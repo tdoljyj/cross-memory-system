@@ -9,7 +9,10 @@
 //
 // Order of one batch (PR-A, free-minutes design S19):
 //   reserve -> derive -> companion bundle -> stage 1 (admission) -> markStarted (burns the head) ->
-//   hosted wait (bounded, hosted-wait.mjs#decide over the companion's untrusted hints) -> 20-plan-intent ->
+//   15-relay-wait (t0, batch) -> hosted wait (bounded, hosted-wait.mjs#decide over the companion's untrusted
+//   hints; NON-BLOCKING: while it says WAIT the tick returns WAITING, and every later tick re-evaluates it
+//   from the stored t0 only after recovery, the Owner's requests, HALT and PAUSE, so the emergency stop is
+//   never delayed by a wait and the service loop keeps the instance lock fresh) -> 20-plan-intent ->
 //   stage R (hosted relay, only when there are relay candidates) -> 25-plan ->
 //   [Linux workspace preparation] -> execution + publication stages of the LOCAL_REQUIRED roles only ->
 //   stage 8 -> close (success-path archive) -> COMPLETED
@@ -52,12 +55,11 @@ class StepFailure {
 }
 
 export class ResidentExecutor {
-  // ports: { policy, ledger, receipts, inbox, requests, owner, engine, companion, sourceIntegrity, clock, sleep? }
+  // ports: { policy, ledger, receipts, inbox, requests, owner, engine, companion, sourceIntegrity, clock }
   //   owner: an Inbox over the admin-only owner directory (only Administrators can create files there).
-  //   sleep: the bounded hosted wait's pause (tests and the drill advance a fake clock with it).
   constructor(ports) {
     for (const k of ['policy', 'ledger', 'receipts', 'inbox', 'requests', 'owner', 'engine', 'companion', 'sourceIntegrity', 'clock']) check(ports[k], 'EXECUTOR_PORT_MISSING', k);
-    Object.assign(this, { sleep: ms => new Promise(r => setTimeout(r, ms)) }, ports);
+    Object.assign(this, ports);
     this.ownerReadFailures = new Map();
   }
 
@@ -71,7 +73,8 @@ export class ResidentExecutor {
   // loop has no batch in flight, so any open entry was left by a crash or an aborted tick: its
   // processes may still exist, so it is UNKNOWN and HALT is latched (once).
   async recover() {
-    const open = await this.ledger.open();
+    // A batch that only waits for hosted signals runs nothing: it is resumed by tick(), never a crash scene.
+    const open = await this.ledger.crashed();
     // A stage R that began (20-plan-intent) without its 25-plan may have begun a relay key: UNKNOWN, HALT.
     const codeFor = entry => (entry.planIntent && !entry.plan ? 'RELAY_STAGE_INTERRUPTED' : 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH');
     // HALT is latched BEFORE any terminal or quarantine write, so no crash point can leave a closed
@@ -227,6 +230,10 @@ export class ResidentExecutor {
     }
     await this.takePauseRequests();
     if (await this.ledger.paused()) return { state: 'PAUSED' };
+    // A batch waiting for hosted signals goes first (serial: nothing else starts while it waits). It is
+    // re-evaluated only here, after recovery, the Owner's requests, HALT and PAUSE.
+    const waiting = await this.ledger.waiting();
+    if (waiting) return this.resumeWaiting(waiting);
     // A due attempt 2 goes before new triggers (it is the same head, already reserved once).
     const due = (await this.ledger.pendingAttempts2()).find(a => a.notBefore <= this.clock());
     if (due) return this.runAttempt2(due);
@@ -353,9 +360,32 @@ export class ResidentExecutor {
     // Admitted and published: from here on this head is burned (also when every heavy role is relayed).
     await this.ledger.markStarted(key, { batchId: batch.batchId });
     await this.receipt('batch-started', { key });
+    // The wait's anchor (t0) and the derived batch, durable before the first wait evaluation: a later tick,
+    // or a restarted service, continues from here without deriving or running stage 1 again.
+    await this.ledger.beginWait(key, { t0, batch });
+    const outcome = await this.continueBatch(key, subject, batch, t0);
+    if (outcome?.state === 'WAITING') await this.receipt('relay-waiting', { key, until: outcome.until, reason: outcome.reason });
+    return outcome;
+  }
 
+  // One evaluation of a waiting batch; WAITING again, or the rest of the batch (or its failure).
+  async resumeWaiting(entry) {
+    const { key } = entry, { t0, batch } = entry.wait, subject = entry.reserved.subject;
+    let outcome;
+    try {
+      outcome = await this.continueBatch(key, subject, batch, t0);
+    } catch (error) {
+      return this.unknown(key, codeOf(error), 'executor-exception', batch);
+    }
+    if (outcome instanceof StepFailure) return this.fail(key, batch, outcome);
+    return outcome;
+  }
+
+  // Everything after 15-relay-wait: one wait evaluation, then (unless still waiting) 20-plan-intent,
+  // stage R, 25-plan, the local roles, stage 8 and the close.
+  async continueBatch(key, subject, batch, t0) {
     const plan = await this.relayPlan(key, subject, batch, t0);
-    if (plan instanceof StepFailure) return plan;
+    if (plan instanceof StepFailure || plan.waiting) return plan.waiting ? { state: 'WAITING', key, until: plan.until, reason: plan.reason } : plan;
     const relayed = plan.relayed.length;
 
     // Only LOCAL_REQUIRED roles run locally, in the fixed role order; the protocol records of the previous
@@ -394,17 +424,13 @@ export class ResidentExecutor {
     try { return { hint: parseHint(bytes, subject), refused: false, sha256: sha256(bytes) }; } catch { return { hint: null, refused: true }; }
   }
 
-  // Hosted wait -> 20-plan-intent -> stage R (only with candidates) -> 25-plan. Returns the plan
-  // { relayed: [row], local: [{ role, reason, receipt }] } or a StepFailure.
+  // One hosted-wait evaluation -> { waiting, until } | 20-plan-intent -> stage R (only with candidates) ->
+  // 25-plan. Returns the plan { relayed: [row], local: [{ role, reason, receipt }] } or a StepFailure.
   async relayPlan(key, subject, batch, t0) {
     const relay = this.policy.relay;
-    let decision, seen = { hint: null, refused: false };
-    for (;;) {
-      if (relay.enabled === true) seen = await this.hint(subject);
-      decision = decide({ relay, t0, now: Math.max(this.clock(), t0), hint: seen.hint });
-      if (decision.action !== 'WAIT') break;
-      await this.sleep(Math.max(1, Math.min(decision.until - this.clock(), relay.wait.pollMs)));
-    }
+    const seen = relay.enabled === true ? await this.hint(subject) : { hint: null, refused: false };
+    const decision = decide({ relay, t0, now: Math.max(this.clock(), t0), hint: seen.hint });
+    if (decision.action === 'WAIT') return { waiting: true, until: decision.until, reason: decision.reason };
     const candidates = decision.relayCandidates;
     await this.ledger.writePlanIntent(key, { candidates, local: decision.local, reasons: decision.reasons, reason: decision.reason, waitedMs: Math.max(0, this.clock() - t0),
       hintSha256: seen.sha256 ?? null, hintRefused: seen.refused });

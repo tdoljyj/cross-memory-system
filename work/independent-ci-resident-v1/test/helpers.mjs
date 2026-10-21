@@ -97,7 +97,6 @@ export async function executorFixture(t, { engine = fakeEngine(), companion, pol
   const root = await tempRoot(t);
   let time = now;
   const clock = () => time;
-  const sleeps = [];
   const ledger = await Ledger.open(path.join(root, 'state'), clock);
   const receipts = await ReceiptChain.open(path.join(root, 'state', 'receipts'), clock);
   const inbox = await Inbox.open(path.join(root, 'inbox'), path.join(root, 'state', 'inbox-archive'));
@@ -108,7 +107,6 @@ export async function executorFixture(t, { engine = fakeEngine(), companion, pol
     policy: validatePolicy(policy), ledger, receipts, inbox, requests, owner, engine, companion: comp, clock,
     sourceIntegrity: async () => integrity ?? { ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT },
   };
-  ports.sleep = async ms => { sleeps.push(ms); time += ms; };
   const exec = new ResidentExecutor(ports);
   let seq = 0;
   const drop = async (bytes, dir = 'inbox') => {
@@ -117,5 +115,5 @@ export async function executorFixture(t, { engine = fakeEngine(), companion, pol
     await fs.writeFile(path.join(root, dir, name), bytes);
     return name;
   };
-  return { root, ports, exec, ledger, receipts, inbox, engine, companion: comp, drop, advance: ms => { time += ms; }, clock, sleeps };
+  return { root, ports, exec, ledger, receipts, inbox, engine, companion: comp, drop, advance: ms => { time += ms; }, clock };
 }

@@ -67,12 +67,26 @@ export async function main(argv = process.argv.slice(2)) {
     measureLinux: () => companion.archiveUsage() });
   await receipts.append('service-start', { policySha256: values['policy-sha256'], pid: process.pid });
   const stopFile = path.join(state, 'STOP-REQUESTED');
-  for (;;) {
-    await lock.touch();
-    // SCM stop is honoured only here, between batches (ResidentServiceHost never kills us).
-    if (await fs.access(stopFile).then(() => true, () => false)) {
+  return serviceLoop({ exec, lock, sleep, once: values.once === true,
+    stopRequested: () => fs.access(stopFile).then(() => true, () => false),
+    acknowledgeStop: async () => {
       await receipts.append('service-stop', { pid: process.pid });
       await fs.rename(stopFile, path.join(state, 'locks', `stop-${Date.now()}-${process.pid}`));
+    },
+    onLoopException: async error => { await ledger.halt('RESIDENT_LOOP_EXCEPTION', { message: String(error?.code ?? 'unknown') }); },
+    betweenBatches: () => retention.maybeCheck() });
+}
+
+// The service loop. Every iteration refreshes the instance-lock liveness and honours an SCM stop before it
+// runs one tick, and a tick never blocks on the hosted wait (it returns WAITING), so neither the liveness
+// record nor a stop, a pause or an Owner request ever waits for hosted signals.
+export const RESTING_STATES = Object.freeze(['IDLE', 'DEFERRED', 'HALTED', 'PAUSED', 'WAITING']);
+export async function serviceLoop({ exec, lock, sleep, once = false, stopRequested, acknowledgeStop, onLoopException, betweenBatches }) {
+  for (;;) {
+    await lock.touch();
+    // SCM stop is honoured only here, between ticks (ResidentServiceHost never kills us).
+    if (await stopRequested()) {
+      await acknowledgeStop();
       return 0;
     }
     let result;
@@ -81,13 +95,13 @@ export async function main(argv = process.argv.slice(2)) {
     } catch (error) {
       // The loop itself failed. Latch HALT if we still can and exit; the next start runs recovery
       // first, which terminalises any entry this tick left open, so re-arm is never wedged.
-      try { await ledger.halt('RESIDENT_LOOP_EXCEPTION', { message: String(error?.code ?? 'unknown') }); } catch { /* keep exiting */ }
+      try { await onLoopException(error); } catch { /* keep exiting */ }
       return 3;
     }
-    // Between batches only (tick is synchronous): the 50 GB archive reminder, measured at most hourly.
-    if (['IDLE', 'DEFERRED', 'PAUSED'].includes(result.state)) { try { await retention.maybeCheck(); } catch { /* a reminder is advisory */ } }
-    if (values.once) return 0;
-    await sleep(['IDLE', 'DEFERRED', 'HALTED', 'PAUSED'].includes(result.state) ? 15_000 : 2_000);
+    // Between batches only (a tick runs at most one batch step): the 50 GB archive reminder, at most hourly.
+    if (['IDLE', 'DEFERRED', 'PAUSED', 'WAITING'].includes(result.state)) { try { await betweenBatches(); } catch { /* a reminder is advisory */ } }
+    if (once) return 0;
+    await sleep(RESTING_STATES.includes(result.state) ? 15_000 : 2_000);
   }
 }
 

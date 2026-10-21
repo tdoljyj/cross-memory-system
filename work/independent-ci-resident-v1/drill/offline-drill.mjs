@@ -221,9 +221,12 @@ const rReceipts = await ReceiptChain.open(path.join(rState, 'receipts'), clock);
 const rInbox = await Inbox.open(path.join(relayRoot, 'inbox'), path.join(rState, 'inbox-archive'));
 const rRequests = await Inbox.open(path.join(relayRoot, 'requests'), path.join(rState, 'requests-archive'));
 const rOwner = await OwnerInbox.open(path.join(relayRoot, 'owner'), path.join(rState, 'owner-seen'));
-let slept = 0;
+// The hosted wait is non-blocking: a waiting tick returns WAITING and the service loop ticks again later.
+// runToEnd ticks (one minute apart, like the loop's resting pause rounded up) until the batch is not waiting.
+let waitTicks = 0;
+const runToEnd = async () => { waitTicks = 0; let r = await relayExec.tick(); while (r.state === 'WAITING') { waitTicks += 1; now += 60_000; r = await relayExec.tick(); } return r; };
 const relayExec = new ResidentExecutor({ policy: relayPolicy, ledger: rLedger, receipts: rReceipts, inbox: rInbox, requests: rRequests, owner: rOwner, engine: relayEngine, companion: relayCompanion, clock,
-  sleep: async ms => { slept += ms; now += ms; }, sourceIntegrity: async () => ({ ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT }) });
+  sourceIntegrity: async () => ({ ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT }) });
 const rDrop = async value => { seq += 1; await fs.writeFile(path.join(relayRoot, 'inbox', `${String(now + seq).padStart(13, '0')}-${String(seq).padStart(12, '0')}.json`), JSON.stringify(value)); };
 // Receipt types of one batch, in chain order, from its batch-reserved receipt to its batch-terminal receipt.
 async function batchReceiptTypes(key) {
@@ -241,8 +244,8 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 // 1. Mid-month, minutes used up: the hosted admission is refused for billing within seconds.
 hints.set(911, { gitleaks: { state: 'BILLING_REFUSED' }, trivy: { state: 'BILLING_REFUSED' } });
-const m1 = await step('relay month 1 (PR 911): minutes used up -> billing-refused hint -> 1..8 all local, no stage R, no wait', async () => { slept = 0; await rDrop(trigger(911)); return relayExec.tick(); },
-  r => r.state === 'COMPLETED' && same(stagesSeen, [1, 2, 3, 4, 5, 6, 7, 8]) && slept === 0);
+const m1 = await step('relay month 1 (PR 911): minutes used up -> billing-refused hint -> 1..8 all local, no stage R, no wait', async () => { await rDrop(trigger(911)); return runToEnd(); },
+  r => r.state === 'COMPLETED' && same(stagesSeen, [1, 2, 3, 4, 5, 6, 7, 8]) && waitTicks === 0);
 const t1 = await batchReceiptTypes(m1.key);
 await step('  receipts: plan intent, billing refusal per relayable role, placement fallback, no relay-attested', async () => ({ state: relayTypes(t1).join(',') }),
   () => same(relayTypes(t1), ['relay-plan-intent', 'relay-billing-refused:gitleaks', 'relay-billing-refused:trivy', 'relay-local-fallback:contract-placement']));
@@ -250,16 +253,16 @@ await step('  receipts: plan intent, billing refusal per relayable role, placeme
 // 2. The first head after minutes return: the hosted jobs queue, run, then succeed while the executor waits.
 let polls912 = 0;
 hints.set(912, at => (++polls912 <= 3 ? { gitleaks: { state: 'PENDING_QUEUED', queuedAt: at - 60_000 }, trivy: { state: 'PENDING_RUNNING', startedAt: at - 120_000 } } : { gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } }));
-const m2 = await step('relay month 2 (PR 912): first head after minutes return -> bounded wait -> R relays gitleaks+trivy -> 6,7 -> 8', async () => { slept = 0; await rDrop(trigger(912)); return relayExec.tick(); },
-  r => r.state === 'COMPLETED' && same(stagesSeen, [1, 9, 6, 7, 8]) && slept > 0 && slept <= 3_600_000 && same(r.relayed, ['gitleaks', 'trivy']));
+const m2 = await step('relay month 2 (PR 912): first head after minutes return -> bounded wait -> R relays gitleaks+trivy -> 6,7 -> 8', async () => { await rDrop(trigger(912)); return runToEnd(); },
+  r => r.state === 'COMPLETED' && same(stagesSeen, [1, 9, 6, 7, 8]) && waitTicks > 0 && waitTicks <= 60 && same(r.relayed, ['gitleaks', 'trivy']));
 const t2 = await batchReceiptTypes(m2.key);
-await step('  receipts: intent before attested, attested before the placement fallback, all before the terminal', async () => ({ state: t2.filter(t => t.startsWith('relay-') || t === 'batch-terminal').join(',') }),
-  () => same(t2.filter(t => t.startsWith('relay-') || t === 'batch-terminal'), ['relay-plan-intent', 'relay-attested:gitleaks', 'relay-attested:trivy', 'relay-local-fallback:contract-placement', 'batch-terminal']));
+await step('  receipts: waiting, then intent, attested, the placement fallback, all before the terminal', async () => ({ state: t2.filter(t => t.startsWith('relay-') || t === 'batch-terminal').join(',') }),
+  () => same(t2.filter(t => t.startsWith('relay-') || t === 'batch-terminal'), ['relay-waiting', 'relay-plan-intent', 'relay-attested:gitleaks', 'relay-attested:trivy', 'relay-local-fallback:contract-placement', 'batch-terminal']));
 
 // 3. Month start, minutes available: hosted success is already there when the executor looks.
 hints.set(913, { gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } });
-await step('relay month 3 (PR 913): minutes available -> 1, R, 6, 7, 8 with no wait; gitleaks and trivy never run on Linux', async () => { slept = 0; await rDrop(trigger(913)); return relayExec.tick(); },
-  r => r.state === 'COMPLETED' && same(stagesSeen, [1, 9, 6, 7, 8]) && slept === 0);
+await step('relay month 3 (PR 913): minutes available -> 1, R, 6, 7, 8 with no wait; gitleaks and trivy never run on Linux', async () => { await rDrop(trigger(913)); return runToEnd(); },
+  r => r.state === 'COMPLETED' && same(stagesSeen, [1, 9, 6, 7, 8]) && waitTicks === 0);
 
 // 4. Minutes run out inside one head (or the hosted trivy fails to fetch its DB): mixed relay and local.
 hints.set(914, { gitleaks: { state: 'SUCCESS' }, trivy: { state: 'HOSTED_NOT_SUCCESS', reason: 'E5_HOSTED_FAILURE' } });
@@ -273,6 +276,17 @@ hints.set(915, { gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } });
 relayRows.set(915, { gitleaks: rowLocal('gitleaks', 'RELAY_NOT_ATTESTED_ATTESTATION_FAILED') });
 await step('relay month 4b (PR 915): stage R refuses gitleaks attestation -> gitleaks local (2, 3), trivy relayed', async () => { await rDrop(trigger(915)); return relayExec.tick(); },
   r => r.state === 'COMPLETED' && same(stagesSeen, [1, 9, 2, 3, 6, 7, 8]) && same(r.relayed, ['trivy']));
+// 5. The emergency stop during a wait: anyone may pause, the batch stops before stage R; only the Owner resumes.
+hints.set(916, at => ({ gitleaks: { state: 'PENDING_QUEUED', queuedAt: at }, trivy: { state: 'SUCCESS' } }));
+await step('relay month 5 (PR 916): a pause during the hosted wait takes effect on the next tick, before stage R', async () => {
+  await rDrop(trigger(916)); const w = await relayExec.tick();
+  seq += 1; await fs.writeFile(path.join(relayRoot, 'requests', `${String(now + seq).padStart(13, '0')}-${String(seq).padStart(12, '0')}.json`), JSON.stringify({ contract: PAUSE_CONTRACT, reason: 'drill emergency stop' }));
+  now += 60_000; const p = await relayExec.tick(); now += 3_600_000; const p2 = await relayExec.tick();
+  return { state: `${w.state}>${p.state}>${p2.state}`, stages: [...stagesSeen] };
+}, r => r.state === 'WAITING>PAUSED>PAUSED' && same(r.stages, [1]));
+await step('  only the Owner resume continues it; the stored t0 is past the cap, so it starts at once', async () => {
+  await writeOwnerRequest(path.join(relayRoot, 'owner'), resumeRequest({ expectedPausedSha256: (await rLedger.paused()).sha256, by: OWNER }), clock); return relayExec.tick();
+}, r => r.state === 'COMPLETED' && same(stagesSeen, [1, 9, 2, 3, 6, 7, 8]) && same(r.relayed, ['trivy']));
 await step('every relayed head stays burned (PR 913 again: never re-run)', async () => { await rDrop(trigger(913)); return relayExec.tick(); }, r => r.reason === 'HEAD_ALREADY_EXECUTED_NO_RETRY');
 const rHead = await rReceipts.verify();
 await step('relay month receipt chain intact', async () => ({ state: `seq ${rHead.seq}` }), () => rHead.seq > 20);

@@ -8,7 +8,7 @@
   - v0.4：按第三轮复核（FAIL：残留全部关闭，但修正本身引入 2 个 MAJOR，另有 1 个旧的代理 MAJOR）再修；
   - v0.5：按第四轮复核（FAIL：代理 MAJOR 只修了一半，隔离与 HALT 不是崩溃一致的）再修；
   - v0.6（2026-10-21）：P1 完成，Source v2（S1–S14）在分支 `claude/pr-a-s-core-20261021` 上离线实现并测试（§7.1）；按 Owner Decision `1b5d3687` 加入自动 attempt 2（§7.2）和 50 GB 归档提醒（§7.3），D2–D7 随之关闭（§15）。主机上还什么都没装，主机验证见 §13.2 P2。
-  - v0.7（2026-10-21）：PR-A 集成，分支 `claude/pr-a-integration-20261021`。托管转发接进常驻执行器（免费分钟设计 S19–S22，§7.5）：第 1 段之后有上限地等托管提示，`20-plan-intent`，第 R 段（第 9 段），`25-plan`，只为 LOCAL_REQUIRED 的角色跑本地段。同时补上 v0.6 §7.4 列出的缺口：v2 发布者按 diff 并入转发改动、合并闸门的 v2 控制检查消费者、Linux 侧 Source v2 安装脚本、Source 闭包重算（§7.6）。转发默认关闭（`relay.enabled=false`），主机上仍然什么都没装。
+  - v0.7（2026-10-21）：PR-A 集成，分支 `claude/pr-a-integration-20261021`。托管转发接进常驻执行器（免费分钟设计 S19–S22，§7.5）：第 1 段之后有上限地等托管提示，`20-plan-intent`，第 R 段（第 9 段），`25-plan`，只为 LOCAL_REQUIRED 的角色跑本地段。同时补上 v0.6 §7.4 列出的缺口：v2 发布者按 diff 并入转发改动、合并闸门的 v2 控制检查消费者、Linux 侧 Source v2 安装脚本、Source 闭包重算（§7.6）。转发默认关闭（`relay.enabled=false`），主机上仍然什么都没装。按复审要求，托管等待不阻塞：每个 tick 只判断一次，等待中暂停、STOP、HALT 和 Owner 请求照常生效，锁存活记录照常刷新，重启后从保存的 t0 继续（§7.5）。
 
   第五轮复核 **PASS**（没有剩余的 BLOCKER 或 MAJOR）。五轮对照见 §13.3–§13.7。
 - 依据（只读）：
@@ -40,7 +40,7 @@
    - 未知失败：HALT，Owner 用 UAC 发一个复位请求，由服务自己完成归档和解锁；
    - Source 变更：Owner 接受后，1 次 UAC 加 1 次 root。
 5. **草稿状态**（v0.7，详见 §13.1）：
-   - 常驻层：Node 单元测试 **96/96**、Python **15/15**、离线演练 **33/33**（新增一个月的免费分钟情形）；
+   - 常驻层：Node 单元测试 **100/100**、Python **15/15**、离线演练 **35/35**（新增一个月的免费分钟情形和等待中的急停）；
    - Source v2（`CI/`）：Node **130 通过 + 1 跳过**、Python **6/6**、PowerShell 离线用例 **35 个**（归档 13、ACL 迁移 12、bundle 10）、C# 纯逻辑 **88 条断言**；`scripts/ci/clued-work-admission.test.mjs` **93/93**（新增 2 个 v2 消费者用例）；
    - 主机演练（§13.2 P2）还没开始，所以可安装性、ACL 掩码、unit 加固、真实的 SCM/WSL/Docker 路径，以及托管运行的 OIDC 声明值，都还没在真机上证明。
 6. **托管转发（v0.7，§7.5）**：有免费分钟时，gitleaks 和 trivy 由第 R 段核验 GitHub 托管运行后以 App 5368905 发布同名检查，本地只跑 contract-placement 和三项 kooyumi 检查；分钟用完时自动回到全本地。转发随策略默认关闭，只有 Owner 改策略（一次 UAC）才打开。
@@ -212,6 +212,7 @@ Agent 在这台机器上用的就是 Owner 的 GitHub 身份（resident constrai
 companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ inbox 里的触发记录
 执行器 tick（空闲每 15 秒一次）：
   崩溃恢复（每 tick 都做，HALT 时也做）：未终结的条目（包括“目录已建、记录没写”的） → FAILED_UNKNOWN、烧掉 head、HALT
+      例外（v0.7）：只在等托管信号的批次（有 15-relay-wait、没有 20-plan-intent）什么都没在运行，不关，由 tick 继续
   处理 owner\ 里的复位 / 恢复请求
   HALT? → 停；处理暂停请求；处于 PAUSED → 停
   取最早的触发记录；预检（不联网、不读秘密）：
@@ -223,7 +224,10 @@ companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ 
       未准入 → 收尾 → 释放成 NOT_EXECUTED
       其他失败 → 烧掉 head
   10-started + head 烧号（只做转发的批次同样烧号）
-  托管等待（v0.7，§7.5）：读 companion 最新的托管提示，按 hosted-wait.decide 有上限地等；转发关闭时不等
+  15-relay-wait（CreateNew：t0 和导出的批次）
+  托管等待（v0.7，§7.5）：读 companion 最新的托管提示，按 hosted-wait.decide 有上限地等；转发关闭时不等。
+      等待不阻塞：结论是 WAIT 时本 tick 返回 WAITING；之后每个 tick 先做崩溃恢复、Owner 请求、HALT、暂停，
+      再从保存的 t0 重新判断。等待期间 tick 不取新触发，也不跑 attempt 2
   20-plan-intent（CreateNew：转发候选、本地角色及其原因）
   有候选时跑第 R 段（第 9 段，通用助手以 clued-control 运行转发入口）→ 每个候选 RELAYED 或 LOCAL_REQUIRED(原因)
       发布不确定或计划行不干净 → UNKNOWN → 烧号、HALT，这个批次此后不再为任何角色跑本地段
@@ -434,8 +438,10 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 
 1. 预留 → 导出 → bundle → 第 1 段 → `10-started`（烧号）。和 v0.6 一样，第 1 段之前的失败仍按 v0.6 处理。
 2. **托管等待**（`R/src/hosted-wait.mjs#decide`）。按本任务的定序，等待放在第 1 段之后（免费分钟设计 §4.2 原本放在预留之前）：
-   - t0 是读到并预留这个触发的时刻；
-   - 每次最多睡 `relay.wait.pollMs`，然后重读 companion 的提示；
+   - t0 是读到并预留这个触发的时刻，`10-started` 之后立刻和导出的批次一起写进 `15-relay-wait`（CreateNew）；
+   - **等待不阻塞**（复审要求：急停永远不能被等待拖住）。每次判断只读一次提示：结论是 WAIT 时，tick 返回 WAITING。服务循环照常每轮先刷新单实例锁的存活记录、检查 STOP，再跑下一个 tick；
+   - 下一个 tick 先做崩溃恢复，再处理 Owner 的请求，然后看 HALT 和暂停，最后才从保存的 t0 重新判断这个批次。所以等待中写入的暂停请求在下一个 tick 就生效，批次停在第 R 段和所有本地段之前；只有 Owner 的恢复请求能让它继续，继续时仍按保存的 t0 计算上限；
+   - 等待中的批次（有 `15-relay-wait`、没有 `20-plan-intent`）什么都没在运行，所以它是“可继续”的，不是崩溃现场：恢复不关它，复位不因它而被拒绝（等待中锁上的 HALT 经 Owner 复位清除后，批次继续等），服务重启后从保存的 t0 和批次继续，不重新导出、不重跑第 1 段。`relay-waiting` 回执只在开始等待时写一次；
    - 上限照 §7.2：没有任何运行等 10 分钟，排队等 15 分钟，运行中等 job 超时加 10 分钟，总上限 60 分钟；
    - 任何角色的提示是 BILLING_REFUSED 就立刻开始，全部本地；
    - `relay.enabled=false` 时不等、不跑第 R 段。
@@ -502,7 +508,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 **没有实现的**（离线做不了，或要主机数据）：
 
 - 免费分钟设计 §7.5 的“开始前合并位剩余不足 20 分钟就推迟”：执行器不联网，读不到 `merge_slot_until`。第 8 段仍按 S8 自己等队首；只做转发的批次从第 1 段到第 8 段通常只要几分钟。
-- 等待期间（最长 60 分钟）执行器不处理暂停、STOP 和 Owner 请求，等批次结束后才处理。这和长阶段时的行为一样；单实例锁的存活记录在等待中也不刷新。
+- 长阶段（最长 45 分钟）运行期间，执行器照旧要等阶段结束才处理暂停、STOP 和 Owner 请求，单实例锁的存活记录也要等阶段结束才刷新。这是 v0.6 就有的行为，等待不再加长它。
 
 ### 7.6 v0.6 缺口的补齐（v0.7）
 
@@ -675,10 +681,10 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 
 v0.7（2026-10-21，转发集成之后）：
 
-- 常驻层：`node --test test/*.test.mjs` **96/96**。新增：
-  - `relay.test.mjs` 12 个：段序 1 → R → 本地子集 → 8；`20-plan-intent`/`25-plan`；有上限的等待；账单拒绝立即全本地；同一 head 内转发与本地混合；发布不确定 HALT 且不再有本地段；计划行不干净；第 R 段崩溃恢复；托管晚到；转发后不排 attempt 2；损坏的提示；
+- 常驻层：`node --test test/*.test.mjs` **100/100**。新增：
+  - `relay.test.mjs` 16 个：段序 1 → R → 本地子集 → 8；`20-plan-intent`/`25-plan`；不阻塞的有上限等待；等待中暂停（停在第 R 段之前，只有 Owner 能恢复，按保存的 t0 继续）；等待中 Owner 复位；等待中重启（不重跑第 1 段）；服务循环每轮刷新锁、等待中照样响应 STOP；账单拒绝立即全本地；同一 head 内转发与本地混合；发布不确定 HALT 且不再有本地段；计划行不干净；第 R 段崩溃恢复；托管晚到；转发后不排 attempt 2；损坏的提示；
   - `hints.test.mjs` 6 个：提示映射；经 Source 观察器（提示模式）到邮箱再到执行器解析的端到端；邮箱的提示文件；轮询器的观察窗口；gh 只读端口；引擎的第 R 段和动态选项。
-- 常驻层 Python **15/15**（新增 4 个 Linux Source v2 安装器用例）；`node drill/offline-drill.mjs` **33/33**（新增 10 步：一个月的免费分钟情形和回执类型、顺序）。
+- 常驻层 Python **15/15**（新增 4 个 Linux Source v2 安装器用例）；`node drill/offline-drill.mjs` **35/35**（新增 12 步：一个月的免费分钟情形、回执类型和顺序、等待中的急停与 Owner 恢复）。
 - Source v2：`node --test test/*.test.mjs` **130 通过 + 1 跳过**（新增 `hosted-relay-v2.test.mjs` 12 个：第 R 段的包导出、计划行、阶段事实、第 9 段 invoke-stage、v2 发布者的 K 互斥与 claim 代次）；Python **6/6**；`test-migrate-acl.ps1` **12 例**；`test-pure-v2.ps1` **88 条**断言；`SwapBroker.cs` 编译通过。
 - `node --test scripts/ci/clued-work-admission.test.mjs` **93/93**（main 上原有 91 个全部通过，新增 2 个 v2 消费者用例）。
 
@@ -721,7 +727,7 @@ v0.5 时的记录：
     - `state\relay\jwks` 的真实 ACL 和 JWKS 文件缓存；
     - 转发入口用 held record 核对登记表字节，在真实安装记录上运行；
     - companion 提示模式在 Owner 会话里加载已安装 Source 的观察器，gh 只读端口对真实 API 的分页和规范化；
-    - 等待期间单实例锁存活记录不刷新，服务重启时的判定；
+    - 等待中的服务循环在真机上的行为（WAITING 的休息间隔、锁存活记录、STOP），以及等待中重启后从 `15-relay-wait` 继续；
     - v2 消费者以 clued-control 运行（评估器调用路径、held record、batch-claim 扫描的上限）；
     - Linux Source v2 安装：先由 root 用 Linux 结果密钥签 qualification v2（单独审查的步骤），再 `--plan`/`--apply`；在真实 WSL 上验证 bundle 克隆、文件属主和权限、`loadQualifiedPolicyV2` 就绪检查、以及 `prepare-workspaces.py` 对受信检出的核对。
 - **P2**：主机隔离演练。演练名包括 `CluedCIResidentRehearsal`、`CluedCISwapBrokerRehearsal`，以及专门的哑 runner 服务 `CluedCIRehearsalRunner`。要验证的点：
