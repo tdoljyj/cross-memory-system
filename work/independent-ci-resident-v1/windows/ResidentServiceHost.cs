@@ -5,12 +5,14 @@
 // pinned service-main.mjs and the policy pin from its own command line, a fixed environment and no
 // inherited handles. It never kills the executor: on Stop it only asks the executor to stop between
 // batches (a STOP-REQUESTED file) and reports how it ended. A running batch always finishes or
-// fails closed on its own; SCM stop never interrupts a stage.
+// fails closed on its own; SCM stop never interrupts a stage. It asks at most once per process
+// (ResidentStopGate): the executor's own exit stops the service without writing STOP-REQUESTED.
 using System;
 using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
 using System.ServiceProcess;
+using System.Threading;
 
 public sealed class ResidentServiceHost : ServiceBase
 {
@@ -18,13 +20,15 @@ public sealed class ResidentServiceHost : ServiceBase
     // Review MAJOR-1: the only privilege the resident needs (`sc privs CluedCIResident SeChangeNotifyPrivilege`).
     public static readonly string[] AllowedPrivileges = { "SeChangeNotifyPrivilege" };
     readonly string root, policySha, nodeExe, entry, nodeSha, entrySha;
+    readonly ResidentStopGate stop;
     Process child;
 
-    ResidentServiceHost(string[] a)
+    internal ResidentServiceHost(string[] a)
     {
         ServiceName = Name; CanStop = true; CanShutdown = true; AutoLog = true;
         if (a.Length != 6) throw new ArgumentException("ROOT POLICY_SHA NODE NODE_SHA ENTRY ENTRY_SHA");
         root = a[0]; policySha = a[1]; nodeExe = a[2]; nodeSha = a[3]; entry = a[4]; entrySha = a[5];
+        stop = new ResidentStopGate(Path.Combine(root, "state"));
     }
 
     static string Sha(string path)
@@ -52,9 +56,21 @@ public sealed class ResidentServiceHost : ServiceBase
         psi.EnvironmentVariables["SystemRoot"] = @"C:\Windows";
         psi.EnvironmentVariables["WINDIR"] = @"C:\Windows";
         psi.EnvironmentVariables["PATH"] = @"C:\Windows\System32;C:\Windows";
-        child = Process.Start(psi);
-        child.EnableRaisingEvents = true;
-        child.Exited += (s, e) => { ExitCode = child.ExitCode == 0 ? 0 : 1064; Stop(); };
+        Watch(Process.Start(psi));
+    }
+
+    // The handler is attached before events are enabled, so an executor that exits at once is still seen.
+    internal void Watch(Process p)
+    {
+        child = p;
+        p.Exited += (s, e) =>
+        {
+            ExitCode = ResidentStopGate.ServiceExitCode(p.ExitCode);
+            // Exited on its own: stop the service; nobody is left to ask, so nothing is written. During an SCM
+            // stop the stopping thread reports STOPPED itself once its wait returns, so Stop() is not called.
+            if (stop.ExecutorExited()) Stop();
+        };
+        p.EnableRaisingEvents = true;
     }
 
 
@@ -71,13 +87,50 @@ public sealed class ResidentServiceHost : ServiceBase
 
     void RequestStopBetweenBatches()
     {
-        try { using (File.Open(Path.Combine(root, "state", "STOP-REQUESTED"), FileMode.CreateNew, FileAccess.Write)) { } } catch (IOException) { }
+        // ServiceBase.Stop() from the Exited handler re-enters OnStop, and a shutdown can follow a stop: only
+        // the first stop of this process asks, and only a running executor (live 2026-10-21: a re-entered
+        // OnStop recreated STOP-REQUESTED after the executor had renamed it away, so the next start stopped).
+        Process p = child;
+        if (!stop.ScmStop(p != null && !p.HasExited)) return;
         // Wait briefly for an idle executor to exit; a busy one keeps running and is found by the
-        // instance lock on the next start. Nothing is killed.
-        if (child != null) child.WaitForExit(20000);
+        // instance lock on the next start. Nothing is killed. The exit code is mapped here as well,
+        // because STOPPED may be reported before the Exited handler has run.
+        if (p != null && p.WaitForExit(20000)) ExitCode = ResidentStopGate.ServiceExitCode(p.ExitCode);
     }
 
     public static void Main(string[] args) { Run(new ResidentServiceHost(args)); }
+}
+
+// The host's stop decisions (stop re-entry fix, Task fe6cd7bc). One stop per host process: whichever comes
+// first, an SCM stop or shutdown, or the executor's own exit, takes it. Only an SCM stop that finds the
+// executor running writes STOP-REQUESTED, create-only. The executor acknowledges it by renaming it into
+// state\locks (service-main.mjs, with a service-stop receipt); the host never renames, deletes or rewrites it.
+public sealed class ResidentStopGate
+{
+    readonly string stopFile;
+    int stopping;
+
+    public ResidentStopGate(string stateDirectory) { stopFile = Path.Combine(stateDirectory, "STOP-REQUESTED"); }
+
+    // OnStop / OnShutdown. False when a stop already happened in this process: do nothing. Otherwise ask a
+    // running executor to stop between batches and return true (the caller then waits for it).
+    public bool ScmStop(bool executorRunning)
+    {
+        if (Interlocked.Exchange(ref stopping, 1) != 0) return false;
+        if (executorRunning) TryCreateStopFile(stopFile);
+        return true;
+    }
+
+    // The executor exited. True when no stop happened yet: the host must stop the service itself.
+    public bool ExecutorExited() { return Interlocked.Exchange(ref stopping, 1) == 0; }
+
+    // An existing file (a stop still pending for an earlier executor) is left exactly as it is.
+    public static bool TryCreateStopFile(string path)
+    {
+        try { using (File.Open(path, FileMode.CreateNew, FileAccess.Write)) { } return true; } catch (IOException) { return false; }
+    }
+
+    public static int ServiceExitCode(int executorExitCode) { return executorExitCode == 0 ? 0 : 1064; }
 }
 
 // Review MAJOR-1: the effective privileges of this process token. The install sets the service's required
