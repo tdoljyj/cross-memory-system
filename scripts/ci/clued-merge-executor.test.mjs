@@ -631,3 +631,40 @@ test("A2: the live authority reader accepts an independent admission check by it
     assert.equal(result.valid, valid, label); assert.deepEqual(writes(fetch), [], label);
   }
 });
+
+// --- Source v2 external ids in the executor (src/job-v2.mjs).
+const V2J = "6".repeat(64);
+const v2Check = (name, extra = {}) => independentCheck(name, { external_id: name === "kooyumi-admission-verified"
+  ? `independent-ci:control:control-admission:v2:${V2J}:a2:cd1dd735d:f3:e2`
+  : name === "kooyumi-work-admission" ? `independent-ci:native-work-admission:v2:${V2J}:a1:cd1dd735d:f3:e2`
+    : `independent-ci:staged:v2:${V2J}:a1`, ...extra });
+const v2Checks = (overrides = {}) => checksRoute({ ...Object.fromEntries(REQUIRED_NAMES.filter((name) => name !== "kooyumi-merge-slot")
+  .map((name) => [name, [v2Check(name)]])), ...overrides });
+
+test("A2 v2: Source v2 admission and scanner checks admit and merge; malformed or foreign v2 ids never do", async () => {
+  let fetch = world({ extra: { ...rulesRoute(INDEPENDENT_RULES), ...v2Checks(), ...mergeable("clean"), ...ciRuns(),
+    [MERGE]: { __status: 200, body: { merged: true, sha: "c".repeat(40) } } } });
+  let result = await run(fetch, {}, { admissionMode: async () => LIVE_MODE });
+  assert.deepEqual([result.errors, result.actions[0].action, result.actions[0].result], [[], "merge_pull_request", "merged"]);
+  for (const [label, externalId] of [
+    ["attempt 3", `independent-ci:control:control-admission:v2:${V2J}:a3:cd1dd735d:f3:e2`],
+    ["no claim generation", `independent-ci:control:control-admission:v2:${V2J}:a1`],
+    ["the merge-slot role", `independent-ci:control:control-merge-slot:v2:${V2J}:a1:cd1dd735d:f3:e2`],
+    ["a staged v2 id", `independent-ci:staged:v2:${V2J}:a1`],
+    ["a native v2 id", `independent-ci:native-work-admission:v2:${V2J}:a1:cd1dd735d:f3:e2`],
+    ["a trailing field", `independent-ci:control:control-admission:v2:${V2J}:a1:cd1dd735d:f3:e2:x`],
+  ]) {
+    fetch = world({ extra: { ...rulesRoute(INDEPENDENT_RULES), ...v2Checks({ "kooyumi-admission-verified": [v2Check("kooyumi-admission-verified", { external_id: externalId })] }),
+      ...mergeable("clean"), ...ciRuns() } });
+    result = await run(fetch, {}, { admissionMode: async () => LIVE_MODE });
+    assert.equal(result.actions[0].action, "none", label);
+    assert.match(result.actions[0].reason, /has not admitted it/, label);
+    assert.deepEqual(writes(fetch), [], label);
+  }
+  // A malformed v2 scanner id is not the required check: no merge.
+  fetch = world({ extra: { ...rulesRoute(INDEPENDENT_RULES), ...v2Checks({ trivy: [v2Check("trivy", { external_id: `independent-ci:staged:v2:${V2J}:a1:cd1dd735d:f3:e2` })] }),
+    ...mergeable("clean"), ...ciRuns() } });
+  result = await run(fetch, {}, { admissionMode: async () => LIVE_MODE });
+  assert.equal(mergeCall(fetch), undefined);
+  assert.notEqual(result.actions[0].action, "merge_pull_request");
+});

@@ -2698,3 +2698,27 @@ test("independent gate: under the Owner's disaster-recovery switch the clued-adm
   const failed = (await independentGate([appCheckRun({ conclusion: "failure" })])).outcome;
   assert.deepEqual([failed.admitted, failed.verdict], [false, "REJECTED"]);
 });
+
+test("independent gate: the Source v2 native-work-admission id admits; malformed or foreign v2 ids refuse", async () => {
+  const V2 = `independent-ci:native-work-admission:v2:${"6".repeat(64)}:a1:cd1dd735d:f3:e2`;
+  assert.equal((await independentGate([nativeCheck({ external_id: V2 })])).outcome.admitted, true);
+  assert.equal((await independentGate([nativeCheck({ external_id: V2.replace(":a1:", ":a2:") })])).outcome.admitted, true);
+  for (const [label, externalId] of [
+    ["attempt 3", V2.replace(":a1:", ":a3:")],
+    ["no claim generation", `independent-ci:native-work-admission:v2:${"6".repeat(64)}:a1`],
+    ["a short claim prefix", V2.replace(":cd1dd735d:", ":cd1dd73:")],
+    ["an upper-case claim prefix", V2.replace(":cd1dd735d:", ":cD1DD735D:")],
+    ["fence 0", V2.replace(":f3:", ":f0:")],
+    ["v1 field order", `independent-ci:native-work-admission:v2:${"6".repeat(64)}:f3:e2:a1`],
+    ["a trailing field", `${V2}:x`],
+    ["a staged v2 id", `independent-ci:staged:v2:${"6".repeat(64)}:a1`],
+    ["a control v2 id", `independent-ci:control:control-admission:v2:${"6".repeat(64)}:a1:cd1dd735d:f3:e2`],
+    ["a v3 id", V2.replace(":v2:", ":v3:")],
+  ]) {
+    const { outcome } = await independentGate([nativeCheck({ external_id: externalId })]);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, "REJECTED"], label);
+  }
+  // A well-formed v2 id from another App is never read.
+  const { outcome } = await independentGate([nativeCheck({ external_id: V2, app: { id: 15368 } })], { envOverrides: { CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" } });
+  assert.deepEqual([outcome.admitted, outcome.verdict], [false, "ADMISSION_PENDING"]);
+});

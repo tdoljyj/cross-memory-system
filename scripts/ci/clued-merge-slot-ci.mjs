@@ -127,18 +127,39 @@ const countsActionsChecks = (required) => required.some((row) => row.app_id === 
 
 // Design A2: a check run of the independent CI (App 5368905) names no pull
 // request in its external_id. It binds by its head and by the independent
-// CI's own external_id formats (independent-ci-v1 staged, Native admission
-// and control publishers; the relay of the hosted-executor design §5). A
-// control check only counts from its own control role, and a summary that
-// names another pull request of this repository is not this one's.
-const INDEPENDENT_EXTERNAL_ID = /^independent-ci:(?:(?:staged|native-work-admission):[a-f0-9]{64}|control:([a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}):[a-f0-9]{64}):f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9}:a[1-9][0-9]{0,9}$|^independent-ci:relay:[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}:[a-f0-9]{12}:run[1-9][0-9]{0,19}:a[1-9][0-9]{0,9}$/;
+// CI's own exact external_id formats: the v1 staged, Native admission and
+// control publishers (independent-ci-v1 src/queue.mjs jobs), the Source v2
+// publishers (src/job-v2.mjs scanExternalIdV2 and admissionExternalIdV2:
+// ':v2:<job id>:a<attempt 1|2>', admission and control also
+// ':c<claim id prefix>:f<fence>:e<epoch>'), and the relay
+// (src/hosted-relay-v1/relay-plan.mjs, gitleaks and trivy only). A control
+// check only counts from its own control role, and a summary that names
+// another pull request of this repository is not this one's.
+const INDEPENDENT_EXTERNAL_ID = new RegExp("^independent-ci:(?:" + [
+  // v1: <job id>:f<fence>:e<epoch>:a<attempt>
+  "(?:staged|native-work-admission):[a-f0-9]{64}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9}:a[1-9][0-9]{0,9}",
+  "control:(control-admission|control-merge-slot):[a-f0-9]{64}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9}:a[1-9][0-9]{0,9}",
+  // v2 scanner content proof: staged:v2:<job id>:a<attempt>
+  "staged:v2:[a-f0-9]{64}:a[12]",
+  // v2 admission and control: ...:v2:<job id>:a<attempt>:c<claim prefix>:f<fence>:e<epoch>
+  "native-work-admission:v2:[a-f0-9]{64}:a[12]:c[a-f0-9]{8}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9}",
+  "control:(control-admission|control-merge-slot):v2:[a-f0-9]{64}:a[12]:c[a-f0-9]{8}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9}",
+  // relay: relay:<role>:<head12>:run<run id>:a<run attempt>
+  "relay:(?:gitleaks|trivy):[a-f0-9]{12}:run[1-9][0-9]{0,19}:a[1-9][0-9]{0,3}",
+].join("|") + ")$");
 const INDEPENDENT_CONTROL_ROLE = Object.freeze({ "kooyumi-admission-verified": "control-admission", "kooyumi-merge-slot": "control-merge-slot" });
 export function independentCheckBindsPullRequest(check, { headSha, prNumber, repository } = {}) {
   if (!check || check.head_sha !== headSha || !check.app || Number(check.app.id) !== INDEPENDENT_CI_APP_ID) return false;
   const match = INDEPENDENT_EXTERNAL_ID.exec(String(check.external_id ?? ""));
   if (!match) return false;
-  const role = INDEPENDENT_CONTROL_ROLE[check.name];
-  if (role ? match[1] !== role : match[1] !== undefined) return false;
+  const role = INDEPENDENT_CONTROL_ROLE[check.name], controlRole = match[1] ?? match[2];
+  if (role ? controlRole !== role : controlRole !== undefined) return false;
+  // A native admission id belongs to the work admission check only.
+  if (/^independent-ci:native-work-admission:/.test(match[0]) !== (check.name === "kooyumi-work-admission") &&
+    !/^independent-ci:staged:/.test(match[0])) return false;
+  // A relay id names the relayed role and the head; both must be this check's.
+  const relay = /^independent-ci:relay:(gitleaks|trivy):([a-f0-9]{12}):/.exec(match[0]);
+  if (relay && (relay[1] !== check.name || relay[2] !== headSha.slice(0, 12))) return false;
   if (typeof repository === "string" && Number.isSafeInteger(prNumber)) {
     const escaped = repository.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const named = [...String((check.output && check.output.summary) ?? "").matchAll(new RegExp(`${escaped}#([0-9]{1,10})(?![0-9])`, "gi"))];

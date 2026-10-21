@@ -1960,7 +1960,9 @@ export const INDEPENDENT_ADMISSION_APP_ID = 5368905;
 export const INDEPENDENT_ADMISSION_CHECK = "kooyumi-work-admission";
 export const INDEPENDENT_GATE_WAIT_SECONDS = 600;
 export const INDEPENDENT_GATE_POLL_SECONDS = 30;
-const INDEPENDENT_NATIVE_ADMISSION_ID = /^independent-ci:native-work-admission:[a-f0-9]{64}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9}:a[1-9][0-9]{0,9}$/;
+// The independent CI's native-work-admission ids: v1 (<job id>:f<fence>:e<epoch>:a<attempt>) and
+// Source v2 (src/job-v2.mjs admissionExternalIdV2: v2:<job id>:a<1|2>:c<claim prefix>:f<fence>:e<epoch>).
+const INDEPENDENT_NATIVE_ADMISSION_ID = /^independent-ci:native-work-admission:(?:[a-f0-9]{64}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9}:a[1-9][0-9]{0,9}|v2:[a-f0-9]{64}:a[12]:c[a-f0-9]{8}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9})$/;
 export async function independentAdmissionCheck(fetchImpl, env, repository, headSha, prNumber) {
   let checks;
   try {

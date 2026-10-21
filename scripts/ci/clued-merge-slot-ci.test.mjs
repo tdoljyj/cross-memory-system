@@ -735,3 +735,61 @@ test("A2: the Owner's disaster-recovery mapping counts the hosted executor names
   const result = await report(fetch);
   assert.deepEqual([result.errors, result.reports[0].ci_state, result.reports[0].merge_slot_check_run_id], [[], "failed", 5005]);
 });
+
+// --- Source v2 external ids (src/job-v2.mjs scanExternalIdV2, admissionExternalIdV2).
+const V2_JOB = "6".repeat(64);
+const V2_IDS = {
+  gitleaks: `independent-ci:staged:v2:${V2_JOB}:a1`,
+  trivy: `independent-ci:staged:v2:${V2_JOB}:a2`,
+  "contract-placement": `independent-ci:staged:v2:${V2_JOB}:a1`,
+  "kooyumi-work-admission": `independent-ci:native-work-admission:v2:${V2_JOB}:a1:c0123abcd:f9:e1`,
+  "kooyumi-admission-verified": `independent-ci:control:control-admission:v2:${V2_JOB}:a2:cd1dd735d:f3:e2`,
+  "kooyumi-merge-slot": `independent-ci:control:control-merge-slot:v2:${V2_JOB}:a1:cd1dd735d:f3:e2`,
+};
+const v2 = (name, extra = {}) => independent(name, { external_id: V2_IDS[name], ...extra });
+
+test("A2 v2: the Source v2 staged, native admission and control ids bind by head; malformed and foreign ids never do", () => {
+  const ok = { headSha: HEAD, prNumber: 5, repository: REPO };
+  for (const name of REQUIRED_NAMES) assert.equal(independentCheckBindsPullRequest(v2(name), ok), true, name);
+  assert.equal(independentCheckBindsPullRequest(v2("gitleaks"), { ...ok, headSha: OTHER }), false, "another head");
+  for (const [label, name, externalId] of [
+    ["attempt 3", "gitleaks", `independent-ci:staged:v2:${V2_JOB}:a3`],
+    ["attempt 0", "trivy", `independent-ci:staged:v2:${V2_JOB}:a0`],
+    ["a staged id with a claim suffix", "gitleaks", `independent-ci:staged:v2:${V2_JOB}:a1:cd1dd735d:f3:e2`],
+    ["a native id without its claim generation", "kooyumi-work-admission", `independent-ci:native-work-admission:v2:${V2_JOB}:a1`],
+    ["a short claim prefix", "kooyumi-work-admission", `independent-ci:native-work-admission:v2:${V2_JOB}:a1:cd1dd73:f3:e2`],
+    ["an upper-case job id", "kooyumi-work-admission", `independent-ci:native-work-admission:v2:${"A".repeat(64)}:a1:cd1dd735d:f3:e2`],
+    ["fence 0", "kooyumi-admission-verified", `independent-ci:control:control-admission:v2:${V2_JOB}:a1:cd1dd735d:f0:e2`],
+    ["a trailing field", "kooyumi-admission-verified", `${V2_IDS["kooyumi-admission-verified"]}:x`],
+    ["v1 field order inside v2", "kooyumi-admission-verified", `independent-ci:control:control-admission:v2:${V2_JOB}:f3:e2:a1`],
+    ["the merge-slot role on the admission check", "kooyumi-admission-verified", V2_IDS["kooyumi-merge-slot"]],
+    ["a v2 control id on a scanner", "gitleaks", V2_IDS["kooyumi-admission-verified"]],
+    ["a v2 native id on a scanner", "trivy", V2_IDS["kooyumi-work-admission"]],
+    ["a v2 staged id on the admission check", "kooyumi-admission-verified", V2_IDS.gitleaks],
+    ["an unknown control role", "kooyumi-admission-verified", `independent-ci:control:control-other:v2:${V2_JOB}:a1:cd1dd735d:f3:e2`],
+    ["an unknown v1 control role", "kooyumi-admission-verified", `independent-ci:control:control-other:${V2_JOB}:f3:e2:a1`],
+    ["a v3 id", "gitleaks", `independent-ci:staged:v3:${V2_JOB}:a1`],
+    ["a relay id for another head", "gitleaks", "independent-ci:relay:gitleaks:bbbbbbbbbbbb:run123:a1"],
+    ["a relay id for another role", "trivy", "independent-ci:relay:gitleaks:aaaaaaaaaaaa:run123:a1"],
+    ["a relay id for placement", "contract-placement", "independent-ci:relay:contract-placement:aaaaaaaaaaaa:run123:a1"],
+    ["a foreign prefix", "gitleaks", `other-ci:staged:v2:${V2_JOB}:a1`],
+  ]) assert.equal(independentCheckBindsPullRequest(v2(name, { external_id: externalId }), ok), false, label);
+  assert.equal(independentCheckBindsPullRequest(v2("trivy", { external_id: "independent-ci:relay:trivy:aaaaaaaaaaaa:run123:a1" }), ok), true);
+});
+
+test("A2 v2: the slot reporter counts v2 checks: green, and a v2 final failure returns the slot", async () => {
+  const v2Green = () => checksRoute(HEAD, Object.fromEntries(REQUIRED_NAMES.filter((name) => name !== "kooyumi-merge-slot").map((name) => [name, [v2(name)]])));
+  let state = await independentState(fakeFetch({ ...v2Green(), ...runsRoute(HEAD, []) }));
+  assert.equal(state.state, "green");
+  state = await independentState(fakeFetch({ ...v2Green(), ...checksRoute(HEAD, { trivy: [v2("trivy", { conclusion: "failure" })] }) }));
+  assert.deepEqual([state.state, state.reason], ["failed", "trivy concluded failure"]);
+  state = await independentState(fakeFetch({ ...v2Green(), ...runsRoute(HEAD, []),
+    ...checksRoute(HEAD, { "kooyumi-admission-verified": [v2("kooyumi-admission-verified", { external_id: V2_IDS["kooyumi-admission-verified"].replace(":cd1dd735d:", ":cD1DD735D:") })] }) }));
+  assert.deepEqual([state.state, state.reason], ["idle", "the newest admission check does not bind this pull request"]);
+  const fetch = slotWorld({ extra: { ...rulesRoute(INDEPENDENT_RULES), ...v2Green(), ...runsRoute(HEAD, []),
+    ...checksRoute(HEAD, { gitleaks: [v2("gitleaks", { conclusion: "failure" })] }) } });
+  const result = await report(fetch);
+  assert.deepEqual([result.errors, result.reports[0].ci_state, result.reports[0].returned], [[], "failed", true]);
+  assert.equal(await requiredBarrier(fakeFetch({ ...v2Green(), ...rulesRoute(INDEPENDENT_RULES), ...runsRoute(HEAD, []) }).fetchImpl,
+    env(), REPO, HEAD, 5, { native_runs: [], default_branch: "main" }), true);
+});
