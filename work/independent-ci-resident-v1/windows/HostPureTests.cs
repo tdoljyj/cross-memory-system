@@ -87,7 +87,8 @@ public static class HostPureTests
         if (args.Length == 3 && args[0] == "--fake-executor") return FakeExecutor(args[1], args[2]);
         self = Process.GetCurrentProcess().MainModule.FileName;
         // A short directory of its own, not the caller's scratch: under a deep scratch path the fake executor's
-        // rename target (...\state\locks\stop-<ms>-<pid>) passes the .NET Framework MAX_PATH of 260.
+        // rename target (...\state\locks\stop-<ms>-<pid>) is longer than .NET Framework paths may be (MAX_PATH,
+        // 260 with the terminator).
         string dir = Path.Combine(Path.GetTempPath(), "clued-host-pure-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         try

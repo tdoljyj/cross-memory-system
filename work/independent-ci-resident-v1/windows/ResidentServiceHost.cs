@@ -91,8 +91,9 @@ public sealed class ResidentServiceHost : ServiceBase
         Process p = child;
         if (stop.Take() && p != null && !p.HasExited)
         {
-            // A request that fails other than "already there" fails this stop, as before; nothing was written,
-            // so the stop is given back and a retried stop asks again.
+            // A request that throws (any IOException counts as "already there") fails this stop, as before.
+            // Nothing was written, so the stop is given back and a retried stop asks again. An executor that
+            // exits in that moment finds the stop still taken: the service stays RUNNING until that retry.
             try { stop.Request(); } catch { stop.Release(); throw; }
         }
         // Wait briefly for an idle executor to exit; a busy one keeps running and is found by the
@@ -122,7 +123,7 @@ public sealed class ResidentStopGate
 
     public ResidentStopGate(string stateDirectory) { stopFile = Path.Combine(stateDirectory, "STOP-REQUESTED"); }
 
-    // True for the first caller of this process only.
+    // True for the first caller of this process, and again for the next one after Release().
     public bool Take() { return Interlocked.Exchange(ref taken, 1) == 0; }
 
     // Only after a failed request, which wrote nothing.
