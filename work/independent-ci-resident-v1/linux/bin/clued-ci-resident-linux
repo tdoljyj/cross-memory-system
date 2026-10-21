@@ -371,13 +371,55 @@ def quiescence(self_unit=None):
             'details': {'busyUnits': busy, 'cgroupsUnpopulated': unpopulated, 'containerStates': states, 'workerProcesses': procs}}
 
 
-def descriptor(batch_id):
+JOB_CONTRACT_V2 = 'clued.independent-ci.job/2'
+LINUX_ROLES = ('gitleaks', 'trivy', 'contract-placement')
+HEX40 = re.compile(r'^[0-9a-f]{40}$')
+HEX64 = re.compile(r'^[0-9a-f]{64}$')
+
+
+def job_id_v2(d, role):
+    """Same formula as job-v2.mjs#jobIdV2 and prepare-workspaces.py#job_id_v2 (a test keeps them equal)."""
+    ident = [JOB_CONTRACT_V2, d['repo'], d['pr'], d['headSha'], d['baseSha'], d['ciSourceManifestSha256'], role, d['attempt']]
+    return hashlib.sha256(json.dumps(ident, separators=(',', ':'), ensure_ascii=False).encode('utf-8')).hexdigest()
+
+
+def descriptor_job_ids(raw, batch_id):
+    """Review MINOR-8: the job ids whose workspaces an archive may move are re-derived from the descriptor's
+    CONTENT (as prepare-workspaces.py does), never taken from its linuxJobIds list; a list that disagrees with
+    the content refuses the archive. Pure."""
+    need(isinstance(raw, bytes) and 0 < len(raw) <= 65536, 'DESCRIPTOR_REFUSED')
+    try:
+        d = json.loads(raw.decode('utf-8'))
+    except (UnicodeDecodeError, ValueError):
+        raise Refused('DESCRIPTOR_REFUSED')
+    need(isinstance(d, dict) and d.get('contract') == 'clued.independent-ci.resident-batch-descriptor/2' and d.get('batchId') == batch_id, 'DESCRIPTOR_REFUSED')
+    need(d.get('repo') == 'tdoljyj/cross-memory-system' and isinstance(d.get('pr'), int) and not isinstance(d.get('pr'), bool) and d['pr'] > 0, 'DESCRIPTOR_REFUSED')
+    need(all(isinstance(d.get(k), str) and HEX40.fullmatch(d[k]) for k in ('headSha', 'baseSha')), 'DESCRIPTOR_REFUSED')
+    need(isinstance(d.get('ciSourceManifestSha256'), str) and HEX64.fullmatch(d['ciSourceManifestSha256']) and d.get('attempt') in (1, 2) and not isinstance(d.get('attempt'), bool), 'DESCRIPTOR_REFUSED')
+    need(isinstance(d.get('batchKey'), str) and HEX64.fullmatch(d['batchKey']) and d['batchKey'][:16] == batch_id[:16], 'DESCRIPTOR_REFUSED')
+    derived = [job_id_v2(d, role) for role in LINUX_ROLES]
+    need(d.get('linuxJobIds') == derived, 'EXACT_CONTENT_JOB_ID_REQUIRED')
+    return derived
+
+
+def read_descriptor_bytes(batch_id):
+    """One no-follow handle: the descriptor itself may not be a link, and its size bound is taken from the
+    handle that is read (no lstat-then-open gap)."""
     path = f'{DESCRIPTORS}/{batch_id}/descriptor.json'
-    st = os.lstat(path)
-    need(not os.path.islink(path) and 0 < st.st_size <= 65536, 'DESCRIPTOR_REFUSED')
-    d = json.loads(open(path, 'rb').read())
-    need(d.get('batchId') == batch_id and len(d.get('linuxJobIds', [])) == 3 and all(JOB_ID.fullmatch(j) for j in d['linuxJobIds']), 'DESCRIPTOR_REFUSED')
-    return d
+    fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_CLOEXEC', 0))
+    try:
+        st = os.fstat(fd)
+        need(stat_regular(st) and 0 < st.st_size <= 65536, 'DESCRIPTOR_REFUSED')
+        raw = os.read(fd, 65537)
+        need(len(raw) == st.st_size, 'DESCRIPTOR_REFUSED')
+        return raw
+    finally:
+        os.close(fd)
+
+
+def stat_regular(st):
+    import stat as _stat
+    return _stat.S_ISREG(st.st_mode)
 
 
 def main(argv):
@@ -411,7 +453,7 @@ def main(argv):
         if parsed['reason'].startswith('rearm-') and not os.path.lexists(f"{DESCRIPTORS}/{parsed['batchId']}/descriptor.json"):
             job_ids = []
         else:
-            job_ids = descriptor(parsed['batchId'])['linuxJobIds']
+            job_ids = descriptor_job_ids(read_descriptor_bytes(parsed['batchId']), parsed['batchId'])
         plan = plan_archive(STATE, parsed['batchId'], parsed['reason'], job_ids, secrets.token_hex(6))
         try:
             result = apply_archive(STATE, plan)

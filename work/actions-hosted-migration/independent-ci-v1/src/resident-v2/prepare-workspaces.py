@@ -54,7 +54,9 @@ CLOCK_SKEW_S = 300
 GIT_ENV = {'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent', 'LANG': 'C', 'LC_ALL': 'C', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null',
            'GIT_CONFIG_SYSTEM': '/dev/null', 'GIT_TERMINAL_PROMPT': '0', 'GIT_ALLOW_PROTOCOL': 'file', 'GIT_NO_REPLACE_OBJECTS': '1'}
 GIT_PREFIX = ['-c', 'protocol.allow=never', '-c', 'protocol.file.allow=always', '-c', 'core.hooksPath=/nonexistent-clued-hooks', '-c', 'init.templateDir=',
-              '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-c', 'core.fsmonitor=false', '-c', 'advice.detachedHead=false']
+              '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-c', 'core.fsmonitor=false', '-c', 'advice.detachedHead=false',
+              # Review MINOR-7: a checkout never materialises a symlink, and NTFS/HFS-special names are refused.
+              '-c', 'core.symlinks=false', '-c', 'core.protectNTFS=true', '-c', 'core.protectHFS=true']
 
 
 class Refused(Exception):
@@ -318,6 +320,9 @@ def prepare(batch_id):
             git(['clone', '--mirror', '--no-local', '--no-hardlinks', '--template=', '--', sealed, f'{target}/.git'])
         else:
             git(['clone', '--no-local', '--no-hardlinks', '--no-checkout', '--template=', '--', sealed, f'{target}/candidate'])
+            # Review MINOR-7: the head tree's modes are validated from the object store BEFORE anything is
+            # materialised (only 100644/100755 blobs: no symlink, submodule or other entry is ever written).
+            tree_modes_regular(git(['-C', f'{target}/candidate', 'ls-tree', '-r', '-z', '--full-tree', d['headSha']]))
             git(['-C', f'{target}/candidate', 'checkout', '--quiet', '--detach', '--no-recurse-submodules', d['headSha']])
     facts = {}
     for role, target in targets.items():

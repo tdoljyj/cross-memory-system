@@ -56,11 +56,21 @@ public static class PureTestsV2 {
    var wide=FormalScmPidHandshakeV2.ManagementSecurity();wide.AddAccessRule(new EventWaitHandleAccessRule(new SecurityIdentifier(FormalPublicBoundaryV2.ResidentSid),EventWaitHandleRights.Synchronize,AccessControlType.Allow));
    Refuse(()=>FormalScmPidHandshakeV2.ValidateSecurity(wide.GetSecurityDescriptorBinaryForm()),"ack-extra-ace");
    // 7. broker SCM primitive: v1-compatible mutex DACL, empty failure policy, service DACL with a resident right refused
-   var m=new MutexSecurity();m.SetOwner(new SecurityIdentifier("S-1-5-18"));m.SetAccessRuleProtection(true,false);foreach(var sid in new[]{"S-1-5-18","S-1-5-32-544",ResidentScmV2.OwnerSid})m.AddAccessRule(new MutexAccessRule(new SecurityIdentifier(sid),MutexRights.FullControl,AccessControlType.Allow));
+   var m=new MutexSecurity();m.SetOwner(new SecurityIdentifier("S-1-5-18"));m.SetAccessRuleProtection(true,false);foreach(var sid in new[]{"S-1-5-18","S-1-5-32-544"})m.AddAccessRule(new MutexAccessRule(new SecurityIdentifier(sid),MutexRights.FullControl,AccessControlType.Allow));
    ResidentScmV2.ValidateMutexSecurity(m.GetSecurityDescriptorBinaryForm());n++;
+   // MINOR-3: the Owner user SID is not a mutex manager (neither as an ACE nor as the owner)
+   var mo=new MutexSecurity();mo.SetOwner(new SecurityIdentifier("S-1-5-18"));mo.SetAccessRuleProtection(true,false);foreach(var sid in new[]{"S-1-5-18","S-1-5-32-544",FormalPublicBoundaryV2.OwnerUser})mo.AddAccessRule(new MutexAccessRule(new SecurityIdentifier(sid),MutexRights.FullControl,AccessControlType.Allow));
+   Refuse(()=>ResidentScmV2.ValidateMutexSecurity(mo.GetSecurityDescriptorBinaryForm()),"mutex-owner-user-ace");
+   var mu=new MutexSecurity();mu.SetOwner(new SecurityIdentifier(FormalPublicBoundaryV2.OwnerUser));mu.SetAccessRuleProtection(true,false);foreach(var sid in new[]{"S-1-5-18","S-1-5-32-544"})mu.AddAccessRule(new MutexAccessRule(new SecurityIdentifier(sid),MutexRights.FullControl,AccessControlType.Allow));
+   Refuse(()=>ResidentScmV2.ValidateMutexSecurity(mu.GetSecurityDescriptorBinaryForm()),"mutex-owner-user-owner");
    m.AddAccessRule(new MutexAccessRule(new SecurityIdentifier(FormalPublicBoundaryV2.ResidentSid),MutexRights.Synchronize,AccessControlType.Allow));Refuse(()=>ResidentScmV2.ValidateMutexSecurity(m.GetSecurityDescriptorBinaryForm()),"mutex-extra");
    Yes(ResidentScmV2.EmptyFailurePolicy(0,false,false,false)&&!ResidentScmV2.EmptyFailurePolicy(1,false,false,false),"failure-policy");
    var svc=new RawSecurityDescriptor("O:SYG:SYD:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)");var sb=new byte[svc.BinaryLength];svc.GetBinaryForm(sb,0);ResidentScmV2.ValidateServiceSecurity(sb);n++;
+   // MINOR-3: the live runner DACL (read-only, 2026-10-21) is accepted; any change-config/start for the Owner user, IU or SU is refused
+   Func<string,byte[]> sdb=t=>{var r=new RawSecurityDescriptor(t);var b=new byte[r.BinaryLength];r.GetBinaryForm(b,0);return b;};
+   ResidentScmV2.ValidateServiceSecurity(sdb("O:SYG:SYD:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)"));n++;
+   foreach(var who in new[]{FormalPublicBoundaryV2.OwnerUser,"IU","SU"})foreach(var right in new[]{"DC","RP","WP","SD","WD","WO","GA","GW"})Refuse(()=>ResidentScmV2.ValidateServiceSecurity(sdb("O:SYG:SYD:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CC"+right+";;;"+who+")")),"service-"+who+"-"+right);
+   Refuse(()=>ResidentScmV2.ValidateServiceSecurity(sdb("O:"+FormalPublicBoundaryV2.OwnerUser+"G:SYD:(A;;CCLCSWRPWPDTLOCRRC;;;SY)")),"service-owner-user-owner");
    var bad2=new RawSecurityDescriptor("O:SYG:SYD:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;RPWP;;;"+FormalPublicBoundaryV2.ResidentSid+")");var bb=new byte[bad2.BinaryLength];bad2.GetBinaryForm(bb,0);Refuse(()=>ResidentScmV2.ValidateServiceSecurity(bb),"service-resident-right");
    // 8. child environment: fixed 8 variables, v2 provider, no proxy/NODE_OPTIONS
    string env=CluedWindowsFormalEntryV2.ChildEnvironment();Yes(env.Split(new[]{'\0'},StringSplitOptions.RemoveEmptyEntries).Length==8&&env.Contains("CLUED_EXECUTION_PROVIDER=independent-ci-resident-v2")&&!env.Contains("NODE_OPTIONS")&&env.EndsWith("\0\0"),"env");

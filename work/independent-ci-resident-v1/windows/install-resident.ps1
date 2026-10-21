@@ -55,6 +55,30 @@ $TargetShape = '^(?:(?:resident|source)\\[0-9a-f]{64}(?:\\[A-Za-z0-9_.@-]+)+|(?:
 $GenericHelper = 'controller-formal-generic-v2.exe'
 $SourceV2Windows = 'work\actions-hosted-migration\independent-ci-v1\src\resident-v2\windows'
 
+# ---- Privilege boundary (independent review of PR-A: MAJOR-1, MINOR-2, MINOR-4, MINOR-5) ----
+# Required privileges cut the service tokens down to what the code needs; both hosts re-check the real
+# token at start and refuse anything else (ResidentServiceHost.cs, SwapBroker.cs). The resident's outbound
+# network is blocked by a firewall rule scoped to its service SID (it never needs the network: every GitHub
+# read runs in the companion under the Owner's own login). Every sc.exe call is exit-code checked.
+$ResidentPrivileges = @('SeChangeNotifyPrivilege')
+$BrokerPrivileges = @('SeChangeNotifyPrivilege', 'SeCreateGlobalPrivilege')
+$FirewallRuleName = 'CluedCIResident-BlockOutbound'
+function Invoke-Sc([string]$failureCode, [string[]]$scArgs) {
+  $out = & $Sc @scArgs | Out-String
+  if ($LASTEXITCODE -ne 0) { throw ($failureCode + ':' + $LASTEXITCODE) }
+  $out
+}
+# `sc qprivs` -> the sorted privilege names ("PRIVILEGES : SeX" then ": SeY" continuation lines).
+function ConvertFrom-ScPrivs([string]$text) {
+  $names = @(foreach ($line in ($text -split "`r?`n")) { if ($line -match '^\s*(?:PRIVILEGES\s*)?:\s*(Se[A-Za-z]+Privilege)\s*$') { $Matches[1] } })
+  @($names | Sort-Object -CaseSensitive)
+}
+function Get-PrivilegePlan {
+  [ordered]@{ residentPrivileges = $ResidentPrivileges; brokerPrivileges = $BrokerPrivileges
+    brokerFailure = 'restart after 60 s, then after 300 s, reset daily, also on non-crash failure'
+    firewall = [ordered]@{ name = $FirewallRuleName; direction = 'Outbound'; action = 'Block'; service = $ServiceName; profile = 'Any' } }
+}
+
 function Sha256Bytes([byte[]]$b) { $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash($b))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() } }
 function Sha256Text([string]$t) { Sha256Bytes ([Text.Encoding]::UTF8.GetBytes($t)) }
 function Sha256File([string]$p) { Sha256Bytes ([IO.File]::ReadAllBytes($p)) }
@@ -103,10 +127,16 @@ function Get-AclPlan([string]$res) {
     'work'              = "$base(A;OICI;$mod;;;$res)(A;OICI;$rx;;;$ControllerSid)(A;OICI;$rx;;;$OwnerSid)"
     'outbox'            = "$base(A;OICI;$mod;;;$res)(A;OICI;$rx;;;$OwnerSid)"
     'broker'            = "$base(A;OICI;$rx;;;$res)"
-    'broker\requests'   = "$base(A;OICI;$mod;;;$res)"
+    # Review MINOR-2: the resident may only add request files (list, add-file, traverse, read), never delete or
+    # rename anything here; files are read-only for it, and OWNER RIGHTS (OW) removes the creator's implicit
+    # WRITE_DAC, so a request can not be rewritten after the broker may have read it.
+    'broker\requests'   = "$base(A;;0x1200a3;;;$res)(A;OIIO;0x120089;;;$res)(A;OIIO;0x120089;;;OW)"
     'broker\responses'  = "$base(A;OICI;$rx;;;$res)"
-    'inbox'             = "$base(A;OICI;$mod;;;$res)(A;;$drop;;;$OwnerSid)(A;OIIO;0x120116;;;$OwnerSid)"
-    'requests'          = "$base(A;OICI;$mod;;;$res)(A;;$drop;;;$OwnerSid)(A;OIIO;0x120116;;;$OwnerSid)"
+    # Review MINOR-9: create-only for the Owner. The folder ACE allows adding a file (the creating handle keeps
+    # the access it asked for); existing files are read-only for the Owner, and OW removes the owner's implicit
+    # WRITE_DAC, so a trigger or request cannot be rewritten after the resident read it.
+    'inbox'             = "$base(A;OICI;$mod;;;$res)(A;;$drop;;;$OwnerSid)(A;OIIO;0x120089;;;$OwnerSid)(A;OIIO;0x120089;;;OW)"
+    'requests'          = "$base(A;OICI;$mod;;;$res)(A;;$drop;;;$OwnerSid)(A;OIIO;0x120089;;;$OwnerSid)(A;OIIO;0x120089;;;OW)"
     'mailbox'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"
     'mailbox\requests'  = "$base(A;OICI;$mod;;;$res)(A;OICI;$rx;;;$OwnerSid)"
     'mailbox\responses' = "$base(A;OICI;$rx;;;$res)(A;OICI;$mod;;;$OwnerSid)"            # responses + companion heartbeat
@@ -155,6 +185,7 @@ function Build-Plan {
     }
     companionTask = [ordered]@{ path = '\Clued\'; name = 'CluedCIResidentCompanion'; principal = $OwnerSid; runLevel = 'LeastPrivilege'; trigger = 'AtLogOn'; sddl = "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;$OwnerSid)" }
     startAfterInstall = [bool]$StartAfterInstall
+    privilegeBoundary = Get-PrivilegePlan
     deletesAnything = $false
   }
 }
@@ -232,10 +263,11 @@ Step 'service-hosts' {
 #     stable configuration digest (read-only, with the just-compiled broker) and the helper pin. Written
 #     once, CreateNew; its SHA-256 is the broker's second command-line argument.
 Step 'broker-config' {
-  $stable = (& (Join-Path $Root 'bin\SwapBroker.exe') --stable-digest $OwnerSid | Out-String).Trim()
+  $stable = (& (Join-Path $Root 'bin\SwapBroker.exe') --stable-digest | Out-String).Trim()
   if ($LASTEXITCODE -ne 0 -or $stable -cnotmatch '^[0-9a-f]{64}$') { throw 'RUNNER_STABLE_DIGEST_UNCONFIRMED' }
   if ((Read-RunnerState).sddl -cne $r.sddl) { throw 'RUNNER_SDDL_CHANGED_DURING_INSTALL' }
-  $json = '{"contract":"clued.independent-ci.swap-broker-config/1","helper":{"name":"' + $GenericHelper + '","sha256":"' + $script:receipt.genericHelperSha256 + '"},"originalBinary":' + ($OriginalBinary | ConvertTo-Json -Compress) + ',"ownerSid":"' + $OwnerSid + '","stableDigest":"' + $stable + '"}'
+  # Config /2 (review MINOR-3): no Owner SID; mutex and runner-DACL managers are SYSTEM and Administrators only.
+  $json = '{"contract":"clued.independent-ci.swap-broker-config/2","helper":{"name":"' + $GenericHelper + '","sha256":"' + $script:receipt.genericHelperSha256 + '"},"originalBinary":' + ($OriginalBinary | ConvertTo-Json -Compress) + ',"stableDigest":"' + $stable + '"}'
   $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($json)
   Write-New (Join-Path $Root 'config\broker.json') $bytes
   $script:receipt.brokerConfigSha256 = Sha256Bytes $bytes; $script:receipt.runnerStableDigest = $stable
@@ -246,16 +278,38 @@ Step 'services' {
   $node = Join-Path $Root 'runtime\node.exe'
   $entry = Join-Path $Root ('resident\' + $plan.residentManifestSha256 + '\src\service-main.mjs')
   $bin = '"' + (Join-Path $Root 'bin\ResidentServiceHost.exe') + '" "' + $Root + '" ' + $plan.policySha256 + ' "' + $node + '" ' + $plan.nodeSha256 + ' "' + $entry + '" ' + (Sha256File $entry)
-  & $Sc create $ServiceName binPath= $bin start= delayed-auto obj= "NT SERVICE\$ServiceName" type= own | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw 'RESIDENT_SERVICE_CREATE_FAILED' }
-  & $Sc sidtype $ServiceName unrestricted | Out-Null
-  & $Sc failure $ServiceName reset= 86400 actions= restart/60000// | Out-Null
-  & $Sc failureflag $ServiceName 1 | Out-Null
-  & $Sc sdset $ServiceName $plan.services.resident.sddl | Out-Null
+  $null = Invoke-Sc 'RESIDENT_SERVICE_CREATE_FAILED' @('create', $ServiceName, 'binPath=', $bin, 'start=', 'delayed-auto', 'obj=', "NT SERVICE\$ServiceName", 'type=', 'own')
+  $null = Invoke-Sc 'RESIDENT_SERVICE_SIDTYPE_FAILED' @('sidtype', $ServiceName, 'unrestricted')
+  $null = Invoke-Sc 'RESIDENT_SERVICE_PRIVS_FAILED' @('privs', $ServiceName, ($ResidentPrivileges -join '/'))
+  $null = Invoke-Sc 'RESIDENT_SERVICE_FAILURE_FAILED' @('failure', $ServiceName, 'reset=', '86400', 'actions=', 'restart/60000//')
+  $null = Invoke-Sc 'RESIDENT_SERVICE_FAILUREFLAG_FAILED' @('failureflag', $ServiceName, '1')
+  $null = Invoke-Sc 'RESIDENT_SERVICE_SDSET_FAILED' @('sdset', $ServiceName, $plan.services.resident.sddl)
   $bbin = '"' + (Join-Path $Root 'bin\SwapBroker.exe') + '" "' + $Root + '" ' + $script:receipt.brokerConfigSha256
-  & $Sc create $BrokerName binPath= $bbin start= auto type= own | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw 'BROKER_SERVICE_CREATE_FAILED' }
-  & $Sc sdset $BrokerName $plan.services.broker.sddl | Out-Null
+  $null = Invoke-Sc 'BROKER_SERVICE_CREATE_FAILED' @('create', $BrokerName, 'binPath=', $bbin, 'start=', 'auto', 'type=', 'own')
+  $null = Invoke-Sc 'BROKER_SERVICE_PRIVS_FAILED' @('privs', $BrokerName, ($BrokerPrivileges -join '/'))
+  # A crashed broker comes back (review MINOR-2); a restart never repeats an interrupted swap (taken markers).
+  $null = Invoke-Sc 'BROKER_SERVICE_FAILURE_FAILED' @('failure', $BrokerName, 'reset=', '86400', 'actions=', 'restart/60000/restart/300000//')
+  $null = Invoke-Sc 'BROKER_SERVICE_FAILUREFLAG_FAILED' @('failureflag', $BrokerName, '1')
+  $null = Invoke-Sc 'BROKER_SERVICE_SDSET_FAILED' @('sdset', $BrokerName, $plan.services.broker.sddl)
+  # Read back what the SCM now holds; the receipt records it and verify-resident.ps1 compares it.
+  foreach ($pair in @(@($ServiceName, $ResidentPrivileges, 'resident'), @($BrokerName, $BrokerPrivileges, 'broker'))) {
+    $have = ConvertFrom-ScPrivs (Invoke-Sc 'SERVICE_QPRIVS_FAILED' @('qprivs', $pair[0], '8192'))
+    if (($have -join '/') -cne ((@($pair[1]) | Sort-Object -CaseSensitive) -join '/')) { throw ('SERVICE_PRIVILEGES_READBACK_MISMATCH:' + $pair[0]) }
+    $script:receipt[($pair[2] + 'RequiredPrivileges')] = $have
+    $script:receipt[($pair[2] + 'Sddl')] = (Invoke-Sc 'SERVICE_SDSHOW_FAILED' @('sdshow', $pair[0])).Trim()
+  }
+  $script:receipt.brokerBinaryPath = $bbin
+}
+# 4b. Outbound network block scoped to the resident's service SID (review MINOR-5). It covers the service's
+#     node processes (they carry the service SID); the companion (Owner) and the runner (clued-control) are
+#     not affected. It is enforced only while Windows Firewall is on; verify-resident.ps1 checks both.
+Step 'resident-firewall' {
+  Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\NetSecurity\NetSecurity.psd1'
+  if (Get-NetFirewallRule -Name $FirewallRuleName -ErrorAction SilentlyContinue) { throw 'FIREWALL_RULE_EXISTS' }
+  $null = New-NetFirewallRule -Name $FirewallRuleName -DisplayName 'Clued CI resident: no outbound network' -Direction Outbound -Action Block -Service $ServiceName -Profile Any -Enabled True
+  $rule = Get-NetFirewallRule -Name $FirewallRuleName; $filter = $rule | Get-NetFirewallServiceFilter
+  if ([string]$rule.Direction -cne 'Outbound' -or [string]$rule.Action -cne 'Block' -or [string]$rule.Enabled -cne 'True' -or $filter.Service -cne $ServiceName) { throw 'FIREWALL_RULE_READBACK_MISMATCH' }
+  $script:receipt.firewallRule = $FirewallRuleName
 }
 # 5. Source v2's own reviewed ACL migration of the one-shot install (formal-spool, state) so the
 #    resident SID can do what the elevated Owner did per batch. Fixed args, installed copy only.
@@ -289,7 +343,19 @@ Step 'companion-task' {
 Step 'runner-unchanged' { if ((Read-RunnerState).sddl -cne $r.sddl) { throw 'RUNNER_SDDL_CHANGED_DURING_INSTALL' } }
 $receipt.completedAt = [DateTimeOffset]::UtcNow.ToString('o')
 $receipt.started = $false
-if ($StartAfterInstall) { & $Sc start $BrokerName | Out-Null; & $Sc start $ServiceName | Out-Null; $receipt.started = ($LASTEXITCODE -eq 0) }
+if ($StartAfterInstall) {
+  $null = Invoke-Sc 'BROKER_SERVICE_START_FAILED' @('start', $BrokerName)
+  $null = Invoke-Sc 'RESIDENT_SERVICE_START_FAILED' @('start', $ServiceName)
+  $receipt.started = $true
+  # The effective token privileges, as each host recorded them from its own token (MAJOR-1).
+  foreach ($pair in @(@('state\service-token.json', $ResidentPrivileges, 'residentTokenPrivileges'), @('broker\token.json', $BrokerPrivileges, 'brokerTokenPrivileges'))) {
+    $file = Join-Path $Root $pair[0]; $until = [DateTime]::UtcNow.AddSeconds(30)
+    while (-not (Test-Path -LiteralPath $file) -and [DateTime]::UtcNow -lt $until) { Start-Sleep -Milliseconds 500 }
+    $have = @((Get-Content -LiteralPath $file -Raw | ConvertFrom-Json).privileges)
+    if (@($have | Where-Object { $pair[1] -cnotcontains $_ }).Count -gt 0) { throw ('EFFECTIVE_TOKEN_PRIVILEGES_NOT_MINIMAL:' + $pair[0]) }
+    $receipt[$pair[2]] = $have
+  }
+}
 $out = Join-Path $Root 'install\install-receipt.json'                    # admin-only directory
 Write-New $out ((New-Object Text.UTF8Encoding($false)).GetBytes(($receipt | ConvertTo-Json -Depth 6)))
 [ordered]@{ status = 'RESIDENT_INSTALLED'; receipt = $out; receiptSha256 = (Sha256File $out); started = $receipt.started } | ConvertTo-Json
