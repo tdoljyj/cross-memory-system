@@ -247,15 +247,17 @@ Before activation, prove the advertised capabilities:
 - verify Windows and Linux jobs can run concurrently when both runners are present
 - verify the physical host remains responsive under the assigned capacity profile
 
-Render a watchdog preview without installing or starting supervision:
+Once the entry is `active` in the activation change, render a watchdog preview without installing or starting supervision:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\ci\self-hosted\render-host-watchdog.ps1 `
-  -HostId home-primary `
-  -OutputPath "$env:TEMP\watchdog-home-primary.preview.ps1"
+  -HostId company-primary `
+  -OutputPath "$env:TEMP\watchdog-company-primary.preview.ps1"
 ```
 
-The current main renderer's `-InstallStartup` uses Startup/HKCU Run; it does not install the no-console supervised scheduled task actually deployed on company-primary. PR #615's installer remains unmerged. Deployment must follow runbook section 5, including its restriction on enabling or expanding automatic service suspension before safe draining is implemented. WSL distributions belong to the user's account; SYSTEM is not a substitute. The renderer also ignores the primary `linux_runner`'s `state`: a re-rendered home-primary watchdog would supervise the retired `clued-ci-home-linux-01` unit again, so do not install one until the renderer honours that state.
+The renderer supervises only Linux runners whose `state` is `active`, and refuses a host that has none, so a host still in `validated` is refused. Home-primary has had no active Linux runner since `clued-ci-home-linux-01` was retired, and its watchdog must stay stopped. On 2026-10-21 its scheduled task read Disabled, no watchdog process was running, and its Startup launcher had been renamed to `.task-backup` (the HKCU Run entry remains but points at the missing file).
+
+The current main renderer's `-InstallStartup` uses Startup/HKCU Run; it does not install the no-console supervised scheduled task actually deployed on company-primary. PR #615's installer remains unmerged. Deployment must follow runbook section 5, including its restriction on enabling or expanding automatic service suspension before safe draining is implemented. WSL distributions belong to the user's account; SYSTEM is not a substitute.
 
 ### active
 
@@ -302,6 +304,7 @@ Do not reuse a retired runner name for a different physical host.
 
 The rendered watchdog has the following behavior and limitations:
 
+- supervises only the host's Linux runners whose own `state` (the host's when unset) is `active`, the primary included, and is not rendered for a host with none. The unit list is fixed at render time: a watchdog already deployed keeps restarting the units it was rendered with, so after a state change re-render and redeploy it, or stop it (runbook section 7.1);
 - keeps the declared WSL distro alive;
 - restores native Docker and the Linux systemd runner;
 - logs when the Windows runner service is not running, but never starts the Windows runner: it runs as a Windows service under the dedicated standard account `clued-runner`, and starting it from the login session would run jobs as the login account;
@@ -340,9 +343,9 @@ inventory entry
 → capacity profile
 → OS/runtime prerequisites
 → runner bootstrap
-→ watchdog
 → capability smoke
 → mark active
+→ watchdog (rendered once the entry is active)
 ```
 
 If a new device introduces a genuinely new capability such as macOS, GPU/model evaluation, release signing, or ephemeral cloud execution, add a new Runner Profile instead of overloading an existing label.
