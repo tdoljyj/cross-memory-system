@@ -14,7 +14,9 @@ chk cgroup-v2 '[ -e /sys/fs/cgroup/cgroup.controllers ]'
 chk pins 'python3.12 -I -c "import json,hashlib,sys;m=json.load(open(\"$OPT/manifest.json\"));sys.exit(any(hashlib.sha256(open(f[\"installedPath\"],\"rb\").read()).hexdigest()!=f[\"sha256\"] for f in m[\"files\"]))"'
 for u in clued-ci-worker@.service clued-ci-wsprep@.service clued-ci-archive@.service; do
   chk "unit:$u" "stat -c %U:%G:%a /etc/systemd/system/$u | grep -qx root:root:644 && systemd-analyze verify /etc/systemd/system/$u"
-  chk "not-enabled:$u" "! systemctl is-enabled --quiet $u"
+  # The template units have no [Install] section, so systemd reports them "static" (exit 0); not enabled
+  # means static (or disabled) and no enablement link anywhere under /etc/systemd.
+  chk "not-enabled:$u" "case \"\$(systemctl is-enabled $u 2>/dev/null)\" in static|disabled) [ -z \"\$(find /etc/systemd -name '${u%@.service}@*' -type l)\" ];; *) false;; esac"
 done
 chk no-active-job '[ -z "$(systemctl list-units --plain --no-legend --state=active,activating clued-ci-*@*.service)" ]'
 chk old-runner-disabled '! systemctl is-enabled --quiet actions.runner.tdoljyj-cross-memory-system.clued-ci-home-linux-01.service'

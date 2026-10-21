@@ -197,8 +197,17 @@ function New-DirectoryWithAcl([string]$path, [string]$sddl) {
   $acl = New-Object Security.AccessControl.DirectorySecurity
   $acl.SetSecurityDescriptorSddlForm($sddl)
   $null = [IO.Directory]::CreateDirectory($path, $acl)
+  # Windows returns the descriptor in canonical form (the explicit ACEs reordered), so the read-back is
+  # compared with the canonical form of the planned descriptor, never with the plan string itself.
   $back = (Get-Acl -LiteralPath $path).Sddl
-  if ($back -cne $sddl) { throw ('ACL_READBACK_MISMATCH:' + $path) }  # canonical-form differences are a review item
+  if ($back -cne $acl.GetSecurityDescriptorSddlForm('All')) { throw ('ACL_READBACK_MISMATCH:' + $path) }
+}
+
+# The SCM's stored image path must be exactly the planned command line (quotes included).
+function Assert-ServiceBinary([string]$name, [string]$want) {
+  $qc = Invoke-Sc 'SERVICE_QC_FAILED' @('qc', $name, '8192')
+  $have = if ($qc -match 'BINARY_PATH_NAME\s*:\s*(.+)') { $Matches[1].Trim() } else { $null }
+  if ($have -cne $want) { throw ('SERVICE_BINARY_PATH_READBACK_MISMATCH:' + $name) }
 }
 
 function Write-New([string]$path, [byte[]]$bytes) {
@@ -278,14 +287,18 @@ Step 'services' {
   $node = Join-Path $Root 'runtime\node.exe'
   $entry = Join-Path $Root ('resident\' + $plan.residentManifestSha256 + '\src\service-main.mjs')
   $bin = '"' + (Join-Path $Root 'bin\ResidentServiceHost.exe') + '" "' + $Root + '" ' + $plan.policySha256 + ' "' + $node + '" ' + $plan.nodeSha256 + ' "' + $entry + '" ' + (Sha256File $entry)
-  $null = Invoke-Sc 'RESIDENT_SERVICE_CREATE_FAILED' @('create', $ServiceName, 'binPath=', $bin, 'start=', 'delayed-auto', 'obj=', "NT SERVICE\$ServiceName", 'type=', 'own')
+  # Windows PowerShell 5.1 does not escape embedded quotes when it builds a native command line, so the
+  # binPath= argument carries them as \" (sc.exe's C runtime turns them back into quotes); read back below.
+  $null = Invoke-Sc 'RESIDENT_SERVICE_CREATE_FAILED' @('create', $ServiceName, 'binPath=', $bin.Replace('"', '\"'), 'start=', 'delayed-auto', 'obj=', "NT SERVICE\$ServiceName", 'type=', 'own')
+  Assert-ServiceBinary $ServiceName $bin
   $null = Invoke-Sc 'RESIDENT_SERVICE_SIDTYPE_FAILED' @('sidtype', $ServiceName, 'unrestricted')
   $null = Invoke-Sc 'RESIDENT_SERVICE_PRIVS_FAILED' @('privs', $ServiceName, ($ResidentPrivileges -join '/'))
   $null = Invoke-Sc 'RESIDENT_SERVICE_FAILURE_FAILED' @('failure', $ServiceName, 'reset=', '86400', 'actions=', 'restart/60000//')
   $null = Invoke-Sc 'RESIDENT_SERVICE_FAILUREFLAG_FAILED' @('failureflag', $ServiceName, '1')
   $null = Invoke-Sc 'RESIDENT_SERVICE_SDSET_FAILED' @('sdset', $ServiceName, $plan.services.resident.sddl)
   $bbin = '"' + (Join-Path $Root 'bin\SwapBroker.exe') + '" "' + $Root + '" ' + $script:receipt.brokerConfigSha256
-  $null = Invoke-Sc 'BROKER_SERVICE_CREATE_FAILED' @('create', $BrokerName, 'binPath=', $bbin, 'start=', 'auto', 'type=', 'own')
+  $null = Invoke-Sc 'BROKER_SERVICE_CREATE_FAILED' @('create', $BrokerName, 'binPath=', $bbin.Replace('"', '\"'), 'start=', 'auto', 'type=', 'own')
+  Assert-ServiceBinary $BrokerName $bbin
   $null = Invoke-Sc 'BROKER_SERVICE_PRIVS_FAILED' @('privs', $BrokerName, ($BrokerPrivileges -join '/'))
   # A crashed broker comes back (review MINOR-2); a restart never repeats an interrupted swap (taken markers).
   $null = Invoke-Sc 'BROKER_SERVICE_FAILURE_FAILED' @('failure', $BrokerName, 'reset=', '86400', 'actions=', 'restart/60000/restart/300000//')
