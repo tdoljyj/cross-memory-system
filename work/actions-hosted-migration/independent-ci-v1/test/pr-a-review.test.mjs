@@ -15,18 +15,37 @@ const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const CI = 'work/actions-hosted-migration/independent-ci-v1/';
 const blocked = (reason, sideEffects = 0) => ({ status: 'BLOCKED', reason, sideEffects, mayHavePublished: sideEffects !== 0 });
 
-test('v1 one-shot pins every Source module the v1 publisher loads (static import closure of staged-check-publisher.mjs)', () => {
-  const seen = new Set(), queue = [CI + 'src/staged-check-publisher.mjs'];
+// The static load closure of a module: static imports/re-exports and module-relative `new URL(...)` file
+// references, followed transitively across the repository (dynamic imports are conditional and excluded).
+export function staticClosure(entry) {
+  const seen = new Set(), queue = [entry];
+  const specifiers = [/^\s*(?:import|export)\s[^'";]*?from\s*['"]([^'"]+)['"]/gm, /^\s*import\s*['"](\.{1,2}\/[^'"]+)['"]/gm,
+    /new URL\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*,\s*import\.meta\.url\s*\)/g];
   while (queue.length) {
     const rel = queue.shift();
     if (seen.has(rel)) continue;
     seen.add(rel);
+    if (!/\.m?js$/.test(rel)) continue;
     const text = fs.readFileSync(path.join(ROOT, ...rel.split('/')), 'utf8');
-    for (const m of text.matchAll(/^import\s[^'"]*from\s*['"](\.{1,2}\/[^'"]+)['"]/gm)) queue.push(path.posix.normalize(path.posix.join(path.posix.dirname(rel), m[1])));
+    for (const re of specifiers) for (const m of text.matchAll(re)) {
+      if ((!m[1].startsWith('./') && !m[1].startsWith('../')) || m[1].endsWith('/')) continue;
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(rel), m[1]));
+      assert.ok(!target.startsWith('../'), `${rel} escapes the repository`);
+      queue.push(target);
+    }
   }
-  const missing = [...seen].filter(p => !V1_REQUIRED_SOURCE.includes(p));
-  assert.deepEqual(missing, []);
+  return [...seen].sort();
+}
+
+test('v1 one-shot pins exactly the transitive static load closure of runtime/one-shot.mjs (publisher, admission, evaluator)', () => {
+  const closure = staticClosure(CI + 'runtime/one-shot.mjs');
+  assert.deepEqual([...V1_REQUIRED_SOURCE], closure);
+  // The round-3 omission: full-admission.mjs imports queue-facts.mjs, which only a transitive walk reaches.
+  assert.ok(V1_REQUIRED_SOURCE.includes(`${CI}src/independent-control-checks-v1/queue-facts.mjs`));
   for (const p of ['attest.mjs', 'registry.mjs', 'oidc.mjs']) assert.ok(V1_REQUIRED_SOURCE.includes(`${CI}src/hosted-relay-v1/${p}`), p);
+  // The pin list the one-shot enforces is the closure, not a one-level list: dropping a transitive file is visible.
+  const oneLevel = staticClosure(CI + 'src/staged-check-publisher.mjs');
+  assert.ok(closure.length > oneLevel.length && oneLevel.every(p => closure.includes(p)));
 });
 
 test('v2 protected Native verify carries the same bounded 10 s signal as v1', async () => {

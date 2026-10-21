@@ -480,16 +480,18 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 - K(head, role) 跨路径互斥：转发入口和本地 v2 扫描发布者用同一个 journal（`state\v2\effects-scan`），所以同一 head 上同一角色只会有一个发布者，跨批次、跨 attempt 也成立（K 不含 base 和 attempt，见 §7.2）。v1 one-shot 的本地路径不拿 K（复审 MAJOR：它有自己的 journal，K 在那里排除不了任何东西；而 v1 作业按 claim、fence、base 区分，拿 K 只会让同一 head 上的第二个 v1 作业永远 BLOCKED）。v1 发布者只有在调用方显式要求（`localRoleMutex`）时才在本地路径拿 K。
 - 转发的重入：本键已结算时，不再只读回，而是像 `publish()` 一样重新核对 PR head、受保护事实与 claim、新鲜的 Native 准入并读回；有漂移就撤销一次已知检查，从不重发。K 已被同一角色在本 head 上**已结算的转发**持有时（托管重跑出了更新的 run 或 run attempt），结果落到那次已结算的发布（重新核对，不再发布），不再 HALT；只有本地持有或未结算的转发持有才仍是 HALT。
 - 每次继续一个等待中的批次之前，都重跑开批次时的检查（`validUntil`、已安装 Source 与常驻层的哈希、批次主体的 Source 等于已安装的 Source）。任何漂移都失败关闭：FAILED_UNKNOWN 加 HALT（`RESIDENT_SOURCE_DRIFT` 或 `RESIDENT_INSTALL_AUTHORITY_EXPIRING`），不会跑第 R 段和本地段。`install-resident.ps1` 在有任何未终结批次时拒绝安装，包括等待中的批次（`INSTALL_REQUIRES_NO_OPEN_BATCH_REARM_FIRST`，与 `uninstall-resident.ps1` 相同）。
-- 其他复审修正：v1 one-shot 的必需钉值加入 v1 发布者现在加载的 `hosted-relay-v1/attest.mjs`、`registry.mjs`、`oidc.mjs`；v2 的 Native verify 和 v1 一样带 10 秒超时；准入登记的注释写明 contract-placement 的托管执行从不转发（`RELAYABLE_ROLES` 只有 gitleaks、trivy）。PR-B 工作流里那句“5368905 在核验后发布 contract-placement”的注释在冻结字节里，要在 PR-B 改。
+- 其他复审修正：v1 one-shot 的必需钉值加入 v1 发布者现在加载的 `hosted-relay-v1/attest.mjs`、`registry.mjs`、`oidc.mjs`。第三轮复审又发现漏了 `full-admission.mjs` 导入的 `independent-control-checks-v1/queue-facts.mjs`，所以 `V1_REQUIRED_SOURCE` 现在就是 `runtime/one-shot.mjs` 的完整静态加载闭包：静态导入和相对模块的 `new URL(...)` 文件引用，逐层展开，包括评估器和它导入的 `scripts/ci` 模块与来源目录（H5 安装记录本来就钉了这些文件）。评估器的动态导入（控制检查的 consumer）只在设置了 `CLUED_EXECUTION_PROVIDER` 时运行，one-shot 不会用到，所以不算在内。`pr-a-review.test.mjs` 重新计算这个闭包，必须和列表完全相同；v2 的 Native verify 和 v1 一样带 10 秒超时；准入登记的注释写明 contract-placement 的托管执行从不转发（`RELAYABLE_ROLES` 只有 gitleaks、trivy）。PR-B 工作流里那句“5368905 在核验后发布 contract-placement”的注释在冻结字节里，要在 PR-B 改。
 - **托管作业执行的仓库脚本被遮蔽（复审 BLOCKER）**：托管 gitleaks 作业持有 `id-token: write`，并从 PR 检出运行 `python3 scripts/ci/reviewed_gitleaks.py`。不带 `-I` 时，Python 会把 `scripts/ci` 放在 `sys.path` 首位，所以 PR 只要加一个 `scripts/ci/argparse.py`，就能在扫描之前运行自己的代码，比如改掉磁盘上的 `.gitleaks.toml`。这样转发会发布一个假的绿色检查，之后 K 还会挡住受信的本地角色。修正如下：
   - 登记表的每个角色新增 `forbiddenChangePrefixes`（目录前缀；gitleaks 是 `scripts/ci/`，trivy 不执行仓库脚本，所以为空），并且计入 `closureSha256`；
   - E3 对改动落在这些前缀下的 PR（新增、修改、删除，改名时两端都算）判 NOT_ELIGIBLE（`E3_EXECUTED_PATH_CHANGED`），角色回本地，提示模式也一样；
   - `build-registry.mjs` 从托管作业的 `run:` 步骤读出执行的仓库脚本：每个 Python 调用都必须带 `-I`（包括 `-c`），拒绝 `-m`，拒绝用 Node 运行仓库脚本；执行的脚本必须在 closure 里，它的目录必须被角色前缀或全局前缀（`.github/`）覆盖，否则拒绝构建。
-  - 现在提交的生产登记表建于这些规则之前，会被拒绝，所以转发失败关闭（第 R 段 `RELAY_STAGE_REFUSED`）。它对应的 PR-B 提交也会被新构建器拒绝（Python 没有 `-I`）。PR-B 要改用 `python3 -I -B` 重新冻结，再用这个构建器重建登记表，转发才可能打开。后来 PR-B 先重新冻结为 `7d0468e0`，又因为复审 BLOCKER（托管 gitleaks 扫描 PR 的工作树，会受 PR 自己的 `.gitattributes` 和 `.gitleaksignore` 影响）再次冻结为 `960133a7`：托管 gitleaks 现在扫描的是本地角色的同一份输入。登记表用当前构建器从 `960133a7` 重建（只有 gitleaks、trivy）。PR-B 前后本地角色认的工作流字节见 §7.7。
-- **复审的转发 MINOR**（随 PR-B `960133a7` 一起）：
-  - 托管作业用到的本地 action（`uses: ./<目录>`）必须整个钉住：`build-registry.mjs` 从托管作业读出这些目录，目录里的每个文件都必须是普通文件，并且在角色的 closure 里（`RELAY_REGISTRY_LOCAL_ACTION_NOT_PINNED`）；目录必须存在并且有 `action.yml`（`RELAY_REGISTRY_LOCAL_ACTION_MISSING`），还必须被禁改前缀覆盖（`RELAY_REGISTRY_LOCAL_ACTION_NOT_COVERED`）；路径有 `..`、空段或不以 `./` 开头时，扫描直接拒绝。`registry.spec.json` 两个角色的 closure 因此加上 `ci-temporary-storage` 的 `check-workflows.mjs` 和 `coverage.json`。登记表已经用这个构建器从 `960133a7` 重建，两个角色都带上了这两个钉值（这两个文件在 `.github/` 下，E3 本来就不转发改动它们的 PR）。如果以后规格又加了钉值而登记表还没重建，旧登记表仍然有效，测试只核对同一个 PR-B 提交按新规格重建时只多出 closure 钉值；
+  - 现在提交的生产登记表建于这些规则之前，会被拒绝，所以转发失败关闭（第 R 段 `RELAY_STAGE_REFUSED`）。它对应的 PR-B 提交也会被新构建器拒绝（Python 没有 `-I`）。PR-B 要改用 `python3 -I -B` 重新冻结，再用这个构建器重建登记表，转发才可能打开。PR-B 后来又重新冻结了几次，其中一次修了复审 BLOCKER：托管 gitleaks 扫描 PR 的工作树时，会受 PR 自己的 `.gitattributes` 和 `.gitleaksignore` 影响。现在托管 gitleaks 扫描的是本地角色的同一份输入。每次冻结后，登记表都用当前构建器从冻结的 PR-B 提交重建（只有 gitleaks、trivy；用的是哪个提交，看 `registry.json` 的 `sourceCommit`）。PR-B 前后本地角色认的工作流字节见 §7.7。
+- **复审的转发 MINOR**（随 PR-B 的重新冻结一起）：
+  - 托管作业用到的本地 action（`uses: ./<目录>`）必须整个钉住：`build-registry.mjs` 从托管作业读出这些目录，目录里的每个文件都必须是普通文件，并且在角色的 closure 里（`RELAY_REGISTRY_LOCAL_ACTION_NOT_PINNED`）；目录必须存在并且有 `action.yml`（`RELAY_REGISTRY_LOCAL_ACTION_MISSING`），还必须被禁改前缀覆盖（`RELAY_REGISTRY_LOCAL_ACTION_NOT_COVERED`）；路径有 `..`、空段或不以 `./` 开头时，扫描直接拒绝。`registry.spec.json` 两个角色的 closure 因此加上 `ci-temporary-storage` 的 `check-workflows.mjs` 和 `coverage.json`。从冻结的 PR-B 提交重建的登记表里，两个角色都带着这两个钉值（这两个文件在 `.github/` 下，E3 本来就不转发改动它们的 PR）。如果以后规格又加了钉值而登记表还没重建，旧登记表仍然有效，测试只核对同一个 PR-B 提交按新规格重建时只多出 closure 钉值；
   - 任意深度的 `.gitattributes` 都不能改：E3 对每个转发角色加一条写在代码里的禁改路径规则 `**/.gitattributes`（`FORBIDDEN_CHANGE_GLOBS`，不依赖登记表），命中时判 NOT_ELIGIBLE（`E3_PROTECTED_PATH_CHANGED`），角色回本地。原来只禁了根目录的 `.gitattributes`；
   - 托管检查的应用：托管作业名下的 check run 只能来自 GitHub Actions（app `15368`）。原来 E5 只是跳过其他应用的 run；现在这个 head 上只要有一个同名的 run 来自别的应用，就判 ATTESTATION_FAILED（`E5_FOREIGN_APP_RUN`），即使旁边还有一个成功的 Actions run，角色也回本地；
+  - trivy 的 checks 包摘要不再靠手抄：托管 trivy 作业在 env 里写 `CHECKS_DIGEST: sha256:…`，本地 trivy 角色在已安装的 Source 清单里钉 `formalTrivy.checksPin.digest`。现在 `build-registry.mjs` 从托管作业读出 `CHECKS_DIGEST`，写进登记表的 `roles.trivy.checksDigest`；托管作业里必须正好有一个这样的值，并且确实用在 `trivy-checks@$CHECKS_DIGEST` 上，否则拒绝构建。第 R 段（`relay-entry-v2.mjs` 的 `installedInputPins`）从安装记录取本地钉值，和登记表比较：不相等，或者登记表里没有这个值（这个规则之前建的登记表），trivy 就是 LOCAL_REQUIRED（`RELAY_ROLE_NOT_RELAYABLE`，detail 分别是 `checksDigest_differs_from_installed_role` 和 `checksDigest_not_registered`），而且不为它读任何东西。gitleaks 不受影响；
+  - 提交里所有的 `.gitattributes` 都钉进 closure：构建器列出登记表提交里每一个 `.gitattributes`（任意深度），钉进 gitleaks 和 trivy 的 closure，不用在规格里手列。main 以后改了其中任何一个，head 上的字节就和登记表不同，E4 判 NOT_ELIGIBLE（`E4_CLOSURE_MISMATCH`），重新钉值之前不再转发。仓库现在有 18 个，每次观察要为它们多读一些目录树（同一次观察里按树缓存）。main 上以后新增的 `.gitattributes` 不在钉值里：新增它的 PR 本身因为 E3 不转发，重建登记表之后它也会被钉住；
   - `requireCheckRunIdClaim` 仍是 `false`：令牌带了 `check_run_id` 声明时，它必须等于这次 check run 的 id；没带时现在照样接受。演练 L1 一旦确认托管令牌带 `check_run_id`，就必须把它改成 `true` 并重建登记表，之后没有这个声明的令牌一律拒绝。
 
 **第 R 段在 Source v2 里**：
@@ -558,14 +560,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 
 现在每份工作流钉成一个**精确的集合**，不用通配，并且所有地方都从**同一张表**取值：`CI/worker/trusted-workflows.mjs`。
 
-- 表的每一行是一份工作流的一个审过的版本：字节的 sha256（作为键）、git blob（对照提交审查用）、来源（`main <提交>` 或 `pr-b <提交>`）。表格式不对就在加载时拒绝（`TRUSTED_WORKFLOW_TABLE_INVALID`），不会接受半张表。现在的行：
-
-  | 工作流 | main（`8710e92c`） | PR-B（`960133a7`） |
-  |---|---|---|
-  | `gitleaks.yml` | blob `74043d68`，sha256 `168aebaf…` | blob `5f27ab3c`，sha256 `be869498…` |
-  | `trivy.yml` | blob `f7f8d075`，sha256 `cea2fd77…` | blob `1d2ab275`，sha256 `981e7a2d…` |
-  | `contract-placement.yml` | blob `54ee2f11`，sha256 `762f1b13…` | blob `3640f089`，sha256 `4898299b…` |
-
+- 表的每一行是一份工作流的一个审过的版本：字节的 sha256（作为键）、git blob（对照提交审查用）、来源（`main <提交>` 或 `pr-b <提交>`）。表格式不对就在加载时拒绝（`TRUSTED_WORKFLOW_TABLE_INVALID`），不会接受半张表。每份工作流两行：一行是 main 上的字节，一行是冻结的 PR-B 提交里的字节。现在是哪两个提交、哪些哈希，以 `CI/worker/trusted-workflows.mjs` 为准，这里不重复。
 - PR-B 重新冻结时，只要一条命令：`node CI/test/fixtures/repin-trusted-workflows.mjs --repo . --main <main> --pr-b <新的 PR-B 提交>`。它从这两个提交的 git 对象读字节，改写表里 BEGIN/END 标记之间的行，同时重写测试夹具 `CI/test/fixtures/trusted-workflows.json`。加 `--check` 时不写文件，只报告是否一致。main 还是这些字节时，main 的行保留。
 - 从这张表取集合的地方：gitleaks 准备（v3、v4）、trivy 计划（`required-trivy-v2`、`-v3`）、placement 适配器（v1、v2）、角色策略（v2、v3），以及经 placement 适配器的签名结果（bridge v3、v4）。表是纯数据，没有导入，也不读文件。它在所有要核对导入闭包的清单里：gitleaks 适配器的 `SOURCE_FILES`、trivy 适配器（v2、v3、v4）和 placement 适配器的 `CLOSURE`、策略的 `COMMON_SOURCE`、bridge v3/v4 的 `REQUIRED_SOURCE_PATHS`、`source-closure.json`（已重算）。
 - 规则：
@@ -748,10 +743,11 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 
 v0.7 补充（2026-10-21，PR-B 前后的工作流字节 §7.7，转发复审 MINOR §7.5）：
 
+- 第三轮复审 MINOR 之后：Source v2 **159 通过 + 1 跳过**（新增 `hosted-relay-stage.test.mjs`、`hosted-relay-registry.test.mjs`、`hosted-relay-attest.test.mjs` 各 1 个：trivy checks 摘要、所有 `.gitattributes` 钉值、E4；`pr-a-review.test.mjs` 的 v1 钉值用例改为核对完整的传递闭包）；Python **6/6**；常驻层 **107/107**、Python **23/23**、演练 **35/35**；准入 **98/98**。下面几条是这一轮之前的数目。
 - Source v2：`node --test test/*.test.mjs worker/image-identity.test.mjs` **156 通过 + 1 跳过**（新增 `trusted-workflow-pins.test.mjs` 9 个；`formal-gitleaks-v3-required-history.test.mjs`、`resident-v2-bridge.test.mjs`、`hosted-relay-registry.test.mjs` 各 1 个；`hosted-relay-attest.test.mjs` 的 E3、E5 用例加了 `**/.gitattributes` 和其他应用的 run）；Python **6/6**。
 - 常驻层：`node --test test/*.test.mjs` **107/107**；Python **23/23**；`node drill/offline-drill.mjs` **35/35**。
 - `node --test scripts/ci/clued-work-admission.test.mjs` **98/98**。
-- 临时分支：在结果上合入 PR-B `960133a7`，上面几组的数目完全一样。`scripts/ci` 全部测试：node 801 通过、29 失败，Python 78 个里 2 个出错；这 31 个在 main（`8710e92c`）上同样失败（main 上 node 777 通过、32 失败，Python 74 个里 2 个失败、2 个出错），没有新增失败，PR-B 还修好了 main 上的 5 个。
+- 临时分支：在结果上合入当时冻结的 PR-B 提交，上面几组的数目完全一样。`scripts/ci` 全部测试：node 801 通过、29 失败，Python 78 个里 2 个出错；这 31 个在 main（`8710e92c`）上同样失败（main 上 node 777 通过、32 失败，Python 74 个里 2 个失败、2 个出错），没有新增失败，PR-B 还修好了 main 上的 5 个。
 
 v0.7（2026-10-21，转发集成之后）：
 

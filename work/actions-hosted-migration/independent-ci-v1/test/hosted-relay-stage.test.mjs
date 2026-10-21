@@ -11,6 +11,9 @@ import { createHostedRelayStage } from '../src/hosted-relay-v1/stage.mjs';
 import { createStagedCheckPublisher } from '../src/staged-check-publisher.mjs';
 import { digest } from '../src/proof.mjs';
 import { validateRegistry } from '../src/hosted-relay-v1/registry.mjs';
+import { createHostedRelayVerifier } from '../src/hosted-relay-v1/stage.mjs';
+import { createHostedRelayObserver } from '../src/hosted-relay-v1/observe.mjs';
+import { installedInputPins } from '../src/hosted-relay-v1/relay-entry-v2.mjs';
 import { H, HEAVY, OTHER, REPO, ROLES, createWorld, published } from './fixtures/hosted-relay/world.mjs';
 
 async function journalFor(t) {
@@ -292,4 +295,36 @@ test('a PR adding scripts/ci/argparse.py is LOCAL_REQUIRED for gitleaks; K stays
   const { hostedHint } = await import('../src/hosted-relay-v1/stage.mjs');
   const facts = await w.observer().observe({ repo: REPO, pr: 7, headSha: H, baseSha: w.subject().baseSha, roles: ['gitleaks'] });
   assert.equal(hostedHint({ registry: w.registry, facts }).roles.gitleaks.reason, 'E3_EXECUTED_PATH_CHANGED');
+});
+
+// PR-A round-3 review: the hosted trivy job's checks bundle digest (CHECKS_DIGEST, read by the builder) must be the
+// installed local role's own pin (formalTrivy.checksPin.digest); otherwise trivy is never relayed, nothing is read for it.
+test('stage R relays trivy only when the registry checks digest equals the installed trivy role pin', async t => {
+  const w = createWorld(); w.allHosted();
+  assert.match(w.registry.roles.trivy.checksDigest, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(Object.hasOwn(w.registry.roles.gitleaks, 'checksDigest'), false);
+  const other = `sha256:${'d'.repeat(64)}`;
+  for (const [label, localInputPins, detail] of [
+    ['other installed digest', { trivy: { checksDigest: other } }, 'checksDigest_differs_from_installed_role'],
+    ['no installed pin', {}, 'checksDigest_differs_from_installed_role'],
+  ]) {
+    const result = await run(w.stage(await journalFor(t), { localInputPins }).stage, w, ['gitleaks', 'trivy']);
+    assert.deepEqual(outcomes(result), { gitleaks: 'RELAYED', trivy: 'LOCAL_REQUIRED:RELAY_ROLE_NOT_RELAYABLE' }, label);
+    const row = result.roles.find(r => r.role === 'trivy');
+    assert.deepEqual([row.detail, row.receipt, row.effectKey], [detail, 'relay-local-fallback', null], label);
+    assert.equal(row.verdict, null, label); // never observed or attested
+    w.state.checkRuns = w.state.checkRuns.filter(run => run.app.id !== 5368905); // let the next case publish again
+  }
+  // A registry built before the rule (no checks digest) keeps trivy local, whatever is installed.
+  const raw = JSON.parse(JSON.stringify(w.registry)); delete raw.roles.trivy.checksDigest;
+  const stale = validateRegistry(raw, { domain: 'fixture' });
+  const verifier = createHostedRelayVerifier({ registry: stale, observer: createHostedRelayObserver({ github: w.github, registry: stale, clock: () => w.state.now }), oidc: w.oidc() });
+  const stage = createHostedRelayStage({ registry: stale, verifier, publisher: w.publisher(await journalFor(t), verifier), localInputPins: { trivy: { checksDigest: w.registry.roles.trivy.checksDigest } } });
+  const result = await run(stage, w, ['trivy']);
+  assert.deepEqual([outcomes(result).trivy, result.roles[0].detail], ['LOCAL_REQUIRED:RELAY_ROLE_NOT_RELAYABLE', 'checksDigest_not_registered']);
+  // The entry reads the installed pin from the record's Source manifest; anything malformed yields no pin.
+  const digest = w.registry.roles.trivy.checksDigest;
+  assert.deepEqual(installedInputPins({ roles: { trivy: { formalTrivy: { checksPin: { digest } } } } }), { trivy: { checksDigest: digest } });
+  for (const manifest of [null, {}, { roles: { trivy: {} } }, { roles: { trivy: { formalTrivy: { checksPin: { digest: digest.slice(7) } } } } },
+    { roles: { trivy: { formalTrivy: { checksPin: { digest: digest.toUpperCase() } } } } }]) assert.deepEqual(installedInputPins(manifest), {});
 });

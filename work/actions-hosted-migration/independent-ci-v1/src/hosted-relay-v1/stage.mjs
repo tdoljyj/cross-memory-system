@@ -14,7 +14,7 @@
 // NOT_PROCESSED, and the executor burns the head and HALTs (PR886 §6.3).
 import { digest } from '../proof.mjs';
 import { attestHead, validateHostedEnvelope } from './attest.mjs';
-import { HEAVY_ROLES, RELAYABLE_ROLES, isValidatedRegistry, registryDigestOf, relayFail } from './registry.mjs';
+import { HEAVY_ROLES, RELAYABLE_ROLES, ROLE_INPUT_PINS, isValidatedRegistry, registryDigestOf, relayFail } from './registry.mjs';
 
 export const RELAY_STAGE_CONTRACT = 'clued.independent-ci.hosted-relay-stage/1';
 export const RELAY_CODES = Object.freeze({
@@ -95,7 +95,10 @@ function validInput(registry, input) {
 
 // run({ subject, attempt, roles }) -> stage result (see RELAY_STAGE_CONTRACT below).
 // `roles` are the relay candidates the executor wrote into 20-plan-intent.
-export function createHostedRelayStage({ registry, verifier, publisher } = {}) {
+// localInputPins: the installed local roles' own pins of hosted-job inputs ({ trivy: { checksDigest } }, from the
+// installed Source manifest). A role whose registry pin is absent or differs is never relayed (PR-A round-3 review):
+// the hosted run would not have used the local role's inputs.
+export function createHostedRelayStage({ registry, verifier, publisher, localInputPins = {} } = {}) {
   const configured = isValidatedRegistry(registry) && typeof verifier?.attest === 'function' && typeof publisher?.publishHosted === 'function'
     && verifier.registrySha256 === registryDigestOf(registry) && (verifier.fixture === true) === (registry.domain === 'fixture')
     && (publisher.fixture === true) === (registry.domain === 'fixture');
@@ -116,8 +119,16 @@ export function createHostedRelayStage({ registry, verifier, publisher } = {}) {
         receipt: reason === 'RELAY_NOT_ATTESTED_BILLING_REFUSED' ? 'relay-billing-refused' : 'relay-local-fallback' });
 
       // Only registered relayable roles are observed; the rest are local without any read.
-      const relayable = roles.filter(role => Object.hasOwn(RELAYABLE_ROLES, role) && Object.hasOwn(registry.roles, role));
-      const never = role => local(role, 'RELAY_ROLE_NOT_RELAYABLE', Object.hasOwn(RELAYABLE_ROLES, role) ? 'not_registered' : 'never_relayed', null);
+      const inputMismatch = role => {
+        const pin = Object.hasOwn(ROLE_INPUT_PINS, role) ? ROLE_INPUT_PINS[role] : null;
+        if (!pin) return null;
+        const registered = registry.roles[role]?.[pin.field], installed = localInputPins?.[role]?.[pin.field];
+        if (typeof registered !== 'string') return `${pin.field}_not_registered`;
+        return registered === installed ? null : `${pin.field}_differs_from_installed_role`;
+      };
+      const relayable = roles.filter(role => Object.hasOwn(RELAYABLE_ROLES, role) && Object.hasOwn(registry.roles, role) && inputMismatch(role) === null);
+      const never = role => local(role, 'RELAY_ROLE_NOT_RELAYABLE', !Object.hasOwn(RELAYABLE_ROLES, role) ? 'never_relayed'
+        : !Object.hasOwn(registry.roles, role) ? 'not_registered' : inputMismatch(role), null);
       let first = { verdicts: {} };
       if (relayable.length) {
         try { first = await verifier.attest({ subject, roles: relayable }); }

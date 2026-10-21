@@ -202,14 +202,16 @@ test('the committed production registry validates and rebuilds byte-identically 
   const present = GIT && spawnSync(GIT, ['-C', ROOT, 'cat-file', '-e', `${registry.sourceCommit}^{commit}`], { windowsHide: true }).status === 0;
   if (!present) { t.skip(`source commit ${registry.sourceCommit} not in the local object store`); return; }
   const rebuilt = buildRegistry({ spec: SPEC, reader: gitObjectReader(ROOT, { git: GIT }), commit: registry.sourceCommit });
-  if (registry.specSha256 !== digest(validateSpec(clone(SPEC)))) {
-    // Built from an older spec (before every file of a local action had to be pinned): it still validates and
-    // the relay keeps working; the same PR-B commit rebuilds with the current spec, adding only closure pins.
-    t.diagnostic('the committed registry predates the current spec; rebuild it from the frozen PR-B commit');
+  // A registry built by an older builder or spec (before the trivy checks digest, every .gitattributes and whole local
+  // actions were pinned) still validates; stage R then keeps trivy local (no checks digest) and gitleaks keeps working.
+  // The same PR-B commit rebuilds with the current builder, adding only those pins.
+  if (!Object.hasOwn(registry.roles.trivy ?? {}, 'checksDigest') || registry.specSha256 !== digest(validateSpec(clone(SPEC)))) {
+    t.diagnostic('the committed registry predates the current builder or spec; rebuild it from the frozen PR-B commit');
+    assert.match(rebuilt.roles.trivy.checksDigest, /^sha256:[a-f0-9]{64}$/);
     for (const [role, entry] of Object.entries(rebuilt.roles)) {
       const old = registry.roles[role], paths = new Set(old.closure.map(item => item.path));
       assert.deepEqual(entry.closure.filter(item => paths.has(item.path)), old.closure, role);
-      assert.ok(entry.closure.filter(item => !paths.has(item.path)).every(item => item.path.startsWith('.github/actions/')), role);
+      assert.ok(entry.closure.filter(item => !paths.has(item.path)).every(item => item.path.startsWith('.github/actions/') || item.path.endsWith('.gitattributes')), role);
       assert.equal(entry.workflowBlob, old.workflowBlob);
     }
     return;
@@ -277,4 +279,36 @@ test('the builder refuses non-isolated Python, -m, repository Node scripts, and 
     const spec = clone(SPEC); spec.roles.gitleaks.forbiddenChangePrefixes = bad;
     refused(() => validateSpec(spec), 'RELAY_REGISTRY_SPEC_INVALID', bad.join(','));
   }
+});
+
+// PR-A round-3 review: the hosted trivy job's checks bundle digest is read from its env (exactly one CHECKS_DIGEST,
+// actually used for trivy-checks@$CHECKS_DIGEST), never hand-copied; every .gitattributes of the commit is pinned.
+test('the builder reads the trivy checks digest from the hosted job and pins every .gitattributes of the commit', () => {
+  const TRIVY = '.github/workflows/trivy.yml', built = build();
+  assert.equal(built.roles.trivy.checksDigest, `sha256:${'c'.repeat(64)}`);
+  assert.equal(Object.hasOwn(built.roles.gitleaks, 'checksDigest'), false);
+  const LINE = `          CHECKS_DIGEST: sha256:${'c'.repeat(64)}\n`;
+  const trivyWith = (from, to) => workflowWith(from, to, TRIVY);
+  for (const [label, files] of [
+    ['missing', trivyWith(LINE, '')],
+    ['tag, not a digest', trivyWith(LINE, '          CHECKS_DIGEST: ghcr.io/aquasecurity/trivy-checks:2\n')],
+    ['twice', trivyWith(LINE, LINE + `          CHECKS_DIGEST: sha256:${'e'.repeat(64)}\n`)],
+    ['not used', trivyWith('trivy-checks@$CHECKS_DIGEST', 'trivy-checks:2')],
+  ]) refused(() => build(files), 'RELAY_REGISTRY_WORKFLOW_REFUSED', label);
+  // A registry without it still validates (older builder); a malformed one does not.
+  const raw = JSON.parse(JSON.stringify(built)); delete raw.roles.trivy.checksDigest;
+  assert.ok(validateRegistry(raw, { domain: 'fixture' }));
+  raw.roles.trivy.checksDigest = 'sha256:abc';
+  refused(() => validateRegistry(raw, { domain: 'fixture' }), 'RELAY_REGISTRY_INVALID', 'malformed digest');
+  const onGitleaks = JSON.parse(JSON.stringify(built)); onGitleaks.roles.gitleaks.checksDigest = built.roles.trivy.checksDigest;
+  refused(() => validateRegistry(onGitleaks, { domain: 'fixture' }), 'RELAY_REGISTRY_INVALID', 'not a gitleaks field');
+  // Every .gitattributes of the commit, at any depth, is pinned for both relayed roles (spec lists only the root one).
+  assert.equal(SPEC.roles.gitleaks.closure.includes('docs/.gitattributes'), false);
+  const deeper = build({ ...REPO_FILES, 'a/b/c/.gitattributes': '*.dat -text\n', 'a/b/c/x.gitattributes': 'not attributes\n' });
+  for (const role of ['gitleaks', 'trivy']) {
+    const pinned = deeper.roles[role].closure.map(item => item.path);
+    assert.deepEqual(pinned.filter(file => file.endsWith('.gitattributes')), ['.gitattributes', 'a/b/c/.gitattributes', 'docs/.gitattributes'], role);
+  }
+  // A .gitattributes that is not a regular file is refused like any closure path.
+  refused(() => build(REPO_FILES, SPEC, { 'docs/.gitattributes': '120000' }), 'RELAY_REGISTRY_CLOSURE_NOT_REGULAR', 'symlinked attributes');
 });

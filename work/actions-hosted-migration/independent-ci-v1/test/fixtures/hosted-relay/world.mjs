@@ -78,6 +78,7 @@ export function memoryReader(files, { commit = B, modes = {} } = {}) {
         return { path: file, mode, type: mode === '160000' ? 'commit' : 'blob', sha: gitBlobSha1(map.get(file)) };
       });
     },
+    paths() { return [...map.keys()].sort(); },
     blob(sha) { return blobs.get(sha); },
   });
 }
@@ -262,9 +263,9 @@ export function createWorld({ now = Date.parse('2026-10-21T06:00:00Z') } = {}) {
       readChangedPaths: job => github.readChangedPaths(job), clock: () => state.now, domain: 'fixture', hostedVerifier, localRoleMutex: true,
       protectedDeployment: { enabled: true, domain: 'fixture', repository: REPO, ciPrincipalBindingId: BINDING, ...REFS } });
   }
-  function stage(journal) {
+  function stage(journal, { localInputPins = { trivy: { checksDigest: registry.roles.trivy?.checksDigest } } } = {}) {
     const v = verifier();
-    return { stage: createHostedRelayStage({ registry, verifier: v, publisher: publisher(journal, v) }), verifier: v };
+    return { stage: createHostedRelayStage({ registry, verifier: v, publisher: publisher(journal, v), localInputPins }), verifier: v };
   }
   return { registry, state, rebuild, github, nativeAdmission, authority, signers, signToken, claimsFor, addHostedRun, allHosted,
     oidc, observer, verifier, publisher, stage, subject, localJob, signedResult, rsa, kid, jwksPort };

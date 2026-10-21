@@ -17,7 +17,8 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { digest } from '../proof.mjs';
-import { REGISTRY_CONTRACT, RELAY_AUDIENCE, REQUIRED_CHECK_NAMES, closureDigest, relayFail, validateRegistry, validateSpec } from './registry.mjs';
+import { OCI_DIGEST, REGISTRY_CONTRACT, RELAY_AUDIENCE, REQUIRED_CHECK_NAMES, ROLE_INPUT_PINS, closureDigest, matchesForbiddenChangeGlob, relayFail,
+  validateRegistry, validateSpec } from './registry.mjs';
 
 const SHA1 = /^[a-f0-9]{40}$/;
 const GENERATED_BY = 'work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/build-registry.mjs';
@@ -58,6 +59,11 @@ export function gitObjectReader(repoDir, { git = 'git' } = {}) {
       }
       entries.set(cacheKey, found);
       return found;
+    },
+    // Every path of the commit (recursive; trees are not listed).
+    paths(commit) {
+      insist(SHA1.test(commit), 'RELAY_REGISTRY_COMMIT_INVALID');
+      return run(['ls-tree', '-r', '-z', '--full-tree', '--name-only', commit]).split('\0').filter(Boolean);
     },
     // Every entry below one directory (recursive; trees are not listed, submodules are).
     tree(commit, dir) {
@@ -106,7 +112,7 @@ export function possibleNames(raw) {
 // value is always A or B), a required check name among any job's possible
 // names, the hosted name on a second job, id-token on any other job, a missing,
 // conditional or non-final identity step, and a step allowed to fail.
-export function scanWorkflow(bytes, { workflowPath, checkName, hostedCheckName, runsOn }) {
+export function scanWorkflow(bytes, { workflowPath, checkName, hostedCheckName, runsOn }, { inputPin = null } = {}) {
   const code = 'RELAY_REGISTRY_WORKFLOW_REFUSED';
   let text;
   try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { relayFail(code, `${workflowPath}:utf8`); }
@@ -180,8 +186,15 @@ export function scanWorkflow(bytes, { workflowPath, checkName, hostedCheckName, 
   insist(last.includes(`audience=${RELAY_AUDIENCE}`) && last.includes(`::notice title=${RELAY_AUDIENCE}::`), code, `${workflowPath}:identity-step-content`);
   const before = job.lines.slice(0, steps.at(-1)).join('\n');
   insist(!before.includes('ACTIONS_ID_TOKEN_REQUEST') && !before.includes(RELAY_AUDIENCE), code, `${workflowPath}:token-before-last-step`);
-  return { hostedJobId: job.id, hostedJobTimeoutMinutes: Number(timeout[0]), executed: executedScripts(job.lines, workflowPath),
+  const result = { hostedJobId: job.id, hostedJobTimeoutMinutes: Number(timeout[0]), executed: executedScripts(job.lines, workflowPath),
     localActions: localActions(job.lines, workflowPath) };
+  if (inputPin) {
+    // Exactly one `<ENV>: sha256:<hex>` in the hosted job, and the job really uses it (PR-A round-3 review).
+    const values = job.lines.flatMap(line => { const m = new RegExp(`^ {8,}${inputPin.env}:\\s*(.*?)\\s*$`).exec(line); return m ? [unquote(m[1])] : []; });
+    insist(values.length === 1 && OCI_DIGEST.test(values[0]) && job.lines.some(line => line.includes(inputPin.use)), code, `${workflowPath}:${inputPin.env}`);
+    result[inputPin.field] = values[0];
+  }
+  return result;
 }
 
 // Local actions the hosted job uses (`uses: ./<dir>`, PR-A re-review). The builder requires every file of each
@@ -251,10 +264,14 @@ export function buildRegistry({ spec, reader, commit: rev, domain = 'production'
   const checked = validateSpec(spec);
   const { commit, tree } = reader.resolve(rev);
   const roles = {};
+  const attributes = reader.paths(commit).filter(matchesForbiddenChangeGlob);
   for (const role of Object.keys(checked.roles).sort()) {
     const entry = checked.roles[role];
+    // Every .gitattributes of the commit is pinned (PR-A round-3 review): a later main change to any of them
+    // changes the head's attribute bytes, so E4 stops relaying until the registry is rebuilt.
+    const pinnedPaths = [...new Set([...entry.closure, ...attributes])].sort();
     const closure = [];
-    for (const file of entry.closure) {
+    for (const file of pinnedPaths) {
       const found = reader.entry(commit, file);
       insist(found, 'RELAY_REGISTRY_CLOSURE_MISSING', file);
       insist(found.type === 'blob' && ['100644', '100755'].includes(found.mode), 'RELAY_REGISTRY_CLOSURE_NOT_REGULAR', file);
@@ -272,11 +289,12 @@ export function buildRegistry({ spec, reader, commit: rev, domain = 'production'
       }
     }
     const workflow = closure.find(item => item.path === entry.workflowPath);
-    const { executed, localActions: actions, ...job } = scanWorkflow(workflow.bytes, entry);
+    const inputPin = Object.hasOwn(ROLE_INPUT_PINS, role) ? ROLE_INPUT_PINS[role] : null;
+    const { executed, localActions: actions, ...job } = scanWorkflow(workflow.bytes, entry, { inputPin });
     // Every executed repository script is pinned (closure) and its directory is a forbidden change prefix of
     // the role (or a global one, like .github/), so no PR that touches it or its neighbours is ever relayed.
     for (const script of executed) {
-      insist(entry.closure.includes(script), 'RELAY_REGISTRY_EXECUTED_SCRIPT_NOT_PINNED', script);
+      insist(pinnedPaths.includes(script), 'RELAY_REGISTRY_EXECUTED_SCRIPT_NOT_PINNED', script);
       const dir = script.includes('/') ? script.slice(0, script.lastIndexOf('/') + 1) : '';
       insist(dir !== '' && [...entry.forbiddenChangePrefixes, ...checked.forbiddenChangePrefixes].some(prefix => dir.startsWith(prefix)),
         'RELAY_REGISTRY_EXECUTED_SCRIPT_NOT_COVERED', script);
@@ -289,7 +307,7 @@ export function buildRegistry({ spec, reader, commit: rev, domain = 'production'
       insist(files.some(file => file.path === `${dir}/action.yml` || file.path === `${dir}/action.yaml`), 'RELAY_REGISTRY_LOCAL_ACTION_MISSING', dir);
       for (const file of files) {
         insist(file.type === 'blob' && ['100644', '100755'].includes(file.mode), 'RELAY_REGISTRY_CLOSURE_NOT_REGULAR', file.path);
-        insist(entry.closure.includes(file.path), 'RELAY_REGISTRY_LOCAL_ACTION_NOT_PINNED', file.path);
+        insist(pinnedPaths.includes(file.path), 'RELAY_REGISTRY_LOCAL_ACTION_NOT_PINNED', file.path);
       }
       insist([...entry.forbiddenChangePrefixes, ...checked.forbiddenChangePrefixes].some(prefix => `${dir}/`.startsWith(prefix)),
         'RELAY_REGISTRY_LOCAL_ACTION_NOT_COVERED', dir);

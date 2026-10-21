@@ -33,6 +33,12 @@ const GLOB_NAMES = FORBIDDEN_CHANGE_GLOBS.map(glob => {
   if (!name) throw Object.assign(new Error('RELAY_FORBIDDEN_GLOB_INVALID'), { code: 'RELAY_FORBIDDEN_GLOB_INVALID' });
   return name;
 });
+// Hosted-job inputs that must equal the installed local role's own pin (PR-A round-3 review): trivy's misconfiguration
+// checks bundle digest, read by the builder from the hosted job's `CHECKS_DIGEST` env and compared in stage R with the
+// installed Source's formalTrivy.checksPin.digest. Optional in a registry built before this rule: such a registry
+// never relays the role (stage R: LOCAL_REQUIRED).
+export const ROLE_INPUT_PINS = Object.freeze({ trivy: Object.freeze({ field: 'checksDigest', env: 'CHECKS_DIGEST', use: 'trivy-checks@$CHECKS_DIGEST' }) });
+export const OCI_DIGEST = /^sha256:[a-f0-9]{64}$/;
 export const matchesForbiddenChangeGlob = file => typeof file === 'string' && GLOB_NAMES.some(name => file === name || file.endsWith(`/${name}`));
 
 const SHA1 = /^[a-f0-9]{40}$/;
@@ -139,7 +145,9 @@ export function validateRegistry(registry, { domain } = {}) {
   insist(SHA1.test(registry.sourceCommit) && SHA1.test(registry.sourceTree) && SHA256.test(registry.specSha256), code, 'source');
   common(registry, code);
   for (const [role, entry] of Object.entries(registry.roles)) {
-    insist(exact(entry, ROLE_KEYS), code, `${role}.shape`);
+    const inputPin = Object.hasOwn(ROLE_INPUT_PINS, role) && Object.hasOwn(entry, ROLE_INPUT_PINS[role].field) ? ROLE_INPUT_PINS[role] : null;
+    insist(exact(entry, inputPin ? [...ROLE_KEYS, inputPin.field] : ROLE_KEYS), code, `${role}.shape`);
+    if (inputPin) insist(OCI_DIGEST.test(entry[inputPin.field] ?? ''), code, `${role}.${inputPin.field}`);
     insist(SHA1.test(entry.workflowBlob) && SHA256.test(entry.workflowSha256) && JOB_ID.test(entry.hostedJobId)
       && positive(entry.hostedJobTimeoutMinutes) && entry.hostedJobTimeoutMinutes <= 360, code, `${role}.workflow`);
     insist(Array.isArray(entry.closure) && entry.closure.length > 0 && entry.closure.length <= 64, code, `${role}.closure`);

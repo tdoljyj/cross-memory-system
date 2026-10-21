@@ -267,3 +267,14 @@ test('hosted-attestation envelopes are integrity-checked and details URLs parse 
   assert.equal(parseDetailsUrl(SHAPES.independentCheckRun.details_url, REPO), null);
   assert.equal(parseDetailsUrl(real.details_url, 'attacker/cross-memory-system'), null);
 });
+
+// PR-A round-3 review: every .gitattributes of the registry commit is pinned, so when main later changes one (the PR
+// itself does not touch it, E3 passes), the head's bytes differ and E4 stops relaying both roles until re-pin.
+test('E4: a pinned nested .gitattributes that main changed later is a closure mismatch for both roles', async () => {
+  let w = createWorld(); w.allHosted();
+  assert.deepEqual(await verdicts(w), all('ATTESTED_SUCCESS'));
+  w = createWorld(); w.allHosted(); w.state.headFiles['docs/.gitattributes'] = '*.md binary\n'; w.rebuild();
+  assert.deepEqual(await verdicts(w), all('NOT_ELIGIBLE:E4_CLOSURE_MISMATCH'));
+  w = createWorld(); w.allHosted(); delete w.state.headFiles['docs/.gitattributes']; w.rebuild();
+  assert.deepEqual(await verdicts(w), all('NOT_ELIGIBLE:E4_CLOSURE_MISMATCH'));
+});

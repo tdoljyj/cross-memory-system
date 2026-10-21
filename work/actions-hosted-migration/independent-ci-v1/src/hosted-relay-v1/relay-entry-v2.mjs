@@ -19,7 +19,7 @@ import { createStagedCheckPublisherV2 } from '../staged-check-publisher-v2.mjs';
 import { protectedAuthority } from '../../runtime/one-shot-v2.mjs';
 import { runEntry, controllerPrincipal, controllerPorts, observationLog } from '../resident-v2/entry-runtime.mjs';
 import { STATE_V2, STATE_RELAY_JWKS } from '../resident-v2/layout.mjs';
-import { validateRegistry, RELAY_AUDIENCE } from './registry.mjs';
+import { validateRegistry, OCI_DIGEST, RELAY_AUDIENCE } from './registry.mjs';
 import { createGitHubOidcVerifier, createJwksFileCache, createJwksPort } from './oidc.mjs';
 import { createHostedRelayObserver } from './observe.mjs';
 import { createHostedRelayStage, createHostedRelayVerifier } from './stage.mjs';
@@ -36,6 +36,13 @@ export function installedRegistry(held) {
   const bytes = fs.readFileSync(fileURLToPath(REGISTRY_URL));
   if (held.sourceHashes.get(REGISTRY_PATH) !== createHash('sha256').update(bytes).digest('hex')) fail('RELAY_REGISTRY_NOT_ACCEPTED');
   return validateRegistry(JSON.parse(bytes.toString('utf8')), { domain: 'production' });
+}
+
+// The installed local roles' own pins of hosted-job inputs, from the installed Source manifest (the record):
+// trivy's checks bundle digest (formalTrivy.checksPin.digest). Anything else yields no pin, so the role stays local.
+export function installedInputPins(manifest) {
+  const digest = manifest?.roles?.trivy?.formalTrivy?.checksPin?.digest;
+  return Object.freeze(typeof digest === 'string' && OCI_DIGEST.test(digest) ? { trivy: Object.freeze({ checksDigest: digest }) } : {});
 }
 
 // The relay stage subject: the batch content of the candidate jobs plus the sticky batch claim generation
@@ -65,7 +72,7 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
         github, journal, signers: inputs.record.signers, configuredChecks: config.checks, readChangedPaths: subject => github.readChangedPaths(subject), batchClaim,
         protectedDeployment: { enabled: true, domain: 'production', repository: config.repository, ciPrincipalBindingId: config.ciPrincipalBindingId, ...Object.fromEntries(REFS.map(r => [r, accepted[r]])) },
         domain: 'production', hostedVerifier: verifier });
-      const stage = createHostedRelayStage({ registry, verifier, publisher });
+      const stage = createHostedRelayStage({ registry, verifier, publisher, localInputPins: installedInputPins(inputs.record.manifest) });
       const result = await stage.run({ subject: relaySubject(jobs, batchClaim), attempt: jobs[0].attempt, roles: jobs.map(j => j.role) });
       log('hosted_relay_stage_result', { jobId: jobs[0].id, resultSha256: result.resultSha256, status: result.status, code: result.code });
       return entryResultOf(result);

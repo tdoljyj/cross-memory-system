@@ -19,7 +19,7 @@ import { ALL_STAGE_CODES, CLEAN_FINAL_CODES, UNKNOWN_CODES, NATIVE_RECEIPT_CONTR
 import { BROKER_RESPONSE_CONTRACT, makeBrokerRequest } from '../src/resident-v2/broker-protocol.mjs';
 import { OUTCOME_CONTRACT, RELAY_STAGE_NUMBER, STAGES_V2, stageJobRolesValid } from '../src/resident-v2/layout.mjs';
 import { entryResultOf, planRowOf, validateRelayPlanRows, RELAY_PLAN_ROW_FIELDS } from '../src/hosted-relay-v1/relay-plan.mjs';
-import { installedRegistry, relaySubject } from '../src/hosted-relay-v1/relay-entry-v2.mjs';
+import { installedInputPins, installedRegistry, relaySubject } from '../src/hosted-relay-v1/relay-entry-v2.mjs';
 import { LOCAL_REASONS, createHostedRelayStage } from '../src/hosted-relay-v1/stage.mjs';
 import { EffectJournal, readRolePublication } from '../src/effect-journal.mjs';
 import { makeJobV2, claimGeneration } from '../src/job-v2.mjs';
@@ -235,7 +235,9 @@ function v2World({ claimFence = 3 } = {}) {
   const publisher = (journal, hostedVerifier) => createStagedCheckPublisherV2({ nativeAdmission, authority, github: w.github, journal, signers, configuredChecks,
     readChangedPaths: job => w.github.readChangedPaths(job), clock: () => w.state.now, domain: 'fixture', hostedVerifier, batchClaim,
     protectedDeployment: { enabled: true, domain: 'fixture', repository: REPO, ciPrincipalBindingId: BINDING, ...REFS } });
-  const stage = journal => { const v = w.verifier(); return createHostedRelayStage({ registry: w.registry, verifier: v, publisher: publisher(journal, v) }); };
+  // The installed trivy role pins the same checks bundle the hosted job uses (stage R compares them).
+  const localInputPins = installedInputPins({ roles: { trivy: { formalTrivy: { checksPin: { digest: w.registry.roles.trivy.checksDigest } } } } });
+  const stage = journal => { const v = w.verifier(); return createHostedRelayStage({ registry: w.registry, verifier: v, publisher: publisher(journal, v), localInputPins }); };
   const localJob = (role, attempt = 1) => makeJobV2({ repo: REPO, pr: 7, headSha: H, baseSha: B, role, sourceManifestSha256: MANIFEST, createdAt: iso(w.state.now - 20 * 60_000), attempt });
   const signed = job => {
     const payload = { contract: RESULT_CONTRACT_V2, domain: 'fixture', runtimeId: 'fixture-runtime', subject: subjectOfV2(job), startedAt: iso(w.state.now - 300_000), finishedAt: iso(w.state.now - 60_000),
