@@ -1,0 +1,28 @@
+// Stage 8 entry of Source v2 (run by the generic helper as clued-control):
+//   node startup.mjs --run --stage <nonce> --config-sha256 <sha>
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { EffectJournal } from '../effect-journal.mjs';
+import { readBatchClaim } from '../batch-claim-v2.mjs';
+import { runEntry, controllerPrincipal, controllerPorts, observationLog, authorityOf } from '../resident-v2/entry-runtime.mjs';
+import { STATE_V2, stageByNumber } from '../resident-v2/layout.mjs';
+import { createProductionControlPublisherV2, queueWindow } from './publisher.mjs';
+
+export async function main(argv = process.argv.slice(2), output = process.stdout) {
+  const startedAt = Date.now();
+  return runEntry({ argv, entryRole: 'control-checks', moduleUrl: import.meta.url, output, body: async ({ inputs, held, live, sourceRoot }) => {
+    const jobs = inputs.jobs;
+    const batchClaim = await readBatchClaim(STATE_V2.batchClaims, jobs[0]);
+    const { appKey, nativeToken } = await controllerPrincipal(inputs.record);
+    const log = observationLog(STATE_V2.effectsControl, jobs[0].id);
+    const { github, admission } = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
+    const journal = await EffectJournal.open(STATE_V2.effectsControl);
+    const publisher = createProductionControlPublisherV2({ github, journal, admission, assertLive: live, record: log, authority: authorityOf(inputs.record.accepted), batchClaim });
+    // The claim lease bound is read from the first live observation inside the wait; the outer bound is
+    // the stage cap and the install's validUntil.
+    const waitUntil = queueWindow({ startedAt, claimExpiresAt: new Date(startedAt + 24 * 3600_000).toISOString(), validUntil: inputs.record.accepted.validUntil,
+      stageDeadline: startedAt + stageByNumber(8).runMilliseconds });
+    return publisher.publishPair(jobs, { waitUntil });
+  } });
+}
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) process.exitCode = await main();
