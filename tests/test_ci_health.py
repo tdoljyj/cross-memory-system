@@ -150,7 +150,7 @@ class CluedCiHealthTests(unittest.TestCase):
         self.assertEqual(report["observations"]["runners"]["mode"], "exact-label-heartbeat")
 
     def test_two_slow_exact_route_probes_notify(self):
-        name = "clued-ci-home-linux-01"
+        name = "clued-ci-company-linux-02"
         jobs = [self.heartbeat_job(1, name), self.heartbeat_job(2, name)]
         report = health.build_report(
             "tdoljyj/cross-memory-system",
@@ -243,7 +243,7 @@ class CluedCiHealthTests(unittest.TestCase):
         self.assertEqual([item["name"] for item in entry["occupied_by"]], ["public-mcp-gate-receipt"])
 
     def test_idle_runner_while_eligible_work_queued_notifies(self):
-        idle = "clued-ci-home-linux-01"
+        idle = "clued-ci-company-linux-03"
         busy = "clued-ci-company-linux-01"
         t0 = datetime(2026, 9, 23, 3, 0, tzinfo=timezone.utc)
         generic = ["self-hosted", "Linux", "X64", "clued", "pool-general", "trust-internal", "cap-docker-linux"]
@@ -267,7 +267,7 @@ class CluedCiHealthTests(unittest.TestCase):
         self.assertEqual(self.slow_entries(restored)["1"]["wait_cause"], "runner_idle_while_work_queued")
 
     def test_single_queued_eligible_job_does_not_flag_idle_runner(self):
-        idle = "clued-ci-home-linux-01"
+        idle = "clued-ci-company-linux-03"
         t0 = datetime(2026, 9, 23, 3, 0, tzinfo=timezone.utc)
         generic = ["self-hosted", "Linux", "X64", "clued", "pool-general", "trust-internal", "cap-docker-linux"]
         jobs = [
@@ -437,6 +437,38 @@ class CluedCiHealthTests(unittest.TestCase):
             datetime(2026, 9, 23, 4, 0, tzinfo=timezone.utc),
         )
         self.assertIn("RUNNER_MISSING", [item["code"] for item in report["anomalies"]])
+
+    def test_retired_primary_linux_runner_is_known_but_not_expected(self):
+        retired = "clued-ci-home-linux-01"
+        self.assertNotIn(retired, self.expected)
+        self.assertIn(retired, health.declared_runner_names(self.inventory))
+        # Its registration is kept but stays offline; that is not an anomaly.
+        registered = self.runners() + [{
+            "id": 99,
+            "name": retired,
+            "os": "Linux",
+            "status": "offline",
+            "busy": False,
+            "labels": [{"name": "clued"}],
+        }]
+        self.assertEqual(self.report(runners=registered)["anomalies"], [])
+        # Leftover queued probes for it never make its route unavailable.
+        t0 = datetime(2026, 9, 23, 3, 0, tzinfo=timezone.utc)
+        probes = [{
+            "id": job_id,
+            "run_id": 700 + job_id,
+            "name": f"{health.HEARTBEAT_PREFIX}{retired}",
+            "status": "queued",
+            "conclusion": None,
+            "runner_name": "",
+            "labels": ["self-hosted", "Linux", "X64", "clued", "pool-general", "trust-internal",
+                       "cap-docker-linux", "runtime-wsl2", "site-home"],
+            "created_at": health.isoformat(t0 + timedelta(minutes=job_id)),
+            "started_at": health.isoformat(t0 + timedelta(minutes=job_id)),
+        } for job_id in (1, 2)]
+        report = self.secretless_report(probes)
+        self.assertNotIn(retired, report["observations"]["runners"]["routes"])
+        self.assertNotIn("RUNNER_ROUTE_UNAVAILABLE", [item["code"] for item in report["anomalies"]])
 
 
 if __name__ == "__main__":
