@@ -99,9 +99,19 @@ foreach ($m in @('config\source-installed-manifest.json', 'config\resident-insta
   Record ('package:' + $m) ($bad.Count -eq 0) $bad.Count
 }
 
+# The companion task runs the installed node copy under the in-box conhost.exe --headless, so it has no console
+# window the Owner could close (install-resident.ps1 Get-CompanionAction).
+function Test-CompanionAction([string]$execute, [string]$arguments, [string]$root, [string]$residentSha) {
+  $want = '--headless "' + (Join-Path $root 'runtime\node.exe') + '" "' + (Join-Path $root ('resident\' + $residentSha + '\src\companion-main.mjs')) + '" --root "' + $root + '" --config-sha256 '
+  ($execute -ceq 'C:\Windows\System32\conhost.exe') -and $arguments.StartsWith($want, [StringComparison]::Ordinal) -and ($arguments.Substring($want.Length) -cmatch '^[0-9a-f]{64}$')
+}
 $task = Get-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -ErrorAction SilentlyContinue
 Record 'companion-task-present' ($null -ne $task)
-if ($task) { Record 'companion-task-not-elevated' ($task.Principal.RunLevel -eq 'Limited') }
+if ($task) {
+  Record 'companion-task-not-elevated' ($task.Principal.RunLevel -eq 'Limited')
+  $actions = @($task.Actions)
+  Record 'companion-task-windowless' (($actions.Count -eq 1) -and (Test-CompanionAction ([string]$actions[0].Execute) ([string]$actions[0].Arguments) $Root $receipt.residentManifestSha256))
+}
 Record 'not-halted' (-not (Test-Path -LiteralPath (Join-Path $Root 'state\HALT.json')))
 Record 'not-paused' (-not (Test-Path -LiteralPath (Join-Path $Root 'state\PAUSED.json')))
 $node = Join-Path $Root 'runtime\node.exe'

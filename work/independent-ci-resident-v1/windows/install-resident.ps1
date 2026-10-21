@@ -79,6 +79,15 @@ function Get-PrivilegePlan {
     firewall = [ordered]@{ name = $FirewallRuleName; direction = 'Outbound'; action = 'Block'; service = $ServiceName; profile = 'Any' } }
 }
 
+# The companion task action. The task runs with the Owner's interactive token, so a console program would get
+# a console window on the Owner's desktop, and closing that window ends the companion (it did, 2026-10-21). The
+# in-box conhost.exe --headless hosts node's console without any window. Ending the task ends conhost, not its
+# node child, so uninstall-resident.ps1 stops every process of the installed node copy itself.
+function Get-CompanionAction([string]$root, [string]$residentSha, [string]$configSha) {
+  [ordered]@{ path = 'C:\Windows\System32\conhost.exe'
+    arguments = '--headless "' + (Join-Path $root 'runtime\node.exe') + '" "' + (Join-Path $root ('resident\' + $residentSha + '\src\companion-main.mjs')) + '" --root "' + $root + '" --config-sha256 ' + $configSha }
+}
+
 function Sha256Bytes([byte[]]$b) { $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash($b))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() } }
 function Sha256Text([string]$t) { Sha256Bytes ([Text.Encoding]::UTF8.GetBytes($t)) }
 function Sha256File([string]$p) { Sha256Bytes ([IO.File]::ReadAllBytes($p)) }
@@ -188,7 +197,8 @@ function Build-Plan {
       resident = [ordered]@{ name = $ServiceName; account = "NT SERVICE\$ServiceName"; start = 'delayed-auto'; sidType = 'unrestricted'; failure = 'restart once per day after 60 s, also on non-crash failure'; sddl = 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)' }
       broker = [ordered]@{ name = $BrokerName; account = 'LocalSystem'; start = 'auto'; sddl = 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)' }
     }
-    companionTask = [ordered]@{ path = '\Clued\'; name = 'CluedCIResidentCompanion'; principal = $OwnerSid; runLevel = 'LeastPrivilege'; trigger = 'AtLogOn'; sddl = "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;$OwnerSid)" }
+    companionTask = [ordered]@{ path = '\Clued\'; name = 'CluedCIResidentCompanion'; principal = $OwnerSid; runLevel = 'LeastPrivilege'; trigger = 'AtLogOn'; sddl = "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;$OwnerSid)"
+      action = (Get-CompanionAction $Root $pkg.residentManifestSha256 (& $find 'config\companion.json')) }
     startAfterInstall = [bool]$StartAfterInstall
     privilegeBoundary = Get-PrivilegePlan
     deletesAnything = $false
@@ -349,14 +359,15 @@ Step 'companion-task' {
   $t = $def.Triggers.Create(9); $t.UserId = $OwnerSid
   $def.Settings.MultipleInstances = 2; $def.Settings.ExecutionTimeLimit = 'PT0S'; $def.Settings.DisallowStartIfOnBatteries = $false; $def.Settings.StopIfGoingOnBatteries = $false
   $def.Settings.RestartCount = 3; $def.Settings.RestartInterval = 'PT1M'
-  $a = $def.Actions.Create(0); $a.Path = (Join-Path $Root 'runtime\node.exe')
-  $a.Arguments = '"' + (Join-Path $Root ('resident\' + $plan.residentManifestSha256 + '\src\companion-main.mjs')) + '" --root "' + $Root + '" --config-sha256 ' + $plan.companionConfigSha256
+  $ca = $plan.companionTask.action
+  $a = $def.Actions.Create(0); $a.Path = $ca.path; $a.Arguments = $ca.arguments
   # 6 = TASK_CREATE_OR_UPDATE (1 would only validate; review M7). Read back what was registered.
   $null = $folder.RegisterTaskDefinition('CluedCIResidentCompanion', $def, 6, $null, $null, 3, $plan.companionTask.sddl)
   $t = $folder.GetTask('CluedCIResidentCompanion')
   $uid = $t.Definition.Principal.UserId
   $uidSid = if ($uid -match '^S-1-') { $uid } else { (New-Object Security.Principal.NTAccount($uid)).Translate([Security.Principal.SecurityIdentifier]).Value }
-  if (($t.Definition.Principal.RunLevel -ne 0) -or ($uidSid -cne $OwnerSid)) { throw 'COMPANION_TASK_READBACK_MISMATCH' }
+  $act = if ($t.Definition.Actions.Count -eq 1) { $t.Definition.Actions.Item(1) } else { $null }
+  if (($t.Definition.Principal.RunLevel -ne 0) -or ($uidSid -cne $OwnerSid) -or $null -eq $act -or $act.Path -cne $ca.path -or $act.Arguments -cne $ca.arguments) { throw 'COMPANION_TASK_READBACK_MISMATCH' }
   $script:receipt.companionTaskXmlSha256 = Sha256Text $t.Xml
 }
 # 7. The runner service must be byte-for-byte what it was (this install never touches it).

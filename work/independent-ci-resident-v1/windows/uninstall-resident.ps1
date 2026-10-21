@@ -9,7 +9,8 @@
       kills the executor, so SCM "STOPPED" alone proves nothing);
     * -ExpectedPlanSha256 equal to the plan computed now.
   Steps: stop both services (the resident exits between batches), delete them and the companion task
-  (configuration objects, not evidence), confirm the runner service is byte-for-byte what install
+  (configuration objects, not evidence), stop the companion's node process (its task runs it under
+  conhost --headless, and ending the task does not end node), confirm the runner service is byte-for-byte what install
   recorded (it was never modified), then rename the whole resident directory to
   resident-uninstalled-<UTC>-<hex>. Ledger, receipts, archives, inbox history, owner requests and
   install records all stay, byte for byte. The Linux half is linux/uninstall-resident-linux.sh.
@@ -64,6 +65,18 @@ while (ExecutorAlive) { if ((Get-Date) -gt $deadline) { throw 'EXECUTOR_STILL_RU
 & $Sc delete CluedCIResident | Out-Null
 & $Sc delete CluedCISwapBroker | Out-Null
 Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -Confirm:$false
+# The companion runs as conhost --headless -> node (install-resident.ps1 Get-CompanionAction); ending or
+# unregistering its task ends conhost, not node. With both services stopped only the companion can still run
+# the installed node copy, so every such process is stopped before the resident directory is renamed.
+Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\CimCmdlets\CimCmdlets.psd1'
+$installedNode = Join-Path $Root 'runtime\node.exe'
+$until = (Get-Date).AddSeconds(30)
+do {
+  $left = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='node.exe'" | Where-Object { [string]::Equals([string]$_.ExecutablePath, $installedNode, [StringComparison]::OrdinalIgnoreCase) })
+  foreach ($p in $left) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+  if ($left.Count) { Start-Sleep -Milliseconds 500 }
+} while ($left.Count -and (Get-Date) -lt $until)
+if ($left.Count) { throw 'COMPANION_STILL_RUNNING_RESIDENT_NOT_RENAMED' }
 # The resident's outbound block (review MINOR-5) is configuration of the deleted service, not evidence.
 Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\NetSecurity\NetSecurity.psd1'
 Get-NetFirewallRule -Name 'CluedCIResident-BlockOutbound' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
