@@ -12,7 +12,7 @@ import {validateJobV2 as validateJob,subjectOfV2 as subjectOf} from '../../src/j
 import {canonical,digest} from '../../src/proof.mjs';
 import {validateFormalAdmissionV2} from '../../src/admission-facts-v2.mjs';
 import {loadQualifiedPolicyV2 as loadQualifiedPolicy,protectedPath,qualificationDeadline} from '../qualification-v2.mjs';
-import {IMAGE,SCAN_ARGS,SOURCE_PINS,prepareRequiredHistory,refsInStore,reviewedSelfTestPlan,runReviewedSelfTest,requiredScannerPlan,validateRemoteSnapshot} from './required-history/prepare.mjs';
+import {IMAGE,SCAN_ARGS,SOURCE_PINS,WORKFLOW_PATH,acceptedWorkflowSha256,prepareRequiredHistory,refsInStore,reviewedSelfTestPlan,runReviewedSelfTest,requiredScannerPlan,validateRemoteSnapshot} from './required-history/prepare.mjs';
 import {observeUnsignedContainer} from '../verify-once/verify-worker.mjs';
 import {dockerInvoke} from '../formal-gitleaks-v3/docker-transport.mjs';
 
@@ -55,6 +55,8 @@ async function sourceBoundary(config,manifest){
     check(await fileHash(file)===pin[0].sha256&&file===path.join(config.trustedSourceDirectory,PREFIX,relative),'FORMAL_ADAPTER_SOURCE_DRIFT');}
   for(const [relative,pin]of Object.entries(SOURCE_PINS)){const file=path.join(config.trustedSourceDirectory,relative);await protectedPath(file);
     check(await fileHash(file)===pin,'TRUSTED_REVIEW_SOURCE_DRIFT');}
+  const workflowPin=acceptedWorkflowSha256(role),workflowFile=path.join(config.trustedSourceDirectory,WORKFLOW_PATH);await protectedPath(workflowFile);
+  check(await fileHash(workflowFile)===workflowPin,'TRUSTED_REVIEW_SOURCE_DRIFT');
   const python=role.hostTools?.python;
   check(python&&Object.keys(python).sort().join('|')==='path|sha256'&&path.isAbsolute(python.path)&&HASH.test(python.sha256),'ACCEPTED_PYTHON_PIN_REQUIRED');
   await protectedPath(python.path);check(await fileHash(python.path)===python.sha256,'PYTHON_PIN_CHANGED');return python;

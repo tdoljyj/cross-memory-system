@@ -10,7 +10,15 @@ import { noLinks } from '../required-gitleaks/prepare.mjs';
 import { createArguments, inspectContainer } from '../verify-once/verify-worker.mjs';
 
 export const IMAGE = 'ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9';
+// Single pin kept only for the H4 formal-trivy-v2 adapter (superseded; on neither the H5 nor the Source v2 path).
 export const WORKFLOW_SHA256 = 'cea2fd770663e65f554719903da90aaf4b8aae4a52bf52098d3d258340e2727d';
+// .github/workflows/trivy.yml is pinned as an exact accepted set, never a pattern: the bytes on main
+// before PR-B (blob f7f8d075) and the bytes PR-B 7d0468e0 lands (blob a7f2653a). The adapter passes the
+// one the installed Source manifest declares and its trusted checkout holds.
+export const WORKFLOW_SHA256S = Object.freeze([
+  'cea2fd770663e65f554719903da90aaf4b8aae4a52bf52098d3d258340e2727d', // main before PR-B, blob f7f8d075
+  '7864a061c96dd377152ff03f0b00d18839602b22b3a520cd412afe3e683248b8', // PR-B 7d0468e0, blob a7f2653a
+]);
 export const CHECKS_REPOSITORY = 'ghcr.io/aquasecurity/trivy-checks:2';
 export const DB_REPOSITORIES = Object.freeze(['ghcr.io/aquasecurity/trivy-db:2', 'mirror.gcr.io/aquasec/trivy-db:2']);
 const HASH = /^[a-f0-9]{64}$/;
@@ -139,7 +147,7 @@ export function checksPreparationPlan({ stagingDirectory, emptyDirectory, checks
 export function requiredTrivyPlans({ job, preparedRequest, snapshotDirectory, database, dbDecision, checksBundle, checksPin,
   workflowSha256, sourceManifestSha256, inputInventory, now = Date.now() }) {
   validateJob(job); check(job.repo === 'tdoljyj/cross-memory-system' && job.role === 'trivy' && job.attempt === 1
-    && workflowSha256 === WORKFLOW_SHA256 && sourceManifestSha256 === job.sourceManifestSha256, 'FIXED_TRIVY_SOURCE_REQUIRED');
+    && WORKFLOW_SHA256S.includes(workflowSha256) && sourceManifestSha256 === job.sourceManifestSha256, 'FIXED_TRIVY_SOURCE_REQUIRED');
   check(safe(snapshotDirectory) && safe(database?.directory) && safe(checksBundle?.directory)
     && ![database.directory, checksBundle.directory].some(root => root === snapshotDirectory || root.startsWith(snapshotDirectory + '/') || snapshotDirectory.startsWith(root + '/')), 'PR_CACHE_MOUNT_OVERLAP');
   const identity = preparedRequest?.identity;

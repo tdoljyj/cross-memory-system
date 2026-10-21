@@ -6,7 +6,7 @@ import {canonical,subjectOf,verifyResult} from '../../src/proof.mjs';
 import {loadQualifiedPolicy,protectedPath} from '../qualification.mjs';
 import {takeActualObservation as takeGitleaks} from '../formal-gitleaks-v3/adapter.mjs';
 import {takeActualObservation as takeTrivy} from '../formal-trivy-v3/adapter.mjs';
-import {takeActualObservation as takePlacement,WORKFLOW_SHA256 as PLACEMENT_WORKFLOW_SHA256} from '../formal-contract-placement-v1/adapter.mjs';
+import {takeActualObservation as takePlacement,WORKFLOW_SHA256S as PLACEMENT_WORKFLOW_SHA256S} from '../formal-contract-placement-v1/adapter.mjs';
 import {loadFixedRolePolicy} from '../formal-fixed-role-policy-v2/policy.mjs';
 import {takeAcceptedBridgeContext} from './boundary.mjs';
 import {validateIssue,digest} from './protocol.mjs';
@@ -23,7 +23,7 @@ function observationFacts(issue,o){
     canonical(o.subject)===canonical(subjectOf(issue.job))&&o.sourceManifestSha256===issue.job.sourceManifestSha256&&
     o.profile===(gl?'required-gitleaks-history/1':placement?'required-contract-placement/1':'required-trivy-three-scanners/1')&&/^[a-f0-9]{40}$/.test(o.sourceSha??''),'ACTUAL_FORMAL_PROFILE_REQUIRED');
   if(placement){const keys=['contract','domain','fixture','profile','subject','sourceSha','sourceTreeSha','candidateTreeSha','sourceManifestSha256','workflowSha256','image','imageId','runtimeIdentity','hostAcceptanceRef','sourceAcceptanceRef','nonce','requestSha256','headBasePackSha256','commandSequenceSha256','toolPinsSha256','preAdmissionSha256','postAdmissionSha256','conclusion','exitCode','startedAt','finishedAt','logs','cleanup','evidenceClass','formalEligible','checksWritten','qualificationIssued'];
-    check(Object.keys(o).sort().join('|')===keys.sort().join('|')&&o.workflowSha256===PLACEMENT_WORKFLOW_SHA256&&['sourceTreeSha','candidateTreeSha'].every(k=>/^[a-f0-9]{40}$/.test(o[k]??''))&&['nonce','requestSha256','headBasePackSha256','commandSequenceSha256','toolPinsSha256','preAdmissionSha256','postAdmissionSha256'].every(k=>/^[a-f0-9]{64}$/.test(o[k]??''))&&/^(?:sha256:[a-f0-9]{64}|[^\s,@]+@sha256:[a-f0-9]{64})$/.test(o.image??'')&&/^sha256:[a-f0-9]{64}$/.test(o.imageId??'')&&o.evidenceClass==='unsigned-observation-requires-protected-result-issuer','ACTUAL_PLACEMENT_EVIDENCE_REQUIRED');
+    check(Object.keys(o).sort().join('|')===keys.sort().join('|')&&PLACEMENT_WORKFLOW_SHA256S.includes(o.workflowSha256)&&['sourceTreeSha','candidateTreeSha'].every(k=>/^[a-f0-9]{40}$/.test(o[k]??''))&&['nonce','requestSha256','headBasePackSha256','commandSequenceSha256','toolPinsSha256','preAdmissionSha256','postAdmissionSha256'].every(k=>/^[a-f0-9]{64}$/.test(o[k]??''))&&/^(?:sha256:[a-f0-9]{64}|[^\s,@]+@sha256:[a-f0-9]{64})$/.test(o.image??'')&&/^sha256:[a-f0-9]{64}$/.test(o.imageId??'')&&o.evidenceClass==='unsigned-observation-requires-protected-result-issuer','ACTUAL_PLACEMENT_EVIDENCE_REQUIRED');
     check(o.logs&&Object.keys(o.logs).sort().join('|')==='stderr|stdout'&&['stdout','stderr'].every(k=>Object.keys(o.logs[k]??{}).sort().join('|')==='bytes|sha256|truncated'&&/^[a-f0-9]{64}$/.test(o.logs[k].sha256??'')&&Number.isSafeInteger(o.logs[k].bytes)&&o.logs[k].bytes>=0&&o.logs[k].bytes<=16777216&&o.logs[k].truncated===false)&&Object.keys(o.cleanup??{}).sort().join('|')==='complete|containerRemoved|observedAt|wholeContainerTreeStopped'&&Date.parse(o.finishedAt)>=Date.parse(o.startedAt)&&Date.parse(o.cleanup.observedAt)>=Date.parse(o.finishedAt),'ACTUAL_PLACEMENT_TERMINAL_EVIDENCE_REQUIRED');
   }
   let start,end,exit,stdout,stderr;

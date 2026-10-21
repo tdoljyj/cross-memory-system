@@ -485,7 +485,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
   - 登记表的每个角色新增 `forbiddenChangePrefixes`（目录前缀；gitleaks 是 `scripts/ci/`，trivy 不执行仓库脚本，所以为空），并且计入 `closureSha256`；
   - E3 对改动落在这些前缀下的 PR（新增、修改、删除，改名时两端都算）判 NOT_ELIGIBLE（`E3_EXECUTED_PATH_CHANGED`），角色回本地，提示模式也一样；
   - `build-registry.mjs` 从托管作业的 `run:` 步骤读出执行的仓库脚本：每个 Python 调用都必须带 `-I`（包括 `-c`），拒绝 `-m`，拒绝用 Node 运行仓库脚本；执行的脚本必须在 closure 里，它的目录必须被角色前缀或全局前缀（`.github/`）覆盖，否则拒绝构建。
-  - 现在提交的生产登记表建于这些规则之前，会被拒绝，所以转发失败关闭（第 R 段 `RELAY_STAGE_REFUSED`）。它对应的 PR-B 提交也会被新构建器拒绝（Python 没有 `-I`）。PR-B 要改用 `python3 -I -B` 重新冻结，再用这个构建器重建登记表，转发才可能打开。
+  - 现在提交的生产登记表建于这些规则之前，会被拒绝，所以转发失败关闭（第 R 段 `RELAY_STAGE_REFUSED`）。它对应的 PR-B 提交也会被新构建器拒绝（Python 没有 `-I`）。PR-B 要改用 `python3 -I -B` 重新冻结，再用这个构建器重建登记表，转发才可能打开。后来 PR-B 已经重新冻结为 `7d0468e0`，登记表也用这个构建器从它重建了（`eaf685d2`，只有 gitleaks、trivy）。PR-B 前后本地角色认的工作流字节见 §7.7。
 
 **第 R 段在 Source v2 里**：
 
@@ -546,6 +546,38 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
   - 只能新建：检出到受信目录并核对每个钉住的文件，然后写源清单、qualification、角色策略（策略最后写），再用钉住的 node 逐个角色做 `loadQualifiedPolicyV2` 就绪检查，最后写回执；
   - 不读私钥，不签 qualification。签发仍是单独的主机步骤（P2）。打包工具把它放进包里并报告哈希，它不是 unit guard 的钉值。
 - **Source 闭包重算**（`CI/src/resident-v2/source-closure.json`）：加入 `HR/` 的入口、登记表、观察、OIDC、计划行，以及 v2 消费者。`github.mjs`、`effect-journal.mjs`、v2 发布者原本就在闭包里；字节在安装时由 `prepare-record.mjs` 按闭包重新钉值，仓库里不存哈希。
+
+### 7.7 PR-B 前后的受信工作流字节（v0.7）
+
+本地正式角色会在已安装的受信检出里核对三份托管工作流的字节：gitleaks 角色核对 `.github/workflows/gitleaks.yml`，trivy 角色核对 `trivy.yml`，contract-placement 角色核对角色策略里的 `workflowSha256` 和 Source 清单里 `contract-placement.yml` 的钉值。原来每份工作流只钉一个值，就是 PR-B 之前 main 上的字节。这样 PR-B（`7d0468e0`）落地以后，从新 main 安装的 Source 会被它自己的角色拒绝（`TRUSTED_REVIEW_SOURCE_CHANGED`）。另外 `formal-gitleaks-v3-required-history.test.mjs` 直接读工作树，合入 PR-B 后也会失败。
+
+现在每份工作流钉成一个**精确的两值集合**，不用通配：
+
+| 工作流 | PR-B 之前的 main | PR-B `7d0468e0` |
+|---|---|---|
+| `gitleaks.yml` | blob `74043d68`，sha256 `168aebaf…` | blob `1764fbcd`，sha256 `17ec69ed…` |
+| `trivy.yml` | blob `f7f8d075`，sha256 `cea2fd77…` | blob `a7f2653a`，sha256 `7864a061…` |
+| `contract-placement.yml` | blob `54ee2f11`，sha256 `762f1b13…` | blob `3640f089`，sha256 `4898299b…` |
+
+- 规则：
+  - Source 清单在安装时由 `prepare-record.mjs` 按受信检出钉值，每份工作流只能声明一个值；
+  - 这个值必须在集合里，受信检出里的文件也必须正好是这个值，否则 gitleaks 报 `TRUSTED_REVIEW_SOURCE_PIN_REQUIRED` 或 `TRUSTED_REVIEW_SOURCE_CHANGED`/`_DRIFT`，trivy 报 `ORIGINAL_TRIVY_WORKFLOW_SOURCE_REQUIRED` 或 `_DRIFT`；
+  - placement 角色策略里的 `workflowSha256` 必须在集合里，并且等于清单里的钉值（`ORIGINAL_WORKFLOW_REQUIRED`）；
+  - 准备记录和观察记录写入实际用到的那个值，不再写常量。签名结果（bridge v3、v4）和角色策略（v2、v3）只接受集合里的值。助手 `reviewed_gitleaks.py` 和 `.gitleaks.toml` 仍然各钉一个值，PR-B 没有改它们。
+- 本地角色读的是已安装的受信检出，不读被检查的 head，所以 head 上是哪一版工作流都不影响本地角色。转发路径按登记表核对 head：登记表已经从 PR-B 重建，head 上不是 PR-B 的字节时，E4 判 NOT_ELIGIBLE（`E4_CLOSURE_MISMATCH`），角色回本地。
+- 两条路径用同一组值：
+  - Source v2：gitleaks v4、trivy v4 加 `required-trivy-v3`、placement v2、策略 v3、bridge v4；
+  - H5 one-shot 回退：gitleaks v3、trivy v3 加 `required-trivy-v2`、placement v1、策略 v2、bridge v3。现在装着的 H5 从它冻结的安装树运行，用的是旧字节，所以不需要新值；但只要从 PR-B 之后的 main 重新安装 H5，就需要新值。为了这种情况，H5 也接受这组值。
+- 不改的部分：
+  - H4 的 `formal-gitleaks-v2`、`formal-trivy-v2`（bridge v2）不在任何一条路径上，保持单值钉；
+  - `required-gitleaks/prepare.mjs` 现在只是为了 `noLinks` 被导入，也保持单值钉；
+  - `required-trivy-v2` 为 `formal-trivy-v2` 留着单值的 `WORKFLOW_SHA256`；
+  - `src/control-install-delta-v2/*.json` 是历史安装记录，不改；
+  - `scripts/ci` 里的准入登记（A1）已经同时登记了两版 blob；`merge-admission-r9-source.json`、`clued-control-workflow-source(s)` 不钉这三份工作流。
+- 测试从 `CI/test/fixtures/trusted-workflows.json` 读两版的精确字节，并核对 blob 和 sha256，不读工作树：
+  - `trusted-workflow-pins.test.mjs` 6 个：夹具、每个模块的集合、gitleaks 声明钉、trivy 计划、placement 角色档案、gitleaks v4 准备；
+  - `formal-gitleaks-v3-required-history.test.mjs` 新增 1 个：两版都接受；换版、篡改、未声明、重复声明都拒绝，并且拒绝时没有任何输出；
+  - `resident-v2-bridge.test.mjs` 新增 1 个：策略 v3 和 v4 签名结果下的 placement。
 
 ---
 
@@ -703,6 +735,12 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 ## 13. 测试、演练与复审
 
 ### 13.1 已运行（离线，没碰主机）
+
+v0.7 补充（2026-10-21，PR-B 前后的工作流字节，§7.7）：
+
+- Source v2：`node --test test/*.test.mjs worker/image-identity.test.mjs` **153 通过 + 1 跳过**（新增 `trusted-workflow-pins.test.mjs` 6 个，`formal-gitleaks-v3-required-history.test.mjs` 1 个，`resident-v2-bridge.test.mjs` 1 个）；Python **6/6**。
+- 常驻层：`node --test test/*.test.mjs` **107/107**；Python **23/23**；`node drill/offline-drill.mjs` **35/35**。
+- `node --test scripts/ci/clued-work-admission.test.mjs` **98/98**。
 
 v0.7（2026-10-21，转发集成之后）：
 
