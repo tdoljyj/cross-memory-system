@@ -14,6 +14,11 @@ import { BATCH_ID } from './mailbox.mjs';
 import { HEX64, check } from './canonical.mjs';
 
 export const COMPANION_CONFIG_CONTRACT = 'clued.independent-ci.resident-companion-config/1';
+// The Linux side of the Source v2 bridge spool (protected-job-bridge-v4/mailbox.mjs LINUX_ROOT): only its
+// outgoing names are listed, to know when a relay call has something to move.
+export const LINUX_OUTGOING = '/var/lib/clued-independent-ci/formal-spool/outgoing';
+// One callback round, the same value as protected-job-bridge-v4/protocol.mjs CALLBACK_WINDOW_MS (test-pinned).
+export const CALLBACK_WINDOW_MS = 120_000;
 
 export function validateCompanionConfig(c) {
   check(c && c.contract === COMPANION_CONFIG_CONTRACT, 'COMPANION_CONFIG_CONTRACT_INVALID');
@@ -46,6 +51,7 @@ export function argv(cfg) {
     activeState: (template, instance) => wsl('/usr/bin/systemctl', 'show', '--property=ActiveState', '--value', unit(template, instance)),
     linuxTool: (sub, id) => { check(['quiescence'].includes(sub) && BATCH_ID.test(id), 'COMPANION_TOOL_ARGS_INVALID'); return wsl(cfg.linuxTool, sub, '--batch', id); },
     archiveUsage: () => wsl(cfg.linuxTool, 'archive-usage'),
+    linuxOutgoing: () => wsl('/usr/bin/ls', '-1', '-A', '--', LINUX_OUTGOING),
     archiveStatus: instance => { check(/^[0-9a-f]{16}-[0-9a-f]{12}_[a-z0-9][a-z0-9-]{0,39}$/.test(instance), 'COMPANION_TOOL_ARGS_INVALID'); return wsl(cfg.linuxTool, 'archive-status', '--instance', instance); },
     relay: (mode, seq) => {
       check(['SendIssue', 'ReceiveChallenge', 'SendResponse', 'ReceiveResult', 'ReceiveBlocked'].includes(mode) && Number.isSafeInteger(seq) && seq >= 0 && seq <= 32, 'COMPANION_RELAY_ARGS_INVALID');
@@ -121,33 +127,64 @@ export class Companion {
     check(false, 'RELAY_REFUSED_NO_RETRY');
   }
 
+  // The names of the complete Linux outgoing records (their ready markers), from one root `ls` (about
+  // 0.15 s, where a relay call that finds nothing takes about 5 s). Only a hint for when to call the relay:
+  // the relay stays the only transfer and re-validates every record. null = the listing failed.
+  async linuxReady() {
+    const r = await this.run(this.a.linuxOutgoing(), { timeoutMs: 15_000 });
+    if (r.code !== 0) return null;
+    return new Set(String(r.stdout).split(/\r?\n/).map(s => s.trim()).filter(s => s.endsWith('.ready.json')));
+  }
+
+  // After a failed callback round (the issuer was late, or the worker gave up before the response arrived)
+  // the Linux worker ends with its clean 'blocked' record (BRIDGE_CALLBACK_DEADLINE) while the Windows issuer
+  // still waits for a record. Hand exactly that record over, once, so the issuer ends BLOCKED now instead of
+  // UNCERTAIN at its own deadline. Never a result, never a retry of the record that failed.
+  async handOverBlocked(deadline) {
+    const until = Math.min(deadline, this.clock() + CALLBACK_WINDOW_MS + 30_000);
+    while (this.clock() < until) {
+      const names = await this.linuxReady();
+      if (names?.has('blocked.ready.json')) { try { return await this.relay('ReceiveBlocked', 0); } catch { return false; } }
+      await this.sleep(1000);
+    }
+    return false;
+  }
+
   // The bridge pump that run-batch.ps1 performs today (lines 86-89), moved out of the elevated
   // process unchanged in meaning: issue -> worker -> challenge/response rounds -> result.
   async pump(request) {
     const deadline = Date.parse(request.deadline);
     const spool = this.cfg.windowsSpool;
     const ready = name => this.fileExists(`${spool}\\outgoing\\${name}.ready.json`);
+    // Without a listing, every record is "maybe there" and the relay itself is the probe (the v1 way).
+    const listed = (names, name) => names === null || names.has(`${name}.ready.json`);
     try {
       while (!(await ready('issue'))) { check(this.clock() < deadline, 'ACTUAL_ISSUE_NOT_PUBLISHED'); await this.sleep(100); }
       check(await this.relay('SendIssue', 0), 'ISSUE_TRANSFER_UNCONFIRMED');
       const start = await this.run(this.a.startNoBlock('clued-ci-worker', request.jobId), { timeoutMs: 30_000 });
       check(start.code === 0, 'LINUX_WORKER_START_UNCONFIRMED');
-      let sequence = 1;
-      for (;;) {
-        check(this.clock() < deadline, 'FORMAL_BRIDGE_STAGE_DEADLINE');
-        // Challenge first: a callback has a 30 s deadline, the result does not hurry (Source v2 order).
-        if (sequence <= 32 && await this.relay('ReceiveChallenge', sequence)) {
-          const responseDeadline = this.clock() + 30_000;
-          const name = `response-${String(sequence).padStart(2, '0')}`;
-          while (!(await ready(name))) { check(this.clock() < responseDeadline, 'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED'); await this.sleep(100); }
-          check(await this.relay('SendResponse', sequence), 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED');
-          sequence += 1;
-          continue;
+      let sequence = 1, blockedTried = false;
+      try {
+        for (;;) {
+          check(this.clock() < deadline, 'FORMAL_BRIDGE_STAGE_DEADLINE');
+          const names = await this.linuxReady();
+          // Challenge first: a callback has a 30 s deadline, the result does not hurry (Source v2 order).
+          if (sequence <= 32 && listed(names, `challenge-${String(sequence).padStart(2, '0')}`) && await this.relay('ReceiveChallenge', sequence)) {
+            const responseDeadline = this.clock() + CALLBACK_WINDOW_MS;
+            const name = `response-${String(sequence).padStart(2, '0')}`;
+            while (!(await ready(name))) { check(this.clock() < responseDeadline, 'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED'); await this.sleep(100); }
+            check(await this.relay('SendResponse', sequence), 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED');
+            sequence += 1;
+            continue;
+          }
+          if (listed(names, 'result') && await this.relay('ReceiveResult', 0)) break;
+          // The worker's clean refusal before any preparation (bridge v4 'blocked'): the issuer ends cleanly.
+          if (listed(names, 'blocked')) { blockedTried = true; if (await this.relay('ReceiveBlocked', 0)) break; }
+          await this.sleep(names === null ? 100 : 250);
         }
-        if (await this.relay('ReceiveResult', 0)) break;
-        // The worker's clean refusal before any preparation (bridge v4 'blocked'): the issuer ends cleanly.
-        if (await this.relay('ReceiveBlocked', 0)) break;
-        await this.sleep(100);
+      } catch (error) {
+        if (!blockedTried) await this.handOverBlocked(deadline);
+        throw error;
       }
       const until = this.clock() + 30_000;
       for (;;) {

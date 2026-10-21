@@ -27,15 +27,18 @@ try{
  # 1. completed protocol (between-roles-4): every record moves flat; journals and archives stay
  $s=New-Fixture;$roots+=$s
  Pair $s 'outgoing' 'issue' '{"issue":1}';Pair $s 'incoming' 'result' '{"result":1}';Pair $s 'incoming' 'challenge-01' '{"c":1}';Pair $s 'outgoing' 'response-01' '{"r":1}'
+ # bridge v4: the worker's clean 'blocked' record is a protocol record too (PR #889 stage 2, 2026-10-21)
+ Pair $s 'incoming' 'blocked' '{"b":1}'
  [IO.File]::WriteAllText((Join-Path $s 'outgoing\active.lock'),'lock',$utf8);$journal=('b'*64)+'.json';[IO.File]::WriteAllText((Join-Path $s ('outgoing\'+$journal)),'{"journal":1}',$utf8)
  [IO.File]::WriteAllText((Join-Path $s 'outgoing\observations.jsonl'),'{}',$utf8);[void][IO.Directory]::CreateDirectory((Join-Path $s ('archive-'+('c'*64))))
  $v=Run $s 'between-roles-4'
- Yes ($v.verified -eq $true -and $v.moved -eq 9) 'completed-moves-all'
+ Yes ($v.verified -eq $true -and $v.moved -eq 11) 'completed-moves-all'
+ Yes (-not [IO.File]::Exists((Join-Path $s 'incoming\blocked.json')) -and -not [IO.File]::Exists((Join-Path $s 'incoming\blocked.ready.json'))) 'blocked-archived'
  $dir=Join-Path $s $v.directory;Yes ($v.directory -cmatch '^archive-aaaaaaaaaaaa-between-roles-4-[0-9a-f]{12}$') 'archive-name'
  Yes (@(Get-ChildItem -LiteralPath $dir -Directory).Count -eq 0) 'flat-destination'
  Yes ([IO.File]::Exists((Join-Path $s ('outgoing\'+$journal))) -and [IO.File]::Exists((Join-Path $s 'outgoing\observations.jsonl'))) 'journal-kept'
  Yes (@(Get-ChildItem -LiteralPath (Join-Path $s 'incoming')).Count -eq 0) 'incoming-empty'
- $r=Get-Content -LiteralPath (Join-Path $dir 'archive-receipt.json') -Raw|ConvertFrom-Json;Yes ($r.deletesAnything -eq $false -and @($r.moved).Count -eq 9) 'receipt'
+ $r=Get-Content -LiteralPath (Join-Path $dir 'archive-receipt.json') -Raw|ConvertFrom-Json;Yes ($r.deletesAnything -eq $false -and @($r.moved).Count -eq 11) 'receipt'
  # 2. completed scope refuses a half pair, an unbound ready marker and an unknown leaf (nothing moved)
  $s=New-Fixture;$roots+=$s;Pair $s 'outgoing' 'issue' '{"issue":2}' -NoReady
  $v=Run $s 'success-close';Yes ($v.verified -eq $false -and $v.code -ceq 'HALF_PROTOCOL_PAIR_PRESERVED' -and [IO.File]::Exists((Join-Path $s 'outgoing\issue.json'))) 'half-pair-refused'

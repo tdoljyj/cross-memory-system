@@ -25,10 +25,10 @@ const REASON = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const MAX_LEAF = 1024 * 1024;
 const seq = prefix => Array.from({ length: 32 }, (_, i) => `${prefix}-${String(i + 1).padStart(2, '0')}`);
 
-// Windows view: outgoing = issue, response-NN, active.lock; incoming = result, challenge-NN.
-// Linux view is the mirror image (see linux/bin/clued-ci-resident-linux).
+// Windows view: outgoing = issue, response-NN, active.lock; incoming = result, blocked (bridge v4: the
+// Linux worker's clean refusal), challenge-NN. Linux view is the mirror image (see linux/bin/clued-ci-resident-linux).
 export const WINDOWS_PROTOCOL = Object.freeze({
-  incoming: ['result', ...seq('challenge')].flatMap(n => [`${n}.json`, `${n}.ready.json`]),
+  incoming: ['result', 'blocked', ...seq('challenge')].flatMap(n => [`${n}.json`, `${n}.ready.json`]),
   outgoing: ['issue', ...seq('response')].flatMap(n => [`${n}.json`, `${n}.ready.json`]).concat(['active.lock']),
 });
 

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Mailbox } from '../src/mailbox.mjs';
-import { COMPANION_CONFIG_CONTRACT, Companion, argv, validateCompanionConfig } from '../src/companion.mjs';
+import { CALLBACK_WINDOW_MS, COMPANION_CONFIG_CONTRACT, Companion, LINUX_OUTGOING, argv, validateCompanionConfig } from '../src/companion.mjs';
 import { mailboxCompanion } from '../src/service-ports.mjs';
 import { RetentionWatch, measureWindows, REMINDER_RECEIPT } from '../src/retention.mjs';
 import { validatePolicy } from '../src/policy.mjs';
@@ -39,12 +39,18 @@ const transferred = { code: 0, stdout: JSON.stringify({ status: 'PUBLIC_RECORD_T
 const absent = { code: 1, stdout: JSON.stringify({ childError: { reason: 'ENOENT' }, terminalConfirmed: true }) };
 const mode = a => a.includes('-Mode') ? a[a.indexOf('-Mode') + 1] : null;
 
-test('argv: the refs gate and archive usage are fixed commands; ReceiveBlocked is a fixed relay mode', () => {
+test('argv: the refs gate and archive usage are fixed commands; ReceiveBlocked is a fixed relay mode', async () => {
   const a = argv(cfg);
   assert.deepEqual(a.checkRefs(BATCH).slice(-5), ['-File', cfg.bundleScript, '-BatchId', BATCH, '-CheckRefs']);
   assert.throws(() => a.checkRefs('x'), { code: 'COMPANION_BUNDLE_ARGS_INVALID' });
   assert.deepEqual(a.archiveUsage().slice(-2), [cfg.linuxTool, 'archive-usage']);
   assert.equal(a.relay('ReceiveBlocked', 0).includes('ReceiveBlocked'), true);
+  // The companion waits for a response exactly as long as the Source bridge allows one round.
+  const protocol = await fs.readFile(new URL('../../actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v4/protocol.mjs', import.meta.url), 'utf8');
+  assert.equal(Number(/CALLBACK_WINDOW_MS=(\d+);/.exec(protocol)?.[1]), CALLBACK_WINDOW_MS);
+  // The Linux outgoing listing is one fixed root command, names only.
+  assert.deepEqual(a.linuxOutgoing().slice(-5), ['/usr/bin/ls', '-1', '-A', '--', LINUX_OUTGOING]);
+  assert.equal(LINUX_OUTGOING, '/var/lib/clued-independent-ci/formal-spool/outgoing');
 });
 
 test('check-refs answers exactly the bundle script verdict; anything else is unavailable, never unchanged', async t => {
@@ -63,15 +69,99 @@ test('a clean Linux refusal (bridge v4 blocked record) ends the pump without wai
     if (m === 'SendIssue') return transferred;
     if (m === 'ReceiveChallenge' || m === 'ReceiveResult') return absent;
     if (m === 'ReceiveBlocked') return transferred;
-    if (a.join(' ').includes('show --property=ActiveState')) return { code: 0, stdout: 'inactive\n' };
-    if (a.join(' ').includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
-    return null;
+    if (a.includes('/usr/bin/ls')) return { code: 0, stdout: 'active.lock\nblocked.json\nblocked.ready.json\n' };
+    return worker(a);
   });
   const req = await f.mailbox.send('relay-stage', { batchId: BATCH, stage: 2, jobId: JOB }, 45 * 60_000);
   await f.c.step();
   const r = await f.mailbox.poll(req);
   assert.equal(r.ok, true);
-  assert.deepEqual(f.h.log.map(mode).filter(Boolean), ['SendIssue', 'ReceiveChallenge', 'ReceiveResult', 'ReceiveBlocked']);
+  assert.deepEqual(f.h.log.map(mode).filter(Boolean), ['SendIssue', 'ReceiveBlocked']);
+});
+
+// The live PR #889 stage 2 (2026-10-21 08:25Z): the callback round took longer than the worker's 30 s, the
+// worker published its clean 'blocked' record and refused the late response, and the issuer then waited for
+// a record until its own deadline (UNCERTAIN -> HALT at 45 min). Now the pump hands that record over once.
+const refused = { code: 2, stdout: JSON.stringify({ status: 'BLOCKED', failureCode: 'PUBLIC_CHILD_REFUSED_NO_RETRY', terminalConfirmed: true }) };
+function worker(a) {
+  if (a.join(' ').includes('show --property=ActiveState')) return { code: 0, stdout: 'inactive\n' };
+  if (a.join(' ').includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
+  return null;
+}
+test('a refused late response: the worker blocked record is handed to the issuer once, the code is kept', async t => {
+  let blocked = false;
+  const f = await companionWith(t, a => {
+    const m = mode(a);
+    if (m === 'SendIssue' || m === 'ReceiveChallenge') return transferred;
+    if (m === 'SendResponse') { blocked = true; return refused; }
+    if (m === 'ReceiveBlocked') return transferred;
+    if (a.includes('/usr/bin/ls')) return { code: 0, stdout: `challenge-01.ready.json\n${blocked ? 'blocked.ready.json\n' : ''}` };
+    return worker(a);
+  });
+  const req = await f.mailbox.send('relay-stage', { batchId: BATCH, stage: 2, jobId: JOB }, 45 * 60_000);
+  await f.c.step();
+  const r = await f.mailbox.poll(req);
+  assert.deepEqual([r.ok, r.code], [false, 'RELAY_REFUSED_NO_RETRY']);
+  assert.deepEqual(f.h.log.map(mode).filter(Boolean), ['SendIssue', 'ReceiveChallenge', 'SendResponse', 'ReceiveBlocked']);
+  assert.equal(f.h.log.some(a => a.includes('stop') || a.includes('kill')), false);
+});
+
+test('a late issuer (no response in 30 s) also hands over the blocked record; nothing listed means no hand-over', async t => {
+  for (const workerBlocks of [true, false]) {
+    let late = false;
+    const f = await companionWith(t, a => {
+      const m = mode(a);
+      if (m === 'SendIssue' || m === 'ReceiveChallenge') return transferred;
+      if (m === 'ReceiveBlocked') return transferred;
+      if (a.includes('/usr/bin/ls')) return { code: 0, stdout: `challenge-01.ready.json\n${workerBlocks && late ? 'blocked.ready.json\n' : ''}` };
+      return worker(a);
+    }, async p => { if (p.endsWith('issue.ready.json')) return true; late = true; return false; });
+    const req = await f.mailbox.send('relay-stage', { batchId: BATCH, stage: 2, jobId: JOB }, 45 * 60_000);
+    await f.c.step();
+    const r = await f.mailbox.poll(req);
+    assert.deepEqual([r.ok, r.code], [false, 'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED']);
+    assert.deepEqual(f.h.log.map(mode).filter(Boolean), workerBlocks ? ['SendIssue', 'ReceiveChallenge', 'ReceiveBlocked'] : ['SendIssue', 'ReceiveChallenge']);
+  }
+});
+
+test('the listing only says when to call the relay; a failed listing falls back to probing with the relay', async t => {
+  let lists = 0;
+  const quiet = await companionWith(t, a => {
+    const m = mode(a);
+    if (m === 'SendIssue' || m === 'ReceiveResult') return transferred;
+    if (a.includes('/usr/bin/ls')) { lists += 1; return { code: 0, stdout: lists > 3 ? 'result.json\nresult.ready.json\n' : 'active.lock\nresult.json\n' }; }
+    return worker(a);
+  });
+  const q = await quiet.mailbox.send('relay-stage', { batchId: BATCH, stage: 2, jobId: JOB }, 45 * 60_000);
+  await quiet.c.step();
+  assert.equal((await quiet.mailbox.poll(q)).ok, true);
+  assert.deepEqual(quiet.h.log.map(mode).filter(Boolean), ['SendIssue', 'ReceiveResult'], 'a record without its ready marker is not complete');
+  const blind = await companionWith(t, a => {
+    const m = mode(a);
+    if (m === 'SendIssue' || m === 'ReceiveResult') return transferred;
+    if (m === 'ReceiveChallenge') return absent;
+    if (a.includes('/usr/bin/ls')) return { code: 2, stdout: '' };
+    return worker(a);
+  });
+  const b = await blind.mailbox.send('relay-stage', { batchId: BATCH, stage: 2, jobId: JOB }, 45 * 60_000);
+  await blind.c.step();
+  assert.equal((await blind.mailbox.poll(b)).ok, true);
+  assert.deepEqual(blind.h.log.map(mode).filter(Boolean), ['SendIssue', 'ReceiveChallenge', 'ReceiveResult']);
+});
+
+test('a refused ReceiveBlocked is never tried a second time', async t => {
+  const f = await companionWith(t, a => {
+    const m = mode(a);
+    if (m === 'SendIssue') return transferred;
+    if (m === 'ReceiveBlocked') return refused;
+    if (a.includes('/usr/bin/ls')) return { code: 0, stdout: 'blocked.ready.json\n' };
+    return worker(a);
+  });
+  const req = await f.mailbox.send('relay-stage', { batchId: BATCH, stage: 2, jobId: JOB }, 45 * 60_000);
+  await f.c.step();
+  const r = await f.mailbox.poll(req);
+  assert.deepEqual([r.ok, r.code], [false, 'RELAY_REFUSED_NO_RETRY']);
+  assert.deepEqual(f.h.log.map(mode).filter(Boolean), ['SendIssue', 'ReceiveBlocked']);
 });
 
 test('archive-usage carries the root tool numbers through the mailbox to the service port', async t => {

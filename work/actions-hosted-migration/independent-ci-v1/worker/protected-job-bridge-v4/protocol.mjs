@@ -19,6 +19,10 @@ export const ISSUE_CONTRACT='clued.independent-ci.protected-job-issue/2';
 export const CHALLENGE_CONTRACT='clued.independent-ci.protected-job-challenge/2';
 export const RESPONSE_CONTRACT='clued.independent-ci.protected-job-response/2';
 export const BLOCKED_CONTRACT='clued.independent-ci.protected-job-blocked/1';
+// One callback round (challenge -> relay -> Windows admission + refs -> relay -> response). 30 s was too tight
+// on TURING: measured 34 s and about 47 s round trips, the Windows step alone up to about 30 s (PR #889 stage 2,
+// 2026-10-21, Owner decision dd7378d2). Every round still re-runs the admission and the refs check.
+export const CALLBACK_WINDOW_MS=120000;
 const REPO='tdoljyj/cross-memory-system',HASH=/^[a-f0-9]{64}$/,SHA=/^[a-f0-9]{40}$/;
 const UUID=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const ISSUE=['contract','domain','issueId','nonce','job','issuedAt','expiresAt','sourceAcceptanceRef','hostQualificationRef','admission','remoteRefs'];
@@ -99,14 +103,14 @@ export function validateChallenge(issue,challenge,now=Date.now()){
   check(Number.isSafeInteger(challenge.sequence)&&challenge.sequence>=1&&challenge.sequence<=32&&HASH.test(challenge.nonce??'')
     &&['admission','remote-refs'].includes(challenge.action)&&(challenge.action!=='remote-refs'||issue.job.role==='gitleaks'),'BRIDGE_CHALLENGE_ACTION_REQUIRED');
   const at=time(challenge.createdAt),end=time(challenge.deadline);
-  check(at>=time(issue.issuedAt)&&at<=now&&end>now&&end>at&&end-at<=30000&&end<=time(issue.expiresAt),'BRIDGE_CHALLENGE_EXPIRED');
+  check(at>=time(issue.issuedAt)&&at<=now&&end>now&&end>at&&end-at<=CALLBACK_WINDOW_MS&&end<=time(issue.expiresAt),'BRIDGE_CHALLENGE_EXPIRED');
   raw(challenge);return challenge;
 }
 export function validateResponse(issue,challenge,response,now=Date.now()){
   validateChallenge(issue,challenge,now);packetShape(response);check(response.contract===RESPONSE_CONTRACT,'BRIDGE_RESPONSE_REQUIRED');
   check(response.challengeSha256===digest(challenge)&&response.issueSha256===digest(issue)&&response.sequence===challenge.sequence&&response.nonce===challenge.nonce,'BRIDGE_RESPONSE_BINDING_CHANGED');
   const at=time(response.issuedAt),end=time(response.expiresAt);
-  check(at>=time(challenge.createdAt)&&at<=now&&now-at<=30000&&end>now&&end>at&&end-at<=30000&&end<=time(challenge.deadline),'BRIDGE_RESPONSE_EXPIRED');
+  check(at>=time(challenge.createdAt)&&at<=now&&now-at<=CALLBACK_WINDOW_MS&&end>now&&end>at&&end-at<=CALLBACK_WINDOW_MS&&end<=time(challenge.deadline),'BRIDGE_RESPONSE_EXPIRED');
   if(challenge.action==='admission'){
     check(response.remoteRefs===null,'BRIDGE_RESPONSE_REFS_NULL_REQUIRED');admissionValid(issue.job,response.admission,now,issueGeneration(issue));
     check(sameClaimGeneration(response.admission.batchClaimBound,issueGeneration(issue)),'BRIDGE_RESPONSE_CLAIM_GENERATION_CHANGED');
@@ -141,13 +145,13 @@ export function makeChallenge(issue,action,sequence,context={}){
   contextValid(context,['now','nonce','createdAt','deadline']);const now=context.now??Date.now();validateIssue(issue,now);
   const challenge={contract:CHALLENGE_CONTRACT,domain:'production',issueId:issue.issueId,issueSha256:digest(issue),subject:subjectOfV2(issue.job),sequence,
     nonce:context.nonce??randomBytes(32).toString('hex'),action,createdAt:makeTime(context,'createdAt',now),
-    deadline:context.deadline??new Date(Math.min(now+30000,time(issue.expiresAt))).toISOString()};
+    deadline:context.deadline??new Date(Math.min(now+CALLBACK_WINDOW_MS,time(issue.expiresAt))).toISOString()};
   return frozen(validateChallenge(issue,challenge,now));
 }
 export function makeResponse(issue,challenge,facts,refs,context={}){
   contextValid(context,['now','issuedAt','expiresAt']);const now=context.now??Date.now();validateChallenge(issue,challenge,now);
   const response={contract:RESPONSE_CONTRACT,domain:'production',challengeSha256:digest(challenge),issueSha256:digest(issue),sequence:challenge.sequence,nonce:challenge.nonce,
-    issuedAt:makeTime(context,'issuedAt',now),expiresAt:context.expiresAt??new Date(Math.min(now+30000,time(challenge.deadline),facts?time(facts.claimExpiresAt):Infinity)).toISOString(),
+    issuedAt:makeTime(context,'issuedAt',now),expiresAt:context.expiresAt??new Date(Math.min(now+CALLBACK_WINDOW_MS,time(challenge.deadline),facts?time(facts.claimExpiresAt):Infinity)).toISOString(),
     admission:structuredClone(facts),remoteRefs:structuredClone(refs)};
   return frozen(validateResponse(issue,challenge,response,now));
 }

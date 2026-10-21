@@ -47,12 +47,16 @@ export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sle
     const until=Math.min(stageDeadline,context.accepted.validUntil===null?Infinity:Date.parse(context.accepted.validUntil));
     const issue=makeIssue(job,first,refs,{sourceAcceptanceRef:context.sourceAcceptanceRef,hostQualificationRef:context.hostQualificationRef,expiresAt:new Date(until).toISOString(),now:clock()});
     assertWindowsContextLive(context);sideEffects=1;await box.write('issue',encode(issue));
-    let next=1;
+    let next=1,late=false;
     const serveNext=async()=>{
       check(next<=32,'FORMAL_CALLBACK_LIMIT');const seq=next,name='challenge-'+String(seq).padStart(2,'0');
       const challenge=validateChallenge(issue,decode(await box.read(name)),clock());check(challenge.sequence===seq,'FORMAL_CALLBACK_SEQUENCE_CHANGED');
       const current=await admitted(),fresh=challenge.action==='admission'?null:await refsStep(collect);
-      const response=challenge.action==='admission'?makeResponse(issue,challenge,current,null,{now:clock()}):makeResponse(issue,challenge,null,fresh,{now:clock()});
+      // Past the round's deadline the Linux worker no longer accepts a response: it ends with its clean
+      // 'blocked' record (BRIDGE_CALLBACK_DEADLINE). Answer nothing more and wait for that record, instead
+      // of failing UNCERTAIN on an expired challenge (PR #889 stage 2 attempt 2, 2026-10-21).
+      const now=clock();if(now>=Date.parse(challenge.deadline)){late=true;return false;}
+      const response=challenge.action==='admission'?makeResponse(issue,challenge,current,null,{now}):makeResponse(issue,challenge,null,fresh,{now});
       assertWindowsContextLive(context);await box.write('response-'+String(seq).padStart(2,'0'),encode(response));next++;return true;
     };
     while(clock()<Date.parse(issue.expiresAt)&&!signal?.aborted){
@@ -66,7 +70,7 @@ export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sle
       if(blocked){const b=validateBlocked(issue,decode(blocked),clock());
         // The Linux side ended before preparing anything: nothing ran, nothing was published.
         return{status:'BLOCKED',reason:blockedReason(b.reason),sideEffects:0,issueSha256:digest(issue)};}
-      try{await serveNext();}catch(e){if(e.code!=='ENOENT')throw e;}
+      if(!late){try{await serveNext();}catch(e){if(e.code!=='ENOENT')throw e;}}
       await sleep(100);
     }
     fail('BRIDGE_RESULT_DEADLINE');

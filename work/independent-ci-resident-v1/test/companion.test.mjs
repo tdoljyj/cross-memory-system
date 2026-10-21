@@ -52,7 +52,7 @@ test('mailbox requests and responses have exact shapes; no free-form field survi
 // A scripted fake of relay-public.ps1 + systemctl + the Linux tool.
 function fakeHost({ challenges = 1, workerExit = 'inactive', failSendIssue = false } = {}) {
   const log = [];
-  const state = { issueReady: true, challengesLeft: challenges, responseReady: new Set(), resultReady: false };
+  const state = { issueReady: true, challengesLeft: challenges, responseReady: new Set() };
   const run = async (args) => {
     log.push(args);
     const joined = args.join(' ');
@@ -62,9 +62,15 @@ function fakeHost({ challenges = 1, workerExit = 'inactive', failSendIssue = fal
       const ok = { code: 0, stdout: JSON.stringify({ status: 'PUBLIC_RECORD_TRANSFERRED', terminalConfirmed: true }) };
       const none = { code: 1, stdout: JSON.stringify({ childError: { reason: 'ENOENT' }, terminalConfirmed: true }) };
       if (mode === 'SendIssue') return failSendIssue ? { code: 1, stdout: '{}' } : ok;
-      if (mode === 'ReceiveResult') return state.resultReady ? ok : none;
-      if (mode === 'ReceiveChallenge') { if (state.challengesLeft > 0) { state.challengesLeft -= 1; state.responseReady.add(seq); return ok; } state.resultReady = true; return none; }
+      if (mode === 'ReceiveResult') return state.challengesLeft === 0 ? ok : none;
+      if (mode === 'ReceiveChallenge') { if (state.challengesLeft > 0 && seq === challenges - state.challengesLeft + 1) { state.challengesLeft -= 1; state.responseReady.add(seq); return ok; } return none; }
       if (mode === 'SendResponse') return ok;
+    }
+    // The Linux outgoing listing: the next challenge until all are answered, then the result.
+    if (joined.includes('/usr/bin/ls')) {
+      const next = challenges - state.challengesLeft + 1;
+      const ch = `challenge-${String(next).padStart(2, '0')}`;
+      return { code: 0, stdout: state.challengesLeft > 0 ? `active.lock\n${ch}.json\n${ch}.ready.json\n` : 'result.json\nresult.ready.json\n' };
     }
     if (joined.includes('show --property=ActiveState')) return { code: 0, stdout: `${workerExit}\n` };
     if (joined.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
@@ -88,7 +94,8 @@ test('the moved bridge pump follows issue -> worker -> challenge/response -> res
   assert.equal(res.ok, true);
   assert.deepEqual(res.proof, { linuxUnitsInactive: true, containersZero: true });
   const modes = host.log.filter(a => a.includes('-Mode')).map(a => `${a[a.indexOf('-Mode') + 1]}:${a[a.indexOf('-Sequence') + 1]}`);
-  assert.deepEqual(modes.filter(m => !m.startsWith('ReceiveResult')), ['SendIssue:0', 'ReceiveChallenge:1', 'SendResponse:1', 'ReceiveChallenge:2', 'SendResponse:2', 'ReceiveChallenge:3']);
+  // The listing decides when to call the relay: no empty ReceiveChallenge/ReceiveResult calls in between.
+  assert.deepEqual(modes, ['SendIssue:0', 'ReceiveChallenge:1', 'SendResponse:1', 'ReceiveChallenge:2', 'SendResponse:2', 'ReceiveResult:0']);
   assert.equal(host.log.some(a => a.includes('stop') || a.includes('kill')), false);
   const beat = JSON.parse(await fs.readFile(path.join(root, 'responses', 'heartbeat.json'), 'utf8'));
   assert.equal(typeof beat.at, 'number', 'the heartbeat is written where the companion has write access');

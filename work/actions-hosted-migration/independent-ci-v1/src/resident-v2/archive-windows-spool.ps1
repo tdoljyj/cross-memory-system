@@ -6,7 +6,7 @@ NEVER elevated. Rename only: nothing is deleted, overwritten or re-ACLed.
   stdout: {"verified":true|false,"directory":"<archive dir name>"|null,"moved":<n>|null,"code":null|"<CODE>",...}
 
 Rules (same allow-list as independent-ci-resident-v1/src/archive.mjs, the offline reference):
-  - only the bridge protocol records: incoming\result + challenge-NN, outgoing\issue + response-NN (each as
+  - only the bridge protocol records: incoming\result + blocked + challenge-NN, outgoing\issue + response-NN (each as
     .json and .ready.json) and outgoing\active.lock; there is no directory walk, so a junction planted under
     the spool is never followed;
   - every parent (spool, incoming, outgoing) is held by handle without FILE_SHARE_DELETE for the whole run,
@@ -74,7 +74,7 @@ try{
  $incoming=Join-Path $Spool 'incoming';$outgoing=Join-Path $Spool 'outgoing'
  foreach($d in @($Spool,$incoming,$outgoing)){$held.Add([CluedSpoolArchiveV2]::HoldDirectory($d))}
  $seq=1..32|ForEach-Object{$_.ToString('00')}
- $allow=[ordered]@{incoming=@('result')+@($seq|ForEach-Object{'challenge-'+$_});outgoing=@('issue')+@($seq|ForEach-Object{'response-'+$_})}
+ $allow=[ordered]@{incoming=@('result','blocked')+@($seq|ForEach-Object{'challenge-'+$_});outgoing=@('issue')+@($seq|ForEach-Object{'response-'+$_})}
  $leaves=@();$half=@();$unbound=@()
  foreach($folder in @('incoming','outgoing')){
   $dir=Join-Path $Spool $folder

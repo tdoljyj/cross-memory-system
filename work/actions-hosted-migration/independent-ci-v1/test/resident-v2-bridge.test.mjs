@@ -14,7 +14,7 @@ import { validateFormalAdmissionV2 } from '../src/admission-facts-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
 import { runWorkerJob } from '../src/worker-v2.mjs';
 import { REQUIRED_SOURCE_PATHS, createWindowsContext } from '../worker/protected-job-bridge-v4/boundary.mjs';
-import { makeIssue, makeChallenge, makeResponse, makeBlocked, validateResponse, validateBlocked, encode, decode, digest as bridgeDigest } from '../worker/protected-job-bridge-v4/protocol.mjs';
+import { CALLBACK_WINDOW_MS, makeIssue, makeChallenge, makeResponse, makeBlocked, validateResponse, validateBlocked, encode, decode, digest as bridgeDigest } from '../worker/protected-job-bridge-v4/protocol.mjs';
 import { createFixtureMailbox } from '../worker/protected-job-bridge-v4/mailbox.mjs';
 import { runIssuer, blockedReason, refsFailureReason, ISSUER_SUCCESS } from '../worker/protected-job-bridge-v4/windows-issuer.mjs';
 import { resultPayload, observationFacts, verifySignedBridgeResult, RESULT_WRAPPER_CONTRACT_V2 } from '../worker/protected-job-bridge-v4/signed-result.mjs';
@@ -192,6 +192,29 @@ test('issuer: the Linux clean blocked record ends the stage BLOCKED with zero si
   assert.deepEqual([r.status, r.reason, r.sideEffects], ['BLOCKED', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 0]);
   // any other clean Linux refusal is final for the attempt, never a pass-through of untrusted text
   assert.equal(blockedReason('ANYTHING_ELSE'), 'LINUX_PREPARATION_REFUSED');
+});
+
+test('issuer: an answer that would be late writes no response and waits for the worker\'s clean blocked record (no UNCERTAIN)', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+  let n = 0;
+  const f = issuerFixture(t);
+  // The callback admission takes longer than the round allows (PR #889 stage 2 attempt 2: about 30 s against 30 s).
+  const evaluate = async () => { if (++n > 1) await new Promise(r => setTimeout(r, 600)); return facts(f.job, f.c); };
+  const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
+  const linux = (async () => {
+    const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
+    const challenge = makeChallenge(issue, 'admission', 1, { deadline: new Date(Date.now() + 300).toISOString() });
+    await put(root, 'challenge-01', encode(challenge));
+    await new Promise(r => setTimeout(r, 900));
+    await put(root, 'blocked', encode(makeBlocked(issue, 'BRIDGE_CALLBACK_DEADLINE')));
+  })();
+  const r = await runIssuer({ context: f.context, evaluate, collect: async () => null, box, stageDeadline: Date.now() + 20_000 });
+  await linux;
+  assert.deepEqual([r.status, r.reason, r.sideEffects], ['BLOCKED', 'BRIDGE_CALLBACK_DEADLINE', 0]);
+  await assert.rejects(fs.lstat(path.join(root, 'outgoing', 'response-01.json')), { code: 'ENOENT' });
+});
+
+test('protocol: one callback round may take up to 120 s (Owner decision dd7378d2), never longer', () => {
+  assert.equal(CALLBACK_WINDOW_MS, 120000);
 });
 
 test('issuer: a refused first admission issues nothing; a claim that moves after the issue is UNCERTAIN, never clean', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {

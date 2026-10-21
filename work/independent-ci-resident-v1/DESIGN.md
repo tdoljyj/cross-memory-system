@@ -254,7 +254,7 @@ companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ 
   - `state\ledger\<key>\` 下依次是 `00-reserved`、`10-started`、`90-terminal`，每个文件 CreateNew，从不改写；
   - `key` 由 repo、PR、head、base、Source、attempt 算出。
 - **按 head 烧号**：`10-started` 之前先 CreateNew `state\ledger-heads\<headKey>.json`；`headKey` 只由 repo、head、Source、attempt 算出。第 1 段的任何失败（未准入除外），以及所有未知失败，也会烧掉 head。
-- **原有防护全部保留**：作业身份、effect journal（`not_sent`、`uncertain`、`revoked` 都是终态）、bridge 的 issueId、nonce、30 秒窗口、签名结果。effect journal（`<64hex>.json`、`observations.jsonl`）不在归档白名单里，所以跨批次仍在原处，“只发布一次”跨批次成立（演练第 19 步）。
+- **原有防护全部保留**：作业身份、effect journal（`not_sent`、`uncertain`、`revoked` 都是终态）、bridge 的 issueId、nonce、回调窗口（Source v2 起 120 秒，见 S7）、签名结果。effect journal（`<64hex>.json`、`observations.jsonl`）不在归档白名单里，所以跨批次仍在原处，“只发布一次”跨批次成立（演练第 19 步）。
 - **attempt 默认是 1**。attempt 2 只有一种来源：§7.2 的自动 attempt 2（Owner Decision `1b5d3687`），每个 head 最多一次，没有 attempt 3。attempt 是作业身份、批次键和 head 键的一部分，所以 attempt 2 的作业 id 与 attempt 1 的完全不同；attempt 1 已结算的作业 id 永远不会再跑。
 
 ### 6.2 锁
@@ -384,7 +384,7 @@ Source v2（S11）之后，阶段的失败码来自已安装 Source 的稳定目
 | S4 | 确定性导出：输入只有已安装的免 claim 安装记录和触发主体，输出 8 个密封阶段包（计划、作业、阶段行、工作清单），同输入同字节；`source-closure.json` 是算出来的 Source 闭包（有测试重算） | `src/resident-v2/derive-batch.mjs`、`prepare-record.mjs`、`record.mjs`、`stage-package.mjs`、`source-closure.mjs` |
 | S5 | 安装记录不带 claim、PR 或作业；`validUntil` 为空表示直到 Source 变更或卸载；没有 24 小时或 claim 截止上限；Linux qualification v2 的 `expiresAt` 也可以为空（绑定到 Source） | `prepare-record.mjs`、`record.mjs`、`worker/qualification-v2.mjs` |
 | S6 | 作业契约 `job/2`：id = sha256(["clued.independent-ci.job/2", repo, pr, head, base, sourceManifestSha256, role, attempt])，没有 claim；完整准入 `full-admission/2` 从 PR trailer 实时解析 claim；第 1 段以“只能新建”的方式记下批次 claim 代次（claimId、fence、epoch），之后每个阶段、每次 bridge 回调都必须是同一代次（续租只改 `expires_at`，算同一代次）；Linux 角色策略 v3 和 qualification v2 没有 currentClaim | `src/job-v2.mjs`、`full-admission-v2.mjs`、`admission-facts-v2.mjs`、`batch-claim-v2.mjs`、`worker/formal-fixed-role-policy-v3/`、`formal-gitleaks-v4/`、`formal-trivy-v4/`、`formal-contract-placement-v2/`、`worker-v2.mjs` |
-| S7 | bridge v4：协议 `/2`、签名结果 `/2`、新增干净的 `blocked` 记录（Linux 在准备之前干净结束时发出，Windows 发行方据此干净结束，不再等到截止）；发行方是一个 v2 阶段入口；relay 从已安装的 `resident\source\<sha>` 副本运行；companion 先收 challenge、再收 result、再收 blocked | `worker/protected-job-bridge-v4/*`、`R/src/companion.mjs` |
+| S7 | bridge v4：协议 `/2`、签名结果 `/2`、新增干净的 `blocked` 记录（Linux 在准备之前干净结束时发出，Windows 发行方据此干净结束，不再等到截止）；一轮回调的窗口 120 秒（`protocol.mjs` `CALLBACK_WINDOW_MS`；30 秒在 TURING 上实测不够：PR #889 第 2 阶段一轮 34 秒、约 47 秒，Owner 决定 dd7378d2）；发行方的回复若已过本轮截止就不再回复、等 Linux 的 `blocked` 干净结束，不再 UNCERTAIN；Windows 归档白名单含 `incoming\blocked`；发行方是一个 v2 阶段入口；relay 从已安装的 `resident\source\<sha>` 副本运行；companion 先用一次 root `ls`（约 0.15 秒）看 Linux 哪条记录就绪，再调 relay（每次约 5 秒），先收 challenge、再收 result、再收 blocked；一轮回调失败后把 Linux 的 `blocked` 交给发行方一次 | `worker/protected-job-bridge-v4/*`、`R/src/companion.mjs` |
 | S8 | 控制助手每 30 秒只读核一次合并队列，窗口 = min(合并位 45 分钟, claim, validUntil, 阶段上限减 7 分钟)，满足就发一对检查，否则 `RESIDENT_QUEUE_HEAD_NOT_REACHED`，什么都不发 | `src/independent-control-checks-v2/` |
 | S9 | `prepare-workspaces.py --batch <id>` 读公开描述符 `/2`，按内容重算作业 id，核对已安装 Source 和角色策略 v3；`build-bundle.ps1 -BatchId` 打 bundle，`-CheckRefs` 是第 2 段前的“bundle 之后没有推送”闸门 | `src/resident-v2/prepare-workspaces.py`、`build-bundle.ps1`、`R/src/engine-windows.mjs` |
 | S10 | 一个 Node：worker unit、relay、自检和角色策略都用 `/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node`，策略 v3 要求 `nodeExecutable` 等于它 | `worker/qualification-v2.mjs`、`protected-job-bridge-v4/relay-public.ps1`、`R/linux/systemd/clued-ci-worker@.service` |
@@ -842,7 +842,7 @@ v0.5 时的记录：
 - **R5 常驻 SID 被攻破**：能让代理启动已审的助手跑任意作业输入，助手里的 node 代码照样做实时准入；还能拒绝服务。拿不到 SYSTEM，也不能以 clued-control 身份运行任意代码。交换代理本身是 SYSTEM 级的新攻击面：它的输入只有 5 个字段，助手路径由阶段号推出，按阶段名精确比对白名单，只返回固定错误码。
 - **R6 trivy 缓存的 `prepare.lock`**，在不确定结局下会留下（`cache.mjs:156`），复审时确认 Linux 归档是否要把它纳入。
 - **R7 ACL 掩码与 SDDL 规范形式**：P2 时确认。
-- **R8 时钟**：bridge 的 30 秒窗口跨 Windows 和 WSL 两个时钟。常驻后 VM 不再冷启动，风险变小，但没有消除。
+- **R8 时钟**：bridge 的回调窗口（120 秒）跨 Windows 和 WSL 两个时钟。常驻后 VM 不再冷启动，风险变小，但没有消除。
 - **R9 先进先出按文件名排序**：触发记录的文件名由生产者定，可以抢到队头；后果被评估上限约束。冷却中的 head 不会挡住后面的 PR。
 - **R10 提权 .NET 进程继承 Owner 的环境变量**（例如 `COR_ENABLE_PROFILING`）：今天每批的 UAC 启动就有这个问题，常驻后只剩安装、升级、卸载、复位、恢复这几次提权。本设计对自己启动的子进程清空了环境，对 PowerShell 本身清理了模块路径；`powershell.exe` 自己的进程环境挡不住，这是现有 Windows 行为。
 - **R11 归档后的触发副本仍归 Owner 所有**：Owner 仍可改动或删除它们，回执里记的字节摘要能发现改动，但挡不住。另外，“中等完整性的进程能否给只读文件建硬链接”要在 P2 确认；能建的话，账本条目会被标为 UNREADABLE 并隔离（M6e 已覆盖）。

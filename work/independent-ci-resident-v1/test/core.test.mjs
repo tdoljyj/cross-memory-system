@@ -136,20 +136,23 @@ test('protocol archive moves only allow-listed records, keeps bytes and effect j
   await fs.mkdir(path.join(spool, 'failed-old-history-source-3eb5ae18959b'), { recursive: true });
   await fs.writeFile(path.join(spool, 'incoming', 'result.json'), '{"r":1}');
   await fs.writeFile(path.join(spool, 'incoming', 'result.ready.json'), '{"ready":1}');
+  // bridge v4: the Linux worker's clean 'blocked' record is a protocol record too (left behind on 2026-10-21)
+  await fs.writeFile(path.join(spool, 'incoming', 'blocked.json'), '{"b":1}');
+  await fs.writeFile(path.join(spool, 'incoming', 'blocked.ready.json'), '{"ready":1}');
   await fs.writeFile(path.join(spool, 'outgoing', 'active.lock'), '{"pid":1}');
   const journal = path.join(spool, 'outgoing', `${'9'.repeat(64)}.json`);
   await fs.writeFile(journal, '{"state":"settled"}');
   await fs.writeFile(path.join(spool, 'outgoing', 'observations.jsonl'), '{}\n');
   await fs.writeFile(path.join(spool, 'failed-old-history-source-3eb5ae18959b', 'kept.json'), 'old evidence');
   const leaves = await protocolLeaves(spool);
-  assert.deepEqual(leaves.map(l => l.path), ['incoming/result.json', 'incoming/result.ready.json', 'outgoing/active.lock']);
+  assert.deepEqual(leaves.map(l => l.path), ['incoming/result.json', 'incoming/result.ready.json', 'incoming/blocked.json', 'incoming/blocked.ready.json', 'outgoing/active.lock']);
   const key = 'f'.repeat(64);
   assert.throws(() => planArchive({ spoolRoot: spool, batchKey: key, reason: 'x', leaves, quiescence: { proven: false } }), { code: 'ARCHIVE_REQUIRES_QUIESCENCE_PROOF' });
   assert.throws(() => planArchive({ spoolRoot: spool, batchKey: key, reason: '../x', leaves, quiescence: { proven: true, basis: 'b' } }), { code: 'ARCHIVE_REASON_INVALID' });
   const plan = planArchive({ spoolRoot: spool, batchKey: key, reason: 'formal-bridge-stage-deadline', leaves, quiescence: { proven: true, basis: 'units inactive, cgroups unpopulated, containers exited' } });
   assert.ok(plan.directory.startsWith('failed-'));
   const result = await applyArchive(plan);
-  assert.deepEqual([result.moved, result.deleted], [3, 0]);
+  assert.deepEqual([result.moved, result.deleted], [5, 0]);
   assert.deepEqual(await protocolLeaves(spool), []);
   assert.equal(await fs.readFile(path.join(spool, plan.directory, 'incoming', 'result.json'), 'utf8'), '{"r":1}');
   assert.equal(await fs.readFile(journal, 'utf8'), '{"state":"settled"}', 'effect journals stay for exactly-once across batches');
