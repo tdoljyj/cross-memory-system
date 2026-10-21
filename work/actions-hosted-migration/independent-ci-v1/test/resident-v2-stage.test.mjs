@@ -8,7 +8,7 @@ import { hash } from '../src/resident-v2/prepare-record.mjs';
 import { deriveBatch, residentBatchKey, writeBatch } from '../src/resident-v2/derive-batch.mjs';
 import { invokeStage, readSpoolResult, RESULT_WRAPPER_CONTRACT_V2 } from '../src/resident-v2/invoke-stage.mjs';
 import { loadStageInputs, parseEntryArgs, writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
-import { buildStageFact, outcomeFailureCode, notAdmittedCode, ALL_STAGE_CODES, TRANSIENT_CODES, NATIVE_RECEIPT_CONTRACT_V2 } from '../src/resident-v2/stage-fact.mjs';
+import { buildStageFact, outcomeFailureCode, validateOutcome, notAdmittedCode, ALL_STAGE_CODES, TRANSIENT_CODES, NATIVE_RECEIPT_CONTRACT_V2 } from '../src/resident-v2/stage-fact.mjs';
 import { BROKER_RESPONSE_CONTRACT, validateBrokerRequest } from '../src/resident-v2/broker-protocol.mjs';
 import { OUTCOME_CONTRACT, ENTRY_V2 } from '../src/resident-v2/layout.mjs';
 import { sourceRootOfModule } from '../src/resident-v2/held-record.mjs';
@@ -113,6 +113,11 @@ test('invoke-stage: a refusal before the stage inputs (no stage, no role, nothin
   const pre = { status: 'BLOCKED', reason: 'ENTRY_OUTSIDE_HELD_SOURCE_REFUSED', sideEffects: 0, stage: null, entryRole: null };
   assert.equal((await run(f, 1, fakeBroker(f, { receipt: refusedReceipt, outcome: pre }))).failure_code, 'STAGE_CHILD_REFUSED');
   assert.equal(outcomeFailureCode({ ...pre, mayHavePublished: false }, 3), 'PUBLICATION_BLOCKED');
+  // the exact bytes runEntry's writeOutcome writes when the plan never loaded are that accepted shape
+  const nonce = hex(16), receiptsRoot = await tempDir(t, 'clued-v2-outcome-');
+  await writeOutcome({ receiptsRoot, nonce, plan: null, jobIds: [], result: { status: 'BLOCKED', reason: 'ENTRY_OUTSIDE_HELD_SOURCE_REFUSED', sideEffects: 0 } });
+  const written = JSON.parse(await fs.readFile(path.join(receiptsRoot, `outcome-${nonce}.json`), 'utf8'));
+  assert.ok(validateOutcome(written, { nonce, plan: { stage: 3, entryRole: 'check-publisher' } }), JSON.stringify(written));
   // only in exactly that shape: side effects, a job id, a status other than BLOCKED or a half-filled stage stay UNKNOWN
   for (const bad of [{ ...pre, sideEffects: 1 }, { ...pre, jobIds: ['a'.repeat(64)] }, { ...pre, status: 'UNCERTAIN' }, { ...pre, stage: 1 }])
     assert.equal((await run(f, 1, fakeBroker(f, { receipt: refusedReceipt, outcome: bad }))).failure_code, 'STAGE_OUTCOME_MISSING', JSON.stringify(bad));
