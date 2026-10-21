@@ -878,5 +878,8 @@ test("the runner budget policy passes, with this workflow hosted-only allowliste
   assert.deepEqual(report.violations, []);
   assert.equal(report.status, "PASS");
   const record = report.workflows.find((w) => w.workflow === "clued-ci-usage-report.yml");
-  assert.deepEqual([record.hosted, record.self_hosted, record.hosted_only_allowlisted, record.pr_triggered], [true, false, true, false]);
+  // Owner Decision 9eb313f8: the hosted-only note is documentation; the job runs as exact legacy hosted debt.
+  assert.deepEqual([record.hosted, record.self_hosted, record.hosted_only_allowlisted, record.pr_triggered], [true, false, false, false]);
+  assert.equal(typeof record.historical_hosted_only_note, "string");
+  assert.ok(record.jobs.every((job) => job.legacy_migration_debt && !job.owner_decision_hosted));
 });

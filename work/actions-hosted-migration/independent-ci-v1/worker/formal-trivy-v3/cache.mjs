@@ -61,8 +61,13 @@ export async function createActualStorage(root) {
   }
   const storage = {
     fixture: false, empty,
-    async lock() { check(!lock, 'CACHE_PREPARATION_ALREADY_OPEN'); lock = await fs.open(path.join(root, 'prepare.lock'), 'wx', 0o600);
-      await lock.writeFile(canonical({ pid: process.pid, nonce: randomBytes(32).toString('hex') })); await lock.sync(); },
+    async lock() { check(!lock, 'CACHE_PREPARATION_ALREADY_OPEN'); const file = path.join(root, 'prepare.lock'), handle = await fs.open(file, 'wx', 0o600);
+      // A lock whose bytes did not reach the disk is removed again: a failed write must not leave a stale
+      // prepare.lock that refuses every later preparation (prepare() never set `acquired` for it). Should the
+      // unlink fail too, the lock stays and later preparations refuse cleanly with EEXIST (fail closed).
+      try { await handle.writeFile(canonical({ pid: process.pid, nonce: randomBytes(32).toString('hex') })); await handle.sync(); }
+      catch (error) { await handle.close().catch(() => {}); await fs.unlink(file).catch(() => {}); throw error; }
+      lock = handle; },
     async unlock(retain) { if (lock) { await lock.close(); lock = null; if (!retain) await fs.unlink(path.join(root, 'prepare.lock')); } },
     async current(kind) {
       const pointer = await readPointer(kind);
