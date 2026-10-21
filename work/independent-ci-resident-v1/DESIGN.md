@@ -1,6 +1,6 @@
-# TURING 独立 CI 常驻执行机制 · 设计与草稿 v0.6（Source v2 已离线实现，未安装）
+# TURING 独立 CI 常驻执行机制 · 设计与草稿 v0.7（Source v2 与托管转发已离线实现，未安装）
 
-- 日期：2026-10-20（UTC）
+- 日期：2026-10-21（UTC）
 - KooYomi：项目 0597aa60；本工作 Task `79c32815`；Owner 决定 Decision `0d84ddbb`（四项选择）；父 Task `253d0382`。
 - 修订历史：
   - v0.2：按第一次独立复审（FAIL：1 个 BLOCKER、7 个 MAJOR）逐项修正；
@@ -8,6 +8,7 @@
   - v0.4：按第三轮复核（FAIL：残留全部关闭，但修正本身引入 2 个 MAJOR，另有 1 个旧的代理 MAJOR）再修；
   - v0.5：按第四轮复核（FAIL：代理 MAJOR 只修了一半，隔离与 HALT 不是崩溃一致的）再修；
   - v0.6（2026-10-21）：P1 完成，Source v2（S1–S14）在分支 `claude/pr-a-s-core-20261021` 上离线实现并测试（§7.1）；按 Owner Decision `1b5d3687` 加入自动 attempt 2（§7.2）和 50 GB 归档提醒（§7.3），D2–D7 随之关闭（§15）。主机上还什么都没装，主机验证见 §13.2 P2。
+  - v0.7（2026-10-21）：PR-A 集成，分支 `claude/pr-a-integration-20261021`。托管转发接进常驻执行器（免费分钟设计 S19–S22，§7.5）：第 1 段之后有上限地等托管提示，`20-plan-intent`，第 R 段（第 9 段），`25-plan`，只为 LOCAL_REQUIRED 的角色跑本地段。同时补上 v0.6 §7.4 列出的缺口：v2 发布者按 diff 并入转发改动、合并闸门的 v2 控制检查消费者、Linux 侧 Source v2 安装脚本、Source 闭包重算（§7.6）。转发默认关闭（`relay.enabled=false`），主机上仍然什么都没装。
 
   第五轮复核 **PASS**（没有剩余的 BLOCKER 或 MAJOR）。五轮对照见 §13.3–§13.7。
 - 依据（只读）：
@@ -38,10 +39,11 @@
    - 干净失败：自动归档后继续；
    - 未知失败：HALT，Owner 用 UAC 发一个复位请求，由服务自己完成归档和解锁；
    - Source 变更：Owner 接受后，1 次 UAC 加 1 次 root。
-5. **草稿状态**（v0.6，详见 §13.1）：
-   - 常驻层：Node 单元测试 **67/67**、Python **11/11**、离线演练 **23/23**；
-   - Source v2（`CI/`）：Node **84 通过 + 1 跳过**（原有 44+1 全部保留）、Python **6/6**、PowerShell 离线用例 **34 个**（归档 13、ACL 迁移 11、bundle 10）、C# 纯逻辑 **78 条断言**（通用助手和交换代理用系统 csc 编译到 scratch）；
-   - 主机演练（§13.2 P2）还没开始，所以可安装性、ACL 掩码、unit 加固和真实的 SCM/WSL/Docker 路径都还没在真机上证明。
+5. **草稿状态**（v0.7，详见 §13.1）：
+   - 常驻层：Node 单元测试 **96/96**、Python **15/15**、离线演练 **33/33**（新增一个月的免费分钟情形）；
+   - Source v2（`CI/`）：Node **130 通过 + 1 跳过**、Python **6/6**、PowerShell 离线用例 **35 个**（归档 13、ACL 迁移 12、bundle 10）、C# 纯逻辑 **88 条断言**；`scripts/ci/clued-work-admission.test.mjs` **93/93**（新增 2 个 v2 消费者用例）；
+   - 主机演练（§13.2 P2）还没开始，所以可安装性、ACL 掩码、unit 加固、真实的 SCM/WSL/Docker 路径，以及托管运行的 OIDC 声明值，都还没在真机上证明。
+6. **托管转发（v0.7，§7.5）**：有免费分钟时，gitleaks 和 trivy 由第 R 段核验 GitHub 托管运行后以 App 5368905 发布同名检查，本地只跑 contract-placement 和三项 kooyumi 检查；分钟用完时自动回到全本地。转发随策略默认关闭，只有 Owner 改策略（一次 UAC）才打开。
 
 ---
 
@@ -220,13 +222,19 @@ companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ 
   第 1 段 Native 准入（经交换代理，以 clued-control 身份运行）
       未准入 → 收尾 → 释放成 NOT_EXECUTED
       其他失败 → 烧掉 head
-  10-started + head 烧号
-  companion 启动 clued-ci-wsprep@<batchId>（root 预检、fsck --strict、建工作区）
-  第 2 到 8 段（每段：node invoke-stage.mjs → 交换代理 → 通用助手 → 一个阶段事实，S1/S11/S12）：
-      第 2 段之前，companion 运行 build-bundle.ps1 -CheckRefs：bundle 之后有推送 → 干净的暂时性失败（§7.2）
-      第 4、6 段之前，两端先做角色间归档（只移协议记录，和今天 run-batch.ps1:81 的语义一致）
+  10-started + head 烧号（只做转发的批次同样烧号）
+  托管等待（v0.7，§7.5）：读 companion 最新的托管提示，按 hosted-wait.decide 有上限地等；转发关闭时不等
+  20-plan-intent（CreateNew：转发候选、本地角色及其原因）
+  有候选时跑第 R 段（第 9 段，通用助手以 clued-control 运行转发入口）→ 每个候选 RELAYED 或 LOCAL_REQUIRED(原因)
+      发布不确定或计划行不干净 → UNKNOWN → 烧号、HALT，这个批次此后不再为任何角色跑本地段
+  25-plan（CreateNew：已转发的角色、要本地执行的角色）
+  有本地 Linux 角色时，companion 启动 clued-ci-wsprep@<batchId>（root 预检、fsck --strict、建工作区）
+  只为 LOCAL_REQUIRED 的角色跑执行段和发布段（每段：node invoke-stage.mjs → 交换代理 → 通用助手 → 一个阶段事实，S1/S11/S12）：
+      第一个本地 Linux 段之前，companion 运行 build-bundle.ps1 -CheckRefs：bundle 之后有推送 → 干净的暂时性失败（§7.2）
+      后面的本地 Linux 段（只可能是第 4、6 段）之前，两端先做角色间归档（只移协议记录，和今天 run-batch.ps1:81 的语义一致）
       Linux 段：companion 泵 issue → worker unit → challenge/response → result（逻辑同 run-batch.ps1:86-89）
-      第 8 段：控制助手自己轮询 Native 合并队列，直到 claim 成为队首或超出窗口（§10.2）
+  本地角色跑完后再读一次提示：托管运行这时才成功的，只记 relay-late-ignored
+  第 8 段：控制助手自己轮询 Native 合并队列，直到 claim 成为队首或超出窗口（§10.2）
   收尾：两端只改名归档最后一个角色的协议记录 → 90-terminal COMPLETED → 回执
   干净失败且满足 §7.2（暂时性码、第 1 或 2 段、attempt 1）→ 记下 attempt 2 意图；延迟到期后它先于新触发运行
   批次之间：最多每小时量一次归档大小，超过 50 GB 写提醒回执（§7.3）
@@ -284,6 +292,7 @@ Source v2（S11）之后，阶段的失败码来自已安装 Source 的稳定目
 | 干净、暂时性 | `NATIVE_ADMISSION_UNAVAILABLE`、`GITHUB_TRANSIENT_UNAVAILABLE`、`BRIDGE_TRANSPORT_TIMEOUT`、`REMOTE_REFS_CHANGED_SINCE_BUNDLE`、`ARCHIVE_PRECONDITION_NOT_MET` |
 | 干净、终局 | `STAGE_PACKAGE_REFUSED`、`STAGE_INPUT_RESULT_MISSING`、`BROKER_RUNNER_NOT_ORIGINAL_STOPPED`、`BROKER_REQUEST_EXPIRED`、`BROKER_REQUEST_REFUSED`、`STAGE_HELPER_PREFLIGHT_REFUSED`、`STAGE_CHILD_REFUSED`、`STAGE_CHILD_TIMEOUT`、`RESIDENT_QUEUE_HEAD_NOT_REACHED`、`BATCH_CLAIM_CHANGED`、`NATIVE_POLICY_UNSUPPORTED`、`PUBLICATION_BLOCKED`、`PUBLICATION_REVOKED`、`EVIDENCE_REFUSED`、`WORKSPACE_PREPARATION_REFUSED` |
 | 永远未知 | `BROKER_RESPONSE_UNCONFIRMED`、`STAGE_HELPER_NOT_STOPPED_IN_TIME`、`STAGE_ORIGINAL_NOT_RESTORED`、`BROKER_CONFIGURATION_CONFLICT`、`NATIVE_RECEIPT_UNCONFIRMED`、`STAGE_CHILD_TREE_UNCONFIRMED`、`STAGE_OUTCOME_MISSING`、`PUBLICATION_UNCERTAIN`、`RECONCILIATION_REQUIRED`、`EVIDENCE_IDENTITY_CONFLICT`、`ADMISSION_CONFIGURATION_REFUSED`、`BROKER_UNCONFIRMED`、`BROKER_BUSY` |
+| 第 R 段（v0.7） | 干净、终局：`RELAY_STAGE_REFUSED`（转发入口在观察和写入之前拒绝，或第 R 段的包导出被拒）；永远未知：`RELAY_PUBLICATION_UNCERTAIN`、`ROLE_ALREADY_PUBLISHED_ON_HEAD`、`RELAY_PLAN_UNCONFIRMED`。崩溃恢复时，有 `20-plan-intent` 而没有 `25-plan` 的条目以 `RELAY_STAGE_INTERRUPTED` 关闭并 HALT |
 
 `BROKER_BUSY` 是未知：另一个控制工具持有变更互斥量，这是 Owner 必须看到的意外并发。结局记录缺失、或者回执与结局对不上，一律 `STAGE_OUTCOME_MISSING`。
 
@@ -410,12 +419,108 @@ v0.6 只实现 S1–S14。中继集成要调用的接口（都已存在、有测
 - **classify / policy / receipts**：新码进 `stage-fact.mjs` 再镜像到 `classify.mjs`；策略 `/2` 的字段是精确集合（`exactKeys`），加字段要同时改 `policy.mjs`、`config/policy.example.json` 和 `test/helpers.mjs`；回执类型是自由的 `receipts.append(type, body)`；
 - **代理白名单**：v0.6 只有一个助手，名字固定 `controller-formal-generic-v2.exe`，哈希在 `broker.json`；再加助手要扩展 `broker.json` 的 `helper` 字段和 `SwapBroker.LoadConfig` 的精确检查。
 
-没有做的（不在 S1–S14 内，或需要中继步骤一起定）：
+v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定），v0.7 的处理见 §7.6：
 
-- `scripts/ci/clued-work-admission.mjs` 的合并闸门仍通过 `independent-control-checks-v1/consumer.mjs` 读 **v1** 控制检查；v2 控制对（外部 id `independent-ci:control:<角色>:v2:…`，journal 在 `state\v2\effects-control`）需要一个 v2 消费者并接进评估器；
-- `staged-check-publisher-v2.mjs` 是 v1 文件的副本（v1 归另一项工作），合并时要按 diff 对齐；
-- A2 的 guarded claim（`lease_key_required`）仍然拒绝，没有放开；
-- Linux 侧 Source v2 的安装（`/opt/clued-independent-ci/source-v2`、`roles-v3/*.json`、`formal-source-manifest-v2.json`、qualification v2 的签发）是主机安装步骤，`install-resident-linux.sh` 还没有这部分。
+- `scripts/ci/clued-work-admission.mjs` 的合并闸门仍通过 `independent-control-checks-v1/consumer.mjs` 读 **v1** 控制检查；v2 控制对需要一个 v2 消费者并接进评估器。**v0.7 已做**；
+- `staged-check-publisher-v2.mjs` 是 v1 文件的副本，合并时要按 diff 对齐。**v0.7 已做**；
+- A2 的 guarded claim（`lease_key_required`）仍然拒绝，没有放开。v0.7 仍然如此；
+- Linux 侧 Source v2 的安装（`/opt/clued-independent-ci/source-v2`、`roles-v3/*.json`、`formal-source-manifest-v2.json`）。**v0.7 已写成脚本**；qualification v2 的签发仍是单独的主机步骤。
+
+### 7.5 托管转发接进常驻执行器（S19–S22，v0.7）
+
+依据：免费分钟设计 §4.1–§4.3 的 S19–S22、§7（切换逻辑、`20-plan-intent`/`25-plan`、幂等、合并位时序）、§11（测试）。转发核心（S15–S18：登记表、OIDC 验签、观察、第 R 段、`publishHosted`、K(head, role)）已在 PR-A 里，本节只讲接线。`R/` 指 `work/independent-ci-resident-v1/`，`HR/` 指 `CI/src/hosted-relay-v1/`。
+
+**一批的顺序**（`R/src/executor.mjs#drive`）：
+
+1. 预留 → 导出 → bundle → 第 1 段 → `10-started`（烧号）。和 v0.6 一样，第 1 段之前的失败仍按 v0.6 处理。
+2. **托管等待**（`R/src/hosted-wait.mjs#decide`）。按本任务的定序，等待放在第 1 段之后（免费分钟设计 §4.2 原本放在预留之前）：
+   - t0 是读到并预留这个触发的时刻；
+   - 每次最多睡 `relay.wait.pollMs`，然后重读 companion 的提示；
+   - 上限照 §7.2：没有任何运行等 10 分钟，排队等 15 分钟，运行中等 job 超时加 10 分钟，总上限 60 分钟；
+   - 任何角色的提示是 BILLING_REFUSED 就立刻开始，全部本地；
+   - `relay.enabled=false` 时不等、不跑第 R 段。
+3. **`20-plan-intent`**（CreateNew）：转发候选、本地角色和每个本地角色的调度原因，还有等了多久、提示的摘要、提示是否被拒。
+4. **第 R 段**（第 9 段，只有候选非空时才跑）：
+   - 执行器先请引擎为这些候选导出第 R 段的包（`derive-batch.mjs --relay-roles`，CreateNew 写进同一个批次目录）；
+   - 然后照常经交换代理和通用助手运行 `HR/relay-entry-v2.mjs`；
+   - 阶段事实带回每个角色一行（`HR/relay-plan.mjs`），执行器逐行核对（`R/src/classify.mjs#relayPlanFromRows`）：行必须正好对应候选，且只能是干净的 RELAYED 或 LOCAL_REQUIRED（原因在白名单里）。
+5. **`25-plan`**（CreateNew）：已转发的角色（check run id、external id、证明摘要），以及要本地执行的角色和原因。来源有两种：第 R 段给的 `RELAY_NOT_ATTESTED_*` 或 `RELAY_ROLE_NOT_RELAYABLE`，执行器自己的调度原因（`RELAY_DISABLED`、`RELAY_HINT_BILLING_REFUSED`、`RELAY_HINT_NOT_ELIGIBLE`、`RELAY_HINT_HOSTED_NOT_SUCCESS`、`RELAY_WAIT_TIMED_OUT`、`RELAY_ROLE_NOT_RELAYABLE`）。
+6. **只为 `25-plan` 里的本地角色**按固定角色顺序跑执行段和发布段：
+   - 有本地 Linux 角色时才做 ws-prep；
+   - 第一个本地 Linux 段之前做 refs 闸门；
+   - 之后的本地 Linux 段之前做角色间归档，原因只会是 `between-roles-4` 或 `between-roles-6`。
+7. 本地角色跑完后再读一次提示：本地已经开始之后托管才成功的角色，只记 `relay-late-ignored`，绝不转发。
+8. 第 8 段 → 收尾。没有本地 Linux 角色时，收尾不碰 WSL。
+
+**不变量**：
+
+- 只做转发的批次也在 `10-started` 烧号。
+- 转发的角色从不获得本地运行：它的阶段包虽然在导出时已经确定性地生成（作业 id 是内容 id），但它的执行段和发布段从不被调用，作业 id 也从不交给 bridge 或用于发布。
+- `RELAY_PUBLICATION_UNCERTAIN`、`ROLE_ALREADY_PUBLISHED_ON_HEAD`、`RELAY_PLAN_UNCONFIRMED` 一律 UNKNOWN：烧号、HALT，这个批次不再跑任何本地段，也不写 `25-plan`。
+- 崩溃恢复：有 `20-plan-intent`、没有 `25-plan` 的条目，可能已经 begin 了某个角色的键，所以以 `RELAY_STAGE_INTERRUPTED` 关闭为 FAILED_UNKNOWN 并 HALT。
+- 第 R 段的干净失败（`RELAY_STAGE_REFUSED`）是终局：烧号、归档，不排 attempt 2。
+- **attempt 2**（`R/src/attempts.mjs`）照 v0.6 的规则（只有第 1、2 段，以及二者之间的工作区准备），另加一条：attempt 1 只要转发过任何角色就不排；第 R 段本身（第 9 段）不在可重试的段里。
+- K(head, role) 跨路径互斥：转发入口和本地 v2 扫描发布者用同一个 journal（`state\v2\effects-scan`），所以同一 head 上同一角色只会有一个发布者，跨批次也成立。
+
+**第 R 段在 Source v2 里**：
+
+| 件 | 内容 | 位置 |
+|---|---|---|
+| 阶段表 | 第 9 段，种类 `hosted-relay`，入口角色 `relay-publisher`，作业角色是 gitleaks、trivy 的非空有序子集，运行上限 15 分钟；`FORMAL_STAGES_V2` 仍是批次导出的 8 段 | `CI/src/resident-v2/layout.mjs` |
+| 第 R 段的包 | `deriveRelayStage`：从已有的 `batch.json` 重新导出主体并核对作业 id，再只为候选生成 `stage-09/`，同输入同字节 | `CI/src/resident-v2/derive-batch.mjs` |
+| 入口 | `relay-entry-v2.mjs`：登记表按 held record 的钉值核对字节；OIDC 验签器的 JWKS 缓存在 `state\relay\jwks\`；观察器走已安装的检查端口；发布者是 v2 扫描发布者（批次 claim 代次） | `HR/relay-entry-v2.mjs` |
+| 结局 | `relay-plan.mjs`：第 R 段的结果 → 结局记录的 `relay` 行（COMPLETE → `RELAY_COMPLETE`；HALT → `UNCERTAIN` 加码；REFUSED → `BLOCKED`）；`stage-fact.mjs` 为第 9 段校验这些行并带进阶段事实 | `HR/relay-plan.mjs`、`CI/src/resident-v2/stage-fact.mjs`、`stage-inputs.mjs` |
+| 通用助手 | C# 阶段表加第 9 段：入口 `relay-publisher`，作业是 gitleaks/trivy 的非空有序子集（`SelectedJobRoles`），时间窗 15 分钟 | `CI/src/resident-v2/windows/FormalPublicBoundaryV2.cs` |
+| 交换代理 | `StageMilliseconds` 加第 9 段；`broker.json` 仍只钉一个通用助手 | `R/windows/SwapBroker.cs` |
+| ACL | 新建 `state\relay`、`state\relay\jwks`（clued-control 修改，常驻 SID 无权限） | `CI/src/resident-v2/acl-model.json` |
+
+**常驻层的其他改动**：
+
+- **策略 `/3`**（`R/src/policy.mjs`）：
+  - `relay` 是精确的键集：`enabled`、`roles`（gitleaks、trivy 的非空有序子集）、`wait`（`signalMs`、`queueMs`、`runSlackMs`、`totalMs`、`pollMs`、`jobTimeoutMs`）；
+  - `stageRunMilliseconds` 第 9 项是第 R 段；
+  - 批次预算在转发打开时加上等待上限和第 R 段；
+  - 样例策略 `relay.enabled=false`（Owner 决定：OIDC 声明的实际取值要等免费分钟恢复后才能测）；打开它就是改策略，换策略哈希，一次 UAC。
+- **可转发角色**等于登记表的 `RELAYABLE_ROLES`（gitleaks、trivy）。contract-placement 永远本地，也从不等它（`hosted-wait.mjs`，测试与登记表对照）。
+- **回执**（`R/src/receipts.mjs#RELAY_RECEIPTS`）：
+  - `relay-attested`：角色、check run id、external id、证明摘要；
+  - `relay-local-fallback`：角色、原因、来源（`stage-r` 或 `resident`）；
+  - `relay-billing-refused`：角色、原因；
+  - `relay-late-ignored`：角色。
+  - 另有 `relay-plan-intent`，以及第 9 段的 `stage-terminal`。转发关闭时不写逐角色的转发回执。
+- **classify**：镜像第 R 段的码和 `LOCAL_REASONS`，测试保证与 Source 一致。
+
+**companion 的提示模式（S20）**：
+
+- 轮询器对它提交过的每个 PR head，在首次提交后的 2 小时内，每次轮询都观察一次托管运行（`R/src/poller.mjs`）。
+- 观察用已安装 Source 的 `HR/observe.mjs` 和 `HR/stage.mjs#hostedHint`（提示模式，不验签），走 Owner 自己的 gh 登录。gh 端口只读（`R/src/gh-read-port.mjs`）：固定 argv `gh api --method GET`，回复按检查端口同样的规则规范化。
+- 结果写成 `clued.independent-ci.hosted-hint/1` 记录（`R/src/hosted-hints.mjs`）：每角色一个状态，≤ 2 KB，只是数据。只在状态变化时写一个新文件 `mailbox\responses\hosted-hint-<pr>-<head12>-<序号>.json`（CreateNew）。
+- 服务只读该 head 最新的那一个（`Mailbox#latestHint`），用 `parseHint` 解析。损坏的、别的 head 的、含不可转发角色的提示，都当作“没有提示”。
+- 提示只能让批次多等或少转发，不能让任何东西发布。
+- 提示模式默认关闭：`companion.json` 的 `hints.enabled` 由打包工具按策略的转发开关设定。
+
+**没有实现的**（离线做不了，或要主机数据）：
+
+- 免费分钟设计 §7.5 的“开始前合并位剩余不足 20 分钟就推迟”：执行器不联网，读不到 `merge_slot_until`。第 8 段仍按 S8 自己等队首；只做转发的批次从第 1 段到第 8 段通常只要几分钟。
+- 等待期间（最长 60 分钟）执行器不处理暂停、STOP 和 Owner 请求，等批次结束后才处理。这和长阶段时的行为一样；单实例锁的存活记录在等待中也不刷新。
+
+### 7.6 v0.6 缺口的补齐（v0.7）
+
+- **v2 发布者并入转发改动**（`CI/src/staged-check-publisher-v2.mjs`，按 diff 对照 v1 提交 `b5a7db45`）：
+  - 证明分两种：`signed`（Linux 签名结果）和 `hosted`（`clued.independent-ci.hosted-attestation/1`，写之前由已安装的验证器用新鲜事实重新核验）；
+  - `publishHosted` 用 v2 作业（内容 id，`createdAt` 不进 id），主体里的 claim 代次必须等于批次 claim，否则 `hosted_claim_changed`，角色回本地；
+  - 本地发布和转发发布在 begin 自己的键之前都先 begin K(head, role)。
+- **合并闸门的 v2 消费者**：
+  - `CI/src/independent-control-checks-v2/consumer.mjs`：从 stage 1 写的 batch-claim 记录找到批次，按内容重算控制作业，读 `state\v2\effects-control` 里已结算的条目；写入前后各做一次新鲜的完整准入，并核对持久的生产者身份 `sourceBindingSha256`（v2 发布者现在也写这个值）；
+  - 同一 head 只认最新的判断（`NEWER_CONTROL_JUDGEMENT_PRESENT`），所以一个 head 只算一个批次；
+  - `clued-work-admission.mjs` 在 `CLUED_EXECUTION_PROVIDER=independent-control-checks-v2` 时走它（`gate` 和 `appChecksOnHead` 两处）；
+  - 不是以 clued-control 身份在 Windows 上运行时，一个文件都不打开就拒绝（`CONTROL_CONSUMER_V2_PRINCIPAL_REQUIRED`）。
+- **Linux 侧 Source v2 安装**（`R/linux/bin/clued-ci-install-source-v2`）：
+  - `package`：任何用户、离线，把安装记录的 `source-manifest.json`、三份角色策略 v3、三份已签名的 qualification v2 和该提交的 git bundle 打成包，每个字节都钉值；
+  - `--plan`、`--apply <planSha256>`：只能由 Linux 上的 root 显式调用；计划绑定包清单哈希和主机事实（目标都不存在、钉住的 node 和 git 在、角色锁空闲）；
+  - 只能新建：检出到受信目录并核对每个钉住的文件，然后写源清单、qualification、角色策略（策略最后写），再用钉住的 node 逐个角色做 `loadQualifiedPolicyV2` 就绪检查，最后写回执；
+  - 不读私钥，不签 qualification。签发仍是单独的主机步骤（P2）。打包工具把它放进包里并报告哈希，它不是 unit guard 的钉值。
+- **Source 闭包重算**（`CI/src/resident-v2/source-closure.json`）：加入 `HR/` 的入口、登记表、观察、OIDC、计划行，以及 v2 消费者。`github.mjs`、`effect-journal.mjs`、v2 发布者原本就在闭包里；字节在安装时由 `prepare-record.mjs` 按闭包重新钉值，仓库里不存哈希。
 
 ---
 
@@ -549,6 +654,7 @@ v0.6 只实现 S1–S14。中继集成要调用的接口（都已存在、有测
 | Windows 预检 | `install-resident.ps1 -PackageRoot … -ExpectedPackageManifestSha256 … -OwnerSid … -ControllerSid …`（只读，打印计划及其哈希） | 普通 |
 | Windows 安装 | 同上，加 `-Apply -ExpectedPlanSha256 <复审过的>` | **UAC 1 次** |
 | Linux 安装 | `install-resident-linux.sh --plan` 之后 `--apply <sha>`；需要启用 systemd 时，再 `wsl --shutdown`，然后 `--continue-after-boot <sha>` | **root 1 次**，可能加 1 次 WSL 重启 |
+| Linux Source v2 安装（v0.7） | 先由 root 签 qualification v2（单独审查的步骤）；`clued-ci-install-source-v2 package …`（普通、离线）打包，然后 `--plan <包>`，再 `--apply <包> <planSha256>` | **root 1 次**（与上一行可在同一次 root 会话里） |
 | 校验 | 已安装副本的 `verify-resident.ps1`、`verify-resident-linux.sh`（只读） | 提权才能看服务 DACL |
 | 卸载 | 已安装副本的 `uninstall-resident.ps1`：先计划，再 `-Apply`；`uninstall-resident-linux.sh` 同理。要求没有未终结批次、执行器进程已不在；删两个服务和任务；runner 保持原样；**整个目录改名保留** | UAC + root |
 
@@ -566,6 +672,15 @@ v0.6 只实现 S1–S14。中继集成要调用的接口（都已存在、有测
 ## 13. 测试、演练与复审
 
 ### 13.1 已运行（离线，没碰主机）
+
+v0.7（2026-10-21，转发集成之后）：
+
+- 常驻层：`node --test test/*.test.mjs` **96/96**。新增：
+  - `relay.test.mjs` 12 个：段序 1 → R → 本地子集 → 8；`20-plan-intent`/`25-plan`；有上限的等待；账单拒绝立即全本地；同一 head 内转发与本地混合；发布不确定 HALT 且不再有本地段；计划行不干净；第 R 段崩溃恢复；托管晚到；转发后不排 attempt 2；损坏的提示；
+  - `hints.test.mjs` 6 个：提示映射；经 Source 观察器（提示模式）到邮箱再到执行器解析的端到端；邮箱的提示文件；轮询器的观察窗口；gh 只读端口；引擎的第 R 段和动态选项。
+- 常驻层 Python **15/15**（新增 4 个 Linux Source v2 安装器用例）；`node drill/offline-drill.mjs` **33/33**（新增 10 步：一个月的免费分钟情形和回执类型、顺序）。
+- Source v2：`node --test test/*.test.mjs` **130 通过 + 1 跳过**（新增 `hosted-relay-v2.test.mjs` 12 个：第 R 段的包导出、计划行、阶段事实、第 9 段 invoke-stage、v2 发布者的 K 互斥与 claim 代次）；Python **6/6**；`test-migrate-acl.ps1` **12 例**；`test-pure-v2.ps1` **88 条**断言；`SwapBroker.cs` 编译通过。
+- `node --test scripts/ci/clued-work-admission.test.mjs` **93/93**（main 上原有 91 个全部通过，新增 2 个 v2 消费者用例）。
 
 v0.6（2026-10-21，Source v2 实现之后）：
 
@@ -600,6 +715,15 @@ v0.5 时的记录：
   - relay v4 从 `resident\source\<sha>` 运行、bundle 清单哈希、challenge 优先的泵顺序；
   - Linux 工具的扁平归档在真实目录上、`ROLE_LOCK_HELD_PRESERVED` 与 partial 状态、`archive-usage`；
   - 安装脚本：record、stage、bundles 目录、助手编译、`broker.json`、ACL 迁移的调用。
+  - **v0.7 转发集成新增的主机项**：
+    - 托管运行的 OIDC 声明实际取值（免费分钟设计 L1：pull_request 事件下 `sha`/`workflow_sha` 是否就是合并提交，`base_ref`、`head_ref`、`runner_environment`、`check_run_id` 是否存在）；注解能否完整容纳 JWT、5368905 能否读到（L2）；`refs/pull/N/merge` 移动后旧合并提交能否按 SHA 读到（L3）；clued-control 环境访问 `token.actions.githubusercontent.com` 的网络路径（L4）。这些要等免费分钟恢复后才能测，所以转发默认关闭；
+    - 第 9 段经真实交换代理和通用助手运行：stage 表、时间窗、`relay-publisher` 入口、子集作业的 C# 校验；
+    - `state\relay\jwks` 的真实 ACL 和 JWKS 文件缓存；
+    - 转发入口用 held record 核对登记表字节，在真实安装记录上运行；
+    - companion 提示模式在 Owner 会话里加载已安装 Source 的观察器，gh 只读端口对真实 API 的分页和规范化；
+    - 等待期间单实例锁存活记录不刷新，服务重启时的判定；
+    - v2 消费者以 clued-control 运行（评估器调用路径、held record、batch-claim 扫描的上限）；
+    - Linux Source v2 安装：先由 root 用 Linux 结果密钥签 qualification v2（单独审查的步骤），再 `--plan`/`--apply`；在真实 WSL 上验证 bundle 克隆、文件属主和权限、`loadQualifiedPolicyV2` 就绪检查、以及 `prepare-workspaces.py` 对受信检出的核对。
 - **P2**：主机隔离演练。演练名包括 `CluedCIResidentRehearsal`、`CluedCISwapBrokerRehearsal`，以及专门的哑 runner 服务 `CluedCIRehearsalRunner`。要验证的点：
   - 代理只改二进制路径、账户不变；
   - 常驻账户对哑 runner 没有任何权限；
@@ -730,4 +854,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 | `config/*.example.json` | 策略与 companion 配置样例 |
 | `test/*.test.mjs`、`test/test_linux_tool.py`、`drill/offline-drill.mjs` | 测试与离线演练 |
 | `src/attempts.mjs`、`src/retention.mjs` | v0.6：自动 attempt 2 的判定（§7.2）、50 GB 归档提醒（§7.3） |
+| `src/hosted-wait.mjs`、`src/hosted-hints.mjs`、`src/gh-read-port.mjs` | v0.7：托管等待与提示解析、companion 的提示模式、gh 只读端口（§7.5） |
+| `linux/bin/clued-ci-install-source-v2` | v0.7：Linux 侧 Source v2 安装（§7.6） |
+| `CI/src/hosted-relay-v1/relay-entry-v2.mjs`、`relay-plan.mjs`、`CI/src/independent-control-checks-v2/consumer.mjs` | v0.7：第 R 段入口、计划行、v2 控制检查消费者 |
 | `CI/src/resident-v2/*`、`CI/src/*-v2.mjs`、`CI/src/formal-work-admission-check-v2/`、`CI/src/independent-control-checks-v2/`、`CI/runtime/one-shot-v2.mjs`、`CI/worker/*-v2|v3|v4/`、`CI/worker/protected-job-bridge-v4/` | v0.6：Source v2 本体（§7.1） |
