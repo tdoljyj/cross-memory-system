@@ -56,11 +56,13 @@ export async function main(argv = process.argv.slice(2)) {
       nodeExe: path.join(root, 'runtime', 'node.exe'),
       powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
       scExe: 'C:\\Windows\\System32\\sc.exe',
+      // Owner abort: the stop request is written next to the in-flight broker request (DESIGN §6.5).
+      brokerRoot: path.join(root, 'broker'),
     },
   });
   const companion = mailboxCompanion(mailbox, sleep);
   const exec = new ResidentExecutor({
-    policy, ledger, receipts, inbox, requests, owner, engine, clock, companion,
+    policy, ledger, receipts, inbox, requests, owner, engine, clock, companion, sleep,
     sourceIntegrity: installedIntegrity({
       sourceRoot, sourceManifest: path.join(root, 'config', 'source-installed-manifest.json'),
       residentRoot: path.join(root, 'resident', policy.residentManifestSha256), residentManifest: path.join(root, 'config', 'resident-installed-manifest.json'),

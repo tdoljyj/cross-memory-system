@@ -10,6 +10,8 @@
   - v0.6（2026-10-21）：P1 完成，Source v2（S1–S14）在分支 `claude/pr-a-s-core-20261021` 上离线实现并测试（§7.1）；按 Owner Decision `1b5d3687` 加入自动 attempt 2（§7.2）和 50 GB 归档提醒（§7.3），D2–D7 随之关闭（§15）。主机上还什么都没装，主机验证见 §13.2 P2。
   - v0.7（2026-10-21）：PR-A 集成，分支 `claude/pr-a-integration-20261021`。托管转发接进常驻执行器（免费分钟设计 S19–S22，§7.5）：第 1 段之后有上限地等托管提示，`20-plan-intent`，第 R 段（第 9 段），`25-plan`，只为 LOCAL_REQUIRED 的角色跑本地段。同时补上 v0.6 §7.4 列出的缺口：v2 发布者按 diff 并入转发改动、合并闸门的 v2 控制检查消费者、Linux 侧 Source v2 安装脚本、Source 闭包重算（§7.6）。转发默认关闭（`relay.enabled=false`），主机上仍然什么都没装。按复审要求，托管等待不阻塞：每个 tick 只判断一次，等待中暂停、STOP、HALT 和 Owner 请求照常生效，锁存活记录照常刷新，重启后从保存的 t0 继续（§7.5）。
 
+  - v0.8（2026-10-21）：Owner 中止当前批次（§6.5，Task `56cd9edc`）。一段卡住时 Owner 用一次 UAC 写中止请求，服务在安全点停下正在跑的扫描签发段（经交换代理和助手现有的停止路径），实测两端静止后只改名归档，记 FAILED_CLEAN `OWNER_ABORTED`；证明不成立时照旧 HALT。
+
   第五轮复核 **PASS**（没有剩余的 BLOCKER 或 MAJOR）。五轮对照见 §13.3–§13.7。
 - 依据（只读）：
   - PR884 head 041eaadf 的 `work/actions-hosted-migration/independent-ci-v1/`。下文 `CI/` 指这个目录，`CID/` 指 `CI/src/control-install-delta-v2/`。
@@ -102,9 +104,9 @@
 
 | 主体 | 身份 / 会话 | 能做 | 不能做 |
 |---|---|---|---|
-| **Owner（安装者）** | Owner SID 提权，UAC | 安装、升级、卸载；向 `owner\` 目录写复位或恢复请求 | 每批不再出现；复位时也不移动任何文件 |
+| **Owner（安装者）** | Owner SID 提权，UAC | 安装、升级、卸载；向 `owner\` 目录写复位、恢复或中止请求 | 每批不再出现；复位时也不移动任何文件 |
 | **CluedCIResident 常驻执行器**（新） | `NT SERVICE\CluedCIResident` 虚拟账户，Session 0，非管理员 | 读已安装 Source；写自己的 state、work、outbox；向交换代理提请求；经 Source v2 的句柄工具归档 formal-spool | 对 runner 服务**没有任何权限**；读秘密；加载用户目录里的代码；联网 |
-| **CluedCISwapBroker 交换代理**（新） | LocalSystem | 只做一件事：把 runner 的二进制路径在“原始”和“已安装、哈希在白名单里的通用助手”之间切换，带 nonce 启动一次，等它停止，再换回 | 改账户、启动类型、依赖、DACL；运行白名单以外的东西；杀进程 |
+| **CluedCISwapBroker 交换代理**（新） | LocalSystem | 只做一件事：把 runner 的二进制路径在“原始”和“已安装、哈希在白名单里的通用助手”之间切换，带 nonce 启动一次，等它停止，再换回；Owner 中止时向这一次交换的助手发一次 SCM 停止（§6.5） | 改账户、启动类型、依赖、DACL；运行白名单以外的东西；杀进程 |
 | **clued-control**（现有，不变） | `.\clued-control`，Session 0 | 跑阶段助手、读秘密，对 GitHub 和 KooYomi 做所有实时核验和发布 | — |
 | **companion 伴随进程**（新） | Owner 本人的登录会话，计划任务，**不提权** | WSL 保活；用 Owner 自己的 git 凭据打 bundle；用现有 `relay-public.ps1` 搬运 bridge 记录；`systemctl start` 三个固定 unit；轮询 PR 生成触发记录 | 任何授权判断；任意命令（只有固定 argv）；写执行器的 state 和 owner 目录 |
 | **Linux unit**（新） | WSL 内 root，systemd oneshot 模板，带沙箱加固 | worker（不变的 `linux-worker.mjs`）、ws-prep、归档；各自用 root 实测前提 | 由 PR 内容驱动执行代码 |
@@ -114,11 +116,14 @@
 ```
 Agent / companion 轮询器 ──写──▶ resident\inbox\            触发记录 {repo, pr, headSha, baseSha}（只是数据）
 任何 Owner 会话进程     ──写──▶ resident\requests\          暂停请求（只能停）
-提权的 Owner（UAC）     ──写──▶ resident\owner\             复位或恢复请求（只有 Administrators 能建文件）
+提权的 Owner（UAC）     ──写──▶ resident\owner\             复位、恢复或中止请求（只有 Administrators 能建文件）
 常驻执行器              ──写──▶ resident\mailbox\requests\  给 companion 的固定种类请求
 companion               ──写──▶ resident\mailbox\responses\ 回答 + 心跳（不可信，只用于分类）
 常驻执行器              ──写──▶ resident\broker\requests\   给交换代理的请求 {stage, nonce, deadline}
 交换代理                ──写──▶ resident\broker\responses\  交换结果
+常驻执行器              ──写──▶ resident\broker\requests\<id>.stop        Owner 中止：停下这一次交换的助手（§6.5）
+交换代理                ──写──▶ resident\broker\responses\<id>.stop.json 这份停止请求的处理结果
+常驻执行器              ──写──▶ resident\mailbox\requests\<id>.cancel.json Owner 中止：companion 停止这个请求的泵
 常驻执行器              ──写──▶ resident\outbox\<batchId>\descriptor.json  公开批次描述（companion 和 Linux unit 只读）
 常驻执行器              ──写──▶ resident\state\             账本、head 烧号、HALT/PAUSE、哈希链回执（Owner 只读）
 ```
@@ -169,6 +174,7 @@ companion               ──写──▶ resident\mailbox\responses\ 回答 + 
    | 暂停 | 任何 Owner 会话进程 | 往 `requests\` 写暂停请求；批次之间生效，从不中断正在跑的段 |
    | 恢复 | 只有提权的 Owner | `rearm-resident.ps1 -Request Resume -ExpectedPausedSha256 <审过的>`。脚本用纯 PowerShell 往 `owner\` 写一个带时间和 nonce 的请求，不启动任何其他程序；服务按比较交换执行 |
    | 复位（未知失败后） | 只有提权的 Owner | `rearm-resident.ps1 -Request Rearm -ExpectedHaltSha256 <审过的> -Reason …`，写法同上。服务实测两端静止，对**每一个还没归档的未知失败批次**只改名归档，再按比较交换清除 HALT |
+   | 中止当前批次 | 只有提权的 Owner | `rearm-resident.ps1 -Request Abort -BatchKey <键> -ExpectedLedgerEntrySha256 <审过的> -Reason …`，写法同上。服务只在安全点执行：停下正在跑的扫描签发段，实测两端静止，只改名归档，记 FAILED_CLEAN `OWNER_ABORTED`；证明不成立时照旧 HALT（§6.5） |
    | 远程急停 | Owner | KooYomi 页面撤销 ci-admission Binding；重新启用要换 token（UAC） |
    | 卸载 | Owner | UAC |
 
@@ -348,6 +354,42 @@ Source v2（S11）之后，阶段的失败码来自已安装 Source 的稳定目
 - 复位不会重跑出事的 head。
 - 崩溃恢复每个 tick 都先做，所以 HALT 时遗留的未终结条目会被先关掉，复位不会被卡住（复审 M6）。
 - 回执链每次追加都从最后一个文件重新取链头，其他进程追加也不会让链分叉或卡住。
+
+#### Owner 中止当前批次（v0.8，Task `56cd9edc`）
+
+- **为什么**：某一段卡住时，今天只能等这一段的截止时间（第 2 段、第 8 段最长 45 分钟）。2026-10-21 的实例：companion 的 bridge 转发被拒（`RELAY_REFUSED_NO_RETRY`），Windows 扫描签发段一直等 Linux 的回应，直到自己的截止时间。
+- **请求** `clued.independent-ci.resident-owner-abort/1`，字段恰好是 `contract`、`batchKey`、`ledgerEntrySha256`、`reason`、`by`、`requestedAt`、`nonce`：
+  - 由已安装的 `rearm-resident.ps1 -Request Abort -BatchKey <键> -ExpectedLedgerEntrySha256 <摘要> -Reason …` 提权写进 `owner\`。纯 PowerShell，只新建一个文件，不启动其他程序。授权和复位、恢复相同（目录 ACL），已处理的请求同样按文件名和字节摘要记下；
+  - `ledgerEntrySha256` 是该批次账本**最新一条记录**原始字节的 SHA-256，取 `00-reserved`、`10-started`、`15-relay-wait`、`20-plan-intent`、`25-plan` 中最后存在的一个。各段只写回执、不写账本，所以一段卡住期间这个值不变；
+  - 不提权的查看（`rearm-resident.ps1` 不带参数）对每个未终结批次列出键、记录名和摘要（`abortTargets`）。
+- **只在安全点生效**：
+  - P0：tick 开始时，只针对正在等托管信号的批次，这时什么都没在运行；
+  - P1：同一批次每一步开始之前：第 1 段、每次托管等待判断、建工作区、每个本地段、第 8 段；
+  - P2：第 2、4、6 段**运行中**。这三段的入口是扫描签发者（`scanner-issuer`），不发布任何检查。段运行时执行器每 5 秒看一次 `owner\`。
+
+  其余步骤不在运行中打断：导出、打 bundle、第 1 段（发布 work-admission）、发布段 3、5、7、第 8 段（发布控制检查）、第 R 段（发布转发检查）、各次归档和收尾。中止等它们自己结束，在下一个安全点生效。批次先自己走到了终态的，请求在下一 tick 以 `OWNER_ABORT_BATCH_NOT_OPEN` 拒绝。第 8 段成功之后不再有安全点。
+- **接受**：比较交换（批次未终结、最新记录的摘要与请求一致）通过后，先只新建 `80-owner-abort.json`，再写 `owner-abort-accepted` 回执。从这一刻起这个批次不会再往下走，也不再算可恢复的等待。
+- **P2 的停止路径**（每一步都只新建文件，都绑定在这一批次的这一段上）：
+  1. 执行器给 companion 写 `mailbox
+equests\<泵请求 id>.cancel.json`。泵在下一个等待步骤以 `COMPANION_PUMP_CANCELLED` 结束；它只停止搬运，从不停止或杀掉 Linux worker；
+  2. 执行器在 `broker
+equests\` 里找**正在进行的那一次交换**：代理已领取（有 `.taken`）、还没回复、段号相同、`configSha256` 等于这一批次该段包的计划哈希（从批次钉住的 work manifest 读出）。恰好一个时，在旁边新建 `<id>.stop`，字段恰好是 `contract`、`requestId`、`nonce`、`stage`、`configSha256`；
+  3. 代理在这次交换的等待循环里每秒看一次（§8.2 第 9 条），条件全部满足时向 runner 服务发**一次** `SERVICE_CONTROL_STOP`；
+  4. 通用助手按它现有的停止路径处理（`STOP_REQUESTED`，服务退出码 92）：只终止并排空**它自己建的作业对象**，写原生回执，报告 STOPPED。代理照常换回原始二进制并回复。执行器和代理都不杀任何进程，也不碰来历不明的进程树；
+  5. 还没调用的段（例如还在 refs 闸门上）直接不调用，以 `OWNER_ABORT_REQUESTED` 结束。
+- **结束**（P0、P1、P2 相同）：
+  1. 运行中被停下的段，结局码必须在白名单里（`classify.mjs#OWNER_ABORT_STAGE_ENDINGS`：本来就干净的码；入口被停下、来不及写结局时的 `STAGE_OUTCOME_MISSING`；`OWNER_ABORT_REQUESTED`；`COMPANION_PUMP_CANCELLED`），而且该段自己的 Windows 证明齐全（作业树为 0、原始二进制已还原）；
+  2. 两端现取静止证明，与失败分类同一套；不成立就每 20 秒再取，最多 9 次，最长 5 分钟；
+  3. head 保持已烧；两端只改名归档，固定原因 `owner-aborted`。它不是协议范围，所以整批现场都归档，effect journal 留在原处；
+  4. 记 `90-terminal` FAILED_CLEAN，码 `OWNER_ABORTED`，事实里有安全点、被停的段、该段的结局码、请求摘要和两端的归档目录；回执 `batch-terminal` 和 `owner-request`（`kind: abort`）。从不排 attempt 2。
+- **HALT 语义不变**：
+  - 段的结局不在白名单、静止证明不成立（`OWNER_ABORT_QUIESCENCE_UNPROVEN`）、归档未核实，都照旧记 FAILED_UNKNOWN 并锁 HALT，现场不动，等 Owner 复位；
+  - 中止不清除也不绕过 HALT。HALT 时仍可中止正在等待的批次，HALT 保持；
+  - 服务在中止中途重启：`80-owner-abort` 让这个批次不再算可恢复的等待，崩溃恢复以 `OWNER_ABORT_INTERRUPTED` 关闭并锁 HALT。
+- **中止从不**发布、撤回或重跑任何检查，从不杀进程，也不放宽任何门禁。
+- **拒绝**（回执 `owner-request-refused`，请求记为已处理）：格式不对（`OWNER_REQUEST_REFUSED`）；批次已终结或不存在（`OWNER_ABORT_BATCH_NOT_OPEN`）；摘要过期（`OWNER_ABORT_LEDGER_CHANGED_SINCE_REVIEW`）；tick 开始时批次未终结却不在等待（`OWNER_ABORT_NOT_AT_SAFE_POINT`，只在恢复本身失败时可能出现）。
+- **窄竞争**：停止恰好落在助手刚放行、子进程还没进作业对象，或者子进程刚正常结束、助手还没停下的那几毫秒里时，助手回执会显示树未确认，或结局与停止冲突。按上面的规则这算未知并 HALT。代理在助手启动后 5 秒内不发停止，以缩小前一种情况。
+- **生效要重装 Windows 常驻包**：交换代理要重新编译，执行器和 companion 要更新。Source v2（`CI/`）和 Linux 侧都没有改动，安装记录和 `ciSourceManifestSha256` 不变。
 
 ---
 
@@ -618,7 +660,14 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
   6. 带 nonce 启动一次，等它停止；
   7. 只有停止了才换回原始二进制，没停止的不动，如实报告。
   8. 每轮循环都检查一次：如果 runner 停在某个已安装的助手二进制上（比如崩溃发生在“停止”和“还原”之间，或者助手过了截止时间后才停），就把原始二进制换回去。还在运行的助手不碰，账户等其他配置也不改。
-- 被攻破的常驻账户最多只能“启动已审的助手跑自己的作业输入”，到不了 SYSTEM，也不能以 clued-control 身份运行任意代码。
+  9. **Owner 中止**（v0.8，§6.5）：交换进行中，代理每秒看一次 `requests\<id>.stop`。只有同时满足下面几条才发一次 `SERVICE_CONTROL_STOP`，句柄只开 `SERVICE_STOP | SERVICE_QUERY_STATUS`：
+     - 五个字段（`contract`、`requestId`、`nonce`、`stage`、`configSha256`）都等于这一次交换；
+     - 段号是 2、4 或 6；
+     - runner 正以代理自己观察到的 PID 运行（RUNNING）；
+     - 助手已启动 5 秒以上。
+
+     读不全或格式不对的停止请求重试 10 秒，之后拒绝。结果（`STOP_SENT`、`HELPER_ALREADY_STOPPING` 或某个拒绝码）只新建写进 `responses\<id>.stop.json`。助手自己排空作业对象后停下，代理照常还原并回复，回复格式不变。代理仍然不杀任何进程。
+- 被攻破的常驻账户最多只能“启动已审的助手跑自己的作业输入”，或让自己发起的扫描签发段提前结束；到不了 SYSTEM，也不能以 clued-control 身份运行任意代码。
 
 ### 8.3 目录 ACL
 
@@ -738,12 +787,24 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 | 每批脚本生成与复审 | 多份 | 0（复审移到 Source v2 一次） |
 | 干净失败 | 2×UAC + root + WSL 重启 | 0 |
 | 未知失败 | 2×UAC + root + WSL 重启 | UAC 1 次，只写复位请求 |
+| 卡住的段 | 等到这一段的截止时间（最长 45 分钟） | UAC 1 次，只写中止请求；服务在安全点停下、归档、继续（§6.5） |
 
 ---
 
 ## 13. 测试、演练与复审
 
 ### 13.1 已运行（离线，没碰主机）
+
+v0.8 补充（2026-10-21，Owner 中止 §6.5，基于 main `8c2bfdcc`）：
+
+- 常驻层：`node --test test/*.test.mjs` **134/134**。新增 `abort.test.mjs` 14 个、`abort-ports.test.mjs` 5 个，覆盖：
+  - 请求合同与结局白名单；
+  - 等待中的批次在 tick 开始时中止；第 2 段运行中中止，只停这一段；发布段不被打断，在下一段之前生效；第 1 段之前中止；
+  - 摘要过期、批次已终结都被拒；重复请求只记为重复；查看列出中止目标；
+  - 静止证明不成立时 HALT，之后照常复位；有界复查内静止也算数；停下的段结局不干净时 HALT；HALT 时中止不清 HALT；中止中途重启以 `OWNER_ABORT_INTERRUPTED` 关闭并 HALT；
+  - 引擎只把停止请求绑定在这一次交换上，还没调用的段不调用；泵被取消，在回调轮次中取消时不做 blocked 转交。
+- 常驻层 Python **25/25**；`node drill/offline-drill.mjs` **37/37**（新增 2 步：第 2 段卡住时 Owner 中止，之后这个 head 不再运行）。
+- `windows/test-resident-windows.ps1` **71 条**断言，其中 C# 纯逻辑 **20 条**（新增 10 条：停止请求只认这一次交换和扫描签发段）；`SwapBroker.cs` 编译通过。
 
 v0.7 补充（2026-10-21，PR-B 前后的工作流字节 §7.7，转发复审 MINOR §7.5）：
 

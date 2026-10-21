@@ -28,9 +28,16 @@
 // role was published schedules attempt 2 of the same head once (its own batch and head key).
 // Anything else latches HALT and leaves the scene untouched until the Owner's re-arm, which the
 // service itself carries out (the elevated Owner step only writes a request; it never moves files).
+//
+// Owner abort (DESIGN §6.5): the Owner may ask, through the same admin-only owner directory, to abort the current
+// batch. It is honoured only at safe points: at a tick start for a batch that waits for hosted signals, before each
+// step of a batch, and while a scanner-issuer stage (2, 4, 6; it publishes no check) runs, which is then asked to stop
+// through its own stop path (broker -> SERVICE_CONTROL_STOP -> the helper drains its own job). Then quiescence on both
+// hosts, a rename-only archive and FAILED_CLEAN OWNER_ABORTED; when quiescence cannot be proven, HALT as always.
+// An abort never publishes, retracts or re-runs anything, and never kills a process.
 import path from 'node:path';
-import { batchKey, headKey } from './ledger.mjs';
-import { archiveReason, classifyFailure } from './classify.mjs';
+import { Ledger, batchKey, headKey } from './ledger.mjs';
+import { ABORTABLE_IN_FLIGHT, OWNER_ABORTED, abortStageEndingClean, archiveReason, classifyFailure, proofComplete } from './classify.mjs';
 import { coalesce, parseTrigger } from './trigger.mjs';
 import { batchBudgetMs } from './policy.mjs';
 import { attempt2Decision, attempt2Subject } from './attempts.mjs';
@@ -43,11 +50,28 @@ import { CODE, HEX64, ResidentError, check, exactKeys, parseBoundedJson, sha256 
 export const PAUSE_CONTRACT = 'clued.independent-ci.resident-pause/1';
 export const REARM_CONTRACT = 'clued.independent-ci.resident-owner-rearm/1';
 export const RESUME_CONTRACT = 'clued.independent-ci.resident-owner-resume/1';
+export const ABORT_CONTRACT = 'clued.independent-ci.resident-owner-abort/1';
+export const OWNER_ABORT_ARCHIVE_REASON = 'owner-aborted';
+// Poll of the owner directory while a scanner-issuer stage runs, and the bounded re-check of quiescence after an abort.
+export const ABORT_POLL_MS = 5_000;
+export const ABORT_QUIESCENCE_ATTEMPTS = 9;
+export const ABORT_QUIESCENCE_POLL_MS = 20_000;
+export const ABORT_QUIESCENCE_WAIT_MS = 5 * 60_000;
+const OWNER_SCAN_MAX = 32;
 const DAY = 86_400_000;
 const codeOf = error => (error instanceof ResidentError && CODE.test(error.code)) ? error.code : 'RESIDENT_EXECUTOR_EXCEPTION';
 const validCode = code => (typeof code === 'string' && CODE.test(code)) ? code : 'FAILURE_CODE_INVALID';
 const SID = /^S-1-5-21-\d+-\d+-\d+-\d+$/;
 const NONCE = /^[0-9a-f]{12,32}$/;
+
+// clued.independent-ci.resident-owner-abort/1: the exact batch key and the SHA-256 of the latest ledger record of that
+// batch the Owner reviewed (Ledger.latestRecord), with the same time, nonce and reason bounds as a re-arm.
+export function validateAbortRequest(v) {
+  exactKeys(v, ['contract', 'batchKey', 'ledgerEntrySha256', 'reason', 'by', 'requestedAt', 'nonce'], 'OWNER_REQUEST_REFUSED');
+  check(v.contract === ABORT_CONTRACT && HEX64.test(v.batchKey) && HEX64.test(v.ledgerEntrySha256) && SID.test(v.by) && NONCE.test(v.nonce)
+    && !Number.isNaN(Date.parse(v.requestedAt)) && typeof v.reason === 'string' && v.reason.length > 0 && v.reason.length <= 200, 'OWNER_REQUEST_REFUSED');
+  return v;
+}
 
 // A step failure travels as a value, so the failure path runs exactly once, outside the step loop.
 class StepFailure {
@@ -57,9 +81,11 @@ class StepFailure {
 export class ResidentExecutor {
   // ports: { policy, ledger, receipts, inbox, requests, owner, engine, companion, sourceIntegrity, clock }
   //   owner: an Inbox over the admin-only owner directory (only Administrators can create files there).
+  //   sleep (optional): the wait between abort polls and quiescence re-checks.
   constructor(ports) {
     for (const k of ['policy', 'ledger', 'receipts', 'inbox', 'requests', 'owner', 'engine', 'companion', 'sourceIntegrity', 'clock']) check(ports[k], 'EXECUTOR_PORT_MISSING', k);
     Object.assign(this, ports);
+    this.sleep ??= ms => new Promise(r => setTimeout(r, ms));
     this.ownerReadFailures = new Map();
   }
 
@@ -75,11 +101,13 @@ export class ResidentExecutor {
   async recover() {
     // A batch that only waits for hosted signals runs nothing: it is resumed by tick(), never a crash scene.
     const open = await this.ledger.crashed();
-    // A stage R that began (20-plan-intent) without its 25-plan may have begun a relay key: UNKNOWN, HALT.
-    const codeFor = entry => (entry.planIntent && !entry.plan ? 'RELAY_STAGE_INTERRUPTED' : 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH');
+    // A stage R that began (20-plan-intent) without its 25-plan may have begun a relay key: UNKNOWN, HALT. An entry
+    // with an accepted Owner abort and no terminal was interrupted in the middle of the abort: UNKNOWN, HALT.
+    const codeFor = entry => (entry.planIntent && !entry.plan ? 'RELAY_STAGE_INTERRUPTED' : entry.abort ? 'OWNER_ABORT_INTERRUPTED' : 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH');
     // HALT is latched BEFORE any terminal or quarantine write, so no crash point can leave a closed
     // failure without a HALT (N1).
-    if (open.length > 0) await this.haltWith(open.some(e => codeFor(e) === 'RELAY_STAGE_INTERRUPTED') ? 'RELAY_STAGE_INTERRUPTED' : 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH', { keys: open.map(e => e.key) });
+    const haltCode = ['RELAY_STAGE_INTERRUPTED', 'OWNER_ABORT_INTERRUPTED'].find(c => open.some(e => codeFor(e) === c)) ?? 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH';
+    if (open.length > 0) await this.haltWith(haltCode, { keys: open.map(e => e.key) });
     for (const entry of open) {
       let closed = false;
       const failureCode = codeFor(entry);
@@ -142,6 +170,8 @@ export class ResidentExecutor {
           check(HEX64.test(v.haltSha256) && SID.test(v.by) && NONCE.test(v.nonce) && !Number.isNaN(Date.parse(v.requestedAt))
             && typeof v.reason === 'string' && v.reason.length > 0 && v.reason.length <= 200, 'OWNER_REQUEST_REFUSED');
           outcome = { kind: 'rearm', ...(await this.rearm(v)) };
+        } else if (v.contract === ABORT_CONTRACT) {
+          outcome = { kind: 'abort', ...(await this.abortAtTickStart(validateAbortRequest(v), requestSha256, entry.name)) };
         } else {
           check(false, 'OWNER_REQUEST_REFUSED');
         }
@@ -192,6 +222,159 @@ export class ResidentExecutor {
     }
     const kept = await this.ledger.clearHalt(haltSha256, { by, reason, archived });
     return { haltSha256, archived, haltKeptAs: path.basename(kept) };
+  }
+
+  // ---- Owner abort (DESIGN §6.5) ----
+
+  // Safe point P0, a tick start: nothing of this executor runs, so the only open entry recovery leaves is a batch
+  // waiting for hosted signals. Any other target is refused and recorded.
+  async abortAtTickStart(v, requestSha256, name) {
+    const s = await this.ledger.state(v.batchKey);
+    check(['RESERVED', 'STARTED'].includes(s.state) && !s.abort, 'OWNER_ABORT_BATCH_NOT_OPEN');
+    check(Ledger.resumable(s), 'OWNER_ABORT_NOT_AT_SAFE_POINT');
+    const latest = await this.ledger.latestRecord(v.batchKey);
+    check(latest && latest.sha256 === v.ledgerEntrySha256, 'OWNER_ABORT_LEDGER_CHANGED_SINCE_REVIEW');
+    const request = await this.acceptAbort(v.batchKey, { name, requestSha256, value: v }, 'waiting', null);
+    const r = await this.ownerAbort(v.batchKey, s.wait.batch, { safePoint: 'waiting', request });
+    return { key: v.batchKey, outcome: r.state, failureCode: r.failureCode };
+  }
+
+  // The Owner's abort of THIS batch, looked for at a safe point inside a tick. Other Owner requests, and aborts of
+  // other batches, stay for the next tick's takeOwnerRequests. A malformed or stale abort of this batch is refused
+  // and recorded here. A read failure is "no abort yet": the next safe point looks again.
+  async pendingAbort(key) {
+    let entries;
+    try { entries = await this.owner.read(OWNER_SCAN_MAX, 2048); } catch { return null; }
+    for (const entry of entries) {
+      if (!entry.bytes) continue;
+      let v;
+      try { v = parseBoundedJson(entry.bytes, 2048, 'OWNER_REQUEST_REFUSED'); } catch { continue; }
+      if (v?.contract !== ABORT_CONTRACT || v.batchKey !== key) continue;
+      const requestSha256 = sha256(entry.bytes);
+      try {
+        if (await this.owner.seen(requestSha256)) continue; // a copy of a handled request: the next tick records the duplicate
+        validateAbortRequest(v);
+        const s = await this.ledger.state(key);
+        // Accepted before (an interrupted acceptance in this tick): the same request continues; any other is refused.
+        if (s.abort) { check(s.abort.requestSha256 === requestSha256, 'OWNER_ABORT_ALREADY_ACCEPTED'); return { name: entry.name, requestSha256, value: v }; }
+        const latest = await this.ledger.latestRecord(key);
+        check(latest && latest.sha256 === v.ledgerEntrySha256, 'OWNER_ABORT_LEDGER_CHANGED_SINCE_REVIEW');
+        return { name: entry.name, requestSha256, value: v };
+      } catch (error) {
+        try {
+          await this.receipt('owner-request-refused', { requestSha256, failureCode: codeOf(error) });
+          await this.owner.remember(entry.name, requestSha256);
+        } catch { /* the next tick settles it */ }
+      }
+    }
+    return null;
+  }
+
+  // 80-owner-abort first (create-only): from here on the batch is never resumed or continued.
+  async acceptAbort(key, { name, requestSha256, value }, safePoint, stage) {
+    const s = await this.ledger.state(key);
+    if (!s.abort) await this.ledger.beginOwnerAbort(key, { requestSha256, ledgerEntrySha256: value.ledgerEntrySha256, by: value.by, reason: value.reason, safePoint, stage });
+    await this.owner.remember(name, requestSha256);
+    await this.receipt('owner-abort-accepted', { key, requestSha256, safePoint, stage });
+    return { requestSha256, by: value.by, reason: value.reason };
+  }
+
+  // Safe point P1, between steps of a batch: nothing of it runs. Returns the batch outcome, or null to go on.
+  async abortIfRequested(key, batch, safePoint) {
+    const found = await this.pendingAbort(key);
+    if (!found) return null;
+    let request;
+    try {
+      request = await this.acceptAbort(key, found, safePoint, null);
+    } catch (error) {
+      return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch);
+    }
+    return this.concludeAbort(key, batch, { safePoint, request });
+  }
+
+  async concludeAbort(key, batch, opts) {
+    const r = await this.ownerAbort(key, batch, opts);
+    try { await this.receipt('owner-request', { requestSha256: opts.request.requestSha256, kind: 'abort', key, outcome: r.state, failureCode: r.failureCode }); } catch { /* the terminal record and receipt are written */ }
+    return r;
+  }
+
+  // Safe point P2: a scanner-issuer stage runs while the owner directory is polled. An accepted abort asks the engine
+  // to stop the stage (again on every poll until the broker stop is written); the stage then ends through its own
+  // stop path and the caller concludes the abort. Every other stage runs as before, to its own end.
+  async runStageWatched(key, batch, number, opts) {
+    const stage = this.stage(number);
+    if (!ABORTABLE_IN_FLIGHT.includes(number) || typeof this.engine.requestStop !== 'function') return { result: await this.engine.runStage(batch, stage, opts), abort: null };
+    const watch = this.watchAbort(key, batch, number);
+    let result;
+    try {
+      result = await this.engine.runStage(batch, stage, opts);
+    } finally {
+      await watch.stop();
+    }
+    let abort = watch.state.accepted;
+    if (!abort) {
+      // An acceptance that wrote 80-owner-abort but not its receipt still aborts: the batch never continues past it.
+      const s = await this.ledger.state(key);
+      if (s.abort) abort = { requestSha256: s.abort.requestSha256, by: s.abort.by, reason: s.abort.reason };
+    }
+    return { result, abort };
+  }
+
+  watchAbort(key, batch, number) {
+    const state = { accepted: null, stop: null };
+    let stopped = false, wake;
+    const stopSignal = new Promise(resolve => { wake = resolve; });
+    const running = (async () => {
+      while (!stopped) {
+        await Promise.race([this.sleep(ABORT_POLL_MS), stopSignal]);
+        if (stopped) return;
+        try {
+          if (!state.accepted) {
+            const found = await this.pendingAbort(key);
+            if (found) state.accepted = await this.acceptAbort(key, found, `in-stage-${number}`, number);
+          }
+          if (state.accepted && state.stop?.broker !== true) {
+            state.stop = await this.engine.requestStop(batch, number);
+            if (state.stop.broker === true) await this.receipt('owner-abort-stop-requested', { key, stage: number, requestId: state.stop.requestId, pump: state.stop.pump === true });
+          }
+        } catch { /* a failed poll never ends the stage; the next poll tries again */ }
+      }
+    })();
+    return { state, stop: async () => { stopped = true; wake(); await running; } };
+  }
+
+  // Quiescence after an abort: the same fresh two-host proof as any failure, re-checked for a bounded time (the Linux
+  // worker of a stopped issuer may need its own short way out). Never longer than ABORT_QUIESCENCE_WAIT_MS.
+  async abortQuiescence(batch, stageProof) {
+    const until = this.clock() + ABORT_QUIESCENCE_WAIT_MS;
+    for (let attempt = 1; ; attempt += 1) {
+      const proof = await this.proofFor(batch, stageProof);
+      if (proofComplete(proof) || attempt >= ABORT_QUIESCENCE_ATTEMPTS || this.clock() >= until) return proof;
+      await this.sleep(ABORT_QUIESCENCE_POLL_MS);
+    }
+  }
+
+  // The abort itself. A stage that was running must have ended through its stop path (or on its own) with an allow-
+  // listed ending and the Windows half of the cleanup proof; then quiescence on both hosts, a rename-only archive with
+  // the fixed reason owner-aborted, and FAILED_CLEAN OWNER_ABORTED (the head stays burned, never an attempt 2).
+  // Anything unproven is UNKNOWN exactly as today: HALT, burned head, the scene left for the Owner's re-arm.
+  async ownerAbort(key, batch, { safePoint, stage = null, result = null, request }) {
+    try {
+      if (result && !abortStageEndingClean(result)) return await this.unknown(key, validCode(result.code ?? 'OWNER_ABORT_STAGE_UNCONFIRMED'), 'owner-abort-stage-not-stopped-cleanly', batch);
+      const proof = await this.abortQuiescence(batch, result?.proof ?? {});
+      if (!proofComplete(proof)) return await this.unknown(key, 'OWNER_ABORT_QUIESCENCE_UNPROVEN', 'owner-abort-quiescence-unproven', batch);
+      await this.ledger.burnHead(key, { failureCode: OWNER_ABORTED });
+      const windows = await this.engine.archiveFailure(batch, OWNER_ABORT_ARCHIVE_REASON);
+      const linux = await this.companion.archiveLinux(batch, OWNER_ABORT_ARCHIVE_REASON);
+      check(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED');
+      await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: OWNER_ABORTED, basis: 'owner-abort-quiescence-proven', safePoint, stage,
+        stageCode: result && result.ok !== true ? validCode(result.code) : null, batchId: batch?.batchId ?? null, windows: windows.directory, linux: linux.directory,
+        requestSha256: request.requestSha256 });
+      await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: OWNER_ABORTED, safePoint });
+      return { state: 'FAILED_CLEAN', key, failureCode: OWNER_ABORTED, safePoint };
+    } catch (error) {
+      return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch);
+    }
   }
 
   // Pause requests may come from the user session: stopping is always allowed, resuming is not.
@@ -375,6 +558,8 @@ export class ResidentExecutor {
     // effect and publishes nothing, so its failure can release the reservation.
     const bundle = await this.companion.buildBundle(batch);
     if (!bundle || bundle.ok !== true) return new StepFailure(0, 'BUNDLE_UNAVAILABLE', {}, 'bundle');
+    const early = await this.abortIfRequested(key, batch, 'before-stage-1');
+    if (early) return early;
 
     const first = await this.engine.runStage(batch, this.stage(1), { betweenRoles: false, firstLinux: false });
     await this.receipt('stage-terminal', { key, stage: 1, ok: first.ok === true, failureCode: first.ok ? null : validCode(first.code), factsSha256: first.factsSha256 ?? null });
@@ -410,6 +595,8 @@ export class ResidentExecutor {
   // Everything after 15-relay-wait: one wait evaluation, then (unless still waiting) 20-plan-intent,
   // stage R, 25-plan, the local roles, stage 8 and the close.
   async continueBatch(key, subject, batch, t0) {
+    let aborted = await this.abortIfRequested(key, batch, 'before-relay-plan');
+    if (aborted) return aborted;
     const plan = await this.relayPlan(key, subject, batch, t0);
     if (plan instanceof StepFailure || plan.waiting) return plan.waiting ? { state: 'WAITING', key, until: plan.until, reason: plan.reason } : plan;
     const relayed = plan.relayed.length;
@@ -418,18 +605,22 @@ export class ResidentExecutor {
     // local Linux role are archived before the next one (between-roles-4 / -6 only where needed).
     const localRoles = HEAVY_ROLES.filter(r => plan.local.some(l => l.role === r));
     if (localRoles.length > 0) {
+      if ((aborted = await this.abortIfRequested(key, batch, 'before-workspace'))) return aborted;
       const prep = await this.companion.prepareWorkspaces(batch);
       if (!prep || prep.ok !== true) return new StepFailure(0, prep?.code ?? 'WORKSPACE_PREPARATION_UNCONFIRMED', {}, 'workspace', relayed);
     }
     for (const [index, role] of localRoles.entries()) {
       for (const number of ROLE_STAGES[role]) {
+        if ((aborted = await this.abortIfRequested(key, batch, `before-stage-${number}`))) return aborted;
         const execution = number === ROLE_STAGES[role][0];
-        const r = await this.engine.runStage(batch, this.stage(number), { betweenRoles: execution && index > 0, firstLinux: execution && index === 0 });
+        const { result: r, abort } = await this.runStageWatched(key, batch, number, { betweenRoles: execution && index > 0, firstLinux: execution && index === 0 });
         await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null });
+        if (abort) return this.concludeAbort(key, batch, { safePoint: `in-stage-${number}`, stage: number, result: r, request: abort });
         if (r.ok !== true) return new StepFailure(number, r.code, r.proof, 'stage', relayed);
       }
     }
     await this.lateHostedResults(key, subject, plan);
+    if ((aborted = await this.abortIfRequested(key, batch, 'before-stage-8'))) return aborted;
     const control = await this.engine.runStage(batch, this.stage(8), { betweenRoles: false, firstLinux: false });
     await this.receipt('stage-terminal', { key, stage: 8, ok: control.ok === true, failureCode: control.ok ? null : validCode(control.code), factsSha256: control.factsSha256 ?? null });
     if (control.ok !== true) return new StepFailure(8, control.code, control.proof, 'stage', relayed);
