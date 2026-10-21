@@ -109,6 +109,9 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
     linuxEntries.push({ path: null, installedPath: p.installedPath, sha256: p.sha256, bytes: null });
   }
   await writeJson(path.join(out, 'linux', 'manifest.json'), { contract: 'clued.independent-ci.resident-linux-manifest/2', files: linuxEntries.map(({ installedPath, sha256: s }) => ({ installedPath, sha256: s })) });
+  // The Linux half of the Source v2 install (bin/clued-ci-install-source-v2) is run once by root from this
+  // reviewed copy, never installed or pinned by the unit guard; its hash is reported for the Owner's review.
+  const sourceV2Installer = await copyNew(path.join(HERE, 'linux', 'bin', 'clued-ci-install-source-v2'), path.join(out, 'linux', 'bin', 'clued-ci-install-source-v2'));
   const files = [];
   const add = async (rel, target) => { files.push({ path: rel, target, sha256: sha256(await fs.readFile(path.join(out, rel))) }); };
   for (const e of residentEntries) await add(`resident/${e.path}`, `resident\\${residentManifestSha256}\\${e.path.replace(/\//g, '\\')}`);
@@ -120,7 +123,8 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
   await add('resident/windows/SwapBroker.cs', 'bin\\SwapBroker.cs');
   const pkg = { contract: 'clued.independent-ci.resident-package/3', sourceManifestSha256, ciSourceManifestSha256, residentManifestSha256, bridgeManifestSha256, files };
   await writeJson(path.join(out, 'package-manifest.json'), pkg);
-  return { packageManifestSha256: sha256(await fs.readFile(path.join(out, 'package-manifest.json'))), sourceManifestSha256, ciSourceManifestSha256, residentManifestSha256, bridgeManifestSha256, files: files.length, runtimeSha256: runtime.sha256 };
+  return { packageManifestSha256: sha256(await fs.readFile(path.join(out, 'package-manifest.json'))), sourceManifestSha256, ciSourceManifestSha256, residentManifestSha256, bridgeManifestSha256, files: files.length, runtimeSha256: runtime.sha256,
+    linuxSourceV2InstallerSha256: sourceV2Installer.sha256 };
 }
 
 if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`) {

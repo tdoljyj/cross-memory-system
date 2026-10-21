@@ -36,6 +36,9 @@ test('the install package is assembled create-only, pins every file and binds po
   assert.ok(linux.files.every(f => f.installedPath.startsWith('/')), 'Linux pins name installed paths');
   assert.ok(linux.files.some(f => f.installedPath === '/etc/systemd/system/clued-ci-worker@.service'));
   assert.ok(linux.files.some(f => f.installedPath.endsWith('/node')), 'external entry points are pinned too');
+  assert.ok(!linux.files.some(f => f.installedPath.endsWith('clued-ci-install-source-v2')), 'the one-time Source v2 installer is not a unit-guard pin');
+  assert.match(r.linuxSourceV2InstallerSha256, /^[0-9a-f]{64}$/);
+  assert.equal(r.linuxSourceV2InstallerSha256, sha256(await fs.readFile(path.join(out, 'linux', 'bin', 'clued-ci-install-source-v2'))));
   assert.equal(r.packageManifestSha256, sha256(await fs.readFile(path.join(out, 'package-manifest.json'))));
   const pkg = JSON.parse(await fs.readFile(path.join(out, 'package-manifest.json'), 'utf8'));
   const shape = /^(?:(?:resident|source)\\[0-9a-f]{64}(?:\\[A-Za-z0-9_.@-]+)+|(?:config|runtime|bin|helpers|record)\\[A-Za-z0-9_.@-]+)$/;
