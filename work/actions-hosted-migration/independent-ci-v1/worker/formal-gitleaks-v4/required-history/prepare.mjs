@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { validateJobV2 as validateJob, subjectOfV2 as subjectOf } from '../../../src/job-v2.mjs';
 import { canonical, digest } from '../../../src/proof.mjs';
+import { TRUSTED_WORKFLOW_PATHS, trustedWorkflowSha256s } from '../../trusted-workflows.mjs';
 
 export const IMAGE = 'ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f';
 export const SCAN_ARGS = Object.freeze(['git', '/repo', '--config', '/repo/.gitleaks.toml', '--gitleaks-ignore-path', '/reviewed.ignore', '--redact', '--exit-code', '1']);
@@ -16,15 +17,12 @@ export const SOURCE_PINS = Object.freeze({
   'scripts/ci/reviewed_gitleaks.py': '433b24137a7d3430990b69e61c0b4ebcd9dad47d770c5df62d6e1fef28b7f7a9',
   '.gitleaks.toml': 'cf631812810d997f42496af561f44930b51087737f146c4a7541c5dbc0a994cd',
 });
-// The hosted workflow is pinned as an exact accepted set, never a pattern: the bytes on main before
-// PR-B (blob 74043d68) and the bytes PR-B 7d0468e0 lands (blob 1764fbcd). The Source manifest declares
+// The hosted workflow is pinned as an exact accepted set, never a pattern, taken from the one table
+// (worker/trusted-workflows.mjs: main before PR-B and the frozen PR-B bytes). The Source manifest declares
 // exactly one of them and the trusted checkout must hold exactly that one, so the same installed code
 // accepts a Source installed from either side of PR-B. Helper and config stay single exact pins.
-export const WORKFLOW_PATH = '.github/workflows/gitleaks.yml';
-export const WORKFLOW_SHA256S = Object.freeze([
-  '168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579', // main before PR-B, blob 74043d68
-  '17ec69ed57368773ed9dbb5c7ab0808172ac12173131d4fe81b57cd3fbfd8384', // PR-B 7d0468e0, blob 1764fbcd
-]);
+export const WORKFLOW_PATH = TRUSTED_WORKFLOW_PATHS.gitleaks;
+export const WORKFLOW_SHA256S = trustedWorkflowSha256s(WORKFLOW_PATH);
 // The role's declared workflow pin; refused unless it is declared once and is an accepted value.
 export function acceptedWorkflowSha256(role) {
   const declared = Array.isArray(role?.sourceFiles) ? role.sourceFiles.filter(pin => pin?.path === WORKFLOW_PATH) : [];

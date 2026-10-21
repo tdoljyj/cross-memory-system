@@ -7,18 +7,17 @@ import { createHash } from 'node:crypto';
 import { validateJob } from '../../src/queue.mjs';
 import { canonical, digest, subjectOf } from '../../src/proof.mjs';
 import { noLinks } from '../required-gitleaks/prepare.mjs';
+import { TRUSTED_WORKFLOW_PATHS, trustedWorkflowSha256s } from '../trusted-workflows.mjs';
 import { createArguments, inspectContainer } from '../verify-once/verify-worker.mjs';
 
 export const IMAGE = 'ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9';
-// Single pin kept only for the H4 formal-trivy-v2 adapter (superseded; on neither the H5 nor the Source v2 path).
-export const WORKFLOW_SHA256 = 'cea2fd770663e65f554719903da90aaf4b8aae4a52bf52098d3d258340e2727d';
-// .github/workflows/trivy.yml is pinned as an exact accepted set, never a pattern: the bytes on main
-// before PR-B (blob f7f8d075) and the bytes PR-B 7d0468e0 lands (blob a7f2653a). The adapter passes the
-// one the installed Source manifest declares and its trusted checkout holds.
-export const WORKFLOW_SHA256S = Object.freeze([
-  'cea2fd770663e65f554719903da90aaf4b8aae4a52bf52098d3d258340e2727d', // main before PR-B, blob f7f8d075
-  '7864a061c96dd377152ff03f0b00d18839602b22b3a520cd412afe3e683248b8', // PR-B 7d0468e0, blob a7f2653a
-]);
+// .github/workflows/trivy.yml is pinned as an exact accepted set, never a pattern, taken from the one table
+// (worker/trusted-workflows.mjs). The adapter passes the one the installed Source manifest declares and its
+// trusted checkout holds.
+export const WORKFLOW_SHA256S = trustedWorkflowSha256s(TRUSTED_WORKFLOW_PATHS.trivy);
+// Single pin kept only for the superseded H4 formal-trivy-v2 adapter (on neither the H5 nor the Source v2 path):
+// the table's main row.
+export const WORKFLOW_SHA256 = WORKFLOW_SHA256S[0];
 export const CHECKS_REPOSITORY = 'ghcr.io/aquasecurity/trivy-checks:2';
 export const DB_REPOSITORIES = Object.freeze(['ghcr.io/aquasecurity/trivy-db:2', 'mirror.gcr.io/aquasec/trivy-db:2']);
 const HASH = /^[a-f0-9]{64}$/;

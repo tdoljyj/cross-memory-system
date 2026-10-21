@@ -16,15 +16,16 @@ import {loadQualifiedPolicyV2 as loadQualifiedPolicy,protectedPath,qualification
 import {observeUnsignedContainer} from '../verify-once/verify-worker.mjs';
 import {dockerInvoke} from '../formal-gitleaks-v2/docker-transport.mjs';
 import {PROFILE,LIMITS,validateTools,fixedCommands} from './container-entry.mjs';
+import {TRUSTED_WORKFLOW_PATHS,trustedWorkflowSha256s} from '../trusted-workflows.mjs';
 
 export const POLICY_FILE='/etc/clued-independent-ci/roles-v3/contract-placement.json';
-// .github/workflows/contract-placement.yml is pinned as an exact accepted set, never a pattern: the bytes on
-// main before PR-B (blob 54ee2f11) and the bytes PR-B 7d0468e0 lands (blob 3640f089). The role profile and the
-// Source manifest must name the same one; the observation records it.
-export const WORKFLOW_SHA256S=Object.freeze(['762f1b1346a699068660e46648a665d25873a396fc0d2186ef8f44a844625ffd','4898299bee3e804a19acfef51d15b582e5a52526a655a290cf09bb56c39de84b']);
+// .github/workflows/contract-placement.yml is pinned as an exact accepted set, never a pattern, taken from the one
+// table (worker/trusted-workflows.mjs). The role profile and the Source manifest must name the same one; the
+// observation records it.
+export const WORKFLOW_SHA256S=trustedWorkflowSha256s(TRUSTED_WORKFLOW_PATHS['contract-placement']);
 const P='work/actions-hosted-migration/independent-ci-v1/';
 const DIR=P+'worker/formal-contract-placement-v2/';
-const CLOSURE=[DIR+'adapter.mjs',DIR+'container-entry.mjs',P+'src/job-v2.mjs',P+'src/admission-facts-v2.mjs',P+'src/proof.mjs',P+'src/worker-v2.mjs',P+'worker/qualification-v2.mjs',P+'worker/verify-once/verify-worker.mjs',P+'worker/formal-gitleaks-v2/docker-transport.mjs'];
+const CLOSURE=[DIR+'adapter.mjs',DIR+'container-entry.mjs',P+'src/job-v2.mjs',P+'src/admission-facts-v2.mjs',P+'src/proof.mjs',P+'src/worker-v2.mjs',P+'worker/qualification-v2.mjs',P+'worker/verify-once/verify-worker.mjs',P+'worker/trusted-workflows.mjs',P+'worker/formal-gitleaks-v2/docker-transport.mjs'];
 const HASH=/^[a-f0-9]{64}$/;const actual=new WeakSet();
 const check=(v,c)=>{if(!v)throw Object.assign(new Error(c),{code:c});};
 const freeze=v=>{if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v);}return v;};

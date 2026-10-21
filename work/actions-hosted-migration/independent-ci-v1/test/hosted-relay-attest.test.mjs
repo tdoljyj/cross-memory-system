@@ -60,6 +60,10 @@ test('E3: a PR that changes CI files, .gitattributes or a role closure falls bac
     [['.github/workflows/gitleaks-shadow.yml', 'src/app.js'], all('NOT_ELIGIBLE:E3_CI_PATH_CHANGED')],
     [['.github/actions/ci-temporary-storage/setup.mjs'], all('NOT_ELIGIBLE:E3_CI_PATH_CHANGED')],
     [['.gitattributes', 'src/app.js'], all('NOT_ELIGIBLE:E3_PROTECTED_PATH_CHANGED')],
+    // PR-A re-review: a .gitattributes at any depth (**/.gitattributes) can mark files binary for the hosted scan.
+    [['docs/.gitattributes'], all('NOT_ELIGIBLE:E3_PROTECTED_PATH_CHANGED')],
+    [['src/app.js', 'apps/web/vendor/.gitattributes'], all('NOT_ELIGIBLE:E3_PROTECTED_PATH_CHANGED')],
+    [['docs/x.gitattributes', 'docs/.gitattributes.md', 'docs/.gitattributesx/a.txt'], all('ATTESTED_SUCCESS')],
     [['.gitleaks.toml'], { gitleaks: 'NOT_ELIGIBLE:E3_CLOSURE_PATH_CHANGED', trivy: 'ATTESTED_SUCCESS' }],
     [['.gitleaksignore'], { gitleaks: 'NOT_ELIGIBLE:E3_CLOSURE_PATH_CHANGED', trivy: 'ATTESTED_SUCCESS' }],
     [['scripts/ci/reviewed_gitleaks.py'], { gitleaks: 'NOT_ELIGIBLE:E3_CLOSURE_PATH_CHANGED', trivy: 'ATTESTED_SUCCESS' }],
@@ -107,9 +111,14 @@ test('E5: absent, pending, failed, skipped, superseded and foreign runs are not 
   assert.equal((await verdicts(w)).gitleaks, 'HOSTED_NOT_SUCCESS:E5_HOSTED_FAILURE');
   w = createWorld(); w.allHosted(); w.addHostedRun('gitleaks', { conclusion: 'cancelled' });
   assert.equal((await verdicts(w)).gitleaks, 'HOSTED_NOT_SUCCESS:E5_HOSTED_CANCELLED');
+  // A run of the hosted job name from any app but GitHub Actions (15368) is refused, also next to a good Actions run.
   w = createWorld(); w.addHostedRun('gitleaks', { appId: 5368905 }); w.addHostedRun('trivy', { headSha: OTHER });
   const foreign = await verdicts(w, ['gitleaks', 'trivy']);
-  assert.deepEqual(foreign, { gitleaks: 'ABSENT:E5_NO_HOSTED_RUN', trivy: 'ABSENT:E5_NO_HOSTED_RUN' });
+  assert.deepEqual(foreign, { gitleaks: 'ATTESTATION_FAILED:E5_FOREIGN_APP_RUN', trivy: 'ABSENT:E5_NO_HOSTED_RUN' });
+  w = createWorld(); w.allHosted(); w.addHostedRun('trivy', { appId: 99999 });
+  assert.deepEqual(await verdicts(w), { gitleaks: 'ATTESTED_SUCCESS', trivy: 'ATTESTATION_FAILED:E5_FOREIGN_APP_RUN' });
+  w = createWorld(); w.allHosted(); w.addHostedRun('gitleaks', { appId: null });
+  assert.equal((await verdicts(w)).gitleaks, 'ATTESTATION_FAILED:E5_FOREIGN_APP_RUN');
   // The required check name from the hosted app is not the registered hosted job.
   w = createWorld(); w.addHostedRun('gitleaks', { name: 'gitleaks' });
   assert.equal((await verdicts(w, ['gitleaks'])).gitleaks, 'ABSENT:E5_NO_HOSTED_RUN');

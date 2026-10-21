@@ -1,10 +1,11 @@
-// Offline tests of the exact accepted workflow pin sets (PR-A x PR-B 7d0468e0). The local formal roles of
-// Source v2 (gitleaks v4, trivy v4 + required-trivy-v3, placement v2, policy v3, bridge v4) and of the H5
-// one-shot fallback (gitleaks v3, trivy v3 + required-trivy-v2, placement v1, policy v2, bridge v3) accept
-// exactly the reviewed bytes of the three hosted workflows on main before PR-B and as frozen in PR-B, never
-// a pattern, so one installed Source keeps working whichever side of PR-B its trusted checkout is from.
-// The bytes come from test/fixtures/trusted-workflows.json, never from the working tree.
-// No network, Docker, Host path or credential. Fixtures live under os.tmpdir().
+// Offline tests of the exact accepted workflow pin sets (PR-A x PR-B). The local formal roles of Source v2
+// (gitleaks v4, trivy v4 + required-trivy-v3, placement v2, policy v3, bridge v4) and of the H5 one-shot
+// fallback (gitleaks v3, trivy v3 + required-trivy-v2, placement v1, policy v2, bridge v3) accept exactly the
+// reviewed bytes of the three hosted workflows on main and in the frozen PR-B commit, never a pattern, so one
+// installed Source keeps working whichever side of PR-B its trusted checkout is from. Every set derives from
+// the one table worker/trusted-workflows.mjs; test/fixtures/repin-trusted-workflows.mjs regenerates that table
+// and the fixture from two commits. The bytes come from test/fixtures/trusted-workflows.json, never from the
+// working tree. No network, Docker, Host path or credential. Fixtures live under os.tmpdir().
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,7 +13,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { canonical } from '../src/proof.mjs';
 import { JOB_CONTRACT, jobId } from '../src/queue.mjs';
 import { makeJobV2 } from '../src/job-v2.mjs';
@@ -28,38 +29,77 @@ import { PLACEMENT_WORKFLOW_SHA256S as POLICY_V2_PLACEMENT } from '../worker/for
 import { PLACEMENT_WORKFLOW_SHA256S as POLICY_V3_PLACEMENT } from '../worker/formal-fixed-role-policy-v3/policy.mjs';
 import * as bridgeV3 from '../worker/protected-job-bridge-v3/signed-result.mjs';
 import * as bridgeV4 from '../worker/protected-job-bridge-v4/signed-result.mjs';
+import { REQUIRED_SOURCE_PATHS as BRIDGE_V3_SOURCE } from '../worker/protected-job-bridge-v3/boundary.mjs';
+import { REQUIRED_SOURCE_PATHS as BRIDGE_V4_SOURCE } from '../worker/protected-job-bridge-v4/boundary.mjs';
+import { requiredSourcePaths as policyV2Paths } from '../worker/formal-fixed-role-policy-v2/policy.mjs';
+import { requiredSourcePaths as policyV3Paths } from '../worker/formal-fixed-role-policy-v3/policy.mjs';
 import { WORKFLOWS, VERSIONS, GITLEAKS, TRIVY, PLACEMENT, workflowBytes, sha256, gitBlob, acceptedSha256s } from './fixtures/trusted-workflows.mjs';
+import { TRUSTED_WORKFLOWS, TRUSTED_WORKFLOW_PATHS, trustedWorkflowSha256s } from '../worker/trusted-workflows.mjs';
+import { TABLE_FILE, FIXTURE_FILE, readVersions, fixtureText, tableText } from './fixtures/repin-trusted-workflows.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../../../..');
 const REPO = 'tdoljyj/cross-memory-system';
 const h = n => String(n).repeat(64).slice(0, 64);
+const FILES = [GITLEAKS, TRIVY, PLACEMENT];
 
-// Independent of the fixture: the blobs the coordinator froze for both sides of PR-B.
-const EXPECTED = {
-  main: { commit: '8710e92ca5c8bb2b7330e45dc6d4f724c0b68b93', [GITLEAKS]: '74043d68d20dbee9f9404a66f0a02d3285fea0aa',
-    [TRIVY]: 'f7f8d075d1a0f314a7c5eb295e459599288d538c', [PLACEMENT]: '54ee2f11cc0f52d7cd9c0f6a63b75da8ef3e2b3a' },
-  'pr-b': { commit: '7d0468e07125fa25cfa23846f66c505248d6396a', [GITLEAKS]: '1764fbcd3dd1457ae93423e0c100fe5deb1449ac',
-    [TRIVY]: 'a7f2653a8add1d2486d27e1dd388ea4a9ef54025', [PLACEMENT]: '3640f0895cc72caffb8b2bc0c1df21b76b4b5340' },
-};
-
-test('the fixture holds the exact reviewed bytes of all three workflows on both sides of PR-B', () => {
+test('the one table and the fixture name the same exact bytes of all three workflows on both sides of PR-B', () => {
   assert.equal(WORKFLOWS.contract, 'clued.independent-ci.test.trusted-workflows/1');
   assert.deepEqual(Object.keys(WORKFLOWS.versions), [...VERSIONS]);
+  assert.deepEqual(Object.values(TRUSTED_WORKFLOW_PATHS).sort(), [...FILES].sort());
+  assert.ok(Object.isFrozen(TRUSTED_WORKFLOWS) && Object.isFrozen(TRUSTED_WORKFLOW_PATHS));
+  assert.equal(Object.keys(TRUSTED_WORKFLOWS).length, FILES.length * VERSIONS.length);
   for (const version of VERSIONS) {
-    assert.equal(WORKFLOWS.versions[version].commit, EXPECTED[version].commit);
-    assert.deepEqual(Object.keys(WORKFLOWS.versions[version].files).sort(), [GITLEAKS, PLACEMENT, TRIVY].sort());
-    for (const file of [GITLEAKS, TRIVY, PLACEMENT]) {
-      const entry = WORKFLOWS.versions[version].files[file], bytes = workflowBytes(version, file);
-      assert.equal(gitBlob(bytes), EXPECTED[version][file], `${version} ${file} blob`);
-      assert.equal(entry.blob, EXPECTED[version][file]);
+    const { commit, files } = WORKFLOWS.versions[version];
+    assert.match(commit, /^[a-f0-9]{40}$/);
+    assert.deepEqual(Object.keys(files).sort(), [...FILES].sort());
+    for (const file of FILES) {
+      const entry = files[file], bytes = workflowBytes(version, file);
+      assert.equal(gitBlob(bytes), entry.blob, `${version} ${file} blob`);
       assert.equal(sha256(bytes), entry.sha256, `${version} ${file} sha256`);
+      // The table row keyed by these bytes' sha256: same path, blob and source commit.
+      assert.deepEqual({ ...TRUSTED_WORKFLOWS[entry.sha256] }, { path: file, sha256: entry.sha256, blob: entry.blob, source: `${version} ${commit}` });
     }
   }
-  for (const file of [GITLEAKS, TRIVY, PLACEMENT]) assert.notEqual(sha256(workflowBytes('main', file)), sha256(workflowBytes('pr-b', file)));
-  // The coordinator's sha256 values for PR-B.
-  assert.equal(sha256(workflowBytes('pr-b', GITLEAKS)), '17ec69ed57368773ed9dbb5c7ab0808172ac12173131d4fe81b57cd3fbfd8384');
-  assert.equal(sha256(workflowBytes('main', GITLEAKS)), '168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579');
+  for (const file of FILES) {
+    assert.notEqual(sha256(workflowBytes('main', file)), sha256(workflowBytes('pr-b', file)));
+    assert.deepEqual([...trustedWorkflowSha256s(file)], acceptedSha256s(file));
+  }
+  assert.throws(() => trustedWorkflowSha256s('.github/workflows/other.yml'), { code: 'TRUSTED_WORKFLOW_PATH_UNKNOWN' });
+  // Regenerating from the fixture's own data reproduces the committed table and fixture byte for byte.
+  const versions = structuredClone(WORKFLOWS.versions);
+  assert.equal(tableText(fs.readFileSync(TABLE_FILE, 'utf8'), versions), fs.readFileSync(TABLE_FILE, 'utf8'));
+  assert.equal(fixtureText(versions), fs.readFileSync(FIXTURE_FILE, 'utf8'));
+});
+
+const haveCommits = (() => {
+  const r = spawnSync('git', ['-C', ROOT, 'cat-file', '--batch-check'], { input: VERSIONS.map(v => WORKFLOWS.versions[v].commit).join('\n') + '\n', windowsHide: true });
+  return r.status === 0 && !String(r.stdout).includes('missing');
+})();
+test('the fixture bytes are the git objects of its two commits (re-pin tool, read-only)', { skip: !haveCommits && 'fixture commits not in the local object store' }, () => {
+  const versions = readVersions(ROOT, Object.fromEntries(VERSIONS.map(v => [v, WORKFLOWS.versions[v].commit])));
+  assert.deepEqual(versions, WORKFLOWS.versions);
+});
+
+test('a malformed table refuses to load: duplicate, non-hex, unknown path, or a workflow without a row', async t => {
+  const directory = await fsp.mkdtemp(path.join(os.tmpdir(), 'clued-trusted-table-'));
+  t.after(() => fsp.rm(directory, { recursive: true, force: true }));
+  const text = fs.readFileSync(TABLE_FILE, 'utf8'), [mainGitleaks] = acceptedSha256s(GITLEAKS);
+  const row = WORKFLOWS.versions.main.files[GITLEAKS];
+  const line = `  ['${GITLEAKS}', '${mainGitleaks}', '${row.blob}', 'main ${WORKFLOWS.versions.main.commit}'],\n`;
+  assert.ok(text.includes(line));
+  const variants = {
+    duplicate: text.replace(line, line + line),
+    upper: text.replace(line, line.replace(mainGitleaks, mainGitleaks.toUpperCase())),
+    pattern: text.replace(line, line.replace(mainGitleaks, '*')),
+    unknown: text.replace(line, line.replace(GITLEAKS, '.github/workflows/gitleaks-shadow.yml')),
+    source: text.replace(line, line.replace(`'main ${WORKFLOWS.versions.main.commit}'`, "'any'")),
+    missing: text.split('\n').filter(l => !l.includes(`['${PLACEMENT}'`)).join('\n'),
+  };
+  for (const [name, variant] of Object.entries(variants)) {
+    const file = path.join(directory, `${name}.mjs`); fs.writeFileSync(file, variant);
+    await assert.rejects(import(pathToFileURL(file).href), { code: 'TRUSTED_WORKFLOW_TABLE_INVALID' }, name);
+  }
 });
 
 test('every role, policy and signed-result check carries exactly both reviewed versions, frozen, and no single pin is left', () => {
@@ -86,6 +126,15 @@ test('every role, policy and signed-result check carries exactly both reviewed v
   // The signed-result checks import the placement adapters' sets; linking them proves no stale single-pin import.
   assert.equal(typeof bridgeV3.verifySignedBridgeResult, 'function');
   assert.equal(typeof bridgeV4.observationFacts, 'function');
+  // The table is pinned wherever a closure of these modules is verified.
+  const TABLE = 'work/actions-hosted-migration/independent-ci-v1/worker/trusted-workflows.mjs';
+  for (const role of ['gitleaks', 'trivy', 'contract-placement']) {
+    assert.ok(policyV2Paths(role).includes(TABLE), `policy v2 ${role}`); assert.ok(policyV3Paths(role).includes(TABLE), `policy v3 ${role}`);
+  }
+  assert.ok(BRIDGE_V3_SOURCE.includes(TABLE) && BRIDGE_V4_SOURCE.includes(TABLE));
+  for (const adapter of ['formal-gitleaks-v3', 'formal-gitleaks-v4', 'formal-trivy-v2', 'formal-trivy-v3', 'formal-trivy-v4', 'formal-contract-placement-v1', 'formal-contract-placement-v2']) {
+    assert.match(fs.readFileSync(new URL(`../worker/${adapter}/adapter.mjs`, import.meta.url), 'utf8'), /(?:P\+)?'worker\/trusted-workflows\.mjs'/, adapter);
+  }
 });
 
 test('gitleaks acceptedWorkflowSha256 (v3, v4): one declared accepted pin, nothing else', () => {

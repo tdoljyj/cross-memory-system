@@ -486,6 +486,11 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
   - E3 对改动落在这些前缀下的 PR（新增、修改、删除，改名时两端都算）判 NOT_ELIGIBLE（`E3_EXECUTED_PATH_CHANGED`），角色回本地，提示模式也一样；
   - `build-registry.mjs` 从托管作业的 `run:` 步骤读出执行的仓库脚本：每个 Python 调用都必须带 `-I`（包括 `-c`），拒绝 `-m`，拒绝用 Node 运行仓库脚本；执行的脚本必须在 closure 里，它的目录必须被角色前缀或全局前缀（`.github/`）覆盖，否则拒绝构建。
   - 现在提交的生产登记表建于这些规则之前，会被拒绝，所以转发失败关闭（第 R 段 `RELAY_STAGE_REFUSED`）。它对应的 PR-B 提交也会被新构建器拒绝（Python 没有 `-I`）。PR-B 要改用 `python3 -I -B` 重新冻结，再用这个构建器重建登记表，转发才可能打开。后来 PR-B 已经重新冻结为 `7d0468e0`，登记表也用这个构建器从它重建了（`eaf685d2`，只有 gitleaks、trivy）。PR-B 前后本地角色认的工作流字节见 §7.7。
+- **复审的转发 MINOR**（PR-B 再次冻结之前一起修）：
+  - 托管作业用到的本地 action（`uses: ./<目录>`）必须整个钉住：`build-registry.mjs` 从托管作业读出这些目录，目录里的每个文件都必须是普通文件，并且在角色的 closure 里（`RELAY_REGISTRY_LOCAL_ACTION_NOT_PINNED`）；目录必须存在并且有 `action.yml`（`RELAY_REGISTRY_LOCAL_ACTION_MISSING`），还必须被禁改前缀覆盖（`RELAY_REGISTRY_LOCAL_ACTION_NOT_COVERED`）；路径有 `..`、空段或不以 `./` 开头时，扫描直接拒绝。`registry.spec.json` 两个角色的 closure 因此加上 `ci-temporary-storage` 的 `check-workflows.mjs` 和 `coverage.json`。现在提交的登记表建于这条规则之前，它仍然有效，转发照常工作（这两个文件在 `.github/` 下，E3 本来就不转发改动它们的 PR）；从新冻结的 PR-B 提交重建时，会带上这两个钉值；
+  - 任意深度的 `.gitattributes` 都不能改：E3 对每个转发角色加一条写在代码里的禁改路径规则 `**/.gitattributes`（`FORBIDDEN_CHANGE_GLOBS`，不依赖登记表），命中时判 NOT_ELIGIBLE（`E3_PROTECTED_PATH_CHANGED`），角色回本地。原来只禁了根目录的 `.gitattributes`；
+  - 托管检查的应用：托管作业名下的 check run 只能来自 GitHub Actions（app `15368`）。原来 E5 只是跳过其他应用的 run；现在这个 head 上只要有一个同名的 run 来自别的应用，就判 ATTESTATION_FAILED（`E5_FOREIGN_APP_RUN`），即使旁边还有一个成功的 Actions run，角色也回本地；
+  - `requireCheckRunIdClaim` 仍是 `false`：令牌带了 `check_run_id` 声明时，它必须等于这次 check run 的 id；没带时现在照样接受。演练 L1 一旦确认托管令牌带 `check_run_id`，就必须把它改成 `true` 并重建登记表，之后没有这个声明的令牌一律拒绝。
 
 **第 R 段在 Source v2 里**：
 
@@ -549,33 +554,38 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 
 ### 7.7 PR-B 前后的受信工作流字节（v0.7）
 
-本地正式角色会在已安装的受信检出里核对三份托管工作流的字节：gitleaks 角色核对 `.github/workflows/gitleaks.yml`，trivy 角色核对 `trivy.yml`，contract-placement 角色核对角色策略里的 `workflowSha256` 和 Source 清单里 `contract-placement.yml` 的钉值。原来每份工作流只钉一个值，就是 PR-B 之前 main 上的字节。这样 PR-B（`7d0468e0`）落地以后，从新 main 安装的 Source 会被它自己的角色拒绝（`TRUSTED_REVIEW_SOURCE_CHANGED`）。另外 `formal-gitleaks-v3-required-history.test.mjs` 直接读工作树，合入 PR-B 后也会失败。
+本地正式角色会在已安装的受信检出里核对三份托管工作流的字节：gitleaks 角色核对 `.github/workflows/gitleaks.yml`，trivy 角色核对 `trivy.yml`，contract-placement 角色核对角色策略里的 `workflowSha256` 和 Source 清单里 `contract-placement.yml` 的钉值。原来每份工作流只钉一个值，就是 PR-B 之前 main 上的字节。这样 PR-B 落地以后，从新 main 安装的 Source 会被它自己的角色拒绝（`TRUSTED_REVIEW_SOURCE_CHANGED`）。另外 `formal-gitleaks-v3-required-history.test.mjs` 直接读工作树，合入 PR-B 后也会失败。
 
-现在每份工作流钉成一个**精确的两值集合**，不用通配：
+现在每份工作流钉成一个**精确的集合**，不用通配，并且所有地方都从**同一张表**取值：`CI/worker/trusted-workflows.mjs`。
 
-| 工作流 | PR-B 之前的 main | PR-B `7d0468e0` |
-|---|---|---|
-| `gitleaks.yml` | blob `74043d68`，sha256 `168aebaf…` | blob `1764fbcd`，sha256 `17ec69ed…` |
-| `trivy.yml` | blob `f7f8d075`，sha256 `cea2fd77…` | blob `a7f2653a`，sha256 `7864a061…` |
-| `contract-placement.yml` | blob `54ee2f11`，sha256 `762f1b13…` | blob `3640f089`，sha256 `4898299b…` |
+- 表的每一行是一份工作流的一个审过的版本：字节的 sha256（作为键）、git blob（对照提交审查用）、来源（`main <提交>` 或 `pr-b <提交>`）。表格式不对就在加载时拒绝（`TRUSTED_WORKFLOW_TABLE_INVALID`），不会接受半张表。现在的行：
 
+  | 工作流 | main（`8710e92c`） | PR-B（`7d0468e0`） |
+  |---|---|---|
+  | `gitleaks.yml` | blob `74043d68`，sha256 `168aebaf…` | blob `1764fbcd`，sha256 `17ec69ed…` |
+  | `trivy.yml` | blob `f7f8d075`，sha256 `cea2fd77…` | blob `a7f2653a`，sha256 `7864a061…` |
+  | `contract-placement.yml` | blob `54ee2f11`，sha256 `762f1b13…` | blob `3640f089`，sha256 `4898299b…` |
+
+- PR-B 重新冻结时，只要一条命令：`node CI/test/fixtures/repin-trusted-workflows.mjs --repo . --main <main> --pr-b <新的 PR-B 提交>`。它从这两个提交的 git 对象读字节，改写表里 BEGIN/END 标记之间的行，同时重写测试夹具 `CI/test/fixtures/trusted-workflows.json`。加 `--check` 时不写文件，只报告是否一致。main 还是这些字节时，main 的行保留。
+- 从这张表取集合的地方：gitleaks 准备（v3、v4）、trivy 计划（`required-trivy-v2`、`-v3`）、placement 适配器（v1、v2）、角色策略（v2、v3），以及经 placement 适配器的签名结果（bridge v3、v4）。表是纯数据，没有导入，也不读文件。它在所有要核对导入闭包的清单里：gitleaks 适配器的 `SOURCE_FILES`、trivy 适配器（v2、v3、v4）和 placement 适配器的 `CLOSURE`、策略的 `COMMON_SOURCE`、bridge v3/v4 的 `REQUIRED_SOURCE_PATHS`、`source-closure.json`（已重算）。
 - 规则：
   - Source 清单在安装时由 `prepare-record.mjs` 按受信检出钉值，每份工作流只能声明一个值；
   - 这个值必须在集合里，受信检出里的文件也必须正好是这个值，否则 gitleaks 报 `TRUSTED_REVIEW_SOURCE_PIN_REQUIRED` 或 `TRUSTED_REVIEW_SOURCE_CHANGED`/`_DRIFT`，trivy 报 `ORIGINAL_TRIVY_WORKFLOW_SOURCE_REQUIRED` 或 `_DRIFT`；
   - placement 角色策略里的 `workflowSha256` 必须在集合里，并且等于清单里的钉值（`ORIGINAL_WORKFLOW_REQUIRED`）；
-  - 准备记录和观察记录写入实际用到的那个值，不再写常量。签名结果（bridge v3、v4）和角色策略（v2、v3）只接受集合里的值。助手 `reviewed_gitleaks.py` 和 `.gitleaks.toml` 仍然各钉一个值，PR-B 没有改它们。
-- 本地角色读的是已安装的受信检出，不读被检查的 head，所以 head 上是哪一版工作流都不影响本地角色。转发路径按登记表核对 head：登记表已经从 PR-B 重建，head 上不是 PR-B 的字节时，E4 判 NOT_ELIGIBLE（`E4_CLOSURE_MISMATCH`），角色回本地。
-- 两条路径用同一组值：
+  - 准备记录和观察记录写入实际用到的那个值，不再写常量。签名结果和角色策略只接受集合里的值。助手 `reviewed_gitleaks.py` 和 `.gitleaks.toml` 仍然各钉一个值，PR-B 没有改它们。
+- 本地角色读的是已安装的受信检出，不读被检查的 head，所以 head 上是哪一版工作流都不影响本地角色。转发路径按登记表核对 head：head 上不是登记表里 PR-B 的字节时，E4 判 NOT_ELIGIBLE（`E4_CLOSURE_MISMATCH`），角色回本地。
+- 两条路径用同一张表：
   - Source v2：gitleaks v4、trivy v4 加 `required-trivy-v3`、placement v2、策略 v3、bridge v4；
   - H5 one-shot 回退：gitleaks v3、trivy v3 加 `required-trivy-v2`、placement v1、策略 v2、bridge v3。现在装着的 H5 从它冻结的安装树运行，用的是旧字节，所以不需要新值；但只要从 PR-B 之后的 main 重新安装 H5，就需要新值。为了这种情况，H5 也接受这组值。
 - 不改的部分：
-  - H4 的 `formal-gitleaks-v2`、`formal-trivy-v2`（bridge v2）不在任何一条路径上，保持单值钉；
+  - H4 的 `formal-gitleaks-v2`（bridge v2）不在任何一条路径上，保持单值钉。`formal-trivy-v2` 仍然只认一个值，即 `required-trivy-v2` 的 `WORKFLOW_SHA256`，它取的是表里 main 的那一行；它也加载这张表，所以表在它的 `CLOSURE` 里。bridge v2 的固定清单（`independent-control-checks-v1/closure.mjs`）不改；
   - `required-gitleaks/prepare.mjs` 现在只是为了 `noLinks` 被导入，也保持单值钉；
-  - `required-trivy-v2` 为 `formal-trivy-v2` 留着单值的 `WORKFLOW_SHA256`；
-  - `src/control-install-delta-v2/*.json` 是历史安装记录，不改；
+  - `src/control-install-delta-v2/*.json` 是历史安装记录，不改；`worker/linux-formal-install-v1/manifest.json` 是历史的候选记录（`SOURCE_CANDIDATE_NOT_INSTALLED`），它记下的依赖哈希早已和仓库不同，也不改；
+  - `src/control-install-delta-v2/prepare-payload.mjs` 是 H5 安装增量的绑定器，它和自己的部署钉值、`manifest.json` 里的字节钉值一起冻结，所以仍然只接受旧的 placement 值。从 PR-B 之后的 main 重新安装 H5，本来就要做一个新的安装增量，新值到那时再带上；
+  - Source v2 的 `prepare-record.mjs` 只检查 placement 的 `workflowSha256` 是不是 64 位十六进制。它和清单钉值是否一致，由 placement 角色在运行时检查（`ORIGINAL_WORKFLOW_REQUIRED`，失败关闭）；
   - `scripts/ci` 里的准入登记（A1）已经同时登记了两版 blob；`merge-admission-r9-source.json`、`clued-control-workflow-source(s)` 不钉这三份工作流。
 - 测试从 `CI/test/fixtures/trusted-workflows.json` 读两版的精确字节，并核对 blob 和 sha256，不读工作树：
-  - `trusted-workflow-pins.test.mjs` 6 个：夹具、每个模块的集合、gitleaks 声明钉、trivy 计划、placement 角色档案、gitleaks v4 准备；
+  - `trusted-workflow-pins.test.mjs` 9 个：表与夹具一致（用夹具数据重新生成，表和夹具都逐字节相同）；本地有这两个提交时，夹具字节就是它们的 git 对象；格式不对的表拒绝加载；每个模块的集合和闭包；gitleaks 声明钉；trivy 计划；placement 角色档案；gitleaks v4 准备；
   - `formal-gitleaks-v3-required-history.test.mjs` 新增 1 个：两版都接受；换版、篡改、未声明、重复声明都拒绝，并且拒绝时没有任何输出；
   - `resident-v2-bridge.test.mjs` 新增 1 个：策略 v3 和 v4 签名结果下的 placement。
 

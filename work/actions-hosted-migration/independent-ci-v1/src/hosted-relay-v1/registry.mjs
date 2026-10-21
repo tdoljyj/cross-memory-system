@@ -24,6 +24,16 @@ export const RELAYABLE_ROLES = Object.freeze({ gitleaks: 'gitleaks', trivy: 'tri
 // Heavy formal roles a relay stage may be asked about; any of them that is not
 // relayable is always LOCAL_REQUIRED.
 export const HEAVY_ROLES = Object.freeze(['contract-placement', 'gitleaks', 'trivy']);
+// Fixed in code for every relayed role, whatever a registry says (PR-A re-review): a .gitattributes anywhere in
+// the tree can mark files binary or change their text conversion, so a hosted scan of the working tree or of
+// history could skip what the PR adds. A pattern `**/<name>` matches <name> at any depth, the root included.
+export const FORBIDDEN_CHANGE_GLOBS = Object.freeze(['**/.gitattributes']);
+const GLOB_NAMES = FORBIDDEN_CHANGE_GLOBS.map(glob => {
+  const name = /^\*\*\/([A-Za-z0-9_.-]+)$/.exec(glob)?.[1];
+  if (!name) throw Object.assign(new Error('RELAY_FORBIDDEN_GLOB_INVALID'), { code: 'RELAY_FORBIDDEN_GLOB_INVALID' });
+  return name;
+});
+export const matchesForbiddenChangeGlob = file => typeof file === 'string' && GLOB_NAMES.some(name => file === name || file.endsWith(`/${name}`));
 
 const SHA1 = /^[a-f0-9]{40}$/;
 const SHA256 = /^[a-f0-9]{64}$/;

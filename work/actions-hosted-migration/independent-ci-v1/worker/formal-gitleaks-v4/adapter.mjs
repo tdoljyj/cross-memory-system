@@ -21,7 +21,8 @@ const SOURCE_FILES=[['worker/formal-gitleaks-v4/adapter.mjs',import.meta.url],
   ['worker/formal-gitleaks-v3/docker-transport.mjs',new URL('../formal-gitleaks-v3/docker-transport.mjs',import.meta.url)],
   ['worker/formal-gitleaks-v4/required-history/prepare.mjs',new URL('./required-history/prepare.mjs',import.meta.url)],
   ['worker/formal-gitleaks-v4/required-history/selftest-shim.mjs',new URL('./required-history/selftest-shim.mjs',import.meta.url)],
-  ['worker/verify-once/verify-worker.mjs',new URL('../verify-once/verify-worker.mjs',import.meta.url)]];
+  ['worker/verify-once/verify-worker.mjs',new URL('../verify-once/verify-worker.mjs',import.meta.url)],
+  ['worker/trusted-workflows.mjs',new URL('../trusted-workflows.mjs',import.meta.url)]];
 const HASH=/^[a-f0-9]{64}$/;
 // Source pins an OCI repository manifest, not a Docker config-image ID. Docker
 // canonical RepoDigests omit the optional human-readable tag only.

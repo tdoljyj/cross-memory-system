@@ -21,7 +21,7 @@ const JOB_TIMEOUT_MS = 25 * 60000; // Existing trusted trivy job ceiling.
 const PREFIX = 'work/actions-hosted-migration/independent-ci-v1/';
 const CLOSURE = ['worker/formal-trivy-v4/adapter.mjs', 'worker/formal-trivy-v3/docker.mjs', 'worker/formal-trivy-v3/cache.mjs',
   'worker/required-trivy-v3/plans.mjs', 'worker/required-trivy-v2/plans.mjs', 'worker/required-gitleaks/prepare.mjs', 'worker/verify-once/verify-worker.mjs',
-  'worker/qualification-v2.mjs', 'worker/qualification.mjs', 'src/worker-v2.mjs', 'src/worker.mjs', 'src/proof.mjs', 'src/job-v2.mjs', 'src/admission-facts-v2.mjs'];
+  'worker/trusted-workflows.mjs', 'worker/qualification-v2.mjs', 'worker/qualification.mjs', 'src/worker-v2.mjs', 'src/worker.mjs', 'src/proof.mjs', 'src/job-v2.mjs', 'src/admission-facts-v2.mjs'];
 const actualObservations = new WeakSet();
 const check = (ok, code) => { if (!ok) throw Object.assign(new Error(code), { code }); };
 const freeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };

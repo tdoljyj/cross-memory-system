@@ -11,14 +11,15 @@ import {canonical,subjectOf,digest} from '../../src/proof.mjs';
 import {loadQualifiedPolicy,protectedPath} from '../qualification.mjs';
 import {IMAGE as GITLEAKS_IMAGE,SCAN_ARGS} from '../formal-gitleaks-v3/required-history/prepare.mjs';
 import {IMAGE as TRIVY_IMAGE} from '../required-trivy-v2/plans.mjs';
+import {TRUSTED_WORKFLOW_PATHS,trustedWorkflowSha256s} from '../trusted-workflows.mjs';
 import {ADAPTER_SUCCESSORS} from './integration.mjs';
 const P='work/actions-hosted-migration/independent-ci-v1/worker/formal-fixed-role-policy-v2/policy.mjs';
 const PREFIX='work/actions-hosted-migration/independent-ci-v1/';
-const COMMON_SOURCE=Object.freeze(['src/proof.mjs','src/queue.mjs','src/worker.mjs','worker/qualification.mjs','worker/linux-launcher.mjs','worker/formal-fixed-role-policy-v2/policy.mjs','worker/formal-fixed-role-policy-v2/integration.mjs','worker/formal-gitleaks-v3/required-history/prepare.mjs','worker/required-gitleaks/prepare.mjs','worker/required-trivy-v2/plans.mjs','worker/verify-once/verify-worker.mjs'].map(p=>PREFIX+p));
+const COMMON_SOURCE=Object.freeze(['worker/trusted-workflows.mjs','src/proof.mjs','src/queue.mjs','src/worker.mjs','worker/qualification.mjs','worker/linux-launcher.mjs','worker/formal-fixed-role-policy-v2/policy.mjs','worker/formal-fixed-role-policy-v2/integration.mjs','worker/formal-gitleaks-v3/required-history/prepare.mjs','worker/required-gitleaks/prepare.mjs','worker/required-trivy-v2/plans.mjs','worker/verify-once/verify-worker.mjs'].map(p=>PREFIX+p));
 const ROLE_SOURCE=Object.freeze({gitleaks:Object.freeze(['worker/formal-gitleaks-v3/adapter.mjs','worker/formal-gitleaks-v3/docker-transport.mjs','worker/formal-gitleaks-v3/required-history/selftest-shim.mjs'].map(p=>PREFIX+p).concat(['.gitleaks.toml','scripts/ci/reviewed_gitleaks.py','.github/workflows/gitleaks.yml'])),trivy:Object.freeze(['worker/formal-trivy-v3/adapter.mjs','worker/formal-trivy-v3/cache.mjs','worker/formal-trivy-v3/docker.mjs'].map(p=>PREFIX+p).concat(['.github/workflows/trivy.yml'])),'contract-placement':Object.freeze(['worker/formal-contract-placement-v1/adapter.mjs','worker/formal-contract-placement-v1/container-entry.mjs','worker/formal-gitleaks-v2/docker-transport.mjs'].map(p=>PREFIX+p).concat(['.github/workflows/contract-placement.yml']))});
-// Mirrors formal-contract-placement-v1/adapter.mjs WORKFLOW_SHA256S (exact accepted set: main before PR-B, PR-B
-// 7d0468e0). Inlined because the policy never imports a role adapter; the offline tests assert equality.
-export const PLACEMENT_WORKFLOW_SHA256S=Object.freeze(['762f1b1346a699068660e46648a665d25873a396fc0d2186ef8f44a844625ffd','4898299bee3e804a19acfef51d15b582e5a52526a655a290cf09bb56c39de84b']);
+// The same exact accepted set as formal-contract-placement-v1/adapter.mjs, from the one table (pure data;
+// the policy never imports a role adapter).
+export const PLACEMENT_WORKFLOW_SHA256S=trustedWorkflowSha256s(TRUSTED_WORKFLOW_PATHS['contract-placement']);
 export const FIXED_ROLE_POLICIES=Object.freeze({gitleaks:'/etc/clued-independent-ci/roles/gitleaks.json',trivy:'/etc/clued-independent-ci/roles/trivy.json','contract-placement':'/etc/clued-independent-ci/roles/contract-placement.json'});
 export const SERIAL_LOCK='/var/lib/clued-independent-ci/formal-role.lock';
 const actual=new WeakSet(),sessions=new WeakSet(),HASH=/^[a-f0-9]{64}$/,fail=code=>{throw Object.assign(new Error(code),{code});},check=(v,c)=>{if(!v)fail(c);};
