@@ -67,7 +67,7 @@ public sealed class ResidentServiceHost : ServiceBase
         {
             ExitCode = ResidentStopGate.ServiceExitCode(p.ExitCode);
             // Exited on its own: stop the service; nobody is left to ask, so nothing is written. When a stop or
-            // a shutdown took the stop first, that thread reports how the service ended, so Stop() is not called.
+            // a shutdown took the stop first, the service is already stopping there, so Stop() is not called.
             if (stop.Take()) Stop();
         };
         p.EnableRaisingEvents = true;
@@ -89,7 +89,12 @@ public sealed class ResidentServiceHost : ServiceBase
         // away, so the next start stopped at once). The stop is taken before the executor is looked at:
         // HasExited and WaitForExit run a pending Exited handler on this thread, which then finds it taken.
         Process p = child;
-        if (stop.Take() && p != null && !p.HasExited) stop.Request();
+        if (stop.Take() && p != null && !p.HasExited)
+        {
+            // A request that fails other than "already there" fails this stop, as before; nothing was written,
+            // so the stop is given back and a retried stop asks again.
+            try { stop.Request(); } catch { stop.Release(); throw; }
+        }
         // Wait briefly for an idle executor to exit; a busy one keeps running and is found by the
         // instance lock on the next start. Nothing is killed. The exit code is mapped here as well,
         // because STOPPED may be reported before the Exited handler has run.
@@ -97,9 +102,9 @@ public sealed class ResidentServiceHost : ServiceBase
     }
 
     // Shutdown asks for nothing. Windows ends every process within seconds (WaitToKillServiceTimeout, 5 s on
-    // TURING), before an idle executor (15 s rest) looks for a stop, and a STOP-REQUESTED left behind would
-    // make the first start after the reboot stop with exit 0, so without the failure restart. The next start
-    // runs crash recovery instead, as after any other end of the executor.
+    // TURING), usually before an idle executor (15 s rest) looks for a stop, and a STOP-REQUESTED left behind
+    // would make the first start after the reboot stop with exit 0, so without the failure restart. The next
+    // start runs crash recovery instead, as after any other end of the executor.
     protected override void OnShutdown() { stop.Take(); }
 
     public static void Main(string[] args) { Run(new ResidentServiceHost(args)); }
@@ -119,6 +124,9 @@ public sealed class ResidentStopGate
 
     // True for the first caller of this process only.
     public bool Take() { return Interlocked.Exchange(ref taken, 1) == 0; }
+
+    // Only after a failed request, which wrote nothing.
+    public void Release() { Interlocked.Exchange(ref taken, 0); }
 
     // Ask the executor to stop between batches.
     public bool Request() { return TryCreateStopFile(stopFile); }

@@ -86,6 +86,8 @@ public static class HostPureTests
     {
         if (args.Length == 3 && args[0] == "--fake-executor") return FakeExecutor(args[1], args[2]);
         self = Process.GetCurrentProcess().MainModule.FileName;
+        // A short directory of its own, not the caller's scratch: under a deep scratch path the fake executor's
+        // rename target (...\state\locks\stop-<ms>-<pid>) passes the .NET Framework MAX_PATH of 260.
         string dir = Path.Combine(Path.GetTempPath(), "clued-host-pure-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         try
@@ -191,11 +193,26 @@ public static class HostPureTests
             release.Set();
             Yes(after.WaitOne(10000) && host.ExitCode == 1064, "stop-during-exited-handler-then-ran");
 
+            // 4d. A request that fails other than "already there" (STOP-REQUESTED is a directory) fails the stop
+            //     visibly, as before, and gives the stop back, so a retried stop asks again.
+            host = Host(Case(dir, "request-fails", out state, out locks));
+            Directory.CreateDirectory(Path.Combine(state, "STOP-REQUESTED"));
+            p = Fake(state, "ack"); host.Watch(p); after = After(p);
+            string refused = null;
+            try { host.Stop(); } catch (Exception e) { refused = e.GetType().Name; }
+            Yes(refused != null && State(host) != 1 && !p.HasExited, "request-fails-stop-refused:" + refused);
+            Directory.Delete(Path.Combine(state, "STOP-REQUESTED"));
+            host.Stop();
+            bool handled = after.WaitOne(10000); int acks = Directory.GetFiles(locks, "stop-*").Length;
+            Yes(handled && acks == 1 && host.ExitCode == 0 && State(host) == 1, "request-fails-retry-asks-again:" + handled + "/" + acks + "/" + host.ExitCode + "/" + State(host) + "/" + File.Exists(Path.Combine(state, "STOP-REQUESTED")));
+
             // 5. The gate on its own.
             Case(dir, "gate", out state, out locks);
             string stopFile = Path.Combine(state, "STOP-REQUESTED");
             var gate = new ResidentStopGate(state);
             Yes(gate.Take() && !gate.Take() && !gate.Take(), "gate-first-caller-only");
+            gate.Release();
+            Yes(gate.Take() && !gate.Take(), "gate-given-back-after-a-failed-request");
             Yes(!File.Exists(stopFile) && gate.Request() && File.Exists(stopFile) && new FileInfo(stopFile).Length == 0, "gate-request-creates-empty");
             // A stop still pending for an earlier executor is never truncated, renamed or rewritten.
             File.WriteAllText(stopFile, "earlier");
