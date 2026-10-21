@@ -11,6 +11,7 @@
   - `gitleaks.yml`、`trivy.yml`、`contract-placement.yml` 的 `admission-gate` 和重型 job 跑在 `ubuntu-latest` 上，用免费分钟。Actions 预算是 $0 硬上限，分钟用完时 GitHub 拒绝启动，不计费。
   - 重型 job 名为 `gitleaks-hosted-executor`、`trivy-hosted-executor`、`contract-placement-hosted-executor`；动态名的另一个分支是对应的 `*-hosted-executor-skipped`。按 `bc6fdad1`，GitHub 把任何同名 check run 都算作必需检查，不看 integration，同名的托管 job 一旦失败就会挡住合并。所以托管 job 的名字（包括动态名的每个分支）绝不能是六个必需检查名之一。
   - 每个重型 job 有 job 级 `permissions: {contents: read, id-token: write}`。最后一步 “Emit relay identity” 只在前面所有步骤都成功后执行：用 runner 自带的 curl 和 python3 铸一个 audience 为 `clued-hosted-relay-v1` 的 GitHub OIDC 令牌，写成 check run 注解（`::notice title=clued-hosted-relay-v1::…`）。这个 audience 没有任何依赖方接受，公开它不能换取别的权限。
+  - 重型 job 持有 `id-token: write`，所以其中每一次 Python 调用都用隔离模式 `python3 -I -B`（不把脚本目录或当前目录放进 `sys.path`，不读 `PYTHON*` 环境变量），PR 加的同名模块不能顶替标准库。只有 gitleaks 和 trivy 会被转发；contract-placement 的托管运行要执行 PR 代码，永远不转发，`5368905` 只从本地正式角色发布它。
   - `scripts/ci/validate_runner_budget_policy.py` 只按精确字节放行这六个托管 job（`OWNER_DECISION_HOSTED_JOBS`），并拒绝带必需检查名的托管执行者。其他新增托管 job 仍会被拒绝。
   - `kooyumi-work-admission`、`kooyumi-admission-verified`、`kooyumi-merge-slot` 一律在本地执行，几秒钟就能完成，不转发。`clued-work-admission.yml` 保持停用（disabled_manually）：它的托管 job 名就是 `kooyumi-work-admission`。
 - **自动选路。** 独立 CI 的转发阶段对每个可转发角色核验托管运行：跑的是登记过的工作流和脚本字节，是这个 PR 的这个 head，在 GitHub 托管机上，结论是 success，OIDC 声明一致。全部成立，才以 `5368905` 发布同名必需检查。任何一项不成立，或者托管 job 被账单拒绝、超时、没成功，或者 PR 改了 CI 文件，就自动在本地执行原有的正式角色，再由 `5368905` 发布。

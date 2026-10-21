@@ -36,7 +36,7 @@ RELAY_STEP = """      - name: Emit relay identity
           set -eu
           jwt="$(curl -fsS --max-time 30 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \\
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1" \\
-            | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+            | python3 -I -B -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
           echo "::notice title=clued-hosted-relay-v1::$jwt"
 """
 HOSTED_EXECUTOR_ROUTE = "    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      id-token: write\n    steps:"
@@ -290,6 +290,9 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
                         self.assertEqual(fields["permissions"].split(), ["contents:", "read", "id-token:", "write"])
                         self.assertTrue(block.endswith(RELAY_STEP), file)
                         self.assertEqual(block.count("id-token"), 1)
+                        # A PR-provided module can never shadow the stdlib of a step that holds id-token.
+                        self.assertIn("python3 -I -B ", block)
+                        self.assertNotRegex(block, r"python3? (?!-I -B )")
                     else:
                         self.assertEqual(names, {"admission-gate"})
                         self.assertNotIn("id-token", block)

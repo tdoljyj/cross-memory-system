@@ -79,7 +79,7 @@ jobs:
             while read -r ref; do git update-ref -d "$ref"; done
       - name: Validate exact historical exceptions and detection regressions
         run: |
-          python3 scripts/ci/reviewed_gitleaks.py \
+          python3 -I -B scripts/ci/reviewed_gitleaks.py \
             --config .gitleaks.toml \
             --output "$RUNNER_TEMP/clued-reviewed.ignore" \
             --self-test
@@ -96,5 +96,5 @@ jobs:
           set -eu
           jwt="$(curl -fsS --max-time 30 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1" \
-            | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+            | python3 -I -B -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
           echo "::notice title=clued-hosted-relay-v1::$jwt"

@@ -167,5 +167,5 @@ jobs:
           set -eu
           jwt="$(curl -fsS --max-time 30 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1" \
-            | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+            | python3 -I -B -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
           echo "::notice title=clued-hosted-relay-v1::$jwt"
