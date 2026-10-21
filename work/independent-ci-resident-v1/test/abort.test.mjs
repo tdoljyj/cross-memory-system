@@ -293,6 +293,27 @@ test('inside a tick, a different abort of a batch whose abort is already accepte
   assert.deepEqual((await bodies(f, 'owner-request-refused')).map(b => b.failureCode), ['OWNER_ABORT_ALREADY_ACCEPTED']);
 });
 
+test('at a tick start, a different abort of a batch whose acceptance names another request is a refusal, not unconfirmed', async t => {
+  const f = await waitingBatch(t);
+  await f.ledger.beginOwnerAbort(KEY, { requestSha256: 'f'.repeat(64), ledgerEntrySha256: 'd'.repeat(64), by: OWNER, reason: 'first', safePoint: 'waiting', stage: null });
+  await ownerAborts(f, KEY, { sha: 'd'.repeat(64) });
+  f.exec.recover = async () => { throw new Error('recovery failed'); }; // the aborting entry stays open for takeOwnerRequests
+  assert.equal((await f.exec.tick()).state, 'HALTED');
+  assert.deepEqual((await bodies(f, 'owner-request-refused')).map(b => b.failureCode), ['OWNER_ABORT_ALREADY_ACCEPTED']);
+  assert.equal((await bodies(f, 'owner-abort-unconfirmed')).length, 0);
+});
+
+test('a concluded P0 abort whose summary receipt fails is neither refused nor unconfirmed', async t => {
+  const f = await waitingBatch(t);
+  await ownerAborts(f);
+  const receipt = f.exec.receipt.bind(f.exec);
+  f.exec.receipt = async (type, body) => { if (type === 'owner-request') throw Object.assign(new Error('disk'), { code: 'EIO' }); return receipt(type, body); };
+  assert.equal((await f.exec.tick()).state, 'IDLE');
+  assert.equal((await f.ledger.state(KEY)).outcome, 'FAILED_CLEAN');
+  assert.equal((await bodies(f, 'owner-abort-unconfirmed')).length + (await bodies(f, 'owner-request-refused')).length, 0);
+  assert.equal(await f.ledger.halted(), null);
+});
+
 test('a P0 abort never runs the archive tools from drifted Source bytes', async t => {
   const f = await waitingBatch(t);
   await ownerAborts(f);

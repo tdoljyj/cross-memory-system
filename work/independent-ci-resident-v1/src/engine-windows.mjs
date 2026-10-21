@@ -111,9 +111,10 @@ export class WindowsEngine {
   //   - first a stop request next to the in-flight broker request: the broker sends the runner service one
   //     SERVICE_CONTROL_STOP, which the helper handles (STOP_REQUESTED) by draining its own job object, and records
   //     what it did in its own receipt (stopOutcome);
-  //   - only once that receipt says STOP_SENT, or the stage's invoke-stage call has returned with the broker's answer
-  //     (whatever its code: the issuer no longer waits for anything the pump could bring), the companion's bridge pump for
-  //     the stage is cancelled (it stops relaying, never stops the worker). Before that the pump, and its blocked hand-over,
+  //   - only once that receipt says STOP_SENT, or the stage's invoke-stage call has returned with a stage fact (the broker
+  //     answered, whatever its code; the invoker refused the stage before asking the broker; or it gave up waiting for the
+  //     answer, past the broker's and the pump's own deadlines): the issuer no longer waits for anything the pump could
+  //     bring. Then the companion's bridge pump for the stage is cancelled (it stops relaying, never stops the worker). Before that the pump, and its blocked hand-over,
   //     run exactly as without an abort, so a stop that does not reach the helper leaves the stage no worse off
   //     (independent reviews, M4 and second review MINOR 2).
   async requestStop(batch, number) {
@@ -269,9 +270,10 @@ export class WindowsEngine {
       const r = await this.run([this.paths.nodeExe, invoke, '--batch-dir', batch.dir, '--stage', String(stage.number), '--work-manifest-sha256', row.workManifestSha256,
         '--batch-key', batch.key], { timeoutMs: stage.runMilliseconds + 360_000 });
       if (r.timedOut || r.code === null) return { ok: false, code: 'STAGE_INVOKER_TERMINAL_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: false } };
-      // The invoke-stage child has returned with the broker's answer, whatever its code (the helper ended; it never
-      // started; or the broker gave up after its own deadline, which lies past the pump's). From here on the pump can only
-      // make the stage wait (requestStop).
+      // The invoke-stage child has returned with a stage fact: the broker answered (whatever its code), the invoker refused
+      // the stage before asking the broker, or it gave up waiting for the answer (past the broker's and the pump's own
+      // deadlines). In every case the issuer no longer waits for the pump, which from here on can only make the stage
+      // wait (requestStop).
       if (this.inflight) this.inflight.windowsEnded = true;
       const fact = parseStageFact(r.stdout, row.workManifestSha256);
       const scOk = await this.scReadback();

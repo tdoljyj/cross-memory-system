@@ -179,12 +179,17 @@ export class ResidentExecutor {
         } else {
           check(false, 'OWNER_REQUEST_REFUSED');
         }
-        await this.receipt('owner-request', { requestSha256, ...outcome });
+        // A concluded abort has its terminal record and batch receipts; a failed summary receipt is no refusal of it.
+        if (outcome.kind === 'abort') { try { await this.receipt('owner-request', { requestSha256, ...outcome }); } catch { /* see above */ } }
+        else await this.receipt('owner-request', { requestSha256, ...outcome });
       } catch (error) {
-        // An abort whose acceptance names this very request in 80-owner-abort but could not be concluded is no refusal:
-        // the gate below HALTs this tick and the next tick's recovery closes the batch (fourth independent review).
+        // An abort whose acceptance names this very request in 80-owner-abort but could not be concluded (the entry is
+        // still open) is no refusal: the gate below HALTs this tick and the next tick's recovery closes the batch.
         let accepted = false;
-        try { accepted = abortKey !== null && (await this.ledger.state(abortKey)).abort?.requestSha256 === requestSha256; } catch { accepted = false; }
+        try {
+          const s = abortKey !== null ? await this.ledger.state(abortKey) : null;
+          accepted = s?.abort?.requestSha256 === requestSha256 && s.state !== 'TERMINAL';
+        } catch { accepted = false; }
         await this.receipt(accepted ? 'owner-abort-unconfirmed' : 'owner-request-refused', { requestSha256, failureCode: codeOf(error) });
       }
       await this.owner.remember(entry.name, requestSha256);

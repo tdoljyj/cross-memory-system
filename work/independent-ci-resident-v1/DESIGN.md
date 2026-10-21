@@ -373,7 +373,7 @@ Source v2（S11）之后，阶段的失败码来自已安装 Source 的稳定目
   1. 执行器在 `broker\requests\` 里找**正在进行的那一次交换**：代理已领取（有 `.taken`）、还没回复、段号相同、`configSha256` 等于这一批次该段包的计划哈希（从批次钉住的 work manifest 读出）。恰好一个时，在旁边新建 `<id>.stop`，字段恰好是 `contract`、`requestId`、`nonce`、`stage`、`configSha256`。执行器记下这个请求 id，交换被回复之后照样能读停止回执；
   2. 代理在这次交换的等待循环里每秒看一次（§8.2 第 9 条），条件全部满足时向 runner 服务发 `SERVICE_CONTROL_STOP`，并把结果写进只新建的停止回执 `broker\responses\<id>.stop.json`（`STOP_SENT`、`HELPER_ALREADY_STOPPING` 或某个拒绝码）。这个控制实际只生效一次：万一因为超时又发了一次，助手也只是再置一次同一个标志、终止同一个作业对象，没有别的作用；
   3. 通用助手按它现有的停止路径处理（`STOP_REQUESTED`，服务退出码 92）：只终止并排空**它自己建的作业对象**，写原生回执，报告 STOPPED。代理照常换回原始二进制并回复。执行器和代理都不杀任何进程，也不碰来历不明的进程树；
-  4. 只有停止回执是 `STOP_SENT`，或者这一段在 Windows 侧的调用（invoke-stage 子进程）已经带着代理的回复返回之后，执行器才给 companion 写 `mailbox\requests\<泵请求 id>.cancel.json`。调用带着回复返回，不论回复码是什么（助手已停；助手根本没启动；或者代理过了自己的截止时间才放弃，那时泵自己的截止时间早已过），发行方都不再等泵能带来的任何东西；调用等不到回复而超时的，这一段本来就是未知。泵在下一个等待步骤以 `COMPANION_PUMP_CANCELLED` 结束，不再做 blocked 转交；它只停止搬运，从不停止或杀掉 Linux worker，取消若随 issue 转交一起到达，就不再启动 worker。在这之前，泵和它的 blocked 转交都和没有中止时完全一样，所以停止没送达时，这一段的结局不会比不中止更差；调用一返回，这一段也不会再为泵多等到截止时间；
+  4. 只有停止回执是 `STOP_SENT`，或者这一段在 Windows 侧的调用（invoke-stage 子进程）已经带着阶段事实返回之后，执行器才给 companion 写 `mailbox\requests\<泵请求 id>.cancel.json`。带着阶段事实返回有三种：代理已经回复，不论回复码是什么（助手已停，或助手根本没启动）；调用在找代理之前就拒绝了这一段；调用等不到代理的回复而放弃，那时代理和泵自己的截止时间都已过。这三种情况下发行方都不再等泵能带来的任何东西。泵在下一个等待步骤以 `COMPANION_PUMP_CANCELLED` 结束，不再做 blocked 转交；它只停止搬运，从不停止或杀掉 Linux worker，取消若随 issue 转交一起到达，就不再启动 worker。在这之前，泵和它的 blocked 转交都和没有中止时完全一样，所以停止没送达时，这一段的结局不会比不中止更差；调用一返回，这一段也不会再为泵多等到截止时间；
   5. 还没调用的段（例如还在 refs 闸门上）直接不调用，以 `OWNER_ABORT_REQUESTED` 结束。
 - **结束**（P0、P1、P2 相同）：
   1. 运行中被停下的段，结局码必须在白名单里（`classify.mjs#OWNER_ABORT_STAGE_ENDINGS`），而且该段自己的 Windows 证明齐全（作业树为 0、原始二进制已还原）。白名单是：本来就干净的码；`OWNER_ABORT_REQUESTED`；`COMPANION_PUMP_CANCELLED`；入口被停下、来不及写结局时的 `STAGE_OUTCOME_MISSING`。最后一个只在停止回执是 `STOP_SENT` 时才算，其他情况下它照旧是未知；
@@ -383,7 +383,7 @@ Source v2（S11）之后，阶段的失败码来自已安装 Source 的稳定目
 - **HALT 语义不变**：
   - 段的结局不在白名单、静止证明不成立（`OWNER_ABORT_QUIESCENCE_UNPROVEN`）、归档未核实，都照旧记 FAILED_UNKNOWN 并锁 HALT，现场不动，等 Owner 复位；
   - 中止不清除也不绕过 HALT。HALT 时仍可中止正在等待的批次，HALT 保持；但只要还有别的未归档现场，P0 中止就拒绝（`OWNER_ABORT_UNARCHIVED_SCENE_PRESENT`），因为 `owner-aborted` 是整批范围的归档，不能把别的现场一起移走；Owner 先复位；
-  - tick 开始时接受到一半就失败（`80-owner-abort` 已写）：这个批次当场以未知关闭并 HALT；另有一道闸门，`takeOwnerRequests` 之后只要还有未终结、又不是可恢复等待的条目，这个 tick 就锁 HALT（`OWNER_ABORT_UNCONFIRMED`），不再跑任何候选；
+  - tick 开始时接受到一半就失败（`80-owner-abort` 已写）：这个批次当场以未知关闭并 HALT；另有一道闸门，`takeOwnerRequests` 之后只要还有未终结、又不是可恢复等待的条目，这个 tick 就锁 HALT（`OWNER_ABORT_UNCONFIRMED`），不再跑任何候选。这种请求的回执是 `owner-abort-unconfirmed`，不是拒绝：账本已经接受了它，下一 tick 的恢复以 `OWNER_ABORT_INTERRUPTED` 关闭这个批次。已经干净结束的中止，汇总回执写失败也不会被记成拒绝或未确认；
   - 段运行中接受到一半就失败、留下读不全的 `80-owner-abort`（账本条目成了 UNREADABLE）：段结束后立即锁 HALT（`OWNER_ABORT_UNCONFIRMED`），后面的发布段一个也不跑。读不全的条目没法再写终态，下一 tick 的崩溃恢复把它原样隔离（`LEDGER_ENTRY_UNREADABLE`），复位时以 `rearm-quarantine` 归档；
   - 服务在中止中途重启：`80-owner-abort` 让这个批次不再算可恢复的等待，崩溃恢复以 `OWNER_ABORT_INTERRUPTED` 关闭并锁 HALT。
 - **中止从不**发布、撤回或重跑任何检查，从不杀进程，也不放宽任何门禁。
@@ -762,7 +762,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 ## 11. 审计回执
 
 - **本地哈希链**（`src/receipts.mjs`）：每条记下上一条字节的 SHA-256，删除、改序、改字都会被发现。每次追加都重新取链头。凡涉及某个触发或请求文件的回执，都记下当时读到的那份字节的 SHA-256，所以之后改动归档副本能被查出来。
-- **安装和卸载回执**：在 `install\`，只有管理员能写。复位与恢复由服务写回执（`owner-request` 或 `owner-request-refused`）。
+- **安装和卸载回执**：在 `install\`，只有管理员能写。复位、恢复与中止由服务写回执（`owner-request` 或 `owner-request-refused`）。中止另有 `owner-abort-accepted`（已接受）、`owner-abort-stop-requested`（已写代理停止请求）和 `owner-abort-unconfirmed`（已接受、没能完成，见 §6.5）。
 - **KooYomi**：执行器、代理和 companion 都没有 KooYomi 写凭据，这是刻意的，不新增秘密。由 Agent 按合同 §3 把关键事件写成 Note，引用回执链头哈希（observed）。
 
 ---
@@ -798,7 +798,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 
 v0.8 补充（2026-10-21，Owner 中止 §6.5，基于 main `8c2bfdcc`，含 §13.9 复审之后的修正）：
 
-- 常驻层：`node --test test/*.test.mjs` **150/150**。新增 `abort.test.mjs` 28 个、`abort-ports.test.mjs` 7 个，覆盖：
+- 常驻层：`node --test test/*.test.mjs` **152/152**。新增 `abort.test.mjs` 30 个、`abort-ports.test.mjs` 7 个，覆盖：
   - 请求合同与结局白名单（入口没写结局只在 `STOP_SENT` 之后才接受）；`rearm-resident.ps1` 写出的字段与服务的校验一致，只收小写十六进制；
   - 等待中的批次在 tick 开始时中止；第 2 段运行中中止，只停这一段；发布段不被打断，在下一段之前生效；第 1 段之前中止；
   - 摘要过期、批次已终结、还有别的未归档现场、tick 开始时不在等待，都被拒；段运行中读到的别的批次的中止留给下一 tick；重复请求只记为重复；查看列出中止目标；
@@ -1001,6 +1001,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
   - MINOR：闸门的用例原来测不到闸门（第一次写 HALT 就已经挡住了这一 tick）。现在让那一次 HALT 写入失败，断言 HALT 码是 `OWNER_ABORT_UNCONFIRMED`、`keys` 是这个批次、后面的 PR 没有运行；把闸门去掉，这个用例就失败。另补 `pendingAbort` 里 `OWNER_ABORT_ALREADY_ACCEPTED` 的用例；
   - NIT：§6.5 写准读不全的 `80-owner-abort` 的真实去向（HALT，下一 tick 隔离）；“Windows 侧结束”写成“调用已返回”；停止控制写成“实际只生效一次，重复送达没有副作用”；各条未知路径都带上安全点、段、停止回执的码和请求摘要；段先结束时也补写 `owner-abort-stop-requested` 回执；写明复位不做漂移检查。
 - 第四轮复审（对象：提交 `4cd6dded` 相对 `7008d943` 的增量，又一位新的复审者）结论 **PASS**：增量里 0 BLOCKER、0 MAJOR，上一轮的 MINOR 和 6 个 NIT 中的 5 个确认修好（闸门用例经变异核对）。新提的都是 NIT，下列修正在之后的提交里：`requestStop` 注释和 §13.1 的“Windows 侧结束”改成“调用带着回复返回”，`windowsEnded` 挪到超时检查之后；补上段后补写回执、中止未知结局带事实的用例（两处都经变异核对）；读不全条目的用例延伸到下一 tick 的隔离和复位；`takeOwnerRequests` 遇到已接受、未完成的中止时记 `owner-abort-unconfirmed`，不再记成拒绝。复审者另指出，`unknown()` 遇到读不全的条目时不写终态记录，却仍写 `batch-terminal` 回执；这是这次之前就有的写法，本次不改。
+- 第五轮复审（对象：提交 `81bb9f99` 相对 `4cd6dded` 的增量，又一位新的复审者）结论 **PASS**：0 BLOCKER、0 MAJOR、0 MINOR，4 个 NIT，新加的断言都经变异核对。之后的提交修正了这 4 个 NIT：干净结束的中止汇总回执写失败时，不再被记成未确认；补上“接受记录点名的是别的请求时照常拒绝”的用例；`windowsEnded` 的注释和 §6.5 第 4 步写全三种返回情况；`owner-abort-unconfirmed` 写进 §6.5 和 §11。推送前合入最新 main 之后，再对最终的 PR head 做一次独立核对。
 
 ## 15. 需要 Owner 决定的事
 
