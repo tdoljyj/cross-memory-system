@@ -66,6 +66,17 @@ jobs:
           persist-credentials: false
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
+      # As the local workspace preparation (prepare-workspaces.py tree_modes_regular): only regular
+      # blobs (100644/100755). A symlink (120000), submodule (160000) or any other tree entry could
+      # point a scanner outside the checkout; such a tree is never scanned here, only locally.
+      - name: Refuse symlinks, submodules and other non-regular tree entries
+        run: |
+          set -eu
+          git ls-tree -r -z --full-tree HEAD > "$RUNNER_TEMP/clued-trivy-tree"
+          if tr '\0' '\n' < "$RUNNER_TEMP/clued-trivy-tree" | grep -Ev '^(100644|100755) blob [0-9a-f]{40}[[:space:]]' | grep -q .; then
+            echo "::error title=trivy-hosted-executor::the tree has a symlink, submodule or other non-regular entry"
+            exit 1
+          fi
       - name: Prepare persistent Trivy cache
         run: |
           TRIVY_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/clued-trivy"

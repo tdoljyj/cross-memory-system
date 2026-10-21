@@ -868,7 +868,7 @@
               "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
               "if": "true",
               "path": "",
-              "ref": null,
+              "ref": "${{ github.event.pull_request.base.sha || github.sha }}",
               "repository": null
             }
           ],

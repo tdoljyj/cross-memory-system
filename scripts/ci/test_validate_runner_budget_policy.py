@@ -293,6 +293,18 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
                         # A PR-provided module can never shadow the stdlib of a step that holds id-token.
                         self.assertIn("python3 -I -B ", block)
                         self.assertNotRegex(block, r"python3? (?!-I -B )")
+                        if file == "gitleaks.yml":
+                            # The local role's input only: the trusted base checkout, a fresh history
+                            # directory, the pinned config; never the PR working tree or .gitleaksignore.
+                            self.assertIn("          ref: ${{ github.event.pull_request.base.sha || github.sha }}\n", block)
+                            self.assertIn('--mount "type=bind,src=$scan/repo,dst=/repo,readonly,bind-propagation=rprivate"', block)
+                            self.assertIn("git init --quiet --template=", block)
+                            code = "\n".join(line for line in block.splitlines() if not line.lstrip().startswith("#"))
+                            self.assertNotIn("$PWD", code)
+                            self.assertNotIn(".gitleaksignore", code)
+                            self.assertNotIn("fetch-depth", code)
+                        if file == "trivy.yml":
+                            self.assertIn("      - name: Refuse symlinks, submodules and other non-regular tree entries\n", block)
                     else:
                         self.assertEqual(names, {"admission-gate"})
                         self.assertNotIn("id-token", block)
