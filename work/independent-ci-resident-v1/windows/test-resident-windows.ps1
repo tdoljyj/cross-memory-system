@@ -52,6 +52,9 @@ $res = 'S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629'
 $acl = Get-AclPlan $res
 $fileWrite = 0x2 -bor 0x4 -bor 0x10 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000
 function Aces([string]$sddl) { @((New-Object Security.AccessControl.RawSecurityDescriptor($sddl)).DiscretionaryAcl) }
+# The generic helper (clued-control) must be able to open the resident root for READ_CONTROL, and nothing more.
+$rootCtrl = @(Aces $acl[''] | Where-Object { $_.SecurityIdentifier.Value -ceq $ControllerSid })
+Yes ($rootCtrl.Count -eq 1 -and $rootCtrl[0].AccessMask -eq 0x120080 -and [int]$rootCtrl[0].AceFlags -eq 0) 'root:controller-read-control-only'
 foreach ($box in @('inbox', 'requests')) {
   $aces = Aces $acl[$box]
   $owner = @($aces | Where-Object { $_.SecurityIdentifier.Value -ceq $OwnerSid })

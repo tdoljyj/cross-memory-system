@@ -114,7 +114,9 @@ function Get-AclPlan([string]$res) {
   $base = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
   $rx = '0x1200a9'; $mod = '0x1301bf'; $drop = '0x1000a2'
   [ordered]@{
-    ''                  = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"
+    # The generic helper (as clued-control) opens every parent of its inputs with READ_CONTROL before it reads
+    # them (FormalPublicBoundaryV2.Parents); this folder only, no inheritance, no access to any content.
+    ''                  = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)(A;;0x120080;;;$ControllerSid)"
     'bin'               = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"
     'config'            = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"
     'install'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"                 # install records: only admins write
