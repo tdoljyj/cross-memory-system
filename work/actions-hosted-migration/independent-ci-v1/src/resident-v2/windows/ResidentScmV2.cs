@@ -20,8 +20,11 @@ public static class ResidentScmV2 {
  public const string Name="actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02";
  public const string ControllerSid="S-1-5-21-1173730660-3877291096-655431861-1015";
  public const string MutationMutexName="Global\\CluedControlControllerMutationV1-TURING-1015";
- public static string OwnerSid="S-1-5-21-1173730660-3877291096-655431861-1001"; // set from the admin-only broker config
- static string[] Management(){return new[]{"S-1-5-18","S-1-5-32-544",OwnerSid};}
+ // Review MINOR-3: only SYSTEM and Administrators manage the runner service and own/hold the mutation mutex.
+ // The Owner's user SID is never trusted here (the live runner DACL has no Owner ACE, and an elevated Owner
+ // acts through Administrators anyway); a mutex or service DACL that names it is refused.
+ static readonly string[] ManagementSids={"S-1-5-18","S-1-5-32-544"};
+ static string[] Management(){return (string[])ManagementSids.Clone();}
  static Mutex mutationMutex;static bool mutexHeld,writable,conflict;static IntPtr fixedManager,fixedService;
  public static bool HasConflict {get{return conflict;}}
  static EventWaitHandle startAck;static bool startConsumed,startCallIssued;static uint independentStartPid;
@@ -46,7 +49,7 @@ public static class ResidentScmV2 {
  static string Hash(string s){using(var h=SHA256.Create())return BitConverter.ToString(h.ComputeHash(Encoding.UTF8.GetBytes(s))).Replace("-","").ToLowerInvariant();}
  public static string ValidateMutexSecurity(byte[] bytes){
   var sd=new RawSecurityDescriptor(bytes,0);var management=Management();
-  if(sd.Owner==null||Array.IndexOf(management,sd.Owner.Value)<0||sd.DiscretionaryAcl==null||(sd.ControlFlags&ControlFlags.DiscretionaryAclProtected)==0||sd.DiscretionaryAcl.Count!=3)Fail("MUTEX_OWNER_OR_PROTECTED_DACL_REFUSED");
+  if(sd.Owner==null||Array.IndexOf(management,sd.Owner.Value)<0||sd.DiscretionaryAcl==null||(sd.ControlFlags&ControlFlags.DiscretionaryAclProtected)==0||sd.DiscretionaryAcl.Count!=ManagementSids.Length)Fail("MUTEX_OWNER_OR_PROTECTED_DACL_REFUSED");
   var seen=new System.Collections.Generic.HashSet<string>();
   foreach(GenericAce item in sd.DiscretionaryAcl){var ace=item as CommonAce;
    if(ace==null||ace.IsCallback||ace.AceQualifier!=AceQualifier.AccessAllowed||ace.AceFlags!=AceFlags.None||Array.IndexOf(management,ace.SecurityIdentifier.Value)<0||ace.AccessMask!=(int)MutexRights.FullControl||!seen.Add(ace.SecurityIdentifier.Value))Fail("MUTEX_EXACT_MANAGEMENT_ACL_REFUSED");
@@ -74,14 +77,15 @@ public static class ResidentScmV2 {
   writable=false;if(mutationMutex!=null){try{if(mutexHeld)mutationMutex.ReleaseMutex();}finally{mutexHeld=false;mutationMutex.Dispose();mutationMutex=null;}}
  }
  static IntPtr HeldService(bool effect){SystemIdentity();ValidateHeldMutex();if(fixedService==IntPtr.Zero||effect&&!writable)Fail("FIXED_SESSION_HANDLE_REQUIRED");if(effect&&conflict)Fail("STICKY_CONFIG_CONFLICT_RESTORE_WITHHELD");return fixedService;}
+ public const uint UntrustedControlMask=0x700d0072u;
  public static string ValidateServiceSecurity(byte[] bytes){
   var sd=new RawSecurityDescriptor(bytes,0);string owner=sd.Owner==null?"":sd.Owner.Value;var management=Management();
   if(Array.IndexOf(management,owner)<0||sd.DiscretionaryAcl==null||sd.DiscretionaryAcl.Count>128)Fail("SERVICE_OWNER_OR_DACL_REFUSED");
   foreach(GenericAce item in sd.DiscretionaryAcl){var ace=item as CommonAce;if(ace==null||ace.IsCallback)Fail("SERVICE_ACE_FORM_REFUSED");if(ace.AceQualifier==AceQualifier.AccessDenied)continue;
    if(ace.AceQualifier!=AceQualifier.AccessAllowed)Fail("SERVICE_ACE_FORM_REFUSED");if((ace.AceFlags&AceFlags.InheritOnly)!=0)continue;
-   // The resident SID must have NO right on the runner service (design §3.1); any non-management
-   // control right fails here exactly as in v1.
-   if(Array.IndexOf(management,ace.SecurityIdentifier.Value)<0&&((uint)ace.AccessMask&0x700d0072u)!=0)Fail("SERVICE_UNTRUSTED_CONTROL_ACE_REFUSED");
+   // The resident SID (and anyone but SY/BA) must have NO control right on the runner service (design §3.1):
+   // change-config 0x2, start 0x10, stop 0x20, pause 0x40, DELETE, WRITE_DAC, WRITE_OWNER and generic all/execute/write.
+   if(Array.IndexOf(management,ace.SecurityIdentifier.Value)<0&&((uint)ace.AccessMask&UntrustedControlMask)!=0)Fail("SERVICE_UNTRUSTED_CONTROL_ACE_REFUSED");
   }
   return Hash(sd.GetSddlForm(AccessControlSections.Access|AccessControlSections.Owner));
  }
@@ -105,8 +109,7 @@ public static class ResidentScmV2 {
  // Install-time, read-only: the stable digest the Owner's elevated install pins into broker.json. It opens
  // the runner service with query rights only (no mutex, no SYSTEM identity, no effect); the broker later
  // re-reads the same digest under its own session before every swap, so a wrong pin only refuses swaps.
- public static string InstallTimeStableDigest(string ownerSid){
-  if(ownerSid==null||!System.Text.RegularExpressions.Regex.IsMatch(ownerSid,@"^S-1-5-21-\d+-\d+-\d+-\d+$"))Fail("OWNER_SID_REQUIRED");OwnerSid=ownerSid;
+ public static string InstallTimeStableDigest(){
   IntPtr manager;IntPtr h=Service(1|4|0x20000u,out manager);
   try{return ReadSnapshotCore(h).StableDigest;}finally{CloseServiceHandle(h);CloseServiceHandle(manager);}
  }

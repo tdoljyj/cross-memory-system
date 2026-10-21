@@ -15,6 +15,8 @@ using System.ServiceProcess;
 public sealed class ResidentServiceHost : ServiceBase
 {
     const string Name = "CluedCIResident";
+    // Review MAJOR-1: the only privilege the resident needs (`sc privs CluedCIResident SeChangeNotifyPrivilege`).
+    public static readonly string[] AllowedPrivileges = { "SeChangeNotifyPrivilege" };
     readonly string root, policySha, nodeExe, entry, nodeSha, entrySha;
     Process child;
 
@@ -33,6 +35,12 @@ public sealed class ResidentServiceHost : ServiceBase
 
     protected override void OnStart(string[] ignored)
     {
+        // The real token, not the configuration: refuse to start with any privilege beyond the allow-list,
+        // and record what the token holds (state\service-token.json; verify-resident.ps1 and the install
+        // receipt compare it).
+        var privileges = ResidentTokenPrivileges.Current();
+        WriteTokenRecord(Path.Combine(root, "state", "service-token.json"), ResidentTokenPrivileges.Json(privileges, Process.GetCurrentProcess().Id));
+        if (ResidentTokenPrivileges.Disallowed(privileges, AllowedPrivileges).Length > 0) throw new InvalidOperationException("RESIDENT_TOKEN_PRIVILEGES_NOT_MINIMAL");
         // Refuse to start on any drift of the runtime or the entry point.
         if (Sha(nodeExe) != nodeSha || Sha(entry) != entrySha) throw new InvalidOperationException("RESIDENT_RUNTIME_PIN_CHANGED");
         var psi = new ProcessStartInfo(nodeExe, "\"" + entry + "\" --root \"" + root + "\" --policy-sha256 " + policySha)
@@ -49,6 +57,15 @@ public sealed class ResidentServiceHost : ServiceBase
         child.Exited += (s, e) => { ExitCode = child.ExitCode == 0 ? 0 : 1064; Stop(); };
     }
 
+
+    // Atomic replace of the small token record (the directory is writable by this service only).
+    static void WriteTokenRecord(string path, string json)
+    {
+        string tmp = path + ".tmp";
+        File.WriteAllText(tmp, json + "\n");
+        if (File.Exists(path)) File.Replace(tmp, path, null); else File.Move(tmp, path);
+    }
+
     protected override void OnStop() { RequestStopBetweenBatches(); }
     protected override void OnShutdown() { RequestStopBetweenBatches(); }
 
@@ -61,4 +78,62 @@ public sealed class ResidentServiceHost : ServiceBase
     }
 
     public static void Main(string[] args) { Run(new ResidentServiceHost(args)); }
+}
+
+// Review MAJOR-1: the effective privileges of this process token. The install sets the service's required
+// privileges (`sc privs`), so the SCM strips every other privilege; the host re-checks the real token at
+// start, refuses to run with anything else, and records what it has for verify and the install receipt.
+public static class ResidentTokenPrivileges
+{
+    [System.Runtime.InteropServices.DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(System.IntPtr process, uint access, out System.IntPtr token);
+    [System.Runtime.InteropServices.DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(System.IntPtr token, int cls, System.IntPtr info, int length, out int needed);
+    [System.Runtime.InteropServices.DllImport("advapi32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)] static extern bool LookupPrivilegeNameW(string system, ref long luid, System.Text.StringBuilder name, ref int length);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern System.IntPtr GetCurrentProcess();
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern bool CloseHandle(System.IntPtr h);
+
+    public static string[] Current()
+    {
+        System.IntPtr token;
+        if (!OpenProcessToken(GetCurrentProcess(), 8 /* TOKEN_QUERY */, out token)) throw new System.InvalidOperationException("TOKEN_QUERY_FAILED");
+        try
+        {
+            int needed; GetTokenInformation(token, 3 /* TokenPrivileges */, System.IntPtr.Zero, 0, out needed);
+            if (needed < 4 || needed > 65536) throw new System.InvalidOperationException("TOKEN_PRIVILEGES_SIZE");
+            System.IntPtr buffer = System.Runtime.InteropServices.Marshal.AllocHGlobal(needed);
+            try
+            {
+                if (!GetTokenInformation(token, 3, buffer, needed, out needed)) throw new System.InvalidOperationException("TOKEN_PRIVILEGES_QUERY_FAILED");
+                int count = System.Runtime.InteropServices.Marshal.ReadInt32(buffer);
+                if (count < 0 || 4 + count * 12 > needed) throw new System.InvalidOperationException("TOKEN_PRIVILEGES_SHAPE");
+                var names = new System.Collections.Generic.List<string>();
+                for (int i = 0; i < count; i++)
+                {
+                    long luid = System.Runtime.InteropServices.Marshal.ReadInt64(buffer, 4 + i * 12);
+                    var name = new System.Text.StringBuilder(128); int length = name.Capacity;
+                    if (!LookupPrivilegeNameW(null, ref luid, name, ref length)) throw new System.InvalidOperationException("TOKEN_PRIVILEGE_NAME_FAILED");
+                    names.Add(name.ToString());
+                }
+                names.Sort(System.StringComparer.Ordinal);
+                return names.ToArray();
+            }
+            finally { System.Runtime.InteropServices.Marshal.FreeHGlobal(buffer); }
+        }
+        finally { CloseHandle(token); }
+    }
+
+    // Pure: the privileges present that the allow-list does not name (sorted).
+    public static string[] Disallowed(string[] present, string[] allowed)
+    {
+        var extra = new System.Collections.Generic.List<string>();
+        foreach (var p in present) if (System.Array.IndexOf(allowed, p) < 0) extra.Add(p);
+        extra.Sort(System.StringComparer.Ordinal);
+        return extra.ToArray();
+    }
+
+    public static string Json(string[] privileges, int pid)
+    {
+        var parts = new string[privileges.Length];
+        for (int i = 0; i < privileges.Length; i++) parts[i] = "\"" + privileges[i] + "\"";
+        return "{\"contract\":\"clued.independent-ci.service-token-privileges/1\",\"pid\":" + pid + ",\"privileges\":[" + string.Join(",", parts) + "]}";
+    }
 }

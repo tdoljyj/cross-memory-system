@@ -6,7 +6,10 @@
   Run the INSTALLED copy (C:\ProgramData\CluedIndependentCI\resident\resident\<sha>\windows\).
   Re-derives every pin of the install receipt (admin-only install\ directory) and compares it with
   the live host: package hashes, both services (account, start type, SID type, failure actions,
-  DACL), the runner service byte-for-byte unchanged (SDDL, binary, account), the companion task
+  DACL as recorded at install, required privileges via `sc qprivs`, the effective token privileges each host
+  recorded at start, the broker's binary path with its config-hash argument and broker.json against that
+  hash, the broker's failure actions, the resident's outbound firewall block and the firewall being on),
+  the runner service byte-for-byte unchanged (SDDL, binary, account), the companion task
   (principal, LeastPrivilege, trigger), the receipt chain and the HALT / PAUSE latches.
   Prints one JSON verdict; exit 0 only if every check passes. Elevated for the complete check
   (service DACLs need READ_CONTROL); a non-elevated run reports those as unreadable and exits 2.
@@ -38,6 +41,47 @@ Record 'resident-host-pin' ((Sha256File (Join-Path $Root 'bin\ResidentServiceHos
 $bq = & $Sc qc CluedCISwapBroker | Out-String
 Record 'broker-account' ($bq -match 'SERVICE_START_NAME\s*:\s*LocalSystem')
 Record 'broker-host-pin' ((Sha256File (Join-Path $Root 'bin\SwapBroker.exe')) -ceq $receipt.SwapBrokerSha256)
+# ---- Privilege boundary (independent review of PR-A: MAJOR-1, MINOR-4, MINOR-5) ----
+$ResidentPrivileges = @('SeChangeNotifyPrivilege')
+$BrokerPrivileges = @('SeChangeNotifyPrivilege', 'SeCreateGlobalPrivilege')
+function ConvertFrom-ScPrivs([string]$text) {
+  $names = @(foreach ($line in ($text -split "`r?`n")) { if ($line -match '^\s*(?:PRIVILEGES\s*)?:\s*(Se[A-Za-z]+Privilege)\s*$') { $Matches[1] } })
+  @($names | Sort-Object -CaseSensitive)
+}
+function Test-ExactPrivileges($have, $want) { (@($have | Sort-Object -CaseSensitive) -join '/') -ceq (@($want | Sort-Object -CaseSensitive) -join '/') }
+# A host's own token record: the privileges it holds are a subset of the allow-list (SeChangeNotify at least).
+function Test-TokenRecord([string]$json, $allowed) {
+  try { $v = $json | ConvertFrom-Json } catch { return $false }
+  if ($null -eq $v -or $v.contract -cne 'clued.independent-ci.service-token-privileges/1') { return $false }
+  $have = @($v.privileges); ($have -ccontains 'SeChangeNotifyPrivilege') -and (@($have | Where-Object { $allowed -cnotcontains $_ }).Count -eq 0)
+}
+# `sc qc` of the broker: exactly "<Root>\bin\SwapBroker.exe" "<Root>" <broker.json SHA-256>.
+function Test-BrokerBinaryPath([string]$qcText, [string]$root, [string]$configSha) {
+  if ($configSha -cnotmatch '^[0-9a-f]{64}$' -or $qcText -notmatch 'BINARY_PATH_NAME\s*:\s*(.+?)\s*(\r?\n|$)') { return $false }
+  $Matches[1] -ceq ('"' + (Join-Path $root 'bin\SwapBroker.exe') + '" "' + $root + '" ' + $configSha)
+}
+function Test-ScSddl([string]$sdshow, [string]$want) { -not [string]::IsNullOrEmpty($want) -and $sdshow.Trim() -ceq $want }
+function Get-ScText([string[]]$scArgs) { $t = & $Sc @scArgs | Out-String; if ($LASTEXITCODE -ne 0) { 'unreadable' } else { $t } }
+foreach ($pair in @(@('CluedCIResident', 'resident', $ResidentPrivileges), @('CluedCISwapBroker', 'broker', $BrokerPrivileges))) {
+  $p = Get-ScText @('qprivs', $pair[0], '8192')
+  Record ($pair[1] + '-required-privileges') $(if ($p -eq 'unreadable') { 'unreadable' } else { Test-ExactPrivileges (ConvertFrom-ScPrivs $p) $pair[2] })
+  $d = Get-ScText @('sdshow', $pair[0])
+  Record ($pair[1] + '-service-dacl') $(if ($d -eq 'unreadable') { 'unreadable' } else { Test-ScSddl $d $receipt.($pair[1] + 'Sddl') })
+}
+Record 'broker-binary-path-and-config-pin' (Test-BrokerBinaryPath $bq $Root $receipt.brokerConfigSha256)
+Record 'broker-config-hash' ((Sha256File (Join-Path $Root 'config\broker.json')) -ceq $receipt.brokerConfigSha256)
+Record 'broker-failure-actions' ((Get-ScText @('qfailure', 'CluedCISwapBroker', '8192')) -match 'RESTART')
+foreach ($pair in @(@('state\service-token.json', $ResidentPrivileges, 'resident'), @('broker\token.json', $BrokerPrivileges, 'broker'))) {
+  $f = Join-Path $Root $pair[0]
+  Record ($pair[2] + '-effective-token-privileges') $(if (Test-Path -LiteralPath $f) { Test-TokenRecord (Get-Content -LiteralPath $f -Raw) $pair[1] } else { 'unreadable' })
+}
+try {
+  Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\NetSecurity\NetSecurity.psd1'
+  $rule = Get-NetFirewallRule -Name 'CluedCIResident-BlockOutbound' -ErrorAction Stop; $filter = $rule | Get-NetFirewallServiceFilter
+  Record 'resident-outbound-blocked' ([string]$rule.Direction -ceq 'Outbound' -and [string]$rule.Action -ceq 'Block' -and [string]$rule.Enabled -ceq 'True' -and $filter.Service -ceq 'CluedCIResident')
+  Record 'firewall-enabled' (@(Get-NetFirewallProfile | Where-Object { [string]$_.Enabled -cne 'True' }).Count -eq 0)
+} catch { Record 'resident-outbound-blocked' $false }
+
 $runnerSddl = try { (& $Sc sdshow $Runner | Out-String).Trim() } catch { 'unreadable' }
 Record 'runner-sddl-unchanged' $(if ($runnerSddl -eq 'unreadable') { 'unreadable' } else { $runnerSddl -ceq $receipt.runnerSddlUnchanged })
 $rq = & $Sc qc $Runner | Out-String

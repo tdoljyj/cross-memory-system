@@ -61,6 +61,9 @@ while (ExecutorAlive) { if ((Get-Date) -gt $deadline) { throw 'EXECUTOR_STILL_RU
 & $Sc delete CluedCIResident | Out-Null
 & $Sc delete CluedCISwapBroker | Out-Null
 Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -Confirm:$false
+# The resident's outbound block (review MINOR-5) is configuration of the deleted service, not evidence.
+Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\NetSecurity\NetSecurity.psd1'
+Get-NetFirewallRule -Name 'CluedCIResident-BlockOutbound' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 $stamp = [DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssZ')
 $hex = -join ((1..6) | ForEach-Object { '{0:x2}' -f (Get-Random -Maximum 256) })
 $target = 'C:\ProgramData\CluedIndependentCI\resident-uninstalled-' + $stamp + '-' + $hex

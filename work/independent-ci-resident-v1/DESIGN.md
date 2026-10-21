@@ -313,6 +313,7 @@ Source v2（S11）之后，阶段的失败码来自已安装 Source 的稳定目
   - `between-roles-N` 只移协议记录；其他原因还会移 `formal-role.lock`、所有 `runs/*`、本批工作区和 ws-prep 目录；
   - 移动用 `renameat2(RENAME_NOREPLACE)`；
   - 每个实例名对应一个 create-only 的状态文件，同一实例跑第二次直接返回上次的结果；
+  - 要移哪些工作区，由描述符的**内容**重算作业 id（与 `prepare-workspaces.py` 同一公式），描述符自带的 `linuxJobIds` 只用来比对，不一致就拒绝；描述符用一个 `O_NOFOLLOW` 句柄读，长度取自这个句柄（MINOR-8）；
   - Source v2（S14，教训 b22/b28）：目标是归档目录里的**扁平名字**（`incoming-<叶子>`、`outgoing-<叶子>`、`run-<名字>`、`workspace-<作业 id>`、`ws-prep-<批次>`、`formal-role.lock`），不再建 `runs/`、`workspaces/` 子目录（`runs/` 前缀把 b28 弄坏过）；“完成型”范围（`between-roles-N`、`success-close`）遇到未知叶子、半对记录或还被持有的 `formal-role.lock` 时一个都不移，原样留给失败路径；失败范围照原样归档并报告留在原处的东西；目录树移动前清点、移动后核对；中途失败写持久的 partial 状态（`verified: false`），不会是“没有状态”。
 - **目录名**：失败用 `failed-<key12>-<reason>-<12hex>`，收尾和角色间用 `archive-…`，都必须是新目录。
 
@@ -537,11 +538,16 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 - `CluedCIResident`，账户 `NT SERVICE\CluedCIResident`（`S-1-5-80-` 加服务名的 SHA-1），SID 类型 unrestricted。
 - 延迟自动启动。失败后每天最多重启一次（`failureflag 1`，非崩溃的失败也会触发），目的是让崩溃恢复把 HALT 落盘，不是重试批次。
 - 服务自身的 DACL：只有 SYSTEM 和 Administrators 能控制。
+- **必需特权只有 `SeChangeNotifyPrivilege`**（`sc privs`，PR-A 复审 MAJOR-1）：SCM 从服务令牌里去掉其余所有特权，尤其是默认带的 `SeImpersonatePrivilege`。宿主启动时再读一次**真实令牌**：多出任何特权就拒绝启动，并把令牌里的特权写进 `state\service-token.json`；安装回执和 `verify-resident.ps1` 都核对它和 `sc qprivs`。
+- **出站网络被封**（MINOR-5）：防火墙规则 `CluedCIResident-BlockOutbound` 按服务 SID 限定（`-Service CluedCIResident`），覆盖服务的所有 node 子进程；GitHub 读取全在 companion（Owner 自己的登录）里，runner（clued-control）不受影响。只在 Windows 防火墙开启时生效，`verify-resident.ps1` 同时检查规则和三个配置文件都开着。
 - 宿主 `ResidentServiceHost.cs`：启动前校验 node 和入口文件的哈希；环境变量清空，只留固定几项，不继承句柄；停止时只写 `STOP-REQUESTED`，从不杀执行器。
 
 ### 8.2 交换代理
 
-- `CluedCISwapBroker`，LocalSystem，自动启动。
+- `CluedCISwapBroker`，LocalSystem，自动启动；失败后自动重启（60 秒、再 300 秒，每天重置，非崩溃的失败也算），重启从不重复被打断的切换（领取标记）。
+- **特权最小化**（MAJOR-1）：必需特权只有 `SeChangeNotifyPrivilege` 和 `SeCreateGlobalPrivilege`，启动时同样核对真实令牌并写 `broker\token.json`。说明：LocalSystem 的 **SID** 仍是 SYSTEM，所有按 DACL 授给 SY 的权利都还在，这一点改不了；能去掉的是特权（`SeTcb`、`SeDebug`、`SeImpersonate`、`SeAssignPrimaryToken`、`SeBackup`、`SeRestore`、`SeTakeOwnership`、`SeLoadDriver` 等）。代理只需要 SCM 的 DACL 授权和它自己的文件。
+- **只信 SYSTEM 和 Administrators**（MINOR-3）：变更互斥量的所有者和 ACE、以及可以接受的 runner 服务 DACL 管理者，都只认 SY 和 BA，不再认 Owner 的用户 SID（实测 runner 的 SDDL 里本来就没有 Owner ACE）；runner DACL 里任何其他主体有改配置、启动、停止、删除、改 DACL/所有者或通用写/执行/全部权利，都拒绝。v1 提权工具若带 Owner ACE 建了同名互斥量，代理会拒绝（fail closed），所以 `broker.json` 也改为 `/2`，不再含 Owner SID。
+- **有界读取与不中断**（MINOR-2）：请求先按文件长度判断（≤ 4096 字节），再读，最多读 4097 字节；枚举请求目录失败不会结束工作线程，单个请求出错只影响它自己。
 - 每个请求的处理：
   1. 只接受 `{contract, stage, nonce, deadline, configSha256}` 这 5 个字段；截止时间距现在不足 2 分钟的请求直接拒绝，也不切换。
      **每个请求最多执行一次，崩溃和重启也不例外**：
@@ -551,7 +557,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 
      所以重启之后，代理绝不会把同一阶段再启动一次（第四轮复核 MAJOR 3）；
   2. 助手路径固定为 `helpers\controller-formal-generic-v2.exe`（S12：一个通用助手），不取自请求；
-  3. 助手哈希必须等于 `config\broker.json` 里钉住的值，这个文件的哈希写在代理的启动参数中；它还钉住 Owner SID、原始二进制和 runner 的稳定配置摘要（安装时用刚编译的代理只读求出）；
+  3. 助手哈希必须等于 `config\broker.json` 里钉住的值，这个文件的哈希写在代理的启动参数中；它还钉住原始二进制和 runner 的稳定配置摘要（安装时用刚编译的代理只读求出）。`verify-resident.ps1` 核对代理的二进制路径、这个配置哈希参数，以及 `broker.json` 与它一致；
   4. 换之前确认 runner 是原始二进制、Manual、STOPPED、账户 clued-control；
   5. `ChangeServiceConfigW` 只传二进制路径，其余参数全部是 `SERVICE_NO_CHANGE` 或 null，所以账户、密码、启动类型改不了；
   6. 带 nonce 启动一次，等它停止；
@@ -574,12 +580,13 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 | `bundles`（companion 打的 bundle） | 读、执行 | 修改 | — |
 | `state\v2\*`（S13，ACL 迁移新建） | `receipts` 只读 | — | 修改 |
 | `state`、`work`、`outbox` | 修改 | 只读 | `work` 可读、执行 |
-| `broker\requests` | 修改 | — | — |
+| `broker\requests` | 只能新建文件、列目录、读（没有 DELETE，MINOR-2） | — | — |
 | `broker\responses` | 只读（代理是 SYSTEM，自己写） | — | — |
-| `inbox`、`requests` | 修改 | 只能新建文件 | — |
+| `inbox`、`requests` | 修改 | 只能新建文件；已有的文件只读（MINOR-9） | — |
 | `mailbox\requests` | 修改 | 只读 | — |
 | `mailbox\responses` | 只读 | 修改（回答 + 心跳） | — |
 
+- “只能新建”的投放目录（`inbox`、`requests`、`broker\requests`）：目录 ACE 只给新建文件，文件上的继承 ACE 只给读，另加一条 OWNER RIGHTS（`OW`）ACE，去掉文件所有者隐含的 WRITE_DAC，所以文件建好之后谁也改不了它的内容（创建它的那个句柄保留创建时要的权限，这条 NTFS 行为在 P2 确认）。离线测试逐条检查这些 ACE（`windows/test-resident-windows.ps1`）。
 - 安装记录在 `install\`，常驻 SID 只读，所以常驻账户篡改不了卸载时要用到的东西。
 - runner 服务**完全不修改**：安装和卸载都要求它的 SDDL 与安装时记录的一字不差。
 
@@ -615,7 +622,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
     - 按安装路径校验所有钉住的文件：工具本身、unit 文件，以及 unit 实际执行的外部入口（node、`linux-worker.mjs`、`prepare-workspaces.py`）；
     - 校验实例名；worker 的实例名必须等于 `incoming/issue.json` 里的作业；
     - 同一时刻只允许一个 clued-ci unit 活动。
-- **加固**：`NoNewPrivileges`、`ProtectSystem=strict`、`ReadWritePaths=/var/lib/clued-independent-ci`、`PrivateTmp`、`PrivateDevices`、`ProtectKernel*`、`RestrictAddressFamilies=AF_UNIX`、`IPAddressDeny=any`、最小 CapabilityBoundingSet。`PrivateTmp`、`ProtectHome` 可能影响 docker CLI 的配置或挂载，每一项都要在 P2 演练里确认。
+- **加固**（MINOR-7 之后 wsprep 和 archive 也有 `CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH`、`SystemCallFilter=@system-service` 外加拒绝 `@privileged @mount @debug @module` 等、`RestrictNamespaces=yes`）：`NoNewPrivileges`、`ProtectSystem=strict`、`ReadWritePaths=/var/lib/clued-independent-ci`、`PrivateTmp`、`PrivateDevices`、`ProtectKernel*`、`RestrictAddressFamilies=AF_UNIX`、`IPAddressDeny=any`、最小 CapabilityBoundingSet。`PrivateTmp`、`ProtectHome` 可能影响 docker CLI 的配置或挂载，每一项都要在 P2 演练里确认。
 - **启用 systemd 与 cgroup v2**：
   - `/etc/wsl.conf` 没有 `[boot] systemd=true` 时：先把原文件复制为 `wsl.conf.before-resident-<UTC>`，再原子替换。已有 `[boot]` 段但没有 systemd 时，脚本拒绝，由 Owner 手动编辑，不自动合并段落。
   - 替换后需要 Owner 做一次 `wsl --shutdown`，再用保存的计划运行 `--continue-after-boot`。
@@ -631,7 +638,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 1. 执行器在导出时写公开描述符 `outbox\<batchId>\descriptor.json`。
 2. companion 在第 1 段**之前**用 Owner 的 git 凭据运行 `build-bundle.ps1 -BatchId`，规则同今天：只用 https、关闭 hooks、refs 等于 ls-remote、main 等于 base、按 SHA 取已审查提交。
 3. 第 1 段准入之后写 `10-started`。
-4. companion 启动 `clued-ci-wsprep@<batchId>`，由 root：按内容重算作业 id、核对已安装 Source 和角色策略、密封 bundle（ls-remote 时间不超过 2 小时）、`fsck --full --strict`、只允许 100644 和 100755 的 blob、建 root:root 0700 工作区。
+4. companion 启动 `clued-ci-wsprep@<batchId>`，由 root：按内容重算作业 id、核对已安装 Source 和角色策略、密封 bundle（ls-remote 时间不超过 2 小时）、`fsck --full --strict`、只允许 100644 和 100755 的 blob、建 root:root 0700 工作区。MINOR-7：候选的 head 树先在对象库里核对模式（只许 100644、100755），**然后**才检出，检出带 `core.symlinks=false`、`core.protectNTFS`、`core.protectHFS`，所以 root 从不写出符号链接或子模块。（以非 root 身份检出没有采用：工作区必须是 root:root，换身份要加 chown 步骤，留作 P2 评估。）
 
 全程不执行 PR 内容。
 
@@ -659,7 +666,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 | 打包 | `node tools/build-package.mjs --out … --policy … --companion … --node … --record <上一步输出> --source-root <checkout> --source-files <闭包里的路径> --linux-external-pins …` | 普通 |
 | Windows 预检 | `install-resident.ps1 -PackageRoot … -ExpectedPackageManifestSha256 … -OwnerSid … -ControllerSid …`（只读，打印计划及其哈希） | 普通 |
 | Windows 安装 | 同上，加 `-Apply -ExpectedPlanSha256 <复审过的>` | **UAC 1 次** |
-| Linux 安装 | `install-resident-linux.sh --plan` 之后 `--apply <sha>`；需要启用 systemd 时，再 `wsl --shutdown`，然后 `--continue-after-boot <sha>` | **root 1 次**，可能加 1 次 WSL 重启 |
+| Linux 安装 | `install-resident-linux.sh --plan` 之后 `--apply <sha>`；需要启用 systemd 时，再 `wsl --shutdown`，然后 `--continue-after-boot <sha>`。MINOR-6：`--apply` 先把包里的文件复制进新的 root 0700 暂存目录，从这份副本算计划、只从这份副本安装；计划绑定脚本自身的哈希和每个包文件（含 `manifest.json`）；整个程序是一个函数，不再 `exec "$0"` 从磁盘重读 | **root 1 次**，可能加 1 次 WSL 重启 |
 | Linux Source v2 安装（v0.7） | 先由 root 签 qualification v2（单独审查的步骤）；`clued-ci-install-source-v2 package …`（普通、离线）打包，然后 `--plan <包>`，再 `--apply <包> <planSha256>` | **root 1 次**（与上一行可在同一次 root 会话里） |
 | 校验 | 已安装副本的 `verify-resident.ps1`、`verify-resident-linux.sh`（只读） | 提权才能看服务 DACL |
 | 卸载 | 已安装副本的 `uninstall-resident.ps1`：先计划，再 `-Apply`；`uninstall-resident-linux.sh` 同理。要求没有未终结批次、执行器进程已不在；删两个服务和任务；runner 保持原样；**整个目录改名保留** | UAC + root |
@@ -826,6 +833,22 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 - 有人持有 state 文件不放时，可以反复制造孤立的隔离标记（只是拒绝服务）；
 - Windows 的“没有残留进程”证明只看本进程的子进程：服务异常退出时，超时的子进程会成为孤儿；
 - 交换代理、`recover()` 的 HALT 顺序、Linux 缺描述符时的复位分支都还没有离线测试。
+
+### 13.8 PR-A 独立复审（权限边界）的修正（分支 `claude/pr-a-priv-fixes-20261021`）
+
+| 发现 | 修正 | 测试 |
+|---|---|---|
+| **MAJOR-1** 常驻服务保留默认服务特权（含 `SeImpersonatePrivilege`），安装不设、校验不查 | `sc privs CluedCIResident SeChangeNotifyPrivilege`；代理 `SeChangeNotifyPrivilege/SeCreateGlobalPrivilege`；两个宿主启动时读真实令牌、多余就拒绝、写记录；安装回读 `sc qprivs` 和令牌记录进回执；verify 核对两者 | `test-resident-windows.ps1`（`sc qprivs` 解析、令牌记录判定）；`BrokerPureTests.cs`（真实读本进程令牌、允许名单判定） |
+| **MINOR-2** 先读后限长；`broker\requests` 给了 DELETE；枚举不在 try 里；代理没有失败动作 | `ReadBounded`（先看长度，最多读 4097 字节）；目录 ACE 只能新建、文件只读、OW；枚举和单个请求都包在 try 里；`sc failure` + `failureflag` | `BrokerPureTests.cs`（4096 可、4097 和 512 MB 拒绝）；ACE 逐条检查 |
+| **MINOR-3** 互斥量和 runner DACL 信任 Owner 用户 SID | 管理者只有 SY、BA；`broker.json` `/2` 去掉 Owner SID；DACL 里非 SY/BA 的控制权一律拒绝 | `PureTestsV2.cs`：实测 SDDL 通过，Owner/IU/SU 带 8 种控制权各被拒绝，Owner 当所有者被拒绝，互斥量带 Owner ACE 或 Owner 所有者被拒绝 |
+| **MINOR-4** verify 不查服务 DACL、代理路径和配置哈希；安装不查 `sc` 退出码 | verify 比对两个服务的 `sdshow`（安装时记入回执）、代理二进制路径 + 配置哈希参数、`broker.json` 哈希、失败动作；安装里每个改动性的 `sc` 调用都经 `Invoke-Sc` 检查退出码 | 静态检查：除只读的 `qc/queryex/sdshow` 外没有未检查的 `sc` 调用；`Invoke-Sc` 遇非零退出码抛出 |
+| **MINOR-5** 常驻服务可以出网 | 按服务 SID 的出站阻断规则；卸载时删除；verify 检查规则和防火墙开启 | 计划与安装脚本内容检查；规则本身要在 P2 主机上确认 |
+| **MINOR-6** Linux 安装从可变的包目录复制、计划不绑定清单、`exec "$0"` | 暂存副本、计划绑定脚本与所有包文件、单进程完成 | `test_linux_privilege.py`（计划内容、硬链接拒绝、顺序与无 `exec`、`bash -n`） |
+| **MINOR-7** wsprep、archive 缺能力/系统调用/命名空间限制；检出前不查模式 | 两个 unit 的 `CapabilityBoundingSet`、`SystemCallFilter`、`RestrictNamespaces`；先查模式、`core.symlinks=false` 检出 | unit 内容测试；模式检查在检出之前 |
+| **MINOR-8** Linux 归档信任描述符里的作业 id | 按内容重算，不一致拒绝；`O_NOFOLLOW` 句柄读取 | 与 `prepare-workspaces.py` 的公式交叉验证；伪造列表、内容改动、坏格式都拒绝 |
+| **MINOR-9** `inbox`、`requests` 对 Owner 不是只能新建 | 目录只给新建文件，文件只读，OW | ACE 逐条检查 |
+
+主机上仍要确认（P2）：`sc privs` 之后两个服务的真实令牌、`SeCreateGlobalPrivilege` 对代理是否必需、出站规则对服务子进程生效、创建句柄在只读继承 ACL 下仍可写入、WSL 内核上的 seccomp 过滤和能力边界不影响 git、docker CLI 和 systemctl。
 
 ## 15. 需要 Owner 决定的事
 
