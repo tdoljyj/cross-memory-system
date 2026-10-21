@@ -8,7 +8,7 @@ import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {validateJob} from '../../src/queue.mjs';
 import {canonical,digest,subjectOf} from '../../src/proof.mjs';
 import {loadQualifiedPolicy,protectedPath} from '../qualification.mjs';
-import {IMAGE,SCAN_ARGS,SOURCE_PINS,prepareRequiredHistory,reviewedSelfTestPlan,runReviewedSelfTest,requiredScannerPlan,validateRemoteSnapshot} from './required-history/prepare.mjs';
+import {IMAGE,SCAN_ARGS,SOURCE_PINS,WORKFLOW_PATH,acceptedWorkflowSha256,prepareRequiredHistory,reviewedSelfTestPlan,runReviewedSelfTest,requiredScannerPlan,validateRemoteSnapshot} from './required-history/prepare.mjs';
 import {observeUnsignedContainer} from '../verify-once/verify-worker.mjs';
 import {dockerInvoke} from './docker-transport.mjs';
 
@@ -17,7 +17,8 @@ const SOURCE_FILES=[['worker/formal-gitleaks-v3/adapter.mjs',import.meta.url],
   ['worker/formal-gitleaks-v3/docker-transport.mjs',new URL('./docker-transport.mjs',import.meta.url)],
   ['worker/formal-gitleaks-v3/required-history/prepare.mjs',new URL('./required-history/prepare.mjs',import.meta.url)],
   ['worker/formal-gitleaks-v3/required-history/selftest-shim.mjs',new URL('./required-history/selftest-shim.mjs',import.meta.url)],
-  ['worker/verify-once/verify-worker.mjs',new URL('../verify-once/verify-worker.mjs',import.meta.url)]];
+  ['worker/verify-once/verify-worker.mjs',new URL('../verify-once/verify-worker.mjs',import.meta.url)],
+  ['worker/trusted-workflows.mjs',new URL('../trusted-workflows.mjs',import.meta.url)]];
 const HASH=/^[a-f0-9]{64}$/;
 // Source pins an OCI repository manifest, not a Docker config-image ID. Docker
 // canonical RepoDigests omit the optional human-readable tag only.
@@ -58,6 +59,8 @@ async function sourceBoundary(config,manifest){
     check(await fileHash(file)===pin[0].sha256&&file===path.join(config.trustedSourceDirectory,PREFIX,relative),'FORMAL_ADAPTER_SOURCE_DRIFT');}
   for(const [relative,pin]of Object.entries(SOURCE_PINS)){const file=path.join(config.trustedSourceDirectory,relative);await protectedPath(file);
     check(await fileHash(file)===pin,'TRUSTED_REVIEW_SOURCE_DRIFT');}
+  const workflowPin=acceptedWorkflowSha256(role),workflowFile=path.join(config.trustedSourceDirectory,WORKFLOW_PATH);await protectedPath(workflowFile);
+  check(await fileHash(workflowFile)===workflowPin,'TRUSTED_REVIEW_SOURCE_DRIFT');
   const python=role.hostTools?.python;
   check(python&&Object.keys(python).sort().join('|')==='path|sha256'&&path.isAbsolute(python.path)&&HASH.test(python.sha256),'ACCEPTED_PYTHON_PIN_REQUIRED');
   await protectedPath(python.path);check(await fileHash(python.path)===python.sha256,'PYTHON_PIN_CHANGED');return python;

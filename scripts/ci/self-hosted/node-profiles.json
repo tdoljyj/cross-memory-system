@@ -187,6 +187,7 @@
       "linux_runner": {
         "profile": "linux-docker-wsl2-v1",
         "name": "clued-ci-home-linux-01",
+        "state": "retired",
         "distro": "Ubuntu-24.04",
         "user": "runner",
         "root": "/opt/actions-runner",

@@ -11,7 +11,11 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  CI_REQUIRED_CHECKS,
+  LEGACY_CI_REQUIRED_CHECKS as CI_REQUIRED_CHECKS,
+  INDEPENDENT_CI_APP_ID,
+  ciRequiredChecks,
+  independentCheckBindsPullRequest,
+  requiredChecksOf,
   HOLDERS_RPC,
   REQUIRED_CHECK_WORKFLOWS,
   TOUCH_RPC,
@@ -52,8 +56,20 @@ const env = (extra = {}) => ({ GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: "t", CLUED
 const pull = (number, sha = HEAD, body = `Clued-Work-Claim: ${CLAIM}\nClued-Work-Scope: ${SCOPE}`) =>
   ({ number, node_id:`PR_${number}`, state: "open", body, draft: false, head: { sha }, base: { ref: "main", repo: { default_branch: "main", full_name:REPO } } });
 const fixtureQualification=async pr=>({passed:true,state:'qualified',head:pr.head.sha,pr_number:pr.number,reason:'fixture execution observed',native_runs:[]});
+// Design A2: the branch rules decide what counts. The earlier fixtures keep the
+// pre-2026-10-20 mapping; the A2 tests below use the live one (App 5368905)
+// and the Owner's disaster-recovery mapping with the hosted executor names.
+const LEGACY_RULES = Object.freeze([...CI_REQUIRED_CHECKS, Object.freeze({ name: "kooyumi-merge-slot", app_id: ADMISSION_APP_ID })]);
+const REQUIRED_NAMES = ["gitleaks", "trivy", "kooyumi-work-admission", "kooyumi-admission-verified", "kooyumi-merge-slot", "contract-placement"];
+const INDEPENDENT_RULES = Object.freeze(REQUIRED_NAMES.map((name) => Object.freeze({ name, app_id: 5368905 })));
+const DR_RULES = Object.freeze([["gitleaks-hosted-executor", 15368], ["trivy-hosted-executor", 15368], ["contract-placement-hosted-executor", 15368],
+  ["kooyumi-work-admission", 15368], ["kooyumi-admission-verified", ADMISSION_APP_ID], ["kooyumi-merge-slot", ADMISSION_APP_ID]]
+  .map(([name, app_id]) => Object.freeze({ name, app_id })));
+const branchRules = (list) => [{ type: "pull_request", parameters: {} }, { type: "required_status_checks", ruleset_id: 24182890,
+  parameters: { strict_required_status_checks_policy: true, required_status_checks: list.map(({ name, app_id }) => ({ context: name, integration_id: app_id })) } }];
+const rulesRoute = (list) => ({ [`/repos/${REPO}/rules/branches/main`]: branchRules(list) });
 const ciStateOf=(fetch,env,repo,head,workflows,since=null)=>actualCiStateOf(fetch,env,repo,head,workflows,since,
-  {pr:pull(5),qualifyExecution:fixtureQualification});
+  {pr:pull(5),qualifyExecution:fixtureQualification,required:LEGACY_RULES});
 const check = (name, extra = {}) => ({ id: CI_REQUIRED_CHECKS.findIndex(row=>row.name===name)+1, name, head_sha: HEAD, status: "completed", conclusion: "success",
   external_id: name==='kooyumi-admission-verified'?'pr:5:run:9001':undefined,
   app: { id: name === "kooyumi-admission-verified" ? ADMISSION_APP_ID : 15368 }, ...extra });
@@ -67,6 +83,9 @@ function fakeFetch(routes) {
     const rpc = /\/rest\/v1\/rpc\/([a-z0-9_]+)$/.exec(route);
     const body = init.body ? JSON.parse(init.body) : null;
     calls.push({ route: rpc ? `rpc:${rpc[1]}` : route, method: init.method ?? "GET", input: body && body.p_input, body });
+    // Branch rules not given by a test are the legacy mapping (design A2).
+    if (route.startsWith(`/repos/${REPO}/rules/branches/`) && !Object.keys(routes).some((key) => route.startsWith(key)))
+      return new Response(JSON.stringify(branchRules(LEGACY_RULES)), { status: 200, headers: { "content-type": "application/json" } });
     // Existing per-name fixtures also serve the new complete, unfiltered API.
     // Keep individual routes for admissionOf, which is outside this change.
     const snapshot = /^(.*\/check-runs)\?filter=all&/.exec(route);
@@ -113,7 +132,8 @@ test("the CI workflows are gitleaks, trivy and the gated workflows of this branc
     assert.equal(registeredPublisherSource(publisherCatalogue,file,text).passed,true,'an exact registered dispatch Source is required');
     return false;
   });
-  assert.deepEqual([...WORKFLOWS.keys()].sort(), [...prGated, ...REQUIRED_CHECK_WORKFLOWS].map((name) => `.github/workflows/${name}`).sort());
+  // The three required-check workflows are gated too; each is counted once.
+  assert.deepEqual([...WORKFLOWS.keys()].sort(), [...new Set([...prGated, ...REQUIRED_CHECK_WORKFLOWS])].map((name) => `.github/workflows/${name}`).sort());
 });
 
 test("the workflow is triggered by every CI workflow's completion, runs default-branch code and is hosted", () => {
@@ -226,11 +246,16 @@ test("ciStateOf: failed wins, then running (default-branch workflows only), then
 test("contract-placement is an always-run hosted required check, and failures return the merge slot", async () => {
   assert.ok(CI_REQUIRED_CHECKS.some(({ name, app_id }) => name === "contract-placement" && app_id === 15368));
   const text = fs.readFileSync(path.join(ROOT, ".github/workflows/contract-placement.yml"), "utf8");
-  assert.match(text, /^ {4}name: contract-placement$/m);
-  assert.match(text, /^ {4}runs-on: ubuntu-latest$/m);
-  assert.doesNotMatch(text, /^\s*(?:if|needs|paths|paths-ignore):/m);
+  // Owner Decision bc6fdad1: the hosted executor never carries the required check's name.
+  assert.match(text, /^ {4}name: contract-placement-hosted-executor$/m);
+  assert.doesNotMatch(text, /^ {4}name: contract-placement$/m);
+  // Owner Decision 325717a6: the gate and the executor run on a hosted runner, on every pull request.
+  assert.equal(text.match(/^ {4}runs-on: /gm).length, 2);
+  assert.equal(text.match(/^ {4}runs-on: ubuntu-latest$/gm).length, 2);
+  assert.doesNotMatch(text, /^\s*(?:paths|paths-ignore):/m);
+  assert.match(text, /^ {4}needs: admission-gate$/m);
   assert.deepEqual(workflowFormFindings(text), []);
-  assert.deepEqual(gateFindings(text, null), []);
+  assert.deepEqual(gateFindings(text, text), []);
   const fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, {
     "contract-placement": [check("contract-placement", { conclusion: "failure" })],
   }) });
@@ -524,7 +549,7 @@ test('partial, conflicting or malformed snapshots cannot classify or pass a fina
   for(const body of invalid){
     const fetch=fakeFetch({[snapshotRoute()]:body});
     await assert.rejects(()=>ciStateOf(fetch.fetchImpl,env(),REPO,HEAD,WORKFLOWS),/snapshot/);
-    assert.equal(await requiredBarrier(fetch.fetchImpl,env(),REPO,HEAD,5,{native_runs:[]}),false);
+    assert.equal(await requiredBarrier(fetch.fetchImpl,env(),REPO,HEAD,5,{native_runs:[],default_branch:"main"}),false);
   }
   const full=Array.from({length:100},(_,i)=>check('auxiliary',{id:1000+i}));
   const changing=async url=>new Response(JSON.stringify(Number(new URL(url).searchParams.get('page'))===1?
@@ -546,8 +571,8 @@ test('qualification and final barriers never reuse the initial green check snaps
   assert.equal(proofs,1);assert.equal(seen.state,'idle');
   assert.equal(fetch.calls.filter(c=>c.route.includes('/check-runs?')).length,2);
   const fresh=fakeFetch({...allGreen(),...runsRoute(HEAD,[])});
-  assert.equal(await requiredBarrier(fresh.fetchImpl,env(),REPO,HEAD,5,{native_runs:[]}),true);
-  assert.equal(await requiredBarrier(fresh.fetchImpl,env(),REPO,HEAD,5,{native_runs:[]}),true);
+  assert.equal(await requiredBarrier(fresh.fetchImpl,env(),REPO,HEAD,5,{native_runs:[],default_branch:"main"}),true);
+  assert.equal(await requiredBarrier(fresh.fetchImpl,env(),REPO,HEAD,5,{native_runs:[],default_branch:"main"}),true);
   assert.equal(fresh.calls.filter(c=>c.route.includes('/check-runs?')).length,2);
 });
 
@@ -565,4 +590,212 @@ test('IDs repeated across pages and malformed PR run metadata stay unknown',asyn
     const fetch=fakeFetch({...allGreen(),...runsRoute(HEAD,[row])});
     await assert.rejects(()=>ciStateOf(fetch.fetchImpl,env(),REPO,HEAD,WORKFLOWS),/invalid workflow_runs snapshot row/);
   }
+});
+
+// --- Design A2: the merge slot counts the ruleset's actual sources.
+
+const JOB64 = (digit) => digit.repeat(64);
+const INDEPENDENT_IDS = {
+  "kooyumi-work-admission": `independent-ci:native-work-admission:${JOB64("3")}:f9:e1:a1`,
+  "kooyumi-admission-verified": `independent-ci:control:control-admission:${JOB64("1")}:f9:e1:a1`,
+  "kooyumi-merge-slot": `independent-ci:control:control-merge-slot:${JOB64("2")}:f9:e1:a1`,
+};
+const independent = (name, extra = {}) => ({ id: 500 + REQUIRED_NAMES.indexOf(name), name, head_sha: HEAD, status: "completed", conclusion: "success",
+  external_id: INDEPENDENT_IDS[name] ?? `independent-ci:staged:${JOB64("4")}:f9:e1:a1`, app: { id: 5368905 },
+  output: { title: "Independent check", summary: name === "kooyumi-admission-verified"
+    ? `Independent Native control check for ${REPO}#5; observation sha256 ${JOB64("5")}.` : `Independent CI job ${JOB64("4")}.` }, ...extra });
+const independentGreen = () => checksRoute(HEAD, Object.fromEntries(REQUIRED_NAMES.filter((name) => name !== "kooyumi-merge-slot")
+  .map((name) => [name, [independent(name)]])));
+const hosted = (name, extra = {}) => ({ id: 800 + name.length, name, head_sha: HEAD, status: "completed", conclusion: "success", app: { id: 15368 }, ...extra });
+const independentState = (fetch, { qualifyExecution = fixtureQualification, since = null } = {}) =>
+  actualCiStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS, since, { pr: pull(5), qualifyExecution, required: INDEPENDENT_RULES });
+
+test("A2: required checks come from every required_status_checks rule of the branch, by context and integration, and fail closed", async () => {
+  assert.equal(INDEPENDENT_CI_APP_ID, 5368905);
+  let fetch = fakeFetch(rulesRoute(INDEPENDENT_RULES));
+  const live = await requiredChecksOf(fetch.fetchImpl, env(), REPO, "main");
+  assert.deepEqual(live, INDEPENDENT_RULES);
+  assert.deepEqual(ciRequiredChecks(live).map((row) => row.name), REQUIRED_NAMES.filter((name) => name !== "kooyumi-merge-slot"));
+  assert.ok(fetch.calls.some((call) => call.route.startsWith(`/repos/${REPO}/rules/branches/main?per_page=100&page=1`)));
+  // The disaster-recovery mapping is read as it is, with the hosted executor names.
+  fetch = fakeFetch(rulesRoute(DR_RULES));
+  assert.deepEqual(await requiredChecksOf(fetch.fetchImpl, env(), REPO, "main"), DR_RULES);
+  // A second ruleset adds to the first (GitHub requires both); duplicates count once; no integration is any App.
+  fetch = fakeFetch({ [`/repos/${REPO}/rules/branches/main`]: [...branchRules(INDEPENDENT_RULES),
+    { type: "required_status_checks", parameters: { required_status_checks: [{ context: "gitleaks", integration_id: 5368905 }, { context: "extra" }] } }] });
+  assert.deepEqual((await requiredChecksOf(fetch.fetchImpl, env(), REPO, "main")).slice(-1), [{ name: "extra", app_id: null }]);
+  for (const answer of [[{ type: "pull_request", parameters: {} }], [{ type: "required_status_checks", parameters: {} }],
+    branchRules([{ name: "", app_id: 5368905 }]), [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "gitleaks", integration_id: "5368905" }] } }],
+    { __status: 404, body: { message: "Not Found" } }]) {
+    fetch = fakeFetch({ [`/repos/${REPO}/rules/branches/main`]: answer });
+    await assert.rejects(() => requiredChecksOf(fetch.fetchImpl, env(), REPO, "main"), String(JSON.stringify(answer)).slice(0, 80));
+  }
+  await assert.rejects(() => requiredChecksOf(fakeFetch({}).fetchImpl, env(), REPO, undefined), /default branch is unknown/);
+});
+
+test("A2: independent CI checks bind to the pull request by head and the independent CI external_id formats", () => {
+  const ok = { headSha: HEAD, prNumber: 5, repository: REPO };
+  for (const name of REQUIRED_NAMES) assert.equal(independentCheckBindsPullRequest(independent(name), ok), true, name);
+  assert.equal(independentCheckBindsPullRequest(independent("gitleaks", { external_id: "independent-ci:relay:gitleaks:aaaaaaaaaaaa:run123:a1" }), ok), true);
+  for (const [label, check] of [
+    ["another head", independent("gitleaks", { head_sha: OTHER })],
+    ["another App", independent("gitleaks", { app: { id: 15368 } })],
+    ["no external id", independent("gitleaks", { external_id: undefined })],
+    ["an admission-run id", independent("kooyumi-admission-verified", { external_id: "pr:5:run:9001" })],
+    ["a truncated job id", independent("trivy", { external_id: `independent-ci:staged:${JOB64("4").slice(1)}:f9:e1:a1` })],
+    ["no fence", independent("trivy", { external_id: `independent-ci:staged:${JOB64("4")}:f0:e1:a1` })],
+    ["a control id on a scanner", independent("gitleaks", { external_id: INDEPENDENT_IDS["kooyumi-admission-verified"] })],
+    ["a staged id on the admission check", independent("kooyumi-admission-verified", { external_id: `independent-ci:staged:${JOB64("4")}:f9:e1:a1` })],
+    ["the merge-slot role on the admission check", independent("kooyumi-admission-verified", { external_id: INDEPENDENT_IDS["kooyumi-merge-slot"] })],
+    ["a summary naming another pull request", independent("kooyumi-admission-verified", { output: { summary: `Independent Native control check for ${REPO}#6; x` } })],
+  ]) assert.equal(independentCheckBindsPullRequest(check, ok), false, label);
+});
+
+test("A2: with the rules on App 5368905, hosted executor results never return the slot; a 5368905 final failure does", async () => {
+  // Hosted executors (App 15368) failed, also under a required check's old name: not counted.
+  const hostedFailures = checksRoute(HEAD, { "gitleaks-hosted-executor": [hosted("gitleaks-hosted-executor", { conclusion: "failure" })],
+    "trivy-hosted-executor": [hosted("trivy-hosted-executor", { conclusion: "failure" })] });
+  let fetch = fakeFetch({ ...independentGreen(), ...hostedFailures, ...checksRoute(HEAD, { gitleaks: [independent("gitleaks"), hosted("gitleaks", { id: 999, conclusion: "failure" })] }),
+    ...runsRoute(HEAD, []) });
+  let state = await independentState(fetch);
+  assert.deepEqual([state.state, state.checks.map((check) => [check.name, check.app_id, check.conclusion])],
+    ["green", REQUIRED_NAMES.filter((name) => name !== "kooyumi-merge-slot").map((name) => [name, 5368905, "success"])]);
+  // The execution proof fails on a hosted executor workflow (billing refusal): idle, not failed.
+  for (const file of REQUIRED_CHECK_WORKFLOWS) {
+    state = await independentState(fakeFetch({ ...independentGreen(), ...runsRoute(HEAD, []) }),
+      { qualifyExecution: async (pr) => ({ passed: false, state: "failed", head: pr.head.sha, pr_number: pr.number, reason: `.github/workflows/${file}: qualified workflow failed` }) });
+    assert.equal(state.state, "idle", file);
+    assert.match(state.reason, /hosted executor is not a required check of these rules, so the slot is not returned/);
+  }
+  // ...but another gated workflow's failure, or the same under rules that count Actions checks, still fails as before.
+  const failedProof = (file) => async (pr) => ({ passed: false, state: "failed", head: pr.head.sha, pr_number: pr.number, reason: `.github/workflows/${file}: CI job failed` });
+  state = await independentState(fakeFetch({ ...independentGreen(), ...runsRoute(HEAD, []) }), { qualifyExecution: failedProof("clued-cloud-quality-gate.yml") });
+  assert.equal(state.state, "failed");
+  state = await actualCiStateOf(fakeFetch({ ...allGreen(), ...runsRoute(HEAD, []) }).fetchImpl, env(), REPO, HEAD, WORKFLOWS, null,
+    { pr: pull(5), qualifyExecution: failedProof("gitleaks.yml"), required: LEGACY_RULES });
+  assert.equal(state.state, "failed");
+  // A 5368905 final failure is the head's own.
+  fetch = fakeFetch({ ...independentGreen(), ...checksRoute(HEAD, { trivy: [independent("trivy", { conclusion: "failure" })] }) });
+  assert.deepEqual([(await independentState(fetch)).state, (await independentState(fetch)).reason], ["failed", "trivy concluded failure"]);
+  // A hosted executor still running keeps the slot running.
+  fetch = fakeFetch({ ...independentGreen(), ...runsRoute(HEAD, [run(GITLEAKS)]), ...sameAsMain() });
+  assert.equal((await independentState(fetch)).state, "running");
+  // A missing or unbound 5368905 check is never green.
+  fetch = fakeFetch({ ...independentGreen(), ...checksRoute(HEAD, { "contract-placement": [] }), ...runsRoute(HEAD, []) });
+  assert.equal((await independentState(fetch)).state, "idle");
+  fetch = fakeFetch({ ...independentGreen(), ...checksRoute(HEAD, { "kooyumi-admission-verified": [independent("kooyumi-admission-verified", { external_id: "pr:5:run:9001" })] }),
+    ...runsRoute(HEAD, []) });
+  assert.deepEqual([(await independentState(fetch)).state, (await independentState(fetch)).reason], ["idle", "the newest admission check does not bind this pull request"]);
+  // The legacy sources do not stand in for the ruleset's.
+  fetch = fakeFetch({ ...allGreen(), ...runsRoute(HEAD, []) });
+  assert.equal((await independentState(fetch)).state, "idle");
+  // The final barrier reads the rules and binds every 5368905 check.
+  fetch = fakeFetch({ ...independentGreen(), ...rulesRoute(INDEPENDENT_RULES), ...runsRoute(HEAD, []) });
+  assert.equal(await requiredBarrier(fetch.fetchImpl, env(), REPO, HEAD, 5, { native_runs: [], default_branch: "main" }), true);
+  fetch = fakeFetch({ ...independentGreen(), ...rulesRoute(INDEPENDENT_RULES), ...runsRoute(HEAD, []),
+    ...checksRoute(HEAD, { gitleaks: [independent("gitleaks", { external_id: INDEPENDENT_IDS["kooyumi-merge-slot"] })] }) });
+  assert.equal(await requiredBarrier(fetch.fetchImpl, env(), REPO, HEAD, 5, { native_runs: [], default_branch: "main" }), false);
+  fetch = fakeFetch({ ...independentGreen(), ...runsRoute(HEAD, []) });
+  assert.equal(await requiredBarrier(fetch.fetchImpl, env(), REPO, HEAD, 5, { native_runs: [], default_branch: "main" }), false, "legacy rules need legacy checks");
+});
+
+test("A2: reportMergeSlots follows the live rules: no slot return for hosted executors, App 5368905 owns the slot check", async () => {
+  const touches = (fetch) => fetch.calls.filter((call) => call.route === `rpc:${TOUCH_RPC}`).map((call) => call.input.ci_state);
+  const posts = (fetch) => fetch.calls.filter((call) => call.method === "POST" && call.route === `/repos/${REPO}/check-runs`);
+  // Hosted executors failed (billing refusal): no failed report, nothing posted.
+  let fetch = slotWorld({ extra: { ...rulesRoute(INDEPENDENT_RULES), ...independentGreen(), ...runsRoute(HEAD, []),
+    ...checksRoute(HEAD, { "gitleaks-hosted-executor": [hosted("gitleaks-hosted-executor", { conclusion: "failure" })] }) } });
+  let result = await report(fetch, { qualifyExecution: async (pr) => ({ passed: false, state: "failed", head: pr.head.sha, pr_number: pr.number,
+    reason: ".github/workflows/gitleaks.yml: qualified workflow failed" }) });
+  assert.deepEqual([result.errors, result.reports[0].ci_state, touches(fetch), posts(fetch).length], [[], "idle", [], 0]);
+  // All six from 5368905 green: green.
+  fetch = slotWorld({ extra: { ...rulesRoute(INDEPENDENT_RULES), ...independentGreen(), ...runsRoute(HEAD, []) } });
+  result = await report(fetch);
+  assert.deepEqual([result.errors, result.reports[0].ci_state, touches(fetch)], [[], "green", ["green"]]);
+  // A 5368905 final failure returns the slot; the clued-admission App posts no foreign kooyumi-merge-slot check.
+  fetch = slotWorld({ extra: { ...rulesRoute(INDEPENDENT_RULES), ...independentGreen(), ...runsRoute(HEAD, []),
+    ...checksRoute(HEAD, { gitleaks: [independent("gitleaks", { conclusion: "failure" })] }) } });
+  result = await report(fetch);
+  assert.deepEqual([result.errors, result.reports[0].ci_state, result.reports[0].returned, touches(fetch), posts(fetch).length],
+    [[], "failed", true, ["failed"], 0]);
+  // Unreadable rules: nothing reported, an error.
+  fetch = slotWorld({ extra: { [`/repos/${REPO}/rules/branches/main`]: { __status: 403, body: { message: "Forbidden" } }, ...independentGreen(), ...runsRoute(HEAD, []) } });
+  result = await report(fetch);
+  assert.deepEqual([result.reports, touches(fetch)], [[], []]);
+  assert.match(result.errors[0], /^#5: GitHub API .*rules\/branches\/main.* returned 403/);
+});
+
+test("A2: the Owner's disaster-recovery mapping counts the hosted executor names from App 15368", async () => {
+  const drGreen = checksRoute(HEAD, Object.fromEntries(DR_RULES.filter((row) => row.name !== "kooyumi-merge-slot").map(({ name, app_id }) =>
+    [name, [{ ...hosted(name), app: { id: app_id }, ...(name === "kooyumi-admission-verified" ? { external_id: "pr:5:run:9001" } : {}) }]])));
+  const drState = (fetch, qualifyExecution = fixtureQualification) =>
+    actualCiStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS, null, { pr: pull(5), qualifyExecution, required: DR_RULES });
+  assert.equal((await drState(fakeFetch({ ...drGreen, ...runsRoute(HEAD, []) }))).state, "green");
+  const failed = fakeFetch({ ...drGreen, ...checksRoute(HEAD, { "trivy-hosted-executor": [hosted("trivy-hosted-executor", { conclusion: "failure" })] }) });
+  assert.deepEqual([(await drState(failed)).state, (await drState(failed)).reason], ["failed", "trivy-hosted-executor concluded failure"]);
+  // Actions checks are counted there, so a hosted executor workflow's failure is CI's again.
+  const proof = async (pr) => ({ passed: false, state: "failed", head: pr.head.sha, pr_number: pr.number, reason: ".github/workflows/trivy.yml: qualified workflow failed" });
+  assert.equal((await drState(fakeFetch({ ...drGreen, ...runsRoute(HEAD, []) }), proof)).state, "failed");
+  // The reporter posts the failing slot check as before: the rules take it from the clued-admission App.
+  const fetch = slotWorld({ extra: { ...rulesRoute(DR_RULES), ...drGreen, ...checksRoute(HEAD, { "gitleaks-hosted-executor": [hosted("gitleaks-hosted-executor", { conclusion: "failure" })] }) } });
+  const result = await report(fetch);
+  assert.deepEqual([result.errors, result.reports[0].ci_state, result.reports[0].merge_slot_check_run_id], [[], "failed", 5005]);
+});
+
+// --- Source v2 external ids (src/job-v2.mjs scanExternalIdV2, admissionExternalIdV2).
+const V2_JOB = "6".repeat(64);
+const V2_IDS = {
+  gitleaks: `independent-ci:staged:v2:${V2_JOB}:a1`,
+  trivy: `independent-ci:staged:v2:${V2_JOB}:a2`,
+  "contract-placement": `independent-ci:staged:v2:${V2_JOB}:a1`,
+  "kooyumi-work-admission": `independent-ci:native-work-admission:v2:${V2_JOB}:a1:c0123abcd:f9:e1`,
+  "kooyumi-admission-verified": `independent-ci:control:control-admission:v2:${V2_JOB}:a2:cd1dd735d:f3:e2`,
+  "kooyumi-merge-slot": `independent-ci:control:control-merge-slot:v2:${V2_JOB}:a1:cd1dd735d:f3:e2`,
+};
+const v2 = (name, extra = {}) => independent(name, { external_id: V2_IDS[name], ...extra });
+
+test("A2 v2: the Source v2 staged, native admission and control ids bind by head; malformed and foreign ids never do", () => {
+  const ok = { headSha: HEAD, prNumber: 5, repository: REPO };
+  for (const name of REQUIRED_NAMES) assert.equal(independentCheckBindsPullRequest(v2(name), ok), true, name);
+  assert.equal(independentCheckBindsPullRequest(v2("gitleaks"), { ...ok, headSha: OTHER }), false, "another head");
+  for (const [label, name, externalId] of [
+    ["attempt 3", "gitleaks", `independent-ci:staged:v2:${V2_JOB}:a3`],
+    ["attempt 0", "trivy", `independent-ci:staged:v2:${V2_JOB}:a0`],
+    ["a staged id with a claim suffix", "gitleaks", `independent-ci:staged:v2:${V2_JOB}:a1:cd1dd735d:f3:e2`],
+    ["a native id without its claim generation", "kooyumi-work-admission", `independent-ci:native-work-admission:v2:${V2_JOB}:a1`],
+    ["a short claim prefix", "kooyumi-work-admission", `independent-ci:native-work-admission:v2:${V2_JOB}:a1:cd1dd73:f3:e2`],
+    ["an upper-case job id", "kooyumi-work-admission", `independent-ci:native-work-admission:v2:${"A".repeat(64)}:a1:cd1dd735d:f3:e2`],
+    ["fence 0", "kooyumi-admission-verified", `independent-ci:control:control-admission:v2:${V2_JOB}:a1:cd1dd735d:f0:e2`],
+    ["a trailing field", "kooyumi-admission-verified", `${V2_IDS["kooyumi-admission-verified"]}:x`],
+    ["v1 field order inside v2", "kooyumi-admission-verified", `independent-ci:control:control-admission:v2:${V2_JOB}:f3:e2:a1`],
+    ["the merge-slot role on the admission check", "kooyumi-admission-verified", V2_IDS["kooyumi-merge-slot"]],
+    ["a v2 control id on a scanner", "gitleaks", V2_IDS["kooyumi-admission-verified"]],
+    ["a v2 native id on a scanner", "trivy", V2_IDS["kooyumi-work-admission"]],
+    ["a v2 staged id on the admission check", "kooyumi-admission-verified", V2_IDS.gitleaks],
+    ["an unknown control role", "kooyumi-admission-verified", `independent-ci:control:control-other:v2:${V2_JOB}:a1:cd1dd735d:f3:e2`],
+    ["an unknown v1 control role", "kooyumi-admission-verified", `independent-ci:control:control-other:${V2_JOB}:f3:e2:a1`],
+    ["a v3 id", "gitleaks", `independent-ci:staged:v3:${V2_JOB}:a1`],
+    ["a relay id for another head", "gitleaks", "independent-ci:relay:gitleaks:bbbbbbbbbbbb:run123:a1"],
+    ["a relay id for another role", "trivy", "independent-ci:relay:gitleaks:aaaaaaaaaaaa:run123:a1"],
+    ["a relay id for placement", "contract-placement", "independent-ci:relay:contract-placement:aaaaaaaaaaaa:run123:a1"],
+    ["a foreign prefix", "gitleaks", `other-ci:staged:v2:${V2_JOB}:a1`],
+  ]) assert.equal(independentCheckBindsPullRequest(v2(name, { external_id: externalId }), ok), false, label);
+  assert.equal(independentCheckBindsPullRequest(v2("trivy", { external_id: "independent-ci:relay:trivy:aaaaaaaaaaaa:run123:a1" }), ok), true);
+});
+
+test("A2 v2: the slot reporter counts v2 checks: green, and a v2 final failure returns the slot", async () => {
+  const v2Green = () => checksRoute(HEAD, Object.fromEntries(REQUIRED_NAMES.filter((name) => name !== "kooyumi-merge-slot").map((name) => [name, [v2(name)]])));
+  let state = await independentState(fakeFetch({ ...v2Green(), ...runsRoute(HEAD, []) }));
+  assert.equal(state.state, "green");
+  state = await independentState(fakeFetch({ ...v2Green(), ...checksRoute(HEAD, { trivy: [v2("trivy", { conclusion: "failure" })] }) }));
+  assert.deepEqual([state.state, state.reason], ["failed", "trivy concluded failure"]);
+  state = await independentState(fakeFetch({ ...v2Green(), ...runsRoute(HEAD, []),
+    ...checksRoute(HEAD, { "kooyumi-admission-verified": [v2("kooyumi-admission-verified", { external_id: V2_IDS["kooyumi-admission-verified"].replace(":cd1dd735d:", ":cD1DD735D:") })] }) }));
+  assert.deepEqual([state.state, state.reason], ["idle", "the newest admission check does not bind this pull request"]);
+  const fetch = slotWorld({ extra: { ...rulesRoute(INDEPENDENT_RULES), ...v2Green(), ...runsRoute(HEAD, []),
+    ...checksRoute(HEAD, { gitleaks: [v2("gitleaks", { conclusion: "failure" })] }) } });
+  const result = await report(fetch);
+  assert.deepEqual([result.errors, result.reports[0].ci_state, result.reports[0].returned], [[], "failed", true]);
+  assert.equal(await requiredBarrier(fakeFetch({ ...v2Green(), ...rulesRoute(INDEPENDENT_RULES), ...runsRoute(HEAD, []) }).fetchImpl,
+    env(), REPO, HEAD, 5, { native_runs: [], default_branch: "main" }), true);
 });
