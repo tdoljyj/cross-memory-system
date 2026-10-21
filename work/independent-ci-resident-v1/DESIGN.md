@@ -481,6 +481,11 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 - 转发的重入：本键已结算时，不再只读回，而是像 `publish()` 一样重新核对 PR head、受保护事实与 claim、新鲜的 Native 准入并读回；有漂移就撤销一次已知检查，从不重发。K 已被同一角色在本 head 上**已结算的转发**持有时（托管重跑出了更新的 run 或 run attempt），结果落到那次已结算的发布（重新核对，不再发布），不再 HALT；只有本地持有或未结算的转发持有才仍是 HALT。
 - 每次继续一个等待中的批次之前，都重跑开批次时的检查（`validUntil`、已安装 Source 与常驻层的哈希、批次主体的 Source 等于已安装的 Source）。任何漂移都失败关闭：FAILED_UNKNOWN 加 HALT（`RESIDENT_SOURCE_DRIFT` 或 `RESIDENT_INSTALL_AUTHORITY_EXPIRING`），不会跑第 R 段和本地段。`install-resident.ps1` 在有任何未终结批次时拒绝安装，包括等待中的批次（`INSTALL_REQUIRES_NO_OPEN_BATCH_REARM_FIRST`，与 `uninstall-resident.ps1` 相同）。
 - 其他复审修正：v1 one-shot 的必需钉值加入 v1 发布者现在加载的 `hosted-relay-v1/attest.mjs`、`registry.mjs`、`oidc.mjs`；v2 的 Native verify 和 v1 一样带 10 秒超时；准入登记的注释写明 contract-placement 的托管执行从不转发（`RELAYABLE_ROLES` 只有 gitleaks、trivy）。PR-B 工作流里那句“5368905 在核验后发布 contract-placement”的注释在冻结字节里，要在 PR-B 改。
+- **托管作业执行的仓库脚本被遮蔽（复审 BLOCKER）**：托管 gitleaks 作业持有 `id-token: write`，并从 PR 检出运行 `python3 scripts/ci/reviewed_gitleaks.py`。不带 `-I` 时，Python 会把 `scripts/ci` 放在 `sys.path` 首位，所以 PR 只要加一个 `scripts/ci/argparse.py`，就能在扫描之前运行自己的代码，比如改掉磁盘上的 `.gitleaks.toml`。这样转发会发布一个假的绿色检查，之后 K 还会挡住受信的本地角色。修正如下：
+  - 登记表的每个角色新增 `forbiddenChangePrefixes`（目录前缀；gitleaks 是 `scripts/ci/`，trivy 不执行仓库脚本，所以为空），并且计入 `closureSha256`；
+  - E3 对改动落在这些前缀下的 PR（新增、修改、删除，改名时两端都算）判 NOT_ELIGIBLE（`E3_EXECUTED_PATH_CHANGED`），角色回本地，提示模式也一样；
+  - `build-registry.mjs` 从托管作业的 `run:` 步骤读出执行的仓库脚本：每个 Python 调用都必须带 `-I`（包括 `-c`），拒绝 `-m`，拒绝用 Node 运行仓库脚本；执行的脚本必须在 closure 里，它的目录必须被角色前缀或全局前缀（`.github/`）覆盖，否则拒绝构建。
+  - 现在提交的生产登记表建于这些规则之前，会被拒绝，所以转发失败关闭（第 R 段 `RELAY_STAGE_REFUSED`）。它对应的 PR-B 提交也会被新构建器拒绝（Python 没有 `-I`）。PR-B 要改用 `python3 -I -B` 重新冻结，再用这个构建器重建登记表，转发才可能打开。
 
 **第 R 段在 Source v2 里**：
 

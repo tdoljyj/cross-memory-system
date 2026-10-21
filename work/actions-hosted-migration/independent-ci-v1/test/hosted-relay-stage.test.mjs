@@ -273,3 +273,23 @@ test('the local path keeps working with K and re-enters a settled publication wi
   assert.equal(mutex.holder.path, 'local');
   assert.equal(mutex.holder.effectKey, first.effectKey);
 });
+
+// PR-A review BLOCKER, end to end: a PR that adds scripts/ci/argparse.py (a stdlib name the hosted gitleaks
+// script imports) could run PR code inside the hosted job before the scan. Stage R never relays gitleaks for it:
+// LOCAL_REQUIRED, nothing published for the role, K left free, so the trusted local role runs.
+test('a PR adding scripts/ci/argparse.py is LOCAL_REQUIRED for gitleaks; K stays free for the local role', async t => {
+  const w = createWorld(); w.allHosted();
+  w.state.changedPaths = ['scripts/ci/argparse.py', 'src/app.js']; w.state.pr.changed_files = 2;
+  const journal = await journalFor(t);
+  const result = await run(w.stage(journal).stage, w, ['gitleaks', 'trivy']);
+  assert.deepEqual(outcomes(result), { gitleaks: 'LOCAL_REQUIRED:RELAY_NOT_ATTESTED_NOT_ELIGIBLE', trivy: 'RELAYED' });
+  assert.equal(result.roles.find(r => r.role === 'gitleaks').detail, 'E3_EXECUTED_PATH_CHANGED');
+  assert.deepEqual(published(w.state).map(c => c.name), ['trivy']);
+  assert.equal((await readRolePublication(journal, mutexOf(w, 'gitleaks'))).holder, null);
+  const job = w.localJob('gitleaks');
+  assert.equal((await w.publisher(journal).publish({ job, envelope: w.signedResult(job) })).status, 'SETTLED', 'the trusted local role publishes');
+  // the same through the companion's hint mode: not eligible, so the executor does not even wait for it
+  const { hostedHint } = await import('../src/hosted-relay-v1/stage.mjs');
+  const facts = await w.observer().observe({ repo: REPO, pr: 7, headSha: H, baseSha: w.subject().baseSha, roles: ['gitleaks'] });
+  assert.equal(hostedHint({ registry: w.registry, facts }).roles.gitleaks.reason, 'E3_EXECUTED_PATH_CHANGED');
+});

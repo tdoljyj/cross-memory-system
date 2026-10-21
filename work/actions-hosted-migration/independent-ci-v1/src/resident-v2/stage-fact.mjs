@@ -90,7 +90,8 @@ export function outcomeFailureCode(outcome, stageNumber) {
   if (r === 'full_admission_subject_changed') return 'PR_NOT_OPEN_OR_CHANGED';
   if (r === 'full_admission_native_unsupported' || r === 'native_policy_changed') return 'NATIVE_POLICY_UNSUPPORTED';
   if (r === 'execution_proof_refused') return 'EVIDENCE_REFUSED';
-  if (stageNumber === RELAY_STAGE_NUMBER && (r === 'RELAY_STAGE_NOT_CONFIGURED' || r === 'RELAY_STAGE_INPUT_INVALID')) return 'RELAY_STAGE_REFUSED';
+  // A refused installed registry (for example one built before the isolation rules) is a clean stage-R refusal.
+  if (stageNumber === RELAY_STAGE_NUMBER && (r === 'RELAY_STAGE_NOT_CONFIGURED' || r === 'RELAY_STAGE_INPUT_INVALID' || /^RELAY_REGISTRY_[A-Z_]+$/.test(r ?? ''))) return 'RELAY_STAGE_REFUSED';
   return stageNumber === 1 || stageNumber === 2 || stageNumber === 4 || stageNumber === 6 ? 'STAGE_CHILD_REFUSED' : 'PUBLICATION_BLOCKED';
 }
 

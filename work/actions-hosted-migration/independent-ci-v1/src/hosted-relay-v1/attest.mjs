@@ -70,6 +70,9 @@ function eligibility(registry, entry, facts) {
     if (registry.forbiddenChangePrefixes.some(prefix => file.startsWith(prefix))) return 'E3_CI_PATH_CHANGED';
     if (registry.forbiddenChangePaths.includes(file)) return 'E3_PROTECTED_PATH_CHANGED';
     if (closurePaths.has(file)) return 'E3_CLOSURE_PATH_CHANGED';
+    // Added, modified, removed or renamed (both sides are in the changed paths) under a directory the hosted job
+    // executes from: a shadowing module could change the scan's inputs (PR-A review BLOCKER).
+    if (entry.forbiddenChangePrefixes.some(prefix => file.startsWith(prefix))) return 'E3_EXECUTED_PATH_CHANGED';
   }
   const head = facts.headCommit;
   if (head?.sha !== facts.headSha || !SHA1.test(head.tree ?? '')) return 'E4_HEAD_TREE_UNOBSERVED';

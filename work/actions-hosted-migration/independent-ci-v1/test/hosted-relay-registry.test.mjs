@@ -149,7 +149,8 @@ test('the workflow scan refuses a commit whose hosted job could mint an identity
   for (const [label, files] of cases) refused(() => build(files), 'RELAY_REGISTRY_WORKFLOW_REFUSED', label);
   // Flow-style job permissions are read the same way.
   const flow = workflowWith('    permissions:\n      contents: read\n      id-token: write\n', '    permissions: {contents: read, id-token: write}\n');
-  assert.deepEqual(scanWorkflow(Buffer.from(flow[GITLEAKS]), SPEC.roles.gitleaks), { hostedJobId: 'gitleaks-trusted-self-hosted', hostedJobTimeoutMinutes: 25 });
+  assert.deepEqual(scanWorkflow(Buffer.from(flow[GITLEAKS]), SPEC.roles.gitleaks), { hostedJobId: 'gitleaks-trusted-self-hosted', hostedJobTimeoutMinutes: 25,
+    executed: ['scripts/ci/reviewed_gitleaks.py'] });
   // A literal hosted name (as the never-relayed placement job uses) is read as well.
   const literal = workflowWith(HOSTED_LINE, '    name: gitleaks-hosted-executor\n');
   assert.equal(scanWorkflow(Buffer.from(literal[GITLEAKS]), SPEC.roles.gitleaks).hostedJobId, 'gitleaks-trusted-self-hosted');
@@ -177,8 +178,19 @@ test('a registry is refused when tampered, mis-domained or not validated', () =>
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../../../..');
 const COMMITTED = path.join(HERE, '../src/hosted-relay-v1/registry.json');
+// A registry built before the PR-A isolation rules (no per-role forbiddenChangePrefixes) is refused, so the relay
+// fails closed (stage R refused) until PR-B is re-frozen with `python3 -I -B` and the registry rebuilt with this
+// builder; the old PR-B commit itself is refused by the new builder.
+const pendingIsolationRebuild = raw => Object.values(raw?.roles ?? {}).some(r => !Object.hasOwn(r, 'forbiddenChangePrefixes'));
 test('the committed production registry validates and rebuilds byte-identically from its PR-B commit', async t => {
   const bytes = fs.readFileSync(COMMITTED, 'utf8');
+  if (pendingIsolationRebuild(JSON.parse(bytes))) {
+    refused(() => validateRegistry(JSON.parse(bytes), { domain: 'production' }), 'RELAY_REGISTRY_INVALID', 'a pre-isolation registry fails closed');
+    const sourceCommit = JSON.parse(bytes).sourceCommit;
+    const present = GIT && spawnSync(GIT, ['-C', ROOT, 'cat-file', '-e', `${sourceCommit}^{commit}`], { windowsHide: true }).status === 0;
+    if (present) refused(() => buildRegistry({ spec: SPEC, reader: gitObjectReader(ROOT, { git: GIT }), commit: sourceCommit }), 'RELAY_REGISTRY_WORKFLOW_REFUSED', 'its PR-B commit runs Python without -I');
+    return;
+  }
   const registry = validateRegistry(JSON.parse(bytes), { domain: 'production' });
   assert.deepEqual(Object.keys(registry.roles).sort(), ['gitleaks', 'trivy']);
   for (const [role, entry] of Object.entries(registry.roles)) {
@@ -189,4 +201,36 @@ test('the committed production registry validates and rebuilds byte-identically 
   const present = GIT && spawnSync(GIT, ['-C', ROOT, 'cat-file', '-e', `${registry.sourceCommit}^{commit}`], { windowsHide: true }).status === 0;
   if (!present) { t.skip(`source commit ${registry.sourceCommit} not in the local object store`); return; }
   assert.equal(serializeRegistry(buildRegistry({ spec: SPEC, reader: gitObjectReader(ROOT, { git: GIT }), commit: registry.sourceCommit })), bytes);
+});
+
+// PR-A review BLOCKER: the hosted gitleaks job ran `python3 scripts/ci/reviewed_gitleaks.py` from the PR checkout
+// while it held id-token: write; without -I Python puts scripts/ci first on sys.path, so a PR adding
+// scripts/ci/argparse.py ran PR code before the scan. The builder now requires isolated Python, pins every
+// executed script, and refuses a registry that does not forbid changes under the executed script's directory.
+test('the builder refuses non-isolated Python, -m, repository Node scripts, and executed scripts that are not pinned or covered', () => {
+  const SCAN = 'python3 -I -B scripts/ci/reviewed_gitleaks.py', IDENT = 'python3 -I -B -c ';
+  for (const [label, files] of [
+    ['script without -I (the reported shadowing route)', workflowWith(SCAN, 'python3 scripts/ci/reviewed_gitleaks.py')],
+    ['script with -B only', workflowWith(SCAN, 'python3 -B scripts/ci/reviewed_gitleaks.py')],
+    ['identity -c without -I (cwd on sys.path)', workflowWith(IDENT, 'python3 -c ')],
+    ['python -m', workflowWith(SCAN, 'python3 -I -m reviewed_gitleaks')],
+    ['a repository node script', workflowWith(SCAN, `node scripts/ci/helper.mjs && ${SCAN}`)],
+  ]) refused(() => build(files), 'RELAY_REGISTRY_WORKFLOW_REFUSED', label);
+  // a bash script outside the closure is not pinned
+  refused(() => build(workflowWith(SCAN, `bash scripts/ci/extra.sh && ${SCAN}`)), 'RELAY_REGISTRY_EXECUTED_SCRIPT_NOT_PINNED');
+  // the role must forbid changes under the executed script's directory
+  const uncovered = clone(SPEC); uncovered.roles.gitleaks.forbiddenChangePrefixes = [];
+  refused(() => build(REPO_FILES, uncovered), 'RELAY_REGISTRY_EXECUTED_SCRIPT_NOT_COVERED');
+  const elsewhere = clone(SPEC); elsewhere.roles.gitleaks.forbiddenChangePrefixes = ['scripts/other/'];
+  refused(() => build(REPO_FILES, elsewhere), 'RELAY_REGISTRY_EXECUTED_SCRIPT_NOT_COVERED');
+  // the registry carries the prefixes, and the attestation binds them through closureSha256
+  const registry = build();
+  assert.deepEqual(registry.roles.gitleaks.forbiddenChangePrefixes, ['scripts/ci/']);
+  assert.deepEqual(registry.roles.trivy.forbiddenChangePrefixes, []);
+  const widened = clone(registry); widened.roles.gitleaks.forbiddenChangePrefixes = [];
+  refused(() => validateRegistry(widened, { domain: 'fixture' }), 'RELAY_REGISTRY_INVALID');
+  for (const bad of [['scripts/ci'], ['/abs/'], ['../up/'], ['b/', 'a/']]) {
+    const spec = clone(SPEC); spec.roles.gitleaks.forbiddenChangePrefixes = bad;
+    refused(() => validateSpec(spec), 'RELAY_REGISTRY_SPEC_INVALID', bad.join(','));
+  }
 });

@@ -37,7 +37,10 @@
         ".gitleaksignore",
         "scripts/ci/reviewed_gitleaks.py"
       ],
-      "mustNotExist": []
+      "mustNotExist": [],
+      "forbiddenChangePrefixes": [
+        "scripts/ci/"
+      ]
     },
     "trivy": {
       "checkName": "trivy",
@@ -56,7 +59,8 @@
         ".trivyignore.yaml",
         "trivy-secret.yaml",
         "trivy.yaml"
-      ]
+      ],
+      "forbiddenChangePrefixes": []
     }
   }
 }

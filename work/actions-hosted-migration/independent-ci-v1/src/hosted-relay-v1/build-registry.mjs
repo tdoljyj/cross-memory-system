@@ -171,7 +171,52 @@ export function scanWorkflow(bytes, { workflowPath, checkName, hostedCheckName, 
   insist(last.includes(`audience=${RELAY_AUDIENCE}`) && last.includes(`::notice title=${RELAY_AUDIENCE}::`), code, `${workflowPath}:identity-step-content`);
   const before = job.lines.slice(0, steps.at(-1)).join('\n');
   insist(!before.includes('ACTIONS_ID_TOKEN_REQUEST') && !before.includes(RELAY_AUDIENCE), code, `${workflowPath}:token-before-last-step`);
-  return { hostedJobId: job.id, hostedJobTimeoutMinutes: Number(timeout[0]) };
+  return { hostedJobId: job.id, hostedJobTimeoutMinutes: Number(timeout[0]), executed: executedScripts(job.lines, workflowPath) };
+}
+
+// Repository scripts the hosted job runs, read from its `run:` steps (PR-A review BLOCKER). Every Python
+// invocation must be isolated (-I: no script directory or cwd on sys.path, no PYTHON* environment); -m is
+// refused; a Node invocation of a repository script is refused (module resolution walks the repository's
+// ancestor node_modules and package.json). Returns the repository paths executed by python, bash, sh or `./`.
+const SCRIPT = /^(?:\.\/)?[A-Za-z0-9_][A-Za-z0-9_./-]*\.(?:py|mjs|cjs|js|sh|bash)$/;
+export function executedScripts(jobLines, workflowPath) {
+  const code = 'RELAY_REGISTRY_WORKFLOW_REFUSED';
+  const blocks = [];
+  for (let index = 0; index < jobLines.length; index++) {
+    const run = /^( {8,})run:\s*(.*)$/.exec(jobLines[index]);
+    if (!run) continue;
+    const indent = run[1].length, body = [];
+    if (!/^[|>][-+]?\s*$/.test(run[2])) body.push(run[2]);
+    else for (let next = index + 1; next < jobLines.length && (jobLines[next].trim() === '' || /^ +/.exec(jobLines[next])[0].length > indent); next++) body.push(jobLines[next]);
+    blocks.push(body.join('\n').replace(/\\\n/g, ' '));
+  }
+  const executed = [];
+  const tokens = text => text.trim().split(/\s+/).filter(Boolean);
+  for (const block of blocks) {
+    for (const line of block.split('\n')) {
+      for (const m of line.matchAll(/(?:^|[\s;|&(`])(python3(?:\.\d+)?|python|node|bash|sh)(?=\s|$)([^;|&\n)`]*)/g)) {
+        const [interpreter, rest] = [m[1], tokens(m[2])];
+        if (interpreter.startsWith('python')) {
+          let at = 0, isolated = false;
+          while (at < rest.length && /^-[A-Za-z]+$/.test(rest[at]) && rest[at] !== '-c' && rest[at] !== '-m') { if (rest[at].includes('I')) isolated = true; at++; }
+          insist(isolated, code, `${workflowPath}:python-not-isolated`);
+          insist(rest[at] !== '-m', code, `${workflowPath}:python-module`);
+          if (rest[at] === '-c') continue;
+          const target = (rest[at] ?? '').replace(/^["']|["']$/g, '');
+          insist(SCRIPT.test(target), code, `${workflowPath}:python-target`);
+          executed.push(target.replace(/^\.\//, ''));
+        } else if (interpreter === 'node') {
+          const target = (rest.find(t => !t.startsWith('-')) ?? '').replace(/^["']|["']$/g, '');
+          insist(!SCRIPT.test(target), code, `${workflowPath}:node-repository-script`);
+        } else {
+          const target = (rest.find(t => !t.startsWith('-')) ?? '').replace(/^["']|["']$/g, '');
+          if (SCRIPT.test(target)) executed.push(target.replace(/^\.\//, ''));
+        }
+      }
+      for (const m of line.matchAll(/(?:^|[\s;|&(`])\.\/([A-Za-z0-9_][A-Za-z0-9_./-]*)/g)) executed.push(m[1]);
+    }
+  }
+  return [...new Set(executed)].sort();
 }
 
 export function buildRegistry({ spec, reader, commit: rev, domain = 'production' }) {
@@ -200,11 +245,20 @@ export function buildRegistry({ spec, reader, commit: rev, domain = 'production'
       }
     }
     const workflow = closure.find(item => item.path === entry.workflowPath);
-    const job = scanWorkflow(workflow.bytes, entry);
+    const { executed, ...job } = scanWorkflow(workflow.bytes, entry);
+    // Every executed repository script is pinned (closure) and its directory is a forbidden change prefix of
+    // the role (or a global one, like .github/), so no PR that touches it or its neighbours is ever relayed.
+    for (const script of executed) {
+      insist(entry.closure.includes(script), 'RELAY_REGISTRY_EXECUTED_SCRIPT_NOT_PINNED', script);
+      const dir = script.includes('/') ? script.slice(0, script.lastIndexOf('/') + 1) : '';
+      insist(dir !== '' && [...entry.forbiddenChangePrefixes, ...checked.forbiddenChangePrefixes].some(prefix => dir.startsWith(prefix)),
+        'RELAY_REGISTRY_EXECUTED_SCRIPT_NOT_COVERED', script);
+    }
     const pins = closure.map(({ bytes, ...item }) => item);
     roles[role] = { checkName: entry.checkName, hostedCheckName: entry.hostedCheckName, workflowPath: entry.workflowPath,
       workflowBlob: workflow.blob, workflowSha256: workflow.sha256, ...job, runsOn: entry.runsOn,
-      closure: pins, mustNotExist: [...entry.mustNotExist], closureSha256: closureDigest(pins, entry.mustNotExist) };
+      closure: pins, mustNotExist: [...entry.mustNotExist], forbiddenChangePrefixes: [...entry.forbiddenChangePrefixes],
+      closureSha256: closureDigest(pins, entry.mustNotExist, entry.forbiddenChangePrefixes) };
   }
   const { contract, roles: specRoles, ...rest } = checked;
   const registry = { contract: REGISTRY_CONTRACT, domain, generatedBy: GENERATED_BY, sourceCommit: commit, sourceTree: tree,
