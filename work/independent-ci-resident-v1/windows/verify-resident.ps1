@@ -60,7 +60,10 @@ function Test-BrokerBinaryPath([string]$qcText, [string]$root, [string]$configSh
   if ($configSha -cnotmatch '^[0-9a-f]{64}$' -or $qcText -notmatch 'BINARY_PATH_NAME\s*:\s*(.+?)\s*(\r?\n|$)') { return $false }
   $Matches[1] -ceq ('"' + (Join-Path $root 'bin\SwapBroker.exe') + '" "' + $root + '" ' + $configSha)
 }
-function Test-ScSddl([string]$sdshow, [string]$want) { -not [string]::IsNullOrEmpty($want) -and $sdshow.Trim() -ceq $want }
+# sc.exe sdshow also prints the SACL ("S:...") when the caller may read it (elevated) and not otherwise;
+# every service-descriptor comparison uses the DACL section alone, so both views agree.
+function Get-DaclPart([string]$sd) { $t = ([string]$sd).Trim(); $i = $t.IndexOf('D:'); if ($i -lt 0) { return $t }; $t = $t.Substring($i); $j = $t.IndexOf('S:'); if ($j -ge 0) { $t = $t.Substring(0, $j) }; $t }
+function Test-ScSddl([string]$sdshow, [string]$want) { -not [string]::IsNullOrEmpty($want) -and (Get-DaclPart $sdshow) -ceq $want }
 function Get-ScText([string[]]$scArgs) { $t = & $Sc @scArgs | Out-String; if ($LASTEXITCODE -ne 0) { 'unreadable' } else { $t } }
 foreach ($pair in @(@('CluedCIResident', 'resident', $ResidentPrivileges), @('CluedCISwapBroker', 'broker', $BrokerPrivileges))) {
   $p = Get-ScText @('qprivs', $pair[0], '8192')
@@ -82,7 +85,7 @@ try {
   Record 'firewall-enabled' (@(Get-NetFirewallProfile | Where-Object { [string]$_.Enabled -cne 'True' }).Count -eq 0)
 } catch { Record 'resident-outbound-blocked' $false }
 
-$runnerSddl = try { (& $Sc sdshow $Runner | Out-String).Trim() } catch { 'unreadable' }
+$runnerSddl = try { Get-DaclPart (& $Sc sdshow $Runner | Out-String) } catch { 'unreadable' }
 Record 'runner-sddl-unchanged' $(if ($runnerSddl -eq 'unreadable') { 'unreadable' } else { $runnerSddl -ceq $receipt.runnerSddlUnchanged })
 $rq = & $Sc qc $Runner | Out-String
 Record 'runner-original-and-controller' (($rq -match 'C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe') -and ($rq -match 'SERVICE_START_NAME\s*:\s*(\.|TURING)\\clued-control'))

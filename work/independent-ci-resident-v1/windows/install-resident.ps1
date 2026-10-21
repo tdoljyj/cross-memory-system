@@ -96,13 +96,16 @@ function Assert-Owner {
   (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# sc.exe sdshow also prints the SACL ("S:...") when the caller may read it (elevated) and not otherwise;
+# every service-descriptor comparison uses the DACL section alone, so both views agree.
+function Get-DaclPart([string]$sd) { $t = ([string]$sd).Trim(); $i = $t.IndexOf('D:'); if ($i -lt 0) { return $t }; $t = $t.Substring($i); $j = $t.IndexOf('S:'); if ($j -ge 0) { $t = $t.Substring(0, $j) }; $t }
 function Read-RunnerState {
   $qc = & $Sc qc $RunnerService | Out-String
   $q = & $Sc queryex $RunnerService | Out-String
   $bin = if ($qc -match 'BINARY_PATH_NAME\s*:\s*(.+)') { $Matches[1].Trim() } else { $null }
   $acct = if ($qc -match 'SERVICE_START_NAME\s*:\s*(.+)') { $Matches[1].Trim() } else { $null }
   [ordered]@{ binary = $bin; originalBinary = ($bin -ceq $OriginalBinary); account = $acct; accountIsController = ($acct -match '^(\.|TURING)\\clued-control$')
-    stoppedPid0 = ($q -match 'STATE\s*:\s*1\s' -and $q -match 'PID\s*:\s*0\b'); manual = ($qc -match 'START_TYPE\s*:\s*3\s'); sddl = (& $Sc sdshow $RunnerService | Out-String).Trim() }
+    stoppedPid0 = ($q -match 'STATE\s*:\s*1\s' -and $q -match 'PID\s*:\s*0\b'); manual = ($qc -match 'START_TYPE\s*:\s*3\s'); sddl = (Get-DaclPart (& $Sc sdshow $RunnerService | Out-String)) }
 }
 
 # Directory ACLs (owner BUILTIN\Administrators, protected DACL). Masks: 0x1200a9 read+execute,
@@ -309,7 +312,7 @@ Step 'services' {
     $have = ConvertFrom-ScPrivs (Invoke-Sc 'SERVICE_QPRIVS_FAILED' @('qprivs', $pair[0], '8192'))
     if (($have -join '/') -cne ((@($pair[1]) | Sort-Object -CaseSensitive) -join '/')) { throw ('SERVICE_PRIVILEGES_READBACK_MISMATCH:' + $pair[0]) }
     $script:receipt[($pair[2] + 'RequiredPrivileges')] = $have
-    $script:receipt[($pair[2] + 'Sddl')] = (Invoke-Sc 'SERVICE_SDSHOW_FAILED' @('sdshow', $pair[0])).Trim()
+    $script:receipt[($pair[2] + 'Sddl')] = Get-DaclPart (Invoke-Sc 'SERVICE_SDSHOW_FAILED' @('sdshow', $pair[0]))
   }
   $script:receipt.brokerBinaryPath = $bbin
 }

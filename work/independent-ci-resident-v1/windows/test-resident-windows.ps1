@@ -70,7 +70,7 @@ foreach ($a in @($broker | Where-Object { $_.SecurityIdentifier.Value -ceq $res 
 Yes (@($broker | Where-Object { $_.SecurityIdentifier.Value -ceq 'S-1-3-4' }).Count -eq 1) 'broker-requests:owner-rights'
 
 # 4. verify-resident.ps1 checks.
-foreach ($name in @('ConvertFrom-ScPrivs', 'Test-ExactPrivileges', 'Test-TokenRecord', 'Test-BrokerBinaryPath', 'Test-ScSddl')) {
+foreach ($name in @('Get-DaclPart', 'ConvertFrom-ScPrivs', 'Test-ExactPrivileges', 'Test-TokenRecord', 'Test-BrokerBinaryPath', 'Test-ScSddl')) {
   Yes ($functions.ContainsKey('verify-resident.ps1:' + $name)) ('verify-present:' + $name); . ([scriptblock]::Create($functions['verify-resident.ps1:' + $name]))
 }
 Yes (Test-ExactPrivileges (ConvertFrom-ScPrivs $qprivs) $BrokerPrivileges) 'verify-qprivs-broker'
@@ -87,6 +87,13 @@ Yes (-not (Test-BrokerBinaryPath ($qc.Replace('SwapBroker.exe', 'Other.exe')) $r
 Yes (Test-ScSddl " D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)`r`n" 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)') 'sddl-exact'
 Yes (-not (Test-ScSddl 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;RPWP;;;IU)' 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)')) 'sddl-extra-ace'
 Yes (-not (Test-ScSddl 'D:x' $null)) 'sddl-no-receipt-value'
+# The elevated sdshow also prints the SACL; only the DACL section is compared, in every script.
+$dacl = 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)'
+Yes (Test-ScSddl ($dacl + 'S:(AU;FA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)' + "`r`n") $dacl) 'sddl-elevated-sacl-ignored'
+Yes ((Get-DaclPart ('O:SYG:SY' + $dacl + 'S:(AU;FA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)')) -ceq $dacl) 'sddl-owner-group-sacl-stripped'
+Yes ((Get-DaclPart 'O:DAG:DAD:(A;;FA;;;SY)S:(AU;FA;FA;;;WD)') -ceq 'D:(A;;FA;;;SY)') 'sddl-alias-before-dacl'
+Yes (-not (Test-ScSddl ($dacl.Replace(';;;SU)', ';;;WD)') + 'S:(AU;FA;FA;;;WD)') $dacl)) 'sddl-dacl-change-still-refused'
+foreach ($s in @('install-resident.ps1', 'uninstall-resident.ps1')) { Yes ($functions.ContainsKey($s + ':Get-DaclPart') -and $functions[$s + ':Get-DaclPart'] -ceq $functions['verify-resident.ps1:Get-DaclPart']) ('dacl-part-identical:' + $s) }
 
 # 5. C#: the broker's bounded read and both token checks (compiled into the scratch directory).
 $fw = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\'; $csc = Join-Path $fw 'csc.exe'

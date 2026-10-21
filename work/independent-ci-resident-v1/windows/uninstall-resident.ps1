@@ -33,6 +33,9 @@ function ExecutorAlive {
 }
 
 $open = @(Get-ChildItem -LiteralPath (Join-Path $Root 'state\ledger') -Directory | Where-Object { -not (Test-Path -LiteralPath (Join-Path $_.FullName '90-terminal.json')) })
+# sc.exe sdshow also prints the SACL ("S:...") when the caller may read it (elevated) and not otherwise;
+# every service-descriptor comparison uses the DACL section alone, so both views agree.
+function Get-DaclPart([string]$sd) { $t = ([string]$sd).Trim(); $i = $t.IndexOf('D:'); if ($i -lt 0) { return $t }; $t = $t.Substring($i); $j = $t.IndexOf('S:'); if ($j -ge 0) { $t = $t.Substring(0, $j) }; $t }
 $installed = Get-Content -LiteralPath (Join-Path $Root 'install\install-receipt.json') -Raw | ConvertFrom-Json
 $qc = & $Sc qc $Runner | Out-String
 $plan = [ordered]@{
@@ -40,7 +43,7 @@ $plan = [ordered]@{
   openBatches = $open.Count
   executorAlive = (ExecutorAlive)
   runnerOriginalStopped = ($qc -match 'C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe') -and ((& $Sc queryex $Runner | Out-String) -match 'STATE\s*:\s*1\s')
-  runnerSddlUnchanged = ((& $Sc sdshow $Runner | Out-String).Trim() -ceq $installed.runnerSddlUnchanged)
+  runnerSddlUnchanged = ((Get-DaclPart (& $Sc sdshow $Runner | Out-String)) -ceq $installed.runnerSddlUnchanged)
   renameTo = 'resident-uninstalled-<UTC>-<hex>'
   deletesEvidence = $false
 }
