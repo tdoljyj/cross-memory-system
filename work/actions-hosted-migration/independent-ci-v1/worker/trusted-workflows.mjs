@@ -20,11 +20,11 @@ export const TRUSTED_WORKFLOW_PATHS = Object.freeze({
 const ROWS = [
   // [path, sha256 of the bytes, git blob, source]
   ['.github/workflows/contract-placement.yml', '762f1b1346a699068660e46648a665d25873a396fc0d2186ef8f44a844625ffd', '54ee2f11cc0f52d7cd9c0f6a63b75da8ef3e2b3a', 'main 8710e92ca5c8bb2b7330e45dc6d4f724c0b68b93'],
-  ['.github/workflows/contract-placement.yml', '4898299bee3e804a19acfef51d15b582e5a52526a655a290cf09bb56c39de84b', '3640f0895cc72caffb8b2bc0c1df21b76b4b5340', 'pr-b 59769e0e880e43f2c10ea4b9b24afef494783e80'],
+  ['.github/workflows/contract-placement.yml', '4898299bee3e804a19acfef51d15b582e5a52526a655a290cf09bb56c39de84b', '3640f0895cc72caffb8b2bc0c1df21b76b4b5340', 'pr-b 3be6bd96c7cc932ba104a8ec4a1f18844c551c49'],
   ['.github/workflows/gitleaks.yml', '168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579', '74043d68d20dbee9f9404a66f0a02d3285fea0aa', 'main 8710e92ca5c8bb2b7330e45dc6d4f724c0b68b93'],
-  ['.github/workflows/gitleaks.yml', 'be869498f8f7215cb61959d2971b2bb0ac09085898f5d231d25e1e435b3891f9', '5f27ab3cc2e11aa109a539d1090c4f24871157ab', 'pr-b 59769e0e880e43f2c10ea4b9b24afef494783e80'],
+  ['.github/workflows/gitleaks.yml', '688073ac1281c4322c90673816b761852989f6849083c07eca2cbd8f4e424091', '95f4527be27d02889892d029b398ab1cf2e71429', 'pr-b 3be6bd96c7cc932ba104a8ec4a1f18844c551c49'],
   ['.github/workflows/trivy.yml', 'cea2fd770663e65f554719903da90aaf4b8aae4a52bf52098d3d258340e2727d', 'f7f8d075d1a0f314a7c5eb295e459599288d538c', 'main 8710e92ca5c8bb2b7330e45dc6d4f724c0b68b93'],
-  ['.github/workflows/trivy.yml', '024401176d53d4b434041225d8f52c86eac0622c00109d41830ebe911f5ab146', 'b8e7df0a01ad261e066b9118266053b3e4cc8906', 'pr-b 59769e0e880e43f2c10ea4b9b24afef494783e80'],
+  ['.github/workflows/trivy.yml', '94e9ac722e3a3e0c4f924ce3b27371803dc2a04b5e177a7b0bcffd2bdf28b810', '300ad19a59bf529ccebd45ae7fbb76189f806316', 'pr-b 3be6bd96c7cc932ba104a8ec4a1f18844c551c49'],
 ];
 // END TRUSTED WORKFLOW ROWS
 

@@ -63,10 +63,10 @@
           "sha256": "f6288615c4b6fe1e2cb8630405c8c618bd73fbe85d1b5336d331600730d9b1fd"
         },
         {
-          "blob": "5f27ab3cc2e11aa109a539d1090c4f24871157ab",
+          "blob": "95f4527be27d02889892d029b398ab1cf2e71429",
           "mode": "100644",
           "path": ".github/workflows/gitleaks.yml",
-          "sha256": "be869498f8f7215cb61959d2971b2bb0ac09085898f5d231d25e1e435b3891f9"
+          "sha256": "688073ac1281c4322c90673816b761852989f6849083c07eca2cbd8f4e424091"
         },
         {
           "blob": "7b4239864b4af470f95d399ace34045c31034f70",
@@ -87,7 +87,7 @@
           "sha256": "433b24137a7d3430990b69e61c0b4ebcd9dad47d770c5df62d6e1fef28b7f7a9"
         }
       ],
-      "closureSha256": "3ae29296d484e8cdf00ec77c0ab520b55197843c8aeddb994981f664aef3617f",
+      "closureSha256": "cbee5d949397b880ad5ba7d31f06d91e8f4594a564f58428c6fcd1369be14cfa",
       "forbiddenChangePrefixes": [
         "scripts/ci/"
       ],
@@ -96,9 +96,9 @@
       "hostedJobTimeoutMinutes": 25,
       "mustNotExist": [],
       "runsOn": "ubuntu-latest",
-      "workflowBlob": "5f27ab3cc2e11aa109a539d1090c4f24871157ab",
+      "workflowBlob": "95f4527be27d02889892d029b398ab1cf2e71429",
       "workflowPath": ".github/workflows/gitleaks.yml",
-      "workflowSha256": "be869498f8f7215cb61959d2971b2bb0ac09085898f5d231d25e1e435b3891f9"
+      "workflowSha256": "688073ac1281c4322c90673816b761852989f6849083c07eca2cbd8f4e424091"
     },
     "trivy": {
       "checkName": "trivy",
@@ -140,13 +140,13 @@
           "sha256": "f6288615c4b6fe1e2cb8630405c8c618bd73fbe85d1b5336d331600730d9b1fd"
         },
         {
-          "blob": "b8e7df0a01ad261e066b9118266053b3e4cc8906",
+          "blob": "300ad19a59bf529ccebd45ae7fbb76189f806316",
           "mode": "100644",
           "path": ".github/workflows/trivy.yml",
-          "sha256": "024401176d53d4b434041225d8f52c86eac0622c00109d41830ebe911f5ab146"
+          "sha256": "94e9ac722e3a3e0c4f924ce3b27371803dc2a04b5e177a7b0bcffd2bdf28b810"
         }
       ],
-      "closureSha256": "313808178ea46fc37fdd1b11c395d1360872bc5e1884b68ef92209471231bd21",
+      "closureSha256": "9052c606d0a0b3a81d16d312f297381cca245ecf8dbfa324b586e74011d2d28f",
       "forbiddenChangePrefixes": [],
       "hostedCheckName": "trivy-hosted-executor",
       "hostedJobId": "trivy-trusted-self-hosted",
@@ -158,13 +158,13 @@
         "trivy.yaml"
       ],
       "runsOn": "ubuntu-latest",
-      "workflowBlob": "b8e7df0a01ad261e066b9118266053b3e4cc8906",
+      "workflowBlob": "300ad19a59bf529ccebd45ae7fbb76189f806316",
       "workflowPath": ".github/workflows/trivy.yml",
-      "workflowSha256": "024401176d53d4b434041225d8f52c86eac0622c00109d41830ebe911f5ab146"
+      "workflowSha256": "94e9ac722e3a3e0c4f924ce3b27371803dc2a04b5e177a7b0bcffd2bdf28b810"
     }
   },
   "runnerEnvironment": "github-hosted",
-  "sourceCommit": "59769e0e880e43f2c10ea4b9b24afef494783e80",
-  "sourceTree": "dd954abd73372b86841933d7884cfd577031f3e6",
+  "sourceCommit": "3be6bd96c7cc932ba104a8ec4a1f18844c551c49",
+  "sourceTree": "1802f3374f0fc40ebc014b0d2a5bd5022e3c0a2e",
   "specSha256": "4b360ec93f6a53a5b2024b9e38d5cc70dab555b28147f20b9965dc46dc9b6e70"
 }
