@@ -1,7 +1,10 @@
 name: contract-placement
 
 # Work-only candidate, NOT REGISTERED / NOT INSTALLED.
-# Same complete placement checks on the existing trusted Linux CI pool; no hosted fallback.
+# Owner Decisions 325717a6, 22b0e0ed and bc6fdad1: the same complete placement checks run on a GitHub-hosted
+# runner (free minutes, $0 Actions budget cap) as an execution-only run. Its job name is not a required check
+# name. contract-placement is never relayed: this job runs PR code, so App 5368905 always publishes the
+# required contract-placement check from its formal local role, whatever this run concludes.
 # Candidate PR code never runs on the controller secret-bearing principal.
 on:
   pull_request:
@@ -18,8 +21,8 @@ concurrency:
 jobs:
   admission-gate:
     name: admission-gate
-    runs-on: [ self-hosted, Linux, X64, clued, pool-general, trust-internal ]
-    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       actions: read
       checks: read
@@ -40,17 +43,24 @@ jobs:
           node-version: 24.19.0
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
+      # Owner Decision 22b0e0ed: admit on the independent CI's own App 5368905 kooyumi-work-admission
+      # check for this exact head, polled for at most 10 minutes; never on another App's check.
       - id: gate
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          CLUED_ADMISSION_GATE_SOURCE: independent-ci-native-work-admission
+          CLUED_ADMISSION_GATE_WAIT_SECONDS: "600"
         run: node scripts/ci/clued-work-admission.mjs --mode gate
 
   contract-placement:
-    name: contract-placement
+    name: contract-placement-hosted-executor
     needs: admission-gate
     if: needs.admission-gate.outputs.admitted == 'true'
-    runs-on: ["self-hosted","Linux","X64","clued","pool-general","trust-internal"]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         if: >-
@@ -77,7 +87,7 @@ jobs:
         uses: ./.github/actions/ci-temporary-storage
       - name: Placement and renderer fixtures
         run: |
-          python3 -m unittest scripts/ci/test_check_contract_placement.py -v
+          python3 -I -B -m unittest discover -s scripts/ci -p test_check_contract_placement.py -v
           node --test apps/clued-cloud/tests/agent-contract-bootstrap.test.mjs
       - name: Build actual public bootstrap without the application dependency tree
         env:
@@ -93,4 +103,11 @@ jobs:
         env:
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           CANDIDATE: ${{ github.sha }}
-        run: python3 scripts/ci/check_contract_placement.py --base "$BASE" --head "$CANDIDATE" --minimum-service-version 0.4.5 --rendered-responses "$RUNNER_TEMP/contract-responses.json"
+        run: python3 -I -B scripts/ci/check_contract_placement.py --base "$BASE" --head "$CANDIDATE" --minimum-service-version 0.4.5 --rendered-responses "$RUNNER_TEMP/contract-responses.json"
+      - name: Emit relay identity
+        run: |
+          set -eu
+          jwt="$(curl -fsS --max-time 30 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1" \
+            | python3 -I -B -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          echo "::notice title=clued-hosted-relay-v1::$jwt"
