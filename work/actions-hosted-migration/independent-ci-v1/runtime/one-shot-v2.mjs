@@ -39,7 +39,8 @@ export function protectedAuthority({ config, accepted, github, fetchImpl, native
     const packet = await github.readChangedPaths(subject);
     let response, body;
     try {
-      response = await fetchImpl(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/clued_work_verify_v1`, { method: 'POST', redirect: 'error',
+      // The same bounded wait as v1 one-shot.mjs (PR-A review MINOR): 10 s, then native_claim_observation_unconfirmed.
+      response = await fetchImpl(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/clued_work_verify_v1`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
         headers: { apikey: config.publishableKey, authorization: `Bearer ${config.publishableKey}`, 'content-type': 'application/json' },
         body: JSON.stringify({ p_token_hash: digest(nativeToken), p_input: { scope: config.scope, claim_id: claimGen.claimId, changed_paths: packet.paths } }) });
       body = await response.json();

@@ -20,7 +20,7 @@ async function journalFor(t) {
 }
 const run = (stage, w, roles = [...ROLES], attempt = 1) => stage.run({ subject: w.subject(), attempt, roles });
 const outcomes = result => Object.fromEntries(result.roles.map(row => [row.role, row.reason ? `${row.outcome}:${row.reason}` : row.outcome]));
-const mutexOf = (w, role, attempt = 1) => ({ repo: REPO, headSha: H, role, checkName: role, appId: 5368905, attempt });
+const mutexOf = (w, role) => ({ repo: REPO, headSha: H, role, checkName: role, appId: 5368905 });
 
 test('attested roles are relayed once by 5368905 under the required names; contract-placement is never relayed', async t => {
   const w = createWorld(); const runs = w.allHosted();
@@ -153,13 +153,50 @@ test('K(head, role): whichever path begins first wins; the other is refused', as
   const local = await w.publisher(journal).publish({ job: late, envelope: w.signedResult(late) });
   assert.deepEqual([local.status, local.reason, local.sideEffects], ['BLOCKED', 'role_already_published_on_head', 0]);
   assert.equal(await journal.read(local.effectKey), null);
-  // A hosted re-run after publication changes nothing: the newer run is refused by K.
+  // A hosted re-run after publication resolves to the relay's own settled publication (re-verified, not
+  // re-posted, not a HALT): PR-A review, second reviewer.
+  const firstRow = result.roles[0];
   w.addHostedRun('gitleaks');
   result = await run(w.stage(journal).stage, w, ['gitleaks']);
-  assert.equal(result.code, 'ROLE_ALREADY_PUBLISHED_ON_HEAD');
+  assert.deepEqual([result.status, outcomes(result)], ['COMPLETE', { gitleaks: 'RELAYED' }]);
+  assert.deepEqual([result.roles[0].checkRunId, result.roles[0].externalId, result.sideEffects], [firstRow.checkRunId, firstRow.externalId, 0]);
   assert.equal(published(w.state).length, 1);
-  // Attempt 2 (Owner-opened) is a different K.
-  assert.notEqual(rolePublicationKey(mutexOf(w, 'gitleaks', 2)), rolePublicationKey(mutexOf(w, 'gitleaks', 1)));
+  // The attempt is not part of K (PR-A review MAJOR 2): one role is published at most once per head.
+  assert.throws(() => rolePublicationKey({ ...mutexOf(w, 'gitleaks'), attempt: 2 }), { code: 'invalid_role_publication_subject' });
+});
+
+test('a settled relay that drifted (Native refuses, PR head moved) is revoked on re-entry, never reported settled again', async t => {
+  for (const [name, drift] of [['native', w => { w.state.faults.native = true; }], ['head', w => { w.state.pr.head.sha = OTHER; }]]) {
+    const w = createWorld(); w.allHosted();
+    const journal = await journalFor(t);
+    const first = await run(w.stage(journal).stage, w, ['gitleaks']);
+    assert.deepEqual(outcomes(first), { gitleaks: 'RELAYED' });
+    const verdict = (await w.verifier().attest({ subject: w.subject(), roles: ['gitleaks'] })).verdicts.gitleaks;
+    drift(w);
+    const again = await w.publisher(journal, w.verifier()).publishHosted({ subject: w.subject(), attempt: 1, envelope: verdict.envelope });
+    assert.equal(again.status, 'REVOKED', name);
+    assert.equal(published(w.state).find(c => c.id === first.roles[0].checkRunId).conclusion, 'failure', name);
+    assert.equal(w.state.calls.createCheck, 1, `${name}: nothing re-posted`);
+  }
+});
+
+test('v1 local path: K only with localRoleMutex; a second v1 job on the same head (new fence) is never BLOCKED by K', async t => {
+  const w = createWorld();
+  const journal = await journalFor(t);
+  const { createStagedCheckPublisher: make } = await import('../src/staged-check-publisher.mjs');
+  const plain = make({ nativeAdmission: w.nativeAdmission, authority: w.authority, github: w.github, journal, signers: w.signers,
+    configuredChecks: { gitleaks: { name: 'gitleaks', appId: 5368905 } }, readChangedPaths: job => w.github.readChangedPaths(job), clock: () => w.state.now, domain: 'fixture',
+    protectedDeployment: { enabled: true, domain: 'fixture', repository: REPO, ciPrincipalBindingId: '11111111-2222-4333-8444-555555555555',
+      sourceAcceptanceRef: 'a1a1a1a1-0000-4000-8000-000000000001', hostQualificationRef: 'a1a1a1a1-0000-4000-8000-000000000002',
+      ownerAuthorizationRef: 'a1a1a1a1-0000-4000-8000-000000000003', publisherQualificationRef: 'a1a1a1a1-0000-4000-8000-000000000004',
+      ciPrincipalQualificationRef: 'a1a1a1a1-0000-4000-8000-000000000005' } });
+  const a = w.localJob('gitleaks');
+  assert.equal((await plain.publish({ job: a, envelope: w.signedResult(a) })).status, 'SETTLED');
+  assert.equal((await readRolePublication(journal, mutexOf(w, 'gitleaks'))).holder, null, 'the v1 one-shot never takes K');
+  // the same head under a new claim generation (a takeover): a new v1 job, not refused by K
+  const b = { ...a, fence: 4 }; const { jobId } = await import('../src/queue.mjs'); b.id = jobId(b);
+  const second = await plain.publish({ job: b, envelope: w.signedResult(b) });
+  assert.equal(second.status, 'SETTLED', JSON.stringify(second));
 });
 
 test('the publisher re-attests from fresh facts: a newer re-run or a moved main leaves the role local', async t => {

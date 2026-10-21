@@ -334,12 +334,14 @@ export class Ledger {
     return key2;
   }
 
-  // Intents whose attempt 2 has not been reserved and not been closed, oldest first.
+  // Intents that were neither consumed (attempt 2 reserved once) nor closed, oldest first. Consumption is a
+  // create-only record written BEFORE the reservation, so any outcome of attempt 2 (also NOT_ADMITTED or
+  // BUNDLE_UNAVAILABLE, which release its ledger entry again) ends the intent for good (PR-A review MAJOR 1).
   async pendingAttempts2() {
     const out = [];
     for (const name of (await fs.readdir(this.attempts2)).sort()) {
       const m = /^([0-9a-f]{64})\.json$/.exec(name);
-      if (!m || await exists(path.join(this.attempts2, `${m[1]}.closed.json`))) continue;
+      if (!m || await exists(path.join(this.attempts2, `${m[1]}.closed.json`)) || await exists(path.join(this.attempts2, `${m[1]}.consumed.json`))) continue;
       let v;
       try { v = (await readJson(path.join(this.attempts2, name))).value; } catch (error) { if (!contentError(error)) throw error; continue; }
       if (v.key1 !== m[1] || !HEX64.test(v.key2 ?? '') || batchKey(v.subject) !== v.key2) continue;
@@ -347,6 +349,12 @@ export class Ledger {
       out.push({ key1: v.key1, key2: v.key2, subject: v.subject, notBefore: Date.parse(v.notBefore) });
     }
     return out.sort((a, b) => a.notBefore - b.notBefore);
+  }
+
+  // Written once, right before attempt 2 is reserved; a crash in between loses attempt 2 (the safe side).
+  async consumeAttempt2(key1, facts) {
+    check(HEX64.test(key1), 'BATCH_KEY_INVALID');
+    await writeNew(path.join(this.attempts2, `${key1}.consumed.json`), { key1, facts, at: isoNow(this.clock) });
   }
 
   async closeAttempt2(key1, facts) {

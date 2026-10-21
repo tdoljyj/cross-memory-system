@@ -82,18 +82,22 @@ export class EffectJournal {
 // begins K with create-exclusive semantics ('wx') before it begins its own
 // effect key. The first holder wins forever; K has no release. The same holder
 // may re-enter (crash recovery continues through its own key's states); any
-// other holder is refused with role_already_published_on_head. The base is not
-// part of K, matching the resident executor's per-head burn. Both paths must
-// open the same journal directory for K to exclude anything.
-export const ROLE_PUBLICATION_CONTRACT = 'clued.independent-ci.role-publication/1';
+// other holder is refused with role_already_published_on_head. Neither the base
+// nor the attempt is part of K (PR-A review MAJOR 2): a role is published at
+// most once per head across bases, batches, attempts and Source installs. This
+// costs nothing, because the one automatic attempt 2 only follows a stage 0-2
+// failure where no role was published. Both paths must open the same journal
+// directory for K to exclude anything (v2: state\v2\effects-scan); the v1 local
+// one-shot path does not take K at all (it has its own journal, so K could
+// exclude nothing there, and v1 jobs differ by claim, fence and base).
+export const ROLE_PUBLICATION_CONTRACT = 'clued.independent-ci.role-publication/2';
 const ROLE_PATHS = ['local', 'relay'];
 
-export function rolePublicationKey({ repo, headSha, role, checkName, appId, attempt }) {
-  if (typeof repo !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) || !/^[a-f0-9]{40}$/.test(headSha ?? '')
+export function rolePublicationKey({ repo, headSha, role, checkName, appId, ...rest }) {
+  if (Object.keys(rest).length !== 0 || typeof repo !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) || !/^[a-f0-9]{40}$/.test(headSha ?? '')
     || typeof role !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(role) || typeof checkName !== 'string'
-    || !checkName || checkName.length > 100 || !Number.isSafeInteger(appId) || appId < 1
-    || !Number.isSafeInteger(attempt) || attempt < 1) fail('invalid_role_publication_subject');
-  return digest({ contract: ROLE_PUBLICATION_CONTRACT, repo, headSha, role, checkName, appId, attempt });
+    || !checkName || checkName.length > 100 || !Number.isSafeInteger(appId) || appId < 1) fail('invalid_role_publication_subject');
+  return digest({ contract: ROLE_PUBLICATION_CONTRACT, repo, headSha, role, checkName, appId });
 }
 
 // holder: { path: 'local' | 'relay', effectKey, externalId }
@@ -102,7 +106,7 @@ export async function claimRolePublication(journal, subject, holder) {
   if (!holder || !ROLE_PATHS.includes(holder.path) || !KEY.test(holder.effectKey ?? '') || typeof holder.externalId !== 'string'
     || !holder.externalId.startsWith('independent-ci:') || holder.externalId.length > 200) fail('invalid_role_publication_holder');
   const record = { contract: ROLE_PUBLICATION_CONTRACT, repo: subject.repo, headSha: subject.headSha, role: subject.role,
-    checkName: subject.checkName, appId: subject.appId, attempt: subject.attempt,
+    checkName: subject.checkName, appId: subject.appId,
     holder: { path: holder.path, effectKey: holder.effectKey, externalId: holder.externalId } };
   let claimed;
   try { claimed = await journal.begin(key, record); }

@@ -351,7 +351,9 @@ export const GATE_JOB_SHA256 = new Set([
   "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb",
   // Owner Decisions 325717a6 and 22b0e0ed: the Stage C gate on
   // ubuntu-latest for the gitleaks, trivy and contract-placement hosted
-  // executors on free minutes ($0 Actions budget cap), admitting on the
+  // executors on free minutes ($0 Actions budget cap). Only gitleaks and
+  // trivy are relayable (hosted-relay-v1 RELAYABLE_ROLES); the placement
+  // hosted run is execution only and never relayed. Admitting on the
   // independent CI's own admission (CLUED_ADMISSION_GATE_SOURCE, a
   // 600-second bounded wait, a 15-minute job). Registered here (PR-A)
   // before the workflows change (PR-B).
@@ -365,7 +367,10 @@ const PLACEMENT_PREDECESSOR_BLOB = "90c632e917de5c84a3d8fb49e634f624703139cd";
 const PLACEMENT_DRAFT_V1_BLOB = "606e2179c957c1537320a71673a2c572cf1a037d";
 // The self-hosted successor now on main. Owner Decisions 325717a6, 22b0e0ed
 // and bc6fdad1 replace it with the exact PR-B hosted executor
-// (contract-placement-hosted-executor, relay identity step, same checks).
+// (contract-placement-hosted-executor, same checks). Its relay identity step
+// is inert: contract-placement is never relayed (it runs PR code while it
+// holds id-token: write); App 5368905 publishes contract-placement only from
+// its formal local role, whatever the PR-B workflow comment says.
 const PLACEMENT_SELF_HOSTED_SUCCESSOR_BLOB = "54ee2f11cc0f52d7cd9c0f6a63b75da8ef3e2b3a";
 const PLACEMENT_SUCCESSOR_BLOB = "06f23a2baee59716315551d11f160d0a4d6d511c";
 const PLACEMENT_SUCCESSOR_SHA256 = "fc3743fc1edd158d9ef22c5331dc65f46e017fdc5e33ca792b777c5e26b64d8a";

@@ -253,7 +253,7 @@ export function createWorld({ now = Date.parse('2026-10-21T06:00:00Z') } = {}) {
     'contract-placement': { name: 'contract-placement', appId: 5368905 } };
   function publisher(journal, hostedVerifier = verifier()) {
     return createStagedCheckPublisher({ nativeAdmission, authority, github, journal, signers, configuredChecks,
-      readChangedPaths: job => github.readChangedPaths(job), clock: () => state.now, domain: 'fixture', hostedVerifier,
+      readChangedPaths: job => github.readChangedPaths(job), clock: () => state.now, domain: 'fixture', hostedVerifier, localRoleMutex: true,
       protectedDeployment: { enabled: true, domain: 'fixture', repository: REPO, ciPrincipalBindingId: BINDING, ...REFS } });
   }
   function stage(journal) {

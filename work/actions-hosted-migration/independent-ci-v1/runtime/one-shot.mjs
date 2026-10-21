@@ -15,6 +15,11 @@ import { EffectJournal } from '../src/effect-journal.mjs';
 import { canonical, digest, subjectOf, verifyResult } from '../src/proof.mjs';
 import { validateJob } from '../src/queue.mjs';
 
+// Every Source file the v1 one-shot loads must be an accepted pin. staged-check-publisher.mjs statically imports
+// the hosted relay attestation (attest.mjs -> registry.mjs, oidc.mjs) since b5a7db45 (PR-A review MINOR).
+export const V1_REQUIRED_SOURCE = Object.freeze(['runtime/one-shot.mjs', 'runtime/verify-install-acl.ps1', 'src/github.mjs', 'src/full-admission.mjs',
+  'src/staged-check-publisher.mjs', 'src/proof.mjs', 'src/effect-journal.mjs', 'src/queue.mjs',
+  'src/hosted-relay-v1/attest.mjs', 'src/hosted-relay-v1/registry.mjs', 'src/hosted-relay-v1/oidc.mjs'].map(p => 'work/actions-hosted-migration/independent-ci-v1/' + p));
 export const INSTALL_ROOT = process.platform === 'win32' ? 'C:\\ProgramData\\CluedIndependentCI' : '/etc/clued-independent-ci';
 export const APP_KEY_FILE = process.platform === 'win32' ? 'C:\\ProgramData\\CluedControl\\trusted\\controller-checks-app.pem' : '/etc/clued-control/trusted/controller-checks-app.pem';
 const SOURCE_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -112,10 +117,8 @@ async function acceptedInstallation(root, config, now) {
     const filename = leaf(SOURCE_ROOT, pin.path); await protectedPaths(SOURCE_ROOT, [filename]);
     if (digest(await read(filename)) !== pin.sha256) stop('accepted_source_changed');
   }
-  const prefix = 'work/actions-hosted-migration/independent-ci-v1/';
-  for (const name of ['runtime/one-shot.mjs', 'runtime/verify-install-acl.ps1', 'src/github.mjs', 'src/full-admission.mjs',
-    'src/staged-check-publisher.mjs', 'src/proof.mjs', 'src/effect-journal.mjs', 'src/queue.mjs']) {
-    if (!pins.has(prefix + name)) stop('accepted_source_incomplete');
+  for (const name of V1_REQUIRED_SOURCE) {
+    if (!pins.has(name)) stop('accepted_source_incomplete');
   }
   for (const filename of ['scripts/ci/clued-work-admission.mjs', 'config/merge-admission-policy.json']) if (!pins.has(filename)) stop('accepted_source_incomplete');
   if (pins.get('scripts/ci/clued-work-admission.mjs') !== config.evaluatorSha256

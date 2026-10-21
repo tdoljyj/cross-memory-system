@@ -28,7 +28,8 @@ const ACTION = 'independent-control-check/2';
 const HASH = /^[a-f0-9]{64}$/, fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
 const plain = v => v && Object.getPrototypeOf(v) === Object.prototype;
-const safe = e => /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(e?.code ?? '') ? e.code : 'NATIVE_CHECK_UNCONFIRMED';
+// An uncoded exception is never a transport fact (PR-A review MINOR 5).
+const safe = e => /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(e?.code ?? '') ? e.code : 'CONTROL_CHECK_OPERATION_UNCONFIRMED';
 const freeze = v => { if (v && typeof v === 'object') { Object.values(v).forEach(freeze); Object.freeze(v); } return v; };
 const definitionFor = job => CONTROL_CHECKS_V2[job.role];
 const actualConsumptions = new WeakMap();

@@ -81,7 +81,7 @@ test('stage 2 first proves no push since the bundle; a moved ref ends the stage 
   assert.equal(f.sent.some(([k]) => k === 'relay-stage'), false, 'no relay was started');
   const g = await engineFixture(t, { answers: { 'check-refs': null } });
   const r2 = await g.engine.runStage(await g.engine.derive(subject, KEY), stages[1]);
-  assert.equal(r2.code, 'GITHUB_TRANSIENT_UNAVAILABLE', 'no answer is a transient refusal, never success');
+  assert.equal(r2.code, 'REFS_GATE_UNCONFIRMED', 'no answer is a final refusal (never success, never an attempt-2 transient)');
   const h = await engineFixture(t);
   const r3 = await h.engine.runStage(await h.engine.derive(subject, KEY), stages[1]);
   assert.equal(r3.ok, true);

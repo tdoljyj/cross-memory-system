@@ -114,6 +114,12 @@ function Get-AclPlan([string]$res) {
 }
 
 $pkgBytes = [IO.File]::ReadAllBytes((Join-Path $PackageRoot 'package-manifest.json'))  # read ONCE
+function Get-OpenBatchCount {
+  $ledger = Join-Path $Root 'state\ledger'
+  if (-not (Test-Path -LiteralPath $ledger)) { return 0 }
+  return @(Get-ChildItem -LiteralPath $ledger -Directory | Where-Object { -not (Test-Path -LiteralPath (Join-Path $_.FullName '90-terminal.json')) }).Count
+}
+
 function Build-Plan {
   $res = Get-ServiceSid $ServiceName
   if ((Sha256Bytes $pkgBytes) -cne $ExpectedPackageManifestSha256) { throw 'REVIEWED_PACKAGE_CHANGED' }
@@ -127,6 +133,9 @@ function Build-Plan {
   [ordered]@{
     contract = 'clued.independent-ci.resident-install-plan/3'
     root = $Root; rootExists = (Test-Path -LiteralPath $Root)
+    # PR-A review MAJOR 3: never install over a resident with an open batch (also one that waits for hosted
+    # signals); like uninstall-resident.ps1, the Owner re-arms or lets it finish first.
+    openBatches = (Get-OpenBatchCount)
     servicesExist = [bool](Get-Service -Name $ServiceName, $BrokerName -ErrorAction SilentlyContinue)
     residentSid = $res; ownerSid = $OwnerSid; controllerSid = $ControllerSid
     installScriptSha256 = (Sha256File $PSCommandPath)
@@ -172,6 +181,7 @@ if (-not $Apply) { [ordered]@{ status = 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN'; pla
 
 if (-not $elevated) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED' }
 if ($ExpectedPlanSha256 -cne $planSha) { throw 'PLAN_CHANGED_SINCE_REVIEW' }
+if ($plan.openBatches -ne 0) { throw 'INSTALL_REQUIRES_NO_OPEN_BATCH_REARM_FIRST' }
 if ($plan.rootExists -or $plan.servicesExist) { throw 'FRESH_INSTALL_REQUIRED_USE_UPGRADE_PATH' }
 $r = $plan.runnerBefore
 if (-not ($r.originalBinary -and $r.stoppedPid0 -and $r.manual -and $r.accountIsController)) { throw 'RUNNER_SERVICE_NOT_ORIGINAL_STOPPED_MANUAL_CONTROLLER' }

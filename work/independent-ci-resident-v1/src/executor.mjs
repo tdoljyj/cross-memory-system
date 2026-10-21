@@ -234,11 +234,16 @@ export class ResidentExecutor {
     // re-evaluated only here, after recovery, the Owner's requests, HALT and PAUSE.
     const waiting = await this.ledger.waiting();
     if (waiting) return this.resumeWaiting(waiting);
-    // A due attempt 2 goes before new triggers (it is the same head, already reserved once).
-    const due = (await this.ledger.pendingAttempts2()).find(a => a.notBefore <= this.clock());
-    if (due) return this.runAttempt2(due);
+    // A due attempt 2 goes before new triggers (it is the same head, already reserved once). One that is only
+    // deferred never blocks other PRs' triggers (PR-A review MINOR 9).
+    let deferred = null;
+    for (const due of (await this.ledger.pendingAttempts2()).filter(a => a.notBefore <= this.clock())) {
+      const r = await this.runAttempt2(due);
+      if (r.state !== 'DEFERRED') return r;
+      deferred ??= r;
+    }
     const candidates = await this.nextCandidates();
-    if (candidates.length === 0) return { state: 'IDLE' };
+    if (candidates.length === 0) return deferred ?? { state: 'IDLE' };
     let last;
     for (const c of candidates) {
       last = await this.runCandidate(c);
@@ -282,13 +287,23 @@ export class ResidentExecutor {
     if (recent.length > 0 && now - Math.max(...recent) < this.policy.limits.unexecutedCooldownMs) return { defer: 'UNEXECUTED_COOLDOWN' };
     if ((await this.ledger.startedSince(now - DAY)) >= this.policy.limits.maxBatchesPer24h) return { defer: 'DAILY_BATCH_LIMIT' };
     if ((await this.ledger.evaluationsSince(now - DAY)) >= this.policy.limits.maxEvaluationsPer24h) return { defer: 'DAILY_EVALUATION_LIMIT' };
-    if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < now + batchBudgetMs(this.policy)) return { halt: 'RESIDENT_INSTALL_AUTHORITY_EXPIRING' };
-    const integrity = await this.sourceIntegrity();
-    if (!integrity || integrity.ok !== true || integrity.sourceManifestSha256 !== this.policy.sourceManifestSha256
-      || integrity.residentManifestSha256 !== this.policy.residentManifestSha256) return { halt: 'RESIDENT_SOURCE_DRIFT' };
+    const startCode = await this.batchStartChecks(null);
+    if (startCode) return { halt: startCode };
     const beat = await this.companion.heartbeat();
     if (!beat || typeof beat.at !== 'number' || now - beat.at > this.policy.companion.heartbeatMaxAgeMs) return { defer: 'COMPANION_NOT_READY' };
     return {};
+  }
+
+  // The start-of-batch authority checks, run before a reservation and again on every resume of a waiting batch
+  // (PR-A review MAJOR 3): the install's validUntil, the installed Source and resident bytes against the
+  // policy, and (for a batch) the batch subject's Source against the installed one. Returns a HALT code or null.
+  async batchStartChecks(subject) {
+    if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < this.clock() + batchBudgetMs(this.policy)) return 'RESIDENT_INSTALL_AUTHORITY_EXPIRING';
+    const integrity = await this.sourceIntegrity();
+    if (!integrity || integrity.ok !== true || integrity.sourceManifestSha256 !== this.policy.sourceManifestSha256
+      || integrity.residentManifestSha256 !== this.policy.residentManifestSha256) return 'RESIDENT_SOURCE_DRIFT';
+    if (subject && subject.sourceManifestSha256 !== this.policy.sourceManifestSha256) return 'RESIDENT_SOURCE_DRIFT';
+    return null;
   }
 
   async runCandidate({ trigger, names, bytesSha256 }) {
@@ -314,6 +329,12 @@ export class ResidentExecutor {
   // The scheduled attempt 2: same pre-checks under its own keys; the intent is closed if they refuse it
   // for good, kept when they only defer it.
   async runAttempt2({ key1, key2, subject }) {
+    // Bound to the installed Source (PR-A review MAJOR 2): an intent from before a reinstall is closed, never run.
+    if (subject.sourceManifestSha256 !== this.policy.sourceManifestSha256) {
+      await this.ledger.closeAttempt2(key1, { failureCode: 'ATTEMPT2_SOURCE_CHANGED' });
+      await this.receipt('attempt2-ignored', { key: key2, attempt1: key1, failureCode: 'ATTEMPT2_SOURCE_CHANGED' });
+      return { state: 'IGNORED', key: key2, reason: 'ATTEMPT2_SOURCE_CHANGED' };
+    }
     const hk = headKey(subject);
     const pre = await this.precheck(key2, hk);
     if (pre.ignore) {
@@ -323,6 +344,8 @@ export class ResidentExecutor {
     }
     if (pre.halt) { await this.haltWith(pre.halt, { key: key2 }); return { state: 'HALTED', key: key2, failureCode: pre.halt }; }
     if (pre.defer) return { state: 'DEFERRED', key: key2, reason: pre.defer };
+    // Consumed create-only before the reservation: whatever attempt 2 ends with, it never runs again.
+    await this.ledger.consumeAttempt2(key1, { key2 });
     await this.ledger.reserve(key2, subject);
     await this.receipt('batch-reserved', { key: key2, headKey: hk, subject, attempt1: key1 });
     return this.driveReserved(key2, subject, this.clock());
@@ -373,6 +396,9 @@ export class ResidentExecutor {
     const { key } = entry, { t0, batch } = entry.wait, subject = entry.reserved.subject;
     let outcome;
     try {
+      // Every resume re-runs the start-of-batch checks; any drift fails closed (UNKNOWN, HALT).
+      const startCode = await this.batchStartChecks(subject);
+      if (startCode) return this.unknown(key, startCode, 'resume-start-checks', batch);
       outcome = await this.continueBatch(key, subject, batch, t0);
     } catch (error) {
       return this.unknown(key, codeOf(error), 'executor-exception', batch);
@@ -511,7 +537,13 @@ export class ResidentExecutor {
         if (decision.eligible) {
           const key2 = await this.ledger.scheduleAttempt2(key, attempt2Subject(subject), { failureCode: failure.code, stage: failure.stageNumber },
             this.clock() + this.policy.automaticAttempt2.delayMs);
-          await this.receipt('attempt2-scheduled', { key, attempt2: key2, failureCode: failure.code, stage: failure.stageNumber });
+          try {
+            await this.receipt('attempt2-scheduled', { key, attempt2: key2, failureCode: failure.code, stage: failure.stageNumber });
+          } catch (error) {
+            // An intent without its receipt is cancelled before the HALT, so no re-arm can ever run it (MINOR 7).
+            await this.ledger.closeAttempt2(key, { failureCode: 'ATTEMPT2_RECEIPT_UNCONFIRMED' });
+            throw error;
+          }
           return { state: 'FAILED_CLEAN', key, failureCode: failure.code, attempt2: key2 };
         }
         return { state: 'FAILED_CLEAN', key, failureCode: failure.code };

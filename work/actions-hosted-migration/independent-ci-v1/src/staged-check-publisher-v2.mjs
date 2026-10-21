@@ -1,6 +1,8 @@
 // Scanner check publication for job contract v2 (stages 3, 5, 7 of Source v2; DESIGN S6).
-// NOTE: this is a NEW v2 file next to staged-check-publisher.mjs (v1, owned by the hosted-relay work and
-// left untouched). It is that module with exactly these changes, so the two can be reconciled by diff:
+// NOTE: this is a NEW v2 file next to staged-check-publisher.mjs (v1). v1 itself was changed by the hosted
+// relay work (b5a7db45: publishHosted, proof kinds, K before the own key; PR-A review: K on the v1 local path
+// only with localRoleMutex, which the v1 one-shot never sets). This file is v1 with exactly these changes,
+// so the two can be reconciled by diff:
 //   - validateJobV2 / subjectOfV2 / verifyResultV2 (claim-free subject, signed-result contract v2);
 //   - effect key = scanEffectKeyV2(job, definition) and external_id = scanExternalIdV2(job): a content
 //     proof, one effect per (content, attempt), the same across claims (design §5.5);
@@ -22,7 +24,7 @@ import { canonical, digest } from './proof.mjs';
 import { validateJobV2, subjectOfV2, scanEffectKeyV2, scanExternalIdV2, sameClaimGeneration, claimGeneration, makeJobV2 } from './job-v2.mjs';
 import { verifyResultV2 } from './proof-v2.mjs';
 import { admittedFactsMatchJobV2 } from './full-admission-v2.mjs';
-import { claimRolePublication, rolePublicationKey } from './effect-journal.mjs';
+import { claimRolePublication, readRolePublication, rolePublicationKey } from './effect-journal.mjs';
 import { relayExternalId, validateHostedEnvelope } from './hosted-relay-v1/attest.mjs';
 
 const HASH = /^[a-f0-9]{64}$/;
@@ -31,7 +33,8 @@ const positive = value => Number.isSafeInteger(value) && value > 0;
 const plain = value => value && Object.getPrototypeOf(value) === Object.prototype;
 const ref = value => typeof value === 'string' && value.length > 0 && value.length <= 1000 && !/[\x00-\x1f]/.test(value);
 const stop = (code, drift = false) => { throw Object.assign(new Error(code), { code, drift }); };
-const reason = error => /^[a-z][a-z0-9_]{0,80}$/.test(error?.code ?? '') ? error.code : 'publication_observation_unconfirmed';
+// An uncoded exception is never a transport fact (PR-A review MINOR 5): it is not a transient code.
+const reason = error => /^[a-z][a-z0-9_]{0,80}$/.test(error?.code ?? '') ? error.code : 'publication_operation_unconfirmed';
 const fresh = (observedAt, expiresAt, now) => Number.isSafeInteger(now) && Number.isFinite(Date.parse(observedAt))
   && Date.parse(observedAt) <= now && now - Date.parse(observedAt) <= 30_000 && Date.parse(expiresAt) > now;
 const requiredRefs = ['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef'];
@@ -147,6 +150,19 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
       mode: native.mode, mergeSlot: native.mergeSlot, ownerReview: native.ownerReview, refs: Object.fromEntries(requiredRefs.map(k => [k, facts[k]])),
       ciPrincipalBindingId: facts.ciPrincipalBindingId, signer: verified.signer, appId: definition.appId, name: definition.name }) };
   }
+  // A settled relay publication, checked again before it is reported settled: the current hosted envelope's
+  // integrity, the protected facts and claim, the PR subject and a fresh complete Native admission, then the
+  // GitHub read-back of the known check. Any drift revokes the known check once; nothing is ever re-posted.
+  async function reverifySettled({ key, settled, definition, job, externalId, envelope }) {
+    try {
+      await boundary(job, { kind: 'hosted', envelope, fresh: false }, definition);
+      await readback({ id: settled.details.checkRunId }, definition, job, externalId, 'success');
+    } catch (error) {
+      const known = { id: settled.details.checkRunId, app: { id: definition.appId }, head_sha: job.headSha, name: definition.name, external_id: externalId };
+      return revoke({ key, phase: 'settled', known, definition, job, externalId, cause: reason(error), sideEffects: 0 });
+    }
+    return { status: 'SETTLED', mode: 'hosted-relay', effectKey: key, checkRunId: settled.details.checkRunId, externalId, sideEffects: 0, productionAuthorized: domain === 'production' };
+  }
   async function transition(key, phase, next, details) {
     try { return await journal.transition(key, phase, next, details); } catch { return null; }
   }
@@ -211,7 +227,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         // publication before its own key exists (free-minutes design §7.4).
         try {
           await claimRolePublication(journal, { repo: job.repo, headSha: job.headSha, role: job.role, checkName: definition.name,
-            appId: definition.appId, attempt: job.attempt }, { path: 'local', effectKey: key, externalId });
+            appId: definition.appId }, { path: 'local', effectKey: key, externalId });
         } catch (error) {
           if (error?.code === 'role_already_published_on_head') return { status: 'BLOCKED', effectKey: key, reason: 'role_already_published_on_head', sideEffects: 0, productionAuthorized: false };
           throw error;
@@ -278,17 +294,16 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         definition = definitionFor(job);
         if (definition.name !== envelope.checkName || definition.appId !== hostedVerifier.publisherAppId) stop('hosted_check_definition_mismatch');
         externalId = relayExternalId({ role: job.role, headSha: job.headSha, runId: envelope.runId, runAttempt: envelope.runAttempt });
-        mutex = { repo: job.repo, headSha: job.headSha, role: job.role, checkName: definition.name, appId: definition.appId, attempt: job.attempt };
+        mutex = { repo: job.repo, headSha: job.headSha, role: job.role, checkName: definition.name, appId: definition.appId };
         mutexKey = rolePublicationKey(mutex);
         key = digest({ action: 'hosted-relay-check/2', roleMutexKey: mutexKey, externalId, definition });
         previous = await journal.read(key);
         if (previous) {
-          // Re-entry never resends: a settled relay is read back, anything else is reconciliation.
+          // Re-entry never resends: anything but settled is reconciliation. A settled relay is re-verified like
+          // publish() does (PR head, protected facts and claim, fresh Native admission, read-back); any drift
+          // compensates the known check once (revoked), never re-posts.
           if (previous.state !== 'settled') return result({ status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0 }, mutexKey, true);
-          try { await readback({ id: previous.details.checkRunId }, definition, job, externalId, 'success'); }
-          catch { return result({ status: 'UNCERTAIN', effectKey: key, reason: 'check_readback_unconfirmed', sideEffects: 0 }, mutexKey, true); }
-          return result({ status: 'SETTLED', mode: 'hosted-relay', effectKey: key, checkRunId: previous.details.checkRunId, externalId,
-            sideEffects: 0, productionAuthorized: domain === 'production' }, mutexKey, true);
+          return { ...(await reverifySettled({ key, settled: previous, definition, job, externalId, envelope })), roleMutex: { key: mutexKey, held: true } };
         }
         before = await boundary(job, { kind: 'hosted', envelope, fresh: true }, definition);
       } catch (error) {
@@ -299,8 +314,16 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         held = true; // from here on K may exist; only a clean refusal below proves it does not
         try { await claimRolePublication(journal, mutex, { path: 'relay', effectKey: key, externalId }); }
         catch (error) {
-          if (error?.code === 'role_already_published_on_head') return result({ status: 'REFUSED', effectKey: key, reason: 'role_already_published_on_head', sideEffects: 0 }, mutexKey, false);
-          throw error;
+          if (error?.code !== 'role_already_published_on_head') throw error;
+          // K is held by another holder. A newer hosted run (or run attempt) of a role the relay already SETTLED
+          // on this head resolves to that publication (re-verified, nothing posted); a local holder, or a relay
+          // holder that is not settled, stays a refusal (HALT: genuinely uncertain).
+          const other = await readRolePublication(journal, mutex);
+          const settled = other.holder?.path === 'relay' && other.holder.effectKey !== key ? await journal.read(other.holder.effectKey) : null;
+          if (settled?.state === 'settled' && positive(settled.details?.checkRunId) && settled.subject?.roleMutexKey === mutexKey) {
+            return { ...(await reverifySettled({ key: other.holder.effectKey, settled, definition, job, externalId: other.holder.externalId, envelope })), roleMutex: { key: mutexKey, held: true } };
+          }
+          return result({ status: 'REFUSED', effectKey: key, reason: 'role_already_published_on_head', sideEffects: 0 }, mutexKey, false);
         }
         const intent = await journal.begin(key, { subject: subjectOfV2(job), claim: claimGeneration(batchClaim), definition, roleMutexKey: mutexKey, externalId,
           attestationSha256: envelope.attestationSha256, observationKind: 'staged-native-observation',

@@ -57,8 +57,9 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
       const { github, admission, fetchImpl } = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
       const oidc = createGitHubOidcVerifier({ audience: RELAY_AUDIENCE, jwksPort: createJwksPort({ fetchImpl }), cache: createJwksFileCache(STATE_RELAY_JWKS) });
       const verifier = createHostedRelayVerifier({ registry, observer: createHostedRelayObserver({ github, registry }), oidc });
-      // K(head, role) and the relay's own effect keys live in the local scanner publisher's journal, so the
-      // two paths exclude each other for one role on one head across batches and attempts.
+      // K(head, role) and the relay's own effect keys live in the local v2 scanner publisher's journal, so the two
+      // paths exclude each other for one role on one head across batches, bases and attempts (K has neither the
+      // base nor the attempt since PR-A review MAJOR 2; the v1 one-shot never takes K).
       const journal = await EffectJournal.open(STATE_V2.effectsScan);
       const publisher = createStagedCheckPublisherV2({ nativeAdmission: admission, authority: protectedAuthority({ config, accepted, github, fetchImpl, nativeToken, live, log }),
         github, journal, signers: inputs.record.signers, configuredChecks: config.checks, readChangedPaths: subject => github.readChangedPaths(subject), batchClaim,

@@ -252,12 +252,12 @@ test('v2 relay: attested roles are relayed once under the batch claim; a later l
   const job = v.localJob('gitleaks');
   const localTry = await v.publisher(journal, null).publish({ job, envelope: v.signed(job) });
   assert.deepEqual([localTry.status, localTry.reason], ['BLOCKED', 'role_already_published_on_head']);
-  const holder = await readRolePublication(journal, { repo: REPO, headSha: H, role: 'gitleaks', checkName: 'gitleaks', appId: 5368905, attempt: 1 });
+  const holder = await readRolePublication(journal, { repo: REPO, headSha: H, role: 'gitleaks', checkName: 'gitleaks', appId: 5368905 });
   assert.equal(holder.holder.path, 'relay');
-  // attempt 2 is a different K: it is never blocked by attempt 1's relay (and attempt 2 never follows a relay, attempts.mjs)
+  // K has no attempt (PR-A review MAJOR 2): an attempt-2 local job of the relayed role is refused as well
   const job2 = v.localJob('gitleaks', 2);
-  assert.notEqual((await readRolePublication(journal, { repo: REPO, headSha: H, role: 'gitleaks', checkName: 'gitleaks', appId: 5368905, attempt: 2 })).key, holder.key);
-  assert.equal(job2.attempt, 2);
+  const attempt2 = await v.publisher(journal, null).publish({ job: job2, envelope: v.signed(job2) });
+  assert.deepEqual([attempt2.status, attempt2.reason], ['BLOCKED', 'role_already_published_on_head']);
 });
 
 test('v2 relay: a local v2 publication first holds K; the relay then HALTs for that role and never publishes it', async t => {
@@ -281,7 +281,7 @@ test('v2 relay: another claim generation than the batch claim, or a Native refus
   const refused = await v.stage(journal).run({ subject: v.subjectOf(), attempt: 1, roles: ['gitleaks'] });
   assert.deepEqual(rowsOf(refused), { gitleaks: 'LOCAL_REQUIRED:RELAY_NOT_ATTESTED_NOT_ADMITTED' });
   assert.equal(published(v.w.state).length, 0);
-  assert.equal((await readRolePublication(journal, { repo: REPO, headSha: H, role: 'gitleaks', checkName: 'gitleaks', appId: 5368905, attempt: 1 })).holder, null);
+  assert.equal((await readRolePublication(journal, { repo: REPO, headSha: H, role: 'gitleaks', checkName: 'gitleaks', appId: 5368905 })).holder, null);
   delete v.w.state.faults.native;
   const job = v.localJob('gitleaks');
   assert.equal((await v.publisher(journal, null).publish({ job, envelope: v.signed(job) })).status, 'SETTLED', 'the local path stays open');

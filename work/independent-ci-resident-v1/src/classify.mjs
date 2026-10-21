@@ -54,8 +54,10 @@ export function relayPlanFromRows(rows, candidates) {
 }
 // Resident-side codes that end a stage cleanly before or around the Source stage (companion pump, the v1
 // one-shot states kept for an unchanged reading of older receipts).
+// REFS_GATE_UNCONFIRMED: the refs gate before the first local scanner got no explicit answer; nothing ran; clean
+// but final (never the transient REMOTE_REFS_CHANGED_SINCE_BUNDLE, PR-A review MINOR 5).
 const RESIDENT_CLEAN = Object.freeze(['FULL_NEXT_STAGE_AUTHORITY_WINDOW_REQUIRED', 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED', 'FIXED_PUBLIC_CHILD_REFUSED',
-  'ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED', 'FORMAL_BRIDGE_STAGE_DEADLINE']);
+  'ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED', 'FORMAL_BRIDGE_STAGE_DEADLINE', 'REFS_GATE_UNCONFIRMED']);
 
 const NOT_ADMITTED = new Set(NOT_ADMITTED_CODES);
 const TRANSIENT = new Set(TRANSIENT_CODES);

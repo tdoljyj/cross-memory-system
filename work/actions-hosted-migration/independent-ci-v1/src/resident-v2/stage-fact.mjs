@@ -45,9 +45,11 @@ const DIAG = Object.freeze({ owner_review_required: 'OWNER_REVIEW_REQUIRED', own
   claim_bound_to_other_pr: 'CLAIM_NOT_CURRENT', work_claim_execution_epoch_stale: 'CLAIM_NOT_CURRENT', task_ci_head_cap_reached: 'TASK_CI_HEAD_CAP_REACHED',
   claim_head_cap_reached: 'CLAIM_HEAD_CAP_REACHED', ci_budget_exhausted: 'CI_BUDGET_EXHAUSTED', head_budget_exhausted: 'CI_BUDGET_EXHAUSTED',
   workflow_change_not_authorized: 'WORKFLOW_CHANGE_NOT_AUTHORIZED', workflow_runs_unavailable: 'NATIVE_ADMISSION_UNAVAILABLE' });
+// Explicit transport facts only (PR-A review MINOR 5): the publishers' defaults for an uncoded exception
+// (publication_operation_unconfirmed, *_OPERATION_UNCONFIRMED; before PR-A publication_observation_unconfirmed
+// and NATIVE_CHECK_UNCONFIRMED) are never transient, so they can never select the automatic attempt 2.
 const TRANSPORT_REASONS = new Set(['full_admission_unavailable', 'full_admission_mode_unknown', 'full_admission_observer_unknown', 'full_admission_observation_expired',
-  'NATIVE_ADMISSION_UNAVAILABLE', 'github_transient_unavailable', 'GITHUB_TRANSIENT_UNAVAILABLE', 'publication_observation_unconfirmed', 'NATIVE_CHECK_UNCONFIRMED',
-  'COMPLETE_CHECK_INVENTORY_REQUIRED', 'REMOTE_REFS_UNAVAILABLE']);
+  'NATIVE_ADMISSION_UNAVAILABLE', 'github_transient_unavailable', 'GITHUB_TRANSIENT_UNAVAILABLE', 'COMPLETE_CHECK_INVENTORY_REQUIRED', 'REMOTE_REFS_UNAVAILABLE']);
 const BRIDGE_TIMEOUTS = new Set(['BRIDGE_RESULT_DEADLINE', 'FORMAL_BRIDGE_STAGE_DEADLINE', 'ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED',
   'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED', 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED', 'BRIDGE_CALLBACK_DEADLINE']);
 const CONFIG_REASONS = new Set(['full_admission_not_configured', 'full_admission_subject_invalid', 'full_admission_source_changed', 'full_admission_clock_invalid',
@@ -74,6 +76,9 @@ export function outcomeFailureCode(outcome, stageNumber) {
   if (outcome.sideEffects !== 0 || outcome.mayHavePublished !== false) return 'PUBLICATION_UNCERTAIN';
   const r = outcome.reason;
   if (r === 'evidence_identity_conflict' || r === 'EVIDENCE_IDENTITY_CONFLICT') return 'EVIDENCE_IDENTITY_CONFLICT';
+  // K(head, role) is held by the other path: a role on this head was (or may have been) published by it. Never
+  // clean, on any stage (DESIGN §6.3; PR-A review MINOR 4).
+  if (r === 'role_already_published_on_head' || r === 'ROLE_ALREADY_PUBLISHED_ON_HEAD') return 'ROLE_ALREADY_PUBLISHED_ON_HEAD';
   if (r === 'RESIDENT_QUEUE_HEAD_NOT_REACHED') return 'RESIDENT_QUEUE_HEAD_NOT_REACHED';
   if (r === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE') return 'REMOTE_REFS_CHANGED_SINCE_BUNDLE';
   if (BRIDGE_TIMEOUTS.has(r)) return 'BRIDGE_TRANSPORT_TIMEOUT';

@@ -20,6 +20,11 @@ import { writeNew, ensureDir } from './store.mjs';
 export const RUNNER_SERVICE = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02';
 export const ORIGINAL_BINARY = '"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"';
 export const DESCRIPTOR_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/2';
+// The codes the companion's bridge pump can end with (companion.mjs#pump); a stage's companion answer is taken
+// only from this list, and none of them is an attempt-2 transient code.
+export const PUMP_CODES = Object.freeze(['ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED', 'LINUX_WORKER_START_UNCONFIRMED', 'FORMAL_BRIDGE_STAGE_DEADLINE',
+  'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED', 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED', 'FORMAL_WORKER_TERMINAL_UNCONFIRMED', 'RELAY_REFUSED_NO_RETRY',
+  'COMPANION_PUMP_UNCONFIRMED', 'COMPANION_REQUEST_EXPIRED', 'COMPANION_HANDLER_UNCONFIRMED']);
 const V2 = ['work', 'actions-hosted-migration', 'independent-ci-v1', 'src', 'resident-v2'];
 
 // The terminal fact the Source v2 stage invoker prints (stage-fact.mjs#buildStageFact keeps the v1 field
@@ -146,7 +151,9 @@ export class WindowsEngine {
     if (firstLinux) {
       const refs = await this.companionMailbox.await(await this.companionMailbox.send('check-refs', { batchId: batch.batchId }, 6 * 60_000), this.sleep);
       if (refs?.ok !== true) {
-        const code = refs?.code === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'GITHUB_TRANSIENT_UNAVAILABLE';
+        // Only an explicit "refs moved" answer is the transient REMOTE_REFS_CHANGED_SINCE_BUNDLE; no answer or
+        // anything else is REFS_GATE_UNCONFIRMED, clean but final: never an attempt-2 code (PR-A review MINOR 5).
+        const code = refs?.code === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'REFS_GATE_UNCONFIRMED';
         return { ok: false, code, proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() } };
       }
     }
@@ -165,7 +172,9 @@ export class WindowsEngine {
     const scOk = await this.scReadback();
     if (relay) {
       const answer = await this.companionMailbox.await(await relay, this.sleep);
-      if (fact.ok && answer?.ok !== true) return { ok: false, code: answer?.code ?? 'COMPANION_PUMP_UNCONFIRMED', proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk } };
+      // The Windows stage succeeded but the companion did not confirm the pump: take only an allow-listed pump
+      // code (none of them transient), never a free-form one (PR-A review MINOR 6).
+      if (fact.ok && answer?.ok !== true) return { ok: false, code: PUMP_CODES.includes(answer?.code) ? answer.code : 'COMPANION_PUMP_UNCONFIRMED', proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk } };
     }
     const ok = fact.ok && scOk;
     return { ok, code: ok ? null : (fact.code ?? 'SCM_READBACK_NOT_ORIGINAL'), proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk }, factsSha256: fact.nativeReceiptSha256,

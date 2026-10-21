@@ -40,8 +40,8 @@
    - 未知失败：HALT，Owner 用 UAC 发一个复位请求，由服务自己完成归档和解锁；
    - Source 变更：Owner 接受后，1 次 UAC 加 1 次 root。
 5. **草稿状态**（v0.7，详见 §13.1）：
-   - 常驻层：Node 单元测试 **100/100**、Python **15/15**、离线演练 **35/35**（新增一个月的免费分钟情形和等待中的急停）；
-   - Source v2（`CI/`）：Node **130 通过 + 1 跳过**、Python **6/6**、PowerShell 离线用例 **35 个**（归档 13、ACL 迁移 12、bundle 10）、C# 纯逻辑 **88 条断言**；`scripts/ci/clued-work-admission.test.mjs` **93/93**（新增 2 个 v2 消费者用例）；
+   - 常驻层：Node 单元测试 **107/107**、Python **15/15**、离线演练 **35/35**（新增一个月的免费分钟情形和等待中的急停）；
+   - Source v2（`CI/`）：Node **137 通过 + 1 跳过**、Python **6/6**、PowerShell 离线用例 **35 个**（归档 13、ACL 迁移 12、bundle 10）、C# 纯逻辑 **88 条断言**；`scripts/ci/clued-work-admission.test.mjs` **97/97**；
    - 主机演练（§13.2 P2）还没开始，所以可安装性、ACL 掩码、unit 加固、真实的 SCM/WSL/Docker 路径，以及托管运行的 OIDC 声明值，都还没在真机上证明。
 6. **托管转发（v0.7，§7.5）**：有免费分钟时，gitleaks 和 trivy 由第 R 段核验 GitHub 托管运行后以 App 5368905 发布同名检查，本地只跑 contract-placement 和三项 kooyumi 检查；分钟用完时自动回到全本地。转发随策略默认关闭，只有 Owner 改策略（一次 UAC）才打开。
 
@@ -297,6 +297,7 @@ Source v2（S11）之后，阶段的失败码来自已安装 Source 的稳定目
 | 干净、终局 | `STAGE_PACKAGE_REFUSED`、`STAGE_INPUT_RESULT_MISSING`、`BROKER_RUNNER_NOT_ORIGINAL_STOPPED`、`BROKER_REQUEST_EXPIRED`、`BROKER_REQUEST_REFUSED`、`STAGE_HELPER_PREFLIGHT_REFUSED`、`STAGE_CHILD_REFUSED`、`STAGE_CHILD_TIMEOUT`、`RESIDENT_QUEUE_HEAD_NOT_REACHED`、`BATCH_CLAIM_CHANGED`、`NATIVE_POLICY_UNSUPPORTED`、`PUBLICATION_BLOCKED`、`PUBLICATION_REVOKED`、`EVIDENCE_REFUSED`、`WORKSPACE_PREPARATION_REFUSED` |
 | 永远未知 | `BROKER_RESPONSE_UNCONFIRMED`、`STAGE_HELPER_NOT_STOPPED_IN_TIME`、`STAGE_ORIGINAL_NOT_RESTORED`、`BROKER_CONFIGURATION_CONFLICT`、`NATIVE_RECEIPT_UNCONFIRMED`、`STAGE_CHILD_TREE_UNCONFIRMED`、`STAGE_OUTCOME_MISSING`、`PUBLICATION_UNCERTAIN`、`RECONCILIATION_REQUIRED`、`EVIDENCE_IDENTITY_CONFLICT`、`ADMISSION_CONFIGURATION_REFUSED`、`BROKER_UNCONFIRMED`、`BROKER_BUSY` |
 | 第 R 段（v0.7） | 干净、终局：`RELAY_STAGE_REFUSED`（转发入口在观察和写入之前拒绝，或第 R 段的包导出被拒）；永远未知：`RELAY_PUBLICATION_UNCERTAIN`、`ROLE_ALREADY_PUBLISHED_ON_HEAD`、`RELAY_PLAN_UNCONFIRMED`。崩溃恢复时，有 `20-plan-intent` 而没有 `25-plan` 的条目以 `RELAY_STAGE_INTERRUPTED` 关闭并 HALT |
+| PR-A 复审（v0.7） | 本地发布被 K 拒绝（`role_already_published_on_head`）在任何段都映射为 `ROLE_ALREADY_PUBLISHED_ON_HEAD`（未知）。发布者对没有码的异常给出的默认原因（`publication_operation_unconfirmed`、`*_OPERATION_UNCONFIRMED`）不再算暂时性，只有明确的传输事实才映射为 `GITHUB_TRANSIENT_UNAVAILABLE` 或 `NATIVE_ADMISSION_UNAVAILABLE`。refs 闸门没有明确答复时是 `REFS_GATE_UNCONFIRMED`（干净、终局，常驻侧码）；Windows 段成功而 companion 没确认泵时，只接受固定的泵码（`engine-windows.mjs#PUMP_CODES`，都不是暂时性码），其余一律 `COMPANION_PUMP_UNCONFIRMED`（未知） |
 
 `BROKER_BUSY` 是未知：另一个控制工具持有变更互斥量，这是 Owner 必须看到的意外并发。结局记录缺失、或者回执与结局对不上，一律 `STAGE_OUTCOME_MISSING`。
 
@@ -405,7 +406,16 @@ Source v2（S11）之后，阶段的失败码来自已安装 Source 的稳定目
 3. **还没有角色发布过**：失败的是第 1 段（工作准入；它自己的检查按 attempt 区分，attempt 2 用新的作业 id 重新证明）、第 2 段（第一个扫描执行），或二者之间的工作区准备。从第 3 段起扫描或控制角色已经（或可能已经）发布，永远不重试；
 4. 策略 `automaticAttempt2.enabled` 为 true；等待 `delayMs`（默认 10 分钟）之后，仍然要过同样的预检（冷却、上限、validUntil、Source 哈希、companion 心跳）。
 
-永远不重试：UNKNOWN（任何 HALT）、可能已有的发布、证据身份冲突、闸门拒绝（未准入、claim 变了、扫描发现问题、准入被拒）、attempt 2 本身。账本在 `ledger-attempt2\<attempt1 键>.json` 以“只能新建”的方式记下意图，所以每个 attempt 1 最多一次；attempt 2 有自己的批次键和 head 键，预留它就算消费了意图。这是对执行器的唯一一处必要改动（`executor.mjs`：失败路径排程、`tick` 里先跑到期的 attempt 2）。
+永远不重试：UNKNOWN（任何 HALT）、可能已有的发布、证据身份冲突、闸门拒绝（未准入、claim 变了、扫描发现问题、准入被拒）、attempt 2 本身。账本在 `ledger-attempt2\<attempt1 键>.json` 以“只能新建”的方式记下意图，所以每个 attempt 1 最多一次；attempt 2 有自己的批次键和 head 键。这是对执行器的唯一一处必要改动（`executor.mjs`：失败路径排程、`tick` 里先跑到期的 attempt 2）。
+
+v0.7 按 PR-A 复审补强（每一条都有先失败、后通过的离线复现测试，`R/test/review.test.mjs`）：
+
+- **预留时消费意图**：预留 attempt 2 之前，先以“只能新建”的方式写 `<attempt1 键>.consumed.json`。之后 attempt 2 不论以什么结局收场，意图都已结束；包括未准入（NOT_ADMITTED）和 bundle 不可用（BUNDLE_UNAVAILABLE），这两种结局会把账本条目释放回 ABSENT。没有新的触发，就不会再评估第 1 段（I3）。在“消费”和“预留”之间崩溃，只会丢掉这次 attempt 2，是安全的方向。
+- **绑定已安装的 Source**：意图的主体 Source 不等于已安装的 Source（重装之后）时，关闭意图（`ATTEMPT2_SOURCE_CHANGED`），从不运行。
+- **K 不含 attempt**：K(head, role) 既不含 base，也不含 attempt（契约 `role-publication/2`），所以同一 head 上一个角色在所有 attempt、批次和 Source 安装之间最多发布一次。这不损失任何东西，因为 attempt 2 只跟在什么都没发布的第 0–2 段失败之后。
+- **回执失败时取消意图**：`attempt2-scheduled` 回执写不进去时，先关闭意图再 HALT，复位永远跑不到它。
+- **推迟不挡路**：到期的 attempt 2 若只是被推迟（DEFERRED），不再挡住其他 PR 的触发。
+- **未知不会变成暂时性**：没有码的异常、没有答复的 refs 闸门、companion 的自由文本码，都不会被归为暂时性码（§6.3），所以不会触发 attempt 2。
 
 “bundle 之后有推送”在两处被发现，都在任何东西运行之前：第 2 段前 companion 的 `build-bundle.ps1 -CheckRefs`；以及 gitleaks 适配器在建 run 目录之前核对所有新鲜的 ref tip、head、base 都已在工作区对象库里（`refsInStore`，失败就是干净的 `BLOCKED`，经 bridge 的 `blocked` 记录回到 Windows）。
 
@@ -466,7 +476,10 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 - 崩溃恢复：有 `20-plan-intent`、没有 `25-plan` 的条目，可能已经 begin 了某个角色的键，所以以 `RELAY_STAGE_INTERRUPTED` 关闭为 FAILED_UNKNOWN 并 HALT。
 - 第 R 段的干净失败（`RELAY_STAGE_REFUSED`）是终局：烧号、归档，不排 attempt 2。
 - **attempt 2**（`R/src/attempts.mjs`）照 v0.6 的规则（只有第 1、2 段，以及二者之间的工作区准备），另加一条：attempt 1 只要转发过任何角色就不排；第 R 段本身（第 9 段）不在可重试的段里。
-- K(head, role) 跨路径互斥：转发入口和本地 v2 扫描发布者用同一个 journal（`state\v2\effects-scan`），所以同一 head 上同一角色只会有一个发布者，跨批次也成立。
+- K(head, role) 跨路径互斥：转发入口和本地 v2 扫描发布者用同一个 journal（`state\v2\effects-scan`），所以同一 head 上同一角色只会有一个发布者，跨批次、跨 attempt 也成立（K 不含 base 和 attempt，见 §7.2）。v1 one-shot 的本地路径不拿 K（复审 MAJOR：它有自己的 journal，K 在那里排除不了任何东西；而 v1 作业按 claim、fence、base 区分，拿 K 只会让同一 head 上的第二个 v1 作业永远 BLOCKED）。v1 发布者只有在调用方显式要求（`localRoleMutex`）时才在本地路径拿 K。
+- 转发的重入：本键已结算时，不再只读回，而是像 `publish()` 一样重新核对 PR head、受保护事实与 claim、新鲜的 Native 准入并读回；有漂移就撤销一次已知检查，从不重发。K 已被同一角色在本 head 上**已结算的转发**持有时（托管重跑出了更新的 run 或 run attempt），结果落到那次已结算的发布（重新核对，不再发布），不再 HALT；只有本地持有或未结算的转发持有才仍是 HALT。
+- 每次继续一个等待中的批次之前，都重跑开批次时的检查（`validUntil`、已安装 Source 与常驻层的哈希、批次主体的 Source 等于已安装的 Source）。任何漂移都失败关闭：FAILED_UNKNOWN 加 HALT（`RESIDENT_SOURCE_DRIFT` 或 `RESIDENT_INSTALL_AUTHORITY_EXPIRING`），不会跑第 R 段和本地段。`install-resident.ps1` 在有任何未终结批次时拒绝安装，包括等待中的批次（`INSTALL_REQUIRES_NO_OPEN_BATCH_REARM_FIRST`，与 `uninstall-resident.ps1` 相同）。
+- 其他复审修正：v1 one-shot 的必需钉值加入 v1 发布者现在加载的 `hosted-relay-v1/attest.mjs`、`registry.mjs`、`oidc.mjs`；v2 的 Native verify 和 v1 一样带 10 秒超时；准入登记的注释写明 contract-placement 的托管执行从不转发（`RELAYABLE_ROLES` 只有 gitleaks、trivy）。PR-B 工作流里那句“5368905 在核验后发布 contract-placement”的注释在冻结字节里，要在 PR-B 改。
 
 **第 R 段在 Source v2 里**：
 
@@ -681,12 +694,12 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 
 v0.7（2026-10-21，转发集成之后）：
 
-- 常驻层：`node --test test/*.test.mjs` **100/100**。新增：
+- 常驻层：`node --test test/*.test.mjs` **107/107**（含 `review.test.mjs` 7 个复审复现用例）。新增：
   - `relay.test.mjs` 16 个：段序 1 → R → 本地子集 → 8；`20-plan-intent`/`25-plan`；不阻塞的有上限等待；等待中暂停（停在第 R 段之前，只有 Owner 能恢复，按保存的 t0 继续）；等待中 Owner 复位；等待中重启（不重跑第 1 段）；服务循环每轮刷新锁、等待中照样响应 STOP；账单拒绝立即全本地；同一 head 内转发与本地混合；发布不确定 HALT 且不再有本地段；计划行不干净；第 R 段崩溃恢复；托管晚到；转发后不排 attempt 2；损坏的提示；
   - `hints.test.mjs` 6 个：提示映射；经 Source 观察器（提示模式）到邮箱再到执行器解析的端到端；邮箱的提示文件；轮询器的观察窗口；gh 只读端口；引擎的第 R 段和动态选项。
 - 常驻层 Python **15/15**（新增 4 个 Linux Source v2 安装器用例）；`node drill/offline-drill.mjs` **35/35**（新增 12 步：一个月的免费分钟情形、回执类型和顺序、等待中的急停与 Owner 恢复）。
-- Source v2：`node --test test/*.test.mjs` **130 通过 + 1 跳过**（新增 `hosted-relay-v2.test.mjs` 12 个：第 R 段的包导出、计划行、阶段事实、第 9 段 invoke-stage、v2 发布者的 K 互斥与 claim 代次）；Python **6/6**；`test-migrate-acl.ps1` **12 例**；`test-pure-v2.ps1` **88 条**断言；`SwapBroker.cs` 编译通过。
-- `node --test scripts/ci/clued-work-admission.test.mjs` **93/93**（main 上原有 91 个全部通过，新增 2 个 v2 消费者用例）。
+- Source v2：`node --test test/*.test.mjs` **137 通过 + 1 跳过**（含复审用例：`pr-a-review.test.mjs` 5 个，`hosted-relay-stage.test.mjs` 新增 2 个，结算转发的漂移撤销、v1 本地路径不拿 K；新增 `hosted-relay-v2.test.mjs` 12 个：第 R 段的包导出、计划行、阶段事实、第 9 段 invoke-stage、v2 发布者的 K 互斥与 claim 代次）；Python **6/6**；`test-migrate-acl.ps1` **12 例**；`test-pure-v2.ps1` **88 条**断言；`SwapBroker.cs` 编译通过。
+- `node --test scripts/ci/clued-work-admission.test.mjs` **97/97**（含合入的 A1 重新登记用例和 2 个 v2 消费者用例）。
 
 v0.6（2026-10-21，Source v2 实现之后）：
 

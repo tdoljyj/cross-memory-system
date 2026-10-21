@@ -21,7 +21,8 @@ const PREFIX = 'independent-ci:native-work-admission';
 const HASH = /^[a-f0-9]{64}$/, fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
 const plain = v => v && Object.getPrototypeOf(v) === Object.prototype;
-const safe = e => /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(e?.code ?? '') ? e.code : 'NATIVE_CHECK_UNCONFIRMED';
+// An uncoded exception is never a transport fact (PR-A review MINOR 5).
+const safe = e => /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(e?.code ?? '') ? e.code : 'WORK_ADMISSION_OPERATION_UNCONFIRMED';
 const diagnosticOf = e => fullAdmissionFailureV2({ contract: 'clued.independent-ci.full-admission/2', status: 'BLOCKED', admitted: false, reason: e?.code, diagnostic: e?.admissionDiagnostic })?.admissionDiagnostic;
 const freeze = v => { if (v && typeof v === 'object') { Object.values(v).forEach(freeze); Object.freeze(v); } return v; };
 const fixedJob = job => { validateJobV2(job); check(job.repo === REPO && job.role === ROLE && job.attempt >= 1 && job.attempt <= MAX_ATTEMPT_V2, 'FIXED_WORK_ADMISSION_JOB_REQUIRED'); return freeze(structuredClone(job)); };
