@@ -254,19 +254,21 @@ test('an acceptance that fails half-way at a tick start HALTs in that tick: no o
   assert.equal((await f.ledger.open()).length, 0);
 });
 
-test('the gate: an acceptance that fails half-way and whose UNKNOWN close also fails still runs no other batch (review M1)', async t => {
+test('the gate: an acceptance that fails half-way and whose UNKNOWN close cannot even latch HALT still runs no other batch (review M1)', async t => {
   const f = await waitingBatch(t);
   await ownerAborts(f);
   await f.drop(triggerBytes({ pr: 885, headSha: '7'.repeat(40) }));
   const remember = f.exec.owner.remember.bind(f.exec.owner);
-  const terminal = f.ledger.terminal.bind(f.ledger);
-  let r1 = false, t1 = false;
+  const halt = f.ledger.halt.bind(f.ledger);
+  let r1 = false, h1 = false;
   f.exec.owner.remember = async (...a) => { if (!r1) { r1 = true; throw Object.assign(new Error('busy'), { code: 'EBUSY' }); } return remember(...a); };
-  f.ledger.terminal = async (...a) => { if (!t1) { t1 = true; throw Object.assign(new Error('disk'), { code: 'EIO' }); } return terminal(...a); };
+  // The first HALT write (inside unknown()) fails, so only the gate after takeOwnerRequests can stop this tick.
+  f.ledger.halt = async (...a) => { if (!h1) { h1 = true; throw Object.assign(new Error('disk'), { code: 'EIO' }); } return halt(...a); };
   assert.equal((await f.exec.tick()).state, 'HALTED');
   assert.deepEqual(stagesRun(f.engine), [1], 'PR 885 was not reserved');
   assert.equal((await f.ledger.state(KEY)).state, 'STARTED', 'still open: recovery closes it on the next tick');
-  assert.ok(['OWNER_ABORT_UNCONFIRMED', 'RESIDENT_EXECUTOR_EXCEPTION'].includes((await f.ledger.halted()).value.code));
+  const h = await f.ledger.halted();
+  assert.deepEqual([h.value.code, h.value.facts.keys], ['OWNER_ABORT_UNCONFIRMED', [KEY]]);
   await f.exec.tick();
   const s = await f.ledger.state(KEY);
   assert.deepEqual([s.outcome, s.terminal.facts.failureCode], ['FAILED_UNKNOWN', 'OWNER_ABORT_INTERRUPTED']);
@@ -278,6 +280,15 @@ test('a second, different abort of a batch whose abort is already accepted is re
   await f.ledger.beginOwnerAbort(KEY, { requestSha256: 'f'.repeat(64), ledgerEntrySha256: (await f.ledger.latestRecord(KEY)).sha256, by: OWNER, reason: 'first', safePoint: 'waiting', stage: null });
   const v = abortRequest({ batchKey: KEY, expectedLedgerEntrySha256: 'd'.repeat(64), reason: 'second', by: OWNER }, f.clock);
   await assert.rejects(f.exec.abortAtTickStart(v, 'e'.repeat(64), '0000000000001-aaaaaaaaaaaa.json'), { code: 'OWNER_ABORT_ALREADY_ACCEPTED' });
+});
+
+test('inside a tick, a different abort of a batch whose abort is already accepted is refused (OWNER_ABORT_ALREADY_ACCEPTED)', async t => {
+  const f = await waitingBatch(t);
+  const latest = await f.ledger.latestRecord(KEY);
+  await ownerAborts(f);
+  await f.ledger.beginOwnerAbort(KEY, { requestSha256: 'f'.repeat(64), ledgerEntrySha256: latest.sha256, by: OWNER, reason: 'first', safePoint: 'in-stage-2', stage: 2 });
+  assert.equal(await f.exec.pendingAbort(KEY), null);
+  assert.deepEqual((await bodies(f, 'owner-request-refused')).map(b => b.failureCode), ['OWNER_ABORT_ALREADY_ACCEPTED']);
 });
 
 test('a P0 abort never runs the archive tools from drifted Source bytes', async t => {

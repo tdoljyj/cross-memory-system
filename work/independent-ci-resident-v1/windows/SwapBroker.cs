@@ -229,8 +229,10 @@ public sealed class SwapBroker : ServiceBase
             if (decision == null) return false;
             if (decision != "SEND") code = decision;
             else if (RunnerStop.Send()) code = "STOP_SENT";
-            // Not accepted: look again. A control that did reach the helper (an answer lost in a timeout) shows as
-            // STOP_PENDING or STOPPED next second and settles as HELPER_ALREADY_STOPPING: delivered at most once.
+            // Not accepted: look again. A control that did reach the helper (an answer lost in a timeout) normally shows as
+            // STOP_PENDING or STOPPED next second and settles as HELPER_ALREADY_STOPPING. If the helper's handler was held
+            // up past the SCM timeout it may be sent again; that is harmless: the handler only sets its cancelled flag and
+            // terminates the same job object it created. Effective once.
             else if (++attempts < StopAttempts) return false;
             else code = "STOP_NOT_ACCEPTED";
         }

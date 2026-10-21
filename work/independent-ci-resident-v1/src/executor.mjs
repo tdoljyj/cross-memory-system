@@ -251,7 +251,7 @@ export class ResidentExecutor {
     } catch (error) {
       // Nothing accepted: a plain refusal. Accepted half-way (80-owner-abort written): UNKNOWN, HALT now (review M1).
       if (!(await this.ledger.state(v.batchKey)).abort) throw error;
-      const r = await this.unknown(v.batchKey, codeOf(error), 'owner-abort-unconfirmed', s.wait.batch);
+      const r = await this.unknown(v.batchKey, codeOf(error), 'owner-abort-unconfirmed', s.wait.batch, { safePoint: 'waiting', stage: null, requestSha256 });
       return { key: v.batchKey, outcome: r.state, failureCode: r.failureCode };
     }
     const r = await this.ownerAbort(v.batchKey, s.wait.batch, { safePoint: 'waiting', request });
@@ -308,7 +308,7 @@ export class ResidentExecutor {
     try {
       request = await this.acceptAbort(key, found, safePoint, null);
     } catch (error) {
-      return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch);
+      return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch, { safePoint, stage: null, requestSha256: found.requestSha256 });
     }
     return this.concludeAbort(key, batch, { safePoint, request });
   }
@@ -331,6 +331,9 @@ export class ResidentExecutor {
       result = await this.engine.runStage(batch, stage, opts);
     } finally {
       await watch.stop();
+    }
+    if (watch.state.stop?.broker === true && !watch.state.stopReceipt) {
+      try { await this.receipt('owner-abort-stop-requested', { key, stage: number, requestId: watch.state.stop.requestId }); } catch { /* the broker's receipt and the terminal facts remain */ }
     }
     let abort = watch.state.accepted;
     let unconfirmed = false;
@@ -400,8 +403,8 @@ export class ResidentExecutor {
   // the fixed reason owner-aborted, and FAILED_CLEAN OWNER_ABORTED (the head stays burned, never an attempt 2).
   // Anything unproven is UNKNOWN exactly as today: HALT, burned head, the scene left for the Owner's re-arm.
   async ownerAbort(key, batch, { safePoint, stage = null, result = null, request, stopCode = null }) {
+    const context = { safePoint, stage, stopCode: typeof stopCode === 'string' && CODE.test(stopCode) ? stopCode : null, requestSha256: request?.requestSha256 ?? null };
     try {
-      const context = { safePoint, stage, stopCode: typeof stopCode === 'string' && CODE.test(stopCode) ? stopCode : null, requestSha256: request?.requestSha256 ?? null };
       if (result && !abortStageEndingClean(result, { stopSent: stopCode === 'STOP_SENT' })) return await this.unknown(key, validCode(result.code ?? 'OWNER_ABORT_STAGE_UNCONFIRMED'), 'owner-abort-stage-not-stopped-cleanly', batch, context);
       const proof = await this.abortQuiescence(batch, result?.proof ?? {});
       if (!proofComplete(proof)) return await this.unknown(key, 'OWNER_ABORT_QUIESCENCE_UNPROVEN', 'owner-abort-quiescence-unproven', batch, context);
@@ -415,7 +418,7 @@ export class ResidentExecutor {
       await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: OWNER_ABORTED, safePoint });
       return { state: 'FAILED_CLEAN', key, failureCode: OWNER_ABORTED, safePoint };
     } catch (error) {
-      return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch, { safePoint, stage });
+      return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch, context);
     }
   }
 

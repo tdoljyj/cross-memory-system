@@ -268,7 +268,9 @@ export class WindowsEngine {
     try {
       const r = await this.run([this.paths.nodeExe, invoke, '--batch-dir', batch.dir, '--stage', String(stage.number), '--work-manifest-sha256', row.workManifestSha256,
         '--batch-key', batch.key], { timeoutMs: stage.runMilliseconds + 360_000 });
-      // The Windows side of the stage has ended: from here on the pump can only make the stage wait (requestStop).
+      // The invoke-stage child has returned: the broker answered (the helper stopped and the original binary is back), or
+      // the invoker gave up waiting for that answer (then the stage is UNKNOWN anyway, and the pump's own deadline has
+      // passed). Either way the pump can only make the stage wait from here on (requestStop).
       if (this.inflight) this.inflight.windowsEnded = true;
       if (r.timedOut || r.code === null) return { ok: false, code: 'STAGE_INVOKER_TERMINAL_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: false } };
       const fact = parseStageFact(r.stdout, row.workManifestSha256);
