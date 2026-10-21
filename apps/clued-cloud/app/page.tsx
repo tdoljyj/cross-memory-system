@@ -901,11 +901,7 @@ export default function Home() {
 
       <header className="topbar">
         <Link className="brand" href="/" aria-label={t.homeLabel}>
-          <span className="brand-mark" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </span>
+          <span className="brand-mark" aria-hidden="true" />
           <span>BeamingFace</span>
         </Link>
         <div className="header-actions">

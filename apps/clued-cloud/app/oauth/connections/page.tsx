@@ -553,7 +553,7 @@ export default function OAuthConnectionsPage() {
     <main className="oauth-shell">
       <section className="oauth-card" aria-busy={busy}>
         <Link className="oauth-brand" href="/" aria-label="返回 BeamingFace 首页">
-          <span className="brand-mark" aria-hidden="true">◆</span><span>BeamingFace</span>
+          <span className="brand-mark" aria-hidden="true" /><span>BeamingFace</span>
         </Link>
         <p className="oauth-kicker">账户授权</p>
         <h1>已连接的客户端</h1>

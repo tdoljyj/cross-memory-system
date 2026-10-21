@@ -282,7 +282,7 @@ export default function OAuthProjectsPage() {
   }
 
   return <main className="oauth-shell"><section className="oauth-card" aria-busy={busy}>
-    <Link className="oauth-brand" href="/"><span className="brand-mark" aria-hidden="true">◆</span><span>BeamingFace</span></Link>
+    <Link className="oauth-brand" href="/"><span className="brand-mark" aria-hidden="true" /><span>BeamingFace</span></Link>
     <h1>开发项目资格</h1><p className="oauth-copy">接受指定项目邀请，或管理你拥有的项目成员。加入项目后，仍由你选择授予每个客户端的权限。</p>
     {busy && <p role="status">正在核验账户与项目…</p>}
     {error && <div className="oauth-error" role="alert"><strong>尚未完成</strong><p>{error}</p>

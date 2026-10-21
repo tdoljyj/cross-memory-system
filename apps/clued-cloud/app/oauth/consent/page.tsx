@@ -97,7 +97,7 @@ function OAuthConsent() {
     <main className="oauth-shell">
       <section className="oauth-card" aria-busy={busy}>
         <Link className="oauth-brand" href="/" aria-label="BeamingFace home">
-          <span className="brand-mark" aria-hidden="true">◆</span>
+          <span className="brand-mark" aria-hidden="true" />
           <span>BeamingFace</span>
         </Link>
 

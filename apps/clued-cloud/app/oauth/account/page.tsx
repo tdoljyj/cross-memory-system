@@ -46,7 +46,7 @@ export default function OAuthAccountPage() {
   }
 
   return <main className="oauth-shell"><section className="oauth-card" aria-busy={busy}>
-    <Link className="oauth-brand" href="/"><span className="brand-mark" aria-hidden="true">◆</span><span>BeamingFace</span></Link>
+    <Link className="oauth-brand" href="/"><span className="brand-mark" aria-hidden="true" /><span>BeamingFace</span></Link>
     <p className="oauth-kicker">账户恢复</p>
     <h1>忘记密码</h1>
     <p className="oauth-copy">输入你的 BeamingFace 账户邮箱，通过邮件中的链接设置新密码。</p>
