@@ -1104,9 +1104,9 @@ const selfHostedGateOf = (text) => text.replace(HOSTED_GATE_ROUTE, SELF_HOSTED_G
 // The frozen PR-B bytes (hosted executors): file -> [main's self-hosted Source, PR-B Source] sha256.
 const HOSTED_EXECUTOR_SOURCES = {
   ".github/workflows/gitleaks.yml": ["168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579",
-    "17ec69ed57368773ed9dbb5c7ab0808172ac12173131d4fe81b57cd3fbfd8384"],
+    "be869498f8f7215cb61959d2971b2bb0ac09085898f5d231d25e1e435b3891f9"],
   ".github/workflows/trivy.yml": ["cea2fd770663e65f554719903da90aaf4b8aae4a52bf52098d3d258340e2727d",
-    "7864a061c96dd377152ff03f0b00d18839602b22b3a520cd412afe3e683248b8"],
+    "981e7a2d7f52b5451f899c3c36f7db133a736dd714d829eab9141d29389ba0c5"],
   ".github/workflows/contract-placement.yml": ["762f1b1346a699068660e46648a665d25873a396fc0d2186ef8f44a844625ffd",
     "4898299bee3e804a19acfef51d15b582e5a52526a655a290cf09bb56c39de84b"],
 };
