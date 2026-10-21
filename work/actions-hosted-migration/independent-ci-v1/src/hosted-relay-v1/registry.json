@@ -81,13 +81,115 @@
           "sha256": "1caa1e9b97c4cae00d0d148e52770f4def734cbbdff60b67faf5f86707c37bae"
         },
         {
+          "blob": "764a0e474a0aac5e390e2cc3ae04ee83e9398285",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/docker-observation-20260908/.gitattributes",
+          "sha256": "d18cb9b2ba76f617b0f2cd30d1f836bf0adc7fcb07ba27e2b5e5124e92d6d3ab"
+        },
+        {
+          "blob": "0a7def484a365ddc7c5363f9636859bec0a9445a",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/protocol-integration-20260908/.gitattributes",
+          "sha256": "5e0b29d98b583de0960dd26e322bedfdefc19bc81d14fb58fa5792a32a0ff524"
+        },
+        {
+          "blob": "7ad0e4fd1ad3e88d72fef237a77a23d08fd26fec",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/evidence-blob-successor-20260909/.gitattributes",
+          "sha256": "d40dba3659d68bf788c3aca1c3dae2d4084e97897014b7dc8d646c1cf8da4c03"
+        },
+        {
+          "blob": "d590ecd2f6cec97228696154f9e10807a1316da7",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/intent-response-20260909/.gitattributes",
+          "sha256": "cc9277c7a3165cc0c1b3207a172ca6e46e3ed54477fa940785bbfc744d29b651"
+        },
+        {
+          "blob": "d590ecd2f6cec97228696154f9e10807a1316da7",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/recorded-intent-recovery-20260909/.gitattributes",
+          "sha256": "cc9277c7a3165cc0c1b3207a172ca6e46e3ed54477fa940785bbfc744d29b651"
+        },
+        {
+          "blob": "0749cae0bc5ed7c30a30f875770c001fef1b0324",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/checkpoint-idempotency/.gitattributes",
+          "sha256": "c7323613dbdd5f9869651b52aef56eff201e88de6b19a6572ad55ea892eaaed1"
+        },
+        {
+          "blob": "fa1385d99a319b43c06f5309d1aae9fdd3adea46",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/.gitattributes",
+          "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
+        },
+        {
+          "blob": "fa1385d99a319b43c06f5309d1aae9fdd3adea46",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/structure-freeze-prep/naming/external-20260907/.gitattributes",
+          "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
+        },
+        {
+          "blob": "625449502ba4b4d7c229c6ccee42e3ec41cc780c",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/structure-freeze-prep/naming/retained-step3-20260907/.gitattributes",
+          "sha256": "8b9c3028d6467ff3be7c793141927841d70f47f52d0590677438f488ca154992"
+        },
+        {
+          "blob": "625449502ba4b4d7c229c6ccee42e3ec41cc780c",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/structure-freeze-prep/naming/retained-step3-r2-20260907/.gitattributes",
+          "sha256": "8b9c3028d6467ff3be7c793141927841d70f47f52d0590677438f488ca154992"
+        },
+        {
+          "blob": "625449502ba4b4d7c229c6ccee42e3ec41cc780c",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/.gitattributes",
+          "sha256": "8b9c3028d6467ff3be7c793141927841d70f47f52d0590677438f488ca154992"
+        },
+        {
+          "blob": "fa1385d99a319b43c06f5309d1aae9fdd3adea46",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/structure-freeze-prep/naming/verification-20260907/.gitattributes",
+          "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
+        },
+        {
+          "blob": "897d3727a527a71ea8be4fc1933aa9f419d8291e",
+          "mode": "100644",
+          "path": "docs/execution-plans/kernel-health-surgical-repair/.gitattributes",
+          "sha256": "0d45287ec4a40386b9a80f41569157429abd5ac610e0ca1e0a20ae6c5310cb7d"
+        },
+        {
+          "blob": "776515d5bf898c53e8310c26af22c8d9a03c9d36",
+          "mode": "100644",
+          "path": "docs/execution-plans/kernel-stability-hardening/.gitattributes",
+          "sha256": "c318e4dd732cee7b9eecfc02abaac81e808ea5b86ae1323a3c7142421475b2d4"
+        },
+        {
+          "blob": "fa1385d99a319b43c06f5309d1aae9fdd3adea46",
+          "mode": "100644",
+          "path": "docs/execution-plans/phase2-structure-governance/.gitattributes",
+          "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
+        },
+        {
           "blob": "a2dfd90c06b80af22fb2e89d2144b7d83f5ee321",
           "mode": "100644",
           "path": "scripts/ci/reviewed_gitleaks.py",
           "sha256": "433b24137a7d3430990b69e61c0b4ebcd9dad47d770c5df62d6e1fef28b7f7a9"
+        },
+        {
+          "blob": "19421881d280bc351fc1992b1a6ec1f15a62e8fb",
+          "mode": "100644",
+          "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/.gitattributes",
+          "sha256": "675723a4a99b3a11589765920fa6390c3d55a0f5b1f9c010979662d90865a2b2"
+        },
+        {
+          "blob": "d851c4e059ec5f6f34dd383441e14c20d5466801",
+          "mode": "100644",
+          "path": "scripts/phase2-qualification/windows-isolation/.gitattributes",
+          "sha256": "aa20458a6ba4eab07db3d623a255cecfa367d3e82845ec2440a17302b5f9f32a"
         }
       ],
-      "closureSha256": "cbee5d949397b880ad5ba7d31f06d91e8f4594a564f58428c6fcd1369be14cfa",
+      "closureSha256": "d8f8f2cea789fac2ba652289ee14aadb124d08343d5ea67ff1e0e65cb8eef337",
       "forbiddenChangePrefixes": [
         "scripts/ci/"
       ],
@@ -102,6 +204,7 @@
     },
     "trivy": {
       "checkName": "trivy",
+      "checksDigest": "sha256:b0e12d009b01dcc8ca2ebbc199b9caf3922491978d21c17b61c1d7f6dc75220b",
       "closure": [
         {
           "blob": "0836158a96c494c2dc9f807a78f5c9ebe7d0e31e",
@@ -144,9 +247,111 @@
           "mode": "100644",
           "path": ".github/workflows/trivy.yml",
           "sha256": "94e9ac722e3a3e0c4f924ce3b27371803dc2a04b5e177a7b0bcffd2bdf28b810"
+        },
+        {
+          "blob": "764a0e474a0aac5e390e2cc3ae04ee83e9398285",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/docker-observation-20260908/.gitattributes",
+          "sha256": "d18cb9b2ba76f617b0f2cd30d1f836bf0adc7fcb07ba27e2b5e5124e92d6d3ab"
+        },
+        {
+          "blob": "0a7def484a365ddc7c5363f9636859bec0a9445a",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/protocol-integration-20260908/.gitattributes",
+          "sha256": "5e0b29d98b583de0960dd26e322bedfdefc19bc81d14fb58fa5792a32a0ff524"
+        },
+        {
+          "blob": "7ad0e4fd1ad3e88d72fef237a77a23d08fd26fec",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/evidence-blob-successor-20260909/.gitattributes",
+          "sha256": "d40dba3659d68bf788c3aca1c3dae2d4084e97897014b7dc8d646c1cf8da4c03"
+        },
+        {
+          "blob": "d590ecd2f6cec97228696154f9e10807a1316da7",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/intent-response-20260909/.gitattributes",
+          "sha256": "cc9277c7a3165cc0c1b3207a172ca6e46e3ed54477fa940785bbfc744d29b651"
+        },
+        {
+          "blob": "d590ecd2f6cec97228696154f9e10807a1316da7",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/recorded-intent-recovery-20260909/.gitattributes",
+          "sha256": "cc9277c7a3165cc0c1b3207a172ca6e46e3ed54477fa940785bbfc744d29b651"
+        },
+        {
+          "blob": "0749cae0bc5ed7c30a30f875770c001fef1b0324",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/checkpoint-idempotency/.gitattributes",
+          "sha256": "c7323613dbdd5f9869651b52aef56eff201e88de6b19a6572ad55ea892eaaed1"
+        },
+        {
+          "blob": "fa1385d99a319b43c06f5309d1aae9fdd3adea46",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/.gitattributes",
+          "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
+        },
+        {
+          "blob": "fa1385d99a319b43c06f5309d1aae9fdd3adea46",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/structure-freeze-prep/naming/external-20260907/.gitattributes",
+          "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
+        },
+        {
+          "blob": "625449502ba4b4d7c229c6ccee42e3ec41cc780c",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/structure-freeze-prep/naming/retained-step3-20260907/.gitattributes",
+          "sha256": "8b9c3028d6467ff3be7c793141927841d70f47f52d0590677438f488ca154992"
+        },
+        {
+          "blob": "625449502ba4b4d7c229c6ccee42e3ec41cc780c",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/structure-freeze-prep/naming/retained-step3-r2-20260907/.gitattributes",
+          "sha256": "8b9c3028d6467ff3be7c793141927841d70f47f52d0590677438f488ca154992"
+        },
+        {
+          "blob": "625449502ba4b4d7c229c6ccee42e3ec41cc780c",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/.gitattributes",
+          "sha256": "8b9c3028d6467ff3be7c793141927841d70f47f52d0590677438f488ca154992"
+        },
+        {
+          "blob": "fa1385d99a319b43c06f5309d1aae9fdd3adea46",
+          "mode": "100644",
+          "path": "artifacts/clued-validation/structure-freeze-prep/naming/verification-20260907/.gitattributes",
+          "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
+        },
+        {
+          "blob": "897d3727a527a71ea8be4fc1933aa9f419d8291e",
+          "mode": "100644",
+          "path": "docs/execution-plans/kernel-health-surgical-repair/.gitattributes",
+          "sha256": "0d45287ec4a40386b9a80f41569157429abd5ac610e0ca1e0a20ae6c5310cb7d"
+        },
+        {
+          "blob": "776515d5bf898c53e8310c26af22c8d9a03c9d36",
+          "mode": "100644",
+          "path": "docs/execution-plans/kernel-stability-hardening/.gitattributes",
+          "sha256": "c318e4dd732cee7b9eecfc02abaac81e808ea5b86ae1323a3c7142421475b2d4"
+        },
+        {
+          "blob": "fa1385d99a319b43c06f5309d1aae9fdd3adea46",
+          "mode": "100644",
+          "path": "docs/execution-plans/phase2-structure-governance/.gitattributes",
+          "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
+        },
+        {
+          "blob": "19421881d280bc351fc1992b1a6ec1f15a62e8fb",
+          "mode": "100644",
+          "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/.gitattributes",
+          "sha256": "675723a4a99b3a11589765920fa6390c3d55a0f5b1f9c010979662d90865a2b2"
+        },
+        {
+          "blob": "d851c4e059ec5f6f34dd383441e14c20d5466801",
+          "mode": "100644",
+          "path": "scripts/phase2-qualification/windows-isolation/.gitattributes",
+          "sha256": "aa20458a6ba4eab07db3d623a255cecfa367d3e82845ec2440a17302b5f9f32a"
         }
       ],
-      "closureSha256": "9052c606d0a0b3a81d16d312f297381cca245ecf8dbfa324b586e74011d2d28f",
+      "closureSha256": "1f80bf3c4fb9782ebe3e66c0f94d2665aa70f38fdc03d09d070b724cb6ee799b",
       "forbiddenChangePrefixes": [],
       "hostedCheckName": "trivy-hosted-executor",
       "hostedJobId": "trivy-trusted-self-hosted",
