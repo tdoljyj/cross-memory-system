@@ -234,22 +234,10 @@ LEGACY_HOSTED_DEBT = {
             "revoke": "05c9112397ce11199544fa0893d674ff79b89db5683030a8fa8c293ceab97437"
         }
     },
-    "contract-placement.yml": {
-        "control_sha256": "7f6b17e3f081e3efe50994f9919f82493625335bfb68b965fb4e9da6165d43af",
-        "jobs": {
-            "contract-placement": "ece793557cdd471a62f4937faf0144ed1a4fac8994267264ee24e2afd513c445"
-        }
-    },
     "design-refs.yml": {
         "control_sha256": "6327e8203db425c4bf5c2ae87d1c4e58a235307ce616fdc5f4a7db93c0b2b6c8",
         "jobs": {
             "design-refs-untrusted-hosted": "5639d9ad5c5f6181caa118e9c55c6f370b55f442447f9e0685976870eb8ac8d2"
-        }
-    },
-    "gitleaks.yml": {
-        "control_sha256": "3ab12e6a86c95658f6c17347a2f81a45184e6b0ff45ef4d1487494b5514b9794",
-        "jobs": {
-            "gitleaks-untrusted-hosted": "4380f116c52b6a654d5f4edae17ce62e4523bd89b1564302d6882dbaeab712cb"
         }
     },
     "information-flow-e2e.yml": {
@@ -342,14 +330,57 @@ LEGACY_HOSTED_DEBT = {
         "jobs": {
             "untrusted-hosted": "6c05c4e934d9565c13a14945e52f5a25490760088e740e17fd252cc2f268a564"
         }
+    }
+}
+
+# Owner Decision 325717a6: the gitleaks, trivy and contract-placement work may
+# run on GitHub-hosted runners with free Actions minutes under the Owner's $0
+# Actions budget cap. Owner Decision 22b0e0ed: these hosted jobs are executors
+# only. App 5368905 stays the one publisher of the six required checks; the
+# independent CI relays a hosted run it can verify (the final step emits a
+# GitHub OIDC identity) and otherwise runs its formal local role, with no
+# monthly ruleset switching. Owner Decision bc6fdad1: GitHub counts every check
+# run with a required check's name, whatever its integration, so no job here
+# is named like a required check. This is the one exception to the
+# self-hosted-only rule above: exactly these executors and the admission-gate
+# each of them needs, pinned like legacy debt (workflow controls and job
+# bytes). It is not an allowlist: no other workflow or job, and no change to
+# these bytes, is admitted, and an entry fails once its job leaves hosted
+# runners or is gone.
+OWNER_DECISION_HOSTED_SOURCE = "325717a6"
+OWNER_DECISION_HOSTED_JOBS = {
+    "contract-placement.yml": {
+        "control_sha256": "9043db3a2c533c54ac60804a543c80ae79f062109d3322e60b58eb50b749542d",
+        "jobs": {
+            "admission-gate": "52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2",
+            "contract-placement": "59ae7ed2ee75cbddf7aa192ec0f4917d049ed6eb624e33c16673be82ed449931"
+        }
+    },
+    "gitleaks.yml": {
+        "control_sha256": "f775a27a4bf06fcff10caf74239c90bd6191fb58e59fcfb67f7141430a35e64b",
+        "jobs": {
+            "admission-gate": "52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2",
+            "gitleaks-trusted-self-hosted": "00f570724819f6a0846b38896237ccbbe29a86a533a68f9a4d6e011f83aa2308"
+        }
     },
     "trivy.yml": {
-        "control_sha256": "518a419739455958d4c1aea912180ba241be7cff4e988c7263efc6f89f9db6c2",
+        "control_sha256": "57f4d26e932037446cc510595b1ba72b819b9b045a4310a589becd2b1686c6f9",
         "jobs": {
-            "trivy-untrusted-hosted": "cf29c5704f534cc39384472b5b2a0a7efe3ffe2ffdc2abe81e7b04eef3cf2e80"
+            "admission-gate": "52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2",
+            "trivy-trusted-self-hosted": "0c7235dc3844aee04caff4e15d82df37fb2f178791c657d46cae9b60323e1878"
         }
     }
 }
+
+# Owner Decision bc6fdad1: GitHub treats every check run that carries a
+# required check's name as that required check, whatever its integration, so a
+# failing hosted run blocks the merge although the ruleset pins App 5368905. No
+# Owner-decision hosted executor may carry one of these names, in any branch of
+# a dynamic name expression; a job without a name is checked by its job ID.
+REQUIRED_CHECK_NAMES = frozenset({
+    "gitleaks", "trivy", "kooyumi-work-admission", "kooyumi-admission-verified",
+    "kooyumi-merge-slot", "contract-placement",
+})
 
 # These existing heartbeat arrays contain literal self-hosted/trust-internal
 # labels, plus one matrix selector. They cannot fall back to a hosted runner.
@@ -507,6 +538,16 @@ def classify_route(filename: str, job_id: str, fields: dict[str, str]) -> tuple[
     return "self-hosted", labels
 
 
+def job_check_names(job_id: str, fields: dict[str, str]) -> set[str]:
+    """Every name a job's check run can carry: each quoted branch of a dynamic name."""
+    if "name" not in fields:
+        return {job_id}
+    raw = " ".join(strip_comment(line) for line in fields["name"].splitlines()).strip()
+    if "${{" in raw:
+        return set(re.findall(r"'([^']*)'", raw))
+    return {scalar(raw)}
+
+
 def baseline_findings(baseline: object) -> list[str]:
     if not isinstance(baseline, dict):
         return ["legacy debt baseline is not a mapping"]
@@ -531,8 +572,38 @@ def baseline_findings(baseline: object) -> list[str]:
     return findings
 
 
-def evaluate_workflows(texts: dict[str, str], baseline: object = None) -> dict[str, object]:
+def owner_decision_findings(exceptions: object, baseline: dict) -> list[str]:
+    """Same exact schema as the debt baseline; never both debt and exception."""
+    if not isinstance(exceptions, dict):
+        return ["Owner-decision hosted exception is not a mapping"]
+    findings = []
+    for file, entry in exceptions.items():
+        if not isinstance(file, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+\.ya?ml", file):
+            findings.append("invalid Owner-decision hosted workflow identity")
+        if not isinstance(entry, dict) or set(entry) != {"control_sha256", "jobs"}:
+            findings.append("invalid Owner-decision hosted entry schema")
+            continue
+        if not isinstance(entry["control_sha256"], str) or not SHA256.fullmatch(entry["control_sha256"]):
+            findings.append("invalid Owner-decision hosted control hash")
+        jobs = entry["jobs"]
+        if not isinstance(jobs, dict) or not jobs:
+            findings.append("empty Owner-decision hosted workflow entry must be deleted")
+            continue
+        for job, digest in jobs.items():
+            if not isinstance(job, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", job):
+                findings.append("invalid Owner-decision hosted job identity")
+            if not isinstance(digest, str) or not SHA256.fullmatch(digest):
+                findings.append("invalid Owner-decision hosted job hash")
+            legacy = baseline.get(file) if isinstance(file, str) else None
+            if isinstance(legacy, dict) and isinstance(legacy.get("jobs"), dict) and job in legacy["jobs"]:
+                findings.append("a job is either legacy debt or Owner-decision hosted, never both")
+    return findings
+
+
+def evaluate_workflows(texts: dict[str, str], baseline: object = None,
+                       owner_hosted: object = None) -> dict[str, object]:
     baseline = LEGACY_HOSTED_DEBT if baseline is None else baseline
+    owner_hosted = OWNER_DECISION_HOSTED_JOBS if owner_hosted is None else owner_hosted
     violations: list[dict[str, str]] = []
     records = []
     def reject(file: str, reason: str, job: str | None = None) -> None:
@@ -542,7 +613,13 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None) -> dict[s
         reject("<embedded-baseline>", error)
     if errors:
         baseline = {}
+    owner_errors = owner_decision_findings(owner_hosted, baseline)
+    for error in owner_errors:
+        reject("<embedded-owner-decision>", error)
+    if owner_errors:
+        owner_hosted = {}
     observed = set()
+    observed_owner = set()
     for filename, text in sorted(texts.items()):
         try:
             control, jobs, top = split_workflow(text)
@@ -551,6 +628,7 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None) -> dict[s
             reject(filename, str(error))
             continue
         entry = baseline.get(filename)
+        owner_entry = owner_hosted.get(filename)
         pr_triggered = bool(re.search(r"\bpull_request(?:_target)?\b", top["on"]))
         concurrency = top.get("concurrency", "")
         has_cancel = bool(re.search(r"(?m)^\s+cancel-in-progress\s*:", concurrency))
@@ -567,10 +645,24 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None) -> dict[s
                         reject(filename, "legacy hosted workflow controls changed", job_id)
                     if source_hash(block) != legacy_hash:
                         reject(filename, "legacy hosted job changed", job_id)
+            owner_hash = owner_entry["jobs"].get(job_id) if owner_entry else None
+            if owner_hash:
+                observed_owner.add((filename, job_id))
+                if kind != "hosted":
+                    reject(filename, "Owner Decision " + OWNER_DECISION_HOSTED_SOURCE +
+                           " hosted exception must be deleted once its job leaves the literal hosted route", job_id)
+                else:
+                    if source_hash(control) != owner_entry["control_sha256"]:
+                        reject(filename, "Owner-decision hosted workflow controls changed", job_id)
+                    if source_hash(block) != owner_hash:
+                        reject(filename, "Owner-decision hosted job changed", job_id)
+                    if job_check_names(job_id, fields[job_id]) & REQUIRED_CHECK_NAMES:
+                        reject(filename, "Owner-decision hosted executor carries a required check name "
+                               "(Owner Decision bc6fdad1)", job_id)
             if kind == "unknown":
                 reject(filename, "unknown, dynamic, reusable or mixed runner route is prohibited", job_id)
             elif kind != "self-hosted":
-                if not legacy_hash:
+                if not legacy_hash and not owner_hash:
                     reject(filename, "new GitHub-hosted execution is prohibited; use literal self-hosted routing", job_id)
             else:
                 if "trust-internal" not in labels:
@@ -581,7 +673,8 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None) -> dict[s
                     elif not has_cancel:
                         reject(filename, "PR-triggered self-hosted workflow is missing cancel-in-progress", job_id)
             routes.append({"job": job_id, "kind": kind, "runs_on": fields[job_id].get("runs-on"),
-                           "job_sha256": source_hash(block), "legacy_migration_debt": bool(legacy_hash)})
+                           "job_sha256": source_hash(block), "legacy_migration_debt": bool(legacy_hash),
+                           "owner_decision_hosted": bool(owner_hash)})
         records.append({
             "workflow": filename, "jobs": routes, "control_sha256": source_hash(control),
             "runs_on": [row["runs_on"] for row in routes],
@@ -597,10 +690,17 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None) -> dict[s
         for job_id in entry["jobs"]:
             if (filename, job_id) not in observed:
                 reject(filename, "removed hosted debt entry must be deleted; stale permits are prohibited", job_id)
+    for filename, entry in owner_hosted.items():
+        for job_id in entry["jobs"]:
+            if (filename, job_id) not in observed_owner:
+                reject(filename, "removed Owner-decision hosted job must be deleted; stale permits are prohibited", job_id)
     return {"schema": "clued.ci-runner-budget-policy/v3", "status": "FAIL" if violations else "PASS",
-            "policy": "self-hosted-only-new-execution; exact legacy debt must shrink on migration",
+            "policy": "self-hosted-only-new-execution; exact legacy debt must shrink on migration; "
+                      "exact Owner Decision " + OWNER_DECISION_HOSTED_SOURCE + " hosted executor jobs",
             "legacy_debt_source": LEGACY_HOSTED_DEBT_SOURCE,
             "legacy_debt_jobs": sum(len(entry["jobs"]) for entry in baseline.values()),
+            "owner_decision_hosted_source": OWNER_DECISION_HOSTED_SOURCE,
+            "owner_decision_hosted_jobs": sum(len(entry["jobs"]) for entry in owner_hosted.values()),
             "historical_hosted_only_notes": HOSTED_ONLY_ALLOWLIST,
             "concurrency_exemptions": CONCURRENCY_EXEMPTIONS,
             "workflows": records, "violations": violations}
