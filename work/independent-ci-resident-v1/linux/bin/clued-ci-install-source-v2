@@ -1,0 +1,315 @@
+#!/usr/bin/python3.12 -I
+"""Linux side of the Source v2 install (DESIGN v0.7, gap list of v0.6 §7.4). DRAFT, offline-tested only.
+
+What it installs, create-only, nothing existing is ever replaced or deleted:
+  /opt/clued-independent-ci/source-v2                       trusted git checkout of the accepted Source commit
+                                                            (cloned from the package's git bundle, detached, clean)
+  /etc/clued-independent-ci/formal-source-manifest-v2.json  the install record's source-manifest.json, byte for byte
+                                                            (its SHA-256 is the ciSourceManifestSha256 of every job)
+  /etc/clued-independent-ci/roles-v3/<role>.json            the three role policies v3 (no currentClaim), 0600
+  /etc/clued-independent-ci/roles-v3/<role>.qualification.json   the signed runtime qualifications v2, 0600
+  /var/lib/clued-independent-ci/resident/source-v2-install-receipt.json   the receipt
+The qualifications are signed BEFORE this step, by root, with the Linux result key (a separate reviewed host
+step; this tool never reads a private key). After the files are in place the tool asks the pinned toolchain
+node to load each role with worker/qualification-v2.mjs#loadQualifiedPolicyV2 (read-only: policy shape,
+pins, signature against the public key) and refuses to call the install complete otherwise.
+
+Sub-commands (one JSON object on stdout; exit 0 only on success):
+  package --record DIR --source-root DIR --roles DIR --out NEW_DIR    any user, any OS: assemble the package
+  --plan PACKAGE_DIR                                                   root on Linux: read-only plan + planSha256
+  --apply PACKAGE_DIR PLAN_SHA256                                      root on Linux: install exactly that plan
+Without an explicit sub-command it refuses. --apply refuses unless run as root on Linux, the package manifest
+pins every file, every target is allow-listed and absent, and the plan is the reviewed one.
+"""
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+PACKAGE_CONTRACT = 'clued.independent-ci.linux-source-v2-package/1'
+PLAN_CONTRACT = 'clued.independent-ci.linux-source-v2-install-plan/1'
+RECEIPT_CONTRACT = 'clued.independent-ci.linux-source-v2-install/1'
+ROLES = ('gitleaks', 'trivy', 'contract-placement')
+CI = 'work/actions-hosted-migration/independent-ci-v1/'
+FIXED = {
+    'trusted': '/opt/clued-independent-ci/source-v2',
+    'etc': '/etc/clued-independent-ci',
+    'manifest': '/etc/clued-independent-ci/formal-source-manifest-v2.json',
+    'roles': '/etc/clued-independent-ci/roles-v3',
+    'state': '/var/lib/clued-independent-ci',
+    'receipt': '/var/lib/clued-independent-ci/resident/source-v2-install-receipt.json',
+    'node': '/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node',
+    'git': '/usr/bin/git',
+}
+HEX40 = re.compile(r'^[0-9a-f]{40}$')
+HEX64 = re.compile(r'^[0-9a-f]{64}$')
+SAFE = re.compile(r'^[A-Za-z0-9_.@+-]+(/[A-Za-z0-9_.@+-]+)*$')
+GIT_ENV = {'PATH': '/usr/bin:/bin', 'LANG': 'C', 'LC_ALL': 'C', 'HOME': '/nonexistent', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': os.devnull,
+           'GIT_CONFIG_SYSTEM': os.devnull, 'GIT_NO_REPLACE_OBJECTS': '1', 'GIT_TERMINAL_PROMPT': '0'}
+GIT_C = ['-c', 'core.hooksPath=/nonexistent-independent-ci-hooks', '-c', 'core.fsmonitor=false', '-c', 'protocol.allow=never', '-c', 'protocol.file.allow=always']
+
+
+class Refused(Exception):
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+def need(cond, code):
+    if not cond:
+        raise Refused(code)
+
+
+def sha256(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+
+
+def read_regular(path, limit=64 << 20):
+    st = os.lstat(path)
+    need(os.path.isfile(path) and not os.path.islink(path) and st.st_nlink == 1 and 0 < st.st_size <= limit, 'PACKAGE_FILE_BOUNDARY')
+    with open(path, 'rb') as f:
+        data = f.read(st.st_size + 1)  # never a limit-sized buffer
+    need(len(data) == st.st_size, 'PACKAGE_FILE_CHANGED')
+    return data
+
+
+def git(args, cwd=None, git_exe=FIXED['git'], timeout=600):
+    p = subprocess.run([git_exe, *GIT_C, *args], cwd=cwd, env=GIT_ENV, capture_output=True, timeout=timeout, check=False)
+    need(p.returncode == 0, 'GIT_OPERATION_REFUSED')
+    return p.stdout.decode('utf-8', 'strict')
+
+
+# ---- the package: record manifest + git bundle of the commit + the six role files, every byte pinned ----
+def source_pins(manifest):
+    """All Source files the accepted manifest pins (union of the roles' sourceFiles), path -> sha256."""
+    need(manifest.get('schema') == 'independent-ci.sources.v2' and manifest.get('repo') == 'tdoljyj/cross-memory-system' and HEX40.match(manifest.get('sourceSha') or ''),
+         'SOURCE_MANIFEST_V2_REQUIRED')
+    pins = {}
+    roles = manifest.get('roles')
+    need(isinstance(roles, dict) and roles, 'SOURCE_MANIFEST_V2_REQUIRED')
+    for role in roles.values():
+        for pin in role.get('sourceFiles') or []:
+            path, digest = pin.get('path'), pin.get('sha256')
+            need(isinstance(path, str) and SAFE.match(path) and '..' not in path.split('/') and HEX64.match(digest or ''), 'SOURCE_PIN_INVALID')
+            need(pins.get(path, digest) == digest, 'SOURCE_PIN_CONFLICT')
+            pins[path] = digest
+    need(pins, 'SOURCE_MANIFEST_V2_REQUIRED')
+    return pins
+
+
+def validate_policy(role, policy, manifest_sha, paths=FIXED):
+    need(isinstance(policy, dict) and policy.get('schema') == 'independent-ci.linux-policy.v3' and policy.get('role') == role and policy.get('formalEnabled') is True
+         and 'currentClaim' not in policy and 'claimId' not in policy, 'ROLE_POLICY_V3_REQUIRED')
+    need(policy.get('trustedSourceDirectory') == paths['trusted'] and policy.get('sourceManifestFile') == paths['manifest'] and policy.get('sourceManifestSha256') == manifest_sha
+         and policy.get('qualificationFile') == f"{paths['roles']}/{role}.qualification.json" and policy.get('nodeExecutable') == paths['node'], 'ROLE_POLICY_BINDING_REFUSED')
+    need(isinstance(policy.get('entryFile'), str) and policy['entryFile'].startswith(paths['trusted'] + '/'), 'ROLE_POLICY_BINDING_REFUSED')
+
+
+def build_package(record_dir, source_root, roles_dir, out, git_exe=FIXED['git']):
+    """Offline, any user: copy the record manifest and the six role files, bundle exactly the accepted commit."""
+    need(not os.path.lexists(out), 'PACKAGE_OUT_EXISTS_PRESERVE')
+    manifest_bytes = read_regular(os.path.join(record_dir, 'source-manifest.json'))
+    manifest = json.loads(manifest_bytes)
+    commit = manifest.get('sourceSha')
+    source_pins(manifest)
+    os.makedirs(os.path.join(out, 'roles-v3'))
+    files = []
+
+    def put(rel, data, target, mode):
+        with open(os.path.join(out, *rel.split('/')), 'xb') as f:
+            f.write(data)
+        files.append({'path': rel, 'target': target, 'sha256': sha256(data), 'bytes': len(data), 'mode': mode})
+
+    put('formal-source-manifest-v2.json', manifest_bytes, FIXED['manifest'], '0644')
+    for role in ROLES:
+        for suffix in ('.json', '.qualification.json'):
+            put(f'roles-v3/{role}{suffix}', read_regular(os.path.join(roles_dir, f'{role}{suffix}')), f"{FIXED['roles']}/{role}{suffix}", '0600')
+    # The bundle carries exactly the accepted commit as HEAD (git bundles name refs, not bare ids).
+    need(git(['-C', source_root, 'rev-parse', '--verify', 'HEAD^{commit}'], git_exe=git_exe).strip() == commit, 'SOURCE_ROOT_NOT_ACCEPTED_COMMIT')
+    git(['-C', source_root, 'bundle', 'create', os.path.abspath(os.path.join(out, 'source-v2.bundle')), 'HEAD'], git_exe=git_exe)
+    bundle = read_regular(os.path.join(out, 'source-v2.bundle'), 4 << 30)
+    files.append({'path': 'source-v2.bundle', 'target': FIXED['trusted'], 'sha256': sha256(bundle), 'bytes': len(bundle), 'mode': 'git-checkout'})
+    package = {'contract': PACKAGE_CONTRACT, 'sourceCommit': commit, 'ciSourceManifestSha256': sha256(manifest_bytes), 'files': files}
+    with open(os.path.join(out, 'package-manifest.json'), 'x', encoding='utf-8') as f:
+        f.write(canonical(package) + '\n')
+    return {'status': 'LINUX_SOURCE_V2_PACKAGE_WRITTEN', 'packageManifestSha256': sha256((canonical(package) + '\n').encode()), 'files': len(files)}
+
+
+def allowed_targets(paths=FIXED):
+    t = {paths['manifest']: '0644', paths['trusted']: 'git-checkout'}
+    for role in ROLES:
+        t[f"{paths['roles']}/{role}.json"] = '0600'
+        t[f"{paths['roles']}/{role}.qualification.json"] = '0600'
+    return t
+
+
+def validate_package(pkg, paths=FIXED):
+    """Every file pinned, every target exactly the allow-list, the policies bound to this manifest and checkout."""
+    raw = read_regular(os.path.join(pkg, 'package-manifest.json'), 1 << 20)
+    m = json.loads(raw)
+    need(isinstance(m, dict) and set(m) == {'contract', 'sourceCommit', 'ciSourceManifestSha256', 'files'} and m['contract'] == PACKAGE_CONTRACT
+         and HEX40.match(m['sourceCommit'] or '') and HEX64.match(m['ciSourceManifestSha256'] or '') and isinstance(m['files'], list), 'PACKAGE_MANIFEST_REFUSED')
+    allowed = allowed_targets(FIXED)
+    need(sorted(f.get('target') for f in m['files']) == sorted(allowed), 'PACKAGE_TARGETS_REFUSED')
+    data = {}
+    for f in m['files']:
+        need(set(f) == {'path', 'target', 'sha256', 'bytes', 'mode'} and isinstance(f['path'], str) and SAFE.match(f['path']) and '..' not in f['path'].split('/')
+             and allowed[f['target']] == f['mode'] and HEX64.match(f['sha256'] or ''), 'PACKAGE_ENTRY_REFUSED')
+        b = read_regular(os.path.join(pkg, *f['path'].split('/')), 4 << 30)
+        need(len(b) == f['bytes'] and sha256(b) == f['sha256'], 'PACKAGE_BYTES_CHANGED')
+        data[f['target']] = b
+    manifest_bytes = data[FIXED['manifest']]
+    need(sha256(manifest_bytes) == m['ciSourceManifestSha256'], 'PACKAGE_MANIFEST_REFUSED')
+    manifest = json.loads(manifest_bytes)
+    pins = source_pins(manifest)
+    need(manifest['sourceSha'] == m['sourceCommit'], 'PACKAGE_MANIFEST_REFUSED')
+    for role in ROLES:
+        validate_policy(role, json.loads(data[f"{FIXED['roles']}/{role}.json"]), m['ciSourceManifestSha256'], FIXED)
+        q = json.loads(data[f"{FIXED['roles']}/{role}.qualification.json"])
+        need(isinstance(q, dict) and set(q) == {'payload', 'signature'} and q['payload'].get('schema') == 'independent-ci.runtime-qualification.v2'
+             and 'currentClaim' not in q['payload'], 'QUALIFICATION_V2_REQUIRED')
+    return {'manifest': m, 'raw': raw, 'pins': pins, 'data': data, 'bundle': os.path.join(pkg, next(f['path'] for f in m['files'] if f['mode'] == 'git-checkout'))}
+
+
+def host_facts(paths=FIXED):
+    """What the plan binds about the host: every target absent, the pinned node and git present, the role lock free."""
+    def present(p):
+        return os.path.lexists(p)
+    node = paths['node']
+    return {
+        'targetsAbsent': {t: not present(p) for t, p in ((k, map_target(k, paths)) for k in sorted(allowed_targets(FIXED)))},
+        'receiptAbsent': not present(paths['receipt']),
+        'nodeSha256': sha256(read_regular(node, 1 << 30)) if present(node) else None,
+        'gitPresent': present(paths['git']),
+        'roleLockAbsent': not present(f"{paths['state']}/formal-role.lock"),
+    }
+
+
+def map_target(fixed_target, paths):
+    """A fixed target path under the (test) path map; production maps identity."""
+    for key in ('manifest', 'trusted'):
+        if fixed_target == FIXED[key]:
+            return paths[key]
+    if fixed_target.startswith(FIXED['roles'] + '/'):
+        return paths['roles'] + fixed_target[len(FIXED['roles']):]
+    raise Refused('PACKAGE_TARGETS_REFUSED')
+
+
+def plan(pkg, paths=FIXED):
+    v = validate_package(pkg, paths)
+    facts = host_facts(paths)
+    body = {'contract': PLAN_CONTRACT, 'packageManifestSha256': sha256(v['raw']), 'sourceCommit': v['manifest']['sourceCommit'],
+            'ciSourceManifestSha256': v['manifest']['ciSourceManifestSha256'], 'host': facts}
+    return body, sha256(canonical(body).encode())
+
+
+def write_new(path, data, mode, as_root):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), mode)
+    try:
+        need(os.write(fd, data) == len(data), 'INSTALL_WRITE_UNCONFIRMED')
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    if as_root:
+        os.chown(path, 0, 0)
+        os.chmod(path, mode)
+
+
+def install(pkg, plan_sha, paths=FIXED, as_root=True, readiness=None, clock=None):
+    body, sha = plan(pkg, paths)
+    need(HEX64.match(plan_sha or '') and sha == plan_sha, 'PLAN_CHANGED_SINCE_REVIEW')
+    f = body['host']
+    need(all(f['targetsAbsent'].values()) and f['receiptAbsent'], 'FRESH_INSTALL_REQUIRED')
+    need(f['nodeSha256'] is not None and f['gitPresent'] and f['roleLockAbsent'], 'HOST_PRECONDITION_NOT_MET')
+    v = validate_package(pkg, paths)
+    created = []
+    try:
+        # 1. the trusted checkout: clone the bundle, detach at the accepted commit, verify clean and every pin
+        trusted = paths['trusted']
+        git(['clone', '--no-checkout', '--no-hardlinks', '--quiet', v['bundle'], trusted], git_exe=paths['git'])
+        created.append(trusted)
+        git(['-C', trusted, 'checkout', '--quiet', '--detach', body['sourceCommit']], git_exe=paths['git'])
+        need(git(['-C', trusted, 'rev-parse', '--verify', 'HEAD^{commit}'], git_exe=paths['git']).strip() == body['sourceCommit'], 'TRUSTED_SOURCE_NOT_ACCEPTED_COMMIT')
+        need(git(['-C', trusted, 'status', '--porcelain=v1', '--untracked-files=all'], git_exe=paths['git']).strip() == '', 'DIRTY_SOURCE_NOT_QUALIFIED')
+        for rel, digest in v['pins'].items():
+            need(sha256(read_regular(os.path.join(trusted, *rel.split('/')), 256 << 20)) == digest, 'TRUSTED_SOURCE_PIN_MISMATCH')
+        if as_root:
+            for d, _dirs, names in os.walk(trusted):
+                os.chown(d, 0, 0); os.chmod(d, 0o755)
+                for n in names:
+                    p = os.path.join(d, n)
+                    if not os.path.islink(p):
+                        os.chown(p, 0, 0); os.chmod(p, 0o644 if not os.access(p, os.X_OK) else 0o755)
+        # 2. the source manifest, then the qualifications, then the policies last (a policy names its qualification)
+        write_new(paths['manifest'], v['data'][FIXED['manifest']], 0o644, as_root); created.append(paths['manifest'])
+        if not os.path.isdir(paths['roles']):
+            os.mkdir(paths['roles'], 0o700); created.append(paths['roles'])
+            if as_root:
+                os.chown(paths['roles'], 0, 0); os.chmod(paths['roles'], 0o700)
+        for suffix in ('.qualification.json', '.json'):
+            for role in ROLES:
+                target = f"{paths['roles']}/{role}{suffix}"
+                write_new(target, v['data'][f"{FIXED['roles']}/{role}{suffix}"], 0o600, as_root); created.append(target)
+        # 3. readiness: the pinned node loads every role read-only (shape, pins, signature against the public key)
+        ready = (readiness or node_readiness)(paths)
+        need(isinstance(ready, dict) and all(ready.get(r) is True for r in ROLES), 'ROLE_READINESS_UNCONFIRMED')
+        receipt = {'contract': RECEIPT_CONTRACT, 'status': 'INSTALLED_READINESS_CONFIRMED_NOT_EXECUTED', 'planSha256': sha, 'sourceCommit': body['sourceCommit'],
+                   'ciSourceManifestSha256': body['ciSourceManifestSha256'], 'created': created, 'readiness': ready, 'privateKeyRead': False,
+                   'qualificationIssued': False, 'containerExecuted': False, 'serviceStarted': False, 'automaticRetryAllowed': False}
+        os.makedirs(os.path.dirname(paths['receipt']), exist_ok=True)
+        write_new(paths['receipt'], (canonical(receipt) + '\n').encode(), 0o600, as_root)
+        return receipt
+    except Refused as e:
+        e.created = created
+        raise
+
+
+def node_readiness(paths):
+    """loadQualifiedPolicyV2 for every role, run by the pinned toolchain node with an empty environment."""
+    module = f"file://{paths['trusted']}/{CI}worker/qualification-v2.mjs"
+    script = (f"const m=await import({json.dumps(module)});const out={{}};for(const r of {json.dumps(list(ROLES))})"
+              "{try{await m.loadQualifiedPolicyV2('/etc/clued-independent-ci/roles-v3/'+r+'.json');out[r]=true;}catch(e){out[r]=String(e.code||'REFUSED');}}"
+              "process.stdout.write(JSON.stringify(out));")
+    p = subprocess.run([paths['node'], '--input-type=module', '-e', script], env={}, capture_output=True, timeout=120, check=False)
+    try:
+        return json.loads(p.stdout.decode('utf-8'))
+    except ValueError:
+        return {}
+
+
+def is_root_linux():
+    return sys.platform.startswith('linux') and hasattr(os, 'geteuid') and os.geteuid() == 0
+
+
+def main(argv, root_check=is_root_linux):
+    try:
+        if len(argv) == 9 and argv[0] == 'package' and argv[1::2] == ['--record', '--source-root', '--roles', '--out']:
+            out = build_package(argv[2], argv[4], argv[6], argv[8])
+        elif len(argv) == 2 and argv[0] == '--plan':
+            need(root_check(), 'ROOT_LINUX_REQUIRED')
+            body, sha = plan(argv[1])
+            out = {'status': 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN', 'planSha256': sha, 'plan': body}
+        elif len(argv) == 3 and argv[0] == '--apply':
+            need(root_check(), 'ROOT_LINUX_REQUIRED')
+            out = install(argv[1], argv[2])
+        else:
+            raise Refused('EXPLICIT_INVOCATION_REQUIRED')
+        print(json.dumps(out, sort_keys=True))
+        return 0
+    except Refused as e:
+        print(json.dumps({'status': 'REFUSED', 'code': e.code, 'created': getattr(e, 'created', []), 'automaticRetryAllowed': False}, sort_keys=True))
+        return 1
+    except (OSError, ValueError, subprocess.SubprocessError):
+        print(json.dumps({'status': 'REFUSED', 'code': 'INSTALL_OPERATION_UNCONFIRMED', 'automaticRetryAllowed': False}))
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))
