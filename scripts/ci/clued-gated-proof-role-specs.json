@@ -937,10 +937,10 @@
             }
           }
         ],
-        "06f23a2baee59716315551d11f160d0a4d6d511c": [
+        "3640f0895cc72caffb8b2bc0c1df21b76b4b5340": [
           {
             "job_id": "contract-placement",
-            "definition_sha256": "4c43c0a4cd2be56e3058ce5bcfac251fada664a4303d8a225cca56dad10b5cc5",
+            "definition_sha256": "01d8c96aed0a55154156254899bd2e08dffaf7ec7ea8041acfaf6b2be5307e78",
             "definition": {
               "name": "contract-placement-hosted-executor",
               "needs": "admission-gate",
@@ -979,7 +979,7 @@
                 },
                 {
                   "name": "Placement and renderer fixtures",
-                  "run": "python3 -m unittest scripts/ci/test_check_contract_placement.py -v\nnode --test apps/clued-cloud/tests/agent-contract-bootstrap.test.mjs\n"
+                  "run": "python3 -I -B -m unittest discover -s scripts/ci -p test_check_contract_placement.py -v\nnode --test apps/clued-cloud/tests/agent-contract-bootstrap.test.mjs\n"
                 },
                 {
                   "name": "Build actual public bootstrap without the application dependency tree",
@@ -998,11 +998,11 @@
                     "BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}",
                     "CANDIDATE": "${{ github.sha }}"
                   },
-                  "run": "python3 scripts/ci/check_contract_placement.py --base \"$BASE\" --head \"$CANDIDATE\" --minimum-service-version 0.4.5 --rendered-responses \"$RUNNER_TEMP/contract-responses.json\""
+                  "run": "python3 -I -B scripts/ci/check_contract_placement.py --base \"$BASE\" --head \"$CANDIDATE\" --minimum-service-version 0.4.5 --rendered-responses \"$RUNNER_TEMP/contract-responses.json\""
                 },
                 {
                   "name": "Emit relay identity",
-                  "run": "set -eu\njwt=\"$(curl -fsS --max-time 30 -H \"Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \\\n  \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1\" \\\n  | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"value\"])')\"\necho \"::notice title=clued-hosted-relay-v1::$jwt\"\n"
+                  "run": "set -eu\njwt=\"$(curl -fsS --max-time 30 -H \"Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \\\n  \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1\" \\\n  | python3 -I -B -c 'import json,sys; print(json.load(sys.stdin)[\"value\"])')\"\necho \"::notice title=clued-hosted-relay-v1::$jwt\"\n"
                 }
               ]
             }
@@ -1185,10 +1185,10 @@
             }
           }
         ],
-        "824724305fadbabf9931b2f84c20c85889d76eb5": [
+        "1764fbcd3dd1457ae93423e0c100fe5deb1449ac": [
           {
             "job_id": "gitleaks-trusted-self-hosted",
-            "definition_sha256": "9ed6a563c8f69a5bb7de5cebd796a6a503c10f6cc94a41e33538976ac3c2d46f",
+            "definition_sha256": "78b792bff8aa139c2ccfc6914a0a4998e62e64c451a36d3c9b8ec36514da7894",
             "definition": {
               "needs": "admission-gate",
               "timeout-minutes": 25,
@@ -1217,7 +1217,7 @@
                 },
                 {
                   "name": "Validate exact historical exceptions and detection regressions",
-                  "run": "python3 scripts/ci/reviewed_gitleaks.py \\\n  --config .gitleaks.toml \\\n  --output \"$RUNNER_TEMP/clued-reviewed.ignore\" \\\n  --self-test\n"
+                  "run": "python3 -I -B scripts/ci/reviewed_gitleaks.py \\\n  --config .gitleaks.toml \\\n  --output \"$RUNNER_TEMP/clued-reviewed.ignore\" \\\n  --self-test\n"
                 },
                 {
                   "name": "Scan complete history with Gitleaks 8.30.1",
@@ -1225,7 +1225,7 @@
                 },
                 {
                   "name": "Emit relay identity",
-                  "run": "set -eu\njwt=\"$(curl -fsS --max-time 30 -H \"Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \\\n  \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1\" \\\n  | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"value\"])')\"\necho \"::notice title=clued-hosted-relay-v1::$jwt\"\n"
+                  "run": "set -eu\njwt=\"$(curl -fsS --max-time 30 -H \"Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \\\n  \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1\" \\\n  | python3 -I -B -c 'import json,sys; print(json.load(sys.stdin)[\"value\"])')\"\necho \"::notice title=clued-hosted-relay-v1::$jwt\"\n"
                 }
               ]
             }
@@ -2012,10 +2012,10 @@
             }
           }
         ],
-        "a9c9a97e30f3c3120969504537c030d9e8aed0ea": [
+        "a7f2653a8add1d2486d27e1dd388ea4a9ef54025": [
           {
             "job_id": "trivy-trusted-self-hosted",
-            "definition_sha256": "8650e9103bf5c7c222d124ab18675003787d9cc97b5e6b2a57651db56d53b631",
+            "definition_sha256": "da2c92b30a7ead44873c99615d3ce86ca848c5cf0f081c6de07eb36586e1ef27",
             "definition": {
               "needs": "admission-gate",
               "name": "${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'trivy-hosted-executor' || 'trivy-hosted-executor-skipped' }}",
@@ -2064,7 +2064,7 @@
                 },
                 {
                   "name": "Emit relay identity",
-                  "run": "set -eu\njwt=\"$(curl -fsS --max-time 30 -H \"Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \\\n  \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1\" \\\n  | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"value\"])')\"\necho \"::notice title=clued-hosted-relay-v1::$jwt\"\n"
+                  "run": "set -eu\njwt=\"$(curl -fsS --max-time 30 -H \"Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \\\n  \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1\" \\\n  | python3 -I -B -c 'import json,sys; print(json.load(sys.stdin)[\"value\"])')\"\necho \"::notice title=clued-hosted-relay-v1::$jwt\"\n"
                 }
               ]
             }

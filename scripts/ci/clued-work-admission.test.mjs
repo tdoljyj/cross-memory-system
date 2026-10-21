@@ -1104,11 +1104,11 @@ const selfHostedGateOf = (text) => text.replace(HOSTED_GATE_ROUTE, SELF_HOSTED_G
 // The frozen PR-B bytes (hosted executors): file -> [main's self-hosted Source, PR-B Source] sha256.
 const HOSTED_EXECUTOR_SOURCES = {
   ".github/workflows/gitleaks.yml": ["168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579",
-    "25730c680b853b39704a7da2b32afe547a4cecb8a4e315c84c6e31c042e4bb25"],
+    "17ec69ed57368773ed9dbb5c7ab0808172ac12173131d4fe81b57cd3fbfd8384"],
   ".github/workflows/trivy.yml": ["cea2fd770663e65f554719903da90aaf4b8aae4a52bf52098d3d258340e2727d",
-    "3e21335aa0cfdc0dbb4855b1ca993c009df6ca830207e3a0b235871a26d77bd7"],
+    "7864a061c96dd377152ff03f0b00d18839602b22b3a520cd412afe3e683248b8"],
   ".github/workflows/contract-placement.yml": ["762f1b1346a699068660e46648a665d25873a396fc0d2186ef8f44a844625ffd",
-    "fc3743fc1edd158d9ef22c5331dc65f46e017fdc5e33ca792b777c5e26b64d8a"],
+    "4898299bee3e804a19acfef51d15b582e5a52526a655a290cf09bb56c39de84b"],
 };
 const HOSTED_EXECUTOR_NAMES = { ".github/workflows/gitleaks.yml": "gitleaks-hosted-executor",
   ".github/workflows/trivy.yml": "trivy-hosted-executor", ".github/workflows/contract-placement.yml": "contract-placement-hosted-executor" };

@@ -370,11 +370,11 @@ const PLACEMENT_DRAFT_V1_BLOB = "606e2179c957c1537320a71673a2c572cf1a037d";
 // (contract-placement-hosted-executor, same checks). Its relay identity step
 // is inert: contract-placement is never relayed (it runs PR code while it
 // holds id-token: write); App 5368905 publishes contract-placement only from
-// its formal local role, whatever the PR-B workflow comment says.
+// its formal local role, as the PR-B workflow comment states.
 const PLACEMENT_SELF_HOSTED_SUCCESSOR_BLOB = "54ee2f11cc0f52d7cd9c0f6a63b75da8ef3e2b3a";
-const PLACEMENT_SUCCESSOR_BLOB = "06f23a2baee59716315551d11f160d0a4d6d511c";
-const PLACEMENT_SUCCESSOR_SHA256 = "fc3743fc1edd158d9ef22c5331dc65f46e017fdc5e33ca792b777c5e26b64d8a";
-const PLACEMENT_ROLE_SHA256 = "4c43c0a4cd2be56e3058ce5bcfac251fada664a4303d8a225cca56dad10b5cc5";
+const PLACEMENT_SUCCESSOR_BLOB = "3640f0895cc72caffb8b2bc0c1df21b76b4b5340";
+const PLACEMENT_SUCCESSOR_SHA256 = "4898299bee3e804a19acfef51d15b582e5a52526a655a290cf09bb56c39de84b";
+const PLACEMENT_ROLE_SHA256 = "01d8c96aed0a55154156254899bd2e08dffaf7ec7ea8041acfaf6b2be5307e78";
 const PLACEMENT_GATE_SHA256 = "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9";
 
 // Only this independently reviewed Source/FullRole can cross the old ungated
@@ -462,26 +462,26 @@ const BOOTSTRAP_ORDINARY_SOURCES=Object.freeze([
   {
     "file": ".github/workflows/gitleaks.yml",
     "predecessor_blob": "74043d68d20dbee9f9404a66f0a02d3285fea0aa",
-    "candidate_blob": "824724305fadbabf9931b2f84c20c85889d76eb5",
-    "candidate_sha256": "25730c680b853b39704a7da2b32afe547a4cecb8a4e315c84c6e31c042e4bb25",
+    "candidate_blob": "1764fbcd3dd1457ae93423e0c100fe5deb1449ac",
+    "candidate_sha256": "17ec69ed57368773ed9dbb5c7ab0808172ac12173131d4fe81b57cd3fbfd8384",
     "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
     "roles": [
       {
         "job_id": "gitleaks-trusted-self-hosted",
-        "definition_sha256": "9ed6a563c8f69a5bb7de5cebd796a6a503c10f6cc94a41e33538976ac3c2d46f"
+        "definition_sha256": "78b792bff8aa139c2ccfc6914a0a4998e62e64c451a36d3c9b8ec36514da7894"
       }
     ]
   },
   {
     "file": ".github/workflows/trivy.yml",
     "predecessor_blob": "f7f8d075d1a0f314a7c5eb295e459599288d538c",
-    "candidate_blob": "a9c9a97e30f3c3120969504537c030d9e8aed0ea",
-    "candidate_sha256": "3e21335aa0cfdc0dbb4855b1ca993c009df6ca830207e3a0b235871a26d77bd7",
+    "candidate_blob": "a7f2653a8add1d2486d27e1dd388ea4a9ef54025",
+    "candidate_sha256": "7864a061c96dd377152ff03f0b00d18839602b22b3a520cd412afe3e683248b8",
     "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
     "roles": [
       {
         "job_id": "trivy-trusted-self-hosted",
-        "definition_sha256": "8650e9103bf5c7c222d124ab18675003787d9cc97b5e6b2a57651db56d53b631"
+        "definition_sha256": "da2c92b30a7ead44873c99615d3ce86ca848c5cf0f081c6de07eb36586e1ef27"
       }
     ]
   },
