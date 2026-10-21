@@ -6,7 +6,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { CODE, HEX64, UUID, check, exactKeys, isoNow, parseBoundedJson } from './canonical.mjs';
+import { CODE, HEX40, HEX64, UUID, canonicalJson, check, exactKeys, isoNow, parseBoundedJson } from './canonical.mjs';
 import { ensureDir, exists, readBounded, writeNew } from './store.mjs';
 
 export const REQUEST_CONTRACT = 'clued.independent-ci.resident-companion-request/1';
@@ -16,6 +16,13 @@ export const BATCH_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/;
 const REASON = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const ARCHIVE_DIR = /^(failed|archive)-[0-9a-z-]{1,120}$/;
 export const KINDS = Object.freeze(['build-bundle', 'prepare-workspaces', 'relay-stage', 'archive-linux', 'linux-quiescence', 'check-refs', 'archive-usage']);
+// Hosted hints (free-minutes design S20, §7.1): the companion's read-only observation of the GitHub-hosted
+// runs of one PR head, as untrusted scheduling data (clued.independent-ci.hosted-hint/1, <= 2 KB). They are
+// not request kinds: the companion writes them on its own poll, create-only, next to its answers, and the
+// executor reads only the newest one of the head it is waiting for (hosted-wait.mjs#parseHint).
+export const HINT_FILE = /^hosted-hint-([1-9][0-9]{0,8})-([0-9a-f]{12})-([0-9]{6})\.json$/;
+export const HINT_FILE_MAX_BYTES = 2048;
+const hintPrefix = (pr, headSha) => `hosted-hint-${pr}-${headSha.slice(0, 12)}-`;
 
 // Exact request shapes per kind; nothing else (no path, argv, env or script) can be carried.
 const REQUEST_FIELDS = {
@@ -119,6 +126,29 @@ export class Mailbox {
     const response = validateResponse({ contract: RESPONSE_CONTRACT, requestId: request.requestId, kind: request.kind, ok: false, code: null, proof: null, directory: null, verified: null, usage: null, observedAt: isoNow(this.clock), ...fields }, request);
     await writeNew(path.join(this.responses, `${request.requestId}.json`), response);
     return response;
+  }
+
+  // Companion side: one new hint file per changed observation (sequence = newest + 1, create-only).
+  async writeHint(record) {
+    check(record && Number.isSafeInteger(record.pr) && record.pr > 0 && record.pr < 1e9 && HEX40.test(record.headSha ?? ''), 'HOSTED_HINT_SUBJECT_INVALID');
+    const bytes = Buffer.from(canonicalJson(record) + '\n', 'utf8');
+    check(bytes.length <= HINT_FILE_MAX_BYTES, 'HOSTED_HINT_TOO_LARGE');
+    const prefix = hintPrefix(record.pr, record.headSha);
+    const seqs = (await fs.readdir(this.responses)).filter(n => n.startsWith(prefix) && HINT_FILE.test(n)).map(n => Number(HINT_FILE.exec(n)[3]));
+    const next = (seqs.length ? Math.max(...seqs) : 0) + 1;
+    check(next <= 999_999, 'HOSTED_HINT_SEQUENCE_EXHAUSTED');
+    const file = path.join(this.responses, `${prefix}${String(next).padStart(6, '0')}.json`);
+    await writeNew(file, record);
+    return file;
+  }
+
+  // Service side: the newest hint bytes for this PR head, or null. Bounded read; the caller parses.
+  async latestHint(pr, headSha) {
+    check(Number.isSafeInteger(pr) && pr > 0 && HEX40.test(headSha ?? ''), 'HOSTED_HINT_SUBJECT_INVALID');
+    const prefix = hintPrefix(pr, headSha);
+    const names = (await fs.readdir(this.responses)).filter(n => n.startsWith(prefix) && HINT_FILE.test(n)).sort();
+    if (names.length === 0) return null;
+    return readBounded(path.join(this.responses, names[names.length - 1]), HINT_FILE_MAX_BYTES, 'HOSTED_HINT_REFUSED');
   }
 
   async beat() {

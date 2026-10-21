@@ -8,7 +8,10 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { HEX64, check, parseBoundedJson, sha256 } from './canonical.mjs';
-import { Companion, argv as companionArgv, validateCompanionConfig } from './companion.mjs';
+import { pathToFileURL } from 'node:url';
+import { Companion, argv as companionArgv, validateCompanionConfig, validateHintConfig } from './companion.mjs';
+import { HostedHints, sourceHintObserver } from './hosted-hints.mjs';
+import { createGhReadPort } from './gh-read-port.mjs';
 import { Mailbox } from './mailbox.mjs';
 import { Runner } from './runner.mjs';
 import { Poller } from './poller.mjs';
@@ -40,8 +43,21 @@ export async function main(args = process.argv.slice(2)) {
   const mailbox = await Mailbox.open(path.join(values.root, 'mailbox'), Date.now);
   const companion = new Companion({ cfg, mailbox, run: (a, o) => runner.run(a, o), fileExists: exists, sleep, clock: Date.now });
   const inboxDir = path.join(values.root, 'inbox');
+  // Hint mode: the installed (admin-only, read by the Owner) CI Source's relay observer and pure hint
+  // attestation over the Owner's own read-only gh login. Off unless companion.json enables it.
+  const hintCfg = validateHintConfig(raw.hints);
+  let hints = null;
+  if (hintCfg.enabled) {
+    const dir = path.join(values.root, 'source', hintCfg.ciSourceManifestSha256, 'work', 'actions-hosted-migration', 'independent-ci-v1', 'src', 'hosted-relay-v1');
+    const load = name => import(pathToFileURL(path.join(dir, name)).href);
+    const [{ validateRegistry }, { createHostedRelayObserver }, { hostedHint }] = await Promise.all([load('registry.mjs'), load('observe.mjs'), load('stage.mjs')]);
+    const registry = validateRegistry(JSON.parse(await fs.readFile(path.join(dir, 'registry.json'), 'utf8')), { domain: 'production' });
+    const github = createGhReadPort({ ghExe: raw.ghExe, repo: raw.repo, run: (a, o) => runner.run(a, o) });
+    hints = new HostedHints({ repo: raw.repo, mailbox, clock: Date.now,
+      observeHead: sourceHintObserver({ registry, createObserver: createHostedRelayObserver, hostedHint, github, repo: raw.repo }) });
+  }
   const poller = new Poller({
-    repo: raw.repo, ghExe: raw.ghExe, run: (a, o) => runner.run(a, o), clock: Date.now,
+    repo: raw.repo, ghExe: raw.ghExe, run: (a, o) => runner.run(a, o), clock: Date.now, hints,
     writeTrigger: async v => { await fs.writeFile(path.join(inboxDir, Inbox.fileName(Date.now())), canonicalJson(v), { flag: 'wx' }); },
   });
   keepalive(companionArgv(cfg).keepalive());

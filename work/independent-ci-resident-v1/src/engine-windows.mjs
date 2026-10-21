@@ -7,7 +7,10 @@
 //   derive-batch.mjs --subject-json --batch-key --batch-id --out  -> RESIDENT_BATCH_DERIVED (S4)
 //   invoke-stage.mjs --batch-dir --stage --work-manifest-sha256 --batch-key -> stage fact /2 (S1, S11, S12)
 //   archive-windows-spool.ps1 -BatchKey -Reason -> {verified, directory, moved, code} (S14)
-//   companion check-refs before stage 2 (S9, lesson b29) and the v4 bridge pump for stages 2, 4, 6 (S7)
+//   companion check-refs before the first local Linux stage (S9, lesson b29) and the v4 bridge pump for
+//   stages 2, 4, 6 (S7)
+//   derive-batch.mjs --relay-roles --batch-dir --batch-key --batch-id -> RESIDENT_RELAY_STAGE_DERIVED (stage R)
+//   invoke-stage.mjs --stage 9 -> stage fact /2 with the per-role relay rows (free-minutes design S19)
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -30,7 +33,9 @@ export function parseStageFact(text, expectedManifestSha256) {
   const ok = f.state === 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' && restored && treeZero
     && f.manifest_sha256 === expectedManifestSha256 && f.scm_start_call_issued === true && f.configuration_conflict_detected === false;
   const code = ok ? null : (typeof f.failure_code === 'string' && CODE.test(f.failure_code) ? f.failure_code : (typeof f.state === 'string' && CODE.test(f.state) ? f.state : 'STAGE_TERMINAL_UNCONFIRMED'));
-  return { ok, code, proof: { windowsTreeZero: treeZero, serviceOriginalStopped: restored }, nativeReceiptSha256: HEX64.test(f.native_receipt_sha256 ?? '') ? f.native_receipt_sha256 : null };
+  // Stage R only: the relay rows as the Source wrote them; the executor validates them (classify.mjs).
+  const relay = Array.isArray(f.relay) ? f.relay : null;
+  return { ok, code, proof: { windowsTreeZero: treeZero, serviceOriginalStopped: restored }, nativeReceiptSha256: HEX64.test(f.native_receipt_sha256 ?? '') ? f.native_receipt_sha256 : null, relay };
 }
 
 // Independent SCM readback (sc.exe qc / queryex), so "original and stopped" never rests on the
@@ -100,12 +105,37 @@ export class WindowsEngine {
     return { verified: answer?.ok === true && answer.verified === true, directory: answer?.directory ?? null };
   }
 
-  async runStage(batch, stage) {
+  // Stage R: derive its package for exactly the relay candidates (create-only, next to the batch), then run
+  // it like any stage (no Linux, no bridge pump). The fact carries the per-role rows.
+  async runRelayStage(batch, roles) {
+    check(Array.isArray(roles) && roles.length > 0 && roles.every(r => ['gitleaks', 'trivy'].includes(r)), 'RESIDENT_RELAY_ROLES_INVALID');
+    const entry = await this.requireV2('derive-batch.mjs');
+    const d = await this.run([this.paths.nodeExe, entry, '--relay-roles', roles.join(','), '--batch-dir', batch.dir, '--batch-key', batch.key, '--batch-id', batch.batchId], { timeoutMs: 5 * 60_000 });
+    let row = null;
+    if (d.code === 0) {
+      const v = parseBoundedJson(Buffer.from(d.stdout, 'utf8'), 65536, 'RESIDENT_DERIVATION_REFUSED');
+      if (v.status === 'RESIDENT_RELAY_STAGE_DERIVED' && v.batchKey === batch.key && v.batchId === batch.batchId && v.stage?.number === 9
+        && HEX64.test(v.stage.workManifestSha256 ?? '') && Array.isArray(v.stage.jobIds) && v.stage.jobIds.length === roles.length && v.stage.jobIds.every(j => HEX64.test(j))) row = v.stage;
+    }
+    // Nothing was requested from the broker yet: a refused derivation is a clean stage-R refusal.
+    if (!row) return { ok: false, code: 'RELAY_STAGE_REFUSED', proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() }, relay: null };
+    batch.relayRow = row;
+    return this.invoke(batch, { number: 9, runMilliseconds: row.runMilliseconds, linuxWorker: false }, row);
+  }
+
+  // opts.betweenRoles: archive the previous local Linux role's protocol records first (stages 4 and 6
+  //   only, the protocol-only Linux scopes); opts.firstLinux: the "no push since the bundle" gate before
+  //   the first local scanner stage. Without opts the fixed v0.6 order applies (4/6 archive, 2 gate).
+  async runStage(batch, stage, opts = null) {
     const row = batch.stages[stage.number - 1];
     check(row && row.number === stage.number && HEX64.test(row.workManifestSha256) && HEX64.test(row.jobId), 'RESIDENT_STAGE_ROW_INVALID');
+    const betweenRoles = opts ? opts.betweenRoles === true : [4, 6].includes(stage.number);
+    const firstLinux = opts ? opts.firstLinux === true : stage.number === 2;
+    check(!betweenRoles || [4, 6].includes(stage.number), 'RESIDENT_BETWEEN_ROLES_STAGE_INVALID');
+    check(!firstLinux || [2, 4, 6].includes(stage.number), 'RESIDENT_FIRST_LINUX_STAGE_INVALID');
     // Before the second and third Linux role, archive the previous role's protocol records on both
     // hosts, exactly as run-batch.ps1:81 does today; otherwise a stale issue.ready would be relayed.
-    if ([4, 6].includes(stage.number)) {
+    if (betweenRoles) {
       const reason = `between-roles-${stage.number}`;
       const w = await this.archiveWindows(batch, reason);
       const l = await this.archiveLinux(batch, reason);
@@ -113,13 +143,17 @@ export class WindowsEngine {
     }
     // Lesson b29: no push between the bundle and the first scanner stage. A moved ref is a clean,
     // transient refusal before anything ran (eligible for the automatic attempt 2).
-    if (stage.number === 2) {
+    if (firstLinux) {
       const refs = await this.companionMailbox.await(await this.companionMailbox.send('check-refs', { batchId: batch.batchId }, 6 * 60_000), this.sleep);
       if (refs?.ok !== true) {
         const code = refs?.code === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'GITHUB_TRANSIENT_UNAVAILABLE';
         return { ok: false, code, proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() } };
       }
     }
+    return this.invoke(batch, stage, row);
+  }
+
+  async invoke(batch, stage, row) {
     const invoke = await this.requireV2('invoke-stage.mjs');
     const relay = stage.linuxWorker
       ? this.companionMailbox.send('relay-stage', { batchId: batch.batchId, stage: stage.number, jobId: row.jobId }, stage.runMilliseconds + 120_000)
@@ -134,7 +168,8 @@ export class WindowsEngine {
       if (fact.ok && answer?.ok !== true) return { ok: false, code: answer?.code ?? 'COMPANION_PUMP_UNCONFIRMED', proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk } };
     }
     const ok = fact.ok && scOk;
-    return { ok, code: ok ? null : (fact.code ?? 'SCM_READBACK_NOT_ORIGINAL'), proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk }, factsSha256: fact.nativeReceiptSha256 };
+    return { ok, code: ok ? null : (fact.code ?? 'SCM_READBACK_NOT_ORIGINAL'), proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk }, factsSha256: fact.nativeReceiptSha256,
+      relay: stage.number === 9 ? fact.relay : null };
   }
 
   // Windows quiescence: SCM shows the original binary, Manual, STOPPED, pid 0 under clued-control,
@@ -145,9 +180,10 @@ export class WindowsEngine {
     return { windowsTreeZero: idle, serviceOriginalStopped: scOk };
   }
 
-  async closeBatch(batch) {
+  // opts.linux false: no local Linux role ran (every heavy role relayed), so WSL is not touched at all.
+  async closeBatch(batch, opts = null) {
     const w = await this.archiveWindows(batch, 'success-close');
-    const l = await this.archiveLinux(batch, 'success-close');
+    const l = opts?.linux === false ? { verified: true } : await this.archiveLinux(batch, 'success-close');
     return { verified: w.verified === true && l.verified === true, archived: w.moved };
   }
 

@@ -24,6 +24,15 @@ export function validateCompanionConfig(c) {
   return Object.freeze({ ...c });
 }
 
+// Hint mode (free-minutes design S20) is off unless the installed companion.json says so; it names the
+// installed CI Source whose hosted-relay-v1 observer and pure hint attestation the companion runs.
+export function validateHintConfig(h) {
+  if (h === undefined || h === null) return Object.freeze({ enabled: false, ciSourceManifestSha256: null });
+  check(typeof h === 'object' && Object.keys(h).sort().join('|') === 'ciSourceManifestSha256|enabled' && typeof h.enabled === 'boolean'
+    && (h.enabled === false || HEX64.test(h.ciSourceManifestSha256 ?? '')), 'COMPANION_HINT_CONFIG_INVALID');
+  return Object.freeze({ enabled: h.enabled, ciSourceManifestSha256: h.ciSourceManifestSha256 ?? null });
+}
+
 // Fixed argv builders. Every variable part is an id that matched a strict pattern first.
 export function argv(cfg) {
   const wsl = (...linux) => [cfg.wslExe, '--distribution', cfg.distribution, '--user', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'LANG=C', 'LC_ALL=C', ...linux];

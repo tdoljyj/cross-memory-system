@@ -8,7 +8,8 @@
 //   - before any role check was published: the failed stage is 1 (work admission; its own check is
 //     attempt-scoped, and attempt 2 re-proves it under new job ids) or 2 (the first scanner execution),
 //     or the workspace preparation between them. From stage 3 on a scanner/control role has published
-//     (or may have), so nothing is ever retried there.
+//     (or may have), so nothing is ever retried there; nor after stage R (9) relayed any role, nor after a
+//     failure of stage R itself (it publishes).
 // Never retried: UNKNOWN (any HALT), any publication that may exist, evidence-identity conflicts, gate
 // refusals (not admitted, claim moved, scanner findings, admission refused), an attempt 2 itself.
 // The attempt number is part of every job identity (job contract v2), so attempt 2 never collides with
@@ -27,6 +28,9 @@ export function attempt2Decision({ policy, subject, outcome, failure }) {
   if (!isTransient(failure?.code)) return no('ATTEMPT2_REQUIRES_TRANSIENT_CODE');
   if (!ATTEMPT2_STAGES.includes(failure?.stageNumber)) return no('ATTEMPT2_ROLE_MAY_BE_PUBLISHED');
   if (failure.stageNumber === 0 && failure.phase !== 'workspace') return no('ATTEMPT2_ROLE_MAY_BE_PUBLISHED');
+  // Stage R (PR-A): a role relayed in attempt 1 is published; nothing after it is ever retried. Stage R itself
+  // (number 9) is never in ATTEMPT2_STAGES.
+  if (failure.relayedRoles !== undefined && failure.relayedRoles !== 0) return no('ATTEMPT2_ROLE_MAY_BE_PUBLISHED');
   return { eligible: true, reason: null };
 }
 

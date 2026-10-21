@@ -12,6 +12,8 @@ export function mailboxCompanion(mailbox, sleep) {
   const ask = async (kind, fields) => mailbox.await(await mailbox.send(kind, fields, TIMEOUTS[kind]), sleep);
   return {
     heartbeat: () => mailbox.heartbeat(),
+    // The newest companion hint for this head (bytes; the executor parses), or null. Never authority.
+    async hostedHint(subject) { try { return await mailbox.latestHint(subject.pr, subject.headSha); } catch { return null; } },
     async buildBundle(batch) {
       const r = await ask('build-bundle', { batchId: batch.batchId });
       return { ok: r?.ok === true, code: r?.code ?? 'BUNDLE_UNAVAILABLE' };

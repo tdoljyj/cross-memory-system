@@ -9,7 +9,8 @@ import { applyArchive, planArchive, protocolLeaves } from '../src/archive.mjs';
 import { coalesce, parseTrigger } from '../src/trigger.mjs';
 import { archiveReason, classifyFailure } from '../src/classify.mjs';
 import { batchBudgetMs, validatePolicy } from '../src/policy.mjs';
-import { BASE, CLEAN_PROOF, HEAD, SOURCE, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
+import { readFileSync } from 'node:fs';
+import { BASE, CLEAN_PROOF, HEAD, RELAY_ON, SOURCE, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 
 const subject = (o = {}) => ({ repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 1, ...o });
 
@@ -215,8 +216,18 @@ test('classification is an allow-list and needs the complete cleanup proof', () 
 
 test('policy refuses general retries, concurrency and drifted shapes; attempt 2 and retention are bounded', () => {
   const p = validatePolicy(rawPolicy());
-  assert.equal(p.stages.length, 8);
-  assert.equal(batchBudgetMs(p), [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000].reduce((a, b) => a + b, 0) + 8 * 180000);
+  assert.equal(p.stages.length, 9, 'eight formal stages and stage R');
+  assert.equal(batchBudgetMs(p), [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000].reduce((a, b) => a + b, 0) + 8 * 180000, 'relay off: no wait, no stage R');
+  const on = validatePolicy(rawPolicy({ relay: RELAY_ON }));
+  assert.equal(batchBudgetMs(on), batchBudgetMs(p) + RELAY_ON.wait.totalMs + 900000 + 180000, 'relay on: the bounded wait and stage R are budgeted');
+  assert.equal(JSON.parse(readFileSync(new URL('../config/policy.example.json', import.meta.url), 'utf8')).relay.enabled, false, 'the example ships with the relay off');
+  validatePolicy(JSON.parse(readFileSync(new URL('../config/policy.example.json', import.meta.url), 'utf8')));
+  assert.throws(() => validatePolicy(rawPolicy({ relay: { ...RELAY_ON, roles: ['contract-placement'] } })), { code: 'POLICY_RELAY_ROLES_INVALID' });
+  assert.throws(() => validatePolicy(rawPolicy({ relay: { ...RELAY_ON, roles: ['trivy', 'gitleaks'] } })), { code: 'POLICY_RELAY_ROLES_INVALID' });
+  assert.throws(() => validatePolicy(rawPolicy({ relay: { ...RELAY_ON, wait: { ...RELAY_ON.wait, totalMs: 8 * 3_600_000 } } })), { code: 'POLICY_RELAY_WAIT_INVALID' });
+  assert.throws(() => validatePolicy(rawPolicy({ relay: { ...RELAY_ON, wait: { ...RELAY_ON.wait, extra: 1 } } })), { code: 'POLICY_RELAY_WAIT_KEYS_INVALID' });
+  assert.throws(() => validatePolicy(rawPolicy({ relay: { enabled: true } })), { code: 'POLICY_RELAY_KEYS_INVALID' });
+  assert.throws(() => validatePolicy(rawPolicy({ stageRunMilliseconds: rawPolicy().stageRunMilliseconds.slice(0, 8) })), { code: 'POLICY_STAGE_TIMES_INVALID' });
   assert.throws(() => validatePolicy(rawPolicy({ automaticRetryAllowed: true })), { code: 'POLICY_KEYS_INVALID' });
   assert.throws(() => validatePolicy(rawPolicy({ automaticAttempt2: { enabled: true, delayMs: 1000 } })), { code: 'POLICY_ATTEMPT2_INVALID' });
   assert.throws(() => validatePolicy(rawPolicy({ automaticAttempt2: { enabled: true, delayMs: 600_000, maxAttempts: 3 } })), { code: 'POLICY_ATTEMPT2_KEYS_INVALID' });

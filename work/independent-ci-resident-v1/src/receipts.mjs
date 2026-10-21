@@ -6,6 +6,10 @@ import { CODE, check, isoNow, sha256 } from './canonical.mjs';
 import { ensureDir, writeNew } from './store.mjs';
 
 export const RECEIPT_CONTRACT = 'clued.independent-ci.resident-receipt/1';
+// Stage R receipt types (free-minutes design S22). Bodies carry the batch key, the role and, for a local
+// fallback, the stable reason (a RELAY_NOT_ATTESTED_* code of stage R or a resident scheduling reason).
+export const RELAY_RECEIPTS = Object.freeze({ attested: 'relay-attested', localFallback: 'relay-local-fallback', billingRefused: 'relay-billing-refused',
+  lateIgnored: 'relay-late-ignored' });
 const NAME = /^(\d{8})-([a-z0-9-]{1,48})\.json$/;
 const GENESIS = '0'.repeat(64);
 

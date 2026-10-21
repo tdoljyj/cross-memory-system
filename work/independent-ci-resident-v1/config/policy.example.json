@@ -1,5 +1,5 @@
 {
-  "contract": "clued.independent-ci.resident-policy/2",
+  "contract": "clued.independent-ci.resident-policy/3",
   "repo": "tdoljyj/cross-memory-system",
   "baseBranch": "main",
   "sourceManifestSha256": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -31,7 +31,8 @@
     900000,
     600000,
     900000,
-    2700000
+    2700000,
+    900000
   ],
   "linux": {
     "distribution": "Ubuntu-24.04",
@@ -46,5 +47,23 @@
   "retention": {
     "reminderBytes": 53687091200,
     "checkEveryMs": 3600000
+  },
+  "relay": {
+    "enabled": false,
+    "roles": [
+      "gitleaks",
+      "trivy"
+    ],
+    "wait": {
+      "signalMs": 600000,
+      "queueMs": 900000,
+      "runSlackMs": 600000,
+      "totalMs": 3600000,
+      "pollMs": 60000,
+      "jobTimeoutMs": {
+        "gitleaks": 1500000,
+        "trivy": 1500000
+      }
+    }
   }
 }

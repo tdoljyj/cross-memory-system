@@ -1,4 +1,6 @@
 // Offline drill of the resident lifecycle (no host, no network, no secret; temp directories only).
+// v0.7: a second instance with the hosted relay on drives one month of free-minutes scenarios (§7.6 of
+// the free-minutes design plus the first head after the minutes return) and checks receipt types and order.
 //   node drill/offline-drill.mjs            prints a step table and a JSON summary; exit 1 on any miss
 //
 // It drives the real executor, ledger, receipts, inboxes, protocol archive and Owner-request code
@@ -33,15 +35,18 @@ await fs.writeFile(path.join(winSpool, 'outgoing', `${'e'.repeat(64)}.json`), '{
 
 let now = Date.parse('2026-10-21T00:00:00Z');
 const clock = () => now;
-const policy = validatePolicy({
-  contract: 'clued.independent-ci.resident-policy/2', repo: REPO, baseBranch: 'main', sourceManifestSha256: SOURCE, ciSourceManifestSha256: '9'.repeat(64), residentManifestSha256: RESIDENT,
+const policyInput = {
+  contract: 'clued.independent-ci.resident-policy/3', repo: REPO, baseBranch: 'main', sourceManifestSha256: SOURCE, ciSourceManifestSha256: '9'.repeat(64), residentManifestSha256: RESIDENT,
   ownerAcceptance: { decisionRef: '0d84ddbb-ec1f-49c3-bbd0-953f72d53584', installReceiptRef: null }, validUntil: null,
   limits: { maxBatchesPer24h: 12, maxEvaluationsPer24h: 24, maxConcurrent: 1, inboxMaxFiles: 16, unexecutedCooldownMs: 600_000, unexecutedMaxPer24h: 3, stageMarginMs: 180_000 },
   companion: { userSid: OWNER, heartbeatMaxAgeMs: 60_000 },
-  stageRunMilliseconds: [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000],
+  stageRunMilliseconds: [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000],
   linux: { distribution: 'Ubuntu-24.04', workerUnit: 'clued-ci-worker@.service', wsprepUnit: 'clued-ci-wsprep@.service', archiveUnit: 'clued-ci-archive@.service' },
   automaticAttempt2: { enabled: true, delayMs: 600_000 }, retention: { reminderBytes: 50 * 1024 ** 3, checkEveryMs: 3_600_000 },
-});
+  // The shipped default: the relay is off (Owner decision); the relay month below runs a second instance with it on.
+  relay: { enabled: false, roles: ['gitleaks', 'trivy'], wait: { signalMs: 600_000, queueMs: 900_000, runSlackMs: 600_000, totalMs: 3_600_000, pollMs: 60_000, jobTimeoutMs: { gitleaks: 1_500_000, trivy: 1_500_000 } } },
+};
+const policy = validatePolicy(policyInput);
 
 // Script: PR number -> { stage number -> result }. Each Linux stage leaves one issue/result exchange.
 const script = new Map();
@@ -158,6 +163,119 @@ const journalKept = await fs.readFile(path.join(winSpool, 'outgoing', `${'e'.rep
 await step('the effect journal survived every archive', async () => ({ state: journalKept }), r => r.state === '{"state":"settled"}');
 const dirs = await archiveDirs();
 await step('every archive is a kept directory, nothing deleted', async () => ({ state: `${dirs} archive dirs` }), () => dirs >= 20);
+
+// ---- one month with the hosted relay on (free-minutes design §7.6 plus "first head after minutes return") ----
+// A second resident instance (own state, own spools) with policy relay.enabled = true. The companion's hints
+// are scripted per PR head, stage R's per-role rows are scripted per PR; everything else (wait, 20-plan-intent,
+// 25-plan, dynamic stage list, between-roles archives, receipts) is the real executor.
+const relayRoot = path.join(root, 'relay-month');
+const rWin = path.join(relayRoot, 'windows-formal-spool'), rLin = path.join(relayRoot, 'linux-formal-spool');
+for (const d of [rWin, rLin]) for (const s of ['incoming', 'outgoing']) await fs.mkdir(path.join(d, s), { recursive: true });
+const relayPolicy = validatePolicy({ ...policyInput, relay: { enabled: true, roles: ['gitleaks', 'trivy'],
+  wait: { signalMs: 600_000, queueMs: 900_000, runSlackMs: 600_000, totalMs: 3_600_000, pollMs: 60_000, jobTimeoutMs: { gitleaks: 1_500_000, trivy: 1_500_000 } } } });
+const hints = new Map(), relayRows = new Map(), relayCalls = [];
+const rowRelayed = (role, h) => ({ role, outcome: 'RELAYED', reason: null, receipt: 'relay-attested', checkRunId: 7000 + relayCalls.length, externalId: `independent-ci:relay:${role}:${h.slice(0, 12)}:run39000000001:a1`,
+  attestationSha256: 'f'.repeat(64), detail: null });
+const rowLocal = (role, reason) => ({ role, outcome: 'LOCAL_REQUIRED', reason, receipt: reason === 'RELAY_NOT_ATTESTED_BILLING_REFUSED' ? 'relay-billing-refused' : 'relay-local-fallback',
+  checkRunId: null, externalId: null, attestationSha256: null, detail: null });
+const rArchive = async (spool, key, reason, layout) => {
+  const plan = planArchive({ spoolRoot: spool, batchKey: key, reason, leaves: await protocolLeaves(spool, layout), quiescence: { proven: true, basis: 'drill: scripted quiescence' } });
+  return { ...(await applyArchive(plan, clock)), directory: plan.directory };
+};
+const rExchange = async () => {
+  for (const [spool, out, inc] of [[rWin, 'issue', 'result'], [rLin, 'result', 'issue']]) {
+    for (const [dir, n] of [['outgoing', out], ['incoming', inc]]) { await fs.writeFile(path.join(spool, dir, `${n}.json`), '{}'); await fs.writeFile(path.join(spool, dir, `${n}.ready.json`), '{}'); }
+  }
+  await fs.writeFile(path.join(rWin, 'outgoing', 'active.lock'), '{}');
+};
+const stagesSeen = [];
+const relayEngine = {
+  current: null,
+  async derive(subject, key) { this.current = subject; stagesSeen.length = 0; return { batchId: `${key.slice(0, 16)}-${'0'.repeat(12)}`, key, packageSha256: '7'.repeat(64) }; },
+  async runStage(batch, stage, opts) {
+    now += 60_000; stagesSeen.push(stage.number);
+    if (opts?.betweenRoles) { await rArchive(rWin, batch.key, `between-roles-${stage.number}`); await rArchive(rLin, batch.key, `between-roles-${stage.number}`, LINUX); }
+    if ([2, 4, 6].includes(stage.number)) await rExchange();
+    return { ok: true, factsSha256: '8'.repeat(64) };
+  },
+  async runRelayStage(batch, roles) {
+    now += 60_000; stagesSeen.push(9); relayCalls.push([this.current.pr, [...roles]]);
+    const script = relayRows.get(this.current.pr) ?? {};
+    return { ok: true, factsSha256: '8'.repeat(64), relay: roles.map(r => script[r] ?? rowRelayed(r, this.current.headSha)) };
+  },
+  async closeBatch(batch, opts) { const w = await rArchive(rWin, batch.key, 'success-close'); const l = opts?.linux === false ? { verified: true, moved: 0 } : await rArchive(rLin, batch.key, 'success-close', LINUX); return { verified: w.verified && l.verified, archived: w.moved + l.moved }; },
+  async archiveFailure(batch, reason) { return rArchive(rWin, batch.key, reason); },
+  async windowsQuiescence() { return WINDOWS_CLEAN; },
+};
+const relayCompanion = {
+  async heartbeat() { return { at: now }; },
+  async buildBundle() { return { ok: true }; },
+  async prepareWorkspaces() { return { ok: true }; },
+  async linuxQuiescence() { return { linuxUnitsInactive: true, containersZero: true }; },
+  async archiveLinux(batch, reason) { return rArchive(rLin, batch.key, reason, LINUX); },
+  async hostedHint(s) { const h = hints.get(s.pr); const v = typeof h === 'function' ? h(now) : h; return v ? Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.hosted-hint/1', repo: REPO, pr: s.pr, headSha: s.headSha, observedAt: now, roles: v })) : null; },
+};
+const rState = path.join(relayRoot, 'state');
+const rLedger = await Ledger.open(rState, clock);
+const rReceipts = await ReceiptChain.open(path.join(rState, 'receipts'), clock);
+const rInbox = await Inbox.open(path.join(relayRoot, 'inbox'), path.join(rState, 'inbox-archive'));
+const rRequests = await Inbox.open(path.join(relayRoot, 'requests'), path.join(rState, 'requests-archive'));
+const rOwner = await OwnerInbox.open(path.join(relayRoot, 'owner'), path.join(rState, 'owner-seen'));
+let slept = 0;
+const relayExec = new ResidentExecutor({ policy: relayPolicy, ledger: rLedger, receipts: rReceipts, inbox: rInbox, requests: rRequests, owner: rOwner, engine: relayEngine, companion: relayCompanion, clock,
+  sleep: async ms => { slept += ms; now += ms; }, sourceIntegrity: async () => ({ ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT }) });
+const rDrop = async value => { seq += 1; await fs.writeFile(path.join(relayRoot, 'inbox', `${String(now + seq).padStart(13, '0')}-${String(seq).padStart(12, '0')}.json`), JSON.stringify(value)); };
+// Receipt types of one batch, in chain order, from its batch-reserved receipt to its batch-terminal receipt.
+async function batchReceiptTypes(key) {
+  const out = []; let on = false;
+  for (const e of await rReceipts.entries()) {
+    const b = JSON.parse(await fs.readFile(path.join(rReceipts.dir, e.name), 'utf8')).body;
+    if (e.type === 'batch-reserved' && b.key === key) on = true;
+    if (on && (b?.key === key)) out.push(e.type === 'relay-attested' || e.type === 'relay-local-fallback' || e.type === 'relay-billing-refused' || e.type === 'relay-late-ignored' ? `${e.type}:${b.role}` : e.type);
+    if (on && e.type === 'batch-terminal' && b.key === key) break;
+  }
+  return out.filter(t => !['stage-terminal', 'batch-derived'].includes(t));
+}
+const relayTypes = types => types.filter(t => t.startsWith('relay-'));
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+// 1. Mid-month, minutes used up: the hosted admission is refused for billing within seconds.
+hints.set(911, { gitleaks: { state: 'BILLING_REFUSED' }, trivy: { state: 'BILLING_REFUSED' } });
+const m1 = await step('relay month 1 (PR 911): minutes used up -> billing-refused hint -> 1..8 all local, no stage R, no wait', async () => { slept = 0; await rDrop(trigger(911)); return relayExec.tick(); },
+  r => r.state === 'COMPLETED' && same(stagesSeen, [1, 2, 3, 4, 5, 6, 7, 8]) && slept === 0);
+const t1 = await batchReceiptTypes(m1.key);
+await step('  receipts: plan intent, billing refusal per relayable role, placement fallback, no relay-attested', async () => ({ state: relayTypes(t1).join(',') }),
+  () => same(relayTypes(t1), ['relay-plan-intent', 'relay-billing-refused:gitleaks', 'relay-billing-refused:trivy', 'relay-local-fallback:contract-placement']));
+
+// 2. The first head after minutes return: the hosted jobs queue, run, then succeed while the executor waits.
+let polls912 = 0;
+hints.set(912, at => (++polls912 <= 3 ? { gitleaks: { state: 'PENDING_QUEUED', queuedAt: at - 60_000 }, trivy: { state: 'PENDING_RUNNING', startedAt: at - 120_000 } } : { gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } }));
+const m2 = await step('relay month 2 (PR 912): first head after minutes return -> bounded wait -> R relays gitleaks+trivy -> 6,7 -> 8', async () => { slept = 0; await rDrop(trigger(912)); return relayExec.tick(); },
+  r => r.state === 'COMPLETED' && same(stagesSeen, [1, 9, 6, 7, 8]) && slept > 0 && slept <= 3_600_000 && same(r.relayed, ['gitleaks', 'trivy']));
+const t2 = await batchReceiptTypes(m2.key);
+await step('  receipts: intent before attested, attested before the placement fallback, all before the terminal', async () => ({ state: t2.filter(t => t.startsWith('relay-') || t === 'batch-terminal').join(',') }),
+  () => same(t2.filter(t => t.startsWith('relay-') || t === 'batch-terminal'), ['relay-plan-intent', 'relay-attested:gitleaks', 'relay-attested:trivy', 'relay-local-fallback:contract-placement', 'batch-terminal']));
+
+// 3. Month start, minutes available: hosted success is already there when the executor looks.
+hints.set(913, { gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } });
+await step('relay month 3 (PR 913): minutes available -> 1, R, 6, 7, 8 with no wait; gitleaks and trivy never run on Linux', async () => { slept = 0; await rDrop(trigger(913)); return relayExec.tick(); },
+  r => r.state === 'COMPLETED' && same(stagesSeen, [1, 9, 6, 7, 8]) && slept === 0);
+
+// 4. Minutes run out inside one head (or the hosted trivy fails to fetch its DB): mixed relay and local.
+hints.set(914, { gitleaks: { state: 'SUCCESS' }, trivy: { state: 'HOSTED_NOT_SUCCESS', reason: 'E5_HOSTED_FAILURE' } });
+const m4 = await step('relay month 4 (PR 914): gitleaks relayed, trivy local in the same batch -> 1, R, 4, 5, 6, 7, 8 (between-roles-6 only)', async () => { await rDrop(trigger(914)); return relayExec.tick(); },
+  r => r.state === 'COMPLETED' && same(stagesSeen, [1, 9, 4, 5, 6, 7, 8]) && same(relayCalls[relayCalls.length - 1], [914, ['gitleaks']]));
+const t4 = await batchReceiptTypes(m4.key);
+await step('  receipts: gitleaks attested, trivy and placement fall back with their reasons', async () => ({ state: relayTypes(t4).join(',') }),
+  () => same(relayTypes(t4), ['relay-plan-intent', 'relay-attested:gitleaks', 'relay-local-fallback:trivy', 'relay-local-fallback:contract-placement']));
+// 4b. Stage R itself sends a role back (the hosted run's token does not verify): it runs locally, never relayed.
+hints.set(915, { gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } });
+relayRows.set(915, { gitleaks: rowLocal('gitleaks', 'RELAY_NOT_ATTESTED_ATTESTATION_FAILED') });
+await step('relay month 4b (PR 915): stage R refuses gitleaks attestation -> gitleaks local (2, 3), trivy relayed', async () => { await rDrop(trigger(915)); return relayExec.tick(); },
+  r => r.state === 'COMPLETED' && same(stagesSeen, [1, 9, 2, 3, 6, 7, 8]) && same(r.relayed, ['trivy']));
+await step('every relayed head stays burned (PR 913 again: never re-run)', async () => { await rDrop(trigger(913)); return relayExec.tick(); }, r => r.reason === 'HEAD_ALREADY_EXECUTED_NO_RETRY');
+const rHead = await rReceipts.verify();
+await step('relay month receipt chain intact', async () => ({ state: `seq ${rHead.seq}` }), () => rHead.seq > 20);
 
 console.table(rows);
 const summary = { status: misses === 0 ? 'OFFLINE_DRILL_PASS' : 'OFFLINE_DRILL_FAIL', steps: rows.length, misses, receipts: head1 };

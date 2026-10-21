@@ -11,6 +11,12 @@
 // one per attempt-1 key, and only after that key ended FAILED_CLEAN); there is no attempt 3. A reservation that ended before 10-started ran no scanner and published no success (the
 // bundle failed, or stage 1 did not admit); it is closed with NOT_EXECUTED and moved, not deleted,
 // into ledger-unexecuted/ so a later trigger may ask again under the cool-down and the daily caps.
+//
+// Stage R (PR-A, free-minutes design §7.3): between 10-started and the local roles, 20-plan-intent records
+// (create-only) which roles the executor is about to ask stage R to relay, and 25-plan records (create-only)
+// the per-role outcome: RELAYED or LOCAL_REQUIRED(reason). Only LOCAL_REQUIRED roles ever run locally. An
+// entry with 20-plan-intent and no 25-plan was interrupted inside stage R: a relay key may have been begun,
+// so recovery closes it FAILED_UNKNOWN (RELAY_STAGE_INTERRUPTED) and HALTs; nothing of it runs locally.
 import fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -70,22 +76,37 @@ export class Ledger {
     if (!(await exists(dir))) return { state: 'ABSENT' };
     // A record that cannot be read (torn write, wrong type, extra hard link) makes the entry
     // UNREADABLE: it is open, recovery closes or quarantines it, and nothing ever throws past here.
-    let reserved, started, terminal, archived;
+    let reserved, started, planIntent, plan, terminal, archived;
     try {
       const read = async name => (await exists(path.join(dir, name))) ? (await readJson(path.join(dir, name))).value : null;
       reserved = await read('00-reserved.json');
       started = await read('10-started.json');
+      planIntent = await read('20-plan-intent.json');
+      plan = await read('25-plan.json');
       terminal = await read('90-terminal.json');
       archived = await read('95-archived.json');
     } catch (error) {
       if (!contentError(error)) throw error;
       return { state: 'UNREADABLE' };
     }
-    if (terminal) return { state: 'TERMINAL', outcome: terminal.outcome, reserved, started, terminal, archived };
+    if (terminal) return { state: 'TERMINAL', outcome: terminal.outcome, reserved, started, planIntent, plan, terminal, archived };
     // A crash between mkdir and the reservation record leaves an INCOMPLETE entry; it is open, so
     // recovery terminalises it (FAILED_UNKNOWN) instead of wedging the ledger.
     if (!reserved) return { state: 'INCOMPLETE', reserved: null, started };
-    return { state: started ? 'STARTED' : 'RESERVED', reserved, started };
+    return { state: started ? 'STARTED' : 'RESERVED', reserved, started, planIntent, plan };
+  }
+
+  // Stage R bookkeeping, both create-only and only on a started entry; 25-plan only after 20-plan-intent.
+  async writePlanIntent(key, intent) {
+    const s = await this.state(key);
+    check(s.state === 'STARTED' && !s.planIntent && !s.plan, 'RELAY_PLAN_INTENT_REQUIRES_STARTED_ENTRY', s.state);
+    await writeNew(path.join(this.dir(key), '20-plan-intent.json'), { key, contract: 'clued.independent-ci.resident-relay-plan-intent/1', at: isoNow(this.clock), ...intent });
+  }
+
+  async writePlan(key, plan) {
+    const s = await this.state(key);
+    check(s.state === 'STARTED' && s.planIntent && !s.plan, 'RELAY_PLAN_REQUIRES_INTENT', s.state);
+    await writeNew(path.join(this.dir(key), '25-plan.json'), { key, contract: 'clued.independent-ci.resident-relay-plan/1', at: isoNow(this.clock), ...plan });
   }
 
   // Moves an entry that cannot be terminalised in place (for example an unreadable 90-terminal) into

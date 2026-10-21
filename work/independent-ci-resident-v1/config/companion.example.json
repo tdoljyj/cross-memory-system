@@ -11,5 +11,9 @@
     "distribution": "Ubuntu-24.04",
     "bridgeManifestSha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "linuxTool": "/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux"
+  },
+  "hints": {
+    "enabled": false,
+    "ciSourceManifestSha256": null
   }
 }

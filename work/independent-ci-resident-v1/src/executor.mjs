@@ -7,11 +7,17 @@
 // admission, Owner grants, merge queue) is decided inside the stages by the existing reviewed helpers
 // that run as clued-control; this module never sees a secret.
 //
-// Order of one batch:
+// Order of one batch (PR-A, free-minutes design S19):
 //   reserve -> derive -> companion bundle -> stage 1 (admission) -> markStarted (burns the head) ->
-//   Linux workspace preparation -> stages 2..8 -> close (success-path archive) -> COMPLETED
+//   hosted wait (bounded, hosted-wait.mjs#decide over the companion's untrusted hints) -> 20-plan-intent ->
+//   stage R (hosted relay, only when there are relay candidates) -> 25-plan ->
+//   [Linux workspace preparation] -> execution + publication stages of the LOCAL_REQUIRED roles only ->
+//   stage 8 -> close (success-path archive) -> COMPLETED
 // Before markStarted nothing touched Linux, no scanner ran and no success check was published, so a
 // bundle failure or a stage-1 "not admitted" releases the reservation instead of burning the head.
+// A batch whose heavy roles were all relayed still burns its head (markStarted) and never touches WSL.
+// Stage R: RELAY_PUBLICATION_UNCERTAIN (or any plan row that is not a clean RELAYED / LOCAL_REQUIRED) is
+// UNKNOWN and HALTs; such a role is never run locally afterwards. A role is run locally only from 25-plan.
 //
 // Failure handling (Owner Decision 0d84ddbb item 4): a failure with a complete cleanup proof is
 // archived (rename only) and the executor moves on; the head is never re-run automatically, with ONE
@@ -25,6 +31,10 @@ import { archiveReason, classifyFailure } from './classify.mjs';
 import { coalesce, parseTrigger } from './trigger.mjs';
 import { batchBudgetMs } from './policy.mjs';
 import { attempt2Decision, attempt2Subject } from './attempts.mjs';
+import { decide, parseHint, HEAVY_ROLES, RELAY_ROLES } from './hosted-wait.mjs';
+import { relayPlanFromRows } from './classify.mjs';
+import { RELAY_STAGE, ROLE_STAGES } from './policy.mjs';
+import { RELAY_RECEIPTS } from './receipts.mjs';
 import { CODE, HEX64, ResidentError, check, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 
 export const PAUSE_CONTRACT = 'clued.independent-ci.resident-pause/1';
@@ -38,15 +48,16 @@ const NONCE = /^[0-9a-f]{12,32}$/;
 
 // A step failure travels as a value, so the failure path runs exactly once, outside the step loop.
 class StepFailure {
-  constructor(stageNumber, code, proof, phase) { Object.assign(this, { stageNumber, code: validCode(code), proof: proof ?? {}, phase }); }
+  constructor(stageNumber, code, proof, phase, relayedRoles = 0) { Object.assign(this, { stageNumber, code: validCode(code), proof: proof ?? {}, phase, relayedRoles }); }
 }
 
 export class ResidentExecutor {
-  // ports: { policy, ledger, receipts, inbox, requests, owner, engine, companion, sourceIntegrity, clock }
+  // ports: { policy, ledger, receipts, inbox, requests, owner, engine, companion, sourceIntegrity, clock, sleep? }
   //   owner: an Inbox over the admin-only owner directory (only Administrators can create files there).
+  //   sleep: the bounded hosted wait's pause (tests and the drill advance a fake clock with it).
   constructor(ports) {
     for (const k of ['policy', 'ledger', 'receipts', 'inbox', 'requests', 'owner', 'engine', 'companion', 'sourceIntegrity', 'clock']) check(ports[k], 'EXECUTOR_PORT_MISSING', k);
-    Object.assign(this, ports);
+    Object.assign(this, { sleep: ms => new Promise(r => setTimeout(r, ms)) }, ports);
     this.ownerReadFailures = new Map();
   }
 
@@ -61,15 +72,18 @@ export class ResidentExecutor {
   // processes may still exist, so it is UNKNOWN and HALT is latched (once).
   async recover() {
     const open = await this.ledger.open();
+    // A stage R that began (20-plan-intent) without its 25-plan may have begun a relay key: UNKNOWN, HALT.
+    const codeFor = entry => (entry.planIntent && !entry.plan ? 'RELAY_STAGE_INTERRUPTED' : 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH');
     // HALT is latched BEFORE any terminal or quarantine write, so no crash point can leave a closed
     // failure without a HALT (N1).
-    if (open.length > 0) await this.haltWith('EXECUTOR_RESTARTED_WITH_OPEN_BATCH', { keys: open.map(e => e.key) });
+    if (open.length > 0) await this.haltWith(open.some(e => codeFor(e) === 'RELAY_STAGE_INTERRUPTED') ? 'RELAY_STAGE_INTERRUPTED' : 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH', { keys: open.map(e => e.key) });
     for (const entry of open) {
       let closed = false;
+      const failureCode = codeFor(entry);
       if (entry.state !== 'UNREADABLE') {
         try {
-          await this.ledger.burnHead(entry.key, { failureCode: 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH' });
-          await this.ledger.terminal(entry.key, 'FAILED_UNKNOWN', { failureCode: 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH', state: entry.state });
+          await this.ledger.burnHead(entry.key, { failureCode });
+          await this.ledger.terminal(entry.key, 'FAILED_UNKNOWN', { failureCode, state: entry.state });
           closed = true;
         } catch (error) {
           // Only a content problem (the terminal record exists but cannot be read, or cannot be
@@ -79,7 +93,7 @@ export class ResidentExecutor {
         }
       }
       if (closed) {
-        await this.receipt('batch-terminal', { key: entry.key, outcome: 'FAILED_UNKNOWN', failureCode: 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH' });
+        await this.receipt('batch-terminal', { key: entry.key, outcome: 'FAILED_UNKNOWN', failureCode });
       } else {
         // Moved, intact, out of the way so the ledger is never wedged (review M6e); its head is burned
         // and re-arm must still archive its scene before HALT can clear.
@@ -286,7 +300,8 @@ export class ResidentExecutor {
     await this.ledger.reserve(key, subject);
     await this.receipt('batch-reserved', { key, headKey: hk, subject, bytesSha256 });
     await this.disposeAll(names, 'processed');
-    return this.driveReserved(key, subject);
+    // t0 of the hosted wait: the trigger is first read and consumed in this very tick.
+    return this.driveReserved(key, subject, this.clock());
   }
 
   // The scheduled attempt 2: same pre-checks under its own keys; the intent is closed if they refuse it
@@ -303,14 +318,14 @@ export class ResidentExecutor {
     if (pre.defer) return { state: 'DEFERRED', key: key2, reason: pre.defer };
     await this.ledger.reserve(key2, subject);
     await this.receipt('batch-reserved', { key: key2, headKey: hk, subject, attempt1: key1 });
-    return this.driveReserved(key2, subject);
+    return this.driveReserved(key2, subject, this.clock());
   }
 
-  async driveReserved(key, subject) {
+  async driveReserved(key, subject, t0) {
     let batch = null;
     let outcome;
     try {
-      outcome = await this.drive(key, subject, b => { batch = b; });
+      outcome = await this.drive(key, subject, t0, b => { batch = b; });
     } catch (error) {
       // An exception in the executor itself (or a port) is never classified as clean.
       return this.unknown(key, codeOf(error), 'executor-exception');
@@ -319,7 +334,9 @@ export class ResidentExecutor {
     return outcome;
   }
 
-  async drive(key, subject, keepBatch) {
+  stage(number) { return this.policy.stages.find(s => s.number === number); }
+
+  async drive(key, subject, t0, keepBatch) {
     const batch = await this.engine.derive(subject, key);
     keepBatch(batch);
     await this.receipt('batch-derived', { key, batchId: batch.batchId, packageSha256: batch.packageSha256 });
@@ -329,28 +346,97 @@ export class ResidentExecutor {
     const bundle = await this.companion.buildBundle(batch);
     if (!bundle || bundle.ok !== true) return new StepFailure(0, 'BUNDLE_UNAVAILABLE', {}, 'bundle');
 
-    const stages = this.policy.stages;
-    const first = await this.engine.runStage(batch, stages[0]);
+    const first = await this.engine.runStage(batch, this.stage(1), { betweenRoles: false, firstLinux: false });
     await this.receipt('stage-terminal', { key, stage: 1, ok: first.ok === true, failureCode: first.ok ? null : validCode(first.code), factsSha256: first.factsSha256 ?? null });
     if (first.ok !== true) return new StepFailure(1, first.code, first.proof, 'stage');
 
-    // Admitted and published: from here on this head is burned.
+    // Admitted and published: from here on this head is burned (also when every heavy role is relayed).
     await this.ledger.markStarted(key, { batchId: batch.batchId });
     await this.receipt('batch-started', { key });
 
-    const prep = await this.companion.prepareWorkspaces(batch);
-    if (!prep || prep.ok !== true) return new StepFailure(0, prep?.code ?? 'WORKSPACE_PREPARATION_UNCONFIRMED', {}, 'workspace');
+    const plan = await this.relayPlan(key, subject, batch, t0);
+    if (plan instanceof StepFailure) return plan;
+    const relayed = plan.relayed.length;
 
-    for (const stage of stages.slice(1)) {
-      const r = await this.engine.runStage(batch, stage);
-      await this.receipt('stage-terminal', { key, stage: stage.number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null });
-      if (r.ok !== true) return new StepFailure(stage.number, r.code, r.proof, 'stage');
+    // Only LOCAL_REQUIRED roles run locally, in the fixed role order; the protocol records of the previous
+    // local Linux role are archived before the next one (between-roles-4 / -6 only where needed).
+    const localRoles = HEAVY_ROLES.filter(r => plan.local.some(l => l.role === r));
+    if (localRoles.length > 0) {
+      const prep = await this.companion.prepareWorkspaces(batch);
+      if (!prep || prep.ok !== true) return new StepFailure(0, prep?.code ?? 'WORKSPACE_PREPARATION_UNCONFIRMED', {}, 'workspace', relayed);
     }
-    const closed = await this.engine.closeBatch(batch);
+    for (const [index, role] of localRoles.entries()) {
+      for (const number of ROLE_STAGES[role]) {
+        const execution = number === ROLE_STAGES[role][0];
+        const r = await this.engine.runStage(batch, this.stage(number), { betweenRoles: execution && index > 0, firstLinux: execution && index === 0 });
+        await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null });
+        if (r.ok !== true) return new StepFailure(number, r.code, r.proof, 'stage', relayed);
+      }
+    }
+    await this.lateHostedResults(key, subject, plan);
+    const control = await this.engine.runStage(batch, this.stage(8), { betweenRoles: false, firstLinux: false });
+    await this.receipt('stage-terminal', { key, stage: 8, ok: control.ok === true, failureCode: control.ok ? null : validCode(control.code), factsSha256: control.factsSha256 ?? null });
+    if (control.ok !== true) return new StepFailure(8, control.code, control.proof, 'stage', relayed);
+
+    const closed = await this.engine.closeBatch(batch, { linux: localRoles.length > 0 });
     check(closed && closed.verified === true, 'SUCCESS_PATH_ARCHIVE_UNCONFIRMED');
-    await this.ledger.terminal(key, 'COMPLETED', { batchId: batch.batchId, closed: closed.archived ?? null });
+    await this.ledger.terminal(key, 'COMPLETED', { batchId: batch.batchId, closed: closed.archived ?? null, relayed: plan.relayed.map(r => r.role), local: localRoles });
     await this.receipt('batch-terminal', { key, outcome: 'COMPLETED' });
-    return { state: 'COMPLETED', key };
+    return { state: 'COMPLETED', key, relayed: plan.relayed.map(r => r.role), local: localRoles };
+  }
+
+  // The latest companion hint for this head, parsed; anything malformed is "no hint" (it can only make the
+  // batch wait less or relay less, never more).
+  async hint(subject) {
+    let bytes = null;
+    try { bytes = await this.companion.hostedHint?.(subject); } catch { bytes = null; }
+    if (!bytes) return { hint: null, refused: false };
+    try { return { hint: parseHint(bytes, subject), refused: false, sha256: sha256(bytes) }; } catch { return { hint: null, refused: true }; }
+  }
+
+  // Hosted wait -> 20-plan-intent -> stage R (only with candidates) -> 25-plan. Returns the plan
+  // { relayed: [row], local: [{ role, reason, receipt }] } or a StepFailure.
+  async relayPlan(key, subject, batch, t0) {
+    const relay = this.policy.relay;
+    let decision, seen = { hint: null, refused: false };
+    for (;;) {
+      if (relay.enabled === true) seen = await this.hint(subject);
+      decision = decide({ relay, t0, now: Math.max(this.clock(), t0), hint: seen.hint });
+      if (decision.action !== 'WAIT') break;
+      await this.sleep(Math.max(1, Math.min(decision.until - this.clock(), relay.wait.pollMs)));
+    }
+    const candidates = decision.relayCandidates;
+    await this.ledger.writePlanIntent(key, { candidates, local: decision.local, reasons: decision.reasons, reason: decision.reason, waitedMs: Math.max(0, this.clock() - t0),
+      hintSha256: seen.sha256 ?? null, hintRefused: seen.refused });
+    await this.receipt('relay-plan-intent', { key, candidates, reason: decision.reason, waitedMs: Math.max(0, this.clock() - t0), hintRefused: seen.refused });
+    // Roles the resident never sent to stage R stay local with the resident's own scheduling reason.
+    const scheduled = decision.local.map(role => ({ role, reason: decision.reasons[role],
+      receipt: decision.reasons[role] === 'RELAY_HINT_BILLING_REFUSED' ? 'relay-billing-refused' : 'relay-local-fallback', source: 'resident' }));
+    let relayed = [], attested = [];
+    if (candidates.length > 0) {
+      const r = await this.engine.runRelayStage(batch, candidates);
+      await this.receipt('stage-terminal', { key, stage: RELAY_STAGE, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null });
+      if (r.ok !== true) return new StepFailure(RELAY_STAGE, r.code, r.proof, 'stage', 0);
+      const rows = relayPlanFromRows(r.relay, candidates);
+      if (!rows) return new StepFailure(RELAY_STAGE, 'RELAY_PLAN_UNCONFIRMED', r.proof, 'stage', 0);
+      relayed = rows.relayed;
+      attested = rows.local.map(row => ({ role: row.role, reason: row.reason, receipt: row.receipt, source: 'stage-r', detail: row.detail }));
+    }
+    const local = [...attested, ...scheduled].sort((a, b) => HEAVY_ROLES.indexOf(a.role) - HEAVY_ROLES.indexOf(b.role));
+    const plan = { candidates, relayed: relayed.map(r => ({ role: r.role, checkRunId: r.checkRunId, externalId: r.externalId, attestationSha256: r.attestationSha256 })), local };
+    await this.ledger.writePlan(key, plan);
+    for (const r of plan.relayed) await this.receipt(RELAY_RECEIPTS.attested, { key, role: r.role, checkRunId: r.checkRunId, externalId: r.externalId, attestationSha256: r.attestationSha256 });
+    if (relay.enabled === true) for (const l of local) await this.receipt(l.receipt === 'relay-billing-refused' ? RELAY_RECEIPTS.billingRefused : RELAY_RECEIPTS.localFallback, { key, role: l.role, reason: l.reason, source: l.source });
+    return plan;
+  }
+
+  // A hosted run that finished after the local path started is never relayed (design §7.4): it is only
+  // recorded, once per role, as relay-late-ignored.
+  async lateHostedResults(key, subject, plan) {
+    if (this.policy.relay.enabled !== true) return;
+    const { hint } = await this.hint(subject);
+    if (!hint) return;
+    for (const l of plan.local) if (RELAY_ROLES.includes(l.role) && hint.roles[l.role]?.state === 'SUCCESS') await this.receipt(RELAY_RECEIPTS.lateIgnored, { key, role: l.role, reason: l.reason });
   }
 
   // The cleanup proof is always gathered fresh at failure time from both hosts (Windows from the

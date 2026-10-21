@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { HEX64, canonicalJson, check, sha256 } from '../src/canonical.mjs';
 import { validatePolicy } from '../src/policy.mjs';
-import { validateCompanionConfig } from '../src/companion.mjs';
+import { validateCompanionConfig, validateHintConfig } from '../src/companion.mjs';
 import { INSTALLED_MANIFEST_CONTRACT } from '../src/service-ports.mjs';
 
 const HERE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -90,8 +90,11 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
   const companion = JSON.parse(await fs.readFile(companionFile, 'utf8'));
   const sub = s => s.replace('<sourceManifestSha256>', ciSourceManifestSha256);
   const finalCompanion = { ...companion, companion: { ...companion.companion, relayScript: sub(companion.companion.relayScript), bundleScript: sub(companion.companion.bundleScript),
-    ...(bridgeManifestSha256 ? { bridgeManifestSha256 } : {}) } };
+    ...(bridgeManifestSha256 ? { bridgeManifestSha256 } : {}) },
+    // Hint mode reads the installed CI Source's relay observer; it follows the policy's relay switch.
+    hints: { enabled: companion.hints?.enabled === true && finalPolicy.relay.enabled === true, ciSourceManifestSha256 } };
   validateCompanionConfig(finalCompanion.companion);
+  validateHintConfig(finalCompanion.hints);
   await fs.mkdir(path.join(out, 'config'));
   await writeJson(path.join(out, 'config', 'policy.json'), finalPolicy);
   await writeJson(path.join(out, 'config', 'companion.json'), finalCompanion);

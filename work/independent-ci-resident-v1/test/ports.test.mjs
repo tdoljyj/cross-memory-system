@@ -18,7 +18,8 @@ const goodFact = {
 };
 
 test('stage terminal facts map to ok, a stable code and the Windows half of the cleanup proof', () => {
-  assert.deepEqual(parseStageFact(JSON.stringify(goodFact), M), { ok: true, code: null, proof: { windowsTreeZero: true, serviceOriginalStopped: true }, nativeReceiptSha256: 'a'.repeat(64) });
+  assert.deepEqual(parseStageFact(JSON.stringify(goodFact), M), { ok: true, code: null, proof: { windowsTreeZero: true, serviceOriginalStopped: true }, nativeReceiptSha256: 'a'.repeat(64), relay: null });
+  assert.deepEqual(parseStageFact(JSON.stringify({ ...goodFact, relay: [{ role: 'trivy' }] }), M).relay, [{ role: 'trivy' }], 'stage R rows are passed through for the executor to validate');
   const refused = parseStageFact(JSON.stringify({ ...goodFact, state: 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED' }), M);
   assert.equal(refused.ok, false);
   assert.equal(refused.code, 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED');
