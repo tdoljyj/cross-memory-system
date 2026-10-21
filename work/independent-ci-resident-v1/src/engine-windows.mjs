@@ -32,6 +32,7 @@ export const PUMP_CODES = Object.freeze(['ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TR
 // resident may write next to it for an Owner abort (windows/SwapBroker.cs, StopRequest).
 export const BROKER_REQUEST_CONTRACT = 'clued.independent-ci.swap-broker-request/2';
 export const BROKER_STOP_CONTRACT = 'clued.independent-ci.swap-broker-stop/1';
+export const BROKER_STOP_RECEIPT_CONTRACT = 'clued.independent-ci.swap-broker-stop-receipt/1';
 const NONCE32 = /^[0-9a-f]{32}$/;
 const SWAP_REQUEST = /^([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.json$/;
 
@@ -104,28 +105,55 @@ export class WindowsEngine {
     return planSha256;
   }
 
-  // Owner abort of a running scanner-issuer stage. Idempotent; the executor calls it again on every poll until the
-  // broker stop is written or the stage has ended. Each effect is create-only and bound to this batch's stage:
+  // Owner abort of a running scanner-issuer stage. Idempotent; the executor calls it again on every poll until it
+  // answers done or the stage has ended. Each effect is create-only, bound to this batch's stage, and tried on its own:
   //   - the stage is not invoked at all if it has not been yet (invoke() checks this flag);
-  //   - the companion's bridge pump for the stage is cancelled (it stops relaying, never stops the worker);
-  //   - a stop request next to the in-flight broker request: the broker sends the runner service one
-  //     SERVICE_CONTROL_STOP, which the helper handles (STOP_REQUESTED) by draining its own job object.
+  //   - first a stop request next to the in-flight broker request: the broker sends the runner service one
+  //     SERVICE_CONTROL_STOP, which the helper handles (STOP_REQUESTED) by draining its own job object, and records
+  //     what it did in its own receipt (stopOutcome);
+  //   - only once that receipt says STOP_SENT, the companion's bridge pump for the stage is cancelled (it stops relaying,
+  //     never stops the worker). Before that the pump, and its blocked hand-over, run exactly as without an abort, so a
+  //     stop that does not reach the helper leaves the stage no worse off (independent review, M4).
   async requestStop(batch, number) {
     check(ABORTABLE_IN_FLIGHT.includes(number) && batch && typeof batch.batchId === 'string', 'OWNER_ABORT_STOP_TARGET_INVALID');
     this.abortRequested = { batchId: batch.batchId, stage: number };
-    const out = { pump: false, broker: false, requestId: null };
-    const pump = this.inflight;
-    if (pump && pump.batchId === batch.batchId && pump.stage === number) out.pump = await this.companionMailbox.cancel(await pump.request, 'owner-abort');
-    const swap = await findInflightSwap(this.paths.brokerRoot, number, await this.stagePlanSha256(batch, number));
-    if (swap) {
+    const mine = s => s && s.batchId === batch.batchId && s.stage === number;
+    const out = { broker: false, requestId: mine(this.abortStop) ? this.abortStop.requestId : null, stopCode: null, pump: false, done: false };
+    if (!out.requestId) {
       try {
-        await writeNew(path.join(this.paths.brokerRoot, 'requests', `${swap.requestId}.stop`), { contract: BROKER_STOP_CONTRACT, ...swap });
-      } catch (error) {
-        if (error.code !== 'CREATE_ONLY_TARGET_EXISTS') throw error;
-      }
-      Object.assign(out, { broker: true, requestId: swap.requestId });
+        const swap = await findInflightSwap(this.paths.brokerRoot, number, await this.stagePlanSha256(batch, number));
+        if (swap) {
+          try {
+            await writeNew(path.join(this.paths.brokerRoot, 'requests', `${swap.requestId}.stop`), { contract: BROKER_STOP_CONTRACT, ...swap });
+          } catch (error) {
+            if (error.code !== 'CREATE_ONLY_TARGET_EXISTS') throw error;
+          }
+          // Remembered: once the broker answers the swap it is no longer "in flight", but its stop receipt stays readable.
+          this.abortStop = { batchId: batch.batchId, stage: number, requestId: swap.requestId };
+          out.requestId = swap.requestId;
+        }
+      } catch { /* not found or not written yet: the next poll tries again */ }
     }
+    out.broker = out.requestId !== null;
+    if (out.requestId) out.stopCode = await this.stopOutcome(out.requestId);
+    const pump = this.inflight;
+    const pumpInFlight = mine(pump);
+    if (out.stopCode === 'STOP_SENT' && pumpInFlight) {
+      try { out.pump = await this.companionMailbox.cancel(await pump.request, 'owner-abort'); } catch { out.pump = false; }
+    }
+    out.done = out.stopCode !== null && (out.stopCode !== 'STOP_SENT' || !pumpInFlight || out.pump);
     return out;
+  }
+
+  // The broker's create-only receipt of one stop request (SwapBroker.cs TryOwnerStop): its code, or null when there is
+  // none yet or it does not read as exactly that receipt.
+  async stopOutcome(requestId) {
+    try {
+      const file = path.join(this.paths.brokerRoot, 'responses', `${requestId}.stop.json`);
+      if (!(await exists(file))) return null;
+      const v = parseBoundedJson(await readBounded(file, 4096, 'BROKER_STOP_RECEIPT_REFUSED'), 4096, 'BROKER_STOP_RECEIPT_REFUSED');
+      return v?.contract === BROKER_STOP_RECEIPT_CONTRACT && v.requestId === requestId && typeof v.code === 'string' && CODE.test(v.code) ? v.code : null;
+    } catch { return null; }
   }
 
   stopRequested(batch, number) { return this.abortRequested?.batchId === batch.batchId && this.abortRequested.stage === number; }

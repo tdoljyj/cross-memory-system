@@ -76,7 +76,8 @@ export function fakeEngine(script = {}) {
     async archiveFailure(batch, reason) { calls.push(['archive-windows', reason]); return script.archiveWindows ?? { verified: true, directory: `failed-x-${reason}-000000000000` }; },
     async windowsQuiescence() { return script.windows ?? WINDOWS_CLEAN; },
     // Owner abort (DESIGN §6.5): the stop request of a running scanner-issuer stage.
-    async requestStop(batch, number) { calls.push(['request-stop', number]); script.onStop?.(number); return script.stop ?? { pump: true, broker: true, requestId: '0a1b2c3d-0000-4000-8000-000000000001' }; },
+    async requestStop(batch, number) { calls.push(['request-stop', number]); script.onStop?.(number); return script.stop ?? { broker: true, requestId: '0a1b2c3d-0000-4000-8000-000000000001', stopCode: 'STOP_SENT', pump: true, done: true }; },
+    async stopOutcome() { return script.stopCode === undefined ? 'STOP_SENT' : script.stopCode; },
   };
   return engine;
 }

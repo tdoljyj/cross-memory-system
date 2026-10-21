@@ -91,15 +91,17 @@ export function classifyFailure(code, proof, stageNumber) {
 // Source layout), which publish no check. Every other stage runs to its own end; the abort takes the next safe point.
 export const ABORTABLE_IN_FLIGHT = Object.freeze([2, 4, 6]);
 export const OWNER_ABORTED = 'OWNER_ABORTED';
-// How such a stage may end once it was asked to stop for an abort: any ending that is clean anyway, the stopped
-// entry's missing outcome (STAGE_OUTCOME_MISSING: the helper drained its own job before the entry wrote it; UNKNOWN
-// in every other path), a stage that was not invoked because the abort came first, or the cancelled bridge pump.
+// How such a stage may end once it was asked to stop for an abort: any ending that is clean anyway, a stage that was
+// not invoked because the abort came first, the bridge pump cancelled after the stop was sent, or the stopped entry's
+// missing outcome (STAGE_OUTCOME_MISSING: UNKNOWN in every other path). The last one only when the broker's own
+// receipt says STOP_SENT, so the stage provably ended through the helper's stop path (independent review, M2).
 // Always together with the Windows half of the cleanup proof (helper tree drained, original binary restored).
 export const OWNER_ABORT_STAGE_ENDINGS = Object.freeze([...TRANSIENT_CODES, ...CLEAN_FINAL_CODES, ...RESIDENT_CLEAN,
   'STAGE_OUTCOME_MISSING', 'OWNER_ABORT_REQUESTED', 'COMPANION_PUMP_CANCELLED']);
 const ABORT_ENDINGS = new Set(OWNER_ABORT_STAGE_ENDINGS);
-export function abortStageEndingClean(result) {
+export function abortStageEndingClean(result, { stopSent = false } = {}) {
   if (!result || result.ok === true) return !!result;
+  if (result.code === 'STAGE_OUTCOME_MISSING' && stopSent !== true) return false;
   return typeof result.code === 'string' && ABORT_ENDINGS.has(result.code)
     && result.proof?.windowsTreeZero === true && result.proof?.serviceOriginalStopped === true;
 }

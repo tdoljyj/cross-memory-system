@@ -48,9 +48,11 @@ test('the request contract: exact keys and bounds; the scanner-issuer stages are
   for (const code of ['STAGE_HELPER_NOT_STOPPED_IN_TIME', 'STAGE_ORIGINAL_NOT_RESTORED', 'STAGE_CHILD_TREE_UNCONFIRMED', 'PUBLICATION_UNCERTAIN',
     'BROKER_CONFIGURATION_CONFLICT', 'BROKER_RESPONSE_UNCONFIRMED', 'ROLE_ALREADY_PUBLISHED_ON_HEAD', 'COMPANION_PUMP_UNCONFIRMED']) assert.ok(!OWNER_ABORT_STAGE_ENDINGS.includes(code), code);
   assert.deepEqual(UNKNOWN_CODES.filter(c => OWNER_ABORT_STAGE_ENDINGS.includes(c)), ['STAGE_OUTCOME_MISSING'], 'only the stopped entry\'s missing outcome is admitted from the unknown list');
-  assert.equal(abortStageEndingClean({ ok: false, code: 'STAGE_OUTCOME_MISSING', proof: WINDOWS_CLEAN }), true);
-  assert.equal(abortStageEndingClean({ ok: false, code: 'STAGE_OUTCOME_MISSING', proof: { windowsTreeZero: false, serviceOriginalStopped: true } }), false);
-  assert.equal(abortStageEndingClean({ ok: false, code: 'STAGE_OUTCOME_MISSING', proof: {} }), false, 'never without the stage\'s own Windows proof');
+  assert.equal(abortStageEndingClean({ ok: false, code: 'STAGE_OUTCOME_MISSING', proof: WINDOWS_CLEAN }, { stopSent: true }), true);
+  assert.equal(abortStageEndingClean({ ok: false, code: 'STAGE_OUTCOME_MISSING', proof: WINDOWS_CLEAN }), false, 'a missing outcome only after the broker sent the stop');
+  assert.equal(abortStageEndingClean({ ok: false, code: 'STAGE_OUTCOME_MISSING', proof: { windowsTreeZero: false, serviceOriginalStopped: true } }, { stopSent: true }), false);
+  assert.equal(abortStageEndingClean({ ok: false, code: 'STAGE_OUTCOME_MISSING', proof: {} }, { stopSent: true }), false, 'never without the stage\'s own Windows proof');
+  assert.equal(abortStageEndingClean({ ok: false, code: 'FORMAL_BRIDGE_STAGE_DEADLINE', proof: WINDOWS_CLEAN }), true, 'a clean ending needs no stop');
 });
 
 test('a batch waiting for hosted signals is aborted at the next tick start: FAILED_CLEAN OWNER_ABORTED, archived rename-only, nothing else ran', async t => {
@@ -82,7 +84,7 @@ test('an abort during a scanner-issuer stage stops it through the broker and hel
   const f = await executorFixture(t, { engine });
   let stopAsked;
   const asked = new Promise(resolve => { stopAsked = resolve; });
-  engine.requestStop = async (batch, number) => { engine.calls.push(['request-stop', number, batch.key]); stopAsked(); return { pump: true, broker: true, requestId: '0a1b2c3d-0000-4000-8000-000000000001' }; };
+  engine.requestStop = async (batch, number) => { engine.calls.push(['request-stop', number, batch.key]); stopAsked(); return { broker: true, requestId: '0a1b2c3d-0000-4000-8000-000000000001', stopCode: 'STOP_SENT', pump: true, done: true }; };
   engine.runStage = async (batch, stage) => {
     engine.calls.push(['stage', stage.number]);
     if (stage.number !== 2) return { ok: true };
@@ -99,8 +101,8 @@ test('an abort during a scanner-issuer stage stops it through the broker and hel
   assert.deepEqual(stagesRun(engine), [1, 2], 'stages 3..8 never ran: nothing was published after the abort');
   assert.deepEqual(engine.calls.filter(c => c[0] === 'request-stop').map(c => [c[1], c[2]]), [[2, KEY]], 'asked once, for this batch\'s stage 2');
   const s = await f.ledger.state(KEY);
-  assert.deepEqual([s.terminal.facts.stage, s.terminal.facts.stageCode, s.abort.safePoint], [2, 'STAGE_OUTCOME_MISSING', 'in-stage-2']);
-  assert.deepEqual((await bodies(f, 'owner-abort-stop-requested')).map(b => [b.stage, b.pump]), [[2, true]]);
+  assert.deepEqual([s.terminal.facts.stage, s.terminal.facts.stageCode, s.terminal.facts.stopCode, s.abort.safePoint], [2, 'STAGE_OUTCOME_MISSING', 'STOP_SENT', 'in-stage-2']);
+  assert.deepEqual((await bodies(f, 'owner-abort-stop-requested')).map(b => b.stage), [2]);
   assert.deepEqual((await bodies(f, 'stage-terminal')).map(b => [b.stage, b.ok]), [[1, true], [2, false]]);
   assert.ok(!engine.calls.some(c => /kill|retract|publish/i.test(String(c[0]))), 'the engine was never asked to kill, publish or retract');
 });
@@ -169,7 +171,7 @@ test('a stopped stage that did not end cleanly is UNKNOWN: HALT with the stage\'
   const f = await executorFixture(t, { engine });
   let stopAsked;
   const asked = new Promise(resolve => { stopAsked = resolve; });
-  engine.requestStop = async () => { stopAsked(); return { pump: true, broker: true, requestId: null }; };
+  engine.requestStop = async () => { stopAsked(); return { broker: false, requestId: null, stopCode: null, pump: false, done: false }; };
   engine.runStage = async (batch, stage) => {
     engine.calls.push(['stage', stage.number]);
     if (stage.number !== 4) return { ok: true };
@@ -234,6 +236,127 @@ test('inspect lists every open batch with the exact values an abort names', asyn
   const latest = await f.ledger.latestRecord(KEY);
   assert.deepEqual(view.abortTargets, [{ batchKey: KEY, state: 'STARTED', waiting: true, aborting: false, latestLedgerEntry: '15-relay-wait.json', ledgerEntrySha256: latest.sha256 }]);
   assert.equal(view.openBatches, 1);
+});
+
+// ---- independent review of v0.8: M1, M2, M5, M6 and the untested paths of M7 ----
+
+test('an acceptance that fails half-way at a tick start HALTs in that tick: no other batch starts behind it (review M1)', async t => {
+  const f = await waitingBatch(t);
+  await ownerAborts(f);
+  await f.drop(triggerBytes({ pr: 885, headSha: '7'.repeat(40) }));
+  const remember = f.exec.owner.remember.bind(f.exec.owner);
+  let failed = false;
+  f.exec.owner.remember = async (...a) => { if (!failed) { failed = true; throw Object.assign(new Error('busy'), { code: 'EBUSY' }); } return remember(...a); };
+  assert.equal((await f.exec.tick()).state, 'HALTED');
+  const s = await f.ledger.state(KEY);
+  assert.deepEqual([s.outcome, s.terminal.facts.basis], ['FAILED_UNKNOWN', 'owner-abort-unconfirmed']);
+  assert.deepEqual(stagesRun(f.engine), [1], 'PR 885 was not reserved, nothing else ran');
+  assert.equal((await f.ledger.open()).length, 0);
+});
+
+test('a stage that ends with a missing outcome while the stop was never sent is UNKNOWN: HALT (review M2)', async t => {
+  const engine = fakeEngine({ stopCode: 'BROKER_STOP_NOT_THIS_HELPER' });
+  const f = await executorFixture(t, { engine });
+  let stopAsked;
+  const asked = new Promise(resolve => { stopAsked = resolve; });
+  engine.requestStop = async () => { stopAsked(); return { broker: true, requestId: '0a1b2c3d-0000-4000-8000-000000000001', stopCode: 'BROKER_STOP_NOT_THIS_HELPER', pump: false, done: true }; };
+  engine.runStage = async (batch, stage) => {
+    engine.calls.push(['stage', stage.number]);
+    if (stage.number !== 2) return { ok: true };
+    await ownerAborts(f, batch.key);
+    await asked;
+    return { ok: false, code: 'STAGE_OUTCOME_MISSING', proof: WINDOWS_CLEAN };
+  };
+  await f.drop(triggerBytes());
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['HALTED', 'STAGE_OUTCOME_MISSING']);
+  assert.equal((await f.ledger.state(KEY)).outcome, 'FAILED_UNKNOWN');
+  // A clean ending the stage reached on its own still aborts cleanly without STOP_SENT.
+  const g = await executorFixture(t, { engine: fakeEngine({ stopCode: null }) });
+  let stop2;
+  const asked2 = new Promise(resolve => { stop2 = resolve; });
+  g.engine.requestStop = async () => { stop2(); return { broker: false, requestId: null, stopCode: null, pump: false, done: false }; };
+  g.engine.runStage = async (batch, stage) => {
+    g.engine.calls.push(['stage', stage.number]);
+    if (stage.number !== 2) return { ok: true };
+    await ownerAborts(g, batch.key);
+    await asked2;
+    return { ok: false, code: 'FORMAL_BRIDGE_STAGE_DEADLINE', proof: WINDOWS_CLEAN };
+  };
+  await g.drop(triggerBytes());
+  assert.deepEqual([(await g.exec.tick()).failureCode, (await g.ledger.state(KEY)).terminal.facts.stopCode], [OWNER_ABORTED, null]);
+});
+
+test('an acceptance whose receipt failed during a stage still asks the stage to stop (review M5)', async t => {
+  const engine = fakeEngine();
+  const f = await executorFixture(t, { engine });
+  let stopAsked;
+  const asked = new Promise(resolve => { stopAsked = resolve; });
+  engine.requestStop = async (batch, number) => { engine.calls.push(['request-stop', number]); stopAsked(); return { broker: true, requestId: '0a1b2c3d-0000-4000-8000-000000000001', stopCode: 'STOP_SENT', pump: true, done: true }; };
+  const receipt = f.exec.receipt.bind(f.exec);
+  let failed = false;
+  f.exec.receipt = async (type, body) => { if (type === 'owner-abort-accepted' && !failed) { failed = true; throw Object.assign(new Error('disk'), { code: 'EIO' }); } return receipt(type, body); };
+  engine.runStage = async (batch, stage) => {
+    engine.calls.push(['stage', stage.number]);
+    if (stage.number !== 2) return { ok: true };
+    await ownerAborts(f, batch.key);
+    await asked;
+    return { ok: false, code: 'STAGE_OUTCOME_MISSING', proof: WINDOWS_CLEAN };
+  };
+  await f.drop(triggerBytes());
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', OWNER_ABORTED]);
+  assert.equal(engine.calls.filter(c => c[0] === 'request-stop').length, 1, 'the stop was requested although the acceptance receipt failed');
+});
+
+test('a waiting batch is not aborted while another unarchived scene exists: the full-scope archive never takes it (review M6)', async t => {
+  const f = await waitingBatch(t);
+  const other = batchKey(subject({ pr: 886, headSha: '8'.repeat(40) }));
+  await f.ledger.reserve(other, subject({ pr: 886, headSha: '8'.repeat(40) }));
+  await f.ledger.terminal(other, 'FAILED_UNKNOWN', { failureCode: 'X_Y' });
+  await ownerAborts(f);
+  assert.equal((await f.exec.tick()).state, 'HALTED');
+  assert.deepEqual((await bodies(f, 'owner-request-refused')).map(b => b.failureCode), ['OWNER_ABORT_UNARCHIVED_SCENE_PRESENT']);
+  assert.equal(Ledger.resumable(await f.ledger.state(KEY)), true, 'the waiting batch is untouched');
+  assert.equal(f.engine.calls.filter(c => c[0] === 'archive-windows').length, 0);
+});
+
+test('an abort of another batch read during a stage is left for the next tick, which refuses it', async t => {
+  const engine = fakeEngine();
+  const f = await executorFixture(t, { engine });
+  const stranger = 'b'.repeat(64);
+  engine.runStage = async (batch, stage) => {
+    engine.calls.push(['stage', stage.number]);
+    if (stage.number === 2) await writeOwnerRequest(path.join(f.root, 'owner'), abortRequest({ batchKey: stranger, expectedLedgerEntrySha256: 'd'.repeat(64), reason: 'wrong batch', by: OWNER }, f.clock), f.clock);
+    return { ok: true };
+  };
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.equal(engine.calls.filter(c => c[0] === 'request-stop').length, 0);
+  assert.equal((await bodies(f, 'owner-request-refused')).length, 0, 'not touched inside the batch');
+  await f.exec.tick();
+  assert.deepEqual((await bodies(f, 'owner-request-refused')).map(b => b.failureCode), ['OWNER_ABORT_BATCH_NOT_OPEN']);
+});
+
+test('at a tick start after a failed recovery, an open entry that is no waiting batch is refused (OWNER_ABORT_NOT_AT_SAFE_POINT)', async t => {
+  const f = await executorFixture(t);
+  await f.ledger.reserve(KEY, subject());
+  await f.ledger.markStarted(KEY, { batchId: `${KEY.slice(0, 16)}-${'0'.repeat(12)}` });
+  await ownerAborts(f);
+  f.exec.recover = async () => { throw new Error('recovery failed'); };
+  assert.equal((await f.exec.tick()).state, 'HALTED');
+  assert.deepEqual((await bodies(f, 'owner-request-refused')).map(b => b.failureCode), ['OWNER_ABORT_NOT_AT_SAFE_POINT']);
+  assert.equal((await f.ledger.state(KEY)).state, 'STARTED', 'nothing was done to it');
+});
+
+test('rearm-resident.ps1 -Request Abort writes exactly the fields the service validates, and only lower-case hex', async () => {
+  const text = await fs.readFile(new URL('../windows/rearm-resident.ps1', import.meta.url), 'utf8');
+  const line = text.split('\n').find(l => l.includes(`contract = '${ABORT_CONTRACT}'`));
+  assert.ok(line, 'the abort body is written by the script');
+  const keys = [...line.matchAll(/(\w+) = /g)].map(m => m[1]).sort();
+  assert.deepEqual(keys, ['batchKey', 'by', 'contract', 'ledgerEntrySha256', 'nonce', 'reason', 'requestedAt']);
+  assert.match(text, /\$BatchKey -cnotmatch '\^\[0-9a-f\]\{64\}\$'/);
+  assert.match(text, /\$ExpectedLedgerEntrySha256 -cnotmatch '\^\[0-9a-f\]\{64\}\$'/);
 });
 
 test('the abort before stage 1 needs the reservation digest and never reaches the admission stage', async t => {

@@ -165,6 +165,7 @@ export class Companion {
     try {
       while (!(await ready('issue'))) { check(this.clock() < deadline, 'ACTUAL_ISSUE_NOT_PUBLISHED'); await live(); await this.sleep(100); }
       check(await this.relay('SendIssue', 0), 'ISSUE_TRANSFER_UNCONFIRMED');
+      await live(); // a cancel that came with the issue transfer starts no worker
       const start = await this.run(this.a.startNoBlock('clued-ci-worker', request.jobId), { timeoutMs: 30_000 });
       check(start.code === 0, 'LINUX_WORKER_START_UNCONFIRMED');
       let sequence = 1, blockedRefused = false;

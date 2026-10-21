@@ -50,6 +50,15 @@ public static class BrokerPureTests
             Refused(() => StopRequest.Validate(utf8(stop(id, 2, nonce, config).Replace("}", ",\"extra\":1}")), id, nonce, 2, config), "BROKER_STOP_SHAPE", "stop-extra-key");
             Refused(() => StopRequest.Validate(utf8(stop(id, 2, nonce, config).Replace(StopRequest.Contract, "clued.independent-ci.swap-broker-stop/2")), id, nonce, 2, config), "BROKER_STOP_SHAPE", "stop-contract");
             Refused(() => StopRequest.Validate(utf8("{\"contract\":"), id, nonce, 2, config), "BROKER_STOP_SHAPE", "stop-torn");
+            // The one-second decision of TryOwnerStop: 2 START_PENDING, 4 RUNNING, 3 STOP_PENDING, 1 STOPPED.
+            Yes(StopRequest.Decide(4, 77, 77, 4.9) == null, "decide-grace");
+            Yes(StopRequest.Decide(2, 0, 77, 60) == null, "decide-start-pending");
+            Yes(StopRequest.Decide(4, 77, 77, 5) == "SEND", "decide-send");
+            Yes(StopRequest.Decide(4, 78, 77, 60) == "BROKER_STOP_NOT_THIS_HELPER", "decide-other-pid");
+            Yes(StopRequest.Decide(4, 0, 0, 60) == "BROKER_STOP_NOT_THIS_HELPER", "decide-no-pid");
+            Yes(StopRequest.Decide(3, 77, 77, 60) == "HELPER_ALREADY_STOPPING", "decide-stop-pending");
+            Yes(StopRequest.Decide(1, 0, 77, 60) == "HELPER_ALREADY_STOPPING", "decide-stopped");
+            Yes(StopRequest.Decide(7, 77, 77, 60) == "BROKER_STOP_NOT_THIS_HELPER", "decide-paused");
             Console.WriteLine("{\"status\":\"BROKER_PURE_PASS\",\"assertions\":" + n + "}");
             return 0;
         }

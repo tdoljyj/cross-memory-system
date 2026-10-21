@@ -44,7 +44,7 @@ async function fixture(t, { invoke } = {}) {
   const companionMailbox = {
     async send(kind, fields) { sent.push([kind, fields]); return { requestId: ID(9), kind, fields }; },
     async await(req) { return req.kind === 'check-refs' ? { ok: true, code: null } : { ok: false, code: 'COMPANION_PUMP_CANCELLED' }; },
-    async cancel(req, reason) { cancelled.push([req.requestId, reason]); return true; },
+    async cancel(req, reason) { if (companionMailbox.cancelThrows) throw new Error('mailbox'); cancelled.push([req.requestId, reason]); return true; },
   };
   const engine = new WindowsEngine({ run, busy: () => false, companionMailbox, sleep: async () => {}, clock: () => Date.parse('2026-10-21T08:00:00Z'),
     paths: { sourceRoot, workRoot: path.join(root, 'work'), outboxRoot: path.join(root, 'outbox'), nodeExe: 'C:\\resident\\runtime\\node.exe',
@@ -54,7 +54,9 @@ async function fixture(t, { invoke } = {}) {
     if (taken) await fs.writeFile(path.join(brokerRoot, 'responses', `${id}.taken`), Buffer.from([1]));
     if (answered) await fs.writeFile(path.join(brokerRoot, 'responses', `${id}.json`), '{}');
   };
-  return { root, brokerRoot, engine, batch, runs, sent, cancelled, request };
+  // The broker's own receipt of a stop request (SwapBroker.cs TryOwnerStop).
+  const stopReceipt = async (id, code) => fs.writeFile(path.join(brokerRoot, 'responses', `${id}.stop.json`), JSON.stringify({ contract: 'clued.independent-ci.swap-broker-stop-receipt/1', requestId: id, code, at: '2026-10-21T08:00:05Z' }));
+  return { root, brokerRoot, engine, batch, runs, sent, cancelled, request, stopReceipt, companionMailbox };
 }
 
 test('the stop request is bound to the one taken, unanswered swap of this stage and this batch\'s stage package', async t => {
@@ -66,7 +68,7 @@ test('the stop request is bound to the one taken, unanswered swap of this stage 
   await f.request(ID(5), { taken: false });                // not taken by the broker yet
   assert.deepEqual(await findInflightSwap(f.brokerRoot, 2, PLAN), { requestId: ID(1), nonce: 'a'.repeat(32), stage: 2, configSha256: PLAN });
   const out = await f.engine.requestStop(f.batch, 2);
-  assert.deepEqual([out.broker, out.requestId], [true, ID(1)]);
+  assert.deepEqual([out.broker, out.requestId, out.stopCode, out.done], [true, ID(1), null, false], 'written; not done until the broker answers');
   const stop = JSON.parse(await fs.readFile(path.join(f.brokerRoot, 'requests', `${ID(1)}.stop`), 'utf8'));
   assert.deepEqual(stop, { configSha256: PLAN, contract: BROKER_STOP_CONTRACT, nonce: 'a'.repeat(32), requestId: ID(1), stage: 2 });
   assert.deepEqual((await fs.readdir(path.join(f.brokerRoot, 'requests'))).filter(n => n.endsWith('.stop')), [`${ID(1)}.stop`], 'no other swap is touched');
@@ -77,7 +79,9 @@ test('the stop request is bound to the one taken, unanswered swap of this stage 
   // Only the scanner-issuer stages, and only a package whose work manifest still matches the batch's pin.
   await assert.rejects(f.engine.requestStop(f.batch, 3), { code: 'OWNER_ABORT_STOP_TARGET_INVALID' });
   await fs.writeFile(path.join(f.batch.dir, 'stage-02', 'work-manifest.json'), '{"planSha256":"' + PLAN + '"}');
-  await assert.rejects(f.engine.requestStop(f.batch, 2), { code: 'OWNER_ABORT_STAGE_PACKAGE_REFUSED' });
+  await assert.rejects(f.engine.stagePlanSha256(f.batch, 2), { code: 'OWNER_ABORT_STAGE_PACKAGE_REFUSED' });
+  const other = await f.engine.requestStop({ ...f.batch, batchId: 'fedcba9876543210-000000000000' }, 2);
+  assert.deepEqual([other.broker, other.done], [false, false], 'a refused package writes no stop; the next poll tries again');
 });
 
 test('a stage asked to stop before it was invoked is never invoked; the refs gate and the runner readback still ran', async t => {
@@ -104,14 +108,59 @@ test('a running issuer stage: the pump of exactly that stage is cancelled; the s
   await f.request(ID(1));
   const stage = f.engine.runStage(f.batch, stages[1]);
   await invoked;
+  // The broker stop first; the pump keeps relaying (and keeps its blocked hand-over) until the stop was sent (review M4).
+  const first = await f.engine.requestStop(f.batch, 2);
+  assert.deepEqual([first.broker, first.stopCode, first.pump, first.done], [true, null, false, false]);
+  assert.deepEqual(f.cancelled, []);
+  await f.stopReceipt(ID(1), 'STOP_SENT');
+  // The swap is answered by now in real life; the engine remembers its request id.
+  await fs.writeFile(path.join(f.brokerRoot, 'responses', `${ID(1)}.json`), '{}');
   const out = await f.engine.requestStop(f.batch, 2);
-  assert.deepEqual([out.pump, out.broker], [true, true]);
+  assert.deepEqual([out.broker, out.requestId, out.stopCode, out.pump, out.done], [true, ID(1), 'STOP_SENT', true, true]);
   assert.deepEqual(f.cancelled, [[ID(9), 'owner-abort']], 'the relay-stage pump of this stage, once');
+  assert.equal(await f.engine.stopOutcome(ID(1)), 'STOP_SENT');
   release();
   const r = await stage;
   assert.deepEqual([r.ok, r.code, r.proof.windowsTreeZero, r.proof.serviceOriginalStopped], [false, 'STAGE_OUTCOME_MISSING', true, true]);
   assert.equal(f.engine.inflight, null, 'nothing in flight after the stage');
   assert.ok(PUMP_CODES.includes('COMPANION_PUMP_CANCELLED'));
+});
+
+test('a stop the broker did not send never cancels the pump; a failing pump cancel never blocks the broker stop (review M4)', async t => {
+  let release;
+  const running = new Promise(resolve => { release = resolve; });
+  let started;
+  const invoked = new Promise(resolve => { started = resolve; });
+  const f = await fixture(t, { invoke: async () => { started(); await running; return { code: 41, stdout: '{}' }; } });
+  await f.request(ID(1));
+  const stage = f.engine.runStage(f.batch, stages[1]);
+  await invoked;
+  await f.stopReceipt(ID(1), 'BROKER_STOP_NOT_THIS_HELPER');
+  const out = await f.engine.requestStop(f.batch, 2);
+  assert.deepEqual([out.stopCode, out.pump, out.done], ['BROKER_STOP_NOT_THIS_HELPER', false, true], 'settled; the pump keeps relaying');
+  assert.deepEqual(f.cancelled, []);
+  release();
+  await stage;
+  // A second batch: the mailbox cancel throws, the stop is still written and the answer is not done.
+  let release2, started2;
+  const running2 = new Promise(resolve => { release2 = resolve; });
+  const invoked2 = new Promise(resolve => { started2 = resolve; });
+  const g = await fixture(t, { invoke: async () => { started2(); await running2; return { code: 41, stdout: '{}' }; } });
+  g.companionMailbox.cancelThrows = true;
+  await g.request(ID(2));
+  await g.stopReceipt(ID(2), 'STOP_SENT');
+  const stage2 = g.engine.runStage(g.batch, stages[1]);
+  await invoked2;
+  const out2 = await g.engine.requestStop(g.batch, 2);
+  assert.deepEqual([out2.broker, out2.stopCode, out2.pump, out2.done], [true, 'STOP_SENT', false, false], 'tried again on the next poll');
+  g.companionMailbox.cancelThrows = false;
+  const out3 = await g.engine.requestStop(g.batch, 2);
+  assert.deepEqual([out3.pump, out3.done], [true, true]);
+  release2();
+  await stage2;
+  assert.equal(await g.engine.stopOutcome(ID(3)), null, 'no receipt, no code');
+  await fs.writeFile(path.join(g.brokerRoot, 'responses', `${ID(4)}.stop.json`), JSON.stringify({ contract: 'x', requestId: ID(4), code: 'STOP_SENT' }));
+  assert.equal(await g.engine.stopOutcome(ID(4)), null, 'only exactly the broker receipt counts');
 });
 
 test('the companion pump stops relaying on a cancel of its own request and never stops or kills the worker', async t => {
@@ -140,6 +189,30 @@ test('the companion pump stops relaying on a cancel of its own request and never
   await fs.writeFile(path.join(root, 'requests', `${other.requestId}.cancel.json`), '{"contract":');
   assert.equal(await mailbox.cancelled(other), false, 'a torn cancel is no cancel');
   await assert.rejects(mailbox.cancel(other, 'because'), { code: 'MAILBOX_CANCEL_REFUSED' });
+});
+
+test('a cancel that comes with the issue transfer starts no worker', async t => {
+  const root = await tempRoot(t);
+  let now = Date.parse('2026-10-21T08:00:00Z');
+  const clock = () => now;
+  const mailbox = await Mailbox.open(root, clock);
+  const log = [];
+  let req;
+  const run = async argv => {
+    const a = argv.join(' ');
+    log.push(a);
+    if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
+    if (a.includes('-Mode SendIssue')) { await mailbox.cancel(req, 'owner-abort'); return { code: 0, stdout: JSON.stringify({ status: 'PUBLIC_RECORD_TRANSFERRED', terminalConfirmed: true }) }; }
+    return { code: 0, stdout: '' };
+  };
+  const cfg = { contract: 'clued.independent-ci.resident-companion-config/1', wslExe: 'C:\\Windows\\System32\\wsl.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    relayScript: 'C:\\x\\relay-public.ps1', bundleScript: 'C:\\x\\build-bundle.ps1', windowsSpool: 'C:\\ProgramData\\CluedIndependentCI\\formal-spool', distribution: 'Ubuntu-24.04',
+    bridgeManifestSha256: 'b'.repeat(64), linuxTool: '/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux' };
+  const c = new Companion({ cfg, mailbox, run, fileExists: async p => p.endsWith('issue.ready.json'), sleep: async ms => { now += ms; }, clock });
+  req = await mailbox.send('relay-stage', { batchId: '0123456789abcdef-000000000000', stage: 2, jobId: '2'.repeat(64) }, 45 * 60_000);
+  await c.step();
+  assert.deepEqual([(await mailbox.poll(req)).code], ['COMPANION_PUMP_CANCELLED']);
+  assert.equal(log.some(a => a.includes('start --no-block')), false);
 });
 
 test('a cancel during the callback rounds skips the blocked hand-over: the pump answers at once', async t => {

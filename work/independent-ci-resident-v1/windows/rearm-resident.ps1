@@ -58,6 +58,8 @@ $body = if ($Request -eq 'Rearm') {
   [ordered]@{ by = $me.User.Value; contract = 'clued.independent-ci.resident-owner-rearm/1'; haltSha256 = $ExpectedHaltSha256; nonce = $hex; reason = $Reason; requestedAt = $now.ToString('o') }
 } elseif ($Request -eq 'Abort') {
   if (-not $BatchKey -or -not $ExpectedLedgerEntrySha256 -or -not $Reason) { throw 'REVIEWED_BATCH_LEDGER_ENTRY_AND_REASON_REQUIRED' }
+  # ValidatePattern ignores case; the service accepts lower-case hex only.
+  if ($BatchKey -cnotmatch '^[0-9a-f]{64}$' -or $ExpectedLedgerEntrySha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'LOWER_CASE_HEX_REQUIRED' }
   [ordered]@{ batchKey = $BatchKey; by = $me.User.Value; contract = 'clued.independent-ci.resident-owner-abort/1'; ledgerEntrySha256 = $ExpectedLedgerEntrySha256; nonce = $hex; reason = $Reason; requestedAt = $now.ToString('o') }
 } else {
   if (-not $ExpectedPausedSha256) { throw 'REVIEWED_PAUSE_REQUIRED' }

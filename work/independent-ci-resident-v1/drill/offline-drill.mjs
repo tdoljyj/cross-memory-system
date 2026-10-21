@@ -87,7 +87,8 @@ const engine = {
     return r ?? { ok: true, factsSha256: '8'.repeat(64) };
   },
   // Owner abort: the stop request of a running scanner-issuer stage (the real engine writes the broker stop and the pump cancel).
-  async requestStop(batch, number) { this.stopRequests = (this.stopRequests ?? 0) + 1; this.stopAsked?.(number); return { pump: true, broker: true, requestId: null }; },
+  async requestStop(batch, number) { this.stopRequests = (this.stopRequests ?? 0) + 1; this.stopAsked?.(number); return { broker: true, requestId: '0d0d0d0d-0000-4000-8000-000000000909', stopCode: 'STOP_SENT', pump: true, done: true }; },
+  async stopOutcome() { return 'STOP_SENT'; }, // the broker's receipt: the one SERVICE_CONTROL_STOP was sent
   async closeBatch(batch) { const w = await archive(winSpool, batch.key, 'success-close'); const l = await archive(linSpool, batch.key, 'success-close', LINUX); return { verified: w.verified && l.verified, archived: w.moved + l.moved }; },
   async archiveFailure(batch, reason) { return archive(winSpool, batch.key, reason); },
   async windowsQuiescence() { return WINDOWS_CLEAN; },

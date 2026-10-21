@@ -211,30 +211,38 @@ public sealed class SwapBroker : ServiceBase
     }
 
     // Owner abort (DESIGN §6.5), checked once a second while the helper of this swap runs. Returns true once the
-    // stop request is settled (sent, refused or no longer needed), false to look again next second: the helper is
-    // still starting, the request is younger than StopGraceSeconds after the start, or its bytes are not readable
-    // yet (the resident may still be writing them; tried for StopReadAttempts seconds).
-    const int StopGraceSeconds = 5, StopReadAttempts = 10;
-    bool TryOwnerStop(string id, int stage, string nonce, string configSha256, DateTime startedHelperAt, ref int readAttempts)
+    // stop request is settled (sent, refused or no longer needed), false to look again next second: the helper is still
+    // starting or younger than StopRequest.GraceSeconds (StopRequest.Decide), or a read, a status query or the control
+    // call failed in a way that may pass (the resident may still be writing the request; a sharing violation; a
+    // momentary SCM error). Those are tried for StopAttempts seconds, then settled with a refusal code.
+    const int StopAttempts = 10;
+    bool TryOwnerStop(string id, int stage, string nonce, string configSha256, DateTime startedHelperAt, ref int attempts)
     {
         var file = Path.Combine(root, "broker", "requests", id + ".stop");
-        if (!File.Exists(file) || DateTime.UtcNow < startedHelperAt.AddSeconds(StopGraceSeconds)) return false;
+        if (!File.Exists(file)) return false;
         string code;
         try
         {
-            byte[] bytes;
-            try { bytes = ReadBounded(file); }
-            catch (Exception) { if (++readAttempts < StopReadAttempts) return false; throw new BrokerRefusal("BROKER_STOP_SHAPE"); }
-            try { StopRequest.Validate(bytes, id, nonce, stage, configSha256); }
-            catch (BrokerRefusal r) { if (r.Code == "BROKER_STOP_SHAPE" && ++readAttempts < StopReadAttempts) return false; throw; }
+            StopRequest.Validate(ReadBounded(file), id, nonce, stage, configSha256);
             var s = ResidentScmV2.ReadStatus();
-            if (s.State == 2) return false;                     // START_PENDING: the helper accepts STOP only once running
-            if (s.State == 1 || s.State == 3) code = "HELPER_ALREADY_STOPPING";
-            else if (s.State != 4 || s.Pid == 0 || s.Pid != ResidentScmV2.IndependentStartPid) code = "BROKER_STOP_NOT_THIS_HELPER";
-            else code = RunnerStop.Send() ? "STOP_SENT" : "STOP_NOT_ACCEPTED";
+            var decision = StopRequest.Decide(s.State, s.Pid, ResidentScmV2.IndependentStartPid, (DateTime.UtcNow - startedHelperAt).TotalSeconds);
+            if (decision == null) return false;
+            if (decision != "SEND") code = decision;
+            else if (RunnerStop.Send()) code = "STOP_SENT";
+            else if (++attempts < StopAttempts) return false;   // not delivered: nothing reached the helper yet
+            else code = "STOP_NOT_ACCEPTED";
         }
-        catch (BrokerRefusal r) { code = r.Code; }
-        catch (Exception) { code = "BROKER_STOP_UNCONFIRMED"; }
+        catch (BrokerRefusal r)
+        {
+            // A request still being written reads as a size or shape refusal for a moment; every other refusal is final.
+            if ((r.Code == "BROKER_STOP_SHAPE" || r.Code == "BROKER_REQUEST_SIZE") && ++attempts < StopAttempts) return false;
+            code = r.Code == "BROKER_REQUEST_SIZE" ? "BROKER_STOP_SHAPE" : r.Code;
+        }
+        catch (Exception)
+        {
+            if (++attempts < StopAttempts) return false;
+            code = "BROKER_STOP_UNCONFIRMED";
+        }
         try
         {
             var receipt = new Dictionary<string, object> { { "contract", StopRequest.ReceiptContract }, { "requestId", id }, { "code", code }, { "at", DateTime.UtcNow.ToString("o") } };
@@ -263,11 +271,11 @@ public sealed class SwapBroker : ServiceBase
             finally { r["startCallIssued"] = ResidentScmV2.StartCallIssued; if (ResidentScmV2.IndependentStartPid > 0) r["helperPid"] = (long)ResidentScmV2.IndependentStartPid; }
             // Wait for the helper to stop by itself (it enforces its own deadline and drains its tree), or after the
             // one SERVICE_CONTROL_STOP of an Owner abort of this very swap (TryOwnerStop).
-            bool stopped = false, stopSettled = !(bool)r["started"]; int stopReads = 0; var startedHelperAt = DateTime.UtcNow;
+            bool stopped = false, stopSettled = !(bool)r["started"]; int stopAttempts = 0; var startedHelperAt = DateTime.UtcNow;
             while (DateTime.UtcNow < deadline)
             {
                 if (ResidentScmV2.ReadStatus().State == 1) { stopped = true; break; }
-                if (!stopSettled) stopSettled = TryOwnerStop(id, stage, nonce, configSha256, startedHelperAt, ref stopReads);
+                if (!stopSettled) stopSettled = TryOwnerStop(id, stage, nonce, configSha256, startedHelperAt, ref stopAttempts);
                 Thread.Sleep(1000);
             }
             if (!stopped && ResidentScmV2.ReadStatus().State == 1) stopped = true;
@@ -312,6 +320,18 @@ public static class StopRequest
     public const string Contract = "clued.independent-ci.swap-broker-stop/1";
     public const string ReceiptContract = "clued.independent-ci.swap-broker-stop-receipt/1";
     public static readonly int[] AbortableStages = { 2, 4, 6 };
+    public const double GraceSeconds = 5;
+    // Pure: what to do with a valid stop request this second, from the runner's status (state, pid) and the PID this
+    // broker observed at the start. null = look again next second (still starting, or inside the grace after the start,
+    // which keeps a stop away from the moment the helper creates its job); "SEND" = send the one SERVICE_CONTROL_STOP;
+    // anything else settles the request with that code.
+    public static string Decide(uint state, uint pid, uint independentPid, double secondsSinceStart)
+    {
+        if (state == 2 || secondsSinceStart < GraceSeconds) return null;
+        if (state == 1 || state == 3) return "HELPER_ALREADY_STOPPING";
+        if (state != 4 || pid == 0 || pid != independentPid) return "BROKER_STOP_NOT_THIS_HELPER";
+        return "SEND";
+    }
     public static void Validate(byte[] bytes, string requestId, string nonce, int stage, string configSha256)
     {
         Dictionary<string, object> v;
