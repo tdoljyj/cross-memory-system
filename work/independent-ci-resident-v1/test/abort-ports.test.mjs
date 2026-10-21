@@ -43,8 +43,13 @@ async function fixture(t, { invoke } = {}) {
   };
   const companionMailbox = {
     async send(kind, fields) { sent.push([kind, fields]); return { requestId: ID(9), kind, fields }; },
-    async await(req) { return req.kind === 'check-refs' ? { ok: true, code: null } : { ok: false, code: 'COMPANION_PUMP_CANCELLED' }; },
-    async cancel(req, reason) { if (companionMailbox.cancelThrows) throw new Error('mailbox'); cancelled.push([req.requestId, reason]); return true; },
+    // pumpBlocks: the relay-stage pump answers only once it is cancelled (a pump still waiting on Linux).
+    async await(req) {
+      if (req.kind === 'check-refs') return { ok: true, code: null };
+      if (companionMailbox.pumpBlocks) await new Promise(resolve => { companionMailbox.unblock = resolve; });
+      return { ok: false, code: 'COMPANION_PUMP_CANCELLED' };
+    },
+    async cancel(req, reason) { if (companionMailbox.cancelThrows) throw new Error('mailbox'); cancelled.push([req.requestId, reason]); companionMailbox.unblock?.(); return true; },
   };
   const engine = new WindowsEngine({ run, busy: () => false, companionMailbox, sleep: async () => {}, clock: () => Date.parse('2026-10-21T08:00:00Z'),
     paths: { sourceRoot, workRoot: path.join(root, 'work'), outboxRoot: path.join(root, 'outbox'), nodeExe: 'C:\\resident\\runtime\\node.exe',
@@ -132,14 +137,21 @@ test('a stop the broker did not send never cancels the pump; a failing pump canc
   let started;
   const invoked = new Promise(resolve => { started = resolve; });
   const f = await fixture(t, { invoke: async () => { started(); await running; return { code: 41, stdout: '{}' }; } });
+  f.companionMailbox.pumpBlocks = true;
   await f.request(ID(1));
   const stage = f.engine.runStage(f.batch, stages[1]);
   await invoked;
   await f.stopReceipt(ID(1), 'BROKER_STOP_NOT_THIS_HELPER');
   const out = await f.engine.requestStop(f.batch, 2);
-  assert.deepEqual([out.stopCode, out.pump, out.done], ['BROKER_STOP_NOT_THIS_HELPER', false, true], 'settled; the pump keeps relaying');
+  assert.deepEqual([out.stopCode, out.pump, out.done], ['BROKER_STOP_NOT_THIS_HELPER', false, false], 'the pump keeps relaying while the issuer still runs');
   assert.deepEqual(f.cancelled, []);
+  // The helper ends by itself; the stage now only waits for the pump, which the next poll cancels (second review MINOR 2).
   release();
+  for (let i = 0; i < 20 && f.engine.inflight?.windowsEnded !== true; i += 1) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.engine.inflight?.windowsEnded, true);
+  const after = await f.engine.requestStop(f.batch, 2);
+  assert.deepEqual([after.pump, after.done], [true, true]);
+  assert.deepEqual(f.cancelled, [[ID(9), 'owner-abort']]);
   await stage;
   // A second batch: the mailbox cancel throws, the stop is still written and the answer is not done.
   let release2, started2;

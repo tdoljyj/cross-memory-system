@@ -254,6 +254,55 @@ test('an acceptance that fails half-way at a tick start HALTs in that tick: no o
   assert.equal((await f.ledger.open()).length, 0);
 });
 
+test('the gate: an acceptance that fails half-way and whose UNKNOWN close also fails still runs no other batch (review M1)', async t => {
+  const f = await waitingBatch(t);
+  await ownerAborts(f);
+  await f.drop(triggerBytes({ pr: 885, headSha: '7'.repeat(40) }));
+  const remember = f.exec.owner.remember.bind(f.exec.owner);
+  const terminal = f.ledger.terminal.bind(f.ledger);
+  let r1 = false, t1 = false;
+  f.exec.owner.remember = async (...a) => { if (!r1) { r1 = true; throw Object.assign(new Error('busy'), { code: 'EBUSY' }); } return remember(...a); };
+  f.ledger.terminal = async (...a) => { if (!t1) { t1 = true; throw Object.assign(new Error('disk'), { code: 'EIO' }); } return terminal(...a); };
+  assert.equal((await f.exec.tick()).state, 'HALTED');
+  assert.deepEqual(stagesRun(f.engine), [1], 'PR 885 was not reserved');
+  assert.equal((await f.ledger.state(KEY)).state, 'STARTED', 'still open: recovery closes it on the next tick');
+  assert.ok(['OWNER_ABORT_UNCONFIRMED', 'RESIDENT_EXECUTOR_EXCEPTION'].includes((await f.ledger.halted()).value.code));
+  await f.exec.tick();
+  const s = await f.ledger.state(KEY);
+  assert.deepEqual([s.outcome, s.terminal.facts.failureCode], ['FAILED_UNKNOWN', 'OWNER_ABORT_INTERRUPTED']);
+  assert.deepEqual(stagesRun(f.engine), [1]);
+});
+
+test('a second, different abort of a batch whose abort is already accepted is refused (OWNER_ABORT_ALREADY_ACCEPTED)', async t => {
+  const f = await waitingBatch(t);
+  await f.ledger.beginOwnerAbort(KEY, { requestSha256: 'f'.repeat(64), ledgerEntrySha256: (await f.ledger.latestRecord(KEY)).sha256, by: OWNER, reason: 'first', safePoint: 'waiting', stage: null });
+  const v = abortRequest({ batchKey: KEY, expectedLedgerEntrySha256: 'd'.repeat(64), reason: 'second', by: OWNER }, f.clock);
+  await assert.rejects(f.exec.abortAtTickStart(v, 'e'.repeat(64), '0000000000001-aaaaaaaaaaaa.json'), { code: 'OWNER_ABORT_ALREADY_ACCEPTED' });
+});
+
+test('a P0 abort never runs the archive tools from drifted Source bytes', async t => {
+  const f = await waitingBatch(t);
+  await ownerAborts(f);
+  f.exec.sourceIntegrity = async () => ({ ok: false });
+  await f.exec.tick();
+  assert.deepEqual((await bodies(f, 'owner-request-refused')).map(b => b.failureCode), ['OWNER_ABORT_SOURCE_DRIFT']);
+  assert.equal(f.engine.calls.filter(c => c[0] === 'archive-windows').length, 0);
+});
+
+test('a torn 80-owner-abort written during a stage is UNKNOWN after the stage: no publishing stage runs (second review MINOR 1)', async t => {
+  const engine = fakeEngine();
+  const f = await executorFixture(t, { engine });
+  engine.runStage = async (batch, stage) => {
+    engine.calls.push(['stage', stage.number]);
+    if (stage.number === 2) await fs.writeFile(path.join(f.root, 'state', 'ledger', batch.key, '80-owner-abort.json'), '{"key":');
+    return { ok: true };
+  };
+  await f.drop(triggerBytes());
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['HALTED', 'OWNER_ABORT_UNCONFIRMED']);
+  assert.deepEqual(stagesRun(engine), [1, 2], 'stage 3 (a publisher) never ran');
+});
+
 test('a stage that ends with a missing outcome while the stop was never sent is UNKNOWN: HALT (review M2)', async t => {
   const engine = fakeEngine({ stopCode: 'BROKER_STOP_NOT_THIS_HELPER' });
   const f = await executorFixture(t, { engine });

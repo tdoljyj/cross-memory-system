@@ -111,9 +111,11 @@ export class WindowsEngine {
   //   - first a stop request next to the in-flight broker request: the broker sends the runner service one
   //     SERVICE_CONTROL_STOP, which the helper handles (STOP_REQUESTED) by draining its own job object, and records
   //     what it did in its own receipt (stopOutcome);
-  //   - only once that receipt says STOP_SENT, the companion's bridge pump for the stage is cancelled (it stops relaying,
-  //     never stops the worker). Before that the pump, and its blocked hand-over, run exactly as without an abort, so a
-  //     stop that does not reach the helper leaves the stage no worse off (independent review, M4).
+  //   - only once that receipt says STOP_SENT, or the Windows side of the stage has ended anyway (the helper stopped by
+  //     itself, so the issuer no longer waits for anything the pump could bring), the companion's bridge pump for the
+  //     stage is cancelled (it stops relaying, never stops the worker). Before that the pump, and its blocked hand-over,
+  //     run exactly as without an abort, so a stop that does not reach the helper leaves the stage no worse off
+  //     (independent reviews, M4 and second review MINOR 2).
   async requestStop(batch, number) {
     check(ABORTABLE_IN_FLIGHT.includes(number) && batch && typeof batch.batchId === 'string', 'OWNER_ABORT_STOP_TARGET_INVALID');
     this.abortRequested = { batchId: batch.batchId, stage: number };
@@ -138,10 +140,12 @@ export class WindowsEngine {
     if (out.requestId) out.stopCode = await this.stopOutcome(out.requestId);
     const pump = this.inflight;
     const pumpInFlight = mine(pump);
-    if (out.stopCode === 'STOP_SENT' && pumpInFlight) {
+    if (pumpInFlight && (out.stopCode === 'STOP_SENT' || pump.windowsEnded === true)) {
       try { out.pump = await this.companionMailbox.cancel(await pump.request, 'owner-abort'); } catch { out.pump = false; }
     }
-    out.done = out.stopCode !== null && (out.stopCode !== 'STOP_SENT' || !pumpInFlight || out.pump);
+    // Done once nothing is left to do: the pump of a stage still in flight is cancelled, or, with no pump in flight, the
+    // broker has settled the stop request. Until then the executor asks again on its next poll.
+    out.done = pumpInFlight ? out.pump : out.stopCode !== null;
     return out;
   }
 
@@ -264,6 +268,8 @@ export class WindowsEngine {
     try {
       const r = await this.run([this.paths.nodeExe, invoke, '--batch-dir', batch.dir, '--stage', String(stage.number), '--work-manifest-sha256', row.workManifestSha256,
         '--batch-key', batch.key], { timeoutMs: stage.runMilliseconds + 360_000 });
+      // The Windows side of the stage has ended: from here on the pump can only make the stage wait (requestStop).
+      if (this.inflight) this.inflight.windowsEnded = true;
       if (r.timedOut || r.code === null) return { ok: false, code: 'STAGE_INVOKER_TERMINAL_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: false } };
       const fact = parseStageFact(r.stdout, row.workManifestSha256);
       const scOk = await this.scReadback();

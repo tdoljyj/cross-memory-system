@@ -239,6 +239,10 @@ export class ResidentExecutor {
     // The owner-aborted archive is a full-scope one on both hosts: it must never take another batch's unarchived
     // scene with it. Such a scene keeps the executor halted; the Owner re-arms first (review M6).
     check((await this.ledger.unarchivedScenes()) === 0, 'OWNER_ABORT_UNARCHIVED_SCENE_PRESENT');
+    // The archive tools run from the installed Source: never from drifted bytes (a HALT may be a RESIDENT_SOURCE_DRIFT).
+    const integrity = await this.sourceIntegrity();
+    check(integrity && integrity.ok === true && integrity.sourceManifestSha256 === this.policy.sourceManifestSha256
+      && integrity.residentManifestSha256 === this.policy.residentManifestSha256, 'OWNER_ABORT_SOURCE_DRIFT');
     const latest = await this.ledger.latestRecord(v.batchKey);
     check(latest && latest.sha256 === v.ledgerEntrySha256, 'OWNER_ABORT_LEDGER_CHANGED_SINCE_REVIEW');
     let request;
@@ -268,6 +272,8 @@ export class ResidentExecutor {
       const requestSha256 = sha256(entry.bytes);
       try {
         const s = await this.ledger.state(key);
+        // A torn record (for example a half-written 80-owner-abort): nothing to decide here; the stage's end handles it.
+        if (s.state === 'UNREADABLE') return null;
         // Accepted before (an interrupted acceptance in this tick): the same request continues; any other is refused.
         if (s.abort) { check(s.abort.requestSha256 === requestSha256, 'OWNER_ABORT_ALREADY_ACCEPTED'); return { name: entry.name, requestSha256, value: v }; }
         if (await this.owner.seen(requestSha256)) continue; // a copy of a handled request: the next tick records the duplicate
@@ -327,10 +333,14 @@ export class ResidentExecutor {
       await watch.stop();
     }
     let abort = watch.state.accepted;
+    let unconfirmed = false;
     if (!abort) {
       // An acceptance that wrote 80-owner-abort but not its receipt still aborts: the batch never continues past it.
+      // One that left a torn 80-owner-abort (an unreadable entry) is unconfirmed: UNKNOWN, never a publishing stage after
+      // it (second independent review, MINOR 1).
       const s = await this.ledger.state(key);
       if (s.abort) abort = adopted(s.abort);
+      else if (s.state === 'UNREADABLE') unconfirmed = true;
     }
     // What the broker did with the stop request (its own create-only receipt): only STOP_SENT proves the stage ended
     // through the stop path, which is what admits a missing entry outcome (review M2).
@@ -339,7 +349,7 @@ export class ResidentExecutor {
     if (abort && requestId && typeof this.engine.stopOutcome === 'function') {
       try { stopCode = (await this.engine.stopOutcome(requestId)) ?? stopCode; } catch { /* unknown: not STOP_SENT */ }
     }
-    return { result, abort, stopCode };
+    return { result, abort, stopCode, unconfirmed };
   }
 
   watchAbort(key, batch, number) {
@@ -362,9 +372,11 @@ export class ResidentExecutor {
             }
           }
           if (state.accepted && state.stop?.done !== true) {
-            const wasWritten = state.stop?.broker === true;
             state.stop = await this.engine.requestStop(batch, number);
-            if (state.stop.broker === true && !wasWritten) await this.receipt('owner-abort-stop-requested', { key, stage: number, requestId: state.stop.requestId });
+          }
+          if (state.stop?.broker === true && !state.stopReceipt) {
+            await this.receipt('owner-abort-stop-requested', { key, stage: number, requestId: state.stop.requestId });
+            state.stopReceipt = true;
           }
         } catch { /* a failed poll never ends the stage; the next poll tries again */ }
       }
@@ -389,9 +401,10 @@ export class ResidentExecutor {
   // Anything unproven is UNKNOWN exactly as today: HALT, burned head, the scene left for the Owner's re-arm.
   async ownerAbort(key, batch, { safePoint, stage = null, result = null, request, stopCode = null }) {
     try {
-      if (result && !abortStageEndingClean(result, { stopSent: stopCode === 'STOP_SENT' })) return await this.unknown(key, validCode(result.code ?? 'OWNER_ABORT_STAGE_UNCONFIRMED'), 'owner-abort-stage-not-stopped-cleanly', batch);
+      const context = { safePoint, stage, stopCode: typeof stopCode === 'string' && CODE.test(stopCode) ? stopCode : null, requestSha256: request?.requestSha256 ?? null };
+      if (result && !abortStageEndingClean(result, { stopSent: stopCode === 'STOP_SENT' })) return await this.unknown(key, validCode(result.code ?? 'OWNER_ABORT_STAGE_UNCONFIRMED'), 'owner-abort-stage-not-stopped-cleanly', batch, context);
       const proof = await this.abortQuiescence(batch, result?.proof ?? {});
-      if (!proofComplete(proof)) return await this.unknown(key, 'OWNER_ABORT_QUIESCENCE_UNPROVEN', 'owner-abort-quiescence-unproven', batch);
+      if (!proofComplete(proof)) return await this.unknown(key, 'OWNER_ABORT_QUIESCENCE_UNPROVEN', 'owner-abort-quiescence-unproven', batch, context);
       await this.ledger.burnHead(key, { failureCode: OWNER_ABORTED });
       const windows = await this.engine.archiveFailure(batch, OWNER_ABORT_ARCHIVE_REASON);
       const linux = await this.companion.archiveLinux(batch, OWNER_ABORT_ARCHIVE_REASON);
@@ -402,7 +415,7 @@ export class ResidentExecutor {
       await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: OWNER_ABORTED, safePoint });
       return { state: 'FAILED_CLEAN', key, failureCode: OWNER_ABORTED, safePoint };
     } catch (error) {
-      return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch);
+      return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch, { safePoint, stage });
     }
   }
 
@@ -435,8 +448,9 @@ export class ResidentExecutor {
     await this.takeOwnerRequests();
     // An Owner abort whose acceptance failed half-way would leave an open entry that is no resumable wait: nothing else
     // runs in this tick, and the next tick's recovery closes it FAILED_UNKNOWN (independent review of v0.8, M1).
-    if (recovered && (await this.ledger.crashed()).length > 0) {
-      await this.haltWith('OWNER_ABORT_UNCONFIRMED', {});
+    const stuck = recovered ? await this.ledger.crashed() : [];
+    if (stuck.length > 0) {
+      await this.haltWith('OWNER_ABORT_UNCONFIRMED', { keys: stuck.map(e => e.key) });
       return { state: 'HALTED' };
     }
     // Even if the HALT itself could not be written, an unconfirmed recovery never runs a candidate,
@@ -648,8 +662,9 @@ export class ResidentExecutor {
       for (const number of ROLE_STAGES[role]) {
         if ((aborted = await this.abortIfRequested(key, batch, `before-stage-${number}`))) return aborted;
         const execution = number === ROLE_STAGES[role][0];
-        const { result: r, abort, stopCode } = await this.runStageWatched(key, batch, number, { betweenRoles: execution && index > 0, firstLinux: execution && index === 0 });
+        const { result: r, abort, stopCode, unconfirmed } = await this.runStageWatched(key, batch, number, { betweenRoles: execution && index > 0, firstLinux: execution && index === 0 });
         await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null });
+        if (unconfirmed) return this.unknown(key, 'OWNER_ABORT_UNCONFIRMED', 'owner-abort-unconfirmed', batch, { safePoint: `in-stage-${number}`, stage: number });
         if (abort) return this.concludeAbort(key, batch, { safePoint: `in-stage-${number}`, stage: number, result: r, request: abort, stopCode });
         if (r.ok !== true) return new StepFailure(number, r.code, r.proof, 'stage', relayed);
       }
@@ -785,12 +800,13 @@ export class ResidentExecutor {
     check(closed && closed.verified === true, 'UNEXECUTED_CLOSE_UNCONFIRMED');
   }
 
-  async unknown(key, failureCode, basis, batch = null) {
+  // extra: further facts of the terminal record (an Owner abort's safe point, stage and stop code).
+  async unknown(key, failureCode, basis, batch = null, extra = {}) {
     await this.haltWith(failureCode, { key, basis }); // HALT first: no crash point leaves a closed unknown without it (N1)
     const s = await this.ledger.state(key);
     if (['RESERVED', 'STARTED', 'INCOMPLETE'].includes(s.state)) {
       await this.ledger.burnHead(key, { failureCode });
-      await this.ledger.terminal(key, 'FAILED_UNKNOWN', { failureCode, basis, batchId: batch?.batchId ?? s.started?.facts?.batchId ?? null });
+      await this.ledger.terminal(key, 'FAILED_UNKNOWN', { ...extra, failureCode, basis, batchId: batch?.batchId ?? s.started?.facts?.batchId ?? null });
     }
     await this.receipt('batch-terminal', { key, outcome: 'FAILED_UNKNOWN', failureCode });
     await this.haltWith(failureCode, { key, basis });

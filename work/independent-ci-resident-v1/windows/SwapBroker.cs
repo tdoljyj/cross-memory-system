@@ -229,7 +229,9 @@ public sealed class SwapBroker : ServiceBase
             if (decision == null) return false;
             if (decision != "SEND") code = decision;
             else if (RunnerStop.Send()) code = "STOP_SENT";
-            else if (++attempts < StopAttempts) return false;   // not delivered: nothing reached the helper yet
+            // Not accepted: look again. A control that did reach the helper (an answer lost in a timeout) shows as
+            // STOP_PENDING or STOPPED next second and settles as HELPER_ALREADY_STOPPING: delivered at most once.
+            else if (++attempts < StopAttempts) return false;
             else code = "STOP_NOT_ACCEPTED";
         }
         catch (BrokerRefusal r)
