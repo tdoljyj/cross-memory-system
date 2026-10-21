@@ -84,6 +84,12 @@ class Units(unittest.TestCase):
             self.assertRegex(unit, r'(?m)^RestrictNamespaces=yes$')
             self.assertRegex(unit, r'(?m)^NoNewPrivileges=yes$')
 
+    def test_wsprep_reallows_exactly_chown_after_the_privileged_deny(self):
+        # prepare-workspaces.py new_dir() chowns to root:root; @privileged contains @chown (host EPERM, 2026-10-21).
+        unit = (R / 'linux' / 'systemd' / 'clued-ci-wsprep@.service').read_text(encoding='utf8')
+        filters = re.findall(r'(?m)^SystemCallFilter=(.+)$', unit)
+        self.assertEqual(filters, ['@system-service', '~@privileged @resources @mount @debug @module @reboot @swap @clock @cpu-emulation @obsolete @raw-io', '@chown'])
+
 
 class WsPrepCheckout(unittest.TestCase):
     def test_checkout_never_materialises_symlinks_and_modes_are_checked_first(self):

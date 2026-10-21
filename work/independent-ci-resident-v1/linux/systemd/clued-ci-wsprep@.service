@@ -37,6 +37,9 @@ CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
 AmbientCapabilities=
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources @mount @debug @module @reboot @swap @clock @cpu-emulation @obsolete @raw-io
+# @privileged contains @chown, and prepare-workspaces.py chowns every directory it creates to root:root
+# (new_dir). Re-allow exactly that group: the first rehearsal on the real host failed with EPERM in os.chown.
+SystemCallFilter=@chown
 SystemCallArchitectures=native
 SystemCallErrorNumber=EPERM
 RestrictNamespaces=yes
