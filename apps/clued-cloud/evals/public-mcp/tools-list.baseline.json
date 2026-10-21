@@ -2,7 +2,7 @@
   "tools": [
     {
       "name": "clued_agent_bootstrap",
-      "description": "Read public Clued connection metadata and the full Clued Agent Contract in content[1]. When agent_contract.parts is above 1, read every part in order before work. This call never returns user context or credentials. Public metadata call; no authenticated Clued scope is required.",
+      "description": "Read public Clued connection metadata and the full BeamingFace Agent Contract in content[1]. When agent_contract.parts is above 1, read every part in order before work. This call never returns user context or credentials. Public metadata call; no authenticated Clued scope is required.",
       "inputSchema": {
         "type": "object",
         "properties": {

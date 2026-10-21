@@ -97,13 +97,13 @@ class HookTest(unittest.TestCase):
         service = self.serve(LOCAL)
         self.install_skill(".claude/skills/clued", LOCAL["skill.clued"])
         text = self.context({"hook_event_name": "SessionStart"}, CLUED_ORIGIN=service.origin)
-        self.assertTrue(text.startswith("KooYomi components current"), text)
+        self.assertTrue(text.startswith("BeamingFace components current"), text)
         self.assertIn("compared with the service", text)
 
     def test_unversioned_synced_copy_is_reported(self):
         path = self.install_skill(".claude/skills/synced/org_x/clued", None, complete=False)
         text = self.context({"hook_event_name": "SessionStart"}, CLUED_VERSION_CHECK="offline")
-        self.assertIn(f"KooYomi Skill at {path} has no version", text)
+        self.assertIn(f"BeamingFace Skill at {path} has no version", text)
         self.assertIn("upload the whole skills/clued folder", text)
 
     def test_older_codex_copy_is_reported_against_the_service(self):
@@ -112,14 +112,14 @@ class HookTest(unittest.TestCase):
         path = self.install_skill("codex/skills/clued", LOCAL["skill.clued"])
         text = self.context({"hook_event_name": "SessionStart"}, CLUED_ORIGIN=service.origin,
                             CODEX_HOME=str(self.home / "codex"))
-        self.assertIn(f"KooYomi Skill at {path} is version {LOCAL['skill.clued']}, "
+        self.assertIn(f"BeamingFace Skill at {path} is version {LOCAL['skill.clued']}, "
                       f"the latest is {newer['skill.clued']}", text)
-        self.assertIn("This checkout is older than the KooYomi service: skill.clued", text)
+        self.assertIn("This checkout is older than the BeamingFace service: skill.clued", text)
 
     def test_same_version_with_missing_files_is_reported(self):
         path = self.install_skill(".claude/skills/clued", LOCAL["skill.clued"], complete=False)
         text = self.context({"hook_event_name": "SessionStart"}, CLUED_VERSION_CHECK="offline")
-        self.assertIn(f"KooYomi Skill at {path} is version {LOCAL['skill.clued']} but its files differ", text)
+        self.assertIn(f"BeamingFace Skill at {path} is version {LOCAL['skill.clued']} but its files differ", text)
         self.assertIn("missing: references/", text)
 
     def test_unreleased_contract_is_explained(self):

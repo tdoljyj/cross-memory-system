@@ -1,8 +1,8 @@
-# KooYomi memory operations
+# BeamingFace memory operations
 
 Use this workflow for personal and project context, including project records maintained during engineering. It does not authorize source changes, privileged administration or release publication.
 
-The served Clued Agent Contract governs every step: start, read order, capture of material outcomes, write discipline, error handling and checkpoint. Obtain its full text through `clued_agent_bootstrap` (all parts), or `/clued-agent.md` when the Host cannot pass `part`; it wins over this workflow. This file adds only what is specific to memory operations.
+The served BeamingFace Agent Contract governs every step: start, read order, capture of material outcomes, write discipline, error handling and checkpoint. Obtain its full text through `clued_agent_bootstrap` (all parts), or `/clued-agent.md` when the Host cannot pass `part`; it wins over this workflow. This file adds only what is specific to memory operations.
 
 ## Development-context projections
 

@@ -1324,6 +1324,7 @@ export default function Home() {
 
       <footer>
         <span>{t.copyright}</span>
+        <a href="/THIRD-PARTY-NOTICES.txt">{locale === "zh-CN" ? "开源许可" : "Open-source licenses"}</a>
         <span>{t.previewStatus}</span>
       </footer>
     </main>
