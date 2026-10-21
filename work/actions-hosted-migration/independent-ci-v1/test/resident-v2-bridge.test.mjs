@@ -372,12 +372,15 @@ test('issuer: the first admission retries an unavailable evaluation while a call
   await linux;
   assert.deepEqual([rA.status, rA.reason, rA.sideEffects, n, waitsA, rA.admissionDiagnostic], ['BLOCKED', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 0, 2, [1000], undefined], 'issued after one retry');
 
-  for (const [window, evaluations, expected] of [[FIRST_RESERVE_MS + 20_000, 4, [1000, 2000, 4000]], [FIRST_RESERVE_MS + 1500, 2, [1000]], [20_000, 1, []]]) {
+  // [stage window, evaluations, waits, evaluation result, outcome diagnostic]; a phase that is not a plain string is dropped
+  for (const [window, evaluations, expected, result = UNAVAILABLE, diagnostic = gaveUp(evaluations)] of [[FIRST_RESERVE_MS + 20_000, 4, [1000, 2000, 4000]],
+    [FIRST_RESERVE_MS + 2000, 2, [1000]], [20_000, 1, []],
+    [FIRST_RESERVE_MS + 20_000, 4, [1000, 2000, 4000], { ...UNAVAILABLE, diagnostic: { phase: ['native'] } }, { transientAdmission: 'full_admission_unavailable', evaluations: 4 }]]) {
     let m = 0;
     const b = issuerFixture(t), waits = [], root = await spool(t);
-    const r = await runIssuer({ context: b.context, evaluate: async () => { m += 1; return UNAVAILABLE; }, collect: async () => null,
+    const r = await runIssuer({ context: b.context, evaluate: async () => { m += 1; return result; }, collect: async () => null,
       box: await createFixtureMailbox(root, 'windows'), sleep: backoffSleep(waits), stageDeadline: Date.now() + window });
-    assert.deepEqual([r.status, r.reason, r.sideEffects, m, waits, r.admissionDiagnostic], ['BLOCKED', 'full_admission_unavailable', 0, evaluations, expected, gaveUp(evaluations)], `stage window ${window} ms`);
+    assert.deepEqual([r.status, r.reason, r.sideEffects, m, waits, r.admissionDiagnostic], ['BLOCKED', 'full_admission_unavailable', 0, evaluations, expected, diagnostic], `stage window ${window} ms`);
     await assert.rejects(fs.lstat(path.join(root, 'outgoing', 'issue.json')), { code: 'ENOENT' });
   }
   // a real refusal after an unavailable first evaluation is final as before: nothing issued

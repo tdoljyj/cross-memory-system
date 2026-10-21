@@ -47,8 +47,9 @@ const refsStep=async collect=>{try{return await collect();}catch(e){fail(refsFai
 // them in main(). sideEffects counts "the Linux side may run": 0 until the issue is written.
 export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),stageDeadline,signal}){
   takeAcceptedBridgeContext(context);const job=context.job;let sideEffects=0,gaveUp=null;
-  // The transient refusal given up on, for the outcome record: a round that went late reports only the bridge reason
-  // otherwise. The resident classifies by status and reason alone, so it changes no outcome.
+  // A transient admission refusal given up on in this run, for the outcome record: a round that went late reports only
+  // the bridge reason otherwise. It is context, not necessarily the cause of the final reason. For the issuer's stages
+  // (2, 4, 6) the resident classifies by status and reason alone, so it changes no outcome.
   const diagnosed=outcome=>gaveUp?{...outcome,admissionDiagnostic:gaveUp}:outcome;
   try{
     check(Number.isSafeInteger(stageDeadline)&&stageDeadline>clock(),'FORMAL_ISSUER_WINDOW_UNCONFIRMED');
@@ -63,8 +64,9 @@ export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sle
         const reason=/^full_admission_[a-z_]+$/.test(facts?.reason??'')?facts.reason:'ACTUAL_NATIVE_ADMISSION_REQUIRED';
         const wait=RETRY_WAITS_MS.get(reason)?.[attempt-1];
         if(wait===undefined||clock()+wait>=until){
+          const phase=facts?.diagnostic?.phase;
           if(RETRY_WAITS_MS.has(reason))gaveUp={transientAdmission:reason,evaluations:attempt,
-            ...(/^[a-z_]{1,32}$/.test(facts.diagnostic?.phase??'')?{phase:facts.diagnostic.phase}:{})};
+            ...(typeof phase==='string'&&/^[a-z_]{1,32}$/.test(phase)?{phase}:{})};
           fail(reason);
         }
         if(wait)await sleep(wait);
