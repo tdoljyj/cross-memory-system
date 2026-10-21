@@ -1733,6 +1733,13 @@ export async function appChecksOnHead(fetchImpl, env, repository, headSha, name 
     const {readIndependentControlChecksOnHead}=await import('../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/consumer.mjs');
     return readIndependentControlChecksOnHead({repository,headSha,name});
   }
+  // Source v2 (resident executor): the same selector over the v2 control pair (external id
+  // independent-ci:control:<role>:v2:..., journal state2\effects-control); fails closed off the
+  // installed clued-control principal.
+  if(env.CLUED_EXECUTION_PROVIDER==='independent-control-checks-v2'&&name!==null){
+    const {readIndependentControlChecksOnHeadV2}=await import('../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/consumer.mjs');
+    return readIndependentControlChecksOnHeadV2({repository,headSha,name});
+  }
 
   const historical = name === null;
   const names = new Set(historical ? [APP_CHECK_NAME, "clued-admission-verified"] : [name]);
@@ -2159,6 +2166,11 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     const {consumeIndependentGate}=await import('../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/consumer.mjs');
     const pr=event?.pull_request;
     return consumeIndependentGate({repository:env.GITHUB_REPOSITORY,pr:pr?.number,headSha:pr?.head?.sha,baseSha:pr?.base?.sha});
+  }
+  if(env.CLUED_EXECUTION_PROVIDER==='independent-control-checks-v2'){
+    const {consumeIndependentGateV2}=await import('../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/consumer.mjs');
+    const pr=event?.pull_request;
+    return consumeIndependentGateV2({repository:env.GITHUB_REPOSITORY,pr:pr?.number,headSha:pr?.head?.sha,baseSha:pr?.base?.sha});
   }
 
   const outcome = emptyOutcome(eventName);

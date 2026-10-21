@@ -9,7 +9,10 @@
 //     stage cap) ends first, it stops cleanly with RESIDENT_QUEUE_HEAD_NOT_REACHED and publishes nothing.
 //     Renewing the claim / merge slot is the claim holder's job (agent contract A.6); this code never
 //     renews anything;
-//   - journal and observation log in state\v2\effects-control (S13).
+//   - journal and observation log in state\v2\effects-control (S13);
+//   - PR-A integration: the durable producer identity sourceBindingSha256 (v1's rule: everything but the
+//     renewable lease and slot timestamps) is journaled, and consume() is the v2 control consumer the merge
+//     gate reads through (consumer.mjs; scripts/ci/clued-work-admission.mjs provider independent-control-checks-v2).
 import { digest } from '../proof.mjs';
 import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, CONTROL_ROLES_V2, MAX_ATTEMPT_V2, sameBatchV2 } from '../job-v2.mjs';
 import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from '../full-admission-v2.mjs';
@@ -28,6 +31,8 @@ const plain = v => v && Object.getPrototypeOf(v) === Object.prototype;
 const safe = e => /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(e?.code ?? '') ? e.code : 'NATIVE_CHECK_UNCONFIRMED';
 const freeze = v => { if (v && typeof v === 'object') { Object.values(v).forEach(freeze); Object.freeze(v); } return v; };
 const definitionFor = job => CONTROL_CHECKS_V2[job.role];
+const actualConsumptions = new WeakMap();
+const exact = (v, keys) => plain(v) && Object.keys(v).sort().join('|') === [...keys].sort().join('|');
 const fixedJob = job => { validateJobV2(job); check(job.repo === REPO && CONTROL_ROLES_V2.includes(job.role) && job.attempt >= 1 && job.attempt <= MAX_ATTEMPT_V2, 'FIXED_INDEPENDENT_CONTROL_JOB_REQUIRED'); return freeze(structuredClone(job)); };
 const prefixFor = job => `independent-ci:control:${job.role}`;
 function identity(c, job, externalId) { return Number.isSafeInteger(c?.id) && c.id > 0 && c.app?.id === APP_ID && c.name === definitionFor(job).name && c.head_sha === job.headSha && c.external_id === externalId; }
@@ -57,13 +62,21 @@ function binding(job, packet, facts, authority) {
     workflowGateFindings: facts.workflowGateFindings, claimExpiresAt: facts.claimExpiresAt, authority, definition: definitionFor(job) });
 }
 
+// The durable producer identity excludes the renewable lease and slot timestamps (v1 sourceBinding); the
+// live before/after binding above still includes every one of them.
+function sourceBinding(job, packet, facts, authority) {
+  return digest({ subject: subjectOfV2(job), claim: claimGeneration(facts.observedClaim), pathsSha256: digest(packet.paths), scope: facts.scope, executionPolicy: facts.executionPolicy,
+    guarded: facts.guarded, mode: facts.mode, ownerReview: facts.ownerReview, workflowGateFindings: facts.workflowGateFindings, authority, definition: definitionFor(job),
+    slot: job.role === 'control-merge-slot' ? { state: facts.mergeSlot.state, ref: facts.mergeSlot.ref, tip: facts.mergeSlot.tip, queueHead: facts.mergeQueueHead } : null });
+}
+
 function engine({ github, journal, admission, assertLive, record, authority, batchClaim, clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)) }, production) {
   const domain = production ? 'production' : 'fixture';
   async function observe(job) { assertLive(); const packet = await github.readChangedPaths(job), facts = await admission.evaluatePr(job, packet, { batchClaim }); assertLive(); return { packet, facts }; }
   async function boundary(job) {
     const { packet, facts } = await observe(job); factsValid(job, packet, facts, domain, clock(), batchClaim);
     record('native_check_boundary', { jobId: job.id, nativeObservationSha256: facts.observationSha256, packetSha256: digest(packet) });
-    return { facts, bindingSha256: binding(job, packet, facts, authority) };
+    return { facts, bindingSha256: binding(job, packet, facts, authority), sourceBindingSha256: sourceBinding(job, packet, facts, authority) };
   }
   async function inventory(job, externalId) {
     const list = await github.readChecks(job.headSha);
@@ -113,7 +126,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     }
     let phase = 'intent', sent = false, known = null, sideEffects = 0;
     try {
-      const intent = await journal.begin(key, { subject: subjectOfV2(job), claim: batchClaim, definition: definitionFor(job), externalId, observationKind: 'actual-native-admission-control', nativeObservationSha256: before.facts.observationSha256, bindingSha256: before.bindingSha256, compensation: 'known-success-one-bounded-negative-patch' });
+      const intent = await journal.begin(key, { subject: subjectOfV2(job), claim: batchClaim, definition: definitionFor(job), externalId, observationKind: 'actual-native-admission-control', nativeObservationSha256: before.facts.observationSha256, bindingSha256: before.bindingSha256, sourceBindingSha256: before.sourceBindingSha256, compensation: 'known-success-one-bounded-negative-patch' });
       if (intent.existing) return { status: 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects, productionAuthorized: false };
       await journal.transition(key, 'intent', 'authorized', { nativeObservationSha256: before.facts.observationSha256 }); phase = 'authorized';
       assertLive(); check(fresh(before.facts, clock()), 'NATIVE_OBSERVATION_EXPIRED_BEFORE_WRITE');
@@ -123,7 +136,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       check(identity(posted, job, externalId) && posted.status === 'completed' && posted.conclusion === 'success', 'NATIVE_CHECK_IDENTITY_UNCONFIRMED'); known = posted;
       const after = await boundary(job); check(after.bindingSha256 === before.bindingSha256, 'NATIVE_AUTHORIZATION_BINDING_CHANGED');
       await readback(job, externalId, known.id, 'success'); assertLive(); check(fresh(after.facts, clock()), 'NATIVE_OBSERVATION_EXPIRED_AFTER_WRITE');
-      await journal.transition(key, 'sent', 'settled', { checkRunId: known.id, externalId, conclusion: 'success', nativeObservationBeforeSha256: before.facts.observationSha256, nativeObservationAfterSha256: after.facts.observationSha256, bindingSha256: after.bindingSha256 });
+      await journal.transition(key, 'sent', 'settled', { checkRunId: known.id, externalId, conclusion: 'success', nativeObservationBeforeSha256: before.facts.observationSha256, nativeObservationAfterSha256: after.facts.observationSha256, bindingSha256: after.bindingSha256, sourceBindingSha256: after.sourceBindingSha256 });
       record('native_check_settled', { jobId: job.id, effectKey: key, checkRunId: known.id, beforeSha256: before.facts.observationSha256, afterSha256: after.facts.observationSha256 });
       return { status: 'SETTLED', effectKey: key, checkRunId: known.id, sideEffects, productionAuthorized: production };
     } catch (e) {
@@ -144,7 +157,38 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       await sleep(QUEUE_POLL_MS);
     }
   }
-  return Object.freeze({ fixture: !production, waitForQueueHead, publishOne, async publishPair(jobs, { waitUntil }) {
+  // The v2 consumer (merge gate): a settled journal entry of exactly this job and batch claim generation,
+  // a fresh complete admission before and after the GitHub read-back, the same durable producer identity.
+  // A settled check whose authority changed is compensated once (revoked), never re-posted.
+  async function consume(input, selector) {
+    const job = fixedJob(input);
+    check(exact(selector, ['repository', 'pr', 'headSha', 'baseSha', 'name']) && selector.repository === job.repo && selector.pr === job.pr && selector.headSha === job.headSha
+      && selector.baseSha === job.baseSha && selector.name === definitionFor(job).name, 'CONTROL_CONSUMER_SUBJECT_REQUIRED');
+    const key = admissionEffectKeyV2(ACTION, job, batchClaim, definitionFor(job)), externalId = admissionExternalIdV2(prefixFor(job), job, batchClaim);
+    const stored = await journal.read(key);
+    let journalIdentity = false;
+    try {
+      check(stored?.state === 'settled' && digest(stored.subject?.subject) === digest(subjectOfV2(job)) && digest(stored.subject.claim) === digest(claimGeneration(batchClaim))
+        && digest(stored.subject.definition) === digest(definitionFor(job)) && stored.subject.externalId === externalId && Number.isSafeInteger(stored.details?.checkRunId), 'TRUSTED_SETTLED_CONTROL_JOURNAL_REQUIRED');
+      journalIdentity = true;
+      const before = await boundary(job);
+      check(stored.details.sourceBindingSha256 === before.sourceBindingSha256, 'CONTROL_JOURNAL_AUTHORITY_CHANGED');
+      const observed = await readback(job, externalId, stored.details.checkRunId, 'success');
+      const after = await boundary(job);
+      check(after.bindingSha256 === before.bindingSha256, 'CONTROL_CONSUMER_AUTHORITY_CHANGED'); assertLive(); check(fresh(after.facts, clock()), 'CONTROL_CONSUMPTION_EXPIRED');
+      const proof = freeze({ contract: 'clued.independent-ci.control-consumption/2', domain, producer: 'independent-control-checks-v2', subject: subjectOfV2(job), claim: claimGeneration(batchClaim),
+        definition: definitionFor(job), check: structuredClone(observed), effectKey: key, journalRevision: stored.revision, bindingSha256: after.bindingSha256, sourceBindingSha256: after.sourceBindingSha256,
+        nativeObservationBeforeSha256: before.facts.observationSha256, nativeObservationAfterSha256: after.facts.observationSha256, observedAt: after.facts.observedAt, claimExpiresAt: after.facts.claimExpiresAt,
+        mergeSlot: structuredClone(after.facts.mergeSlot), mergeQueueHead: after.facts.mergeQueueHead, productionAuthorized: production, qualificationIssued: false, nativeTicketIssued: false });
+      if (production) actualConsumptions.set(proof, { selector: structuredClone(selector), expiresAt: Math.min(Date.parse(proof.observedAt) + 30000, Date.parse(proof.claimExpiresAt),
+        job.role === 'control-merge-slot' ? Date.parse(proof.mergeSlot.until) : Infinity, authority?.acceptanceValidUntil ? Date.parse(authority.acceptanceValidUntil) : Infinity) });
+      return proof;
+    } catch (error) {
+      if (journalIdentity && Number.isSafeInteger(stored.details?.checkRunId) && stored.details.checkRunId > 0) return revoke({ job, key, externalId, known: { id: stored.details.checkRunId }, phase: 'settled', cause: safe(error), sideEffects: 0 });
+      throw error;
+    }
+  }
+  return Object.freeze({ fixture: !production, waitForQueueHead, publishOne, consume, async publishPair(jobs, { waitUntil }) {
     try {
       check(Array.isArray(jobs) && jobs.length === 2 && jobs.map(j => j.role).join('|') === CONTROL_ROLES_V2.join('|') && sameBatchV2(jobs[0], jobs[1]), 'TWO_FIXED_CONTROL_JOBS_REQUIRED');
       jobs.forEach(fixedJob);
@@ -162,6 +206,12 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
   } });
 }
 export function createFixtureControlPublisherV2(dependencies) { return engine(dependencies, false); }
+// A production consumption proof is usable only for exactly its selector and only within its expiry.
+export function takeActualControlConsumptionV2(value, selector) {
+  const actual = actualConsumptions.get(value);
+  check(actual && digest(actual.selector) === digest(selector) && Date.now() < actual.expiresAt && value.productionAuthorized === true && value.domain === 'production', 'ACTUAL_CURRENT_CONTROL_CONSUMPTION_REQUIRED');
+  return value;
+}
 export function createProductionControlPublisherV2(dependencies) { return engine(dependencies, true); }
 // Window of the S8 wait: merge slot 45 min, the batch claim's lease, the install's validUntil and the
 // stage cap minus the time two publications need.

@@ -31,6 +31,25 @@ export function protectedFactsFromVerify({ job, batchClaim, body, status, config
     claim: { claimId: claim.claim_id, fence: claim.fence, epoch: claim.execution_epoch } };
 }
 
+// The protected observation port of a v2 scanner publisher (this entry and the stage-R relay entry): the
+// read-only Native verify RPC for the batch claim generation. It never binds a PR or charges a meter.
+export function protectedAuthority({ config, accepted, github, fetchImpl, nativeToken, live, log }) {
+  return { async observe(subject, claimGen) {
+    live();
+    const packet = await github.readChangedPaths(subject);
+    let response, body;
+    try {
+      response = await fetchImpl(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/clued_work_verify_v1`, { method: 'POST', redirect: 'error',
+        headers: { apikey: config.publishableKey, authorization: `Bearer ${config.publishableKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ p_token_hash: digest(nativeToken), p_input: { scope: config.scope, claim_id: claimGen.claimId, changed_paths: packet.paths } }) });
+      body = await response.json();
+    } catch { stop('native_claim_observation_unconfirmed'); }
+    const facts = protectedFactsFromVerify({ job: subject, batchClaim: claimGen, body, status: response.status, config, accepted, now: Date.now() });
+    log('native_claim_observation', body);
+    return facts;
+  } };
+}
+
 export async function main(argv = process.argv.slice(2), output = process.stdout) {
   return runEntry({ argv, entryRole: 'check-publisher', moduleUrl: import.meta.url, output, body: async ({ inputs, held, live, sourceRoot }) => {
     const job = inputs.jobs[0], envelope = inputs.resultEnvelope, { config, accepted } = inputs.record;
@@ -38,20 +57,7 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const { appKey, nativeToken } = await controllerPrincipal(inputs.record);
     const log = observationLog(STATE_V2.effectsScan, job.id);
     const { github, admission, fetchImpl } = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
-    const authority = { async observe(subject, claimGen) {
-      live();
-      const packet = await github.readChangedPaths(subject);
-      let response, body;
-      try {
-        response = await fetchImpl(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/clued_work_verify_v1`, { method: 'POST', redirect: 'error',
-          headers: { apikey: config.publishableKey, authorization: `Bearer ${config.publishableKey}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ p_token_hash: digest(nativeToken), p_input: { scope: config.scope, claim_id: claimGen.claimId, changed_paths: packet.paths } }) });
-        body = await response.json();
-      } catch { stop('native_claim_observation_unconfirmed'); }
-      const facts = protectedFactsFromVerify({ job: subject, batchClaim: claimGen, body, status: response.status, config, accepted, now: Date.now() });
-      log('native_claim_observation', body);
-      return facts;
-    } };
+    const authority = protectedAuthority({ config, accepted, github, fetchImpl, nativeToken, live, log });
     const journal = await EffectJournal.open(STATE_V2.effectsScan);
     const publisher = createStagedCheckPublisherV2({ nativeAdmission: admission, authority, github, journal, signers: inputs.record.signers, configuredChecks: config.checks,
       readChangedPaths: subject => github.readChangedPaths(subject), batchClaim,

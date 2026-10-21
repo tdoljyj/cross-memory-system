@@ -9,9 +9,10 @@ import path from 'node:path';
 import { canonical } from '../proof.mjs';
 import { validateJobV2, sameBatchV2, CONTROL_ROLES_V2 } from '../job-v2.mjs';
 import { hash } from './prepare-record.mjs';
+import { validateRelayPlanRows } from '../hosted-relay-v1/relay-plan.mjs';
 import { validateRecordV2 } from './record.mjs';
 import { validatePlanV2 } from './stage-package.mjs';
-import { NONCE32, HEX64, OUTCOME_CONTRACT, STATE_V2, WIN_STAGE } from './layout.mjs';
+import { NONCE32, HEX64, OUTCOME_CONTRACT, STATE_V2, WIN_STAGE, stageJobRolesValid } from './layout.mjs';
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
@@ -49,9 +50,9 @@ export async function loadStageInputs({ nonce, configSha256, entryRole, recordDo
   const jobsBytes = await readStageFile(dir, 'jobs.json', 65536);
   check(hash(jobsBytes) === plan.jobSha256, 'EXACT_SELECTED_JOB_PLAN_PIN_REQUIRED');
   const jobs = JSON.parse(jobsBytes.toString('utf8'));
-  check(Array.isArray(jobs) && jobs.length === row.jobRoles.length && jobsBytes.toString('utf8') === canonical(jobs), 'EXACT_STAGE_JOBS_REQUIRED');
+  check(Array.isArray(jobs) && jobs.length > 0 && jobs.length <= row.jobRoles.length && jobsBytes.toString('utf8') === canonical(jobs), 'EXACT_STAGE_JOBS_REQUIRED');
   jobs.forEach(validateJobV2);
-  check(jobs.every((j, i) => j.role === row.jobRoles[i] && j.repo === record.config.repository && j.sourceManifestSha256 === record.config.sourceManifestSha256 && sameBatchV2(j, jobs[0]))
+  check(stageJobRolesValid(row, jobs.map(j => j.role)) && jobs.every(j => j.repo === record.config.repository && j.sourceManifestSha256 === record.config.sourceManifestSha256 && sameBatchV2(j, jobs[0]))
     && (entryRole !== 'control-checks' || jobs.map(j => j.role).join('|') === CONTROL_ROLES_V2.join('|')), 'EXACT_STAGE_JOBS_REQUIRED');
   let resultEnvelope = null;
   if (entryRole === 'check-publisher') {
@@ -73,6 +74,9 @@ export async function writeOutcome({ receiptsRoot = STATE_V2.receipts, nonce, pl
     status, reason: typeof r.reason === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(r.reason) ? r.reason : null, sideEffects,
     // Anything but a clean BLOCKED with zero side effects may have published.
     mayHavePublished: !(status === 'BLOCKED' && sideEffects === 0), diagnostic: plain(r.admissionDiagnostic) ? r.admissionDiagnostic : null,
+    // Stage R only: the per-role relay plan rows (hosted-relay-v1/relay-plan.mjs); a row set that does not
+    // validate is written as an empty list, which the resident reads as "plan unconfirmed" (UNKNOWN).
+    relay: plan?.entryRole === 'relay-publisher' ? (validateRelayPlanRows(r.relay) ?? []) : null,
     at: new Date(clock()).toISOString() };
   await fs.mkdir(receiptsRoot, { recursive: true });
   const h = await fs.open(path.join(receiptsRoot, `outcome-${nonce}.json`), 'wx', 0o600);

@@ -10,10 +10,20 @@
 //     no longer reports lease_observations_disagree);
 //   - nothing else: same journal states, same revocation, same readback and the same "a settled
 //     effect is only re-verified, never re-posted" rule (a settled job id is never run again).
+// PR-A integration (free-minutes design S18/S19): the hosted relay changes of v1 (b5a7db45) are merged in,
+// so the v2 path has them too, with the v2 job and claim rules:
+//   - publishHosted({ subject, attempt, envelope }) with the clued.independent-ci.hosted-attestation/1
+//     envelope, re-attested from fresh GitHub facts by the installed hostedVerifier before any journal
+//     write (only this entry accepts that contract); the subject's claim generation must be the batch claim;
+//   - the role-on-head mutex K(head, role) (effect-journal.mjs#claimRolePublication) is begun before the
+//     own effect key by BOTH entries, local and relay, in the same journal (state\v2\effects-scan);
+//   - the boundary takes a proof { kind: 'signed' | 'hosted' } instead of a bare signed envelope.
 import { canonical, digest } from './proof.mjs';
-import { validateJobV2, subjectOfV2, scanEffectKeyV2, scanExternalIdV2, sameClaimGeneration, claimGeneration } from './job-v2.mjs';
+import { validateJobV2, subjectOfV2, scanEffectKeyV2, scanExternalIdV2, sameClaimGeneration, claimGeneration, makeJobV2 } from './job-v2.mjs';
 import { verifyResultV2 } from './proof-v2.mjs';
 import { admittedFactsMatchJobV2 } from './full-admission-v2.mjs';
+import { claimRolePublication, rolePublicationKey } from './effect-journal.mjs';
+import { relayExternalId, validateHostedEnvelope } from './hosted-relay-v1/attest.mjs';
 
 const HASH = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -25,10 +35,12 @@ const reason = error => /^[a-z][a-z0-9_]{0,80}$/.test(error?.code ?? '') ? error
 const fresh = (observedAt, expiresAt, now) => Number.isSafeInteger(now) && Number.isFinite(Date.parse(observedAt))
   && Date.parse(observedAt) <= now && now - Date.parse(observedAt) <= 30_000 && Date.parse(expiresAt) > now;
 const requiredRefs = ['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef'];
+const SUBJECT_KEYS = ['baseSha', 'claimId', 'epoch', 'fence', 'headSha', 'pr', 'repo', 'sourceManifestSha256'];
 
 // batchClaim: the sticky claim generation recorded by stage 1 for this batch (batch-claim-v2.mjs).
+// hostedVerifier: the installed hosted relay verifier (hosted-relay-v1/stage.mjs), for publishHosted only.
 export function createStagedCheckPublisherV2({ nativeAdmission, authority, github, journal, signers,
-  configuredChecks, readChangedPaths, protectedDeployment, batchClaim, clock = Date.now, domain = 'production' } = {}) {
+  configuredChecks, readChangedPaths, protectedDeployment, batchClaim, clock = Date.now, domain = 'production', hostedVerifier = null } = {}) {
   const deployment = plain(protectedDeployment) ? structuredClone(protectedDeployment) : null;
   const checks = plain(configuredChecks) ? structuredClone(configuredChecks) : null;
   const configured = ['production', 'fixture'].includes(domain) && deployment?.enabled === true
@@ -41,6 +53,8 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     && plain(batchClaim) && UUID.test(batchClaim.claimId ?? '') && positive(batchClaim.fence) && positive(batchClaim.epoch)
     && (domain !== 'fixture' || github.fixture === true && authority.fixture === true && nativeAdmission.fixture === true)
     && (domain !== 'production' || !github.fixture && !authority.fixture && !nativeAdmission.fixture);
+  const hostedConfigured = configured && typeof hostedVerifier?.confirm === 'function' && HASH.test(hostedVerifier.registrySha256 ?? '')
+    && positive(hostedVerifier.publisherAppId) && (domain === 'fixture') === (hostedVerifier.fixture === true);
 
   function definitionFor(job) {
     const d = checks?.[job.role];
@@ -68,10 +82,24 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     if (matches.length !== 1) stop('check_discovery_unconfirmed');
     return matches[0];
   }
-  async function boundary(job, envelope, definition, expectedEvidenceSha256 = null) {
-    let verified;
-    try { verified = verifyResultV2({ job, envelope, signers, now: clock(), domain }); }
-    catch { stop('execution_proof_refused', true); }
+  // proof: { kind: 'signed', envelope } for a local formal role, or { kind: 'hosted', envelope, fresh } for a
+  // hosted relay. `fresh` re-attests the hosted run from new GitHub facts (before the write); without it only
+  // the envelope's own integrity is rechecked (after the write).
+  async function proofOf(job, proof) {
+    if (proof.kind === 'signed') {
+      try { return verifyResultV2({ job, envelope: proof.envelope, signers, now: clock(), domain }); }
+      catch { stop('execution_proof_refused', true); }
+    }
+    try { validateHostedEnvelope(proof.envelope); } catch { stop('hosted_attestation_invalid', true); }
+    if (proof.fresh) {
+      let confirmed;
+      try { confirmed = await hostedVerifier.confirm(proof.envelope); } catch { stop('hosted_attestation_not_confirmed'); }
+      if (confirmed?.confirmed !== true || confirmed.attestationSha256 !== proof.envelope.attestationSha256) stop('hosted_attestation_not_confirmed');
+    }
+    return { evidenceSha256: proof.envelope.attestationSha256, payload: { conclusion: 'success' }, signer: null };
+  }
+  async function boundary(job, proof, definition, expectedEvidenceSha256 = null) {
+    const verified = await proofOf(job, proof);
     if (expectedEvidenceSha256 && expectedEvidenceSha256 !== verified.evidenceSha256) stop('evidence_identity_conflict', true);
     const facts = await authority.observe(job, batchClaim);
     if (!plain(facts)) stop('protected_facts_unconfirmed');
@@ -82,7 +110,8 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     if (facts.sourceAccepted !== true || facts.hostQualified !== true || facts.publisherQualified !== true || facts.ciPrincipalQualified !== true)
       stop('protected_qualification_missing', ['sourceAccepted', 'hostQualified', 'publisherQualified', 'ciPrincipalQualified'].some(k => facts[k] === false));
     if (!requiredRefs.every(k => facts[k] === deployment[k]) || facts.ciPrincipalBindingId !== deployment.ciPrincipalBindingId
-      || verified.signer.sourceAcceptanceRef !== facts.sourceAcceptanceRef || verified.signer.qualificationRef !== facts.hostQualificationRef)
+      || (verified.signer !== null && (verified.signer.sourceAcceptanceRef !== facts.sourceAcceptanceRef
+        || verified.signer.qualificationRef !== facts.hostQualificationRef)))
       stop('protected_qualification_changed', true);
     const pr = await github.readPullRequest(job.pr);
     if (pr.state !== 'open' || pr.head?.sha !== job.headSha || pr.base?.sha !== job.baseSha || pr.base?.ref !== 'main'
@@ -106,10 +135,14 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     // Generation, not expires_at: a renewal between the two observations is not a disagreement.
     if (!sameClaimGeneration(facts.claim, native.observedClaim)) stop('lease_observations_disagree', true);
     if (!fresh(facts.observedAt, facts.claimExpiresAt, clock())) stop('protected_facts_expired_during_admission');
-    try {
-      const stillVerified = verifyResultV2({ job, envelope, signers, now: clock(), domain });
-      if (canonical(stillVerified.signer) !== canonical(verified.signer)) stop('execution_proof_refused');
-    } catch { stop('execution_proof_refused'); }
+    if (proof.kind === 'signed') {
+      try {
+        const stillVerified = verifyResultV2({ job, envelope: proof.envelope, signers, now: clock(), domain });
+        if (canonical(stillVerified.signer) !== canonical(verified.signer)) stop('execution_proof_refused');
+      } catch { stop('execution_proof_refused'); }
+    } else {
+      try { validateHostedEnvelope(proof.envelope); } catch { stop('hosted_attestation_invalid'); }
+    }
     return { verified, native, bindingSha256: digest({ subject: subjectOfV2(job), claim: claimGeneration(native.observedClaim), executionPolicy: native.executionPolicy,
       mode: native.mode, mergeSlot: native.mergeSlot, ownerReview: native.ownerReview, refs: Object.fromEntries(requiredRefs.map(k => [k, facts[k]])),
       ciPrincipalBindingId: facts.ciPrincipalBindingId, signer: verified.signer, appId: definition.appId, name: definition.name }) };
@@ -159,7 +192,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         externalId = scanExternalIdV2(job);
         previous = await journal.read(key);
         if (previous && previous.state !== 'settled') return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
-        before = await boundary(job, envelope, definition, previous?.subject.evidenceSha256);
+        before = await boundary(job, { kind: 'signed', envelope }, definition, previous?.subject.evidenceSha256);
         if (previous) {
           if (previous.subject.evidenceSha256 !== before.verified.evidenceSha256) stop('evidence_identity_conflict', true);
           await readback({ id: previous.details.checkRunId }, definition, job, externalId, previous.details.conclusion);
@@ -174,6 +207,15 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
       }
       let phase = 'intent', sent = false, known = null, sideEffects = 0;
       try {
+        // K(head, role) first: a hosted relay that already holds this role on this head refuses the local
+        // publication before its own key exists (free-minutes design §7.4).
+        try {
+          await claimRolePublication(journal, { repo: job.repo, headSha: job.headSha, role: job.role, checkName: definition.name,
+            appId: definition.appId, attempt: job.attempt }, { path: 'local', effectKey: key, externalId });
+        } catch (error) {
+          if (error?.code === 'role_already_published_on_head') return { status: 'BLOCKED', effectKey: key, reason: 'role_already_published_on_head', sideEffects: 0, productionAuthorized: false };
+          throw error;
+        }
         const intent = await journal.begin(key, { subject: subjectOfV2(job), definition, evidenceSha256: before.verified.evidenceSha256,
           observationKind: 'staged-native-observation', nativeObservationSha256: before.native.observationSha256, externalId,
           compensation: 'known-check-patch-failure-on-any-unsettled-write' });
@@ -185,7 +227,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
           external_id: externalId, output: { title: `${definition.name}: ${before.verified.payload.conclusion}`,
             summary: `Independent CI job ${job.id} (attempt ${job.attempt}); signed execution sha256 ${before.verified.evidenceSha256}; staged Native observation sha256 ${before.native.observationSha256}. No Native publication ticket or Receipt is asserted.` } });
         if (!identity(created, definition, job, externalId)) stop('check_identity_unconfirmed'); known = created;
-        const after = await boundary(job, envelope, definition);
+        const after = await boundary(job, { kind: 'signed', envelope }, definition);
         if (after.bindingSha256 !== before.bindingSha256 || after.verified.evidenceSha256 !== before.verified.evidenceSha256) stop('authorization_binding_changed', true);
         await readback(known, definition, job, externalId, before.verified.payload.conclusion);
         if (!fresh(after.native.observedAt, after.native.claimExpiresAt, clock())) stop('lease_expired_after_write', true);
@@ -202,6 +244,97 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         if (sent && known) return revoke({ key, phase, known, definition, job, externalId, cause: reason(error), sideEffects });
         await transition(key, phase, sent ? 'uncertain' : 'not_sent', { reason: reason(error), ...(known ? { checkRunId: known.id, externalId } : {}) });
         return { status: sent ? 'UNCERTAIN' : 'BLOCKED', effectKey: key, reason: reason(error), sideEffects, productionAuthorized: false };
+      }
+    },
+    // Hosted relay publication (design S17/S18, rules E9 and E10), v2. Input:
+    //   subject: { repo, pr, headSha, baseSha, claimId, fence, epoch, sourceManifestSha256 } (the claim fields
+    //            must be the batch claim generation; sourceManifestSha256 is the CI Source of the jobs)
+    //   attempt: the per-head attempt (1, or 2 for the one automatic attempt 2)
+    //   envelope: clued.independent-ci.hosted-attestation/1 from the relay stage
+    // Every result carries roleMutex { key, held }: once K is held by this relay, only SETTLED is a usable
+    // outcome; anything else needs reconciliation, because K now refuses the local path for this role on this head.
+    async publishHosted(input) {
+      const result = (fields, mutexKey = null, held = false) => ({ productionAuthorized: false, ...fields, roleMutex: { key: mutexKey, held } });
+      if (!hostedConfigured) return result({ status: 'BLOCKED', reason: 'hosted_relay_not_configured', sideEffects: 0 });
+      let job, envelope, definition, key, mutex, mutexKey = null, externalId, previous, before;
+      try {
+        if (!plain(input) || Object.keys(input).sort().join('|') !== 'attempt|envelope|subject') stop('publication_input_invalid');
+        envelope = structuredClone(input.envelope);
+        try { validateHostedEnvelope(envelope); } catch { stop('hosted_attestation_invalid'); }
+        const subject = input.subject;
+        if (!plain(subject) || Object.keys(subject).sort().join('|') !== SUBJECT_KEYS.join('|')) stop('publication_input_invalid');
+        // A-strict: the relay publishes under the batch claim generation stage 1 recorded, never another one.
+        if (!sameClaimGeneration(subject, batchClaim)) stop('hosted_claim_changed', true);
+        // The installed evaluator takes a v2 job-shaped subject; its id is the deterministic content id of
+        // the role. It is never issued to the bridge, scheduled or published under (the relay has its own
+        // effect key and external id), so a relayed role never gets a local run.
+        try {
+          job = makeJobV2({ repo: subject.repo, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, role: envelope.role,
+            sourceManifestSha256: subject.sourceManifestSha256, createdAt: new Date(clock()).toISOString(), attempt: input.attempt });
+        } catch { stop('publication_input_invalid'); }
+        if (job.repo !== deployment.repository) stop('repository_not_configured');
+        if (envelope.repository !== job.repo || envelope.pr !== job.pr || envelope.headSha !== job.headSha || envelope.baseSha !== job.baseSha) stop('hosted_subject_mismatch');
+        if (envelope.registrySha256 !== hostedVerifier.registrySha256) stop('hosted_registry_changed');
+        definition = definitionFor(job);
+        if (definition.name !== envelope.checkName || definition.appId !== hostedVerifier.publisherAppId) stop('hosted_check_definition_mismatch');
+        externalId = relayExternalId({ role: job.role, headSha: job.headSha, runId: envelope.runId, runAttempt: envelope.runAttempt });
+        mutex = { repo: job.repo, headSha: job.headSha, role: job.role, checkName: definition.name, appId: definition.appId, attempt: job.attempt };
+        mutexKey = rolePublicationKey(mutex);
+        key = digest({ action: 'hosted-relay-check/2', roleMutexKey: mutexKey, externalId, definition });
+        previous = await journal.read(key);
+        if (previous) {
+          // Re-entry never resends: a settled relay is read back, anything else is reconciliation.
+          if (previous.state !== 'settled') return result({ status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0 }, mutexKey, true);
+          try { await readback({ id: previous.details.checkRunId }, definition, job, externalId, 'success'); }
+          catch { return result({ status: 'UNCERTAIN', effectKey: key, reason: 'check_readback_unconfirmed', sideEffects: 0 }, mutexKey, true); }
+          return result({ status: 'SETTLED', mode: 'hosted-relay', effectKey: key, checkRunId: previous.details.checkRunId, externalId,
+            sideEffects: 0, productionAuthorized: domain === 'production' }, mutexKey, true);
+        }
+        before = await boundary(job, { kind: 'hosted', envelope, fresh: true }, definition);
+      } catch (error) {
+        return result({ status: 'BLOCKED', ...(key ? { effectKey: key } : {}), reason: reason(error), sideEffects: 0 }, mutexKey, false);
+      }
+      let phase = 'intent', sent = false, known = null, sideEffects = 0, held = false;
+      try {
+        held = true; // from here on K may exist; only a clean refusal below proves it does not
+        try { await claimRolePublication(journal, mutex, { path: 'relay', effectKey: key, externalId }); }
+        catch (error) {
+          if (error?.code === 'role_already_published_on_head') return result({ status: 'REFUSED', effectKey: key, reason: 'role_already_published_on_head', sideEffects: 0 }, mutexKey, false);
+          throw error;
+        }
+        const intent = await journal.begin(key, { subject: subjectOfV2(job), claim: claimGeneration(batchClaim), definition, roleMutexKey: mutexKey, externalId,
+          attestationSha256: envelope.attestationSha256, observationKind: 'staged-native-observation',
+          nativeObservationSha256: before.native.observationSha256, compensation: 'known-check-patch-failure-on-any-unsettled-write' });
+        if (intent.existing) return result({ status: 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0 }, mutexKey, true);
+        await journal.transition(key, 'intent', 'authorized', { observationKind: 'staged-native-observation', nativeObservationSha256: before.native.observationSha256 }); phase = 'authorized';
+        if (!fresh(before.native.observedAt, before.native.claimExpiresAt, clock())) stop('lease_expired_before_write', true);
+        await journal.transition(key, 'authorized', 'sent', { externalId, nativeObservationSha256: before.native.observationSha256 }); phase = 'sent'; sent = true; sideEffects++;
+        const created = await github.createCheck({ name: definition.name, head_sha: job.headSha, status: 'completed', conclusion: 'success',
+          external_id: externalId, output: { title: `${definition.name}: success`,
+            summary: `Relayed GitHub-hosted run ${envelope.runUrl} (attempt ${envelope.runAttempt}), job ${envelope.jobUrl}; `
+              + `merge commit ${envelope.mergeSha} on base ${envelope.mergeBaseSha}; workflow ${envelope.workflowPath} blob ${envelope.workflowBlob}; `
+              + `closure sha256 ${envelope.closureSha256}; OIDC claims sha256 ${envelope.claimsSha256}; registry sha256 ${envelope.registrySha256}; `
+              + `attestation sha256 ${envelope.attestationSha256}; staged Native observation sha256 ${before.native.observationSha256}; `
+              + `Source manifest sha256 ${job.sourceManifestSha256}; attempt ${job.attempt}. No Native publication ticket or Receipt is asserted.` } });
+        if (!identity(created, definition, job, externalId)) stop('check_identity_unconfirmed'); known = created;
+        const after = await boundary(job, { kind: 'hosted', envelope, fresh: false }, definition);
+        if (after.bindingSha256 !== before.bindingSha256 || after.verified.evidenceSha256 !== before.verified.evidenceSha256) stop('authorization_binding_changed', true);
+        await readback(known, definition, job, externalId, 'success');
+        if (!fresh(after.native.observedAt, after.native.claimExpiresAt, clock())) stop('lease_expired_after_write', true);
+        await journal.transition(key, 'sent', 'settled', { checkRunId: known.id, externalId, conclusion: 'success', attestationSha256: envelope.attestationSha256,
+          observationKind: 'staged-native-observation', nativeObservationBeforeSha256: before.native.observationSha256,
+          nativeObservationAfterSha256: after.native.observationSha256 });
+        return result({ status: 'SETTLED', mode: 'hosted-relay', effectKey: key, checkRunId: known.id, externalId, attestationSha256: envelope.attestationSha256,
+          nativeObservationBeforeSha256: before.native.observationSha256, nativeObservationAfterSha256: after.native.observationSha256,
+          sideEffects, productionAuthorized: domain === 'production' }, mutexKey, true);
+      } catch (error) {
+        if (sent && !known) {
+          try { known = await discoverKnown(definition, job, externalId); }
+          catch { /* UNCERTAIN: the relay cannot prove what GitHub holds. */ }
+        }
+        if (sent && known) return { ...(await revoke({ key, phase, known, definition, job, externalId, cause: reason(error), sideEffects })), roleMutex: { key: mutexKey, held } };
+        await transition(key, phase, sent ? 'uncertain' : 'not_sent', { reason: reason(error), ...(known ? { checkRunId: known.id, externalId } : {}) });
+        return result({ status: sent ? 'UNCERTAIN' : 'BLOCKED', effectKey: key, reason: reason(error), sideEffects }, mutexKey, held);
       }
     }
   });

@@ -5,7 +5,8 @@
 // Pure.
 import { canonical } from '../proof.mjs';
 import { hash } from './prepare-record.mjs';
-import { HEX64, OUTCOME_CONTRACT } from './layout.mjs';
+import { HEX64, OUTCOME_CONTRACT, RELAY_STAGE_NUMBER } from './layout.mjs';
+import { RELAY_HALT_CODES, validateRelayPlanRows } from '../hosted-relay-v1/relay-plan.mjs';
 
 export const STAGE_FACT_CONTRACT = 'clued.independent-ci.resident-stage-fact/2';
 export const NATIVE_RECEIPT_CONTRACT_V2 = 'clued.independent-ci.windows-formal-entry-receipt/2';
@@ -23,13 +24,18 @@ export const TRANSIENT_CODES = Object.freeze(['NATIVE_ADMISSION_UNAVAILABLE', 'G
 // Clean, but final for this head and attempt (never retried automatically).
 export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_INPUT_RESULT_MISSING', 'BROKER_RUNNER_NOT_ORIGINAL_STOPPED', 'BROKER_REQUEST_EXPIRED',
   'BROKER_REQUEST_REFUSED', 'STAGE_HELPER_PREFLIGHT_REFUSED', 'STAGE_CHILD_REFUSED', 'STAGE_CHILD_TIMEOUT', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 'BATCH_CLAIM_CHANGED',
-  'NATIVE_POLICY_UNSUPPORTED', 'PUBLICATION_BLOCKED', 'PUBLICATION_REVOKED', 'EVIDENCE_REFUSED', 'WORKSPACE_PREPARATION_REFUSED']);
+  'NATIVE_POLICY_UNSUPPORTED', 'PUBLICATION_BLOCKED', 'PUBLICATION_REVOKED', 'EVIDENCE_REFUSED', 'WORKSPACE_PREPARATION_REFUSED',
+  // Stage R refused before anything was observed or written (relay not configured, input invalid).
+  'RELAY_STAGE_REFUSED']);
 // Never clean: something may still run, or a publication may exist unsettled, or an identity conflicts.
 export const UNKNOWN_CODES = Object.freeze(['BROKER_RESPONSE_UNCONFIRMED', 'STAGE_HELPER_NOT_STOPPED_IN_TIME', 'STAGE_ORIGINAL_NOT_RESTORED',
   'BROKER_CONFIGURATION_CONFLICT', 'NATIVE_RECEIPT_UNCONFIRMED', 'STAGE_CHILD_TREE_UNCONFIRMED', 'STAGE_OUTCOME_MISSING', 'PUBLICATION_UNCERTAIN',
   'RECONCILIATION_REQUIRED', 'EVIDENCE_IDENTITY_CONFLICT', 'ADMISSION_CONFIGURATION_REFUSED', 'BROKER_UNCONFIRMED',
   // Another controller tool held the mutation mutex: an unexpected concurrent effect the Owner must see.
-  'BROKER_BUSY']);
+  'BROKER_BUSY',
+  // Stage R (free-minutes design §7.3, S21): a relay publication that may exist unsettled, a role already
+  // held on the head by the other path, or a relay plan that does not validate. Never local afterwards.
+  'RELAY_PUBLICATION_UNCERTAIN', 'ROLE_ALREADY_PUBLISHED_ON_HEAD', 'RELAY_PLAN_UNCONFIRMED']);
 
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 const DIAG = Object.freeze({ owner_review_required: 'OWNER_REVIEW_REQUIRED', owner_review_unavailable: 'NATIVE_ADMISSION_UNAVAILABLE',
@@ -61,7 +67,7 @@ export function notAdmittedCode(diagnostic) {
 // later: the batch claim moved under a running batch).
 export function outcomeFailureCode(outcome, stageNumber) {
   if (!plain(outcome)) return 'STAGE_OUTCOME_MISSING';
-  if (outcome.status === 'UNCERTAIN') return 'PUBLICATION_UNCERTAIN';
+  if (outcome.status === 'UNCERTAIN') return stageNumber === RELAY_STAGE_NUMBER && RELAY_HALT_CODES.includes(outcome.reason) ? outcome.reason : 'PUBLICATION_UNCERTAIN';
   if (outcome.status === 'RECONCILIATION_REQUIRED') return 'RECONCILIATION_REQUIRED';
   if (outcome.status === 'REVOKED') return 'PUBLICATION_REVOKED';
   if (outcome.status !== 'BLOCKED') return 'PUBLICATION_UNCERTAIN';
@@ -79,6 +85,7 @@ export function outcomeFailureCode(outcome, stageNumber) {
   if (r === 'full_admission_subject_changed') return 'PR_NOT_OPEN_OR_CHANGED';
   if (r === 'full_admission_native_unsupported' || r === 'native_policy_changed') return 'NATIVE_POLICY_UNSUPPORTED';
   if (r === 'execution_proof_refused') return 'EVIDENCE_REFUSED';
+  if (stageNumber === RELAY_STAGE_NUMBER && (r === 'RELAY_STAGE_NOT_CONFIGURED' || r === 'RELAY_STAGE_INPUT_INVALID')) return 'RELAY_STAGE_REFUSED';
   return stageNumber === 1 || stageNumber === 2 || stageNumber === 4 || stageNumber === 6 ? 'STAGE_CHILD_REFUSED' : 'PUBLICATION_BLOCKED';
 }
 
@@ -107,7 +114,7 @@ export function validateOutcome(o, { nonce, plan }) {
 export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha256, broker, receipt, receiptBytes, outcome, outcomeBytes, controllerSid, preflightCode = null }) {
   const fact = { contract: STAGE_FACT_CONTRACT, stage, nonce, manifest_sha256: workManifestSha256, state: 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED',
     failure_code: null, scm_start_call_issued: false, original_binary_restored: false, complete_original_readback: false, configuration_conflict_detected: false,
-    tree_cleanup_confirmed: false, tree_active_processes: null, root_exit_confirmed: false, native_receipt_sha256: null, outcome: null };
+    tree_cleanup_confirmed: false, tree_active_processes: null, root_exit_confirmed: false, native_receipt_sha256: null, outcome: null, relay: null };
   const done = code => ({ ...fact, failure_code: code });
   if (preflightCode) {
     // Nothing was requested from the broker: no service change, no child; the original is untouched.
@@ -137,7 +144,16 @@ export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha
   if (!n.treeZero) return done(n.code);
   const boundOutcome = receipt.outcome_sha256 && outcomeBytes && hash(outcomeBytes) === receipt.outcome_sha256 ? validateOutcome(outcome, { nonce, plan }) : null;
   fact.outcome = boundOutcome ? { status: boundOutcome.status, reason: boundOutcome.reason, sideEffects: boundOutcome.sideEffects, mayHavePublished: boundOutcome.mayHavePublished } : null;
+  // Stage R: the relay plan rows travel with the fact (the resident writes them into 25-plan), on success
+  // and on a HALT alike; rows that do not validate never pass as a completed relay stage.
+  const relayRows = plan.stage === RELAY_STAGE_NUMBER && boundOutcome ? validateRelayPlanRows(outcome.relay) : null;
+  if (plan.stage === RELAY_STAGE_NUMBER) fact.relay = relayRows;
   if (n.ok) {
+    if (plan.stage === RELAY_STAGE_NUMBER) {
+      if (!boundOutcome || boundOutcome.status !== 'RELAY_COMPLETE') return done('STAGE_OUTCOME_MISSING');
+      if (!relayRows || !relayRows.every(r => ['RELAYED', 'LOCAL_REQUIRED'].includes(r.outcome))) return done('RELAY_PLAN_UNCONFIRMED');
+      return { ...fact, state: 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' };
+    }
     if (!boundOutcome || !['SETTLED', 'ISSUED_RESULT_RECEIVED'].includes(boundOutcome.status)) return done('STAGE_OUTCOME_MISSING');
     return { ...fact, state: 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' };
   }

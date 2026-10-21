@@ -40,7 +40,13 @@ public static class PureTestsV2 {
    // 5. S5 window: null validUntil = install lifetime; a near deadline refuses; stage 8 waits longest
    var now=DateTimeOffset.UtcNow;Yes(FormalPublicBoundaryV2.BoundedDeadline(8,now,null)==now.AddMilliseconds(2700000),"window-null");
    Refuse(()=>FormalPublicBoundaryV2.BoundedDeadline(2,now,now.AddMinutes(30)),"window-near");Yes(FormalPublicBoundaryV2.BoundedDeadline(1,now,now.AddDays(30))==now.AddMinutes(15),"window-far");
-   Refuse(()=>FormalPublicBoundaryV2.BoundedDeadline(9,now,null),"window-stage");
+   Refuse(()=>FormalPublicBoundaryV2.BoundedDeadline(10,now,null),"window-stage");Yes(FormalPublicBoundaryV2.BoundedDeadline(9,now,null)==now.AddMilliseconds(900000),"window-stage-r");
+   // 5b. stage R: entry relay-publisher, a non-empty ordered subset of gitleaks/trivy, nothing else
+   Yes(FormalPublicBoundaryV2.RelativeEntryForRole("relay-publisher").EndsWith("src/hosted-relay-v1/relay-entry-v2.mjs"),"relay-entry");
+   Func<string[],object[]> js=rs=>{var o=new object[rs.Length];for(int i=0;i<rs.Length;i++)o[i]=new Dictionary<string,object>{{"role",rs[i]}};return o;};
+   Yes(FormalPublicBoundaryV2.SelectedJobRoles(9,js(new[]{"trivy"}))[0]=="trivy"&&FormalPublicBoundaryV2.SelectedJobRoles(9,js(new[]{"gitleaks","trivy"})).Length==2,"relay-subset");
+   Refuse(()=>FormalPublicBoundaryV2.SelectedJobRoles(9,js(new[]{"trivy","gitleaks"})),"relay-order");Refuse(()=>FormalPublicBoundaryV2.SelectedJobRoles(9,js(new[]{"contract-placement"})),"relay-placement");
+   Refuse(()=>FormalPublicBoundaryV2.SelectedJobRoles(9,js(new string[0])),"relay-empty");Refuse(()=>FormalPublicBoundaryV2.SelectedJobRoles(2,js(new[]{"gitleaks","trivy"})),"fixed-stage-count");
    // 6. S2 PID handshake event: owner SYSTEM, SY+BA full, controller Synchronize; nothing else
    Yes(FormalScmPidHandshakeV2.NameForNonce(nonce).EndsWith(nonce),"ack-name");Refuse(()=>FormalScmPidHandshakeV2.NameForNonce("A"),"ack-nonce");
    FormalScmPidHandshakeV2.ValidateSecurity(FormalScmPidHandshakeV2.ManagementSecurity().GetSecurityDescriptorBinaryForm());n++;

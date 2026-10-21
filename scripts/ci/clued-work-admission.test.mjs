@@ -80,6 +80,7 @@ import {
   mergeSlotCheck,
   mergeSlotOutputs,
   mergeSlotState,
+  appChecksOnHead,
 } from "./clued-work-admission.mjs";
 import { fixedPolicy } from "./merge-admission-policy.fixtures.mjs";
 import { parseModeLabel } from "./merge-admission-policy.mjs";
@@ -2515,4 +2516,78 @@ test("evaluate (Owner Decision a0d93cd0): a head that only merged main keeps the
   assert.equal(result.outcome.owner_review.kind, "transient");
   assert.match(result.outcome.reasons[0], /^owner_review_unavailable:transient/);
   assert.deepEqual(result.asked, [APPROVED]);
+});
+
+// Source v2 resident executor (PR-A): the merge gate counts the v2 control pair through the v2 consumer.
+// Off the installed clued-control principal the consumer refuses before it opens any file, so the gate
+// can never turn a v2 check into an admission here; the consumption itself runs on the fixture engine below.
+test("independent-control-checks-v2: the gate and the head reader dispatch to the v2 consumer and fail closed off the controller", async () => {
+  const env = { CLUED_EXECUTION_PROVIDER: "independent-control-checks-v2", GITHUB_REPOSITORY: "tdoljyj/cross-memory-system" };
+  const event = { pull_request: { number: 7, head: { sha: "a".repeat(40) }, base: { sha: "b".repeat(40) } } };
+  const noNetwork = async () => { throw new Error("no network in this test"); };
+  await assert.rejects(gate({ env, event, eventName: "pull_request", fetchImpl: noNetwork }), { code: "CONTROL_CONSUMER_V2_PRINCIPAL_REQUIRED" });
+  await assert.rejects(appChecksOnHead(noNetwork, env, "tdoljyj/cross-memory-system", "a".repeat(40), "kooyumi-admission-verified"), { code: "CONTROL_CONSUMER_V2_PRINCIPAL_REQUIRED" });
+  await assert.rejects(appChecksOnHead(noNetwork, env, "tdoljyj/cross-memory-system", "a".repeat(40), "kooyumi-merge-slot"), { code: "CONTROL_CONSUMER_V2_PRINCIPAL_REQUIRED" });
+  // A wrong repository or an unknown check name is refused before the principal is even looked at.
+  await assert.rejects(appChecksOnHead(noNetwork, env, "evil/repo", "a".repeat(40), "kooyumi-admission-verified"), { code: "CONTROL_HEAD_SELECTOR_REQUIRED" });
+  const consumer = await import("../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/consumer.mjs");
+  assert.throws(() => consumer.assertControllerPrincipal({ platform: "linux", username: "clued-control" }), { code: "CONTROL_CONSUMER_V2_PRINCIPAL_REQUIRED" });
+  assert.doesNotThrow(() => consumer.assertControllerPrincipal({ platform: "win32", username: "clued-control" }));
+});
+
+test("independent-control-checks-v2: a settled v2 control pair counts; another claim generation or Source does not, and one head counts one batch", async () => {
+  const CI = "../../work/actions-hosted-migration/independent-ci-v1/";
+  const { batchJobsV2, claimGeneration } = await import(CI + "src/job-v2.mjs");
+  const { recordBatchClaim } = await import(CI + "src/batch-claim-v2.mjs");
+  const { EffectJournal } = await import(CI + "src/effect-journal.mjs");
+  const { createFixtureControlPublisherV2 } = await import(CI + "src/independent-control-checks-v2/publisher.mjs");
+  const { controlJobsFor, consumeControlV2 } = await import(CI + "src/independent-control-checks-v2/consumer.mjs");
+  const { admittedFacts } = await import(CI + "test/resident-v2-fixtures.mjs");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "clued-v2-control-"));
+  try {
+    const repo = "tdoljyj/cross-memory-system", head = "a".repeat(40), base = "b".repeat(40), ci = "d".repeat(64);
+    const now = Date.now(), iso = ms => new Date(ms).toISOString();
+    const claim = { claimId: crypto.randomUUID(), fence: 3, epoch: 1, expiresAt: iso(now + 3_600_000) };
+    const jobs = batchJobsV2({ repo, pr: 888, headSha: head, baseSha: base, sourceManifestSha256: ci, createdAt: iso(now - 60_000), attempt: 1 });
+    const claims = path.join(root, "batch-claims");
+    const { record } = await recordBatchClaim(claims, jobs["work-admission"], claim, iso(now - 30_000));
+    const checks = []; let next = 100;
+    const github = { fixture: true,
+      async readChangedPaths(j) { return { complete: true, pr: j.pr, headSha: j.headSha, baseSha: j.baseSha, paths: ["a.txt"] }; },
+      async readChecks(h) { return { complete: true, checks: checks.filter(c => c.head_sha === h).map(c => structuredClone(c)) }; },
+      async createCheck(body) { const c = { id: next++, app: { id: 5368905 }, ...structuredClone(body) }; checks.push(c); return structuredClone(c); },
+      async revokeCheck(id, body) { const c = checks.find(x => x.id === id); Object.assign(c, structuredClone(body)); return structuredClone(c); } };
+    let observed = claim;
+    const admission = { fixture: true, async evaluatePr(j, packet, opts) {
+      return admittedFacts(j, observed, packet, { domain: "fixture", mergeQueueHead: true, batchClaim: opts?.batchClaim, observedAt: Date.now(), slotUntil: now + 3_600_000 });
+    } };
+    const journal = await EffectJournal.open(path.join(root, "effects-control"));
+    const consumerFor = batchClaim => createFixtureControlPublisherV2({ github, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaim });
+    // stage 8 published the pair under the batch claim generation
+    const pub = consumerFor(claimGeneration(claim));
+    for (const role of ["control-admission", "control-merge-slot"]) assert.equal((await pub.publishOne(jobs[role])).status, "SETTLED");
+    for (const name of ["kooyumi-admission-verified", "kooyumi-merge-slot"]) {
+      const candidates = controlJobsFor([record], { repository: repo, headSha: head, name }, ci);
+      assert.equal(candidates.length, 1);
+      const { proof } = await consumeControlV2({ candidates, consumerFor });
+      assert.equal(proof.contract, "clued.independent-ci.control-consumption/2");
+      assert.equal(proof.check.name, name);
+      assert.match(proof.check.external_id, /^independent-ci:control:control-(admission|merge-slot):v2:[0-9a-f]{64}:a1:c[0-9a-f]{8}:f3:e1$/);
+    }
+    // another CI Source: no candidate, no green check
+    assert.deepEqual(controlJobsFor([record], { repository: repo, headSha: head, name: "kooyumi-admission-verified" }, "e".repeat(64)), []);
+    await assert.rejects(consumeControlV2({ candidates: [], consumerFor }), { code: "CONTROL_HEAD_NOT_CURRENT" });
+    // a takeover (new fence) after publication: the settled check no longer counts and is compensated once
+    observed = { ...claim, fence: 4 };
+    await assert.rejects(consumeControlV2({ candidates: controlJobsFor([record], { repository: repo, pr: 888, headSha: head, name: "kooyumi-admission-verified" }, ci), consumerFor }));
+    assert.equal(checks.find(c => c.name === "kooyumi-admission-verified" && c.external_id.includes(jobs["control-admission"].id)).conclusion, "failure");
+    observed = claim;
+    // the same head under a second PR: the newer judgement on the head wins (NEWER_CONTROL_JUDGEMENT_PRESENT),
+    // so a head-only reader counts exactly one batch, never two
+    const jobs2 = batchJobsV2({ repo, pr: 889, headSha: head, baseSha: base, sourceManifestSha256: ci, createdAt: iso(now - 60_000), attempt: 1 });
+    const second = (await recordBatchClaim(claims, jobs2["work-admission"], claim, iso(now - 30_000))).record;
+    assert.equal((await pub.publishOne(jobs2["control-admission"])).status, "SETTLED");
+    const both = await consumeControlV2({ candidates: controlJobsFor([record, second], { repository: repo, headSha: head, name: "kooyumi-admission-verified" }, ci), consumerFor });
+    assert.equal(both.proof.subject.pr, 889);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

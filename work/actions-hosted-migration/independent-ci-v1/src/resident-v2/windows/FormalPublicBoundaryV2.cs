@@ -33,14 +33,26 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
  public const string ResidentSid="S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629";
  static readonly string[] Management={"S-1-5-18","S-1-5-32-544","S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"};
  const string P="work/actions-hosted-migration/independent-ci-v1/";
- public static readonly string[] StageRole={"work-admission","scanner-issuer","check-publisher","scanner-issuer","check-publisher","scanner-issuer","check-publisher","control-checks"};
- public static readonly uint[] StageMilliseconds={900000,2700000,900000,1800000,900000,600000,900000,2700000};
- public static readonly string[][] StageJobRoles={new[]{"work-admission"},new[]{"gitleaks"},new[]{"gitleaks"},new[]{"trivy"},new[]{"trivy"},new[]{"contract-placement"},new[]{"contract-placement"},new[]{"control-admission","control-merge-slot"}};
+ // Stage 9 is stage R, the hosted relay (free-minutes design S19/S22): entry relay-publisher, a non-empty
+ // ordered subset of its job roles (the relay candidates; contract-placement is never relayed).
+ public const int RelayStage=9;
+ public static readonly string[] StageRole={"work-admission","scanner-issuer","check-publisher","scanner-issuer","check-publisher","scanner-issuer","check-publisher","control-checks","relay-publisher"};
+ public static readonly uint[] StageMilliseconds={900000,2700000,900000,1800000,900000,600000,900000,2700000,900000};
+ public static readonly string[][] StageJobRoles={new[]{"work-admission"},new[]{"gitleaks"},new[]{"gitleaks"},new[]{"trivy"},new[]{"trivy"},new[]{"contract-placement"},new[]{"contract-placement"},new[]{"control-admission","control-merge-slot"},new[]{"gitleaks","trivy"}};
+ // The job roles a stage package may carry: exactly the row's, or (stage R) a non-empty ordered subset.
+ public static string[] SelectedJobRoles(int stage,object[] jobs){
+  if(stage<1||stage>StageRole.Length||jobs==null)Deny("EXACT_STAGE_JOBS_REQUIRED");string[] row=StageJobRoles[stage-1];
+  if(stage!=RelayStage){if(jobs.Length!=row.Length)Deny("EXACT_STAGE_JOBS_REQUIRED");return row;}
+  if(jobs.Length<1||jobs.Length>row.Length)Deny("EXACT_STAGE_JOBS_REQUIRED");var roles=new string[jobs.Length];int last=-1;
+  for(int i=0;i<jobs.Length;i++){var j=jobs[i] as Dictionary<string,object>;string r=j==null?null:j.ContainsKey("role")?j["role"] as string:null;int at=r==null?-1:Array.IndexOf(row,r);if(at<=last)Deny("EXACT_STAGE_JOBS_REQUIRED");last=at;roles[i]=r;}
+  return roles;
+ }
  public static string RelativeEntryForRole(string role){
   if(role=="work-admission")return P+"src/formal-work-admission-check-v2/startup.mjs";
   if(role=="scanner-issuer")return P+"worker/protected-job-bridge-v4/windows-issuer.mjs";
   if(role=="check-publisher")return P+"runtime/one-shot-v2.mjs";
   if(role=="control-checks")return P+"src/independent-control-checks-v2/startup.mjs";
+  if(role=="relay-publisher")return P+"src/hosted-relay-v1/relay-entry-v2.mjs";
   Deny("FIXED_FORMAL_ENTRY_ROLE_REQUIRED");return null;
  }
  // Every v2 entry imports these; a record that does not pin them is not a Source v2 record.
@@ -121,7 +133,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
  public static void NoLegacy(object v){var m=v as Dictionary<string,object>;if(m!=null)foreach(var p in m){if(p.Key=="ciTokenSha256"||p.Key=="currentClaim")Deny("REPLAYABLE_OR_CLAIM_BOUND_INPUT_REFUSED");NoLegacy(p.Value);}var a=v as object[];if(a!=null)foreach(var x in a)NoLegacy(x);}
  static readonly string[] PlanFields={"contract","enabled","stage","entryRole","batchKey","batchId","ownerPackageAcceptanceRef","nodeSha256","entrySha256","acceptanceSha256","sourceManifestSha256","installationSha256","runtimeConfigPinSha256","jobSha256"};
  public static int PlanStage(Dictionary<string,object> plan){
-  Fields(plan,PlanFields);Exact(plan,"contract","clued.independent-ci.fixed-formal-windows-entry/2");True(plan,"enabled");long stage=Int(plan,"stage");if(stage<1||stage>8)Deny("FIXED_FORMAL_STAGE_REQUIRED");
+  Fields(plan,PlanFields);Exact(plan,"contract","clued.independent-ci.fixed-formal-windows-entry/2");True(plan,"enabled");long stage=Int(plan,"stage");if(stage<1||stage>StageRole.Length)Deny("FIXED_FORMAL_STAGE_REQUIRED");
   if(Text(plan,"entryRole")!=StageRole[stage-1])Deny("FIXED_FORMAL_ENTRY_ROLE_REQUIRED");Ref(plan,"ownerPackageAcceptanceRef");Sha(plan,"batchKey");
   string id=Text(plan,"batchId");if(id.Length!=29||id[16]!='-'||!LowerHex(id.Substring(0,16))||!LowerHex(id.Substring(17)))Deny("FIXED_BATCH_ID_REQUIRED");
   foreach(string f in new[]{"nodeSha256","entrySha256","acceptanceSha256","sourceManifestSha256","installationSha256","runtimeConfigPinSha256","jobSha256"})Sha(plan,f);return (int)stage;
@@ -147,7 +159,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
  }
  // S5: the stage cap, bounded only by the install's validUntil (null = until Source change/uninstall).
  public static DateTimeOffset BoundedDeadline(int stage,DateTimeOffset now,DateTimeOffset? validUntil){
-  if(stage<1||stage>8)Deny("FIXED_RUNTIME_STAGE_REQUIRED");uint duration=StageMilliseconds[stage-1];
+  if(stage<1||stage>StageMilliseconds.Length)Deny("FIXED_RUNTIME_STAGE_REQUIRED");uint duration=StageMilliseconds[stage-1];
   if(validUntil.HasValue&&validUntil.Value<now.AddMilliseconds((long)duration+180000))Deny("FULL_FORMAL_ROLE_AND_RESTORE_WINDOW_REQUIRED");return now.AddMilliseconds(duration);
  }
  public uint RemainingRunMilliseconds(){double ms=(RuntimeDeadlineUtc-DateTimeOffset.UtcNow).TotalMilliseconds;if(ms<1||ms>StageMilliseconds[Stage-1])Deny("ACTUAL_FORMAL_RUNTIME_WINDOW_EXPIRED");return (uint)Math.Floor(ms);}
@@ -177,7 +189,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   var pins=SourcePins(accepted,EntryHash,SelectedRole);
   var manifest=Parse(Read(Record+"\\source-manifest.json",SourceManifestHash,true));Exact(manifest,"schema","independent-ci.sources.v2");Exact(manifest,"repo","tdoljyj/cross-memory-system");
   var jobsBytes=Read(stageDir+"\\jobs.json",Sha(plan,"jobSha256"),true);var jobs=new JavaScriptSerializer().DeserializeObject(new UTF8Encoding(false,true).GetString(jobsBytes)) as object[];
-  string[] roles=StageJobRoles[Stage-1];if(jobs==null||jobs.Length!=roles.Length)Deny("EXACT_STAGE_JOBS_REQUIRED");
+  string[] roles=SelectedJobRoles(Stage,jobs);
   for(int i=0;i<roles.Length;i++){var j=jobs[i] as Dictionary<string,object>;if(j==null)Deny("EXACT_STAGE_JOBS_REQUIRED");ValidateJobV2(j,roles[i],SourceManifestHash);
    if(i>0)foreach(string k in new[]{"repo","pr","headSha","baseSha","sourceManifestSha256","createdAt","attempt"})if(!Object.Equals(At(j,k),At((Dictionary<string,object>)jobs[0],k)))Deny("EXACT_CONTROL_PAIR_SUBJECT_REQUIRED");}
   if(SelectedRole=="check-publisher")Read(stageDir+"\\result.json",null,false); // signed untrusted input; the entry verifies it

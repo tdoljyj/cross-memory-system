@@ -13,7 +13,7 @@ import { validateRecordV2 } from '../src/resident-v2/record.mjs';
 import { deriveBatch, residentBatchKey, writeBatch, main as deriveMain } from '../src/resident-v2/derive-batch.mjs';
 import { readSealedStage } from '../src/resident-v2/stage-package.mjs';
 import { makeBrokerRequest, validateBrokerRequest, validateBrokerResponse, BROKER_RESPONSE_CONTRACT } from '../src/resident-v2/broker-protocol.mjs';
-import { STAGES_V2, RESIDENT_SID, serviceSid } from '../src/resident-v2/layout.mjs';
+import { FORMAL_STAGES_V2, RESIDENT_SID, serviceSid } from '../src/resident-v2/layout.mjs';
 import { NOW, HEAD, BASE, iso, hex, tempDir, fixtureRecord, writeRecordDir, subject, signResult, recordInputs, sourceFiles } from './resident-v2-fixtures.mjs';
 
 const base = (o = {}) => ({ repo: 'tdoljyj/cross-memory-system', pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(NOW), attempt: 1, ...o });
@@ -125,7 +125,7 @@ test('derive-batch: deterministic eight sealed stages, jobs carry attempt, key a
   assert.deepEqual(a.files, b.files);
   assert.equal(a.result.status, 'RESIDENT_BATCH_DERIVED');
   assert.equal(a.result.stages.length, 8);
-  assert.deepEqual(a.result.stages.map(x => x.entryRole), STAGES_V2.map(x => x.entryRole));
+  assert.deepEqual(a.result.stages.map(x => x.entryRole), FORMAL_STAGES_V2.map(x => x.entryRole));
   assert.equal(a.result.stages[1].jobId, a.result.stages[2].jobId); // execution and publication share the job
   assert.equal(a.result.stages[7].jobIds.length, 2);
   assert.throws(() => deriveBatch({ recordDocs: docs, subject: s, batchKey: 'f'.repeat(64), batchId: id, now: NOW }), { code: 'RESIDENT_BATCH_KEY_MISMATCH' });
@@ -171,7 +171,7 @@ test('broker protocol: five fields, bounded deadline, exact response, ok implies
   assert.equal(validateBrokerRequest(req, NOW), req);
   assert.throws(() => validateBrokerRequest(req, Date.parse(req.deadline) - 60_000), { code: 'BROKER_REQUEST_EXPIRED' });
   assert.throws(() => validateBrokerRequest({ ...req, helper: 'x' }, NOW), { code: 'BROKER_REQUEST_SHAPE' });
-  assert.throws(() => validateBrokerRequest({ ...req, stage: 9 }, NOW), { code: 'BROKER_REQUEST_FIELDS' });
+  assert.throws(() => validateBrokerRequest({ ...req, stage: 10 }, NOW), { code: 'BROKER_REQUEST_FIELDS' });
   const id = randomUUID();
   const ok = { contract: BROKER_RESPONSE_CONTRACT, requestId: id, ok: true, code: null, started: true, startCallIssued: true, helperPid: 4242, stoppedInTime: true, restored: true, accountUnchanged: true, stableBefore: true, stableAfter: true, configurationConflict: false };
   assert.ok(validateBrokerResponse(ok, id));

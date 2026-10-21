@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { canonical } from '../proof.mjs';
 import { hash } from './prepare-record.mjs';
-import { HEX64, STAGES_V2 } from './layout.mjs';
+import { HEX64, STAGES_V2, stageJobRolesValid } from './layout.mjs';
 
 export const STAGE_CONTRACT = 'clued.independent-ci.resident-stage/2';
 export const WORK_CONTRACT = 'clued.independent-ci.resident-stage-work/2';
@@ -69,7 +69,7 @@ export async function readSealedStage(batchDir, number, expectedWorkManifestSha2
   const plan = JSON.parse(files['formal-service-entry.json'].toString('utf8'));
   const row = validatePlanV2(plan);
   check(stage.contract === STAGE_CONTRACT && stage.number === number && plan.stage === number && stage.entryRole === row.entryRole
-    && canonical(stage.jobRoles) === canonical(row.jobRoles) && stage.batchKey === plan.batchKey && stage.batchId === plan.batchId
+    && stageJobRolesValid(row, stage.jobRoles) && stage.batchKey === plan.batchKey && stage.batchId === plan.batchId
     && hash(files['jobs.json']) === plan.jobSha256, 'SEALED_STAGE_BINDING_REQUIRED');
   return Object.freeze({ dir, files, stage, plan, row, planSha256: wm.planSha256 });
 }

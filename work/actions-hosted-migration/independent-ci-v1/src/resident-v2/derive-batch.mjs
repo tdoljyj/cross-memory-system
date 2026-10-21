@@ -9,6 +9,11 @@
 //   node derive-batch.mjs --subject-json <json> --batch-key <64hex> --batch-id <16hex-12hex> --out <new dir> [--record <dir>]
 // stdout: {status:'RESIDENT_BATCH_DERIVED', batchKey, batchId, packageSha256, ciSourceManifestSha256,
 //          stages:[{number,name,entryRole,jobId,jobIds,workManifestSha256,planSha256,directory,runMilliseconds,linuxWorker}]}
+// Stage R (hosted relay, free-minutes design S19) is not part of the batch derivation: its job list is the
+// relay candidates the resident decided after the hosted wait (20-plan-intent). One more deterministic call
+// adds exactly that one package to the existing batch directory (create-only, from the same record):
+//   node derive-batch.mjs --relay-roles gitleaks,trivy --batch-dir <dir> --batch-key <64hex> --batch-id <id> [--record <dir>]
+// stdout: {status:'RESIDENT_RELAY_STAGE_DERIVED', batchKey, batchId, stage:{number:9,...same row fields}}
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -16,7 +21,7 @@ import { canonical, digest } from '../proof.mjs';
 import { batchJobsV2, MAX_ATTEMPT_V2 } from '../job-v2.mjs';
 import { hash } from './prepare-record.mjs';
 import { validateRecordV2 } from './record.mjs';
-import { BATCH_ID, ENTRY_V2, HEX64, RECORD_FILES, REPO, STAGES_V2, WIN_RECORD } from './layout.mjs';
+import { BATCH_ID, ENTRY_V2, FORMAL_STAGES_V2, HEX64, RECORD_FILES, RELAY_STAGE_V2, REPO, WIN_RECORD, stageJobRolesValid } from './layout.mjs';
 import { STAGE_CONTRACT, PLAN_CONTRACT_V2, stageDirectory, workManifest } from './stage-package.mjs';
 
 export const BATCH_CONTRACT = 'clued.independent-ci.resident-batch/2';
@@ -51,28 +56,67 @@ export function deriveBatch({ recordDocs, subject, batchKey, batchId, now = Date
   const jobs = batchJobsV2({ repo: subject.repo, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, sourceManifestSha256: ci, createdAt: subject.createdAt, attempt: subject.attempt });
   const out = {};
   const rows = [];
-  for (const s of STAGES_V2) {
-    const stageJobs = s.jobRoles.map(r => jobs[r]);
-    const jobsText = canonical(stageJobs);
-    const plan = { contract: PLAN_CONTRACT_V2, enabled: true, stage: s.number, entryRole: s.entryRole, batchKey, batchId,
-      ownerPackageAcceptanceRef: record.accepted.ownerPackageAcceptanceRef, nodeSha256: record.config.controllerNodeSha256,
-      entrySha256: record.pins.get(ENTRY_V2[s.entryRole]), acceptanceSha256: record.hashes.acceptanceSha256, sourceManifestSha256: ci,
-      installationSha256: record.hashes.installationSha256, runtimeConfigPinSha256: record.hashes.runtimeConfigPinSha256, jobSha256: hash(jobsText) };
-    const stage = { contract: STAGE_CONTRACT, number: s.number, name: s.name, entryRole: s.entryRole, jobRoles: [...s.jobRoles], jobIds: stageJobs.map(j => j.id),
-      runMilliseconds: s.runMilliseconds, linuxWorker: s.linuxWorker, batchKey, batchId };
-    const files = { 'stage.json': canonical(stage), 'formal-service-entry.json': canonical(plan), 'jobs.json': jobsText };
-    const wm = workManifest(files);
-    const dir = stageDirectory(s.number);
-    for (const [n, t] of Object.entries(files)) out[`${dir}/${n}`] = t;
-    out[`${dir}/work-manifest.json`] = wm;
-    rows.push({ number: s.number, name: s.name, entryRole: s.entryRole, jobId: stageJobs[0].id, jobIds: stage.jobIds, workManifestSha256: hash(wm),
-      planSha256: hash(files['formal-service-entry.json']), directory: dir, runMilliseconds: s.runMilliseconds, linuxWorker: s.linuxWorker });
+  for (const s of FORMAL_STAGES_V2) {
+    const { files, row } = stagePackage({ record, s, stageJobs: s.jobRoles.map(r => jobs[r]), batchKey, batchId });
+    Object.assign(out, files);
+    rows.push(row);
   }
   const batch = { contract: BATCH_CONTRACT, batchKey, batchId, subject, ciSourceManifestSha256: ci, sourceCommit, gitleaksTomlSha256, recordHashes: record.hashes,
     jobs: Object.fromEntries(Object.entries(jobs).map(([r, j]) => [r, j.id])), stages: rows, automaticRetryAllowed: false, claimBound: false };
   out['batch.json'] = canonical(batch);
   const packageSha256 = hash(canonical({ batch: hash(out['batch.json']), stages: rows.map(r => r.workManifestSha256) }));
   return { files: out, result: { status: 'RESIDENT_BATCH_DERIVED', batchKey, batchId, packageSha256, ciSourceManifestSha256: ci, sourceCommit, gitleaksTomlSha256, stages: rows } };
+}
+
+// One sealed stage package (plan, stage row, jobs, work manifest), shared by the batch and stage R.
+function stagePackage({ record, s, stageJobs, batchKey, batchId }) {
+  const ci = record.config.sourceManifestSha256;
+  const jobsText = canonical(stageJobs);
+  const plan = { contract: PLAN_CONTRACT_V2, enabled: true, stage: s.number, entryRole: s.entryRole, batchKey, batchId,
+    ownerPackageAcceptanceRef: record.accepted.ownerPackageAcceptanceRef, nodeSha256: record.config.controllerNodeSha256,
+    entrySha256: record.pins.get(ENTRY_V2[s.entryRole]), acceptanceSha256: record.hashes.acceptanceSha256, sourceManifestSha256: ci,
+    installationSha256: record.hashes.installationSha256, runtimeConfigPinSha256: record.hashes.runtimeConfigPinSha256, jobSha256: hash(jobsText) };
+  const stage = { contract: STAGE_CONTRACT, number: s.number, name: s.name, entryRole: s.entryRole, jobRoles: stageJobs.map(j => j.role), jobIds: stageJobs.map(j => j.id),
+    runMilliseconds: s.runMilliseconds, linuxWorker: s.linuxWorker, batchKey, batchId };
+  const files = { 'stage.json': canonical(stage), 'formal-service-entry.json': canonical(plan), 'jobs.json': jobsText };
+  const wm = workManifest(files);
+  const dir = stageDirectory(s.number);
+  const out = {};
+  for (const [n, t] of Object.entries(files)) out[`${dir}/${n}`] = t;
+  out[`${dir}/work-manifest.json`] = wm;
+  return { files: out, row: { number: s.number, name: s.name, entryRole: s.entryRole, jobId: stageJobs[0].id, jobIds: stage.jobIds, workManifestSha256: hash(wm),
+    planSha256: hash(files['formal-service-entry.json']), directory: dir, runMilliseconds: s.runMilliseconds, linuxWorker: s.linuxWorker } };
+}
+
+// Stage R for an already derived batch: the same record, the batch's own subject and job ids (re-derived and
+// compared, never trusted from the file), and the relay candidate roles (a non-empty ordered subset of the
+// relayable roles). Pure; the same inputs always give the same bytes.
+export function deriveRelayStage({ recordDocs, batchJson, roles, batchKey, batchId, now = Date.now() }) {
+  const text = Buffer.isBuffer(batchJson) ? batchJson.toString('utf8') : batchJson;
+  let batch;
+  try { batch = JSON.parse(text); } catch { fail('RESIDENT_BATCH_RECORD_REFUSED'); }
+  check(plain(batch) && batch.contract === BATCH_CONTRACT && batch.batchKey === batchKey && batch.batchId === batchId && canonical(batch) === text, 'RESIDENT_BATCH_RECORD_REFUSED');
+  check(Array.isArray(roles) && stageJobRolesValid(RELAY_STAGE_V2, roles), 'RESIDENT_RELAY_ROLES_REFUSED');
+  const subject = validateSubject(batch.subject, now);
+  check(batchKey === residentBatchKey(subject), 'RESIDENT_BATCH_KEY_MISMATCH');
+  const record = validateRecordV2(recordDocs, { now, required: [...Object.values(ENTRY_V2), '.gitleaks.toml'] });
+  const ci = record.config.sourceManifestSha256;
+  check(batch.ciSourceManifestSha256 === ci, 'RESIDENT_BATCH_RECORD_REFUSED');
+  const jobs = batchJobsV2({ repo: subject.repo, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, sourceManifestSha256: ci, createdAt: subject.createdAt, attempt: subject.attempt });
+  check(plain(batch.jobs) && Object.keys(batch.jobs).length === Object.keys(jobs).length && Object.entries(jobs).every(([r, j]) => batch.jobs[r] === j.id), 'RESIDENT_BATCH_RECORD_REFUSED');
+  const { files, row } = stagePackage({ record, s: RELAY_STAGE_V2, stageJobs: roles.map(r => jobs[r]), batchKey, batchId });
+  return { files, result: { status: 'RESIDENT_RELAY_STAGE_DERIVED', batchKey, batchId, stage: row } };
+}
+
+// Adds the stage-R files to an existing batch directory; the stage directory itself must be new.
+export function writeRelayStage(batchDir, files) {
+  check(path.isAbsolute(batchDir) && fs.lstatSync(batchDir).isDirectory(), 'RESIDENT_BATCH_DIRECTORY_REQUIRED');
+  const dirs = new Set(Object.keys(files).map(rel => rel.split('/')[0]));
+  check(dirs.size === 1, 'RESIDENT_RELAY_STAGE_REFUSED');
+  const stageDir = path.join(batchDir, [...dirs][0]);
+  check(!fs.existsSync(stageDir), 'RESIDENT_RELAY_STAGE_EXISTS_PRESERVE_NO_RETRY');
+  fs.mkdirSync(stageDir);
+  for (const [rel, t] of Object.entries(files)) fs.writeFileSync(path.join(batchDir, ...rel.split('/')), t, { flag: 'wx' });
 }
 
 export function readRecordDocs(dir) {
@@ -99,10 +143,20 @@ export function writeBatch(outDir, files) {
 export function main(argv = process.argv.slice(2), { now = Date.now(), output = process.stdout } = {}) {
   const args = {};
   for (let i = 0; i < argv.length; i += 2) {
-    check(['--subject-json', '--batch-key', '--batch-id', '--out', '--record'].includes(argv[i]) && typeof argv[i + 1] === 'string' && !Object.hasOwn(args, argv[i]), 'RESIDENT_DERIVATION_ARGUMENTS_REFUSED');
+    check(['--subject-json', '--batch-key', '--batch-id', '--out', '--record', '--relay-roles', '--batch-dir'].includes(argv[i]) && typeof argv[i + 1] === 'string' && !Object.hasOwn(args, argv[i]), 'RESIDENT_DERIVATION_ARGUMENTS_REFUSED');
     args[argv[i]] = argv[i + 1];
   }
-  check(args['--subject-json'] && args['--batch-key'] && args['--batch-id'] && args['--out'], 'RESIDENT_DERIVATION_ARGUMENTS_REFUSED');
+  if (Object.hasOwn(args, '--relay-roles')) {
+    check(args['--batch-dir'] && args['--batch-key'] && args['--batch-id'] && !args['--subject-json'] && !args['--out'], 'RESIDENT_DERIVATION_ARGUMENTS_REFUSED');
+    check(/^[a-z-]{1,40}(,[a-z-]{1,40}){0,3}$/.test(args['--relay-roles']), 'RESIDENT_RELAY_ROLES_REFUSED');
+    const batchJson = fs.readFileSync(path.join(args['--batch-dir'], 'batch.json'));
+    const { files, result } = deriveRelayStage({ recordDocs: readRecordDocs(args['--record'] ?? WIN_RECORD), batchJson, roles: args['--relay-roles'].split(','),
+      batchKey: args['--batch-key'], batchId: args['--batch-id'], now });
+    writeRelayStage(args['--batch-dir'], files);
+    output.write(JSON.stringify(result) + '\n');
+    return 0;
+  }
+  check(args['--subject-json'] && args['--batch-key'] && args['--batch-id'] && args['--out'] && !args['--batch-dir'], 'RESIDENT_DERIVATION_ARGUMENTS_REFUSED');
   let subject;
   try { subject = JSON.parse(args['--subject-json']); } catch { fail('RESIDENT_SUBJECT_FIELDS_REQUIRED'); }
   const { files, result } = deriveBatch({ recordDocs: readRecordDocs(args['--record'] ?? WIN_RECORD), subject, batchKey: args['--batch-key'], batchId: args['--batch-id'], now });
