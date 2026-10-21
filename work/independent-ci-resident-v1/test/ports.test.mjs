@@ -6,7 +6,7 @@ import { EventEmitter } from 'node:events';
 import { ORIGINAL_BINARY, originalStopped, parseScQc, parseScQueryex, parseStageFact } from '../src/engine-windows.mjs';
 import { INSTALLED_MANIFEST_CONTRACT, installedIntegrity, mailboxCompanion } from '../src/service-ports.mjs';
 import { Mailbox } from '../src/mailbox.mjs';
-import { Runner } from '../src/runner.mjs';
+import { Runner, FIXED_ENV, serviceEnv } from '../src/runner.mjs';
 import { sha256 } from '../src/canonical.mjs';
 import { tempRoot } from './helpers.mjs';
 
@@ -89,4 +89,15 @@ test('instance lock refuses a second live executor and keeps a dead holder\'s lo
   const stale = await fs.readdir(path.join(root, 'locks'));
   assert.equal(stale.length, 1);
   assert.equal(JSON.parse(await fs.readFile(path.join(root, 'locks', stale[0], 'holder.json'), 'utf8')).pid, 111);
+});
+
+test('service children get the service temp directory on top of the fixed environment', () => {
+  const dir = String.raw`C:\ProgramData\CluedIndependentCI\resident\state\tmp`;
+  const env = serviceEnv(dir);
+  assert.equal(env.TEMP, dir);
+  assert.equal(env.TMP, dir);
+  for (const [k, v] of Object.entries(FIXED_ENV)) assert.equal(env[k], v);
+  assert.deepEqual(Object.keys(env).sort(), [...Object.keys(FIXED_ENV), 'TEMP', 'TMP'].sort());
+  assert.equal(FIXED_ENV.TEMP, undefined);
+  for (const bad of ['', String.raw`relative\tmp`, String.raw`C:\a;b`, String.raw`C:\a"b`, null]) assert.throws(() => serviceEnv(bad), /SERVICE_TEMP_DIR_REFUSED/);
 });

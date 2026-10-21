@@ -4,7 +4,14 @@
 // runner stays "busy" until the child exits, so no new work starts on top of it.
 import { spawn } from 'node:child_process';
 
-const FIXED_ENV = Object.freeze({ SystemRoot: 'C:\\Windows', WINDIR: 'C:\\Windows', PATH: 'C:\\Windows\\System32;C:\\Windows', OS: 'Windows_NT', COMPUTERNAME: 'TURING' });
+export const FIXED_ENV = Object.freeze({ SystemRoot: 'C:\\Windows', WINDIR: 'C:\\Windows', PATH: 'C:\\Windows\\System32;C:\\Windows', OS: 'Windows_NT', COMPUTERNAME: 'TURING' });
+// The service passes its own temp directory on top of FIXED_ENV (see service-main.mjs): without TEMP/TMP a
+// child of a profile-less service account resolves the temp path to C:\Windows (GetTempPath), where Windows
+// PowerShell's Add-Type (archive-windows-spool.ps1) cannot write.
+export function serviceEnv(tempDir) {
+  if (typeof tempDir !== 'string' || !/^[A-Za-z]:\\/.test(tempDir) || /[\0;"]/.test(tempDir)) throw new Error('SERVICE_TEMP_DIR_REFUSED');
+  return Object.freeze({ ...FIXED_ENV, TEMP: tempDir, TMP: tempDir });
+}
 // USERPROFILE / LOCALAPPDATA, which run-batch.ps1:12 sets to the Owner's profile today, are left out
 // on purpose: the service account must not resolve anything from a user profile (Source v2 review).
 const MAX_OUTPUT = 4 * 1024 * 1024;

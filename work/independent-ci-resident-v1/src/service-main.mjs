@@ -13,7 +13,7 @@ import { ReceiptChain } from './receipts.mjs';
 import { Inbox, OwnerInbox } from './inbox.mjs';
 import { Mailbox } from './mailbox.mjs';
 import { ResidentExecutor } from './executor.mjs';
-import { Runner } from './runner.mjs';
+import { Runner, serviceEnv } from './runner.mjs';
 import { installedIntegrity, mailboxCompanion } from './service-ports.mjs';
 import { WindowsEngine } from './engine-windows.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
@@ -39,7 +39,11 @@ export async function main(argv = process.argv.slice(2)) {
   const requests = await Inbox.open(path.join(root, 'requests'), path.join(state, 'requests-archive'));
   const owner = await OwnerInbox.open(path.join(root, 'owner'), path.join(state, 'owner-seen'));
   const mailbox = await Mailbox.open(path.join(root, 'mailbox'), clock);
-  const runner = new Runner();
+  // The children's temp directory is the service's own (state\ is resident-only modify): Add-Type in the
+  // Windows archive tool compiles there, never in C:\Windows (first real batch, 2026-10-21).
+  const tempDir = path.join(state, 'tmp');
+  await fs.mkdir(tempDir, { recursive: true });
+  const runner = new Runner({ env: serviceEnv(tempDir) });
   // Source v2: the installed CI Source lives under the CI Source manifest hash of the install record (the
   // directory the generic helper loads code from); its installed-files manifest (A) pins every byte.
   const sourceRoot = path.join(root, 'source', policy.ciSourceManifestSha256);
