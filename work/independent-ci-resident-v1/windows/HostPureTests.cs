@@ -15,20 +15,24 @@ public static class HostPureTests
     static void Yes(bool ok, string what) { if (!ok) throw new Exception("FAILED:" + what); n++; }
 
     // The executor's side of the stop contract, as service-main.mjs does it: at a safe point it finds
-    // STOP-REQUESTED, renames it into state\locks\stop-<ms>-<pid> and exits 0. Other modes exit on their own.
+    // STOP-REQUESTED, renames it into state\locks\stop-<ms>-<pid> and exits 0 ("ack"; "ack-then-go" exits only
+    // once GO appears). The other modes exit on their own.
     static int FakeExecutor(string state, string mode)
     {
         string stopFile = Path.Combine(state, "STOP-REQUESTED"), go = Path.Combine(state, "GO");
         if (mode == "exit3") return 3;
+        bool acknowledged = false;
         var until = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < until)
         {
-            if (mode == "ack" && File.Exists(stopFile))
+            if ((mode == "ack" || mode == "ack-then-go") && !acknowledged && File.Exists(stopFile))
             {
                 long ms = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalMilliseconds;
                 File.Move(stopFile, Path.Combine(state, "locks", "stop-" + ms + "-" + Process.GetCurrentProcess().Id));
-                return 0;
+                acknowledged = true;
+                if (mode == "ack") return 0;
             }
+            if (mode == "ack-then-go" && acknowledged && File.Exists(go)) return 0;
             if (mode == "exit3-on-go" && File.Exists(go)) return 3;
             Thread.Sleep(20);
         }
@@ -103,6 +107,25 @@ public static class HostPureTests
             host.Stop(); Shutdown(host);
             Yes(!File.Exists(Path.Combine(state, "STOP-REQUESTED")) && Directory.GetFiles(locks).Length == 1, "scm-stop-later-stop-and-shutdown-write-nothing");
 
+            // 1b. A second stop while the executor has acknowledged but still runs: only the gate keeps the file
+            //     from coming back here. The second stop waits for the exit like the first.
+            host = Host(Case(dir, "second-stop", out state, out locks));
+            p = Fake(state, "ack-then-go"); host.Watch(p); after = After(p);
+            var firstHost = host; var first = new Thread(() => firstHost.Stop()); first.Start();
+            var until = DateTime.UtcNow.AddSeconds(10);
+            while (Directory.GetFiles(locks, "stop-*").Length == 0 && DateTime.UtcNow < until) Thread.Sleep(20);
+            Yes(Directory.GetFiles(locks, "stop-*").Length == 1 && !p.HasExited, "second-stop-acknowledged-still-running");
+            string goFile = Path.Combine(state, "GO");
+            using (new Timer(_ => File.WriteAllText(goFile, ""), null, 500, Timeout.Infinite))
+            {
+                host.Stop();
+                Yes(!File.Exists(Path.Combine(state, "STOP-REQUESTED")) && Directory.GetFiles(locks, "stop-*").Length == 1, "second-stop-writes-nothing");
+                Yes(p.HasExited, "second-stop-waited-for-the-exit");
+            }
+            Yes(first.Join(30000) && after.WaitOne(10000), "second-stop-first-stop-returned");
+            Shutdown(host);
+            Yes(!File.Exists(Path.Combine(state, "STOP-REQUESTED")) && host.ExitCode == 0 && State(host) == 1, "second-stop-exit-0-stopped");
+
             // 2. The executor exits on its own (exit 3): the service stops with 1064 and nothing is written, so the
             //    failure restart runs recovery instead of stopping at once.
             host = Host(Case(dir, "own-exit", out state, out locks));
@@ -114,62 +137,83 @@ public static class HostPureTests
             host.Stop(); Shutdown(host);
             Yes(!File.Exists(Path.Combine(state, "STOP-REQUESTED")), "own-exit-later-stop-and-shutdown-write-nothing");
 
-            // 3. Shutdown first takes the one stop just like OnStop; a later stop writes nothing.
+            // 3. Shutdown asks for nothing and returns at once: Windows ends the executor within seconds anyway, and a
+            //    file left behind would stop the first start after the reboot. It takes the one stop, so the
+            //    executor's later exit does not stop the service itself and a later stop writes nothing.
             host = Host(Case(dir, "shutdown", out state, out locks));
-            p = Fake(state, "ack"); host.Watch(p); after = After(p);
+            p = Fake(state, "exit3-on-go"); host.Watch(p); after = After(p);
+            clock = Stopwatch.StartNew();
             Shutdown(host);
-            Yes(after.WaitOne(10000), "shutdown-exited-handler-ran");
-            Yes(!File.Exists(Path.Combine(state, "STOP-REQUESTED")) && Directory.GetFiles(locks, "stop-*").Length == 1, "shutdown-acknowledged-once-not-recreated");
-            Yes(host.ExitCode == 0, "shutdown-exit-0");
+            Yes(clock.ElapsedMilliseconds < 2000 && !File.Exists(Path.Combine(state, "STOP-REQUESTED")), "shutdown-writes-nothing-and-returns");
+            File.WriteAllText(Path.Combine(state, "GO"), "");
+            Yes(after.WaitOne(30000), "shutdown-exited-handler-ran");
+            Yes(host.ExitCode == 1064 && State(host) != 1, "shutdown-then-exit-does-not-stop-again");
             host.Stop();
-            Yes(!File.Exists(Path.Combine(state, "STOP-REQUESTED")), "shutdown-later-stop-writes-nothing");
+            Yes(!File.Exists(Path.Combine(state, "STOP-REQUESTED")) && host.ExitCode == 1064 && State(host) == 1, "shutdown-later-stop-writes-nothing");
 
             // 4. An executor that exits before the host watches it is still seen (handler attached before events).
             host = Host(Case(dir, "early-exit", out state, out locks));
             p = Fake(state, "exit3"); p.WaitForExit();
             host.Watch(p);
-            var until = DateTime.UtcNow.AddSeconds(10);
+            until = DateTime.UtcNow.AddSeconds(10);
             while (State(host) != 1 && DateTime.UtcNow < until) Thread.Sleep(20);
             Yes(State(host) == 1 && host.ExitCode == 1064, "early-exit-seen");
             Yes(!File.Exists(Path.Combine(state, "STOP-REQUESTED")), "early-exit-writes-no-stop");
 
-            // 4b. An SCM stop that comes after the executor exited but before its Exited handler ran (here: the
-            //     handler is never attached) takes the stop and writes nothing: nobody is left to read it.
+            // 4b. An SCM stop after the executor exited but before the threadpool raised Exited (held off here by
+            //     holding the Process lock, under which Process raises it). HasExited in OnStop then runs the
+            //     handler on the stopping thread. The stop is already taken: the handler leaves STOP_PENDING (3)
+            //     to the stopping thread instead of stopping the service itself, and nothing is written.
             host = Host(Case(dir, "stop-after-exit", out state, out locks));
             p = Fake(state, "exit3"); p.WaitForExit();
-            typeof(ResidentServiceHost).GetField("child", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(host, p);
-            host.Stop();
+            var handledHost = host; int stateWhenHandled = -1;
+            lock (p)
+            {
+                host.Watch(p);
+                p.Exited += (s, e) => stateWhenHandled = State(handledHost);
+                host.Stop();
+            }
+            Yes(stateWhenHandled == 3, "stop-after-exit-handler-did-not-stop-the-service:" + stateWhenHandled);
             Yes(!File.Exists(Path.Combine(state, "STOP-REQUESTED")), "stop-after-exit-writes-no-stop");
             Yes(host.ExitCode == 1064 && State(host) == 1, "stop-after-exit-1064-stopped");
+
+            // 4c. The threadpool is already raising Exited (held in a handler subscribed before the host's) when an
+            //     SCM stop reports STOPPED: the stopping thread maps the exit code itself.
+            host = Host(Case(dir, "stop-during-exited", out state, out locks));
+            p = Fake(state, "exit3-on-go");
+            var inExited = new ManualResetEvent(false); var release = new ManualResetEvent(false);
+            p.Exited += (s, e) => { inExited.Set(); release.WaitOne(30000); };
+            host.Watch(p); after = After(p);
+            File.WriteAllText(Path.Combine(state, "GO"), "");
+            Yes(inExited.WaitOne(30000), "stop-during-exited-raising");
+            host.Stop();
+            Yes(host.ExitCode == 1064 && State(host) == 1 && !File.Exists(Path.Combine(state, "STOP-REQUESTED")), "stop-during-exited-maps-exit-code");
+            release.Set();
+            Yes(after.WaitOne(10000) && host.ExitCode == 1064, "stop-during-exited-handler-then-ran");
 
             // 5. The gate on its own.
             Case(dir, "gate", out state, out locks);
             string stopFile = Path.Combine(state, "STOP-REQUESTED");
             var gate = new ResidentStopGate(state);
-            Yes(gate.ScmStop(false) && !File.Exists(stopFile), "gate-executor-gone-writes-nothing");
-            Yes(!gate.ScmStop(true) && !File.Exists(stopFile), "gate-second-stop-refused");
-            Yes(!gate.ExecutorExited(), "gate-exit-after-stop-no-second-stop");
+            Yes(gate.Take() && !gate.Take() && !gate.Take(), "gate-first-caller-only");
+            Yes(!File.Exists(stopFile) && gate.Request() && File.Exists(stopFile) && new FileInfo(stopFile).Length == 0, "gate-request-creates-empty");
             // A stop still pending for an earlier executor is never truncated, renamed or rewritten.
             File.WriteAllText(stopFile, "earlier");
-            Yes(new ResidentStopGate(state).ScmStop(true) && File.ReadAllText(stopFile) == "earlier", "gate-existing-stop-untouched");
+            Yes(!new ResidentStopGate(state).Request() && File.ReadAllText(stopFile) == "earlier", "gate-existing-stop-untouched");
             Yes(!ResidentStopGate.TryCreateStopFile(stopFile) && File.ReadAllText(stopFile) == "earlier", "gate-create-only");
             File.Delete(stopFile);
-            Yes(ResidentStopGate.TryCreateStopFile(stopFile) && new FileInfo(stopFile).Length == 0, "gate-creates-empty");
-            File.Delete(stopFile);
-            // Racing stops and exits: exactly one wins, and only a winning SCM stop writes the file.
+            // Racing callers: exactly one takes the stop.
             for (int round = 0; round < 200; round++)
             {
-                var g = new ResidentStopGate(state); int wins = 0, scmWins = 0;
+                var g = new ResidentStopGate(state); int wins = 0;
                 var barrier = new Barrier(8); var threads = new Thread[8];
                 for (int t = 0; t < 8; t++)
                 {
-                    bool scm = t % 2 == 0;
-                    threads[t] = new Thread(() => { barrier.SignalAndWait(); if (scm ? g.ScmStop(true) : g.ExecutorExited()) { Interlocked.Increment(ref wins); if (scm) Interlocked.Increment(ref scmWins); } });
+                    threads[t] = new Thread(() => { barrier.SignalAndWait(); if (g.Take()) Interlocked.Increment(ref wins); });
                     threads[t].Start();
                 }
                 foreach (var t in threads) t.Join();
-                if (wins != 1 || File.Exists(stopFile) != (scmWins == 1)) throw new Exception("FAILED:gate-race-round-" + round);
-                if (File.Exists(stopFile)) File.Delete(stopFile);
+                if (wins != 1) throw new Exception("FAILED:gate-race-round-" + round);
             }
             Yes(true, "gate-race-200-rounds");
             Yes(ResidentStopGate.ServiceExitCode(0) == 0 && ResidentStopGate.ServiceExitCode(3) == 1064 && ResidentStopGate.ServiceExitCode(4) == 1064 && ResidentStopGate.ServiceExitCode(-1) == 1064, "exit-code-mapping");

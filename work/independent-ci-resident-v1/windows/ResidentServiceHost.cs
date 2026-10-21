@@ -5,8 +5,8 @@
 // pinned service-main.mjs and the policy pin from its own command line, a fixed environment and no
 // inherited handles. It never kills the executor: on Stop it only asks the executor to stop between
 // batches (a STOP-REQUESTED file) and reports how it ended. A running batch always finishes or
-// fails closed on its own; SCM stop never interrupts a stage. It asks at most once per process
-// (ResidentStopGate): the executor's own exit stops the service without writing STOP-REQUESTED.
+// fails closed on its own; SCM stop never interrupts a stage. It asks at most once per process, and
+// never at shutdown or when the executor exited on its own (ResidentStopGate).
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -66,9 +66,9 @@ public sealed class ResidentServiceHost : ServiceBase
         p.Exited += (s, e) =>
         {
             ExitCode = ResidentStopGate.ServiceExitCode(p.ExitCode);
-            // Exited on its own: stop the service; nobody is left to ask, so nothing is written. During an SCM
-            // stop the stopping thread reports STOPPED itself once its wait returns, so Stop() is not called.
-            if (stop.ExecutorExited()) Stop();
+            // Exited on its own: stop the service; nobody is left to ask, so nothing is written. When a stop or
+            // a shutdown took the stop first, that thread reports how the service ended, so Stop() is not called.
+            if (stop.Take()) Stop();
         };
         p.EnableRaisingEvents = true;
     }
@@ -82,47 +82,46 @@ public sealed class ResidentServiceHost : ServiceBase
         if (File.Exists(path)) File.Replace(tmp, path, null); else File.Move(tmp, path);
     }
 
-    protected override void OnStop() { RequestStopBetweenBatches(); }
-    protected override void OnShutdown() { RequestStopBetweenBatches(); }
-
-    void RequestStopBetweenBatches()
+    protected override void OnStop()
     {
-        // ServiceBase.Stop() from the Exited handler re-enters OnStop, and a shutdown can follow a stop: only
-        // the first stop of this process asks, and only a running executor (live 2026-10-21: a re-entered
-        // OnStop recreated STOP-REQUESTED after the executor had renamed it away, so the next start stopped).
+        // Only the first stop of this process asks, and only a running executor (live 2026-10-21: the Exited
+        // handler's Stop() re-entered OnStop and recreated STOP-REQUESTED after the executor had renamed it
+        // away, so the next start stopped at once). The stop is taken before the executor is looked at:
+        // HasExited and WaitForExit run a pending Exited handler on this thread, which then finds it taken.
         Process p = child;
-        if (!stop.ScmStop(p != null && !p.HasExited)) return;
+        if (stop.Take() && p != null && !p.HasExited) stop.Request();
         // Wait briefly for an idle executor to exit; a busy one keeps running and is found by the
         // instance lock on the next start. Nothing is killed. The exit code is mapped here as well,
         // because STOPPED may be reported before the Exited handler has run.
         if (p != null && p.WaitForExit(20000)) ExitCode = ResidentStopGate.ServiceExitCode(p.ExitCode);
     }
 
+    // Shutdown asks for nothing. Windows ends every process within seconds (WaitToKillServiceTimeout, 5 s on
+    // TURING), before an idle executor (15 s rest) looks for a stop, and a STOP-REQUESTED left behind would
+    // make the first start after the reboot stop with exit 0, so without the failure restart. The next start
+    // runs crash recovery instead, as after any other end of the executor.
+    protected override void OnShutdown() { stop.Take(); }
+
     public static void Main(string[] args) { Run(new ResidentServiceHost(args)); }
 }
 
 // The host's stop decisions (stop re-entry fix, Task fe6cd7bc). One stop per host process: whichever comes
-// first, an SCM stop or shutdown, or the executor's own exit, takes it. Only an SCM stop that finds the
-// executor running writes STOP-REQUESTED, create-only. The executor acknowledges it by renaming it into
-// state\locks (service-main.mjs, with a service-stop receipt); the host never renames, deletes or rewrites it.
+// first, an SCM stop, a shutdown or the executor's own exit, takes it. Only an SCM stop that takes it and
+// finds the executor running writes STOP-REQUESTED, create-only. The executor acknowledges it by renaming it
+// into state\locks (service-main.mjs, with a service-stop receipt); the host never renames, deletes or
+// rewrites it.
 public sealed class ResidentStopGate
 {
     readonly string stopFile;
-    int stopping;
+    int taken;
 
     public ResidentStopGate(string stateDirectory) { stopFile = Path.Combine(stateDirectory, "STOP-REQUESTED"); }
 
-    // OnStop / OnShutdown. False when a stop already happened in this process: do nothing. Otherwise ask a
-    // running executor to stop between batches and return true (the caller then waits for it).
-    public bool ScmStop(bool executorRunning)
-    {
-        if (Interlocked.Exchange(ref stopping, 1) != 0) return false;
-        if (executorRunning) TryCreateStopFile(stopFile);
-        return true;
-    }
+    // True for the first caller of this process only.
+    public bool Take() { return Interlocked.Exchange(ref taken, 1) == 0; }
 
-    // The executor exited. True when no stop happened yet: the host must stop the service itself.
-    public bool ExecutorExited() { return Interlocked.Exchange(ref stopping, 1) == 0; }
+    // Ask the executor to stop between batches.
+    public bool Request() { return TryCreateStopFile(stopFile); }
 
     // An existing file (a stop still pending for an earlier executor) is left exactly as it is.
     public static bool TryCreateStopFile(string path)
