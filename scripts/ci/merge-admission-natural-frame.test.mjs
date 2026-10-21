@@ -147,7 +147,7 @@ function intakeVersionFixture({succession=false,renamed=false}={}){
   return {paths,runtimePath,sourcePaths,oldMap,middleMap,currentMap,oldDescriptor,middleDescriptor,currentDescriptor,descriptor,oldTexts,middleTexts,currentTexts,textsByCommit,records,native,selection,routes,request,collect};
 }
 
-function namedSuccessorFixture({capacitySuccessor=false}={}){
+function namedSuccessorFixture({capacitySuccessor=false,publisherSuccessor=false}={}){
   const f=intakeVersionFixture({succession:true,renamed:true}),pins=texts=>Object.fromEntries(f.sourcePaths.map(p=>[p,blob(texts[p])])),
     thirdTexts={...f.middleTexts,[f.paths.script]:'// reviewed third legacy script\n'},
     successorTexts={...f.currentTexts,[f.paths.script]:'// reviewed Kooyumi successor script\n'},
@@ -158,8 +158,10 @@ function namedSuccessorFixture({capacitySuccessor=false}={}){
       {run:'44',artifact:'11',commit:head,texts:f.currentTexts,name:'kooyumi-work-admission'},
       {run:'50',artifact:'17',commit:'e'.repeat(40),texts:successorTexts,name:'kooyumi-work-admission'}
     ];
-  if(capacitySuccessor)rows.push({run:'52',artifact:'19',commit:'f'.repeat(40),
+  if(capacitySuccessor||publisherSuccessor)rows.push({run:'52',artifact:'19',commit:'f'.repeat(40),
     texts:{...successorTexts,[f.paths.script]:'// reviewed profile-capacity successor script\n'},name:'kooyumi-work-admission'});
+  if(publisherSuccessor)rows.push({run:'54',artifact:'21',commit:'9'.repeat(40),
+    texts:{...successorTexts,[f.paths.script]:'// reviewed dispatch publisher Source successor script\n'},name:'kooyumi-work-admission'});
   for(const row of rows){
     row.map=pins(row.texts);f.textsByCommit[row.commit]=row.texts;
     row.descriptor={...f.currentDescriptor,job_name:row.name,workflow_blob:row.map[f.paths.workflow],source_blobs:row.map};
@@ -213,11 +215,25 @@ test('a fifth exact historical generation preserves every prior descriptor and c
   assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
 });
 
+test('dispatch Source successor retains six exact prior generations; a seventh unique prior map is refused before HTTP',async()=>{
+  const f=namedSuccessorFixture({publisherSuccessor:true}),r=await f.collect();
+  assert.equal(f.descriptor.previous_source_versions.length,6);
+  assert.equal(r.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(r.gaps));assert.equal(r.entries.length,7);
+  for(const [i,row]of f.rows.entries())assert.equal(r.entries[i].descriptor_digest,h(JSON.stringify(row.descriptor)));
+  const d=structuredClone(f.descriptor);
+  d.previous_source_versions.push({job_name:d.job_name,source_blobs:{...d.source_blobs,[f.paths.script]:'1'.repeat(40)}});
+  let reads=0;const refused=await f.collect({native:{status:'COMPLETE',population_packets:[]},selection:{...f.selection,natural_producers:[d]},
+    request:async()=>{reads++;throw Error('SEVENTH_PRIOR_GENERATION_MUST_NOT_READ');}});
+  assert.equal(refused.status,'PARTIAL');assert.equal(reads,0);
+  assert.ok(refused.gaps.some(g=>g.code==='NATURAL_PRODUCER_SELECTION_INVALID'));
+  assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
+
 test('explicit Source histories reject ambiguous formats, names, incomplete maps and duplicates before HTTP',async()=>{
   const f=namedSuccessorFixture(),copy=()=>structuredClone(f.descriptor),without=(m,p)=>Object.fromEntries(Object.entries(m).filter(([k])=>k!==p)),
     changes=[
       ['non-array',d=>d.previous_source_versions={}],
-      ['over bound',d=>d.previous_source_versions.push({...d.previous_source_versions[0]},{...d.previous_source_versions[0]})],
+      ['over bound',d=>d.previous_source_versions.push({...d.previous_source_versions[0]},{...d.previous_source_versions[0]},{...d.previous_source_versions[0]})],
       ['mixed old maps',d=>d.previous_source_blobs=[]],
       ['mixed old name',d=>d.previous_job_name='clued-work-admission'],
       ['missing current',d=>delete d.source_blobs],

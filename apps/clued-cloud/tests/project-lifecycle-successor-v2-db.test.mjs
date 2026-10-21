@@ -39,11 +39,13 @@ const storageDemandRenewalMigrations = [
 // This scenario reconstructs the lifecycle transition before handover support.
 // Defer the exact migration family until the historical lifecycle assertions
 // and gateway/storage prerequisites below have been replayed. The final
-// subtest then installs both migrations and checks the unchanged caller grants.
+// subtest installs the whole family, including the observation successor,
+// and checks the unchanged caller grants.
 const workClaimHandoverMigration = '20261011131755_work_claim_handover_execution_v1.sql';
 const workClaimHandoverMigrations = [
   workClaimHandoverMigration,
   '20261012114500_work_claim_handover_legacy_drain_v1.sql',
+  '20261017215600_work_verify_shared_observation_v1.sql',
 ];
 const storageOwnerLifecycleMigrations = [
   '20261010055701_storage_owner_lifecycle_v1.sql',

@@ -53,11 +53,21 @@ test('agent messages: claim-addressed requests, replies, inbox, summary and thei
         $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
+    const recipientMigration = '20261017201529_agent_inbox_recipient_prefilter_v1.sql';
+    let recipientPredecessors;
     for (const name of (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort()) {
+      if (name === recipientMigration) {
+        recipientPredecessors = (await admin.query(`select pg_get_functiondef(p.oid) definition
+          from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public'
+          and p.proname in ('clued_agent_inbox_v1','clued_agent_inbox_summary_v1') order by p.proname`))
+          .rows.map((row) => row.definition);
+        assert.equal(recipientPredecessors.length, 2);
+      }
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    assert.ok(recipientPredecessors, 'the full chain must apply the recipient migration');
     await allowRawTestBindings(admin);
 
     const userId = uuid();
@@ -88,10 +98,39 @@ test('agent messages: claim-addressed requests, replies, inbox, summary and thei
     clients.push(workerCaller);
     await workerCaller.connect();
     await setWorkerGatewayCaller(workerCaller);
-    const agent = async (who, name, input) =>
+    const invokeAgent = async (who, name, input) =>
       CI_SIGNATURES.includes(name + '(text,jsonb)')
         ? (await anon.query(`select public.${name}($1,$2) v`, [tokens[who],input])).rows[0].v
         : await workerGatewayRpc(workerCaller, name, tokens[who], input);
+    let equivalentRecipientCalls = 0;
+    const agent = async (who, name, input) => {
+      if (!['clued_agent_inbox_v1','clued_agent_inbox_summary_v1'].includes(name)) {
+        return invokeAgent(who, name, input);
+      }
+      // Use the real Gateway in both cases. Roll back the predecessor's
+      // definitions and read effects before running the installed successor.
+      let before, beforeError, after, afterError;
+      await workerCaller.query('begin');
+      try {
+        await workerCaller.query('reset role');
+        for (const definition of recipientPredecessors) await workerCaller.query(definition);
+        await setWorkerGatewayCaller(workerCaller);
+        before = await workerGatewayRpc(workerCaller, name, tokens[who], input);
+      } catch (error) { beforeError = error; }
+      finally { await workerCaller.query('rollback'); }
+      try { after = await invokeAgent(who, name, input); }
+      catch (error) { afterError = error; }
+      const errorValue = (error) => error ? { code: error.code, message: error.message } : null;
+      assert.deepEqual(errorValue(afterError), errorValue(beforeError), `${name}/${who}: same rejection`);
+      const normalize = (value) => {
+        if (!value || typeof value !== 'object') return value;
+        const copy = structuredClone(value); delete copy.observed_at; return copy;
+      };
+      assert.deepEqual(normalize(after), normalize(before), `${name}/${who}: complete recipient response`);
+      equivalentRecipientCalls++;
+      if (afterError) throw afterError;
+      return after;
+    };
     const committed = (result) => { assert.equal(result.status, 'committed', JSON.stringify(result)); return result; };
     const ok = (result) => { assert.equal(result.status, 'ok', JSON.stringify(result)); return result; };
     const rejected = (result, code) => { assert.deepEqual([result.status, result.error_code], ['rejected', code], JSON.stringify(result)); return result; };
@@ -279,9 +318,40 @@ test('agent messages: claim-addressed requests, replies, inbox, summary and thei
     assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
     await assertGatewayCloseoutBoundary(admin);
 
+    // The safe prefilter must retain current-holder and expired-claim fallback
+    // semantics, including null sessions, under a generic Gateway plan.
+    const moved = (await claim(await createTask('recipient migration transferred holder'),
+      'codex','claim-before',['recipient-migration/**'])).claim;
+    const transferred = committed(await send('claude',{to:{claim_id:moved.claim_id},
+      session_ref:'recipient-sender',kind:'info',subject:'isolated handover',body:'synthetic fixture'}))
+      .message.message_id;
+    await workerCaller.query('set plan_cache_mode=force_generic_plan');
+    const contains = async (who, session) => ok(await inbox(who,{view:'all',
+      ...(session === null ? {} : {session_ref:session}),mark_read:false}))
+      .messages.some((message) => message.message_id === transferred);
+    assert.equal(await contains('codex','claim-before'), true);
+    await admin.query(`update clued_private.work_claims_v1 set holder_binding_id=$2,
+      holder_session_ref='claim-after' where claim_id=$1`,[moved.claim_id,bindingIds.bystander]);
+    assert.equal(await contains('codex','claim-before'), false);
+    assert.equal(await contains('bystander','claim-after'), true);
+    assert.equal(await contains('bystander','other-session'), false);
+    await admin.query('update clued_private.work_claims_v1 set holder_session_ref=null where claim_id=$1',[moved.claim_id]);
+    assert.equal(await contains('bystander','other-session'), true);
+    await admin.query(`update clued_private.work_claims_v1 set issued_at=clock_timestamp()-interval '1 minute',
+      expires_at=clock_timestamp()-interval '1 second' where claim_id=$1`,[moved.claim_id]);
+    assert.equal(await contains('codex','claim-before'), true);
+    assert.equal(await contains('codex','claim-after'), false);
+    assert.equal(await contains('codex',null), true);
+    assert.equal(await contains('bystander',null), false);
+    await workerCaller.query('reset plan_cache_mode');
+    assert.ok(equivalentRecipientCalls >= 30, 'existing business and transferred/expired/null-session calls compared');
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});
-    await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
+    const resolved = path.resolve(directory);
+    assert.equal(path.dirname(resolved), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(resolved).startsWith('clued-agent-messages-'));
+    await fs.rm(resolved, { recursive: true, force: true }).catch(() => {});
   }
 });

@@ -13,7 +13,7 @@ import tomllib
 
 PREFIX = "# clued-reviewed-finding: "
 COUNT_PREFIX = "# clued-reviewed-count: "
-EXPECTED_COUNT = 533
+EXPECTED_COUNT = 726
 REVIEW_DOCUMENT_PATH = "development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json"
 REVIEW_DOCUMENT_COMMIT = "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904"
 REVIEW_DOCUMENT_SHA256 = "d223d30902ead65ac193a2166cc081a2a2b326d71af3e8a898994427e72e1d21"
@@ -70,6 +70,30 @@ HANDOVER_DIGEST_LINES = {
     32, 40, 82, 99, 110, 119, 132, 140, 165, 210,
     230, 236, 242, 574, 1112, 1118, 1119, 1123, 1416, 1419,
 }
+# Exact paths outside the reviewed prefixes (reviewed 2026-10-20, KooYomi Decision
+# 5e5b5f64): each path is admitted only at its exact commit, line and kind.
+EXACT_PATH_FINDINGS = {
+    "apps/clued-cloud/app/supabase-public-config.ts": {
+        ("299869b5426b6cc1235527bd130dc5fb074558da", 6): "PUBLIC_CLIENT_KEY"},
+    "apps/clued-cloud/app/page.tsx": {
+        ("920601a448a5ea8c99f99192cc2b3e59fd8a8843", 8): "PUBLIC_CLIENT_KEY"},
+    "apps/clued-cloud/app/oauth/consent/page.tsx": {
+        ("95c2e5b49f630bb4bc19ae93d837a704f0e64779", 13): "PUBLIC_CLIENT_KEY"},
+    "apps/clued-cloud/worker/continuity.ts": {
+        ("920601a448a5ea8c99f99192cc2b3e59fd8a8843", 2): "PUBLIC_CLIENT_KEY"},
+    "apps/clued-cloud/supabase/tests/m1_runtime_contracts.test.sql": {
+        ("53ce5eab2566cbc38891afe8c70d16e6302e2c49", 65): "IDEMPOTENCY_METADATA"},
+    "clued/cloud_data/lifecycle.py": {
+        ("567222dccd8f51b2314b460876a4de9812aa0c74", 106): "IDEMPOTENCY_METADATA"},
+    "docs/execution-plans/phase2-structure-governance/step18-publication-20260907/Policy.json": {
+        ("99f615bdb924c510e62c41f3510cd76acb6ce2fb", 1): "ARTIFACT_DIGEST"},
+    "docs/r4-gate0/evidence/frozen-eval-manifest.json": {
+        ("4fd59f797e1afc9b8bfad2e0edee7801313e4cab", 566): "ARTIFACT_DIGEST"},
+    "docs/r4-gate0/evidence/model-manifest.redacted.json": {
+        ("acfb5a8130ae99a81e7be529503169465939d5dc", 22): "ARTIFACT_DIGEST"},
+    "memory_engine/manifest_guard.py": {
+        ("dc01dd1b9c7de78f4a64631e4566a472f16349ae", 83): "ARTIFACT_DIGEST"},
+}
 IMAGE = "ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
 KINDS = {
     "GIT_OBJECT_METADATA", "OWNER_COMMIT_ID", "API_BUNDLE_DIGEST",
@@ -80,6 +104,12 @@ KINDS = {
     # A made-up bearer token in a test under apps/clued-cloud/tests/ that never
     # authenticated anywhere (reviewed 2026-10-07, Owner decision, Task 27aeb894).
     "SYNTHETIC_TEST_TOKEN",
+    # The public OpenPGP fingerprint of a release-signing key, e.g. the python image's
+    # GPG_KEY environment value; never a private key (reviewed 2026-10-20).
+    "PUBLIC_KEY_FINGERPRINT",
+    # An OAuth client identifier, public by design; never a client secret or token
+    # (reviewed 2026-10-20).
+    "OAUTH_CLIENT_ID",
 }
 BASE_CONFIG = {
     "title": "Clued Gitleaks configuration",
@@ -118,7 +148,7 @@ def parse_records(text):
         if (not (path.startswith(("artifacts/", "scripts/", "work/", "apps/clued-cloud/tests/"))
                  or path == "development/contracts/information-flow/known-limitations.m0d.v0.1.json"
                  or path == REVIEW_DOCUMENT_PATH or path in FINAL_EVIDENCE_DOCUMENTS or path == PATCH_DOCUMENT_PATH
-                 or path == HANDOVER_ACCEPTANCE_PATH)
+                 or path == HANDOVER_ACCEPTANCE_PATH or path in EXACT_PATH_FINDINGS)
                 or any(p in ("", ".", "..") for p in path.split("/"))
                 or any(c in path for c in "\\*?[]\r\n")
                 or not re.fullmatch(r"[1-9][0-9]*", line)):
@@ -147,6 +177,11 @@ def parse_records(text):
                 rule != "generic-api-key" or int(line) not in HANDOVER_DIGEST_LINES
                 or record["kinds"] != ["ARTIFACT_DIGEST"]):
             raise ValueError("Handover acceptance exception identity changed")
+        if path in EXACT_PATH_FINDINGS and (
+                rule != "generic-api-key"
+                or (commit, int(line)) not in EXACT_PATH_FINDINGS[path]
+                or record["kinds"] != [EXACT_PATH_FINDINGS[path][(commit, int(line))]]):
+            raise ValueError("Exact path exception identity changed")
         fingerprints.append(record["fingerprint"])
     if len(set(fingerprints)) != len(fingerprints):
         raise ValueError("Duplicate reviewed fingerprint")
@@ -172,6 +207,12 @@ def parse_records(text):
     if (len(handover_commits) != 2 or HANDOVER_ORIGINAL_COMMIT not in handover_commits
             or set(handover) != expected_handover):
         raise ValueError("Handover acceptance exact generation set changed")
+    expected_exact = {f"{commit}:{path}:generic-api-key:{line}"
+                      for path, locations in EXACT_PATH_FINDINGS.items() for commit, line in locations}
+    actual_exact = {record["fingerprint"] for record in records
+                    if record["fingerprint"].split(":")[1] in EXACT_PATH_FINDINGS}
+    if actual_exact != expected_exact:
+        raise ValueError("Exact path exception set changed")
     return records
 
 

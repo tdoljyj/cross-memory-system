@@ -1,0 +1,103 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import os from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { digest } from '../src/proof.mjs';
+import { makeJobV2 } from '../src/job-v2.mjs';
+import { createFullAdmissionPortV2, admittedFactsMatchJobV2, fullAdmissionFailureV2, FULL_ADMISSION_CONTRACT_V2 } from '../src/full-admission-v2.mjs';
+import { isCurrentMergeQueueHeadV2 } from '../src/independent-control-checks-v2/queue-facts.mjs';
+import { HEAD, BASE } from './resident-v2-fixtures.mjs';
+
+const REPO = 'tdoljyj/cross-memory-system';
+const SCOPE = `project:${randomUUID()}`;
+const iso = ms => new Date(ms).toISOString();
+
+function world({ trailer, claimId = randomUUID(), fence = 3, epoch = 1, nativeOverrides = {}, claimOverrides = {}, commitTrailer = null } = {}) {
+  const job = makeJobV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt: 1, role: 'control-merge-slot' });
+  const prRef = `${REPO}#888`;
+  const body = trailer === undefined ? `Fix\n\nClued-Work-Claim: ${claimId}\nClued-Work-Scope: ${SCOPE}\n` : trailer;
+  const pr = { number: 888, state: 'open', body, head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: BASE, ref: 'main', repo: { full_name: REPO } } };
+  const state = { claimId, fence, epoch, expiresAt: iso(Date.now() + 3600_000) };
+  const native = () => ({ status: 'ok', verdict: 'ADMITTED', execution_authorized: true, execution_policy: 'staged', current_fence: state.fence, execution_epoch: state.epoch,
+    bound_pr: prRef, pr_ref: prRef, head_sha: HEAD, base_sha: BASE, verified_at: iso(Date.now()), paths_outside_write_set: [],
+    claim: { claim_id: state.claimId, fence: state.fence, execution_epoch: state.epoch, context_key: SCOPE, status: 'ACTIVE', bound_pr: prRef, expires_at: state.expiresAt,
+      lease_key_required: false, execution_handover_pending: false, merge_slot_until: iso(Date.now() + 600_000),
+      merge_queue: [{ ref: `merge:${REPO}:main`, state: 'head', position: 1, ahead: [], head: { claim_id: state.claimId, bound_pr: prRef, since: iso(Date.now() - 1000), until: iso(Date.now() + 600_000) } }],
+      ...claimOverrides }, ...nativeOverrides });
+  const fetchImpl = async url => {
+    const u = new URL(url);
+    if (u.pathname.endsWith('/pulls/888')) return { ok: true, status: 200, json: async () => structuredClone(pr) };
+    if (u.pathname.endsWith(`/commits/${HEAD}`)) return { ok: true, status: 200, json: async () => ({ commit: { message: commitTrailer ?? 'no trailer' } }) };
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const policyText = '{"policy":"fixture"}';
+  const config = { domain: 'fixture', repository: REPO, scope: SCOPE, workspace: os.tmpdir(), sourceManifestSha256: 'd'.repeat(64), evaluatorSha256: digest('EVALUATOR'),
+    policyText, policySha256: digest(policyText), ciPrincipalBindingId: randomUUID(), ciPrincipalQualificationRef: 'qualification-ref', publishableKey: 'sb_publishable_fixture',
+    supabaseUrl: 'https://fixture.supabase.co' };
+  const hooks = { evaluatorReader: () => 'EVALUATOR',
+    evaluateImpl: async ({ observation_recorder }) => {
+      const n = native();
+      observation_recorder.record('claim_verification', { result: { payload: n } });
+      return { admitted: true, verdict: 'ADMITTED', head_sha: HEAD, base_sha: BASE, pr_ref: prRef, claim_id: n.claim.claim_id, scope: SCOPE, changed_paths: ['a.txt'],
+        admission_mode: { state: 'normal', layer: 'code', policy_version: 1 }, merge_slot: { state: 'held', ref: `merge:${REPO}:main`, tip: BASE, until: iso(Date.now() + 600_000) },
+        owner_review: null, workflow_gate_findings: [] };
+    } };
+  const port = createFullAdmissionPortV2({ protectedConfig: config,
+    tokenProvider: async () => ({ githubToken: 'gh-fixture', ciAdmissionToken: ['clued', 'bnd', 'fixture123'].join('_'), ciPrincipalBindingId: config.ciPrincipalBindingId, ciPrincipalQualificationRef: config.ciPrincipalQualificationRef }),
+    modeProvider: async () => ({ complete: true, repository: REPO, variable: 'CLUED_MERGE_ADMISSION_STATE', source: 'github-repository-variables', exists: false, observedAt: iso(Date.now()), proofRef: 'mode-proof' }),
+    recorderProvider: async () => ({ kind: 'independent-controller', domain: 'fixture', observedAt: iso(Date.now()), observationRef: 'obs', recorder: { newId: randomUUID, record() {} } }),
+    fetchImpl, fixtureHooks: hooks });
+  const packet = { complete: true, pr: 888, headSha: HEAD, baseSha: BASE, paths: ['a.txt'] };
+  return { job, port, packet, state, claimId };
+}
+
+test('full admission v2: the claim comes live from the PR trailer, not from the job', async () => {
+  const w = world();
+  const facts = await w.port.evaluatePr(w.job, w.packet);
+  assert.equal(facts.contract, FULL_ADMISSION_CONTRACT_V2);
+  assert.equal(facts.status, 'ADMITTED');
+  assert.deepEqual(facts.observedClaim, { claimId: w.claimId, fence: 3, epoch: 1, expiresAt: w.state.expiresAt });
+  assert.equal(facts.mergeQueueHead, true);
+  assert.equal(facts.jobId, w.job.id);
+  assert.ok(admittedFactsMatchJobV2(facts, w.job, Date.now()));
+  assert.ok(admittedFactsMatchJobV2(facts, w.job, Date.now(), { batchClaim: { claimId: w.claimId, fence: 3, epoch: 1 } }));
+  assert.equal(admittedFactsMatchJobV2(facts, w.job, Date.now(), { batchClaim: { claimId: w.claimId, fence: 4, epoch: 1 } }), false);
+  assert.equal(admittedFactsMatchJobV2({ ...facts, fence: 9 }, w.job, Date.now()), false);
+});
+
+test('full admission v2: batch stickiness allows a renewal, refuses another generation or claim', async () => {
+  const w = world();
+  const batchClaim = { claimId: w.claimId, fence: 3, epoch: 1 };
+  w.state.expiresAt = iso(Date.now() + 7200_000); // renewed lease
+  assert.equal((await w.port.evaluatePr(w.job, w.packet, { batchClaim })).status, 'ADMITTED');
+  w.state.fence = 4; // takeover / re-claim of the same id bumps fence
+  assert.equal((await w.port.evaluatePr(w.job, w.packet, { batchClaim })).reason, 'full_admission_claim_changed');
+  const other = world();
+  assert.equal((await other.port.evaluatePr(other.job, other.packet, { batchClaim })).reason, 'full_admission_claim_changed');
+  assert.equal((await w.port.evaluatePr(w.job, w.packet, { batchClaim: { claimId: 'not-a-uuid', fence: 1, epoch: 1 } })).reason, 'full_admission_subject_invalid');
+});
+
+test('full admission v2: missing trailer, commit trailer fallback, guarded claim and inconsistent Native', async () => {
+  assert.equal((await (w => w.port.evaluatePr(w.job, w.packet))(world({ trailer: 'no trailer here' }))).reason, 'full_admission_claim_missing');
+  const id = randomUUID();
+  const viaCommit = world({ trailer: 'none', claimId: id, commitTrailer: `x\n\nClued-Work-Claim: ${id}\nClued-Work-Scope: ${SCOPE}` });
+  assert.equal((await viaCommit.port.evaluatePr(viaCommit.job, viaCommit.packet)).status, 'ADMITTED');
+  const guarded = world({ claimOverrides: { lease_key_required: true } });
+  assert.equal((await guarded.port.evaluatePr(guarded.job, guarded.packet)).reason, 'full_admission_native_unsupported');
+  const torn = world({ nativeOverrides: { current_fence: 99 } });
+  assert.equal((await torn.port.evaluatePr(torn.job, torn.packet)).reason, 'full_admission_native_changed');
+  const blocked = await torn.port.evaluatePr(torn.job, torn.packet);
+  assert.equal(fullAdmissionFailureV2(blocked).reason, 'full_admission_native_changed');
+  // a v1 job is refused outright
+  assert.equal((await torn.port.evaluatePr({ ...torn.job, contract: 'clued.independent-ci.job/1' }, torn.packet)).reason, 'full_admission_unavailable');
+});
+
+test('queue facts v2: head only for the observed claim generation', () => {
+  const job = makeJobV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now()), attempt: 1, role: 'control-merge-slot' });
+  const now = Date.now(), id = randomUUID();
+  const claim = { claim_id: id, fence: 2, execution_epoch: 1, execution_handover_pending: false, lease_key_required: false, merge_slot_until: iso(now + 1000),
+    merge_queue: [{ ref: `merge:${REPO}:main`, state: 'head', position: 1, ahead: [], head: { claim_id: id, bound_pr: `${REPO}#888`, since: iso(now - 1), until: iso(now + 1000) } }] };
+  assert.equal(isCurrentMergeQueueHeadV2(claim, { claimId: id, fence: 2, epoch: 1 }, job, now), true);
+  assert.equal(isCurrentMergeQueueHeadV2(claim, { claimId: id, fence: 3, epoch: 1 }, job, now), false);
+  assert.equal(isCurrentMergeQueueHeadV2({ ...claim, merge_queue: [{ ...claim.merge_queue[0], position: 2 }] }, { claimId: id, fence: 2, epoch: 1 }, job, now), false);
+});

@@ -13,6 +13,16 @@
             "job_id": "untrusted-hosted",
             "definition_sha256": "dbebc120b727c1fb8692f5853318a728e8ea8a2d03f5f9ec37c367cde0556831"
           }
+        ],
+        "2b836707f42381079f0a08cb2085b1db762bdc5f": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "ac0e3a0793f44a7bcb7bc3b3c500a27809a9cc82d71a2c811d34f55b9d9fff1e"
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "10670f508fda86a0c9ef484c8fa91a4191a92075a2a8ff719b0fc91954cc2178"
+          }
         ]
       }
     },
@@ -37,6 +47,188 @@
             "job_id": "untrusted-hosted",
             "definition_sha256": "320c37faad0f913908820086992eab536abd93742c77a11c7b1972e1f26d39b4"
           }
+        ],
+        "b5eb10c080986da6136abba72b0825f124aa99d8": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "4531d48e3f7ab76ccf166876edeb5f2f9cb13e510fd8b3482402397889e496c2"
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "bdacdcbf1d2a1d98b7488a7e205ff6697edf3bee474388fd3759596cd45ae56b"
+          }
+        ],
+        "f00faf1d60179780f26f25dd338f591c4319b352": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "fcdeb46431eb70d29f3027b9f99f3de2de9da3982594c62594eced64e5adf254",
+            "definition": {
+              "name": "${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'clued-cloud-quality' || 'clued-cloud-quality-self-hosted-skipped' }}",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal"
+              ],
+              "timeout-minutes": 25,
+              "defaults": {
+                "run": {
+                  "working-directory": "apps/clued-cloud"
+                }
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false,
+                    "fetch-depth": 2
+                  }
+                },
+                {
+                  "name": "Qualify ordinary documentation changes",
+                  "id": "classify",
+                  "continue-on-error": true,
+                  "working-directory": ".",
+                  "env": {
+                    "TMPDIR": "${{ runner.temp }}",
+                    "TMP": "${{ runner.temp }}",
+                    "TEMP": "${{ runner.temp }}",
+                    "PYTHONPYCACHEPREFIX": "${{ runner.temp }}/clued-pycache",
+                    "WRANGLER_LOG_PATH": "${{ runner.temp }}/clued-wrangler-logs"
+                  },
+                  "run": "python3 scripts/ci/test_clued_docs_only.py\npython3 scripts/ci/clued-docs-only.py\n"
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Install from lockfile",
+                  "id": "install",
+                  "if": "steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'",
+                  "env": {
+                    "npm_config_logs_dir": "${{ runner.temp }}/clued-npm-debug-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}"
+                  },
+                  "run": "timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=2 --fetch-timeout=30000"
+                },
+                {
+                  "name": "Observe npm HTTP cache events",
+                  "if": "${{ !cancelled() && (steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false') }}",
+                  "env": {
+                    "npm_config_logs_dir": "${{ runner.temp }}/clued-npm-debug-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
+                    "NPM_INSTALL_OUTCOME": "${{ steps.install.outcome }}"
+                  },
+                  "run": "node \"$GITHUB_WORKSPACE/scripts/ci/npm-cache-observation.mjs\""
+                },
+                {
+                  "if": "steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'",
+                  "run": "npm run lint"
+                },
+                {
+                  "if": "steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'",
+                  "run": "npm run ledger:verify"
+                },
+                {
+                  "if": "steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'",
+                  "run": "npm run typecheck"
+                },
+                {
+                  "if": "steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'",
+                  "run": "npm run build"
+                },
+                {
+                  "if": "steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'",
+                  "run": "npm run test:unit"
+                }
+              ]
+            }
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "b6d8f88b6fde77d47735e9680d9c0e4418fcdffaf3d7f444c14ab855aaa1ded1",
+            "definition": {
+              "name": "${{ false && 'clued-cloud-quality' || 'clued-cloud-quality-hosted-skipped' }}",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && (false && ((github.event_name == 'pull_request' && needs.admission-gate.outputs.automation_self_hosted != 'true' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor != github.repository_owner))))",
+              "runs-on": "ubuntu-latest",
+              "timeout-minutes": 25,
+              "defaults": {
+                "run": {
+                  "working-directory": "apps/clued-cloud"
+                }
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false,
+                    "fetch-depth": 2
+                  }
+                },
+                {
+                  "name": "Qualify ordinary documentation changes",
+                  "id": "classify",
+                  "continue-on-error": true,
+                  "working-directory": ".",
+                  "env": {
+                    "TMPDIR": "${{ runner.temp }}",
+                    "TMP": "${{ runner.temp }}",
+                    "TEMP": "${{ runner.temp }}",
+                    "PYTHONPYCACHEPREFIX": "${{ runner.temp }}/clued-pycache",
+                    "WRANGLER_LOG_PATH": "${{ runner.temp }}/clued-wrangler-logs"
+                  },
+                  "run": "python3 scripts/ci/test_clued_docs_only.py\npython3 scripts/ci/clued-docs-only.py\n"
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0",
+                    "cache": "${{ (steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false') && 'npm' || '' }}",
+                    "cache-dependency-path": "apps/clued-cloud/package-lock.json"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Install from lockfile",
+                  "if": "steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'",
+                  "run": "npm ci --ignore-scripts"
+                },
+                {
+                  "if": "steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'",
+                  "run": "npm run lint"
+                },
+                {
+                  "if": "steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'",
+                  "run": "npm run ledger:verify"
+                },
+                {
+                  "if": "steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'",
+                  "run": "npm run typecheck"
+                },
+                {
+                  "if": "steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'",
+                  "run": "npm run build"
+                },
+                {
+                  "if": "steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'",
+                  "run": "npm run test:unit"
+                }
+              ]
+            }
+          }
         ]
       }
     },
@@ -50,6 +242,127 @@
           {
             "job_id": "untrusted-hosted",
             "definition_sha256": "6834cf80f5612e6dd1dd1516adbe75871c455cb1ff228558578c1acec065941d"
+          }
+        ],
+        "b62ab78b15cab65b1286f4bb6a0312d46f65d3fb": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "4ef93f58250341285856e5cc1ee8576a2a4064060540f88b10e3a10a9d623348"
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "5817681a1a6213644342d3e6a218e4981b192d53b6f9618f296b398475fb899f"
+          }
+        ],
+        "c146ce2f79ab4f6228c079d31a3dd2b9cfb4ae07": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "2df1e615ebc6a51510530d43bcfa96c4cd3e42d9bb5d61c4d64a65daedda09af",
+            "definition": {
+              "name": "${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'clued-components' || 'clued-components-self-hosted-skipped' }}",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal"
+              ],
+              "timeout-minutes": 10,
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false,
+                    "fetch-depth": 0
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Check component versions against the base",
+                  "env": {
+                    "BASE": "${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}"
+                  },
+                  "run": "python3 scripts/clued_components.py check --base \"$BASE\""
+                },
+                {
+                  "run": "python3 -m unittest tests.test_clued_components tests.test_clued_version_check -v"
+                },
+                {
+                  "name": "VERSION and its git tag agree",
+                  "run": "python3 scripts/ci/clued_release_tags.py check"
+                },
+                {
+                  "run": "python3 -m unittest scripts/ci/test_clued_release_tags.py -v"
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Admission self-tests on this head",
+                  "run": "node --test scripts/ci/clued-work-admission.test.mjs scripts/ci/merge-admission-policy.test.mjs scripts/ci/merge-admission-policy-file.test.mjs scripts/ci/clued-release-grant.test.mjs scripts/runner/clued-runner-job-started.test.mjs scripts/ci/clued-merge-slot-ci.test.mjs"
+                }
+              ]
+            }
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "86f9463a0bb3f8c23e3e03499ce9cf171ec4a1e2562053c14a7a5b7f27e970bb",
+            "definition": {
+              "name": "${{ false && 'clued-components' || 'clued-components-hosted-skipped' }}",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && (false && ((github.event_name == 'pull_request' && needs.admission-gate.outputs.automation_self_hosted != 'true' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor != github.repository_owner))))",
+              "runs-on": "ubuntu-latest",
+              "timeout-minutes": 10,
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false,
+                    "fetch-depth": 0
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Check component versions against the base",
+                  "env": {
+                    "BASE": "${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}"
+                  },
+                  "run": "python3 scripts/clued_components.py check --base \"$BASE\""
+                },
+                {
+                  "run": "python3 -m unittest tests.test_clued_components tests.test_clued_version_check -v"
+                },
+                {
+                  "name": "VERSION and its git tag agree",
+                  "run": "python3 scripts/ci/clued_release_tags.py check"
+                },
+                {
+                  "run": "python3 -m unittest scripts/ci/test_clued_release_tags.py -v"
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Admission self-tests on this head",
+                  "run": "node --test scripts/ci/clued-work-admission.test.mjs scripts/ci/merge-admission-policy.test.mjs scripts/ci/merge-admission-policy-file.test.mjs scripts/ci/clued-release-grant.test.mjs scripts/runner/clued-runner-job-started.test.mjs scripts/ci/clued-merge-slot-ci.test.mjs"
+                }
+              ]
+            }
           }
         ]
       }
@@ -94,6 +407,313 @@
           {
             "job_id": "isolated-candidate-untrusted-hosted",
             "definition_sha256": "57133a69ff75999c0d64f951a81d4245c7d94631c8c17dc22021f61c51638d92"
+          }
+        ],
+        "90cac082bf246af83377b19669d21ea82abd026f": [
+          {
+            "job_id": "isolated-candidate-trusted-self-hosted",
+            "definition_sha256": "023ff3555032c89046d457851c3d467cb29bbe9bc5d71c82292717c152cfe6c7",
+            "definition": {
+              "needs": [
+                "admission-gate",
+                "push-reuse"
+              ],
+              "if": "needs.admission-gate.outputs.admitted == 'true' && (!cancelled() && needs.admission-gate.result == 'success' &&\n (github.event_name != 'push' || needs.push-reuse.result != 'success' ||\n  needs.push-reuse.outputs.run_heavy != 'false') &&\n((github.event_name == 'workflow_dispatch' &&\n (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')) ||\n(github.event_name == 'push' &&\n github.ref == 'refs/heads/main') ||\n(github.event_name == 'pull_request' &&\n github.event.pull_request.head.repo.full_name == github.repository &&\n (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))))",
+              "name": "${{ ((github.event_name == 'workflow_dispatch' && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')) ||\n       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n       (github.event_name == 'pull_request' &&\n        github.event.pull_request.head.repo.full_name == github.repository &&\n        (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'isolated-candidate' || 'isolated-candidate-self-hosted-skipped' }}",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal"
+              ],
+              "timeout-minutes": 25,
+              "defaults": {
+                "run": {
+                  "working-directory": "apps/clued-cloud"
+                }
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "run": "npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline"
+                },
+                {
+                  "name": "Hydrate embedded PostgreSQL bundled library symlinks",
+                  "working-directory": "apps/clued-cloud/node_modules/@embedded-postgres/linux-x64",
+                  "run": "node scripts/hydrate-symlinks.js\n./native/bin/initdb --version\n./native/bin/postgres --version\n"
+                },
+                {
+                  "run": "npm run typecheck"
+                },
+                {
+                  "run": "npm run test:authorization:transport"
+                },
+                {
+                  "run": "npm run test:authorization:database"
+                },
+                {
+                  "run": "npm run test:context:v2"
+                },
+                {
+                  "run": "npm run test:projection:refresh"
+                },
+                {
+                  "run": "npm run test:work:claims"
+                },
+                {
+                  "run": "node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs"
+                },
+                {
+                  "run": "node --test --test-force-exit tests/work-claims-continuation-db.test.mjs"
+                },
+                {
+                  "run": "node --test tests/db-security-hygiene-db.test.mjs"
+                },
+                {
+                  "run": "npm run test:information-flow:candidates"
+                },
+                {
+                  "run": "npm run test:information-flow:intake"
+                },
+                {
+                  "run": "npm run test:information-flow:promotion"
+                },
+                {
+                  "run": "npm run test:information-flow:context"
+                },
+                {
+                  "run": "npm run test:information-flow:invalidation"
+                },
+                {
+                  "run": "npm run test:information-flow:hardening"
+                },
+                {
+                  "run": "npm run test:records:db"
+                },
+                {
+                  "run": "npm run test:mtpe:intake"
+                },
+                {
+                  "run": "npm run test:production:release-gate"
+                },
+                {
+                  "run": "npm run test:integration-runtime:gate-evidence"
+                },
+                {
+                  "name": "S2c gate evidence",
+                  "env": {
+                    "CLUED_EVIDENCE_PR_HEAD_SHA": "${{ github.event.pull_request.head.sha || github.sha }}"
+                  },
+                  "run": "npm run integration-runtime:gate-evidence -- --out \"$RUNNER_TEMP/integration-runtime-gate-evidence.json\""
+                },
+                {
+                  "name": "Upload S2c gate evidence",
+                  "if": "always()",
+                  "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                  "with": {
+                    "name": "integration-runtime-gate-evidence-self-hosted",
+                    "path": "${{ runner.temp }}/integration-runtime-gate-evidence.json",
+                    "if-no-files-found": "warn"
+                  }
+                },
+                {
+                  "run": "npm run test:authorization:invitations"
+                },
+                {
+                  "run": "npm run test:authorization:migrations"
+                },
+                {
+                  "run": "npm run test:resource-center:authority"
+                },
+                {
+                  "run": "npm run test:authorization:integration"
+                },
+                {
+                  "run": "npm run test:authorization:pages"
+                },
+                {
+                  "name": "Verify DatasetSplit Native grant correction and Binding successor",
+                  "run": "node scripts/run-tests.mjs --test \\\n  tests/dataset-split-native-grant-binding-successor-db.test.mjs \\\n  tests/dataset-split-native-grant-correction-db.test.mjs \\\n  tests/dataset-split-native-grant-currentness-scope-db.test.mjs\n"
+                },
+                {
+                  "name": "Record the actual PR test tree",
+                  "if": "success() && github.event_name == 'pull_request'",
+                  "env": {
+                    "REUSE_WORKFLOW": "clued-connection-authorization.yml",
+                    "REUSE_REPORT_PATH": "${{ runner.temp }}/clued-tested-tree.json"
+                  },
+                  "run": "node ../../scripts/ci/clued-push-reuse.mjs --report"
+                },
+                {
+                  "name": "Upload the actual PR test tree",
+                  "if": "success() && github.event_name == 'pull_request'",
+                  "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                  "with": {
+                    "name": "clued-tested-tree-clued-connection-authorization.yml-${{ github.run_attempt }}",
+                    "path": "${{ runner.temp }}/clued-tested-tree.json",
+                    "if-no-files-found": "error",
+                    "compression-level": 0,
+                    "retention-days": 7
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "job_id": "isolated-candidate-untrusted-hosted",
+            "definition_sha256": "122289e1c2c3b0e2c32dceec654ab878043fa6b36f69017ae7e5ff53ff68d29c",
+            "definition": {
+              "needs": [
+                "admission-gate",
+                "push-reuse"
+              ],
+              "if": "needs.admission-gate.outputs.admitted == 'true' && (false && ((!cancelled() && needs.admission-gate.result == 'success' && (github.event_name != 'push' || needs.push-reuse.result != 'success' || needs.push-reuse.outputs.run_heavy != 'false') && ((github.event_name == 'workflow_dispatch' && (github.actor != github.repository_owner && needs.admission-gate.outputs.automation_self_hosted != 'true')) || (github.event_name == 'push' && github.ref != 'refs/heads/main') || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || (github.actor != github.repository_owner && needs.admission-gate.outputs.automation_self_hosted != 'true')))))))",
+              "name": "${{ false && 'isolated-candidate' || 'isolated-candidate-hosted-skipped' }}",
+              "runs-on": "ubuntu-24.04",
+              "timeout-minutes": 25,
+              "defaults": {
+                "run": {
+                  "working-directory": "apps/clued-cloud"
+                }
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0",
+                    "cache": "npm",
+                    "cache-dependency-path": "apps/clued-cloud/package-lock.json"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "run": "npm ci --ignore-scripts"
+                },
+                {
+                  "name": "Install embedded PostgreSQL ICU compatibility runtime",
+                  "run": "set -euo pipefail\nicu_deb=$(mktemp \"$RUNNER_TEMP/clued-libicu60-XXXXXX.deb\")\ntrap 'rm -f -- \"$icu_deb\"' EXIT\ncurl -fsSLo \"$icu_deb\" https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb\nsudo dpkg -i \"$icu_deb\"\nldconfig -p | grep 'libicuuc.so.60'\n"
+                },
+                {
+                  "run": "npm run typecheck"
+                },
+                {
+                  "run": "npm run test:authorization:transport"
+                },
+                {
+                  "run": "npm run test:authorization:database"
+                },
+                {
+                  "run": "npm run test:context:v2"
+                },
+                {
+                  "run": "npm run test:projection:refresh"
+                },
+                {
+                  "run": "npm run test:work:claims"
+                },
+                {
+                  "run": "node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs"
+                },
+                {
+                  "run": "node --test --test-force-exit tests/work-claims-continuation-db.test.mjs"
+                },
+                {
+                  "run": "node --test tests/db-security-hygiene-db.test.mjs"
+                },
+                {
+                  "run": "npm run test:information-flow:candidates"
+                },
+                {
+                  "run": "npm run test:information-flow:intake"
+                },
+                {
+                  "run": "npm run test:information-flow:promotion"
+                },
+                {
+                  "run": "npm run test:information-flow:context"
+                },
+                {
+                  "run": "npm run test:information-flow:invalidation"
+                },
+                {
+                  "run": "npm run test:information-flow:hardening"
+                },
+                {
+                  "run": "npm run test:records:db"
+                },
+                {
+                  "run": "npm run test:mtpe:intake"
+                },
+                {
+                  "run": "npm run test:production:release-gate"
+                },
+                {
+                  "run": "npm run test:integration-runtime:gate-evidence"
+                },
+                {
+                  "name": "S2c gate evidence",
+                  "env": {
+                    "CLUED_EVIDENCE_PR_HEAD_SHA": "${{ github.event.pull_request.head.sha || github.sha }}"
+                  },
+                  "run": "npm run integration-runtime:gate-evidence -- --out \"$RUNNER_TEMP/integration-runtime-gate-evidence.json\""
+                },
+                {
+                  "name": "Upload S2c gate evidence",
+                  "if": "always()",
+                  "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                  "with": {
+                    "name": "integration-runtime-gate-evidence-hosted",
+                    "path": "${{ runner.temp }}/integration-runtime-gate-evidence.json",
+                    "if-no-files-found": "warn"
+                  }
+                },
+                {
+                  "run": "npm run test:authorization:invitations"
+                },
+                {
+                  "run": "npm run test:authorization:migrations"
+                },
+                {
+                  "run": "npm run test:resource-center:authority"
+                },
+                {
+                  "run": "npm run test:authorization:integration"
+                },
+                {
+                  "run": "npm run test:authorization:pages"
+                },
+                {
+                  "name": "Verify DatasetSplit Native grant correction and Binding successor",
+                  "run": "node scripts/run-tests.mjs --test \\\n  tests/dataset-split-native-grant-binding-successor-db.test.mjs \\\n  tests/dataset-split-native-grant-correction-db.test.mjs \\\n  tests/dataset-split-native-grant-currentness-scope-db.test.mjs\n"
+                }
+              ]
+            }
           }
         ]
       }
@@ -179,6 +799,214 @@
             "job_id": "contract-placement",
             "definition_sha256": "7c78109f3c1d4448a33147ed28ef048ae6578fe96bc4abaf4ce0ecf032c05f98"
           }
+        ],
+        "606e2179c957c1537320a71673a2c572cf1a037d": [
+          {
+            "job_id": "contract-placement",
+            "definition_sha256": "35757ddc910a5ded5198796626f290c5ffc1cb0b8e26fd066d88fbde7d987d2b",
+            "definition": {
+              "name": "contract-placement",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true'",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal"
+              ],
+              "timeout-minutes": 5,
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "if": "(github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner)",
+                  "with": {
+                    "persist-credentials": false,
+                    "fetch-depth": 0
+                  }
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Require a qualified ordinary CI subject before candidate execution",
+                  "run": "node --input-type=module - <<'NODE'\nimport fs from 'node:fs';\nconst e=JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH,'utf8'));\nconst own=process.env.GITHUB_REPOSITORY==='tdoljyj/cross-memory-system' && e.repository?.full_name===process.env.GITHUB_REPOSITORY;\nconst trustedPush=process.env.GITHUB_EVENT_NAME==='push' && process.env.GITHUB_REF==='refs/heads/main';\nconst trustedPr=process.env.GITHUB_EVENT_NAME==='pull_request' && e.pull_request?.base?.ref==='main' && e.pull_request?.head?.repo?.full_name===process.env.GITHUB_REPOSITORY && process.env.GITHUB_ACTOR===process.env.GITHUB_REPOSITORY_OWNER;\nif(!own || (!trustedPush && !trustedPr)){console.error('contract-placement: subject is not qualified for the persistent internal CI pool');process.exit(1);}\nNODE\n"
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Placement and renderer fixtures",
+                  "run": "python3 -m unittest scripts/ci/test_check_contract_placement.py -v\nnode --test apps/clued-cloud/tests/agent-contract-bootstrap.test.mjs\n"
+                },
+                {
+                  "name": "Build actual public bootstrap without the application dependency tree",
+                  "env": {
+                    "CANDIDATE": "${{ github.sha }}"
+                  },
+                  "run": "npm install --prefix \"$RUNNER_TEMP/contract-build\" --no-save --package-lock=false --ignore-scripts esbuild@0.28.1\nnode \"$RUNNER_TEMP/contract-build/node_modules/esbuild/bin/esbuild\" apps/clued-cloud/worker/continuity.ts \\\n  --bundle --platform=node --format=esm --external:js-tiktoken/* \\\n  --define:__CLUED_BUILD_SHA__=\"\\\"$CANDIDATE\\\"\" --outfile=\"$RUNNER_TEMP/contract-bootstrap.mjs\"\n"
+                },
+                {
+                  "name": "Render all actual and synthetic contract parts",
+                  "run": "node apps/clued-cloud/scripts/render-agent-contract-budget.mjs --worker-module \"$RUNNER_TEMP/contract-bootstrap.mjs\" --output \"$RUNNER_TEMP/contract-responses.json\""
+                },
+                {
+                  "name": "Enforce placement and one-time production gate",
+                  "env": {
+                    "BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}",
+                    "CANDIDATE": "${{ github.sha }}"
+                  },
+                  "run": "python3 scripts/ci/check_contract_placement.py --base \"$BASE\" --head \"$CANDIDATE\" --minimum-service-version 0.4.5 --rendered-responses \"$RUNNER_TEMP/contract-responses.json\""
+                }
+              ]
+            }
+          }
+        ],
+        "54ee2f11cc0f52d7cd9c0f6a63b75da8ef3e2b3a": [
+          {
+            "job_id": "contract-placement",
+            "definition_sha256": "2901b0b053e4064b557bbd958e48c4c07aab8bc42dff6fb501b9f94ab8da7377",
+            "definition": {
+              "name": "contract-placement",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true'",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal"
+              ],
+              "timeout-minutes": 5,
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "if": "(github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))",
+                  "with": {
+                    "persist-credentials": false,
+                    "fetch-depth": 0
+                  }
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Require a qualified ordinary CI subject before candidate execution",
+                  "env": {
+                    "CLUED_AUTOMATION_SELF_HOSTED": "${{ needs.admission-gate.outputs.automation_self_hosted }}"
+                  },
+                  "run": "node --input-type=module - <<'NODE'\nimport fs from 'node:fs';\nconst e=JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH,'utf8'));\nconst own=process.env.GITHUB_REPOSITORY==='tdoljyj/cross-memory-system' && e.repository?.full_name===process.env.GITHUB_REPOSITORY;\nconst trustedPush=process.env.GITHUB_EVENT_NAME==='push' && process.env.GITHUB_REF==='refs/heads/main';\nconst trustedPr=process.env.GITHUB_EVENT_NAME==='pull_request' && e.pull_request?.base?.ref==='main' && e.pull_request?.head?.repo?.full_name===process.env.GITHUB_REPOSITORY && (process.env.GITHUB_ACTOR===process.env.GITHUB_REPOSITORY_OWNER || process.env.CLUED_AUTOMATION_SELF_HOSTED==='true');\nif(!own || (!trustedPush && !trustedPr)){console.error('contract-placement: subject is not qualified for the persistent internal CI pool');process.exit(1);}\nNODE\n"
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Placement and renderer fixtures",
+                  "run": "python3 -m unittest scripts/ci/test_check_contract_placement.py -v\nnode --test apps/clued-cloud/tests/agent-contract-bootstrap.test.mjs\n"
+                },
+                {
+                  "name": "Build actual public bootstrap without the application dependency tree",
+                  "env": {
+                    "CANDIDATE": "${{ github.sha }}"
+                  },
+                  "run": "npm install --prefix \"$RUNNER_TEMP/contract-build\" --no-save --package-lock=false --ignore-scripts esbuild@0.28.1\nnode \"$RUNNER_TEMP/contract-build/node_modules/esbuild/bin/esbuild\" apps/clued-cloud/worker/continuity.ts \\\n  --bundle --platform=node --format=esm --external:js-tiktoken/* \\\n  --define:__CLUED_BUILD_SHA__=\"\\\"$CANDIDATE\\\"\" --outfile=\"$RUNNER_TEMP/contract-bootstrap.mjs\"\n"
+                },
+                {
+                  "name": "Render all actual and synthetic contract parts",
+                  "run": "node apps/clued-cloud/scripts/render-agent-contract-budget.mjs --worker-module \"$RUNNER_TEMP/contract-bootstrap.mjs\" --output \"$RUNNER_TEMP/contract-responses.json\""
+                },
+                {
+                  "name": "Enforce placement and one-time production gate",
+                  "env": {
+                    "BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}",
+                    "CANDIDATE": "${{ github.sha }}"
+                  },
+                  "run": "python3 scripts/ci/check_contract_placement.py --base \"$BASE\" --head \"$CANDIDATE\" --minimum-service-version 0.4.5 --rendered-responses \"$RUNNER_TEMP/contract-responses.json\""
+                }
+              ]
+            }
+          }
+        ],
+        "3640f0895cc72caffb8b2bc0c1df21b76b4b5340": [
+          {
+            "job_id": "contract-placement",
+            "definition_sha256": "01d8c96aed0a55154156254899bd2e08dffaf7ec7ea8041acfaf6b2be5307e78",
+            "definition": {
+              "name": "contract-placement-hosted-executor",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true'",
+              "runs-on": "ubuntu-latest",
+              "timeout-minutes": 5,
+              "permissions": {
+                "contents": "read",
+                "id-token": "write"
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "if": "(github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))",
+                  "with": {
+                    "persist-credentials": false,
+                    "fetch-depth": 0
+                  }
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Require a qualified ordinary CI subject before candidate execution",
+                  "env": {
+                    "CLUED_AUTOMATION_SELF_HOSTED": "${{ needs.admission-gate.outputs.automation_self_hosted }}"
+                  },
+                  "run": "node --input-type=module - <<'NODE'\nimport fs from 'node:fs';\nconst e=JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH,'utf8'));\nconst own=process.env.GITHUB_REPOSITORY==='tdoljyj/cross-memory-system' && e.repository?.full_name===process.env.GITHUB_REPOSITORY;\nconst trustedPush=process.env.GITHUB_EVENT_NAME==='push' && process.env.GITHUB_REF==='refs/heads/main';\nconst trustedPr=process.env.GITHUB_EVENT_NAME==='pull_request' && e.pull_request?.base?.ref==='main' && e.pull_request?.head?.repo?.full_name===process.env.GITHUB_REPOSITORY && (process.env.GITHUB_ACTOR===process.env.GITHUB_REPOSITORY_OWNER || process.env.CLUED_AUTOMATION_SELF_HOSTED==='true');\nif(!own || (!trustedPush && !trustedPr)){console.error('contract-placement: subject is not qualified for the persistent internal CI pool');process.exit(1);}\nNODE\n"
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Placement and renderer fixtures",
+                  "run": "python3 -I -B -m unittest discover -s scripts/ci -p test_check_contract_placement.py -v\nnode --test apps/clued-cloud/tests/agent-contract-bootstrap.test.mjs\n"
+                },
+                {
+                  "name": "Build actual public bootstrap without the application dependency tree",
+                  "env": {
+                    "CANDIDATE": "${{ github.sha }}"
+                  },
+                  "run": "npm install --prefix \"$RUNNER_TEMP/contract-build\" --no-save --package-lock=false --ignore-scripts esbuild@0.28.1\nnode \"$RUNNER_TEMP/contract-build/node_modules/esbuild/bin/esbuild\" apps/clued-cloud/worker/continuity.ts \\\n  --bundle --platform=node --format=esm --external:js-tiktoken/* \\\n  --define:__CLUED_BUILD_SHA__=\"\\\"$CANDIDATE\\\"\" --outfile=\"$RUNNER_TEMP/contract-bootstrap.mjs\"\n"
+                },
+                {
+                  "name": "Render all actual and synthetic contract parts",
+                  "run": "node apps/clued-cloud/scripts/render-agent-contract-budget.mjs --worker-module \"$RUNNER_TEMP/contract-bootstrap.mjs\" --output \"$RUNNER_TEMP/contract-responses.json\""
+                },
+                {
+                  "name": "Enforce placement and one-time production gate",
+                  "env": {
+                    "BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}",
+                    "CANDIDATE": "${{ github.sha }}"
+                  },
+                  "run": "python3 -I -B scripts/ci/check_contract_placement.py --base \"$BASE\" --head \"$CANDIDATE\" --minimum-service-version 0.4.5 --rendered-responses \"$RUNNER_TEMP/contract-responses.json\""
+                },
+                {
+                  "name": "Emit relay identity",
+                  "run": "set -eu\njwt=\"$(curl -fsS --max-time 30 -H \"Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \\\n  \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1\" \\\n  | python3 -I -B -c 'import json,sys; print(json.load(sys.stdin)[\"value\"])')\"\necho \"::notice title=clued-hosted-relay-v1::$jwt\"\n"
+                }
+              ]
+            }
+          }
         ]
       }
     },
@@ -193,6 +1021,73 @@
             "job_id": "design-refs-untrusted-hosted",
             "definition_sha256": "7b6618632196ea0b9e89a001a8ff126b8248ffb7c6d03920546c0f002ebfcc09"
           }
+        ],
+        "67ca1d530eac321b2f5b316fae45e0b23d2b4914": [
+          {
+            "job_id": "design-refs-trusted-self-hosted",
+            "definition_sha256": "b1da4014d7bf6ab692067937512735b0af69cc417863033f531cf89aa2dee661",
+            "definition": {
+              "name": "${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'design-refs' || 'design-refs-self-hosted-skipped' }}",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal"
+              ],
+              "timeout-minutes": 5,
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "run": "python3 -m unittest scripts/ci/test_check_design_refs.py"
+                },
+                {
+                  "run": "python3 scripts/ci/check_design_refs.py"
+                }
+              ]
+            }
+          },
+          {
+            "job_id": "design-refs-untrusted-hosted",
+            "definition_sha256": "9159f2a515553cd999f280df9fbab44faa10d1b0730e36ae3ffcfe9d0f034d57",
+            "definition": {
+              "name": "${{ false && 'design-refs' || 'design-refs-hosted-skipped' }}",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && (false && (github.event_name == 'pull_request' && needs.admission-gate.outputs.automation_self_hosted != 'true' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor != github.repository_owner)))",
+              "runs-on": "ubuntu-24.04",
+              "timeout-minutes": 5,
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "run": "python3 -m unittest scripts/ci/test_check_design_refs.py"
+                },
+                {
+                  "run": "python3 scripts/ci/check_design_refs.py"
+                }
+              ]
+            }
+          }
         ]
       }
     },
@@ -206,6 +1101,139 @@
           {
             "job_id": "gitleaks-untrusted-hosted",
             "definition_sha256": "2cd1646ce2ee525e6d4af7d396e06af0c006e982897124a3bcf1e1cc6d96cbcf"
+          }
+        ],
+        "74043d68d20dbee9f9404a66f0a02d3285fea0aa": [
+          {
+            "job_id": "gitleaks-trusted-self-hosted",
+            "definition_sha256": "900524a57416a36bf8627d9fb65dc98bf1cf726db9dd4828196ea4c3dc0b0672",
+            "definition": {
+              "needs": "admission-gate",
+              "timeout-minutes": 25,
+              "name": "${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'gitleaks' || 'gitleaks-self-hosted-skipped' }}",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal",
+                "cap-docker-linux"
+              ],
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "fetch-depth": 0,
+                    "persist-credentials": true
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Drop refs of deleted branches and of other PRs' earlier runs",
+                  "run": "git remote prune origin\ngit for-each-ref --format='%(refname)' refs/remotes/pull |\n  while read -r ref; do git update-ref -d \"$ref\"; done\n"
+                },
+                {
+                  "name": "Validate exact historical exceptions and detection regressions",
+                  "run": "python3 scripts/ci/reviewed_gitleaks.py \\\n  --config .gitleaks.toml \\\n  --output \"$RUNNER_TEMP/clued-reviewed.ignore\" \\\n  --self-test\n"
+                },
+                {
+                  "name": "Scan complete history with Gitleaks 8.30.1",
+                  "run": "docker run --rm \\\n  -v \"$PWD:/repo\" \\\n  -v \"$RUNNER_TEMP/clued-reviewed.ignore:/reviewed.ignore:ro\" \\\n  ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \\\n  git /repo --config /repo/.gitleaks.toml \\\n  --gitleaks-ignore-path /reviewed.ignore --redact --exit-code 1\n"
+                }
+              ]
+            }
+          },
+          {
+            "job_id": "gitleaks-untrusted-hosted",
+            "definition_sha256": "72e630fef3abc4acac7fd9280a7a2bd1c70b409570bef1833f7471907619c135",
+            "definition": {
+              "needs": "admission-gate",
+              "timeout-minutes": 25,
+              "name": "${{ false && 'gitleaks' || 'gitleaks-hosted-skipped' }}",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && (false && ((github.event_name == 'pull_request' && needs.admission-gate.outputs.automation_self_hosted != 'true' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor != github.repository_owner))))",
+              "runs-on": "ubuntu-latest",
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "fetch-depth": 0,
+                    "persist-credentials": true
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Drop refs of deleted branches and of other PRs' earlier runs",
+                  "run": "git remote prune origin\ngit for-each-ref --format='%(refname)' refs/remotes/pull |\n  while read -r ref; do git update-ref -d \"$ref\"; done\n"
+                },
+                {
+                  "name": "Validate exact historical exceptions and detection regressions",
+                  "run": "python3 scripts/ci/reviewed_gitleaks.py \\\n  --config .gitleaks.toml \\\n  --output \"$RUNNER_TEMP/clued-reviewed.ignore\" \\\n  --self-test\n"
+                },
+                {
+                  "name": "Scan complete history with Gitleaks 8.30.1",
+                  "run": "docker run --rm \\\n  -v \"$PWD:/repo\" \\\n  -v \"$RUNNER_TEMP/clued-reviewed.ignore:/reviewed.ignore:ro\" \\\n  ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \\\n  git /repo --config /repo/.gitleaks.toml \\\n  --gitleaks-ignore-path /reviewed.ignore --redact --exit-code 1\n"
+                }
+              ]
+            }
+          }
+        ],
+        "95f4527be27d02889892d029b398ab1cf2e71429": [
+          {
+            "job_id": "gitleaks-trusted-self-hosted",
+            "definition_sha256": "a4aeb5d5ab4d38eac6bff4dcd68b19f0c7874ef009a17483d8e4375f3af4bfda",
+            "definition": {
+              "needs": "admission-gate",
+              "timeout-minutes": 25,
+              "name": "${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'gitleaks-hosted-executor' || 'gitleaks-hosted-executor-skipped' }}",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "runs-on": "ubuntu-latest",
+              "permissions": {
+                "contents": "read",
+                "id-token": "write"
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false,
+                    "ref": "${{ github.event.pull_request.base.sha || github.sha }}"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Prepare the required history",
+                  "env": {
+                    "FETCH_TOKEN": "${{ github.token }}",
+                    "HEAD_SHA": "${{ github.event.pull_request.head.sha || github.sha }}",
+                    "BASE_SHA": "${{ github.event.pull_request.base.sha || '' }}"
+                  },
+                  "run": "set -eu\numask 022\nexport LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1\nscan=\"$RUNNER_TEMP/clued-gitleaks\"; repo=\"$scan/repo\"; control=\"$scan/control\"\nmkdir \"$scan\" \"$repo\" \"$control\"\necho \"cf631812810d997f42496af561f44930b51087737f146c4a7541c5dbc0a994cd  .gitleaks.toml\" | sha256sum -c --quiet -\necho \"433b24137a7d3430990b69e61c0b4ebcd9dad47d770c5df62d6e1fef28b7f7a9  scripts/ci/reviewed_gitleaks.py\" | sha256sum -c --quiet -\nsed -n 's/^# clued-reviewed-finding: {\"fingerprint\":\"\\([0-9a-f]\\{40\\}\\):.*$/\\1/p' .gitleaks.toml | sort -u > \"$control/reviewed-commits\"\necho \"fcb2cc04ee35e01fbfc4bfc3dc9b0bb0ba78a6c4083ab5e17433c549450d59bb  $control/reviewed-commits\" | sha256sum -c --quiet -\ngit init --quiet --template= \"$repo\"\nauth=\"$(printf 'x-access-token:%s' \"$FETCH_TOKEN\" | base64 -w0)\"\nfetch() {\n  GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $auth\" \\\n    git -C \"$repo\" -c core.logAllRefUpdates=false -c core.hooksPath=/nonexistent-clued-hooks -c protocol.allow=never \\\n    -c protocol.https.allow=always fetch --quiet --no-tags --no-recurse-submodules --no-auto-gc --update-head-ok \\\n    \"https://github.com/$GITHUB_REPOSITORY\" \"$@\"\n}\nfetch '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'\nfetch \"$HEAD_SHA\" \"$GITHUB_SHA\" $(cat \"$control/reviewed-commits\")\nrm -f \"$repo/.git/FETCH_HEAD\"\ngit -C \"$repo\" -c core.logAllRefUpdates=false update-ref --no-deref HEAD \"$HEAD_SHA\"\ntest \"$(git -C \"$repo\" cat-file -t \"$HEAD_SHA\")\" = commit\n# The scanned head is the second parent of the merge commit this run belongs to.\ntest \"$GITHUB_EVENT_NAME\" != pull_request || test \"$(git -C \"$repo\" rev-parse --verify --quiet \"$GITHUB_SHA^2\")\" = \"$HEAD_SHA\"\ntest -z \"$BASE_SHA\" || test \"$(git -C \"$repo\" rev-parse --verify --quiet refs/heads/main)\" = \"$BASE_SHA\"\ntest \"$(git -C \"$repo\" cat-file --batch-check='%(objecttype)' < \"$control/reviewed-commits\" | sort -u)\" = commit\ntest -z \"$(git -C \"$repo\" for-each-ref --format='%(refname)' | grep -Ev '^refs/(heads|tags)/' || true)\"\nfor indirect in shallow info/grafts objects/info/alternates objects/info/http-alternates logs; do test ! -e \"$repo/.git/$indirect\"; done\ngit -C \"$repo\" fsck --full --strict --no-reflogs --no-progress\ninstall -m 0444 .gitleaks.toml \"$repo/.gitleaks.toml\"\nprintf '[safe]\\n\\tdirectory = /repo\\n\\tdirectory = /test\\n' > \"$control/git-safe.config\"\nchmod -R a+rX \"$repo\" && chmod 0444 \"$control/git-safe.config\"\n"
+                },
+                {
+                  "name": "Validate exact historical exceptions and detection regressions",
+                  "run": "python3 -I -B scripts/ci/reviewed_gitleaks.py \\\n  --config \"$RUNNER_TEMP/clued-gitleaks/repo/.gitleaks.toml\" \\\n  --output \"$RUNNER_TEMP/clued-gitleaks/control/reviewed.ignore\" \\\n  --self-test\n"
+                },
+                {
+                  "name": "Scan complete history with Gitleaks 8.30.1",
+                  "run": "set -eu\nscan=\"$RUNNER_TEMP/clued-gitleaks\"\nimage=ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f\necho \"d599f6b9733e68370f7353114600f9939d675202de828d68cc761f3153aa2abe  $scan/control/reviewed.ignore\" | sha256sum -c --quiet -\nchmod 0444 \"$scan/control/reviewed.ignore\"\ndocker pull --quiet \"$image\" > /dev/null\ndocker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \\\n  --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \\\n  --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \\\n  --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=65532,gid=65532 \\\n  --mount \"type=bind,src=$scan/repo,dst=/repo,readonly,bind-propagation=rprivate\" \\\n  --mount \"type=bind,src=$scan/control/reviewed.ignore,dst=/reviewed.ignore,readonly,bind-propagation=rprivate\" \\\n  --mount \"type=bind,src=$scan/control/git-safe.config,dst=/etc/gitconfig,readonly,bind-propagation=rprivate\" \\\n  --workdir=/repo --entrypoint /usr/bin/gitleaks \"$image\" \\\n  git /repo --config /repo/.gitleaks.toml --gitleaks-ignore-path /reviewed.ignore --redact --exit-code 1\n"
+                },
+                {
+                  "name": "Emit relay identity",
+                  "run": "set -eu\njwt=\"$(curl -fsS --max-time 30 -H \"Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \\\n  \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1\" \\\n  | python3 -I -B -c 'import json,sys; print(json.load(sys.stdin)[\"value\"])')\"\necho \"::notice title=clued-hosted-relay-v1::$jwt\"\n"
+                }
+              ]
+            }
           }
         ]
       }
@@ -240,6 +1268,214 @@
           {
             "job_id": "e2e-untrusted-hosted",
             "definition_sha256": "9953c379eaf83bb1ca9d5b194c04b2f095b2ac8b3883ab7455cd39af0c02d8c2"
+          }
+        ],
+        "7b098eb798482099b2ffaf650a344e0d0ba12510": [
+          {
+            "job_id": "e2e-trusted-self-hosted",
+            "definition_sha256": "41641adb256b4d24b73a15534df32b527165d6563ee36d3cd8d0d6766853f889",
+            "definition": {
+              "needs": [
+                "admission-gate",
+                "push-reuse"
+              ],
+              "if": "needs.admission-gate.outputs.admitted == 'true' && (!cancelled() && needs.admission-gate.result == 'success' &&\n (github.event_name != 'push' || needs.push-reuse.result != 'success' ||\n  needs.push-reuse.outputs.run_heavy != 'false') &&\n((github.event_name == 'workflow_dispatch' &&\n (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')) ||\n(github.event_name == 'push' &&\n github.ref == 'refs/heads/main') ||\n(github.event_name == 'pull_request' &&\n github.event.pull_request.head.repo.full_name == github.repository &&\n (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))))",
+              "name": "Information Flow E2E over the local Worker and Supabase stack",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal",
+                "cap-docker-linux"
+              ],
+              "timeout-minutes": 35,
+              "defaults": {
+                "run": {
+                  "working-directory": "apps/clued-cloud"
+                }
+              },
+              "steps": [
+                {
+                  "name": "Check out repository",
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Set up Node.js",
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Install application dependencies",
+                  "env": {
+                    "ONNXRUNTIME_NODE_INSTALL": "skip"
+                  },
+                  "run": "npm ci --cache \"$HOME/.npm\" --prefer-offline"
+                },
+                {
+                  "name": "Isolate local Supabase ports",
+                  "env": {
+                    "CLUED_IFE2E_RUN_ID": "${{ github.run_id }}"
+                  },
+                  "run": "python3 - <<'PY'\nimport os\nimport re\nfrom pathlib import Path\n\nrun_id = int(os.environ['CLUED_IFE2E_RUN_ID'])\nport_base = 45000 + (run_id % 1000) * 10\nconfig = Path('supabase/config.toml')\nsource = config.read_text(encoding='utf-8')\nproject = 'project_id = \"clued-cloud\"'\nif source.count(project) != 1:\n    raise RuntimeError('Unexpected Supabase project ID')\nsource = source.replace(project, f'project_id = \"clued-ife2e-{run_id}\"')\nsource, count = re.subn(\n    r'(?m)^([ \\t]*(?:port|shadow_port)[ \\t]*=[ \\t]*)5432([0-9])$',\n    lambda match: match.group(1) + str(port_base + int(match.group(2))),\n    source,\n)\nif count != 7:\n    raise RuntimeError(f'Expected seven Supabase ports, found {count}')\nconfig.write_text(source, encoding='utf-8')\nprint(f'IF E2E Supabase project and ports isolated for run {run_id}')\nPY\n"
+                },
+                {
+                  "name": "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)",
+                  "run": "npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor"
+                },
+                {
+                  "name": "Deny loopback proxy ports to the harness isolation guard",
+                  "run": "# Any loopback HTTP(S) proxy port is refused by the guard; \"none\" when\n# the runner has no loopback proxy (IFE2E_DENY_PORTS is recorded in run.json).\nports=$(python3 - <<'PY'\nimport os, urllib.parse\nout = set()\nfor name in ('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'):\n    value = os.environ.get(name)\n    if not value:\n        continue\n    url = urllib.parse.urlparse(value if '://' in value else 'http://' + value)\n    if url.hostname in ('127.0.0.1', 'localhost', '::1') and url.port:\n        out.add(str(url.port))\nprint(','.join(sorted(out)) or 'none')\nPY\n)\necho \"IFE2E_DENY_PORTS=$ports\" >> \"$GITHUB_ENV\"\n"
+                },
+                {
+                  "name": "Run the Information Flow E2E harness",
+                  "run": "npm run test:information-flow:e2e -- --evidence-dir \"$RUNNER_TEMP/ife2e\""
+                },
+                {
+                  "name": "Recompute normalized evidence digests",
+                  "if": "always()",
+                  "run": "npm run information-flow:e2e:verify -- --dir \"$RUNNER_TEMP/ife2e\""
+                },
+                {
+                  "name": "Upload E2E evidence",
+                  "if": "always()",
+                  "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                  "with": {
+                    "name": "information-flow-e2e-evidence",
+                    "path": "${{ runner.temp }}/ife2e",
+                    "retention-days": 30,
+                    "if-no-files-found": "warn"
+                  }
+                },
+                {
+                  "name": "Capture safe failure diagnostics",
+                  "if": "failure()",
+                  "run": "docker ps -a --format 'table {{.Names}}\\t{{.Image}}\\t{{.Status}}'\ndocker system df\n"
+                },
+                {
+                  "name": "Stop the local Supabase stack",
+                  "if": "always()",
+                  "run": "npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup"
+                },
+                {
+                  "name": "Record the actual PR test tree",
+                  "if": "success() && github.event_name == 'pull_request'",
+                  "env": {
+                    "REUSE_WORKFLOW": "information-flow-e2e.yml",
+                    "REUSE_REPORT_PATH": "${{ runner.temp }}/clued-tested-tree.json"
+                  },
+                  "run": "node ../../scripts/ci/clued-push-reuse.mjs --report"
+                },
+                {
+                  "name": "Upload the actual PR test tree",
+                  "if": "success() && github.event_name == 'pull_request'",
+                  "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                  "with": {
+                    "name": "clued-tested-tree-information-flow-e2e.yml-${{ github.run_attempt }}",
+                    "path": "${{ runner.temp }}/clued-tested-tree.json",
+                    "if-no-files-found": "error",
+                    "compression-level": 0,
+                    "retention-days": 7
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "job_id": "e2e-untrusted-hosted",
+            "definition_sha256": "9d156e66707037d0eb4cda7df91d630bfb18871696897e9bcddbe7368da97e76",
+            "definition": {
+              "needs": [
+                "admission-gate",
+                "push-reuse"
+              ],
+              "if": "needs.admission-gate.outputs.admitted == 'true' && (false && ((!cancelled() && needs.admission-gate.result == 'success' && (github.event_name != 'push' || needs.push-reuse.result != 'success' || needs.push-reuse.outputs.run_heavy != 'false') && ((github.event_name == 'workflow_dispatch' && (github.actor != github.repository_owner && needs.admission-gate.outputs.automation_self_hosted != 'true')) || (github.event_name == 'push' && github.ref != 'refs/heads/main') || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || (github.actor != github.repository_owner && needs.admission-gate.outputs.automation_self_hosted != 'true')))))))",
+              "name": "Information Flow E2E over the local Worker and Supabase stack (hosted)",
+              "runs-on": "ubuntu-24.04",
+              "timeout-minutes": 35,
+              "defaults": {
+                "run": {
+                  "working-directory": "apps/clued-cloud"
+                }
+              },
+              "steps": [
+                {
+                  "name": "Check out repository",
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Set up Node.js",
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0",
+                    "cache": "npm",
+                    "cache-dependency-path": "apps/clued-cloud/package-lock.json"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Install application dependencies",
+                  "env": {
+                    "ONNXRUNTIME_NODE_INSTALL": "skip"
+                  },
+                  "run": "npm ci"
+                },
+                {
+                  "name": "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)",
+                  "run": "npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor"
+                },
+                {
+                  "name": "Deny loopback proxy ports to the harness isolation guard",
+                  "run": "# Any loopback HTTP(S) proxy port is refused by the guard; \"none\" when\n# the runner has no loopback proxy (IFE2E_DENY_PORTS is recorded in run.json).\nports=$(python3 - <<'PY'\nimport os, urllib.parse\nout = set()\nfor name in ('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'):\n    value = os.environ.get(name)\n    if not value:\n        continue\n    url = urllib.parse.urlparse(value if '://' in value else 'http://' + value)\n    if url.hostname in ('127.0.0.1', 'localhost', '::1') and url.port:\n        out.add(str(url.port))\nprint(','.join(sorted(out)) or 'none')\nPY\n)\necho \"IFE2E_DENY_PORTS=$ports\" >> \"$GITHUB_ENV\"\n"
+                },
+                {
+                  "name": "Run the Information Flow E2E harness",
+                  "run": "npm run test:information-flow:e2e -- --evidence-dir \"$RUNNER_TEMP/ife2e\""
+                },
+                {
+                  "name": "Recompute normalized evidence digests",
+                  "if": "always()",
+                  "run": "npm run information-flow:e2e:verify -- --dir \"$RUNNER_TEMP/ife2e\""
+                },
+                {
+                  "name": "Upload E2E evidence",
+                  "if": "always()",
+                  "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                  "with": {
+                    "name": "information-flow-e2e-evidence",
+                    "path": "${{ runner.temp }}/ife2e",
+                    "retention-days": 30,
+                    "if-no-files-found": "warn"
+                  }
+                },
+                {
+                  "name": "Capture safe failure diagnostics",
+                  "if": "failure()",
+                  "run": "docker ps -a --format 'table {{.Names}}\\t{{.Image}}\\t{{.Status}}'\ndocker system df\n"
+                },
+                {
+                  "name": "Stop the local Supabase stack",
+                  "if": "always()",
+                  "run": "npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup"
+                }
+              ]
+            }
           }
         ]
       }
@@ -299,6 +1535,198 @@
             "job_id": "untrusted-hosted",
             "definition_sha256": "f9b5c84406e3a2bd075186db67f2959b5aead109bc9c458cb8a39139e688d984"
           }
+        ],
+        "f21fc0ebc64d6ddef684c496ffd98a663564ed5d": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "14b1c2ca529f017e926d28082009c5c3d3390894a1e8bb70d78639e0c9eaa8f4",
+            "definition": {
+              "name": "${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'public-mcp-behavior' || 'public-mcp-behavior-self-hosted-skipped' }}",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal",
+                "cap-docker-linux",
+                "site-company"
+              ],
+              "timeout-minutes": 25,
+              "defaults": {
+                "run": {
+                  "working-directory": "apps/clued-cloud"
+                }
+              },
+              "env": {
+                "PROMPTFOO_DISABLE_TELEMETRY": "true",
+                "MCP_BEARER_TOKEN": "clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "MCP_NEG_OWNER_A_TOKEN": "clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "MCP_SESSION_TOKEN": "clued_ses_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage",
+                  "with": {
+                    "isolate-promptfoo": "true"
+                  }
+                },
+                {
+                  "run": "npm ci --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=5"
+                },
+                {
+                  "name": "Serialize fixed public MCP ports with other runners on this host",
+                  "run": "\"$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh\" acquire public-mcp-ports\n"
+                },
+                {
+                  "name": "Isolate this run's Supabase project and ports",
+                  "run": "node --test ../../scripts/ci/public-mcp-supabase-isolation.test.mjs\nnode ../../scripts/ci/public-mcp-supabase-isolation.mjs prepare\n"
+                },
+                {
+                  "run": "npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start"
+                },
+                {
+                  "run": "npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed"
+                },
+                {
+                  "run": "npm run mcp:isolated:fixture"
+                },
+                {
+                  "name": "Allocate a behavior-only loopback port",
+                  "run": "mcp_port=\"$(node evals/public-mcp/start-isolated.mjs allocate)\"\necho \"MCP_ISOLATED_PORT=$mcp_port\" >> \"$GITHUB_ENV\"\necho \"MCP_ISOLATED_URL=http://127.0.0.1:$mcp_port/mcp\" >> \"$GITHUB_ENV\"\n"
+                },
+                {
+                  "name": "Start isolated MCP",
+                  "timeout-minutes": 2,
+                  "run": "setsid node evals/public-mcp/start-isolated.mjs &\nnode evals/public-mcp/start-isolated.mjs record \"$!\" > \"$RUNNER_TEMP/public-mcp.pid\"\nnode evals/public-mcp/start-isolated.mjs ready \"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n"
+                },
+                {
+                  "run": "npm run mcp:eval:positive"
+                },
+                {
+                  "run": "npm run mcp:isolated:fixture"
+                },
+                {
+                  "run": "npm run mcp:eval:negative"
+                },
+                {
+                  "run": "npm run test:p5:postgres"
+                },
+                {
+                  "name": "Stop isolated services",
+                  "if": "always()",
+                  "timeout-minutes": 2,
+                  "run": "cleanup_result=0\nif [ -f \"$RUNNER_TEMP/public-mcp.pid\" ]; then\n  mcp_pid=\"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n  node evals/public-mcp/start-isolated.mjs stop \"$mcp_pid\" || cleanup_result=1\nfi\nif [ -f \"$RUNNER_TEMP/public-mcp-supabase-isolation.json\" ]; then\n  if node ../../scripts/ci/public-mcp-supabase-isolation.mjs verify; then\n    npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || cleanup_result=1\n  else\n    cleanup_result=1\n  fi\nfi\n\"$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh\" release public-mcp-ports\nexit \"$cleanup_result\"\n"
+                }
+              ]
+            }
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "7d7d11171c286b45a64096d36bdd9f064ec5573a60ac12d16f26683f59b565c0",
+            "definition": {
+              "name": "${{ false && 'public-mcp-behavior' || 'public-mcp-behavior-hosted-skipped' }}",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && (false && ((github.event_name == 'pull_request' && needs.admission-gate.outputs.automation_self_hosted != 'true' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor != github.repository_owner))))",
+              "runs-on": "ubuntu-latest",
+              "defaults": {
+                "run": {
+                  "working-directory": "apps/clued-cloud"
+                }
+              },
+              "env": {
+                "PROMPTFOO_DISABLE_TELEMETRY": "true",
+                "MCP_BEARER_TOKEN": "clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "MCP_NEG_OWNER_A_TOKEN": "clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "MCP_SESSION_TOKEN": "clued_ses_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0",
+                    "cache": "npm",
+                    "cache-dependency-path": "apps/clued-cloud/package-lock.json"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage",
+                  "with": {
+                    "isolate-promptfoo": "true"
+                  }
+                },
+                {
+                  "name": "Prepare hosted Docker capacity",
+                  "run": "node --test ../../scripts/ci/public-mcp-hosted-space.test.mjs\nnode ../../scripts/ci/public-mcp-hosted-space.mjs\n"
+                },
+                {
+                  "run": "npm ci"
+                },
+                {
+                  "name": "Isolate this run's Supabase project and ports",
+                  "run": "node --test ../../scripts/ci/public-mcp-supabase-isolation.test.mjs\nnode ../../scripts/ci/public-mcp-supabase-isolation.mjs prepare\n"
+                },
+                {
+                  "run": "npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start"
+                },
+                {
+                  "run": "npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed"
+                },
+                {
+                  "run": "npm run mcp:isolated:fixture"
+                },
+                {
+                  "name": "Allocate a behavior-only loopback port",
+                  "run": "mcp_port=\"$(node evals/public-mcp/start-isolated.mjs allocate)\"\necho \"MCP_ISOLATED_PORT=$mcp_port\" >> \"$GITHUB_ENV\"\necho \"MCP_ISOLATED_URL=http://127.0.0.1:$mcp_port/mcp\" >> \"$GITHUB_ENV\"\n"
+                },
+                {
+                  "name": "Start isolated MCP",
+                  "timeout-minutes": 2,
+                  "run": "setsid node evals/public-mcp/start-isolated.mjs &\nnode evals/public-mcp/start-isolated.mjs record \"$!\" > \"$RUNNER_TEMP/public-mcp.pid\"\nnode evals/public-mcp/start-isolated.mjs ready \"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n"
+                },
+                {
+                  "run": "npm run mcp:eval:positive"
+                },
+                {
+                  "run": "npm run mcp:isolated:fixture"
+                },
+                {
+                  "run": "npm run mcp:eval:negative"
+                },
+                {
+                  "run": "npm run test:p5:postgres"
+                },
+                {
+                  "name": "Stop isolated services",
+                  "if": "always()",
+                  "timeout-minutes": 2,
+                  "run": "cleanup_result=0\nif [ -f \"$RUNNER_TEMP/public-mcp.pid\" ]; then\n  mcp_pid=\"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n  node evals/public-mcp/start-isolated.mjs stop \"$mcp_pid\" || cleanup_result=1\nfi\nif [ -f \"$RUNNER_TEMP/public-mcp-supabase-isolation.json\" ]; then\n  if node ../../scripts/ci/public-mcp-supabase-isolation.mjs verify; then\n    npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || cleanup_result=1\n  else\n    cleanup_result=1\n  fi\nfi\nexit \"$cleanup_result\"\n"
+                }
+              ]
+            }
+          }
         ]
       }
     },
@@ -323,6 +1751,165 @@
             "job_id": "untrusted-hosted",
             "definition_sha256": "3a6fa39122d2af8665d3167b3faf6714c56a60b5fe8b4a6121a6bd9e4a655245"
           }
+        ],
+        "482185df0d258a968bee7eb3500cdf1847ac6287": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "446fd76242ded564e057f395419329b222bde354e258442999bf4555252399b1",
+            "definition": {
+              "name": "${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'public-mcp-protocol' || 'public-mcp-protocol-self-hosted-skipped' }}",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal"
+              ],
+              "timeout-minutes": 25,
+              "defaults": {
+                "run": {
+                  "working-directory": "apps/clued-cloud"
+                }
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Verify gate terminal-state and timeout regressions",
+                  "run": "npm run mcp:gate-receipt:test"
+                },
+                {
+                  "name": "Install dependencies from runner cache",
+                  "env": {
+                    "ONNXRUNTIME_NODE_INSTALL": "skip"
+                  },
+                  "run": "timeout --signal=TERM --kill-after=15s 8m npm ci --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=2 --fetch-timeout=30000"
+                },
+                {
+                  "name": "Verify governed Resource Center mutation contract",
+                  "run": "node --test tests/resource-center-mutation-policy.test.mjs tests/resource-center-host-qualification.test.mjs tests/resource-center-online-tool-host.test.mjs tests/resource-center-authority-client.test.mjs tests/resource-center-google-drive-identity.test.mjs tests/resource-center-google-drive-metadata.test.mjs tests/resource-center-storage-read-transport.test.mjs tests/resource-center-storage-read-formats.test.mjs tests/resource-center-zip-reader.test.mjs tests/resource-center-ooxml-text.test.mjs tests/stage6-contract.test.mjs tests/k-cont-contract.test.mjs"
+                },
+                {
+                  "name": "Allocate a protocol-only loopback port",
+                  "run": "rm -f \"$RUNNER_TEMP/public-mcp.pid\"\nnode --input-type=module <<'NODE'\nimport net from 'node:net';\nimport fs from 'node:fs';\nconst server = net.createServer();\nawait new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });\nconst port = server.address().port;\nawait new Promise((resolve) => server.close(resolve));\nfs.appendFileSync(process.env.GITHUB_ENV, `MCP_ISOLATED_PORT=${port}\\nMCP_ISOLATED_URL=http://127.0.0.1:${port}/mcp\\n`);\nNODE\n"
+                },
+                {
+                  "name": "Start isolated MCP",
+                  "run": "printf 'SUPABASE_PUBLISHABLE_KEY=ci-public-placeholder\\n' > evals/public-mcp/.dev.vars.public-mcp\nsetsid node node_modules/wrangler/bin/wrangler.js dev --config evals/public-mcp/wrangler.jsonc --env public-mcp --ip 127.0.0.1 --port \"$MCP_ISOLATED_PORT\" --inspector-port 0 --define \"__CLUED_BUILD_SHA__:\\\"$GITHUB_SHA\\\"\" --local --show-interactive-dev-session false --log-level error &\necho $! > \"$RUNNER_TEMP/public-mcp.pid\"\nfor attempt in $(seq 1 30); do\n  kill -0 \"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\" 2>/dev/null || exit 1\n  if node --input-type=module <<'NODE'\nimport assert from 'node:assert/strict';\nconst response = await fetch(new URL('/.well-known/clued-continuity', process.env.MCP_ISOLATED_URL), { signal: AbortSignal.timeout(1000) });\nassert.equal(response.status, 200);\nassert.equal((await response.json()).components.source_commit, process.env.GITHUB_SHA);\nNODE\n  then exit 0; fi\n  sleep 1\ndone\nexit 1\n"
+                },
+                {
+                  "name": "Inspector strict schema validation",
+                  "run": "npx mcp-inspector --cli --server-url \"$MCP_ISOLATED_URL\" --transport http --header \"Authorization: Bearer clued_bnd_$(printf 'a%.0s' {1..43})\" --method tools/list --format json --strict"
+                },
+                {
+                  "run": "npm run mcp:protocol:verify"
+                },
+                {
+                  "run": "npm run mcp:tools:verify"
+                },
+                {
+                  "run": "npm run mcp:flags:verify"
+                },
+                {
+                  "name": "Stop isolated MCP",
+                  "if": "always()",
+                  "run": "if [ -f \"$RUNNER_TEMP/public-mcp.pid\" ]; then\n  mcp_pid=\"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n  kill -- \"-$mcp_pid\" 2>/dev/null || true\nfi\nrm -f evals/public-mcp/.dev.vars.public-mcp\n"
+                }
+              ]
+            }
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "f968f1e82055b40013ef4bb560b0b11bd7af6bc90b0817f821c59db273dc794a",
+            "definition": {
+              "name": "${{ false && 'public-mcp-protocol' || 'public-mcp-protocol-hosted-skipped' }}",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && (false && ((github.event_name == 'pull_request' && needs.admission-gate.outputs.automation_self_hosted != 'true' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor != github.repository_owner))))",
+              "runs-on": "ubuntu-latest",
+              "defaults": {
+                "run": {
+                  "working-directory": "apps/clued-cloud"
+                }
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0",
+                    "cache": "npm",
+                    "cache-dependency-path": "apps/clued-cloud/package-lock.json"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Verify gate terminal-state and timeout regressions",
+                  "run": "npm run mcp:gate-receipt:test"
+                },
+                {
+                  "run": "npm ci",
+                  "env": {
+                    "ONNXRUNTIME_NODE_INSTALL": "skip"
+                  }
+                },
+                {
+                  "name": "Verify governed Resource Center mutation contract",
+                  "run": "node --test tests/resource-center-mutation-policy.test.mjs tests/resource-center-host-qualification.test.mjs tests/resource-center-online-tool-host.test.mjs tests/resource-center-authority-client.test.mjs tests/resource-center-google-drive-identity.test.mjs tests/resource-center-google-drive-metadata.test.mjs tests/resource-center-storage-read-transport.test.mjs tests/resource-center-storage-read-formats.test.mjs tests/resource-center-zip-reader.test.mjs tests/resource-center-ooxml-text.test.mjs tests/stage6-contract.test.mjs tests/k-cont-contract.test.mjs"
+                },
+                {
+                  "name": "Allocate a protocol-only loopback port",
+                  "run": "rm -f \"$RUNNER_TEMP/public-mcp.pid\"\nnode --input-type=module <<'NODE'\nimport net from 'node:net';\nimport fs from 'node:fs';\nconst server = net.createServer();\nawait new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });\nconst port = server.address().port;\nawait new Promise((resolve) => server.close(resolve));\nfs.appendFileSync(process.env.GITHUB_ENV, `MCP_ISOLATED_PORT=${port}\\nMCP_ISOLATED_URL=http://127.0.0.1:${port}/mcp\\n`);\nNODE\n"
+                },
+                {
+                  "name": "Start the allocated protocol instance",
+                  "run": "printf 'SUPABASE_PUBLISHABLE_KEY=ci-public-placeholder\\n' > evals/public-mcp/.dev.vars.public-mcp\nsetsid node node_modules/wrangler/bin/wrangler.js dev --config evals/public-mcp/wrangler.jsonc --env public-mcp --ip 127.0.0.1 --port \"$MCP_ISOLATED_PORT\" --inspector-port 0 --define \"__CLUED_BUILD_SHA__:\\\"$GITHUB_SHA\\\"\" --local --show-interactive-dev-session false --log-level error &\necho $! > \"$RUNNER_TEMP/public-mcp.pid\"\nfor attempt in $(seq 1 30); do\n  kill -0 \"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\" 2>/dev/null || exit 1\n  if node --input-type=module <<'NODE'\nimport assert from 'node:assert/strict';\nconst response = await fetch(new URL('/.well-known/clued-continuity', process.env.MCP_ISOLATED_URL), { signal: AbortSignal.timeout(1000) });\nassert.equal(response.status, 200);\nassert.equal((await response.json()).components.source_commit, process.env.GITHUB_SHA);\nNODE\n  then exit 0; fi\n  sleep 1\ndone\nexit 1\n"
+                },
+                {
+                  "name": "Inspector strict schema validation",
+                  "run": "npx mcp-inspector --cli --server-url \"$MCP_ISOLATED_URL\" --transport http --header \"Authorization: Bearer clued_bnd_$(printf 'a%.0s' {1..43})\" --method tools/list --format json --strict"
+                },
+                {
+                  "run": "npm run mcp:protocol:verify"
+                },
+                {
+                  "run": "npm run mcp:tools:verify"
+                },
+                {
+                  "run": "npm run mcp:flags:verify"
+                },
+                {
+                  "name": "Stop isolated MCP",
+                  "if": "always()",
+                  "run": "if [ -f \"$RUNNER_TEMP/public-mcp.pid\" ]; then\n  mcp_pid=\"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n  kill -- \"-$mcp_pid\" 2>/dev/null || true\nfi\nrm -f evals/public-mcp/.dev.vars.public-mcp\n"
+                }
+              ]
+            }
+          }
         ]
       }
     },
@@ -336,6 +1923,163 @@
           {
             "job_id": "trivy-untrusted-hosted",
             "definition_sha256": "f56385fee7bb60ae1f4b80615cb83a460eead28cd2ce58b2304a456e289cb3e0"
+          }
+        ],
+        "f7f8d075d1a0f314a7c5eb295e459599288d538c": [
+          {
+            "job_id": "trivy-trusted-self-hosted",
+            "definition_sha256": "be50edb275909634522fa8cdcaffcf59e5c17bfeaf7edc96afa91b7d479c09f9",
+            "definition": {
+              "needs": "admission-gate",
+              "name": "${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'trivy' || 'trivy-self-hosted-skipped' }}",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal",
+                "cap-docker-linux"
+              ],
+              "timeout-minutes": 25,
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Prepare persistent Trivy cache",
+                  "run": "TRIVY_CACHE_DIR=\"${XDG_CACHE_HOME:-$HOME/.cache}/clued-trivy\"\nmkdir -p \"$TRIVY_CACHE_DIR\"\necho \"TRIVY_CACHE_DIR=$TRIVY_CACHE_DIR\" >> \"$GITHUB_ENV\"\n"
+                },
+                {
+                  "name": "Download vulnerability database through runner network",
+                  "timeout-minutes": 22,
+                  "env": {
+                    "TRIVY_IMAGE": "ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9",
+                    "TRIVY_DB_FALLBACK_MAX_AGE_HOURS": "72"
+                  },
+                  "run": "# Only the pinned scanner and its cache use the runner network. No\n# checkout or Docker socket is mounted during this download. A host\n# loopback proxy is otherwise unreachable from the container bridge.\ndb_dir=\"$TRIVY_CACHE_DIR/db\"\nmetadata_epoch() {\n  value=\"$(sed -n \"s/.*\\\"$1\\\" *: *\\\"\\([^\\\"]*\\)\\\".*/\\1/p\" \"$db_dir/metadata.json\" 2>/dev/null | head -n 1)\"\n  if [ -n \"$value\" ]; then date -u -d \"$value\" +%s 2>/dev/null || true; fi\n}\nnow=\"$(date -u +%s)\"\nnext_update=\"$(metadata_epoch NextUpdate)\"\nif [ -f \"$db_dir/trivy.db\" ] && [ -n \"$next_update\" ] && [ \"$now\" -lt \"$next_update\" ]; then\n  echo \"Cached vulnerability database is current; no download needed.\"\n  exit 0\nfi\n\n# Trivy deletes the cached metadata before it downloads, so a failed\n# in-place download destroys the last good database. Download into a\n# per-run staging cache and swap it in only after success. The cache\n# is root-owned by the container, so file operations run in it too.\nstaging=\"trivy-db-staging-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT\"\nin_cache() {\n  docker run --rm --network none --entrypoint sh \\\n    -v \"$TRIVY_CACHE_DIR:/cache\" \"$TRIVY_IMAGE\" -ec \"$1\" sh \"$staging\"\n}\n# Also drop staging caches abandoned by cancelled runs.\ncleanup_staging() {\n  in_cache 'rm -rf \"/cache/$1\"\n    find /cache -maxdepth 1 -name \"trivy-db-staging-*\" -mmin +120 -exec rm -rf {} \\;' || true\n}\ntrap cleanup_staging EXIT\n\ndownloaded=false\nfor repository in ghcr.io/aquasecurity/trivy-db:2 mirror.gcr.io/aquasec/trivy-db:2; do\n  for attempt in 1 2; do\n  if docker run --rm --network host \\\n    -e HTTP_PROXY -e HTTPS_PROXY -e NO_PROXY \\\n    -e http_proxy -e https_proxy -e no_proxy \\\n    -v \"$TRIVY_CACHE_DIR:/root/.cache/trivy\" \\\n    \"$TRIVY_IMAGE\" \\\n    fs --download-db-only --timeout 5m --cache-dir \"/root/.cache/trivy/$staging\" --db-repository \"$repository\"; then\n    downloaded=true\n    break 2\n  fi\n  sleep \"$attempt\"\n  done\ndone\nif [ \"$downloaded\" = true ]; then\n  in_cache 'rm -rf /cache/db.previous\n    if [ -d /cache/db ]; then mv /cache/db /cache/db.previous; fi\n    mv \"/cache/$1/db\" /cache/db\n    rm -rf /cache/db.previous'\n  exit 0\nfi\n\nupdated_at=\"$(metadata_epoch UpdatedAt)\"\nif [ -f \"$db_dir/trivy.db\" ] && [ -n \"$updated_at\" ]; then\n  age_hours=$(( (now - updated_at) / 3600 ))\n  if [ \"$age_hours\" -le \"$TRIVY_DB_FALLBACK_MAX_AGE_HOURS\" ]; then\n    echo \"::warning title=Trivy DB download failed::Using the cached vulnerability database built ${age_hours}h ago (limit ${TRIVY_DB_FALLBACK_MAX_AGE_HOURS}h).\"\n    exit 0\n  fi\n  echo \"::error title=Trivy DB download failed::Cached vulnerability database is ${age_hours}h old, over the ${TRIVY_DB_FALLBACK_MAX_AGE_HOURS}h fallback limit.\"\nelse\n  echo \"::error title=Trivy DB download failed::No usable cached vulnerability database.\"\nfi\nexit 1\n"
+                },
+                {
+                  "name": "Vulnerabilities (HIGH/CRITICAL)",
+                  "run": "# The previous step prepared the database; never re-download here.\ndocker run --rm -v \"$PWD:/repo\" -v \"$TRIVY_CACHE_DIR:/root/.cache/trivy\" \\\n  ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n  fs --skip-db-update --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 /repo\n"
+                },
+                {
+                  "name": "Secrets",
+                  "run": "docker run --rm -v \"$PWD:/repo\" -v \"$TRIVY_CACHE_DIR:/root/.cache/trivy\" \\\n  ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n  fs --scanners secret --exit-code 1 /repo\n"
+                },
+                {
+                  "name": "Misconfiguration (HIGH/CRITICAL)",
+                  "run": "docker run --rm -v \"$PWD:/repo\" -v \"$TRIVY_CACHE_DIR:/root/.cache/trivy\" \\\n  ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n  fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /repo\n"
+                }
+              ]
+            }
+          },
+          {
+            "job_id": "trivy-untrusted-hosted",
+            "definition_sha256": "d349c2c0d00afa00b7b9cb09e461940e3e016840108c9e1e07ee3aad9d9742cd",
+            "definition": {
+              "needs": "admission-gate",
+              "name": "${{ false && 'trivy' || 'trivy-hosted-skipped' }}",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && (false && ((github.event_name == 'pull_request' && needs.admission-gate.outputs.automation_self_hosted != 'true' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor != github.repository_owner))))",
+              "runs-on": "ubuntu-latest",
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Vulnerabilities (HIGH/CRITICAL)",
+                  "run": "docker run --rm -v \"$PWD:/repo\" \\\n  ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n  fs --db-repository ghcr.io/aquasecurity/trivy-db:2 --db-repository mirror.gcr.io/aquasec/trivy-db:2 --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 /repo\n"
+                },
+                {
+                  "name": "Secrets",
+                  "run": "docker run --rm -v \"$PWD:/repo\" \\\n  ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n  fs --scanners secret --exit-code 1 /repo\n"
+                },
+                {
+                  "name": "Misconfiguration (HIGH/CRITICAL)",
+                  "run": "docker run --rm -v \"$PWD:/repo\" \\\n  ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n  fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /repo\n"
+                }
+              ]
+            }
+          }
+        ],
+        "300ad19a59bf529ccebd45ae7fbb76189f806316": [
+          {
+            "job_id": "trivy-trusted-self-hosted",
+            "definition_sha256": "c7b119873990af82908377518126526da392fb7aa351c4b00841d30970062625",
+            "definition": {
+              "needs": "admission-gate",
+              "name": "${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'trivy-hosted-executor' || 'trivy-hosted-executor-skipped' }}",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "runs-on": "ubuntu-latest",
+              "timeout-minutes": 25,
+              "permissions": {
+                "contents": "read",
+                "id-token": "write"
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Refuse symlinks, submodules and other non-regular tree entries",
+                  "run": "set -eu\ngit ls-tree -r -z --full-tree HEAD > \"$RUNNER_TEMP/clued-trivy-tree\"\nif tr '\\0' '\\n' < \"$RUNNER_TEMP/clued-trivy-tree\" | grep -Ev '^(100644|100755) blob [0-9a-f]{40}[[:space:]]' | grep -q .; then\n  echo \"::error title=trivy-hosted-executor::the tree has a symlink, submodule or other non-regular entry\"\n  exit 1\nfi\ngit ls-files -z > \"$RUNNER_TEMP/clued-trivy-paths\"\nif grep -qzE '[\\\\:[:cntrl:]]|.{4096,}' \"$RUNNER_TEMP/clued-trivy-paths\"; then\n  echo \"::error title=trivy-hosted-executor::a path has a backslash, colon or control character, or is too long\"\n  exit 1\nfi\nif grep -qziE '\\.(jar|war|ear|par)$' \"$RUNNER_TEMP/clued-trivy-paths\"; then\n  echo \"::error title=trivy-hosted-executor::a Java archive needs the Java DB the local role does not prepare\"\n  exit 1\nfi\ntest \"$(tr -cd '\\0' < \"$RUNNER_TEMP/clued-trivy-paths\" | wc -c)\" -le 100000\n"
+                },
+                {
+                  "name": "Snapshot the tree for the scanners",
+                  "run": "set -eu\nsnap=\"$RUNNER_TEMP/clued-trivy-snapshot\"\nmkdir \"$snap\"\ngit ls-files -z | tar --null --no-recursion -T - -cf - | tar -xf - -C \"$snap\"\nchmod -R a+rX \"$snap\"\n"
+                },
+                {
+                  "name": "Prepare the vulnerability DB and the pinned checks bundle",
+                  "timeout-minutes": 10,
+                  "env": {
+                    "TRIVY_IMAGE": "ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9",
+                    "CHECKS_DIGEST": "sha256:b0e12d009b01dcc8ca2ebbc199b9caf3922491978d21c17b61c1d7f6dc75220b"
+                  },
+                  "run": "set -eu\ndocker pull --quiet \"$TRIVY_IMAGE\" > /dev/null\ncache_run() {\n  docker run --rm --pull=never --network=host --ipc=private --cgroupns=private --user=65532:65532 --read-only \\\n    --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \\\n    --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \\\n    --env=TMPDIR=/scratch --env=GODEBUG=http2client=0 \\\n    --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=65532,gid=65532 \"$@\"\n}\nread_back() {\n  docker run --rm --pull=never --network=none --user=65532:65532 --read-only --cap-drop=ALL \\\n    --security-opt=no-new-privileges:true --mount \"type=bind,src=$1,dst=/cache,readonly\" --entrypoint \"$2\" \"$TRIVY_IMAGE\" \"$3\"\n}\ndb=\"\"\nn=0\nfor repository in ghcr.io/aquasecurity/trivy-db:2 mirror.gcr.io/aquasec/trivy-db:2; do\n  for attempt in 1 2; do\n    n=$((n + 1)); stage=\"$RUNNER_TEMP/clued-trivy-db-$n\"\n    mkdir -m 0777 \"$stage\"\n    if cache_run --mount \"type=bind,src=$stage,dst=/cache,bind-propagation=rprivate\" --workdir=/scratch \\\n      --entrypoint /usr/local/bin/trivy \"$TRIVY_IMAGE\" \\\n      fs --download-db-only --timeout 5m --cache-dir /cache --db-repository \"$repository\"; then\n      db=\"$stage\"; break 2\n    fi\n  done\ndone\ntest -n \"$db\"\nread_back \"$db\" /bin/cat /cache/db/metadata.json | python3 -I -B -c 'import json,sys,time; m=json.load(sys.stdin); now=time.strftime(\"%Y-%m-%dT%H:%M:%S\", time.gmtime()); u, n = m[\"UpdatedAt\"], m[\"NextUpdate\"]; sys.exit(0 if m.get(\"Version\") == 2 and u.endswith(\"Z\") and n.endswith(\"Z\") and u[:19] <= now < n[:19] else 1)'\nchecks=\"$RUNNER_TEMP/clued-trivy-checks\"; empty=\"$RUNNER_TEMP/clued-trivy-empty\"\nmkdir -m 0777 \"$checks\"\nmkdir \"$empty\"\ncache_run --mount \"type=bind,src=$checks,dst=/cache,bind-propagation=rprivate\" \\\n  --mount \"type=bind,src=$empty,dst=/empty,readonly,bind-propagation=rprivate\" --workdir=/scratch \\\n  --entrypoint /usr/local/bin/trivy \"$TRIVY_IMAGE\" \\\n  fs --cache-dir /cache --checks-bundle-repository \"ghcr.io/aquasecurity/trivy-checks@$CHECKS_DIGEST\" \\\n  --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /empty\nread_back \"$checks\" /bin/cat /cache/policy/metadata.json | python3 -I -B -c 'import json,sys; m=json.load(sys.stdin); sys.exit(0 if m.get(\"Digest\") == sys.argv[1] and m.get(\"MajorVersion\") == 2 and m.get(\"CustomBuild\") is not True else 1)' \"$CHECKS_DIGEST\"\nread_back \"$checks\" /bin/ls -R /cache/policy/content | grep -q '\\.rego$'\necho \"CLUED_TRIVY_DB=$db/db\" >> \"$GITHUB_ENV\"\necho \"CLUED_TRIVY_POLICY=$checks/policy\" >> \"$GITHUB_ENV\"\n"
+                },
+                {
+                  "name": "Vulnerabilities (HIGH/CRITICAL)",
+                  "timeout-minutes": 5,
+                  "run": "set -eu\ndocker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \\\n  --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \\\n  --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \\\n  --env=TMPDIR=/scratch --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=65532,gid=65532 \\\n  --mount \"type=bind,src=$RUNNER_TEMP/clued-trivy-snapshot,dst=/repo,readonly,bind-propagation=rprivate\" \\\n  --mount \"type=bind,src=$CLUED_TRIVY_DB,dst=/scratch/db,readonly,bind-propagation=rprivate\" \\\n  --mount \"type=bind,src=$CLUED_TRIVY_POLICY,dst=/scratch/policy,readonly,bind-propagation=rprivate\" \\\n  --workdir=/scratch --entrypoint /usr/local/bin/trivy \\\n  ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n  fs --skip-db-update --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \\\n  --cache-dir /scratch --skip-check-update --skip-version-check --disable-telemetry /repo\n"
+                },
+                {
+                  "name": "Secrets",
+                  "timeout-minutes": 5,
+                  "run": "set -eu\ndocker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \\\n  --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \\\n  --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \\\n  --env=TMPDIR=/scratch --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=65532,gid=65532 \\\n  --mount \"type=bind,src=$RUNNER_TEMP/clued-trivy-snapshot,dst=/repo,readonly,bind-propagation=rprivate\" \\\n  --mount \"type=bind,src=$CLUED_TRIVY_DB,dst=/scratch/db,readonly,bind-propagation=rprivate\" \\\n  --mount \"type=bind,src=$CLUED_TRIVY_POLICY,dst=/scratch/policy,readonly,bind-propagation=rprivate\" \\\n  --workdir=/scratch --entrypoint /usr/local/bin/trivy \\\n  ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n  fs --scanners secret --exit-code 1 \\\n  --cache-dir /scratch --skip-check-update --skip-version-check --disable-telemetry /repo\n"
+                },
+                {
+                  "name": "Misconfiguration (HIGH/CRITICAL)",
+                  "timeout-minutes": 5,
+                  "run": "set -eu\ndocker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \\\n  --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \\\n  --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \\\n  --env=TMPDIR=/scratch --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=65532,gid=65532 \\\n  --mount \"type=bind,src=$RUNNER_TEMP/clued-trivy-snapshot,dst=/repo,readonly,bind-propagation=rprivate\" \\\n  --mount \"type=bind,src=$CLUED_TRIVY_DB,dst=/scratch/db,readonly,bind-propagation=rprivate\" \\\n  --mount \"type=bind,src=$CLUED_TRIVY_POLICY,dst=/scratch/policy,readonly,bind-propagation=rprivate\" \\\n  --workdir=/scratch --entrypoint /usr/local/bin/trivy \\\n  ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n  fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 \\\n  --cache-dir /scratch --skip-check-update --skip-version-check --disable-telemetry /repo\n"
+                },
+                {
+                  "name": "Emit relay identity",
+                  "run": "set -eu\njwt=\"$(curl -fsS --max-time 30 -H \"Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \\\n  \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1\" \\\n  | python3 -I -B -c 'import json,sys; print(json.load(sys.stdin)[\"value\"])')\"\necho \"::notice title=clued-hosted-relay-v1::$jwt\"\n"
+                }
+              ]
+            }
           }
         ]
       }
@@ -989,6 +2733,144 @@
                 {
                   "name": "Bounded idle process to prove real provider cancellation",
                   "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelse\n  sleep 2400\nfi\n"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    ".github/workflows/runner-budget-policy.yml": {
+      "sources": {
+        "9a5f46cdb30f2fb0394f0ea3c0fdb91a7539cb13": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "203e75a10fed3b4dc00aea3d7a0f1428959755700a1047bf51f6571e8ffe198d",
+            "definition": {
+              "timeout-minutes": 20,
+              "name": "${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||\n       (github.event_name == 'pull_request' &&\n        github.event.pull_request.head.repo.full_name == github.repository &&\n        github.actor == github.repository_owner)))\n    && 'runner-budget-policy' || 'runner-budget-policy-self-hosted-skipped' }}",
+              "if": "(github.event_name == 'push' &&\n github.actor == github.repository_owner) ||\n(github.event_name == 'pull_request' &&\n github.event.pull_request.head.repo.full_name == github.repository &&\n github.actor == github.repository_owner)",
+              "runs-on": [
+                "self-hosted",
+                "Windows",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal",
+                "cap-python312"
+              ],
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "run": "python scripts/ci/validate_runner_budget_policy.py"
+                },
+                {
+                  "run": "python scripts/ci/test_validate_runner_budget_policy.py"
+                }
+              ]
+            }
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "34b3451e82030d7c19e3386497698aa96f2c9ff7e2a418621a5c78daf2751af6",
+            "definition": {
+              "timeout-minutes": 20,
+              "name": "${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||\n       (github.event_name == 'pull_request' &&\n        (github.event.pull_request.head.repo.full_name != github.repository ||\n         github.actor != github.repository_owner))))\n    && 'runner-budget-policy' || 'runner-budget-policy-hosted-skipped' }}",
+              "if": "(github.event_name == 'push' &&\n github.actor != github.repository_owner) ||\n(github.event_name == 'pull_request' &&\n (github.event.pull_request.head.repo.full_name != github.repository ||\n  github.actor != github.repository_owner))",
+              "runs-on": "ubuntu-latest",
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "run": "python scripts/ci/validate_runner_budget_policy.py"
+                },
+                {
+                  "run": "python scripts/ci/test_validate_runner_budget_policy.py"
+                }
+              ]
+            }
+          }
+        ],
+        "5619452aa4e616a992861fa3f7f154f4b484f6a4": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "0c9bde9a02ccb317e593614441f564e522e98401597f6fd74b8be37096d0681c",
+            "definition": {
+              "needs": "admission-gate",
+              "timeout-minutes": 20,
+              "name": "${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'runner-budget-policy' || 'runner-budget-policy-self-hosted-skipped' }}",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "runs-on": [
+                "self-hosted",
+                "Windows",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal",
+                "cap-python312"
+              ],
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "run": "python scripts/ci/validate_runner_budget_policy.py"
+                },
+                {
+                  "run": "python scripts/ci/test_validate_runner_budget_policy.py"
+                }
+              ]
+            }
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "6ef6e62469265c9d9222876fa029164e88661dbbccd8a3f8c3221fa74334d0d0",
+            "definition": {
+              "needs": "admission-gate",
+              "timeout-minutes": 20,
+              "name": "${{ false && 'runner-budget-policy' || 'runner-budget-policy-hosted-skipped' }}",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && (false && ((github.event_name == 'pull_request' && needs.admission-gate.outputs.automation_self_hosted != 'true' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor != github.repository_owner))))",
+              "runs-on": "ubuntu-latest",
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "run": "python scripts/ci/validate_runner_budget_policy.py"
+                },
+                {
+                  "run": "python scripts/ci/test_validate_runner_budget_policy.py"
                 }
               ]
             }

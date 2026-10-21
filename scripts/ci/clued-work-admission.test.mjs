@@ -55,9 +55,15 @@ import {
   appJwt,
   GATE_JOB_SHA256,
   GATE_WAIT_SECONDS,
+  INDEPENDENT_GATE_SOURCE,
+  INDEPENDENT_GATE_WAIT_SECONDS,
+  INDEPENDENT_GATE_POLL_SECONDS,
+  independentAdmissionCheck,
   checkNamesPullRequest,
   SAME_EVENT_MS,
   gateFindings,
+  PRODUCTION_PUBLISHER_WORKFLOW,
+  registeredPublisherGatedSuccessor,
   jobIsHosted,
   jobTimeout,
   rerunAttempt,
@@ -78,9 +84,11 @@ import {
   mergeSlotCheck,
   mergeSlotOutputs,
   mergeSlotState,
+  appChecksOnHead,
 } from "./clued-work-admission.mjs";
 import { fixedPolicy } from "./merge-admission-policy.fixtures.mjs";
 import { parseModeLabel } from "./merge-admission-policy.mjs";
+import {registeredPublisherSource} from './clued-production-publisher-source.mjs';
 
 // Merge Admission v0.1 (review MAJOR-1): these self-tests run on the default
 // branch before every admission, so every evaluation here judges against the
@@ -996,6 +1004,19 @@ test("dispatch gate: admits only a fresh, successful default-branch admission ru
   assert.deepEqual([outcome.admitted, outcome.verdict], [true, "NOT_APPLICABLE"]);
 });
 
+test("dispatch gate: uninstalled publisher targets fail closed without admission network reads", async () => {
+  for (const file of ["clued-cloud-production-release.yml", "clued-production-publisher-qualification.yml"]) {
+    for (const runId of [null, "77"]) {
+      const { outcome, calls } = await dispatchGateWith(admissionRun(), {
+        GITHUB_WORKFLOW_REF: `o/r/.github/workflows/${file}@refs/heads/main`,
+      }, runId);
+      assert.deepEqual([outcome.admitted, outcome.verdict], [false, "REJECTED"]);
+      assert.match(outcome.reasons.join(" "), /publisher_dispatch_not_installed/);
+      assert.equal(calls.length, 0);
+    }
+  }
+});
+
 test("dispatch admission: verifies the claim on the default branch only, against the ref's head", async () => {
   const base = env({
     GITHUB_REF: "refs/heads/main", CLUED_DEFAULT_BRANCH: "main",
@@ -1045,6 +1066,7 @@ test("workflows: dispatch-gated workflows take admission_run_id; the admission w
   assert.doesNotMatch(admit, /^ {2}pull_request/m);
   for (const file of DISPATCH_GATED_WORKFLOWS) {
     const text = fs.readFileSync(path.join(dir, file), "utf8");
+
     assert.match(text, /^ {2}workflow_dispatch:\n {4}inputs:\n {6}admission_run_id:\n/m, file);
     assert.match(text, /--mode gate/, file);
   }
@@ -1059,6 +1081,51 @@ test("workflows: dispatch-gated workflows take admission_run_id; the admission w
 
 const GATED_FILES = fs.readdirSync(path.join(ROOT, ".github", "workflows")).filter((name) => /\.ya?ml$/.test(name))
   .filter((name) => workflowIsGated(fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8")));
+// These three workflows acquired the registered source-proof gate after the
+// earlier gate-template rollouts. Their actual gates remain covered by the
+// all-workflows and retired-switch attack checks below.
+const NEWLY_GATED_FILES = ["contract-placement.yml", "gitleaks.yml", "trivy.yml"];
+const LEGACY_TEMPLATE_FILES = GATED_FILES.filter((name) => !NEWLY_GATED_FILES.includes(name));
+const SOURCE_PROOF_GATE_DIGEST = "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb";
+// Owner Decisions 325717a6 and 22b0e0ed (PR-B): the Stage C gate on ubuntu-latest that admits on
+// the independent CI's own admission with a bounded wait (hostedGateOf below).
+const HOSTED_SOURCE_PROOF_GATE_DIGEST = "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9";
+// Exactly the PR-B change of the self-hosted Stage C gate: runner, timeout and the independent source.
+const SELF_HOSTED_GATE_ROUTE = "\n    runs-on: [ self-hosted, Linux, X64, clued, pool-general, trust-internal ]\n    timeout-minutes: 10\n";
+const HOSTED_GATE_ROUTE = "\n    runs-on: ubuntu-latest\n    timeout-minutes: 15\n";
+const SELF_HOSTED_GATE_STEP = "      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run:";
+const HOSTED_GATE_STEP = "      # Owner Decision 22b0e0ed: admit on the independent CI's own App 5368905 kooyumi-work-admission\n" +
+  "      # check for this exact head, polled for at most 10 minutes; never on another App's check.\n" +
+  "      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n" +
+  "          CLUED_ADMISSION_GATE_SOURCE: independent-ci-native-work-admission\n" +
+  "          CLUED_ADMISSION_GATE_WAIT_SECONDS: \"600\"\n        run:";
+const hostedGateOf = (text) => text.replace(SELF_HOSTED_GATE_ROUTE, HOSTED_GATE_ROUTE).replace(SELF_HOSTED_GATE_STEP, HOSTED_GATE_STEP);
+const selfHostedGateOf = (text) => text.replace(HOSTED_GATE_ROUTE, SELF_HOSTED_GATE_ROUTE).replace(HOSTED_GATE_STEP, SELF_HOSTED_GATE_STEP);
+// The frozen PR-B bytes (hosted executors): file -> [main's self-hosted Source, PR-B Source] sha256.
+const HOSTED_EXECUTOR_SOURCES = {
+  ".github/workflows/gitleaks.yml": ["168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579",
+    "688073ac1281c4322c90673816b761852989f6849083c07eca2cbd8f4e424091"],
+  ".github/workflows/trivy.yml": ["cea2fd770663e65f554719903da90aaf4b8aae4a52bf52098d3d258340e2727d",
+    "94e9ac722e3a3e0c4f924ce3b27371803dc2a04b5e177a7b0bcffd2bdf28b810"],
+  ".github/workflows/contract-placement.yml": ["762f1b1346a699068660e46648a665d25873a396fc0d2186ef8f44a844625ffd",
+    "4898299bee3e804a19acfef51d15b582e5a52526a655a290cf09bb56c39de84b"],
+};
+const HOSTED_EXECUTOR_NAMES = { ".github/workflows/gitleaks.yml": "gitleaks-hosted-executor",
+  ".github/workflows/trivy.yml": "trivy-hosted-executor", ".github/workflows/contract-placement.yml": "contract-placement-hosted-executor" };
+const REQUIRED_CHECK_NAMES = ["gitleaks", "trivy", "kooyumi-work-admission", "kooyumi-admission-verified", "kooyumi-merge-slot", "contract-placement"];
+
+// The ungated attack cases exercise the exact registered predecessor, not the
+// newly gated working-tree Trivy workflow.
+function historicalUngatedTrivy() {
+  const profiles = JSON.parse(fs.readFileSync(path.join(ROOT, "scripts/ci/clued-gated-proof-profiles.json"), "utf8"));
+  const predecessor = profiles.workflows[".github/workflows/trivy.yml"];
+  assert.equal(predecessor.gated, false);
+  assert.equal(predecessor.source_sha256, "85df37f10587af183dfac642d3f289ae4973ba2623a1e3dceb6537967d0c1e95");
+  assert.equal(sha256Hex(predecessor.source_yaml), predecessor.source_sha256);
+  assert.equal(workflowIsGated(predecessor.source_yaml), false);
+  return predecessor.source_yaml;
+}
+
 // Keep the historical one-dependency attack fixtures below in their original
 // spelling. The all-workflows test reads the actual new dependency graph;
 // clued-push-reuse.test.mjs checks the additional proof dependency itself.
@@ -1067,9 +1134,148 @@ const g4 = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-g4-dat
   .replace("(!cancelled() && needs.admission-gate.result == 'success' &&\n       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||\n        needs.push-reuse.outputs.run_heavy != 'false') &&\n      ((", "((")
   .replace("github.actor == github.repository_owner)))\n    name:", "github.actor == github.repository_owner))\n    name:");
 
+function publisherTransitionFixture() {
+  const profiles=JSON.parse(fs.readFileSync(path.join(ROOT,"scripts/ci/clued-production-publisher-sources.json"),"utf8"));
+  const entries=profiles.workflows[PRODUCTION_PUBLISHER_WORKFLOW].sources;
+  const base=entries.find(s=>s.source_kind==='legacy_predecessor').source_yaml;
+  const head=entries.find(s=>s.source_kind==='gated_successor').source_yaml;
+  return {base,head,profiles};
+}
+
+test("publisher transition: exact trusted dispatch sources retain every canonical gate check",()=>{
+  const {base,head,profiles}=publisherTransitionFixture();
+  const file={filename:PRODUCTION_PUBLISHER_WORKFLOW,status:"modified"};
+  const registeredPublisherTransition=registeredPublisherGatedSuccessor(file,head,base,profiles);
+  assert.equal(registeredPublisherTransition,true);
+  assert.deepEqual(gateFindings(head,base,{registeredPublisherTransition}),[]);
+  assert.ok(gateFindings(head,base).includes("self_hosted_job_switched_ungated:release"));
+  assert.equal(registeredPublisherGatedSuccessor(file,head.replaceAll("\n","\r\n"),base,profiles),false,
+    "independent review M1: a different raw Git blob is never the registered LF source");
+  assert.equal(registeredPublisherGatedSuccessor(file,head,base.replaceAll("\n","\r\n"),profiles),false);
+});
+
+test("publisher transition: unknown, ambiguous, unrelated and newly added production sources remain refused",()=>{
+  const {base,head,profiles}=publisherTransitionFixture(),file={filename:PRODUCTION_PUBLISHER_WORKFLOW,status:"modified"};
+  for(const mutate of [r=>r.schema='unrecognized',r=>r.workflows[PRODUCTION_PUBLISHER_WORKFLOW].registration_status='candidate',
+    r=>r.workflows[PRODUCTION_PUBLISHER_WORKFLOW].sources.push(structuredClone(r.workflows[PRODUCTION_PUBLISHER_WORKFLOW].sources[1])),
+    r=>r.workflows[PRODUCTION_PUBLISHER_WORKFLOW].sources[1].source_sha256='0'.repeat(64),
+    r=>r.workflows[PRODUCTION_PUBLISHER_WORKFLOW].sources[1].workflow_blob='0'.repeat(40),
+    r=>r.workflows[PRODUCTION_PUBLISHER_WORKFLOW].sources[1].primary_ids=['other']]) {
+    const altered=structuredClone(profiles);mutate(altered);
+    assert.equal(registeredPublisherGatedSuccessor(file,head,base,altered),false);
+  }
+  assert.equal(registeredPublisherGatedSuccessor(file,head,base,null),false);
+  assert.equal(registeredPublisherGatedSuccessor(file,head+'\n',base,profiles),false);
+  assert.equal(registeredPublisherGatedSuccessor(file,head,null,profiles),false);
+  assert.equal(registeredPublisherGatedSuccessor({...file,filename:'.github/workflows/other.yml'},head,base,profiles),false);
+  for(const status of ['added','copied','renamed','removed'])assert.equal(registeredPublisherGatedSuccessor({...file,status},head,base,profiles),false);
+});
+
+test("publisher transition: even a registered transition cannot waive the frozen gate, dependency or condition",()=>{
+  const {base,head}=publisherTransitionFixture();
+  for(const [changed,expected] of [
+    [head.replace('node-version: 24.19.0','node-version: 24'),'admission_gate_changed'],
+    [head.replace('    needs: admission-gate\n',''),'job_not_gated:release'],
+    [head.replace("needs.admission-gate.outputs.admitted == 'true' &&",'true &&'),'job_condition_not_gated:release'],
+  ])assert.ok(gateFindings(changed,base,{registeredPublisherTransition:true}).includes(expected),expected);
+});
+
+test("publisher transition: caller workspace or API profiles never select the trusted default source",async()=>{
+  const {base,head}=publisherTransitionFixture();const calls=[];
+  const fetchImpl=async url=>{calls.push(String(url));assert.ok(String(url).includes('/contents/.github/workflows/clued-cloud-production-release.yml?ref='));
+    const text=String(url).endsWith(`?ref=${HEAD}`)?head+'# caller-only altered source\n':base;
+    return new Response(JSON.stringify({content:Buffer.from(text).toString('base64'),encoding:'base64'}),{status:200});};
+  const result=await workflowFindings(fetchImpl,{GITHUB_WORKSPACE:'untrusted-profile-fixture'},'o/r',[
+    {filename:PRODUCTION_PUBLISHER_WORKFLOW,status:'modified'},
+    {filename:'scripts/ci/clued-production-publisher-sources.json',status:'modified'},
+  ],HEAD,BASE);
+  assert.ok(result.gate.some(f=>f.endsWith('self_hosted_job_switched_ungated:release')));
+  assert.equal(calls.length,2);
+});
+
+// Owner Decisions 325717a6, 22b0e0ed and bc6fdad1 (A1): this trusted main
+// registers the exact PR-B hosted executor Sources as successors of the
+// self-hosted ones on main, through the existing exact ordinary/placement
+// registrations. Both Sources come from the registry, so this holds before
+// and after PR-B lands.
+function hostedExecutorPair() {
+  const profiles = JSON.parse(fs.readFileSync(path.join(ROOT, "scripts/ci/clued-gated-proof-profiles.json"), "utf8"));
+  const texts = {};
+  for (const [file, [before, after]] of Object.entries(HOSTED_EXECUTOR_SOURCES)) {
+    const record = profiles.workflows[file];
+    const source = (digest) => [record, ...record.accepted_sources].filter((entry) => entry.source_sha256 === digest);
+    assert.equal(source(before).length, 1, `${file}: main's Source is registered once`);
+    assert.equal(source(after).length, 1, `${file}: the PR-B Source is registered once`);
+    texts[file] = { base: source(before)[0].source_yaml, head: source(after)[0].source_yaml, profile: source(after)[0] };
+  }
+  return texts;
+}
+const hostedExecutorFindings = (texts, heads, extra = []) => workflowFindings(async (url) => {
+  const [, file, ref] = /\/contents\/(.+)\?ref=(.+)$/.exec(String(url));
+  const text = ref === HEAD ? heads[file] : texts[file].base;
+  return new Response(JSON.stringify({ content: Buffer.from(text).toString("base64"), encoding: "base64" }), { status: 200 });
+}, {}, "o/r", [...Object.keys(heads).map((filename) => ({ filename, status: "modified" })), ...extra], HEAD, BASE);
+
+test("gate guard (A1): the exact PR-B hosted executor Sources are registered successors of main's self-hosted ones", async () => {
+  const texts = hostedExecutorPair();
+  for (const [file, { base, head, profile }] of Object.entries(texts)) {
+    assert.ok([base, head].map(sha256Hex).includes(sha256Hex(fs.readFileSync(path.join(ROOT, file), "utf8"))),
+      `${file}: the working tree is one of the pair`);
+    assert.ok(workflowJobs(base).some((job) => job.name === "admission-gate" && !jobIsHosted(job)), file);
+    assert.ok(workflowJobs(head).every((job) => jobIsHosted(job)), file);
+    assert.equal(sha256Hex(workflowJobs(head).find((job) => job.name === "admission-gate").lines.join("\n")), HOSTED_SOURCE_PROOF_GATE_DIGEST, file);
+    // Owner Decision bc6fdad1: no hosted job carries a required check name.
+    assert.deepEqual(profile.routes.map((route) => [route.name, route.self_hosted]), [[HOSTED_EXECUTOR_NAMES[file], false]], file);
+    for (const name of REQUIRED_CHECK_NAMES) {
+      assert.doesNotMatch(head, new RegExp(`^ {4}name: ${name}$`, "m"), file);
+      assert.ok(!head.includes(`'${name}' ||`) && !head.includes(`|| '${name}' }}`), `${file}: ${name} in a dynamic name branch`);
+    }
+    // The relay identity step is registered as a required step after every scan.
+    const steps = Object.keys(profile.routes[0].required_steps);
+    assert.equal(steps.at(-1), "Emit relay identity", file);
+    assert.match(head, /^ {4}permissions:\n {6}contents: read\n {6}id-token: write\n {4}steps:$/m, file);
+    assert.match(head, /audience=clued-hosted-relay-v1/, file);
+  }
+  const heads = Object.fromEntries(Object.entries(texts).map(([file, { head }]) => [file, head]));
+  assert.deepEqual(await hostedExecutorFindings(texts, heads), { gate: [], owner: [] });
+  // The PR-B change set also carries the budget validator, docs and tests.
+  assert.deepEqual((await hostedExecutorFindings(texts, heads, [{ filename: "scripts/ci/validate_runner_budget_policy.py", status: "modified" },
+    { filename: "docs/maintenance/independent-ci.md", status: "added" }])).gate, []);
+});
+
+test("gate guard (A1): any other byte of a hosted executor Source is refused, and main's bytes stay valid", async () => {
+  const texts = hostedExecutorPair();
+  const heads = Object.fromEntries(Object.entries(texts).map(([file, { head }]) => [file, head]));
+  const mutations = {
+    ".github/workflows/gitleaks.yml": [["timeout-minutes: 15", "timeout-minutes: 14"],
+      ["'gitleaks-hosted-executor' ||", "'gitleaks' ||"], ["      id-token: write\n", ""],
+      ["audience=clued-hosted-relay-v1", "audience=sts.amazonaws.com"], ["--redact --exit-code 1", "--redact --exit-code 0"]],
+    ".github/workflows/trivy.yml": [["timeout-minutes: 15", "timeout-minutes: 14"],
+      ["|| 'trivy-hosted-executor-skipped' }}", "|| 'trivy-skipped' }}"], ["      - name: Emit relay identity\n", "      - name: Emit relay identity\n        if: always()\n"]],
+    ".github/workflows/contract-placement.yml": [["timeout-minutes: 15", "timeout-minutes: 14"],
+      ["    name: contract-placement-hosted-executor\n", "    name: contract-placement\n"], ["      contents: read\n      id-token: write\n", "      contents: write\n      id-token: write\n"]],
+  };
+  for (const [file, list] of Object.entries(mutations)) {
+    for (const [from, to] of list) {
+      const changed = { ...heads, [file]: heads[file].replace(from, to) };
+      assert.notEqual(changed[file], heads[file], `${file}: ${from}`);
+      const { gate } = await hostedExecutorFindings(texts, changed);
+      assert.ok(gate.some((finding) => finding.startsWith(`workflow_gate:${file}:`) && finding.endsWith("_Source_not_registered")),
+        `${file}: ${from} -> ${JSON.stringify(gate)}`);
+    }
+  }
+  // main's current self-hosted bytes keep their registered gate.
+  for (const { base } of Object.values(texts)) assert.deepEqual(gateFindings(base, base), []);
+  // An unchanged head (a PR that does not touch these workflows) needs no transition at all.
+  const unchanged = await workflowFindings(async () => { throw new Error("no workflow read expected"); }, {}, "o/r",
+    [{ filename: "README.md", status: "modified" }], HEAD, BASE);
+  assert.deepEqual(unchanged, { gate: [], owner: [] });
+});
+
 test("gate guard: every gated workflow on this branch passes and uses a listed gate job", () => {
   // No pinned list (see "gate job digest"); the workflow this file reads below must stay gated.
   assert.ok(GATED_FILES.includes("clued-g4-database.yml"));
+  for (const name of NEWLY_GATED_FILES) assert.ok(GATED_FILES.includes(name), name + ": migrated workflow remains gated");
   for (const name of GATED_FILES) {
     const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8");
     assert.deepEqual(gateFindings(text, text), [], name);
@@ -1079,7 +1285,7 @@ test("gate guard: every gated workflow on this branch passes and uses a listed g
     assert.match(gateJob.lines.join("\n"), /ref: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.repository\.default_branch \}\}/);
   }
   // Ungated workflows, even with self-hosted jobs, stay out of scope when they already exist.
-  const ungated = fs.readFileSync(path.join(ROOT, ".github", "workflows", "trivy.yml"), "utf8");
+  const ungated = historicalUngatedTrivy();
   assert.deepEqual(gateFindings(ungated, ungated), []);
 });
 
@@ -1091,12 +1297,13 @@ test("gate guard: the exact PR-read version is registered before workflow rollou
   const legacyDigest = "41e789754b90dcb27c8297bf83169194b7aaab2659d909859ddd8618d0fa07c4";
   const prReadDigest = "4136409cf9440c3e8755ed03014cd3c39f90a169f4f8a2ce3d83af2e4a0111cd";
   const noEnforceDigest = "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc";
-  assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest, noEnforceDigest, TEMPORARY_GATE_DIGEST], "only the four exact gate versions");
+  assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest, noEnforceDigest, TEMPORARY_GATE_DIGEST, SOURCE_PROOF_GATE_DIGEST,
+    HOSTED_SOURCE_PROOF_GATE_DIGEST], "only the six exact gate versions");
   // Merge Admission step 6 dropped this line from the gate; the two older
   // versions below still carry it.
   const token = "          GITHUB_TOKEN: ${{ github.token }}\n";
   const enforceLine = "          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}\n";
-  for (const name of GATED_FILES) {
+  for (const name of LEGACY_TEMPLATE_FILES) {
     const current = withoutTemporaryGateBootstrap(fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8"));
     assert.equal(sha256Hex(workflowJobs(current).find((job) => job.name === "admission-gate").lines.join("\n")), noEnforceDigest, name);
     const withEnforce = current.replace(token, `${enforceLine}${token}`);
@@ -1130,7 +1337,7 @@ test("gate guard: the exact PR-read version is registered before workflow rollou
 });
 
 test("gate guard: only the exact temporary bootstrap template is registered before rollout", () => {
-  for (const name of GATED_FILES) {
+  for (const name of LEGACY_TEMPLATE_FILES) {
     const legacy = withoutTemporaryGateBootstrap(fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8"));
     const candidate = legacy.replace("      - id: gate\n", TEMPORARY_GATE_BOOTSTRAP + "      - id: gate\n");
     assert.notEqual(candidate, legacy, name);
@@ -1158,7 +1365,17 @@ test("gate guard (Merge Admission step 6): every gated workflow's gate no longer
     const current = fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8");
     const gateJob = workflowJobs(current).find((job) => job.name === "admission-gate");
     assert.ok(!gateJob.lines.some((line) => /_ENFORCE\b/.test(line)), `${name}: the gate reads no retired switch`);
-    assert.equal(sha256Hex(workflowJobs(withoutTemporaryGateBootstrap(current)).find(job => job.name === "admission-gate").lines.join("\n")), "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc", name);
+    if (NEWLY_GATED_FILES.includes(name)) {
+      // Owner Decisions 325717a6 and 22b0e0ed (PR-B): the Stage C gate on ubuntu-latest that admits on
+      // the independent CI's own admission; exactly runner, timeout and gate source differ.
+      const text = gateJob.lines.join("\n");
+      const hosted = hostedGateOf(text), selfHosted = selfHostedGateOf(hosted);
+      assert.ok([SOURCE_PROOF_GATE_DIGEST, HOSTED_SOURCE_PROOF_GATE_DIGEST].includes(sha256Hex(text)), name);
+      assert.equal(sha256Hex(hosted), HOSTED_SOURCE_PROOF_GATE_DIGEST, name);
+      assert.equal(sha256Hex(selfHosted), SOURCE_PROOF_GATE_DIGEST, name);
+    } else {
+      assert.equal(sha256Hex(workflowJobs(withoutTemporaryGateBootstrap(current)).find(job => job.name === "admission-gate").lines.join("\n")), "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc", name);
+    }
     assert.deepEqual(gateFindings(current, current), [], name);
     // Dropping the token or adding another variable is still a changed gate.
     assert.deepEqual(gateFindings(current.replace(token, ""), current), ["admission_gate_changed"], name);
@@ -1298,7 +1515,7 @@ test("gate guard (re-review N4): YAML the line reader cannot follow is refused, 
   const merged = hosted.replace("    steps:", "    <<: *heavy\n    steps:");
   assert.deepEqual(gateFindings(merged, null), ["admission_gate_missing"]);
   // An existing ungated short check may not grow a new self-hosted job.
-  const trivy = fs.readFileSync(path.join(ROOT, ".github", "workflows", "trivy.yml"), "utf8");
+  const trivy = historicalUngatedTrivy();
   assert.deepEqual(gateFindings(`${trivy}\n  extra:\n    runs-on: [self-hosted, Linux]\n    steps:\n      - run: x\n`, trivy),
     ["self_hosted_job_added_ungated:extra"]);
   assert.deepEqual(gateFindings(`${trivy}\n  extra:\n    runs-on: ubuntu-latest\n    steps:\n      - run: x\n`, trivy), []);
@@ -1638,7 +1855,7 @@ async function gateRun(checks, envOverrides = {}) {
 }
 
 test("gate guard (re-review 3, N-R5): an ungated workflow may not move a job to a self-hosted runner or loosen its timeout", () => {
-  const ungated = fs.readFileSync(path.join(ROOT, ".github", "workflows", "trivy.yml"), "utf8");
+  const ungated = historicalUngatedTrivy();
   const job = "trivy-trusted-self-hosted";
   const selfHosted = workflowJobs(ungated).find((j) => j.name === job);
   assert.equal(jobTimeout(selfHosted), 25);
@@ -1688,7 +1905,7 @@ test("app check (re-review 4, m1): the posted check names the pull request and t
 });
 
 test("gate guard (re-review 4, m3): an ungated self-hosted job may not add or change its strategy", () => {
-  const ungated = fs.readFileSync(path.join(ROOT, ".github", "workflows", "trivy.yml"), "utf8");
+  const ungated = historicalUngatedTrivy();
   const job = "trivy-trusted-self-hosted";
   const matrix = ungated.replace("    timeout-minutes: 25\n", "    timeout-minutes: 25\n    strategy:\n      matrix:\n        shard: [1, 2, 3]\n");
   assert.notEqual(matrix, ungated);
@@ -2313,4 +2530,195 @@ test("evaluate (Owner Decision a0d93cd0): a head that only merged main keeps the
   assert.equal(result.outcome.owner_review.kind, "transient");
   assert.match(result.outcome.reasons[0], /^owner_review_unavailable:transient/);
   assert.deepEqual(result.asked, [APPROVED]);
+});
+
+// Source v2 resident executor (PR-A): the merge gate counts the v2 control pair through the v2 consumer.
+// Off the installed clued-control principal the consumer refuses before it opens any file, so the gate
+// can never turn a v2 check into an admission here; the consumption itself runs on the fixture engine below.
+test("independent-control-checks-v2: the gate and the head reader dispatch to the v2 consumer and fail closed off the controller", async () => {
+  const env = { CLUED_EXECUTION_PROVIDER: "independent-control-checks-v2", GITHUB_REPOSITORY: "tdoljyj/cross-memory-system" };
+  const event = { pull_request: { number: 7, head: { sha: "a".repeat(40) }, base: { sha: "b".repeat(40) } } };
+  const noNetwork = async () => { throw new Error("no network in this test"); };
+  await assert.rejects(gate({ env, event, eventName: "pull_request", fetchImpl: noNetwork }), { code: "CONTROL_CONSUMER_V2_PRINCIPAL_REQUIRED" });
+  await assert.rejects(appChecksOnHead(noNetwork, env, "tdoljyj/cross-memory-system", "a".repeat(40), "kooyumi-admission-verified"), { code: "CONTROL_CONSUMER_V2_PRINCIPAL_REQUIRED" });
+  await assert.rejects(appChecksOnHead(noNetwork, env, "tdoljyj/cross-memory-system", "a".repeat(40), "kooyumi-merge-slot"), { code: "CONTROL_CONSUMER_V2_PRINCIPAL_REQUIRED" });
+  // A wrong repository or an unknown check name is refused before the principal is even looked at.
+  await assert.rejects(appChecksOnHead(noNetwork, env, "evil/repo", "a".repeat(40), "kooyumi-admission-verified"), { code: "CONTROL_HEAD_SELECTOR_REQUIRED" });
+  const consumer = await import("../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/consumer.mjs");
+  assert.throws(() => consumer.assertControllerPrincipal({ platform: "linux", username: "clued-control" }), { code: "CONTROL_CONSUMER_V2_PRINCIPAL_REQUIRED" });
+  assert.doesNotThrow(() => consumer.assertControllerPrincipal({ platform: "win32", username: "clued-control" }));
+});
+
+test("independent-control-checks-v2: a settled v2 control pair counts; another claim generation or Source does not, and one head counts one batch", async () => {
+  const CI = "../../work/actions-hosted-migration/independent-ci-v1/";
+  const { batchJobsV2, claimGeneration } = await import(CI + "src/job-v2.mjs");
+  const { recordBatchClaim } = await import(CI + "src/batch-claim-v2.mjs");
+  const { EffectJournal } = await import(CI + "src/effect-journal.mjs");
+  const { createFixtureControlPublisherV2 } = await import(CI + "src/independent-control-checks-v2/publisher.mjs");
+  const { controlJobsFor, consumeControlV2 } = await import(CI + "src/independent-control-checks-v2/consumer.mjs");
+  const { admittedFacts } = await import(CI + "test/resident-v2-fixtures.mjs");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "clued-v2-control-"));
+  try {
+    const repo = "tdoljyj/cross-memory-system", head = "a".repeat(40), base = "b".repeat(40), ci = "d".repeat(64);
+    const now = Date.now(), iso = ms => new Date(ms).toISOString();
+    const claim = { claimId: crypto.randomUUID(), fence: 3, epoch: 1, expiresAt: iso(now + 3_600_000) };
+    const jobs = batchJobsV2({ repo, pr: 888, headSha: head, baseSha: base, sourceManifestSha256: ci, createdAt: iso(now - 60_000), attempt: 1 });
+    const claims = path.join(root, "batch-claims");
+    const { record } = await recordBatchClaim(claims, jobs["work-admission"], claim, iso(now - 30_000));
+    const checks = []; let next = 100;
+    const github = { fixture: true,
+      async readChangedPaths(j) { return { complete: true, pr: j.pr, headSha: j.headSha, baseSha: j.baseSha, paths: ["a.txt"] }; },
+      async readChecks(h) { return { complete: true, checks: checks.filter(c => c.head_sha === h).map(c => structuredClone(c)) }; },
+      async createCheck(body) { const c = { id: next++, app: { id: 5368905 }, ...structuredClone(body) }; checks.push(c); return structuredClone(c); },
+      async revokeCheck(id, body) { const c = checks.find(x => x.id === id); Object.assign(c, structuredClone(body)); return structuredClone(c); } };
+    let observed = claim;
+    const admission = { fixture: true, async evaluatePr(j, packet, opts) {
+      return admittedFacts(j, observed, packet, { domain: "fixture", mergeQueueHead: true, batchClaim: opts?.batchClaim, observedAt: Date.now(), slotUntil: now + 3_600_000 });
+    } };
+    const journal = await EffectJournal.open(path.join(root, "effects-control"));
+    const consumerFor = batchClaim => createFixtureControlPublisherV2({ github, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaim });
+    // stage 8 published the pair under the batch claim generation
+    const pub = consumerFor(claimGeneration(claim));
+    for (const role of ["control-admission", "control-merge-slot"]) assert.equal((await pub.publishOne(jobs[role])).status, "SETTLED");
+    for (const name of ["kooyumi-admission-verified", "kooyumi-merge-slot"]) {
+      const candidates = controlJobsFor([record], { repository: repo, headSha: head, name }, ci);
+      assert.equal(candidates.length, 1);
+      const { proof } = await consumeControlV2({ candidates, consumerFor });
+      assert.equal(proof.contract, "clued.independent-ci.control-consumption/2");
+      assert.equal(proof.check.name, name);
+      assert.match(proof.check.external_id, /^independent-ci:control:control-(admission|merge-slot):v2:[0-9a-f]{64}:a1:c[0-9a-f]{8}:f3:e1$/);
+    }
+    // another CI Source: no candidate, no green check
+    assert.deepEqual(controlJobsFor([record], { repository: repo, headSha: head, name: "kooyumi-admission-verified" }, "e".repeat(64)), []);
+    await assert.rejects(consumeControlV2({ candidates: [], consumerFor }), { code: "CONTROL_HEAD_NOT_CURRENT" });
+    // a takeover (new fence) after publication: the settled check no longer counts and is compensated once
+    observed = { ...claim, fence: 4 };
+    await assert.rejects(consumeControlV2({ candidates: controlJobsFor([record], { repository: repo, pr: 888, headSha: head, name: "kooyumi-admission-verified" }, ci), consumerFor }));
+    assert.equal(checks.find(c => c.name === "kooyumi-admission-verified" && c.external_id.includes(jobs["control-admission"].id)).conclusion, "failure");
+    observed = claim;
+    // the same head under a second PR: the newer judgement on the head wins (NEWER_CONTROL_JUDGEMENT_PRESENT),
+    // so a head-only reader counts exactly one batch, never two
+    const jobs2 = batchJobsV2({ repo, pr: 889, headSha: head, baseSha: base, sourceManifestSha256: ci, createdAt: iso(now - 60_000), attempt: 1 });
+    const second = (await recordBatchClaim(claims, jobs2["work-admission"], claim, iso(now - 30_000))).record;
+    assert.equal((await pub.publishOne(jobs2["control-admission"])).status, "SETTLED");
+    const both = await consumeControlV2({ candidates: controlJobsFor([record, second], { repository: repo, headSha: head, name: "kooyumi-admission-verified" }, ci), consumerFor });
+    assert.equal(both.proof.subject.pr, 889);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// --- PR-B hosted executor gate: the independent CI's own admission (Owner Decision 22b0e0ed).
+const NATIVE_ID = `independent-ci:native-work-admission:${"3".repeat(64)}:f9:e1:a1`;
+const nativeCheck = (overrides = {}) => ({ id: 50, name: "kooyumi-work-admission", head_sha: HEAD, status: "completed", conclusion: "success",
+  external_id: NATIVE_ID, app: { id: 5368905 },
+  output: { title: "Work claim and complete Native admission verified", summary: `Independent Native control check for o/r#452; observation sha256 ${"5".repeat(64)}.` },
+  ...overrides });
+const independentEvent = () => {
+  const value = withClaim();
+  value.pull_request.base.repo = { full_name: "o/r", default_branch: "main" };
+  return value;
+};
+async function independentGate(checks, { envOverrides = {}, script = {}, eventValue = independentEvent() } = {}) {
+  const { fetchImpl, calls } = fakeFetch({ ...SELF_RUN, [CHECKS]: typeof checks === "function" ? checks : { body: { check_runs: checks } }, ...script });
+  const slept = [];
+  const outcome = await gate({ env: env({ CLUED_ADMISSION_GATE_SOURCE: INDEPENDENT_GATE_SOURCE, ...envOverrides }), event: eventValue,
+    eventName: "pull_request", fetchImpl, sleep: async (ms) => { slept.push(ms); } });
+  return { outcome, calls, slept };
+}
+
+test("independent gate: App 5368905's bound kooyumi-work-admission success for the exact head admits at once", async () => {
+  assert.deepEqual([INDEPENDENT_GATE_SOURCE, INDEPENDENT_GATE_WAIT_SECONDS, INDEPENDENT_GATE_POLL_SECONDS],
+    ["independent-ci-native-work-admission", 600, 30]);
+  const { outcome, calls, slept } = await independentGate([nativeCheck()]);
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source, outcome.automation_self_hosted, outcome.enforced, slept],
+    [true, "ADMITTED", INDEPENDENT_GATE_SOURCE, false, true, []]);
+  assert.deepEqual([outcome.head_sha, outcome.base_sha, outcome.pr_ref], [HEAD, BASE, "o/r#452"]);
+  assert.ok(calls.some((call) => call.url.includes("/check-runs?check_name=kooyumi-work-admission&filter=all")));
+  assert.ok(calls.every((call) => call.method === "GET" || call.url === EPOCH_URL), "read-only, besides the public epoch observation");
+  // The newest of App 5368905 decides: a later success over a failure admits, a later failure refuses.
+  assert.equal((await independentGate([nativeCheck({ id: 40, conclusion: "failure" }), nativeCheck({ id: 51 })])).outcome.admitted, true);
+  const refused = (await independentGate([nativeCheck({ id: 40 }), nativeCheck({ id: 51, conclusion: "failure" })])).outcome;
+  assert.deepEqual([refused.admitted, refused.verdict], [false, "REJECTED"]);
+  assert.match(refused.reasons[0], /concluded failure/);
+});
+
+test("independent gate: same-name checks of other Apps, other heads, unbound ids or summaries never admit", async () => {
+  for (const [label, list, verdict] of [
+    ["GitHub Actions", [nativeCheck({ app: { id: 15368 } })], "ADMISSION_PENDING"],
+    ["clued-admission App", [nativeCheck({ app: { id: 5164952 } })], "ADMISSION_PENDING"],
+    ["another App", [nativeCheck({ app: { id: 999 } })], "ADMISSION_PENDING"],
+    ["another head", [nativeCheck({ head_sha: BASE })], "ADMISSION_PENDING"],
+    ["an admission-run id", [nativeCheck({ external_id: "pr:452:run:77" })], "REJECTED"],
+    ["a staged id", [nativeCheck({ external_id: `independent-ci:staged:${"4".repeat(64)}:f9:e1:a1` })], "REJECTED"],
+    ["a control id", [nativeCheck({ external_id: `independent-ci:control:control-admission:${"1".repeat(64)}:f9:e1:a1` })], "REJECTED"],
+    ["another pull request", [nativeCheck({ output: { summary: "Independent Native control check for o/r#453; x" } })], "REJECTED"],
+    ["no pull request", [nativeCheck({ output: { summary: "Independent Native control check" } })], "REJECTED"],
+    ["still running", [nativeCheck({ status: "in_progress", conclusion: null })], "ADMISSION_PENDING"],
+  ]) {
+    const { outcome } = await independentGate(list, { envOverrides: { CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" } });
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, verdict], label);
+  }
+  // Not into the default branch, a stale execution epoch or a re-run: refused.
+  const other = independentEvent(); other.pull_request.base.ref = "release";
+  assert.equal((await independentGate([nativeCheck()], { eventValue: other })).outcome.verdict, "REJECTED");
+  const stale = await independentGate([nativeCheck()], { script: { [VERIFY]: { body: { status: "ok", guard_required: true, epoch_current: false } } } });
+  assert.deepEqual([stale.outcome.admitted, stale.outcome.reasons], [false, ["work_claim_execution_epoch_stale"]]);
+  const rerun = await independentGate([nativeCheck()], { envOverrides: { GITHUB_RUN_ATTEMPT: "2" },
+    script: { [PULL]: { body: { state: "open", head: { sha: HEAD }, base: { ref: "main" } } } } });
+  assert.deepEqual([rerun.outcome.admitted, rerun.outcome.verdict], [false, "RERUN_REFUSED"]);
+  // An unknown source fails the gate instead of falling back.
+  await assert.rejects(() => gate({ env: env({ CLUED_ADMISSION_GATE_SOURCE: "any" }), event: independentEvent(), eventName: "pull_request",
+    fetchImpl: fakeFetch(SELF_RUN).fetchImpl, sleep: async () => {} }), /unknown admission gate source/);
+});
+
+test("independent gate: polls about every 30 seconds for at most 10 minutes, then skips the executor", async () => {
+  let reads = 0;
+  const late = (call) => {
+    if (!call.url.includes("check_name=kooyumi-work-admission")) return { body: { check_runs: [] } };
+    reads += 1;
+    return { body: { check_runs: reads < 4 ? [] : [nativeCheck()] } };
+  };
+  let result = await independentGate(late);
+  assert.deepEqual([result.outcome.admitted, result.slept], [true, [30000, 30000, 30000]]);
+  result = await independentGate([]);
+  assert.deepEqual([result.outcome.admitted, result.outcome.verdict], [false, "ADMISSION_PENDING"]);
+  assert.equal(result.slept.length, 20);
+  assert.equal(result.slept.reduce((sum, ms) => sum + ms, 0), 600000);
+  assert.match(result.outcome.reasons[0], /kooyumi-work-admission of App 5368905 for #452 .* has posted no check after 600s/);
+  // A longer configured wait is capped; the default gate keeps its own 180-second limit.
+  result = await independentGate([], { envOverrides: { CLUED_ADMISSION_GATE_WAIT_SECONDS: "3600" } });
+  assert.equal(result.slept.reduce((sum, ms) => sum + ms, 0), 600000);
+  // independentAdmissionCheck needs checks: read.
+  const forbidden = fakeFetch({ [CHECKS]: { status: 403, body: {} } });
+  await assert.rejects(() => independentAdmissionCheck(forbidden.fetchImpl, env(), "o/r", HEAD, 452), /needs `checks: read`/);
+});
+
+test("independent gate: under the Owner's disaster-recovery switch the clued-admission App check of this event still decides", async () => {
+  const { outcome } = await independentGate([appCheckRun()]);
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source], [true, "ADMITTED", undefined]);
+  const failed = (await independentGate([appCheckRun({ conclusion: "failure" })])).outcome;
+  assert.deepEqual([failed.admitted, failed.verdict], [false, "REJECTED"]);
+});
+
+test("independent gate: the Source v2 native-work-admission id admits; malformed or foreign v2 ids refuse", async () => {
+  const V2 = `independent-ci:native-work-admission:v2:${"6".repeat(64)}:a1:cd1dd735d:f3:e2`;
+  assert.equal((await independentGate([nativeCheck({ external_id: V2 })])).outcome.admitted, true);
+  assert.equal((await independentGate([nativeCheck({ external_id: V2.replace(":a1:", ":a2:") })])).outcome.admitted, true);
+  for (const [label, externalId] of [
+    ["attempt 3", V2.replace(":a1:", ":a3:")],
+    ["no claim generation", `independent-ci:native-work-admission:v2:${"6".repeat(64)}:a1`],
+    ["a short claim prefix", V2.replace(":cd1dd735d:", ":cd1dd73:")],
+    ["an upper-case claim prefix", V2.replace(":cd1dd735d:", ":cD1DD735D:")],
+    ["fence 0", V2.replace(":f3:", ":f0:")],
+    ["v1 field order", `independent-ci:native-work-admission:v2:${"6".repeat(64)}:f3:e2:a1`],
+    ["a trailing field", `${V2}:x`],
+    ["a staged v2 id", `independent-ci:staged:v2:${"6".repeat(64)}:a1`],
+    ["a control v2 id", `independent-ci:control:control-admission:v2:${"6".repeat(64)}:a1:cd1dd735d:f3:e2`],
+    ["a v3 id", V2.replace(":v2:", ":v3:")],
+  ]) {
+    const { outcome } = await independentGate([nativeCheck({ external_id: externalId })]);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, "REJECTED"], label);
+  }
+  // A well-formed v2 id from another App is never read.
+  const { outcome } = await independentGate([nativeCheck({ external_id: V2, app: { id: 15368 } })], { envOverrides: { CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" } });
+  assert.deepEqual([outcome.admitted, outcome.verdict], [false, "ADMISSION_PENDING"]);
 });

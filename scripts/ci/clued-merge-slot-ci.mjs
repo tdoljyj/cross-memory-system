@@ -6,10 +6,10 @@
 // the hourly re-verification runs it too. It reports the CI state of each
 // open pull request that holds a merge slot:
 //
-//   failed   a CI required check (gitleaks, trivy, contract-placement and
-//            kooyumi-work-admission from GitHub Actions, kooyumi-admission-verified
-//            from the clued-admission App) finally failed on the head after
-//            the claim got the slot (step 4: an admission check that failed
+//   failed   a CI required check, as the default branch's rules require it
+//            (name and integration, read live: requiredChecksOf; today all
+//            from the independent CI, App 5368905), finally failed on the head
+//            after the claim got the slot (step 4: an admission check that failed
 //            before, as it does when the head falls behind while the claim
 //            waits in the merge queue, leaves the holder the slot to bring
 //            the default branch in and push; it holds green back); Clued
@@ -30,7 +30,7 @@
 // and its name, branch, conclusion and pull requests come from that run. The
 // event is only a signal to look. The pull requests come from the API, the
 // slots from Clued, and the state from the head's check runs (by name and
-// app id, as the ruleset reads them) and from the runs of the default
+// app id, as the ruleset reads them, from the live branch rules) and from the runs of the default
 // branch's CI workflows (gitleaks, trivy and the gated workflows) whose file
 // at the head is byte for byte the default branch's (git blob SHA). The
 // kooyumi-merge-slot check is not counted: it is the slot's result, not CI's.
@@ -47,6 +47,8 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import {PUBLISHER_FILES,PUBLISHER_SOURCE_PATH,registeredPublisherSource} from "./clued-production-publisher-source.mjs";
+import {PUBLISHER_PR_QUALIFICATION_FILES,PUBLISHER_PR_QUALIFICATION_PATH,registeredPublisherPrQualificationSource} from "./clued-publisher-qualification-source.mjs";
 import {createNaturalRecorder} from "./merge-admission-source-producer.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,6 +64,7 @@ import {
   parseClaimReference,
   postAppCheck,
   withTokenHint,
+  gateFindings,
   workflowIsGated,
 } from "./clued-work-admission.mjs";
 import { resolveMode } from "./merge-admission-policy.mjs";
@@ -72,18 +75,113 @@ import {cleanupManagedAutoMerge} from "./clued-managed-auto-merge.mjs";
 export const TOUCH_RPC = "clued_work_merge_slot_touch_v1";
 export const HOLDERS_RPC = "clued_work_merge_slot_holders_v1";
 export const ACTIONS_APP_ID = 15368;
-// All CI required checks of the main ruleset, by (name, app id).
-// kooyumi-merge-slot is required too, but it is the slot's own result.
-export const CI_REQUIRED_CHECKS = Object.freeze([
+export const INDEPENDENT_CI_APP_ID = 5368905;
+// The main ruleset's mapping before 2026-10-20 (docs/maintenance/
+// kooyumi-ci-check-cutover.md), by (name, app id). Design A2 (Owner Decisions
+// 89945332, 22b0e0ed): nothing counts by this list any more. The reporter and
+// the merge executor read the ruleset's actual required checks
+// (requiredChecksOf), so App 5368905 today, and an Owner's temporary
+// disaster-recovery switch of the ruleset (docs/maintenance/independent-ci.md)
+// is followed without a code change. Kept as the legacy fixture reference.
+export const LEGACY_CI_REQUIRED_CHECKS = Object.freeze([
   Object.freeze({ name: "gitleaks", app_id: ACTIONS_APP_ID }),
   Object.freeze({ name: "trivy", app_id: ACTIONS_APP_ID }),
   Object.freeze({ name: "kooyumi-work-admission", app_id: ACTIONS_APP_ID }),
   Object.freeze({ name: "kooyumi-admission-verified", app_id: ADMISSION_APP_ID }),
   Object.freeze({ name: "contract-placement", app_id: ACTIONS_APP_ID }),
 ]);
-// Workflows that count as CI besides the gated ones: those of the required checks
-// that run on the self-hosted runners. kooyumi-work-admission takes seconds.
+// Workflows that count as CI besides the gated ones: those of the required
+// checks' work. Since PR-B they are hosted executors (gitleaks-hosted-executor
+// and so on): a run of one keeps a slot running, but while the ruleset counts
+// no GitHub Actions check their failure is not CI's (hostedExecutorFailure).
 export const REQUIRED_CHECK_WORKFLOWS = Object.freeze(["gitleaks.yml", "trivy.yml", "contract-placement.yml"]);
+
+// The required status checks of the default branch, as GitHub enforces them:
+// every required_status_checks rule of every active ruleset that applies to
+// the branch, by (context, integration_id); a missing integration is any
+// source (app_id null). Read live, never hard-coded. Fails closed: an
+// unreadable, malformed or empty list throws and nothing is reported.
+export async function requiredChecksOf(fetchImpl, env, repository, branch) {
+  if (typeof branch !== "string" || !branch || /[\u0000-\u0020\u007f]/.test(branch))
+    throw new Error("the default branch is unknown; its required checks cannot be read");
+  const rules = await githubPaged(fetchImpl, env, `/repos/${repository}/rules/branches/${encodeURIComponent(branch)}`);
+  const required = [];
+  for (const rule of rules) {
+    if (!rule || rule.type !== "required_status_checks") continue;
+    const list = rule.parameters && rule.parameters.required_status_checks;
+    if (!Array.isArray(list)) throw new Error("a required_status_checks rule has no check list");
+    for (const entry of list) {
+      const appId = entry && entry.integration_id !== undefined && entry.integration_id !== null ? entry.integration_id : null;
+      if (!entry || typeof entry.context !== "string" || !entry.context || entry.context.length > 255 ||
+        (appId !== null && (!Number.isSafeInteger(appId) || appId <= 0))) throw new Error("invalid required status check in the branch rules");
+      if (!required.some((row) => row.name === entry.context && row.app_id === appId))
+        required.push(Object.freeze({ name: entry.context, app_id: appId }));
+    }
+  }
+  if (!required.length) throw new Error(`the ${branch} rules require no status check; CI cannot be counted`);
+  return Object.freeze(required);
+}
+// kooyumi-merge-slot is required too, but it is the slot's own result, not CI's.
+export const ciRequiredChecks = (required) => required.filter((row) => row.name !== MERGE_SLOT_CHECK_NAME);
+const countsActionsChecks = (required) => required.some((row) => row.app_id === ACTIONS_APP_ID || row.app_id === null);
+
+// Design A2: a check run of the independent CI (App 5368905) names no pull
+// request in its external_id. It binds by its head and by the independent
+// CI's own exact external_id formats: the v1 staged, Native admission and
+// control publishers (independent-ci-v1 src/queue.mjs jobs), the Source v2
+// publishers (src/job-v2.mjs scanExternalIdV2 and admissionExternalIdV2:
+// ':v2:<job id>:a<attempt 1|2>', admission and control also
+// ':c<claim id prefix>:f<fence>:e<epoch>'), and the relay
+// (src/hosted-relay-v1/relay-plan.mjs, gitleaks and trivy only). A control
+// check only counts from its own control role, and a summary that names
+// another pull request of this repository is not this one's.
+const INDEPENDENT_EXTERNAL_ID = new RegExp("^independent-ci:(?:" + [
+  // v1: <job id>:f<fence>:e<epoch>:a<attempt>
+  "(?:staged|native-work-admission):[a-f0-9]{64}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9}:a[1-9][0-9]{0,9}",
+  "control:(control-admission|control-merge-slot):[a-f0-9]{64}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9}:a[1-9][0-9]{0,9}",
+  // v2 scanner content proof: staged:v2:<job id>:a<attempt>
+  "staged:v2:[a-f0-9]{64}:a[12]",
+  // v2 admission and control: ...:v2:<job id>:a<attempt>:c<claim prefix>:f<fence>:e<epoch>
+  "native-work-admission:v2:[a-f0-9]{64}:a[12]:c[a-f0-9]{8}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9}",
+  "control:(control-admission|control-merge-slot):v2:[a-f0-9]{64}:a[12]:c[a-f0-9]{8}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9}",
+  // relay: relay:<role>:<head12>:run<run id>:a<run attempt>
+  "relay:(?:gitleaks|trivy):[a-f0-9]{12}:run[1-9][0-9]{0,19}:a[1-9][0-9]{0,3}",
+].join("|") + ")$");
+const INDEPENDENT_CONTROL_ROLE = Object.freeze({ "kooyumi-admission-verified": "control-admission", "kooyumi-merge-slot": "control-merge-slot" });
+export function independentCheckBindsPullRequest(check, { headSha, prNumber, repository } = {}) {
+  if (!check || check.head_sha !== headSha || !check.app || Number(check.app.id) !== INDEPENDENT_CI_APP_ID) return false;
+  const match = INDEPENDENT_EXTERNAL_ID.exec(String(check.external_id ?? ""));
+  if (!match) return false;
+  const role = INDEPENDENT_CONTROL_ROLE[check.name], controlRole = match[1] ?? match[2];
+  if (role ? controlRole !== role : controlRole !== undefined) return false;
+  // A native admission id belongs to the work admission check only.
+  if (/^independent-ci:native-work-admission:/.test(match[0]) !== (check.name === "kooyumi-work-admission") &&
+    !/^independent-ci:staged:/.test(match[0])) return false;
+  // A relay id names the relayed role and the head; both must be this check's.
+  const relay = /^independent-ci:relay:(gitleaks|trivy):([a-f0-9]{12}):/.exec(match[0]);
+  if (relay && (relay[1] !== check.name || relay[2] !== headSha.slice(0, 12))) return false;
+  if (typeof repository === "string" && Number.isSafeInteger(prNumber)) {
+    const escaped = repository.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const named = [...String((check.output && check.output.summary) ?? "").matchAll(new RegExp(`${escaped}#([0-9]{1,10})(?![0-9])`, "gi"))];
+    if (named.some((found) => Number(found[1]) !== prNumber)) return false;
+  }
+  return true;
+}
+// The pull request binding of a counted check, by the App that posted it.
+function checkBindsPullRequest(check, required, { headSha, prNumber, repository }) {
+  const appId = Number(check.app && check.app.id);
+  if (appId === INDEPENDENT_CI_APP_ID) return independentCheckBindsPullRequest(check, { headSha, prNumber, repository });
+  if (required.name === "kooyumi-admission-verified" && appId === ADMISSION_APP_ID)
+    return !Number.isSafeInteger(prNumber) || checkNamesPullRequest(check, prNumber);
+  return true;
+}
+// Design A2 (D8): a hosted executor (App 15368) run is not CI while the
+// ruleset counts no GitHub Actions check. Its failure, a billing refusal
+// included, never returns the slot; only the ruleset source's final failure does.
+function hostedExecutorFailure(proof, required) {
+  const reason = String((proof && proof.reason) ?? "");
+  return !countsActionsChecks(required) && REQUIRED_CHECK_WORKFLOWS.some((file) => reason.startsWith(`.github/workflows/${file}:`));
+}
 // A required check passes as the ruleset counts it. A final failure returns
 // the slot; cancelled is not one: the admission run of an edited pull request
 // cancels the previous one on the same head, and the next run's check may not
@@ -106,7 +204,26 @@ export function ciWorkflows(workspace, readDir = fs.readdirSync, readFile = fs.r
   for (const file of readDir(dir).filter((name) => /\.ya?ml$/.test(name)).sort()) {
     const bytes = readFile(path.join(dir, file));
     if (REQUIRED_CHECK_WORKFLOWS.includes(file) || workflowIsGated(bytes.toString("utf8"))) {
-      out.set(`.github/workflows/${file}`, gitBlobSha(bytes));
+      const workflowPath=`.github/workflows/${file}`;
+      if(Object.hasOwn(PUBLISHER_PR_QUALIFICATION_FILES,workflowPath)) {
+        const raw=readFile(path.join(workspace,PUBLISHER_PR_QUALIFICATION_PATH));
+        if(raw.length>524288)throw Error('PR qualification Source registry exceeds bounds');
+        const selected=registeredPublisherPrQualificationSource(JSON.parse(raw.toString('utf8')),workflowPath,bytes.toString('utf8'));
+        if(!selected.passed||gateFindings(bytes.toString('utf8'),bytes.toString('utf8')).length)
+          throw Error('unregistered default PR qualification Source');
+        continue;
+      }
+      if(Object.hasOwn(PUBLISHER_FILES,workflowPath)) {
+        // Only the exact registered default Source can be excluded from PR
+        // proof enumeration. A basename or dispatch trigger is insufficient.
+        const raw=readFile(path.join(workspace,PUBLISHER_SOURCE_PATH));
+        if(raw.length>524288)throw Error('publisher Source registry exceeds bounds');
+        const selected=registeredPublisherSource(JSON.parse(raw.toString('utf8')),workflowPath,bytes.toString('utf8'));
+        if(!selected.passed||selected.profile.source_kind!=='gated_successor'||
+          gateFindings(bytes.toString('utf8'),bytes.toString('utf8')).length)throw Error('unregistered default publisher Source');
+        continue;
+      }
+      out.set(workflowPath, gitBlobSha(bytes));
     }
   }
   return out;
@@ -142,10 +259,11 @@ async function completeHeadSnapshot(fetchImpl, env, repository, headSha, kind) {
 }
 
 // The newest check run of a required check on an already complete snapshot.
+// A rule without an integration (app_id null) takes any App's check.
 function newestCheck(checks, headSha, { name, app_id: appId }) {
   return checks
     .filter((check) => check && check.name === name && check.head_sha === headSha
-      && check.app && Number(check.app.id) === appId)
+      && check.app && (appId === null || Number(check.app.id) === appId))
     .sort((a, b) => Number(b.id) - Number(a.id))[0] ?? null;
 }
 export function matchesOperationPR(current,expected,action) {
@@ -155,7 +273,9 @@ export function matchesOperationPR(current,expected,action) {
     current.base?.repo?.default_branch===expected.base?.repo?.default_branch &&
     (!action || current.auto_merge===null) && (action!=='merge_pull_request' || current.mergeable_state==='clean'));
 }
-export async function requiredBarrier(fetchImpl,env,repository,head,prNumber,proof,{expectedPR,action}={}) {
+// The final barrier reads the branch rules again unless the caller passes the
+// list it read in this same observation (required).
+export async function requiredBarrier(fetchImpl,env,repository,head,prNumber,proof,{expectedPR,action,required,branch}={}) {
   const signal=AbortSignal.timeout(12000);
   const bounded=(url,init)=>fetchImpl(url,{...init,signal,redirect:'error'});
   if(proof?.tip || expectedPR) {
@@ -169,13 +289,18 @@ export async function requiredBarrier(fetchImpl,env,repository,head,prNumber,pro
       if(branch?.commit?.sha!==proof.tip)return false;
     }
   }
-  let checkSnapshot;
-  try { checkSnapshot=await completeHeadSnapshot(bounded,env,repository,head,'check_runs'); }
+  let checkSnapshot,requiredChecks;
+  try {
+    requiredChecks=ciRequiredChecks(required??await requiredChecksOf(bounded,env,repository,
+      branch??proof?.default_branch??expectedPR?.base?.ref));
+    checkSnapshot=await completeHeadSnapshot(bounded,env,repository,head,'check_runs');
+  }
   catch { return false; }
-  for(const required of CI_REQUIRED_CHECKS) {
-    const check=newestCheck(checkSnapshot,head,required);
+  if(!requiredChecks.length)return false;
+  for(const entry of requiredChecks) {
+    const check=newestCheck(checkSnapshot,head,entry);
     if(!check || check.status!=='completed' || check.conclusion!=='success' ||
-      (required.name==='kooyumi-admission-verified' && !checkNamesPullRequest(check,prNumber)))return false;
+      !checkBindsPullRequest(check,entry,{headSha:head,prNumber,repository}))return false;
   }
   if(proof && !Array.isArray(proof.native_runs))return false;
   const expected=proof?.native_runs??[];
@@ -207,15 +332,21 @@ export async function requiredBarrier(fetchImpl,env,repository,head,prNumber,pro
 // admission check's failure that completed before slotSince (when the claim
 // became head of the merge queue, ms) is not reported.
 const STALE_OK = new Set(["kooyumi-work-admission", "kooyumi-admission-verified"]);
-export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, slotSince = null, { pr, qualifyExecution } = {}) {
+// required: the branch rules as read in this observation (requiredChecksOf);
+// read here from the pull request's default branch when not given.
+export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, slotSince = null, { pr, qualifyExecution, required } = {}) {
   const checks = [];
   let before = null;
+  const rules = required ?? await requiredChecksOf(fetchImpl, env, repository,
+    pr && pr.base && (pr.base.repo && pr.base.repo.default_branch || pr.base.ref));
+  const requiredChecks = ciRequiredChecks(rules);
+  if (!requiredChecks.length) return { state: "idle", reason: "the branch rules require no CI check", checks };
   const checkSnapshot = await completeHeadSnapshot(fetchImpl, env, repository, headSha, 'check_runs');
-  for (const required of CI_REQUIRED_CHECKS) {
+  for (const required of requiredChecks) {
     const check = newestCheck(checkSnapshot, headSha, required);
-    checks.push({ name: required.name, status: check ? check.status : "missing", conclusion: check ? check.conclusion ?? null : null });
-    if (check && required.name === "kooyumi-admission-verified" && pr && !checkNamesPullRequest(check, pr.number))
-      return { state: "idle", reason: "the newest admission check does not bind this pull request", checks };
+    checks.push({ name: required.name, app_id: required.app_id, status: check ? check.status : "missing", conclusion: check ? check.conclusion ?? null : null });
+    if (check && !checkBindsPullRequest(check, required, { headSha, prNumber: pr ? pr.number : undefined, repository }))
+      return { state: "idle", reason: `the newest ${required.name === "kooyumi-admission-verified" ? "admission" : required.name} check does not bind this pull request`, checks };
     if (check && check.status === "completed" && FAILING.has(check.conclusion)) {
       const completed = Date.parse(check.completed_at ?? "");
       // Only the admission checks: they fail when the head falls behind while the claim waits. A
@@ -252,14 +383,27 @@ export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, 
     const proof = await qualifyExecution(pr);
     if (proof?.head !== headSha || proof.pr_number !== pr.number)
       return { state: "idle", reason: proof?.reason ?? "execution proof identity missing", checks };
-    if (proof.state === "failed") return { state: "failed", reason: proof.reason, checks, execution: proof };
-    if (proof.passed === true && proof.state === "qualified" && await requiredBarrier(fetchImpl,env,repository,headSha,pr.number,proof))
+    if (proof.state === "failed") {
+      if (hostedExecutorFailure(proof, requiredChecks))
+        return { state: "idle", reason: `${proof.reason}; a hosted executor is not a required check of these rules, so the slot is not returned`, checks, execution: proof };
+      return { state: "failed", reason: proof.reason, checks, execution: proof };
+    }
+    if (proof.passed === true && proof.state === "qualified" && await requiredBarrier(fetchImpl,env,repository,headSha,pr.number,proof,{required:rules}))
       return { state: "green", reason: proof.reason, checks, execution: proof };
     return { state: "idle", reason: proof.reason ?? "execution scope remains unknown", checks, execution: proof };
   }
   return { state: "idle", reason: "no CI result yet and no CI run active", checks };
 }
 
+// The clued-admission App (5164952) posts the failing slot check below. It
+// does so only where the rules take kooyumi-merge-slot from that App (or from
+// any App, or name no source). Where the independent CI (5368905) owns the
+// check, its stage 8 publishes it only for a live slot at the queue head, and
+// a foreign same-name failure (Owner Decision bc6fdad1) could never be cleared.
+const reporterPostsSlotCheck = (required) => {
+  const sources = (required ?? []).filter((row) => row.name === MERGE_SLOT_CHECK_NAME).map((row) => row.app_id);
+  return !sources.length || sources.some((appId) => appId === ADMISSION_APP_ID || appId === null);
+};
 async function newestSlotCheckGreen(fetchImpl, env, repository, headSha) {
   const [newest] = await appChecksOnHead(fetchImpl, env, repository, headSha, MERGE_SLOT_CHECK_NAME);
   return Boolean(newest) && newest.status === "completed" && newest.conclusion === "success";
@@ -342,10 +486,13 @@ async function reportMergeSlotsCore({ env, event, eventName, fetchImpl, workspac
   // efficiency it only advises it for code and docs (confirmation review
   // MINOR-B). Admission is always enforced since Merge Admission step 6.
   const slotRequired = mode.state !== "efficiency";
+  // The branch rules are read once per run, only when a live slot is reported.
+  let required = null;
   for (const { pr, scope, since } of live) {
     const prRef = `${repository}#${pr.number}`;
     try {
-      let seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since, { pr, qualifyExecution: qualify });
+      required ??= await requiredChecksOf(fetchImpl, env, repository, pr.base.repo.default_branch);
+      let seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since, { pr, qualifyExecution: qualify, required });
       observations.record("round_ci_observation",{scope,pr,seen});
       const report = { pr: pr.number, head_sha: pr.head.sha, ci_state: seen.state, reason: seen.reason };
       if (seen.state !== "idle") {
@@ -359,7 +506,8 @@ async function reportMergeSlotsCore({ env, event, eventName, fetchImpl, workspac
           Object.assign(report, { ci_state: "idle", reason: "PR or default tip changed before reporting CI" });
           result.reports.push(report);continue;
         }
-        if(seen.state==='green' && !await requiredBarrier(fetchImpl,env,repository,pr.head.sha,pr.number,seen.execution)) {
+        if(seen.state==='green' && !await requiredBarrier(fetchImpl,env,repository,pr.head.sha,pr.number,seen.execution,
+          {branch:pr.base.repo.default_branch})) {
           Object.assign(report,{ci_state:'idle',reason:'required checks or active runs changed before reporting CI'});
           result.reports.push(report);continue;
         }
@@ -377,7 +525,7 @@ async function reportMergeSlotsCore({ env, event, eventName, fetchImpl, workspac
         // re-run that turns CI green cannot let auto-merge merge without the
         // slot. Also when an earlier run returned the slot but could not post
         // (confirmation review NIT-2): the newest App check is still green then.
-        const stale = seen.state === "failed" && slotRequired
+        const stale = seen.state === "failed" && slotRequired && reporterPostsSlotCheck(required)
           && (report.returned || await newestSlotCheckGreen(fetchImpl, env, repository, pr.head.sha));
         if (stale) {
           const posted = await postAppCheck({ env, fetchImpl, headSha: pr.head.sha, success: false, prNumber: pr.number,

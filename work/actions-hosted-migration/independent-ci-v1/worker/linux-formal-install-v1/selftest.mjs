@@ -1,0 +1,17 @@
+// Pure input guards and Windows no-effect/default-disabled checks only.
+// Fixtures are not installation, qualification or actual-role observations.
+import assert from 'node:assert/strict';
+import {validatePlan,validateSignedQualification,install,main,INSTALLER_SOURCES,ROLES} from './install.mjs';
+const now=Date.parse('2026-10-19T08:00:00Z'),h='a'.repeat(64);
+const fixture=()=>({contract:'clued.independent-ci.linux-formal-install/1',enabled:true,accepted:true,exclusiveHostWriter:true,ownerAcceptanceRef:'fixture-source-only-not-actual-authority',acceptedAt:'2026-10-19T07:00:00Z',expiresAt:'2026-10-19T09:00:00Z',sourceRoot:'/opt/fixture-source',sourceCommit:'b'.repeat(40),sourceManifestSha256:h,installerSourceFiles:INSTALLER_SOURCES.map(path=>({path,sha256:h})),roles:Object.fromEntries(ROLES.map(r=>[r,{policySha256:h,qualificationSha256:h,jobSha256:h}])),cache:{root:'/var/lib/fixture-cache',dbPointerSha256:h,checksPointerSha256:h}});
+let passed=0;const test=(name,fn)=>{fn();passed++;process.stdout.write('PASS '+name+'\n');};
+test('disabled acceptance and missing exclusive writer cannot enter install',()=>{for(const k of ['enabled','accepted','exclusiveHostWriter']){const p=fixture();p[k]=false;assert.throws(()=>validatePlan(p,now),/FORMAL_INSTALL_DISABLED/);}});
+test('expired and future acceptance rejected',()=>{const p=fixture();p.expiresAt='2026-10-19T08:00:00Z';assert.throws(()=>validatePlan(p,now),/INSTALL_ACCEPTANCE_EXPIRED/);p.expiresAt='2026-10-19T09:00:00Z';p.acceptedAt=p.expiresAt;assert.throws(()=>validatePlan(p,now),/INSTALL_ACCEPTANCE_EXPIRED/);});
+test('source traversal and missing committed source rejected',()=>{for(const root of ['/opt/a/../b','/etc','/etc/inside','/opt/a//b']){const p=fixture();p.sourceRoot=root;assert.throws(()=>validatePlan(p,now),/EXACT_COMMITTED_SOURCE_REQUIRED/);}const p=fixture();p.sourceCommit=null;assert.throws(()=>validatePlan(p,now),/EXACT_COMMITTED_SOURCE_REQUIRED/);});
+test('all three roles and both installer pins are required',()=>{const p=fixture();delete p.roles.trivy;assert.throws(()=>validatePlan(p,now),/THREE_EXACT_ROLE_INPUT_PINS_REQUIRED/);const q=fixture();q.installerSourceFiles[1]=q.installerSourceFiles[0];assert.throws(()=>validatePlan(q,now),/INSTALLER_SOURCE_PINS_REQUIRED/);});
+test('null caches and unpinned input rejected',()=>{const p=fixture();p.cache.dbPointerSha256=null;assert.throws(()=>validatePlan(p,now),/INSTALLED_CACHE_PINS_REQUIRED/);const q=fixture();q.roles.gitleaks.policySha256=null;assert.throws(()=>validatePlan(q,now),/THREE_EXACT_ROLE_INPUT_PINS_REQUIRED/);});
+test('candidate envelope cannot qualify without a real signature',()=>assert.throws(()=>validateSignedQualification({payload:{fixture:true},signature:null},{},Buffer.alloc(0),now),/QUALIFICATION_ENVELOPE_REQUIRED/));
+test('shape-only fixture does not become authority',()=>assert.equal(validatePlan(fixture(),now).ownerAcceptanceRef,'fixture-source-only-not-actual-authority'));
+assert.equal(await main([]),2);passed++;process.stdout.write('PASS default invocation refuses before Host access\n');
+if(process.platform!=='linux'){await assert.rejects(install(h),/FIXED_ROOT_NODE_REQUIRED/);passed++;process.stdout.write('PASS non-Linux installation refuses before filesystem access\n');}
+process.stdout.write(JSON.stringify({status:'SOURCE_FIXTURE_GUARDS_ONLY',passed,hostInstallExecuted:false,qualificationIssued:false,actualRoleQualified:false})+'\n');

@@ -75,6 +75,10 @@
 import { createHash, createSign, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import {CONTROL_WORKFLOW_FILES,registeredControlWorkflowTransition} from './clued-control-workflow-source.mjs';
+import {PUBLISHER_FILES,registeredPublisherTransition} from "./clued-production-publisher-source.mjs";
+import {PUBLISHER_PR_QUALIFICATION_FILES,registeredPublisherPrQualificationTransition} from "./clued-publisher-qualification-source.mjs";
+import {compileRegisteredWorkflow,registeredWorkflowSource,rolesForSource,roleDefinitionDigest,workflowBlob} from "./clued-workflow-profile.mjs";
 import {createNaturalRecorder,observeEvaluation} from "./merge-admission-source-producer.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -342,8 +346,328 @@ export const GATE_JOB_SHA256 = new Set([
   // checked-out temporary-storage bootstrap immediately before its command.
   // Register on trusted main first; workflow rollout is a separate PR.
   "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9",
+  // Stage C: the same trusted-base gate exports the independently observed
+  // main-refresh route. Register these exact bytes before consumer rollout.
+  "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb",
+  // Owner Decisions 325717a6 and 22b0e0ed: the Stage C gate on
+  // ubuntu-latest for the gitleaks, trivy and contract-placement hosted
+  // executors on free minutes ($0 Actions budget cap). Only gitleaks and
+  // trivy are relayable (hosted-relay-v1 RELAYABLE_ROLES); the placement
+  // hosted run is execution only and never relayed. Admitting on the
+  // independent CI's own admission (CLUED_ADMISSION_GATE_SOURCE, a
+  // 600-second bounded wait, a 15-minute job). Registered here (PR-A)
+  // before the workflows change (PR-B).
+  "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
 ]);
 const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
+export const PRODUCTION_PUBLISHER_WORKFLOW = ".github/workflows/clued-cloud-production-release.yml";
+export const PLACEMENT_WORKFLOW = ".github/workflows/contract-placement.yml";
+const PLACEMENT_PREDECESSOR_BLOB = "90c632e917de5c84a3d8fb49e634f624703139cd";
+// Prior local candidate only; never represented as a published main generation.
+const PLACEMENT_DRAFT_V1_BLOB = "606e2179c957c1537320a71673a2c572cf1a037d";
+// The self-hosted successor now on main. Owner Decisions 325717a6, 22b0e0ed
+// and bc6fdad1 replace it with the exact PR-B hosted executor
+// (contract-placement-hosted-executor, same checks). Its relay identity step
+// is inert: contract-placement is never relayed (it runs PR code while it
+// holds id-token: write); App 5368905 publishes contract-placement only from
+// its formal local role, as the PR-B workflow comment states.
+const PLACEMENT_SELF_HOSTED_SUCCESSOR_BLOB = "54ee2f11cc0f52d7cd9c0f6a63b75da8ef3e2b3a";
+const PLACEMENT_SUCCESSOR_BLOB = "3640f0895cc72caffb8b2bc0c1df21b76b4b5340";
+const PLACEMENT_SUCCESSOR_SHA256 = "4898299bee3e804a19acfef51d15b582e5a52526a655a290cf09bb56c39de84b";
+const PLACEMENT_ROLE_SHA256 = "01d8c96aed0a55154156254899bd2e08dffaf7ec7ea8041acfaf6b2be5307e78";
+const PLACEMENT_GATE_SHA256 = "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9";
+
+// Only this independently reviewed Source/FullRole can cross the old ungated
+// boundary. Keep checking later gated edits: a retained gate cannot authorize
+// removing the ordinary-CI subject check or moving it onto another workflow.
+export function registeredPlacementSuccessor({file,headText,baseText,profiles,roleSpecs}={}) {
+  const no=reason=>({passed:false,registeredPlacementTransition:false,reason});
+  try {
+    if(file?.filename!==PLACEMENT_WORKFLOW || file.status!=="modified" ||
+      file.previous_filename && file.previous_filename!==PLACEMENT_WORKFLOW ||
+      typeof baseText!=="string" || typeof headText!=="string")return no("placement exact modified path/base required");
+    const baseBlob=workflowBlob(baseText),headBlob=workflowBlob(headText);
+    if(![PLACEMENT_PREDECESSOR_BLOB,PLACEMENT_DRAFT_V1_BLOB,PLACEMENT_SELF_HOSTED_SUCCESSOR_BLOB,PLACEMENT_SUCCESSOR_BLOB].includes(baseBlob) ||
+      headBlob!==PLACEMENT_SUCCESSOR_BLOB || sha256Hex(headText)!==PLACEMENT_SUCCESSOR_SHA256)
+      return no("placement exact predecessor/successor bytes required");
+    const before=registeredWorkflowSource(profiles,PLACEMENT_WORKFLOW,baseBlob),
+      after=registeredWorkflowSource(profiles,PLACEMENT_WORKFLOW,headBlob);
+    if(!before.passed || !after.passed || before.profile.source_yaml!==baseText || after.profile.source_yaml!==headText)
+      return no("placement Sources must already be registered on main");
+    const profile=after.profile,roles=rolesForSource(roleSpecs,PLACEMENT_WORKFLOW,headBlob),role=roles?.[0];
+    if(roles?.length!==1 || role.job_id!=="contract-placement" || !role.definition ||
+      role.definition_sha256!==PLACEMENT_ROLE_SHA256 || roleDefinitionDigest(role.definition)!==PLACEMENT_ROLE_SHA256)
+      return no("placement independent complete Role required");
+    // The exact Source hash binds the complete YAML. Recompile route/command
+    // metadata from its separately accepted FullRole without executing a PR
+    // parser or importing any candidate code.
+    const compiled=compileRegisteredWorkflow(headText,{primary_ids:["contract-placement"],accepted_roles:roles,
+      parseYaml:()=>({name:"contract-placement",on:{pull_request:null},jobs:{"admission-gate":{},"contract-placement":role.definition}})});
+    if(JSON.stringify(compiled)!==JSON.stringify(profile) ||
+      sha256Hex(workflowJobs(headText).find(job=>job.name===GATE_JOB)?.lines.join("\n")??"")!==PLACEMENT_GATE_SHA256)
+      return no("placement compiled Source/FrozenGate differs");
+    return {passed:true,registeredPlacementTransition:before.profile.gated===false,profile,role};
+  }catch{return no("placement Source/Role invalid");}
+}
+
+function trustedPlacementCatalogues() {
+  const read=(name,limit)=>{
+    const location=new URL(name,import.meta.url),info=fs.lstatSync(location);
+    if(!info.isFile() || info.isSymbolicLink() || info.size>limit)throw Error("trusted placement catalogue unavailable");
+    const bytes=fs.readFileSync(location),text=bytes.toString("utf8");
+    if(bytes.length>limit || !Buffer.from(text,"utf8").equals(bytes))throw Error("trusted placement catalogue invalid");
+    return JSON.parse(text);
+  };
+  try{return {profiles:read("./clued-gated-proof-profiles.json",1048576),
+    roleSpecs:read("./clued-gated-proof-role-specs.json",524288)};}
+  catch{return {profiles:null,roleSpecs:null};}
+}
+
+// BEGIN exact bootstrap ordinary Source integration; no runtime work inputs.
+const BOOTSTRAP_ORDINARY_SOURCES=Object.freeze([
+  {
+    "file": ".github/workflows/clued-cloud-quality-gate.yml",
+    "predecessor_blob": "a811a0128db82fb23f78b51fefea73288a103223",
+    "candidate_blob": "f00faf1d60179780f26f25dd338f591c4319b352",
+    "candidate_sha256": "dd05c39a6dee035a500d4ba56c5d49a7f5f784ddfa7aa2f2032493d7d809739d",
+    "gate_sha256": "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb",
+    "roles": [
+      {
+        "job_id": "trusted-self-hosted",
+        "definition_sha256": "fcdeb46431eb70d29f3027b9f99f3de2de9da3982594c62594eced64e5adf254"
+      },
+      {
+        "job_id": "untrusted-hosted",
+        "definition_sha256": "b6d8f88b6fde77d47735e9680d9c0e4418fcdffaf3d7f444c14ab855aaa1ded1"
+      }
+    ]
+  },
+  {
+    "file": ".github/workflows/clued-components.yml",
+    "predecessor_blob": "c1d5649e420263e313ff5d52247b09d27920536f",
+    "candidate_blob": "c146ce2f79ab4f6228c079d31a3dd2b9cfb4ae07",
+    "candidate_sha256": "e652630eb5048a28eccfb02aa272ff5cfcb2267932272ba0e2a6705b06e53b49",
+    "gate_sha256": "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb",
+    "roles": [
+      {
+        "job_id": "trusted-self-hosted",
+        "definition_sha256": "2df1e615ebc6a51510530d43bcfa96c4cd3e42d9bb5d61c4d64a65daedda09af"
+      },
+      {
+        "job_id": "untrusted-hosted",
+        "definition_sha256": "86f9463a0bb3f8c23e3e03499ce9cf171ec4a1e2562053c14a7a5b7f27e970bb"
+      }
+    ]
+  },
+  {
+    "file": ".github/workflows/gitleaks.yml",
+    "predecessor_blob": "74043d68d20dbee9f9404a66f0a02d3285fea0aa",
+    "candidate_blob": "95f4527be27d02889892d029b398ab1cf2e71429",
+    "candidate_sha256": "688073ac1281c4322c90673816b761852989f6849083c07eca2cbd8f4e424091",
+    "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
+    "roles": [
+      {
+        "job_id": "gitleaks-trusted-self-hosted",
+        "definition_sha256": "a4aeb5d5ab4d38eac6bff4dcd68b19f0c7874ef009a17483d8e4375f3af4bfda"
+      }
+    ]
+  },
+  {
+    "file": ".github/workflows/trivy.yml",
+    "predecessor_blob": "f7f8d075d1a0f314a7c5eb295e459599288d538c",
+    "candidate_blob": "300ad19a59bf529ccebd45ae7fbb76189f806316",
+    "candidate_sha256": "94e9ac722e3a3e0c4f924ce3b27371803dc2a04b5e177a7b0bcffd2bdf28b810",
+    "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
+    "roles": [
+      {
+        "job_id": "trivy-trusted-self-hosted",
+        "definition_sha256": "c7b119873990af82908377518126526da392fb7aa351c4b00841d30970062625"
+      }
+    ]
+  },
+  {
+    "file": ".github/workflows/runner-budget-policy.yml",
+    "predecessor_blob": "9a5f46cdb30f2fb0394f0ea3c0fdb91a7539cb13",
+    "candidate_blob": "5619452aa4e616a992861fa3f7f154f4b484f6a4",
+    "candidate_sha256": "dda08be0e13d271d495a625d0ad25d4c60646ccc805bcc0542056b1c46fc778d",
+    "gate_sha256": "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb",
+    "roles": [
+      {
+        "job_id": "trusted-self-hosted",
+        "definition_sha256": "0c9bde9a02ccb317e593614441f564e522e98401597f6fd74b8be37096d0681c"
+      },
+      {
+        "job_id": "untrusted-hosted",
+        "definition_sha256": "6ef6e62469265c9d9222876fa029164e88661dbbccd8a3f8c3221fa74334d0d0"
+      }
+    ]
+  },
+  {
+    "file": ".github/workflows/clued-connection-authorization.yml",
+    "predecessor_blob": "3d20ba406c8397cfa86bf29be6904bf9fb6ba287",
+    "candidate_blob": "90cac082bf246af83377b19669d21ea82abd026f",
+    "candidate_sha256": "0de704b484c993d5a9d9759d4c17d1644e2035d9e71172b0259ad2b3c3519ba9",
+    "gate_sha256": "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb",
+    "roles": [
+      {
+        "job_id": "isolated-candidate-trusted-self-hosted",
+        "definition_sha256": "023ff3555032c89046d457851c3d467cb29bbe9bc5d71c82292717c152cfe6c7"
+      },
+      {
+        "job_id": "isolated-candidate-untrusted-hosted",
+        "definition_sha256": "122289e1c2c3b0e2c32dceec654ab878043fa6b36f69017ae7e5ff53ff68d29c"
+      }
+    ]
+  },
+  {
+    "file": ".github/workflows/information-flow-e2e.yml",
+    "predecessor_blob": "312e1ef4d963ccf5be13ee9db57b30cdaef6cf99",
+    "candidate_blob": "7b098eb798482099b2ffaf650a344e0d0ba12510",
+    "candidate_sha256": "dfbe58c1edf4caacda109dfdf39b19fc66526bcb503ea10992472f8e9c086e1c",
+    "gate_sha256": "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb",
+    "roles": [
+      {
+        "job_id": "e2e-trusted-self-hosted",
+        "definition_sha256": "41641adb256b4d24b73a15534df32b527165d6563ee36d3cd8d0d6766853f889"
+      },
+      {
+        "job_id": "e2e-untrusted-hosted",
+        "definition_sha256": "9d156e66707037d0eb4cda7df91d630bfb18871696897e9bcddbe7368da97e76"
+      }
+    ]
+  },
+  {
+    "file": ".github/workflows/public-mcp-behavior.yml",
+    "predecessor_blob": "05aaf31c642cee6be608b4aa1f635f6f1f9df5ec",
+    "candidate_blob": "f21fc0ebc64d6ddef684c496ffd98a663564ed5d",
+    "candidate_sha256": "644d79d52f4b3e376300461f8260f25715bfa254ed75b990bbb279f0f7cedc38",
+    "gate_sha256": "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb",
+    "roles": [
+      {
+        "job_id": "trusted-self-hosted",
+        "definition_sha256": "14b1c2ca529f017e926d28082009c5c3d3390894a1e8bb70d78639e0c9eaa8f4"
+      },
+      {
+        "job_id": "untrusted-hosted",
+        "definition_sha256": "7d7d11171c286b45a64096d36bdd9f064ec5573a60ac12d16f26683f59b565c0"
+      }
+    ]
+  },
+  {
+    "file": ".github/workflows/public-mcp-protocol.yml",
+    "predecessor_blob": "cdd4a4a1e55c3e59b933b8617fdd9c44310f2078",
+    "candidate_blob": "482185df0d258a968bee7eb3500cdf1847ac6287",
+    "candidate_sha256": "17fb876b9ef5b0f169b4601eb633381a677b9c9b02b5e23678ddba1a794daca9",
+    "gate_sha256": "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb",
+    "roles": [
+      {
+        "job_id": "trusted-self-hosted",
+        "definition_sha256": "446fd76242ded564e057f395419329b222bde354e258442999bf4555252399b1"
+      },
+      {
+        "job_id": "untrusted-hosted",
+        "definition_sha256": "f968f1e82055b40013ef4bb560b0b11bd7af6bc90b0817f821c59db273dc794a"
+      }
+    ]
+  }
+]);
+const bootstrapOrdinarySame=(a,b)=>roleDefinitionDigest(a)===roleDefinitionDigest(b);
+const bootstrapOrdinaryRefusal=reason=>({passed:false,registeredBootstrapOrdinaryTransition:false,reason});
+export function bootstrapOrdinaryKnownFile(file){return BOOTSTRAP_ORDINARY_SOURCES.some(source=>source.file===file);}
+
+export function bootstrapOrdinaryRegistryView(profiles,roleSpecs){
+  const file='.github/workflows/runner-budget-policy.yml',source=profiles?.bootstrap_ordinary_sources,
+    roles=roleSpecs?.bootstrap_ordinary_sources,descriptor=BOOTSTRAP_ORDINARY_SOURCES.find(row=>row.file===file);
+  if(source===undefined&&roles===undefined)return {profiles,roleSpecs,staged:false};
+  const exact=(value,keys)=>value&&typeof value==='object'&&!Array.isArray(value)&&bootstrapOrdinarySame(Object.keys(value).sort(),keys.sort());
+  if(!exact(source,['schema','workflows'])||!exact(roles,['schema','workflows'])||
+    source.schema!=='clued.bootstrap-ordinary-source-stage/1'||roles.schema!=='clued.bootstrap-ordinary-role-stage/1'||
+    !exact(source.workflows,[file])||!exact(roles.workflows,[file])||profiles.workflows?.[file]||roleSpecs.workflows?.[file])
+    throw Error('bounded staged ordinary catalogue identity');
+  const entry=source.workflows[file],roleEntry=roles.workflows[file];
+  if(!exact(entry,['registration_status','predecessor','successor'])||entry.registration_status!=='accepted_not_installed'||
+    entry.predecessor?.workflow_blob!==descriptor.predecessor_blob||entry.successor?.workflow_blob!==descriptor.candidate_blob||
+    !exact(roleEntry,['sources'])||!exact(roleEntry.sources,[descriptor.predecessor_blob,descriptor.candidate_blob]))
+    throw Error('bounded staged ordinary Source/Role identity');
+  const view={...profiles,workflows:{...profiles.workflows,[file]:{...entry.predecessor,accepted_sources:[entry.successor]}}},
+    specs={...roleSpecs,workflows:{...roleSpecs.workflows,[file]:roleEntry}};
+  for(const blob of [descriptor.predecessor_blob,descriptor.candidate_blob])if(!registeredWorkflowSource(view,file,blob).passed||
+    !rolesForSource(specs,file,blob))throw Error('staged ordinary Source/Role integrity');
+  return {profiles:view,roleSpecs:specs,staged:true};
+}
+
+export function registeredBootstrapOrdinarySuccessor({file,headText,baseText,profiles,roleSpecs}={}){
+  try{
+    const descriptor=BOOTSTRAP_ORDINARY_SOURCES.find(row=>row.file===file?.filename);
+    if(!descriptor||file.status!=='modified'||file.previous_filename!==undefined&&file.previous_filename!==file.filename||
+      typeof headText!=='string'||typeof baseText!=='string')return bootstrapOrdinaryRefusal('exact modified ordinary-CI identity');
+    const beforeBlob=workflowBlob(baseText),headBlob=workflowBlob(headText);
+    if(![descriptor.predecessor_blob,descriptor.candidate_blob].includes(beforeBlob)||headBlob!==descriptor.candidate_blob||
+      sha256Hex(headText)!==descriptor.candidate_sha256)return bootstrapOrdinaryRefusal('exact ordinary-CI Source bytes');
+    ({profiles,roleSpecs}=bootstrapOrdinaryRegistryView(profiles,roleSpecs));
+    const before=registeredWorkflowSource(profiles,descriptor.file,beforeBlob),after=registeredWorkflowSource(profiles,descriptor.file,headBlob);
+    if(!before.passed||!after.passed||before.profile.source_yaml!==baseText||after.profile.source_yaml!==headText)
+      return bootstrapOrdinaryRefusal('ordinary-CI Source must be registered on trusted main');
+    const roles=rolesForSource(roleSpecs,descriptor.file,headBlob);
+    if(!roles||roles.length!==descriptor.roles.length||!bootstrapOrdinarySame(roles.map(({job_id,definition_sha256})=>({job_id,definition_sha256})),descriptor.roles)||
+      roles.some(role=>!role.definition||roleDefinitionDigest(role.definition)!==role.definition_sha256))return bootstrapOrdinaryRefusal('independent full ordinary-CI Roles');
+    const profile=after.profile,compiled=compileRegisteredWorkflow(headText,{primary_ids:descriptor.roles.map(role=>role.job_id),accepted_roles:roles,
+      parseYaml:()=>({name:descriptor.file==='.github/workflows/clued-cloud-quality-gate.yml'?'clued-cloud-quality':descriptor.file.split('/').pop().replace(/\.yml$/,''),
+        on:{pull_request:profile.pull_request},jobs:{'admission-gate':{},...Object.fromEntries(roles.map(role=>[role.job_id,role.definition]))}})});
+    if(!bootstrapOrdinarySame(compiled,profile)||sha256Hex(workflowJobs(headText).find(job=>job.name==='admission-gate')?.lines.join('\n')??'')!==descriptor.gate_sha256)
+      return bootstrapOrdinaryRefusal('compiled ordinary-CI Source/FrozenGate differs');
+    return {passed:true,scope:'exact_ordinary_ci_source_only',registeredBootstrapOrdinaryTransition:before.profile.gated===false,
+      profile,roles,execution_authority:false,host_qualification:'separate_required'};
+  }catch{return bootstrapOrdinaryRefusal('ordinary-CI Source invalid');}
+}
+// END exact bootstrap ordinary Source integration.
+
+// A publisher conversion is registered on trusted main before its workflow
+// changes. PR-provided profiles, flags and environment variables are not inputs.
+// Unknown or ambiguous sources keep the original ungated-workflow refusal.
+export function registeredPublisherGatedSuccessor(file, headText, baseText, profiles) {
+  const workflowPath = file?.filename;
+  if (workflowPath !== PRODUCTION_PUBLISHER_WORKFLOW || file.status !== "modified" ||
+      workflowBasePath(file) !== PRODUCTION_PUBLISHER_WORKFLOW || baseText === null ||
+      workflowIsGated(baseText) || !workflowIsGated(headText)) return false;
+  return registeredPublisherTransition(profiles, workflowPath, headText, baseText).passed;
+}
+
+function trustedControlProfiles() {
+  try {
+    const location=new URL('./clued-control-workflow-sources.json',import.meta.url),info=fs.lstatSync(location);
+    if(!info.isFile()||info.isSymbolicLink()||info.size>524288)return null;
+    const bytes=fs.readFileSync(location),text=bytes.toString('utf8');
+    if(bytes.length>524288||!Buffer.from(text,'utf8').equals(bytes))return null;
+    return JSON.parse(text);
+  }catch{return null;}
+}
+
+function trustedPublisherProfiles() {
+  // The fixed adjacent default-branch catalogue is not a PR proof registry.
+  // A caller workspace, environment variable or PR file cannot select it.
+  const location = new URL("./clued-production-publisher-sources.json", import.meta.url);
+  try {
+    const info = fs.lstatSync(location);
+    if (!info.isFile() || info.isSymbolicLink() || info.size > 524288) return null;
+    const bytes = fs.readFileSync(location);
+    if (bytes.length > 524288) return null;
+    return JSON.parse(bytes.toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function trustedPublisherPrQualificationProfiles() {
+  const location = new URL("./clued-publisher-qualification-sources.json", import.meta.url);
+  try {
+    const info=fs.lstatSync(location);
+    if(!info.isFile()||info.isSymbolicLink()||info.size>524288)return null;
+    const bytes=fs.readFileSync(location),text=bytes.toString('utf8');
+    if(bytes.length>524288||!Buffer.from(text,'utf8').equals(bytes))return null;
+    return JSON.parse(text);
+  }catch{return null;}
+}
 
 export function workflowJobs(text) {
   const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");
@@ -484,12 +808,19 @@ export function jobIsHosted(job) {
 // Findings for one workflow at the PR head; baseText is its base-branch
 // version, or null when the PR adds it. Existing ungated workflows (the
 // short checks of Owner Decision 75abfe80) stay ungated.
-export function gateFindings(headText, baseText) {
+export function gateFindings(headText, baseText, { registeredPublisherTransition = false, registeredPlacementTransition = false, registeredControlTransition = false, registeredBootstrapOrdinaryTransition = false } = {}) {
   const form = workflowFormFindings(headText);
   if (form.length) return form;
+  // Only the trusted-main exact-pair caller may set this Source classification.
+  // A controller remains ungated to avoid waiting on its own admission result.
+  if(registeredControlTransition===true){
+    if(baseText===null||workflowIsGated(baseText)||workflowIsGated(headText))return ['controller_Source_expected_ungated'];
+    return [];
+  }
   const jobs = workflowJobs(headText);
   const selfHosted = jobs.some((job) => !jobIsHosted(job));
-  const required = baseText === null ? selfHosted : workflowIsGated(baseText);
+  const required = baseText === null ? selfHosted : workflowIsGated(baseText) ||
+    ((registeredPublisherTransition === true || registeredPlacementTransition === true || registeredBootstrapOrdinaryTransition === true) && workflowIsGated(headText));
   if (!required) {
     // An existing ungated workflow (a short check) may not grow a job that can
     // reach a self-hosted runner: no new one, no hosted job moved to a
@@ -556,7 +887,31 @@ export async function workflowFindings(fetchImpl, env, repository, files, headSh
     if (head === null) throw new Error(`${file.filename} is missing at ${headSha}.`);
     const basePath = workflowBasePath(file);
     const base = basePath === null ? null : await fileAt(fetchImpl, env, repository, basePath, baseSha);
-    for (const finding of gateFindings(head, base)) gate.push(`workflow_gate:${file.filename}:${finding}`);
+    if(Object.hasOwn(PUBLISHER_PR_QUALIFICATION_FILES,file.filename)&&
+      (!['added','modified'].includes(file.status)||
+        file.status==='modified'&&basePath!==file.filename||
+        !registeredPublisherPrQualificationTransition(trustedPublisherPrQualificationProfiles(),file.filename,head,base,{repository}).passed)) {
+      gate.push(`workflow_gate:${file.filename}:publisher_PR_qualification_Source_not_registered`);
+    }
+    const controlKnown=Object.hasOwn(CONTROL_WORKFLOW_FILES,file.filename)||Object.hasOwn(CONTROL_WORKFLOW_FILES,file.previous_filename??'');
+    const controlSource=controlKnown?registeredControlWorkflowTransition(trustedControlProfiles(),file.filename,head,base,{repository,change:file}):null;
+    if(controlKnown&&!controlSource.passed)gate.push(`workflow_gate:${file.filename}:control_Source_not_registered`);
+    const registeredPublisherTransition = file.filename === PRODUCTION_PUBLISHER_WORKFLOW &&
+      registeredPublisherGatedSuccessor(file, head, base, trustedPublisherProfiles());
+    const placement=(file.filename===PLACEMENT_WORKFLOW || file.previous_filename===PLACEMENT_WORKFLOW) &&
+      (workflowIsGated(head) || base!==null && workflowIsGated(base));
+    const placementSource=placement?registeredPlacementSuccessor({file,headText:head,baseText:base,
+      ...trustedPlacementCatalogues()}):null;
+    if(placement && !placementSource.passed)gate.push(`workflow_gate:${file.filename}:placement_Source_not_registered`);
+    const ordinaryKnown=bootstrapOrdinaryKnownFile(file.filename)||bootstrapOrdinaryKnownFile(file.previous_filename);
+    const ordinaryRequired=ordinaryKnown&&(workflowIsGated(head)||base!==null&&workflowIsGated(base));
+    const ordinarySource=ordinaryRequired?registeredBootstrapOrdinarySuccessor({file,headText:head,baseText:base,...trustedPlacementCatalogues()}):null;
+    if(ordinaryRequired&&!ordinarySource.passed)gate.push(`workflow_gate:${file.filename}:bootstrap_ordinary_Source_not_registered`);
+    for (const finding of gateFindings(head, base, { registeredControlTransition:controlSource?.passed===true, registeredPublisherTransition,
+      registeredPlacementTransition:placementSource?.registeredPlacementTransition===true,
+      registeredBootstrapOrdinaryTransition:ordinarySource?.registeredBootstrapOrdinaryTransition===true })) {
+      gate.push(`workflow_gate:${file.filename}:${finding}`);
+    }
     for (const finding of ownerReviewFindings(head, base)) owner.push(`${file.filename}:${finding}`);
   }
   // A workflow the pull request deletes or renames away may be the one that
@@ -1379,6 +1734,20 @@ export function mergeSlotCheck({ admitted, state, ref, until, tip, claimId, bran
 export const ADMISSION_WORKFLOW = "clued-work-admission.yml";
 
 export async function appChecksOnHead(fetchImpl, env, repository, headSha, name = APP_CHECK_NAME) {
+  // This selector grants no authority: the concrete installed reader obtains
+  // a private proof from the protected journal, Source lease and fresh Native.
+  if(env.CLUED_EXECUTION_PROVIDER==='independent-control-checks-v1'&&name!==null){
+    const {readIndependentControlChecksOnHead}=await import('../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/consumer.mjs');
+    return readIndependentControlChecksOnHead({repository,headSha,name});
+  }
+  // Source v2 (resident executor): the same selector over the v2 control pair (external id
+  // independent-ci:control:<role>:v2:..., journal state2\effects-control); fails closed off the
+  // installed clued-control principal.
+  if(env.CLUED_EXECUTION_PROVIDER==='independent-control-checks-v2'&&name!==null){
+    const {readIndependentControlChecksOnHeadV2}=await import('../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/consumer.mjs');
+    return readIndependentControlChecksOnHeadV2({repository,headSha,name});
+  }
+
   const historical = name === null;
   const names = new Set(historical ? [APP_CHECK_NAME, "clued-admission-verified"] : [name]);
   const checks = await githubPaged(fetchImpl, env,
@@ -1573,6 +1942,82 @@ export function renderReverifySummary(result) {
 export const GATE_WAIT_SECONDS = 180;
 export const GATE_POLL_SECONDS = 10;
 
+// Owner Decision 22b0e0ed (PR-B hosted executors): a gate whose job names
+// this source admits on the independent CI's own admission. The
+// clued-admission App no longer runs on pull requests (its workflow is
+// disabled), so the gate reads App 5368905's kooyumi-work-admission check of
+// the exact head, which the resident executor's stage 1 publishes before it
+// waits for hosted results. It polls every INDEPENDENT_GATE_POLL_SECONDS for
+// at most INDEPENDENT_GATE_WAIT_SECONDS. Only the newest check of App 5368905
+// counts: success, the exact head, the independent CI's native-work-admission
+// external_id and a summary that names this pull request. A same-name check
+// of any other App is never read. While the Owner's disaster-recovery switch
+// runs the clued-admission workflow again, its event-bound App check below
+// still decides when it settles first. The job is digest-pinned, so a pull
+// request cannot select this source for another workflow.
+export const INDEPENDENT_GATE_SOURCE = "independent-ci-native-work-admission";
+export const INDEPENDENT_ADMISSION_APP_ID = 5368905;
+export const INDEPENDENT_ADMISSION_CHECK = "kooyumi-work-admission";
+export const INDEPENDENT_GATE_WAIT_SECONDS = 600;
+export const INDEPENDENT_GATE_POLL_SECONDS = 30;
+// The independent CI's native-work-admission ids: v1 (<job id>:f<fence>:e<epoch>:a<attempt>) and
+// Source v2 (src/job-v2.mjs admissionExternalIdV2: v2:<job id>:a<1|2>:c<claim prefix>:f<fence>:e<epoch>).
+const INDEPENDENT_NATIVE_ADMISSION_ID = /^independent-ci:native-work-admission:(?:[a-f0-9]{64}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9}:a[1-9][0-9]{0,9}|v2:[a-f0-9]{64}:a[12]:c[a-f0-9]{8}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9})$/;
+export async function independentAdmissionCheck(fetchImpl, env, repository, headSha, prNumber) {
+  let checks;
+  try {
+    checks = await githubPaged(fetchImpl, env,
+      `/repos/${repository}/commits/${headSha}/check-runs?check_name=${INDEPENDENT_ADMISSION_CHECK}&filter=all`, "check_runs");
+  } catch (error) {
+    if (/ returned 403$/.test(String(error && error.message))) throw new Error(`${error.message}: the admission-gate job needs \`checks: read\``);
+    throw error;
+  }
+  const newest = (Array.isArray(checks) ? checks : [])
+    .filter((check) => check && check.name === INDEPENDENT_ADMISSION_CHECK && check.head_sha === headSha
+      && check.app && Number(check.app.id) === INDEPENDENT_ADMISSION_APP_ID)
+    .sort((a, b) => Number(b.id) - Number(a.id))[0] ?? null;
+  if (!newest || newest.status !== "completed") return { settled: false, check: newest };
+  const named = [...String((newest.output && newest.output.summary) ?? "").matchAll(/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([0-9]{1,10})(?![0-9])/g)]
+    .filter((match) => match[1].toLowerCase() === String(repository).toLowerCase()).map((match) => Number(match[2]));
+  const bound = INDEPENDENT_NATIVE_ADMISSION_ID.test(String(newest.external_id ?? "")) &&
+    named.length > 0 && named.every((number) => number === Number(prNumber));
+  return { settled: true, check: newest, bound, admitted: bound && newest.conclusion === "success" };
+}
+
+async function independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, independent, limit }) {
+  const what = `${INDEPENDENT_ADMISSION_CHECK} of App ${INDEPENDENT_ADMISSION_APP_ID} for #${pr.number} on ${pr.head.sha}`;
+  outcome.admission_source = INDEPENDENT_GATE_SOURCE;
+  outcome.automation_self_hosted = false;
+  const check = independent && independent.check;
+  if (check) outcome.admission_run = { id: check.id, status: check.status, conclusion: check.conclusion ?? null,
+    html_url: check.html_url ?? null, source: what };
+  if (!independent || !independent.settled) {
+    outcome.verdict = "ADMISSION_PENDING";
+    outcome.reasons.push(`${what}: ${check ? `check ${check.id} still ${check.status}` : "has posted no check"} after ${limit}s`);
+  } else if (!independent.bound) {
+    outcome.verdict = "REJECTED";
+    outcome.reasons.push(`${what}: check ${check.id} does not bind this pull request (external_id or summary)`);
+  } else if (!independent.admitted) {
+    outcome.verdict = "REJECTED";
+    outcome.reasons.push(`${what} ${check.id} concluded ${check.conclusion}`);
+  } else if (!pr.base || !pr.base.repo || pr.base.ref !== pr.base.repo.default_branch) {
+    outcome.verdict = "REJECTED";
+    outcome.reasons.push("the independent CI admits only pull requests into the default branch");
+  } else if (attempt) {
+    outcome.verdict = "RERUN_REFUSED";
+    outcome.reasons.push(`run attempt ${attempt}: the independent CI admission names no re-run allowance; push a new commit`);
+  } else if (!await executionEpochCurrent(fetchImpl, env, env.GITHUB_WORKSPACE, {
+    repository: env.GITHUB_REPOSITORY, head_sha: pr.head.sha, pr_ref: outcome.pr_ref, target_branch: pr.base.ref,
+  })) {
+    outcome.verdict = "REJECTED";
+    outcome.reasons.push("work_claim_execution_epoch_stale");
+  } else {
+    outcome.verdict = "ADMITTED";
+    outcome.admitted = true;
+  }
+  return outcome;
+}
+
 // Re-review 2, N3c: the pull_requests list of a run names every open pull
 // request with that head, not the one that triggered it, so a pull request
 // into another branch, whose copy of the admission workflow passes anything,
@@ -1582,6 +2027,124 @@ export const GATE_POLL_SECONDS = 10;
 // out main and runs only for pull requests into main (re-review 6, B1). The
 // gate job needs `checks: read` to read it.
 export const ADMISSION_APP_ID = 5164952;
+
+// A GitHub App login alone never qualifies candidate code for the internal
+// pool. This observer is called only after the ordinary exact-head admission,
+// execution epoch and rerun checks; it adds bounded main-refresh provenance.
+export const AUTOMATION_BOT = Object.freeze({ id: 337003645, login: 'clued-admission[bot]', type: 'Bot' });
+const WEB_FLOW = Object.freeze({ id: 19864447, login: 'web-flow', type: 'User' });
+const APP_ID = ADMISSION_APP_ID;
+const SHA = /^[a-f0-9]{40}$/;
+const positive = value => Number.isSafeInteger(value) && value > 0;
+const identity = (value, expected) => value?.id === expected.id && value?.login === expected.login && value?.type === expected.type;
+const timestamp = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? Date.parse(value) : null;
+const denied = reason => ({ qualified: false, reason });
+class RouteRefusal extends Error {}
+const requireProof = (condition, reason) => { if (!condition) throw new RouteRefusal(reason); };
+
+export function automationRouteRequested({ env, run }) {
+  return run?.actor?.type === 'Bot' || run?.actor?.id === AUTOMATION_BOT.id ||
+    run?.actor?.login === AUTOMATION_BOT.login || /\[bot\]$/.test(env.GITHUB_ACTOR ?? '');
+}
+
+function checkFor(check, head, prNumber) {
+  const externalId = String(check?.external_id ?? '');
+  const match = EXTERNAL_ID.exec(externalId);
+  return positive(check?.id) && check.name === APP_CHECK_NAME && check.app?.id === APP_ID &&
+    check.app?.slug === 'clued-admission' && check.head_sha === head &&
+    match !== null && match[0] === externalId && positive(prNumber) &&
+    Number(match[1]) === prNumber && positive(Number(match[2]));
+}
+function successful(check) { return check.status === 'completed' && check.conclusion === 'success'; }
+function boundedChecks(value) {
+  requireProof(Number.isSafeInteger(value?.total_count) && value.total_count >= 0 && value.total_count < 100 &&
+    Array.isArray(value.check_runs) && value.check_runs.length === value.total_count, 'check_listing_incomplete');
+  return value.check_runs;
+}
+function samePR(pr, { repository, number, head, base, branch, owner }) {
+  return pr?.number === number && pr.state === 'open' && identity(pr.user, owner) &&
+    pr.head?.sha === head && pr.head.ref === branch && pr.head.repo?.full_name === repository &&
+    pr.base?.sha === base && pr.base.ref === 'main' && pr.base.repo?.full_name === repository;
+}
+
+// read is the gate's authenticated, GET-only GitHub JSON reader. Returned
+// evidence contains identifiers only; payloads, credentials and exception text
+// never enter route diagnostics. An unavailable observation is a refusal.
+export async function qualifyTrustedAutomationRoute({ env, event, run, currentAdmission, read }) {
+  let reason = 'automation_route_unavailable';
+  try {
+    const repository = env.GITHUB_REPOSITORY;
+    requireProof(typeof repository === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) &&
+      env.GITHUB_REPOSITORY_OWNER === repository.split('/')[0] && typeof read === 'function', 'repository_identity');
+    const pr = event?.pull_request;
+    requireProof(env.GITHUB_EVENT_NAME === 'pull_request' && event?.action === 'synchronize' &&
+      positive(pr?.number) && SHA.test(pr.head?.sha ?? '') && SHA.test(pr.base?.sha ?? '') &&
+      typeof pr.head?.ref === 'string' && pr.head.ref.length > 0, 'refresh_event_identity');
+    const attempt = Number(env.GITHUB_RUN_ATTEMPT ?? '1');
+    requireProof(positive(run?.id) && String(run.id) === env.GITHUB_RUN_ID && positive(attempt) &&
+      run.run_attempt === attempt && run.event === 'pull_request' && run.head_sha === pr.head.sha &&
+      run.head_branch === pr.head.ref && run.repository?.full_name === repository &&
+      run.head_repository?.full_name === repository && /^\.github\/workflows\/[A-Za-z0-9_.-]+\.ya?ml$/.test(run.path ?? '') &&
+      env.GITHUB_REF === `refs/pull/${pr.number}/merge` && env.GITHUB_HEAD_REF === pr.head.ref &&
+      env.GITHUB_BASE_REF === 'main', 'native_run_identity');
+    requireProof(identity(run.actor, AUTOMATION_BOT) && env.GITHUB_ACTOR === AUTOMATION_BOT.login,
+      'automation_actor_identity');
+    requireProof(checkFor(currentAdmission, pr.head.sha, pr.number) && successful(currentAdmission), 'current_admission_identity');
+    const repo = await read(`/repos/${repository}`);
+    const owner = repo?.owner;
+    requireProof(repo?.full_name === repository && repo.default_branch === 'main' && positive(owner?.id) &&
+      owner.login === env.GITHUB_REPOSITORY_OWNER && owner.type === 'User', 'repository_owner_identity');
+    const context = { repository, number: pr.number, head: pr.head.sha, base: pr.base.sha, branch: pr.head.ref, owner };
+    requireProof(samePR(pr, context), 'owner_pr_identity');
+    requireProof(run.triggering_actor?.login === env.GITHUB_TRIGGERING_ACTOR &&
+      (attempt === 1 ? identity(run.triggering_actor, AUTOMATION_BOT) :
+        identity(run.triggering_actor, AUTOMATION_BOT) || identity(run.triggering_actor, owner)), 'triggering_actor_identity');
+    const live = await read(`/repos/${repository}/pulls/${pr.number}`);
+    requireProof(samePR(live, context), 'live_pr_changed');
+    const main = await read(`/repos/${repository}/branches/main`);
+    requireProof(main?.name === 'main' && main.commit?.sha === pr.base.sha, 'main_tip_changed');
+    const commit = await read(`/repos/${repository}/commits/${pr.head.sha}`);
+    const parents = commit?.parents?.map(parent => parent?.sha);
+    requireProof(commit?.sha === pr.head.sha && parents?.length === 2 && parents.every(parent => SHA.test(parent ?? '')) &&
+      parents[0] !== parents[1] && !parents.includes(pr.head.sha) && parents[1] === pr.base.sha, 'refresh_parents');
+    requireProof(identity(commit.author, AUTOMATION_BOT) && identity(commit.committer, WEB_FLOW), 'refresh_platform_identity');
+    const verification = commit.commit?.verification;
+    requireProof(SHA.test(commit.commit?.tree?.sha ?? '') && verification?.verified === true && verification.reason === 'valid' &&
+      typeof verification.signature === 'string' && verification.signature.length > 0 &&
+      typeof verification.payload === 'string' && verification.payload.startsWith(
+        `tree ${commit.commit.tree.sha}\nparent ${parents[0]}\nparent ${parents[1]}\n`), 'refresh_signature');
+    const mergedAt = timestamp(commit.commit?.committer?.date), createdAt = timestamp(run.created_at);
+    requireProof(mergedAt !== null && createdAt !== null && mergedAt <= createdAt, 'refresh_time');
+    const checksPath = head => `/repos/${repository}/commits/${head}/check-runs?check_name=${APP_CHECK_NAME}&filter=all&per_page=100`;
+    const prior = boundedChecks(await read(checksPath(parents[0]))).filter(check => {
+      const finished = timestamp(check.completed_at);
+      return checkFor(check, parents[0], pr.number) && successful(check) && finished !== null && finished <= mergedAt;
+    }).sort((a, b) => b.id - a.id)[0];
+    // This earlier successful check proves provenance only. It cannot replace
+    // the current head's live admission, epoch or rerun authorization.
+    requireProof(prior, 'prior_pr_admission_missing');
+    const priorRunId = Number(EXTERNAL_ID.exec(prior.external_id)?.[2]);
+    requireProof(positive(priorRunId), 'prior_admission_origin');
+    const priorRun = await read(`/repos/${repository}/actions/runs/${priorRunId}`);
+    requireProof(positive(priorRunId) && priorRun?.id === priorRunId && priorRun.event === 'pull_request_target' &&
+      priorRun.path === '.github/workflows/clued-work-admission.yml' && priorRun.status === 'completed' &&
+      priorRun.conclusion === 'success' && priorRun.repository?.full_name === repository &&
+      priorRun.head_repository?.full_name === repository && timestamp(priorRun.created_at) !== null &&
+      timestamp(priorRun.created_at) <= timestamp(prior.completed_at) &&
+      (identity(priorRun.actor, owner) || identity(priorRun.actor, AUTOMATION_BOT)), 'prior_admission_origin');
+    const latest = boundedChecks(await read(checksPath(pr.head.sha))).filter(check =>
+      checkFor(check, pr.head.sha, pr.number)).sort((a, b) => b.id - a.id)[0];
+    requireProof(latest?.id === currentAdmission.id && successful(latest), 'current_admission_changed');
+    requireProof(samePR(await read(`/repos/${repository}/pulls/${pr.number}`), context), 'live_pr_changed');
+    return { qualified: true, reason: 'admitted_owner_pr_signed_main_refresh', run_id: run.id, run_attempt: attempt,
+      pr_number: pr.number, head_sha: pr.head.sha, previous_head_sha: parents[0], main_sha: parents[1],
+      actor_id: AUTOMATION_BOT.id, prior_check_id: prior.id, prior_admission_run_id: priorRunId,
+      current_check_id: currentAdmission.id };
+  } catch (error) {
+    if (error instanceof RouteRefusal) reason = error.message;
+    return denied(reason);
+  }
+}
 
 // Re-review 3, N-R1: the App check is posted when an admission run ends, so
 // until then an older success on the same head (a force-push back to an
@@ -1682,6 +2245,17 @@ async function currentHeadOf(fetchImpl, env, pr) {
 }
 
 export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = () => Date.now() }) {
+  if(env.CLUED_EXECUTION_PROVIDER==='independent-control-checks-v1'){
+    const {consumeIndependentGate}=await import('../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/consumer.mjs');
+    const pr=event?.pull_request;
+    return consumeIndependentGate({repository:env.GITHUB_REPOSITORY,pr:pr?.number,headSha:pr?.head?.sha,baseSha:pr?.base?.sha});
+  }
+  if(env.CLUED_EXECUTION_PROVIDER==='independent-control-checks-v2'){
+    const {consumeIndependentGateV2}=await import('../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/consumer.mjs');
+    const pr=event?.pull_request;
+    return consumeIndependentGateV2({repository:env.GITHUB_REPOSITORY,pr:pr?.number,headSha:pr?.head?.sha,baseSha:pr?.base?.sha});
+  }
+
   const outcome = emptyOutcome(eventName);
   if (eventName === "workflow_dispatch") return dispatchGate({ env, event, fetchImpl, now, outcome });
   if (!PR_EVENTS.has(eventName)) {
@@ -1697,9 +2271,15 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   outcome.pr_ref = `${env.GITHUB_REPOSITORY}#${pr.number}`;
   // A fork pull request, like any other, follows the App check that main's
   // admission run posts; the gate reads no repository variable.
+  const source = env.CLUED_ADMISSION_GATE_SOURCE;
+  if (source !== undefined && source !== "" && source !== INDEPENDENT_GATE_SOURCE)
+    throw new Error(`unknown admission gate source ${JSON.stringify(String(source)).slice(0, 80)}`);
+  const independentSource = source === INDEPENDENT_GATE_SOURCE;
+  const maxWait = independentSource ? INDEPENDENT_GATE_WAIT_SECONDS : GATE_WAIT_SECONDS;
+  const pollSeconds = independentSource ? INDEPENDENT_GATE_POLL_SECONDS : GATE_POLL_SECONDS;
   const waitSeconds = Number.parseInt(env.CLUED_ADMISSION_GATE_WAIT_SECONDS ?? "", 10);
   const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0
-    ? Math.min(waitSeconds, GATE_WAIT_SECONDS) : GATE_WAIT_SECONDS;
+    ? Math.min(waitSeconds, maxWait) : maxWait;
   try {
     if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
     const attempt = rerunAttempt(env);
@@ -1716,17 +2296,26 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     const since = Date.parse(self && self.created_at);
     if (!Number.isFinite(since)) throw new Error(`run ${env.GITHUB_RUN_ID} has no created_at.`);
     let found = { run: null, check: null };
+    let independent = null;
     const what = `${APP_CHECK_NAME} of App ${ADMISSION_APP_ID} for #${pr.number} from the admission run of this event (created since ${self.created_at} less ${SAME_EVENT_MS / 1000}s)`;
     for (let waited = 0; ;) {
+      if (independentSource) {
+        independent = await independentAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, pr.number);
+        if (independent.settled) break;
+      }
       found = await eventAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, since, pr.number);
       // On a re-run the admission run may itself be running again under its
       // old id, with its previous attempt's check posted: wait for it to end.
       const settled = found.check && found.check.status === "completed" && (!attempt || !found.run || found.run.status === "completed");
       if (settled || waited >= limit) break;
-      const delay = Math.min(GATE_POLL_SECONDS, limit - waited);
+      const delay = Math.min(pollSeconds, limit - waited);
       await sleep(delay * 1000);
       waited += delay;
     }
+    // The independent source decides unless the clued-admission App's
+    // event-bound check (disaster recovery only) settled first.
+    if (independentSource && (independent?.settled || !(found.check && found.check.status === "completed")))
+      return await independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, independent, limit });
     // Merge Admission step 2 (review MINOR-3/4): on a re-run, the newest
     // check for this pull request on this head decides, whichever admission
     // run (or re-verification) posted it: every later check is a later
@@ -1777,6 +2366,24 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
         outcome.verdict = "RERUN_REFUSED";
         outcome.reasons.push(`run attempt ${attempt}: ${label ? `the ${label.layer} layer allows ${allowed} re-run(s) per head in ${label.state}` : "the admission check names no re-run allowance"}; ${PR_RERUN_HOWTO}`);
       }
+    }
+    if (outcome.admitted && automationRouteRequested({ env, run: self })) {
+      const route = await qualifyTrustedAutomationRoute({ env, event, run: self, currentAdmission: run,
+        read: (route) => githubJson(fetchImpl, env, route) });
+      outcome.automation_route = route;
+      outcome.automation_self_hosted = false;
+      if (!route.qualified) {
+        outcome.admitted = false;
+        outcome.verdict = "REJECTED";
+        outcome.reasons.push(`trusted_automation_route:${route.reason}`);
+      } else if (!await executionEpochCurrent(fetchImpl, env, env.GITHUB_WORKSPACE, {
+        repository: env.GITHUB_REPOSITORY, head_sha: pr.head.sha, pr_ref: outcome.pr_ref, target_branch: pr.base.ref,
+      })) {
+        outcome.automation_route = { ...route, qualified: false, reason: "execution_epoch_changed" };
+        outcome.admitted = false;
+        outcome.verdict = "REJECTED";
+        outcome.reasons.push("work_claim_execution_epoch_stale");
+      } else outcome.automation_self_hosted = true;
     }
   } catch (error) {
     if (!(error && error.refused)) throw error;
@@ -1839,6 +2446,12 @@ const DISPATCH_HOWTO = `dispatch ${DISPATCH_ADMISSION_WORKFLOW} on the default b
 async function dispatchGate({ env, event, fetchImpl, now, outcome }) {
   const workflow = workflowFileOf(env);
   const ref = env.GITHUB_REF_NAME ?? "";
+  if(workflow && Object.hasOwn(PUBLISHER_FILES,`.github/workflows/${workflow}`) &&
+    !DISPATCH_GATED_WORKFLOWS.includes(workflow)) {
+    outcome.verdict="REJECTED";
+    outcome.reasons=["publisher_dispatch_not_installed: a qualified self-hosted admission control is required"];
+    return outcome;
+  }
   if (!workflow || !DISPATCH_GATED_WORKFLOWS.includes(workflow)) {
     outcome.admitted = true;
     outcome.verdict = "NOT_APPLICABLE";
@@ -2436,6 +3049,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
   appendFile(env.GITHUB_STEP_SUMMARY, renderSummary(outcome));
   appendFile(env.GITHUB_OUTPUT, [
     `admitted=${outcome.admitted ? "true" : "false"}`,
+    `automation_self_hosted=${outcome.admitted && outcome.automation_self_hosted === true ? "true" : "false"}`,
     `enforced=${String(outcome.enforced)}`,
     `verdict=${outcome.verdict ?? ""}`,
     `claim_id=${outcome.claim_id ?? ""}`,
