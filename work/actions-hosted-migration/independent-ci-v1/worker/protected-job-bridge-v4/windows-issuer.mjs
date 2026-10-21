@@ -59,8 +59,9 @@ export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sle
     assertWindowsContextLive(context);sideEffects=1;await box.write('issue',encode(issue));
     // late: the deadline of the round this issuer could not answer in time (null = still answering). Past it
     // the Linux worker accepts no response and ends with its clean 'blocked' record (BRIDGE_CALLBACK_DEADLINE),
-    // so answer nothing more and wait for that record, one more window at most, instead of failing UNCERTAIN on
-    // an expired challenge (PR #889 stage 2 attempt 2, 2026-10-21). A worker that ends without it stays UNCERTAIN.
+    // so answer nothing more and wait for that record instead of failing UNCERTAIN on an expired challenge (PR #889
+    // stage 2 attempt 2, 2026-10-21): two more windows at most, since the companion waits one window for a response
+    // from its own ReceiveChallenge before it hands the record over. A worker that ends without it stays UNCERTAIN.
     let next=1,late=null;
     const goLate=challenge=>{late=Date.parse(challenge.deadline);return false;};
     const serveNext=async()=>{
@@ -93,7 +94,7 @@ export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sle
         // The Linux side ended before preparing anything: nothing ran, nothing was published.
         return{status:'BLOCKED',reason:blockedReason(b.reason),sideEffects:0,issueSha256:digest(issue)};}
       if(late===null){try{await serveNext();}catch(e){if(e.code!=='ENOENT')throw e;}}
-      else check(clock()<late+CALLBACK_WINDOW_MS,'BRIDGE_LATE_BLOCKED_UNCONFIRMED');
+      else check(clock()<late+2*CALLBACK_WINDOW_MS,'BRIDGE_LATE_BLOCKED_UNCONFIRMED');
       await sleep(100);
     }
     fail('BRIDGE_RESULT_DEADLINE');

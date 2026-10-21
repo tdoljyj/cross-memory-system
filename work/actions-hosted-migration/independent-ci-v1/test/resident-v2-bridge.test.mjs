@@ -265,7 +265,23 @@ test('issuer: a challenge relayed only after its deadline is late (no admission,
   await assert.rejects(fs.lstat(path.join(root, 'outgoing', 'response-01.json')), { code: 'ENOENT' });
 });
 
-test('issuer: after a late round the wait for the blocked record is one window; then UNCERTAIN (the worker may have run)', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+test('issuer: an expired challenge that was never valid (created before the issue) is UNCERTAIN, never late', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+  let n = 0;
+  const f = issuerFixture(t);
+  const evaluate = async () => { n += 1; return facts(f.job, f.c); };
+  const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
+  const linux = (async () => {
+    const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
+    const challenge = makeChallenge(issue, 'admission', 1, { deadline: new Date(Date.now() + 300).toISOString() });
+    await new Promise(r => setTimeout(r, 600));
+    await put(root, 'challenge-01', encode({ ...challenge, createdAt: new Date(Date.parse(issue.issuedAt) - 1000).toISOString() }));
+  })();
+  const r = await runIssuer({ context: f.context, evaluate, collect: async () => null, box, stageDeadline: Date.now() + 5_000 });
+  await linux;
+  assert.deepEqual([r.status, r.reason, r.sideEffects, n], ['UNCERTAIN', 'BRIDGE_CHALLENGE_EXPIRED', 1, 1]);
+});
+
+test('issuer: after a late round the wait for the blocked record is two windows; then UNCERTAIN (the worker may have run)', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
   let n = 0, skew = 0;
   const f = issuerFixture(t);
   const clock = () => Date.now() + skew;
@@ -275,7 +291,7 @@ test('issuer: after a late round the wait for the blocked record is one window; 
     const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
     await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1, { deadline: new Date(Date.now() + 300).toISOString() })));
     await new Promise(r => setTimeout(r, 1500));
-    skew = CALLBACK_WINDOW_MS + 5000;
+    skew = 2 * CALLBACK_WINDOW_MS + 5000;
   })();
   const r = await runIssuer({ context: f.context, evaluate, collect: async () => null, box, clock, stageDeadline: Date.now() + 600_000 });
   await linux;
@@ -310,7 +326,7 @@ test('issuer: a refused first admission issues nothing; a claim that moves after
   const linux = (async () => { const issue = decode(await waitFor(path.join(root2, 'outgoing', 'issue.json'))); await put(root2, 'challenge-01', encode(makeChallenge(issue, 'admission', 1))); })();
   const r2 = await runIssuer({ context: moved.context, evaluate, collect: async () => null, box: box2, stageDeadline: Date.now() + 10_000 });
   await linux;
-  assert.deepEqual([r2.status, r2.reason, r2.sideEffects], ['UNCERTAIN', 'full_admission_claim_changed', 1]);
+  assert.deepEqual([r2.status, r2.reason, r2.sideEffects, n], ['UNCERTAIN', 'full_admission_claim_changed', 1, 2], 'a refusal other than staleness is never re-evaluated');
 });
 
 test('issuer: no result before the stage window ends is UNCERTAIN (the Linux side may still run); refs failures map to stable reasons', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
