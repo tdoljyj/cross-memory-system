@@ -159,7 +159,7 @@ export class ResidentExecutor {
         await this.owner.remember(entry.name, requestSha256);
         continue;
       }
-      let outcome;
+      let outcome, abortKey = null;
       try {
         const v = parseBoundedJson(entry.bytes, 2048, 'OWNER_REQUEST_REFUSED');
         // Every request carries its own time and nonce, so a retry after a refusal is a new request.
@@ -174,13 +174,18 @@ export class ResidentExecutor {
             && typeof v.reason === 'string' && v.reason.length > 0 && v.reason.length <= 200, 'OWNER_REQUEST_REFUSED');
           outcome = { kind: 'rearm', ...(await this.rearm(v)) };
         } else if (v.contract === ABORT_CONTRACT) {
-          outcome = { kind: 'abort', ...(await this.abortAtTickStart(validateAbortRequest(v), requestSha256, entry.name)) };
+          abortKey = validateAbortRequest(v).batchKey;
+          outcome = { kind: 'abort', ...(await this.abortAtTickStart(v, requestSha256, entry.name)) };
         } else {
           check(false, 'OWNER_REQUEST_REFUSED');
         }
         await this.receipt('owner-request', { requestSha256, ...outcome });
       } catch (error) {
-        await this.receipt('owner-request-refused', { requestSha256, failureCode: codeOf(error) });
+        // An abort whose acceptance names this very request in 80-owner-abort but could not be concluded is no refusal:
+        // the gate below HALTs this tick and the next tick's recovery closes the batch (fourth independent review).
+        let accepted = false;
+        try { accepted = abortKey !== null && (await this.ledger.state(abortKey)).abort?.requestSha256 === requestSha256; } catch { accepted = false; }
+        await this.receipt(accepted ? 'owner-abort-unconfirmed' : 'owner-request-refused', { requestSha256, failureCode: codeOf(error) });
       }
       await this.owner.remember(entry.name, requestSha256);
     }

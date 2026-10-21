@@ -269,6 +269,8 @@ test('the gate: an acceptance that fails half-way and whose UNKNOWN close cannot
   assert.equal((await f.ledger.state(KEY)).state, 'STARTED', 'still open: recovery closes it on the next tick');
   const h = await f.ledger.halted();
   assert.deepEqual([h.value.code, h.value.facts.keys], ['OWNER_ABORT_UNCONFIRMED', [KEY]]);
+  assert.equal((await bodies(f, 'owner-abort-unconfirmed')).length, 1, 'an accepted, unconcluded abort is no refusal');
+  assert.equal((await bodies(f, 'owner-request-refused')).length, 0);
   await f.exec.tick();
   const s = await f.ledger.state(KEY);
   assert.deepEqual([s.outcome, s.terminal.facts.failureCode], ['FAILED_UNKNOWN', 'OWNER_ABORT_INTERRUPTED']);
@@ -312,6 +314,57 @@ test('a torn 80-owner-abort written during a stage is UNKNOWN after the stage: n
   const r = await f.exec.tick();
   assert.deepEqual([r.state, r.failureCode], ['HALTED', 'OWNER_ABORT_UNCONFIRMED']);
   assert.deepEqual(stagesRun(engine), [1, 2], 'stage 3 (a publisher) never ran');
+  // The next tick's recovery quarantines the unreadable entry; the Owner's re-arm archives it as rearm-quarantine.
+  assert.equal((await f.exec.tick()).state, 'HALTED');
+  assert.equal((await f.ledger.state(KEY)).state, 'ABSENT');
+  assert.equal(await f.ledger.headBurned(headKey(subject())), true);
+  assert.equal((await f.ledger.quarantinedUnarchived()).length, 1);
+  const { rearmRequest } = await import('../tools/rearm-tool.mjs');
+  await writeOwnerRequest(path.join(f.root, 'owner'), rearmRequest({ expectedHaltSha256: (await f.ledger.halted()).sha256, reason: 'looked at the torn entry', by: OWNER }, f.clock), f.clock);
+  assert.equal((await f.exec.tick()).state, 'IDLE');
+  assert.deepEqual(engine.calls.filter(c => c[0] === 'archive-windows').map(c => c[1]), ['rearm-quarantine']);
+});
+
+test('the stop-requested receipt is written after the stage when the poll could not write it', async t => {
+  const engine = fakeEngine();
+  const f = await executorFixture(t, { engine });
+  let stopAsked;
+  const asked = new Promise(resolve => { stopAsked = resolve; });
+  engine.requestStop = async () => { stopAsked(); return { broker: true, requestId: '0a1b2c3d-0000-4000-8000-000000000001', stopCode: 'STOP_SENT', pump: true, done: true }; };
+  const receipt = f.exec.receipt.bind(f.exec);
+  let failed = false;
+  f.exec.receipt = async (type, body) => { if (type === 'owner-abort-stop-requested' && !failed) { failed = true; throw Object.assign(new Error('disk'), { code: 'EIO' }); } return receipt(type, body); };
+  engine.runStage = async (batch, stage) => {
+    engine.calls.push(['stage', stage.number]);
+    if (stage.number !== 2) return { ok: true };
+    await ownerAborts(f, batch.key);
+    await asked;
+    return { ok: false, code: 'STAGE_OUTCOME_MISSING', proof: WINDOWS_CLEAN };
+  };
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).failureCode, OWNER_ABORTED);
+  assert.ok(failed, 'the first write failed');
+  assert.deepEqual((await bodies(f, 'owner-abort-stop-requested')).map(b => [b.stage, b.requestId]), [[2, '0a1b2c3d-0000-4000-8000-000000000001']]);
+});
+
+test('UNKNOWN endings of an abort record its safe point and request digest', async t => {
+  // P1: the acceptance itself fails.
+  const companion = fakeCompanion();
+  const f = await executorFixture(t, { companion });
+  let digest;
+  companion.buildBundle = async () => { const file = await ownerAborts(f); digest = (await import('node:crypto')).createHash('sha256').update(await fs.readFile(file)).digest('hex'); return { ok: true }; };
+  f.ledger.beginOwnerAbort = async () => { throw Object.assign(new Error('disk'), { code: 'EIO' }); };
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'HALTED');
+  const s = (await f.ledger.state(KEY)).terminal.facts;
+  assert.deepEqual([s.failureCode, s.basis, s.safePoint, s.requestSha256], ['RESIDENT_EXECUTOR_EXCEPTION', 'owner-abort-unconfirmed', 'before-stage-1', digest]);
+  // ownerAbort: the archive throws after quiescence was proven.
+  const g = await waitingBatch(t);
+  g.engine.archiveFailure = async () => { throw Object.assign(new Error('busy'), { code: 'EBUSY' }); };
+  await ownerAborts(g);
+  assert.equal((await g.exec.tick()).state, 'HALTED');
+  const st = await g.ledger.state(KEY);
+  assert.deepEqual([st.outcome, st.terminal.facts.basis, st.terminal.facts.safePoint, st.terminal.facts.requestSha256], ['FAILED_UNKNOWN', 'owner-abort-unconfirmed', 'waiting', st.abort.requestSha256]);
 });
 
 test('a stage that ends with a missing outcome while the stop was never sent is UNKNOWN: HALT (review M2)', async t => {
