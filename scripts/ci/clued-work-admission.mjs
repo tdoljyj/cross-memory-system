@@ -462,26 +462,26 @@ const BOOTSTRAP_ORDINARY_SOURCES=Object.freeze([
   {
     "file": ".github/workflows/gitleaks.yml",
     "predecessor_blob": "74043d68d20dbee9f9404a66f0a02d3285fea0aa",
-    "candidate_blob": "1764fbcd3dd1457ae93423e0c100fe5deb1449ac",
-    "candidate_sha256": "17ec69ed57368773ed9dbb5c7ab0808172ac12173131d4fe81b57cd3fbfd8384",
+    "candidate_blob": "5f27ab3cc2e11aa109a539d1090c4f24871157ab",
+    "candidate_sha256": "be869498f8f7215cb61959d2971b2bb0ac09085898f5d231d25e1e435b3891f9",
     "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
     "roles": [
       {
         "job_id": "gitleaks-trusted-self-hosted",
-        "definition_sha256": "78b792bff8aa139c2ccfc6914a0a4998e62e64c451a36d3c9b8ec36514da7894"
+        "definition_sha256": "e4287b3c4cc1c42284d8f185ebf5fdb41d929c0e2a7dfc2c99c1481b0948ec37"
       }
     ]
   },
   {
     "file": ".github/workflows/trivy.yml",
     "predecessor_blob": "f7f8d075d1a0f314a7c5eb295e459599288d538c",
-    "candidate_blob": "a7f2653a8add1d2486d27e1dd388ea4a9ef54025",
-    "candidate_sha256": "7864a061c96dd377152ff03f0b00d18839602b22b3a520cd412afe3e683248b8",
+    "candidate_blob": "1d2ab2751ffb14be32347d13810796d0d8ddc7a8",
+    "candidate_sha256": "981e7a2d7f52b5451f899c3c36f7db133a736dd714d829eab9141d29389ba0c5",
     "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
     "roles": [
       {
         "job_id": "trivy-trusted-self-hosted",
-        "definition_sha256": "da2c92b30a7ead44873c99615d3ce86ca848c5cf0f081c6de07eb36586e1ef27"
+        "definition_sha256": "3149e3b628e966004ac3658c9ce9cdf26465ae39bdeed9377e883bcb18740019"
       }
     ]
   },
