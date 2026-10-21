@@ -47,7 +47,7 @@ company-primary / DESK-W-591
 
 home-primary / Turing
 ├─ clued-ci-home-win-01
-└─ clued-ci-home-linux-01
+└─ clued-ci-home-linux-01      (retired 2026-10-21; kept offline, not expected)
    capacity: compact-v1
 ```
 
@@ -55,7 +55,7 @@ Runtime online/busy state is intentionally **not** stored in Git. The inventory 
 
 ## Low-cost CI health monitor
 
-`.github/workflows/clued-ci-health.yml` checks the pool once an hour on a small GitHub-hosted runner (hourly bounds the hosted-minute cost). The hosted runner is deliberate: a monitor scheduled on the pool it watches could not report a total pool outage. `.github/workflows/clued-ci-runner-heartbeat.yml` separately sends a no-checkout, exact-label route probe to each of the five matrix runners every 15 minutes; the seven-node inventory additionally includes company Linux03/04, which this matrix does not probe (company Linux slots route by their own `runner-company-linux-NN` label). A successful probe proves that the named runner can accept its complete required-label contract. The healthy path is entirely deterministic and never invokes a model.
+`.github/workflows/clued-ci-health.yml` checks the pool once an hour on a small GitHub-hosted runner (hourly bounds the hosted-minute cost). The hosted runner is deliberate: a monitor scheduled on the pool it watches could not report a total pool outage. `.github/workflows/clued-ci-runner-heartbeat.yml` separately sends a no-checkout, exact-label route probe to each of the four matrix runners (`clued-ci-company-win-01`, `clued-ci-home-win-01`, `clued-ci-company-linux-01`, `clued-ci-company-linux-02`) every 15 minutes; the six active inventory entries additionally include company Linux03/04, which this matrix does not probe (company Linux slots route by their own `runner-company-linux-NN` label). The retired `clued-ci-home-linux-01` is neither probed nor expected; the home host's required checks now come from the resident independent-CI executor, which is not a GitHub runner and is not part of this inventory. A successful probe proves that the named runner can accept its complete required-label contract. The healthy path is entirely deterministic and never invokes a model.
 
 The default path needs no extra secret. GitHub's workflow token can read workflow/job state but cannot list repository runner registrations, so the monitor falls back to the routes actually present in the heartbeat matrix. If a deliberately scoped `CI_HEALTH_GITHUB_TOKEN` secret with repository Administration read access is later supplied, the same script also uses the direct runner API for registered name, OS, labels, online, and busy state. The secretless heartbeat path remains the default and treats inability to call the administrative endpoint as an observation-mode choice, not as an anomaly.
 
@@ -94,7 +94,7 @@ Do not leave the ChatGPT Work path active when deliberately switching to `openai
 
 ## Current qualification status
 
-The following P7/P8/P14 evidence concerns the historical four-runner subjects. It is not blanket qualification of today's seven inventory entries, later service-account/hook changes, or a current host readback. Revalidate its exact scope under the maintained runbook before using it for a change.
+The following P7/P8/P14 evidence concerns the historical four-runner subjects. It is not blanket qualification of today's six active inventory entries, later service-account/hook changes, or a current host readback. Revalidate its exact scope under the maintained runbook before using it for a change.
 
 - P7 dual Windows parallelism: PASS — Actions run `35411176126`
 - P8 dual Linux/Docker parallelism: PASS — Actions run `35413330672`
@@ -255,7 +255,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ci\self-hosted\render-host-wa
   -OutputPath "$env:TEMP\watchdog-home-primary.preview.ps1"
 ```
 
-The current main renderer's `-InstallStartup` uses Startup/HKCU Run; it does not install the no-console supervised scheduled task actually deployed on company-primary. PR #615's installer remains unmerged. Deployment must follow runbook section 5, including its restriction on enabling or expanding automatic service suspension before safe draining is implemented. WSL distributions belong to the user's account; SYSTEM is not a substitute.
+The current main renderer's `-InstallStartup` uses Startup/HKCU Run; it does not install the no-console supervised scheduled task actually deployed on company-primary. PR #615's installer remains unmerged. Deployment must follow runbook section 5, including its restriction on enabling or expanding automatic service suspension before safe draining is implemented. WSL distributions belong to the user's account; SYSTEM is not a substitute. The renderer also ignores the primary `linux_runner`'s `state`: a re-rendered home-primary watchdog would supervise the retired `clued-ci-home-linux-01` unit again, so do not install one until the renderer honours that state.
 
 ### active
 
