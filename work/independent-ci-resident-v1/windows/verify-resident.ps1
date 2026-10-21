@@ -92,7 +92,9 @@ Record 'runner-original-and-controller' (($rq -match 'C:\\ProgramData\\CluedCont
 
 foreach ($m in @('config\source-installed-manifest.json', 'config\resident-installed-manifest.json')) {
   $man = Get-Content -LiteralPath (Join-Path $Root $m) -Raw | ConvertFrom-Json
-  $base = if ($man.root -ceq 'source') { Join-Path $Root ('source\' + $receipt.sourceManifestSha256) } else { Join-Path $Root ('resident\' + $receipt.residentManifestSha256) }
+  # Source v2 installs the CI Source under source\<ciSourceManifestSha256>, the hash of the installed record's
+  # source-manifest.json (the package's sourceManifestSha256 names the file list, not the directory).
+  $base = if ($man.root -ceq 'source') { Join-Path $Root ('source\' + (Sha256File (Join-Path $Root 'record\source-manifest.json'))) } else { Join-Path $Root ('resident\' + $receipt.residentManifestSha256) }
   $bad = @($man.files | Where-Object { (Sha256File (Join-Path $base $_.path)) -cne $_.sha256 })
   Record ('package:' + $m) ($bad.Count -eq 0) $bad.Count
 }
