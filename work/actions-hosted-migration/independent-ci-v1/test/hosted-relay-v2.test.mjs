@@ -192,9 +192,15 @@ test('invoke-stage stage 9: a completed relay stage is a success fact carrying t
 test('relay entry: the installed registry must be the held, accepted bytes; the subject carries the batch claim generation', () => {
   const bytes = fs.readFileSync(new URL('../src/hosted-relay-v1/registry.json', import.meta.url));
   const p = 'work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/registry.json';
-  const registry = installedRegistry({ sourceHashes: new Map([[p, createHash('sha256').update(bytes).digest('hex')]]) });
-  assert.equal(registry.domain, 'production');
-  assert.deepEqual(Object.keys(registry.roles).sort(), ['gitleaks', 'trivy']);
+  const held = { sourceHashes: new Map([[p, createHash('sha256').update(bytes).digest('hex')]]) };
+  if (Object.values(JSON.parse(bytes).roles).some(r => !Object.hasOwn(r, 'forbiddenChangePrefixes'))) {
+    // pre-isolation registry (PR-A review BLOCKER): refused until PR-B is re-frozen and the registry rebuilt
+    assert.throws(() => installedRegistry(held), { code: 'RELAY_REGISTRY_INVALID' });
+  } else {
+    const registry = installedRegistry(held);
+    assert.equal(registry.domain, 'production');
+    assert.deepEqual(Object.keys(registry.roles).sort(), ['gitleaks', 'trivy']);
+  }
   assert.throws(() => installedRegistry({ sourceHashes: new Map([[p, 'f'.repeat(64)]]) }), { code: 'RELAY_REGISTRY_NOT_ACCEPTED' });
   const job = makeJobV2({ repo: REPO, pr: 7, headSha: H, baseSha: B, role: 'gitleaks', sourceManifestSha256: MANIFEST, createdAt: new Date(NOW).toISOString(), attempt: 2 });
   assert.deepEqual(relaySubject([job], { claimId: CLAIM, fence: 3, epoch: 1 }), { repo: REPO, pr: 7, headSha: H, baseSha: B, claimId: CLAIM, fence: 3, epoch: 1, sourceManifestSha256: MANIFEST });

@@ -37,9 +37,15 @@ const COMMON = ['repository', 'repositoryId', 'repositoryOwner', 'repositoryOwne
   'iatSkewSeconds', 'requireCheckRunIdClaim', 'forbiddenChangePrefixes', 'forbiddenChangePaths', 'roles'];
 const SPEC_KEYS = ['contract', ...COMMON];
 const REGISTRY_KEYS = ['contract', 'domain', 'generatedBy', 'sourceCommit', 'sourceTree', 'specSha256', ...COMMON];
-const SPEC_ROLE_KEYS = ['checkName', 'hostedCheckName', 'workflowPath', 'runsOn', 'closure', 'mustNotExist'];
+// forbiddenChangePrefixes (per role, PR-A review BLOCKER): directory prefixes a PR may not touch at all for
+// the role to be relayed - at least the directory of every repository script the hosted job executes (the
+// builder refuses a registry that leaves one uncovered). A shadowing module next to an executed script (for
+// example scripts/ci/argparse.py) could otherwise change the scan's inputs before the scan runs.
+const SPEC_ROLE_KEYS = ['checkName', 'hostedCheckName', 'workflowPath', 'runsOn', 'closure', 'mustNotExist', 'forbiddenChangePrefixes'];
 const ROLE_KEYS = ['checkName', 'hostedCheckName', 'workflowPath', 'workflowBlob', 'workflowSha256', 'hostedJobId',
-  'hostedJobTimeoutMinutes', 'runsOn', 'closure', 'mustNotExist', 'closureSha256'];
+  'hostedJobTimeoutMinutes', 'runsOn', 'closure', 'mustNotExist', 'forbiddenChangePrefixes', 'closureSha256'];
+const rolePrefixesValid = prefixes => sortedUnique(prefixes) && prefixes.length <= 64
+  && prefixes.every(prefix => typeof prefix === 'string' && prefix.endsWith('/') && safeRepoPath(prefix.slice(0, -1)));
 const CLOSURE_KEYS = ['path', 'mode', 'blob', 'sha256'];
 
 export class RelayError extends Error {
@@ -104,6 +110,7 @@ export function validateSpec(spec) {
     insist(entry.closure.includes(entry.workflowPath), code, `${role}.closure.workflow`);
     insist(sortedUnique(entry.mustNotExist) && entry.mustNotExist.length <= 64 && entry.mustNotExist.every(safeRepoPath)
       && !entry.mustNotExist.some(path => entry.closure.includes(path)), code, `${role}.mustNotExist`);
+    insist(rolePrefixesValid(entry.forbiddenChangePrefixes), code, `${role}.forbiddenChangePrefixes`);
   }
   names(spec.roles, code);
   return structuredClone(spec);
@@ -135,7 +142,8 @@ export function validateRegistry(registry, { domain } = {}) {
     insist(workflow?.blob === entry.workflowBlob && workflow.sha256 === entry.workflowSha256, code, `${role}.closure.workflow`);
     insist(sortedUnique(entry.mustNotExist) && entry.mustNotExist.length <= 64 && entry.mustNotExist.every(safeRepoPath)
       && !entry.mustNotExist.some(path => entry.closure.some(item => item.path === path)), code, `${role}.mustNotExist`);
-    insist(entry.closureSha256 === closureDigest(entry.closure, entry.mustNotExist), code, `${role}.closureSha256`);
+    insist(rolePrefixesValid(entry.forbiddenChangePrefixes), code, `${role}.forbiddenChangePrefixes`);
+    insist(entry.closureSha256 === closureDigest(entry.closure, entry.mustNotExist, entry.forbiddenChangePrefixes), code, `${role}.closureSha256`);
   }
   names(registry.roles, code);
   const frozen = deepFreeze(structuredClone(registry));
@@ -143,7 +151,8 @@ export function validateRegistry(registry, { domain } = {}) {
   return frozen;
 }
 
-export const closureDigest = (closure, mustNotExist) => digest({ closure, mustNotExist });
+// The role's executed-input pins: closure blobs, paths that must not exist and the forbidden change prefixes.
+export const closureDigest = (closure, mustNotExist, forbiddenChangePrefixes) => digest({ closure, mustNotExist, forbiddenChangePrefixes });
 export const isValidatedRegistry = registry => validated.has(registry);
 export function registryDigestOf(registry) {
   insist(validated.has(registry), 'RELAY_REGISTRY_NOT_VALIDATED');

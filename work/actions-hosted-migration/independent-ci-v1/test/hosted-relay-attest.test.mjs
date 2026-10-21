@@ -64,8 +64,17 @@ test('E3: a PR that changes CI files, .gitattributes or a role closure falls bac
     [['.gitleaksignore'], { gitleaks: 'NOT_ELIGIBLE:E3_CLOSURE_PATH_CHANGED', trivy: 'ATTESTED_SUCCESS' }],
     [['scripts/ci/reviewed_gitleaks.py'], { gitleaks: 'NOT_ELIGIBLE:E3_CLOSURE_PATH_CHANGED', trivy: 'ATTESTED_SUCCESS' }],
     [['.trivyignore'], { gitleaks: 'ATTESTED_SUCCESS', trivy: 'NOT_ELIGIBLE:E3_CLOSURE_PATH_CHANGED' }],
-    // Placement files are outside every relay closure, and placement itself is never relayed.
-    [['scripts/ci/check_contract_placement.py'], { gitleaks: 'ATTESTED_SUCCESS', trivy: 'ATTESTED_SUCCESS' }],
+    // Anything under the directory the hosted gitleaks job executes from (scripts/ci/) is a shadowing risk for
+    // gitleaks: placement scripts too. trivy executes no repository script.
+    [['scripts/ci/check_contract_placement.py'], { gitleaks: 'NOT_ELIGIBLE:E3_EXECUTED_PATH_CHANGED', trivy: 'ATTESTED_SUCCESS' }],
+    // PR-A review BLOCKER: a PR adding scripts/ci/argparse.py would shadow the stdlib module of the hosted
+    // `python3 scripts/ci/reviewed_gitleaks.py` (without -I) and could rewrite the scan inputs before the scan.
+    [['scripts/ci/argparse.py'], { gitleaks: 'NOT_ELIGIBLE:E3_EXECUTED_PATH_CHANGED', trivy: 'ATTESTED_SUCCESS' }],
+    [['src/app.js', 'scripts/ci/sub/tomllib/__init__.py'], { gitleaks: 'NOT_ELIGIBLE:E3_EXECUTED_PATH_CHANGED', trivy: 'ATTESTED_SUCCESS' }],
+    // both sides of a rename are changed paths (github.mjs adds previous_filename): out of, or into, scripts/ci/
+    [['scripts/ci/old_name.py', 'tools/new_name.py'], { gitleaks: 'NOT_ELIGIBLE:E3_EXECUTED_PATH_CHANGED', trivy: 'ATTESTED_SUCCESS' }],
+    [['tools/json.py', 'scripts/ci/json.py'], { gitleaks: 'NOT_ELIGIBLE:E3_EXECUTED_PATH_CHANGED', trivy: 'ATTESTED_SUCCESS' }],
+    [['scripts/cix.py', 'scripts/README.md'], { gitleaks: 'ATTESTED_SUCCESS', trivy: 'ATTESTED_SUCCESS' }],
   ];
   for (const [paths, expected] of cases) {
     const w = createWorld(); w.allHosted(); w.state.changedPaths = paths;
