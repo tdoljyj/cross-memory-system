@@ -247,14 +247,18 @@ test('issuer: a callback admission still stale after three evaluations is late, 
   await assert.rejects(fs.lstat(path.join(root, 'outgoing', 'response-01.json')), { code: 'ENOENT' });
 });
 
-// full_admission_unavailable: a GitHub or KooYomi call threw inside the admission (PR #894 stage 6, 2026-10-21).
-const UNAVAILABLE = Object.freeze({ status: 'BLOCKED', reason: 'full_admission_unavailable' });
+// full_admission_unavailable: the admission caught an exception, here in its Native phase (PR #894 stage 6, 2026-10-21).
+const UNAVAILABLE = Object.freeze({ status: 'BLOCKED', reason: 'full_admission_unavailable', diagnostic: Object.freeze({ phase: 'native' }) });
+const STALE = Object.freeze({ status: 'BLOCKED', reason: 'full_admission_observation_expired' });
+const gaveUp = evaluations => ({ transientAdmission: 'full_admission_unavailable', evaluations, phase: 'native' });
 // Records the issuer's backoff waits (1 s and more; its polling sleeps 100 ms). Unless `real`, a wait lasts 20 ms.
-const backoffSleep = (waits, { real = false } = {}) => ms => {
-  if (ms >= 1000) waits.push(ms);
+const backoffSleep = (waits, { real = false, onWait = () => {} } = {}) => ms => {
+  if (ms >= 1000) { waits.push(ms); onWait(ms); }
   return new Promise(r => setTimeout(r, ms >= 1000 && !real ? 20 : ms));
 };
 const waitUntil = async (done, ms = 8000) => { for (const end = Date.now() + ms; !done() && Date.now() < end;) await new Promise(r => setTimeout(r, 20)); };
+// The first admission keeps one callback window of the stage for the Linux side.
+const FIRST_RESERVE_MS = CALLBACK_WINDOW_MS;
 
 test('issuer: an unavailable admission is evaluated again after a short backoff; the fresh ADMITTED answers (callback and final admission)', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
   const f = issuerFixture(t), given = [], waits = [];
@@ -271,7 +275,7 @@ test('issuer: an unavailable admission is evaluated again after a short backoff;
   })();
   const r = await runIssuer({ context: f.context, evaluate, collect: async () => null, box, sleep: backoffSleep(waits), stageDeadline: Date.now() + 20_000 });
   await linux;
-  assert.deepEqual([r.status, r.sideEffects, given.length, waits], [ISSUER_SUCCESS, 1, 5, [1000, 1000]]);
+  assert.deepEqual([r.status, r.sideEffects, given.length, waits, r.admissionDiagnostic], [ISSUER_SUCCESS, 1, 5, [1000, 1000], undefined]);
 });
 
 test('issuer: a callback admission unavailable until the round deadline answers nothing; the worker\'s clean blocked record ends the stage (no UNCERTAIN)', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
@@ -281,15 +285,17 @@ test('issuer: a callback admission unavailable until the round deadline answers 
   const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
   const linux = (async () => {
     const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
-    const deadline = Date.now() + 2500;
+    const deadline = Date.now() + 2950;
     await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1, { deadline: iso(deadline) })));
     await new Promise(r => setTimeout(r, deadline + 300 - Date.now()));
     await put(root, 'blocked', encode(makeBlocked(issue, 'BRIDGE_CALLBACK_DEADLINE')));
   })();
-  // Real waits: the 1 s one ends inside the round, the 2 s one would end past its deadline and is not taken.
+  // Real waits: the 1 s one ends inside the round (the first callback evaluation has about 1.9 s to start), the 2 s
+  // one would end past its deadline and is not taken.
   const r = await runIssuer({ context: f.context, evaluate, collect: async () => null, box, sleep: backoffSleep(waits, { real: true }), stageDeadline: Date.now() + 20_000 });
   await linux;
   assert.deepEqual([r.status, r.reason, r.sideEffects, n, waits], ['BLOCKED', 'BRIDGE_CALLBACK_DEADLINE', 0, 3, [1000]]);
+  assert.deepEqual(r.admissionDiagnostic, gaveUp(2), 'the outcome record keeps why the round went late');
   await assert.rejects(fs.lstat(path.join(root, 'outgoing', 'response-01.json')), { code: 'ENOENT' });
 });
 
@@ -306,7 +312,7 @@ test('issuer: a callback admission still unavailable after four evaluations (wai
   })();
   const r = await runIssuer({ context: f.context, evaluate, collect: async () => null, box, sleep: backoffSleep(waits), stageDeadline: Date.now() + 20_000 });
   await linux;
-  assert.deepEqual([r.status, r.reason, r.sideEffects, n, waits], ['BLOCKED', 'BRIDGE_CALLBACK_DEADLINE', 0, 5, [1000, 2000, 4000]]);
+  assert.deepEqual([r.status, r.reason, r.sideEffects, n, waits, r.admissionDiagnostic], ['BLOCKED', 'BRIDGE_CALLBACK_DEADLINE', 0, 5, [1000, 2000, 4000], gaveUp(4)]);
   await assert.rejects(fs.lstat(path.join(root, 'outgoing', 'response-01.json')), { code: 'ENOENT' });
 });
 
@@ -319,28 +325,68 @@ test('issuer: a refusal is final at once, also right after an unavailable evalua
     const linux = (async () => { const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json'))); await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1))); })();
     const r = await runIssuer({ context: f.context, evaluate, collect: async () => null, box, sleep: backoffSleep(waits), stageDeadline: Date.now() + 10_000 });
     await linux;
-    assert.deepEqual([r.status, r.reason, r.sideEffects, n, waits], ['UNCERTAIN', refusal.reason ?? 'ACTUAL_NATIVE_ADMISSION_REQUIRED', 1, 3, [1000]]);
+    assert.deepEqual([r.status, r.reason, r.sideEffects, n, waits, r.admissionDiagnostic], ['UNCERTAIN', refusal.reason ?? 'ACTUAL_NATIVE_ADMISSION_REQUIRED', 1, 3, [1000], undefined]);
     await assert.rejects(fs.lstat(path.join(root, 'outgoing', 'response-01.json')), { code: 'ENOENT' });
   }
 });
 
-test('issuer: the first admission retries an unavailable evaluation within the stage window; still unavailable, nothing is issued (clean BLOCKED)', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+test('issuer: both transient reasons share one evaluation counter; the final admission gives up UNCERTAIN; a lease lost in a wait fails at once', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+  // seq[i] is the i-th evaluation (0 = before the issue). The Linux party sends the result once response-01 exists,
+  // else (no answer within 1.5 s) its clean blocked record.
+  const run = async (seq, { onWait } = {}) => {
+    let n = 0;
+    const f = issuerFixture(t), waits = [];
+    const evaluate = async () => { const v = seq[n++] ?? 'admitted'; return v === 'stale' ? STALE : v === 'unavailable' ? UNAVAILABLE : facts(f.job, f.c); };
+    const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
+    const linux = (async () => {
+      const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
+      await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1)));
+      const answered = await waitFor(path.join(root, 'outgoing', 'response-01.json'), 1500).then(() => true, () => false);
+      await put(root, answered ? 'result' : 'blocked', answered ? Buffer.from(canonical(signedWrapper(issue, trivyObservation(f.job), f.signer))) : encode(makeBlocked(issue, 'BRIDGE_CALLBACK_DEADLINE')));
+    })();
+    const r = await runIssuer({ context: f.context, evaluate, collect: async () => null, box, sleep: backoffSleep(waits, { onWait: () => onWait?.(f) }), stageDeadline: Date.now() + 20_000 });
+    await linux;
+    return { r, n, waits, responded: await fs.lstat(path.join(root, 'outgoing', 'response-01.json')).then(() => true, () => false) };
+  };
+  // stale (no wait), then unavailable as the 2nd evaluation of the callback admission: its 2nd wait (2 s), then ADMITTED
+  let x = await run(['admitted', 'stale', 'unavailable', 'admitted']);
+  assert.deepEqual([x.r.status, x.n, x.waits, x.responded], [ISSUER_SUCCESS, 5, [2000], true]);
+  // unavailable, unavailable, then stale as the 3rd evaluation: stale has no 3rd wait, so the round gives up (late)
+  x = await run(['admitted', 'unavailable', 'unavailable', 'stale']);
+  assert.deepEqual([x.r.status, x.r.reason, x.n, x.waits, x.responded, x.r.admissionDiagnostic],
+    ['BLOCKED', 'BRIDGE_CALLBACK_DEADLINE', 4, [1000, 2000], false, { transientAdmission: 'full_admission_observation_expired', evaluations: 3 }]);
+  // after the result: the final admission retries, then fails UNCERTAIN (the result is in hand, the admission is not)
+  x = await run(['admitted', 'admitted', 'unavailable', 'unavailable', 'unavailable', 'unavailable']);
+  assert.deepEqual([x.r.status, x.r.reason, x.r.sideEffects, x.n, x.waits, x.r.admissionDiagnostic], ['UNCERTAIN', 'full_admission_unavailable', 1, 6, [1000, 2000, 4000], gaveUp(4)]);
+  // the held lease ends during a wait: the next evaluation never runs
+  x = await run(['admitted', 'unavailable', 'admitted'], { onWait: f => f.stop() });
+  assert.deepEqual([x.r.status, x.r.reason, x.n, x.waits, x.responded], ['UNCERTAIN', 'HELD_RECORD_LEASE_LOST', 2, [1000], false]);
+});
+
+test('issuer: the first admission retries an unavailable evaluation while a callback window of the stage is left; still unavailable, nothing is issued (clean BLOCKED)', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
   let n = 0;
   const a = issuerFixture(t), waitsA = [], rootA = await spool(t);
   const linux = (async () => { const issue = decode(await waitFor(path.join(rootA, 'outgoing', 'issue.json'))); await put(rootA, 'blocked', encode(makeBlocked(issue, 'REMOTE_REFS_CHANGED_SINCE_BUNDLE'))); })();
   const rA = await runIssuer({ context: a.context, evaluate: async () => (++n === 1 ? UNAVAILABLE : facts(a.job, a.c)), collect: async () => null,
-    box: await createFixtureMailbox(rootA, 'windows'), sleep: backoffSleep(waitsA), stageDeadline: Date.now() + 20_000 });
+    box: await createFixtureMailbox(rootA, 'windows'), sleep: backoffSleep(waitsA), stageDeadline: Date.now() + FIRST_RESERVE_MS + 20_000 });
   await linux;
-  assert.deepEqual([rA.status, rA.reason, rA.sideEffects, n, waitsA], ['BLOCKED', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 0, 2, [1000]], 'issued after one retry');
+  assert.deepEqual([rA.status, rA.reason, rA.sideEffects, n, waitsA, rA.admissionDiagnostic], ['BLOCKED', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 0, 2, [1000], undefined], 'issued after one retry');
 
-  for (const [window, evaluations, expected] of [[20_000, 4, [1000, 2000, 4000]], [1500, 2, [1000]]]) {
+  for (const [window, evaluations, expected] of [[FIRST_RESERVE_MS + 20_000, 4, [1000, 2000, 4000]], [FIRST_RESERVE_MS + 1500, 2, [1000]], [20_000, 1, []]]) {
     let m = 0;
     const b = issuerFixture(t), waits = [], root = await spool(t);
     const r = await runIssuer({ context: b.context, evaluate: async () => { m += 1; return UNAVAILABLE; }, collect: async () => null,
       box: await createFixtureMailbox(root, 'windows'), sleep: backoffSleep(waits), stageDeadline: Date.now() + window });
-    assert.deepEqual([r.status, r.reason, r.sideEffects, m, waits], ['BLOCKED', 'full_admission_unavailable', 0, evaluations, expected], `stage window ${window} ms`);
+    assert.deepEqual([r.status, r.reason, r.sideEffects, m, waits, r.admissionDiagnostic], ['BLOCKED', 'full_admission_unavailable', 0, evaluations, expected, gaveUp(evaluations)], `stage window ${window} ms`);
     await assert.rejects(fs.lstat(path.join(root, 'outgoing', 'issue.json')), { code: 'ENOENT' });
   }
+  // a real refusal after an unavailable first evaluation is final as before: nothing issued
+  let k = 0;
+  const c = issuerFixture(t), waitsC = [], rootC = await spool(t);
+  const rC = await runIssuer({ context: c.context, evaluate: async () => (++k === 1 ? UNAVAILABLE : { status: 'BLOCKED', reason: 'full_admission_claim_changed' }), collect: async () => null,
+    box: await createFixtureMailbox(rootC, 'windows'), sleep: backoffSleep(waitsC), stageDeadline: Date.now() + FIRST_RESERVE_MS + 20_000 });
+  assert.deepEqual([rC.status, rC.reason, rC.sideEffects, k, waitsC, rC.admissionDiagnostic], ['BLOCKED', 'full_admission_claim_changed', 0, 2, [1000], undefined]);
+  await assert.rejects(fs.lstat(path.join(rootC, 'outgoing', 'issue.json')), { code: 'ENOENT' });
 });
 
 test('issuer: a challenge relayed only after its deadline is late (no admission, no response, no UNCERTAIN)', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {

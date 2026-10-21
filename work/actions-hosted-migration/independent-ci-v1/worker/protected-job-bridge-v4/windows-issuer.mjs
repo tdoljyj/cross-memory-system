@@ -5,8 +5,8 @@
 //   - inputs come from the sealed stage directory and the held claim-free record (runEntry);
 //   - every admission (issue and each callback) is evaluated under the BATCH claim generation that
 //     stage 1 recorded (A-strict, batch-claim-v2.mjs); a moved claim fails closed;
-//   - a transient admission refusal (stale, or unavailable: a GitHub or KooYomi call threw) is evaluated
-//     again within its window; in a callback round one that outlasts it is late, never UNCERTAIN;
+//   - a transient admission refusal (stale, or unavailable: the admission threw) is evaluated again within
+//     its window; in a callback round one that outlasts it answers nothing (late) instead of failing itself;
 //   - the stage ends with an outcome record (S11): ISSUED_RESULT_RECEIVED, a clean BLOCKED with zero side
 //     effects (nothing issued, or the Linux worker's clean 'blocked' record), or UNCERTAIN after an issue
 //     without a verified result (the Linux side may still run: UNKNOWN for the resident).
@@ -24,10 +24,11 @@ import {CALLBACK_WINDOW_MS,makeIssue,makeResponse,validateChallenge,validateBloc
 import {verifySignedBridgeResult} from './signed-result.mjs';
 export const ISSUER_SUCCESS='ISSUED_RESULT_RECEIVED';
 const STALE_ADMISSION='full_admission_observation_expired',UNAVAILABLE_ADMISSION='full_admission_unavailable';
-// Transient admission refusals, where no gate said no: the wait before each new complete evaluation, indexed by the
-// evaluations already made. Stale (a slow host outran the 30 s freshness bound): again at once, three evaluations at
-// most. Unavailable (a GitHub or KooYomi call threw, full-admission-v2.mjs): after 1, 2 and 4 s, four at most (PR #894
-// stage 6, 2026-10-21: one failed call in a callback round ended UNCERTAIN and HALTed the resident).
+// Transient admission refusals, where no gate said no: entry n is the wait after the n-th evaluation of one admission
+// before the next, complete one (one counter for both reasons; no entry left = give up). Stale (a slow host outran the
+// 30 s freshness bound): again at once, three evaluations at most. Unavailable (full-admission-v2.mjs caught an
+// exception, mostly a failed GitHub or KooYomi call): after 1, 2 and 4 s, four at most (PR #894 stage 6, 2026-10-21:
+// one failed call in a callback round ended UNCERTAIN and HALTed the resident).
 const RETRY_WAITS_MS=new Map([[STALE_ADMISSION,[0,0]],[UNAVAILABLE_ADMISSION,[1000,2000,4000]]]);
 const fail=code=>{throw Object.assign(new Error(code),{code});},check=(v,c)=>{if(!v)fail(c);};
 // Linux clean-blocked codes that keep their meaning (transient, see stage-fact.mjs); any other clean
@@ -45,33 +46,43 @@ const refsStep=async collect=>{try{return await collect();}catch(e){fail(refsFai
 // The issuer engine. Ports are injected so the offline tests drive the real protocol; production wires
 // them in main(). sideEffects counts "the Linux side may run": 0 until the issue is written.
 export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),stageDeadline,signal}){
-  takeAcceptedBridgeContext(context);const job=context.job;let sideEffects=0;
+  takeAcceptedBridgeContext(context);const job=context.job;let sideEffects=0,gaveUp=null;
+  // The transient refusal given up on, for the outcome record: a round that went late reports only the bridge reason
+  // otherwise. The resident classifies by status and reason alone, so it changes no outcome.
+  const diagnosed=outcome=>gaveUp?{...outcome,admissionDiagnostic:gaveUp}:outcome;
   try{
     check(Number.isSafeInteger(stageDeadline)&&stageDeadline>clock(),'FORMAL_ISSUER_WINDOW_UNCONFIRMED');
     await box.lock();
     // One complete admission. A transient refusal (RETRY_WAITS_MS) is evaluated again, in full, after its wait and
     // only while that wait ends before `until`; any other refusal fails at once. Only a fresh complete ADMITTED is
-    // ever used. The first admission gets the same retries within the stage window: nothing is issued yet.
+    // ever used.
     const admitted=async until=>{
       for(let attempt=1;;attempt++){
         assertWindowsContextLive(context);const facts=await evaluate();assertWindowsContextLive(context);
         if(facts?.status==='ADMITTED')return facts;
         const reason=/^full_admission_[a-z_]+$/.test(facts?.reason??'')?facts.reason:'ACTUAL_NATIVE_ADMISSION_REQUIRED';
         const wait=RETRY_WAITS_MS.get(reason)?.[attempt-1];
-        if(wait===undefined||clock()+wait>=until)fail(reason);
+        if(wait===undefined||clock()+wait>=until){
+          if(RETRY_WAITS_MS.has(reason))gaveUp={transientAdmission:reason,evaluations:attempt,
+            ...(/^[a-z_]{1,32}$/.test(facts.diagnostic?.phase??'')?{phase:facts.diagnostic.phase}:{})};
+          fail(reason);
+        }
         if(wait)await sleep(wait);
       }
     };
-    const first=await admitted(stageDeadline),refs=job.role==='gitleaks'?await refsStep(collect):null;
+    // The first admission retries too (nothing is issued yet), but only while its wait leaves the Linux side at least
+    // one callback window of the stage.
+    const first=await admitted(stageDeadline-CALLBACK_WINDOW_MS),refs=job.role==='gitleaks'?await refsStep(collect):null;
     const until=Math.min(stageDeadline,context.accepted.validUntil===null?Infinity:Date.parse(context.accepted.validUntil));
     const issue=makeIssue(job,first,refs,{sourceAcceptanceRef:context.sourceAcceptanceRef,hostQualificationRef:context.hostQualificationRef,expiresAt:new Date(until).toISOString(),now:clock()});
     assertWindowsContextLive(context);sideEffects=1;await box.write('issue',encode(issue));
     // late: the deadline of the round this issuer did not answer (null = still answering): out of time, or a
-    // transient admission refusal outlasted its retries. Past it
-    // the Linux worker accepts no response and ends with its clean 'blocked' record (BRIDGE_CALLBACK_DEADLINE),
-    // so answer nothing more and wait for that record instead of failing UNCERTAIN on an expired challenge (PR #889
-    // stage 2 attempt 2, 2026-10-21): two more windows at most, since the companion waits one window for a response
-    // from its own ReceiveChallenge before it hands the record over. A worker that ends without it stays UNCERTAIN.
+    // transient admission refusal outlasted its retries. Past it the Linux worker accepts no response; in a round
+    // before it prepared anything it ends with its clean 'blocked' record (BRIDGE_CALLBACK_DEADLINE). So answer
+    // nothing more and wait for that record instead of failing UNCERTAIN on an expired challenge (PR #889 stage 2
+    // attempt 2, 2026-10-21): two more windows at most, since the companion waits one window for a response from its
+    // own ReceiveChallenge before it hands the record over. A worker that ends without it (a later round, after it
+    // prepared: PR #894 stage 6 challenge-02) stays UNCERTAIN, so there only the retries above help.
     let next=1,late=null;
     const goLate=challenge=>{late=Date.parse(challenge.deadline);return false;};
     const serveNext=async()=>{
@@ -104,7 +115,7 @@ export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sle
       if(blocked){const b=validateBlocked(issue,decode(blocked),clock());
         // The Linux side ended cleanly before any scanner touched the PR (trivy may have run cache-only
         // containers): nothing was published. A clean refusal is final, never retried automatically.
-        return{status:'BLOCKED',reason:blockedReason(b.reason),sideEffects:0,issueSha256:digest(issue)};}
+        return diagnosed({status:'BLOCKED',reason:blockedReason(b.reason),sideEffects:0,issueSha256:digest(issue)});}
       if(late===null){try{await serveNext();}catch(e){if(e.code!=='ENOENT')throw e;}}
       else check(clock()<late+2*CALLBACK_WINDOW_MS,'BRIDGE_LATE_BLOCKED_UNCONFIRMED');
       await sleep(100);
@@ -112,7 +123,7 @@ export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sle
     fail('BRIDGE_RESULT_DEADLINE');
   }catch(e){
     const reason=/^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(e?.code??'')?e.code:'FORMAL_BRIDGE_UNCONFIRMED';
-    return{status:sideEffects?'UNCERTAIN':'BLOCKED',reason,sideEffects};
+    return diagnosed({status:sideEffects?'UNCERTAIN':'BLOCKED',reason,sideEffects});
   }finally{closeWindowsContext(context);}
 }
 
