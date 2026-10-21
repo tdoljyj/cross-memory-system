@@ -1,5 +1,5 @@
 // FIXTURE ONLY. Loader for trusted-workflows.json: the exact reviewed bytes of the three hosted workflows
-// the local formal roles pin, on main before PR-B and as frozen in PR-B 7d0468e0. Tests build trusted
+// the local formal roles pin, on main and in the frozen PR-B commit (repin-trusted-workflows.mjs). Tests build trusted
 // Sources from these bytes instead of the working tree, so they hold on a head carrying either version.
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';

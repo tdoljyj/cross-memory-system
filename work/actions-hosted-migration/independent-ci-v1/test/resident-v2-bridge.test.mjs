@@ -109,7 +109,7 @@ test('signed result v4: the wrapper binds the issue, the v2 subject and the obse
   assert.throws(() => observationFacts(issue, v1Obs), { code: 'ACTUAL_FORMAL_PROFILE_REQUIRED' });
 });
 
-// PR-A x PR-B 7d0468e0: the Source v2 placement path accepts exactly the two reviewed contract-placement.yml
+// PR-A x PR-B: the Source v2 placement path accepts exactly the two reviewed contract-placement.yml
 // versions (fixture bytes, never the working tree) in role policy v3 and in the v4 signed result.
 function placementObservation(job, workflowSha256) {
   const now = Date.now(), log = () => ({ sha256: hex(32), bytes: 10, truncated: false });

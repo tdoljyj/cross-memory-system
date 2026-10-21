@@ -1,7 +1,7 @@
 // Offline unit tests for worker/formal-gitleaks-v3/required-history/prepare.mjs:
 // the registered '/input' manifest cwd, the pinned reviewed-commit extraction,
 // reviewed commits as pack tips, the fail-closed missing reviewed commit, and the
-// exact accepted gitleaks.yml pin set (main before PR-B and PR-B 7d0468e0).
+// exact accepted gitleaks.yml pin set (main and the frozen PR-B commit).
 // No network, Docker, Host path or credential. Fixtures live under os.tmpdir().
 // The trusted workflow bytes come from test/fixtures/trusted-workflows.json, never
 // from the working tree, so these tests hold on a head carrying either version.

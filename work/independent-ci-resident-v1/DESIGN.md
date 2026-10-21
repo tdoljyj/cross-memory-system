@@ -485,9 +485,9 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
   - 登记表的每个角色新增 `forbiddenChangePrefixes`（目录前缀；gitleaks 是 `scripts/ci/`，trivy 不执行仓库脚本，所以为空），并且计入 `closureSha256`；
   - E3 对改动落在这些前缀下的 PR（新增、修改、删除，改名时两端都算）判 NOT_ELIGIBLE（`E3_EXECUTED_PATH_CHANGED`），角色回本地，提示模式也一样；
   - `build-registry.mjs` 从托管作业的 `run:` 步骤读出执行的仓库脚本：每个 Python 调用都必须带 `-I`（包括 `-c`），拒绝 `-m`，拒绝用 Node 运行仓库脚本；执行的脚本必须在 closure 里，它的目录必须被角色前缀或全局前缀（`.github/`）覆盖，否则拒绝构建。
-  - 现在提交的生产登记表建于这些规则之前，会被拒绝，所以转发失败关闭（第 R 段 `RELAY_STAGE_REFUSED`）。它对应的 PR-B 提交也会被新构建器拒绝（Python 没有 `-I`）。PR-B 要改用 `python3 -I -B` 重新冻结，再用这个构建器重建登记表，转发才可能打开。后来 PR-B 已经重新冻结为 `7d0468e0`，登记表也用这个构建器从它重建了（`eaf685d2`，只有 gitleaks、trivy）。PR-B 前后本地角色认的工作流字节见 §7.7。
-- **复审的转发 MINOR**（PR-B 再次冻结之前一起修）：
-  - 托管作业用到的本地 action（`uses: ./<目录>`）必须整个钉住：`build-registry.mjs` 从托管作业读出这些目录，目录里的每个文件都必须是普通文件，并且在角色的 closure 里（`RELAY_REGISTRY_LOCAL_ACTION_NOT_PINNED`）；目录必须存在并且有 `action.yml`（`RELAY_REGISTRY_LOCAL_ACTION_MISSING`），还必须被禁改前缀覆盖（`RELAY_REGISTRY_LOCAL_ACTION_NOT_COVERED`）；路径有 `..`、空段或不以 `./` 开头时，扫描直接拒绝。`registry.spec.json` 两个角色的 closure 因此加上 `ci-temporary-storage` 的 `check-workflows.mjs` 和 `coverage.json`。现在提交的登记表建于这条规则之前，它仍然有效，转发照常工作（这两个文件在 `.github/` 下，E3 本来就不转发改动它们的 PR）；从新冻结的 PR-B 提交重建时，会带上这两个钉值；
+  - 现在提交的生产登记表建于这些规则之前，会被拒绝，所以转发失败关闭（第 R 段 `RELAY_STAGE_REFUSED`）。它对应的 PR-B 提交也会被新构建器拒绝（Python 没有 `-I`）。PR-B 要改用 `python3 -I -B` 重新冻结，再用这个构建器重建登记表，转发才可能打开。后来 PR-B 先重新冻结为 `7d0468e0`，又因为复审 BLOCKER（托管 gitleaks 扫描 PR 的工作树，会受 PR 自己的 `.gitattributes` 和 `.gitleaksignore` 影响）再次冻结为 `960133a7`：托管 gitleaks 现在扫描的是本地角色的同一份输入。登记表用当前构建器从 `960133a7` 重建（只有 gitleaks、trivy）。PR-B 前后本地角色认的工作流字节见 §7.7。
+- **复审的转发 MINOR**（随 PR-B `960133a7` 一起）：
+  - 托管作业用到的本地 action（`uses: ./<目录>`）必须整个钉住：`build-registry.mjs` 从托管作业读出这些目录，目录里的每个文件都必须是普通文件，并且在角色的 closure 里（`RELAY_REGISTRY_LOCAL_ACTION_NOT_PINNED`）；目录必须存在并且有 `action.yml`（`RELAY_REGISTRY_LOCAL_ACTION_MISSING`），还必须被禁改前缀覆盖（`RELAY_REGISTRY_LOCAL_ACTION_NOT_COVERED`）；路径有 `..`、空段或不以 `./` 开头时，扫描直接拒绝。`registry.spec.json` 两个角色的 closure 因此加上 `ci-temporary-storage` 的 `check-workflows.mjs` 和 `coverage.json`。登记表已经用这个构建器从 `960133a7` 重建，两个角色都带上了这两个钉值（这两个文件在 `.github/` 下，E3 本来就不转发改动它们的 PR）。如果以后规格又加了钉值而登记表还没重建，旧登记表仍然有效，测试只核对同一个 PR-B 提交按新规格重建时只多出 closure 钉值；
   - 任意深度的 `.gitattributes` 都不能改：E3 对每个转发角色加一条写在代码里的禁改路径规则 `**/.gitattributes`（`FORBIDDEN_CHANGE_GLOBS`，不依赖登记表），命中时判 NOT_ELIGIBLE（`E3_PROTECTED_PATH_CHANGED`），角色回本地。原来只禁了根目录的 `.gitattributes`；
   - 托管检查的应用：托管作业名下的 check run 只能来自 GitHub Actions（app `15368`）。原来 E5 只是跳过其他应用的 run；现在这个 head 上只要有一个同名的 run 来自别的应用，就判 ATTESTATION_FAILED（`E5_FOREIGN_APP_RUN`），即使旁边还有一个成功的 Actions run，角色也回本地；
   - `requireCheckRunIdClaim` 仍是 `false`：令牌带了 `check_run_id` 声明时，它必须等于这次 check run 的 id；没带时现在照样接受。演练 L1 一旦确认托管令牌带 `check_run_id`，就必须把它改成 `true` 并重建登记表，之后没有这个声明的令牌一律拒绝。
@@ -560,10 +560,10 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 
 - 表的每一行是一份工作流的一个审过的版本：字节的 sha256（作为键）、git blob（对照提交审查用）、来源（`main <提交>` 或 `pr-b <提交>`）。表格式不对就在加载时拒绝（`TRUSTED_WORKFLOW_TABLE_INVALID`），不会接受半张表。现在的行：
 
-  | 工作流 | main（`8710e92c`） | PR-B（`7d0468e0`） |
+  | 工作流 | main（`8710e92c`） | PR-B（`960133a7`） |
   |---|---|---|
-  | `gitleaks.yml` | blob `74043d68`，sha256 `168aebaf…` | blob `1764fbcd`，sha256 `17ec69ed…` |
-  | `trivy.yml` | blob `f7f8d075`，sha256 `cea2fd77…` | blob `a7f2653a`，sha256 `7864a061…` |
+  | `gitleaks.yml` | blob `74043d68`，sha256 `168aebaf…` | blob `5f27ab3c`，sha256 `be869498…` |
+  | `trivy.yml` | blob `f7f8d075`，sha256 `cea2fd77…` | blob `1d2ab275`，sha256 `981e7a2d…` |
   | `contract-placement.yml` | blob `54ee2f11`，sha256 `762f1b13…` | blob `3640f089`，sha256 `4898299b…` |
 
 - PR-B 重新冻结时，只要一条命令：`node CI/test/fixtures/repin-trusted-workflows.mjs --repo . --main <main> --pr-b <新的 PR-B 提交>`。它从这两个提交的 git 对象读字节，改写表里 BEGIN/END 标记之间的行，同时重写测试夹具 `CI/test/fixtures/trusted-workflows.json`。加 `--check` 时不写文件，只报告是否一致。main 还是这些字节时，main 的行保留。
