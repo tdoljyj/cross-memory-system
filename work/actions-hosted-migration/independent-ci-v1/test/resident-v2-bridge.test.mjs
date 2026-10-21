@@ -25,6 +25,7 @@ import { validateSelectedFacts, requiredSourcePaths, FIXED_ROLE_POLICIES } from 
 import { IMAGE as GITLEAKS_IMAGE, SCAN_ARGS } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
 import { validateEntryJob } from '../worker/formal-contract-placement-v2/container-entry.mjs';
 import { HEAD, BASE, tempDir, fixtureRecord, admittedFacts, hex } from './resident-v2-fixtures.mjs';
+import { PLACEMENT as PLACEMENT_WORKFLOW, acceptedSha256s } from './fixtures/trusted-workflows.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const iso = ms => new Date(ms).toISOString();
@@ -106,6 +107,44 @@ test('signed result v4: the wrapper binds the issue, the v2 subject and the obse
   assert.throws(() => verifySignedBridgeResult({ issue, wrapper: { ...wrapper, contract: 'clued.independent-ci.protected-job-result/1' }, signers: record.signers }), { code: 'SIGNED_BRIDGE_RESULT_BINDING_REQUIRED' });
   const v1Obs = { ...trivyObservation(job), contract: 'clued.independent-ci.formal-scanner-observation/1' };
   assert.throws(() => observationFacts(issue, v1Obs), { code: 'ACTUAL_FORMAL_PROFILE_REQUIRED' });
+});
+
+// PR-A x PR-B: the Source v2 placement path accepts exactly the two reviewed contract-placement.yml
+// versions (fixture bytes, never the working tree) in role policy v3 and in the v4 signed result.
+function placementObservation(job, workflowSha256) {
+  const now = Date.now(), log = () => ({ sha256: hex(32), bytes: 10, truncated: false });
+  return { contract: 'clued.independent-ci.formal-check-observation/2', domain: 'production-observation', fixture: false, profile: 'required-contract-placement/1',
+    subject: Object.fromEntries(['id', 'repo', 'pr', 'headSha', 'baseSha', 'role', 'sourceManifestSha256', 'attempt'].map(k => [k, job[k]])),
+    sourceSha: 'c'.repeat(40), sourceTreeSha: 'd'.repeat(40), candidateTreeSha: 'e'.repeat(40), sourceManifestSha256: job.sourceManifestSha256, workflowSha256,
+    image: 'sha256:' + hex(32), imageId: 'sha256:' + hex(32), runtimeIdentity: 'turing-linux', hostAcceptanceRef: randomUUID(), sourceAcceptanceRef: randomUUID(),
+    nonce: hex(32), requestSha256: hex(32), headBasePackSha256: hex(32), commandSequenceSha256: hex(32), toolPinsSha256: hex(32), preAdmissionSha256: hex(32), postAdmissionSha256: hex(32),
+    conclusion: 'success', exitCode: 0, startedAt: iso(now - 20_000), finishedAt: iso(now - 10_000), logs: { stdout: log(), stderr: log() },
+    cleanup: { complete: true, wholeContainerTreeStopped: true, containerRemoved: true, observedAt: iso(now - 5_000) },
+    evidenceClass: 'unsigned-observation-requires-protected-result-issuer', formalEligible: false, checksWritten: false, qualificationIssued: false };
+}
+test('placement (Source v2): policy v3 and the v4 signed result accept both reviewed contract-placement.yml versions and nothing else', () => {
+  const accepted = acceptedSha256s(PLACEMENT_WORKFLOW), other = hex(32);
+  const { jobs, record } = setup(), job = jobs['contract-placement'], c = claim();
+  const issue = makeIssue(job, facts(job, c), null, { sourceAcceptanceRef: record.accepted.sourceAcceptanceRef, hostQualificationRef: record.accepted.hostQualificationRef, expiresAt: iso(Date.now() + 600_000) });
+  for (const workflowSha256 of accepted) assert.equal(observationFacts(issue, placementObservation(job, workflowSha256)).exitCode, 0);
+  for (const workflowSha256 of [other, acceptedSha256s('.github/workflows/gitleaks.yml')[1]]) {
+    assert.throws(() => observationFacts(issue, placementObservation(job, workflowSha256)), { code: 'ACTUAL_PLACEMENT_EVIDENCE_REQUIRED' });
+  }
+  const tools = { node: { path: '/usr/local/bin/node', sha256: hex(32) }, python: { path: '/usr/bin/python3', sha256: hex(32) }, git: { path: '/usr/bin/git', sha256: hex(32) },
+    esbuildJs: { path: '/opt/esbuild/lib/main.js', sha256: hex(32) }, esbuildBinary: { path: '/opt/esbuild/bin/esbuild', sha256: hex(32) } };
+  const refs = { runtimeIdentity: 'turing-linux', sourceAcceptanceRef: randomUUID(), hostAcceptanceRef: randomUUID() }, image = 'sha256:' + hex(32);
+  const selected = workflowSha256 => {
+    const manifestBytes = Buffer.from(canonical({ schema: 'independent-ci.sources.v2', repo: REPO, sourceSha: 'c'.repeat(40), roles: { 'contract-placement': {
+      formalContractPlacement: { profile: 'required-contract-placement/1', workflowSha256, esbuildVersion: '0.28.1', tools },
+      sourceFiles: requiredSourcePaths('contract-placement').map(p => ({ path: p, sha256: hex(32) })) } } }));
+    const placement = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: sha(manifestBytes), createdAt: iso(Date.now() - 1000), attempt: 1 })['contract-placement'];
+    const config = { schema: 'independent-ci.linux-policy.v3', role: 'contract-placement', formalEnabled: true, sourceManifestSha256: sha(manifestBytes), nodeExecutable: LINUX_NODE_V2,
+      dockerRootDirectory: '/var/lib/docker', containerUser: '65532:65532', executionMode: 'node-entry', image, containerNodeExecutable: tools.node.path, containerNodeSha256: tools.node.sha256, ...refs };
+    const qualification = { payload: { schema: 'independent-ci.runtime-qualification.v2', fixture: false, image, sourceManifestSha256: sha(manifestBytes), ...refs, qualifiedAt: iso(Date.now() - 1000), expiresAt: null } };
+    return () => validateSelectedFacts(placement, { config, sourceManifestBytes: manifestBytes, qualification });
+  };
+  for (const workflowSha256 of accepted) assert.equal(selected(workflowSha256)().config.role, 'contract-placement');
+  for (const workflowSha256 of [other, null]) assert.throws(selected(workflowSha256), { code: 'FIXED_CONTRACT_TOOLS_IMAGE_REQUIRED' });
 });
 
 // ---- the Windows issuer engine against a simulated Linux party over fixture mailboxes ----

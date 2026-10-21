@@ -59,6 +59,15 @@ export function gitObjectReader(repoDir, { git = 'git' } = {}) {
       entries.set(cacheKey, found);
       return found;
     },
+    // Every entry below one directory (recursive; trees are not listed, submodules are).
+    tree(commit, dir) {
+      insist(SHA1.test(commit), 'RELAY_REGISTRY_COMMIT_INVALID');
+      return run(['ls-tree', '-r', '-z', '--full-tree', commit, '--', `:(literal)${dir}`]).split('\0').filter(Boolean).map(record => {
+        const match = /^(\d{6}) (blob|tree|commit) ([a-f0-9]{40})\t(.+)$/s.exec(record);
+        insist(match && match[4].startsWith(`${dir}/`), 'RELAY_REGISTRY_TREE_AMBIGUOUS', dir);
+        return { path: match[4], mode: match[1], type: match[2], sha: match[3] };
+      });
+    },
     blob(sha) {
       insist(SHA1.test(sha), 'RELAY_REGISTRY_BLOB_INVALID');
       if (!blobs.has(sha)) blobs.set(sha, run(['cat-file', 'blob', sha], { binary: true }));
@@ -171,7 +180,25 @@ export function scanWorkflow(bytes, { workflowPath, checkName, hostedCheckName, 
   insist(last.includes(`audience=${RELAY_AUDIENCE}`) && last.includes(`::notice title=${RELAY_AUDIENCE}::`), code, `${workflowPath}:identity-step-content`);
   const before = job.lines.slice(0, steps.at(-1)).join('\n');
   insist(!before.includes('ACTIONS_ID_TOKEN_REQUEST') && !before.includes(RELAY_AUDIENCE), code, `${workflowPath}:token-before-last-step`);
-  return { hostedJobId: job.id, hostedJobTimeoutMinutes: Number(timeout[0]), executed: executedScripts(job.lines, workflowPath) };
+  return { hostedJobId: job.id, hostedJobTimeoutMinutes: Number(timeout[0]), executed: executedScripts(job.lines, workflowPath),
+    localActions: localActions(job.lines, workflowPath) };
+}
+
+// Local actions the hosted job uses (`uses: ./<dir>`, PR-A re-review). The builder requires every file of each
+// one to be pinned in the role closure, so the registry covers the whole action and not a hand-listed part of it.
+const LOCAL_ACTION = /^[A-Za-z0-9_.][A-Za-z0-9_./-]*$/;
+export function localActions(jobLines, workflowPath) {
+  const code = 'RELAY_REGISTRY_WORKFLOW_REFUSED', found = [];
+  for (const line of jobLines) {
+    const m = /^\s+(?:-\s+)?uses:\s*(.*?)\s*$/.exec(line);
+    if (!m) continue;
+    const value = m[1].replace(/\s+#.*$/, '').replace(/^(['"])(.*)\1$/, '$2');
+    if (!value.startsWith('.')) continue;
+    const dir = value.startsWith('./') ? value.slice(2).replace(/\/+$/, '') : '';
+    insist(dir !== '' && LOCAL_ACTION.test(dir) && dir.split('/').every(part => part && part !== '.' && part !== '..'), code, `${workflowPath}:local-action-path`);
+    found.push(dir);
+  }
+  return [...new Set(found)].sort();
 }
 
 // Repository scripts the hosted job runs, read from its `run:` steps (PR-A review BLOCKER). Every Python
@@ -245,7 +272,7 @@ export function buildRegistry({ spec, reader, commit: rev, domain = 'production'
       }
     }
     const workflow = closure.find(item => item.path === entry.workflowPath);
-    const { executed, ...job } = scanWorkflow(workflow.bytes, entry);
+    const { executed, localActions: actions, ...job } = scanWorkflow(workflow.bytes, entry);
     // Every executed repository script is pinned (closure) and its directory is a forbidden change prefix of
     // the role (or a global one, like .github/), so no PR that touches it or its neighbours is ever relayed.
     for (const script of executed) {
@@ -253,6 +280,19 @@ export function buildRegistry({ spec, reader, commit: rev, domain = 'production'
       const dir = script.includes('/') ? script.slice(0, script.lastIndexOf('/') + 1) : '';
       insist(dir !== '' && [...entry.forbiddenChangePrefixes, ...checked.forbiddenChangePrefixes].some(prefix => dir.startsWith(prefix)),
         'RELAY_REGISTRY_EXECUTED_SCRIPT_NOT_COVERED', script);
+    }
+    // Every file of every local action the hosted job uses is a regular file pinned in the closure, and the
+    // action directory is a forbidden change prefix, so no PR that touches the action is ever relayed.
+    for (const dir of actions) {
+      insist(reader.entry(commit, dir)?.type === 'tree', 'RELAY_REGISTRY_LOCAL_ACTION_MISSING', dir);
+      const files = reader.tree(commit, dir);
+      insist(files.some(file => file.path === `${dir}/action.yml` || file.path === `${dir}/action.yaml`), 'RELAY_REGISTRY_LOCAL_ACTION_MISSING', dir);
+      for (const file of files) {
+        insist(file.type === 'blob' && ['100644', '100755'].includes(file.mode), 'RELAY_REGISTRY_CLOSURE_NOT_REGULAR', file.path);
+        insist(entry.closure.includes(file.path), 'RELAY_REGISTRY_LOCAL_ACTION_NOT_PINNED', file.path);
+      }
+      insist([...entry.forbiddenChangePrefixes, ...checked.forbiddenChangePrefixes].some(prefix => `${dir}/`.startsWith(prefix)),
+        'RELAY_REGISTRY_LOCAL_ACTION_NOT_COVERED', dir);
     }
     const pins = closure.map(({ bytes, ...item }) => item);
     roles[role] = { checkName: entry.checkName, hostedCheckName: entry.hostedCheckName, workflowPath: entry.workflowPath,

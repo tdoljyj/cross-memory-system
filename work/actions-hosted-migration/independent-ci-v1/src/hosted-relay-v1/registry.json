@@ -39,6 +39,18 @@
           "sha256": "a41e32538ac28a3e28fc482f2e4d93d83223c9f0a10b02103cdea52c86c30106"
         },
         {
+          "blob": "a8288f8673630b28f9f69a010ba8614d3f537711",
+          "mode": "100644",
+          "path": ".github/actions/ci-temporary-storage/check-workflows.mjs",
+          "sha256": "a17026cbf180e4c85ce8fa29e5ab9862f8b4e96073088d4bbe4b30d0061e7a9f"
+        },
+        {
+          "blob": "91156e013eac9cb25238a0bd824ad8a19a53de41",
+          "mode": "100644",
+          "path": ".github/actions/ci-temporary-storage/coverage.json",
+          "sha256": "4e2ff60dc81dfa89888a880f10b7658c7b44751d649a100ee33755fd8c096c90"
+        },
+        {
           "blob": "dd162105b2800d31b9970d25575945a140a69d42",
           "mode": "100644",
           "path": ".github/actions/ci-temporary-storage/setup.mjs",
@@ -75,7 +87,7 @@
           "sha256": "433b24137a7d3430990b69e61c0b4ebcd9dad47d770c5df62d6e1fef28b7f7a9"
         }
       ],
-      "closureSha256": "10aa3a697cc5bfd28d9c76f23f8449a8adddfec3a25399a96a20ba7821761783",
+      "closureSha256": "3ae29296d484e8cdf00ec77c0ab520b55197843c8aeddb994981f664aef3617f",
       "forbiddenChangePrefixes": [
         "scripts/ci/"
       ],
@@ -104,6 +116,18 @@
           "sha256": "a41e32538ac28a3e28fc482f2e4d93d83223c9f0a10b02103cdea52c86c30106"
         },
         {
+          "blob": "a8288f8673630b28f9f69a010ba8614d3f537711",
+          "mode": "100644",
+          "path": ".github/actions/ci-temporary-storage/check-workflows.mjs",
+          "sha256": "a17026cbf180e4c85ce8fa29e5ab9862f8b4e96073088d4bbe4b30d0061e7a9f"
+        },
+        {
+          "blob": "91156e013eac9cb25238a0bd824ad8a19a53de41",
+          "mode": "100644",
+          "path": ".github/actions/ci-temporary-storage/coverage.json",
+          "sha256": "4e2ff60dc81dfa89888a880f10b7658c7b44751d649a100ee33755fd8c096c90"
+        },
+        {
           "blob": "dd162105b2800d31b9970d25575945a140a69d42",
           "mode": "100644",
           "path": ".github/actions/ci-temporary-storage/setup.mjs",
@@ -122,7 +146,7 @@
           "sha256": "981e7a2d7f52b5451f899c3c36f7db133a736dd714d829eab9141d29389ba0c5"
         }
       ],
-      "closureSha256": "1402cbd837a4da2335d74b27463475b34e2db0ac45d63704f82bceb9c9bdf65e",
+      "closureSha256": "f0abdfc1a38125fcb031a5692c643522237da1b25ed8ffba4fc3850d58e9f927",
       "forbiddenChangePrefixes": [],
       "hostedCheckName": "trivy-hosted-executor",
       "hostedJobId": "trivy-trusted-self-hosted",
@@ -142,5 +166,5 @@
   "runnerEnvironment": "github-hosted",
   "sourceCommit": "960133a7cb858f0f47245e6a08d10121437ab0d5",
   "sourceTree": "8b95c3fb2b71b2c08ec21b0e4a5c943bcce50d8a",
-  "specSha256": "563020122d693097851c2fc7a1536915b4d7e7674f62b72d23d6c4bb8dfe5d57"
+  "specSha256": "4b360ec93f6a53a5b2024b9e38d5cc70dab555b28147f20b9965dc46dc9b6e70"
 }

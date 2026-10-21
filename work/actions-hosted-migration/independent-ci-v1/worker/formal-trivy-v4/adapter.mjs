@@ -12,7 +12,7 @@ import { canonical, digest } from '../../src/proof.mjs';
 import { validateFormalAdmissionV2 } from '../../src/admission-facts-v2.mjs';
 import { prepareContainerWorkerJob } from '../../src/worker-v2.mjs';
 import { loadQualifiedPolicyV2 as loadQualifiedPolicy, protectedPath, qualificationDeadline } from '../qualification-v2.mjs';
-import { IMAGE, LIMITS, WORKFLOW_SHA256, requiredTrivyPlans } from '../required-trivy-v3/plans.mjs';
+import { IMAGE, LIMITS, WORKFLOW_SHA256S, requiredTrivyPlans } from '../required-trivy-v3/plans.mjs';
 import { actualDockerClient, NATIVE_IMAGE, runFixedScanner } from '../formal-trivy-v3/docker.mjs';
 import { createActualStorage, actualCachePort } from '../formal-trivy-v3/cache.mjs';
 
@@ -21,7 +21,7 @@ const JOB_TIMEOUT_MS = 25 * 60000; // Existing trusted trivy job ceiling.
 const PREFIX = 'work/actions-hosted-migration/independent-ci-v1/';
 const CLOSURE = ['worker/formal-trivy-v4/adapter.mjs', 'worker/formal-trivy-v3/docker.mjs', 'worker/formal-trivy-v3/cache.mjs',
   'worker/required-trivy-v3/plans.mjs', 'worker/required-trivy-v2/plans.mjs', 'worker/required-gitleaks/prepare.mjs', 'worker/verify-once/verify-worker.mjs',
-  'worker/qualification-v2.mjs', 'worker/qualification.mjs', 'src/worker-v2.mjs', 'src/worker.mjs', 'src/proof.mjs', 'src/job-v2.mjs', 'src/admission-facts-v2.mjs'];
+  'worker/trusted-workflows.mjs', 'worker/qualification-v2.mjs', 'worker/qualification.mjs', 'src/worker-v2.mjs', 'src/worker.mjs', 'src/proof.mjs', 'src/job-v2.mjs', 'src/admission-facts-v2.mjs'];
 const actualObservations = new WeakSet();
 const check = (ok, code) => { if (!ok) throw Object.assign(new Error(code), { code }); };
 const freeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
@@ -45,14 +45,15 @@ async function sourceBoundary(config, manifest) {
   }
   const workflowPins = role.sourceFiles.filter(pin => pin.path === '.github/workflows/trivy.yml');
   const workflow = path.join(config.trustedSourceDirectory, '.github/workflows/trivy.yml');
-  check(workflowPins.length === 1 && workflowPins[0].sha256 === WORKFLOW_SHA256, 'ORIGINAL_TRIVY_WORKFLOW_SOURCE_REQUIRED');
-  await protectedPath(workflow); check(await fileHash(workflow) === WORKFLOW_SHA256, 'ORIGINAL_TRIVY_WORKFLOW_DRIFT');
+  check(workflowPins.length === 1 && WORKFLOW_SHA256S.includes(workflowPins[0].sha256), 'ORIGINAL_TRIVY_WORKFLOW_SOURCE_REQUIRED');
+  await protectedPath(workflow); check(await fileHash(workflow) === workflowPins[0].sha256, 'ORIGINAL_TRIVY_WORKFLOW_DRIFT');
   check(typeof accepted.cacheRoot === 'string' && /^\/[A-Za-z0-9_./-]+$/.test(accepted.cacheRoot) && path.posix.normalize(accepted.cacheRoot) === accepted.cacheRoot
     && accepted.cacheRoot !== '/' && ![config.workspaceRoot, config.runsRoot, config.trustedSourceDirectory].some(root => root === accepted.cacheRoot
       || root.startsWith(accepted.cacheRoot + '/') || accepted.cacheRoot.startsWith(root + '/'))
     && ![config.signingKeyFile, config.qualificationFile, config.publicKeyFile, config.sourceManifestFile].some(file => file.startsWith(accepted.cacheRoot + '/')),
   'CACHE_CONTROL_OR_PR_OVERLAP');
-  await protectedPath(accepted.cacheRoot, { directory: true }); return freeze(structuredClone(accepted));
+  await protectedPath(accepted.cacheRoot, { directory: true });
+  return freeze({ accepted: structuredClone(accepted), workflowSha256: workflowPins[0].sha256 });
 }
 
 // No PR script executes while producing this immutable tree. The prior worker
@@ -83,12 +84,12 @@ async function removeSnapshot(run, snapshot) {
 
 // The shared fixture path exercises real argv/readback algorithms with mocked
 // Docker. It is deliberately not the installed qualification or signing path.
-async function executeScanners({ job, preparedRequest, snapshotDirectory, inputInventory, cache, checksPin, docker,
+async function executeScanners({ job, preparedRequest, snapshotDirectory, inputInventory, cache, checksPin, workflowSha256, docker,
   dockerRootDirectory, deadline, signal, admissionPort, fixture, context, generation = null }) {
   const scans = [], pre = validateAdmission(job, await admissionPort(job), Date.now(), { batchClaim: generation });
   check(Date.now() < deadline && !signal?.aborted, 'AUTHORITY_EXPIRED');
   const plan = requiredTrivyPlans({ job, preparedRequest, snapshotDirectory, inputInventory, database: cache.database,
-    dbDecision: cache.dbDecision, checksBundle: cache.checksBundle, checksPin, workflowSha256: WORKFLOW_SHA256, sourceManifestSha256: job.sourceManifestSha256 });
+    dbDecision: cache.dbDecision, checksBundle: cache.checksBundle, checksPin, workflowSha256, sourceManifestSha256: job.sourceManifestSha256 });
   for (const scan of plan.scanners) {
     validateAdmission(job, await admissionPort(job), Date.now(), { batchClaim: generation }); check(Date.now() < deadline && !signal?.aborted, 'AUTHORITY_EXPIRED_BEFORE_SCAN');
     const result = await runFixedScanner({ scan, docker, dockerRootDirectory, deadline: Math.min(deadline, Date.now() + LIMITS.timeoutMs), signal }); scans.push(result);
@@ -107,10 +108,10 @@ async function executeScanners({ job, preparedRequest, snapshotDirectory, inputI
     cleanup: { containersRemoved: true, wholeContainerTreesStopped: true }, evidenceClass: 'unsigned-observation-requires-protected-result-issuer',
     formalEligible: false, checksWritten: false, qualificationIssued: false, publicationAuthorized: false }), formalEligible: false, checksWritten: false };
 }
-export function createFixtureTrivyAdapter({ docker, cache, checksPin, admissionPort, preparedRequest, snapshotDirectory, inputInventory }) {
+export function createFixtureTrivyAdapter({ docker, cache, checksPin, admissionPort, preparedRequest, snapshotDirectory, inputInventory, workflowSha256 = WORKFLOW_SHA256S[0] }) {
   return Object.freeze({ fixture: true, async execute(job, { signal } = {}) {
     try { job = freeze(structuredClone(validateRequiredJob(job))); check(cache?.fixture === true, 'FIXTURE_CACHE_REQUIRED');
-      return await executeScanners({ job, preparedRequest, snapshotDirectory, inputInventory, cache, checksPin, docker, dockerRootDirectory: '/var/lib/docker',
+      return await executeScanners({ job, preparedRequest, snapshotDirectory, inputInventory, cache, checksPin, workflowSha256, docker, dockerRootDirectory: '/var/lib/docker',
         deadline: Date.now() + 60000, signal, admissionPort, fixture: true, context: { runtimeIdentity: 'fixture', hostAcceptanceRef: null, sourceAcceptanceRef: null } });
     } catch (error) { return { status: 'UNCERTAIN', reason: safeReason(error), fixture: true, formalEligible: false, checksWritten: false, automaticRetryAllowed: false }; }
   } });
@@ -129,7 +130,7 @@ export function createFormalTrivyAdapter({ admissionPort } = {}) {
       check(config.executionMode === 'scanner' && config.image === IMAGE && config.sourceManifestSha256 === job.sourceManifestSha256
         && config.dockerRootDirectory === '/var/lib/docker'
         && config.memoryBytes === LIMITS.memoryBytes && config.cpus === LIMITS.cpus && config.pids === LIMITS.pids, 'QUALIFIED_JOB_CONTEXT_MISMATCH');
-      const accepted = await sourceBoundary(config, JSON.parse(sourceManifestBytes));
+      const { accepted, workflowSha256 } = await sourceBoundary(config, JSON.parse(sourceManifestBytes));
       const before = validateAdmission(job, await admissionPort(job)), generation = before.batchClaimBound;
       const deadline = Math.min(Date.parse(before.claimExpiresAt), qualificationDeadline(qualification.payload), Date.now() + JOB_TIMEOUT_MS);
       check(deadline > Date.now() && !signal?.aborted, 'CURRENT_AUTHORITY_EXPIRED');
@@ -148,7 +149,7 @@ export function createFormalTrivyAdapter({ admissionPort } = {}) {
         if (cache.status !== 'UNCERTAIN') { await removeSnapshot(run, snapshot); snapshotReady = false; }
         return { status: cache.status, reason: cache.reason, cache, automaticRetryAllowed: false, checksWritten: false, formalEligible: false };
       }
-      const result = await executeScanners({ job, preparedRequest: prepared, snapshotDirectory: snapshot, inputInventory, cache, checksPin: accepted.checksPin,
+      const result = await executeScanners({ job, preparedRequest: prepared, snapshotDirectory: snapshot, inputInventory, cache, checksPin: accepted.checksPin, workflowSha256,
         docker, dockerRootDirectory: config.dockerRootDirectory, deadline, signal, admissionPort, fixture: false, context: config, generation });
       if (result.status !== 'UNCERTAIN') { await removeSnapshot(run, snapshot); snapshotReady = false; }
       if (result.observation) {

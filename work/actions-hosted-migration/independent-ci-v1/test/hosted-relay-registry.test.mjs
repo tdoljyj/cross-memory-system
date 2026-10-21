@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildRegistry, gitBlobSha1, gitObjectReader, main, scanWorkflow, serializeRegistry } from '../src/hosted-relay-v1/build-registry.mjs';
 import { registryDigestOf, validateRegistry, validateSpec } from '../src/hosted-relay-v1/registry.mjs';
+import { digest } from '../src/proof.mjs';
 import { B, REPO_FILES, SPEC, fixtureRegistry, memoryReader } from './fixtures/hosted-relay/world.mjs';
 
 const clone = value => structuredClone(value);
@@ -150,7 +151,7 @@ test('the workflow scan refuses a commit whose hosted job could mint an identity
   // Flow-style job permissions are read the same way.
   const flow = workflowWith('    permissions:\n      contents: read\n      id-token: write\n', '    permissions: {contents: read, id-token: write}\n');
   assert.deepEqual(scanWorkflow(Buffer.from(flow[GITLEAKS]), SPEC.roles.gitleaks), { hostedJobId: 'gitleaks-trusted-self-hosted', hostedJobTimeoutMinutes: 25,
-    executed: ['scripts/ci/reviewed_gitleaks.py'] });
+    executed: ['scripts/ci/reviewed_gitleaks.py'], localActions: ['.github/actions/ci-temporary-storage'] });
   // A literal hosted name (as the never-relayed placement job uses) is read as well.
   const literal = workflowWith(HOSTED_LINE, '    name: gitleaks-hosted-executor\n');
   assert.equal(scanWorkflow(Buffer.from(literal[GITLEAKS]), SPEC.roles.gitleaks).hostedJobId, 'gitleaks-trusted-self-hosted');
@@ -200,7 +201,50 @@ test('the committed production registry validates and rebuilds byte-identically 
   assert.equal(bytes, serializeRegistry(JSON.parse(bytes)));
   const present = GIT && spawnSync(GIT, ['-C', ROOT, 'cat-file', '-e', `${registry.sourceCommit}^{commit}`], { windowsHide: true }).status === 0;
   if (!present) { t.skip(`source commit ${registry.sourceCommit} not in the local object store`); return; }
-  assert.equal(serializeRegistry(buildRegistry({ spec: SPEC, reader: gitObjectReader(ROOT, { git: GIT }), commit: registry.sourceCommit })), bytes);
+  const rebuilt = buildRegistry({ spec: SPEC, reader: gitObjectReader(ROOT, { git: GIT }), commit: registry.sourceCommit });
+  if (registry.specSha256 !== digest(validateSpec(clone(SPEC)))) {
+    // Built from an older spec (before every file of a local action had to be pinned): it still validates and
+    // the relay keeps working; the same PR-B commit rebuilds with the current spec, adding only closure pins.
+    t.diagnostic('the committed registry predates the current spec; rebuild it from the frozen PR-B commit');
+    for (const [role, entry] of Object.entries(rebuilt.roles)) {
+      const old = registry.roles[role], paths = new Set(old.closure.map(item => item.path));
+      assert.deepEqual(entry.closure.filter(item => paths.has(item.path)), old.closure, role);
+      assert.ok(entry.closure.filter(item => !paths.has(item.path)).every(item => item.path.startsWith('.github/actions/')), role);
+      assert.equal(entry.workflowBlob, old.workflowBlob);
+    }
+    return;
+  }
+  assert.equal(serializeRegistry(rebuilt), bytes);
+});
+
+// PR-A re-review: a local action the hosted job uses (`uses: ./<dir>`) is pinned whole, never hand-listed in part.
+test('the builder pins every file of every local action of the hosted job, regular and covered, or refuses', () => {
+  const ACTION = '.github/actions/ci-temporary-storage';
+  const built = build();
+  for (const role of ['gitleaks', 'trivy']) {
+    const pinned = built.roles[role].closure.map(item => item.path).filter(file => file.startsWith(`${ACTION}/`));
+    assert.deepEqual(pinned, Object.keys(REPO_FILES).filter(file => file.startsWith(`${ACTION}/`)).sort(), role);
+  }
+  // A file of the action that the spec does not pin (added to the action, or dropped from the spec).
+  refused(() => build({ ...REPO_FILES, [`${ACTION}/extra.mjs`]: 'export {};\n' }), 'RELAY_REGISTRY_LOCAL_ACTION_NOT_PINNED', 'unpinned new file');
+  const narrowed = clone(SPEC); narrowed.roles.trivy.closure = narrowed.roles.trivy.closure.filter(file => file !== `${ACTION}/coverage.json`);
+  refused(() => build(REPO_FILES, narrowed), 'RELAY_REGISTRY_LOCAL_ACTION_NOT_PINNED', 'file dropped from the spec');
+  // A symbolic link or a submodule inside the action is never a pinned regular file.
+  refused(() => build(REPO_FILES, SPEC, { [`${ACTION}/setup.mjs`]: '120000' }), 'RELAY_REGISTRY_CLOSURE_NOT_REGULAR', 'symlink');
+  const USES = `        uses: ./${ACTION}\n`;
+  const usesOther = (dir, extra = {}) => ({ ...workflowWith(USES, `        uses: ./${dir}\n`), ...extra });
+  // An action that is not there, or has no action.yml, is refused.
+  refused(() => build(usesOther('.github/actions/missing')), 'RELAY_REGISTRY_LOCAL_ACTION_MISSING', 'missing action');
+  refused(() => build(usesOther('.github/actions/noaction', { '.github/actions/noaction/run.sh': 'true\n' })), 'RELAY_REGISTRY_LOCAL_ACTION_MISSING', 'no action.yml');
+  // A local action outside every forbidden change prefix could be changed by the very PR that is relayed.
+  const outside = clone(SPEC); outside.roles.gitleaks.closure = [...outside.roles.gitleaks.closure, 'tools/act/action.yml'].sort();
+  refused(() => build(usesOther('tools/act', { 'tools/act/action.yml': 'runs: {using: composite, steps: []}\n' }), outside), 'RELAY_REGISTRY_LOCAL_ACTION_NOT_COVERED', 'not covered');
+  // Escaping or ambiguous local paths are refused by the scan.
+  for (const bad of ['./.github/actions/../workflows', './', '.github/actions/x', './.github//actions']) {
+    refused(() => build(workflowWith(USES, `        uses: ${bad}\n`)), 'RELAY_REGISTRY_WORKFLOW_REFUSED', bad);
+  }
+  // Quoted and commented forms are the same local action.
+  assert.deepEqual(scanWorkflow(Buffer.from(workflowWith(USES, `        uses: './${ACTION}/' # pinned whole\n`)[GITLEAKS]), SPEC.roles.gitleaks).localActions, [ACTION]);
 });
 
 // PR-A review BLOCKER: the hosted gitleaks job ran `python3 scripts/ci/reviewed_gitleaks.py` from the PR checkout

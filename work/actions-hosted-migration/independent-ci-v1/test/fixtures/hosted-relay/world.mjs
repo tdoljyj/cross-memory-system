@@ -72,6 +72,12 @@ export function memoryReader(files, { commit = B, modes = {} } = {}) {
       if (dirs.has(file)) return { mode: '040000', type: 'tree', sha: dirs.get(file) };
       return null;
     },
+    tree(_commit, dir) {
+      return [...map.keys()].filter(file => file.startsWith(`${dir}/`)).sort().map(file => {
+        const mode = modes[file] ?? '100644';
+        return { path: file, mode, type: mode === '160000' ? 'commit' : 'blob', sha: gitBlobSha1(map.get(file)) };
+      });
+    },
     blob(sha) { return blobs.get(sha); },
   });
 }

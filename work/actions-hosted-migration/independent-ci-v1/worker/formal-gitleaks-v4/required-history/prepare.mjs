@@ -9,14 +9,26 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { validateJobV2 as validateJob, subjectOfV2 as subjectOf } from '../../../src/job-v2.mjs';
 import { canonical, digest } from '../../../src/proof.mjs';
+import { TRUSTED_WORKFLOW_PATHS, trustedWorkflowSha256s } from '../../trusted-workflows.mjs';
 
 export const IMAGE = 'ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f';
 export const SCAN_ARGS = Object.freeze(['git', '/repo', '--config', '/repo/.gitleaks.toml', '--gitleaks-ignore-path', '/reviewed.ignore', '--redact', '--exit-code', '1']);
 export const SOURCE_PINS = Object.freeze({
   'scripts/ci/reviewed_gitleaks.py': '433b24137a7d3430990b69e61c0b4ebcd9dad47d770c5df62d6e1fef28b7f7a9',
   '.gitleaks.toml': 'cf631812810d997f42496af561f44930b51087737f146c4a7541c5dbc0a994cd',
-  '.github/workflows/gitleaks.yml': '168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579',
 });
+// The hosted workflow is pinned as an exact accepted set, never a pattern, taken from the one table
+// (worker/trusted-workflows.mjs: main before PR-B and the frozen PR-B bytes). The Source manifest declares
+// exactly one of them and the trusted checkout must hold exactly that one, so the same installed code
+// accepts a Source installed from either side of PR-B. Helper and config stay single exact pins.
+export const WORKFLOW_PATH = TRUSTED_WORKFLOW_PATHS.gitleaks;
+export const WORKFLOW_SHA256S = trustedWorkflowSha256s(WORKFLOW_PATH);
+// The role's declared workflow pin; refused unless it is declared once and is an accepted value.
+export function acceptedWorkflowSha256(role) {
+  const declared = Array.isArray(role?.sourceFiles) ? role.sourceFiles.filter(pin => pin?.path === WORKFLOW_PATH) : [];
+  check(declared.length === 1 && WORKFLOW_SHA256S.includes(declared[0].sha256), 'TRUSTED_REVIEW_SOURCE_PIN_REQUIRED');
+  return declared[0].sha256;
+}
 // The pinned trusted helper (scripts/ci/reviewed_gitleaks.py parse_records and
 // _ensure_reviewed_commits) reads its reviewed records from the pinned
 // .gitleaks.toml "# clued-reviewed-finding: {json}" lines and requires the
@@ -168,6 +180,8 @@ export async function prepareRequiredHistory({ job, sourceManifestBytes, expecte
     const file = path.join(source, ...filename.split('/')); await noLinks(file);
     check(await fileHash(file) === hash, 'TRUSTED_REVIEW_SOURCE_CHANGED');
   }
+  const workflowSha256 = acceptedWorkflowSha256(role), workflowFile = path.join(source, ...WORKFLOW_PATH.split('/'));
+  await noLinks(workflowFile); check(await fileHash(workflowFile) === workflowSha256, 'TRUSTED_REVIEW_SOURCE_CHANGED');
   // One read: these exact pinned bytes are both parsed and copied to the scanner input.
   const configBytes = await fsp.readFile(path.join(source, '.gitleaks.toml'));
   check(createHashForBytes().update(configBytes).digest('hex') === SOURCE_PINS['.gitleaks.toml'], 'TRUSTED_REVIEW_SOURCE_CHANGED');
@@ -225,7 +239,7 @@ export async function prepareRequiredHistory({ job, sourceManifestBytes, expecte
     reachableObjectCount: objects.length, reachableObjectsSha256: digest(objects), packedHistorySha256: packed.sha256,
     packedHistoryBytes: packed.bytes, repository, control, safeGitConfig, trustedHelper: path.join(source, 'scripts/ci/reviewed_gitleaks.py'),
     reviewedIgnore: path.join(control, 'reviewed.ignore'), helperSha256: SOURCE_PINS['scripts/ci/reviewed_gitleaks.py'],
-    configSha256: SOURCE_PINS['.gitleaks.toml'], workflowSha256: SOURCE_PINS['.github/workflows/gitleaks.yml'],
+    configSha256: SOURCE_PINS['.gitleaks.toml'], workflowSha256,
     sourceCandidateOnly: true, requiredSelfTestComplete: false, requiredScanComplete: false, formalEligible: false };
   await writeOnce(path.join(outputDirectory, 'input.json'), canonical(prepared)); await seal(repository);
   return Object.freeze(prepared);

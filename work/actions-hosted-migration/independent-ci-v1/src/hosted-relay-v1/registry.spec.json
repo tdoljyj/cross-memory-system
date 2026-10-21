@@ -30,6 +30,8 @@
       "closure": [
         ".gitattributes",
         ".github/actions/ci-temporary-storage/action.yml",
+        ".github/actions/ci-temporary-storage/check-workflows.mjs",
+        ".github/actions/ci-temporary-storage/coverage.json",
         ".github/actions/ci-temporary-storage/setup.mjs",
         ".github/actions/ci-temporary-storage/setup.py",
         ".github/workflows/gitleaks.yml",
@@ -50,6 +52,8 @@
       "closure": [
         ".gitattributes",
         ".github/actions/ci-temporary-storage/action.yml",
+        ".github/actions/ci-temporary-storage/check-workflows.mjs",
+        ".github/actions/ci-temporary-storage/coverage.json",
         ".github/actions/ci-temporary-storage/setup.mjs",
         ".github/actions/ci-temporary-storage/setup.py",
         ".github/workflows/trivy.yml"

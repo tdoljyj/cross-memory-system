@@ -8,7 +8,7 @@
 // E9 (fresh Native admission) and E10 (plan and K(head, role)) are checked by
 // the publisher, after this function, immediately before the write.
 import { digest } from '../proof.mjs';
-import { HOSTED_APP_ID, isValidatedRegistry, registryDigestOf, relayFail } from './registry.mjs';
+import { HOSTED_APP_ID, isValidatedRegistry, matchesForbiddenChangeGlob, registryDigestOf, relayFail } from './registry.mjs';
 import { decodeJwtUnverified, MAX_TOKEN_LENGTH } from './oidc.mjs';
 
 export const FACTS_CONTRACT = 'clued.independent-ci.hosted-relay-facts/1';
@@ -68,7 +68,7 @@ function eligibility(registry, entry, facts) {
   for (const file of changed.paths) {
     if (typeof file !== 'string') return 'E3_FILES_INCOMPLETE';
     if (registry.forbiddenChangePrefixes.some(prefix => file.startsWith(prefix))) return 'E3_CI_PATH_CHANGED';
-    if (registry.forbiddenChangePaths.includes(file)) return 'E3_PROTECTED_PATH_CHANGED';
+    if (registry.forbiddenChangePaths.includes(file) || matchesForbiddenChangeGlob(file)) return 'E3_PROTECTED_PATH_CHANGED';
     if (closurePaths.has(file)) return 'E3_CLOSURE_PATH_CHANGED';
     // Added, modified, removed or renamed (both sides are in the changed paths) under a directory the hosted job
     // executes from: a shadowing module could change the scan's inputs (PR-A review BLOCKER).
@@ -147,7 +147,11 @@ export function attestRole({ registry, role, facts, verification = null, mode = 
   const listed = facts.hostedRuns?.[role];
   if (!listed || listed.complete !== true || !Array.isArray(listed.checks)) return out('ATTESTATION_FAILED', 'E5_CHECK_SET_INCOMPLETE');
   const billing = facts.billing?.refused === true;
-  const runs = listed.checks.filter(run => run?.appId === HOSTED_APP_ID && run.name === entry.hostedCheckName && run.headSha === facts.headSha);
+  // Only GitHub Actions (app 15368) runs the hosted job. A run of the hosted job name on this head from any other
+  // app is refused outright (the role goes local), never skipped in favour of an Actions run.
+  const named = listed.checks.filter(run => run?.name === entry.hostedCheckName && run.headSha === facts.headSha);
+  if (named.some(run => run.appId !== HOSTED_APP_ID)) return out('ATTESTATION_FAILED', 'E5_FOREIGN_APP_RUN');
+  const runs = named;
   if (runs.length === 0) return billing ? out('BILLING_REFUSED', 'E5_BILLING_REFUSED') : out('ABSENT', 'E5_NO_HOSTED_RUN');
   const run = runs.reduce((a, b) => (b.id > a.id ? b : a));
   if (!Number.isSafeInteger(run.id) || run.id < 1) return out('ATTESTATION_FAILED', 'E5_CHECK_RUN_INVALID');
