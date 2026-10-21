@@ -746,11 +746,12 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 
 ### 13.1 已运行（离线，没碰主机）
 
-v0.7 补充（2026-10-21，PR-B 前后的工作流字节，§7.7）：
+v0.7 补充（2026-10-21，PR-B 前后的工作流字节 §7.7，转发复审 MINOR §7.5）：
 
-- Source v2：`node --test test/*.test.mjs worker/image-identity.test.mjs` **153 通过 + 1 跳过**（新增 `trusted-workflow-pins.test.mjs` 6 个，`formal-gitleaks-v3-required-history.test.mjs` 1 个，`resident-v2-bridge.test.mjs` 1 个）；Python **6/6**。
+- Source v2：`node --test test/*.test.mjs worker/image-identity.test.mjs` **156 通过 + 1 跳过**（新增 `trusted-workflow-pins.test.mjs` 9 个；`formal-gitleaks-v3-required-history.test.mjs`、`resident-v2-bridge.test.mjs`、`hosted-relay-registry.test.mjs` 各 1 个；`hosted-relay-attest.test.mjs` 的 E3、E5 用例加了 `**/.gitattributes` 和其他应用的 run）；Python **6/6**。
 - 常驻层：`node --test test/*.test.mjs` **107/107**；Python **23/23**；`node drill/offline-drill.mjs` **35/35**。
 - `node --test scripts/ci/clued-work-admission.test.mjs` **98/98**。
+- 临时分支：在结果上合入 PR-B `960133a7`，上面几组的数目完全一样。`scripts/ci` 全部测试：node 801 通过、29 失败，Python 78 个里 2 个出错；这 31 个在 main（`8710e92c`）上同样失败（main 上 node 777 通过、32 失败，Python 74 个里 2 个失败、2 个出错），没有新增失败，PR-B 还修好了 main 上的 5 个。
 
 v0.7（2026-10-21，转发集成之后）：
 
