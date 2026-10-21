@@ -475,13 +475,13 @@ const BOOTSTRAP_ORDINARY_SOURCES=Object.freeze([
   {
     "file": ".github/workflows/trivy.yml",
     "predecessor_blob": "f7f8d075d1a0f314a7c5eb295e459599288d538c",
-    "candidate_blob": "1d2ab2751ffb14be32347d13810796d0d8ddc7a8",
-    "candidate_sha256": "981e7a2d7f52b5451f899c3c36f7db133a736dd714d829eab9141d29389ba0c5",
+    "candidate_blob": "b8e7df0a01ad261e066b9118266053b3e4cc8906",
+    "candidate_sha256": "024401176d53d4b434041225d8f52c86eac0622c00109d41830ebe911f5ab146",
     "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
     "roles": [
       {
         "job_id": "trivy-trusted-self-hosted",
-        "definition_sha256": "3149e3b628e966004ac3658c9ce9cdf26465ae39bdeed9377e883bcb18740019"
+        "definition_sha256": "b3a2242a8fa27b6b3e65dc56dd53d74438583fd400e9961ccab8a465ad2310c3"
       }
     ]
   },

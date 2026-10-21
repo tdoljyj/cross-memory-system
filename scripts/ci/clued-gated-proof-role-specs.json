@@ -2017,10 +2017,10 @@
             }
           }
         ],
-        "1d2ab2751ffb14be32347d13810796d0d8ddc7a8": [
+        "b8e7df0a01ad261e066b9118266053b3e4cc8906": [
           {
             "job_id": "trivy-trusted-self-hosted",
-            "definition_sha256": "3149e3b628e966004ac3658c9ce9cdf26465ae39bdeed9377e883bcb18740019",
+            "definition_sha256": "b3a2242a8fa27b6b3e65dc56dd53d74438583fd400e9961ccab8a465ad2310c3",
             "definition": {
               "needs": "admission-gate",
               "name": "${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'trivy-hosted-executor' || 'trivy-hosted-executor-skipped' }}",
@@ -2068,8 +2068,16 @@
                   "run": "docker run --rm -v \"$PWD:/repo\" -v \"$TRIVY_CACHE_DIR:/root/.cache/trivy\" \\\n  ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n  fs --scanners secret --exit-code 1 /repo\n"
                 },
                 {
+                  "name": "Prepare the pinned misconfiguration checks bundle",
+                  "env": {
+                    "TRIVY_IMAGE": "ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9",
+                    "CHECKS_DIGEST": "sha256:b0e12d009b01dcc8ca2ebbc199b9caf3922491978d21c17b61c1d7f6dc75220b"
+                  },
+                  "run": "set -eu\nchecks=\"$RUNNER_TEMP/clued-trivy-checks\"; empty=\"$RUNNER_TEMP/clued-trivy-empty\"\nmkdir \"$checks\" \"$empty\"\ndocker run --rm -v \"$checks:/cache\" -v \"$empty:/empty:ro\" \"$TRIVY_IMAGE\" \\\n  fs --cache-dir /cache --checks-bundle-repository \"ghcr.io/aquasecurity/trivy-checks@$CHECKS_DIGEST\" \\\n  --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /empty\npython3 -I -B -c 'import json,sys; m=json.load(open(sys.argv[1])); sys.exit(0 if m.get(\"Digest\")==sys.argv[2] and m.get(\"MajorVersion\")==2 and m.get(\"CustomBuild\") is not True else 1)' \\\n  \"$checks/policy/metadata.json\" \"$CHECKS_DIGEST\"\ntest -n \"$(find \"$checks/policy/content\" -name '*.rego' -print -quit)\"\n"
+                },
+                {
                   "name": "Misconfiguration (HIGH/CRITICAL)",
-                  "run": "docker run --rm -v \"$PWD:/repo\" -v \"$TRIVY_CACHE_DIR:/root/.cache/trivy\" \\\n  ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n  fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /repo\n"
+                  "run": "docker run --rm --network=none --tmpfs /scratch:rw,nosuid,nodev,noexec,size=536870912 \\\n  -v \"$PWD:/repo:ro\" -v \"$RUNNER_TEMP/clued-trivy-checks/policy:/scratch/policy:ro\" \\\n  ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n  fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --skip-check-update --scanners misconfig --severity HIGH,CRITICAL \\\n  --exit-code 1 --cache-dir /scratch --skip-version-check --disable-telemetry /repo\n"
                 },
                 {
                   "name": "Emit relay identity",
