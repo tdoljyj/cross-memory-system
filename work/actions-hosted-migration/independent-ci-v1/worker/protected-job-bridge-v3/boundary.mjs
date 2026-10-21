@@ -77,6 +77,7 @@ export const REQUIRED_SOURCE_PATHS=Object.freeze([
   'work/actions-hosted-migration/independent-ci-v1/worker/qualification.mjs',
   'work/actions-hosted-migration/independent-ci-v1/worker/required-gitleaks/prepare.mjs',
   'work/actions-hosted-migration/independent-ci-v1/worker/required-trivy-v2/plans.mjs',
+  'work/actions-hosted-migration/independent-ci-v1/worker/trusted-workflows.mjs',
   'work/actions-hosted-migration/independent-ci-v1/worker/verify-once/verify-worker.mjs',
 ]);
 const REFS=['sourceAcceptanceRef','hostQualificationRef','ownerAuthorizationRef','publisherQualificationRef','ciPrincipalQualificationRef','ownerPackageAcceptanceRef','installationReceiptRef'];

@@ -1,0 +1,316 @@
+// CluedCISwapBroker (DESIGN S1, §8.2). LocalSystem service, installed and pinned once by the Owner's
+// elevated install. It is the only principal that changes the runner service's configuration, and it
+// does exactly one thing: point the runner at the ONE installed generic helper (Source v2 S12), start it
+// once with (nonce, configSha256), wait for it to stop, and point it back at the original binary. It
+// never changes the account (always .\clued-control), start type, dependencies or DACL, never stops or
+// kills anything, and runs nothing that is not the allow-listed helper.
+//
+// Compiled at install together with the installed Source v2 files ResidentScmV2.cs (the reviewed v1
+// FixedScm checks: full stable snapshot, mutation mutex, binary-only change, one start, independent PID
+// observation) and ScmPidHandshakeV2.cs (the PID ACK event, owner SYSTEM).
+//
+// The resident executor (NT SERVICE\CluedCIResident) talks to it through two directories:
+//   broker\requests\<uuid>.json   writable by the resident SID only
+//   broker\responses\<uuid>.json  writable by the broker only (plus <uuid>.taken claim markers)
+// Every request is executed at most once, also across crashes and reboots: a request that predates this
+// broker process, or one whose claim marker exists without an answer, is answered and never executed.
+using System;
+using System.IO;
+using System.Security.Cryptography;
+using System.ServiceProcess;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Collections.Generic;
+using System.Web.Script.Serialization;
+
+public sealed class SwapBroker : ServiceBase
+{
+    const string RequestContract = "clued.independent-ci.swap-broker-request/2";
+    const string ResponseContract = "clued.independent-ci.swap-broker-response/2";
+    // Config /2 (review MINOR-3): no Owner SID; the mutex and runner-DACL managers are SYSTEM and Administrators only.
+    const string ConfigContract = "clued.independent-ci.swap-broker-config/2";
+    const int MaxRequestBytes = 4096;
+    // Review MAJOR-1: LocalSystem cannot be made unprivileged by DACLs (its SID keeps every SY grant), but its
+    // token privileges can be cut to these (`sc privs CluedCISwapBroker SeChangeNotifyPrivilege/SeCreateGlobalPrivilege`):
+    // no SeTcb, SeDebug, SeImpersonate, SeAssignPrimaryToken, SeBackup, SeRestore, SeTakeOwnership or SeLoadDriver.
+    // The broker only needs DACL-granted SCM access and its own files.
+    public static readonly string[] AllowedPrivileges = { "SeChangeNotifyPrivilege", "SeCreateGlobalPrivilege" };
+    // Stage caps (Source v2 resident-v2/layout.mjs STAGES_V2) + 180 s margin bound every deadline. Stage 9 is
+    // stage R, the hosted relay (free-minutes design S22): the same one generic helper runs it (the helper's
+    // own stage table maps 9 to the relay-publisher entry), so broker.json still pins exactly one helper.
+    static readonly long[] StageMilliseconds = { 900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000 };
+    static readonly Regex Hex32 = new Regex("^[0-9a-f]{32}$"), Hex64 = new Regex("^[0-9a-f]{64}$"), Uuid = new Regex("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$");
+    static readonly Regex Iso = new Regex(@"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,7})?Z$");
+    readonly string root, configSha;
+    Thread worker; volatile bool stopping; DateTime startedAt;
+
+    SwapBroker(string[] a)
+    {
+        ServiceName = "CluedCISwapBroker"; CanStop = true;
+        if (a.Length != 2 || !Hex64.IsMatch(a[1])) throw new ArgumentException("ROOT CONFIG_SHA256");
+        root = a[0]; configSha = a[1];
+    }
+
+    protected override void OnStart(string[] _)
+    {
+        var privileges = BrokerTokenPrivileges.Current();
+        WriteTokenRecord(Path.Combine(root, "broker", "token.json"), BrokerTokenPrivileges.Json(privileges, System.Diagnostics.Process.GetCurrentProcess().Id));
+        if (BrokerTokenPrivileges.Disallowed(privileges, AllowedPrivileges).Length > 0) throw new InvalidOperationException("BROKER_TOKEN_PRIVILEGES_NOT_MINIMAL");
+        startedAt = DateTime.UtcNow; worker = new Thread(Loop) { IsBackground = false }; worker.Start();
+    }
+
+    // Atomic replace of the small token record (the directory is writable by this service only).
+    static void WriteTokenRecord(string path, string json)
+    {
+        string tmp = path + ".tmp";
+        File.WriteAllText(tmp, json + "\n");
+        if (File.Exists(path)) File.Replace(tmp, path, null); else File.Move(tmp, path);
+    }
+
+    protected override void OnStop() { stopping = true; } // finishes the current swap first; never kills
+
+    sealed class BrokerConfig { public string OriginalBinary, StableDigest, HelperName, HelperSha256; }
+
+    static string Sha(byte[] b) { using (var h = SHA256.Create()) return BitConverter.ToString(h.ComputeHash(b)).Replace("-", "").ToLowerInvariant(); }
+    static string ShaFile(string path) { using (var s = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read)) using (var h = SHA256.Create()) return BitConverter.ToString(h.ComputeHash(s)).Replace("-", "").ToLowerInvariant(); }
+
+    // Admin-only config, pinned by hash on the broker's own command line (only Administrators can
+    // change the service configuration). Read and hashed from the same bytes.
+    BrokerConfig LoadConfig()
+    {
+        var bytes = File.ReadAllBytes(Path.Combine(root, "config", "broker.json"));
+        if (bytes.Length == 0 || bytes.Length > 16384 || Sha(bytes) != configSha) throw new BrokerRefusal("BROKER_CONFIG_CHANGED");
+        var v = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(Encoding.UTF8.GetString(bytes));
+        var helper = v != null && v.ContainsKey("helper") ? v["helper"] as Dictionary<string, object> : null;
+        if (v == null || v.Count != 4 || !v.ContainsKey("contract") || (v["contract"] as string) != ConfigContract || helper == null || helper.Count != 2) throw new BrokerRefusal("BROKER_CONFIG_CHANGED");
+        var c = new BrokerConfig { OriginalBinary = v.ContainsKey("originalBinary") ? v["originalBinary"] as string : null, StableDigest = v.ContainsKey("stableDigest") ? v["stableDigest"] as string : null,
+            HelperName = helper.ContainsKey("name") ? helper["name"] as string : null, HelperSha256 = helper.ContainsKey("sha256") ? helper["sha256"] as string : null };
+        if (c.OriginalBinary == null || c.StableDigest == null || !Hex64.IsMatch(c.StableDigest)
+            || c.HelperName != "controller-formal-generic-v2.exe" || c.HelperSha256 == null || !Hex64.IsMatch(c.HelperSha256)) throw new BrokerRefusal("BROKER_CONFIG_CHANGED");
+        return c;
+    }
+
+    string HelperBinary(BrokerConfig c) { return "\"" + Path.Combine(root, "helpers", c.HelperName) + "\""; }
+
+    void Loop()
+    {
+        var req = Path.Combine(root, "broker", "requests");
+        var res = Path.Combine(root, "broker", "responses");
+        while (!stopping)
+        {
+            RestoreStoppedHelper();
+            // Review MINOR-2: a transient enumeration failure (sharing violation, a vanished directory) never
+            // ends the worker thread; the next pass retries.
+            string[] files;
+            try { files = Directory.GetFiles(req, "*.json"); } catch (Exception) { Thread.Sleep(2000); continue; }
+            foreach (var file in files)
+            {
+              try
+              {
+                var id = Path.GetFileNameWithoutExtension(file);
+                var outFile = Path.Combine(res, id + ".json");
+                if (!Uuid.IsMatch(id) || File.Exists(outFile)) continue;
+                Dictionary<string, object> answer;
+                var taken = Path.Combine(res, id + ".taken");
+                if (File.Exists(taken)) answer = Refused(id, "BROKER_REQUEST_INTERRUPTED_NOT_REPEATED");
+                else if (File.GetCreationTimeUtc(file) < startedAt) answer = Refused(id, "BROKER_REQUEST_PREDATES_START");
+                else
+                {
+                    // Create-only, written through to disk, before any effect.
+                    using (var t = new FileStream(taken, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.WriteThrough)) { t.WriteByte(1); t.Flush(true); }
+                    try { answer = Handle(id, ReadBounded(file)); }
+                    catch (BrokerRefusal r) { answer = Refused(id, r.Code); }
+                    catch (Exception) { answer = Refused(id, "BROKER_UNCONFIRMED"); }
+                }
+                var b = Encoding.UTF8.GetBytes(new JavaScriptSerializer().Serialize(answer));
+                using (var f = new FileStream(outFile, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough)) { f.Write(b, 0, b.Length); f.Flush(true); }
+              }
+              catch (Exception) { /* this request is answered on a later pass, or stays visible to the resident as unanswered */ }
+            }
+            Thread.Sleep(500);
+        }
+    }
+
+    // Review MINOR-2: the size bound comes before the read; at most MaxRequestBytes + 1 bytes are ever read.
+    public static byte[] ReadBounded(string path)
+    {
+        using (var s = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.None))
+        {
+            if (s.Length <= 0 || s.Length > MaxRequestBytes) throw new BrokerRefusal("BROKER_REQUEST_SIZE");
+            var buffer = new byte[MaxRequestBytes + 1]; int total = 0, n;
+            while ((n = s.Read(buffer, total, buffer.Length - total)) > 0) { total += n; if (total > MaxRequestBytes) throw new BrokerRefusal("BROKER_REQUEST_SIZE"); }
+            var bytes = new byte[total]; Array.Copy(buffer, bytes, total); return bytes;
+        }
+    }
+
+    static Dictionary<string, object> Response(string id)
+    {
+        return new Dictionary<string, object> { { "contract", ResponseContract }, { "requestId", id }, { "ok", false }, { "code", null }, { "started", false }, { "startCallIssued", false },
+            { "helperPid", null }, { "stoppedInTime", false }, { "restored", false }, { "accountUnchanged", false }, { "stableBefore", false }, { "stableAfter", false }, { "configurationConflict", false } };
+    }
+    // A refusal before any effect: the runner was not touched; restored/stable mean "still original".
+    Dictionary<string, object> Refused(string id, string code)
+    {
+        var r = Response(id); r["code"] = code;
+        try { var c = LoadConfig(); bool original = OriginalStopped(c, false); r["restored"] = original; r["accountUnchanged"] = original; r["stableBefore"] = original; r["stableAfter"] = original; }
+        catch (Exception) { }
+        return r;
+    }
+
+    bool OriginalStopped(BrokerConfig c, bool alreadyInSession)
+    {
+        if (!alreadyInSession) ResidentScmV2.BeginSession(false);
+        try { return ResidentScmV2.Matches(ResidentScmV2.ReadSnapshot(), c.OriginalBinary, c.StableDigest, true); }
+        finally { if (!alreadyInSession) ResidentScmV2.EndSession(); }
+    }
+
+    // If the runner is STOPPED on the installed helper (a crash between stop and restore, or a helper
+    // that outlived its deadline and stopped later), put the original back. A running helper is never
+    // touched; nothing but the binary path is ever changed.
+    void RestoreStoppedHelper()
+    {
+        try
+        {
+            var c = LoadConfig(); var helper = HelperBinary(c);
+            ResidentScmV2.BeginSession(true);
+            try
+            {
+                var s = ResidentScmV2.ReadSnapshot();
+                if (ResidentScmV2.Matches(s, helper, c.StableDigest, true)) ResidentScmV2.SwitchOnlyBinary(helper, c.OriginalBinary, c.StableDigest);
+            }
+            finally { ResidentScmV2.EndSession(); }
+        }
+        catch (Exception) { /* busy mutex or not on the helper: reported through the next swap's before-check */ }
+    }
+
+    Dictionary<string, object> Handle(string id, byte[] bytes)
+    {
+        if (bytes.Length == 0 || bytes.Length > MaxRequestBytes) throw new BrokerRefusal("BROKER_REQUEST_SIZE");
+        Dictionary<string, object> v;
+        try { v = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(Encoding.UTF8.GetString(bytes)); } catch { throw new BrokerRefusal("BROKER_REQUEST_SHAPE"); }
+        if (v == null || v.Count != 5 || !(v.ContainsKey("contract") && v.ContainsKey("stage") && v.ContainsKey("nonce") && v.ContainsKey("deadline") && v.ContainsKey("configSha256"))
+            || (v["contract"] as string) != RequestContract) throw new BrokerRefusal("BROKER_REQUEST_SHAPE");
+        if (!(v["stage"] is int)) throw new BrokerRefusal("BROKER_REQUEST_FIELDS");
+        int stage = (int)v["stage"]; string nonce = v["nonce"] as string; string config = v["configSha256"] as string; string deadlineText = v["deadline"] as string;
+        if (stage < 1 || stage > StageMilliseconds.Length || nonce == null || !Hex32.IsMatch(nonce) || config == null || !Hex64.IsMatch(config) || deadlineText == null || !Iso.IsMatch(deadlineText)) throw new BrokerRefusal("BROKER_REQUEST_FIELDS");
+        DateTime deadline = DateTime.Parse(deadlineText, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal);
+        if (deadline > DateTime.UtcNow.AddMilliseconds(StageMilliseconds[stage - 1] + 180000)) throw new BrokerRefusal("BROKER_REQUEST_FIELDS");
+        if (deadline < DateTime.UtcNow.AddMinutes(2)) throw new BrokerRefusal("BROKER_REQUEST_EXPIRED");
+        var c = LoadConfig();
+        // The helper path is fixed, never taken from the request; its bytes must be the allow-listed ones.
+        var helperPath = Path.Combine(root, "helpers", c.HelperName);
+        if (ShaFile(helperPath) != c.HelperSha256) throw new BrokerRefusal("BROKER_HELPER_NOT_ALLOW_LISTED");
+        return Swap(id, c, nonce, config, deadline);
+    }
+
+    Dictionary<string, object> Swap(string id, BrokerConfig c, string nonce, string configSha256, DateTime deadline)
+    {
+        var r = Response(id); var helper = HelperBinary(c);
+        try { ResidentScmV2.BeginSession(true); }
+        // Another controller tool holds the mutation mutex: nothing was changed by this request, but the
+        // runner state is not known to this broker either (the resident re-reads it and HALTs).
+        catch (Exception) { r["code"] = "BROKER_BUSY"; return r; }
+        bool switched = false;
+        try
+        {
+            if (!ResidentScmV2.Matches(ResidentScmV2.ReadSnapshot(), c.OriginalBinary, c.StableDigest, true)) { r["code"] = "BROKER_RUNNER_NOT_ORIGINAL_STOPPED"; return r; }
+            r["stableBefore"] = true;
+            ResidentScmV2.SwitchOnlyBinary(c.OriginalBinary, helper, c.StableDigest); switched = true;
+            try { r["helperPid"] = (long)ResidentScmV2.StartOnce(helper, c.StableDigest, nonce, configSha256, new DateTimeOffset(deadline, TimeSpan.Zero)); r["started"] = true; }
+            catch (Exception) { r["code"] = "BROKER_PID_HANDSHAKE_UNCONFIRMED"; }
+            finally { r["startCallIssued"] = ResidentScmV2.StartCallIssued; if (ResidentScmV2.IndependentStartPid > 0) r["helperPid"] = (long)ResidentScmV2.IndependentStartPid; }
+            // Wait for the helper to stop by itself (it enforces its own deadline and drains its tree).
+            bool stopped = false;
+            while (DateTime.UtcNow < deadline) { if (ResidentScmV2.ReadStatus().State == 1) { stopped = true; break; } Thread.Sleep(1000); }
+            if (!stopped && ResidentScmV2.ReadStatus().State == 1) stopped = true;
+            r["stoppedInTime"] = stopped;
+            if (!stopped) { if (r["code"] == null) r["code"] = "BROKER_HELPER_NOT_STOPPED_IN_TIME"; return r; }
+            ResidentScmV2.SwitchOnlyBinary(helper, c.OriginalBinary, c.StableDigest); switched = false;
+            bool after = ResidentScmV2.Matches(ResidentScmV2.ReadSnapshot(), c.OriginalBinary, c.StableDigest, true);
+            r["restored"] = after; r["accountUnchanged"] = after; r["stableAfter"] = after;
+            if (!after && r["code"] == null) r["code"] = "BROKER_ORIGINAL_NOT_RESTORED";
+            if (r["code"] == null && (bool)r["started"]) r["ok"] = true;
+            return r;
+        }
+        catch (Exception)
+        {
+            if (r["code"] == null) r["code"] = switched ? "BROKER_ORIGINAL_NOT_RESTORED" : "BROKER_UNCONFIRMED";
+            return r;
+        }
+        finally
+        {
+            r["configurationConflict"] = ResidentScmV2.HasConflict;
+            if ((bool)r["configurationConflict"]) { r["ok"] = false; if (r["code"] == null) r["code"] = "BROKER_CONFIGURATION_CONFLICT"; }
+            ResidentScmV2.EndSession();
+        }
+    }
+
+    // "--stable-digest": install-time, read-only (see ResidentScmV2.InstallTimeStableDigest); the
+    // elevated install pins the printed digest into config\broker.json. Any other argv is the service.
+    public static void Main(string[] args)
+    {
+        if (args.Length == 1 && args[0] == "--stable-digest") { Console.Out.WriteLine(ResidentScmV2.InstallTimeStableDigest()); return; }
+        Run(new SwapBroker(args));
+    }
+}
+
+sealed class BrokerRefusal : Exception { public readonly string Code; public BrokerRefusal(string code) : base(code) { Code = code; } }
+
+// Review MAJOR-1: the effective privileges of this process token. The install sets the service's required
+// privileges (`sc privs`), so the SCM strips every other privilege; the host re-checks the real token at
+// start, refuses to run with anything else, and records what it has for verify and the install receipt.
+public static class BrokerTokenPrivileges
+{
+    [System.Runtime.InteropServices.DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(System.IntPtr process, uint access, out System.IntPtr token);
+    [System.Runtime.InteropServices.DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(System.IntPtr token, int cls, System.IntPtr info, int length, out int needed);
+    [System.Runtime.InteropServices.DllImport("advapi32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)] static extern bool LookupPrivilegeNameW(string system, ref long luid, System.Text.StringBuilder name, ref int length);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern System.IntPtr GetCurrentProcess();
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern bool CloseHandle(System.IntPtr h);
+
+    public static string[] Current()
+    {
+        System.IntPtr token;
+        if (!OpenProcessToken(GetCurrentProcess(), 8 /* TOKEN_QUERY */, out token)) throw new System.InvalidOperationException("TOKEN_QUERY_FAILED");
+        try
+        {
+            int needed; GetTokenInformation(token, 3 /* TokenPrivileges */, System.IntPtr.Zero, 0, out needed);
+            if (needed < 4 || needed > 65536) throw new System.InvalidOperationException("TOKEN_PRIVILEGES_SIZE");
+            System.IntPtr buffer = System.Runtime.InteropServices.Marshal.AllocHGlobal(needed);
+            try
+            {
+                if (!GetTokenInformation(token, 3, buffer, needed, out needed)) throw new System.InvalidOperationException("TOKEN_PRIVILEGES_QUERY_FAILED");
+                int count = System.Runtime.InteropServices.Marshal.ReadInt32(buffer);
+                if (count < 0 || 4 + count * 12 > needed) throw new System.InvalidOperationException("TOKEN_PRIVILEGES_SHAPE");
+                var names = new System.Collections.Generic.List<string>();
+                for (int i = 0; i < count; i++)
+                {
+                    long luid = System.Runtime.InteropServices.Marshal.ReadInt64(buffer, 4 + i * 12);
+                    var name = new System.Text.StringBuilder(128); int length = name.Capacity;
+                    if (!LookupPrivilegeNameW(null, ref luid, name, ref length)) throw new System.InvalidOperationException("TOKEN_PRIVILEGE_NAME_FAILED");
+                    names.Add(name.ToString());
+                }
+                names.Sort(System.StringComparer.Ordinal);
+                return names.ToArray();
+            }
+            finally { System.Runtime.InteropServices.Marshal.FreeHGlobal(buffer); }
+        }
+        finally { CloseHandle(token); }
+    }
+
+    // Pure: the privileges present that the allow-list does not name (sorted).
+    public static string[] Disallowed(string[] present, string[] allowed)
+    {
+        var extra = new System.Collections.Generic.List<string>();
+        foreach (var p in present) if (System.Array.IndexOf(allowed, p) < 0) extra.Add(p);
+        extra.Sort(System.StringComparer.Ordinal);
+        return extra.ToArray();
+    }
+
+    public static string Json(string[] privileges, int pid)
+    {
+        var parts = new string[privileges.Length];
+        for (int i = 0; i < privileges.Length; i++) parts[i] = "\"" + privileges[i] + "\"";
+        return "{\"contract\":\"clued.independent-ci.service-token-privileges/1\",\"pid\":" + pid + ",\"privileges\":[" + string.Join(",", parts) + "]}";
+    }
+}

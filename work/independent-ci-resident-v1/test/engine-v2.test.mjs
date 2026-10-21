@@ -1,0 +1,89 @@
+// The Windows engine against the Source v2 entry points (fixed argv, descriptor /2, refs gate, stage fact /2).
+// The Source entries are faked at the runner boundary; the real ones are tested in their own suites.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { WindowsEngine, DESCRIPTOR_CONTRACT, parseStageFact } from '../src/engine-windows.mjs';
+import { validatePolicy } from '../src/policy.mjs';
+import { tempRoot, rawPolicy, HEAD, BASE, SOURCE } from './helpers.mjs';
+
+const V2 = ['work', 'actions-hosted-migration', 'independent-ci-v1', 'src', 'resident-v2'];
+const KEY = 'a1'.repeat(32);
+const fact = (o = {}) => ({ contract: 'clued.independent-ci.resident-stage-fact/2', stage: 1, nonce: 'n'.repeat(32), manifest_sha256: 'f'.repeat(64),
+  state: 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION', failure_code: null, scm_start_call_issued: true, original_binary_restored: true,
+  complete_original_readback: true, configuration_conflict_detected: false, tree_cleanup_confirmed: true, tree_active_processes: 0, root_exit_confirmed: true,
+  native_receipt_sha256: 'e'.repeat(64), outcome: { status: 'SETTLED', reason: null, sideEffects: 1, mayHavePublished: true }, ...o });
+const SC_QC = 'BINARY_PATH_NAME   : "C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"\r\n        START_TYPE         : 3   DEMAND_START\r\n        SERVICE_START_NAME : .\\clued-control\r\n';
+const SC_Q = 'STATE              : 1  STOPPED\r\n        PID                : 0\r\n';
+
+async function engineFixture(t, { answers = {}, stdout = {} } = {}) {
+  const root = await tempRoot(t);
+  const sourceRoot = path.join(root, 'source', 'e'.repeat(64));
+  await fs.mkdir(path.join(sourceRoot, ...V2), { recursive: true });
+  for (const n of ['derive-batch.mjs', 'invoke-stage.mjs', 'archive-windows-spool.ps1']) await fs.writeFile(path.join(sourceRoot, ...V2, n), '// fixture');
+  const runs = [], sent = [];
+  const rows = [1, 2, 3, 4, 5, 6, 7, 8].map(n => ({ number: n, jobId: String(n).repeat(64).slice(0, 64), workManifestSha256: 'f'.repeat(64), directory: `stage-0${n}`, linuxWorker: [2, 4, 6].includes(n) }));
+  const run = async argv => {
+    runs.push(argv);
+    if (argv[0].endsWith('sc.exe')) return { code: 0, stdout: argv[1] === 'qc' ? SC_QC : SC_Q };
+    if (argv[1].endsWith('derive-batch.mjs')) {
+      const id = argv[argv.indexOf('--batch-id') + 1];
+      return { code: 0, stdout: JSON.stringify({ status: 'RESIDENT_BATCH_DERIVED', batchKey: KEY, batchId: id, packageSha256: 'c'.repeat(64), ciSourceManifestSha256: 'e'.repeat(64),
+        sourceCommit: 'd'.repeat(40), gitleaksTomlSha256: '9'.repeat(64), stages: rows }) };
+    }
+    if (argv[1].endsWith('invoke-stage.mjs')) return { code: 0, stdout: JSON.stringify(stdout[argv[argv.indexOf('--stage') + 1]] ?? fact()) };
+    throw new Error('unexpected argv ' + argv.join(' '));
+  };
+  const companionMailbox = {
+    async send(kind, fields) { sent.push([kind, fields]); return { kind, fields }; },
+    async await(req) { return Object.hasOwn(answers, req.kind) ? answers[req.kind] : { ok: true, code: null }; },
+  };
+  const engine = new WindowsEngine({ run, busy: () => false, companionMailbox, sleep: async () => {}, clock: () => Date.parse('2026-10-21T08:00:00Z'),
+    paths: { sourceRoot, workRoot: path.join(root, 'work'), outboxRoot: path.join(root, 'outbox'), nodeExe: 'C:\\resident\\runtime\\node.exe',
+      powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', scExe: 'C:\\Windows\\System32\\sc.exe' } });
+  return { root, engine, runs, sent };
+}
+const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 2 };
+const stages = validatePolicy(rawPolicy()).stages;
+
+test('derive passes the v2 subject (with createdAt) and writes the public descriptor /2', async t => {
+  const f = await engineFixture(t);
+  const batch = await f.engine.derive(subject, KEY);
+  const argv = f.runs[0];
+  assert.equal(argv[0], 'C:\\resident\\runtime\\node.exe');
+  const sent = JSON.parse(argv[argv.indexOf('--subject-json') + 1]);
+  assert.deepEqual(Object.keys(sent).sort(), ['attempt', 'baseSha', 'createdAt', 'headSha', 'pr', 'repo', 'sourceManifestSha256']);
+  const d = JSON.parse(await fs.readFile(path.join(f.root, 'outbox', batch.batchId, 'descriptor.json'), 'utf8'));
+  assert.equal(d.contract, DESCRIPTOR_CONTRACT);
+  assert.deepEqual([d.attempt, d.ciSourceManifestSha256, d.sourceCommit, d.gitleaksTomlSha256, d.linuxJobIds.length], [2, 'e'.repeat(64), 'd'.repeat(40), '9'.repeat(64), 3]);
+  assert.equal(d.createdAt, sent.createdAt);
+});
+
+test('stages run through node invoke-stage.mjs with fixed argv; the v2 fact is parsed', async t => {
+  const f = await engineFixture(t);
+  const batch = await f.engine.derive(subject, KEY);
+  const r = await f.engine.runStage(batch, stages[0]);
+  assert.equal(r.ok, true);
+  const argv = f.runs.find(a => a[1]?.endsWith('invoke-stage.mjs'));
+  assert.deepEqual(argv.slice(2), ['--batch-dir', batch.dir, '--stage', '1', '--work-manifest-sha256', 'f'.repeat(64), '--batch-key', KEY]);
+  assert.equal(parseStageFact(JSON.stringify(fact({ contract: 'clued.independent-ci.resident-stage-fact/9' })), 'f'.repeat(64)).code, 'STAGE_TERMINAL_UNCONFIRMED');
+  const failed = parseStageFact(JSON.stringify(fact({ state: 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED', failure_code: 'BATCH_CLAIM_CHANGED' })), 'f'.repeat(64));
+  assert.deepEqual([failed.ok, failed.code], [false, 'BATCH_CLAIM_CHANGED']);
+});
+
+test('stage 2 first proves no push since the bundle; a moved ref ends the stage cleanly before anything runs', async t => {
+  const f = await engineFixture(t, { answers: { 'check-refs': { ok: false, code: 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' } } });
+  const batch = await f.engine.derive(subject, KEY);
+  const r = await f.engine.runStage(batch, stages[1]);
+  assert.deepEqual([r.ok, r.code, r.proof.windowsTreeZero, r.proof.serviceOriginalStopped], [false, 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', true, true]);
+  assert.equal(f.runs.some(a => a[1]?.endsWith('invoke-stage.mjs')), false, 'no stage was invoked');
+  assert.equal(f.sent.some(([k]) => k === 'relay-stage'), false, 'no relay was started');
+  const g = await engineFixture(t, { answers: { 'check-refs': null } });
+  const r2 = await g.engine.runStage(await g.engine.derive(subject, KEY), stages[1]);
+  assert.equal(r2.code, 'REFS_GATE_UNCONFIRMED', 'no answer is a final refusal (never success, never an attempt-2 transient)');
+  const h = await engineFixture(t);
+  const r3 = await h.engine.runStage(await h.engine.derive(subject, KEY), stages[1]);
+  assert.equal(r3.ok, true);
+  assert.deepEqual(h.sent.map(([k]) => k), ['check-refs', 'relay-stage']);
+});
