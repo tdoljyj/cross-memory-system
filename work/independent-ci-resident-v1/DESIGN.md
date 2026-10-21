@@ -644,6 +644,9 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 - “只能新建”的投放目录（`inbox`、`requests`、`broker\requests`）：目录 ACE 只给新建文件，文件上的继承 ACE 只给读，另加一条 OWNER RIGHTS（`OW`）ACE，去掉文件所有者隐含的 WRITE_DAC，所以文件建好之后谁也改不了它的内容（创建它的那个句柄保留创建时要的权限，这条 NTFS 行为在 P2 确认）。离线测试逐条检查这些 ACE（`windows/test-resident-windows.ps1`）。
 - 安装记录在 `install\`，常驻 SID 只读，所以常驻账户篡改不了卸载时要用到的东西。
 - runner 服务**完全不修改**：安装和卸载都要求它的 SDDL 与安装时记录的一字不差。
+- 真机首装补的两条（2026-10-21，TURING）：
+  - `resident\` 根目录给 clued-control 一条只针对本目录的 `0x120080`（READ_CONTROL、SYNCHRONIZE、读属性），不继承。通用助手打开每个输入之前，会先以 READ_CONTROL 打开它的每一级父目录（`FormalPublicBoundaryV2.Parents`），之前根目录不给 clued-control 任何权限，助手在预检里以服务退出码 20 退出。安装计划已包含这一条（`Get-AclPlan ''`）。
+  - v1 的 `C:\ProgramData\CluedIndependentCI\state` 原来给 clued-control 一条 `(A;OICI;0x1301bf;;;clued-control)`，作用于目录本身。v2 助手只允许 clued-control 在 `state\v2` 以下有写权限（v1 允许整个 `state`），它打开 `state\v2` 的父目录 `state` 时，以 `UNTRUSTED_PUBLIC_MUTATION_RIGHT_REFUSED` 拒绝。真机上这条 ACE 已改为仅继承（`OICIIO`，子目录权限不变），另加一条只针对本目录的读和列目录（`0x1200a9`）。改之前，在提权环境下用真实的 `FormalPublicBoundaryV2` 对真实路径跑过一遍，唯一的拒绝就是这一条；改之后通过。代价是 v1 一次性工具不能再在 `state` 本身下新建条目，v1 的角色策略也在 2026-10-21 18:45Z 到期。新主机安装前要满足这条前提：clued-control 在 `state` 本身没有写、删除和改权限的权利。`migrate-acl.ps1` 和 `acl-model.json` 属于 Source 闭包，本次不改。
 
 ### 8.4 companion 计划任务
 
