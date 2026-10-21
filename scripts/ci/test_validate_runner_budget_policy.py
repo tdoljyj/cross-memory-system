@@ -305,6 +305,13 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
                             self.assertNotIn("fetch-depth", code)
                         if file == "trivy.yml":
                             self.assertIn("      - name: Refuse symlinks, submodules and other non-regular tree entries\n", block)
+                            # The installed checks generation by digest; the mutable tag never downloads.
+                            self.assertIn("CHECKS_DIGEST: sha256:b0e12d009b01dcc8ca2ebbc199b9caf3922491978d21c17b61c1d7f6dc75220b\n", block)
+                            self.assertIn('--checks-bundle-repository "ghcr.io/aquasecurity/trivy-checks@$CHECKS_DIGEST"', block)
+                            for line in block.splitlines():
+                                if "trivy-checks:2" in line and not line.lstrip().startswith("#"):
+                                    self.assertIn("--skip-check-update", line)
+                            self.assertIn("docker run --rm --network=none --tmpfs /scratch", block)
                     else:
                         self.assertEqual(names, {"admission-gate"})
                         self.assertNotIn("id-token", block)

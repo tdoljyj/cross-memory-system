@@ -168,11 +168,32 @@ jobs:
           docker run --rm -v "$PWD:/repo" -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" \
             ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
             fs --scanners secret --exit-code 1 /repo
+      # The local role's checks generation (required-trivy-v3/plans.mjs checksPreparationPlan and
+      # validateChecksBundle): the trivy-checks bundle by its installed digest, never the mutable
+      # trivy-checks:2 tag, prepared into a fresh cache-only directory with nothing of the checkout
+      # mounted; a different digest, major version or a custom build fails the job.
+      - name: Prepare the pinned misconfiguration checks bundle
+        env:
+          TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9
+          CHECKS_DIGEST: sha256:b0e12d009b01dcc8ca2ebbc199b9caf3922491978d21c17b61c1d7f6dc75220b
+        run: |
+          set -eu
+          checks="$RUNNER_TEMP/clued-trivy-checks"; empty="$RUNNER_TEMP/clued-trivy-empty"
+          mkdir "$checks" "$empty"
+          docker run --rm -v "$checks:/cache" -v "$empty:/empty:ro" "$TRIVY_IMAGE" \
+            fs --cache-dir /cache --checks-bundle-repository "ghcr.io/aquasecurity/trivy-checks@$CHECKS_DIGEST" \
+            --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /empty
+          python3 -I -B -c 'import json,sys; m=json.load(open(sys.argv[1])); sys.exit(0 if m.get("Digest")==sys.argv[2] and m.get("MajorVersion")==2 and m.get("CustomBuild") is not True else 1)' \
+            "$checks/policy/metadata.json" "$CHECKS_DIGEST"
+          test -n "$(find "$checks/policy/content" -name '*.rego' -print -quit)"
+      # The scan reads only that prepared bundle (no network, --skip-check-update), as the local role.
       - name: Misconfiguration (HIGH/CRITICAL)
         run: |
-          docker run --rm -v "$PWD:/repo" -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" \
+          docker run --rm --network=none --tmpfs /scratch:rw,nosuid,nodev,noexec,size=536870912 \
+            -v "$PWD:/repo:ro" -v "$RUNNER_TEMP/clued-trivy-checks/policy:/scratch/policy:ro" \
             ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
-            fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /repo
+            fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --skip-check-update --scanners misconfig --severity HIGH,CRITICAL \
+            --exit-code 1 --cache-dir /scratch --skip-version-check --disable-telemetry /repo
       - name: Emit relay identity
         run: |
           set -eu

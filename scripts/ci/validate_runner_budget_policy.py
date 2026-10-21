@@ -367,7 +367,7 @@ OWNER_DECISION_HOSTED_JOBS = {
         "control_sha256": "57f4d26e932037446cc510595b1ba72b819b9b045a4310a589becd2b1686c6f9",
         "jobs": {
             "admission-gate": "52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2",
-            "trivy-trusted-self-hosted": "176a6ceeee5ff13e3ad3b7621ab8f8c15750b8b66abcd42c7b6fdae48340838b"
+            "trivy-trusted-self-hosted": "5e4f72166a20d0f20919b960f45459d8669d22ac3a3e756e6af3de70e62eee75"
         }
     }
 }
