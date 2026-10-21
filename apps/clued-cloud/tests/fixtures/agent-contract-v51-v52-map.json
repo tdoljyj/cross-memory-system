@@ -1,0 +1,19 @@
+{
+  "schema": "clued.agent-contract-session-title-successor/1",
+  "source_version": 51,
+  "target_version": 52,
+  "source_document_normalized_sha256": "54e4bd83df76ed36bc321cc112e5ae1cb9f8486198b36efa880fee5b98f2b652",
+  "target_document_normalized_sha256": "7a92aaaf24d4320e5d634f06fa2e7ed316b291b24dcaedefa5c245ee74cb95cd",
+  "edits": [
+    {
+      "id": "version",
+      "before": "Contract version: 51",
+      "after": "Contract version: 52"
+    },
+    {
+      "id": "session-title-metadata",
+      "before": "When your Host lets you set your own session title, make it match `holder_session_title` and include the label. Keep the returned `claim_id`, `fence` and `lease_version`.",
+      "after": "Read this exact Host session's current title through an authorized Host tool before a claim, takeover or renewal, and send it verbatim as `holder_session_title`. A readable title must be supplied; never substitute `holder_label` or skip a supported title read.\n\n  If the title remains unavailable after checking the Host's actual exposed capabilities and read results, leave `holder_session_title` blank (omit the optional field) and record the reason in Clued metadata. Use only investigated and verified reasons: for example, report that this session has no exposed title-reading interface only after checking that fact. If the cause is unknown, label it unknown and include the relevant facts already verified, including any causes actually ruled out; do not present an unverified possibility as the reason. Use a dedicated reason field when the schema provides one; otherwise append a concise reason and verification summary to `holder_label`, retaining the truthful work and machine identity. Never put a label or failure explanation in `holder_session_title`.\n\n  Client and machine information belong only in Clued holder metadata. `holder_label` is independent of `holder_session_title` and need not match or appear in it. Claiming, taking over, renewing or reporting identity never requires or authorizes renaming the Host conversation, appending identity suffixes or restoring an older title. Preserve the Host's normal naming behavior and the Owner's chosen title. An explicitly requested rename uses the authorized Host mechanism and is verified before reporting success. Keep the returned `claim_id`, `fence` and `lease_version`."
+    }
+  ]
+}

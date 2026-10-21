@@ -1,6 +1,6 @@
 # Clued Agent Contract
 
-Contract version: 50
+Contract version: 52
 
 This file is the single normative source for how any Agent, on any Host, uses Clued. The Clued service serves it at `/clued-agent.md`; the `clued` Skill, repository `AGENTS.md` files and the MCP server instructions point here instead of restating it. Host- or repository-specific procedures may add steps; they never relax this contract. A working Binding or scope is required for every protected call but is never, by itself, a reason to read or write.
 
@@ -202,7 +202,11 @@ Claim work before you spend on it. When the service offers `clued_work_claim`, a
   - `holder_client`: your client as people know it (`Claude Code`, `Codex`, `ChatGPT`, `claude.ai`);
   - `holder_session_title`: your session's title as the Owner sees it in your client;
   - `holder_session_ref`: your client's own session id (Claude Code `session_01…`, a Codex session id), not a name you invent; leave it out when you cannot get it.
-  When your Host lets you set your own session title, make it match `holder_session_title` and include the label. Keep the returned `claim_id`, `fence` and `lease_version`.
+  Read this exact Host session's current title through an authorized Host tool before a claim, takeover or renewal, and send it verbatim as `holder_session_title`. A readable title must be supplied; never substitute `holder_label` or skip a supported title read.
+
+  If the title remains unavailable after checking the Host's actual exposed capabilities and read results, leave `holder_session_title` blank (omit the optional field) and record the reason in Clued metadata. Use only investigated and verified reasons: for example, report that this session has no exposed title-reading interface only after checking that fact. If the cause is unknown, label it unknown and include the relevant facts already verified, including any causes actually ruled out; do not present an unverified possibility as the reason. Use a dedicated reason field when the schema provides one; otherwise append a concise reason and verification summary to `holder_label`, retaining the truthful work and machine identity. Never put a label or failure explanation in `holder_session_title`.
+
+  Client and machine information belong only in Clued holder metadata. `holder_label` is independent of `holder_session_title` and need not match or appear in it. Claiming, taking over, renewing or reporting identity never requires or authorizes renaming the Host conversation, appending identity suffixes or restoring an older title. Preserve the Host's normal naming behavior and the Owner's chosen title. An explicitly requested rename uses the authorized Host mechanism and is verified before reporting success. Keep the returned `claim_id`, `fence` and `lease_version`.
 
 - A `write_set` entry is a repository path or glob, or a typed resource `kind:value`: `storage:<connection_id>/<path under the registered root>` for Clued storage, `repo:<owner>/<name>/<path>` for a named repository, `record:<canonical id>` for a record. Entries cannot contain whitespace; cover a name with spaces by a glob (`storage:<connection_id>/20_P/**`).
 
@@ -257,7 +261,7 @@ Read this section before renewal, continued work across sessions, release, takeo
 
 - Keep time boundaries separate and traceable. `expires_at` is that service claim's lease expiry; `hard_deadline_at` is that claim chain's service limit. Neither is an Owner-imposed Task deadline. An Owner hard deadline or spending limit needs its actual Owner instruction or authoritative policy source, with the applicable Task/scope and current version. Estimates, checkpoints, Agent-written Task text and historical claim metadata cannot create or carry forward that authority by themselves. Re-read the current claim/profile and source when they conflict; record a correction instead of asking the Owner to approve an invented extension.
 
-- A genuine service or Owner limit still binds: do not manufacture progress, renew after the chain cap, reclaim or rename work to evade it, reset spending/CI counts, or widen scope/permissions. On a real refusal, use its existing recovery or grant route, including the Owner's effective auto-approval setting. Ask the Owner only when an unresolved limit or scope/permission decision actually requires them; identify the precise source and remaining work. A queue delay or revised estimate alone is not such a decision.
+- A genuine service or Owner limit still binds: do not manufacture progress, renew a claim past its renewal budget or hard deadline, reset spending/CI counts, widen scope/permissions, or change the Task, rename work or switch Binding to evade a refusal. A normal new claim for the same unfinished Task after its old claim expires follows Appendix A.8; it is not an extension of the old claim. On a real refusal, use its existing recovery or grant route, including the Owner's effective auto-approval setting. Ask the Owner only when an unresolved limit or scope/permission decision actually requires them; identify the precise source and remaining work. A queue delay or revised estimate alone is not such a decision.
 
 - Either way of working is fine: claim for one step and release when that step ends, or keep one claim across turns, steps and sessions and renew it (any session of the same Binding can, with the `claim_id`, `fence` and `lease_version` that `active_work_claims` lists), using the Receipt id of what you just recorded or the new head SHA as `progress_ref`. A claim bound to an open pull request stays live until the pull request merges (see [Appendix A.5](#appendix-a5)).
 
@@ -311,6 +315,8 @@ Read this section before rerunning CI or manually dispatching a heavy workflow.
 Read this section before a new claim or takeover, when rate-limited, when continuing a released claim, or when the Owner runs a Task as a race.
 
 - Starts are rate-limited, not counted per day: each new claim or takeover takes a token from the Task's bucket (8, one back per hour) and the Binding's bucket (30, one back per 15 minutes); renewals and replays take none. A refusal names the short bucket in `limit` (`task_claim_rate` or `binding_claim_rate`) and when the next token arrives in `retry_after`.
+
+- Exhausting a claim's renewal budget stops renewal of that claim, not ordinary claiming of the unfinished Task after that claim expires. Use `clued_work_claim` for the same active Task: the service checks current claims, conflicts and both start-rate buckets. Resume work only after a committed new claim. This is a normal token-consuming start, not the token-free continuation below. Preserve the Task's costs, failures, CI meter and genuine Owner limits. Never mark unfinished work completed to obtain a continuation, or change the Task or Binding to evade a refusal.
 
 - A continuation takes no token: when your Binding released the Task's latest claim as `completed` with an `evidence_ref` not used before in that chain, and claims the same Task again within 15 minutes, the new claim continues it (`continued_from` names the claim it continues), whatever the session. It is not a continuation when the prior claim was `abandoned`, expired, taken over or handed over, when another claim of the Task came in between, or when someone else waited for it (a conflict refusal, a takeover refused as still active, or an Agent message request). A chain keeps its first claim's 24-hour hard deadline. A rate refusal says in `continuation.reason` why the claim did not continue. So when you claim per step, release each finished step as `completed` with that step's own `evidence_ref` and claim the next one within 15 minutes.
 

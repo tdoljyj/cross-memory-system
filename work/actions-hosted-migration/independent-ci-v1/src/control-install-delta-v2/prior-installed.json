@@ -1,0 +1,921 @@
+{
+  "contract": "clued.independent-ci.control-install-prior-public/1",
+  "receiptSha256": "9ed1287dda86dfed63886dbf48d9b1acc18bda1abf5f7b3c06c06fef9de0330e",
+  "observedAt": "2026-10-19T05:46:30.1414341+00:00",
+  "nativeReceiptSha256": "7edc3e00c6f7beb53510efe83313a5cafa7247b74009cea46d7145a0f36bd65e",
+  "files": [
+    {
+      "path": "verify-once.json",
+      "metadata": {
+        "bytes": 1882,
+        "sha256": "05a400387345511c2d724f1926e9b16efc75f5f0a98d5e7cae946c73b604baa7",
+        "volume": 4106269708,
+        "indexHigh": 458752,
+        "indexLow": 3367160,
+        "securityDescriptorBase64": "AQAElBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "verify-once-acceptance.json",
+      "metadata": {
+        "bytes": 13641,
+        "sha256": "ceb07ea99d9b0ec06f47ea2f200d58a9d519a4d14ab6201cd05a18173ca2a092",
+        "volume": 4106269708,
+        "indexHigh": 327680,
+        "indexLow": 3367162,
+        "securityDescriptorBase64": "AQAElBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "verify-service-entry.json",
+      "metadata": {
+        "bytes": 1032,
+        "sha256": "0c0530abee2073380d33156a042ba72df47af01d57c2c54c54da5be4c9042a81",
+        "volume": 4106269708,
+        "indexHigh": 327680,
+        "indexLow": 3367164,
+        "securityDescriptorBase64": "AQAElBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "verify-once-job.json",
+      "metadata": {
+        "bytes": 568,
+        "sha256": "1148f773481cace81adbad44987dea0a85fed03c50937385e0fdbecbd295b5b8",
+        "volume": 4106269708,
+        "indexHigh": 8585216,
+        "indexLow": 3313649,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "controller-verify-once-ack-v1.exe",
+      "metadata": {
+        "bytes": 41472,
+        "sha256": "2c0435131e08e778343f01bb5354c27b00152e3e662c21e03a4e4a7be210ffd9",
+        "volume": 4106269708,
+        "indexHigh": 327680,
+        "indexLow": 3367165,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/active-doc-links.yml",
+      "metadata": {
+        "bytes": 3065,
+        "sha256": "7f5dce87816ce519ee72ab1093955319f5ec224cc600a0e2f4743bf02c3ac2a4",
+        "volume": 4106269708,
+        "indexHigh": 1376256,
+        "indexLow": 3248832,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-capture-guard.yml",
+      "metadata": {
+        "bytes": 3222,
+        "sha256": "5ffca57e143036fcd891805d2fa51eb02f5447c75b4f4ade6476012324b6924a",
+        "volume": 4106269708,
+        "indexHigh": 3145728,
+        "indexLow": 1478554,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-ci-health.yml",
+      "metadata": {
+        "bytes": 2997,
+        "sha256": "960aa651f60ca035fa070d03a477b0edee54052f82df4b35b008aa5b772cdd07",
+        "volume": 4106269708,
+        "indexHigh": 1179648,
+        "indexLow": 3248834,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-ci-runner-heartbeat.yml",
+      "metadata": {
+        "bytes": 2210,
+        "sha256": "bf85111d1c417f2d6c3ece67ec397d9bde58d06a1ed00e91e95ec2f7353a76ea",
+        "volume": 4106269708,
+        "indexHigh": 1114112,
+        "indexLow": 3248835,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-ci-usage-report.yml",
+      "metadata": {
+        "bytes": 5909,
+        "sha256": "b439bd0dbc48bd6bc365f77a5a82ea18b47dfd3167c03519c1b302c497873c3f",
+        "volume": 4106269708,
+        "indexHigh": 1114112,
+        "indexLow": 3248836,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-cloud-node22-install.yml",
+      "metadata": {
+        "bytes": 5543,
+        "sha256": "fb844c6d2a1f2dd020679762452fde159125022ba60edcb6e7fd3e0f33837c97",
+        "volume": 4106269708,
+        "indexHigh": 1114112,
+        "indexLow": 3248840,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-cloud-production-release.yml",
+      "metadata": {
+        "bytes": 27288,
+        "sha256": "d836a95e37ba35581ebc41bdf8a4f6d517beeeec433803cff90c833224270d46",
+        "volume": 4106269708,
+        "indexHigh": 1114112,
+        "indexLow": 3248842,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-cloud-quality-gate.yml",
+      "metadata": {
+        "bytes": 8604,
+        "sha256": "dd05c39a6dee035a500d4ba56c5d49a7f5f784ddfa7aa2f2032493d7d809739d",
+        "volume": 4106269708,
+        "indexHigh": 1114112,
+        "indexLow": 3248843,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-components.yml",
+      "metadata": {
+        "bytes": 6750,
+        "sha256": "e652630eb5048a28eccfb02aa272ff5cfcb2267932272ba0e2a6705b06e53b49",
+        "volume": 4106269708,
+        "indexHigh": 1048576,
+        "indexLow": 3248844,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-connection-authorization.yml",
+      "metadata": {
+        "bytes": 20902,
+        "sha256": "0de704b484c993d5a9d9759d4c17d1644e2035d9e71172b0259ad2b3c3519ba9",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248845,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-currentness-post-deploy-attestation.yml",
+      "metadata": {
+        "bytes": 2284,
+        "sha256": "fb24d919e6213d4751307a9beacddf48f77fa139c9577b236e30a522c0490003",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248846,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-g4-database.yml",
+      "metadata": {
+        "bytes": 18318,
+        "sha256": "4e274f8709e1b638d26659fd17138eb7b8b435104ed1b79bbeffe545456676a0",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248852,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-handover-disposable-idle.yml",
+      "metadata": {
+        "bytes": 2841,
+        "sha256": "f72524c1b5ab32a762aec59007bf85dc0ae1ddb9a9e74f38e768dbf712faaa0e",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248853,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-handover-external-qualification.yml",
+      "metadata": {
+        "bytes": 6546,
+        "sha256": "4f59187f16e4d2808a7816ac9f0c72efcbc7b9ebf2524902c8f08ace65063d19",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248854,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-information-flow-prod-e2e.yml",
+      "metadata": {
+        "bytes": 1842,
+        "sha256": "1adc9215caf3d62c3b46fbcf7018558c7a21631202dc99941dc789b4a22deaba",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248855,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-integration-runtime-config.yml",
+      "metadata": {
+        "bytes": 8779,
+        "sha256": "33d77f8df2456521da18e9ef2724d9a90ca8eefcdebfdba988395bf1c5f88050",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248856,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-integration-runtime-nightly.yml",
+      "metadata": {
+        "bytes": 3528,
+        "sha256": "a9f72034accb3c199f207ec942339dd97f04dfdca925394400b356158e8ff1d2",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248857,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-merge-executor.yml",
+      "metadata": {
+        "bytes": 5641,
+        "sha256": "deb70de1c176d25af057a728b3d2fb94cd3ba6a9ca183c4bd242cab3db212835",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248858,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-merge-slot-ci.yml",
+      "metadata": {
+        "bytes": 5945,
+        "sha256": "5b733df448c656f0a9a1cf98e95a33f44169d17f76b1b4d454014c4d2139baf1",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248859,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-release-tags.yml",
+      "metadata": {
+        "bytes": 3627,
+        "sha256": "069b2c1d2a692e769234942c2d192079e0a2ed4fd03d084567b664c828c04a55",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248860,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-storage-executor-window.yml",
+      "metadata": {
+        "bytes": 8150,
+        "sha256": "27ec893da5185096b710ae1ac9ee33578f5355d2087ea72c5d9dfc922b03e4dc",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248861,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-storage-read-config.yml",
+      "metadata": {
+        "bytes": 5358,
+        "sha256": "0f75dee942dc529a83dcdb3daae05c704683e1dca1add1e682e31cc5991d4a67",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248862,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-work-admission-dispatch.yml",
+      "metadata": {
+        "bytes": 3861,
+        "sha256": "c070ee8e042885f100fecae791438cf6d7e6f88189c66e8f65c6b6dbf1a475be",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248863,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-work-admission-reverify.yml",
+      "metadata": {
+        "bytes": 5352,
+        "sha256": "8cf7dc0817360c962391ab22c41a7451ee9a01ad0e5833d0f2fbb45152cae560",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248864,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-work-admission.yml",
+      "metadata": {
+        "bytes": 10837,
+        "sha256": "ced258f8f7001f1e730305464974bbcbe97dd5502b5b51250be3d84dc58a3155",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248865,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-work-claim-handover-revoke.yml",
+      "metadata": {
+        "bytes": 1286,
+        "sha256": "f11742735cd0fe2af5e2b2e00384f0aba3c2833546f62b6607ae930ae71b4911",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248866,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-work-handover-qualification-company-linux-01.yml",
+      "metadata": {
+        "bytes": 3478,
+        "sha256": "3738f8f610b776c6ad26ece82e90de848008cf5365a141fd378d009a0d1a4c4b",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248867,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-work-handover-qualification-company-linux-02.yml",
+      "metadata": {
+        "bytes": 3478,
+        "sha256": "7c5b46dd52e318cc2a745057f325be4e53498b5760df5c371087669c363139c4",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248868,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-work-handover-qualification-company-linux-03.yml",
+      "metadata": {
+        "bytes": 3478,
+        "sha256": "0109e57b59e94faf8c152fe0f861541eaa974d5bf783280a5d3b777b98335159",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248869,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-work-handover-qualification-company-linux-04.yml",
+      "metadata": {
+        "bytes": 3478,
+        "sha256": "e3b35b4d7e0ab3dd2f2491d85bc61f4d2196d7774780d300d5be07a5910c0629",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248870,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-work-handover-qualification-company-win-01.yml",
+      "metadata": {
+        "bytes": 3647,
+        "sha256": "dec104e90e576d22229d9a320168f91c677f2c82611494f1b2c4f14fcbf53780",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248871,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-work-handover-qualification-home-linux-01.yml",
+      "metadata": {
+        "bytes": 3449,
+        "sha256": "610590b365426a594ce10f732accc1e2fea86c79183c32a8e5b617057e8de3e1",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248872,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/clued-work-handover-qualification-home-win-01.yml",
+      "metadata": {
+        "bytes": 3629,
+        "sha256": "695deb0d77646b22adc842d1aace94a9aa7edeb01e9ad47e72b4dd3866b51ca8",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248873,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/contract-placement.yml",
+      "metadata": {
+        "bytes": 5129,
+        "sha256": "762f1b1346a699068660e46648a665d25873a396fc0d2186ef8f44a844625ffd",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248874,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/design-refs.yml",
+      "metadata": {
+        "bytes": 4464,
+        "sha256": "b07f5d4a484392692ede099c18a7e8777e28df7eab51715e7dd54fec17e82800",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248875,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/gitleaks.yml",
+      "metadata": {
+        "bytes": 5927,
+        "sha256": "168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248876,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/information-flow-e2e.yml",
+      "metadata": {
+        "bytes": 15049,
+        "sha256": "dfbe58c1edf4caacda109dfdf39b19fc66526bcb503ea10992472f8e9c086e1c",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248877,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/memory-publication-gate.yml",
+      "metadata": {
+        "bytes": 3617,
+        "sha256": "6aa417be2389d3f0195ab6540bab27b336fa3287a9c3586daa564bdd9c3db207",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248878,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/model-program-m0.yml",
+      "metadata": {
+        "bytes": 2906,
+        "sha256": "bc96ac9d43bdfdf8c6add9d6193319d14c3f4f9045aec34da7a072e81cf64873",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248879,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/model-program-m1-entry.yml",
+      "metadata": {
+        "bytes": 2617,
+        "sha256": "292ad955d30b61e7c26751396255761986816829aa6291b762d2bbbc2011fe3f",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248880,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/model-program-m1-harness.yml",
+      "metadata": {
+        "bytes": 3597,
+        "sha256": "dddf57a98e78ce8f16ecff1e177a7a39600dc3db2fc49fe32de77f09f3998399",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248881,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/model-program-m1-package.yml",
+      "metadata": {
+        "bytes": 3338,
+        "sha256": "f33730bb86a84ec99465b14549b36f0526e7d6814bda196ce98afe92b74bd818",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248882,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/model-program-m2-scoped-consumer.yml",
+      "metadata": {
+        "bytes": 6780,
+        "sha256": "9df7e67f93fbc13c2abd8211f31c5a848384e06b0c55e7762939861df2870c24",
+        "volume": 4106269708,
+        "indexHigh": 2949120,
+        "indexLow": 678903,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/mps03-native-agent.yml",
+      "metadata": {
+        "bytes": 3238,
+        "sha256": "501dd2e429cea4beeeca8bf2293c60bc62d6f91579fff480ebc553c016e21b32",
+        "volume": 4106269708,
+        "indexHigh": 1048576,
+        "indexLow": 3248884,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/multitrack-governance-projection.yml",
+      "metadata": {
+        "bytes": 2524,
+        "sha256": "216fed619d310d4ee266acb63ba97a8e42e279a8653d46a32a40734fff32a5df",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248885,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/node-profile-policy.yml",
+      "metadata": {
+        "bytes": 4910,
+        "sha256": "c0e14909f0530ca4f710bc85a72777917605c2dfc006e083100598c4d1c554c1",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248886,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/phase2-naming-surface-inventory.yml",
+      "metadata": {
+        "bytes": 9402,
+        "sha256": "51a972e99792ab4d219711b8b86a3c0aa794286598bdb5452144875886c76b32",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248887,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/phase2-v027-validation.yml",
+      "metadata": {
+        "bytes": 15632,
+        "sha256": "63ba535d691f613bdbd0ad496e331dd0adc28d6ecbfd101a5fe970b31bb19dd7",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248888,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/public-mcp-behavior.yml",
+      "metadata": {
+        "bytes": 9972,
+        "sha256": "644d79d52f4b3e376300461f8260f25715bfa254ed75b990bbb279f0f7cedc38",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248889,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/public-mcp-gate-receipt.yml",
+      "metadata": {
+        "bytes": 5316,
+        "sha256": "61e8b15588e3c1d39586b71020ab7fee97fd8665c0f7867f056610b4570c5f00",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248890,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/public-mcp-protocol.yml",
+      "metadata": {
+        "bytes": 11909,
+        "sha256": "17fb876b9ef5b0f169b4601eb633381a677b9c9b02b5e23678ddba1a794daca9",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248891,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/runner-budget-policy.yml",
+      "metadata": {
+        "bytes": 3772,
+        "sha256": "dda08be0e13d271d495a625d0ad25d4c60646ccc805bcc0542056b1c46fc778d",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248892,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/.github/workflows/trivy.yml",
+      "metadata": {
+        "bytes": 9461,
+        "sha256": "cea2fd770663e65f554719903da90aaf4b8aae4a52bf52098d3d258340e2727d",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248893,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/apps/clued-cloud/app/supabase-public-config.ts",
+      "metadata": {
+        "bytes": 1426,
+        "sha256": "f6517407ee13879fd2dccd36c718278fb9dbe6291caf61237202699aa38ab3a4",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248897,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/config/merge-admission-policy.json",
+      "metadata": {
+        "bytes": 1971,
+        "sha256": "76dd3694e2de8216cabcf21f4f04fc7fe364534b49438a042921b065c5de92d7",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248899,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/scripts/ci/clued-control-workflow-source.mjs",
+      "metadata": {
+        "bytes": 43883,
+        "sha256": "83f965131dcffcc0e551b52a26bb4311b6c6486565251d9e483e4b6b266fb33a",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248902,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/scripts/ci/clued-control-workflow-sources.json",
+      "metadata": {
+        "bytes": 265316,
+        "sha256": "8618e81aa26aa19269a2a2ca3ef6da304bdb00b1e79531828c5b5899fced03a1",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248903,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/scripts/ci/clued-gated-proof-profiles.json",
+      "metadata": {
+        "bytes": 811444,
+        "sha256": "b98439c82546edcc750e264df58b8b7c328e22e01dc6f662facdacf7e325d256",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248904,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/scripts/ci/clued-gated-proof-role-specs.json",
+      "metadata": {
+        "bytes": 145552,
+        "sha256": "0493cf57a6c25756f6c57a7a34d026d8bbdeb5a6d2bfd514fe7a5d7a70683e6c",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248905,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/scripts/ci/clued-production-publisher-source.mjs",
+      "metadata": {
+        "bytes": 10281,
+        "sha256": "abbd23c15357fc190ab60cedd98770e47e821dbcc5a0ba83c2fa4f5e3f09081a",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248906,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/scripts/ci/clued-production-publisher-sources.json",
+      "metadata": {
+        "bytes": 126971,
+        "sha256": "e1eea0d0e0580294a92e2a66988ef996ced6c4584d67431222c68c7437a291cf",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248907,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/scripts/ci/clued-publisher-qualification-source.mjs",
+      "metadata": {
+        "bytes": 10247,
+        "sha256": "f88a6a7bf1018250407bd754cd3dd5733ee90e068cdc71e2893a0a285c5ff048",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248908,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/scripts/ci/clued-publisher-qualification-sources.json",
+      "metadata": {
+        "bytes": 21779,
+        "sha256": "8e98ef45ce2c093b3c9631e03e8deebc086abfa5b32cd3605ac9b23cf48f356c",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248909,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/scripts/ci/clued-work-admission.mjs",
+      "metadata": {
+        "bytes": 173449,
+        "sha256": "cf971662bc80865321338b0cdc1a81cec0ab079068ec1bb38a2c4ecee20a80f5",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248910,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/scripts/ci/clued-workflow-profile.mjs",
+      "metadata": {
+        "bytes": 50044,
+        "sha256": "65904668b637a6be526d15de0b75ac4c08a59c9c84b58b3c71d7cae978e99a41",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248911,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/scripts/ci/merge-admission-measurement-history.mjs",
+      "metadata": {
+        "bytes": 10652,
+        "sha256": "f05140eb055ba05650c9e517af04c065b7b1e76ede6bd7b7fa4c8f441fc9624e",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248912,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/scripts/ci/merge-admission-policy.mjs",
+      "metadata": {
+        "bytes": 16881,
+        "sha256": "b3bf3ddb82dd22b61bb1f2e3ca7c10f10b6b4acd8dfbd528ae0e2f557c27c5d3",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248913,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/scripts/ci/merge-admission-source-producer.mjs",
+      "metadata": {
+        "bytes": 39631,
+        "sha256": "67667bf45a008c6580f29a2d90466e8fc96c54c75806d8422a2fc47d985c62a7",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248914,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/scripts/runner/clued-runner-job-started.mjs",
+      "metadata": {
+        "bytes": 38896,
+        "sha256": "e0cec3d48810a6ee934814ebc58060f40486098d7eef005237fb6e1f75a6bf0e",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248916,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/work/actions-hosted-migration/independent-ci-v1/runtime/protected-files.mjs",
+      "metadata": {
+        "bytes": 5022,
+        "sha256": "4e9c034377528741a48477facfa4541dfedb67468f675b4cdc20e9bb4aad0ccb",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248921,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/work/actions-hosted-migration/independent-ci-v1/runtime/verify-install-acl.ps1",
+      "metadata": {
+        "bytes": 7520,
+        "sha256": "09d17148e2dd5d7527a0b88b8f2e084cf7627935e9db2f38b3f73add24867966",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248922,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/work/actions-hosted-migration/independent-ci-v1/runtime/verify-once.mjs",
+      "metadata": {
+        "bytes": 31067,
+        "sha256": "5ecb7c20cc7189b16db4c7dba306d629e1b01ea7ca770addd80c884cbc55e330",
+        "volume": 4106269708,
+        "indexHigh": 4521984,
+        "indexLow": 3247700,
+        "securityDescriptorBase64": "AQAElBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/work/actions-hosted-migration/independent-ci-v1/runtime/verify-spool-acl.ps1",
+      "metadata": {
+        "bytes": 8285,
+        "sha256": "09d2cab0ba81a16ed77ba51ba60b411cedac8a8d45041f8dce2c0b6d87ad65e8",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248924,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/work/actions-hosted-migration/independent-ci-v1/src/full-admission.mjs",
+      "metadata": {
+        "bytes": 11694,
+        "sha256": "ecdc5b56a50e3c399145561e5837bdef5b12e7cdb1a2c8c87a846ef200d8dfba",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248926,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/work/actions-hosted-migration/independent-ci-v1/src/github.mjs",
+      "metadata": {
+        "bytes": 10727,
+        "sha256": "df4273b834c6ad9be895bb97240ec510f9bd4f84fc926989d79189e922d065dc",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248927,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/work/actions-hosted-migration/independent-ci-v1/src/proof.mjs",
+      "metadata": {
+        "bytes": 3699,
+        "sha256": "ed5f8800d27eb1ee5666c12983cac6b93ec5a2398a0c4dcf762e55b4a29f976b",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248928,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source/work/actions-hosted-migration/independent-ci-v1/src/queue.mjs",
+      "metadata": {
+        "bytes": 18605,
+        "sha256": "63c05f00ce6d1100af631e4387b024fbfed67a606e6d18f2de76eeffe707cf89",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248929,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    },
+    {
+      "path": "source-manifest.json",
+      "metadata": {
+        "bytes": 737,
+        "sha256": "9940b950fc33183b9cbfdcf0a75cb9d2b31c7b826d3960967c4a3a918c4dc5e7",
+        "volume": 4106269708,
+        "indexHigh": 983040,
+        "indexLow": 3248932,
+        "securityDescriptorBase64": "AQAEkBQAAAAAAAAAAAAAACQAAAABAgAAAAAABSAAAAAgAgAAAgBYAAMAAAAAABQA/wEfAAEBAAAAAAAFEgAAAAAAGAD/AR8AAQIAAAAAAAUgAAAAIAIAAAAAJACpABIAAQUAAAAAAAUVAAAAZLX1RVjEGue1GBEn9wMAAA=="
+      }
+    }
+  ]
+}

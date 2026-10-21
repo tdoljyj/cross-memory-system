@@ -1,0 +1,9 @@
+{
+  "contract": "clued.independent-ci.actual-receipt-fixed-batch-continuation/1",
+  "installationReportSha256": null,
+  "installationReceiptRef": null,
+  "finalBatchManifestSha256": null,
+  "ownerDecisionRef": null,
+  "ownerReceiptRef": null,
+  "rootVerifiedCanonicalReceipt": false
+}

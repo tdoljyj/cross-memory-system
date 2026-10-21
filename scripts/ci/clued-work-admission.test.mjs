@@ -1076,6 +1076,25 @@ test("workflows: dispatch-gated workflows take admission_run_id; the admission w
 
 const GATED_FILES = fs.readdirSync(path.join(ROOT, ".github", "workflows")).filter((name) => /\.ya?ml$/.test(name))
   .filter((name) => workflowIsGated(fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8")));
+// These three workflows acquired the registered source-proof gate after the
+// earlier gate-template rollouts. Their actual gates remain covered by the
+// all-workflows and retired-switch attack checks below.
+const NEWLY_GATED_FILES = ["contract-placement.yml", "gitleaks.yml", "trivy.yml"];
+const LEGACY_TEMPLATE_FILES = GATED_FILES.filter((name) => !NEWLY_GATED_FILES.includes(name));
+const SOURCE_PROOF_GATE_DIGEST = "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb";
+
+// The ungated attack cases exercise the exact registered predecessor, not the
+// newly gated working-tree Trivy workflow.
+function historicalUngatedTrivy() {
+  const profiles = JSON.parse(fs.readFileSync(path.join(ROOT, "scripts/ci/clued-gated-proof-profiles.json"), "utf8"));
+  const predecessor = profiles.workflows[".github/workflows/trivy.yml"];
+  assert.equal(predecessor.gated, false);
+  assert.equal(predecessor.source_sha256, "85df37f10587af183dfac642d3f289ae4973ba2623a1e3dceb6537967d0c1e95");
+  assert.equal(sha256Hex(predecessor.source_yaml), predecessor.source_sha256);
+  assert.equal(workflowIsGated(predecessor.source_yaml), false);
+  return predecessor.source_yaml;
+}
+
 // Keep the historical one-dependency attack fixtures below in their original
 // spelling. The all-workflows test reads the actual new dependency graph;
 // clued-push-reuse.test.mjs checks the additional proof dependency itself.
@@ -1146,6 +1165,7 @@ test("publisher transition: caller workspace or API profiles never select the tr
 test("gate guard: every gated workflow on this branch passes and uses a listed gate job", () => {
   // No pinned list (see "gate job digest"); the workflow this file reads below must stay gated.
   assert.ok(GATED_FILES.includes("clued-g4-database.yml"));
+  for (const name of NEWLY_GATED_FILES) assert.ok(GATED_FILES.includes(name), name + ": migrated workflow remains gated");
   for (const name of GATED_FILES) {
     const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8");
     assert.deepEqual(gateFindings(text, text), [], name);
@@ -1155,7 +1175,7 @@ test("gate guard: every gated workflow on this branch passes and uses a listed g
     assert.match(gateJob.lines.join("\n"), /ref: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.repository\.default_branch \}\}/);
   }
   // Ungated workflows, even with self-hosted jobs, stay out of scope when they already exist.
-  const ungated = fs.readFileSync(path.join(ROOT, ".github", "workflows", "trivy.yml"), "utf8");
+  const ungated = historicalUngatedTrivy();
   assert.deepEqual(gateFindings(ungated, ungated), []);
 });
 
@@ -1167,12 +1187,12 @@ test("gate guard: the exact PR-read version is registered before workflow rollou
   const legacyDigest = "41e789754b90dcb27c8297bf83169194b7aaab2659d909859ddd8618d0fa07c4";
   const prReadDigest = "4136409cf9440c3e8755ed03014cd3c39f90a169f4f8a2ce3d83af2e4a0111cd";
   const noEnforceDigest = "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc";
-  assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest, noEnforceDigest, TEMPORARY_GATE_DIGEST], "only the four exact gate versions");
+  assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest, noEnforceDigest, TEMPORARY_GATE_DIGEST, SOURCE_PROOF_GATE_DIGEST], "only the five exact gate versions");
   // Merge Admission step 6 dropped this line from the gate; the two older
   // versions below still carry it.
   const token = "          GITHUB_TOKEN: ${{ github.token }}\n";
   const enforceLine = "          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}\n";
-  for (const name of GATED_FILES) {
+  for (const name of LEGACY_TEMPLATE_FILES) {
     const current = withoutTemporaryGateBootstrap(fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8"));
     assert.equal(sha256Hex(workflowJobs(current).find((job) => job.name === "admission-gate").lines.join("\n")), noEnforceDigest, name);
     const withEnforce = current.replace(token, `${enforceLine}${token}`);
@@ -1206,7 +1226,7 @@ test("gate guard: the exact PR-read version is registered before workflow rollou
 });
 
 test("gate guard: only the exact temporary bootstrap template is registered before rollout", () => {
-  for (const name of GATED_FILES) {
+  for (const name of LEGACY_TEMPLATE_FILES) {
     const legacy = withoutTemporaryGateBootstrap(fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8"));
     const candidate = legacy.replace("      - id: gate\n", TEMPORARY_GATE_BOOTSTRAP + "      - id: gate\n");
     assert.notEqual(candidate, legacy, name);
@@ -1234,7 +1254,11 @@ test("gate guard (Merge Admission step 6): every gated workflow's gate no longer
     const current = fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8");
     const gateJob = workflowJobs(current).find((job) => job.name === "admission-gate");
     assert.ok(!gateJob.lines.some((line) => /_ENFORCE\b/.test(line)), `${name}: the gate reads no retired switch`);
-    assert.equal(sha256Hex(workflowJobs(withoutTemporaryGateBootstrap(current)).find(job => job.name === "admission-gate").lines.join("\n")), "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc", name);
+    if (NEWLY_GATED_FILES.includes(name)) {
+      assert.equal(sha256Hex(gateJob.lines.join("\n")), SOURCE_PROOF_GATE_DIGEST, name);
+    } else {
+      assert.equal(sha256Hex(workflowJobs(withoutTemporaryGateBootstrap(current)).find(job => job.name === "admission-gate").lines.join("\n")), "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc", name);
+    }
     assert.deepEqual(gateFindings(current, current), [], name);
     // Dropping the token or adding another variable is still a changed gate.
     assert.deepEqual(gateFindings(current.replace(token, ""), current), ["admission_gate_changed"], name);
@@ -1374,7 +1398,7 @@ test("gate guard (re-review N4): YAML the line reader cannot follow is refused, 
   const merged = hosted.replace("    steps:", "    <<: *heavy\n    steps:");
   assert.deepEqual(gateFindings(merged, null), ["admission_gate_missing"]);
   // An existing ungated short check may not grow a new self-hosted job.
-  const trivy = fs.readFileSync(path.join(ROOT, ".github", "workflows", "trivy.yml"), "utf8");
+  const trivy = historicalUngatedTrivy();
   assert.deepEqual(gateFindings(`${trivy}\n  extra:\n    runs-on: [self-hosted, Linux]\n    steps:\n      - run: x\n`, trivy),
     ["self_hosted_job_added_ungated:extra"]);
   assert.deepEqual(gateFindings(`${trivy}\n  extra:\n    runs-on: ubuntu-latest\n    steps:\n      - run: x\n`, trivy), []);
@@ -1714,7 +1738,7 @@ async function gateRun(checks, envOverrides = {}) {
 }
 
 test("gate guard (re-review 3, N-R5): an ungated workflow may not move a job to a self-hosted runner or loosen its timeout", () => {
-  const ungated = fs.readFileSync(path.join(ROOT, ".github", "workflows", "trivy.yml"), "utf8");
+  const ungated = historicalUngatedTrivy();
   const job = "trivy-trusted-self-hosted";
   const selfHosted = workflowJobs(ungated).find((j) => j.name === job);
   assert.equal(jobTimeout(selfHosted), 25);
@@ -1764,7 +1788,7 @@ test("app check (re-review 4, m1): the posted check names the pull request and t
 });
 
 test("gate guard (re-review 4, m3): an ungated self-hosted job may not add or change its strategy", () => {
-  const ungated = fs.readFileSync(path.join(ROOT, ".github", "workflows", "trivy.yml"), "utf8");
+  const ungated = historicalUngatedTrivy();
   const job = "trivy-trusted-self-hosted";
   const matrix = ungated.replace("    timeout-minutes: 25\n", "    timeout-minutes: 25\n    strategy:\n      matrix:\n        shard: [1, 2, 3]\n");
   assert.notEqual(matrix, ungated);
