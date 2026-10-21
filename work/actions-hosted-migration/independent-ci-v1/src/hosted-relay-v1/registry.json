@@ -140,13 +140,13 @@
           "sha256": "f6288615c4b6fe1e2cb8630405c8c618bd73fbe85d1b5336d331600730d9b1fd"
         },
         {
-          "blob": "1d2ab2751ffb14be32347d13810796d0d8ddc7a8",
+          "blob": "b8e7df0a01ad261e066b9118266053b3e4cc8906",
           "mode": "100644",
           "path": ".github/workflows/trivy.yml",
-          "sha256": "981e7a2d7f52b5451f899c3c36f7db133a736dd714d829eab9141d29389ba0c5"
+          "sha256": "024401176d53d4b434041225d8f52c86eac0622c00109d41830ebe911f5ab146"
         }
       ],
-      "closureSha256": "f0abdfc1a38125fcb031a5692c643522237da1b25ed8ffba4fc3850d58e9f927",
+      "closureSha256": "313808178ea46fc37fdd1b11c395d1360872bc5e1884b68ef92209471231bd21",
       "forbiddenChangePrefixes": [],
       "hostedCheckName": "trivy-hosted-executor",
       "hostedJobId": "trivy-trusted-self-hosted",
@@ -158,13 +158,13 @@
         "trivy.yaml"
       ],
       "runsOn": "ubuntu-latest",
-      "workflowBlob": "1d2ab2751ffb14be32347d13810796d0d8ddc7a8",
+      "workflowBlob": "b8e7df0a01ad261e066b9118266053b3e4cc8906",
       "workflowPath": ".github/workflows/trivy.yml",
-      "workflowSha256": "981e7a2d7f52b5451f899c3c36f7db133a736dd714d829eab9141d29389ba0c5"
+      "workflowSha256": "024401176d53d4b434041225d8f52c86eac0622c00109d41830ebe911f5ab146"
     }
   },
   "runnerEnvironment": "github-hosted",
-  "sourceCommit": "960133a7cb858f0f47245e6a08d10121437ab0d5",
-  "sourceTree": "8b95c3fb2b71b2c08ec21b0e4a5c943bcce50d8a",
+  "sourceCommit": "59769e0e880e43f2c10ea4b9b24afef494783e80",
+  "sourceTree": "dd954abd73372b86841933d7884cfd577031f3e6",
   "specSha256": "4b360ec93f6a53a5b2024b9e38d5cc70dab555b28147f20b9965dc46dc9b6e70"
 }
