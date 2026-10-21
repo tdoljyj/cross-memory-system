@@ -7,13 +7,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createHash, createPublicKey, randomUUID } from 'node:crypto';
 import { canonical, digest } from '../proof.mjs';
 import { createGitHubChecksPort } from '../github.mjs';
 import { createFullAdmissionPortV2 } from '../full-admission-v2.mjs';
 import { INSTALL_ROOT, APP_KEY_FILE, assertProtectedPaths, readProtected } from '../../runtime/protected-files.mjs';
-import { openHeldRecord, takeHeldRecord, assertOwnSourceRoot } from './held-record.mjs';
+import { openHeldRecord, takeHeldRecord, assertOwnSourceRoot, sourceRootOfModule } from './held-record.mjs';
 import { loadStageInputs, parseEntryArgs, writeOutcome } from './stage-inputs.mjs';
 import { STATE_V2 } from './layout.mjs';
 import { FIXED_APP } from './record.mjs';
@@ -21,7 +20,8 @@ import { FIXED_APP } from './record.mjs';
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
 export const safeReason = e => (/^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(e?.code ?? '') ? e.code : 'ENTRY_OPERATION_UNCONFIRMED');
-export const sourceRootOf = moduleUrl => fileURLToPath(new URL('../../../../../', moduleUrl));
+// With the trailing separator, as before (callers join relative Source paths onto it).
+export const sourceRootOf = moduleUrl => sourceRootOfModule(moduleUrl) + path.sep;
 
 // Append-only, fsynced observation log next to the role's own effect journal (never in the spool, S13).
 export function observationLog(directory, jobId) {

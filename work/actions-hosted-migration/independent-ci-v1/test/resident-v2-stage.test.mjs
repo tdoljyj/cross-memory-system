@@ -10,7 +10,9 @@ import { invokeStage, readSpoolResult, RESULT_WRAPPER_CONTRACT_V2 } from '../src
 import { loadStageInputs, parseEntryArgs, writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import { buildStageFact, outcomeFailureCode, notAdmittedCode, ALL_STAGE_CODES, TRANSIENT_CODES, NATIVE_RECEIPT_CONTRACT_V2 } from '../src/resident-v2/stage-fact.mjs';
 import { BROKER_RESPONSE_CONTRACT, validateBrokerRequest } from '../src/resident-v2/broker-protocol.mjs';
-import { OUTCOME_CONTRACT } from '../src/resident-v2/layout.mjs';
+import { OUTCOME_CONTRACT, ENTRY_V2 } from '../src/resident-v2/layout.mjs';
+import { sourceRootOfModule } from '../src/resident-v2/held-record.mjs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { NOW, hex, tempDir, fixtureRecord, subject, signResult } from './resident-v2-fixtures.mjs';
 
 const CONTROLLER = 'S-1-5-21-1-2-3-1015';
@@ -44,7 +46,8 @@ function fakeBroker(f, { response = {}, receipt = {}, outcome = { status: 'SETTL
       const plan = JSON.parse(await fs.readFile(path.join(f.roots.stageRoot, req.nonce, 'formal-service-entry.json'), 'utf8'));
       let outcomeBytes = null;
       if (outcome) {
-        const o = { contract: OUTCOME_CONTRACT, nonce: req.nonce, stage: plan.stage, entryRole: plan.entryRole, jobIds: [], status: outcome.status, reason: outcome.reason,
+        const o = { contract: OUTCOME_CONTRACT, nonce: req.nonce, stage: 'stage' in outcome ? outcome.stage : plan.stage, entryRole: 'entryRole' in outcome ? outcome.entryRole : plan.entryRole,
+          jobIds: outcome.jobIds ?? [], status: outcome.status, reason: outcome.reason,
           sideEffects: outcome.sideEffects, mayHavePublished: !(outcome.status === 'BLOCKED' && outcome.sideEffects === 0), diagnostic: outcome.diagnostic ?? null, at: new Date(NOW).toISOString() };
         outcomeBytes = Buffer.from(canonical(o) + '\n');
         await fs.writeFile(path.join(f.roots.receiptsRoot, `outcome-${req.nonce}.json`), outcomeBytes, { flag: 'wx' });
@@ -100,6 +103,30 @@ test('invoke-stage: a changed package, a missing broker answer, a running helper
   const busy = await run(f, 2, fakeBroker(f, { writeReceipt: false, outcome: null, response: { ok: false, code: 'BROKER_BUSY', started: false, startCallIssued: false, helperPid: null, stoppedInTime: false, restored: false, accountUnchanged: false, stableBefore: false, stableAfter: false } }));
   assert.equal(busy.failure_code, 'BROKER_BUSY');
   assert.equal(busy.original_binary_restored, false);
+});
+
+// PR #889 stage 3 (2026-10-21): the check-publisher refused itself before reading its inputs, so its outcome had
+// no stage and no role; it was read as a missing outcome (UNKNOWN -> HALT) although nothing had run.
+test('invoke-stage: a refusal before the stage inputs (no stage, no role, nothing ran) is that clean refusal, never a missing outcome', async t => {
+  const f = await fixture(t);
+  const refusedReceipt = { state: 'FIXED_CHILD_REFUSED', failure_code: 'FIXED_NODE_EXIT_NONZERO', node_exit_code: 2 };
+  const pre = { status: 'BLOCKED', reason: 'ENTRY_OUTSIDE_HELD_SOURCE_REFUSED', sideEffects: 0, stage: null, entryRole: null };
+  assert.equal((await run(f, 1, fakeBroker(f, { receipt: refusedReceipt, outcome: pre }))).failure_code, 'STAGE_CHILD_REFUSED');
+  assert.equal(outcomeFailureCode({ ...pre, mayHavePublished: false }, 3), 'PUBLICATION_BLOCKED');
+  // only in exactly that shape: side effects, a job id, a status other than BLOCKED or a half-filled stage stay UNKNOWN
+  for (const bad of [{ ...pre, sideEffects: 1 }, { ...pre, jobIds: ['a'.repeat(64)] }, { ...pre, status: 'UNCERTAIN' }, { ...pre, stage: 1 }])
+    assert.equal((await run(f, 1, fakeBroker(f, { receipt: refusedReceipt, outcome: bad }))).failure_code, 'STAGE_OUTCOME_MISSING', JSON.stringify(bad));
+});
+
+test('every v2 entry finds the same Source root whatever its depth (the check-publisher is one level shallower)', { skip: process.platform !== 'win32' && 'Windows paths' }, () => {
+  const root = 'C:\\ProgramData\\CluedIndependentCI\\resident\\source\\' + 'a'.repeat(64);
+  for (const [role, rel] of Object.entries(ENTRY_V2)) {
+    const url = pathToFileURL(path.join(root, ...rel.split('/'))).href;
+    assert.equal(sourceRootOfModule(url), root, role);
+    // the old fixed five-level rule was right for every entry but the check-publisher (runtime/one-shot-v2.mjs)
+    assert.equal(path.resolve(fileURLToPath(new URL('../../../../../', url))) === root, role !== 'check-publisher', role);
+  }
+  assert.throws(() => sourceRootOfModule(pathToFileURL('C:\\elsewhere\\x.mjs').href), { code: 'ENTRY_OUTSIDE_HELD_SOURCE_REFUSED' });
 });
 
 test('invoke-stage: helper preflight refusal, tree unknown, unbound outcome and a not-admitted stage 1', async t => {

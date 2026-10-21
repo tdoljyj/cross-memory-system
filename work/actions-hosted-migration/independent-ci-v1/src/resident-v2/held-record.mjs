@@ -59,7 +59,19 @@ export async function openHeldRecord() {
 }
 export function takeHeldRecord(lease) { check(leases.has(lease), 'ACTUAL_HELD_RECORD_LEASE_REQUIRED'); lease.assertLive(); return lease; }
 // The Source root this entry runs from must be the held one (code only from source\<sha>, S12).
+// The Source root of a module of this Source: the directory that holds work/actions-hosted-migration/independent-ci-v1/.
+// Entries sit at different depths (runtime/one-shot-v2.mjs is one level shallower than src/<dir>/<entry>.mjs), so
+// a fixed number of '..' put the check-publisher's root one level too high: every publication stage refused
+// itself with ENTRY_OUTSIDE_HELD_SOURCE_REFUSED (PR #889 stage 3, 2026-10-21). No trailing separator.
+const CI_DIR = ['work', 'actions-hosted-migration', 'independent-ci-v1'];
+export function sourceRootOfModule(moduleUrl) {
+  const file = path.resolve(fileURLToPath(moduleUrl));
+  const marker = path.sep + CI_DIR.join(path.sep) + path.sep;
+  const at = file.toLowerCase().lastIndexOf(marker.toLowerCase());
+  check(at > 0, 'ENTRY_OUTSIDE_HELD_SOURCE_REFUSED');
+  return file.slice(0, at);
+}
 export function assertOwnSourceRoot(lease, moduleUrl) {
-  const own = path.resolve(fileURLToPath(new URL('../../../../../', moduleUrl)));
+  const own = sourceRootOfModule(moduleUrl);
   check(own.toLowerCase() === takeHeldRecord(lease).data.sourceRoot.toLowerCase(), 'ENTRY_OUTSIDE_HELD_SOURCE_REFUSED');
 }

@@ -110,6 +110,12 @@ export function validateNativeReceiptV2(n, { nonce, plan, planSha256, controller
 }
 
 export function validateOutcome(o, { nonce, plan }) {
+  // A refusal before the stage inputs were read (runEntry: arguments parsed, then held record, own Source root or
+  // inputs refused) carries no stage or role, but it is bound by nonce and by the helper's receipt and the body
+  // never ran: nothing was issued or published. It counts as that clean refusal, never as a missing outcome
+  // (UNKNOWN), and only in exactly that shape (PR #889 stage 3, 2026-10-21).
+  if (plain(o) && o.contract === OUTCOME_CONTRACT && o.nonce === nonce && o.stage === null && o.entryRole === null && o.status === 'BLOCKED'
+    && o.sideEffects === 0 && o.mayHavePublished === false && Array.isArray(o.jobIds) && o.jobIds.length === 0 && typeof o.reason === 'string') return o;
   if (!plain(o) || o.contract !== OUTCOME_CONTRACT || o.nonce !== nonce || o.stage !== plan.stage || o.entryRole !== plan.entryRole
     || typeof o.status !== 'string' || !(o.reason === null || typeof o.reason === 'string') || !Number.isSafeInteger(o.sideEffects) || o.sideEffects < 0
     || typeof o.mayHavePublished !== 'boolean') return null;
