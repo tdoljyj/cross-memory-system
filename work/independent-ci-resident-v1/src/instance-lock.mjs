@@ -5,14 +5,26 @@
 //   holder pid alive and liveness fresh    -> another executor is running: refuse to start
 //   holder pid alive but liveness stale    -> ambiguous (pid reuse, or a hung executor): refuse to
 //                                             start; the Owner looks (fail closed, nothing is killed)
+//   holder from an earlier boot            -> stale, whatever its pid (Task d80fd886, F1): after a reboot
+//                                             the old pid may name an unrelated process, and a liveness
+//                                             record from minutes before the reboot still looks fresh
+// The holder and its liveness record carry the milliseconds since boot (os.uptime(), GetTickCount64 on
+// Windows). Uptime restarts at every boot and only grows within one, so a record with more uptime than the
+// machine has now was written before a reboot. The test is one-way: a holder that ran only briefly in the
+// earlier boot is not recognised and falls back to the rules above.
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { check, isoNow } from './canonical.mjs';
 import { exists, nonce, readJson, renameToNew, writeNew } from './store.mjs';
 
 const FRESH_MS = 10 * 60_000;
+const EARLIER_BOOT_MARGIN_MS = 60_000;
 
-export async function acquireInstanceLock(stateRoot, { pid = process.pid, alive, clock = Date.now }) {
+export const uptimeMs = () => Math.floor(os.uptime() * 1000);
+const recordedUptime = record => (Number.isSafeInteger(record?.uptimeMs) && record.uptimeMs >= 0 ? record.uptimeMs : -1);
+
+export async function acquireInstanceLock(stateRoot, { pid = process.pid, alive, clock = Date.now, uptime = uptimeMs }) {
   const dir = path.join(stateRoot, 'executor.lock');
   const locks = path.join(stateRoot, 'locks');
   await fs.mkdir(locks, { recursive: true });
@@ -22,19 +34,25 @@ export async function acquireInstanceLock(stateRoot, { pid = process.pid, alive,
     if (error.code !== 'EEXIST') throw error;
     const holder = (await exists(path.join(dir, 'holder.json'))) ? (await readJson(path.join(dir, 'holder.json'))).value : null;
     const liveness = (await exists(path.join(dir, 'alive.json'))) ? JSON.parse(await fs.readFile(path.join(dir, 'alive.json'), 'utf8')) : null;
-    if (holder && await alive(holder.pid)) {
-      const fresh = liveness && liveness.token === holder.token && clock() - liveness.at < FRESH_MS;
+    const ownLiveness = liveness && holder && liveness.token === holder.token ? liveness : null;
+    const recorded = Math.max(recordedUptime(holder), recordedUptime(ownLiveness));
+    const now = uptime();
+    const earlierBoot = recorded > now + EARLIER_BOOT_MARGIN_MS;
+    if (holder && !earlierBoot && await alive(holder.pid)) {
+      const fresh = ownLiveness && clock() - ownLiveness.at < FRESH_MS;
       check(!fresh, 'EXECUTOR_ALREADY_RUNNING', holder.pid);
       check(false, 'EXECUTOR_LOCK_AMBIGUOUS_OWNER_LOOK', holder.pid);
     }
-    await renameToNew(dir, path.join(locks, `stale-${isoNow(clock).replace(/[:.]/g, '')}-${nonce()}`));
+    const kept = path.join(locks, `stale-${isoNow(clock).replace(/[:.]/g, '')}-${nonce()}`);
+    await renameToNew(dir, kept);
+    if (earlierBoot) await writeNew(path.join(kept, 'earlier-boot.json'), { contract: 'clued.independent-ci.lock-earlier-boot/1', recordedUptimeMs: recorded, uptimeMs: now, at: isoNow(clock) });
     await fs.mkdir(dir);
   }
   const token = nonce(16);
-  await writeNew(path.join(dir, 'holder.json'), { pid, token, at: isoNow(clock) });
+  await writeNew(path.join(dir, 'holder.json'), { pid, token, at: isoNow(clock), uptimeMs: uptime() });
   const touch = async () => {
     const tmp = path.join(dir, `alive.${pid}.tmp`);
-    await fs.writeFile(tmp, JSON.stringify({ token, at: clock() }));
+    await fs.writeFile(tmp, JSON.stringify({ token, at: clock(), uptimeMs: uptime() }));
     await fs.rename(tmp, path.join(dir, 'alive.json')); // liveness hint, not evidence
   };
   await touch();
