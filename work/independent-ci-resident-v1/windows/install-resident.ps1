@@ -174,6 +174,7 @@ function Get-CarryForwardPlan([string]$parent) {
     Test-NoLink $dir
     $state = Join-Path $dir.FullName 'state'
     $files = New-Object System.Collections.ArrayList
+    $keys = New-Object System.Collections.ArrayList   # executed-heads\<key> directories: the key alone names a head that may have published
     if (Test-Path -LiteralPath $state -PathType Container) {
       Test-NoLink (Get-Item -LiteralPath $state -Force)
       $take = {
@@ -202,12 +203,13 @@ function Get-CarryForwardPlan([string]$parent) {
         Test-NoLink (Get-Item -LiteralPath $executed -Force)
         foreach ($k in @(Get-ChildItem -LiteralPath $executed -Directory -Force | Where-Object { $_.Name -cmatch '^[0-9a-f]{32}$' } | Sort-Object Name)) {
           Test-NoLink $k
+          [void]$keys.Add($k.Name)
           foreach ($f in @(Get-ChildItem -LiteralPath $k.FullName -Force | Sort-Object Name)) { Test-NoLink $f; if (-not $f.PSIsContainer -and $f.Name -cmatch '^(publication|backfill)-[0-9a-f]{16}\.json$') { & $take ('executed-heads\' + $k.Name + '\' + $f.Name) } }
         }
       }
     }
     if ($files.Count -gt 200000) { throw ('CARRY_FORWARD_TOO_MANY_FILES:' + $dir.Name) }
-    $sources += ,([ordered]@{ name = $dir.Name; files = @($files) })
+    $sources += ,([ordered]@{ name = $dir.Name; files = @($files); heads = @($keys) })
   }
   # The resident's backfill reads at most 256 earlier states (src/executed-heads.mjs): refuse here, before anything is
   # written, rather than install a state that HALTs on its first start.
@@ -230,7 +232,7 @@ function Copy-CarryForward($sources, [string]$stateRoot) {
       $w = [IO.File]::Open($to, 'CreateNew', 'Write', 'None'); try { $w.Write($bytes, 0, $bytes.Length); $w.Flush($true) } finally { $w.Dispose() }
       [void]$listed.Add([ordered]@{ path = $f.rel; sha256 = (Sha256Bytes $bytes); bytes = $bytes.Length })
     }
-    $out += ,([ordered]@{ name = $s.name; dir = [string]$index; files = @($listed) })
+    $out += ,([ordered]@{ name = $s.name; dir = [string]$index; files = @($listed); heads = @($s.heads) })
   }
   [ordered]@{ contract = 'clued.independent-ci.resident-backfill-manifest/1'; sources = @($out) }
 }

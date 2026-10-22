@@ -68,7 +68,7 @@ test('deterministic PR faults mirror the Source and always burn, also with a (fo
   // a waiting code reduced from a diagnostic that also says "not up to date": burned (the resident's own guard)
   const stale = decideFailure({ code: 'OWNER_REVIEW_REQUIRED', stage: 1, outcome: { ...forged, reason: 'full_admission_rejected',
     diagnostic: { reasonCodes: ['owner_review_required', 'protected_change_not_up_to_date'], nativeReasonCodes: [] } }, proof: CLEAN_PROOF, started: false });
-  assert.deepEqual([stale.row.class, stale.release, stale.klass], ['waiting', null, 'CLEAN']);
+  assert.deepEqual([stale.row.class, stale.row.retry, stale.release, stale.klass], ['deterministic-pr', 'new-commit', null, 'CLEAN'], 'recorded as what decided it');
   assert.deepEqual([...DETERMINISTIC_REASON_CODES].sort(), [...DETERMINISTIC_PR_REASON_CODES].sort());
 });
 

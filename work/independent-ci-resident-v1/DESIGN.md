@@ -1064,15 +1064,16 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
   - 完成后写 `BACKFILL-COMPLETE.json`。完成之前不跑任何批次，等待中的批次和 attempt 2 也不跑。
   - 出错时：
     - 清单缺失、格式不对、带入的文件不见或被改：HALT；
-    - I/O 暂时错误：`BACKFILL_PENDING`，下个 tick 再试；连续 `BACKFILL_MAX_PENDING`（10）次仍失败就 HALT（`EXECUTED_HEADS_BACKFILL_UNAVAILABLE`），不会无限重读；
+    - I/O 暂时错误：`BACKFILL_PENDING`，下个 tick 再试；从第一次失败起持续 `BACKFILL_PENDING_MAX_MS`（30 分钟）仍失败就 HALT（`EXECUTED_HEADS_BACKFILL_UNAVAILABLE`），不会无限重读，杀毒或备份软件锁几分钟文件也不会触发 HALT；
     - 解析不了的记录（包括写到一半的 0 字节文件）：计数（`unreadable`）后跳过，最后一道防线仍是发布者的 K(head, role)。
 - **预检**：已执行的 head 一律忽略（`HEAD_ALREADY_PUBLISHED_NO_RETRY`），不论 Source、PR 号还是 base。要再跑，只能推新提交。
-  - 唯一例外是同一 head 的 attempt 2：如果这个 head 唯一的记录是 attempt 1 自己在第 R 段之前写的那条（`executed-heads.mjs#onlyRelayRecordOf`），照常运行。能排上 attempt 2，说明第 R 段一个角色都没转发（`attempts.mjs`）。
+  - 唯一例外是同一 head 的 attempt 2：如果这个 head 唯一的记录文件是 attempt 1 自己在第 R 段之前写的那条（`executed-heads.mjs#onlyRelayRecordOf`），并且 attempt 1 的账本也表明它在第 0、1 或 2 段以 FAILED_CLEAN 结束、计划里没有转发任何角色（`executor.mjs#relayedNothing`），照常运行。记录按（来源、批次键）只建一次，单看文件分不出后面的段有没有跑过，所以要再核账本。
 - **安装带入旧账本**（`install-resident.ps1` 第 1b 步 carry-forward）：
   - 来源是父目录下每个 `resident-uninstalled-*\state`：`ledger-heads`、账本的 00/10/25/80/90 记录、`executed-heads`；
   - 每个文件读一次、算哈希、CreateNew 写进 `state\backfill\<n>\`，并逐个列进只有管理员能写的 `install\backfill-manifest.json`。`<n>` 是序号，保证路径远低于 Windows 的 260 字符上限；
   - 遇到任何链接，在写入任何东西之前就拒绝安装；旧 state 超过 256 个（回填能读的上限）时也一样（`CARRY_FORWARD_TOO_MANY_STATES`）；
   - 0 字节的记录照样带入、列进清单（字节数 0），回填时计为 unreadable，回执的 `carriedSources` 里有每个来源的 `empty` 数；
+  - 清单的每个来源还列出旧 state 里全部 `executed-heads\<键>` 目录（`heads`），包括没有记录文件的。回填为每个键建目录，不管记录能不能解析：目录本身就表示这个 head 可能已发布。否则一条写到一半的空记录会让这个 head 在再下一次重装时丢掉；
   - 旧 state 原样不动；
   - 计划只写规则，不列具体文件：旧 state 要等卸载改名之后才知道。具体文件记在安装回执和清单里。dry run 另外输出 `carryForwardPreview`，不进计划哈希；
   - `verify-resident.ps1` 新增两项检查：`backfill-manifest`，以及 `executed-heads-backfilled`（最多等 90 秒）。
@@ -1134,7 +1135,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 ### 16.5 poller 只提议跟上 main 的提交（v0.6 §2，§7 次要 12）
 
 - **条件**：PR 的 `base.sha` 等于 main 尖端，并且 compare（main...head）的 `behind_by` 为 0（`poller.mjs#upToDate`）。两个固定提交的 compare 结果会缓存。
-- **限量**：每次 compare 最多 15 秒；每轮最多 10 次没缓存的 compare，其余的这一轮记为 `compare-unavailable`（不提议），下一轮再比。
+- **限量**：每次 compare 最多 15 秒；每轮最多 10 次没缓存的 compare，其余的这一轮记为 `compare-unavailable`（不提议），下一轮再比。超时的 compare（子进程还在跑，Runner 仍忙）结束这一轮的 compare，不占名额，并且 15 分钟内不再比这一个，排在它后面的 PR 下一轮照常比。
 - **不提议的 PR**：在 `lastPass` 里给出提示：
   - `merge-main`：head 不含 main；
   - `push-any-commit`：已含 main，但 GitHub 的 base.sha 还是旧的，推任意一个提交即可。
@@ -1162,6 +1163,8 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 - **两条线**（`companion-main.mjs#lane`）：companion 自己的动作（邮箱：bundle、工作区、Linux 归档和静止证明、转发泵）和咨询性工作（poller、PR 页面状态、通知）各走一条线，各用自己的 Runner。
   - Runner 从不杀子进程，所以一个卡住的 gh 只会占住它自己那条线；服务要的证明（例如 2 分钟期限的 `linux-quiescence`）照常应答，GitHub 再慢也不会让邮箱请求过期，进而导致不该有的 HALT（独立复核 M1）。
   - 咨询性的每次调用最多 15 秒，每轮 PR 页面加通知最多 60 秒，超时后这一轮不再发起新调用。
+  - 调用超时或 Runner 仍忙时，这一轮就此结束；没做成的事不记为已做或失败：没弹出的通知下一轮再弹，没写成的 PR 状态不进 10 分钟的失败名单。
+  - 通知先于 PR 页面：通知只在本机，不应排在慢的 GitHub 后面。
   - 之前“泵送桥接段时 PR 页面和通知要等泵结束”的限制因此不再存在。
 
 ### 16.7 policy 合同
@@ -1172,9 +1175,9 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 
 ### 16.8 测试
 
-- **常驻层**：Node 189/189，新增 `failure-table`、`executed-heads`、`stage-outcome`、`status`、`pr-status` 五个测试文件。其中必需的一条：全新 state 加旧账本存档（只带账本、不带 executed-heads，与第一期之前的安装一样），曾经发布过检查的 head 不再准入，包括第 3 段遇到 `ROLE_ALREADY_PUBLISHED_ON_HEAD` 而 HALT 的那种；回填完成前不跑任何批次。
+- **常驻层**：Node 191/191，新增 `failure-table`、`executed-heads`、`stage-outcome`、`status`、`pr-status` 五个测试文件。其中必需的一条：全新 state 加旧账本存档（只带账本、不带 executed-heads，与第一期之前的安装一样），曾经发布过检查的 head 不再准入，包括第 3 段遇到 `ROLE_ALREADY_PUBLISHED_ON_HEAD` 而 HALT 的那种；回填完成前不跑任何批次。
 - **离线演练**：40 步，新增重装后回填的三步。
-- **PowerShell**：`windows/test-install-carry.ps1`，31 条断言，含 node 用真实回填读安装写出的清单（含一个 0 字节记录）、dry run 预览每个旧 state 一项、链接拒绝和超过 256 个旧 state 的拒绝；`windows/test-resident-windows.ps1` 不变，仍通过。
+- **PowerShell**：`windows/test-install-carry.ps1`，36 条断言，含 node 用真实回填读安装写出的清单（含 0 字节的账本记录、0 字节的已执行记录和没有记录的键）、dry run 预览每个旧 state 一项、链接拒绝和超过 256 个旧 state 的拒绝；`windows/test-resident-windows.ps1` 不变，仍通过。
 - **Source v2**：Node 173 项通过、1 项跳过，新增 `resident-v2-quota-phase1.test.mjs`，并在准入和发布者测试里加了用例。
 
 ### 16.9 独立复核与修正
@@ -1192,6 +1195,16 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 | MINOR 6 | 回填的非 ResidentError 失败会无限 `BACKFILL_PENDING` | 连续 10 次后 HALT（§16.1） |
 | MINOR 7 | Native 的 `state:'none'` 被当成未知 | 记为不在队列里（§16.2） |
 | NIT | 必需用例里声明的 HALT 场景没执行；名字形状的说法不准；PowerShell 侧没有 256 个来源的限制；写失败每分钟重试 | 场景已执行并断言；注释改准；安装前拒绝；10 分钟内不重试 |
+
+修正提交的第二次独立复核：上面各项都已修好；修正本身带出 2 个 MINOR、3 个 NIT，没有 BLOCKER 或 MAJOR，也都已修正：
+
+| 编号 | 问题 | 修正 |
+|---|---|---|
+| MINOR-A | 带入的空的或写坏的 executed-heads 记录在回填时被跳过，这个 head 的“可能已发布”在下一次重装时丢掉 | 清单列出每个旧 state 的 executed-heads 键，回填为每个键建目录，不管记录能否解析（§16.1） |
+| MINOR-B | 咨询线的调用超时后，同一轮后面的调用被 Runner 以“忙”拒绝，拒绝被当成真实结果：HALT 通知的键被占掉、PR 状态被标失败、compare 名额被扣 | 超时或忙时这一轮结束，不占键、不标失败、不扣名额；超时的 compare 15 分钟内跳过；通知先于 PR 页面（§16.5、§16.6） |
+| NIT 1 | attempt 2 放行只看记录文件，单看文件分不出后面的段 | 另核 attempt 1 的账本（§16.1） |
+| NIT 2 | 常驻侧的合并队列状态没有 `none` | 加上，并有测试保证与 Source 一致 |
+| NIT 3 | 确定性码推翻等待行时，账本仍记 waiting；回填只容忍约 2.5 分钟的暂时错误 | 账本和状态记实际生效的 deterministic-pr / new-commit；改为按时间计（30 分钟） |
 
 ---
 

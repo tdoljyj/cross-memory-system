@@ -182,11 +182,13 @@ export const UNEXECUTED_REASON_RULES = Object.freeze({
 // review of phase 1, MINOR 1): the Source's flag already says so, and the resident does not rely on that alone.
 export const DETERMINISTIC_REASON_CODES = Object.freeze([...new Set(FAILURE_TABLE.rows.filter(r => r.class === 'deterministic-pr' && r.reasonCodesAny).flatMap(r => r.reasonCodesAny))]);
 export function decideFailure({ code, stage, phase = 'stage', outcome = null, brokerNoLaunch = false, proof, started }) {
-  const row = typeof code === 'string' && CODE.test(code) ? failureRow({ code, stage, phase, reason: outcome?.reason ?? null, diagnostic: outcome?.diagnostic ?? null }) : null;
+  let row = typeof code === 'string' && CODE.test(code) ? failureRow({ code, stage, phase, reason: outcome?.reason ?? null, diagnostic: outcome?.diagnostic ?? null }) : null;
   if (!row || row.disposition === 'halt') return { klass: 'UNKNOWN', basis: row ? 'failure-table-halt' : 'not-an-allow-listed-clean-failure', row, release: null };
   const windows = proof?.windowsTreeZero === true && proof?.serviceOriginalStopped === true;
   const deterministic = diagnosticCodes(outcome?.diagnostic).some(c => DETERMINISTIC_REASON_CODES.includes(c));
-  if (started !== true && row.disposition === 'release-if-safe' && windows && !deterministic) {
+  // What the deterministic code makes of a release-if-safe row is what the ledger and the status record.
+  if (deterministic && row.disposition === 'release-if-safe') row = Object.freeze({ ...row, class: 'deterministic-pr', disposition: 'burn', retry: 'new-commit', breaker: 'neutral' });
+  if (started !== true && row.disposition === 'release-if-safe' && windows) {
     if (outcome?.safeToRerun === true) return { klass: 'NOT_ADMITTED', basis: 'stage-1-safe-to-rerun', row, release: 'NOT_ADMITTED' };
     if (brokerNoLaunch === true) return { klass: 'NOT_ADMITTED', basis: 'stage-1-broker-not-launched', row, release: 'BROKER_NOT_LAUNCHED' };
   }

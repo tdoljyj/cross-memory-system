@@ -16,9 +16,14 @@ const TRAILER = /^Clued-Work-Claim:\s*[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12
 export const UP_TO_DATE_HINTS = Object.freeze(['merge-main', 'push-any-commit', 'compare-unavailable']);
 const COMPARE_CACHE_MAX = 512;
 // A compare is one short call, and at most MAX_COMPARES_PER_PASS uncached ones run per pass (independent review of
-// phase 1, M1): a PR not compared this pass is "compare-unavailable" (never proposed) until the next pass.
+// phase 1, M1): a PR not compared this pass is "compare-unavailable" (never proposed) until the next pass. A compare
+// that timed out (its child still running, the Runner busy) ends this pass's compares without using the budget, and
+// that one compare is not asked again for SLOW_COMPARE_SKIP_MS, so the PRs behind it are compared in the next passes
+// (independent re-review, MINOR-B).
 export const COMPARE_TIMEOUT_MS = 15_000;
 export const MAX_COMPARES_PER_PASS = 10;
+export const SLOW_COMPARE_SKIP_MS = 15 * 60_000;
+const stalledCall = r => r?.timedOut === true || r?.refused === 'RUNNER_BUSY_WITH_UNFINISHED_CHILD';
 
 // Hint mode (free-minutes design S20): a proposed head is also observed for its GitHub-hosted runs, read-only,
 // for this long after it was first proposed (the executor waits at most policy.relay.wait.totalMs after it
@@ -34,7 +39,11 @@ export function upToDate({ mainSha, baseSha, behindBy }) {
 
 export class Poller {
   // ports: { repo, ghExe, run(argv,{timeoutMs}), writeTrigger(object), clock, hints? }
-  constructor(ports) { Object.assign(this, ports); this.sent = new Map(); this.firstSeen = new Map(); this.compares = new Map(); this.lastPass = null; this.compareBudget = MAX_COMPARES_PER_PASS; }
+  constructor(ports) {
+    Object.assign(this, ports);
+    this.sent = new Map(); this.firstSeen = new Map(); this.compares = new Map(); this.slow = new Map(); this.lastPass = null;
+    this.compareBudget = MAX_COMPARES_PER_PASS; this.stalled = false;
+  }
 
   async mainTip() {
     const r = await this.run([this.ghExe, 'api', `repos/${this.repo}/git/ref/heads/main`, '--jq', '.object.sha'], { timeoutMs: 30_000 });
@@ -55,9 +64,14 @@ export class Poller {
   async behindBy(mainSha, headSha) {
     const id = `${mainSha}...${headSha}`;
     if (this.compares.has(id)) return this.compares.get(id);
-    if (this.compareBudget <= 0) return null;
-    this.compareBudget -= 1;
+    if (this.compareBudget <= 0 || this.stalled || (this.slow.get(id) ?? 0) > this.clock()) return null;
     const r = await this.run([this.ghExe, 'api', '--method', 'GET', `repos/${this.repo}/compare/${mainSha}...${headSha}?per_page=1`, '--jq', '{behind_by: .behind_by, base: .base_commit.sha}'], { timeoutMs: COMPARE_TIMEOUT_MS });
+    if (stalledCall(r)) {
+      this.stalled = true;
+      if (r.timedOut) { this.slow.set(id, this.clock() + SLOW_COMPARE_SKIP_MS); if (this.slow.size > COMPARE_CACHE_MAX) this.slow.delete(this.slow.keys().next().value); }
+      return null;
+    }
+    this.compareBudget -= 1;
     const v = r.code === 0 ? json(r.stdout) : null;
     if (!v || v.base !== mainSha || !Number.isSafeInteger(v.behind_by) || v.behind_by < 0) return null;
     this.compares.set(id, v.behind_by);
@@ -69,7 +83,7 @@ export class Poller {
   // same signal GitHub-hosted admission used for "re-run me"; the executor still applies its own
   // once-only ledger, cool-down and daily cap, so proposing again can never force a re-execution.
   async pass() {
-    this.compareBudget = MAX_COMPARES_PER_PASS;
+    this.compareBudget = MAX_COMPARES_PER_PASS; this.stalled = false;
     const base = await this.mainTip();
     let proposed = 0;
     const pulls = [];

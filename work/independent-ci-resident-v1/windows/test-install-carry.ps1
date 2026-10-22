@@ -31,7 +31,13 @@ Yes ($installText.IndexOf("Step 'carry-forward'") -gt $installText.IndexOf("Step
 function Put([string]$path, [string]$text) { [void][IO.Directory]::CreateDirectory((Split-Path -Parent $path)); [IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding($false))) }
 $repo = 'tdoljyj/cross-memory-system'
 $head = 'a' * 40; $other = 'b' * 40
-$key = '1' * 64; $hk = '2' * 64; $key2 = '3' * 64; $hk2 = '4' * 64; $ek = '5' * 32
+$key = '1' * 64; $hk = '2' * 64; $key2 = '3' * 64; $hk2 = '4' * 64
+$third = 'e' * 40; $dirOnly = '6' * 32
+# The real executed-head keys (src/executed-heads.mjs#executedHeadKey) of the two heads with executed-heads records.
+$module = ([Uri](Join-Path (Split-Path -Parent $here) 'src\executed-heads.mjs')).AbsoluteUri
+$keyOf = { param([string]$sha) (& $Node --input-type=module -e ("import { executedHeadKey } from '" + $module + "'; console.log(executedHeadKey({ repo: 'tdoljyj/cross-memory-system', headSha: '" + $sha + "' }))") | Out-String).Trim() }
+$ek = & $keyOf $head; $ek3 = & $keyOf $third
+Yes ($ek -cmatch '^[0-9a-f]{32}$' -and $ek3 -cmatch '^[0-9a-f]{32}$' -and $ek -cne $ek3) 'real-executed-head-keys'
 $subject = '"subject":{"attempt":1,"baseSha":"' + ('c' * 40) + '","headSha":"' + $head + '","pr":884,"repo":"' + $repo + '","sourceManifestSha256":"' + ('d' * 64) + '"}'
 $subject2 = $subject.Replace($head, $other).Replace('"pr":884', '"pr":885')
 
@@ -49,9 +55,12 @@ Put (Join-Path $old1 ('ledger-heads\' + $hk2 + '.json')) ('{"headKey":"' + $hk2 
 Put (Join-Path $old1 ('ledger\' + $key2 + '\00-reserved.json')) ('{"headKey":"' + $hk2 + '","key":"' + $key2 + '",' + $subject2 + '}')
 Put (Join-Path $old1 ('ledger\' + $key2 + '\90-terminal.json')) ('{"key":"' + $key2 + '","outcome":"FAILED_CLEAN","facts":{"stage":1,"failureCode":"STAGE_CHILD_REFUSED"}}')
 Put (Join-Path $old1 'ledger-heads\notes.txt') 'ignored'
+# a head whose executed-heads record was left empty by an interrupted write: its directory still names it
+Put (Join-Path $old1 ('executed-heads\' + $ek3 + '\backfill-' + $key2.Substring(0, 16) + '.json')) ''
 $old2 = Join-Path $parent 'resident-uninstalled-20261022T060000Z-bbbbbb\state'
 Put (Join-Path $old2 ('executed-heads\' + $ek + '\publication-' + $key.Substring(0, 16) + '.json')) ('{"contract":"x","repo":"' + $repo + '","headSha":"' + $head + '","key":"' + $key + '","origin":"publication"}')
 Put (Join-Path $old2 'executed-heads\BACKFILL-COMPLETE.json') '{"not":"carried"}'
+[void][IO.Directory]::CreateDirectory((Join-Path $old2 ('executed-heads\' + $dirOnly)))   # a key with no record at all
 [void][IO.Directory]::CreateDirectory((Join-Path $parent 'resident-uninstalled-20261020T000000Z-cccccc'))   # no state at all
 Put (Join-Path $parent 'resident\state\ledger-heads\x.json') '{}'                                         # not an earlier state
 Put (Join-Path $parent 'resident-partial-1\state\ledger-heads\y.json') '{}'                              # not an uninstalled one
@@ -59,7 +68,7 @@ Put (Join-Path $parent 'resident-partial-1\state\ledger-heads\y.json') '{}'     
 $plan = Get-CarryForwardPlan $parent
 Yes (@($plan).Count -eq 3) 'three-earlier-states'
 Yes ((@($plan | ForEach-Object { $_.name }) -join '|') -ceq 'resident-uninstalled-20261020T000000Z-cccccc|resident-uninstalled-20261021T120000Z-aaaaaa|resident-uninstalled-20261022T060000Z-bbbbbb') 'sorted-by-name'
-Yes (@($plan[1].files).Count -eq 8) 'fixed-record-shapes-only'
+Yes (@($plan[1].files).Count -eq 9) 'fixed-record-shapes-only'
 Yes (-not (@($plan[1].files | ForEach-Object { $_.rel }) -match 'relay-wait|notes')) 'nothing-else'
 
 # The dry run's preview (the install's own line): one entry per earlier state, not one entry holding them all.
@@ -69,7 +78,7 @@ Yes ($previewLine.Count -eq 1) 'preview-line-present'
 . ([scriptblock]::Create($previewLine[0]))
 $previewJson = ConvertTo-Json -InputObject $preview -Depth 4 -Compress
 $previewBack = $previewJson | ConvertFrom-Json   # PS 5.1 hands a JSON array back as one object: assigned, not wrapped
-Yes ($previewBack.Count -eq 3 -and $previewBack[1].name -ceq 'resident-uninstalled-20261021T120000Z-aaaaaa' -and $previewBack[1].files -eq 8 -and $previewBack[0].files -eq 0) ('preview-one-entry-per-state:' + $previewJson)
+Yes ($previewBack.Count -eq 3 -and $previewBack[1].name -ceq 'resident-uninstalled-20261021T120000Z-aaaaaa' -and $previewBack[1].files -eq 9 -and $previewBack[0].files -eq 0) ('preview-one-entry-per-state:' + $previewJson)
 
 $newState = Join-Path $Scratch 'new\state'
 [void][IO.Directory]::CreateDirectory($newState)
@@ -81,6 +90,9 @@ $back = $json | ConvertFrom-Json
 Yes ($back.contract -ceq 'clued.independent-ci.resident-backfill-manifest/1') 'manifest-contract'
 Yes ((@($back.sources)[0].files -is [array]) -and @(@($back.sources)[0].files).Count -eq 0) 'an-empty-state-keeps-an-array'
 Yes ((@($back.sources)[2].files -is [array]) -and @(@($back.sources)[2].files).Count -eq 1) 'a-single-file-stays-an-array'
+Yes ((@($back.sources)[1].heads -is [array]) -and (@(@($back.sources)[1].heads) -join ',') -ceq $ek3) ('one-key-stays-an-array:' + $json)
+Yes ((@(@($back.sources)[2].heads) -join ',') -ceq ((@($ek, $dirOnly) | Sort-Object) -join ',')) 'every-key-listed-also-without-a-record'
+Yes ((@($back.sources)[0].heads -is [array]) -and @(@($back.sources)[0].heads).Count -eq 0) 'no-keys-keeps-an-array'
 foreach ($s in @($back.sources)) {
   foreach ($f in @($s.files)) {
     $copy = Join-Path (Join-Path (Join-Path $newState 'backfill') $s.dir) ($f.path.Replace('/', '\'))
@@ -93,16 +105,16 @@ Yes ($null -ne $threw) 'create-only-never-overwrites'
 
 # The resident's real backfill over exactly this manifest.
 $script = Join-Path $Scratch 'backfill.mjs'
-$module = ([Uri](Join-Path (Split-Path -Parent $here) 'src\executed-heads.mjs')).AbsoluteUri
 Put $script ("import path from 'node:path';`nimport { ExecutedHeads } from '" + $module + "';`n" +
   "const [state, manifestFile] = process.argv.slice(2);`n" +
   "const e = await ExecutedHeads.open(state, Date.now, { manifestFile, carriedRoot: path.join(state, 'backfill') });`n" +
   "const m = await e.backfill();`n" +
-  "console.log(JSON.stringify({ published: m.published, unreadable: m.unreadable, head: await e.published({ repo: '" + $repo + "', headSha: '" + $head + "' }), other: await e.published({ repo: '" + $repo + "', headSha: '" + $other + "' }) }));")
+  "console.log(JSON.stringify({ published: m.published, unreadable: m.unreadable, head: await e.published({ repo: '" + $repo + "', headSha: '" + $head + "' }), third: await e.published({ repo: '" + $repo + "', headSha: '" + $third + "' }), other: await e.published({ repo: '" + $repo + "', headSha: '" + $other + "' }) }));")
 $out = & $Node $script $newState $manifestFile | Out-String
 Yes ($LASTEXITCODE -eq 0) ('node-backfill:' + $out)
 $r = $out | ConvertFrom-Json
-Yes ($r.published -eq 1 -and $r.unreadable -eq 1 -and $r.head -eq $true -and $r.other -eq $false) ('backfill-reads-the-manifest:' + $out.Trim())
+# published: head (ledger and record), third (its empty record's key), the key without a record; unreadable: the two empty files
+Yes ($r.published -eq 3 -and $r.unreadable -eq 2 -and $r.head -eq $true -and $r.third -eq $true -and $r.other -eq $false) ('backfill-reads-the-manifest:' + $out.Trim())
 
 # A link anywhere in an earlier state refuses before anything is written.
 $linked = Join-Path $Scratch 'linked'

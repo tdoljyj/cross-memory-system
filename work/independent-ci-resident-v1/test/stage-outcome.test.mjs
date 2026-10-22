@@ -5,7 +5,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { parseStageFact, parseStageOutcome } from '../src/engine-windows.mjs';
+import { QUEUE_STATES, parseStageFact, parseStageOutcome } from '../src/engine-windows.mjs';
+import { MERGE_QUEUE_STATES } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/queue-facts.mjs';
 import { batchKey, headKey } from '../src/ledger.mjs';
 import { buildStageFact } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
 import { BASE, HEAD, SAFE_REFUSAL, SOURCE, WINDOWS_CLEAN, executorFixture, fakeEngine, notAdmitted, triggerBytes } from './helpers.mjs';
@@ -34,6 +35,9 @@ test('the stage fact\'s outcome reaches the executor whole: diagnostic codes, ci
   assert.deepEqual(parseStageOutcome({ ...outcome, diagnostic: { reasonCodes: ['Free Text', 'ok_code'], ciRetryAfter: 'soon' } }).diagnostic.reasonCodes, ['ok_code']);
   assert.equal(parseStageOutcome({ ...outcome, diagnostic: { ciRetryAfter: 'soon' } }).diagnostic.ciRetryAfter, null);
   assert.equal(parseStageOutcome({ ...outcome, scheduling: { mergeQueue: { entered: true, state: 'lapsed', position: 2 } } }).scheduling.mergeQueue.entered, false);
+  // Native's 'none' (a claim with the ref but no entry) is kept as itself: the same states as the Source's
+  assert.deepEqual([...QUEUE_STATES], [...MERGE_QUEUE_STATES]);
+  assert.deepEqual(parseStageOutcome({ ...outcome, scheduling: { mergeQueue: { entered: false, state: 'none', position: null } } }).scheduling.mergeQueue, { entered: false, state: 'none', position: null });
   assert.equal(parseStageFact(JSON.stringify(refusedFact(null)), M).outcome, null);
 });
 

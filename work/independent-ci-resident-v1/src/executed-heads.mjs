@@ -30,6 +30,7 @@ export const BACKFILL_MANIFEST_CONTRACT = 'clued.independent-ci.resident-backfil
 export const BACKFILL_MARKER = 'BACKFILL-COMPLETE.json';
 export const ORIGINS = Object.freeze(['publication', 'backfill']);
 // The files install-resident.ps1 carries from an earlier install's state (relative, forward slashes).
+const HEAD_KEY = /^[0-9a-f]{32}$/;
 export const CARRIED_FILE = /^(?:ledger-heads\/[0-9a-f]{64}\.json|ledger\/[0-9a-f]{64}\/(?:00-reserved|10-started|25-plan|80-owner-abort|90-terminal)\.json|executed-heads\/[0-9a-f]{32}\/(?:publication|backfill)-[0-9a-f]{16}\.json)$/;
 // The directory a carried state is copied into: its position in the manifest, so every carried path stays far below
 // the Windows path limit (260) the install's .NET file calls obey.
@@ -95,10 +96,11 @@ export class ExecutedHeads {
   // Any record of this head, whatever Source or attempt wrote it, and also its directory alone (an interrupted write).
   async published(subject) { return exists(this.headDir(subject)); }
 
-  // True only when the head's one record is attempt 1's own "before stage R" record (batch key key1): the executor's
-  // attempt 2 decision (attempts.mjs) already proved that stage R relayed no role, so that record alone does not stop
-  // the attempt 2 of the same head (independent review of phase 1, MINOR 5). Anything else, or anything unreadable,
-  // is false.
+  // True only when the head's one record FILE is attempt 1's own, written first "before stage R" (batch key key1). A
+  // record is create-only per (origin, batch key), so a later stage of the same attempt writes nothing new: this alone
+  // cannot tell that stage R was the last publication stage. The executor therefore also requires attempt 1's ledger to
+  // say so (executor.mjs#relayedNothing: FAILED_CLEAN at stage 0, 1 or 2 with a plan that relayed no role), as the
+  // attempt 2 decision did (attempts.mjs; independent review of phase 1, MINOR 5). Anything unreadable is false.
   async onlyRelayRecordOf(subject, key1, relayStage) {
     try {
       const names = await fs.readdir(this.headDir(subject));
@@ -138,14 +140,17 @@ export class ExecutedHeads {
     for (const [i, s] of m.sources.entries()) {
       // dir: where the install copied it (its 1-based position), name: the earlier install it came from.
       check(s && typeof s === 'object' && typeof s.name === 'string' && CARRIED_SOURCE.test(s.name) && s.dir === String(i + 1) && CARRIED_DIR.test(s.dir)
-        && Array.isArray(s.files) && s.files.length <= 200_000 && !out.some(o => o.name === s.name), 'EXECUTED_HEADS_BACKFILL_MANIFEST_REFUSED');
+        && Array.isArray(s.files) && s.files.length <= 200_000 && !out.some(o => o.name === s.name)
+        // heads (optional): the earlier state's executed-heads keys, also those whose directory holds no readable record
+        && (s.heads === undefined || (Array.isArray(s.heads) && s.heads.length <= 200_000 && s.heads.every(k => typeof k === 'string' && HEAD_KEY.test(k)) && new Set(s.heads).size === s.heads.length)),
+      'EXECUTED_HEADS_BACKFILL_MANIFEST_REFUSED');
       const files = new Map();
       for (const f of s.files) {
         check(f && typeof f === 'object' && typeof f.path === 'string' && CARRIED_FILE.test(f.path) && typeof f.sha256 === 'string' && HEX64.test(f.sha256)
           && Number.isSafeInteger(f.bytes) && f.bytes >= 0 && f.bytes <= MAX_RECORD && (f.bytes > 0 || f.sha256 === EMPTY_SHA256) && !files.has(f.path), 'EXECUTED_HEADS_BACKFILL_MANIFEST_REFUSED');
         files.set(f.path, f);
       }
-      out.push({ name: s.name, root: path.join(carriedRoot, s.dir), files });
+      out.push({ name: s.name, root: path.join(carriedRoot, s.dir), files, keys: s.heads ?? [] });
     }
     return out;
   }
@@ -180,9 +185,13 @@ export class ExecutedHeads {
 
   // Reads one source into heads, ledger entries and executed records. A record whose bytes do not parse cannot name
   // its head: it is counted (unreadable) and skipped; the K(head, role) mutex of the publishers remains the last guard.
+  // An executed-heads record is the exception: its directory already names the head (the key), so a carried key is kept
+  // whether or not its record parses (an empty one from an interrupted write; independent re-review, MINOR-A).
   async readSource(source) {
     const paths = source.files ? [...source.files.keys()].sort() : await this.ownFiles();
     const heads = [], entries = new Map(), executed = [];
+    const keys = new Set(source.files ? source.keys ?? [] : []);
+    if (source.files) for (const rel of paths) { const [kind, k] = rel.split('/'); if (kind === 'executed-heads' && HEAD_KEY.test(k)) keys.add(k); }
     let unreadable = 0;
     for (const rel of paths) {
       const bytes = source.files ? await ExecutedHeads.readCarried(source, rel) : await readOwn(this.stateRoot, rel);
@@ -200,7 +209,7 @@ export class ExecutedHeads {
       } else if (subjectOf(value) && HEX64.test(value.key ?? '')) executed.push(value);
       else unreadable += 1;
     }
-    return { heads, entries, executed, unreadable };
+    return { heads, entries, executed, keys: [...keys].sort(), unreadable };
   }
 
   // The backfill. Idempotent (create-only records; an interrupted run is simply repeated) and done when the marker is.
@@ -210,7 +219,7 @@ export class ExecutedHeads {
     const summary = [], heads = new Set();
     let unreadable = 0;
     for (const source of sources) {
-      const { heads: burned, entries, executed, unreadable: bad } = await this.readSource(source);
+      const { heads: burned, entries, executed, keys, unreadable: bad } = await this.readSource(source);
       const mine = new Set();
       const keep = async (subject, key, basis) => {
         await this.record(subject, { key, origin: 'backfill', basis: `${source.name === 'current' ? 'current' : 'carried'}:${basis}`.slice(0, 80) });
@@ -221,8 +230,10 @@ export class ExecutedHeads {
         if (verdict.published) await keep(head.subject, head.key, verdict.basis);
       }
       for (const x of executed) await keep(x, x.key, 'executed-head');
+      // Every carried key, readable or not, is a head that may have published: its directory is the record.
+      for (const k of keys) { await fs.mkdir(path.join(this.dir, k), { recursive: true }); mine.add(k); heads.add(k); }
       unreadable += bad;
-      summary.push({ name: source.name, heads: burned.length, entries: entries.size, executed: executed.length, published: mine.size, unreadable: bad });
+      summary.push({ name: source.name, heads: burned.length, entries: entries.size, executed: executed.length, keys: keys.length, published: mine.size, unreadable: bad });
     }
     // published: distinct heads (repo, head) the store holds from this backfill.
     const marker = { contract: BACKFILL_MARKER_CONTRACT, at: isoNow(this.clock), sources: summary, published: heads.size, unreadable };

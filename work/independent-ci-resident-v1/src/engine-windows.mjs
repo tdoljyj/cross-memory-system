@@ -65,7 +65,7 @@ export const STAGE_FACT_CONTRACT = 'clued.independent-ci.resident-stage-fact/2';
 // here to a fixed shape: anything that does not fit is dropped (null), never guessed, so a malformed outcome can only
 // lose a release, never gain one. Only diagnostics and scheduling: no free text crosses into the ledger or status.
 const ENUM = /^[A-Za-z_]{1,40}$/, DCODE = /^[a-z][a-z0-9_]{0,63}$/, ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
-const QUEUE_STATES = Object.freeze(['head', 'waiting', 'lapsed', 'out']);
+export const QUEUE_STATES = Object.freeze(['head', 'waiting', 'lapsed', 'out', 'none']);   // the Source's MERGE_QUEUE_STATES
 const isoOrNull = v => typeof v === 'string' && ISO.test(v) && Number.isFinite(Date.parse(v)) ? v : null;
 function queueEntry(v) {
   if (!v || typeof v !== 'object' || Array.isArray(v) || Object.keys(v).sort().join('|') !== 'entered|position|state' || typeof v.entered !== 'boolean') return null;

@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { COMPARE_TIMEOUT_MS, MAX_COMPARES_PER_PASS, Poller, upToDate } from '../src/poller.mjs';
+import { COMPARE_TIMEOUT_MS, MAX_COMPARES_PER_PASS, Poller, SLOW_COMPARE_SKIP_MS, upToDate } from '../src/poller.mjs';
 import { ADVISORY_TIMEOUT_MS, LocalStore, PASS_BUDGET_MS, POST_RETRY_MS, PR_STATUS_CONTEXT, PrStatusReporter, contextFree, contextShapeSafe, describe, events, toastArgv, validateStatusConfig } from '../src/pr-status.mjs';
 import { lane } from '../src/companion-main.mjs';
 import { Runner } from '../src/runner.mjs';
@@ -99,6 +99,52 @@ test('the advisory work is bounded: short calls, at most MAX_COMPARES_PER_PASS c
   assert.equal(posts() - before, 1, `nothing starts after ${PASS_BUDGET_MS} ms`);
 });
 
+test('a stalled advisory call ends the pass: nothing it could not do is recorded as done or failed (independent re-review, MINOR-B)', async t => {
+  const root = await tempRoot(t);
+  let now = Date.parse('2026-10-22T09:00:00Z');
+  const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  // A busy Runner (an earlier child still running) refuses every call: the HALT toast keeps its key, no head is failed.
+  let mode = 'busy';
+  const calls = [];
+  const run = async argv => {
+    calls.push(argv);
+    if (mode === 'busy') return { code: null, stdout: '', stderr: '', refused: 'RUNNER_BUSY_WITH_UNFINISHED_CHILD' };
+    if (mode === 'slow-rules' && argv.some(a => a.includes('/rules/branches/main'))) return { code: null, stdout: '', stderr: '', timedOut: true };
+    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    return { code: 0, stdout: '{}' };
+  };
+  const reporter = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now) });
+  const prs = [{ pr: 9, headSha: H(9), eligible: false, hint: 'merge-main', behindBy: 3 }];
+  const halted = boardStatus(b => b.update({ halt: { code: 'X_Y', at: '2026-10-22T09:00:00Z' } }), now);
+  const first = await reporter.pass({ pulls: prs, status: halted });
+  assert.deepEqual([first.stalled, first.toasts, first.posted, calls.length], [true, 0, 0, 1], 'one refused call, then the pass ends');
+  assert.equal(reporter.store.data.notified['halt:X_Y:2026-10-22T09:00:00Z'], undefined, 'the HALT toast is still owed');
+  // the rules read times out: no write, and the head is not marked failed
+  mode = 'slow-rules';
+  const second = await reporter.pass({ pulls: prs, status: halted });
+  assert.deepEqual([second.stalled, second.toasts, second.posted, reporter.failed.size], [true, 1, 0, 0]);
+  mode = 'ok';
+  assert.equal((await reporter.pass({ pulls: prs, status: halted })).posted, 1, 'written once the Runner answers again');
+  // poller: a compare that times out stops this pass's compares (budget kept) and is skipped for a while
+  let slowHead = null;
+  const pulls = [1, 2, 3].map(i => ({ number: i, headRefOid: String(i).padStart(40, 'c'), baseRefOid: MAIN, isDraft: false, body: TRAILER, updatedAt: 't' }));
+  const prun = async argv => {
+    const c = argv.find(a => a.includes('/compare/'));
+    if (c) return c.includes(slowHead) ? { code: null, stdout: '', stderr: '', timedOut: true } : { code: 0, stdout: JSON.stringify({ behind_by: 0, base: MAIN }) };
+    if (argv.includes('api')) return { code: 0, stdout: `${MAIN}\n` };
+    return { code: 0, stdout: JSON.stringify(pulls) };
+  };
+  let clock = 0;
+  const p = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run: prun, writeTrigger: async () => {}, clock: () => clock });
+  slowHead = pulls[0].headRefOid;
+  assert.equal(await p.pass(), 0, 'the first compare hangs: nothing compared after it this pass');
+  assert.equal(p.compareBudget, MAX_COMPARES_PER_PASS, 'the budget is not used by a stalled call');
+  assert.equal(await p.pass(), 2, 'next pass: the slow one is skipped, the PRs behind it are compared');
+  clock += SLOW_COMPARE_SKIP_MS;
+  slowHead = 'none';
+  assert.equal(await p.pass(), 1, 'after the skip window it is asked again');
+});
+
 test('two lanes: a hung advisory child never stops the companion answering the mailbox (independent review M1)', async () => {
   // fake children: the advisory one never exits (the Runner never kills it), the companion's ones exit at once
   const child = () => { const handlers = {}; return { stdout: null, stderr: null, on: (e, f) => { handlers[e] = f; }, handlers }; };
@@ -185,7 +231,7 @@ test('the reporter writes a status only when it changes, never over a required c
   const pulls = [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }, { pr: 9, headSha: H(9), eligible: false, hint: 'merge-main', behindBy: 2 }];
   const status = boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 } }); b.outcome({ pr: 7, headSha: H(7), outcome: 'COMPLETED' }); }, now);
   const posts = () => calls.filter(a => a.includes('POST'));
-  assert.deepEqual(await reporter.pass({ pulls, status }), { posted: 2, toasts: 0, collision: false });
+  assert.deepEqual(await reporter.pass({ pulls, status }), { posted: 2, toasts: 0, collision: false, stalled: false });
   const first = posts();
   assert.deepEqual(first.map(a => a[a.indexOf('-f') + 1]), ['state=success', 'state=failure']);
   assert.ok(first.every(a => a.includes(`context=${PR_STATUS_CONTEXT}`) && a.includes(`repos/${REPO}/statuses/${a[4].split('/').pop()}`)));
@@ -204,7 +250,8 @@ test('the reporter writes a status only when it changes, never over a required c
   const before = posts().length;
   const r = await reporter.pass({ pulls, status: halted });
   assert.deepEqual([r.posted, r.collision, posts().length - before], [0, true, 0]);
-  assert.equal(r.toasts, 2, 'the collision and the HALT');
+  assert.equal(r.toasts, 1, 'the HALT (the notifications run first, before the rules are read)');
+  assert.equal((await reporter.pass({ pulls, status: halted })).toasts, 1, 'the collision, one pass later');
   assert.equal((await reporter.pass({ pulls, status: halted })).toasts, 0, 'each key once');
   // unknown rules: nothing is written
   required = null; now += 31 * 60_000;

@@ -12,7 +12,10 @@
 //     MAX_POSTS_PER_PASS per pass; a generic "proposed" text never replaces anything already written for that head; a
 //     head whose write failed is left alone for POST_RETRY_MS.
 // Every call is short (ADVISORY_TIMEOUT_MS) and a pass stops starting calls after PASS_BUDGET_MS. The companion runs all
-// of this in its advisory lane, with its own Runner (companion-main.mjs), so it never delays the mailbox.
+// of this in its advisory lane, with its own Runner (companion-main.mjs), so it never delays the mailbox. A call that
+// timed out leaves its child running and the Runner busy: the pass ends there (stalled), and nothing it could not do is
+// recorded as done or as failed (independent re-review, MINOR-B). The notifications go first: they are local and must
+// not wait behind a slow GitHub.
 // Notifications: a Windows toast in the Owner's session, once per event key (kept locally): the executor HALTed, its
 // status stopped moving (STATUS_STALE_MS), a PR head waited more than an hour (once per PR, head and reason), the
 // status context collides with a required check.
@@ -30,6 +33,8 @@ export const REQUIRED_CACHE_MS = 30 * 60_000;
 export const ADVISORY_TIMEOUT_MS = 15_000;
 export const PASS_BUDGET_MS = 60_000;
 export const POST_RETRY_MS = 10 * 60_000;
+// A call that did not run (the Runner is still busy with an earlier child) or did not finish in time.
+export const stalledCall = r => r?.timedOut === true || r?.refused === 'RUNNER_BUSY_WITH_UNFINISHED_CHILD';
 const DESCRIPTION_MAX = 140;
 const STORE_CONTRACT = 'clued.independent-ci.companion-pr-status-store/1';
 const KEEP_MS = 14 * 86_400_000;
@@ -171,6 +176,7 @@ export class PrStatusReporter {
     if (this.required && this.clock() - this.requiredAt < REQUIRED_CACHE_MS) return this.required;
     const r = await this.run([this.ghExe, 'api', '--method', 'GET', '--paginate', `repos/${this.repo}/rules/branches/main`,
       '--jq', '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context'], { timeoutMs: ADVISORY_TIMEOUT_MS });
+    if (stalledCall(r)) this.stalled = true;
     if (r.code !== 0) return null;
     const list = String(r.stdout).split(/\r?\n/).map(s => s.trim()).filter(Boolean);
     if (list.length === 0) return null; // main always requires checks: an empty answer is no answer
@@ -182,6 +188,7 @@ export class PrStatusReporter {
     check(HEX40.test(headSha) && ['pending', 'success', 'failure', 'error'].includes(want.state) && typeof want.description === 'string', 'PR_STATUS_INVALID');
     const r = await this.run([this.ghExe, 'api', '--method', 'POST', `repos/${this.repo}/statuses/${headSha}`, '-f', `state=${want.state}`, '-f', `context=${PR_STATUS_CONTEXT}`,
       '-f', `description=${want.description}`], { timeoutMs: ADVISORY_TIMEOUT_MS });
+    if (stalledCall(r)) this.stalled = true;
     return r.code === 0;
   }
 
@@ -190,11 +197,26 @@ export class PrStatusReporter {
     const now = this.clock();
     const inBudget = () => this.clock() - now < PASS_BUDGET_MS;
     let posted = 0, toasts = 0;
+    this.stalled = false;
     for (const [head, at] of this.failed) if (now - at >= POST_RETRY_MS) this.failed.delete(head);
-    if (this.prStatus !== false && pulls.length > 0) {
+    if (this.notifications !== false) {
+      for (const e of events({ status, statusError, now, pulls, startedAt: this.startedAt, collision: this.collision })) {
+        if (toasts >= MAX_TOASTS_PER_PASS || !inBudget()) break;
+        if (this.store.data.notified[e.key]) continue;
+        const r = await this.run(toastArgv(this.powershellExe, e.title, e.body), { timeoutMs: ADVISORY_TIMEOUT_MS });
+        // A toast that never started keeps its key for the next pass. Shown, refused or still running (timed out): the
+        // key is used up, so a toast is never shown twice or retried every minute.
+        if (r?.refused === 'RUNNER_BUSY_WITH_UNFINISHED_CHILD') { this.stalled = true; break; }
+        this.store.data.notified[e.key] = { at: new Date(now).toISOString() };
+        this.dirty = true;
+        if (r.code === 0) toasts += 1;
+        if (stalledCall(r)) { this.stalled = true; break; }
+      }
+    }
+    if (this.prStatus !== false && pulls.length > 0 && !this.stalled) {
       const required = await this.requiredContexts();
-      this.collision = Array.isArray(required) && !contextFree(PR_STATUS_CONTEXT, required);
-      if (Array.isArray(required) && !this.collision) {
+      if (!this.stalled) this.collision = Array.isArray(required) && !contextFree(PR_STATUS_CONTEXT, required);
+      if (Array.isArray(required) && !this.collision && !this.stalled) {
         for (const pull of pulls) {
           if (posted >= MAX_POSTS_PER_PASS || !inBudget()) break;
           const want = describe({ pull, status, now });
@@ -202,24 +224,15 @@ export class PrStatusReporter {
           const last = this.store.data.posted[pull.headSha];
           if (want.weak && last) continue;
           if (last && last.state === want.state && last.description === want.description) continue;
-          if (await this.post(pull.headSha, want)) { this.store.data.posted[pull.headSha] = { state: want.state, description: want.description, at: new Date(now).toISOString() }; posted += 1; }
-          else this.failed.set(pull.headSha, now);
+          const ok = await this.post(pull.headSha, want);
+          if (ok) { this.store.data.posted[pull.headSha] = { state: want.state, description: want.description, at: new Date(now).toISOString() }; posted += 1; }
+          else if (!this.stalled) this.failed.set(pull.headSha, now);
+          if (this.stalled) break;
         }
       }
     }
-    if (this.notifications !== false) {
-      for (const e of events({ status, statusError, now, pulls, startedAt: this.startedAt, collision: this.collision })) {
-        if (toasts >= MAX_TOASTS_PER_PASS || !inBudget()) break;
-        if (this.store.data.notified[e.key]) continue;
-        const r = await this.run(toastArgv(this.powershellExe, e.title, e.body), { timeoutMs: ADVISORY_TIMEOUT_MS });
-        // Shown or not, the key is used up: a toast that cannot be shown is not retried every minute.
-        this.store.data.notified[e.key] = { at: new Date(now).toISOString() };
-        this.dirty = true;
-        if (r.code === 0) toasts += 1;
-      }
-    }
     if (posted > 0 || toasts > 0 || this.dirty) { try { await this.store.save(); this.dirty = false; } catch { this.dirty = true; } }
-    return { posted, toasts, collision: this.collision };
+    return { posted, toasts, collision: this.collision, stalled: this.stalled };
   }
 }
 

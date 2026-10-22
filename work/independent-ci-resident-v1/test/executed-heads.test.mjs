@@ -10,7 +10,7 @@ import { batchKey, headKey } from '../src/ledger.mjs';
 import { ExecutedHeads, BACKFILL_MANIFEST_CONTRACT, CARRIED_FILE, executedHeadKey, mayHavePublished } from '../src/executed-heads.mjs';
 import { sha256 } from '../src/canonical.mjs';
 import { BASE, HEAD, SOURCE, WINDOWS_CLEAN, executorFixture, fakeEngine, notAdmitted, rawPolicy, triggerBytes } from './helpers.mjs';
-import { BACKFILL_MAX_PENDING } from '../src/executor.mjs';
+import { BACKFILL_PENDING_MAX_MS } from '../src/executor.mjs';
 
 const OLD_SOURCE = 'c'.repeat(64);
 const subject = (o = {}) => ({ repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 1, ...o });
@@ -34,12 +34,16 @@ async function oldInstall(t, heads) {
 // The old state's own executed-heads records are carried only when asked: an install from before phase 1 has none, and
 // the required case must be found from the ledger alone.
 async function carry(oldRoot, newRoot, name = 'resident-uninstalled-20261022T061000Z-aa11bb', { executedHeads = false } = {}) {
-  const files = [];
+  const files = [], heads = [];
   const walk = async rel => {
     for (const n of (await fs.readdir(path.join(oldRoot, 'state', ...rel.split('/').filter(Boolean)))).sort()) {
       const r = rel ? `${rel}/${n}` : n;
       const abs = path.join(oldRoot, 'state', ...r.split('/'));
-      if ((await fs.stat(abs)).isDirectory()) { if (/^(ledger-heads|ledger|ledger\/[0-9a-f]{64}|executed-heads|executed-heads\/[0-9a-f]{32})$/.test(r)) await walk(r); continue; }
+      if ((await fs.stat(abs)).isDirectory()) {
+        if (/^executed-heads\/[0-9a-f]{32}$/.test(r)) heads.push(n);
+        if (/^(ledger-heads|ledger|ledger\/[0-9a-f]{64}|executed-heads|executed-heads\/[0-9a-f]{32})$/.test(r)) await walk(r);
+        continue;
+      }
       if (!CARRIED_FILE.test(r)) continue;
       const bytes = await fs.readFile(abs);
       const to = path.join(newRoot, 'state', 'backfill', '1', ...r.split('/'));
@@ -52,7 +56,7 @@ async function carry(oldRoot, newRoot, name = 'resident-uninstalled-20261022T061
     try { await fs.access(path.join(oldRoot, 'state', top)); } catch { continue; }
     await walk(top);
   }
-  return { contract: BACKFILL_MANIFEST_CONTRACT, sources: [{ name, dir: '1', files }] };
+  return { contract: BACKFILL_MANIFEST_CONTRACT, sources: [{ name, dir: '1', files, ...(executedHeads ? { heads } : {}) }] };
 }
 
 test('fresh state + archived old ledger: a head that published checks is never admitted again, under any Source, PR or base', async t => {
@@ -115,11 +119,12 @@ test('no batch runs before the backfill: a missing manifest or a changed carried
   assert.equal(await flaky.ledger.halted(), null, 'a transient error is no HALT');
   fail = false;
   assert.equal((await flaky.exec.tick()).state, 'COMPLETED');
-  // an I/O error that lasts: deferred BACKFILL_MAX_PENDING - 1 ticks, then a HALT (never a batch)
+  // an I/O error that lasts: deferred for BACKFILL_PENDING_MAX_MS since its first failure, then a HALT (never a batch)
   const stuck = await executorFixture(t);
   stuck.executedHeads.backfill = async () => { throw Object.assign(new Error('EPERM'), { code: 'EPERM' }); };
   await stuck.drop(triggerBytes());
-  for (let i = 1; i < BACKFILL_MAX_PENDING; i += 1) assert.equal((await stuck.exec.tick()).state, 'BACKFILL_PENDING', `tick ${i}`);
+  for (let i = 0; i < 20; i += 1) { assert.equal((await stuck.exec.tick()).state, 'BACKFILL_PENDING', `tick ${i}`); stuck.advance(BACKFILL_PENDING_MAX_MS / 25); }
+  stuck.advance(BACKFILL_PENDING_MAX_MS);
   assert.deepEqual([(await stuck.exec.tick()).failureCode, derived(stuck.engine)], ['EXECUTED_HEADS_BACKFILL_UNAVAILABLE', 0]);
   assert.equal((await stuck.ledger.halted()).value.code, 'EXECUTED_HEADS_BACKFILL_UNAVAILABLE');
 });
@@ -174,6 +179,31 @@ test('may-have-published: anything not proven to have ended before the first pub
   assert.equal(mayHavePublished(head(), clean({ failureCode: 'OWNER_ABORTED', safePoint: 'in-stage-2' })).published, false);
   assert.equal(mayHavePublished(head(), clean({ failureCode: 'OWNER_ABORTED', safePoint: 'in-stage-4' })).published, true);
   assert.equal(mayHavePublished(head(), clean({ failureCode: 'OWNER_ABORTED', safePoint: 'before-stage-8' })).published, true);
+});
+
+test('a carried executed-heads key is kept whatever its record: empty, torn, or no record at all (independent re-review, MINOR-A)', async t => {
+  const old = await oldInstall(t, []);
+  const emptyHead = subject({ headSha: '7'.repeat(40) }), tornHead = subject({ headSha: '8'.repeat(40) }), bareHead = subject({ headSha: '9'.repeat(40) });
+  const at = s => path.join(old.root, 'state', 'executed-heads', executedHeadKey(s));
+  for (const [s, bytes] of [[emptyHead, ''], [tornHead, '{"repo":']]) { await fs.mkdir(at(s), { recursive: true }); await fs.writeFile(path.join(at(s), `backfill-${'a'.repeat(16)}.json`), bytes); }
+  await fs.mkdir(at(bareHead), { recursive: true });
+  const newRoot = path.join(old.root, '..', path.basename(old.root) + '-keys');
+  await fs.mkdir(newRoot); t.after(() => fs.rm(newRoot, { recursive: true, force: true }));
+  const manifest = await carry(old.root, newRoot, undefined, { executedHeads: true });
+  assert.deepEqual(manifest.sources[0].heads.length, 3);
+  const f = await executorFixture(t, { root: newRoot, backfillManifest: manifest });
+  await f.exec.tick();
+  for (const s of [emptyHead, tornHead, bareHead]) assert.equal(await f.executedHeads.published(s), true, s.headSha);
+  const marker = await f.executedHeads.readMarker();
+  assert.deepEqual([marker.published, marker.unreadable, marker.sources[1].keys], [3, 2, 3]);
+  // keys are fixed-shape and unique, or the manifest is refused
+  for (const bad of [['x'], ['a'.repeat(32), 'a'.repeat(32)], 'a'.repeat(32)]) {
+    const m = structuredClone(manifest); m.sources[0].heads = bad;
+    const badRoot = path.join(newRoot, '..', path.basename(newRoot) + `-bad${String(bad).length}`);
+    t.after(() => fs.rm(badRoot, { recursive: true, force: true }));
+    const g = await executorFixture(t, { root: badRoot, backfillManifest: m });
+    assert.equal((await g.exec.tick()).failureCode, 'EXECUTED_HEADS_BACKFILL_MANIFEST_REFUSED', JSON.stringify(bad));
+  }
 });
 
 test('backfill counts and skips a carried record that does not parse; the store refuses a bad subject', async t => {
