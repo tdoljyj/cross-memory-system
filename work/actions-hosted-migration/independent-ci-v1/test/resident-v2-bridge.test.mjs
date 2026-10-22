@@ -16,7 +16,7 @@ import { runWorkerJob } from '../src/worker-v2.mjs';
 import { REQUIRED_SOURCE_PATHS, createWindowsContext } from '../worker/protected-job-bridge-v4/boundary.mjs';
 import { CALLBACK_WINDOW_MS, makeIssue, makeChallenge, makeResponse, makeBlocked, validateChallenge, validateResponse, validateBlocked, encode, decode, digest as bridgeDigest } from '../worker/protected-job-bridge-v4/protocol.mjs';
 import { createFixtureMailbox } from '../worker/protected-job-bridge-v4/mailbox.mjs';
-import { runIssuer, blockedReason, refsFailureReason, ISSUER_SUCCESS } from '../worker/protected-job-bridge-v4/windows-issuer.mjs';
+import { runIssuer, issuerEvaluate, blockedReason, refsFailureReason, ISSUER_SUCCESS } from '../worker/protected-job-bridge-v4/windows-issuer.mjs';
 import { resultPayload, observationFacts, verifySignedBridgeResult, RESULT_WRAPPER_CONTRACT_V2 } from '../worker/protected-job-bridge-v4/signed-result.mjs';
 import { cleanBlockedReason, isCleanBlocked } from '../worker/protected-job-bridge-v4/linux-worker.mjs';
 import { cacheRefusal } from '../worker/formal-trivy-v4/adapter.mjs';
@@ -390,6 +390,59 @@ test('issuer: the first admission retries an unavailable evaluation while a call
     box: await createFixtureMailbox(rootC, 'windows'), sleep: backoffSleep(waitsC), stageDeadline: Date.now() + FIRST_RESERVE_MS + 20_000 });
   assert.deepEqual([rC.status, rC.reason, rC.sideEffects, k, waitsC, rC.admissionDiagnostic], ['BLOCKED', 'full_admission_claim_changed', 0, 2, [1000], undefined]);
   await assert.rejects(fs.lstat(path.join(rootC, 'outgoing', 'issue.json')), { code: 'ENOENT' });
+});
+
+test('issuer evaluate: a failed changed-paths read is unavailable (retried), a PR that moved is the subject change; otherwise the complete admission runs', async () => {
+  const job = { id: 'job' }, batchClaim = { claimId: 'c' }, packet = { complete: true, paths: ['a.txt'] }, calls = [];
+  const admission = { evaluatePr: async (...args) => { calls.push(args); return { status: 'ADMITTED', marker: 1 }; } };
+  const throwing = code => ({ readChangedPaths: async () => { throw code === undefined ? undefined : Object.assign(new Error(code), { code }); } });
+  for (const code of ['github_transport_unconfirmed', 'github_http_502', 'pr_files_changed', 'invalid_pr_files', undefined]) {
+    assert.deepEqual(await issuerEvaluate({ github: throwing(code), admission, job, batchClaim })(),
+      { status: 'BLOCKED', reason: 'full_admission_unavailable', diagnostic: { phase: 'changed_paths' } }, String(code));
+  }
+  assert.deepEqual(await issuerEvaluate({ github: throwing('pr_subject_changed'), admission, job, batchClaim })(),
+    { status: 'BLOCKED', reason: 'full_admission_subject_changed', diagnostic: { phase: 'changed_paths' } });
+  assert.equal(calls.length, 0, 'no admission without the changed paths');
+  const read = [];
+  const ok = await issuerEvaluate({ github: { readChangedPaths: async j => { read.push(j); return packet; } }, admission, job, batchClaim })();
+  assert.deepEqual([ok, read, calls], [{ status: 'ADMITTED', marker: 1 }, [job], [[job, packet, { batchClaim }]]]);
+});
+
+test('issuer: a changed-paths read that fails once in a callback round is retried and answered (through issuerEvaluate)', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+  const f = issuerFixture(t), waits = [];
+  let reads = 0;
+  // read 1: the issue; read 2: the callback, GitHub down after the port's own retries; read 3: the callback again; read 4: the final admission
+  const github = { readChangedPaths: async () => { if (++reads === 2) throw Object.assign(new Error('github_transport_unconfirmed'), { code: 'github_transport_unconfirmed' }); return PACKET; } };
+  const admission = { evaluatePr: async () => facts(f.job, f.c) };
+  const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
+  const linux = (async () => {
+    const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
+    await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1)));
+    await waitFor(path.join(root, 'outgoing', 'response-01.json'));
+    await put(root, 'result', Buffer.from(canonical(signedWrapper(issue, trivyObservation(f.job), f.signer))));
+  })();
+  const r = await runIssuer({ context: f.context, evaluate: issuerEvaluate({ github, admission, job: f.job, batchClaim: null }), collect: async () => null, box,
+    sleep: backoffSleep(waits), stageDeadline: Date.now() + 20_000 });
+  await linux;
+  assert.deepEqual([r.status, reads, waits, r.admissionDiagnostic], [ISSUER_SUCCESS, 4, [1000], undefined]);
+});
+
+test('issuer: a final admission that ends past the issue window is not a success (UNCERTAIN BRIDGE_RESULT_DEADLINE)', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+  let n = 0, skew = 0;
+  const f = issuerFixture(t);
+  const clock = () => Date.now() + skew;
+  // evaluation 3 is the admission after the result; it returns ADMITTED but only after the issue's expiresAt
+  const evaluate = async () => { if (++n === 3) skew = 60_000; return facts(f.job, f.c); };
+  const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
+  const linux = (async () => {
+    const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
+    await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1)));
+    await waitFor(path.join(root, 'outgoing', 'response-01.json'));
+    await put(root, 'result', Buffer.from(canonical(signedWrapper(issue, trivyObservation(f.job), f.signer))));
+  })();
+  const r = await runIssuer({ context: f.context, evaluate, collect: async () => null, box, clock, stageDeadline: Date.now() + 20_000 });
+  await linux;
+  assert.deepEqual([r.status, r.reason, r.sideEffects, n], ['UNCERTAIN', 'BRIDGE_RESULT_DEADLINE', 1, 3]);
 });
 
 test('issuer: a challenge relayed only after its deadline is late (no admission, no response, no UNCERTAIN)', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {

@@ -42,6 +42,16 @@ export function refsFailureReason(code){
   return 'REMOTE_REFS_UNAVAILABLE';
 }
 const refsStep=async collect=>{try{return await collect();}catch(e){fail(refsFailureReason(e?.code));}};
+// The issuer's evaluate(): the changed-paths read, then the complete admission. The read sits outside
+// full-admission-v2.mjs's catch-all, so its failures are mapped the same way: a PR that is no longer open on the job's
+// head and base (pr_subject_changed) is the subject change evaluatePr reports itself; any other exception (mostly
+// GitHub after the port's own retries) is unavailable, which runIssuer retries (Task 576231fa).
+export const issuerEvaluate=({github,admission,job,batchClaim})=>async()=>{
+  let packet;
+  try{packet=await github.readChangedPaths(job);}
+  catch(e){return{status:'BLOCKED',reason:e?.code==='pr_subject_changed'?'full_admission_subject_changed':UNAVAILABLE_ADMISSION,diagnostic:{phase:'changed_paths'}};}
+  return admission.evaluatePr(job,packet,{batchClaim});
+};
 
 // The issuer engine. Ports are injected so the offline tests drive the real protocol; production wires
 // them in main(). sideEffects counts "the Linux side may run": 0 until the issue is written.
@@ -112,6 +122,8 @@ export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sle
       if(raw){let wrapper;try{wrapper=JSON.parse(raw.toString('utf8'));}catch{fail('SIGNED_BRIDGE_RESULT_JSON_REQUIRED');}
         check(Buffer.from(canonical(wrapper)).equals(raw),'SIGNED_BRIDGE_RESULT_CANONICAL_REQUIRED');
         verifySignedBridgeResult({issue,wrapper,signers:context.signers,now:clock()});await admitted(Date.parse(issue.expiresAt));
+        // Retries keep only their waits inside the window; a last evaluation may still end past it.
+        check(clock()<Date.parse(issue.expiresAt),'BRIDGE_RESULT_DEADLINE');
         return{status:ISSUER_SUCCESS,reason:null,sideEffects,issueSha256:digest(issue),resultSha256:proofDigest(wrapper)};}
       let blocked=null;try{blocked=await box.read('blocked');}catch(e){if(e.code!=='ENOENT')throw e;}
       if(blocked){const b=validateBlocked(issue,decode(blocked),clock());
@@ -141,7 +153,7 @@ export async function main(argv=process.argv.slice(2),output=process.stdout){
     // The helper's own child deadline is the stage cap; keep the stage margin for the outcome and exit.
     const stageDeadline=Math.min(Date.now()+row.runMilliseconds-120_000,Date.parse(held.expiresAt));
     return runIssuer({context,box,stageDeadline,
-      evaluate:async()=>admission.evaluatePr(job,await github.readChangedPaths(job),{batchClaim}),
+      evaluate:issuerEvaluate({github,admission,job,batchClaim}),
       collect:async()=>{const v=await collectCompleteRemoteRefs({job,token:await github.getInstallationToken(),readPullRequest:n=>github.readPullRequest(n),fetchImpl});
         return Object.fromEntries(['contract','repository','complete','observedAt','refs'].map(k=>[k,v[k]]));}});
   }});
