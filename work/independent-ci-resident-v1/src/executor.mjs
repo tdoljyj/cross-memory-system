@@ -131,6 +131,8 @@ export const FALSIFYING_REASONS = Object.freeze(['pr_subject_changed', 'pr_files
 // A batch that waits for hosted signals is resumed every tick: its supersession live read (and the receipt of a missing
 // answer) happens at most this often (independent review of step 1, m9).
 export const SUPERSEDE_LIVE_READ_MS = 10 * 60_000;
+// Ticks in a row the queue could not be written before the Owner is told (re-review N2).
+export const QUEUE_SAVE_ALARM = 3;
 const dayKey = ms => new Date(ms).toISOString().slice(0, 10);
 
 // The stage-terminal receipt's summary of a stage outcome: codes and flags only.
@@ -664,9 +666,18 @@ export class ResidentExecutor {
     }
     if (done.length === 0) return;
     // Consumed only once the queue holding them is on disk: otherwise they stay in the inbox and are read again (a second
-    // reading changes nothing; independent review m6).
-    if (!(await this.persistQueue())) return;
+    // reading changes nothing; independent review m6). Triggers refused before the queue saw them never wait for it, and
+    // a queue that cannot be written for QUEUE_SAVE_ALARM ticks in a row is told once (re-review N2).
+    const saved = await this.persistQueue();
+    if (!saved) {
+      this.queueSaveFailures = (this.queueSaveFailures ?? 0) + 1;
+      if (this.queueSaveFailures === QUEUE_SAVE_ALARM) {
+        this.queue.notice({ key: `queue-unsaved:${dayKey(now)}`, kind: 'queue-unsaved', pr: null, headSha: null, code: 'QUEUE_SAVE_UNCONFIRMED' });
+        try { await this.receipt('queue-save-failed', { failureCode: 'QUEUE_SAVE_UNCONFIRMED', ticks: this.queueSaveFailures }); } catch { /* the notice stays */ }
+      }
+    } else this.queueSaveFailures = 0;
     for (const d of done) {
+      if (!saved && d.disposition !== 'rejected') continue;
       await this.inbox.dispose(d.name, d.disposition);
       await this.receipt(...d.receipt);
     }
@@ -1242,8 +1253,9 @@ export class ResidentExecutor {
   async supersededAfterStart(key, subject, batch, safePoint, pos) {
     if (!(await this.newerCommitArrived(subject))) return null;
     this.liveReadAt ??= new Map();
-    if (this.clock() - (this.liveReadAt.get(key) ?? -Infinity) < SUPERSEDE_LIVE_READ_MS) return null;
-    this.liveReadAt.set(key, this.clock());
+    const throttle = `${key}:${this.queue.row(subject.pr)?.current?.headSha ?? ''}`;
+    if (this.clock() - (this.liveReadAt.get(throttle) ?? -Infinity) < SUPERSEDE_LIVE_READ_MS) return null;
+    this.liveReadAt.set(throttle, this.clock());
     if (this.liveReadAt.size > 64) this.liveReadAt.delete(this.liveReadAt.keys().next().value);
     const live = await this.livePull(subject.pr, batch);
     if (!live) { await this.receipt('supersede-unconfirmed', { key, pr: subject.pr, safePoint }); return null; }

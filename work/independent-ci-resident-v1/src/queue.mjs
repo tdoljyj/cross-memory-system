@@ -18,16 +18,16 @@
 //     the new one becomes current and the running batch decides at its next safe point (executor.mjs#supersededCheck).
 //   - A commit seen before never replaces anything (a companion that restarts and proposes an old head again).
 //   - A trigger of the current commit is a NEW trigger when it carries no prUpdatedAt (an Agent's own trigger) or a
-//     prUpdatedAt newer than the row's: a row that waits for its next try (WAITING, BACKOFF, or STOPPED at the release
-//     cap) is then due after the 10-minute cool-down; the executor counts it among the 96 evaluations and at most
+//     prUpdatedAt newer than the row's: a row that waits for its next try (WAITING, BACKOFF) is then due after the
+//     10-minute cool-down; the executor counts it among the 96 evaluations and at most
 //     policy.limits.reevaluationsPerPrHeadPer24h times per (PR, commit) and day (v0.6 §9 phase 2 item 1).
 //   - When stage 1 or the bundle proves the current commit is no longer the PR's head, the companion reads the PR once;
 //     the head it sees becomes current again when it is one of the row's superseded commits and not burned (restore).
 //     A live read only ever stops or re-queues; it never admits anything.
 //   - After a release the row goes to the tail with its own back-off: 10 -> 20 -> 40 minutes (§4.5). A wait backs off
 //     10 -> 20 -> 40 -> 80 -> 120 minutes, then every 120 (§4.4), or until Native's ci_retry_after. A commit released
-//     more than policy.limits.releasesPerHeadPer24h times in 24 hours (waits never count) is STOPPED: a new commit, or
-//     a new trigger after the fix (its failure-table retry rule is new-trigger), runs it again.
+//     policy.limits.releasesPerHeadPer24h times in 24 hours (waits never count) is STOPPED: only a new commit runs the
+//     PR again (§4.5); a new trigger pokes only a row that still waits for its next try.
 //   - Depth: at most policy.limits.queueDepth live rows (QUEUED, RUNNING, WAITING, BACKOFF); rows DONE or STOPPED for
 //     24 hours are compacted away.
 import fs from 'node:fs/promises';
