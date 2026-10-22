@@ -10,6 +10,7 @@ import { Inbox, OwnerInbox } from '../src/inbox.mjs';
 import { TRIGGER_CONTRACT } from '../src/trigger.mjs';
 import { ResidentExecutor } from '../src/executor.mjs';
 import { ExecutedHeads, BACKFILL_MANIFEST_CONTRACT } from '../src/executed-heads.mjs';
+import { RunQueue } from '../src/queue.mjs';
 
 export const SOURCE = 'a'.repeat(64);
 export const RESIDENT = 'b'.repeat(64);
@@ -23,7 +24,7 @@ export const RELAY_ON = Object.freeze({ ...RELAY_OFF, enabled: true });
 
 export function rawPolicy(overrides = {}) {
   return {
-    contract: 'clued.independent-ci.resident-policy/3',
+    contract: 'clued.independent-ci.resident-policy/4',
     repo: 'tdoljyj/cross-memory-system',
     baseBranch: 'main',
     sourceManifestSha256: SOURCE,
@@ -31,7 +32,9 @@ export function rawPolicy(overrides = {}) {
     residentManifestSha256: RESIDENT,
     ownerAcceptance: { decisionRef: '0d84ddbb-ec1f-49c3-bbd0-953f72d53584', installReceiptRef: null },
     validUntil: null,
-    limits: { maxBatchesPer24h: 12, maxEvaluationsPer24h: 24, maxConcurrent: 1, inboxMaxFiles: 16, unexecutedCooldownMs: 600_000, unexecutedMaxPer24h: 3, stageMarginMs: 180_000 },
+    limits: { maxBatchesPer24h: 12, maxEvaluationsPer24h: 24, perPrBatchesPer24h: 6, waitingRetriesPer24h: 48, reevaluationsPerPrHeadPer24h: 6, releasesPerHeadPer24h: 2,
+      queueDepth: 100, maxConcurrent: 1, inboxMaxFiles: 16, unexecutedCooldownMs: 600_000, stageMarginMs: 180_000 },
+    breaker: { consecutive: 3, windowCount: 4, windowMs: 3_600_000, backoffMs: [1_800_000, 3_600_000, 7_200_000] },
     companion: { userSid: 'S-1-5-21-1-2-3-1001', heartbeatMaxAgeMs: 60_000 },
     stageRunMilliseconds: [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000],
     linux: { distribution: 'Ubuntu-24.04', workerUnit: 'clued-ci-worker@.service', wsprepUnit: 'clued-ci-wsprep@.service', archiveUnit: 'clued-ci-archive@.service' },
@@ -101,6 +104,8 @@ export function fakeCompanion(script = {}, clock = () => Date.now()) {
     async prepareWorkspaces() { calls.push(['wsprep']); return script.wsprep ?? { ok: true }; },
     async linuxQuiescence() { calls.push(['quiescence']); return script.linux ?? { linuxUnitsInactive: true, containersZero: true }; },
     async archiveLinux(batch, reason) { calls.push(['archive-linux', reason]); return script.archiveLinux ?? { verified: true, directory: `failed-x-${reason}-111111111111` }; },
+    // Phase 2: the live PR read (script.pull(pr) -> { number, state, headSha } | null); none unless scripted.
+    async prHead(pr) { calls.push(['pr-head', pr]); return script.pull ? script.pull(pr) : null; },
   };
 }
 
@@ -124,8 +129,9 @@ export async function executorFixture(t, { engine = fakeEngine(), companion, pol
   const requests = await Inbox.open(path.join(root, 'requests'), path.join(root, 'state', 'requests-archive'));
   const owner = await OwnerInbox.open(path.join(root, 'owner'), path.join(root, 'state', 'owner-seen'));
   const comp = companion ?? fakeCompanion({}, clock);
+  const queue = await RunQueue.open(path.join(root, 'state', 'queue'), clock);
   const ports = {
-    policy: validatePolicy(policy), ledger, receipts, inbox, requests, owner, engine, companion: comp, clock, sleep, executedHeads, status,
+    policy: validatePolicy(policy), ledger, receipts, inbox, requests, owner, engine, companion: comp, clock, sleep, executedHeads, status, queue,
     sourceIntegrity: async () => integrity ?? { ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT },
   };
   const exec = new ResidentExecutor(ports);
@@ -136,5 +142,5 @@ export async function executorFixture(t, { engine = fakeEngine(), companion, pol
     await fs.writeFile(path.join(root, dir, name), bytes);
     return name;
   };
-  return { root, ports, exec, ledger, receipts, inbox, engine, companion: comp, drop, advance: ms => { time += ms; }, clock, executedHeads };
+  return { root, ports, exec, ledger, receipts, inbox, engine, companion: comp, drop, advance: ms => { time += ms; }, clock, executedHeads, queue };
 }

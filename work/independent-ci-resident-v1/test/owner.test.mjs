@@ -124,7 +124,8 @@ test('a head waiting out its cool-down does not block the PRs behind it', async 
   await f.drop(triggerBytes({ pr: 900, headSha: '4'.repeat(40) })); // another PR behind it
   const r = await f.exec.tick();
   assert.equal(r.state, 'COMPLETED', 'the PR behind the cooling head ran');
-  assert.equal((await fs.readdir(path.join(f.root, 'inbox'))).length, 1, 'the cooling trigger waits in the inbox');
+  assert.equal((await fs.readdir(path.join(f.root, 'inbox'))).length, 0, 'every trigger went into the run queue');
+  assert.equal(f.queue.row(884).state, 'BACKOFF', 'the released head waits for its own back-off');
 });
 
 test('a stage proof field that is present must be true; absent fields add nothing', async t => {

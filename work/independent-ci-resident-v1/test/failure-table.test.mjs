@@ -15,7 +15,8 @@ import { CLEAN_PROOF, WINDOWS_CLEAN } from './helpers.mjs';
 // codes and the engine's and executor's own refusals.
 const RESIDENT_CODES = ['FULL_NEXT_STAGE_AUTHORITY_WINDOW_REQUIRED', 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED', 'FIXED_PUBLIC_CHILD_REFUSED', 'ACTUAL_ISSUE_NOT_PUBLISHED',
   'ISSUE_TRANSFER_UNCONFIRMED', 'FORMAL_BRIDGE_STAGE_DEADLINE', 'REFS_GATE_UNCONFIRMED', 'STAGE_TERMINAL_UNCONFIRMED', 'STAGE_INVOKER_TERMINAL_UNCONFIRMED', 'SCM_READBACK_NOT_ORIGINAL',
-  'BETWEEN_ROLES_ARCHIVE_UNCONFIRMED', 'WORKSPACE_PREPARATION_UNCONFIRMED', 'EXECUTED_HEAD_RECORD_UNCONFIRMED', 'BUNDLE_UNAVAILABLE', 'OWNER_ABORTED', 'OWNER_ABORT_REQUESTED'];
+  'BETWEEN_ROLES_ARCHIVE_UNCONFIRMED', 'WORKSPACE_PREPARATION_UNCONFIRMED', 'EXECUTED_HEAD_RECORD_UNCONFIRMED', 'BUNDLE_UNAVAILABLE', 'OWNER_ABORTED', 'OWNER_ABORT_REQUESTED',
+  'SUPERSEDED_AT_SAFE_POINT'];
 const ALL = [...new Set([...source.ALL_STAGE_CODES, ...RESIDENT_CODES, ...PUMP_CODES])];
 const rowsOf = code => FAILURE_TABLE.rows.filter(r => r.code === code);
 
@@ -124,7 +125,12 @@ test('a release needs the outcome\'s own safeToRerun or the broker\'s no-launch,
   assert.equal(decideFailure({ code: 'GITHUB_TRANSIENT_UNAVAILABLE', stage: 1, outcome: { ...safe, reason: 'github_http_503' }, proof: CLEAN_PROOF, started: false }).release, null);
 });
 
-test('every release reason is registered with its cool-down and daily-cap rule (v0.6 §7 minor 6)', () => {
+test('every release reason is registered with its cool-down and the budget that bounds it (v0.6 §7 minor 6; phase 2)', () => {
   assert.deepEqual(Object.keys(UNEXECUTED_REASON_RULES).sort(), [...UNEXECUTED_REASONS].sort());
-  for (const [reason, rule] of Object.entries(UNEXECUTED_REASON_RULES)) assert.deepEqual([rule.cooldown, rule.dailyCap], [true, true], reason);
+  for (const [reason, rule] of Object.entries(UNEXECUTED_REASON_RULES)) {
+    assert.equal(rule.cooldown, reason !== 'SUPERSEDED', reason);
+    assert.ok([null, 'waitingRetriesPer24h', 'releasesPerHeadPer24h'].includes(rule.cap.waiting) && [null, 'releasesPerHeadPer24h'].includes(rule.cap.other), reason);
+  }
+  assert.deepEqual(UNEXECUTED_REASON_RULES.NOT_ADMITTED.cap, { waiting: 'waitingRetriesPer24h', other: 'releasesPerHeadPer24h' });
+  assert.deepEqual(UNEXECUTED_REASON_RULES.SUPERSEDED.cap, { waiting: null, other: null });
 });

@@ -8,8 +8,13 @@
 // stale-base heads, STAGE_CHILD_REFUSED). A PR that is not up to date is reported (lastPass) with the hint the PR page
 // shows: "merge-main" (the head does not contain main) or "push-any-commit" (it does, but GitHub's base.sha is older:
 // any push makes GitHub move it).
+//
+// Phase 2, step 1 (design v0.5 §4.2): triggers are contract /2 and carry the PR's update time (prUpdatedAt), so the
+// executor's run queue can tell a new trigger (the PR was edited) from the same proposal again (a companion restart).
+// When the run queue starts over (its generation in the status changes: the queue file was unreadable), every open,
+// up-to-date PR head is proposed again, which is how the queue is rebuilt from the poller.
 import { HEX40, check } from './canonical.mjs';
-import { TRIGGER_CONTRACT } from './trigger.mjs';
+import { TRIGGER_CONTRACT_V2 } from './trigger.mjs';
 
 const json = text => { try { return JSON.parse(text); } catch { return null; } };
 const TRAILER = /^Clued-Work-Claim:\s*[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\s*$/m;
@@ -82,8 +87,13 @@ export class Poller {
   // Propose each ready, up-to-date PR head once per (head, base, PR edit time). An edit of the PR body is the
   // same signal GitHub-hosted admission used for "re-run me"; the executor still applies its own
   // once-only ledger, cool-down and daily cap, so proposing again can never force a re-execution.
-  async pass() {
+  // generation: the run queue's generation from the executor's status (null when unknown).
+  async pass({ generation = null } = {}) {
     this.compareBudget = MAX_COMPARES_PER_PASS; this.stalled = false;
+    if (typeof generation === 'string' && generation !== this.generation) {
+      if (this.generation !== undefined && this.generation !== null) this.sent.clear();
+      this.generation = generation;
+    }
     const base = await this.mainTip();
     let proposed = 0;
     const pulls = [];
@@ -100,7 +110,8 @@ export class Poller {
         try { await this.hints.observe({ pr: p.number, headSha: p.headRefOid, baseSha: base }); } catch { /* a hint is advisory */ }
       }
       if (this.sent.get(id) === p.updatedAt) continue;
-      await this.writeTrigger({ contract: TRIGGER_CONTRACT, repo: this.repo, pr: p.number, headSha: p.headRefOid, baseSha: base });
+      const prUpdatedAt = typeof p.updatedAt === 'string' && Number.isFinite(Date.parse(p.updatedAt)) ? new Date(Date.parse(p.updatedAt)).toISOString() : null;
+      await this.writeTrigger({ contract: TRIGGER_CONTRACT_V2, repo: this.repo, pr: p.number, headSha: p.headRefOid, baseSha: base, ...(prUpdatedAt ? { prUpdatedAt } : {}) });
       this.sent.set(id, p.updatedAt);
       proposed += 1;
     }

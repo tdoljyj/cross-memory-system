@@ -105,7 +105,7 @@ test('MINOR 9: a deferred attempt 2 does not block other PRs\' triggers', async 
   const first = await f.exec.tick();
   assert.ok(first.attempt2);
   const precheck = f.exec.precheck.bind(f.exec);
-  f.exec.precheck = async (key, hk, subject) => (key === first.attempt2 ? { defer: 'COMPANION_NOT_READY' } : precheck(key, hk, subject));
+  f.exec.precheck = async (key, hk, subject, o) => (key === first.attempt2 ? { defer: 'COMPANION_NOT_READY' } : precheck(key, hk, subject, o));
   f.advance(600_000);
   await f.drop(triggerBytes({ pr: 885, headSha: '3'.repeat(40) }));
   const r = await f.exec.tick();

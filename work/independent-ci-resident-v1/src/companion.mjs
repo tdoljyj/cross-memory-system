@@ -65,8 +65,22 @@ export function argv(cfg) {
 
 const json = text => { try { return JSON.parse(text); } catch { return null; } };
 
+// pr-head (phase 2, step 1): the PR's state and head over the Owner's own gh login, read-only, fixed argv.
+export const PR_HEAD_TIMEOUT_MS = 30_000;
+export function readPullArgv(ghExe, repo, pr) {
+  check(typeof ghExe === 'string' && /^[A-Z]:\\/.test(ghExe) && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? '') && Number.isSafeInteger(pr) && pr > 0 && pr < 1e9, 'COMPANION_PR_HEAD_ARGS_INVALID');
+  return [ghExe, 'api', '--method', 'GET', `repos/${repo}/pulls/${pr}`, '--jq', '{number: .number, state: .state, merged: .merged, head: .head.sha}'];
+}
+// The gh answer -> { number, state: open | closed | merged, headSha }, or null when it is not exactly that shape.
+export function parsePull(stdout, pr) {
+  const v = json(stdout);
+  if (!v || v.number !== pr || !['open', 'closed'].includes(v.state) || typeof v.merged !== 'boolean' || !/^[0-9a-f]{40}$/.test(v.head ?? '')) return null;
+  return { number: pr, state: v.merged ? 'merged' : v.state, headSha: v.head };
+}
+
 export class Companion {
-  // ports: { cfg, mailbox, run(argv,{timeoutMs}) -> {code, stdout, stderr}, fileExists(path), sleep(ms), clock() }
+  // ports: { cfg, mailbox, run(argv,{timeoutMs}) -> {code, stdout, stderr}, fileExists(path), sleep(ms), clock(),
+  //   readPull(pr) -> argv (pr-head; without it the companion answers PR_HEAD_UNAVAILABLE) }
   constructor(ports) {
     Object.assign(this, ports);
     this.a = argv(ports.cfg);
@@ -114,6 +128,12 @@ export class Companion {
       }
       // Verbatim root-tool facts; the companion never synthesises a proof value itself.
       case 'linux-quiescence': return { ok: true, proof: await this.quiescence(request.batchId) };
+      case 'pr-head': {
+        if (typeof this.readPull !== 'function') return { ok: false, code: 'PR_HEAD_UNAVAILABLE' };
+        const r = await this.run(this.readPull(request.pr), { timeoutMs: PR_HEAD_TIMEOUT_MS });
+        const pull = r.code === 0 ? parsePull(r.stdout, request.pr) : null;
+        return pull ? { ok: true, pull } : { ok: false, code: 'PR_HEAD_UNAVAILABLE' };
+      }
       default: return { ok: false, code: 'COMPANION_REQUEST_KIND_REFUSED' };
     }
   }
@@ -228,7 +248,7 @@ export class Companion {
       if (this.clock() >= Date.parse(request.deadline)) { await this.mailbox.respond(request, { ok: false, code: 'COMPANION_REQUEST_EXPIRED' }); continue; }
       let answer;
       try { answer = await this.handle(request); } catch { answer = { ok: false, code: 'COMPANION_HANDLER_UNCONFIRMED' }; }
-      await this.mailbox.respond(request, { ok: answer.ok === true, code: answer.ok ? null : (answer.code ?? 'COMPANION_HANDLER_UNCONFIRMED'), proof: answer.proof ?? null, directory: answer.directory ?? null, verified: answer.verified ?? null, usage: answer.usage ?? null });
+      await this.mailbox.respond(request, { ok: answer.ok === true, code: answer.ok ? null : (answer.code ?? 'COMPANION_HANDLER_UNCONFIRMED'), proof: answer.proof ?? null, directory: answer.directory ?? null, verified: answer.verified ?? null, usage: answer.usage ?? null, pull: answer.pull ?? null });
     }
   }
 }

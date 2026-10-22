@@ -74,8 +74,10 @@ test('a batch waiting for hosted signals is aborted at the next tick start: FAIL
   assert.deepEqual((await bodies(f, 'owner-request')).map(b => [b.kind, b.outcome, b.failureCode]), [['abort', 'FAILED_CLEAN', OWNER_ABORTED]]);
   assert.ok((await types(f)).includes('owner-abort-accepted'));
   assert.equal((await f.ledger.pendingAttempts2()).length, 0, 'never an attempt 2');
-  // The same head never runs again, whatever trigger names it.
+  // The same head never runs again, whatever trigger names it (its own PR's row has seen it; another PR is refused by the ledger).
   await f.drop(triggerBytes({ baseSha: '3'.repeat(40) }));
+  assert.equal((await f.exec.tick()).state, 'IDLE');
+  await f.drop(triggerBytes({ pr: 990, baseSha: '3'.repeat(40) }));
   assert.equal((await f.exec.tick()).reason, 'HEAD_ALREADY_EXECUTED_NO_RETRY');
 });
 

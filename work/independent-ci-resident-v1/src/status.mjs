@@ -6,12 +6,15 @@
 // minor 2). changedAt moves only when the content changes. The companion (Owner session, read-only on state\) turns it
 // into the PR page status and the Windows notifications (pr-status.mjs); Agents may read it too.
 // Content: fixed shapes, stable codes, PR numbers and commit SHAs only (no free text from a PR or a remote service).
+// Contract /2 (phase 2, step 1: design v0.5 §4.10): `pending` is the run queue's view (queue.mjs#view: every row with
+// its state, reason, position, next try and an ESTIMATED start), plus the queue's generation, the breaker and the
+// notices the companion turns into notifications (one per key).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CODE, HEX40, HEX64, canonicalJson, check, exactKeys, parseBoundedJson } from './canonical.mjs';
 import { readBounded } from './store.mjs';
 
-export const STATUS_CONTRACT = 'clued.independent-ci.resident-status/1';
+export const STATUS_CONTRACT = 'clued.independent-ci.resident-status/2';
 export const STATUS_FILE = 'status.json';
 export const STATUS_REFRESH_MS = 15_000;
 // The companion's reading: a status not rewritten for this long means the executor (or its service) stopped.
@@ -20,8 +23,13 @@ export const STATUS_MAX_BYTES = 256 * 1024;
 export const EXECUTOR_STATES = Object.freeze(['STARTING', 'IDLE', 'RUNNING', 'WAITING', 'DEFERRED', 'HALTED', 'PAUSED', 'BACKFILL_PENDING', 'STOPPED',
   'COMPLETED', 'FAILED_CLEAN', 'NOT_ADMITTED', 'NOT_EXECUTED', 'IGNORED']);
 export const RECENT_OUTCOMES = Object.freeze(['COMPLETED', 'FAILED_CLEAN', 'FAILED_UNKNOWN', 'NOT_ADMITTED', 'NOT_EXECUTED', 'IGNORED']);
-const RECENT_MAX = 50, PENDING_MAX = 50;
+const RECENT_MAX = 50, PENDING_MAX = 100, NOTICES_MAX = 50;
+export const ROW_STATES = Object.freeze(['QUEUED', 'RUNNING', 'WAITING', 'BACKOFF', 'STOPPED', 'DONE']);
+export const NOTICE_KINDS = Object.freeze(['new-trigger', 'stopped', 'waiting-budget', 'batch-limit', 'breaker-open', 'queue-full', 'queue-unsaved']);
+export const BREAKER_STATES = Object.freeze(['closed', 'open', 'half-open']);
 const iso = ms => new Date(ms).toISOString();
+const isoOrNull = v => (Number.isSafeInteger(v) && v > 0) ? iso(v) : (typeof v === 'string' && Number.isFinite(Date.parse(v)) ? iso(Date.parse(v)) : null);
+const codeOrNull = v => typeof v === 'string' && CODE.test(v) ? v : null;
 const key12 = key => (typeof key === 'string' && HEX64.test(key)) ? key.slice(0, 12) : null;
 
 export class StatusBoard {
@@ -29,7 +37,7 @@ export class StatusBoard {
     this.clock = clock;
     this.pid = pid;
     this.content = { executor: { state: 'STARTING', since: iso(clock()), reason: null }, halt: null, paused: false, backfill: { complete: false, published: null, unreadable: null },
-      current: null, pending: [], recent: [], limits: null };
+      current: null, pending: [], recent: [], limits: null, queue: null, breaker: null, notices: [] };
     this.changedAt = iso(clock());
   }
 
@@ -69,9 +77,14 @@ export class StatusBoard {
     return this.update({ recent: [entry, ...rest].slice(0, RECENT_MAX) });
   }
 
+  // The run queue's rows (queue.mjs#view). position: the place among the rows that may run now (null for a row that waits,
+  // stopped or is done); eta: an estimate only.
   setPending(list) {
-    return this.update({ pending: list.slice(0, PENDING_MAX).map((p, i) => ({ pr: p.pr, headSha: p.headSha, baseSha: p.baseSha, position: i + 1,
-      deferred: typeof p.deferred === 'string' && CODE.test(p.deferred) ? p.deferred : null, since: p.since ?? null })) });
+    return this.update({ pending: list.slice(0, PENDING_MAX).map((p, i) => ({ pr: p.pr, headSha: p.headSha, baseSha: p.baseSha,
+      state: ROW_STATES.includes(p.state) ? p.state : 'QUEUED', position: Number.isSafeInteger(p.position) ? p.position : (p.state === undefined ? i + 1 : null),
+      deferred: codeOrNull(p.reason ?? p.deferred), since: isoOrNull(p.firstAt ?? p.since), nextAt: isoOrNull(p.nextAt), eta: isoOrNull(p.eta),
+      level: Number.isSafeInteger(p.level) ? p.level : 0, origin: typeof p.origin === 'string' && /^[a-z0-9-]{1,20}$/.test(p.origin) ? p.origin : null,
+      stopKind: ['burned', 'release-cap'].includes(p.stopKind) ? p.stopKind : null })) });
   }
 
   snapshot() {
@@ -107,7 +120,8 @@ export function startStatusTimer({ board, file, intervalMs = STATUS_REFRESH_MS, 
 }
 
 // ---- the companion's reading (untrusted bytes in the resident's state, read-only for the Owner) ----
-const TOP = ['contract', 'writtenAt', 'changedAt', 'pid', 'executor', 'halt', 'paused', 'backfill', 'current', 'pending', 'recent', 'limits'];
+const TOP = ['contract', 'writtenAt', 'changedAt', 'pid', 'executor', 'halt', 'paused', 'backfill', 'current', 'pending', 'recent', 'limits', 'queue', 'breaker', 'notices'];
+const ms = v => (typeof v === 'string' && Number.isFinite(Date.parse(v))) ? Date.parse(v) : (Number.isSafeInteger(v) && v > 0 ? v : null);
 export function parseStatus(bytes) {
   const v = parseBoundedJson(bytes, STATUS_MAX_BYTES, 'STATUS_REFUSED');
   exactKeys(v, TOP, 'STATUS_REFUSED');
@@ -123,13 +137,18 @@ export function parseStatus(bytes) {
     current: v.current && Number.isSafeInteger(v.current.pr) && head(v.current.headSha)
       ? { pr: v.current.pr, headSha: v.current.headSha, attempt: v.current.attempt, stage: Number.isSafeInteger(v.current.stage) ? v.current.stage : null, since: Date.parse(v.current.since) || null } : null,
     pending: Array.isArray(v.pending) ? v.pending.filter(p => Number.isSafeInteger(p?.pr) && head(p.headSha)).slice(0, PENDING_MAX)
-      .map(p => ({ pr: p.pr, headSha: p.headSha, position: Number.isSafeInteger(p.position) ? p.position : null, deferred: typeof p.deferred === 'string' && CODE.test(p.deferred) ? p.deferred : null,
-        since: Date.parse(p.since) || null })) : [],
+      .map(p => ({ pr: p.pr, headSha: p.headSha, state: ROW_STATES.includes(p.state) ? p.state : 'QUEUED', position: Number.isSafeInteger(p.position) ? p.position : null,
+        deferred: codeOrNull(p.deferred), since: ms(p.since), nextAt: ms(p.nextAt), eta: ms(p.eta), level: Number.isSafeInteger(p.level) ? p.level : 0,
+        stopKind: ['burned', 'release-cap'].includes(p.stopKind) ? p.stopKind : null })) : [],
     recent: Array.isArray(v.recent) ? v.recent.filter(r => Number.isSafeInteger(r?.pr) && head(r.headSha) && RECENT_OUTCOMES.includes(r.outcome)).slice(0, RECENT_MAX)
       .map(r => ({ pr: r.pr, headSha: r.headSha, attempt: r.attempt, outcome: r.outcome, code: typeof r.code === 'string' && CODE.test(r.code) ? r.code : null,
         class: typeof r.class === 'string' && /^[a-z0-9-]{1,40}$/.test(r.class) ? r.class : null, retry: typeof r.retry === 'string' && /^[a-z0-9-]{1,40}$/.test(r.retry) ? r.retry : null,
         at: Date.parse(r.at) || null })) : [],
     limits: v.limits && Number.isSafeInteger(v.limits.batches24h) ? { batches24h: v.limits.batches24h, maxBatches: v.limits.maxBatches, evaluations24h: v.limits.evaluations24h, maxEvaluations: v.limits.maxEvaluations } : null,
+    queue: v.queue && /^[0-9a-f]{12}$/.test(v.queue.generation ?? '') ? { generation: v.queue.generation, live: Number.isSafeInteger(v.queue.live) ? v.queue.live : null } : null,
+    breaker: v.breaker && BREAKER_STATES.includes(v.breaker.state) ? { state: v.breaker.state, nextTrialAt: ms(v.breaker.nextTrialAt), openedAt: ms(v.breaker.openedAt) } : null,
+    notices: Array.isArray(v.notices) ? v.notices.filter(n => n && NOTICE_KINDS.includes(n.kind) && typeof n.key === 'string' && /^[A-Za-z0-9:_-]{1,160}$/.test(n.key)).slice(0, NOTICES_MAX)
+      .map(n => ({ key: n.key, kind: n.kind, pr: Number.isSafeInteger(n.pr) ? n.pr : null, headSha: head(n.headSha) ? n.headSha : null, code: codeOrNull(n.code), at: ms(n.at), until: ms(n.until) })) : [],
   };
 }
 

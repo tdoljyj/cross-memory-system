@@ -5,7 +5,8 @@ import path from 'node:path';
 import { HEX64, check, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 
 // Timeouts are upper bounds for one companion action; no answer by then is never success.
-const TIMEOUTS = { 'build-bundle': 35 * 60_000, 'prepare-workspaces': 25 * 60_000, 'archive-linux': 6 * 60_000, 'linux-quiescence': 2 * 60_000, 'check-refs': 6 * 60_000, 'archive-usage': 3 * 60_000 };
+const TIMEOUTS = { 'build-bundle': 35 * 60_000, 'prepare-workspaces': 25 * 60_000, 'archive-linux': 6 * 60_000, 'linux-quiescence': 2 * 60_000, 'check-refs': 6 * 60_000, 'archive-usage': 3 * 60_000,
+  'pr-head': 2 * 60_000 };
 const NO_BATCH = '0000000000000000-000000000000';
 
 export function mailboxCompanion(mailbox, sleep) {
@@ -36,6 +37,11 @@ export function mailboxCompanion(mailbox, sleep) {
     async archiveUsage() {
       const r = await ask('archive-usage', { batchId: NO_BATCH });
       return r?.ok === true && r.usage ? { ok: true, ...r.usage } : { ok: false };
+    },
+    // Phase 2, step 1: one live read of the PR (state, head) for the run queue, or null (no answer is never a fact).
+    async prHead(pr, batch = null) {
+      const r = await ask('pr-head', { batchId: batch?.batchId ?? NO_BATCH, pr });
+      return r?.ok === true && r.pull ? r.pull : null;
     },
     async archiveLinux(batch, reason) {
       const r = await ask('archive-linux', { batchId: batch.batchId, reason });

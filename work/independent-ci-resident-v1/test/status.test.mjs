@@ -11,7 +11,7 @@ test('status board: fixed shape, state since only moves on a change, outcomes ne
   let now = Date.parse('2026-10-22T08:00:00Z');
   const b = new StatusBoard({ clock: () => now, pid: 7 });
   const s0 = b.snapshot();
-  assert.deepEqual(Object.keys(s0).sort(), ['backfill', 'changedAt', 'contract', 'current', 'executor', 'halt', 'limits', 'paused', 'pending', 'pid', 'recent', 'writtenAt']);
+  assert.deepEqual(Object.keys(s0).sort(), ['backfill', 'breaker', 'changedAt', 'contract', 'current', 'executor', 'halt', 'limits', 'notices', 'paused', 'pending', 'pid', 'queue', 'recent', 'writtenAt']);
   assert.equal(s0.contract, STATUS_CONTRACT);
   now += 1000;
   assert.equal(b.setState('IDLE'), true);
@@ -90,15 +90,16 @@ test('the executor reports its batch in flight, recent outcomes, pending trigger
   assert.deepEqual([status.content.recent[0].pr, status.content.recent[0].outcome], [884, 'COMPLETED']);
   assert.equal(status.content.backfill.complete, true);
   assert.equal(status.content.executor.state, 'COMPLETED');
-  // the same head again is ignored, and shows so
-  await f.drop(triggerBytes());
+  // the same head in another PR is ignored, and shows so (its own PR's row has already seen it)
+  await f.drop(triggerBytes({ pr: 885 }));
   const ignored = await f.exec.tick();
   assert.equal(ignored.reason, 'HEAD_ALREADY_EXECUTED_NO_RETRY', JSON.stringify(ignored));
-  assert.deepEqual([status.content.recent[0].pr, status.content.recent[0].outcome, status.content.recent[0].code], [884, 'IGNORED', 'HEAD_ALREADY_EXECUTED_NO_RETRY']);
+  assert.deepEqual([status.content.recent[0].pr, status.content.recent[0].outcome, status.content.recent[0].code], [885, 'IGNORED', 'HEAD_ALREADY_EXECUTED_NO_RETRY']);
   // the next head waits for the daily limit: pending, with its reason
   await f.drop(triggerBytes({ pr: 900, headSha: '4'.repeat(40) }));
   assert.equal((await f.exec.tick()).reason, 'DAILY_BATCH_LIMIT');
-  assert.deepEqual(status.content.pending.map(p => [p.pr, p.deferred]), [[900, 'DAILY_BATCH_LIMIT']]);
+  assert.deepEqual(status.content.pending.filter(p => p.state === 'QUEUED').map(p => [p.pr, p.position]), [[900, 1]]);
+  assert.equal(status.content.queue.generation, f.queue.generation);
   assert.deepEqual([status.content.limits.batches24h, status.content.limits.maxBatches], [1, 1]);
   assert.deepEqual([status.content.executor.state, status.content.executor.reason], ['DEFERRED', 'DAILY_BATCH_LIMIT']);
   // a HALT shows with its code

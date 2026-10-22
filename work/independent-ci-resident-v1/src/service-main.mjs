@@ -22,6 +22,7 @@ import { readBounded } from './store.mjs';
 import { RetentionWatch, measureWindows } from './retention.mjs';
 import { ExecutedHeads } from './executed-heads.mjs';
 import { STATUS_FILE, StatusBoard, StatusFile, startStatusTimer } from './status.mjs';
+import { RunQueue } from './queue.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -72,8 +73,10 @@ export async function main(argv = process.argv.slice(2)) {
   const status = new StatusBoard({ clock });
   const statusTimer = startStatusTimer({ board: status, file: new StatusFile(path.join(state, STATUS_FILE)) });
   await statusTimer.flush();
+  // The executor's own run queue (phase 2, step 1; DESIGN §17): state\queue\queue.json, a view the ledger overrules.
+  const queue = await RunQueue.open(path.join(state, 'queue'), clock);
   const exec = new ResidentExecutor({
-    policy, ledger, receipts, inbox, requests, owner, engine, clock, companion, sleep, executedHeads, status,
+    policy, ledger, receipts, inbox, requests, owner, engine, clock, companion, sleep, executedHeads, status, queue,
     sourceIntegrity: installedIntegrity({
       sourceRoot, sourceManifest: path.join(root, 'config', 'source-installed-manifest.json'),
       residentRoot: path.join(root, 'resident', policy.residentManifestSha256), residentManifest: path.join(root, 'config', 'resident-installed-manifest.json'),

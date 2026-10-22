@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { HEX64, check, parseBoundedJson, sha256 } from './canonical.mjs';
 import { pathToFileURL } from 'node:url';
-import { Companion, argv as companionArgv, validateCompanionConfig, validateHintConfig } from './companion.mjs';
+import { Companion, argv as companionArgv, readPullArgv, validateCompanionConfig, validateHintConfig } from './companion.mjs';
 import { HostedHints, sourceHintObserver } from './hosted-hints.mjs';
 import { createGhReadPort } from './gh-read-port.mjs';
 import { Mailbox } from './mailbox.mjs';
@@ -62,7 +62,8 @@ export async function main(args = process.argv.slice(2)) {
   const runner = new Runner({ env: { ...process.env } }); // the Owner's own environment: gh/git credential helpers live here
   const advisory = new Runner({ env: { ...process.env } }); // the advisory lane's own (see lane)
   const mailbox = await Mailbox.open(path.join(values.root, 'mailbox'), Date.now);
-  const companion = new Companion({ cfg, mailbox, run: (a, o) => runner.run(a, o), fileExists: exists, sleep, clock: Date.now });
+  // pr-head (phase 2): the run queue's live PR read runs in the mailbox lane, like every other service request.
+  const companion = new Companion({ cfg, mailbox, run: (a, o) => runner.run(a, o), fileExists: exists, sleep, clock: Date.now, readPull: pr => readPullArgv(raw.ghExe, raw.repo, pr) });
   const inboxDir = path.join(values.root, 'inbox');
   // Hint mode: the installed (admin-only, read by the Owner) CI Source's relay observer and pure hint
   // attestation over the Owner's own read-only gh login. Off unless companion.json enables it.
@@ -93,7 +94,13 @@ export async function main(args = process.argv.slice(2)) {
     // the service times out and classifies a request the companion did not answer; never retried here
     lane({ runner, work: () => companion.step() }),
     lane({ runner: advisory, work: async () => {
-      if (Date.now() - lastPoll > POLL_EVERY_MS) { lastPoll = Date.now(); try { await poller.pass(); } catch { /* next pass */ } }
+      if (Date.now() - lastPoll > POLL_EVERY_MS) {
+        lastPoll = Date.now();
+        // The run queue's generation (phase 2): a queue that started over gets every open PR proposed again.
+        let generation = null;
+        try { generation = (await readStatus(values.root)).queue?.generation ?? null; } catch { generation = null; }
+        try { await poller.pass({ generation }); } catch { /* next pass */ }
+      }
       if (Date.now() - lastReport > REPORT_EVERY_MS) {
         lastReport = Date.now();
         let status = null, statusError = false;

@@ -20,6 +20,9 @@
 // status stopped moving (STATUS_STALE_MS), a PR head waited more than an hour (once per PR, head and reason), the
 // status context collides with a required check.
 // Texts are fixed templates over stable codes, numbers and times; nothing from a PR or a remote service is shown.
+// Phase 2, step 1 (design v0.5 §4.10): the run queue's view says where a PR stands: its place and an estimated start, a
+// wait or a back-off and when it is tried again, a stop and what makes it run again; the breaker; and the executor's
+// notices (a new trigger, a stopped row, the waits' budget, the daily batch limit, the breaker) become notifications.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
@@ -41,8 +44,13 @@ const KEEP_MS = 14 * 86_400_000;
 
 export const STAGE_NAMES = Object.freeze({ 0: '准备', 1: '准入', 2: 'gitleaks 扫描', 3: 'gitleaks 发布', 4: 'trivy 扫描', 5: 'trivy 发布', 6: 'contract-placement 扫描',
   7: 'contract-placement 发布', 8: '准入复核与合并位', 9: '托管转发' });
-const DEFERRED_TEXT = Object.freeze({ DAILY_BATCH_LIMIT: '今日执行批次额度已满', DAILY_EVALUATION_LIMIT: '今日评估额度已满', UNEXECUTED_COOLDOWN: '冷却中（10 分钟）',
-  COMPANION_NOT_READY: '等 companion 就绪' });
+const DEFERRED_TEXT = Object.freeze({ DAILY_BATCH_LIMIT: '今日执行批次额度已满，明天继续', DAILY_EVALUATION_LIMIT: '今日评估额度已满', UNEXECUTED_COOLDOWN: '冷却中（10 分钟）',
+  COMPANION_NOT_READY: '等 companion 就绪', PR_DAILY_BATCH_LIMIT: '本 PR 今日批次已满', WAITING_BUDGET_EXHAUSTED: '今日等待重试额度已满，明天继续',
+  REEVALUATION_CAP: '本提交今日重新评估次数已满', BREAKER_OPEN: '执行器熔断中' });
+// Why a row waits (failure-table class waiting), in the words of the PR page.
+const WAIT_TEXT = Object.freeze({ OWNER_REVIEW_REQUIRED: '等 Owner 批准受保护改动', TASK_CI_HEAD_CAP_REACHED: 'Task 的 24 小时 CI 额度已满',
+  WAITING_BUDGET_EXHAUSTED: '今日等待重试额度已满（明天继续）' });
+const LIVE = new Set(['QUEUED', 'WAITING', 'BACKOFF']);
 const hhmm = ms => new Date(ms).toISOString().slice(11, 16) + 'Z';
 const clip = s => s.length <= DESCRIPTION_MAX ? s : `${s.slice(0, DESCRIPTION_MAX - 1)}…`;
 
@@ -71,6 +79,23 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     const stage = status.current.stage;
     return { state: 'pending', description: stage === null ? '运行中：等待托管信号' : `运行中：第 ${stage} 段（${STAGE_NAMES[stage] ?? '?'}）` };
   }
+  // The run queue (phase 2): a row that waits for its turn or its next try says so; nothing runs while HALTed or paused.
+  const row = status.pending.find(mine);
+  if (row && LIVE.has(row.state)) {
+    if (status.halt) return { state: 'error', description: clip(`执行器已停机（${status.halt.code}），等 Owner 复位`) };
+    if (status.paused) return { state: 'pending', description: '执行器已暂停，等 Owner 恢复' };
+    if (!status.backfill.complete) return { state: 'pending', description: '执行器启动中：回填已执行记录', weak: true };
+    const code = row.deferred ?? '?';
+    const at = row.nextAt ? `约 ${hhmm(row.nextAt)} ` : '';
+    if (row.state === 'WAITING') return { state: 'pending', description: clip(`${WAIT_TEXT[row.deferred] ?? `等待中（${code}）`}：${at}自动重试，批准或修正后编辑 PR 可提前`) };
+    if (row.state === 'BACKOFF') return { state: 'pending', description: clip(`未准入或未执行（${code}）：${at}自动重试（第 ${row.level} 次），修正后编辑 PR 可提前`) };
+    if (status.breaker?.state === 'open') return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：执行器熔断中${status.breaker.nextTrialAt ? `，约 ${hhmm(status.breaker.nextTrialAt)} 试跑` : ''}`) };
+    const why = row.deferred ? `：${DEFERRED_TEXT[row.deferred] ?? row.deferred}` : '';
+    return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位${why}${row.eta && !row.deferred ? `，预计 ${hhmm(row.eta)} 开始` : ''}`) };
+  }
+  if (row && row.state === 'STOPPED' && row.stopKind === 'release-cap') {
+    return { state: 'failure', description: clip(`24 小时内已多次未准入或未执行（${row.deferred ?? '?'}）：请修正后推新提交`) };
+  }
   const recent = status.recent.find(mine);
   if (recent) {
     const code = recent.code ?? '?';
@@ -81,11 +106,11 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
         : { state: 'failure', description: clip(`失败（${code}）：此提交不再运行，请推新提交`) };
       case 'FAILED_UNKNOWN': return { state: 'error', description: clip(`执行器停机（${code}），等 Owner 复位`) };
       case 'NOT_ADMITTED':
-        if (recent.code === 'OWNER_REVIEW_REQUIRED') return { state: 'pending', description: '等 Owner 批准受保护改动，批准后再触发' };
-        if (recent.code === 'TASK_CI_HEAD_CAP_REACHED') return { state: 'pending', description: 'Task 的 24 小时 CI 额度已满，稍后再触发' };
-        if (recent.class === 'waiting') return { state: 'pending', description: clip(`等待中（${code}），稍后再触发`) };
-        return { state: 'failure', description: clip(`未准入（${code}）：修正后再触发`) };
-      case 'NOT_EXECUTED': return { state: 'pending', description: clip(`未执行（${code}），可再触发`) };
+        if (recent.code === 'OWNER_REVIEW_REQUIRED') return { state: 'pending', description: '等 Owner 批准受保护改动，批准后编辑 PR 可提前重试' };
+        if (recent.code === 'TASK_CI_HEAD_CAP_REACHED') return { state: 'pending', description: 'Task 的 24 小时 CI 额度已满，稍后自动重试' };
+        if (recent.class === 'waiting') return { state: 'pending', description: clip(`等待中（${code}），稍后自动重试`) };
+        return { state: 'failure', description: clip(`未准入（${code}）：修正后编辑 PR 再试`) };
+      case 'NOT_EXECUTED': return recent.code === 'BATCH_SUPERSEDED' ? null : { state: 'pending', description: clip(`未执行（${code}），稍后自动重试`) };
       case 'IGNORED':
         if (recent.code === 'UNEXECUTED_DAILY_CAP') return { state: 'failure', description: '此提交今日评估次数已满：请推新提交' };
         // An executed head proposed again: what was written for it stays.
@@ -93,11 +118,10 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       default: return null;
     }
   }
+  if (row && row.state === 'STOPPED') return { state: 'failure', description: clip(`此提交不再运行（${row.deferred ?? '?'}）：请推新提交`) };
   if (status.halt) return { state: 'error', description: clip(`执行器已停机（${status.halt.code}），等 Owner 复位`) };
   if (status.paused) return { state: 'pending', description: '执行器已暂停，等 Owner 恢复' };
   if (!status.backfill.complete) return { state: 'pending', description: '执行器启动中：回填已执行记录', weak: true };
-  const queued = status.pending.find(mine);
-  if (queued) return { state: 'pending', description: clip(`排队第 ${queued.position} 位${queued.deferred ? `：${DEFERRED_TEXT[queued.deferred] ?? queued.deferred}` : ''}`) };
   return { state: 'pending', description: '已提议，等待执行器读取', weak: true };
 }
 
@@ -112,9 +136,23 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
   if (now - status.writtenAt > staleMs) out.push({ key: `stale:${status.writtenAt}`, title: '常驻执行器可能已停止', body: `状态自 ${hhmm(status.writtenAt)} 起未更新（超过 ${Math.round(staleMs / 60_000)} 分钟）。` });
   if (status.halt) out.push({ key: `halt:${status.halt.code}:${status.halt.at ?? ''}`, title: '常驻执行器已停机（HALT）', body: `原因：${status.halt.code}。需要 Owner 复位（rearm）后才会继续。` });
   for (const p of status.pending) {
-    if (!p.since || now - p.since <= WAIT_NOTIFY_MS) continue;
-    const reason = p.deferred ?? 'QUEUED';
-    out.push({ key: `wait:${p.pr}:${p.headSha}:${reason}`, title: `PR #${p.pr} 排队超过 1 小时`, body: `提交 ${p.headSha.slice(0, 8)}：${DEFERRED_TEXT[p.deferred] ?? '前面还有批次'}。` });
+    if (!LIVE.has(p.state ?? 'QUEUED') || !p.since || now - p.since <= WAIT_NOTIFY_MS) continue;
+    const reason = p.deferred ?? p.state ?? 'QUEUED';
+    out.push({ key: `wait:${p.pr}:${p.headSha}:${reason}`, title: `PR #${p.pr} 排队超过 1 小时`, body: `提交 ${p.headSha.slice(0, 8)}：${DEFERRED_TEXT[p.deferred] ?? WAIT_TEXT[p.deferred] ?? (p.deferred ? `等待中（${p.deferred}）` : '前面还有批次')}。` });
+  }
+  // The executor's own notices (queue.mjs#notice), each key once.
+  for (const n of status.notices ?? []) {
+    const head = n.headSha ? n.headSha.slice(0, 8) : '';
+    switch (n.kind) {
+      case 'new-trigger': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 收到新触发`, body: `提交 ${head} 等待中的重试已提前，冷却 10 分钟后重新评估。` }); break;
+      case 'stopped': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${n.code ?? '?'}）。请修正后推新提交。` }); break;
+      case 'queue-unsaved': out.push({ key: `notice:${n.key}`, title: '常驻执行器写不进排队表', body: `连续多次写不进 state\\queue\\queue.json（${n.code ?? '?'}），新的触发留在收件箱里没有处理。` }); break;
+      case 'waiting-budget': out.push({ key: `notice:${n.key}`, title: '今日等待重试额度已用完', body: '等待类的自动重试今天已用完，等待中的 PR 明天继续，状态见 PR 页面。' }); break;
+      case 'batch-limit': out.push({ key: `notice:${n.key}`, title: '今日执行批次额度已满', body: '常驻执行器今天的执行批次已满，排队的 PR 明天继续，不会丢弃。' }); break;
+      case 'queue-full': out.push({ key: `notice:${n.key}`, title: '常驻执行器排队表已满', body: '活着的排队行已达上限，新的 PR 暂不排队；排队的 PR 跑完或停住后再提议。' }); break;
+      case 'breaker-open': out.push({ key: `notice:${n.key}`, title: '常驻执行器熔断', body: `连续出现环境故障（${n.code ?? '?'}），暂停开新批次${n.until ? `，约 ${hhmm(n.until)} 试跑一批` : ''}。` }); break;
+      default: break;
+    }
   }
   return out;
 }
