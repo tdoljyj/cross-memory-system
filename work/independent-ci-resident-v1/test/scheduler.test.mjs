@@ -346,3 +346,14 @@ test('review m6: triggers stay in the inbox when the queue cannot be written', a
   await f.exec.intake();
   assert.equal((await fs.readdir(path.join(f.root, 'inbox'))).length, 1);
 });
+
+test('re-review N2: refused triggers never wait for the queue; a queue that cannot be written is told once', async t => {
+  const f = await executorFixture(t);
+  f.queue.save = async () => { throw new Error('locked'); };
+  await f.drop(Buffer.from('{not json'));
+  await f.drop(triggerBytes());
+  for (let i = 0; i < 4; i++) await f.exec.intake();
+  assert.equal((await fs.readdir(path.join(f.root, 'inbox'))).length, 1, 'the unparseable one is gone, the good one waits');
+  assert.equal(f.queue.notices.filter(n => n.kind === 'queue-unsaved').length, 1);
+  assert.equal((await receiptTypes(f)).filter(x => x === 'queue-save-failed').length, 1);
+});
