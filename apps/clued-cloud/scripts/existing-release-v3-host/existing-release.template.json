@@ -1,0 +1,20 @@
+{
+  "contract": "clued.existing-release-context/2",
+  "repository": "tdoljyj/cross-memory-system",
+  "sourceCommit": null,
+  "sourceRoot": "/srv/clued-production-release/source",
+  "publisherUid": null,
+  "publisherGid": null,
+  "acceptedAt": null,
+  "expiresAt": null,
+  "node": {
+    "path": "/var/lib/clued-independent-ci/toolchain-build-v1/node",
+    "sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12"
+  },
+  "git": {
+    "path": "/usr/bin/git",
+    "sha256": "2a8c18fbf43da9f692d75474c72bea9dfd796c260b0f3dfe456376abc3bbd668"
+  },
+  "managerConfigSha256": null,
+  "sourcePins": {}
+}

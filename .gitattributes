@@ -78,3 +78,11 @@ work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v
 work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/publisher.mjs -text
 work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/queue-facts.mjs -text
 work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/startup.mjs -text
+
+# Preserve the exact bytes of the existing-release publisher package installed on
+# the Host (package manifest 71ee46c6). These files carry CRLF lines; the package
+# manifest, its source freeze and existing-stages.mjs pin their digests.
+apps/clued-cloud/scripts/existing-release-v3-host/build-files.template.json -text
+apps/clued-cloud/scripts/existing-release-v3-host/existing-release.template.json -text
+apps/clued-cloud/scripts/existing-release-v3-host/payload/release/linux-process-manager.mjs -text
+apps/clued-cloud/scripts/existing-release-v3-host/required-metadata.json -text
