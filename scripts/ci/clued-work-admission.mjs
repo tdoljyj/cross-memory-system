@@ -807,12 +807,13 @@ export function jobIsHosted(job) {
 
 // A job's strategy as a tree, or null when it is not in the one plain block
 // form read here: mapping keys, `- ` items, and one-line values that are a
-// plain or simply quoted scalar or a flow list of such scalars. Blank and
+// plain or simply quoted scalar or a flow list of simple scalars. Blank and
 // whole-line comment lines carry no value and are dropped (at any indent, as
 // in YAML). Anchors, aliases, tags, merge keys, block or multi-line scalars,
 // flow mappings, inline comments, a bare `-`, a duplicate key, uneven
 // indentation and whitespace other than spaces are not read, nor is a job
-// whose strategy key is quoted, written in another case or given twice.
+// with a strategy key written in another case or given twice, or any job key
+// that does not start with a plain key character (quoted, tagged, anchored).
 const STRATEGY_KEY = /^([A-Za-z0-9_-]+):(?: +(.+))?$/;
 const STRATEGY_PLAIN = /^(?:[^ [\]{},#&*!|>'"%@`?:-]|-[^ ])/;
 const STRATEGY_FLOW_ITEM = /^(?:(?!-$)[A-Za-z0-9_./+-]+|"[^"\\,[\]{}]*"|'[^',[\]{}]*')$/;
@@ -826,7 +827,7 @@ function strategyValue(text) {
   return STRATEGY_PLAIN.test(text) && !/:( |$)| #/.test(text) ? { scalar: text } : null;
 }
 function strategyTree(job) {
-  const keyLines = job.lines.filter((line) => /^ {4}(?:["'?]|strategy *:)/i.test(line));
+  const keyLines = job.lines.filter((line) => /^ {4}(?:[^\sA-Za-z0-9_#-]|strategy\s*:)/i.test(line));
   if (keyLines.length !== 1 || !/^ {4}strategy: *$/.test(keyLines[0]) ||
     job.lines.some((line) => /^ *(?:- +)?<<\s*:/.test(line))) return null;
   const rows = [];
@@ -904,6 +905,8 @@ function strategyShrinks(job, old) {
     const now = head.map[i][1];
     if (same(was, now)) continue;
     if (key !== "matrix" || !was.map || !now.map || !same(keys(was), keys(now))) return false;
+    // `Include` or `EXCLUDE` would be an axis to GitHub; refuse rather than guess.
+    if (keys(was).some((name) => /^(?:in|ex)clude$/i.test(name) && name !== name.toLowerCase())) return false;
     const hasInclude = keys(was).includes("include");
     for (const [j, [list, entries]] of was.map.entries()) {
       const kept = now.map[j][1];

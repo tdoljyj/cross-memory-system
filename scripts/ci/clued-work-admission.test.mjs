@@ -2006,6 +2006,8 @@ test("gate guard (Owner Decision 586181ec): an axis value may be removed only fr
     ["remove an include entry next to an axis", withInclude, dropLines(withInclude, 7, 8), SHRUNK],
     ["remove a value next to exclude", withExclude, setLine(withExclude, 2, "        shard: [1, 2]"), SHRUNK],
     ["remove an exclude entry", withExclude, dropLines(withExclude, 6), STRATEGY_CHANGED],
+    ["remove an entry of an Exclude written in another case", setLine(withExclude, 4, "        Exclude:"),
+      dropLines(setLine(withExclude, 4, "        Exclude:"), 6), STRATEGY_CHANGED],
     ["add an exclude entry", withExclude, [...withExclude, "          - shard: 3"], STRATEGY_CHANGED],
   ]);
 });
@@ -2034,8 +2036,16 @@ test("gate guard (Owner Decision 586181ec): a strategy that is not read with cer
       ["    strategy:", "      matrix:", "        include: [{runner_name: runner-a}]"], STRATEGY_CHANGED],
     ["an expression strategy", ["    strategy: ${{ fromJSON(vars.S) }}"], ["    strategy: ${{ fromJSON(vars.T) }}"], STRATEGY_CHANGED],
     ["an expression matrix", ["    strategy:", "      matrix: ${{ fromJSON(vars.M) }}"], ["    strategy:", "      matrix: ${{ fromJSON(vars.N) }}"], STRATEGY_CHANGED],
-    // A lone carriage return in the base could hide a line from this reader.
+    // A lone carriage return or a NEL in the base could hide a line from this reader.
     ["a hidden line break in the base", setLine(S, 5, "          # One entry per runner.\r      max-parallel: 1"), dropLines(S, 10, 11), STRATEGY_CHANGED],
+    ["a NEL in the base", setLine(S, 11, "            route_label: \"route-c\u0085      fail-fast: true\""), dropLines(S, 10, 11), STRATEGY_CHANGED],
+    // A second strategy key the head adds in a tagged, anchored, aliased or quoted spelling.
+    ...["!!str strategy:", "&k strategy:", "*k :", "\"strategy\":"].map((key) => [`a second strategy key ${key} in the head`, S,
+      [...dropLines(S, 10, 11), `    ${key}`, "      matrix:", "        n: [1, 2, 3, 4, 5]"], STRATEGY_CHANGED]),
+    // Comments are read through at any indent: entries after a comment line
+    // indented less than the strategy still count.
+    ["entries added after a less indented comment", insertLines(S, 10, "    # note"),
+      [...insertLines(dropLines(S, 8, 9), 8, "    # note"), "          - runner_name: runner-d", "            route_label: route-d"], STRATEGY_CHANGED],
     // Entries are removed only under strategy.matrix.
     ["a list under another strategy key", ["    strategy:", "      other:", "        include:", "          - a: 1", "          - a: 2"],
       ["    strategy:", "      other:", "        include:", "          - a: 1"], STRATEGY_CHANGED],
