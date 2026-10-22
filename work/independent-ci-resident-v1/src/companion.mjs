@@ -147,7 +147,7 @@ export class Companion {
     while (this.clock() < until) {
       await live();
       const names = await this.linuxReady();
-      if (names === null || names.has('blocked.ready.json')) { try { if (await this.relay('ReceiveBlocked', 0)) return true; } catch { return false; } }
+      if (names === null || names.has('blocked.ready.json')) { await live(); try { if (await this.relay('ReceiveBlocked', 0)) return true; } catch { return false; } }
       await this.sleep(1000);
     }
     return false;
@@ -156,24 +156,26 @@ export class Companion {
   // The bridge pump that run-batch.ps1 performs today (lines 86-89), moved out of the elevated
   // process unchanged in meaning: issue -> worker -> challenge/response rounds -> result.
   // Owner abort (DESIGN §6.5): a cancel of this request from the service ends the pump at its next wait step with
-  // COMPANION_PUMP_CANCELLED; a relay call already running ends first (at most 40 s). It only stops relaying; the
-  // worker unit is never stopped or killed.
+  // COMPANION_PUMP_CANCELLED. No relay call starts after it; one already running ends first (at most 40 s). It only
+  // stops relaying; the worker unit is never stopped or killed. A cancel file that cannot be read is no cancel.
   async pump(request) {
     const deadline = Date.parse(request.deadline);
     const spool = this.cfg.windowsSpool;
     const ready = name => this.fileExists(`${spool}\\outgoing\\${name}.ready.json`);
     // Without a listing, every record is "maybe there" and the relay itself is the probe (the v1 way).
     const listed = (names, name) => names === null || names.has(`${name}.ready.json`);
-    const live = async () => { check(!(await this.mailbox.cancelled(request)), 'COMPANION_PUMP_CANCELLED'); };
+    const cancelled = async () => { try { return await this.mailbox.cancelled(request); } catch { return false; } };
+    const live = async () => { check(!(await cancelled()), 'COMPANION_PUMP_CANCELLED'); };
+    const relay = async (mode, seq) => { await live(); return this.relay(mode, seq); };
     try {
       while (!(await ready('issue'))) { check(this.clock() < deadline, 'ACTUAL_ISSUE_NOT_PUBLISHED'); await live(); await this.sleep(100); }
-      check(await this.relay('SendIssue', 0), 'ISSUE_TRANSFER_UNCONFIRMED');
+      check(await relay('SendIssue', 0), 'ISSUE_TRANSFER_UNCONFIRMED');
       await live(); // a cancel that came with the issue transfer starts no worker
       const start = await this.run(this.a.startNoBlock('clued-ci-worker', request.jobId), { timeoutMs: 30_000 });
       check(start.code === 0, 'LINUX_WORKER_START_UNCONFIRMED');
       let sequence = 1, blockedRefused = false;
       // A refused ReceiveBlocked is remembered (never tried twice); one that only found nothing is not.
-      const receiveBlocked = async () => { try { return await this.relay('ReceiveBlocked', 0); } catch (e) { blockedRefused = true; throw e; } };
+      const receiveBlocked = async () => { await live(); try { return await this.relay('ReceiveBlocked', 0); } catch (e) { blockedRefused = true; throw e; } };
       try {
         for (;;) {
           check(this.clock() < deadline, 'FORMAL_BRIDGE_STAGE_DEADLINE');
@@ -182,26 +184,23 @@ export class Companion {
           // The worker's clean refusal (bridge v4 'blocked') means it has ended: it goes before a stale challenge.
           if (names?.has('blocked.ready.json') && await receiveBlocked()) break;
           // Then a challenge: a callback has a deadline (CALLBACK_WINDOW_MS), the result does not hurry.
-          if (sequence <= 32 && listed(names, `challenge-${String(sequence).padStart(2, '0')}`) && await this.relay('ReceiveChallenge', sequence)) {
+          if (sequence <= 32 && listed(names, `challenge-${String(sequence).padStart(2, '0')}`) && await relay('ReceiveChallenge', sequence)) {
             const responseDeadline = this.clock() + CALLBACK_WINDOW_MS;
             const name = `response-${String(sequence).padStart(2, '0')}`;
             while (!(await ready(name))) { check(this.clock() < responseDeadline, 'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED'); await live(); await this.sleep(100); }
-            await live(); // a response that was already there when the cancel came is not relayed either
-            check(await this.relay('SendResponse', sequence), 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED');
+            check(await relay('SendResponse', sequence), 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED');
             sequence += 1;
             continue;
           }
-          if (listed(names, 'result') && await this.relay('ReceiveResult', 0)) break;
+          if (listed(names, 'result') && await relay('ReceiveResult', 0)) break;
           if (names === null && await receiveBlocked()) break;
           // A listing every second is ample against a 120 s round and keeps the wsl.exe launches low.
           await this.sleep(names === null ? 100 : 1000);
         }
       } catch (error) {
-        // An Owner abort stops the Windows issuer anyway: no blocked hand-over, the pump answers at once. That holds
-        // too for a cancel that came while a relay call was failing, and for one during the hand-over itself.
-        if (error?.code === 'COMPANION_PUMP_CANCELLED') throw error;
-        await live();
-        if (!blockedRefused) await this.handOverBlocked(deadline, live);
+        // An Owner abort stops the Windows issuer anyway: no blocked hand-over (it checks the cancel before each of its
+        // steps), and the outer catch answers COMPANION_PUMP_CANCELLED.
+        if (!blockedRefused && error?.code !== 'COMPANION_PUMP_CANCELLED') await this.handOverBlocked(deadline, live);
         throw error;
       }
       const until = this.clock() + 30_000;
@@ -214,8 +213,10 @@ export class Companion {
       }
       return { ok: true, proof: await this.quiescence(request.batchId) };
     } catch (error) {
-      // Never stop or kill the worker: report what is known and let the service classify.
-      return { ok: false, code: /^[A-Z][A-Z0-9_]{1,79}$/.test(error.code ?? '') ? error.code : 'COMPANION_PUMP_UNCONFIRMED', proof: await this.quiescence(request.batchId) };
+      // Never stop or kill the worker: report what is known and let the service classify. A cancelled pump answers
+      // COMPANION_PUMP_CANCELLED whatever step it ended in, also a relay call that failed as the cancel came.
+      const code = (await cancelled()) ? 'COMPANION_PUMP_CANCELLED' : /^[A-Z][A-Z0-9_]{1,79}$/.test(error.code ?? '') ? error.code : 'COMPANION_PUMP_UNCONFIRMED';
+      return { ok: false, code, proof: await this.quiescence(request.batchId) };
     }
   }
 

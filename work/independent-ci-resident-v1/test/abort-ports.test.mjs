@@ -8,7 +8,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { BROKER_STOP_CONTRACT, PUMP_CODES, WindowsEngine, findInflightSwap } from '../src/engine-windows.mjs';
 import { CANCEL_CONTRACT, Mailbox } from '../src/mailbox.mjs';
-import { Companion } from '../src/companion.mjs';
+import { CALLBACK_WINDOW_MS, Companion } from '../src/companion.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { rawPolicy, tempRoot } from './helpers.mjs';
 
@@ -228,12 +228,14 @@ test('a cancel that comes with the issue transfer starts no worker', async t => 
 });
 
 // The bridge pump against the real Companion and Mailbox (bootstrap review 11af4710, finding 3). `relay(mode, ctx)`
-// answers each relay call; ctx.cancel() writes the Owner-abort cancel of this pump's request once and notes when.
+// answers each relay call and `listing` the Linux outgoing listing (a string, or a function of ctx returning the run
+// result); ctx.cancel() writes the Owner-abort cancel of this pump's request once and notes when.
 const TRANSFERRED = { code: 0, stdout: JSON.stringify({ status: 'PUBLIC_RECORD_TRANSFERRED', terminalConfirmed: true }) };
 const NOT_THERE = { code: 0, stdout: JSON.stringify({ childError: { reason: 'ENOENT' }, terminalConfirmed: true }) };
-async function pumpWith(t, { listing, relay, fileExists = async p => p.endsWith('outgoing\\issue.ready.json'), onSleep = async () => {} }) {
+async function pumpWith(t, { listing, relay, fileExists = async p => p.endsWith('outgoing\\issue.ready.json'), onSleep = async () => {}, mailboxPatch = () => {} }) {
   const root = await tempRoot(t);
-  let now = Date.parse('2026-10-21T08:00:00Z'), req, cancelAt = null;
+  const start = Date.parse('2026-10-21T08:00:00Z');
+  let now = start, req, cancelAt = null;
   const clock = () => now;
   const mailbox = await Mailbox.open(root, clock);
   const log = [];
@@ -241,7 +243,7 @@ async function pumpWith(t, { listing, relay, fileExists = async p => p.endsWith(
   const run = async (argv, { timeoutMs } = {}) => {
     const a = argv.join(' ');
     if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
-    if (a.includes('/usr/bin/ls')) return { code: 0, stdout: listing };
+    if (a.includes('/usr/bin/ls')) return typeof listing === 'function' ? listing(ctx) : { code: 0, stdout: listing };
     const mode = /-Mode (\w+)/.exec(a)?.[1];
     if (mode) { log.push({ mode, afterCancel: cancelAt !== null }); return relay(mode, { ...ctx, timeoutMs }); }
     return { code: 0, stdout: '' }; // the worker start
@@ -251,9 +253,11 @@ async function pumpWith(t, { listing, relay, fileExists = async p => p.endsWith(
     bridgeManifestSha256: 'b'.repeat(64), linuxTool: '/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux' };
   const c = new Companion({ cfg, mailbox, run, fileExists, sleep: async ms => { now += ms; await onSleep(ctx); }, clock });
   req = await mailbox.send('relay-stage', { batchId: '0123456789abcdef-000000000000', stage: 2, jobId: '2'.repeat(64) }, 45 * 60_000);
+  mailboxPatch(mailbox);
   await c.step();
-  return { res: await mailbox.poll(req), log, sinceCancel: cancelAt === null ? null : now - cancelAt, after: log.filter(x => x.afterCancel).map(x => x.mode) };
+  return { res: await mailbox.poll(req), log, elapsed: now - start, sinceCancel: cancelAt === null ? null : now - cancelAt, after: log.filter(x => x.afterCancel).map(x => x.mode) };
 }
+const REFUSED = { code: null, stdout: '', stderr: '', refused: 'RUNNER_BUSY_WITH_UNFINISHED_CHILD' };
 
 test('a cancel while a Receive relay call fails ends the pump after that one call: no blocked hand-over, no further relay (bootstrap review finding 3)', async t => {
   // A refused ReceiveBlocked skips the hand-over anyway; its cancel must still be the answer.
@@ -298,6 +302,49 @@ test('a response that was already there when the cancel came is not relayed', as
     } });
   assert.deepEqual([r.res.ok, r.res.code], [false, 'COMPANION_PUMP_CANCELLED']);
   assert.deepEqual(r.after, [], 'no SendResponse, no ReceiveBlocked');
+});
+
+test('after a cancel no relay call starts, also right after a listing or a "not there" answer (second review MINOR 1)', async t => {
+  // a: without a listing, the cancel comes during a ReceiveChallenge that finds nothing: no ReceiveResult, no ReceiveBlocked.
+  const a = await pumpWith(t, { listing: async () => ({ code: 1, stdout: '' }),
+    relay: async (m, ctx) => { if (m === 'SendIssue') return TRANSFERRED; if (m === 'ReceiveChallenge') await ctx.cancel(); return NOT_THERE; } });
+  // b: the cancel comes during the listing that shows the blocked record: it is not received.
+  const b = await pumpWith(t, { listing: async ctx => { await ctx.cancel(); return { code: 0, stdout: 'blocked.ready.json\n' }; },
+    relay: async m => (m === 'SendIssue' ? TRANSFERRED : NOT_THERE) });
+  // c: the same inside the blocked hand-over, after a failed ReceiveResult.
+  let failed = false;
+  const c = await pumpWith(t, { listing: async ctx => { if (failed) await ctx.cancel(); return { code: 0, stdout: failed ? 'blocked.ready.json\n' : 'result.ready.json\n' }; },
+    relay: async m => { if (m === 'SendIssue') return TRANSFERRED; if (m === 'ReceiveResult') { failed = true; return REFUSED; } return NOT_THERE; } });
+  for (const [label, r] of [['a', a], ['b', b], ['c', c]]) {
+    assert.deepEqual([r.res.ok, r.res.code], [false, 'COMPANION_PUMP_CANCELLED'], label);
+    assert.deepEqual(r.after, [], `${label}: no relay call after the cancel`);
+  }
+});
+
+test('a cancelled pump answers COMPANION_PUMP_CANCELLED whatever step it ended in (second review NIT 2)', async t => {
+  // a: the SendIssue that was running as the cancel came fails.
+  const a = await pumpWith(t, { listing: '', relay: async (m, ctx) => { if (m === 'SendIssue') { await ctx.cancel(); return REFUSED; } return NOT_THERE; } });
+  // b: the hand-over's own ReceiveBlocked that was running as the cancel came is refused.
+  let failed = false;
+  const b = await pumpWith(t, { listing: async () => ({ code: 0, stdout: failed ? 'blocked.ready.json\n' : 'result.ready.json\n' }),
+    relay: async (m, ctx) => {
+      if (m === 'SendIssue') return TRANSFERRED;
+      if (m === 'ReceiveResult') { failed = true; return REFUSED; }
+      if (m === 'ReceiveBlocked') { await ctx.cancel(); return REFUSED; }
+      return NOT_THERE;
+    } });
+  for (const [label, r] of [['a', a], ['b', b]]) {
+    assert.deepEqual([r.res.ok, r.res.code], [false, 'COMPANION_PUMP_CANCELLED'], label);
+    assert.deepEqual(r.after, [], `${label}: no relay call after the cancel`);
+  }
+});
+
+test('a cancel file that cannot be read is no cancel: the pump runs exactly as without an abort (second review NIT 3)', async t => {
+  const r = await pumpWith(t, { listing: 'result.ready.json\n',
+    relay: async m => (m === 'SendIssue' ? TRANSFERRED : m === 'ReceiveResult' ? REFUSED : NOT_THERE),
+    mailboxPatch: mailbox => { mailbox.cancelled = async () => { throw Object.assign(new Error('denied'), { code: 'EPERM' }); }; } });
+  assert.deepEqual([r.res.ok, r.res.code], [false, 'RELAY_REFUSED_NO_RETRY']);
+  assert.ok(r.elapsed >= CALLBACK_WINDOW_MS, `the blocked hand-over ran its window (${r.elapsed} ms)`);
 });
 
 test('a cancel during the callback rounds skips the blocked hand-over: the pump answers at once', async t => {
