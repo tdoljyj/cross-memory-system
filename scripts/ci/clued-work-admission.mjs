@@ -845,6 +845,7 @@ function strategyTree(job) {
   const unread = new Error("strategy not read");
   const block = (indent) => {
     const node = rows[i].text.startsWith("- ") ? { seq: [] } : { map: [] };
+    const names = new Set();
     while (i < rows.length && rows[i].indent === indent) {
       if (node.seq) {
         if (!rows[i].text.startsWith("- ")) throw unread;
@@ -861,7 +862,8 @@ function strategyTree(job) {
         }
       } else {
         const key = STRATEGY_KEY.exec(rows[i].text);
-        if (!key || node.map.some(([name]) => name === key[1])) throw unread;
+        if (!key || names.has(key[1])) throw unread;
+        names.add(key[1]);
         i += 1;
         if (key[2] === undefined) {
           if (i >= rows.length || rows[i].indent <= indent) throw unread;
@@ -919,10 +921,12 @@ function strategyShrinks(job, old) {
       const to = kind && kept[kind];
       if (!to || to.length < 1 || to.length >= from.length) return false;
       // The kept entries, in their order, are a subsequence of the base's.
+      // Each entry is serialized once, so a large one is not compared again and again.
+      const fromText = from.map((entry) => JSON.stringify(entry));
       let k = 0;
-      for (const entry of to) {
-        while (k < from.length && !same(from[k], entry)) k += 1;
-        if (k === from.length) return false;
+      for (const entry of to.map((item) => JSON.stringify(item))) {
+        while (k < fromText.length && fromText[k] !== entry) k += 1;
+        if (k === fromText.length) return false;
         k += 1;
       }
       removed += from.length - to.length;

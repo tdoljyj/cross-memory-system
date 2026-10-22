@@ -1983,10 +1983,26 @@ test("gate guard (Owner Decision 586181ec): an include entry may be removed, not
   const raised = withStrategy(lastGone).replace("    timeout-minutes: 25\n", "    timeout-minutes: 360\n");
   assert.deepEqual(gateFindings(raised, withStrategy(S)), ["self_hosted_timeout_raised_ungated:trivy-trusted-self-hosted"]);
   assert.deepEqual(gateFindings(withStrategy(S), withStrategy(S)), []);
-  // A long run of spaces is read in linear time (a / +$/ replace took minutes on 1 MB).
-  const started = Date.now();
-  assert.deepEqual(gateFindings(withStrategy([...lastGone, `     ${" ".repeat(1000000)}x`]), withStrategy(S)), STRATEGY_CHANGED);
-  assert.ok(Date.now() - started < 5000, `${Date.now() - started} ms`);
+});
+
+// Each case took from a minute to many minutes with the quadratic code it guards against.
+test("gate guard (Owner Decision 586181ec): large strategies are read in linear time", () => {
+  const S = INCLUDE_STRATEGY;
+  const axis = ["    strategy:", "      matrix:", "        os: [a, b]"];
+  const spaces = " ".repeat(1000000);
+  const many = (count, line) => Array.from({ length: count }, (_, n) => line(n));
+  const cases = [
+    ["a long run of spaces in a line", S, [...dropLines(S, 10, 11), `     ${spaces}x`]],
+    ["a long run of spaces in a flow item", axis, ["    strategy:", "      matrix:", `        os: [a${spaces}x]`]],
+    ["many keys in one mapping", axis, ["    strategy:", "      matrix:", "        os: [a]", ...many(60000, (n) => `        k${n}: 1`)]],
+    ["one large kept entry against many base entries", [...S.slice(0, 5), ...many(50000, (n) => `          - n: ${n}`)],
+      [...S.slice(0, 5), "          - k0: 0", ...many(30000, (n) => `            k${n + 1}: 0`)]],
+  ];
+  for (const [label, base, head] of cases) {
+    const started = Date.now();
+    assert.deepEqual(gateFindings(withStrategy(head), withStrategy(base)), STRATEGY_CHANGED, label);
+    assert.ok(Date.now() - started < 5000, `${label}: ${Date.now() - started} ms`);
+  }
 });
 
 test("gate guard (Owner Decision 586181ec): an axis value may be removed only from a matrix without include", () => {
