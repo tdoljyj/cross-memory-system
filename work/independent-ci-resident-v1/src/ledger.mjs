@@ -26,7 +26,9 @@
 //
 // Owner abort (DESIGN §6.5): an accepted abort writes 80-owner-abort (create-only) before anything is stopped. An
 // entry with it is never a resumable wait, so a service that dies in the middle of an abort leaves a crash scene
-// that recovery closes FAILED_UNKNOWN (OWNER_ABORT_INTERRUPTED) and HALTs, exactly like any other open entry.
+// that recovery closes FAILED_UNKNOWN (OWNER_ABORT_INTERRUPTED) and HALTs, exactly like any other open entry. The
+// executor's own end of a superseded batch (phase 2, DESIGN §17.4) does the same with 81-self-abort
+// (SUPERSEDE_INTERRUPTED).
 //
 // Phase 2, step 1 (resident quota redesign, design v0.5 §4.4-§4.7, Task 6451a55d): 00-reserved.json also names how the
 // run queue picked the subject (`origin`, queue.mjs#ORIGINS; a record without one was a plain first try), and usage()
@@ -51,10 +53,11 @@ export const OUTCOMES = Object.freeze(['COMPLETED', 'FAILED_CLEAN', 'FAILED_UNKN
 export const UNEXECUTED_REASONS = Object.freeze(['NOT_ADMITTED', 'BUNDLE_UNAVAILABLE', 'BROKER_NOT_LAUNCHED', 'SUPERSEDED']);
 // Releases that never count as an evaluation nor towards a head's release cap (nothing about the PR was decided).
 export const UNCOUNTED_RELEASES = Object.freeze(['BUNDLE_UNAVAILABLE', 'BROKER_NOT_LAUNCHED', 'SUPERSEDED']);
-export const RESERVATION_ORIGINS = Object.freeze(['queued', 'backoff-retry', 'waiting-retry', 'new-trigger', 'restored', 'attempt2']);
+export const RESERVATION_ORIGINS = Object.freeze(['queued', 'backoff-retry', 'waiting-retry', 'new-trigger', 'restored', 'lifted', 'attempt2']);
 // The records of an open entry, oldest first; the newest one present is what an Owner abort names by digest.
 export const OPEN_RECORDS = Object.freeze(['00-reserved.json', '10-started.json', '15-relay-wait.json', '20-plan-intent.json', '25-plan.json']);
 export const OWNER_ABORT_RECORD = '80-owner-abort.json';
+export const SELF_ABORT_RECORD = '81-self-abort.json';
 
 function subjectCheck({ repo, pr, headSha, baseSha, sourceManifestSha256, attempt }) {
   check(REPO.test(repo) && Number.isSafeInteger(pr) && pr > 0, 'BATCH_KEY_SUBJECT_INVALID');
@@ -104,7 +107,7 @@ export class Ledger {
     if (!(await exists(dir))) return { state: 'ABSENT' };
     // A record that cannot be read (torn write, wrong type, extra hard link) makes the entry
     // UNREADABLE: it is open, recovery closes or quarantines it, and nothing ever throws past here.
-    let reserved, started, wait, planIntent, plan, abort, terminal, archived;
+    let reserved, started, wait, planIntent, plan, abort, selfAbort, terminal, archived;
     try {
       const read = async name => (await exists(path.join(dir, name))) ? (await readJson(path.join(dir, name))).value : null;
       reserved = await read('00-reserved.json');
@@ -113,24 +116,25 @@ export class Ledger {
       planIntent = await read('20-plan-intent.json');
       plan = await read('25-plan.json');
       abort = await read(OWNER_ABORT_RECORD);
+      selfAbort = await read(SELF_ABORT_RECORD);
       terminal = await read('90-terminal.json');
       archived = await read('95-archived.json');
     } catch (error) {
       if (!contentError(error)) throw error;
       return { state: 'UNREADABLE' };
     }
-    if (terminal) return { state: 'TERMINAL', outcome: terminal.outcome, reserved, started, wait, planIntent, plan, abort, terminal, archived };
+    if (terminal) return { state: 'TERMINAL', outcome: terminal.outcome, reserved, started, wait, planIntent, plan, abort, selfAbort, terminal, archived };
     // A crash between mkdir and the reservation record leaves an INCOMPLETE entry; it is open, so
     // recovery terminalises it (FAILED_UNKNOWN) instead of wedging the ledger.
-    if (!reserved) return { state: 'INCOMPLETE', reserved: null, started, abort };
-    return { state: started ? 'STARTED' : 'RESERVED', reserved, started, wait, planIntent, plan, abort };
+    if (!reserved) return { state: 'INCOMPLETE', reserved: null, started, abort, selfAbort };
+    return { state: started ? 'STARTED' : 'RESERVED', reserved, started, wait, planIntent, plan, abort, selfAbort };
   }
 
   // The newest record of an OPEN entry with the SHA-256 of its exact bytes (what an Owner abort names), or null
   // when the entry is absent, terminal, unreadable or already being aborted.
   async latestRecord(key) {
     const s = await this.state(key);
-    if (!['RESERVED', 'STARTED'].includes(s.state) || s.abort) return null;
+    if (!['RESERVED', 'STARTED'].includes(s.state) || s.abort || s.selfAbort) return null;
     for (const name of [...OPEN_RECORDS].reverse()) {
       const file = path.join(this.dir(key), name);
       if (await exists(file)) return { name, sha256: (await readJson(file)).sha256 };
@@ -141,8 +145,16 @@ export class Ledger {
   // Create-only, before anything of the abort happens; a second acceptance of the same entry fails here.
   async beginOwnerAbort(key, facts) {
     const s = await this.state(key);
-    check(['RESERVED', 'STARTED'].includes(s.state) && !s.abort, 'OWNER_ABORT_BATCH_NOT_OPEN', s.state);
+    check(['RESERVED', 'STARTED'].includes(s.state) && !s.abort && !s.selfAbort, 'OWNER_ABORT_BATCH_NOT_OPEN', s.state);
     await writeNew(path.join(this.dir(key), OWNER_ABORT_RECORD), { key, contract: 'clued.independent-ci.resident-owner-abort-accepted/1', at: isoNow(this.clock), ...facts });
+  }
+
+  // The executor's own end of a superseded batch (phase 2): create-only, before quiescence is proven or anything is
+  // archived; from here on the batch is never resumed or continued.
+  async beginSelfAbort(key, facts) {
+    const s = await this.state(key);
+    check(s.state === 'STARTED' && !s.abort && !s.selfAbort, 'SELF_ABORT_REQUIRES_STARTED_ENTRY', s.state);
+    await writeNew(path.join(this.dir(key), SELF_ABORT_RECORD), { key, contract: 'clued.independent-ci.resident-self-abort/1', at: isoNow(this.clock), ...facts });
   }
 
   // The hosted wait record: written once, right after 10-started, before anything else of the batch.
@@ -154,7 +166,7 @@ export class Ledger {
 
   // An open entry that is only waiting for hosted signals (nothing of it can be running). One whose Owner abort
   // was accepted is never resumed: if it is still open at a tick start, the abort was interrupted (a crash scene).
-  static resumable(entry) { return entry?.state === 'STARTED' && !!entry.wait && !entry.planIntent && !entry.plan && !entry.abort; }
+  static resumable(entry) { return entry?.state === 'STARTED' && !!entry.wait && !entry.planIntent && !entry.plan && !entry.abort && !entry.selfAbort; }
 
   // Open entries that are a crash scene (recovery closes them) - everything open except a resumable wait.
   async crashed() { return (await this.open()).filter(e => !Ledger.resumable(e)); }
@@ -169,13 +181,13 @@ export class Ledger {
   // Stage R bookkeeping, both create-only and only on a started entry; 25-plan only after 20-plan-intent.
   async writePlanIntent(key, intent) {
     const s = await this.state(key);
-    check(s.state === 'STARTED' && s.wait && !s.planIntent && !s.plan && !s.abort, 'RELAY_PLAN_INTENT_REQUIRES_STARTED_ENTRY', s.state);
+    check(s.state === 'STARTED' && s.wait && !s.planIntent && !s.plan && !s.abort && !s.selfAbort, 'RELAY_PLAN_INTENT_REQUIRES_STARTED_ENTRY', s.state);
     await writeNew(path.join(this.dir(key), '20-plan-intent.json'), { key, contract: 'clued.independent-ci.resident-relay-plan-intent/1', at: isoNow(this.clock), ...intent });
   }
 
   async writePlan(key, plan) {
     const s = await this.state(key);
-    check(s.state === 'STARTED' && s.planIntent && !s.plan && !s.abort, 'RELAY_PLAN_REQUIRES_INTENT', s.state);
+    check(s.state === 'STARTED' && s.planIntent && !s.plan && !s.abort && !s.selfAbort, 'RELAY_PLAN_REQUIRES_INTENT', s.state);
     await writeNew(path.join(this.dir(key), '25-plan.json'), { key, contract: 'clued.independent-ci.resident-relay-plan/1', at: isoNow(this.clock), ...plan });
   }
 
@@ -317,10 +329,10 @@ export class Ledger {
       if (!name.startsWith(`${key}-`)) continue;
       try {
         const { value } = await readJson(path.join(this.unexecuted, name, '90-terminal.json'));
-        if (Date.parse(value.at) >= sinceMs) out.push({ at: Date.parse(value.at), reason: UNEXECUTED_REASONS.includes(value.reason) ? value.reason : null });
+        if (Date.parse(value.at) >= sinceMs) out.push({ at: Date.parse(value.at), reason: UNEXECUTED_REASONS.includes(value.reason) ? value.reason : null, klass: typeof value.facts?.class === 'string' ? value.facts.class : null });
       } catch (error) {
         if (!contentError(error)) throw error;
-        out.push({ at: this.clock(), reason: null });
+        out.push({ at: this.clock(), reason: null, klass: null });
       }
     }
     return out;
@@ -382,7 +394,7 @@ export class Ledger {
   }
 
   // The run queue's daily budgets for the window since sinceMs, from the ledger alone (one pass; see the header).
-  // A record that cannot be read counts against every budget it might belong to (never a wedge, never a free pass).
+  // A record that cannot be read counts as one more execution or evaluation (never a wedge, never a free pass).
   async usage(sinceMs) {
     const u = { started: 0, startedByPr: new Map(), evaluations: 0, waitingRetries: 0, reevaluations: new Map(), releasesByHead: new Map() };
     const bump = (map, k) => map.set(k, (map.get(k) ?? 0) + 1);

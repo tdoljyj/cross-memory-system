@@ -89,11 +89,8 @@ test('waits back off 10, 20, 40, 80, 120, then every 120 minutes, or until ci_re
   assert.equal(release(1), null);
   assert.deepEqual([q.row(8).state, (q.row(8).nextAt - now()) / MIN], ['BACKOFF', 10]);
   advance(10 * MIN);
-  assert.equal(release(2), null);
-  assert.equal((q.row(8).nextAt - now()) / MIN, 20);
   assert.deepEqual(RELEASE_BACKOFF_MS.map(ms => ms / MIN), [10, 20, 40]);
-  advance(20 * MIN);
-  assert.equal(release(3), 'stopped');
+  assert.equal(release(2), 'stopped', 'at most two releases in 24 hours');
   assert.deepEqual([q.row(8).state, q.row(8).stopKind, q.row(8).stopClass], ['STOPPED', 'release-cap', 'not-admitted']);
   // a released row goes to the tail
   q.offer(trig(9, 3), now(), OPTS);
@@ -104,7 +101,7 @@ test('waits back off 10, 20, 40, 80, 120, then every 120 minutes, or until ci_re
   assert.deepEqual(q.candidates(now()).filter(c => [9, 10].includes(c.pr)).map(c => c.pr), [10, 9]);
 });
 
-test('a new trigger pokes a row that waits: due after the 10-minute cool-down; a stopped row at the release cap too, a burned one never', async t => {
+test('a new trigger pokes a row that waits: due after the 10-minute cool-down; a stopped row (cap or burned) needs a new commit', async t => {
   const { q, now, advance } = await fresh(t);
   q.offer(trig(7, 1, { prUpdatedAt: '2026-10-22T11:00:00Z' }), now(), OPTS);
   q.begin(7, H(1), KEY, 'queued', now());

@@ -148,6 +148,7 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
       case 'stopped': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入（${n.code ?? '?'}）。修正后编辑 PR 可再试，或推新提交。` }); break;
       case 'waiting-budget': out.push({ key: `notice:${n.key}`, title: '今日等待重试额度已用完', body: '等待类的自动重试今天已用完，等待中的 PR 明天继续，状态见 PR 页面。' }); break;
       case 'batch-limit': out.push({ key: `notice:${n.key}`, title: '今日执行批次额度已满', body: '常驻执行器今天的执行批次已满，排队的 PR 明天继续，不会丢弃。' }); break;
+      case 'queue-full': out.push({ key: `notice:${n.key}`, title: '常驻执行器排队表已满', body: '活着的排队行已达上限，新的 PR 暂不排队；排队的 PR 跑完或停住后再提议。' }); break;
       case 'breaker-open': out.push({ key: `notice:${n.key}`, title: '常驻执行器熔断', body: `连续出现环境故障（${n.code ?? '?'}），暂停开新批次${n.until ? `，约 ${hhmm(n.until)} 试跑一批` : ''}。` }); break;
       default: break;
     }

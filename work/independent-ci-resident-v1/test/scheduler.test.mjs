@@ -7,7 +7,7 @@ import path from 'node:path';
 import { ResidentExecutor, SUPERSEDED_AT_SAFE_POINT, SUPERSEDED_ARCHIVE_REASON, BATCH_SUPERSEDED } from '../src/executor.mjs';
 import { batchKey, headKey } from '../src/ledger.mjs';
 import { RunQueue } from '../src/queue.mjs';
-import { BASE, HEAD, SAFE_REFUSAL, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, notAdmitted, rawPolicy, triggerBytes } from './helpers.mjs';
+import { BASE, HEAD, RELAY_ON, SAFE_REFUSAL, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, localRow, notAdmitted, rawPolicy, triggerBytes } from './helpers.mjs';
 
 const MIN = 60_000;
 const H = n => String(n).repeat(40).slice(0, 40);
@@ -179,4 +179,170 @@ test('the queue survives a restart; a row left running by a crash follows the le
   assert.equal((await exec.tick()).state, 'HALTED', 'the open entry is a crash scene');
   assert.deepEqual([queue.row(884).state, queue.row(884).running], ['STOPPED', null], 'the ledger closed it: the row follows');
   assert.equal(queue.row(900).state, 'QUEUED');
+});
+
+// ---- independent review of step 1: the gaps it named ----
+
+test('review M1: the executor\'s own end writes its record first; a crash in the middle is SUPERSEDE_INTERRUPTED, never a resumed wait', async t => {
+  const f = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => null, pull: pr => ({ number: pr, state: 'open', headSha: H(7) }) }) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'WAITING');
+  const key = batchKey(subject());
+  // the process dies right after the record (simulated: the record is written, nothing else happens)
+  await f.ledger.beginSelfAbort(key, { safePoint: 'before-relay-plan', liveHeadSha: H(7), liveState: 'open' });
+  const fresh = new ResidentExecutor(f.ports);
+  const r = await fresh.tick();
+  assert.equal(r.state, 'HALTED');
+  assert.equal((await f.ledger.halted()).value.code, 'SUPERSEDE_INTERRUPTED');
+  assert.deepEqual([(await f.ledger.state(key)).outcome, (await f.ledger.state(key)).terminal.facts.failureCode], ['FAILED_UNKNOWN', 'SUPERSEDE_INTERRUPTED']);
+});
+
+test('review M1: quiescence that cannot be proven at the executor\'s own end HALTs, exactly like the Owner abort', async t => {
+  const engine = fakeEngine();
+  const base = engine.runStage;
+  let f;
+  engine.runStage = async (batch, stage, o) => { if (stage.number === 1) await f.drop(triggerBytes({ headSha: H(7) })); return base(batch, stage, o); };
+  f = await executorFixture(t, { engine, companion: fakeCompanion({ pull: pr => ({ number: pr, state: 'open', headSha: H(7) }), linux: { linuxUnitsInactive: false, containersZero: true } }) });
+  await f.drop(triggerBytes());
+  const r = await f.exec.tick();
+  assert.equal(r.state, 'HALTED');
+  assert.equal((await f.ledger.halted()).value.code, 'SUPERSEDE_QUIESCENCE_UNPROVEN');
+  assert.equal(engine.calls.some(c => c[0] === 'archive-windows'), false, 'the scene is left as it is');
+});
+
+test('supersession at the before-workspace safe point (after stage R) and during a hosted wait', async t => {
+  // a newer commit arrives while stage R runs: caught before the workspace, after the plan was written
+  const engine = fakeEngine({ relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(r => localRow(r)) }) });
+  const relay = engine.runRelayStage.bind(engine);
+  let f;
+  engine.runRelayStage = async (batch, roles) => { await f.drop(triggerBytes({ headSha: H(7) })); return relay(batch, roles); };
+  f = await executorFixture(t, { engine, policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => hintFor({ gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } }), pull: pr => ({ number: pr, state: 'open', headSha: H(7) }) }) });
+  await f.drop(triggerBytes());
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode, r.safePoint], ['FAILED_CLEAN', SUPERSEDED_AT_SAFE_POINT, 'before-workspace']);
+  assert.deepEqual(stagesRun(engine), [1, 9]);
+  // during a hosted wait: the next resume sees the newer commit and the live read confirms it
+  const g = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => null, pull: pr => ({ number: pr, state: 'open', headSha: H(7) }) }) });
+  await g.drop(triggerBytes());
+  assert.equal((await g.exec.tick()).state, 'WAITING');
+  await g.drop(triggerBytes({ headSha: H(7) }));
+  g.advance(60_000);
+  const w = await g.exec.tick();
+  assert.deepEqual([w.state, w.failureCode, w.safePoint], ['FAILED_CLEAN', SUPERSEDED_AT_SAFE_POINT, 'before-relay-plan']);
+});
+
+test('review M2: attempt 2 runs when the live read disproves the newer commit, or gives no answer; the stale commit is set aside', async t => {
+  for (const pull of [pr => ({ number: pr, state: 'open', headSha: HEAD }), () => null]) {
+    let n = 0;
+    const engine = fakeEngine();
+    const base = engine.runStage;
+    engine.runStage = async (batch, stage, o) => (stage.number === 2 && ++n === 1 ? (engine.calls.push(['stage', 2]), { ok: false, code: 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', proof: WINDOWS_CLEAN }) : base(batch, stage, o));
+    const f = await executorFixture(t, { engine, companion: fakeCompanion({ pull }) });
+    await f.drop(triggerBytes());
+    assert.ok((await f.exec.tick()).attempt2);
+    await f.drop(triggerBytes({ headSha: H(7) })); // a stale or forged trigger
+    f.advance(10 * MIN);
+    const r = await f.exec.tick();
+    assert.deepEqual([r.state, r.key], ['COMPLETED', batchKey(subject({ attempt: 2 }))], String(pull));
+    if (pull(884)) assert.ok(f.queue.row(884).superseded.some(c => c.headSha === H(7)), 'the disproved commit is set aside');
+  }
+});
+
+test('review m4: the release cap holds across a queue that started over; the rebuilt breaker starts half-open', async t => {
+  const engine = fakeEngine({ stages: { 1: notAdmitted() } });
+  const f = await executorFixture(t, { engine });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'NOT_ADMITTED');
+  f.advance(10 * MIN + 1);
+  assert.equal((await f.exec.tick()).state, 'NOT_ADMITTED');
+  assert.equal(f.queue.row(884).state, 'STOPPED');
+  await fs.writeFile(path.join(f.root, 'state', 'queue', 'queue.json'), '{"not":"a queue"}');
+  const queue = await RunQueue.open(path.join(f.root, 'state', 'queue'), f.clock);
+  assert.equal(queue.breaker.state, 'half-open');
+  const exec = new ResidentExecutor({ ...f.ports, queue });
+  await f.drop(triggerBytes()); // the poller proposes the head again after the new generation
+  f.advance(10 * MIN + 1);
+  const r = await exec.tick();
+  assert.equal(r.reason, 'RELEASE_CAP_REACHED');
+  assert.equal(queue.row(884).state, 'STOPPED');
+  assert.deepEqual(stagesRun(engine), [1, 1], 'never a third evaluation');
+  assert.ok((await receiptTypes(f)).includes('queue-rebuilt'));
+});
+
+test('the breaker closing lifts rows the release cap stopped because of an environment fault', async t => {
+  const broker = { ok: false, code: 'BROKER_REQUEST_EXPIRED', proof: WINDOWS_CLEAN, outcome: null, brokerNoLaunch: true };
+  const burn = { ok: false, code: 'STAGE_PACKAGE_REFUSED', proof: WINDOWS_CLEAN };
+  const per = { 1: broker };
+  const engine = perPr(per);
+  const f = await executorFixture(t, { engine });
+  await f.drop(triggerBytes({ pr: 1, headSha: H(1) }));
+  await f.exec.tick();
+  f.advance(10 * MIN + 1);
+  await f.exec.tick();
+  assert.deepEqual([f.queue.row(1).state, f.queue.row(1).stopClass], ['STOPPED', 'environment']);
+  // the two broker releases plus one more counted failure open the breaker
+  per[2] = burn;
+  await f.drop(triggerBytes({ pr: 2, headSha: H(2) }));
+  await f.exec.tick();
+  assert.equal(f.queue.breaker.state, 'open');
+  delete per[1];
+  await f.drop(triggerBytes({ pr: 3, headSha: H(3) }));
+  f.advance(30 * MIN);
+  assert.equal((await f.exec.tick()).state, 'COMPLETED', 'the trial (PR 3) completes');
+  assert.equal(f.queue.breaker.state, 'closed');
+  assert.equal(f.queue.row(1).state, 'BACKOFF', 'the environment stop is lifted');
+  assert.equal((await f.exec.tick()).state, 'COMPLETED', 'and PR 1 runs');
+});
+
+test('the re-evaluation cap per (PR, commit) and the evaluation budget at the executor; a full budget never starves a due wait', async t => {
+  const engine = perPr({ 1: notAdmitted('NATIVE_NOT_ADMITTED', WAIT), 2: notAdmitted() });
+  const f = await executorFixture(t, { engine, policy: rawPolicy({ limits: { ...rawPolicy().limits, reevaluationsPerPrHeadPer24h: 1, maxEvaluationsPer24h: 2 } }) });
+  await f.drop(triggerBytes({ pr: 1, headSha: H(1) }));
+  await f.exec.tick();                                  // evaluation 1: PR 1 waits
+  await f.drop(triggerBytes({ pr: 2, headSha: H(2) }));
+  await f.exec.tick();                                  // evaluation 2: PR 2 released (back-off)
+  // a poke of PR 2 (an Agent's trigger) now meets the full evaluation budget; the due wait of PR 1 still runs
+  f.advance(10 * MIN + 1);
+  await f.drop(triggerBytes({ pr: 2, headSha: H(2) }));
+  const r = await f.exec.tick();
+  assert.equal(r.state, 'NOT_ADMITTED', 'PR 1 waiting retry ran');
+  assert.equal(f.queue.row(1).origin, 'waiting-retry');
+  // the cap of 1 new-trigger re-evaluation per (PR, commit)
+  const g = await executorFixture(t, { engine: perPr({ 1: notAdmitted('NATIVE_NOT_ADMITTED', WAIT) }), policy: rawPolicy({ limits: { ...rawPolicy().limits, reevaluationsPerPrHeadPer24h: 1 } }) });
+  await g.drop(triggerBytes({ pr: 1, headSha: H(1) }));
+  await g.exec.tick();
+  g.advance(10 * MIN + 1);
+  const at = (await g.ledger.usage(0)).reevaluations.get(`1:${H(1)}`) ?? 0;
+  assert.equal(at, 0);
+  // first the waiting retry is due: move it out of the way with a long ci wait, then poke twice
+  g.queue.row(1).nextAt = g.clock() + 5 * 60 * MIN;
+  await g.drop(triggerBytes({ pr: 1, headSha: H(1) }));
+  assert.equal((await g.exec.tick()).state, 'NOT_ADMITTED', 'the first poke re-evaluates');
+  g.queue.row(1).nextAt = g.clock() + 5 * 60 * MIN;
+  g.advance(10 * MIN + 1);
+  await g.drop(triggerBytes({ pr: 1, headSha: H(1) }));
+  const capped = await g.exec.tick();
+  assert.equal(g.queue.row(1).deferred ?? g.queue.row(1).reason, 'REEVALUATION_CAP');
+  assert.notEqual(capped.state, 'NOT_ADMITTED');
+});
+
+test('the daily execution limit defers without dropping, tells the Owner once, and the row runs the next day', async t => {
+  const f = await executorFixture(t, { policy: rawPolicy({ limits: { ...rawPolicy().limits, maxBatchesPer24h: 1 } }) });
+  await f.drop(triggerBytes({ pr: 1, headSha: H(1) }));
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  await f.drop(triggerBytes({ pr: 2, headSha: H(2) }));
+  assert.equal((await f.exec.tick()).reason, 'DAILY_BATCH_LIMIT');
+  assert.equal((await f.exec.tick()).reason, 'DAILY_BATCH_LIMIT');
+  assert.equal(f.queue.notices.filter(n => n.kind === 'batch-limit').length, 1);
+  assert.equal(f.queue.row(2).state, 'QUEUED', 'never dropped');
+  f.advance(24 * 60 * MIN + 1);
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+});
+
+test('review m6: triggers stay in the inbox when the queue cannot be written', async t => {
+  const f = await executorFixture(t);
+  f.queue.save = async () => { throw new Error('locked'); };
+  await f.drop(triggerBytes());
+  await f.exec.intake();
+  assert.equal((await fs.readdir(path.join(f.root, 'inbox'))).length, 1);
 });

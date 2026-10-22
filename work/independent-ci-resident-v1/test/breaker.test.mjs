@@ -101,3 +101,20 @@ test('policy /4: the queue and breaker settings are bounded; the phase-1 daily c
   assert.throws(() => validatePolicy({ ...p, breaker: { ...p.breaker, backoffMs: [3_600_000, 1_800_000] } }), { code: 'POLICY_BREAKER_INVALID' });
   assert.throws(() => validatePolicy({ ...p, contract: 'clued.independent-ci.resident-policy/3' }), { code: 'POLICY_CONTRACT_INVALID' });
 });
+
+test('review m2/m3: the failing place is the furthest one that opened it; a Windows-only ending never closes a Linux one', () => {
+  let now = 0;
+  const b = closedBreaker();
+  breakerRecord(b, { ...fail(positionOf(2), 1), windowsOnly: false }, policy, now += MIN);
+  breakerRecord(b, { ...fail(positionOf(0, 'bundle'), 2), windowsOnly: true }, policy, now += MIN);
+  breakerRecord(b, { ...fail(positionOf(0, 'bundle'), 3), windowsOnly: true }, policy, now += MIN);
+  assert.deepEqual([b.state, b.failingPos, b.failingWindowsOnly], ['open', positionOf(2), false]);
+  breakerGate(b, b.nextTrialAt);
+  // a trial that gets past the bundle but fails at stage 2 again does not close it
+  assert.equal(breakerRecord(b, { ...fail(positionOf(2), 4), windowsOnly: false }, policy, now += 31 * MIN), 'reopened');
+  breakerGate(b, b.nextTrialAt);
+  // a fully relayed batch (no Linux) completes: Windows-only, no proof for stage 2
+  assert.equal(breakerRecord(b, { ...done(5), windowsOnly: true }, policy, now += 61 * MIN), null);
+  assert.equal(b.state, 'half-open');
+  assert.equal(breakerRecord(b, { ...done(6), windowsOnly: false }, policy, now += MIN), 'closed');
+});

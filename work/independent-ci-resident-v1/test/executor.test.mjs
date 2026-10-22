@@ -81,20 +81,17 @@ test('stage-1 "not admitted" releases the key; the queue retries on its own back
   assert.equal((await f.exec.tick()).state, 'IDLE', 'its 10-minute back-off');
   f.advance(60_001);
   assert.equal((await f.exec.tick()).state, 'NOT_ADMITTED', 'retried without a new trigger (phase 2)');
-  f.advance(19 * 60_000);
-  assert.equal((await f.exec.tick()).state, 'IDLE', 'then 20 minutes');
-  f.advance(60_001);
-  assert.equal((await f.exec.tick()).state, 'NOT_ADMITTED');
-  assert.deepEqual([f.queue.row(884).state, f.queue.row(884).stopKind], ['STOPPED', 'release-cap'], 'the third release in 24 hours stops it');
+  assert.deepEqual([f.queue.row(884).state, f.queue.row(884).stopKind], ['STOPPED', 'release-cap'], 'at most two releases in 24 hours (design v0.5 §4.5)');
   assert.ok(f.queue.notices.some(n => n.kind === 'stopped' && n.pr === 884));
   f.advance(3_600_000);
   assert.equal((await f.exec.tick()).state, 'IDLE');
-  // A new trigger after the fix (the PR was edited) runs it again, once per trigger, bounded per day.
+  // Only a new commit runs it again: a new trigger of the same commit does not (design v0.5 §4.5).
   await f.drop(triggerBytes({ contract: 'clued.independent-ci.resident-trigger/2', prUpdatedAt: '2026-10-20T13:30:00Z' }));
-  assert.equal((await f.exec.tick()).state, 'NOT_ADMITTED');
-  const reserved = (await f.ledger.usage(0)).reevaluations.get(`884:${HEAD}`);
-  assert.equal(reserved, 1);
-  assert.deepEqual(stagesRun(engine), [1, 1, 1, 1]);
+  assert.equal((await f.exec.tick()).state, 'IDLE');
+  engine.runStage = fakeEngine().runStage.bind(engine);
+  await f.drop(triggerBytes({ headSha: '7'.repeat(40) }));
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.deepEqual(stagesRun(engine).slice(0, 2), [1, 1]);
 });
 
 test('any other stage-1 failure burns the head even before 10-started (review M4)', async t => {
