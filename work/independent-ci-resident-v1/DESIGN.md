@@ -277,13 +277,18 @@ companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ 
 
 - **执行器单实例锁**（`src/instance-lock.mjs`）：
   - 目录原子创建，持有者每 tick 刷新一次存活记录；
+  - 持有者来自上一次开机：不管 pid 还在不在，都按过期处理。锁改名保留，附一份 `earlier-boot.json`，交给崩溃恢复判断（Task `d80fd886`）。持有者记录和存活记录都写开机以来的毫秒数 `uptimeMs`（Node 的 `os.uptime()`，在 Windows 上就是 `GetTickCount64`）。这个数每次开机从零开始，一次开机之内只增不减，所以记录里的数比现在大、而且差值超过 60 秒，就是上一次开机写的。只看 pid 和存活记录不够：重启后旧 pid 可能已经分给了别的进程，重启前一分钟写的存活记录按墙钟看也还新鲜。判断只朝一个方向：认不出来时退回下面几条规则，最坏是拒绝启动，不会让两个执行器同时运行。快速启动（Fast Startup）不会把这个数归零，服务进程也不重启，这时这条规则不触发；
   - pid 已不在：锁改名保留，交给崩溃恢复判断；
   - pid 还在而且存活记录新鲜：拒绝启动；
   - pid 还在但存活记录过期（pid 复用或挂起）：拒绝启动，交给 Owner 查看；
   - 服务停止从不杀进程：宿主只写 `STOP-REQUESTED`，执行器在批次之间退出。
   - 每个宿主进程最多请求一次停止（`ResidentStopGate`，Task `fe6cd7bc`）。SCM 停止、关机、执行器自己退出，三者谁先到谁算。只有 SCM 停止、并且执行器还在运行时，才写 `STOP-REQUESTED`（只能新建）。执行器自己退出时，宿主直接停服务，什么都不写。修复前，Exited 处理器调用的 `ServiceBase.Stop()` 会重入 `OnStop`：执行器已经把 `STOP-REQUESTED` 改名进 `state\locks` 之后，宿主又建一个，下一次启动随即停止（2026-10-21 15:51Z 实测，Note `fdf7e62a`）。
+  - 停止请求的内容是 `{"contract":"clued.independent-ci.stop-request/1","uptimeMs":<GetTickCount64>}`，记下发出时本次开机已过的毫秒数，执行器据此判断它是不是上一次开机发出的（Task `d80fd886`）。只有"文件已经在了"（`ERROR_FILE_EXISTS`、`ERROR_ALREADY_EXISTS`）才算已经请求过；其他错误都让这次停止明确失败，并交还停止权，下一次停止会重新请求。文件建好就算请求成立，即使内容没写进去：空文件可能是内容还没写进去的一瞬间，也可能是写入失败留下的，执行器都照样停下。
   - 关机时不写 `STOP-REQUESTED`。Windows 只给服务几秒（TURING 上 `WaitToKillServiceTimeout` 是 5 秒），空闲的执行器每 15 秒才看一次，来不及确认。留下的文件会让重启后的第一次启动以 0 退出，不触发失败重启，常驻服务就一直停着。不写的话，执行器随系统结束，下次启动按崩溃恢复处理：空闲时没有未结束的批次，什么都不用做；批次中途被结束的，由崩溃恢复照常处理（执行器若恰好在这几秒里醒来并开始新批次，也是这样）。
-  - 启动时不清理残留的 `STOP-REQUESTED`。它可能仍是给一个没有宿主的旧执行器的：批次超过了宿主的 20 秒等待，宿主已报 STOPPED，执行器还在跑。宿主不重做单实例锁的存活判断，就分不清这种情况和已死执行器的残留；改名会让那个执行器收不到停止。已死执行器的残留（SCM 停止之后、确认之前，执行器崩溃、被杀、断电或自己出错退出），由下一个执行器照常确认一次：`service-start`、`service-stop` 两条回执，改名进 `state\locks`，不删除。再下一次启动正常运行。
+  - 宿主启动时不清理残留的 `STOP-REQUESTED`。它可能仍是给一个没有宿主的旧执行器的：批次超过了宿主的 20 秒等待，宿主已报 STOPPED，执行器还在跑。宿主不重做单实例锁的存活判断，就分不清这种情况和已死执行器的残留；改名会让那个执行器收不到停止。
+  - 执行器在每个 tick 之前（包括第一个）读请求内容（`src/stop-request.mjs`，最多读 4097 字节），每次都现取本机的 `uptimeMs`。只有能解析的 `stop-request/1`、而且 `uptimeMs` 比现在大、差值超过 60 秒，才算上一次开机的请求：它是重启前发出、没等到确认的，不是给这个执行器的。执行器先写 `service-stop-prior-boot` 回执，记下两边的 uptime，再把它改名为 `state\locks\prior-boot-stop-<ms>-<pid>`（`<ms>` 是墙钟毫秒），然后继续运行。这条回执写不进去时不改名；改名失败时尽力补一条 `service-stop-prior-boot-failed` 回执。两种情况都以错误退出（exit 4，宿主报 1064，按 §8.1 每天最多重启一次）。修复前，重启后的第一次启动会随即以 0 退出，不触发失败重启，常驻服务就一直停着。
+  - 其他请求照常执行，执行器停下：本次开机的、空的、残缺的、超长的、读不了的、格式不对的，都算。已死执行器的残留（SCM 停止之后、确认之前，执行器崩溃、被杀或自己出错退出）就是这样，由下一个执行器确认一次：`service-start`、`service-stop` 两条回执，改名进 `state\locks`，不删除。再下一次启动正常运行。
+  - 还有两种情况没有覆盖。一是判断只朝一个方向：服务延迟启动，执行器第一次看时开机已有几分钟；上一次开机里，开机时长不超过（这次第一次看时的开机时长 + 60 秒）时写下的请求认不出来，照常执行，第一次启动以 0 退出，和修复前一样。二是残留还在时（从服务报 RUNNING 到执行器第一次看，几秒钟）来的 SCM 停止，会看到"文件已经在了"，什么都不写；执行器随后把残留改名，这次停止就丢了。宿主等 20 秒后报 STOPPED，执行器没有宿主，继续运行，SCM 再也停不了它；下一次启动会被单实例锁拒绝，Owner 能看到，手工建 `STOP-REQUESTED` 或结束进程。
 - **串行**：`maxConcurrent` 只能是 1；交换代理有自己的全局互斥量；Linux `formal-role.lock` 不变；Linux guard 要求同时只有一个 clued-ci unit 活动。
 - **companion**：有子进程超时未退时进入 busy，不接新请求，也不发心跳。
 
@@ -713,7 +718,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 - 服务自身的 DACL：只有 SYSTEM 和 Administrators 能控制。
 - **必需特权只有 `SeChangeNotifyPrivilege`**（`sc privs`，PR-A 复审 MAJOR-1）：SCM 从服务令牌里去掉其余所有特权，尤其是默认带的 `SeImpersonatePrivilege`。宿主启动时再读一次**真实令牌**：多出任何特权就拒绝启动，并把令牌里的特权写进 `state\service-token.json`；安装回执和 `verify-resident.ps1` 都核对它和 `sc qprivs`。
 - **出站网络被封**（MINOR-5）：防火墙规则 `CluedCIResident-BlockOutbound` 按服务 SID 限定（`-Service CluedCIResident`），覆盖服务的所有 node 子进程；GitHub 读取全在 companion（Owner 自己的登录）里，runner（clued-control）不受影响。只在 Windows 防火墙开启时生效，`verify-resident.ps1` 同时检查规则和三个配置文件都开着。
-- 宿主 `ResidentServiceHost.cs`：启动前校验 node 和入口文件的哈希；环境变量清空，只留固定几项，不继承句柄；停止时只写 `STOP-REQUESTED`，每个进程最多一次，关机时和执行器自己退出时都不写（§6.2）；从不杀执行器。离线测试：`windows/test-resident-windows.ps1` 第 6 节（`HostPureTests.cs`，用真实宿主加假执行器）。
+- 宿主 `ResidentServiceHost.cs`：启动前校验 node 和入口文件的哈希；环境变量清空，只留固定几项，不继承句柄；停止时只写 `STOP-REQUESTED`，内容写明本次开机的 `GetTickCount64`，每个进程最多一次，关机时和执行器自己退出时都不写（§6.2）；从不杀执行器。离线测试：`windows/test-resident-windows.ps1` 第 6 节（`HostPureTests.cs`，用真实宿主加假执行器）；第 7 节核对本机 node 的 `uptimeMs()` 和 `GetTickCount64` 读的是同一个时钟。执行器把上一次开机的请求改名留存、不执行（§6.2，`test/stop-request.test.mjs`）。
 
 ### 8.2 交换代理
 
@@ -1268,6 +1273,151 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 
 ---
 
+## 17. 额度第二期·第 1 步：执行器自己的排队表、等待与熔断（v1.0，Task `6451a55d`）
+
+- 依据：设计说明《常驻执行器额度第二期（含合并列车）设计说明 v0.5》（资料中心 `10_E_工程与平台/CI基础设施/`，sha256 `bd20941b…`）§4.1–§4.7、§4.10、§6 第 1 步；Owner 决定 `6c69755a`、`e1e19e2e`。
+- 本步不改 Source v2、不改 KooYomi 服务端、不碰合并列车与停靠（§4.8、§4.9、§5 是第 2 步以后）。
+
+### 17.1 排队表（`src/queue.mjs`，设计 §4.1）
+
+- **位置与写法**：`state\queue\queue.json`，每次变化整体替换（临时文件、刷盘、改名），和 `status.json` 一样。这相当于设计里的“只新建的日志加定期压缩的快照”在每次写入时都压缩：崩溃后读到的是旧的或新的一份，不会是半份。内容没变时不写（空闲 tick 每 15 秒一次，不产生写入）。
+- **只是视图**：排队表决定“下一个试谁”，不决定“能不能跑”。能不能跑仍由账本（烧号、已执行记录、预留）和第 1 段的 Native 准入决定；排队表与账本不一致时以账本为准：
+  - 每个 tick 开头，排队表里标着“在跑”而账本已结束的行，按账本的结局结算（`executor.mjs#reconcileQueue`）；HALT 时也做，状态页因此显示账本的实际结果；
+  - 内容读不出（形状不对、JSON 坏了）的排队表改名留存（`queue.unreadable-<时间>-<随机>.json`，不删除），重新开始，并换一个 `generation`。状态快照带出 `generation`，poller 看到它变了就把所有打开、跟上 main 的 PR 重新提议一遍，排队表就从 poller 和账本重建。I/O 错误（被杀毒软件锁住等）不算读不出：服务启动失败，下次再试，不重建。
+  - 重建后的排队表里熔断从“半开”开始：失败位置记为“到跑完为止”，下一次计入的失败立刻重新打开，只有跑完一批才关闭；释放上限照样从账本核对（17.3），所以重建不会多放过任何东西。
+- **每个 PR 一行**：当前提交（head、base、到达序号、首次到达时间）、正在跑的提交、被替换过的提交（最多 8 个）、见过的提交（最多 32 个）、状态、原因码、下次可试时间、退避级数、新触发、PR 更新时间、来源（`origin`）。
+- **状态**：`QUEUED`、`RUNNING`、`WAITING`（等待类退避）、`BACKOFF`（被释放、按行退避）、`STOPPED`（烧号，或达到释放上限）、`DONE`。停靠的 `PARKED` 在第 2 步。
+- **深度**：活着的行（QUEUED、RUNNING、WAITING、BACKOFF）最多 `limits.queueDepth`（100）；超过时新的 PR 被拒（`trigger-refused`，`QUEUE_DEPTH_EXCEEDED`）。`DONE`、`STOPPED` 满 24 小时的行被压缩掉。
+
+### 17.2 到达序号、取代与新触发（设计 §4.2；v0.6 §3、§9 第二期 1、5）
+
+- 收件箱里的触发每个 tick 都读进排队表（每 tick 最多 `inboxMaxFiles` 个），序号由执行器读到时自己编。排队表写成功之后才把触发文件归档；写不成就留在收件箱，下次再读；两者之间崩溃也一样。同一触发再读一次不改变任何东西。
+- **这个 PR 没见过的提交**：
+  - 当前提交还在等（QUEUED、WAITING、BACKOFF）：替换它，旧的进“被替换过”，不评估、不烧号；
+  - 当前提交正在跑：新提交成为当前提交，跑着的批次在下一个安全点决定（17.4）。
+- **见过的提交**：不替换任何东西（companion 重启后又提议旧提交、poller 一轮里读到的旧 head）。
+- **新触发**（触发合同 `/2`，见 17.6）：当前提交的触发没有 `prUpdatedAt`（Agent 自己写的），或者比这一行记下的新，就是新触发。它让等着下次重试的行（WAITING、BACKOFF，以及因释放上限停住的 STOPPED）在 10 分钟冷却后到期：
+  - 计入 96 的评估名额；每个（PR，提交）每天最多 `limits.reevaluationsPerPrHeadPer24h`（6）次，超过就丢掉这次新触发，状态写 `REEVALUATION_CAP`；
+  - 通知 Owner 一次（每个 PR 提交一次）。
+  - 停住的行（烧号，或达到释放上限）只有新提交才会再跑（设计 §4.5）。新触发只作用于还在等下次重试的行。
+  - 来自未来的 `prUpdatedAt`（收件箱是不受信任的）按现在算，不会让以后的编辑都“不算新”。
+- **PR 关闭又重新打开**：关闭时这一行结束（`PR_CLOSED`，不算烧号）；poller 再提议同一个 head 时重新排队，能不能跑由账本决定。
+- **证伪后恢复**：第 1 段或打包以 `PR_NOT_OPEN_OR_CHANGED`、`REMOTE_REFS_CHANGED_SINCE_BUNDLE`、`BUNDLE_UNAVAILABLE`、或 `STAGE_CHILD_REFUSED`（`pr_subject_changed`、`pr_files_changed`）结束时，companion 实时读一次 PR（17.5）：
+  - PR 已关闭：这一行结束（`PR_CLOSED`）；
+  - 看到的 head 在“被替换过”里，并且账本与已执行记录都说它没烧：恢复为当前提交（恢复的是实际看到的那个，不是序号最新的那个）；
+  - 其他情况不动，等 poller 提议。
+
+### 17.3 调度、退避与额度（设计 §4.3–§4.5、§4.7；v0.6 §7 次要 4）
+
+- **每个 tick 的顺序**：崩溃恢复、Owner 请求、HALT、回填、暂停照旧在最前；然后读收件箱；然后等托管的批次（第 2 步改为停靠）；然后：
+  1. 到期的 attempt 2；
+  2. 到期的等待重试和收到新触发的行（按到期时间）；
+  3. 其余按到达先后（被释放的行排到队尾）。
+  一次最多看 16 行。只对某一行生效的推迟（冷却、本 PR 今日批次已满、等待预算用完、重评上限、释放上限）只挡这一行，并在 5 分钟后（冷却则在冷却结束时）再看它；全局的推迟（今日执行额度已满、companion 没就绪、熔断）结束这一轮。评估额度已满只挡它管的评估：这一轮后面到期的等待重试照样跑（等待有自己的预算）。
+- **释放后重排**：释放的前提不变（第一期：只在 10-started 之前，Source 的 `safeToRerun` 或 broker 的“没有发起启动”，§16.3）。释放后这一行排到队尾，按行退避 10 → 20 → 40 分钟，不再需要新触发。同一个 head 24 小时内计数的释放最多 `limits.releasesPerHeadPer24h`（2）次：达到这个数的那次释放就让这一行停住（`STOPPED`，释放上限），通知一次，只有推新提交才会再跑。预检也从账本核对这个上限（`RELEASE_CAP_REACHED`），所以排队表重建以后也不会多评估一次；等待、新触发、attempt 2，以及熔断关闭时解除的行（`origin: lifted`，见 17.7）不受它约束。
+- **等待类**：失败对照表 `class: waiting` 的释放（`OWNER_REVIEW_REQUIRED`、`TASK_CI_HEAD_CAP_REACHED`、只含 `merge_slot_required`、`merge_slot_missing`、`evaluation_not_completed` 的 `NATIVE_NOT_ADMITTED`；混着确定性 PR 码的不算，§16.3）进 `WAITING`，退避 10 → 20 → 40 → 80 → 120 分钟，之后每 120 分钟；`TASK_CI_HEAD_CAP_REACHED` 按 KooYomi 给的 `ci_retry_after`（不早于 10 分钟、不晚于 24 小时）。等待不受释放上限约束。
+- **额度一律从账本推算**（`ledger.mjs#usage`）：`00-reserved.json` 新增 `origin`（`queued`、`backoff-retry`、`waiting-retry`、`new-trigger`、`restored`、`attempt2`；旧记录没有这个字段，按 `queued`）。排队表丢了，额度也不会清零。
+  - 执行（`maxBatchesPer24h`，72）：24 小时内 `ledger-heads` 的记录（含第 1 段烧号）。到上限推迟、通知一次、不丢弃。
+  - 评估（`maxEvaluationsPer24h`，96）：没有执行的预留，不含等待重试（它有自己的预算）、环境类与暂时类的结局（它们归熔断管）、取代（SUPERSEDED、broker 没启动、打包失败）。新触发引起的重评计入。
+  - 等待重试（`waitingRetriesPer24h`，48）：`origin = waiting-retry` 的预留。用完后等待行停在 `WAITING_BUDGET_EXHAUSTED`，状态可见，通知一次。
+  - 新触发重评（`reevaluationsPerPrHeadPer24h`，6）：每个（PR，提交）`origin = new-trigger` 的预留。
+  - 每个 PR 的批次（`perPrBatchesPer24h`，6）：车头批次不受限是第 3 步的事。
+  - 每个 head 的释放（`releasesPerHeadPer24h`，2）：不含等待、取代，也不含熔断没关时的环境类释放。
+  - 为了不每个 tick 读遍整个账本，`usage` 先按文件修改时间跳过窗口前（留 1 小时余量）就写完的条目，放进来的每条再按记录里的时间判断。
+- **`UNEXECUTED_REASON_RULES`**（v0.6 §7 次要 6）：每个释放原因写明 10 分钟冷却是否适用（取代不适用，其余适用）和用哪个上限代替第一期的“每个 key 每天 3 次”（`unexecutedMaxPer24h` 随 policy `/4` 去掉）。新增释放原因 `SUPERSEDED`。
+
+### 17.4 正在跑的批次被取代（设计 §4.2；v0.6 §3）
+
+- **第 1 段之前**（打包之后、`before-stage-1` 安全点）：再读一次收件箱；这个 PR 有了更新的提交，就关闭批次、以 `SUPERSEDED` 释放（PR 页面码 `BATCH_SUPERSEDED`）：什么都没跑，不烧号，旧 head 回到“被替换过”，新提交下一个跑。这里按到达顺序判断就够（v0.6 §3）。
+- **第 1 段之后**：只在 Linux 准备之外的两个安全点（`before-relay-plan`，每次恢复等托管的批次时也在这里；`before-workspace`）判断，而且只凭实时读：
+  - companion 读到 PR 已关闭，或 head 已不是这个批次的 head：执行器自己结束批次，走 Owner 中止的同一条路（§6.5）：
+    1. 先只新建 `81-self-abort.json`。从这一刻起这个条目不再是可恢复的等待：中途崩溃时，重启后的恢复把它当现场，`FAILED_UNKNOWN SUPERSEDE_INTERRUPTED` 加 HALT，与 `80-owner-abort` 的 `OWNER_ABORT_INTERRUPTED` 相同，绝不会在归档到一半的现场上接着跑；
+    2. 两端静止证明（最多 5 分钟复查），不全就 `SUPERSEDE_QUIESCENCE_UNPROVEN`：UNKNOWN 加 HALT，现场不动；
+    3. 烧号、两端只改名归档（固定原因 `superseded`）、`FAILED_CLEAN SUPERSEDED_AT_SAFE_POINT`（终态记 `stage: 1`，已执行记录的回填因此判它没有发布，§16.1；第 R 段转发过角色的，由转发计划判为已发布）。对熔断中性，从不排 attempt 2。
+  - 读到的 head 仍是这个批次的 head：排队表里那个“更新的提交”被证伪，退回“被替换过”，批次继续。
+  - 没有答复：继续跑（实时读只用来拦下，不用来放行，也不因读不到而拦下）。
+  - 等托管的批次每个 tick 都会恢复一次：同一个批次最多每 10 分钟实时读一次（`SUPERSEDE_LIVE_READ_MS`），读不到时的回执也一样。
+  - ws-prep 之后到最后一个 Linux 段之间不判断；已过第 3 段的批次照旧跑完。
+- **attempt 2**：到期时这个 PR 已有更新的提交，先实时读一次：
+  - 读到 head 已变或 PR 已关闭：关闭这次 attempt 2（`ATTEMPT2_SUPERSEDED`）；
+  - 读到 head 仍是 attempt 1 的：排队表里那个“更新的提交”被证伪，退回“被替换过”，attempt 2 照常跑；
+  - 读不到：attempt 2 照常跑，由第 1 段判断。
+  attempt 2 不走“第 1 段之前按到达顺序释放”（只有实时读能作废它，v0.6 §3）。
+- 为什么 SUPERSEDED_AT_SAFE_POINT 不改 Source：安全点上没有任何段在跑，Source 看不到这个结局；它和 `OWNER_ABORTED` 一样是常驻层自己的码，登记在失败对照表（`clean-final`、`burn`、`new-commit`、`neutral`）。所以第 1 步只改常驻层，重装时 Linux 一侧的 Source v2 不变。
+
+### 17.5 实时读 PR：companion 的 `pr-head`（设计 §4.2；v0.6 §9 第二期 5）
+
+- 新的邮箱请求 `pr-head {batchId, pr}`，答复多一个 `pull` 字段 `{number, state: open | closed | merged, headSha}`，形状精确校验，只有 `pr-head` 的答复可以带它，PR 号必须等于请求的号。
+- companion 用 Owner 自己的 gh 登录，固定参数 `gh api --method GET repos/<repo>/pulls/<n> --jq …`，在邮箱那条线上运行（30 秒上限，服务端等 2 分钟）。没有读端口或读不到就答 `PR_HEAD_UNAVAILABLE`，从不猜。
+- 它的答复只能让批次停下或让一个提交重新排队；放行永远由第 1 段的 Native 准入决定。
+
+### 17.6 触发、状态与 PR 页面（设计 §4.2、§4.10）
+
+- **触发合同 `/2`**：可选的 `prUpdatedAt`（ISO 时间），poller 填 PR 的更新时间。`/1` 照常读，等同于没有 `prUpdatedAt` 的 `/2`。合并相同触发的 `coalesce` 去掉了，排队表自己合并。
+- **状态快照 `/2`**：`pending` 改为排队表的视图（每行的状态、原因、在能跑的行里排第几、下次重试时间、**估计**开始时间：前面每批按 22 分钟，只是估计），另有 `queue`（generation、活行数）、`breaker`、`notices`。
+- **PR 页面**（`pr-status.mjs#describe`）：排第几、预计何时开始、为什么没跑（冷却、本 PR 今日批次已满、额度已满、熔断中及试跑时间）；等待中及约何时自动重试；未准入或未执行后的自动重试；停住及怎样再跑；HALT、暂停照旧优先。
+- **通知**：排队超过 1 小时（每个 PR、提交、原因一次；停住和已完成的行不算）；执行器的通知（`queue.mjs#notice`，每个键一次）：新触发、某行停住、等待预算用完、执行额度已满、熔断打开及试跑时间。
+
+### 17.7 熔断（`src/breaker.mjs`，设计 §4.6；v0.6 §4、§9 第二期 6、7）
+
+- **计数**：每个批次结束给熔断一个事件：结束的位置（打包、第 1 段、第 R 段、工作区准备、第 2–8 段、跑完），以及对照表那一行的 `breaker`（counts 计入，neutral 不计）。被忽略、被推迟的不算事件；Owner 中止不算。
+- **打开**：连续 3 次计入的失败（中间有批次跑完，或越过了最近一次失败的位置，就不算连续），或 1 小时内 4 次。打开后不开任何新批次（含 attempt 2），试跑间隔 30 → 60 → 120 分钟，之后每 120 分钟，不锁死。状态与通知写明下次试跑时间。
+- **半开**：到点后一次放一批试跑；试跑不选刚才失败的那些 PR（除非没有别的可选）。
+- **失败位置**：打开它的那些失败里最靠后的位置（试跑要越过每一个失败的地方），以及它们是不是都只碰 Windows。
+- **关闭**：试跑跑完；或越过了失败位置；或在那个位置以中性结果结束（第 1 段那一类故障，KooYomi 给出明确答复，含明确拒绝，就是这种情况）。没碰 Linux 的结局（第 1 段、第 R 段的结局，所有角色都转发的跑完）不能关闭 Linux 位置引起的熔断。关闭时，因环境类释放达到上限而停住的行自动解除（`origin: lifted`，下一次不受释放上限约束）。
+- **试跑失败**（计入）：再打开，换下一档间隔。其他结局（中性但在失败位置之前、释放、忽略）不下结论，保持半开，下一个候选就是下一次试跑。
+- 第 1 段之后的失败，试跑与否都烧号（v0.6 §9 第二期 7）。
+
+### 17.8 policy 合同 `/4`
+
+- 新增 `limits.perPrBatchesPer24h`、`waitingRetriesPer24h`、`reevaluationsPerPrHeadPer24h`、`releasesPerHeadPer24h`、`queueDepth`，以及 `breaker {consecutive, windowCount, windowMs, backoffMs}`；`maxBatchesPer24h` 上限放到 72；去掉 `unexecutedMaxPer24h`。
+- 设计 §4.7 把第二期全部设置列在一张 `/4` 表里；实现上每一步只加自己用到的设置、各用自己的合同号（第 2 步的停靠、第 3 步的列车各升一号），装上的 policy 只写它的代码会做的事。
+- 重装时的取值（设计 §4.7）：72 / 96 / 6 / 48 / 6 / 2 / 100，熔断 3 / 4 / 1 小时 / 30、60、120 分钟。在这之前 48/96（Decision `a17b3a7a`）继续有效。
+
+### 17.9 实测核对
+
+- PR 页面的 commit status 不改 PR 的 `updated_at`（2026-10-22 核对 #902：最近一条 `resident-queue (info only)` 在 13:46:46Z，PR 的 `updatedAt` 仍是 13:07:36Z），所以 poller 不会因为自己写的状态又提议一次。
+
+### 17.10 测试
+
+- **常驻层**：Node 255 项全部通过（含合入的 F2 #905 的测试）。新增：
+  - `test/queue.test.mjs`：序号与取代、见过的提交不替换、跑着时的新提交、证伪与恢复、等待与释放的退避、释放上限、新触发与冷却、深度只数活行、24 小时压缩、熔断解除环境类停住、读不出时改名留存并换 generation、状态视图；
+  - `test/breaker.test.mjs`：位置、打开（连续与 1 小时窗口）、试跑间隔、试跑不选失败的行、关闭条件、只碰 Windows 的规则、policy `/4` 的界限；
+  - `test/scheduler.test.mjs`：调度顺序与只挡一行的推迟、额度从账本来、等待预算、熔断打开与试跑关闭、第 1 段前的取代释放、第 1 段后的实时读（确认、证伪、无答复）、证伪后恢复、被取代的 attempt 2、重启后排队表与账本对齐。
+  - 原有测试按新行为更新：同一 PR 再提议已执行过的 head 现在由排队表认出（不再预留），“不再运行”改由另一个 PR 号验证账本仍然挡住。
+- **离线演练**：46 步，新增等待行自动重试、打包期间被取代、熔断打开与试跑关闭。
+- Python 25 项、`windows/test-resident-windows.ps1`、`windows/test-install-carry.ps1` 照常通过。
+
+### 17.11 独立复核与修正
+
+第一次复核结论 REJECT：1 个 BLOCKER、2 个 MAJOR、9 个 MINOR、若干 NIT，都是局部问题，不需要重新设计。已执行记录、只在 10-started 之前释放、HALT 先于终态、`mayHavePublished` 的判定都经复核确认成立。修正如下：
+
+| 编号 | 问题 | 修正 |
+|---|---|---|
+| B1 | `service-main.mjs` 没有创建排队表，装上后服务起不来 | 打开 `state\queue` 并传给执行器；测试按执行器要求的端口核对服务入口 |
+| M1 | 执行器自己结束批次时没有先写记录，中途崩溃后会在归档到一半的现场上恢复等待 | 先写 `81-self-abort.json`；可恢复判断排除它；恢复时 `SUPERSEDE_INTERRUPTED` 加 HALT（17.4） |
+| M2 | attempt 2 只凭到达顺序就被作废，实时读证伪也照样作废 | 证伪时把更新的提交退回“被替换过”；attempt 2 不走按顺序释放（17.4） |
+| m1 | 评估额度满时，一个收到新触发的行挡住后面到期的等待 | 评估额度只挡评估（17.3） |
+| m2 | 熔断的“只碰 Windows”规则没有输入 | 按结局是否到过 Linux 准备判断（17.7） |
+| m3 | 失败位置只记最后一次 | 取打开时各次失败里最靠后的位置（17.7） |
+| m4 | 排队表重建会清掉熔断和释放上限；I/O 错误也会触发重建 | 只有内容错误才重建；重建后熔断半开；预检从账本核对释放上限（17.1、17.3） |
+| m5 | 释放上限差一：实际允许 3 次 | 达到 2 次就停（17.3） |
+| m6 | 排队表写失败时触发仍被归档 | 写成功之后才归档（17.2） |
+| m7 | 新触发能让释放上限停住的行再跑，偏离设计 | 按设计：停住的行只有新提交才会再跑（17.2） |
+| m8 | 未来时间的 `prUpdatedAt` 会让以后的编辑都不算新触发 | 按现在算（17.2） |
+| m9 | 等托管期间每个 tick 都可能实时读一次、写一条回执 | 每个批次最多每 10 分钟一次（17.4） |
+| NIT | 账本里已不在的预留一律按释放结算；关闭的 PR 记成烧号；释放上限停住的行被新提交替换时旧 head 不进“被替换过”；注释与代码不一致；排队表满时没有通知；状态写入是否改 PR 更新时间未核实 | 按它自己的未执行记录结算（等待仍是等待）；关闭不算烧号；进“被替换过”；注释改正；每天通知一次；已实测核对（17.9） |
+
+复核还指出缺的测试，都已补上：服务入口的端口、自我结束中途崩溃与静止证明不全、`before-workspace` 安全点、等托管期间被取代、attempt 2 证伪和无答复、重建后释放上限仍然有效、熔断关闭解除环境类停住、执行器层面的重评上限与评估额度、执行额度推迟不丢弃并只通知一次、写不成排队表时触发留在收件箱、熔断的失败位置与“只碰 Windows”规则。
+
+第二次复核（确认性）结论 ACCEPT-WITH-FIXES：B1 要等服务入口接上排队表才能合入（本 PR 已接上，当时 `service-main.mjs` 还被另一个认领占着），其余各项都确认已修；修正本身没有带来安全上的退步，只新带出 1 个 MINOR（文字不一致）和几条 NIT，已在 `2c32d5a6` 修正：
+
+| 编号 | 问题 | 修正 |
+|---|---|---|
+| N1（MINOR） | 停住的说明写“修正后编辑 PR 可再试”，与 m7 的修正（停住的行只有新提交才会再跑）不一致 | 改为“请修正后推新提交” |
+| N2（NIT） | 排队表一直写不进时，新触发留在收件箱里，没有任何提醒 | 连续 3 个 tick 写不进就通知一次并写回执；排队之前就被拒绝的触发不等排队表、照常归档 |
+| NIT | 实时读按批次节流 10 分钟，第二个新提交要等 | 按（批次，最新提交）节流 |
+
 ## 附录 A：草稿文件
 
 | 文件 | 作用 |
@@ -1281,7 +1431,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 | `src/executor.mjs` | 常驻状态机 |
 | `src/archive.mjs` | 协议记录白名单归档（参考实现与离线实现） |
 | `src/mailbox.mjs`、`companion.mjs`、`poller.mjs`、`runner.mjs` | companion 协议、泵、轮询、不杀进程的运行器 |
-| `src/service-ports.mjs`、`engine-windows.mjs`、`service-main.mjs`、`companion-main.mjs`、`instance-lock.mjs` | 真实端口与入口（引擎依赖 Source v2，缺了就 `SOURCE_V2_REQUIRED`） |
+| `src/service-ports.mjs`、`engine-windows.mjs`、`service-main.mjs`、`companion-main.mjs`、`instance-lock.mjs`、`stop-request.mjs` | 真实端口与入口（引擎依赖 Source v2，缺了就 `SOURCE_V2_REQUIRED`） |
 | `windows/install-resident.ps1`、`verify-resident.ps1`、`uninstall-resident.ps1`、`rearm-resident.ps1` | 安装、校验、卸载、复位与恢复请求 |
 | `windows/ResidentServiceHost.cs`、`SwapBroker.cs` | 两个服务宿主（`HostPureTests.cs`：宿主停止处理的离线测试） |
 | `linux/systemd/*.service`、`linux/bin/clued-ci-resident-linux`、`linux/*-resident-linux.sh` | Linux 三个 unit、root 工具、安装、校验、卸载 |
