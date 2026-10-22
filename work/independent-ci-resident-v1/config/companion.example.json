@@ -15,5 +15,9 @@
   "hints": {
     "enabled": false,
     "ciSourceManifestSha256": null
+  },
+  "status": {
+    "prStatus": true,
+    "notifications": true
   }
 }

@@ -1,0 +1,244 @@
+// The executor's status on the PR page, and Windows notifications for the big events (resident quota redesign v0.6
+// + §9, phase 1, item 7; Owner Decision 38936534). Runs in the companion (the Owner's own session and gh login).
+//
+// PR page: ONE commit status per open PR's current head, context PR_STATUS_CONTEXT. It is information only:
+//   - a commit status, never a comment (a comment would move the PR's updated time and make the poller propose again);
+//   - a context that is never a required check: what decides is a live read of main's rules before any write (a
+//     context that appears among the required checks is never written, and the Owner is told once; without that read
+//     nothing is written). This repository protects main with rulesets only: classic branch protection answers 404
+//     (2026-10-22), so the rules read sees every required check. The fixed name (a " (info only)" suffix) only makes a
+//     collision unlikely; a matrix job could still be named like that;
+//   - written only when its state or text changes for that head (the last write per head is kept locally), at most
+//     MAX_POSTS_PER_PASS per pass; a generic "proposed" text never replaces anything already written for that head; a
+//     head whose write failed is left alone for POST_RETRY_MS.
+// Every call is short (ADVISORY_TIMEOUT_MS) and a pass stops starting calls after PASS_BUDGET_MS. The companion runs all
+// of this in its advisory lane, with its own Runner (companion-main.mjs), so it never delays the mailbox. A call that
+// timed out leaves its child running and the Runner busy: the pass ends there (stalled), and nothing it could not do is
+// recorded as done or as failed (independent re-review, MINOR-B). The notifications go first: they are local and must
+// not wait behind a slow GitHub.
+// Notifications: a Windows toast in the Owner's session, once per event key (kept locally): the executor HALTed, its
+// status stopped moving (STATUS_STALE_MS), a PR head waited more than an hour (once per PR, head and reason), the
+// status context collides with a required check.
+// Texts are fixed templates over stable codes, numbers and times; nothing from a PR or a remote service is shown.
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { HEX40, canonicalJson, check } from './canonical.mjs';
+import { STATUS_STALE_MS } from './status.mjs';
+
+export const PR_STATUS_CONTEXT = 'resident-queue (info only)';
+export const MAX_POSTS_PER_PASS = 20;
+export const MAX_TOASTS_PER_PASS = 5;
+export const WAIT_NOTIFY_MS = 3_600_000;
+export const REQUIRED_CACHE_MS = 30 * 60_000;
+export const ADVISORY_TIMEOUT_MS = 15_000;
+export const PASS_BUDGET_MS = 60_000;
+export const POST_RETRY_MS = 10 * 60_000;
+// A call that did not run (the Runner is still busy with an earlier child) or did not finish in time.
+export const stalledCall = r => r?.timedOut === true || r?.refused === 'RUNNER_BUSY_WITH_UNFINISHED_CHILD';
+const DESCRIPTION_MAX = 140;
+const STORE_CONTRACT = 'clued.independent-ci.companion-pr-status-store/1';
+const KEEP_MS = 14 * 86_400_000;
+
+export const STAGE_NAMES = Object.freeze({ 0: '准备', 1: '准入', 2: 'gitleaks 扫描', 3: 'gitleaks 发布', 4: 'trivy 扫描', 5: 'trivy 发布', 6: 'contract-placement 扫描',
+  7: 'contract-placement 发布', 8: '准入复核与合并位', 9: '托管转发' });
+const DEFERRED_TEXT = Object.freeze({ DAILY_BATCH_LIMIT: '今日执行批次额度已满', DAILY_EVALUATION_LIMIT: '今日评估额度已满', UNEXECUTED_COOLDOWN: '冷却中（10 分钟）',
+  COMPANION_NOT_READY: '等 companion 就绪' });
+const hhmm = ms => new Date(ms).toISOString().slice(11, 16) + 'Z';
+const clip = s => s.length <= DESCRIPTION_MAX ? s : `${s.slice(0, DESCRIPTION_MAX - 1)}…`;
+
+// The fixed shape of the context (a " (info only)" suffix); whether it is free is decided by contextFree.
+export function contextShapeSafe(context) { return typeof context === 'string' && / \(info only\)$/.test(context) && context.length <= 100; }
+// True only when the context collides with none of the required checks (case-insensitive, trimmed).
+export function contextFree(context, required) {
+  if (!contextShapeSafe(context) || !Array.isArray(required)) return false;
+  const c = context.trim().toLowerCase();
+  return !required.some(r => typeof r === 'string' && r.trim().toLowerCase() === c);
+}
+
+// Pure: what the PR page should say for one open PR head, or null (write nothing). weak: a generic text that never
+// replaces what was already written for that head.
+export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
+  if (!pull || !HEX40.test(pull.headSha ?? '')) return null;
+  if (!pull.eligible) {
+    if (pull.hint === 'merge-main') return { state: 'failure', description: clip(`落后 main ${pull.behindBy} 个提交：请合入最新 main 并推送`) };
+    if (pull.hint === 'push-any-commit') return { state: 'failure', description: '已包含 main，但 PR 的基准还是旧的：推一个任意提交即可' };
+    return null;
+  }
+  if (!status) return null;
+  if (now - status.writtenAt > staleMs) return { state: 'error', description: `执行器状态自 ${hhmm(status.writtenAt)} 起未更新，可能已停止` };
+  const mine = x => x && x.pr === pull.pr && x.headSha === pull.headSha;
+  if (mine(status.current)) {
+    const stage = status.current.stage;
+    return { state: 'pending', description: stage === null ? '运行中：等待托管信号' : `运行中：第 ${stage} 段（${STAGE_NAMES[stage] ?? '?'}）` };
+  }
+  const recent = status.recent.find(mine);
+  if (recent) {
+    const code = recent.code ?? '?';
+    switch (recent.outcome) {
+      case 'COMPLETED': return { state: 'success', description: '已完成：常驻执行器跑完八段，检查已发布' };
+      case 'FAILED_CLEAN': return recent.retry === 'attempt2'
+        ? { state: 'pending', description: clip(`暂时失败（${code}），将自动第二次尝试`) }
+        : { state: 'failure', description: clip(`失败（${code}）：此提交不再运行，请推新提交`) };
+      case 'FAILED_UNKNOWN': return { state: 'error', description: clip(`执行器停机（${code}），等 Owner 复位`) };
+      case 'NOT_ADMITTED':
+        if (recent.code === 'OWNER_REVIEW_REQUIRED') return { state: 'pending', description: '等 Owner 批准受保护改动，批准后再触发' };
+        if (recent.code === 'TASK_CI_HEAD_CAP_REACHED') return { state: 'pending', description: 'Task 的 24 小时 CI 额度已满，稍后再触发' };
+        if (recent.class === 'waiting') return { state: 'pending', description: clip(`等待中（${code}），稍后再触发`) };
+        return { state: 'failure', description: clip(`未准入（${code}）：修正后再触发`) };
+      case 'NOT_EXECUTED': return { state: 'pending', description: clip(`未执行（${code}），可再触发`) };
+      case 'IGNORED':
+        if (recent.code === 'UNEXECUTED_DAILY_CAP') return { state: 'failure', description: '此提交今日评估次数已满：请推新提交' };
+        // An executed head proposed again: what was written for it stays.
+        return null;
+      default: return null;
+    }
+  }
+  if (status.halt) return { state: 'error', description: clip(`执行器已停机（${status.halt.code}），等 Owner 复位`) };
+  if (status.paused) return { state: 'pending', description: '执行器已暂停，等 Owner 恢复' };
+  if (!status.backfill.complete) return { state: 'pending', description: '执行器启动中：回填已执行记录', weak: true };
+  const queued = status.pending.find(mine);
+  if (queued) return { state: 'pending', description: clip(`排队第 ${queued.position} 位${queued.deferred ? `：${DEFERRED_TEXT[queued.deferred] ?? queued.deferred}` : ''}`) };
+  return { state: 'pending', description: '已提议，等待执行器读取', weak: true };
+}
+
+// Pure: the notification events now (a stable key each; the reporter shows each key once).
+export function events({ status, statusError = false, now, pulls = [], startedAt = now, staleMs = STATUS_STALE_MS, collision = false }) {
+  const out = [];
+  if (collision) out.push({ key: 'context-collision', title: 'PR 页面状态名与必需检查重名', body: `“${PR_STATUS_CONTEXT}”出现在 main 的必需检查里，已停止写 PR 页面状态。请检查 main 的规则。` });
+  if (!status) {
+    if (statusError && now - startedAt > staleMs) out.push({ key: 'status-unreadable', title: '读不到常驻执行器状态', body: 'state\\status.json 读不到或格式不对，执行器可能没有运行。' });
+    return out;
+  }
+  if (now - status.writtenAt > staleMs) out.push({ key: `stale:${status.writtenAt}`, title: '常驻执行器可能已停止', body: `状态自 ${hhmm(status.writtenAt)} 起未更新（超过 ${Math.round(staleMs / 60_000)} 分钟）。` });
+  if (status.halt) out.push({ key: `halt:${status.halt.code}:${status.halt.at ?? ''}`, title: '常驻执行器已停机（HALT）', body: `原因：${status.halt.code}。需要 Owner 复位（rearm）后才会继续。` });
+  for (const p of status.pending) {
+    if (!p.since || now - p.since <= WAIT_NOTIFY_MS) continue;
+    const reason = p.deferred ?? 'QUEUED';
+    out.push({ key: `wait:${p.pr}:${p.headSha}:${reason}`, title: `PR #${p.pr} 排队超过 1 小时`, body: `提交 ${p.headSha.slice(0, 8)}：${DEFERRED_TEXT[p.deferred] ?? '前面还有批次'}。` });
+  }
+  return out;
+}
+
+// The Windows toast: a fixed PowerShell script, the texts passed as Base64 (no quoting of the texts at all).
+export function toastArgv(powershellExe, title, body) {
+  check(typeof powershellExe === 'string' && /^[A-Z]:\\/.test(powershellExe), 'TOAST_POWERSHELL_INVALID');
+  const b64 = s => Buffer.from(String(s).slice(0, 400), 'utf8').toString('base64');
+  const script = "$ErrorActionPreference='Stop';"
+    + `$t=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64(title)}'));`
+    + `$b=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64(body)}'));`
+    + '[void][Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime];'
+    + '[void][Windows.Data.Xml.Dom.XmlDocument,Windows.Data.Xml.Dom.XmlDocument,ContentType=WindowsRuntime];'
+    + '$x=New-Object Windows.Data.Xml.Dom.XmlDocument;'
+    + "$x.LoadXml('<toast><visual><binding template=\"ToastGeneric\"><text>'+[Security.SecurityElement]::Escape($t)+'</text><text>'+[Security.SecurityElement]::Escape($b)+'</text></binding></visual></toast>');"
+    + "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show([Windows.UI.Notifications.ToastNotification]::new($x))";
+  return [powershellExe, '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')];
+}
+
+// The reporter's own memory (the Owner's profile, never the resident's state): the last write per head, and which
+// notification keys were shown. Lost memory only means one more write or one more toast.
+export class LocalStore {
+  constructor(file, clock) { this.file = file; this.clock = clock; this.data = { contract: STORE_CONTRACT, posted: {}, notified: {} }; }
+  static async open(file, clock = Date.now) {
+    const s = new LocalStore(file, clock);
+    try {
+      const v = JSON.parse(await fs.readFile(file, 'utf8'));
+      if (v?.contract === STORE_CONTRACT && v.posted && typeof v.posted === 'object' && v.notified && typeof v.notified === 'object') s.data = { contract: STORE_CONTRACT, posted: v.posted, notified: v.notified };
+    } catch { /* fresh memory */ }
+    return s;
+  }
+  prune() {
+    const cut = this.clock() - KEEP_MS;
+    for (const bag of [this.data.posted, this.data.notified]) {
+      for (const [k, v] of Object.entries(bag)) if (!(Date.parse(v?.at) > cut)) delete bag[k];
+      const keys = Object.keys(bag);
+      if (keys.length > 500) for (const k of keys.sort((a, b) => Date.parse(bag[a].at) - Date.parse(bag[b].at)).slice(0, keys.length - 500)) delete bag[k];
+    }
+  }
+  async save() {
+    this.prune();
+    await fs.mkdir(path.dirname(this.file), { recursive: true });
+    const tmp = `${this.file}.${process.pid}.tmp`;
+    await fs.writeFile(tmp, canonicalJson(this.data));
+    await fs.rename(tmp, this.file);
+  }
+}
+
+export class PrStatusReporter {
+  // ports: { repo, ghExe, powershellExe, run(argv,{timeoutMs}), clock, store (LocalStore), prStatus (bool), notifications (bool) }
+  constructor(ports) {
+    Object.assign(this, ports);
+    check(contextShapeSafe(PR_STATUS_CONTEXT), 'PR_STATUS_CONTEXT_UNSAFE');
+    this.required = null; this.requiredAt = 0; this.collision = false; this.startedAt = this.clock(); this.failed = new Map();
+  }
+
+  // main's required status checks (rulesets), read with the Owner's gh login; null when unknown.
+  async requiredContexts() {
+    if (this.required && this.clock() - this.requiredAt < REQUIRED_CACHE_MS) return this.required;
+    const r = await this.run([this.ghExe, 'api', '--method', 'GET', '--paginate', `repos/${this.repo}/rules/branches/main`,
+      '--jq', '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context'], { timeoutMs: ADVISORY_TIMEOUT_MS });
+    if (stalledCall(r)) this.stalled = true;
+    if (r.code !== 0) return null;
+    const list = String(r.stdout).split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    if (list.length === 0) return null; // main always requires checks: an empty answer is no answer
+    this.required = list; this.requiredAt = this.clock();
+    return list;
+  }
+
+  async post(headSha, want) {
+    check(HEX40.test(headSha) && ['pending', 'success', 'failure', 'error'].includes(want.state) && typeof want.description === 'string', 'PR_STATUS_INVALID');
+    const r = await this.run([this.ghExe, 'api', '--method', 'POST', `repos/${this.repo}/statuses/${headSha}`, '-f', `state=${want.state}`, '-f', `context=${PR_STATUS_CONTEXT}`,
+      '-f', `description=${want.description}`], { timeoutMs: ADVISORY_TIMEOUT_MS });
+    if (stalledCall(r)) this.stalled = true;
+    return r.code === 0;
+  }
+
+  // One pass: the PR page status of every open PR head the poller looked at, then the notifications.
+  async pass({ pulls = [], status = null, statusError = false }) {
+    const now = this.clock();
+    const inBudget = () => this.clock() - now < PASS_BUDGET_MS;
+    let posted = 0, toasts = 0;
+    this.stalled = false;
+    for (const [head, at] of this.failed) if (now - at >= POST_RETRY_MS) this.failed.delete(head);
+    if (this.notifications !== false) {
+      for (const e of events({ status, statusError, now, pulls, startedAt: this.startedAt, collision: this.collision })) {
+        if (toasts >= MAX_TOASTS_PER_PASS || !inBudget()) break;
+        if (this.store.data.notified[e.key]) continue;
+        const r = await this.run(toastArgv(this.powershellExe, e.title, e.body), { timeoutMs: ADVISORY_TIMEOUT_MS });
+        // A toast that never started keeps its key for the next pass. Shown, refused or still running (timed out): the
+        // key is used up, so a toast is never shown twice or retried every minute.
+        if (r?.refused === 'RUNNER_BUSY_WITH_UNFINISHED_CHILD') { this.stalled = true; break; }
+        this.store.data.notified[e.key] = { at: new Date(now).toISOString() };
+        this.dirty = true;
+        if (r.code === 0) toasts += 1;
+        if (stalledCall(r)) { this.stalled = true; break; }
+      }
+    }
+    if (this.prStatus !== false && pulls.length > 0 && !this.stalled) {
+      const required = await this.requiredContexts();
+      if (!this.stalled) this.collision = Array.isArray(required) && !contextFree(PR_STATUS_CONTEXT, required);
+      if (Array.isArray(required) && !this.collision && !this.stalled) {
+        for (const pull of pulls) {
+          if (posted >= MAX_POSTS_PER_PASS || !inBudget()) break;
+          const want = describe({ pull, status, now });
+          if (!want || this.failed.has(pull.headSha)) continue;
+          const last = this.store.data.posted[pull.headSha];
+          if (want.weak && last) continue;
+          if (last && last.state === want.state && last.description === want.description) continue;
+          const ok = await this.post(pull.headSha, want);
+          if (ok) { this.store.data.posted[pull.headSha] = { state: want.state, description: want.description, at: new Date(now).toISOString() }; posted += 1; }
+          else if (!this.stalled) this.failed.set(pull.headSha, now);
+          if (this.stalled) break;
+        }
+      }
+    }
+    if (posted > 0 || toasts > 0 || this.dirty) { try { await this.store.save(); this.dirty = false; } catch { this.dirty = true; } }
+    return { posted, toasts, collision: this.collision, stalled: this.stalled };
+  }
+}
+
+// companion.json "status" (optional): { prStatus, notifications } (both on unless set false).
+export function validateStatusConfig(s) {
+  if (s === undefined || s === null) return Object.freeze({ prStatus: true, notifications: true });
+  check(typeof s === 'object' && Object.keys(s).every(k => ['prStatus', 'notifications'].includes(k)) && Object.values(s).every(v => typeof v === 'boolean'), 'COMPANION_STATUS_CONFIG_INVALID');
+  return Object.freeze({ prStatus: s.prStatus !== false, notifications: s.notifications !== false });
+}

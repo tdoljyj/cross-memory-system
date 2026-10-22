@@ -32,6 +32,15 @@ $receiptFile = Join-Path $Root 'install\install-receipt.json'
 Record 'install-receipt' ((Sha256File $receiptFile) -ceq $ExpectedInstallReceiptSha256)
 $receipt = Get-Content -LiteralPath $receiptFile -Raw | ConvertFrom-Json
 foreach ($s in @($receipt.sourceManifestSha256, $receipt.residentManifestSha256)) { if ($s -cnotmatch '^[0-9a-f]{64}$') { throw 'INSTALL_RECEIPT_SHAPE_REFUSED' } }
+# Resident quota redesign phase 1: the carried-forward executed heads the install listed, and the resident's backfill of
+# them (no batch runs before it; state\executed-heads\BACKFILL-COMPLETE.json once done).
+$backfillManifest = Join-Path $Root 'install\backfill-manifest.json'
+Record 'backfill-manifest' ((Test-Path -LiteralPath $backfillManifest -PathType Leaf) -and ((Sha256File $backfillManifest) -ceq [string]$receipt.backfillManifestSha256))
+$marker = Join-Path $Root 'state\executed-heads\BACKFILL-COMPLETE.json'
+$until = [DateTime]::UtcNow.AddSeconds(90)   # right after an install the first tick may still be running it
+while (-not (Test-Path -LiteralPath $marker -PathType Leaf) -and [DateTime]::UtcNow -lt $until) { Start-Sleep -Seconds 3 }
+$markerDetail = if (Test-Path -LiteralPath $marker -PathType Leaf) { try { $m = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json; 'published ' + $m.published + ', unreadable ' + $m.unreadable } catch { 'marker unreadable' } } else { $null }
+Record 'executed-heads-backfilled' (Test-Path -LiteralPath $marker -PathType Leaf) $markerDetail
 
 $qc = & $Sc qc CluedCIResident | Out-String
 Record 'resident-account' ($qc -match 'SERVICE_START_NAME\s*:\s*NT SERVICE\\CluedCIResident')

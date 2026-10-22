@@ -5,6 +5,7 @@
 // Source v2 (DESIGN S11): the stage codes below MIRROR the stable failure catalogue of the installed
 // Source (actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs); a test keeps the
 // two identical. The resident never imports the Source at run time (it is a separate pinned layer).
+import { readFileSync } from 'node:fs';
 import { CODE, HEX64, check } from './canonical.mjs';
 
 // Stage 1 only: Native said no. Nothing was published, nothing executed.
@@ -111,4 +112,86 @@ export function abortStageEndingClean(result, { stopSent = false } = {}) {
 export function archiveReason(code) {
   check(typeof code === 'string' && CODE.test(code), 'ARCHIVE_REASON_CODE_INVALID');
   return code.toLowerCase().replace(/_/g, '-').slice(0, 40).replace(/-+$/, '');
+}
+
+// ---- the machine-readable failure table (resident quota redesign v0.6 + §9, phase 1; failure-table.json) ----
+// (stage, phase, code, outcome reason, diagnostic reason codes) -> (class, release or burn, retry rule, breaker).
+// Loaded once from the installed resident layer (its bytes are pinned by the resident manifest like every other
+// file) and validated here; a table that does not validate stops the module from loading (fail closed).
+export const FAILURE_TABLE_CONTRACT = 'clued.independent-ci.resident-failure-table/1';
+export const FAILURE_CLASSES_V1 = Object.freeze(['not-admitted', 'waiting', 'deterministic-pr', 'unmapped-stage-1', 'transient', 'environment', 'clean-final', 'queue', 'abort', 'unknown']);
+export const DISPOSITIONS = Object.freeze(['release', 'release-if-safe', 'burn', 'halt']);
+export const RETRY_RULES = Object.freeze(['new-trigger', 'attempt2', 'new-commit', 'owner-rearm']);
+const ROW_KEYS = ['code', 'stages', 'phase', 'reasons', 'reasonCodesAny', 'reasonCodesWithin', 'class', 'disposition', 'retry', 'breaker', 'note'];
+const LOWER = /^[a-z][a-z0-9_]{0,63}$/, REASON = /^[A-Za-z][A-Za-z0-9_]{0,79}$/;
+export function validateFailureTable(t) {
+  check(t && t.contract === FAILURE_TABLE_CONTRACT && Array.isArray(t.rows) && t.rows.length > 0, 'FAILURE_TABLE_INVALID');
+  for (const r of t.rows) {
+    check(r && typeof r === 'object' && Object.keys(r).every(k => ROW_KEYS.includes(k)) && CODE.test(r.code ?? '')
+      && (r.stages === 'any' || (Array.isArray(r.stages) && r.stages.length > 0 && r.stages.every(s => Number.isSafeInteger(s) && s >= 0 && s <= 9)))
+      && (r.phase === undefined || ['stage', 'bundle', 'workspace'].includes(r.phase))
+      && (r.reasons === undefined || (Array.isArray(r.reasons) && r.reasons.length > 0 && r.reasons.every(x => REASON.test(x))))
+      && ['reasonCodesAny', 'reasonCodesWithin'].every(k => r[k] === undefined || (Array.isArray(r[k]) && r[k].length > 0 && r[k].every(x => LOWER.test(x))))
+      && [r.reasons, r.reasonCodesAny, r.reasonCodesWithin].filter(x => x !== undefined).length <= 1
+      && FAILURE_CLASSES_V1.includes(r.class) && DISPOSITIONS.includes(r.disposition) && RETRY_RULES.includes(r.retry) && ['counts', 'neutral'].includes(r.breaker)
+      && typeof r.note === 'string' && r.note.length > 0 && r.note.length <= 300
+      // a halt is UNKNOWN and an unknown class halts; nothing else may halt or be unknown
+      && ((r.disposition === 'halt') === (r.class === 'unknown')) && ((r.disposition === 'halt') === (r.retry === 'owner-rearm'))
+      // releases exist only before 10-started: stage 1 (or the bundle, stage 0)
+      && (!r.disposition.startsWith('release') || (Array.isArray(r.stages) && r.stages.every(s => s <= 1)))
+      // the one automatic attempt 2 only follows a transient code, and every transient code may select it
+      && ((r.retry === 'attempt2') === TRANSIENT.has(r.code)), 'FAILURE_TABLE_INVALID', r?.code);
+  }
+  return t;
+}
+export const FAILURE_TABLE = Object.freeze(validateFailureTable(JSON.parse(readFileSync(new URL('./failure-table.json', import.meta.url), 'utf8'))));
+
+const diagnosticCodes = d => [...new Set([...(Array.isArray(d?.reasonCodes) ? d.reasonCodes : []), ...(Array.isArray(d?.nativeReasonCodes) ? d.nativeReasonCodes : [])])];
+// The one row a failure is decided by, or null (no row: unknown, HALT). See the table's "match" text.
+export function failureRow({ code, stage, phase = 'stage', reason = null, diagnostic = null }) {
+  const codes = diagnosticCodes(diagnostic);
+  let best = null, bestScore = -1;
+  for (const r of FAILURE_TABLE.rows) {
+    if (r.code !== code || (r.stages !== 'any' && !r.stages.includes(stage)) || (r.phase !== undefined && r.phase !== phase)) continue;
+    let score;
+    if (r.reasons) { if (!r.reasons.includes(reason)) continue; score = 6; }
+    else if (r.reasonCodesAny) { if (!codes.some(c => r.reasonCodesAny.includes(c))) continue; score = 4; }
+    else if (r.reasonCodesWithin) { if (codes.length === 0 || !codes.every(c => r.reasonCodesWithin.includes(c))) continue; score = 2; }
+    else score = 0;
+    if (r.stages !== 'any') score += 1;
+    if (score > bestScore) { best = r; bestScore = score; }
+  }
+  return best;
+}
+
+// The release reasons a reservation can be closed with (ledger.mjs#UNEXECUTED_REASONS), and the existing guards that
+// apply to a later trigger of the same batch key (v0.6 §7 minor 6): the cool-down (policy.limits.unexecutedCooldownMs,
+// 10 minutes) and the daily cap (policy.limits.unexecutedMaxPer24h) count every release of the key, whatever its reason.
+export const UNEXECUTED_REASON_RULES = Object.freeze({
+  NOT_ADMITTED: Object.freeze({ cooldown: true, dailyCap: true, evidence: 'stage-1 outcome safeToRerun' }),
+  BUNDLE_UNAVAILABLE: Object.freeze({ cooldown: true, dailyCap: true, evidence: 'bundle failed before stage 1' }),
+  BROKER_NOT_LAUNCHED: Object.freeze({ cooldown: true, dailyCap: true, evidence: 'broker refused before any launch, original restored' }),
+});
+
+// The failure decision of the executor (phase 1). release: the unexecuted reason to close the reservation with, or
+// null. A release needs the table's release-if-safe row, an entry that did not reach 10-started, the Windows half of
+// the cleanup proof, and EITHER the bound stage outcome's own safeToRerun flag (v0.6 §9 phase 1, items 1 and 2; never
+// inferred from a code) OR the broker's "no launch, original restored" refusal. Everything else is burned: CLEAN with a
+// complete two-host proof, else UNKNOWN; a halt row or no row at all is UNKNOWN. A diagnostic that carries a
+// deterministic PR code (DETERMINISTIC_REASON_CODES) never releases, whichever code it was reduced to (independent
+// review of phase 1, MINOR 1): the Source's flag already says so, and the resident does not rely on that alone.
+export const DETERMINISTIC_REASON_CODES = Object.freeze([...new Set(FAILURE_TABLE.rows.filter(r => r.class === 'deterministic-pr' && r.reasonCodesAny).flatMap(r => r.reasonCodesAny))]);
+export function decideFailure({ code, stage, phase = 'stage', outcome = null, brokerNoLaunch = false, proof, started }) {
+  let row = typeof code === 'string' && CODE.test(code) ? failureRow({ code, stage, phase, reason: outcome?.reason ?? null, diagnostic: outcome?.diagnostic ?? null }) : null;
+  if (!row || row.disposition === 'halt') return { klass: 'UNKNOWN', basis: row ? 'failure-table-halt' : 'not-an-allow-listed-clean-failure', row, release: null };
+  const windows = proof?.windowsTreeZero === true && proof?.serviceOriginalStopped === true;
+  const deterministic = diagnosticCodes(outcome?.diagnostic).some(c => DETERMINISTIC_REASON_CODES.includes(c));
+  // What the deterministic code makes of a release-if-safe row is what the ledger and the status record.
+  if (deterministic && row.disposition === 'release-if-safe') row = Object.freeze({ ...row, class: 'deterministic-pr', disposition: 'burn', retry: 'new-commit', breaker: 'neutral' });
+  if (started !== true && row.disposition === 'release-if-safe' && windows) {
+    if (outcome?.safeToRerun === true) return { klass: 'NOT_ADMITTED', basis: 'stage-1-safe-to-rerun', row, release: 'NOT_ADMITTED' };
+    if (brokerNoLaunch === true) return { klass: 'NOT_ADMITTED', basis: 'stage-1-broker-not-launched', row, release: 'BROKER_NOT_LAUNCHED' };
+  }
+  if (!proofComplete(proof)) return { klass: 'UNKNOWN', basis: 'cleanup-proof-incomplete', row, release: null };
+  return { klass: 'CLEAN', basis: row.class === 'transient' ? 'transient-cleanup-proof-complete' : 'cleanup-proof-complete', row, release: null };
 }

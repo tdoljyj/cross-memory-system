@@ -35,9 +35,18 @@
 // through its own stop path (broker -> SERVICE_CONTROL_STOP -> the helper drains its own job). Then quiescence on both
 // hosts, a rename-only archive and FAILED_CLEAN OWNER_ABORTED; when quiescence cannot be proven, HALT as always.
 // An abort never publishes, retracts or re-runs anything, and never kills a process.
+//
+// Resident quota redesign v0.6 + §9, phase 1 (Task 12ada80e):
+//   - executed heads independent of the Source (executed-heads.mjs): no batch runs before the first start's backfill
+//     finished, a head that may have published under ANY Source is never admitted again, and the executor records
+//     a head right before the first stage that can publish (R, 3, 5, 7 or 8);
+//   - the stage outcome (diagnostic, scheduling facts, safeToRerun) and the broker's no-launch fact travel with a stage
+//     failure, and the machine-readable failure table (classify.mjs#decideFailure) decides release or burn: a stage-1
+//     failure is released only on the outcome's own safeToRerun flag or the broker's no-launch answer;
+//   - a status board (status.mjs) shows the state, the batch in flight, the pending triggers and recent outcomes.
 import path from 'node:path';
 import { Ledger, batchKey, headKey } from './ledger.mjs';
-import { ABORTABLE_IN_FLIGHT, OWNER_ABORTED, abortStageEndingClean, archiveReason, classifyFailure, proofComplete } from './classify.mjs';
+import { ABORTABLE_IN_FLIGHT, OWNER_ABORTED, abortStageEndingClean, archiveReason, decideFailure, proofComplete } from './classify.mjs';
 import { coalesce, parseTrigger } from './trigger.mjs';
 import { batchBudgetMs } from './policy.mjs';
 import { attempt2Decision, attempt2Subject } from './attempts.mjs';
@@ -76,23 +85,52 @@ export function validateAbortRequest(v) {
 // The accepted request as the ledger's 80-owner-abort records it.
 const adopted = a => ({ requestSha256: a.requestSha256, by: a.by, reason: a.reason });
 
-// A step failure travels as a value, so the failure path runs exactly once, outside the step loop.
+// A step failure travels as a value, so the failure path runs exactly once, outside the step loop. result: the stage
+// result it came from (its bound outcome and the broker's no-launch fact decide a release, classify.mjs#decideFailure).
 class StepFailure {
-  constructor(stageNumber, code, proof, phase, relayedRoles = 0) { Object.assign(this, { stageNumber, code: validCode(code), proof: proof ?? {}, phase, relayedRoles }); }
+  constructor(stageNumber, code, proof, phase, relayedRoles = 0, result = null) {
+    Object.assign(this, { stageNumber, code: validCode(code), proof: proof ?? {}, phase, relayedRoles, outcome: result?.outcome ?? null, brokerNoLaunch: result?.brokerNoLaunch === true });
+  }
 }
 
+// The stages before which the executor records the head as "may have published" (executed-heads.mjs): every stage that
+// can publish a role or control check.
+export const PUBLICATION_STAGES = Object.freeze([3, 5, 7, 8, RELAY_STAGE]);
+// A backfill that keeps failing transiently (not a refused source) HALTs after this long (an antivirus or backup lock
+// of a few minutes only defers it).
+export const BACKFILL_PENDING_MAX_MS = 30 * 60_000;
+const NO_STATUS = Object.freeze({ update() {}, setState() {}, setCurrent() {}, outcome() {}, setPending() {} });
+
+// The stage-terminal receipt's summary of a stage outcome: codes and flags only.
+const outcomeSummary = r => {
+  const o = r?.outcome;
+  if (!o && r?.brokerNoLaunch !== true) return null;
+  return { status: o?.status ?? null, reason: o?.reason ?? null, sideEffects: o?.sideEffects ?? null, safeToRerun: o?.safeToRerun === true, brokerNoLaunch: r?.brokerNoLaunch === true,
+    reasonCodes: o?.diagnostic?.reasonCodes ?? [], nativeReasonCodes: o?.diagnostic?.nativeReasonCodes ?? [], ciRetryAfter: o?.scheduling?.ciRetryAfter ?? o?.diagnostic?.ciRetryAfter ?? null,
+    mergeQueue: o?.scheduling?.mergeQueue ?? o?.diagnostic?.mergeQueue ?? null };
+};
+
 export class ResidentExecutor {
-  // ports: { policy, ledger, receipts, inbox, requests, owner, engine, companion, sourceIntegrity, clock }
+  // ports: { policy, ledger, receipts, inbox, requests, owner, engine, companion, sourceIntegrity, clock, executedHeads }
   //   owner: an Inbox over the admin-only owner directory (only Administrators can create files there).
+  //   executedHeads: executed-heads.mjs#ExecutedHeads (Source-independent "may have published" heads and the backfill).
   //   sleep (optional): the wait between abort polls and quiescence re-checks.
+  //   status (optional): status.mjs#StatusBoard (a view; nothing the executor decides ever reads it).
   constructor(ports) {
-    for (const k of ['policy', 'ledger', 'receipts', 'inbox', 'requests', 'owner', 'engine', 'companion', 'sourceIntegrity', 'clock']) check(ports[k], 'EXECUTOR_PORT_MISSING', k);
+    for (const k of ['policy', 'ledger', 'receipts', 'inbox', 'requests', 'owner', 'engine', 'companion', 'sourceIntegrity', 'clock', 'executedHeads']) check(ports[k], 'EXECUTOR_PORT_MISSING', k);
     Object.assign(this, ports);
     this.sleep ??= ms => new Promise(r => setTimeout(r, ms));
+    this.status ??= NO_STATUS;
     this.ownerReadFailures = new Map();
   }
 
   receipt(type, body) { return this.receipts.append(type, body); }
+
+  // The status board is a view: a failure to update it never changes what the executor does.
+  report(fn) { try { fn(this.status); } catch { /* advisory */ } }
+  reportOutcome(subject, outcome, { code = null, row = null, key = null } = {}) {
+    this.report(s => s.outcome({ pr: subject?.pr, headSha: subject?.headSha, attempt: subject?.attempt ?? 1, outcome, code, klass: row?.class ?? null, retry: row?.retry ?? null, key }));
+  }
 
   async haltWith(code, facts) {
     if (await this.ledger.halt(code, facts)) await this.receipt('halt', { failureCode: code, facts });
@@ -429,6 +467,7 @@ export class ResidentExecutor {
         stageCode: result && result.ok !== true ? validCode(result.code) : null, stopCode: typeof stopCode === 'string' && CODE.test(stopCode) ? stopCode : null,
         batchId: batch?.batchId ?? null, windows: windows.directory, linux: linux.directory, requestSha256: request.requestSha256 });
       await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: OWNER_ABORTED, safePoint });
+      try { this.reportOutcome((await this.ledger.state(key)).reserved?.subject, 'FAILED_CLEAN', { code: OWNER_ABORTED, key }); } catch { /* advisory */ }
       return { state: 'FAILED_CLEAN', key, failureCode: OWNER_ABORTED, safePoint };
     } catch (error) {
       return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch, context);
@@ -453,6 +492,53 @@ export class ResidentExecutor {
   }
 
   async tick() {
+    const result = await this.tickInner();
+    await this.reportTick(result);
+    return result;
+  }
+
+  // The status board after a tick: the resting state, HALT and PAUSE as the ledger has them now.
+  async reportTick(result) {
+    try {
+      const halt = await this.ledger.halted();
+      const paused = await this.ledger.paused();
+      const state = ['IDLE', 'RUNNING', 'WAITING', 'DEFERRED', 'HALTED', 'PAUSED', 'BACKFILL_PENDING', 'COMPLETED', 'FAILED_CLEAN', 'NOT_ADMITTED', 'NOT_EXECUTED', 'IGNORED'].includes(result?.state) ? result.state : 'IDLE';
+      this.report(s => {
+        s.setState(halt ? 'HALTED' : state, halt ? (halt.value?.code ?? null) : (result?.reason ?? result?.failureCode ?? null));
+        s.update({ halt: halt ? { code: CODE.test(halt.value?.code ?? '') ? halt.value.code : 'HALT_RECORD_UNREADABLE', at: halt.value?.at ?? null } : null, paused: !!paused });
+        if (!['WAITING'].includes(result?.state)) s.setCurrent(null);
+      });
+    } catch { /* advisory */ }
+  }
+
+  // Resident quota redesign v0.6 §9 phase 1, items 6 and 7: on the first start of an install, before any batch, every
+  // earlier ledger (this state and the state the install carried forward) is read into the Source-independent executed
+  // heads. Done once (BACKFILL-COMPLETE.json). A refused source (manifest missing or malformed, a carried file missing
+  // or changed) HALTs: no batch may run without it. A transient I/O error only defers it to the next tick, for at most
+  // BACKFILL_PENDING_MAX_MS since the first failure in a row; then it HALTs too (independent review of phase 1, MINOR 6:
+  // a lasting EPERM must not keep rereading every carried file forever).
+  async ensureBackfill() {
+    let marker;
+    try {
+      if (await this.executedHeads.backfilled()) return null;
+      this.report(s => s.update({ backfill: { complete: false, published: null, unreadable: null } }));
+      marker = await this.executedHeads.backfill();
+    } catch (error) {
+      this.backfillPendingSince ??= this.clock();
+      if (!(error instanceof ResidentError) && this.clock() - this.backfillPendingSince < BACKFILL_PENDING_MAX_MS) return { state: 'BACKFILL_PENDING' };
+      const code = error instanceof ResidentError ? codeOf(error) : 'EXECUTED_HEADS_BACKFILL_UNAVAILABLE';
+      await this.haltWith(code, { phase: 'executed-heads-backfill', pendingSince: new Date(this.backfillPendingSince).toISOString() });
+      this.backfillPendingSince = null;
+      return { state: 'HALTED', failureCode: code };
+    }
+    this.backfillPendingSince = null;
+    await this.receipt('executed-heads-backfilled', { published: marker.published, unreadable: marker.unreadable,
+      sources: marker.sources.map(s => ({ name: s.name, heads: s.heads, published: s.published, unreadable: s.unreadable })) });
+    this.report(s => s.update({ backfill: { complete: true, published: marker.published, unreadable: marker.unreadable } }));
+    return null;
+  }
+
+  async tickInner() {
     let recovered = true;
     try {
       await this.recover();
@@ -476,6 +562,9 @@ export class ResidentExecutor {
       await this.haltWith('UNARCHIVED_FAILURE_SCENE', {});
       return { state: 'HALTED' };
     }
+    // No batch of any kind (a resumed wait, an attempt 2, a new trigger) before the executed-heads backfill finished.
+    const backfill = await this.ensureBackfill();
+    if (backfill) return backfill;
     await this.takePauseRequests();
     if (await this.ledger.paused()) return { state: 'PAUSED' };
     // A batch waiting for hosted signals goes first (serial: nothing else starts while it waits). It is
@@ -491,13 +580,23 @@ export class ResidentExecutor {
       deferred ??= r;
     }
     const candidates = await this.nextCandidates();
+    // The status board's pending list: the triggers in the order they run, with the reason each waits (if known).
+    const pending = candidates.map(c => ({ pr: c.trigger.pr, headSha: c.trigger.headSha, baseSha: c.trigger.baseSha, since: c.since ?? null, deferred: null }));
+    const show = () => this.report(s => s.setPending(pending.filter(p => !p.done)));
+    show();
     if (candidates.length === 0) return deferred ?? { state: 'IDLE' };
     let last;
-    for (const c of candidates) {
+    for (const [i, c] of candidates.entries()) {
       last = await this.runCandidate(c);
+      if (last.state === 'DEFERRED') pending[i].deferred = last.reason; else pending[i].done = true;
       // A head waiting out its own cool-down must not block the PRs behind it.
-      if (!(last.state === 'DEFERRED' && last.reason === 'UNEXECUTED_COOLDOWN')) return last;
+      if (!(last.state === 'DEFERRED' && last.reason === 'UNEXECUTED_COOLDOWN')) {
+        if (last.state === 'DEFERRED') for (const p of pending.slice(i + 1)) p.deferred ??= last.reason;
+        show();
+        return last;
+      }
     }
+    show();
     return last;
   }
 
@@ -519,22 +618,35 @@ export class ResidentExecutor {
     }
     // Oldest first; duplicates of one (pr, head, base) are handled together.
     const all = coalesce(parsed, this.policy.limits.inboxMaxFiles);
-    for (const c of all) c.bytesSha256 = parsed.filter(p => c.names.includes(p.name)).map(p => p.bytesSha256);
+    for (const c of all) {
+      c.bytesSha256 = parsed.filter(p => c.names.includes(p.name)).map(p => p.bytesSha256);
+      // When the first trigger of it arrived (the inbox name's time prefix; display only, never a decision).
+      const at = Math.min(...c.names.map(n => Number(/^(\d{13})-/.exec(n)?.[1] ?? NaN)).filter(Number.isFinite));
+      c.since = Number.isFinite(at) ? new Date(at).toISOString() : null;
+    }
     return all;
   }
 
   async disposeAll(names, disposition) { for (const n of names) await this.inbox.dispose(n, disposition); }
 
   // Pre-checks that need no secret and no network. Anything that fails here leaves the ledger untouched.
-  async precheck(key, hk) {
+  async precheck(key, hk, subject, { attempt1Key = null } = {}) {
     const now = this.clock();
     if (await this.ledger.headBurned(hk)) return { ignore: 'HEAD_ALREADY_EXECUTED_NO_RETRY' };
+    // A head that may have published a check under ANY Source or attempt (executed-heads.mjs) never runs again: a new
+    // Source would otherwise run it as new and stop at ROLE_ALREADY_PUBLISHED_ON_HEAD (2026-10-22, Note 1550fef8). The
+    // one exception: attempt 2 of the same head, when the only record is attempt 1's own "before stage R" one (stage R
+    // relayed nothing, or attempt 2 would never have been scheduled). attempt 1's own ledger must say so too.
+    if (await this.executedHeads.published(subject)
+      && !(attempt1Key && await this.executedHeads.onlyRelayRecordOf(subject, attempt1Key, RELAY_STAGE) && await this.relayedNothing(attempt1Key))) return { ignore: 'HEAD_ALREADY_PUBLISHED_NO_RETRY' };
     if ((await this.ledger.state(key)).state !== 'ABSENT') return { ignore: 'CONTENT_ALREADY_EXECUTED_NO_RETRY' };
     const recent = await this.ledger.unexecutedSince(key, now - DAY);
     if (recent.length > 0 && recent.length >= this.policy.limits.unexecutedMaxPer24h) return { ignore: 'UNEXECUTED_DAILY_CAP' };
     if (recent.length > 0 && now - Math.max(...recent) < this.policy.limits.unexecutedCooldownMs) return { defer: 'UNEXECUTED_COOLDOWN' };
-    if ((await this.ledger.startedSince(now - DAY)) >= this.policy.limits.maxBatchesPer24h) return { defer: 'DAILY_BATCH_LIMIT' };
-    if ((await this.ledger.evaluationsSince(now - DAY)) >= this.policy.limits.maxEvaluationsPer24h) return { defer: 'DAILY_EVALUATION_LIMIT' };
+    const batches24h = await this.ledger.startedSince(now - DAY), evaluations24h = await this.ledger.evaluationsSince(now - DAY);
+    this.report(s => s.update({ limits: { batches24h, maxBatches: this.policy.limits.maxBatchesPer24h, evaluations24h, maxEvaluations: this.policy.limits.maxEvaluationsPer24h } }));
+    if (batches24h >= this.policy.limits.maxBatchesPer24h) return { defer: 'DAILY_BATCH_LIMIT' };
+    if (evaluations24h >= this.policy.limits.maxEvaluationsPer24h) return { defer: 'DAILY_EVALUATION_LIMIT' };
     const startCode = await this.batchStartChecks(null);
     if (startCode) return { halt: startCode };
     const beat = await this.companion.heartbeat();
@@ -558,10 +670,11 @@ export class ResidentExecutor {
     const subject = { ...trigger, sourceManifestSha256: this.policy.sourceManifestSha256, attempt: 1 };
     const key = batchKey(subject);
     const hk = headKey(subject);
-    const pre = await this.precheck(key, hk);
+    const pre = await this.precheck(key, hk, subject);
     if (pre.ignore) {
       await this.disposeAll(names, 'ignored');
       await this.receipt('trigger-ignored', { key, failureCode: pre.ignore, bytesSha256 });
+      this.reportOutcome(subject, 'IGNORED', { code: pre.ignore, key });
       return { state: 'IGNORED', key, reason: pre.ignore };
     }
     if (pre.halt) { await this.haltWith(pre.halt, { key }); return { state: 'HALTED', key, failureCode: pre.halt }; }
@@ -574,6 +687,15 @@ export class ResidentExecutor {
     return this.driveReserved(key, subject, this.clock());
   }
 
+  // attempt 1 ended FAILED_CLEAN at stage 0, 1 or 2 (attempts.mjs#ATTEMPT2_STAGES) with a recorded plan that relayed no role.
+  async relayedNothing(key1) {
+    try {
+      const s = await this.ledger.state(key1);
+      return s.state === 'TERMINAL' && s.outcome === 'FAILED_CLEAN' && [0, 1, 2].includes(s.terminal?.facts?.stage)
+        && Array.isArray(s.plan?.relayed) && s.plan.relayed.length === 0;
+    } catch { return false; }
+  }
+
   // The scheduled attempt 2: same pre-checks under its own keys; the intent is closed if they refuse it
   // for good, kept when they only defer it.
   async runAttempt2({ key1, key2, subject }) {
@@ -584,7 +706,7 @@ export class ResidentExecutor {
       return { state: 'IGNORED', key: key2, reason: 'ATTEMPT2_SOURCE_CHANGED' };
     }
     const hk = headKey(subject);
-    const pre = await this.precheck(key2, hk);
+    const pre = await this.precheck(key2, hk, subject, { attempt1Key: key1 });
     if (pre.ignore) {
       await this.ledger.closeAttempt2(key1, { failureCode: pre.ignore });
       await this.receipt('attempt2-ignored', { key: key2, attempt1: key1, failureCode: pre.ignore });
@@ -602,6 +724,8 @@ export class ResidentExecutor {
   async driveReserved(key, subject, t0) {
     let batch = null;
     let outcome;
+    this.current = { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, attempt: subject.attempt, since: new Date(this.clock()).toISOString() };
+    this.atStage(0, 'derive');
     try {
       outcome = await this.drive(key, subject, t0, b => { batch = b; });
     } catch (error) {
@@ -612,7 +736,23 @@ export class ResidentExecutor {
     return outcome;
   }
 
+  // The status board's batch in flight (this.current is set when a batch is reserved or resumed).
+  atStage(stage, phase) { if (this.current) this.report(s => s.setCurrent({ ...this.current, stage, phase })); }
+
   stage(number) { return this.policy.stages.find(s => s.number === number); }
+
+  // Right before a stage that can publish a check: the head is recorded as "may have published" for every Source and
+  // attempt (executed-heads.mjs). Create-only and idempotent; a record that cannot be written stops the batch before
+  // that stage (a clean, final failure: nothing of the stage ran).
+  async beforePublication(key, subject, number) {
+    if (!PUBLICATION_STAGES.includes(number)) return null;
+    try {
+      await this.executedHeads.record(subject, { key, origin: 'publication', basis: `before-stage-${number}`, stage: number });
+      return null;
+    } catch (error) {
+      return new StepFailure(number, 'EXECUTED_HEAD_RECORD_UNCONFIRMED', { windowsTreeZero: true }, 'stage');
+    }
+  }
 
   async drive(key, subject, t0, keepBatch) {
     const batch = await this.engine.derive(subject, key);
@@ -621,14 +761,16 @@ export class ResidentExecutor {
 
     // The bundle comes first: it needs only the Owner's own read credential, has no Windows or Linux
     // effect and publishes nothing, so its failure can release the reservation.
+    this.atStage(0, 'bundle');
     const bundle = await this.companion.buildBundle(batch);
     if (!bundle || bundle.ok !== true) return new StepFailure(0, 'BUNDLE_UNAVAILABLE', {}, 'bundle');
     const early = await this.abortIfRequested(key, batch, 'before-stage-1');
     if (early) return early;
 
+    this.atStage(1, 'stage');
     const first = await this.engine.runStage(batch, this.stage(1), { betweenRoles: false, firstLinux: false });
-    await this.receipt('stage-terminal', { key, stage: 1, ok: first.ok === true, failureCode: first.ok ? null : validCode(first.code), factsSha256: first.factsSha256 ?? null });
-    if (first.ok !== true) return new StepFailure(1, first.code, first.proof, 'stage');
+    await this.receipt('stage-terminal', { key, stage: 1, ok: first.ok === true, failureCode: first.ok ? null : validCode(first.code), factsSha256: first.factsSha256 ?? null, outcome: outcomeSummary(first) });
+    if (first.ok !== true) return new StepFailure(1, first.code, first.proof, 'stage', 0, first);
 
     // Admitted and published: from here on this head is burned (also when every heavy role is relayed).
     await this.ledger.markStarted(key, { batchId: batch.batchId });
@@ -644,6 +786,8 @@ export class ResidentExecutor {
   // One evaluation of a waiting batch; WAITING again, or the rest of the batch (or its failure).
   async resumeWaiting(entry) {
     const { key } = entry, { t0, batch } = entry.wait, subject = entry.reserved.subject;
+    this.current = { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, attempt: subject.attempt, since: entry.reserved.reservedAt ?? null };
+    this.atStage(null, 'relay-wait');
     let outcome;
     try {
       // Every resume re-runs the start-of-batch checks; any drift fails closed (UNKNOWN, HALT).
@@ -671,30 +815,38 @@ export class ResidentExecutor {
     const localRoles = HEAVY_ROLES.filter(r => plan.local.some(l => l.role === r));
     if (localRoles.length > 0) {
       if ((aborted = await this.abortIfRequested(key, batch, 'before-workspace'))) return aborted;
+      this.atStage(0, 'workspace');
       const prep = await this.companion.prepareWorkspaces(batch);
       if (!prep || prep.ok !== true) return new StepFailure(0, prep?.code ?? 'WORKSPACE_PREPARATION_UNCONFIRMED', {}, 'workspace', relayed);
     }
     for (const [index, role] of localRoles.entries()) {
       for (const number of ROLE_STAGES[role]) {
         if ((aborted = await this.abortIfRequested(key, batch, `before-stage-${number}`))) return aborted;
+        const unrecorded = await this.beforePublication(key, subject, number);
+        if (unrecorded) { unrecorded.relayedRoles = relayed; return unrecorded; }
+        this.atStage(number, 'stage');
         const execution = number === ROLE_STAGES[role][0];
         const { result: r, abort, stopCode, unconfirmed } = await this.runStageWatched(key, batch, number, { betweenRoles: execution && index > 0, firstLinux: execution && index === 0 });
-        await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null });
+        await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r) });
         if (unconfirmed) return this.unknown(key, 'OWNER_ABORT_UNCONFIRMED', 'owner-abort-unconfirmed', batch, { safePoint: `in-stage-${number}`, stage: number });
         if (abort) return this.concludeAbort(key, batch, { safePoint: `in-stage-${number}`, stage: number, result: r, request: abort, stopCode });
-        if (r.ok !== true) return new StepFailure(number, r.code, r.proof, 'stage', relayed);
+        if (r.ok !== true) return new StepFailure(number, r.code, r.proof, 'stage', relayed, r);
       }
     }
     await this.lateHostedResults(key, subject, plan);
     if ((aborted = await this.abortIfRequested(key, batch, 'before-stage-8'))) return aborted;
+    const unrecorded = await this.beforePublication(key, subject, 8);
+    if (unrecorded) { unrecorded.relayedRoles = relayed; return unrecorded; }
+    this.atStage(8, 'stage');
     const control = await this.engine.runStage(batch, this.stage(8), { betweenRoles: false, firstLinux: false });
-    await this.receipt('stage-terminal', { key, stage: 8, ok: control.ok === true, failureCode: control.ok ? null : validCode(control.code), factsSha256: control.factsSha256 ?? null });
-    if (control.ok !== true) return new StepFailure(8, control.code, control.proof, 'stage', relayed);
+    await this.receipt('stage-terminal', { key, stage: 8, ok: control.ok === true, failureCode: control.ok ? null : validCode(control.code), factsSha256: control.factsSha256 ?? null, outcome: outcomeSummary(control) });
+    if (control.ok !== true) return new StepFailure(8, control.code, control.proof, 'stage', relayed, control);
 
     const closed = await this.engine.closeBatch(batch, { linux: localRoles.length > 0 });
     check(closed && closed.verified === true, 'SUCCESS_PATH_ARCHIVE_UNCONFIRMED');
     await this.ledger.terminal(key, 'COMPLETED', { batchId: batch.batchId, closed: closed.archived ?? null, relayed: plan.relayed.map(r => r.role), local: localRoles });
     await this.receipt('batch-terminal', { key, outcome: 'COMPLETED' });
+    this.reportOutcome(subject, 'COMPLETED', { key });
     return { state: 'COMPLETED', key, relayed: plan.relayed.map(r => r.role), local: localRoles };
   }
 
@@ -723,9 +875,12 @@ export class ResidentExecutor {
       receipt: decision.reasons[role] === 'RELAY_HINT_BILLING_REFUSED' ? 'relay-billing-refused' : 'relay-local-fallback', source: 'resident' }));
     let relayed = [], attested = [];
     if (candidates.length > 0) {
+      const unrecorded = await this.beforePublication(key, subject, RELAY_STAGE);
+      if (unrecorded) return unrecorded;
+      this.atStage(RELAY_STAGE, 'stage');
       const r = await this.engine.runRelayStage(batch, candidates);
-      await this.receipt('stage-terminal', { key, stage: RELAY_STAGE, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null });
-      if (r.ok !== true) return new StepFailure(RELAY_STAGE, r.code, r.proof, 'stage', 0);
+      await this.receipt('stage-terminal', { key, stage: RELAY_STAGE, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r) });
+      if (r.ok !== true) return new StepFailure(RELAY_STAGE, r.code, r.proof, 'stage', 0, r);
       const rows = relayPlanFromRows(r.relay, candidates);
       if (!rows) return new StepFailure(RELAY_STAGE, 'RELAY_PLAN_UNCONFIRMED', r.proof, 'stage', 0);
       relayed = rows.relayed;
@@ -763,22 +918,37 @@ export class ResidentExecutor {
     };
   }
 
+  // The failure table's facts a terminal or unexecuted record keeps (codes only, no free text).
+  static failureFacts(failure, row) {
+    const o = failure.outcome;
+    return { class: row?.class ?? null, retry: row?.retry ?? null, breaker: row?.breaker ?? null, reason: o?.reason ?? null,
+      reasonCodes: o?.diagnostic?.reasonCodes ?? null, nativeReasonCodes: o?.diagnostic?.nativeReasonCodes ?? null,
+      ciRetryAfter: o?.scheduling?.ciRetryAfter ?? o?.diagnostic?.ciRetryAfter ?? null, safeToRerun: o?.safeToRerun === true, brokerNoLaunch: failure.brokerNoLaunch === true };
+  }
+
   async fail(key, batch, failure) {
+    const subjectOf = async () => { try { return (await this.ledger.state(key)).reserved?.subject ?? null; } catch { return null; } };
     try {
       const started = (await this.ledger.state(key)).state === 'STARTED';
       if (!started && failure.phase === 'bundle') {
         await this.closeOrThrow(batch);
         await this.ledger.releaseUnexecuted(key, 'BUNDLE_UNAVAILABLE', { failureCode: failure.code });
         await this.receipt('batch-unexecuted', { key, failureCode: failure.code });
+        this.reportOutcome(this.current, 'NOT_EXECUTED', { code: failure.code, key });
         return { state: 'NOT_EXECUTED', key, failureCode: failure.code };
       }
       const proof = await this.proofFor(batch, failure.proof);
-      const { klass, basis } = classifyFailure(failure.code, proof, failure.stageNumber);
-      if (!started && klass === 'NOT_ADMITTED') {
+      // The failure table (classify.mjs#decideFailure): a stage-1 failure is released only on the outcome's own
+      // safeToRerun flag or the broker's "no launch, original restored" answer; every other failure burns the head.
+      const { klass, basis, row, release } = decideFailure({ code: failure.code, stage: failure.stageNumber, phase: failure.phase, outcome: failure.outcome,
+        brokerNoLaunch: failure.brokerNoLaunch, proof, started });
+      const facts = ResidentExecutor.failureFacts(failure, row);
+      if (!started && release) {
         await this.closeOrThrow(batch);
-        await this.ledger.releaseUnexecuted(key, 'NOT_ADMITTED', { failureCode: failure.code });
-        await this.receipt('batch-unexecuted', { key, failureCode: failure.code });
-        return { state: 'NOT_ADMITTED', key, failureCode: failure.code };
+        await this.ledger.releaseUnexecuted(key, release, { failureCode: failure.code, basis, ...facts });
+        await this.receipt('batch-unexecuted', { key, failureCode: failure.code, release, class: facts.class });
+        this.reportOutcome(await subjectOf() ?? this.current, release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', { code: failure.code, row, key });
+        return { state: release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', key, failureCode: failure.code, release };
       }
       // Every other failure burns the head, also before 10-started (stage 1 may have published).
       await this.ledger.burnHead(key, { failureCode: failure.code });
@@ -787,9 +957,10 @@ export class ResidentExecutor {
         const windows = await this.engine.archiveFailure(batch, reason);
         const linux = await this.companion.archiveLinux(batch, reason);
         check(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED');
-        await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: failure.code, basis, stage: failure.stageNumber, batchId: batch?.batchId ?? null, windows: windows.directory, linux: linux.directory });
-        await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: failure.code });
+        await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: failure.code, basis, stage: failure.stageNumber, batchId: batch?.batchId ?? null, windows: windows.directory, linux: linux.directory, ...facts });
+        await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: failure.code, class: facts.class });
         const subject = (await this.ledger.state(key)).reserved?.subject;
+        this.reportOutcome(subject, 'FAILED_CLEAN', { code: failure.code, row, key });
         const decision = attempt2Decision({ policy: this.policy, subject, outcome: 'FAILED_CLEAN', failure });
         if (decision.eligible) {
           const key2 = await this.ledger.scheduleAttempt2(key, attempt2Subject(subject), { failureCode: failure.code, stage: failure.stageNumber },
@@ -805,7 +976,7 @@ export class ResidentExecutor {
         }
         return { state: 'FAILED_CLEAN', key, failureCode: failure.code };
       }
-      return await this.unknown(key, failure.code, basis, batch);
+      return await this.unknown(key, failure.code, basis, batch, { stage: failure.stageNumber, ...facts });
     } catch (error) {
       return this.unknown(key, codeOf(error), 'failure-handling-unconfirmed', batch);
     }
@@ -826,6 +997,7 @@ export class ResidentExecutor {
     }
     await this.receipt('batch-terminal', { key, outcome: 'FAILED_UNKNOWN', failureCode });
     await this.haltWith(failureCode, { key, basis });
+    this.reportOutcome(s.reserved?.subject ?? this.current, 'FAILED_UNKNOWN', { code: failureCode, key });
     return { state: 'HALTED', key, failureCode };
   }
 }

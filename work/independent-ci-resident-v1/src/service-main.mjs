@@ -19,6 +19,8 @@ import { WindowsEngine } from './engine-windows.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
 import { readBounded } from './store.mjs';
 import { RetentionWatch, measureWindows } from './retention.mjs';
+import { ExecutedHeads } from './executed-heads.mjs';
+import { STATUS_FILE, StatusBoard, StatusFile, startStatusTimer } from './status.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -61,8 +63,16 @@ export async function main(argv = process.argv.slice(2)) {
     },
   });
   const companion = mailboxCompanion(mailbox, sleep);
+  // Executed heads independent of the Source (resident quota redesign phase 1): the install carries every earlier
+  // install's ledger into state\backfill\ and lists it in the admin-only install\backfill-manifest.json.
+  const executedHeads = await ExecutedHeads.open(state, clock, { manifestFile: path.join(root, 'install', 'backfill-manifest.json'), carriedRoot: path.join(state, 'backfill') });
+  // The status snapshot (state\status.json, read by the companion): rewritten whole on a timer, so writtenAt moves
+  // even while one stage runs for 45 minutes.
+  const status = new StatusBoard({ clock });
+  const statusTimer = startStatusTimer({ board: status, file: new StatusFile(path.join(state, STATUS_FILE)) });
+  await statusTimer.flush();
   const exec = new ResidentExecutor({
-    policy, ledger, receipts, inbox, requests, owner, engine, clock, companion, sleep,
+    policy, ledger, receipts, inbox, requests, owner, engine, clock, companion, sleep, executedHeads, status,
     sourceIntegrity: installedIntegrity({
       sourceRoot, sourceManifest: path.join(root, 'config', 'source-installed-manifest.json'),
       residentRoot: path.join(root, 'resident', policy.residentManifestSha256), residentManifest: path.join(root, 'config', 'resident-installed-manifest.json'),
@@ -78,6 +88,9 @@ export async function main(argv = process.argv.slice(2)) {
     acknowledgeStop: async () => {
       await receipts.append('service-stop', { pid: process.pid });
       await fs.rename(stopFile, path.join(state, 'locks', `stop-${Date.now()}-${process.pid}`));
+      status.setState('STOPPED');
+      statusTimer.stop();
+      await statusTimer.flush();
     },
     onLoopException: async error => { await ledger.halt('RESIDENT_LOOP_EXCEPTION', { message: String(error?.code ?? 'unknown') }); },
     betweenBatches: () => retention.maybeCheck() });
@@ -86,7 +99,7 @@ export async function main(argv = process.argv.slice(2)) {
 // The service loop. Every iteration refreshes the instance-lock liveness and honours an SCM stop before it
 // runs one tick, and a tick never blocks on the hosted wait (it returns WAITING), so neither the liveness
 // record nor a stop, a pause or an Owner request ever waits for hosted signals.
-export const RESTING_STATES = Object.freeze(['IDLE', 'DEFERRED', 'HALTED', 'PAUSED', 'WAITING']);
+export const RESTING_STATES = Object.freeze(['IDLE', 'DEFERRED', 'HALTED', 'PAUSED', 'WAITING', 'BACKFILL_PENDING']);
 export async function serviceLoop({ exec, lock, sleep, once = false, stopRequested, acknowledgeStop, onLoopException, betweenBatches }) {
   for (;;) {
     await lock.touch();

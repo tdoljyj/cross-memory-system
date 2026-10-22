@@ -131,11 +131,13 @@ test('a refused relay or a missing issue is reported, with the observed quiescen
 test('poller proposes ready heads once, skips drafts and PRs without a claim trailer', async t => {
   const written = [];
   const pulls = [
-    { number: 884, headRefOid: 'a'.repeat(40), isDraft: false, body: 'x\nClued-Work-Claim: 842cf499-1519-4ba9-b3be-b9ac3f6e8ee4\n', updatedAt: 't1' },
+    { number: 884, headRefOid: 'a'.repeat(40), baseRefOid: 'd'.repeat(40), isDraft: false, body: 'x\nClued-Work-Claim: 842cf499-1519-4ba9-b3be-b9ac3f6e8ee4\n', updatedAt: 't1' },
     { number: 885, headRefOid: 'b'.repeat(40), isDraft: true, body: 'Clued-Work-Claim: 842cf499-1519-4ba9-b3be-b9ac3f6e8ee4', updatedAt: 't1' },
     { number: 886, headRefOid: 'c'.repeat(40), isDraft: false, body: 'no trailer', updatedAt: 't1' },
   ];
-  const run = async args => args.includes('api') ? { code: 0, stdout: `${'d'.repeat(40)}\n` } : { code: 0, stdout: JSON.stringify(pulls) };
+  // the main tip, the main...head compares (up to date: behind_by 0), the PR list
+  const run = async args => args.some(a => a.includes('/compare/')) ? { code: 0, stdout: JSON.stringify({ behind_by: 0, base: 'd'.repeat(40) }) }
+    : args.includes('api') ? { code: 0, stdout: `${'d'.repeat(40)}\n` } : { code: 0, stdout: JSON.stringify(pulls) };
   const p = new Poller({ repo: 'tdoljyj/cross-memory-system', ghExe: 'C:\\gh.exe', run, writeTrigger: async v => written.push(v), clock: () => 0 });
   assert.equal(await p.pass(), 1);
   assert.equal(await p.pass(), 0);

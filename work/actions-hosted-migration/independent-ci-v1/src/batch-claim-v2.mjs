@@ -7,6 +7,12 @@
 //
 // The record is keyed by the batch's work-admission job id (job-v2.mjs#batchRefV2), which every job
 // of the batch can recompute from its own content + attempt; no extra input is needed.
+//
+// Identity (resident quota redesign v0.6 §1, phase 1): the record's identity is the job content and
+// attempt, exactly what batchRefV2 hashes. createdAt is the derivation time of the batch that first
+// recorded the claim; it is kept in the record as a fact but is not compared, so a later batch of the
+// same content and attempt (derived at another time) reads the same record instead of failing with
+// BATCH_CLAIM_RECORD_INVALID. The claim generation is still compared (BATCH_CLAIM_CHANGED).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { canonical, digest } from './proof.mjs';
@@ -18,6 +24,8 @@ const HASH = /^[a-f0-9]{64}$/;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 const SUBJECT = ['repo', 'pr', 'headSha', 'baseSha', 'sourceManifestSha256', 'attempt', 'createdAt'];
+// Compared on every read; createdAt is recorded (SUBJECT) but never part of the identity.
+const IDENTITY = SUBJECT.filter(k => k !== 'createdAt');
 
 async function directoryOk(directory) {
   if (!path.isAbsolute(directory)) fail('BATCH_CLAIM_DIRECTORY_INVALID');
@@ -36,7 +44,8 @@ function body(job, claim, observedAt) {
 export function validateBatchClaimRecord(record, job) {
   validateJobV2(job);
   if (!plain(record) || Object.keys(record).length !== FIELDS.length || !FIELDS.every(k => Object.hasOwn(record, k))
-    || record.contract !== BATCH_CLAIM_CONTRACT || record.batchRef !== batchRefV2(job) || !SUBJECT.every(k => record[k] === job[k])
+    || record.contract !== BATCH_CLAIM_CONTRACT || record.batchRef !== batchRefV2(job) || !IDENTITY.every(k => record[k] === job[k])
+    || typeof record.createdAt !== 'string' || !Number.isFinite(Date.parse(record.createdAt))
     || !plain(record.claim) || Object.keys(record.claim).sort().join('|') !== 'claimId|epoch|fence'
     || typeof record.observedAt !== 'string' || !Number.isFinite(Date.parse(record.observedAt))) fail('BATCH_CLAIM_RECORD_INVALID');
   validateObservedClaim({ ...record.claim, expiresAt: record.observedAt });

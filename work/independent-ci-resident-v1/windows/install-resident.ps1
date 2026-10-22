@@ -157,6 +157,86 @@ function Get-AclPlan([string]$res) {
   }
 }
 
+# ---- Carry-forward of the executed heads (resident quota redesign v0.6 + section 9, phase 1, item 7) ----
+# uninstall-resident.ps1 renames the whole resident directory to resident-uninstalled-<UTC>-<hex>, so a reinstall starts
+# with an empty state. The resident's Source-independent executed heads (src/executed-heads.mjs) must survive that: this
+# install copies, from EVERY earlier resident-uninstalled-* state, the ledger-heads records, the ledger records the
+# backfill reads and any executed-heads records into state\backfill\<n>\ (read once, hashed, CreateNew), and lists
+# each file with its SHA-256 in install\backfill-manifest.json (admin-only). On its first start the resident backfills from
+# exactly those files and runs no batch before that is done. Only fixed name shapes are taken; a link anywhere refuses the
+# install before anything is written. Nothing in an earlier state is changed.
+$CarryParent = Split-Path -Parent $Root
+$CarryLedgerRecords = @('00-reserved.json', '10-started.json', '25-plan.json', '80-owner-abort.json', '90-terminal.json')
+function Test-NoLink([IO.FileSystemInfo]$item) { if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw ('CARRY_FORWARD_LINK_REFUSED:' + $item.FullName) } }
+function Get-CarryForwardPlan([string]$parent) {
+  $sources = @()
+  foreach ($dir in @(Get-ChildItem -LiteralPath $parent -Directory -Force -ErrorAction Stop | Where-Object { $_.Name -cmatch '^resident-uninstalled-[0-9A-Za-z-]{1,80}$' } | Sort-Object Name)) {
+    Test-NoLink $dir
+    $state = Join-Path $dir.FullName 'state'
+    $files = New-Object System.Collections.ArrayList
+    $keys = New-Object System.Collections.ArrayList   # executed-heads\<key> directories: the key alone names a head that may have published
+    if (Test-Path -LiteralPath $state -PathType Container) {
+      Test-NoLink (Get-Item -LiteralPath $state -Force)
+      $take = {
+        param([string]$rel)
+        $item = Get-Item -LiteralPath (Join-Path $state $rel) -Force
+        Test-NoLink $item
+        # An empty record (a write interrupted before its bytes) is carried as it is; the backfill counts it unreadable.
+        if ($item.Length -lt 0 -or $item.Length -gt 4MB) { throw ('CARRY_FORWARD_FILE_SIZE_REFUSED:' + $rel) }
+        [void]$files.Add([ordered]@{ rel = $rel.Replace('\', '/'); full = $item.FullName })
+      }
+      $heads = Join-Path $state 'ledger-heads'
+      if (Test-Path -LiteralPath $heads -PathType Container) {
+        Test-NoLink (Get-Item -LiteralPath $heads -Force)
+        foreach ($f in @(Get-ChildItem -LiteralPath $heads -Force | Sort-Object Name)) { Test-NoLink $f; if (-not $f.PSIsContainer -and $f.Name -cmatch '^[0-9a-f]{64}\.json$') { & $take ('ledger-heads\' + $f.Name) } }
+      }
+      $ledger = Join-Path $state 'ledger'
+      if (Test-Path -LiteralPath $ledger -PathType Container) {
+        Test-NoLink (Get-Item -LiteralPath $ledger -Force)
+        foreach ($k in @(Get-ChildItem -LiteralPath $ledger -Directory -Force | Where-Object { $_.Name -cmatch '^[0-9a-f]{64}$' } | Sort-Object Name)) {
+          Test-NoLink $k
+          foreach ($n in $CarryLedgerRecords) { if (Test-Path -LiteralPath (Join-Path $k.FullName $n) -PathType Leaf) { & $take ('ledger\' + $k.Name + '\' + $n) } }
+        }
+      }
+      $executed = Join-Path $state 'executed-heads'
+      if (Test-Path -LiteralPath $executed -PathType Container) {
+        Test-NoLink (Get-Item -LiteralPath $executed -Force)
+        foreach ($k in @(Get-ChildItem -LiteralPath $executed -Directory -Force | Where-Object { $_.Name -cmatch '^[0-9a-f]{32}$' } | Sort-Object Name)) {
+          Test-NoLink $k
+          [void]$keys.Add($k.Name)
+          foreach ($f in @(Get-ChildItem -LiteralPath $k.FullName -Force | Sort-Object Name)) { Test-NoLink $f; if (-not $f.PSIsContainer -and $f.Name -cmatch '^(publication|backfill)-[0-9a-f]{16}\.json$') { & $take ('executed-heads\' + $k.Name + '\' + $f.Name) } }
+        }
+      }
+    }
+    if ($files.Count -gt 200000) { throw ('CARRY_FORWARD_TOO_MANY_FILES:' + $dir.Name) }
+    $sources += ,([ordered]@{ name = $dir.Name; files = @($files); heads = @($keys) })
+  }
+  # The resident's backfill reads at most 256 earlier states (src/executed-heads.mjs): refuse here, before anything is
+  # written, rather than install a state that HALTs on its first start.
+  if ($sources.Count -gt 256) { throw ('CARRY_FORWARD_TOO_MANY_STATES:' + $sources.Count) }
+  ,$sources
+}
+# Copies the planned files (each read once, hashed, written from that same buffer with CreateNew) and returns the
+# manifest the resident's backfill reads. Each earlier state goes to state\backfill\<n>\ (n = its place in the list, so
+# every path stays short); the manifest names it. The new state\backfill\ inherits the state directory's ACL.
+function Copy-CarryForward($sources, [string]$stateRoot) {
+  $out = @()
+  $index = 0
+  foreach ($s in @($sources)) {
+    $index += 1
+    $listed = New-Object System.Collections.ArrayList
+    foreach ($f in @($s.files)) {
+      $bytes = [IO.File]::ReadAllBytes($f.full)
+      $to = Join-Path (Join-Path (Join-Path $stateRoot 'backfill') ([string]$index)) ($f.rel.Replace('/', '\'))
+      [void][IO.Directory]::CreateDirectory((Split-Path -Parent $to))
+      $w = [IO.File]::Open($to, 'CreateNew', 'Write', 'None'); try { $w.Write($bytes, 0, $bytes.Length); $w.Flush($true) } finally { $w.Dispose() }
+      [void]$listed.Add([ordered]@{ path = $f.rel; sha256 = (Sha256Bytes $bytes); bytes = $bytes.Length })
+    }
+    $out += ,([ordered]@{ name = $s.name; dir = [string]$index; files = @($listed); heads = @($s.heads) })
+  }
+  [ordered]@{ contract = 'clued.independent-ci.resident-backfill-manifest/1'; sources = @($out) }
+}
+
 $pkgBytes = [IO.File]::ReadAllBytes((Join-Path $PackageRoot 'package-manifest.json'))  # read ONCE
 function Get-OpenBatchCount {
   $ledger = Join-Path $Root 'state\ledger'
@@ -201,6 +281,9 @@ function Build-Plan {
       action = (Get-CompanionAction $Root $pkg.residentManifestSha256 (& $find 'config\companion.json')) }
     startAfterInstall = [bool]$StartAfterInstall
     privilegeBoundary = Get-PrivilegePlan
+    # The earlier states are only known after the uninstall renamed the current one, so the plan names the rule, and the
+    # install receipt and install\backfill-manifest.json name the files.
+    carryForward = 'every resident-uninstalled-* state under the parent directory: ledger-heads, ledger records 00/10/25/80/90, executed-heads -> state\backfill\<n>\, listed with SHA-256 in install\backfill-manifest.json'
     deletesAnything = $false
   }
 }
@@ -232,7 +315,13 @@ function Write-New([string]$path, [byte[]]$bytes) {
 $elevated = Assert-Owner
 $plan = Build-Plan
 $planSha = Sha256Text ($plan | ConvertTo-Json -Depth 8)
-if (-not $Apply) { [ordered]@{ status = 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN'; planSha256 = $planSha; plan = $plan } | ConvertTo-Json -Depth 10; exit 0 }
+if (-not $Apply) {
+  # Not part of the plan (the state being replaced is renamed only by the uninstall that runs after this dry run): what
+  # would be carried forward if the install ran now, or why it would be refused.
+  # Get-CarryForwardPlan returns its list as ONE pipeline object (,$sources): assigned first, then walked with foreach.
+  $preview = try { $all = Get-CarryForwardPlan $CarryParent; $p = @(); foreach ($s in $all) { $p += ,([ordered]@{ name = $s.name; files = @($s.files).Count }) }; ,$p } catch { $_.Exception.Message }
+  [ordered]@{ status = 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN'; planSha256 = $planSha; plan = $plan; carryForwardPreview = $preview } | ConvertTo-Json -Depth 10; exit 0
+}
 
 if (-not $elevated) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED' }
 if ($ExpectedPlanSha256 -cne $planSha) { throw 'PLAN_CHANGED_SINCE_REVIEW' }
@@ -240,6 +329,8 @@ if ($plan.openBatches -ne 0) { throw 'INSTALL_REQUIRES_NO_OPEN_BATCH_REARM_FIRST
 if ($plan.rootExists -or $plan.servicesExist) { throw 'FRESH_INSTALL_REQUIRED_USE_UPGRADE_PATH' }
 $r = $plan.runnerBefore
 if (-not ($r.originalBinary -and $r.stoppedPid0 -and $r.manual -and $r.accountIsController)) { throw 'RUNNER_SERVICE_NOT_ORIGINAL_STOPPED_MANUAL_CONTROLLER' }
+# Before anything is written: every earlier state to carry, every file shape, no link anywhere.
+$carry = Get-CarryForwardPlan $CarryParent
 
 $receipt = [ordered]@{ contract = 'clued.independent-ci.resident-install-receipt/2'; planSha256 = $planSha; sourceManifestSha256 = $plan.sourceManifestSha256; residentManifestSha256 = $plan.residentManifestSha256; runnerSddlUnchanged = $r.sddl; steps = @(); startedAt = [DateTimeOffset]::UtcNow.ToString('o') }
 function Step([string]$name, [scriptblock]$body) { & $body; $script:receipt.steps += $name }
@@ -247,6 +338,14 @@ function Step([string]$name, [scriptblock]$body) { & $body; $script:receipt.step
 # 1. Directories, created new with their final ACLs.
 Step 'directories' {
   foreach ($rel in $plan.acl.Keys) { New-DirectoryWithAcl $(if ($rel) { Join-Path $Root $rel } else { $Root }) $plan.acl[$rel] }
+}
+# 1b. Carry the earlier states' executed heads forward (the resident backfills from them before its first batch).
+Step 'carry-forward' {
+  $manifest = Copy-CarryForward $carry (Join-Path $Root 'state')
+  $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes((ConvertTo-Json -InputObject $manifest -Depth 6 -Compress))
+  Write-New (Join-Path $Root 'install\backfill-manifest.json') $bytes
+  $script:receipt.backfillManifestSha256 = Sha256Bytes $bytes
+  $script:receipt.carriedSources = @($manifest.sources | ForEach-Object { [ordered]@{ name = $_.name; files = @($_.files).Count; empty = @($_.files | Where-Object { $_.bytes -eq 0 }).Count } })
 }
 # 2. Package files: read once, hash, compare, write those same bytes (CreateNew).
 Step 'package-copy' {

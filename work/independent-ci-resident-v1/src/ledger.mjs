@@ -36,7 +36,10 @@ import { ensureDir, exists, nonce, readJson, renameToNew, writeNew } from './sto
 export const BATCH_KEY_CONTRACT = 'clued.independent-ci.resident-batch-key/1';
 export const HEAD_KEY_CONTRACT = 'clued.independent-ci.resident-head-key/1';
 export const OUTCOMES = Object.freeze(['COMPLETED', 'FAILED_CLEAN', 'FAILED_UNKNOWN']);
-export const UNEXECUTED_REASONS = Object.freeze(['NOT_ADMITTED', 'BUNDLE_UNAVAILABLE']);
+// Why a reservation was closed before 10-started (classify.mjs#UNEXECUTED_REASON_RULES says, per reason, that the
+// cool-down and the daily cap of a later trigger apply): Native refused on a safe-to-re-run stage 1 outcome, the bundle
+// failed, or the broker refused stage 1 before any launch with the original restored (resident quota redesign phase 1).
+export const UNEXECUTED_REASONS = Object.freeze(['NOT_ADMITTED', 'BUNDLE_UNAVAILABLE', 'BROKER_NOT_LAUNCHED']);
 // The records of an open entry, oldest first; the newest one present is what an Owner abort names by digest.
 export const OPEN_RECORDS = Object.freeze(['00-reserved.json', '10-started.json', '15-relay-wait.json', '20-plan-intent.json', '25-plan.json']);
 export const OWNER_ABORT_RECORD = '80-owner-abort.json';
