@@ -155,6 +155,9 @@ export const PARK_RETRY_MS = Object.freeze([10 * 60_000, 20 * 60_000, 40 * 60_00
 // says main moved or the PR changed) makes a try due at most this often.
 export const PARK_HEAD_RETRY_MS = 60_000;
 export const PARK_NUDGE_MS = 5 * 60_000;
+// The oldest bundle a batch takes into the workspace preparation (which accepts at most 2 hours), measured from the
+// reservation, which comes before the bundle (design v0.5 §4.3 item 3).
+export const BUNDLE_MAX_AGE_AT_WORKSPACE_MS = 100 * 60_000;
 const dayKey = ms => new Date(ms).toISOString().slice(0, 10);
 
 // The stage-terminal receipt's summary of a stage outcome: codes and flags only.
@@ -1264,6 +1267,11 @@ export class ResidentExecutor {
     if (localRoles.length > 0) {
       if ((aborted = await this.abortIfRequested(key, batch, 'before-workspace'))) return aborted;
       if ((aborted = await this.supersededAfterStart(key, subject, batch, 'before-workspace', plan.candidates.length > 0 ? POSITIONS[RELAY_STAGE] : POSITIONS[1]))) return aborted;
+      // A batch resumed from parking point A after other batches ran may hold a bundle too old for the workspace: it ends
+      // here, nothing of it on Linux. The design's re-bundle needs a second bundle generation in the companion and comes
+      // with the relay (off until the Owner's November test; DESIGN §18.2).
+      const reservedAt = Date.parse((await this.ledger.state(key)).reserved?.reservedAt ?? '');
+      if (Number.isFinite(reservedAt) && this.clock() - reservedAt > BUNDLE_MAX_AGE_AT_WORKSPACE_MS) return new StepFailure(0, 'PARKED_BUNDLE_TOO_OLD', {}, 'workspace', relayed);
       this.atStage(0, 'workspace');
       const prep = await this.companion.prepareWorkspaces(batch);
       if (!prep || prep.ok !== true) return new StepFailure(0, prep?.code ?? 'WORKSPACE_PREPARATION_UNCONFIRMED', {}, 'workspace', relayed);

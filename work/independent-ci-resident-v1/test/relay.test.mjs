@@ -132,7 +132,7 @@ test('pause during the wait stops the batch before stage R and any local stage; 
   const f = await waitingFixture(t);
   await f.drop(Buffer.from(JSON.stringify({ contract: PAUSE_CONTRACT, reason: 'emergency stop' })), 'requests');
   assert.equal((await f.exec.tick()).state, 'PAUSED', 'the pause takes effect on the very next tick');
-  f.advance(2 * 3_600_000); // paused far beyond the wait's total cap
+  f.advance(80 * 60_000); // paused beyond the wait's 60-minute total cap, inside the bundle's 100 minutes (park.test.mjs)
   assert.equal((await f.exec.tick()).state, 'PAUSED');
   assert.deepEqual(stagesRun(f.engine), [1], 'no stage R, no local stage while paused');
   // a resume from the user-writable requests directory does nothing; only the Owner's does

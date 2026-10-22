@@ -8,7 +8,7 @@ import path from 'node:path';
 import { ResidentExecutor, PARK_HEAD_RETRY_MS } from '../src/executor.mjs';
 import { Ledger, batchKey, headKey } from '../src/ledger.mjs';
 import { drainRequest, abortRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
-import { BASE, HEAD, SOURCE, WINDOWS_CLEAN, executorFixture, fakeEngine, rawPolicy, triggerBytes } from './helpers.mjs';
+import { BASE, HEAD, RELAY_ON, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, rawPolicy, triggerBytes } from './helpers.mjs';
 
 const MIN = 60_000;
 const OWNER = 'S-1-5-21-1-2-3-1001';
@@ -190,4 +190,16 @@ test('the breaker: parking after stage 7 is a pass of every stage before it; a s
   const trial = await f.exec.tick();
   assert.equal(trial.state, 'PARKED', 'the trial got past stage 2 and parked');
   assert.equal(f.queue.breaker.state, 'closed', 'getting past stage 7 closes a stage-2 breaker');
+});
+
+test('parking point A: a batch resumed with a bundle older than 100 minutes ends before the workspace, nothing on Linux', async t => {
+  const f = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => null }) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'WAITING');
+  // other batches held the executor (or it was off): the wait expired long ago, the bundle is too old now
+  f.advance(101 * MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'PARKED_BUNDLE_TOO_OLD']);
+  assert.deepEqual(stagesRun(f.engine), [1], 'no workspace preparation, no Linux stage');
+  assert.equal(f.queue.row(884).state, 'STOPPED');
 });
