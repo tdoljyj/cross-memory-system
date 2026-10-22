@@ -888,6 +888,22 @@ function strategyTree(job) {
   }
 }
 
+// The lines of a job's strategy as YAML reads them, or null without one.
+// Bootstrap review 11af4710, finding 1: jobField ends the field at the first
+// comment line indented four spaces or less, but YAML ignores the indentation
+// of comments, so entries after such a line still belong to the strategy. The
+// region runs from the strategy key to the first other line indented less
+// than five spaces, comment and blank lines inside it included; trailing ones
+// carry nothing and are left out.
+function strategyRegion(job) {
+  const start = job.lines.findIndex((line) => line.startsWith("    strategy:"));
+  if (start < 0) return null;
+  let end = start + 1;
+  while (end < job.lines.length && (/^\s*(#.*)?$/.test(job.lines[end]) || job.lines[end].startsWith("     "))) end += 1;
+  while (end > start + 1 && /^\s*(#.*)?$/.test(job.lines[end - 1])) end -= 1;
+  return job.lines.slice(start, end).join("\n");
+}
+
 // Owner Decision 586181ec: true only when the head job's strategy is the base
 // job's with entries removed and nothing else changed. Entries may go from
 // matrix.include, or from a matrix axis list when the matrix has no include:
@@ -971,9 +987,10 @@ export function gateFindings(headText, baseText, { registeredPublisherTransition
         // Re-review 4, m3: a new or changed strategy (a matrix) multiplies the
         // job; one admitted head would buy many self-hosted runs. Owner
         // Decision 586181ec: a strategy that only loses matrix entries runs the
-        // job fewer times and passes (strategyShrinks).
-        if ((jobField(job, "strategy") ?? "").trim() !== (jobField(old, "strategy") ?? "").trim() &&
-          !strategyShrinks(job, old)) {
+        // job fewer times and passes (strategyShrinks). A change counts in
+        // jobField's view or in the whole region (strategyRegion).
+        if (((jobField(job, "strategy") ?? "").trim() !== (jobField(old, "strategy") ?? "").trim() ||
+          strategyRegion(job) !== strategyRegion(old)) && !strategyShrinks(job, old)) {
           findings.push(`self_hosted_strategy_changed_ungated:${job.name}`);
         }
       }

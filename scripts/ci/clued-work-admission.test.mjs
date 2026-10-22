@@ -1977,12 +1977,33 @@ test("gate guard (Owner Decision 586181ec): an include entry may be removed, not
     // Decided: comments and blank lines alone remove nothing, so a change of
     // only those stays reported, as before.
     ["change only the comment", S, setLine(S, 5, "          # Runners a to c."), STRATEGY_CHANGED],
+    ["change only a trailing comment", [...S, "          # End of the list."], [...S, "          # Last runner: c."], STRATEGY_CHANGED],
     ["add only a blank line", S, insertLines(S, 6, ""), STRATEGY_CHANGED],
   ]);
   // A removal does not hide a timeout raise next to it.
   const raised = withStrategy(lastGone).replace("    timeout-minutes: 25\n", "    timeout-minutes: 360\n");
   assert.deepEqual(gateFindings(raised, withStrategy(S)), ["self_hosted_timeout_raised_ungated:trivy-trusted-self-hosted"]);
   assert.deepEqual(gateFindings(withStrategy(S), withStrategy(S)), []);
+});
+
+// Bootstrap review 11af4710, finding 1: jobField's view of a field ends at a
+// comment line indented four spaces or less, but YAML reads on past it.
+test("gate guard (re-review 4, m3): a comment line indented less than the strategy does not hide entries after it", () => {
+  const S = INCLUDE_STRATEGY;
+  const runnerD = ["          - runner_name: runner-d", "            route_label: route-d"];
+  assertShrinkCases([
+    ["entries appended after a four-space comment", [...S, "    # more runners"], [...S, "    # more runners", ...runnerD], STRATEGY_CHANGED],
+    ["entries appended after a column-0 comment", [...S, "# more runners"], [...S, "# more runners", ...runnerD], STRATEGY_CHANGED],
+    ["an entry added after a two-space comment inside the list", insertLines(S, 6, "  # runners"),
+      [...insertLines(S, 6, "  # runners"), ...runnerD], STRATEGY_CHANGED],
+    ["fail-fast changed after a four-space comment", insertLines(S, 1, "    # options"),
+      setLine(insertLines(S, 1, "    # options"), 2, "      fail-fast: true"), STRATEGY_CHANGED],
+    // The exemption still applies across such a comment.
+    ["an entry removed after a four-space comment", insertLines(S, 10, "    # retired below"), insertLines(dropLines(S, 10, 11), 10, "    # retired below"), SHRUNK],
+    // A trailing comment or blank line carries nothing, as before.
+    ["only a trailing comment added after the strategy", S, [...S, "  # end of matrix"], []],
+    ["only a trailing blank line added after the strategy", S, [...S, ""], []],
+  ]);
 });
 
 // Each case took from a minute to many minutes with the quadratic code it guards against.
