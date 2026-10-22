@@ -91,9 +91,9 @@ public sealed class ResidentServiceHost : ServiceBase
         Process p = child;
         if (stop.Take() && p != null && !p.HasExited)
         {
-            // A request that throws (any IOException counts as "already there") fails this stop, as before.
-            // Nothing was written, so the stop is given back and a retried stop asks again. An executor that
-            // exits in that moment finds the stop still taken: the service stays RUNNING until that retry.
+            // A request that throws (no file created, for any reason but "already there") fails this stop, as
+            // before. Nothing was created, so the stop is given back and a retried stop asks again. An executor
+            // that exits in that moment finds the stop still taken: the service stays RUNNING until that retry.
             try { stop.Request(); } catch { stop.Release(); throw; }
         }
         // Wait briefly for an idle executor to exit; a busy one keeps running and is found by the
@@ -126,17 +126,47 @@ public sealed class ResidentStopGate
     // True for the first caller of this process, and again for the next one after Release().
     public bool Take() { return Interlocked.Exchange(ref taken, 1) == 0; }
 
-    // Only after a failed request, which wrote nothing.
+    // Only after a failed request, which created no file.
     public void Release() { Interlocked.Exchange(ref taken, 0); }
 
-    // Ask the executor to stop between batches.
-    public bool Request() { return TryCreateStopFile(stopFile); }
+    // Ask the executor to stop between batches. The request carries the milliseconds since this boot. Uptime
+    // starts again at every boot, so a request that records more uptime than the machine has now was written
+    // before a reboot and asked no executor of this boot (Task d80fd886, F2); one written early in an earlier
+    // boot cannot be told apart. An executor that only checks that the file exists ignores the content.
+    public bool Request() { return TryCreateStopFile(stopFile, RequestText(GetTickCount64())); }
 
-    // An existing file (a stop still pending for an earlier executor) is left exactly as it is.
-    public static bool TryCreateStopFile(string path)
+    public static string RequestText(ulong uptimeMs)
     {
-        try { using (File.Open(path, FileMode.CreateNew, FileAccess.Write)) { } return true; } catch (IOException) { return false; }
+        return "{\"contract\":\"clued.independent-ci.stop-request/1\",\"uptimeMs\":" + uptimeMs + "}\n";
     }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] internal static extern ulong GetTickCount64();
+
+    // Written through to disk: stops are rare, and a request cut by a power loss would lose its boot record.
+    public static bool TryCreateStopFile(string path, string text) { return TryCreateStopFile(path, text, (f, b) => { f.Write(b, 0, b.Length); f.Flush(true); }); }
+
+    // An existing file (a stop still pending for an earlier executor) is left exactly as it is. Only "already
+    // there" counts as asked: any other failure to create the file (a missing directory, a full disk) is thrown,
+    // so the stop fails visibly instead of reporting STOPPED while the executor was never asked (Task d80fd886,
+    // F3). Once the file exists the request stands, even if its content could not be written: an empty or cut
+    // request is honoured like one without content. An empty file is also the normal state between CreateNew and
+    // the write, so a reader must never treat an empty or unreadable request as stale. The file is shared for read
+    // and delete, so the executor can read and rename it while the host still holds it.
+    internal static bool TryCreateStopFile(string path, string text, Action<FileStream, byte[]> write)
+    {
+        FileStream f;
+        try { f = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read | FileShare.Delete); }
+        catch (IOException e)
+        {
+            if (AlreadyThere(e)) return false;
+            throw;
+        }
+        try { using (f) write(f, System.Text.Encoding.ASCII.GetBytes(text)); } catch (Exception) { /* the request stands */ }
+        return true;
+    }
+
+    // ERROR_FILE_EXISTS, which CREATE_NEW reports, and ERROR_ALREADY_EXISTS (kept defensively), as HRESULTs.
+    public static bool AlreadyThere(IOException e) { return (uint)e.HResult == 0x80070050u || (uint)e.HResult == 0x800700B7u; }
 
     public static int ServiceExitCode(int executorExitCode) { return executorExitCode == 0 ? 0 : 1064; }
 }
