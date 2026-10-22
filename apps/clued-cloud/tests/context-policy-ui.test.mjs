@@ -51,7 +51,7 @@ const issued={status:'issued',confirmation_token:'clued_cpt_x',view_digest:'d'.r
 
 test('signed-out page sends no requests and offers sign-in',t=>{
  const f=fixture();t.after(()=>f.unmount());f.emit('INITIAL_SESSION',null);
- assert.equal(f.requests.length,0);assert.ok(f.text().includes('登录 KooYomi'));
+ assert.equal(f.requests.length,0);assert.ok(f.text().includes('登录 BeamingFace'));
 });
 
 test('preview then accept sends the exact Native bodies with the session bearer',async t=>{

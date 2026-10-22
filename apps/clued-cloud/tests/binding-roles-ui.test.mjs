@@ -74,7 +74,7 @@ test('signed out: no calls, a link to sign in', async t => {
   const f = fixture(PAGE); t.after(() => f.unmount());
   f.emit('INITIAL_SESSION', null);
   assert.equal(f.calls.length, 0);
-  assert.ok(f.text().includes('登录 KooYomi'));
+  assert.ok(f.text().includes('登录 BeamingFace'));
 });
 
 test('marking a role is two steps: Clued renders the change, 确认 commits exactly that token and digest', async t => {

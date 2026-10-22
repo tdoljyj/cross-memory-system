@@ -15,7 +15,7 @@ export function verifyConnectRelease({ commit, revision, contract, page, smoke, 
   for (const [name, result] of Object.entries({ page, smoke, resource, issuer, servedContract, bootstrap })) {
     if (result?.status !== 200) errors.push(`connect_${name}_http_${result?.status ?? 0}`);
   }
-  if (!/KooYomi Connect/.test(page?.body ?? '')) errors.push('connect_brand_mismatch');
+  if (!/BeamingFace Connect/.test(page?.body ?? '')) errors.push('connect_brand_mismatch');
   const body = smoke?.body;
   if (body?.ok !== true || body?.state_machine?.ok !== true || body?.connect_service !== 'clued-connect') errors.push('connect_smoke_failed');
   if (body?.revision !== revision) errors.push('connect_revision_mismatch');

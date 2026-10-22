@@ -18,7 +18,7 @@ type Json = Record<string, unknown>;
 type Setting = { enabled: boolean; version: number; isDefault: boolean; updatedAt: string | null };
 const object = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
 const MESSAGES: Record<string, string> = {
-  direct_human_session_required: "需要你本人直接登录 KooYomi，授权给应用的登录不能切换这个开关。",
+  direct_human_session_required: "需要你本人直接登录 BeamingFace，授权给应用的登录不能切换这个开关。",
   agent_messages_setting_session_required: "当前登录缺少会话信息，请退出后重新登录。",
   agent_messages_setting_version_conflict: "开关在你打开页面后被改过，已显示最新状态，请确认后再切换。",
 };
@@ -108,11 +108,11 @@ export default function AgentMessagesPage() {
   }
 
   return <main className="context-page owner-confirm">
-    <header><Link href="/">KooYomi</Link> <Link href="/grants">我的授权</Link> <Link href="/work-claims">谁在做哪个任务</Link></header>
+    <header><Link href="/">BeamingFace</Link> <Link href="/grants">我的授权</Link> <Link href="/work-claims">谁在做哪个任务</Link></header>
     <h1>Agent 消息</h1>
-    <p className="context-muted">打开时，你账号下的 Agent（Claude Code、Codex 等）在你已授权的工作里，可以通过 KooYomi 互相发协调消息，比如问对方修复进度、请对方释放占用的文件、排合并顺序，不用每条都来问你。消息只是 Agent 之间的请求，不算你的决定，也不给任何 Agent 增加权限。</p>
-    <p className="context-muted">关闭后，KooYomi 会拒绝新的消息和回复，Agent 会改为把需要协调的事告诉你；已经收到的消息仍然可以读。新账号默认打开。只有你本人登录 KooYomi 才能在这里切换，Agent 改不了。</p>
-    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 KooYomi</Link> 后管理 Agent 消息。</p> : <>
+    <p className="context-muted">打开时，你账号下的 Agent（Claude Code、Codex 等）在你已授权的工作里，可以通过 BeamingFace 互相发协调消息，比如问对方修复进度、请对方释放占用的文件、排合并顺序，不用每条都来问你。消息只是 Agent 之间的请求，不算你的决定，也不给任何 Agent 增加权限。</p>
+    <p className="context-muted">关闭后，BeamingFace 会拒绝新的消息和回复，Agent 会改为把需要协调的事告诉你；已经收到的消息仍然可以读。新账号默认打开。只有你本人登录 BeamingFace 才能在这里切换，Agent 改不了。</p>
+    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 BeamingFace</Link> 后管理 Agent 消息。</p> : <>
       <p className="context-muted">已登录 {session.user.email || session.user.id}</p>
       <section aria-label="开关" className="owner-note">
         {setting === null ? <p role="status">{working ? "正在读取…" : "暂未读到开关状态。"}</p> : <>

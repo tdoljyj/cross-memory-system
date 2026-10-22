@@ -75,6 +75,9 @@ export function fakeEngine(script = {}) {
     async closeBatch(batch, opts) { calls.push(['close', opts?.linux ?? null]); return script.close ?? { verified: true, archived: 3 }; },
     async archiveFailure(batch, reason) { calls.push(['archive-windows', reason]); return script.archiveWindows ?? { verified: true, directory: `failed-x-${reason}-000000000000` }; },
     async windowsQuiescence() { return script.windows ?? WINDOWS_CLEAN; },
+    // Owner abort (DESIGN §6.5): the stop request of a running scanner-issuer stage.
+    async requestStop(batch, number) { calls.push(['request-stop', number]); script.onStop?.(number); return script.stop ?? { broker: true, requestId: '0a1b2c3d-0000-4000-8000-000000000001', stopCode: 'STOP_SENT', pump: true, done: true }; },
+    async stopOutcome() { return script.stopCode === undefined ? 'STOP_SENT' : script.stopCode; },
   };
   return engine;
 }
@@ -93,7 +96,10 @@ export function fakeCompanion(script = {}, clock = () => Date.now()) {
   };
 }
 
-export async function executorFixture(t, { engine = fakeEngine(), companion, policy = rawPolicy(), integrity, now = Date.parse('2026-10-20T12:00:00Z') } = {}) {
+// sleep: the executor's wait between abort polls and quiescence re-checks; a turn of the event loop in tests.
+export const fastSleep = () => new Promise(resolve => setImmediate(resolve));
+
+export async function executorFixture(t, { engine = fakeEngine(), companion, policy = rawPolicy(), integrity, now = Date.parse('2026-10-20T12:00:00Z'), sleep = fastSleep } = {}) {
   const root = await tempRoot(t);
   let time = now;
   const clock = () => time;
@@ -104,7 +110,7 @@ export async function executorFixture(t, { engine = fakeEngine(), companion, pol
   const owner = await OwnerInbox.open(path.join(root, 'owner'), path.join(root, 'state', 'owner-seen'));
   const comp = companion ?? fakeCompanion({}, clock);
   const ports = {
-    policy: validatePolicy(policy), ledger, receipts, inbox, requests, owner, engine, companion: comp, clock,
+    policy: validatePolicy(policy), ledger, receipts, inbox, requests, owner, engine, companion: comp, clock, sleep,
     sourceIntegrity: async () => integrity ?? { ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT },
   };
   const exec = new ResidentExecutor(ports);

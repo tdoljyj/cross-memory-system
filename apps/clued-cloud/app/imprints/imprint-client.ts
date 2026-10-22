@@ -169,7 +169,7 @@ export async function mutateRecord(rpc: NativeRpc, pending: PreparedWrite): Prom
 export function noteInput(id: string, key: string, scope: string, title: string, content: string): Json {
   return { operation: "create", id, idempotency_key: key, record_type: "note", record_schema_version: 1,
     lifecycle_status: "active", scope, authority: "user_explicit", user_confirmed: true, confidence: 1,
-    confidence_reason: "Direct note saved by the signed-in owner", source_refs: [], source_unavailable_reason: "Direct entry in KooYomi",
+    confidence_reason: "Direct note saved by the signed-in owner", source_refs: [], source_unavailable_reason: "Direct entry in BeamingFace",
     mutation: { title: title.trim(), content, type_fields: { note_kind: "observation" }, relations: {} } };
 }
 export function taskDueInput(record: ImprintRecord, key: string, dueAt: string | null): Json {
