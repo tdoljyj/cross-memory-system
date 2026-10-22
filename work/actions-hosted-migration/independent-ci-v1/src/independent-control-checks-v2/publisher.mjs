@@ -35,6 +35,12 @@ export const MERGE_SLOT_WINDOW_MS = 45 * 60_000;
 export const STAGE8_CHECK_MS = 90_000;
 // Why a stage-8 run was not ready (all BLOCKED, zero side effects, before any journal write).
 export const STAGE8_NOT_READY_REASONS = Object.freeze(['RESIDENT_BASE_MOVED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED']);
+// Admission answers no wait can change: the run ends at once with the answer (stage-fact.mjs maps each one to its final
+// code). The claim changed, missing, inactive or expired; Native rejected; the PR closed or its head or base moved;
+// Native's policy unsupported. Phase 2, step 2 (independent review M3): before, the last three were swallowed and came
+// out as the retryable RESIDENT_QUEUE_HEAD_NOT_REACHED after the check window.
+export const QUEUE_WAIT_FINAL_REASONS = Object.freeze(['full_admission_claim_changed', 'full_admission_rejected', 'full_admission_claim_missing',
+  'full_admission_subject_changed', 'full_admission_native_changed', 'full_admission_native_unsupported']);
 const ACTION = 'independent-control-check/2';
 const HASH = /^[a-f0-9]{64}$/, fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
@@ -166,9 +172,16 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     let scheduling = null, last = null;
     const tell = facts => { scheduling = facts; };
     for (let polls = 1; ; polls++) {
-      let observed = null;
-      try { const { packet, facts } = await observe(slotJob, tell); factsValid(slotJob, packet, facts, domain, clock(), batchClaim, { requireQueueHead: false }); observed = facts; last = facts; }
-      catch (e) { if (['full_admission_claim_changed', 'full_admission_rejected', 'full_admission_claim_missing'].includes(e.code)) return { ready: false, reason: e.code, polls, scheduling }; }
+      let observed = null, answered = null;
+      try { const { packet, facts } = await observe(slotJob, tell); answered = facts; factsValid(slotJob, packet, facts, domain, clock(), batchClaim, { requireQueueHead: false }); observed = facts; last = facts; }
+      catch (e) {
+        if (QUEUE_WAIT_FINAL_REASONS.includes(e.code)) {
+          // A protected change Native rejects as no longer up to date is main moving under the batch (review m6).
+          const d = e.code === 'full_admission_rejected' ? fullAdmissionFailureV2(answered)?.admissionDiagnostic : null;
+          const behind = [...(d?.reasonCodes ?? []), ...(d?.nativeReasonCodes ?? [])].includes('protected_change_not_up_to_date');
+          return { ready: false, reason: behind ? 'RESIDENT_BASE_MOVED' : e.code, polls, scheduling };
+        }
+      }
       if (observed && queueHeadReady(slotJob, observed, clock())) return { ready: true, polls, scheduling };
       if (observed && typeof observed.mergeSlot?.tip === 'string' && observed.mergeSlot.tip !== slotJob.baseSha) return { ready: false, reason: 'RESIDENT_BASE_MOVED', polls, scheduling };
       if (clock() + QUEUE_POLL_MS > waitUntil) {

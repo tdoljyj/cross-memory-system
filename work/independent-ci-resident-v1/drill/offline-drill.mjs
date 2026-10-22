@@ -230,7 +230,7 @@ await step('PR 932 parks, then main moves: the batch ends at once, FAILED_CLEAN 
 script.set(933, { 8: [notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')] });
 await step('PR 933 parks; the Owner drain before a reinstall ends it OWNER_ABORTED and leaves nothing open', async () => {
   await drop(trigger(933)); const p = await exec.tick(); now += 1;
-  await writeOwnerRequest(path.join(root, 'owner'), drainRequest({ reason: 'drill reinstall', by: OWNER }), clock);
+  await writeOwnerRequest(path.join(root, 'owner'), drainRequest({ reason: 'drill reinstall', by: OWNER }, clock), clock);
   await exec.tick();
   const open = (await ledger.open()).length;
   const ended = (await Promise.all((await fs.readdir(path.join(state, 'ledger'))).map(k => ledger.state(k)))).filter(e => e.reserved?.subject?.pr === 933);

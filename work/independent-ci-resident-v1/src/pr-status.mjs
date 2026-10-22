@@ -90,11 +90,15 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     // Parked before stage 8 (phase 2, step 2): its checks are published; it waits for the merge queue.
     if (row.state === 'PARKED') {
       if (row.deferred === 'RESIDENT_MERGE_QUEUE_NOT_JOINED') return { state: 'pending', description: clip(`已测通：现在加入合并队列，${at}再查第 8 段`) };
-      return { state: 'pending', description: clip(`已测通，在合并队列${row.queuePosition ? `第 ${row.queuePosition} 位` : '中'}：等成为队首，${at}再查第 8 段`) };
+      // Without a place the Source did not learn whether the claim is in the queue (review of step 2, m13).
+      if (!row.queuePosition) return { state: 'pending', description: clip(`已测通：等合并队列，${at}再查第 8 段`) };
+      return { state: 'pending', description: clip(`已测通，在合并队列第 ${row.queuePosition} 位：等成为队首，${at}再查第 8 段`) };
     }
     if (row.state === 'WAITING') return { state: 'pending', description: clip(`${WAIT_TEXT[row.deferred] ?? `等待中（${code}）`}：${at}自动重试，批准或修正后编辑 PR 可提前`) };
     if (row.state === 'BACKOFF') return { state: 'pending', description: clip(`未准入或未执行（${code}）：${at}自动重试（第 ${row.level} 次），修正后编辑 PR 可提前`) };
     if (status.breaker?.state === 'open') return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：执行器熔断中${status.breaker.nextTrialAt ? `，约 ${hhmm(status.breaker.nextTrialAt)} 试跑` : ''}`) };
+    // No new batch while the parking places are full (phase 2, step 2; review m8): no estimate that assumes a free executor.
+    if (status.executor?.state === 'DEFERRED' && status.executor.reason === 'PARKING_FULL') return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：停靠的批次已满，等它们结束`) };
     const why = row.deferred ? `：${DEFERRED_TEXT[row.deferred] ?? row.deferred}` : '';
     return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位${why}${row.eta && !row.deferred ? `，预计 ${hhmm(row.eta)} 开始` : ''}`) };
   }

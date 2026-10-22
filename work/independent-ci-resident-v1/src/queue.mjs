@@ -388,10 +388,14 @@ export class RunQueue {
     const runnable = this.candidates(now).map(c => c.pr);
     const ahead = new Map(runnable.map((pr, i) => [pr, i]));
     const start = Math.max(now, runningUntil ?? now);
+    // A parked row whose current commit is a newer one (its batch still rests at B) shows that commit as waiting for the
+    // batch, never as tested (independent review of step 2, m3).
+    const parkedHere = r => r.state === 'PARKED' && r.running?.headSha === r.current.headSha;
     return this.data.rows.filter(r => r.current).map(r => ({
-      pr: r.pr, headSha: r.current.headSha, baseSha: r.current.baseSha, state: r.state, reason: r.deferred ?? r.reason ?? null, since: r.since ?? null,
-      nextAt: r.state === 'PARKED' ? (r.parked?.nextAt ?? null) : time(r.nextAt) ? r.nextAt : (r.poke ? r.poke.dueAt : null), level: r.level, origin: r.origin ?? null, stopKind: r.stopKind ?? null,
-      queuePosition: r.state === 'PARKED' ? (r.parked?.position ?? null) : null,
+      pr: r.pr, headSha: r.current.headSha, baseSha: r.current.baseSha, state: r.state === 'PARKED' && !parkedHere(r) ? 'RUNNING' : r.state,
+      reason: r.state === 'PARKED' && !parkedHere(r) ? null : (r.deferred ?? r.reason ?? null), since: r.since ?? null,
+      nextAt: parkedHere(r) ? (r.parked?.nextAt ?? null) : r.state === 'PARKED' ? null : time(r.nextAt) ? r.nextAt : (r.poke ? r.poke.dueAt : null), level: r.level, origin: r.origin ?? null, stopKind: r.stopKind ?? null,
+      queuePosition: parkedHere(r) ? (r.parked?.position ?? null) : null,
       firstAt: r.current.firstAt ?? null, position: ahead.has(r.pr) ? ahead.get(r.pr) + 1 : null,
       eta: ahead.has(r.pr) ? start + ahead.get(r.pr) * etaBatchMs : null,
     })).sort((a, b) => (a.position ?? 1e9) - (b.position ?? 1e9) || a.pr - b.pr);

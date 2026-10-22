@@ -5,7 +5,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { ResidentExecutor, PARK_HEAD_RETRY_MS } from '../src/executor.mjs';
+import { ResidentExecutor, PARK_HEAD_RETRY_MS, PARK_HEAD_STREAK_MS } from '../src/executor.mjs';
+import { POSITIONS, closedBreaker } from '../src/breaker.mjs';
+import { describe as prPage } from '../src/pr-status.mjs';
+import { StatusBoard, parseStatus } from '../src/status.mjs';
 import { Ledger, batchKey, headKey } from '../src/ledger.mjs';
 import { drainRequest, abortRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
 import { BASE, HEAD, RELAY_ON, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, rawPolicy, triggerBytes } from './helpers.mjs';
@@ -122,7 +125,7 @@ test('the Owner aborts a parked batch at a tick start, and a drain ends every pa
   assert.deepEqual([s.outcome, s.terminal.facts.failureCode, s.terminal.facts.safePoint], ['FAILED_CLEAN', 'OWNER_ABORTED', 'parked']);
   // drain: the other parked batch ends too; nothing is open afterwards, so the uninstall is allowed
   f.advance(1);
-  await writeOwnerRequest(path.join(f.root, 'owner'), drainRequest({ reason: 'reinstall', by: OWNER }), f.clock);
+  await writeOwnerRequest(path.join(f.root, 'owner'), drainRequest({ reason: 'reinstall', by: OWNER }, f.clock), f.clock);
   await f.exec.tick();
   assert.equal((await f.ledger.open()).length, 0);
   assert.equal((await f.ledger.state(batchKey(subject({ pr: 900, headSha: H(4) })))).terminal.facts.failureCode, 'OWNER_ABORTED');
@@ -161,12 +164,11 @@ test('a nudge (main moved, or the parked PR changed) brings the next try forward
 });
 
 test('an install authority ending soon closes a parked batch neutrally instead of a HALT', async t => {
-  const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]), policy: rawPolicy({ validUntil: '2026-10-22T12:00:00Z' }) });
+  const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]), policy: rawPolicy({ validUntil: '2026-10-21T02:00:00Z' }) });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'PARKED');
-  f.advance(10 * MIN);
-  // the same policy object, its validUntil now within a batch budget (2026-10-20 + 10 min + ~3 h < 2026-10-22? no): shift the clock
-  f.advance(Date.parse('2026-10-22T09:00:00Z') - f.clock());
+  // 11.5 hours later (inside park.maxMs) the install authority ends within one batch budget
+  f.advance(Date.parse('2026-10-20T23:30:00Z') - f.clock());
   const r = await f.exec.tick();
   assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'PARKED_AUTHORITY_EXPIRING']);
   assert.equal(await f.ledger.halted(), null);
@@ -225,4 +227,200 @@ test('a newer commit of a parked PR ends the parked batch once a live read confi
   assert.equal((await f.exec.tick()).state, 'COMPLETED');
   assert.equal(f.queue.row(884).current.headSha, H(7));
   assert.equal(f.queue.row(884).state, 'DONE');
+});
+
+// ---- the independent review of step 2 ----
+const bodies = async (f, type) => {
+  const out = [];
+  for (const e of await f.receipts.entries()) if (e.type === type) out.push(JSON.parse(await fs.readFile(path.join(f.receipts.dir, e.name), 'utf8')).body);
+  return out;
+};
+const UNCERTAIN = { ok: false, code: 'PUBLICATION_UNCERTAIN', proof: WINDOWS_CLEAN, outcome: { status: 'UNCERTAIN', reason: 'x', sideEffects: 1, mayHavePublished: true, diagnostic: null, scheduling: null, safeToRerun: false } };
+const K900 = batchKey(subject({ pr: 900, headSha: H(4) }));
+
+test('review M1, m10: the drain keeps the Owner abort guards (another scene, drift, a failed recovery, a stale request)', async t => {
+  // PR 884 parks; PR 900 then fails stage 3 uncertain: FAILED_UNKNOWN, HALT, its scene unarchived
+  const engine = stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')], KEY);
+  const at8 = engine.runStage;
+  engine.runStage = async (batch, stage, o) => (batch.key === K900 && stage.number === 3 ? (engine.calls.push(['stage', 3]), UNCERTAIN) : at8(batch, stage, o));
+  const f = await executorFixture(t, { engine });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  await f.drop(triggerBytes({ pr: 900, headSha: H(4) }));
+  assert.equal((await f.exec.tick()).state, 'HALTED');
+  assert.ok((await f.ledger.unarchivedScenes()) > 0);
+  f.advance(1);
+  await writeOwnerRequest(path.join(f.root, 'owner'), drainRequest({ reason: 'reinstall', by: OWNER }, f.clock), f.clock);
+  await f.exec.tick();
+  assert.deepEqual((await bodies(f, 'owner-request-refused')).map(b => b.failureCode), ['OWNER_DRAIN_UNARCHIVED_SCENE_PRESENT']);
+  assert.ok(Ledger.parkedAt(await f.ledger.state(KEY)), 'the parked batch is untouched; nothing was archived over the scene');
+  assert.equal(engine.calls.filter(c => c[0] === 'archive-windows').length, 0);
+  // drifted installed bytes
+  const g = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')], KEY) });
+  await g.drop(triggerBytes());
+  assert.equal((await g.exec.tick()).state, 'PARKED');
+  const drifted = new ResidentExecutor({ ...g.ports, sourceIntegrity: async () => ({ ok: false }) });
+  g.advance(1);
+  await writeOwnerRequest(path.join(g.root, 'owner'), drainRequest({ reason: 'reinstall', by: OWNER }, g.clock), g.clock);
+  await drifted.tick();
+  assert.deepEqual((await bodies(g, 'owner-request-refused')).map(b => b.failureCode), ['OWNER_DRAIN_SOURCE_DRIFT']);
+  assert.ok(Ledger.parkedAt(await g.ledger.state(KEY)));
+  // a request written more than an hour before the service reads it
+  const h = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')], KEY) });
+  await h.drop(triggerBytes());
+  assert.equal((await h.exec.tick()).state, 'PARKED');
+  const written = h.clock();
+  h.advance(61 * MIN);
+  await writeOwnerRequest(path.join(h.root, 'owner'), drainRequest({ reason: 'reinstall', by: OWNER }, () => written), h.clock);
+  await h.exec.tick();
+  assert.ok((await bodies(h, 'owner-request-refused')).some(b => b.failureCode === 'OWNER_DRAIN_REQUEST_STALE'));
+  // recovery failed this tick: refused too
+  const k = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')], KEY) });
+  await k.drop(triggerBytes());
+  assert.equal((await k.exec.tick()).state, 'PARKED');
+  k.exec.recover = async () => { throw new Error('disk'); };
+  k.advance(1);
+  await writeOwnerRequest(path.join(k.root, 'owner'), drainRequest({ reason: 'reinstall', by: OWNER }, k.clock), k.clock);
+  await k.exec.tick();
+  assert.ok((await bodies(k, 'owner-request-refused')).some(b => b.failureCode === 'OWNER_DRAIN_RECOVERY_UNCONFIRMED'));
+});
+
+test('review M1: the drain ends a batch waiting at parking point A (not published) the same way', async t => {
+  const f = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => null }) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'WAITING');
+  f.advance(1);
+  await writeOwnerRequest(path.join(f.root, 'owner'), drainRequest({ reason: 'reinstall', by: OWNER }, f.clock), f.clock);
+  await f.exec.tick();
+  const s = await f.ledger.state(KEY);
+  assert.deepEqual([s.outcome, s.terminal.facts.failureCode, s.terminal.facts.safePoint, s.abort.safePoint], ['FAILED_CLEAN', 'OWNER_ABORTED', 'waiting', 'waiting']);
+  assert.equal(await f.executedHeads.published(subject()), false);
+  assert.deepEqual((await bodies(f, 'owner-request')).map(b => [b.kind, b.remaining]), [['drain', 0]]);
+});
+
+test('review M2: a supersession at parking point B never closes a breaker a Linux place opened', async t => {
+  const engine = stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')], KEY);
+  const at8 = engine.runStage;
+  const failing = new Set([batchKey(subject({ pr: 901, headSha: H(3) })), batchKey(subject({ pr: 902, headSha: H(6) })), batchKey(subject({ pr: 903, headSha: H(8) }))]);
+  engine.runStage = async (batch, stage, o) => (failing.has(batch.key) && stage.number === 2 ? (engine.calls.push(['stage', 2]), { ok: false, code: 'STAGE_PACKAGE_REFUSED', proof: WINDOWS_CLEAN }) : at8(batch, stage, o));
+  const f = await executorFixture(t, { engine, companion: fakeCompanion({ pull: pr => ({ number: pr, state: 'open', headSha: pr === 884 ? H(7) : null }) }) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  for (const [n, h] of [[1, 3], [2, 6], [3, 8]]) { await f.drop(triggerBytes({ pr: 900 + n, headSha: H(h) })); assert.equal((await f.exec.tick()).state, 'FAILED_CLEAN'); }
+  assert.equal(f.queue.breaker.state, 'open');
+  await f.drop(triggerBytes({ headSha: H(7) }));
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'SUPERSEDED_AT_SAFE_POINT']);
+  assert.equal(f.queue.breaker.state, 'open', 'the stage-8 place is Windows-only');
+});
+
+test('review m2: the Owner abort of a batch at B records safe point parked from its first record', async t => {
+  const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')], KEY) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  const latest = await f.ledger.latestRecord(KEY);
+  await writeOwnerRequest(path.join(f.root, 'owner'), abortRequest({ batchKey: KEY, expectedLedgerEntrySha256: latest.sha256, reason: 'stuck', by: OWNER }), f.clock);
+  await f.exec.tick();
+  const s = await f.ledger.state(KEY);
+  assert.deepEqual([s.abort.safePoint, s.terminal.facts.safePoint], ['parked', 'parked']);
+  assert.deepEqual((await bodies(f, 'owner-abort-accepted')).map(b => b.safePoint), ['parked']);
+});
+
+test('review m3, m13, m8: the PR page never calls an untested commit tested, nor claims a queue place it does not know', async t => {
+  // a newer commit of a parked PR, the live read unanswered: the batch stays at B, the newer commit is not shown parked
+  const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')], KEY) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  await f.drop(triggerBytes({ headSha: H(7) }));
+  await f.exec.tick();
+  assert.ok(Ledger.parkedAt(await f.ledger.state(KEY)));
+  const row = f.queue.view(f.clock(), { etaBatchMs: 20 * MIN }).find(r => r.pr === 884);
+  assert.deepEqual([row.headSha, row.state, row.queuePosition], [H(7), 'RUNNING', null]);
+  const now = Date.parse('2026-10-22T09:00:00Z');
+  const board = fn => { const b = new StatusBoard({ clock: () => now }); b.update({ backfill: { complete: true, published: 0, unreadable: 0 } }); fn(b); return parseStatus(Buffer.from(JSON.stringify(b.snapshot()))); };
+  const pull = { pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 };
+  const newer = prPage({ pull, status: board(b => b.setPending([{ pr: 7, headSha: H(7), baseSha: BASE, state: 'RUNNING' }])), now });
+  assert.ok(newer === null || (newer.weak === true && !/已测通/.test(newer.description)), JSON.stringify(newer));
+  // a parked row without a place: waiting for the merge queue, no claim that it is in it
+  const parked = prPage({ pull, status: board(b => b.setPending([{ pr: 7, headSha: H(7), baseSha: BASE, state: 'PARKED', deferred: 'RESIDENT_QUEUE_HEAD_NOT_REACHED', nextAt: now + 10 * MIN }])), now });
+  assert.match(parked.description, /^已测通：等合并队列/);
+  const placed = prPage({ pull, status: board(b => b.setPending([{ pr: 7, headSha: H(7), baseSha: BASE, state: 'PARKED', deferred: 'RESIDENT_QUEUE_HEAD_NOT_REACHED', queuePosition: 2, nextAt: now + 10 * MIN }])), now });
+  assert.match(placed.description, /在合并队列第 2 位/);
+  // the parking places full: no estimate that assumes a free executor
+  const full = prPage({ pull, status: board(b => { b.setState('DEFERRED', 'PARKING_FULL'); b.setPending([{ pr: 6, headSha: H(6), baseSha: BASE }, { pr: 7, headSha: H(7), baseSha: BASE, eta: now + 20 * MIN }]); }), now });
+  assert.equal(full.description, '排队第 2 位：停靠的批次已满，等它们结束');
+});
+
+test('review m4: park.maxMs ends a parked batch at a tick start even when no try is allowed', async t => {
+  const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')], KEY), policy: rawPolicy({ park: { ...rawPolicy().park, stage8RetriesPer24h: 0 } }) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  f.advance(23 * 60 * MIN);
+  assert.ok(Ledger.parkedAt(await f.ledger.state(KEY)), 'no retry budget: it only rests');
+  await f.exec.tick();
+  assert.ok(Ledger.parkedAt(await f.ledger.state(KEY)));
+  f.advance(60 * MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'RESIDENT_MERGE_QUEUE_NOT_JOINED']);
+  assert.equal(stagesRun(f.engine).filter(n => n === 8).length, 1, 'no stage ran for the ending');
+  assert.equal(await f.ledger.halted(), null);
+});
+
+test('review m5: tries first in the merge queue come a minute apart for 15 minutes and never use up the try cap', async t => {
+  const head = notReady('RESIDENT_QUEUE_HEAD_NOT_REACHED', { entered: true, state: 'waiting', position: 1 });
+  const f = await executorFixture(t, { engine: stage8Engine(Array.from({ length: 40 }, () => head), KEY) });
+  await f.drop(triggerBytes());
+  let r = await f.exec.tick();
+  const start = f.clock();
+  let tries = 1;
+  while (f.clock() - start < PARK_HEAD_STREAK_MS) {
+    assert.equal(r.until - f.clock(), PARK_HEAD_RETRY_MS, `try ${tries}`);
+    f.advance(PARK_HEAD_RETRY_MS);
+    r = await f.exec.tick();
+    tries += 1;
+    assert.equal(r.state, 'PARKED', `try ${tries}`);
+  }
+  assert.ok(tries > rawPolicy().park.stage8MaxTries, 'more head tries than the cap, still parked');
+  assert.ok(r.until - f.clock() > PARK_HEAD_RETRY_MS, 'after 15 minutes the back-off applies again');
+  assert.equal((await f.ledger.usage(f.clock() - 24 * 60 * MIN)).stage8Retries, tries - 1, 'every try after the first is a stage-8 retry');
+});
+
+test('review m7: a re-read of a seen trigger nudges nothing; a new main tip nudges once', async t => {
+  const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')], KEY) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  const tries = async () => (await f.ledger.state(KEY)).tries.length;
+  await f.drop(triggerBytes());   // the same trigger again: seen
+  await f.exec.tick();
+  assert.equal(await tries(), 1);
+  // main moved: the poller's trigger of another PR carries the new tip
+  await f.drop(triggerBytes({ pr: 900, headSha: H(4), baseSha: H(5) }));
+  const moved = await f.exec.tick();
+  assert.deepEqual([moved.state, await tries()], ['PARKED', 2]);
+  // the same tip again later: no second nudge for it
+  f.advance(6 * MIN);
+  await f.drop(triggerBytes({ pr: 901, headSha: H(6), baseSha: H(5) }));
+  await f.exec.tick();
+  assert.equal(await tries(), 2);
+});
+
+test('review m9, m11, m12: no new batch while the outside bound is full or a trial rests at A; a breaker feed never ends a parked batch', async t => {
+  const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')], KEY), policy: rawPolicy({ park: { ...rawPolicy().park, maxParkedOutsideTop2: 1 } }) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  await f.drop(triggerBytes({ pr: 900, headSha: H(4) }));
+  assert.deepEqual([(await f.exec.tick()).reason, f.engine.calls.filter(c => c[0] === 'derive').length], ['PARKING_FULL', 1]);
+  // a half-open breaker starts no trial while a batch rests at parking point A
+  const g = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => null }) });
+  await g.drop(triggerBytes());
+  assert.equal((await g.exec.tick()).state, 'WAITING');
+  g.queue.breaker = { ...closedBreaker(), state: 'open', level: 0, openedAt: g.clock(), nextTrialAt: g.clock() - 1, failingPos: POSITIONS[2], failingWindowsOnly: false, exclude: [] };
+  await g.drop(triggerBytes({ pr: 900, headSha: H(4) }));
+  assert.equal((await g.exec.tick()).reason, 'BREAKER_TRIAL_PENDING');
+  // a breaker feed that throws when the batch parks never turns the batch at rest into a crash
+  const h = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')], KEY) });
+  h.exec.feedBreaker = async () => { throw new Error('receipt store full'); };
+  await h.drop(triggerBytes());
+  assert.equal((await h.exec.tick()).state, 'PARKED');
+  assert.equal(await h.ledger.halted(), null);
 });

@@ -7,7 +7,8 @@ import { batchJobsV2, claimGeneration, scanEffectKeyV2, subjectOfV2 } from '../s
 import { EffectJournal } from '../src/effect-journal.mjs';
 import { recordBatchClaim, readBatchClaim } from '../src/batch-claim-v2.mjs';
 import { createFixtureWorkAdmissionPublisherV2 } from '../src/formal-work-admission-check-v2/publisher.mjs';
-import { createFixtureControlPublisherV2, queueWindow, QUEUE_POLL_MS, STAGE8_CHECK_MS } from '../src/independent-control-checks-v2/publisher.mjs';
+import { createFixtureControlPublisherV2, queueWindow, QUEUE_POLL_MS, QUEUE_WAIT_FINAL_REASONS, STAGE8_CHECK_MS } from '../src/independent-control-checks-v2/publisher.mjs';
+import { outcomeFailureCode } from '../src/resident-v2/stage-fact.mjs';
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { protectedFactsFromVerify } from '../runtime/one-shot-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
@@ -244,4 +245,35 @@ test('control pair v2 (phase 2, step 2): one run only checks; main moved ends it
   const pub2 = createFixtureControlPublisherV2({ github, journal, admission: moved, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c), clock: () => time, sleep: async ms => { time += ms; } });
   const r2 = await pub2.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS });
   assert.deepEqual([r2.status, r2.reason, r2.sideEffects, r2.polls, github.checks.length], ['BLOCKED', 'RESIDENT_BASE_MOVED', 0, 1, 0]);
+});
+
+test('control pair v2 (phase 2, step 2, review M3, m6): an answer no wait can change ends the run at once with its final code', async t => {
+  const jobs = jobsFor(), c = claim(), github = fakeGithub();
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  let time = Date.now();
+  const runWith = async answer => {
+    let polls = 0;
+    const pub = createFixtureControlPublisherV2({ github, journal, admission: fakeAdmission(() => { polls++; return answer(); }), assertLive() {}, record() {}, authority: {},
+      batchClaim: claimGeneration(c), clock: () => time, sleep: async ms => { time += ms; } });
+    const r = await pub.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS });
+    return { ...r, calls: polls };
+  };
+  const finals = { full_admission_subject_changed: 'PR_NOT_OPEN_OR_CHANGED', full_admission_native_changed: 'BATCH_CLAIM_CHANGED',
+    full_admission_native_unsupported: 'NATIVE_POLICY_UNSUPPORTED', full_admission_claim_changed: 'BATCH_CLAIM_CHANGED', full_admission_claim_missing: 'BATCH_CLAIM_CHANGED' };
+  for (const [reason, code] of Object.entries(finals)) {
+    assert.ok(QUEUE_WAIT_FINAL_REASONS.includes(reason), reason);
+    const r = await runWith(() => blocked(reason));
+    assert.deepEqual([r.status, r.reason, r.sideEffects, r.polls, r.calls, github.checks.length], ['BLOCKED', reason, 0, 1, 1, 0], reason);
+    assert.equal(outcomeFailureCode({ status: r.status, reason: r.reason, sideEffects: 0, mayHavePublished: false }, 8), code, reason);
+  }
+  // a protected change Native rejects as not up to date is main moving under the batch
+  const behind = await runWith(() => ({ ...blocked('full_admission_rejected'), diagnostic: { reasonCodes: ['protected_change_not_up_to_date'], nativeReasonCodes: [] } }));
+  assert.deepEqual([behind.status, behind.reason, behind.polls], ['BLOCKED', 'RESIDENT_BASE_MOVED', 1]);
+  assert.equal(outcomeFailureCode({ status: 'BLOCKED', reason: 'RESIDENT_BASE_MOVED', sideEffects: 0, mayHavePublished: false }, 8), 'RESIDENT_BASE_MOVED');
+  // any other rejection stays the batch claim's (final as before)
+  const other = await runWith(() => ({ ...blocked('full_admission_rejected'), diagnostic: { reasonCodes: ['owner_grant_required'], nativeReasonCodes: [] } }));
+  assert.deepEqual([other.reason, outcomeFailureCode({ status: 'BLOCKED', reason: other.reason, sideEffects: 0, mayHavePublished: false }, 8)], ['full_admission_rejected', 'BATCH_CLAIM_CHANGED']);
+  // a transient answer is still waited out inside the window (and ends not ready)
+  const flaky = await runWith(() => blocked('full_admission_unavailable'));
+  assert.deepEqual([flaky.reason, flaky.calls > 1], ['RESIDENT_QUEUE_HEAD_NOT_REACHED', true]);
 });
