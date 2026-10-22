@@ -22,7 +22,7 @@ import { check, isoNow } from './canonical.mjs';
 import { exists, nonce, readJson, renameToNew, writeNew } from './store.mjs';
 
 const FRESH_MS = 10 * 60_000;
-const EARLIER_BOOT_MARGIN_MS = 60_000;
+export const EARLIER_BOOT_MARGIN_MS = 60_000; // also the stop request's (src/stop-request.mjs)
 
 // Rounded, not floored: os.uptime() is GetTickCount64() / 1000 on Windows, and only rounding gives back the exact
 // milliseconds (flooring loses one for about one value in a hundred), so a record compares exactly with the host's.
