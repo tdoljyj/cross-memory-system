@@ -1913,6 +1913,153 @@ test("gate guard (re-review 4, m3): an ungated self-hosted job may not add or ch
   assert.deepEqual(gateFindings(ungated, ungated), []);
 });
 
+// Owner Decision 586181ec: an ungated self-hosted job's strategy may lose
+// matrix entries, and change nothing else.
+const SHRUNK = [];
+const STRATEGY_CHANGED = ["self_hosted_strategy_changed_ungated:trivy-trusted-self-hosted"];
+const INCLUDE_STRATEGY = [
+  "    strategy:",
+  "      fail-fast: false",
+  "      max-parallel: 2",
+  "      matrix:",
+  "        include:",
+  "          # One entry per runner.",
+  "          - runner_name: runner-a",
+  "            route_label: route-a",
+  "          - runner_name: runner-b",
+  "            route_label: \"route-b\"",
+  "          - runner_name: runner-c",
+  "            route_label: route-c",
+];
+// The historical ungated Trivy workflow with these strategy lines on its self-hosted job.
+const withStrategy = (lines) => historicalUngatedTrivy().replace("    timeout-minutes: 25\n", `    timeout-minutes: 25\n${lines.join("\n")}\n`);
+const dropLines = (lines, ...drop) => lines.filter((_, i) => !drop.includes(i));
+const setLine = (lines, i, ...text) => [...lines.slice(0, i), ...text, ...lines.slice(i + 1)];
+const insertLines = (lines, i, ...text) => [...lines.slice(0, i), ...text, ...lines.slice(i)];
+function assertShrinkCases(cases) {
+  for (const [label, base, head, expected] of cases) {
+    const baseText = withStrategy(base);
+    const headText = withStrategy(head);
+    assert.notEqual(headText, baseText, label);
+    assert.deepEqual(gateFindings(headText, baseText), expected, label);
+  }
+}
+
+test("gate guard (Owner Decision 586181ec): an include entry may be removed, nothing added or changed", () => {
+  const S = INCLUDE_STRATEGY;
+  const lastGone = dropLines(S, 10, 11);
+  assertShrinkCases([
+    ["remove the last entry", S, lastGone, SHRUNK],
+    ["remove a middle entry", S, dropLines(S, 8, 9), SHRUNK],
+    ["remove all but one entry", S, dropLines(S, 8, 9, 10, 11), SHRUNK],
+    ["remove an entry and reword the comment", S, setLine(lastGone, 5, "          # Runner c is retired."), SHRUNK],
+    ["remove an entry, drop the comment and add a blank line", S, insertLines(dropLines(S, 5, 10, 11), 4, ""), SHRUNK],
+    ["remove every entry", S, dropLines(S, 5, 6, 7, 8, 9, 10, 11), STRATEGY_CHANGED],
+    ["add an entry", S, [...S, "          - runner_name: runner-d", "            route_label: route-d"], STRATEGY_CHANGED],
+    ["replace an entry by a new one", S, [...lastGone, "          - runner_name: runner-d", "            route_label: route-d"], STRATEGY_CHANGED],
+    ["change a value in a kept entry", S, setLine(lastGone, 7, "            route_label: route-x"), STRATEGY_CHANGED],
+    ["change a value without a removal", S, setLine(S, 7, "            route_label: route-x"), STRATEGY_CHANGED],
+    ["requote a value in a kept entry", S, setLine(lastGone, 9, "            route_label: route-b"), STRATEGY_CHANGED],
+    ["add a key to a kept entry", S, insertLines(lastGone, 8, "            extra: x"), STRATEGY_CHANGED],
+    ["remove a key from a kept entry", S, dropLines(S, 7), STRATEGY_CHANGED],
+    ["change fail-fast", S, setLine(lastGone, 1, "      fail-fast: true"), STRATEGY_CHANGED],
+    ["remove fail-fast", S, dropLines(lastGone, 1), STRATEGY_CHANGED],
+    ["change max-parallel", S, setLine(lastGone, 2, "      max-parallel: 3"), STRATEGY_CHANGED],
+    ["remove max-parallel", S, dropLines(lastGone, 2), STRATEGY_CHANGED],
+    ["add an exclude", S, insertLines(lastGone, 4, "        exclude:", "          - runner_name: runner-a"), STRATEGY_CHANGED],
+    ["add an axis", S, insertLines(lastGone, 4, "        shard: [1, 2]"), STRATEGY_CHANGED],
+    ["reorder the keys", S, [S[0], S[2], S[1], ...lastGone.slice(3)], STRATEGY_CHANGED],
+    // Decided: a reorder is a change (an include entry may overwrite values an
+    // earlier one added), with or without a removal.
+    ["reorder the entries", S, [...S.slice(0, 6), ...S.slice(8, 10), ...S.slice(6, 8), ...S.slice(10)], STRATEGY_CHANGED],
+    ["reorder the entries and remove one", S, [...S.slice(0, 6), ...S.slice(8, 10), ...S.slice(6, 8)], STRATEGY_CHANGED],
+    // Decided: comments and blank lines alone remove nothing, so a change of
+    // only those stays reported, as before.
+    ["change only the comment", S, setLine(S, 5, "          # Runners a to c."), STRATEGY_CHANGED],
+    ["add only a blank line", S, insertLines(S, 6, ""), STRATEGY_CHANGED],
+  ]);
+  // A removal does not hide a timeout raise next to it.
+  const raised = withStrategy(lastGone).replace("    timeout-minutes: 25\n", "    timeout-minutes: 360\n");
+  assert.deepEqual(gateFindings(raised, withStrategy(S)), ["self_hosted_timeout_raised_ungated:trivy-trusted-self-hosted"]);
+  assert.deepEqual(gateFindings(withStrategy(S), withStrategy(S)), []);
+});
+
+test("gate guard (Owner Decision 586181ec): an axis value may be removed only from a matrix without include", () => {
+  const flow = ["    strategy:", "      matrix:", "        shard: [1, 2, 3]", "        os: [linux]"];
+  const block = ["    strategy:", "      matrix:", "        shard:", "          - 1", "          - 2", "          - 3"];
+  const withInclude = [...flow, "        include:", "          - shard: 2", "            extra: x", "          - shard: 3", "            extra: y"];
+  const withExclude = [...flow, "        exclude:", "          - shard: 1", "          - shard: 2"];
+  assertShrinkCases([
+    ["remove a flow value", flow, setLine(flow, 2, "        shard: [1, 3]"), SHRUNK],
+    ["remove all but one flow value", flow, setLine(flow, 2, "        shard: [3]"), SHRUNK],
+    ["remove a block value", block, dropLines(block, 4), SHRUNK],
+    ["remove every flow value", flow, setLine(flow, 2, "        shard: []"), STRATEGY_CHANGED],
+    ["remove every block value", block, dropLines(block, 3, 4, 5), STRATEGY_CHANGED],
+    ["remove an axis", flow, dropLines(flow, 3), STRATEGY_CHANGED],
+    ["add a value", flow, setLine(flow, 2, "        shard: [1, 2, 3, 4]"), STRATEGY_CHANGED],
+    ["replace a value", flow, setLine(flow, 2, "        shard: [1, 2, 4]"), STRATEGY_CHANGED],
+    ["reorder and remove", flow, setLine(flow, 2, "        shard: [3, 1]"), STRATEGY_CHANGED],
+    ["flow to block with fewer values", flow, [...flow.slice(0, 2), "        shard:", "          - 1", "          - 3", flow[3]], STRATEGY_CHANGED],
+    // A removed value could turn an include entry into a combination of its own.
+    ["remove a value next to include", withInclude, setLine(withInclude, 2, "        shard: [1, 3]"), STRATEGY_CHANGED],
+    ["remove an include entry next to an axis", withInclude, dropLines(withInclude, 7, 8), SHRUNK],
+    ["remove a value next to exclude", withExclude, setLine(withExclude, 2, "        shard: [1, 2]"), SHRUNK],
+    ["remove an exclude entry", withExclude, dropLines(withExclude, 6), STRATEGY_CHANGED],
+    ["add an exclude entry", withExclude, [...withExclude, "          - shard: 3"], STRATEGY_CHANGED],
+  ]);
+});
+
+test("gate guard (Owner Decision 586181ec): a strategy that is not read with certainty stays reported", () => {
+  const S = INCLUDE_STRATEGY;
+  // Each pair is the same base form with the last entry removed in the head.
+  const both = (label, lines) => [label, lines, lines.filter((line) => !/runner-c|route-c/.test(line)), STRATEGY_CHANGED];
+  assertShrinkCases([
+    both("an anchor", setLine(S, 3, "      matrix: &m")),
+    both("an inline comment", setLine(S, 7, "            route_label: route-a # a")),
+    both("a block scalar", setLine(S, 7, "            route_label: |", "              route-a")),
+    both("a multi-line plain scalar", insertLines(S, 8, "              more")),
+    both("a bare dash", setLine(S, 6, "          -", "            runner_name: runner-a")),
+    both("an indentless sequence", S.map((line) => line.replace(/^ {10}/, "        "))),
+    both("uneven indentation", setLine(S, 7, "             route_label: route-a")),
+    both("a duplicate key", insertLines(S, 8, "            route_label: route-z")),
+    both("a no-break space", setLine(S, 7, "            route_label: route-a ")),
+    both("a merge key in the job", insertLines(S, 0, "    <<: *defaults")),
+    both("a quoted second strategy key", [...S, "    \"strategy\":", "      matrix:", "        n: [1, 2, 3]"]),
+    both("a second strategy key in another case", [...S, "    Strategy:", "      matrix:", "        n: [1, 2, 3]"]),
+    both("a strategy line with a value", setLine(S, 0, "    strategy: # entries below")),
+    ["a flow mapping include", ["    strategy:", "      matrix:", "        include: [{runner_name: runner-a}, {runner_name: runner-b}]"],
+      ["    strategy:", "      matrix:", "        include: [{runner_name: runner-a}]"], STRATEGY_CHANGED],
+    ["an expression strategy", ["    strategy: ${{ fromJSON(vars.S) }}"], ["    strategy: ${{ fromJSON(vars.T) }}"], STRATEGY_CHANGED],
+    ["an expression matrix", ["    strategy:", "      matrix: ${{ fromJSON(vars.M) }}"], ["    strategy:", "      matrix: ${{ fromJSON(vars.N) }}"], STRATEGY_CHANGED],
+  ]);
+});
+
+test("gate guard (Owner Decision 586181ec): PR #890's heartbeat matrix removal passes", () => {
+  const fixture = JSON.parse(fs.readFileSync(path.join(ROOT, "scripts", "ci", "fixtures", "heartbeat-pr890-strategy-shrink.v1.json"), "utf8"));
+  // The exact git blobs of the workflow at main fbb4a8d9 and at the PR head b86084a5.
+  const blob = (text) => crypto.createHash("sha1").update(`blob ${Buffer.byteLength(text, "utf8")}\0`).update(text, "utf8").digest("hex");
+  assert.deepEqual([fixture.base.commit, blob(fixture.base.text)], ["fbb4a8d9cf35590bedf2352f15840428eb8150b2", "6103ee624bf1a8b5c5975dc4a08ae2ccac1643f3"]);
+  assert.deepEqual([fixture.head.commit, blob(fixture.head.text)], ["b86084a5b11af7a360b729be5a3f29b231745526", "707debbca71be56b749301b29467bc5d117fe7ef"]);
+  const { base: { text: base }, head: { text: head } } = fixture;
+  assert.equal(workflowIsGated(base), false);
+  assert.equal(workflowJobs(head).filter((job) => !jobIsHosted(job)).length, 2);
+  assert.deepEqual(gateFindings(head, base), []);
+  assert.deepEqual(ownerReviewFindings(head, base), []);
+  // The other direction adds the entry back, and a changed kept entry or
+  // fail-fast is still refused.
+  assert.deepEqual(gateFindings(base, head), ["self_hosted_strategy_changed_ungated:linux-route"]);
+  const relabelled = head.replace("route_label: runner-company-linux-02", "route_label: site-company");
+  assert.notEqual(relabelled, head);
+  assert.deepEqual(gateFindings(relabelled, base), ["self_hosted_strategy_changed_ungated:linux-route"]);
+  const failFast = head.replace(/(  linux-route:\n(?:.*\n)*?)      fail-fast: false\n/, "$1      fail-fast: true\n");
+  assert.notEqual(failFast, head);
+  assert.deepEqual(gateFindings(failFast, base), ["self_hosted_strategy_changed_ungated:linux-route"]);
+  // Removing the home Windows runner as well shrinks the other job too.
+  const windowsToo = head.replace("          - runner_name: clued-ci-home-win-01\n            site_label: site-home\n", "");
+  assert.notEqual(windowsToo, head);
+  assert.deepEqual(gateFindings(windowsToo, base), []);
+});
+
 test("workflows (re-review 4, M2 and m6): renamed deploy secrets; admission side jobs check out the default branch", () => {
   const dir = path.join(ROOT, ".github", "workflows");
   for (const file of fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f))) {
