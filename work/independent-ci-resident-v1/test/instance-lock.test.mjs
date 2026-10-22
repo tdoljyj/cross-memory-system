@@ -139,3 +139,8 @@ test('seconds become the exact milliseconds they came from (GetTickCount64 / 100
   for (const ms of [2058941, 32840094, 32943041, 33045988]) assert.equal(secondsToMs(ms / 1000), ms);
   for (let ms = 0; ms < 4e10; ms += 999_983) assert.equal(secondsToMs(ms / 1000), ms, String(ms));
 });
+
+test('the default uptime goes through that conversion', t => {
+  t.mock.method(os, 'uptime', () => 32840094 / 1000);
+  assert.equal(uptimeMs(), 32840094);
+});
