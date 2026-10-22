@@ -529,3 +529,33 @@ test('final check n2: alternating main tips nudge once each, not every 5 minutes
   // X and Y nudge once each (tries 2 and 3); X and Y again nudge nothing (no try is due by its back-off yet)
   assert.deepEqual(seen, [2, 3, 3, 3]);
 });
+
+test('final check n6: a later entry failing after its acceptance stops the drain with what it ended, then HALTs', async t => {
+  // the Owner abort's own path fails on the second entry (accepted, not concluded), or so does its UNKNOWN ending
+  for (const where of ['owner-abort', 'unknown']) {
+    const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]) });
+    await f.drop(triggerBytes());
+    assert.equal((await f.exec.tick()).state, 'PARKED');
+    await f.drop(triggerBytes({ pr: 900, headSha: H(4) }));
+    assert.equal((await f.exec.tick()).state, 'PARKED');
+    const disk = () => Object.assign(new Error('disk'), { code: 'LEDGER_WRITE_FAILED' });
+    let calls = 0;
+    if (where === 'owner-abort') {
+      const ownerAbort = f.exec.ownerAbort.bind(f.exec);
+      f.exec.ownerAbort = async (...a) => { if (++calls === 2) throw disk(); return ownerAbort(...a); };
+    } else {
+      const accept = f.exec.acceptAbort.bind(f.exec);
+      f.exec.acceptAbort = async (...a) => { const r = await accept(...a); if (++calls === 2) throw disk(); return r; };
+      f.exec.unknown = async () => { throw disk(); };
+    }
+    f.advance(1);
+    await writeOwnerRequest(path.join(f.root, 'owner'), drainRequest({ reason: 'reinstall', by: OWNER }, f.clock), f.clock);
+    assert.equal((await f.exec.tick()).state, 'HALTED', where);
+    const done = (await bodies(f, 'owner-request')).find(b => b.kind === 'drain');
+    assert.ok(done, where);
+    assert.deepEqual([done.ended.length, done.ended[0].failureCode, done.remaining, done.stoppedBy, done.unconfirmed.length], [1, 'OWNER_ABORTED', 1, 'RESIDENT_EXECUTOR_EXCEPTION', 64], where);
+    assert.equal((await bodies(f, 'owner-request-refused')).length, 0, where);
+    assert.equal((await f.ledger.halted()).value.code, 'OWNER_ABORT_UNCONFIRMED', where);
+    assert.deepEqual((await f.ledger.crashed()).map(e => e.key), [done.unconfirmed], where);
+  }
+});

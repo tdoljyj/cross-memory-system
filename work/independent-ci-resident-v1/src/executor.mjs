@@ -366,7 +366,7 @@ export class ResidentExecutor {
     check(integrity && integrity.ok === true && integrity.sourceManifestSha256 === this.policy.sourceManifestSha256
       && integrity.residentManifestSha256 === this.policy.residentManifestSha256, 'OWNER_DRAIN_SOURCE_DRIFT');
     const ended = [], entries = await this.ledger.parkedEntries();
-    let stoppedBy = null;
+    let stoppedBy = null, unconfirmed = null;
     for (const e of entries) {
       if ((await this.ledger.unarchivedScenes()) > 0) {
         check(ended.length > 0, 'OWNER_DRAIN_UNARCHIVED_SCENE_PRESENT');
@@ -386,15 +386,34 @@ export class ResidentExecutor {
           stoppedBy = codeOf(error);
           break;
         }
-        const r = await this.unknown(e.key, codeOf(error), 'owner-drain-unconfirmed', batch, { safePoint, stage: null, requestSha256 });
+        let r;
+        try {
+          r = await this.unknown(e.key, codeOf(error), 'owner-drain-unconfirmed', batch, { safePoint, stage: null, requestSha256 });
+        } catch (inner) {
+          // After an earlier entry ended, a failure here is no refusal of the request: the drain stops and says what it
+          // ended and which entry is unconfirmed (still open, or ended without its summary). This tick stops HALTed either
+          // way: by the code written first on the way, or at the OWNER_ABORT_UNCONFIRMED gate after the Owner's requests
+          // (final check of step 2, n6).
+          if (ended.length === 0) throw inner;
+          stoppedBy = codeOf(inner); unconfirmed = e.key;
+          break;
+        }
         ended.push({ key: e.key, outcome: r.state, failureCode: r.failureCode });
         break;
       }
-      const r = await this.afterBatch(e.reserved.subject, e.reserved.origin ?? 'queued', await this.ownerAbort(e.key, batch, { safePoint, request }));
+      let r;
+      try {
+        r = await this.afterBatch(e.reserved.subject, e.reserved.origin ?? 'queued', await this.ownerAbort(e.key, batch, { safePoint, request }));
+      } catch (error) {
+        // The same for the Owner abort's own path on a later entry (n6).
+        if (ended.length === 0) throw error;
+        stoppedBy = codeOf(error); unconfirmed = e.key;
+        break;
+      }
       ended.push({ key: e.key, outcome: r.state, failureCode: r.failureCode });
       if (!(r.state === 'FAILED_CLEAN' && r.failureCode === OWNER_ABORTED)) break;
     }
-    return { ended, remaining: entries.length - ended.length, stoppedBy };
+    return { ended, remaining: entries.length - ended.length, stoppedBy, ...(unconfirmed ? { unconfirmed } : {}) };
   }
 
   // Safe point P0, a tick start: nothing of this executor runs, so the only open entries recovery leaves are batches at a
