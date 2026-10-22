@@ -36,7 +36,7 @@ const ROLE_SECRETS: Record<string, string> = {
 const secretsFor = (roles: string[]) => roles.map(r => ROLE_SECRETS[r]).filter(Boolean);
 const DAYS = [7, 30, 90];
 const MESSAGES: Record<string, string> = {
-  direct_human_session_required: "需要你本人直接登录 KooYomi，授权给应用的登录不能签发令牌。",
+  direct_human_session_required: "需要你本人直接登录 BeamingFace，授权给应用的登录不能签发令牌。",
   confirmation_token_session_id_required: "当前登录缺少会话信息，请退出后重新登录。",
   confirmation_token_expired: "确认已超过 5 分钟有效期，请重新预览。",
   confirmation_token_revoked: "确认已被更新的预览取代，请按页面当前内容操作。",

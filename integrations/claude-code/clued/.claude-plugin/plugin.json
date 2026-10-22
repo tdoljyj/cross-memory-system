@@ -1,9 +1,9 @@
 {
   "name": "clued",
-  "displayName": "KooYomi",
-  "description": "KooYomi for Claude Code (private trial): the KooYomi Skill and the Stop hook that reminds the agent to record outcomes in KooYomi and checkpoint. Uses your existing Clued connector; it does not add one.",
+  "displayName": "BeamingFace",
+  "description": "BeamingFace for Claude Code (private trial): the BeamingFace Skill and the Stop hook that reminds the agent to record outcomes in BeamingFace and checkpoint. Uses your existing Clued connector; it does not add one.",
   "author": {
-    "name": "KooYomi"
+    "name": "BeamingFace"
   },
   "repository": "https://github.com/tdoljyj/cross-memory-system",
   "keywords": [

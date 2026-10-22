@@ -1,6 +1,6 @@
-# KooYomi 工程文档导航
+# BeamingFace 工程文档导航
 
-本目录只承载仍需要留在 Git 中的工程文档、合同、迁移/回滚材料、验证证据与历史追溯资料。它**不是 KooYomi（原 Clued）当前运行状态或业务 Canonical Truth 的来源**。
+本目录只承载仍需要留在 Git 中的工程文档、合同、迁移/回滚材料、验证证据与历史追溯资料。它**不是 BeamingFace（原 Clued）当前运行状态或业务 Canonical Truth 的来源**。
 
 先看：
 
@@ -19,7 +19,7 @@
 
 | 路径 | 内容 | 当前使用方式 |
 |---|---|---|
-| [`clued-two-level-views/`](./clued-two-level-views/) | 两级五视图、单一数据源、Bundle、迁移/回滚与相关验收材料 | 架构/迁移参考；在线 Current Truth 仍来自认证 KooYomi 服务 |
+| [`clued-two-level-views/`](./clued-two-level-views/) | 两级五视图、单一数据源、Bundle、迁移/回滚与相关验收材料 | 架构/迁移参考；在线 Current Truth 仍来自认证 BeamingFace 服务 |
 | [`r5-kernel/`](./r5-kernel/) | R5 Kernel 架构、合同、Debt Closure、Cloud Data Foundation、Gate/Evidence | 历史/阶段性 Kernel 工程资料；不要据此直接判断当前 Kernel 状态 |
 | [`r5.1/`](./r5.1/) | R5.1 Beta Candidate、限制与 Receipt | 历史验收与追溯 |
 | [`r3-gate0/`](./r3-gate0/) · [`r3-gate1/`](./r3-gate1/) · [`r3-gate3/`](./r3-gate3/) | R3 各 Gate 的 ADR、Schema、Baseline 与 Evidence | 封存/追溯，不作为当前运行入口 |

@@ -415,7 +415,7 @@ test('adopt refusals before any job and its execution reasons carry fixed guidan
   globalThis.fetch = async () => Response.json({ ...status(reason === 'ADOPT_NOT_SETTLED' ? 'cancelled' : 'denied'), reason_code: reason });
   try {
     const expected = { ADOPT_SCOPE_UPGRADE_REQUIRED: /allow managing existing files/, ADOPT_TARGET_UNSUPPORTED: /shortcut/,
-      ADOPT_NOT_SETTLED: /nothing was registered/, SCOPE_UPGRADE_REQUIRED: /not created by Kooyumi/, PROVIDER_OWNER_REQUIRED: /adopted/ };
+      ADOPT_NOT_SETTLED: /nothing was registered/, SCOPE_UPGRADE_REQUIRED: /not created by BeamingFace/, PROVIDER_OWNER_REQUIRED: /adopted/ };
     for (reason of Object.keys(expected)) {
       const r = (await (await call('clued_storage_inspect', ref, env, { waitUntil: () => {} })).json()).result;
       assert.equal(r.structuredContent.reason_code, reason); assert.match(r.structuredContent.hint, expected[reason], reason);

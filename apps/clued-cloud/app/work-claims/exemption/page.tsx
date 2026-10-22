@@ -9,7 +9,7 @@ import "../../contexts/contexts.css";
 // granted here earlier stay valid until they expire. Old links land here.
 export default function WorkClaimExemptionPage() {
   return <main className="context-page">
-    <header><Link href="/">KooYomi / 账号</Link></header>
+    <header><Link href="/">BeamingFace / 账号</Link></header>
     <h1>任务领取豁免已改为授权</h1>
     <section aria-label="现在怎么做">
       <p>一个任务 24 小时内最多领取 10 次。超过后，Agent 会收到一个确认链接并发给你；你打开链接，选“只批这一次”或“这一类管一段时间”即可，不用再手填任务 ID。</p>

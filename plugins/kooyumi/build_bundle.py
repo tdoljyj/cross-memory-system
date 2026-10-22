@@ -1,4 +1,4 @@
-"""Build/check the exact private KooYomi bundle from canonical repository sources."""
+"""Build/check the exact private BeamingFace bundle from canonical repository sources."""
 import argparse
 import hashlib
 import io
@@ -11,16 +11,16 @@ import tempfile
 import zipfile
 
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 REPOSITORY_ROOT = Path(__file__).absolute().parents[2]
 APP_ID = "asdk_app_6ad0cb1db0c48191a97bd2bd158836e3"
 PACKAGE_NAME = "dev-6ad0cb1db0c48191a97bd2bd158836e3"
-PACKAGE_VERSION = "1.0.2"
-SKILL_VERSION = "1.0.24"
-DESCRIPTION = "KooYomi：授权的个人与项目上下文服务"
+PACKAGE_VERSION = "1.0.3"
+SKILL_VERSION = "1.0.25"
+DESCRIPTION = "BeamingFace：授权的个人与项目上下文服务"
 INTERFACE = {
     "capabilities": [], "category": "Other", "defaultPrompt": None,
-    "developerName": "App developer", "displayName": "KooYomi",
+    "developerName": "App developer", "displayName": "BeamingFace",
     "longDescription": DESCRIPTION, "shortDescription": DESCRIPTION,
 }
 SKILL_FILES = (
@@ -135,7 +135,7 @@ def source_files():
     require(text.startswith("---\n") or text.startswith("---\r\n"), "skill_header_invalid")
     header = re.split(r"\r?\n---(?:\r?\n|$)", text, maxsplit=1)[0]
     require(re.search(r"^name: clued\r?$", header, re.M) is not None and
-            re.search(r'^  version: "1\.0\.24"\r?$', header, re.M) is not None,
+            re.search(r'^  version: "' + re.escape(SKILL_VERSION) + r'"\r?$', header, re.M) is not None,
             "skill_identity_mismatch")
     return files
 

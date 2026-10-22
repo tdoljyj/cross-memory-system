@@ -805,6 +805,152 @@ export function jobIsHosted(job) {
   return HOSTED_LABEL.test(unquote(text)) || text === HOSTED_STATE_CHANGE_RUNNER;
 }
 
+// A job's strategy as a tree, or null when it is not in the one plain block
+// form read here: mapping keys, `- ` items, and one-line values that are a
+// plain or simply quoted scalar or a flow list of simple scalars. Blank and
+// whole-line comment lines carry no value and are dropped (at any indent, as
+// in YAML). Anchors, aliases, tags, merge keys, block or multi-line scalars,
+// flow mappings, inline comments, a bare `-`, a duplicate key, uneven
+// indentation and whitespace other than spaces are not read, nor is a job
+// with a strategy key written in another case or given twice, or any job key
+// that does not start with a plain key character (quoted, tagged, anchored).
+const STRATEGY_KEY = /^([A-Za-z0-9_-]+):(?: +(.+))?$/;
+const STRATEGY_PLAIN = /^(?:[^ [\]{},#&*!|>'"%@`?:-]|-[^ ])/;
+const STRATEGY_FLOW_ITEM = /^(?:(?!-$)[A-Za-z0-9_./+-]+|"[^"\\,[\]{}]*"|'[^',[\]{}]*')$/;
+function strategyValue(text) {
+  if (/^"[^"\\]*"$|^'[^']*'$/.test(text)) return { scalar: text };
+  const flow = /^\[(.*)\]$/.exec(text);
+  if (flow) {
+    const items = flow[1].split(",").map((item) => item.trim());
+    return items.every((item) => STRATEGY_FLOW_ITEM.test(item)) ? { flow: items } : null;
+  }
+  return STRATEGY_PLAIN.test(text) && !/:( |$)| #/.test(text) ? { scalar: text } : null;
+}
+function strategyTree(job) {
+  const keyLines = job.lines.filter((line) => /^ {4}(?:[^\sA-Za-z0-9_#-]|strategy\s*:)/i.test(line));
+  if (keyLines.length !== 1 || !/^ {4}strategy: *$/.test(keyLines[0]) ||
+    job.lines.some((line) => /^ *(?:- +)?<<\s*:/.test(line))) return null;
+  const rows = [];
+  for (const line of job.lines.slice(job.lines.indexOf(keyLines[0]) + 1)) {
+    if (/[^\S ]/.test(line) || HIDDEN_LINE_BREAK.test(line)) return null;
+    if (/^ *(#.*)?$/.test(line)) continue;
+    if (!line.startsWith("     ")) break;
+    // Only spaces are left as whitespace here, so trim() strips exactly those
+    // (a / +$/ replace is quadratic on a long run of spaces).
+    const text = line.trimEnd();
+    const indent = text.length - text.trimStart().length;
+    rows.push({ indent, text: text.slice(indent) });
+  }
+  let i = 0;
+  const unread = new Error("strategy not read");
+  const block = (indent) => {
+    const node = rows[i].text.startsWith("- ") ? { seq: [] } : { map: [] };
+    const names = new Set();
+    while (i < rows.length && rows[i].indent === indent) {
+      if (node.seq) {
+        if (!rows[i].text.startsWith("- ")) throw unread;
+        const rest = rows[i].text.slice(2);
+        if (STRATEGY_KEY.test(rest)) {
+          // `- key: ...` opens a mapping whose keys sit two columns in.
+          rows[i] = { indent: indent + 2, text: rest };
+          node.seq.push(block(indent + 2));
+        } else {
+          const value = strategyValue(rest);
+          if (!value) throw unread;
+          node.seq.push(value);
+          i += 1;
+        }
+      } else {
+        const key = STRATEGY_KEY.exec(rows[i].text);
+        if (!key || names.has(key[1])) throw unread;
+        names.add(key[1]);
+        i += 1;
+        if (key[2] === undefined) {
+          if (i >= rows.length || rows[i].indent <= indent) throw unread;
+          node.map.push([key[1], block(rows[i].indent)]);
+        } else {
+          const value = strategyValue(key[2]);
+          if (!value) throw unread;
+          node.map.push([key[1], value]);
+        }
+      }
+      if (i < rows.length && rows[i].indent > indent) throw unread;
+    }
+    return node;
+  };
+  try {
+    if (!rows.length) return null;
+    const tree = block(rows[0].indent);
+    return i === rows.length && tree.map ? tree : null;
+  } catch (error) {
+    if (error === unread) return null;
+    throw error;
+  }
+}
+
+// The lines of a job's strategy as YAML reads them, or null without one.
+// Bootstrap review 11af4710, finding 1: jobField ends the field at the first
+// comment line indented four spaces or less, but YAML ignores the indentation
+// of comments, so entries after such a line still belong to the strategy. The
+// region runs from the strategy key to the first other line indented less
+// than five spaces, comment and blank lines inside it included; trailing ones
+// carry nothing and are left out.
+function strategyRegion(job) {
+  const start = job.lines.findIndex((line) => line.startsWith("    strategy:"));
+  if (start < 0) return null;
+  let end = start + 1;
+  while (end < job.lines.length && (/^\s*(#.*)?$/.test(job.lines[end]) || job.lines[end].startsWith("     "))) end += 1;
+  while (end > start + 1 && /^\s*(#.*)?$/.test(job.lines[end - 1])) end -= 1;
+  return job.lines.slice(start, end).join("\n");
+}
+
+// Owner Decision 586181ec: true only when the head job's strategy is the base
+// job's with entries removed and nothing else changed. Entries may go from
+// matrix.include, or from a matrix axis list when the matrix has no include:
+// a removed axis value could turn an include entry that extended its
+// combinations into new combinations of its own. Each changed list keeps at
+// least one entry and the rest in their order (an include entry may overwrite
+// values an earlier one added, so a reorder is a change). Keys, their order,
+// every other value, exclude, fail-fast and max-parallel stay as they are. A
+// change of comments or blank lines alone removes nothing and stays a change.
+function strategyShrinks(job, old) {
+  const head = strategyTree(job);
+  const base = strategyTree(old);
+  if (!head || !base) return false;
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const keys = (node) => node.map.map(([key]) => key);
+  if (!same(keys(head), keys(base))) return false;
+  let removed = 0;
+  for (const [i, [key, was]] of base.map.entries()) {
+    const now = head.map[i][1];
+    if (same(was, now)) continue;
+    if (key !== "matrix" || !was.map || !now.map || !same(keys(was), keys(now))) return false;
+    // `Include` or `EXCLUDE` would be an axis to GitHub; refuse rather than guess.
+    if (keys(was).some((name) => /^(?:in|ex)clude$/i.test(name) && name !== name.toLowerCase())) return false;
+    const hasInclude = keys(was).includes("include");
+    for (const [j, [list, entries]] of was.map.entries()) {
+      const kept = now.map[j][1];
+      if (same(entries, kept)) continue;
+      if (list === "exclude" || (list !== "include" && hasInclude)) return false;
+      const kind = entries.seq ? "seq" : entries.flow ? "flow" : null;
+      const from = kind && entries[kind];
+      const to = kind && kept[kind];
+      if (!to || to.length < 1 || to.length >= from.length) return false;
+      // The kept entries, in their order, are a subsequence of the base's.
+      // Each entry is serialized once, so a large one is not compared again and again.
+      const fromText = from.map((entry) => JSON.stringify(entry));
+      let k = 0;
+      for (const entry of to.map((item) => JSON.stringify(item))) {
+        while (k < fromText.length && fromText[k] !== entry) k += 1;
+        if (k === fromText.length) return false;
+        k += 1;
+      }
+      removed += from.length - to.length;
+    }
+  }
+  return removed > 0;
+}
+
 // Findings for one workflow at the PR head; baseText is its base-branch
 // version, or null when the PR adds it. Existing ungated workflows (the
 // short checks of Owner Decision 75abfe80) stay ungated.
@@ -839,8 +985,12 @@ export function gateFindings(headText, baseText, { registeredPublisherTransition
         const now = jobTimeout(job);
         if (now === null || (was !== null && now > was)) findings.push(`self_hosted_timeout_raised_ungated:${job.name}`);
         // Re-review 4, m3: a new or changed strategy (a matrix) multiplies the
-        // job; one admitted head would buy many self-hosted runs.
-        if ((jobField(job, "strategy") ?? "").trim() !== (jobField(old, "strategy") ?? "").trim()) {
+        // job; one admitted head would buy many self-hosted runs. Owner
+        // Decision 586181ec: a strategy that only loses matrix entries runs the
+        // job fewer times and passes (strategyShrinks). A change counts in
+        // jobField's view or in the whole region (strategyRegion).
+        if (((jobField(job, "strategy") ?? "").trim() !== (jobField(old, "strategy") ?? "").trim() ||
+          strategyRegion(job) !== strategyRegion(old)) && !strategyShrinks(job, old)) {
           findings.push(`self_hosted_strategy_changed_ungated:${job.name}`);
         }
       }
