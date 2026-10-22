@@ -1,0 +1,364 @@
+#!/usr/bin/python3.12 -I
+"""WSL host tuning for the resident executor's Linux side (Task 7c2e4386). Not part of the pinned resident
+layer: it changes three kernel settings of the WSL VM, nothing the per-batch drift check covers.
+
+Why: every hv_sock connection Windows opens into the VM (each wsl.exe launch opens several, and the companion
+lists the Linux spool with one wsl.exe per second during every Linux stage) makes the guest open a VMBus
+channel whose two ring buffers are sized from the listening socket's buffers, i.e. net.core.wmem_default and
+net.core.rmem_default (212992 bytes each), and allocated together as one physically contiguous block:
+2 x 52 pages = 104 pages = order 7 (512 KiB), GFP_KERNEL, given up after one reclaim/compaction round. With
+the page cache filling the VM that allocation failed on 2026-10-22 at 07:49Z and 13:22Z
+(hvs_probe -> vmbus_open -> vmbus_alloc_ring), the relay of that wsl.exe hung and two trivy stages ended
+UNCERTAIN. The drop-in (60-clued-ci-hvsock-memory.conf):
+  net.core.rmem_default = net.core.wmem_default = 65536  -> new rings 2 x 16 pages = order 5 (128 KiB)
+  vm.watermark_scale_factor = 200                        -> kswapd wakes earlier and keeps ~2% of each zone free
+
+Sub-commands (each prints one JSON object; exit 0 only on success):
+  plan --conf FILE                 read-only: live values, target values, drop-in state, planSha256
+  apply --conf FILE --plan SHA256  root: refuses while a clued-ci unit runs; saves the live values, creates the
+                                   drop-in (create-only, never overwritten) and writes the values to /proc/sys
+  verify --conf FILE               read-only: drop-in bytes and live values equal FILE; hv_sock ring sizes
+  rollback --saved FILE            root: writes the saved values back and moves the drop-in it created aside
+                                   (renamed into the state directory, never deleted)
+Run it from a root-owned copy (README.md): the plan binds this file's and the drop-in's SHA-256.
+"""
+import datetime
+import hashlib
+import json
+import os
+import re
+import secrets
+import stat
+import subprocess
+import sys
+
+REAL = {
+    'proc_sys': '/proc/sys',
+    'target': '/etc/sysctl.d/60-clued-ci-hvsock-memory.conf',
+    'state': '/var/lib/clued-wsl-host-tuning',
+    'hv_sock': '/sys/bus/vmbus/drivers/hv_sock',
+    'buddyinfo': '/proc/buddyinfo',
+}
+SYSTEMCTL = '/usr/bin/systemctl'
+ENV = {'PATH': '/usr/bin:/bin', 'LANG': 'C', 'LC_ALL': 'C'}
+PAGE = 4096
+# hv_sock keeps each ring direction between 5 and 64 pages (net/vmw_vsock/hyperv_transport.c RINGBUFFER_HVS_*).
+HVS_MIN, HVS_MAX = 5 * PAGE, 64 * PAGE
+BOUNDS = {'net.core.rmem_default': (HVS_MIN, HVS_MAX), 'net.core.wmem_default': (HVS_MIN, HVS_MAX), 'vm.watermark_scale_factor': (10, 1000)}
+KEYS = tuple(BOUNDS)
+MAX_CONF = 4096
+MAX_SAVED = 65536
+SAVED_CONTRACT = 'clued.wsl-host-tuning-previous/1'
+DEVICE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+CONF_LINE = re.compile(r'^([a-z_.]+)\s*=\s*([0-9]{1,7})$')
+CI_UNIT = re.compile(r'^(clued-ci-[a-z]+@\S+\.service)\s+\S+\s+(\S+)\s+(\S+)')
+BINARY = getattr(os, 'O_BINARY', 0)  # 0 on Linux; keeps the offline tests on Windows byte-exact
+
+
+class Refused(Exception):
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+def need(cond, code):
+    if not cond:
+        raise Refused(code)
+
+
+def sha256(raw):
+    return hashlib.sha256(raw).hexdigest()
+
+
+# ---------- pure helpers (unit-tested on any OS) ----------
+
+def parse_conf(raw):
+    """Exactly the three keys, once each, decimal values within BOUNDS; comments and blank lines only otherwise.
+    No '-' prefix, no other key: what is reviewed is all the drop-in can set."""
+    need(isinstance(raw, bytes) and 0 < len(raw) <= MAX_CONF, 'CONF_REFUSED')
+    try:
+        text = raw.decode('ascii')
+    except UnicodeDecodeError:
+        raise Refused('CONF_REFUSED')
+    values = {}
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith('#'):
+            continue
+        m = CONF_LINE.fullmatch(s)
+        need(m is not None and m.group(1) in BOUNDS and m.group(1) not in values, 'CONF_REFUSED')
+        values[m.group(1)] = int(m.group(2))
+    need(set(values) == set(KEYS), 'CONF_REFUSED')
+    for key, (lo, hi) in BOUNDS.items():
+        need(lo <= values[key] <= hi, 'CONF_REFUSED')
+    need(values['net.core.rmem_default'] % PAGE == 0 and values['net.core.wmem_default'] % PAGE == 0, 'CONF_REFUSED')
+    return values
+
+
+def ring_bytes(sock_buf):
+    """One direction of a host-initiated hv_sock channel: the socket buffer clamped to 5..64 pages, page aligned."""
+    size = min(max(sock_buf, HVS_MIN), HVS_MAX)
+    return -(-size // PAGE) * PAGE
+
+
+def ring_order(rmem, wmem):
+    """Buddy order of the single allocation holding both directions (vmbus_alloc_ring)."""
+    pages = (ring_bytes(wmem) + ring_bytes(rmem)) // PAGE
+    return (pages - 1).bit_length()
+
+
+def proc_path(proc_sys, key):
+    need(key in BOUNDS, 'KEY_REFUSED')
+    return f"{proc_sys}/{key.replace('.', '/')}"
+
+
+def file_state(current, wanted):
+    if current is None:
+        return 'absent'
+    return 'same' if current == wanted else 'different'
+
+
+def plan_text(tool_sha, conf_raw, live, state, kernel, target):
+    conf = parse_conf(conf_raw)
+    lines = [f'tool.sha256={tool_sha}', f'conf.sha256={sha256(conf_raw)}', f'target={target}', f'dropIn={state}', f'kernel={kernel}']
+    lines += [f'conf.{k}={conf[k]}' for k in KEYS] + [f'live.{k}={live[k]}' for k in KEYS]
+    return '\n'.join(lines) + '\n'
+
+
+def plan_sha(text):
+    return sha256(text.encode('ascii'))
+
+
+def busy_units(listing):
+    """clued-ci-* units that are not inactive/failed (systemctl list-units --all --plain --no-legend)."""
+    busy = []
+    for line in listing.splitlines():
+        m = CI_UNIT.match(line.strip())
+        if m and m.group(2) not in ('inactive', 'failed'):
+            busy.append(m.group(1))
+    return busy
+
+
+def ring_histogram(sizes):
+    hist = {}
+    for s in sizes:
+        hist[str(s)] = hist.get(str(s), 0) + 1
+    return dict(sorted(hist.items(), key=lambda kv: int(kv[0])))
+
+
+def buddy_summary(text):
+    """Free blocks of at least order 5 and order 7 per zone, from /proc/buddyinfo."""
+    out = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 15 and parts[0] == 'Node' and parts[2] == 'zone':
+            counts = [int(x) for x in parts[4:15]]
+            out[f'{parts[1].rstrip(",")}:{parts[3]}'] = {'order5plus': sum(counts[5:]), 'order7plus': sum(counts[7:])}
+    return out
+
+
+def validate_saved(saved):
+    need(isinstance(saved, dict) and saved.get('contract') == SAVED_CONTRACT, 'SAVED_REFUSED')
+    values = saved.get('values')
+    need(isinstance(values, dict) and set(values) == set(KEYS), 'SAVED_REFUSED')
+    need(all(type(values[k]) is int and 0 < values[k] <= 10**8 for k in KEYS), 'SAVED_REFUSED')
+    need(saved.get('dropInBefore') in ('absent', 'same'), 'SAVED_REFUSED')
+    return saved
+
+
+# ---------- host effects (paths injectable for the offline tests) ----------
+
+def read_optional(path, limit=MAX_CONF):
+    try:
+        fd = os.open(path, os.O_RDONLY | BINARY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_CLOEXEC', 0))
+    except FileNotFoundError:
+        return None
+    try:
+        st = os.fstat(fd)
+        need(stat.S_ISREG(st.st_mode) and st.st_size <= limit, 'FILE_SHAPE_REFUSED')
+        raw = os.read(fd, limit + 1)
+        need(len(raw) == st.st_size, 'FILE_SHAPE_REFUSED')
+        return raw
+    finally:
+        os.close(fd)
+
+
+def read_required(path, limit=MAX_CONF):
+    raw = read_optional(path, limit)
+    need(raw is not None, 'FILE_MISSING')
+    return raw
+
+
+def read_live(proc_sys):
+    values = {}
+    for k in KEYS:
+        with open(proc_path(proc_sys, k)) as f:
+            values[k] = int(f.read().split()[0])
+    return values
+
+
+def write_value(proc_sys, key, value):
+    with open(proc_path(proc_sys, key), 'w') as f:
+        f.write(f'{int(value)}\n')
+
+
+def read_rings(hv_sock):
+    """write_avail of every channel of every hv_sock device: an idle send ring reports its size minus the header page."""
+    sizes = []
+    try:
+        devices = sorted(os.listdir(hv_sock))
+    except FileNotFoundError:
+        return sizes
+    for dev in devices:
+        if not DEVICE.fullmatch(dev):
+            continue
+        channels = f'{hv_sock}/{dev}/channels'
+        try:
+            relids = sorted(os.listdir(channels))
+        except OSError:
+            continue
+        for relid in relids:
+            try:
+                with open(f'{channels}/{relid}/write_avail') as f:
+                    sizes.append(int(f.read().strip()))
+            except (OSError, ValueError):
+                continue
+    return sizes
+
+
+def _durable_new(path, value):
+    with open(path, 'x') as f:
+        json.dump(value, f, sort_keys=True)
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def _create_only(path, raw, mode):
+    """Write a temporary name in the same directory, then hard-link it to the final name: link() fails if the
+    final name exists, so an existing drop-in is never replaced."""
+    tmp = f'{os.path.dirname(path)}/.{os.path.basename(path)}.new-{secrets.token_hex(6)}'
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | BINARY | getattr(os, 'O_NOFOLLOW', 0), mode)
+    try:
+        os.write(fd, raw)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.chmod(tmp, mode)
+    try:
+        os.link(tmp, path)
+    except FileExistsError:
+        raise Refused('DROP_IN_APPEARED')
+    finally:
+        os.unlink(tmp)
+
+
+def plan_tuning(p, conf_raw, tool_sha, kernel):
+    parse_conf(conf_raw)
+    live = read_live(p['proc_sys'])
+    state = file_state(read_optional(p['target']), conf_raw)
+    text = plan_text(tool_sha, conf_raw, live, state, kernel, p['target'])
+    return text, live, state
+
+
+def apply_tuning(p, conf_raw, want_plan, tool_sha, kernel, busy, stamp):
+    target = parse_conf(conf_raw)
+    text, live, state = plan_tuning(p, conf_raw, tool_sha, kernel)
+    need(plan_sha(text) == want_plan, 'PLAN_CHANGED_SINCE_REVIEW')
+    need(not busy, 'CI_UNIT_ACTIVE')
+    need(state != 'different', 'DROP_IN_DIFFERS_OWNER_DECIDES')
+    if state == 'same' and live == target:
+        return {'status': 'HOST_TUNING_ALREADY_APPLIED', 'now': live, 'planSha256': want_plan}
+    os.makedirs(p['state'], mode=0o700, exist_ok=True)
+    saved = f"{p['state']}/previous-{stamp}.json"
+    _durable_new(saved, {'contract': SAVED_CONTRACT, 'values': live, 'dropInBefore': state, 'confSha256': sha256(conf_raw), 'planSha256': want_plan})
+    if state == 'absent':
+        _create_only(p['target'], conf_raw, 0o644)
+    for k in KEYS:
+        write_value(p['proc_sys'], k, target[k])
+    now = read_live(p['proc_sys'])
+    need(now == target, 'APPLY_READBACK_MISMATCH')
+    return {'status': 'HOST_TUNING_APPLIED', 'saved': saved, 'previous': live, 'now': now,
+            'dropIn': 'created' if state == 'absent' else 'already-present', 'planSha256': want_plan}
+
+
+def verify_tuning(p, conf_raw):
+    target = parse_conf(conf_raw)
+    state = file_state(read_optional(p['target']), conf_raw)
+    live = read_live(p['proc_sys'])
+    sizes = read_rings(p['hv_sock'])
+    expected = ring_bytes(target['net.core.wmem_default']) - PAGE
+    at_new = sum(1 for s in sizes if s == expected)
+    ok = state == 'same' and live == target
+    return {'status': 'HOST_TUNING_VERIFIED' if ok else 'HOST_TUNING_NOT_IN_EFFECT', 'dropIn': state, 'live': live,
+            'ringOrderForNewChannels': ring_order(live['net.core.rmem_default'], live['net.core.wmem_default']),
+            'expectedNewRingWriteAvail': expected, 'channelsAtNewSize': at_new,
+            # True once a channel opened after apply shows the new size; False means the relay sets its own buffers.
+            'ringEffective': (at_new > 0) if sizes else None, 'ringWriteAvail': ring_histogram(sizes)}, ok
+
+
+def rollback_tuning(p, saved_path, stamp):
+    real_state = os.path.realpath(p['state'])
+    need(os.path.dirname(os.path.realpath(saved_path)) == real_state, 'SAVED_OUTSIDE_STATE')
+    saved = validate_saved(json.loads(read_required(saved_path, MAX_SAVED)))
+    moved = None
+    if saved['dropInBefore'] == 'absent' and os.path.lexists(p['target']):
+        moved = f"{p['state']}/removed-{stamp}-{os.path.basename(p['target'])}"
+        need(not os.path.lexists(moved), 'ROLLBACK_NAME_TAKEN')
+        os.rename(p['target'], moved)  # /etc and /var/lib share the WSL root file system
+    for k in KEYS:
+        write_value(p['proc_sys'], k, saved['values'][k])
+    now = read_live(p['proc_sys'])
+    need(now == saved['values'], 'ROLLBACK_READBACK_MISMATCH')
+    return {'status': 'HOST_TUNING_ROLLED_BACK', 'now': now, 'dropInMovedTo': moved}
+
+
+def list_units():
+    r = subprocess.run([SYSTEMCTL, 'list-units', '--all', '--plain', '--no-legend', 'clued-ci-*'], env=ENV, capture_output=True, text=True, timeout=30, check=False)
+    need(r.returncode == 0, 'SYSTEMCTL_LIST_UNCONFIRMED')
+    return r.stdout
+
+
+def memory_facts(p):
+    try:  # a /proc file reports size 0, so it is read plainly rather than through read_optional
+        with open(p['buddyinfo']) as f:
+            return buddy_summary(f.read())
+    except OSError:
+        return None
+
+
+def main(argv):
+    cmd = argv[0] if argv else ''
+    args = dict(zip(argv[1::2], argv[2::2]))
+    p = REAL
+    tool_sha = sha256(read_required(os.path.realpath(__file__), 1 << 20))
+    kernel = os.uname().release
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + secrets.token_hex(3)
+    if cmd == 'plan':
+        conf_raw = read_required(args.get('--conf', ''))
+        text, _, state = plan_tuning(p, conf_raw, tool_sha, kernel)
+        return {'status': 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN', 'planSha256': plan_sha(text), 'plan': text.splitlines(),
+                'busyUnits': busy_units(list_units()), 'memory': memory_facts(p)}, True
+    if cmd == 'apply':
+        need(os.geteuid() == 0, 'ROOT_REQUIRED')
+        conf_raw = read_required(args.get('--conf', ''))
+        return apply_tuning(p, conf_raw, args.get('--plan', ''), tool_sha, kernel, busy_units(list_units()), stamp), True
+    if cmd == 'verify':
+        result, ok = verify_tuning(p, read_required(args.get('--conf', '')))
+        return {**result, 'memory': memory_facts(p)}, ok
+    if cmd == 'rollback':
+        need(os.geteuid() == 0, 'ROOT_REQUIRED')
+        return rollback_tuning(p, args.get('--saved', ''), stamp), True
+    raise Refused('COMMAND_REFUSED')
+
+
+if __name__ == '__main__':
+    try:
+        result, ok = main(sys.argv[1:])
+        print(json.dumps(result, sort_keys=True))
+        sys.exit(0 if ok else 1)
+    except Refused as e:
+        print(json.dumps({'status': 'REFUSED', 'code': e.code}))
+        sys.exit(1)
+    except (OSError, ValueError, KeyError) as e:
+        print(json.dumps({'status': 'REFUSED', 'code': 'HOST_TUNING_UNCONFIRMED', 'kind': type(e).__name__}))
+        sys.exit(1)
