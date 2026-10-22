@@ -10,11 +10,11 @@
 //                                             start; the Owner looks (fail closed, nothing is killed)
 // The holder and its liveness record carry the milliseconds since boot (os.uptime(), GetTickCount64 on
 // Windows). Uptime restarts at every boot and only grows within one, so a record with more uptime than the
-// machine has now was written before a reboot. The test is one-way: a holder that ran for less than the new
-// start's uptime plus the margin in the earlier boot is not recognised and falls back to the rules below it.
-// The margin is defence in depth: with one clock source the error is a millisecond, but a misjudged live
-// holder would mean two executors. An unreadable liveness record (torn by a power loss; the rename within one
-// boot is atomic) counts as none.
+// machine has now was written before a reboot. The test is one-way: a holder whose last record was written
+// earlier after its boot than the new start's uptime plus the margin is not recognised and falls back to the
+// rules below it. The margin is defence in depth: with one clock source the error is a clock tick (about 16 ms
+// on Windows), but a misjudged live holder would mean two executors. An unparsable liveness record (torn by a
+// power loss; within one boot the rename is atomic) counts as none; any other read error is thrown.
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -65,7 +65,9 @@ export async function acquireInstanceLock(stateRoot, { pid = process.pid, alive,
   await writeNew(path.join(dir, 'holder.json'), { pid, token, at: isoNow(clock), uptimeMs: uptime() });
   const touch = async () => {
     const tmp = path.join(dir, `alive.${pid}.tmp`);
-    await fs.writeFile(tmp, JSON.stringify({ token, at: clock(), uptimeMs: uptime() }));
+    // Synced before the rename: after a power loss the record must still carry the uptime the next boot reads.
+    const handle = await fs.open(tmp, 'w');
+    try { await handle.writeFile(JSON.stringify({ token, at: clock(), uptimeMs: uptime() })); await handle.sync(); } finally { await handle.close(); }
     await fs.rename(tmp, path.join(dir, 'alive.json')); // liveness hint, not evidence
   };
   await touch();

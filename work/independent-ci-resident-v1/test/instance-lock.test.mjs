@@ -49,7 +49,15 @@ test('the holder record alone also tells an earlier boot (no liveness record)', 
   assert.equal((await read(path.join(root, 'locks', stale[0], 'earlier-boot.json'))).recordedFrom, 'holder');
 });
 
-test('a torn liveness record (power loss) counts as none and never blocks the start', async t => {
+test('a liveness record that cannot be read for another reason is not ignored', async t => {
+  const root = await tempRoot(t);
+  const old = await acquireInstanceLock(root, { pid: 111, alive: async () => false, clock: () => 0, uptime: () => 5 * HOUR });
+  await fs.rm(path.join(old.dir, 'alive.json'));
+  await fs.mkdir(path.join(old.dir, 'alive.json'));
+  await assert.rejects(acquireInstanceLock(root, { pid: 222, alive: async () => false, clock: () => 1000, uptime: () => 4 * 60_000 }), { code: 'EISDIR' });
+});
+
+test('a torn liveness record (power loss) counts as none before the rules run', async t => {
   for (const torn of ['', '\0\0\0\0\0\0\0\0', '{"token":"']) {
     // Earlier boot: the holder record still tells, and the lock is stale.
     let root = await tempRoot(t);
