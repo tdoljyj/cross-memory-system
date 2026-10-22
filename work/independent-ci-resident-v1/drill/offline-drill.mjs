@@ -1,6 +1,7 @@
 // Offline drill of the resident lifecycle (no host, no network, no secret; temp directories only).
 // v0.7: a second instance with the hosted relay on drives one month of free-minutes scenarios (§7.6 of
 // the free-minutes design plus the first head after the minutes return) and checks receipt types and order.
+// v0.8: an Owner abort of a batch hanging in stage 2 (DESIGN §6.5).
 //   node drill/offline-drill.mjs            prints a step table and a JSON summary; exit 1 on any miss
 //
 // It drives the real executor, ledger, receipts, inboxes, protocol archive and Owner-request code
@@ -17,7 +18,7 @@ import { Inbox, OwnerInbox } from '../src/inbox.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { TRIGGER_CONTRACT } from '../src/trigger.mjs';
 import { applyArchive, planArchive, protocolLeaves } from '../src/archive.mjs';
-import { inspect, rearmRequest, resumeRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
+import { abortRequest, inspect, rearmRequest, resumeRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const SOURCE = '5'.repeat(64);
@@ -74,8 +75,20 @@ const engine = {
     if ([2, 4, 6].includes(stage.number)) await exchange();
     const r = script.get(`${this.current.subject.pr}:${this.current.subject.attempt}`)?.[stage.number] ?? script.get(this.current.subject.pr)?.[stage.number];
     if (r?.leaveLinuxBusy) linuxBusy = true;
+    // The stage hangs (the 2026-10-21 refused relay) until it is asked to stop; the Owner looks and aborts meanwhile.
+    if (r?.hangUntilStop) {
+      const stopped = new Promise(resolve => { this.stopAsked = resolve; });
+      const latest = await ledger.latestRecord(batch.key);
+      await writeOwnerRequest(path.join(root, 'owner'), abortRequest({ batchKey: batch.key, expectedLedgerEntrySha256: latest.sha256, reason: 'stage 2 hangs', by: OWNER }), clock);
+      await stopped;
+      // The helper drained its own job before the entry wrote its outcome; the broker restored the original.
+      return { ok: false, code: 'STAGE_OUTCOME_MISSING', proof: WINDOWS_CLEAN };
+    }
     return r ?? { ok: true, factsSha256: '8'.repeat(64) };
   },
+  // Owner abort: the stop request of a running scanner-issuer stage (the real engine writes the broker stop and the pump cancel).
+  async requestStop(batch, number) { this.stopRequests = (this.stopRequests ?? 0) + 1; this.stopAsked?.(number); return { broker: true, requestId: '0d0d0d0d-0000-4000-8000-000000000909', stopCode: 'STOP_SENT', pump: true, done: true }; },
+  async stopOutcome() { return 'STOP_SENT'; }, // the broker's receipt: the one SERVICE_CONTROL_STOP was sent
   async closeBatch(batch) { const w = await archive(winSpool, batch.key, 'success-close'); const l = await archive(linSpool, batch.key, 'success-close', LINUX); return { verified: w.verified && l.verified, archived: w.moved + l.moved }; },
   async archiveFailure(batch, reason) { return archive(winSpool, batch.key, reason); },
   async windowsQuiescence() { return WINDOWS_CLEAN; },
@@ -95,6 +108,7 @@ const inbox = await Inbox.open(path.join(root, 'inbox'), path.join(state, 'inbox
 const requests = await Inbox.open(path.join(root, 'requests'), path.join(state, 'requests-archive'));
 const owner = await OwnerInbox.open(path.join(root, 'owner'), path.join(state, 'owner-seen'));
 const exec = new ResidentExecutor({ policy, ledger, receipts, inbox, requests, owner, engine, companion, clock,
+  sleep: () => new Promise(resolve => setImmediate(resolve)),
   sourceIntegrity: async () => ({ ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT }) });
 
 let seq = 0;
@@ -150,6 +164,13 @@ await step('PR 907: a push between bundle and scan fails stage 2 cleanly and sch
 await step('attempt 2 waits for its delay, then runs all eight stages once', async () => { const early = await exec.tick(); now += 600_000; const r = await exec.tick(); return { ...r, early: early.state }; }, r => r.early === 'IDLE' && r.state === 'COMPLETED');
 script.set(908, { 3: { ok: false, code: 'GITHUB_TRANSIENT_UNAVAILABLE', proof: WINDOWS_CLEAN } });
 await step('PR 908: the same transient after a role published (stage 3) is final, no attempt 2', async () => { await drop(trigger(908)); const r = await exec.tick(); now += 600_000; const again = await exec.tick(); return { ...r, again: again.state }; }, r => r.state === 'FAILED_CLEAN' && !r.attempt2 && r.again === 'IDLE');
+// Owner abort (DESIGN §6.5): PR 909 hangs in stage 2; the Owner's abort stops it through the stop path.
+script.set(909, { 2: { hangUntilStop: true } });
+await step('PR 909 hangs in stage 2: the Owner aborts it mid-stage, it is stopped, archived and FAILED_CLEAN OWNER_ABORTED', async () => { await drop(trigger(909)); return exec.tick(); },
+  r => r.state === 'FAILED_CLEAN' && r.failureCode === 'OWNER_ABORTED' && r.safePoint === 'in-stage-2' && engine.stopRequests === 1);
+const leftAfterAbort = (await protocolLeaves(winSpool)).length + (await protocolLeaves(linSpool, LINUX)).length;
+await step('  nothing after stage 2 ran, the scene is archived on both hosts, and PR 909 never runs again', async () => { await drop(trigger(909)); const r = await exec.tick(); return { ...r, left: leftAfterAbort }; },
+  r => r.reason === 'HEAD_ALREADY_EXECUTED_NO_RETRY' && r.left === 0);
 const head1 = await receipts.verify();
 await step('receipt chain intact', async () => ({ state: `seq ${head1.seq}` }), () => head1.seq > 30);
 const files = (await fs.readdir(path.join(state, 'receipts'))).sort();

@@ -23,6 +23,10 @@
 // the per-role outcome: RELAYED or LOCAL_REQUIRED(reason). Only LOCAL_REQUIRED roles ever run locally. An
 // entry with 20-plan-intent and no 25-plan was interrupted inside stage R: a relay key may have been begun,
 // so recovery closes it FAILED_UNKNOWN (RELAY_STAGE_INTERRUPTED) and HALTs; nothing of it runs locally.
+//
+// Owner abort (DESIGN §6.5): an accepted abort writes 80-owner-abort (create-only) before anything is stopped. An
+// entry with it is never a resumable wait, so a service that dies in the middle of an abort leaves a crash scene
+// that recovery closes FAILED_UNKNOWN (OWNER_ABORT_INTERRUPTED) and HALTs, exactly like any other open entry.
 import fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -33,6 +37,9 @@ export const BATCH_KEY_CONTRACT = 'clued.independent-ci.resident-batch-key/1';
 export const HEAD_KEY_CONTRACT = 'clued.independent-ci.resident-head-key/1';
 export const OUTCOMES = Object.freeze(['COMPLETED', 'FAILED_CLEAN', 'FAILED_UNKNOWN']);
 export const UNEXECUTED_REASONS = Object.freeze(['NOT_ADMITTED', 'BUNDLE_UNAVAILABLE']);
+// The records of an open entry, oldest first; the newest one present is what an Owner abort names by digest.
+export const OPEN_RECORDS = Object.freeze(['00-reserved.json', '10-started.json', '15-relay-wait.json', '20-plan-intent.json', '25-plan.json']);
+export const OWNER_ABORT_RECORD = '80-owner-abort.json';
 
 function subjectCheck({ repo, pr, headSha, baseSha, sourceManifestSha256, attempt }) {
   check(REPO.test(repo) && Number.isSafeInteger(pr) && pr > 0, 'BATCH_KEY_SUBJECT_INVALID');
@@ -82,7 +89,7 @@ export class Ledger {
     if (!(await exists(dir))) return { state: 'ABSENT' };
     // A record that cannot be read (torn write, wrong type, extra hard link) makes the entry
     // UNREADABLE: it is open, recovery closes or quarantines it, and nothing ever throws past here.
-    let reserved, started, wait, planIntent, plan, terminal, archived;
+    let reserved, started, wait, planIntent, plan, abort, terminal, archived;
     try {
       const read = async name => (await exists(path.join(dir, name))) ? (await readJson(path.join(dir, name))).value : null;
       reserved = await read('00-reserved.json');
@@ -90,28 +97,49 @@ export class Ledger {
       wait = await read('15-relay-wait.json');
       planIntent = await read('20-plan-intent.json');
       plan = await read('25-plan.json');
+      abort = await read(OWNER_ABORT_RECORD);
       terminal = await read('90-terminal.json');
       archived = await read('95-archived.json');
     } catch (error) {
       if (!contentError(error)) throw error;
       return { state: 'UNREADABLE' };
     }
-    if (terminal) return { state: 'TERMINAL', outcome: terminal.outcome, reserved, started, wait, planIntent, plan, terminal, archived };
+    if (terminal) return { state: 'TERMINAL', outcome: terminal.outcome, reserved, started, wait, planIntent, plan, abort, terminal, archived };
     // A crash between mkdir and the reservation record leaves an INCOMPLETE entry; it is open, so
     // recovery terminalises it (FAILED_UNKNOWN) instead of wedging the ledger.
-    if (!reserved) return { state: 'INCOMPLETE', reserved: null, started };
-    return { state: started ? 'STARTED' : 'RESERVED', reserved, started, wait, planIntent, plan };
+    if (!reserved) return { state: 'INCOMPLETE', reserved: null, started, abort };
+    return { state: started ? 'STARTED' : 'RESERVED', reserved, started, wait, planIntent, plan, abort };
+  }
+
+  // The newest record of an OPEN entry with the SHA-256 of its exact bytes (what an Owner abort names), or null
+  // when the entry is absent, terminal, unreadable or already being aborted.
+  async latestRecord(key) {
+    const s = await this.state(key);
+    if (!['RESERVED', 'STARTED'].includes(s.state) || s.abort) return null;
+    for (const name of [...OPEN_RECORDS].reverse()) {
+      const file = path.join(this.dir(key), name);
+      if (await exists(file)) return { name, sha256: (await readJson(file)).sha256 };
+    }
+    return null;
+  }
+
+  // Create-only, before anything of the abort happens; a second acceptance of the same entry fails here.
+  async beginOwnerAbort(key, facts) {
+    const s = await this.state(key);
+    check(['RESERVED', 'STARTED'].includes(s.state) && !s.abort, 'OWNER_ABORT_BATCH_NOT_OPEN', s.state);
+    await writeNew(path.join(this.dir(key), OWNER_ABORT_RECORD), { key, contract: 'clued.independent-ci.resident-owner-abort-accepted/1', at: isoNow(this.clock), ...facts });
   }
 
   // The hosted wait record: written once, right after 10-started, before anything else of the batch.
   async beginWait(key, { t0, batch }) {
     const s = await this.state(key);
-    check(s.state === 'STARTED' && !s.wait && !s.planIntent && Number.isSafeInteger(t0) && t0 > 0 && batch && typeof batch.batchId === 'string', 'RELAY_WAIT_REQUIRES_STARTED_ENTRY', s.state);
+    check(s.state === 'STARTED' && !s.wait && !s.planIntent && !s.abort && Number.isSafeInteger(t0) && t0 > 0 && batch && typeof batch.batchId === 'string', 'RELAY_WAIT_REQUIRES_STARTED_ENTRY', s.state);
     await writeNew(path.join(this.dir(key), '15-relay-wait.json'), { key, contract: 'clued.independent-ci.resident-relay-wait/1', t0, batch, at: isoNow(this.clock) });
   }
 
-  // An open entry that is only waiting for hosted signals (nothing of it can be running).
-  static resumable(entry) { return entry?.state === 'STARTED' && !!entry.wait && !entry.planIntent && !entry.plan; }
+  // An open entry that is only waiting for hosted signals (nothing of it can be running). One whose Owner abort
+  // was accepted is never resumed: if it is still open at a tick start, the abort was interrupted (a crash scene).
+  static resumable(entry) { return entry?.state === 'STARTED' && !!entry.wait && !entry.planIntent && !entry.plan && !entry.abort; }
 
   // Open entries that are a crash scene (recovery closes them) - everything open except a resumable wait.
   async crashed() { return (await this.open()).filter(e => !Ledger.resumable(e)); }
@@ -126,13 +154,13 @@ export class Ledger {
   // Stage R bookkeeping, both create-only and only on a started entry; 25-plan only after 20-plan-intent.
   async writePlanIntent(key, intent) {
     const s = await this.state(key);
-    check(s.state === 'STARTED' && s.wait && !s.planIntent && !s.plan, 'RELAY_PLAN_INTENT_REQUIRES_STARTED_ENTRY', s.state);
+    check(s.state === 'STARTED' && s.wait && !s.planIntent && !s.plan && !s.abort, 'RELAY_PLAN_INTENT_REQUIRES_STARTED_ENTRY', s.state);
     await writeNew(path.join(this.dir(key), '20-plan-intent.json'), { key, contract: 'clued.independent-ci.resident-relay-plan-intent/1', at: isoNow(this.clock), ...intent });
   }
 
   async writePlan(key, plan) {
     const s = await this.state(key);
-    check(s.state === 'STARTED' && s.planIntent && !s.plan, 'RELAY_PLAN_REQUIRES_INTENT', s.state);
+    check(s.state === 'STARTED' && s.planIntent && !s.plan && !s.abort, 'RELAY_PLAN_REQUIRES_INTENT', s.state);
     await writeNew(path.join(this.dir(key), '25-plan.json'), { key, contract: 'clued.independent-ci.resident-relay-plan/1', at: isoNow(this.clock), ...plan });
   }
 
@@ -227,7 +255,7 @@ export class Ledger {
   // created first: if this head ever started under any base, PR or claim, starting fails here.
   async markStarted(key, facts) {
     const s = await this.state(key);
-    check(s.state === 'RESERVED', 'BATCH_START_REQUIRES_RESERVATION', s.state);
+    check(s.state === 'RESERVED' && !s.abort, 'BATCH_START_REQUIRES_RESERVATION', s.state);
     try {
       await writeNew(path.join(this.heads, `${s.reserved.headKey}.json`), { headKey: s.reserved.headKey, key, subject: s.reserved.subject, startedAt: isoNow(this.clock) });
     } catch (error) {

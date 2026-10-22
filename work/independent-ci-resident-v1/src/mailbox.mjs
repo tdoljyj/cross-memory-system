@@ -12,6 +12,11 @@ import { ensureDir, exists, readBounded, writeNew } from './store.mjs';
 export const REQUEST_CONTRACT = 'clued.independent-ci.resident-companion-request/1';
 export const RESPONSE_CONTRACT = 'clued.independent-ci.resident-companion-response/1';
 export const HEARTBEAT_CONTRACT = 'clued.independent-ci.resident-companion-heartbeat/1';
+// Owner abort (DESIGN §6.5): the service asks the companion to stop working on ONE pending request (today only the
+// bridge pump of a stage being stopped). Create-only <requestId>.cancel.json next to the request; pending() never
+// lists it as a request. The companion only stops what it does for that request; it never stops or kills a unit.
+export const CANCEL_CONTRACT = 'clued.independent-ci.resident-companion-cancel/1';
+export const CANCEL_REASONS = Object.freeze(['owner-abort']);
 export const BATCH_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/;
 const REASON = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const ARCHIVE_DIR = /^(failed|archive)-[0-9a-z-]{1,120}$/;
@@ -96,6 +101,28 @@ export class Mailbox {
       await sleep(pollMs);
     }
     return null; // No answer is never success.
+  }
+
+  // Service side: idempotent (a cancel that already exists is the same cancel).
+  async cancel(request, reason) {
+    check(UUID.test(request?.requestId ?? '') && KINDS.includes(request.kind) && CANCEL_REASONS.includes(reason), 'MAILBOX_CANCEL_REFUSED');
+    try {
+      await writeNew(path.join(this.requests, `${request.requestId}.cancel.json`), { contract: CANCEL_CONTRACT, requestId: request.requestId, kind: request.kind, reason, at: isoNow(this.clock) });
+    } catch (error) {
+      if (error.code !== 'CREATE_ONLY_TARGET_EXISTS') throw error;
+    }
+    return true;
+  }
+
+  // Companion side: true only for a well-formed cancel of exactly this request.
+  async cancelled(request) {
+    const file = path.join(this.requests, `${request.requestId}.cancel.json`);
+    if (!(await exists(file))) return false;
+    try {
+      const v = parseBoundedJson(await readBounded(file, 1024, 'MAILBOX_CANCEL_REFUSED'), 1024, 'MAILBOX_CANCEL_REFUSED');
+      exactKeys(v, ['contract', 'requestId', 'kind', 'reason', 'at'], 'MAILBOX_CANCEL_REFUSED');
+      return v.contract === CANCEL_CONTRACT && v.requestId === request.requestId && v.kind === request.kind && CANCEL_REASONS.includes(v.reason);
+    } catch { return false; }
   }
 
   async heartbeat() {
