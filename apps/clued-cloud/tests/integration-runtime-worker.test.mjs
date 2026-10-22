@@ -46,7 +46,7 @@ const AUTHORIZATION = ['binding_not_authorized', 'direct_human_session_required'
   'integration_connection_required', 'platform_admin_required', 'binding_not_owned'];
 const CONFLICTS = ['integration_version_conflict', 'installation_request_version_conflict', 'identity_claim_retry_exhausted',
   'integration_revoke_connection_set_changed'];
-const RULE_MESSAGE = 'The request was refused by a Kooyumi contract rule; reconnecting will not change the outcome.';
+const RULE_MESSAGE = 'The request was refused by a BeamingFace contract rule; reconnecting will not change the outcome.';
 
 const assets = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
 // The production flags without the Integration Runtime flag: the flag-off case. Production itself
@@ -320,7 +320,7 @@ test('T-W-2 flag off: bootstrap carries no integration_runtime key; /v1/integrat
     for (const name of TOOLS) {
       const response = await callTool(production, name, { integration_id: ID });
       assert.equal(response.status, 404, name);
-      assert.equal(response.body.error.message, 'Unknown Kooyumi continuity tool.', name);
+      assert.equal(response.body.error.message, 'Unknown BeamingFace continuity tool.', name);
       const unknown = await callTool(production, 'clued_integration_nonexistent');
       assert.deepEqual(response.body, unknown.body, 'indistinguishable from an unknown tool');
     }
@@ -342,7 +342,7 @@ test('T-W-3 flag on: the seven tools match §12.2 and every existing tool defini
     // OQ-12 interim: context:read, server-enforced, and the description says connection-self
     assert.deepEqual(tool._meta, { 'clued/requiredScopes': ['context:read'], 'clued/scopeEnforcement': 'server-side' }, name);
     assert.match(tool.description, /Connection-self operation/, name);
-    assert.match(tool.description, /never reads or writes your KooYomi context\. Required Clued scope: context:read\.$/, name);
+    assert.match(tool.description, /never reads or writes your BeamingFace context\. Required Clued scope: context:read\.$/, name);
     assert.equal(tool.inputSchema.type, 'object', name);
     assert.equal(tool.inputSchema.additionalProperties, false, name);
     assert.ok(tool.outputSchema, name);

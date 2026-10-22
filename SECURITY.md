@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-This repository is private, so GitHub's private vulnerability reporting form is not available here. Report a vulnerability directly to the repository owner, GitHub user `tdoljyj`, through a private channel; do not describe it in an issue, a pull request, a commit or a KooYomi record, and never include tokens or secrets. If the repository becomes public, the Owner should enable private vulnerability reporting under Settings → Security.
+This repository is private, so GitHub's private vulnerability reporting form is not available here. Report a vulnerability directly to the repository owner, GitHub user `tdoljyj`, through a private channel; do not describe it in an issue, a pull request, a commit or a BeamingFace record, and never include tokens or secrets. If the repository becomes public, the Owner should enable private vulnerability reporting under Settings → Security.
 
 ## Scope
 

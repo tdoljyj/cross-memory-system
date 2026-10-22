@@ -1,4 +1,4 @@
-"""Explicit, offline installation of the unified KooYomi Skill; no background updater."""
+"""Explicit, offline installation of the unified BeamingFace Skill; no background updater."""
 import argparse
 import hashlib
 import json
@@ -8,7 +8,7 @@ import shutil
 import tempfile
 import uuid
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 SOURCE = Path(__file__).resolve().parents[1] / 'skills'
 NAME = 'clued'

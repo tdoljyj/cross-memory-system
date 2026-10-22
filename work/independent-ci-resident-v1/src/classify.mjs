@@ -86,6 +86,27 @@ export function classifyFailure(code, proof, stageNumber) {
   return { klass: 'UNKNOWN', basis: 'not-an-allow-listed-clean-failure' };
 }
 
+// ---- Owner abort (DESIGN §6.5) ----
+// The only stages an Owner abort stops while they run: the scanner-issuer stages (entry role scanner-issuer in the
+// Source layout), which publish no check. Every other stage runs to its own end; the abort takes the next safe point.
+export const ABORTABLE_IN_FLIGHT = Object.freeze([2, 4, 6]);
+export const OWNER_ABORTED = 'OWNER_ABORTED';
+// How such a stage may end once it was asked to stop for an abort: any ending that is clean anyway, a stage that was
+// not invoked because the abort came first, the bridge pump cancelled after the stop was sent, or the stopped entry's
+// missing outcome (STAGE_OUTCOME_MISSING: UNKNOWN in every other path). The last one only when the broker's own
+// receipt says STOP_SENT: the stop control reached the running helper, whose only answer to it is STOP_REQUESTED
+// (independent review, M2). A scanner-issuer publishes no check, and both hosts must still prove quiescence.
+// Always together with the Windows half of the cleanup proof (helper tree drained, original binary restored).
+export const OWNER_ABORT_STAGE_ENDINGS = Object.freeze([...TRANSIENT_CODES, ...CLEAN_FINAL_CODES, ...RESIDENT_CLEAN,
+  'STAGE_OUTCOME_MISSING', 'OWNER_ABORT_REQUESTED', 'COMPANION_PUMP_CANCELLED']);
+const ABORT_ENDINGS = new Set(OWNER_ABORT_STAGE_ENDINGS);
+export function abortStageEndingClean(result, { stopSent = false } = {}) {
+  if (!result || result.ok === true) return !!result;
+  if (result.code === 'STAGE_OUTCOME_MISSING' && stopSent !== true) return false;
+  return typeof result.code === 'string' && ABORT_ENDINGS.has(result.code)
+    && result.proof?.windowsTreeZero === true && result.proof?.serviceOriginalStopped === true;
+}
+
 // The archive reason segment is derived from the stable code, never taken from untrusted text.
 export function archiveReason(code) {
   check(typeof code === 'string' && CODE.test(code), 'ARCHIVE_REASON_CODE_INVALID');

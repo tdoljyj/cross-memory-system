@@ -250,7 +250,7 @@ test('a refusal is shown in plain words', async t => {
   assert.ok(f.text().includes('新令牌需要保留对应权限'));
   f.button('预览').props.onClick();
   f.calls[2].resolve({ data: null, error: { message: 'direct_human_session_required', code: '42501' } }); await f.settle();
-  assert.ok(f.text().includes('需要你本人直接登录 KooYomi'));
+  assert.ok(f.text().includes('需要你本人直接登录 BeamingFace'));
 });
 
 test('a role Binding names its GitHub secret, and a rotation says which secret to update', async t => {

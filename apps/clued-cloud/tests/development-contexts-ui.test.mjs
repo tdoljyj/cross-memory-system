@@ -54,7 +54,7 @@ const create=f=>f.nodes('form')[0].props.onSubmit({preventDefault(){}});
 test('signed-out page has no bearer input or retired publication/bridge controls and sends no requests',t=>{
  const f=fixture();t.after(()=>f.unmount());f.emit('INITIAL_SESSION',null);
  assert.equal(f.requests.length,0);assert.equal(f.nodes('input').length,0);
- assert.ok(f.text().includes('登录 KooYomi'));
+ assert.ok(f.text().includes('登录 BeamingFace'));
  assert.ok(!/发布|关联到项目|当前会话的连接令牌|接受这版/.test(f.text()));
 });
 
