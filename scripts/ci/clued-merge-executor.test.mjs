@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { EXECUTOR_PERMISSIONS, currentOperationAuthority, optInSha, renderSummary, runExecutor } from "./clued-merge-executor.mjs";
 import { resolveMode } from "./merge-admission-policy.mjs";
-import { CI_REQUIRED_CHECKS, HOLDERS_RPC } from "./clued-merge-slot-ci.mjs";
+import { LEGACY_CI_REQUIRED_CHECKS as CI_REQUIRED_CHECKS, HOLDERS_RPC } from "./clued-merge-slot-ci.mjs";
 import { ADMISSION_APP_ID, VERIFY_RPC } from "./clued-work-admission.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -32,6 +32,14 @@ const verified = (extra = {}) => ({ id: 20, name: "kooyumi-admission-verified", 
 const check = (name, extra = {}) => (name === "kooyumi-admission-verified" ? verified(extra)
   : { id: CI_REQUIRED_CHECKS.findIndex(row=>row.name===name)+1, name, head_sha: HEAD, status: "completed", conclusion: "success", app: { id: 15368 }, ...extra });
 
+// Design A2: the branch rules decide which checks and sources count.
+const LEGACY_RULES = Object.freeze([...CI_REQUIRED_CHECKS, Object.freeze({ name: "kooyumi-merge-slot", app_id: ADMISSION_APP_ID })]);
+const REQUIRED_NAMES = ["gitleaks", "trivy", "kooyumi-work-admission", "kooyumi-admission-verified", "kooyumi-merge-slot", "contract-placement"];
+const INDEPENDENT_RULES = Object.freeze(REQUIRED_NAMES.map((name) => Object.freeze({ name, app_id: 5368905 })));
+const branchRules = (list) => [{ type: "required_status_checks", ruleset_id: 24182890, parameters: { strict_required_status_checks_policy: true,
+  required_status_checks: list.map(({ name, app_id }) => ({ context: name, integration_id: app_id })) } }];
+const rulesRoute = (list) => ({ [`/repos/${REPO}/rules/branches/main`]: branchRules(list) });
+
 // Routes are matched by "METHOD prefix" (GET when no method); an RPC route answers with a function of its input.
 function fakeFetch(routes) {
   const calls = [];
@@ -42,6 +50,9 @@ function fakeFetch(routes) {
     const method = init.method ?? "GET";
     calls.push({ route: rpc ? `rpc:${rpc[1]}` : route, method, input: body && body.p_input, body,
       authorization: init.headers && init.headers.authorization });
+    // Branch rules not given by a test are the legacy mapping (design A2).
+    if (method === "GET" && route.startsWith(`/repos/${REPO}/rules/branches/`) && !Object.keys(routes).some((key) => route.startsWith(key)))
+      return new Response(JSON.stringify(branchRules(LEGACY_RULES)), { status: 200, headers: { "content-type": "application/json" } });
     const snapshot = /^(.*\/check-runs)\?filter=all&/.exec(route);
     if (snapshot && !Object.keys(routes).some(key=>key.startsWith(`${snapshot[1]}?filter=all`) && route.startsWith(key))) {
       const chunks = Object.entries(routes).filter(([key])=>key.startsWith(`${snapshot[1]}?check_name=`))
@@ -546,4 +557,114 @@ test('partial active listings never enable an operation or manufacture a clean h
   const fetch=world({extra:{[`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]:{total_count:2,workflow_runs:[]}}});
   let proofs=0;const result=await run(fetch,{}, {qualifyExecution:async()=>{proofs++;return fixtureProof(pull());}});
   assert.equal(proofs,0);assert.deepEqual(writes(fetch),[]);assert.match(result.errors[0],/incomplete workflow_runs snapshot/);
+});
+
+// --- Design A2: the executor counts the branch rules' actual sources.
+const J64 = (digit) => digit.repeat(64);
+const independentCheck = (name, extra = {}) => ({ id: 500 + REQUIRED_NAMES.indexOf(name), name, head_sha: HEAD, status: "completed", conclusion: "success",
+  external_id: name === "kooyumi-admission-verified" ? `independent-ci:control:control-admission:${J64("1")}:f9:e1:a1`
+    : name === "kooyumi-work-admission" ? `independent-ci:native-work-admission:${J64("3")}:f9:e1:a1` : `independent-ci:staged:${J64("4")}:f9:e1:a1`,
+  app: { id: 5368905 }, output: { title: "Complete Native control and exact subject verified",
+    summary: `Independent Native control check for ${REPO}#5; observation sha256 ${J64("5")}.` }, ...extra });
+const independentChecks = (overrides = {}) => checksRoute({ ...Object.fromEntries(REQUIRED_NAMES.filter((name) => name !== "kooyumi-merge-slot")
+  .map((name) => [name, [independentCheck(name)]])), ...overrides });
+const LIVE_MODE = { state: "normal", layer: "code", reruns_per_head: 1 };
+
+test("A2: under rules on App 5368905 an independent admission check admits with the live evaluation's mode, and the head merges", async () => {
+  const fetch = world({ extra: { ...rulesRoute(INDEPENDENT_RULES), ...independentChecks(), ...mergeable("clean"), ...ciRuns(),
+    [MERGE]: { __status: 200, body: { merged: true, sha: "c".repeat(40) } } } });
+  const asked = [];
+  const result = await run(fetch, {}, { admissionMode: async (pr) => { asked.push(pr.head.sha); return LIVE_MODE; } });
+  assert.deepEqual([result.errors, result.actions[0].action, result.actions[0].result], [[], "merge_pull_request", "merged"]);
+  assert.ok(asked.length >= 1 && asked.every((sha) => sha === HEAD));
+  assert.ok(fetch.calls.some((call) => call.route.startsWith(`/repos/${REPO}/rules/branches/main`)));
+  assert.equal(fetch.calls.some((call) => call.route.includes("check-runs?check_name=kooyumi-admission-verified") && call.route.includes("&per_page=100")), true);
+});
+
+test("A2: no live mode, a legacy source or an unbound independent check never admits under the 5368905 rules", async () => {
+  for (const [label, extra, admissionMode] of [
+    ["no live mode", independentChecks(), async () => null],
+    ["clued-admission App check only", independentChecks({ "kooyumi-admission-verified": [verified()] }), async () => LIVE_MODE],
+    ["admission-run external id", independentChecks({ "kooyumi-admission-verified": [independentCheck("kooyumi-admission-verified", { external_id: "pr:5:run:900" })] }), async () => LIVE_MODE],
+    ["another pull request's control check", independentChecks({ "kooyumi-admission-verified": [independentCheck("kooyumi-admission-verified",
+      { output: { summary: `Independent Native control check for ${REPO}#6; x` } })] }), async () => LIVE_MODE],
+    ["another head", independentChecks({ "kooyumi-admission-verified": [independentCheck("kooyumi-admission-verified", { head_sha: APPROVED })] }), async () => LIVE_MODE],
+  ]) {
+    const fetch = world({ extra: { ...rulesRoute(INDEPENDENT_RULES), ...extra, ...mergeable("clean"), ...ciRuns() } });
+    const result = await run(fetch, {}, { admissionMode });
+    assert.equal(result.actions[0].action, "none", label);
+    assert.match(result.actions[0].reason, /kooyumi-admission-verified check for this pull request has not admitted it/, label);
+    assert.deepEqual(writes(fetch), [], label);
+  }
+  // Unreadable rules: nothing is planned or written.
+  const fetch = world({ extra: { [`/repos/${REPO}/rules/branches/main`]: { __status: 403, body: { message: "Forbidden" } }, ...mergeable("clean"), ...ciRuns() } });
+  const result = await run(fetch);
+  assert.match(result.errors[0], /^#5: GitHub API \/repos\/.*\/rules\/branches\/main.* returned 403/);
+  assert.deepEqual([result.actions, writes(fetch)], [[], []]);
+});
+
+test("A2: a hosted executor workflow's failure is not CI under the 5368905 rules; under Actions rules it still is", async () => {
+  const proof = { [PROOF]: { passed: false, state: "failed", reason: ".github/workflows/trivy.yml: qualified workflow failed" } };
+  let fetch = world({ extra: { ...rulesRoute(INDEPENDENT_RULES), ...independentChecks(), ...mergeable("clean"), ...proof } });
+  let result = await run(fetch, {}, { admissionMode: async () => LIVE_MODE });
+  assert.equal(result.actions[0].action, "none");
+  assert.match(result.actions[0].reason, /^waiting for CI execution on this head: \.github\/workflows\/trivy\.yml: qualified workflow failed/);
+  assert.deepEqual(writes(fetch), []);
+  fetch = world({ extra: { ...mergeable("clean"), ...proof } });
+  result = await run(fetch);
+  assert.match(result.actions[0].reason, /^CI failed: \.github\/workflows\/trivy\.yml: qualified workflow failed/);
+  // A 5368905 final failure stops the merge as CI failed.
+  fetch = world({ extra: { ...rulesRoute(INDEPENDENT_RULES), ...independentChecks({ gitleaks: [independentCheck("gitleaks", { conclusion: "failure" })] }), ...mergeable("clean"), ...ciRuns() } });
+  result = await run(fetch, {}, { admissionMode: async () => LIVE_MODE });
+  assert.deepEqual([result.actions[0].action, result.actions[0].reason, writes(fetch)], ["none", "CI failed: gitleaks concluded failure", []]);
+});
+
+test("A2: the live authority reader accepts an independent admission check by its live evaluation, never a legacy or unbound one", async () => {
+  for (const [label, checks, valid] of [
+    ["independent", { "kooyumi-admission-verified": [independentCheck("kooyumi-admission-verified")] }, true],
+    ["legacy App under 5368905 rules", { "kooyumi-admission-verified": [verified({ output: { title: "ADMITTED [normal · docs · reruns 2]" } })] }, false],
+    ["unbound independent", { "kooyumi-admission-verified": [independentCheck("kooyumi-admission-verified", { external_id: "independent-ci:control:control-admission:x" })] }, false],
+  ]) {
+    const { fetch, current } = authorityWorld({ ...rulesRoute(INDEPENDENT_RULES), ...checksRoute(checks) });
+    const result = await currentOperationAuthority({ env: env(), fetchImpl: fetch.fetchImpl, workspace: ROOT,
+      readPolicyFile: fs.readFileSync, repository: REPO, pr: current, tip: TIP, scope: SCOPE, action: "merge_pull_request" });
+    assert.equal(result.valid, valid, label); assert.deepEqual(writes(fetch), [], label);
+  }
+});
+
+// --- Source v2 external ids in the executor (src/job-v2.mjs).
+const V2J = "6".repeat(64);
+const v2Check = (name, extra = {}) => independentCheck(name, { external_id: name === "kooyumi-admission-verified"
+  ? `independent-ci:control:control-admission:v2:${V2J}:a2:cd1dd735d:f3:e2`
+  : name === "kooyumi-work-admission" ? `independent-ci:native-work-admission:v2:${V2J}:a1:cd1dd735d:f3:e2`
+    : `independent-ci:staged:v2:${V2J}:a1`, ...extra });
+const v2Checks = (overrides = {}) => checksRoute({ ...Object.fromEntries(REQUIRED_NAMES.filter((name) => name !== "kooyumi-merge-slot")
+  .map((name) => [name, [v2Check(name)]])), ...overrides });
+
+test("A2 v2: Source v2 admission and scanner checks admit and merge; malformed or foreign v2 ids never do", async () => {
+  let fetch = world({ extra: { ...rulesRoute(INDEPENDENT_RULES), ...v2Checks(), ...mergeable("clean"), ...ciRuns(),
+    [MERGE]: { __status: 200, body: { merged: true, sha: "c".repeat(40) } } } });
+  let result = await run(fetch, {}, { admissionMode: async () => LIVE_MODE });
+  assert.deepEqual([result.errors, result.actions[0].action, result.actions[0].result], [[], "merge_pull_request", "merged"]);
+  for (const [label, externalId] of [
+    ["attempt 3", `independent-ci:control:control-admission:v2:${V2J}:a3:cd1dd735d:f3:e2`],
+    ["no claim generation", `independent-ci:control:control-admission:v2:${V2J}:a1`],
+    ["the merge-slot role", `independent-ci:control:control-merge-slot:v2:${V2J}:a1:cd1dd735d:f3:e2`],
+    ["a staged v2 id", `independent-ci:staged:v2:${V2J}:a1`],
+    ["a native v2 id", `independent-ci:native-work-admission:v2:${V2J}:a1:cd1dd735d:f3:e2`],
+    ["a trailing field", `independent-ci:control:control-admission:v2:${V2J}:a1:cd1dd735d:f3:e2:x`],
+  ]) {
+    fetch = world({ extra: { ...rulesRoute(INDEPENDENT_RULES), ...v2Checks({ "kooyumi-admission-verified": [v2Check("kooyumi-admission-verified", { external_id: externalId })] }),
+      ...mergeable("clean"), ...ciRuns() } });
+    result = await run(fetch, {}, { admissionMode: async () => LIVE_MODE });
+    assert.equal(result.actions[0].action, "none", label);
+    assert.match(result.actions[0].reason, /has not admitted it/, label);
+    assert.deepEqual(writes(fetch), [], label);
+  }
+  // A malformed v2 scanner id is not the required check: no merge.
+  fetch = world({ extra: { ...rulesRoute(INDEPENDENT_RULES), ...v2Checks({ trivy: [v2Check("trivy", { external_id: `independent-ci:staged:v2:${V2J}:a1:cd1dd735d:f3:e2` })] }),
+    ...mergeable("clean"), ...ciRuns() } });
+  result = await run(fetch, {}, { admissionMode: async () => LIVE_MODE });
+  assert.equal(mergeCall(fetch), undefined);
+  assert.notEqual(result.actions[0].action, "merge_pull_request");
 });

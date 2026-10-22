@@ -1,7 +1,12 @@
 // Offline unit tests for worker/formal-gitleaks-v3/required-history/prepare.mjs:
 // the registered '/input' manifest cwd, the pinned reviewed-commit extraction,
-// reviewed commits as pack tips, and the fail-closed missing reviewed commit.
+// reviewed commits as pack tips, the fail-closed missing reviewed commit, and the
+// exact accepted gitleaks.yml pin set (main and the frozen PR-B commit).
 // No network, Docker, Host path or credential. Fixtures live under os.tmpdir().
+// The trusted workflow bytes come from test/fixtures/trusted-workflows.json, never
+// from the working tree, so these tests hold on a head carrying either version.
+// The helper and .gitleaks.toml stay single exact pins and are read from the
+// working tree on purpose: a change there must change the pins.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,8 +17,9 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { JOB_CONTRACT, jobId } from '../src/queue.mjs';
-import { IMAGE, SCAN_ARGS, SOURCE_PINS, REVIEWED_COMMITS, prepareRequiredHistory, reviewedCommitsFromConfig }
+import { IMAGE, SCAN_ARGS, SOURCE_PINS, WORKFLOW_PATH, WORKFLOW_SHA256S, REVIEWED_COMMITS, prepareRequiredHistory, reviewedCommitsFromConfig }
   from '../worker/formal-gitleaks-v3/required-history/prepare.mjs';
+import { workflowBytes } from './fixtures/trusted-workflows.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../../../..');
@@ -45,19 +51,23 @@ async function scratch(t, label) {
   });
   return directory;
 }
-async function trustedSource(directory) {
+const MAIN_WORKFLOW = workflowBytes('main', WORKFLOW_PATH);
+async function trustedSource(directory, workflow = MAIN_WORKFLOW) {
   const source = path.join(directory, 'source');
   for (const relative of Object.keys(SOURCE_PINS)) {
     const target = path.join(source, ...relative.split('/'));
     await fsp.mkdir(path.dirname(target), { recursive: true });
     await fsp.copyFile(path.join(ROOT, ...relative.split('/')), target);
   }
+  const target = path.join(source, ...WORKFLOW_PATH.split('/'));
+  await fsp.mkdir(path.dirname(target), { recursive: true }); await fsp.writeFile(target, workflow);
   return source;
 }
-function manifestBytes({ cwd = '/input' } = {}) {
+function manifestBytes({ cwd = '/input', workflowPins = [sha256(MAIN_WORKFLOW)] } = {}) {
   return Buffer.from(JSON.stringify({ schema: 'independent-ci.sources.v1', repo: 'tdoljyj/cross-memory-system', sourceSha: 'c'.repeat(40),
     roles: { gitleaks: { containerCommand: { image: IMAGE, scanner: 'gitleaks', executable: '/usr/bin/gitleaks', cwd, args: [...SCAN_ARGS] },
-      sourceFiles: Object.entries(SOURCE_PINS).map(([file, hash]) => ({ path: file, sha256: hash })) } } }));
+      sourceFiles: [...Object.entries(SOURCE_PINS).map(([file, hash]) => ({ path: file, sha256: hash })),
+        ...workflowPins.map(hash => ({ path: WORKFLOW_PATH, sha256: hash }))] } } }));
 }
 function gitleaksJob(headSha, baseSha, sourceManifestSha256) {
   const job = { contract: JOB_CONTRACT, id: '', repo: 'tdoljyj/cross-memory-system', pr: 884, headSha, baseSha,
@@ -72,10 +82,10 @@ function bareStore(directory) {
   git(['init', '--bare', '--quiet', '--template=', store]);
   return store;
 }
-async function run({ directory, store, head, base, refs, cwd }) {
-  const bytes = manifestBytes({ cwd }), manifestSha = sha256(bytes), job = gitleaksJob(head, base, manifestSha);
+async function run({ directory, store, head, base, refs, cwd, workflow, workflowPins }) {
+  const bytes = manifestBytes({ cwd, workflowPins }), manifestSha = sha256(bytes), job = gitleaksJob(head, base, manifestSha);
   return prepareRequiredHistory({ job, sourceManifestBytes: bytes, expectedSourceManifestSha256: manifestSha,
-    trustedSourceDirectory: await trustedSource(directory), gitDirectory: store, remoteSnapshot: snapshot(job, refs ?? [{ name: 'refs/heads/main', objectSha: base }]),
+    trustedSourceDirectory: await trustedSource(directory, workflow), gitDirectory: store, remoteSnapshot: snapshot(job, refs ?? [{ name: 'refs/heads/main', objectSha: base }]),
     outputDirectory: path.join(directory, 'history'), gitExecutable: GIT, expectedGitSha256: GIT ? sha256(fs.readFileSync(GIT)) : '0'.repeat(64) });
 }
 
@@ -137,6 +147,36 @@ test('a reviewed commit missing from the object store fails closed before any pa
   const packDirectory = path.join(directory, 'history', 'repo', '.git', 'objects', 'pack');
   assert.deepEqual(fs.readdirSync(packDirectory), []);
   assert.equal(fs.existsSync(path.join(directory, 'history', 'input.json')), false);
+});
+
+test('exactly the two reviewed gitleaks.yml versions are trusted; a swapped, tampered, undeclared or duplicated pin is refused', { skip: !GIT && 'no single-link git executable' }, async t => {
+  const directory = await scratch(t, 'workflow'), store = bareStore(directory);
+  const tree = text(['--git-dir=' + store, 'mktree'], { input: '' });
+  const base = text(['--git-dir=' + store, 'commit-tree', tree, '-m', 'synthetic base']);
+  const head = text(['--git-dir=' + store, 'commit-tree', tree, '-p', base, '-m', 'synthetic head']);
+  const attempt = async (label, options) => run({ directory: await fsp.mkdtemp(path.join(directory, `${label}-`)), store, head, base, ...options });
+  const main = workflowBytes('main', WORKFLOW_PATH), prB = workflowBytes('pr-b', WORKFLOW_PATH);
+  assert.deepEqual([...WORKFLOW_SHA256S], [sha256(main), sha256(prB)]);
+  assert.equal(Object.hasOwn(SOURCE_PINS, WORKFLOW_PATH), false);
+  // Either reviewed version passes every pinned-source check and stops at this synthetic store's reviewed-commit check.
+  for (const [label, bytes] of [['main', main], ['pr-b', prB]]) {
+    await assert.rejects(attempt(label, { workflow: bytes, workflowPins: [sha256(bytes)] }), { code: 'REVIEWED_COMMIT_NOT_IN_STORE' }, label);
+  }
+  const tampered = Buffer.concat([prB, Buffer.from('# tampered\n')]);
+  const refused = [
+    ['swapped', { workflow: prB, workflowPins: [sha256(main)] }, 'TRUSTED_REVIEW_SOURCE_CHANGED'],
+    ['tampered-declared', { workflow: tampered, workflowPins: [sha256(tampered)] }, 'TRUSTED_REVIEW_SOURCE_PIN_REQUIRED'],
+    ['tampered-file', { workflow: tampered, workflowPins: [sha256(prB)] }, 'TRUSTED_REVIEW_SOURCE_CHANGED'],
+    ['undeclared', { workflow: main, workflowPins: [] }, 'TRUSTED_REVIEW_SOURCE_PIN_REQUIRED'],
+    ['duplicated', { workflow: main, workflowPins: [sha256(main), sha256(prB)] }, 'TRUSTED_REVIEW_SOURCE_PIN_REQUIRED'],
+  ];
+  for (const [label, options, code] of refused) {
+    const before = new Set(fs.readdirSync(directory));
+    await assert.rejects(attempt(label, options), { code }, label);
+    // Refused before any output: the run directory holds only its trusted source.
+    const created = fs.readdirSync(directory).filter(name => !before.has(name));
+    assert.equal(created.length, 1, label); assert.deepEqual(fs.readdirSync(path.join(directory, created[0])), ['source'], label);
+  }
 });
 
 const localHistory = (() => {

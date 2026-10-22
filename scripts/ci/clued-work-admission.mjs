@@ -349,6 +349,15 @@ export const GATE_JOB_SHA256 = new Set([
   // Stage C: the same trusted-base gate exports the independently observed
   // main-refresh route. Register these exact bytes before consumer rollout.
   "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb",
+  // Owner Decisions 325717a6 and 22b0e0ed: the Stage C gate on
+  // ubuntu-latest for the gitleaks, trivy and contract-placement hosted
+  // executors on free minutes ($0 Actions budget cap). Only gitleaks and
+  // trivy are relayable (hosted-relay-v1 RELAYABLE_ROLES); the placement
+  // hosted run is execution only and never relayed. Admitting on the
+  // independent CI's own admission (CLUED_ADMISSION_GATE_SOURCE, a
+  // 600-second bounded wait, a 15-minute job). Registered here (PR-A)
+  // before the workflows change (PR-B).
+  "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
 ]);
 const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 export const PRODUCTION_PUBLISHER_WORKFLOW = ".github/workflows/clued-cloud-production-release.yml";
@@ -356,10 +365,17 @@ export const PLACEMENT_WORKFLOW = ".github/workflows/contract-placement.yml";
 const PLACEMENT_PREDECESSOR_BLOB = "90c632e917de5c84a3d8fb49e634f624703139cd";
 // Prior local candidate only; never represented as a published main generation.
 const PLACEMENT_DRAFT_V1_BLOB = "606e2179c957c1537320a71673a2c572cf1a037d";
-const PLACEMENT_SUCCESSOR_BLOB = "54ee2f11cc0f52d7cd9c0f6a63b75da8ef3e2b3a";
-const PLACEMENT_SUCCESSOR_SHA256 = "762f1b1346a699068660e46648a665d25873a396fc0d2186ef8f44a844625ffd";
-const PLACEMENT_ROLE_SHA256 = "2901b0b053e4064b557bbd958e48c4c07aab8bc42dff6fb501b9f94ab8da7377";
-const PLACEMENT_GATE_SHA256 = "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb";
+// The self-hosted successor now on main. Owner Decisions 325717a6, 22b0e0ed
+// and bc6fdad1 replace it with the exact PR-B hosted executor
+// (contract-placement-hosted-executor, same checks). Its relay identity step
+// is inert: contract-placement is never relayed (it runs PR code while it
+// holds id-token: write); App 5368905 publishes contract-placement only from
+// its formal local role, as the PR-B workflow comment states.
+const PLACEMENT_SELF_HOSTED_SUCCESSOR_BLOB = "54ee2f11cc0f52d7cd9c0f6a63b75da8ef3e2b3a";
+const PLACEMENT_SUCCESSOR_BLOB = "3640f0895cc72caffb8b2bc0c1df21b76b4b5340";
+const PLACEMENT_SUCCESSOR_SHA256 = "4898299bee3e804a19acfef51d15b582e5a52526a655a290cf09bb56c39de84b";
+const PLACEMENT_ROLE_SHA256 = "01d8c96aed0a55154156254899bd2e08dffaf7ec7ea8041acfaf6b2be5307e78";
+const PLACEMENT_GATE_SHA256 = "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9";
 
 // Only this independently reviewed Source/FullRole can cross the old ungated
 // boundary. Keep checking later gated edits: a retained gate cannot authorize
@@ -371,7 +387,7 @@ export function registeredPlacementSuccessor({file,headText,baseText,profiles,ro
       file.previous_filename && file.previous_filename!==PLACEMENT_WORKFLOW ||
       typeof baseText!=="string" || typeof headText!=="string")return no("placement exact modified path/base required");
     const baseBlob=workflowBlob(baseText),headBlob=workflowBlob(headText);
-    if(![PLACEMENT_PREDECESSOR_BLOB,PLACEMENT_DRAFT_V1_BLOB,PLACEMENT_SUCCESSOR_BLOB].includes(baseBlob) ||
+    if(![PLACEMENT_PREDECESSOR_BLOB,PLACEMENT_DRAFT_V1_BLOB,PLACEMENT_SELF_HOSTED_SUCCESSOR_BLOB,PLACEMENT_SUCCESSOR_BLOB].includes(baseBlob) ||
       headBlob!==PLACEMENT_SUCCESSOR_BLOB || sha256Hex(headText)!==PLACEMENT_SUCCESSOR_SHA256)
       return no("placement exact predecessor/successor bytes required");
     const before=registeredWorkflowSource(profiles,PLACEMENT_WORKFLOW,baseBlob),
@@ -445,35 +461,27 @@ const BOOTSTRAP_ORDINARY_SOURCES=Object.freeze([
   },
   {
     "file": ".github/workflows/gitleaks.yml",
-    "predecessor_blob": "cbe2f69ddabb49cd91cd26664a88d47859696fa5",
-    "candidate_blob": "74043d68d20dbee9f9404a66f0a02d3285fea0aa",
-    "candidate_sha256": "168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579",
-    "gate_sha256": "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb",
+    "predecessor_blob": "74043d68d20dbee9f9404a66f0a02d3285fea0aa",
+    "candidate_blob": "95f4527be27d02889892d029b398ab1cf2e71429",
+    "candidate_sha256": "688073ac1281c4322c90673816b761852989f6849083c07eca2cbd8f4e424091",
+    "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
     "roles": [
       {
         "job_id": "gitleaks-trusted-self-hosted",
-        "definition_sha256": "900524a57416a36bf8627d9fb65dc98bf1cf726db9dd4828196ea4c3dc0b0672"
-      },
-      {
-        "job_id": "gitleaks-untrusted-hosted",
-        "definition_sha256": "72e630fef3abc4acac7fd9280a7a2bd1c70b409570bef1833f7471907619c135"
+        "definition_sha256": "a4aeb5d5ab4d38eac6bff4dcd68b19f0c7874ef009a17483d8e4375f3af4bfda"
       }
     ]
   },
   {
     "file": ".github/workflows/trivy.yml",
-    "predecessor_blob": "024f88452142c2e01daec1e201caa64704f2c3bc",
-    "candidate_blob": "f7f8d075d1a0f314a7c5eb295e459599288d538c",
-    "candidate_sha256": "cea2fd770663e65f554719903da90aaf4b8aae4a52bf52098d3d258340e2727d",
-    "gate_sha256": "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb",
+    "predecessor_blob": "f7f8d075d1a0f314a7c5eb295e459599288d538c",
+    "candidate_blob": "300ad19a59bf529ccebd45ae7fbb76189f806316",
+    "candidate_sha256": "94e9ac722e3a3e0c4f924ce3b27371803dc2a04b5e177a7b0bcffd2bdf28b810",
+    "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
     "roles": [
       {
         "job_id": "trivy-trusted-self-hosted",
-        "definition_sha256": "be50edb275909634522fa8cdcaffcf59e5c17bfeaf7edc96afa91b7d479c09f9"
-      },
-      {
-        "job_id": "trivy-untrusted-hosted",
-        "definition_sha256": "d349c2c0d00afa00b7b9cb09e461940e3e016840108c9e1e07ee3aad9d9742cd"
+        "definition_sha256": "c7b119873990af82908377518126526da392fb7aa351c4b00841d30970062625"
       }
     ]
   },
@@ -1732,6 +1740,13 @@ export async function appChecksOnHead(fetchImpl, env, repository, headSha, name 
     const {readIndependentControlChecksOnHead}=await import('../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/consumer.mjs');
     return readIndependentControlChecksOnHead({repository,headSha,name});
   }
+  // Source v2 (resident executor): the same selector over the v2 control pair (external id
+  // independent-ci:control:<role>:v2:..., journal state2\effects-control); fails closed off the
+  // installed clued-control principal.
+  if(env.CLUED_EXECUTION_PROVIDER==='independent-control-checks-v2'&&name!==null){
+    const {readIndependentControlChecksOnHeadV2}=await import('../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/consumer.mjs');
+    return readIndependentControlChecksOnHeadV2({repository,headSha,name});
+  }
 
   const historical = name === null;
   const names = new Set(historical ? [APP_CHECK_NAME, "clued-admission-verified"] : [name]);
@@ -1926,6 +1941,82 @@ export function renderReverifySummary(result) {
 // once, within the live admission's rerun allowance, before considering merge.
 export const GATE_WAIT_SECONDS = 180;
 export const GATE_POLL_SECONDS = 10;
+
+// Owner Decision 22b0e0ed (PR-B hosted executors): a gate whose job names
+// this source admits on the independent CI's own admission. The
+// clued-admission App no longer runs on pull requests (its workflow is
+// disabled), so the gate reads App 5368905's kooyumi-work-admission check of
+// the exact head, which the resident executor's stage 1 publishes before it
+// waits for hosted results. It polls every INDEPENDENT_GATE_POLL_SECONDS for
+// at most INDEPENDENT_GATE_WAIT_SECONDS. Only the newest check of App 5368905
+// counts: success, the exact head, the independent CI's native-work-admission
+// external_id and a summary that names this pull request. A same-name check
+// of any other App is never read. While the Owner's disaster-recovery switch
+// runs the clued-admission workflow again, its event-bound App check below
+// still decides when it settles first. The job is digest-pinned, so a pull
+// request cannot select this source for another workflow.
+export const INDEPENDENT_GATE_SOURCE = "independent-ci-native-work-admission";
+export const INDEPENDENT_ADMISSION_APP_ID = 5368905;
+export const INDEPENDENT_ADMISSION_CHECK = "kooyumi-work-admission";
+export const INDEPENDENT_GATE_WAIT_SECONDS = 600;
+export const INDEPENDENT_GATE_POLL_SECONDS = 30;
+// The independent CI's native-work-admission ids: v1 (<job id>:f<fence>:e<epoch>:a<attempt>) and
+// Source v2 (src/job-v2.mjs admissionExternalIdV2: v2:<job id>:a<1|2>:c<claim prefix>:f<fence>:e<epoch>).
+const INDEPENDENT_NATIVE_ADMISSION_ID = /^independent-ci:native-work-admission:(?:[a-f0-9]{64}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9}:a[1-9][0-9]{0,9}|v2:[a-f0-9]{64}:a[12]:c[a-f0-9]{8}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9})$/;
+export async function independentAdmissionCheck(fetchImpl, env, repository, headSha, prNumber) {
+  let checks;
+  try {
+    checks = await githubPaged(fetchImpl, env,
+      `/repos/${repository}/commits/${headSha}/check-runs?check_name=${INDEPENDENT_ADMISSION_CHECK}&filter=all`, "check_runs");
+  } catch (error) {
+    if (/ returned 403$/.test(String(error && error.message))) throw new Error(`${error.message}: the admission-gate job needs \`checks: read\``);
+    throw error;
+  }
+  const newest = (Array.isArray(checks) ? checks : [])
+    .filter((check) => check && check.name === INDEPENDENT_ADMISSION_CHECK && check.head_sha === headSha
+      && check.app && Number(check.app.id) === INDEPENDENT_ADMISSION_APP_ID)
+    .sort((a, b) => Number(b.id) - Number(a.id))[0] ?? null;
+  if (!newest || newest.status !== "completed") return { settled: false, check: newest };
+  const named = [...String((newest.output && newest.output.summary) ?? "").matchAll(/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([0-9]{1,10})(?![0-9])/g)]
+    .filter((match) => match[1].toLowerCase() === String(repository).toLowerCase()).map((match) => Number(match[2]));
+  const bound = INDEPENDENT_NATIVE_ADMISSION_ID.test(String(newest.external_id ?? "")) &&
+    named.length > 0 && named.every((number) => number === Number(prNumber));
+  return { settled: true, check: newest, bound, admitted: bound && newest.conclusion === "success" };
+}
+
+async function independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, independent, limit }) {
+  const what = `${INDEPENDENT_ADMISSION_CHECK} of App ${INDEPENDENT_ADMISSION_APP_ID} for #${pr.number} on ${pr.head.sha}`;
+  outcome.admission_source = INDEPENDENT_GATE_SOURCE;
+  outcome.automation_self_hosted = false;
+  const check = independent && independent.check;
+  if (check) outcome.admission_run = { id: check.id, status: check.status, conclusion: check.conclusion ?? null,
+    html_url: check.html_url ?? null, source: what };
+  if (!independent || !independent.settled) {
+    outcome.verdict = "ADMISSION_PENDING";
+    outcome.reasons.push(`${what}: ${check ? `check ${check.id} still ${check.status}` : "has posted no check"} after ${limit}s`);
+  } else if (!independent.bound) {
+    outcome.verdict = "REJECTED";
+    outcome.reasons.push(`${what}: check ${check.id} does not bind this pull request (external_id or summary)`);
+  } else if (!independent.admitted) {
+    outcome.verdict = "REJECTED";
+    outcome.reasons.push(`${what} ${check.id} concluded ${check.conclusion}`);
+  } else if (!pr.base || !pr.base.repo || pr.base.ref !== pr.base.repo.default_branch) {
+    outcome.verdict = "REJECTED";
+    outcome.reasons.push("the independent CI admits only pull requests into the default branch");
+  } else if (attempt) {
+    outcome.verdict = "RERUN_REFUSED";
+    outcome.reasons.push(`run attempt ${attempt}: the independent CI admission names no re-run allowance; push a new commit`);
+  } else if (!await executionEpochCurrent(fetchImpl, env, env.GITHUB_WORKSPACE, {
+    repository: env.GITHUB_REPOSITORY, head_sha: pr.head.sha, pr_ref: outcome.pr_ref, target_branch: pr.base.ref,
+  })) {
+    outcome.verdict = "REJECTED";
+    outcome.reasons.push("work_claim_execution_epoch_stale");
+  } else {
+    outcome.verdict = "ADMITTED";
+    outcome.admitted = true;
+  }
+  return outcome;
+}
 
 // Re-review 2, N3c: the pull_requests list of a run names every open pull
 // request with that head, not the one that triggered it, so a pull request
@@ -2159,6 +2250,11 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     const pr=event?.pull_request;
     return consumeIndependentGate({repository:env.GITHUB_REPOSITORY,pr:pr?.number,headSha:pr?.head?.sha,baseSha:pr?.base?.sha});
   }
+  if(env.CLUED_EXECUTION_PROVIDER==='independent-control-checks-v2'){
+    const {consumeIndependentGateV2}=await import('../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/consumer.mjs');
+    const pr=event?.pull_request;
+    return consumeIndependentGateV2({repository:env.GITHUB_REPOSITORY,pr:pr?.number,headSha:pr?.head?.sha,baseSha:pr?.base?.sha});
+  }
 
   const outcome = emptyOutcome(eventName);
   if (eventName === "workflow_dispatch") return dispatchGate({ env, event, fetchImpl, now, outcome });
@@ -2175,9 +2271,15 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   outcome.pr_ref = `${env.GITHUB_REPOSITORY}#${pr.number}`;
   // A fork pull request, like any other, follows the App check that main's
   // admission run posts; the gate reads no repository variable.
+  const source = env.CLUED_ADMISSION_GATE_SOURCE;
+  if (source !== undefined && source !== "" && source !== INDEPENDENT_GATE_SOURCE)
+    throw new Error(`unknown admission gate source ${JSON.stringify(String(source)).slice(0, 80)}`);
+  const independentSource = source === INDEPENDENT_GATE_SOURCE;
+  const maxWait = independentSource ? INDEPENDENT_GATE_WAIT_SECONDS : GATE_WAIT_SECONDS;
+  const pollSeconds = independentSource ? INDEPENDENT_GATE_POLL_SECONDS : GATE_POLL_SECONDS;
   const waitSeconds = Number.parseInt(env.CLUED_ADMISSION_GATE_WAIT_SECONDS ?? "", 10);
   const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0
-    ? Math.min(waitSeconds, GATE_WAIT_SECONDS) : GATE_WAIT_SECONDS;
+    ? Math.min(waitSeconds, maxWait) : maxWait;
   try {
     if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
     const attempt = rerunAttempt(env);
@@ -2194,17 +2296,26 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     const since = Date.parse(self && self.created_at);
     if (!Number.isFinite(since)) throw new Error(`run ${env.GITHUB_RUN_ID} has no created_at.`);
     let found = { run: null, check: null };
+    let independent = null;
     const what = `${APP_CHECK_NAME} of App ${ADMISSION_APP_ID} for #${pr.number} from the admission run of this event (created since ${self.created_at} less ${SAME_EVENT_MS / 1000}s)`;
     for (let waited = 0; ;) {
+      if (independentSource) {
+        independent = await independentAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, pr.number);
+        if (independent.settled) break;
+      }
       found = await eventAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, since, pr.number);
       // On a re-run the admission run may itself be running again under its
       // old id, with its previous attempt's check posted: wait for it to end.
       const settled = found.check && found.check.status === "completed" && (!attempt || !found.run || found.run.status === "completed");
       if (settled || waited >= limit) break;
-      const delay = Math.min(GATE_POLL_SECONDS, limit - waited);
+      const delay = Math.min(pollSeconds, limit - waited);
       await sleep(delay * 1000);
       waited += delay;
     }
+    // The independent source decides unless the clued-admission App's
+    // event-bound check (disaster recovery only) settled first.
+    if (independentSource && (independent?.settled || !(found.check && found.check.status === "completed")))
+      return await independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, independent, limit });
     // Merge Admission step 2 (review MINOR-3/4): on a re-run, the newest
     // check for this pull request on this head decides, whichever admission
     // run (or re-verification) posted it: every later check is a later
