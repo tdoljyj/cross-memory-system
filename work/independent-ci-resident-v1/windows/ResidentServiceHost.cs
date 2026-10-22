@@ -142,14 +142,16 @@ public sealed class ResidentStopGate
 
     [System.Runtime.InteropServices.DllImport("kernel32.dll")] internal static extern ulong GetTickCount64();
 
-    public static bool TryCreateStopFile(string path, string text) { return TryCreateStopFile(path, text, (f, b) => f.Write(b, 0, b.Length)); }
+    // Written through to disk: stops are rare, and a request cut by a power loss would lose its boot record.
+    public static bool TryCreateStopFile(string path, string text) { return TryCreateStopFile(path, text, (f, b) => { f.Write(b, 0, b.Length); f.Flush(true); }); }
 
     // An existing file (a stop still pending for an earlier executor) is left exactly as it is. Only "already
     // there" counts as asked: any other failure to create the file (a missing directory, a full disk) is thrown,
     // so the stop fails visibly instead of reporting STOPPED while the executor was never asked (Task d80fd886,
     // F3). Once the file exists the request stands, even if its content could not be written: an empty or cut
-    // request is honoured like one without content. The file is shared for read and delete, so the executor can
-    // read and rename it while the host still holds it.
+    // request is honoured like one without content. An empty file is also the normal state between CreateNew and
+    // the write, so a reader must never treat an empty or unreadable request as stale. The file is shared for read
+    // and delete, so the executor can read and rename it while the host still holds it.
     internal static bool TryCreateStopFile(string path, string text, Action<FileStream, byte[]> write)
     {
         FileStream f;
