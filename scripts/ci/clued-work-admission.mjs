@@ -821,7 +821,7 @@ function strategyValue(text) {
   if (/^"[^"\\]*"$|^'[^']*'$/.test(text)) return { scalar: text };
   const flow = /^\[(.*)\]$/.exec(text);
   if (flow) {
-    const items = flow[1].split(",").map((item) => item.replace(/^ +| +$/g, ""));
+    const items = flow[1].split(",").map((item) => item.trim());
     return items.every((item) => STRATEGY_FLOW_ITEM.test(item)) ? { flow: items } : null;
   }
   return STRATEGY_PLAIN.test(text) && !/:( |$)| #/.test(text) ? { scalar: text } : null;
@@ -835,8 +835,10 @@ function strategyTree(job) {
     if (/[^\S ]/.test(line) || HIDDEN_LINE_BREAK.test(line)) return null;
     if (/^ *(#.*)?$/.test(line)) continue;
     if (!line.startsWith("     ")) break;
-    const text = line.replace(/ +$/, "");
-    const indent = text.length - text.replace(/^ +/, "").length;
+    // Only spaces are left as whitespace here, so trim() strips exactly those
+    // (a / +$/ replace is quadratic on a long run of spaces).
+    const text = line.trimEnd();
+    const indent = text.length - text.trimStart().length;
     rows.push({ indent, text: text.slice(indent) });
   }
   let i = 0;

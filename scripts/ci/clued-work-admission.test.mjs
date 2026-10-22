@@ -1983,6 +1983,10 @@ test("gate guard (Owner Decision 586181ec): an include entry may be removed, not
   const raised = withStrategy(lastGone).replace("    timeout-minutes: 25\n", "    timeout-minutes: 360\n");
   assert.deepEqual(gateFindings(raised, withStrategy(S)), ["self_hosted_timeout_raised_ungated:trivy-trusted-self-hosted"]);
   assert.deepEqual(gateFindings(withStrategy(S), withStrategy(S)), []);
+  // A long run of spaces is read in linear time (a / +$/ replace took minutes on 1 MB).
+  const started = Date.now();
+  assert.deepEqual(gateFindings(withStrategy([...lastGone, `     ${" ".repeat(1000000)}x`]), withStrategy(S)), STRATEGY_CHANGED);
+  assert.ok(Date.now() - started < 5000, `${Date.now() - started} ms`);
 });
 
 test("gate guard (Owner Decision 586181ec): an axis value may be removed only from a matrix without include", () => {
