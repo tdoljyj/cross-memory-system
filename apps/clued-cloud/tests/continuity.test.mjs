@@ -127,7 +127,7 @@ test("publishes vendor-neutral agent instructions", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/markdown/);
   const markdown = await response.text();
   assert.match(markdown, /clued_session_resume/);
-  assert.match(markdown, /dedicated Clued Binding/);
+  assert.match(markdown, /dedicated BeamingFace Binding/);
 });
 
 test("serves MCP bootstrap without a binding token", async () => {
