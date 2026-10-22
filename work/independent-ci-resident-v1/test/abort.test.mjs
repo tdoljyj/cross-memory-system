@@ -236,7 +236,7 @@ test('inspect lists every open batch with the exact values an abort names', asyn
   const f = await waitingBatch(t);
   const view = await inspect({ ledger: f.ledger, receipts: f.receipts });
   const latest = await f.ledger.latestRecord(KEY);
-  assert.deepEqual(view.abortTargets, [{ batchKey: KEY, state: 'STARTED', waiting: true, aborting: false, latestLedgerEntry: '15-relay-wait.json', ledgerEntrySha256: latest.sha256 }]);
+  assert.deepEqual(view.abortTargets, [{ batchKey: KEY, state: 'STARTED', waiting: true, parked: false, aborting: false, latestLedgerEntry: '15-relay-wait.json', ledgerEntrySha256: latest.sha256 }]);
   assert.equal(view.openBatches, 1);
 });
 

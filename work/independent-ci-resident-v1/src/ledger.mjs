@@ -67,7 +67,7 @@ export const OPEN_RECORDS = Object.freeze(['00-reserved.json', '10-started.json'
 export const OWNER_ABORT_RECORD = '80-owner-abort.json';
 export const PARK_RECORD = '70-parked.json';
 export const MAX_TRIES = 99;
-const TRY = /^7([12])-try(?:ed)?-(\d{2})\.json$/;
+const TRY = /^7(?:(1)-try|(2)-tried)-(\d{2})\.json$/;
 const tryName = (begun, n) => `${begun ? '71-try' : '72-tried'}-${String(n).padStart(2, '0')}.json`;
 export const SELF_ABORT_RECORD = '81-self-abort.json';
 
@@ -150,12 +150,12 @@ export class Ledger {
     const names = (await fs.readdir(dir)).filter(n => TRY.test(n)).sort();
     const tries = [];
     for (const name of names) {
-      const [, kind, nn] = TRY.exec(name);
+      const [, one, two, nn] = TRY.exec(name); const kind = one ?? two;
       const n = Number(nn);
       if (kind === '1') { check(n === tries.length + 1 && n <= MAX_TRIES, 'PARKED_TRY_SEQUENCE_INVALID'); tries.push({ n, begun: await read(name), ended: null }); }
     }
     for (const name of names) {
-      const [, kind, nn] = TRY.exec(name);
+      const [, one, two, nn] = TRY.exec(name); const kind = one ?? two;
       if (kind !== '2') continue;
       const t = tries[Number(nn) - 1];
       check(t && t.ended === null, 'PARKED_TRY_SEQUENCE_INVALID');
@@ -223,7 +223,7 @@ export class Ledger {
   // Parking point B: after the last role stage and the close archive on both hosts, before stage 8. Create-only.
   async park(key, facts) {
     const s = await this.state(key);
-    check(s.state === 'STARTED' && s.plan && !s.parked && !s.abort, 'PARK_REQUIRES_STARTED_ENTRY_WITH_PLAN', s.state);
+    check(s.state === 'STARTED' && s.plan && !s.parked && !s.abort && !s.selfAbort, 'PARK_REQUIRES_STARTED_ENTRY_WITH_PLAN', s.state);
     await writeNew(path.join(this.dir(key), PARK_RECORD), { key, contract: 'clued.independent-ci.resident-parked/1', at: isoNow(this.clock), ...facts });
   }
 
@@ -238,7 +238,7 @@ export class Ledger {
 
   async endTry(key, n, facts) {
     const s = await this.state(key);
-    check(s.state === 'STARTED' && s.parked && s.tries.length === n && s.tries[n - 1].ended === null && !s.abort, 'PARKED_TRY_END_REQUIRES_OPEN_TRY', s.state);
+    check(s.state === 'STARTED' && s.parked && s.tries.length === n && s.tries[n - 1].ended === null && !s.abort && !s.selfAbort, 'PARKED_TRY_END_REQUIRES_OPEN_TRY', s.state);
     await writeNew(path.join(this.dir(key), tryName(false, n)), { key, contract: 'clued.independent-ci.resident-stage8-tried/1', n, at: isoNow(this.clock), ...facts });
   }
 

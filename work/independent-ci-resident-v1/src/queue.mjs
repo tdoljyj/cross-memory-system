@@ -39,8 +39,9 @@ import { POSITIONS } from './breaker.mjs';
 export const QUEUE_CONTRACT = 'clued.independent-ci.resident-queue/1';
 export const QUEUE_FILE = 'queue.json';
 export const QUEUE_MAX_BYTES = 4 * 1024 * 1024;
-export const ROW_STATES = Object.freeze(['QUEUED', 'RUNNING', 'WAITING', 'BACKOFF', 'STOPPED', 'DONE']);
-export const LIVE_STATES = Object.freeze(['QUEUED', 'RUNNING', 'WAITING', 'BACKOFF']);
+// PARKED (phase 2, step 2): the row's batch rests at parking point B before stage 8 (its `running` stays set).
+export const ROW_STATES = Object.freeze(['QUEUED', 'RUNNING', 'PARKED', 'WAITING', 'BACKOFF', 'STOPPED', 'DONE']);
+export const LIVE_STATES = Object.freeze(['QUEUED', 'RUNNING', 'PARKED', 'WAITING', 'BACKOFF']);
 // How a row was picked (00-reserved.json keeps it; ledger.mjs#usage counts the waiting budget and the re-evaluations
 // from it). attempt2 is the one automatic attempt 2 (attempts.mjs), never a queue row.
 export const ORIGINS = Object.freeze(['queued', 'backoff-retry', 'waiting-retry', 'new-trigger', 'restored', 'lifted', 'attempt2']);
@@ -78,7 +79,7 @@ export function validateQueue(q) {
   for (const r of q.rows) {
     check(r && Number.isSafeInteger(r.pr) && r.pr > 0 && !prs.has(r.pr) && ROW_STATES.includes(r.state)
       && (r.current === null || commitOk(r.current)) && (r.running === null || (commitOk(r.running) && /^[0-9a-f]{64}$/.test(r.running.key ?? '')))
-      && (r.state !== 'RUNNING' || r.running !== null) && (r.state === 'DONE' || r.state === 'STOPPED' || r.current !== null)
+      && (!['RUNNING', 'PARKED'].includes(r.state) || r.running !== null) && (r.state === 'DONE' || r.state === 'STOPPED' || r.current !== null)
       && Array.isArray(r.superseded) && r.superseded.length <= SUPERSEDED_MAX && r.superseded.every(commitOk)
       && Array.isArray(r.seen) && r.seen.length <= SEEN_MAX && r.seen.every(h => HEX40.test(h))
       && Number.isSafeInteger(r.order) && Number.isSafeInteger(r.level) && r.level >= 0 && (r.stopKind === null || STOP_KINDS.includes(r.stopKind))
@@ -185,7 +186,7 @@ export class RunQueue {
     // A commit this PR was never seen with.
     if (!LIVE_STATES.includes(row.state) && this.live().length >= depth) return { action: 'refused', code: 'QUEUE_DEPTH_EXCEEDED' };
     let action = 'new';
-    if (row.state === 'RUNNING') {
+    if (['RUNNING', 'PARKED'].includes(row.state)) {
       action = 'pending';
       // A newer commit that was waiting behind the running one is itself replaced now.
       if (row.current && row.current.headSha !== row.running?.headSha) row.superseded = [commitOf(row.current), ...row.superseded.filter(c => c.headSha !== row.current.headSha)].slice(0, SUPERSEDED_MAX);
@@ -196,8 +197,8 @@ export class RunQueue {
     row.seen = [t.headSha, ...row.seen].slice(0, SEEN_MAX);
     row.current = { headSha: t.headSha, baseSha: t.baseSha, seq: this.seq(), firstAt: now };
     Object.assign(row, { order: row.current.seq, level: 0, levelKind: null, nextAt: null, poke: null, stopKind: null, stopClass: null, origin: 'queued', deferred: null, deferUntil: null });
-    // A running batch keeps running (the row stays RUNNING and shows the newer commit as the next one).
-    this.setState(row, row.running ? 'RUNNING' : 'QUEUED', null, now);
+    // A running or parked batch keeps going (the row stays as it is and shows the newer commit as the next one).
+    this.setState(row, row.running ? (row.state === 'PARKED' ? 'PARKED' : 'RUNNING') : 'QUEUED', row.running && row.state === 'PARKED' ? row.reason : null, now);
     return { action, seq: row.current.seq };
   }
 
@@ -244,6 +245,17 @@ export class RunQueue {
     this.setState(r, 'RUNNING', null, now);
   }
 
+  // Phase 2, step 2: the row's batch rests at parking point B (reason: why stage 8 was not ready; nextAt: its next try;
+  // position: its claim's place in the merge queue at that try). A newer commit that arrived meanwhile stays current.
+  park(pr, headSha, { reason, nextAt, position }, now) {
+    const r = this.row(pr);
+    if (!r || r.running?.headSha !== headSha) return false;
+    r.parked = { reason: reason ?? null, nextAt: Number.isSafeInteger(nextAt) ? nextAt : null, position: Number.isSafeInteger(position) ? position : null };
+    if (r.current?.headSha === headSha) this.setState(r, 'PARKED', reason ?? null, now);
+    else r.updatedAt = now;
+    return true;
+  }
+
   // A batch of (pr, headSha) ended (a precheck that ignored it counts as one). outcome: { kind: completed | burned |
   //   released | ignored, code, klass (failure-table class), reason (the release reason), ciRetryAfter (ms or null),
   //   releases24h (this head's counted releases in 24 hours, this one included), releaseCap }.
@@ -252,11 +264,11 @@ export class RunQueue {
     const r = this.row(pr);
     if (!r) return null;
     const ran = r.running?.headSha === headSha ? r.running : null;
-    if (ran) r.running = null;
+    if (ran) { r.running = null; r.parked = null; }
     if (r.current?.headSha !== headSha) {
       // A newer commit took over while this one ran. An unburned one may come back (restore); a burned one never.
       if (ran && outcome.kind === 'released') r.superseded = [commitOf(ran), ...r.superseded.filter(c => c.headSha !== headSha)].slice(0, SUPERSEDED_MAX);
-      if (r.state === 'RUNNING' && !r.running) this.setState(r, r.current ? 'QUEUED' : 'DONE', null, now);
+      if (['RUNNING', 'PARKED'].includes(r.state) && !r.running) this.setState(r, r.current ? 'QUEUED' : 'DONE', null, now);
       return null;
     }
     r.deferred = null;
@@ -377,7 +389,8 @@ export class RunQueue {
     const start = Math.max(now, runningUntil ?? now);
     return this.data.rows.filter(r => r.current).map(r => ({
       pr: r.pr, headSha: r.current.headSha, baseSha: r.current.baseSha, state: r.state, reason: r.deferred ?? r.reason ?? null, since: r.since ?? null,
-      nextAt: time(r.nextAt) ? r.nextAt : (r.poke ? r.poke.dueAt : null), level: r.level, origin: r.origin ?? null, stopKind: r.stopKind ?? null,
+      nextAt: r.state === 'PARKED' ? (r.parked?.nextAt ?? null) : time(r.nextAt) ? r.nextAt : (r.poke ? r.poke.dueAt : null), level: r.level, origin: r.origin ?? null, stopKind: r.stopKind ?? null,
+      queuePosition: r.state === 'PARKED' ? (r.parked?.position ?? null) : null,
       firstAt: r.current.firstAt ?? null, position: ahead.has(r.pr) ? ahead.get(r.pr) + 1 : null,
       eta: ahead.has(r.pr) ? start + ahead.get(r.pr) * etaBatchMs : null,
     })).sort((a, b) => (a.position ?? 1e9) - (b.position ?? 1e9) || a.pr - b.pr);

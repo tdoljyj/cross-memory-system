@@ -1,5 +1,5 @@
 {
-  "contract": "clued.independent-ci.resident-policy/4",
+  "contract": "clued.independent-ci.resident-policy/5",
   "repo": "tdoljyj/cross-memory-system",
   "baseBranch": "main",
   "sourceManifestSha256": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -32,6 +32,16 @@
       3600000,
       7200000
     ]
+  },
+  "stage8": {
+    "mode": "park"
+  },
+  "park": {
+    "maxParked": 4,
+    "maxParkedOutsideTop2": 8,
+    "maxMs": 86400000,
+    "stage8MaxTries": 12,
+    "stage8RetriesPer24h": 100
   },
   "companion": {
     "userSid": "S-1-5-21-0-0-0-1001",
