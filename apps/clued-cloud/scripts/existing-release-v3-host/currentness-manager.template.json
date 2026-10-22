@@ -1,0 +1,39 @@
+{
+  "schema": "clued.currentness-linux-process-manager/2",
+  "manager_ref": null,
+  "qualification_ref": null,
+  "uid": null,
+  "job_uid": null,
+  "job_gid": null,
+  "source_root": "/srv/clued-production-release/source",
+  "source_commit": null,
+  "node": {
+    "path": "/var/lib/clued-independent-ci/toolchain-build-v1/node",
+    "sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12"
+  },
+  "git": {
+    "path": "/usr/bin/git",
+    "sha256": "2a8c18fbf43da9f692d75474c72bea9dfd796c260b0f3dfe456376abc3bbd668"
+  },
+  "manager": {
+    "path": "/opt/clued-production-release-v3/release/linux-process-manager.mjs",
+    "sha256": "b961dfc06794336f38f47d4f8f5d7c6a2724aee6ba5bac4ff69090ef30842f70"
+  },
+  "systemctl": {
+    "path": "/usr/bin/systemctl",
+    "sha256": null
+  },
+  "unit_template": {
+    "path": "/etc/systemd/system/clued-currentness@.service",
+    "sha256": null
+  },
+  "state_dir": "/var/lib/clued-production-release/manager-state",
+  "output_dir": "/var/lib/clued-production-release/manager-output",
+  "environment": {
+    "PATH": "/var/lib/clued-independent-ci/toolchain-build-v1:/usr/bin:/bin",
+    "HOME": "/var/lib/clued-production-release/job-home",
+    "TMPDIR": "/var/lib/clued-production-release/job-tmp",
+    "LANG": "C",
+    "LC_ALL": "C"
+  }
+}
