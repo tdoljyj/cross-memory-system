@@ -46,8 +46,8 @@ const OMITTED = ['ExecStartPre', 'ExecStartPost', 'ExecCondition', 'ExecStop', '
   'EnvironmentFiles'];
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
-// Git's object id of a file as a text checkout normalizes it (CRLF to LF): the
-// committed patches name these ids in their `index` lines.
+// Git's object id of a file once it is committed as text (CRLF normalized to
+// LF): the git-format patches name these ids in their `index` lines.
 const gitBlob = (bytes) => {
   const text = Buffer.from(bytes.toString('utf8').replaceAll('\r\n', '\n'));
   return createHash('sha1').update(`blob ${text.length}\0`).update(text).digest('hex');
@@ -55,7 +55,13 @@ const gitBlob = (bytes) => {
 const read = (file) => fs.readFileSync(path.join(PACKAGE, file));
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'existing-release-v3-host-'));
 // On exit rather than in after(): this also runs when the module fails to load.
-process.once('exit', () => fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 3 }));
+process.once('exit', () => {
+  try {
+    fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 3 });
+  } catch {
+    // A leftover scratch directory must not turn a passing run into a failure.
+  }
+});
 
 function code(run) {
   try {
@@ -209,7 +215,8 @@ test('the committed package is the revision 6 installed on the Host, byte for by
 });
 
 test('the committed patches rebuild the exact v4 and v5 predecessors', () => {
-  // Each patch names the git object ids of its two sides in its `index` line.
+  // The two git-format patches, v4-to-v5 and v5-to-v6, name the object ids of
+  // both sides in their `index` lines; v3-to-v4 is a plain diff without them.
   for (const [patchFile, file] of [['v4-to-v5-executable.patch', MANAGER], ['v4-to-v5-executable.patch', STAGES],
     ['v5-to-v6-executable.patch', RELEASE]]) {
     const [older, newer] = patchSection(patchFile, file).match(/^index ([0-9a-f]{7,40})\.\.([0-9a-f]{7,40})/m).slice(1);
@@ -337,7 +344,8 @@ test("the release entry still pins main's original verification CLIs", () => {
   assert.equal(pinned.length, 3);
   for (const [, file, pin] of pinned) {
     assert.equal(sha256(fs.readFileSync(path.join(REPO, file))), pin, `${file} no longer matches its pin in `
-      + `scripts/existing-release-v3-host/${STAGES}: the Host publisher would refuse to release this main. `
+      + `${path.relative(REPO, path.join(PACKAGE, STAGES)).split(path.sep).join('/')}: `
+      + 'the Host publisher would refuse to release this main. '
       + 'Land a new reviewed publisher package revision that pins the new bytes first.');
   }
 });
