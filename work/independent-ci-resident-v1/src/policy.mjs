@@ -29,10 +29,14 @@
 //     #UNEXECUTED_REASON_RULES). The 10-minute cool-down stays.
 // The design names the later settings of phase 2 (stage 8 parking, the merge train) in the same /4 table; each later
 // step adds its own settings with its own contract number, so an installed policy only ever names what its code does.
+// Contract /5 (phase 2, step 2: parking, design v0.5 §4.7, §4.9; Owner decision e1e19e2e item 4):
+//   - stage8.mode: 'park' (the Owner's choice; the design's alternative grace15 is not implemented);
+//   - park: maxParked (4: batches at A, or at B in the queue's first two places), maxParkedOutsideTop2 (8), maxMs (24 h
+//     at B), stage8MaxTries (12), stage8RetriesPer24h (100, every parked batch together).
 import { HEX64, REPO, UUID, check, exactKeys } from './canonical.mjs';
 import { RELAY_ROLES } from './hosted-wait.mjs';
 
-export const POLICY_CONTRACT = 'clued.independent-ci.resident-policy/4';
+export const POLICY_CONTRACT = 'clued.independent-ci.resident-policy/5';
 export const REMINDER_BYTES_DEFAULT = 50 * 1024 ** 3;
 
 // The fixed eight stages of the six-check batch (stages.json of the installed Source).
@@ -57,7 +61,7 @@ const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const int = (v, lo, hi) => Number.isSafeInteger(v) && v >= lo && v <= hi;
 
 export function validatePolicy(p) {
-  exactKeys(p, ['contract', 'repo', 'baseBranch', 'sourceManifestSha256', 'ciSourceManifestSha256', 'residentManifestSha256', 'ownerAcceptance', 'validUntil', 'limits', 'breaker', 'companion', 'stageRunMilliseconds', 'linux', 'automaticAttempt2', 'retention', 'relay'], 'POLICY_KEYS_INVALID');
+  exactKeys(p, ['contract', 'repo', 'baseBranch', 'sourceManifestSha256', 'ciSourceManifestSha256', 'residentManifestSha256', 'ownerAcceptance', 'validUntil', 'limits', 'breaker', 'stage8', 'park', 'companion', 'stageRunMilliseconds', 'linux', 'automaticAttempt2', 'retention', 'relay'], 'POLICY_KEYS_INVALID');
   check(p.contract === POLICY_CONTRACT, 'POLICY_CONTRACT_INVALID');
   check(REPO.test(p.repo), 'POLICY_REPO_INVALID');
   check(p.baseBranch === 'main', 'POLICY_BASE_BRANCH_FIXED_MAIN');
@@ -83,6 +87,11 @@ export function validatePolicy(p) {
   check(int(p.breaker.consecutive, 1, 10) && int(p.breaker.windowCount, 1, 20) && int(p.breaker.windowMs, 60_000, 86_400_000)
     && Array.isArray(p.breaker.backoffMs) && p.breaker.backoffMs.length >= 1 && p.breaker.backoffMs.length <= 6
     && p.breaker.backoffMs.every((ms, i, a) => int(ms, 60_000, 86_400_000) && (i === 0 || a[i - 1] <= ms)), 'POLICY_BREAKER_INVALID');
+  exactKeys(p.stage8, ['mode'], 'POLICY_STAGE8_KEYS_INVALID');
+  check(p.stage8.mode === 'park', 'POLICY_STAGE8_MODE_INVALID');
+  exactKeys(p.park, ['maxParked', 'maxParkedOutsideTop2', 'maxMs', 'stage8MaxTries', 'stage8RetriesPer24h'], 'POLICY_PARK_KEYS_INVALID');
+  check(int(p.park.maxParked, 1, 8) && int(p.park.maxParkedOutsideTop2, 0, 16) && int(p.park.maxMs, 3_600_000, 86_400_000) && int(p.park.stage8MaxTries, 1, 24)
+    && int(p.park.stage8RetriesPer24h, 0, 200), 'POLICY_PARK_INVALID');
   exactKeys(p.companion, ['userSid', 'heartbeatMaxAgeMs'], 'POLICY_COMPANION_KEYS_INVALID');
   check(SID.test(p.companion.userSid), 'POLICY_COMPANION_SID_INVALID');
   check(int(p.companion.heartbeatMaxAgeMs, 5_000, 600_000), 'POLICY_HEARTBEAT_INVALID');

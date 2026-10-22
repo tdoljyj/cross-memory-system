@@ -50,7 +50,7 @@ const DEFERRED_TEXT = Object.freeze({ DAILY_BATCH_LIMIT: '今日执行批次额�
 // Why a row waits (failure-table class waiting), in the words of the PR page.
 const WAIT_TEXT = Object.freeze({ OWNER_REVIEW_REQUIRED: '等 Owner 批准受保护改动', TASK_CI_HEAD_CAP_REACHED: 'Task 的 24 小时 CI 额度已满',
   WAITING_BUDGET_EXHAUSTED: '今日等待重试额度已满（明天继续）' });
-const LIVE = new Set(['QUEUED', 'WAITING', 'BACKOFF']);
+const LIVE = new Set(['QUEUED', 'PARKED', 'WAITING', 'BACKOFF']);
 const hhmm = ms => new Date(ms).toISOString().slice(11, 16) + 'Z';
 const clip = s => s.length <= DESCRIPTION_MAX ? s : `${s.slice(0, DESCRIPTION_MAX - 1)}…`;
 
@@ -87,9 +87,18 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     if (!status.backfill.complete) return { state: 'pending', description: '执行器启动中：回填已执行记录', weak: true };
     const code = row.deferred ?? '?';
     const at = row.nextAt ? `约 ${hhmm(row.nextAt)} ` : '';
+    // Parked before stage 8 (phase 2, step 2): its checks are published; it waits for the merge queue.
+    if (row.state === 'PARKED') {
+      if (row.deferred === 'RESIDENT_MERGE_QUEUE_NOT_JOINED') return { state: 'pending', description: clip(`已测通：现在加入合并队列，${at}再查第 8 段`) };
+      // Without a place the Source did not learn whether the claim is in the queue (review of step 2, m13).
+      if (!row.queuePosition) return { state: 'pending', description: clip(`已测通：等合并队列，${at}再查第 8 段`) };
+      return { state: 'pending', description: clip(`已测通，在合并队列第 ${row.queuePosition} 位：等成为队首，${at}再查第 8 段`) };
+    }
     if (row.state === 'WAITING') return { state: 'pending', description: clip(`${WAIT_TEXT[row.deferred] ?? `等待中（${code}）`}：${at}自动重试，批准或修正后编辑 PR 可提前`) };
     if (row.state === 'BACKOFF') return { state: 'pending', description: clip(`未准入或未执行（${code}）：${at}自动重试（第 ${row.level} 次），修正后编辑 PR 可提前`) };
     if (status.breaker?.state === 'open') return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：执行器熔断中${status.breaker.nextTrialAt ? `，约 ${hhmm(status.breaker.nextTrialAt)} 试跑` : ''}`) };
+    // No new batch while the parking places are full (phase 2, step 2; review m8): no estimate that assumes a free executor.
+    if (status.queue?.parkingFull === true) return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：停靠的批次已满，等它们结束`) };
     const why = row.deferred ? `：${DEFERRED_TEXT[row.deferred] ?? row.deferred}` : '';
     return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位${why}${row.eta && !row.deferred ? `，预计 ${hhmm(row.eta)} 开始` : ''}`) };
   }
@@ -101,7 +110,9 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     const code = recent.code ?? '?';
     switch (recent.outcome) {
       case 'COMPLETED': return { state: 'success', description: '已完成：常驻执行器跑完八段，检查已发布' };
-      case 'FAILED_CLEAN': return recent.retry === 'attempt2'
+      case 'FAILED_CLEAN':
+        if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'failure', description: 'main 已移动：请合入最新 main 并推新提交' };
+        return recent.retry === 'attempt2'
         ? { state: 'pending', description: clip(`暂时失败（${code}），将自动第二次尝试`) }
         : { state: 'failure', description: clip(`失败（${code}）：此提交不再运行，请推新提交`) };
       case 'FAILED_UNKNOWN': return { state: 'error', description: clip(`执行器停机（${code}），等 Owner 复位`) };
@@ -146,6 +157,7 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
     switch (n.kind) {
       case 'new-trigger': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 收到新触发`, body: `提交 ${head} 等待中的重试已提前，冷却 10 分钟后重新评估。` }); break;
       case 'stopped': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${n.code ?? '?'}）。请修正后推新提交。` }); break;
+      case 'stage8-budget': out.push({ key: `notice:${n.key}`, title: '今日第 8 段重试额度已用完', body: '停靠批次的第 8 段重试今天已用完，明天继续。' }); break;
       case 'queue-unsaved': out.push({ key: `notice:${n.key}`, title: '常驻执行器写不进排队表', body: `连续多次写不进 state\\queue\\queue.json（${n.code ?? '?'}），新的触发留在收件箱里没有处理。` }); break;
       case 'waiting-budget': out.push({ key: `notice:${n.key}`, title: '今日等待重试额度已用完', body: '等待类的自动重试今天已用完，等待中的 PR 明天继续，状态见 PR 页面。' }); break;
       case 'batch-limit': out.push({ key: `notice:${n.key}`, title: '今日执行批次额度已满', body: '常驻执行器今天的执行批次已满，排队的 PR 明天继续，不会丢弃。' }); break;
