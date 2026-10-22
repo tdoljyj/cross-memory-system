@@ -96,6 +96,7 @@ class StepFailure {
 // The stages before which the executor records the head as "may have published" (executed-heads.mjs): every stage that
 // can publish a role or control check.
 export const PUBLICATION_STAGES = Object.freeze([3, 5, 7, 8, RELAY_STAGE]);
+export const BACKFILL_MAX_PENDING = 10;
 const NO_STATUS = Object.freeze({ update() {}, setState() {}, setCurrent() {}, outcome() {}, setPending() {} });
 
 // The stage-terminal receipt's summary of a stage outcome: codes and flags only.
@@ -511,7 +512,9 @@ export class ResidentExecutor {
   // Resident quota redesign v0.6 §9 phase 1, items 6 and 7: on the first start of an install, before any batch, every
   // earlier ledger (this state and the state the install carried forward) is read into the Source-independent executed
   // heads. Done once (BACKFILL-COMPLETE.json). A refused source (manifest missing or malformed, a carried file missing
-  // or changed) HALTs: no batch may run without it. A transient I/O error only defers it to the next tick.
+  // or changed) HALTs: no batch may run without it. A transient I/O error only defers it to the next tick, at most
+  // BACKFILL_MAX_PENDING ticks in a row; then it HALTs too (independent review of phase 1, MINOR 6: a lasting EPERM
+  // must not keep rereading every carried file forever).
   async ensureBackfill() {
     let marker;
     try {
@@ -519,10 +522,14 @@ export class ResidentExecutor {
       this.report(s => s.update({ backfill: { complete: false, published: null, unreadable: null } }));
       marker = await this.executedHeads.backfill();
     } catch (error) {
-      if (!(error instanceof ResidentError)) return { state: 'BACKFILL_PENDING' };
-      await this.haltWith(codeOf(error), { phase: 'executed-heads-backfill' });
-      return { state: 'HALTED', failureCode: codeOf(error) };
+      const pending = !(error instanceof ResidentError) && (this.backfillPending = (this.backfillPending ?? 0) + 1) < BACKFILL_MAX_PENDING;
+      if (pending) return { state: 'BACKFILL_PENDING' };
+      const code = error instanceof ResidentError ? codeOf(error) : 'EXECUTED_HEADS_BACKFILL_UNAVAILABLE';
+      await this.haltWith(code, { phase: 'executed-heads-backfill', attempts: this.backfillPending ?? 0 });
+      this.backfillPending = 0;
+      return { state: 'HALTED', failureCode: code };
     }
+    this.backfillPending = 0;
     await this.receipt('executed-heads-backfilled', { published: marker.published, unreadable: marker.unreadable,
       sources: marker.sources.map(s => ({ name: s.name, heads: s.heads, published: s.published, unreadable: s.unreadable })) });
     this.report(s => s.update({ backfill: { complete: true, published: marker.published, unreadable: marker.unreadable } }));
@@ -621,12 +628,15 @@ export class ResidentExecutor {
   async disposeAll(names, disposition) { for (const n of names) await this.inbox.dispose(n, disposition); }
 
   // Pre-checks that need no secret and no network. Anything that fails here leaves the ledger untouched.
-  async precheck(key, hk, subject) {
+  async precheck(key, hk, subject, { attempt1Key = null } = {}) {
     const now = this.clock();
     if (await this.ledger.headBurned(hk)) return { ignore: 'HEAD_ALREADY_EXECUTED_NO_RETRY' };
     // A head that may have published a check under ANY Source or attempt (executed-heads.mjs) never runs again: a new
-    // Source would otherwise run it as new and stop at ROLE_ALREADY_PUBLISHED_ON_HEAD (2026-10-22, Note 1550fef8).
-    if (await this.executedHeads.published(subject)) return { ignore: 'HEAD_ALREADY_PUBLISHED_NO_RETRY' };
+    // Source would otherwise run it as new and stop at ROLE_ALREADY_PUBLISHED_ON_HEAD (2026-10-22, Note 1550fef8). The
+    // one exception: attempt 2 of the same head, when the only record is attempt 1's own "before stage R" one (stage R
+    // relayed nothing, or attempt 2 would never have been scheduled).
+    if (await this.executedHeads.published(subject)
+      && !(attempt1Key && await this.executedHeads.onlyRelayRecordOf(subject, attempt1Key, RELAY_STAGE))) return { ignore: 'HEAD_ALREADY_PUBLISHED_NO_RETRY' };
     if ((await this.ledger.state(key)).state !== 'ABSENT') return { ignore: 'CONTENT_ALREADY_EXECUTED_NO_RETRY' };
     const recent = await this.ledger.unexecutedSince(key, now - DAY);
     if (recent.length > 0 && recent.length >= this.policy.limits.unexecutedMaxPer24h) return { ignore: 'UNEXECUTED_DAILY_CAP' };
@@ -685,7 +695,7 @@ export class ResidentExecutor {
       return { state: 'IGNORED', key: key2, reason: 'ATTEMPT2_SOURCE_CHANGED' };
     }
     const hk = headKey(subject);
-    const pre = await this.precheck(key2, hk, subject);
+    const pre = await this.precheck(key2, hk, subject, { attempt1Key: key1 });
     if (pre.ignore) {
       await this.ledger.closeAttempt2(key1, { failureCode: pre.ignore });
       await this.receipt('attempt2-ignored', { key: key2, attempt1: key1, failureCode: pre.ignore });

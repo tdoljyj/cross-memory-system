@@ -4,8 +4,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { Poller, upToDate } from '../src/poller.mjs';
-import { LocalStore, PR_STATUS_CONTEXT, PrStatusReporter, contextFree, contextShapeSafe, describe, events, toastArgv, validateStatusConfig } from '../src/pr-status.mjs';
+import { COMPARE_TIMEOUT_MS, MAX_COMPARES_PER_PASS, Poller, upToDate } from '../src/poller.mjs';
+import { ADVISORY_TIMEOUT_MS, LocalStore, PASS_BUDGET_MS, POST_RETRY_MS, PR_STATUS_CONTEXT, PrStatusReporter, contextFree, contextShapeSafe, describe, events, toastArgv, validateStatusConfig } from '../src/pr-status.mjs';
+import { lane } from '../src/companion-main.mjs';
+import { Runner } from '../src/runner.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
 import { tempRoot } from './helpers.mjs';
 
@@ -50,6 +52,71 @@ test('the poller proposes only up-to-date heads (the nine stale-base burns of 20
   const compares = calls.filter(a => a.some(x => x.includes('/compare/'))).length;
   await p.pass();
   assert.equal(calls.filter(a => a.some(x => x.includes('/compare/'))).length - compares, 1, 'answered compares are cached; only the unavailable one is asked again');
+});
+
+test('the advisory work is bounded: short calls, at most MAX_COMPARES_PER_PASS compares and a pass budget for the reporter', async t => {
+  // poller: 15 uncached PRs -> 10 compares this pass, the rest "compare-unavailable" until the next pass
+  const pulls = Array.from({ length: 15 }, (_, i) => ({ number: i + 1, headRefOid: String(i + 1).padStart(40, 'c'), baseRefOid: MAIN, isDraft: false, body: TRAILER, updatedAt: 't' }));
+  const timeouts = [];
+  const run = async (argv, o) => {
+    if (argv.some(a => a.includes('/compare/'))) { timeouts.push(o.timeoutMs); return { code: 0, stdout: JSON.stringify({ behind_by: 0, base: MAIN }) }; }
+    if (argv.includes('api')) return { code: 0, stdout: `${MAIN}\n` };
+    return { code: 0, stdout: JSON.stringify(pulls) };
+  };
+  const p = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run, writeTrigger: async () => {}, clock: () => 0 });
+  assert.equal(await p.pass(), MAX_COMPARES_PER_PASS);
+  assert.deepEqual([timeouts.length, [...new Set(timeouts)]], [MAX_COMPARES_PER_PASS, [COMPARE_TIMEOUT_MS]]);
+  assert.equal(p.lastPass.pulls.filter(x => x.hint === 'compare-unavailable').length, 5);
+  assert.equal(await p.pass(), 5, 'the next pass compares the rest');
+  // reporter: every call is short; a failed write is left alone for POST_RETRY_MS; no call starts after the budget
+  const root = await tempRoot(t);
+  let now = Date.parse('2026-10-22T09:00:00Z');
+  const calls = [];
+  let postOk = false, cost = 0;
+  const run2 = async (argv, o) => {
+    calls.push([argv, o.timeoutMs]); now += cost;
+    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    return { code: postOk ? 0 : 1, stdout: '{}' };
+  };
+  const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const reporter = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run: run2, clock: () => now,
+    store: await LocalStore.open(path.join(root, 'store.json'), () => now) });
+  const prs = [{ pr: 7, headSha: H(7), eligible: false, hint: 'merge-main', behindBy: 2 }, { pr: 9, headSha: H(9), eligible: false, hint: 'merge-main', behindBy: 3 }];
+  const posts = () => calls.filter(([a]) => a.includes('POST')).length;
+  assert.equal((await reporter.pass({ pulls: prs, status: null })).posted, 0);
+  assert.equal(posts(), 2);
+  assert.ok(calls.every(([, ms]) => ms === ADVISORY_TIMEOUT_MS));
+  postOk = true;
+  assert.equal((await reporter.pass({ pulls: prs, status: null })).posted, 0, 'a failed head is not retried every minute');
+  now += POST_RETRY_MS;
+  assert.equal((await reporter.pass({ pulls: prs, status: null })).posted, 2, 'retried after POST_RETRY_MS');
+  // budget: each call takes 40 s, so the second write never starts
+  cost = 40_000; now += 31 * 60_000;
+  const slow = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run: run2, clock: () => now,
+    store: await LocalStore.open(path.join(root, 'slow.json'), () => now), notifications: false });
+  const before = posts();
+  assert.equal((await slow.pass({ pulls: prs, status: null })).posted, 1);
+  assert.equal(posts() - before, 1, `nothing starts after ${PASS_BUDGET_MS} ms`);
+});
+
+test('two lanes: a hung advisory child never stops the companion answering the mailbox (independent review M1)', async () => {
+  // fake children: the advisory one never exits (the Runner never kills it), the companion's ones exit at once
+  const child = () => { const handlers = {}; return { stdout: null, stderr: null, on: (e, f) => { handlers[e] = f; }, handlers }; };
+  const hung = [];
+  const advisory = new Runner({ spawnImpl: () => { const c = child(); hung.push(c); return c; } });
+  const runner = new Runner({ spawnImpl: () => { const c = child(); setImmediate(() => c.handlers.close?.(0)); return c; } });
+  let ticks = 0, steps = 0, advisoryCalls = 0, stopped = false;
+  const wait = () => new Promise(r => setImmediate(r));
+  const stop = () => stopped || ++ticks > 400;
+  await Promise.all([
+    lane({ runner, sleep: wait, stop, work: async () => { const r = await runner.run(['C:\\wsl.exe', 'x'], { timeoutMs: 1_000 }); if (r.code === 0) steps += 1; } }),
+    lane({ runner: advisory, sleep: wait, stop, work: async () => { advisoryCalls += 1; await advisory.run(['C:\\gh.exe', 'api'], { timeoutMs: 1 }); } }),
+  ]);
+  assert.equal(hung.length, 1, 'the advisory lane waits for its own hung child');
+  assert.equal(advisoryCalls, 1);
+  assert.equal(advisory.busy, true);
+  assert.ok(steps > 50, `the companion lane kept answering (${steps} steps)`);
+  stopped = true;
 });
 
 const boardStatus = (fn, now) => { const b = new StatusBoard({ clock: () => now }); fn(b); return parseStatus(Buffer.from(JSON.stringify(b.snapshot()))); };

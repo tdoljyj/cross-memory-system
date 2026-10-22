@@ -10,6 +10,7 @@ import { batchKey, headKey } from '../src/ledger.mjs';
 import { ExecutedHeads, BACKFILL_MANIFEST_CONTRACT, CARRIED_FILE, executedHeadKey, mayHavePublished } from '../src/executed-heads.mjs';
 import { sha256 } from '../src/canonical.mjs';
 import { BASE, HEAD, SOURCE, WINDOWS_CLEAN, executorFixture, fakeEngine, notAdmitted, rawPolicy, triggerBytes } from './helpers.mjs';
+import { BACKFILL_MAX_PENDING } from '../src/executor.mjs';
 
 const OLD_SOURCE = 'c'.repeat(64);
 const subject = (o = {}) => ({ repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 1, ...o });
@@ -30,7 +31,9 @@ async function oldInstall(t, heads) {
   for (const h of heads) { await old.drop(triggerBytes({ pr: h.pr, headSha: h.headSha })); h.result = await old.exec.tick(); }
   return old;
 }
-async function carry(oldRoot, newRoot, name = 'resident-uninstalled-20261022T061000Z-aa11bb') {
+// The old state's own executed-heads records are carried only when asked: an install from before phase 1 has none, and
+// the required case must be found from the ledger alone.
+async function carry(oldRoot, newRoot, name = 'resident-uninstalled-20261022T061000Z-aa11bb', { executedHeads = false } = {}) {
   const files = [];
   const walk = async rel => {
     for (const n of (await fs.readdir(path.join(oldRoot, 'state', ...rel.split('/').filter(Boolean)))).sort()) {
@@ -45,7 +48,7 @@ async function carry(oldRoot, newRoot, name = 'resident-uninstalled-20261022T061
       files.push({ path: r, sha256: sha256(bytes), bytes: bytes.length });
     }
   };
-  for (const top of ['ledger-heads', 'ledger', 'executed-heads']) {
+  for (const top of ['ledger-heads', 'ledger', ...(executedHeads ? ['executed-heads'] : [])]) {
     try { await fs.access(path.join(oldRoot, 'state', top)); } catch { continue; }
     await walk(top);
   }
@@ -56,8 +59,8 @@ test('fresh state + archived old ledger: a head that published checks is never a
   const published = { pr: 884, headSha: HEAD };                                               // COMPLETED: every check published
   const stage1 = { pr: 885, headSha: '3'.repeat(40), fail: { stage: 1, result: { ok: false, code: 'STAGE_CHILD_REFUSED', proof: WINDOWS_CLEAN } } }; // stale base, burned at stage 1
   const halted = { pr: 886, headSha: '5'.repeat(40), fail: { stage: 3, result: { ok: false, code: 'ROLE_ALREADY_PUBLISHED_ON_HEAD', proof: WINDOWS_CLEAN } } };
-  const old = await oldInstall(t, [published, stage1]);
-  assert.deepEqual([published.result.state, stage1.result.state], ['COMPLETED', 'FAILED_CLEAN']);
+  const old = await oldInstall(t, [published, stage1, halted]);
+  assert.deepEqual([published.result.state, stage1.result.state, halted.result.state], ['COMPLETED', 'FAILED_CLEAN', 'HALTED']);
   const manifest = await carry(old.root, await (async () => { const d = path.join(old.root, '..', path.basename(old.root) + '-new'); await fs.mkdir(d); t.after(() => fs.rm(d, { recursive: true, force: true })); return d; })());
   const newRoot = path.join(old.root, '..', path.basename(old.root) + '-new');
   const engine = fakeEngine();
@@ -73,12 +76,14 @@ test('fresh state + archived old ledger: a head that published checks is never a
   // also under another PR number and base: the head is what was published
   await f.drop(triggerBytes({ pr: 999, baseSha: '7'.repeat(40) }));
   assert.equal((await f.exec.tick()).reason, 'HEAD_ALREADY_PUBLISHED_NO_RETRY');
+  // the head whose stage 3 found its role already published (the 2026-10-22 HALT): never again either
+  await f.drop(triggerBytes({ pr: 886, headSha: '5'.repeat(40) }));
+  assert.equal((await f.exec.tick()).reason, 'HEAD_ALREADY_PUBLISHED_NO_RETRY');
   // the head that never got past stage 1 under the old Source runs under the new one (as before phase 1)
   await f.drop(triggerBytes({ pr: 885, headSha: '3'.repeat(40) }));
   assert.equal((await f.exec.tick()).state, 'COMPLETED');
   const types = (await fs.readdir(path.join(newRoot, 'state', 'receipts'))).map(n => n.replace(/^\d{8}-|\.json$/g, ''));
   assert.equal(types[0], 'executed-heads-backfilled', 'the backfill is the first thing the new install records');
-  assert.equal(halted.fail.stage, 3);
 });
 
 test('no batch runs before the backfill: a missing manifest or a changed carried file HALTs; an I/O error only defers', async t => {
@@ -110,6 +115,13 @@ test('no batch runs before the backfill: a missing manifest or a changed carried
   assert.equal(await flaky.ledger.halted(), null, 'a transient error is no HALT');
   fail = false;
   assert.equal((await flaky.exec.tick()).state, 'COMPLETED');
+  // an I/O error that lasts: deferred BACKFILL_MAX_PENDING - 1 ticks, then a HALT (never a batch)
+  const stuck = await executorFixture(t);
+  stuck.executedHeads.backfill = async () => { throw Object.assign(new Error('EPERM'), { code: 'EPERM' }); };
+  await stuck.drop(triggerBytes());
+  for (let i = 1; i < BACKFILL_MAX_PENDING; i += 1) assert.equal((await stuck.exec.tick()).state, 'BACKFILL_PENDING', `tick ${i}`);
+  assert.deepEqual([(await stuck.exec.tick()).failureCode, derived(stuck.engine)], ['EXECUTED_HEADS_BACKFILL_UNAVAILABLE', 0]);
+  assert.equal((await stuck.ledger.halted()).value.code, 'EXECUTED_HEADS_BACKFILL_UNAVAILABLE');
 });
 
 test('the executor records a head before its first publication stage; a later Source never runs it again', async t => {
@@ -170,11 +182,21 @@ test('backfill counts and skips a carried record that does not parse; the store 
   await fs.mkdir(newRoot); t.after(() => fs.rm(newRoot, { recursive: true, force: true }));
   // a torn ledger-heads record in the old state (its listed hash is of the torn bytes): unreadable, counted
   await fs.writeFile(path.join(old.root, 'state', 'ledger-heads', `${'9'.repeat(64)}.json`), '{"headKey":');
+  // and an empty one (a write interrupted before its bytes; independent review of phase 1, MINOR 4): carried, counted
+  await fs.writeFile(path.join(old.root, 'state', 'ledger-heads', `${'8'.repeat(64)}.json`), '');
   const manifest = await carry(old.root, newRoot);
+  assert.equal(manifest.sources[0].files.find(x => x.path.includes('8'.repeat(64))).bytes, 0);
   const f = await executorFixture(t, { root: newRoot, backfillManifest: manifest });
   await f.exec.tick();
   const marker = await f.executedHeads.readMarker();
-  assert.deepEqual([marker.published, marker.unreadable, marker.sources.map(s => s.name)], [1, 1, ['current', manifest.sources[0].name]]);
+  assert.deepEqual([marker.published, marker.unreadable, marker.sources.map(s => s.name)], [1, 2, ['current', manifest.sources[0].name]]);
+  // an empty listed file that is no longer empty is a changed carried state: HALT
+  const grown = path.join(old.root, '..', path.basename(old.root) + '-grown');
+  await fs.mkdir(grown); t.after(() => fs.rm(grown, { recursive: true, force: true }));
+  const m2 = await carry(old.root, grown);
+  await fs.writeFile(path.join(grown, 'state', 'backfill', '1', 'ledger-heads', `${'8'.repeat(64)}.json`), '{}');
+  const g = await executorFixture(t, { root: grown, backfillManifest: m2 });
+  assert.equal((await g.exec.tick()).failureCode, 'EXECUTED_HEADS_BACKFILL_SOURCE_CHANGED');
   assert.equal(await f.executedHeads.published(subject()), true);
   await assert.rejects(f.executedHeads.record({ repo: 'x', headSha: 'nope' }, { key: 'a'.repeat(64), origin: 'publication', basis: 'b' }), { code: 'EXECUTED_HEAD_SUBJECT_INVALID' });
   await assert.rejects(f.executedHeads.record(subject(), { key: 'a'.repeat(64), origin: 'other', basis: 'b' }), { code: 'EXECUTED_HEAD_RECORD_INVALID' });

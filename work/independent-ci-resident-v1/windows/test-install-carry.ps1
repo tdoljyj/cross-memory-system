@@ -42,6 +42,7 @@ Put (Join-Path $old1 ('ledger-heads\' + $hk + '.json')) ('{"headKey":"' + $hk + 
 Put (Join-Path $old1 ('ledger\' + $key + '\00-reserved.json')) ('{"headKey":"' + $hk + '","key":"' + $key + '",' + $subject + '}')
 Put (Join-Path $old1 ('ledger\' + $key + '\10-started.json')) ('{"key":"' + $key + '"}')
 Put (Join-Path $old1 ('ledger\' + $key + '\15-relay-wait.json')) '{"not":"carried"}'
+Put (Join-Path $old1 ('ledger\' + $key + '\25-plan.json')) ''   # an interrupted write: empty, carried, counted unreadable
 Put (Join-Path $old1 ('ledger\' + $key + '\90-terminal.json')) ('{"key":"' + $key + '","outcome":"COMPLETED","facts":{}}')
 # a head burned at stage 1 only (published nothing): carried, but not executed after the backfill
 Put (Join-Path $old1 ('ledger-heads\' + $hk2 + '.json')) ('{"headKey":"' + $hk2 + '","key":"' + $key2 + '",' + $subject2 + ',"startedAt":"2026-10-21T12:00:00.000Z","burnedBy":{"failureCode":"STAGE_CHILD_REFUSED"}}')
@@ -58,8 +59,17 @@ Put (Join-Path $parent 'resident-partial-1\state\ledger-heads\y.json') '{}'     
 $plan = Get-CarryForwardPlan $parent
 Yes (@($plan).Count -eq 3) 'three-earlier-states'
 Yes ((@($plan | ForEach-Object { $_.name }) -join '|') -ceq 'resident-uninstalled-20261020T000000Z-cccccc|resident-uninstalled-20261021T120000Z-aaaaaa|resident-uninstalled-20261022T060000Z-bbbbbb') 'sorted-by-name'
-Yes (@($plan[1].files).Count -eq 7) 'fixed-record-shapes-only'
+Yes (@($plan[1].files).Count -eq 8) 'fixed-record-shapes-only'
 Yes (-not (@($plan[1].files | ForEach-Object { $_.rel }) -match 'relay-wait|notes')) 'nothing-else'
+
+# The dry run's preview (the install's own line): one entry per earlier state, not one entry holding them all.
+$CarryParent = $parent
+$previewLine = @($installText -split "`r?`n" | Where-Object { $_ -match '^\s*\$preview = try \{' })
+Yes ($previewLine.Count -eq 1) 'preview-line-present'
+. ([scriptblock]::Create($previewLine[0]))
+$previewJson = ConvertTo-Json -InputObject $preview -Depth 4 -Compress
+$previewBack = $previewJson | ConvertFrom-Json   # PS 5.1 hands a JSON array back as one object: assigned, not wrapped
+Yes ($previewBack.Count -eq 3 -and $previewBack[1].name -ceq 'resident-uninstalled-20261021T120000Z-aaaaaa' -and $previewBack[1].files -eq 8 -and $previewBack[0].files -eq 0) ('preview-one-entry-per-state:' + $previewJson)
 
 $newState = Join-Path $Scratch 'new\state'
 [void][IO.Directory]::CreateDirectory($newState)
@@ -92,7 +102,7 @@ Put $script ("import path from 'node:path';`nimport { ExecutedHeads } from '" + 
 $out = & $Node $script $newState $manifestFile | Out-String
 Yes ($LASTEXITCODE -eq 0) ('node-backfill:' + $out)
 $r = $out | ConvertFrom-Json
-Yes ($r.published -eq 1 -and $r.unreadable -eq 0 -and $r.head -eq $true -and $r.other -eq $false) ('backfill-reads-the-manifest:' + $out.Trim())
+Yes ($r.published -eq 1 -and $r.unreadable -eq 1 -and $r.head -eq $true -and $r.other -eq $false) ('backfill-reads-the-manifest:' + $out.Trim())
 
 # A link anywhere in an earlier state refuses before anything is written.
 $linked = Join-Path $Scratch 'linked'
@@ -102,5 +112,11 @@ Put (Join-Path $linked ('resident-uninstalled-20261022T070000Z-dddddd\state\ledg
 $null = New-Item -ItemType Junction -Path (Join-Path $linked ('resident-uninstalled-20261022T070000Z-dddddd\state\ledger\' + $key)) -Target $target
 $threw = $null; try { $null = Get-CarryForwardPlan $linked } catch { $threw = $_.Exception.Message }
 Yes ($threw -like 'CARRY_FORWARD_LINK_REFUSED:*') ('junction-refused:' + $threw)
+
+# More earlier states than the backfill reads (256): refused before anything is written.
+$many = Join-Path $Scratch 'many'
+for ($i = 0; $i -lt 257; $i++) { [void][IO.Directory]::CreateDirectory((Join-Path $many ('resident-uninstalled-20261022T000000Z-' + $i.ToString('000')))) }
+$threw = $null; try { $null = Get-CarryForwardPlan $many } catch { $threw = $_.Exception.Message }
+Yes ($threw -ceq 'CARRY_FORWARD_TOO_MANY_STATES:257') ('too-many-states:' + $threw)
 
 [ordered]@{ status = 'RESIDENT_INSTALL_CARRY_OFFLINE_PASS'; assertions = $n; hostRead = $false; hostWrite = $false } | ConvertTo-Json -Compress

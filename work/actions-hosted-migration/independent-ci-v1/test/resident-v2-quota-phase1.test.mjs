@@ -61,6 +61,8 @@ test('merge-queue entry fact: in the queue (head, waiting), not in it (none, lap
   assert.deepEqual(mergeQueueEntryV2(q('head', 1), job), { entered: true, state: 'head', position: 1 });
   assert.deepEqual(mergeQueueEntryV2(q('waiting'), job), { entered: true, state: 'waiting', position: 3 });
   for (const s of ['lapsed', 'out']) assert.deepEqual(mergeQueueEntryV2(q(s), job), { entered: false, state: s, position: 3 });
+  // Native's view answers {state:'none'} (no position) for a claim with the ref but no entry in that queue
+  assert.deepEqual(mergeQueueEntryV2({ merge_queue: [{ ref: 'merge:tdoljyj/cross-memory-system:main', length: 2, head: null, state: 'none' }] }, job), { entered: false, state: 'none', position: null });
   assert.deepEqual(mergeQueueEntryV2({ merge_queue: [] }, job), { entered: false, state: null, position: null });
   assert.deepEqual(mergeQueueEntryV2({ merge_queue: null }, job), { entered: false, state: null, position: null });
   assert.deepEqual(mergeQueueEntryV2({ merge_queue: [{ ref: 'merge:other/repo:main', state: 'head' }] }, job), { entered: false, state: null, position: null });

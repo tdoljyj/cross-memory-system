@@ -282,6 +282,13 @@ test('attempt 2 never follows a relay; with stage R relaying nothing, a stage-2 
   const r2 = await g.exec.tick();
   assert.equal(r2.state, 'FAILED_CLEAN');
   assert.equal(r2.attempt2, batchKey(subject({ attempt: 2 })));
+  // and it runs: attempt 1's own "before stage R" executed-head record does not stop it (independent review of phase 1,
+  // MINOR 5), while a new trigger of the head is still refused
+  g.advance(600_000);
+  const again = await g.exec.tick();
+  assert.deepEqual([again.state, again.key], ['COMPLETED', batchKey(subject({ attempt: 2 }))]);
+  await g.drop(triggerBytes());
+  assert.ok(['HEAD_ALREADY_EXECUTED_NO_RETRY', 'HEAD_ALREADY_PUBLISHED_NO_RETRY'].includes((await g.exec.tick()).reason));
   // a clean failure of stage R itself is final for the head
   const refused = fakeEngine({ relay: () => ({ ok: false, code: 'RELAY_STAGE_REFUSED', proof: WINDOWS_CLEAN }) });
   const h = await executorFixture(t, { engine: refused, policy: ON, companion: fakeCompanion({ hint: () => hintFor(SUCCESS) }) });

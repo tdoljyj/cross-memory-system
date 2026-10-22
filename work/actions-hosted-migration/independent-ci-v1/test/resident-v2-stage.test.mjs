@@ -202,6 +202,8 @@ test('stage-fact catalogue: every mapped code is catalogued; transient codes are
   assert.equal(outcomeFailureCode(samples[3], 1), 'ADMISSION_CONFIGURATION_REFUSED');
   assert.equal(outcomeFailureCode({ status: 'BLOCKED', reason: 'full_admission_claim_changed', sideEffects: 0, mayHavePublished: false }, 5), 'BATCH_CLAIM_CHANGED');
   assert.equal(notAdmittedCode({ reasonCodes: ['owner_review_required', 'paths_outside_write_set'] }), 'OWNER_REVIEW_REQUIRED');
+  // not up to date with main dominates: that head can never pass, whatever else Native says
+  assert.equal(notAdmittedCode({ reasonCodes: ['owner_review_required', 'protected_change_not_up_to_date'] }), 'PROTECTED_CHANGE_NOT_UP_TO_DATE');
   assert.equal(notAdmittedCode({}), 'NATIVE_NOT_ADMITTED');
   assert.ok(TRANSIENT_CODES.every(c => ALL_STAGE_CODES.includes(c)));
   assert.equal(buildStageFact({ stage: 1, nonce: hex(16), workManifestSha256: hex(32), preflightCode: 'STAGE_PACKAGE_REFUSED' }).tree_active_processes, 0);

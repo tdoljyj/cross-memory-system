@@ -38,6 +38,7 @@ export const CARRIED_SOURCE = /^resident-uninstalled-[0-9A-Za-z-]{1,80}$/;
 // The ledger records the verdict reads, by file name -> the name mayHavePublished uses.
 const LEDGER_RECORDS = Object.freeze({ '00-reserved': 'reserved', '10-started': 'started', '25-plan': 'plan', '80-owner-abort': 'abort', '90-terminal': 'terminal' });
 const UNREADABLE = Symbol('unreadable');
+const EMPTY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 const MAX_RECORD = 4 * 1024 * 1024;
 const MAX_MANIFEST = 32 * 1024 * 1024;
 // Owner-abort safe points before any role check could have been published (executor.mjs#continueBatch order).
@@ -94,6 +95,19 @@ export class ExecutedHeads {
   // Any record of this head, whatever Source or attempt wrote it, and also its directory alone (an interrupted write).
   async published(subject) { return exists(this.headDir(subject)); }
 
+  // True only when the head's one record is attempt 1's own "before stage R" record (batch key key1): the executor's
+  // attempt 2 decision (attempts.mjs) already proved that stage R relayed no role, so that record alone does not stop
+  // the attempt 2 of the same head (independent review of phase 1, MINOR 5). Anything else, or anything unreadable,
+  // is false.
+  async onlyRelayRecordOf(subject, key1, relayStage) {
+    try {
+      const names = await fs.readdir(this.headDir(subject));
+      if (typeof key1 !== 'string' || !HEX64.test(key1) || names.length !== 1 || names[0] !== `publication-${key1.slice(0, 16)}.json`) return false;
+      const r = parseBoundedJson(await readBounded(path.join(this.headDir(subject), names[0]), MAX_RECORD, 'EXECUTED_HEADS_RECORD_UNREADABLE'), MAX_RECORD, 'EXECUTED_HEADS_RECORD_UNREADABLE');
+      return r.contract === EXECUTED_HEAD_CONTRACT && r.origin === 'publication' && r.key === key1 && r.stage === relayStage && r.basis === `before-stage-${relayStage}`;
+    } catch { return false; }
+  }
+
   // Create-only and idempotent: an existing record of the same origin and batch key is the same record.
   async record(subject, { key, origin, basis, stage = null }) {
     check(ORIGINS.includes(origin) && typeof key === 'string' && HEX64.test(key) && typeof basis === 'string' && basis.length > 0 && basis.length <= 80, 'EXECUTED_HEAD_RECORD_INVALID');
@@ -128,7 +142,7 @@ export class ExecutedHeads {
       const files = new Map();
       for (const f of s.files) {
         check(f && typeof f === 'object' && typeof f.path === 'string' && CARRIED_FILE.test(f.path) && typeof f.sha256 === 'string' && HEX64.test(f.sha256)
-          && Number.isSafeInteger(f.bytes) && f.bytes > 0 && f.bytes <= MAX_RECORD && !files.has(f.path), 'EXECUTED_HEADS_BACKFILL_MANIFEST_REFUSED');
+          && Number.isSafeInteger(f.bytes) && f.bytes >= 0 && f.bytes <= MAX_RECORD && (f.bytes > 0 || f.sha256 === EMPTY_SHA256) && !files.has(f.path), 'EXECUTED_HEADS_BACKFILL_MANIFEST_REFUSED');
         files.set(f.path, f);
       }
       out.push({ name: s.name, root: path.join(carriedRoot, s.dir), files });
@@ -137,8 +151,16 @@ export class ExecutedHeads {
   }
 
   // One carried file: its listed bytes, or a hard refusal (missing, replaced, changed).
+  // A listed empty file (a record whose write was interrupted before its bytes; independent review of phase 1, MINOR 4)
+  // is carried as it is and counted unreadable, as in the resident's own state; it must still be there and still empty.
   static async readCarried(source, rel) {
     const f = source.files.get(rel);
+    if (f.bytes === 0) {
+      let link;
+      try { link = await fs.lstat(path.join(source.root, ...rel.split('/'))); } catch (error) { if (error?.code === 'ENOENT') throw new ResidentError('EXECUTED_HEADS_BACKFILL_SOURCE_CHANGED', rel); throw error; }
+      check(link.isFile() && !link.isSymbolicLink() && link.size === 0, 'EXECUTED_HEADS_BACKFILL_SOURCE_CHANGED', rel);
+      return UNREADABLE;
+    }
     let bytes;
     try { bytes = await readBounded(path.join(source.root, ...rel.split('/')), MAX_RECORD, 'EXECUTED_HEADS_BACKFILL_SOURCE_CHANGED'); }
     catch (error) { if (error instanceof ResidentError || error?.code === 'ENOENT') throw new ResidentError('EXECUTED_HEADS_BACKFILL_SOURCE_CHANGED', rel); throw error; }

@@ -188,6 +188,8 @@ test('work admission v2: safeToRerun only for a first-admission boundary refusal
   // deterministic faults of the PR: never safe to re-run, also inside the boundary
   assert.equal((await run({ answer: () => blocked('full_admission_subject_changed') })).safeToRerun, false);
   assert.equal((await run({ answer: () => ({ ...blocked('full_admission_rejected'), diagnostic: { reasonCodes: ['changed_files_truncated'] } }) })).safeToRerun, false);
+  // not up to date with main: also deterministic, even together with a waiting reason
+  assert.equal((await run({ answer: () => ({ ...blocked('full_admission_rejected'), diagnostic: { reasonCodes: ['owner_review_required', 'protected_change_not_up_to_date'] } }) })).safeToRerun, false);
   for (const code of ['pr_files_page_limit', 'pr_subject_changed', 'invalid_pr_files']) {
     const github = { ...fakeGithub(), async readChangedPaths() { throw Object.assign(new Error(code), { code }); } };
     const x = await run({ answer: () => rejected, github });

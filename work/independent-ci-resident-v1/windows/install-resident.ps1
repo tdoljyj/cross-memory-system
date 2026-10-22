@@ -180,7 +180,8 @@ function Get-CarryForwardPlan([string]$parent) {
         param([string]$rel)
         $item = Get-Item -LiteralPath (Join-Path $state $rel) -Force
         Test-NoLink $item
-        if ($item.Length -le 0 -or $item.Length -gt 4MB) { throw ('CARRY_FORWARD_FILE_SIZE_REFUSED:' + $rel) }
+        # An empty record (a write interrupted before its bytes) is carried as it is; the backfill counts it unreadable.
+        if ($item.Length -lt 0 -or $item.Length -gt 4MB) { throw ('CARRY_FORWARD_FILE_SIZE_REFUSED:' + $rel) }
         [void]$files.Add([ordered]@{ rel = $rel.Replace('\', '/'); full = $item.FullName })
       }
       $heads = Join-Path $state 'ledger-heads'
@@ -208,6 +209,9 @@ function Get-CarryForwardPlan([string]$parent) {
     if ($files.Count -gt 200000) { throw ('CARRY_FORWARD_TOO_MANY_FILES:' + $dir.Name) }
     $sources += ,([ordered]@{ name = $dir.Name; files = @($files) })
   }
+  # The resident's backfill reads at most 256 earlier states (src/executed-heads.mjs): refuse here, before anything is
+  # written, rather than install a state that HALTs on its first start.
+  if ($sources.Count -gt 256) { throw ('CARRY_FORWARD_TOO_MANY_STATES:' + $sources.Count) }
   ,$sources
 }
 # Copies the planned files (each read once, hashed, written from that same buffer with CreateNew) and returns the
@@ -312,7 +316,8 @@ $planSha = Sha256Text ($plan | ConvertTo-Json -Depth 8)
 if (-not $Apply) {
   # Not part of the plan (the state being replaced is renamed only by the uninstall that runs after this dry run): what
   # would be carried forward if the install ran now, or why it would be refused.
-  $preview = try { @(Get-CarryForwardPlan $CarryParent | ForEach-Object { [ordered]@{ name = $_.name; files = @($_.files).Count } }) } catch { $_.Exception.Message }
+  # Get-CarryForwardPlan returns its list as ONE pipeline object (,$sources): assigned first, then walked with foreach.
+  $preview = try { $all = Get-CarryForwardPlan $CarryParent; $p = @(); foreach ($s in $all) { $p += ,([ordered]@{ name = $s.name; files = @($s.files).Count }) }; ,$p } catch { $_.Exception.Message }
   [ordered]@{ status = 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN'; planSha256 = $planSha; plan = $plan; carryForwardPreview = $preview } | ConvertTo-Json -Depth 10; exit 0
 }
 
@@ -338,7 +343,7 @@ Step 'carry-forward' {
   $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes((ConvertTo-Json -InputObject $manifest -Depth 6 -Compress))
   Write-New (Join-Path $Root 'install\backfill-manifest.json') $bytes
   $script:receipt.backfillManifestSha256 = Sha256Bytes $bytes
-  $script:receipt.carriedSources = @($manifest.sources | ForEach-Object { [ordered]@{ name = $_.name; files = @($_.files).Count } })
+  $script:receipt.carriedSources = @($manifest.sources | ForEach-Object { [ordered]@{ name = $_.name; files = @($_.files).Count; empty = @($_.files | Where-Object { $_.bytes -eq 0 }).Count } })
 }
 # 2. Package files: read once, hash, compare, write those same bytes (CreateNew).
 Step 'package-copy' {

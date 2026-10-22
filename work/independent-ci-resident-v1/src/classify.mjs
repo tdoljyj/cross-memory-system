@@ -177,12 +177,16 @@ export const UNEXECUTED_REASON_RULES = Object.freeze({
 // null. A release needs the table's release-if-safe row, an entry that did not reach 10-started, the Windows half of
 // the cleanup proof, and EITHER the bound stage outcome's own safeToRerun flag (v0.6 §9 phase 1, items 1 and 2; never
 // inferred from a code) OR the broker's "no launch, original restored" refusal. Everything else is burned: CLEAN with a
-// complete two-host proof, else UNKNOWN; a halt row or no row at all is UNKNOWN.
+// complete two-host proof, else UNKNOWN; a halt row or no row at all is UNKNOWN. A diagnostic that carries a
+// deterministic PR code (DETERMINISTIC_REASON_CODES) never releases, whichever code it was reduced to (independent
+// review of phase 1, MINOR 1): the Source's flag already says so, and the resident does not rely on that alone.
+export const DETERMINISTIC_REASON_CODES = Object.freeze([...new Set(FAILURE_TABLE.rows.filter(r => r.class === 'deterministic-pr' && r.reasonCodesAny).flatMap(r => r.reasonCodesAny))]);
 export function decideFailure({ code, stage, phase = 'stage', outcome = null, brokerNoLaunch = false, proof, started }) {
   const row = typeof code === 'string' && CODE.test(code) ? failureRow({ code, stage, phase, reason: outcome?.reason ?? null, diagnostic: outcome?.diagnostic ?? null }) : null;
   if (!row || row.disposition === 'halt') return { klass: 'UNKNOWN', basis: row ? 'failure-table-halt' : 'not-an-allow-listed-clean-failure', row, release: null };
   const windows = proof?.windowsTreeZero === true && proof?.serviceOriginalStopped === true;
-  if (started !== true && row.disposition === 'release-if-safe' && windows) {
+  const deterministic = diagnosticCodes(outcome?.diagnostic).some(c => DETERMINISTIC_REASON_CODES.includes(c));
+  if (started !== true && row.disposition === 'release-if-safe' && windows && !deterministic) {
     if (outcome?.safeToRerun === true) return { klass: 'NOT_ADMITTED', basis: 'stage-1-safe-to-rerun', row, release: 'NOT_ADMITTED' };
     if (brokerNoLaunch === true) return { klass: 'NOT_ADMITTED', basis: 'stage-1-broker-not-launched', row, release: 'BROKER_NOT_LAUNCHED' };
   }

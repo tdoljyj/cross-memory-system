@@ -20,6 +20,8 @@
     - status.json、PR 页面状态和 Windows 通知；
     - 批次认领记录的身份去掉 createdAt。
 
+    独立复核结论是“修复后可接受”：没有 BLOCKER，1 个 MAJOR，7 个 MINOR，全部已在 PR 内修正（§16.9）。
+
   第五轮复核 **PASS**（没有剩余的 BLOCKER 或 MAJOR）。五轮对照见 §13.3–§13.7。
 - 依据（只读）：
   - PR884 head 041eaadf 的 `work/actions-hosted-migration/independent-ci-v1/`。下文 `CI/` 指这个目录，`CID/` 指 `CI/src/control-install-delta-v2/`。
@@ -1062,13 +1064,15 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
   - 完成后写 `BACKFILL-COMPLETE.json`。完成之前不跑任何批次，等待中的批次和 attempt 2 也不跑。
   - 出错时：
     - 清单缺失、格式不对、带入的文件不见或被改：HALT；
-    - I/O 暂时错误：`BACKFILL_PENDING`，下个 tick 再试；
-    - 解析不了的记录：计数（`unreadable`）后跳过，最后一道防线仍是发布者的 K(head, role)。
+    - I/O 暂时错误：`BACKFILL_PENDING`，下个 tick 再试；连续 `BACKFILL_MAX_PENDING`（10）次仍失败就 HALT（`EXECUTED_HEADS_BACKFILL_UNAVAILABLE`），不会无限重读；
+    - 解析不了的记录（包括写到一半的 0 字节文件）：计数（`unreadable`）后跳过，最后一道防线仍是发布者的 K(head, role)。
 - **预检**：已执行的 head 一律忽略（`HEAD_ALREADY_PUBLISHED_NO_RETRY`），不论 Source、PR 号还是 base。要再跑，只能推新提交。
+  - 唯一例外是同一 head 的 attempt 2：如果这个 head 唯一的记录是 attempt 1 自己在第 R 段之前写的那条（`executed-heads.mjs#onlyRelayRecordOf`），照常运行。能排上 attempt 2，说明第 R 段一个角色都没转发（`attempts.mjs`）。
 - **安装带入旧账本**（`install-resident.ps1` 第 1b 步 carry-forward）：
   - 来源是父目录下每个 `resident-uninstalled-*\state`：`ledger-heads`、账本的 00/10/25/80/90 记录、`executed-heads`；
   - 每个文件读一次、算哈希、CreateNew 写进 `state\backfill\<n>\`，并逐个列进只有管理员能写的 `install\backfill-manifest.json`。`<n>` 是序号，保证路径远低于 Windows 的 260 字符上限；
-  - 遇到任何链接，在写入任何东西之前就拒绝安装；
+  - 遇到任何链接，在写入任何东西之前就拒绝安装；旧 state 超过 256 个（回填能读的上限）时也一样（`CARRY_FORWARD_TOO_MANY_STATES`）；
+  - 0 字节的记录照样带入、列进清单（字节数 0），回填时计为 unreadable，回执的 `carriedSources` 里有每个来源的 `empty` 数；
   - 旧 state 原样不动；
   - 计划只写规则，不列具体文件：旧 state 要等卸载改名之后才知道。具体文件记在安装回执和清单里。dry run 另外输出 `carryForwardPreview`，不进计划哈希；
   - `verify-resident.ps1` 新增两项检查：`backfill-manifest`，以及 `executed-heads-backfilled`（最多等 90 秒）。
@@ -1078,7 +1082,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 - **Source 侧**：
   - entry outcome（`stage-inputs.mjs#writeOutcome`）和阶段事实（`stage-fact.mjs#outcomeFacts`）都带上：
     - status、reason、sideEffects、mayHavePublished；
-    - 清洗过的准入诊断：verdict、reasonCodes、nativeReasonCodes、`ciRetryAfter`、合并队列入队事实；
+    - 清洗过的准入诊断：verdict、reasonCodes、nativeReasonCodes、`ciRetryAfter`、合并队列入队事实（Native 视图的 `state:'none'` 记为不在队列里，不是未知）；
     - scheduling；
     - entry 自己的 `safeToRerun`。
   - `full-admission-v2.mjs` 的拒绝诊断多了 `ciRetryAfter` 和 `mergeQueue`（`queue-facts.mjs#mergeQueueEntryV2`）。
@@ -1098,7 +1102,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
     - 处置：release、release-if-safe、burn、halt；
     - 重试规则：new-trigger、attempt2、new-commit、owner-rearm；
     - 熔断输入：counts 或 neutral。第二期才用，现在先记下。
-  - 匹配：最具体的行胜出。没有行 = 未知，HALT。
+  - 匹配：最具体的行胜出，同样具体时取靠前的一行。没有行 = 未知，HALT。
 - **释放的前提**（`classify.mjs#decideFailure`）：
   - 只在 10-started 之前，也就是第 1 段；
   - Windows 一半的清理证明齐全；
@@ -1107,8 +1111,10 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
     - broker 明确说“没有发起启动、原样已恢复”，即 `broker_no_launch`，原因记为新的释放原因 `BROKER_NOT_LAUNCHED`。
 - **其余一律烧号**：完整的两端证明下记 CLEAN，否则 UNKNOWN。
   - 确定性的 PR 问题即使带着 `safeToRerun` 也烧号，例如 `pr_files_page_limit`、PR 已关闭、文件过多、`PROTECTED_CHANGE_NOT_UP_TO_DATE`。
-  - 没映射的第 1 段原因（`unmapped-stage-1`）烧号，并计入熔断。
+  - 没映射的第 1 段原因（`unmapped-stage-1`）烧号，并计入熔断。包括 Native 拒绝但没有原因码，或原因码本 Source 不认识（`unknown_reason`）。Native 有名字的未准入原因列在对照表的 `reasonCodesWithin` 里，测试保证 Source 的每个诊断码都有归属。
+  - 诊断码里只要带确定性的 PR 码（`classify.mjs#DETERMINISTIC_REASON_CODES`，与 Source 的 `DETERMINISTIC_PR_REASON_CODES` 相同，含 `protected_change_not_up_to_date`），不论归成哪个码都不释放。这是常驻侧自己的检查，不只靠 Source 的标记。
 - **Source 什么时候给 `safeToRerun`**：拒绝发生在首次准入的 boundary 里面（还没有批次认领记录，真实效果键下什么都没写），并且原因不是确定性的 PR 问题（`DETERMINISTIC_PR_REASONS`、`DETERMINISTIC_PR_REASON_CODES`，测试保证与对照表一致）。
+- **未准入码的优先级**（`stage-fact.mjs#notAdmittedCode`）：`protected_change_not_up_to_date` 排第一。不是最新 main 的 head 无论 Native 还说了什么都过不了，所以它和 `owner_review_required` 同时出现时归为 `PROTECTED_CHANGE_NOT_UP_TO_DATE`，不归为等待。
 - **与 v0.8 相比的行为变化**：
   - 第 1 段的未准入码只在有 `safeToRerun` 时释放；
   - 第 1 段 broker 没启动时释放；
@@ -1128,6 +1134,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 ### 16.5 poller 只提议跟上 main 的提交（v0.6 §2，§7 次要 12）
 
 - **条件**：PR 的 `base.sha` 等于 main 尖端，并且 compare（main...head）的 `behind_by` 为 0（`poller.mjs#upToDate`）。两个固定提交的 compare 结果会缓存。
+- **限量**：每次 compare 最多 15 秒；每轮最多 10 次没缓存的 compare，其余的这一轮记为 `compare-unavailable`（不提议），下一轮再比。
 - **不提议的 PR**：在 `lastPass` 里给出提示：
   - `merge-main`：head 不含 main；
   - `push-any-commit`：已含 main，但 GitHub 的 base.sha 还是旧的，推任意一个提交即可。
@@ -1141,8 +1148,8 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
   - 它只是视图，执行器的任何决定都不读它。
 - **PR 页面**（`src/pr-status.mjs`，companion）：
   - 每个打开的 PR 的当前 head 挂一条 commit status，上下文是 `resident-queue (info only)`。只写状态，不发评论，所以不改 PR 的更新时间；
-  - 这个名字的形状不会是任何检查名；写之前还会实时读 main 的规则，名字一旦出现在必需检查里就不写，并通知一次；读不到规则时也不写；
-  - 只有状态或文字变化时才写，每轮最多 20 条；“已提议”这类泛泛的文字不会覆盖已写过的状态。
+  - 起决定作用的是写之前实时读 main 的规则：名字一旦出现在必需检查里就不写，并通知一次；读不到规则时也不写。本仓库只用规则集保护 main，经典分支保护返回 404（2026-10-22 核实），所以读规则能看到全部必需检查。固定的 ` (info only)` 后缀只是让重名不太可能，矩阵作业也可能起这种名字；
+  - 只有状态或文字变化时才写，每轮最多 20 条；“已提议”这类泛泛的文字不会覆盖已写过的状态；写失败的 head 10 分钟内不再试。
 - **Windows 通知**：在 Owner 会话里弹出，每个事件键只弹一次。事件有：
   - HALT；
   - 状态超过 5 分钟没更新；
@@ -1152,7 +1159,10 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
   文字都是固定模板加稳定码。
 - 去重记录放在 Owner 自己的 `%LOCALAPPDATA%\CluedIndependentCI\`，不放在常驻目录。
 - `companion.json` 的 `status` 可以分别关掉这两项，默认都开。
-- **已知限制**：companion 是单线程的，泵送桥接段时 PR 页面和通知要等泵结束。
+- **两条线**（`companion-main.mjs#lane`）：companion 自己的动作（邮箱：bundle、工作区、Linux 归档和静止证明、转发泵）和咨询性工作（poller、PR 页面状态、通知）各走一条线，各用自己的 Runner。
+  - Runner 从不杀子进程，所以一个卡住的 gh 只会占住它自己那条线；服务要的证明（例如 2 分钟期限的 `linux-quiescence`）照常应答，GitHub 再慢也不会让邮箱请求过期，进而导致不该有的 HALT（独立复核 M1）。
+  - 咨询性的每次调用最多 15 秒，每轮 PR 页面加通知最多 60 秒，超时后这一轮不再发起新调用。
+  - 之前“泵送桥接段时 PR 页面和通知要等泵结束”的限制因此不再存在。
 
 ### 16.7 policy 合同
 
@@ -1162,10 +1172,26 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 
 ### 16.8 测试
 
-- **常驻层**：Node 186/186，新增 `failure-table`、`executed-heads`、`stage-outcome`、`status`、`pr-status` 五个测试文件。其中必需的一条：全新 state 加旧账本存档，曾经发布过检查的 head 不再准入；回填完成前不跑任何批次。
+- **常驻层**：Node 189/189，新增 `failure-table`、`executed-heads`、`stage-outcome`、`status`、`pr-status` 五个测试文件。其中必需的一条：全新 state 加旧账本存档（只带账本、不带 executed-heads，与第一期之前的安装一样），曾经发布过检查的 head 不再准入，包括第 3 段遇到 `ROLE_ALREADY_PUBLISHED_ON_HEAD` 而 HALT 的那种；回填完成前不跑任何批次。
 - **离线演练**：40 步，新增重装后回填的三步。
-- **PowerShell**：`windows/test-install-carry.ps1`，27 条断言，含 node 用真实回填读安装写出的清单，以及链接拒绝；`windows/test-resident-windows.ps1` 不变，仍通过。
+- **PowerShell**：`windows/test-install-carry.ps1`，31 条断言，含 node 用真实回填读安装写出的清单（含一个 0 字节记录）、dry run 预览每个旧 state 一项、链接拒绝和超过 256 个旧 state 的拒绝；`windows/test-resident-windows.ps1` 不变，仍通过。
 - **Source v2**：Node 173 项通过、1 项跳过，新增 `resident-v2-quota-phase1.test.mjs`，并在准入和发布者测试里加了用例。
+
+### 16.9 独立复核与修正
+
+结论“修复后可接受”：没有 BLOCKER；第一期的三条安全要求成立（发布过检查的 head 不再准入，回填完成前不跑批次，第 1 段只凭 Source 的 `safeToRerun` 或 broker 的“没有发起启动”释放）。发现的问题都在本 PR 内修正：
+
+| 编号 | 问题 | 修正 |
+|---|---|---|
+| M1 | 新增的 PR 页面状态、通知和 compare 与邮箱共用一个 Runner，GitHub 慢时会让 `linux-quiescence` 过期，导致 UNKNOWN 和 HALT | 两条线各用自己的 Runner；单次 15 秒、每轮 60 秒；compare 每轮最多 10 次；写失败 10 分钟内不重试（§16.5、§16.6） |
+| MINOR 1 | `owner_review_required` 加 `protected_change_not_up_to_date` 会被当成等待而释放 | `notAdmittedCode` 把后者排第一；Source 的确定性码表加上它；常驻侧遇到确定性码一律不释放（§16.3） |
+| MINOR 2 | Native 没有原因码或原因未知时会被释放 | 有名字的原因列入对照表，其余归 `unmapped-stage-1` 烧号并计入熔断（§16.3） |
+| MINOR 3 | dry run 的 `carryForwardPreview` 把所有旧 state 合成一项 | 先赋值再 foreach，测试直接运行安装脚本里的那一行 |
+| MINOR 4 | 旧 state 里有 0 字节记录时整个安装被拒 | 照样带入并列入清单，回填计为 unreadable（§16.1） |
+| MINOR 5 | 第 R 段跑过但没转发任何角色时，attempt 2 被自己的已执行记录挡住 | 预检对 attempt 2 放行 attempt 1 自己的第 R 段前记录（§16.1） |
+| MINOR 6 | 回填的非 ResidentError 失败会无限 `BACKFILL_PENDING` | 连续 10 次后 HALT（§16.1） |
+| MINOR 7 | Native 的 `state:'none'` 被当成未知 | 记为不在队列里（§16.2） |
+| NIT | 必需用例里声明的 HALT 场景没执行；名字形状的说法不准；PowerShell 侧没有 256 个来源的限制；写失败每分钟重试 | 场景已执行并断言；注释改准；安装前拒绝；10 分钟内不重试 |
 
 ---
 

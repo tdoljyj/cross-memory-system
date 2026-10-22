@@ -63,8 +63,11 @@ export const hintFor = (roles, { pr = 884, head = HEAD, at = Date.parse('2026-10
 export const CLEAN_PROOF = Object.freeze({ windowsTreeZero: true, serviceOriginalStopped: true, linuxUnitsInactive: true, containersZero: true });
 export const WINDOWS_CLEAN = Object.freeze({ windowsTreeZero: true, serviceOriginalStopped: true });
 // A stage-1 refusal as the Source reports it inside the first admission's boundary (resident quota redesign phase 1):
-// the bound outcome says safeToRerun, which is what lets the executor release it (classify.mjs#decideFailure).
-export const SAFE_REFUSAL = Object.freeze({ status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: null, safeToRerun: true });
+// the bound outcome says safeToRerun, which is what lets the executor release it (classify.mjs#decideFailure), and
+// Native named its reason (a workflow gate finding): a refusal with no named reason is unmapped and burned.
+export const SAFE_REFUSAL = Object.freeze({ status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, mayHavePublished: false,
+  diagnostic: Object.freeze({ verdict: 'REJECTED', nativeVerdict: 'REJECTED', ownerReviewKind: 'UNKNOWN', reasonCodes: Object.freeze(['workflow_gate']), nativeReasonCodes: Object.freeze([]) }),
+  scheduling: null, safeToRerun: true });
 export const notAdmitted = (code = 'NATIVE_NOT_ADMITTED', outcome = SAFE_REFUSAL) => ({ ok: false, code, proof: WINDOWS_CLEAN, outcome, brokerNoLaunch: false });
 
 // Fake engine: stages maps stage number -> result; default ok. windows = fresh Windows quiescence.

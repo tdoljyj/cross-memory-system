@@ -15,7 +15,8 @@
 // It is true only when the refusal came from inside the admission boundary (changed paths, full admission, fact
 // checks) of the FIRST admission of this batch (no batch claim recorded yet, so nothing local or remote was written
 // under the real effect key) and the reason is not a deterministic fault of the PR itself (DETERMINISTIC_*: the PR
-// changed or closed, too many files, a removed or invalid policy file), which would fail the same way again.
+// changed or closed, too many files, a removed or invalid policy file, a protected change not up to date with main),
+// which would fail the same way again.
 // Results also carry the scheduling facts Native reported (ci_retry_after, merge-queue entry) when it was reached.
 import { randomUUID } from 'node:crypto';
 import { digest } from '../proof.mjs';
@@ -36,7 +37,7 @@ const diagnosticOf = e => fullAdmissionFailureV2({ contract: 'clued.independent-
 // boundary reasons of the changed-paths read and of full admission, and the Native/evaluator diagnostic codes.
 export const DETERMINISTIC_PR_REASONS = Object.freeze(['invalid_pr_subject', 'pr_subject_changed', 'pr_files_changed', 'incomplete_pr_files', 'invalid_pr_files',
   'pr_files_page_limit', 'COMPLETE_CURRENT_PATHS_REQUIRED', 'full_admission_subject_changed', 'full_admission_subject_invalid']);
-export const DETERMINISTIC_PR_REASON_CODES = Object.freeze(['changed_files_truncated', 'policy_file_removed', 'policy_file_invalid']);
+export const DETERMINISTIC_PR_REASON_CODES = Object.freeze(['changed_files_truncated', 'policy_file_removed', 'policy_file_invalid', 'protected_change_not_up_to_date']);
 export function deterministicPrFault(reason, diagnostic) {
   return DETERMINISTIC_PR_REASONS.includes(reason)
     || [...(diagnostic?.reasonCodes ?? []), ...(diagnostic?.nativeReasonCodes ?? [])].some(c => DETERMINISTIC_PR_REASON_CODES.includes(c));

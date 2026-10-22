@@ -3,11 +3,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import { FAILURE_TABLE, failureRow, decideFailure, validateFailureTable, UNEXECUTED_REASON_RULES, NOT_ADMITTED_CODES, TRANSIENT_CODES, CLEAN_FINAL_CODES, UNKNOWN_CODES } from '../src/classify.mjs';
+import { FAILURE_TABLE, failureRow, decideFailure, validateFailureTable, UNEXECUTED_REASON_RULES, NOT_ADMITTED_CODES, TRANSIENT_CODES, CLEAN_FINAL_CODES, UNKNOWN_CODES, DETERMINISTIC_REASON_CODES } from '../src/classify.mjs';
 import { UNEXECUTED_REASONS } from '../src/ledger.mjs';
 import { PUMP_CODES } from '../src/engine-windows.mjs';
 import * as source from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
 import { DETERMINISTIC_PR_REASONS, DETERMINISTIC_PR_REASON_CODES } from '../../actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/publisher.mjs';
+import { DIAGNOSTIC_CODES } from '../../actions-hosted-migration/independent-ci-v1/src/admission-facts-v2.mjs';
 import { CLEAN_PROOF, WINDOWS_CLEAN } from './helpers.mjs';
 
 // Every code the executor can be handed: the Source catalogue, the resident's own clean endings, the companion pump's
@@ -64,13 +65,37 @@ test('deterministic PR faults mirror the Source and always burn, also with a (fo
   const truncated = decideFailure({ code: 'NATIVE_NOT_ADMITTED', stage: 1, outcome: { ...forged, reason: 'full_admission_rejected', diagnostic: { reasonCodes: ['changed_files_truncated', 'merge_slot_required'], nativeReasonCodes: [] } },
     proof: CLEAN_PROOF, started: false });
   assert.deepEqual([truncated.row.class, truncated.release], ['deterministic-pr', null]);
+  // a waiting code reduced from a diagnostic that also says "not up to date": burned (the resident's own guard)
+  const stale = decideFailure({ code: 'OWNER_REVIEW_REQUIRED', stage: 1, outcome: { ...forged, reason: 'full_admission_rejected',
+    diagnostic: { reasonCodes: ['owner_review_required', 'protected_change_not_up_to_date'], nativeReasonCodes: [] } }, proof: CLEAN_PROOF, started: false });
+  assert.deepEqual([stale.row.class, stale.release, stale.klass], ['waiting', null, 'CLEAN']);
+  assert.deepEqual([...DETERMINISTIC_REASON_CODES].sort(), [...DETERMINISTIC_PR_REASON_CODES].sort());
+});
+
+test('every Native reason code is placed: a named code, deterministic, a named not-admitted reason, or unmapped (burned)', () => {
+  const named = DIAGNOSTIC_CODES.filter(c => source.notAdmittedCode({ reasonCodes: [c] }) !== 'NATIVE_NOT_ADMITTED');
+  const rows = rowsOf('NATIVE_NOT_ADMITTED').filter(r => Array.isArray(r.stages));
+  const within = rows.find(r => r.class === 'not-admitted').reasonCodesWithin;
+  const placed = new Set([...named, ...DETERMINISTIC_REASON_CODES, ...within]);
+  assert.deepEqual(DIAGNOSTIC_CODES.filter(c => !placed.has(c)), ['unknown_reason']);
+  assert.ok(rows.find(r => r.class === 'waiting').reasonCodesWithin.every(c => within.includes(c)), 'the waiting reasons are named not-admitted reasons too');
+  const decide = codes => decideFailure({ code: 'NATIVE_NOT_ADMITTED', stage: 1, outcome: { status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, mayHavePublished: false, safeToRerun: true,
+    diagnostic: { reasonCodes: codes, nativeReasonCodes: [] } }, proof: CLEAN_PROOF, started: false });
+  for (const codes of [[], ['unknown_reason'], ['workflow_gate', 'unknown_reason']]) {
+    const d = decide(codes);
+    assert.deepEqual([d.row.class, d.row.breaker, d.release], ['unmapped-stage-1', 'counts', null], JSON.stringify(codes));
+  }
+  assert.deepEqual([decide(['workflow_gate']).row.class, decide(['workflow_gate']).release], ['not-admitted', 'NOT_ADMITTED']);
+  assert.deepEqual([decide(['merge_slot_required']).row.class, decide(['merge_slot_required']).release], ['waiting', 'NOT_ADMITTED']);
 });
 
 test('the most specific row wins: waiting only when every reason is a wait; an unmapped stage-1 reason burns and counts', () => {
   const row = (code, stage, o = {}) => failureRow({ code, stage, ...o });
   assert.equal(row('NATIVE_NOT_ADMITTED', 1, { diagnostic: { reasonCodes: ['merge_slot_required'], nativeReasonCodes: ['evaluation_not_completed'] } }).class, 'waiting');
   assert.equal(row('NATIVE_NOT_ADMITTED', 1, { diagnostic: { reasonCodes: ['merge_slot_required', 'workflow_gate'] } }).class, 'not-admitted');
-  assert.equal(row('NATIVE_NOT_ADMITTED', 1, { diagnostic: { reasonCodes: [] } }).class, 'not-admitted');
+  // no reason code at all, or an unknown one: unmapped, burned (v0.6 §1; independent review of phase 1, MINOR 2)
+  assert.equal(row('NATIVE_NOT_ADMITTED', 1, { diagnostic: { reasonCodes: [] } }).class, 'unmapped-stage-1');
+  assert.equal(row('NATIVE_NOT_ADMITTED', 1, { diagnostic: { reasonCodes: ['unknown_reason'] } }).class, 'unmapped-stage-1');
   assert.equal(row('NATIVE_NOT_ADMITTED', 3).class, 'clean-final');
   for (const code of ['OWNER_REVIEW_REQUIRED', 'TASK_CI_HEAD_CAP_REACHED']) assert.equal(row(code, 1).class, 'waiting', code);
   const unmapped = row('STAGE_CHILD_REFUSED', 1, { reason: 'BATCH_CLAIM_RECORD_INVALID' });

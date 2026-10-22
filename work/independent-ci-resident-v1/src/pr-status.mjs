@@ -3,11 +3,16 @@
 //
 // PR page: ONE commit status per open PR's current head, context PR_STATUS_CONTEXT. It is information only:
 //   - a commit status, never a comment (a comment would move the PR's updated time and make the poller propose again);
-//   - a context that can never be a required check: a fixed name of a shape no check uses, AND a live read of main's
-//     rules before any write (a context that appears among the required checks is never written, and the Owner is told
-//     once); without that read nothing is written;
+//   - a context that is never a required check: what decides is a live read of main's rules before any write (a
+//     context that appears among the required checks is never written, and the Owner is told once; without that read
+//     nothing is written). This repository protects main with rulesets only: classic branch protection answers 404
+//     (2026-10-22), so the rules read sees every required check. The fixed name (a " (info only)" suffix) only makes a
+//     collision unlikely; a matrix job could still be named like that;
 //   - written only when its state or text changes for that head (the last write per head is kept locally), at most
-//     MAX_POSTS_PER_PASS per pass; a generic "proposed" text never replaces anything already written for that head.
+//     MAX_POSTS_PER_PASS per pass; a generic "proposed" text never replaces anything already written for that head; a
+//     head whose write failed is left alone for POST_RETRY_MS.
+// Every call is short (ADVISORY_TIMEOUT_MS) and a pass stops starting calls after PASS_BUDGET_MS. The companion runs all
+// of this in its advisory lane, with its own Runner (companion-main.mjs), so it never delays the mailbox.
 // Notifications: a Windows toast in the Owner's session, once per event key (kept locally): the executor HALTed, its
 // status stopped moving (STATUS_STALE_MS), a PR head waited more than an hour (once per PR, head and reason), the
 // status context collides with a required check.
@@ -22,6 +27,9 @@ export const MAX_POSTS_PER_PASS = 20;
 export const MAX_TOASTS_PER_PASS = 5;
 export const WAIT_NOTIFY_MS = 3_600_000;
 export const REQUIRED_CACHE_MS = 30 * 60_000;
+export const ADVISORY_TIMEOUT_MS = 15_000;
+export const PASS_BUDGET_MS = 60_000;
+export const POST_RETRY_MS = 10 * 60_000;
 const DESCRIPTION_MAX = 140;
 const STORE_CONTRACT = 'clued.independent-ci.companion-pr-status-store/1';
 const KEEP_MS = 14 * 86_400_000;
@@ -33,7 +41,7 @@ const DEFERRED_TEXT = Object.freeze({ DAILY_BATCH_LIMIT: '今日执行批次额�
 const hhmm = ms => new Date(ms).toISOString().slice(11, 16) + 'Z';
 const clip = s => s.length <= DESCRIPTION_MAX ? s : `${s.slice(0, DESCRIPTION_MAX - 1)}…`;
 
-// A context that can never be a check name of this repository: the shape no check uses (a space and the parenthesis).
+// The fixed shape of the context (a " (info only)" suffix); whether it is free is decided by contextFree.
 export function contextShapeSafe(context) { return typeof context === 'string' && / \(info only\)$/.test(context) && context.length <= 100; }
 // True only when the context collides with none of the required checks (case-insensitive, trimmed).
 export function contextFree(context, required) {
@@ -155,14 +163,14 @@ export class PrStatusReporter {
   constructor(ports) {
     Object.assign(this, ports);
     check(contextShapeSafe(PR_STATUS_CONTEXT), 'PR_STATUS_CONTEXT_UNSAFE');
-    this.required = null; this.requiredAt = 0; this.collision = false; this.startedAt = this.clock();
+    this.required = null; this.requiredAt = 0; this.collision = false; this.startedAt = this.clock(); this.failed = new Map();
   }
 
   // main's required status checks (rulesets), read with the Owner's gh login; null when unknown.
   async requiredContexts() {
     if (this.required && this.clock() - this.requiredAt < REQUIRED_CACHE_MS) return this.required;
     const r = await this.run([this.ghExe, 'api', '--method', 'GET', '--paginate', `repos/${this.repo}/rules/branches/main`,
-      '--jq', '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context'], { timeoutMs: 60_000 });
+      '--jq', '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context'], { timeoutMs: ADVISORY_TIMEOUT_MS });
     if (r.code !== 0) return null;
     const list = String(r.stdout).split(/\r?\n/).map(s => s.trim()).filter(Boolean);
     if (list.length === 0) return null; // main always requires checks: an empty answer is no answer
@@ -173,36 +181,40 @@ export class PrStatusReporter {
   async post(headSha, want) {
     check(HEX40.test(headSha) && ['pending', 'success', 'failure', 'error'].includes(want.state) && typeof want.description === 'string', 'PR_STATUS_INVALID');
     const r = await this.run([this.ghExe, 'api', '--method', 'POST', `repos/${this.repo}/statuses/${headSha}`, '-f', `state=${want.state}`, '-f', `context=${PR_STATUS_CONTEXT}`,
-      '-f', `description=${want.description}`], { timeoutMs: 60_000 });
+      '-f', `description=${want.description}`], { timeoutMs: ADVISORY_TIMEOUT_MS });
     return r.code === 0;
   }
 
   // One pass: the PR page status of every open PR head the poller looked at, then the notifications.
   async pass({ pulls = [], status = null, statusError = false }) {
     const now = this.clock();
+    const inBudget = () => this.clock() - now < PASS_BUDGET_MS;
     let posted = 0, toasts = 0;
+    for (const [head, at] of this.failed) if (now - at >= POST_RETRY_MS) this.failed.delete(head);
     if (this.prStatus !== false && pulls.length > 0) {
       const required = await this.requiredContexts();
       this.collision = Array.isArray(required) && !contextFree(PR_STATUS_CONTEXT, required);
       if (Array.isArray(required) && !this.collision) {
         for (const pull of pulls) {
-          if (posted >= MAX_POSTS_PER_PASS) break;
+          if (posted >= MAX_POSTS_PER_PASS || !inBudget()) break;
           const want = describe({ pull, status, now });
-          if (!want) continue;
+          if (!want || this.failed.has(pull.headSha)) continue;
           const last = this.store.data.posted[pull.headSha];
           if (want.weak && last) continue;
           if (last && last.state === want.state && last.description === want.description) continue;
           if (await this.post(pull.headSha, want)) { this.store.data.posted[pull.headSha] = { state: want.state, description: want.description, at: new Date(now).toISOString() }; posted += 1; }
+          else this.failed.set(pull.headSha, now);
         }
       }
     }
     if (this.notifications !== false) {
       for (const e of events({ status, statusError, now, pulls, startedAt: this.startedAt, collision: this.collision })) {
-        if (toasts >= MAX_TOASTS_PER_PASS) break;
+        if (toasts >= MAX_TOASTS_PER_PASS || !inBudget()) break;
         if (this.store.data.notified[e.key]) continue;
-        const r = await this.run(toastArgv(this.powershellExe, e.title, e.body), { timeoutMs: 30_000 });
+        const r = await this.run(toastArgv(this.powershellExe, e.title, e.body), { timeoutMs: ADVISORY_TIMEOUT_MS });
         // Shown or not, the key is used up: a toast that cannot be shown is not retried every minute.
         this.store.data.notified[e.key] = { at: new Date(now).toISOString() };
+        this.dirty = true;
         if (r.code === 0) toasts += 1;
       }
     }
