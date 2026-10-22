@@ -6,7 +6,10 @@
   - the directory ACL plan is checked ACE by ACE (create-only Owner drop boxes, no DELETE for the resident on
     broker\requests, OWNER RIGHTS restriction);
   - SwapBroker.cs, ResidentServiceHost.cs and BrokerPureTests.cs are compiled with the in-box csc into the NEW
-    scratch directory given by the caller and the broker's bounded read and both token checks are run.
+    scratch directory given by the caller and the broker's bounded read and both token checks are run;
+  - ResidentServiceHost.cs and HostPureTests.cs are compiled the same way and the host's stop handling is run
+    against a temporary state directory with a fake executor (one stop per process, no stop file on the
+    executor's own exit; Task fe6cd7bc).
   powershell -NoProfile -File test-resident-windows.ps1 -Scratch <new empty directory>
 #>
 param([Parameter(Mandatory)][string]$Scratch)
@@ -139,4 +142,11 @@ Yes ($LASTEXITCODE -eq 0) 'compile-broker'
 $out = & (Join-Path $Scratch 'broker-pure.exe') | Out-String
 Yes ($LASTEXITCODE -eq 0 -and $out -match 'BROKER_PURE_PASS') ('broker-pure:' + $out.Trim())
 $csharp = [int](($out | ConvertFrom-Json).assertions)
-[ordered]@{ status = 'RESIDENT_WINDOWS_OFFLINE_PASS'; assertions = $n; csharpAssertions = $csharp; hostRead = $false; hostWrite = $false } | ConvertTo-Json -Compress
+
+# 6. C#: the resident host's stop handling (stop re-entry, Task fe6cd7bc), with the install-time references only.
+& $csc /nologo /noconfig /target:exe /main:HostPureTests ('/out:' + (Join-Path $Scratch 'host-pure.exe')) "/reference:$($fw)System.dll" "/reference:$($fw)System.ServiceProcess.dll" (Join-Path $here 'ResidentServiceHost.cs') (Join-Path $here 'HostPureTests.cs') | Out-Null
+Yes ($LASTEXITCODE -eq 0) 'compile-host-pure'
+$out = & (Join-Path $Scratch 'host-pure.exe') | Out-String
+Yes ($LASTEXITCODE -eq 0 -and $out -match 'HOST_PURE_PASS') ('host-pure:' + $out.Trim())
+$serviceHostCsharp = [int](($out | ConvertFrom-Json).assertions)
+[ordered]@{ status = 'RESIDENT_WINDOWS_OFFLINE_PASS'; assertions = $n; csharpAssertions = $csharp; serviceHostCsharpAssertions = $serviceHostCsharp; hostRead = $false; hostWrite = $false } | ConvertTo-Json -Compress
