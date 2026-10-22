@@ -1,0 +1,90 @@
+{
+  "contract": "clued.existing-release-v3-host-required-metadata/1",
+  "status": "SOURCE_METADATA_ONLY_NO_HOST_FACTS_OR_CREDENTIAL_VALUES_READ",
+  "realRequiredBeforeProduction": [
+    "exact final reviewed main commit with actual independent CI and original release-build/check evidence",
+    "protected complete same-commit checkout, installed dependency closure and original verified main/PDF/Connect build outputs",
+    "actual independent publisher Source/Role and Linux Host isolation/cleanup acceptance",
+    "existing release-door Binding context:write/global, release-door role, exact release.production repo:<repository>/<commit> Owner Grant",
+    "existing attestation DB role with original gate reads, G6 attestation SELECT/INSERT/UPDATE and read-only consumer definition/catalog access",
+    "actual Cloudflare account credential allowing the original fixed deployment/queue commands",
+    "two positive distinct publisher/job subjects, job excluded from publisher credential group, zero capabilities and no root/docker groups",
+    "actual Node/Git/systemctl path hashes, fixed manager context/unit, exact four-unit start/stop permission",
+    "Root actually confirms the existing production clued-storage-jobs queue; this candidate never creates it"
+  ],
+  "candidateLocalBindingChoicesNotNewOnlineAuthority": [
+    "/opt/clued-production-release-v3 package path",
+    "/srv/clued-production-release/source protected checkout path",
+    "/etc/clued-production-release/existing-release.json context hash and v3's existing two-hour window",
+    "fixed root-owned 0440 credential file names",
+    "CreateNew run/evidence files and fixed one-shot systemd service",
+    "build-files.json exact artifact inventory is integrity input, not proof CI passed",
+    "manager_ref/qualification_ref are actual evidence references; they do not call a new Native API"
+  ],
+  "futureCredentialFiles": [
+    {
+      "path": "/etc/clued-production-release/secrets/release-door.token",
+      "owner": "root",
+      "group": "actual publisher GID",
+      "mode": "0440",
+      "use": "unchanged real release-door helper only"
+    },
+    {
+      "path": "/etc/clued-production-release/secrets/attestation-database-url",
+      "owner": "root",
+      "group": "actual publisher GID",
+      "mode": "0440",
+      "use": "original DB pre/postflight and existing G6 table/consumer"
+    },
+    {
+      "path": "/etc/clued-production-release/secrets/cloudflare-deploy-token",
+      "owner": "root",
+      "group": "actual publisher GID",
+      "mode": "0440",
+      "use": "original wrangler commands only"
+    },
+    {
+      "path": "/etc/clued-production-release/secrets/cloudflare-account-id",
+      "owner": "root",
+      "group": "actual publisher GID",
+      "mode": "0440",
+      "use": "actual account metadata for original wrangler commands"
+    }
+  ],
+  "cloudflareOperationMetadata": {
+    "workers": [
+      "clued-storage-pdf",
+      "clued-cloud",
+      "clued-connect"
+    ],
+    "queue": [
+      "clued-storage-jobs info only; any nonzero stops; no create"
+    ],
+    "mainConfiguration": "apps/clued-cloud/wrangler.production.jsonc",
+    "pdfConfiguration": "apps/clued-cloud/wrangler.pdf-extractor.jsonc",
+    "connectConfiguration": "apps/kooyumi-connect/wrangler.production.jsonc",
+    "rights": "actual provider permissions enabling those original account/zone/Worker/asset/route/binding/queue operations; no token permission claim is inferred from installation",
+    "resourceCreationNotAdded": [
+      "new KV namespace",
+      "new R2 bucket",
+      "new database",
+      "migration",
+      "backup",
+      "queue"
+    ]
+  },
+  "notEvidenceOfProductionQualification": [
+    "installed CI/Checks App",
+    "transport/control-install success",
+    "matching Node hash alone",
+    "context template or manifest",
+    "Source syntax/offline tests"
+  ],
+  "notOperatedOrRead": [
+    "Host",
+    "remote",
+    "Canonical",
+    "secrets",
+    "production"
+  ]
+}
