@@ -3,18 +3,18 @@
 export const CLUED_COMPONENTS_SCHEMA = "clued.components/1";
 export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "product": "1.6",
-  "skill.clued": "1.0.24",
-  "agent-contract": "52",
-  "mcp.server": "0.8.4",
+  "skill.clued": "1.0.25",
+  "agent-contract": "53",
+  "mcp.server": "0.8.5",
   "hook.runner-job-started": "1.0.0",
-  "hook.capture-guard": "1.0.3",
-  "hook.work-claim-guard": "1.1.6",
-  "hook.version-check": "1.0.3",
-  "hook.run-python": "1.0.2",
+  "hook.capture-guard": "1.0.4",
+  "hook.work-claim-guard": "1.1.7",
+  "hook.version-check": "1.0.4",
+  "hook.run-python": "1.0.3",
   "hook.settings": "1.1.1",
   "script.runner-handover-qualifier": "1.0.0",
-  "script.components": "1.0.2",
-  "script.update-clued-skills": "1.0.1",
+  "script.components": "1.0.3",
+  "script.update-clued-skills": "1.0.2",
   "script.memory-sync": "1.0.1",
   "script.gated-proof-runtime": "1.0.2",
   "script.handover-external-driver": "1.0.2",
@@ -22,10 +22,10 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.handover-external-journal": "1.0.1",
   "script.handover-external-register": "1.0.1",
   "script.workflow-source-profile": "1.0.0",
-  "script.kooyumi-plugin-bundle": "1.0.1",
+  "script.kooyumi-plugin-bundle": "1.0.2",
   "script.storage-google-redirect-cutover": "1.0.0",
   "script.storage-zip": "1.0.0",
   "script.production-publisher-source": "1.0.0",
   "script.publisher-pr-qualification-source": "1.0.0"
 };
-export const MCP_SERVER_VERSION = "0.8.4";
+export const MCP_SERVER_VERSION = "0.8.5";

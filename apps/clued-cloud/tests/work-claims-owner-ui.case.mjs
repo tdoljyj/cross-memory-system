@@ -81,7 +81,7 @@ async function listed(f, claims = [row(), codexRow]) {
 
 test('work claims page: signed out it makes no calls and offers sign-in', t => {
   const f = fixture(PAGE); t.after(() => f.unmount()); f.emit('INITIAL_SESSION', null);
-  assert.equal(f.calls.length, 0); assert.ok(f.text().includes('登录 KooYomi'));
+  assert.equal(f.calls.length, 0); assert.ok(f.text().includes('登录 BeamingFace'));
 });
 
 test('work claims page: each live claim shows who holds it, its label as self-reported, the session and the PR', async t => {

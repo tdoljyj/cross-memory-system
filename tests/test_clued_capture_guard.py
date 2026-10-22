@@ -143,7 +143,7 @@ class CaptureGuardTest(GuardHarness):
         steps = [self.merge_turn(),
                  [call("w1", MUTATE, ABOUT_PR_7), result("w1", {"status": "rejected"})],
                  [call("w2", MUTATE, {"mutation": {"content": "unrelated"}}), result("w2", COMMITTED)]]
-        expected = ["no KooYomi write after it", "did not commit", "none names PR #7"]
+        expected = ["no BeamingFace write after it", "did not commit", "none names PR #7"]
         entries: list[dict] = []
         for step, text in zip(steps, expected):
             entries += step
@@ -227,7 +227,7 @@ class CaptureGuardTest(GuardHarness):
         self.assertNotIn("PR #1 with", proc.stderr)
 
     def test_own_reminder_logged_as_user_entry_is_not_a_decision(self):
-        for brand in ("KooYomi", "Kooyumi", "Clued"):
+        for brand in ("BeamingFace", "KooYomi", "Kooyumi", "Clued"):
             with self.subTest(brand=brand):
                 feedback = (f"Stop hook feedback:\n{brand} capture guard (protocol/agent/agent-contract.md §3 "
                             f"and §5):\n- The {brand} write after it did not commit (rejected: authority_escalation_forbidden).")
