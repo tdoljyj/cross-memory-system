@@ -36,11 +36,13 @@ export const STAGE8_CHECK_MS = 90_000;
 // Why a stage-8 run was not ready (all BLOCKED, zero side effects, before any journal write).
 export const STAGE8_NOT_READY_REASONS = Object.freeze(['RESIDENT_BASE_MOVED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED']);
 // Admission answers no wait can change: the run ends at once with the answer (stage-fact.mjs maps each one to its final
-// code). The claim changed, missing, inactive or expired; Native rejected; the PR closed or its head or base moved;
-// Native's policy unsupported. Phase 2, step 2 (independent review M3): before, the last three were swallowed and came
-// out as the retryable RESIDENT_QUEUE_HEAD_NOT_REACHED after the check window.
+// code). The claim changed or missing; Native rejected; the PR closed or its head or base moved; Native's policy
+// unsupported. Phase 2, step 2 (independent review M3): before, the last two were swallowed and came out as the retryable
+// RESIDENT_QUEUE_HEAD_NOT_REACHED after the check window. full_admission_native_changed (the claim inactive, its lease
+// lapsed, a verification older than 30 s) stays waited out: a renewal keeps the claim generation, so it can pass again,
+// and a final ending would burn a head whose stages 3, 5 and 7 are published (re-review m17).
 export const QUEUE_WAIT_FINAL_REASONS = Object.freeze(['full_admission_claim_changed', 'full_admission_rejected', 'full_admission_claim_missing',
-  'full_admission_subject_changed', 'full_admission_native_changed', 'full_admission_native_unsupported']);
+  'full_admission_subject_changed', 'full_admission_native_unsupported']);
 const ACTION = 'independent-control-check/2';
 const HASH = /^[a-f0-9]{64}$/, fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };

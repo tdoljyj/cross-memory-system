@@ -347,7 +347,7 @@ test('review m3, m13, m8: the PR page never calls an untested commit tested, nor
   const placed = prPage({ pull, status: board(b => b.setPending([{ pr: 7, headSha: H(7), baseSha: BASE, state: 'PARKED', deferred: 'RESIDENT_QUEUE_HEAD_NOT_REACHED', queuePosition: 2, nextAt: now + 10 * MIN }])), now });
   assert.match(placed.description, /在合并队列第 2 位/);
   // the parking places full: no estimate that assumes a free executor
-  const full = prPage({ pull, status: board(b => { b.setState('DEFERRED', 'PARKING_FULL'); b.setPending([{ pr: 6, headSha: H(6), baseSha: BASE }, { pr: 7, headSha: H(7), baseSha: BASE, eta: now + 20 * MIN }]); }), now });
+  const full = prPage({ pull, status: board(b => { b.update({ queue: { generation: 'abcdefabcdef', live: 2, depth: 100, parkingFull: true } }); b.setPending([{ pr: 6, headSha: H(6), baseSha: BASE }, { pr: 7, headSha: H(7), baseSha: BASE, eta: now + 20 * MIN }]); }), now });
   assert.equal(full.description, '排队第 2 位：停靠的批次已满，等它们结束');
 });
 
@@ -393,13 +393,17 @@ test('review m7: a re-read of a seen trigger nudges nothing; a new main tip nudg
   await f.drop(triggerBytes());   // the same trigger again: seen
   await f.exec.tick();
   assert.equal(await tries(), 1);
+  // an Agent's trigger (no prUpdatedAt) names any base: no nudge
+  await f.drop(triggerBytes({ pr: 902, headSha: H(8), baseSha: H(9) }));
+  await f.exec.tick();
+  assert.equal(await tries(), 1);
   // main moved: the poller's trigger of another PR carries the new tip
-  await f.drop(triggerBytes({ pr: 900, headSha: H(4), baseSha: H(5) }));
+  await f.drop(triggerBytes({ pr: 900, headSha: H(4), baseSha: H(5), prUpdatedAt: '2026-10-20T11:00:00.000Z', contract: 'clued.independent-ci.resident-trigger/2' }));
   const moved = await f.exec.tick();
   assert.deepEqual([moved.state, await tries()], ['PARKED', 2]);
   // the same tip again later: no second nudge for it
   f.advance(6 * MIN);
-  await f.drop(triggerBytes({ pr: 901, headSha: H(6), baseSha: H(5) }));
+  await f.drop(triggerBytes({ pr: 901, headSha: H(6), baseSha: H(5), prUpdatedAt: '2026-10-20T11:00:00.000Z', contract: 'clued.independent-ci.resident-trigger/2' }));
   await f.exec.tick();
   assert.equal(await tries(), 2);
 });
@@ -423,4 +427,73 @@ test('review m9, m11, m12: no new batch while the outside bound is full or a tri
   await h.drop(triggerBytes());
   assert.equal((await h.exec.tick()).state, 'PARKED');
   assert.equal(await h.ledger.halted(), null);
+});
+
+// ---- the confirmatory re-review of step 2 ----
+test('re-review m15: the 99th stage-8 try is the last one, whatever the answer; never a HALT at the ledger cap', async t => {
+  const head = notReady('RESIDENT_QUEUE_HEAD_NOT_REACHED', { entered: true, state: 'waiting', position: 1 });
+  const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), head], KEY) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  // 97 more tries at the queue's first place (they do not count towards the cap), as the ledger records them
+  for (let n = 2; n <= 98; n++) {
+    await f.ledger.beginTry(KEY, { batchId: 'x' });
+    await f.ledger.endTry(KEY, n, { code: 'RESIDENT_QUEUE_HEAD_NOT_REACHED', nextAt: new Date(f.clock()).toISOString(), position: 1, entered: true });
+  }
+  f.advance(10 * MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'RESIDENT_QUEUE_HEAD_NOT_REACHED']);
+  assert.equal((await f.ledger.state(KEY)).tries.length, 99);
+  assert.equal(await f.ledger.halted(), null);
+});
+
+test('re-review m16: drifted bytes end a parked batch UNKNOWN with a HALT, never through the archive tools', async t => {
+  for (const ending of ['time', 'supersede', 'authority']) {
+    const engine = stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')], KEY);
+    const f = await executorFixture(t, { engine, policy: rawPolicy(ending === 'authority' ? { validUntil: '2026-10-21T02:00:00Z' } : {}),
+      companion: fakeCompanion({ pull: pr => ({ number: pr, state: 'open', headSha: H(7) }) }) });
+    await f.drop(triggerBytes());
+    assert.equal((await f.exec.tick()).state, 'PARKED');
+    const drifted = new ResidentExecutor({ ...f.ports, sourceIntegrity: async () => ({ ok: false }) });
+    if (ending === 'time') f.advance(25 * 60 * MIN);
+    if (ending === 'supersede') await f.drop(triggerBytes({ headSha: H(7) }));
+    if (ending === 'authority') f.advance(Date.parse('2026-10-20T23:30:00Z') - f.clock());
+    const r = await drifted.tick();
+    assert.equal(r.state, 'HALTED', ending);
+    assert.equal((await f.ledger.halted()).value.code, 'RESIDENT_SOURCE_DRIFT', ending);
+    assert.equal(engine.calls.filter(c => c[0] === 'archive-windows').length, 0, ending);
+  }
+});
+
+test('re-review m8, N6, N9: parking full is on every status; the back-off after a head run; a drain stopped part-way says so', async t => {
+  // parking full stays visible on a tick that ran a parked try (the executor state is PARKED then)
+  const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')], KEY),
+    policy: rawPolicy({ park: { ...rawPolicy().park, maxParkedOutsideTop2: 1 } }), status: new StatusBoard({ clock: () => Date.parse('2026-10-20T12:00:00Z') }) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  f.advance(10 * MIN);
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  assert.equal(parseStatus(Buffer.from(JSON.stringify(f.ports.status.snapshot()))).queue.parkingFull, true);
+  // N6: after 15 minutes at the queue's first place the next try follows the counted tries (10 minutes), not 2 hours
+  const head = notReady('RESIDENT_QUEUE_HEAD_NOT_REACHED', { entered: true, state: 'waiting', position: 1 });
+  const g = await executorFixture(t, { engine: stage8Engine(Array.from({ length: 30 }, () => head), KEY) });
+  await g.drop(triggerBytes());
+  let r = await g.exec.tick();
+  while (r.until - g.clock() === PARK_HEAD_RETRY_MS) { g.advance(PARK_HEAD_RETRY_MS); r = await g.exec.tick(); }
+  assert.equal(r.until - g.clock(), 10 * MIN);
+  // N9: the second entry's acceptance fails before anything was written: the first one stays ended and reported
+  const h = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]) });
+  await h.drop(triggerBytes());
+  assert.equal((await h.exec.tick()).state, 'PARKED');
+  await h.drop(triggerBytes({ pr: 900, headSha: H(4) }));
+  assert.equal((await h.exec.tick()).state, 'PARKED');
+  const begin = h.ledger.beginOwnerAbort.bind(h.ledger);
+  let calls = 0;
+  h.ledger.beginOwnerAbort = async (...a) => { if (++calls === 2) throw Object.assign(new Error('disk'), { code: 'LEDGER_WRITE_FAILED' }); return begin(...a); };
+  h.advance(1);
+  await writeOwnerRequest(path.join(h.root, 'owner'), drainRequest({ reason: 'reinstall', by: OWNER }, h.clock), h.clock);
+  await h.exec.tick();
+  const done = (await bodies(h, 'owner-request')).find(b => b.kind === 'drain');
+  assert.deepEqual([done.ended.length, done.remaining, typeof done.stoppedBy], [1, 1, 'string']);
+  assert.equal((await bodies(h, 'owner-request-refused')).length, 0);
 });

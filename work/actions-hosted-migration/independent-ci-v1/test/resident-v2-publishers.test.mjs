@@ -258,7 +258,7 @@ test('control pair v2 (phase 2, step 2, review M3, m6): an answer no wait can ch
     const r = await pub.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS });
     return { ...r, calls: polls };
   };
-  const finals = { full_admission_subject_changed: 'PR_NOT_OPEN_OR_CHANGED', full_admission_native_changed: 'BATCH_CLAIM_CHANGED',
+  const finals = { full_admission_subject_changed: 'PR_NOT_OPEN_OR_CHANGED',
     full_admission_native_unsupported: 'NATIVE_POLICY_UNSUPPORTED', full_admission_claim_changed: 'BATCH_CLAIM_CHANGED', full_admission_claim_missing: 'BATCH_CLAIM_CHANGED' };
   for (const [reason, code] of Object.entries(finals)) {
     assert.ok(QUEUE_WAIT_FINAL_REASONS.includes(reason), reason);
@@ -273,7 +273,10 @@ test('control pair v2 (phase 2, step 2, review M3, m6): an answer no wait can ch
   // any other rejection stays the batch claim's (final as before)
   const other = await runWith(() => ({ ...blocked('full_admission_rejected'), diagnostic: { reasonCodes: ['owner_grant_required'], nativeReasonCodes: [] } }));
   assert.deepEqual([other.reason, outcomeFailureCode({ status: 'BLOCKED', reason: other.reason, sideEffects: 0, mayHavePublished: false }, 8)], ['full_admission_rejected', 'BATCH_CLAIM_CHANGED']);
-  // a transient answer is still waited out inside the window (and ends not ready)
-  const flaky = await runWith(() => blocked('full_admission_unavailable'));
-  assert.deepEqual([flaky.reason, flaky.calls > 1], ['RESIDENT_QUEUE_HEAD_NOT_REACHED', true]);
+  // a transient answer, and an inactive or stale claim verification (a renewal can fix it; re-review m17), are still
+  // waited out inside the window and end not ready
+  for (const reason of ['full_admission_unavailable', 'full_admission_native_changed']) {
+    const waited = await runWith(() => blocked(reason));
+    assert.deepEqual([waited.reason, waited.calls > 1, QUEUE_WAIT_FINAL_REASONS.includes(reason)], ['RESIDENT_QUEUE_HEAD_NOT_REACHED', true, false], reason);
+  }
 });

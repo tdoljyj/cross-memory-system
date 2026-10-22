@@ -72,7 +72,7 @@
 //   - the Owner's drain request (tools/rearm-tool.mjs request-drain) ends every parked batch on the Owner abort's path,
 //     so a reinstall finds no open batch (with the Owner abort's guards: no unarchived scene, no drift, recovery done).
 import path from 'node:path';
-import { Ledger, batchKey, headKey } from './ledger.mjs';
+import { Ledger, MAX_TRIES, batchKey, headKey } from './ledger.mjs';
 import { ABORTABLE_IN_FLIGHT, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, proofComplete } from './classify.mjs';
 import { parseTrigger } from './trigger.mjs';
 import { POSITIONS, breakerGate, breakerOf, breakerRecord, breakerView, positionOf } from './breaker.mjs';
@@ -366,9 +366,11 @@ export class ResidentExecutor {
     check(integrity && integrity.ok === true && integrity.sourceManifestSha256 === this.policy.sourceManifestSha256
       && integrity.residentManifestSha256 === this.policy.residentManifestSha256, 'OWNER_DRAIN_SOURCE_DRIFT');
     const ended = [], entries = await this.ledger.parkedEntries();
+    let stoppedBy = null;
     for (const e of entries) {
       if ((await this.ledger.unarchivedScenes()) > 0) {
         check(ended.length > 0, 'OWNER_DRAIN_UNARCHIVED_SCENE_PRESENT');
+        stoppedBy = 'OWNER_DRAIN_UNARCHIVED_SCENE_PRESENT';
         break;
       }
       const batch = Ledger.parkedAt(e) ? e.parked.batch : e.wait.batch;
@@ -377,7 +379,13 @@ export class ResidentExecutor {
       try {
         request = await this.acceptAbort(e.key, { name, requestSha256, value: { by: v.by, reason: v.reason, ledgerEntrySha256: null } }, safePoint, null);
       } catch (error) {
-        if (!(await this.ledger.state(e.key)).abort) throw error;
+        if (!(await this.ledger.state(e.key)).abort) {
+          // Nothing accepted for this entry: a refusal when it is the first, else the drain stops and says what it ended
+          // (re-review of step 2, N9).
+          if (ended.length === 0) throw error;
+          stoppedBy = codeOf(error);
+          break;
+        }
         const r = await this.unknown(e.key, codeOf(error), 'owner-drain-unconfirmed', batch, { safePoint, stage: null, requestSha256 });
         ended.push({ key: e.key, outcome: r.state, failureCode: r.failureCode });
         break;
@@ -386,7 +394,7 @@ export class ResidentExecutor {
       ended.push({ key: e.key, outcome: r.state, failureCode: r.failureCode });
       if (!(r.state === 'FAILED_CLEAN' && r.failureCode === OWNER_ABORTED)) break;
     }
-    return { ended, remaining: entries.length - ended.length };
+    return { ended, remaining: entries.length - ended.length, stoppedBy };
   }
 
   // Safe point P0, a tick start: nothing of this executor runs, so the only open entries recovery leaves are batches at a
@@ -726,6 +734,11 @@ export class ResidentExecutor {
   // still-waiting result when one only waits }.
   async resumeParked() {
     const entries = await this.ledger.parkedEntries();
+    // Whether new batches wait for the parking places: shown on the status of every tick, not only one that deferred
+    // (re-review of step 2, m8).
+    const counts = await this.parkedCounts(entries);
+    const outsideMax = this.policy.park.maxParkedOutsideTop2;
+    this.parkingFull = counts.inside >= this.policy.park.maxParked || (outsideMax > 0 && counts.outside >= outsideMax);
     if (entries.length === 0) return { acted: null, waiting: null };
     let waiting = null;
     for (const e of entries.filter(x => Ledger.waitingAt(x))) {
@@ -776,7 +789,9 @@ export class ResidentExecutor {
     this.current = { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, attempt: subject.attempt, since: entry.reserved.reservedAt ?? null };
     let outcome;
     try {
-      outcome = await this.fail(key, batch, Object.assign(new StepFailure(8, code, {}, 'stage', entry.plan?.relayed?.length ?? 0), { windowsOnly: true }));
+      const drift = await this.driftCode();
+      outcome = drift ? await this.unknown(key, drift, 'resume-start-checks', batch)
+        : await this.fail(key, batch, Object.assign(new StepFailure(8, code, {}, 'stage', entry.plan?.relayed?.length ?? 0), { windowsOnly: true }));
     } catch (error) {
       outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch);
     }
@@ -790,6 +805,8 @@ export class ResidentExecutor {
     this.current = { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, attempt: subject.attempt, since: entry.reserved.reservedAt ?? null };
     let outcome;
     try {
+      const drift = await this.driftCode();
+      if (drift) return this.afterBatch(subject, origin, await this.unknown(key, drift, 'resume-start-checks', batch));
       // An install authority that ends within one batch budget closes a parked batch neutrally, never a HALT (§4.8).
       if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < this.clock() + batchBudgetMs(this.policy)) {
         outcome = Object.assign(new StepFailure(8, 'PARKED_AUTHORITY_EXPIRING', { windowsTreeZero: true }, 'stage', entry.plan?.relayed?.length ?? 0), { windowsOnly: true });
@@ -837,9 +854,13 @@ export class ResidentExecutor {
     const counted = before.filter(t => t.ended.position !== 1).length + (position === 1 ? 0 : 1);
     let streakFrom = now;
     for (let i = before.length - 1; i >= 0 && before[i].ended.position === 1; i--) streakFrom = Date.parse(before[i].ended.at) || streakFrom;
-    const final = control.code === 'RESIDENT_BASE_MOVED' || counted >= this.policy.park.stage8MaxTries || now - Date.parse(s.parked.at) >= this.policy.park.maxMs;
+    // The ledger takes at most MAX_TRIES tries: the last one is final whatever the answer (re-review of step 2, m15).
+    const final = control.code === 'RESIDENT_BASE_MOVED' || counted >= this.policy.park.stage8MaxTries || n >= MAX_TRIES || now - Date.parse(s.parked.at) >= this.policy.park.maxMs;
     if (zero && STAGE8_NOT_READY_CODES.includes(control.code) && !final) {
-      const nextAt = now + (position === 1 && now - streakFrom < PARK_HEAD_STREAK_MS ? PARK_HEAD_RETRY_MS : PARK_RETRY_MS[Math.min(n - 1, PARK_RETRY_MS.length - 1)]);
+      // The back-off follows the counted tries: after a run at the queue's first place the next try is not 2 hours away
+      // (re-review N6).
+      const backoff = PARK_RETRY_MS[Math.min(Math.max(counted - 1, 0), PARK_RETRY_MS.length - 1)];
+      const nextAt = now + (position === 1 && now - streakFrom < PARK_HEAD_STREAK_MS ? PARK_HEAD_RETRY_MS : backoff);
       // Over capacity outside the queue's first two places: end it now rather than hold a slot (§4.9, review n-m9).
       const counts = await this.parkedCounts();
       if (!(Number.isSafeInteger(position) && position <= 2) && counts.outside >= this.policy.park.maxParkedOutsideTop2) {
@@ -864,7 +885,7 @@ export class ResidentExecutor {
   reportQueue() {
     this.report(s => {
       const b = breakerOf(this.queue.breaker);
-      s.update({ queue: { generation: this.queue.generation, live: this.queue.live().length, depth: this.policy.limits.queueDepth }, breaker: breakerView(b),
+      s.update({ queue: { generation: this.queue.generation, live: this.queue.live().length, depth: this.policy.limits.queueDepth, parkingFull: this.parkingFull === true }, breaker: breakerView(b),
         notices: this.queue.notices.slice(0, 50) });
       s.setPending(this.queue.view(this.clock(), { etaBatchMs: ETA_BATCH_MS }));
     });
@@ -932,11 +953,14 @@ export class ResidentExecutor {
     this.parkNudgeBase ??= new Map();
     for (const e of entries) {
       const s = e.reserved.subject;
-      const moved = triggers.find(({ t }) => t.baseSha !== s.baseSha && t.baseSha !== this.parkNudgeBase.get(e.key));
+      // The main tip comes from the poller (its triggers carry prUpdatedAt); an Agent's trigger may name any base. Each tip
+      // nudges a batch once (re-review of step 2, m7: alternating stale bases nudged every 5 minutes).
+      const nudged = this.parkNudgeBase.get(e.key) ?? [];
+      const moved = triggers.find(({ t }) => t.prUpdatedAt !== null && t.baseSha !== s.baseSha && !nudged.includes(t.baseSha));
       const edited = triggers.some(({ t, seen }) => t.pr === s.pr && !seen);
       if (!moved && !edited) continue;
       if (now - (this.parkNudgedAt.get(e.key) ?? -Infinity) < PARK_NUDGE_MS) continue;
-      if (moved) this.parkNudgeBase.set(e.key, moved.t.baseSha);
+      if (moved) this.parkNudgeBase.set(e.key, [...nudged, moved.t.baseSha].slice(-32));
       this.parkNudgedAt.set(e.key, now);
       this.parkNudges.set(e.key, now);
     }
@@ -1060,6 +1084,14 @@ export class ResidentExecutor {
   // The start-of-batch authority checks, run before a reservation and again on every resume of a waiting batch
   // (PR-A review MAJOR 3): the install's validUntil, the installed Source and resident bytes against the
   // policy, and (for a batch) the batch subject's Source against the installed one. Returns a HALT code or null.
+  // The installed bytes, checked before an ending that runs the archive tools without the start checks (independent
+  // re-review of step 2, m16): drift is never archived over; the batch ends UNKNOWN with a HALT instead.
+  async driftCode() {
+    const integrity = await this.sourceIntegrity();
+    return integrity && integrity.ok === true && integrity.sourceManifestSha256 === this.policy.sourceManifestSha256
+      && integrity.residentManifestSha256 === this.policy.residentManifestSha256 ? null : 'RESIDENT_SOURCE_DRIFT';
+  }
+
   async batchStartChecks(subject) {
     if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < this.clock() + batchBudgetMs(this.policy)) return 'RESIDENT_INSTALL_AUTHORITY_EXPIRING';
     const integrity = await this.sourceIntegrity();
@@ -1322,6 +1354,8 @@ export class ResidentExecutor {
       // An install authority that ends within one batch budget closes a batch at parking point A neutrally, as at B
       // (design v0.5 §4.8; independent review of step 2, m1). Only stage 1 ran: nothing was published.
       if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < this.clock() + batchBudgetMs(this.policy)) {
+        const drift = await this.driftCode();
+        if (drift) return this.afterBatch(subject, entry.reserved.origin ?? 'queued', await this.unknown(key, drift, 'resume-start-checks', batch));
         const f = await this.fail(key, batch, Object.assign(new StepFailure(1, 'PARKED_AUTHORITY_EXPIRING', { windowsTreeZero: true }, 'stage', 0), { windowsOnly: true }));
         return this.afterBatch(subject, entry.reserved.origin ?? 'queued', f);
       }
@@ -1575,6 +1609,9 @@ export class ResidentExecutor {
   async supersededEnd(key, subject, batch, { safePoint, pos, live, stage = 1 }) {
     const context = { safePoint, stage: null };
     try {
+      // Never archive from drifted bytes (re-review of step 2, m16).
+      const drift = await this.driftCode();
+      if (drift) return await this.unknown(key, drift, 'superseded-source-drift', batch, context);
       // First the create-only record: a crash from here on is a crash scene (SUPERSEDE_INTERRUPTED), never a wait that a
       // restart would resume on a half-archived scene (independent review of step 1, M1).
       await this.ledger.beginSelfAbort(key, { safePoint, liveHeadSha: live.headSha, liveState: live.state });
