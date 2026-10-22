@@ -21,8 +21,11 @@ test('holder and liveness record the uptime of their boot', async t => {
 
 test('a holder from an earlier boot is stale although its pid is alive and its liveness is fresh', async t => {
   const root = await tempRoot(t);
-  // The earlier boot: up five hours, liveness touched one minute before the reboot.
-  const old = await acquireInstanceLock(root, { pid: 111, alive: async () => false, clock: () => 0, uptime: () => 5 * HOUR });
+  // The earlier boot: the executor started two minutes after boot (delayed auto start), so its holder record is
+  // small; its liveness was last touched five hours in, one minute before the reboot. Only the liveness tells.
+  let earlier = 2 * 60_000;
+  const old = await acquireInstanceLock(root, { pid: 111, alive: async () => false, clock: () => 0, uptime: () => earlier });
+  earlier = 5 * HOUR;
   await old.touch();
   // After the reboot: four minutes up, the old pid now names another process, the wall clock barely moved.
   const asked = [];
@@ -33,7 +36,41 @@ test('a holder from an earlier boot is stale although its pid is alive and its l
   assert.equal(stale.length, 1);
   assert.equal((await read(path.join(root, 'locks', stale[0], 'holder.json'))).pid, 111);
   const evidence = await read(path.join(root, 'locks', stale[0], 'earlier-boot.json'));
-  assert.deepEqual([evidence.contract, evidence.recordedUptimeMs, evidence.uptimeMs], ['clued.independent-ci.lock-earlier-boot/1', 5 * HOUR, 4 * 60_000]);
+  assert.deepEqual([evidence.contract, evidence.recordedUptimeMs, evidence.recordedFrom, evidence.uptimeMs, evidence.marginMs], ['clued.independent-ci.lock-earlier-boot/1', 5 * HOUR, 'liveness', 4 * 60_000, 60_000]);
+});
+
+test('the holder record alone also tells an earlier boot (no liveness record)', async t => {
+  const root = await tempRoot(t);
+  const old = await acquireInstanceLock(root, { pid: 111, alive: async () => false, clock: () => 0, uptime: () => 5 * HOUR });
+  await fs.rm(path.join(old.dir, 'alive.json'));
+  await acquireInstanceLock(root, { pid: 222, alive: async () => true, clock: () => 1000, uptime: () => 4 * 60_000 });
+  const stale = await kept(root);
+  assert.equal(stale.length, 1);
+  assert.equal((await read(path.join(root, 'locks', stale[0], 'earlier-boot.json'))).recordedFrom, 'holder');
+});
+
+test('a torn liveness record (power loss) counts as none and never blocks the start', async t => {
+  for (const torn of ['', '\0\0\0\0\0\0\0\0', '{"token":"']) {
+    // Earlier boot: the holder record still tells, and the lock is stale.
+    let root = await tempRoot(t);
+    let old = await acquireInstanceLock(root, { pid: 111, alive: async () => false, clock: () => 0, uptime: () => 5 * HOUR });
+    await fs.writeFile(path.join(old.dir, 'alive.json'), torn);
+    await acquireInstanceLock(root, { pid: 222, alive: async () => true, clock: () => 1000, uptime: () => 4 * 60_000 });
+    assert.equal((await kept(root)).length, 1, JSON.stringify(torn));
+    // This boot with a live pid: no liveness is not fresh, so the Owner looks (as for a stale liveness record).
+    root = await tempRoot(t);
+    old = await acquireInstanceLock(root, { pid: 111, alive: async () => false, clock: () => 0, uptime: () => 5 * HOUR });
+    await fs.writeFile(path.join(old.dir, 'alive.json'), torn);
+    await assert.rejects(acquireInstanceLock(root, { pid: 222, alive: async () => true, clock: () => 1000, uptime: () => 5 * HOUR + 1000 }), { code: 'EXECUTOR_LOCK_AMBIGUOUS_OWNER_LOOK' }, JSON.stringify(torn));
+  }
+});
+
+test('just past the margin is an earlier boot: a short earlier boot is still recognised', async t => {
+  const root = await tempRoot(t);
+  // The earlier boot lasted six minutes; the new start is five minutes in, so the record is 61 s ahead.
+  await acquireInstanceLock(root, { pid: 111, alive: async () => false, clock: () => 0, uptime: () => 5 * 60_000 + 61_000 });
+  await acquireInstanceLock(root, { pid: 222, alive: async () => true, clock: () => 1000, uptime: () => 5 * 60_000 });
+  assert.equal((await kept(root)).length, 1);
 });
 
 test('a live holder of this boot is still refused, also inside the margin', async t => {
@@ -70,6 +107,7 @@ test('only the holder\'s own liveness record counts, and bad uptimes count as no
     ['negative uptime', -5, { token: 'aa', at: 0, uptimeMs: -5 }],
     ['text uptime', '36000000', { token: 'aa', at: 0, uptimeMs: '36000000' }],
     ['fractional uptime', 36000000.5, { token: 'aa', at: 0, uptimeMs: 36000000.5 }],
+    ['unsafe integer uptime', 1e300, { token: 'aa', at: 0, uptimeMs: 2 ** 53 + 2 }],
   ]) {
     const root = await tempRoot(t);
     const dir = path.join(root, 'executor.lock');

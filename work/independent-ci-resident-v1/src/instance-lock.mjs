@@ -1,17 +1,20 @@
 // Single-instance lock for the executor. Stopping the service never kills an executor that is in the
 // middle of a batch, so after a restart an old executor might still be finishing. The lock is a
-// directory created atomically; its holder refreshes a liveness file every tick.
+// directory created atomically; its holder refreshes a liveness file every tick. Checked in this order:
+//   holder from an earlier boot            -> stale, whatever its pid (Task d80fd886, F1): after a reboot
+//                                             the old pid may name an unrelated process, and a liveness
+//                                             record from minutes before the reboot still looks fresh
 //   holder pid gone                        -> stale: the lock is renamed (kept) and recovery decides
 //   holder pid alive and liveness fresh    -> another executor is running: refuse to start
 //   holder pid alive but liveness stale    -> ambiguous (pid reuse, or a hung executor): refuse to
 //                                             start; the Owner looks (fail closed, nothing is killed)
-//   holder from an earlier boot            -> stale, whatever its pid (Task d80fd886, F1): after a reboot
-//                                             the old pid may name an unrelated process, and a liveness
-//                                             record from minutes before the reboot still looks fresh
 // The holder and its liveness record carry the milliseconds since boot (os.uptime(), GetTickCount64 on
 // Windows). Uptime restarts at every boot and only grows within one, so a record with more uptime than the
-// machine has now was written before a reboot. The test is one-way: a holder that ran only briefly in the
-// earlier boot is not recognised and falls back to the rules above.
+// machine has now was written before a reboot. The test is one-way: a holder that ran for less than the new
+// start's uptime plus the margin in the earlier boot is not recognised and falls back to the rules below it.
+// The margin is defence in depth: with one clock source the error is a millisecond, but a misjudged live
+// holder would mean two executors. An unreadable liveness record (torn by a power loss; the rename within one
+// boot is atomic) counts as none.
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,6 +26,10 @@ const EARLIER_BOOT_MARGIN_MS = 60_000;
 
 export const uptimeMs = () => Math.floor(os.uptime() * 1000);
 const recordedUptime = record => (Number.isSafeInteger(record?.uptimeMs) && record.uptimeMs >= 0 ? record.uptimeMs : -1);
+const readLiveness = async file => {
+  if (!(await exists(file))) return null;
+  try { return JSON.parse(await fs.readFile(file, 'utf8')); } catch (error) { if (error instanceof SyntaxError) return null; throw error; }
+};
 
 export async function acquireInstanceLock(stateRoot, { pid = process.pid, alive, clock = Date.now, uptime = uptimeMs }) {
   const dir = path.join(stateRoot, 'executor.lock');
@@ -33,9 +40,10 @@ export async function acquireInstanceLock(stateRoot, { pid = process.pid, alive,
   } catch (error) {
     if (error.code !== 'EEXIST') throw error;
     const holder = (await exists(path.join(dir, 'holder.json'))) ? (await readJson(path.join(dir, 'holder.json'))).value : null;
-    const liveness = (await exists(path.join(dir, 'alive.json'))) ? JSON.parse(await fs.readFile(path.join(dir, 'alive.json'), 'utf8')) : null;
+    const liveness = await readLiveness(path.join(dir, 'alive.json'));
     const ownLiveness = liveness && holder && liveness.token === holder.token ? liveness : null;
-    const recorded = Math.max(recordedUptime(holder), recordedUptime(ownLiveness));
+    const fromHolder = recordedUptime(holder), fromLiveness = recordedUptime(ownLiveness);
+    const recorded = Math.max(fromHolder, fromLiveness);
     const now = uptime();
     const earlierBoot = recorded > now + EARLIER_BOOT_MARGIN_MS;
     if (holder && !earlierBoot && await alive(holder.pid)) {
@@ -45,7 +53,12 @@ export async function acquireInstanceLock(stateRoot, { pid = process.pid, alive,
     }
     const kept = path.join(locks, `stale-${isoNow(clock).replace(/[:.]/g, '')}-${nonce()}`);
     await renameToNew(dir, kept);
-    if (earlierBoot) await writeNew(path.join(kept, 'earlier-boot.json'), { contract: 'clued.independent-ci.lock-earlier-boot/1', recordedUptimeMs: recorded, uptimeMs: now, at: isoNow(clock) });
+    if (earlierBoot) {
+      await writeNew(path.join(kept, 'earlier-boot.json'), {
+        contract: 'clued.independent-ci.lock-earlier-boot/1', recordedUptimeMs: recorded, recordedFrom: fromLiveness >= fromHolder ? 'liveness' : 'holder',
+        uptimeMs: now, marginMs: EARLIER_BOOT_MARGIN_MS, at: isoNow(clock),
+      });
+    }
     await fs.mkdir(dir);
   }
   const token = nonce(16);
