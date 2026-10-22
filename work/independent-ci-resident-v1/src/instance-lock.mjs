@@ -24,7 +24,10 @@ import { exists, nonce, readJson, renameToNew, writeNew } from './store.mjs';
 const FRESH_MS = 10 * 60_000;
 const EARLIER_BOOT_MARGIN_MS = 60_000;
 
-export const uptimeMs = () => Math.floor(os.uptime() * 1000);
+// Rounded, not floored: os.uptime() is GetTickCount64() / 1000 on Windows, and only rounding gives back the exact
+// milliseconds (flooring loses one for about one value in a hundred), so a record compares exactly with the host's.
+export const secondsToMs = seconds => Math.round(seconds * 1000);
+export const uptimeMs = () => secondsToMs(os.uptime());
 const recordedUptime = record => (Number.isSafeInteger(record?.uptimeMs) && record.uptimeMs >= 0 ? record.uptimeMs : -1);
 const readLiveness = async file => {
   if (!(await exists(file))) return null;

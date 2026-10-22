@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { acquireInstanceLock, uptimeMs } from '../src/instance-lock.mjs';
+import { acquireInstanceLock, secondsToMs, uptimeMs } from '../src/instance-lock.mjs';
 import { tempRoot } from './helpers.mjs';
 
 const HOUR = 3_600_000;
@@ -110,24 +110,32 @@ test('a holder without an uptime (written before this change) keeps the old rule
 });
 
 test('only the holder\'s own liveness record counts, and bad uptimes count as none', async t => {
-  for (const [name, holderUptime, liveness] of [
-    ['foreign liveness token', 60_000, { token: 'other', at: 0, uptimeMs: 10 * HOUR }],
-    ['negative uptime', -5, { token: 'aa', at: 0, uptimeMs: -5 }],
-    ['text uptime', '36000000', { token: 'aa', at: 0, uptimeMs: '36000000' }],
-    ['fractional uptime', 36000000.5, { token: 'aa', at: 0, uptimeMs: 36000000.5 }],
-    ['unsafe integer uptime', 1e300, { token: 'aa', at: 0, uptimeMs: 2 ** 53 + 2 }],
+  // A foreign liveness record is not this holder's, so it is not fresh either: the Owner looks. The others are the
+  // holder's own fresh record, so a live pid of this boot is a running executor.
+  for (const [name, holderUptime, liveness, code] of [
+    ['foreign liveness token', 60_000, { token: 'other', at: 0, uptimeMs: 10 * HOUR }, 'EXECUTOR_LOCK_AMBIGUOUS_OWNER_LOOK'],
+    ['negative uptime', -5, { token: 'aa', at: 0, uptimeMs: -5 }, 'EXECUTOR_ALREADY_RUNNING'],
+    ['text uptime', '36000000', { token: 'aa', at: 0, uptimeMs: '36000000' }, 'EXECUTOR_ALREADY_RUNNING'],
+    ['fractional uptime', 36000000.5, { token: 'aa', at: 0, uptimeMs: 36000000.5 }, 'EXECUTOR_ALREADY_RUNNING'],
+    ['unsafe integer uptime', 1e300, { token: 'aa', at: 0, uptimeMs: 2 ** 53 + 2 }, 'EXECUTOR_ALREADY_RUNNING'],
   ]) {
     const root = await tempRoot(t);
     const dir = path.join(root, 'executor.lock');
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(path.join(dir, 'holder.json'), JSON.stringify({ pid: 111, token: 'aa', at: '2026-10-22T00:00:00.000Z', uptimeMs: holderUptime }));
     await fs.writeFile(path.join(dir, 'alive.json'), JSON.stringify(liveness));
-    await assert.rejects(acquireInstanceLock(root, { pid: 222, alive: async () => true, clock: () => 1000, uptime: () => 2 * 60_000 }), { code: /EXECUTOR_(ALREADY_RUNNING|LOCK_AMBIGUOUS_OWNER_LOOK)/ }, name);
+    await assert.rejects(acquireInstanceLock(root, { pid: 222, alive: async () => true, clock: () => 1000, uptime: () => 2 * 60_000 }), { code }, name);
   }
 });
 
 test('the default uptime is os.uptime() in milliseconds', () => {
-  const before = Math.floor(os.uptime() * 1000);
+  const before = Math.round(os.uptime() * 1000);
   const value = uptimeMs();
-  assert.ok(Number.isSafeInteger(value) && value >= before - 1 && value <= Math.floor(os.uptime() * 1000) + 1);
+  assert.ok(Number.isSafeInteger(value) && value >= before && value <= Math.round(os.uptime() * 1000));
+});
+
+test('seconds become the exact milliseconds they came from (GetTickCount64 / 1000)', () => {
+  // These lose a millisecond when floored; the sweep reaches about 460 days of uptime.
+  for (const ms of [2058941, 32840094, 32943041, 33045988]) assert.equal(secondsToMs(ms / 1000), ms);
+  for (let ms = 0; ms < 4e10; ms += 999_983) assert.equal(secondsToMs(ms / 1000), ms, String(ms));
 });
