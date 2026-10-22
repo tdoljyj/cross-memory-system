@@ -1966,6 +1966,7 @@ test("gate guard (Owner Decision 586181ec): an include entry may be removed, not
     ["remove fail-fast", S, dropLines(lastGone, 1), STRATEGY_CHANGED],
     ["change max-parallel", S, setLine(lastGone, 2, "      max-parallel: 3"), STRATEGY_CHANGED],
     ["remove max-parallel", S, dropLines(lastGone, 2), STRATEGY_CHANGED],
+    ["add max-parallel after the matrix", dropLines(S, 2), [...dropLines(lastGone, 2), "      max-parallel: 4"], STRATEGY_CHANGED],
     ["add an exclude", S, insertLines(lastGone, 4, "        exclude:", "          - runner_name: runner-a"), STRATEGY_CHANGED],
     ["add an axis", S, insertLines(lastGone, 4, "        shard: [1, 2]"), STRATEGY_CHANGED],
     ["reorder the keys", S, [S[0], S[2], S[1], ...lastGone.slice(3)], STRATEGY_CHANGED],
@@ -2015,12 +2016,14 @@ test("gate guard (Owner Decision 586181ec): a strategy that is not read with cer
   const both = (label, lines) => [label, lines, lines.filter((line) => !/runner-c|route-c/.test(line)), STRATEGY_CHANGED];
   assertShrinkCases([
     both("an anchor", setLine(S, 3, "      matrix: &m")),
+    both("an anchor and an alias on values", setLine(setLine(S, 9, "            route_label: *n"), 6, "          - runner_name: &n runner-a")),
     both("an inline comment", setLine(S, 7, "            route_label: route-a # a")),
     both("a block scalar", setLine(S, 7, "            route_label: |", "              route-a")),
     both("a multi-line plain scalar", insertLines(S, 8, "              more")),
     both("a bare dash", setLine(S, 6, "          -", "            runner_name: runner-a")),
     both("an indentless sequence", S.map((line) => line.replace(/^ {10}/, "        "))),
     both("uneven indentation", setLine(S, 7, "             route_label: route-a")),
+    ["a line less indented than the strategy keys", [...S, "     extra: [1]"], [...dropLines(S, 10, 11), "     extra: [1, 2, 3]"], STRATEGY_CHANGED],
     both("a duplicate key", insertLines(S, 8, "            route_label: route-z")),
     both("a no-break space", setLine(S, 7, "            route_label: route-a ")),
     both("a merge key in the job", insertLines(S, 0, "    <<: *defaults")),
@@ -2031,6 +2034,11 @@ test("gate guard (Owner Decision 586181ec): a strategy that is not read with cer
       ["    strategy:", "      matrix:", "        include: [{runner_name: runner-a}]"], STRATEGY_CHANGED],
     ["an expression strategy", ["    strategy: ${{ fromJSON(vars.S) }}"], ["    strategy: ${{ fromJSON(vars.T) }}"], STRATEGY_CHANGED],
     ["an expression matrix", ["    strategy:", "      matrix: ${{ fromJSON(vars.M) }}"], ["    strategy:", "      matrix: ${{ fromJSON(vars.N) }}"], STRATEGY_CHANGED],
+    // A lone carriage return in the base could hide a line from this reader.
+    ["a hidden line break in the base", setLine(S, 5, "          # One entry per runner.\r      max-parallel: 1"), dropLines(S, 10, 11), STRATEGY_CHANGED],
+    // Entries are removed only under strategy.matrix.
+    ["a list under another strategy key", ["    strategy:", "      other:", "        include:", "          - a: 1", "          - a: 2"],
+      ["    strategy:", "      other:", "        include:", "          - a: 1"], STRATEGY_CHANGED],
   ]);
 });
 
