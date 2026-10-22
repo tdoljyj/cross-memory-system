@@ -19,6 +19,8 @@ import { validatePolicy } from '../src/policy.mjs';
 import { TRIGGER_CONTRACT } from '../src/trigger.mjs';
 import { applyArchive, planArchive, protocolLeaves } from '../src/archive.mjs';
 import { abortRequest, inspect, rearmRequest, resumeRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
+import { ExecutedHeads, BACKFILL_MANIFEST_CONTRACT, CARRIED_FILE } from '../src/executed-heads.mjs';
+import { sha256 } from '../src/canonical.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const SOURCE = '5'.repeat(64);
@@ -107,7 +109,10 @@ const receipts = await ReceiptChain.open(path.join(state, 'receipts'), clock);
 const inbox = await Inbox.open(path.join(root, 'inbox'), path.join(state, 'inbox-archive'));
 const requests = await Inbox.open(path.join(root, 'requests'), path.join(state, 'requests-archive'));
 const owner = await OwnerInbox.open(path.join(root, 'owner'), path.join(state, 'owner-seen'));
-const exec = new ResidentExecutor({ policy, ledger, receipts, inbox, requests, owner, engine, companion, clock,
+// A fresh install with nothing carried forward: install\backfill-manifest.json lists no earlier state.
+const emptyManifest = async dir => { await fs.mkdir(dir, { recursive: true }); const f = path.join(dir, 'backfill-manifest.json'); await fs.writeFile(f, JSON.stringify({ contract: BACKFILL_MANIFEST_CONTRACT, sources: [] })); return f; };
+const executedHeads = await ExecutedHeads.open(state, clock, { manifestFile: await emptyManifest(path.join(root, 'install')), carriedRoot: path.join(state, 'backfill') });
+const exec = new ResidentExecutor({ policy, ledger, receipts, inbox, requests, owner, engine, companion, clock, executedHeads,
   sleep: () => new Promise(resolve => setImmediate(resolve)),
   sourceIntegrity: async () => ({ ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT }) });
 
@@ -134,7 +139,8 @@ await step('forged repo, bad JSON and a script file are rejected', async () => {
   await drop(trigger(950, { repo: 'evil/repo' })); await drop('{not json'); await fs.writeFile(path.join(root, 'inbox', 'run.ps1'), 'Remove-Item C:\\ -Recurse'); return exec.tick();
 }, r => r.state === 'IDLE');
 await step('PR 901 head again with a moved main: never re-run', async () => { await drop(trigger(901, { baseSha: '1'.repeat(40) })); return exec.tick(); }, r => r.reason === 'HEAD_ALREADY_EXECUTED_NO_RETRY');
-script.set(902, { 1: { ok: false, code: 'PATHS_OUTSIDE_WRITE_SET', proof: WINDOWS_CLEAN } });
+// The Source's own stage-1 outcome says safe to re-run (a refusal inside the first admission's boundary): released.
+script.set(902, { 1: { ok: false, code: 'PATHS_OUTSIDE_WRITE_SET', proof: WINDOWS_CLEAN, outcome: { status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: null, safeToRerun: true } } });
 await step('PR 902 not admitted: released, nothing reached Linux', async () => { await drop(trigger(902)); return exec.tick(); }, r => r.state === 'NOT_ADMITTED');
 await step('PR 902 re-proposed inside the cool-down waits', async () => { await drop(trigger(902)); return exec.tick(); }, r => r.reason === 'UNEXECUTED_COOLDOWN');
 script.delete(902);
@@ -246,7 +252,9 @@ const rOwner = await OwnerInbox.open(path.join(relayRoot, 'owner'), path.join(rS
 // runToEnd ticks (one minute apart, like the loop's resting pause rounded up) until the batch is not waiting.
 let waitTicks = 0;
 const runToEnd = async () => { waitTicks = 0; let r = await relayExec.tick(); while (r.state === 'WAITING') { waitTicks += 1; now += 60_000; r = await relayExec.tick(); } return r; };
+const rExecutedHeads = await ExecutedHeads.open(rState, clock, { manifestFile: await emptyManifest(path.join(relayRoot, 'install')), carriedRoot: path.join(rState, 'backfill') });
 const relayExec = new ResidentExecutor({ policy: relayPolicy, ledger: rLedger, receipts: rReceipts, inbox: rInbox, requests: rRequests, owner: rOwner, engine: relayEngine, companion: relayCompanion, clock,
+  executedHeads: rExecutedHeads,
   sourceIntegrity: async () => ({ ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT }) });
 const rDrop = async value => { seq += 1; await fs.writeFile(path.join(relayRoot, 'inbox', `${String(now + seq).padStart(13, '0')}-${String(seq).padStart(12, '0')}.json`), JSON.stringify(value)); };
 // Receipt types of one batch, in chain order, from its batch-reserved receipt to its batch-terminal receipt.
@@ -311,6 +319,43 @@ await step('  only the Owner resume continues it; the stored t0 is past the cap,
 await step('every relayed head stays burned (PR 913 again: never re-run)', async () => { await rDrop(trigger(913)); return relayExec.tick(); }, r => r.reason === 'HEAD_ALREADY_EXECUTED_NO_RETRY');
 const rHead = await rReceipts.verify();
 await step('relay month receipt chain intact', async () => ({ state: `seq ${rHead.seq}` }), () => rHead.seq > 20);
+
+// ---- a reinstall (resident quota redesign phase 1, v0.6 §9 item 7): new Source, fresh state, the old ledger carried ----
+// What install-resident.ps1 does: copy the old state's ledger-heads and ledger records into state\backfill\<name>\ and list
+// each with its SHA-256 in install\backfill-manifest.json. The first start backfills before any batch (2026-10-22: after
+// the r2 reinstall #896 head 21d6d7e3 was admitted again and HALTed at ROLE_ALREADY_PUBLISHED_ON_HEAD, Note 1550fef8).
+const SOURCE2 = '4'.repeat(64);
+const iRoot = path.join(root, 'reinstall'), iState = path.join(iRoot, 'state');
+const carriedName = 'resident-uninstalled-20261022T000000Z-drill01';
+const carriedFiles = [];
+const walk = async (base, rel = '') => {
+  for (const name of (await fs.readdir(path.join(base, rel)).catch(() => [])).sort()) {
+    const r = rel ? `${rel}/${name}` : name;
+    if ((await fs.stat(path.join(base, r))).isDirectory()) { if (/^(ledger-heads|ledger|ledger\/[0-9a-f]{64})$/.test(r)) await walk(base, r); continue; }
+    if (!CARRIED_FILE.test(r)) continue;
+    const bytes = await fs.readFile(path.join(base, r));
+    await fs.mkdir(path.dirname(path.join(iState, 'backfill', carriedName, r)), { recursive: true });
+    await fs.writeFile(path.join(iState, 'backfill', carriedName, r), bytes);
+    carriedFiles.push({ path: r, sha256: sha256(bytes), bytes: bytes.length });
+  }
+};
+await walk(state);
+await fs.mkdir(path.join(iRoot, 'install'), { recursive: true });
+await fs.writeFile(path.join(iRoot, 'install', 'backfill-manifest.json'), JSON.stringify({ contract: BACKFILL_MANIFEST_CONTRACT, sources: [{ name: carriedName, files: carriedFiles }] }));
+const iLedger = await Ledger.open(iState, clock);
+let iDerived = 0;
+const iEngine = { ...engine, current: null, async derive(subject, key) { iDerived += 1; return engine.derive.call(this, subject, key); } };
+const iExec = new ResidentExecutor({ policy: validatePolicy({ ...policyInput, sourceManifestSha256: SOURCE2 }), ledger: iLedger, receipts: await ReceiptChain.open(path.join(iState, 'receipts'), clock),
+  inbox: await Inbox.open(path.join(iRoot, 'inbox'), path.join(iState, 'inbox-archive')), requests: await Inbox.open(path.join(iRoot, 'requests'), path.join(iState, 'requests-archive')),
+  owner: await OwnerInbox.open(path.join(iRoot, 'owner'), path.join(iState, 'owner-seen')), engine: iEngine, companion, clock, sleep: () => new Promise(resolve => setImmediate(resolve)),
+  executedHeads: await ExecutedHeads.open(iState, clock, { manifestFile: path.join(iRoot, 'install', 'backfill-manifest.json'), carriedRoot: path.join(iState, 'backfill') }),
+  sourceIntegrity: async () => ({ ok: true, sourceManifestSha256: SOURCE2, residentManifestSha256: RESIDENT }) });
+const iDrop = async value => { seq += 1; await fs.writeFile(path.join(iRoot, 'inbox', `${String(now + seq).padStart(13, '0')}-${String(seq).padStart(12, '0')}.json`), JSON.stringify(value)); };
+await step('reinstall (new Source, fresh state): the first tick backfills the carried ledger, then PR 901 (completed before) is never admitted', async () => { await iDrop(trigger(901)); const r = await iExec.tick(); return { ...r, derived: iDerived }; },
+  r => r.state === 'IGNORED' && r.reason === 'HEAD_ALREADY_PUBLISHED_NO_RETRY' && r.derived === 0);
+await step('  PR 904 (halted at stage 6 before the reinstall) is never admitted either', async () => { await iDrop(trigger(904)); return iExec.tick(); }, r => r.reason === 'HEAD_ALREADY_PUBLISHED_NO_RETRY');
+script.delete(909); // its stage 2 no longer hangs
+await step('  PR 909 (aborted inside stage 2, nothing published) runs under the new Source', async () => { await iDrop(trigger(909)); return iExec.tick(); }, r => r.state === 'COMPLETED');
 
 console.table(rows);
 const summary = { status: misses === 0 ? 'OFFLINE_DRILL_PASS' : 'OFFLINE_DRILL_FAIL', steps: rows.length, misses, receipts: head1 };

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { ResidentExecutor } from '../src/executor.mjs';
 import { batchKey, headKey } from '../src/ledger.mjs';
 import { rearmRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
-import { BASE, HEAD, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, triggerBytes } from './helpers.mjs';
+import { BASE, HEAD, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, notAdmitted, triggerBytes } from './helpers.mjs';
 
 const OWNER = 'S-1-5-21-1-2-3-1001';
 const subject = (o = {}) => ({ repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 1, ...o });
@@ -117,7 +117,7 @@ test('a transient Owner-request read failure does not use up the request', async
 test('a head waiting out its cool-down does not block the PRs behind it', async t => {
   const engine = fakeEngine({ stages: {} });
   const f = await executorFixture(t, { engine });
-  engine.runStage = async (batch, stage) => { engine.calls.push(['stage', stage.number]); return batch.key === batchKey(subject()) && stage.number === 1 ? { ok: false, code: 'NATIVE_NOT_ADMITTED', proof: WINDOWS_CLEAN } : { ok: true }; };
+  engine.runStage = async (batch, stage) => { engine.calls.push(['stage', stage.number]); return batch.key === batchKey(subject()) && stage.number === 1 ? notAdmitted() : { ok: true }; };
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'NOT_ADMITTED');
   await f.drop(triggerBytes());                                   // same head again, inside the cool-down

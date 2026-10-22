@@ -7,7 +7,7 @@ import { batchKey, headKey } from '../src/ledger.mjs';
 import { ReceiptChain } from '../src/receipts.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { rearmRequest, resumeRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
-import { BASE, CLEAN_PROOF, HEAD, RESIDENT, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, rawPolicy, triggerBytes } from './helpers.mjs';
+import { BASE, CLEAN_PROOF, HEAD, RESIDENT, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, notAdmitted, rawPolicy, triggerBytes } from './helpers.mjs';
 
 const subject = (o = {}) => ({ repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 1, ...o });
 const keyFor = o => batchKey(subject(o));
@@ -49,7 +49,7 @@ test('malformed or foreign triggers are rejected without touching the engine; re
   assert.equal((await f.exec.tick()).state, 'IDLE');
   assert.equal(f.engine.calls.length, 0);
   assert.equal((await ls(path.join(f.root, 'state', 'inbox-archive', 'rejected'))).length, 3);
-  const receipts = await ls(path.join(f.root, 'state', 'receipts'));
+  const receipts = (await ls(path.join(f.root, 'state', 'receipts'))).filter(n => n.includes('trigger-rejected'));
   const first = JSON.parse(await fs.readFile(path.join(f.root, 'state', 'receipts', receipts[0]), 'utf8'));
   assert.match(first.body.bytesSha256 ?? '', /^[0-9a-f]{64}$/);
 });
@@ -64,7 +64,7 @@ test('the bundle is fetched before stage 1; its failure releases the key with no
 });
 
 test('stage-1 "not admitted" releases the key; cool-down and caps bound re-evaluation', async t => {
-  const engine = fakeEngine({ stages: { 1: { ok: false, code: 'NATIVE_NOT_ADMITTED', proof: WINDOWS_CLEAN } } });
+  const engine = fakeEngine({ stages: { 1: notAdmitted() } });
   const f = await executorFixture(t, { engine });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'NOT_ADMITTED');
@@ -203,7 +203,7 @@ test('Source drift and an expiring install authority halt before any reservation
   await limited.drop(triggerBytes({ pr: 900, headSha: '4'.repeat(40) }));
   assert.equal((await limited.exec.tick()).reason, 'DAILY_BATCH_LIMIT');
   // Junk evaluations have their own cap and do not consume the execution budget.
-  const junk = await executorFixture(t, { engine: fakeEngine({ stages: { 1: { ok: false, code: 'NATIVE_NOT_ADMITTED', proof: WINDOWS_CLEAN } } }), policy: rawPolicy({ limits: { ...rawPolicy().limits, maxEvaluationsPer24h: 2 } }) });
+  const junk = await executorFixture(t, { engine: fakeEngine({ stages: { 1: notAdmitted() } }), policy: rawPolicy({ limits: { ...rawPolicy().limits, maxEvaluationsPer24h: 2 } }) });
   for (const n of [1, 2]) { await junk.drop(triggerBytes({ pr: n, headSha: String(n).repeat(40) })); assert.equal((await junk.exec.tick()).state, 'NOT_ADMITTED'); }
   await junk.drop(triggerBytes({ pr: 3, headSha: '3'.repeat(40) }));
   assert.equal((await junk.exec.tick()).reason, 'DAILY_EVALUATION_LIMIT');

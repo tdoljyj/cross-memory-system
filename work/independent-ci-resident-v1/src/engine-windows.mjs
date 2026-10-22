@@ -58,9 +58,40 @@ const V2 = ['work', 'actions-hosted-migration', 'independent-ci-v1', 'src', 'res
 // The terminal fact the Source v2 stage invoker prints (stage-fact.mjs#buildStageFact keeps the v1 field
 // names that run-batch.ps1:92 checked; contract /2 adds the bound entry outcome).
 export const STAGE_FACT_CONTRACT = 'clued.independent-ci.resident-stage-fact/2';
+
+// The bound entry outcome as the stage fact carries it (resident quota redesign v0.6 §9 phase 1, item 4; Source
+// stage-fact.mjs#outcomeFacts): status, reason, side effects, the admission diagnostic (reasonCodes, nativeReasonCodes,
+// ...), the scheduling facts (ci_retry_after, merge-queue entry) and the entry's own safeToRerun flag. Re-validated
+// here to a fixed shape: anything that does not fit is dropped (null), never guessed, so a malformed outcome can only
+// lose a release, never gain one. Only diagnostics and scheduling: no free text crosses into the ledger or status.
+const ENUM = /^[A-Za-z_]{1,40}$/, DCODE = /^[a-z][a-z0-9_]{0,63}$/, ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
+const QUEUE_STATES = Object.freeze(['head', 'waiting', 'lapsed', 'out']);
+const isoOrNull = v => typeof v === 'string' && ISO.test(v) && Number.isFinite(Date.parse(v)) ? v : null;
+function queueEntry(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v) || Object.keys(v).sort().join('|') !== 'entered|position|state' || typeof v.entered !== 'boolean') return null;
+  const state = QUEUE_STATES.includes(v.state) ? v.state : null;
+  return { entered: v.entered && (state === 'head' || state === 'waiting'), state, position: Number.isSafeInteger(v.position) && v.position > 0 && v.position <= 10_000 ? v.position : null };
+}
+const codeList = v => Array.isArray(v) ? [...new Set(v.slice(0, 64).filter(x => typeof x === 'string' && DCODE.test(x)))].sort() : [];
+export function parseStageOutcome(o) {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+  if (typeof o.status !== 'string' || !/^[A-Z][A-Z_]{1,60}$/.test(o.status) || !(o.reason === null || (typeof o.reason === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(o.reason)))
+    || !Number.isSafeInteger(o.sideEffects) || o.sideEffects < 0 || typeof o.mayHavePublished !== 'boolean') return null;
+  const d = o.diagnostic && typeof o.diagnostic === 'object' && !Array.isArray(o.diagnostic) ? o.diagnostic : null;
+  const s = o.scheduling && typeof o.scheduling === 'object' && !Array.isArray(o.scheduling) ? o.scheduling : null;
+  return {
+    status: o.status, reason: o.reason, sideEffects: o.sideEffects, mayHavePublished: o.mayHavePublished,
+    diagnostic: d ? { verdict: ENUM.test(d.verdict ?? '') ? d.verdict : 'UNKNOWN', nativeVerdict: ENUM.test(d.nativeVerdict ?? '') ? d.nativeVerdict : 'UNKNOWN',
+      reasonCodes: codeList(d.reasonCodes), nativeReasonCodes: codeList(d.nativeReasonCodes), ciRetryAfter: isoOrNull(d.ciRetryAfter), mergeQueue: queueEntry(d.mergeQueue) } : null,
+    scheduling: s ? { ciRetryAfter: isoOrNull(s.ciRetryAfter), mergeQueue: queueEntry(s.mergeQueue) } : null,
+    // the flag holds only on a clean BLOCKED with zero side effects that may not have published
+    safeToRerun: o.safeToRerun === true && o.status === 'BLOCKED' && o.sideEffects === 0 && o.mayHavePublished === false,
+  };
+}
+
 export function parseStageFact(text, expectedManifestSha256) {
   const f = parseBoundedJson(Buffer.from(text, 'utf8'), 1024 * 1024, 'STAGE_FACT_REFUSED');
-  if (f.contract !== undefined && f.contract !== STAGE_FACT_CONTRACT) return { ok: false, code: 'STAGE_TERMINAL_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: false }, nativeReceiptSha256: null };
+  if (f.contract !== undefined && f.contract !== STAGE_FACT_CONTRACT) return { ok: false, code: 'STAGE_TERMINAL_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: false }, nativeReceiptSha256: null, outcome: null, brokerNoLaunch: false };
   const restored = f.original_binary_restored === true && f.complete_original_readback === true;
   const treeZero = f.tree_cleanup_confirmed === true && f.tree_active_processes === 0 && f.root_exit_confirmed === true;
   const ok = f.state === 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' && restored && treeZero
@@ -68,7 +99,11 @@ export function parseStageFact(text, expectedManifestSha256) {
   const code = ok ? null : (typeof f.failure_code === 'string' && CODE.test(f.failure_code) ? f.failure_code : (typeof f.state === 'string' && CODE.test(f.state) ? f.state : 'STAGE_TERMINAL_UNCONFIRMED'));
   // Stage R only: the relay rows as the Source wrote them; the executor validates them (classify.mjs).
   const relay = Array.isArray(f.relay) ? f.relay : null;
-  return { ok, code, proof: { windowsTreeZero: treeZero, serviceOriginalStopped: restored }, nativeReceiptSha256: HEX64.test(f.native_receipt_sha256 ?? '') ? f.native_receipt_sha256 : null, relay };
+  // The broker refused before any start and re-read the original (stage-fact.mjs BROKER_NO_LAUNCH_CODES): one of the
+  // two ways a stage-1 failure may be released (classify.mjs#decideFailure); only with the fact's own readback.
+  const brokerNoLaunch = !ok && f.broker_no_launch === true && f.scm_start_call_issued === false && restored && treeZero && f.configuration_conflict_detected === false;
+  return { ok, code, proof: { windowsTreeZero: treeZero, serviceOriginalStopped: restored }, nativeReceiptSha256: HEX64.test(f.native_receipt_sha256 ?? '') ? f.native_receipt_sha256 : null, relay,
+    outcome: parseStageOutcome(f.outcome), brokerNoLaunch };
 }
 
 // Independent SCM readback (sc.exe qc / queryex), so "original and stopped" never rests on the
@@ -280,12 +315,15 @@ export class WindowsEngine {
       if (relay) {
         const answer = await this.companionMailbox.await(await relay, this.sleep);
         // The Windows stage succeeded but the companion did not confirm the pump: take only an allow-listed pump
-        // code (none of them transient), never a free-form one (PR-A review MINOR 6).
-        if (fact.ok && answer?.ok !== true) return { ok: false, code: PUMP_CODES.includes(answer?.code) ? answer.code : 'COMPANION_PUMP_UNCONFIRMED', proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk } };
+        // code (none of them transient), never a free-form one (PR-A review MINOR 6). That ending is the pump's, not
+        // the entry's: no outcome travels with it.
+        if (fact.ok && answer?.ok !== true) return { ok: false, code: PUMP_CODES.includes(answer?.code) ? answer.code : 'COMPANION_PUMP_UNCONFIRMED', proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk }, outcome: null, brokerNoLaunch: false };
       }
       const ok = fact.ok && scOk;
+      // The stage outcome (diagnostic, scheduling facts, safeToRerun) travels to the executor (v0.6 §9 phase 1). The
+      // broker's no-launch fact counts only with this engine's own sc.exe readback of the original, stopped runner.
       return { ok, code: ok ? null : (fact.code ?? 'SCM_READBACK_NOT_ORIGINAL'), proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk }, factsSha256: fact.nativeReceiptSha256,
-        relay: stage.number === 9 ? fact.relay : null };
+        relay: stage.number === 9 ? fact.relay : null, outcome: fact.outcome, brokerNoLaunch: fact.brokerNoLaunch === true && scOk };
     } finally {
       this.inflight = null;
     }

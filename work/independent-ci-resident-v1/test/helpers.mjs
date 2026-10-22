@@ -9,6 +9,7 @@ import { ReceiptChain } from '../src/receipts.mjs';
 import { Inbox, OwnerInbox } from '../src/inbox.mjs';
 import { TRIGGER_CONTRACT } from '../src/trigger.mjs';
 import { ResidentExecutor } from '../src/executor.mjs';
+import { ExecutedHeads, BACKFILL_MANIFEST_CONTRACT } from '../src/executed-heads.mjs';
 
 export const SOURCE = 'a'.repeat(64);
 export const RESIDENT = 'b'.repeat(64);
@@ -61,6 +62,10 @@ export const hintFor = (roles, { pr = 884, head = HEAD, at = Date.parse('2026-10
 
 export const CLEAN_PROOF = Object.freeze({ windowsTreeZero: true, serviceOriginalStopped: true, linuxUnitsInactive: true, containersZero: true });
 export const WINDOWS_CLEAN = Object.freeze({ windowsTreeZero: true, serviceOriginalStopped: true });
+// A stage-1 refusal as the Source reports it inside the first admission's boundary (resident quota redesign phase 1):
+// the bound outcome says safeToRerun, which is what lets the executor release it (classify.mjs#decideFailure).
+export const SAFE_REFUSAL = Object.freeze({ status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: null, safeToRerun: true });
+export const notAdmitted = (code = 'NATIVE_NOT_ADMITTED', outcome = SAFE_REFUSAL) => ({ ok: false, code, proof: WINDOWS_CLEAN, outcome, brokerNoLaunch: false });
 
 // Fake engine: stages maps stage number -> result; default ok. windows = fresh Windows quiescence.
 export function fakeEngine(script = {}) {
@@ -99,18 +104,25 @@ export function fakeCompanion(script = {}, clock = () => Date.now()) {
 // sleep: the executor's wait between abort polls and quiescence re-checks; a turn of the event loop in tests.
 export const fastSleep = () => new Promise(resolve => setImmediate(resolve));
 
-export async function executorFixture(t, { engine = fakeEngine(), companion, policy = rawPolicy(), integrity, now = Date.parse('2026-10-20T12:00:00Z'), sleep = fastSleep } = {}) {
-  const root = await tempRoot(t);
+// backfillManifest: the install's carried-state manifest (install\backfill-manifest.json); null = none carried (an empty
+// list of sources), false = no manifest at all. status: a status board (status.mjs), or none.
+export async function executorFixture(t, { engine = fakeEngine(), companion, policy = rawPolicy(), integrity, now = Date.parse('2026-10-20T12:00:00Z'), sleep = fastSleep,
+  backfillManifest = null, status = undefined, root: givenRoot = null } = {}) {
+  const root = givenRoot ?? await tempRoot(t);
   let time = now;
   const clock = () => time;
   const ledger = await Ledger.open(path.join(root, 'state'), clock);
+  await fs.mkdir(path.join(root, 'install'), { recursive: true });
+  const manifestFile = path.join(root, 'install', 'backfill-manifest.json');
+  if (backfillManifest !== false) await fs.writeFile(manifestFile, JSON.stringify(backfillManifest ?? { contract: BACKFILL_MANIFEST_CONTRACT, sources: [] }), { flag: 'w' });
+  const executedHeads = await ExecutedHeads.open(path.join(root, 'state'), clock, { manifestFile, carriedRoot: path.join(root, 'state', 'backfill') });
   const receipts = await ReceiptChain.open(path.join(root, 'state', 'receipts'), clock);
   const inbox = await Inbox.open(path.join(root, 'inbox'), path.join(root, 'state', 'inbox-archive'));
   const requests = await Inbox.open(path.join(root, 'requests'), path.join(root, 'state', 'requests-archive'));
   const owner = await OwnerInbox.open(path.join(root, 'owner'), path.join(root, 'state', 'owner-seen'));
   const comp = companion ?? fakeCompanion({}, clock);
   const ports = {
-    policy: validatePolicy(policy), ledger, receipts, inbox, requests, owner, engine, companion: comp, clock, sleep,
+    policy: validatePolicy(policy), ledger, receipts, inbox, requests, owner, engine, companion: comp, clock, sleep, executedHeads, status,
     sourceIntegrity: async () => integrity ?? { ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT },
   };
   const exec = new ResidentExecutor(ports);
@@ -121,5 +133,5 @@ export async function executorFixture(t, { engine = fakeEngine(), companion, pol
     await fs.writeFile(path.join(root, dir, name), bytes);
     return name;
   };
-  return { root, ports, exec, ledger, receipts, inbox, engine, companion: comp, drop, advance: ms => { time += ms; }, clock };
+  return { root, ports, exec, ledger, receipts, inbox, engine, companion: comp, drop, advance: ms => { time += ms; }, clock, executedHeads };
 }
