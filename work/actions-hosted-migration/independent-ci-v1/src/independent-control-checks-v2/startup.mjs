@@ -6,7 +6,7 @@ import { EffectJournal } from '../effect-journal.mjs';
 import { readBatchClaim } from '../batch-claim-v2.mjs';
 import { runEntry, controllerPrincipal, controllerPorts, observationLog, authorityOf } from '../resident-v2/entry-runtime.mjs';
 import { STATE_V2, stageByNumber } from '../resident-v2/layout.mjs';
-import { createProductionControlPublisherV2, queueWindow } from './publisher.mjs';
+import { STAGE8_CHECK_MS, createProductionControlPublisherV2, queueWindow } from './publisher.mjs';
 
 export async function main(argv = process.argv.slice(2), output = process.stdout) {
   const startedAt = Date.now();
@@ -19,9 +19,10 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const journal = await EffectJournal.open(STATE_V2.effectsControl);
     const publisher = createProductionControlPublisherV2({ github, journal, admission, assertLive: live, record: log, authority: authorityOf(inputs.record.accepted), batchClaim });
     // The claim lease bound is read from the first live observation inside the wait; the outer bound is
-    // the stage cap and the install's validUntil.
+    // the stage cap and the install's validUntil. Phase 2, step 2: one run only checks (STAGE8_CHECK_MS); the
+    // resident parks the batch and runs this stage again on its own back-off.
     const waitUntil = queueWindow({ startedAt, claimExpiresAt: new Date(startedAt + 24 * 3600_000).toISOString(), validUntil: inputs.record.accepted.validUntil,
-      stageDeadline: startedAt + stageByNumber(8).runMilliseconds });
+      stageDeadline: startedAt + stageByNumber(8).runMilliseconds, checkMs: STAGE8_CHECK_MS });
     return publisher.publishPair(jobs, { waitUntil });
   } });
 }

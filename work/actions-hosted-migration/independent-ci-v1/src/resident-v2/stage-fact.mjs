@@ -27,7 +27,9 @@ export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_
   'BROKER_REQUEST_REFUSED', 'STAGE_HELPER_PREFLIGHT_REFUSED', 'STAGE_CHILD_REFUSED', 'STAGE_CHILD_TIMEOUT', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 'BATCH_CLAIM_CHANGED',
   'NATIVE_POLICY_UNSUPPORTED', 'PUBLICATION_BLOCKED', 'PUBLICATION_REVOKED', 'EVIDENCE_REFUSED', 'WORKSPACE_PREPARATION_REFUSED',
   // Stage R refused before anything was observed or written (relay not configured, input invalid).
-  'RELAY_STAGE_REFUSED']);
+  'RELAY_STAGE_REFUSED',
+  // Stage 8 not ready (phase 2, step 2; publisher.mjs STAGE8_NOT_READY_REASONS): the resident parks and retries.
+  'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_BASE_MOVED']);
 // Never clean: something may still run, or a publication may exist unsettled, or an identity conflicts.
 export const UNKNOWN_CODES = Object.freeze(['BROKER_RESPONSE_UNCONFIRMED', 'STAGE_HELPER_NOT_STOPPED_IN_TIME', 'STAGE_ORIGINAL_NOT_RESTORED',
   'BROKER_CONFIGURATION_CONFLICT', 'NATIVE_RECEIPT_UNCONFIRMED', 'STAGE_CHILD_TREE_UNCONFIRMED', 'STAGE_OUTCOME_MISSING', 'PUBLICATION_UNCERTAIN',
@@ -87,7 +89,7 @@ export function outcomeFailureCode(outcome, stageNumber) {
   // K(head, role) is held by the other path: a role on this head was (or may have been) published by it. Never
   // clean, on any stage (DESIGN §6.3; PR-A review MINOR 4).
   if (r === 'role_already_published_on_head' || r === 'ROLE_ALREADY_PUBLISHED_ON_HEAD') return 'ROLE_ALREADY_PUBLISHED_ON_HEAD';
-  if (r === 'RESIDENT_QUEUE_HEAD_NOT_REACHED') return 'RESIDENT_QUEUE_HEAD_NOT_REACHED';
+  if (r === 'RESIDENT_QUEUE_HEAD_NOT_REACHED' || r === 'RESIDENT_MERGE_QUEUE_NOT_JOINED' || r === 'RESIDENT_BASE_MOVED') return r;
   if (r === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE') return 'REMOTE_REFS_CHANGED_SINCE_BUNDLE';
   if (BRIDGE_TIMEOUTS.has(r)) return 'BRIDGE_TRANSPORT_TIMEOUT';
   if (TRANSPORT_REASONS.has(r)) return r.startsWith('full_admission_') || r === 'NATIVE_ADMISSION_UNAVAILABLE' ? 'NATIVE_ADMISSION_UNAVAILABLE' : 'GITHUB_TRANSIENT_UNAVAILABLE';

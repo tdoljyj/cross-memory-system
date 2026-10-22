@@ -7,7 +7,7 @@ import { batchJobsV2, claimGeneration, scanEffectKeyV2, subjectOfV2 } from '../s
 import { EffectJournal } from '../src/effect-journal.mjs';
 import { recordBatchClaim, readBatchClaim } from '../src/batch-claim-v2.mjs';
 import { createFixtureWorkAdmissionPublisherV2 } from '../src/formal-work-admission-check-v2/publisher.mjs';
-import { createFixtureControlPublisherV2, queueWindow, QUEUE_POLL_MS } from '../src/independent-control-checks-v2/publisher.mjs';
+import { createFixtureControlPublisherV2, queueWindow, QUEUE_POLL_MS, STAGE8_CHECK_MS } from '../src/independent-control-checks-v2/publisher.mjs';
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { protectedFactsFromVerify } from '../runtime/one-shot-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
@@ -219,5 +219,29 @@ test('control pair v2: a queue wait that does not reach the head carries the lat
   const never = fakeAdmission((job, packet, opts) => { opts.scheduling?.(told); return admitted(job, c, packet, { mergeQueueHead: false, observedAt: time, slotUntil: time + 600_000 }); });
   const pub = createFixtureControlPublisherV2({ github, journal, admission: never, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c), clock: () => time, sleep: async ms => { time += ms; } });
   const r = await pub.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + 2 * QUEUE_POLL_MS });
-  assert.deepEqual([r.status, r.reason, r.sideEffects, r.scheduling], ['BLOCKED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 0, told]);
+  // phase 2, step 2: not in the merge queue at all is its own not-ready reason (the resident parks and retries)
+  assert.deepEqual([r.status, r.reason, r.sideEffects, r.scheduling], ['BLOCKED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 0, told]);
+});
+
+test('control pair v2 (phase 2, step 2): one run only checks; main moved ends it at once; nothing is ever written', async t => {
+  const jobs = jobsFor(), c = claim(), github = fakeGithub();
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  let time = Date.now(), polls = 0;
+  const waiting = { ciRetryAfter: null, mergeQueue: { entered: true, state: 'waiting', position: 2 } };
+  const inQueue = fakeAdmission((job, packet, opts) => { polls++; opts.scheduling?.(waiting); return admitted(job, c, packet, { mergeQueueHead: false, observedAt: time, slotUntil: time + 600_000 }); });
+  const pub = createFixtureControlPublisherV2({ github, journal, admission: inQueue, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c), clock: () => time, sleep: async ms => { time += ms; } });
+  const s = time;
+  const waitUntil = queueWindow({ startedAt: s, claimExpiresAt: iso(s + 3600_000), validUntil: null, stageDeadline: s + 45 * 60_000, checkMs: STAGE8_CHECK_MS });
+  assert.equal(waitUntil, s + STAGE8_CHECK_MS);
+  const r = await pub.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil });
+  assert.deepEqual([r.status, r.reason, r.sideEffects, github.checks.length, polls], ['BLOCKED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 0, 0, 4]);
+  // main moved under the batch: no wait helps (strict), the run ends at the first observation
+  const moved = fakeAdmission((job, packet) => {
+    const { observationSha256, ...f } = admitted(job, c, packet, { mergeQueueHead: false, observedAt: time, slotUntil: time + 600_000 });
+    const g = { ...f, mergeSlot: { ...f.mergeSlot, state: 'not_needed', tip: '9'.repeat(40) } };
+    return { ...g, observationSha256: digest(g) };
+  });
+  const pub2 = createFixtureControlPublisherV2({ github, journal, admission: moved, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c), clock: () => time, sleep: async ms => { time += ms; } });
+  const r2 = await pub2.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS });
+  assert.deepEqual([r2.status, r2.reason, r2.sideEffects, r2.polls, github.checks.length], ['BLOCKED', 'RESIDENT_BASE_MOVED', 0, 1, 0]);
 });

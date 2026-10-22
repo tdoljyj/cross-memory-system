@@ -13,6 +13,13 @@
 //   - PR-A integration: the durable producer identity sourceBindingSha256 (v1's rule: everything but the
 //     renewable lease and slot timestamps) is journaled, and consume() is the v2 control consumer the merge
 //     gate reads through (consumer.mjs; scripts/ci/clued-work-admission.mjs provider independent-control-checks-v2).
+//   - Resident quota redesign phase 2, step 2 (parking, design v0.5 §4.9; Owner decision e1e19e2e item 4): the resident
+//     no longer waits inside the stage. It parks the batch after stage 7 and runs stage 8 again on its own back-off,
+//     so one stage-8 run only checks (STAGE8_CHECK_MS: the first observation and the polls inside it) and says why it is
+//     not ready yet, before any journal write and with zero side effects:
+//       RESIDENT_BASE_MOVED              main's tip is no longer this batch's base (with strict this head never merges);
+//       RESIDENT_MERGE_QUEUE_NOT_JOINED  the batch claim is not in the merge queue at all (the scheduling fact);
+//       RESIDENT_QUEUE_HEAD_NOT_REACHED  it is in the queue, not at its head yet.
 import { digest } from '../proof.mjs';
 import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, CONTROL_ROLES_V2, MAX_ATTEMPT_V2, sameBatchV2 } from '../job-v2.mjs';
 import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from '../full-admission-v2.mjs';
@@ -24,6 +31,10 @@ export const CONTROL_CHECKS_V2 = Object.freeze({
 });
 export const QUEUE_POLL_MS = 30_000;
 export const MERGE_SLOT_WINDOW_MS = 45 * 60_000;
+// One stage-8 run (phase 2, step 2): the resident retries a parked batch, so a run only checks for this long.
+export const STAGE8_CHECK_MS = 90_000;
+// Why a stage-8 run was not ready (all BLOCKED, zero side effects, before any journal write).
+export const STAGE8_NOT_READY_REASONS = Object.freeze(['RESIDENT_BASE_MOVED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED']);
 const ACTION = 'independent-control-check/2';
 const HASH = /^[a-f0-9]{64}$/, fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
@@ -149,16 +160,21 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     }
   }
   // S8: read-only wait for the queue head, then publish the pair in the fixed order. The latest scheduling facts
-  // (is the claim in the merge queue at all) travel with a not-ready answer (resident quota redesign v0.6 §9).
+  // (is the claim in the merge queue at all) travel with a not-ready answer (resident quota redesign v0.6 §9), and
+  // the answer names why (phase 2, step 2): main moved (at once: waiting cannot help), not in the queue, not its head.
   async function waitForQueueHead(slotJob, waitUntil) {
-    let scheduling = null;
+    let scheduling = null, last = null;
     const tell = facts => { scheduling = facts; };
     for (let polls = 1; ; polls++) {
       let observed = null;
-      try { const { packet, facts } = await observe(slotJob, tell); factsValid(slotJob, packet, facts, domain, clock(), batchClaim, { requireQueueHead: false }); observed = facts; }
+      try { const { packet, facts } = await observe(slotJob, tell); factsValid(slotJob, packet, facts, domain, clock(), batchClaim, { requireQueueHead: false }); observed = facts; last = facts; }
       catch (e) { if (['full_admission_claim_changed', 'full_admission_rejected', 'full_admission_claim_missing'].includes(e.code)) return { ready: false, reason: e.code, polls, scheduling }; }
       if (observed && queueHeadReady(slotJob, observed, clock())) return { ready: true, polls, scheduling };
-      if (clock() + QUEUE_POLL_MS > waitUntil) return { ready: false, reason: 'RESIDENT_QUEUE_HEAD_NOT_REACHED', polls, scheduling };
+      if (observed && typeof observed.mergeSlot?.tip === 'string' && observed.mergeSlot.tip !== slotJob.baseSha) return { ready: false, reason: 'RESIDENT_BASE_MOVED', polls, scheduling };
+      if (clock() + QUEUE_POLL_MS > waitUntil) {
+        const notJoined = last !== null && scheduling?.mergeQueue?.entered === false;
+        return { ready: false, reason: notJoined ? 'RESIDENT_MERGE_QUEUE_NOT_JOINED' : 'RESIDENT_QUEUE_HEAD_NOT_REACHED', polls, scheduling };
+      }
       await sleep(QUEUE_POLL_MS);
     }
   }
@@ -220,6 +236,7 @@ export function takeActualControlConsumptionV2(value, selector) {
 export function createProductionControlPublisherV2(dependencies) { return engine(dependencies, true); }
 // Window of the S8 wait: merge slot 45 min, the batch claim's lease, the install's validUntil and the
 // stage cap minus the time two publications need.
-export function queueWindow({ startedAt, claimExpiresAt, validUntil, stageDeadline, publicationReserveMs = 7 * 60_000 }) {
-  return Math.min(startedAt + MERGE_SLOT_WINDOW_MS, Date.parse(claimExpiresAt), validUntil === null ? Infinity : Date.parse(validUntil), stageDeadline - publicationReserveMs);
+// Phase 2, step 2: checkMs (STAGE8_CHECK_MS) bounds one run; the resident parks and runs stage 8 again.
+export function queueWindow({ startedAt, claimExpiresAt, validUntil, stageDeadline, publicationReserveMs = 7 * 60_000, checkMs = Infinity }) {
+  return Math.min(startedAt + MERGE_SLOT_WINDOW_MS, startedAt + checkMs, Date.parse(claimExpiresAt), validUntil === null ? Infinity : Date.parse(validUntil), stageDeadline - publicationReserveMs);
 }
