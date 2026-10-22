@@ -675,20 +675,21 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 - 改动文件的读取（`github.readChangedPaths`）在 `full-admission-v2.mjs` 的兜底之外，所以 `issuerEvaluate` 按兜底的方式映射它的失败：
   - PR 已不在作业的 head 和 base 上打开（`pr_subject_changed`）时，记为 `full_admission_subject_changed`，与 `evaluatePr` 自己发现时相同，不重评；
   - 其他失败（多半是 GitHub 在端口自己的重试之后仍然失败）记为 `full_admission_unavailable`，`phase` 为 `changed_paths`，照上面的规则重试。
+  - 这是一处分类变化：端口自己的确定性拒绝（`pr_files_page_limit`、`invalid_pr_files`、`incomplete_pr_files`、`pr_files_changed`、`invalid_pr_subject`）和 `github_http_403` 也落到这里。以前它们以自己的 code 结束（第 2、4、6 段多为 `STAGE_CHILD_REFUSED`，5xx 为 `GITHUB_TRANSIENT_UNAVAILABLE`），现在用尽重试后是 `NATIVE_ADMISSION_UNAVAILABLE`（暂时性，第 2 段可能 attempt 2）。影响小：第 1 段已经读过同一 head 和 base 的改动文件。把这些码重新分出来归入 Task `576231fa`。
 - 收到签名结果后的那次准入也按同样的规则重试。
   - 用尽时仍是 UNCERTAIN：结果已经在手，但准入没有得到确认。
   - 重试只把等待限制在窗口内，最后一次评估可能越过 issue 的 `expiresAt`。越过时不算成功，记为 `BRIDGE_RESULT_DEADLINE`（UNCERTAIN）。
 - 放弃一次暂时性准入时，发行方把 `{transientAdmission, evaluations, phase}` 放进结局的 `admissionDiagnostic`，好让走了 late 的一轮看得出是准入出的问题。它记的是本次运行中放弃过的暂时性准入，是上下文，不一定就是最终 reason 的成因。
   - PR #898 之后，结局记录的写入（`CI/src/resident-v2/stage-inputs.mjs#writeOutcome`）用 `sanitizeAdmissionDiagnosticV2` 净化它，只留已知的准入诊断字段：`transientAdmission`、`evaluations` 被丢掉，`phase` 只在 `DIAGNOSTIC_PHASES` 里时保留（`changed_paths` 不在其中）。让这两个字段进入结局记录是 Task `31f044d5`。
-  - 不影响任何分类：失败对照表（§16）只看 status、reason 和诊断里的原因码，发行方的诊断没有原因码。
+  - 诊断字段本身不影响分类：失败对照表（§16.3）只看 status、reason 和诊断里的原因码，发行方的诊断没有原因码。
 - **签发前的首次准入也重试**（这是本节的决定）。理由：
   - 这时还没签发，Linux 侧什么都没开始，重试没有副作用；
   - 第 4、6 段（trivy、placement）的首次准入失败虽然是干净的 `NATIVE_ADMISSION_UNAVAILABLE`，但第 3 段以后不会自动做 attempt 2（§7.2），所以一次抖动就会丢掉整批；段内重试不算新的 attempt，与 §7.2 不冲突；
-  - 代价有界：最多 4 次评估，外加 7 秒等待，并给 Linux 侧留一个回调窗口。用尽时结局与以前相同：`BLOCKED`、`full_admission_unavailable`、零副作用。
+  - 代价有界：最多 4 次评估，外加 7 秒等待，并给 Linux 侧留一个回调窗口。用尽时结局与以前相同：`BLOCKED`、`full_admission_unavailable`、零副作用（改动文件读取的失败除外，见上）。
   - 实测：PR #892 批次 `2bf6b12c` attempt 2 第 4 段，2026-10-21 17:36Z。发行方拿到 spool 锁后，没写 issue 就结束了；同一分钟 GitHub 短暂不可用，大概率是签发前的 `full_admission_unavailable`。
   - 这种结局之后，companion 的 relay 泵仍在 `R/src/companion.mjs` 里等 issue，一直等到请求截止，那次白等了约 30 分钟常驻时间。发行方阶段已经以 sideEffects 0 结束时立即取消它，是 Task `c18eac1d`。
 - 第 1 段的工作准入是另一个入口，不归本节管。它的 `NATIVE_ADMISSION_UNAVAILABLE` 仍由 attempt 2 处理（§7.2）。
-- 仍不经过这条规则的暂时性失败：gitleaks 的 remote-refs 回调里，refs 读取失败是 `REMOTE_REFS_UNAVAILABLE`，回调中仍立即 UNCERTAIN（Task `576231fa`）。
+- 仍不经过这条规则的暂时性失败：gitleaks 的 remote-refs 回调里，refs 读取失败是 `REMOTE_REFS_UNAVAILABLE`，回调中仍立即 UNCERTAIN（Task `576231fa` 剩下的一半；改动文件读取那一半已在 PR #899 完成）。
 - 测试：`CI/test/resident-v2-bridge.test.mjs` 新增 9 个。重试、截止、首次准入上限、late 路径、`issuerEvaluate` 映射、结果后的过期检查、`diagnostic` 和 `phase` 类型检查都做过变异检查；评估结果为 null 时 `phase` 读取的空值保护（`facts?.`）没有测试守着，去掉它仍然失败关闭，只是 reason 变成 `FORMAL_BRIDGE_UNCONFIRMED`。
   1. unavailable 之后来了 ADMITTED，就回复；结果后的那次准入也一样；
   2. 到本轮截止仍是 unavailable，走 late；
@@ -699,7 +700,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
   7. `issuerEvaluate` 的映射；
   8. 改动文件读取在回调轮里失败一次后重试并回复；
   9. 结果后的准入越过 issue 窗口时为 UNCERTAIN。
-- 四轮独立只读审核均为 PASS（0 BLOCKER、0 MAJOR）：`8b1f6f7b`、`105adffc`、`5410d563`，以及自举安装审核 11af4710 第 4、5 条修复后的 `18c0afc5`。
+- 四轮独立只读审核均为 PASS（0 BLOCKER、0 MAJOR）：`8b1f6f7b`、`105adffc`、`5410d563`，以及自举安装审核 `11af4710` 第 4、5 条修复后的 `18c0afc5`。审核记录在 PR #899 正文里。
 
 ---
 
