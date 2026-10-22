@@ -53,7 +53,7 @@
 
 `clued-wsl-memguard` 每 60 秒运行一次，批次进行中也照常运行：
 - 先按当前的 `net.core` 值算出 hv_sock 环形缓冲的阶数，再把各 zone 中不小于这个阶数的空闲块加起来。分配要在所有 zone 都凑不出块时才会失败，所以只看合计。
-- 合计少于 64 块时执行一次 `compact_memory`。如果 5 分钟内上一次整理只多出不到 8 块，这一遍就跳过整理，免得对正在跑的扫描反复做无效的全量整理。
+- 合计少于 64 块时执行一次 `compact_memory`。如果 5 分钟内上一次整理只多出不到 8 块、而且之后仍低于 64 块，这一遍就跳过整理，免得对正在跑的扫描反复做无效的全量整理。上一次整理把合计拉回到 64 块以上的，下一次照常整理，不升级成丢缓存。
 - 还不够时执行 `drop_caches=1`（只丢干净的页缓存，不碰 slab、脏页和被映射的页），然后再整理一次。丢缓存最多 5 分钟一次，而且先写时间戳再丢。
 - 时间用 `CLOCK_BOOTTIME`。每一遍都先确认两个 `/proc` 文件和自己的状态目录可写，再做任何动作。
 - 做了动作时往 journal 写一行 JSON；没有动作时每 10 分钟写一行计数，观察期能看出离阈值还有多远。
@@ -63,7 +63,7 @@
 
 | 文件 | 安装位置 | sha256 |
 |---|---|---|
-| `clued-wsl-memguard` | `/usr/local/lib/clued-wsl-host-tuning/`（0755） | `45f749583b36f9ccda4531418a375bd9e56c7a2b9c6f0df7799a98445b25ee8c` |
+| `clued-wsl-memguard` | `/usr/local/lib/clued-wsl-host-tuning/`（0755） | `d27630a90c9d0fa727c088c5717eefdd581b31e0c73cfd62738b4822f505a591` |
 | `clued-wsl-memguard.service` | `/etc/systemd/system/`（0644） | `df73066d7cdb6d0e5c1254462359797fc963406827213f6fe2857264fe644592` |
 | `clued-wsl-memguard.timer` | `/etc/systemd/system/`（0644） | `f43a942ac473938b8f3d10d5b2fa79b96bcdb16d32286c9a9cd4638ce6cc4321` |
 

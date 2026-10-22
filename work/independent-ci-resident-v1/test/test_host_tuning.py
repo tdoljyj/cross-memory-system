@@ -393,9 +393,26 @@ class MemGuard(unittest.TestCase):
         r = self.run_pass(1000.0, LOW_BUDDY, LITTLE_GAIN, LITTLE_GAIN)
         self.assertEqual((r['compacted'], r['afterCompact'], r['dropped']), (True, 3, True))
         r = self.run_pass(1060.0, LOW_BUDDY, HIGH_BUDDY)
-        self.assertEqual((r['compacted'], r['dropped'], self.writes), (False, False, []), 'gain 3 < 8: no compaction for 300 s, drop not due')
+        self.assertEqual((r['status'], r['compacted'], r['dropped'], self.writes), ('BACKOFF', False, False, []),
+                         'gain 3 < 8 and still below 64: no compaction for 300 s, drop not due')
         r = self.run_pass(1300.0, LOW_BUDDY, HIGH_BUDDY)
         self.assertEqual((r['compacted'], self.writes), (True, ['compact_memory']))
+
+    def test_a_small_gain_that_crossed_the_threshold_does_not_back_off(self):
+        def blocks(n):  # n free order-7 blocks in DMA32, none elsewhere
+            return (f'Node 0, zone    DMA32      0      0      0      0      0      0      0 {n:6d}      0      0      0\n'
+                    'Node 0, zone   Normal      0      0      0      0      0      0      0      0      0      0      0\n')
+        r = self.run_pass(1000.0, blocks(60), blocks(66))
+        self.assertEqual((r['compacted'], r['afterCompact'], r['dropped']), (True, 66, False))
+        r = self.run_pass(1060.0, blocks(61), blocks(70))
+        self.assertEqual((r['compacted'], r['dropped'], self.writes), (True, False, ['compact_memory']),
+                         'gain 6 but back over 64 last time: compacting again is cheaper than dropping the page cache')
+
+    def test_a_damaged_state_file_counts_as_no_record(self):
+        (self.state / 'last-compact').write_text('1000.0 3\n')  # an old two-field record
+        (self.state / 'last-drop').write_text('garbage\n')
+        r = self.run_pass(1000.0, LOW_BUDDY, LOW_BUDDY, HIGH_BUDDY)
+        self.assertEqual((r['compacted'], r['dropped']), (True, True))
 
     def test_threshold_follows_the_live_ring_order(self):
         self.set_buffers(65536)

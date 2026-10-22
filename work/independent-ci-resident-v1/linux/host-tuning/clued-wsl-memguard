@@ -5,7 +5,8 @@ Every Windows->WSL hv_sock channel needs one free block of the ring order (order
 defaults, order 5 with the host-tuning drop-in). An allocation fails only when no zone can supply such a block
 (2026-10-22 13:22Z: DMA32 and Normal both empty), so the guard counts the free blocks of at least that order
 summed over the zones. Below LOW_BLOCKS it compacts memory, unless a compaction in the last COMPACT_BACKOFF
-seconds gained fewer than MIN_GAIN blocks (then compacting again would only churn the running scans); if the
+seconds both gained fewer than MIN_GAIN blocks and left the count below LOW_BLOCKS (then compacting again would
+only churn the running scans; one that got the count back over the threshold stays worth repeating); if the
 count is still low it drops clean page cache (echo 1: never slab, dirty or mapped pages) and compacts again, at
 most once every DROP_INTERVAL seconds. Times are CLOCK_BOOTTIME, and /run is per boot, so they never jump.
 
@@ -69,11 +70,14 @@ def write(path, value):
         f.write(value)
 
 
-def load(state, name):
+def load(state, name, fields):
+    """The numbers stored in a state file, or None when it is missing or not exactly that many numbers (a damaged
+    file then counts as no record instead of failing every later pass)."""
     try:
-        return [float(x) for x in read(f'{state}/{name}').split()]
+        values = [float(x) for x in read(f'{state}/{name}').split()]
     except (OSError, ValueError):
         return None
+    return values if len(values) == fields else None
 
 
 def guard_pass(proc_sys=PROC_SYS, buddyinfo=BUDDYINFO, state=STATE, clock=boottime, low=LOW_BLOCKS):
@@ -86,30 +90,31 @@ def guard_pass(proc_sys=PROC_SYS, buddyinfo=BUDDYINFO, state=STATE, clock=bootti
     order = ring_order(int(read(f'{proc_sys}/net/core/rmem_default')), int(read(f'{proc_sys}/net/core/wmem_default')))
     zones = zone_blocks(read(buddyinfo), order)
     before = sum(zones.values())
-    report = load(state, 'last-report')
+    report = load(state, 'last-report', 1)
     if before >= low:
         if not due(now, report and report[0], REPORT_INTERVAL):
             return None
         write(f'{state}/last-report', f'{now}\n')
         return {'guard': 'clued-wsl-memguard', 'status': 'OK', 'order': order, 'low': low, 'blocks': before, 'zones': zones}
-    result = {'guard': 'clued-wsl-memguard', 'status': 'ACTED', 'order': order, 'low': low, 'before': before, 'zones': zones,
+    result = {'guard': 'clued-wsl-memguard', 'status': 'BACKOFF', 'order': order, 'low': low, 'before': before, 'zones': zones,
               'compacted': False, 'dropped': False}
     after = before
-    last_compact = load(state, 'last-compact')  # [time, gain]
-    if last_compact is None or due(now, last_compact[0], COMPACT_BACKOFF) or last_compact[1] >= MIN_GAIN:
-        write(f'{state}/last-compact', f'{now} 0\n')
+    last_compact = load(state, 'last-compact', 3)  # [time, gain, count after]
+    if (last_compact is None or due(now, last_compact[0], COMPACT_BACKOFF)
+            or last_compact[1] >= MIN_GAIN or last_compact[2] >= low):
+        write(f'{state}/last-compact', f'{now} 0 0\n')
         write(f'{proc_sys}/vm/compact_memory', '1\n')
         after = blocks_at_least(read(buddyinfo), order)
-        write(f'{state}/last-compact', f'{now} {after - before}\n')
-        result.update(compacted=True, afterCompact=after)
-    last_drop = load(state, 'last-drop')
+        write(f'{state}/last-compact', f'{now} {after - before} {after}\n')
+        result.update(status='ACTED', compacted=True, afterCompact=after)
+    last_drop = load(state, 'last-drop', 1)
     if after < low and due(now, last_drop and last_drop[0], DROP_INTERVAL):
         write(f'{state}/last-drop', f'{now}\n')
         write(f'{proc_sys}/vm/drop_caches', '1\n')
         write(f'{proc_sys}/vm/compact_memory', '1\n')
         after_drop = blocks_at_least(read(buddyinfo), order)
-        write(f'{state}/last-compact', f'{now} {after_drop - after}\n')
-        result.update(dropped=True, afterDrop=after_drop)
+        write(f'{state}/last-compact', f'{now} {after_drop - after} {after_drop}\n')
+        result.update(status='ACTED', dropped=True, afterDrop=after_drop)
     write(f'{state}/last-report', f'{now}\n')
     return result
 
