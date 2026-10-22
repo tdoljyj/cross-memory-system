@@ -513,10 +513,10 @@ export class ResidentExecutor {
   // heads. Done once (BACKFILL-COMPLETE.json). A refused source (manifest missing or malformed, a carried file missing
   // or changed) HALTs: no batch may run without it. A transient I/O error only defers it to the next tick.
   async ensureBackfill() {
-    if (await this.executedHeads.backfilled()) return null;
-    this.report(s => s.update({ backfill: { complete: false, published: null, unreadable: null } }));
     let marker;
     try {
+      if (await this.executedHeads.backfilled()) return null;
+      this.report(s => s.update({ backfill: { complete: false, published: null, unreadable: null } }));
       marker = await this.executedHeads.backfill();
     } catch (error) {
       if (!(error instanceof ResidentError)) return { state: 'BACKFILL_PENDING' };
