@@ -207,6 +207,19 @@ public static class HostPureTests
             bool handled = after.WaitOne(10000); int acks = Directory.GetFiles(locks, "stop-*").Length;
             Yes(handled && acks == 1 && host.ExitCode == 0 && State(host) == 1, "request-fails-retry-asks-again:" + handled + "/" + acks + "/" + host.ExitCode + "/" + State(host) + "/" + File.Exists(Path.Combine(state, "STOP-REQUESTED")));
 
+            // 4e. An IOException other than "already there" (here the state directory is gone) no longer counts as
+            //     asked (Task d80fd886, F3): the stop fails visibly instead of waiting 20 s and reporting STOPPED with
+            //     an executor that was never asked; a retried stop asks again.
+            host = Host(Case(dir, "state-missing", out state, out locks));
+            Directory.Delete(state, true);
+            p = Fake(state, "ack"); host.Watch(p); after = After(p);
+            clock = Stopwatch.StartNew(); refused = null;
+            try { host.Stop(); } catch (Exception e) { refused = e.GetType().Name; }
+            Yes(refused == "DirectoryNotFoundException" && clock.ElapsedMilliseconds < 5000 && State(host) != 1 && !p.HasExited, "state-missing-stop-refused:" + refused);
+            Directory.CreateDirectory(locks);
+            host.Stop();
+            Yes(after.WaitOne(10000) && Directory.GetFiles(locks, "stop-*").Length == 1 && host.ExitCode == 0 && State(host) == 1, "state-missing-retry-asks-again");
+
             // 5. The gate on its own.
             Case(dir, "gate", out state, out locks);
             string stopFile = Path.Combine(state, "STOP-REQUESTED");
@@ -220,6 +233,12 @@ public static class HostPureTests
             Yes(!new ResidentStopGate(state).Request() && File.ReadAllText(stopFile) == "earlier", "gate-existing-stop-untouched");
             Yes(!ResidentStopGate.TryCreateStopFile(stopFile) && File.ReadAllText(stopFile) == "earlier", "gate-create-only");
             File.Delete(stopFile);
+            // Only "already there" counts as asked; other IOExceptions are thrown (F3).
+            string missingDirectory = null;
+            try { ResidentStopGate.TryCreateStopFile(Path.Combine(state, "no-such-directory", "STOP-REQUESTED")); } catch (IOException e) { missingDirectory = e.GetType().Name; }
+            Yes(missingDirectory == "DirectoryNotFoundException", "gate-missing-directory-thrown:" + missingDirectory);
+            Yes(ResidentStopGate.AlreadyThere(new IOException("x", unchecked((int)0x80070050))) && ResidentStopGate.AlreadyThere(new IOException("x", unchecked((int)0x800700B7)))
+                && !ResidentStopGate.AlreadyThere(new IOException("x", unchecked((int)0x80070070))) && !ResidentStopGate.AlreadyThere(new IOException("x", unchecked((int)0x80070020))), "gate-already-there-codes");
             // Racing callers: exactly one takes the stop.
             for (int round = 0; round < 200; round++)
             {

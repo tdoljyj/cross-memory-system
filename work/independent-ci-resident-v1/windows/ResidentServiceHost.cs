@@ -91,7 +91,7 @@ public sealed class ResidentServiceHost : ServiceBase
         Process p = child;
         if (stop.Take() && p != null && !p.HasExited)
         {
-            // A request that throws (any IOException counts as "already there") fails this stop, as before.
+            // A request that throws (anything but "already there") fails this stop, as before.
             // Nothing was written, so the stop is given back and a retried stop asks again. An executor that
             // exits in that moment finds the stop still taken: the service stays RUNNING until that retry.
             try { stop.Request(); } catch { stop.Release(); throw; }
@@ -132,11 +132,21 @@ public sealed class ResidentStopGate
     // Ask the executor to stop between batches.
     public bool Request() { return TryCreateStopFile(stopFile); }
 
-    // An existing file (a stop still pending for an earlier executor) is left exactly as it is.
+    // An existing file (a stop still pending for an earlier executor) is left exactly as it is. Only "already
+    // there" counts as asked: any other failure (a missing directory, a full disk) is thrown, so the stop fails
+    // visibly instead of reporting STOPPED while the executor was never asked (Task d80fd886, F3).
     public static bool TryCreateStopFile(string path)
     {
-        try { using (File.Open(path, FileMode.CreateNew, FileAccess.Write)) { } return true; } catch (IOException) { return false; }
+        try { using (File.Open(path, FileMode.CreateNew, FileAccess.Write)) { } return true; }
+        catch (IOException e)
+        {
+            if (AlreadyThere(e)) return false;
+            throw;
+        }
     }
+
+    // ERROR_FILE_EXISTS and ERROR_ALREADY_EXISTS as HRESULTs.
+    public static bool AlreadyThere(IOException e) { return (uint)e.HResult == 0x80070050u || (uint)e.HResult == 0x800700B7u; }
 
     public static int ServiceExitCode(int executorExitCode) { return executorExitCode == 0 ? 0 : 1064; }
 }
