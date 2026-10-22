@@ -34,7 +34,7 @@ export function positionOf(stage, phase = 'stage') {
   return p;
 }
 
-export const closedBreaker = () => ({ state: 'closed', failures: [], streak: 0, streakPos: 0, streakPrs: [], openedAt: null, level: 0, nextTrialAt: null,
+export const closedBreaker = () => ({ state: 'closed', failures: [], streak: 0, streakPos: 0, streakPrs: [], streakFails: [], openedAt: null, level: 0, nextTrialAt: null,
   failingPos: null, failingWindowsOnly: null, exclude: [], closedAt: null });
 
 const valid = b => b && BREAKER_STATES.includes(b.state) && Array.isArray(b.failures) && Array.isArray(b.exclude) && Array.isArray(b.streakPrs) && Number.isSafeInteger(b.level);
@@ -48,10 +48,15 @@ export function breakerGate(b, now) {
   return { allow: true, trial: true, exclude: b.exclude, until: null };
 }
 
+// pos / windowsOnly: the furthest place among the failures that opened it (a trial must get past every one of them), and
+// whether all of them were Windows-only (independent review of step 1, m3).
 const open = (b, policy, now, { pos, windowsOnly, prs, level }) => {
   const delays = policy.breaker.backoffMs;
-  Object.assign(b, { state: 'open', openedAt: b.state === 'closed' ? now : (b.openedAt ?? now), level, nextTrialAt: now + delays[Math.min(level, delays.length - 1)],
-    failingPos: pos, failingWindowsOnly: windowsOnly === true, exclude: [...new Set([...b.exclude, ...prs])].slice(-FAILURES_KEPT) });
+  const reopening = b.state !== 'closed';
+  Object.assign(b, { state: 'open', openedAt: reopening ? (b.openedAt ?? now) : now, level, nextTrialAt: now + delays[Math.min(level, delays.length - 1)],
+    failingPos: reopening ? Math.max(b.failingPos ?? pos, pos) : pos,
+    failingWindowsOnly: reopening ? (b.failingWindowsOnly === true && windowsOnly === true) : windowsOnly === true,
+    exclude: [...new Set([...b.exclude, ...prs])].slice(-FAILURES_KEPT) });
 };
 
 // One batch ending. ev: { pos (where it ended: positionOf, or POSITIONS.END), completed, counts, neutral, windowsOnly, pr,
@@ -75,17 +80,19 @@ export function breakerRecord(b, ev, policy, now) {
     }
   }
   // closed
-  if (ev.completed === true || (ev.counts !== true && ev.pos > b.streakPos)) { b.streak = 0; b.streakPos = 0; b.streakPrs = []; }
+  if (ev.completed === true || (ev.counts !== true && ev.pos > b.streakPos)) { b.streak = 0; b.streakPos = 0; b.streakPrs = []; b.streakFails = []; }
   if (ev.counts !== true) return transition;
-  b.failures = [...b.failures.filter(f => now - f.at < policy.breaker.windowMs), { at: now, pos: ev.pos, pr: ev.pr, code: ev.code ?? null }].slice(-FAILURES_KEPT);
+  b.failures = [...b.failures.filter(f => now - f.at < policy.breaker.windowMs), { at: now, pos: ev.pos, pr: ev.pr, code: ev.code ?? null, windowsOnly: ev.windowsOnly === true }].slice(-FAILURES_KEPT);
   b.streak += 1;
   b.streakPos = ev.pos;
   b.streakPrs = [...b.streakPrs, ev.pr].slice(-FAILURES_KEPT);
+  b.streakFails = [...(b.streakFails ?? []), { pos: ev.pos, windowsOnly: ev.windowsOnly === true }].slice(-FAILURES_KEPT);
   const inWindow = b.failures.filter(f => now - f.at < policy.breaker.windowMs);
   if (b.streak >= policy.breaker.consecutive || inWindow.length >= policy.breaker.windowCount) {
+    const opening = b.streak >= policy.breaker.consecutive ? b.streakFails : inWindow;
     const prs = [...new Set([...b.streakPrs, ...inWindow.map(f => f.pr)])];
     b.exclude = [];
-    open(b, policy, now, { pos: ev.pos, windowsOnly: ev.windowsOnly, prs, level: 0 });
+    open(b, policy, now, { pos: Math.max(...opening.map(f => f.pos)), windowsOnly: opening.every(f => f.windowsOnly === true), prs, level: 0 });
     return 'opened';
   }
   return transition;

@@ -128,6 +128,9 @@ export const ROWS_PER_TICK = 16;
 // PR changed or closed, the refs moved since the bundle, or the bundle failed.
 export const FALSIFYING_CODES = Object.freeze(['PR_NOT_OPEN_OR_CHANGED', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'BUNDLE_UNAVAILABLE']);
 export const FALSIFYING_REASONS = Object.freeze(['pr_subject_changed', 'pr_files_changed']);
+// A batch that waits for hosted signals is resumed every tick: its supersession live read (and the receipt of a missing
+// answer) happens at most this often (independent review of step 1, m9).
+export const SUPERSEDE_LIVE_READ_MS = 10 * 60_000;
 const dayKey = ms => new Date(ms).toISOString().slice(0, 10);
 
 // The stage-terminal receipt's summary of a stage outcome: codes and flags only.
@@ -139,6 +142,9 @@ const outcomeSummary = r => {
     mergeQueue: o?.scheduling?.mergeQueue ?? o?.diagnostic?.mergeQueue ?? null };
 };
 
+// The ports every executor needs (service-main.mjs builds them; a test checks the service entry passes each one).
+export const EXECUTOR_PORTS = Object.freeze(['policy', 'ledger', 'receipts', 'inbox', 'requests', 'owner', 'engine', 'companion', 'sourceIntegrity', 'clock', 'executedHeads', 'queue']);
+
 export class ResidentExecutor {
   // ports: { policy, ledger, receipts, inbox, requests, owner, engine, companion, sourceIntegrity, clock, executedHeads, queue }
   //   owner: an Inbox over the admin-only owner directory (only Administrators can create files there).
@@ -147,7 +153,7 @@ export class ResidentExecutor {
   //   status (optional): status.mjs#StatusBoard (a view; nothing the executor decides ever reads it).
   constructor(ports) {
     //   queue: queue.mjs#RunQueue (the run queue and the breaker's state; a view the ledger always overrules).
-    for (const k of ['policy', 'ledger', 'receipts', 'inbox', 'requests', 'owner', 'engine', 'companion', 'sourceIntegrity', 'clock', 'executedHeads', 'queue']) check(ports[k], 'EXECUTOR_PORT_MISSING', k);
+    for (const k of EXECUTOR_PORTS) check(ports[k], 'EXECUTOR_PORT_MISSING', k);
     Object.assign(this, ports);
     this.sleep ??= ms => new Promise(r => setTimeout(r, ms));
     this.status ??= NO_STATUS;
@@ -174,10 +180,11 @@ export class ResidentExecutor {
     const open = await this.ledger.crashed();
     // A stage R that began (20-plan-intent) without its 25-plan may have begun a relay key: UNKNOWN, HALT. An entry
     // with an accepted Owner abort and no terminal was interrupted in the middle of the abort: UNKNOWN, HALT.
-    const codeFor = entry => (entry.planIntent && !entry.plan ? 'RELAY_STAGE_INTERRUPTED' : entry.abort ? 'OWNER_ABORT_INTERRUPTED' : 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH');
+    // An entry with the executor's own 81-self-abort and no terminal was interrupted in the middle of that end (phase 2).
+    const codeFor = entry => (entry.planIntent && !entry.plan ? 'RELAY_STAGE_INTERRUPTED' : entry.abort ? 'OWNER_ABORT_INTERRUPTED' : entry.selfAbort ? 'SUPERSEDE_INTERRUPTED' : 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH');
     // HALT is latched BEFORE any terminal or quarantine write, so no crash point can leave a closed
     // failure without a HALT (N1).
-    const haltCode = ['RELAY_STAGE_INTERRUPTED', 'OWNER_ABORT_INTERRUPTED'].find(c => open.some(e => codeFor(e) === c)) ?? 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH';
+    const haltCode = ['RELAY_STAGE_INTERRUPTED', 'OWNER_ABORT_INTERRUPTED', 'SUPERSEDE_INTERRUPTED'].find(c => open.some(e => codeFor(e) === c)) ?? 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH';
     if (open.length > 0) await this.haltWith(haltCode, { keys: open.map(e => e.key) });
     for (const entry of open) {
       let closed = false;
@@ -613,8 +620,9 @@ export class ResidentExecutor {
 
   // ---- the run queue (phase 2, step 1; queue.mjs) ----
 
-  // A failure to write the queue never changes what a batch did: the queue is a view the ledger overrules.
-  async persistQueue() { try { await this.queue.save(); } catch { /* the next write carries the change */ } }
+  // A failure to write the queue never changes what a batch did: the queue is a view the ledger overrules. true: written
+  // (or nothing to write).
+  async persistQueue() { try { await this.queue.save(); return true; } catch { return false; } }
 
   // The status board's queue, breaker and notices (a view; nothing the executor decides reads it).
   reportQueue() {
@@ -641,7 +649,11 @@ export class ResidentExecutor {
         continue;
       }
       const r = this.queue.offer(t, now, { depth: this.policy.limits.queueDepth, cooldownMs: this.policy.limits.unexecutedCooldownMs });
-      if (r.action === 'refused') { done.push({ name: entry.name, disposition: 'rejected', receipt: ['trigger-refused', { failureCode: r.code, pr: t.pr, headSha: t.headSha, bytesSha256 }] }); continue; }
+      if (r.action === 'refused') {
+        this.queue.notice({ key: `queue-full:${dayKey(now)}`, kind: 'queue-full', pr: null, headSha: null, code: r.code });
+        done.push({ name: entry.name, disposition: 'rejected', receipt: ['trigger-refused', { failureCode: r.code, pr: t.pr, headSha: t.headSha, bytesSha256 }] });
+        continue;
+      }
       if (r.action === 'new-trigger') this.queue.notice({ key: `poke:${t.pr}:${t.headSha}`, kind: 'new-trigger', pr: t.pr, headSha: t.headSha, code: null });
       done.push({ name: entry.name, disposition: r.action === 'seen' ? 'ignored' : 'processed',
         receipt: ['trigger-queued', { pr: t.pr, headSha: t.headSha, baseSha: t.baseSha, action: r.action, seq: r.seq ?? null, bytesSha256 }] });
@@ -651,7 +663,9 @@ export class ResidentExecutor {
       this.queueRebuiltReported = true;
     }
     if (done.length === 0) return;
-    await this.persistQueue();
+    // Consumed only once the queue holding them is on disk: otherwise they stay in the inbox and are read again (a second
+    // reading changes nothing; independent review m6).
+    if (!(await this.persistQueue())) return;
     for (const d of done) {
       await this.inbox.dispose(d.name, d.disposition);
       await this.receipt(...d.receipt);
@@ -668,7 +682,9 @@ export class ResidentExecutor {
       try { s = await this.ledger.state(key); } catch { continue; }
       if (['RESERVED', 'STARTED', 'INCOMPLETE', 'UNREADABLE'].includes(s.state)) continue;
       const kind = s.state === 'TERMINAL' ? (s.outcome === 'COMPLETED' ? 'completed' : 'burned') : 'released';
-      this.queue.settle(row.pr, headSha, { kind, code: s.terminal?.facts?.failureCode ?? null, klass: s.terminal?.facts?.class ?? null, reason: 'RECONCILED' }, this.clock());
+      // Released (moved to ledger-unexecuted): its own record says whether it was a wait.
+      const release = kind === 'released' ? (await this.ledger.unexecutedRecords(key, 0).catch(() => [])).at(-1) ?? null : null;
+      this.queue.settle(row.pr, headSha, { kind, code: s.terminal?.facts?.failureCode ?? null, klass: s.terminal?.facts?.class ?? release?.klass ?? null, reason: release?.reason ?? 'RECONCILED' }, this.clock());
       changed = true;
     }
     if (changed) await this.persistQueue();
@@ -702,14 +718,18 @@ export class ResidentExecutor {
     const u = this.tickUsage, l = this.policy.limits;
     this.report(s => s.update({ limits: { batches24h: u.started, maxBatches: l.maxBatchesPer24h, evaluations24h: u.evaluations, maxEvaluations: l.maxEvaluationsPer24h,
       waitingRetries24h: u.waitingRetries, maxWaitingRetries: l.waitingRetriesPer24h } }));
-    let last = null;
+    let last = null, evaluationsFull = null;
     for (const item of list.slice(0, ROWS_PER_TICK)) {
+      // A full evaluation budget stops only what it bounds: the due waits behind it still run (independent review m1).
+      if (evaluationsFull && item.row?.origin !== 'waiting-retry') continue;
       const r = item.attempt2 ? await this.runAttempt2(item.attempt2, u) : await this.runRow(item.row, u);
+      if (r.state === 'DEFERRED' && r.reason === 'DAILY_EVALUATION_LIMIT') { evaluationsFull = r; continue; }
       if (r.next === true) { last ??= r; continue; }
       await this.persistQueue();
       this.reportQueue();
       return r;
     }
+    if (evaluationsFull) last = evaluationsFull;
     await this.persistQueue();
     this.reportQueue();
     return last ?? { state: 'IDLE' };
@@ -741,6 +761,9 @@ export class ResidentExecutor {
     }
     if (origin === 'new-trigger' && (usage.reevaluations.get(`${subject.pr}:${subject.headSha}`) ?? 0) >= l.reevaluationsPerPrHeadPer24h) return { defer: 'REEVALUATION_CAP', perRow: true, dropPoke: true };
     if ((usage.startedByPr.get(subject.pr) ?? 0) >= l.perPrBatchesPer24h) return { defer: 'PR_DAILY_BATCH_LIMIT', perRow: true };
+    // The head's release cap (design v0.5 §4.5: at most releasesPerHeadPer24h releases a day) from the ledger, so a queue
+    // that started over never forgets it (independent review m4). A wait, a new trigger and attempt 2 are not bound by it.
+    if (['queued', 'backoff-retry', 'restored'].includes(origin) && (usage.releasesByHead.get(subject.headSha) ?? 0) >= l.releasesPerHeadPer24h) return { stop: 'RELEASE_CAP_REACHED' };
     const startCode = await this.batchStartChecks(null);
     if (startCode) return { halt: startCode };
     const beat = await this.companion.heartbeat();
@@ -781,6 +804,10 @@ export class ResidentExecutor {
     }
     if (pre.halt) { await this.haltWith(pre.halt, { key }); return { state: 'HALTED', key, failureCode: pre.halt }; }
     if (pre.defer) return this.deferral(pre, key, c.pr);
+    if (pre.stop) {
+      if (this.queue.stopAtCap(c.pr, c.headSha, pre.stop, this.clock())) this.queue.notice({ key: `stopped:${c.pr}:${c.headSha}:${pre.stop}`, kind: 'stopped', pr: c.pr, headSha: c.headSha, code: pre.stop });
+      return { state: 'DEFERRED', key, reason: pre.stop, next: true };
+    }
 
     await this.ledger.reserve(key, subject, { origin: c.origin });
     await this.receipt('batch-reserved', { key, headKey: hk, subject, origin: c.origin });
@@ -826,6 +853,12 @@ export class ResidentExecutor {
         await this.ledger.closeAttempt2(key1, { failureCode: 'ATTEMPT2_SUPERSEDED', liveHeadSha: live.headSha, liveState: live.state });
         await this.receipt('attempt2-ignored', { key: key2, attempt1: key1, failureCode: 'ATTEMPT2_SUPERSEDED' });
         return { state: 'IGNORED', key: key2, reason: 'ATTEMPT2_SUPERSEDED', next: true };
+      }
+      // Disproved (the PR's head is still attempt 1's): the newer commit in the queue goes back to superseded. No answer:
+      // attempt 2 runs and stage 1 decides; nothing but a confirming live read ever voids it (v0.6 §3; review M2).
+      if (live && this.queue.keepCurrent(subject.pr, subject.headSha, subject.baseSha, this.clock())) {
+        await this.persistQueue();
+        await this.receipt('supersede-disproved', { key: key2, pr: subject.pr, safePoint: 'before-attempt-2' });
       }
     }
     const hk = headKey(subject);
@@ -886,7 +919,10 @@ export class ResidentExecutor {
         await this.receipt('queue-row-stopped', { pr: subject.pr, headSha: subject.headSha, failureCode: s.code ?? null, releases24h });
       }
       if (s && Number.isSafeInteger(s.pos)) {
-        const t = breakerRecord(b, { pos: s.pos, completed: s.kind === 'completed', counts: s.breaker === 'counts', neutral: s.breaker !== 'counts', windowsOnly: false,
+        // Windows-only: the ending never reached the Linux preparation (a stage-1 or stage-R ending, or a completed batch
+        // whose roles were all relayed); it never closes a breaker a Linux place opened (design v0.5 §4.6; review m2).
+        const windowsOnly = s.kind === 'completed' ? s.linux !== true : s.pos < POSITIONS.workspace;
+        const t = breakerRecord(b, { pos: s.pos, completed: s.kind === 'completed', counts: s.breaker === 'counts', neutral: s.breaker !== 'counts', windowsOnly,
           pr: subject.pr, code: s.code ?? null }, this.policy, now);
         if (t === 'opened' || t === 'reopened') {
           this.queue.notice({ key: `breaker:${b.openedAt}`, kind: 'breaker-open', pr: null, headSha: null, code: s.code ?? null, until: b.nextTrialAt });
@@ -1039,7 +1075,7 @@ export class ResidentExecutor {
     await this.ledger.terminal(key, 'COMPLETED', { batchId: batch.batchId, closed: closed.archived ?? null, relayed: plan.relayed.map(r => r.role), local: localRoles });
     await this.receipt('batch-terminal', { key, outcome: 'COMPLETED' });
     this.reportOutcome(subject, 'COMPLETED', { key });
-    return { state: 'COMPLETED', key, relayed: plan.relayed.map(r => r.role), local: localRoles, settle: { kind: 'completed', code: null, klass: null, breaker: 'neutral', pos: POSITIONS.END } };
+    return { state: 'COMPLETED', key, relayed: plan.relayed.map(r => r.role), local: localRoles, settle: { kind: 'completed', code: null, klass: null, breaker: 'neutral', pos: POSITIONS.END, linux: localRoles.length > 0 } };
   }
 
   // The latest companion hint for this head, parsed; anything malformed is "no hint" (it can only make the
@@ -1190,7 +1226,8 @@ export class ResidentExecutor {
   // Before stage 1 (nothing ran, nothing was asked of the broker): the arrival order alone decides; released as
   // SUPERSEDED, the head unburned (it goes back to the row's superseded commits and may be restored).
   async supersededBeforeStart(key, subject, batch) {
-    if (!(await this.newerCommitArrived(subject))) return null;
+    // attempt 2 is never released by the arrival order: runAttempt2 asked the PR live before it was reserved (review M2).
+    if (subject.attempt !== 1 || !(await this.newerCommitArrived(subject))) return null;
     await this.closeOrThrow(batch);
     await this.ledger.releaseUnexecuted(key, 'SUPERSEDED', { failureCode: BATCH_SUPERSEDED, basis: 'newer-commit-before-stage-1', class: 'superseded', breaker: 'neutral' });
     await this.receipt('batch-superseded', { key, pr: subject.pr, headSha: subject.headSha, safePoint: 'before-stage-1' });
@@ -1204,6 +1241,10 @@ export class ResidentExecutor {
   // goes on. The live head IS this batch's head: the newer commit in the queue is disproved and the batch goes on.
   async supersededAfterStart(key, subject, batch, safePoint, pos) {
     if (!(await this.newerCommitArrived(subject))) return null;
+    this.liveReadAt ??= new Map();
+    if (this.clock() - (this.liveReadAt.get(key) ?? -Infinity) < SUPERSEDE_LIVE_READ_MS) return null;
+    this.liveReadAt.set(key, this.clock());
+    if (this.liveReadAt.size > 64) this.liveReadAt.delete(this.liveReadAt.keys().next().value);
     const live = await this.livePull(subject.pr, batch);
     if (!live) { await this.receipt('supersede-unconfirmed', { key, pr: subject.pr, safePoint }); return null; }
     if (live.state === 'open' && live.headSha === subject.headSha) {
@@ -1221,6 +1262,10 @@ export class ResidentExecutor {
   async supersededEnd(key, subject, batch, { safePoint, pos, live }) {
     const context = { safePoint, stage: null };
     try {
+      // First the create-only record: a crash from here on is a crash scene (SUPERSEDE_INTERRUPTED), never a wait that a
+      // restart would resume on a half-archived scene (independent review of step 1, M1).
+      await this.ledger.beginSelfAbort(key, { safePoint, liveHeadSha: live.headSha, liveState: live.state });
+      await this.receipt('batch-self-abort', { key, pr: subject.pr, safePoint });
       const proof = await this.abortQuiescence(batch, {});
       if (!proofComplete(proof)) return await this.unknown(key, 'SUPERSEDE_QUIESCENCE_UNPROVEN', 'superseded-quiescence-unproven', batch, context);
       await this.ledger.burnHead(key, { failureCode: SUPERSEDED_AT_SAFE_POINT });

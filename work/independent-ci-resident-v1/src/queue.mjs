@@ -32,8 +32,9 @@
 //     24 hours are compacted away.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { HEX40, canonicalJson, check, isoNow, parseBoundedJson } from './canonical.mjs';
+import { HEX40, ResidentError, canonicalJson, check, isoNow, parseBoundedJson } from './canonical.mjs';
 import { ensureDir, exists, nonce, readBounded } from './store.mjs';
+import { POSITIONS } from './breaker.mjs';
 
 export const QUEUE_CONTRACT = 'clued.independent-ci.resident-queue/1';
 export const QUEUE_FILE = 'queue.json';
@@ -42,7 +43,7 @@ export const ROW_STATES = Object.freeze(['QUEUED', 'RUNNING', 'WAITING', 'BACKOF
 export const LIVE_STATES = Object.freeze(['QUEUED', 'RUNNING', 'WAITING', 'BACKOFF']);
 // How a row was picked (00-reserved.json keeps it; ledger.mjs#usage counts the waiting budget and the re-evaluations
 // from it). attempt2 is the one automatic attempt 2 (attempts.mjs), never a queue row.
-export const ORIGINS = Object.freeze(['queued', 'backoff-retry', 'waiting-retry', 'new-trigger', 'restored', 'attempt2']);
+export const ORIGINS = Object.freeze(['queued', 'backoff-retry', 'waiting-retry', 'new-trigger', 'restored', 'lifted', 'attempt2']);
 // Why a STOPPED row stopped: its head is burned (only a new commit runs it), or it hit the release cap (a new trigger
 // after the fix, or a new commit; one an environment fault caused is lifted when the breaker closes).
 export const STOP_KINDS = Object.freeze(['burned', 'release-cap']);
@@ -58,6 +59,9 @@ export const NOTICES_MAX = 50;
 export const DEFER_RECHECK_MS = 5 * MIN;
 
 const delayAt = (table, level) => table[Math.min(Math.max(level, 0), table.length - 1)];
+// A queue file that could not be read took the breaker's state with it: half-open, failing "everywhere".
+const rebuiltBreaker = now => ({ state: 'half-open', failures: [], streak: 0, streakPos: 0, streakPrs: [], openedAt: now, level: 0, nextTrialAt: null,
+  failingPos: POSITIONS.END, failingWindowsOnly: false, exclude: [], closedAt: null });
 const time = v => Number.isSafeInteger(v) && v > 0;
 const commitOf = c => ({ headSha: c.headSha, baseSha: c.baseSha, seq: c.seq, firstAt: c.firstAt ?? null });
 
@@ -100,11 +104,18 @@ export class RunQueue {
     if (!(await exists(file))) return new RunQueue(dir, clock, emptyQueue(clock));
     try {
       return new RunQueue(dir, clock, validateQueue(parseBoundedJson(await readBounded(file, QUEUE_MAX_BYTES, 'QUEUE_FILE_INVALID'), QUEUE_MAX_BYTES, 'QUEUE_FILE_INVALID')));
-    } catch {
-      // Kept, never deleted: the ledger stays the authority, and the new generation makes the poller propose again.
+    } catch (error) {
+      // Only content that does not validate starts the queue over; an I/O error (a lock, a busy file) propagates and the
+      // service start is retried (independent review of step 1, m4).
+      if (!(error instanceof ResidentError || error instanceof SyntaxError)) throw error;
+      // Kept, never deleted: the ledger stays the authority, and the new generation makes the poller propose again. The
+      // breaker's state was in the file: a queue that starts over starts it half-open, so the next counted failure opens
+      // it again at once and only a completed batch closes it.
       const keptAs = path.join(dir, `queue.unreadable-${isoNow(clock).replace(/[:.]/g, '')}-${nonce()}.json`);
       await fs.rename(file, keptAs);
-      return new RunQueue(dir, clock, emptyQueue(clock), { keptAs: path.basename(keptAs), at: clock() });
+      const fresh = emptyQueue(clock);
+      fresh.breaker = rebuiltBreaker(clock());
+      return new RunQueue(dir, clock, fresh, { keptAs: path.basename(keptAs), at: clock() });
     }
   }
 
@@ -155,13 +166,16 @@ export class RunQueue {
       this.data.rows.push(row);
       this.data.rows.sort((a, b) => a.pr - b.pr);
     }
-    const updatedAt = typeof t.prUpdatedAt === 'string' ? Date.parse(t.prUpdatedAt) : null;
+    // An update time from the future (an untrusted writer) is taken as now: it can never silence later edits (review m8).
+    const updatedAt = typeof t.prUpdatedAt === 'string' ? Math.min(Date.parse(t.prUpdatedAt), now) : null;
     const newer = updatedAt !== null && (row.prUpdatedAt === null || updatedAt > row.prUpdatedAt);
     if (newer) row.prUpdatedAt = updatedAt;
     if (row.seen.includes(t.headSha)) {
       if (row.current?.headSha !== t.headSha || row.running?.headSha === t.headSha) return { action: 'seen' };
       // The current commit asked again: a new trigger pokes a row that waits for its next try.
-      const waits = ['WAITING', 'BACKOFF'].includes(row.state) || (row.state === 'STOPPED' && row.stopKind === 'release-cap');
+      // A closed PR that is open again (the poller proposes it): its head is tried again; the ledger decides.
+      if (row.state === 'DONE' && row.reason === 'PR_CLOSED') { this.setState(row, 'QUEUED', null, now); row.order = this.seq(); row.origin = 'queued'; return { action: 'reopened' }; }
+      const waits = ['WAITING', 'BACKOFF'].includes(row.state);
       if (!waits || !(updatedAt === null || newer)) return { action: 'seen' };
       row.poke = { at: now, dueAt: Math.max(now, (row.lastEvalAt ?? 0) + cooldownMs) };
       row.deferUntil = null;
@@ -175,7 +189,7 @@ export class RunQueue {
       action = 'pending';
       // A newer commit that was waiting behind the running one is itself replaced now.
       if (row.current && row.current.headSha !== row.running?.headSha) row.superseded = [commitOf(row.current), ...row.superseded.filter(c => c.headSha !== row.current.headSha)].slice(0, SUPERSEDED_MAX);
-    } else if (['QUEUED', 'WAITING', 'BACKOFF'].includes(row.state)) {
+    } else if (['QUEUED', 'WAITING', 'BACKOFF'].includes(row.state) || (row.state === 'STOPPED' && row.stopKind === 'release-cap' && row.current)) {
       row.superseded = [commitOf(row.current), ...row.superseded.filter(c => c.headSha !== row.current.headSha)].slice(0, SUPERSEDED_MAX);
       action = 'superseded';
     }
@@ -196,8 +210,8 @@ export class RunQueue {
       if (!r.current || r.running || (time(r.deferUntil) && r.deferUntil > now)) continue;
       const poked = !!r.poke && r.poke.dueAt <= now;
       if (r.state === 'WAITING' && time(r.nextAt) && r.nextAt <= now) first.push({ r, origin: 'waiting-retry', at: r.nextAt, poked });
-      else if (poked && ['WAITING', 'BACKOFF', 'STOPPED'].includes(r.state)) first.push({ r, origin: 'new-trigger', at: r.poke.dueAt, poked: true });
-      else if (r.state === 'BACKOFF' && time(r.nextAt) && r.nextAt <= now) rest.push({ r, origin: 'backoff-retry' });
+      else if (poked && ['WAITING', 'BACKOFF'].includes(r.state)) first.push({ r, origin: 'new-trigger', at: r.poke.dueAt, poked: true });
+      else if (r.state === 'BACKOFF' && time(r.nextAt) && r.nextAt <= now) rest.push({ r, origin: r.origin === 'lifted' ? 'lifted' : 'backoff-retry' });
       else if (r.state === 'QUEUED') rest.push({ r, origin: r.origin === 'restored' ? 'restored' : 'queued' });
     }
     first.sort((a, b) => a.at - b.at || a.r.pr - b.r.pr);
@@ -255,7 +269,7 @@ export class RunQueue {
       case 'released': {
         r.order = this.seq(); // to the tail
         const waiting = outcome.klass === 'waiting';
-        if (!waiting && Number.isSafeInteger(outcome.releases24h) && outcome.releases24h > outcome.releaseCap) {
+        if (!waiting && Number.isSafeInteger(outcome.releases24h) && outcome.releases24h >= outcome.releaseCap) {
           Object.assign(r, { stopKind: 'release-cap', stopClass: outcome.klass ?? null, nextAt: null });
           this.setState(r, 'STOPPED', outcome.code ?? null, now);
           return 'stopped';
@@ -273,6 +287,30 @@ export class RunQueue {
         this.setState(r, 'STOPPED', outcome.code ?? null, now);
         return null;
     }
+  }
+
+  // The precheck found the head at its release cap (from the ledger): the row stops without a batch. true when it stopped
+  // now (the executor notifies once).
+  stopAtCap(pr, headSha, code, now) {
+    const r = this.row(pr);
+    if (!r || r.current?.headSha !== headSha || r.running || r.state === 'STOPPED') return false;
+    Object.assign(r, { stopKind: 'release-cap', stopClass: null, nextAt: null, poke: null, deferred: null, deferUntil: null });
+    this.setState(r, 'STOPPED', code, now);
+    return true;
+  }
+
+  // Attempt 2 of a head whose PR got a newer commit, and the live read says the head is still the PR's: the newer commit
+  // goes back to superseded and the head is current again (not running: attempt 2 starts next). true when it changed.
+  keepCurrent(pr, headSha, baseSha, now) {
+    const r = this.row(pr);
+    if (!r || r.running || !r.current || r.current.headSha === headSha) return false;
+    const was = r.superseded.find(c => c.headSha === headSha);
+    r.superseded = [commitOf(r.current), ...r.superseded.filter(c => c.headSha !== headSha && c.headSha !== r.current.headSha)].slice(0, SUPERSEDED_MAX);
+    r.current = was ? commitOf(was) : { headSha, baseSha, seq: this.seq(), firstAt: now };
+    Object.assign(r, { order: this.seq(), nextAt: null, poke: null, deferred: null, deferUntil: null, origin: 'queued' });
+    this.setState(r, 'STOPPED', 'ATTEMPT2_PENDING', now);
+    r.stopKind = 'burned';
+    return true;
   }
 
   // The running batch's safe point found it superseded, but the live read says it IS the PR's head: the newer commit in
@@ -305,7 +343,7 @@ export class RunQueue {
   closePr(pr, now) {
     const r = this.row(pr);
     if (!r || r.running) return false;
-    Object.assign(r, { poke: null, nextAt: null, stopKind: 'burned', deferred: null });
+    Object.assign(r, { poke: null, nextAt: null, stopKind: null, deferred: null });
     this.setState(r, 'DONE', 'PR_CLOSED', now);
     return true;
   }
@@ -315,7 +353,8 @@ export class RunQueue {
     const lifted = [];
     for (const r of this.data.rows) {
       if (r.state !== 'STOPPED' || r.stopKind !== 'release-cap' || r.stopClass !== 'environment' || !r.current) continue;
-      Object.assign(r, { stopKind: null, stopClass: null, level: 0, levelKind: null, nextAt: now, order: this.seq(), origin: 'backoff-retry', deferUntil: null });
+      // 'lifted': the next try is not held back by the release cap its environment releases reached (executor precheck).
+      Object.assign(r, { stopKind: null, stopClass: null, level: 0, levelKind: null, nextAt: now, order: this.seq(), origin: 'lifted', deferUntil: null });
       this.setState(r, 'BACKOFF', null, now);
       lifted.push(r.pr);
     }
