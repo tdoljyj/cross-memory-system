@@ -255,6 +255,20 @@ public static class HostPureTests
             Yes(missingDirectory == "DirectoryNotFoundException", "gate-missing-directory-thrown:" + missingDirectory);
             Yes(ResidentStopGate.AlreadyThere(new IOException("x", unchecked((int)0x80070050))) && ResidentStopGate.AlreadyThere(new IOException("x", unchecked((int)0x800700B7)))
                 && !ResidentStopGate.AlreadyThere(new IOException("x", unchecked((int)0x80070070))) && !ResidentStopGate.AlreadyThere(new IOException("x", unchecked((int)0x80070020))), "gate-already-there-codes");
+            // Once the file is created the request stands, even if its content cannot be written: a failure there
+            // must not give the stop back, or a retry would create a second request after the executor took the first.
+            Yes(ResidentStopGate.TryCreateStopFile(stopFile, "x", (f, b) => { throw new IOException("disk full"); }) && File.Exists(stopFile) && new FileInfo(stopFile).Length == 0, "gate-created-but-unwritten-stands");
+            File.Delete(stopFile);
+            // Shared for read and delete: the executor can read and rename the request while the host still holds it.
+            bool readAndRenamedWhileHeld = false;
+            Yes(ResidentStopGate.TryCreateStopFile(stopFile, "x", (f, b) =>
+            {
+                f.Write(b, 0, b.Length); f.Flush();
+                using (var r = new FileStream(stopFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) { }
+                File.Move(stopFile, stopFile + ".taken");
+                readAndRenamedWhileHeld = true;
+            }) && readAndRenamedWhileHeld && File.ReadAllText(stopFile + ".taken") == "x" && !File.Exists(stopFile), "gate-request-renamable-while-held");
+            File.Delete(stopFile + ".taken");
             // Racing callers: exactly one takes the stop.
             for (int round = 0; round < 200; round++)
             {
