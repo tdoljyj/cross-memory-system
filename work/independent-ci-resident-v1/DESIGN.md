@@ -376,7 +376,7 @@ Source v2（S11）之后，阶段的失败码来自已安装 Source 的稳定目
   1. 执行器在 `broker\requests\` 里找**正在进行的那一次交换**：代理已领取（有 `.taken`）、还没回复、段号相同、`configSha256` 等于这一批次该段包的计划哈希（从批次钉住的 work manifest 读出）。恰好一个时，在旁边新建 `<id>.stop`，字段恰好是 `contract`、`requestId`、`nonce`、`stage`、`configSha256`。执行器记下这个请求 id，交换被回复之后照样能读停止回执；
   2. 代理在这次交换的等待循环里每秒看一次（§8.2 第 9 条），条件全部满足时向 runner 服务发 `SERVICE_CONTROL_STOP`，并把结果写进只新建的停止回执 `broker\responses\<id>.stop.json`（`STOP_SENT`、`HELPER_ALREADY_STOPPING` 或某个拒绝码）。这个控制实际只生效一次：万一因为超时又发了一次，助手也只是再置一次同一个标志、终止同一个作业对象，没有别的作用；
   3. 通用助手按它现有的停止路径处理（`STOP_REQUESTED`，服务退出码 92）：只终止并排空**它自己建的作业对象**，写原生回执，报告 STOPPED。代理照常换回原始二进制并回复。执行器和代理都不杀任何进程，也不碰来历不明的进程树；
-  4. 只有停止回执是 `STOP_SENT`，或者这一段在 Windows 侧的调用（invoke-stage 子进程）已经带着阶段事实返回之后，执行器才给 companion 写 `mailbox\requests\<泵请求 id>.cancel.json`。带着阶段事实返回有三种：代理已经回复，不论回复码是什么（助手已停，或助手根本没启动）；调用在找代理之前就拒绝了这一段；调用等不到代理的回复而放弃，那时代理和泵自己的截止时间都已过。这三种情况下发行方都不再等泵能带来的任何东西。泵在下一个等待步骤以 `COMPANION_PUMP_CANCELLED` 结束，不再做 blocked 转交：取消之后不再发起任何 relay 调用（每次调用之前都先查取消，正在进行的那一次最多 40 秒，先等它结束），blocked 转交的每一步之前也查；不论停在哪一步，回复都是 `COMPANION_PUMP_CANCELLED`；读不出的取消文件按没有取消处理；它只停止搬运，从不停止或杀掉 Linux worker，取消若随 issue 转交一起到达，就不再启动 worker。在这之前，泵和它的 blocked 转交都和没有中止时完全一样，所以停止没送达时，这一段的结局不会比不中止更差；调用一返回，这一段也不会再为泵多等到截止时间；
+  4. 只有停止回执是 `STOP_SENT`，或者这一段在 Windows 侧的调用（invoke-stage 子进程）已经带着阶段事实返回之后，执行器才给 companion 写 `mailbox\requests\<泵请求 id>.cancel.json`。带着阶段事实返回有三种：代理已经回复，不论回复码是什么（助手已停，或助手根本没启动）；调用在找代理之前就拒绝了这一段；调用等不到代理的回复而放弃，那时代理和泵自己的截止时间都已过。这三种情况下发行方都不再等泵能带来的任何东西。泵在下一个等待步骤以 `COMPANION_PUMP_CANCELLED` 结束，不再做 blocked 转交：取消之后不再发起任何 relay 调用（每次调用之前都先查取消，正在进行的那一次最多 40 秒，先等它结束），blocked 转交的每一步之前也查；以失败结束时，不论停在哪一步，回复都是 `COMPANION_PUMP_CANCELLED`（取消时恰好已经正常走完的，照实回复成功）；读不出的取消文件按没有取消处理；它只停止搬运，从不停止或杀掉 Linux worker，取消若随 issue 转交一起到达，就不再启动 worker。在这之前，泵和它的 blocked 转交都和没有中止时完全一样，所以停止没送达时，这一段的结局不会比不中止更差；调用一返回，这一段也不会再为泵多等到截止时间；
   5. 还没调用的段（例如还在 refs 闸门上）直接不调用，以 `OWNER_ABORT_REQUESTED` 结束。
 - **结束**（P0、P1、P2 相同）：
   1. 运行中被停下的段，结局码必须在白名单里（`classify.mjs#OWNER_ABORT_STAGE_ENDINGS`），而且该段自己的 Windows 证明齐全（作业树为 0、原始二进制已还原）。白名单是：本来就干净的码；`OWNER_ABORT_REQUESTED`；`COMPANION_PUMP_CANCELLED`；入口被停下、来不及写结局时的 `STAGE_OUTCOME_MISSING`。最后一个只在停止回执是 `STOP_SENT` 时才算，其他情况下它照旧是未知；
@@ -1011,7 +1011,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
   - MINOR：§6.2、§8.1 和附录里 Task `fe6cd7bc` 的几行写的是 PR #895 的宿主行为，那个 PR 还没合并。这是与该任务约定的做法（Clued 线程 `a137c18f`，option a）；PR 描述写明了这个依赖，两处改动都要等同一次重装（Task `0f6035b6`）才到主机。
   - NIT：服务记下请求之前就死了、恢复关闭批次之后再读到这个请求时，回执被记成拒绝。之后的提交改为 `owner-abort-unconfirmed`，只有这次中止自己的 `FAILED_CLEAN` `OWNER_ABORTED` 才算已了结；新增的两个用例都经变异核对。
 - bootstrap 安装源复审（`11af4710`，发现 3，MINOR）：取消在一次 relay 调用失败期间写好时，泵仍做 blocked 转交，约 150–190 秒后才回复，回复码是 `RELAY_REFUSED_NO_RETRY`，与上面 §6.5 第 4 步不符。没有找到会导致 HALT 的路径（签发段事实不成立时，引擎不看泵的码）。之后的提交修正：内层 catch 先查取消，blocked 转交每一轮都查取消，转发 response 之前也查一次；新增 3 个用例。
-  - 这次修正的独立复审（又一位新的复审者）结论 **PASS**：0 BLOCKER、0 MAJOR、1 MINOR、2 NIT，都不是这次修正引入的。MINOR：每轮只查一次取消，列目录或 relay 回答“没有”之后，同一轮里仍会再调 relay，可能把 blocked 记录转过去。NIT：取消时停在失败的 SendIssue 或 blocked 转交自己的 ReceiveBlocked 上，回复的是原错误码；读取消文件出错时会跳过 blocked 转交。之后的提交修正：泵的每次 relay 调用之前都查取消（blocked 转交里也是），取消后不论停在哪一步都回复 `COMPANION_PUMP_CANCELLED`，读不出取消文件按没有取消处理；新增 3 个用例。
+  - 这次修正的独立复审（又一位新的复审者）结论 **PASS**：0 BLOCKER、0 MAJOR、1 MINOR、2 NIT。MINOR 和第一个 NIT 在这次修正之前就有；第二个 NIT 是这次修正在内层 catch 里加的取消检查带进来的。MINOR：每轮只查一次取消，列目录或 relay 回答“没有”之后，同一轮里仍会再调 relay，可能把 blocked 记录转过去。NIT：取消时停在失败的 SendIssue 或 blocked 转交自己的 ReceiveBlocked 上，回复的是原错误码；读取消文件出错时会跳过 blocked 转交。之后的提交修正：泵的每次 relay 调用之前都查取消（blocked 转交里也是），取消后不论停在哪一步都回复 `COMPANION_PUMP_CANCELLED`，读不出取消文件按没有取消处理；新增 3 个用例。
 
 ## 15. 需要 Owner 决定的事
 
