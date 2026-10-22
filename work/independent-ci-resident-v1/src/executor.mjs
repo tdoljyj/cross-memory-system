@@ -142,6 +142,9 @@ const outcomeSummary = r => {
     mergeQueue: o?.scheduling?.mergeQueue ?? o?.diagnostic?.mergeQueue ?? null };
 };
 
+// The ports every executor needs (service-main.mjs builds them; a test checks the service entry passes each one).
+export const EXECUTOR_PORTS = Object.freeze(['policy', 'ledger', 'receipts', 'inbox', 'requests', 'owner', 'engine', 'companion', 'sourceIntegrity', 'clock', 'executedHeads', 'queue']);
+
 export class ResidentExecutor {
   // ports: { policy, ledger, receipts, inbox, requests, owner, engine, companion, sourceIntegrity, clock, executedHeads, queue }
   //   owner: an Inbox over the admin-only owner directory (only Administrators can create files there).
@@ -150,7 +153,7 @@ export class ResidentExecutor {
   //   status (optional): status.mjs#StatusBoard (a view; nothing the executor decides ever reads it).
   constructor(ports) {
     //   queue: queue.mjs#RunQueue (the run queue and the breaker's state; a view the ledger always overrules).
-    for (const k of ['policy', 'ledger', 'receipts', 'inbox', 'requests', 'owner', 'engine', 'companion', 'sourceIntegrity', 'clock', 'executedHeads', 'queue']) check(ports[k], 'EXECUTOR_PORT_MISSING', k);
+    for (const k of EXECUTOR_PORTS) check(ports[k], 'EXECUTOR_PORT_MISSING', k);
     Object.assign(this, ports);
     this.sleep ??= ms => new Promise(r => setTimeout(r, ms));
     this.status ??= NO_STATUS;
