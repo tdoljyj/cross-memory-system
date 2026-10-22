@@ -1,0 +1,8 @@
+# Preserve the exact bytes of the existing-release publisher package installed on
+# the Host (package manifest 71ee46c6). These files carry CRLF lines and their
+# digests are pinned by the package source freeze (the manager also by the
+# package manifest and existing-stages.mjs), so git must not normalize them.
+existing-release-v3-host/build-files.template.json -text whitespace=cr-at-eol
+existing-release-v3-host/existing-release.template.json -text whitespace=cr-at-eol
+existing-release-v3-host/payload/release/linux-process-manager.mjs -text whitespace=cr-at-eol
+existing-release-v3-host/required-metadata.json -text whitespace=cr-at-eol
