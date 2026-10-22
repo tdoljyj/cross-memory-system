@@ -85,8 +85,9 @@ test('mailbox hints are create-only, sequenced and bounded', async t => {
 test('poller: hint mode observes each proposed head for a bounded window, a failing observation never stops triggers', async t => {
   let now = T0;
   const observed = [], triggers = [];
-  const pulls = [{ number: 7, headRefOid: HEAD, isDraft: false, body: 'Clued-Work-Claim: 6081c581-1fa5-4492-a4a4-dbdfe931c915', updatedAt: 'x' }];
-  const run = async argv => argv.includes('api') ? { code: 0, stdout: BASE + '\n' } : { code: 0, stdout: JSON.stringify(pulls) };
+  const pulls = [{ number: 7, headRefOid: HEAD, baseRefOid: BASE, isDraft: false, body: 'Clued-Work-Claim: 6081c581-1fa5-4492-a4a4-dbdfe931c915', updatedAt: 'x' }];
+  const run = async argv => argv.some(a => a.includes('/compare/')) ? { code: 0, stdout: JSON.stringify({ behind_by: 0, base: BASE }) }
+    : argv.includes('api') ? { code: 0, stdout: BASE + '\n' } : { code: 0, stdout: JSON.stringify(pulls) };
   const hints = { async observe(s) { observed.push(s); if (observed.length === 1) throw new Error('boom'); } };
   const p = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run, writeTrigger: async v => triggers.push(v), clock: () => now, hints });
   assert.equal(await p.pass(), 1);

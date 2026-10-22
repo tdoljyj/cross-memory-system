@@ -334,14 +334,14 @@ const walk = async (base, rel = '') => {
     if ((await fs.stat(path.join(base, r))).isDirectory()) { if (/^(ledger-heads|ledger|ledger\/[0-9a-f]{64})$/.test(r)) await walk(base, r); continue; }
     if (!CARRIED_FILE.test(r)) continue;
     const bytes = await fs.readFile(path.join(base, r));
-    await fs.mkdir(path.dirname(path.join(iState, 'backfill', carriedName, r)), { recursive: true });
-    await fs.writeFile(path.join(iState, 'backfill', carriedName, r), bytes);
+    await fs.mkdir(path.dirname(path.join(iState, 'backfill', '1', r)), { recursive: true });
+    await fs.writeFile(path.join(iState, 'backfill', '1', r), bytes);
     carriedFiles.push({ path: r, sha256: sha256(bytes), bytes: bytes.length });
   }
 };
 await walk(state);
 await fs.mkdir(path.join(iRoot, 'install'), { recursive: true });
-await fs.writeFile(path.join(iRoot, 'install', 'backfill-manifest.json'), JSON.stringify({ contract: BACKFILL_MANIFEST_CONTRACT, sources: [{ name: carriedName, files: carriedFiles }] }));
+await fs.writeFile(path.join(iRoot, 'install', 'backfill-manifest.json'), JSON.stringify({ contract: BACKFILL_MANIFEST_CONTRACT, sources: [{ name: carriedName, dir: '1', files: carriedFiles }] }));
 const iLedger = await Ledger.open(iState, clock);
 let iDerived = 0;
 const iEngine = { ...engine, current: null, async derive(subject, key) { iDerived += 1; return engine.derive.call(this, subject, key); } };

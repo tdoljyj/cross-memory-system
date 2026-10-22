@@ -6,13 +6,14 @@
 // already published by the r1 run (ROLE_ALREADY_PUBLISHED_ON_HEAD) and the executor HALTed (Note 1550fef8).
 //
 // This store keeps, per (repo, head) and whatever the Source or attempt, the heads that MAY HAVE PUBLISHED a check:
-//   state\executed-heads\<executedHeadKey>\<origin>-<batch key>.json   (create-only; any file, or the directory alone
+//   state\executed-heads\<executedHeadKey>\<origin>-<batch key, 16 hex>.json   (create-only; any file, or the directory alone
 //   after an interrupted write, means "may have published")
 // written
 //   - by the executor right before the first stage that can publish a role check (stage R, 3, 5, 7 or 8), and
 //   - once, on the first start of an install, by the BACKFILL from every earlier ledger: the state the service starts
-//     with and the earlier installs' state that install-resident.ps1 carried into state\backfill\<name>\ and listed,
-//     file by file with its SHA-256, in install\backfill-manifest.json. A reinstall therefore never forgets one.
+//     with and the earlier installs' state that install-resident.ps1 carried into state\backfill\<n>\ (n = its place in
+//     the manifest) and listed, file by file with its SHA-256, in install\backfill-manifest.json. A reinstall therefore
+//     never forgets one.
 // No batch runs before the backfill wrote BACKFILL-COMPLETE.json (executor.mjs#tick). A head in this store is never
 // admitted again, under any Source (executor.mjs#precheck, HEAD_ALREADY_PUBLISHED_NO_RETRY); a new commit is needed.
 // Heads that ended before any publication stage (stage 1 or 2, the workspace, a bundle) stay out of it, so a new Source
@@ -29,7 +30,10 @@ export const BACKFILL_MANIFEST_CONTRACT = 'clued.independent-ci.resident-backfil
 export const BACKFILL_MARKER = 'BACKFILL-COMPLETE.json';
 export const ORIGINS = Object.freeze(['publication', 'backfill']);
 // The files install-resident.ps1 carries from an earlier install's state (relative, forward slashes).
-export const CARRIED_FILE = /^(?:ledger-heads\/[0-9a-f]{64}\.json|ledger\/[0-9a-f]{64}\/(?:00-reserved|10-started|25-plan|80-owner-abort|90-terminal)\.json|executed-heads\/[0-9a-f]{64}\/(?:publication|backfill)-[0-9a-f]{64}\.json)$/;
+export const CARRIED_FILE = /^(?:ledger-heads\/[0-9a-f]{64}\.json|ledger\/[0-9a-f]{64}\/(?:00-reserved|10-started|25-plan|80-owner-abort|90-terminal)\.json|executed-heads\/[0-9a-f]{32}\/(?:publication|backfill)-[0-9a-f]{16}\.json)$/;
+// The directory a carried state is copied into: its position in the manifest, so every carried path stays far below
+// the Windows path limit (260) the install's .NET file calls obey.
+export const CARRIED_DIR = /^[1-9][0-9]{0,2}$/;
 export const CARRIED_SOURCE = /^resident-uninstalled-[0-9A-Za-z-]{1,80}$/;
 // The ledger records the verdict reads, by file name -> the name mayHavePublished uses.
 const LEDGER_RECORDS = Object.freeze({ '00-reserved': 'reserved', '10-started': 'started', '25-plan': 'plan', '80-owner-abort': 'abort', '90-terminal': 'terminal' });
@@ -39,9 +43,11 @@ const MAX_MANIFEST = 32 * 1024 * 1024;
 // Owner-abort safe points before any role check could have been published (executor.mjs#continueBatch order).
 export const NOT_PUBLISHED_SAFE_POINTS = Object.freeze(['waiting', 'before-stage-1', 'before-relay-plan', 'before-workspace', 'before-stage-2', 'in-stage-2', 'before-stage-3']);
 
+// 128 bits of the digest name the head's directory (and 64 bits of the batch key its record), so that every path,
+// also a carried copy under state\backfill\<n>\, stays well below the Windows path limit.
 export function executedHeadKey({ repo, headSha }) {
   check(typeof repo === 'string' && REPO.test(repo) && typeof headSha === 'string' && HEX40.test(headSha), 'EXECUTED_HEAD_SUBJECT_INVALID');
-  return digest({ contract: EXECUTED_HEAD_KEY_CONTRACT, repo, headSha });
+  return digest({ contract: EXECUTED_HEAD_KEY_CONTRACT, repo, headSha }).slice(0, 32);
 }
 
 // Pure: may the batch behind this burned head have published a role check? Conservative: anything not proven to have
@@ -93,7 +99,7 @@ export class ExecutedHeads {
     check(ORIGINS.includes(origin) && typeof key === 'string' && HEX64.test(key) && typeof basis === 'string' && basis.length > 0 && basis.length <= 80, 'EXECUTED_HEAD_RECORD_INVALID');
     const dir = this.headDir(subject);
     await fs.mkdir(dir, { recursive: true });
-    const file = path.join(dir, `${origin}-${key}.json`);
+    const file = path.join(dir, `${origin}-${key.slice(0, 16)}.json`);
     if (await exists(file)) return false;
     await writeNew(file, { contract: EXECUTED_HEAD_CONTRACT, repo: subject.repo, headSha: subject.headSha, pr: Number.isSafeInteger(subject.pr) ? subject.pr : null,
       sourceManifestSha256: HEX64.test(subject.sourceManifestSha256 ?? '') ? subject.sourceManifestSha256 : null,
@@ -115,16 +121,17 @@ export class ExecutedHeads {
     const m = parseBoundedJson(await readBounded(manifestFile, MAX_MANIFEST, 'EXECUTED_HEADS_BACKFILL_MANIFEST_REFUSED'), MAX_MANIFEST, 'EXECUTED_HEADS_BACKFILL_MANIFEST_REFUSED');
     check(m.contract === BACKFILL_MANIFEST_CONTRACT && Array.isArray(m.sources) && m.sources.length <= 256, 'EXECUTED_HEADS_BACKFILL_MANIFEST_REFUSED');
     const out = [];
-    for (const s of m.sources) {
-      check(s && typeof s === 'object' && typeof s.name === 'string' && CARRIED_SOURCE.test(s.name) && Array.isArray(s.files) && s.files.length <= 200_000
-        && !out.some(o => o.name === s.name), 'EXECUTED_HEADS_BACKFILL_MANIFEST_REFUSED');
+    for (const [i, s] of m.sources.entries()) {
+      // dir: where the install copied it (its 1-based position), name: the earlier install it came from.
+      check(s && typeof s === 'object' && typeof s.name === 'string' && CARRIED_SOURCE.test(s.name) && s.dir === String(i + 1) && CARRIED_DIR.test(s.dir)
+        && Array.isArray(s.files) && s.files.length <= 200_000 && !out.some(o => o.name === s.name), 'EXECUTED_HEADS_BACKFILL_MANIFEST_REFUSED');
       const files = new Map();
       for (const f of s.files) {
         check(f && typeof f === 'object' && typeof f.path === 'string' && CARRIED_FILE.test(f.path) && typeof f.sha256 === 'string' && HEX64.test(f.sha256)
           && Number.isSafeInteger(f.bytes) && f.bytes > 0 && f.bytes <= MAX_RECORD && !files.has(f.path), 'EXECUTED_HEADS_BACKFILL_MANIFEST_REFUSED');
         files.set(f.path, f);
       }
-      out.push({ name: s.name, root: path.join(carriedRoot, s.name), files });
+      out.push({ name: s.name, root: path.join(carriedRoot, s.dir), files });
     }
     return out;
   }

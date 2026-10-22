@@ -20,6 +20,7 @@ import { parseArgs } from 'node:util';
 import { HEX64, canonicalJson, check, sha256 } from '../src/canonical.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { validateCompanionConfig, validateHintConfig } from '../src/companion.mjs';
+import { validateStatusConfig } from '../src/pr-status.mjs';
 import { INSTALLED_MANIFEST_CONTRACT } from '../src/service-ports.mjs';
 
 const HERE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -95,6 +96,7 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
     hints: { enabled: companion.hints?.enabled === true && finalPolicy.relay.enabled === true, ciSourceManifestSha256 } };
   validateCompanionConfig(finalCompanion.companion);
   validateHintConfig(finalCompanion.hints);
+  validateStatusConfig(finalCompanion.status);
   await fs.mkdir(path.join(out, 'config'));
   await writeJson(path.join(out, 'config', 'policy.json'), finalPolicy);
   await writeJson(path.join(out, 'config', 'companion.json'), finalCompanion);

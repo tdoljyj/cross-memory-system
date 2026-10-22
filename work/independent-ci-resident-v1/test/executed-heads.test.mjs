@@ -36,10 +36,10 @@ async function carry(oldRoot, newRoot, name = 'resident-uninstalled-20261022T061
     for (const n of (await fs.readdir(path.join(oldRoot, 'state', ...rel.split('/').filter(Boolean)))).sort()) {
       const r = rel ? `${rel}/${n}` : n;
       const abs = path.join(oldRoot, 'state', ...r.split('/'));
-      if ((await fs.stat(abs)).isDirectory()) { if (/^(ledger-heads|ledger|ledger\/[0-9a-f]{64}|executed-heads|executed-heads\/[0-9a-f]{64})$/.test(r)) await walk(r); continue; }
+      if ((await fs.stat(abs)).isDirectory()) { if (/^(ledger-heads|ledger|ledger\/[0-9a-f]{64}|executed-heads|executed-heads\/[0-9a-f]{32})$/.test(r)) await walk(r); continue; }
       if (!CARRIED_FILE.test(r)) continue;
       const bytes = await fs.readFile(abs);
-      const to = path.join(newRoot, 'state', 'backfill', name, ...r.split('/'));
+      const to = path.join(newRoot, 'state', 'backfill', '1', ...r.split('/'));
       await fs.mkdir(path.dirname(to), { recursive: true });
       await fs.writeFile(to, bytes);
       files.push({ path: r, sha256: sha256(bytes), bytes: bytes.length });
@@ -49,7 +49,7 @@ async function carry(oldRoot, newRoot, name = 'resident-uninstalled-20261022T061
     try { await fs.access(path.join(oldRoot, 'state', top)); } catch { continue; }
     await walk(top);
   }
-  return { contract: BACKFILL_MANIFEST_CONTRACT, sources: [{ name, files }] };
+  return { contract: BACKFILL_MANIFEST_CONTRACT, sources: [{ name, dir: '1', files }] };
 }
 
 test('fresh state + archived old ledger: a head that published checks is never admitted again, under any Source, PR or base', async t => {
@@ -95,7 +95,7 @@ test('no batch runs before the backfill: a missing manifest or a changed carried
   await fs.mkdir(newRoot); t.after(() => fs.rm(newRoot, { recursive: true, force: true }));
   const manifest = await carry(old.root, newRoot);
   const victim = manifest.sources[0].files.find(x => x.path.startsWith('ledger-heads/'));
-  await fs.writeFile(path.join(newRoot, 'state', 'backfill', manifest.sources[0].name, ...victim.path.split('/')), '{"edited":true}');
+  await fs.writeFile(path.join(newRoot, 'state', 'backfill', manifest.sources[0].dir, ...victim.path.split('/')), '{"edited":true}');
   const changed = await executorFixture(t, { root: newRoot, backfillManifest: manifest });
   await changed.drop(triggerBytes());
   assert.deepEqual([(await changed.exec.tick()).failureCode, derived(changed.engine)], ['EXECUTED_HEADS_BACKFILL_SOURCE_CHANGED', 0]);
@@ -118,7 +118,7 @@ test('the executor records a head before its first publication stage; a later So
   assert.equal((await f.exec.tick()).state, 'COMPLETED');
   const dir = path.join(f.root, 'state', 'executed-heads', executedHeadKey(subject()));
   const records = await fs.readdir(dir);
-  assert.deepEqual(records, [`publication-${batchKey(subject())}.json`]);
+  assert.deepEqual(records, [`publication-${batchKey(subject()).slice(0, 16)}.json`]);
   const rec = JSON.parse(await fs.readFile(path.join(dir, records[0]), 'utf8'));
   assert.deepEqual([rec.stage, rec.basis, rec.sourceManifestSha256], [3, 'before-stage-3', SOURCE]);
   // the same state under a new Source (in place): the ledger's head key is new, the executed head is not

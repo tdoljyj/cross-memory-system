@@ -17,6 +17,13 @@ import { Runner } from './runner.mjs';
 import { Poller } from './poller.mjs';
 import { Inbox } from './inbox.mjs';
 import { canonicalJson } from './canonical.mjs';
+import os from 'node:os';
+import { readStatus } from './status.mjs';
+import { LocalStore, PrStatusReporter, validateStatusConfig } from './pr-status.mjs';
+
+// The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
+// phase 1, item 7); the poller still proposes every five minutes.
+export const REPORT_EVERY_MS = 60_000;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const exists = async p => { try { await fs.access(p); return true; } catch { return false; } };
@@ -60,12 +67,24 @@ export async function main(args = process.argv.slice(2)) {
     repo: raw.repo, ghExe: raw.ghExe, run: (a, o) => runner.run(a, o), clock: Date.now, hints,
     writeTrigger: async v => { await fs.writeFile(path.join(inboxDir, Inbox.fileName(Date.now())), canonicalJson(v), { flag: 'wx' }); },
   });
+  // PR page status and Windows notifications (pr-status.mjs). Their memory lives in the Owner's own profile, never in the
+  // resident's directories.
+  const statusCfg = validateStatusConfig(raw.status);
+  const store = await LocalStore.open(path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'CluedIndependentCI', 'companion-pr-status.json'));
+  const reporter = new PrStatusReporter({ repo: raw.repo, ghExe: raw.ghExe, powershellExe: cfg.powershellExe, run: (a, o) => runner.run(a, o), clock: Date.now, store,
+    prStatus: statusCfg.prStatus, notifications: statusCfg.notifications });
   keepalive(companionArgv(cfg).keepalive());
-  let lastPoll = 0;
+  let lastPoll = 0, lastReport = 0;
   for (;;) {
     if (!runner.busy) {
       try { await companion.step(); } catch { /* the service times out and classifies; never retry here */ }
       if (Date.now() - lastPoll > 5 * 60_000) { lastPoll = Date.now(); try { await poller.pass(); } catch { /* next pass */ } }
+      if (Date.now() - lastReport > REPORT_EVERY_MS) {
+        lastReport = Date.now();
+        let status = null, statusError = false;
+        try { status = await readStatus(values.root); } catch { statusError = true; }
+        try { await reporter.pass({ pulls: poller.lastPass?.pulls ?? [], status, statusError }); } catch { /* advisory: the next minute tries again */ }
+      }
     }
     await sleep(2_000);
   }
