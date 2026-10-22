@@ -1,58 +1,68 @@
-"""Offline tests for linux/host-tuning/clued-wsl-host-tuning (run on any OS):
+"""Offline tests for linux/host-tuning/clued-wsl-host-tuning (run on any OS; the symlink case needs Linux):
 python -I -m unittest discover -s test -p "test_*.py" (from work/independent-ci-resident-v1)."""
 import importlib.machinery
 import importlib.util
 import json
 import os
 import pathlib
+import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = pathlib.Path(__file__).resolve().parent
 TUNING = HERE.parent / 'linux' / 'host-tuning'
-loader = importlib.machinery.SourceFileLoader('wsl_host_tuning', str(TUNING / 'clued-wsl-host-tuning'))
+TOOL = TUNING / 'clued-wsl-host-tuning'
+loader = importlib.machinery.SourceFileLoader('wsl_host_tuning', str(TOOL))
 spec = importlib.util.spec_from_loader('wsl_host_tuning', loader)
 tool = importlib.util.module_from_spec(spec)
 loader.exec_module(tool)
 
 CONF = (TUNING / '60-clued-ci-hvsock-memory.conf').read_bytes()
-DEFAULTS = {'net.core.rmem_default': 212992, 'net.core.wmem_default': 212992, 'vm.watermark_scale_factor': 10}
+TARGET_NAME = '60-clued-ci-hvsock-memory.conf'
+DEFAULTS = {'net.core.rmem_default': 212992, 'net.core.wmem_default': 212992, 'vm.watermark_scale_factor': 10, 'vm.watermark_boost_factor': 15000}
 TOOL_SHA = 'a' * 64
 KERNEL = '6.18.33.2-microsoft-standard-WSL2'
-DEV = '1b61d1fa-0000-4000-8000-000000000001'
+OLD_DEV = '28b4324c-0000-4000-8000-000000000001'
+NEW_DEV = '28b4324c-0000-4000-8000-000000000002'
 
 
 def conf(**over):
-    values = {'net.core.rmem_default': 65536, 'net.core.wmem_default': 65536, 'vm.watermark_scale_factor': 200, **over}
+    values = {'net.core.rmem_default': 65536, 'net.core.wmem_default': 65536, 'vm.watermark_scale_factor': 200, 'vm.watermark_boost_factor': 3500, **over}
     return ''.join(f'{k} = {v}\n' for k, v in values.items()).encode('ascii')
 
 
 class ConfAndRing(unittest.TestCase):
     def test_shipped_conf_cuts_the_ring_to_order_5(self):
         values = tool.parse_conf(CONF)
-        self.assertEqual(values, {'net.core.rmem_default': 65536, 'net.core.wmem_default': 65536, 'vm.watermark_scale_factor': 200})
+        self.assertEqual(values, {'net.core.rmem_default': 65536, 'net.core.wmem_default': 65536, 'vm.watermark_scale_factor': 200, 'vm.watermark_boost_factor': 3500})
         self.assertEqual(tool.ring_order(values['net.core.rmem_default'], values['net.core.wmem_default']), 5)
 
     def test_ring_sizes_match_what_turing_showed(self):
-        # 2026-10-22: every live hv_sock channel reported write_avail 208896 with the 212992 defaults,
-        # and the failed allocations were order 7.
+        # 2026-10-22: every live host-initiated hv_sock channel had a 208896-byte send ring with the 212992
+        # defaults, and the failed allocations were order 7.
         self.assertEqual(tool.ring_bytes(212992) - tool.PAGE, 208896)
         self.assertEqual(tool.ring_order(212992, 212992), 7)
         self.assertEqual(tool.ring_order(131072, 131072), 6)
         self.assertEqual(tool.ring_bytes(65536) - tool.PAGE, 61440)
-        self.assertEqual(tool.ring_bytes(1), 5 * tool.PAGE, 'hv_sock never goes below 5 pages')
+        self.assertEqual(tool.ring_order(32768, 32768), 4)
+        self.assertEqual(tool.ring_bytes(1), 6 * tool.PAGE, 'hv_sock never goes below 6 pages')
+        self.assertEqual(tool.ring_order(1, 1), 4, 'so the ring is always a costly order (> 3)')
         self.assertEqual(tool.ring_bytes(4 << 20), 64 * tool.PAGE, 'nor above 64 pages')
         self.assertEqual(tool.ring_order(4 << 20, 4 << 20), 7)
 
     def test_conf_is_exact(self):
         bad = [
             b'',
-            conf().replace(b'vm.watermark_scale_factor = 200\n', b''),                    # a key missing
+            conf().replace(b'vm.watermark_boost_factor = 3500\n', b''),                     # a key missing
             conf() + b'vm.watermark_scale_factor = 200\n',                                 # duplicated
             conf() + b'vm.min_free_kbytes = 131072\n',                                     # not reviewed
             conf().replace(b'net.core.rmem_default', b'-net.core.rmem_default'),           # ignore-errors prefix
             conf(**{'vm.watermark_scale_factor': 5}),                                      # below bounds
+            conf(**{'vm.watermark_boost_factor': 20000}),                                  # above bounds
             conf(**{'net.core.wmem_default': 300000}),                                     # above 64 pages
+            conf(**{'net.core.rmem_default': 20480}),                                      # below 6 pages
             conf(**{'net.core.rmem_default': 65537}),                                      # not page aligned
             conf() + '# é\n'.encode('utf-8'),                                              # not ascii
             conf() + b'#' * 5000,                                                          # too large
@@ -60,9 +70,9 @@ class ConfAndRing(unittest.TestCase):
         for raw in bad:
             with self.assertRaises(tool.Refused, msg=raw[:80]):
                 tool.parse_conf(raw)
-        self.assertEqual(tool.parse_conf(b'# c\n\n' + conf())['vm.watermark_scale_factor'], 200)
+        self.assertEqual(tool.parse_conf(b'# c\n\n' + conf())['vm.watermark_boost_factor'], 3500)
 
-    def test_busy_units_and_buddyinfo(self):
+    def test_busy_units_buddyinfo_zoneinfo(self):
         listing = '\n'.join([
             'clued-ci-worker@' + 'e' * 64 + '.service loaded failed failed Clued job',
             'clued-ci-wsprep@0123456789abcdef-0123456789ab.service loaded activating start Clued prep',
@@ -74,31 +84,60 @@ class ConfAndRing(unittest.TestCase):
                 'Node 0, zone   Normal    300   1063    795    356    271    170     90     49      5     44    151\n')
         self.assertEqual(tool.buddy_summary(snap), {'0:DMA32': {'order5plus': 1834 + 1308 + 773 + 388 + 265 + 427, 'order7plus': 773 + 388 + 265 + 427},
                                                     '0:Normal': {'order5plus': 170 + 90 + 49 + 5 + 44 + 151, 'order7plus': 49 + 5 + 44 + 151}})
+        zoneinfo = ('Node 0, zone    DMA32\n  per-node stats\n      nr_free_pages 1\n  pages free     113117\n        boost    5120\n'
+                    '        min      7424\n        low      9280\n        high     11136\n        spanned  1015808\n'
+                    'Node 0, zone  Movable\n  pages free     0\n        boost    0\n        min      32\n        low      32\n        high     32\n')
+        self.assertEqual(tool.zone_summary(zoneinfo)['DMA32'], {'free': 113117, 'boost': 5120, 'min': 7424, 'low': 9280, 'high': 11136})
+
+    def test_boot_overrides(self):
+        files = {
+            '10-network-security.conf': 'vm.watermark_scale_factor = 10\n',   # earlier: the drop-in wins
+            TARGET_NAME: CONF.decode('ascii'),
+            '60-clued-runner.conf': 'kernel.yama.ptrace_scope = 1\n',       # later, other key
+            '70-x.conf': 'vm.watermark_*=5\n',                              # later, glob
+            '99-sysctl.conf': '# comment\n;x\n-net/core/rmem_default = 1\n',  # later, slash form and '-' prefix
+        }
+        self.assertEqual(tool.boot_overrides(files, TARGET_NAME), ['70-x.conf:vm.watermark_boost_factor', '70-x.conf:vm.watermark_scale_factor', '99-sysctl.conf:net.core.rmem_default'])
+        self.assertEqual(tool.boot_overrides({TARGET_NAME: '', '60-clued-runner.conf': 'kernel.yama.ptrace_scope = 1\n'}, TARGET_NAME), [])
+
+    def test_ring_verdict_counts_only_new_devices(self):
+        before = {OLD_DEV}
+        self.assertEqual(tool.ring_verdict({OLD_DEV: 208896}, before, 61440, 208896), (None, {}), 'nothing opened since apply')
+        self.assertEqual(tool.ring_verdict({OLD_DEV: 208896, NEW_DEV: 61440}, before, 61440, 208896)[0], True)
+        self.assertEqual(tool.ring_verdict({OLD_DEV: 61440, NEW_DEV: 208896}, before, 61440, 208896)[0], False, 'the relay sets its own buffers')
+        third = NEW_DEV[:-1] + '3'
+        self.assertIsNone(tool.ring_verdict({NEW_DEV: 61440, third: 208896}, before, 61440, 208896)[0], 'mixed: no claim')
+        self.assertIsNone(tool.ring_verdict({NEW_DEV: 24576}, before, 61440, 208896)[0], 'explicitly sized guest channels say neither')
 
 
 class Host(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         r = pathlib.Path(self.tmp.name)
-        self.p = {'proc_sys': str(r / 'proc'), 'target': str(r / 'etc' / '60-clued-ci-hvsock-memory.conf'),
-                  'state': str(r / 'state'), 'hv_sock': str(r / 'hv_sock'), 'buddyinfo': str(r / 'buddyinfo')}
+        self.p = {'proc_sys': str(r / 'proc'), 'target': str(r / 'etc' / TARGET_NAME), 'state': str(r / 'state'),
+                  'hv_sock': str(r / 'hv_sock'), 'buddyinfo': str(r / 'buddyinfo'), 'zoneinfo': str(r / 'zoneinfo'),
+                  'sysctl_dirs': (str(r / 'etc'), str(r / 'usr-lib'))}
         (r / 'etc').mkdir()
+        (r / 'usr-lib').mkdir()
+        (r / 'etc' / '60-clued-runner.conf').write_text('kernel.yama.ptrace_scope = 1\n')
         for k, v in DEFAULTS.items():
             f = pathlib.Path(tool.proc_path(self.p['proc_sys'], k))
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_text(f'{v}\n')
+        self.device(OLD_DEV, 208896)
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def plan(self, raw=CONF):
-        text, _, _ = tool.plan_tuning(self.p, raw, TOOL_SHA, KERNEL)
+        text, _, _, _ = tool.plan_tuning(self.p, raw, TOOL_SHA, KERNEL)
         return tool.plan_sha(text)
 
-    def channel(self, dev, relid, write_avail):
-        d = pathlib.Path(self.p['hv_sock']) / dev / 'channels' / str(relid)
+    def device(self, dev, ring_bytes, queued=0):
+        d = pathlib.Path(self.p['hv_sock']) / dev
         d.mkdir(parents=True)
-        (d / 'write_avail').write_text(f'{write_avail}\n')
+        (d / 'out_read_bytes_avail').write_text(f'{queued}\n')
+        (d / 'out_write_bytes_avail').write_text(f'{ring_bytes - queued}\n')
 
     def test_apply_verify_rollback(self):
         want = self.plan()
@@ -117,27 +156,31 @@ class Host(unittest.TestCase):
         self.assertEqual(pathlib.Path(self.p['target']).read_bytes(), CONF)
         self.assertEqual(tool.read_live(self.p['proc_sys']), tool.parse_conf(CONF))
         saved = json.loads(pathlib.Path(r['saved']).read_text())
-        self.assertEqual((saved['values'], saved['dropInBefore']), (DEFAULTS, 'absent'))
-        self.assertEqual([n for n in os.listdir(os.path.dirname(self.p['target']))], ['60-clued-ci-hvsock-memory.conf'], 'no temporary name left')
+        self.assertEqual((saved['values'], saved['dropInBefore'], saved['devicesBefore']), (DEFAULTS, 'absent', [OLD_DEV]))
+        self.assertEqual(sorted(os.listdir(os.path.dirname(self.p['target']))), ['60-clued-ci-hvsock-memory.conf', '60-clued-runner.conf'], 'no temporary name left')
 
         again = tool.apply_tuning(self.p, CONF, self.plan(), TOOL_SHA, KERNEL, [], 's2')
         self.assertEqual(again['status'], 'HOST_TUNING_ALREADY_APPLIED')
-        self.assertEqual(len(os.listdir(self.p['state'])), 1, 'no second saved file that would make rollback a no-op')
+        self.assertEqual(len(tool.saved_files(self.p['state'])), 1, 'no second saved file that would make rollback a no-op')
 
-        result, ok = tool.verify_tuning(self.p, CONF)
+        result, ok = tool.verify_tuning(self.p, CONF, r['saved'])
         self.assertTrue(ok)
-        self.assertIsNone(result['ringEffective'], 'no channel, no claim either way')
-        self.channel(DEV, 35, 208896)
-        self.assertFalse(tool.verify_tuning(self.p, CONF)[0]['ringEffective'], 'only old-size rings: the relay may set its own buffers')
-        self.channel(DEV, 36, 61440)
-        result, _ = tool.verify_tuning(self.p, CONF)
-        self.assertEqual((result['ringEffective'], result['ringOrderForNewChannels'], result['ringWriteAvail']), (True, 5, {'61440': 1, '208896': 1}))
+        self.assertIsNone(result['ringEffective'], 'no device opened since apply: no claim either way')
+        self.device(NEW_DEV, 61440, queued=4096)  # queued bytes do not change the ring size read
+        result, _ = tool.verify_tuning(self.p, CONF, r['saved'])
+        self.assertEqual((result['ringEffective'], result['ringOrderForNewChannels'], result['newDeviceRingBytes']), (True, 5, {'61440': 1}))
 
         back = tool.rollback_tuning(self.p, r['saved'], 's3')
         self.assertEqual(back['now'], DEFAULTS)
         self.assertFalse(os.path.exists(self.p['target']))
         self.assertEqual(pathlib.Path(back['dropInMovedTo']).read_bytes(), CONF, 'moved aside, not deleted')
-        self.assertFalse(tool.verify_tuning(self.p, CONF)[1])
+        result, ok = tool.verify_tuning(self.p, CONF)
+        self.assertEqual((ok, result['ringEffective']), (False, None))
+
+    def test_a_ring_that_did_not_shrink_is_reported(self):
+        r = tool.apply_tuning(self.p, CONF, self.plan(), TOOL_SHA, KERNEL, [], 's1')
+        self.device(NEW_DEV, 208896)
+        self.assertIs(tool.verify_tuning(self.p, CONF, r['saved'])[0]['ringEffective'], False)
 
     def test_a_different_drop_in_is_never_replaced(self):
         pathlib.Path(self.p['target']).write_bytes(conf(**{'vm.watermark_scale_factor': 100}))
@@ -149,10 +192,20 @@ class Host(unittest.TestCase):
         with self.assertRaises(tool.Refused) as e:
             tool._create_only(self.p['target'], CONF, 0o644)
         self.assertEqual(e.exception.code, 'DROP_IN_APPEARED')
-        self.assertEqual(len(os.listdir(os.path.dirname(self.p['target']))), 1)
+        self.assertEqual(len(os.listdir(os.path.dirname(self.p['target']))), 2)
+
+    def test_a_later_sysctl_file_that_overrides_a_key_is_refused(self):
+        pathlib.Path(self.p['sysctl_dirs'][1], '99-tuning.conf').write_text('vm.watermark_scale_factor = 10\n')
+        text, _, _, overrides = tool.plan_tuning(self.p, CONF, TOOL_SHA, KERNEL)
+        self.assertEqual(overrides, ['99-tuning.conf:vm.watermark_scale_factor'])
+        self.assertIn('bootOverride=99-tuning.conf:vm.watermark_scale_factor', text.splitlines())
+        with self.assertRaises(tool.Refused) as e:
+            tool.apply_tuning(self.p, CONF, tool.plan_sha(text), TOOL_SHA, KERNEL, [], 's1')
+        self.assertEqual(e.exception.code, 'KEY_OVERRIDDEN_AT_BOOT')
+        self.assertFalse(os.path.exists(self.p['target']))
 
     def test_drop_in_present_but_values_not_live(self):
-        # For example after a restart where systemd-sysctl did not run: the values are written, the file is kept.
+        # For example a drop-in placed by hand: the values are written, the file is kept on rollback.
         pathlib.Path(self.p['target']).write_bytes(CONF)
         r = tool.apply_tuning(self.p, CONF, self.plan(), TOOL_SHA, KERNEL, [], 's1')
         self.assertEqual((r['status'], r['dropIn']), ('HOST_TUNING_APPLIED', 'already-present'))
@@ -161,17 +214,49 @@ class Host(unittest.TestCase):
         self.assertTrue(os.path.exists(self.p['target']))
         self.assertEqual(back['now'], DEFAULTS)
 
+    def test_an_apply_that_stopped_half_way_is_rolled_back_first(self):
+        real = tool.write_value
+        def flaky(proc_sys, key, value):
+            if key == 'vm.watermark_scale_factor':
+                raise OSError('write failed')
+            real(proc_sys, key, value)
+        with mock.patch.object(tool, 'write_value', flaky):
+            with self.assertRaises(OSError):
+                tool.apply_tuning(self.p, CONF, self.plan(), TOOL_SHA, KERNEL, [], 's1')
+        self.assertTrue(os.path.exists(self.p['target']))
+        [saved] = tool.saved_files(self.p['state'])
+        with self.assertRaises(tool.Refused) as e:
+            tool.apply_tuning(self.p, CONF, self.plan(), TOOL_SHA, KERNEL, [], 's2')
+        self.assertEqual(e.exception.code, 'PREVIOUS_APPLY_NOT_ROLLED_BACK')
+        self.assertEqual(len(tool.saved_files(self.p['state'])), 1)
+        back = tool.rollback_tuning(self.p, f"{self.p['state']}/{saved}", 's3')
+        self.assertEqual(back['now'], DEFAULTS)
+        self.assertFalse(os.path.exists(self.p['target']))
+        self.assertEqual(tool.apply_tuning(self.p, CONF, self.plan(), TOOL_SHA, KERNEL, [], 's4')['status'], 'HOST_TUNING_APPLIED')
+
+    def test_rollback_leaves_a_replaced_drop_in_alone(self):
+        r = tool.apply_tuning(self.p, CONF, self.plan(), TOOL_SHA, KERNEL, [], 's1')
+        pathlib.Path(self.p['target']).write_bytes(conf(**{'vm.watermark_scale_factor': 300}))
+        with self.assertRaises(tool.Refused) as e:
+            tool.rollback_tuning(self.p, r['saved'], 's2')
+        self.assertEqual(e.exception.code, 'DROP_IN_CHANGED_SINCE_APPLY')
+        self.assertTrue(os.path.exists(self.p['target']))
+        self.assertEqual(tool.read_live(self.p['proc_sys']), tool.parse_conf(CONF), 'nothing written back either')
+
     def test_rollback_reads_only_its_own_saved_files(self):
         os.makedirs(self.p['state'])
+        good = {'contract': tool.SAVED_CONTRACT, 'values': DEFAULTS, 'dropInBefore': 'absent', 'confSha256': tool.sha256(CONF), 'devicesBefore': [OLD_DEV]}
         outside = pathlib.Path(self.tmp.name) / 'previous.json'
-        outside.write_text(json.dumps({'contract': tool.SAVED_CONTRACT, 'values': DEFAULTS, 'dropInBefore': 'absent'}))
+        outside.write_text(json.dumps(good))
         with self.assertRaises(tool.Refused) as e:
             tool.rollback_tuning(self.p, str(outside), 's1')
         self.assertEqual(e.exception.code, 'SAVED_OUTSIDE_STATE')
-        for bad in [{'contract': 'x', 'values': DEFAULTS, 'dropInBefore': 'absent'},
-                    {'contract': tool.SAVED_CONTRACT, 'values': {**DEFAULTS, 'vm.min_free_kbytes': 1}, 'dropInBefore': 'absent'},
-                    {'contract': tool.SAVED_CONTRACT, 'values': {**DEFAULTS, 'vm.watermark_scale_factor': '10'}, 'dropInBefore': 'absent'},
-                    {'contract': tool.SAVED_CONTRACT, 'values': DEFAULTS, 'dropInBefore': 'different'}]:
+        for bad in [{**good, 'contract': 'clued.wsl-host-tuning-previous/1'},
+                    {**good, 'values': {**DEFAULTS, 'vm.min_free_kbytes': 1}},
+                    {**good, 'values': {**DEFAULTS, 'vm.watermark_scale_factor': '10'}},
+                    {**good, 'dropInBefore': 'different'},
+                    {**good, 'confSha256': 'x'},
+                    {**good, 'devicesBefore': ['../x']}]:
             f = pathlib.Path(self.p['state']) / 'previous-bad.json'
             f.write_text(json.dumps(bad))
             with self.assertRaises(tool.Refused):
@@ -179,13 +264,44 @@ class Host(unittest.TestCase):
             f.unlink()
         self.assertEqual(tool.read_live(self.p['proc_sys']), DEFAULTS)
 
-    def test_plan_binds_tool_conf_and_live_values(self):
+    def test_plan_binds_tool_conf_live_values_and_overrides(self):
         base = self.plan()
         self.assertEqual(base, self.plan(), 'deterministic')
         self.assertNotEqual(base, tool.plan_sha(tool.plan_tuning(self.p, CONF, 'b' * 64, KERNEL)[0]))
         self.assertNotEqual(base, self.plan(conf(**{'vm.watermark_scale_factor': 150})))
-        pathlib.Path(tool.proc_path(self.p['proc_sys'], 'vm.watermark_scale_factor')).write_text('20\n')
+        pathlib.Path(tool.proc_path(self.p['proc_sys'], 'vm.watermark_boost_factor')).write_text('15001\n')
         self.assertNotEqual(base, self.plan(), 'a live value changed since review')
+
+    @unittest.skipUnless(hasattr(os, 'O_NOFOLLOW') and hasattr(os, 'symlink'), 'symlink refusal needs O_NOFOLLOW (Linux)')
+    def test_symlinked_drop_in_or_conf_is_refused(self):
+        real = pathlib.Path(self.tmp.name) / 'elsewhere.conf'
+        real.write_bytes(CONF)
+        os.symlink(real, self.p['target'])
+        with self.assertRaises(OSError):
+            tool.read_optional(self.p['target'])
+
+    def test_main_dispatch(self):
+        with self.assertRaises(tool.Refused) as e:
+            tool.main(['bogus'], self.p)
+        self.assertEqual(e.exception.code, 'COMMAND_REFUSED')
+        if not tool.is_root():
+            for cmd in (['apply', '--conf', 'x', '--plan', 'y'], ['rollback', '--saved', 'x']):
+                with self.assertRaises(tool.Refused) as e:
+                    tool.main(cmd, self.p)
+                self.assertEqual(e.exception.code, 'ROOT_REQUIRED')
+        conf_path = pathlib.Path(self.tmp.name) / 'conf'
+        conf_path.write_bytes(CONF)
+        result, ok = tool.main(['verify', '--conf', str(conf_path)], self.p)
+        self.assertEqual((result['status'], ok), ('HOST_TUNING_NOT_IN_EFFECT', False))
+
+    def test_cli_prints_one_json_object_and_exit_code(self):
+        def run(*args):
+            r = subprocess.run([sys.executable, '-I', '-B', str(TOOL), *args], capture_output=True, text=True, timeout=60)
+            return r.returncode, json.loads(r.stdout)
+        self.assertEqual(run('bogus'), (1, {'status': 'REFUSED', 'code': 'COMMAND_REFUSED'}))
+        self.assertEqual(run('verify', '--conf', str(pathlib.Path(self.tmp.name) / 'missing.conf')), (1, {'status': 'REFUSED', 'code': 'FILE_MISSING'}))
+        if not tool.is_root():
+            self.assertEqual(run('apply', '--conf', 'x', '--plan', 'y'), (1, {'status': 'REFUSED', 'code': 'ROOT_REQUIRED'}))
 
 
 if __name__ == '__main__':
