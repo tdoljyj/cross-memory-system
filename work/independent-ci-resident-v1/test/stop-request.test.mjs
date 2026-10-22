@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { STOP_REQUEST_CONTRACT, STOP_REQUEST_MAX_BYTES, classifyStopRequest, stopRequestCheck } from '../src/stop-request.mjs';
 import { serviceLoop } from '../src/service-main.mjs';
@@ -56,12 +57,29 @@ test('the default clock is this boot\'s uptime, read at each look', async t => {
   f = await setup(t, { uptime: undefined });
   await fs.writeFile(f.stopFile, request(uptimeMs() + 2 * HOUR));
   assert.equal(await f.check(), false, 'a request two hours ahead is from an earlier boot');
-  // The clock is read at each look, not once: hours later, a request written a second ago is honoured.
+  // The clock is read at each look, not once: hours later, a request written a second ago is honoured. The first
+  // look also has a request, so a clock read only on first use is caught too.
   let now = NOW;
   f = await setup(t, { uptime: () => now });
-  assert.equal(await f.check(), false);
+  await fs.writeFile(f.stopFile, request(now));
+  assert.equal(await f.check(), true);
+  await fs.rm(f.stopFile);
   now = NOW + 2 * HOUR;
   await fs.writeFile(f.stopFile, request(now - 1000));
+  assert.equal(await f.check(), true);
+});
+
+test('the default clock moves with os.uptime(), not with a value taken once', async t => {
+  // A default read once (at module load or on first use) is hours behind here, so it would drop the second request.
+  const base = os.uptime() * 1000;
+  let now = base + HOUR;
+  t.mock.method(os, 'uptime', () => now / 1000);
+  const f = await setup(t, { uptime: undefined });
+  await fs.writeFile(f.stopFile, request(Math.round(now)));
+  assert.equal(await f.check(), true);
+  await fs.rm(f.stopFile);
+  now = base + 10 * HOUR;
+  await fs.writeFile(f.stopFile, request(Math.round(now) - 1000));
   assert.equal(await f.check(), true);
 });
 
@@ -113,6 +131,20 @@ test('any read error other than "not there" is honoured as a stop', async t => {
     assert.equal(await f.check(), true, code);
     assert.deepEqual(f.receipts, [], code);
   }
+  // The real read: only "not there" means no request.
+  const f = await setup(t);
+  await fs.writeFile(f.stopFile, request(5 * HOUR));
+  const open = t.mock.method(fs, 'open', async () => { throw Object.assign(new Error('EPERM'), { code: 'EPERM' }); });
+  const seen = await f.check();
+  open.mock.restore();
+  assert.equal(seen, true);
+});
+
+test('a failure receipt that fails does not hide the rename error', async t => {
+  const f = await setup(t, { receipts: { append: async type => { if (type.endsWith('-failed')) throw Object.assign(new Error('disk full'), { code: 'ENOSPC' }); } } });
+  await fs.writeFile(f.stopFile, request(5 * HOUR));
+  await fs.rm(f.locks, { recursive: true });
+  await assert.rejects(f.check(), { code: 'STOP_REQUEST_RENAME_FAILED' });
 });
 
 test('a rename that fails is thrown, after a receipt that the request is still in place', async t => {
