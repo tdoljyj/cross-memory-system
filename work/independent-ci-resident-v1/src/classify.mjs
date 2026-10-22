@@ -164,13 +164,19 @@ export function failureRow({ code, stage, phase = 'stage', reason = null, diagno
   return best;
 }
 
-// The release reasons a reservation can be closed with (ledger.mjs#UNEXECUTED_REASONS), and the existing guards that
-// apply to a later trigger of the same batch key (v0.6 §7 minor 6): the cool-down (policy.limits.unexecutedCooldownMs,
-// 10 minutes) and the daily cap (policy.limits.unexecutedMaxPer24h) count every release of the key, whatever its reason.
+// The release reasons a reservation can be closed with (ledger.mjs#UNEXECUTED_REASONS), and which guards apply to the
+// same head afterwards (v0.6 §7 minor 6; phase 2, design v0.5 §4.4, §4.5):
+//   cooldown: the 10-minute cool-down of the batch key (policy.limits.unexecutedCooldownMs) before it is reserved again;
+//   cap: the budget that bounds its retries now that the run queue retries on its own (queue.mjs). Phase 1's daily cap
+//     per key (unexecutedMaxPer24h) is gone with policy /4: a wait (failure-table class waiting) is bounded by the
+//     waits' own budget (waitingRetriesPer24h a day, every PR together), any other release by the head's release cap
+//     (releasesPerHeadPer24h counted releases in 24 hours, then STOPPED; an environment release while the breaker is
+//     not closed is not counted), a supersession by nothing (nothing about the PR was decided).
 export const UNEXECUTED_REASON_RULES = Object.freeze({
-  NOT_ADMITTED: Object.freeze({ cooldown: true, dailyCap: true, evidence: 'stage-1 outcome safeToRerun' }),
-  BUNDLE_UNAVAILABLE: Object.freeze({ cooldown: true, dailyCap: true, evidence: 'bundle failed before stage 1' }),
-  BROKER_NOT_LAUNCHED: Object.freeze({ cooldown: true, dailyCap: true, evidence: 'broker refused before any launch, original restored' }),
+  NOT_ADMITTED: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: 'waitingRetriesPer24h', other: 'releasesPerHeadPer24h' }), evidence: 'stage-1 outcome safeToRerun' }),
+  BUNDLE_UNAVAILABLE: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: null, other: 'releasesPerHeadPer24h' }), evidence: 'bundle failed before stage 1' }),
+  BROKER_NOT_LAUNCHED: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: null, other: 'releasesPerHeadPer24h' }), evidence: 'broker refused before any launch, original restored' }),
+  SUPERSEDED: Object.freeze({ cooldown: false, cap: Object.freeze({ waiting: null, other: null }), evidence: 'a newer commit of the PR arrived before stage 1' }),
 });
 
 // The failure decision of the executor (phase 1). release: the unexecuted reason to close the reservation with, or

@@ -140,7 +140,7 @@ test('the executor records a head before its first publication stage; a later So
   assert.deepEqual([rec.stage, rec.basis, rec.sourceManifestSha256], [3, 'before-stage-3', SOURCE]);
   // the same state under a new Source (in place): the ledger's head key is new, the executed head is not
   const g = await executorFixture(t, { root: f.root, policy: rawPolicy({ sourceManifestSha256: 'd'.repeat(64) }), integrity: { ok: true, sourceManifestSha256: 'd'.repeat(64), residentManifestSha256: 'b'.repeat(64) } });
-  await g.drop(triggerBytes());
+  await g.drop(triggerBytes({ pr: 990 }));
   assert.equal((await g.exec.tick()).reason, 'HEAD_ALREADY_PUBLISHED_NO_RETRY');
   assert.equal(derived(g.engine), 0);
 });

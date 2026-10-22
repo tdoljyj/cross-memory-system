@@ -176,7 +176,7 @@ test('the PR page text per head: running stage, queue position, outcome, HALT, s
   const s = fn => boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 } }); fn(b); }, now);
   assert.match(describe({ pull: pull(), status: s(b => b.setCurrent({ key: 'a'.repeat(64), pr: 7, headSha: H(7), baseSha: MAIN, attempt: 1, stage: 4 })), now }).description, /第 4 段（trivy 扫描）/);
   const queued = describe({ pull: pull(), status: s(b => b.setPending([{ pr: 6, headSha: H(6), baseSha: MAIN }, { pr: 7, headSha: H(7), baseSha: MAIN, deferred: 'DAILY_BATCH_LIMIT' }])), now });
-  assert.deepEqual([queued.state, queued.description], ['pending', '排队第 2 位：今日执行批次额度已满']);
+  assert.deepEqual([queued.state, queued.description], ['pending', '排队第 2 位：今日执行批次额度已满，明天继续']);
   assert.equal(describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'COMPLETED' })), now }).state, 'success');
   assert.equal(describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'FAILED_CLEAN', code: 'STAGE_CHILD_REFUSED', retry: 'new-commit' })), now }).state, 'failure');
   assert.equal(describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'FAILED_CLEAN', code: 'GITHUB_TRANSIENT_UNAVAILABLE', retry: 'attempt2' })), now }).state, 'pending');
@@ -262,4 +262,39 @@ test('the reporter writes a status only when it changes, never over a required c
   assert.deepEqual(validateStatusConfig({ notifications: false }), { prStatus: true, notifications: false });
   assert.throws(() => validateStatusConfig({ other: true }), { code: 'COMPANION_STATUS_CONFIG_INVALID' });
   assert.ok((await fs.readdir(root)).includes('store.json'));
+});
+
+test('phase 2: the PR page says where the run queue has the head: its place and estimated start, a wait, a back-off, a stop, the breaker', () => {
+  const now = Date.parse('2026-10-22T09:00:00Z');
+  const pull = (o = {}) => ({ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0, ...o });
+  const s = fn => boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 } }); fn(b); }, now);
+  const row = o => ({ pr: 7, headSha: H(7), baseSha: MAIN, state: 'QUEUED', position: 2, eta: now + 22 * 60_000, ...o });
+  assert.equal(describe({ pull: pull(), status: s(b => b.setPending([row()])), now }).description, '排队第 2 位，预计 09:22Z 开始');
+  assert.equal(describe({ pull: pull(), status: s(b => b.setPending([row({ state: 'WAITING', position: null, reason: 'OWNER_REVIEW_REQUIRED', nextAt: now + 40 * 60_000 })])), now }).description,
+    '等 Owner 批准受保护改动：约 09:40Z 自动重试，批准或修正后编辑 PR 可提前');
+  const back = describe({ pull: pull(), status: s(b => b.setPending([row({ state: 'BACKOFF', position: null, reason: 'CLAIM_NOT_CURRENT', nextAt: now + 10 * 60_000, level: 1 })])), now });
+  assert.deepEqual([back.state, back.description], ['pending', '未准入或未执行（CLAIM_NOT_CURRENT）：约 09:10Z 自动重试（第 1 次），修正后编辑 PR 可提前']);
+  assert.equal(describe({ pull: pull(), status: s(b => b.setPending([row({ state: 'STOPPED', position: null, reason: 'CLAIM_NOT_CURRENT', stopKind: 'release-cap' })])), now }).state, 'failure');
+  assert.match(describe({ pull: pull(), status: s(b => b.setPending([row({ state: 'STOPPED', position: null, reason: 'PROTECTED_CHANGE_NOT_UP_TO_DATE', stopKind: 'burned' })])), now }).description, /请推新提交/);
+  assert.match(describe({ pull: pull(), status: s(b => { b.setPending([row()]); b.update({ breaker: { state: 'open', nextTrialAt: now + 30 * 60_000 } }); }), now }).description, /熔断中，约 09:30Z 试跑/);
+  assert.match(describe({ pull: pull(), status: s(b => { b.setPending([row()]); b.update({ halt: { code: 'X_Y', at: '2026-10-22T08:00:00Z' } }); }), now }).description, /停机/);
+  // a supersession before stage 1 leaves what was written for the head
+  assert.equal(describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'NOT_EXECUTED', code: 'BATCH_SUPERSEDED' })), now }), null);
+});
+
+test('phase 2: the executor\'s notices become one notification each; a stopped or done row never counts as waiting', () => {
+  const now = Date.parse('2026-10-22T09:00:00Z');
+  const s = boardStatus(b => {
+    b.setPending([{ pr: 7, headSha: H(7), baseSha: MAIN, state: 'STOPPED', firstAt: now - 3 * 3_600_000 }, { pr: 8, headSha: H(8), baseSha: MAIN, state: 'WAITING', reason: 'OWNER_REVIEW_REQUIRED', firstAt: now - 2 * 3_600_000 }]);
+    b.update({ notices: [{ key: `poke:7:${H(7)}`, kind: 'new-trigger', pr: 7, headSha: H(7), code: null, at: now },
+      { key: `stopped:8:${H(8)}:CLAIM_NOT_CURRENT`, kind: 'stopped', pr: 8, headSha: H(8), code: 'CLAIM_NOT_CURRENT', at: now },
+      { key: 'waiting-budget:2026-10-22', kind: 'waiting-budget', pr: null, headSha: null, code: 'WAITING_BUDGET_EXHAUSTED', at: now },
+      { key: 'batch-limit:2026-10-22', kind: 'batch-limit', pr: null, headSha: null, code: 'DAILY_BATCH_LIMIT', at: now },
+      { key: 'breaker:1792658000000', kind: 'breaker-open', pr: null, headSha: null, code: 'STAGE_PACKAGE_REFUSED', at: now, until: now + 30 * 60_000 },
+      { key: 'x', kind: 'not-a-kind', at: now }] });
+  }, now);
+  const e = events({ status: s, now });
+  assert.deepEqual(e.map(x => x.key), [`wait:8:${H(8)}:OWNER_REVIEW_REQUIRED`, `notice:poke:7:${H(7)}`, `notice:stopped:8:${H(8)}:CLAIM_NOT_CURRENT`,
+    'notice:waiting-budget:2026-10-22', 'notice:batch-limit:2026-10-22', 'notice:breaker:1792658000000']);
+  assert.match(e.at(-1).body, /约 09:30Z 试跑一批/);
 });

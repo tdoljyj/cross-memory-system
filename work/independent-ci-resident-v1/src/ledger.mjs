@@ -27,6 +27,15 @@
 // Owner abort (DESIGN §6.5): an accepted abort writes 80-owner-abort (create-only) before anything is stopped. An
 // entry with it is never a resumable wait, so a service that dies in the middle of an abort leaves a crash scene
 // that recovery closes FAILED_UNKNOWN (OWNER_ABORT_INTERRUPTED) and HALTs, exactly like any other open entry.
+//
+// Phase 2, step 1 (resident quota redesign, design v0.5 §4.4-§4.7, Task 6451a55d): 00-reserved.json also names how the
+// run queue picked the subject (`origin`, queue.mjs#ORIGINS; a record without one was a plain first try), and usage()
+// derives every daily budget of the queue from the ledger itself, so a lost queue file never resets a budget: the
+// executions (10-started heads, per PR too), the evaluations (reservations that did not execute, without the waits'
+// own budget, the environment releases and the supersessions), the waiting retries, the new-trigger re-evaluations per
+// (PR, commit), and the counted releases per head (waits never count; an environment release while the breaker was not
+// closed does not either). A new release reason, SUPERSEDED, closes a reservation whose PR got a newer commit before
+// stage 1 (nothing of it ran).
 import fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -39,7 +48,10 @@ export const OUTCOMES = Object.freeze(['COMPLETED', 'FAILED_CLEAN', 'FAILED_UNKN
 // Why a reservation was closed before 10-started (classify.mjs#UNEXECUTED_REASON_RULES says, per reason, that the
 // cool-down and the daily cap of a later trigger apply): Native refused on a safe-to-re-run stage 1 outcome, the bundle
 // failed, or the broker refused stage 1 before any launch with the original restored (resident quota redesign phase 1).
-export const UNEXECUTED_REASONS = Object.freeze(['NOT_ADMITTED', 'BUNDLE_UNAVAILABLE', 'BROKER_NOT_LAUNCHED']);
+export const UNEXECUTED_REASONS = Object.freeze(['NOT_ADMITTED', 'BUNDLE_UNAVAILABLE', 'BROKER_NOT_LAUNCHED', 'SUPERSEDED']);
+// Releases that never count as an evaluation nor towards a head's release cap (nothing about the PR was decided).
+export const UNCOUNTED_RELEASES = Object.freeze(['BUNDLE_UNAVAILABLE', 'BROKER_NOT_LAUNCHED', 'SUPERSEDED']);
+export const RESERVATION_ORIGINS = Object.freeze(['queued', 'backoff-retry', 'waiting-retry', 'new-trigger', 'restored', 'attempt2']);
 // The records of an open entry, oldest first; the newest one present is what an Owner abort names by digest.
 export const OPEN_RECORDS = Object.freeze(['00-reserved.json', '10-started.json', '15-relay-wait.json', '20-plan-intent.json', '25-plan.json']);
 export const OWNER_ABORT_RECORD = '80-owner-abort.json';
@@ -242,8 +254,9 @@ export class Ledger {
     return exists(path.join(this.heads, `${hk}.json`));
   }
 
-  // Reservation decides "this subject runs at most once at a time".
-  async reserve(key, subject) {
+  // Reservation decides "this subject runs at most once at a time". origin: how the run queue picked it (usage()).
+  async reserve(key, subject, { origin = 'queued' } = {}) {
+    check(RESERVATION_ORIGINS.includes(origin), 'RESERVATION_ORIGIN_INVALID');
     const dir = this.dir(key);
     try {
       await fs.mkdir(dir);
@@ -251,7 +264,7 @@ export class Ledger {
       if (error.code === 'EEXIST') fail('BATCH_KEY_ALREADY_USED_NO_RETRY', key);
       throw error;
     }
-    await writeNew(path.join(dir, '00-reserved.json'), { key, subject, headKey: headKey(subject), reservedAt: isoNow(this.clock), automaticRetryAllowed: false });
+    await writeNew(path.join(dir, '00-reserved.json'), { key, subject, headKey: headKey(subject), reservedAt: isoNow(this.clock), automaticRetryAllowed: false, origin });
   }
 
   // Written right after stage 1 admitted and before any Linux or scanner effect. The head record is
@@ -294,6 +307,23 @@ export class Ledger {
     const archived = path.join(this.unexecuted, `${key}-${stamp(this.clock)}-${nonce()}`);
     await renameToNew(dir, archived);
     return archived;
+  }
+
+  // The releases of one batch key since sinceMs with their reason (classify.mjs#UNEXECUTED_REASON_RULES says which ones
+  // the cool-down applies to); an unreadable one counts as a release just now.
+  async unexecutedRecords(key, sinceMs) {
+    const out = [];
+    for (const name of (await fs.readdir(this.unexecuted)).sort()) {
+      if (!name.startsWith(`${key}-`)) continue;
+      try {
+        const { value } = await readJson(path.join(this.unexecuted, name, '90-terminal.json'));
+        if (Date.parse(value.at) >= sinceMs) out.push({ at: Date.parse(value.at), reason: UNEXECUTED_REASONS.includes(value.reason) ? value.reason : null });
+      } catch (error) {
+        if (!contentError(error)) throw error;
+        out.push({ at: this.clock(), reason: null });
+      }
+    }
+    return out;
   }
 
   async unexecutedSince(key, sinceMs) {
@@ -349,6 +379,54 @@ export class Ledger {
       } catch (error) { if (!contentError(error)) throw error; n += 1; }
     }
     return n;
+  }
+
+  // The run queue's daily budgets for the window since sinceMs, from the ledger alone (one pass; see the header).
+  // A record that cannot be read counts against every budget it might belong to (never a wedge, never a free pass).
+  async usage(sinceMs) {
+    const u = { started: 0, startedByPr: new Map(), evaluations: 0, waitingRetries: 0, reevaluations: new Map(), releasesByHead: new Map() };
+    const bump = (map, k) => map.set(k, (map.get(k) ?? 0) + 1);
+    // A file or entry last written before the window (with an hour's margin) cannot hold a record of it: its recorded
+    // times are older still. Only a prefilter: every record it lets through is decided by its own recorded time.
+    const before = async p => { try { return (await fs.stat(p)).mtimeMs < sinceMs - 3_600_000; } catch { return false; } };
+    for (const name of await fs.readdir(this.heads)) {
+      if (await before(path.join(this.heads, name))) continue;
+      try {
+        const v = (await readJson(path.join(this.heads, name))).value;
+        if (Date.parse(v.startedAt) >= sinceMs) { u.started += 1; if (Number.isSafeInteger(v.subject?.pr)) bump(u.startedByPr, v.subject.pr); }
+      } catch (error) { if (!contentError(error)) throw error; u.started += 1; }
+    }
+    // One reservation: its origin, whether it executed, and how it ended (a release reason and the failure-table facts).
+    const count = ({ reserved, started, reason, facts }) => {
+      const origin = RESERVATION_ORIGINS.includes(reserved.origin) ? reserved.origin : 'queued';
+      const s = reserved.subject ?? {};
+      if (origin === 'waiting-retry') u.waitingRetries += 1;
+      if (origin === 'new-trigger') bump(u.reevaluations, `${s.pr}:${s.headSha}`);
+      const environment = ['environment', 'transient'].includes(facts?.class);
+      if (!started && origin !== 'waiting-retry' && !UNCOUNTED_RELEASES.includes(reason) && !environment) u.evaluations += 1;
+      if (reason && reason !== 'SUPERSEDED' && facts?.class !== 'waiting' && !(environment && facts?.breakerState && facts.breakerState !== 'closed') && HEX40.test(s.headSha ?? '')) bump(u.releasesByHead, s.headSha);
+    };
+    const read = async file => (await exists(file)) ? (await readJson(file)).value : null;
+    for (const key of await this.keys()) {
+      const dir = path.join(this.batches, key);
+      if (await before(dir)) continue;
+      try {
+        const reserved = await read(path.join(dir, '00-reserved.json'));
+        if (!reserved || !(Date.parse(reserved.reservedAt) >= sinceMs)) continue;
+        const terminal = await read(path.join(dir, '90-terminal.json'));
+        count({ reserved, started: await exists(path.join(dir, '10-started.json')), reason: null, facts: terminal?.facts ?? null });
+      } catch (error) { if (!contentError(error)) throw error; u.evaluations += 1; }
+    }
+    for (const name of await fs.readdir(this.unexecuted)) {
+      if (await before(path.join(this.unexecuted, name))) continue;
+      try {
+        const reserved = (await readJson(path.join(this.unexecuted, name, '00-reserved.json'))).value;
+        if (!(Date.parse(reserved.reservedAt) >= sinceMs)) continue;
+        const terminal = (await readJson(path.join(this.unexecuted, name, '90-terminal.json'))).value;
+        count({ reserved, started: false, reason: UNEXECUTED_REASONS.includes(terminal.reason) ? terminal.reason : 'NOT_ADMITTED', facts: terminal.facts ?? null });
+      } catch (error) { if (!contentError(error)) throw error; u.evaluations += 1; }
+    }
+    return u;
   }
 
   // ---- the one automatic attempt 2 (attempts.mjs) ----

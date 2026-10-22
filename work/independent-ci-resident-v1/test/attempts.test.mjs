@@ -60,7 +60,7 @@ test('a push between bundle and scan (stage 2) runs attempt 2 once after the del
   f.advance(600_000);
   assert.equal((await f.exec.tick()).state, 'IDLE', 'never an attempt 3');
   // a new trigger for the head is still refused (attempt 1's head is burned)
-  await f.drop(triggerBytes());
+  await f.drop(triggerBytes({ pr: 990 }));
   assert.equal((await f.exec.tick()).reason, 'HEAD_ALREADY_EXECUTED_NO_RETRY');
 });
 

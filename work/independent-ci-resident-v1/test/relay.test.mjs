@@ -71,7 +71,7 @@ test('minutes available: 1 -> R (gitleaks, trivy relayed) -> placement locally -
   const s = await f.ledger.state(r.key);
   assert.deepEqual(s.plan.relayed.map(x => x.role), ['gitleaks', 'trivy']);
   assert.equal(await f.ledger.headBurned(headKey(subject())), true, 'a batch that relayed its scanners still burns its head');
-  await f.drop(triggerBytes());
+  await f.drop(triggerBytes({ pr: 990 }));
   assert.equal((await f.exec.tick()).reason, 'HEAD_ALREADY_EXECUTED_NO_RETRY');
 });
 
@@ -287,7 +287,7 @@ test('attempt 2 never follows a relay; with stage R relaying nothing, a stage-2 
   g.advance(600_000);
   const again = await g.exec.tick();
   assert.deepEqual([again.state, again.key], ['COMPLETED', batchKey(subject({ attempt: 2 }))]);
-  await g.drop(triggerBytes());
+  await g.drop(triggerBytes({ pr: 990 }));
   assert.ok(['HEAD_ALREADY_EXECUTED_NO_RETRY', 'HEAD_ALREADY_PUBLISHED_NO_RETRY'].includes((await g.exec.tick()).reason));
   // a clean failure of stage R itself is final for the head
   const refused = fakeEngine({ relay: () => ({ ok: false, code: 'RELAY_STAGE_REFUSED', proof: WINDOWS_CLEAN }) });

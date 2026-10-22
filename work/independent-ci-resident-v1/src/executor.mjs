@@ -44,10 +44,24 @@
 //     failure, and the machine-readable failure table (classify.mjs#decideFailure) decides release or burn: a stage-1
 //     failure is released only on the outcome's own safeToRerun flag or the broker's no-launch answer;
 //   - a status board (status.mjs) shows the state, the batch in flight, the pending triggers and recent outcomes.
+//
+// Resident quota redesign phase 2, step 1 (design v0.5 §4.1-§4.7, DESIGN §17, Task 6451a55d):
+//   - triggers are read into the executor's own run queue (queue.mjs, one row per PR, its own arrival sequence,
+//     supersession, new triggers) and the queue decides which row runs next: a due attempt 2, then due waits and poked
+//     rows, then first come, first served; a row that is only deferred, or ignored, never blocks the rows behind it;
+//   - a release goes to the tail and is retried on the row's own back-off; a wait backs off and has its own budget; a
+//     head released too often stops; every daily budget is derived from the ledger (ledger.mjs#usage);
+//   - the circuit breaker (breaker.mjs) is fed one event per batch end and asked before every start;
+//   - a batch whose PR got a newer commit is released before stage 1 (SUPERSEDED, nothing burned), and after stage 1
+//     ended at a safe point outside the Linux preparation only when a live read of the PR confirms it
+//     (SUPERSEDED_AT_SAFE_POINT: the Owner abort's quiescence and rename-only archive, the head burned, never an
+//     attempt 2). When stage 1 or the bundle proves the batch head is no longer the PR's head, one live read may restore
+//     a superseded, unburned commit as the PR's current one. A live read only ever stops or re-queues.
 import path from 'node:path';
 import { Ledger, batchKey, headKey } from './ledger.mjs';
-import { ABORTABLE_IN_FLIGHT, OWNER_ABORTED, abortStageEndingClean, archiveReason, decideFailure, proofComplete } from './classify.mjs';
-import { coalesce, parseTrigger } from './trigger.mjs';
+import { ABORTABLE_IN_FLIGHT, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, proofComplete } from './classify.mjs';
+import { parseTrigger } from './trigger.mjs';
+import { POSITIONS, breakerGate, breakerOf, breakerRecord, breakerView, positionOf } from './breaker.mjs';
 import { batchBudgetMs } from './policy.mjs';
 import { attempt2Decision, attempt2Subject } from './attempts.mjs';
 import { decide, parseHint, HEAVY_ROLES, RELAY_ROLES } from './hosted-wait.mjs';
@@ -101,6 +115,21 @@ export const PUBLICATION_STAGES = Object.freeze([3, 5, 7, 8, RELAY_STAGE]);
 export const BACKFILL_PENDING_MAX_MS = 30 * 60_000;
 const NO_STATUS = Object.freeze({ update() {}, setState() {}, setCurrent() {}, outcome() {}, setPending() {} });
 
+// Phase 2, step 1 (DESIGN §17).
+export const SUPERSEDED_AT_SAFE_POINT = 'SUPERSEDED_AT_SAFE_POINT';
+export const SUPERSEDED_ARCHIVE_REASON = 'superseded';
+// The status code of a reservation released for a newer commit before stage 1 (release reason SUPERSEDED).
+export const BATCH_SUPERSEDED = 'BATCH_SUPERSEDED';
+// What one batch usually takes (design v0.5 §1: 17.5 to 24 minutes): only the status board's estimate.
+export const ETA_BATCH_MS = 22 * 60_000;
+// Queue rows looked at in one tick (an ignored or deferred row does not end the tick; this bounds the work).
+export const ROWS_PER_TICK = 16;
+// Endings after which the batch head may no longer be the PR's head (falsification, queue.mjs#restore): stage 1 saw the
+// PR changed or closed, the refs moved since the bundle, or the bundle failed.
+export const FALSIFYING_CODES = Object.freeze(['PR_NOT_OPEN_OR_CHANGED', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'BUNDLE_UNAVAILABLE']);
+export const FALSIFYING_REASONS = Object.freeze(['pr_subject_changed', 'pr_files_changed']);
+const dayKey = ms => new Date(ms).toISOString().slice(0, 10);
+
 // The stage-terminal receipt's summary of a stage outcome: codes and flags only.
 const outcomeSummary = r => {
   const o = r?.outcome;
@@ -111,13 +140,14 @@ const outcomeSummary = r => {
 };
 
 export class ResidentExecutor {
-  // ports: { policy, ledger, receipts, inbox, requests, owner, engine, companion, sourceIntegrity, clock, executedHeads }
+  // ports: { policy, ledger, receipts, inbox, requests, owner, engine, companion, sourceIntegrity, clock, executedHeads, queue }
   //   owner: an Inbox over the admin-only owner directory (only Administrators can create files there).
   //   executedHeads: executed-heads.mjs#ExecutedHeads (Source-independent "may have published" heads and the backfill).
   //   sleep (optional): the wait between abort polls and quiescence re-checks.
   //   status (optional): status.mjs#StatusBoard (a view; nothing the executor decides ever reads it).
   constructor(ports) {
-    for (const k of ['policy', 'ledger', 'receipts', 'inbox', 'requests', 'owner', 'engine', 'companion', 'sourceIntegrity', 'clock', 'executedHeads']) check(ports[k], 'EXECUTOR_PORT_MISSING', k);
+    //   queue: queue.mjs#RunQueue (the run queue and the breaker's state; a view the ledger always overrules).
+    for (const k of ['policy', 'ledger', 'receipts', 'inbox', 'requests', 'owner', 'engine', 'companion', 'sourceIntegrity', 'clock', 'executedHeads', 'queue']) check(ports[k], 'EXECUTOR_PORT_MISSING', k);
     Object.assign(this, ports);
     this.sleep ??= ms => new Promise(r => setTimeout(r, ms));
     this.status ??= NO_STATUS;
@@ -468,7 +498,7 @@ export class ResidentExecutor {
         batchId: batch?.batchId ?? null, windows: windows.directory, linux: linux.directory, requestSha256: request.requestSha256 });
       await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: OWNER_ABORTED, safePoint });
       try { this.reportOutcome((await this.ledger.state(key)).reserved?.subject, 'FAILED_CLEAN', { code: OWNER_ABORTED, key }); } catch { /* advisory */ }
-      return { state: 'FAILED_CLEAN', key, failureCode: OWNER_ABORTED, safePoint };
+      return { state: 'FAILED_CLEAN', key, failureCode: OWNER_ABORTED, safePoint, settle: { kind: 'burned', code: OWNER_ABORTED, klass: 'abort', breaker: 'neutral', pos: null } };
     } catch (error) {
       return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch, context);
     }
@@ -508,6 +538,7 @@ export class ResidentExecutor {
         s.update({ halt: halt ? { code: CODE.test(halt.value?.code ?? '') ? halt.value.code : 'HALT_RECORD_UNREADABLE', at: halt.value?.at ?? null } : null, paused: !!paused });
         if (!['WAITING'].includes(result?.state)) s.setCurrent(null);
       });
+      this.reportQueue();
     } catch { /* advisory */ }
   }
 
@@ -548,6 +579,9 @@ export class ResidentExecutor {
       try { await this.ledger.halt('RECOVERY_UNCONFIRMED', {}); } catch { /* reported by the loop */ }
     }
     await this.takeOwnerRequests();
+    // The run queue follows the ledger for any row a crash or an earlier tick left marked running (a view: also while
+    // halted, so the status shows what the ledger says).
+    try { await this.reconcileQueue(); } catch { /* the next tick */ }
     // An Owner abort whose acceptance failed half-way would leave an open entry that is no resumable wait: nothing else
     // runs in this tick, and the next tick's recovery closes it FAILED_UNKNOWN (independent review of v0.8, M1).
     const stuck = recovered ? await this.ledger.crashed() : [];
@@ -567,71 +601,126 @@ export class ResidentExecutor {
     if (backfill) return backfill;
     await this.takePauseRequests();
     if (await this.ledger.paused()) return { state: 'PAUSED' };
+    // Triggers go into the run queue first (phase 2, step 1); the queue then follows the ledger for any row a crash left
+    // marked running.
+    await this.intake();
     // A batch waiting for hosted signals goes first (serial: nothing else starts while it waits). It is
     // re-evaluated only here, after recovery, the Owner's requests, HALT and PAUSE.
     const waiting = await this.ledger.waiting();
     if (waiting) return this.resumeWaiting(waiting);
-    // A due attempt 2 goes before new triggers (it is the same head, already reserved once). One that is only
-    // deferred never blocks other PRs' triggers (PR-A review MINOR 9).
-    let deferred = null;
-    for (const due of (await this.ledger.pendingAttempts2()).filter(a => a.notBefore <= this.clock())) {
-      const r = await this.runAttempt2(due);
-      if (r.state !== 'DEFERRED') return r;
-      deferred ??= r;
-    }
-    const candidates = await this.nextCandidates();
-    // The status board's pending list: the triggers in the order they run, with the reason each waits (if known).
-    const pending = candidates.map(c => ({ pr: c.trigger.pr, headSha: c.trigger.headSha, baseSha: c.trigger.baseSha, since: c.since ?? null, deferred: null }));
-    const show = () => this.report(s => s.setPending(pending.filter(p => !p.done)));
-    show();
-    if (candidates.length === 0) return deferred ?? { state: 'IDLE' };
-    let last;
-    for (const [i, c] of candidates.entries()) {
-      last = await this.runCandidate(c);
-      if (last.state === 'DEFERRED') pending[i].deferred = last.reason; else pending[i].done = true;
-      // A head waiting out its own cool-down must not block the PRs behind it.
-      if (!(last.state === 'DEFERRED' && last.reason === 'UNEXECUTED_COOLDOWN')) {
-        if (last.state === 'DEFERRED') for (const p of pending.slice(i + 1)) p.deferred ??= last.reason;
-        show();
-        return last;
-      }
-    }
-    show();
-    return last;
+    return this.schedule();
   }
 
-  async nextCandidates() {
-    const parsed = [];
+  // ---- the run queue (phase 2, step 1; queue.mjs) ----
+
+  // A failure to write the queue never changes what a batch did: the queue is a view the ledger overrules.
+  async persistQueue() { try { await this.queue.save(); } catch { /* the next write carries the change */ } }
+
+  // The status board's queue, breaker and notices (a view; nothing the executor decides reads it).
+  reportQueue() {
+    this.report(s => {
+      const b = breakerOf(this.queue.breaker);
+      s.update({ queue: { generation: this.queue.generation, live: this.queue.live().length, depth: this.policy.limits.queueDepth }, breaker: breakerView(b),
+        notices: this.queue.notices.slice(0, 50) });
+      s.setPending(this.queue.view(this.clock(), { etaBatchMs: ETA_BATCH_MS }));
+    });
+  }
+
+  // Every trigger in the inbox (bounded per tick) is read into the queue, which numbers it on arrival and decides what
+  // it changes (queue.mjs#offer). The queue is written before the triggers are consumed: a crash in between only reads
+  // them again, and a second reading of the same trigger changes nothing.
+  async intake() {
+    const now = this.clock();
+    const done = [];
     for (const entry of await this.inbox.read(this.policy.limits.inboxMaxFiles, 1024)) {
       const bytesSha256 = entry.bytes ? sha256(entry.bytes) : null;
-      if (!entry.bytes) {
-        await this.inbox.dispose(entry.name, 'rejected');
-        await this.receipt('trigger-rejected', { failureCode: entry.refused, bytesSha256 });
+      if (!entry.bytes) { done.push({ name: entry.name, disposition: 'rejected', receipt: ['trigger-rejected', { failureCode: entry.refused, bytesSha256 }] }); continue; }
+      let t;
+      try { t = parseTrigger(entry.bytes, this.policy); } catch (error) {
+        done.push({ name: entry.name, disposition: 'rejected', receipt: ['trigger-rejected', { failureCode: codeOf(error), bytesSha256 }] });
         continue;
       }
-      try {
-        parsed.push({ name: entry.name, bytesSha256, trigger: parseTrigger(entry.bytes, this.policy) });
-      } catch (error) {
-        await this.inbox.dispose(entry.name, 'rejected');
-        await this.receipt('trigger-rejected', { failureCode: codeOf(error), bytesSha256 });
-      }
+      const r = this.queue.offer(t, now, { depth: this.policy.limits.queueDepth, cooldownMs: this.policy.limits.unexecutedCooldownMs });
+      if (r.action === 'refused') { done.push({ name: entry.name, disposition: 'rejected', receipt: ['trigger-refused', { failureCode: r.code, pr: t.pr, headSha: t.headSha, bytesSha256 }] }); continue; }
+      if (r.action === 'new-trigger') this.queue.notice({ key: `poke:${t.pr}:${t.headSha}`, kind: 'new-trigger', pr: t.pr, headSha: t.headSha, code: null });
+      done.push({ name: entry.name, disposition: r.action === 'seen' ? 'ignored' : 'processed',
+        receipt: ['trigger-queued', { pr: t.pr, headSha: t.headSha, baseSha: t.baseSha, action: r.action, seq: r.seq ?? null, bytesSha256 }] });
     }
-    // Oldest first; duplicates of one (pr, head, base) are handled together.
-    const all = coalesce(parsed, this.policy.limits.inboxMaxFiles);
-    for (const c of all) {
-      c.bytesSha256 = parsed.filter(p => c.names.includes(p.name)).map(p => p.bytesSha256);
-      // When the first trigger of it arrived (the inbox name's time prefix; display only, never a decision).
-      const at = Math.min(...c.names.map(n => Number(/^(\d{13})-/.exec(n)?.[1] ?? NaN)).filter(Number.isFinite));
-      c.since = Number.isFinite(at) ? new Date(at).toISOString() : null;
+    if (this.queue.rebuilt && !this.queueRebuiltReported) {
+      await this.receipt('queue-rebuilt', { keptAs: this.queue.rebuilt.keptAs, generation: this.queue.generation });
+      this.queueRebuiltReported = true;
     }
-    return all;
+    if (done.length === 0) return;
+    await this.persistQueue();
+    for (const d of done) {
+      await this.inbox.dispose(d.name, d.disposition);
+      await this.receipt(...d.receipt);
+    }
   }
 
-  async disposeAll(names, disposition) { for (const n of names) await this.inbox.dispose(n, disposition); }
+  // A row the queue still shows running, while no batch of this executor runs (a tick start), follows the ledger: a
+  // resumable wait stays running, an ended batch settles, a reservation that is gone (released) is queued again.
+  async reconcileQueue() {
+    let changed = false;
+    for (const row of this.queue.data.rows.filter(r => r.running)) {
+      const { headSha, key } = row.running;
+      let s;
+      try { s = await this.ledger.state(key); } catch { continue; }
+      if (['RESERVED', 'STARTED', 'INCOMPLETE', 'UNREADABLE'].includes(s.state)) continue;
+      const kind = s.state === 'TERMINAL' ? (s.outcome === 'COMPLETED' ? 'completed' : 'burned') : 'released';
+      this.queue.settle(row.pr, headSha, { kind, code: s.terminal?.facts?.failureCode ?? null, klass: s.terminal?.facts?.class ?? null, reason: 'RECONCILED' }, this.clock());
+      changed = true;
+    }
+    if (changed) await this.persistQueue();
+  }
+
+  // One scheduling pass (design v0.5 §4.3; v0.6 §7 minor 4): a due attempt 2 first, then the queue's due waits and
+  // poked rows, then first come, first served. A row that is only deferred for itself, or ignored, never blocks the
+  // rows behind it; a global deferral (the daily limits, the companion, the breaker) ends the pass.
+  async schedule() {
+    const now = this.clock();
+    this.queue.compact(now);
+    const b = breakerOf(this.queue.breaker);
+    this.queue.breaker = b;
+    const attempts = (await this.ledger.pendingAttempts2()).filter(a => a.notBefore <= now);
+    const rows = this.queue.candidates(now);
+    this.reportQueue();
+    if (attempts.length === 0 && rows.length === 0) { await this.persistQueue(); return { state: 'IDLE' }; }
+    const gate = breakerGate(b, now);
+    if (!gate.allow) {
+      await this.persistQueue();
+      this.reportQueue();
+      return { state: 'DEFERRED', reason: 'BREAKER_OPEN', until: gate.until };
+    }
+    let list = [...attempts.map(a => ({ pr: a.subject.pr, attempt2: a })), ...rows.map(c => ({ pr: c.pr, row: c }))];
+    // A trial never picks the rows that just failed, unless nothing else is there (it never locks for good).
+    if (gate.trial) {
+      const others = list.filter(x => !gate.exclude.includes(x.pr));
+      if (others.length > 0) list = others;
+    }
+    this.tickUsage = await this.ledger.usage(now - DAY);
+    const u = this.tickUsage, l = this.policy.limits;
+    this.report(s => s.update({ limits: { batches24h: u.started, maxBatches: l.maxBatchesPer24h, evaluations24h: u.evaluations, maxEvaluations: l.maxEvaluationsPer24h,
+      waitingRetries24h: u.waitingRetries, maxWaitingRetries: l.waitingRetriesPer24h } }));
+    let last = null;
+    for (const item of list.slice(0, ROWS_PER_TICK)) {
+      const r = item.attempt2 ? await this.runAttempt2(item.attempt2, u) : await this.runRow(item.row, u);
+      if (r.next === true) { last ??= r; continue; }
+      await this.persistQueue();
+      this.reportQueue();
+      return r;
+    }
+    await this.persistQueue();
+    this.reportQueue();
+    return last ?? { state: 'IDLE' };
+  }
 
   // Pre-checks that need no secret and no network. Anything that fails here leaves the ledger untouched.
-  async precheck(key, hk, subject, { attempt1Key = null } = {}) {
+  //   usage: ledger.mjs#usage for the last 24 hours; origin: how the queue picked the subject (queue.mjs#ORIGINS).
+  // A deferral with perRow waits for this row only; any other one ends the scheduling pass.
+  async precheck(key, hk, subject, { attempt1Key = null, usage, origin = 'queued' } = {}) {
     const now = this.clock();
+    const l = this.policy.limits;
     if (await this.ledger.headBurned(hk)) return { ignore: 'HEAD_ALREADY_EXECUTED_NO_RETRY' };
     // A head that may have published a check under ANY Source or attempt (executed-heads.mjs) never runs again: a new
     // Source would otherwise run it as new and stop at ROLE_ALREADY_PUBLISHED_ON_HEAD (2026-10-22, Note 1550fef8). The
@@ -640,13 +729,18 @@ export class ResidentExecutor {
     if (await this.executedHeads.published(subject)
       && !(attempt1Key && await this.executedHeads.onlyRelayRecordOf(subject, attempt1Key, RELAY_STAGE) && await this.relayedNothing(attempt1Key))) return { ignore: 'HEAD_ALREADY_PUBLISHED_NO_RETRY' };
     if ((await this.ledger.state(key)).state !== 'ABSENT') return { ignore: 'CONTENT_ALREADY_EXECUTED_NO_RETRY' };
-    const recent = await this.ledger.unexecutedSince(key, now - DAY);
-    if (recent.length > 0 && recent.length >= this.policy.limits.unexecutedMaxPer24h) return { ignore: 'UNEXECUTED_DAILY_CAP' };
-    if (recent.length > 0 && now - Math.max(...recent) < this.policy.limits.unexecutedCooldownMs) return { defer: 'UNEXECUTED_COOLDOWN' };
-    const batches24h = await this.ledger.startedSince(now - DAY), evaluations24h = await this.ledger.evaluationsSince(now - DAY);
-    this.report(s => s.update({ limits: { batches24h, maxBatches: this.policy.limits.maxBatchesPer24h, evaluations24h, maxEvaluations: this.policy.limits.maxEvaluationsPer24h } }));
-    if (batches24h >= this.policy.limits.maxBatchesPer24h) return { defer: 'DAILY_BATCH_LIMIT' };
-    if (evaluations24h >= this.policy.limits.maxEvaluationsPer24h) return { defer: 'DAILY_EVALUATION_LIMIT' };
+    // The 10-minute cool-down of the batch key after a release it applies to (classify.mjs#UNEXECUTED_REASON_RULES).
+    const recent = (await this.ledger.unexecutedRecords(key, now - DAY)).filter(r => UNEXECUTED_REASON_RULES[r.reason]?.cooldown !== false);
+    if (recent.length > 0 && now - Math.max(...recent.map(r => r.at)) < l.unexecutedCooldownMs) return { defer: 'UNEXECUTED_COOLDOWN', perRow: true, until: Math.max(...recent.map(r => r.at)) + l.unexecutedCooldownMs };
+    // The daily budgets (policy /4), all from the ledger: executions, evaluations (not for a wait: it has its own
+    // budget), the waits' budget, the new-trigger re-evaluations of this PR commit, the PR's own executions.
+    if (usage.started >= l.maxBatchesPer24h) return { defer: 'DAILY_BATCH_LIMIT', notice: { key: `batch-limit:${dayKey(now)}`, kind: 'batch-limit', pr: null, headSha: null, code: 'DAILY_BATCH_LIMIT' } };
+    if (origin !== 'waiting-retry' && usage.evaluations >= l.maxEvaluationsPer24h) return { defer: 'DAILY_EVALUATION_LIMIT' };
+    if (origin === 'waiting-retry' && usage.waitingRetries >= l.waitingRetriesPer24h) {
+      return { defer: 'WAITING_BUDGET_EXHAUSTED', perRow: true, notice: { key: `waiting-budget:${dayKey(now)}`, kind: 'waiting-budget', pr: null, headSha: null, code: 'WAITING_BUDGET_EXHAUSTED' } };
+    }
+    if (origin === 'new-trigger' && (usage.reevaluations.get(`${subject.pr}:${subject.headSha}`) ?? 0) >= l.reevaluationsPerPrHeadPer24h) return { defer: 'REEVALUATION_CAP', perRow: true, dropPoke: true };
+    if ((usage.startedByPr.get(subject.pr) ?? 0) >= l.perPrBatchesPer24h) return { defer: 'PR_DAILY_BATCH_LIMIT', perRow: true };
     const startCode = await this.batchStartChecks(null);
     if (startCode) return { halt: startCode };
     const beat = await this.companion.heartbeat();
@@ -666,25 +760,34 @@ export class ResidentExecutor {
     return null;
   }
 
-  async runCandidate({ trigger, names, bytesSha256 }) {
-    const subject = { ...trigger, sourceManifestSha256: this.policy.sourceManifestSha256, attempt: 1 };
+  // A precheck's deferral: the row's own one is shown on it and the pass goes on; a global one ends the pass.
+  deferral(pre, key, pr) {
+    if (pre.notice) this.queue.notice(pre.notice);
+    if (pre.perRow) { this.queue.defer(pr, pre.defer, this.clock(), { dropPoke: pre.dropPoke === true, until: pre.until ?? null }); return { state: 'DEFERRED', key, reason: pre.defer, next: true }; }
+    return { state: 'DEFERRED', key, reason: pre.defer };
+  }
+
+  // One queue row: its current commit as attempt 1.
+  async runRow(c, usage) {
+    const subject = { repo: this.policy.repo, pr: c.pr, headSha: c.headSha, baseSha: c.baseSha, sourceManifestSha256: this.policy.sourceManifestSha256, attempt: 1 };
     const key = batchKey(subject);
     const hk = headKey(subject);
-    const pre = await this.precheck(key, hk, subject);
+    const pre = await this.precheck(key, hk, subject, { usage, origin: c.origin });
     if (pre.ignore) {
-      await this.disposeAll(names, 'ignored');
-      await this.receipt('trigger-ignored', { key, failureCode: pre.ignore, bytesSha256 });
+      this.queue.settle(c.pr, c.headSha, { kind: 'ignored', code: pre.ignore, klass: null }, this.clock());
+      await this.receipt('trigger-ignored', { key, failureCode: pre.ignore, origin: c.origin });
       this.reportOutcome(subject, 'IGNORED', { code: pre.ignore, key });
-      return { state: 'IGNORED', key, reason: pre.ignore };
+      return { state: 'IGNORED', key, reason: pre.ignore, next: true };
     }
     if (pre.halt) { await this.haltWith(pre.halt, { key }); return { state: 'HALTED', key, failureCode: pre.halt }; }
-    if (pre.defer) return { state: 'DEFERRED', key, reason: pre.defer };
+    if (pre.defer) return this.deferral(pre, key, c.pr);
 
-    await this.ledger.reserve(key, subject);
-    await this.receipt('batch-reserved', { key, headKey: hk, subject, bytesSha256 });
-    await this.disposeAll(names, 'processed');
-    // t0 of the hosted wait: the trigger is first read and consumed in this very tick.
-    return this.driveReserved(key, subject, this.clock());
+    await this.ledger.reserve(key, subject, { origin: c.origin });
+    await this.receipt('batch-reserved', { key, headKey: hk, subject, origin: c.origin });
+    this.queue.begin(c.pr, c.headSha, key, c.origin, this.clock());
+    await this.persistQueue();
+    // t0 of the hosted wait: the row is reserved in this very tick.
+    return this.driveReserved(key, subject, this.clock(), c.origin);
   }
 
   // attempt 1 ended FAILED_CLEAN at stage 0, 1 or 2 (attempts.mjs#ATTEMPT2_STAGES) with a recorded plan that relayed no role.
@@ -696,44 +799,127 @@ export class ResidentExecutor {
     } catch { return false; }
   }
 
+  // Is a newer commit of this subject's PR in the queue (it arrived while the subject ran, or after attempt 1)?
+  newerCommitQueued(subject) {
+    const r = this.queue.row(subject.pr);
+    return !!r?.current && r.current.headSha !== subject.headSha;
+  }
+
+  // One live read of the PR (the companion's pr-head): null when there is no answer. Never authority to run anything.
+  async livePull(pr, batch = null) {
+    try { return (await this.companion.prHead?.(pr, batch)) ?? null; } catch { return null; }
+  }
+
   // The scheduled attempt 2: same pre-checks under its own keys; the intent is closed if they refuse it
-  // for good, kept when they only defer it.
-  async runAttempt2({ key1, key2, subject }) {
+  // for good, kept when they only defer it. Phase 2: an attempt 2 whose PR got a newer commit is voided when one live
+  // read confirms the PR's head moved on (v0.6 §3).
+  async runAttempt2({ key1, key2, subject }, usage) {
     // Bound to the installed Source (PR-A review MAJOR 2): an intent from before a reinstall is closed, never run.
     if (subject.sourceManifestSha256 !== this.policy.sourceManifestSha256) {
       await this.ledger.closeAttempt2(key1, { failureCode: 'ATTEMPT2_SOURCE_CHANGED' });
       await this.receipt('attempt2-ignored', { key: key2, attempt1: key1, failureCode: 'ATTEMPT2_SOURCE_CHANGED' });
-      return { state: 'IGNORED', key: key2, reason: 'ATTEMPT2_SOURCE_CHANGED' };
+      return { state: 'IGNORED', key: key2, reason: 'ATTEMPT2_SOURCE_CHANGED', next: true };
+    }
+    if (this.newerCommitQueued(subject)) {
+      const live = await this.livePull(subject.pr);
+      if (live && (live.state !== 'open' || live.headSha !== subject.headSha)) {
+        await this.ledger.closeAttempt2(key1, { failureCode: 'ATTEMPT2_SUPERSEDED', liveHeadSha: live.headSha, liveState: live.state });
+        await this.receipt('attempt2-ignored', { key: key2, attempt1: key1, failureCode: 'ATTEMPT2_SUPERSEDED' });
+        return { state: 'IGNORED', key: key2, reason: 'ATTEMPT2_SUPERSEDED', next: true };
+      }
     }
     const hk = headKey(subject);
-    const pre = await this.precheck(key2, hk, subject, { attempt1Key: key1 });
+    const pre = await this.precheck(key2, hk, subject, { attempt1Key: key1, usage, origin: 'attempt2' });
     if (pre.ignore) {
       await this.ledger.closeAttempt2(key1, { failureCode: pre.ignore });
       await this.receipt('attempt2-ignored', { key: key2, attempt1: key1, failureCode: pre.ignore });
-      return { state: 'IGNORED', key: key2, reason: pre.ignore };
+      return { state: 'IGNORED', key: key2, reason: pre.ignore, next: true };
     }
     if (pre.halt) { await this.haltWith(pre.halt, { key: key2 }); return { state: 'HALTED', key: key2, failureCode: pre.halt }; }
-    if (pre.defer) return { state: 'DEFERRED', key: key2, reason: pre.defer };
+    // A deferred attempt 2 never blocks the rows behind it (PR-A review MINOR 9): a global deferral stops them anyway.
+    if (pre.defer) { if (pre.notice) this.queue.notice(pre.notice); return { state: 'DEFERRED', key: key2, reason: pre.defer, next: true }; }
     // Consumed create-only before the reservation: whatever attempt 2 ends with, it never runs again.
     await this.ledger.consumeAttempt2(key1, { key2 });
-    await this.ledger.reserve(key2, subject);
-    await this.receipt('batch-reserved', { key: key2, headKey: hk, subject, attempt1: key1 });
-    return this.driveReserved(key2, subject, this.clock());
+    await this.ledger.reserve(key2, subject, { origin: 'attempt2' });
+    await this.receipt('batch-reserved', { key: key2, headKey: hk, subject, attempt1: key1, origin: 'attempt2' });
+    // The row of attempt 1's head shows attempt 2 running (when that head is still the PR's current one in the queue).
+    const row = this.queue.row(subject.pr);
+    if (row?.current?.headSha === subject.headSha && !row.running) { this.queue.begin(subject.pr, subject.headSha, key2, 'attempt2', this.clock()); await this.persistQueue(); }
+    return this.driveReserved(key2, subject, this.clock(), 'attempt2');
   }
 
-  async driveReserved(key, subject, t0) {
+  async driveReserved(key, subject, t0, origin = 'queued') {
     let batch = null;
     let outcome;
     this.current = { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, attempt: subject.attempt, since: new Date(this.clock()).toISOString() };
     this.atStage(0, 'derive');
     try {
       outcome = await this.drive(key, subject, t0, b => { batch = b; });
+      if (outcome instanceof StepFailure) outcome = await this.fail(key, batch, outcome);
     } catch (error) {
       // An exception in the executor itself (or a port) is never classified as clean.
-      return this.unknown(key, codeOf(error), 'executor-exception');
+      outcome = await this.unknown(key, codeOf(error), 'executor-exception');
     }
-    if (outcome instanceof StepFailure) return this.fail(key, batch, outcome);
-    return outcome;
+    return this.afterBatch(subject, origin, outcome);
+  }
+
+  // A batch ended (anything but WAITING): its queue row settles, the breaker gets one event, and an ending that may
+  // have falsified the batch head asks the companion once for the PR's real head (queue.mjs#restore). All of it is a
+  // view: a failure here never changes what the batch did or how it ended.
+  async afterBatch(subject, origin, result) {
+    if (!result || result.state === 'WAITING') return result;
+    const now = this.clock();
+    const s = result.settle ?? null;
+    try {
+      const environment = ['environment', 'transient'].includes(s?.klass);
+      const b = breakerOf(this.queue.breaker);
+      this.queue.breaker = b;
+      // This release counts towards the head's cap unless it is a wait, a supersession, or an environment fault while
+      // the breaker is not closed (ledger.mjs#usage counts the same way; the tick's usage is from before this batch).
+      const counted = s?.kind === 'released' && s.klass !== 'waiting' && s.reason !== 'SUPERSEDED' && !(environment && s.breakerState !== 'closed');
+      const releases24h = (this.tickUsage?.releasesByHead.get(subject.headSha) ?? 0) + (counted ? 1 : 0);
+      const ciRetryAfter = typeof s?.ciRetryAfter === 'string' && Number.isFinite(Date.parse(s.ciRetryAfter)) ? Date.parse(s.ciRetryAfter) : null;
+      const settled = this.queue.settle(subject.pr, subject.headSha, s ? { kind: s.kind, code: s.code ?? null, klass: s.klass ?? null, reason: s.reason ?? null, ciRetryAfter,
+        releases24h, releaseCap: this.policy.limits.releasesPerHeadPer24h } : { kind: 'burned', code: result.failureCode ?? null, klass: 'unknown' }, now);
+      if (settled === 'stopped') {
+        this.queue.notice({ key: `stopped:${subject.pr}:${subject.headSha}:${s.code}`, kind: 'stopped', pr: subject.pr, headSha: subject.headSha, code: s.code ?? null });
+        await this.receipt('queue-row-stopped', { pr: subject.pr, headSha: subject.headSha, failureCode: s.code ?? null, releases24h });
+      }
+      if (s && Number.isSafeInteger(s.pos)) {
+        const t = breakerRecord(b, { pos: s.pos, completed: s.kind === 'completed', counts: s.breaker === 'counts', neutral: s.breaker !== 'counts', windowsOnly: false,
+          pr: subject.pr, code: s.code ?? null }, this.policy, now);
+        if (t === 'opened' || t === 'reopened') {
+          this.queue.notice({ key: `breaker:${b.openedAt}`, kind: 'breaker-open', pr: null, headSha: null, code: s.code ?? null, until: b.nextTrialAt });
+          await this.receipt('breaker-opened', { failureCode: s.code ?? null, failingPos: b.failingPos, level: b.level, nextTrialAt: new Date(b.nextTrialAt).toISOString(), reopened: t === 'reopened' });
+        } else if (t === 'closed') {
+          const lifted = this.queue.liftEnvironmentStops(now);
+          await this.receipt('breaker-closed', { pr: subject.pr, lifted });
+        }
+      }
+      if (s && (FALSIFYING_CODES.includes(s.code) || (s.code === 'STAGE_CHILD_REFUSED' && FALSIFYING_REASONS.includes(s.outcomeReason)))) await this.falsified(subject);
+      await this.persistQueue();
+    } catch { /* the queue and the breaker are a view; the next batch end writes them again */ }
+    this.reportQueue();
+    return result;
+  }
+
+  // The batch head may no longer be the PR's head: one live read. A closed PR leaves the queue; a head the companion
+  // sees that this PR had superseded, and that is not burned, becomes the PR's current commit again (v0.6 §9 phase 2
+  // item 5: the head actually seen, not the newest one).
+  async falsified(subject) {
+    const live = await this.livePull(subject.pr);
+    if (!live) return;
+    if (live.state !== 'open') {
+      if (this.queue.closePr(subject.pr, this.clock())) await this.receipt('queue-pr-closed', { pr: subject.pr, state: live.state });
+      return;
+    }
+    if (live.headSha === subject.headSha) return;
+    const row = this.queue.row(subject.pr);
+    const was = row?.superseded.find(c => c.headSha === live.headSha);
+    if (!was) return;
+    const candidate = { repo: this.policy.repo, pr: subject.pr, headSha: was.headSha, baseSha: was.baseSha, sourceManifestSha256: this.policy.sourceManifestSha256, attempt: 1 };
+    const burned = (await this.ledger.headBurned(headKey(candidate))) || (await this.executedHeads.published(candidate));
+    if (this.queue.restore(subject.pr, live.headSha, this.clock(), { burned })) await this.receipt('queue-restored', { pr: subject.pr, headSha: live.headSha, falsified: subject.headSha });
   }
 
   // The status board's batch in flight (this.current is set when a batch is reserved or resumed).
@@ -766,6 +952,10 @@ export class ResidentExecutor {
     if (!bundle || bundle.ok !== true) return new StepFailure(0, 'BUNDLE_UNAVAILABLE', {}, 'bundle');
     const early = await this.abortIfRequested(key, batch, 'before-stage-1');
     if (early) return early;
+    // Phase 2: a newer commit of the PR arrived while the bundle was built. Nothing of this batch ran: released, not
+    // burned (design v0.5 §4.2; v0.6 §3: before stage 1 the arrival order alone may decide).
+    const superseded = await this.supersededBeforeStart(key, subject, batch);
+    if (superseded) return superseded;
 
     this.atStage(1, 'stage');
     const first = await this.engine.runStage(batch, this.stage(1), { betweenRoles: false, firstLinux: false });
@@ -792,13 +982,13 @@ export class ResidentExecutor {
     try {
       // Every resume re-runs the start-of-batch checks; any drift fails closed (UNKNOWN, HALT).
       const startCode = await this.batchStartChecks(subject);
-      if (startCode) return this.unknown(key, startCode, 'resume-start-checks', batch);
+      if (startCode) return this.afterBatch(subject, entry.reserved.origin ?? 'queued', await this.unknown(key, startCode, 'resume-start-checks', batch));
       outcome = await this.continueBatch(key, subject, batch, t0);
+      if (outcome instanceof StepFailure) outcome = await this.fail(key, batch, outcome);
     } catch (error) {
-      return this.unknown(key, codeOf(error), 'executor-exception', batch);
+      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch);
     }
-    if (outcome instanceof StepFailure) return this.fail(key, batch, outcome);
-    return outcome;
+    return this.afterBatch(subject, entry.reserved.origin ?? 'queued', outcome);
   }
 
   // Everything after 15-relay-wait: one wait evaluation, then (unless still waiting) 20-plan-intent,
@@ -806,6 +996,7 @@ export class ResidentExecutor {
   async continueBatch(key, subject, batch, t0) {
     let aborted = await this.abortIfRequested(key, batch, 'before-relay-plan');
     if (aborted) return aborted;
+    if ((aborted = await this.supersededAfterStart(key, subject, batch, 'before-relay-plan', POSITIONS[1]))) return aborted;
     const plan = await this.relayPlan(key, subject, batch, t0);
     if (plan instanceof StepFailure || plan.waiting) return plan.waiting ? { state: 'WAITING', key, until: plan.until, reason: plan.reason } : plan;
     const relayed = plan.relayed.length;
@@ -815,6 +1006,7 @@ export class ResidentExecutor {
     const localRoles = HEAVY_ROLES.filter(r => plan.local.some(l => l.role === r));
     if (localRoles.length > 0) {
       if ((aborted = await this.abortIfRequested(key, batch, 'before-workspace'))) return aborted;
+      if ((aborted = await this.supersededAfterStart(key, subject, batch, 'before-workspace', plan.candidates.length > 0 ? POSITIONS[RELAY_STAGE] : POSITIONS[1]))) return aborted;
       this.atStage(0, 'workspace');
       const prep = await this.companion.prepareWorkspaces(batch);
       if (!prep || prep.ok !== true) return new StepFailure(0, prep?.code ?? 'WORKSPACE_PREPARATION_UNCONFIRMED', {}, 'workspace', relayed);
@@ -847,7 +1039,7 @@ export class ResidentExecutor {
     await this.ledger.terminal(key, 'COMPLETED', { batchId: batch.batchId, closed: closed.archived ?? null, relayed: plan.relayed.map(r => r.role), local: localRoles });
     await this.receipt('batch-terminal', { key, outcome: 'COMPLETED' });
     this.reportOutcome(subject, 'COMPLETED', { key });
-    return { state: 'COMPLETED', key, relayed: plan.relayed.map(r => r.role), local: localRoles };
+    return { state: 'COMPLETED', key, relayed: plan.relayed.map(r => r.role), local: localRoles, settle: { kind: 'completed', code: null, klass: null, breaker: 'neutral', pos: POSITIONS.END } };
   }
 
   // The latest companion hint for this head, parsed; anything malformed is "no hint" (it can only make the
@@ -928,14 +1120,18 @@ export class ResidentExecutor {
 
   async fail(key, batch, failure) {
     const subjectOf = async () => { try { return (await this.ledger.state(key)).reserved?.subject ?? null; } catch { return null; } };
+    // What the run queue and the breaker learn from this ending (afterBatch).
+    const pos = positionOf(failure.stageNumber, failure.phase);
+    const breakerState = breakerOf(this.queue.breaker).state;
     try {
       const started = (await this.ledger.state(key)).state === 'STARTED';
       if (!started && failure.phase === 'bundle') {
         await this.closeOrThrow(batch);
-        await this.ledger.releaseUnexecuted(key, 'BUNDLE_UNAVAILABLE', { failureCode: failure.code });
+        await this.ledger.releaseUnexecuted(key, 'BUNDLE_UNAVAILABLE', { failureCode: failure.code, class: 'environment', breaker: 'counts', breakerState });
         await this.receipt('batch-unexecuted', { key, failureCode: failure.code });
         this.reportOutcome(this.current, 'NOT_EXECUTED', { code: failure.code, key });
-        return { state: 'NOT_EXECUTED', key, failureCode: failure.code };
+        return { state: 'NOT_EXECUTED', key, failureCode: failure.code,
+          settle: { kind: 'released', reason: 'BUNDLE_UNAVAILABLE', code: failure.code, klass: 'environment', breaker: 'counts', breakerState, pos } };
       }
       const proof = await this.proofFor(batch, failure.proof);
       // The failure table (classify.mjs#decideFailure): a stage-1 failure is released only on the outcome's own
@@ -943,12 +1139,13 @@ export class ResidentExecutor {
       const { klass, basis, row, release } = decideFailure({ code: failure.code, stage: failure.stageNumber, phase: failure.phase, outcome: failure.outcome,
         brokerNoLaunch: failure.brokerNoLaunch, proof, started });
       const facts = ResidentExecutor.failureFacts(failure, row);
+      const settle = { code: failure.code, klass: row?.class ?? 'unknown', breaker: row?.breaker ?? 'counts', breakerState, pos, ciRetryAfter: facts.ciRetryAfter, outcomeReason: facts.reason };
       if (!started && release) {
         await this.closeOrThrow(batch);
-        await this.ledger.releaseUnexecuted(key, release, { failureCode: failure.code, basis, ...facts });
+        await this.ledger.releaseUnexecuted(key, release, { failureCode: failure.code, basis, ...facts, breakerState });
         await this.receipt('batch-unexecuted', { key, failureCode: failure.code, release, class: facts.class });
         this.reportOutcome(await subjectOf() ?? this.current, release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', { code: failure.code, row, key });
-        return { state: release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', key, failureCode: failure.code, release };
+        return { state: release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', key, failureCode: failure.code, release, settle: { ...settle, kind: 'released', reason: release } };
       }
       // Every other failure burns the head, also before 10-started (stage 1 may have published).
       await this.ledger.burnHead(key, { failureCode: failure.code });
@@ -972,13 +1169,74 @@ export class ResidentExecutor {
             await this.ledger.closeAttempt2(key, { failureCode: 'ATTEMPT2_RECEIPT_UNCONFIRMED' });
             throw error;
           }
-          return { state: 'FAILED_CLEAN', key, failureCode: failure.code, attempt2: key2 };
+          return { state: 'FAILED_CLEAN', key, failureCode: failure.code, attempt2: key2, settle: { ...settle, kind: 'burned' } };
         }
-        return { state: 'FAILED_CLEAN', key, failureCode: failure.code };
+        return { state: 'FAILED_CLEAN', key, failureCode: failure.code, settle: { ...settle, kind: 'burned' } };
       }
-      return await this.unknown(key, failure.code, basis, batch, { stage: failure.stageNumber, ...facts });
+      return { ...(await this.unknown(key, failure.code, basis, batch, { stage: failure.stageNumber, ...facts })), settle: { ...settle, kind: 'burned', klass: 'unknown' } };
     } catch (error) {
       return this.unknown(key, codeOf(error), 'failure-handling-unconfirmed', batch);
+    }
+  }
+
+  // ---- supersession of a running batch (phase 2, step 1; design v0.5 §4.2; DESIGN §17.4) ----
+
+  // The inbox is read again at a safe point, so a newer commit that arrived while this batch ran is in the queue.
+  async newerCommitArrived(subject) {
+    try { await this.intake(); } catch { /* the next tick reads it */ }
+    return this.newerCommitQueued(subject);
+  }
+
+  // Before stage 1 (nothing ran, nothing was asked of the broker): the arrival order alone decides; released as
+  // SUPERSEDED, the head unburned (it goes back to the row's superseded commits and may be restored).
+  async supersededBeforeStart(key, subject, batch) {
+    if (!(await this.newerCommitArrived(subject))) return null;
+    await this.closeOrThrow(batch);
+    await this.ledger.releaseUnexecuted(key, 'SUPERSEDED', { failureCode: BATCH_SUPERSEDED, basis: 'newer-commit-before-stage-1', class: 'superseded', breaker: 'neutral' });
+    await this.receipt('batch-superseded', { key, pr: subject.pr, headSha: subject.headSha, safePoint: 'before-stage-1' });
+    this.reportOutcome(subject, 'NOT_EXECUTED', { code: BATCH_SUPERSEDED, key });
+    return { state: 'NOT_EXECUTED', key, failureCode: BATCH_SUPERSEDED, release: 'SUPERSEDED',
+      settle: { kind: 'released', reason: 'SUPERSEDED', code: BATCH_SUPERSEDED, klass: 'superseded', breaker: 'neutral', pos: POSITIONS.bundle } };
+  }
+
+  // After stage 1, only at a safe point outside the Linux preparation (before stage R's plan, before the workspace):
+  // the order is not enough, one live read must confirm the PR's head moved on (or the PR closed). No answer: the batch
+  // goes on. The live head IS this batch's head: the newer commit in the queue is disproved and the batch goes on.
+  async supersededAfterStart(key, subject, batch, safePoint, pos) {
+    if (!(await this.newerCommitArrived(subject))) return null;
+    const live = await this.livePull(subject.pr, batch);
+    if (!live) { await this.receipt('supersede-unconfirmed', { key, pr: subject.pr, safePoint }); return null; }
+    if (live.state === 'open' && live.headSha === subject.headSha) {
+      this.queue.keepRunning(subject.pr, subject.headSha, this.clock());
+      await this.persistQueue();
+      await this.receipt('supersede-disproved', { key, pr: subject.pr, safePoint });
+      return null;
+    }
+    return this.supersededEnd(key, subject, batch, { safePoint, pos, live });
+  }
+
+  // The executor's own end of a batch, on the Owner abort's path (DESIGN §6.5): nothing of this batch runs at a safe
+  // point, so quiescence on both hosts, the head burned, a rename-only archive with the fixed reason superseded, and
+  // FAILED_CLEAN SUPERSEDED_AT_SAFE_POINT (neutral for the breaker, never an attempt 2). Unproven: UNKNOWN, HALT.
+  async supersededEnd(key, subject, batch, { safePoint, pos, live }) {
+    const context = { safePoint, stage: null };
+    try {
+      const proof = await this.abortQuiescence(batch, {});
+      if (!proofComplete(proof)) return await this.unknown(key, 'SUPERSEDE_QUIESCENCE_UNPROVEN', 'superseded-quiescence-unproven', batch, context);
+      await this.ledger.burnHead(key, { failureCode: SUPERSEDED_AT_SAFE_POINT });
+      const windows = await this.engine.archiveFailure(batch, SUPERSEDED_ARCHIVE_REASON);
+      const linux = await this.companion.archiveLinux(batch, SUPERSEDED_ARCHIVE_REASON);
+      check(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED');
+      // stage 1: the last stage that ran (executed-heads.mjs#mayHavePublished: nothing after stage 1 published, unless
+      // stage R relayed a role, which its plan says).
+      await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: SUPERSEDED_AT_SAFE_POINT, basis: 'superseded-live-read', safePoint, stage: 1, batchId: batch?.batchId ?? null,
+        windows: windows.directory, linux: linux.directory, class: 'clean-final', retry: 'new-commit', breaker: 'neutral', liveHeadSha: live.headSha, liveState: live.state });
+      await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: SUPERSEDED_AT_SAFE_POINT, safePoint });
+      this.reportOutcome(subject, 'FAILED_CLEAN', { code: SUPERSEDED_AT_SAFE_POINT, key });
+      return { state: 'FAILED_CLEAN', key, failureCode: SUPERSEDED_AT_SAFE_POINT, safePoint,
+        settle: { kind: 'burned', code: SUPERSEDED_AT_SAFE_POINT, klass: 'clean-final', breaker: 'neutral', pos } };
+    } catch (error) {
+      return this.unknown(key, codeOf(error), 'superseded-end-unconfirmed', batch, context);
     }
   }
 

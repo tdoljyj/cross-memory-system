@@ -2,6 +2,8 @@
 // v0.7: a second instance with the hosted relay on drives one month of free-minutes scenarios (§7.6 of
 // the free-minutes design plus the first head after the minutes return) and checks receipt types and order.
 // v0.8: an Owner abort of a batch hanging in stage 2 (DESIGN §6.5).
+// v1.0 (phase 2, step 1, DESIGN §17): the run queue (a seen head is never reserved again, a release and a wait are
+// retried on their own back-off), a supersession before stage 1, and the breaker opening and closing on a trial.
 //   node drill/offline-drill.mjs            prints a step table and a JSON summary; exit 1 on any miss
 //
 // It drives the real executor, ledger, receipts, inboxes, protocol archive and Owner-request code
@@ -17,6 +19,7 @@ import { ReceiptChain } from '../src/receipts.mjs';
 import { Inbox, OwnerInbox } from '../src/inbox.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { TRIGGER_CONTRACT } from '../src/trigger.mjs';
+import { RunQueue } from '../src/queue.mjs';
 import { applyArchive, planArchive, protocolLeaves } from '../src/archive.mjs';
 import { abortRequest, inspect, rearmRequest, resumeRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
 import { ExecutedHeads, BACKFILL_MANIFEST_CONTRACT, CARRIED_FILE } from '../src/executed-heads.mjs';
@@ -39,9 +42,11 @@ await fs.writeFile(path.join(winSpool, 'outgoing', `${'e'.repeat(64)}.json`), '{
 let now = Date.parse('2026-10-21T00:00:00Z');
 const clock = () => now;
 const policyInput = {
-  contract: 'clued.independent-ci.resident-policy/3', repo: REPO, baseBranch: 'main', sourceManifestSha256: SOURCE, ciSourceManifestSha256: '9'.repeat(64), residentManifestSha256: RESIDENT,
+  contract: 'clued.independent-ci.resident-policy/4', repo: REPO, baseBranch: 'main', sourceManifestSha256: SOURCE, ciSourceManifestSha256: '9'.repeat(64), residentManifestSha256: RESIDENT,
   ownerAcceptance: { decisionRef: '0d84ddbb-ec1f-49c3-bbd0-953f72d53584', installReceiptRef: null }, validUntil: null,
-  limits: { maxBatchesPer24h: 12, maxEvaluationsPer24h: 24, maxConcurrent: 1, inboxMaxFiles: 16, unexecutedCooldownMs: 600_000, unexecutedMaxPer24h: 3, stageMarginMs: 180_000 },
+  limits: { maxBatchesPer24h: 72, maxEvaluationsPer24h: 96, perPrBatchesPer24h: 6, waitingRetriesPer24h: 48, reevaluationsPerPrHeadPer24h: 6, releasesPerHeadPer24h: 2, queueDepth: 100,
+    maxConcurrent: 1, inboxMaxFiles: 16, unexecutedCooldownMs: 600_000, stageMarginMs: 180_000 },
+  breaker: { consecutive: 3, windowCount: 4, windowMs: 3_600_000, backoffMs: [1_800_000, 3_600_000, 7_200_000] },
   companion: { userSid: OWNER, heartbeatMaxAgeMs: 60_000 },
   stageRunMilliseconds: [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000],
   linux: { distribution: 'Ubuntu-24.04', workerUnit: 'clued-ci-worker@.service', wsprepUnit: 'clued-ci-wsprep@.service', archiveUnit: 'clued-ci-archive@.service' },
@@ -95,9 +100,10 @@ const engine = {
   async archiveFailure(batch, reason) { return archive(winSpool, batch.key, reason); },
   async windowsQuiescence() { return WINDOWS_CLEAN; },
 };
+let duringBundle = null; // a push while the bundle is built (phase 2 supersession)
 const companion = {
   async heartbeat() { return { at: now }; },
-  async buildBundle() { return { ok: true }; },
+  async buildBundle() { if (duringBundle) { const f = duringBundle; duringBundle = null; await f(); } return { ok: true }; },
   async prepareWorkspaces() { return { ok: true }; },
   async linuxQuiescence() { return { linuxUnitsInactive: !linuxBusy, containersZero: true }; },
   async archiveLinux(batch, reason) { return archive(linSpool, batch.key, reason, LINUX); },
@@ -112,7 +118,8 @@ const owner = await OwnerInbox.open(path.join(root, 'owner'), path.join(state, '
 // A fresh install with nothing carried forward: install\backfill-manifest.json lists no earlier state.
 const emptyManifest = async dir => { await fs.mkdir(dir, { recursive: true }); const f = path.join(dir, 'backfill-manifest.json'); await fs.writeFile(f, JSON.stringify({ contract: BACKFILL_MANIFEST_CONTRACT, sources: [] })); return f; };
 const executedHeads = await ExecutedHeads.open(state, clock, { manifestFile: await emptyManifest(path.join(root, 'install')), carriedRoot: path.join(state, 'backfill') });
-const exec = new ResidentExecutor({ policy, ledger, receipts, inbox, requests, owner, engine, companion, clock, executedHeads,
+const queue = await RunQueue.open(path.join(state, 'queue'), clock);
+const exec = new ResidentExecutor({ policy, ledger, receipts, inbox, requests, owner, engine, companion, clock, executedHeads, queue,
   sleep: () => new Promise(resolve => setImmediate(resolve)),
   sourceIntegrity: async () => ({ ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT }) });
 
@@ -138,13 +145,14 @@ await step('normal PR 901: eight stages, between-role archives, close', async ()
 await step('forged repo, bad JSON and a script file are rejected', async () => {
   await drop(trigger(950, { repo: 'evil/repo' })); await drop('{not json'); await fs.writeFile(path.join(root, 'inbox', 'run.ps1'), 'Remove-Item C:\\ -Recurse'); return exec.tick();
 }, r => r.state === 'IDLE');
-await step('PR 901 head again with a moved main: never re-run', async () => { await drop(trigger(901, { baseSha: '1'.repeat(40) })); return exec.tick(); }, r => r.reason === 'HEAD_ALREADY_EXECUTED_NO_RETRY');
+await step('PR 901 head again with a moved main: the queue has seen it, nothing is reserved', async () => { await drop(trigger(901, { baseSha: '1'.repeat(40) })); return exec.tick(); }, r => r.state === 'IDLE');
+await step('  the same head in another PR: the ledger never runs it', async () => { await drop({ ...trigger(901), pr: 951 }); return exec.tick(); }, r => r.reason === 'HEAD_ALREADY_EXECUTED_NO_RETRY');
 // The Source's own stage-1 outcome says safe to re-run (a refusal inside the first admission's boundary): released.
 script.set(902, { 1: { ok: false, code: 'PATHS_OUTSIDE_WRITE_SET', proof: WINDOWS_CLEAN, outcome: { status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: null, safeToRerun: true } } });
 await step('PR 902 not admitted: released, nothing reached Linux', async () => { await drop(trigger(902)); return exec.tick(); }, r => r.state === 'NOT_ADMITTED');
-await step('PR 902 re-proposed inside the cool-down waits', async () => { await drop(trigger(902)); return exec.tick(); }, r => r.reason === 'UNEXECUTED_COOLDOWN');
+await step('PR 902 re-proposed inside its back-off waits', async () => { await drop(trigger(902)); return exec.tick(); }, r => r.state === 'IDLE' && queue.row(902).state === 'BACKOFF');
 script.delete(902);
-await step('after the cool-down (claim widened) PR 902 runs', async () => { now += 600_001; return exec.tick(); }, r => r.state === 'COMPLETED');
+await step('after its 10-minute back-off (claim widened) PR 902 is retried on its own and runs', async () => { now += 600_001; return exec.tick(); }, r => r.state === 'COMPLETED');
 script.set(903, { 4: { ok: false, code: 'FORMAL_BRIDGE_STAGE_DEADLINE', proof: WINDOWS_CLEAN } });
 await step('PR 903 fails cleanly at stage 4: archived, executor continues', async () => { await drop(trigger(903)); return exec.tick(); }, r => r.state === 'FAILED_CLEAN');
 script.set(904, { 6: { ok: false, code: 'FORMAL_BRIDGE_STAGE_DEADLINE', proof: WINDOWS_CLEAN, leaveLinuxBusy: true } });
@@ -160,7 +168,7 @@ linuxBusy = false; now += 1;
 await step('Owner re-arm request: the service archives, clears HALT and runs the waiting PR 905', async () => {
   await writeOwnerRequest(path.join(root, 'owner'), rearmRequest({ expectedHaltSha256: view.haltSha256, reason: 'worker confirmed exited', by: OWNER }), clock); return exec.tick();
 }, r => r.state === 'COMPLETED');
-await step('PR 904 is still never re-run automatically', async () => { await drop(trigger(904)); return exec.tick(); }, r => r.reason === 'HEAD_ALREADY_EXECUTED_NO_RETRY');
+await step('PR 904 is still never re-run automatically', async () => { await drop(trigger(904)); return exec.tick(); }, r => r.state === 'IDLE' && queue.row(904).state === 'STOPPED');
 await step('anyone may pause', async () => { await drop({ contract: PAUSE_CONTRACT, reason: 'drill pause' }, 'requests'); await drop(trigger(906)); return exec.tick(); }, r => r.state === 'PAUSED');
 await step('a resume dropped in the user-writable requests dir is ignored', async () => { await drop(resumeRequest({ expectedPausedSha256: (await ledger.paused()).sha256, by: OWNER }), 'requests'); return exec.tick(); }, r => r.state === 'PAUSED');
 await step('only the Owner resume request continues', async () => { await writeOwnerRequest(path.join(root, 'owner'), resumeRequest({ expectedPausedSha256: (await ledger.paused()).sha256, by: OWNER }), clock); return exec.tick(); }, r => r.state === 'COMPLETED');
@@ -176,7 +184,26 @@ await step('PR 909 hangs in stage 2: the Owner aborts it mid-stage, it is stoppe
   r => r.state === 'FAILED_CLEAN' && r.failureCode === 'OWNER_ABORTED' && r.safePoint === 'in-stage-2' && engine.stopRequests === 1);
 const leftAfterAbort = (await protocolLeaves(winSpool)).length + (await protocolLeaves(linSpool, LINUX)).length;
 await step('  nothing after stage 2 ran, the scene is archived on both hosts, and PR 909 never runs again', async () => { await drop(trigger(909)); const r = await exec.tick(); return { ...r, left: leftAfterAbort }; },
-  r => r.reason === 'HEAD_ALREADY_EXECUTED_NO_RETRY' && r.left === 0);
+  r => r.state === 'IDLE' && queue.row(909).state === 'STOPPED' && r.left === 0);
+// ---- phase 2, step 1: the run queue's waits, a supersession before stage 1, the breaker ----
+const WAIT = { ok: false, code: 'NATIVE_NOT_ADMITTED', proof: WINDOWS_CLEAN, outcome: { status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, mayHavePublished: false,
+  diagnostic: { verdict: 'REJECTED', nativeVerdict: 'REJECTED', reasonCodes: ['merge_slot_required'], nativeReasonCodes: [] }, scheduling: null, safeToRerun: true } };
+script.set(920, { 1: WAIT });
+await step('PR 920 waits for its merge slot: released as a wait, nothing burned', async () => { await drop(trigger(920)); return exec.tick(); }, r => r.state === 'NOT_ADMITTED' && queue.row(920).state === 'WAITING');
+script.delete(920);
+await step('  ten minutes later it is retried on its own (no new trigger) and runs', async () => { now += 600_001; return exec.tick(); }, r => r.state === 'COMPLETED');
+await step('PR 921 gets a newer commit while its bundle is built: released before stage 1, the newer commit runs next', async () => {
+  duringBundle = () => drop({ ...trigger(921), headSha: head(9210) });
+  await drop(trigger(921)); const first = await exec.tick(); const second = await exec.tick(); return { ...second, first: first.failureCode };
+}, r => r.first === 'BATCH_SUPERSEDED' && r.state === 'COMPLETED' && queue.row(921).current.headSha === head(9210));
+for (const pr of [922, 923, 924]) script.set(pr, { 3: { ok: false, code: 'STAGE_PACKAGE_REFUSED', proof: WINDOWS_CLEAN } });
+await step('three environment failures in a row (PRs 922-924) open the breaker; nothing starts until the trial', async () => {
+  for (const pr of [922, 923, 924, 925]) await drop(trigger(pr));
+  for (let i = 0; i < 3; i++) await exec.tick();
+  return exec.tick();
+}, r => r.state === 'DEFERRED' && r.reason === 'BREAKER_OPEN' && queue.breaker.state === 'open');
+await step('  thirty minutes later PR 925 is the trial (not a row that failed); it completes and closes the breaker', async () => { now += 1_800_000; return exec.tick(); },
+  r => r.state === 'COMPLETED' && queue.breaker.state === 'closed');
 const head1 = await receipts.verify();
 await step('receipt chain intact', async () => ({ state: `seq ${head1.seq}` }), () => head1.seq > 30);
 const files = (await fs.readdir(path.join(state, 'receipts'))).sort();
@@ -254,7 +281,7 @@ let waitTicks = 0;
 const runToEnd = async () => { waitTicks = 0; let r = await relayExec.tick(); while (r.state === 'WAITING') { waitTicks += 1; now += 60_000; r = await relayExec.tick(); } return r; };
 const rExecutedHeads = await ExecutedHeads.open(rState, clock, { manifestFile: await emptyManifest(path.join(relayRoot, 'install')), carriedRoot: path.join(rState, 'backfill') });
 const relayExec = new ResidentExecutor({ policy: relayPolicy, ledger: rLedger, receipts: rReceipts, inbox: rInbox, requests: rRequests, owner: rOwner, engine: relayEngine, companion: relayCompanion, clock,
-  executedHeads: rExecutedHeads,
+  executedHeads: rExecutedHeads, queue: await RunQueue.open(path.join(rState, 'queue'), clock),
   sourceIntegrity: async () => ({ ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT }) });
 const rDrop = async value => { seq += 1; await fs.writeFile(path.join(relayRoot, 'inbox', `${String(now + seq).padStart(13, '0')}-${String(seq).padStart(12, '0')}.json`), JSON.stringify(value)); };
 // Receipt types of one batch, in chain order, from its batch-reserved receipt to its batch-terminal receipt.
@@ -316,7 +343,7 @@ await step('relay month 5 (PR 916): a pause during the hosted wait takes effect 
 await step('  only the Owner resume continues it; the stored t0 is past the cap, so it starts at once', async () => {
   await writeOwnerRequest(path.join(relayRoot, 'owner'), resumeRequest({ expectedPausedSha256: (await rLedger.paused()).sha256, by: OWNER }), clock); return relayExec.tick();
 }, r => r.state === 'COMPLETED' && same(stagesSeen, [1, 9, 2, 3, 6, 7, 8]) && same(r.relayed, ['trivy']));
-await step('every relayed head stays burned (PR 913 again: never re-run)', async () => { await rDrop(trigger(913)); return relayExec.tick(); }, r => r.reason === 'HEAD_ALREADY_EXECUTED_NO_RETRY');
+await step('every relayed head stays burned (PR 913 again: never re-run)', async () => { await rDrop({ ...trigger(913), pr: 9130 }); return relayExec.tick(); }, r => r.reason === 'HEAD_ALREADY_EXECUTED_NO_RETRY');
 const rHead = await rReceipts.verify();
 await step('relay month receipt chain intact', async () => ({ state: `seq ${rHead.seq}` }), () => rHead.seq > 20);
 
@@ -348,6 +375,7 @@ const iEngine = { ...engine, current: null, async derive(subject, key) { iDerive
 const iExec = new ResidentExecutor({ policy: validatePolicy({ ...policyInput, sourceManifestSha256: SOURCE2 }), ledger: iLedger, receipts: await ReceiptChain.open(path.join(iState, 'receipts'), clock),
   inbox: await Inbox.open(path.join(iRoot, 'inbox'), path.join(iState, 'inbox-archive')), requests: await Inbox.open(path.join(iRoot, 'requests'), path.join(iState, 'requests-archive')),
   owner: await OwnerInbox.open(path.join(iRoot, 'owner'), path.join(iState, 'owner-seen')), engine: iEngine, companion, clock, sleep: () => new Promise(resolve => setImmediate(resolve)),
+  queue: await RunQueue.open(path.join(iState, 'queue'), clock),
   executedHeads: await ExecutedHeads.open(iState, clock, { manifestFile: path.join(iRoot, 'install', 'backfill-manifest.json'), carriedRoot: path.join(iState, 'backfill') }),
   sourceIntegrity: async () => ({ ok: true, sourceManifestSha256: SOURCE2, residentManifestSha256: RESIDENT }) });
 const iDrop = async value => { seq += 1; await fs.writeFile(path.join(iRoot, 'inbox', `${String(now + seq).padStart(13, '0')}-${String(seq).padStart(12, '0')}.json`), JSON.stringify(value)); };

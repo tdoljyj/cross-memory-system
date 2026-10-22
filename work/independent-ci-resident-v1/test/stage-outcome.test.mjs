@@ -70,9 +70,10 @@ test('stage 1: released only on the outcome\'s safeToRerun or the broker\'s no-l
   const moved = await fs.readdir(path.join(broker.root, 'state', 'ledger-unexecuted'));
   const record = JSON.parse(await fs.readFile(path.join(broker.root, 'state', 'ledger-unexecuted', moved[0], '90-terminal.json'), 'utf8'));
   assert.deepEqual([record.reason, record.facts.class, record.facts.brokerNoLaunch], ['BROKER_NOT_LAUNCHED', 'environment', true]);
-  // a later trigger of the same head is held by the existing cool-down
+  // a later trigger of the same head is held by the cool-down (the row's own 10-minute back-off)
   await broker.drop(triggerBytes());
-  assert.equal((await broker.exec.tick()).reason, 'UNEXECUTED_COOLDOWN');
+  assert.equal((await broker.exec.tick()).state, 'IDLE');
+  assert.deepEqual([broker.queue.row(884).state, broker.queue.row(884).nextAt - broker.clock() > 0], ['BACKOFF', true]);
 
   // a waiting-class refusal with the flag: released; the stage-terminal receipt keeps the codes and ci_retry_after
   const cap = { ...SAFE_REFUSAL, diagnostic: { verdict: 'REJECTED', nativeVerdict: 'REJECTED', reasonCodes: ['task_ci_head_cap_reached'], nativeReasonCodes: [], ciRetryAfter: '2026-10-22T12:00:00.000Z', mergeQueue: null },
