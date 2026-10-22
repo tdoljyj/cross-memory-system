@@ -29,6 +29,19 @@ jobs:
 """
 
 
+# The final step of each hosted executor (design 4.3): only after every step
+# before it succeeded, a GitHub OIDC identity for the App 5368905 relay.
+RELAY_STEP = """      - name: Emit relay identity
+        run: |
+          set -eu
+          jwt="$(curl -fsS --max-time 30 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \\
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1" \\
+            | python3 -I -B -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          echo "::notice title=clued-hosted-relay-v1::$jwt"
+"""
+HOSTED_EXECUTOR_ROUTE = "    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      id-token: write\n    steps:"
+
+
 def job(name="check", runner=SELF_HOSTED):
     return f"""  {name}:
     runs-on: {runner}
@@ -46,8 +59,9 @@ def frozen(text, name="legacy.yml"):
 
 
 class RunnerBudgetPolicyTests(unittest.TestCase):
-    def evaluate(self, texts, baseline=None):
-        return policy.evaluate_workflows(texts, {} if baseline is None else baseline)
+    def evaluate(self, texts, baseline=None, owner_hosted=None):
+        return policy.evaluate_workflows(texts, {} if baseline is None else baseline,
+                                         {} if owner_hosted is None else owner_hosted)
 
     def assert_pass(self, report):
         self.assertEqual(report["violations"], [], report["violations"])
@@ -223,6 +237,175 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
         actual_debt = sum(row["legacy_migration_debt"]
                           for workflow in report["workflows"] for row in workflow["jobs"])
         self.assertEqual(actual_debt, report["legacy_debt_jobs"])
+        actual_owner = sum(row["owner_decision_hosted"]
+                           for workflow in report["workflows"] for row in workflow["jobs"])
+        self.assertEqual(actual_owner, report["owner_decision_hosted_jobs"])
+
+    def test_owner_decision_325717a6_names_exactly_the_hosted_executor_jobs(self):
+        self.assertEqual(policy.OWNER_DECISION_HOSTED_SOURCE, "325717a6")
+        self.assertEqual(policy.owner_decision_findings(policy.OWNER_DECISION_HOSTED_JOBS,
+                                                        policy.LEGACY_HOSTED_DEBT), [])
+        pairs = {(file, job) for file, entry in policy.OWNER_DECISION_HOSTED_JOBS.items()
+                 for job in entry["jobs"]}
+        self.assertEqual(pairs, {
+            ("gitleaks.yml", "admission-gate"), ("gitleaks.yml", "gitleaks-trusted-self-hosted"),
+            ("trivy.yml", "admission-gate"), ("trivy.yml", "trivy-trusted-self-hosted"),
+            ("contract-placement.yml", "admission-gate"), ("contract-placement.yml", "contract-placement"),
+        })
+        # The jobs it replaced left the debt baseline in the same change.
+        for file, job in [("gitleaks.yml", "gitleaks-untrusted-hosted"), ("trivy.yml", "trivy-untrusted-hosted"),
+                          ("contract-placement.yml", "contract-placement")]:
+            self.assertNotIn(job, policy.LEGACY_HOSTED_DEBT.get(file, {}).get("jobs", {}))
+        texts = {p.name: p.read_text(encoding="utf-8") for p in policy.WORKFLOW_DIR.glob("*.yml")}
+        report = policy.evaluate_workflows(texts)
+        self.assert_pass(report)
+        routes = {(w["workflow"], row["job"]): row for w in report["workflows"] for row in w["jobs"]}
+        for pair in pairs:
+            self.assertEqual(routes[pair]["kind"], "hosted", pair)
+            self.assertTrue(routes[pair]["owner_decision_hosted"], pair)
+            self.assertFalse(routes[pair]["legacy_migration_debt"], pair)
+        self.assertEqual(sum(row["owner_decision_hosted"] for row in routes.values()), 6)
+
+    def test_hosted_executors_never_carry_a_required_check_name(self):
+        # Owner Decision bc6fdad1: a same-name hosted check run counts as the
+        # required check even though the ruleset pins App 5368905.
+        self.assertEqual(policy.REQUIRED_CHECK_NAMES, {
+            "gitleaks", "trivy", "kooyumi-work-admission", "kooyumi-admission-verified",
+            "kooyumi-merge-slot", "contract-placement"})
+        expected = {
+            ("gitleaks.yml", "gitleaks-trusted-self-hosted"): {"gitleaks-hosted-executor", "gitleaks-hosted-executor-skipped"},
+            ("trivy.yml", "trivy-trusted-self-hosted"): {"trivy-hosted-executor", "trivy-hosted-executor-skipped"},
+            ("contract-placement.yml", "contract-placement"): {"contract-placement-hosted-executor"},
+        }
+        for file, entry in policy.OWNER_DECISION_HOSTED_JOBS.items():
+            _, jobs, _ = policy.split_workflow((policy.WORKFLOW_DIR / file).read_text(encoding="utf-8"))
+            self.assertEqual(set(jobs), set(entry["jobs"]), file)
+            for job_id, block in jobs.items():
+                names = policy.job_check_names(job_id, policy.job_fields(block))
+                with self.subTest(file=file, job=job_id):
+                    self.assertFalse(names & policy.REQUIRED_CHECK_NAMES, names)
+                    if (file, job_id) in expected:
+                        self.assertTrue(expected[(file, job_id)] <= names, names)
+                        fields = policy.job_fields(block)
+                        self.assertEqual(fields["permissions"].split(), ["contents:", "read", "id-token:", "write"])
+                        self.assertTrue(block.endswith(RELAY_STEP), file)
+                        self.assertEqual(block.count("id-token"), 1)
+                        # A PR-provided module can never shadow the stdlib of a step that holds id-token.
+                        self.assertIn("python3 -I -B ", block)
+                        self.assertNotRegex(block, r"python3? (?!-I -B )")
+                        if file == "gitleaks.yml":
+                            # The local role's input only: the trusted base checkout, a fresh history
+                            # directory, the pinned config; never the PR working tree or .gitleaksignore.
+                            self.assertIn("          ref: ${{ github.event.pull_request.base.sha || github.sha }}\n", block)
+                            self.assertIn('--mount "type=bind,src=$scan/repo,dst=/repo,readonly,bind-propagation=rprivate"', block)
+                            self.assertIn("git init --quiet --template=", block)
+                            code = "\n".join(line for line in block.splitlines() if not line.lstrip().startswith("#"))
+                            self.assertNotIn("$PWD", code)
+                            self.assertNotIn(".gitleaksignore", code)
+                            self.assertNotIn("fetch-depth", code)
+                        if file == "trivy.yml":
+                            self.assertIn("      - name: Refuse symlinks, submodules and other non-regular tree entries\n", block)
+                            # The installed checks generation by digest; the mutable tag never downloads.
+                            self.assertIn("CHECKS_DIGEST: sha256:b0e12d009b01dcc8ca2ebbc199b9caf3922491978d21c17b61c1d7f6dc75220b\n", block)
+                            self.assertIn('--checks-bundle-repository "ghcr.io/aquasecurity/trivy-checks@$CHECKS_DIGEST"', block)
+                            self.assertIn("grep -qziE '\\.(jar|war|ear|par)$'", block)
+                            # Every scan mirrors the local role's container: offline, read-only, uid
+                            # 65532, cwd /scratch, a read-only snapshot, prepared DB and checks only.
+                            steps = {chunk.split("\n", 1)[0]: chunk for chunk in block.split("      - name: ")[1:]}
+                            code = "\n".join(line for line in block.splitlines() if not line.lstrip().startswith("#"))
+                            self.assertNotIn("$PWD", code)
+                            self.assertNotIn("TRIVY_CACHE_DIR", code)
+                            for scan, args in [
+                                ("Vulnerabilities (HIGH/CRITICAL)", "fs --skip-db-update --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1"),
+                                ("Secrets", "fs --scanners secret --exit-code 1"),
+                                ("Misconfiguration (HIGH/CRITICAL)", "fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --scanners misconfig --severity HIGH,CRITICAL --exit-code 1"),
+                            ]:
+                                step = " ".join(steps[scan].replace("\\\n", " ").split())
+                                with self.subTest(scan=scan):
+                                    for flag in ["--network=none", "--read-only", "--user=65532:65532", "--workdir=/scratch",
+                                                 "dst=/repo,readonly", "dst=/scratch/db,readonly", "dst=/scratch/policy,readonly",
+                                                 args + " --cache-dir /scratch --skip-check-update --skip-version-check --disable-telemetry /repo"]:
+                                        self.assertIn(flag, step)
+                            prepare = steps["Prepare the vulnerability DB and the pinned checks bundle"]
+                            self.assertIn("for repository in ghcr.io/aquasecurity/trivy-db:2 mirror.gcr.io/aquasec/trivy-db:2; do", prepare)
+                            self.assertNotIn("$GITHUB_WORKSPACE", prepare)
+                    else:
+                        self.assertEqual(names, {"admission-gate"})
+                        self.assertNotIn("id-token", block)
+                        # The hosted gate admits on App 5368905's own admission check, bounded wait.
+                        self.assertIn("          CLUED_ADMISSION_GATE_SOURCE: independent-ci-native-work-admission\n", block)
+                        self.assertIn('          CLUED_ADMISSION_GATE_WAIT_SECONDS: "600"\n', block)
+                        self.assertIn("    timeout-minutes: 15\n", block)
+                        self.assertIn("      checks: read\n", block)
+        texts = {p.name: p.read_text(encoding="utf-8") for p in policy.WORKFLOW_DIR.glob("*.yml")}
+        # Every branch of a dynamic name counts, and so does a job ID without a name.
+        for file, old, new in [
+            ("gitleaks.yml", "'gitleaks-hosted-executor' ||", "'gitleaks' ||"),
+            ("trivy.yml", "|| 'trivy-hosted-executor-skipped' }}", "|| 'trivy' }}"),
+            ("contract-placement.yml", "    name: contract-placement-hosted-executor\n", "    name: contract-placement\n"),
+            ("contract-placement.yml", "    name: contract-placement-hosted-executor\n", ""),
+        ]:
+            with self.subTest(file=file, new=new):
+                changed = texts[file].replace(old, new, 1)
+                self.assertNotEqual(changed, texts[file])
+                _, jobs, _ = policy.split_workflow(changed)
+                # Re-pinned exact bytes still refuse the hazardous name.
+                pinned = copy.deepcopy(policy.OWNER_DECISION_HOSTED_JOBS)
+                pinned[file]["jobs"] = {job_id: policy.source_hash(block) for job_id, block in jobs.items()}
+                report = policy.evaluate_workflows({**texts, file: changed}, None, pinned)
+                self.assert_rejected(report, "carries a required check name")
+                self.assertEqual({row["workflow"] for row in report["violations"]}, {file})
+                self.assert_rejected(policy.evaluate_workflows({**texts, file: changed}), "Owner-decision hosted job changed")
+
+    def test_owner_decision_exception_cannot_extend_change_or_outlive_its_jobs(self):
+        texts = {p.name: p.read_text(encoding="utf-8") for p in policy.WORKFLOW_DIR.glob("*.yml")}
+        gitleaks = texts["gitleaks.yml"]
+        # Another hosted job, even in an excepted workflow, is new hosted execution.
+        self.assert_rejected(policy.evaluate_workflows({**texts, "gitleaks.yml": gitleaks + job("extra", "ubuntu-latest")}),
+                             "new GitHub-hosted")
+        # The exact admission-gate bytes in any other workflow are not admitted.
+        _, jobs, _ = policy.split_workflow(gitleaks)
+        copied = PREFIX + jobs["admission-gate"]
+        report = policy.evaluate_workflows({**texts, "copied-gate.yml": copied})
+        self.assert_rejected(report, "new GitHub-hosted")
+        self.assertEqual({row["workflow"] for row in report["violations"]}, {"copied-gate.yml"})
+        # Work, timeout, trigger and permission changes of an excepted workflow refuse.
+        for changed, reason in [
+            (gitleaks.replace("    timeout-minutes: 25\n", "    timeout-minutes: 60\n", 1), "Owner-decision hosted job changed"),
+            (gitleaks.replace("--redact --exit-code 1", "--redact --exit-code 0"), "Owner-decision hosted job changed"),
+            (gitleaks.replace("  push:\n", "  schedule:\n    - cron: '0 * * * *'\n  push:\n"), "Owner-decision hosted workflow controls changed"),
+            (gitleaks.replace("permissions:\n  contents: read\n", "permissions:\n  contents: write\n", 1), "Owner-decision hosted workflow controls changed"),
+            (gitleaks.replace(HOSTED_EXECUTOR_ROUTE, HOSTED_EXECUTOR_ROUTE.replace("ubuntu-latest", "ubuntu-24.04")), "Owner-decision hosted job changed"),
+            # The relay identity: its permission, audience, condition and position are exact.
+            (gitleaks.replace("      id-token: write\n", "      id-token: write\n      checks: write\n", 1), "Owner-decision hosted job changed"),
+            (gitleaks.replace("      id-token: write\n", "", 1), "Owner-decision hosted job changed"),
+            (gitleaks.replace("audience=clued-hosted-relay-v1", "audience=sts.amazonaws.com"), "Owner-decision hosted job changed"),
+            (gitleaks.replace("      - name: Emit relay identity\n", "      - name: Emit relay identity\n        if: always()\n"), "Owner-decision hosted job changed"),
+            (gitleaks.replace(RELAY_STEP, ""), "Owner-decision hosted job changed"),
+        ]:
+            with self.subTest(reason=reason, changed=changed[-300:]):
+                self.assertNotEqual(changed, gitleaks)
+                self.assert_rejected(policy.evaluate_workflows({**texts, "gitleaks.yml": changed}), reason)
+        # A job moved back to self-hosted or removed must drop its exception.
+        back = gitleaks.replace(HOSTED_EXECUTOR_ROUTE, HOSTED_EXECUTOR_ROUTE.replace(
+            "ubuntu-latest", "[self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]"))
+        self.assertNotEqual(back, gitleaks)
+        self.assert_rejected(policy.evaluate_workflows({**texts, "gitleaks.yml": back}),
+                             "hosted exception must be deleted once its job leaves")
+        removed = {name: text for name, text in texts.items() if name != "trivy.yml"}
+        self.assert_rejected(policy.evaluate_workflows(removed), "removed Owner-decision hosted job must be deleted")
+
+    def test_owner_decision_exception_schema_fails_closed(self):
+        text = PREFIX + job(runner="ubuntu-latest")
+        exact = frozen(text)
+        self.assert_pass(self.evaluate({"legacy.yml": text}, owner_hosted=exact))
+        for invalid in [[], {"legacy.yml": {"control_sha256": "0" * 64, "jobs": {}}},
+                        {"legacy.yml": {"control_sha256": "bad", "jobs": {"check": "0" * 64}}},
+                        {"legacy.yml": {**exact["legacy.yml"], "extra": True}},
+                        {"*.yml": exact["legacy.yml"]}, {"legacy.yml": {**exact["legacy.yml"], "jobs": {"*": "0" * 64}}}]:
+            with self.subTest(invalid=invalid):
+                self.assert_rejected(self.evaluate({"legacy.yml": text}, owner_hosted=invalid), "Owner-decision")
+        self.assert_rejected(self.evaluate({"legacy.yml": text}, exact, exact), "never both")
 
     def test_real_three_push_reuse_migrations_require_debt_retirement(self):
         texts = {p.name: p.read_text(encoding="utf-8")
