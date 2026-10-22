@@ -36,7 +36,6 @@ the same way, from the directory holding those three files:
 Run it from a root-owned copy (README.md): the plan binds this file's and the drop-in's SHA-256.
 """
 import datetime
-import fnmatch
 import hashlib
 import json
 import os
@@ -164,20 +163,18 @@ def sysctl_keys(text):
 
 
 def boot_overrides(files, target_name):
-    """files: {basename: text} as systemd-sysctl would pick them (first directory wins per basename). Assignments
-    are applied in basename order and the last one wins, so a later file that assigns one of our keys explicitly
-    overrides the drop-in at every boot. A glob never overrides an explicit assignment (sysctl.d(5)), whatever
-    its order; a '-key' line in any other file can keep the key from being set, so it is reported too."""
+    """files: {basename: text} as systemd-sysctl would pick them (first directory wins per basename). Entries are
+    read in basename order and a later entry for the same exact name replaces an earlier one (systemd 255
+    src/sysctl/sysctl.c): so a later file that assigns one of our keys overrides the drop-in, and a later bare
+    '-key' line with exactly our key leaves it unset at boot. Globs, assigned or negated, never touch an explicit
+    key, and anything sorting before the drop-in is replaced by it."""
     found = []
     for name in sorted(files):
-        if name == target_name:
+        if name <= target_name:
             continue
         for key, kind in sysctl_keys(files[name]):
-            for ours in KEYS:
-                if kind == 'set' and name > target_name and key == ours:
-                    found.append(f'{name}:{ours}')
-                elif kind == 'exclude' and (key == ours or fnmatch.fnmatchcase(ours, key)):
-                    found.append(f'{name}:-{ours}')
+            if key in KEYS:
+                found.append(f'{name}:{key}' if kind == 'set' else f'{name}:-{key}')
     return sorted(set(found))
 
 
@@ -498,9 +495,18 @@ def guard_running(systemctl):
     return code == 0 and out.strip() == 'active'
 
 
+def guard_timer_state(systemctl):
+    """(is-enabled, is-active) words of the timer, as systemctl prints them ('not-found' when it does not exist)."""
+    return systemctl('is-enabled', GUARD_TIMER)[1].strip() or 'unknown', systemctl('is-active', GUARD_TIMER)[1].strip() or 'unknown'
+
+
 def guard_last_pass_ok(systemctl):
-    code, out = systemctl('show', '--property=Result', '--value', GUARD_SERVICE)
-    return code == 0 and out.strip() == 'success'
+    """The service unit is loaded, has run at least once, and its last pass succeeded (Result=success alone is
+    also what systemd reports for a unit that never ran or does not exist)."""
+    code, out = systemctl('show', '--property=LoadState,Result,ExecMainStartTimestampMonotonic', GUARD_SERVICE)
+    facts = dict(line.split('=', 1) for line in out.splitlines() if '=' in line)
+    return (code == 0 and facts.get('LoadState') == 'loaded' and facts.get('Result') == 'success'
+            and facts.get('ExecMainStartTimestampMonotonic', '0') not in ('', '0'))
 
 
 def guard_apply(p, pkg_dir, want_plan, tool_sha, kernel, busy, stamp, systemctl):
@@ -508,29 +514,34 @@ def guard_apply(p, pkg_dir, want_plan, tool_sha, kernel, busy, stamp, systemctl)
     need(plan_sha(text) == want_plan, 'PLAN_CHANGED_SINCE_REVIEW')
     need(not busy, 'CI_UNIT_ACTIVE')
     need('different' not in states.values(), 'GUARD_FILE_DIFFERS_OWNER_DECIDES')
-    if all(v == 'same' for v in states.values()) and guard_running(systemctl):
+    if all(v == 'same' for v in states.values()) and guard_running(systemctl) and guard_last_pass_ok(systemctl):
         return {'status': 'GUARD_ALREADY_APPLIED', 'planSha256': want_plan}
-    need(not ('same' in states.values() and guard_saved_files(p['state'])), 'PREVIOUS_GUARD_APPLY_NOT_ROLLED_BACK', guard_saved_files(p['state']))
+    need(not guard_saved_files(p['state']), 'PREVIOUS_GUARD_APPLY_NOT_ROLLED_BACK', guard_saved_files(p['state']))
+    enabled, active = guard_timer_state(systemctl)
     os.makedirs(p['state'], mode=0o700, exist_ok=True)
     saved = f"{p['state']}/guard-previous-{stamp}.json"
-    _durable_new(saved, {'contract': GUARD_CONTRACT, 'states': states, 'sha256': {n: sha256(raw) for n, raw in pkg.items()}, 'planSha256': want_plan})
+    _durable_new(saved, {'contract': GUARD_CONTRACT, 'states': states, 'sha256': {n: sha256(raw) for n, raw in pkg.items()},
+                         'timerBefore': {'enabled': enabled, 'active': active}, 'planSha256': want_plan})
     for name, target, mode in p['guard_files']:
         if states[name] == 'absent':
             os.makedirs(os.path.dirname(target), mode=0o755, exist_ok=True)
             _create_only(target, pkg[name], mode)
-    for args in (('daemon-reload',), ('enable', '--now', GUARD_TIMER), ('start', GUARD_SERVICE)):
+    for args in (('daemon-reload',), ('enable', '--now', GUARD_TIMER)):
         code, _ = systemctl(*args)
         need(code == 0, 'GUARD_SYSTEMCTL_FAILED', ' '.join(args))
-    need(guard_running(systemctl) and guard_last_pass_ok(systemctl), 'GUARD_FIRST_RUN_FAILED')
+    code, _ = systemctl('start', GUARD_SERVICE)
+    if code != 0 or not (guard_running(systemctl) and guard_last_pass_ok(systemctl)):
+        systemctl('disable', '--now', GUARD_TIMER)  # a guard that cannot do its pass must not keep failing every minute
+        raise Refused('GUARD_FIRST_RUN_FAILED', saved)
     return {'status': 'GUARD_APPLIED', 'saved': saved, 'states': states, 'planSha256': want_plan}
 
 
 def guard_verify(p, pkg_dir, systemctl):
     states = guard_states(p, guard_package(p, pkg_dir))
-    code, enabled = systemctl('is-enabled', GUARD_TIMER)
+    enabled, _ = guard_timer_state(systemctl)
     running, last_ok = guard_running(systemctl), guard_last_pass_ok(systemctl)
-    ok = all(v == 'same' for v in states.values()) and code == 0 and enabled.strip() == 'enabled' and running and last_ok
-    return {'status': 'GUARD_VERIFIED' if ok else 'GUARD_NOT_IN_EFFECT', 'states': states, 'timerEnabled': enabled.strip(),
+    ok = all(v == 'same' for v in states.values()) and enabled == 'enabled' and running and last_ok
+    return {'status': 'GUARD_VERIFIED' if ok else 'GUARD_NOT_IN_EFFECT', 'states': states, 'timerEnabled': enabled,
             'timerActive': running, 'lastPassSucceeded': last_ok}, ok
 
 
@@ -539,16 +550,21 @@ def guard_rollback(p, saved_path, stamp, systemctl):
     need(os.path.dirname(os.path.realpath(saved_path)) == real_state, 'SAVED_OUTSIDE_STATE')
     saved = json.loads(read_required(saved_path, MAX_SAVED))
     names = [name for name, _, _ in p['guard_files']]
+    timer_before = saved.get('timerBefore') if isinstance(saved, dict) else None
     need(isinstance(saved, dict) and saved.get('contract') == GUARD_CONTRACT and isinstance(saved.get('states'), dict)
          and isinstance(saved.get('sha256'), dict) and set(saved['states']) == set(names) == set(saved['sha256'])
-         and all(saved['states'][n] in ('absent', 'same') for n in names), 'SAVED_REFUSED')
+         and all(saved['states'][n] in ('absent', 'same') for n in names)
+         and isinstance(timer_before, dict) and isinstance(timer_before.get('enabled'), str) and isinstance(timer_before.get('active'), str), 'SAVED_REFUSED')
     created = [(name, target) for name, target, _ in p['guard_files'] if saved['states'][name] == 'absent' and os.path.lexists(target)]
     for name, target in created:  # every file is checked before anything is touched
         current = read_optional(target, MAX_GUARD_FILE)
         need(current is not None and sha256(current) == saved['sha256'][name], 'GUARD_FILE_CHANGED_SINCE_APPLY', name)
-    if created:
+    # Back to the timer state recorded before apply: off unless it was an enabled, running install before.
+    was_on = timer_before['enabled'] == 'enabled' and timer_before['active'] == 'active' and not created
+    if not was_on:
         code, _ = systemctl('disable', '--now', GUARD_TIMER)
-        need(code == 0, 'GUARD_SYSTEMCTL_FAILED', 'disable --now')
+        need(code == 0 or not any(os.path.lexists(t) for _, t, _ in p['guard_files']), 'GUARD_SYSTEMCTL_FAILED', 'disable --now')
+    systemctl('reset-failed', GUARD_SERVICE)
     moved = []
     for name, target in created:
         dest = f"{p['state']}/removed-{stamp}-{name}"

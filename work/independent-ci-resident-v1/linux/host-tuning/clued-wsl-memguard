@@ -2,11 +2,16 @@
 """One pass of the WSL memory guard (Task 7c2e4386), run every 60 s by clued-wsl-memguard.timer as root.
 
 Every Windows->WSL hv_sock channel needs one free block of the ring order (order 7 with the 212992-byte socket
-defaults, order 5 with the host-tuning drop-in), and a batch fills the VM with page cache within the hour. When
-the free blocks of at least that order, summed over the zones, fall below LOW_BLOCKS, this pass compacts memory;
-if that is not enough it drops clean page cache (echo 1, never slab, never dirty pages) and compacts again, at
-most once every DROP_INTERVAL seconds. It only ever writes /proc/sys/vm/compact_memory and drop_caches; it
-starts, stops or reads nothing of the resident CI. Prints one JSON line when it acted, nothing otherwise.
+defaults, order 5 with the host-tuning drop-in). An allocation fails only when no zone can supply such a block
+(2026-10-22 13:22Z: DMA32 and Normal both empty), so the guard counts the free blocks of at least that order
+summed over the zones. Below LOW_BLOCKS it compacts memory, unless a compaction in the last COMPACT_BACKOFF
+seconds gained fewer than MIN_GAIN blocks (then compacting again would only churn the running scans); if the
+count is still low it drops clean page cache (echo 1: never slab, dirty or mapped pages) and compacts again, at
+most once every DROP_INTERVAL seconds. Times are CLOCK_BOOTTIME, and /run is per boot, so they never jump.
+
+It only writes /proc/sys/vm/compact_memory and drop_caches and its own files under /run/clued-wsl-memguard; it
+starts, stops or reads nothing of the resident CI. It prints one JSON line when it acted, and one status line
+every REPORT_INTERVAL seconds so the observation period shows how close the count runs to the threshold.
 """
 import json
 import os
@@ -17,7 +22,10 @@ PROC_SYS = '/proc/sys'
 BUDDYINFO = '/proc/buddyinfo'
 STATE = '/run/clued-wsl-memguard'
 LOW_BLOCKS = 64
+MIN_GAIN = 8
+COMPACT_BACKOFF = 300
 DROP_INTERVAL = 300
+REPORT_INTERVAL = 600
 PAGE = 4096
 HVS_MIN, HVS_MAX = 6 * PAGE, 64 * PAGE
 
@@ -29,17 +37,26 @@ def ring_order(rmem, wmem):
     return (one(rmem) + one(wmem) - 1).bit_length()
 
 
-def blocks_at_least(buddyinfo, order):
-    total = 0
+def zone_blocks(buddyinfo, order):
+    """{zone: free blocks of at least order}."""
+    out = {}
     for line in buddyinfo.splitlines():
         parts = line.split()
         if len(parts) >= 15 and parts[0] == 'Node' and parts[2] == 'zone':
-            total += sum(int(x) for x in parts[4 + order:15])
-    return total
+            out[parts[3]] = out.get(parts[3], 0) + sum(int(x) for x in parts[4 + order:15])
+    return out
 
 
-def may_drop(now, last_drop, interval=DROP_INTERVAL):
-    return last_drop is None or now - last_drop >= interval
+def blocks_at_least(buddyinfo, order):
+    return sum(zone_blocks(buddyinfo, order).values())
+
+
+def due(now, last, interval):
+    return last is None or now - last >= interval
+
+
+def boottime():
+    return time.clock_gettime(getattr(time, 'CLOCK_BOOTTIME', time.CLOCK_MONOTONIC))
 
 
 def read(path):
@@ -52,30 +69,48 @@ def write(path, value):
         f.write(value)
 
 
-def last_drop_time(state):
+def load(state, name):
     try:
-        return float(read(f'{state}/last-drop').strip())
+        return [float(x) for x in read(f'{state}/{name}').split()]
     except (OSError, ValueError):
         return None
 
 
-def guard_pass(proc_sys=PROC_SYS, buddyinfo=BUDDYINFO, state=STATE, clock=time.time, low=LOW_BLOCKS):
-    # Fail loudly (unit Result=exit-code) if the two files cannot be opened for writing, even on a quiet pass.
+def guard_pass(proc_sys=PROC_SYS, buddyinfo=BUDDYINFO, state=STATE, clock=boottime, low=LOW_BLOCKS):
+    # Fail loudly (unit Result=exit-code) when anything this pass may write cannot be written, even on a quiet
+    # pass, and before any action: a drop is never done without its time stamp.
     for name in ('compact_memory', 'drop_caches'):
         os.close(os.open(f'{proc_sys}/vm/{name}', os.O_WRONLY))
-    order = ring_order(int(read(f'{proc_sys}/net/core/rmem_default')), int(read(f'{proc_sys}/net/core/wmem_default')))
-    before = blocks_at_least(read(buddyinfo), order)
-    if before >= low:
-        return None
-    write(f'{proc_sys}/vm/compact_memory', '1\n')
-    after_compact = blocks_at_least(read(buddyinfo), order)
-    result = {'guard': 'clued-wsl-memguard', 'order': order, 'low': low, 'before': before, 'afterCompact': after_compact, 'dropped': False}
+    write(f'{state}/probe', '')
     now = clock()
-    if after_compact < low and may_drop(now, last_drop_time(state)):
-        write(f'{proc_sys}/vm/drop_caches', '1\n')
-        write(f'{state}/last-drop', f'{now}\n')
+    order = ring_order(int(read(f'{proc_sys}/net/core/rmem_default')), int(read(f'{proc_sys}/net/core/wmem_default')))
+    zones = zone_blocks(read(buddyinfo), order)
+    before = sum(zones.values())
+    report = load(state, 'last-report')
+    if before >= low:
+        if not due(now, report and report[0], REPORT_INTERVAL):
+            return None
+        write(f'{state}/last-report', f'{now}\n')
+        return {'guard': 'clued-wsl-memguard', 'status': 'OK', 'order': order, 'low': low, 'blocks': before, 'zones': zones}
+    result = {'guard': 'clued-wsl-memguard', 'status': 'ACTED', 'order': order, 'low': low, 'before': before, 'zones': zones,
+              'compacted': False, 'dropped': False}
+    after = before
+    last_compact = load(state, 'last-compact')  # [time, gain]
+    if last_compact is None or due(now, last_compact[0], COMPACT_BACKOFF) or last_compact[1] >= MIN_GAIN:
+        write(f'{state}/last-compact', f'{now} 0\n')
         write(f'{proc_sys}/vm/compact_memory', '1\n')
-        result.update(dropped=True, afterDrop=blocks_at_least(read(buddyinfo), order))
+        after = blocks_at_least(read(buddyinfo), order)
+        write(f'{state}/last-compact', f'{now} {after - before}\n')
+        result.update(compacted=True, afterCompact=after)
+    last_drop = load(state, 'last-drop')
+    if after < low and due(now, last_drop and last_drop[0], DROP_INTERVAL):
+        write(f'{state}/last-drop', f'{now}\n')
+        write(f'{proc_sys}/vm/drop_caches', '1\n')
+        write(f'{proc_sys}/vm/compact_memory', '1\n')
+        after_drop = blocks_at_least(read(buddyinfo), order)
+        write(f'{state}/last-compact', f'{now} {after_drop - after}\n')
+        result.update(dropped=True, afterDrop=after_drop)
+    write(f'{state}/last-report', f'{now}\n')
     return result
 
 
