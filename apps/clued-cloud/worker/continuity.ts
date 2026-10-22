@@ -590,7 +590,7 @@ async function supabaseRequest(
 ) {
   const { url, key } = supabaseConfig(env);
   const token = init.userToken ?? databaseGatewayToken(env);
-  if (!token) throw new HttpError(503, "Kooyumi database gateway is not configured.");
+  if (!token) throw new HttpError(503, "BeamingFace database gateway is not configured.");
   const headers = new Headers(init.headers);
   headers.set("apikey", key);
   headers.set("content-type", "application/json");
@@ -604,7 +604,7 @@ async function supabaseRequest(
       const parsed = JSON.parse(text) as unknown;
       payload = parsed;
     } catch {
-      payload = { message: response.statusText || "Kooyumi storage returned a non-JSON response." };
+      payload = { message: response.statusText || "BeamingFace storage returned a non-JSON response." };
     }
   }
   if (!response.ok) {
@@ -616,7 +616,7 @@ async function supabaseRequest(
         ? details.message
         : typeof details?.error_description === "string"
           ? details.error_description
-          : "Kooyumi storage request failed.";
+          : "BeamingFace storage request failed.";
     // Binding RPCs use the Worker gateway role after Clued authenticates the
     // connection. PostgREST maps that role's insufficient_privilege to 401;
     // forwarding it makes MCP clients restart OAuth for a resource denial.
@@ -636,7 +636,7 @@ async function supabaseRequest(
         : response.status;
     throw new HttpError(
       status,
-      status === 503 && response.status === 401 ? "Kooyumi database gateway is temporarily unavailable." : message,
+      status === 503 && response.status === 401 ? "BeamingFace database gateway is temporarily unavailable." : message,
       status === 503 && response.status === 401 ? { code: "worker_gateway_unavailable" } : payload,
     );
   }
@@ -1094,7 +1094,7 @@ function mayInvalidateApprovedProjection(request: Request) {
 
 function p5GatewayToken(env: ContinuityEnv) {
   const token = env.CLUED_P5_GATEWAY_TOKEN?.trim();
-  if (!token) throw new HttpError(503, "Kooyumi P5 gateway is not configured.");
+  if (!token) throw new HttpError(503, "BeamingFace P5 gateway is not configured.");
   return token;
 }
 
@@ -1109,7 +1109,7 @@ async function p5GatewayRpc(
     body: JSON.stringify(parameters),
   });
   if (!result || typeof result !== "object" || Array.isArray(result)) {
-    throw new HttpError(502, "Kooyumi P5 gateway returned an invalid response.");
+    throw new HttpError(502, "BeamingFace P5 gateway returned an invalid response.");
   }
   return result as Record<string, unknown>;
 }
@@ -1151,7 +1151,7 @@ function p5ResolvedCanonicalResult(resolution: Record<string, unknown>) {
 
 function p5AttemptResolutionFailed(resolution: Record<string, unknown>): never {
   const error = resolution.error;
-  throw new HttpError(409, "Kooyumi P5 attempt replay could not be resolved.", {
+  throw new HttpError(409, "BeamingFace P5 attempt replay could not be resolved.", {
     status: resolution.status,
     error: error && typeof error === "object" && !Array.isArray(error) ? error : undefined,
   });
@@ -1233,13 +1233,13 @@ async function storageOnboardRuntime(env: ContinuityEnv, token: string) {
 async function requireSupabaseUser(request: Request, env: ContinuityEnv) {
   const token = bearerToken(request);
   if (!token || token.startsWith("clued_bnd_")) {
-    throw new HttpError(401, "A signed-in Kooyumi account is required.");
+    throw new HttpError(401, "A signed-in BeamingFace account is required.");
   }
   const user = (await supabaseRequest(env, "/auth/v1/user", {
     method: "GET",
     userToken: token,
   })) as AuthenticatedUser;
-  if (!user?.id) throw new HttpError(401, "The Kooyumi session is invalid.");
+  if (!user?.id) throw new HttpError(401, "The BeamingFace session is invalid.");
   return { user, token };
 }
 
@@ -1297,7 +1297,7 @@ const tools = [
   {
     name: "clued_agent_bootstrap",
     description:
-      "Read public Clued connection metadata and the full Clued Agent Contract in content[1]. When agent_contract.parts is above 1, read every part in order before work. This call never returns user context or credentials.",
+      "Read public Clued connection metadata and the full BeamingFace Agent Contract in content[1]. When agent_contract.parts is above 1, read every part in order before work. This call never returns user context or credentials.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2037,7 +2037,7 @@ async function callRpc(
 ) {
   const token = bearerToken(request);
   if (!token) {
-    throw new HttpError(401, "Authorize with Kooyumi OAuth or a Clued Binding Token.");
+    throw new HttpError(401, "Authorize with BeamingFace OAuth or a Clued Binding Token.");
   }
   const supplied = typeof args === "object" && args ? args : {};
   // Hosts append reserved MCP annotations inside tool arguments. They are
@@ -2052,7 +2052,7 @@ async function callRpc(
 
   if (name in contextRpcByTool) {
     if (!contextsEnabled(env)) throw new HttpError(404, "Development context is disabled.");
-    if (!token.startsWith("clued_bnd_")) throw new HttpError(403, "Use an explicitly consented Kooyumi connection for development operations.");
+    if (!token.startsWith("clued_bnd_")) throw new HttpError(403, "Use an explicitly consented BeamingFace connection for development operations.");
     const contextInput = { mode: "ordinary", ...payload };
     return await supabaseRequest(env, "/rest/v1/rpc/clued_development_call_v14", {
       method: "POST",
@@ -2062,7 +2062,7 @@ async function callRpc(
 
   if (name in p5RpcByTool) {
     if (!p5TenantWritesEnabled(env)) {
-      throw new HttpError(404, "Kooyumi P5 tenant writes are disabled.");
+      throw new HttpError(404, "BeamingFace P5 tenant writes are disabled.");
     }
     if (!token.startsWith("clued_bnd_")) {
       throw new HttpError(403, "P5 tenant operations require an independent revocable Agent Binding.");
@@ -2266,7 +2266,7 @@ function requestRuleRejection(error: unknown) {
     error: {
       code: error.message,
       category: "request_rule",
-      message: "The request was refused by a Kooyumi contract rule; reconnecting will not change the outcome.",
+      message: "The request was refused by a BeamingFace contract rule; reconnecting will not change the outcome.",
       ...(hint ? { hint } : {}),
     },
   };
@@ -2277,7 +2277,7 @@ function requestRuleRejection(error: unknown) {
 // that asked, and delegated OAuth already arrives here as its Binding.
 async function callOwnerRequest(request: Request, env: ContinuityEnv, args: unknown) {
   const token = bearerToken(request);
-  if (!token) throw new HttpError(401, "Authorize with Kooyumi OAuth or a Clued Binding Token.");
+  if (!token) throw new HttpError(401, "Authorize with BeamingFace OAuth or a Clued Binding Token.");
   if (!token.startsWith("clued_bnd_")) throw new HttpError(403, "Owner requests require a Clued Agent Binding.");
   let result: unknown;
   try {
@@ -2308,7 +2308,7 @@ async function callModelDomainTool(request: Request, env: ContinuityEnv,
   if (!recordsV2Enabled(env) || !modelDomainSourceEnabled(env) ||
     ((name === MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL || name === MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL) &&
       (!modelDomainBootstrapRequestEnabled(env) || !ownerRequestsEnabled(env)))) {
-    throw new HttpError(404, "Unknown Kooyumi continuity tool.");
+    throw new HttpError(404, "Unknown BeamingFace continuity tool.");
   }
   const token = bearerToken(request);
   if (!token) throw new HttpError(401, "Authorize with a Clued Binding Token.");
@@ -2365,7 +2365,7 @@ async function callModelDomainTool(request: Request, env: ContinuityEnv,
 // request_rule shape; authorization denials stay HTTP 403; a Receipt-level conflict is retryable.
 async function callIntegrationTool(request: Request, env: ContinuityEnv, name: IntegrationToolName, args: unknown) {
   const token = bearerToken(request);
-  if (!token) throw new HttpError(401, "Authorize with Kooyumi OAuth or a Clued Binding Token.");
+  if (!token) throw new HttpError(401, "Authorize with BeamingFace OAuth or a Clued Binding Token.");
   if (!token.startsWith("clued_bnd_")) throw new HttpError(403, "Integration operations require a Clued Agent Binding.");
   const tokenHash = await sha256(token);
   // The transport facts the Canonical baseline checks (CRV-3) come from this request, never from the
@@ -2469,8 +2469,8 @@ async function callTool(
         : code === "export_too_large" ? "The Google Doc is larger than the 10 MB export limit."
         : code === "shortcut_not_followed" ? "Shortcuts are not followed. Read the target file inside the root instead."
         : code === "content_not_accessible" ? "This file's content is not readable with the current Google permission."
-        : code === "scope_upgrade_required" ? "Reading files Kooyumi did not create, and searching by content, need the Owner to turn on normal use on the Kooyumi storage page. Retrying will not help."
-        : code === "budget_exhausted" ? "This connection has used its hourly content budget (by default 256 MiB per rolling hour per authorized client and 1 GiB per account; only the Owner can change them, on the Kooyumi storage page; reserved before each body request and settled to the bytes returned). Try again later; retrying now will not help."
+        : code === "scope_upgrade_required" ? "Reading files BeamingFace did not create, and searching by content, need the Owner to turn on normal use on the BeamingFace storage page. Retrying will not help."
+        : code === "budget_exhausted" ? "This connection has used its hourly content budget (by default 256 MiB per rolling hour per authorized client and 1 GiB per account; only the Owner can change them, on the BeamingFace storage page; reserved before each body request and settled to the bytes returned). Try again later; retrying now will not help."
         : code === "request_limit_exceeded" ? "This large Office file needs more provider requests than one call may make. Retrying will not help; read an earlier or shorter range (a smaller offset + length), since each call extracts the text up to offset + length."
         : "Storage read unavailable.",
         // A fixed hint and a page number (StorageNormalUse §4.5: PDF time cut on a continuation).
@@ -2516,7 +2516,7 @@ async function callTool(
       const message = error instanceof Error ? error.message : "";
       const result = pathCode ? { error: pathCode, message: storagePathMessages[pathCode] }
         : message === "storage_trash_batch_item_unavailable"
-          ? { error: "storage_trash_batch_item_unavailable", message: "An item does not match a Kooyumi-registered item that can be moved to (or out of) the trash at that path, Drive file ID and version. Stat each item again; leave out the root, tracks, non-empty directories and governance files without delete authority." }
+          ? { error: "storage_trash_batch_item_unavailable", message: "An item does not match a BeamingFace-registered item that can be moved to (or out of) the trash at that path, Drive file ID and version. Stat each item again; leave out the root, tracks, non-empty directories and governance files without delete authority." }
           : message === "storage_trash_batch_pending_limit"
             ? { error: "storage_trash_batch_pending_limit", message: "This client registration already has 5 batches waiting for the Owner on this connection. Ask the user to confirm or let them expire before registering another; put every remaining item in one batch." }
           : message === "storage_trash_batch_conflict"
@@ -2595,29 +2595,29 @@ async function callTool(
   }
   if (typeof name === "string" && (name in recordRpcByTool || name in informationFlowRpcByTool) &&
     !recordsV2Enabled(env)) {
-    throw new HttpError(404, "Kooyumi project views v2 are disabled.");
+    throw new HttpError(404, "BeamingFace project views v2 are disabled.");
   }
   if (typeof name === "string" && name in p5RpcByTool && !p5TenantWritesEnabled(env)) {
-    throw new HttpError(404, "Kooyumi P5 tenant writes are disabled.");
+    throw new HttpError(404, "BeamingFace P5 tenant writes are disabled.");
   }
   if (typeof name === "string" && name in workClaimRpcByTool && !workClaimsEnabled(env)) {
-    throw new HttpError(404, "Kooyumi work claims are disabled.");
+    throw new HttpError(404, "BeamingFace work claims are disabled.");
   }
   if (typeof name === "string" && name in agentMessageRpcByTool && !agentMessagesEnabled(env)) {
-    throw new HttpError(404, "Kooyumi agent messages are disabled.");
+    throw new HttpError(404, "BeamingFace agent messages are disabled.");
   }
   if (isModelDomainTool(name)) return await callModelDomainTool(request, env, name, args);
   if (name === OWNER_REQUEST_TOOL) {
-    if (!ownerRequestsEnabled(env)) throw new HttpError(404, "Kooyumi owner requests are disabled.");
+    if (!ownerRequestsEnabled(env)) throw new HttpError(404, "BeamingFace owner requests are disabled.");
     return await callOwnerRequest(request, env, args);
   }
   if (isIntegrationTool(name)) {
     // flag off: the name is unknown, exactly like any other (IntegrationRuntime §13.8 T-W-2)
-    if (!integrationRuntimeEnabled(env)) throw new HttpError(404, "Unknown Kooyumi continuity tool.");
+    if (!integrationRuntimeEnabled(env)) throw new HttpError(404, "Unknown BeamingFace continuity tool.");
     return await callIntegrationTool(request, env, name, args);
   }
   if (typeof name !== "string" || !(name in rpcByTool)) {
-    throw new HttpError(404, "Unknown Kooyumi continuity tool.");
+    throw new HttpError(404, "Unknown BeamingFace continuity tool.");
   }
   let rawResult: unknown;
   try {
@@ -2700,7 +2700,7 @@ function withAuthorityCapture(name: string, value: unknown): unknown {
 // its failure is reported in the result, never thrown into the resume.
 async function callWorkClaimsActive(request: Request, env: ContinuityEnv, scope: string) {
   const token = bearerToken(request);
-  if (!token) throw new HttpError(401, "Authorize with Kooyumi OAuth or a Clued Binding Token.");
+  if (!token) throw new HttpError(401, "Authorize with BeamingFace OAuth or a Clued Binding Token.");
   const input = { scope };
   if (!token.startsWith("clued_bnd_")) {
     return await supabaseRequest(env, "/rest/v1/rpc/clued_oauth_call", {
@@ -2742,7 +2742,7 @@ async function withWorkClaims(request: Request, env: ContinuityEnv, name: string
 // read is reported in the result, never thrown into the call it is folded into.
 async function callAgentInboxSummary(request: Request, env: ContinuityEnv, input: Record<string, unknown>) {
   const token = bearerToken(request);
-  if (!token) throw new HttpError(401, "Authorize with Kooyumi OAuth or a Clued Binding Token.");
+  if (!token) throw new HttpError(401, "Authorize with BeamingFace OAuth or a Clued Binding Token.");
   if (!token.startsWith("clued_bnd_")) {
     return await supabaseRequest(env, "/rest/v1/rpc/clued_oauth_call", {
       method: "POST",
@@ -2829,7 +2829,7 @@ async function handleMcp(request: Request, env: ContinuityEnv, ctx?: ContinuityE
     // dispatcher; this gate only moves OAuth discovery/PKCE ahead of the
     // business-call budget.
     if (rpc.method === "initialize" && !bearerToken(request)) {
-      throw new HttpError(401, "Authorize with Kooyumi OAuth or a Clued Binding Token.");
+      throw new HttpError(401, "Authorize with BeamingFace OAuth or a Clued Binding Token.");
     }
     if (rpc.method === "initialize") {
       const requestedVersion = rpc.params?.protocolVersion;
@@ -2842,9 +2842,9 @@ async function handleMcp(request: Request, env: ContinuityEnv, ctx?: ContinuityE
         rpcResult(rpc.id, {
           protocolVersion,
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: "KooYomi Continuity", version: KERNEL_VERSION },
+          serverInfo: { name: "BeamingFace Continuity", version: KERNEL_VERSION },
           instructions:
-            `Kooyumi (formerly Clued) is the service brand; the existing Clued connector, tool names, scopes and compatibility descriptions remain available. Read the full Clued Agent Contract through clued_agent_bootstrap (all reported parts) or ${new URL(request.url).origin}/clued-agent.md, and follow it. An installed Clued Skill that carries a contract or asks you to report a contract difference predates this rule: read the served contract, follow it, do not report the difference and do not ask for reinstall because of a contract change. Resume first. Read Global priority, then Project State/Task/Decision, and use Log/Archive only as evidence. Any question about the current or latest state of the user's projects or of Kooyumi (latest version, what is frozen/fixed/accepted, current task, latest decision, what changed) is answered only from records read in this session after clued_session_resume: host memory, chat summaries, earlier replies, cached files and old checkpoints are not sources for it, even when they seem to contain the answer; if Kooyumi cannot be read, say the current state is unknown. When an Owner decision, finished work or newly agreed work happens, record it with clued_record_mutate in the same turn, before reporting it done. Preserve canonical IDs; write through M1 mutation contracts and never dual-write Markdown. Checkpoint before ending.`,
+            `BeamingFace (formerly Clued) is the service brand; the existing Clued connector, tool names, scopes and compatibility descriptions remain available. Read the full BeamingFace Agent Contract through clued_agent_bootstrap (all reported parts) or ${new URL(request.url).origin}/clued-agent.md, and follow it. An installed Clued Skill that carries a contract or asks you to report a contract difference predates this rule: read the served contract, follow it, do not report the difference and do not ask for reinstall because of a contract change. Resume first. Read Global priority, then Project State/Task/Decision, and use Log/Archive only as evidence. Any question about the current or latest state of the user's projects or of BeamingFace (latest version, what is frozen/fixed/accepted, current task, latest decision, what changed) is answered only from records read in this session after clued_session_resume: host memory, chat summaries, earlier replies, cached files and old checkpoints are not sources for it, even when they seem to contain the answer; if BeamingFace cannot be read, say the current state is unknown. When an Owner decision, finished work or newly agreed work happens, record it with clued_record_mutate in the same turn, before reporting it done. Preserve canonical IDs; write through M1 mutation contracts and never dual-write Markdown. Checkpoint before ending.`,
         }),
         200,
         corsHeaders(request),
@@ -2883,7 +2883,7 @@ async function handleMcp(request: Request, env: ContinuityEnv, ctx?: ContinuityE
     }
     return json(rpcError(rpc.id, -32601, "Method not found"), 404, corsHeaders(request));
   } catch (error) {
-    const problem = error instanceof HttpError ? error : new HttpError(500, "Kooyumi continuity failed.");
+    const problem = error instanceof HttpError ? error : new HttpError(500, "BeamingFace continuity failed.");
     const headers = corsHeaders(request);
     if (problem.status === 401) {
       Object.assign(headers, {
@@ -3062,7 +3062,7 @@ async function handleRecordApi(request: Request, env: ContinuityEnv) {
     );
   }
   if (!recordsV2Enabled(env)) {
-    throw new HttpError(404, "Kooyumi project views v2 are disabled.");
+    throw new HttpError(404, "BeamingFace project views v2 are disabled.");
   }
   if (url.pathname === "/v1/records" && request.method === "GET") {
     const input: Record<string, unknown> = {};
@@ -3159,7 +3159,7 @@ async function requireNativeBearer(request: Request, env: ContinuityEnv, denial:
     console.warn(JSON.stringify({
       event: "information_flow_native_route_denied", ...denial, reason: "binding_or_missing_token",
     }));
-    throw new HttpError(401, "A signed-in Kooyumi account is required.");
+    throw new HttpError(401, "A signed-in BeamingFace account is required.");
   }
   return await requireSupabaseUser(request, env);
 }
@@ -3200,7 +3200,7 @@ async function handleInformationFlowApi(request: Request, env: ContinuityEnv) {
     return new Response(null, { status: 204, headers: corsHeaders(request) });
   }
   if (!recordsV2Enabled(env)) {
-    throw new HttpError(404, "Kooyumi project views v2 are disabled.");
+    throw new HttpError(404, "BeamingFace project views v2 are disabled.");
   }
   const url = new URL(request.url);
   if (url.pathname === "/v1/intake" && request.method === "GET") {
@@ -4017,7 +4017,7 @@ async function handleContinuityRequestInner(
     }
     return null;
   } catch (error) {
-    const problem = error instanceof HttpError ? error : new HttpError(500, "Kooyumi request failed.");
+    const problem = error instanceof HttpError ? error : new HttpError(500, "BeamingFace request failed.");
     return json({ error: problem.message, details: problem.details }, problem.status, corsHeaders(request));
   }
 }

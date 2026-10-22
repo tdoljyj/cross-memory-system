@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KooYomi component versions: one manifest, content-bound, checked in CI.
+"""BeamingFace component versions: one manifest, content-bound, checked in CI.
 
 config/clued-components.json lists every self-developed Clued component (the
 Skill, the Agent contract, the Claude Code hooks, the local scripts, the MCP
@@ -29,7 +29,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = Path("config/clued-components.json")

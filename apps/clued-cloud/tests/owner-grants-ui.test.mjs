@@ -124,7 +124,7 @@ test('a note written by the admission check is shown as the check\'s, with its c
 test('signed out: no calls, an inline sign-in form', async t => {
   const f = fixture(CONFIRM); t.after(() => f.unmount()); f.emit('INITIAL_SESSION', null);
   assert.equal(f.calls.length, 0);
-  assert.ok(f.text().includes('请先登录 KooYomi'));
+  assert.ok(f.text().includes('请先登录 BeamingFace'));
   assert.equal(f.nodes('form').length, 1);
 });
 

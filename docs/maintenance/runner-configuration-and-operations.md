@@ -23,7 +23,7 @@ Owner 决定容量、受保护变更及停机范围；执行者只在授权机�
 
 ## 2. 当前清单与配置底线
 
-本次主线清单有两台主机、七个 runner，均为 active；2026-10-10 GitHub 注册 API 核对到同一七个名称及能力标签。表格是配置身份快照，未来数量从清单重新读取，不能把它当动态在线监控。
+本次主线清单有两台主机、七个 runner 条目：六个 active，家里 `home-linux-01` 已于 2026-10-21 退役（`state: retired`）。2026-10-10 GitHub 注册 API 核对到同一七个名称及能力标签（当时七个均为 active）。表格是配置身份快照，未来数量从清单重新读取，不能把它当动态在线监控。
 
 | 主机 / HostId | 容量配置 | runner | 独立根目录 |
 | --- | --- | --- | --- |
@@ -33,11 +33,13 @@ Owner 决定容量、受保护变更及停机范围；执行者只在授权机�
 | 同上 | 同上 | company-linux-03 | `/home/runner/actions-runner-03` |
 | 同上 | 同上 | company-linux-04 | `/home/runner/actions-runner-04` |
 | Turing / home-primary | compact-v1 | home-win-01 | `C:\clued-ci\runner-home-win-01` |
-| 同上 | 同上 | home-linux-01 | `/opt/actions-runner` |
+| 同上 | 同上 | home-linux-01（已退役，保持离线） | `/opt/actions-runner` |
 
 表内名称均加前缀 `clued-ci-`。公司 WSL 为 `CluedCI-Linux`，家里为 `Ubuntu-24.04`；Linux 服务用户为 `runner`。完整服务名、路由标签和看门狗路径从清单取，不能按机器名猜测。
 
-本次证据边界：公司四个 Linux unit 为 `User=runner`、`KillMode=control-group`、各自独立工作目录且 active；公司 `.wslconfig` 实际为 28 GB / 16 CPU / 8 GB swap。家里 `Ubuntu-24.04` 的 Linux 服务本轮只读复核为 active、`User=runner`、`KillMode=control-group`、根目录 `/opt/actions-runner`。两台原生 Windows 服务本轮经管理员只读复核均为 Running/Auto、`StartName=.\clued-runner`。这些定点读取不替代启动链、冷启动或登出无人值守验收；相应资格仍按历史精确证据及变更失效规则使用。
+`home-linux-01` 随 2026-10-21 家里独立 CI 切到 Source v2 退役：家里的必需检查改由常驻独立 CI 执行器给出，它不是 GitHub runner，不在本清单内。清单保留该条目并标 `retired`；健康监控不再期望它，路由心跳不再探测它，注册保留但离线不算异常。不要重新启用它；按 Owner 的切换决定，恢复旧 runner 前必须先撤销独立 CI 正式资格并清除其签名能力。
+
+本次证据边界：公司四个 Linux unit 为 `User=runner`、`KillMode=control-group`、各自独立工作目录且 active；公司 `.wslconfig` 实际为 28 GB / 16 CPU / 8 GB swap。家里 `Ubuntu-24.04` 的 Linux 服务本轮只读复核为 active、`User=runner`、`KillMode=control-group`、根目录 `/opt/actions-runner`（该 runner 已于 2026-10-21 退役，此条只作历史证据）。两台原生 Windows 服务本轮经管理员只读复核均为 Running/Auto、`StartName=.\clued-runner`。这些定点读取不替代启动链、冷启动或登出无人值守验收；相应资格仍按历史精确证据及变更失效规则使用。
 
 ### 2.1 身份、目录与路由
 
@@ -183,10 +185,11 @@ Get-CimInstance Win32_Service -Filter "Name='actions.runner.tdoljyj-cross-memory
 Get-ScheduledTask -TaskName 'Clued-CI-Watchdog-home-primary' -ErrorAction SilentlyContinue
 Get-ScheduledTaskInfo -TaskName 'Clued-CI-Watchdog-home-primary' -ErrorAction SilentlyContinue
 Get-Content -LiteralPath 'C:\clued-ci\logs\watchdog-home-primary.log' -Tail 20
-wsl.exe -d Ubuntu-24.04 -u runner -e systemctl show actions.runner.tdoljyj-cross-memory-system.clued-ci-home-linux-01.service -p ActiveState -p SubState -p User -p MainPID -p KillMode
+# 家里 home-linux-01 已退役，不再核对其 unit；下面的 Linux unit 示例针对公司，在 DESK-W-591 上执行
+wsl.exe -d CluedCI-Linux -u runner -e systemctl show actions.runner.tdoljyj-cross-memory-system.clued-ci-company-linux-01.service -p ActiveState -p SubState -p User -p MainPID -p KillMode
 ```
 
-上例针对家里，不能直接用于公司。不输出凭据文件、服务完整 Environment、私有 SSH 或个人配置。Task=Running 只能证明调度进程存活，还要核对实际看门狗进程、采样/命令是否卡住。watchdog 日志只在事件变化时写，不是连续心跳；旧日志末行不能证明当前运行。
+上例除最后一行外针对家里，最后一行针对公司；两台主机的服务名、计划任务、日志路径和 distro 不能互换。不输出凭据文件、服务完整 Environment、私有 SSH 或个人配置。Task=Running 只能证明调度进程存活，还要核对实际看门狗进程、采样/命令是否卡住。watchdog 日志只在事件变化时写，不是连续心跳；旧日志末行不能证明当前运行。
 
 ### 6.2 按原因处理
 
@@ -201,7 +204,7 @@ wsl.exe -d Ubuntu-24.04 -u runner -e systemctl show actions.runner.tdoljyj-cross
 | watch 无进程 | 调度、重复入口、账号、执行结果 | 核对脚本/账号后恢复监督，再实测退出恢复 |
 | Docker 冲突/孤儿进程 | 同机锁、cgroup、容器归属 | 排空后处理目标资源，不能全机 prune/杀所有进程 |
 
-[健康监控](../../scripts/ci/self-hosted/ci_health.py)每小时分析；[路由心跳](../../.github/workflows/clued-ci-runner-heartbeat.yml)每 15 分钟探测。基线 matrix 只有公司 Linux01/02 与家里 Linux01、两 Windows，**不包含公司 Linux03/04**。不得把它称为七节点完整覆盖；03/04 先用直接 API 与指定实际 job 证据核对，监控覆盖补齐另走受审变更。
+[健康监控](../../scripts/ci/self-hosted/ci_health.py)每小时分析；[路由心跳](../../.github/workflows/clued-ci-runner-heartbeat.yml)每 15 分钟探测。基线 matrix 只有公司 Linux01/02 与两 Windows（company-win-01、home-win-01）四个目标，**不包含公司 Linux03/04**；已退役的家里 Linux01 既不探测，也不在健康监控的期望集内。不得把它称为六个 active 节点的完整覆盖；03/04 先用直接 API 与指定实际 job 证据核对，监控覆盖补齐另走受审变更。
 
 告警运输 PR 是 do-not-merge 的事件载体，不合入 main。恢复后以机器与实际作业证据结案，再登记 KooYomi；不把 API 状态延迟、采样缺口或旧资格说明当结论。
 
@@ -313,9 +316,10 @@ C 盘可用空间、VHDX 在宿主的占用和 Linux `df`/`du` 的使用量是�
 
 | 差异 | 实施时的限制 |
 | --- | --- |
-| 主线清单七节点；历史 P7/P8/P14 资格只覆盖当时受查对象 | 当前数量由清单/API读取；旧四节点资格不能推广为七节点或本轮主机重验 |
+| 主线清单七个条目（六个 active，home-linux-01 已退役）；历史 P7/P8/P14 资格只覆盖当时受查对象 | 当前数量由清单/API读取；旧四节点资格不能推广为六个 active 节点或本轮主机重验 |
 | 清单 auto_update_after_registration=true；bootstrap 没有 --disableupdate/完整标准账号加固入口 | 不以基础安装成功直接上线；使用受审管理员安装/加固方案并验收，代码统一另走 PR |
-| 心跳 matrix 仅覆盖五节点，未列公司 Linux03/04 | 保留 API/实际定点 job 核对；新增/退役流程必须安排 matrix 对应变更，不能称完整覆盖 |
+| 心跳 matrix 仅覆盖四节点，未列公司 Linux03/04（已退役的 home-linux-01 已移出） | 保留 API/实际定点 job 核对；新增/退役流程必须安排 matrix 对应变更，不能称完整覆盖 |
+| renderer 不读 primary `linux_runner` 的 `state` | 家里清单已标 retired，但按现主线重渲染家里看门狗仍会监督已退役的 unit；renderer 修正前不要重渲染家里看门狗，修正另走受审 PR |
 | 主线 renderer 仍只安装 Startup/HKCU Run；无窗口计划任务安装器在未合入 PR #615 | 公司现场已安装无窗口 Limited 计划任务，家里有既有计划任务验收；部署事实不冒充主线工具能力，安装器更新另按原 Task/PR 受审 |
 | 公司已部署任务为每日触发并带重复恢复；规范目标是登录触发 | 既有受控退出恢复通过不等于已符合全部调度定义；公司登录/冷启动/登出无人值守仍未实测，不据此新增或变更任务 |
 | 清单 draining/maintenance/retired 不自动阻断 GitHub 或停止 primary 服务 | 必须按第 7 节隔离派单、停监督并排空，不能只改状态 |

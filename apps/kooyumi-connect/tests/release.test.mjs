@@ -20,9 +20,9 @@ Binding portal: ${ORIGIN}/
 `;
 const servedContract = contract + serviceTail, contractSha = sha256(contract), servedSha = sha256(servedContract);
 function healthy() {
-  return { commit, revision: '0.2.15', contract, notBefore,
-    page: { status: 200, body: '<b>KooYomi Connect</b>' },
-    smoke: { status: 200, body: { ok: true, connect_service: 'clued-connect', revision: '0.2.15', source_commit: commit,
+  return { commit, revision: '0.2.16', contract, notBefore,
+    page: { status: 200, body: '<b>BeamingFace Connect</b>' },
+    smoke: { status: 200, body: { ok: true, connect_service: 'clued-connect', revision: '0.2.16', source_commit: commit,
       checked_at: '2026-10-15T10:00:01Z', state_machine: { ok: true },
       upstream: { origin: ORIGIN, resource: ORIGIN + '/mcp', healthz: 200, continuity_policy: 200, official_skill: 200, official_skill_sha256: servedSha } } },
     resource: { status: 200, body: { resource: ORIGIN + '/mcp', authorization_servers: [ORIGIN] } },
@@ -115,7 +115,7 @@ test('production verification refuses wrong code, old issuers, failed upstream c
     [value => { value.resource.body.authorization_servers = [LEGACY_ORIGIN]; }, 'connect_resource_mismatch'],
     [value => { value.issuer.body.token_endpoint = LEGACY_ORIGIN + '/oauth/token'; }, 'connect_issuer_mismatch'],
     [value => { value.page.body = '<b>Clued Connect</b>'; }, 'connect_brand_mismatch'],
-    [value => { value.page.body = '<b>Kooyumi Connect</b>'; }, 'connect_brand_mismatch'],
+    [value => { value.page.body = '<b>KooYomi Connect</b>'; }, 'connect_brand_mismatch'],
     [value => { value.page.status = 302; }, 'connect_page_http_302'],
   ];
   for (const [mutate, expected] of cases) await t.test(expected, () => {

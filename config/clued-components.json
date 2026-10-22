@@ -1,12 +1,12 @@
 {
   "schema": "clued.components/1",
-  "about": "Every self-developed KooYomi component and its version. Content-bound: scripts/clued_components.py check fails when a component's files change without a version bump. The service reports these versions in /.well-known/clued-continuity and clued_session_resume; scripts/hooks/clued_version_check.py compares them with this machine. Task 6dfd7560.",
+  "about": "Every self-developed BeamingFace component and its version. Content-bound: scripts/clued_components.py check fails when a component's files change without a version bump. The service reports these versions in /.well-known/clued-continuity and clued_session_resume; scripts/hooks/clued_version_check.py compares them with this machine. Task 6dfd7560.",
   "components": [
     {
       "id": "product",
       "kind": "product",
       "version": "1.6",
-      "description": "KooYomi product version (root VERSION).",
+      "description": "BeamingFace product version (root VERSION).",
       "root": ".",
       "files": [
         "VERSION"
@@ -20,13 +20,13 @@
     {
       "id": "skill.clued",
       "kind": "skill",
-      "version": "1.0.24",
-      "description": "The KooYomi Skill package (SKILL.md, agents/ and references/), installed on Claude, Codex and other hosts.",
+      "version": "1.0.25",
+      "description": "The BeamingFace Skill package (SKILL.md, agents/ and references/), installed on Claude, Codex and other hosts.",
       "root": "skills/clued",
       "files": [
         "**/*"
       ],
-      "content_sha256": "35dc5890818c22e2ed1de8db49d7f02c5944bed2999ab4d79fc20bc09c92f89a",
+      "content_sha256": "8166f32dded2b7cb511c8ef74ca1aafe4bb0bd324630c065d526e84db78ad271",
       "version_marker": {
         "file": "SKILL.md",
         "pattern": "  version: \"{version}\""
@@ -35,13 +35,13 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "52",
-      "description": "Clued Agent Contract, served at /clued-agent.md.",
+      "version": "53",
+      "description": "BeamingFace Agent Contract, served at /clued-agent.md.",
       "root": "protocol/agent",
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "d7c9999ebeeb5d43cadb5dddff3d5c63159a3edad523ac7bd26c4d9518f57938",
+      "content_sha256": "3e70535d7dba877afd399c4f571d9690086d61ee2cd1498a2937de5f9e44c982",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
@@ -50,8 +50,8 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.8.4",
-      "description": "KooYomi MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
+      "version": "0.8.5",
+      "description": "BeamingFace MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
     },
     {
       "id": "hook.runner-job-started",
@@ -71,13 +71,13 @@
     {
       "id": "hook.capture-guard",
       "kind": "hook",
-      "version": "1.0.3",
-      "description": "Claude Code Stop hook enforcing KooYomi capture.",
+      "version": "1.0.4",
+      "description": "Claude Code Stop hook enforcing BeamingFace capture.",
       "root": "scripts/hooks",
       "files": [
         "clued_capture_guard.py"
       ],
-      "content_sha256": "d33038791c4aa6f05c2d17df85b995456c5a727723375fda4165ed9077aeda19",
+      "content_sha256": "144a64bf5b82e17b79148b58ccf1c2fed4016b5813b15f1746001316849df541",
       "version_marker": {
         "file": "clued_capture_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -86,13 +86,13 @@
     {
       "id": "hook.work-claim-guard",
       "kind": "hook",
-      "version": "1.1.6",
+      "version": "1.1.7",
       "description": "Claude Code work-claim hooks.",
       "root": "scripts/hooks",
       "files": [
         "clued_work_claim_guard.py"
       ],
-      "content_sha256": "4e1f82e3cd86cd8270184492fa90726246e041b8da85ab416f10bab7b46a4d64",
+      "content_sha256": "e6861fca7236d21ffe0e859ecdb8a76440e0429f73cccd6cc2cf1462e8265ed7",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -101,13 +101,13 @@
     {
       "id": "hook.version-check",
       "kind": "hook",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "description": "Claude Code hook comparing component versions with the service.",
       "root": "scripts/hooks",
       "files": [
         "clued_version_check.py"
       ],
-      "content_sha256": "3faf65def3d30609930d51161ed4ec7732f98b24e1f281e90d90d08e69628462",
+      "content_sha256": "17aa7b9b46309de222e570009c1e01a43eba0ef3dbc83b0484d2c9159b230756",
       "version_marker": {
         "file": "clued_version_check.py",
         "pattern": "__version__ = \"{version}\""
@@ -116,13 +116,13 @@
     {
       "id": "hook.run-python",
       "kind": "hook",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "description": "Python launcher used by every Claude Code hook.",
       "root": "scripts/hooks",
       "files": [
         "run_python.sh"
       ],
-      "content_sha256": "e4da4a4a3d2575a8489fb771e61cd3d977ddae555ba2cb9e183631b4dbb59b52",
+      "content_sha256": "c5ca61bba222975eb55fc5de4748d17a07e8fe24e9238d6f98139f1fed02eccd",
       "version_marker": {
         "file": "run_python.sh",
         "pattern": "# Version: {version}"
@@ -157,13 +157,13 @@
     {
       "id": "script.components",
       "kind": "script",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "description": "Component manifest tool (this manifest's checker).",
       "root": "scripts",
       "files": [
         "clued_components.py"
       ],
-      "content_sha256": "5acd577f147a29a9c67a9ce52646bad951aed1fa44e15963aec18d5834d48741",
+      "content_sha256": "945a548dda51452567cf3587457b4d523c27ea7d483710f1f82ea0b5e01e81f7",
       "version_marker": {
         "file": "clued_components.py",
         "pattern": "__version__ = \"{version}\""
@@ -172,13 +172,13 @@
     {
       "id": "script.update-clued-skills",
       "kind": "script",
-      "version": "1.0.1",
-      "description": "Installer for the KooYomi Skill on Codex endpoints.",
+      "version": "1.0.2",
+      "description": "Installer for the BeamingFace Skill on Codex endpoints.",
       "root": "scripts",
       "files": [
         "update_clued_skills.py"
       ],
-      "content_sha256": "23f683142adcfa3e9250421fff5263fddd08899c6282fc7d3056c1130a7f368b",
+      "content_sha256": "c0b45bc7ca13cfa9a946cec5ec56dffc785d5c59fffb4e94f750b82f173e3e45",
       "version_marker": {
         "file": "update_clued_skills.py",
         "pattern": "__version__ = \"{version}\""
@@ -314,13 +314,13 @@
     {
       "id": "script.kooyumi-plugin-bundle",
       "kind": "script",
-      "version": "1.0.1",
-      "description": "Build and verify the private registered KooYomi App plugin with the canonical Skill; no direct MCP or new account connection.",
+      "version": "1.0.2",
+      "description": "Build and verify the private registered BeamingFace App plugin with the canonical Skill; no direct MCP or new account connection.",
       "root": "plugins/kooyumi",
       "files": [
         "**/*"
       ],
-      "content_sha256": "70afca67848ad55f2611591ac46b7205e2364b9c4877bbbf488c2f7b57893a22",
+      "content_sha256": "951876a4d818db286e99577ee09b051f10f76613520d6bfcfe1f1669895c7041",
       "version_marker": {
         "file": "build_bundle.py",
         "pattern": "__version__ = \"{version}\""

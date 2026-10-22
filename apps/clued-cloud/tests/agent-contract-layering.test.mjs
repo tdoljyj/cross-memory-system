@@ -10,14 +10,35 @@ const review = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v48-
 const autonomy = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v49-v50-map.json', import.meta.url), 'utf8'));
 const claimRenewal = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v50-v51-map.json', import.meta.url), 'utf8'));
 const sessionTitle = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v51-v52-map.json', import.meta.url), 'utf8'));
+const branding = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v52-v53-map.json', import.meta.url), 'utf8'));
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 
 // Keep the v46→v47 movement proof unchanged. The v48 successor declares its
 // three scoped replacements separately, followed by exact v49 review and v50
-// runtime additions, the v51 claim-renewal clarification and the v52 title
-// metadata correction. Undo only these declared successors before checking all
+// runtime additions, the v51 claim-renewal clarification, the v52 title
+// metadata correction and the v53 display-name changes. Undo only these declared successors before checking all
 // 24 original normative blocks against the unchanged frozen proof.
+function v52Source() {
+  assert.equal(branding.schema, 'clued.agent-contract-branding-successor/1');
+  assert.equal(branding.source_version, 52);
+  assert.equal(branding.target_version, 53);
+  assert.equal(sha256(source), branding.target_document_normalized_sha256);
+  let restored = source;
+  for (const { id, before, after } of [...branding.edits].reverse()) {
+    // The mapping can change only the visible name and the contract version.
+    // In particular it cannot silently change authority, tools or identifiers.
+    const expected = id === 'version' ? 'Contract version: 53'
+      : before.split('`').map((part, i) => i % 2 ? part : part.replace(/\bClued\b(?![-_])/g, 'BeamingFace')).join('`');
+    assert.equal(after, expected, `${id}: branding-only replacement`);
+    assert.equal(restored.split(after).length - 1, 1, `${id}: exact branding successor text`);
+    restored = restored.replace(after, before);
+  }
+  assert.equal(sha256(restored), branding.source_document_normalized_sha256);
+  return restored;
+}
+
 function v51Source() {
+  const source = v52Source();
   assert.equal(sessionTitle.schema, 'clued.agent-contract-session-title-successor/1');
   assert.equal(sessionTitle.source_version, 51);
   assert.equal(sessionTitle.target_version, 52);
@@ -104,7 +125,7 @@ test('the mandatory work-claim core remains within 500 words', () => {
   assert.ok(words > 0 && words <= 500, `§1.7 has ${words} words`);
 });
 
-test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v52 successor edits', () => {
+test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v53 successor edits', () => {
   assert.equal(map.schema, 'clued.agent-contract-claim-move/1');
   assert.equal(map.blocks.length, 24);
   assert.equal(map.blocks.reduce((count, row) => count + row.reference_edits.length, 0), 9);
