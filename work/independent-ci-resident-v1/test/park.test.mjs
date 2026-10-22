@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ResidentExecutor, PARK_HEAD_RETRY_MS, PARK_HEAD_STREAK_MS } from '../src/executor.mjs';
+import { validatePolicy } from '../src/policy.mjs';
 import { POSITIONS, closedBreaker } from '../src/breaker.mjs';
 import { describe as prPage } from '../src/pr-status.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
@@ -496,4 +497,35 @@ test('re-review m8, N6, N9: parking full is on every status; the back-off after 
   const done = (await bodies(h, 'owner-request')).find(b => b.kind === 'drain');
   assert.deepEqual([done.ended.length, done.remaining, typeof done.stoppedBy], [1, 1, 'string']);
   assert.equal((await bodies(h, 'owner-request-refused')).length, 0);
+});
+
+// ---- the final check of step 2 (test gaps n1, n2) ----
+test('final check n1: drifted bytes at an expiring authority end a batch waiting at A with a HALT, no archive', async t => {
+  const f = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => null }) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'WAITING');
+  const later = new ResidentExecutor({ ...f.ports, policy: validatePolicy(rawPolicy({ relay: RELAY_ON, validUntil: new Date(f.clock() + 60_000).toISOString() })),
+    sourceIntegrity: async () => ({ ok: false }) });
+  const r = await later.tick();
+  assert.equal(r.state, 'HALTED');
+  assert.equal((await f.ledger.halted()).value.code, 'RESIDENT_SOURCE_DRIFT');
+  assert.equal(f.engine.calls.filter(c => c[0] === 'archive-windows').length, 0);
+});
+
+test('final check n2: alternating main tips nudge once each, not every 5 minutes', async t => {
+  const answers = Array.from({ length: 6 }, () => notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'));
+  const f = await executorFixture(t, { engine: stage8Engine(answers, KEY) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  const tries = async () => (await f.ledger.state(KEY)).tries.length;
+  const poller = (pr, base) => triggerBytes({ contract: 'clued.independent-ci.resident-trigger/2', pr, headSha: H(pr % 10 === 0 ? 3 : pr % 10), baseSha: base, prUpdatedAt: '2026-10-20T11:00:00.000Z' });
+  const seen = [];
+  for (const [i, base] of [H(5), H(6), H(5), H(6)].entries()) {
+    f.advance(6 * MIN);
+    await f.drop(poller(901 + i, base));
+    await f.exec.tick();
+    seen.push(await tries());
+  }
+  // X and Y nudge once each (tries 2 and 3); X and Y again nudge nothing (no try is due by its back-off yet)
+  assert.deepEqual(seen, [2, 3, 3, 3]);
 });
