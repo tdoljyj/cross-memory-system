@@ -70,7 +70,7 @@ test('the default clock is this boot\'s uptime, read at each look', async t => {
 });
 
 test('the default clock moves with os.uptime(), not with a value taken once', async t => {
-  // A default read once (at module load or on first use) is hours behind here, so it would drop the second request.
+  // A default read once is behind here: taken at module load it drops both requests, taken on first use the second.
   const base = os.uptime() * 1000;
   let now = base + HOUR;
   t.mock.method(os, 'uptime', () => now / 1000);

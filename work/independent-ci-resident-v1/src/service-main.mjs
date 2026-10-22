@@ -105,7 +105,7 @@ export const RESTING_STATES = Object.freeze(['IDLE', 'DEFERRED', 'HALTED', 'PAUS
 export async function serviceLoop({ exec, lock, sleep, once = false, stopRequested, acknowledgeStop, onLoopException, betweenBatches }) {
   for (;;) {
     await lock.touch();
-    // SCM stop is honoured only here, between ticks (ResidentServiceHost never kills us).
+    // SCM stop is honoured only here, before every tick, the first included (ResidentServiceHost never kills us).
     if (await stopRequested()) {
       await acknowledgeStop();
       return 0;

@@ -1,6 +1,6 @@
 // The SCM stop request, state\STOP-REQUESTED (Task d80fd886, F2). ResidentServiceHost creates it only when none
 // exists and writes {"contract":"clued.independent-ci.stop-request/1","uptimeMs":<GetTickCount64>} into it, so a
-// file without its content yet is a normal moment. The executor looks between ticks.
+// file without its content yet is a normal moment. The executor looks before every tick, the first included.
 //
 // A request whose uptime is more than the margin ahead of this boot's was asked before a reboot and never
 // acknowledged (the executor ended first). It is not for this executor: it is renamed into
