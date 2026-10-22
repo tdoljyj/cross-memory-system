@@ -74,6 +74,14 @@ public static class HostPureTests
         return (int)cs.GetValue(status);
     }
 
+    // The uptimeMs field of a stop request (RequestText).
+    static ulong UptimeIn(string text)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(text, "\"uptimeMs\":([0-9]{1,20})\\}");
+        if (!m.Success) throw new Exception("FAILED:stop-request-shape:" + text);
+        return ulong.Parse(m.Groups[1].Value);
+    }
+
     static string Case(string dir, string name, out string state, out string locks)
     {
         string root = Path.Combine(dir, name);
@@ -106,6 +114,9 @@ public static class HostPureTests
             Yes(after.WaitOne(10000), "scm-stop-exited-handler-ran");
             Yes(!File.Exists(Path.Combine(state, "STOP-REQUESTED")), "scm-stop-not-recreated-after-acknowledgement");
             Yes(Directory.GetFiles(locks, "stop-*").Length == 1, "scm-stop-acknowledged-once");
+            // The acknowledged request names this boot (F2): milliseconds since boot, no later than now.
+            string asked = File.ReadAllText(Directory.GetFiles(locks, "stop-*")[0]);
+            Yes(asked.StartsWith("{\"contract\":\"clued.independent-ci.stop-request/1\",\"uptimeMs\":") && UptimeIn(asked) <= ResidentStopGate.GetTickCount64(), "scm-stop-request-names-this-boot:" + asked.Trim());
             Yes(host.ExitCode == 0 && State(host) == 1, "scm-stop-exit-0-stopped");
             host.Stop(); Shutdown(host);
             Yes(!File.Exists(Path.Combine(state, "STOP-REQUESTED")) && Directory.GetFiles(locks).Length == 1, "scm-stop-later-stop-and-shutdown-write-nothing");
@@ -207,6 +218,19 @@ public static class HostPureTests
             bool handled = after.WaitOne(10000); int acks = Directory.GetFiles(locks, "stop-*").Length;
             Yes(handled && acks == 1 && host.ExitCode == 0 && State(host) == 1, "request-fails-retry-asks-again:" + handled + "/" + acks + "/" + host.ExitCode + "/" + State(host) + "/" + File.Exists(Path.Combine(state, "STOP-REQUESTED")));
 
+            // 4e. An IOException other than "already there" (here the state directory is gone) no longer counts as
+            //     asked (Task d80fd886, F3): the stop fails visibly instead of waiting 20 s and reporting STOPPED with
+            //     an executor that was never asked; a retried stop asks again.
+            host = Host(Case(dir, "state-missing", out state, out locks));
+            Directory.Delete(state, true);
+            p = Fake(state, "ack"); host.Watch(p); after = After(p);
+            clock = Stopwatch.StartNew(); refused = null;
+            try { host.Stop(); } catch (Exception e) { refused = e.GetType().Name; }
+            Yes(refused == "DirectoryNotFoundException" && clock.ElapsedMilliseconds < 5000 && State(host) != 1 && !p.HasExited, "state-missing-stop-refused:" + refused);
+            Directory.CreateDirectory(locks);
+            host.Stop();
+            Yes(after.WaitOne(10000) && Directory.GetFiles(locks, "stop-*").Length == 1 && host.ExitCode == 0 && State(host) == 1, "state-missing-retry-asks-again");
+
             // 5. The gate on its own.
             Case(dir, "gate", out state, out locks);
             string stopFile = Path.Combine(state, "STOP-REQUESTED");
@@ -214,12 +238,37 @@ public static class HostPureTests
             Yes(gate.Take() && !gate.Take() && !gate.Take(), "gate-first-caller-only");
             gate.Release();
             Yes(gate.Take() && !gate.Take(), "gate-given-back-after-a-failed-request");
-            Yes(!File.Exists(stopFile) && gate.Request() && File.Exists(stopFile) && new FileInfo(stopFile).Length == 0, "gate-request-creates-empty");
+            ulong before = ResidentStopGate.GetTickCount64();
+            Yes(!File.Exists(stopFile) && gate.Request() && File.Exists(stopFile), "gate-request-creates");
+            ulong written = UptimeIn(File.ReadAllText(stopFile));
+            Yes(written >= before && written <= ResidentStopGate.GetTickCount64() && File.ReadAllText(stopFile) == ResidentStopGate.RequestText(written), "gate-request-uptime:" + written);
+            Yes(ResidentStopGate.RequestText(123) == "{\"contract\":\"clued.independent-ci.stop-request/1\",\"uptimeMs\":123}\n", "gate-request-text");
+            File.Delete(stopFile);
             // A stop still pending for an earlier executor is never truncated, renamed or rewritten.
             File.WriteAllText(stopFile, "earlier");
             Yes(!new ResidentStopGate(state).Request() && File.ReadAllText(stopFile) == "earlier", "gate-existing-stop-untouched");
-            Yes(!ResidentStopGate.TryCreateStopFile(stopFile) && File.ReadAllText(stopFile) == "earlier", "gate-create-only");
+            Yes(!ResidentStopGate.TryCreateStopFile(stopFile, "x") && File.ReadAllText(stopFile) == "earlier", "gate-create-only");
             File.Delete(stopFile);
+            // Only "already there" counts as asked; other IOExceptions are thrown (F3).
+            string missingDirectory = null;
+            try { ResidentStopGate.TryCreateStopFile(Path.Combine(state, "no-such-directory", "STOP-REQUESTED"), "x"); } catch (IOException e) { missingDirectory = e.GetType().Name; }
+            Yes(missingDirectory == "DirectoryNotFoundException", "gate-missing-directory-thrown:" + missingDirectory);
+            Yes(ResidentStopGate.AlreadyThere(new IOException("x", unchecked((int)0x80070050))) && ResidentStopGate.AlreadyThere(new IOException("x", unchecked((int)0x800700B7)))
+                && !ResidentStopGate.AlreadyThere(new IOException("x", unchecked((int)0x80070070))) && !ResidentStopGate.AlreadyThere(new IOException("x", unchecked((int)0x80070020))), "gate-already-there-codes");
+            // Once the file is created the request stands, even if its content cannot be written: a failure there
+            // must not give the stop back, or a retry would create a second request after the executor took the first.
+            Yes(ResidentStopGate.TryCreateStopFile(stopFile, "x", (f, b) => { throw new IOException("disk full"); }) && File.Exists(stopFile) && new FileInfo(stopFile).Length == 0, "gate-created-but-unwritten-stands");
+            File.Delete(stopFile);
+            // Shared for read and delete: the executor can read and rename the request while the host still holds it.
+            bool readAndRenamedWhileHeld = false;
+            Yes(ResidentStopGate.TryCreateStopFile(stopFile, "x", (f, b) =>
+            {
+                f.Write(b, 0, b.Length); f.Flush();
+                using (var r = new FileStream(stopFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) { }
+                File.Move(stopFile, stopFile + ".taken");
+                readAndRenamedWhileHeld = true;
+            }) && readAndRenamedWhileHeld && File.ReadAllText(stopFile + ".taken") == "x" && !File.Exists(stopFile), "gate-request-renamable-while-held");
+            File.Delete(stopFile + ".taken");
             // Racing callers: exactly one takes the stop.
             for (int round = 0; round < 200; round++)
             {
