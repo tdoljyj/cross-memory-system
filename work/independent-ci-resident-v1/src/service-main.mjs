@@ -17,6 +17,7 @@ import { Runner, serviceEnv } from './runner.mjs';
 import { installedIntegrity, mailboxCompanion } from './service-ports.mjs';
 import { WindowsEngine } from './engine-windows.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
+import { stopRequestCheck } from './stop-request.mjs';
 import { readBounded } from './store.mjs';
 import { RetentionWatch, measureWindows } from './retention.mjs';
 import { ExecutedHeads } from './executed-heads.mjs';
@@ -84,7 +85,8 @@ export async function main(argv = process.argv.slice(2)) {
   await receipts.append('service-start', { policySha256: values['policy-sha256'], pid: process.pid });
   const stopFile = path.join(state, 'STOP-REQUESTED');
   return serviceLoop({ exec, lock, sleep, once: values.once === true,
-    stopRequested: () => fs.access(stopFile).then(() => true, () => false),
+    // A request left from an earlier boot is renamed with a receipt and does not stop us (src/stop-request.mjs).
+    stopRequested: stopRequestCheck({ stopFile, locksDir: path.join(state, 'locks'), receipts, clock }),
     acknowledgeStop: async () => {
       await receipts.append('service-stop', { pid: process.pid });
       await fs.rename(stopFile, path.join(state, 'locks', `stop-${Date.now()}-${process.pid}`));
@@ -103,7 +105,7 @@ export const RESTING_STATES = Object.freeze(['IDLE', 'DEFERRED', 'HALTED', 'PAUS
 export async function serviceLoop({ exec, lock, sleep, once = false, stopRequested, acknowledgeStop, onLoopException, betweenBatches }) {
   for (;;) {
     await lock.touch();
-    // SCM stop is honoured only here, between ticks (ResidentServiceHost never kills us).
+    // SCM stop is honoured only here, before every tick, the first included (ResidentServiceHost never kills us).
     if (await stopRequested()) {
       await acknowledgeStop();
       return 0;
