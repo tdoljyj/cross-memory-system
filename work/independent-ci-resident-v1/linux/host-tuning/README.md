@@ -18,7 +18,7 @@
 
 | 文件 | sha256 |
 |---|---|
-| `clued-wsl-host-tuning` | `f25babf71670a777d306d44023ba37b957d84e88639018fbfc6f1f13ccab889c` |
+| `clued-wsl-host-tuning` | `7e082e5d453fc4e7cc9fb55289e87ec09e1fa3721331c1633e6488c4ea5ad074` |
 | `60-clued-ci-hvsock-memory.conf` | `7ef616b66f216de6ea6a9da1d151477db18f66a924cfe02bfecc9015667b0a06` |
 
 1. 复制到 root 目录，核对上表哈希。`PKG` 是本目录在 WSL 里的路径；哈希不一致就停下。
@@ -40,12 +40,38 @@
 4. 另开一次 `wsl.exe`，运行 `verify --conf ... --saved <apply 输出的 saved>`。要求：
    - 状态为 `HOST_TUNING_VERIFIED`；
    - `ringEffective: true`：apply 之后新开的通道，发送环大小都是 61440。
-   - 如果是 `false`（新通道仍是 208896），说明 WSL 中继自己设了缓冲，65536 不起作用，立即回退；
+   - 如果是 `false`（新通道全是 208896），说明 WSL 中继自己设了缓冲，65536 不起作用，立即回退；
+   - 新旧大小同时出现仍算 `true`：WSL 在 sysctl 生效前建好的监听（开机时或 apply 之前）连进来的通道保持旧大小，重启之后必然如此；
    - `null` 表示 apply 之后还没有新通道，再跑一次 verify 即可。
 5. 回退：`... rollback --saved <apply 输出的 saved>`。
-   - 保存文件名是 `previous-<UTC>-<6 位十六进制>.json`，就用 apply 输出里的那一个。
+   - 保存文件名是 `previous-<UTC>-<6 位十六进制>.json`，就用 apply 输出里的那一个；`PREVIOUS_APPLY_NOT_ROLLED_BACK` 的 `detail` 也会列出它。
+   - 回退成功后，这个保存文件改名为 `rolled-back-…`，之后不再挡 apply。
    - 回退会写回原值，并把 apply 建的配置文件移进状态目录，不删除。
    - 配置文件已被改动过时拒绝（`DROP_IN_CHANGED_SINCE_APPLY`）。
+
+## 内存守护（可选，与上面的配置分开批准）
+
+`clued-wsl-memguard` 每 60 秒运行一次，批次进行中也照常运行：
+- 先按当前的 `net.core` 值算出 hv_sock 环形缓冲的阶数，再统计各 zone 中不小于这个阶数的空闲块；
+- 少于 64 块时执行一次 `compact_memory`；
+- 还不够时执行 `drop_caches=1`（只丢干净的页缓存，不碰 slab 和脏页）后再整理一次，丢缓存最多 5 分钟一次；
+- 只有做了动作才往 journal 写一行 JSON。
+
+它只写这两个 `/proc/sys/vm` 文件和自己在 `/run` 下的时间戳，不启停、也不读常驻执行器的任何东西。
+
+| 文件 | 安装位置 | sha256 |
+|---|---|---|
+| `clued-wsl-memguard` | `/usr/local/lib/clued-wsl-host-tuning/`（0755） | `8dbecd1de416b449ca56b5060ca3e0156766891b6067d4b1e62b015af846d705` |
+| `clued-wsl-memguard.service` | `/etc/systemd/system/`（0644） | `40b2d703dc13fabf9b57e8b2b76e5224447e78150b319be07862436fc9c379f3` |
+| `clued-wsl-memguard.timer` | `/etc/systemd/system/`（0644） | `f43a942ac473938b8f3d10d5b2fa79b96bcdb16d32286c9a9cd4638ce6cc4321` |
+
+步骤与上面相同：
+1. 把三个文件也复制进 `$S` 并核对哈希。
+2. `guard-plan --pkg "$S"`：`planSha256` 必须等于批准值。
+3. `guard-apply --pkg "$S" --plan <批准值>`：只新建文件，然后 `daemon-reload`、`enable --now` 定时器，并立即跑一遍；第一遍失败就拒绝（`GUARD_FIRST_RUN_FAILED`）。
+4. `guard-verify --pkg "$S"`：文件一致、定时器已启用且在运行、上一遍成功。
+5. 回退：`guard-rollback --saved <guard-apply 输出的 saved>`。先停用定时器，再把它装的三个文件移进状态目录；有文件被改过就拒绝，什么都不动。
+6. 平时查看：`journalctl -u clued-wsl-memguard.service --since <时间>`。
 
 ## 判定
 

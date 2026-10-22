@@ -91,13 +91,14 @@ class ConfAndRing(unittest.TestCase):
 
     def test_boot_overrides(self):
         files = {
+            '05-early.conf': '-vm.watermark_boost_factor\n',                # a bare '-key' keeps it from being set
             '10-network-security.conf': 'vm.watermark_scale_factor = 10\n',   # earlier: the drop-in wins
             TARGET_NAME: CONF.decode('ascii'),
             '60-clued-runner.conf': 'kernel.yama.ptrace_scope = 1\n',       # later, other key
-            '70-x.conf': 'vm.watermark_*=5\n',                              # later, glob
+            '70-x.conf': 'vm.watermark_*=5\n',                              # later glob: an explicit key still wins
             '99-sysctl.conf': '# comment\n;x\n-net/core/rmem_default = 1\n',  # later, slash form and '-' prefix
         }
-        self.assertEqual(tool.boot_overrides(files, TARGET_NAME), ['70-x.conf:vm.watermark_boost_factor', '70-x.conf:vm.watermark_scale_factor', '99-sysctl.conf:net.core.rmem_default'])
+        self.assertEqual(tool.boot_overrides(files, TARGET_NAME), ['05-early.conf:-vm.watermark_boost_factor', '99-sysctl.conf:net.core.rmem_default'])
         self.assertEqual(tool.boot_overrides({TARGET_NAME: '', '60-clued-runner.conf': 'kernel.yama.ptrace_scope = 1\n'}, TARGET_NAME), [])
 
     def test_ring_verdict_counts_only_new_devices(self):
@@ -106,7 +107,8 @@ class ConfAndRing(unittest.TestCase):
         self.assertEqual(tool.ring_verdict({OLD_DEV: 208896, NEW_DEV: 61440}, before, 61440, 208896)[0], True)
         self.assertEqual(tool.ring_verdict({OLD_DEV: 61440, NEW_DEV: 208896}, before, 61440, 208896)[0], False, 'the relay sets its own buffers')
         third = NEW_DEV[:-1] + '3'
-        self.assertIsNone(tool.ring_verdict({NEW_DEV: 61440, third: 208896}, before, 61440, 208896)[0], 'mixed: no claim')
+        self.assertIs(tool.ring_verdict({NEW_DEV: 61440, third: 208896}, before, 61440, 208896)[0], True,
+                      'after a restart, listeners WSL made before systemd-sysctl keep the old size next to the new ones')
         self.assertIsNone(tool.ring_verdict({NEW_DEV: 24576}, before, 61440, 208896)[0], 'explicitly sized guest channels say neither')
 
 
@@ -174,6 +176,8 @@ class Host(unittest.TestCase):
         self.assertEqual(back['now'], DEFAULTS)
         self.assertFalse(os.path.exists(self.p['target']))
         self.assertEqual(pathlib.Path(back['dropInMovedTo']).read_bytes(), CONF, 'moved aside, not deleted')
+        self.assertEqual(tool.saved_files(self.p['state']), [], 'the used saved file is retired')
+        self.assertTrue(os.path.exists(back['savedRetiredAs']))
         result, ok = tool.verify_tuning(self.p, CONF)
         self.assertEqual((ok, result['ringEffective']), (False, None))
 
@@ -213,6 +217,8 @@ class Host(unittest.TestCase):
         self.assertIsNone(back['dropInMovedTo'], 'a drop-in that was there before stays')
         self.assertTrue(os.path.exists(self.p['target']))
         self.assertEqual(back['now'], DEFAULTS)
+        again = tool.apply_tuning(self.p, CONF, self.plan(), TOOL_SHA, KERNEL, [], 's3')
+        self.assertEqual(again['status'], 'HOST_TUNING_APPLIED', 'a retired saved file does not block the next apply')
 
     def test_an_apply_that_stopped_half_way_is_rolled_back_first(self):
         real = tool.write_value
@@ -227,7 +233,7 @@ class Host(unittest.TestCase):
         [saved] = tool.saved_files(self.p['state'])
         with self.assertRaises(tool.Refused) as e:
             tool.apply_tuning(self.p, CONF, self.plan(), TOOL_SHA, KERNEL, [], 's2')
-        self.assertEqual(e.exception.code, 'PREVIOUS_APPLY_NOT_ROLLED_BACK')
+        self.assertEqual((e.exception.code, e.exception.detail), ('PREVIOUS_APPLY_NOT_ROLLED_BACK', [saved]), 'the refusal names the file to roll back with')
         self.assertEqual(len(tool.saved_files(self.p['state'])), 1)
         back = tool.rollback_tuning(self.p, f"{self.p['state']}/{saved}", 's3')
         self.assertEqual(back['now'], DEFAULTS)
@@ -302,6 +308,183 @@ class Host(unittest.TestCase):
         self.assertEqual(run('verify', '--conf', str(pathlib.Path(self.tmp.name) / 'missing.conf')), (1, {'status': 'REFUSED', 'code': 'FILE_MISSING'}))
         if not tool.is_root():
             self.assertEqual(run('apply', '--conf', 'x', '--plan', 'y'), (1, {'status': 'REFUSED', 'code': 'ROOT_REQUIRED'}))
+
+
+GUARD = TUNING / 'clued-wsl-memguard'
+gloader = importlib.machinery.SourceFileLoader('wsl_memguard', str(GUARD))
+gspec = importlib.util.spec_from_loader('wsl_memguard', gloader)
+guard = importlib.util.module_from_spec(gspec)
+gloader.exec_module(guard)
+
+LOW_BUDDY = ('Node 0, zone    DMA32   5131   2227    703    424    335    263    210      0      0      0      0\n'
+             'Node 0, zone   Normal   1037    597    194     44     21     21      5      0      0      0      0\n')
+HIGH_BUDDY = ('Node 0, zone    DMA32   3949   3186   2754   1852   1554   1267    934    632    360    197    528\n'
+              'Node 0, zone   Normal   3408   2170   1256    938    588    370    250    168    161    137    173\n')
+
+
+class MemGuard(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        r = pathlib.Path(self.tmp.name)
+        self.proc = r / 'proc'
+        (self.proc / 'vm').mkdir(parents=True)
+        (self.proc / 'net' / 'core').mkdir(parents=True)
+        for name in ('compact_memory', 'drop_caches'):
+            (self.proc / 'vm' / name).write_text('')
+        self.set_buffers(212992)
+        self.buddy = r / 'buddyinfo'
+        self.state = r / 'run'
+        self.state.mkdir()
+        self.writes = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def set_buffers(self, size):
+        for name in ('rmem_default', 'wmem_default'):
+            (self.proc / 'net' / 'core' / name).write_text(f'{size}\n')
+
+    def run_pass(self, now, after_compact, after_drop=None):
+        # The kernel effect of each write is played by rewriting buddyinfo.
+        real = guard.write
+        def fake(path, value):
+            self.writes.append(pathlib.Path(path).name)
+            real(path, value)
+            if path.endswith('compact_memory'):
+                self.buddy.write_text(after_drop if 'drop_caches' in self.writes and after_drop else after_compact)
+        with mock.patch.object(guard, 'write', fake):
+            return guard.guard_pass(str(self.proc), str(self.buddy), str(self.state), lambda: now)
+
+    def test_ring_order_and_block_count(self):
+        self.assertEqual((guard.ring_order(212992, 212992), guard.ring_order(65536, 65536)), (7, 5))
+        self.assertEqual(guard.ring_order(65536, 65536), tool.ring_order(65536, 65536))
+        self.assertEqual(guard.blocks_at_least(HIGH_BUDDY, 7), 632 + 360 + 197 + 528 + 168 + 161 + 137 + 173)
+        self.assertEqual(guard.blocks_at_least(LOW_BUDDY, 7), 0)
+        self.assertEqual(guard.blocks_at_least(LOW_BUDDY, 5), 263 + 210 + 21 + 5)
+
+    def test_quiet_when_enough_blocks(self):
+        self.buddy.write_text(HIGH_BUDDY)
+        self.assertIsNone(self.run_pass(1000.0, HIGH_BUDDY))
+        self.assertEqual(self.writes, [])
+
+    def test_compaction_first_then_drop_at_most_every_five_minutes(self):
+        self.buddy.write_text(LOW_BUDDY)
+        r = self.run_pass(1000.0, HIGH_BUDDY)
+        self.assertEqual((r['order'], r['before'], r['dropped']), (7, 0, False))
+        self.assertEqual(self.writes, ['compact_memory'], 'compaction was enough: page cache kept')
+        self.writes.clear()
+        self.buddy.write_text(LOW_BUDDY)
+        r = self.run_pass(1000.0, LOW_BUDDY, HIGH_BUDDY)
+        self.assertEqual((r['dropped'], r['afterDrop']), (True, guard.blocks_at_least(HIGH_BUDDY, 7)))
+        self.assertEqual(self.writes, ['compact_memory', 'drop_caches', 'last-drop', 'compact_memory'])
+        self.assertEqual((self.proc / 'vm' / 'drop_caches').read_text(), '1\n', 'clean page cache only, never slab')
+        self.writes.clear()
+        self.buddy.write_text(LOW_BUDDY)
+        r = self.run_pass(1000.0 + 299, LOW_BUDDY, HIGH_BUDDY)
+        self.assertEqual((r['dropped'], self.writes), (False, ['compact_memory']), 'no second drop within 300 s')
+        self.writes.clear()
+        r = self.run_pass(1000.0 + 300, LOW_BUDDY, HIGH_BUDDY)
+        self.assertTrue(r['dropped'])
+
+    def test_threshold_follows_the_live_ring_order(self):
+        self.set_buffers(65536)
+        self.buddy.write_text(LOW_BUDDY)  # 499 blocks of order >= 5: enough once the rings are order 5
+        self.assertIsNone(self.run_pass(1000.0, LOW_BUDDY))
+
+    def test_a_pass_that_cannot_write_fails(self):
+        (self.proc / 'vm' / 'drop_caches').unlink()
+        self.buddy.write_text(HIGH_BUDDY)
+        with self.assertRaises(OSError):
+            guard.guard_pass(str(self.proc), str(self.buddy), str(self.state), lambda: 1.0)
+
+
+class FakeSystemctl:
+    def __init__(self, fail=()):
+        self.calls, self.enabled, self.active, self.result, self.fail = [], False, False, '', set(fail)
+
+    def __call__(self, *args):
+        self.calls.append(args)
+        if args[0] in self.fail:
+            return 1, ''
+        if args[:2] == ('enable', '--now'):
+            self.enabled = self.active = True
+        elif args[:2] == ('disable', '--now'):
+            self.enabled = self.active = False
+        elif args[0] == 'start':
+            self.result = 'success'
+        elif args[0] == 'is-active':
+            return (0, 'active\n') if self.active else (3, 'inactive\n')
+        elif args[0] == 'is-enabled':
+            return (0, 'enabled\n') if self.enabled else (1, 'disabled\n')
+        elif args[0] == 'show':
+            return 0, f'{self.result}\n'
+        return 0, ''
+
+
+class GuardInstall(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        r = pathlib.Path(self.tmp.name)
+        self.p = {'state': str(r / 'state'),
+                  'guard_files': (('clued-wsl-memguard', str(r / 'lib' / 'clued-wsl-memguard'), 0o755),
+                                  ('clued-wsl-memguard.service', str(r / 'systemd' / 'clued-wsl-memguard.service'), 0o644),
+                                  ('clued-wsl-memguard.timer', str(r / 'systemd' / 'clued-wsl-memguard.timer'), 0o644))}
+        self.pkg = str(TUNING)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def plan(self):
+        return tool.plan_sha(tool.guard_plan(self.p, self.pkg, TOOL_SHA, KERNEL)[0])
+
+    def test_apply_verify_rollback(self):
+        sc = FakeSystemctl()
+        want = self.plan()
+        with self.assertRaises(tool.Refused) as e:
+            tool.guard_apply(self.p, self.pkg, want, TOOL_SHA, KERNEL, ['clued-ci-worker@x.service'], 's1', sc)
+        self.assertEqual(e.exception.code, 'CI_UNIT_ACTIVE')
+        r = tool.guard_apply(self.p, self.pkg, want, TOOL_SHA, KERNEL, [], 's1', sc)
+        self.assertEqual(r['status'], 'GUARD_APPLIED')
+        for name, target, _ in self.p['guard_files']:
+            self.assertEqual(pathlib.Path(target).read_bytes(), (TUNING / name).read_bytes())
+        self.assertIn(('enable', '--now', 'clued-wsl-memguard.timer'), sc.calls)
+        self.assertEqual(tool.guard_verify(self.p, self.pkg, sc)[1], True)
+        self.assertEqual(tool.guard_apply(self.p, self.pkg, self.plan(), TOOL_SHA, KERNEL, [], 's2', sc)['status'], 'GUARD_ALREADY_APPLIED')
+        back = tool.guard_rollback(self.p, r['saved'], 's3', sc)
+        self.assertEqual(len(back['movedTo']), 3)
+        self.assertFalse(any(os.path.exists(t) for _, t, _ in self.p['guard_files']))
+        self.assertFalse(sc.active)
+        self.assertEqual(tool.guard_saved_files(self.p['state']), [])
+        self.assertEqual(tool.guard_verify(self.p, self.pkg, sc)[1], False)
+
+    def test_a_first_pass_that_fails_is_reported(self):
+        sc = FakeSystemctl()
+        sc.result = 'exit-code'
+        real = sc.__call__
+        with mock.patch.object(FakeSystemctl, '__call__', lambda self, *a: (0, '') if a[0] == 'start' else real(*a)):
+            with self.assertRaises(tool.Refused) as e:
+                tool.guard_apply(self.p, self.pkg, self.plan(), TOOL_SHA, KERNEL, [], 's1', sc)
+        self.assertEqual(e.exception.code, 'GUARD_FIRST_RUN_FAILED')
+        [saved] = tool.guard_saved_files(self.p['state'])
+        with self.assertRaises(tool.Refused) as e:
+            tool.guard_apply(self.p, self.pkg, self.plan(), TOOL_SHA, KERNEL, [], 's2', FakeSystemctl())
+        self.assertEqual(e.exception.code, 'PREVIOUS_GUARD_APPLY_NOT_ROLLED_BACK')
+        tool.guard_rollback(self.p, f"{self.p['state']}/{saved}", 's3', FakeSystemctl())
+        self.assertFalse(any(os.path.exists(t) for _, t, _ in self.p['guard_files']))
+
+    def test_changed_or_foreign_files_are_left_alone(self):
+        sc = FakeSystemctl()
+        r = tool.guard_apply(self.p, self.pkg, self.plan(), TOOL_SHA, KERNEL, [], 's1', sc)
+        timer = self.p['guard_files'][2][1]
+        pathlib.Path(timer).write_text('[Timer]\nOnUnitActiveSec=1s\n')
+        with self.assertRaises(tool.Refused) as e:
+            tool.guard_rollback(self.p, r['saved'], 's2', sc)
+        self.assertEqual(e.exception.code, 'GUARD_FILE_CHANGED_SINCE_APPLY')
+        self.assertTrue(all(os.path.exists(t) for _, t, _ in self.p['guard_files']), 'nothing moved')
+        self.assertTrue(sc.active, 'timer not touched')
+        with self.assertRaises(tool.Refused) as e:
+            tool.guard_apply(self.p, self.pkg, self.plan(), TOOL_SHA, KERNEL, [], 's3', sc)
+        self.assertEqual(e.exception.code, 'GUARD_FILE_DIFFERS_OWNER_DECIDES')
 
 
 if __name__ == '__main__':

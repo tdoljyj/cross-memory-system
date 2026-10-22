@@ -1,0 +1,89 @@
+#!/usr/bin/python3.12 -I
+"""One pass of the WSL memory guard (Task 7c2e4386), run every 60 s by clued-wsl-memguard.timer as root.
+
+Every Windows->WSL hv_sock channel needs one free block of the ring order (order 7 with the 212992-byte socket
+defaults, order 5 with the host-tuning drop-in), and a batch fills the VM with page cache within the hour. When
+the free blocks of at least that order, summed over the zones, fall below LOW_BLOCKS, this pass compacts memory;
+if that is not enough it drops clean page cache (echo 1, never slab, never dirty pages) and compacts again, at
+most once every DROP_INTERVAL seconds. It only ever writes /proc/sys/vm/compact_memory and drop_caches; it
+starts, stops or reads nothing of the resident CI. Prints one JSON line when it acted, nothing otherwise.
+"""
+import json
+import os
+import sys
+import time
+
+PROC_SYS = '/proc/sys'
+BUDDYINFO = '/proc/buddyinfo'
+STATE = '/run/clued-wsl-memguard'
+LOW_BLOCKS = 64
+DROP_INTERVAL = 300
+PAGE = 4096
+HVS_MIN, HVS_MAX = 6 * PAGE, 64 * PAGE
+
+
+def ring_order(rmem, wmem):
+    """Same arithmetic as clued-wsl-host-tuning: each direction clamped to 6..64 pages, one allocation."""
+    def one(buf):
+        return -(-min(max(buf, HVS_MIN), HVS_MAX) // PAGE)
+    return (one(rmem) + one(wmem) - 1).bit_length()
+
+
+def blocks_at_least(buddyinfo, order):
+    total = 0
+    for line in buddyinfo.splitlines():
+        parts = line.split()
+        if len(parts) >= 15 and parts[0] == 'Node' and parts[2] == 'zone':
+            total += sum(int(x) for x in parts[4 + order:15])
+    return total
+
+
+def may_drop(now, last_drop, interval=DROP_INTERVAL):
+    return last_drop is None or now - last_drop >= interval
+
+
+def read(path):
+    with open(path) as f:
+        return f.read()
+
+
+def write(path, value):
+    with open(path, 'w') as f:
+        f.write(value)
+
+
+def last_drop_time(state):
+    try:
+        return float(read(f'{state}/last-drop').strip())
+    except (OSError, ValueError):
+        return None
+
+
+def guard_pass(proc_sys=PROC_SYS, buddyinfo=BUDDYINFO, state=STATE, clock=time.time, low=LOW_BLOCKS):
+    # Fail loudly (unit Result=exit-code) if the two files cannot be opened for writing, even on a quiet pass.
+    for name in ('compact_memory', 'drop_caches'):
+        os.close(os.open(f'{proc_sys}/vm/{name}', os.O_WRONLY))
+    order = ring_order(int(read(f'{proc_sys}/net/core/rmem_default')), int(read(f'{proc_sys}/net/core/wmem_default')))
+    before = blocks_at_least(read(buddyinfo), order)
+    if before >= low:
+        return None
+    write(f'{proc_sys}/vm/compact_memory', '1\n')
+    after_compact = blocks_at_least(read(buddyinfo), order)
+    result = {'guard': 'clued-wsl-memguard', 'order': order, 'low': low, 'before': before, 'afterCompact': after_compact, 'dropped': False}
+    now = clock()
+    if after_compact < low and may_drop(now, last_drop_time(state)):
+        write(f'{proc_sys}/vm/drop_caches', '1\n')
+        write(f'{state}/last-drop', f'{now}\n')
+        write(f'{proc_sys}/vm/compact_memory', '1\n')
+        result.update(dropped=True, afterDrop=blocks_at_least(read(buddyinfo), order))
+    return result
+
+
+if __name__ == '__main__':
+    try:
+        r = guard_pass()
+    except (OSError, ValueError) as e:
+        print(json.dumps({'guard': 'clued-wsl-memguard', 'status': 'FAILED', 'kind': type(e).__name__}))
+        sys.exit(1)
+    if r is not None:
+        print(json.dumps(r, sort_keys=True))

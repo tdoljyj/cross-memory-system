@@ -1,0 +1,11 @@
+# Clued WSL memory guard (Task 7c2e4386): one pass every 60 s, also inside a batch.
+[Unit]
+Description=Run the Clued WSL memory guard every 60 s
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
