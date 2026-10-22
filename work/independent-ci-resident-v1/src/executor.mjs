@@ -57,8 +57,22 @@
 //     (SUPERSEDED_AT_SAFE_POINT: the Owner abort's quiescence and rename-only archive, the head burned, never an
 //     attempt 2). When stage 1 or the bundle proves the batch head is no longer the PR's head, one live read may restore
 //     a superseded, unburned commit as the PR's current one. A live read only ever stops or re-queues.
+//
+// Phase 2, step 2 (parking; design v0.5 §4.3, §4.8, §4.9; Owner decision e1e19e2e item 4; DESIGN §18):
+//   - a batch rests at parking point A (the hosted wait) or B (after the last role stage and the close archive on both
+//     hosts, before stage 8) with nothing of it running and Linux empty; other batches run meanwhile. A tick runs at most
+//     one Linux exclusive zone (workspace preparation to the last Linux stage), and never parks inside one;
+//   - at B, stage 8 runs as tries: one check (Source v2 STAGE8_CHECK_MS) that, when the claim is not at the merge-queue
+//     head yet, ends with zero side effects and a named reason; the batch parks again and is tried on its own back-off
+//     (10, 20, 40, 80, 120 minutes, 1 minute when its claim is first in the queue) for at most park.stage8MaxTries tries
+//     and park.maxMs. Main moving (RESIDENT_BASE_MOVED) or the tries running out end it neutrally (its head published
+//     stages 3, 5 and 7: a new commit runs the PR again);
+//   - at most park.maxParked batches rest at A or at B in the queue's first two places; others at B are bounded by
+//     park.maxParkedOutsideTop2 and beyond that end as PARKED_OVER_CAPACITY;
+//   - the Owner's drain request (tools/rearm-tool.mjs request-drain) ends every parked batch on the Owner abort's path,
+//     so a reinstall finds no open batch (with the Owner abort's guards: no unarchived scene, no drift, recovery done).
 import path from 'node:path';
-import { Ledger, batchKey, headKey } from './ledger.mjs';
+import { Ledger, MAX_TRIES, batchKey, headKey } from './ledger.mjs';
 import { ABORTABLE_IN_FLIGHT, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, proofComplete } from './classify.mjs';
 import { parseTrigger } from './trigger.mjs';
 import { POSITIONS, breakerGate, breakerOf, breakerRecord, breakerView, positionOf } from './breaker.mjs';
@@ -72,6 +86,7 @@ import { CODE, HEX64, ResidentError, check, exactKeys, parseBoundedJson, sha256 
 
 export const PAUSE_CONTRACT = 'clued.independent-ci.resident-pause/1';
 export const REARM_CONTRACT = 'clued.independent-ci.resident-owner-rearm/1';
+export const DRAIN_CONTRACT = 'clued.independent-ci.resident-owner-drain-parked/1';
 export const RESUME_CONTRACT = 'clued.independent-ci.resident-owner-resume/1';
 export const ABORT_CONTRACT = 'clued.independent-ci.resident-owner-abort/1';
 export const OWNER_ABORT_ARCHIVE_REASON = 'owner-aborted';
@@ -133,6 +148,21 @@ export const FALSIFYING_REASONS = Object.freeze(['pr_subject_changed', 'pr_files
 export const SUPERSEDE_LIVE_READ_MS = 10 * 60_000;
 // Ticks in a row the queue could not be written before the Owner is told (re-review N2).
 export const QUEUE_SAVE_ALARM = 3;
+// Phase 2, step 2: stage 8 not ready, with zero side effects (Source v2 publisher STAGE8_NOT_READY_REASONS).
+export const STAGE8_NOT_READY_CODES = Object.freeze(['RESIDENT_BASE_MOVED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED']);
+export const PARK_RETRY_MS = Object.freeze([10 * 60_000, 20 * 60_000, 40 * 60_000, 80 * 60_000, 120 * 60_000]);
+// A parked batch whose claim was first in the queue at its last try is tried again this soon; a nudge (a trigger that
+// says main moved or the PR changed) makes a try due at most this often.
+export const PARK_HEAD_RETRY_MS = 60_000;
+export const PARK_NUDGE_MS = 5 * 60_000;
+// Tries at the merge queue's first place come a minute apart for at most this long in a row; then the back-off applies
+// again. They never count towards park.stage8MaxTries (independent review of step 2, m5).
+export const PARK_HEAD_STREAK_MS = 15 * 60_000;
+// A drain request older than this is refused: the Owner decided on the parked batches of that moment (review m10).
+export const DRAIN_MAX_AGE_MS = 60 * 60_000;
+// The oldest bundle a batch takes into the workspace preparation (which accepts at most 2 hours), measured from the
+// reservation, which comes before the bundle (design v0.5 §4.3 item 3).
+export const BUNDLE_MAX_AGE_AT_WORKSPACE_MS = 100 * 60_000;
 const dayKey = ms => new Date(ms).toISOString().slice(0, 10);
 
 // The stage-terminal receipt's summary of a stage outcome: codes and flags only.
@@ -253,6 +283,10 @@ export class ResidentExecutor {
         } else if (v.contract === ABORT_CONTRACT) {
           abortKey = validateAbortRequest(v).batchKey;
           outcome = { kind: 'abort', ...(await this.abortAtTickStart(v, requestSha256, entry.name)) };
+        } else if (v.contract === DRAIN_CONTRACT) {
+          exactKeys(v, ['contract', 'reason', 'by', 'requestedAt', 'nonce'], 'OWNER_REQUEST_REFUSED');
+          check(SID.test(v.by) && NONCE.test(v.nonce) && !Number.isNaN(Date.parse(v.requestedAt)) && typeof v.reason === 'string' && v.reason.length > 0 && v.reason.length <= 200, 'OWNER_REQUEST_REFUSED');
+          outcome = { kind: 'drain', ...(await this.drainParked(v, requestSha256, entry.name)) };
         } else {
           check(false, 'OWNER_REQUEST_REFUSED');
         }
@@ -319,8 +353,71 @@ export class ResidentExecutor {
 
   // ---- Owner abort (DESIGN §6.5) ----
 
-  // Safe point P0, a tick start: nothing of this executor runs, so the only open entry recovery leaves is a batch
-  // waiting for hosted signals. Any other target is refused and recorded.
+  // Phase 2, step 2: the Owner's drain request (before a reinstall: the uninstall refuses an open batch). Every batch at a
+  // parking point ends on the Owner abort's path, one by one, each with its own 80-owner-abort naming this request.
+  // The Owner abort's guards hold for every entry (independent review of step 2, M1): recovery done, the installed bytes
+  // unchanged, and no unarchived scene of another batch (the owner-aborted archive is full scope on both hosts). It stops
+  // at the first ending that is not a clean OWNER_ABORTED.
+  async drainParked(v, requestSha256, name) {
+    check(this.recoveredThisTick !== false, 'OWNER_DRAIN_RECOVERY_UNCONFIRMED');
+    const age = this.clock() - Date.parse(v.requestedAt);
+    check(age >= -5 * 60_000 && age <= DRAIN_MAX_AGE_MS, 'OWNER_DRAIN_REQUEST_STALE');
+    const integrity = await this.sourceIntegrity();
+    check(integrity && integrity.ok === true && integrity.sourceManifestSha256 === this.policy.sourceManifestSha256
+      && integrity.residentManifestSha256 === this.policy.residentManifestSha256, 'OWNER_DRAIN_SOURCE_DRIFT');
+    const ended = [], entries = await this.ledger.parkedEntries();
+    let stoppedBy = null, unconfirmed = null;
+    for (const e of entries) {
+      if ((await this.ledger.unarchivedScenes()) > 0) {
+        check(ended.length > 0, 'OWNER_DRAIN_UNARCHIVED_SCENE_PRESENT');
+        stoppedBy = 'OWNER_DRAIN_UNARCHIVED_SCENE_PRESENT';
+        break;
+      }
+      const batch = Ledger.parkedAt(e) ? e.parked.batch : e.wait.batch;
+      const safePoint = Ledger.parkedAt(e) ? 'parked' : 'waiting';
+      let request;
+      try {
+        request = await this.acceptAbort(e.key, { name, requestSha256, value: { by: v.by, reason: v.reason, ledgerEntrySha256: null } }, safePoint, null);
+      } catch (error) {
+        if (!(await this.ledger.state(e.key)).abort) {
+          // Nothing accepted for this entry: a refusal when it is the first, else the drain stops and says what it ended
+          // (re-review of step 2, N9).
+          if (ended.length === 0) throw error;
+          stoppedBy = codeOf(error);
+          break;
+        }
+        let r;
+        try {
+          r = await this.unknown(e.key, codeOf(error), 'owner-drain-unconfirmed', batch, { safePoint, stage: null, requestSha256 });
+        } catch (inner) {
+          // After an earlier entry ended, a failure here is no refusal of the request: the drain stops and says what it
+          // ended and which entry is unconfirmed (still open, or ended without its summary). This tick stops HALTed either
+          // way: by the code written first on the way, or at the OWNER_ABORT_UNCONFIRMED gate after the Owner's requests
+          // (final check of step 2, n6).
+          if (ended.length === 0) throw inner;
+          stoppedBy = codeOf(inner); unconfirmed = e.key;
+          break;
+        }
+        ended.push({ key: e.key, outcome: r.state, failureCode: r.failureCode });
+        break;
+      }
+      let r;
+      try {
+        r = await this.afterBatch(e.reserved.subject, e.reserved.origin ?? 'queued', await this.ownerAbort(e.key, batch, { safePoint, request }));
+      } catch (error) {
+        // The same for the Owner abort's own path on a later entry (n6).
+        if (ended.length === 0) throw error;
+        stoppedBy = codeOf(error); unconfirmed = e.key;
+        break;
+      }
+      ended.push({ key: e.key, outcome: r.state, failureCode: r.failureCode });
+      if (!(r.state === 'FAILED_CLEAN' && r.failureCode === OWNER_ABORTED)) break;
+    }
+    return { ended, remaining: entries.length - ended.length, stoppedBy, ...(unconfirmed ? { unconfirmed } : {}) };
+  }
+
+  // Safe point P0, a tick start: nothing of this executor runs, so the only open entries recovery leaves are batches at a
+  // parking point (A, the hosted wait; B, before stage 8). Any other target is refused and recorded.
   async abortAtTickStart(v, requestSha256, name) {
     const s = await this.ledger.state(v.batchKey);
     check(['RESERVED', 'STARTED'].includes(s.state), 'OWNER_ABORT_BATCH_NOT_OPEN');
@@ -337,14 +434,16 @@ export class ResidentExecutor {
     check(latest && latest.sha256 === v.ledgerEntrySha256, 'OWNER_ABORT_LEDGER_CHANGED_SINCE_REVIEW');
     let request;
     try {
-      request = await this.acceptAbort(v.batchKey, { name, requestSha256, value: v }, 'waiting', null);
+      request = await this.acceptAbort(v.batchKey, { name, requestSha256, value: v }, Ledger.parkedAt(s) ? 'parked' : 'waiting', null);
     } catch (error) {
       // Nothing accepted: a plain refusal. Accepted half-way (80-owner-abort written): UNKNOWN, HALT now (review M1).
       if (!(await this.ledger.state(v.batchKey)).abort) throw error;
-      const r = await this.unknown(v.batchKey, codeOf(error), 'owner-abort-unconfirmed', s.wait.batch, { safePoint: 'waiting', stage: null, requestSha256 });
+      const r = await this.unknown(v.batchKey, codeOf(error), 'owner-abort-unconfirmed', Ledger.parkedAt(s) ? s.parked.batch : s.wait.batch, { safePoint: Ledger.parkedAt(s) ? 'parked' : 'waiting', stage: null, requestSha256 });
       return { key: v.batchKey, outcome: r.state, failureCode: r.failureCode };
     }
-    const r = await this.ownerAbort(v.batchKey, s.wait.batch, { safePoint: 'waiting', request });
+    const parkedB = Ledger.parkedAt(s);
+    const r = await this.afterBatch(s.reserved.subject, s.reserved.origin ?? 'queued',
+      await this.ownerAbort(v.batchKey, parkedB ? s.parked.batch : s.wait.batch, { safePoint: parkedB ? 'parked' : 'waiting', request }));
     return { key: v.batchKey, outcome: r.state, failureCode: r.failureCode };
   }
 
@@ -384,7 +483,7 @@ export class ResidentExecutor {
   // 80-owner-abort first (create-only): from here on the batch is never resumed or continued.
   async acceptAbort(key, { name, requestSha256, value }, safePoint, stage) {
     const s = await this.ledger.state(key);
-    if (!s.abort) await this.ledger.beginOwnerAbort(key, { requestSha256, ledgerEntrySha256: value.ledgerEntrySha256, by: value.by, reason: value.reason, safePoint, stage });
+    if (!s.abort) await this.ledger.beginOwnerAbort(key, { requestSha256, ledgerEntrySha256: value.ledgerEntrySha256 ?? null, by: value.by, reason: value.reason, safePoint, stage });
     await this.owner.remember(name, requestSha256);
     await this.receipt('owner-abort-accepted', { key, requestSha256, safePoint, stage });
     return { requestSha256, by: value.by, reason: value.reason };
@@ -541,7 +640,7 @@ export class ResidentExecutor {
     try {
       const halt = await this.ledger.halted();
       const paused = await this.ledger.paused();
-      const state = ['IDLE', 'RUNNING', 'WAITING', 'DEFERRED', 'HALTED', 'PAUSED', 'BACKFILL_PENDING', 'COMPLETED', 'FAILED_CLEAN', 'NOT_ADMITTED', 'NOT_EXECUTED', 'IGNORED'].includes(result?.state) ? result.state : 'IDLE';
+      const state = ['IDLE', 'RUNNING', 'WAITING', 'PARKED', 'DEFERRED', 'HALTED', 'PAUSED', 'BACKFILL_PENDING', 'COMPLETED', 'FAILED_CLEAN', 'NOT_ADMITTED', 'NOT_EXECUTED', 'IGNORED'].includes(result?.state) ? result.state : 'IDLE';
       this.report(s => {
         s.setState(halt ? 'HALTED' : state, halt ? (halt.value?.code ?? null) : (result?.reason ?? result?.failureCode ?? null));
         s.update({ halt: halt ? { code: CODE.test(halt.value?.code ?? '') ? halt.value.code : 'HALT_RECORD_UNREADABLE', at: halt.value?.at ?? null } : null, paused: !!paused });
@@ -587,6 +686,7 @@ export class ResidentExecutor {
       recovered = false;
       try { await this.ledger.halt('RECOVERY_UNCONFIRMED', {}); } catch { /* reported by the loop */ }
     }
+    this.recoveredThisTick = recovered;
     await this.takeOwnerRequests();
     // The run queue follows the ledger for any row a crash or an earlier tick left marked running (a view: also while
     // halted, so the status shows what the ledger says).
@@ -613,11 +713,185 @@ export class ResidentExecutor {
     // Triggers go into the run queue first (phase 2, step 1); the queue then follows the ledger for any row a crash left
     // marked running.
     await this.intake();
-    // A batch waiting for hosted signals goes first (serial: nothing else starts while it waits). It is
-    // re-evaluated only here, after recovery, the Owner's requests, HALT and PAUSE.
-    const waiting = await this.ledger.waiting();
-    if (waiting) return this.resumeWaiting(waiting);
-    return this.schedule();
+    // Batches at a parking point go first (design v0.5 §4.3 step 3): each one waiting for hosted signals is evaluated
+    // once (and continues to its end when it may), a parked one whose stage-8 try is due runs that try. They are
+    // re-evaluated only here, after recovery, the Owner's requests, HALT and PAUSE. Then the queue.
+    const { acted, waiting } = await this.resumeParked();
+    if (acted) return acted;
+    // Nothing else to do: the tick rests in the hosted wait (the status keeps showing it).
+    const r = await this.schedule();
+    return r.state === 'IDLE' && waiting ? waiting : r;
+  }
+
+  // ---- parking (phase 2, step 2; DESIGN §18) ----
+
+  // The newest stage-8 try of a parked entry (its 72 record), or null before the first one ended.
+  static lastTry(entry) { return entry.tries?.length ? entry.tries[entry.tries.length - 1].ended : null; }
+
+  // A parked batch counts towards park.maxParked when it waits at A, or when its claim was in the merge queue's first two
+  // places at its last try (design v0.5 §4.7, review M4); the others are bounded by park.maxParkedOutsideTop2.
+  async parkedCounts(entries = null) {
+    const all = entries ?? await this.ledger.parkedEntries();
+    let inside = 0, outside = 0;
+    for (const e of all) {
+      if (Ledger.waitingAt(e)) { inside += 1; continue; }
+      const p = ResidentExecutor.lastTry(e)?.position;
+      if (Number.isSafeInteger(p) && p <= 2) inside += 1; else outside += 1;
+    }
+    return { inside, outside };
+  }
+
+  // When the next stage-8 try of a parked entry is due (a nudge brings it forward, at most every PARK_NUDGE_MS).
+  parkedDueAt(e) {
+    const last = ResidentExecutor.lastTry(e);
+    const at = last ? Date.parse(last.nextAt) : Date.parse(e.parked.at);
+    const nudged = this.parkNudges?.get(e.key);
+    return Number.isFinite(nudged) ? Math.min(at, nudged) : at;
+  }
+
+  // { acted: the result of a parked batch that moved on (it continued, ended, or ran a stage-8 try), waiting: the last
+  // still-waiting result when one only waits }.
+  async resumeParked() {
+    const entries = await this.ledger.parkedEntries();
+    // Whether new batches wait for the parking places: shown on the status of every tick, not only one that deferred
+    // (re-review of step 2, m8).
+    const counts = await this.parkedCounts(entries);
+    const outsideMax = this.policy.park.maxParkedOutsideTop2;
+    this.parkingFull = counts.inside >= this.policy.park.maxParked || (outsideMax > 0 && counts.outside >= outsideMax);
+    if (entries.length === 0) return { acted: null, waiting: null };
+    let waiting = null;
+    for (const e of entries.filter(x => Ledger.waitingAt(x))) {
+      const r = await this.resumeWaiting(e);
+      if (r?.state !== 'WAITING') return { acted: r, waiting: null };
+      waiting = r;
+    }
+    // A batch parked at B whose PR got a newer commit ends at its safe point once one live read confirms it (DESIGN 17.4):
+    // the newer commit never waits for the parked batch's tries.
+    for (const e of entries.filter(x => Ledger.parkedAt(x))) {
+      const r = await this.supersededParked(e);
+      if (r) return { acted: r, waiting };
+    }
+    const now = this.clock();
+    // park.maxMs holds without a try too (while the retry budget is used up or nothing is due; review m4): the batch ends
+    // with its last not-ready code, no stage runs.
+    const expired = entries.find(x => Ledger.parkedAt(x) && now - Date.parse(x.parked.at) >= this.policy.park.maxMs);
+    if (expired) return { acted: await this.endParkedB(expired, ResidentExecutor.lastTry(expired)?.code ?? 'RESIDENT_QUEUE_HEAD_NOT_REACHED'), waiting };
+    const due = entries.filter(x => Ledger.parkedAt(x) && this.parkedDueAt(x) <= now).sort((a, b) => this.parkedDueAt(a) - this.parkedDueAt(b));
+    if (due.length === 0) return { acted: null, waiting };
+    const usage = await this.ledger.usage(now - DAY);
+    if (usage.stage8Retries >= this.policy.park.stage8RetriesPer24h) {
+      this.queue.notice({ key: `stage8-budget:${dayKey(now)}`, kind: 'stage8-budget', pr: null, headSha: null, code: 'STAGE8_RETRY_BUDGET_EXHAUSTED' });
+      return { acted: null, waiting };
+    }
+    return { acted: await this.resumeParkedB(due[0]), waiting };
+  }
+
+  // A batch parked at B, superseded by a newer commit of its PR (the queue's order, then one live read): ended as
+  // SUPERSEDED_AT_SAFE_POINT. Its head published stages 3, 5 and 7 (the terminal says stage 8). null: it stays parked.
+  async supersededParked(entry) {
+    const { key } = entry, batch = entry.parked.batch, subject = entry.reserved.subject;
+    if (!this.newerCommitQueued(subject)) return null;
+    this.current = { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, attempt: subject.attempt, since: entry.reserved.reservedAt ?? null };
+    let outcome;
+    try {
+      outcome = await this.supersededAfterStart(key, subject, batch, 'parked', POSITIONS[8], 8);
+    } catch (error) {
+      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch);
+    }
+    return outcome ? this.afterBatch(subject, entry.reserved.origin ?? 'queued', outcome) : null;
+  }
+
+  // A batch parked at B ends without a try (its time ran out): a Windows-only stage-8 ending, nothing ran.
+  async endParkedB(entry, code) {
+    const { key } = entry, batch = entry.parked.batch, subject = entry.reserved.subject;
+    this.parkNudges?.delete(key);
+    this.current = { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, attempt: subject.attempt, since: entry.reserved.reservedAt ?? null };
+    let outcome;
+    try {
+      const drift = await this.driftCode();
+      outcome = drift ? await this.unknown(key, drift, 'resume-start-checks', batch)
+        : await this.fail(key, batch, Object.assign(new StepFailure(8, code, {}, 'stage', entry.plan?.relayed?.length ?? 0), { windowsOnly: true }));
+    } catch (error) {
+      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch);
+    }
+    return this.afterBatch(subject, entry.reserved.origin ?? 'queued', outcome);
+  }
+
+  // One stage-8 try of a batch parked at B.
+  async resumeParkedB(entry) {
+    const { key } = entry, batch = entry.parked.batch, subject = entry.reserved.subject, origin = entry.reserved.origin ?? 'queued';
+    this.parkNudges?.delete(key);
+    this.current = { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, attempt: subject.attempt, since: entry.reserved.reservedAt ?? null };
+    let outcome;
+    try {
+      const drift = await this.driftCode();
+      if (drift) return this.afterBatch(subject, origin, await this.unknown(key, drift, 'resume-start-checks', batch));
+      // An install authority that ends within one batch budget closes a parked batch neutrally, never a HALT (§4.8).
+      if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < this.clock() + batchBudgetMs(this.policy)) {
+        outcome = Object.assign(new StepFailure(8, 'PARKED_AUTHORITY_EXPIRING', { windowsTreeZero: true }, 'stage', entry.plan?.relayed?.length ?? 0), { windowsOnly: true });
+      } else {
+        const startCode = await this.batchStartChecks(subject);
+        if (startCode) return this.afterBatch(subject, origin, await this.unknown(key, startCode, 'resume-start-checks', batch));
+        outcome = await this.stage8Try(key, subject, batch);
+      }
+      if (outcome instanceof StepFailure) outcome = await this.fail(key, batch, outcome);
+    } catch (error) {
+      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch);
+    }
+    return this.afterBatch(subject, origin, outcome);
+  }
+
+  // Stage 8 as one try. Settled: COMPLETED. Not ready with zero side effects, and neither main moved nor the tries or the
+  // time ran out: the try is recorded and the batch rests at B again (PARKED). Anything else: a stage failure as before.
+  async stage8Try(key, subject, batch) {
+    const s = await this.ledger.state(key);
+    const windowsOnly = f => Object.assign(f, { windowsOnly: true }); // only stage 8 ran here (breaker, review m2)
+    const unrecorded = await this.beforePublication(key, subject, 8);
+    if (unrecorded) { unrecorded.relayedRoles = s.plan?.relayed?.length ?? 0; return windowsOnly(unrecorded); }
+    const n = await this.ledger.beginTry(key, { batchId: batch.batchId });
+    this.atStage(8, 'stage');
+    const control = await this.engine.runStage(batch, this.stage(8), { betweenRoles: false, firstLinux: false });
+    await this.receipt('stage-terminal', { key, stage: 8, ok: control.ok === true, failureCode: control.ok ? null : validCode(control.code), factsSha256: control.factsSha256 ?? null, outcome: outcomeSummary(control), try: n });
+    const relayed = s.plan?.relayed?.length ?? 0;
+    if (control.ok === true) {
+      await this.ledger.terminal(key, 'COMPLETED', { batchId: batch.batchId, closed: s.parked.closed ?? null, relayed: s.plan.relayed.map(r => r.role), local: s.parked.local ?? [], tries: n });
+      await this.receipt('batch-terminal', { key, outcome: 'COMPLETED' });
+      this.reportOutcome(subject, 'COMPLETED', { key });
+      // Only stage 8 ran in this step: a Windows-only ending for the breaker (the parking itself told it about the rest).
+      return { state: 'COMPLETED', key, relayed: s.plan.relayed.map(r => r.role), local: s.parked.local ?? [], tries: n,
+        settle: { kind: 'completed', code: null, klass: null, breaker: 'neutral', pos: POSITIONS.END, linux: false } };
+    }
+    const o = control.outcome;
+    const zero = !!o && o.status === 'BLOCKED' && o.sideEffects === 0 && o.mayHavePublished === false
+      && control.proof?.windowsTreeZero === true && control.proof?.serviceOriginalStopped === true;
+    const now = this.clock();
+    const queueFact = o?.scheduling?.mergeQueue ?? o?.diagnostic?.mergeQueue ?? null;
+    const position = queueFact?.entered === true && Number.isSafeInteger(queueFact.position) ? queueFact.position : null;
+    // Tries that found the claim first in the merge queue do not count towards the cap (review m5); a run of them comes a
+    // minute apart for PARK_HEAD_STREAK_MS, then on the back-off.
+    const before = (s.tries ?? []).filter(t => t.ended);
+    const counted = before.filter(t => t.ended.position !== 1).length + (position === 1 ? 0 : 1);
+    let streakFrom = now;
+    for (let i = before.length - 1; i >= 0 && before[i].ended.position === 1; i--) streakFrom = Date.parse(before[i].ended.at) || streakFrom;
+    // The ledger takes at most MAX_TRIES tries: the last one is final whatever the answer (re-review of step 2, m15).
+    const final = control.code === 'RESIDENT_BASE_MOVED' || counted >= this.policy.park.stage8MaxTries || n >= MAX_TRIES || now - Date.parse(s.parked.at) >= this.policy.park.maxMs;
+    if (zero && STAGE8_NOT_READY_CODES.includes(control.code) && !final) {
+      // The back-off follows the counted tries: after a run at the queue's first place the next try is not 2 hours away
+      // (re-review N6).
+      const backoff = PARK_RETRY_MS[Math.min(Math.max(counted - 1, 0), PARK_RETRY_MS.length - 1)];
+      const nextAt = now + (position === 1 && now - streakFrom < PARK_HEAD_STREAK_MS ? PARK_HEAD_RETRY_MS : backoff);
+      // Over capacity outside the queue's first two places: end it now rather than hold a slot (§4.9, review n-m9).
+      const counts = await this.parkedCounts();
+      if (!(Number.isSafeInteger(position) && position <= 2) && counts.outside >= this.policy.park.maxParkedOutsideTop2) {
+        await this.ledger.endTry(key, n, { code: control.code, nextAt: new Date(now).toISOString(), position, entered: queueFact?.entered ?? null, ending: 'PARKED_OVER_CAPACITY' });
+        return windowsOnly(new StepFailure(8, 'PARKED_OVER_CAPACITY', control.proof, 'stage', relayed));
+      }
+      await this.ledger.endTry(key, n, { code: control.code, nextAt: new Date(nextAt).toISOString(), position, entered: queueFact?.entered ?? null });
+      await this.receipt('stage8-not-ready', { key, try: n, failureCode: control.code, nextAt: new Date(nextAt).toISOString(), position });
+      return { state: 'PARKED', key, reason: control.code, until: nextAt, position, tries: n,
+        settle: { kind: 'parked', code: control.code, klass: 'queue', breaker: 'neutral', pos: POSITIONS[8], linux: false, nextAt, position } };
+    }
+    return windowsOnly(new StepFailure(8, control.code, control.proof, 'stage', relayed, control));
   }
 
   // ---- the run queue (phase 2, step 1; queue.mjs) ----
@@ -630,7 +904,7 @@ export class ResidentExecutor {
   reportQueue() {
     this.report(s => {
       const b = breakerOf(this.queue.breaker);
-      s.update({ queue: { generation: this.queue.generation, live: this.queue.live().length, depth: this.policy.limits.queueDepth }, breaker: breakerView(b),
+      s.update({ queue: { generation: this.queue.generation, live: this.queue.live().length, depth: this.policy.limits.queueDepth, parkingFull: this.parkingFull === true }, breaker: breakerView(b),
         notices: this.queue.notices.slice(0, 50) });
       s.setPending(this.queue.view(this.clock(), { etaBatchMs: ETA_BATCH_MS }));
     });
@@ -641,7 +915,7 @@ export class ResidentExecutor {
   // them again, and a second reading of the same trigger changes nothing.
   async intake() {
     const now = this.clock();
-    const done = [];
+    const done = [], nudges = [];
     for (const entry of await this.inbox.read(this.policy.limits.inboxMaxFiles, 1024)) {
       const bytesSha256 = entry.bytes ? sha256(entry.bytes) : null;
       if (!entry.bytes) { done.push({ name: entry.name, disposition: 'rejected', receipt: ['trigger-rejected', { failureCode: entry.refused, bytesSha256 }] }); continue; }
@@ -657,9 +931,11 @@ export class ResidentExecutor {
         continue;
       }
       if (r.action === 'new-trigger') this.queue.notice({ key: `poke:${t.pr}:${t.headSha}`, kind: 'new-trigger', pr: t.pr, headSha: t.headSha, code: null });
+      nudges.push({ t, seen: r.action === 'seen' });
       done.push({ name: entry.name, disposition: r.action === 'seen' ? 'ignored' : 'processed',
         receipt: ['trigger-queued', { pr: t.pr, headSha: t.headSha, baseSha: t.baseSha, action: r.action, seq: r.seq ?? null, bytesSha256 }] });
     }
+    await this.nudgeParked(nudges, now);
     if (this.queue.rebuilt && !this.queueRebuiltReported) {
       await this.receipt('queue-rebuilt', { keptAs: this.queue.rebuilt.keptAs, generation: this.queue.generation });
       this.queueRebuiltReported = true;
@@ -680,6 +956,32 @@ export class ResidentExecutor {
       if (!saved && d.disposition !== 'rejected') continue;
       await this.inbox.dispose(d.name, d.disposition);
       await this.receipt(...d.receipt);
+    }
+  }
+
+  // Phase 2, step 2: a trigger with a main tip this parked batch has not been nudged for (main moved), or a new trigger of
+  // the parked batch's own PR (its author edited the PR after joining the merge queue), makes that batch's next stage-8
+  // try due now, at most every PARK_NUDGE_MS. A re-read of a trigger already seen nudges for neither its PR nor an old
+  // base (independent review of step 2, m7). Only a hint: the try itself reads main and the queue; it never stops anything.
+  async nudgeParked(triggers, now) {
+    if (triggers.length === 0) return;
+    let entries;
+    try { entries = (await this.ledger.parkedEntries()).filter(e => Ledger.parkedAt(e)); } catch { return; }
+    this.parkNudges ??= new Map();
+    this.parkNudgedAt ??= new Map();
+    this.parkNudgeBase ??= new Map();
+    for (const e of entries) {
+      const s = e.reserved.subject;
+      // The main tip comes from the poller (its triggers carry prUpdatedAt); an Agent's trigger may name any base. Each tip
+      // nudges a batch once (re-review of step 2, m7: alternating stale bases nudged every 5 minutes).
+      const nudged = this.parkNudgeBase.get(e.key) ?? [];
+      const moved = triggers.find(({ t }) => t.prUpdatedAt !== null && t.baseSha !== s.baseSha && !nudged.includes(t.baseSha));
+      const edited = triggers.some(({ t, seen }) => t.pr === s.pr && !seen);
+      if (!moved && !edited) continue;
+      if (now - (this.parkNudgedAt.get(e.key) ?? -Infinity) < PARK_NUDGE_MS) continue;
+      if (moved) this.parkNudgeBase.set(e.key, [...nudged, moved.t.baseSha].slice(-32));
+      this.parkNudgedAt.set(e.key, now);
+      this.parkNudges.set(e.key, now);
     }
   }
 
@@ -713,11 +1015,27 @@ export class ResidentExecutor {
     const rows = this.queue.candidates(now);
     this.reportQueue();
     if (attempts.length === 0 && rows.length === 0) { await this.persistQueue(); return { state: 'IDLE' }; }
+    // No new batch while park.maxParked batches rest at A or in the queue's first two places at B: a new one could not
+    // park (design v0.5 §4.7). A due attempt 2 is a batch too.
+    // Nor while the bound outside those places is full: a new batch would run its whole zone and end PARKED_OVER_CAPACITY
+    // at its first try (independent review of step 2, m9). A bound of 0 parks nothing outside them and blocks nothing.
+    const entries = await this.ledger.parkedEntries();
+    const counts = await this.parkedCounts(entries);
+    const outsideMax = this.policy.park.maxParkedOutsideTop2;
+    if (counts.inside >= this.policy.park.maxParked || (outsideMax > 0 && counts.outside >= outsideMax)) {
+      await this.persistQueue();
+      return { state: 'DEFERRED', reason: 'PARKING_FULL' };
+    }
     const gate = breakerGate(b, now);
     if (!gate.allow) {
       await this.persistQueue();
       this.reportQueue();
       return { state: 'DEFERRED', reason: 'BREAKER_OPEN', until: gate.until };
+    }
+    // One trial at a time: while a batch rests at parking point A, a half-open breaker starts none (review m11).
+    if (gate.trial && entries.some(e => Ledger.waitingAt(e))) {
+      await this.persistQueue();
+      return { state: 'DEFERRED', reason: 'BREAKER_TRIAL_PENDING' };
     }
     let list = [...attempts.map(a => ({ pr: a.subject.pr, attempt2: a })), ...rows.map(c => ({ pr: c.pr, row: c }))];
     // A trial never picks the rows that just failed, unless nothing else is there (it never locks for good).
@@ -785,6 +1103,14 @@ export class ResidentExecutor {
   // The start-of-batch authority checks, run before a reservation and again on every resume of a waiting batch
   // (PR-A review MAJOR 3): the install's validUntil, the installed Source and resident bytes against the
   // policy, and (for a batch) the batch subject's Source against the installed one. Returns a HALT code or null.
+  // The installed bytes, checked before an ending that runs the archive tools without the start checks (independent
+  // re-review of step 2, m16): drift is never archived over; the batch ends UNKNOWN with a HALT instead.
+  async driftCode() {
+    const integrity = await this.sourceIntegrity();
+    return integrity && integrity.ok === true && integrity.sourceManifestSha256 === this.policy.sourceManifestSha256
+      && integrity.residentManifestSha256 === this.policy.residentManifestSha256 ? null : 'RESIDENT_SOURCE_DRIFT';
+  }
+
   async batchStartChecks(subject) {
     if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < this.clock() + batchBudgetMs(this.policy)) return 'RESIDENT_INSTALL_AUTHORITY_EXPIRING';
     const integrity = await this.sourceIntegrity();
@@ -910,8 +1236,37 @@ export class ResidentExecutor {
   // A batch ended (anything but WAITING): its queue row settles, the breaker gets one event, and an ending that may
   // have falsified the batch head asks the companion once for the PR's real head (queue.mjs#restore). All of it is a
   // view: a failure here never changes what the batch did or how it ended.
+  // The breaker's event for one ending (also the parking after stage 7, which is no batch end).
+  async feedBreaker(subject, s) {
+    if (!s || !Number.isSafeInteger(s.pos)) return;
+    const now = this.clock();
+    const b = breakerOf(this.queue.breaker);
+    this.queue.breaker = b;
+    // Windows-only: the ending never reached the Linux preparation (a stage-1 or stage-R ending, a completed batch whose
+    // roles were all relayed, a stage-8 try); it never closes a breaker a Linux place opened (design v0.5 §4.6; review m2).
+    const windowsOnly = typeof s.windowsOnly === 'boolean' ? s.windowsOnly : ['completed', 'parked'].includes(s.kind) ? s.linux !== true : s.pos < POSITIONS.workspace;
+    const t = breakerRecord(b, { pos: s.pos, completed: s.kind === 'completed', counts: s.breaker === 'counts', neutral: s.breaker !== 'counts', windowsOnly,
+      pr: subject.pr, code: s.code ?? null }, this.policy, now);
+    if (t === 'opened' || t === 'reopened') {
+      this.queue.notice({ key: `breaker:${b.openedAt}`, kind: 'breaker-open', pr: null, headSha: null, code: s.code ?? null, until: b.nextTrialAt });
+      await this.receipt('breaker-opened', { failureCode: s.code ?? null, failingPos: b.failingPos, level: b.level, nextTrialAt: new Date(b.nextTrialAt).toISOString(), reopened: t === 'reopened' });
+    } else if (t === 'closed') {
+      const lifted = this.queue.liftEnvironmentStops(now);
+      await this.receipt('breaker-closed', { pr: subject.pr, lifted });
+    }
+  }
+
   async afterBatch(subject, origin, result) {
     if (!result || result.state === 'WAITING') return result;
+    if (result.state === 'PARKED') {
+      try {
+        this.queue.park(subject.pr, subject.headSha, { reason: result.reason, nextAt: result.until, position: result.position ?? null }, this.clock());
+        await this.feedBreaker(subject, result.settle);
+        await this.persistQueue();
+      } catch { /* a view */ }
+      this.reportQueue();
+      return result;
+    }
     const now = this.clock();
     const s = result.settle ?? null;
     try {
@@ -929,20 +1284,8 @@ export class ResidentExecutor {
         this.queue.notice({ key: `stopped:${subject.pr}:${subject.headSha}:${s.code}`, kind: 'stopped', pr: subject.pr, headSha: subject.headSha, code: s.code ?? null });
         await this.receipt('queue-row-stopped', { pr: subject.pr, headSha: subject.headSha, failureCode: s.code ?? null, releases24h });
       }
-      if (s && Number.isSafeInteger(s.pos)) {
-        // Windows-only: the ending never reached the Linux preparation (a stage-1 or stage-R ending, or a completed batch
-        // whose roles were all relayed); it never closes a breaker a Linux place opened (design v0.5 §4.6; review m2).
-        const windowsOnly = s.kind === 'completed' ? s.linux !== true : s.pos < POSITIONS.workspace;
-        const t = breakerRecord(b, { pos: s.pos, completed: s.kind === 'completed', counts: s.breaker === 'counts', neutral: s.breaker !== 'counts', windowsOnly,
-          pr: subject.pr, code: s.code ?? null }, this.policy, now);
-        if (t === 'opened' || t === 'reopened') {
-          this.queue.notice({ key: `breaker:${b.openedAt}`, kind: 'breaker-open', pr: null, headSha: null, code: s.code ?? null, until: b.nextTrialAt });
-          await this.receipt('breaker-opened', { failureCode: s.code ?? null, failingPos: b.failingPos, level: b.level, nextTrialAt: new Date(b.nextTrialAt).toISOString(), reopened: t === 'reopened' });
-        } else if (t === 'closed') {
-          const lifted = this.queue.liftEnvironmentStops(now);
-          await this.receipt('breaker-closed', { pr: subject.pr, lifted });
-        }
-      }
+      // A batch that rested at B told the breaker about stages 1-7 when it parked: its end is a stage-8 ending.
+      await this.feedBreaker(subject, s);
       if (s && (FALSIFYING_CODES.includes(s.code) || (s.code === 'STAGE_CHILD_REFUSED' && FALSIFYING_REASONS.includes(s.outcomeReason)))) await this.falsified(subject);
       await this.persistQueue();
     } catch { /* the queue and the breaker are a view; the next batch end writes them again */ }
@@ -1027,6 +1370,14 @@ export class ResidentExecutor {
     this.atStage(null, 'relay-wait');
     let outcome;
     try {
+      // An install authority that ends within one batch budget closes a batch at parking point A neutrally, as at B
+      // (design v0.5 §4.8; independent review of step 2, m1). Only stage 1 ran: nothing was published.
+      if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < this.clock() + batchBudgetMs(this.policy)) {
+        const drift = await this.driftCode();
+        if (drift) return this.afterBatch(subject, entry.reserved.origin ?? 'queued', await this.unknown(key, drift, 'resume-start-checks', batch));
+        const f = await this.fail(key, batch, Object.assign(new StepFailure(1, 'PARKED_AUTHORITY_EXPIRING', { windowsTreeZero: true }, 'stage', 0), { windowsOnly: true }));
+        return this.afterBatch(subject, entry.reserved.origin ?? 'queued', f);
+      }
       // Every resume re-runs the start-of-batch checks; any drift fails closed (UNKNOWN, HALT).
       const startCode = await this.batchStartChecks(subject);
       if (startCode) return this.afterBatch(subject, entry.reserved.origin ?? 'queued', await this.unknown(key, startCode, 'resume-start-checks', batch));
@@ -1054,6 +1405,11 @@ export class ResidentExecutor {
     if (localRoles.length > 0) {
       if ((aborted = await this.abortIfRequested(key, batch, 'before-workspace'))) return aborted;
       if ((aborted = await this.supersededAfterStart(key, subject, batch, 'before-workspace', plan.candidates.length > 0 ? POSITIONS[RELAY_STAGE] : POSITIONS[1]))) return aborted;
+      // A batch resumed from parking point A after other batches ran may hold a bundle too old for the workspace: it ends
+      // here, nothing of it on Linux. The design's re-bundle needs a second bundle generation in the companion and comes
+      // with the relay (off until the Owner's November test; DESIGN §18.2).
+      const reservedAt = Date.parse((await this.ledger.state(key)).reserved?.reservedAt ?? '');
+      if (Number.isFinite(reservedAt) && this.clock() - reservedAt > BUNDLE_MAX_AGE_AT_WORKSPACE_MS) return new StepFailure(0, 'PARKED_BUNDLE_TOO_OLD', {}, 'workspace', relayed);
       this.atStage(0, 'workspace');
       const prep = await this.companion.prepareWorkspaces(batch);
       if (!prep || prep.ok !== true) return new StepFailure(0, prep?.code ?? 'WORKSPACE_PREPARATION_UNCONFIRMED', {}, 'workspace', relayed);
@@ -1074,19 +1430,16 @@ export class ResidentExecutor {
     }
     await this.lateHostedResults(key, subject, plan);
     if ((aborted = await this.abortIfRequested(key, batch, 'before-stage-8'))) return aborted;
-    const unrecorded = await this.beforePublication(key, subject, 8);
-    if (unrecorded) { unrecorded.relayedRoles = relayed; return unrecorded; }
-    this.atStage(8, 'stage');
-    const control = await this.engine.runStage(batch, this.stage(8), { betweenRoles: false, firstLinux: false });
-    await this.receipt('stage-terminal', { key, stage: 8, ok: control.ok === true, failureCode: control.ok ? null : validCode(control.code), factsSha256: control.factsSha256 ?? null, outcome: outcomeSummary(control) });
-    if (control.ok !== true) return new StepFailure(8, control.code, control.proof, 'stage', relayed, control);
-
+    // Phase 2, step 2: the close archive on both hosts ends the Linux exclusive zone; then the batch rests at parking
+    // point B and stage 8 runs as tries (the first one right away). Stage 8 touches only Windows.
     const closed = await this.engine.closeBatch(batch, { linux: localRoles.length > 0 });
     check(closed && closed.verified === true, 'SUCCESS_PATH_ARCHIVE_UNCONFIRMED');
-    await this.ledger.terminal(key, 'COMPLETED', { batchId: batch.batchId, closed: closed.archived ?? null, relayed: plan.relayed.map(r => r.role), local: localRoles });
-    await this.receipt('batch-terminal', { key, outcome: 'COMPLETED' });
-    this.reportOutcome(subject, 'COMPLETED', { key });
-    return { state: 'COMPLETED', key, relayed: plan.relayed.map(r => r.role), local: localRoles, settle: { kind: 'completed', code: null, klass: null, breaker: 'neutral', pos: POSITIONS.END, linux: localRoles.length > 0 } };
+    await this.ledger.park(key, { batch, closed: closed.archived ?? null, local: localRoles });
+    await this.receipt('batch-parked', { key, local: localRoles, relayed: plan.relayed.map(r => r.role) });
+    // Everything up to stage 7 passed (Linux too when a role ran locally): the breaker learns it now. A view: a failure
+    // here never changes the batch, which already rests at B (independent review of step 2, m12).
+    try { await this.feedBreaker(subject, { pos: POSITIONS[7], breaker: 'neutral', linux: localRoles.length > 0, kind: 'parked', code: null }); } catch { /* a view */ }
+    return this.stage8Try(key, subject, batch);
   }
 
   // The latest companion hint for this head, parsed; anything malformed is "no hint" (it can only make the
@@ -1186,7 +1539,8 @@ export class ResidentExecutor {
       const { klass, basis, row, release } = decideFailure({ code: failure.code, stage: failure.stageNumber, phase: failure.phase, outcome: failure.outcome,
         brokerNoLaunch: failure.brokerNoLaunch, proof, started });
       const facts = ResidentExecutor.failureFacts(failure, row);
-      const settle = { code: failure.code, klass: row?.class ?? 'unknown', breaker: row?.breaker ?? 'counts', breakerState, pos, ciRetryAfter: facts.ciRetryAfter, outcomeReason: facts.reason };
+      const settle = { code: failure.code, klass: row?.class ?? 'unknown', breaker: row?.breaker ?? 'counts', breakerState, pos, ciRetryAfter: facts.ciRetryAfter, outcomeReason: facts.reason,
+        ...(typeof failure.windowsOnly === 'boolean' ? { windowsOnly: failure.windowsOnly } : {}) };
       if (!started && release) {
         await this.closeOrThrow(batch);
         await this.ledger.releaseUnexecuted(key, release, { failureCode: failure.code, basis, ...facts, breakerState });
@@ -1250,7 +1604,7 @@ export class ResidentExecutor {
   // After stage 1, only at a safe point outside the Linux preparation (before stage R's plan, before the workspace):
   // the order is not enough, one live read must confirm the PR's head moved on (or the PR closed). No answer: the batch
   // goes on. The live head IS this batch's head: the newer commit in the queue is disproved and the batch goes on.
-  async supersededAfterStart(key, subject, batch, safePoint, pos) {
+  async supersededAfterStart(key, subject, batch, safePoint, pos, stage = 1) {
     if (!(await this.newerCommitArrived(subject))) return null;
     this.liveReadAt ??= new Map();
     const throttle = `${key}:${this.queue.row(subject.pr)?.current?.headSha ?? ''}`;
@@ -1265,15 +1619,18 @@ export class ResidentExecutor {
       await this.receipt('supersede-disproved', { key, pr: subject.pr, safePoint });
       return null;
     }
-    return this.supersededEnd(key, subject, batch, { safePoint, pos, live });
+    return this.supersededEnd(key, subject, batch, { safePoint, pos, live, stage });
   }
 
   // The executor's own end of a batch, on the Owner abort's path (DESIGN §6.5): nothing of this batch runs at a safe
   // point, so quiescence on both hosts, the head burned, a rename-only archive with the fixed reason superseded, and
   // FAILED_CLEAN SUPERSEDED_AT_SAFE_POINT (neutral for the breaker, never an attempt 2). Unproven: UNKNOWN, HALT.
-  async supersededEnd(key, subject, batch, { safePoint, pos, live }) {
+  async supersededEnd(key, subject, batch, { safePoint, pos, live, stage = 1 }) {
     const context = { safePoint, stage: null };
     try {
+      // Never archive from drifted bytes (re-review of step 2, m16).
+      const drift = await this.driftCode();
+      if (drift) return await this.unknown(key, drift, 'superseded-source-drift', batch, context);
       // First the create-only record: a crash from here on is a crash scene (SUPERSEDE_INTERRUPTED), never a wait that a
       // restart would resume on a half-archived scene (independent review of step 1, M1).
       await this.ledger.beginSelfAbort(key, { safePoint, liveHeadSha: live.headSha, liveState: live.state });
@@ -1284,14 +1641,15 @@ export class ResidentExecutor {
       const windows = await this.engine.archiveFailure(batch, SUPERSEDED_ARCHIVE_REASON);
       const linux = await this.companion.archiveLinux(batch, SUPERSEDED_ARCHIVE_REASON);
       check(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED');
-      // stage 1: the last stage that ran (executed-heads.mjs#mayHavePublished: nothing after stage 1 published, unless
-      // stage R relayed a role, which its plan says).
-      await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: SUPERSEDED_AT_SAFE_POINT, basis: 'superseded-live-read', safePoint, stage: 1, batchId: batch?.batchId ?? null,
+      // stage: the last stage that ran (executed-heads.mjs#mayHavePublished): 1 before the workspace (nothing after stage 1
+      // published, unless stage R relayed a role, which its plan says); 8 at parking point B (stages 3, 5 and 7 published).
+      await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: SUPERSEDED_AT_SAFE_POINT, basis: 'superseded-live-read', safePoint, stage, batchId: batch?.batchId ?? null,
         windows: windows.directory, linux: linux.directory, class: 'clean-final', retry: 'new-commit', breaker: 'neutral', liveHeadSha: live.headSha, liveState: live.state });
       await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: SUPERSEDED_AT_SAFE_POINT, safePoint });
       this.reportOutcome(subject, 'FAILED_CLEAN', { code: SUPERSEDED_AT_SAFE_POINT, key });
+      // At B only Windows was touched since the parking told the breaker about stages 1-7 (review of step 2, M2).
       return { state: 'FAILED_CLEAN', key, failureCode: SUPERSEDED_AT_SAFE_POINT, safePoint,
-        settle: { kind: 'burned', code: SUPERSEDED_AT_SAFE_POINT, klass: 'clean-final', breaker: 'neutral', pos } };
+        settle: { kind: 'burned', code: SUPERSEDED_AT_SAFE_POINT, klass: 'clean-final', breaker: 'neutral', pos, ...(stage === 8 ? { windowsOnly: true } : {}) } };
     } catch (error) {
       return this.unknown(key, codeOf(error), 'superseded-end-unconfirmed', batch, context);
     }

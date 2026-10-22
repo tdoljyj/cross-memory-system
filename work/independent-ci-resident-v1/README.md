@@ -27,3 +27,5 @@ powershell -NoProfile -File windows/test-install-carry.ps1 -Scratch <new dir wit
 The failure table, the Source-independent executed heads and the status, PR page and notification features of the quota redesign's phase 1 are described in DESIGN.md §16 (Task `12ada80e`).
 
 Phase 2, step 1 (Task `6451a55d`) is described in DESIGN.md §17. It covers the executor's own run queue (`state\queue\queue.json`), the waits and back-off, the release cap, the budgets read from the ledger, the circuit breaker and supersession.
+
+Phase 2, step 2 (Task `6451a55d`) is described in DESIGN.md §18. It covers parking at points A and B, stage 8 as tries, the Owner's drain request before a reinstall, and policy `/5`.

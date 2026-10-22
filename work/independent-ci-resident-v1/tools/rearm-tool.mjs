@@ -3,6 +3,7 @@
 //   node rearm-tool.mjs request-rearm  --root <root> --expected-halt-sha256 <sha> --reason <text> --by <sid>
 //   node rearm-tool.mjs request-resume --root <root> --expected-paused-sha256 <sha> --by <sid>
 //   node rearm-tool.mjs request-abort  --root <root> --batch-key <key> --expected-ledger-entry-sha256 <sha> --reason <text> --by <sid>
+//   node rearm-tool.mjs request-drain  --root <root> --reason <text> --by <sid>   (phase 2: end every parked batch, before a reinstall)
 // inspect writes nothing and needs no elevation (state is Owner-readable). The request modes write
 // exactly one small create-only JSON file into the admin-only owner\ directory and nothing else:
 // no archive, no ledger write, no rename. The service then carries the request out with its own
@@ -14,7 +15,7 @@ import { HEX64, check } from '../src/canonical.mjs';
 import { Ledger } from '../src/ledger.mjs';
 import { ReceiptChain } from '../src/receipts.mjs';
 import { Inbox } from '../src/inbox.mjs';
-import { ABORT_CONTRACT, REARM_CONTRACT, RESUME_CONTRACT, validateAbortRequest } from '../src/executor.mjs';
+import { ABORT_CONTRACT, DRAIN_CONTRACT, REARM_CONTRACT, RESUME_CONTRACT, validateAbortRequest } from '../src/executor.mjs';
 import { nonce, writeNew } from '../src/store.mjs';
 
 const SID = /^S-1-5-21-\d+-\d+-\d+-\d+$/;
@@ -29,7 +30,7 @@ export async function inspect({ ledger, receipts }) {
   const abortTargets = [];
   for (const e of open) {
     const latest = HEX64.test(e.key ?? '') ? await ledger.latestRecord(e.key) : null;
-    abortTargets.push({ batchKey: e.key, state: e.state, waiting: Ledger.resumable(e), aborting: !!e.abort,
+    abortTargets.push({ batchKey: e.key, state: e.state, waiting: Ledger.waitingAt(e), parked: Ledger.parkedAt(e), aborting: !!e.abort,
       latestLedgerEntry: latest?.name ?? null, ledgerEntrySha256: latest?.sha256 ?? null });
   }
   const key = halt?.value?.facts?.key ?? null;
@@ -64,6 +65,14 @@ export function abortRequest({ batchKey, expectedLedgerEntrySha256, reason, by }
   return validateAbortRequest({ contract: ABORT_CONTRACT, batchKey, ledgerEntrySha256: expectedLedgerEntrySha256, reason, by, requestedAt: new Date(clock()).toISOString(), nonce: nonce(8) });
 }
 
+// Phase 2, step 2: end every batch at a parking point (A or B) on the Owner abort's path, before a reinstall (the
+// uninstall refuses an open batch). The service carries it out at its next tick start.
+export function drainRequest({ reason, by }, clock = Date.now) {
+  check(typeof reason === 'string' && reason.length > 0 && reason.length <= 200, 'DRAIN_REASON_REQUIRED');
+  check(SID.test(by ?? ''), 'OWNER_SID_REQUIRED');
+  return { contract: DRAIN_CONTRACT, reason, by, requestedAt: new Date(clock()).toISOString(), nonce: nonce(8) };
+}
+
 export function resumeRequest({ expectedPausedSha256, by }, clock = Date.now) {
   check(HEX64.test(expectedPausedSha256 ?? ''), 'REVIEWED_PAUSE_SHA_REQUIRED');
   check(SID.test(by ?? ''), 'OWNER_SID_REQUIRED');
@@ -86,6 +95,9 @@ if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`) {
     } else if (positionals[0] === 'request-resume') {
       const file = await writeOwnerRequest(path.join(values.root, 'owner'), resumeRequest({ expectedPausedSha256: values['expected-paused-sha256'], by: values.by }));
       console.log(JSON.stringify({ status: 'RESUME_REQUESTED', file }));
+    } else if (positionals[0] === 'request-drain') {
+      const file = await writeOwnerRequest(path.join(values.root, 'owner'), drainRequest({ reason: values.reason, by: values.by }));
+      console.log(JSON.stringify({ status: 'DRAIN_REQUESTED_SERVICE_WILL_END_PARKED_BATCHES', file }));
     } else if (positionals[0] === 'request-abort') {
       const file = await writeOwnerRequest(path.join(values.root, 'owner'), abortRequest({ batchKey: values['batch-key'], expectedLedgerEntrySha256: values['expected-ledger-entry-sha256'], reason: values.reason, by: values.by }));
       console.log(JSON.stringify({ status: 'ABORT_REQUESTED_SERVICE_WILL_VERIFY', file }));

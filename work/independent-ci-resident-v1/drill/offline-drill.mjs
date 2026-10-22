@@ -4,6 +4,8 @@
 // v0.8: an Owner abort of a batch hanging in stage 2 (DESIGN §6.5).
 // v1.0 (phase 2, step 1, DESIGN §17): the run queue (a seen head is never reserved again, a release and a wait are
 // retried on their own back-off), a supersession before stage 1, and the breaker opening and closing on a trial.
+// v1.1 (phase 2, step 2, DESIGN §18): parking at B (the close archive before stage 8, stage 8 as tries on their own
+// back-off while other PRs run), main moving ending a parked batch, and the Owner drain before a reinstall.
 //   node drill/offline-drill.mjs            prints a step table and a JSON summary; exit 1 on any miss
 //
 // It drives the real executor, ledger, receipts, inboxes, protocol archive and Owner-request code
@@ -21,7 +23,7 @@ import { validatePolicy } from '../src/policy.mjs';
 import { TRIGGER_CONTRACT } from '../src/trigger.mjs';
 import { RunQueue } from '../src/queue.mjs';
 import { applyArchive, planArchive, protocolLeaves } from '../src/archive.mjs';
-import { abortRequest, inspect, rearmRequest, resumeRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
+import { abortRequest, drainRequest, inspect, rearmRequest, resumeRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
 import { ExecutedHeads, BACKFILL_MANIFEST_CONTRACT, CARRIED_FILE } from '../src/executed-heads.mjs';
 import { sha256 } from '../src/canonical.mjs';
 
@@ -42,11 +44,13 @@ await fs.writeFile(path.join(winSpool, 'outgoing', `${'e'.repeat(64)}.json`), '{
 let now = Date.parse('2026-10-21T00:00:00Z');
 const clock = () => now;
 const policyInput = {
-  contract: 'clued.independent-ci.resident-policy/4', repo: REPO, baseBranch: 'main', sourceManifestSha256: SOURCE, ciSourceManifestSha256: '9'.repeat(64), residentManifestSha256: RESIDENT,
+  contract: 'clued.independent-ci.resident-policy/5', repo: REPO, baseBranch: 'main', sourceManifestSha256: SOURCE, ciSourceManifestSha256: '9'.repeat(64), residentManifestSha256: RESIDENT,
   ownerAcceptance: { decisionRef: '0d84ddbb-ec1f-49c3-bbd0-953f72d53584', installReceiptRef: null }, validUntil: null,
   limits: { maxBatchesPer24h: 72, maxEvaluationsPer24h: 96, perPrBatchesPer24h: 6, waitingRetriesPer24h: 48, reevaluationsPerPrHeadPer24h: 6, releasesPerHeadPer24h: 2, queueDepth: 100,
     maxConcurrent: 1, inboxMaxFiles: 16, unexecutedCooldownMs: 600_000, stageMarginMs: 180_000 },
   breaker: { consecutive: 3, windowCount: 4, windowMs: 3_600_000, backoffMs: [1_800_000, 3_600_000, 7_200_000] },
+  stage8: { mode: 'park' },
+  park: { maxParked: 4, maxParkedOutsideTop2: 8, maxMs: 86_400_000, stage8MaxTries: 12, stage8RetriesPer24h: 100 },
   companion: { userSid: OWNER, heartbeatMaxAgeMs: 60_000 },
   stageRunMilliseconds: [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000],
   linux: { distribution: 'Ubuntu-24.04', workerUnit: 'clued-ci-worker@.service', wsprepUnit: 'clued-ci-wsprep@.service', archiveUnit: 'clued-ci-archive@.service' },
@@ -75,12 +79,16 @@ const archive = async (spool, key, reason, layout) => {
 };
 const engine = {
   current: null,
-  async derive(subject, key) { this.current = { subject, key }; return { batchId: `${key.slice(0, 16)}-${'0'.repeat(12)}`, key, packageSha256: '7'.repeat(64) }; },
+  // A parked batch's later stage-8 tries run without a derive: each batch finds its own script by its key.
+  subjects: new Map(),
+  async derive(subject, key) { this.current = { subject, key }; this.subjects.set(key, subject); return { batchId: `${key.slice(0, 16)}-${'0'.repeat(12)}`, key, packageSha256: '7'.repeat(64) }; },
   async runStage(batch, stage) {
     now += 60_000;
     if ([4, 6].includes(stage.number)) { await archive(winSpool, batch.key, `between-roles-${stage.number}`); await archive(linSpool, batch.key, `between-roles-${stage.number}`, LINUX); }
     if ([2, 4, 6].includes(stage.number)) await exchange();
-    const r = script.get(`${this.current.subject.pr}:${this.current.subject.attempt}`)?.[stage.number] ?? script.get(this.current.subject.pr)?.[stage.number];
+    const subject = this.subjects.get(batch.key) ?? this.current.subject;
+    let r = script.get(`${subject.pr}:${subject.attempt}`)?.[stage.number] ?? script.get(subject.pr)?.[stage.number];
+    if (Array.isArray(r)) r = r.shift(); // one answer per run of the stage (stage 8 as tries), then success
     if (r?.leaveLinuxBusy) linuxBusy = true;
     // The stage hangs (the 2026-10-21 refused relay) until it is asked to stop; the Owner looks and aborts meanwhile.
     if (r?.hangUntilStop) {
@@ -204,6 +212,30 @@ await step('three environment failures in a row (PRs 922-924) open the breaker; 
 }, r => r.state === 'DEFERRED' && r.reason === 'BREAKER_OPEN' && queue.breaker.state === 'open');
 await step('  thirty minutes later PR 925 is the trial (not a row that failed); it completes and closes the breaker', async () => { now += 1_800_000; return exec.tick(); },
   r => r.state === 'COMPLETED' && queue.breaker.state === 'closed');
+// ---- phase 2, step 2: parking at B (stage 8 as tries), main moving, the Owner drain before a reinstall ----
+const notReady = (code, mergeQueue = { entered: false, state: null, position: null }) => ({ ok: false, code, proof: WINDOWS_CLEAN, brokerNoLaunch: false,
+  outcome: { status: 'BLOCKED', reason: code, sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: { ciRetryAfter: null, mergeQueue }, safeToRerun: false } });
+script.set(930, { 8: [notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), notReady('RESIDENT_QUEUE_HEAD_NOT_REACHED', { entered: true, state: 'waiting', position: 1 })] });
+await step('PR 930 has not joined the merge queue: closed on both hosts, it parks before stage 8 while PR 931 runs', async () => {
+  await drop(trigger(930)); const p = await exec.tick(); const left = (await protocolLeaves(winSpool)).length + (await protocolLeaves(linSpool, LINUX)).length;
+  await drop(trigger(931)); const r = await exec.tick(); return { ...r, parked: p.state, tries: p.tries, left };
+}, r => r.parked === 'PARKED' && r.tries === 1 && r.left === 0 && r.state === 'COMPLETED' && queue.row(930).state === 'PARKED');
+await step('  ten minutes later it is first in the merge queue: tried again a minute later, it completes on try 3', async () => {
+  now += 600_000; const second = await exec.tick(); now += 60_000; const third = await exec.tick(); return { ...third, second: second.state, position: second.position };
+}, r => r.second === 'PARKED' && r.position === 1 && r.state === 'COMPLETED' && r.tries === 3 && queue.row(930).state === 'DONE');
+script.set(932, { 8: [notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), notReady('RESIDENT_BASE_MOVED')] });
+await step('PR 932 parks, then main moves: the batch ends at once, FAILED_CLEAN RESIDENT_BASE_MOVED, never an attempt 2', async () => {
+  await drop(trigger(932)); const p = await exec.tick(); now += 600_000; const r = await exec.tick(); return { ...r, parked: p.state };
+}, r => r.parked === 'PARKED' && r.state === 'FAILED_CLEAN' && r.failureCode === 'RESIDENT_BASE_MOVED' && !r.attempt2);
+script.set(933, { 8: [notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')] });
+await step('PR 933 parks; the Owner drain before a reinstall ends it OWNER_ABORTED and leaves nothing open', async () => {
+  await drop(trigger(933)); const p = await exec.tick(); now += 1;
+  await writeOwnerRequest(path.join(root, 'owner'), drainRequest({ reason: 'drill reinstall', by: OWNER }, clock), clock);
+  await exec.tick();
+  const open = (await ledger.open()).length;
+  const ended = (await Promise.all((await fs.readdir(path.join(state, 'ledger'))).map(k => ledger.state(k)))).filter(e => e.reserved?.subject?.pr === 933);
+  return { state: ended[0]?.terminal?.facts?.failureCode ?? '-', safePoint: ended[0]?.terminal?.facts?.safePoint, parked: p.state, open };
+}, r => r.parked === 'PARKED' && r.state === 'OWNER_ABORTED' && r.safePoint === 'parked' && r.open === 0);
 const head1 = await receipts.verify();
 await step('receipt chain intact', async () => ({ state: `seq ${head1.seq}` }), () => head1.seq > 30);
 const files = (await fs.readdir(path.join(state, 'receipts'))).sort();

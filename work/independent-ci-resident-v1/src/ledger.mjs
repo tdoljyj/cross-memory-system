@@ -38,6 +38,14 @@
 // (PR, commit), and the counted releases per head (waits never count; an environment release while the breaker was not
 // closed does not either). A new release reason, SUPERSEDED, closes a reservation whose PR got a newer commit before
 // stage 1 (nothing of it ran).
+//
+// Phase 2, step 2 (parking, design v0.5 §4.3, §4.8, §4.9): an entry can rest at two parking points, with nothing of it
+// running and Linux empty:
+//   A, the hosted wait (15-relay-wait, as before); several batches may now wait at once;
+//   B, after the last role stage and the close archive on both hosts (70-parked), before stage 8. Stage 8 then runs as
+//      "tries": 71-try-NN is written (create-only) right before a try, 72-tried-NN right after a try that was not ready
+//      (zero side effects). An entry whose every try has its 72 record is resumable; a 71 without its 72 is a crash in
+//      stage 8, a crash scene like any other (recovery closes it FAILED_UNKNOWN and HALTs).
 import fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -55,8 +63,12 @@ export const UNEXECUTED_REASONS = Object.freeze(['NOT_ADMITTED', 'BUNDLE_UNAVAIL
 export const UNCOUNTED_RELEASES = Object.freeze(['BUNDLE_UNAVAILABLE', 'BROKER_NOT_LAUNCHED', 'SUPERSEDED']);
 export const RESERVATION_ORIGINS = Object.freeze(['queued', 'backoff-retry', 'waiting-retry', 'new-trigger', 'restored', 'lifted', 'attempt2']);
 // The records of an open entry, oldest first; the newest one present is what an Owner abort names by digest.
-export const OPEN_RECORDS = Object.freeze(['00-reserved.json', '10-started.json', '15-relay-wait.json', '20-plan-intent.json', '25-plan.json']);
+export const OPEN_RECORDS = Object.freeze(['00-reserved.json', '10-started.json', '15-relay-wait.json', '20-plan-intent.json', '25-plan.json', '70-parked.json']);
 export const OWNER_ABORT_RECORD = '80-owner-abort.json';
+export const PARK_RECORD = '70-parked.json';
+export const MAX_TRIES = 99;
+const TRY = /^7(?:(1)-try|(2)-tried)-(\d{2})\.json$/;
+const tryName = (begun, n) => `${begun ? '71-try' : '72-tried'}-${String(n).padStart(2, '0')}.json`;
 export const SELF_ABORT_RECORD = '81-self-abort.json';
 
 function subjectCheck({ repo, pr, headSha, baseSha, sourceManifestSha256, attempt }) {
@@ -107,7 +119,7 @@ export class Ledger {
     if (!(await exists(dir))) return { state: 'ABSENT' };
     // A record that cannot be read (torn write, wrong type, extra hard link) makes the entry
     // UNREADABLE: it is open, recovery closes or quarantines it, and nothing ever throws past here.
-    let reserved, started, wait, planIntent, plan, abort, selfAbort, terminal, archived;
+    let reserved, started, wait, planIntent, plan, parked, tries, abort, selfAbort, terminal, archived;
     try {
       const read = async name => (await exists(path.join(dir, name))) ? (await readJson(path.join(dir, name))).value : null;
       reserved = await read('00-reserved.json');
@@ -115,6 +127,8 @@ export class Ledger {
       wait = await read('15-relay-wait.json');
       planIntent = await read('20-plan-intent.json');
       plan = await read('25-plan.json');
+      parked = await read(PARK_RECORD);
+      tries = await this.readTries(dir, read);
       abort = await read(OWNER_ABORT_RECORD);
       selfAbort = await read(SELF_ABORT_RECORD);
       terminal = await read('90-terminal.json');
@@ -123,11 +137,31 @@ export class Ledger {
       if (!contentError(error)) throw error;
       return { state: 'UNREADABLE' };
     }
-    if (terminal) return { state: 'TERMINAL', outcome: terminal.outcome, reserved, started, wait, planIntent, plan, abort, selfAbort, terminal, archived };
+    if (terminal) return { state: 'TERMINAL', outcome: terminal.outcome, reserved, started, wait, planIntent, plan, parked, tries, abort, selfAbort, terminal, archived };
     // A crash between mkdir and the reservation record leaves an INCOMPLETE entry; it is open, so
     // recovery terminalises it (FAILED_UNKNOWN) instead of wedging the ledger.
     if (!reserved) return { state: 'INCOMPLETE', reserved: null, started, abort, selfAbort };
-    return { state: started ? 'STARTED' : 'RESERVED', reserved, started, wait, planIntent, plan, abort, selfAbort };
+    return { state: started ? 'STARTED' : 'RESERVED', reserved, started, wait, planIntent, plan, parked, tries, abort, selfAbort };
+  }
+
+  // The stage-8 tries of a parked entry, in order: [{ n, begun, ended }] (ended null while a try runs or crashed). A gap
+  // (try n+1 without try n, a result without its try) is content that does not fit: UNREADABLE.
+  async readTries(dir, read) {
+    const names = (await fs.readdir(dir)).filter(n => TRY.test(n)).sort();
+    const tries = [];
+    for (const name of names) {
+      const [, one, two, nn] = TRY.exec(name); const kind = one ?? two;
+      const n = Number(nn);
+      if (kind === '1') { check(n === tries.length + 1 && n <= MAX_TRIES, 'PARKED_TRY_SEQUENCE_INVALID'); tries.push({ n, begun: await read(name), ended: null }); }
+    }
+    for (const name of names) {
+      const [, one, two, nn] = TRY.exec(name); const kind = one ?? two;
+      if (kind !== '2') continue;
+      const t = tries[Number(nn) - 1];
+      check(t && t.ended === null, 'PARKED_TRY_SEQUENCE_INVALID');
+      t.ended = await read(name);
+    }
+    return tries;
   }
 
   // The newest record of an OPEN entry with the SHA-256 of its exact bytes (what an Owner abort names), or null
@@ -135,6 +169,12 @@ export class Ledger {
   async latestRecord(key) {
     const s = await this.state(key);
     if (!['RESERVED', 'STARTED'].includes(s.state) || s.abort || s.selfAbort) return null;
+    // A parked entry's newest record is its newest try record, if it has any.
+    const last = s.tries?.at(-1);
+    if (last) {
+      const name = tryName(last.ended === null, last.n);
+      return { name, sha256: (await readJson(path.join(this.dir(key), name))).sha256 };
+    }
     for (const name of [...OPEN_RECORDS].reverse()) {
       const file = path.join(this.dir(key), name);
       if (await exists(file)) return { name, sha256: (await readJson(file)).sha256 };
@@ -164,18 +204,42 @@ export class Ledger {
     await writeNew(path.join(this.dir(key), '15-relay-wait.json'), { key, contract: 'clued.independent-ci.resident-relay-wait/1', t0, batch, at: isoNow(this.clock) });
   }
 
-  // An open entry that is only waiting for hosted signals (nothing of it can be running). One whose Owner abort
-  // was accepted is never resumed: if it is still open at a tick start, the abort was interrupted (a crash scene).
-  static resumable(entry) { return entry?.state === 'STARTED' && !!entry.wait && !entry.planIntent && !entry.plan && !entry.abort && !entry.selfAbort; }
+  // An open entry at a parking point (nothing of it can be running): A, waiting for hosted signals; B, parked before
+  // stage 8 with every try settled. One whose Owner abort (or the executor's own end) was accepted is never resumed: if it
+  // is still open at a tick start, that end was interrupted (a crash scene).
+  static waitingAt(entry) { return entry?.state === 'STARTED' && !!entry.wait && !entry.planIntent && !entry.plan && !entry.parked && !entry.abort && !entry.selfAbort; }
+  static parkedAt(entry) { return entry?.state === 'STARTED' && !!entry.plan && !!entry.parked && !entry.abort && !entry.selfAbort && (entry.tries ?? []).every(t => t.ended !== null); }
+  static resumable(entry) { return Ledger.waitingAt(entry) || Ledger.parkedAt(entry); }
 
-  // Open entries that are a crash scene (recovery closes them) - everything open except a resumable wait.
+  // Open entries that are a crash scene (recovery closes them) - everything open except an entry at a parking point.
   async crashed() { return (await this.open()).filter(e => !Ledger.resumable(e)); }
 
-  // The batch that waits for hosted signals, if any (serial execution: at most one).
-  async waiting() {
-    const w = (await this.open()).filter(e => Ledger.resumable(e));
-    check(w.length <= 1, 'RELAY_WAIT_MORE_THAN_ONE_BATCH');
-    return w[0] ?? null;
+  // The batches at a parking point (phase 2: several may rest at once; the executor bounds how many).
+  async parkedEntries() { return (await this.open()).filter(e => Ledger.resumable(e)); }
+
+  // The oldest batch waiting for hosted signals, if any.
+  async waiting() { return (await this.open()).find(e => Ledger.waitingAt(e)) ?? null; }
+
+  // Parking point B: after the last role stage and the close archive on both hosts, before stage 8. Create-only.
+  async park(key, facts) {
+    const s = await this.state(key);
+    check(s.state === 'STARTED' && s.plan && !s.parked && !s.abort && !s.selfAbort, 'PARK_REQUIRES_STARTED_ENTRY_WITH_PLAN', s.state);
+    await writeNew(path.join(this.dir(key), PARK_RECORD), { key, contract: 'clued.independent-ci.resident-parked/1', at: isoNow(this.clock), ...facts });
+  }
+
+  // One stage-8 try of a parked entry: begun right before it runs, ended only when it was not ready (zero side effects).
+  async beginTry(key, facts) {
+    const s = await this.state(key);
+    check(Ledger.parkedAt(s) && s.tries.length < MAX_TRIES, 'PARKED_TRY_REQUIRES_PARKED_ENTRY', s.state);
+    const n = s.tries.length + 1;
+    await writeNew(path.join(this.dir(key), tryName(true, n)), { key, contract: 'clued.independent-ci.resident-stage8-try/1', n, at: isoNow(this.clock), ...facts });
+    return n;
+  }
+
+  async endTry(key, n, facts) {
+    const s = await this.state(key);
+    check(s.state === 'STARTED' && s.parked && s.tries.length === n && s.tries[n - 1].ended === null && !s.abort && !s.selfAbort, 'PARKED_TRY_END_REQUIRES_OPEN_TRY', s.state);
+    await writeNew(path.join(this.dir(key), tryName(false, n)), { key, contract: 'clued.independent-ci.resident-stage8-tried/1', n, at: isoNow(this.clock), ...facts });
   }
 
   // Stage R bookkeeping, both create-only and only on a started entry; 25-plan only after 20-plan-intent.
@@ -396,7 +460,7 @@ export class Ledger {
   // The run queue's daily budgets for the window since sinceMs, from the ledger alone (one pass; see the header).
   // A record that cannot be read counts as one more execution or evaluation (never a wedge, never a free pass).
   async usage(sinceMs) {
-    const u = { started: 0, startedByPr: new Map(), evaluations: 0, waitingRetries: 0, reevaluations: new Map(), releasesByHead: new Map() };
+    const u = { started: 0, startedByPr: new Map(), evaluations: 0, waitingRetries: 0, reevaluations: new Map(), releasesByHead: new Map(), stage8Retries: 0 };
     const bump = (map, k) => map.set(k, (map.get(k) ?? 0) + 1);
     // A file or entry last written before the window (with an hour's margin) cannot hold a record of it: its recorded
     // times are older still. Only a prefilter: every record it lets through is decided by its own recorded time.
@@ -423,6 +487,11 @@ export class Ledger {
       const dir = path.join(this.batches, key);
       if (await before(dir)) continue;
       try {
+        // Every try after the first one of a parked entry is a stage-8 retry (phase 2, step 2), whenever it was reserved.
+        for (const name of (await fs.readdir(dir)).filter(n => /^71-try-(\d{2})\.json$/.test(n) && n !== '71-try-01.json')) {
+          const at = Date.parse((await read(path.join(dir, name)))?.at);
+          if (!(at < sinceMs)) u.stage8Retries += 1;
+        }
         const reserved = await read(path.join(dir, '00-reserved.json'));
         if (!reserved || !(Date.parse(reserved.reservedAt) >= sinceMs)) continue;
         const terminal = await read(path.join(dir, '90-terminal.json'));
