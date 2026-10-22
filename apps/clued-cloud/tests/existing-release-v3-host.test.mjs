@@ -17,7 +17,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import test, { after } from 'node:test';
+import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const APP = fileURLToPath(new URL('..', import.meta.url));
@@ -29,8 +29,10 @@ const HOST_FILES = 'payload/release/existing-release-entry-v1/v3-host/host-files
 const STAGES = 'payload/release/existing-release-entry-v1/v3/existing-stages.mjs';
 const PDF_CONFIG = 'apps/clued-cloud/wrangler.pdf-extractor.jsonc';
 
-// The package manifest installed on the Host (Note fdfbe464@7).
+// The package manifest installed on the Host (Note fdfbe464@7), and the source
+// freeze that pins every other file of the package (the handover copy's).
 const INSTALLED_MANIFEST = '71ee46c6c0d5bb0bafa5a85a5445b11c4f0b534141eb25010b06b51da04b8bf4';
+const SOURCE_FREEZE = 'e28ed179837a91ff88e3a3b979d93c23abed8c73ec01e552fa5bf407ba9f4534';
 // Predecessor bytes the committed patches must rebuild exactly: the v4 manager
 // is the pin that v4-to-v5 replaces; the v5 release entry is the one in v5
 // package manifest 590f00f3.
@@ -44,9 +46,16 @@ const OMITTED = ['ExecStartPre', 'ExecStartPost', 'ExecCondition', 'ExecStop', '
   'EnvironmentFiles'];
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+// Git's object id of a file as a text checkout normalizes it (CRLF to LF): the
+// committed patches name these ids in their `index` lines.
+const gitBlob = (bytes) => {
+  const text = Buffer.from(bytes.toString('utf8').replaceAll('\r\n', '\n'));
+  return createHash('sha1').update(`blob ${text.length}\0`).update(text).digest('hex');
+};
 const read = (file) => fs.readFileSync(path.join(PACKAGE, file));
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'existing-release-v3-host-'));
-after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+// On exit rather than in after(): this also runs when the module fails to load.
+process.once('exit', () => fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 3 }));
 
 function code(run) {
   try {
@@ -68,10 +77,15 @@ function listFiles(dir, prefix = '') {
 // the CRLF lines it had before v5 (only the five lines v5 added end in LF).
 // Lines therefore compare without a trailing CR, and a removed line gets one
 // back when the hunk's context lines have it.
-function reverseApply(patchFile, file, newer) {
+function patchSection(patchFile, file) {
   const section = read(patchFile).toString('utf8').split(/^diff --git /m)
     .find((part) => part.startsWith(`a/${file} b/${file}\n`));
   assert.ok(section, `${patchFile} has no hunk for ${file}`);
+  return section;
+}
+
+function reverseApply(patchFile, file, newer) {
+  const section = patchSection(patchFile, file);
   const lines = newer.toString('utf8').split('\n');
   const older = [];
   let at = 0;
@@ -143,10 +157,6 @@ const managerV6 = await import(pathToFileURL(path.join(PACKAGE, MANAGER)).href);
 const managerV4 = await importBytes('v4/linux-process-manager.mjs', reverseApply('v4-to-v5-executable.patch', MANAGER, read(MANAGER)));
 const releaseV5 = reverseApply('v5-to-v6-executable.patch', RELEASE, read(RELEASE)).toString('utf8');
 
-// Everything the tests read is prepared before the first test(): a top-level
-// await after a test() lets the runner finish the tests registered so far and
-// run after(), which removes the scratch directory later tests need.
-//
 // release-once reads the pinned PDF config through host-files' fixed Source
 // root. Run the exact committed release-once next to a host-files that
 // re-exports the committed one, with the Source root moved to a scratch
@@ -181,6 +191,7 @@ test('the committed package is the revision 6 installed on the Host, byte for by
   assert.equal(freeze.revision, 6);
   assert.equal(manifest.revision, 6);
   assert.equal(sha256(read('package-manifest.json')), INSTALLED_MANIFEST);
+  assert.equal(sha256(read('source-freeze.json')), SOURCE_FREEZE);
   assert.equal(freeze.packageManifestSha256, INSTALLED_MANIFEST);
   assert.deepEqual(listFiles(PACKAGE).sort(), [...Object.keys(freeze.sourceFiles), 'source-freeze.json'].sort());
   for (const [file, { bytes, sha256: expected }] of Object.entries(freeze.sourceFiles)) {
@@ -197,7 +208,14 @@ test('the committed package is the revision 6 installed on the Host, byte for by
   }
 });
 
-test('the committed patches rebuild the exact v4 manager and v5 release entry', () => {
+test('the committed patches rebuild the exact v4 and v5 predecessors', () => {
+  // Each patch names the git object ids of its two sides in its `index` line.
+  for (const [patchFile, file] of [['v4-to-v5-executable.patch', MANAGER], ['v4-to-v5-executable.patch', STAGES],
+    ['v5-to-v6-executable.patch', RELEASE]]) {
+    const [older, newer] = patchSection(patchFile, file).match(/^index ([0-9a-f]{7,40})\.\.([0-9a-f]{7,40})/m).slice(1);
+    assert.ok(gitBlob(read(file)).startsWith(newer), `${patchFile}: ${file} is not the patched side`);
+    assert.ok(gitBlob(reverseApply(patchFile, file, read(file))).startsWith(older), `${patchFile}: ${file} predecessor`);
+  }
   assert.equal(sha256(reverseApply('v4-to-v5-executable.patch', MANAGER, read(MANAGER))), V4_MANAGER);
   assert.ok(read('v4-to-v5-executable.patch').toString('utf8').includes(`- [MANAGER,'${V4_MANAGER}'],`));
   assert.equal(sha256(Buffer.from(releaseV5)), V5_RELEASE);
@@ -216,16 +234,23 @@ test('systemd 255: the v4 manager refuses the show reply, the v6 manager accepts
 
 test('systemd 255: the v6 manager keeps every other refusal of the v4 manager', () => {
   const reply = systemd255Reply();
-  const parse = (text) => code(() => managerV6.parseSystemdShow(text, config, 'head'));
-  const execStop = 'ExecStop={ path=/bin/true ; argv[]=/bin/true ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }';
-  assert.equal(parse(reply + execStop + '\n'), 'MANAGER_LOADED_UNIT_MISMATCH');
-  assert.equal(parse(reply + 'EnvironmentFiles=/etc/x (ignore_errors=no)\n'), 'MANAGER_LOADED_UNIT_MISMATCH');
+  const parse = (manager, text) => code(() => manager.parseSystemdShow(text, config, 'head'));
+  const command = '{ path=/bin/true ; argv[]=/bin/true ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }';
+  for (const key of OMITTED) {
+    const value = key === 'EnvironmentFiles' ? '/etc/x (ignore_errors=no)' : command;
+    const explicit = reply + OMITTED.map((name) => `${name}=${name === key ? value : ''}`).join('\n') + '\n';
+    assert.equal(parse(managerV6, `${reply}${key}=${value}\n`), 'MANAGER_LOADED_UNIT_MISMATCH', `v6, ${key} set`);
+    assert.equal(parse(managerV6, explicit), 'MANAGER_LOADED_UNIT_MISMATCH', `v6, ${key} set, the six empty`);
+    assert.equal(parse(managerV4, explicit), 'MANAGER_LOADED_UNIT_MISMATCH', `v4, ${key} set, the six empty`);
+  }
   for (const key of UNIT_PROPERTIES.filter((name) => !OMITTED.includes(name))) {
     const missing = reply.split('\n').filter((line) => !line.startsWith(`${key}=`)).join('\n');
-    assert.notEqual(parse(missing), 'PASS', `a reply without ${key} must still be refused`);
+    assert.equal(parse(managerV6, missing), 'MANAGER_SYSTEMD_BOUNDARY_UNPROVEN', `a reply without ${key}`);
   }
-  assert.equal(parse(reply + 'Foo=bar\n'), 'MANAGER_SYSTEMD_REPLY_INVALID');
-  assert.equal(parse(reply + 'User=994\n'), 'MANAGER_SYSTEMD_REPLY_INVALID');
+  for (const extra of ['Foo=bar', 'User=994']) {
+    assert.equal(parse(managerV6, `${reply}${extra}\n`), 'MANAGER_SYSTEMD_REPLY_INVALID', extra);
+    assert.equal(parse(managerV4, `${reply}${extra}\n`), 'MANAGER_SYSTEMD_REPLY_INVALID', extra);
+  }
 });
 
 test('wrangler 4: the v5 PDF deploy passed --no-build, the v6 deploy uses the derived config', () => {
@@ -310,13 +335,24 @@ test("the release entry still pins main's original verification CLIs", () => {
   const block = read(STAGES).toString('utf8').match(/const PINNED=Object\.freeze\(\{([^}]*)\}\);/)[1];
   const pinned = [...block.matchAll(/'([^']+)':'([a-f0-9]{64})'/g)];
   assert.equal(pinned.length, 3);
-  for (const [, file, pin] of pinned) assert.equal(sha256(fs.readFileSync(path.join(REPO, file))), pin, file);
+  for (const [, file, pin] of pinned) {
+    assert.equal(sha256(fs.readFileSync(path.join(REPO, file))), pin, `${file} no longer matches its pin in `
+      + `scripts/existing-release-v3-host/${STAGES}: the Host publisher would refuse to release this main. `
+      + 'Land a new reviewed publisher package revision that pins the new bytes first.');
+  }
 });
 
-test('every entry stays disabled without its fixed arguments', () => {
-  for (const [file, expected] of [[RELEASE, '"status":"DISABLED"'], ['install-once.mjs', '"status":"DISABLED"'],
-    [MANAGER, '"code":"PROTECTED_SYSTEMD_CONFIG_AND_PUBLISHER_REQUIRED"']]) {
-    const run = spawnSync(process.execPath, [path.join(PACKAGE, file)], { cwd: scratch, encoding: 'utf8', timeout: 30000 });
+test('every entry point stays disabled or blocked without its fixed arguments', () => {
+  for (const [file, expected] of [
+    [RELEASE, '"status":"DISABLED"'],
+    ['install-once.mjs', '"status":"DISABLED"'],
+    [STAGES, '"status":"DISABLED"'],
+    [MANAGER, '"code":"PROTECTED_SYSTEMD_CONFIG_AND_PUBLISHER_REQUIRED"'],
+    ['payload/release/verify-currentness-external.mjs', '"code":"CURRENTNESS_PROTECTED_PUBLISHER_CONTEXT_REQUIRED"'],
+  ]) {
+    // Each entry runs main() only when argv[1] is its own real path.
+    const entry = fs.realpathSync(path.join(PACKAGE, file));
+    const run = spawnSync(process.execPath, [entry], { cwd: scratch, encoding: 'utf8', timeout: 30000 });
     assert.ok(run.stdout.includes(expected), `${file}: ${run.stdout}${run.stderr}`);
   }
 });
