@@ -227,6 +227,79 @@ test('a cancel that comes with the issue transfer starts no worker', async t => 
   assert.equal(log.some(a => a.includes('start --no-block')), false);
 });
 
+// The bridge pump against the real Companion and Mailbox (bootstrap review 11af4710, finding 3). `relay(mode, ctx)`
+// answers each relay call; ctx.cancel() writes the Owner-abort cancel of this pump's request once and notes when.
+const TRANSFERRED = { code: 0, stdout: JSON.stringify({ status: 'PUBLIC_RECORD_TRANSFERRED', terminalConfirmed: true }) };
+const NOT_THERE = { code: 0, stdout: JSON.stringify({ childError: { reason: 'ENOENT' }, terminalConfirmed: true }) };
+async function pumpWith(t, { listing, relay, fileExists = async p => p.endsWith('outgoing\\issue.ready.json'), onSleep = async () => {} }) {
+  const root = await tempRoot(t);
+  let now = Date.parse('2026-10-21T08:00:00Z'), req, cancelAt = null;
+  const clock = () => now;
+  const mailbox = await Mailbox.open(root, clock);
+  const log = [];
+  const ctx = { cancel: async () => { if (cancelAt === null) { cancelAt = now; await mailbox.cancel(req, 'owner-abort'); } }, advance: ms => { now += ms; } };
+  const run = async (argv, { timeoutMs } = {}) => {
+    const a = argv.join(' ');
+    if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
+    if (a.includes('/usr/bin/ls')) return { code: 0, stdout: listing };
+    const mode = /-Mode (\w+)/.exec(a)?.[1];
+    if (mode) { log.push({ mode, afterCancel: cancelAt !== null }); return relay(mode, { ...ctx, timeoutMs }); }
+    return { code: 0, stdout: '' }; // the worker start
+  };
+  const cfg = { contract: 'clued.independent-ci.resident-companion-config/1', wslExe: 'C:\\Windows\\System32\\wsl.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    relayScript: 'C:\\x\\relay-public.ps1', bundleScript: 'C:\\x\\build-bundle.ps1', windowsSpool: 'C:\\ProgramData\\CluedIndependentCI\\formal-spool', distribution: 'Ubuntu-24.04',
+    bridgeManifestSha256: 'b'.repeat(64), linuxTool: '/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux' };
+  const c = new Companion({ cfg, mailbox, run, fileExists, sleep: async ms => { now += ms; await onSleep(ctx); }, clock });
+  req = await mailbox.send('relay-stage', { batchId: '0123456789abcdef-000000000000', stage: 2, jobId: '2'.repeat(64) }, 45 * 60_000);
+  await c.step();
+  return { res: await mailbox.poll(req), log, sinceCancel: cancelAt === null ? null : now - cancelAt, after: log.filter(x => x.afterCancel).map(x => x.mode) };
+}
+
+test('a cancel while a Receive relay call fails ends the pump after that one call: no blocked hand-over, no further relay (bootstrap review finding 3)', async t => {
+  // A refused ReceiveBlocked skips the hand-over anyway; its cancel must still be the answer.
+  for (const [mode, listing] of [['ReceiveResult', 'result.ready.json\n'], ['ReceiveChallenge', 'challenge-01.ready.json\n'], ['ReceiveBlocked', 'blocked.ready.json\n']]) {
+    for (const fail of ['timeout', 'busy']) {
+      const label = `${mode}, ${fail}`;
+      const r = await pumpWith(t, { listing, relay: async (m, ctx) => {
+        if (m === 'SendIssue') return TRANSFERRED;
+        if (m !== mode) return NOT_THERE;
+        await ctx.cancel();
+        if (fail === 'timeout') { ctx.advance(ctx.timeoutMs); return { code: null, stdout: '', stderr: '', timedOut: true }; }
+        return { code: null, stdout: '', stderr: '', refused: 'RUNNER_BUSY_WITH_UNFINISHED_CHILD' };
+      } });
+      assert.deepEqual([r.res.ok, r.res.code], [false, 'COMPANION_PUMP_CANCELLED'], label);
+      assert.ok(r.sinceCancel <= 40_000, `${label}: answered within the one relay call's time (${r.sinceCancel} ms)`);
+      assert.deepEqual(r.after, [], `${label}: no relay call after the cancel, so no blocked hand-over`);
+    }
+  }
+});
+
+test('a cancel during the blocked hand-over ends it at its next wait step', async t => {
+  let failed = false;
+  const r = await pumpWith(t, { listing: 'result.ready.json\n',
+    relay: async m => {
+      if (m === 'SendIssue') return TRANSFERRED;
+      if (m === 'ReceiveResult') { failed = true; return { code: null, stdout: '', stderr: '', refused: 'RUNNER_BUSY_WITH_UNFINISHED_CHILD' }; }
+      return NOT_THERE;
+    },
+    onSleep: async ctx => { if (failed) await ctx.cancel(); } });
+  assert.deepEqual([r.res.ok, r.res.code], [false, 'COMPANION_PUMP_CANCELLED']);
+  assert.ok(r.sinceCancel !== null && r.sinceCancel <= 1000, `stopped at the next wait step (${r.sinceCancel} ms), not after the hand-over window`);
+  assert.deepEqual(r.after, []);
+});
+
+test('a response that was already there when the cancel came is not relayed', async t => {
+  const r = await pumpWith(t, { listing: 'challenge-01.ready.json\n',
+    fileExists: async p => p.endsWith('outgoing\\issue.ready.json') || p.endsWith('outgoing\\response-01.ready.json'),
+    relay: async (m, ctx) => {
+      if (m === 'SendIssue') return TRANSFERRED;
+      if (m === 'ReceiveChallenge') { await ctx.cancel(); return TRANSFERRED; }
+      return NOT_THERE;
+    } });
+  assert.deepEqual([r.res.ok, r.res.code], [false, 'COMPANION_PUMP_CANCELLED']);
+  assert.deepEqual(r.after, [], 'no SendResponse, no ReceiveBlocked');
+});
+
 test('a cancel during the callback rounds skips the blocked hand-over: the pump answers at once', async t => {
   const root = await tempRoot(t);
   const start = Date.parse('2026-10-21T08:00:00Z');

@@ -376,7 +376,7 @@ Source v2（S11）之后，阶段的失败码来自已安装 Source 的稳定目
   1. 执行器在 `broker\requests\` 里找**正在进行的那一次交换**：代理已领取（有 `.taken`）、还没回复、段号相同、`configSha256` 等于这一批次该段包的计划哈希（从批次钉住的 work manifest 读出）。恰好一个时，在旁边新建 `<id>.stop`，字段恰好是 `contract`、`requestId`、`nonce`、`stage`、`configSha256`。执行器记下这个请求 id，交换被回复之后照样能读停止回执；
   2. 代理在这次交换的等待循环里每秒看一次（§8.2 第 9 条），条件全部满足时向 runner 服务发 `SERVICE_CONTROL_STOP`，并把结果写进只新建的停止回执 `broker\responses\<id>.stop.json`（`STOP_SENT`、`HELPER_ALREADY_STOPPING` 或某个拒绝码）。这个控制实际只生效一次：万一因为超时又发了一次，助手也只是再置一次同一个标志、终止同一个作业对象，没有别的作用；
   3. 通用助手按它现有的停止路径处理（`STOP_REQUESTED`，服务退出码 92）：只终止并排空**它自己建的作业对象**，写原生回执，报告 STOPPED。代理照常换回原始二进制并回复。执行器和代理都不杀任何进程，也不碰来历不明的进程树；
-  4. 只有停止回执是 `STOP_SENT`，或者这一段在 Windows 侧的调用（invoke-stage 子进程）已经带着阶段事实返回之后，执行器才给 companion 写 `mailbox\requests\<泵请求 id>.cancel.json`。带着阶段事实返回有三种：代理已经回复，不论回复码是什么（助手已停，或助手根本没启动）；调用在找代理之前就拒绝了这一段；调用等不到代理的回复而放弃，那时代理和泵自己的截止时间都已过。这三种情况下发行方都不再等泵能带来的任何东西。泵在下一个等待步骤以 `COMPANION_PUMP_CANCELLED` 结束，不再做 blocked 转交；它只停止搬运，从不停止或杀掉 Linux worker，取消若随 issue 转交一起到达，就不再启动 worker。在这之前，泵和它的 blocked 转交都和没有中止时完全一样，所以停止没送达时，这一段的结局不会比不中止更差；调用一返回，这一段也不会再为泵多等到截止时间；
+  4. 只有停止回执是 `STOP_SENT`，或者这一段在 Windows 侧的调用（invoke-stage 子进程）已经带着阶段事实返回之后，执行器才给 companion 写 `mailbox\requests\<泵请求 id>.cancel.json`。带着阶段事实返回有三种：代理已经回复，不论回复码是什么（助手已停，或助手根本没启动）；调用在找代理之前就拒绝了这一段；调用等不到代理的回复而放弃，那时代理和泵自己的截止时间都已过。这三种情况下发行方都不再等泵能带来的任何东西。泵在下一个等待步骤以 `COMPANION_PUMP_CANCELLED` 结束，不再做 blocked 转交：正在进行的那一次 relay 调用（最多 40 秒）先结束，它失败了也不做 blocked 转交；blocked 转交本身也是等待步骤，途中收到取消就结束；已经写好、还没转发的 response 也不再转发；它只停止搬运，从不停止或杀掉 Linux worker，取消若随 issue 转交一起到达，就不再启动 worker。在这之前，泵和它的 blocked 转交都和没有中止时完全一样，所以停止没送达时，这一段的结局不会比不中止更差；调用一返回，这一段也不会再为泵多等到截止时间；
   5. 还没调用的段（例如还在 refs 闸门上）直接不调用，以 `OWNER_ABORT_REQUESTED` 结束。
 - **结束**（P0、P1、P2 相同）：
   1. 运行中被停下的段，结局码必须在白名单里（`classify.mjs#OWNER_ABORT_STAGE_ENDINGS`），而且该段自己的 Windows 证明齐全（作业树为 0、原始二进制已还原）。白名单是：本来就干净的码；`OWNER_ABORT_REQUESTED`；`COMPANION_PUMP_CANCELLED`；入口被停下、来不及写结局时的 `STAGE_OUTCOME_MISSING`。最后一个只在停止回执是 `STOP_SENT` 时才算，其他情况下它照旧是未知；
@@ -801,13 +801,14 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 
 v0.8 补充（2026-10-21，Owner 中止 §6.5，基于 main `8c2bfdcc`，推送前合入 main `fbb4a8d9`，含 §13.9 复审之后的修正）：
 
-- 常驻层：`node --test test/*.test.mjs` **154/154**。新增 `abort.test.mjs` 32 个、`abort-ports.test.mjs` 7 个，覆盖：
+- 常驻层：`node --test test/*.test.mjs` **157/157**。新增 `abort.test.mjs` 32 个、`abort-ports.test.mjs` 10 个，覆盖：
   - 请求合同与结局白名单（入口没写结局只在 `STOP_SENT` 之后才接受）；`rearm-resident.ps1` 写出的字段与服务的校验一致，只收小写十六进制；
   - 等待中的批次在 tick 开始时中止；第 2 段运行中中止，只停这一段；发布段不被打断，在下一段之前生效；第 1 段之前中止；
   - 摘要过期、批次已终结、还有别的未归档现场、tick 开始时不在等待，都被拒；段运行中读到的别的批次的中止留给下一 tick；重复请求只记为重复；查看列出中止目标；
   - 静止证明不成立时 HALT，之后照常复位；有界复查内静止也算数；停下的段结局不干净时 HALT；停止没送达、入口没写结局时 HALT；HALT 时中止不清 HALT；tick 开始时接受到一半失败，当场 HALT，不再启动别的批次；接受回执写失败时照样请求停止；中止中途重启以 `OWNER_ABORT_INTERRUPTED` 关闭并 HALT；
   - 引擎只把停止请求绑定在这一次交换上，还没调用的段不调用；先写代理停止，`STOP_SENT` 之后才取消泵，取消失败不挡代理停止；泵被取消时跳过 blocked 转交，取消随 issue 转交一起到达时不启动 worker。
   - 第二轮复审之后：接受到一半失败、以未知关闭也失败时，闸门照样不跑别的批次，回执记为 `owner-abort-unconfirmed` 而不是拒绝；已接受过的中止再请求被拒；tick 开始时 Source 漂移就拒绝；段运行中写出读不全的 `80-owner-abort` 时，段结束后 HALT，下一 tick 隔离，复位以 `rearm-quarantine` 归档；停止没送达时，这一段的调用一返回就取消泵，不再等泵的截止时间；段结束后补写“已请求停止”的回执；中止的未知结局带上安全点和请求摘要。
+  - bootstrap 安装源复审之后：relay 调用失败时取消已经写好，泵只等完那一次调用（最多 40 秒）就以 `COMPANION_PUMP_CANCELLED` 结束，不做 blocked 转交，也不再调 relay（ReceiveResult、ReceiveChallenge、ReceiveBlocked，超时和被拒各一）；blocked 转交途中收到取消，在下一个等待步骤结束；取消时已经写好的 response 不再转发。
   - 推送前的最终核对之后：服务记下请求之前就死了、恢复关闭批次之后再读到这个请求，回执记为 `owner-abort-unconfirmed` 而不是拒绝；`FAILED_CLEAN` 已写、`batch-terminal` 回执写失败时不记成未确认；tick 开始时接受到一半失败，汇总回执是 `owner-request`（`HALTED`），不是拒绝。
 - 常驻层 Python **25/25**（在 Git Bash 里运行；在 PowerShell 里有 3 个 Linux 安装器用例因为解析到另一个 `/bin/bash` 而以 127 失败，与本次改动无关）；`node drill/offline-drill.mjs` **37/37**（新增 2 步：第 2 段卡住时 Owner 中止，之后这个 head 不再运行）。
 - `windows/test-resident-windows.ps1` **71 条**断言，其中 C# 纯逻辑 **28 条**（新增 18 条：停止请求只认这一次交换和扫描签发段，`StopRequest.Decide` 的每种状态）；`SwapBroker.cs` 编译通过。
@@ -1009,6 +1010,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 - 最终核对（对象：合入 main `fbb4a8d9` 之后的 head `514b4fc8`，含第五轮之后的修正和 Task `fe6cd7bc` 的几行，又一位新的复审者）结论 **PASS**：0 BLOCKER、0 MAJOR、1 MINOR、1 NIT。
   - MINOR：§6.2、§8.1 和附录里 Task `fe6cd7bc` 的几行写的是 PR #895 的宿主行为，那个 PR 还没合并。这是与该任务约定的做法（Clued 线程 `a137c18f`，option a）；PR 描述写明了这个依赖，两处改动都要等同一次重装（Task `0f6035b6`）才到主机。
   - NIT：服务记下请求之前就死了、恢复关闭批次之后再读到这个请求时，回执被记成拒绝。之后的提交改为 `owner-abort-unconfirmed`，只有这次中止自己的 `FAILED_CLEAN` `OWNER_ABORTED` 才算已了结；新增的两个用例都经变异核对。
+- bootstrap 安装源复审（`11af4710`，发现 3，MINOR）：取消在一次 relay 调用失败期间写好时，泵仍做 blocked 转交，约 150–190 秒后才回复，回复码是 `RELAY_REFUSED_NO_RETRY`，与上面 §6.5 第 4 步不符。没有找到会导致 HALT 的路径（签发段事实不成立时，引擎不看泵的码）。之后的提交修正：内层 catch 先查取消，blocked 转交每一轮都查取消，转发 response 之前也查一次；新增 3 个用例。
 
 ## 15. 需要 Owner 决定的事
 

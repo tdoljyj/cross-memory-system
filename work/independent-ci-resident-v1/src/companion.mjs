@@ -140,10 +140,12 @@ export class Companion {
   // the Linux worker ends with its clean 'blocked' record (BRIDGE_CALLBACK_DEADLINE) while the Windows issuer
   // still waits for a record. Hand exactly that record over, once, so the issuer ends BLOCKED now instead of
   // UNCERTAIN at its own deadline. Never a result; a refused ReceiveBlocked is never tried again. Without a
-  // listing the relay itself is the probe (false = not there yet).
-  async handOverBlocked(deadline) {
+  // listing the relay itself is the probe (false = not there yet). The hand-over is a wait step like any other:
+  // `live` throws COMPANION_PUMP_CANCELLED once the service cancelled the pump (Owner abort).
+  async handOverBlocked(deadline, live = async () => {}) {
     const until = Math.min(deadline, this.clock() + CALLBACK_WINDOW_MS + 30_000);
     while (this.clock() < until) {
+      await live();
       const names = await this.linuxReady();
       if (names === null || names.has('blocked.ready.json')) { try { if (await this.relay('ReceiveBlocked', 0)) return true; } catch { return false; } }
       await this.sleep(1000);
@@ -154,7 +156,8 @@ export class Companion {
   // The bridge pump that run-batch.ps1 performs today (lines 86-89), moved out of the elevated
   // process unchanged in meaning: issue -> worker -> challenge/response rounds -> result.
   // Owner abort (DESIGN §6.5): a cancel of this request from the service ends the pump at its next wait step with
-  // COMPANION_PUMP_CANCELLED. It only stops relaying; the worker unit is never stopped or killed.
+  // COMPANION_PUMP_CANCELLED; a relay call already running ends first (at most 40 s). It only stops relaying; the
+  // worker unit is never stopped or killed.
   async pump(request) {
     const deadline = Date.parse(request.deadline);
     const spool = this.cfg.windowsSpool;
@@ -183,6 +186,7 @@ export class Companion {
             const responseDeadline = this.clock() + CALLBACK_WINDOW_MS;
             const name = `response-${String(sequence).padStart(2, '0')}`;
             while (!(await ready(name))) { check(this.clock() < responseDeadline, 'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED'); await live(); await this.sleep(100); }
+            await live(); // a response that was already there when the cancel came is not relayed either
             check(await this.relay('SendResponse', sequence), 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED');
             sequence += 1;
             continue;
@@ -193,8 +197,11 @@ export class Companion {
           await this.sleep(names === null ? 100 : 1000);
         }
       } catch (error) {
-        // An Owner abort stops the Windows issuer anyway: no blocked hand-over, the pump answers at once.
-        if (!blockedRefused && error?.code !== 'COMPANION_PUMP_CANCELLED') await this.handOverBlocked(deadline);
+        // An Owner abort stops the Windows issuer anyway: no blocked hand-over, the pump answers at once. That holds
+        // too for a cancel that came while a relay call was failing, and for one during the hand-over itself.
+        if (error?.code === 'COMPANION_PUMP_CANCELLED') throw error;
+        await live();
+        if (!blockedRefused) await this.handOverBlocked(deadline, live);
         throw error;
       }
       const until = this.clock() + 30_000;
