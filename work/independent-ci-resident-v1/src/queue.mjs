@@ -332,7 +332,8 @@ export class RunQueue {
     if (!r || r.running?.headSha !== headSha || !r.current || r.current.headSha === headSha) return false;
     r.superseded = [commitOf(r.current), ...r.superseded.filter(c => c.headSha !== headSha && c.headSha !== r.current.headSha)].slice(0, SUPERSEDED_MAX);
     r.current = commitOf(r.running);
-    this.setState(r, 'RUNNING', null, now);
+    // A batch parked at B stays parked (phase 2, step 2).
+    this.setState(r, r.state === 'PARKED' ? 'PARKED' : 'RUNNING', r.state === 'PARKED' ? r.reason : null, now);
     return true;
   }
 

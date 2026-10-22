@@ -713,6 +713,12 @@ export class ResidentExecutor {
       if (r?.state !== 'WAITING') return { acted: r, waiting: null };
       waiting = r;
     }
+    // A batch parked at B whose PR got a newer commit ends at its safe point once one live read confirms it (DESIGN 17.4):
+    // the newer commit never waits for the parked batch's tries.
+    for (const e of entries.filter(x => Ledger.parkedAt(x))) {
+      const r = await this.supersededParked(e);
+      if (r) return { acted: r, waiting };
+    }
     const now = this.clock();
     const due = entries.filter(x => Ledger.parkedAt(x) && this.parkedDueAt(x) <= now).sort((a, b) => this.parkedDueAt(a) - this.parkedDueAt(b));
     if (due.length === 0) return { acted: null, waiting };
@@ -722,6 +728,21 @@ export class ResidentExecutor {
       return { acted: null, waiting };
     }
     return { acted: await this.resumeParkedB(due[0]), waiting };
+  }
+
+  // A batch parked at B, superseded by a newer commit of its PR (the queue's order, then one live read): ended as
+  // SUPERSEDED_AT_SAFE_POINT. Its head published stages 3, 5 and 7 (the terminal says stage 8). null: it stays parked.
+  async supersededParked(entry) {
+    const { key } = entry, batch = entry.parked.batch, subject = entry.reserved.subject;
+    if (!this.newerCommitQueued(subject)) return null;
+    this.current = { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, attempt: subject.attempt, since: entry.reserved.reservedAt ?? null };
+    let outcome;
+    try {
+      outcome = await this.supersededAfterStart(key, subject, batch, 'parked', POSITIONS[8], 8);
+    } catch (error) {
+      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch);
+    }
+    return outcome ? this.afterBatch(subject, entry.reserved.origin ?? 'queued', outcome) : null;
   }
 
   // One stage-8 try of a batch parked at B.
@@ -1465,7 +1486,7 @@ export class ResidentExecutor {
   // After stage 1, only at a safe point outside the Linux preparation (before stage R's plan, before the workspace):
   // the order is not enough, one live read must confirm the PR's head moved on (or the PR closed). No answer: the batch
   // goes on. The live head IS this batch's head: the newer commit in the queue is disproved and the batch goes on.
-  async supersededAfterStart(key, subject, batch, safePoint, pos) {
+  async supersededAfterStart(key, subject, batch, safePoint, pos, stage = 1) {
     if (!(await this.newerCommitArrived(subject))) return null;
     this.liveReadAt ??= new Map();
     const throttle = `${key}:${this.queue.row(subject.pr)?.current?.headSha ?? ''}`;
@@ -1480,13 +1501,13 @@ export class ResidentExecutor {
       await this.receipt('supersede-disproved', { key, pr: subject.pr, safePoint });
       return null;
     }
-    return this.supersededEnd(key, subject, batch, { safePoint, pos, live });
+    return this.supersededEnd(key, subject, batch, { safePoint, pos, live, stage });
   }
 
   // The executor's own end of a batch, on the Owner abort's path (DESIGN §6.5): nothing of this batch runs at a safe
   // point, so quiescence on both hosts, the head burned, a rename-only archive with the fixed reason superseded, and
   // FAILED_CLEAN SUPERSEDED_AT_SAFE_POINT (neutral for the breaker, never an attempt 2). Unproven: UNKNOWN, HALT.
-  async supersededEnd(key, subject, batch, { safePoint, pos, live }) {
+  async supersededEnd(key, subject, batch, { safePoint, pos, live, stage = 1 }) {
     const context = { safePoint, stage: null };
     try {
       // First the create-only record: a crash from here on is a crash scene (SUPERSEDE_INTERRUPTED), never a wait that a
@@ -1499,9 +1520,9 @@ export class ResidentExecutor {
       const windows = await this.engine.archiveFailure(batch, SUPERSEDED_ARCHIVE_REASON);
       const linux = await this.companion.archiveLinux(batch, SUPERSEDED_ARCHIVE_REASON);
       check(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED');
-      // stage 1: the last stage that ran (executed-heads.mjs#mayHavePublished: nothing after stage 1 published, unless
-      // stage R relayed a role, which its plan says).
-      await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: SUPERSEDED_AT_SAFE_POINT, basis: 'superseded-live-read', safePoint, stage: 1, batchId: batch?.batchId ?? null,
+      // stage: the last stage that ran (executed-heads.mjs#mayHavePublished): 1 before the workspace (nothing after stage 1
+      // published, unless stage R relayed a role, which its plan says); 8 at parking point B (stages 3, 5 and 7 published).
+      await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: SUPERSEDED_AT_SAFE_POINT, basis: 'superseded-live-read', safePoint, stage, batchId: batch?.batchId ?? null,
         windows: windows.directory, linux: linux.directory, class: 'clean-final', retry: 'new-commit', breaker: 'neutral', liveHeadSha: live.headSha, liveState: live.state });
       await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: SUPERSEDED_AT_SAFE_POINT, safePoint });
       this.reportOutcome(subject, 'FAILED_CLEAN', { code: SUPERSEDED_AT_SAFE_POINT, key });

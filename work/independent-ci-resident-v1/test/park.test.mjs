@@ -203,3 +203,26 @@ test('parking point A: a batch resumed with a bundle older than 100 minutes ends
   assert.deepEqual(stagesRun(f.engine), [1], 'no workspace preparation, no Linux stage');
   assert.equal(f.queue.row(884).state, 'STOPPED');
 });
+
+test('a newer commit of a parked PR ends the parked batch once a live read confirms it; the newer commit runs next', async t => {
+  // a live read that still sees the parked head: the batch stays parked (the trigger only brought its next try forward)
+  const g = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')], KEY),
+    companion: fakeCompanion({ pull: pr => ({ number: pr, state: 'open', headSha: HEAD }) }) });
+  await g.drop(triggerBytes());
+  assert.equal((await g.exec.tick()).state, 'PARKED');
+  await g.drop(triggerBytes({ headSha: H(7) }));
+  assert.deepEqual([(await g.exec.tick()).state, g.queue.row(884).state, (await g.ledger.state(KEY)).state], ['PARKED', 'PARKED', 'STARTED']);
+  // a live read that confirms the push: ended at its safe point at once, published, then the newer commit runs
+  const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')], KEY),
+    companion: fakeCompanion({ pull: pr => ({ number: pr, state: 'open', headSha: H(7) }) }) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  await f.drop(triggerBytes({ headSha: H(7) }));
+  const ended = await f.exec.tick();
+  assert.deepEqual([ended.state, ended.failureCode, ended.safePoint], ['FAILED_CLEAN', 'SUPERSEDED_AT_SAFE_POINT', 'parked']);
+  assert.equal((await f.ledger.state(KEY)).terminal.facts.stage, 8, 'stages 3, 5 and 7 published');
+  assert.equal(await f.executedHeads.published(subject()), true);
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.equal(f.queue.row(884).current.headSha, H(7));
+  assert.equal(f.queue.row(884).state, 'DONE');
+});
