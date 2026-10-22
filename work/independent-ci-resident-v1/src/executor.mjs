@@ -183,12 +183,15 @@ export class ResidentExecutor {
         if (outcome.kind === 'abort') { try { await this.receipt('owner-request', { requestSha256, ...outcome }); } catch { /* see above */ } }
         else await this.receipt('owner-request', { requestSha256, ...outcome });
       } catch (error) {
-        // An abort whose acceptance names this very request in 80-owner-abort but could not be concluded (the entry is
-        // still open) is no refusal: the gate below HALTs this tick and the next tick's recovery closes the batch.
+        // An abort whose acceptance names this very request in 80-owner-abort but was not concluded cleanly is no
+        // refusal: the entry is still open (the gate below HALTs this tick and the next tick's recovery closes the
+        // batch), or it is closed UNKNOWN (half-way acceptance; OWNER_ABORT_INTERRUPTED after a restart). Only its own
+        // clean conclusion, FAILED_CLEAN OWNER_ABORTED, is settled.
         let accepted = false;
         try {
           const s = abortKey !== null ? await this.ledger.state(abortKey) : null;
-          accepted = s?.abort?.requestSha256 === requestSha256 && s.state !== 'TERMINAL';
+          accepted = s?.abort?.requestSha256 === requestSha256
+            && !(s.state === 'TERMINAL' && s.outcome === 'FAILED_CLEAN' && s.terminal?.facts?.failureCode === OWNER_ABORTED);
         } catch { accepted = false; }
         await this.receipt(accepted ? 'owner-abort-unconfirmed' : 'owner-request-refused', { requestSha256, failureCode: codeOf(error) });
       }

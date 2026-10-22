@@ -250,6 +250,8 @@ test('an acceptance that fails half-way at a tick start HALTs in that tick: no o
   assert.equal((await f.exec.tick()).state, 'HALTED');
   const s = await f.ledger.state(KEY);
   assert.deepEqual([s.outcome, s.terminal.facts.basis], ['FAILED_UNKNOWN', 'owner-abort-unconfirmed']);
+  assert.deepEqual((await bodies(f, 'owner-request')).map(b => [b.kind, b.outcome]), [['abort', 'HALTED']], 'accepted, then closed UNKNOWN: no refusal');
+  assert.equal((await bodies(f, 'owner-request-refused')).length, 0);
   assert.deepEqual(stagesRun(f.engine), [1], 'PR 885 was not reserved, nothing else ran');
   assert.equal((await f.ledger.open()).length, 0);
 });
@@ -312,6 +314,31 @@ test('a concluded P0 abort whose summary receipt fails is neither refused nor un
   assert.equal((await f.ledger.state(KEY)).outcome, 'FAILED_CLEAN');
   assert.equal((await bodies(f, 'owner-abort-unconfirmed')).length + (await bodies(f, 'owner-request-refused')).length, 0);
   assert.equal(await f.ledger.halted(), null);
+});
+
+test('an abort accepted by a service that died before remembering it is unconfirmed, not refused, after recovery (final check NIT-1)', async t => {
+  const f = await waitingBatch(t);
+  const file = await ownerAborts(f);
+  const requestSha256 = (await import('node:crypto')).createHash('sha256').update(await fs.readFile(file)).digest('hex');
+  // The dead service wrote 80-owner-abort for this very request, then died before it remembered the request.
+  await f.ledger.beginOwnerAbort(KEY, { requestSha256, ledgerEntrySha256: (await f.ledger.latestRecord(KEY)).sha256, by: OWNER, reason: 'stage stuck', safePoint: 'waiting', stage: null });
+  const restarted = new ResidentExecutor(f.ports);
+  assert.equal((await restarted.tick()).state, 'HALTED');
+  const s = await f.ledger.state(KEY);
+  assert.deepEqual([s.outcome, s.terminal.facts.failureCode], ['FAILED_UNKNOWN', 'OWNER_ABORT_INTERRUPTED']);
+  assert.deepEqual((await bodies(f, 'owner-abort-unconfirmed')).map(b => [b.requestSha256, b.failureCode]), [[requestSha256, 'OWNER_ABORT_BATCH_NOT_OPEN']]);
+  assert.equal((await bodies(f, 'owner-request-refused')).length, 0);
+});
+
+test('a P0 abort whose FAILED_CLEAN conclusion is written but whose batch-terminal receipt fails is never unconfirmed', async t => {
+  const f = await waitingBatch(t);
+  await ownerAborts(f);
+  const receipt = f.exec.receipt.bind(f.exec);
+  f.exec.receipt = async (type, body) => { if (type === 'batch-terminal') throw Object.assign(new Error('disk'), { code: 'EIO' }); return receipt(type, body); };
+  await f.exec.tick();
+  const s = await f.ledger.state(KEY);
+  assert.deepEqual([s.outcome, s.terminal.facts.failureCode], ['FAILED_CLEAN', OWNER_ABORTED]);
+  assert.equal((await bodies(f, 'owner-abort-unconfirmed')).length, 0);
 });
 
 test('a P0 abort never runs the archive tools from drifted Source bytes', async t => {
