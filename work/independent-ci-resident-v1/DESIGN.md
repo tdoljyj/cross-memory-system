@@ -11,6 +11,16 @@
   - v0.7（2026-10-21）：PR-A 集成，分支 `claude/pr-a-integration-20261021`。托管转发接进常驻执行器（免费分钟设计 S19–S22，§7.5）：第 1 段之后有上限地等托管提示，`20-plan-intent`，第 R 段（第 9 段），`25-plan`，只为 LOCAL_REQUIRED 的角色跑本地段。同时补上 v0.6 §7.4 列出的缺口：v2 发布者按 diff 并入转发改动、合并闸门的 v2 控制检查消费者、Linux 侧 Source v2 安装脚本、Source 闭包重算（§7.6）。转发默认关闭（`relay.enabled=false`），主机上仍然什么都没装。按复审要求，托管等待不阻塞：每个 tick 只判断一次，等待中暂停、STOP、HALT 和 Owner 请求照常生效，锁存活记录照常刷新，重启后从保存的 t0 继续（§7.5）。
 
   - v0.8（2026-10-21）：Owner 中止当前批次（§6.5，Task `56cd9edc`）。一段卡住时 Owner 用一次 UAC 写中止请求，服务在安全点停下正在跑的扫描签发段（经交换代理和助手现有的停止路径），实测两端静止后只改名归档，记 FAILED_CLEAN `OWNER_ABORTED`；证明不成立时照旧 HALT。这一版有自己的独立复审（§13.9），和下面说的五轮复核无关。
+  - v0.9（2026-10-22）：排队、限额与故障保护的第一期“看得清，不白烧”（§16，Task `12ada80e`，设计说明 v0.6 加 §9）。包括：
+    - 与 Source 无关的已执行记录，重装时带入旧账本并回填；
+    - 阶段结果的诊断一路传到执行器；
+    - 机器可读的失败对照表；
+    - GitHub 暂时错误映射；
+    - poller 只提议跟上 main 的提交；
+    - status.json、PR 页面状态和 Windows 通知；
+    - 批次认领记录的身份去掉 createdAt。
+
+    独立复核结论是“修复后可接受”：没有 BLOCKER，1 个 MAJOR，7 个 MINOR，全部已在 PR 内修正（§16.9）。
 
   第五轮复核 **PASS**（没有剩余的 BLOCKER 或 MAJOR）。五轮对照见 §13.3–§13.7。
 - 依据（只读）：
@@ -309,6 +319,8 @@ Source v2（S11）之后，阶段的失败码来自已安装 Source 的稳定目
 | PR-A 复审（v0.7） | 本地发布被 K 拒绝（`role_already_published_on_head`）在任何段都映射为 `ROLE_ALREADY_PUBLISHED_ON_HEAD`（未知）。发布者对没有码的异常给出的默认原因（`publication_operation_unconfirmed`、`*_OPERATION_UNCONFIRMED`）不再算暂时性，只有明确的传输事实才映射为 `GITHUB_TRANSIENT_UNAVAILABLE` 或 `NATIVE_ADMISSION_UNAVAILABLE`。refs 闸门没有明确答复时是 `REFS_GATE_UNCONFIRMED`（干净、终局，常驻侧码）；Windows 段成功而 companion 没确认泵时，只接受固定的泵码（`engine-windows.mjs#PUMP_CODES`，都不是暂时性码），其余一律 `COMPANION_PUMP_UNCONFIRMED`（未知） |
 
 `BROKER_BUSY` 是未知：另一个控制工具持有变更互斥量，这是 Owner 必须看到的意外并发。结局记录缺失、或者回执与结局对不上，一律 `STAGE_OUTCOME_MISSING`。
+
+v0.9 起，释放还是烧号由机器可读的失败对照表 `src/failure-table.json` 决定，见 §16.3。上表的三类码不变；对照表按（段、码、结局原因、诊断码）再细分。
 
 ### 6.4 归档（只改名，不删除；复审 X1）
 
@@ -1025,6 +1037,177 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 
 ---
 
+## 16. 排队、限额与故障保护·第一期：看得清，不白烧（v0.9，Task `12ada80e`）
+
+- 依据：设计说明 v0.6 加 §9（资料中心 `10_E_工程与平台/CI基础设施/常驻执行器排队限额与故障保护_设计说明_v0.6_20261022.md`，sha256 `540c83f7…`）。
+- 第二期是另一个 PR，同在 Task `12ada80e` 下：排队表、只跑最新、等待类退避、释放并重新排队、熔断、兜底数值。
+
+### 16.1 与 Source 无关的已执行记录（v0.6 §2，§9 第 6、7 项）
+
+- **问题**：账本按 (repo, head, Source, attempt) 烧号，所以换 Source 后每个 head 都算新的。没发布过检查的 head 这样没问题；发布过的不行。2026-10-22 r2 重装后 state 是新的，#896 的 21d6d7e3 又被准入，第 3 段 `ROLE_ALREADY_PUBLISHED_ON_HEAD`，执行器 HALT（Note `1550fef8`）。
+- **记录**（`src/executed-heads.mjs`）：
+  - 位置：`state\executed-heads\<键>\<来源>-<批次键前 16 位>.json`，只能新建；
+  - 键是 (repo, head) 摘要的前 32 位，与 Source、attempt 都无关；
+  - 只有目录、没有文件（写到一半）也算已执行。
+- **什么时候写**：
+  - 执行器在第一个可能发布检查的段之前写，即第 R、3、5、7、8 段（`executor.mjs#beforePublication`）；
+  - 写不进去时，那一段不跑，以 `EXECUTED_HEAD_RECORD_UNCONFIRMED` 干净烧号。
+- **回填**（每次安装后第一次启动做一次）：
+  - 来源有两个：本 state 的账本，以及安装带入的旧 state（§16.1 末）。
+  - 按 `mayHavePublished` 判定，保守地算“可能已发布”的有：
+    - COMPLETED、FAILED_UNKNOWN、隔离；
+    - 有转发计划；
+    - 第 3 段及以后的 FAILED_CLEAN；
+    - 第 3 段之后的 Owner 中止；
+    - 账本条目缺失或未结束。
+  - 只在第 1、2 段或工作区准备就结束的 head 不记，所以换 Source 后它们照旧能跑。
+  - 完成后写 `BACKFILL-COMPLETE.json`。完成之前不跑任何批次，等待中的批次和 attempt 2 也不跑。
+  - 出错时：
+    - 清单缺失、格式不对、带入的文件不见或被改：HALT；
+    - I/O 暂时错误：`BACKFILL_PENDING`，下个 tick 再试；从第一次失败起持续 `BACKFILL_PENDING_MAX_MS`（30 分钟）仍失败就 HALT（`EXECUTED_HEADS_BACKFILL_UNAVAILABLE`），不会无限重读，杀毒或备份软件锁几分钟文件也不会触发 HALT；
+    - 解析不了的记录（包括写到一半的 0 字节文件）：计数（`unreadable`）后跳过，最后一道防线仍是发布者的 K(head, role)。
+- **预检**：已执行的 head 一律忽略（`HEAD_ALREADY_PUBLISHED_NO_RETRY`），不论 Source、PR 号还是 base。要再跑，只能推新提交。
+  - 唯一例外是同一 head 的 attempt 2：如果这个 head 唯一的记录文件是 attempt 1 自己在第 R 段之前写的那条（`executed-heads.mjs#onlyRelayRecordOf`），并且 attempt 1 的账本也表明它在第 0、1 或 2 段以 FAILED_CLEAN 结束、计划里没有转发任何角色（`executor.mjs#relayedNothing`），照常运行。记录按（来源、批次键）只建一次，单看文件分不出后面的段有没有跑过，所以要再核账本。
+- **安装带入旧账本**（`install-resident.ps1` 第 1b 步 carry-forward）：
+  - 来源是父目录下每个 `resident-uninstalled-*\state`：`ledger-heads`、账本的 00/10/25/80/90 记录、`executed-heads`；
+  - 每个文件读一次、算哈希、CreateNew 写进 `state\backfill\<n>\`，并逐个列进只有管理员能写的 `install\backfill-manifest.json`。`<n>` 是序号，保证路径远低于 Windows 的 260 字符上限；
+  - 遇到任何链接，在写入任何东西之前就拒绝安装；旧 state 超过 256 个（回填能读的上限）时也一样（`CARRY_FORWARD_TOO_MANY_STATES`）；
+  - 0 字节的记录照样带入、列进清单（字节数 0），回填时计为 unreadable，回执的 `carriedSources` 里有每个来源的 `empty` 数；
+  - 清单的每个来源还列出旧 state 里全部 `executed-heads\<键>` 目录（`heads`），包括没有记录文件的。回填为每个键建目录，不管记录能不能解析：目录本身就表示这个 head 可能已发布。否则一条写到一半的空记录会让这个 head 在再下一次重装时丢掉；
+  - 旧 state 原样不动；
+  - 计划只写规则，不列具体文件：旧 state 要等卸载改名之后才知道。具体文件记在安装回执和清单里。dry run 另外输出 `carryForwardPreview`，不进计划哈希；
+  - `verify-resident.ps1` 新增两项检查：`backfill-manifest`，以及 `executed-heads-backfilled`（最多等 90 秒）。
+
+### 16.2 阶段结果的诊断传到执行器（v0.6 §2，§9 第 4 项）
+
+- **Source 侧**：
+  - entry outcome（`stage-inputs.mjs#writeOutcome`）和阶段事实（`stage-fact.mjs#outcomeFacts`）都带上：
+    - status、reason、sideEffects、mayHavePublished；
+    - 清洗过的准入诊断：verdict、reasonCodes、nativeReasonCodes、`ciRetryAfter`、合并队列入队事实（Native 视图的 `state:'none'` 记为不在队列里，不是未知）；
+    - scheduling；
+    - entry 自己的 `safeToRerun`。
+  - `full-admission-v2.mjs` 的拒绝诊断多了 `ciRetryAfter` 和 `mergeQueue`（`queue-facts.mjs#mergeQueueEntryV2`）。
+  - 可选的 `scheduling` 监听在每次到达 Native 的评估后被告知这两个事实，只告知，不影响准入。
+  - 准入事实合同（`ADMISSION_FIELDS_V2`）不变，所以 Linux 侧和适配器不受影响。
+- **常驻侧**：`engine-windows.mjs#parseStageOutcome` 按固定形状重新校验，不合格就丢弃，只会少释放，不会多释放。结果写进三处：
+  - `stage-terminal` 回执的 `outcome` 摘要；
+  - 账本终态，或未执行记录里的 class、retry、breaker、reason、reasonCodes、nativeReasonCodes、ciRetryAfter、safeToRerun、brokerNoLaunch；
+  - 状态快照。
+
+### 16.3 机器可读的失败对照表（v0.6 §1，§9 第 1、2 项，§7 次要 6、7）
+
+- **表本身**：`src/failure-table.json`，每个失败码一行；段或结局原因会改变结论的地方另加行。
+  - 输入：（段、阶段、码、结局原因、诊断码）。
+  - 输出：
+    - 类别：not-admitted、waiting、deterministic-pr、unmapped-stage-1、transient、environment、clean-final、queue、abort、unknown；
+    - 处置：release、release-if-safe、burn、halt；
+    - 重试规则：new-trigger、attempt2、new-commit、owner-rearm；
+    - 熔断输入：counts 或 neutral。第二期才用，现在先记下。
+  - 匹配：最具体的行胜出，同样具体时取靠前的一行。没有行 = 未知，HALT。
+- **释放的前提**（`classify.mjs#decideFailure`）：
+  - 只在 10-started 之前，也就是第 1 段；
+  - Windows 一半的清理证明齐全；
+  - 以下二者之一：
+    - 已绑定结局里 Source 自己给的 `safeToRerun`，绝不由原因码推断；
+    - broker 明确说“没有发起启动、原样已恢复”，即 `broker_no_launch`，原因记为新的释放原因 `BROKER_NOT_LAUNCHED`。
+- **其余一律烧号**：完整的两端证明下记 CLEAN，否则 UNKNOWN。
+  - 确定性的 PR 问题即使带着 `safeToRerun` 也烧号，例如 `pr_files_page_limit`、PR 已关闭、文件过多、`PROTECTED_CHANGE_NOT_UP_TO_DATE`。
+  - 没映射的第 1 段原因（`unmapped-stage-1`）烧号，并计入熔断。包括 Native 拒绝但没有原因码，或原因码本 Source 不认识（`unknown_reason`）。Native 有名字的未准入原因列在对照表的 `reasonCodesWithin` 里，测试保证 Source 的每个诊断码都有归属。
+  - 诊断码里只要带确定性的 PR 码（`classify.mjs#DETERMINISTIC_REASON_CODES`，与 Source 的 `DETERMINISTIC_PR_REASON_CODES` 相同，含 `protected_change_not_up_to_date`），不论归成哪个码都不释放。这是常驻侧自己的检查，不只靠 Source 的标记。
+- **Source 什么时候给 `safeToRerun`**：拒绝发生在首次准入的 boundary 里面（还没有批次认领记录，真实效果键下什么都没写），并且原因不是确定性的 PR 问题（`DETERMINISTIC_PR_REASONS`、`DETERMINISTIC_PR_REASON_CODES`，测试保证与对照表一致）。
+- **未准入码的优先级**（`stage-fact.mjs#notAdmittedCode`）：`protected_change_not_up_to_date` 排第一。不是最新 main 的 head 无论 Native 还说了什么都过不了，所以它和 `owner_review_required` 同时出现时归为 `PROTECTED_CHANGE_NOT_UP_TO_DATE`，不归为等待。
+- **与 v0.8 相比的行为变化**：
+  - 第 1 段的未准入码只在有 `safeToRerun` 时释放；
+  - 第 1 段 broker 没启动时释放；
+  - `PROTECTED_CHANGE_NOT_UP_TO_DATE`、`PR_NOT_OPEN_OR_CHANGED` 在第 1 段改为烧号。
+- **第一期的边界**：释放后不会自动重新排队，要有新的触发；现有的 10 分钟冷却和每天 3 次上限照旧适用，每个释放原因的规则见 `UNEXECUTED_REASON_RULES`。释放并重新排队、按行重试、等待类和熔断按 v0.6 §2 在第二期一起上线（Task `12ada80e`）。
+
+### 16.4 Source 侧的其他修正（v0.6 §1、§2，§9 第 3、5 项）
+
+- **批次认领记录**（`batch-claim-v2.mjs`）：
+  - 身份不再包含 createdAt，同一内容和 attempt 的后一批读到的就是同一条记录；
+  - 认领代（claim、fence、epoch）照旧比较；
+  - 核查结果：控制端 `consumer.mjs` 不受影响。它用记录自己的字段重新导出作业，而作业 id 本来就不含 createdAt。有测试覆盖。
+- **GitHub 暂时错误**：`github_http_5xx`、`github_http_429`、`github_transport_unconfirmed` 映射为 `GITHUB_TRANSIENT_UNAVAILABLE`。
+  - 只在 BLOCKED 且零副作用时映射，可能写到 GitHub 的写入永远不算暂时；
+  - 403 有歧义，不映射。
+
+### 16.5 poller 只提议跟上 main 的提交（v0.6 §2，§7 次要 12）
+
+- **条件**：PR 的 `base.sha` 等于 main 尖端，并且 compare（main...head）的 `behind_by` 为 0（`poller.mjs#upToDate`）。两个固定提交的 compare 结果会缓存。
+- **限量**：每次 compare 最多 15 秒；每轮最多 10 次没缓存的 compare，其余的这一轮记为 `compare-unavailable`（不提议），下一轮再比。超时的 compare（子进程还在跑，Runner 仍忙）结束这一轮的 compare，不占名额，并且 15 分钟内不再比这一个，排在它后面的 PR 下一轮照常比。
+- **不提议的 PR**：在 `lastPass` 里给出提示：
+  - `merge-main`：head 不含 main；
+  - `push-any-commit`：已含 main，但 GitHub 的 base.sha 还是旧的，推任意一个提交即可。
+- 2026-10-22 有 9 个 base 过期的 head 就是这样在第 1 段被烧掉的。
+
+### 16.6 状态快照、PR 页面状态、Windows 通知（v0.6 §2，§7 次要 2、3、10；Decision `38936534`）
+
+- **`state\status.json`**（`src/status.mjs`）：
+  - 内容：执行器状态、正在跑的批次和段、排队的触发（及等待原因）、最近结果、额度、HALT、回填情况；
+  - 整体替换（临时文件加改名），由服务的定时器每 15 秒重写一次。所以长阶段里 `writtenAt` 也在走，只有它停了才表示执行器停了；`changedAt` 只在内容变化时更新；
+  - 它只是视图，执行器的任何决定都不读它。
+- **PR 页面**（`src/pr-status.mjs`，companion）：
+  - 每个打开的 PR 的当前 head 挂一条 commit status，上下文是 `resident-queue (info only)`。只写状态，不发评论，所以不改 PR 的更新时间；
+  - 起决定作用的是写之前实时读 main 的规则：名字一旦出现在必需检查里就不写，并通知一次；读不到规则时也不写。本仓库只用规则集保护 main，经典分支保护返回 404（2026-10-22 核实），所以读规则能看到全部必需检查。固定的 ` (info only)` 后缀只是让重名不太可能，矩阵作业也可能起这种名字；
+  - 只有状态或文字变化时才写，每轮最多 20 条；“已提议”这类泛泛的文字不会覆盖已写过的状态；写失败的 head 10 分钟内不再试。
+- **Windows 通知**：在 Owner 会话里弹出，每个事件键只弹一次。事件有：
+  - HALT；
+  - 状态超过 5 分钟没更新；
+  - 某个 PR 提交排队超过 1 小时，按（PR、提交、原因）各一次；
+  - 状态名与必需检查重名。
+
+  文字都是固定模板加稳定码。
+- 去重记录放在 Owner 自己的 `%LOCALAPPDATA%\CluedIndependentCI\`，不放在常驻目录。
+- `companion.json` 的 `status` 可以分别关掉这两项，默认都开。
+- **两条线**（`companion-main.mjs#lane`）：companion 自己的动作（邮箱：bundle、工作区、Linux 归档和静止证明、转发泵）和咨询性工作（poller、PR 页面状态、通知）各走一条线，各用自己的 Runner。
+  - Runner 从不杀子进程，所以一个卡住的 gh 只会占住它自己那条线；服务要的证明（例如 2 分钟期限的 `linux-quiescence`）照常应答，GitHub 再慢也不会让邮箱请求过期，进而导致不该有的 HALT（独立复核 M1）。
+  - 咨询性的每次调用最多 15 秒，每轮 PR 页面加通知最多 60 秒，超时后这一轮不再发起新调用。
+  - 调用超时或 Runner 仍忙时，这一轮就此结束；没做成的事不记为已做或失败：没弹出的通知下一轮再弹，没写成的 PR 状态不进 10 分钟的失败名单。
+  - 通知先于 PR 页面：通知只在本机，不应排在慢的 GitHub 后面。
+  - 之前“泵送桥接段时 PR 页面和通知要等泵结束”的限制因此不再存在。
+
+### 16.7 policy 合同
+
+- 第一期没有新设置，合同仍是 `/3`，`validatePolicy` 不变（上限 48/96）。
+- 重装时 policy 沿用现行临时值 48/96（Decision `a17b3a7a`）。
+- 第二期新增第一个设置时升到 `/4`（Task `12ada80e`）。
+
+### 16.8 测试
+
+- **常驻层**：Node 191/191，新增 `failure-table`、`executed-heads`、`stage-outcome`、`status`、`pr-status` 五个测试文件。其中必需的一条：全新 state 加旧账本存档（只带账本、不带 executed-heads，与第一期之前的安装一样），曾经发布过检查的 head 不再准入，包括第 3 段遇到 `ROLE_ALREADY_PUBLISHED_ON_HEAD` 而 HALT 的那种；回填完成前不跑任何批次。
+- **离线演练**：40 步，新增重装后回填的三步。
+- **PowerShell**：`windows/test-install-carry.ps1`，36 条断言，含 node 用真实回填读安装写出的清单（含 0 字节的账本记录、0 字节的已执行记录和没有记录的键）、dry run 预览每个旧 state 一项、链接拒绝和超过 256 个旧 state 的拒绝；`windows/test-resident-windows.ps1` 不变，仍通过。
+- **Source v2**：Node 173 项通过、1 项跳过，新增 `resident-v2-quota-phase1.test.mjs`，并在准入和发布者测试里加了用例。
+
+### 16.9 独立复核与修正
+
+结论“修复后可接受”：没有 BLOCKER；第一期的三条安全要求成立（发布过检查的 head 不再准入，回填完成前不跑批次，第 1 段只凭 Source 的 `safeToRerun` 或 broker 的“没有发起启动”释放）。发现的问题都在本 PR 内修正：
+
+| 编号 | 问题 | 修正 |
+|---|---|---|
+| M1 | 新增的 PR 页面状态、通知和 compare 与邮箱共用一个 Runner，GitHub 慢时会让 `linux-quiescence` 过期，导致 UNKNOWN 和 HALT | 两条线各用自己的 Runner；单次 15 秒、每轮 60 秒；compare 每轮最多 10 次；写失败 10 分钟内不重试（§16.5、§16.6） |
+| MINOR 1 | `owner_review_required` 加 `protected_change_not_up_to_date` 会被当成等待而释放 | `notAdmittedCode` 把后者排第一；Source 的确定性码表加上它；常驻侧遇到确定性码一律不释放（§16.3） |
+| MINOR 2 | Native 没有原因码或原因未知时会被释放 | 有名字的原因列入对照表，其余归 `unmapped-stage-1` 烧号并计入熔断（§16.3） |
+| MINOR 3 | dry run 的 `carryForwardPreview` 把所有旧 state 合成一项 | 先赋值再 foreach，测试直接运行安装脚本里的那一行 |
+| MINOR 4 | 旧 state 里有 0 字节记录时整个安装被拒 | 照样带入并列入清单，回填计为 unreadable（§16.1） |
+| MINOR 5 | 第 R 段跑过但没转发任何角色时，attempt 2 被自己的已执行记录挡住 | 预检对 attempt 2 放行 attempt 1 自己的第 R 段前记录（§16.1） |
+| MINOR 6 | 回填的非 ResidentError 失败会无限 `BACKFILL_PENDING` | 连续 10 次后 HALT（§16.1） |
+| MINOR 7 | Native 的 `state:'none'` 被当成未知 | 记为不在队列里（§16.2） |
+| NIT | 必需用例里声明的 HALT 场景没执行；名字形状的说法不准；PowerShell 侧没有 256 个来源的限制；写失败每分钟重试 | 场景已执行并断言；注释改准；安装前拒绝；10 分钟内不重试 |
+
+修正提交的第二次独立复核：上面各项都已修好；修正本身带出 2 个 MINOR、3 个 NIT，没有 BLOCKER 或 MAJOR，也都已修正：
+
+| 编号 | 问题 | 修正 |
+|---|---|---|
+| MINOR-A | 带入的空的或写坏的 executed-heads 记录在回填时被跳过，这个 head 的“可能已发布”在下一次重装时丢掉 | 清单列出每个旧 state 的 executed-heads 键，回填为每个键建目录，不管记录能否解析（§16.1） |
+| MINOR-B | 咨询线的调用超时后，同一轮后面的调用被 Runner 以“忙”拒绝，拒绝被当成真实结果：HALT 通知的键被占掉、PR 状态被标失败、compare 名额被扣 | 超时或忙时这一轮结束，不占键、不标失败、不扣名额；超时的 compare 15 分钟内跳过；通知先于 PR 页面（§16.5、§16.6） |
+| NIT 1 | attempt 2 放行只看记录文件，单看文件分不出后面的段 | 另核 attempt 1 的账本（§16.1） |
+| NIT 2 | 常驻侧的合并队列状态没有 `none` | 加上，并有测试保证与 Source 一致 |
+| NIT 3 | 确定性码推翻等待行时，账本仍记 waiting；回填只容忍约 2.5 分钟的暂时错误 | 账本和状态记实际生效的 deterministic-pr / new-commit；改为按时间计（30 分钟） |
+
+---
+
 ## 附录 A：草稿文件
 
 | 文件 | 作用 |
@@ -1050,3 +1233,4 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 | `linux/bin/clued-ci-install-source-v2` | v0.7：Linux 侧 Source v2 安装（§7.6） |
 | `CI/src/hosted-relay-v1/relay-entry-v2.mjs`、`relay-plan.mjs`、`CI/src/independent-control-checks-v2/consumer.mjs` | v0.7：第 R 段入口、计划行、v2 控制检查消费者 |
 | `CI/src/resident-v2/*`、`CI/src/*-v2.mjs`、`CI/src/formal-work-admission-check-v2/`、`CI/src/independent-control-checks-v2/`、`CI/runtime/one-shot-v2.mjs`、`CI/worker/*-v2|v3|v4/`、`CI/worker/protected-job-bridge-v4/` | v0.6：Source v2 本体（§7.1） |
+| `src/failure-table.json`、`src/executed-heads.mjs`、`src/status.mjs`、`src/pr-status.mjs`、`windows/test-install-carry.ps1` | v0.9：失败对照表、与 Source 无关的已执行记录与回填、状态快照、PR 页面状态与通知、安装带入旧账本的离线测试（§16） |

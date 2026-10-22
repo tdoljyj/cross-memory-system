@@ -9,7 +9,7 @@ const { WindowsEngine } = eng;
 const PUMP_CODES = eng.PUMP_CODES ?? [];
 import { classifyFailure, isTransient } from '../src/classify.mjs';
 import { validatePolicy } from '../src/policy.mjs';
-import { BASE, CLEAN_PROOF, HEAD, RELAY_ON, SOURCE, RESIDENT, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
+import { BASE, CLEAN_PROOF, HEAD, RELAY_ON, SOURCE, RESIDENT, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, notAdmitted, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 
 const stage1Calls = engine => engine.calls.filter(c => c[0] === 'stage' && c[1] === 1).length;
 // Attempt 1 fails stage 2 with a clean transient code (schedules attempt 2); later stage-1 runs answer `later`.
@@ -27,7 +27,7 @@ function attempt2Engine(later = null) {
 
 test('MAJOR 1: attempt 2 is consumed at reservation; a NOT_ADMITTED or BUNDLE_UNAVAILABLE attempt 2 never runs again', async t => {
   for (const variant of ['not-admitted', 'bundle']) {
-    const engine = attempt2Engine(variant === 'not-admitted' ? { ok: false, code: 'PATHS_OUTSIDE_WRITE_SET', proof: WINDOWS_CLEAN } : null);
+    const engine = attempt2Engine(variant === 'not-admitted' ? notAdmitted('PATHS_OUTSIDE_WRITE_SET') : null);
     let bundles = 0;
     const companion = fakeCompanion();
     companion.buildBundle = async () => ({ ok: !(variant === 'bundle' && ++bundles > 1) });
@@ -105,7 +105,7 @@ test('MINOR 9: a deferred attempt 2 does not block other PRs\' triggers', async 
   const first = await f.exec.tick();
   assert.ok(first.attempt2);
   const precheck = f.exec.precheck.bind(f.exec);
-  f.exec.precheck = async (key, hk) => (key === first.attempt2 ? { defer: 'COMPANION_NOT_READY' } : precheck(key, hk));
+  f.exec.precheck = async (key, hk, subject) => (key === first.attempt2 ? { defer: 'COMPANION_NOT_READY' } : precheck(key, hk, subject));
   f.advance(600_000);
   await f.drop(triggerBytes({ pr: 885, headSha: '3'.repeat(40) }));
   const r = await f.exec.tick();

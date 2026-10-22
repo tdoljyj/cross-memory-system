@@ -142,7 +142,11 @@ test('invoke-stage: helper preflight refusal, tree unknown, unbound outcome and 
   const na = await run(f, 1, fakeBroker(f, { receipt: { state: 'FIXED_CHILD_REFUSED', node_exit_code: 2 },
     outcome: { status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, diagnostic: { reasonCodes: ['paths_outside_write_set'] } } }));
   assert.equal(na.failure_code, 'PATHS_OUTSIDE_WRITE_SET');
-  assert.deepEqual(na.outcome, { status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, mayHavePublished: false });
+  // The fact carries the sanitized diagnostic up to the resident (quota redesign v0.6 §9 phase 1); no safe-to-re-run
+  // flag was written, so none is inferred.
+  assert.deepEqual(na.outcome, { status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, mayHavePublished: false,
+    diagnostic: { verdict: 'UNKNOWN', nativeVerdict: 'UNKNOWN', ownerReviewKind: 'UNKNOWN', reasonCodes: ['paths_outside_write_set'], nativeReasonCodes: [] },
+    scheduling: null, safeToRerun: false });
   const transient = await run(f, 1, fakeBroker(f, { receipt: { state: 'FIXED_CHILD_REFUSED', node_exit_code: 2 }, outcome: { status: 'BLOCKED', reason: 'full_admission_unavailable', sideEffects: 0 } }));
   assert.equal(transient.failure_code, 'NATIVE_ADMISSION_UNAVAILABLE');
   const uncertain = await run(f, 1, fakeBroker(f, { receipt: { state: 'FIXED_CHILD_REFUSED', node_exit_code: 2 }, outcome: { status: 'UNCERTAIN', reason: 'NATIVE_CHECK_IDENTITY_UNCONFIRMED', sideEffects: 1 } }));
@@ -198,6 +202,8 @@ test('stage-fact catalogue: every mapped code is catalogued; transient codes are
   assert.equal(outcomeFailureCode(samples[3], 1), 'ADMISSION_CONFIGURATION_REFUSED');
   assert.equal(outcomeFailureCode({ status: 'BLOCKED', reason: 'full_admission_claim_changed', sideEffects: 0, mayHavePublished: false }, 5), 'BATCH_CLAIM_CHANGED');
   assert.equal(notAdmittedCode({ reasonCodes: ['owner_review_required', 'paths_outside_write_set'] }), 'OWNER_REVIEW_REQUIRED');
+  // not up to date with main dominates: that head can never pass, whatever else Native says
+  assert.equal(notAdmittedCode({ reasonCodes: ['owner_review_required', 'protected_change_not_up_to_date'] }), 'PROTECTED_CHANGE_NOT_UP_TO_DATE');
   assert.equal(notAdmittedCode({}), 'NATIVE_NOT_ADMITTED');
   assert.ok(TRANSIENT_CODES.every(c => ALL_STAGE_CODES.includes(c)));
   assert.equal(buildStageFact({ stage: 1, nonce: hex(16), workManifestSha256: hex(32), preflightCode: 'STAGE_PACKAGE_REFUSED' }).tree_active_processes, 0);

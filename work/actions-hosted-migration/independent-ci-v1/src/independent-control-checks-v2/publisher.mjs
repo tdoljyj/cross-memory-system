@@ -73,7 +73,8 @@ function sourceBinding(job, packet, facts, authority) {
 
 function engine({ github, journal, admission, assertLive, record, authority, batchClaim, clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)) }, production) {
   const domain = production ? 'production' : 'fixture';
-  async function observe(job) { assertLive(); const packet = await github.readChangedPaths(job), facts = await admission.evaluatePr(job, packet, { batchClaim }); assertLive(); return { packet, facts }; }
+  // scheduling (optional): told the scheduling facts of each evaluation (full-admission-v2 option; never authority).
+  async function observe(job, scheduling = null) { assertLive(); const packet = await github.readChangedPaths(job), facts = await admission.evaluatePr(job, packet, { batchClaim, ...(scheduling ? { scheduling } : {}) }); assertLive(); return { packet, facts }; }
   async function boundary(job) {
     const { packet, facts } = await observe(job); factsValid(job, packet, facts, domain, clock(), batchClaim);
     record('native_check_boundary', { jobId: job.id, nativeObservationSha256: facts.observationSha256, packetSha256: digest(packet) });
@@ -147,14 +148,17 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       return { status: sent ? 'UNCERTAIN' : 'BLOCKED', effectKey: key, reason: safe(e), sideEffects, productionAuthorized: false };
     }
   }
-  // S8: read-only wait for the queue head, then publish the pair in the fixed order.
+  // S8: read-only wait for the queue head, then publish the pair in the fixed order. The latest scheduling facts
+  // (is the claim in the merge queue at all) travel with a not-ready answer (resident quota redesign v0.6 §9).
   async function waitForQueueHead(slotJob, waitUntil) {
+    let scheduling = null;
+    const tell = facts => { scheduling = facts; };
     for (let polls = 1; ; polls++) {
       let observed = null;
-      try { const { packet, facts } = await observe(slotJob); factsValid(slotJob, packet, facts, domain, clock(), batchClaim, { requireQueueHead: false }); observed = facts; }
-      catch (e) { if (['full_admission_claim_changed', 'full_admission_rejected', 'full_admission_claim_missing'].includes(e.code)) return { ready: false, reason: e.code, polls }; }
-      if (observed && queueHeadReady(slotJob, observed, clock())) return { ready: true, polls };
-      if (clock() + QUEUE_POLL_MS > waitUntil) return { ready: false, reason: 'RESIDENT_QUEUE_HEAD_NOT_REACHED', polls };
+      try { const { packet, facts } = await observe(slotJob, tell); factsValid(slotJob, packet, facts, domain, clock(), batchClaim, { requireQueueHead: false }); observed = facts; }
+      catch (e) { if (['full_admission_claim_changed', 'full_admission_rejected', 'full_admission_claim_missing'].includes(e.code)) return { ready: false, reason: e.code, polls, scheduling }; }
+      if (observed && queueHeadReady(slotJob, observed, clock())) return { ready: true, polls, scheduling };
+      if (clock() + QUEUE_POLL_MS > waitUntil) return { ready: false, reason: 'RESIDENT_QUEUE_HEAD_NOT_REACHED', polls, scheduling };
       await sleep(QUEUE_POLL_MS);
     }
   }
@@ -197,7 +201,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     } catch (e) { return { status: 'BLOCKED', reason: safe(e), sideEffects: 0, productionAuthorized: false }; }
     const head = await waitForQueueHead(jobs[1], waitUntil);
     record('native_queue_wait', { jobId: jobs[1].id, ready: head.ready, polls: head.polls });
-    if (!head.ready) return { status: 'BLOCKED', reason: head.reason, sideEffects: 0, productionAuthorized: false, polls: head.polls };
+    if (!head.ready) return { status: 'BLOCKED', reason: head.reason, sideEffects: 0, productionAuthorized: false, polls: head.polls, scheduling: head.scheduling };
     const results = []; let sideEffects = 0;
     for (const job of jobs) {
       const r = await publishOne(job); sideEffects += r.sideEffects ?? 0; results.push({ role: job.role, ...r });

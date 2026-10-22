@@ -12,7 +12,7 @@ const REPO = 'tdoljyj/cross-memory-system';
 const SCOPE = `project:${randomUUID()}`;
 const iso = ms => new Date(ms).toISOString();
 
-function world({ trailer, claimId = randomUUID(), fence = 3, epoch = 1, nativeOverrides = {}, claimOverrides = {}, commitTrailer = null } = {}) {
+function world({ trailer, claimId = randomUUID(), fence = 3, epoch = 1, nativeOverrides = {}, claimOverrides = {}, commitTrailer = null, outcomeOverrides = {} } = {}) {
   const job = makeJobV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt: 1, role: 'control-merge-slot' });
   const prRef = `${REPO}#888`;
   const body = trailer === undefined ? `Fix\n\nClued-Work-Claim: ${claimId}\nClued-Work-Scope: ${SCOPE}\n` : trailer;
@@ -40,7 +40,7 @@ function world({ trailer, claimId = randomUUID(), fence = 3, epoch = 1, nativeOv
       observation_recorder.record('claim_verification', { result: { payload: n } });
       return { admitted: true, verdict: 'ADMITTED', head_sha: HEAD, base_sha: BASE, pr_ref: prRef, claim_id: n.claim.claim_id, scope: SCOPE, changed_paths: ['a.txt'],
         admission_mode: { state: 'normal', layer: 'code', policy_version: 1 }, merge_slot: { state: 'held', ref: `merge:${REPO}:main`, tip: BASE, until: iso(Date.now() + 600_000) },
-        owner_review: null, workflow_gate_findings: [] };
+        owner_review: null, workflow_gate_findings: [], ...outcomeOverrides };
     } };
   const port = createFullAdmissionPortV2({ protectedConfig: config,
     tokenProvider: async () => ({ githubToken: 'gh-fixture', ciAdmissionToken: ['clued', 'bnd', 'fixture123'].join('_'), ciPrincipalBindingId: config.ciPrincipalBindingId, ciPrincipalQualificationRef: config.ciPrincipalQualificationRef }),
@@ -100,4 +100,37 @@ test('queue facts v2: head only for the observed claim generation', () => {
   assert.equal(isCurrentMergeQueueHeadV2(claim, { claimId: id, fence: 2, epoch: 1 }, job, now), true);
   assert.equal(isCurrentMergeQueueHeadV2(claim, { claimId: id, fence: 3, epoch: 1 }, job, now), false);
   assert.equal(isCurrentMergeQueueHeadV2({ ...claim, merge_queue: [{ ...claim.merge_queue[0], position: 2 }] }, { claimId: id, fence: 2, epoch: 1 }, job, now), false);
+});
+
+// Resident quota redesign v0.6 §9 phase 1, item 4: the scheduling facts (ci_retry_after, merge-queue entry) reach the
+// caller of every evaluation that reached Native, and a rejection's diagnostic carries them, sanitized.
+test('full admission v2: scheduling facts are told on admission and carried in a rejection diagnostic', async () => {
+  const w = world();
+  const told = [];
+  const facts = await w.port.evaluatePr(w.job, w.packet, { scheduling: s => told.push(s) });
+  assert.equal(facts.status, 'ADMITTED');
+  assert.deepEqual(told, [{ ciRetryAfter: null, mergeQueue: { entered: true, state: 'head', position: 1 } }]);
+  assert.ok(!('scheduling' in facts) && !('mergeQueue' in facts), 'the admitted facts contract (ADMISSION_FIELDS_V2) is unchanged');
+  // a throwing listener changes nothing
+  assert.equal((await w.port.evaluatePr(w.job, w.packet, { scheduling: () => { throw new Error('boom'); } })).status, 'ADMITTED');
+  assert.equal((await w.port.evaluatePr(w.job, w.packet, { scheduling: 'not a function' })).reason, 'full_admission_subject_invalid');
+  assert.equal((await w.port.evaluatePr(w.job, w.packet, { other: 1 })).reason, 'full_admission_subject_invalid');
+
+  const capped = world({ claimOverrides: { merge_queue: [] },
+    outcomeOverrides: { admitted: false, verdict: 'REJECTED', reasons: ['task_ci_head_cap_reached'], ci_retry_after: '2026-10-22T12:00:00+00:00' } });
+  const seen = [];
+  const blocked = await capped.port.evaluatePr(capped.job, capped.packet, { scheduling: s => seen.push(s) });
+  assert.equal(blocked.reason, 'full_admission_rejected');
+  assert.deepEqual(seen, [{ ciRetryAfter: '2026-10-22T12:00:00.000Z', mergeQueue: { entered: false, state: null, position: null } }]);
+  const failure = fullAdmissionFailureV2(blocked);
+  assert.deepEqual(failure.admissionDiagnostic.reasonCodes, ['task_ci_head_cap_reached']);
+  assert.equal(failure.admissionDiagnostic.ciRetryAfter, '2026-10-22T12:00:00.000Z');
+  assert.deepEqual(failure.admissionDiagnostic.mergeQueue, { entered: false, state: null, position: null });
+  // remote text never passes: a free-form ci_retry_after is null, a malformed queue entry is unknown (null)
+  const odd = world({ claimOverrides: { merge_queue: [{ ref: `merge:${REPO}:main`, state: 'somewhere' }] },
+    outcomeOverrides: { admitted: false, verdict: 'REJECTED', reasons: ['merge_slot_required'], ci_retry_after: 'tomorrow, maybe' } });
+  const d = fullAdmissionFailureV2(await odd.port.evaluatePr(odd.job, odd.packet)).admissionDiagnostic;
+  assert.deepEqual([d.ciRetryAfter, d.mergeQueue, d.reasonCodes], [null, null, ['merge_slot_required']]);
+  assert.deepEqual(fullAdmissionFailureV2({ ...blocked, diagnostic: { ...blocked.diagnostic, mergeQueue: { entered: true, state: 'lapsed', position: 9 } } }).admissionDiagnostic.mergeQueue,
+    { entered: false, state: 'lapsed', position: 9 }, 'a lapsed entry is not in the queue whatever it says');
 });
