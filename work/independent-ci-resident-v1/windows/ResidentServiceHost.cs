@@ -129,15 +129,32 @@ public sealed class ResidentStopGate
     // Only after a failed request, which wrote nothing.
     public void Release() { Interlocked.Exchange(ref taken, 0); }
 
-    // Ask the executor to stop between batches.
-    public bool Request() { return TryCreateStopFile(stopFile); }
+    // Ask the executor to stop between batches. The request carries the milliseconds since this boot, so a
+    // request written before a reboot, which no executor of this boot was ever meant to see, can be told
+    // apart (Task d80fd886, F2). An executor that only checks that the file exists ignores the content.
+    public bool Request() { return TryCreateStopFile(stopFile, RequestText(GetTickCount64())); }
+
+    public static string RequestText(ulong uptimeMs)
+    {
+        return "{\"contract\":\"clued.independent-ci.stop-request/1\",\"uptimeMs\":" + uptimeMs + "}\n";
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern ulong GetTickCount64();
 
     // An existing file (a stop still pending for an earlier executor) is left exactly as it is. Only "already
     // there" counts as asked: any other failure (a missing directory, a full disk) is thrown, so the stop fails
     // visibly instead of reporting STOPPED while the executor was never asked (Task d80fd886, F3).
-    public static bool TryCreateStopFile(string path)
+    public static bool TryCreateStopFile(string path, string text)
     {
-        try { using (File.Open(path, FileMode.CreateNew, FileAccess.Write)) { } return true; }
+        try
+        {
+            using (var f = File.Open(path, FileMode.CreateNew, FileAccess.Write))
+            {
+                byte[] bytes = System.Text.Encoding.ASCII.GetBytes(text);
+                f.Write(bytes, 0, bytes.Length);
+            }
+            return true;
+        }
         catch (IOException e)
         {
             if (AlreadyThere(e)) return false;

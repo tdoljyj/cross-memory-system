@@ -74,6 +74,14 @@ public static class HostPureTests
         return (int)cs.GetValue(status);
     }
 
+    // The uptimeMs field of a stop request (RequestText).
+    static ulong UptimeIn(string text)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(text, "\"uptimeMs\":([0-9]{1,20})\\}");
+        if (!m.Success) throw new Exception("FAILED:stop-request-shape:" + text);
+        return ulong.Parse(m.Groups[1].Value);
+    }
+
     static string Case(string dir, string name, out string state, out string locks)
     {
         string root = Path.Combine(dir, name);
@@ -106,6 +114,9 @@ public static class HostPureTests
             Yes(after.WaitOne(10000), "scm-stop-exited-handler-ran");
             Yes(!File.Exists(Path.Combine(state, "STOP-REQUESTED")), "scm-stop-not-recreated-after-acknowledgement");
             Yes(Directory.GetFiles(locks, "stop-*").Length == 1, "scm-stop-acknowledged-once");
+            // The acknowledged request names this boot (F2): milliseconds since boot, no later than now.
+            string asked = File.ReadAllText(Directory.GetFiles(locks, "stop-*")[0]);
+            Yes(asked.StartsWith("{\"contract\":\"clued.independent-ci.stop-request/1\",\"uptimeMs\":") && UptimeIn(asked) <= ResidentStopGate.GetTickCount64(), "scm-stop-request-names-this-boot:" + asked.Trim());
             Yes(host.ExitCode == 0 && State(host) == 1, "scm-stop-exit-0-stopped");
             host.Stop(); Shutdown(host);
             Yes(!File.Exists(Path.Combine(state, "STOP-REQUESTED")) && Directory.GetFiles(locks).Length == 1, "scm-stop-later-stop-and-shutdown-write-nothing");
@@ -227,15 +238,20 @@ public static class HostPureTests
             Yes(gate.Take() && !gate.Take() && !gate.Take(), "gate-first-caller-only");
             gate.Release();
             Yes(gate.Take() && !gate.Take(), "gate-given-back-after-a-failed-request");
-            Yes(!File.Exists(stopFile) && gate.Request() && File.Exists(stopFile) && new FileInfo(stopFile).Length == 0, "gate-request-creates-empty");
+            ulong before = ResidentStopGate.GetTickCount64();
+            Yes(!File.Exists(stopFile) && gate.Request() && File.Exists(stopFile), "gate-request-creates");
+            ulong written = UptimeIn(File.ReadAllText(stopFile));
+            Yes(written >= before && written <= ResidentStopGate.GetTickCount64() && File.ReadAllText(stopFile) == ResidentStopGate.RequestText(written), "gate-request-uptime:" + written);
+            Yes(ResidentStopGate.RequestText(123) == "{\"contract\":\"clued.independent-ci.stop-request/1\",\"uptimeMs\":123}\n", "gate-request-text");
+            File.Delete(stopFile);
             // A stop still pending for an earlier executor is never truncated, renamed or rewritten.
             File.WriteAllText(stopFile, "earlier");
             Yes(!new ResidentStopGate(state).Request() && File.ReadAllText(stopFile) == "earlier", "gate-existing-stop-untouched");
-            Yes(!ResidentStopGate.TryCreateStopFile(stopFile) && File.ReadAllText(stopFile) == "earlier", "gate-create-only");
+            Yes(!ResidentStopGate.TryCreateStopFile(stopFile, "x") && File.ReadAllText(stopFile) == "earlier", "gate-create-only");
             File.Delete(stopFile);
             // Only "already there" counts as asked; other IOExceptions are thrown (F3).
             string missingDirectory = null;
-            try { ResidentStopGate.TryCreateStopFile(Path.Combine(state, "no-such-directory", "STOP-REQUESTED")); } catch (IOException e) { missingDirectory = e.GetType().Name; }
+            try { ResidentStopGate.TryCreateStopFile(Path.Combine(state, "no-such-directory", "STOP-REQUESTED"), "x"); } catch (IOException e) { missingDirectory = e.GetType().Name; }
             Yes(missingDirectory == "DirectoryNotFoundException", "gate-missing-directory-thrown:" + missingDirectory);
             Yes(ResidentStopGate.AlreadyThere(new IOException("x", unchecked((int)0x80070050))) && ResidentStopGate.AlreadyThere(new IOException("x", unchecked((int)0x800700B7)))
                 && !ResidentStopGate.AlreadyThere(new IOException("x", unchecked((int)0x80070070))) && !ResidentStopGate.AlreadyThere(new IOException("x", unchecked((int)0x80070020))), "gate-already-there-codes");
