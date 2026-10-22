@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { STOP_REQUEST_CONTRACT, STOP_REQUEST_MAX_BYTES, classifyStopRequest, stopRequestCheck } from '../src/stop-request.mjs';
 import { serviceLoop } from '../src/service-main.mjs';
+import { uptimeMs } from '../src/instance-lock.mjs';
 import { tempRoot } from './helpers.mjs';
 
 const HOUR = 3_600_000;
@@ -36,16 +37,33 @@ test('only a well-formed request from an earlier boot is from an earlier boot', 
   assert.deepEqual(classifyStopRequest(padded, NOW), { earlierBoot: true, recordedUptimeMs: 5 * HOUR }, 'at the limit');
 });
 
-async function setup(t) {
+async function setup(t, options = {}) {
   const state = await tempRoot(t);
   const locks = path.join(state, 'locks');
   await fs.mkdir(locks);
   const stopFile = path.join(state, 'STOP-REQUESTED');
   const receipts = [];
   const check = stopRequestCheck({ stopFile, locksDir: locks, uptime: () => NOW, clock: () => 1000, pid: 222,
-    receipts: { append: async (type, body) => { receipts.push({ type, body, stopFileThere: await fs.access(stopFile).then(() => true, () => false) }); } } });
+    receipts: { append: async (type, body) => { receipts.push({ type, body, stopFileThere: await fs.access(stopFile).then(() => true, () => false) }); } }, ...options });
   return { state, locks, stopFile, receipts, check };
 }
+
+test('the default clock is this boot\'s uptime, read at each look', async t => {
+  // No uptime injected: the check must use os.uptime(), not the process's age.
+  let f = await setup(t, { uptime: undefined });
+  await fs.writeFile(f.stopFile, request(uptimeMs()));
+  assert.equal(await f.check(), true, 'a request of this boot, written now, is honoured');
+  f = await setup(t, { uptime: undefined });
+  await fs.writeFile(f.stopFile, request(uptimeMs() + 2 * HOUR));
+  assert.equal(await f.check(), false, 'a request two hours ahead is from an earlier boot');
+  // The clock is read at each look, not once: hours later, a request written a second ago is honoured.
+  let now = NOW;
+  f = await setup(t, { uptime: () => now });
+  assert.equal(await f.check(), false);
+  now = NOW + 2 * HOUR;
+  await fs.writeFile(f.stopFile, request(now - 1000));
+  assert.equal(await f.check(), true);
+});
 
 test('a request from an earlier boot is renamed after a receipt, and the executor keeps running', async t => {
   const f = await setup(t);
@@ -68,6 +86,8 @@ test('every other request is honoured and left for the stop acknowledgement', as
     ['this boot', file => fs.writeFile(file, request(NOW - 1000))],
     ['empty', file => fs.writeFile(file, '')],
     ['oversize', file => fs.writeFile(file, Buffer.alloc(STOP_REQUEST_MAX_BYTES + 10, 0x20))],
+    // Its first 4096 bytes alone would be a request from an earlier boot: the byte past the limit must be read.
+    ['oversize by one byte', file => fs.writeFile(file, Buffer.concat([request(5 * HOUR), Buffer.alloc(STOP_REQUEST_MAX_BYTES - request(5 * HOUR).length + 1, 0x20)]))],
     ['torn', file => fs.writeFile(file, request(5 * HOUR).subarray(0, 40))],
     ['unreadable (a directory)', file => fs.mkdir(file)],
   ]) {
@@ -87,12 +107,30 @@ test('no request: no stop and nothing written', async t => {
   assert.deepEqual(f.receipts, []);
 });
 
-test('a rename that fails is not swallowed', async t => {
+test('any read error other than "not there" is honoured as a stop', async t => {
+  for (const code of ['EBUSY', 'EPERM', 'EACCES', 'EISDIR']) {
+    const f = await setup(t, { read: async () => { throw Object.assign(new Error(code), { code }); } });
+    assert.equal(await f.check(), true, code);
+    assert.deepEqual(f.receipts, [], code);
+  }
+});
+
+test('a rename that fails is thrown, after a receipt that the request is still in place', async t => {
   const f = await setup(t);
   await fs.writeFile(f.stopFile, request(5 * HOUR));
   await fs.rm(f.locks, { recursive: true });
-  await assert.rejects(f.check(), { code: 'ENOENT' });
+  await assert.rejects(f.check(), { code: 'STOP_REQUEST_RENAME_FAILED' });
   await fs.access(f.stopFile);
+  assert.deepEqual(f.receipts.map(r => [r.type, r.body.failureCode, r.body.errno]),
+    [['service-stop-prior-boot', undefined, undefined], ['service-stop-prior-boot-failed', 'STOP_REQUEST_RENAME_FAILED', 'ENOENT']]);
+});
+
+test('a receipt that fails is thrown and nothing is renamed', async t => {
+  const f = await setup(t, { receipts: { append: async () => { throw Object.assign(new Error('disk full'), { code: 'ENOSPC' }); } } });
+  await fs.writeFile(f.stopFile, request(5 * HOUR));
+  await assert.rejects(f.check(), { code: 'ENOSPC' });
+  await fs.access(f.stopFile);
+  assert.deepEqual(await fs.readdir(f.locks), []);
 });
 
 test('the service loop runs on past a request from an earlier boot and stops on the next one', async t => {

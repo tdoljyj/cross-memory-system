@@ -7,13 +7,21 @@
 // state\locks\prior-boot-stop-<ms>-<pid> after a receipt with both uptimes, and the executor keeps running. Without
 // this, the first start after such a reboot stops at once with exit 0, and no failure restart follows. Every other
 // request is honoured as before, including one that is empty, torn, unreadable or of another shape: only a parsed
-// request from an earlier boot is dropped. Within one boot the host's uptime is never ahead of the executor's.
-// One narrow case stays open: an SCM stop that comes while such a leftover is still there (between the start and
-// the executor's first look, a few seconds) finds it "already there" and writes nothing, and the executor then drops
-// the leftover. The host reports STOPPED after its 20 s wait and the executor runs on without a host; the next
-// start refuses the instance lock, so the Owner sees it.
+// request from an earlier boot is dropped. Within one boot the host's uptime is never ahead of the executor's, which
+// is read at each look from the same clock (os.uptime(), GetTickCount64 on Windows).
+//
+// Two cases stay open:
+// - The test is one-way. A request that the earlier boot wrote no more than the margin after the uptime of this
+//   executor's look (the service starts delayed, a few minutes after boot) is not recognised and is honoured: the
+//   first start then stops with exit 0, as before this change.
+// - An SCM stop that comes while such a leftover is still there (from the service reporting RUNNING to the
+//   executor's first look) finds it "already there" and writes nothing, and the executor then drops the leftover.
+//   The host reports STOPPED after its 20 s wait, and the executor runs on without a host. The SCM cannot stop it
+//   any more: the next start refuses the instance lock, so the Owner sees it, and stops it by creating
+//   STOP-REQUESTED by hand or by ending the process.
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { check } from './canonical.mjs';
 import { EARLIER_BOOT_MARGIN_MS, uptimeMs } from './instance-lock.mjs';
 
 export const STOP_REQUEST_CONTRACT = 'clued.independent-ci.stop-request/1';
@@ -34,7 +42,7 @@ export function classifyStopRequest(bytes, now) {
 }
 
 // At most one byte more than the limit, so an oversize request is seen as one. null: no request.
-async function readRequest(file) {
+export async function readStopRequest(file) {
   let handle;
   try { handle = await fs.open(file, 'r'); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
   try {
@@ -44,18 +52,24 @@ async function readRequest(file) {
   } finally { await handle.close(); }
 }
 
-// The service loop's stopRequested(): true when the executor must stop now.
-export function stopRequestCheck({ stopFile, locksDir, receipts, uptime = uptimeMs, clock = Date.now, pid = process.pid }) {
+// The service loop's stopRequested(): true when the executor must stop now. A receipt or a rename that fails is
+// thrown (exit 4, so the host reports 1064), after a best-effort receipt that the request is still in place.
+export function stopRequestCheck({ stopFile, locksDir, receipts, uptime = uptimeMs, clock = Date.now, pid = process.pid, read = readStopRequest }) {
   return async () => {
     let bytes;
-    try { bytes = await readRequest(stopFile); } catch { return true; } // there, but unreadable: honoured
+    try { bytes = await read(stopFile); } catch { return true; } // there, but unreadable: honoured
     if (bytes === null) return false;
     const now = uptime();
     const seen = classifyStopRequest(bytes, now);
     if (!seen.earlierBoot) return true;
     const kept = `prior-boot-stop-${clock()}-${pid}`;
     await receipts.append('service-stop-prior-boot', { pid, recordedUptimeMs: seen.recordedUptimeMs, uptimeMs: now, marginMs: EARLIER_BOOT_MARGIN_MS, kept });
-    await fs.rename(stopFile, path.join(locksDir, kept));
+    try {
+      await fs.rename(stopFile, path.join(locksDir, kept));
+    } catch (error) {
+      try { await receipts.append('service-stop-prior-boot-failed', { pid, kept, failureCode: 'STOP_REQUEST_RENAME_FAILED', errno: String(error?.code ?? 'unknown') }); } catch { /* the error below still ends us */ }
+      check(false, 'STOP_REQUEST_RENAME_FAILED', error?.code);
+    }
     return false;
   };
 }

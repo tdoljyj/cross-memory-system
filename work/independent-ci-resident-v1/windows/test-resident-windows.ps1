@@ -154,6 +154,8 @@ $serviceHostCsharp = [int](($out | ConvertFrom-Json).assertions)
 # 7. One clock for the host and the executor (Task d80fd886): the stop request carries the host's GetTickCount64,
 #    and the executor compares it with node's uptimeMs(). Read between two GetTickCount64 calls, node's value must
 #    lie between them. A runtime whose uptime leaves out sleep would fall outside on any machine that has slept.
+#    This checks the node on this machine, not the packaged runtime; the result says whether it ran.
+$uptimeClock = 'skipped-no-node'
 if (Test-Path -LiteralPath $probeNode) {
   Add-Type -Namespace CluedResidentTest -Name Tick -MemberDefinition '[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern ulong GetTickCount64();'
   $lockUrl = ([Uri][IO.Path]::GetFullPath((Join-Path $here '..\src\instance-lock.mjs'))).AbsoluteUri
@@ -161,5 +163,6 @@ if (Test-Path -LiteralPath $probeNode) {
   $nodeMs = [uint64](& $probeNode --input-type=module -e 'const m = await import(process.argv[1]); process.stdout.write(String(m.uptimeMs()));' $lockUrl)
   $after = [CluedResidentTest.Tick]::GetTickCount64()
   Yes ($LASTEXITCODE -eq 0 -and $nodeMs -ge $before -and $nodeMs -le $after) ('node-uptime-is-gettickcount64:' + $before + '/' + $nodeMs + '/' + $after)
+  $uptimeClock = 'checked'
 }
-[ordered]@{ status = 'RESIDENT_WINDOWS_OFFLINE_PASS'; assertions = $n; csharpAssertions = $csharp; serviceHostCsharpAssertions = $serviceHostCsharp; hostRead = $false; hostWrite = $false } | ConvertTo-Json -Compress
+[ordered]@{ status = 'RESIDENT_WINDOWS_OFFLINE_PASS'; assertions = $n; csharpAssertions = $csharp; serviceHostCsharpAssertions = $serviceHostCsharp; uptimeClock = $uptimeClock; hostRead = $false; hostWrite = $false } | ConvertTo-Json -Compress
