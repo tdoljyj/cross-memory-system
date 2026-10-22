@@ -10,6 +10,7 @@ import { canonical } from '../proof.mjs';
 import { validateJobV2, sameBatchV2, CONTROL_ROLES_V2 } from '../job-v2.mjs';
 import { hash } from './prepare-record.mjs';
 import { validateRelayPlanRows } from '../hosted-relay-v1/relay-plan.mjs';
+import { sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2 } from '../admission-facts-v2.mjs';
 import { validateRecordV2 } from './record.mjs';
 import { validatePlanV2 } from './stage-package.mjs';
 import { NONCE32, HEX64, OUTCOME_CONTRACT, STATE_V2, WIN_STAGE, stageJobRolesValid } from './layout.mjs';
@@ -73,7 +74,11 @@ export async function writeOutcome({ receiptsRoot = STATE_V2.receipts, nonce, pl
   const outcome = { contract: OUTCOME_CONTRACT, nonce, stage: plan?.stage ?? null, entryRole: plan?.entryRole ?? null, jobIds: Array.isArray(jobIds) ? jobIds : [],
     status, reason: typeof r.reason === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(r.reason) ? r.reason : null, sideEffects,
     // Anything but a clean BLOCKED with zero side effects may have published.
-    mayHavePublished: !(status === 'BLOCKED' && sideEffects === 0), diagnostic: plain(r.admissionDiagnostic) ? r.admissionDiagnostic : null,
+    mayHavePublished: !(status === 'BLOCKED' && sideEffects === 0), diagnostic: sanitizeAdmissionDiagnosticV2(r.admissionDiagnostic),
+    // Resident quota redesign v0.6 §9 phase 1: the entry's own "safe to re-run" flag (only ever on a clean BLOCKED with
+    // zero side effects) and the scheduling facts Native reported (ci_retry_after, merge-queue entry). The resident
+    // releases a stage only on this flag, never by inferring it from a reason code.
+    safeToRerun: status === 'BLOCKED' && sideEffects === 0 && r.safeToRerun === true, scheduling: sanitizeSchedulingV2(r.scheduling),
     // Stage R only: the per-role relay plan rows (hosted-relay-v1/relay-plan.mjs); a row set that does not
     // validate is written as an empty list, which the resident reads as "plan unconfirmed" (UNKNOWN).
     relay: plan?.entryRole === 'relay-publisher' ? (validateRelayPlanRows(r.relay) ?? []) : null,

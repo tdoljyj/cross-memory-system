@@ -167,3 +167,55 @@ test('one-shot v2: the protected observation must name exactly the batch claim g
   assert.throws(() => protectedFactsFromVerify({ job: jobs.gitleaks, batchClaim: { ...claimGeneration(c), fence: 4 }, body, status: 200, config, accepted, now }), { code: 'native_claim_observation_refused' });
   assert.throws(() => protectedFactsFromVerify({ job: jobs.gitleaks, batchClaim: claimGeneration(c), body: { ...body, claim: { ...body.claim, lease_key_required: true } }, status: 200, config, accepted, now }), { code: 'native_claim_observation_refused' });
 });
+
+// Resident quota redesign v0.6 §1 / §9 phase 1: the resident releases a stage-1 failure only on the entry's own
+// "safe to re-run" flag. It holds only for a refusal inside the first admission's boundary (nothing written under the
+// real effect key, no batch claim recorded) that is not a deterministic fault of the PR itself.
+test('work admission v2: safeToRerun only for a first-admission boundary refusal that is not a deterministic PR fault', async t => {
+  const jobs = jobsFor(), c = claim();
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  const told = { ciRetryAfter: '2026-10-22T12:00:00.000Z', mergeQueue: { entered: false, state: null, position: null } };
+  const run = async ({ answer, github = fakeGithub(), bc = null }) => {
+    const claims = bc ?? await batchClaimsAt(t);
+    const pub = createFixtureWorkAdmissionPublisherV2({ github, journal, admission: fakeAdmission(answer), assertLive() {}, record() {}, authority: {}, batchClaims: claims });
+    return pub.publish(jobs['work-admission']);
+  };
+  const rejected = { ...blocked('full_admission_rejected'), diagnostic: { reasonCodes: ['owner_grant_required'], nativeReasonCodes: [] } };
+  const r = await run({ answer: (job, packet, opts) => { opts.scheduling?.(told); return rejected; } });
+  assert.deepEqual([r.status, r.reason, r.sideEffects, r.safeToRerun], ['BLOCKED', 'full_admission_rejected', 0, true]);
+  assert.deepEqual(r.scheduling, told, 'the scheduling facts Native reported travel with the result');
+  assert.deepEqual(r.admissionDiagnostic.reasonCodes, ['owner_grant_required']);
+  // deterministic faults of the PR: never safe to re-run, also inside the boundary
+  assert.equal((await run({ answer: () => blocked('full_admission_subject_changed') })).safeToRerun, false);
+  assert.equal((await run({ answer: () => ({ ...blocked('full_admission_rejected'), diagnostic: { reasonCodes: ['changed_files_truncated'] } }) })).safeToRerun, false);
+  for (const code of ['pr_files_page_limit', 'pr_subject_changed', 'invalid_pr_files']) {
+    const github = { ...fakeGithub(), async readChangedPaths() { throw Object.assign(new Error(code), { code }); } };
+    const x = await run({ answer: () => rejected, github });
+    assert.deepEqual([x.status, x.reason, x.safeToRerun], ['BLOCKED', code, false], code);
+  }
+  // a transient GitHub answer inside the boundary is safe to re-run (the resident decides what to do with it)
+  const flaky = { ...fakeGithub(), async readChangedPaths() { throw Object.assign(new Error('github_http_503'), { code: 'github_http_503' }); } };
+  assert.deepEqual([(await run({ answer: () => rejected, github: flaky })).reason, (await run({ answer: () => rejected, github: flaky })).safeToRerun], ['github_http_503', true]);
+  // a batch claim already recorded for this content: not the first admission, never safe
+  const bc = await batchClaimsAt(t);
+  await bc.record(jobs['work-admission'], c, iso(Date.now()));
+  assert.equal((await run({ answer: () => rejected, bc })).safeToRerun, false);
+  // admitted, then the batch claim record failed: past the boundary, never safe
+  const broken = { read: async () => null, record: async () => { throw Object.assign(new Error('BATCH_CLAIM_DIRECTORY_INVALID'), { code: 'BATCH_CLAIM_DIRECTORY_INVALID' }); } };
+  const after = await run({ answer: (job, packet) => admitted(job, c, packet), bc: broken });
+  assert.deepEqual([after.status, after.reason, after.safeToRerun], ['BLOCKED', 'BATCH_CLAIM_DIRECTORY_INVALID', false]);
+  // a settled first admission carries the scheduling facts too
+  const ok = await run({ answer: (job, packet, opts) => { opts.scheduling?.(told); return admitted(job, c, packet); } });
+  assert.deepEqual([ok.status, ok.scheduling], ['SETTLED', told]);
+});
+
+test('control pair v2: a queue wait that does not reach the head carries the latest scheduling facts', async t => {
+  const jobs = jobsFor(), c = claim(), github = fakeGithub();
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  let time = Date.now();
+  const told = { ciRetryAfter: null, mergeQueue: { entered: false, state: null, position: null } };
+  const never = fakeAdmission((job, packet, opts) => { opts.scheduling?.(told); return admitted(job, c, packet, { mergeQueueHead: false, observedAt: time, slotUntil: time + 600_000 }); });
+  const pub = createFixtureControlPublisherV2({ github, journal, admission: never, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c), clock: () => time, sleep: async ms => { time += ms; } });
+  const r = await pub.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + 2 * QUEUE_POLL_MS });
+  assert.deepEqual([r.status, r.reason, r.sideEffects, r.scheduling], ['BLOCKED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 0, told]);
+});
