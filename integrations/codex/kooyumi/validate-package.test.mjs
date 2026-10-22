@@ -20,9 +20,9 @@ async function fixture(t) {
   return root;
 }
 
-test("clean source contains only the registered KooYomi app and retains the local package identity", async () => {
-  assert.deepEqual(await validatePackage(sourceRoot, "1.0.6"), {
-    version: "1.0.6", registeredApps: 1, appIds: [appId], mcpServers: [],
+test("clean source contains only the registered BeamingFace app and retains the local package identity", async () => {
+  assert.deepEqual(await validatePackage(sourceRoot, "1.0.7"), {
+    version: "1.0.7", registeredApps: 1, appIds: [appId], mcpServers: [],
   });
   const manifest = JSON.parse(await readFile(join(sourceRoot, ".codex-plugin/plugin.json"), "utf8"));
   assert.equal(manifest.name, "dev-6a9f92f8ec908191a9ef87838c60177f");
@@ -36,7 +36,7 @@ test("clean source contains only the registered KooYomi app and retains the loca
 test("the old registered Clued app ID is rejected", async (t) => {
   const root = await fixture(t);
   await writeFile(join(root, ".app.json"), JSON.stringify({ apps: { kooyumi: { id: legacyAppId } } }));
-  await assert.rejects(validatePackage(root, "1.0.6"), /only the registered KooYomi app/);
+  await assert.rejects(validatePackage(root, "1.0.7"), /only the registered BeamingFace app/);
 });
 
 test("multiple aliases are rejected even when they reference the same registered app", async (t) => {
@@ -45,7 +45,7 @@ test("multiple aliases are rejected even when they reference the same registered
     await writeFile(join(root, ".app.json"), JSON.stringify({
       apps: { kooyumi: { id: appId }, clued: { id: aliasId } },
     }));
-    await assert.rejects(validatePackage(root, "1.0.6"), /only the registered KooYomi app/);
+    await assert.rejects(validatePackage(root, "1.0.7"), /only the registered BeamingFace app/);
   }
 });
 
@@ -57,7 +57,7 @@ test("app declarations have no additional fields or alternate aliases", async (t
   ]) {
     const root = await fixture(t);
     await writeFile(join(root, ".app.json"), JSON.stringify(declaration));
-    await assert.rejects(validatePackage(root, "1.0.6"), /only the registered KooYomi app/);
+    await assert.rejects(validatePackage(root, "1.0.7"), /only the registered BeamingFace app/);
   }
 });
 
@@ -67,7 +67,7 @@ test("residual compatibility or portable MCP files fail the exact inventory", as
     await writeFile(join(root, filename), JSON.stringify({
       mcpServers: { kooyumi: { type: "http", url: "https://kooyumi.pixelgrav.com/mcp" } },
     }));
-    await assert.rejects(validatePackage(root, "1.0.6"), /Package file set/);
+    await assert.rejects(validatePackage(root, "1.0.7"), /Package file set/);
   }
 });
 
@@ -81,7 +81,7 @@ test("manifest direct MCP and Skill dependencies fail validation", async (t) => 
     const path = join(root, ".codex-plugin/plugin.json");
     const manifest = JSON.parse(await readFile(path, "utf8"));
     await writeFile(path, JSON.stringify({ ...manifest, ...extra }));
-    await assert.rejects(validatePackage(root, "1.0.6"), /Unexpected plugin fields/);
+    await assert.rejects(validatePackage(root, "1.0.7"), /Unexpected plugin fields/);
   }
 });
 
@@ -89,5 +89,5 @@ test("an extra bundled Skill fails the exact package inventory", async (t) => {
   const root = await fixture(t);
   await mkdir(join(root, "skills/clued"), { recursive: true });
   await writeFile(join(root, "skills/clued/SKILL.md"), "---\nname: clued\ndescription: Fixture only\n---\n");
-  await assert.rejects(validatePackage(root, "1.0.6"), /Package file set/);
+  await assert.rejects(validatePackage(root, "1.0.7"), /Package file set/);
 });

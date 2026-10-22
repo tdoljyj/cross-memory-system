@@ -3,17 +3,17 @@
   "author": {
     "name": "App developer"
   },
-  "description": "KooYomi：授权的个人与项目上下文服务",
+  "description": "BeamingFace：授权的个人与项目上下文服务",
   "interface": {
     "capabilities": [],
     "category": "Other",
     "defaultPrompt": null,
     "developerName": "App developer",
-    "displayName": "KooYomi",
-    "longDescription": "KooYomi：授权的个人与项目上下文服务",
-    "shortDescription": "KooYomi：授权的个人与项目上下文服务"
+    "displayName": "BeamingFace",
+    "longDescription": "BeamingFace：授权的个人与项目上下文服务",
+    "shortDescription": "BeamingFace：授权的个人与项目上下文服务"
   },
   "name": "dev-6ad0cb1db0c48191a97bd2bd158836e3",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "skills": "./skills/"
 }

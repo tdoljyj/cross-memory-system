@@ -1,6 +1,6 @@
-# KooYomi Skill：维护与按需更新
+# BeamingFace Skill：维护与按需更新
 
-KooYomi（原 Clued）Skill 的 `clued/SKILL.md` 是唯一主动入口；记忆业务与工程维护流程分别维护在同一包的 `references/memory-operations.md` 和 `references/engineering.md` 中，按实际操作加载。版本号写在 `clued/SKILL.md` 的 `metadata.version`，与 `config/clued-components.json` 中 `skill.clued` 的版本和内容摘要绑定（见下文“组件版本”）。原 `clued-developer`、`clued-user`、`clued-continuity` 不再作为主动入口或安装源；它们的 Git 历史及执行计划中的旧验收副本保持原有历史含义，不改写为本次验收。
+BeamingFace（原 Clued）Skill 的 `clued/SKILL.md` 是唯一主动入口；记忆业务与工程维护流程分别维护在同一包的 `references/memory-operations.md` 和 `references/engineering.md` 中，按实际操作加载。版本号写在 `clued/SKILL.md` 的 `metadata.version`，与 `config/clued-components.json` 中 `skill.clued` 的版本和内容摘要绑定（见下文“组件版本”）。原 `clued-developer`、`clued-user`、`clued-continuity` 不再作为主动入口或安装源；它们的 Git 历史及执行计划中的旧验收副本保持原有历史含义，不改写为本次验收。
 
 在已核对并对齐远端的授权仓库中，从仓库根目录运行：
 
@@ -38,6 +38,6 @@ python3 scripts/clued_components.py check --base origin/main
 
 版本与 git tag：根 `VERSION` 的值就是产品版本 tag 名（如 `Clued-v1.6`），指向把 VERSION 改成该值的提交；每次生产发布成功会打 `release/<日期>-r<run 编号>`，说明里写明 VERSION 和各组件版本。两者都由 `clued-release-tags` 工作流自动创建，规则见 `ComponentVersioning.v0.2.md` §6。
 
-过期检测：Claude Code 开会话时，`scripts/hooks/clued_version_check.py` 读取服务的 `/.well-known/clued-continuity` 中的组件版本，与本 checkout 和本机安装的 KooYomi Skill 副本（`~/.claude/skills`、claude.ai 同步副本、`$CODEX_HOME/skills`）比对，旧版本、无版本号或文件不全都会提示；`clued_session_resume` 返回后再比对一次组件版本；合同变化只要求通过 `clued_agent_bootstrap`（全部分段）或 `/clued-agent.md` 读取当前全文，不作为 Skill 过期或重装的理由。仍携带 `references/agent-contract.md` 的安装副本属于旧 Skill 包。只在会话开始和 resume 时检查，不定时运行；`CLUED_VERSION_CHECK=off` 关闭，`=offline` 不读服务。
+过期检测：Claude Code 开会话时，`scripts/hooks/clued_version_check.py` 读取服务的 `/.well-known/clued-continuity` 中的组件版本，与本 checkout 和本机安装的 BeamingFace Skill 副本（`~/.claude/skills`、claude.ai 同步副本、`$CODEX_HOME/skills`）比对，旧版本、无版本号或文件不全都会提示；`clued_session_resume` 返回后再比对一次组件版本；合同变化只要求通过 `clued_agent_bootstrap`（全部分段）或 `/clued-agent.md` 读取当前全文，不作为 Skill 过期或重装的理由。仍携带 `references/agent-contract.md` 的安装副本属于旧 Skill 包。只在会话开始和 resume 时检查，不定时运行；`CLUED_VERSION_CHECK=off` 关闭，`=offline` 不读服务。
 
 Agent 合同只有仓库源 `protocol/agent/agent-contract.md`，由服务交付，Skill 和插件包不携带原文。合同独立升版本，合同变化不再导致 Skill 升版本或重装。首次换成不含合同的 Skill 需要按既有安装流程更新一次；后续自动安装改进仍由其独立任务负责。

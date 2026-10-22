@@ -96,16 +96,16 @@ function OAuthConsent() {
   return (
     <main className="oauth-shell">
       <section className="oauth-card" aria-busy={busy}>
-        <Link className="oauth-brand" href="/" aria-label="KooYomi home">
-          <span className="brand-mark" aria-hidden="true">◆</span>
-          <span>KooYomi</span>
+        <Link className="oauth-brand" href="/" aria-label="BeamingFace home">
+          <span className="brand-mark" aria-hidden="true" />
+          <span>BeamingFace</span>
         </Link>
 
         {!authorizationId ? (
           <div className="oauth-error" role="alert">
             <strong>无法继续</strong>
             <p>缺少 authorization_id。请从 ChatGPT 的连接流程重新打开此页面。</p>
-            <Link href="/">返回 KooYomi</Link>
+            <Link href="/">返回 BeamingFace</Link>
           </div>
         ) : busy && !error ? (
           <div className="oauth-status">
@@ -115,8 +115,8 @@ function OAuthConsent() {
         ) : !session && !error ? (
           <>
             <p className="oauth-kicker">安全登录</p>
-            <h1>登录 KooYomi 以继续</h1>
-            <p className="oauth-copy">使用你的 KooYomi 账户确认这次 AI 连接。密码只发送给 KooYomi 的认证服务。</p>
+            <h1>登录 BeamingFace 以继续</h1>
+            <p className="oauth-copy">使用你的 BeamingFace 账户确认这次 AI 连接。密码只发送给 BeamingFace 的认证服务。</p>
             <form className="oauth-form" onSubmit={signIn}>
               <label>
                 邮箱
@@ -132,9 +132,9 @@ function OAuthConsent() {
         ) : details ? (
           <>
             <p className="oauth-kicker">AI 连续性授权</p>
-            <h1>允许 {details.client.name || "此 AI 客户端"} 连接 KooYomi？</h1>
+            <h1>允许 {details.client.name || "此 AI 客户端"} 连接 BeamingFace？</h1>
             <p className="oauth-copy">
-              此连接将获得一个独立、可撤销的 Binding，用于读取和更新你授权的 KooYomi 上下文，并留下审计回执。
+              此连接将获得一个独立、可撤销的 Binding，用于读取和更新你授权的 BeamingFace 上下文，并留下审计回执。
             </p>
 
             <dl className="oauth-details">
@@ -149,7 +149,7 @@ function OAuthConsent() {
               <li>创建检查点并读取审计回执</li>
             </ul>
 
-            <p className="oauth-note">KooYomi 不会向客户端发送你的密码或长期 Binding 密钥。你可以随时在“AI 连续性”中撤销此连接。</p>
+            <p className="oauth-note">BeamingFace 不会向客户端发送你的密码或长期 Binding 密钥。你可以随时在“AI 连续性”中撤销此连接。</p>
             <div className="oauth-actions">
               <button className="oauth-secondary" type="button" onClick={() => void decide("deny")} disabled={busy}>拒绝</button>
               <button className="primary-button" type="button" onClick={() => void decide("approve")} disabled={busy}>允许连接</button>
@@ -161,7 +161,7 @@ function OAuthConsent() {
           <div className="oauth-error" role="alert">
             <strong>无法继续</strong>
             <p>{error}</p>
-            <Link href="/">返回 KooYomi</Link>
+            <Link href="/">返回 BeamingFace</Link>
           </div>
         ) : null}
       </section>
