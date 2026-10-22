@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Claude Code Stop hook: enforce KooYomi capture (BUG-20260924-001 L3).
+"""Claude Code Stop hook: enforce BeamingFace capture (BUG-20260924-001 L3).
 
 protocol/agent/agent-contract.md §3 requires material outcomes to be
-written to KooYomi in the same turn, and §5 requires a checkpoint after writes.
+written to BeamingFace in the same turn, and §5 requires a checkpoint after writes.
 This hook reads the session transcript when Claude is about to stop and blocks
 the stop once, with a reason, when it finds:
 
 * a material outcome (merged PR, by tool, `gh pr merge` or a `gh api` PUT to
   the merge endpoint; pushed main; applied migration; deployed edge function)
-  with no committed KooYomi write about it after it, including outcomes reached
+  with no committed BeamingFace write about it after it, including outcomes reached
   inside subagents, whose transcripts Claude Code keeps beside the session's
   (<session>/subagents/agent-*.jsonl) and which are merged in by timestamp;
-* committed KooYomi writes with no committed checkpoint for their context after
+* committed BeamingFace writes with no committed checkpoint for their context after
   them (BUG-20260924-003: a checkpoint absorbs only its own context's events,
   so project-scope writes need a checkpoint in that project's context);
-* a human message that looks like an Owner decision with no committed KooYomi
+* a human message that looks like an Owner decision with no committed BeamingFace
   write after it (every such message, not only the last one);
-* an answered question (AskUserQuestion) with no committed KooYomi write after
+* an answered question (AskUserQuestion) with no committed BeamingFace write after
   it: Owner decisions are asked as such questions, so every answer counts as
   a decision, whatever its wording.
 
@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 
 CLUED_WRITE_TOOLS = (
     "clued_record_mutate",
@@ -121,7 +121,7 @@ class Subject:
     patterns: list[re.Pattern]
 
 
-# A KooYomi write succeeded: record tools return "committed"; the legacy
+# A BeamingFace write succeeded: record tools return "committed"; the legacy
 # clued_append_event returns "appended" with a receipt.
 WRITE_OK = ("committed", "appended")
 # The tool that asks the Owner a question, and the text of an answered one:
@@ -147,8 +147,9 @@ def owner_answers(entry: dict, body: str) -> str | None:
         return None
     return " ".join(chosen.split())[:120]
 # Text of this hook's own reminders, should the Host log one as a user entry.
-OWN_MESSAGE = "KooYomi capture guard (protocol/agent/agent-contract.md"
-PREVIOUS_OWN_MESSAGE = "Kooyumi capture guard (protocol/agent/agent-contract.md"
+OWN_MESSAGE = "BeamingFace capture guard (protocol/agent/agent-contract.md"
+PREVIOUS_OWN_MESSAGE = "KooYomi capture guard (protocol/agent/agent-contract.md"
+EARLIER_OWN_MESSAGE = "Kooyumi capture guard (protocol/agent/agent-contract.md"
 LEGACY_OWN_MESSAGE = "Clued capture guard (protocol/agent/agent-contract.md"
 # `gh pr merge` options that take a value.
 GH_VALUE_OPTIONS = {"-R", "--repo", "-t", "--subject", "-b", "--body", "-F", "--body-file",
@@ -342,7 +343,7 @@ def prompt_text(content) -> str | None:
 
 def settle(writes: list[Write], after: int, subject: Subject | None,
            records_only: bool = False) -> tuple[str, str]:
-    """How the KooYomi writes after position `after` settle a finding.
+    """How the BeamingFace writes after position `after` settle a finding.
 
     Returns ("settled", ""), ("none", ""), ("failed", detail) when writes were
     tried but none committed, or ("unrelated", "") when writes committed but
@@ -408,7 +409,7 @@ def analyse(entries: list[dict]) -> list[Finding]:
             injected = entry.get("isCompactSummary") or entry.get("isVisibleInTranscriptOnly")
             text = SYSTEM_REMINDER.sub("", text)
             if human and not injected and not any(
-                prefix in text for prefix in (OWN_MESSAGE, PREVIOUS_OWN_MESSAGE, LEGACY_OWN_MESSAGE)
+                prefix in text for prefix in (OWN_MESSAGE, PREVIOUS_OWN_MESSAGE, EARLIER_OWN_MESSAGE, LEGACY_OWN_MESSAGE)
             ):
                 human_prompts.append((pos, str(entry.get("uuid") or f"pos{pos}"), text))
             continue
@@ -473,14 +474,14 @@ def analyse(entries: list[dict]) -> list[Finding]:
     for pos, key, description, subject in outcomes:
         state, detail = settle(ordered, pos, subject)
         if state == "none":
-            message = (f"- Material outcome with no KooYomi write after it: {description}. "
+            message = (f"- Material outcome with no BeamingFace write after it: {description}. "
                        "Record it per §3 (close or update the Task, or a follow-up note).")
         elif state == "failed":
-            message = (f"- Material outcome not recorded: {description}. The KooYomi write after it did "
-                       f"not commit ({detail}). Fix and retry it; if KooYomi or the Host refuses it, tell "
+            message = (f"- Material outcome not recorded: {description}. The BeamingFace write after it did "
+                       f"not commit ({detail}). Fix and retry it; if BeamingFace or the Host refuses it, tell "
                        "the Owner which write is still owed (§4).")
         elif state == "unrelated":
-            message = (f"- Material outcome not recorded: {description}. KooYomi writes after it committed, "
+            message = (f"- Material outcome not recorded: {description}. BeamingFace writes after it committed, "
                        f"but none names {subject.label}. Record this outcome itself per §3 and cite "
                        f"{subject.label} in the record.")
         else:
@@ -497,14 +498,14 @@ def analyse(entries: list[dict]) -> list[Finding]:
     for context, use_ids in pending.items():
         if context:
             message = (
-                f"- {len(use_ids)} committed KooYomi write(s) in context {context} since the last "
+                f"- {len(use_ids)} committed BeamingFace write(s) in context {context} since the last "
                 f"checkpoint in that context. Resume with context_key={context}, reconcile, then "
                 "clued_session_checkpoint with the same context_key and those writes' event IDs; "
                 "a checkpoint never covers another context's events (§5)."
             )
         else:
             message = (
-                f"- {len(use_ids)} committed KooYomi write(s) since the last checkpoint. "
+                f"- {len(use_ids)} committed BeamingFace write(s) since the last checkpoint. "
                 "Reconcile if you wrote since resume, then clued_session_checkpoint (§5)."
             )
         findings.append(Finding(f"checkpoint:{context}:{use_ids[-1]}", message))
@@ -513,14 +514,14 @@ def analyse(entries: list[dict]) -> list[Finding]:
         if state == "none":
             findings.append(Finding(
                 f"answer:{use_id}",
-                f"- The Owner answered a question (“{chosen}”) and no KooYomi write followed. An Owner "
+                f"- The Owner answered a question (“{chosen}”) and no BeamingFace write followed. An Owner "
                 "choice is a decision per §3: record it; if this answer needs no record, say why.",
             ))
         elif state == "failed":
             findings.append(Finding(
                 f"answer:{use_id}:failed",
-                f"- The Owner answered a question (“{chosen}”) and the KooYomi write after it did not "
-                f"commit ({detail}). If the answer needs a record, fix and retry the write; if KooYomi or "
+                f"- The Owner answered a question (“{chosen}”) and the BeamingFace write after it did not "
+                f"commit ({detail}). If the answer needs a record, fix and retry the write; if BeamingFace or "
                 "the Host refuses it, tell the Owner which write is still owed (§4). If it needs no "
                 "record, say why.",
             ))
@@ -549,7 +550,7 @@ def analyse(entries: list[dict]) -> list[Finding]:
             findings.append(Finding(
                 f"decision:{key}:failed",
                 f"- An Owner message may be a decision (matched “{match.group(0)}” in “{quote}”) and "
-                f"the KooYomi write after it did not commit ({detail}). Fix and retry it; if KooYomi or "
+                f"the BeamingFace write after it did not commit ({detail}). Fix and retry it; if BeamingFace or "
                 "the Host refuses it, tell the Owner which write is still owed (§4).",
             ))
         elif state == "event_only":
@@ -609,9 +610,9 @@ def run() -> int:
         return 0
     save_reported(path, reported | {finding.key for finding in new})
     print(
-        "KooYomi capture guard (protocol/agent/agent-contract.md §3 and §5):\n"
+        "BeamingFace capture guard (protocol/agent/agent-contract.md §3 and §5):\n"
         + "\n".join(finding.message for finding in new)
-        + "\nHandle these now, or say in your reply why they need no record or that KooYomi is "
+        + "\nHandle these now, or say in your reply why they need no record or that BeamingFace is "
         "unavailable. Each item is reported once in each state.",
         file=sys.stderr,
     )

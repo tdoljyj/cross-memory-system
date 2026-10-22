@@ -23,13 +23,13 @@ const dimensionSchema = {
 const provenanceSchema = { type: "object", description: "Host-supplied provenance, stored as evidence only." } as const;
 
 export const INTEGRATION_CONNECTION_SELF =
-  " Connection-self operation: it acts on the Integration this KooYomi connection belongs to and never reads or writes your KooYomi context.";
+  " Connection-self operation: it acts on the Integration this BeamingFace connection belongs to and never reads or writes your BeamingFace context.";
 
 export const integrationTools = [
   {
     name: "clued_integration_install",
     description:
-      "Install or bind this connection as a KooYomi Integration: opens an Installation Request and consumes it in one call (both steps are idempotent; repeat with the same request_key and idempotency_key). intent create_or_bind creates or binds by the full identity; rebind, reauthorization, reinstall, recovery, adapter_migration, verification_repair and bind_connection target one existing Integration. The provider connection identity is always derived by the server." + INTEGRATION_CONNECTION_SELF,
+      "Install or bind this connection as a BeamingFace Integration: opens an Installation Request and consumes it in one call (both steps are idempotent; repeat with the same request_key and idempotency_key). intent create_or_bind creates or binds by the full identity; rebind, reauthorization, reinstall, recovery, adapter_migration, verification_repair and bind_connection target one existing Integration. The provider connection identity is always derived by the server." + INTEGRATION_CONNECTION_SELF,
     inputSchema: {
       type: "object",
       required: ["request_key", "intent", "host", "host_surface", "adapter_family", "adapter_version", "idempotency_key"],
@@ -123,7 +123,7 @@ export const integrationTools = [
   {
     name: "clued_integration_identity_update",
     description:
-      "Strengthen this Integration's tenant or account identity with verified evidence and re-claim it, or (action request_reconcile) move a CLAIM_CONFLICT Integration to PENDING_RECONCILE for the Owner to resolve in KooYomi. Verified dimensions cannot be withdrawn here." + INTEGRATION_CONNECTION_SELF,
+      "Strengthen this Integration's tenant or account identity with verified evidence and re-claim it, or (action request_reconcile) move a CLAIM_CONFLICT Integration to PENDING_RECONCILE for the Owner to resolve in BeamingFace. Verified dimensions cannot be withdrawn here." + INTEGRATION_CONNECTION_SELF,
     inputSchema: {
       type: "object",
       required: ["idempotency_key", "integration_id", "base_version"],
@@ -142,7 +142,7 @@ export const integrationTools = [
   {
     name: "clued_integration_verify",
     description:
-      "Record a verification of this Integration: kind canonical_baseline checks the Canonical runtime baseline from server-observed evidence (the Worker supplies the MCP transport facts; a caller-supplied transport is ignored); kind ready_profile checks one READY profile and requires the Integration to be operable. Failures are recorded as FAIL results with a Receipt. A canonical_baseline retry with the same idempotency_key replays only under the same MCP protocol version and KooYomi build; after either changes, verify again with a new idempotency_key." + INTEGRATION_CONNECTION_SELF,
+      "Record a verification of this Integration: kind canonical_baseline checks the Canonical runtime baseline from server-observed evidence (the Worker supplies the MCP transport facts; a caller-supplied transport is ignored); kind ready_profile checks one READY profile and requires the Integration to be operable. Failures are recorded as FAIL results with a Receipt. A canonical_baseline retry with the same idempotency_key replays only under the same MCP protocol version and BeamingFace build; after either changes, verify again with a new idempotency_key." + INTEGRATION_CONNECTION_SELF,
     inputSchema: {
       type: "object",
       required: ["kind", "idempotency_key", "integration_id", "base_version"],
@@ -160,7 +160,7 @@ export const integrationTools = [
   {
     name: "clued_integration_revoke",
     description:
-      "Revoke this Integration from the Host side. It always revokes every credential of this connection's own provider-connection identity; when the Integration also holds Bindings of another identity, the result is PARTIAL_CONNECTION_REVOKE and the Owner should revoke the whole Integration in KooYomi. A revoked Integration is only recovered by the Owner's explicit restore in KooYomi; reconnecting never restores it." + INTEGRATION_CONNECTION_SELF,
+      "Revoke this Integration from the Host side. It always revokes every credential of this connection's own provider-connection identity; when the Integration also holds Bindings of another identity, the result is PARTIAL_CONNECTION_REVOKE and the Owner should revoke the whole Integration in BeamingFace. A revoked Integration is only recovered by the Owner's explicit restore in BeamingFace; reconnecting never restores it." + INTEGRATION_CONNECTION_SELF,
     inputSchema: {
       type: "object",
       required: ["idempotency_key", "integration_id", "reason"],
@@ -273,7 +273,7 @@ export const INTEGRATION_AUTHORIZATION_CODES = [
   "integration_connection_required", "platform_admin_required", "binding_not_owned",
 ] as const;
 
-const OWNER_RESTORE = "A revoked Integration is restored only by the Owner in KooYomi (restore), with a new authorization from the same client when it is in a claim conflict; reconnecting does not restore it.";
+const OWNER_RESTORE = "A revoked Integration is restored only by the Owner in BeamingFace (restore), with a new authorization from the same client when it is in a claim conflict; reconnecting does not restore it.";
 export const INTEGRATION_REQUEST_RULE_REJECTIONS: Readonly<Record<string, string | null>> = {
   installation_request_expired: "Open a new Installation Request and retry.",
   installation_request_closed: "Open a new Installation Request and retry.",
@@ -290,14 +290,14 @@ export const INTEGRATION_REQUEST_RULE_REJECTIONS: Readonly<Record<string, string
   host_surface_not_registered: null,
   provider_not_registered: null,
   binding_owned_by_other_integration:
-    "This Binding belongs to another Integration. The Owner can move it in KooYomi (confirm_rebind, adopt_binding, restore or reconcile); if it is that Integration's current connection, switch that Integration to another connection or reconcile first. Do not revoke that Integration for this: revoking it revokes this Binding too.",
+    "This Binding belongs to another Integration. The Owner can move it in BeamingFace (confirm_rebind, adopt_binding, restore or reconcile); if it is that Integration's current connection, switch that Integration to another connection or reconcile first. Do not revoke that Integration for this: revoking it revokes this Binding too.",
   binding_predates_revocation:
     "This authorization was issued before a revocation and cannot restore or create a connection. Reconnect in the Host and approve again on the consent page.",
   binding_not_adoptable: "Only personal Bindings that are live can be used.",
-  integration_rebind_requires_owner_confirmation: "Ask the Owner to confirm this connection in KooYomi (confirm_rebind).",
+  integration_rebind_requires_owner_confirmation: "Ask the Owner to confirm this connection in BeamingFace (confirm_rebind).",
   integration_host_mismatch: "The Host is an identity dimension; install a new Integration for this Host.",
   integration_provider_mismatch: null,
-  integration_recovery_forbidden: "Recovery of this Integration is only by the Owner's explicit restore in KooYomi.",
+  integration_recovery_forbidden: "Recovery of this Integration is only by the Owner's explicit restore in BeamingFace.",
   integration_revoked_requires_explicit_restore: OWNER_RESTORE,
   integration_superseded: "Use the Integration named in superseded_by.",
   integration_claim_blocked:
@@ -305,7 +305,7 @@ export const INTEGRATION_REQUEST_RULE_REJECTIONS: Readonly<Record<string, string
   reconcile_not_applicable: null,
   reconcile_requires_active_connection: "Use REPLACE_HOLDER, or revoke or pause this Integration.",
   reauthorization_scope_expansion_forbidden:
-    "Reauthorize with the original scope; a wider scope needs the Owner's explicit approval in KooYomi.",
+    "Reauthorize with the original scope; a wider scope needs the Owner's explicit approval in BeamingFace.",
   restore_requires_new_authorization_decision: "Complete a new authorization first, then restore.",
   reauth_mark_not_open: null,
   capability_declaration_exceeds_ceiling: "A Host Adapter can only keep or narrow capabilities.",
@@ -327,7 +327,7 @@ export const INTEGRATION_CONFLICT_CODES = new Set([
   "integration_revoke_connection_set_changed",
 ]);
 
-const RULE_MESSAGE = "The request was refused by a Kooyumi contract rule; reconnecting will not change the outcome.";
+const RULE_MESSAGE = "The request was refused by a BeamingFace contract rule; reconnecting will not change the outcome.";
 
 // §12.3 integrationRuleEnvelope: an M1 envelope rejected inside the Receipt renders exactly like the
 // pre-Receipt rule rejection (category request_rule, same hint table); a conflict code renders as a

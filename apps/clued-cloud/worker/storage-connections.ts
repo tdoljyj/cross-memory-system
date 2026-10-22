@@ -66,5 +66,5 @@ export function storageConnectionsResult(value: unknown, offered: { reads: boole
 
 export const storageConnectionsMessages = {
   storage_connections_input_invalid: "clued_storage_connections takes no arguments.",
-  storage_connections_unavailable: "Storage connections are unavailable right now. Do not ask the user for a connection_id; try again later, or tell the user that Kooyumi storage could not be reached.",
+  storage_connections_unavailable: "Storage connections are unavailable right now. Do not ask the user for a connection_id; try again later, or tell the user that BeamingFace storage could not be reached.",
 } as const;

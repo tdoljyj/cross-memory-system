@@ -15,10 +15,10 @@ import "../confirm/owner.css";
 type Json = Record<string, unknown>;
 const object = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
 const MESSAGES: Record<string, string> = {
-  direct_human_session_required: "需要你本人直接登录 KooYomi，授权给应用的登录不能管理授权。",
+  direct_human_session_required: "需要你本人直接登录 BeamingFace，授权给应用的登录不能管理授权。",
   owner_grant_not_found: "找不到这条授权，可能已过期。",
   owner_auto_approve_version_conflict: "设置已在别处更新，已显示最新状态。请确认后再操作。",
-  owner_auto_approve_session_id_required: "请重新登录 KooYomi 后再修改自动审批。",
+  owner_auto_approve_session_id_required: "请重新登录 BeamingFace 后再修改自动审批。",
   owner_auto_approve_successor_required: "自动审批设置已更新，请刷新页面。",
 };
 class RequestFailure extends Error {
@@ -137,11 +137,11 @@ export default function OwnerGrantsPage() {
 
   const now = Date.now();
   return <main className="context-page owner-confirm">
-    <header><Link href="/">KooYomi</Link> <Link href="/work-claims">谁在做哪个任务</Link> <Link href="/work-claims/race">多份模式</Link> <Link href="/bindings">专用 Binding</Link></header>
+    <header><Link href="/">BeamingFace</Link> <Link href="/work-claims">谁在做哪个任务</Link> <Link href="/work-claims/race">多份模式</Link> <Link href="/bindings">专用 Binding</Link></header>
     <h1>我的授权</h1>
     <p><Link href="/independent-review">独立审核自动授权</Link>：默认打开，Agent 在已有授权范围内安排审核，无需逐次询问。</p>
     <p className="context-muted">你给 Agent 的授权都在这里。撤销立即生效。</p>
-    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 KooYomi</Link> 后查看你的授权。</p> : <>
+    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 BeamingFace</Link> 后查看你的授权。</p> : <>
       <p className="context-muted">已登录 {session.user.email || session.user.id}</p>
       <AutoApprovalSwitch auto={auto} working={working}
         onToggle={(enabled, baseVersion) => void setAutoEnabled(enabled, baseVersion)} />

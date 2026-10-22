@@ -46,10 +46,10 @@ export default function OAuthAccountPage() {
   }
 
   return <main className="oauth-shell"><section className="oauth-card" aria-busy={busy}>
-    <Link className="oauth-brand" href="/"><span className="brand-mark" aria-hidden="true">◆</span><span>KooYomi</span></Link>
+    <Link className="oauth-brand" href="/"><span className="brand-mark" aria-hidden="true" /><span>BeamingFace</span></Link>
     <p className="oauth-kicker">账户恢复</p>
     <h1>忘记密码</h1>
-    <p className="oauth-copy">输入你的 KooYomi 账户邮箱，通过邮件中的链接设置新密码。</p>
+    <p className="oauth-copy">输入你的 BeamingFace 账户邮箱，通过邮件中的链接设置新密码。</p>
     <form className="oauth-form" onSubmit={recover}>
       <label>账户邮箱<input type="email" autoComplete="email" required value={email} disabled={busy}
         onChange={event => { setEmail(event.target.value); setError(""); setNotice(""); }} /></label>
@@ -58,6 +58,6 @@ export default function OAuthAccountPage() {
     {error && <div className="oauth-error" role="alert"><strong>尚未完成</strong><p>{error}</p></div>}
     {notice && <p className="oauth-note" role="status">{notice}</p>}
     <p className="oauth-note">设置密码后，回到原来的客户端重新发起连接，再选择授权范围。</p>
-    <div className="oauth-actions"><Link className="oauth-secondary" href="/oauth/connections">返回登录</Link><Link className="oauth-secondary" href="/">KooYomi 首页</Link></div>
+    <div className="oauth-actions"><Link className="oauth-secondary" href="/oauth/connections">返回登录</Link><Link className="oauth-secondary" href="/">BeamingFace 首页</Link></div>
   </section></main>;
 }

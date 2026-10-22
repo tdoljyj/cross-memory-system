@@ -44,7 +44,7 @@ const DURATIONS: [number, string][] = [[3600, "1 小时"], [14400, "4 小时"], 
 const REFRESH_MS = 20_000;
 const MESSAGES: Record<string, string> = {
   confirmation_token_session_id_required: "当前登录缺少会话信息，请退出后重新登录。",
-  direct_human_session_required: "需要你本人直接登录 KooYomi，授权给应用的登录不能批准请求。",
+  direct_human_session_required: "需要你本人直接登录 BeamingFace，授权给应用的登录不能批准请求。",
   owner_request_not_found: "找不到这个请求，或它不属于当前登录的账号。",
   owner_request_id_invalid: "链接里的请求编号无效。",
   owner_request_decided: "这个请求已经处理过了。",
@@ -532,17 +532,17 @@ export default function OwnerConfirmPage() {
   const leftover = request && status !== "pending" ? bundleOthers(request, requestId ?? "").filter(member => member.status === "pending") : [];
 
   return <main className="context-page owner-confirm">
-    <header><Link href="/">KooYomi</Link><Link href="/grants">我的授权</Link></header>
+    <header><Link href="/">BeamingFace</Link><Link href="/grants">我的授权</Link></header>
     <h1>确认 Agent 的请求</h1>
     {!requestId ? <p role="alert">链接无效：缺少请求编号。请让 Agent 重新发送链接。</p>
       : !ready ? <p role="status">正在读取登录状态…</p>
-      : !session ? <section aria-label="登录"><p>请先登录 KooYomi，再确认这个请求。</p>
+      : !session ? <section aria-label="登录"><p>请先登录 BeamingFace，再确认这个请求。</p>
         <form onSubmit={signIn}>
           <label>邮箱<input type="email" autoComplete="email" required value={email} onChange={event => setEmail(event.target.value)} /></label>
           <label>密码<input type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} /></label>
           <div className="owner-actions"><button type="submit" disabled={working}>登录</button></div>
         </form>
-        <p className="context-muted">也可以先在 <Link href="/">KooYomi 首页</Link> 登录，再重新打开这个链接。</p></section>
+        <p className="context-muted">也可以先在 <Link href="/">BeamingFace 首页</Link> 登录，再重新打开这个链接。</p></section>
       : <>
         <p className="context-muted">已登录 {session.user.email || session.user.id} <button type="button" onClick={() => void signOut()}>退出</button></p>
         {done?.kind === "granted" && permission && <section aria-label="已批准" role="status"><h2>已批准</h2>
@@ -631,7 +631,7 @@ export default function OwnerConfirmPage() {
             </>}
           </section>}
           {view && permission && <section aria-label="要批准什么"><h2>要批准什么</h2>
-            <p className="context-muted">以下内容由 KooYomi 生成，Agent 改不了。批准后权限加到这个连接上，不用重新连接。</p>
+            <p className="context-muted">以下内容由 BeamingFace 生成，Agent 改不了。批准后权限加到这个连接上，不用重新连接。</p>
             <dl>
               <dt>给哪个连接</dt><dd>{String(connection?.client_name ?? grantee?.agent_name ?? "发起请求的连接")}</dd>
               <dt>要加的权限</dt><dd><ul>{authorizationDisplayOrder(permissions).map(item => <li key={String(item.resource)}>
@@ -657,7 +657,7 @@ export default function OwnerConfirmPage() {
             </section>}
             </section>}
           {view && !permission && <section aria-label="要批准什么"><h2>要批准什么</h2>
-            <p className="context-muted">以下内容由 KooYomi 生成，Agent 改不了。</p>
+            <p className="context-muted">以下内容由 BeamingFace 生成，Agent 改不了。</p>
             <dl>
               {!items.length && <><dt>动作</dt><dd>{actionText(view)}</dd>
                 <dt>范围</dt><dd><ul>{list(view.resources).map(resource => <li key={resource}>{resource}</li>)}</ul></dd></>}
@@ -682,7 +682,7 @@ export default function OwnerConfirmPage() {
             {items.length > 0 && picked.length < items.length && <p className="context-muted">没勾的项保持待确认，之后还可以再批。</p>}
             {deployAlone && <p className="owner-warning" role="note">部署通常依赖同批迁移，只批部署可能出错。</p>}</section>}
           {note && admissionNote && <section aria-label="准入检查说明" className="owner-note"><h2>准入检查说明</h2>
-            <p className="context-muted">这段话由 KooYomi 的准入检查根据 PR 写出，不是 Agent 自述；批准前请打开链接看这些提交改了什么。</p><p>{note}</p>
+            <p className="context-muted">这段话由 BeamingFace 的准入检查根据 PR 写出，不是 Agent 自述；批准前请打开链接看这些提交改了什么。</p><p>{note}</p>
             {compareLink ? <p><a href={compareLink} target="_blank" rel="noreferrer">在 GitHub 上查看这些提交的改动</a></p>
               : <p className="context-muted">说明里的链接与要批准的提交不一致，已隐藏；请在 GitHub 上按上面的提交核对。</p>}</section>}
           {note && !admissionNote && <section aria-label="Agent 说明" className="owner-note"><h2>Agent 说明（未核实）</h2>

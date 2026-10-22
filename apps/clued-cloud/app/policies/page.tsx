@@ -177,10 +177,10 @@ export default function PoliciesPage() {
   }
 
   return <main className="context-page">
-    <header><Link href="/">KooYomi / 账号</Link><Link href="/contexts">上下文</Link></header>
+    <header><Link href="/">BeamingFace / 账号</Link><Link href="/contexts">上下文</Link></header>
     <h1>上下文策略</h1>
     <p className="context-muted">规定 Agent 通过 context-pack 能读到哪些记录。接受策略需要你本人登录确认：先生成预览，核对无误后再确认接受。</p>
-    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 KooYomi</Link> 后设置上下文策略。</p> : <>
+    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 BeamingFace</Link> 后设置上下文策略。</p> : <>
       <p>已登录 {session.user.email || session.user.id} <button type="button" onClick={() => void signOut()}>退出</button></p>
       {editing && <form onSubmit={preview} aria-label="策略内容">
         <label>任务类<input required maxLength={120} disabled={working} value={taskClass} onChange={event => setTaskClass(event.target.value)} /></label>
