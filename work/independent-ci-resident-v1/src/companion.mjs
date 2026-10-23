@@ -19,6 +19,11 @@ export const COMPANION_CONFIG_CONTRACT = 'clued.independent-ci.resident-companio
 export const LINUX_OUTGOING = '/var/lib/clued-independent-ci/formal-spool/outgoing';
 // One callback round, the same value as protected-job-bridge-v4/protocol.mjs CALLBACK_WINDOW_MS (test-pinned).
 export const CALLBACK_WINDOW_MS = 120_000;
+// How long the pump waits for one relay call. A relay call usually takes 4-6 s, but sometimes 25-45 s: PR #911 stage 4
+// (2026-10-23) lost a 43 s SendIssue to the old fixed 40 s, so no worker was started and the issuer waited out its
+// stage into a HALT (Task 576231fa). The runner never kills a child, so giving up earlier gains nothing: the runner
+// stays busy until the call ends. One callback round is the most a relay call can still help.
+export const RELAY_TIMEOUT_MS = CALLBACK_WINDOW_MS;
 
 export function validateCompanionConfig(c) {
   check(c && c.contract === COMPANION_CONFIG_CONTRACT, 'COMPANION_CONFIG_CONTRACT_INVALID');
@@ -140,7 +145,7 @@ export class Companion {
 
   // relay: true = record transferred, false = nothing there yet, throws on any refusal.
   async relay(mode, seq) {
-    const r = await this.run(this.a.relay(mode, seq), { timeoutMs: 40_000 });
+    const r = await this.run(this.a.relay(mode, seq), { timeoutMs: RELAY_TIMEOUT_MS });
     const v = json(r.stdout);
     if (r.code === 0 && v?.status === 'PUBLIC_RECORD_TRANSFERRED' && v.terminalConfirmed === true) return true;
     if (v?.childError?.reason === 'ENOENT' && v.terminalConfirmed === true) return false;
@@ -176,7 +181,7 @@ export class Companion {
   // The bridge pump that run-batch.ps1 performs today (lines 86-89), moved out of the elevated
   // process unchanged in meaning: issue -> worker -> challenge/response rounds -> result.
   // Owner abort (DESIGN §6.5): a cancel of this request from the service ends the pump at its next wait step with
-  // COMPANION_PUMP_CANCELLED. No relay call starts after it; one already running ends first (at most 40 s). It only
+  // COMPANION_PUMP_CANCELLED. No relay call starts after it; one already running ends first (at most RELAY_TIMEOUT_MS). It only
   // stops relaying; the worker unit is never stopped or killed. A cancel file that cannot be read is no cancel.
   async pump(request) {
     const deadline = Date.parse(request.deadline);
