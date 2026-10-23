@@ -761,5 +761,282 @@ class RuntimeBoundaryTest(unittest.TestCase):
                 self.assertIn("clued_work_renew", GUARD.runtime_reminder(payload, self.now))
 
 
+# Publish trailers (Decision 349f6e42 item 2a): before a push or a pull request,
+# read the commit message and body the way stage 1 of the CI does.
+
+PROJECT_SCOPE = "project:5d3a1c22-7f0e-4b8a-9c1d-2e3f4a5b6c7d"
+OTHER_ID = "9f0e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f"
+REPOSITORY_NAME = GUARD.REPOSITORY_NAME
+CLAIM_LINE = f"Clued-Work-Claim: {CLAIM_ID}"
+SCOPE_LINE = f"Clued-Work-Scope: {PROJECT_SCOPE}"
+
+
+def project_claim(**changes) -> dict:
+    return {**claim(), "context_key": PROJECT_SCOPE, **changes}
+
+
+def heredoc(text: str) -> str:
+    return "\"$(cat <<'EOF'\n" + text + "\nEOF\n)\""
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class PublishTrailerTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.project = Path(self.tmp.name) / "project"
+        self.project.mkdir()
+        self.env = {**os.environ, "TMPDIR": self.tmp.name, "CLAUDE_PROJECT_DIR": str(self.project),
+                    "GIT_CEILING_DIRECTORIES": self.tmp.name}
+        for name in ("CLUED_WORK_CLAIM_GUARD", "CLUED_WORK_CLAIM", "CLUED_CONTEXT_READ_TOKEN"):
+            self.env.pop(name, None)
+        self.git("init", "-q")
+        for key, value in (("user.name", "Test"), ("user.email", "test@example.invalid"),
+                           ("commit.gpgsign", "false")):
+            self.git("config", key, value)
+        self.git("checkout", "-q", "-b", "work")
+        self.post(committed(project_claim()))
+
+    def git(self, *args: str) -> None:
+        subprocess.run(["git", "-C", str(self.project), *args], check=True, capture_output=True, text=True,
+                       env=self.env, timeout=30)
+
+    def commit(self, message: str) -> None:
+        self.git("commit", "-q", "--allow-empty", "-m", message)
+
+    def run_hook(self, payload: dict, env: dict | None = None) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, str(HOOK)], input=json.dumps({"session_id": "s1", **payload}),
+                              text=True, capture_output=True, env=env or self.env, timeout=30)
+
+    def post(self, response, session: str = "s1") -> None:
+        self.run_hook({"hook_event_name": "PostToolUse", "session_id": session,
+                       "tool_name": "mcp__Clued__clued_work_claim", "tool_input": {}, "tool_response": response})
+
+    def pre(self, name: str, tool_input: dict, session: str = "s1", env: dict | None = None):
+        return self.run_hook({"hook_event_name": "PreToolUse", "session_id": session, "tool_name": name,
+                              "tool_input": tool_input}, env)
+
+    def bash(self, command: str, session: str = "s1", env: dict | None = None):
+        return self.pre("Bash", {"command": command}, session, env)
+
+    def test_missing_claim_line_blocks_once_with_the_exact_lines(self):
+        self.commit("Fix the guard")
+        first = self.bash("git push -u origin work")
+        self.assertEqual(first.returncode, 2)
+        self.assertIn("The head commit of work has no `Clued-Work-Claim:` line", first.stderr)
+        self.assertIn(f"\n{CLAIM_LINE}\n{SCOPE_LINE}\n", first.stderr)
+        self.assertIn("never force-push", first.stderr)
+        self.assertEqual(self.bash("git push -u origin work").returncode, 0)
+        self.assertEqual(self.bash("git push -u origin work", session="s2").returncode, 2)
+
+    def test_missing_scope_line_blocks(self):
+        self.commit(f"Fix the guard\n\n{CLAIM_LINE}")
+        result = self.bash("git push origin HEAD")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("has no `Clued-Work-Scope:` line, so stage 1 reads the scope as global", result.stderr)
+        self.assertIn(f"\n{SCOPE_LINE}", result.stderr)
+        self.assertNotIn("has no `Clued-Work-Claim:`", result.stderr)
+
+    def test_wrong_claim_id_blocks(self):
+        self.commit(f"Fix the guard\n\nClued-Work-Claim: {OTHER_ID}\n{SCOPE_LINE}")
+        result = self.bash("git push")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(f"names claim {OTHER_ID}, which is not a claim recorded in this checkout", result.stderr)
+        self.assertIn(f"\n{CLAIM_LINE}\n{SCOPE_LINE}\n", result.stderr)
+        # A wrong Scope line on the right claim is named too.
+        self.commit(f"Fix the guard\n\n{CLAIM_LINE}\nClued-Work-Scope: global")
+        result = self.bash("git push", session="scope")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(f"has `Clued-Work-Scope: global`, but claim {CLAIM_ID} is in {PROJECT_SCOPE}", result.stderr)
+
+    def test_expired_lease_blocks_even_beside_another_live_claim(self):
+        self.post(committed(project_claim(claim_id=OTHER_ID, expires_at=stamp(-timedelta(minutes=1)))))
+        self.commit(f"Fix the guard\n\nClued-Work-Claim: {OTHER_ID}\n{SCOPE_LINE}")
+        result = self.bash("git push")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(f"names claim {OTHER_ID}, which is not live by this machine's clock", result.stderr)
+        self.assertIn("clued_work_renew", result.stderr)
+        # With no live claim left, the expired lease is the one finding.
+        (self.project / ".clued" / "work-claim.json").unlink()
+        self.post(committed(project_claim(expires_at=stamp(-timedelta(minutes=1)))))
+        self.commit(f"Fix the guard\n\n{CLAIM_LINE}\n{SCOPE_LINE}")
+        result = self.bash("git push", session="expired-only")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(f"names claim {CLAIM_ID}, which is not live", result.stderr)
+        self.assertNotIn("no live work claim is recorded", result.stderr)
+
+    def test_both_lines_and_a_live_claim_pass(self):
+        self.commit(f"Fix the guard\n\n{CLAIM_LINE}\n{SCOPE_LINE}\n")
+        body = f"Summary\n\n{CLAIM_LINE}\n{SCOPE_LINE}\n\n🤖 Generated with Claude Code"
+        for n, command in enumerate((
+                "git push -u origin work", "git push origin +work:refs/heads/work", "git push origin HEAD",
+                f"gh pr create --base main --title 'x' --body {heredoc(body)}",
+                f"gh pr edit 5 --body {heredoc(body)}", "gh pr create --fill --head work",
+                "git fetch origin main && git merge -q origin/main && git push")):
+            with self.subTest(command=command):
+                result = self.bash(command, session=f"pass-{n}")
+                self.assertEqual(result.returncode, 0, result.stderr)
+        # A global claim needs no Scope line.
+        (self.project / ".clued" / "work-claim.json").unlink()
+        self.post(committed(claim()))
+        self.commit(f"Fix the guard\n\n{CLAIM_LINE}")
+        self.assertEqual(self.bash("git push", session="global").returncode, 0)
+
+    def test_off_switch_and_env_claim_skip_the_check(self):
+        self.commit("No trailers")
+        self.assertEqual(self.bash("git push", env={**self.env, "CLUED_WORK_CLAIM_GUARD": "off"}).returncode, 0)
+        self.assertEqual(self.bash("git push", env={**self.env, "CLUED_WORK_CLAIM": CLAIM_ID}).returncode, 0)
+
+    def test_pull_request_body_is_read(self):
+        self.commit(f"Fix the guard\n\n{CLAIM_LINE}\n{SCOPE_LINE}")
+        only_claim = f"Summary\n\n{CLAIM_LINE}"
+        result = self.bash(f"gh pr create --title 'x' --body {heredoc(only_claim)}")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("The pull request body names claim", result.stderr)
+        self.assertIn(f"\n{SCOPE_LINE}", result.stderr)
+        (self.project / "body.md").write_text("Summary only\n", encoding="utf-8")
+        for n, command in enumerate(("gh pr create --title x --body-file body.md", "gh pr edit 5 -F body.md",
+                                     "gh pr edit 5 --body 'Summary only'", 'gh pr create -b "Summary only"')):
+            with self.subTest(command=command):
+                result = self.bash(command, session=f"body-{n}")
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("The pull request body has no `Clued-Work-Claim:` line", result.stderr)
+        # Editing anything but the body is not publishing, and an unreadable body is not guessed.
+        self.assertIsNone(bash_kind("gh pr edit 5 --add-label ci"))
+        for n, command in enumerate(('gh pr create --body "$BODY"', "gh pr create --body-file -",
+                                     "cat > b.md <<'EOF'\nx\nEOF\ngh pr create --body-file b.md")):
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command, session=f"unread-{n}").returncode, 0)
+
+    def test_commit_in_the_same_command_is_read_before_it_exists(self):
+        self.commit("Base commit without trailers")
+        good = heredoc(f"Fix the guard\n\n{CLAIM_LINE}\n{SCOPE_LINE}")
+        result = self.bash(f"git add -A && git commit -q -m {good} && git push -u origin work")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.bash(f"git commit -am 'Fix' -m '{CLAIM_LINE}' && git push", session="no-scope")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("The message of the `git commit` before this push", result.stderr)
+        # An editor, a message file or a merge leave the head unknown: nothing is guessed.
+        for n, command in enumerate(("git commit && git push", "git commit -F m.txt && git push",
+                                     "git merge origin/main && git push", "git commit -m x && git push origin v1")):
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command, session=f"unknown-{n}").returncode, 0)
+
+    def test_tags_deletions_and_unknown_refs_are_not_read(self):
+        self.commit("No trailers")
+        self.git("tag", "v1")
+        for n, command in enumerate(("git push origin v1", "git push --tags", "git push origin :old",
+                                     "git push -d origin old", "git push origin nosuchbranch",
+                                     "git push origin HEAD~1:refs/heads/x")):
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command, session=f"skip-{n}").returncode, 0)
+
+    def test_github_tools_are_read(self):
+        result = self.pre("mcp__github__create_pull_request", {"title": "x", "body": f"x\n\n{CLAIM_LINE}"})
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("The pull request body names claim", result.stderr)
+        result = self.pre("mcp__github__push_files", {"message": "x", "files": []}, session="push")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("The commit message has no `Clued-Work-Claim:` line", result.stderr)
+        result = self.pre("mcp__github__create_or_update_file",
+                          {"message": f"x\r\n\r\n{CLAIM_LINE}\r\n{SCOPE_LINE}\r\n"}, session="ok")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_the_exact_lines_come_from_this_sessions_claims(self):
+        self.post(committed(project_claim(claim_id=OTHER_ID)), session="s2")
+        self.commit("No trailers")
+        own = self.bash("git push")
+        self.assertIn(CLAIM_LINE, own.stderr)
+        self.assertNotIn(OTHER_ID, own.stderr)
+        other = self.bash("git push", session="s2")
+        self.assertIn(f"Clued-Work-Claim: {OTHER_ID}", other.stderr)
+        both = self.bash("git push", session="s3")
+        self.assertIn("one of these", both.stderr)
+        self.assertIn(CLAIM_ID, both.stderr)
+        self.assertIn(OTHER_ID, both.stderr)
+
+    def test_git_options_and_unknown_steps_before_a_push(self):
+        self.commit("Base commit without trailers")
+        good = heredoc(f"Fix the guard\n\n{CLAIM_LINE}\n{SCOPE_LINE}")
+        for n, command in enumerate((f"git -c commit.gpgsign=false commit --allow-empty -m {good} && git push",
+                                     f"git --no-pager commit -m {good} && git push",
+                                     f"git -C . commit -m {good} && git push origin HEAD",
+                                     "gh pr checkout 5 && git push", "./scripts/sync.sh && git push",
+                                     "git -C ../other commit -m x && git push")):
+            with self.subTest(command=command):
+                result = self.bash(command, session=f"moved-{n}")
+                self.assertEqual(result.returncode, 0, result.stderr)
+        # Steps that leave HEAD alone still let the push be read.
+        result = self.bash("git add -A && git status --short && git push", session="still")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("The head commit of HEAD has no `Clued-Work-Claim:` line", result.stderr)
+
+    def test_body_files_that_cannot_be_read_now_are_skipped(self):
+        self.commit(f"Fix the guard\n\n{CLAIM_LINE}\n{SCOPE_LINE}")
+        (self.project / "notes").mkdir()
+        for n, command in enumerate((f"gh pr create --title x --body-file /dev/stdin <<'EOF'\n{CLAIM_LINE}\n"
+                                     f"{SCOPE_LINE}\nEOF", "gh pr create --body-file /proc/self/fd/0",
+                                     "gh pr create --body-file notes", "gh pr create --body-file missing.md",
+                                     "gh pr create --body-file a\x00b",
+                                     "gh pr create --body-file /tmp/clued-no-such-body.md")):
+            with self.subTest(command=command):
+                result = self.bash(command, session=f"file-{n}")
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_multi_line_commands_are_read(self):
+        self.commit(f"Fix the guard\n\n{CLAIM_LINE}\n{SCOPE_LINE}")
+        only_claim = heredoc(f"Summary\n\n{CLAIM_LINE}")
+        for n, command in enumerate((f"gh pr edit 912 \\\n  --body {only_claim}", f"gh pr edit 912 \\\n--body {only_claim}",
+                                     f"gh pr create \\\n  --title x \\\n  --body {only_claim}")):
+            with self.subTest(command=command):
+                self.assertEqual(bash_kind(command), "publish")
+                result = self.bash(command, session=f"lines-{n}")
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("The pull request body names claim", result.stderr)
+
+    def test_directory_changes_draining_and_other_targets(self):
+        self.commit("No trailers")
+        self.assertEqual(self.bash("cd .. && cd project && git push", session="cd").returncode, 2)
+        self.assertEqual(self.bash('cd "$WORK" && git push', session="cd-unknown").returncode, 0)
+        # Pull requests into another base and other repositories are not judged by this admission.
+        for n, (name, tool_input) in enumerate((
+                ("Bash", {"command": "gh pr create --base feature/x --body 'Summary only'"}),
+                ("mcp__github__create_pull_request", {"repo": REPOSITORY_NAME, "base": "dev", "body": "x"}),
+                ("mcp__github__push_files", {"owner": "someone", "repo": "blog", "message": "x"}))):
+            with self.subTest(name=name, tool_input=tool_input):
+                self.assertEqual(self.pre(name, tool_input, session=f"target-{n}").returncode, 0)
+        (self.project / ".clued" / "work-claim.json").unlink()
+        self.post(committed(project_claim(status="DRAINING")))
+        self.commit(f"Fix the guard\n\n{CLAIM_LINE}\n{SCOPE_LINE}")
+        self.assertEqual(self.bash("git push", session="draining").returncode, 0)
+
+    def test_an_odd_command_never_breaks_the_session(self):
+        self.commit("No trailers")
+        for n, command in enumerate(("cd a\x00b && git push", "git -C 'a\x00b' push", "git push origin 'a\x00b'")):
+            with self.subTest(command=command):
+                result = self.bash(command, session=f"odd-{n}")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_parsers(self):
+        self.assertEqual(GUARD.commit_message(["-am", "a", "-m", "b"]), "a\n\nb")
+        self.assertEqual(GUARD.commit_message(["--message=a", "--author", "X <x@y>", "-mb"]), "a\n\nb")
+        for args in ([], ["-F", "m.txt"], ["-m", "a", "-e"], ["-C", "HEAD"], ["--amend"], ["-m", None],
+                     ["-m", "a", "--trailer", "x: y"]):
+            with self.subTest(args=args):
+                self.assertIsNone(GUARD.commit_message(args))
+        self.assertEqual(GUARD.push_sources([]), ["HEAD"])
+        self.assertEqual(GUARD.push_sources(["-u", "origin", "a", "+b:refs/heads/c", ":d"]), ["a", "b"])
+        self.assertEqual(GUARD.push_sources(["-o", "ci.skip", "origin"]), ["HEAD"])
+        for args in (["--tags"], ["--all", "origin"], ["-d", "origin", "x"], ["origin", None]):
+            with self.subTest(args=args):
+                self.assertEqual(GUARD.push_sources(args), [])
+        text, bodies = GUARD.lift_heredocs("git commit -m " + heredoc("a 'quote' (and) | b") + " && git push")
+        self.assertEqual(bodies, ["a 'quote' (and) | b\n"])
+        self.assertIsNotNone(GUARD.shell_segments(text))
+        self.assertEqual(GUARD.lift_heredocs("cat <<EOF\n$HOME\nEOF")[1], [None])
+        self.assertEqual(GUARD.lift_heredocs("cat <<-EOF\n\tx\n\tEOF")[1], ["x\n"])
+
+
 if __name__ == "__main__":
     unittest.main()

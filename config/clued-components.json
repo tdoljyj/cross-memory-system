@@ -86,13 +86,13 @@
     {
       "id": "hook.work-claim-guard",
       "kind": "hook",
-      "version": "1.1.7",
+      "version": "1.1.8",
       "description": "Claude Code work-claim hooks.",
       "root": "scripts/hooks",
       "files": [
         "clued_work_claim_guard.py"
       ],
-      "content_sha256": "e6861fca7236d21ffe0e859ecdb8a76440e0429f73cccd6cc2cf1462e8265ed7",
+      "content_sha256": "5609814e824f29a3739e795a8eaf19141a3633767cc33d7ce80e9bab6868569b",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""
