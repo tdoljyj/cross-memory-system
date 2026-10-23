@@ -45,7 +45,16 @@ public static class PureTestsV2 {
    // 5. S5 window: null validUntil = install lifetime; a near deadline refuses; stage 8 waits longest
    var now=DateTimeOffset.UtcNow;Yes(FormalPublicBoundaryV2.BoundedDeadline(8,now,null)==now.AddMilliseconds(2700000),"window-null");
    Refuse(()=>FormalPublicBoundaryV2.BoundedDeadline(2,now,now.AddMinutes(30)),"window-near");Yes(FormalPublicBoundaryV2.BoundedDeadline(1,now,now.AddDays(30))==now.AddMinutes(15),"window-far");
-   Refuse(()=>FormalPublicBoundaryV2.BoundedDeadline(10,now,null),"window-stage");Yes(FormalPublicBoundaryV2.BoundedDeadline(9,now,null)==now.AddMilliseconds(900000),"window-stage-r");
+   Refuse(()=>FormalPublicBoundaryV2.BoundedDeadline(11,now,null),"window-stage");Yes(FormalPublicBoundaryV2.BoundedDeadline(10,now,null)==now.AddMilliseconds(300000),"window-stage-10");Yes(FormalPublicBoundaryV2.BoundedDeadline(9,now,null)==now.AddMilliseconds(900000),"window-stage-r");
+   // 5a. stage 10 (quota phase 2 step 3c-1): entry train-maintenance, exactly one train run (contract /1, shadow, of the plan's run id)
+   Yes(FormalPublicBoundaryV2.RelativeEntryForRole("train-maintenance").EndsWith("src/independent-control-checks-v2/train-maintenance.mjs"),"train-entry");
+   Yes(FormalPublicBoundaryV2.StageRole.Length==10&&FormalPublicBoundaryV2.StageMilliseconds[9]==300000&&FormalPublicBoundaryV2.SelectedJobRoles(10,new object[]{new Dictionary<string,object>{{"role","train-run"}}})[0]=="train-run","train-row");
+   foreach(object o in (object[])fixture["trainRuns"]){var run=(Dictionary<string,object>)o;string trId=(string)run["runId"],tm=(string)run["sourceManifestSha256"];
+    Yes(FormalPublicBoundaryV2.TrainRunId(run)==(string)run["id"],"train-run-id");FormalPublicBoundaryV2.ValidateTrainRun(run,tm,trId);
+    var on=new Dictionary<string,object>(run);on["mode"]="on";Refuse(()=>FormalPublicBoundaryV2.ValidateTrainRun(on,tm,trId),"train-run-on");
+    var other=new Dictionary<string,object>(run);Refuse(()=>FormalPublicBoundaryV2.ValidateTrainRun(other,tm,new string('0',16)+"-"+new string('1',12)),"train-run-other-plan");
+    var moved=new Dictionary<string,object>(run);moved["repo"]="other/repo";Refuse(()=>FormalPublicBoundaryV2.ValidateTrainRun(moved,tm,trId),"train-run-repo");
+    var asJob=new Dictionary<string,object>(run);Refuse(()=>FormalPublicBoundaryV2.ValidateJobV2(asJob,"train-run",tm),"train-run-is-no-job");}
    // 5b. stage R: entry relay-publisher, a non-empty ordered subset of gitleaks/trivy, nothing else
    Yes(FormalPublicBoundaryV2.RelativeEntryForRole("relay-publisher").EndsWith("src/hosted-relay-v1/relay-entry-v2.mjs"),"relay-entry");
    Func<string[],object[]> js=rs=>{var o=new object[rs.Length];for(int i=0;i<rs.Length;i++)o[i]=new Dictionary<string,object>{{"role",rs[i]}};return o;};

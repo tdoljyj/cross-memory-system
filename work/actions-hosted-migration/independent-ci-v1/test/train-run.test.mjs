@@ -1,6 +1,7 @@
 // Stage 10's job and stage row (resident quota redesign phase 2, step 3c-1; DESIGN §21.1).
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { TRAIN_RUN_CONTRACT, TRAIN_RUN_MODES, makeTrainRun, trainRunJobId, trainRunKey, validateTrainRun } from '../src/resident-v2/train-run.mjs';
 import { ENTRY_V2, FORMAL_STAGES_V2, STAGES_V2, TRAIN_STAGE_NUMBER, TRAIN_STAGE_V2, STATE_V2 } from '../src/resident-v2/layout.mjs';
@@ -38,4 +39,22 @@ test('stage 10: a train row outside the batch, with its own entry and state dire
   assert.ok(!FORMAL_STAGES_V2.some(s => s.number === 10), 'stage 10 is never one of the batch stages');
   assert.equal(ENTRY_V2['train-maintenance'], 'work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-maintenance.mjs');
   assert.match(STATE_V2.trainShadow, /\\state\\v2\\train-shadow$/);
+});
+
+test('derive-batch --train-run: one sealed stage-10 package the stage reader accepts, from the installed record', async t => {
+  const { fixtureRecord, tempDir, NOW } = await import('./resident-v2-fixtures.mjs');
+  const { deriveTrainRun, writeBatch } = await import('../src/resident-v2/derive-batch.mjs');
+  const { readSealedStage } = await import('../src/resident-v2/stage-package.mjs');
+  const rec = fixtureRecord();
+  const runKey = trainRunKey({ repo: REPO, seed: 'c'.repeat(64) }), runId = `${runKey.slice(0, 16)}-0123456789ab`;
+  const a = deriveTrainRun({ recordDocs: rec.docs, runId, runKey, mode: 'shadow', now: NOW });
+  assert.deepEqual(a.files, deriveTrainRun({ recordDocs: rec.docs, runId, runKey, mode: 'shadow', now: NOW }).files, 'deterministic');
+  assert.deepEqual([a.result.status, a.result.stage.number, a.result.stage.entryRole, a.result.stage.jobIds.length], ['RESIDENT_TRAIN_RUN_DERIVED', 10, 'train-maintenance', 1]);
+  const dir = path.join(await tempDir(t), 'train-run');
+  writeBatch(dir, a.files);
+  const sealed = await readSealedStage(dir, 10, a.result.stage.workManifestSha256);
+  const job = JSON.parse(sealed.files['jobs.json'].toString('utf8'))[0];
+  assert.deepEqual([sealed.plan.batchKey, sealed.plan.batchId, sealed.stage.jobRoles, job.runId, job.mode, validateTrainRun(job).id], [runKey, runId, ['train-run'], runId, 'shadow', a.result.stage.jobId]);
+  for (const bad of [{ runKey: 'x' }, { runId: 'f'.repeat(16) + '-0123456789ab' }, { mode: 'on' }])
+    assert.throws(() => deriveTrainRun({ recordDocs: rec.docs, runId, runKey, mode: 'shadow', now: NOW, ...bad }), { code: 'RESIDENT_TRAIN_RUN_REFUSED' });
 });

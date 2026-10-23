@@ -100,10 +100,12 @@ export function parseStageFact(text, expectedManifestSha256) {
   const code = ok ? null : (typeof f.failure_code === 'string' && CODE.test(f.failure_code) ? f.failure_code : (typeof f.state === 'string' && CODE.test(f.state) ? f.state : 'STAGE_TERMINAL_UNCONFIRMED'));
   // Stage R only: the relay rows as the Source wrote them; the executor validates them (classify.mjs).
   const relay = Array.isArray(f.relay) ? f.relay : null;
+  // Stage 10 only: the train facts as the Source wrote them; the executor keeps only what train.mjs#trainSummary reads.
+  const train = f.train && typeof f.train === 'object' && !Array.isArray(f.train) ? f.train : null;
   // The broker refused before any start and re-read the original (stage-fact.mjs BROKER_NO_LAUNCH_CODES): one of the
   // two ways a stage-1 failure may be released (classify.mjs#decideFailure); only with the fact's own readback.
   const brokerNoLaunch = !ok && f.broker_no_launch === true && f.scm_start_call_issued === false && restored && treeZero && f.configuration_conflict_detected === false;
-  return { ok, code, proof: { windowsTreeZero: treeZero, serviceOriginalStopped: restored }, nativeReceiptSha256: HEX64.test(f.native_receipt_sha256 ?? '') ? f.native_receipt_sha256 : null, relay,
+  return { ok, code, proof: { windowsTreeZero: treeZero, serviceOriginalStopped: restored }, nativeReceiptSha256: HEX64.test(f.native_receipt_sha256 ?? '') ? f.native_receipt_sha256 : null, relay, train,
     outcome: parseStageOutcome(f.outcome), brokerNoLaunch };
 }
 
@@ -264,6 +266,29 @@ export class WindowsEngine {
     return this.invoke(batch, { number: 9, runMilliseconds: row.runMilliseconds, linuxWorker: false }, row);
   }
 
+  // Stage 10 (quota phase 2 step 3c-1, DESIGN §22.1): one train run outside any batch. Its package is derived into a
+  // new work\train\<runId> directory (create-only), then it runs like any Windows-only stage. The run key and id are
+  // fresh random values (the derivation checks their shape); the fact carries the train facts.
+  async runTrainStage(mode) {
+    check(mode === 'shadow', 'RESIDENT_TRAIN_MODE_INVALID');
+    const entry = await this.requireV2('derive-batch.mjs');
+    const key = randomBytes(32).toString('hex');
+    const runId = `${key.slice(0, 16)}-${randomBytes(6).toString('hex')}`;
+    const root = path.join(this.paths.workRoot, 'train');
+    await ensureDir(root);
+    const out = path.join(root, runId);
+    const d = await this.run([this.paths.nodeExe, entry, '--train-run', runId, '--train-key', key, '--mode', mode, '--out', out], { timeoutMs: 5 * 60_000 });
+    let row = null;
+    if (d.code === 0) {
+      const v = parseBoundedJson(Buffer.from(d.stdout, 'utf8'), 65536, 'RESIDENT_DERIVATION_REFUSED');
+      if (v.status === 'RESIDENT_TRAIN_RUN_DERIVED' && v.runKey === key && v.runId === runId && v.mode === mode && v.stage?.number === 10
+        && HEX64.test(v.stage.workManifestSha256 ?? '') && HEX64.test(v.stage.jobId ?? '') && Number.isSafeInteger(v.stage.runMilliseconds)) row = v.stage;
+    }
+    // Nothing was requested from the broker yet: a refused derivation is a clean stage-10 refusal.
+    if (!row) return { ok: false, code: 'TRAIN_STAGE_REFUSED', proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() }, train: null, runId };
+    return { ...(await this.invoke({ batchId: runId, key, dir: out }, { number: 10, runMilliseconds: row.runMilliseconds, linuxWorker: false }, row)), runId };
+  }
+
   // opts.betweenRoles: archive the previous local Linux role's protocol records first (stages 4 and 6
   //   only, the protocol-only Linux scopes); opts.firstLinux: the "no push since the bundle" gate before
   //   the first local scanner stage. Without opts the fixed v0.6 order applies (4/6 archive, 2 gate).
@@ -326,7 +351,7 @@ export class WindowsEngine {
       // The stage outcome (diagnostic, scheduling facts, safeToRerun) travels to the executor (v0.6 §9 phase 1). The
       // broker's no-launch fact counts only with this engine's own sc.exe readback of the original, stopped runner.
       return { ok, code: ok ? null : (fact.code ?? 'SCM_READBACK_NOT_ORIGINAL'), proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk }, factsSha256: fact.nativeReceiptSha256,
-        relay: stage.number === 9 ? fact.relay : null, outcome: fact.outcome, brokerNoLaunch: fact.brokerNoLaunch === true && scOk };
+        relay: stage.number === 9 ? fact.relay : null, train: stage.number === 10 ? fact.train : null, outcome: fact.outcome, brokerNoLaunch: fact.brokerNoLaunch === true && scOk };
     } finally {
       this.inflight = null;
     }

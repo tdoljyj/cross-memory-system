@@ -27,6 +27,11 @@ async function engineFixture(t, { answers = {}, stdout = {}, testSha = null } = 
   const run = async argv => {
     runs.push(argv);
     if (argv[0].endsWith('sc.exe')) return { code: 0, stdout: argv[1] === 'qc' ? SC_QC : SC_Q };
+    if (argv[1].endsWith('derive-batch.mjs') && argv.includes('--train-run')) {
+      const at = k => argv[argv.indexOf(k) + 1];
+      return { code: 0, stdout: JSON.stringify({ status: 'RESIDENT_TRAIN_RUN_DERIVED', runKey: at('--train-key'), runId: at('--train-run'), mode: at('--mode'),
+        stage: { number: 10, jobId: '7'.repeat(64), workManifestSha256: 'f'.repeat(64), directory: 'stage-10', runMilliseconds: 300000, linuxWorker: false } }) };
+    }
     if (argv[1].endsWith('derive-batch.mjs')) {
       const id = argv[argv.indexOf('--batch-id') + 1];
       return { code: 0, stdout: JSON.stringify({ status: 'RESIDENT_BATCH_DERIVED', batchKey: KEY, batchId: id, packageSha256: 'c'.repeat(64), ciSourceManifestSha256: 'e'.repeat(64),
@@ -92,4 +97,21 @@ test('stage 2 first proves no push since the bundle; a moved ref ends the stage 
   const r3 = await h.engine.runStage(await h.engine.derive(subject, KEY), stages[1]);
   assert.equal(r3.ok, true);
   assert.deepEqual(h.sent.map(([k]) => k), ['check-refs', 'relay-stage']);
+});
+
+test('stage 10 (quota phase 2 step 3c-1): a train run derived into work\train and run as stage 10; the fact carries the train facts', async t => {
+  const train = { contract: 'clued.independent-ci.train-facts/1', mode: 'shadow', at: '2026-10-21T08:00:00.000Z', wouldDo: 'NO_FRONT', front: null };
+  const f = await engineFixture(t, { stdout: { 10: fact({ stage: 10, outcome: { status: 'TRAIN_FACTS', reason: null, sideEffects: 0, mayHavePublished: false }, train }) } });
+  const r = await f.engine.runTrainStage('shadow');
+  assert.deepEqual([r.ok, r.train, r.outcome.status], [true, train, 'TRAIN_FACTS']);
+  const derive = f.runs.find(a => a.includes('--train-run'));
+  const key = derive[derive.indexOf('--train-key') + 1], runId = derive[derive.indexOf('--train-run') + 1];
+  assert.match(key, /^[0-9a-f]{64}$/);
+  assert.equal(runId.slice(0, 16), key.slice(0, 16));
+  assert.equal(r.runId, runId);
+  assert.equal(derive[derive.indexOf('--out') + 1], path.join(f.root, 'work', 'train', runId));
+  const invoke = f.runs.find(a => a[1].endsWith('invoke-stage.mjs'));
+  assert.deepEqual([invoke[invoke.indexOf('--stage') + 1], invoke[invoke.indexOf('--batch-key') + 1]], ['10', key]);
+  assert.equal(f.sent.length, 0, 'no companion request: Windows only, no relay pump');
+  await assert.rejects(f.engine.runTrainStage('on'), e => e.code === 'RESIDENT_TRAIN_MODE_INVALID');
 });
