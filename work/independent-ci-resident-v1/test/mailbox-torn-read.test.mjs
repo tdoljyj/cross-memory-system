@@ -20,8 +20,9 @@ async function twinBytes(t, clock, write) {
 }
 
 // writeNew one step at a time: the exclusive create, then the bytes in pieces, then sync and close. Tests read between.
-async function slowWrite(file, bytes) {
+async function slowWrite(t, file, bytes) {
   const handle = await fs.open(file, 'wx');
+  t.after(() => handle.close().catch(() => {})); // also when an assertion fails before finish()
   let at = 0;
   return {
     async upTo(end) { await handle.write(bytes, at, end - at, at); at = end; },
@@ -37,7 +38,7 @@ test('service: an answer polled between its create and its last byte is not ther
   const box = await Mailbox.open(await tempRoot(t), clock);
   const req = await box.send('archive-linux', { batchId: BATCH, reason: 'success-close' }, 6 * 60_000);
   const bytes = await twinBytes(t, clock, async twin => { await twin.respond(req, { ok: true, verified: true, directory: DIRECTORY }); return path.join(twin.responses, `${req.requestId}.json`); });
-  const w = await slowWrite(path.join(box.responses, `${req.requestId}.json`), bytes);
+  const w = await slowWrite(t, path.join(box.responses, `${req.requestId}.json`), bytes);
   for (const end of cuts(bytes)) {
     await w.upTo(end);
     assert.equal(await box.poll(req), null, `${end} of ${bytes.length} bytes written`);
@@ -47,13 +48,34 @@ test('service: an answer polled between its create and its last byte is not ther
   assert.deepEqual([answer.ok, answer.verified, answer.directory], [true, true, DIRECTORY]);
 });
 
+test('service: an answer that grows between readBounded\'s size and its read is not there yet either', async t => {
+  const clock = () => T0;
+  const box = await Mailbox.open(await tempRoot(t), clock);
+  const req = await box.send('archive-linux', { batchId: BATCH, reason: 'success-close' }, 6 * 60_000);
+  const bytes = await twinBytes(t, clock, async twin => { await twin.respond(req, { ok: true, verified: true, directory: DIRECTORY }); return path.join(twin.responses, `${req.requestId}.json`); });
+  const w = await slowWrite(t, path.join(box.responses, `${req.requestId}.json`), bytes);
+  await w.upTo(10);
+  // The writer's next bytes land after the reader's handle.stat() and before its handle.read() ('size-changed').
+  const probe = await fs.open(path.join(box.responses, `${req.requestId}.json`), 'r');
+  const proto = Object.getPrototypeOf(probe);
+  await probe.close();
+  const read = proto.read;
+  t.after(() => { proto.read = read; });
+  let grew = false;
+  proto.read = async function (...args) { proto.read = read; await w.upTo(20); grew = true; return read.apply(this, args); };
+  assert.equal(await box.poll(req), null);
+  assert.equal(grew, true);
+  await w.finish();
+  assert.equal((await box.poll(req)).ok, true);
+});
+
 test('service: await polls an unfinished answer again and returns it finished; one unfinished at the deadline is no answer', async t => {
   let now = T0;
   const clock = () => now;
   const box = await Mailbox.open(await tempRoot(t), clock);
   const req = await box.send('archive-linux', { batchId: BATCH, reason: 'success-close' }, 6 * 60_000);
   const bytes = await twinBytes(t, clock, async twin => { await twin.respond(req, { ok: true, verified: true, directory: DIRECTORY }); return path.join(twin.responses, `${req.requestId}.json`); });
-  const w = await slowWrite(path.join(box.responses, `${req.requestId}.json`), bytes);
+  const w = await slowWrite(t, path.join(box.responses, `${req.requestId}.json`), bytes);
   // Each sleep lets the writer go one step further; the first poll already finds the file, empty.
   const steps = [() => w.upTo(1), () => w.upTo(40), () => w.finish()];
   let polls = 0;
@@ -63,7 +85,7 @@ test('service: await polls an unfinished answer again and returns it finished; o
 
   const late = await box.send('archive-linux', { batchId: BATCH, reason: 'success-close' }, 5_000);
   const lateBytes = await twinBytes(t, clock, async twin => { await twin.respond(late, { ok: true, verified: true, directory: DIRECTORY }); return path.join(twin.responses, `${late.requestId}.json`); });
-  const lw = await slowWrite(path.join(box.responses, `${late.requestId}.json`), lateBytes);
+  const lw = await slowWrite(t, path.join(box.responses, `${late.requestId}.json`), lateBytes);
   await lw.upTo(20);
   assert.equal(await box.await(late, async ms => { now += ms; }), null, 'still unfinished at the deadline: the existing no-answer path');
   await lw.finish();
@@ -89,7 +111,7 @@ test('companion: a request polled between its create and its last byte is left o
   const runs = [];
   const run = async args => { runs.push(args); return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) }; };
   const c = new Companion({ cfg, mailbox: box, run, fileExists: async () => false, sleep: async ms => { now += ms; }, clock });
-  const w = await slowWrite(path.join(box.requests, `${sent.requestId}.json`), bytes);
+  const w = await slowWrite(t, path.join(box.requests, `${sent.requestId}.json`), bytes);
   for (const end of cuts(bytes)) {
     await w.upTo(end);
     assert.deepEqual(await box.pending(), [], `${end} of ${bytes.length} bytes written`);
