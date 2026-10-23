@@ -155,3 +155,24 @@ test('a partial UTF-8 sequence is unfinished too; a finished file of the wrong s
   await fs.link(path.join(box.responses, `${other.requestId}.json`), path.join(box.responses, `${linked.requestId}.json`));
   await assert.rejects(box.poll(linked), { code: 'MAILBOX_RESPONSE_REFUSED', detail: 'identity' });
 });
+
+test('complete JSON null is refused on both sides while its unfinished prefixes wait', async t => {
+  const box = await Mailbox.open(await tempRoot(t), () => T0);
+  const req = await box.send('archive-linux', { batchId: BATCH, reason: 'success-close' }, 60_000);
+  const response = path.join(box.responses, `${req.requestId}.json`);
+  const id = '33333333-3333-4333-8333-333333333333';
+  const request = path.join(box.requests, `${id}.json`);
+
+  for (const prefix of ['', 'nu']) {
+    await fs.writeFile(response, prefix);
+    await fs.writeFile(request, prefix);
+    assert.equal(await box.poll(req), null, `unfinished response: ${JSON.stringify(prefix)}`);
+    assert.deepEqual((await box.pending()).filter(p => p.requestId === id), [], `unfinished request: ${JSON.stringify(prefix)}`);
+  }
+
+  // parseBoundedJson already refuses complete null with detail=object, before readFinished's pending sentinel.
+  await fs.writeFile(response, 'null\n');
+  await fs.writeFile(request, 'null\n');
+  await assert.rejects(box.poll(req), { code: 'MAILBOX_RESPONSE_REFUSED', detail: 'object' });
+  assert.deepEqual((await box.pending()).filter(p => p.requestId === id), [{ requestId: id, refused: true }]);
+});
