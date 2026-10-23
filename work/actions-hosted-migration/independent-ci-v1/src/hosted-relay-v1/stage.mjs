@@ -20,7 +20,7 @@
 import { digest } from '../proof.mjs';
 import { attestHead, validateHostedEnvelope } from './attest.mjs';
 import { HEAVY_ROLES, RELAYABLE_ROLES, ROLE_INPUT_PINS, isValidatedRegistry, registryDigestOf, relayFail } from './registry.mjs';
-import { ROLE_ALREADY_ON_GITHUB } from '../published-on-github-v2.mjs';
+import { ROLE_ALREADY_ON_GITHUB, ROLE_ALREADY_ON_GITHUB_REASON } from '../published-on-github-v2.mjs';
 
 export const RELAY_STAGE_CONTRACT = 'clued.independent-ci.hosted-relay-stage/1';
 export const RELAY_CODES = Object.freeze({
@@ -170,14 +170,16 @@ export function createHostedRelayStage({ registry, verifier, publisher, localInp
           continue;
         }
         // Already on GitHub, unknown to this node (C4): nothing was sent and nothing more is published in this batch.
-        if (published?.status === 'BLOCKED' && published.reason === 'role_already_on_github' && published.roleMutex?.held === false && published.sideEffects === 0) {
+        if (published?.status === 'BLOCKED' && published.reason === ROLE_ALREADY_ON_GITHUB_REASON && published.roleMutex?.held === false && published.sideEffects === 0) {
           onGithub = true;
           rows.push(row(role, 'ON_GITHUB', { ...common, reason: RELAY_CODES.ROLE_ALREADY_ON_GITHUB, detail: published.reason }));
           continue;
         }
         // A role found on GitHub in any other shape is never sent to the local path: it HALTs below.
-        if (published?.status === 'BLOCKED' && published.roleMutex?.held === false && published.reason !== 'role_already_on_github') {
-          // Refused before K: nothing was sent and the local path stays open.
+        if (published?.status === 'BLOCKED' && published.roleMutex?.held === false && published.reason !== ROLE_ALREADY_ON_GITHUB_REASON) {
+          // Refused before K: nothing was sent and the local path stays open. This includes a GitHub read-back that
+          // could not be completed (C4): the local publication reads GitHub back again before it publishes, and
+          // refuses (fail closed) if that read is still incomplete.
           const notConfirmed = ['hosted_attestation_not_confirmed', 'hosted_attestation_invalid'].includes(published.reason);
           rows.push(local(role, notConfirmed ? 'RELAY_NOT_ATTESTED_NOT_CONFIRMED' : 'RELAY_NOT_ATTESTED_NOT_ADMITTED', published.reason ?? null, verdict.verdict, common));
           continue;

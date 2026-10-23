@@ -7,14 +7,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
-import { batchJobsV2, claimGeneration } from '../src/job-v2.mjs';
+import { admissionEffectKeyV2, batchJobsV2, claimGeneration } from '../src/job-v2.mjs';
 import { createGitHubChecksPort } from '../src/github.mjs';
 import { EffectJournal } from '../src/effect-journal.mjs';
 import { recordBatchClaim, readBatchClaim } from '../src/batch-claim-v2.mjs';
 import { CHECKS_V2 } from '../src/resident-v2/prepare-record.mjs';
 import { HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, PUBLISHER_APP_ID, ROLE_ALREADY_ON_GITHUB, publishedNames, readPublishedChecks } from '../src/published-on-github-v2.mjs';
 import { createFixtureWorkAdmissionPublisherV2 } from '../src/formal-work-admission-check-v2/publisher.mjs';
-import { createFixtureControlPublisherV2, QUEUE_POLL_MS } from '../src/independent-control-checks-v2/publisher.mjs';
+import { CONTROL_CHECKS_V2, createFixtureControlPublisherV2, QUEUE_POLL_MS } from '../src/independent-control-checks-v2/publisher.mjs';
 import { createHostedRelayStage } from '../src/hosted-relay-v1/stage.mjs';
 import { entryResultOf, planRowOf, relayPlanEnding, validateRelayPlanRows } from '../src/hosted-relay-v1/relay-plan.mjs';
 import { HEAD, BASE, tempDir, admittedFacts } from './resident-v2-fixtures.mjs';
@@ -122,6 +122,19 @@ test('stage 1: kooyumi-work-admission of an earlier attempt and checks of other 
   assert.equal(admission.calls, 2);
 });
 
+test('stage 1: the work admission of this very job (same job id and attempt) from another node counts; that of another attempt does not', async t => {
+  const job = jobsFor()['work-admission'];
+  const own = { ...run(7, 'kooyumi-work-admission'), external_id: `independent-ci:native-work-admission:v2:${job.id}:a1:c12345678:f3:e1` };
+  const github = fakeGithub([own]);
+  const { pub, admission } = await stageOne(t, github);
+  const r = await pub.publish(job);
+  assert.deepEqual([r.status, r.reason, r.publishedChecks, r.sideEffects], ['BLOCKED', HEAD_PUBLISHED_ON_GITHUB, ['kooyumi-work-admission'], 0]);
+  assert.equal(admission.calls, 0);
+  // attempt 2 is another job id: attempt 1's work admission does not stop it
+  const second = await stageOne(t, fakeGithub([own]));
+  assert.equal((await second.pub.publish(jobsFor(2)['work-admission'])).status, 'SETTLED');
+});
+
 test('stage 1: a read-back that is not complete refuses before Native (fail closed), keeping the port code', async t => {
   for (const code of ['incomplete_checks', 'checks_page_limit', 'github_transport_unconfirmed', 'published_checks_unconfirmed']) {
     const github = fakeGithub();
@@ -197,6 +210,14 @@ test('stage R: only a clean refusal before K with zero side effects is ON_GITHUB
   }
 });
 
+test('stage R: a read-back that could not be completed is a refusal before K, so the role stays local (the local path reads again)', async () => {
+  const w = createWorld(); w.allHosted();
+  const { stage } = relayStage(w, { gitleaks: { status: 'BLOCKED', reason: 'incomplete_checks', effectKey: 'e'.repeat(64), sideEffects: 0, productionAuthorized: false, roleMutex: { key: 'k'.repeat(64), held: false } } });
+  const result = await stage.run({ subject: w.subject(), attempt: 1, roles: ['gitleaks'] });
+  assert.deepEqual([result.status, outcomes(result)], ['COMPLETE', { gitleaks: 'LOCAL_REQUIRED:RELAY_NOT_ATTESTED_NOT_ADMITTED' }]);
+  assert.equal(result.roles[0].detail, 'incomplete_checks');
+});
+
 test('relay plan rows: ON_GITHUB rows and the endings the executor acts on', () => {
   const row = (role, outcome, fields = {}) => planRowOf({ role, outcome, ...fields });
   const relayed = role => row(role, 'RELAYED', { checkRunId: 9, externalId: `independent-ci:relay:${role}:${'a'.repeat(12)}:run5:a1`, attestationSha256: 'b'.repeat(64), receipt: 'relay-attested' });
@@ -266,7 +287,7 @@ async function controlPair(t, github) {
     return admittedFacts(job, c, packet, { domain: 'fixture', mergeQueueHead: true, slotUntil: SLOT_UNTIL, batchClaim: claimGeneration(c) });
   } };
   const pub = createFixtureControlPublisherV2({ github, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c), sleep: async () => {} });
-  return { pub, pair: [jobs['control-admission'], jobs['control-merge-slot']], journal };
+  return { pub, pair: [jobs['control-admission'], jobs['control-merge-slot']], journal, batchClaim: claimGeneration(c) };
 }
 
 test('stage 8: a control check already on GitHub from another node ends the pair before either half is published', async t => {
@@ -283,6 +304,24 @@ test('stage 8: a control check already on GitHub from another node ends the pair
   const { pub, pair } = await controlPair(t, github);
   const one = await pub.publishOne(pair[1]);
   assert.deepEqual([one.status, one.reason, one.sideEffects], ['BLOCKED', ROLE_ALREADY_ON_GITHUB, 0]);
+});
+
+test('stage 8: one half this node published, the other already on GitHub: a clean refusal; an unsettled half keeps reconciliation', async t => {
+  const github = fakeGithub();
+  const { pub, pair, journal, batchClaim } = await controlPair(t, github);
+  assert.equal((await pub.publishOne(pair[0])).status, 'SETTLED');
+  github.checks.push(run(70, 'kooyumi-merge-slot'));
+  const r = await pub.publishPair(pair, { waitUntil: Date.now() + 2 * QUEUE_POLL_MS });
+  assert.deepEqual([r.status, r.reason, r.role, r.sideEffects, github.calls.createCheck], ['BLOCKED', ROLE_ALREADY_ON_GITHUB, 'control-merge-slot', 0, 1]);
+  // A half whose write may have happened (journal sent) is never hidden behind a clean code: the existing reconciliation.
+  const g = fakeGithub([run(71, 'kooyumi-merge-slot')]);
+  const u = await controlPair(t, g);
+  const key = admissionEffectKeyV2('independent-control-check/2', u.pair[0], u.batchClaim, CONTROL_CHECKS_V2['control-admission']);
+  await u.journal.begin(key, { note: 'a write that may have happened' });
+  await u.journal.transition(key, 'intent', 'authorized'); await u.journal.transition(key, 'authorized', 'sent');
+  const halted = await u.pub.publishPair(u.pair, { waitUntil: Date.now() + 2 * QUEUE_POLL_MS });
+  assert.equal(halted.status, 'RECONCILIATION_REQUIRED');
+  assert.equal(g.calls.createCheck, 0);
 });
 
 test('stage 8: a pair this node published is known and re-verified on the next try; a read-back that is not complete refuses', async t => {

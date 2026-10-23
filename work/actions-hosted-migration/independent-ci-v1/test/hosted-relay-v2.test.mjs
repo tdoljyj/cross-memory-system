@@ -216,7 +216,8 @@ const REFS = { sourceAcceptanceRef: 'a1a1a1a1-0000-4000-8000-000000000001', host
   ownerAuthorizationRef: 'a1a1a1a1-0000-4000-8000-000000000003', publisherQualificationRef: 'a1a1a1a1-0000-4000-8000-000000000004',
   ciPrincipalQualificationRef: 'a1a1a1a1-0000-4000-8000-000000000005' };
 const BINDING = '11111111-2222-4333-8444-555555555555';
-function v2World({ claimFence = 3 } = {}) {
+// wrapGithub: the GitHub port the v2 publisher sees (the world's own by default).
+function v2World({ claimFence = 3, wrapGithub = g => g } = {}) {
   const w = createWorld();
   const iso = ms => new Date(ms).toISOString();
   const observed = () => ({ claimId: CLAIM, fence: claimFence, epoch: 1, expiresAt: iso(w.state.now + 3_600_000) });
@@ -232,7 +233,7 @@ function v2World({ claimFence = 3 } = {}) {
   const signers = new Map([['fixture-key', { domain: 'fixture', publicKeyPem: signer.publicKeyPem, runtimeId: 'fixture-runtime', qualificationRef: REFS.hostQualificationRef, sourceAcceptanceRef: REFS.sourceAcceptanceRef }]]);
   const batchClaim = { claimId: CLAIM, fence: 3, epoch: 1 };
   const configuredChecks = { gitleaks: { name: 'gitleaks', appId: 5368905 }, trivy: { name: 'trivy', appId: 5368905 }, 'contract-placement': { name: 'contract-placement', appId: 5368905 } };
-  const publisher = (journal, hostedVerifier) => createStagedCheckPublisherV2({ nativeAdmission, authority, github: w.github, journal, signers, configuredChecks,
+  const publisher = (journal, hostedVerifier) => createStagedCheckPublisherV2({ nativeAdmission, authority, github: wrapGithub(w.github), journal, signers, configuredChecks,
     readChangedPaths: job => w.github.readChangedPaths(job), clock: () => w.state.now, domain: 'fixture', hostedVerifier, batchClaim,
     protectedDeployment: { enabled: true, domain: 'fixture', repository: REPO, ciPrincipalBindingId: BINDING, ...REFS } });
   // The installed trivy role pins the same checks bundle the hosted job uses (stage R compares them).
@@ -361,13 +362,28 @@ test('C4 v2 local: a role already on GitHub from another node ends cleanly; what
   assert.deepEqual([refused.status, refused.reason], ['BLOCKED', 'role_already_published_on_head']);
 });
 
+test('C4 v2: a read-back that is not complete refuses before K on both paths (fail closed), and the relay leaves the role local', async t => {
+  const v = v2World({ wrapGithub: g => ({ ...g, async readAppChecks() { throw Object.assign(new Error('incomplete_checks'), { code: 'incomplete_checks' }); } }) });
+  v.w.allHosted();
+  const journal = await journalFor(t);
+  const r = await v.stage(journal).run({ subject: v.subjectOf(), attempt: 1, roles: ['gitleaks'] });
+  assert.deepEqual(rowsOf(r), { gitleaks: 'LOCAL_REQUIRED:RELAY_NOT_ATTESTED_NOT_ADMITTED' });
+  const job = v.localJob('gitleaks');
+  const local = await v.publisher(journal, null).publish({ job, envelope: v.signed(job) });
+  assert.deepEqual([local.status, local.reason, local.sideEffects], ['BLOCKED', 'incomplete_checks', 0]);
+  assert.equal((await readRolePublication(journal, mutexOf('gitleaks'))).holder, null);
+  assert.equal(v.w.state.calls.createCheck ?? 0, 0);
+  assert.equal(outcomeFailureCode({ status: 'BLOCKED', reason: 'incomplete_checks', sideEffects: 0, mayHavePublished: false }, 3), 'PUBLICATION_BLOCKED');
+});
+
 test('C4 stage fact: an ON_GITHUB plan is a completed stage R exactly when the outcome says ROLE_ALREADY_ON_GITHUB', async t => {
   const f = await stageRFixture(t);
   const ok = await invokeR(f, relayBroker(f, { status: 'RELAY_COMPLETE', reason: 'ROLE_ALREADY_ON_GITHUB', sideEffects: 0, relay: [onGithub('gitleaks'), notProcessed('trivy')] }));
   assert.equal(ok.state, 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION');
   assert.deepEqual(ok.relay.map(r => `${r.role}:${r.outcome}`), ['gitleaks:ON_GITHUB', 'trivy:NOT_PROCESSED']);
   for (const [reason, relay] of [[null, [onGithub('gitleaks'), notProcessed('trivy')]], ['ROLE_ALREADY_ON_GITHUB', [relayed('gitleaks'), local('trivy')]],
-    ['ROLE_ALREADY_ON_GITHUB', [onGithub('gitleaks'), relayed('trivy')]], ['ROLE_ALREADY_ON_GITHUB', [notProcessed('gitleaks'), onGithub('trivy')]]]) {
+    ['ROLE_ALREADY_ON_GITHUB', [onGithub('gitleaks'), relayed('trivy')]], ['ROLE_ALREADY_ON_GITHUB', [notProcessed('gitleaks'), onGithub('trivy')]],
+    ['SOMETHING_ELSE', [relayed('gitleaks'), local('trivy')]]]) {
     const g = await stageRFixture(t);
     const bad = await invokeR(g, relayBroker(g, { status: 'RELAY_COMPLETE', reason, sideEffects: 0, relay }));
     assert.equal(bad.failure_code, 'RELAY_PLAN_UNCONFIRMED', JSON.stringify([reason, relay.map(r => r.outcome)]));
@@ -378,6 +394,7 @@ test('C4 stage-fact catalogue: both codes are clean and final, and only on a cle
   for (const c of ['HEAD_PUBLISHED_ON_GITHUB', 'ROLE_ALREADY_ON_GITHUB']) assert.ok(CLEAN_FINAL_CODES.includes(c) && ALL_STAGE_CODES.includes(c) && !UNKNOWN_CODES.includes(c), c);
   const o = (reason, sideEffects = 0) => ({ status: 'BLOCKED', reason, sideEffects, mayHavePublished: sideEffects !== 0 });
   assert.equal(outcomeFailureCode(o('HEAD_PUBLISHED_ON_GITHUB'), 1), 'HEAD_PUBLISHED_ON_GITHUB');
+  assert.equal(outcomeFailureCode(o('HEAD_PUBLISHED_ON_GITHUB'), 3), 'PUBLICATION_BLOCKED', 'only stage 1 ends a head this way');
   for (const stage of [3, 5, 7]) assert.equal(outcomeFailureCode(o('role_already_on_github'), stage), 'ROLE_ALREADY_ON_GITHUB');
   assert.equal(outcomeFailureCode(o('ROLE_ALREADY_ON_GITHUB'), 8), 'ROLE_ALREADY_ON_GITHUB');
   assert.equal(outcomeFailureCode(o('role_already_on_github', 1), 3), 'PUBLICATION_UNCERTAIN', 'a write may have happened: never clean');

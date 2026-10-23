@@ -12,7 +12,7 @@ import { executedHeadKey } from '../src/executed-heads.mjs';
 import { describe } from '../src/pr-status.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
 import { HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB } from '../../actions-hosted-migration/independent-ci-v1/src/published-on-github-v2.mjs';
-import { relayPlanEnding } from '../../actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/relay-plan.mjs';
+import { relayPlanEnding, validateRelayPlanRows } from '../../actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/relay-plan.mjs';
 import { BASE, CLEAN_PROOF, HEAD, RELAY_ON, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, localRow, rawPolicy, relayedRow, triggerBytes } from './helpers.mjs';
 
 const subject = (o = {}) => ({ repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 1, ...o });
@@ -37,7 +37,7 @@ test('both codes are clean and final: burned, a new commit runs the PR again, th
   }
 });
 
-test('stage R rows: ON_GITHUB, then only roles not processed or never relayable; the same endings as the Source', () => {
+test('stage R rows: ON_GITHUB, then only roles not processed or never relayable', () => {
   const plan = (rows, candidates = rows.map(r => r.role)) => relayPlanFromRows(rows, candidates);
   const a = plan([onGithubRow('gitleaks'), notProcessedRow('trivy')]);
   assert.deepEqual([a.relayed, a.local, a.onGithub.role], [[], [], 'gitleaks']);
@@ -51,11 +51,32 @@ test('stage R rows: ON_GITHUB, then only roles not processed or never relayable;
     [{ ...notProcessedRow('gitleaks'), reason: 'X' }, onGithubRow('trivy')],
   ];
   for (const rows of bad) assert.equal(plan(rows), null, JSON.stringify(rows.map(r => r.outcome)));
-  // Mirror: the resident acts on exactly the plans the Source writes as completed (relay-plan.mjs#relayPlanEnding).
-  for (const rows of [[onGithubRow('gitleaks'), notProcessedRow('trivy')], [relayedRow('gitleaks'), onGithubRow('trivy')], [relayedRow('gitleaks'), localRow('trivy')],
-    [notProcessedRow('gitleaks')], [onGithubRow('gitleaks'), onGithubRow('trivy')], [onGithubRow('gitleaks'), relayedRow('trivy')], [onGithubRow('gitleaks'), localRow('trivy')]]) {
-    assert.equal(plan(rows) !== null, relayPlanEnding(rows) !== null, JSON.stringify(rows.map(r => r.outcome)));
+});
+
+test('stage R rows: the resident acts on exactly the plans the Source completes, with the same ending (every row set)', () => {
+  // Every candidate order of one to three heavy roles, every row kind per role (well formed or not): the resident's
+  // reading (relayPlanFromRows) and the Source's (validateRelayPlanRows, then relayPlanEnding) give the same ending.
+  const haltRow = role => ({ ...notProcessedRow(role), outcome: 'HALT', reason: 'RELAY_PUBLICATION_UNCERTAIN' });
+  const kinds = [relayedRow, r => localRow(r), r => localRow(r, 'RELAY_ROLE_NOT_RELAYABLE'), r => localRow(r, 'RELAY_NOT_ATTESTED_BILLING_REFUSED'), onGithubRow, notProcessedRow, haltRow];
+  const roles = ['gitleaks', 'trivy', 'contract-placement'];
+  const orders = [];
+  const permute = (left, acc) => { if (acc.length) orders.push(acc); for (const r of left) permute(left.filter(x => x !== r), [...acc, r]); };
+  permute(roles, []);
+  let compared = 0;
+  for (const candidates of orders) {
+    const walk = (i, rows) => {
+      if (i === candidates.length) {
+        const mine = relayPlanFromRows(rows, candidates);
+        const theirs = validateRelayPlanRows(rows, candidates) ? relayPlanEnding(rows) : null;
+        assert.equal(mine === null ? null : mine.onGithub ? 'ON_GITHUB' : 'COMPLETE', theirs, JSON.stringify([candidates, rows.map(r => `${r.outcome}:${r.reason}`)]));
+        compared++;
+        return;
+      }
+      for (const k of kinds) walk(i + 1, [...rows, k(candidates[i])]);
+    };
+    walk(0, []);
   }
+  assert.ok(compared > 2000, `${compared} row sets`);
 });
 
 test('stage 1 HEAD_PUBLISHED_ON_GITHUB: burned, recorded as executed, no attempt 2, the same head never runs again', async t => {
@@ -80,11 +101,18 @@ test('stage 1 HEAD_PUBLISHED_ON_GITHUB: burned, recorded as executed, no attempt
   const again = await f.exec.tick();
   assert.equal(again.reason, 'HEAD_ALREADY_EXECUTED_NO_RETRY');
   assert.deepEqual(stagesRun(engine), [1]);
+  // A record that cannot be written ends the batch as EXECUTED_HEAD_RECORD_UNCONFIRMED (burned, clean), never silently.
+  const g = await executorFixture(t, { engine: fakeEngine({ stages: { 1: failed(HEAD_PUBLISHED_ON_GITHUB) } }) });
+  g.executedHeads.record = async () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); };
+  await g.drop(triggerBytes());
+  const r2 = await g.exec.tick();
+  assert.deepEqual([r2.state, r2.failureCode], ['FAILED_CLEAN', 'EXECUTED_HEAD_RECORD_UNCONFIRMED']);
+  assert.equal(await g.ledger.headBurned(headKey(subject())), true);
 });
 
-test('stage 3 ROLE_ALREADY_ON_GITHUB: clean final, no HALT, nothing after it', async t => {
-  for (const [stage, ran] of [[3, [1, 2, 3]], [5, [1, 2, 3, 4, 5]], [7, [1, 2, 3, 4, 5, 6, 7]]]) {
-    const engine = fakeEngine({ stages: { [stage]: failed(ROLE_ALREADY_ON_GITHUB, 'role_already_on_github') } });
+test('stages 3, 5, 7 and 8 ROLE_ALREADY_ON_GITHUB: clean final, no HALT, no parking, nothing after it', async t => {
+  for (const [stage, ran] of [[3, [1, 2, 3]], [5, [1, 2, 3, 4, 5]], [7, [1, 2, 3, 4, 5, 6, 7]], [8, [1, 2, 3, 4, 5, 6, 7, 8]]]) {
+    const engine = fakeEngine({ stages: { [stage]: failed(ROLE_ALREADY_ON_GITHUB, stage === 8 ? ROLE_ALREADY_ON_GITHUB : 'role_already_on_github') } });
     const f = await executorFixture(t, { engine });
     await f.drop(triggerBytes());
     const r = await f.exec.tick();
@@ -108,6 +136,9 @@ test('stage R ON_GITHUB: the batch ends cleanly, no 25-plan, no workspace, no lo
     assert.deepEqual([s.outcome, !!s.planIntent, s.plan], ['FAILED_CLEAN', true, null]);
     assert.equal(await f.ledger.halted(), null);
     assert.equal(await f.executedHeads.published(subject()), true);
+    // A role relayed before the ON_GITHUB row keeps its relay-attested receipt.
+    const attested = (await f.receipts.entries()).filter(e => e.type === 'relay-attested').length;
+    assert.equal(attested, rows(['gitleaks', 'trivy']).filter(x => x.outcome === 'RELAYED').length);
   }
 });
 

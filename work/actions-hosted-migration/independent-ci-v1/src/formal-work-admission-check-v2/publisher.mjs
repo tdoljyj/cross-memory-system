@@ -23,13 +23,15 @@
 // published, the head's complete check-run inventory of this App is read on GitHub (published-on-github-v2.mjs). A head
 // that already carries a role or control check, published by another node, another Source install or another batch,
 // ends with HEAD_PUBLISHED_ON_GITHUB: nothing evaluated, nothing published, never reaching the Task's CI meter, never safe
-// to re-run (a new commit runs the PR again). A batch that already recorded its claim is this node's own and keeps its
-// path. A read that is not complete refuses (fail closed).
+// to re-run (a new commit runs the PR again). So does this very job's own kooyumi-work-admission (same job id and attempt)
+// published by another node or install: a node taking over after the active one ran stage 1 would otherwise post a second
+// check of the same identity and HALT on the read-back. A batch that already recorded its claim is this node's own and
+// keeps its path. A read that is not complete refuses (fail closed).
 import { randomUUID } from 'node:crypto';
 import { digest } from '../proof.mjs';
 import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, MAX_ATTEMPT_V2 } from '../job-v2.mjs';
 import { fullAdmissionFailureV2, admittedFactsMatchJobV2 } from '../full-admission-v2.mjs';
-import { HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, publishedNames } from '../published-on-github-v2.mjs';
+import { HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, readPublishedChecks } from '../published-on-github-v2.mjs';
 
 export const ROLE = 'work-admission', CHECK_NAME = 'kooyumi-work-admission', APP_ID = 5368905, REPO = 'tdoljyj/cross-memory-system';
 const DEFINITION = Object.freeze({ name: CHECK_NAME, appId: APP_ID });
@@ -134,7 +136,10 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         // C4: GitHub is the shared record of what was published on this head, by any node or install.
         step = 'published-on-github';
         assertLive();
-        const published = await publishedNames(github, job.headSha, PUBLISHED_ROLE_CHECK_NAMES, APP_ID);
+        const sameJob = `${PREFIX}:v2:${job.id}:a${job.attempt}:`;
+        const published = [...new Set((await readPublishedChecks(github, job.headSha, APP_ID))
+          .filter(c => PUBLISHED_ROLE_CHECK_NAMES.includes(c.name) || (c.name === CHECK_NAME && typeof c.external_id === 'string' && c.external_id.startsWith(sameJob)))
+          .map(c => c.name))].sort();
         if (published.length) throw Object.assign(new Error(HEAD_PUBLISHED_ON_GITHUB), { code: HEAD_PUBLISHED_ON_GITHUB, publishedChecks: published });
       }
       step = 'boundary';
