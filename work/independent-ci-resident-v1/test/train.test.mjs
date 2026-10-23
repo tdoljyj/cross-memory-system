@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { trainDue, trainPageLine, trainSummary, WOULD_DO } from '../src/train.mjs';
-import { executorFixture, fakeEngine, rawPolicy } from './helpers.mjs';
+import { executorFixture, fakeEngine, rawPolicy, triggerBytes } from './helpers.mjs';
 import { WOULD_DO as SOURCE_WOULD_DO, TRAIN_FACTS_CONTRACT } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-facts.mjs';
 
 const MIN = 60_000, NOW = Date.parse('2026-10-23T12:00:00Z');
@@ -38,7 +38,7 @@ test('the summary keeps only what status and the PR page show; the page line is 
 });
 
 // ---- the executor's stage 10 (DESIGN §22.3) ----
-const shadowPolicy = (train = {}) => rawPolicy({ train: { enabled: 'shadow', nonFrontRuns: true, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, ...train } });
+const shadowPolicy = (train = {}, top = {}) => rawPolicy({ train: { enabled: 'shadow', nonFrontRuns: true, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, ...train }, ...top });
 const ofType = async (receipts, type) => (await receipts.latest([type], 1000)).map(e => e.value.body);
 const trainCalls = engine => engine.calls.filter(c => c[0] === 'stage' && c[1] === 10);
 
@@ -82,6 +82,7 @@ test('executor: stage 10 never runs with the train off, while PAUSED, or past th
 
 test('executor: a failed stage 10 is only a receipt; an unproven cleanup or an exception HALTs', async t => {
   const failed = await executorFixture(t, { policy: shadowPolicy(), engine: fakeEngine({ train: () => ({ ok: false, code: 'TRAIN_STAGE_REFUSED', proof: { windowsTreeZero: true, serviceOriginalStopped: true } }) }) });
+  // (TRAIN_STAGE_REFUSED is the engine's own refusal before anything was asked of the broker)
   assert.equal((await failed.exec.tick()).state, 'IDLE');
   assert.deepEqual((await ofType(failed.receipts, 'train-run')).map(b => [b.ok, b.failureCode, b.runId]), [[false, 'TRAIN_STAGE_REFUSED', null]]);
   assert.equal(await failed.ledger.halted(), null);
@@ -148,4 +149,67 @@ test('the status snapshot carries the train mode and the newest summary; the com
   const read = parseStatus(Buffer.from(JSON.stringify(b.snapshot()))).train;
   assert.deepEqual([read.enabled, read.last.wouldDo, read.last.at, read.last.onDuty], ['shadow', 'NOT_ON_DUTY', NOW, false]);
   assert.deepEqual(parseStatus(Buffer.from(JSON.stringify({ ...b.snapshot(), train: { enabled: 'sideways', last: { wouldDo: 'x' } } }))).train, { enabled: null, last: null });
+});
+
+test('executor (review of 3c-1): an intake pause holds stage 10 also with an empty queue; the install authority keeps its margin', async t => {
+  const f = await executorFixture(t, { policy: shadowPolicy() });
+  const { intakePauseRequest } = await import('../src/intake-pause.mjs');
+  await f.drop(JSON.stringify(intakePauseRequest({ minutes: 30, reason: 'planned switch' }, f.clock)), 'requests');
+  assert.equal((await f.exec.tick()).state, 'IDLE');
+  assert.deepEqual(trainCalls(f.engine), [], 'held by the intake pause with an empty queue (M1)');
+  // the install authority: stage 10's cap plus the helper's margin (stageMarginMs) must fit before validUntil (m2)
+  const cap = 300_000, margin = 180_000, at = Date.parse('2026-10-20T12:00:00Z');
+  const tight = await executorFixture(t, { policy: shadowPolicy({}, { validUntil: new Date(at + cap + margin - 1).toISOString() }) });
+  await tight.exec.tick();
+  assert.deepEqual(trainCalls(tight.engine), []);
+  const room = await executorFixture(t, { policy: shadowPolicy({}, { validUntil: new Date(at + cap + margin + 60_000).toISOString() }) });
+  await room.exec.tick();
+  assert.equal(trainCalls(room.engine).length, 1);
+});
+
+test('executor (review of 3c-1): a side effect, an unknown failure or a broker conflict HALTs; a clean BLOCKED does not', async t => {
+  const proof = { windowsTreeZero: true, serviceOriginalStopped: true };
+  const outcome = o => ({ status: 'BLOCKED', reason: 'github_http_502', sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: null, safeToRerun: true, ...o });
+  const cases = [
+    [{ ok: false, code: 'PUBLICATION_BLOCKED', proof, outcome: outcome() }, null],
+    [{ ok: false, code: 'PUBLICATION_UNCERTAIN', proof, outcome: outcome({ status: 'UNCERTAIN', sideEffects: 1, mayHavePublished: true }) }, 'TRAIN_STAGE_OUTCOME_UNCONFIRMED'],
+    [{ ok: false, code: 'BROKER_BUSY', proof }, 'TRAIN_STAGE_OUTCOME_UNCONFIRMED'],
+    [{ ok: false, code: 'STAGE_OUTCOME_MISSING', proof }, 'TRAIN_STAGE_OUTCOME_UNCONFIRMED'],
+    [{ ok: true, runId: 'x', proof, outcome: outcome({ status: 'TRAIN_FACTS', sideEffects: 1 }), train: null }, 'TRAIN_STAGE_OUTCOME_UNCONFIRMED'],
+  ];
+  for (const [answer, halt] of cases) {
+    const f = await executorFixture(t, { policy: shadowPolicy(), engine: fakeEngine({ train: () => answer }) });
+    const r = await f.exec.tick();
+    assert.equal((await f.ledger.halted())?.value?.code ?? null, halt, answer.code ?? 'facts with a side effect');
+    if (halt) assert.deepEqual(r, { state: 'HALTED', failureCode: halt });
+    assert.equal((await ofType(f.receipts, 'train-run')).length, 1, 'the run is closed in every case');
+  }
+});
+
+test('executor (review of 3c-1): the HALT comes before the closing receipt; an unreadable chain holds every batch, then HALTs', async t => {
+  const f = await executorFixture(t, { policy: shadowPolicy(), engine: fakeEngine({ train: () => ({ ok: false, code: 'X', proof: { windowsTreeZero: false, serviceOriginalStopped: true } }) }) });
+  const append = f.receipts.append.bind(f.receipts);
+  f.receipts.append = async (type, body) => { if (type === 'train-run') throw new Error('disk full'); return append(type, body); };
+  await assert.rejects(f.exec.tick());
+  assert.equal((await f.ledger.halted()).value.code, 'TRAIN_STAGE_CLEANUP_UNCONFIRMED', 'latched although the receipt failed');
+  // the chain cannot be read: batches wait (DEFERRED), for at most BACKFILL_PENDING_MAX_MS, then HALT
+  const { BACKFILL_PENDING_MAX_MS } = await import('../src/executor.mjs');
+  const g = await executorFixture(t, { policy: shadowPolicy() });
+  g.receipts.latest = async () => { throw new Error('EBUSY'); };
+  assert.deepEqual(await g.exec.tick(), { state: 'DEFERRED', reason: 'TRAIN_RECEIPTS_PENDING' });
+  await g.drop(triggerBytes());
+  assert.equal((await g.exec.tick()).reason, 'TRAIN_RECEIPTS_PENDING', 'no batch either');
+  assert.deepEqual(g.engine.calls.filter(c => c[0] === 'derive'), []);
+  g.advance(BACKFILL_PENDING_MAX_MS);
+  assert.deepEqual(await g.exec.tick(), { state: 'HALTED', failureCode: 'TRAIN_RECEIPTS_UNREADABLE' });
+});
+
+test('executor (review of 3c-1): the status says RUNNING TRAIN_MAINTENANCE while stage 10 runs', async t => {
+  const { StatusBoard } = await import('../src/status.mjs');
+  const status = new StatusBoard({ clock: () => Date.parse('2026-10-20T12:00:00Z'), pid: 1 });
+  let during = null;
+  const f = await executorFixture(t, { policy: shadowPolicy(), status, engine: fakeEngine({ train: mode => { during = { ...status.snapshot().executor }; return fakeEngine().runTrainStage(mode); } }) });
+  await f.exec.tick();
+  assert.deepEqual([during.state, during.reason], ['RUNNING', 'TRAIN_MAINTENANCE']);
+  assert.equal(status.snapshot().executor.state, 'IDLE');
 });

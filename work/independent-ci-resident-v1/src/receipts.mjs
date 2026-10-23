@@ -33,7 +33,7 @@ export class ReceiptChain {
   }
 
   // The newest receipts of the given types (newest last), at most `limit`, with their contents (stage 10's
-  // bookkeeping, executor.mjs#trainBook). Reads only the picked files.
+  // bookkeeping, executor.mjs#trainRecover). Reads only the picked files.
   async latest(types, limit) {
     check(Number.isSafeInteger(limit) && limit > 0, 'RECEIPT_LIMIT_INVALID');
     const picked = (await this.entries()).filter(e => types.includes(e.type)).slice(-limit);

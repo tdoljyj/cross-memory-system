@@ -56,8 +56,9 @@ export async function backstopPass({ readRules, trainMode, writePause, notify, m
   const now = clock(), key = `backstop:${d.notify}`, last = Number(await memory.get(key)) || 0;
   if (now - last < DAY) return { ...d, acted: false };
   if (d.pause) await writePause(`ruleset-backstop: ${d.notify}`);
-  await notify(d.notify, backstopText(d.notify));
+  // Remembered before the notification: a toast that fails never makes every poll write another pause request.
   await memory.set(key, now);
+  try { await notify(d.notify, backstopText(d.notify)); } catch { /* the pause request is written; the toast is advisory */ }
   return { ...d, acted: true };
 }
 

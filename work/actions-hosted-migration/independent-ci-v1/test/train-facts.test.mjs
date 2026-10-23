@@ -108,7 +108,7 @@ test('the shadow run reads only and says what it would do', async () => {
   const f = await readTrainFacts({ job, github, native: native({ onDuty: true, holders: [parseHolders(200, { status: 'ok', repository: REPO, holders: [holderRow()] }, REPO).holders[0]] }), ledger, clock: () => Date.parse('2026-10-23T05:01:00Z') });
   assert.deepEqual([f.wouldDo, f.mainSha, f.rules.strict, f.front.pr, f.front.headSha, f.front.testMergeSha, f.front.testMergeParentsOk, f.wouldRevokeCount], ['OPEN_FRONT_BATCH', T, true, 910, H, S, true, 1]);
   assert.deepEqual(f.wouldRevoke, [{ headSha: OLD, checkRunId: 5, pr: 900, phase: 'settled' }]);
-  assert.ok(github.reads.every(r => !r.startsWith('write')));
+  assert.deepEqual(github.reads, ['branch:main', 'rules', 'pull:910', 'compare:2', 'commit:3', 'checks:2', 'compare:9'], 'reads only, in this order');
   // not on duty: nothing else is read
   const idle = fakeGithub();
   const off = await readTrainFacts({ job, github: idle, native: native({ onDuty: false, holders: [] }), ledger, clock: () => 0 });
@@ -138,4 +138,41 @@ test('shadow records are create-only and validated; the stage-10 outcome carries
   assert.equal(bad.train, null);
   const other = await writeOutcome({ receiptsRoot: receipts, nonce: 'c'.repeat(32), plan: { stage: 8, entryRole: 'control-checks' }, jobIds: [], result: { status: 'SETTLED', sideEffects: 2, train: f } });
   assert.equal(other.train, null);
+});
+
+// The production ports (github.mjs, merge-slot-native.mjs) under a fetch that answers only reads: every GitHub call is a
+// GET except the installation-token mint, and the one KooYomi call is the read-only holders RPC (review of 3c-1, m6).
+test('wiring: the real GitHub and KooYomi ports, a fetch that refuses every write', async () => {
+  const { generateKeyPairSync } = await import('node:crypto');
+  const { createGitHubChecksPort } = await import('../src/github.mjs');
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const now = Date.parse('2026-10-23T05:01:00Z'), seen = [];
+  const reply = body => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
+  const base = `/repos/${REPO}`;
+  const fetchImpl = async (url, options = {}) => {
+    const u = new URL(url), method = options.method ?? 'GET', where = `${method} ${u.host}${u.pathname}`;
+    seen.push(where);
+    if (u.host === 'x.supabase.co') {
+      assert.equal(`${method} ${u.pathname}`, `POST /rest/v1/rpc/${HOLDERS_RPC}`);
+      return { status: 200, json: async () => ({ status: 'ok', repository: REPO, holders: [holderRow()] }) };
+    }
+    assert.equal(u.host, 'api.github.com', where);
+    if (method === 'POST' && u.pathname === '/app/installations/99/access_tokens')
+      return reply({ token: 't', expires_at: new Date(now + 3_600_000).toISOString(), permissions: { checks: 'write', contents: 'read', pull_requests: 'read', metadata: 'read' } });
+    assert.equal(method, 'GET', `a write in shadow mode: ${where}`);
+    if (u.pathname === '/app') return reply({ id: 77 });
+    if (u.pathname === '/installation/repositories') return reply({ total_count: 1, repositories: [{ id: 41, full_name: REPO }] });
+    if (u.pathname === `${base}/branches/main`) return reply({ name: 'main', commit: { sha: T } });
+    if (u.pathname === `${base}/rules/branches/main`) return reply(rules(true));
+    if (u.pathname === `${base}/pulls/910`) return reply({ number: 910, ...openPull() });
+    if (u.pathname === `${base}/compare/${T}...${H}`) return reply({ status: 'ahead', ahead_by: 1, behind_by: 0, base_commit: { sha: T }, merge_base_commit: { sha: T } });
+    if (u.pathname === `${base}/git/commits/${S}`) return reply({ sha: S, tree: { sha: TREE }, parents: [{ sha: T }, { sha: H }] });
+    if (u.pathname === `${base}/commits/${H}/check-runs`) return reply({ total_count: 0, check_runs: [] });
+    throw new Error(`unexpected ${where}`);
+  };
+  const github = createGitHubChecksPort({ repository: REPO, repositoryId: 41, appId: 77, installationId: 99, includeModeRead: true, privateKeyProvider: async () => privateKey, fetchImpl, clock: () => now });
+  const native = createMergeSlotNative({ config: { supabaseUrl: 'https://x.supabase.co', publishableKey: 'pk', scope: 'project:p', repository: REPO }, nativeToken: 'clued_bnd_secret', fetchImpl });
+  const f = await readTrainFacts({ job, github, native, ledger: null, clock: () => now });
+  assert.deepEqual([f.onDuty, f.front.pr, f.front.headSha, f.mainSha, f.wouldDo], [true, 910, H, T, 'OPEN_FRONT_BATCH']);
+  assert.ok(seen.every(w => w.startsWith('GET ') || w === 'POST api.github.com/app/installations/99/access_tokens' || w === `POST x.supabase.co/rest/v1/rpc/${HOLDERS_RPC}`), seen.join('\n'));
 });

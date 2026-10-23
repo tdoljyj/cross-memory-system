@@ -108,6 +108,8 @@ export function validatePolicy(p) {
   check(int(p.companion.heartbeatMaxAgeMs, 5_000, 600_000), 'POLICY_HEARTBEAT_INVALID');
   check(Array.isArray(p.stageRunMilliseconds) && p.stageRunMilliseconds.length === FIXED_STAGES.length
     && p.stageRunMilliseconds.every(ms => int(ms, 60_000, 5_400_000)), 'POLICY_STAGE_TIMES_INVALID');
+  // Stage 10's cap is fixed: the C# boundary and SwapBroker allow exactly 5 minutes (independent review of 3c-1, m2).
+  check(p.stageRunMilliseconds[TRAIN_STAGE - 1] === 300_000, 'POLICY_STAGE_TIMES_INVALID');
   exactKeys(p.linux, ['distribution', 'workerUnit', 'wsprepUnit', 'archiveUnit'], 'POLICY_LINUX_KEYS_INVALID');
   check(p.linux.distribution === 'Ubuntu-24.04', 'POLICY_DISTRIBUTION_FIXED');
   check(p.linux.workerUnit === 'clued-ci-worker@.service' && p.linux.wsprepUnit === 'clued-ci-wsprep@.service'
