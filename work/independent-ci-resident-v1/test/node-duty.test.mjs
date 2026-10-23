@@ -3,7 +3,7 @@
 // commits, only the Owner's statuses in the exact template, the lock and its three releases, the restart, the refresh.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DUTY_WINDOW_MS, HOLDER_DUAL, LEGACY_CONTEXT, NodeDuty, RELEASE_READ_MS, STALL_NOTICE_MS, STANDBY_CONTEXT, UNCLAIMED_MS, WORD, dualText, freshMemory, handedText,
+import { DUTY_WINDOW_MS, HOLDER_DUAL, LEGACY_CONTEXT, NodeDuty, validMemory, RELEASE_READ_MS, STALL_NOTICE_MS, STANDBY_CONTEXT, UNCLAIMED_MS, WORD, dualText, freshMemory, handedText,
   nodeContext, nodeOf, onDutyElsewhere, othersOnHead, ownAny, ownLive, parseDutyStatus, stallCode, stalledText, standbyText, statusesArgv, unclaimedReason } from '../src/node-duty.mjs';
 import { INTAKE_PAUSE_CONTRACT, INTAKE_RESUME_CONTRACT } from '../src/intake-pause.mjs';
 
@@ -53,7 +53,7 @@ test('own commits only: queued or running is live; outcomes and stopped rows are
   assert.equal(ownLive(s, { pr: 1, headSha: H(9) }), false, 'another commit of the same PR is not its');
 });
 
-test('another node\'s status counts only from the Owner\'s account, in its own context, in the exact template', () => {
+test('another node\'s status counts only from the Owner\'s account, in its own context; a duty word only in the exact template', () => {
   const ok = gh('company-01', '当班：排队第 1 位，预计 06:20Z 开始', NOW - MIN);
   assert.deepEqual(parseDutyStatus(ok, OWNER), { node: 'company-01', word: WORD.ON, code: null, at: NOW - MIN });
   assert.deepEqual(parseDutyStatus(gh('company-01', '停摆（BREAKER_OPEN）：执行器熔断中', NOW), OWNER).code, 'BREAKER_OPEN');
@@ -61,13 +61,29 @@ test('another node\'s status counts only from the Owner\'s account, in its own c
     ['another writer (GitHub Actions)', { ...ok, login: 'github-actions[bot]' }],
     ['the legacy context', { ...ok, context: LEGACY_CONTEXT }],
     ['a look-alike context', { ...ok, context: 'resident-queue/company-01' }],
-    ['no word', { ...ok, description: '排队第 1 位' }],
+    ['a name ending in -', { ...ok, context: 'resident-queue/company- (info only)' }],
+    ['no time', { ...ok, created_at: 'soon' }],
+  ]) assert.equal(parseDutyStatus(s, OWNER), null, name);
+  // the node's own statuses that are no duty word: they count as its latest word, which is no duty (review M1)
+  for (const [name, s] of [
+    ['a result', { ...ok, description: '已完成：常驻执行器跑完八段，检查已发布' }],
     ['a word inside', { ...ok, description: '提示：当班：x' }],
     ['a lower-case code', { ...ok, description: '停摆（halt）：x' }],
     ['too long', { ...ok, description: `当班：${'x'.repeat(140)}` }],
-    ['no time', { ...ok, created_at: 'soon' }],
-  ]) assert.equal(parseDutyStatus(s, OWNER), null, name);
+  ]) assert.deepEqual(parseDutyStatus(s, OWNER), { node: 'company-01', word: null, code: null, at: NOW - MIN }, name);
   assert.equal(parseDutyStatus(ok, ''), null, 'an unknown Owner login reads nothing');
+});
+
+test('review M1: a result written after 当班 is the latest word: no duty, no lock', async () => {
+  const list = [gh('company-01', '已完成：常驻执行器跑完八段，检查已发布', NOW - MIN), gh('company-01', '当班：运行中：第 8 段（准入复核与合并位）', NOW - 6 * MIN)];
+  assert.equal(onDutyElsewhere(othersOnHead(list, 'turing', OWNER), NOW), null);
+  const t = duty({ statuses: { [H(1)]: list } });
+  t.memory.mode = 'STANDBY';
+  assert.equal((await t.d.prepare({ status: fresh({ node: known('ACTIVE') }), pulls: [pull(1)], now: NOW })).lock, null);
+  // a result also ends a run of 停摆
+  const run = othersOnHead([gh('company-01', '停摆（X_Y）：执行器已停机，等 Owner 复位', NOW - MIN), gh('company-01', '失败（A_B）：此提交不再运行，请推新提交', NOW - 5 * MIN),
+    gh('company-01', '停摆（X_Y）：执行器已停机，等 Owner 复位', NOW - 20 * MIN)], 'turing', OWNER);
+  assert.equal(run.get('company-01').stalledSince, NOW - MIN);
 });
 
 test('the latest status of each other node per head; its run of 停摆; own statuses are not others', () => {
@@ -249,6 +265,9 @@ test('review N1: a lock is released only when this node lost the role, the other
   reset.advance(MIN);
   await reset.d.prepare({ status: fresh({ node: known('ACTIVE'), writtenAt: reset.now(), intakePause: { until, holders: [{ holder: HOLDER_DUAL, since: NOW, until }] } }), pulls: [], now: reset.now() });
   reset.advance(MIN);
+  const once = await reset.d.prepare({ status: fresh({ node: known('ACTIVE'), writtenAt: reset.now() }), pulls: [], now: reset.now() });
+  assert.ok(once.lock, 'seen once: not yet (review M2)');
+  reset.advance(MIN);
   const r = await reset.d.prepare({ status: fresh({ node: known('ACTIVE'), writtenAt: reset.now() }), pulls: [], now: reset.now() });
   assert.equal(r.lock, null);
   assert.equal(reset.requests.length, 1, 'the Owner lifted the hold: nothing more to write');
@@ -258,23 +277,29 @@ test('review N1: a lock is released only when this node lost the role, the other
 test('STANDBY: own 当班 and 双活停机 of the last 30 minutes become 已交班, results stay (NIT 2); a restart turns them 停摆 (NIT 4)', async () => {
   const own = 'resident-queue/turing (info only)';
   const posted = {
-    [H(1)]: { context: own, kind: 'duty', at: iso(NOW - 10 * MIN) },
-    [H(2)]: { context: own, kind: 'dual', at: iso(NOW - 29 * MIN) },
-    [H(3)]: { context: own, kind: 'result', at: iso(NOW - MIN) },
-    [H(4)]: { context: own, kind: 'duty', at: iso(NOW - 31 * MIN) },
-    [H(5)]: { context: 'resident-queue (info only)', kind: 'duty', at: iso(NOW - MIN) },
+    [H(1)]: { context: own, kind: 'duty', at: iso(NOW - 10 * MIN), dutyAt: iso(NOW - 10 * MIN) },
+    [H(2)]: { context: own, kind: 'dual', at: iso(NOW - 29 * MIN), dutyAt: iso(NOW - 29 * MIN) },
+    [H(3)]: { context: own, kind: 'result', state: 'failure', description: '失败（A_B）：此提交不再运行，请推新提交', at: iso(NOW - MIN), dutyAt: iso(NOW - 5 * MIN) },
+    [H(4)]: { context: own, kind: 'duty', at: iso(NOW - 31 * MIN), dutyAt: iso(NOW - 31 * MIN) },
+    [H(5)]: { context: 'resident-queue (info only)', kind: 'duty', at: iso(NOW - MIN), dutyAt: iso(NOW - MIN) },
+    [H(6)]: { context: own, kind: 'result', at: iso(NOW - MIN), dutyAt: null },
   };
   const standby = duty();
-  await standby.d.prepare({ status: fresh({ node: known('STANDBY') }), pulls: [], now: NOW });
+  await standby.d.prepare({ status: fresh({ node: known('STANDBY') }), pulls: [], now: NOW, posted });
   const out = await standby.d.extra({ posted, described: new Set(), pulls: [], now: NOW });
-  assert.deepEqual(out.map(o => [o.headSha, o.want.kind]), [[H(1), 'handed'], [H(2), 'handed']]);
+  assert.deepEqual(out.map(o => [o.headSha, o.want.kind]), [[H(1), 'handed'], [H(2), 'handed'], [H(3), 'handed']]);
+  // review M3: a result written after the node's 当班 stays readable after the word (NIT 2: never washed out)
+  assert.deepEqual([out[2].want.state, out[2].want.description], ['failure', '已交班：失败（A_B）：此提交不再运行，请推新提交']);
+  // review m5: owed until written, also when the window has passed by then
+  assert.deepEqual(Object.keys((await (async () => { standby.advance(60 * MIN); await standby.d.prepare({ status: fresh({ node: known('STANDBY') }), pulls: [], now: standby.now(), posted }); return standby.memory.handover; })())).length, 3);
   assert.equal(standby.d.want(pull(1), fresh({ node: known('STANDBY'), current: { pr: 1, headSha: H(1) } }), NOW, { state: 'pending', description: 'x' }), null, 'a STANDBY writes no queue text');
   // a restarted companion (ACTIVE): the duty texts not described again in its first pass become 停摆（NODE_RESTARTED）, once
   const restarted = duty();
   await restarted.d.prepare({ status: fresh(), pulls: [], now: NOW });
-  const first = await restarted.d.extra({ posted, described: new Set([H(1)]), pulls: [], now: NOW });
-  assert.deepEqual(first.map(o => [o.headSha, o.want.description]), [[H(2), '停摆（NODE_RESTARTED）：本节点重启，等执行器恢复']]);
-  assert.deepEqual(await restarted.d.extra({ posted, described: new Set(), pulls: [], now: NOW + MIN }), [], 'only the first pass');
+  const open = [pull(1), pull(2), pull(4)];
+  const first = await restarted.d.extra({ posted, described: new Set([H(1)]), pulls: open, now: NOW });
+  assert.deepEqual(first.map(o => [o.headSha, o.want.description]), [[H(2), '停摆（NODE_RESTARTED）：本节点重启，等执行器恢复']], 'open heads only (review m4)');
+  assert.equal(first[0].restart, true, 'the reporter ends the restart once these are written');
 });
 
 test('§5.3: a STANDBY reminds once per (PR, commit, reason) under resident-standby; reads are bounded', async () => {
@@ -293,4 +318,119 @@ test('§5.3: a STANDBY reminds once per (PR, commit, reason) under resident-stan
   const calls = t.calls.length;
   await t.d.extra({ posted: {}, described: new Set(), pulls: [pull(1), pull(2)], now: t.now() + 1 });
   assert.equal(t.calls.length, calls, 'a head is read at most every 5 minutes');
+});
+
+// ---- independent review of C5: the fixes ----
+
+test('review M2: a hold missing while the executor cannot read its intake state is no Owner reset; nor is one sighting', async () => {
+  const t = duty({ statuses: { [H(1)]: [gh('company-01', '当班：排队第 1 位', NOW - MIN)] } });
+  t.memory.mode = 'ACTIVE';
+  await t.d.prepare({ status: fresh({ node: known('ACTIVE') }), pulls: [pull(1)], now: NOW });
+  const until = NOW + 120 * MIN;
+  t.advance(MIN);
+  await t.d.prepare({ status: fresh({ node: known('ACTIVE'), writtenAt: t.now(), intakePause: { until, holders: [{ holder: HOLDER_DUAL, since: NOW, until }] } }), pulls: [], now: t.now() });
+  for (const holder of ['unconfirmed', 'unreadable']) {
+    for (let i = 0; i < 3; i++) {
+      t.advance(MIN);
+      await t.d.prepare({ status: fresh({ node: known('ACTIVE'), writtenAt: t.now(), intakePause: { until: null, holders: [{ holder, since: null, until: null }] } }), pulls: [], now: t.now() });
+    }
+    assert.ok(t.memory.lock, `${holder}: still locked`);
+  }
+  // one sighting, then the hold is back: no reset, and no renewal was written while the reset was being confirmed
+  const before = t.requests.length;
+  t.advance(MIN);
+  await t.d.prepare({ status: fresh({ node: known('ACTIVE'), writtenAt: t.now() }), pulls: [], now: t.now() });
+  assert.notEqual(t.memory.lock.resetSeenAt, null);
+  assert.equal(t.requests.length, before, 'no renewal while a reset is being confirmed');
+  t.advance(MIN);
+  await t.d.prepare({ status: fresh({ node: known('ACTIVE'), writtenAt: t.now(), intakePause: { until, holders: [{ holder: HOLDER_DUAL, since: NOW, until }] } }), pulls: [], now: t.now() });
+  assert.ok(t.memory.lock);
+  assert.equal(t.memory.lock.resetSeenAt, null);
+});
+
+test('review M4: the take-over check reads at most 10 heads a pass, keeps its place, and waits 5 minutes after a failed read', async () => {
+  const heads = Array.from({ length: 25 }, (_, i) => pull(100 + i, { headSha: (i + 1).toString(16).padStart(40, '0') }));
+  const statuses = Object.fromEntries(heads.map(p => [p.headSha, []]));
+  const t = duty({ statuses });
+  const s = fresh({ node: known('ACTIVE') });
+  await t.d.prepare({ status: s, pulls: heads, now: NOW });
+  assert.equal(reads(t.calls), 10);
+  assert.equal(t.memory.probeAt, null, 'not done yet');
+  t.advance(MIN);
+  await t.d.prepare({ status: s, pulls: heads, now: t.now() });
+  assert.equal(reads(t.calls), 20, 'the next ten');
+  t.advance(MIN);
+  await t.d.prepare({ status: s, pulls: heads, now: t.now() });
+  assert.equal(reads(t.calls), 25, 'the last five, none twice');
+  assert.equal(t.memory.probeAt, s.node.probe.at, 'done');
+  // a failed read: no more reads of that check for READ_RETRY_MS
+  const f = duty({ statuses: { [H(1)]: null, [H(2)]: [] } });
+  await f.d.prepare({ status: s, pulls: [pull(2), pull(1)], now: NOW });
+  const n = reads(f.calls);
+  f.advance(MIN);
+  await f.d.prepare({ status: s, pulls: [pull(2), pull(1)], now: f.now() });
+  assert.equal(reads(f.calls), n, 'backed off');
+  f.advance(5 * MIN);
+  await f.d.prepare({ status: s, pulls: [pull(2), pull(1)], now: f.now() });
+  assert.equal(reads(f.calls), n + 1, 'tried again, from where it stopped');
+});
+
+test('review m3: an UNCERTAIN in between is no role change; review m7: a stored lock of the wrong shape stays a lock', async () => {
+  const t = duty();
+  t.memory.mode = 'ACTIVE';
+  let p = await t.d.prepare({ status: fresh({ node: known('UNCERTAIN') }), pulls: [], now: NOW });
+  assert.equal(t.memory.mode, 'ACTIVE');
+  p = await t.d.prepare({ status: fresh({ node: known('ACTIVE') }), pulls: [], now: NOW + MIN });
+  assert.deepEqual(p.events.filter(e => e.key.startsWith('role:')), [], 'ACTIVE, UNCERTAIN, ACTIVE: nothing changed');
+  const m = validMemory({ mode: 'LEADER', lock: { other: 'Company 01!', heads: ['x', H(1)], since: 'yesterday' }, seen: [] }, NOW);
+  assert.deepEqual(m.lock, { since: NOW, reason: 'dual-active', other: 'unknown', heads: [H(1)], holdAt: null, holdUntil: null, releaseReadAt: null, resetSeenAt: null });
+  assert.equal(m.mode, null);
+  assert.deepEqual(m.seen, {});
+  const kept = duty({ memory: m });
+  await kept.d.prepare({ status: fresh({ node: known('ACTIVE') }), pulls: [], now: NOW });
+  assert.equal(kept.requests.length, 1, 'the hold is kept');
+});
+
+test('review m9: a STANDBY reminds when the node on duty stopped refreshing its 当班 (it died after the admission check)', async () => {
+  const t = duty({ statuses: { [H(1)]: [gh('company-01', '当班：运行中：第 4 段（trivy 扫描）', NOW - 31 * MIN)] }, checks: { [H(1)]: 1 } });
+  await t.d.prepare({ status: fresh({ node: known('STANDBY') }), pulls: [pull(1)], now: NOW });
+  const out = await t.d.extra({ posted: {}, described: new Set(), pulls: [pull(1)], now: NOW });
+  assert.deepEqual(out.map(o => o.remind.key), [`standby:1:${H(1)}:stale`]);
+  assert.equal(out[0].want.description, '当班节点 company-01 的状态已 31 分钟没刷新；需要切换请在 KooYomi 把 ci-admission 移交给 turing');
+});
+
+test('the hold is written at most hourly while the executor status is stale (nobody reads the requests then)', async () => {
+  const t = duty({ statuses: { [H(1)]: [gh('company-01', '当班：排队第 1 位', NOW - MIN)] } });
+  t.memory.mode = 'ACTIVE';
+  await t.d.prepare({ status: fresh({ node: known('ACTIVE') }), pulls: [pull(1)], now: NOW });
+  assert.equal(t.requests.length, 1);
+  const stale = fresh({ node: known('ACTIVE'), writtenAt: NOW - 10 * MIN });
+  for (let i = 0; i < 6; i++) { t.advance(10 * MIN); await t.d.prepare({ status: stale, pulls: [], now: t.now() }); }
+  assert.equal(t.requests.length, 2, 'one more in an hour');
+});
+
+test('C5 re-review: ACTIVE again owes no 已交班; a check ending passes later keeps its reason; an unreadable head is passed over after 3 tries', async () => {
+  const own = 'resident-queue/turing (info only)';
+  const posted = { [H(1)]: { context: own, kind: 'duty', at: iso(NOW - MIN), dutyAt: iso(NOW - MIN) } };
+  const t = duty();
+  await t.d.prepare({ status: fresh({ node: known('STANDBY') }), pulls: [], now: NOW, posted });
+  assert.deepEqual(Object.keys(t.memory.handover), [H(1)]);
+  await t.d.prepare({ status: fresh({ node: known('ACTIVE') }), pulls: [], now: NOW + MIN, posted });
+  assert.deepEqual(t.memory.handover, {}, 'back on duty: nothing owed');
+  assert.deepEqual(await t.d.extra({ posted, described: new Set(), pulls: [], now: NOW + MIN }), []);
+  // the check of a node just taken over ends two passes later: the lock says "take-over refused", not "dual-active"
+  const heads = Array.from({ length: 12 }, (_, i) => pull(200 + i, { headSha: (i + 1).toString(16).padStart(40, '0') }));
+  const statuses = Object.fromEntries(heads.map(p => [p.headSha, []]));
+  statuses[heads[11].headSha] = [gh('company-01', '当班：排队第 1 位', NOW - MIN)];
+  const r = duty({ statuses });
+  r.memory.mode = 'STANDBY';
+  await r.d.prepare({ status: fresh({ node: known('ACTIVE') }), pulls: heads, now: NOW });
+  assert.equal(r.memory.lock, null);
+  await r.d.prepare({ status: fresh({ node: known('ACTIVE') }), pulls: heads, now: NOW + MIN });
+  assert.equal(r.memory.lock.reason, 'takeover-refused');
+  // one head that never answers: passed over after READ_GIVE_UP tries, the check ends
+  const u = duty({ statuses: { [H(1)]: null, [H(2)]: [] } });
+  const s = fresh({ node: known('ACTIVE') });
+  for (let i = 0; i < 3; i++) { await u.d.prepare({ status: s, pulls: [pull(1), pull(2)], now: u.now() }); u.advance(5 * MIN); }
+  assert.equal(u.memory.probeAt, s.node.probe.at, 'done after the third failed read');
 });
