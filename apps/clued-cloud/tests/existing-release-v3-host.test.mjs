@@ -35,7 +35,7 @@ const STAGES = 'payload/release/existing-release-entry-v1/v3/existing-stages.mjs
 const PDF_CONFIG = 'apps/clued-cloud/wrangler.pdf-extractor.jsonc';
 
 // The source freeze of revision 7, which pins every other file of the package.
-const SOURCE_FREEZE = 'f6d8fdb91e3d50bf1a0ce05fed3b0d19412eaf2a22123b0f05366cf5f1ef6d5e';
+const SOURCE_FREEZE = 'c83dc54287ae130b00f402c6e4fc915b86f4555cb530863f98ada6ec0a0c8900';
 // Revision 6 as installed on the Host (Note fdfbe464@7): its package manifest,
 // its source freeze (the handover copy's) and the bytes of its seven files.
 const INSTALLED_MANIFEST = '71ee46c6c0d5bb0bafa5a85a5445b11c4f0b534141eb25010b06b51da04b8bf4';
@@ -245,6 +245,8 @@ test('the committed package is revision 7, after the revision 6 installed on the
     ['PORTS', 'payload/release/existing-release-entry-v1/fixed-currentness-ports.mjs']]) {
     assert.ok(read(STAGES).toString('utf8').includes(`[${name},'${sha256(read(file))}']`), `${STAGES} pins ${file}`);
   }
+  // The manager config template names the manager this package installs.
+  assert.equal(JSON.parse(read('currentness-manager.template.json')).manager.sha256, sha256(read(MANAGER)));
   // v7 changes four files; the patch gives back revision 6 of all seven.
   for (const [file, installed] of Object.entries(INSTALLED_FILES)) {
     assert.equal(sha256(v6[file] ?? read(file)), installed, file);
@@ -379,8 +381,8 @@ test('WSL interop: here, outside the units, the checks and release-once stop exa
   const open = ['/run/WSL', '/dev/shm'].some((dir) => [R_OK, X_OK].some((mode) => code(() => fs.accessSync(dir, mode)) === 'PASS'));
   assert.equal(code(() => managerV7.interopBoundary()), open ? 'MANAGER_WSL_INTEROP_OR_SHM_REACHABLE' : 'PASS');
   assert.equal(code(() => hostFilesV7.interopBoundary()), open ? 'WSL_INTEROP_OR_SHM_REACHABLE' : 'PASS');
-  // Package and context hashes no Host has: release-once reads or writes nothing
-  // past its first check whatever happens.
+  // Package and context hashes no Host has: where the first check passes,
+  // verifyPackage refuses next, before anything is written.
   const result = await releaseOnce(['--execute-once', '--fixed-scope', 'existing-production-release-v3-host',
     '--reviewed-context-sha256', 'a'.repeat(64), '--reviewed-package-sha256', 'b'.repeat(64)]);
   assert.equal(result.status, 'BLOCKED');

@@ -6,8 +6,8 @@
   "packageManifestSha256": "c9b1a43105bdfcf8631e1abeec0c3552a56797bb259f3bccd767899953bacc8c",
   "sourceFiles": {
     "README.md": {
-      "bytes": 14922,
-      "sha256": "6bb475419fccd4e22194b8aa69007c9d948d7319dbc9e78d5f8d8422b1ee4f60"
+      "bytes": 16684,
+      "sha256": "8731bff19945023d2ef305bd20789e000b82357ea06d44a086cb07d2917275d2"
     },
     "build-files.template.json": {
       "bytes": 101,
@@ -15,7 +15,7 @@
     },
     "currentness-manager.template.json": {
       "bytes": 1292,
-      "sha256": "1a60d6d25a72c09e090fd2d2d63cbb1ab402d03008f0635099ce7cebc1919f6b"
+      "sha256": "68bb80e113143d483c57cbabc959787e40ed523be86d60a0da05ddd88b14b83b"
     },
     "existing-release.template.json": {
       "bytes": 634,
@@ -34,12 +34,12 @@
       "sha256": "d4267a1d5bd97808be6b2d002d29249d685e4a03268e16ba75c1a7a9394e8a37"
     },
     "offline-checks-v7.mjs": {
-      "bytes": 5957,
-      "sha256": "3651de72c171995827518842ba165b93867d7f281a51f7462670ab37bc57bc76"
+      "bytes": 7256,
+      "sha256": "aa0210909135ec1a01f8116909ebee78bafc991b0e7c0fe7e6b6e8b5e87d6bb8"
     },
     "offline-source-checks.json": {
-      "bytes": 557,
-      "sha256": "66c0d8ff81e11ffe5d7a88cbc62631b22baae8c976c08dd565190a83145a9b8a"
+      "bytes": 1078,
+      "sha256": "6064be8589f0e5497023402a3e162bca5bcb643c214c187d74980b778392ad5a"
     },
     "package-manifest.json": {
       "bytes": 1960,

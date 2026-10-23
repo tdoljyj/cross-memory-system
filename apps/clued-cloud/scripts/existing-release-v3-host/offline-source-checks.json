@@ -4,10 +4,15 @@
   "packageManifestSha256": "c9b1a43105bdfcf8631e1abeec0c3552a56797bb259f3bccd767899953bacc8c",
   "checks": {
     "offlineChecksScript": "offline-checks-v7.mjs",
-    "offlineChecksScriptSha256": "3651de72c171995827518842ba165b93867d7f281a51f7462670ab37bc57bc76",
+    "offlineChecksScriptSha256": "aa0210909135ec1a01f8116909ebee78bafc991b0e7c0fe7e6b6e8b5e87d6bb8",
     "result": "NOT_RUN: run on the Linux Host as the publisher after installing v7, before the first release",
     "rootInstallExecuted": false,
     "credentialsRead": false,
     "productionExecuted": false
-  }
+  },
+  "requiredBeforeFirstRelease": [
+    "offline-checks-v7.mjs PASS as the publisher in a transient unit with every [Service] setting of the installed release unit except ExecStart, given the /run/WSL/*_interop paths listed by root",
+    "the fixed tests operation through the manager as the publisher settles with exit code 0, and clued-currentness@tests.service is stopped afterwards",
+    "no other uid 994 or 995 process runs outside a sandbox that makes /run/WSL and /dev/shm inaccessible while the release runs"
+  ]
 }

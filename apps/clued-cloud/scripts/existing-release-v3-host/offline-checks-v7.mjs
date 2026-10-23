@@ -19,6 +19,9 @@ const MANAGER='payload/release/linux-process-manager.mjs',HOST_FILES='payload/re
 const changed=[MANAGER,HOST_FILES,'payload/release/existing-release-entry-v1/v3-host/release-once.mjs','payload/release/existing-release-entry-v1/v3/existing-stages.mjs'];
 for(const f of files){const r=spawnSync(process.execPath,['--check',path.join(v7,f)],{encoding:'utf8'});check('syntax:'+f,r.status===0,r.stderr.trim());}
 for(const f of files.filter(f=>!changed.includes(f)))check('unchanged-from-v6:'+f,fs.readFileSync(path.join(v7,f)).equals(fs.readFileSync(path.join(v6,f))));
+check('v6 dir is the installed revision 6',hash(fs.readFileSync(path.join(v6,'package-manifest.json')))==='71ee46c6c0d5bb0bafa5a85a5445b11c4f0b534141eb25010b06b51da04b8bf4');
+const context=JSON.parse(fs.readFileSync('/etc/clued-production-release/existing-release.json','utf8'));
+check('runs as the publisher',process.getuid()===context.publisherUid&&process.getgid()===context.publisherGid,process.getuid()+':'+process.getgid());
 const m=JSON.parse(fs.readFileSync(path.join(v7,'package-manifest.json'),'utf8'));
 for(const f of files)check('manifest:'+f,m.files[f]?.sha256===hash(fs.readFileSync(path.join(v7,f)))&&m.files[f].bytes===fs.statSync(path.join(v7,f)).size);
 check('revision 7 after v6',m.revision===7&&m.previousPackageManifestSha256==='71ee46c6c0d5bb0bafa5a85a5445b11c4f0b534141eb25010b06b51da04b8bf4');
@@ -48,6 +51,14 @@ for(const s of sockets){
   c.once('connect',()=>{clearTimeout(t);c.destroy();done('CONNECTED');});c.once('error',e=>{clearTimeout(t);done(e.code);});});
  check('interop socket unreachable:'+s,r==='EACCES'||r==='ENOENT',r);
 }
+// End to end: the binfmt handler (/init) cannot reach interop, so a Windows program does not start.
+const exe='/mnt/c/Windows/System32/whoami.exe',win=spawnSync(exe,[],{encoding:'utf8',timeout:15000});
+check('a Windows program cannot start here',fs.existsSync(exe)&&win.status!==0,`status=${win.status} error=${win.error?.code??''} ${(win.stderr??'').trim()}`);
+// ProtectProc=invisible hides only other users' processes: a publisher process
+// outside this unit would expose both paths through /proc/<pid>/root.
+const own=fs.readFileSync('/proc/self/cgroup','utf8');
+const outside=fs.readdirSync('/proc').filter(p=>/^[0-9]+$/.test(p)).filter(p=>{try{return fs.statSync('/proc/'+p).uid===process.getuid()&&fs.readFileSync(`/proc/${p}/cgroup`,'utf8')!==own;}catch{return false;}});
+check('no publisher process outside this unit',outside.length===0,outside.join(','));
 const shm=code(()=>fs.writeFileSync('/dev/shm/clued-v7-probe','x',{flag:'wx',mode:0o600}));
 if(shm==='PASS')fs.unlinkSync('/dev/shm/clued-v7-probe');
 check('/dev/shm not writable',shm==='EACCES'||shm==='ENOENT',shm);
