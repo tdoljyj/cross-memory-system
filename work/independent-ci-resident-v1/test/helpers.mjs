@@ -24,7 +24,7 @@ export const RELAY_ON = Object.freeze({ ...RELAY_OFF, enabled: true });
 
 export function rawPolicy(overrides = {}) {
   return {
-    contract: 'clued.independent-ci.resident-policy/5',
+    contract: 'clued.independent-ci.resident-policy/6',
     repo: 'tdoljyj/cross-memory-system',
     baseBranch: 'main',
     sourceManifestSha256: SOURCE,
@@ -38,11 +38,12 @@ export function rawPolicy(overrides = {}) {
     stage8: { mode: 'park' },
     park: { maxParked: 4, maxParkedOutsideTop2: 8, maxMs: 86_400_000, stage8MaxTries: 12, stage8RetriesPer24h: 100 },
     companion: { userSid: 'S-1-5-21-1-2-3-1001', heartbeatMaxAgeMs: 60_000 },
-    stageRunMilliseconds: [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000],
+    stageRunMilliseconds: [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000, 300000],
     linux: { distribution: 'Ubuntu-24.04', workerUnit: 'clued-ci-worker@.service', wsprepUnit: 'clued-ci-wsprep@.service', archiveUnit: 'clued-ci-archive@.service' },
     automaticAttempt2: { enabled: true, delayMs: 600_000 },
     retention: { reminderBytes: 50 * 1024 ** 3, checkEveryMs: 3_600_000 },
     relay: RELAY_OFF,
+    train: { enabled: 'off', nonFrontRuns: true, maintenanceEveryMs: 600_000, maintenanceMaxPerDay: 200 },
     ...overrides,
   };
 }

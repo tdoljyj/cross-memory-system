@@ -14,6 +14,7 @@
     { "path": "C:\\ProgramData\\CluedIndependentCI\\state\\v2\\batch-claims", "sddl": "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;{CTRL})" },
     { "path": "C:\\ProgramData\\CluedIndependentCI\\state\\v2\\temp", "sddl": "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;{CTRL})" },
     { "path": "C:\\ProgramData\\CluedIndependentCI\\state\\v2\\green-ledger", "sddl": "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;{CTRL})" },
+    { "path": "C:\\ProgramData\\CluedIndependentCI\\state\\v2\\train-shadow", "sddl": "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;{CTRL})" },
     { "path": "C:\\ProgramData\\CluedIndependentCI\\state\\v2\\receipts", "sddl": "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;{CTRL})(A;OICI;0x1200a9;;;{RES})" },
     { "path": "C:\\ProgramData\\CluedIndependentCI\\state\\relay", "sddl": "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;{CTRL})" },
     { "path": "C:\\ProgramData\\CluedIndependentCI\\state\\relay\\jwks", "sddl": "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;{CTRL})" }

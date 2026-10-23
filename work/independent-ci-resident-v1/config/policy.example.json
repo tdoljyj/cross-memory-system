@@ -1,5 +1,5 @@
 {
-  "contract": "clued.independent-ci.resident-policy/5",
+  "contract": "clued.independent-ci.resident-policy/6",
   "repo": "tdoljyj/cross-memory-system",
   "baseBranch": "main",
   "sourceManifestSha256": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -43,6 +43,12 @@
     "stage8MaxTries": 12,
     "stage8RetriesPer24h": 100
   },
+  "train": {
+    "enabled": "shadow",
+    "nonFrontRuns": true,
+    "maintenanceEveryMs": 600000,
+    "maintenanceMaxPerDay": 200
+  },
   "companion": {
     "userSid": "S-1-5-21-0-0-0-1001",
     "heartbeatMaxAgeMs": 60000
@@ -56,7 +62,8 @@
     600000,
     900000,
     2700000,
-    900000
+    900000,
+    300000
   ],
   "linux": {
     "distribution": "Ubuntu-24.04",

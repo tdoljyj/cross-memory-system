@@ -221,7 +221,7 @@ test('classification is an allow-list and needs the complete cleanup proof', () 
 
 test('policy refuses general retries, concurrency and drifted shapes; attempt 2 and retention are bounded', () => {
   const p = validatePolicy(rawPolicy());
-  assert.equal(p.stages.length, 9, 'eight formal stages and stage R');
+  assert.equal(p.stages.length, 10, 'eight formal stages, stage R and stage 10 (train maintenance, never in a batch)');
   assert.equal(batchBudgetMs(p), [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000].reduce((a, b) => a + b, 0) + 8 * 180000, 'relay off: no wait, no stage R');
   const on = validatePolicy(rawPolicy({ relay: RELAY_ON }));
   assert.equal(batchBudgetMs(on), batchBudgetMs(p) + RELAY_ON.wait.totalMs + 900000 + 180000, 'relay on: the bounded wait and stage R are budgeted');
@@ -232,7 +232,7 @@ test('policy refuses general retries, concurrency and drifted shapes; attempt 2 
   assert.throws(() => validatePolicy(rawPolicy({ relay: { ...RELAY_ON, wait: { ...RELAY_ON.wait, totalMs: 8 * 3_600_000 } } })), { code: 'POLICY_RELAY_WAIT_INVALID' });
   assert.throws(() => validatePolicy(rawPolicy({ relay: { ...RELAY_ON, wait: { ...RELAY_ON.wait, extra: 1 } } })), { code: 'POLICY_RELAY_WAIT_KEYS_INVALID' });
   assert.throws(() => validatePolicy(rawPolicy({ relay: { enabled: true } })), { code: 'POLICY_RELAY_KEYS_INVALID' });
-  assert.throws(() => validatePolicy(rawPolicy({ stageRunMilliseconds: rawPolicy().stageRunMilliseconds.slice(0, 8) })), { code: 'POLICY_STAGE_TIMES_INVALID' });
+  assert.throws(() => validatePolicy(rawPolicy({ stageRunMilliseconds: rawPolicy().stageRunMilliseconds.slice(0, 9) })), { code: 'POLICY_STAGE_TIMES_INVALID' });
   assert.throws(() => validatePolicy(rawPolicy({ automaticRetryAllowed: true })), { code: 'POLICY_KEYS_INVALID' });
   assert.throws(() => validatePolicy(rawPolicy({ automaticAttempt2: { enabled: true, delayMs: 1000 } })), { code: 'POLICY_ATTEMPT2_INVALID' });
   assert.throws(() => validatePolicy(rawPolicy({ automaticAttempt2: { enabled: true, delayMs: 600_000, maxAttempts: 3 } })), { code: 'POLICY_ATTEMPT2_KEYS_INVALID' });
