@@ -1,4 +1,6 @@
 // Source v2 copy of worker.mjs (DESIGN S6): job contract v2 identity and the v2 Source manifest schema.
+// Job contract /3 (quota phase 2 step 3b): the candidate is checked out at the tested commit S (job.testSha, S = H
+// outside the train); the head H and the base T must be in its store. The identity keeps its fields: jobId binds S.
 import { createHash, randomBytes, verify } from 'node:crypto';
 import { lstat, readdir, readFile, realpath } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
@@ -10,7 +12,7 @@ const DIGEST = /^[a-f0-9]{64}$/;
 const fixtureRuntimes = new WeakSet();
 const protectedRuntimes = new WeakSet();
 const preparedRequests = new WeakSet();
-// Job contract v2 identity (claim-free, attempt-scoped; DESIGN S6). Everything else is worker.mjs unchanged.
+// Source v2 job identity (claim-free, attempt-scoped; DESIGN S6; jobId binds S since contract /3). Everything else is worker.mjs unchanged.
 const identityKeys = ['jobId', 'repo', 'pr', 'headSha', 'baseSha', 'role', 'sourceManifestSha256', 'attempt'];
 export const sha256 = value => createHash('sha256').update(value).digest('hex');
 export function canonicalJson(value) {
@@ -129,6 +131,10 @@ async function validateCheckout(root, commit, gitExecutable, { complete = true, 
   }
   return { path: root, treeSha: (await git(root, gitExecutable, 'rev-parse', `${commit}^{tree}`)).toString().trim() };
 }
+async function headAndBasePresent(candidate, gitExecutable, identity) {
+  insist((await git(candidate, gitExecutable, 'cat-file', '-t', identity.baseSha)).toString().trim() === 'commit', 'BASE_NOT_PRESENT');
+  insist((await git(candidate, gitExecutable, 'cat-file', '-t', identity.headSha)).toString().trim() === 'commit', 'HEAD_NOT_PRESENT');
+}
 export async function prepareWorkerJob({ job, workspace, trustedSourceDirectory, sourceManifestBytes, expectedSourceManifestSha256, gitExecutable }) {
   const identity = identityOf(job);
   insist(Buffer.isBuffer(sourceManifestBytes) || typeof sourceManifestBytes === 'string', 'SOURCE_BYTES_REQUIRED');
@@ -149,9 +155,9 @@ export async function prepareWorkerJob({ job, workspace, trustedSourceDirectory,
   await noLinks(command.executable);
   insist(sha256(await readFile(command.executable)) === command.executableSha256, 'EXECUTABLE_HASH_MISMATCH');
   const source = await validateCheckout(trustedSourceDirectory, manifest.sourceSha, gitExecutable, { complete: false, files: role.sourceFiles });
-  const candidate = await validateCheckout(workspace, identity.headSha, gitExecutable);
+  const candidate = await validateCheckout(workspace, job.testSha, gitExecutable);
   insist(source.path !== candidate.path && !source.path.startsWith(candidate.path + path.sep) && !candidate.path.startsWith(source.path + path.sep), 'SOURCE_CANDIDATE_OVERLAP');
-  insist((await git(candidate.path, gitExecutable, 'cat-file', '-t', identity.baseSha)).toString().trim() === 'commit', 'BASE_NOT_PRESENT');
+  await headAndBasePresent(candidate.path, gitExecutable, identity);
   const cwd = await noLinks(path.join(candidate.path, ...(command.cwd ?? '.').split('/')));
   const prepared = { schema: 'independent-ci.execution-request.v1', nonce: randomBytes(32).toString('hex'), identity, sourceSha: manifest.sourceSha, sourceTreeSha: source.treeSha, candidateTreeSha: candidate.treeSha, workspace: candidate.path, command: { ...command, cwd }, timeoutMs: role.timeoutMs, maxOutputBytes: role.maxOutputBytes };
   prepared.requestDigest = sha256(canonicalJson(prepared));
@@ -181,9 +187,9 @@ export async function prepareContainerWorkerJob({ job, workspace, trustedSourceD
   insist(Number.isSafeInteger(role.timeoutMs) && role.timeoutMs >= 10 && role.timeoutMs <= 3600000, 'INVALID_TIMEOUT');
   insist(Number.isSafeInteger(role.maxOutputBytes) && role.maxOutputBytes >= 128 && role.maxOutputBytes <= 16 * 1024 * 1024, 'INVALID_OUTPUT_BOUND');
   const source = await validateCheckout(trustedSourceDirectory, manifest.sourceSha, gitExecutable, { complete: false, files: role.sourceFiles });
-  const candidate = await validateCheckout(workspace, identity.headSha, gitExecutable);
+  const candidate = await validateCheckout(workspace, job.testSha, gitExecutable);
   insist(source.path !== candidate.path && !source.path.startsWith(candidate.path + path.sep) && !candidate.path.startsWith(source.path + path.sep), 'SOURCE_CANDIDATE_OVERLAP');
-  insist((await git(candidate.path, gitExecutable, 'cat-file', '-t', identity.baseSha)).toString().trim() === 'commit', 'BASE_NOT_PRESENT');
+  await headAndBasePresent(candidate.path, gitExecutable, identity);
   const prepared = { schema: 'independent-ci.container-execution-request.v1', nonce: randomBytes(32).toString('hex'), identity,
     sourceSha: manifest.sourceSha, sourceTreeSha: source.treeSha, candidateTreeSha: candidate.treeSha, workspace: candidate.path,
     containerCommand: command, timeoutMs: role.timeoutMs, maxOutputBytes: role.maxOutputBytes };

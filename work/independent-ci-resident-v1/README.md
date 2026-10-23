@@ -33,3 +33,5 @@ Phase 2, step 2 (Task `6451a55d`) is described in DESIGN.md §18. It covers park
 Phase 2, step 3a (Task `6451a55d`, Owner decision `0bb98194`) is described in DESIGN.md §19. Before writing a green, stage 8 now reads main's branch rules and GitHub's test merge of the PR. It records every merge-slot green in the green ledger (`state\v2\green-ledger`). A PR that GitHub has already merged as tested counts as success. The train stays off.
 
 Primary/standby C6 (Task `6444f88a`) is described in DESIGN.md §20. It adds the intake pause: any Owner session can hold new batches for at most two hours (`tools/rearm-tool.mjs request-intake-pause`), without touching a batch that runs or is parked. Each request names a holder, and a holder may lift only its own hold. status.json `/3` shows the holds.
+
+Phase 2, step 3b (Task `6451a55d`, sub-Task `a3548216`) is described in DESIGN.md §21. Job contract `/3` adds the tested commit S to the job identity. With the train off, S is the head itself, so the workspaces and tests are the same as before.

@@ -17,7 +17,7 @@ using Microsoft.Win32.SafeHandles;
 //     so ONE helper binary serves every stage and every batch (no per-batch csc, no rNN archives);
 //   - the install facts come from the claim-free record (resident\record\*, admin-only), the Source from
 //     resident\source\<sourceManifestSha256>\ only (S12: code only from source\<sha>);
-//   - jobs are contract /2 (no claim; id over content + attempt; attempt 1..2) (S6);
+//   - jobs are contract /3 (no claim; id over content + tested commit + attempt; attempt 1..2) (S6, quota phase 2 step 3b);
 //   - the runtime window is the stage cap bounded by the install's validUntil, never by a claim and never
 //     by 24 h (S5);
 //   - the exact ACL model admits the resident SID as owner/writer of its own stage directory and as a
@@ -138,16 +138,17 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   string id=Text(plan,"batchId");if(id.Length!=29||id[16]!='-'||!LowerHex(id.Substring(0,16))||!LowerHex(id.Substring(17)))Deny("FIXED_BATCH_ID_REQUIRED");
   foreach(string f in new[]{"nodeSha256","entrySha256","acceptanceSha256","sourceManifestSha256","installationSha256","runtimeConfigPinSha256","jobSha256"})Sha(plan,f);return (int)stage;
  }
- // Job contract /2: id = sha256(JSON(["clued.independent-ci.job/2",repo,pr,headSha,baseSha,sourceManifestSha256,role,attempt])).
+ // Job contract /3 (quota phase 2 step 3b): id = sha256(JSON(["clued.independent-ci.job/3",repo,pr,headSha,baseSha,testSha,sourceManifestSha256,role,attempt])).
+ // testSha is the tested commit S (S = H outside the train). The method keeps its V2 (Source v2) name.
  public static string JobIdV2(Dictionary<string,object> job){
-  var identity=new List<object>{"clued.independent-ci.job/2",At(job,"repo"),At(job,"pr"),At(job,"headSha"),At(job,"baseSha"),At(job,"sourceManifestSha256"),At(job,"role"),At(job,"attempt")};
+  var identity=new List<object>{"clued.independent-ci.job/3",At(job,"repo"),At(job,"pr"),At(job,"headSha"),At(job,"baseSha"),At(job,"testSha"),At(job,"sourceManifestSha256"),At(job,"role"),At(job,"attempt")};
   byte[] raw=new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(identity));using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(raw)).Replace("-","").ToLowerInvariant();
  }
  public static Dictionary<string,object> ValidateJobV2(Dictionary<string,object> job,string expectedRole,string sourceManifest){
-  Fields(job,new[]{"contract","id","repo","pr","headSha","baseSha","role","sourceManifestSha256","createdAt","attempt"});Exact(job,"contract","clued.independent-ci.job/2");Exact(job,"repo","tdoljyj/cross-memory-system");
+  Fields(job,new[]{"contract","id","repo","pr","headSha","baseSha","testSha","role","sourceManifestSha256","createdAt","attempt"});Exact(job,"contract","clued.independent-ci.job/3");Exact(job,"repo","tdoljyj/cross-memory-system");
   if(Text(job,"role")!=expectedRole)Deny("FIXED_FORMAL_JOB_ROLE_REQUIRED");Sha(job,"id");
   long pr=Int(job,"pr"),attempt=Int(job,"attempt");
-  if(!Commit(Text(job,"headSha"))||!Commit(Text(job,"baseSha"))||Sha(job,"sourceManifestSha256")!=sourceManifest||pr<1||attempt<1||attempt>2)Deny("FIXED_FORMAL_JOB_SUBJECT_REQUIRED");
+  if(!Commit(Text(job,"headSha"))||!Commit(Text(job,"baseSha"))||!Commit(Text(job,"testSha"))||Sha(job,"sourceManifestSha256")!=sourceManifest||pr<1||attempt<1||attempt>2)Deny("FIXED_FORMAL_JOB_SUBJECT_REQUIRED");
   DateTimeOffset created;if(!DateTimeOffset.TryParse(Text(job,"createdAt"),CultureInfo.InvariantCulture,DateTimeStyles.None,out created)||created>DateTimeOffset.UtcNow.AddMinutes(5))Deny("FIXED_FORMAL_JOB_TIME_REQUIRED");
   if(JobIdV2(job)!=Text(job,"id"))Deny("DETERMINISTIC_JOB_ID_REQUIRED");return job;
  }
@@ -191,7 +192,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   var jobsBytes=Read(stageDir+"\\jobs.json",Sha(plan,"jobSha256"),true);var jobs=new JavaScriptSerializer().DeserializeObject(new UTF8Encoding(false,true).GetString(jobsBytes)) as object[];
   string[] roles=SelectedJobRoles(Stage,jobs);
   for(int i=0;i<roles.Length;i++){var j=jobs[i] as Dictionary<string,object>;if(j==null)Deny("EXACT_STAGE_JOBS_REQUIRED");ValidateJobV2(j,roles[i],SourceManifestHash);
-   if(i>0)foreach(string k in new[]{"repo","pr","headSha","baseSha","sourceManifestSha256","createdAt","attempt"})if(!Object.Equals(At(j,k),At((Dictionary<string,object>)jobs[0],k)))Deny("EXACT_CONTROL_PAIR_SUBJECT_REQUIRED");}
+   if(i>0)foreach(string k in new[]{"repo","pr","headSha","baseSha","testSha","sourceManifestSha256","createdAt","attempt"})if(!Object.Equals(At(j,k),At((Dictionary<string,object>)jobs[0],k)))Deny("EXACT_CONTROL_PAIR_SUBJECT_REQUIRED");}
   if(SelectedRole=="check-publisher")Read(stageDir+"\\result.json",null,false); // signed untrusted input; the entry verifies it
   RuntimeDeadlineUtc=BoundedDeadline(Stage,DateTimeOffset.UtcNow,validUntil);
   Read(Node,nodeHash,false);
