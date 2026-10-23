@@ -49,21 +49,29 @@ class ArchiveDescriptor(unittest.TestCase):
         raw = json.dumps(d).encode()
         self.assertEqual(tool.descriptor_job_ids(raw, BATCH), d['linuxJobIds'])
         self.assertEqual(list(wsprep.validate_descriptor(d, BATCH).values()), d['linuxJobIds'])
-        # job contract /3: the tested commit is in the id; a /2 descriptor (a batch from before the reinstall) is still
-        # archived with the /2 formula, but ws-prep accepts /3 only
+        # job contract /3: the tested commit is in the id, and both tools agree on it; /2 and a missing S are refused
         other = descriptor(testSha='4' * 40)
         other['linuxJobIds'] = [tool.job_id_v2(other, r) for r in tool.LINUX_ROLES]
         self.assertNotEqual(other['linuxJobIds'], d['linuxJobIds'])
         self.assertEqual([tool.job_id_v2(other, r) for r in tool.LINUX_ROLES], [wsprep.job_id_v2(other, r) for r in tool.LINUX_ROLES])
-        old = {k: v for k, v in d.items() if k != 'testSha'}
-        old['contract'] = 'clued.independent-ci.resident-batch-descriptor/2'
-        old['linuxJobIds'] = [tool.job_id_v2(old, r) for r in tool.LINUX_ROLES]
-        self.assertNotEqual(old['linuxJobIds'], d['linuxJobIds'])
-        self.assertEqual(tool.descriptor_job_ids(json.dumps(old).encode(), BATCH), old['linuxJobIds'])
-        with self.assertRaises(wsprep.Refused):
-            wsprep.validate_descriptor(old, BATCH)
-        with self.assertRaises(tool.Refused):
-            tool.descriptor_job_ids(json.dumps({k: v for k, v in d.items() if k != 'testSha'}).encode(), BATCH)
+        for bad in ({**d, 'contract': 'clued.independent-ci.resident-batch-descriptor/2'}, {k: v for k, v in d.items() if k != 'testSha'}):
+            with self.assertRaises(tool.Refused):
+                tool.descriptor_job_ids(json.dumps(bad).encode(), BATCH)
+
+    def test_the_archive_reads_the_descriptor_from_the_outbox(self):
+        # 3b review B1: the outbox path and the descriptor contract must never share a name; read through the real path
+        self.assertIsInstance(tool.DESCRIPTORS, str)
+        d = descriptor()
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, BATCH))
+            with open(os.path.join(root, BATCH, 'descriptor.json'), 'wb') as f:
+                f.write(json.dumps(d).encode())
+            saved = tool.DESCRIPTORS
+            tool.DESCRIPTORS = root.replace('\\', '/')
+            try:
+                self.assertEqual(tool.descriptor_job_ids(tool.read_descriptor_bytes(BATCH), BATCH), d['linuxJobIds'])
+            finally:
+                tool.DESCRIPTORS = saved
 
     def test_a_list_that_disagrees_with_the_content_refuses_the_archive(self):
         # e.g. a descriptor naming another batch's (or an attacker-chosen) workspace ids
@@ -125,6 +133,11 @@ class WsPrepCheckout(unittest.TestCase):
         ls = text.index("'ls-tree', '-r', '-z', '--full-tree', d['testSha']")
         checkout = text.index("'checkout', '--quiet', '--detach'")
         self.assertLess(ls, checkout, 'the tested tree modes are validated before the checkout')
+        # job contract /3 (3b review m3): the candidate is checked out at S and its HEAD is checked against S, with H and T in the store
+        self.assertIn("'checkout', '--quiet', '--detach', '--no-recurse-submodules', d['testSha']", text)
+        self.assertIn("'rev-parse', '--verify', 'HEAD^{commit}']).strip() == d['testSha'], 'CANDIDATE_HEAD_CHANGED'", text)
+        self.assertIn("for c in (d['headSha'], d['baseSha']):", text)
+        self.assertNotIn("'checkout', '--quiet', '--detach', '--no-recurse-submodules', d['headSha']", text)
         with self.assertRaises(wsprep.Refused):
             wsprep.tree_modes_regular('120000 blob ' + 'a' * 40 + '\tlink\0')
         with self.assertRaises(wsprep.Refused):

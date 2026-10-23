@@ -4,7 +4,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { JOB_CONTRACT_V2, JOB_FIELDS_V2, IDENTITY_V2, SUBJECT_V2, batchJobsV2, jobIdV2, makeJobV2, sameBatchV2, subjectOfV2, validateJobV2 } from '../src/job-v2.mjs';
-import { validateEntryJob } from '../worker/formal-contract-placement-v2/container-entry.mjs';
+import { fixedCommands, validateEntryJob } from '../worker/formal-contract-placement-v2/container-entry.mjs';
+import fs from 'node:fs';
 
 const H = '1'.repeat(40), T = '2'.repeat(40), S = '4'.repeat(40);
 const base = { repo: 'tdoljyj/cross-memory-system', pr: 888, headSha: H, baseSha: T, sourceManifestSha256: 'd'.repeat(64), createdAt: '2026-10-23T03:00:00.000Z', attempt: 1 };
@@ -52,4 +53,22 @@ test('job /3: the placement container derives the same id and refuses /2', () =>
     assert.throws(() => validateEntryJob({ ...old, contract: 'clued.independent-ci.job/2' }), e => e.code === 'EXACT_PLACEMENT_JOB_REQUIRED');
     assert.throws(() => validateEntryJob({ ...job, testSha: '5'.repeat(40) }), e => e.code === 'EXACT_PLACEMENT_JOB_REQUIRED');
   }
+});
+
+test('job /3: the placement container builds and checks the tested commit S, against the base T (3b review m3)', () => {
+  const tools = Object.fromEntries(['node', 'python', 'git', 'esbuildJs', 'esbuildBinary'].map((k, i) => [k, { path: `/usr/local/clued/${k}`, sha256: String(i).repeat(64) }]));
+  const job = makeJobV2({ ...base, testSha: S, role: 'contract-placement' });
+  const byId = Object.fromEntries(fixedCommands(job, tools).map(c => [c.id, c.args]));
+  assert.ok(byId['actual-bootstrap-build'].includes(`--define:__CLUED_BUILD_SHA__=${JSON.stringify(S)}`));
+  const placement = byId['placement-and-production-floor'];
+  assert.equal(placement[placement.indexOf('--base') + 1], T);
+  assert.equal(placement[placement.indexOf('--head') + 1], S);
+  assert.ok(!Object.values(byId).flat().includes(H), 'the head is never what the container checks');
+});
+
+test('job /3: the bundle builder accepts descriptor /3 only and refuses S != H until step 3c', () => {
+  const text = fs.readFileSync(new URL('../src/resident-v2/build-bundle.ps1', import.meta.url), 'utf8');
+  assert.ok(text.includes("$d.contract -cne 'clued.independent-ci.resident-batch-descriptor/3'"));
+  assert.ok(!text.includes('resident-batch-descriptor/2'));
+  assert.ok(text.includes("if($d.testSha -cne $d.headSha){throw 'TEST_COMMIT_NOT_HEAD'}"));
 });

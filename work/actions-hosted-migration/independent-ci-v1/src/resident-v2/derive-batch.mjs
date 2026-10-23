@@ -7,7 +7,8 @@
 // no host write outside --out, no network, no secret. The same inputs always give the same bytes.
 //
 //   node derive-batch.mjs --subject-json <json> --batch-key <64hex> --batch-id <16hex-12hex> --out <new dir> [--record <dir>]
-// stdout: {status:'RESIDENT_BATCH_DERIVED', batchKey, batchId, packageSha256, ciSourceManifestSha256,
+// stdout: {status:'RESIDENT_BATCH_DERIVED', batchKey, batchId, packageSha256, ciSourceManifestSha256, sourceCommit, gitleaksTomlSha256,
+//          testSha (the tested commit S every job of the batch names; the engine copies it into the descriptor),
 //          stages:[{number,name,entryRole,jobId,jobIds,workManifestSha256,planSha256,directory,runMilliseconds,linuxWorker}]}
 // Stage R (hosted relay, free-minutes design S19) is not part of the batch derivation: its job list is the
 // relay candidates the resident decided after the hosted wait (20-plan-intent). One more deterministic call
@@ -66,7 +67,7 @@ export function deriveBatch({ recordDocs, subject, batchKey, batchId, now = Date
     jobs: Object.fromEntries(Object.entries(jobs).map(([r, j]) => [r, j.id])), stages: rows, automaticRetryAllowed: false, claimBound: false };
   out['batch.json'] = canonical(batch);
   const packageSha256 = hash(canonical({ batch: hash(out['batch.json']), stages: rows.map(r => r.workManifestSha256) }));
-  return { files: out, result: { status: 'RESIDENT_BATCH_DERIVED', batchKey, batchId, packageSha256, ciSourceManifestSha256: ci, sourceCommit, gitleaksTomlSha256, stages: rows } };
+  return { files: out, result: { status: 'RESIDENT_BATCH_DERIVED', batchKey, batchId, packageSha256, ciSourceManifestSha256: ci, sourceCommit, gitleaksTomlSha256, testSha: jobs['work-admission'].testSha, stages: rows } };
 }
 
 // One sealed stage package (plan, stage row, jobs, work manifest), shared by the batch and stage R.

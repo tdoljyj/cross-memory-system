@@ -17,7 +17,7 @@ using Microsoft.Win32.SafeHandles;
 //     so ONE helper binary serves every stage and every batch (no per-batch csc, no rNN archives);
 //   - the install facts come from the claim-free record (resident\record\*, admin-only), the Source from
 //     resident\source\<sourceManifestSha256>\ only (S12: code only from source\<sha>);
-//   - jobs are contract /2 (no claim; id over content + attempt; attempt 1..2) (S6);
+//   - jobs are contract /3 (no claim; id over content + tested commit + attempt; attempt 1..2) (S6, quota phase 2 step 3b);
 //   - the runtime window is the stage cap bounded by the install's validUntil, never by a claim and never
 //     by 24 h (S5);
 //   - the exact ACL model admits the resident SID as owner/writer of its own stage directory and as a
@@ -192,7 +192,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   var jobsBytes=Read(stageDir+"\\jobs.json",Sha(plan,"jobSha256"),true);var jobs=new JavaScriptSerializer().DeserializeObject(new UTF8Encoding(false,true).GetString(jobsBytes)) as object[];
   string[] roles=SelectedJobRoles(Stage,jobs);
   for(int i=0;i<roles.Length;i++){var j=jobs[i] as Dictionary<string,object>;if(j==null)Deny("EXACT_STAGE_JOBS_REQUIRED");ValidateJobV2(j,roles[i],SourceManifestHash);
-   if(i>0)foreach(string k in new[]{"repo","pr","headSha","baseSha","sourceManifestSha256","createdAt","attempt"})if(!Object.Equals(At(j,k),At((Dictionary<string,object>)jobs[0],k)))Deny("EXACT_CONTROL_PAIR_SUBJECT_REQUIRED");}
+   if(i>0)foreach(string k in new[]{"repo","pr","headSha","baseSha","testSha","sourceManifestSha256","createdAt","attempt"})if(!Object.Equals(At(j,k),At((Dictionary<string,object>)jobs[0],k)))Deny("EXACT_CONTROL_PAIR_SUBJECT_REQUIRED");}
   if(SelectedRole=="check-publisher")Read(stageDir+"\\result.json",null,false); // signed untrusted input; the entry verifies it
   RuntimeDeadlineUtc=BoundedDeadline(Stage,DateTimeOffset.UtcNow,validUntil);
   Read(Node,nodeHash,false);

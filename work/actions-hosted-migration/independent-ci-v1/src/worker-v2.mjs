@@ -12,7 +12,7 @@ const DIGEST = /^[a-f0-9]{64}$/;
 const fixtureRuntimes = new WeakSet();
 const protectedRuntimes = new WeakSet();
 const preparedRequests = new WeakSet();
-// Job contract v2 identity (claim-free, attempt-scoped; DESIGN S6). Everything else is worker.mjs unchanged.
+// Source v2 job identity (claim-free, attempt-scoped; DESIGN S6; jobId binds S since contract /3). Everything else is worker.mjs unchanged.
 const identityKeys = ['jobId', 'repo', 'pr', 'headSha', 'baseSha', 'role', 'sourceManifestSha256', 'attempt'];
 export const sha256 = value => createHash('sha256').update(value).digest('hex');
 export function canonicalJson(value) {

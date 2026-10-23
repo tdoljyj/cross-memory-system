@@ -16,7 +16,7 @@ lock, empty spool, no worker process; bundle sealed by streaming copy and hash; 
 header: v2, no prerequisites/capabilities, formal refs == the receipt's ls-remote list, main == base,
 exact reviewed refs; mirror + candidates without hardlinks; git-dir audits; fsck --full --strict;
 only 100644/100755 blobs; workspaces root:root 0700.
-Changed against b29 (each a lesson): job ids are contract /2 (content + attempt, no claim), so an
+Changed against b29 (each a lesson): job ids are content + attempt, no claim (contract /2, now /3), so an
 attempt 2 never collides with attempt 1's workspaces; the trusted Source is compared with the
 installed Source commit, NOT with the PR head (b29 only worked because they were the same commit);
 refusal codes report the caller's line; nothing is patched into this file per batch.

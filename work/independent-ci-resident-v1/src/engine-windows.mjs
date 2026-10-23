@@ -217,7 +217,9 @@ export class WindowsEngine {
     check(r.code === 0, 'RESIDENT_DERIVATION_REFUSED');
     const v = parseBoundedJson(Buffer.from(r.stdout, 'utf8'), 1024 * 1024, 'RESIDENT_DERIVATION_REFUSED');
     check(v.status === 'RESIDENT_BATCH_DERIVED' && v.batchKey === key && v.batchId === batchId && HEX64.test(v.packageSha256) && HEX64.test(v.ciSourceManifestSha256 ?? '')
-      && /^[0-9a-f]{40}$/.test(v.sourceCommit ?? '') && HEX64.test(v.gitleaksTomlSha256 ?? '') && Array.isArray(v.stages) && v.stages.length === 8, 'RESIDENT_DERIVATION_REFUSED');
+      && /^[0-9a-f]{40}$/.test(v.sourceCommit ?? '') && HEX64.test(v.gitleaksTomlSha256 ?? '') && Array.isArray(v.stages) && v.stages.length === 8
+      // the tested commit S comes from the derivation alone; until step 3c it is the head itself
+      && v.testSha === subject.headSha, 'RESIDENT_DERIVATION_REFUSED');
     const linuxJobIds = v.stages.filter(s => [2, 4, 6].includes(s.number)).map(s => s.jobId);
     check(linuxJobIds.length === 3 && linuxJobIds.every(j => HEX64.test(j)), 'RESIDENT_DERIVATION_REFUSED');
     // Public descriptor (/3) for the companion's bundle and ws-prep, and (through /mnt/c, read-only) the
@@ -225,7 +227,7 @@ export class WindowsEngine {
     const dir = path.join(this.paths.outboxRoot, batchId);
     await ensureDir(dir);
     await writeNew(path.join(dir, 'descriptor.json'), { contract: DESCRIPTOR_CONTRACT, batchId, batchKey: key, repo: subject.repo, pr: subject.pr,
-      headSha: subject.headSha, baseSha: subject.baseSha, testSha: subject.headSha, attempt: subject.attempt, ciSourceManifestSha256: v.ciSourceManifestSha256, sourceCommit: v.sourceCommit,
+      headSha: subject.headSha, baseSha: subject.baseSha, testSha: v.testSha, attempt: subject.attempt, ciSourceManifestSha256: v.ciSourceManifestSha256, sourceCommit: v.sourceCommit,
       gitleaksTomlSha256: v.gitleaksTomlSha256, linuxJobIds, createdAt: v2.createdAt });
     return { batchId, key, dir: out, packageSha256: v.packageSha256, stages: v.stages, ciSourceManifestSha256: v.ciSourceManifestSha256 };
   }

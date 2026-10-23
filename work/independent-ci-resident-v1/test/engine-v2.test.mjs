@@ -17,7 +17,7 @@ const fact = (o = {}) => ({ contract: 'clued.independent-ci.resident-stage-fact/
 const SC_QC = 'BINARY_PATH_NAME   : "C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"\r\n        START_TYPE         : 3   DEMAND_START\r\n        SERVICE_START_NAME : .\\clued-control\r\n';
 const SC_Q = 'STATE              : 1  STOPPED\r\n        PID                : 0\r\n';
 
-async function engineFixture(t, { answers = {}, stdout = {} } = {}) {
+async function engineFixture(t, { answers = {}, stdout = {}, testSha = null } = {}) {
   const root = await tempRoot(t);
   const sourceRoot = path.join(root, 'source', 'e'.repeat(64));
   await fs.mkdir(path.join(sourceRoot, ...V2), { recursive: true });
@@ -30,7 +30,7 @@ async function engineFixture(t, { answers = {}, stdout = {} } = {}) {
     if (argv[1].endsWith('derive-batch.mjs')) {
       const id = argv[argv.indexOf('--batch-id') + 1];
       return { code: 0, stdout: JSON.stringify({ status: 'RESIDENT_BATCH_DERIVED', batchKey: KEY, batchId: id, packageSha256: 'c'.repeat(64), ciSourceManifestSha256: 'e'.repeat(64),
-        sourceCommit: 'd'.repeat(40), gitleaksTomlSha256: '9'.repeat(64), stages: rows }) };
+        sourceCommit: 'd'.repeat(40), gitleaksTomlSha256: '9'.repeat(64), testSha: testSha ?? JSON.parse(argv[argv.indexOf('--subject-json') + 1]).headSha, stages: rows }) };
     }
     if (argv[1].endsWith('invoke-stage.mjs')) return { code: 0, stdout: JSON.stringify(stdout[argv[argv.indexOf('--stage') + 1]] ?? fact()) };
     throw new Error('unexpected argv ' + argv.join(' '));
@@ -61,6 +61,9 @@ test('derive passes the v2 subject (with createdAt) and writes the public descri
   assert.deepEqual([d.headSha, d.testSha], [subject.headSha, subject.headSha]);
   assert.deepEqual([d.attempt, d.ciSourceManifestSha256, d.sourceCommit, d.gitleaksTomlSha256, d.linuxJobIds.length], [2, 'e'.repeat(64), 'd'.repeat(40), '9'.repeat(64), 3]);
   assert.equal(d.createdAt, sent.createdAt);
+  // the descriptor's S is the derivation's; a derivation that names another S is refused until step 3c
+  const other = await engineFixture(t, { testSha: '4'.repeat(40) });
+  await assert.rejects(other.engine.derive(subject, KEY), e => e.code === 'RESIDENT_DERIVATION_REFUSED');
 });
 
 test('stages run through node invoke-stage.mjs with fixed argv; the v2 fact is parsed', async t => {
