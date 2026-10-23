@@ -31,23 +31,82 @@ export function protectedFactsFromVerify({ job, batchClaim, body, status, config
     claim: { claimId: claim.claim_id, fence: claim.fence, epoch: claim.execution_epoch } };
 }
 
+// Bounded retry of the verify request (KooYomi Task a3ad42a9; the issuer's RETRY_WAITS_MS, resident DESIGN §7.8). A
+// request that timed out or failed on the network, or that Native answered 5xx or 429 (the anon role's 3 s statement
+// timeout is a 500/57014), is sent again after 1, 2 and 4 s, and only while the wait still leaves a short attempt
+// before OBSERVE_BUDGET_MS from the first request (monotonic time; the changed-paths read before it has its own
+// bound); every attempt's own wait is the same 10 s as v1 one-shot.mjs (PR-A review MINOR), cut to that budget. Each
+// attempt is a new read verified exactly as before, with its own verified_at checked against its own arrival. The
+// monotonic deadline is checked again after a scheduled wait and before accepting a reply (an abort timer can run
+// late); the held record must still be live at that arrival. Thus a
+// retried answer is as fresh and complete as a first one; a verified refusal (native_claim_observation_refused) and
+// any other failure, such as a body that is not JSON, a redirect or a bad URL (native_claim_observation_unconfirmed),
+// never retry. Exhausted: native_claim_observation_unavailable, mapped to NATIVE_ADMISSION_UNAVAILABLE only on a
+// clean BLOCKED with zero side effects; this does not enable a new batch attempt after a role may have published.
+// The verify RPC is read-only, so a retry never writes or re-posts a check, on the publisher's first
+// boundary (before its journal says sent) or on the one after its write. Like the answer's, a retry's observation
+// log line must be written: if it cannot be, the observation fails closed.
+export const OBSERVE_RETRY_WAITS_MS = Object.freeze([1000, 2000, 4000]);
+export const OBSERVE_BUDGET_MS = 30000;
+const OBSERVE_ATTEMPT_MS = 10000, OBSERVE_MIN_ATTEMPT_MS = 2000;
+const transientStatus = status => status === 429 || (status >= 500 && status <= 599);
+// fetch (undici) on Node 24: the attempt's own timeout is a TimeoutError; a network failure is a TypeError ("fetch
+// failed" while connecting or sending, "terminated" while reading the body) whose cause carries a socket or DNS code.
+// A TypeError without one (a redirect refused by redirect:'error', a bad URL or header, a fault in this code) is not.
+// A dual-stack connect gives an AggregateError whose own code is only its first attempt's: every attempt's code counts.
+const NETWORK_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH',
+  'ENETDOWN', 'EHOSTDOWN', 'UND_ERR_SOCKET', 'UND_ERR_CLOSED', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT']);
+export const transientFetchError = error => error?.name === 'TimeoutError'
+  || (error instanceof TypeError && ['fetch failed', 'terminated'].includes(error.message)
+    && [error.cause?.code, ...(Array.isArray(error.cause?.errors) ? error.cause.errors.map(e => e?.code) : [])].some(code => NETWORK_CODES.has(code)));
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+
 // The protected observation port of a v2 scanner publisher (this entry and the stage-R relay entry): the
 // read-only Native verify RPC for the batch claim generation. It never binds a PR or charges a meter.
-export function protectedAuthority({ config, accepted, github, fetchImpl, nativeToken, live, log }) {
+// clock (verified_at freshness), monotonic (the retry budget), sleep and timeoutSignal are the tests' seams.
+export function protectedAuthority({ config, accepted, github, fetchImpl, nativeToken, live, log, clock = Date.now, monotonic = () => performance.now(), sleep = pause,
+  timeoutSignal = ms => AbortSignal.timeout(ms) }) {
   return { async observe(subject, claimGen) {
     live();
     const packet = await github.readChangedPaths(subject);
-    let response, body;
-    try {
-      // The same bounded wait as v1 one-shot.mjs (PR-A review MINOR): 10 s, then native_claim_observation_unconfirmed.
-      response = await fetchImpl(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/clued_work_verify_v1`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
-        headers: { apikey: config.publishableKey, authorization: `Bearer ${config.publishableKey}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ p_token_hash: digest(nativeToken), p_input: { scope: config.scope, claim_id: claimGen.claimId, changed_paths: packet.paths } }) });
-      body = await response.json();
-    } catch { stop('native_claim_observation_unconfirmed'); }
-    const facts = protectedFactsFromVerify({ job: subject, batchClaim: claimGen, body, status: response.status, config, accepted, now: Date.now() });
-    log('native_claim_observation', body);
-    return facts;
+    const url = `${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/clued_work_verify_v1`;
+    const request = JSON.stringify({ p_token_hash: digest(nativeToken), p_input: { scope: config.scope, claim_id: claimGen.claimId, changed_paths: packet.paths } });
+    const deadline = monotonic() + OBSERVE_BUDGET_MS;
+    for (let attempt = 1; ; attempt++) {
+      live();
+      const remaining = deadline - monotonic();
+      if (remaining <= 0) {
+        log('native_claim_observation_unavailable', { attempt: attempt - 1, cause: 'budget', status: null });
+        stop('native_claim_observation_unavailable');
+      }
+      let response = null, body, cause = null;
+      try {
+        response = await fetchImpl(url, { method: 'POST', redirect: 'error', signal: timeoutSignal(Math.max(1, Math.min(OBSERVE_ATTEMPT_MS, Math.ceil(remaining)))),
+          headers: { apikey: config.publishableKey, authorization: `Bearer ${config.publishableKey}`, 'content-type': 'application/json' }, body: request });
+        if (transientStatus(response.status)) {
+          cause = 'status';
+          try { await response.body?.cancel(); } catch { /* the answer is discarded either way */ }
+        } else body = await response.json();
+      } catch (error) {
+        if (!transientFetchError(error)) stop('native_claim_observation_unconfirmed');
+        cause = response ? 'body' : 'transport';
+      }
+      if (cause === null) {
+        const facts = protectedFactsFromVerify({ job: subject, batchClaim: claimGen, body, status: response.status, config, accepted, now: clock() });
+        live();
+        if (monotonic() > deadline) {
+          log('native_claim_observation_unavailable', { attempt, cause: 'budget', status: response.status });
+          stop('native_claim_observation_unavailable');
+        }
+        log('native_claim_observation', body);
+        return facts;
+      }
+      const wait = OBSERVE_RETRY_WAITS_MS[attempt - 1];
+      const exhausted = wait === undefined || monotonic() + wait + OBSERVE_MIN_ATTEMPT_MS > deadline;
+      log(exhausted ? 'native_claim_observation_unavailable' : 'native_claim_observation_retry', { attempt, cause, status: response?.status ?? null });
+      if (exhausted) stop('native_claim_observation_unavailable');
+      await sleep(wait);
+    }
   } };
 }
 
