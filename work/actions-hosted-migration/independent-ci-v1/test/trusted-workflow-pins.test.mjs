@@ -33,9 +33,9 @@ import { REQUIRED_SOURCE_PATHS as BRIDGE_V3_SOURCE } from '../worker/protected-j
 import { REQUIRED_SOURCE_PATHS as BRIDGE_V4_SOURCE } from '../worker/protected-job-bridge-v4/boundary.mjs';
 import { requiredSourcePaths as policyV2Paths } from '../worker/formal-fixed-role-policy-v2/policy.mjs';
 import { requiredSourcePaths as policyV3Paths } from '../worker/formal-fixed-role-policy-v3/policy.mjs';
-import { WORKFLOWS, VERSIONS, GITLEAKS, TRIVY, PLACEMENT, workflowBytes, sha256, gitBlob, acceptedSha256s } from './fixtures/trusted-workflows.mjs';
-import { TRUSTED_WORKFLOWS, TRUSTED_WORKFLOW_PATHS, trustedWorkflowSha256s } from '../worker/trusted-workflows.mjs';
-import { TABLE_FILE, FIXTURE_FILE, readVersions, fixtureText, tableText } from './fixtures/repin-trusted-workflows.mjs';
+import { WORKFLOWS, VERSIONS, GITLEAKS, TRIVY, PLACEMENT, workflowBytes, sha256, gitBlob, acceptedSha256s, GITLEAKS_SUCCESSOR, successorWorkflowBytes } from './fixtures/trusted-workflows.mjs';
+import { TRUSTED_WORKFLOWS, TRUSTED_WORKFLOW_PATHS, trustedWorkflowSha256s, GITLEAKS_SUCCESSOR_WORKFLOW, activeGitleaksWorkflowSha256s } from '../worker/trusted-workflows.mjs';
+import { TABLE_FILE, FIXTURE_FILE, readVersions, fixtureText, tableText, readGitleaksSuccessor, successorTableText } from './fixtures/repin-trusted-workflows.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../../../..');
@@ -69,7 +69,21 @@ test('the one table and the fixture name the same exact bytes of all three workf
   // Regenerating from the fixture's own data reproduces the committed table and fixture byte for byte.
   const versions = structuredClone(WORKFLOWS.versions);
   assert.equal(tableText(fs.readFileSync(TABLE_FILE, 'utf8'), versions), fs.readFileSync(TABLE_FILE, 'utf8'));
-  assert.equal(fixtureText(versions), fs.readFileSync(FIXTURE_FILE, 'utf8'));
+  assert.equal(fixtureText(versions, WORKFLOWS.successors), fs.readFileSync(FIXTURE_FILE, 'utf8'));
+  assert.equal(successorTableText(fs.readFileSync(TABLE_FILE, 'utf8'), GITLEAKS_SUCCESSOR), fs.readFileSync(TABLE_FILE, 'utf8'));
+});
+
+test('the active gitleaks successor is separate from the immutable 726 workflow set', () => {
+  const active = GITLEAKS_SUCCESSOR ? [GITLEAKS_SUCCESSOR.files[GITLEAKS].sha256] : [];
+  assert.deepEqual([...activeGitleaksWorkflowSha256s()], active);
+  assert.deepEqual([...gitleaksV4.WORKFLOW_SHA256S], active);
+  assert.deepEqual([...gitleaksV3.WORKFLOW_SHA256S], acceptedSha256s(GITLEAKS));
+  assert.ok(active.every(sha => !gitleaksV3.WORKFLOW_SHA256S.includes(sha)));
+  if (!GITLEAKS_SUCCESSOR) { assert.equal(GITLEAKS_SUCCESSOR_WORKFLOW, null); return; }
+  const bytes = successorWorkflowBytes(), entry = GITLEAKS_SUCCESSOR.files[GITLEAKS];
+  assert.equal(sha256(bytes), entry.sha256); assert.equal(gitBlob(bytes), entry.blob);
+  assert.deepEqual(GITLEAKS_SUCCESSOR_WORKFLOW, { path: GITLEAKS, sha256: entry.sha256, blob: entry.blob, commit: GITLEAKS_SUCCESSOR.commit });
+  assert.deepEqual(readGitleaksSuccessor(ROOT, GITLEAKS_SUCCESSOR.commit), GITLEAKS_SUCCESSOR);
 });
 
 const haveCommits = (() => {
@@ -104,7 +118,7 @@ test('a malformed table refuses to load: duplicate, non-hex, unknown path, or a 
 
 test('every role, policy and signed-result check carries exactly both reviewed versions, frozen, and no single pin is left', () => {
   const sets = [
-    ['gitleaks v3', gitleaksV3.WORKFLOW_SHA256S, GITLEAKS], ['gitleaks v4', gitleaksV4.WORKFLOW_SHA256S, GITLEAKS],
+    ['gitleaks v3', gitleaksV3.WORKFLOW_SHA256S, GITLEAKS],
     ['required-trivy v2', trivyPlansV2.WORKFLOW_SHA256S, TRIVY], ['required-trivy v3', trivyPlansV3.WORKFLOW_SHA256S, TRIVY],
     ['placement v1', placementV1.WORKFLOW_SHA256S, PLACEMENT], ['placement v2', placementV2.WORKFLOW_SHA256S, PLACEMENT],
     ['policy v2', POLICY_V2_PLACEMENT, PLACEMENT], ['policy v3', POLICY_V3_PLACEMENT, PLACEMENT],
@@ -115,7 +129,7 @@ test('every role, policy and signed-result check carries exactly both reviewed v
     assert.ok(set.every(value => /^[a-f0-9]{64}$/.test(value)), name);
   }
   assert.equal(gitleaksV3.WORKFLOW_PATH, GITLEAKS); assert.equal(gitleaksV4.WORKFLOW_PATH, GITLEAKS);
-  for (const module of [gitleaksV3, gitleaksV4]) {
+  for (const module of [gitleaksV3]) {
     assert.deepEqual(Object.keys(module.SOURCE_PINS).sort(), ['.gitleaks.toml', 'scripts/ci/reviewed_gitleaks.py']);
   }
   for (const [name, module] of [['placement v1', placementV1], ['placement v2', placementV2], ['required-trivy v3', trivyPlansV3]]) {
@@ -140,7 +154,7 @@ test('every role, policy and signed-result check carries exactly both reviewed v
 test('gitleaks acceptedWorkflowSha256 (v3, v4): one declared accepted pin, nothing else', () => {
   const [main, prB] = acceptedSha256s(GITLEAKS), other = h(9);
   const role = pins => ({ sourceFiles: pins.map(sha => ({ path: GITLEAKS, sha256: sha })).concat([{ path: '.gitleaks.toml', sha256: h(1) }]) });
-  for (const module of [gitleaksV3, gitleaksV4]) {
+  for (const module of [gitleaksV3]) {
     assert.equal(module.acceptedWorkflowSha256(role([main])), main);
     assert.equal(module.acceptedWorkflowSha256(role([prB])), prB);
     for (const bad of [role([]), role([other]), role([main, prB]), role([main, main]), { sourceFiles: null }, null,
@@ -148,6 +162,10 @@ test('gitleaks acceptedWorkflowSha256 (v3, v4): one declared accepted pin, nothi
       assert.throws(() => module.acceptedWorkflowSha256(bad), { code: 'TRUSTED_REVIEW_SOURCE_PIN_REQUIRED' });
     }
   }
+  const active = GITLEAKS_SUCCESSOR ? GITLEAKS_SUCCESSOR.files[GITLEAKS].sha256 : null;
+  if (active) assert.equal(gitleaksV4.acceptedWorkflowSha256(role([active])), active);
+  for (const bad of [role([]), role([main]), role([prB]), role([other]), role(active ? [active, active] : []), { sourceFiles: null }, null])
+    assert.throws(() => gitleaksV4.acceptedWorkflowSha256(bad), { code: 'TRUSTED_REVIEW_SOURCE_PIN_REQUIRED' });
 });
 
 test('required trivy plans (v2, v3): the source check accepts both reviewed trivy.yml versions and nothing else', () => {
@@ -197,7 +215,7 @@ const GIT_ENV = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: p
 const git = (args, input) => { const r = spawnSync(GIT, args, { input, env: GIT_ENV });
   if (r.status !== 0) throw new Error(`git ${args[0]} failed: ${String(r.stderr).slice(0, 300)}`); return r.stdout.toString('utf8').trim(); };
 
-test('gitleaks v4 (Source v2) prepare: either reviewed gitleaks.yml passes, a swapped or tampered one is refused before any output', { skip: !GIT && 'no single-link git executable' }, async t => {
+test('gitleaks v4 prepare: only the 729 successor passes; legacy, swapped or tampered bytes are refused before output', { skip: !GIT ? 'no single-link git executable' : !GITLEAKS_SUCCESSOR && 'successor workflow awaits a real freeze commit' }, async t => {
   const directory = await fsp.mkdtemp(path.join(os.tmpdir(), 'clued-workflow-pins-'));
   t.after(async () => {
     const open = async p => { const s = await fsp.lstat(p); await fsp.chmod(p, s.isDirectory() ? 0o700 : 0o600);
@@ -228,12 +246,12 @@ test('gitleaks v4 (Source v2) prepare: either reviewed gitleaks.yml passes, a sw
       return { code: null, outputs: fs.readdirSync(run) };
     } catch (error) { return { code: error.code, outputs: fs.readdirSync(run) }; }
   }
-  const main = workflowBytes('main', GITLEAKS), prB = workflowBytes('pr-b', GITLEAKS), tampered = Buffer.concat([main, Buffer.from('# tampered\n')]);
+  const active = successorWorkflowBytes(), main = workflowBytes('main', GITLEAKS), prB = workflowBytes('pr-b', GITLEAKS), tampered = Buffer.concat([active, Buffer.from('# tampered\n')]);
+  assert.deepEqual(await attempt('successor', active, [sha256(active)]), { code: 'REVIEWED_COMMIT_NOT_IN_STORE', outputs: ['history', 'source'] });
   for (const [label, bytes] of [['main', main], ['pr-b', prB]]) {
-    // Every pinned-source check passes; the synthetic store then lacks the reviewed commits.
-    assert.deepEqual(await attempt(label, bytes, [sha256(bytes)]), { code: 'REVIEWED_COMMIT_NOT_IN_STORE', outputs: ['history', 'source'] }, label);
+    assert.deepEqual(await attempt(label, bytes, [sha256(bytes)]), { code: 'TRUSTED_REVIEW_SOURCE_PIN_REQUIRED', outputs: ['source'] }, label);
   }
-  assert.deepEqual(await attempt('swapped', main, [sha256(prB)]), { code: 'TRUSTED_REVIEW_SOURCE_CHANGED', outputs: ['source'] });
+  assert.deepEqual(await attempt('swapped', main, [sha256(active)]), { code: 'TRUSTED_REVIEW_SOURCE_CHANGED', outputs: ['source'] });
   assert.deepEqual(await attempt('tampered', tampered, [sha256(tampered)]), { code: 'TRUSTED_REVIEW_SOURCE_PIN_REQUIRED', outputs: ['source'] });
   assert.deepEqual(await attempt('undeclared', main, []), { code: 'TRUSTED_REVIEW_SOURCE_PIN_REQUIRED', outputs: ['source'] });
 });
