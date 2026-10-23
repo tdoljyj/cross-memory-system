@@ -8,7 +8,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { BROKER_STOP_CONTRACT, PUMP_CODES, WindowsEngine, findInflightSwap } from '../src/engine-windows.mjs';
 import { CANCEL_CONTRACT, Mailbox } from '../src/mailbox.mjs';
-import { CALLBACK_WINDOW_MS, Companion } from '../src/companion.mjs';
+import { CALLBACK_WINDOW_MS, Companion, RELAY_TIMEOUT_MS } from '../src/companion.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { rawPolicy, tempRoot } from './helpers.mjs';
 
@@ -272,7 +272,7 @@ test('a cancel while a Receive relay call fails ends the pump after that one cal
         return { code: null, stdout: '', stderr: '', refused: 'RUNNER_BUSY_WITH_UNFINISHED_CHILD' };
       } });
       assert.deepEqual([r.res.ok, r.res.code], [false, 'COMPANION_PUMP_CANCELLED'], label);
-      assert.ok(r.sinceCancel <= 40_000, `${label}: answered within the one relay call's time (${r.sinceCancel} ms)`);
+      assert.ok(r.sinceCancel <= RELAY_TIMEOUT_MS, `${label}: answered within the one relay call's time (${r.sinceCancel} ms)`);
       assert.deepEqual(r.after, [], `${label}: no relay call after the cancel, so no blocked hand-over`);
     }
   }

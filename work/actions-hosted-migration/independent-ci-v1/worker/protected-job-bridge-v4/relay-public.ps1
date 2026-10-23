@@ -95,7 +95,9 @@ try{
   try{[Console]::InputEncoding=$utf8;if(-not $proc.Start()){throw 'PUBLIC_START_UNCONFIRMED'};$started=$true;$result.processId=$proc.Id}finally{[Console]::InputEncoding=$previous}
   $ot=[CluedFormalRelayIO]::Read($proc.StandardOutput,1399000);$et=[CluedFormalRelayIO]::Read($proc.StandardError,4096)
   $stdin=$proc.StandardInput.BaseStream;$wt=$stdin.WriteAsync($ib,0,$ib.Length);if(-not $wt.Wait(5000)){throw 'PUBLIC_STDIN_UNCERTAIN_NO_RETRY'};[void]($wt.GetAwaiter().GetResult());$stdin.Dispose()
-  if(-not $proc.WaitForExit(30000)){throw 'PUBLIC_TERMINAL_UNCONFIRMED_LOCKS_RETAINED'}
+  # The finally block waits for the child in any case; this bound only decides whether a slow child that did finish
+  # counts. 90 s of the companion's 120 s per relay call (RELAY_TIMEOUT_MS; Task 576231fa: a relay call sometimes takes 25-45 s).
+  if(-not $proc.WaitForExit(90000)){throw 'PUBLIC_TERMINAL_UNCONFIRMED_LOCKS_RETAINED'}
   $proc.WaitForExit();$terminal=$true;$result.exitCode=$proc.ExitCode
   if(-not [Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($ot,$et),5000)){throw 'PUBLIC_OUTPUT_UNCONFIRMED_NO_RETRY'}
   $stdout=$ot.GetAwaiter().GetResult();$stderr=$et.GetAwaiter().GetResult()
