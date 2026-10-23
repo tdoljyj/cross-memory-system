@@ -138,16 +138,17 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   string id=Text(plan,"batchId");if(id.Length!=29||id[16]!='-'||!LowerHex(id.Substring(0,16))||!LowerHex(id.Substring(17)))Deny("FIXED_BATCH_ID_REQUIRED");
   foreach(string f in new[]{"nodeSha256","entrySha256","acceptanceSha256","sourceManifestSha256","installationSha256","runtimeConfigPinSha256","jobSha256"})Sha(plan,f);return (int)stage;
  }
- // Job contract /2: id = sha256(JSON(["clued.independent-ci.job/2",repo,pr,headSha,baseSha,sourceManifestSha256,role,attempt])).
+ // Job contract /3 (quota phase 2 step 3b): id = sha256(JSON(["clued.independent-ci.job/3",repo,pr,headSha,baseSha,testSha,sourceManifestSha256,role,attempt])).
+ // testSha is the tested commit S (S = H outside the train). The method keeps its V2 (Source v2) name.
  public static string JobIdV2(Dictionary<string,object> job){
-  var identity=new List<object>{"clued.independent-ci.job/2",At(job,"repo"),At(job,"pr"),At(job,"headSha"),At(job,"baseSha"),At(job,"sourceManifestSha256"),At(job,"role"),At(job,"attempt")};
+  var identity=new List<object>{"clued.independent-ci.job/3",At(job,"repo"),At(job,"pr"),At(job,"headSha"),At(job,"baseSha"),At(job,"testSha"),At(job,"sourceManifestSha256"),At(job,"role"),At(job,"attempt")};
   byte[] raw=new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(identity));using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(raw)).Replace("-","").ToLowerInvariant();
  }
  public static Dictionary<string,object> ValidateJobV2(Dictionary<string,object> job,string expectedRole,string sourceManifest){
-  Fields(job,new[]{"contract","id","repo","pr","headSha","baseSha","role","sourceManifestSha256","createdAt","attempt"});Exact(job,"contract","clued.independent-ci.job/2");Exact(job,"repo","tdoljyj/cross-memory-system");
+  Fields(job,new[]{"contract","id","repo","pr","headSha","baseSha","testSha","role","sourceManifestSha256","createdAt","attempt"});Exact(job,"contract","clued.independent-ci.job/3");Exact(job,"repo","tdoljyj/cross-memory-system");
   if(Text(job,"role")!=expectedRole)Deny("FIXED_FORMAL_JOB_ROLE_REQUIRED");Sha(job,"id");
   long pr=Int(job,"pr"),attempt=Int(job,"attempt");
-  if(!Commit(Text(job,"headSha"))||!Commit(Text(job,"baseSha"))||Sha(job,"sourceManifestSha256")!=sourceManifest||pr<1||attempt<1||attempt>2)Deny("FIXED_FORMAL_JOB_SUBJECT_REQUIRED");
+  if(!Commit(Text(job,"headSha"))||!Commit(Text(job,"baseSha"))||!Commit(Text(job,"testSha"))||Sha(job,"sourceManifestSha256")!=sourceManifest||pr<1||attempt<1||attempt>2)Deny("FIXED_FORMAL_JOB_SUBJECT_REQUIRED");
   DateTimeOffset created;if(!DateTimeOffset.TryParse(Text(job,"createdAt"),CultureInfo.InvariantCulture,DateTimeStyles.None,out created)||created>DateTimeOffset.UtcNow.AddMinutes(5))Deny("FIXED_FORMAL_JOB_TIME_REQUIRED");
   if(JobIdV2(job)!=Text(job,"id"))Deny("DETERMINISTIC_JOB_ID_REQUIRED");return job;
  }

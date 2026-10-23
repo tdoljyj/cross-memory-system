@@ -23,8 +23,8 @@ BATCH = 'a1b2c3d4e5f60718-0123456789ab'
 
 
 def descriptor(**o):
-    d = {'contract': 'clued.independent-ci.resident-batch-descriptor/2', 'batchId': BATCH, 'batchKey': BATCH[:16] + 'c' * 48, 'repo': pw.REPO, 'pr': 888,
-         'headSha': '1' * 40, 'baseSha': '2' * 40, 'sourceCommit': '3' * 40, 'ciSourceManifestSha256': 'd' * 64, 'gitleaksTomlSha256': 'e' * 64, 'attempt': 1}
+    d = {'contract': 'clued.independent-ci.resident-batch-descriptor/3', 'batchId': BATCH, 'batchKey': BATCH[:16] + 'c' * 48, 'repo': pw.REPO, 'pr': 888,
+         'headSha': '1' * 40, 'baseSha': '2' * 40, 'testSha': '1' * 40, 'sourceCommit': '3' * 40, 'ciSourceManifestSha256': 'd' * 64, 'gitleaksTomlSha256': 'e' * 64, 'attempt': 1}
     d.update(o)
     d['linuxJobIds'] = [pw.job_id_v2(d, r) for r in pw.LINUX_ROLES]
     return d
@@ -34,7 +34,7 @@ def node_job_id(d, role):
     """The Node formula (job-v2.mjs) computed by node itself, so the two can never drift."""
     url = 'file:///' + os.path.join(os.path.dirname(HERE), 'src', 'job-v2.mjs').replace('\\', '/').lstrip('/')
     script = (f"import {{jobIdV2}} from '{url}';process.stdout.write(jobIdV2(JSON.parse(process.argv[1])));")
-    job = {'repo': d['repo'], 'pr': d['pr'], 'headSha': d['headSha'], 'baseSha': d['baseSha'], 'sourceManifestSha256': d['ciSourceManifestSha256'], 'role': role, 'attempt': d['attempt']}
+    job = {'repo': d['repo'], 'pr': d['pr'], 'headSha': d['headSha'], 'baseSha': d['baseSha'], 'testSha': d['testSha'], 'sourceManifestSha256': d['ciSourceManifestSha256'], 'role': role, 'attempt': d['attempt']}
     return subprocess.run(['node', '--input-type=module', '-e', script, json.dumps(job)], capture_output=True, text=True, check=True).stdout
 
 
@@ -47,12 +47,21 @@ class PrepareWorkspacesV2Tests(unittest.TestCase):
         self.assertEqual(pw.validate_descriptor(d, BATCH)['gitleaks'], d['linuxJobIds'][0])
         two = descriptor(attempt=2)
         self.assertTrue(all(a != b for a, b in zip(d['linuxJobIds'], two['linuxJobIds'])))
+        # job contract /3: the tested commit is part of the id (another S, other ids), and Node agrees on it too
+        other = descriptor(testSha='4' * 40)
+        self.assertTrue(all(a != b for a, b in zip(d['linuxJobIds'], other['linuxJobIds'])))
+        if shutil.which('node'):
+            self.assertEqual(pw.job_id_v2(other, 'trivy'), node_job_id(other, 'trivy'))
 
     def test_descriptor_refusals(self):
         d = descriptor()
         for bad, code in [({**d, 'linuxJobIds': d['linuxJobIds'][::-1]}, 'EXACT_CONTENT_JOB_ID_REQUIRED'), ({**d, 'attempt': 3}, 'DESCRIPTOR_REFUSED'),
                           ({**d, 'batchId': 'f' * 16 + '-' + '0' * 12}, 'DESCRIPTOR_REFUSED'), ({**d, 'pr': True}, 'DESCRIPTOR_REFUSED'),
-                          ({**d, 'contract': 'clued.independent-ci.resident-batch-descriptor/1'}, 'DESCRIPTOR_REFUSED')]:
+                          ({**d, 'contract': 'clued.independent-ci.resident-batch-descriptor/1'}, 'DESCRIPTOR_REFUSED'),
+                          ({**d, 'contract': 'clued.independent-ci.resident-batch-descriptor/2'}, 'DESCRIPTOR_REFUSED'),
+                          ({k: v for k, v in d.items() if k != 'testSha'}, 'DESCRIPTOR_REFUSED'), ({**d, 'testSha': 'X' * 40}, 'DESCRIPTOR_REFUSED'),
+                          # step 3b: S = H; another tested commit is refused until step 3c (ids recomputed so only S differs)
+                          (descriptor(testSha='4' * 40), 'TEST_COMMIT_NOT_HEAD')]:
             with self.assertRaises(pw.Refused) as e:
                 pw.validate_descriptor(bad, BATCH)
             self.assertEqual(e.exception.code, code)

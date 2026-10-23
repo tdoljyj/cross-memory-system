@@ -1,4 +1,4 @@
-// The Windows engine against the Source v2 entry points (fixed argv, descriptor /2, refs gate, stage fact /2).
+// The Windows engine against the Source v2 entry points (fixed argv, descriptor /3, refs gate, stage fact /2).
 // The Source entries are faked at the runner boundary; the real ones are tested in their own suites.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -47,7 +47,7 @@ async function engineFixture(t, { answers = {}, stdout = {} } = {}) {
 const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 2 };
 const stages = validatePolicy(rawPolicy()).stages;
 
-test('derive passes the v2 subject (with createdAt) and writes the public descriptor /2', async t => {
+test('derive passes the v2 subject (with createdAt) and writes the public descriptor /3', async t => {
   const f = await engineFixture(t);
   const batch = await f.engine.derive(subject, KEY);
   const argv = f.runs[0];
@@ -56,6 +56,9 @@ test('derive passes the v2 subject (with createdAt) and writes the public descri
   assert.deepEqual(Object.keys(sent).sort(), ['attempt', 'baseSha', 'createdAt', 'headSha', 'pr', 'repo', 'sourceManifestSha256']);
   const d = JSON.parse(await fs.readFile(path.join(f.root, 'outbox', batch.batchId, 'descriptor.json'), 'utf8'));
   assert.equal(d.contract, DESCRIPTOR_CONTRACT);
+  // quota phase 2 step 3b: the descriptor names the tested commit, the head itself until step 3c
+  assert.equal(DESCRIPTOR_CONTRACT, 'clued.independent-ci.resident-batch-descriptor/3');
+  assert.deepEqual([d.headSha, d.testSha], [subject.headSha, subject.headSha]);
   assert.deepEqual([d.attempt, d.ciSourceManifestSha256, d.sourceCommit, d.gitleaksTomlSha256, d.linuxJobIds.length], [2, 'e'.repeat(64), 'd'.repeat(40), '9'.repeat(64), 3]);
   assert.equal(d.createdAt, sent.createdAt);
 });
