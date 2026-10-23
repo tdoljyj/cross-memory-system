@@ -85,10 +85,10 @@ jobs:
           export LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1
           scan="$RUNNER_TEMP/clued-gitleaks"; repo="$scan/repo"; control="$scan/control"
           mkdir "$scan" "$repo" "$control"
-          echo "cf631812810d997f42496af561f44930b51087737f146c4a7541c5dbc0a994cd  .gitleaks.toml" | sha256sum -c --quiet -
-          echo "433b24137a7d3430990b69e61c0b4ebcd9dad47d770c5df62d6e1fef28b7f7a9  scripts/ci/reviewed_gitleaks.py" | sha256sum -c --quiet -
+          echo "167600934018e4761d80057321789a1c50486f35c32aa15eebc00ee53cf9aeec  .gitleaks.toml" | sha256sum -c --quiet -
+          echo "ce262ae31a44cfd486e9c8b56e6bc912e7259f18bf5b3b7bebcaf60f26206e4d  scripts/ci/reviewed_gitleaks.py" | sha256sum -c --quiet -
           sed -n 's/^# clued-reviewed-finding: {"fingerprint":"\([0-9a-f]\{40\}\):.*$/\1/p' .gitleaks.toml | sort -u > "$control/reviewed-commits"
-          echo "fcb2cc04ee35e01fbfc4bfc3dc9b0bb0ba78a6c4083ab5e17433c549450d59bb  $control/reviewed-commits" | sha256sum -c --quiet -
+          echo "37fcdae7442b1235f75f2325c13e508a0189443a24e62627bf338fa8285488bf  $control/reviewed-commits" | sha256sum -c --quiet -
           git init --quiet --template= "$repo"
           auth="$(printf 'x-access-token:%s' "$FETCH_TOKEN" | base64 -w0)"
           fetch() {
@@ -125,7 +125,7 @@ jobs:
           set -eu
           scan="$RUNNER_TEMP/clued-gitleaks"
           image=ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
-          echo "d599f6b9733e68370f7353114600f9939d675202de828d68cc761f3153aa2abe  $scan/control/reviewed.ignore" | sha256sum -c --quiet -
+          echo "abbbece0db8ff3e524736006e0bc8ecf078358b48fae91c8d0bc3046728b8f5a  $scan/control/reviewed.ignore" | sha256sum -c --quiet -
           chmod 0444 "$scan/control/reviewed.ignore"
           docker pull --quiet "$image" > /dev/null
           docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \
