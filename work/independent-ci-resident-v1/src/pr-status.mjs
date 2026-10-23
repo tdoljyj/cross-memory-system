@@ -50,6 +50,16 @@ const DEFERRED_TEXT = Object.freeze({ DAILY_BATCH_LIMIT: '今日执行批次额�
 // Why a row waits (failure-table class waiting), in the words of the PR page.
 const WAIT_TEXT = Object.freeze({ OWNER_REVIEW_REQUIRED: '等 Owner 批准受保护改动', TASK_CI_HEAD_CAP_REACHED: 'Task 的 24 小时 CI 额度已满',
   WAITING_BUDGET_EXHAUSTED: '今日等待重试额度已满（明天继续）' });
+// Phase 2, step 3a: a batch parked before stage 8 because of main's live rules, GitHub's test merge or the green ledger.
+const PARKED_TEXT = Object.freeze({ RULESET_UNREADABLE: '已测通：读不到 main 的规则，或必需检查不再钉在本执行器上',
+  STRICT_OFF_WITHOUT_TRAIN: '已测通：main 的 strict 已关而列车未开，暂不发合并位（已通知 Owner）',
+  MERGE_METHODS_NOT_MERGE_ONLY: '已测通：strict 已关，但合并方式不只有 merge，暂不发合并位（已通知 Owner）',
+  TRAIN_TEST_MERGE_NOT_READY: '已测通：等 GitHub 算好试合并', GREEN_LEDGER_UNAVAILABLE: '已测通：本机绿色台账暂时写不进' });
+// The Windows notification of each stage-8 rules notice (step 3a).
+const STAGE8_RULES_TEXT = Object.freeze({
+  STRICT_OFF_WITHOUT_TRAIN: () => ({ title: 'main 的 strict 已关，第 8 段停发合并位', body: '列车没有开，常驻执行器不再发合并位。请把 main 规则集的 strict 改回开，或按上线顺序开车。' }),
+  MERGE_METHODS_NOT_MERGE_ONLY: () => ({ title: '合并方式不只有 merge，第 8 段停发合并位', body: 'strict 已关时，main 只能允许 merge 方式合入。请在规则集里只留 merge，或把 strict 改回开。' }),
+  TRAIN_TEST_MERGE_TREE_DIFFERS: (pr, head) => ({ title: `PR #${pr} 的试合并与测过的树不同`, body: `提交 ${head}：GitHub 对 main 与此提交的试合并不是测过的树，没有发合并位。请推新提交，并检查原因。` }) });
 const LIVE = new Set(['QUEUED', 'PARKED', 'WAITING', 'BACKOFF']);
 const hhmm = ms => new Date(ms).toISOString().slice(11, 16) + 'Z';
 const clip = s => s.length <= DESCRIPTION_MAX ? s : `${s.slice(0, DESCRIPTION_MAX - 1)}…`;
@@ -90,6 +100,7 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     // Parked before stage 8 (phase 2, step 2): its checks are published; it waits for the merge queue.
     if (row.state === 'PARKED') {
       if (row.deferred === 'RESIDENT_MERGE_QUEUE_NOT_JOINED') return { state: 'pending', description: clip(`已测通：现在加入合并队列，${at}再查第 8 段`) };
+      if (PARKED_TEXT[row.deferred]) return { state: 'pending', description: clip(`${PARKED_TEXT[row.deferred]}，${at}再查第 8 段`) };
       // Without a place the Source did not learn whether the claim is in the queue (review of step 2, m13).
       if (!row.queuePosition) return { state: 'pending', description: clip(`已测通：等合并队列，${at}再查第 8 段`) };
       return { state: 'pending', description: clip(`已测通，在合并队列第 ${row.queuePosition} 位：等成为队首，${at}再查第 8 段`) };
@@ -112,6 +123,7 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       case 'COMPLETED': return { state: 'success', description: '已完成：常驻执行器跑完八段，检查已发布' };
       case 'FAILED_CLEAN':
         if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'failure', description: 'main 已移动：请合入最新 main 并推新提交' };
+        if (recent.code === 'TRAIN_TEST_MERGE_TREE_DIFFERS') return { state: 'failure', description: '试合并与测过的树不同，未发合并位：请推新提交（已通知 Owner）' };
         return recent.retry === 'attempt2'
         ? { state: 'pending', description: clip(`暂时失败（${code}），将自动第二次尝试`) }
         : { state: 'failure', description: clip(`失败（${code}）：此提交不再运行，请推新提交`) };
@@ -158,6 +170,8 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
       case 'new-trigger': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 收到新触发`, body: `提交 ${head} 等待中的重试已提前，冷却 10 分钟后重新评估。` }); break;
       case 'stopped': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${n.code ?? '?'}）。请修正后推新提交。` }); break;
       case 'stage8-budget': out.push({ key: `notice:${n.key}`, title: '今日第 8 段重试额度已用完', body: '停靠批次的第 8 段重试今天已用完，明天继续。' }); break;
+      // Phase 2, step 3a: why stage 8 writes no merge-slot green.
+      case 'stage8-rules': out.push({ key: `notice:${n.key}`, ...(STAGE8_RULES_TEXT[n.code] ? STAGE8_RULES_TEXT[n.code](n.pr, head) : { title: '第 8 段不发合并位', body: n.code ?? '?' }) }); break;
       case 'queue-unsaved': out.push({ key: `notice:${n.key}`, title: '常驻执行器写不进排队表', body: `连续多次写不进 state\\queue\\queue.json（${n.code ?? '?'}），新的触发留在收件箱里没有处理。` }); break;
       case 'waiting-budget': out.push({ key: `notice:${n.key}`, title: '今日等待重试额度已用完', body: '等待类的自动重试今天已用完，等待中的 PR 明天继续，状态见 PR 页面。' }); break;
       case 'batch-limit': out.push({ key: `notice:${n.key}`, title: '今日执行批次额度已满', body: '常驻执行器今天的执行批次已满，排队的 PR 明天继续，不会丢弃。' }); break;
