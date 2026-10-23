@@ -10,7 +10,7 @@ import { CODE, HEX40, HEX64, UUID, canonicalJson, check, exactKeys, isoNow, pars
 import { ensureDir, exists, readBounded, writeNew } from './store.mjs';
 
 export const REQUEST_CONTRACT = 'clued.independent-ci.resident-companion-request/1';
-// /2 (DESIGN §22, Task 8e1f07d3): every answer also says what the companion's job host found about the children of this
+// /2 (DESIGN §24, Task 8e1f07d3): every answer also says what the companion's job host found about the children of this
 // request: jobTree null (each ended on its own and its job was drained), 'zero' (one or more outlived the limit; each job was
 // terminated and no process of it was left) or 'unconfirmed' (anything else, also a leftover not drained or no host report).
 // A fact for the record only; no proof of either host rests on the companion's own tree.

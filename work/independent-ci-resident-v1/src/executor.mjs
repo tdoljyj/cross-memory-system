@@ -1688,7 +1688,7 @@ export class ResidentExecutor {
     try {
       const started = (await this.ledger.state(key)).state === 'STARTED';
       if (!started && failure.phase === 'bundle') {
-        // Nothing of this batch reached Linux yet (DESIGN §22): the close archives Windows only and asks the companion for
+        // Nothing of this batch reached Linux yet (DESIGN §24): the close archives Windows only and asks the companion for
         // nothing, so a companion still busy with, or done with, the failed bundle cannot turn this release into a HALT.
         await this.closeOrThrow(batch, { linux: false });
         await this.ledger.releaseUnexecuted(key, 'BUNDLE_UNAVAILABLE', { failureCode: failure.code, class: 'environment', breaker: 'counts', breakerState });
@@ -1757,7 +1757,7 @@ export class ResidentExecutor {
   async supersededBeforeStart(key, subject, batch) {
     // attempt 2 is never released by the arrival order: runAttempt2 asked the PR live before it was reserved (review M2).
     if (subject.attempt !== 1 || !(await this.newerCommitArrived(subject))) return null;
-    await this.closeOrThrow(batch, { linux: false }); // before stage 1: nothing on Linux (DESIGN §22)
+    await this.closeOrThrow(batch, { linux: false }); // before stage 1: nothing on Linux (DESIGN §24)
     await this.ledger.releaseUnexecuted(key, 'SUPERSEDED', { failureCode: BATCH_SUPERSEDED, basis: 'newer-commit-before-stage-1', class: 'superseded', breaker: 'neutral' });
     await this.receipt('batch-superseded', { key, pr: subject.pr, headSha: subject.headSha, safePoint: 'before-stage-1' });
     this.reportOutcome(subject, 'NOT_EXECUTED', { code: BATCH_SUPERSEDED, key });

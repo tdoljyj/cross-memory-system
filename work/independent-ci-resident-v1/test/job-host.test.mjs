@@ -1,4 +1,4 @@
-// DESIGN §22 (Task 8e1f07d3): the companion's children run under the job host, so a child that outlives its limit is
+// DESIGN §24 (Task 8e1f07d3): the companion's children run under the job host, so a child that outlives its limit is
 // ended with exactly its own job and the mailbox lane goes on; a stage-0 failure is released without the companion.
 // CLUED_JOB_HOST_EXE (set by windows/test-job-host.ps1 after it compiles the host) adds the live tests against the real host.
 import test from 'node:test';

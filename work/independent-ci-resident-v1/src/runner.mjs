@@ -3,7 +3,7 @@
 // existing CI's rule: never kill an unknown process tree); the caller is told it timed out and the
 // runner stays "busy" until the child exits, so no new work starts on top of it.
 //
-// The companion's runners take a job host instead (DESIGN §22, Task 8e1f07d3): every child is started by
+// The companion's runners take a job host instead (DESIGN §24, Task 8e1f07d3): every child is started by
 // bin\CluedCompanionJobHost.exe (windows/CompanionJobHost.cs), which creates it suspended inside a job object of its own
 // and, once the child has exited or outlived its time limit, terminates and drains exactly that job. The tree it ends is
 // therefore never unknown, and a timed-out child no longer keeps the companion busy. The service's runner keeps the rule

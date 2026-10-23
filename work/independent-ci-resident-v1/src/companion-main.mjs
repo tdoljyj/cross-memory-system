@@ -33,7 +33,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // run in two lanes (independent review of the quota redesign phase 1, M1). A child keeps only its own lane busy, and a
 // slow GitHub can never make a mailbox request expire: the service's proofs (for example the 2-minute linux-quiescence)
 // are answered while the advisory lane waits. A child that outlives its limit is ended by the job host with its whole job
-// (DESIGN §22), so the lane is busy again only while a job host itself has not ended.
+// (DESIGN §24), so the lane is busy again only while a job host itself has not ended.
 export async function lane({ runner, work, sleep: wait = sleep, everyMs = 2_000, stop = () => false }) {
   while (!stop()) {
     if (!runner.busy) { try { await work(); } catch { /* each lane's work handles its own failures; never retry here */ } }
@@ -60,7 +60,7 @@ export async function main(args = process.argv.slice(2)) {
   check(sha256(bytes) === values['config-sha256'], 'COMPANION_CONFIG_CHANGED');
   const raw = parseBoundedJson(bytes, 65536, 'COMPANION_CONFIG_REFUSED');
   const cfg = validateCompanionConfig(raw.companion);
-  // Every child of both lanes runs under the installed job host (DESIGN §22): a child that outlives its limit is ended with
+  // Every child of both lanes runs under the installed job host (DESIGN §24): a child that outlives its limit is ended with
   // exactly the job it was started in, and the lane goes on. Without the host the companion does not start.
   const jobHost = path.join(values.root, 'bin', JOB_HOST_EXE);
   check(await exists(jobHost), 'COMPANION_JOB_HOST_REQUIRED');

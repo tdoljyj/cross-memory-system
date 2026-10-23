@@ -5,7 +5,7 @@ using System.Text;
 using System.Threading;
 using Microsoft.Win32.SafeHandles;
 
-// Companion job host (DESIGN §22, Task 8e1f07d3). Compiled once at install into bin\CluedCompanionJobHost.exe (admin-only,
+// Companion job host (DESIGN §24, Task 8e1f07d3). Compiled once at install into bin\CluedCompanionJobHost.exe (admin-only,
 // read and run by the Owner). The companion starts every child through it:
 //   CluedCompanionJobHost.exe <nonce: 32 hex> <time limit ms> <absolute application> [arguments...]
 // The host creates ONE child suspended and directly inside a job object of its own (PROC_THREAD_ATTRIBUTE_JOB_LIST: the

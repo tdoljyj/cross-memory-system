@@ -1,5 +1,5 @@
 <#
-  Offline checks of the companion job host (DESIGN §22, Task 8e1f07d3). Nothing on the host is read or changed:
+  Offline checks of the companion job host (DESIGN §24, Task 8e1f07d3). Nothing on the host is read or changed:
   - CompanionJobHost.cs is compiled with the in-box csc, with the install's flags, into the NEW scratch directory
     given by the caller;
   - the host refuses malformed arguments before it starts anything (exit 120 and its report line);

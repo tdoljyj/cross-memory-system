@@ -78,7 +78,7 @@ export function parsePull(stdout, pr) {
   return { number: pr, state: v.merged ? 'merged' : v.state, headSha: v.head };
 }
 
-// DESIGN §22: the answer's jobTree from what the job host said about each child of one request that did not simply end
+// DESIGN §24: the answer's jobTree from what the job host said about each child of one request that did not simply end
 // on its own (runner.mjs `tree`): none -> null; all drained -> 'zero'; any other -> 'unconfirmed'.
 export function jobTreeOf(trees) {
   if (trees.length === 0) return null;
