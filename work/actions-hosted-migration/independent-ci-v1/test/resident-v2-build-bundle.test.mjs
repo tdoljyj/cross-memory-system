@@ -15,8 +15,8 @@ test('build-bundle: every git call aborts a transfer below 1000 bytes/s for 60 s
   assert.match(common, /'-c','http\.lowSpeedTime=60'/);
 });
 
-test('build-bundle: one retry of the network steps, in a second fresh store, only in the first 15 minutes', () => {
-  assert.ok(text.includes("$NetworkSteps=@('fetch','ls-remote','fetch-reviewed');$RetryWithinSeconds=900"));
+test('build-bundle: one retry of the network steps, in a second fresh store, only in the first 10 minutes', () => {
+  assert.ok(text.includes("$NetworkSteps=@('fetch','ls-remote','fetch-reviewed');$RetryWithinSeconds=600"));
   assert.ok(text.includes("$FetchDir2=Join-Path $Root 'fetch-2.git'"));
   assert.ok(text.includes('try{return Build-Store $FetchDir}'));
   assert.ok(text.includes('return Build-Store $FetchDir2'));
@@ -25,4 +25,11 @@ test('build-bundle: one retry of the network steps, in a second fresh store, onl
   assert.equal(text.match(/Build-Store \$/g).length, 2);
   assert.ok(text.includes(' $store=Fetch-Store\n') || text.includes(' $store=Fetch-Store\r\n'));
   assert.ok(text.includes("if(-not (Same-Map $header.formal $remote)){throw 'BUNDLE_REFS_DIFFER_FROM_LS_REMOTE'}"));
+});
+
+test('build-bundle: the main block reads no variable that only Build-Store sets (StrictMode would fail a written bundle)', () => {
+  const main = text.slice(text.search(/^try\{/m));
+  for (const name of ['fetchStartedAt', 'fetchCompletedAt', 'lsRemoteCompletedAt', 'reviewedFetchStartedAt', 'reviewedFetchCompletedAt', 'branchesAtHead', 'local', 'all', 'toml']) {
+    assert.doesNotMatch(main, new RegExp(`\\$${name}\\b`), name);
+  }
 });

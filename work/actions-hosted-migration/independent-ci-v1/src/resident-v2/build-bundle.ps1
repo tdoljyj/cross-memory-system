@@ -20,7 +20,7 @@ a receipt binds batchId, descriptor digest and Source commit.
 
 Stalled transfers (lesson #916, 2026-10-23: a fetch stalled at 47 MB and held the resident until the companion's
 35-minute deadline): an HTTP transfer slower than 1000 bytes/s for 60 s is aborted, and a failed network step gets one
-more complete attempt in a second fresh bare repository (Fetch-Store), early enough to end inside the companion's wait.
+more complete attempt in a second fresh bare repository (Fetch-Store), only while most of the companion's wait is left.
 #>
 [CmdletBinding()]
 param([Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{16}-[0-9a-f]{12}$')][string]$BatchId,[switch]$CheckRefs)
@@ -37,8 +37,10 @@ $Common=@('-c','core.hooksPath=C:/nonexistent-clued-hooks','-c','core.fsmonitor=
   '-c','fetch.writeCommitGraph=false','-c','protocol.allow=never','-c','protocol.https.allow=always','-c','init.templateDir=','-c','advice.defaultBranchName=false',
   '-c','http.lowSpeedLimit=1000','-c','http.lowSpeedTime=60')
 # The steps that talk to GitHub. A full build takes 40-283 s (receipts of 2026-10-23); the companion waits 30 minutes
-# (companion.mjs build-bundle), so a retry starts only within the first 15 of them.
-$NetworkSteps=@('fetch','ls-remote','fetch-reviewed');$RetryWithinSeconds=900
+# (companion.mjs build-bundle). A retry starts only within the first 10 of them, so the second attempt has at least
+# 20 minutes, twice what the first one can have used. A transfer that stays just above the low-speed limit is still
+# not bounded: nothing here kills git.
+$NetworkSteps=@('fetch','ls-remote','fetch-reviewed');$RetryWithinSeconds=600
 $Clock=[Diagnostics.Stopwatch]::StartNew()
 $stage='fixed-preflight';$created=@();$writesStarted=$false;$lastGit=$null;$attempts=1;$firstAttempt=$null
 function Utc{return [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'",[Globalization.CultureInfo]::InvariantCulture)}
@@ -179,7 +181,8 @@ function Build-Store([string]$Dir){
   fetchStartedAt=$fetchStartedAt;fetchCompletedAt=$fetchCompletedAt;lsRemoteCompletedAt=$lsRemoteCompletedAt;reviewedFetchStartedAt=$reviewedFetchStartedAt;reviewedFetchCompletedAt=$reviewedFetchCompletedAt}
 }
 # Only a network step that git itself failed is retried, and only early enough: never a refusal of this script
-# (main moved, refs differ, a missing commit), never a git that did not start.
+# (main moved, refs differ, a commit missing from the store), never a git that did not start. Stderr is not read, so
+# a network failure that will repeat (credentials, a reviewed commit gone from GitHub) also costs one more attempt.
 function Retry-Allowed([string]$Reason,$Step,[double]$ElapsedSeconds){
  return ($Reason -ceq 'GIT_STEP_FAILED' -and $null -ne $Step -and $NetworkSteps -ccontains $Step.label -and $Step.exitCode -ne 0 -and $ElapsedSeconds -lt $RetryWithinSeconds)
 }
@@ -238,7 +241,7 @@ try{
   credentialsPrinted=$false;credentialsWrittenByScript=$false;existingCheckoutTouched=$false;wslTouched=$false;automaticRetryAllowed=$false}
  $json=($receipt|ConvertTo-Json -Depth 5 -Compress)
  $rb=(New-Object Text.UTF8Encoding($false)).GetBytes($json+[char]10);$f=[IO.File]::Open($ReceiptPath,'CreateNew','Write','None');try{$f.Write($rb,0,$rb.Length);$f.Flush($true)}finally{$f.Dispose()};$created+=$ReceiptPath
- [ordered]@{status='BUNDLE_WRITTEN';batchId=$BatchId;bundleSha256=$sha;bundleBytes=$bytes;receiptSha256=(Hash-Bytes $rb);refListSha256=$receipt.refListSha256;lsRemoteCompletedAt=$lsRemoteCompletedAt}|ConvertTo-Json -Compress
+ [ordered]@{status='BUNDLE_WRITTEN';batchId=$BatchId;bundleSha256=$sha;bundleBytes=$bytes;receiptSha256=(Hash-Bytes $rb);refListSha256=$receipt.refListSha256;lsRemoteCompletedAt=$store.lsRemoteCompletedAt}|ConvertTo-Json -Compress
  exit 0
 }catch{
  $code=if($_.Exception.Message -cmatch '\A[A-Z][A-Z0-9_]{1,90}\z'){$_.Exception.Message}else{'FIXED_BUNDLE_BUILD_UNCONFIRMED'}

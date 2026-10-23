@@ -34,11 +34,11 @@ Refuse {Reviewed-Commits ($toml+"# clued-reviewed-finding: {`"fingerprint`":`"$(
 # Stalled transfers (lesson #916): every git call carries the low-speed abort, and only an early network failure is retried.
 $i=[Array]::IndexOf($FixedCommon,'http.lowSpeedLimit=1000');Yes ($i -gt 0 -and $FixedCommon[$i-1] -ceq '-c') 'common-low-speed-limit'
 $i=[Array]::IndexOf($FixedCommon,'http.lowSpeedTime=60');Yes ($i -gt 0 -and $FixedCommon[$i-1] -ceq '-c') 'common-low-speed-time'
-Yes ((@($NetworkSteps)-join '|') -ceq 'fetch|ls-remote|fetch-reviewed' -and $RetryWithinSeconds -eq 900) 'retry-constants'
+Yes ((@($NetworkSteps)-join '|') -ceq 'fetch|ls-remote|fetch-reviewed' -and $RetryWithinSeconds -eq 600) 'retry-constants'
 function Step([string]$l,[int]$x){return [ordered]@{label=$l;exitCode=$x;stderrChars=1}}
 foreach($l in @('fetch','ls-remote','fetch-reviewed')){Yes (Retry-Allowed 'GIT_STEP_FAILED' (Step $l 128) 61) ('retry-'+$l)}
-Yes (Retry-Allowed 'GIT_STEP_FAILED' (Step 'fetch' 128) 899.9) 'retry-just-in-time'
-Yes (-not (Retry-Allowed 'GIT_STEP_FAILED' (Step 'fetch' 128) 900)) 'no-retry-too-late'
+Yes (Retry-Allowed 'GIT_STEP_FAILED' (Step 'fetch' 128) 599.9) 'retry-just-in-time'
+Yes (-not (Retry-Allowed 'GIT_STEP_FAILED' (Step 'fetch' 128) 600)) 'no-retry-too-late'
 foreach($l in @('init-bare','cat-file','source-gitleaks-toml','reviewed-closure','for-each-ref')){Yes (-not (Retry-Allowed 'GIT_STEP_FAILED' (Step $l 128) 61)) ('no-retry-'+$l)}
 foreach($r in @('REMOTE_MAIN_BASE_CHANGED','FETCHED_REFS_DIFFER_FROM_LS_REMOTE','GIT_START_UNCONFIRMED','FIXED_BUNDLE_BUILD_UNCONFIRMED')){Yes (-not (Retry-Allowed $r (Step 'fetch' 128) 61)) ('no-retry-'+$r)}
 Yes (-not (Retry-Allowed 'GIT_STEP_FAILED' $null 61)) 'no-retry-without-step'
@@ -120,13 +120,41 @@ if($git){
   Refused-With {Fetch-Store} 'GIT_STEP_FAILED' 'second-failure-final'
   Yes ($attempts -eq 2 -and (Fetches) -eq 2 -and $stage -ceq 'fetch-all-heads-and-tags' -and $lastGit.label -ceq 'fetch') 'never-a-third-attempt'
   # 5. a stall after the retry window: no second attempt
-  New-Case @{fetch=1} 900
+  New-Case @{fetch=1} 600
   Refused-With {Fetch-Store} 'GIT_STEP_FAILED' 'late-failure-final'
   Yes ($attempts -eq 1 -and $null -eq $firstAttempt -and -not (Test-Path -LiteralPath $FetchDir2)) 'late-failure-not-retried'
   # 6. a refusal of the script's own checks is never retried (here: main is not the descriptor's base)
   New-Case @{} $null;$Base=$c2
   Refused-With {Fetch-Store} 'REMOTE_MAIN_BASE_CHANGED' 'refusal-final'
   Yes ($attempts -eq 1 -and -not (Test-Path -LiteralPath $FetchDir2)) 'refusal-not-retried'
+  # 7. The whole script, main block included, as its own process, on a copy that changes only its fixed places: the
+  #    resident directory, the remote (the file:// fixture, allowed for this copy only) and git's path. The answer and
+  #    the receipt, then -CheckRefs, then a second run of the same batch (create-only). The script refuses elevation.
+  $principal=New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+  $mainBlockRun=-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+  if($mainBlockRun){
+   $res=Join-Path $tmp 'resident';$batch='0123456789abcdef-0123456789ab';$ob=Join-Path $res ('outbox\'+$batch)
+   [void][IO.Directory]::CreateDirectory($ob);[void][IO.Directory]::CreateDirectory((Join-Path $res 'bundles'))
+   $descriptor=[ordered]@{contract='clued.independent-ci.resident-batch-descriptor/3';batchId=$batch;repo='tdoljyj/cross-memory-system';headSha=$c2;testSha=$c2;baseSha=$c1;sourceCommit=$c1;gitleaksTomlSha256=(Hash-Text $toml)}
+   [IO.File]::WriteAllText((Join-Path $ob 'descriptor.json'),($descriptor|ConvertTo-Json -Compress))
+   $text=[IO.File]::ReadAllText($tool)
+   foreach($pair in @(@("`$Resident='C:\ProgramData\CluedIndependentCI\resident'","`$Resident='$res'"),@("`$Url='https://github.com/tdoljyj/cross-memory-system.git'","`$Url='$Url'"),
+     @("'-c','protocol.https.allow=always'","'-c','protocol.https.allow=always','-c','protocol.file.allow=always'"),@("`$Git='C:\Program Files\Git\cmd\git.exe'","`$Git='$Git'"))){
+    if(-not $text.Contains($pair[0])){throw ('FIXED_PLACE_MISSING:'+$pair[0])};$text=$text.Replace($pair[0],$pair[1])
+   }
+   $copy=Join-Path $tmp 'build-bundle-copy.ps1';[IO.File]::WriteAllText($copy,$text)
+   $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $batch)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+   Yes ($code -eq 0 -and $v.status -ceq 'BUNDLE_WRITTEN' -and $v.lsRemoteCompletedAt -cmatch '\A\d{4}-\d\d-\d\dT') ('main-block-answer:'+$out)
+   $rc=[IO.File]::ReadAllText((Join-Path $res ('bundles\'+$batch+'\all-refs.receipt.json')))|ConvertFrom-Json
+   Yes ($rc.status -ceq 'EXACT_ALL_REFS_AND_REVIEWED_BUNDLE_CREATED' -and $rc.storeAttempts -eq 1 -and $null -eq $rc.firstAttempt -and $rc.refListSha256 -ceq (Ref-List-Sha $expected) -and
+     $rc.reviewedCommitCount -eq 1 -and $rc.headSha -ceq $c2 -and $rc.mainSha -ceq $c1 -and $rc.bundleSha256 -ceq $v.bundleSha256 -and $rc.lsRemoteCompletedAt -ceq $v.lsRemoteCompletedAt -and
+     (@($rc.branchesAtHead)-join '|') -ceq 'refs/heads/feature') 'main-block-receipt'
+   $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $batch -CheckRefs)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+   Yes ($code -eq 0 -and $v.status -ceq 'REMOTE_REFS_UNCHANGED' -and $v.mainStillBase -eq $true) ('check-refs:'+$out)
+   $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $batch)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+   Yes ($code -eq 2 -and $v.status -ceq 'REFUSED_BEFORE_WRITE' -and $v.reason -ceq 'FIXED_TARGET_ALREADY_EXISTS') ('create-only:'+$out)
+  }
  }finally{if($listener){$listener.Stop()};Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue;Remove-Item Env:\GIT_CONFIG_GLOBAL,Env:\GIT_CONFIG_NOSYSTEM -ErrorAction SilentlyContinue}
 }
-[pscustomobject]@{status='BUILD_BUNDLE_OFFLINE_PASS';cases=$cases;networkUsed='loopback-only';hostWrite=$false}|ConvertTo-Json -Compress
+$mainBlock=if(-not $git){'no-git'}elseif($mainBlockRun){'run'}else{'skipped-elevated'}
+[pscustomobject]@{status='BUILD_BUNDLE_OFFLINE_PASS';cases=$cases;mainBlock=$mainBlock;networkUsed='loopback-only';hostWrite=$false}|ConvertTo-Json -Compress
