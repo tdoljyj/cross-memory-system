@@ -29,3 +29,5 @@ The failure table, the Source-independent executed heads and the status, PR page
 Phase 2, step 1 (Task `6451a55d`) is described in DESIGN.md §17. It covers the executor's own run queue (`state\queue\queue.json`), the waits and back-off, the release cap, the budgets read from the ledger, the circuit breaker and supersession.
 
 Phase 2, step 2 (Task `6451a55d`) is described in DESIGN.md §18. It covers parking at points A and B, stage 8 as tries, the Owner's drain request before a reinstall, and policy `/5`.
+
+Phase 2, step 3a (Task `6451a55d`, Owner decision `0bb98194`) is described in DESIGN.md §19. Before writing a green, stage 8 now reads main's branch rules and GitHub's test merge of the PR. It records every merge-slot green in the green ledger (`state\v2\green-ledger`). A PR that GitHub has already merged as tested counts as success. The train stays off.
