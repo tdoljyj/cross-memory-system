@@ -371,15 +371,19 @@ def quiescence(self_unit=None):
             'details': {'busyUnits': busy, 'cgroupsUnpopulated': unpopulated, 'containerStates': states, 'workerProcesses': procs}}
 
 
-JOB_CONTRACT_V2 = 'clued.independent-ci.job/2'
+# Job contract /3 (quota phase 2 step 3b) names the tested commit S; descriptor /3 carries it. Only /3 exists after a
+# reinstall: the uninstall renames the whole resident directory, outbox included, so no /2 descriptor is left to archive.
+JOB_CONTRACT = 'clued.independent-ci.job/3'
+DESCRIPTOR_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/3'
 LINUX_ROLES = ('gitleaks', 'trivy', 'contract-placement')
 HEX40 = re.compile(r'^[0-9a-f]{40}$')
 HEX64 = re.compile(r'^[0-9a-f]{64}$')
 
 
 def job_id_v2(d, role):
-    """Same formula as job-v2.mjs#jobIdV2 and prepare-workspaces.py#job_id_v2 (a test keeps them equal)."""
-    ident = [JOB_CONTRACT_V2, d['repo'], d['pr'], d['headSha'], d['baseSha'], d['ciSourceManifestSha256'], role, d['attempt']]
+    """Same formula as job-v2.mjs#jobIdV2 and prepare-workspaces.py#job_id_v2 (a test keeps them equal): contract /3,
+    with the tested commit. The function keeps its v2 (Source v2) name."""
+    ident = [JOB_CONTRACT, d['repo'], d['pr'], d['headSha'], d['baseSha'], d['testSha'], d['ciSourceManifestSha256'], role, d['attempt']]
     return hashlib.sha256(json.dumps(ident, separators=(',', ':'), ensure_ascii=False).encode('utf-8')).hexdigest()
 
 
@@ -392,9 +396,9 @@ def descriptor_job_ids(raw, batch_id):
         d = json.loads(raw.decode('utf-8'))
     except (UnicodeDecodeError, ValueError):
         raise Refused('DESCRIPTOR_REFUSED')
-    need(isinstance(d, dict) and d.get('contract') == 'clued.independent-ci.resident-batch-descriptor/2' and d.get('batchId') == batch_id, 'DESCRIPTOR_REFUSED')
+    need(isinstance(d, dict) and d.get('contract') == DESCRIPTOR_CONTRACT and d.get('batchId') == batch_id, 'DESCRIPTOR_REFUSED')
     need(d.get('repo') == 'tdoljyj/cross-memory-system' and isinstance(d.get('pr'), int) and not isinstance(d.get('pr'), bool) and d['pr'] > 0, 'DESCRIPTOR_REFUSED')
-    need(all(isinstance(d.get(k), str) and HEX40.fullmatch(d[k]) for k in ('headSha', 'baseSha')), 'DESCRIPTOR_REFUSED')
+    need(all(isinstance(d.get(k), str) and HEX40.fullmatch(d[k]) for k in ('headSha', 'baseSha', 'testSha')), 'DESCRIPTOR_REFUSED')
     need(isinstance(d.get('ciSourceManifestSha256'), str) and HEX64.fullmatch(d['ciSourceManifestSha256']) and d.get('attempt') in (1, 2) and not isinstance(d.get('attempt'), bool), 'DESCRIPTOR_REFUSED')
     need(isinstance(d.get('batchKey'), str) and HEX64.fullmatch(d['batchKey']) and d['batchKey'][:16] == batch_id[:16], 'DESCRIPTOR_REFUSED')
     derived = [job_id_v2(d, role) for role in LINUX_ROLES]

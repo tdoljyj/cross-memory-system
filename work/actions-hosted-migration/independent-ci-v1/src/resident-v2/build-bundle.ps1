@@ -122,7 +122,9 @@ function Bundle-Header([string]$Path){
 function Read-Descriptor{
  $i=Get-Item -LiteralPath $Descriptor -Force;if($i.PSIsContainer -or ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $i.Length -lt 1 -or $i.Length -gt 65536){throw 'DESCRIPTOR_REFUSED'}
  $raw=[IO.File]::ReadAllBytes($Descriptor);$d=(New-Object Text.UTF8Encoding($false,$true)).GetString($raw)|ConvertFrom-Json
- if($d.contract -cne 'clued.independent-ci.resident-batch-descriptor/2' -or $d.batchId -cne $BatchId -or $d.repo -cne 'tdoljyj/cross-memory-system' -or $d.headSha -cnotmatch '\A[0-9a-f]{40}\z' -or $d.baseSha -cnotmatch '\A[0-9a-f]{40}\z' -or $d.sourceCommit -cnotmatch '\A[0-9a-f]{40}\z' -or $d.gitleaksTomlSha256 -cnotmatch '\A[0-9a-f]{64}\z'){throw 'DESCRIPTOR_REFUSED'}
+ if($d.contract -cne 'clued.independent-ci.resident-batch-descriptor/3' -or $d.testSha -cnotmatch '\A[0-9a-f]{40}\z' -or $d.batchId -cne $BatchId -or $d.repo -cne 'tdoljyj/cross-memory-system' -or $d.headSha -cnotmatch '\A[0-9a-f]{40}\z' -or $d.baseSha -cnotmatch '\A[0-9a-f]{40}\z' -or $d.sourceCommit -cnotmatch '\A[0-9a-f]{40}\z' -or $d.gitleaksTomlSha256 -cnotmatch '\A[0-9a-f]{64}\z'){throw 'DESCRIPTOR_REFUSED'}
+ # Quota phase 2 step 3b: the tested commit S is the head until step 3c fetches GitHub's test merge by SHA for the train.
+ if($d.testSha -cne $d.headSha){throw 'TEST_COMMIT_NOT_HEAD'}
  return [pscustomobject]@{value=$d;sha256=(Hash-Bytes $raw)}
 }
 try{

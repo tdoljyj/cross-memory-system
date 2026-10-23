@@ -125,7 +125,7 @@
 
 ```
 Agent / companion 轮询器 ──写──▶ resident\inbox\            触发记录 {repo, pr, headSha, baseSha}（只是数据）
-任何 Owner 会话进程     ──写──▶ resident\requests\          暂停请求（只能停）
+任何 Owner 会话进程     ──写──▶ resident\requests\          暂停请求（只能停）；暂停接新请求（§20：最长 2 小时，同一持有者可提前结束）
 提权的 Owner（UAC）     ──写──▶ resident\owner\             复位、恢复或中止请求（只有 Administrators 能建文件）
 常驻执行器              ──写──▶ resident\mailbox\requests\  给 companion 的固定种类请求
 companion               ──写──▶ resident\mailbox\responses\ 回答 + 心跳（不可信，只用于分类）
@@ -182,6 +182,7 @@ companion               ──写──▶ resident\mailbox\responses\ 回答 + 
    | 动作 | 谁能做 | 怎么做 |
    |---|---|---|
    | 暂停 | 任何 Owner 会话进程 | 往 `requests\` 写暂停请求；批次之间生效，从不中断正在跑的段 |
+   | 暂停接新 | 任何 Owner 会话进程 | `node tools\rearm-tool.mjs request-intake-pause --root <root> --reason …`，写进 `requests\`：只不开新批次，在跑和停靠的批次照常，最长 2 小时自动失效；同一持有者的 `request-intake-resume` 可提前结束（§20） |
    | 恢复 | 只有提权的 Owner | `rearm-resident.ps1 -Request Resume -ExpectedPausedSha256 <审过的>`。脚本用纯 PowerShell 往 `owner\` 写一个带时间和 nonce 的请求，不启动任何其他程序；服务按比较交换执行 |
    | 复位（未知失败后） | 只有提权的 Owner | `rearm-resident.ps1 -Request Rearm -ExpectedHaltSha256 <审过的> -Reason …`，写法同上。服务实测两端静止，对**每一个还没归档的未知失败批次**只改名归档，再按比较交换清除 HALT |
    | 中止当前批次 | 只有提权的 Owner | `rearm-resident.ps1 -Request Abort -BatchKey <键> -ExpectedLedgerEntrySha256 <审过的> -Reason …`，写法同上。服务只在安全点执行：停下正在跑的扫描签发段，实测两端静止，只改名归档，记 FAILED_CLEAN `OWNER_ABORTED`；证明不成立时照旧 HALT（§6.5） |
@@ -1624,6 +1625,198 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
   - N5：检查说明里写出车头、main@T、S 与它的树（设计 §5.3 第 6 条）放到 3c，和第 10 段一起做。
   - N2 的台账清理：3c 的第 10 段负责。
 
+## 20. 主备 C6：暂停接新（Task `6444f88a`）
+
+来源：《常驻执行器主备部署·设计说明 v0.4》§5.4 第 1 步、§9 C6（Owner 接受：Decision `bd86149e`）。同时关闭审核遗留 N3 里本 Task 负责的部分（status.json 的“排空”字段），以及 N1 里 C6 负责的续期办法。代码在 `src/intake-pause.mjs`，测试在 `test/intake-pause.test.mjs`。
+
+### 20.1 是什么，不打断什么
+
+- **暂停接新**：只要有一个持有者的暂停在生效，执行器就不从排队表开任何新批次。排队的行、到期的 attempt 2、等待重试的行都不开。
+- **不打断**：
+  - 正在跑的批次照常跑完；
+  - 停在 A 的批次每个 tick 照常判断（状态的 `current` 照常显示它），停在 B 的照常按时尝试第 8 段；
+  - 被新提交取代、Owner 中止、排空照常结束停靠批次；
+  - 触发照常读进排队表，不丢；停靠批次照常看到 main 移动和本 PR 的新提交。
+- 设计原文叫“排空请求”。第二期第 2 步已经有一个“排空”（§18.6，结束停靠批次），为免混淆，实现和文档里都叫“暂停接新”（intake pause）。
+
+### 20.2 和暂停、排空、Owner 中止的区别
+
+| | 暂停接新（本节） | 暂停（PAUSE） | 排空（§18.6） | Owner 中止（§6.5） |
+|---|---|---|---|---|
+| 作用 | 不开新批次 | 批次之间一切停下，停靠批次也不动 | 一次性结束所有停靠批次 | 结束一个批次 |
+| 谁能写 | 任何 Owner 会话进程（`requests\`，不提权） | 任何 Owner 会话进程（`requests\`） | 提权的 Owner（`owner\`） | 提权的 Owner（`owner\`） |
+| 怎么结束 | 到时自动失效（最长 2 小时）；或同一持有者的恢复请求 | 只有提权 Owner 的恢复请求 | — | — |
+
+四者可以同时生效，各按各的规则。暂停更强：暂停期间 tick 停在暂停那一步；Owner 恢复暂停后，暂停接新如果还没到时，照常生效。暂停接新的恢复请求不能恢复暂停。
+
+### 20.3 请求
+
+```
+node tools\rearm-tool.mjs request-intake-pause  --root <root> --reason <text> [--minutes 1-120] [--holder owner]
+node tools\rearm-tool.mjs request-intake-resume --root <root> --reason <text> [--holder owner]
+```
+
+- 写进 `requests\`（和暂停一样，任何 Owner 会话进程都能写，不需要 UAC）。合同：
+  - `clued.independent-ci.resident-intake-pause/1`：`holder`、`minutes`（1–120 的整数）、`reason`、`requestedAt`、`nonce`；
+  - `clued.independent-ci.resident-intake-resume/1`：`holder`、`reason`、`requestedAt`、`nonce`；
+  - 字段严格，多一个少一个都拒绝。
+- **时限**：结束时间 = min(`requestedAt` + 分钟数, 执行器当前时间 + 2 小时)。
+  - 读到时已过结束时间（例如 HALT 期间写的请求，复位后才读到），拒绝 `INTAKE_PAUSE_REQUEST_EXPIRED`；
+  - `requestedAt` 比执行器时钟超前 5 分钟以上，拒绝 `INTAKE_REQUEST_CLOCK_SKEW`；
+  - 到时自动失效，不需要任何人操作，写回执 `intake-pause-ended`。HALT 和暂停期间也照样按时失效；
+  - 系统时钟往回跳时，结束时间按“现在 + 2 小时”封顶并写回，暂停不会超过 2 小时。代价：时钟追上之前，同一持有者新写的请求时间比已记下的更早，会被拒 `INTAKE_REQUEST_SUPERSEDED`（Owner 不能提前恢复，C5 也续不了期）。影响以 2 小时为限。
+- **持有者**（小写字母开头，最多 32 个字符；`unconfirmed` 保留不用）：
+  - 每个持有者只认它最新的一句话（按 `requestedAt`）。比它已有的更早的请求（乱序或重放的文件）拒绝 `INTAKE_REQUEST_SUPERSEDED`；
+  - 续期：同一持有者再写一份暂停请求，结束时间重新算，开始时间不变；
+  - 恢复请求只结束这个持有者自己的暂停，不动别的持有者；从没出现过的持有者的恢复请求不留记录，不占位置；
+  - 任何一个持有者的暂停在生效，暂停接新就生效；
+  - 最多记 8 个持有者。新的持有者需要位置时，最旧的已结束记录让位；8 个都还可能在生效时拒绝 `INTAKE_PAUSE_HOLDERS_FULL`（那时本来就在暂停）。结束的记录在它最后一句话 2 小时后丢弃（那时再旧的请求也已过期）。
+- 约定的持有者：
+  - `owner`（默认）：Owner 手工暂停，例如计划内切换；
+  - `dual-active`：C5 的 companion 在双活停机时用。锁住期间定期续写（剩余不足 90 分钟就续，间隔远小于 2 小时）；三种解除情况之一出现时写恢复请求。这样 Owner 的计划内暂停和 companion 的锁互不解除。
+- **为什么放在 `requests\`，不放 `owner\`**：它只会让执行器少做事（不开新批次），最长 2 小时。设计 §5.4 要的就是“任何 Owner 会话进程都能写”。
+- **谁能提前恢复**：同样是任何 Owner 会话进程，写上持有者的名字就行。这是有意的，理由如下：
+  - 提前恢复只是回到平常的服务。真正挡住重复发布的是服务端的 ci-admission 角色（停车位、Z1）和 C4 的 GitHub 回读，它们都不受影响；
+  - Owner 账号下的 Agent 本来就能伪造 PR 页面状态（例如对方的“已交班”）来解除 C5 的双活锁。设计 §5.2 已接受这类伪造的后果只是可用性。提前恢复没有给它更多能力；
+  - 急停仍然是暂停（PAUSE），只有提权的 Owner 能恢复。
+  - 所以 §3.2 里“`requests\` 只能停”的说法要补一句：暂停接新可以由同一持有者提前结束（见本节）。
+
+### 20.4 状态、回执与显示
+
+- **状态文件**：`state\INTAKE-PAUSE.json`，服务自己的状态（只有常驻服务能改），整体替换（临时文件、刷盘、改名）。
+  - 格式不对时：先把原文件只新建地复制一份保留（`INTAKE-PAUSE.unreadable-<时间>-<随机>.json`），再整体替换成持有者 `unreadable` 的 2 小时暂停，写回执 `intake-pause-unreadable`。失败时偏安全，又有上限：替换写成之前崩溃，下次还会读到坏文件，照样暂停。Owner 看过保留的副本后，可以用 `--holder unreadable` 的恢复请求提前结束。
+  - 读写出 I/O 错误时，进入一段“不确定”：
+    - 期间不开新批次（`DEFERRED` / `INTAKE_PAUSE_UNCONFIRMED`）；
+    - status.json 的 `intakePause` 显示持有者 `unconfirmed`，所以 C5 不会把本节点当成当班；
+    - 每段只写一次回执 `intake-pause-unconfirmed`；
+    - 读错误在下一次读成功时结束，写错误要等下一次写成功才结束（读得出、写不进的状态接不住 Owner 的暂停）。写错误期间每个 tick 把当前状态重写一次当作探测，所以短暂的锁（例如杀毒扫描）一过就结束；
+    - 连续 30 分钟还没结束就 HALT（`INTAKE_PAUSE_STATE_UNAVAILABLE`），和回填一直失败时一样。HALT 只在开新批次前那道闸门处写下，同一 tick 里不会再跑别的；所以队列为空时不会因此 HALT（不挡任何批次，status 一直显示 `unconfirmed`），一有排队的行，满 30 分钟就 HALT。
+  - 写不进状态的请求留在 `requests\`，下个 tick 再读，最多 3 次。3 次都不行就拒绝并写回执（`INTAKE_PAUSE_UNCONFIRMED`），所以积下的请求永远不会把后面的暂停请求挤出每 tick 读的那 16 个（独立审核 M1）。
+- **回执**：
+  - `intake-paused`（holder、until、renewed、reason、请求摘要）；
+  - `intake-resumed`（holder、held）；
+  - `intake-request-refused`（失败码）；
+  - `intake-pause-ended`（到时失效）；
+  - `intake-pause-unreadable`；
+  - `intake-pause-unconfirmed`。
+  - 状态已经写成、回执却写不进时，请求照样算已处理，不当成拒绝。
+- **status.json 合同升到 `/3`**：新增 `intakePause`。
+  - 没有生效的暂停时为 `null`；否则是最晚结束时间，以及每个持有者的名字、开始和结束时间。不含理由文字：理由来自用户会话，只进回执；
+  - 执行器在有排队的行时停在 `DEFERRED`，原因 `INTAKE_PAUSED`。有批次停在 A 时，tick 的结果仍是 `WAITING`；
+  - HALT 和暂停期间这个字段也照样更新；
+  - C5 判断“当班”时，`intakePause` 不为 `null` 就不算当班（设计 §5.2 的“排空”）；
+  - 执行器和 companion 来自同一份安装，一起升级；旧版 companion 读不了 `/3`，只会通知“读不到状态”。
+- **PR 页面**：排队的行写“排队第 N 位：暂停接新中，最晚 hh:mmZ 恢复”。它排在熔断和停靠名额满之前，和执行器的判断顺序一致。停靠和等待的行照旧。
+- **`rearm-tool inspect`**：多了 `intakePause`（服务最后写下的状态，只读）。文件读不出时如实写出原因，`inspect` 本身不失败。
+
+### 20.5 计划内切换怎么用（设计 §5.4 第 1 步）
+
+1. 在当班节点写 `request-intake-pause --minutes 120 --reason <切换原因>`。
+2. 等 status.json 的 `current` 为空（停在 A 的批次也显示在这里）。停在 B 的批次只会再尝试第 8 段：可以等它们结束；要马上结束就排空（§18.6，它们的 head 已发布，要推新提交）。
+3. 再按设计 §5.4 移交角色。切换完成后，旧节点上的暂停到时自动失效，或写 `request-intake-resume` 提前结束。
+
+### 20.6 与设计的差异
+
+- 名称：设计叫“排空请求”，实现叫“暂停接新”（见 20.1）。
+- 设计只说“最长 2 小时自动失效”。实现另加了持有者和提前恢复，供 C5 的双活停机续期和解除用（审核遗留 N1）。谁能提前恢复见 20.3。
+
+### 20.7 测试
+
+`test/intake-pause.test.mjs`（22 项）：
+- 请求格式；时限与自动失效；过期、超前和乱序的请求；
+- 持有者互不解除与续期；持有者上限、让位与恢复请求不占位置；时钟往回跳；
+- 状态文件读不出时保留副本并暂停 2 小时；
+- 执行器层面：
+  - 排队不开、到时恢复；
+  - 停在 A 的批次照常判断并留在 `current`；停在 B 的批次照常尝试第 8 段；到期的 attempt 2 等暂停结束；
+  - 和暂停、排空同时生效；暂停期间到时失效；
+  - 每个持有者只解除自己的；
+  - 拒绝的请求写回执并归档；写不进状态的请求 3 次后拒绝，后面的暂停请求照样读到；
+  - 一直读不出时显示 `unconfirmed`、只写一次回执、30 分钟后 HALT；短暂写不进在下一次写成功时结束，不 HALT；
+- status.json `/3` 与 PR 页面文字；Owner 工具写进 `requests\`、`inspect` 显示；命令行的 `--minutes`。
+
+`test/status.test.mjs` 的键列表加 `intakePause`。
+
+## 21. 额度第二期·第 3b 步：作业合同 `/3`，按测试提交 S 建工作区（v1.2，Task `6451a55d`，子 Task `a3548216`）
+
+Owner Decision `0bb98194` 把设计 v0.5 的第 3 步拆成三个 PR，这是第二个，对应设计 §5.7 和 §5.2“怎么测”。列车仍然是关的：所有批次的测试提交 S 都等于 head H，装上后工作区和今天一模一样。
+
+### 21.1 作业合同 `/3`
+
+- 作业 id = sha256(JSON(["clued.independent-ci.job/3", repo, pr, headSha, baseSha, testSha, sourceManifestSha256, role, attempt]))。`testSha` 就是测试提交 S，紧跟在基础 T 之后。
+- 作业多一个字段 `testSha`。`makeJobV2` 不给 `testSha` 时取 `headSha`。现在只有一处会给：批次推导（`derive-batch.mjs`）。
+- 模块和导出名保留 V2（指 Source v2），只改合同字符串。
+- subject（签名结果、作用键和发布者用的那组字段）不加字段：它的 `id` 已经绑定 S，所以一个 S 的结果不会被当成另一个 S 的结果。这样准入、发布者、桥和中继都不用改。
+- 公式有五份副本，一起改：`job-v2.mjs`、`prepare-workspaces.py`、`linux/bin/clued-ci-resident-linux`、`FormalPublicBoundaryV2.cs`、`formal-contract-placement-v2/container-entry.mjs`。复核实测五份逐项相同，Node、Python 和 .NET 三种序列化逐字节一致。测试核对它们相等：Node 对 Python、Linux 工具对 ws-prep、C# 对 Node 推出的批次、容器入口对 `jobIdV2`。
+- `/2` 作业一律拒绝。C# 核对同一批的作业时也比较 `testSha`，和 JS 的 `sameBatchV2` 一致。
+
+### 21.2 描述符 `/3` 和工作区
+
+- 批次推导的结果带 `testSha`。常驻层把它抄进公开描述符 `resident-batch-descriptor/3`，并核对它等于 head，所以 S 只由推导决定。
+- ws-prep、companion 的打包脚本和 Linux 的归档工具只认 `/3`。ws-prep 和打包脚本要求 `testSha == headSha`（`TEST_COMMIT_NOT_HEAD`）。卸载会把整个 resident 目录连 outbox 一起改名，所以重装之后不会再有 `/2` 描述符要归档。
+- trivy 和 contract-placement 的候选工作区检出 S：先核对 S 的树只有普通文件，再检出，再核对 HEAD 是 S，H 和 T 都在库里。gitleaks 照旧扫 H 的提交历史。
+- worker（`worker-v2.mjs`）按 `job.testSha` 核对检出，另核对 H 和 T 在库里。
+- placement 的密封候选：HEAD 是 S，打包 S、H、T。容器里的构建标签和 `check_contract_placement.py --head` 都用 S，也就是 T..S 的改动。S = H 时和今天相同。
+
+### 21.3 留给 3c 的（S ≠ H，复核 M1 补全）
+
+设计 §6 规定第 4–7 步不再改 Source。S ≠ H 只出现在列车模式的车头批次，下面每一项都要在开车之前装上：
+
+- **S 的来源**：只取自第 10 段的受信实时读取，经阶段事实交给执行器。subject、批次认领记录（`batch-claim-v2.mjs`）和账本 batch key 都带上 S。`makeJobV2` 去掉默认值，所有调用点显式传 S，否则漏传会被默认值藏住（复核 m1）。
+- **第 8 段测过的树**：`independent-control-checks-v2/publisher.mjs` 的 `trainFacts` 现在读 H 的树，要改成读 `job.testSha` 的树。这个文件在 3a 之后先给主备 C4 用，所以放在 3c 改。
+- **控制消费者**（`consumer.mjs`）：重推作业时读记录里的 S；不能再用受保护脚本传进来的 `pr.base.sha` 去和 T 比较。
+- **对 `base.sha` 做等值比较的地方**都要按设计 §5.7 放宽：只要求 PR 打开、head 相同、base 分支是 main，`base.sha` 只记为读到的事实。涉及：
+  - `full-admission-v2.mjs` 的 `samePr`；
+  - `staged-check-publisher-v2.mjs` 的写前核对；
+  - `github.mjs` 的 `exactPr`；
+  - 两个发布者对 packet `baseSha` 的检查；
+  - `protected-controller-ports-v2/refs.mjs` 的 `samePr`。
+  关车时 head 含 main 尖端，保留今天的核对只会更严，所以 3b 不放宽。
+- **中继**：`publishHosted` 自己推作业时要带 S；`relay-entry-v2.mjs` 的 subject 和第 R 段推导也要带 S；E8 改为核对 S 的树。
+- **打包与 ws-prep**：
+  - companion 按 SHA 取 S。bundle 的引用命名空间要和 gitleaks 的“引用等于 bundle”核对一起设计。
+  - GitHub 重新生成试合并后，旧的 S 可能取不到。这算批次开始前的暂时原因（设计 §5.2 n-m6，不计释放上限），回到第 10 段重读 S。
+  - ws-prep 核对 S 恰好有两个父提交 [T, H]。凡是核对“还是不是那个 S”，都按父提交和树比较，不按 SHA。
+- 撤掉三处 S = H 守卫：`engine-windows.mjs` 的推导核对、`prepare-workspaces.py` 的 `TEST_COMMIT_NOT_HEAD`、`build-bundle.ps1` 的 `TEST_COMMIT_NOT_HEAD`，并改掉钉住它们的测试。设计 §5.3 第 4、6、8 条和 §5.4 属于第 10 段，也在 3c。
+- **测试**：用 S ≠ H 作固定输入，跑通第 1–8 段的单元路径（准入、桥签发、发布者写前核对、第 8 段、消费者），worker 用 HEAD = S ≠ H 的 git 工作区，并测密封候选的 HEAD 和打包内容。
+
+### 21.4 为什么装上是安全的
+
+- 关车时 S = H：作业 id 变了，工作区、测试输入和签名结果的内容都和今天一样。复核核实，placement 打包的内容和以前逐字节相同。
+- 不会重跑：已执行记录和 K(head, role) 按 head 记，不按作业 id。作业 id 本来每次重装都会变，因为身份里有 `sourceManifestSha256`。
+- 合同在两侧一起换：Windows 的 Source v2、C# 边界、Linux 的 ws-prep、worker、容器入口和 Linux 常驻工具都在同一次重装里换。没换的一侧会拒绝另一侧的 `/3` 作业，这是失败关闭，不会写出检查。
+- 按 Owner Decision `72ed7fb4`，3b 合入后不单独重装，3c 合入后两侧一起装。两侧必须一起装、一起回退：只换一侧时，Linux 归档读不懂另一侧的描述符，执行器 HALT（失败关闭，复核 r2 n2）。重装清单要写明这一条。
+
+### 21.5 测试
+
+- Source v2：201 项（200 通过、1 跳过）。新增 `test/job-v3.test.mjs`，共 6 项：
+  - 合同和身份；
+  - S 默认等于 H，另一个 S 是另一个作业；
+  - 拒绝 `/2` 和坏 S；
+  - 容器入口推出同一个 id；
+  - 容器用 S 构建并检查 T..S；
+  - 打包脚本只认 `/3`，并拒绝 S ≠ H。
+- `test/test_prepare_workspaces_v2.py`：Node 和 Python 对 S ≠ H 的 id 一致；拒绝 `/2` 描述符、缺 S、坏 S 和 S ≠ H（`TEST_COMMIT_NOT_HEAD`）。
+- 常驻层：
+  - `test_linux_privilege.py` 核对 Linux 工具和 ws-prep 的公式一致，拒绝 `/2` 和缺 S；
+  - 新增一项归档测试，从 outbox 按真实读取路径读描述符（复核 B1）；
+  - 核对先查 S 的树再检出、检出 S、HEAD 核对 S。
+  - `engine-v2.test.mjs` 核对描述符是 `/3`、S 来自推导，推导给出别的 S 就拒绝。
+- 常驻层 Node 286 项、离线演练 51 步、Python 照常通过。
+- C#：`test-pure-v2.ps1` 共 140 项断言，新增几项拒绝：S 改了、合同串改成 `/2`、`/2` 作业。
+
+### 21.6 独立复核
+
+- 第一轮（3177b549）：ACCEPT-WITH-FIXES，1 BLOCKER、1 MAJOR、4 MINOR、5 NIT。
+  - B1：Linux 工具新加的合同表和 outbox 路径常量同名，归档会读不到描述符；不修就装，第一个跑 Linux 角色的批次就会 HALT。已修：只认 `/3`，不再要合同表；加了走真实读取路径的测试。
+  - M1：3c 清单补全，见 §21.3。
+  - m1 写进 3c。m2 已修。m3 补了能现在补的测试，其余写进 3c。m4 已修：理由不成立，`/2` 兼容已去掉。
+  - NIT：过时注释已改；C# 合同串单独测；打包脚本的拒绝有测试；S 只由推导决定。
+- 第二轮（ef98de49）：ACCEPT，0 BLOCKER、0 MAJOR、1 MINOR、5 NIT。
+  - B1 彻底修好，没有引入新问题。上一轮存活的变异里，ws-prep 检出、HEAD 核对、打包脚本的拒绝、构建标签、`--head` 和 C# 合同串，现在都能抓到。
+  - 已改：m1（推导结果的 `testSha` 加了跨层断言）、n1（outbox 路径与 `layout.mjs` 的 `LINUX_DESCRIPTORS` 相等）、n2 和 n5（写进 §21.4、§21.3）、n4（过时注释）。
+  - n3（打包脚本只有源码断言；C# 同批核对没有测试）留到 3c，和 S ≠ H 的测试一起补。
+
 ## 附录 A：草稿文件
 
 | 文件 | 作用 |
@@ -1651,3 +1844,4 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 | `CI/src/resident-v2/*`、`CI/src/*-v2.mjs`、`CI/src/formal-work-admission-check-v2/`、`CI/src/independent-control-checks-v2/`、`CI/runtime/one-shot-v2.mjs`、`CI/worker/*-v2|v3|v4/`、`CI/worker/protected-job-bridge-v4/` | v0.6：Source v2 本体（§7.1） |
 | `src/failure-table.json`、`src/executed-heads.mjs`、`src/status.mjs`、`src/pr-status.mjs`、`windows/test-install-carry.ps1` | v0.9：失败对照表、与 Source 无关的已执行记录与回填、状态快照、PR 页面状态与通知、安装带入旧账本的离线测试（§16） |
 | `CI/src/independent-control-checks-v2/train-rules.mjs`、`green-ledger.mjs` | v1.2：第 8 段的 main 规则与试合并核对、绿色台账（§19） |
+| `CI/src/job-v2.mjs`（合同 /3）、`CI/test/job-v3.test.mjs` | v1.2：作业身份加测试提交 S，描述符 /3，工作区检出 S（§21） |
