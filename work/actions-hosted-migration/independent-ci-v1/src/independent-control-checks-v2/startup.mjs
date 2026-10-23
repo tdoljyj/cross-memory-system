@@ -19,7 +19,10 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const { github, admission } = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
     const journal = await EffectJournal.open(STATE_V2.effectsControl);
     // Phase 2, step 3a: the green ledger (migrate-acl.ps1 creates the directory, clued-control only); the train stays off.
-    const greenLedger = await GreenLedger.open(STATE_V2.greenLedger);
+    // A ledger that cannot be opened never burns the head: publishPair then answers GREEN_LEDGER_UNAVAILABLE and the
+    // batch parks (review M2).
+    let greenLedger = null;
+    try { greenLedger = await GreenLedger.open(STATE_V2.greenLedger); } catch { /* parked by publishPair */ }
     const publisher = createProductionControlPublisherV2({ github, journal, admission, assertLive: live, record: log, authority: authorityOf(inputs.record.accepted), batchClaim, greenLedger });
     // The claim lease bound is read from the first live observation inside the wait; the outer bound is
     // the stage cap and the install's validUntil. Phase 2, step 2: one run only checks (STAGE8_CHECK_MS); the

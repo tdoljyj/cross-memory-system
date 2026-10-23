@@ -112,7 +112,8 @@ function sourceBinding(job, packet, facts, authority) {
 function engine({ github, journal, admission, assertLive, record, authority, batchClaim, greenLedger = null, trainMode = TRAIN_MODE_DEFAULT,
   clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)) }, production) {
   const domain = production ? 'production' : 'fixture';
-  check(TRAIN_MODES.includes(trainMode) && (!production || typeof greenLedger?.append === 'function'), 'CONTROL_PUBLISHER_CONFIGURATION_REFUSED');
+  // The green ledger is required where a green is written (publishPair), not here: the merge-gate consumer only reads (review M1).
+  check(TRAIN_MODES.includes(trainMode) && (greenLedger === null || typeof greenLedger?.append === 'function'), 'CONTROL_PUBLISHER_CONFIGURATION_REFUSED');
   // Phase 2, step 3a: the live branch rules of main and GitHub's test merge of the PR (train-rules.mjs). Without the train
   // the tested tree is the head's own (S = H). Any read that fails is a not-ready answer, never a stage failure: these
   // facts change by themselves and the resident tries again.
@@ -132,14 +133,16 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     const reason = testMergeDecision({ pull, mergeCommit, job, testTree: head.tree });
     return { reason, ruleset: rules, testTree: head.tree, testMergeSha: reason ? null : pull.merge_commit_sha };
   }
-  // After the write: GitHub's own answer for the PR now. 'merged' when it merged exactly [T, H] with the tested tree,
-  // 'mismatch' when the PR is open and the test merge is definitely other parents or another tree, otherwise 'open' (also
-  // when it cannot be read: the Native boundary decides then, as before 3a).
+  // After the write: GitHub's own answer for the PR now. 'merged' when it merged exactly [T, H] with the tested tree;
+  // 'mismatch' when it merged any other way (squash, rebase, other parents or tree: review M3), or when the PR is open and
+  // the test merge is definitely other parents or another tree; otherwise 'open' (also when it cannot be read: the Native
+  // boundary decides then, as before 3a).
   async function afterWrite(job, train) {
     try {
       const pull = await github.readPullRequest(job.pr);
       const mergeCommit = SHA.test(pull?.merge_commit_sha ?? '') ? await github.readGitCommit(pull.merge_commit_sha) : null;
       if (mergedAsTested({ pull, mergeCommit, job, testTree: train.testTree })) return { state: 'merged', mergeSha: pull.merge_commit_sha };
+      if (pull?.merged === true) return { state: 'mismatch' };
       if (pull?.state === 'open' && pull.head?.sha === job.headSha && pull.mergeable === true && mergeCommit
         && testMergeDecision({ pull, mergeCommit, job, testTree: train.testTree }) !== null) return { state: 'mismatch' };
     } catch { /* unreadable: no new fact */ }
@@ -237,15 +240,20 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       // [T, H] and the tested tree, the green did what it was for: SETTLED_MERGED, never revoked.
       if (sent && known && train && job.role === 'control-merge-slot') {
         const written = await afterWrite(job, train);
+        let settled = false;
         if (written.state === 'merged') {
           try {
             await readback(job, externalId, known.id, 'success');
             await journal.transition(key, 'sent', 'settled', { checkRunId: known.id, externalId, conclusion: 'success', settledMerged: written.mergeSha,
               nativeObservationBeforeSha256: before.facts.observationSha256, bindingSha256: before.bindingSha256, sourceBindingSha256: before.sourceBindingSha256 });
-            record('native_check_settled_merged', { jobId: job.id, effectKey: key, checkRunId: known.id, mergeSha: written.mergeSha, cause: safe(e) });
-            await ledger('merged', job, train, key, externalId, known.id, written.mergeSha);
-            return { status: 'SETTLED', effectKey: key, checkRunId: known.id, sideEffects, productionAuthorized: production, settledMerged: true };
+            settled = true;
           } catch { /* not confirmed: compensate as before */ }
+        }
+        // Settled is settled: the log and the ledger after it are best-effort and can never turn it into a revoke (review N3).
+        if (settled) {
+          try { record('native_check_settled_merged', { jobId: job.id, effectKey: key, checkRunId: known.id, mergeSha: written.mergeSha, cause: safe(e) }); } catch { /* best-effort */ }
+          await ledger('merged', job, train, key, externalId, known.id, written.mergeSha);
+          return { status: 'SETTLED', effectKey: key, checkRunId: known.id, sideEffects, productionAuthorized: production, settledMerged: true };
         }
       }
       if (sent && known) return revoke({ job, key, externalId, known, phase, cause: safe(e), sideEffects, train: job.role === 'control-merge-slot' ? train : null });
@@ -328,10 +336,11 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     const head = await waitForQueueHead(jobs[1], waitUntil);
     record('native_queue_wait', { jobId: jobs[1].id, ready: head.ready, polls: head.polls });
     if (!head.ready) return { status: 'BLOCKED', reason: head.reason, sideEffects: 0, productionAuthorized: false, polls: head.polls, scheduling: head.scheduling };
-    // Step 3a (§5.4 item 4): the merge-slot green is in the ledger before anything of the pair is written.
-    if (greenLedger) {
+    // Step 3a (§5.4 item 4): the merge-slot green is in the ledger before anything of the pair is written. Production
+    // without a ledger (it could not be opened: review M2) writes nothing and parks.
+    if (greenLedger || production) {
       const slot = fixedJob(jobs[1]);
-      try { await ledger('intent', slot, head.train, admissionEffectKeyV2(ACTION, slot, batchClaim, definitionFor(slot)), admissionExternalIdV2(prefixFor(slot), slot, batchClaim), null, null, { required: true }); }
+      try { check(greenLedger, GREEN_LEDGER_UNAVAILABLE); await ledger('intent', slot, head.train, admissionEffectKeyV2(ACTION, slot, batchClaim, definitionFor(slot)), admissionExternalIdV2(prefixFor(slot), slot, batchClaim), null, null, { required: true }); }
       catch { return { status: 'BLOCKED', reason: GREEN_LEDGER_UNAVAILABLE, sideEffects: 0, productionAuthorized: false, polls: head.polls, scheduling: head.scheduling }; }
     }
     const results = []; let sideEffects = 0;

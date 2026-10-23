@@ -15,7 +15,7 @@ export const GREEN_PHASES = Object.freeze(['intent', 'posted', 'settled', 'merge
 // The intent could not be recorded: nothing was written to GitHub; stage 8 is not ready (the resident parks and retries).
 export const GREEN_LEDGER_UNAVAILABLE = 'GREEN_LEDGER_UNAVAILABLE';
 export const GREEN_ENTRY_FIELDS = Object.freeze(['contract', 'phase', 'repo', 'pr', 'headSha', 'baseSha', 'testTree', 'testMergeSha', 'effectKey', 'externalId', 'checkRunId', 'at', 'detail']);
-const SHA = /^[a-f0-9]{40}$/, HEX64 = /^[a-f0-9]{64}$/, NAME = /^\d{13}-[a-f0-9]{16}-[a-z]{4,7}-[a-f0-9]{8}\.json$/;
+const SHA = /^[a-f0-9]{40}$/, HEX64 = /^[a-f0-9]{64}$/, NAME = /^(\d{13})-([a-f0-9]{16})-([a-z]{4,7})-[a-f0-9]{8}\.json$/;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 
@@ -41,8 +41,9 @@ export class GreenLedger {
     return new GreenLedger(resolved);
   }
   constructor(directory, clock = Date.now) { this.directory = directory; this.clock = clock; }
-  // One new file per record: written whole under a temporary name, synced, then renamed to a name nothing else can have
-  // (time, effect key, phase, a nonce). A crash leaves at most a temporary file, never a half record under a ledger name.
+  // One new file per record: written whole under a temporary name, synced, then hard-linked to a name nothing else can have
+  // (time, effect key, phase, a nonce) and the temporary name removed. A link never replaces an existing file (a rename
+  // would, on Windows: review N2). A crash leaves at most a temporary file, never a half record under a ledger name.
   async append({ phase, job, testTree, testMergeSha = null, effectKey, externalId, checkRunId = null, detail = null }) {
     const now = this.clock();
     const entry = validateGreenEntry({ contract: GREEN_LEDGER_CONTRACT, phase, repo: job?.repo, pr: job?.pr, headSha: job?.headSha, baseSha: job?.baseSha, testTree,
@@ -51,7 +52,8 @@ export class GreenLedger {
     const temporary = path.join(this.directory, `${name}.tmp`);
     const handle = await fs.open(temporary, 'wx', 0o600);
     try { await handle.writeFile(canonical(entry)); await handle.sync(); } finally { await handle.close(); }
-    await fs.rename(temporary, path.join(this.directory, name));
+    await fs.link(temporary, path.join(this.directory, name));
+    await fs.unlink(temporary).catch(() => { /* a leftover temporary file is skipped by list() */ });
     return { name, entry };
   }
   // Every complete record, oldest first. A file that is not exactly a ledger record is reported, never skipped silently:
@@ -60,12 +62,14 @@ export class GreenLedger {
     const out = [], refused = [];
     for (const name of (await fs.readdir(this.directory)).sort()) {
       if (name.endsWith('.tmp')) continue;
-      if (!NAME.test(name)) { refused.push(name); continue; }
+      const parts = NAME.exec(name);
+      if (!parts) { refused.push(name); continue; }
       try {
         const file = path.join(this.directory, name), stat = await fs.lstat(file);
         if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 64 * 1024) fail('unsafe_green_entry');
         const text = await fs.readFile(file, 'utf8'), entry = validateGreenEntry(JSON.parse(text));
-        if (canonical(entry) !== text) fail('invalid_green_entry');
+        // The name says when, which effect and which phase: the content must say the same (review N2).
+        if (canonical(entry) !== text || Date.parse(entry.at) !== Number(parts[1]) || entry.effectKey.slice(0, 16) !== parts[2] || entry.phase !== parts[3]) fail('invalid_green_entry');
         out.push({ name, entry });
       } catch { refused.push(name); }
     }

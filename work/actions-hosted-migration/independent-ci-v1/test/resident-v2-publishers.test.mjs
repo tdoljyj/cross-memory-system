@@ -370,9 +370,19 @@ test('control pair v2 (step 3a): the merge-slot green is ledgered before the pai
   const none = await pairRun(t, { greenLedger: memoryLedger({ fail: true }) });
   assert.deepEqual([none.r.status, none.r.reason, none.r.sideEffects, none.github.checks.length], ['BLOCKED', 'GREEN_LEDGER_UNAVAILABLE', 0, 0]);
   assert.equal(stage8Code(none.r), 'GREEN_LEDGER_UNAVAILABLE');
-  // the production publisher refuses to run without one
-  assert.throws(() => createProductionControlPublisherV2({ github: fakeGithub(), journal: ok.journal, admission: fakeAdmission(() => null), assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(claim()) }),
+  // the production publisher can be built without one (the merge-gate consumer only reads: review M1), but it never
+  // writes a green without one: no ledger (it could not be opened: review M2) parks like a failing one
+  const reader = createProductionControlPublisherV2({ github: fakeGithub(), journal: ok.journal, admission: fakeAdmission(() => null), assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(claim()) });
+  assert.equal(typeof reader.consume, 'function');
+  assert.throws(() => createProductionControlPublisherV2({ github: fakeGithub(), journal: ok.journal, admission: fakeAdmission(() => null), assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(claim()), greenLedger: {} }),
     e => e.code === 'CONTROL_PUBLISHER_CONFIGURATION_REFUSED');
+  const jobs = jobsFor(), c = claim(), github = fakeGithub(), journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  let time = Date.now();
+  const productionFacts = f => { const { observationSha256, ...facts } = f; return { ...facts, domain: 'production', observationSha256: digest({ ...facts, domain: 'production' }) }; };
+  const admission = fakeAdmission((job, packet, opts) => productionFacts(admitted(job, c, packet, { mergeQueueHead: true, batchClaim: opts.batchClaim, observedAt: time, slotUntil: time + 600_000 })));
+  const production = createProductionControlPublisherV2({ github, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c), clock: () => time, sleep: async ms => { time += ms; } });
+  const parked = await production.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS });
+  assert.deepEqual([parked.status, parked.reason, parked.sideEffects, github.checks.length], ['BLOCKED', 'GREEN_LEDGER_UNAVAILABLE', 0, 0]);
 });
 
 test('control pair v2 (step 3a): a PR GitHub merged as tested right after the green is success, never revoked', async t => {
@@ -384,14 +394,31 @@ test('control pair v2 (step 3a): a PR GitHub merged as tested right after the gr
   assert.equal(m.greenLedger.records[2].detail, LANDED);
   const settled = await m.journal.read(m.r.results[1].effectKey);
   assert.deepEqual([settled.state, settled.details.settledMerged], ['settled', LANDED]);
-  // merged on another tree, or on other parents: not what was tested, the green is revoked as before
-  for (const landed of [{ sha: LANDED, tree: '7'.repeat(40), parents: [BASE, HEAD] }, { sha: LANDED, tree: TREE, parents: ['9'.repeat(40), HEAD] }]) {
+  // merged on another tree, on other parents, or squashed (one parent): not what was tested, the green is revoked as before
+  const squash = { sha: LANDED, tree: TREE, parents: [BASE] };
+  for (const landed of [{ sha: LANDED, tree: '7'.repeat(40), parents: [BASE, HEAD] }, { sha: LANDED, tree: TREE, parents: ['9'.repeat(40), HEAD] }, squash]) {
     const g = fakeGithub(); autoMergeOnGreen(g, landed);
     const x = await pairRun(t, { github: g });
     assert.equal(x.r.status, 'REVOKED');
     assert.equal(x.github.checks.find(c => c.name === 'kooyumi-merge-slot').conclusion, 'failure');
     assert.deepEqual(x.greenLedger.records.map(r => r.phase), ['intent', 'posted', 'revoked']);
   }
+  // the same when the after-write boundary still answered (it read before the merge) and only GitHub's own answer
+  // shows the squash: whichever read sees the merge first, the result is the same (review M3)
+  const raced = fakeGithub(); autoMergeOnGreen(raced, squash);
+  const answer = raced.readChangedPaths.bind(raced);
+  raced.readChangedPaths = async job => { const now = raced.state.pull; raced.state.pull = { ...now, state: 'open' }; try { return await answer(job); } finally { raced.state.pull = now; } };
+  const y = await pairRun(t, { github: raced });
+  assert.equal(y.r.status, 'REVOKED');
+  assert.equal(y.github.checks.find(c => c.name === 'kooyumi-merge-slot').conclusion, 'failure');
+  // merged as tested, but the readback of the green fails (here a newer judgement of the same check): never settled on
+  // an unconfirmed check, nothing ledgered as merged (review M4)
+  const unread = fakeGithub(); autoMergeOnGreen(unread);
+  const create = unread.state.onCreate;
+  unread.state.onCreate = c => { create(c); if (c.name === 'kooyumi-merge-slot') unread.checks.push({ ...structuredClone(c), id: c.id + 50 }); };
+  const z = await pairRun(t, { github: unread });
+  assert.notEqual(z.r.status, 'SETTLED');
+  assert.ok(!z.greenLedger.records.some(r => r.phase === 'merged'));
 });
 
 test('control pair v2 (step 3a): an open PR whose test merge definitely changed right after the green loses it', async t => {
@@ -404,4 +431,8 @@ test('control pair v2 (step 3a): an open PR whose test merge definitely changed 
   const flaky = fakeGithub();
   flaky.state.onCreate = c => { if (c.name === 'kooyumi-merge-slot') flaky.readPullRequest = async () => { throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); }; };
   assert.equal((await pairRun(t, { github: flaky })).r.status, 'SETTLED');
+  // GitHub still computing (mergeable null) on other parents proves nothing either: the green stands (review M4)
+  const computing = fakeGithub();
+  computing.state.onCreate = c => { if (c.name === 'kooyumi-merge-slot') { computing.state.pull = { ...computing.state.pull, mergeable: null }; computing.state.commits[TEST_MERGE] = { sha: TEST_MERGE, tree: TREE, parents: ['9'.repeat(40), HEAD] }; } };
+  assert.equal((await pairRun(t, { github: computing })).r.status, 'SETTLED');
 });
