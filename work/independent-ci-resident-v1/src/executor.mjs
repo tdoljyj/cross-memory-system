@@ -21,6 +21,9 @@
 // A batch whose heavy roles were all relayed still burns its head (markStarted) and never touches WSL.
 // Stage R: RELAY_PUBLICATION_UNCERTAIN (or any plan row that is not a clean RELAYED / LOCAL_REQUIRED) is
 // UNKNOWN and HALTs; such a role is never run locally afterwards. A role is run locally only from 25-plan.
+// An ON_GITHUB row (primary/standby C4: the role's check is already on GitHub, unknown to this node) ends the batch
+// cleanly as ROLE_ALREADY_ON_GITHUB, with no 25-plan and no local stage; so does stage 1's HEAD_PUBLISHED_ON_GITHUB,
+// after which the head is recorded as executed.
 //
 // Failure handling (Owner Decision 0d84ddbb item 4): a failure with a complete cleanup proof is
 // archived (rename only) and the executor moves on; the head is never re-run automatically, with ONE
@@ -1465,6 +1468,18 @@ export class ResidentExecutor {
     }
   }
 
+  // Primary/standby design v0.4 §6.2 (C4): stage 1 found this head already published on GitHub (HEAD_PUBLISHED_ON_GITHUB,
+  // by another node or install). It is recorded as "may have published" for every Source and attempt, so it is never
+  // admitted again; a record that cannot be written ends the batch as EXECUTED_HEAD_RECORD_UNCONFIRMED instead.
+  async recordPublishedOnGithub(key, subject) {
+    try {
+      await this.executedHeads.record(subject, { key, origin: 'publication', basis: 'head-published-on-github', stage: 1 });
+      return null;
+    } catch (error) {
+      return new StepFailure(1, 'EXECUTED_HEAD_RECORD_UNCONFIRMED', { windowsTreeZero: true }, 'stage');
+    }
+  }
+
   async drive(key, subject, t0, keepBatch) {
     const batch = await this.engine.derive(subject, key);
     keepBatch(batch);
@@ -1485,7 +1500,13 @@ export class ResidentExecutor {
     this.atStage(1, 'stage');
     const first = await this.engine.runStage(batch, this.stage(1), { betweenRoles: false, firstLinux: false });
     await this.receipt('stage-terminal', { key, stage: 1, ok: first.ok === true, failureCode: first.ok ? null : validCode(first.code), factsSha256: first.factsSha256 ?? null, outcome: outcomeSummary(first) });
-    if (first.ok !== true) return new StepFailure(1, first.code, first.proof, 'stage', 0, first);
+    if (first.ok !== true) {
+      if (first.code === 'HEAD_PUBLISHED_ON_GITHUB') {
+        const unrecorded = await this.recordPublishedOnGithub(key, subject);
+        if (unrecorded) return unrecorded;
+      }
+      return new StepFailure(1, first.code, first.proof, 'stage', 0, first);
+    }
 
     // Admitted and published: from here on this head is burned (also when every heavy role is relayed).
     await this.ledger.markStarted(key, { batchId: batch.batchId });
@@ -1610,6 +1631,12 @@ export class ResidentExecutor {
       if (r.ok !== true) return new StepFailure(RELAY_STAGE, r.code, r.proof, 'stage', 0, r);
       const rows = relayPlanFromRows(r.relay, candidates);
       if (!rows) return new StepFailure(RELAY_STAGE, 'RELAY_PLAN_UNCONFIRMED', r.proof, 'stage', 0);
+      // C4: a role already on GitHub that this node knew nothing of ends the batch cleanly: no 25-plan and no local stage
+      // for any role (the head was recorded as executed before stage R). A role relayed before it keeps its receipt.
+      if (rows.onGithub) {
+        for (const x of rows.relayed) await this.receipt(RELAY_RECEIPTS.attested, { key, role: x.role, checkRunId: x.checkRunId, externalId: x.externalId, attestationSha256: x.attestationSha256 });
+        return new StepFailure(RELAY_STAGE, 'ROLE_ALREADY_ON_GITHUB', r.proof, 'stage', rows.relayed.length, r);
+      }
       relayed = rows.relayed;
       attested = rows.local.map(row => ({ role: row.role, reason: row.reason, receipt: row.receipt, source: 'stage-r', detail: row.detail }));
     }
