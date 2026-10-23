@@ -132,6 +132,8 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       case 'FAILED_CLEAN':
         if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'failure', description: 'main 已移动：请合入最新 main 并推新提交' };
         if (recent.code === 'TRAIN_TEST_MERGE_TREE_DIFFERS') return { state: 'failure', description: '试合并与测过的树不同，未发合并位：请推新提交（已通知 Owner）' };
+        // Primary/standby C4: App 5368905 had already published on this head (another node or install).
+        if (recent.code === 'HEAD_PUBLISHED_ON_GITHUB' || recent.code === 'ROLE_ALREADY_ON_GITHUB') return { state: 'failure', description: '这个提交已有检查，请推新提交' };
         return recent.retry === 'attempt2'
         ? { state: 'pending', description: clip(`暂时失败（${code}），将自动第二次尝试`) }
         : { state: 'failure', description: clip(`失败（${code}）：此提交不再运行，请推新提交`) };
