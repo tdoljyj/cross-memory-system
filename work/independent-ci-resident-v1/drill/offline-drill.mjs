@@ -423,6 +423,45 @@ await step('  PR 904 (halted at stage 6 before the reinstall) is never admitted 
 script.delete(909); // its stage 2 no longer hangs
 await step('  PR 909 (aborted inside stage 2, nothing published) runs under the new Source', async () => { await iDrop(trigger(909)); return iExec.tick(); }, r => r.state === 'COMPLETED');
 
+// ---- step 3c-1: the merge train in shadow mode (stage 10, DESIGN §22.3), on a fresh install with train.enabled shadow ----
+const tRoot = path.join(root, 'train-shadow'), tState = path.join(tRoot, 'state');
+for (const d of ['inbox', 'requests', 'owner']) await fs.mkdir(path.join(tRoot, d), { recursive: true });
+let trainAnswer = null; // the next stage-10 answer; null = shadow facts with no merge-queue front
+const tEngine = { ...engine, current: null, subjects: new Map(), trainRuns: 0,
+  async runTrainStage(mode) {
+    this.trainRuns += 1;
+    now += 30_000;
+    const a = trainAnswer;
+    trainAnswer = null;
+    return a ?? { ok: true, runId: `${'7'.repeat(16)}-${String(this.trainRuns).padStart(12, '0')}`, proof: WINDOWS_CLEAN, train: { contract: 'clued.independent-ci.train-facts/1', mode,
+      at: new Date(now).toISOString(), onDuty: true, mainSha: BASE, rules: { strict: true, mergeOnly: true }, front: null, wouldDo: 'NO_FRONT', wouldRevoke: [], wouldRevokeCount: 0 } };
+  } };
+const tLedger = await Ledger.open(tState, clock);
+const tReceipts = await ReceiptChain.open(path.join(tState, 'receipts'), clock);
+const tExec = new ResidentExecutor({ policy: validatePolicy({ ...policyInput, train: { ...policyInput.train, enabled: 'shadow' } }), ledger: tLedger, receipts: tReceipts,
+  inbox: await Inbox.open(path.join(tRoot, 'inbox'), path.join(tState, 'inbox-archive')), requests: await Inbox.open(path.join(tRoot, 'requests'), path.join(tState, 'requests-archive')),
+  owner: await OwnerInbox.open(path.join(tRoot, 'owner'), path.join(tState, 'owner-seen')), engine: tEngine, companion, clock, sleep: () => new Promise(resolve => setImmediate(resolve)),
+  queue: await RunQueue.open(path.join(tState, 'queue'), clock),
+  executedHeads: await ExecutedHeads.open(tState, clock, { manifestFile: await emptyManifest(path.join(tRoot, 'install')), carriedRoot: path.join(tState, 'backfill') }),
+  sourceIntegrity: async () => ({ ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT }) });
+const tDrop = async value => { seq += 1; await fs.writeFile(path.join(tRoot, 'inbox', `${String(now + seq).padStart(13, '0')}-${String(seq).padStart(12, '0')}.json`), JSON.stringify(value)); };
+const trainTypes = async () => (await tReceipts.entries()).map(e => e.type).filter(t => t.startsWith('train-')).join(',');
+await step('train shadow (step 3c-1): an idle tick runs stage 10 once, leaving only its two receipts', async () => { const r = await tExec.tick(); return { ...r, runs: tEngine.trainRuns, types: await trainTypes() }; },
+  r => r.state === 'IDLE' && r.runs === 1 && r.types === 'train-run-intent,train-run');
+await step('  a PR batch comes first: that tick runs no stage 10, the next idle tick ten minutes later does', async () => {
+  await tDrop(trigger(940));
+  const a = await tExec.tick();
+  const between = tEngine.trainRuns;
+  now += 600_000;
+  const c = await tExec.tick();
+  return { state: a.state, between, after: tEngine.trainRuns, idle: c.state };
+}, r => r.state === 'COMPLETED' && r.between === 1 && r.after === 2 && r.idle === 'IDLE');
+await step('  a stage 10 whose cleanup is not proven HALTs like any stage', async () => {
+  now += 600_000;
+  trainAnswer = { ok: false, code: 'STAGE_CHILD_TREE_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: true } };
+  return tExec.tick();
+}, r => r.state === 'HALTED' && r.failureCode === 'TRAIN_STAGE_CLEANUP_UNCONFIRMED');
+
 console.table(rows);
 const summary = { status: misses === 0 ? 'OFFLINE_DRILL_PASS' : 'OFFLINE_DRILL_FAIL', steps: rows.length, misses, receipts: head1 };
 console.log(JSON.stringify(summary));
