@@ -51,3 +51,33 @@ test('the pause request is one the executor accepts (inbox name shape, exact key
   const [entry] = await inbox.read(10, 1024);
   assert.deepEqual(JSON.parse(entry.bytes.toString('utf8')), { contract: PAUSE_CONTRACT, reason: 'ruleset-backstop: STRICT_OFF_WITHOUT_TRAIN' });
 });
+
+test('companion wiring: gh reads main\'s rules, the pause goes into the requests folder, the toast runs once a day, memory in the companion store', async t => {
+  const { companionBackstop } = await import('../src/ruleset-backstop.mjs');
+  const { LocalStore } = await import('../src/pr-status.mjs');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-backstop-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.mkdir(path.join(root, 'requests'));
+  const store = await LocalStore.open(path.join(root, 'companion-store.json'));
+  const calls = [];
+  let reply = { code: 0, stdout: JSON.stringify(rules({ strict: false })) };
+  const run = async (argv, opts) => { calls.push(argv); return argv[0].endsWith('gh.exe') ? reply : { code: 0, stdout: '' }; };
+  let now = Date.parse('2026-10-23T12:00:00Z');
+  const pass = () => companionBackstop({ root, ghExe: 'C:\\gh\\gh.exe', repo: 'tdoljyj/cross-memory-system', powershellExe: 'C:\\Windows\\powershell.exe', run, store, clock: () => now });
+  // no status snapshot: the train mode is unknown, so strict off without the train pauses
+  assert.deepEqual(await pass(), { pause: true, notify: 'STRICT_OFF_WITHOUT_TRAIN', acted: true });
+  assert.deepEqual(calls[0].slice(1, 3), ['api', '--method']);
+  assert.ok(calls[0].includes('repos/tdoljyj/cross-memory-system/rules/branches/main?per_page=100'));
+  assert.equal(calls[1][0], 'C:\\Windows\\powershell.exe', 'the toast');
+  const pauses = await fs.readdir(path.join(root, 'requests'));
+  assert.equal(pauses.length, 1);
+  assert.equal(JSON.parse(await fs.readFile(path.join(root, 'requests', pauses[0]), 'utf8')).contract, PAUSE_CONTRACT);
+  assert.ok(JSON.parse(await fs.readFile(path.join(root, 'companion-store.json'), 'utf8')).notified['backstop:STRICT_OFF_WITHOUT_TRAIN']);
+  // the same day: nothing more; an unreadable reply: nothing at all
+  now += 3600_000;
+  assert.equal((await pass()).acted, false);
+  reply = { code: 1, stdout: '' };
+  now += 2 * 86_400_000;
+  assert.deepEqual(await pass(), { pause: false, notify: null, acted: false });
+  assert.equal((await fs.readdir(path.join(root, 'requests'))).length, 1);
+});

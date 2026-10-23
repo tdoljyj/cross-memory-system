@@ -119,3 +119,33 @@ test('executor: an intent no train-run receipt closed HALTs once at the next sta
   assert.equal(await third.exec.trainRecover(), null);
   assert.equal(third.exec.trainRuns.length, 2);
 });
+
+test('the status copy of a summary and the PR page line: recent, this head at the front, never on a failure', async () => {
+  const { parseTrainLast, withTrainLine, TRAIN_PAGE_MAX_AGE_MS } = await import('../src/train.mjs');
+  const facts = { contract: 'clued.independent-ci.train-facts/1', mode: 'shadow', at: '2026-10-23T12:00:00.000Z', onDuty: true, mainSha: '1'.repeat(40), rules: { strict: true, mergeOnly: true },
+    front: { claimId: 'c', pr: 910, headSha: '2'.repeat(40) }, wouldDo: 'FRONT_GREEN_WAIT_MERGE', wouldRevoke: [], wouldRevokeCount: 0 };
+  const last = parseTrainLast(JSON.parse(JSON.stringify(trainSummary(facts))));
+  assert.deepEqual({ ...last }, { at: NOW, mode: 'shadow', wouldDo: 'FRONT_GREEN_WAIT_MERGE', onDuty: true, front: { pr: 910, headSha: '2'.repeat(40) }, mainSha: '1'.repeat(40), strict: true, wouldRevokeCount: 0 });
+  for (const bad of [null, [], { ...last, at: 'x' }, { ...last, mode: 'on' }, { ...last, wouldDo: 'REVOKE' }]) assert.equal(parseTrainLast(bad), null);
+  const pull = { pr: 910, headSha: '2'.repeat(40) };
+  const parked = { state: 'pending', description: '已测通，在合并队列第 1 位：等成为队首，约 12:05 再查第 8 段' };
+  assert.match(withTrainLine(parked, last, pull, NOW + MIN).description, /^已测通.*；列车影子（只记录，不执行）：你是合并队列车头。车头六项已绿，等合并。$/);
+  assert.equal(withTrainLine(parked, last, pull, NOW + TRAIN_PAGE_MAX_AGE_MS + 1), parked, 'too old');
+  assert.equal(withTrainLine(parked, last, { ...pull, headSha: '3'.repeat(40) }, NOW), parked, 'another head');
+  assert.equal(withTrainLine(parked, last, { ...pull, pr: 911 }, NOW), parked, 'another PR');
+  const failed = { state: 'failure', description: 'x' };
+  assert.equal(withTrainLine(failed, last, pull, NOW), failed);
+  assert.equal(withTrainLine(null, last, pull, NOW), null);
+  assert.ok(withTrainLine({ state: 'pending', description: 'y'.repeat(140) }, last, pull, NOW).description.length <= 140);
+});
+
+test('the status snapshot carries the train mode and the newest summary; the companion reads them back', async () => {
+  const { StatusBoard, parseStatus } = await import('../src/status.mjs');
+  const b = new StatusBoard({ clock: () => NOW, pid: 7 });
+  assert.deepEqual(parseStatus(Buffer.from(JSON.stringify(b.snapshot()))).train, { enabled: 'off', last: null });
+  const facts = { contract: 'clued.independent-ci.train-facts/1', mode: 'shadow', at: '2026-10-23T12:00:00.000Z', onDuty: false, mainSha: null, rules: null, front: null, wouldDo: 'NOT_ON_DUTY', wouldRevoke: [], wouldRevokeCount: 0 };
+  b.update({ train: { enabled: 'shadow', last: trainSummary(facts) } });
+  const read = parseStatus(Buffer.from(JSON.stringify(b.snapshot()))).train;
+  assert.deepEqual([read.enabled, read.last.wouldDo, read.last.at, read.last.onDuty], ['shadow', 'NOT_ON_DUTY', NOW, false]);
+  assert.deepEqual(parseStatus(Buffer.from(JSON.stringify({ ...b.snapshot(), train: { enabled: 'sideways', last: { wouldDo: 'x' } } }))).train, { enabled: null, last: null });
+});

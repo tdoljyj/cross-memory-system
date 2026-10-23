@@ -11,6 +11,8 @@
 import path from 'node:path';
 import { Inbox } from './inbox.mjs';
 import { writeNew } from './store.mjs';
+import { readStatus } from './status.mjs';
+import { toastArgv } from './pr-status.mjs';
 
 export const APP_ID = 5368905;
 // Must equal Source v2 train-rules.mjs REQUIRED_CHECK_NAMES and executor.mjs PAUSE_CONTRACT (a test keeps them equal).
@@ -64,4 +66,25 @@ export async function writePauseRequest(requestsDir, reason, clock = Date.now) {
   const name = Inbox.fileName(clock());
   await writeNew(path.join(requestsDir, name), { contract: PAUSE_CONTRACT, reason: String(reason).slice(0, 200) });
   return name;
+}
+
+// The companion's ports for one pass (companion-main.mjs calls it on every poll): main's rules with the Owner's read-only
+// gh login, the train mode from the executor's status snapshot, the pause request into the user-writable requests\, a
+// Windows notification, and the once-a-day memory in the companion's own store (pr-status.mjs#LocalStore, `backstop:` keys).
+export function companionBackstop({ root, ghExe, repo, powershellExe, run, store, clock = Date.now, timeoutMs = 60_000 }) {
+  return backstopPass({
+    readRules: async () => {
+      const r = await run([ghExe, 'api', '--method', 'GET', '-H', 'Accept: application/vnd.github+json', `repos/${repo}/rules/branches/main?per_page=100`], { timeoutMs });
+      if (r.code !== 0) throw new Error('rules unreadable');
+      return JSON.parse(r.stdout);
+    },
+    trainMode: async () => (await readStatus(root)).train?.enabled ?? null,
+    writePause: reason => writePauseRequest(path.join(root, 'requests'), reason, clock),
+    notify: async (kind, text) => { await run(toastArgv(powershellExe, kind === 'STRICT_OFF_WITHOUT_TRAIN' ? '紧急：main 的 strict 已关' : 'main 的必需检查有变', text), { timeoutMs }); },
+    memory: {
+      get: key => Date.parse(store.data.notified[key]?.at) || 0,
+      set: async (key, at) => { store.data.notified[key] = { at: new Date(at).toISOString() }; await store.save(); },
+    },
+    clock,
+  });
 }

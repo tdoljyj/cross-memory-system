@@ -43,3 +43,24 @@ export function trainPageLine(summary, pr) {
   if (!summary || summary.front?.pr !== pr || !TEXT[summary.wouldDo]) return null;
   return `列车影子（只记录，不执行）：你是合并队列车头。${TEXT[summary.wouldDo]}。`;
 }
+
+// The status reader's copy of a summary (untrusted bytes in state\status.json): the same fields with `at` in ms, or null.
+export function parseTrainLast(l) {
+  if (!l || typeof l !== 'object' || Array.isArray(l) || l.mode !== 'shadow' || !WOULD_DO.includes(l.wouldDo) || !Number.isFinite(Date.parse(l.at))) return null;
+  return Object.freeze({ at: Date.parse(l.at), mode: l.mode, wouldDo: l.wouldDo, onDuty: l.onDuty === true,
+    front: l.front && Number.isSafeInteger(l.front.pr) ? { pr: l.front.pr, headSha: SHA.test(l.front.headSha ?? '') ? l.front.headSha : null } : null,
+    mainSha: SHA.test(l.mainSha ?? '') ? l.mainSha : null, strict: typeof l.strict === 'boolean' ? l.strict : null,
+    wouldRevokeCount: Number.isSafeInteger(l.wouldRevokeCount) && l.wouldRevokeCount >= 0 ? l.wouldRevokeCount : 0 });
+}
+
+// The PR page (pr-status.mjs): the front PR's own description, with the shadow line appended when the newest run (at most
+// TRAIN_PAGE_MAX_AGE_MS old) saw this very head at the front. Never on a failure or an error, never instead of the
+// executor's own words.
+export const TRAIN_PAGE_MAX_AGE_MS = 30 * 60_000;
+export function withTrainLine(want, last, pull, now, max = 140) {
+  if (!want || ['failure', 'error'].includes(want.state) || !last || now - last.at > TRAIN_PAGE_MAX_AGE_MS || !last.front?.headSha || last.front.headSha !== pull?.headSha) return want;
+  const line = trainPageLine(last, pull.pr);
+  if (!line) return want;
+  const d = `${want.description}；${line}`;
+  return { ...want, description: d.length <= max ? d : `${d.slice(0, max - 1)}…` };
+}
