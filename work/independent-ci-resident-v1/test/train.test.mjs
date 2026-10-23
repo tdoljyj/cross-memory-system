@@ -212,6 +212,45 @@ test('executor (review of 3c-1): the status says RUNNING TRAIN_MAINTENANCE while
   await f.exec.tick();
   assert.deepEqual([during.state, during.reason], ['RUNNING', 'TRAIN_MAINTENANCE']);
   assert.equal(status.snapshot().executor.state, 'IDLE');
+  // the tick's status carries the mode and the newest run's summary (review of 3c-1, round 3, m1)
+  const train = status.snapshot().train;
+  assert.deepEqual([train.enabled, train.last.wouldDo, train.last.mode], ['shadow', 'NO_FRONT', 'shadow']);
+});
+
+test('the companion reporter puts the shadow line on the front PR only, after the executor\'s own words (review of 3c-1, round 3, m1)', async t => {
+  const fsp = (await import('node:fs/promises')).default;
+  const os = (await import('node:os')).default;
+  const path = (await import('node:path')).default;
+  const { StatusBoard, parseStatus } = await import('../src/status.mjs');
+  const { LocalStore, PrStatusReporter } = await import('../src/pr-status.mjs');
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'clued-train-page-'));
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  const H = '2'.repeat(40), other = '4'.repeat(40);
+  const REQUIRED = ['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified', 'kooyumi-merge-slot'];
+  const calls = [];
+  const run = async argv => {
+    calls.push(argv);
+    if (argv.some(x => x.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    return { code: 0, stdout: '{}' };
+  };
+  const board = new StatusBoard({ clock: () => NOW, pid: 1 });
+  board.update({ backfill: { complete: true, published: 0, unreadable: 0 } });
+  board.outcome({ pr: 910, headSha: H, outcome: 'COMPLETED' });
+  board.outcome({ pr: 911, headSha: other, outcome: 'COMPLETED' });
+  const facts = { contract: 'clued.independent-ci.train-facts/1', mode: 'shadow', at: new Date(NOW).toISOString(), onDuty: true, mainSha: '1'.repeat(40), rules: { strict: true, mergeOnly: true },
+    front: { claimId: 'c', pr: 910, headSha: H }, wouldDo: 'FRONT_GREEN_WAIT_MERGE', wouldRevoke: [], wouldRevokeCount: 0 };
+  board.update({ train: { enabled: 'shadow', last: trainSummary(facts) } });
+  const status = parseStatus(Buffer.from(JSON.stringify(board.snapshot())));
+  const reporter = new PrStatusReporter({ repo: 'tdoljyj/cross-memory-system', ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => NOW + MIN,
+    store: await LocalStore.open(path.join(root, 'store.json'), () => NOW + MIN) });
+  const pulls = [{ pr: 910, headSha: H, eligible: true, hint: null, behindBy: 0 }, { pr: 911, headSha: other, eligible: true, hint: null, behindBy: 0 }];
+  await reporter.pass({ pulls, status });
+  const description = pr => {
+    const post = calls.find(argv => argv.includes('POST') && argv.some(x => x.endsWith(`/statuses/${pr === 910 ? H : other}`)));
+    return post?.find(x => x.startsWith('description='))?.slice('description='.length) ?? null;
+  };
+  assert.match(description(910), /列车影子（只记录，不执行）：你是合并队列车头。车头六项已绿，等合并。$/);
+  assert.ok(description(911) && !description(911).includes('列车影子'), 'another PR gets no line');
 });
 
 test('executor (review of 3c-1, round 2): the clean endings that are not BLOCKED stay clean; an incomplete proof HALTs', async t => {
