@@ -149,7 +149,12 @@ export const SUPERSEDE_LIVE_READ_MS = 10 * 60_000;
 // Ticks in a row the queue could not be written before the Owner is told (re-review N2).
 export const QUEUE_SAVE_ALARM = 3;
 // Phase 2, step 2: stage 8 not ready, with zero side effects (Source v2 publisher STAGE8_NOT_READY_REASONS).
-export const STAGE8_NOT_READY_CODES = Object.freeze(['RESIDENT_BASE_MOVED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED']);
+export const STAGE8_NOT_READY_CODES = Object.freeze(['RESIDENT_BASE_MOVED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED',
+  // Phase 2, step 3a: main's live branch rules, GitHub's test merge, the green ledger (all before any journal write).
+  'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE']);
+// Stage-8 answers the Owner must hear about (step 3a): main's rules do not hold it for a green, or GitHub's merge of exactly
+// [T, H] is not what was tested.
+export const STAGE8_OWNER_NOTICE_CODES = Object.freeze(['STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_TREE_DIFFERS']);
 export const PARK_RETRY_MS = Object.freeze([10 * 60_000, 20 * 60_000, 40 * 60_000, 80 * 60_000, 120 * 60_000]);
 // A parked batch whose claim was first in the queue at its last try is tried again this soon; a nudge (a trigger that
 // says main moved or the PR changed) makes a try due at most this often.
@@ -865,6 +870,13 @@ export class ResidentExecutor {
     const zero = !!o && o.status === 'BLOCKED' && o.sideEffects === 0 && o.mayHavePublished === false
       && control.proof?.windowsTreeZero === true && control.proof?.serviceOriginalStopped === true;
     const now = this.clock();
+    // Step 3a: a rule change on main, or a test merge that is not the tested tree, is the Owner's to know (once a day per
+    // code for the rules, once per head for the tree).
+    if (STAGE8_OWNER_NOTICE_CODES.includes(control.code)) {
+      const perHead = control.code === 'TRAIN_TEST_MERGE_TREE_DIFFERS';
+      this.queue.notice({ key: perHead ? `stage8:${control.code}:${subject.pr}:${subject.headSha}` : `stage8:${control.code}:${dayKey(now)}`, kind: 'stage8-rules',
+        pr: perHead ? subject.pr : null, headSha: perHead ? subject.headSha : null, code: control.code });
+    }
     const queueFact = o?.scheduling?.mergeQueue ?? o?.diagnostic?.mergeQueue ?? null;
     const position = queueFact?.entered === true && Number.isSafeInteger(queueFact.position) ? queueFact.position : null;
     // Tries that found the claim first in the merge queue do not count towards the cap (review m5); a run of them comes a
