@@ -35,7 +35,7 @@ const STAGES = 'payload/release/existing-release-entry-v1/v3/existing-stages.mjs
 const PDF_CONFIG = 'apps/clued-cloud/wrangler.pdf-extractor.jsonc';
 
 // The source freeze of revision 7, which pins every other file of the package.
-const SOURCE_FREEZE = 'c83dc54287ae130b00f402c6e4fc915b86f4555cb530863f98ada6ec0a0c8900';
+const SOURCE_FREEZE = '75e8840f76f9a8e6a795b158107d7cce795bd592e9f01e3147722f5ed4801b2f';
 // Revision 6 as installed on the Host (Note fdfbe464@7): its package manifest,
 // its source freeze (the handover copy's) and the bytes of its seven files.
 const INSTALLED_MANIFEST = '71ee46c6c0d5bb0bafa5a85a5445b11c4f0b534141eb25010b06b51da04b8bf4';
@@ -389,7 +389,7 @@ test('WSL interop: here, outside the units, the checks and release-once stop exa
   assert.equal(result.code === 'WSL_INTEROP_OR_SHM_REACHABLE', open, JSON.stringify(result));
 });
 
-test('WSL interop: release-once and the manager check before they read, run or deploy anything', () => {
+test('WSL interop: release-once checks before it reads anything, the manager before it runs a command', () => {
   const release = read(RELEASE).toString('utf8');
   const first = release.indexOf('interopBoundary();verifyPackage(packageSha);let c=readContext(contextSha);');
   assert.ok(first > 0 && first === release.indexOf('interopBoundary()'));
@@ -493,6 +493,12 @@ test("the release entry still pins main's original verification CLIs", () => {
       + 'the Host publisher would refuse to release this main. '
       + 'Land a new reviewed publisher package revision that pins the new bytes first.');
   }
+});
+
+test('the v7 Host check script parses', () => {
+  // It runs only on the Host after an install; here only its syntax can be checked.
+  const run = spawnSync(process.execPath, ['--check', path.join(PACKAGE, 'offline-checks-v7.mjs')], { encoding: 'utf8', timeout: 30000 });
+  assert.equal(run.status, 0, run.stderr);
 });
 
 test('every entry point stays disabled or blocked without its fixed arguments', () => {

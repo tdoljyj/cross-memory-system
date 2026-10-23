@@ -4,7 +4,7 @@
   "packageManifestSha256": "c9b1a43105bdfcf8631e1abeec0c3552a56797bb259f3bccd767899953bacc8c",
   "checks": {
     "offlineChecksScript": "offline-checks-v7.mjs",
-    "offlineChecksScriptSha256": "aa0210909135ec1a01f8116909ebee78bafc991b0e7c0fe7e6b6e8b5e87d6bb8",
+    "offlineChecksScriptSha256": "d081d21835db9ff3de6a3e4df0d0417dd98e39038d82bad15699719cf9447169",
     "result": "NOT_RUN: run on the Linux Host as the publisher after installing v7, before the first release",
     "rootInstallExecuted": false,
     "credentialsRead": false,

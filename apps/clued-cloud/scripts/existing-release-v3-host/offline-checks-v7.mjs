@@ -27,6 +27,9 @@ for(const f of files)check('manifest:'+f,m.files[f]?.sha256===hash(fs.readFileSy
 check('revision 7 after v6',m.revision===7&&m.previousPackageManifestSha256==='71ee46c6c0d5bb0bafa5a85a5445b11c4f0b534141eb25010b06b51da04b8bf4');
 const stages=fs.readFileSync(path.join(v7,'payload/release/existing-release-entry-v1/v3/existing-stages.mjs'),'utf8');
 check('existing-stages pins the v7 manager',stages.includes(`[MANAGER,'${m.files[MANAGER].sha256}']`));
+for(const f of files.filter(f=>f.startsWith('payload/')))check('installed:'+f,fs.readFileSync('/opt/clued-production-release-v3/'+f.slice('payload/'.length)).equals(fs.readFileSync(path.join(v7,f))));
+check('installed manifest is v7',fs.readFileSync('/opt/clued-production-release-v3/package-manifest.json').equals(fs.readFileSync(path.join(v7,'package-manifest.json'))));
+check('manager config pins the v7 manager',JSON.parse(fs.readFileSync('/etc/clued/currentness-manager.json','utf8')).manager?.sha256===m.files[MANAGER].sha256);
 const manager=await import(path.join(v7,MANAGER)),host=await import(path.join(v7,HOST_FILES));
 // The installed unit files, and what systemd loaded from them.
 const want=host.INACCESSIBLE.join(' ');
@@ -53,7 +56,7 @@ for(const s of sockets){
 }
 // End to end: the binfmt handler (/init) cannot reach interop, so a Windows program does not start.
 const exe='/mnt/c/Windows/System32/whoami.exe',win=spawnSync(exe,[],{encoding:'utf8',timeout:15000});
-check('a Windows program cannot start here',fs.existsSync(exe)&&win.status!==0,`status=${win.status} error=${win.error?.code??''} ${(win.stderr??'').trim()}`);
+check('a Windows program cannot start here',fs.existsSync(exe)&&win.status!==0&&win.error?.code!=='ETIMEDOUT',`status=${win.status} error=${win.error?.code??''} ${(win.stderr??'').trim()}`);
 // ProtectProc=invisible hides only other users' processes: a publisher process
 // outside this unit would expose both paths through /proc/<pid>/root.
 const own=fs.readFileSync('/proc/self/cgroup','utf8');

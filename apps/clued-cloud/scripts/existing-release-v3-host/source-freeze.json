@@ -6,8 +6,8 @@
   "packageManifestSha256": "c9b1a43105bdfcf8631e1abeec0c3552a56797bb259f3bccd767899953bacc8c",
   "sourceFiles": {
     "README.md": {
-      "bytes": 16684,
-      "sha256": "8731bff19945023d2ef305bd20789e000b82357ea06d44a086cb07d2917275d2"
+      "bytes": 17399,
+      "sha256": "64c2caca0e14d2007e2a0920fc0b711fd934feb6752e5560c5f8f416bfef6384"
     },
     "build-files.template.json": {
       "bytes": 101,
@@ -34,12 +34,12 @@
       "sha256": "d4267a1d5bd97808be6b2d002d29249d685e4a03268e16ba75c1a7a9394e8a37"
     },
     "offline-checks-v7.mjs": {
-      "bytes": 7256,
-      "sha256": "aa0210909135ec1a01f8116909ebee78bafc991b0e7c0fe7e6b6e8b5e87d6bb8"
+      "bytes": 7821,
+      "sha256": "d081d21835db9ff3de6a3e4df0d0417dd98e39038d82bad15699719cf9447169"
     },
     "offline-source-checks.json": {
       "bytes": 1078,
-      "sha256": "6064be8589f0e5497023402a3e162bca5bcb643c214c187d74980b778392ad5a"
+      "sha256": "1651d571dc7d9a72eba916efd620c13dfc708e001b8c82c7260fa3c2a998479b"
     },
     "package-manifest.json": {
       "bytes": 1960,
