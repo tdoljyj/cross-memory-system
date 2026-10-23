@@ -59,8 +59,11 @@ class ArchiveDescriptor(unittest.TestCase):
                 tool.descriptor_job_ids(json.dumps(bad).encode(), BATCH)
 
     def test_the_archive_reads_the_descriptor_from_the_outbox(self):
-        # 3b review B1: the outbox path and the descriptor contract must never share a name; read through the real path
+        # 3b review B1: the outbox path and the descriptor contract must never share a name; read through the real path.
+        # The path is the one the Windows side writes (layout.mjs LINUX_DESCRIPTORS, review r2 n1).
         self.assertIsInstance(tool.DESCRIPTORS, str)
+        layout = (CI / 'src' / 'resident-v2' / 'layout.mjs').read_text(encoding='utf8')
+        self.assertIn(f"export const LINUX_DESCRIPTORS = '{tool.DESCRIPTORS}';", layout)
         d = descriptor()
         with tempfile.TemporaryDirectory() as root:
             os.makedirs(os.path.join(root, BATCH))

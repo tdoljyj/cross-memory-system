@@ -43,12 +43,13 @@ export function rulesetFacts(rules, appId) {
   }
   check(REQUIRED_CHECK_NAMES.every(n => pinned.get(n) === true), RULESET_UNREADABLE);
   // Several rulesets aggregate, the strictest wins: strict holds if any rule asks for it; the merge methods allowed are
-  // the ones every pull_request rule allows (none at all: unknown, so never "merge only").
+  // the ones every pull_request rule allows. No pull_request rule, or one whose methods cannot be read, is unknown, so
+  // never "merge only"; that only matters to the train, never a reason to refuse the rules (review N6).
   const strict = required.some(r => r.parameters.strict_required_status_checks_policy === true);
   const prRules = rules.filter(r => r.type === 'pull_request');
-  check(prRules.every(r => plain(r.parameters) && Array.isArray(r.parameters.allowed_merge_methods)
-    && r.parameters.allowed_merge_methods.every(m => typeof m === 'string')), RULESET_UNREADABLE);
-  const methods = prRules.length === 0 ? null
+  const readable = prRules.every(r => plain(r.parameters) && Array.isArray(r.parameters.allowed_merge_methods)
+    && r.parameters.allowed_merge_methods.every(m => typeof m === 'string'));
+  const methods = prRules.length === 0 || !readable ? null
     : ['merge', 'squash', 'rebase'].filter(m => prRules.every(r => r.parameters.allowed_merge_methods.includes(m)));
   return { requiredPinned: true, strict, mergeOnly: methods !== null && methods.length === 1 && methods[0] === 'merge' };
 }
