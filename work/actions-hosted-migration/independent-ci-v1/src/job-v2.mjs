@@ -38,7 +38,7 @@ const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(
 const exact = (v, keys) => plain(v) && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
 const positive = v => Number.isSafeInteger(v) && v > 0;
 
-// The id is domain-separated from v1 by the contract string, so a v2 id can never equal a v1 id.
+// The id is domain-separated by the contract string, so a /3 id can never equal a v1 or /2 id.
 export function jobIdV2(job) {
   return createHash('sha256').update(JSON.stringify([JOB_CONTRACT_V2, ...IDENTITY_V2.map(k => job[k])])).digest('hex');
 }
