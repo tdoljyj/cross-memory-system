@@ -84,6 +84,23 @@ export function admittedFactsMatchJobV2(facts, job, now, { batchClaim = null } =
   return sha.test(observationSha256 ?? '') && digest(body) === observationSha256;
 }
 
+// Owner Decision 6f1fb753 (Task 576231fa): the admission inside a bridge v4 callback response is fresh when the
+// Windows issuer issued that response, like the issue's own admission (protocol.mjs validateResponse); the response
+// then only has to arrive inside its own window. A relay call that took 30 s (PR #915 stage 4, 2026-10-23) refused
+// a response the issuer had answered in 10 s. The Linux worker notes the issuance and expiry of exactly the facts
+// object it hands an adapter; while that response is valid, and never past the claim, the 30 s bound below is measured
+// from its issuance. Facts that did not come out of a validated response (every Windows caller) keep `now`.
+const bridgeResponseTimes = new WeakMap();
+export function noteBridgeResponseTimes(facts, response) {
+  const issuedAt = at(response?.issuedAt), expiresAt = Math.min(at(response?.expiresAt), at(facts?.claimExpiresAt));
+  if (plain(facts) && Number.isSafeInteger(issuedAt) && Number.isSafeInteger(expiresAt) && issuedAt < expiresAt) bridgeResponseTimes.set(facts, { issuedAt, expiresAt });
+  return facts;
+}
+export function admissionReferenceTime(facts, now) {
+  const t = plain(facts) ? bridgeResponseTimes.get(facts) : undefined;
+  return t && Number.isSafeInteger(now) && t.issuedAt <= now && now < t.expiresAt ? t.issuedAt : now;
+}
+
 // The one admission check of the Linux scanner adapters and the bridge v4 protocol (replaces the three
 // per-adapter v1 validateAdmission copies). A scanner stage's admission is always made under the batch
 // claim recorded by stage 1, so batchClaimBound is required and must name the observed claim; a caller
@@ -92,7 +109,7 @@ export function validateFormalAdmissionV2(job, a, now = Date.now(), { batchClaim
   const generation = v => plain(v) && Object.keys(v).sort().join('|') === 'claimId|epoch|fence';
   if (!plain(a) || Object.keys(a).sort().join('|') !== [...ADMISSION_FIELDS_V2].sort().join('|') || a.domain !== 'production'
     || !generation(a.batchClaimBound) || !sameClaimGeneration(a.observedClaim, a.batchClaimBound)
-    || !admittedFactsMatchJobV2(a, job, now, { batchClaim })) {
+    || !admittedFactsMatchJobV2(a, job, admissionReferenceTime(a, now), { batchClaim })) {
     throw Object.assign(new Error('FRESH_COMPLETE_NATIVE_ADMISSION_REQUIRED'), { code: 'FRESH_COMPLETE_NATIVE_ADMISSION_REQUIRED' });
   }
   return a;
