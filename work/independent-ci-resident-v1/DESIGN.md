@@ -125,7 +125,7 @@
 
 ```
 Agent / companion 轮询器 ──写──▶ resident\inbox\            触发记录 {repo, pr, headSha, baseSha}（只是数据）
-任何 Owner 会话进程     ──写──▶ resident\requests\          暂停请求（只能停）
+任何 Owner 会话进程     ──写──▶ resident\requests\          暂停请求（只能停）；暂停接新请求（§20：最长 2 小时，同一持有者可提前结束）
 提权的 Owner（UAC）     ──写──▶ resident\owner\             复位、恢复或中止请求（只有 Administrators 能建文件）
 常驻执行器              ──写──▶ resident\mailbox\requests\  给 companion 的固定种类请求
 companion               ──写──▶ resident\mailbox\responses\ 回答 + 心跳（不可信，只用于分类）
@@ -182,6 +182,7 @@ companion               ──写──▶ resident\mailbox\responses\ 回答 + 
    | 动作 | 谁能做 | 怎么做 |
    |---|---|---|
    | 暂停 | 任何 Owner 会话进程 | 往 `requests\` 写暂停请求；批次之间生效，从不中断正在跑的段 |
+   | 暂停接新 | 任何 Owner 会话进程 | `node tools\rearm-tool.mjs request-intake-pause --root <root> --reason …`，写进 `requests\`：只不开新批次，在跑和停靠的批次照常，最长 2 小时自动失效；同一持有者的 `request-intake-resume` 可提前结束（§20） |
    | 恢复 | 只有提权的 Owner | `rearm-resident.ps1 -Request Resume -ExpectedPausedSha256 <审过的>`。脚本用纯 PowerShell 往 `owner\` 写一个带时间和 nonce 的请求，不启动任何其他程序；服务按比较交换执行 |
    | 复位（未知失败后） | 只有提权的 Owner | `rearm-resident.ps1 -Request Rearm -ExpectedHaltSha256 <审过的> -Reason …`，写法同上。服务实测两端静止，对**每一个还没归档的未知失败批次**只改名归档，再按比较交换清除 HALT |
    | 中止当前批次 | 只有提权的 Owner | `rearm-resident.ps1 -Request Abort -BatchKey <键> -ExpectedLedgerEntrySha256 <审过的> -Reason …`，写法同上。服务只在安全点执行：停下正在跑的扫描签发段，实测两端静止，只改名归档，记 FAILED_CLEAN `OWNER_ABORTED`；证明不成立时照旧 HALT（§6.5） |
@@ -1623,6 +1624,118 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
   - N4：第一次用 App 令牌读 `rules/branches` 会发生在第一次真实的第 8 段。重装核验加一次现读，`403` 在批次跑之前就能看到。
   - N5：检查说明里写出车头、main@T、S 与它的树（设计 §5.3 第 6 条）放到 3c，和第 10 段一起做。
   - N2 的台账清理：3c 的第 10 段负责。
+
+## 20. 主备 C6：暂停接新（Task `6444f88a`）
+
+来源：《常驻执行器主备部署·设计说明 v0.4》§5.4 第 1 步、§9 C6（Owner 接受：Decision `bd86149e`）。同时关闭审核遗留 N3 里本 Task 负责的部分（status.json 的“排空”字段），以及 N1 里 C6 负责的续期办法。代码在 `src/intake-pause.mjs`，测试在 `test/intake-pause.test.mjs`。
+
+### 20.1 是什么，不打断什么
+
+- **暂停接新**：只要有一个持有者的暂停在生效，执行器就不从排队表开任何新批次。排队的行、到期的 attempt 2、等待重试的行都不开。
+- **不打断**：
+  - 正在跑的批次照常跑完；
+  - 停在 A 的批次每个 tick 照常判断（状态的 `current` 照常显示它），停在 B 的照常按时尝试第 8 段；
+  - 被新提交取代、Owner 中止、排空照常结束停靠批次；
+  - 触发照常读进排队表，不丢；停靠批次照常看到 main 移动和本 PR 的新提交。
+- 设计原文叫“排空请求”。第二期第 2 步已经有一个“排空”（§18.6，结束停靠批次），为免混淆，实现和文档里都叫“暂停接新”（intake pause）。
+
+### 20.2 和暂停、排空、Owner 中止的区别
+
+| | 暂停接新（本节） | 暂停（PAUSE） | 排空（§18.6） | Owner 中止（§6.5） |
+|---|---|---|---|---|
+| 作用 | 不开新批次 | 批次之间一切停下，停靠批次也不动 | 一次性结束所有停靠批次 | 结束一个批次 |
+| 谁能写 | 任何 Owner 会话进程（`requests\`，不提权） | 任何 Owner 会话进程（`requests\`） | 提权的 Owner（`owner\`） | 提权的 Owner（`owner\`） |
+| 怎么结束 | 到时自动失效（最长 2 小时）；或同一持有者的恢复请求 | 只有提权 Owner 的恢复请求 | — | — |
+
+四者可以同时生效，各按各的规则。暂停更强：暂停期间 tick 停在暂停那一步；Owner 恢复暂停后，暂停接新如果还没到时，照常生效。暂停接新的恢复请求不能恢复暂停。
+
+### 20.3 请求
+
+```
+node tools\rearm-tool.mjs request-intake-pause  --root <root> --reason <text> [--minutes 1-120] [--holder owner]
+node tools\rearm-tool.mjs request-intake-resume --root <root> --reason <text> [--holder owner]
+```
+
+- 写进 `requests\`（和暂停一样，任何 Owner 会话进程都能写，不需要 UAC）。合同：
+  - `clued.independent-ci.resident-intake-pause/1`：`holder`、`minutes`（1–120 的整数）、`reason`、`requestedAt`、`nonce`；
+  - `clued.independent-ci.resident-intake-resume/1`：`holder`、`reason`、`requestedAt`、`nonce`；
+  - 字段严格，多一个少一个都拒绝。
+- **时限**：结束时间 = min(`requestedAt` + 分钟数, 执行器当前时间 + 2 小时)。
+  - 读到时已过结束时间（例如 HALT 期间写的请求，复位后才读到），拒绝 `INTAKE_PAUSE_REQUEST_EXPIRED`；
+  - `requestedAt` 比执行器时钟超前 5 分钟以上，拒绝 `INTAKE_REQUEST_CLOCK_SKEW`；
+  - 到时自动失效，不需要任何人操作，写回执 `intake-pause-ended`。HALT 和暂停期间也照样按时失效；
+  - 系统时钟往回跳时，结束时间按“现在 + 2 小时”封顶并写回，暂停不会超过 2 小时。代价：时钟追上之前，同一持有者新写的请求时间比已记下的更早，会被拒 `INTAKE_REQUEST_SUPERSEDED`（Owner 不能提前恢复，C5 也续不了期）。影响以 2 小时为限。
+- **持有者**（小写字母开头，最多 32 个字符；`unconfirmed` 保留不用）：
+  - 每个持有者只认它最新的一句话（按 `requestedAt`）。比它已有的更早的请求（乱序或重放的文件）拒绝 `INTAKE_REQUEST_SUPERSEDED`；
+  - 续期：同一持有者再写一份暂停请求，结束时间重新算，开始时间不变；
+  - 恢复请求只结束这个持有者自己的暂停，不动别的持有者；从没出现过的持有者的恢复请求不留记录，不占位置；
+  - 任何一个持有者的暂停在生效，暂停接新就生效；
+  - 最多记 8 个持有者。新的持有者需要位置时，最旧的已结束记录让位；8 个都还可能在生效时拒绝 `INTAKE_PAUSE_HOLDERS_FULL`（那时本来就在暂停）。结束的记录在它最后一句话 2 小时后丢弃（那时再旧的请求也已过期）。
+- 约定的持有者：
+  - `owner`（默认）：Owner 手工暂停，例如计划内切换；
+  - `dual-active`：C5 的 companion 在双活停机时用。锁住期间定期续写（剩余不足 90 分钟就续，间隔远小于 2 小时）；三种解除情况之一出现时写恢复请求。这样 Owner 的计划内暂停和 companion 的锁互不解除。
+- **为什么放在 `requests\`，不放 `owner\`**：它只会让执行器少做事（不开新批次），最长 2 小时。设计 §5.4 要的就是“任何 Owner 会话进程都能写”。
+- **谁能提前恢复**：同样是任何 Owner 会话进程，写上持有者的名字就行。这是有意的，理由如下：
+  - 提前恢复只是回到平常的服务。真正挡住重复发布的是服务端的 ci-admission 角色（停车位、Z1）和 C4 的 GitHub 回读，它们都不受影响；
+  - Owner 账号下的 Agent 本来就能伪造 PR 页面状态（例如对方的“已交班”）来解除 C5 的双活锁。设计 §5.2 已接受这类伪造的后果只是可用性。提前恢复没有给它更多能力；
+  - 急停仍然是暂停（PAUSE），只有提权的 Owner 能恢复。
+  - 所以 §3.2 里“`requests\` 只能停”的说法要补一句：暂停接新可以由同一持有者提前结束（见本节）。
+
+### 20.4 状态、回执与显示
+
+- **状态文件**：`state\INTAKE-PAUSE.json`，服务自己的状态（只有常驻服务能改），整体替换（临时文件、刷盘、改名）。
+  - 格式不对时：先把原文件只新建地复制一份保留（`INTAKE-PAUSE.unreadable-<时间>-<随机>.json`），再整体替换成持有者 `unreadable` 的 2 小时暂停，写回执 `intake-pause-unreadable`。失败时偏安全，又有上限：替换写成之前崩溃，下次还会读到坏文件，照样暂停。Owner 看过保留的副本后，可以用 `--holder unreadable` 的恢复请求提前结束。
+  - 读写出 I/O 错误时，进入一段“不确定”：
+    - 期间不开新批次（`DEFERRED` / `INTAKE_PAUSE_UNCONFIRMED`）；
+    - status.json 的 `intakePause` 显示持有者 `unconfirmed`，所以 C5 不会把本节点当成当班；
+    - 每段只写一次回执 `intake-pause-unconfirmed`；
+    - 读错误在下一次读成功时结束，写错误要等下一次写成功才结束（读得出、写不进的状态接不住 Owner 的暂停）。写错误期间每个 tick 把当前状态重写一次当作探测，所以短暂的锁（例如杀毒扫描）一过就结束；
+    - 连续 30 分钟还没结束就 HALT（`INTAKE_PAUSE_STATE_UNAVAILABLE`），和回填一直失败时一样。HALT 只在开新批次前那道闸门处写下，同一 tick 里不会再跑别的；所以队列为空时不会因此 HALT（不挡任何批次，status 一直显示 `unconfirmed`），一有排队的行，满 30 分钟就 HALT。
+  - 写不进状态的请求留在 `requests\`，下个 tick 再读，最多 3 次。3 次都不行就拒绝并写回执（`INTAKE_PAUSE_UNCONFIRMED`），所以积下的请求永远不会把后面的暂停请求挤出每 tick 读的那 16 个（独立审核 M1）。
+- **回执**：
+  - `intake-paused`（holder、until、renewed、reason、请求摘要）；
+  - `intake-resumed`（holder、held）；
+  - `intake-request-refused`（失败码）；
+  - `intake-pause-ended`（到时失效）；
+  - `intake-pause-unreadable`；
+  - `intake-pause-unconfirmed`。
+  - 状态已经写成、回执却写不进时，请求照样算已处理，不当成拒绝。
+- **status.json 合同升到 `/3`**：新增 `intakePause`。
+  - 没有生效的暂停时为 `null`；否则是最晚结束时间，以及每个持有者的名字、开始和结束时间。不含理由文字：理由来自用户会话，只进回执；
+  - 执行器在有排队的行时停在 `DEFERRED`，原因 `INTAKE_PAUSED`。有批次停在 A 时，tick 的结果仍是 `WAITING`；
+  - HALT 和暂停期间这个字段也照样更新；
+  - C5 判断“当班”时，`intakePause` 不为 `null` 就不算当班（设计 §5.2 的“排空”）；
+  - 执行器和 companion 来自同一份安装，一起升级；旧版 companion 读不了 `/3`，只会通知“读不到状态”。
+- **PR 页面**：排队的行写“排队第 N 位：暂停接新中，最晚 hh:mmZ 恢复”。它排在熔断和停靠名额满之前，和执行器的判断顺序一致。停靠和等待的行照旧。
+- **`rearm-tool inspect`**：多了 `intakePause`（服务最后写下的状态，只读）。文件读不出时如实写出原因，`inspect` 本身不失败。
+
+### 20.5 计划内切换怎么用（设计 §5.4 第 1 步）
+
+1. 在当班节点写 `request-intake-pause --minutes 120 --reason <切换原因>`。
+2. 等 status.json 的 `current` 为空（停在 A 的批次也显示在这里）。停在 B 的批次只会再尝试第 8 段：可以等它们结束；要马上结束就排空（§18.6，它们的 head 已发布，要推新提交）。
+3. 再按设计 §5.4 移交角色。切换完成后，旧节点上的暂停到时自动失效，或写 `request-intake-resume` 提前结束。
+
+### 20.6 与设计的差异
+
+- 名称：设计叫“排空请求”，实现叫“暂停接新”（见 20.1）。
+- 设计只说“最长 2 小时自动失效”。实现另加了持有者和提前恢复，供 C5 的双活停机续期和解除用（审核遗留 N1）。谁能提前恢复见 20.3。
+
+### 20.7 测试
+
+`test/intake-pause.test.mjs`（22 项）：
+- 请求格式；时限与自动失效；过期、超前和乱序的请求；
+- 持有者互不解除与续期；持有者上限、让位与恢复请求不占位置；时钟往回跳；
+- 状态文件读不出时保留副本并暂停 2 小时；
+- 执行器层面：
+  - 排队不开、到时恢复；
+  - 停在 A 的批次照常判断并留在 `current`；停在 B 的批次照常尝试第 8 段；到期的 attempt 2 等暂停结束；
+  - 和暂停、排空同时生效；暂停期间到时失效；
+  - 每个持有者只解除自己的；
+  - 拒绝的请求写回执并归档；写不进状态的请求 3 次后拒绝，后面的暂停请求照样读到；
+  - 一直读不出时显示 `unconfirmed`、只写一次回执、30 分钟后 HALT；短暂写不进在下一次写成功时结束，不 HALT；
+- status.json `/3` 与 PR 页面文字；Owner 工具写进 `requests\`、`inspect` 显示；命令行的 `--minutes`。
+
+`test/status.test.mjs` 的键列表加 `intakePause`。
 
 ## 附录 A：草稿文件
 
