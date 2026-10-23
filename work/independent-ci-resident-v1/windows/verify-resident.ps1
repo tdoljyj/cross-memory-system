@@ -103,7 +103,7 @@ Record 'runner-sddl-unchanged' $(if ($runnerSddl -eq 'unreadable') { 'unreadable
 $rq = & $Sc qc $Runner | Out-String
 Record 'runner-original-and-controller' (($rq -match 'C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe') -and ($rq -match ('SERVICE_START_NAME\s*:\s*(\.|' + [regex]::Escape($Node.hostname) + ')\\clued-control')))
 # Receipt /3: the install pinned this node profile; the installed record still carries it, and this is that host.
-Record 'node-profile' (($receipt.PSObject.Properties.Name -ccontains 'node') -and (($receipt.node | ConvertTo-Json -Compress) -ceq ($Node | ConvertTo-Json -Compress)) -and $env:COMPUTERNAME -ceq $Node.hostname) $Node.nodeName
+Record 'node-profile' (($receipt.PSObject.Properties.Name -ccontains 'node') -and (($receipt.node | ConvertTo-Json -Compress) -ceq ($Node | ConvertTo-Json -Compress)) -and [Environment]::MachineName -ceq $Node.hostname) $Node.nodeName
 
 foreach ($m in @('config\source-installed-manifest.json', 'config\resident-installed-manifest.json')) {
   $man = Get-Content -LiteralPath (Join-Path $Root $m) -Raw | ConvertFrom-Json

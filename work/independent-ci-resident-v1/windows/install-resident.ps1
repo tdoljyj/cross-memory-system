@@ -137,11 +137,11 @@ function Get-PackageNodeProfile {
 function Assert-Owner {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
   if ($id.User.Value -cne $OwnerSid) { throw 'OWNER_ACCOUNT_REQUIRED' }
-  if ($env:COMPUTERNAME -cne $Node.hostname) { throw 'NODE_HOST_REQUIRED' }
+  if ([Environment]::MachineName -cne $Node.hostname) { throw 'NODE_HOST_REQUIRED' }
   if ($OwnerSid -cne $Node.ownerSid -or $ControllerSid -cne $Node.controllerSid) { throw 'NODE_PROFILE_ACCOUNTS_MISMATCH' }
   # The ACL plan grants the record, source, stage and work directories to this SID and every runtime reader trusts the
   # record's value, so it must be the real local .\clued-control of this host, not only the value the profile names.
-  $controllerActual = try { (New-Object Security.Principal.NTAccount($env:COMPUTERNAME, 'clued-control')).Translate([Security.Principal.SecurityIdentifier]).Value } catch { $null }
+  $controllerActual = try { (New-Object Security.Principal.NTAccount([Environment]::MachineName, 'clued-control')).Translate([Security.Principal.SecurityIdentifier]).Value } catch { $null }
   if ($controllerActual -cne $Node.controllerSid) { throw 'NODE_CONTROLLER_ACCOUNT_MISMATCH' }
   (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
