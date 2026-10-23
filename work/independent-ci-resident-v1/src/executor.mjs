@@ -71,6 +71,11 @@
 //     park.maxParkedOutsideTop2 and beyond that end as PARKED_OVER_CAPACITY;
 //   - the Owner's drain request (tools/rearm-tool.mjs request-drain) ends every parked batch on the Owner abort's path,
 //     so a reinstall finds no open batch (with the Owner abort's guards: no unarchived scene, no drift, recovery done).
+//
+// The intake pause (primary/standby design v0.4 §5.4 step 1, §9 C6; Task 6444f88a; intake-pause.mjs, DESIGN §20): while
+// any holder's hold is in force (at most two hours, from the user-writable requests\ like PAUSE) no batch starts from the
+// queue (no row, no attempt 2); triggers are still read, and a batch in flight or at a parking point goes on. It is
+// neither PAUSE (which also stops the parked batches) nor the drain (which ends them); all three may be in force at once.
 import path from 'node:path';
 import { Ledger, MAX_TRIES, batchKey, headKey } from './ledger.mjs';
 import { ABORTABLE_IN_FLIGHT, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, proofComplete } from './classify.mjs';
@@ -83,6 +88,7 @@ import { relayPlanFromRows } from './classify.mjs';
 import { RELAY_STAGE, ROLE_STAGES } from './policy.mjs';
 import { RELAY_RECEIPTS } from './receipts.mjs';
 import { CODE, HEX64, ResidentError, check, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
+import { INTAKE_PAUSE_CONTRACT, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 
 export const PAUSE_CONTRACT = 'clued.independent-ci.resident-pause/1';
 export const REARM_CONTRACT = 'clued.independent-ci.resident-owner-rearm/1';
@@ -165,6 +171,11 @@ export const PARK_NUDGE_MS = 5 * 60_000;
 export const PARK_HEAD_STREAK_MS = 15 * 60_000;
 // A drain request older than this is refused: the Owner decided on the parked batches of that moment (review m10).
 export const DRAIN_MAX_AGE_MS = 60 * 60_000;
+// Primary/standby C6: an intake pause state that cannot be read or written holds new batches; for longer than this in a
+// row it HALTs (like a backfill that keeps failing). An intake request that could not be applied in this many ticks is
+// refused, so it never keeps a PAUSE behind it out of the per-tick read (independent review of C6, M1).
+export const INTAKE_PAUSE_UNCONFIRMED_MAX_MS = 30 * 60_000;
+export const INTAKE_REQUEST_TRIES = 3;
 // The oldest bundle a batch takes into the workspace preparation (which accepts at most 2 hours), measured from the
 // reservation, which comes before the bundle (design v0.5 §4.3 item 3).
 export const BUNDLE_MAX_AGE_AT_WORKSPACE_MS = 100 * 60_000;
@@ -188,6 +199,7 @@ export class ResidentExecutor {
   //   executedHeads: executed-heads.mjs#ExecutedHeads (Source-independent "may have published" heads and the backfill).
   //   sleep (optional): the wait between abort polls and quiescence re-checks.
   //   status (optional): status.mjs#StatusBoard (a view; nothing the executor decides ever reads it).
+  //   intakePause (optional): intake-pause.mjs#IntakePause; opened from the ledger's state directory when not given.
   constructor(ports) {
     //   queue: queue.mjs#RunQueue (the run queue and the breaker's state; a view the ledger always overrules).
     for (const k of EXECUTOR_PORTS) check(ports[k], 'EXECUTOR_PORT_MISSING', k);
@@ -195,6 +207,7 @@ export class ResidentExecutor {
     this.sleep ??= ms => new Promise(r => setTimeout(r, ms));
     this.status ??= NO_STATUS;
     this.ownerReadFailures = new Map();
+    this.intakeRequestFailures = new Map();
   }
 
   receipt(type, body) { return this.receipts.append(type, body); }
@@ -619,19 +632,119 @@ export class ResidentExecutor {
 
   // Pause requests may come from the user session: stopping is always allowed, resuming is not.
   // A pause takes effect between batches; a running batch is never interrupted or killed.
+  // The same directory carries the intake pause's requests (pause or resume of one holder, takeIntakeRequest).
   async takePauseRequests() {
     for (const entry of await this.requests.read(this.policy.limits.inboxMaxFiles, 1024)) {
-      let ok = false;
+      let disposition = 'rejected';
       if (entry.bytes) {
         try {
           const v = parseBoundedJson(entry.bytes, 1024, 'PAUSE_REQUEST_REFUSED');
-          exactKeys(v, ['contract', 'reason'], 'PAUSE_REQUEST_REFUSED');
-          ok = v.contract === PAUSE_CONTRACT && typeof v.reason === 'string' && v.reason.length <= 200;
-          if (ok && await this.ledger.pause({ reason: v.reason, requestSha256: sha256(entry.bytes) })) await this.receipt('paused', { reason: v.reason, requestSha256: sha256(entry.bytes) });
-        } catch { ok = false; }
+          if ([INTAKE_PAUSE_CONTRACT, INTAKE_RESUME_CONTRACT].includes(v?.contract)) {
+            disposition = await this.takeIntakeRequest(v, sha256(entry.bytes));
+          } else {
+            exactKeys(v, ['contract', 'reason'], 'PAUSE_REQUEST_REFUSED');
+            const ok = v.contract === PAUSE_CONTRACT && typeof v.reason === 'string' && v.reason.length <= 200;
+            if (ok && await this.ledger.pause({ reason: v.reason, requestSha256: sha256(entry.bytes) })) await this.receipt('paused', { reason: v.reason, requestSha256: sha256(entry.bytes) });
+            disposition = ok ? 'processed' : 'rejected';
+          }
+        } catch { disposition = 'rejected'; }
       }
-      await this.requests.dispose(entry.name, ok ? 'processed' : 'rejected');
+      // null: an intake request whose state could not be read or written stays and is read again next tick, at most
+      // INTAKE_REQUEST_TRIES times; then it is refused with a receipt.
+      if (disposition !== null) this.intakeRequestFailures.delete(entry.name);
+      else {
+        const n = (this.intakeRequestFailures.get(entry.name) ?? 0) + 1;
+        this.intakeRequestFailures.set(entry.name, n);
+        if (n < INTAKE_REQUEST_TRIES) continue;
+        this.intakeRequestFailures.delete(entry.name);
+        try { await this.receipt('intake-request-refused', { requestSha256: sha256(entry.bytes), failureCode: 'INTAKE_PAUSE_UNCONFIRMED' }); } catch { /* refused anyway */ }
+        disposition = 'rejected';
+      }
+      await this.requests.dispose(entry.name, disposition);
     }
+  }
+
+  // ---- the intake pause (primary/standby C6; intake-pause.mjs, DESIGN §20) ----
+
+  // Opened once, from the ledger's state directory unless a port gave it. A state file that did not validate was kept
+  // aside and holds for two hours; its receipt is written here.
+  async intakeHolds() {
+    if (this.intakePause) return this.intakePause;
+    const p = await IntakePause.open(this.ledger.root, this.clock);
+    this.intakePause = p;
+    if (p.unreadable) { try { await this.receipt('intake-pause-unreadable', { keptAs: p.unreadable.keptAs, until: p.data.holds[0].until }); } catch { /* the hold is in force */ } }
+    return p;
+  }
+
+  // Settles the state (holds that ran out are marked, one receipt each; an end too far ahead is capped) and returns the
+  // status board's view (null: nothing held). An I/O error starts or continues a spell of trouble (intakeTrouble) and is
+  // thrown. A read error's spell ends with the next good read; a write error's only with the next good write (a state
+  // that can be read but not written cannot take the Owner's hold), so while one lasts every refresh writes the state
+  // again as a probe (independent re-review of C6, new major). A receipt that cannot be written never undoes a state
+  // already written.
+  async intakeRefresh() {
+    let p, next;
+    try { p = await this.intakeHolds(); next = p.settle(this.clock()); } catch (error) { await this.intakeTrouble(error, 'read'); throw error; }
+    if (!next && this.intakeTroubleSince != null && this.intakeTroubleKind === 'write') next = { data: p.data, ended: [] };
+    if (next) {
+      try { await p.save(next.data); } catch (error) { await this.intakeTrouble(error, 'write'); throw error; }
+      this.intakeTroubleSince = null;
+      for (const h of next.ended) { try { await this.receipt('intake-pause-ended', { holder: h.holder, since: h.since, until: h.until, ending: 'expired' }); } catch { /* see above */ } }
+    } else if (this.intakeTroubleKind === 'read') this.intakeTroubleSince = null;
+    return p.view(this.clock());
+  }
+
+  // A spell of trouble with the intake pause state: no new batch (fail safe), the status shows a hold of
+  // UNCONFIRMED_HOLDER (so nothing reads the node as on duty), one receipt per spell, and a spell of
+  // INTAKE_PAUSE_UNCONFIRMED_MAX_MS HALTs, from the gate only (mayHalt), so nothing else of that tick runs after the HALT
+  // (re-review, new minor). error: the error that starts or continues it (kind 'read' or 'write'); null only asks where
+  // the spell stands. Returns { view, halted }.
+  async intakeTrouble(error, kind = 'read', { mayHalt = false } = {}) {
+    const now = this.clock();
+    const code = error instanceof ResidentError && CODE.test(error.code) ? error.code : 'INTAKE_PAUSE_STATE_UNAVAILABLE';
+    if (error && this.intakeTroubleSince == null) {
+      this.intakeTroubleSince = now;
+      this.intakeTroubleKind = kind;
+      try { await this.receipt('intake-pause-unconfirmed', { failureCode: code, kind }); } catch { /* the gate holds anyway */ }
+    } else if (error && kind === 'write') this.intakeTroubleKind = 'write';
+    const since = new Date(this.intakeTroubleSince).toISOString();
+    let halted = false;
+    if (mayHalt && now - this.intakeTroubleSince >= INTAKE_PAUSE_UNCONFIRMED_MAX_MS) {
+      try { await this.haltWith('INTAKE_PAUSE_STATE_UNAVAILABLE', { phase: 'intake-pause', failureCode: code, since }); halted = true; } catch { /* the gate holds anyway */ }
+    }
+    return { view: { until: null, holders: [{ holder: UNCONFIRMED_HOLDER, since, until: null }] }, halted };
+  }
+
+  // One intake request: 'processed' (applied, with its receipt), 'rejected' (refused, with its receipt), or null when the
+  // state could not be read or written (the request is read again next tick; one that did take effect is then refused
+  // as superseded, never applied twice).
+  async takeIntakeRequest(v, requestSha256) {
+    try { await this.intakeRefresh(); } catch { return null; }
+    let next;
+    try {
+      next = this.intakePause.apply(v, requestSha256, this.clock());
+    } catch (error) {
+      await this.receipt('intake-request-refused', { requestSha256, failureCode: codeOf(error) });
+      return 'rejected';
+    }
+    try { await this.intakePause.save(next.data); } catch (error) { await this.intakeTrouble(error, 'write'); return null; }
+    this.intakeTroubleSince = null; // a good write ends any spell
+    const { kind, ...facts } = next.result;
+    // Applied: a receipt that cannot be written does not make it a refusal (independent review of C6, minor 6).
+    try { await this.receipt(kind, { requestSha256, ...facts, reason: v.reason }); } catch { /* the request took effect */ }
+    return 'processed';
+  }
+
+  // null: a new batch may start. Otherwise the deferral: a hold in force, or a state that cannot be read now (fail safe,
+  // bounded by intakeTrouble's HALT).
+  async intakeGate() {
+    let view = null;
+    try { view = await this.intakeRefresh(); } catch { /* a spell of trouble: below */ }
+    if (this.intakeTroubleSince != null) {
+      const t = await this.intakeTrouble(null, 'read', { mayHalt: true });
+      return t.halted ? { state: 'HALTED', failureCode: 'INTAKE_PAUSE_STATE_UNAVAILABLE' } : { state: 'DEFERRED', reason: 'INTAKE_PAUSE_UNCONFIRMED' };
+    }
+    return view ? { state: 'DEFERRED', reason: 'INTAKE_PAUSED', until: Date.parse(view.until) } : null;
   }
 
   async tick() {
@@ -640,15 +753,19 @@ export class ResidentExecutor {
     return result;
   }
 
-  // The status board after a tick: the resting state, HALT and PAUSE as the ledger has them now.
+  // The status board after a tick: the resting state, HALT and PAUSE as the ledger has them now, and the intake pause's
+  // holds (also while halted or paused: a hold runs out by its clock whatever the executor does).
   async reportTick(result) {
     try {
       const halt = await this.ledger.halted();
       const paused = await this.ledger.paused();
+      let intake;
+      try { intake = { intakePause: await this.intakeRefresh() }; } catch { intake = {}; }
+      if (this.intakeTroubleSince != null) intake = { intakePause: (await this.intakeTrouble(null)).view };
       const state = ['IDLE', 'RUNNING', 'WAITING', 'PARKED', 'DEFERRED', 'HALTED', 'PAUSED', 'BACKFILL_PENDING', 'COMPLETED', 'FAILED_CLEAN', 'NOT_ADMITTED', 'NOT_EXECUTED', 'IGNORED'].includes(result?.state) ? result.state : 'IDLE';
       this.report(s => {
         s.setState(halt ? 'HALTED' : state, halt ? (halt.value?.code ?? null) : (result?.reason ?? result?.failureCode ?? null));
-        s.update({ halt: halt ? { code: CODE.test(halt.value?.code ?? '') ? halt.value.code : 'HALT_RECORD_UNREADABLE', at: halt.value?.at ?? null } : null, paused: !!paused });
+        s.update({ halt: halt ? { code: CODE.test(halt.value?.code ?? '') ? halt.value.code : 'HALT_RECORD_UNREADABLE', at: halt.value?.at ?? null } : null, paused: !!paused, ...intake });
         if (!['WAITING'].includes(result?.state)) s.setCurrent(null);
       });
       this.reportQueue();
@@ -725,7 +842,9 @@ export class ResidentExecutor {
     if (acted) return acted;
     // Nothing else to do: the tick rests in the hosted wait (the status keeps showing it).
     const r = await this.schedule();
-    return r.state === 'IDLE' && waiting ? waiting : r;
+    // A batch resting at parking point A stays the tick's result (and the status's current batch) while only the intake
+    // pause holds the new ones (independent review of C6, minor 3).
+    return waiting && (r.state === 'IDLE' || ['INTAKE_PAUSED', 'INTAKE_PAUSE_UNCONFIRMED'].includes(r.reason)) ? waiting : r;
   }
 
   // ---- parking (phase 2, step 2; DESIGN §18) ----
@@ -1027,6 +1146,10 @@ export class ResidentExecutor {
     const rows = this.queue.candidates(now);
     this.reportQueue();
     if (attempts.length === 0 && rows.length === 0) { await this.persistQueue(); return { state: 'IDLE' }; }
+    // The intake pause (C6, DESIGN §20): no new batch of any kind while a hold is in force. The batches in flight and at a
+    // parking point were already resumed by tickInner; nothing of theirs waits for this gate.
+    const held = await this.intakeGate();
+    if (held) { await this.persistQueue(); return held; }
     // No new batch while park.maxParked batches rest at A or in the queue's first two places at B: a new one could not
     // park (design v0.5 §4.7). A due attempt 2 is a batch too.
     // Nor while the bound outside those places is full: a new batch would run its whole zone and end PARKED_OVER_CAPACITY
