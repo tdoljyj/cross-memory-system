@@ -21,7 +21,12 @@ public static class PureTestsV2 {
     var wrongRole=new Dictionary<string,object>(job);Refuse(()=>FormalPublicBoundaryV2.ValidateJobV2(wrongRole,"other-role",(string)job["sourceManifestSha256"]),"role");
     var third=new Dictionary<string,object>(job);third["attempt"]=3;Refuse(()=>FormalPublicBoundaryV2.ValidateJobV2(third,(string)job["role"],(string)job["sourceManifestSha256"]),"attempt-3");
     var claim=new Dictionary<string,object>(job);claim["claimId"]="x";Refuse(()=>FormalPublicBoundaryV2.ValidateJobV2(claim,(string)job["role"],(string)job["sourceManifestSha256"]),"claim-field");
-    var moved=new Dictionary<string,object>(job);moved["headSha"]=new string('9',40);Refuse(()=>FormalPublicBoundaryV2.ValidateJobV2(moved,(string)job["role"],(string)job["sourceManifestSha256"]),"id-changed");}
+    var moved=new Dictionary<string,object>(job);moved["headSha"]=new string('9',40);Refuse(()=>FormalPublicBoundaryV2.ValidateJobV2(moved,(string)job["role"],(string)job["sourceManifestSha256"]),"id-changed");
+    // job contract /3: the tested commit is part of the id; a /2 job (no testSha) is refused
+    Yes((string)job["testSha"]==(string)job["headSha"]&&(string)job["contract"]=="clued.independent-ci.job/3","job-v3-test-commit-is-head");
+    var tested=new Dictionary<string,object>(job);tested["testSha"]=new string('8',40);Refuse(()=>FormalPublicBoundaryV2.ValidateJobV2(tested,(string)job["role"],(string)job["sourceManifestSha256"]),"test-commit-changed");
+    var renamed=new Dictionary<string,object>(job);renamed["contract"]="clued.independent-ci.job/2";Refuse(()=>FormalPublicBoundaryV2.ValidateJobV2(renamed,(string)job["role"],(string)job["sourceManifestSha256"]),"job-contract-string");
+    var old=new Dictionary<string,object>(job);old.Remove("testSha");old["contract"]="clued.independent-ci.job/2";Refuse(()=>FormalPublicBoundaryV2.ValidateJobV2(old,(string)job["role"],(string)job["sourceManifestSha256"]),"job-v2-refused");}
    // 2. plans: every derived plan passes; a tampered stage/role fails
    foreach(object o in (object[])fixture["plans"]){var plan=(Dictionary<string,object>)o;int s=FormalPublicBoundaryV2.PlanStage(plan);Yes(FormalPublicBoundaryV2.StageRole[s-1]==(string)plan["entryRole"],"plan-role");
     var bad=new Dictionary<string,object>(plan);bad["entryRole"]=s==1?"control-checks":"work-admission";Refuse(()=>FormalPublicBoundaryV2.PlanStage(bad),"plan-wrong-role");
