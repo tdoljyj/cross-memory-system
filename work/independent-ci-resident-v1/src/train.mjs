@@ -3,10 +3,11 @@
 // the PR page show. In shadow mode nothing here changes what the executor runs or publishes.
 //
 // Stage 10 is due when train.enabled is not 'off', no batch is running, the last run is at least
-// train.maintenanceEveryMs ago and fewer than train.maintenanceMaxPerDay ran in the last 24 hours. A pause request
-// does not stop it (design §4.3: a pause stops new greens; stage 10 in shadow writes nothing). A failed run counts
-// like any other and is simply tried again at the next due time: it has no side effects, so it never feeds the
-// breaker and never HALTs.
+// train.maintenanceEveryMs ago and fewer than train.maintenanceMaxPerDay ran in the last 24 hours. In step 3c-1 the
+// executor also holds it under PAUSE and an intake pause (its PAUSE stops everything but reading triggers); design §4.3
+// lets a pause stop only new greens, which step 3c-2 takes up with the sweeps that must run during one. A failed run
+// counts like any other and is simply tried again at the next due time: it has no side effects, so it never feeds the
+// breaker; it HALTs only when its cleanup is not proven, like any stage (executor.mjs#trainMaintenance).
 export const TRAIN_FACTS_CONTRACT = 'clued.independent-ci.train-facts/1';
 export const WOULD_DO = Object.freeze(['NOT_ON_DUTY', 'NO_FRONT', 'FRONT_AMBIGUOUS', 'FRONT_NOT_BOUND', 'FRONT_NOT_RUNNABLE', 'FRONT_NEEDS_MAIN_MERGE',
   'FRONT_TEST_MERGE_NOT_READY', 'FRONT_GREEN_WAIT_MERGE', 'OPEN_FRONT_BATCH']);
