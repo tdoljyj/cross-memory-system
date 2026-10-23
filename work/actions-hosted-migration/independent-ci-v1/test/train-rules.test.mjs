@@ -24,7 +24,7 @@ test('branch rules: the six checks pinned to 5368905, strict and merge methods; 
   fails(() => rulesetFacts([required({ pinned: 5164952 })], APP));
   fails(() => rulesetFacts([required({ extra: [{ context: 'gitleaks' }] })], APP));
   // malformed replies
-  for (const bad of [null, {}, [null], [{ type: '' }], [{ type: 'required_status_checks', parameters: null }], [required(), { type: 'pull_request', parameters: { allowed_merge_methods: 'merge' } }],
+  for (const bad of [null, {}, [null], [{ type: '' }], [{ type: 'required_status_checks', parameters: null }],
     [{ type: 'required_status_checks', parameters: { required_status_checks: [], strict_required_status_checks_policy: 'yes' } }], Array.from({ length: 100 }, () => required())]) fails(() => rulesetFacts(bad, APP));
   // other required checks next to the six do not matter
   assert.equal(rulesetFacts([required({ extra: [{ context: 'other', integration_id: 1 }] })], APP).requiredPinned, true);
@@ -34,6 +34,9 @@ test('branch rules: the six checks pinned to 5368905, strict and merge methods; 
   assert.equal(rulesetFacts([required(), pullRule(['merge'])], APP).mergeOnly, true);
   assert.equal(rulesetFacts([required(), pullRule(['merge', 'squash']), pullRule(['merge', 'rebase'])], APP).mergeOnly, true);
   assert.equal(rulesetFacts([required()], APP).mergeOnly, false, 'no pull_request rule: the methods are unknown');
+  // unreadable merge methods are unknown, never "merge only", and never a reason to refuse the rules (review N6)
+  for (const parameters of [{ allowed_merge_methods: 'merge' }, {}, null, { allowed_merge_methods: [1] }])
+    assert.deepEqual(rulesetFacts([required(), pullRule(['merge']), { type: 'pull_request', parameters }], APP), { requiredPinned: true, strict: true, mergeOnly: false });
 });
 
 test('branch rules decide: strict off needs the train; with the train, strict off needs merge-only', () => {
@@ -95,6 +98,13 @@ test('green ledger: create-only records, intent before a check id, every complet
   assert.equal(again.entries.length, 3);
   assert.deepEqual(again.refused.sort(), [`${'1'.repeat(13)}-${'f'.repeat(16)}-posted-00000000.json`, 'notes.txt']);
   assert.throws(() => validateGreenEntry({ ...entries[0].entry, extra: 1 }), e => e.code === 'invalid_green_entry');
+  // a complete record under a name that says another phase, time or effect is refused (review N2)
+  const text = await fs.readFile(path.join(dir, entries[0].name), 'utf8');
+  const misnamed = [entries[0].name.replace('-intent-', '-posted-'), entries[0].name.replace(/^\d{13}/, '9'.repeat(13)), entries[0].name.replace(/-[a-f0-9]{16}-/, `-${'0'.repeat(16)}-`)];
+  for (const name of misnamed) await fs.writeFile(path.join(dir, name), text);
+  const third = await ledger.list();
+  assert.equal(third.entries.length, 3);
+  assert.deepEqual(third.refused.filter(n => misnamed.includes(n)).sort(), [...misnamed].sort());
 });
 
 test('GitHub port: the branch-rules read is one normalized GET of main, a full page refused', async () => {

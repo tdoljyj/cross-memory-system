@@ -5,7 +5,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { ResidentExecutor, PARK_HEAD_RETRY_MS, PARK_HEAD_STREAK_MS } from '../src/executor.mjs';
+import { ResidentExecutor, PARK_HEAD_RETRY_MS, PARK_HEAD_STREAK_MS, STAGE8_NOT_READY_CODES } from '../src/executor.mjs';
+import { STAGE8_NOT_READY_REASONS, STAGE8_FINAL_REASONS } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/publisher.mjs';
+import { outcomeFailureCode } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { POSITIONS, closedBreaker } from '../src/breaker.mjs';
 import { describe as prPage, events as notificationEvents } from '../src/pr-status.mjs';
@@ -561,6 +563,14 @@ test('final check n6: a later entry failing after its acceptance stops the drain
 });
 
 // ---- phase 2, step 3a (design v0.5 §5.3 rules 3, 5, 7): stage 8's live branch rules, test merge and green ledger ----
+test('step 3a: the stage-8 code lists of the publisher, the stage fact and the executor agree (review N1)', () => {
+  assert.deepEqual([...STAGE8_NOT_READY_CODES].sort(), [...STAGE8_NOT_READY_REASONS].sort());
+  // every not-ready answer and every final answer of stage 8 reaches the resident under its own code
+  for (const code of [...STAGE8_NOT_READY_REASONS, ...STAGE8_FINAL_REASONS])
+    assert.equal(outcomeFailureCode({ status: 'BLOCKED', reason: code, sideEffects: 0, mayHavePublished: false }, 8), code, code);
+  assert.ok(STAGE8_FINAL_REASONS.every(code => !STAGE8_NOT_READY_CODES.includes(code)));
+});
+
 test('step 3a: the new not-ready answers park the batch and are tried again; the rules ones tell the Owner once a day', async t => {
   for (const code of ['RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE']) {
     const f = await executorFixture(t, { engine: stage8Engine([notReady(code), notReady(code)], KEY) });
