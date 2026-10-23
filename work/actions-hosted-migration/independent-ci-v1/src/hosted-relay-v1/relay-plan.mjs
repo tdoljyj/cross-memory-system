@@ -11,11 +11,16 @@
 //                              relay-billing-refused);
 //           HALT            -> RELAY_PUBLICATION_UNCERTAIN or ROLE_ALREADY_PUBLISHED_ON_HEAD; the role is
 //                              never run locally afterwards (the executor HALTs);
-//           NOT_PROCESSED   -> a later role after a HALT (also HALT for the executor).
+//           ON_GITHUB       -> ROLE_ALREADY_ON_GITHUB: App 5368905 already published the role's check on the head and
+//                              this node knows nothing of it (another node or install; primary/standby design v0.4
+//                              §6.2, C4). Nothing was sent; the executor ends the batch cleanly and runs no local role;
+//           NOT_PROCESSED   -> a later relayable role after a HALT (also HALT for the executor) or after ON_GITHUB.
+// A plan the executor acts on (relayPlanEnding): every row RELAYED or LOCAL_REQUIRED (COMPLETE), or such rows, then one
+// ON_GITHUB row, then only NOT_PROCESSED rows or never-relayable LOCAL_REQUIRED rows (ON_GITHUB).
 import { LOCAL_REASONS, RELAY_CODES } from './stage.mjs';
 
 export const RELAY_PLAN_ROW_FIELDS = Object.freeze(['role', 'outcome', 'reason', 'receipt', 'checkRunId', 'externalId', 'attestationSha256', 'detail']);
-export const RELAY_OUTCOMES = Object.freeze(['RELAYED', 'LOCAL_REQUIRED', 'HALT', 'NOT_PROCESSED']);
+export const RELAY_OUTCOMES = Object.freeze(['RELAYED', 'LOCAL_REQUIRED', 'ON_GITHUB', 'HALT', 'NOT_PROCESSED']);
 export const RELAY_RECEIPTS = Object.freeze(['relay-attested', 'relay-billing-refused', 'relay-local-fallback']);
 export const RELAY_HALT_CODES = Object.freeze([RELAY_CODES.PUBLICATION_UNCERTAIN, RELAY_CODES.ROLE_ALREADY_PUBLISHED_ON_HEAD]);
 const ROLES = ['gitleaks', 'trivy', 'contract-placement'];
@@ -35,9 +40,20 @@ export function planRowOf(row) {
     return { ...base, outcome: 'RELAYED', reason: null, receipt: 'relay-attested', checkRunId: row.checkRunId, externalId: row.externalId, attestationSha256: row.attestationSha256 };
   if (row.outcome === 'LOCAL_REQUIRED' && LOCAL_REASONS.includes(row.reason) && ['relay-local-fallback', 'relay-billing-refused'].includes(row.receipt))
     return { ...base, outcome: 'LOCAL_REQUIRED', reason: row.reason, receipt: row.receipt };
+  if (row.outcome === 'ON_GITHUB' && row.reason === RELAY_CODES.ROLE_ALREADY_ON_GITHUB) return { ...base, outcome: 'ON_GITHUB', reason: RELAY_CODES.ROLE_ALREADY_ON_GITHUB };
   if (row.outcome === 'HALT' && RELAY_HALT_CODES.includes(row.reason)) return { ...base, reason: row.reason };
   if (row.outcome === 'NOT_PROCESSED') return { ...base, outcome: 'NOT_PROCESSED', reason: null };
   return base;
+}
+
+// The ending of a plan the executor acts on: 'COMPLETE', 'ON_GITHUB' (see above), or null for anything else.
+export function relayPlanEnding(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const at = rows.findIndex(r => r?.outcome === 'ON_GITHUB');
+  const clean = r => ['RELAYED', 'LOCAL_REQUIRED'].includes(r?.outcome);
+  if (at < 0) return rows.every(clean) ? 'COMPLETE' : null;
+  return rows.slice(0, at).every(clean) && rows.slice(at + 1).every(r => r?.outcome === 'NOT_PROCESSED'
+    || (r?.outcome === 'LOCAL_REQUIRED' && r.reason === 'RELAY_ROLE_NOT_RELAYABLE')) ? 'ON_GITHUB' : null;
 }
 
 // Strict check of plan rows read back from an outcome record or a stage fact. Returns a frozen copy or null.
@@ -58,12 +74,15 @@ export function validateRelayPlanRows(rows, candidates = null) {
 }
 
 // Stage result (stage.mjs#run) -> entry result for runEntry/writeOutcome (stage-fact.mjs reads it back).
-//   COMPLETE -> RELAY_COMPLETE (success); HALT -> UNCERTAIN with the halt code; REFUSED -> BLOCKED, nothing done.
+//   COMPLETE -> RELAY_COMPLETE (success); ON_GITHUB -> RELAY_COMPLETE with reason ROLE_ALREADY_ON_GITHUB (the rows say
+//   which role; the executor ends the batch cleanly); HALT -> UNCERTAIN with the halt code; REFUSED -> BLOCKED, nothing done.
 export function entryResultOf(stageResult) {
   const sideEffects = Number.isSafeInteger(stageResult?.sideEffects) && stageResult.sideEffects >= 0 ? stageResult.sideEffects : 1;
   const relay = Array.isArray(stageResult?.roles) ? stageResult.roles.map(planRowOf) : [];
-  if (stageResult?.status === 'COMPLETE' && relay.length > 0 && relay.every(r => ['RELAYED', 'LOCAL_REQUIRED'].includes(r.outcome)))
+  if (stageResult?.status === 'COMPLETE' && (stageResult.code ?? null) === null && relayPlanEnding(relay) === 'COMPLETE')
     return { status: 'RELAY_COMPLETE', reason: null, sideEffects, relay };
+  if (stageResult?.status === 'ON_GITHUB' && stageResult.code === RELAY_CODES.ROLE_ALREADY_ON_GITHUB && relayPlanEnding(relay) === 'ON_GITHUB')
+    return { status: 'RELAY_COMPLETE', reason: RELAY_CODES.ROLE_ALREADY_ON_GITHUB, sideEffects, relay };
   if (stageResult?.status === 'REFUSED' && sideEffects === 0)
     return { status: 'BLOCKED', reason: ['RELAY_STAGE_NOT_CONFIGURED', 'RELAY_STAGE_INPUT_INVALID'].includes(stageResult.code) ? stageResult.code : 'RELAY_STAGE_NOT_CONFIGURED', sideEffects: 0, relay: null };
   const reason = RELAY_HALT_CODES.includes(stageResult?.code) ? stageResult.code : RELAY_CODES.PUBLICATION_UNCERTAIN;
