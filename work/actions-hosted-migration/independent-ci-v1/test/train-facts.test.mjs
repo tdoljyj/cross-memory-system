@@ -158,7 +158,7 @@ test('wiring: the real GitHub and KooYomi ports, a fetch that refuses every writ
     }
     assert.equal(u.host, 'api.github.com', where);
     if (method === 'POST' && u.pathname === '/app/installations/99/access_tokens')
-      return reply({ token: 't', expires_at: new Date(now + 3_600_000).toISOString(), permissions: { checks: 'write', contents: 'read', pull_requests: 'read', metadata: 'read' } });
+      return reply({ token: 't', expires_at: new Date(now + 3_600_000).toISOString(), permissions: { checks: 'write', contents: 'read', pull_requests: 'read', actions_variables: 'read', environments: 'read', metadata: 'read' } });
     assert.equal(method, 'GET', `a write in shadow mode: ${where}`);
     if (u.pathname === '/app') return reply({ id: 77 });
     if (u.pathname === '/installation/repositories') return reply({ total_count: 1, repositories: [{ id: 41, full_name: REPO }] });
