@@ -27,7 +27,7 @@ $Sc = 'C:\Windows\System32\sc.exe'
 # validated by the install; design section 9 C1). The name is still held to its fixed shape before it reaches sc.exe.
 $Node = ([IO.File]::ReadAllText((Join-Path $Root 'record\acceptance.json'), (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json).node
 $Runner = [string]$Node.runnerService
-if ($Runner -cnotmatch '^actions\.runner\.tdoljyj-cross-memory-system\.clued-ci-[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$' -or [string]$Node.hostname -cnotmatch '^[A-Z0-9](?:[A-Z0-9-]{0,13}[A-Z0-9])?$') { throw 'INSTALLED_NODE_PROFILE_REFUSED' }
+if ($Runner -cnotmatch '^actions\.runner\.tdoljyj-cross-memory-system\.clued-ci-[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?\z' -or [string]$Node.hostname -cnotmatch '^[A-Z0-9](?:[A-Z0-9-]{0,13}[A-Z0-9])?\z') { throw 'INSTALLED_NODE_PROFILE_REFUSED' }
 $checks = [ordered]@{}
 function Sha256File([string]$p) { $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash([IO.File]::ReadAllBytes($p)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() } }
 function Record([string]$name, $ok, $detail = $null) { $script:checks[$name] = [ordered]@{ ok = $ok; detail = $detail } }

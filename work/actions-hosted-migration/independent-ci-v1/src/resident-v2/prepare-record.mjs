@@ -50,7 +50,10 @@ const noSecrets = v => { if (plain(v)) { check(!Object.keys(v).some(k => /privat
 // and the v2 entries' secret reads (entry-runtime.mjs) take the host identity from it. TURING's profile is
 // independent-ci-resident-v1/config/node-profile.turing.json: exactly the values the Source carried before.
 // Every rule is a shape rule except mutationMutex, which must be the v1 name derived from the host and the
-// controller account's RID (TURING: Global\CluedControlControllerMutationV1-TURING-1015).
+// controller account's RID (TURING: Global\CluedControlControllerMutationV1-TURING-1015, the name the v1 elevated tool
+// control-install-delta-v2/invoker/FixedScm.cs shares with the broker so the two exclude each other; a new node has no v1
+// tool, so there the derived name only has to be one fixed name per host). install-resident.ps1#Assert-NodeProfile is
+// the PowerShell twin; test/fixtures/node-profile-cases.json holds both to the same answers and refusal codes.
 //   nodeName              lower-case node label (resident-queue/<nodeName> on the PR page, design §5.2)
 //   hostname              NetBIOS computer name, upper-case (COMPUTERNAME, Environment.MachineName)
 //   ownerSid              the Owner's account (companion, relay, incoming spool writer)

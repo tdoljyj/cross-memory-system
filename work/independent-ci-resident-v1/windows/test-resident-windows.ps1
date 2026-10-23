@@ -139,16 +139,21 @@ $turingText = [IO.File]::ReadAllText((Join-Path $here '..\config\node-profile.tu
 $turing = $turingText | ConvertFrom-Json
 Assert-NodeProfile $turing; $n++
 Yes ($turing.hostname -ceq 'TURING' -and $turing.ownerSid -ceq $OwnerSid -and $turing.controllerSid -ceq $ControllerSid -and $turing.runnerService -ceq 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02' -and $turing.wslDistribution -ceq 'Ubuntu-24.04') 'turing-profile-is-todays-values'
-function Copy-Profile { $turingText | ConvertFrom-Json }
 function Test-Refused([scriptblock]$body, [string]$code) { try { & $body; return $false } catch { return $_.Exception.Message -ceq $code } }
-foreach ($case in @(@('hostname', 'turing'), @('hostname', 'ABCDEFGHIJKLMNOP'), @('mutationMutex', 'Global\CluedControlControllerMutationV1-TURING-1001'), @('controllerSid', 'S-1-5-21-1-2-3-500'),
-  @('ownerSid', $ControllerSid), @('runnerService', 'actions.runner.other-repo.clued-ci-x'), @('wslDistribution', 'Ubuntu 24.04'), @('ownerProfileDirectory', 'C:\Users\..'), @('nodeName', 'TURING'), @('contract', 'x'))) {
-  $c = Copy-Profile; $c.($case[0]) = $case[1]
-  Yes (Test-Refused { Assert-NodeProfile $c } 'NODE_PROFILE_INVALID') ('node-profile-refused:' + $case[0] + '=' + $case[1])
+# The shared cases (independent-ci-v1/test/fixtures/node-profile-cases.json): the JS validator is held to the same answers
+# and refusal codes (test/resident-v2-node-profile.test.mjs), so the two cannot drift apart.
+$casesText = [IO.File]::ReadAllText((Join-Path $here '..\..\actions-hosted-migration\independent-ci-v1\test\fixtures\node-profile-cases.json'), (New-Object Text.UTF8Encoding($false, $true)))
+$cases = $casesText | ConvertFrom-Json
+Yes ($cases.contract -ceq 'clued.independent-ci.node-profile-cases/1' -and @($cases.accepted).Count -ge 5 -and @($cases.refused).Count -ge 40) 'node-profile-cases'
+function New-CaseProfile($case) {
+  $p = ($casesText | ConvertFrom-Json).base
+  if ($case.PSObject.Properties.Name -ccontains 'set') { foreach ($f in $case.set.PSObject.Properties) { $p.($f.Name) = $f.Value } }
+  if ($case.PSObject.Properties.Name -ccontains 'add') { foreach ($f in $case.add.PSObject.Properties) { $p | Add-Member -NotePropertyName $f.Name -NotePropertyValue $f.Value } }
+  if ($case.PSObject.Properties.Name -ccontains 'remove') { $p.PSObject.Properties.Remove($case.remove) }
+  $p
 }
-$c = Copy-Profile; $c.nodeName = 7; Yes (Test-Refused { Assert-NodeProfile $c } 'NODE_PROFILE_FIELDS_REQUIRED') 'node-profile-refused:non-string'
-$c = Copy-Profile; $c | Add-Member -NotePropertyName extra -NotePropertyValue 'x'; Yes (Test-Refused { Assert-NodeProfile $c } 'NODE_PROFILE_FIELDS_REQUIRED') 'node-profile-refused:extra-field'
-$c = Copy-Profile; $c.PSObject.Properties.Remove('wslDistribution'); Yes (Test-Refused { Assert-NodeProfile $c } 'NODE_PROFILE_FIELDS_REQUIRED') 'node-profile-refused:missing-field'
+$i = 0; foreach ($case in @($cases.accepted)) { $i++; $p = New-CaseProfile $case; Assert-NodeProfile $p; $n++ }
+$i = 0; foreach ($case in @($cases.refused)) { $i++; $p = New-CaseProfile $case; Yes (Test-Refused { Assert-NodeProfile $p } $case.code) ('node-profile-refused:' + $i + ':' + $case.code) }
 Yes (Test-Refused { Assert-NodeProfile $null } 'NODE_PROFILE_FIELDS_REQUIRED') 'node-profile-refused:null'
 # The profile is read from the package bytes the reviewed manifest pins, never from anything else.
 $PackageRoot = Join-Path $Scratch 'node-package'; [void][IO.Directory]::CreateDirectory((Join-Path $PackageRoot 'record'))

@@ -105,17 +105,21 @@ function Get-ServiceSid([string]$name) {
 # from it; TURING's profile is config\node-profile.turing.json, today's values. The shape rules are those of
 # resident-v2/prepare-record.mjs#validateNodeProfile; -OwnerSid and -ControllerSid must name the same accounts.
 $NodeProfileKeys = @('contract', 'nodeName', 'hostname', 'ownerSid', 'ownerProfileDirectory', 'controllerSid', 'runnerService', 'mutationMutex', 'wslDistribution')
+# .NET regex differs from JS here: `$` also matches before a final newline and `\d` matches any Unicode digit, so every
+# pattern is anchored with \z and spells digits [0-9]. The shared cases (independent-ci-v1/test/fixtures/
+# node-profile-cases.json) hold both validators to the same answers and refusal codes.
 function Assert-NodeProfile($n) {
   $names = @(if ($n -is [pscustomobject]) { $n.PSObject.Properties.Name })
-  if ($names.Count -ne $NodeProfileKeys.Count -or @($NodeProfileKeys | Where-Object { $names -cnotcontains $_ -or $n.$_ -isnot [string] }).Count -ne 0) { throw 'NODE_PROFILE_FIELDS_REQUIRED' }
-  $sid = '^S-1-5-21-\d{1,10}-\d{1,10}-\d{1,10}-(\d{1,10})$'
+  if ($names.Count -ne $NodeProfileKeys.Count -or @($NodeProfileKeys | Where-Object { $names -cnotcontains $_ -or $n.$_ -isnot [string] }).Count -ne 0 -or
+    $n.contract -cne 'clued.independent-ci.node-profile/1') { throw 'NODE_PROFILE_FIELDS_REQUIRED' }
+  $sid = '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-([0-9]{1,10})\z'
   $rid = if ($n.controllerSid -cmatch $sid) { $Matches[1] } else { $null }
-  if ($n.contract -cne 'clued.independent-ci.node-profile/1' -or $n.nodeName -cnotmatch '^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$' -or
-    $n.hostname -cnotmatch '^[A-Z0-9](?:[A-Z0-9-]{0,13}[A-Z0-9])?$' -or $n.ownerSid -cnotmatch $sid -or $null -eq $rid -or [long]$rid -lt 1000 -or $n.ownerSid -ceq $n.controllerSid -or
-    $n.ownerProfileDirectory -cnotmatch '^C:\\Users\\[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$' -or
-    $n.runnerService -cnotmatch '^actions\.runner\.tdoljyj-cross-memory-system\.clued-ci-[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$' -or
+  if ($n.nodeName -cnotmatch '^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\z' -or
+    $n.hostname -cnotmatch '^[A-Z0-9](?:[A-Z0-9-]{0,13}[A-Z0-9])?\z' -or $n.ownerSid -cnotmatch $sid -or $null -eq $rid -or [long]$rid -lt 1000 -or $n.ownerSid -ceq $n.controllerSid -or
+    $n.ownerProfileDirectory -cnotmatch '^C:\\Users\\[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?\z' -or
+    $n.runnerService -cnotmatch '^actions\.runner\.tdoljyj-cross-memory-system\.clued-ci-[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?\z' -or
     $n.mutationMutex -cne ('Global\CluedControlControllerMutationV1-' + $n.hostname + '-' + $rid) -or
-    $n.wslDistribution -cnotmatch '^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$') { throw 'NODE_PROFILE_INVALID' }
+    $n.wslDistribution -cnotmatch '^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?\z') { throw 'NODE_PROFILE_INVALID' }
 }
 function Get-PackageNodeProfile {
   if ((Sha256Bytes $pkgBytes) -cne $ExpectedPackageManifestSha256) { throw 'REVIEWED_PACKAGE_CHANGED' }
@@ -135,6 +139,10 @@ function Assert-Owner {
   if ($id.User.Value -cne $OwnerSid) { throw 'OWNER_ACCOUNT_REQUIRED' }
   if ($env:COMPUTERNAME -cne $Node.hostname) { throw 'NODE_HOST_REQUIRED' }
   if ($OwnerSid -cne $Node.ownerSid -or $ControllerSid -cne $Node.controllerSid) { throw 'NODE_PROFILE_ACCOUNTS_MISMATCH' }
+  # The ACL plan grants the record, source, stage and work directories to this SID and every runtime reader trusts the
+  # record's value, so it must be the real local .\clued-control of this host, not only the value the profile names.
+  $controllerActual = try { (New-Object Security.Principal.NTAccount($env:COMPUTERNAME, 'clued-control')).Translate([Security.Principal.SecurityIdentifier]).Value } catch { $null }
+  if ($controllerActual -cne $Node.controllerSid) { throw 'NODE_CONTROLLER_ACCOUNT_MISMATCH' }
   (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 

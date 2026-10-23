@@ -31,23 +31,20 @@ test('node profile: the fixture and TURING profiles pass; the TURING file is exa
   assert.equal(turing.mutationMutex, 'Global\\CluedControlControllerMutationV1-TURING-1015');
 });
 
-test('node profile: every field is held to its shape, the key set is exact, the mutex is derived', () => {
-  const bad = [
-    ['contract', 'clued.independent-ci.node-profile/2'], ['nodeName', 'Turing'], ['nodeName', '-turing'], ['nodeName', 'a'.repeat(33)],
-    ['hostname', 'turing'], ['hostname', 'A'.repeat(16)], ['hostname', 'TUR ING'], ['ownerSid', 'S-1-5-18'], ['ownerSid', 'S-1-5-21-1-2-3-1015'],
-    ['controllerSid', 'S-1-5-21-1-2-3-500'], ['controllerSid', 'S-1-5-32-544'], ['ownerProfileDirectory', 'C:\\Users\\..\\x'],
-    ['ownerProfileDirectory', 'D:\\Users\\owner'], ['ownerProfileDirectory', 'C:\\Users\\owner\\AppData'], ['runnerService', 'actions.runner.other-repo.clued-ci-x'],
-    ['runnerService', 'actions.runner.tdoljyj-cross-memory-system.home-win-02'], ['mutationMutex', 'Global\\CluedControlControllerMutationV1-TURING-1015'],
-    ['wslDistribution', 'Ubuntu 24.04'], ['wslDistribution', '-x'], ['nodeName', 7],
-  ];
-  for (const [k, v] of bad) assert.throws(() => validateNodeProfile(nodeProfile({ [k]: v })), e => ['NODE_PROFILE_INVALID', 'NODE_PROFILE_FIELDS_REQUIRED'].includes(e.code), `${k}=${v}`);
-  // the controller's RID is part of the mutex name: another controller needs its own name
-  const moved = nodeProfile({ controllerSid: 'S-1-5-21-1-2-3-1016' });
-  assert.throws(() => validateNodeProfile(moved), { code: 'NODE_PROFILE_INVALID' });
-  assert.doesNotThrow(() => validateNodeProfile({ ...moved, mutationMutex: 'Global\\CluedControlControllerMutationV1-FIXTURE-NODE-1016' }));
-  assert.throws(() => validateNodeProfile({ ...nodeProfile(), extra: 'x' }), { code: 'NODE_PROFILE_FIELDS_REQUIRED' });
-  const { wslDistribution, ...missing } = nodeProfile();
-  assert.throws(() => validateNodeProfile(missing), { code: 'NODE_PROFILE_FIELDS_REQUIRED' });
+// The cases install-resident.ps1#Assert-NodeProfile is held to as well (windows/test-resident-windows.ps1, section 4c).
+const CASES = JSON.parse(read(`${CI}test/fixtures/node-profile-cases.json`));
+function applyCase(base, c) {
+  const p = { ...base, ...(c.set ?? {}), ...(c.add ?? {}) };
+  if (c.remove) delete p[c.remove];
+  return p;
+}
+
+test('node profile: the shared cases: every field is held to its shape, the key set is exact, the mutex is derived', () => {
+  assert.equal(CASES.contract, 'clued.independent-ci.node-profile-cases/1');
+  assert.deepEqual(CASES.base, nodeProfile());
+  assert.ok(CASES.accepted.length >= 5 && CASES.refused.length >= 40);
+  for (const c of CASES.accepted) assert.doesNotThrow(() => validateNodeProfile(applyCase(CASES.base, c)), JSON.stringify(c));
+  for (const c of CASES.refused) assert.throws(() => validateNodeProfile(applyCase(CASES.base, c)), { code: c.code }, JSON.stringify(c));
   assert.throws(() => validateNodeProfile(null), { code: 'NODE_PROFILE_FIELDS_REQUIRED' });
 });
 
@@ -146,9 +143,19 @@ test('verify-install-acl.ps1: a secret read needs the pinned controller SID, giv
       '-LiteralTarget', file, '-ReadFile', '-SecretRoot', secrets, '-ProtectedRoot', dir, ...extra], { windowsHide: true, timeout: 30000, stdio: 'pipe' }); return 0; }
     catch (e) { return e.status; }
   };
-  assert.equal(run([]), 2);
-  assert.equal(run(['-ControllerSid', 'S-1-5-18']), 2);
-  assert.equal(run(['-ControllerSid', 'S-1-5-21-1-2-3-1015 ']), 2);
-  // a well-formed SID passes the argument gate; the temp directory then fails the real ACL checks (never exit 0 here)
+  // the argument gate has its own exit code (3): no SID, another kind of SID, a trailing space or newline, non-ASCII digits
+  assert.equal(run([]), 3);
+  for (const bad of ['S-1-5-18', 'S-1-5-21-1-2-3-1015 ', 'S-1-5-21-1-2-3-1015\n', 'S-1-5-21-1-2-3-١٠١٥']) assert.equal(run(['-ControllerSid', bad]), 3, JSON.stringify(bad));
+  // a well-formed SID passes the gate; this temp directory then fails the real ACL checks (2, never 0 here)
   assert.equal(run(['-ControllerSid', 'S-1-5-21-1-2-3-1015']), 2);
+});
+
+test('hold-record.ps1: the record is read and held before the identity check, and no Source file before it', () => {
+  const text = read(`${CI}src/resident-v2/hold-record.ps1`);
+  const records = text.indexOf("foreach($name in @('installation.json','acceptance.json','source-manifest.json','signers.json'))");
+  const identity = text.indexOf("throw 'EXACT_CONTROLLER_REQUIRED'");
+  const source = text.indexOf('Hold-Read (Join-Path $Source');
+  assert.ok(records > 0 && identity > records && source > identity, `${records} < ${identity} < ${source}`);
+  assert.equal(text.split("throw 'EXACT_CONTROLLER_REQUIRED'").length, 2);
+  assert.match(text, /\$Controller=\[string\]\$accepted\.node\.controllerSid/);
 });

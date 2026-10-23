@@ -65,7 +65,7 @@ export async function readSignedExchange(spool, filename) {
   try { return JSON.parse(bytes); } catch { stop('exchange_json_invalid'); }
 }
 
-export async function assertProtectedPaths(root, files, state = false, { controllerSid = null } = {}) {
+export async function assertProtectedPaths(root, files, state = false) {
   const checked = new Set();
   for (const file of [root, ...files]) {
     for (let cursor = file; ; cursor = path.dirname(cursor)) {
@@ -81,7 +81,7 @@ export async function assertProtectedPaths(root, files, state = false, { control
       const boundary = target === APP_KEY_FILE ? path.dirname(path.dirname(APP_KEY_FILE)) : root;
       try {
         await promisify(execFile)(powershell, ['-NoProfile', '-NonInteractive', '-File', script,
-          '-LiteralTarget', target, '-ProtectedRoot', boundary, ...(state ? ['-AllowControllerWrite', ...(controllerSid ? ['-ControllerSid', controllerSid] : [])] : [])],
+          '-LiteralTarget', target, '-ProtectedRoot', boundary, ...(state ? ['-AllowControllerWrite'] : [])],
         { windowsHide: true, timeout: 10000, maxBuffer: 4096 });
       } catch { stop('installation_acl_unqualified'); }
     }

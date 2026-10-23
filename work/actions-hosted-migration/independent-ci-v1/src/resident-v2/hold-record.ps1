@@ -70,7 +70,7 @@ try{
  $utf8=New-Object Text.UTF8Encoding($false,$true);$config=$utf8.GetString([Convert]::FromBase64String($documents['installation.json']))|ConvertFrom-Json;$acceptanceBytes=[Convert]::FromBase64String($documents['acceptance.json']);$accepted=$utf8.GetString($acceptanceBytes)|ConvertFrom-Json
  if((Hash $acceptanceBytes) -cne $config.acceptanceSha256 -or $accepted.sourceFiles -isnot [Array] -or $accepted.sourceFiles.Count -lt 1 -or $accepted.sourceFiles.Count -gt 10000){throw 'SOURCE_ACCEPTANCE_BYTES_REFUSED'}
  $Controller=[string]$accepted.node.controllerSid
- if($Controller -cnotmatch '^S-1-5-21-\d{1,10}-\d{1,10}-\d{1,10}-\d{1,10}$' -or [Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne $Controller){throw 'EXACT_CONTROLLER_REQUIRED'}
+ if($Controller -cnotmatch '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}\z' -or [Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne $Controller){throw 'EXACT_CONTROLLER_REQUIRED'}
  # validUntil null = until Source change or uninstall; the lease itself is always bounded.
  $expiry=[DateTimeOffset]::UtcNow.AddHours($MaxLeaseHours)
  if($null -ne $accepted.validUntil){$until=[DateTimeOffset]::Parse([string]$accepted.validUntil);if($until -le [DateTimeOffset]::UtcNow){throw 'SOURCE_ACCEPTANCE_EXPIRED'};if($until -lt $expiry){$expiry=$until}}
