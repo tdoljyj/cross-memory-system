@@ -1,0 +1,292 @@
+// The intake pause (resident primary/standby design v0.4 §5.4 step 1, §9 C6; Task 6444f88a; DESIGN §19): any Owner
+// session may hold new batches for at most two hours; a batch in flight or at a parking point goes on; the latest word
+// of each holder counts; the status shows it; it is neither PAUSE nor the drain.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_FILE, INTAKE_PAUSE_MAX_MS, INTAKE_RESUME_CONTRACT, INTAKE_HOLDS_MAX, IntakePause, UNREADABLE_HOLDER,
+  intakePauseRequest, intakeResumeRequest, readIntakePause, validateIntakeRequest } from '../src/intake-pause.mjs';
+import { PAUSE_CONTRACT } from '../src/executor.mjs';
+import { StatusBoard, parseStatus } from '../src/status.mjs';
+import { describe as prPage } from '../src/pr-status.mjs';
+import { batchKey } from '../src/ledger.mjs';
+import { drainRequest, inspect, resumeRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
+import { BASE, HEAD, SOURCE, WINDOWS_CLEAN, executorFixture, fakeEngine, tempRoot, triggerBytes } from './helpers.mjs';
+
+const MIN = 60_000;
+const T0 = Date.parse('2026-10-23T05:00:00Z');
+const SHA = n => String(n).repeat(64).slice(0, 64);
+const iso = ms => new Date(ms).toISOString();
+
+async function store(t, now = T0) {
+  const dir = await tempRoot(t);
+  let time = now;
+  const clock = () => time;
+  const p = await IntakePause.open(dir, clock);
+  return { dir, p, clock, advance: ms => { time += ms; } };
+}
+// apply + save, as the executor does.
+async function take(s, request, sha = SHA(1)) {
+  const { data, result } = s.p.apply(request, sha);
+  await s.p.save(data);
+  return result;
+}
+const codeOf = fn => { try { fn(); return null; } catch (e) { return e.code; } };
+const OWNER = 'S-1-5-21-1-2-3-1001';
+const H = n => String(n).repeat(40).slice(0, 40);
+const subject = (o = {}) => ({ repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 1, ...o });
+const stagesRun = engine => engine.calls.filter(c => c[0] === 'stage').map(c => c[1]);
+const receiptTypes = async f => (await fs.readdir(path.join(f.root, 'state', 'receipts'))).map(n => n.replace(/^\d+-|\.json$/g, ''));
+const pick = r => [r.state, r.reason ?? null];
+const json = v => Buffer.from(JSON.stringify(v));
+// Stage 8 not ready (park.test.mjs): the batch rests at parking point B; then stage 8 succeeds.
+const notReady = code => ({ ok: false, code, proof: WINDOWS_CLEAN, brokerNoLaunch: false,
+  outcome: { status: 'BLOCKED', reason: code, sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: { ciRetryAfter: null, mergeQueue: { entered: false, state: null, position: null } }, safeToRerun: false } });
+function stage8Engine(answers) {
+  const engine = fakeEngine();
+  const base = engine.runStage;
+  let i = 0;
+  engine.runStage = async (batch, stage, o) => (stage.number === 8 && i < answers.length ? (engine.calls.push(['stage', 8]), answers[i++]) : base(batch, stage, o));
+  return engine;
+}
+
+test('the request shapes: a holder, 1 to 120 minutes, a reason, its own time and nonce; nothing else', () => {
+  const ok = intakePauseRequest({ holder: 'owner', minutes: 120, reason: 'switch to company-01' }, () => T0);
+  assert.equal(ok.contract, INTAKE_PAUSE_CONTRACT);
+  assert.equal(validateIntakeRequest(ok).requestedAtMs, T0);
+  assert.equal(intakeResumeRequest({ holder: 'dual-active', reason: 'lock released' }, () => T0).contract, INTAKE_RESUME_CONTRACT);
+  for (const [name, v] of [
+    ['121 minutes', { ...ok, minutes: 121 }], ['0 minutes', { ...ok, minutes: 0 }], ['fractional', { ...ok, minutes: 1.5 }], ['text minutes', { ...ok, minutes: '60' }],
+    ['holder with capitals', { ...ok, holder: 'Owner' }], ['holder too long', { ...ok, holder: 'a'.repeat(33) }], ['no reason', { ...ok, reason: '' }],
+    ['reason too long', { ...ok, reason: 'x'.repeat(201) }], ['bad nonce', { ...ok, nonce: 'zz' }], ['bad time', { ...ok, requestedAt: 'soon' }],
+    ['extra key', { ...ok, by: 'S-1-5-21-1-2-3-1001' }], ['resume with minutes', { ...ok, contract: INTAKE_RESUME_CONTRACT }],
+    ['another contract', { ...ok, contract: 'clued.independent-ci.resident-pause/1' }], ['null', null], ['array', []],
+  ]) assert.equal(codeOf(() => validateIntakeRequest(v)), 'INTAKE_REQUEST_REFUSED', name);
+  assert.throws(() => intakePauseRequest({ minutes: 121, reason: 'r' }), { code: 'INTAKE_REQUEST_REFUSED' }, 'the tool refuses what the executor would');
+});
+
+test('a hold lasts the requested minutes, at most two hours from the executor clock, and runs out by itself', async t => {
+  const s = await store(t);
+  assert.equal(s.p.view(), null);
+  const r = await take(s, intakePauseRequest({ minutes: 30, reason: 'maintenance' }, s.clock));
+  assert.deepEqual(r, { kind: 'intake-paused', holder: 'owner', until: iso(T0 + 30 * MIN), renewed: false });
+  assert.deepEqual(s.p.view(), { until: iso(T0 + 30 * MIN), holders: [{ holder: 'owner', since: iso(T0), until: iso(T0 + 30 * MIN) }] });
+  // a request dated ahead (inside the skew) still ends two hours from the executor's clock at the latest
+  const ahead = { ...intakePauseRequest({ holder: 'other', minutes: 120, reason: 'r' }, () => T0 + 4 * MIN) };
+  assert.equal((await take(s, ahead, SHA(2))).until, iso(T0 + INTAKE_PAUSE_MAX_MS));
+  s.advance(30 * MIN);
+  assert.deepEqual(s.p.view().holders.map(h => h.holder), ['other'], 'the owner hold ran out at its until');
+  const ran = s.p.expired();
+  assert.deepEqual(ran.ended, [{ holder: 'owner', since: iso(T0), until: iso(T0 + 30 * MIN) }]);
+  await s.p.save(ran.data);
+  assert.equal(s.p.expired(), null, 'marked once');
+  s.advance(90 * MIN);
+  assert.equal(s.p.view(), null, 'nothing outlives two hours');
+  // persisted: a restarted service reads the same state
+  const again = await IntakePause.open(s.dir, s.clock);
+  assert.deepEqual(again.data, s.p.data);
+});
+
+test('stale, future-dated and superseded requests change nothing', async t => {
+  const s = await store(t);
+  assert.equal(codeOf(() => s.p.apply(intakePauseRequest({ minutes: 60, reason: 'r' }, () => T0 - 61 * MIN), SHA(1))), 'INTAKE_PAUSE_REQUEST_EXPIRED');
+  assert.equal(codeOf(() => s.p.apply(intakePauseRequest({ minutes: 60, reason: 'r' }, () => T0 + 6 * MIN), SHA(1))), 'INTAKE_REQUEST_CLOCK_SKEW');
+  await take(s, intakePauseRequest({ minutes: 60, reason: 'newer' }, () => T0 - MIN));
+  // an older word of the same holder (an out-of-order file, a replayed copy) is refused
+  assert.equal(codeOf(() => s.p.apply(intakePauseRequest({ minutes: 120, reason: 'older' }, () => T0 - 2 * MIN), SHA(2))), 'INTAKE_REQUEST_SUPERSEDED');
+  const same = intakeResumeRequest({ reason: 'r' }, () => T0 - MIN);
+  assert.equal(codeOf(() => s.p.apply(same, SHA(3))), 'INTAKE_REQUEST_SUPERSEDED', 'the same instant is not later');
+  // after a resume, an older pause request read late cannot revive the hold
+  await take(s, intakeResumeRequest({ reason: 'done' }, s.clock), SHA(4));
+  assert.equal(codeOf(() => s.p.apply(intakePauseRequest({ minutes: 60, reason: 'late file' }, () => T0 - 30_000), SHA(5))), 'INTAKE_REQUEST_SUPERSEDED');
+  assert.equal(s.p.view(), null);
+});
+
+test('holders never cancel each other: the Owner pause and the dual-active hold are independent; renewals extend, a resume ends one', async t => {
+  const s = await store(t);
+  await take(s, intakePauseRequest({ holder: 'owner', minutes: 120, reason: 'planned switch' }, s.clock));
+  s.advance(MIN);
+  await take(s, intakePauseRequest({ holder: 'dual-active', minutes: 120, reason: 'two nodes on duty' }, s.clock), SHA(2));
+  s.advance(MIN);
+  assert.deepEqual(await take(s, intakeResumeRequest({ holder: 'dual-active', reason: 'role lost' }, s.clock), SHA(3)), { kind: 'intake-resumed', holder: 'dual-active', held: true });
+  assert.deepEqual(s.p.view().holders.map(h => h.holder), ['owner'], 'the Owner pause stays');
+  // the companion renews its own hold while the lock lasts: the until moves, since stays
+  s.advance(MIN);
+  await take(s, intakePauseRequest({ holder: 'dual-active', minutes: 120, reason: 'locked again' }, s.clock), SHA(4));
+  s.advance(100 * MIN);
+  const renewed = await take(s, intakePauseRequest({ holder: 'dual-active', minutes: 120, reason: 'renewal' }, s.clock), SHA(5));
+  assert.equal(renewed.renewed, true);
+  const dual = s.p.view().holders.find(h => h.holder === 'dual-active');
+  assert.deepEqual([dual.since, dual.until], [iso(T0 + 3 * MIN), iso(T0 + 103 * MIN + INTAKE_PAUSE_MAX_MS)]);
+  // a resume of a holder with nothing in force is accepted and says so
+  assert.deepEqual(await take(s, intakeResumeRequest({ holder: 'nobody', reason: 'r' }, s.clock), SHA(6)), { kind: 'intake-resumed', holder: 'nobody', held: false });
+});
+
+test('at most eight holders; ended holds are dropped once no request that old could be in force', async t => {
+  const s = await store(t);
+  for (let i = 0; i < INTAKE_HOLDS_MAX; i++) await take(s, intakePauseRequest({ holder: `h${i}`, minutes: 1, reason: 'r' }, s.clock), SHA(i % 10));
+  assert.equal(codeOf(() => s.p.apply(intakePauseRequest({ holder: 'one-more', minutes: 1, reason: 'r' }, s.clock), SHA(9))), 'INTAKE_PAUSE_HOLDERS_FULL');
+  s.advance(2 * MIN);
+  await s.p.save(s.p.expired().data);
+  assert.equal(codeOf(() => s.p.apply(intakePauseRequest({ holder: 'one-more', minutes: 1, reason: 'r' }, s.clock), SHA(9))), 'INTAKE_PAUSE_HOLDERS_FULL', 'ended, but still ordering later words');
+  s.advance(INTAKE_PAUSE_MAX_MS);
+  await take(s, intakePauseRequest({ holder: 'one-more', minutes: 1, reason: 'r' }, s.clock), SHA(9));
+  assert.deepEqual(s.p.data.holds.map(h => h.holder), ['one-more']);
+});
+
+test('a state file that does not validate is kept aside and holds for two hours (fail safe, bounded); the Owner may lift it', async t => {
+  const dir = await tempRoot(t);
+  const clock = () => T0;
+  await fs.writeFile(path.join(dir, INTAKE_PAUSE_FILE), '{"contract":');
+  const p = await IntakePause.open(dir, clock);
+  assert.match(p.unreadable.keptAs, /^INTAKE-PAUSE\.unreadable-.*\.json$/);
+  assert.equal((await fs.readFile(path.join(dir, p.unreadable.keptAs), 'utf8')), '{"contract":', 'kept, never deleted');
+  assert.deepEqual(p.view(), { until: iso(T0 + INTAKE_PAUSE_MAX_MS), holders: [{ holder: UNREADABLE_HOLDER, since: iso(T0), until: iso(T0 + INTAKE_PAUSE_MAX_MS) }] });
+  const reopened = await IntakePause.open(dir, clock);
+  assert.equal(reopened.unreadable, null, 'the replacement is a valid state');
+  const { data } = reopened.apply(intakeResumeRequest({ holder: UNREADABLE_HOLDER, reason: 'checked' }, () => T0 + 1), SHA(1), T0 + 1);
+  await reopened.save(data);
+  assert.equal(reopened.view(T0 + 1), null);
+  assert.deepEqual((await readIntakePause(dir, clock)).view, null);
+  await fs.writeFile(path.join(dir, INTAKE_PAUSE_FILE), JSON.stringify({ contract: 'x', holds: [] }));
+  assert.deepEqual(await readIntakePause(dir, clock), { view: null, holds: null, unreadable: true }, 'the read-only tool never renames anything');
+});
+
+// ---- the executor ----
+
+test('any Owner session holds new batches: the trigger is queued, nothing starts; the hold runs out by itself and the queue runs', async t => {
+  const board = new StatusBoard({ clock: () => T0 });
+  const f = await executorFixture(t, { now: T0, status: board });
+  await f.drop(json(intakePauseRequest({ minutes: 30, reason: 'planned switch to company-01' }, f.clock)), 'requests');
+  await f.drop(triggerBytes());
+  assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'INTAKE_PAUSED']);
+  assert.equal(f.engine.calls.length, 0, 'no stage, no bundle');
+  assert.equal(f.queue.row(884).state, 'QUEUED', 'the trigger is read, not lost');
+  assert.deepEqual(board.snapshot().intakePause, { until: iso(T0 + 30 * MIN), holders: [{ holder: 'owner', since: iso(T0), until: iso(T0 + 30 * MIN) }] });
+  assert.deepEqual([board.snapshot().executor.state, board.snapshot().executor.reason], ['DEFERRED', 'INTAKE_PAUSED']);
+  assert.ok((await receiptTypes(f)).includes('intake-paused'));
+  f.advance(29 * MIN);
+  assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'INTAKE_PAUSED']);
+  f.advance(MIN);
+  assert.equal((await f.exec.tick()).state, 'COMPLETED', 'at its until the queue runs again, no Owner step needed');
+  assert.equal(board.snapshot().intakePause, null);
+  assert.equal((await receiptTypes(f)).filter(x => x === 'intake-pause-ended').length, 1);
+});
+
+test('nothing in flight or parked is touched: a batch at parking point B runs its stage-8 try under the hold; a new PR waits', async t => {
+  const engine = stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]);
+  const f = await executorFixture(t, { engine, now: T0 });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  await f.drop(json(intakePauseRequest({ reason: 'maintenance' }, f.clock)), 'requests');
+  await f.drop(triggerBytes({ pr: 900, headSha: H(4) }));
+  assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'INTAKE_PAUSED']);
+  f.advance(10 * MIN);
+  assert.equal((await f.exec.tick()).state, 'COMPLETED', 'the parked batch finished: its try is no new batch');
+  assert.deepEqual(stagesRun(engine), [1, 2, 3, 4, 5, 6, 7, 8, 8]);
+  assert.equal((await f.ledger.state(batchKey(subject()))).outcome, 'COMPLETED');
+  assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'INTAKE_PAUSED']);
+  assert.equal(f.queue.row(900).state, 'QUEUED');
+  assert.equal(await f.executedHeads.published(subject({ pr: 900, headSha: H(4) })), false, 'PR 900 never started');
+});
+
+test('it is neither PAUSE nor the drain: all three hold at once and each keeps its own rules', async t => {
+  const board = new StatusBoard({ clock: () => T0 });
+  const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]), now: T0, status: board });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  await f.drop(json(intakePauseRequest({ reason: 'planned switch' }, f.clock)), 'requests');
+  await f.drop(json({ contract: PAUSE_CONTRACT, reason: 'emergency stop' }), 'requests');
+  await f.drop(triggerBytes({ pr: 900, headSha: H(4) }));
+  assert.equal((await f.exec.tick()).state, 'PAUSED', 'PAUSE stays the stronger stop');
+  assert.equal(board.snapshot().paused, true);
+  assert.notEqual(board.snapshot().intakePause, null, 'both shown');
+  // an intake resume is no PAUSE resume
+  f.advance(MIN);
+  await f.drop(json(intakeResumeRequest({ reason: 'not a pause resume' }, f.clock)), 'requests');
+  assert.equal((await f.exec.tick()).state, 'PAUSED');
+  f.advance(MIN);
+  await f.drop(json(intakePauseRequest({ reason: 'hold again' }, f.clock)), 'requests');
+  await writeOwnerRequest(path.join(f.root, 'owner'), resumeRequest({ expectedPausedSha256: (await f.ledger.paused()).sha256, by: OWNER }), f.clock);
+  assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'INTAKE_PAUSED'], 'the Owner resume clears PAUSE, not the intake pause');
+  // the drain still ends the parked batch while the intake pause holds; the hold stays
+  f.advance(MIN);
+  await writeOwnerRequest(path.join(f.root, 'owner'), drainRequest({ reason: 'reinstall', by: OWNER }, f.clock), f.clock);
+  assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'INTAKE_PAUSED']);
+  assert.equal((await f.ledger.state(batchKey(subject()))).terminal.facts.failureCode, 'OWNER_ABORTED');
+  assert.equal((await f.ledger.open()).length, 0);
+  assert.equal(f.queue.row(900).state, 'QUEUED');
+});
+
+test('each holder lifts only its own hold; the Owner pause and the dual-active hold both have to end', async t => {
+  const f = await executorFixture(t, { now: T0 });
+  await f.drop(json(intakePauseRequest({ holder: 'owner', reason: 'planned switch' }, f.clock)), 'requests');
+  await f.drop(json(intakePauseRequest({ holder: 'dual-active', reason: 'two nodes on duty' }, f.clock)), 'requests');
+  await f.drop(triggerBytes());
+  assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'INTAKE_PAUSED']);
+  f.advance(MIN);
+  await f.drop(json(intakeResumeRequest({ holder: 'owner', reason: 'switch done' }, f.clock)), 'requests');
+  assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'INTAKE_PAUSED'], 'the Owner resume leaves the dual-active hold');
+  await f.drop(json(intakeResumeRequest({ holder: 'dual-active', reason: 'role lost' }, f.clock)), 'requests');
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  const types = await receiptTypes(f);
+  assert.deepEqual([types.filter(x => x === 'intake-paused').length, types.filter(x => x === 'intake-resumed').length], [2, 2]);
+});
+
+test('refused requests leave a receipt and change nothing; the requests are archived as rejected', async t => {
+  const f = await executorFixture(t, { now: T0 });
+  await f.drop(json(intakePauseRequest({ minutes: 60, reason: 'written long ago' }, () => T0 - 3 * 60 * MIN)), 'requests');
+  await f.drop(json({ ...intakePauseRequest({ reason: 'r' }, f.clock), minutes: 500 }), 'requests');
+  await f.drop(json({ ...intakeResumeRequest({ reason: 'r' }, f.clock), by: OWNER }), 'requests');
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.equal((await receiptTypes(f)).filter(x => x === 'intake-request-refused').length, 3);
+  assert.equal((await fs.readdir(path.join(f.root, 'state', 'requests-archive', 'rejected'))).length, 3);
+});
+
+test('an unreadable state holds (fail safe, two hours at most, with a receipt) and the Owner may lift it; an I/O error holds one tick', async t => {
+  const f = await executorFixture(t, { now: T0 });
+  await fs.writeFile(path.join(f.root, 'state', INTAKE_PAUSE_FILE), 'not json');
+  await f.drop(triggerBytes());
+  assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'INTAKE_PAUSED']);
+  assert.ok((await receiptTypes(f)).includes('intake-pause-unreadable'));
+  f.advance(MIN);
+  await f.drop(json(intakeResumeRequest({ holder: UNREADABLE_HOLDER, reason: 'looked at the kept copy' }, f.clock)), 'requests');
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  // an I/O error reading the state: no batch this tick, nothing else changes
+  const g = await executorFixture(t, { now: T0 });
+  g.exec.intakePause = { expired() { throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' }); } };
+  await g.drop(triggerBytes());
+  assert.deepEqual(pick(await g.exec.tick()), ['DEFERRED', 'INTAKE_PAUSE_UNCONFIRMED']);
+  assert.equal(g.engine.calls.length, 0);
+  g.exec.intakePause = null;
+  assert.equal((await g.exec.tick()).state, 'COMPLETED', 'read again the next tick');
+});
+
+test('status.json /3 carries the holds and the PR page says the queue waits for the intake pause', () => {
+  const now = T0;
+  const b = new StatusBoard({ clock: () => now });
+  b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, intakePause: { until: iso(now + 90 * MIN), holders: [{ holder: 'owner', since: iso(now), until: iso(now + 90 * MIN) }] } });
+  b.setPending([{ pr: 7, headSha: H(7), baseSha: BASE, eta: now + 20 * MIN }]);
+  const status = parseStatus(Buffer.from(JSON.stringify(b.snapshot())));
+  assert.deepEqual(status.intakePause, { until: now + 90 * MIN, holders: [{ holder: 'owner', since: now, until: now + 90 * MIN }] });
+  const page = prPage({ pull: { pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }, status, now });
+  assert.deepEqual(page, { state: 'pending', description: '排队第 1 位：暂停接新中，最晚 06:30Z 恢复' });
+  // a reader keeps a hold whose times it cannot read, and drops holder names that do not fit
+  const odd = parseStatus(Buffer.from(JSON.stringify({ ...b.snapshot(), intakePause: { until: 'later', holders: [{ holder: 'Owner!', until: 1 }, { holder: 'ok', since: null, until: null }] } })));
+  assert.deepEqual(odd.intakePause, { until: null, holders: [{ holder: 'ok', since: null, until: null }] });
+  assert.equal(parseStatus(Buffer.from(JSON.stringify({ ...b.snapshot(), intakePause: null }))).intakePause, null);
+  const { intakePause, ...without } = b.snapshot();
+  assert.throws(() => parseStatus(Buffer.from(JSON.stringify(without))), { code: 'STATUS_REFUSED' }, 'a /3 snapshot always has the key');
+});
+
+test('the Owner tool writes the requests into requests\\ (no elevation) and inspect shows the holds', async t => {
+  const f = await executorFixture(t, { now: T0 });
+  const file = await writeOwnerRequest(path.join(f.root, 'requests'), intakePauseRequest({ minutes: 45, reason: 'upgrade' }, f.clock), f.clock);
+  assert.equal(path.dirname(file), path.join(f.root, 'requests'));
+  await f.exec.tick();
+  const seen = await inspect({ ledger: f.ledger, receipts: f.receipts, intake: await readIntakePause(path.join(f.root, 'state'), f.clock) });
+  assert.deepEqual(seen.intakePause.view, { until: iso(T0 + 45 * MIN), holders: [{ holder: 'owner', since: iso(T0), until: iso(T0 + 45 * MIN) }] });
+  assert.equal(seen.paused, false, 'not a PAUSE');
+});
