@@ -7,12 +7,18 @@
 // sticky inside one batch (batch-claim-v2.mjs). `attempt` is part of the id (Owner decision
 // 1b5d3687): an automatic attempt 2 therefore has new job ids, new run directories and new effect
 // keys, and a settled or published job id is never run again.
+//
+// Contract /3 (quota phase 2 step 3b, design v0.5 §5.7): the identity also names the tested commit S
+// (`testSha`) next to the head H and the base T. In the merge train the front batch tests GitHub's test
+// merge of [T, H]; everywhere else, and in every batch until the train is wired (step 3c), S = H. The
+// module and its exports keep the "V2" (Source v2) names; only the contract string changed. The
+// subject keeps its fields: its `id` already binds S, so a result for one S never counts for another.
 import { createHash } from 'node:crypto';
 import { canonical, digest } from './proof.mjs';
 
-export const JOB_CONTRACT_V2 = 'clued.independent-ci.job/2';
-export const JOB_FIELDS_V2 = Object.freeze(['contract', 'id', 'repo', 'pr', 'headSha', 'baseSha', 'role', 'sourceManifestSha256', 'createdAt', 'attempt']);
-export const IDENTITY_V2 = Object.freeze(['repo', 'pr', 'headSha', 'baseSha', 'sourceManifestSha256', 'role', 'attempt']);
+export const JOB_CONTRACT_V2 = 'clued.independent-ci.job/3';
+export const JOB_FIELDS_V2 = Object.freeze(['contract', 'id', 'repo', 'pr', 'headSha', 'baseSha', 'testSha', 'role', 'sourceManifestSha256', 'createdAt', 'attempt']);
+export const IDENTITY_V2 = Object.freeze(['repo', 'pr', 'headSha', 'baseSha', 'testSha', 'sourceManifestSha256', 'role', 'attempt']);
 export const SUBJECT_V2 = Object.freeze(['id', 'repo', 'pr', 'headSha', 'baseSha', 'role', 'sourceManifestSha256', 'attempt']);
 // One automatic retry generation at most (attempt 2 only for a clean transient failure, see
 // independent-ci-resident-v1/src/attempts.mjs). Nothing ever creates attempt 3.
@@ -32,22 +38,23 @@ const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(
 const exact = (v, keys) => plain(v) && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
 const positive = v => Number.isSafeInteger(v) && v > 0;
 
-// The id is domain-separated from v1 by the contract string, so a v2 id can never equal a v1 id.
+// The id is domain-separated by the contract string, so a /3 id can never equal a v1 or /2 id.
 export function jobIdV2(job) {
   return createHash('sha256').update(JSON.stringify([JOB_CONTRACT_V2, ...IDENTITY_V2.map(k => job[k])])).digest('hex');
 }
 
 export function validateJobV2(job) {
   if (!exact(job, JOB_FIELDS_V2) || job.contract !== JOB_CONTRACT_V2 || !HASH.test(job.id ?? '') || !REPO.test(job.repo ?? '')
-    || !positive(job.pr) || !SHA.test(job.headSha ?? '') || !SHA.test(job.baseSha ?? '') || !ROLES_V2.includes(job.role)
+    || !positive(job.pr) || !SHA.test(job.headSha ?? '') || !SHA.test(job.baseSha ?? '') || !SHA.test(job.testSha ?? '') || !ROLES_V2.includes(job.role)
     || !HASH.test(job.sourceManifestSha256 ?? '') || typeof job.createdAt !== 'string' || !ISO.test(job.createdAt)
     || !Number.isFinite(Date.parse(job.createdAt)) || !positive(job.attempt) || job.attempt > MAX_ATTEMPT_V2
     || job.id !== jobIdV2(job)) fail('invalid_job_v2');
   return job;
 }
 
-export function makeJobV2({ repo, pr, headSha, baseSha, role, sourceManifestSha256, createdAt, attempt }) {
-  const job = { contract: JOB_CONTRACT_V2, id: null, repo, pr, headSha, baseSha, role, sourceManifestSha256, createdAt, attempt };
+// S defaults to H: only the train's front batch (step 3c) ever passes another testSha.
+export function makeJobV2({ repo, pr, headSha, baseSha, testSha = headSha, role, sourceManifestSha256, createdAt, attempt }) {
+  const job = { contract: JOB_CONTRACT_V2, id: null, repo, pr, headSha, baseSha, testSha, role, sourceManifestSha256, createdAt, attempt };
   job.id = jobIdV2(job);
   return validateJobV2(job);
 }
@@ -58,7 +65,7 @@ export const subjectOfV2 = job => Object.fromEntries(SUBJECT_V2.map(k => [k, job
 export function batchJobsV2(subject) {
   return Object.fromEntries(ROLES_V2.map(role => [role, makeJobV2({ ...subject, role })]));
 }
-export const sameBatchV2 = (a, b) => ['repo', 'pr', 'headSha', 'baseSha', 'sourceManifestSha256', 'attempt', 'createdAt'].every(k => a?.[k] === b?.[k]);
+export const sameBatchV2 = (a, b) => ['repo', 'pr', 'headSha', 'baseSha', 'testSha', 'sourceManifestSha256', 'attempt', 'createdAt'].every(k => a?.[k] === b?.[k]);
 // The batch claim of every job is recorded under its batch's work-admission job id (batch-claim-v2.mjs).
 export const batchRefV2 = job => jobIdV2({ ...job, role: 'work-admission' });
 

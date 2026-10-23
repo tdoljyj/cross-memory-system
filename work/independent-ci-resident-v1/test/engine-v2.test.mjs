@@ -1,4 +1,4 @@
-// The Windows engine against the Source v2 entry points (fixed argv, descriptor /2, refs gate, stage fact /2).
+// The Windows engine against the Source v2 entry points (fixed argv, descriptor /3, refs gate, stage fact /2).
 // The Source entries are faked at the runner boundary; the real ones are tested in their own suites.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +17,7 @@ const fact = (o = {}) => ({ contract: 'clued.independent-ci.resident-stage-fact/
 const SC_QC = 'BINARY_PATH_NAME   : "C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"\r\n        START_TYPE         : 3   DEMAND_START\r\n        SERVICE_START_NAME : .\\clued-control\r\n';
 const SC_Q = 'STATE              : 1  STOPPED\r\n        PID                : 0\r\n';
 
-async function engineFixture(t, { answers = {}, stdout = {} } = {}) {
+async function engineFixture(t, { answers = {}, stdout = {}, testSha = null } = {}) {
   const root = await tempRoot(t);
   const sourceRoot = path.join(root, 'source', 'e'.repeat(64));
   await fs.mkdir(path.join(sourceRoot, ...V2), { recursive: true });
@@ -30,7 +30,7 @@ async function engineFixture(t, { answers = {}, stdout = {} } = {}) {
     if (argv[1].endsWith('derive-batch.mjs')) {
       const id = argv[argv.indexOf('--batch-id') + 1];
       return { code: 0, stdout: JSON.stringify({ status: 'RESIDENT_BATCH_DERIVED', batchKey: KEY, batchId: id, packageSha256: 'c'.repeat(64), ciSourceManifestSha256: 'e'.repeat(64),
-        sourceCommit: 'd'.repeat(40), gitleaksTomlSha256: '9'.repeat(64), stages: rows }) };
+        sourceCommit: 'd'.repeat(40), gitleaksTomlSha256: '9'.repeat(64), testSha: testSha ?? JSON.parse(argv[argv.indexOf('--subject-json') + 1]).headSha, stages: rows }) };
     }
     if (argv[1].endsWith('invoke-stage.mjs')) return { code: 0, stdout: JSON.stringify(stdout[argv[argv.indexOf('--stage') + 1]] ?? fact()) };
     throw new Error('unexpected argv ' + argv.join(' '));
@@ -47,7 +47,7 @@ async function engineFixture(t, { answers = {}, stdout = {} } = {}) {
 const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 2 };
 const stages = validatePolicy(rawPolicy()).stages;
 
-test('derive passes the v2 subject (with createdAt) and writes the public descriptor /2', async t => {
+test('derive passes the v2 subject (with createdAt) and writes the public descriptor /3', async t => {
   const f = await engineFixture(t);
   const batch = await f.engine.derive(subject, KEY);
   const argv = f.runs[0];
@@ -56,8 +56,14 @@ test('derive passes the v2 subject (with createdAt) and writes the public descri
   assert.deepEqual(Object.keys(sent).sort(), ['attempt', 'baseSha', 'createdAt', 'headSha', 'pr', 'repo', 'sourceManifestSha256']);
   const d = JSON.parse(await fs.readFile(path.join(f.root, 'outbox', batch.batchId, 'descriptor.json'), 'utf8'));
   assert.equal(d.contract, DESCRIPTOR_CONTRACT);
+  // quota phase 2 step 3b: the descriptor names the tested commit, the head itself until step 3c
+  assert.equal(DESCRIPTOR_CONTRACT, 'clued.independent-ci.resident-batch-descriptor/3');
+  assert.deepEqual([d.headSha, d.testSha], [subject.headSha, subject.headSha]);
   assert.deepEqual([d.attempt, d.ciSourceManifestSha256, d.sourceCommit, d.gitleaksTomlSha256, d.linuxJobIds.length], [2, 'e'.repeat(64), 'd'.repeat(40), '9'.repeat(64), 3]);
   assert.equal(d.createdAt, sent.createdAt);
+  // the descriptor's S is the derivation's; a derivation that names another S is refused until step 3c
+  const other = await engineFixture(t, { testSha: '4'.repeat(40) });
+  await assert.rejects(other.engine.derive(subject, KEY), e => e.code === 'RESIDENT_DERIVATION_REFUSED');
 });
 
 test('stages run through node invoke-stage.mjs with fixed argv; the v2 fact is parsed', async t => {

@@ -6,8 +6,8 @@
 // complete Native admission before and after the GitHub read-back (publisher.mjs#consume).
 //
 // v2 has no installed per-batch job file: the batch is found from the batch-claim records stage 1 wrote
-// (create-only, controller-owned), and the control jobs are re-derived from their content (job/2 ids
-// exclude createdAt and the claim). Only clued-control on Windows ever reaches the installed path; any
+// (create-only, controller-owned), and the control jobs are re-derived from their content (job ids, contract
+// /3, exclude createdAt and the claim; until step 3c every batch tests S = H, which makeJobV2 defaults to). Only clued-control on Windows ever reaches the installed path; any
 // other caller is refused before a single file is opened.
 import fs from 'node:fs/promises';
 import os from 'node:os';

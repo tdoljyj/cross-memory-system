@@ -9,12 +9,15 @@
 // Contract /2 (phase 2, step 1: design v0.5 §4.10): `pending` is the run queue's view (queue.mjs#view: every row with
 // its state, reason, position, next try and an ESTIMATED start), plus the queue's generation, the breaker and the
 // notices the companion turns into notifications (one per key).
+// Contract /3 (primary/standby C6, DESIGN §20): `intakePause`, the intake pause's holds in force (null when none): the
+// latest end and each holder's name, start and end (intake-pause.mjs#view). No reason text: that comes from a user session.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CODE, HEX40, HEX64, canonicalJson, check, exactKeys, parseBoundedJson } from './canonical.mjs';
 import { readBounded } from './store.mjs';
+import { HOLDER, INTAKE_HOLDS_MAX } from './intake-pause.mjs';
 
-export const STATUS_CONTRACT = 'clued.independent-ci.resident-status/2';
+export const STATUS_CONTRACT = 'clued.independent-ci.resident-status/3';
 export const STATUS_FILE = 'status.json';
 export const STATUS_REFRESH_MS = 15_000;
 // The companion's reading: a status not rewritten for this long means the executor (or its service) stopped.
@@ -38,7 +41,7 @@ export class StatusBoard {
   constructor({ clock = Date.now, pid = process.pid } = {}) {
     this.clock = clock;
     this.pid = pid;
-    this.content = { executor: { state: 'STARTING', since: iso(clock()), reason: null }, halt: null, paused: false, backfill: { complete: false, published: null, unreadable: null },
+    this.content = { executor: { state: 'STARTING', since: iso(clock()), reason: null }, halt: null, paused: false, intakePause: null, backfill: { complete: false, published: null, unreadable: null },
       current: null, pending: [], recent: [], limits: null, queue: null, breaker: null, notices: [] };
     this.changedAt = iso(clock());
   }
@@ -123,7 +126,7 @@ export function startStatusTimer({ board, file, intervalMs = STATUS_REFRESH_MS, 
 }
 
 // ---- the companion's reading (untrusted bytes in the resident's state, read-only for the Owner) ----
-const TOP = ['contract', 'writtenAt', 'changedAt', 'pid', 'executor', 'halt', 'paused', 'backfill', 'current', 'pending', 'recent', 'limits', 'queue', 'breaker', 'notices'];
+const TOP = ['contract', 'writtenAt', 'changedAt', 'pid', 'executor', 'halt', 'paused', 'intakePause', 'backfill', 'current', 'pending', 'recent', 'limits', 'queue', 'breaker', 'notices'];
 const ms = v => (typeof v === 'string' && Number.isFinite(Date.parse(v))) ? Date.parse(v) : (Number.isSafeInteger(v) && v > 0 ? v : null);
 export function parseStatus(bytes) {
   const v = parseBoundedJson(bytes, STATUS_MAX_BYTES, 'STATUS_REFUSED');
@@ -136,6 +139,10 @@ export function parseStatus(bytes) {
     executor: { state: v.executor.state, since: Date.parse(v.executor.since) || null, reason: typeof v.executor.reason === 'string' && CODE.test(v.executor.reason) ? v.executor.reason : null },
     halt: v.halt && typeof v.halt.code === 'string' && CODE.test(v.halt.code) ? { code: v.halt.code, at: Date.parse(v.halt.at) || null } : null,
     paused: v.paused === true,
+    // A hold whose end the reader cannot read is still a hold (the companion then shows it without an end).
+    intakePause: v.intakePause && typeof v.intakePause === 'object' && !Array.isArray(v.intakePause)
+      ? { until: ms(v.intakePause.until), holders: Array.isArray(v.intakePause.holders) ? v.intakePause.holders.filter(h => typeof h?.holder === 'string' && HOLDER.test(h.holder))
+        .slice(0, INTAKE_HOLDS_MAX).map(h => ({ holder: h.holder, since: ms(h.since), until: ms(h.until) })) : [] } : null,
     backfill: { complete: v.backfill?.complete === true },
     current: v.current && Number.isSafeInteger(v.current.pr) && head(v.current.headSha)
       ? { pr: v.current.pr, headSha: v.current.headSha, attempt: v.current.attempt, stage: Number.isSafeInteger(v.current.stage) ? v.current.stage : null, since: Date.parse(v.current.since) || null } : null,

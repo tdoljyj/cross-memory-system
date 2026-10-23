@@ -124,6 +124,8 @@ test('derive-batch: deterministic eight sealed stages, jobs carry attempt, key a
   const b = deriveBatch({ recordDocs: docs, subject: structuredClone(s), batchKey: key, batchId: id, now: NOW + 1000 });
   assert.deepEqual(a.files, b.files);
   assert.equal(a.result.status, 'RESIDENT_BATCH_DERIVED');
+  // job contract /3 (3b review r2 m1): the result names the tested commit the engine copies into the descriptor (S = H)
+  assert.equal(a.result.testSha, s.headSha);
   assert.equal(a.result.stages.length, 8);
   assert.deepEqual(a.result.stages.map(x => x.entryRole), FORMAL_STAGES_V2.map(x => x.entryRole));
   assert.equal(a.result.stages[1].jobId, a.result.stages[2].jobId); // execution and publication share the job

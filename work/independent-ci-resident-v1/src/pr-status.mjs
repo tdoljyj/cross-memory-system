@@ -107,6 +107,9 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     }
     if (row.state === 'WAITING') return { state: 'pending', description: clip(`${WAIT_TEXT[row.deferred] ?? `等待中（${code}）`}：${at}自动重试，批准或修正后编辑 PR 可提前`) };
     if (row.state === 'BACKOFF') return { state: 'pending', description: clip(`未准入或未执行（${code}）：${at}自动重试（第 ${row.level} 次），修正后编辑 PR 可提前`) };
+    // The intake pause (primary/standby C6): no new batch starts until it ends (the executor's first gate, before the
+    // parking places and the breaker); no estimate that assumes a free executor.
+    if (status.intakePause) return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：暂停接新中${status.intakePause.until ? `，最晚 ${hhmm(status.intakePause.until)} 恢复` : ''}`) };
     if (status.breaker?.state === 'open') return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：执行器熔断中${status.breaker.nextTrialAt ? `，约 ${hhmm(status.breaker.nextTrialAt)} 试跑` : ''}`) };
     // No new batch while the parking places are full (phase 2, step 2; review m8): no estimate that assumes a free executor.
     if (status.queue?.parkingFull === true) return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：停靠的批次已满，等它们结束`) };
