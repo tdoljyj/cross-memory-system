@@ -10,7 +10,11 @@ import { CODE, HEX40, HEX64, UUID, canonicalJson, check, exactKeys, isoNow, pars
 import { ensureDir, exists, readBounded, writeNew } from './store.mjs';
 
 export const REQUEST_CONTRACT = 'clued.independent-ci.resident-companion-request/1';
-export const RESPONSE_CONTRACT = 'clued.independent-ci.resident-companion-response/1';
+// /2 (DESIGN §22, Task 8e1f07d3): every answer also says whether a child of this request outlived its time limit and what
+// the companion's job host found after ending it: jobTree null (none did), 'zero' (its job was terminated and no process of
+// it was left) or 'unconfirmed'. A fact for the record only; no proof of either host rests on the companion's own tree.
+export const RESPONSE_CONTRACT = 'clued.independent-ci.resident-companion-response/2';
+export const JOB_TREES = Object.freeze(['zero', 'unconfirmed']);
 export const HEARTBEAT_CONTRACT = 'clued.independent-ci.resident-companion-heartbeat/1';
 // Owner abort (DESIGN §6.5): the service asks the companion to stop working on ONE pending request (today only the
 // bridge pump of a stage being stopped). Create-only <requestId>.cancel.json next to the request; pending() never
@@ -60,7 +64,7 @@ export function validateRequest(v) {
 
 const PROOF_KEYS = ['linuxUnitsInactive', 'containersZero'];
 export function validateResponse(v, request) {
-  exactKeys(v, ['contract', 'requestId', 'kind', 'ok', 'code', 'proof', 'directory', 'verified', 'usage', 'pull', 'observedAt'], 'MAILBOX_RESPONSE_KEYS_REFUSED');
+  exactKeys(v, ['contract', 'requestId', 'kind', 'ok', 'code', 'proof', 'directory', 'verified', 'usage', 'pull', 'jobTree', 'observedAt'], 'MAILBOX_RESPONSE_KEYS_REFUSED');
   check(v.contract === RESPONSE_CONTRACT && v.requestId === request.requestId && v.kind === request.kind, 'MAILBOX_RESPONSE_IDENTITY_REFUSED');
   check(typeof v.ok === 'boolean' && (v.code === null || (typeof v.code === 'string' && CODE.test(v.code))), 'MAILBOX_RESPONSE_STATUS_REFUSED');
   check(v.proof === null || (exactKeys(v.proof, PROOF_KEYS, 'MAILBOX_RESPONSE_PROOF_REFUSED'), PROOF_KEYS.every(k => typeof v.proof[k] === 'boolean')), 'MAILBOX_RESPONSE_PROOF_REFUSED');
@@ -69,6 +73,7 @@ export function validateResponse(v, request) {
   check(v.usage === null || (exactKeys(v.usage, ['bytes', 'directories'], 'MAILBOX_RESPONSE_USAGE_REFUSED'), Number.isSafeInteger(v.usage.bytes) && v.usage.bytes >= 0 && Number.isSafeInteger(v.usage.directories) && v.usage.directories >= 0), 'MAILBOX_RESPONSE_USAGE_REFUSED');
   check(v.pull === null || (request.kind === 'pr-head' && (exactKeys(v.pull, ['number', 'state', 'headSha'], 'MAILBOX_RESPONSE_PULL_REFUSED'),
     v.pull.number === request.pr && PULL_STATES.includes(v.pull.state) && HEX40.test(v.pull.headSha ?? ''))), 'MAILBOX_RESPONSE_PULL_REFUSED');
+  check(v.jobTree === null || JOB_TREES.includes(v.jobTree), 'MAILBOX_RESPONSE_JOB_TREE_REFUSED');
   return v;
 }
 
@@ -158,7 +163,7 @@ export class Mailbox {
   }
 
   async respond(request, fields) {
-    const response = validateResponse({ contract: RESPONSE_CONTRACT, requestId: request.requestId, kind: request.kind, ok: false, code: null, proof: null, directory: null, verified: null, usage: null, pull: null, observedAt: isoNow(this.clock), ...fields }, request);
+    const response = validateResponse({ contract: RESPONSE_CONTRACT, requestId: request.requestId, kind: request.kind, ok: false, code: null, proof: null, directory: null, verified: null, usage: null, pull: null, jobTree: null, observedAt: isoNow(this.clock), ...fields }, request);
     await writeNew(path.join(this.responses, `${request.requestId}.json`), response);
     return response;
   }

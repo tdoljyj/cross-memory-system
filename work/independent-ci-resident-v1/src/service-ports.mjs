@@ -15,9 +15,11 @@ export function mailboxCompanion(mailbox, sleep) {
     heartbeat: () => mailbox.heartbeat(),
     // The newest companion hint for this head (bytes; the executor parses), or null. Never authority.
     async hostedHint(subject) { try { return await mailbox.latestHint(subject.pr, subject.headSha); } catch { return null; } },
+    // jobTree (DESIGN §22): what the companion's job host found after a bundle child outlived its limit; null = none did,
+    // or no answer came. Recorded with a stage-0 failure; the release never waits for it.
     async buildBundle(batch) {
       const r = await ask('build-bundle', { batchId: batch.batchId });
-      return { ok: r?.ok === true, code: r?.code ?? 'BUNDLE_UNAVAILABLE' };
+      return { ok: r?.ok === true, code: r?.code ?? 'BUNDLE_UNAVAILABLE', jobTree: r?.jobTree ?? null };
     },
     async prepareWorkspaces(batch) {
       const r = await ask('prepare-workspaces', { batchId: batch.batchId });

@@ -78,12 +78,26 @@ export function parsePull(stdout, pr) {
   return { number: pr, state: v.merged ? 'merged' : v.state, headSha: v.head };
 }
 
+// DESIGN §22: the answer's jobTree from what the job host said about each child of one request that did not simply end
+// on its own (runner.mjs `tree`): none -> null; all drained -> 'zero'; any other -> 'unconfirmed'.
+export function jobTreeOf(trees) {
+  if (trees.length === 0) return null;
+  return trees.every(t => t === 'zero') ? 'zero' : 'unconfirmed';
+}
+
 export class Companion {
-  // ports: { cfg, mailbox, run(argv,{timeoutMs}) -> {code, stdout, stderr}, fileExists(path), sleep(ms), clock(),
+  // ports: { cfg, mailbox, run(argv,{timeoutMs}) -> {code, stdout, stderr, timedOut?, tree?}, fileExists(path), sleep(ms), clock(),
   //   readPull(pr) -> argv (pr-head; without it the companion answers PR_HEAD_UNAVAILABLE) }
   constructor(ports) {
     Object.assign(this, ports);
     this.a = argv(ports.cfg);
+    // Every child of the request in hand that the job host had to end (or could not show ended) is noted for its answer.
+    this.trees = [];
+    this.run = async (a, o) => {
+      const r = await ports.run(a, o);
+      if (r?.tree === 'zero' || r?.tree === 'unconfirmed') this.trees.push(r.tree);
+      return r;
+    };
   }
 
   async quiescence(batchId) {
@@ -247,8 +261,10 @@ export class Companion {
       if (request.refused) continue; // unreadable requests are left for the service's own audit
       if (this.clock() >= Date.parse(request.deadline)) { await this.mailbox.respond(request, { ok: false, code: 'COMPANION_REQUEST_EXPIRED' }); continue; }
       let answer;
+      this.trees = [];
       try { answer = await this.handle(request); } catch { answer = { ok: false, code: 'COMPANION_HANDLER_UNCONFIRMED' }; }
-      await this.mailbox.respond(request, { ok: answer.ok === true, code: answer.ok ? null : (answer.code ?? 'COMPANION_HANDLER_UNCONFIRMED'), proof: answer.proof ?? null, directory: answer.directory ?? null, verified: answer.verified ?? null, usage: answer.usage ?? null, pull: answer.pull ?? null });
+      await this.mailbox.respond(request, { ok: answer.ok === true, code: answer.ok ? null : (answer.code ?? 'COMPANION_HANDLER_UNCONFIRMED'), proof: answer.proof ?? null, directory: answer.directory ?? null, verified: answer.verified ?? null, usage: answer.usage ?? null, pull: answer.pull ?? null,
+        jobTree: jobTreeOf(this.trees) });
     }
   }
 }
