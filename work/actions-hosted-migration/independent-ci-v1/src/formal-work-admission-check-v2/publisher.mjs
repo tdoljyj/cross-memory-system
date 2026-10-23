@@ -18,10 +18,20 @@
 // changed or closed, too many files, a removed or invalid policy file, a protected change not up to date with main),
 // which would fail the same way again.
 // Results also carry the scheduling facts Native reported (ci_retry_after, merge-queue entry) when it was reached.
+//
+// Resident primary/standby design v0.4 §6.2 (C4, Task c2af8d17): before Native is asked and before this check is
+// published, the head's complete check-run inventory of this App is read on GitHub (published-on-github-v2.mjs). A head
+// that already carries a role or control check, published by another node, another Source install or another batch,
+// ends with HEAD_PUBLISHED_ON_GITHUB: nothing evaluated, nothing published, never reaching the Task's CI meter, never safe
+// to re-run (a new commit runs the PR again). So does this very job's own kooyumi-work-admission (same job id and attempt)
+// published by another node or install: a node taking over after the active one ran stage 1 would otherwise post a second
+// check of the same identity and HALT on the read-back. A batch that already recorded its claim is this node's own and
+// keeps its path. A read that is not complete refuses (fail closed).
 import { randomUUID } from 'node:crypto';
 import { digest } from '../proof.mjs';
 import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, MAX_ATTEMPT_V2 } from '../job-v2.mjs';
 import { fullAdmissionFailureV2, admittedFactsMatchJobV2 } from '../full-admission-v2.mjs';
+import { HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, readPublishedChecks } from '../published-on-github-v2.mjs';
 
 export const ROLE = 'work-admission', CHECK_NAME = 'kooyumi-work-admission', APP_ID = 5368905, REPO = 'tdoljyj/cross-memory-system';
 const DEFINITION = Object.freeze({ name: CHECK_NAME, appId: APP_ID });
@@ -122,6 +132,15 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         key = admissionEffectKeyV2(ACTION, job, claimed, DEFINITION); externalId = admissionExternalIdV2(PREFIX, job, claimed);
         previous = await journal.read(key);
         if (previous && previous.state !== 'settled') return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
+      } else {
+        // C4: GitHub is the shared record of what was published on this head, by any node or install.
+        step = 'published-on-github';
+        assertLive();
+        const sameJob = `${PREFIX}:v2:${job.id}:a${job.attempt}:`;
+        const published = [...new Set((await readPublishedChecks(github, job.headSha, APP_ID))
+          .filter(c => PUBLISHED_ROLE_CHECK_NAMES.includes(c.name) || (c.name === CHECK_NAME && typeof c.external_id === 'string' && c.external_id.startsWith(sameJob)))
+          .map(c => c.name))].sort();
+        if (published.length) throw Object.assign(new Error(HEAD_PUBLISHED_ON_GITHUB), { code: HEAD_PUBLISHED_ON_GITHUB, publishedChecks: published });
       }
       step = 'boundary';
       const evaluated = await evaluate(job, claimed, facts => { scheduling = facts; });
@@ -145,12 +164,13 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         try {
           const diag = digest({ action: 'native-work-admission-blocked/2', jobId: job.id, evaluationRef: randomUUID() });
           await journal.begin(diag, { subject: subjectOfV2(job), definition: DEFINITION, observationKind: 'blocked-native-admission-control', diagnosticOnly: true });
-          await journal.transition(diag, 'intent', 'not_sent', { reason: safe(e), ...(diagnosticOf(e) ? { admissionDiagnostic: diagnosticOf(e) } : {}) });
+          await journal.transition(diag, 'intent', 'not_sent', { reason: safe(e), ...(diagnosticOf(e) ? { admissionDiagnostic: diagnosticOf(e) } : {}),
+            ...(e?.publishedChecks ? { publishedChecks: e.publishedChecks } : {}) });
         } catch { /* diagnostic only */ }
       }
       const reason = safe(e), admissionDiagnostic = diagnosticOf(e);
-      return { status: 'BLOCKED', reason, ...(admissionDiagnostic ? { admissionDiagnostic } : {}), sideEffects: 0, productionAuthorized: false,
-        safeToRerun: step === 'boundary' && claimed === null && !deterministicPrFault(reason, admissionDiagnostic), scheduling };
+      return { status: 'BLOCKED', reason, ...(admissionDiagnostic ? { admissionDiagnostic } : {}), ...(e?.publishedChecks ? { publishedChecks: e.publishedChecks } : {}),
+        sideEffects: 0, productionAuthorized: false, safeToRerun: step === 'boundary' && claimed === null && !deterministicPrFault(reason, admissionDiagnostic), scheduling };
     }
     let phase = 'intent', sent = false, known = null, sideEffects = 0;
     try {
