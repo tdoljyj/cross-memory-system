@@ -207,6 +207,8 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     }
   }
   // C4: this App's check of the job's name is on GitHub although this journal has no entry for it under the batch claim.
+  // It looks at this job's own entry only: a direct publishOne of one half does not see the other half's unsettled entry;
+  // publishPair, the stage-8 path, checks both halves' entries before it calls this.
   async function onGithubOnly(job) {
     if (await journal.read(admissionEffectKeyV2(ACTION, job, batchClaim, definitionFor(job)))) return false;
     assertLive();
