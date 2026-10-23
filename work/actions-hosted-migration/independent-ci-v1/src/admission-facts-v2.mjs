@@ -88,11 +88,11 @@ export function admittedFactsMatchJobV2(facts, job, now, { batchClaim = null } =
 // Windows issuer issued that response, like the issue's own admission (protocol.mjs validateResponse); the response
 // then only has to arrive inside its own window. A relay call that took 30 s (PR #915 stage 4, 2026-10-23) refused
 // a response the issuer had answered in 10 s. The Linux worker notes the issuance and expiry of exactly the facts
-// object it hands an adapter; while that response is valid, the 30 s bound below is measured from its issuance.
-// Facts that did not come out of a validated response (every Windows caller) keep `now`.
+// object it hands an adapter; while that response is valid, and never past the claim, the 30 s bound below is measured
+// from its issuance. Facts that did not come out of a validated response (every Windows caller) keep `now`.
 const bridgeResponseTimes = new WeakMap();
 export function noteBridgeResponseTimes(facts, response) {
-  const issuedAt = at(response?.issuedAt), expiresAt = at(response?.expiresAt);
+  const issuedAt = at(response?.issuedAt), expiresAt = Math.min(at(response?.expiresAt), at(facts?.claimExpiresAt));
   if (plain(facts) && Number.isSafeInteger(issuedAt) && Number.isSafeInteger(expiresAt) && issuedAt < expiresAt) bridgeResponseTimes.set(facts, { issuedAt, expiresAt });
   return facts;
 }

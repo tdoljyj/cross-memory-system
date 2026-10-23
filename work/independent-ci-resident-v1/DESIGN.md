@@ -721,11 +721,17 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 **改动**：
 
 - 回调 response 里的准入按签出时刻判新鲜，和 issue 一样（`CI/worker/protected-job-bridge-v4/protocol.mjs#validateResponse`）：签出时准入不超过 30 秒；response 只要在自己的窗口内到达（不晚于本轮 challenge 的截止，最多 120 秒）；claim 在到达时仍有效（response 的 `expiresAt` 不晚于 `claimExpiresAt`，且晚于到达时刻）。
-- Linux 适配器对每轮回调结果自己的复核（`validateFormalAdmissionV2`）也一样：worker 把每个 response 的签出时间和过期时间记在它交给适配器的那份准入事实上（`linux-worker.mjs#callbackValue`、`admission-facts-v2.mjs#noteBridgeResponseTimes`）。在这个 response 有效期内，30 秒从签出时刻算；过了有效期，或者不是从回调来的事实，照旧从当前时刻算。Windows 侧的调用方从不登记，行为不变。
-- remote-refs 回调的 refs 快照仍按到达时刻判 30 秒，不在这次决定范围内。
+- Linux 适配器对每轮回调结果自己的复核（`validateFormalAdmissionV2`）也一样：worker 把每个 response 的签出时间和过期时间记在它交给适配器的那份准入事实上（`linux-worker.mjs#callbackValue`、`admission-facts-v2.mjs#noteBridgeResponseTimes`）。在这个 response 有效期内、且不晚于 claim 到期，30 秒从签出时刻算；过了这个时间，或者不是从回调来的事实，照旧从当前时刻算。适配器先校验端口交来的那个对象，再克隆；克隆出的对象不带登记。Windows 侧的调用方从不登记，行为不变。
+- 所以 Linux 侧用上一份准入时，它最多比 `observedAt` 晚约 150 秒（签出前 30 秒，加一个回调窗口），以前是 30 秒。
+- remote-refs 回调的 refs 快照仍按到达时刻判 30 秒，不在这次决定范围内。gitleaks 的 remote-refs 一轮走的是同样的搬运，变慢时仍会被拒（那一轮在准备之前，所以以干净的 `blocked` 结束，#908 就是这样）。
 - companion 每次搬运调用最多等一个回调窗口（`RELAY_TIMEOUT_MS` = 120 秒），不再固定 40 秒。Runner 从不杀子进程，提前放弃并不能腾出 Runner，只会让泵以没用的答复结束。Owner 中止时，正在进行的那次调用最多多等这么久。
+- relay-public.ps1 等 wsl 子进程的上限从 30 秒改为 90 秒。它的 `finally` 本来就会一直等到子进程结束，这个上限只决定一个慢了、但已经做完的子进程算不算成功。以前超过 30 秒就是 `UNCERTAIN_LOCKS_RETAINED_NO_RETRY`，companion 照样报 `RELAY_REFUSED_NO_RETRY`。
+- 生效要重装两侧：桥 v4 的文件按字节受理（relay-public.ps1 每次搬运前逐字节核对 manifest），companion 配置里的 `bridgeManifestSha256` 也随之更新。
 - 不变：每轮仍重新做完整准入；绑定 nonce、序号与批次 claim 代际；发布阶段（3、5、7、8）自己再做完整准入，已发布的检查不重复、不伪造。
-- 仍未处理（后续）：泵在扫描执行段停下、companion 已给出 Linux 静止证明时，常驻侧要等签发方到期才 UNCERTAIN→HALT，应尽早停下签发方并干净结束。
+- 仍未处理（后续）：
+  - 泵在扫描执行段停下、companion 已给出 Linux 静止证明时，常驻侧要等签发方到期才 UNCERTAIN→HALT，应尽早停下签发方并干净结束。
+  - 搬运慢在哪一步仍不知道：relay 的输出（`status`、`failureCode`）没有留下来，下次出事故时无从查起。
+  - `windows-issuer.mjs` 里“迟到后再等两个窗口”的说明，假设的是一次 ReceiveBlocked 很快；搬运调用长到接近 120 秒时，这两个窗口可能不够用。
 
 ---
 
@@ -905,7 +911,7 @@ v0.8 补充（2026-10-21，Owner 中止 §6.5，基于 main `8c2bfdcc`，推送�
   - 静止证明不成立时 HALT，之后照常复位；有界复查内静止也算数；停下的段结局不干净时 HALT；停止没送达、入口没写结局时 HALT；HALT 时中止不清 HALT；tick 开始时接受到一半失败，当场 HALT，不再启动别的批次；接受回执写失败时照样请求停止；中止中途重启以 `OWNER_ABORT_INTERRUPTED` 关闭并 HALT；
   - 引擎只把停止请求绑定在这一次交换上，还没调用的段不调用；先写代理停止，`STOP_SENT` 之后才取消泵，取消失败不挡代理停止；泵被取消时跳过 blocked 转交，取消随 issue 转交一起到达时不启动 worker。
   - 第二轮复审之后：接受到一半失败、以未知关闭也失败时，闸门照样不跑别的批次，回执记为 `owner-abort-unconfirmed` 而不是拒绝；已接受过的中止再请求被拒；tick 开始时 Source 漂移就拒绝；段运行中写出读不全的 `80-owner-abort` 时，段结束后 HALT，下一 tick 隔离，复位以 `rearm-quarantine` 归档；停止没送达时，这一段的调用一返回就取消泵，不再等泵的截止时间；段结束后补写“已请求停止”的回执；中止的未知结局带上安全点和请求摘要。
-  - bootstrap 安装源复审之后：relay 调用失败时取消已经写好，泵只等完那一次调用（最多 40 秒）就以 `COMPANION_PUMP_CANCELLED` 结束，不做 blocked 转交，也不再调 relay（ReceiveResult、ReceiveChallenge、ReceiveBlocked，超时和被拒各一）；blocked 转交途中收到取消，在下一个等待步骤结束；取消时已经写好的 response 不再转发。之后的复审又补了：列目录、或 relay 回答“没有”之后，不再发起下一次 relay 调用（没有列表时、主循环里、blocked 转交里各一）；失败的 SendIssue、blocked 转交自己被拒的 ReceiveBlocked 也回复 `COMPANION_PUMP_CANCELLED`；读不出取消文件时，泵和没有中止时完全一样。
+  - bootstrap 安装源复审之后：relay 调用失败时取消已经写好，泵只等完那一次调用（当时最多 40 秒，§7.9 起最多 120 秒）就以 `COMPANION_PUMP_CANCELLED` 结束，不做 blocked 转交，也不再调 relay（ReceiveResult、ReceiveChallenge、ReceiveBlocked，超时和被拒各一）；blocked 转交途中收到取消，在下一个等待步骤结束；取消时已经写好的 response 不再转发。之后的复审又补了：列目录、或 relay 回答“没有”之后，不再发起下一次 relay 调用（没有列表时、主循环里、blocked 转交里各一）；失败的 SendIssue、blocked 转交自己被拒的 ReceiveBlocked 也回复 `COMPANION_PUMP_CANCELLED`；读不出取消文件时，泵和没有中止时完全一样。
   - 推送前的最终核对之后：服务记下请求之前就死了、恢复关闭批次之后再读到这个请求，回执记为 `owner-abort-unconfirmed` 而不是拒绝；`FAILED_CLEAN` 已写、`batch-terminal` 回执写失败时不记成未确认；tick 开始时接受到一半失败，汇总回执是 `owner-request`（`HALTED`），不是拒绝。
 - 常驻层 Python **25/25**（在 Git Bash 里运行；在 PowerShell 里有 3 个 Linux 安装器用例因为解析到另一个 `/bin/bash` 而以 127 失败，与本次改动无关）；`node drill/offline-drill.mjs` **37/37**（新增 2 步：第 2 段卡住时 Owner 中止，之后这个 head 不再运行）。
 - `windows/test-resident-windows.ps1` **71 条**断言，其中 C# 纯逻辑 **28 条**（新增 18 条：停止请求只认这一次交换和扫描签发段，`StopRequest.Decide` 的每种状态）；`SwapBroker.cs` 编译通过。

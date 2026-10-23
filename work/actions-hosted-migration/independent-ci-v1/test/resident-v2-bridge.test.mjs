@@ -127,6 +127,13 @@ test('protocol v4: a callback response is fresh at its issuance and only has to 
   assert.ok(Date.parse(r2.expiresAt) <= t + 20_000);
   assert.ok(validateResponse(issue, ch, decode(encode(r2)), t + 19_000));
   assert.throws(() => validateResponse(issue, ch, decode(encode(r2)), t + 25_000), { code: 'BRIDGE_RESPONSE_EXPIRED' });
+  // A response window past the claim is never issued, and a forged one is refused on arrival.
+  const shortFacts = admittedFacts(job, short, PACKET, { batchClaim: c, observedAt: t + 10_000 });
+  assert.throws(() => makeResponse(issue, ch, shortFacts, null, { now: t + 10_500, expiresAt: iso(t + 60_000) }), { code: 'BRIDGE_RESPONSE_ADMISSION_TIME_REQUIRED' });
+  const stretched = { ...decode(encode(r2)), expiresAt: iso(t + 60_000) };
+  assert.throws(() => validateResponse(issue, ch, stretched, t + 25_000), { code: 'BRIDGE_RESPONSE_ADMISSION_TIME_REQUIRED' });
+  // Noted facts never get the issuance time past their claim, whatever the response window says.
+  assert.throws(() => validateFormalAdmissionV2(job, callbackValue('admission', stretched), t + 25_000, generation), { code: 'FRESH_COMPLETE_NATIVE_ADMISSION_REQUIRED' });
   // remote-refs responses are unchanged: their refs snapshot is measured from the arrival.
   const refsCh = makeChallenge(gissue, 'remote-refs', 1, { now: t }), refsResponse = makeResponse(gissue, refsCh, null, refsSnapshot(t + 10_000), { now: t + 10_500 });
   assert.ok(validateResponse(gissue, refsCh, decode(encode(refsResponse)), t + 10_500 + 15_000));
