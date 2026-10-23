@@ -355,15 +355,13 @@ SCOPE_VALUE = re.compile(r"global|project:[0-9a-fA-F-]{36}")
 HEREDOC_BODY = re.compile(r"(?<!<)<<(?!<)(-?)[ \t]*(['\"]?)(\w+)\2([^\n]*)\n(.*?)^[ \t]*\3[ \t]*$",
                           re.MULTILINE | re.DOTALL)
 LIFTED = re.compile(r'"?\$\(\s*cat\s+@@heredoc(\d+)@@\s*\)"?')
-# A backslash-newline joins two lines before the shell splits words.
-LINE_CONTINUATION = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")
 REPOSITORY_NAME = "cross-memory-system"
-# Steps that leave HEAD alone. After any other step (a merge, a script, gh pr checkout)
-# HEAD is not the commit the hook can read before the call runs, so a later push is not read.
+# Steps that leave every branch where it is. After any other step (a merge, a script, gh pr
+# checkout, a command substitution) a branch may have moved, so a later push is not read.
 STILL_HEAD = {"cd", "echo", "printf", "true", ":", "ls", "pwd", "cat", "grep", "rg", "head", "tail", "wc", "test",
               "[", "sleep", "date"}
 STILL_HEAD_GIT = {"status", "add", "fetch", "log", "diff", "show", "rev-parse", "remote", "config", "ls-remote",
-                  "ls-files", "merge-base", "describe", "rm", "mv", "restore", "tag", "branch", "push"}
+                  "ls-files", "merge-base", "describe", "rm", "mv", "restore", "tag", "push"}
 PUSH_VALUE_OPTIONS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
 PUSH_NOT_HEADS = {"--all", "--mirror", "--tags", "--delete", "--prune"}
 # git commit options that take the message from elsewhere or let an editor change it.
@@ -538,6 +536,25 @@ def lift_heredocs(command: str) -> tuple[str, list[str | None]]:
     return HEREDOC_BODY.sub(lift, command), bodies
 
 
+def join_lines(text: str) -> str:
+    """The text with each backslash-newline removed, as the shell does outside single quotes."""
+    out, quote, i = [], "", 0
+    while i < len(text):
+        char = text[i]
+        if quote == "'":
+            quote = "" if char == "'" else quote
+        elif char == "\\":
+            if text[i + 1:i + 2] != "\n":
+                out.append(text[i:i + 2])
+            i += 2
+            continue
+        elif char in "'\"" and quote in ("", char):
+            quote = "" if quote else char
+        out.append(char)
+        i += 1
+    return "".join(out)
+
+
 def word_text(text: str, word: tuple, bodies: list[str | None]) -> str | None:
     """The argument a shell passes for a word, or None when only running something would tell."""
     start, end, plain, quotes = word
@@ -707,7 +724,7 @@ def bash_publish_texts(command: str, cwd: Path | None) -> list[tuple[str, str, s
     a step that may move HEAD) is skipped.
     """
     text, bodies = lift_heredocs(command)
-    text = LINE_CONTINUATION.sub(r"\1", text)
+    text = join_lines(text)
     segments = shell_segments(text)
     if segments is None:
         return []
@@ -715,8 +732,11 @@ def bash_publish_texts(command: str, cwd: Path | None) -> list[tuple[str, str, s
     moved, pending = False, None  # a step before the push may have moved HEAD; a git commit's message
     for words, _ in segments:
         head, index = command_head(text, words)
+        substitutes = any("$(" in text[start:end] or "`" in text[start:end] for start, end, _, _ in words)
         if head is None and index >= len(words):
-            continue  # nothing, or assignments only
+            if substitutes:  # an assignment that runs a command
+                moved, pending = True, None
+            continue
         values = [word_text(text, word, bodies) for word in words[index + 1:]]
         sub, args, where = git_invocation(values, cwd) if head == "git" else (None, [], cwd)
         if head == "cd":
@@ -745,7 +765,8 @@ def bash_publish_texts(command: str, cwd: Path | None) -> list[tuple[str, str, s
             message = head_message(cwd, branch) if values[1] == "create" and not moved and branch else None
             if message is not None:
                 found.append(("commit", f"The head commit of {branch}", message))
-        elif head not in STILL_HEAD and not (head == "git" and sub in STILL_HEAD_GIT):
+        elif substitutes or not (head in STILL_HEAD or (head == "git" and sub in STILL_HEAD_GIT and not (
+                sub == "fetch" and any(arg is None or ":" in arg for arg in args)))):
             moved, pending = True, None
     return found
 

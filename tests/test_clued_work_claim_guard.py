@@ -962,12 +962,17 @@ class PublishTrailerTest(unittest.TestCase):
                                      f"git --no-pager commit -m {good} && git push",
                                      f"git -C . commit -m {good} && git push origin HEAD",
                                      "gh pr checkout 5 && git push", "./scripts/sync.sh && git push",
-                                     "git -C ../other commit -m x && git push")):
+                                     "git -C ../other commit -m x && git push",
+                                     f'echo "$(git commit --allow-empty -m {good})" && git push',
+                                     f"OUT=$(git commit --allow-empty -m {good}) && git push",
+                                     "git branch -f work HEAD && git push origin work",
+                                     "git fetch origin work:work && git push origin work",
+                                     f"git commit --allow-empty -m 'Fix \\\n{CLAIM_LINE}\n{SCOPE_LINE}' && git push")):
             with self.subTest(command=command):
                 result = self.bash(command, session=f"moved-{n}")
                 self.assertEqual(result.returncode, 0, result.stderr)
         # Steps that leave HEAD alone still let the push be read.
-        result = self.bash("git add -A && git status --short && git push", session="still")
+        result = self.bash("git add -A && git fetch origin main && git status --short && git push", session="still")
         self.assertEqual(result.returncode, 2)
         self.assertIn("The head commit of HEAD has no `Clued-Work-Claim:` line", result.stderr)
 
@@ -1036,6 +1041,8 @@ class PublishTrailerTest(unittest.TestCase):
         self.assertIsNotNone(GUARD.shell_segments(text))
         self.assertEqual(GUARD.lift_heredocs("cat <<EOF\n$HOME\nEOF")[1], [None])
         self.assertEqual(GUARD.lift_heredocs("cat <<-EOF\n\tx\n\tEOF")[1], ["x\n"])
+        self.assertEqual(GUARD.join_lines("a \\\nb 'c \\\nd' \"e \\\nf\" g\\\\\nh"),
+                         "a b 'c \\\nd' \"e f\" g\\\\\nh")
 
 
 if __name__ == "__main__":
