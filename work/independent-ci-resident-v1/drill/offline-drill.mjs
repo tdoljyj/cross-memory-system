@@ -227,6 +227,11 @@ script.set(932, { 8: [notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), notReady('RES
 await step('PR 932 parks, then main moves: the batch ends at once, FAILED_CLEAN RESIDENT_BASE_MOVED, never an attempt 2', async () => {
   await drop(trigger(932)); const p = await exec.tick(); now += 600_000; const r = await exec.tick(); return { ...r, parked: p.state };
 }, r => r.parked === 'PARKED' && r.state === 'FAILED_CLEAN' && r.failureCode === 'RESIDENT_BASE_MOVED' && !r.attempt2);
+script.set(934, { 8: [notReady('STRICT_OFF_WITHOUT_TRAIN')] });
+await step('step 3a: PR 934 finds strict off on main without the train: it parks, the Owner is told; strict back on, it completes', async () => {
+  await drop(trigger(934)); const p = await exec.tick(); const told = queue.notices.some(n => n.kind === 'stage8-rules' && n.code === 'STRICT_OFF_WITHOUT_TRAIN');
+  now += 600_000; const r = await exec.tick(); return { ...r, parked: p.state, reason: p.reason, told };
+}, r => r.parked === 'PARKED' && r.reason === 'STRICT_OFF_WITHOUT_TRAIN' && r.told && r.state === 'COMPLETED' && queue.row(934).state === 'DONE');
 script.set(933, { 8: [notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')] });
 await step('PR 933 parks; the Owner drain before a reinstall ends it OWNER_ABORTED and leaves nothing open', async () => {
   await drop(trigger(933)); const p = await exec.tick(); now += 1;

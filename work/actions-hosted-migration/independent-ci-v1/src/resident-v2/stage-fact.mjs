@@ -29,7 +29,14 @@ export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_
   // Stage R refused before anything was observed or written (relay not configured, input invalid).
   'RELAY_STAGE_REFUSED',
   // Stage 8 not ready (phase 2, step 2; publisher.mjs STAGE8_NOT_READY_REASONS): the resident parks and retries.
-  'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_BASE_MOVED']);
+  'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_BASE_MOVED',
+  // Phase 2, step 3a (train-rules.mjs, green-ledger.mjs): main's live branch rules, GitHub's test merge, the green ledger;
+  // all before any journal write. The last one is final for the head (STAGE8_FINAL_REASONS).
+  'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE',
+  'TRAIN_TEST_MERGE_TREE_DIFFERS']);
+// The stage-8 answers that travel as their own code (publisher.mjs STAGE8_NOT_READY_REASONS and STAGE8_FINAL_REASONS).
+const STAGE8_OWN_CODES = new Set(['RESIDENT_QUEUE_HEAD_NOT_REACHED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_BASE_MOVED', 'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN',
+  'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE', 'TRAIN_TEST_MERGE_TREE_DIFFERS']);
 // Never clean: something may still run, or a publication may exist unsettled, or an identity conflicts.
 export const UNKNOWN_CODES = Object.freeze(['BROKER_RESPONSE_UNCONFIRMED', 'STAGE_HELPER_NOT_STOPPED_IN_TIME', 'STAGE_ORIGINAL_NOT_RESTORED',
   'BROKER_CONFIGURATION_CONFLICT', 'NATIVE_RECEIPT_UNCONFIRMED', 'STAGE_CHILD_TREE_UNCONFIRMED', 'STAGE_OUTCOME_MISSING', 'PUBLICATION_UNCERTAIN',
@@ -90,6 +97,7 @@ export function outcomeFailureCode(outcome, stageNumber) {
   // clean, on any stage (DESIGN §6.3; PR-A review MINOR 4).
   if (r === 'role_already_published_on_head' || r === 'ROLE_ALREADY_PUBLISHED_ON_HEAD') return 'ROLE_ALREADY_PUBLISHED_ON_HEAD';
   if (r === 'RESIDENT_QUEUE_HEAD_NOT_REACHED' || r === 'RESIDENT_MERGE_QUEUE_NOT_JOINED' || r === 'RESIDENT_BASE_MOVED') return r;
+  if (stageNumber === 8 && STAGE8_OWN_CODES.has(r)) return r;
   if (r === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE') return 'REMOTE_REFS_CHANGED_SINCE_BUNDLE';
   if (BRIDGE_TIMEOUTS.has(r)) return 'BRIDGE_TRANSPORT_TIMEOUT';
   if (TRANSPORT_REASONS.has(r)) return r.startsWith('full_admission_') || r === 'NATIVE_ADMISSION_UNAVAILABLE' ? 'NATIVE_ADMISSION_UNAVAILABLE' : 'GITHUB_TRANSIENT_UNAVAILABLE';

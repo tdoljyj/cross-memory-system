@@ -269,6 +269,17 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
       });
       return { sha: treeSha, entries };
     },
+    // The rules GitHub applies to one branch (quota phase 2, step 3a: stage 8 reads main's live before writing a
+    // green). Metadata read, which every installation token of this port carries. One page; a full page is refused,
+    // never guessed.
+    async readBranchRules(branch) {
+      if (branch !== 'main') fail('invalid_branch');
+      const body = await scoped(`/rules/branches/${branch}?per_page=100`);
+      if (!Array.isArray(body) || body.length >= 100 || body.some(rule => typeof rule?.type !== 'string' || !rule.type
+        || !(rule.parameters === null || rule.parameters === undefined || (typeof rule.parameters === 'object' && !Array.isArray(rule.parameters))))) fail('invalid_rules_reply');
+      return { complete: true, branch, rules: body.map(rule => ({ type: rule.type, rulesetId: Number.isSafeInteger(rule.ruleset_id) ? rule.ruleset_id : null,
+        parameters: rule.parameters ? structuredClone(rule.parameters) : null })) };
+    },
     async readCheckRunsByName(headSha, name) {
       if (typeof name !== 'string' || !name || name.length > 100 || /[\x00-\x1f]/.test(name)) fail('invalid_check_name');
       return inventory(headSha, null, name);
