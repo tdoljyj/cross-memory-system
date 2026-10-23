@@ -72,6 +72,20 @@ export function validateResponse(v, request) {
   return v;
 }
 
+// writeNew creates a mailbox file before it writes it, so the other side can find the file empty, growing, or holding
+// only a prefix of its JSON (2026-10-23 10:45:42Z: a verified archive-linux answer read so was refused and HALTed batch
+// 523849a6). Such a file is not there yet: null, and the next poll reads it again; one still unfinished at the request's
+// deadline is no answer. A finished file is refused, as before, for its type, links, identity, size and exact shape.
+const UNFINISHED = new Set(['empty', 'size-changed', 'utf8', 'json']);
+async function readFinished(file, maximum, code) {
+  try {
+    return parseBoundedJson(await readBounded(file, maximum, code), maximum, code);
+  } catch (error) {
+    if (error.code === code && UNFINISHED.has(error.detail)) return null;
+    throw error;
+  }
+}
+
 export class Mailbox {
   constructor(root, clock) {
     this.requests = path.join(root, 'requests');
@@ -99,7 +113,8 @@ export class Mailbox {
   async poll(request) {
     const file = path.join(this.responses, `${request.requestId}.json`);
     if (!(await exists(file))) return null;
-    return validateResponse(parseBoundedJson(await readBounded(file, 4096, 'MAILBOX_RESPONSE_REFUSED'), 4096, 'MAILBOX_RESPONSE_REFUSED'), request);
+    const value = await readFinished(file, 4096, 'MAILBOX_RESPONSE_REFUSED');
+    return value === null ? null : validateResponse(value, request);
   }
 
   async await(request, sleep, pollMs = 500) {
@@ -142,7 +157,7 @@ export class Mailbox {
     } catch { return null; }
   }
 
-  // Companion side.
+  // Companion side. A request the service is still writing is left out (the next pass reads it again), never refused.
   async pending() {
     const out = [];
     for (const name of (await fs.readdir(this.requests)).sort()) {
@@ -150,7 +165,8 @@ export class Mailbox {
       const id = name.slice(0, 36);
       if (await exists(path.join(this.responses, name))) continue;
       try {
-        out.push(validateRequest(parseBoundedJson(await readBounded(path.join(this.requests, name), 2048, 'MAILBOX_REQUEST_REFUSED'), 2048, 'MAILBOX_REQUEST_REFUSED')));
+        const value = await readFinished(path.join(this.requests, name), 2048, 'MAILBOX_REQUEST_REFUSED');
+        if (value !== null) out.push(validateRequest(value));
       } catch { out.push({ requestId: id, refused: true }); }
     }
     // Oldest first by the service's own createdAt, not by the random request id.
