@@ -77,12 +77,13 @@ test('a hosted child past its limit: the host ended and drained its job; the run
   assert.equal((await next).code, 0);
 });
 
-test('a host that could not drain, gave no report, refused to start, or disagrees with its exit code is never a plain success', async () => {
+test('host endings other than "ended on its own, drained": each says what is unknown; only a child that exited is ever code 0', async () => {
   const cases = [
     [{ err: report({ fields: { timedOut: true, exitCode: 90, activeProcesses: 1, treeZero: false } }), code: 121 }, { code: null, timedOut: true, tree: 'unconfirmed' }],
     [{ err: report({ fields: { activeProcesses: 1, treeZero: false } }), code: 0 }, { code: 0, tree: 'unconfirmed' }],
     [{ err: 'crashed\n', code: 255 }, { code: null, refused: 'JOB_HOST_UNCONFIRMED', tree: 'unconfirmed' }],
     [{ err: report({ fields: { started: false, failure: 'CHILD_CREATE_FAILED', childPid: null, exitCode: null } }), code: 120 }, { code: null, refused: 'JOB_HOST_UNCONFIRMED' }],
+    [{ err: report({ fields: { started: false, failure: 'CHILD_RESUME_FAILED', exitCode: null, activeProcesses: 1, treeZero: false } }), code: 120 }, { code: null, refused: 'JOB_HOST_UNCONFIRMED', tree: 'unconfirmed' }],
     [{ err: report({ fields: { exitCode: 0 } }), code: 1 }, { code: null, refused: 'JOB_HOST_UNCONFIRMED', tree: 'zero' }],
     [{ err: report({ fields: { failure: 'CHILD_WAIT_UNCONFIRMED' } }), code: 122 }, { code: null, refused: 'JOB_HOST_UNCONFIRMED', tree: 'zero' }],
     [{ err: report({ nonce: 'a'.repeat(32) }), code: 0 }, { code: null, refused: 'JOB_HOST_UNCONFIRMED', tree: 'unconfirmed' }],
@@ -121,6 +122,25 @@ test('a host that outstays its own limit is ended by the runner (its job closes 
   assert.equal(runner.busy, true);
   assert.equal((await runner.run(['C:\\y.exe'], { timeoutMs: 5_000 })).refused, 'RUNNER_BUSY_WITH_UNFINISHED_CHILD');
   h.end(0, { code: null });
+  assert.equal(runner.busy, false);
+});
+
+test('a kill the system refuses (an error event of a started host) leaves the runner busy until the host is really gone', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = fakeHost();
+  const runner = new Runner({ jobHost: HOST, spawnImpl: (...a) => { const c = h.spawnImpl(...a); c.pid = 4321; c.kill = () => { c.emit('error', Object.assign(new Error('kill EPERM'), { code: 'EPERM' })); }; return c; }, nonce: () => NONCE });
+  const p = runner.run(['C:\\x.exe'], { timeoutMs: 5_000 });
+  t.mock.timers.tick(5_000 + JOB_HOST_GRACE_MS);
+  assert.deepEqual((await p).tree, 'unconfirmed');
+  assert.equal(runner.busy, true, 'the host still runs: nothing new starts on top of it');
+  h.end(0, { code: 1 });
+  assert.equal(runner.busy, false);
+});
+
+test('a host that never started (spawn error, no pid) frees the runner at once', async () => {
+  const h = fakeHost();
+  const runner = new Runner({ jobHost: HOST, spawnImpl: (...a) => { const c = h.spawnImpl(...a); setImmediate(() => c.emit('error', new Error('ENOENT'))); return c; }, nonce: () => NONCE });
+  assert.equal((await runner.run(['C:\\x.exe'], { timeoutMs: 5_000 })).refused, 'RUNNER_SPAWN_FAILED');
   assert.equal(runner.busy, false);
 });
 

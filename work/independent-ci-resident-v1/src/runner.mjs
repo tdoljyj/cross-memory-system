@@ -115,15 +115,21 @@ export class Runner {
         settle({ code: null, stdout, stderr, timedOut: true, tree: 'unconfirmed' });
         try { child.kill(); } catch { /* the close event still ends the busy state */ }
       }, timeoutMs + JOB_HOST_GRACE_MS);
-      child.on('error', () => { this.outstanding.delete(child); clearTimeout(guard); settle({ code: null, stdout, stderr, refused: 'RUNNER_SPAWN_FAILED' }); });
+      // 'error' without a pid: the host never started. With a pid (for example a refused kill) the host may still run: the
+      // runner stays busy until its close event.
+      child.on('error', () => {
+        if (child.pid !== undefined) return;
+        this.outstanding.delete(child); clearTimeout(guard); settle({ code: null, stdout, stderr, refused: 'RUNNER_SPAWN_FAILED' });
+      });
       child.on('close', code => {
         this.outstanding.delete(child);
         clearTimeout(guard);
         const report = parseJobHostReport(tail, nonce);
         const err = withoutReport(stderr, nonce);
-        // No report: whether a child ran is unknown (its job closed with the host). A report without a started child: none ran.
+        // No report: whether a child ran is unknown (its job closed with the host). A report without a started child: none
+        // ran, unless the host created one it then could not show ended (never resumed, but not seen gone either).
         if (!report) return settle({ code: null, stdout, stderr: err, refused: 'JOB_HOST_UNCONFIRMED', tree: 'unconfirmed' });
-        if (report.started !== true) return settle({ code: null, stdout, stderr: err, refused: 'JOB_HOST_UNCONFIRMED' });
+        if (report.started !== true) return settle({ code: null, stdout, stderr: err, refused: 'JOB_HOST_UNCONFIRMED', ...(report.treeZero ? {} : { tree: 'unconfirmed' }) });
         const tree = report.treeZero ? 'zero' : 'unconfirmed';
         if (report.timedOut) return settle({ code: null, stdout, stderr: err, timedOut: true, tree });
         // Ended on its own: its exit code, as the host saw it and passed it on. A leftover the host could not drain is said.

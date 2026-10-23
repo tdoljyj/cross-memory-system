@@ -20,6 +20,7 @@ Windows-only offline checks (PowerShell 5.1; each needs a NEW empty scratch dire
 ```bash
 powershell -NoProfile -File windows/test-resident-windows.ps1 -Scratch <new dir>
 powershell -NoProfile -File windows/test-install-carry.ps1 -Scratch <new dir with a short path>
+powershell -NoProfile -File windows/test-job-host.ps1 -Scratch <new dir> [-Wsl]
 ```
 
 `test-install-carry.ps1` builds fake earlier installs with 64-hex record names. Give it a short scratch path, for example under `%TEMP%`, so the paths stay under the 260-character limit of Windows PowerShell 5.1.
@@ -35,3 +36,5 @@ Phase 2, step 3a (Task `6451a55d`, Owner decision `0bb98194`) is described in DE
 Primary/standby C6 (Task `6444f88a`) is described in DESIGN.md §20. It adds the intake pause: any Owner session can hold new batches for at most two hours (`tools/rearm-tool.mjs request-intake-pause`), without touching a batch that runs or is parked. Each request names a holder, and a holder may lift only its own hold. status.json `/3` shows the holds.
 
 Phase 2, step 3b (Task `6451a55d`, sub-Task `a3548216`) is described in DESIGN.md §21. Job contract `/3` adds the tested commit S to the job identity. With the train off, S is the head itself, so the workspaces and tests are the same as before.
+
+The companion job host (Task `8e1f07d3`) is described in DESIGN.md §22. Every companion child now runs in a job object of the companion's own (`windows/CompanionJobHost.cs`, compiled at install into `bin\CluedCompanionJobHost.exe`). A child that outlives its time limit is ended with exactly that job, so the mailbox lane goes on, and a stage-0 failure is released without asking the companion for anything. The service's own runner still never kills a child. `test-job-host.ps1` compiles the host and runs `test/job-host.test.mjs` with its live cases; `-Wsl` adds the real wsl, PowerShell and git chains.

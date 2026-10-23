@@ -8,8 +8,9 @@ using Microsoft.Win32.SafeHandles;
 // Companion job host (DESIGN §22, Task 8e1f07d3). Compiled once at install into bin\CluedCompanionJobHost.exe (admin-only,
 // read and run by the Owner). The companion starts every child through it:
 //   CluedCompanionJobHost.exe <nonce: 32 hex> <time limit ms> <absolute application> [arguments...]
-// The host creates ONE child suspended, puts it into a job object of its own and only then lets it run, so the child and
-// every process it starts belong to that job and nothing else does (no breakaway is allowed). When the child has exited
+// The host creates ONE child suspended and directly inside a job object of its own (PROC_THREAD_ATTRIBUTE_JOB_LIST: the
+// child is never outside that job, not even before it runs), checks that it is there and only then lets it run, so the
+// child and every process it starts belong to that job and nothing else does (no breakaway is allowed). When the child has exited
 // or has outlived the time limit, the host terminates that job and waits until no process of it is left: the principle of
 // the generic helper (FormalSession0V2.cs), which only ever ends and drains the job object it created itself. No process
 // outside the job is looked at or touched, and no process tree is walked.
@@ -37,7 +38,7 @@ public static class CluedCompanionJobHost {
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateJobObjectW(IntPtr security,string name);
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool SetInformationJobObject(IntPtr job,int kind,ref Limits data,uint length);
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool QueryInformationJobObject(IntPtr job,int kind,out Accounting info,uint size,out uint returned);
- [DllImport("kernel32.dll",SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job,IntPtr process);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern bool IsProcessInJob(IntPtr process,IntPtr job,out bool result);
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool TerminateJobObject(IntPtr job,uint exit);
  [DllImport("kernel32.dll",SetLastError=true)] static extern uint ResumeThread(IntPtr thread);
  [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr handle,uint timeout);
@@ -81,12 +82,15 @@ public static class CluedCompanionJobHost {
  // Terminate the job and wait until it has no process left (and the child's exit code is known). Only this job.
  static bool Drain(IntPtr job,IntPtr child,uint code,out uint exit,out bool exitKnown,out uint active,out uint total){
   exit=0;exitKnown=false;active=uint.MaxValue;total=uint.MaxValue;
-  bool terminated=TerminateJobObject(job,code);var start=Environment.TickCount;
+  TerminateJobObject(job,code);var start=Environment.TickCount;var again=start;
   for(;;){
    Accounting info;if(!Query(job,out info))return false;active=info.ActiveProcesses;total=info.TotalProcesses;
    if(!exitKnown&&WaitForSingleObject(child,0)==0&&GetExitCodeProcess(child,out exit))exitKnown=true;
-   if(active==0&&exitKnown)return terminated;
-   if(unchecked((uint)(Environment.TickCount-start))>=DrainWait)return false;
+   // The proof is the kernel's own count of the job's live processes, read after the job was terminated.
+   if(active==0&&exitKnown)return true;
+   var now=Environment.TickCount;if(unchecked((uint)(now-start))>=DrainWait)return false;
+   // A process that joined while the job was being terminated is ended by terminating the job once more.
+   if(active>0&&unchecked((uint)(now-again))>=500){TerminateJobObject(job,code);again=now;}
    Thread.Sleep(20);
   }
  }
@@ -102,27 +106,32 @@ public static class CluedCompanionJobHost {
  public static int Main(string[] args){
   string nonce=args.Length>0?args[0]:null,failure=null;bool started=false,timedOut=false,treeZero=false,exitKnown=false,attributesReady=false;
   uint timeout=0,exit=0,leftover=uint.MaxValue,active=uint.MaxValue,total=uint.MaxValue;uint? pid=null;
-  IntPtr job=IntPtr.Zero,input=IntPtr.Zero,attributes=IntPtr.Zero,handles=IntPtr.Zero;ProcessInfo p=new ProcessInfo();
+  IntPtr job=IntPtr.Zero,input=IntPtr.Zero,output=IntPtr.Zero,error=IntPtr.Zero,attributes=IntPtr.Zero,handles=IntPtr.Zero,jobs=IntPtr.Zero;ProcessInfo p=new ProcessInfo();
+  IntPtr stdOut=GetStdHandle(-11),stdErr=GetStdHandle(-12);
   try{
    if(args.Length<3||!ValidNonce(nonce)||!ValidTimeout(args[1],out timeout)||!ValidApplication(args[2]))Fail("JOB_HOST_ARGUMENTS_REFUSED");
    string command=CommandLine(args,2);if(command==null)Fail("JOB_HOST_ARGUMENTS_REFUSED");
    job=CreateJobObjectW(IntPtr.Zero,null);if(job==IntPtr.Zero)Fail("JOB_CREATE_FAILED");
-   var limits=new Limits();limits.Basic.Flags=0x2000; // KILL_ON_JOB_CLOSE; no BREAKAWAY_OK, no SILENT_BREAKAWAY_OK
+   // KILL_ON_JOB_CLOSE | DIE_ON_UNHANDLED_EXCEPTION (a crashing child ends at once instead of waiting in error reporting
+   // until the limit, as it did under the node job it was started in before); no BREAKAWAY_OK, no SILENT_BREAKAWAY_OK.
+   var limits=new Limits();limits.Basic.Flags=0x2000|0x400;
    if(!SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(Limits))))Fail("JOB_LIMIT_FAILED");
    input=Inheritable(IntPtr.Zero,0x80000000);
-   IntPtr output=Inheritable(GetStdHandle(-11),0x40000000),error=Inheritable(GetStdHandle(-12),0x40000000);
+   output=Inheritable(stdOut,0x40000000);error=Inheritable(stdErr,0x40000000);
    var list=output==error?new[]{input,output}:new[]{input,output,error};
-   IntPtr size=IntPtr.Zero;InitializeProcThreadAttributeList(IntPtr.Zero,1,0,ref size);if(size==IntPtr.Zero)Fail("CHILD_ATTRIBUTE_SIZE_FAILED");
-   attributes=Marshal.AllocHGlobal(size);if(!InitializeProcThreadAttributeList(attributes,1,0,ref size))Fail("CHILD_ATTRIBUTE_INIT_FAILED");attributesReady=true;
+   IntPtr size=IntPtr.Zero;InitializeProcThreadAttributeList(IntPtr.Zero,2,0,ref size);if(size==IntPtr.Zero)Fail("CHILD_ATTRIBUTE_SIZE_FAILED");
+   attributes=Marshal.AllocHGlobal(size);if(!InitializeProcThreadAttributeList(attributes,2,0,ref size))Fail("CHILD_ATTRIBUTE_INIT_FAILED");attributesReady=true;
    handles=Marshal.AllocHGlobal(list.Length*IntPtr.Size);for(int i=0;i<list.Length;i++)Marshal.WriteIntPtr(handles,i*IntPtr.Size,list[i]);
    if(!UpdateProcThreadAttribute(attributes,0,new IntPtr(0x20002),handles,new IntPtr(list.Length*IntPtr.Size),IntPtr.Zero,IntPtr.Zero))Fail("CHILD_HANDLE_ALLOWLIST_FAILED");
+   jobs=Marshal.AllocHGlobal(IntPtr.Size);Marshal.WriteIntPtr(jobs,job);
+   if(!UpdateProcThreadAttribute(attributes,0,new IntPtr(0x2000D),jobs,new IntPtr(IntPtr.Size),IntPtr.Zero,IntPtr.Zero))Fail("CHILD_JOB_LIST_FAILED");
    var start=new StartupEx();start.Basic.Size=(uint)Marshal.SizeOf(typeof(StartupEx));start.Basic.Flags=0x100|1;start.Basic.Show=0;start.Basic.Input=input;start.Basic.Output=output;start.Basic.Error=error;start.Attributes=attributes;
    // CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW; the environment and
    // the current directory are the host's own, which the companion set exactly as it did for a direct child.
    if(!CreateProcessW(args[2],new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,true,4|0x400|0x80000|0x08000000,IntPtr.Zero,null,ref start,out p))Fail("CHILD_CREATE_FAILED");
    pid=p.Pid;
-   // The child has not run a single instruction yet: if it cannot join the job it is ended here, never resumed.
-   if(!AssignProcessToJobObject(job,p.Process)){TerminateProcess(p.Process,120);WaitForSingleObject(p.Process,5000);Fail("CHILD_JOB_ASSIGN_FAILED");}
+   // The child has not run a single instruction yet: unless the kernel says it is in the job, it is ended here, never resumed.
+   bool inJob;if(!IsProcessInJob(p.Process,job,out inJob)||!inJob){TerminateProcess(p.Process,120);WaitForSingleObject(p.Process,5000);Fail("CHILD_JOB_UNCONFIRMED");}
    if(ResumeThread(p.Thread)==0xffffffff)Fail("CHILD_RESUME_FAILED");
    started=true;
    uint waited=WaitForSingleObject(p.Process,timeout);
@@ -133,8 +142,9 @@ public static class CluedCompanionJobHost {
    // Whatever happened, a job that holds a process is terminated and drained before the host reports anything.
    if(job!=IntPtr.Zero&&p.Process!=IntPtr.Zero)treeZero=Drain(job,p.Process,timedOut?90u:91u,out exit,out exitKnown,out active,out total);
    else if(job!=IntPtr.Zero){Accounting none;if(Query(job,out none)){active=none.ActiveProcesses;total=none.TotalProcesses;treeZero=active==0;}}
-   if(attributesReady)DeleteProcThreadAttributeList(attributes);if(attributes!=IntPtr.Zero)Marshal.FreeHGlobal(attributes);if(handles!=IntPtr.Zero)Marshal.FreeHGlobal(handles);
+   if(attributesReady)DeleteProcThreadAttributeList(attributes);if(attributes!=IntPtr.Zero)Marshal.FreeHGlobal(attributes);if(handles!=IntPtr.Zero)Marshal.FreeHGlobal(handles);if(jobs!=IntPtr.Zero)Marshal.FreeHGlobal(jobs);
    if(p.Thread!=IntPtr.Zero)CloseHandle(p.Thread);if(p.Process!=IntPtr.Zero)CloseHandle(p.Process);if(input!=IntPtr.Zero)CloseHandle(input);
+   if(output!=IntPtr.Zero&&output!=stdOut)CloseHandle(output);if(error!=IntPtr.Zero&&error!=stdErr&&error!=output)CloseHandle(error);
   }
   WriteReport(Report(nonce,started,failure,pid,timedOut,exitKnown?(uint?)exit:null,leftover==uint.MaxValue?null:(uint?)leftover,active==uint.MaxValue?null:(uint?)active,total==uint.MaxValue?null:(uint?)total,treeZero));
   if(job!=IntPtr.Zero)CloseHandle(job);
