@@ -394,13 +394,16 @@ test('all-contexts real early writer barriers and preserved caller catalog', { t
         const subject = await approve(first, await prepare());
         if (name === 'clued_owner_grant_admission_door_v1') {
           const roleToken = await native(first, 'clued_binding_role_confirmation_issue_v1', {
-            binding_id: subject.binding_id, role: 'ci-admission', enabled: true,
+            binding_id: subject.binding_id, role: 'ci-admission', enabled: true, purpose: 'other',
           });
           assert.equal(roleToken.status, 'issued', JSON.stringify(roleToken));
           const roleSet = await native(first, 'clued_binding_role_set_v1', {
             confirmation_token: roleToken.confirmation_token, view_digest: roleToken.view_digest,
           });
           assert.equal(roleSet.status, 'committed', JSON.stringify(roleSet));
+          // A new ci-admission row starts 5 minutes later (C10); let them pass.
+          await admin.query(`update clued_private.binding_roles_v1 set granted_at=granted_at-interval '5 minutes',
+            effective_at=effective_at-interval '5 minutes' where binding_id=$1 and revoked_at is null`, [subject.binding_id]);
         }
         const token = await permissionToken(subject);
         const door = await connect('anon');
