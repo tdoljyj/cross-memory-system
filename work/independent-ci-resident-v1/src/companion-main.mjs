@@ -20,6 +20,7 @@ import { canonicalJson } from './canonical.mjs';
 import os from 'node:os';
 import { readStatus } from './status.mjs';
 import { LocalStore, PrStatusReporter, validateStatusConfig } from './pr-status.mjs';
+import { companionBackstop } from './ruleset-backstop.mjs';
 
 // The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
 // phase 1, item 7); the poller still proposes every five minutes.
@@ -104,6 +105,8 @@ export async function main(args = process.argv.slice(2)) {
         let generation = null;
         try { generation = (await readStatus(values.root)).queue?.generation ?? null; } catch { generation = null; }
         try { await poller.pass({ generation }); } catch { /* next pass */ }
+        // The ruleset backstop (phase 2 step 3c-1, DESIGN §22.3): main's rules on every poll.
+        try { await companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), store }); } catch { /* next poll */ }
       }
       if (Date.now() - lastReport > REPORT_EVERY_MS) {
         lastReport = Date.now();
