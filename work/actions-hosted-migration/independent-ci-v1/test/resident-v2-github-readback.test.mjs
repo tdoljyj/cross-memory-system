@@ -6,13 +6,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { batchJobsV2 } from '../src/job-v2.mjs';
+import { generateKeyPairSync, randomUUID } from 'node:crypto';
+import { batchJobsV2, claimGeneration } from '../src/job-v2.mjs';
+import { createGitHubChecksPort } from '../src/github.mjs';
 import { EffectJournal } from '../src/effect-journal.mjs';
 import { recordBatchClaim, readBatchClaim } from '../src/batch-claim-v2.mjs';
 import { CHECKS_V2 } from '../src/resident-v2/prepare-record.mjs';
 import { HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, PUBLISHER_APP_ID, ROLE_ALREADY_ON_GITHUB, publishedNames, readPublishedChecks } from '../src/published-on-github-v2.mjs';
 import { createFixtureWorkAdmissionPublisherV2 } from '../src/formal-work-admission-check-v2/publisher.mjs';
+import { createFixtureControlPublisherV2, QUEUE_POLL_MS } from '../src/independent-control-checks-v2/publisher.mjs';
 import { createHostedRelayStage } from '../src/hosted-relay-v1/stage.mjs';
 import { entryResultOf, planRowOf, relayPlanEnding, validateRelayPlanRows } from '../src/hosted-relay-v1/relay-plan.mjs';
 import { HEAD, BASE, tempDir, admittedFacts } from './resident-v2-fixtures.mjs';
@@ -30,6 +32,7 @@ function fakeGithub(seed = [], { narrowed = true } = {}) {
   const calls = { readChangedPaths: 0, readChecks: 0, readAppChecks: 0, createCheck: 0 };
   const port = { fixture: true, checks, calls,
     async readChangedPaths(job) { calls.readChangedPaths++; return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: ['a.txt'] }; },
+    async readPullRequest(n) { return { number: n, state: 'open', head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: BASE, ref: 'main', repo: { full_name: REPO } } }; },
     async readChecks(head) { calls.readChecks++; return { complete: true, checks: checks.filter(c => c.head_sha === head).map(c => structuredClone(c)) }; },
     async createCheck(body) { calls.createCheck++; const c = { id: next++, app: { id: APP }, ...structuredClone(body) }; checks.push(c); return structuredClone(c); },
     async revokeCheck(id, body) { const c = checks.find(x => x.id === id); Object.assign(c, structuredClone(body)); return structuredClone(c); } };
@@ -215,4 +218,83 @@ test('relay plan rows: ON_GITHUB rows and the endings the executor acts on', () 
   assert.deepEqual([bad.status, bad.reason], ['UNCERTAIN', 'RELAY_PUBLICATION_UNCERTAIN']);
   const coded = entryResultOf({ status: 'COMPLETE', code: ROLE_ALREADY_ON_GITHUB, sideEffects: 0, roles: [local('contract-placement')] });
   assert.equal(coded.status, 'UNCERTAIN');
+});
+
+// ---- github.mjs readAppChecks ----
+
+const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+// The App's GitHub as the port reads it; answer(page) is the check-runs reply of that page.
+function checksPort(answer) {
+  const searches = [];
+  const reply = body => ({ ok: true, status: 200, json: async () => body });
+  const fetchImpl = async (url, options) => {
+    const u = new URL(url), key = `${options.method} ${u.pathname}`;
+    if (key === 'GET /app') return reply({ id: APP });
+    if (key === 'POST /app/installations/9/access_tokens') return reply({ token: 'installation-token', expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+      permissions: { checks: 'write', contents: 'read', pull_requests: 'read', metadata: 'read' } });
+    if (key === 'GET /installation/repositories') return reply({ total_count: 1, repositories: [{ id: 41, full_name: REPO }] });
+    if (key === `GET /repos/${REPO}/commits/${HEAD}/check-runs`) { searches.push(u.search); return reply(answer(Number(u.searchParams.get('page')))); }
+    throw new Error(`unexpected ${key}`);
+  };
+  return { port: createGitHubChecksPort({ repository: REPO, repositoryId: 41, appId: APP, installationId: 9, privateKeyProvider: async () => privateKey, fetchImpl }), searches };
+}
+const runs = (from, n, o) => Array.from({ length: n }, (_, i) => run(from + i, 'gitleaks', o));
+
+test('github.mjs readAppChecks: app_id and filter=all on every page; complete, or refused', async () => {
+  const ok = checksPort(page => ({ total_count: 150, check_runs: page === 1 ? runs(1, 100) : runs(101, 50) }));
+  const list = await ok.port.readAppChecks(HEAD);
+  assert.deepEqual([list.complete, list.checks.length], [true, 150]);
+  assert.deepEqual(ok.searches, ['?app_id=5368905&filter=all&per_page=100&page=1', '?app_id=5368905&filter=all&per_page=100&page=2']);
+  for (const [answer, code] of [
+    [page => ({ total_count: 150, check_runs: page === 1 ? runs(1, 100) : runs(101, 30) }), 'incomplete_checks'],
+    [page => ({ total_count: page === 1 ? 150 : 151, check_runs: page === 1 ? runs(1, 100) : runs(101, 51) }), 'checks_pagination_changed'],
+    [page => ({ total_count: 1001, check_runs: runs(page * 100, 100) }), 'checks_page_limit'],
+    [() => ({ total_count: 1, check_runs: [run(1, 'gitleaks', { app: OTHER_APP })] }), 'invalid_check_set'],
+  ]) await assert.rejects(checksPort(answer).port.readAppChecks(HEAD), { code });
+  // The unnarrowed inventory is unchanged.
+  const all = checksPort(() => ({ total_count: 1, check_runs: [run(1, 'gitleaks', { app: OTHER_APP })] }));
+  assert.equal((await all.port.readChecks(HEAD)).checks.length, 1);
+  assert.deepEqual(all.searches, ['?filter=all&per_page=100&page=1']);
+});
+
+// ---- the control pair (stage 8) ----
+
+async function controlPair(t, github) {
+  const jobs = jobsFor(), c = claim();
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  const admission = { fixture: true, async evaluatePr(job, packet) {
+    return admittedFacts(job, c, packet, { domain: 'fixture', mergeQueueHead: true, slotUntil: SLOT_UNTIL, batchClaim: claimGeneration(c) });
+  } };
+  const pub = createFixtureControlPublisherV2({ github, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c), sleep: async () => {} });
+  return { pub, pair: [jobs['control-admission'], jobs['control-merge-slot']], journal };
+}
+
+test('stage 8: a control check already on GitHub from another node ends the pair before either half is published', async t => {
+  for (const name of ['kooyumi-admission-verified', 'kooyumi-merge-slot']) {
+    const github = fakeGithub([run(7, name)]);
+    const { pub, pair } = await controlPair(t, github);
+    const r = await pub.publishPair(pair, { waitUntil: Date.now() + 2 * QUEUE_POLL_MS });
+    assert.deepEqual([r.status, r.reason, r.sideEffects], ['BLOCKED', ROLE_ALREADY_ON_GITHUB, 0], name);
+    assert.equal(r.role, name === 'kooyumi-merge-slot' ? 'control-merge-slot' : 'control-admission');
+    assert.equal(github.calls.createCheck, 0);
+  }
+  // publishOne on its own refuses the same way.
+  const github = fakeGithub([run(7, 'kooyumi-merge-slot')]);
+  const { pub, pair } = await controlPair(t, github);
+  const one = await pub.publishOne(pair[1]);
+  assert.deepEqual([one.status, one.reason, one.sideEffects], ['BLOCKED', ROLE_ALREADY_ON_GITHUB, 0]);
+});
+
+test('stage 8: a pair this node published is known and re-verified on the next try; a read-back that is not complete refuses', async t => {
+  const github = fakeGithub();
+  const { pub, pair } = await controlPair(t, github);
+  const first = await pub.publishPair(pair, { waitUntil: Date.now() + 2 * QUEUE_POLL_MS });
+  assert.deepEqual([first.status, first.sideEffects, github.calls.createCheck], ['SETTLED', 2, 2]);
+  const again = await pub.publishPair(pair, { waitUntil: Date.now() + 2 * QUEUE_POLL_MS });
+  assert.deepEqual([again.status, again.sideEffects, github.calls.createCheck], ['SETTLED', 0, 2]);
+  const broken = fakeGithub();
+  broken.readAppChecks = async () => { throw Object.assign(new Error('incomplete_checks'), { code: 'incomplete_checks' }); };
+  const b = await controlPair(t, broken);
+  const r = await b.pub.publishPair(b.pair, { waitUntil: Date.now() + 2 * QUEUE_POLL_MS });
+  assert.deepEqual([r.status, r.reason, r.sideEffects, broken.calls.createCheck], ['BLOCKED', 'incomplete_checks', 0, 0]);
 });

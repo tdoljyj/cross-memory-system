@@ -79,7 +79,7 @@ export function validateRelayPlanRows(rows, candidates = null) {
 export function entryResultOf(stageResult) {
   const sideEffects = Number.isSafeInteger(stageResult?.sideEffects) && stageResult.sideEffects >= 0 ? stageResult.sideEffects : 1;
   const relay = Array.isArray(stageResult?.roles) ? stageResult.roles.map(planRowOf) : [];
-  if (stageResult?.status === 'COMPLETE' && stageResult.code === null && relayPlanEnding(relay) === 'COMPLETE')
+  if (stageResult?.status === 'COMPLETE' && (stageResult.code ?? null) === null && relayPlanEnding(relay) === 'COMPLETE')
     return { status: 'RELAY_COMPLETE', reason: null, sideEffects, relay };
   if (stageResult?.status === 'ON_GITHUB' && stageResult.code === RELAY_CODES.ROLE_ALREADY_ON_GITHUB && relayPlanEnding(relay) === 'ON_GITHUB')
     return { status: 'RELAY_COMPLETE', reason: RELAY_CODES.ROLE_ALREADY_ON_GITHUB, sideEffects, relay };

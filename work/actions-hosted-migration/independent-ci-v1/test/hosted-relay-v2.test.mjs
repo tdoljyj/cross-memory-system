@@ -315,3 +315,71 @@ test('v2 publisher without a hosted verifier refuses publishHosted and never tou
   const r = await v.publisher(journal, null).publishHosted({ subject: v.subjectOf(), attempt: 1, envelope: {} });
   assert.deepEqual([r.status, r.reason, r.roleMutex.held], ['BLOCKED', 'hosted_relay_not_configured', false]);
 });
+
+// ---- Resident primary/standby design v0.4 §6.2 (C4, Task c2af8d17): GitHub is the shared record across nodes ----
+// A check of App 5368905 that another node (or an earlier install) published on the head; this node's journal knows nothing of it.
+const otherNodeRun = (role, id = 990001) => ({ id, name: role, head_sha: H, status: 'completed', conclusion: 'success', app: { id: 5368905 },
+  external_id: `independent-ci:staged:v2:${'c'.repeat(64)}:a1`, output: { title: `${role}: success`, summary: 'published by another node' } });
+const onGithub = role => ({ role, outcome: 'ON_GITHUB', reason: 'ROLE_ALREADY_ON_GITHUB', receipt: null, checkRunId: null, externalId: null, attestationSha256: null, detail: 'role_already_on_github' });
+const notProcessed = role => ({ role, outcome: 'NOT_PROCESSED', reason: null, receipt: null, checkRunId: null, externalId: null, attestationSha256: null, detail: null });
+const mutexOf = role => ({ repo: REPO, headSha: H, role, checkName: role, appId: 5368905 });
+
+test('C4 v2 relay: a role already on GitHub from another node is ON_GITHUB; nothing posted, no K, later roles not processed', async t => {
+  const v = v2World(); v.w.allHosted(); v.w.state.checkRuns.push(otherNodeRun('gitleaks'));
+  const journal = await journalFor(t);
+  const r = await v.stage(journal).run({ subject: v.subjectOf(), attempt: 1, roles: [...ROLES] });
+  assert.deepEqual([r.status, r.code, r.sideEffects], ['ON_GITHUB', 'ROLE_ALREADY_ON_GITHUB', 0]);
+  assert.deepEqual(rowsOf(r), { gitleaks: 'ON_GITHUB:ROLE_ALREADY_ON_GITHUB', trivy: 'NOT_PROCESSED' });
+  assert.equal(v.w.state.calls.createCheck ?? 0, 0);
+  assert.deepEqual(published(v.w.state).map(c => c.id), [990001]);
+  assert.equal((await readRolePublication(journal, mutexOf('gitleaks'))).holder, null);
+  const entry = entryResultOf(r);
+  assert.deepEqual([entry.status, entry.reason, entry.relay.map(x => x.outcome)], ['RELAY_COMPLETE', 'ROLE_ALREADY_ON_GITHUB', ['ON_GITHUB', 'NOT_PROCESSED']]);
+});
+
+test('C4 v2 local: a role already on GitHub from another node ends cleanly; what this journal knows keeps its path', async t => {
+  const v = v2World(); v.w.allHosted(); v.w.state.checkRuns.push(otherNodeRun('gitleaks'));
+  const journal = await journalFor(t);
+  const job = v.localJob('gitleaks');
+  const r = await v.publisher(journal, null).publish({ job, envelope: v.signed(job) });
+  assert.deepEqual([r.status, r.reason, r.sideEffects], ['BLOCKED', 'role_already_on_github', 0]);
+  assert.equal(await journal.read(r.effectKey), null, 'no effect key');
+  assert.equal((await readRolePublication(journal, mutexOf('gitleaks'))).holder, null, 'no K');
+  assert.equal(v.w.state.calls.createCheck ?? 0, 0);
+  assert.equal(outcomeFailureCode({ status: r.status, reason: r.reason, sideEffects: 0, mayHavePublished: false }, 3), 'ROLE_ALREADY_ON_GITHUB');
+  // A role this journal knows: its own settled publication is re-verified (its check on GitHub is its own), never refused.
+  const trivy = v.localJob('trivy');
+  assert.equal((await v.publisher(journal, null).publish({ job: trivy, envelope: v.signed(trivy) })).status, 'SETTLED');
+  const again = await v.publisher(journal, null).publish({ job: trivy, envelope: v.signed(trivy) });
+  assert.deepEqual([again.status, again.sideEffects], ['SETTLED', 0]);
+  // K held by the other path stays role_already_published_on_head (HALT), even when GitHub also carries the check.
+  const w2 = v2World(); w2.w.allHosted();
+  const j2 = await journalFor(t);
+  assert.deepEqual(rowsOf(await w2.stage(j2).run({ subject: w2.subjectOf(), attempt: 1, roles: ['gitleaks'] })), { gitleaks: 'RELAYED' });
+  const late = w2.localJob('gitleaks');
+  const refused = await w2.publisher(j2, null).publish({ job: late, envelope: w2.signed(late) });
+  assert.deepEqual([refused.status, refused.reason], ['BLOCKED', 'role_already_published_on_head']);
+});
+
+test('C4 stage fact: an ON_GITHUB plan is a completed stage R exactly when the outcome says ROLE_ALREADY_ON_GITHUB', async t => {
+  const f = await stageRFixture(t);
+  const ok = await invokeR(f, relayBroker(f, { status: 'RELAY_COMPLETE', reason: 'ROLE_ALREADY_ON_GITHUB', sideEffects: 0, relay: [onGithub('gitleaks'), notProcessed('trivy')] }));
+  assert.equal(ok.state, 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION');
+  assert.deepEqual(ok.relay.map(r => `${r.role}:${r.outcome}`), ['gitleaks:ON_GITHUB', 'trivy:NOT_PROCESSED']);
+  for (const [reason, relay] of [[null, [onGithub('gitleaks'), notProcessed('trivy')]], ['ROLE_ALREADY_ON_GITHUB', [relayed('gitleaks'), local('trivy')]],
+    ['ROLE_ALREADY_ON_GITHUB', [onGithub('gitleaks'), relayed('trivy')]], ['ROLE_ALREADY_ON_GITHUB', [notProcessed('gitleaks'), onGithub('trivy')]]]) {
+    const g = await stageRFixture(t);
+    const bad = await invokeR(g, relayBroker(g, { status: 'RELAY_COMPLETE', reason, sideEffects: 0, relay }));
+    assert.equal(bad.failure_code, 'RELAY_PLAN_UNCONFIRMED', JSON.stringify([reason, relay.map(r => r.outcome)]));
+  }
+});
+
+test('C4 stage-fact catalogue: both codes are clean and final, and only on a clean BLOCKED with zero side effects', () => {
+  for (const c of ['HEAD_PUBLISHED_ON_GITHUB', 'ROLE_ALREADY_ON_GITHUB']) assert.ok(CLEAN_FINAL_CODES.includes(c) && ALL_STAGE_CODES.includes(c) && !UNKNOWN_CODES.includes(c), c);
+  const o = (reason, sideEffects = 0) => ({ status: 'BLOCKED', reason, sideEffects, mayHavePublished: sideEffects !== 0 });
+  assert.equal(outcomeFailureCode(o('HEAD_PUBLISHED_ON_GITHUB'), 1), 'HEAD_PUBLISHED_ON_GITHUB');
+  for (const stage of [3, 5, 7]) assert.equal(outcomeFailureCode(o('role_already_on_github'), stage), 'ROLE_ALREADY_ON_GITHUB');
+  assert.equal(outcomeFailureCode(o('ROLE_ALREADY_ON_GITHUB'), 8), 'ROLE_ALREADY_ON_GITHUB');
+  assert.equal(outcomeFailureCode(o('role_already_on_github', 1), 3), 'PUBLICATION_UNCERTAIN', 'a write may have happened: never clean');
+  assert.equal(outcomeFailureCode({ status: 'UNCERTAIN', reason: 'ROLE_ALREADY_ON_GITHUB', sideEffects: 1, mayHavePublished: true }, 8), 'PUBLICATION_UNCERTAIN');
+});
