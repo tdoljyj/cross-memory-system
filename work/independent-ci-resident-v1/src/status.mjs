@@ -25,7 +25,9 @@ export const EXECUTOR_STATES = Object.freeze(['STARTING', 'IDLE', 'RUNNING', 'WA
 export const RECENT_OUTCOMES = Object.freeze(['COMPLETED', 'FAILED_CLEAN', 'FAILED_UNKNOWN', 'NOT_ADMITTED', 'NOT_EXECUTED', 'IGNORED']);
 const RECENT_MAX = 50, PENDING_MAX = 100, NOTICES_MAX = 50;
 export const ROW_STATES = Object.freeze(['QUEUED', 'RUNNING', 'PARKED', 'WAITING', 'BACKOFF', 'STOPPED', 'DONE']);
-export const NOTICE_KINDS = Object.freeze(['new-trigger', 'stopped', 'waiting-budget', 'batch-limit', 'breaker-open', 'queue-full', 'queue-unsaved', 'stage8-budget']);
+export const NOTICE_KINDS = Object.freeze(['new-trigger', 'stopped', 'waiting-budget', 'batch-limit', 'breaker-open', 'queue-full', 'queue-unsaved', 'stage8-budget',
+  // Phase 2, step 3a: main's branch rules do not hold it for a green, or a test merge is not the tested tree.
+  'stage8-rules']);
 export const BREAKER_STATES = Object.freeze(['closed', 'open', 'half-open']);
 const iso = ms => new Date(ms).toISOString();
 const isoOrNull = v => (Number.isSafeInteger(v) && v > 0) ? iso(v) : (typeof v === 'string' && Number.isFinite(Date.parse(v)) ? iso(Date.parse(v)) : null);
