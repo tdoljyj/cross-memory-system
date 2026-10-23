@@ -8,7 +8,7 @@ import path from 'node:path';
 import { ResidentExecutor, PARK_HEAD_RETRY_MS, PARK_HEAD_STREAK_MS } from '../src/executor.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { POSITIONS, closedBreaker } from '../src/breaker.mjs';
-import { describe as prPage } from '../src/pr-status.mjs';
+import { describe as prPage, events as notificationEvents } from '../src/pr-status.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
 import { Ledger, batchKey, headKey } from '../src/ledger.mjs';
 import { drainRequest, abortRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
@@ -558,4 +558,57 @@ test('final check n6: a later entry failing after its acceptance stops the drain
     assert.equal((await f.ledger.halted()).value.code, 'OWNER_ABORT_UNCONFIRMED', where);
     assert.deepEqual((await f.ledger.crashed()).map(e => e.key), [done.unconfirmed], where);
   }
+});
+
+// ---- phase 2, step 3a (design v0.5 §5.3 rules 3, 5, 7): stage 8's live branch rules, test merge and green ledger ----
+test('step 3a: the new not-ready answers park the batch and are tried again; the rules ones tell the Owner once a day', async t => {
+  for (const code of ['RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE']) {
+    const f = await executorFixture(t, { engine: stage8Engine([notReady(code), notReady(code)], KEY) });
+    await f.drop(triggerBytes());
+    const first = await f.exec.tick();
+    assert.deepEqual([first.state, first.reason, first.tries], ['PARKED', code, 1], code);
+    assert.deepEqual([f.queue.row(884).state, f.queue.row(884).reason], ['PARKED', code], code);
+    const notices = f.queue.notices.filter(n => n.kind === 'stage8-rules');
+    const toldOwner = ['STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY'].includes(code);
+    assert.equal(notices.length, toldOwner ? 1 : 0, code);
+    f.advance(10 * MIN);
+    const second = await f.exec.tick();
+    assert.deepEqual([second.state, second.tries], ['PARKED', 2], code);
+    assert.equal(f.queue.notices.filter(n => n.kind === 'stage8-rules').length, toldOwner ? 1 : 0, `${code}: the same notice key the same day`);
+    f.advance(20 * MIN);
+    assert.equal((await f.exec.tick()).state, 'COMPLETED', code);
+  }
+});
+
+test('step 3a: a test merge that is not the tested tree ends the parked batch neutrally, never an attempt 2, and tells the Owner', async t => {
+  const f = await executorFixture(t, { engine: stage8Engine([notReady('TRAIN_TEST_MERGE_TREE_DIFFERS')], KEY) });
+  await f.drop(triggerBytes());
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'TRAIN_TEST_MERGE_TREE_DIFFERS']);
+  assert.deepEqual(await f.ledger.pendingAttempts2(), []);
+  assert.equal(f.queue.breaker?.state ?? 'closed', 'closed');
+  assert.equal(f.queue.row(884).state, 'STOPPED');
+  const n = f.queue.notices.filter(x => x.kind === 'stage8-rules');
+  assert.deepEqual(n.map(x => [x.code, x.pr, x.headSha]), [['TRAIN_TEST_MERGE_TREE_DIFFERS', 884, HEAD]]);
+  // the stage-fact catalogue and the failure table agree it is a clean final code of the head
+  assert.equal(await f.executedHeads.published(subject()), true, 'its roles were published before stage 8');
+});
+
+test('step 3a: the PR page and the notifications say why stage 8 writes no green', async () => {
+  const now = Date.parse('2026-10-23T09:00:00Z');
+  const board = fn => { const b = new StatusBoard({ clock: () => now }); b.update({ backfill: { complete: true, published: 0, unreadable: 0 } }); fn(b); return parseStatus(Buffer.from(JSON.stringify(b.snapshot()))); };
+  const pull = { pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 };
+  const parkedAs = code => prPage({ pull, status: board(b => b.setPending([{ pr: 7, headSha: H(7), baseSha: BASE, state: 'PARKED', deferred: code, nextAt: now + 10 * MIN }])), now });
+  assert.match(parkedAs('STRICT_OFF_WITHOUT_TRAIN').description, /^已测通：main 的 strict 已关而列车未开.*再查第 8 段$/);
+  assert.match(parkedAs('RULESET_UNREADABLE').description, /^已测通：读不到 main 的规则/);
+  assert.match(parkedAs('TRAIN_TEST_MERGE_NOT_READY').description, /^已测通：等 GitHub 算好试合并/);
+  assert.match(parkedAs('MERGE_METHODS_NOT_MERGE_ONLY').description, /合并方式不只有 merge/);
+  assert.match(parkedAs('GREEN_LEDGER_UNAVAILABLE').description, /绿色台账/);
+  const ended = prPage({ pull, status: board(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'FAILED_CLEAN', code: 'TRAIN_TEST_MERGE_TREE_DIFFERS', klass: 'clean-final', retry: 'new-commit' })), now });
+  assert.deepEqual([ended.state, /请推新提交/.test(ended.description)], ['failure', true]);
+  const told = notificationEvents({ status: board(b => b.update({ notices: [
+    { key: 'stage8:STRICT_OFF_WITHOUT_TRAIN:2026-10-23', kind: 'stage8-rules', pr: null, headSha: null, code: 'STRICT_OFF_WITHOUT_TRAIN' },
+    { key: `stage8:TRAIN_TEST_MERGE_TREE_DIFFERS:7:${H(7)}`, kind: 'stage8-rules', pr: 7, headSha: H(7), code: 'TRAIN_TEST_MERGE_TREE_DIFFERS' }] })), now });
+  assert.deepEqual(told.map(e => e.title), ['main 的 strict 已关，第 8 段停发合并位', 'PR #7 的试合并与测过的树不同']);
+  assert.match(told[1].body, new RegExp(H(7).slice(0, 8)));
 });

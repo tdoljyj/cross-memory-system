@@ -1557,6 +1557,65 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 
 最后一次核对（`331d0b22` → `360068bc`）结论 ACCEPT：上面各项都按要求修好，或做了有记录的安全选择；没有新的 BLOCKER、MAJOR、MINOR，只有 6 条 NIT：两处缺测试（A 上授权将到期时的漂移检查、按 main 尖端去重的提示）已补；状态里 `parkingFull` 在 HALT、暂停时不更新、第 1 位长时间不成为队首时的额度消耗、漂移时第二条出路的代价，都已写进上文；排空在后面的条目上 `unknown()` 或 Owner 中止本身失败时仍记成“请求被拒”：已改为照常写出已结束的批次，并写出停下的条目（`unconfirmed`，18.6），有测试。这一处的独立复核 ACCEPT-WITH-FIXES（0 BLOCKER、0 MAJOR）：唯一的 MINOR 是本 tick 以哪个码 HALT 的说法，已改；余下 4 条 NIT 未改：后面条目上的读取失败仍记“请求被拒”、`remaining` 含未确认的条目、第一个条目接受后失败时与单条中止的回执说法不一致，这三条只影响回执；第四条是原有的：同一 tick 里再读到一个排空或中止请求时，它的全范围归档可能顺带移走那个已接受、未结束条目的现场（要 Owner 在同一 tick 写两个请求，未实测）。
 
+## 19. 额度第二期·第 3a 步：第 8 段加固与绿色台账（v1.2，Task `6451a55d`）
+
+设计 v0.5 的第 3 步（列车深度 1 代码，`train.enabled=off`）按 Owner Decision `0bb98194` 拆成三个 PR：3a 第 8 段加固与绿色台账（本节）；3b 作业合同 `/3` 与按试合并提交 S 测试；3c 第 10 段与常驻层列车调度。本节只改 Source v2 的第 8 段和常驻层的失败码，列车一直是关的（Source 里固定为 `off`，3c 才接策略）。
+
+### 19.1 第 8 段写之前多核对两件事（设计 §5.3 第 3、5 条）
+
+在批次认领成为合并队列队首之后、写任何日志之前，第 8 段现读两样 GitHub 事实（`independent-control-checks-v2/train-rules.mjs`）。
+
+- **main 的规则**：`GET /repos/{repo}/rules/branches/main`（Metadata 读权限，安装令牌本来就有）。
+  - 读不到、没有 `required_status_checks` 规则（规则集被停用）、六项必需检查里有一项缺失或不再钉 integration 5368905（灾备切换），都是 `RULESET_UNREADABLE`。在本次运行的 90 秒窗口内反复读，读不到就停靠重试。
+  - 多个规则集按最严的算：任一条要求 `strict` 就算开；合并方式取所有 `pull_request` 规则都允许的交集。
+  - `strict` 关着而本节点不在列车模式：`STRICT_OFF_WITHOUT_TRAIN`，立即停靠，并通知 Owner（每天一次）。
+  - 列车模式下 `strict` 关着而合并方式不只有 merge：`MERGE_METHODS_NOT_MERGE_ONLY`（3a 用不到，写好供第 5 步起用）。
+- **GitHub 的试合并**：`pull.merge_commit_sha` 指向的提交必须恰好两个父提交 [T, H]（T 是批次测过的 main 尖端，H 是 PR head），树等于测过的树。
+  - 关车时测过的树就是 H 自己的树：H 含 T，试合并不改变内容（3b 起列车模式下才是 S 的树）。
+  - 还在算（`mergeable` 为空）、不可合并、还没有试合并、父提交还是旧的（GitHub 刚看到 main 或 head 变化，还没重算）：`TRAIN_TEST_MERGE_NOT_READY`，在窗口内反复读，然后停靠重试。
+  - 父提交对、树不同：`TRAIN_TEST_MERGE_TREE_DIFFERS`，立即结束（这个 head 的第 3、5、7 段已发布，要推新提交），通知 Owner（每个 head 一次）。
+  - 只按父提交和树比较，不按 SHA：GitHub 重新生成 `refs/pull/<n>/merge` 时 SHA 会变，父提交和树不变（设计审核 n-m5）。
+  - 任何一次读取失败都按没就绪处理，不当成段失败：这些事实会自己变，执行器再试即可。
+
+两件事都成立才继续：照旧先发 `kooyumi-admission-verified`，再发 `kooyumi-merge-slot`。
+
+### 19.2 绿色台账（设计 §5.4 第 4 条）
+
+- 每一次 `kooyumi-merge-slot` 成功都记进只新建的台账 `state\v2\green-ledger\`（`green-ledger.mjs`；`acl-model.json` 新增这个目录，只有 clued-control 能写）。
+- 记录按（提交、check run id、阶段）分文件：`intent`（写之前，必须记上）、`posted`、`settled`、`merged`、`revoked`。文件名带时间、作用键、阶段和随机数，先写临时文件、同步、再改名，崩溃不会留下半条记录。
+- `intent` 在这一对检查的任何一个写出之前就记：记不上就什么都不写（`GREEN_LEDGER_UNAVAILABLE`，停靠重试）。所以发布结果不确定的绿也在台账里。之后几个阶段是事后补记，崩溃时可能缺，日志和 `intent` 仍然指得出那条检查。
+- 3a 只记录。3c 的第 10 段读它，在发新绿之前撤销所有旧绿（设计 §5.4）。台账随安装带入，但正确性不依赖带入：3c 每次安装后都做一次全量清扫。
+
+### 19.3 写之后（设计 §5.3 第 7 条）
+
+- **PR 已被合入**：auto-merge 在 `kooyumi-merge-slot` 变绿几秒内就会合入，第 8 段写之后的核对会因为 PR 不再打开而失败。以前这被当成“授权变了”，把刚发的绿撤成失败。现在先问 GitHub：PR 已合入，合并提交恰好是 [T, H]、树等于测过的树，就算成功（`SETTLED`，`settledMerged`，日志记下合并提交），不撤销，台账记 `merged`。合并提交不对（不同的父提交或树），照旧撤销。
+- **PR 还开着**：写之后再看一次试合并。确定变成了别的父提交或别的树，撤销（`TRAIN_TEST_MERGE_CHANGED_AFTER_WRITE`）；读不到或还在算，不据此撤销，照旧由 Native 的写后核对决定。规则集写之后不再读：它管的是“发不发新绿”，写之后一次读取失败不值得撤销一个有效的绿。
+
+### 19.4 常驻层
+
+- 新码进了 `classify.mjs` 的干净终止码表和失败对照表，与 Source 的 `stage-fact.mjs` 一致（测试交叉核对）。`RULESET_UNREADABLE`、`STRICT_OFF_WITHOUT_TRAIN`、`MERGE_METHODS_NOT_MERGE_ONLY`、`TRAIN_TEST_MERGE_NOT_READY`、`GREEN_LEDGER_UNAVAILABLE` 是第 8 段没就绪的码，批次停在 B，按第 2 步的退避再试；`TRAIN_TEST_MERGE_TREE_DIFFERS` 是干净终止，中性，不做 attempt 2。
+- 新的通知种类 `stage8-rules`：`STRICT_OFF_WITHOUT_TRAIN`、`MERGE_METHODS_NOT_MERGE_ONLY`（每天一次）和 `TRAIN_TEST_MERGE_TREE_DIFFERS`（每个 head 一次）弹 Windows 通知给 Owner。
+- PR 页面：停靠行写明原因（“已测通：main 的 strict 已关而列车未开，暂不发合并位（已通知 Owner）”“已测通：等 GitHub 算好试合并”等）；树不同的结束写“试合并与测过的树不同，未发合并位：请推新提交（已通知 Owner）”。
+
+### 19.5 为什么装上是安全的
+
+- 只会更严：多出来的核对都在写之前、零副作用；今天的规则集（`strict` 开、六项钉 5368905）和今天的 PR（head 含 main 尖端）下，它们都成立，第 8 段照常发绿。
+- 写之后已合入不再撤销，是把一个错误的撤销改掉；合并提交不对时照旧撤销。
+- 台账写不进就不发绿，最坏是停靠重试，不会多发绿。
+- 改了 Source v2（第 8 段、GitHub 端口、布局、ACL 模型），所以要两侧重装（Linux root 加 Owner 的 UAC）。
+
+### 19.6 测试
+
+- **Source v2**：195 项（194 通过、1 跳过）。
+  - `test/train-rules.test.mjs`（5 项）：规则集的各种情况（停用、缺项、钉错、聚合、合并方式交集、格式不对）、不同模式下的判断、试合并的判断（还在算、不可合并、父提交顺序与新旧、树不同、重新生成的 SHA）、已合入的判断、绿色台账（只新建、先 intent、列出、撕裂文件与外来文件报出）、GitHub 端口的规则读取。
+  - `test/resident-v2-publishers.test.mjs` 新增 5 项：规则集挡住发绿、试合并、台账先于写、写之后已合入算成功（合并提交不对照旧撤销）、写之后试合并确定变了就撤销而读不到不撤销。
+- **常驻层**：Node 285 项全部通过（`park.test.mjs` 新增 3 项：新码停靠并通知、树不同中性结束、PR 页面与通知文字）。离线演练 51 步（新增“strict 关着、列车未开：停靠并通知，strict 开回后跑完”）。
+- Python、`windows/test-resident-windows.ps1`、`windows/test-install-carry.ps1` 照常通过。
+
+### 19.7 独立复核
+
+（待复核）
+
 ## 附录 A：草稿文件
 
 | 文件 | 作用 |
@@ -1583,3 +1642,4 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 | `CI/src/hosted-relay-v1/relay-entry-v2.mjs`、`relay-plan.mjs`、`CI/src/independent-control-checks-v2/consumer.mjs` | v0.7：第 R 段入口、计划行、v2 控制检查消费者 |
 | `CI/src/resident-v2/*`、`CI/src/*-v2.mjs`、`CI/src/formal-work-admission-check-v2/`、`CI/src/independent-control-checks-v2/`、`CI/runtime/one-shot-v2.mjs`、`CI/worker/*-v2|v3|v4/`、`CI/worker/protected-job-bridge-v4/` | v0.6：Source v2 本体（§7.1） |
 | `src/failure-table.json`、`src/executed-heads.mjs`、`src/status.mjs`、`src/pr-status.mjs`、`windows/test-install-carry.ps1` | v0.9：失败对照表、与 Source 无关的已执行记录与回填、状态快照、PR 页面状态与通知、安装带入旧账本的离线测试（§16） |
+| `CI/src/independent-control-checks-v2/train-rules.mjs`、`green-ledger.mjs` | v1.2：第 8 段的 main 规则与试合并核对、绿色台账（§19） |

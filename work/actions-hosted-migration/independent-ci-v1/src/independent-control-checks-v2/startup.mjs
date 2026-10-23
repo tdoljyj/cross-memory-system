@@ -7,6 +7,7 @@ import { readBatchClaim } from '../batch-claim-v2.mjs';
 import { runEntry, controllerPrincipal, controllerPorts, observationLog, authorityOf } from '../resident-v2/entry-runtime.mjs';
 import { STATE_V2, stageByNumber } from '../resident-v2/layout.mjs';
 import { STAGE8_CHECK_MS, createProductionControlPublisherV2, queueWindow } from './publisher.mjs';
+import { GreenLedger } from './green-ledger.mjs';
 
 export async function main(argv = process.argv.slice(2), output = process.stdout) {
   const startedAt = Date.now();
@@ -17,7 +18,9 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const log = observationLog(STATE_V2.effectsControl, jobs[0].id);
     const { github, admission } = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
     const journal = await EffectJournal.open(STATE_V2.effectsControl);
-    const publisher = createProductionControlPublisherV2({ github, journal, admission, assertLive: live, record: log, authority: authorityOf(inputs.record.accepted), batchClaim });
+    // Phase 2, step 3a: the green ledger (migrate-acl.ps1 creates the directory, clued-control only); the train stays off.
+    const greenLedger = await GreenLedger.open(STATE_V2.greenLedger);
+    const publisher = createProductionControlPublisherV2({ github, journal, admission, assertLive: live, record: log, authority: authorityOf(inputs.record.accepted), batchClaim, greenLedger });
     // The claim lease bound is read from the first live observation inside the wait; the outer bound is
     // the stage cap and the install's validUntil. Phase 2, step 2: one run only checks (STAGE8_CHECK_MS); the
     // resident parks the batch and runs this stage again on its own back-off.
