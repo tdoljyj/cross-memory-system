@@ -278,7 +278,10 @@ export function validateSelfTestReport(selfTestReport) {
     && selfTestReport.commits === REVIEWED_HISTORY_PROOF.commits && selfTestReport.files_at_commits === REVIEWED_HISTORY_PROOF.files_at_commits
     && selfTestReport.verified_git_objects === REVIEWED_HISTORY_PROOF.verified_git_objects
     && selfTestReport.global_fingerprints === 0 && selfTestReport.ignore_sha256 === REVIEWED_HISTORY_PROOF.reviewed_ignore_sha256
-    && Object.keys(selfTestReport.regression ?? {}).sort().join('|') === 'baseline_detection|different_path_detection|exact_history_only|handover_acceptance_artifact_proof|new_commit_detection|scheduling_marker_different_path_detection|scheduling_marker_new_commit_detection|valid_private_key_detection'
+    && Object.keys(selfTestReport.regression ?? {}).sort().join('|') === 'baseline_detection|different_path_detection|exact_history_only|handover_acceptance_artifact_proof|new_commit_detection|scheduling_marker_different_path_detection|scheduling_marker_new_commit_detection|synthetic_test_repository|valid_private_key_detection'
+    && typeof selfTestReport.regression.synthetic_test_repository === 'string' && selfTestReport.regression.synthetic_test_repository.length <= 4096
+    && !/[\x00-\x1f\x7f]/.test(selfTestReport.regression.synthetic_test_repository)
+    && path.posix.isAbsolute(selfTestReport.regression.synthetic_test_repository) && path.posix.basename(selfTestReport.regression.synthetic_test_repository) === 'repo'
     && selfTestReport.regression?.baseline_detection === true && selfTestReport.regression.exact_history_only === true
     && selfTestReport.regression.new_commit_detection === true && selfTestReport.regression.different_path_detection === true
     && ['scheduling_marker_new_commit_detection', 'scheduling_marker_different_path_detection', 'valid_private_key_detection']

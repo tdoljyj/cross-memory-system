@@ -2,6 +2,8 @@
 // actual self-test, observation, qualification or signer capability.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { batchJobsV2, subjectOfV2 } from '../src/job-v2.mjs';
 import { REVIEWED_COMMITS, REVIEWED_HISTORY_PROOF, validateSelfTestReport, requiredScannerPlan } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
 import { REVIEWED_COMMITS as LEGACY_COMMITS } from '../worker/formal-gitleaks-v3/required-history/prepare.mjs';
@@ -10,14 +12,36 @@ import { observationFacts } from '../worker/protected-job-bridge-v4/signed-resul
 import { takeActualObservation } from '../worker/formal-gitleaks-v4/adapter.mjs';
 
 const iso = ms => new Date(ms).toISOString();
-function report() {
-  return { exact_historical_fingerprints: 729, default_rules_unchanged: true, global_fingerprints: 0,
-    commits: 101, files_at_commits: 172, verified_git_objects: 130, ignore_sha256: 'abbbece0db8ff3e524736006e0bc8ecf078358b48fae91c8d0bc3046728b8f5a',
-    regression: { baseline_detection: true, exact_history_only: true, new_commit_detection: true, different_path_detection: true,
-      scheduling_marker_new_commit_detection: true, scheduling_marker_different_path_detection: true, valid_private_key_detection: true,
-      handover_acceptance_artifact_proof: { actual_git_artifact_passes: true, forged_digest_rejected: true, valid_nonancestor_rejected: true,
-        wrong_line_rejected: true, wrong_path_rejected: true } } };
-}
+// Evaluate only the pinned Python helper's real report/return expressions, not
+// its scanner/Git side effects. This is a wire-schema fixture, never detection
+// evidence. New producer fields cannot silently disappear in a hand-built JS mock.
+const helperReport = (() => {
+  const script = String.raw`import ast,hashlib,json,pathlib,sys
+tree=ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))
+functions={node.name:node for node in tree.body if isinstance(node,ast.FunctionDef)}
+def returned(name):
+ return next(node.value for node in reversed(functions[name].body) if isinstance(node,ast.Return))
+artifact=ast.literal_eval(returned('_self_test_handover_acceptance'))
+records=[json.loads(line[len('# clued-reviewed-finding: '):]) for line in pathlib.Path(sys.argv[2]).read_text(encoding='utf-8').splitlines() if line.startswith('# clued-reviewed-finding: ')]
+content=''.join(record['fingerprint']+'\n' for record in records)
+proof={'commits':len({r['fingerprint'].split(':')[0] for r in records}),'files_at_commits':len({':'.join(r['fingerprint'].split(':')[:2]) for r in records}),'verified_git_objects':int(sys.argv[3])}
+scope={'str':str,'len':len,'hashlib':hashlib,'records':records,'proof':proof,'content':content,'test_repo':pathlib.PurePosixPath('/controlled-helper-return/repo'),'root':pathlib.PurePosixPath('/controlled-helper-return'),'_self_test_handover_acceptance':lambda root:artifact}
+def evaluate(value):
+ return eval(compile(ast.Expression(value),'pinned-helper-return','eval'),{'__builtins__':{}},scope)
+regression=evaluate(returned('self_test'))
+constructor=next(node.value for node in functions['main'].body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='report' for t in node.targets))
+report=evaluate(constructor)
+report['regression']=regression
+print(json.dumps(report))
+`;
+  const result = spawnSync('python', ['-I', '-B', '-c', script,
+    fileURLToPath(new URL('../../../../scripts/ci/reviewed_gitleaks.py', import.meta.url)),
+    fileURLToPath(new URL('../../../../.gitleaks.toml', import.meta.url)), String(REVIEWED_HISTORY_PROOF.verified_git_objects)],
+  { windowsHide: true, encoding: 'utf8', timeout: 10000 });
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
+})();
+const report = () => structuredClone(helperReport);
 function execution() {
   const now = Date.now();
   const job = batchJobsV2({ repo: 'tdoljyj/cross-memory-system', pr: 920, headSha: 'a'.repeat(40), baseSha: 'b'.repeat(40),
@@ -36,10 +60,13 @@ test('Source v4 has exactly 729 findings/101 commits; the legacy Source remains 
 });
 
 test('the actual self-test must retain every old guard and prove new marker and valid-PEM detection', async () => {
+  assert.equal(report().regression.synthetic_test_repository, '/controlled-helper-return/repo');
   assert.doesNotThrow(() => validateSelfTestReport(report()));
   for (const edit of [r => r.exact_historical_fingerprints = 726, r => r.exact_historical_fingerprints = 730,
     r => r.global_fingerprints = 1, r => r.default_rules_unchanged = false, r => r.commits = 100,
-    r => r.files_at_commits = 170, r => r.verified_git_objects = 131, r => r.ignore_sha256 = 'a'.repeat(64), r => r.extra = true]) {
+    r => r.files_at_commits = 170, r => r.verified_git_objects = 131, r => r.ignore_sha256 = 'a'.repeat(64), r => r.extra = true,
+    r => r.regression.extra = true, r => delete r.regression.synthetic_test_repository,
+    r => r.regression.synthetic_test_repository = false, r => r.regression.synthetic_test_repository = 'relative/repo']) {
     const value = report(); edit(value); assert.throws(() => validateSelfTestReport(value), { code: 'UNCHANGED_REVIEW_SELF_TEST_REQUIRED' });
   }
   for (const key of ['baseline_detection', 'exact_history_only', 'new_commit_detection', 'different_path_detection',
