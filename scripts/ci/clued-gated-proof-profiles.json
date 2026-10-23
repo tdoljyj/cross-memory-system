@@ -5688,6 +5688,39 @@
             ]
           }
         }
+      ],
+      "accepted_sources": [
+        {
+          "registration_status": "registered",
+          "workflow_blob": "0137e1fc6eb97249b8bae82ff71a5e1d26484c11",
+          "source_sha256": "0528debb673a3fad6e1b8a27f9bb45527d93ba9a6b70f418d70f4576b8ac3403",
+          "source_yaml": "# Candidate External2 idle Source; no App/PG/Clued secret, no readonly-purpose inheritance.\nname: Clued disposable cancellation fixture\non:\n  pull_request:\n    paths:\n      - '.github/workflows/clued-handover-disposable-idle.yml'\n      - 'scripts/ci/clued-handover-external-*'\n  workflow_dispatch:\n    inputs:\n      admission_run_id:\n        description: Existing exact workflow/ref dispatch admission\n        required: true\n        type: string\npermissions:\n  contents: read\nconcurrency:\n  group: clued-handover-idle-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\njobs:\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  disposable-idle:\n    name: disposable-idle\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'pull_request' &&\n        github.event.pull_request.head.repo.full_name == github.repository &&\n        github.event.pull_request.base.repo.full_name == github.repository &&\n        github.event.pull_request.user.login == github.repository_owner &&\n        github.actor == github.repository_owner &&\n        github.triggering_actor == github.repository_owner) ||\n       (github.event_name == 'workflow_dispatch' &&\n        startsWith(github.ref, 'refs/heads/clued-handover-disposable-') &&\n        github.actor == github.repository_owner &&\n        github.triggering_actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 45\n    environment: clued-handover-source-only\n    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          ref: ${{ github.event.pull_request.head.sha || github.ref }}\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Bounded idle process to prove real provider cancellation\n        run: |\n          if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n            node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\n          else\n            sleep 2400\n          fi\n",
+          "primary_ids": [
+            "disposable-idle"
+          ],
+          "pull_request": {
+            "paths": [
+              ".github/workflows/clued-handover-disposable-idle.yml",
+              "scripts/ci/clued-handover-external-*"
+            ]
+          },
+          "gated": true,
+          "routes": [
+            {
+              "job_id": "disposable-idle",
+              "name": "disposable-idle",
+              "self_hosted": true,
+              "required_steps": {
+                "Bounded idle process to prove real provider cancellation": 1
+              },
+              "command_digests": {
+                "Bounded idle process to prove real provider cancellation": [
+                  "7bef5b7eaf13ac2ad7be770fbafaa9f720c6cc1e30d139d6f0feb548afd445ff"
+                ]
+              }
+            }
+          ]
+        }
       ]
     },
     ".github/workflows/runner-budget-policy.yml": {

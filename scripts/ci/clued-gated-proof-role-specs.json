@@ -2737,6 +2737,53 @@
               ]
             }
           }
+        ],
+        "0137e1fc6eb97249b8bae82ff71a5e1d26484c11": [
+          {
+            "job_id": "disposable-idle",
+            "definition_sha256": "54b92e0420dee05b5d631172a853eb3a2d43ddf0ce38ef3ab7273f856d91c11e",
+            "definition": {
+              "name": "disposable-idle",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'pull_request' &&\n  github.event.pull_request.head.repo.full_name == github.repository &&\n  github.event.pull_request.base.repo.full_name == github.repository &&\n  github.event.pull_request.user.login == github.repository_owner &&\n  github.actor == github.repository_owner &&\n  github.triggering_actor == github.repository_owner) ||\n (github.event_name == 'workflow_dispatch' &&\n  startsWith(github.ref, 'refs/heads/clued-handover-disposable-') &&\n  github.actor == github.repository_owner &&\n  github.triggering_actor == github.repository_owner))",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal"
+              ],
+              "timeout-minutes": 45,
+              "environment": "clued-handover-source-only",
+              "permissions": {
+                "contents": "read"
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "ref": "${{ github.event.pull_request.head.sha || github.ref }}",
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Bounded idle process to prove real provider cancellation",
+                  "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelse\n  sleep 2400\nfi\n"
+                }
+              ]
+            }
+          }
         ]
       }
     },
