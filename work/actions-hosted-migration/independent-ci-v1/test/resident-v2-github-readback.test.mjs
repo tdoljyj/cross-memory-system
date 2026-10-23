@@ -26,13 +26,24 @@ const jobsFor = (attempt = 1) => batchJobsV2({ repo: REPO, pr: 888, headSha: HEA
 const claim = () => ({ claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000) });
 const run = (id, name, { app = APP, head = HEAD, conclusion = 'success' } = {}) => ({ id, name, head_sha: head, status: 'completed', conclusion, app: { id: app }, external_id: `independent-ci:${name}` });
 
+// Stage 8 also reads main's live branch rules and GitHub's test merge (phase 2, step 3a): the six checks pinned to
+// 5368905, strict on, the test merge exactly [BASE, HEAD] with HEAD's own tree.
+const SIX = ['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified', 'kooyumi-merge-slot'];
+const TREE = 'c'.repeat(40), TEST_MERGE = 'e'.repeat(40);
+const RULES = [{ type: 'pull_request', rulesetId: 24182890, parameters: { allowed_merge_methods: ['merge', 'squash', 'rebase'], required_approving_review_count: 0 } },
+  { type: 'required_status_checks', rulesetId: 24182890, parameters: { strict_required_status_checks_policy: true, required_status_checks: SIX.map(context => ({ context, integration_id: APP })) } }];
+const COMMITS = { [HEAD]: { sha: HEAD, tree: TREE, parents: [BASE] }, [TEST_MERGE]: { sha: TEST_MERGE, tree: TREE, parents: [BASE, HEAD] } };
+const memoryLedger = () => ({ records: [], async append(r) { this.records.push({ phase: r.phase, headSha: r.job.headSha }); } });
+
 // The GitHub port as the publishers see it; `seed` are check runs some other node or install published earlier.
 function fakeGithub(seed = [], { narrowed = true } = {}) {
   const checks = seed.map(c => structuredClone(c)); let next = 1000;
   const calls = { readChangedPaths: 0, readChecks: 0, readAppChecks: 0, createCheck: 0 };
   const port = { fixture: true, checks, calls,
     async readChangedPaths(job) { calls.readChangedPaths++; return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: ['a.txt'] }; },
-    async readPullRequest(n) { return { number: n, state: 'open', head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: BASE, ref: 'main', repo: { full_name: REPO } } }; },
+    async readPullRequest(n) { return { number: n, state: 'open', merged: false, mergeable: true, merge_commit_sha: TEST_MERGE, head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: BASE, ref: 'main', repo: { full_name: REPO } } }; },
+    async readBranchRules(branch) { return { complete: true, branch, rules: structuredClone(RULES) }; },
+    async readGitCommit(sha) { if (!COMMITS[sha]) throw Object.assign(new Error('github_http_404'), { code: 'github_http_404' }); return structuredClone(COMMITS[sha]); },
     async readChecks(head) { calls.readChecks++; return { complete: true, checks: checks.filter(c => c.head_sha === head).map(c => structuredClone(c)) }; },
     async createCheck(body) { calls.createCheck++; const c = { id: next++, app: { id: APP }, ...structuredClone(body) }; checks.push(c); return structuredClone(c); },
     async revokeCheck(id, body) { const c = checks.find(x => x.id === id); Object.assign(c, structuredClone(body)); return structuredClone(c); } };
@@ -286,7 +297,7 @@ async function controlPair(t, github) {
   const admission = { fixture: true, async evaluatePr(job, packet) {
     return admittedFacts(job, c, packet, { domain: 'fixture', mergeQueueHead: true, slotUntil: SLOT_UNTIL, batchClaim: claimGeneration(c) });
   } };
-  const pub = createFixtureControlPublisherV2({ github, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c), sleep: async () => {} });
+  const pub = createFixtureControlPublisherV2({ github, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c), greenLedger: memoryLedger(), sleep: async () => {} });
   return { pub, pair: [jobs['control-admission'], jobs['control-merge-slot']], journal, batchClaim: claimGeneration(c) };
 }
 

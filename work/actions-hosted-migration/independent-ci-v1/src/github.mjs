@@ -169,19 +169,21 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     }
     fail('mode_inventory_page_limit');
   }
-  async function inventory(headSha, until = null, checkName = null) {
+  // ownOnly: this App's runs only (app_id); every run must then be this App's.
+  async function inventory(headSha, until = null, checkName = null, ownOnly = false) {
     if (!sha.test(headSha)) fail('invalid_head');
     const named = checkName === null ? '' : `check_name=${encodeURIComponent(checkName)}&`;
+    const own = ownOnly ? `app_id=${appId}&` : '';
     const checks = []; let expected = null;
     for (let page = 1; page <= maxPages; page++) {
-      const reply = await scoped(`/commits/${headSha}/check-runs?${named}filter=all&per_page=100&page=${page}`, 'GET', undefined, { until });
+      const reply = await scoped(`/commits/${headSha}/check-runs?${own}${named}filter=all&per_page=100&page=${page}`, 'GET', undefined, { until });
       if (!Number.isSafeInteger(reply.total_count) || reply.total_count < 0 || !Array.isArray(reply.check_runs)
         || reply.check_runs.length > 100 || (expected !== null && expected !== reply.total_count)) fail('checks_pagination_changed');
       expected = reply.total_count; checks.push(...reply.check_runs);
       if (checks.length === expected) {
         if (new Set(checks.map(check => check.id)).size !== checks.length
           || checks.some(check => !positive(check.id) || check.head_sha !== headSha
-            || (checkName !== null && check.name !== checkName))) fail('invalid_check_set');
+            || (checkName !== null && check.name !== checkName) || (ownOnly && check.app?.id !== appId))) fail('invalid_check_set');
         return { complete: true, checks };
       }
       if (checks.length > expected || reply.check_runs.length < 100) fail('incomplete_checks');
@@ -231,6 +233,9 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
       return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: [...paths].sort() };
     },
     async readChecks(headSha) { return inventory(headSha); },
+    // This App's runs on the head, every run of every name (filter=all, app_id): the cross-node "already published"
+    // read-back (resident primary/standby design v0.4 §6.2; published-on-github-v2.mjs). Complete, or refused.
+    async readAppChecks(headSha) { return inventory(headSha, null, null, true); },
     // Hosted relay reads (design S16/S17): GET only, same fixed origin, same
     // installation token and permission set. Replies are normalized and checked.
     async readBranchHead(name) {
