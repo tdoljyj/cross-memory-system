@@ -51,12 +51,12 @@ function scripted(steps, { clock = null } = {}) {
 
 // With a fake `clock` (both the wall clock and the monotonic one), every attempt's signal is a fake one that records its
 // timeout (signals) and is never aborted.
-function authorityWith({ fetchImpl, accepted = Object.fromEntries(REFS.map(k => [k, randomUUID()])), ciPrincipalBindingId = randomUUID(), clock = null, live = () => {} }) {
+function authorityWith({ fetchImpl, accepted = Object.fromEntries(REFS.map(k => [k, randomUUID()])), ciPrincipalBindingId = randomUUID(), clock = null, live = () => {}, sleepDelay = 0 }) {
   const waits = [], logs = [], signals = [];
   const config = { supabaseUrl: 'https://x.supabase.co/', publishableKey: 'k', scope: 'project:x', ciPrincipalBindingId };
   const auth = protectedAuthority({ config, accepted, github: { async readChangedPaths(job) { return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: ['a.txt'] }; } },
     fetchImpl, nativeToken: 't', live, log: (kind, data) => logs.push({ kind, data: structuredClone(data) }),
-    ...(clock ? { clock: () => clock.now, monotonic: () => clock.now, sleep: async ms => { waits.push(ms); clock.now += ms; }, timeoutSignal: ms => { signals.push(ms); return new AbortController().signal; } }
+    ...(clock ? { clock: () => clock.now, monotonic: () => clock.now, sleep: async ms => { waits.push(ms); clock.now += ms + sleepDelay; }, timeoutSignal: ms => { signals.push(ms); return new AbortController().signal; } }
       : { sleep: async ms => { waits.push(ms); } }) });
   return { auth, waits, logs, signals };
 }
@@ -162,6 +162,38 @@ test('a slow failing Native (3 s 500s) gets four attempts in 19 s', async () => 
   assert.equal(calls.length, 4);
   assert.deepEqual(waits, [1000, 2000, 4000]);
   assert.equal(clock.now - start, 19000);
+});
+
+test('a fresh success delivered after the monotonic budget is refused even if the abort timer ran late', async () => {
+  const jobs = jobsFor(), c = claim(), clock = { now: Date.now() }, start = clock.now;
+  const { fetchImpl, calls } = scripted([() => { clock.now += 30001; return reply(200, verifyBody(c, clock.now)); }]);
+  const { auth, logs } = authorityWith({ fetchImpl, clock });
+  await assert.rejects(auth.observe(jobs.trivy, claimGeneration(c)), { code: 'native_claim_observation_unavailable' });
+  assert.equal(calls.length, 1);
+  assert.equal(clock.now - start, 30001);
+  assert.deepEqual(logs.map(l => l.kind), ['native_claim_observation_unavailable']);
+  assert.deepEqual(logs[0].data, { attempt: 1, cause: 'budget', status: 200 });
+});
+
+test('a scheduled retry that wakes after the budget sends no further request', async () => {
+  const jobs = jobsFor(), c = claim(), clock = { now: Date.now() };
+  const { fetchImpl, calls } = scripted([timeout(), () => reply(200, verifyBody(c, clock.now))]);
+  const { auth, waits, logs } = authorityWith({ fetchImpl, clock, sleepDelay: 30000 });
+  await assert.rejects(auth.observe(jobs.trivy, claimGeneration(c)), { code: 'native_claim_observation_unavailable' });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(waits, [1000]);
+  assert.deepEqual(logs.map(l => l.kind), ['native_claim_observation_retry', 'native_claim_observation_unavailable']);
+});
+
+test('the held record must remain live when a successful verify reply arrives', async () => {
+  const jobs = jobsFor(), c = claim();
+  let lives = 0;
+  const lost = Object.assign(new Error('HELD_RECORD_LOST'), { code: 'HELD_RECORD_LOST' });
+  const { fetchImpl, calls } = scripted([() => reply(200, verifyBody(c, Date.now()))]);
+  const { auth, logs } = authorityWith({ fetchImpl, live: () => { if (++lives === 3) throw lost; } });
+  await assert.rejects(auth.observe(jobs.trivy, claimGeneration(c)), { code: 'HELD_RECORD_LOST' });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(logs, []);
 });
 
 test('a wait is taken only when it leaves at least 2 s of the budget for the next attempt', async () => {
@@ -306,7 +338,18 @@ test('publisher: exhausted before the write, nothing is written and the outcome 
   assert.equal(calls.length, 4);
   assert.deepEqual(waits, [1000, 2000, 4000]);
   // stage-inputs.mjs#writeOutcome: BLOCKED with zero side effects is mayHavePublished=false
-  assert.equal(outcomeFailureCode({ ...result, mayHavePublished: false }, 5), 'PUBLICATION_BLOCKED');
+  assert.equal(outcomeFailureCode({ ...result, mayHavePublished: false }, 5), 'NATIVE_ADMISSION_UNAVAILABLE');
+});
+
+test('publisher: exhausted after the write compensates the one check and never re-posts it', async t => {
+  const { result, checks, waits, calls, journal, key } = await publisherWith(t, c => [() => reply(200, verifyBody(c, Date.now())), reply(503, {})]);
+  assert.equal(result.status, 'REVOKED', JSON.stringify(result));
+  assert.equal(checks.length, 1);
+  assert.equal(checks[0].conclusion, 'failure');
+  assert.equal((await journal.read(key)).state, 'revoked');
+  assert.equal(calls.length, 5);
+  assert.deepEqual(waits, [1000, 2000, 4000]);
+  assert.equal(outcomeFailureCode({ ...result, mayHavePublished: true }, 5), 'PUBLICATION_REVOKED');
 });
 
 // Real fetch (undici) against a local server: the classification above holds for Node's own errors.

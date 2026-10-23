@@ -36,11 +36,14 @@ export function protectedFactsFromVerify({ job, batchClaim, body, status, config
 // timeout is a 500/57014), is sent again after 1, 2 and 4 s, and only while the wait still leaves a short attempt
 // before OBSERVE_BUDGET_MS from the first request (monotonic time; the changed-paths read before it has its own
 // bound); every attempt's own wait is the same 10 s as v1 one-shot.mjs (PR-A review MINOR), cut to that budget. Each
-// attempt is a new read verified exactly as before, with its own verified_at checked against its own arrival, so a
+// attempt is a new read verified exactly as before, with its own verified_at checked against its own arrival. The
+// monotonic deadline is checked again after a scheduled wait and before accepting a reply (an abort timer can run
+// late); the held record must still be live at that arrival. Thus a
 // retried answer is as fresh and complete as a first one; a verified refusal (native_claim_observation_refused) and
 // any other failure, such as a body that is not JSON, a redirect or a bad URL (native_claim_observation_unconfirmed),
-// never retry. Exhausted: native_claim_observation_unavailable, which stage-fact.mjs maps like any other reason it
-// does not list. The verify RPC is read-only, so a retry never writes or re-posts a check, on the publisher's first
+// never retry. Exhausted: native_claim_observation_unavailable, mapped to NATIVE_ADMISSION_UNAVAILABLE only on a
+// clean BLOCKED with zero side effects; this does not enable a new batch attempt after a role may have published.
+// The verify RPC is read-only, so a retry never writes or re-posts a check, on the publisher's first
 // boundary (before its journal says sent) or on the one after its write. Like the answer's, a retry's observation
 // log line must be written: if it cannot be, the observation fails closed.
 export const OBSERVE_RETRY_WAITS_MS = Object.freeze([1000, 2000, 4000]);
@@ -71,9 +74,14 @@ export function protectedAuthority({ config, accepted, github, fetchImpl, native
     const deadline = monotonic() + OBSERVE_BUDGET_MS;
     for (let attempt = 1; ; attempt++) {
       live();
+      const remaining = deadline - monotonic();
+      if (remaining <= 0) {
+        log('native_claim_observation_unavailable', { attempt: attempt - 1, cause: 'budget', status: null });
+        stop('native_claim_observation_unavailable');
+      }
       let response = null, body, cause = null;
       try {
-        response = await fetchImpl(url, { method: 'POST', redirect: 'error', signal: timeoutSignal(Math.max(1, Math.min(OBSERVE_ATTEMPT_MS, Math.ceil(deadline - monotonic())))),
+        response = await fetchImpl(url, { method: 'POST', redirect: 'error', signal: timeoutSignal(Math.max(1, Math.min(OBSERVE_ATTEMPT_MS, Math.ceil(remaining)))),
           headers: { apikey: config.publishableKey, authorization: `Bearer ${config.publishableKey}`, 'content-type': 'application/json' }, body: request });
         if (transientStatus(response.status)) {
           cause = 'status';
@@ -85,6 +93,11 @@ export function protectedAuthority({ config, accepted, github, fetchImpl, native
       }
       if (cause === null) {
         const facts = protectedFactsFromVerify({ job: subject, batchClaim: claimGen, body, status: response.status, config, accepted, now: clock() });
+        live();
+        if (monotonic() > deadline) {
+          log('native_claim_observation_unavailable', { attempt, cause: 'budget', status: response.status });
+          stop('native_claim_observation_unavailable');
+        }
         log('native_claim_observation', body);
         return facts;
       }
