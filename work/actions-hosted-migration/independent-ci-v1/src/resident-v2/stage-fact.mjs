@@ -6,8 +6,9 @@
 import { canonical } from '../proof.mjs';
 import { hash } from './prepare-record.mjs';
 import { HEX64, OUTCOME_CONTRACT, RELAY_STAGE_NUMBER } from './layout.mjs';
-import { RELAY_HALT_CODES, validateRelayPlanRows } from '../hosted-relay-v1/relay-plan.mjs';
+import { RELAY_HALT_CODES, relayPlanEnding, validateRelayPlanRows } from '../hosted-relay-v1/relay-plan.mjs';
 import { sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2 } from '../admission-facts-v2.mjs';
+import { HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB, ROLE_ALREADY_ON_GITHUB_REASON } from '../published-on-github-v2.mjs';
 
 export const STAGE_FACT_CONTRACT = 'clued.independent-ci.resident-stage-fact/2';
 export const NATIVE_RECEIPT_CONTRACT_V2 = 'clued.independent-ci.windows-formal-entry-receipt/2';
@@ -33,7 +34,12 @@ export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_
   // Phase 2, step 3a (train-rules.mjs, green-ledger.mjs): main's live branch rules, GitHub's test merge, the green ledger;
   // all before any journal write. The last one is final for the head (STAGE8_FINAL_REASONS).
   'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE',
-  'TRAIN_TEST_MERGE_TREE_DIFFERS']);
+  'TRAIN_TEST_MERGE_TREE_DIFFERS',
+  // App 5368905 already published on this head (primary/standby design v0.4 §6.2, C4; published-on-github-v2.mjs):
+  // stage 1 found a role or control check before Native was asked, or a role this node knew nothing of was already
+  // there before its first publication (stage R: an ON_GITHUB plan row). Nothing was published for that role (an earlier
+  // stage of the batch may have published its own); a new commit is needed.
+  HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB]);
 // The stage-8 answers that travel as their own code (publisher.mjs STAGE8_NOT_READY_REASONS and STAGE8_FINAL_REASONS).
 const STAGE8_OWN_CODES = new Set(['RESIDENT_QUEUE_HEAD_NOT_REACHED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_BASE_MOVED', 'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN',
   'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE', 'TRAIN_TEST_MERGE_TREE_DIFFERS']);
@@ -96,6 +102,10 @@ export function outcomeFailureCode(outcome, stageNumber) {
   // K(head, role) is held by the other path: a role on this head was (or may have been) published by it. Never
   // clean, on any stage (DESIGN §6.3; PR-A review MINOR 4).
   if (r === 'role_already_published_on_head' || r === 'ROLE_ALREADY_PUBLISHED_ON_HEAD') return 'ROLE_ALREADY_PUBLISHED_ON_HEAD';
+  // On GitHub but unknown to this node (C4): clean, final, only on this clean BLOCKED with zero side effects (stage 1's
+  // read-back is the only one that ends a head as HEAD_PUBLISHED_ON_GITHUB).
+  if (r === HEAD_PUBLISHED_ON_GITHUB && stageNumber === 1) return HEAD_PUBLISHED_ON_GITHUB;
+  if (r === ROLE_ALREADY_ON_GITHUB_REASON || r === ROLE_ALREADY_ON_GITHUB) return ROLE_ALREADY_ON_GITHUB;
   if (r === 'RESIDENT_QUEUE_HEAD_NOT_REACHED' || r === 'RESIDENT_MERGE_QUEUE_NOT_JOINED' || r === 'RESIDENT_BASE_MOVED') return r;
   if (stageNumber === 8 && STAGE8_OWN_CODES.has(r)) return r;
   if (r === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE') return 'REMOTE_REFS_CHANGED_SINCE_BUNDLE';
@@ -198,7 +208,9 @@ export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha
   if (n.ok) {
     if (plan.stage === RELAY_STAGE_NUMBER) {
       if (!boundOutcome || boundOutcome.status !== 'RELAY_COMPLETE') return done('STAGE_OUTCOME_MISSING');
-      if (!relayRows || !relayRows.every(r => ['RELAYED', 'LOCAL_REQUIRED'].includes(r.outcome))) return done('RELAY_PLAN_UNCONFIRMED');
+      // A complete plan (every row RELAYED or LOCAL_REQUIRED) with no reason, or one ending ON_GITHUB (C4) with exactly that reason.
+      const ending = relayRows ? relayPlanEnding(relayRows) : null;
+      if (!ending || boundOutcome.reason !== (ending === 'ON_GITHUB' ? ROLE_ALREADY_ON_GITHUB : null)) return done('RELAY_PLAN_UNCONFIRMED');
       return { ...fact, state: 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' };
     }
     if (!boundOutcome || !['SETTLED', 'ISSUED_RESULT_RECEIVED'].includes(boundOutcome.status)) return done('STAGE_OUTCOME_MISSING');
