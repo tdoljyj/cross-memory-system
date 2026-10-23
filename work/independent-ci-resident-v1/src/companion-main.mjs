@@ -91,8 +91,12 @@ export async function main(args = process.argv.slice(2)) {
   // resident's directories.
   const statusCfg = validateStatusConfig(raw.status);
   const store = await LocalStore.open(path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'CluedIndependentCI', 'companion-pr-status.json'));
+  // The node's duty (primary/standby C5, node-duty.mjs): its name while status.json names none, and the one write it may
+  // make into the resident, the dual-active hold (an intake pause request in the user-writable requests\, like a pause).
+  const requestsDir = path.join(values.root, 'requests');
   const reporter = new PrStatusReporter({ repo: raw.repo, ghExe: raw.ghExe, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), clock: Date.now, store,
-    prStatus: statusCfg.prStatus, notifications: statusCfg.notifications });
+    prStatus: statusCfg.prStatus, notifications: statusCfg.notifications, node: statusCfg.node,
+    writeRequest: async v => { await fs.writeFile(path.join(requestsDir, Inbox.fileName(Date.now())), canonicalJson(v), { flag: 'wx' }); } });
   keepalive(companionArgv(cfg).keepalive());
   let lastPoll = 0, lastReport = 0;
   await Promise.all([

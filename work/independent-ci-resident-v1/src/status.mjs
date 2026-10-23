@@ -11,13 +11,17 @@
 // notices the companion turns into notifications (one per key).
 // Contract /3 (primary/standby C6, DESIGN §20): `intakePause`, the intake pause's holds in force (null when none): the
 // latest end and each holder's name, start and end (intake-pause.mjs#view). No reason text: that comes from a user session.
+// Contract /4 (primary/standby C5, DESIGN §23): `node`, null until the node profile and the node mode (C1, C3) fill it:
+// { name, mode: ACTIVE | STANDBY | UNCERTAIN, probe: null | { at, result: held | not-held | uncertain, failures,
+// failingSince } }. The companion reads null as one ACTIVE node (node-duty.mjs#nodeOf).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CODE, HEX40, HEX64, canonicalJson, check, exactKeys, parseBoundedJson } from './canonical.mjs';
 import { readBounded } from './store.mjs';
 import { HOLDER, INTAKE_HOLDS_MAX } from './intake-pause.mjs';
+import { NODE_NAME } from './node-duty.mjs';
 
-export const STATUS_CONTRACT = 'clued.independent-ci.resident-status/3';
+export const STATUS_CONTRACT = 'clued.independent-ci.resident-status/4';
 export const STATUS_FILE = 'status.json';
 export const STATUS_REFRESH_MS = 15_000;
 // The companion's reading: a status not rewritten for this long means the executor (or its service) stopped.
@@ -32,6 +36,8 @@ export const NOTICE_KINDS = Object.freeze(['new-trigger', 'stopped', 'waiting-bu
   // Phase 2, step 3a: main's branch rules do not hold it for a green, or a test merge is not the tested tree.
   'stage8-rules']);
 export const BREAKER_STATES = Object.freeze(['closed', 'open', 'half-open']);
+export const NODE_MODES = Object.freeze(['ACTIVE', 'STANDBY', 'UNCERTAIN']);
+export const PROBE_RESULTS = Object.freeze(['held', 'not-held', 'uncertain']);
 const iso = ms => new Date(ms).toISOString();
 const isoOrNull = v => (Number.isSafeInteger(v) && v > 0) ? iso(v) : (typeof v === 'string' && Number.isFinite(Date.parse(v)) ? iso(Date.parse(v)) : null);
 const codeOrNull = v => typeof v === 'string' && CODE.test(v) ? v : null;
@@ -41,7 +47,7 @@ export class StatusBoard {
   constructor({ clock = Date.now, pid = process.pid } = {}) {
     this.clock = clock;
     this.pid = pid;
-    this.content = { executor: { state: 'STARTING', since: iso(clock()), reason: null }, halt: null, paused: false, intakePause: null, backfill: { complete: false, published: null, unreadable: null },
+    this.content = { executor: { state: 'STARTING', since: iso(clock()), reason: null }, halt: null, paused: false, intakePause: null, node: null, backfill: { complete: false, published: null, unreadable: null },
       current: null, pending: [], recent: [], limits: null, queue: null, breaker: null, notices: [] };
     this.changedAt = iso(clock());
   }
@@ -126,7 +132,7 @@ export function startStatusTimer({ board, file, intervalMs = STATUS_REFRESH_MS, 
 }
 
 // ---- the companion's reading (untrusted bytes in the resident's state, read-only for the Owner) ----
-const TOP = ['contract', 'writtenAt', 'changedAt', 'pid', 'executor', 'halt', 'paused', 'intakePause', 'backfill', 'current', 'pending', 'recent', 'limits', 'queue', 'breaker', 'notices'];
+const TOP = ['contract', 'writtenAt', 'changedAt', 'pid', 'executor', 'halt', 'paused', 'intakePause', 'node', 'backfill', 'current', 'pending', 'recent', 'limits', 'queue', 'breaker', 'notices'];
 const ms = v => (typeof v === 'string' && Number.isFinite(Date.parse(v))) ? Date.parse(v) : (Number.isSafeInteger(v) && v > 0 ? v : null);
 export function parseStatus(bytes) {
   const v = parseBoundedJson(bytes, STATUS_MAX_BYTES, 'STATUS_REFUSED');
@@ -143,6 +149,11 @@ export function parseStatus(bytes) {
     intakePause: v.intakePause && typeof v.intakePause === 'object' && !Array.isArray(v.intakePause)
       ? { until: ms(v.intakePause.until), holders: Array.isArray(v.intakePause.holders) ? v.intakePause.holders.filter(h => typeof h?.holder === 'string' && HOLDER.test(h.holder))
         .slice(0, INTAKE_HOLDS_MAX).map(h => ({ holder: h.holder, since: ms(h.since), until: ms(h.until) })) : [] } : null,
+    // The node (C1, C3); null: one node. A name that does not fit is no node: the companion falls back to its own.
+    node: v.node && typeof v.node === 'object' && NODE_NAME.test(v.node.name ?? '')
+      ? { name: v.node.name, mode: NODE_MODES.includes(v.node.mode) ? v.node.mode : 'UNCERTAIN',
+        probe: v.node.probe && typeof v.node.probe === 'object' ? { at: ms(v.node.probe.at), result: PROBE_RESULTS.includes(v.node.probe.result) ? v.node.probe.result : 'uncertain',
+          failures: Number.isSafeInteger(v.node.probe.failures) && v.node.probe.failures >= 0 ? v.node.probe.failures : 0, failingSince: ms(v.node.probe.failingSince) } : null } : null,
     backfill: { complete: v.backfill?.complete === true },
     current: v.current && Number.isSafeInteger(v.current.pr) && head(v.current.headSha)
       ? { pr: v.current.pr, headSha: v.current.headSha, attempt: v.current.attempt, stage: Number.isSafeInteger(v.current.stage) ? v.current.stage : null, since: Date.parse(v.current.since) || null } : null,
