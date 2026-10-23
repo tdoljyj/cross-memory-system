@@ -12,14 +12,21 @@
 // local path. Once K is held by the relay, every outcome other than a settled
 // publication is RELAY_PUBLICATION_UNCERTAIN: the stage stops, later roles are
 // NOT_PROCESSED, and the executor burns the head and HALTs (PR886 §6.3).
+// A role this node knows nothing of whose check App 5368905 already published on
+// the head (another node or install; resident primary/standby design v0.4 §6.2,
+// C4) is ON_GITHUB: nothing is sent for it, later relayable roles are
+// NOT_PROCESSED, and the executor ends the batch cleanly (ROLE_ALREADY_ON_GITHUB),
+// never running a local role for it.
 import { digest } from '../proof.mjs';
 import { attestHead, validateHostedEnvelope } from './attest.mjs';
 import { HEAVY_ROLES, RELAYABLE_ROLES, ROLE_INPUT_PINS, isValidatedRegistry, registryDigestOf, relayFail } from './registry.mjs';
+import { ROLE_ALREADY_ON_GITHUB, ROLE_ALREADY_ON_GITHUB_REASON } from '../published-on-github-v2.mjs';
 
 export const RELAY_STAGE_CONTRACT = 'clued.independent-ci.hosted-relay-stage/1';
 export const RELAY_CODES = Object.freeze({
   PUBLICATION_UNCERTAIN: 'RELAY_PUBLICATION_UNCERTAIN',
   ROLE_ALREADY_PUBLISHED_ON_HEAD: 'ROLE_ALREADY_PUBLISHED_ON_HEAD',
+  ROLE_ALREADY_ON_GITHUB,
   STAGE_INPUT_INVALID: 'RELAY_STAGE_INPUT_INVALID',
   STAGE_NOT_CONFIGURED: 'RELAY_STAGE_NOT_CONFIGURED',
 });
@@ -138,10 +145,10 @@ export function createHostedRelayStage({ registry, verifier, publisher, localInp
             roles: roles.map(role => relayable.includes(role) ? local(role, 'RELAY_NOT_ATTESTED_OBSERVATION_UNCONFIRMED', detailOf(error), null) : never(role)) });
         }
       }
-      const rows = []; let sideEffects = 0, halt = null;
+      const rows = []; let sideEffects = 0, halt = null, onGithub = false;
       for (const role of roles) {
         if (!relayable.includes(role)) { rows.push(never(role)); continue; }
-        if (halt) { rows.push(row(role, 'NOT_PROCESSED')); continue; }
+        if (halt || onGithub) { rows.push(row(role, 'NOT_PROCESSED')); continue; }
         const verdict = first.verdicts[role];
         if (verdict?.verdict !== 'ATTESTED_SUCCESS') {
           rows.push(local(role, `RELAY_NOT_ATTESTED_${verdict?.verdict ?? 'ATTESTATION_FAILED'}`, verdict?.reason ?? null, verdict?.verdict ?? null));
@@ -162,8 +169,17 @@ export function createHostedRelayStage({ registry, verifier, publisher, localInp
           rows.push(row(role, 'HALT', { ...common, reason: halt, detail: published.reason }));
           continue;
         }
-        if (published?.status === 'BLOCKED' && published.roleMutex?.held === false) {
-          // Refused before K: nothing was sent and the local path stays open.
+        // Already on GitHub, unknown to this node (C4): nothing was sent and nothing more is published in this batch.
+        if (published?.status === 'BLOCKED' && published.reason === ROLE_ALREADY_ON_GITHUB_REASON && published.roleMutex?.held === false && published.sideEffects === 0) {
+          onGithub = true;
+          rows.push(row(role, 'ON_GITHUB', { ...common, reason: RELAY_CODES.ROLE_ALREADY_ON_GITHUB, detail: published.reason }));
+          continue;
+        }
+        // A role found on GitHub in any other shape is never sent to the local path: it HALTs below.
+        if (published?.status === 'BLOCKED' && published.roleMutex?.held === false && published.reason !== ROLE_ALREADY_ON_GITHUB_REASON) {
+          // Refused before K: nothing was sent and the local path stays open. This includes a GitHub read-back that
+          // could not be completed (C4): the local publication reads GitHub back again before it publishes, and
+          // refuses (fail closed) if that read is still incomplete.
           const notConfirmed = ['hosted_attestation_not_confirmed', 'hosted_attestation_invalid'].includes(published.reason);
           rows.push(local(role, notConfirmed ? 'RELAY_NOT_ATTESTED_NOT_CONFIRMED' : 'RELAY_NOT_ATTESTED_NOT_ADMITTED', published.reason ?? null, verdict.verdict, common));
           continue;
@@ -171,7 +187,7 @@ export function createHostedRelayStage({ registry, verifier, publisher, localInp
         halt = RELAY_CODES.PUBLICATION_UNCERTAIN;
         rows.push(row(role, 'HALT', { ...common, reason: halt, detail: `${published?.status ?? 'UNKNOWN'}:${published?.reason ?? 'none'}`.slice(0, 160) }));
       }
-      return finish({ ...head, status: halt ? 'HALT' : 'COMPLETE', code: halt, sideEffects, roles: rows });
+      return finish({ ...head, status: halt ? 'HALT' : onGithub ? 'ON_GITHUB' : 'COMPLETE', code: halt ?? (onGithub ? RELAY_CODES.ROLE_ALREADY_ON_GITHUB : null), sideEffects, roles: rows });
     },
   });
 }

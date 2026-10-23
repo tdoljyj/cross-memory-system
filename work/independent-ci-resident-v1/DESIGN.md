@@ -394,7 +394,7 @@ v0.9 起，释放还是烧号由机器可读的失败对照表 `src/failure-tabl
   1. 执行器在 `broker\requests\` 里找**正在进行的那一次交换**：代理已领取（有 `.taken`）、还没回复、段号相同、`configSha256` 等于这一批次该段包的计划哈希（从批次钉住的 work manifest 读出）。恰好一个时，在旁边新建 `<id>.stop`，字段恰好是 `contract`、`requestId`、`nonce`、`stage`、`configSha256`。执行器记下这个请求 id，交换被回复之后照样能读停止回执；
   2. 代理在这次交换的等待循环里每秒看一次（§8.2 第 9 条），条件全部满足时向 runner 服务发 `SERVICE_CONTROL_STOP`，并把结果写进只新建的停止回执 `broker\responses\<id>.stop.json`（`STOP_SENT`、`HELPER_ALREADY_STOPPING` 或某个拒绝码）。这个控制实际只生效一次：万一因为超时又发了一次，助手也只是再置一次同一个标志、终止同一个作业对象，没有别的作用；
   3. 通用助手按它现有的停止路径处理（`STOP_REQUESTED`，服务退出码 92）：只终止并排空**它自己建的作业对象**，写原生回执，报告 STOPPED。代理照常换回原始二进制并回复。执行器和代理都不杀任何进程，也不碰来历不明的进程树；
-  4. 只有停止回执是 `STOP_SENT`，或者这一段在 Windows 侧的调用（invoke-stage 子进程）已经带着阶段事实返回之后，执行器才给 companion 写 `mailbox\requests\<泵请求 id>.cancel.json`。带着阶段事实返回有三种：代理已经回复，不论回复码是什么（助手已停，或助手根本没启动）；调用在找代理之前就拒绝了这一段；调用等不到代理的回复而放弃，那时代理和泵自己的截止时间都已过。这三种情况下发行方都不再等泵能带来的任何东西。泵在下一个等待步骤以 `COMPANION_PUMP_CANCELLED` 结束，不再做 blocked 转交：取消之后不再发起任何 relay 调用（每次调用之前都先查取消，正在进行的那一次最多 40 秒，先等它结束），blocked 转交的每一步之前也查；以失败结束时，不论停在哪一步，回复都是 `COMPANION_PUMP_CANCELLED`（取消时恰好已经正常走完的，照实回复成功）；读不出的取消文件按没有取消处理；它只停止搬运，从不停止或杀掉 Linux worker，取消若随 issue 转交一起到达，就不再启动 worker。在这之前，泵和它的 blocked 转交都和没有中止时完全一样，所以停止没送达时，这一段的结局不会比不中止更差；调用一返回，这一段也不会再为泵多等到截止时间；
+  4. 只有停止回执是 `STOP_SENT`，或者这一段在 Windows 侧的调用（invoke-stage 子进程）已经带着阶段事实返回之后，执行器才给 companion 写 `mailbox\requests\<泵请求 id>.cancel.json`。带着阶段事实返回有三种：代理已经回复，不论回复码是什么（助手已停，或助手根本没启动）；调用在找代理之前就拒绝了这一段；调用等不到代理的回复而放弃，那时代理和泵自己的截止时间都已过。这三种情况下发行方都不再等泵能带来的任何东西。泵在下一个等待步骤以 `COMPANION_PUMP_CANCELLED` 结束，不再做 blocked 转交：取消之后不再发起任何 relay 调用（每次调用之前都先查取消，正在进行的那一次最多一个回调窗口（120 秒，`RELAY_TIMEOUT_MS`，§7.9），先等它结束），blocked 转交的每一步之前也查；以失败结束时，不论停在哪一步，回复都是 `COMPANION_PUMP_CANCELLED`（取消时恰好已经正常走完的，照实回复成功）；读不出的取消文件按没有取消处理；它只停止搬运，从不停止或杀掉 Linux worker，取消若随 issue 转交一起到达，就不再启动 worker。在这之前，泵和它的 blocked 转交都和没有中止时完全一样，所以停止没送达时，这一段的结局不会比不中止更差；调用一返回，这一段也不会再为泵多等到截止时间；
   5. 还没调用的段（例如还在 refs 闸门上）直接不调用，以 `OWNER_ABORT_REQUESTED` 结束。
 - **结束**（P0、P1、P2 相同）：
   1. 运行中被停下的段，结局码必须在白名单里（`classify.mjs#OWNER_ABORT_STAGE_ENDINGS`），而且该段自己的 Windows 证明齐全（作业树为 0、原始二进制已还原）。白名单是：本来就干净的码；`OWNER_ABORT_REQUESTED`；`COMPANION_PUMP_CANCELLED`；入口被停下、来不及写结局时的 `STAGE_OUTCOME_MISSING`。最后一个只在停止回执是 `STOP_SENT` 时才算，其他情况下它照旧是未知；
@@ -708,6 +708,31 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
   9. 结果后的准入越过 issue 窗口时为 UNCERTAIN。
 - 四轮独立只读审核均为 PASS（0 BLOCKER、0 MAJOR）：`8b1f6f7b`、`105adffc`、`5410d563`，以及自举安装审核 `11af4710` 第 4、5 条修复后的 `18c0afc5`。审核记录在 PR #899 正文里。
 
+### 7.9 搬运变慢时的回调（Task `576231fa`，Owner 决定 `6f1fb753`）
+
+**根因**（2026-10-23，只读核实）：三次被记成“签发方卡住”的事故里，签发方其实都按时作答了。慢的是 companion 的一次搬运调用（relay-public.ps1）：平常 4–6 秒，偶尔 25–45 秒。
+
+- PR #915 第 4 段（批次 `a0a76a17`）：签发方 07:20:38Z 写出 response-04，SendResponse(4) 约 30 秒后才在 Linux 侧校验。这时响应里的准入已超过 30 秒新鲜期，Linux 拒收。companion 以 `RELAY_REFUSED_NO_RETRY` 停泵；worker 在本轮截止写 uncertain，因为扫描已经跑过。
+- PR #911 第 4 段（批次 `0d379e72`）：签发方 04:57:30Z 写出 issue，SendIssue 用了约 43 秒，超过 companion 原来固定的 40 秒，泵当作失败停下，worker 没有启动。
+- PR #908 第 1 次：response-02 同样没送到 Linux。那一轮在准备之前，所以 worker 写了 `blocked`，干净结束。
+- 泵停下以后，签发方等到 issue 过期，以 `BRIDGE_RESULT_DEADLINE` 结束（UNCERTAIN），常驻侧判 `PUBLICATION_UNCERTAIN` 并 HALT。
+- 证据：Windows 侧桥记录的时间（Owner 一次 UAC 的只读收集）、Linux 侧归档与 journal、companion 的 relay-stage 答复。搬运慢在哪一步没有记录可查。
+
+**改动**：
+
+- 回调 response 里的准入按签出时刻判新鲜，和 issue 一样（`CI/worker/protected-job-bridge-v4/protocol.mjs#validateResponse`）：签出时准入不超过 30 秒；response 只要在自己的窗口内到达（不晚于本轮 challenge 的截止，最多 120 秒）；claim 在到达时仍有效（response 的 `expiresAt` 不晚于 `claimExpiresAt`，且晚于到达时刻）。
+- Linux 适配器对每轮回调结果自己的复核（`validateFormalAdmissionV2`）也一样：worker 把每个 response 的签出时间和过期时间记在它交给适配器的那份准入事实上（`linux-worker.mjs#callbackValue`、`admission-facts-v2.mjs#noteBridgeResponseTimes`）。在这个 response 有效期内、且不晚于 claim 到期，30 秒从签出时刻算；过了这个时间，或者不是从回调来的事实，照旧从当前时刻算。适配器先校验端口交来的那个对象，再克隆；克隆出的对象不带登记。Windows 侧的调用方从不登记，行为不变。
+- 所以 Linux 侧用上一份准入时，它最多比 `observedAt` 晚约 150 秒（签出前 30 秒，加一个回调窗口），以前是 30 秒。
+- remote-refs 回调的 refs 快照仍按到达时刻判 30 秒，不在这次决定范围内。gitleaks 的 remote-refs 一轮走的是同样的搬运，变慢时仍会被拒（那一轮在准备之前，所以以干净的 `blocked` 结束，#908 就是这样）。
+- companion 每次搬运调用最多等一个回调窗口（`RELAY_TIMEOUT_MS` = 120 秒），不再固定 40 秒。Runner 从不杀子进程，提前放弃并不能腾出 Runner，只会让泵以没用的答复结束。Owner 中止时，正在进行的那次调用最多多等这么久。
+- relay-public.ps1 等 wsl 子进程的上限从 30 秒改为 90 秒。它的 `finally` 本来就会一直等到子进程结束，这个上限只决定一个慢了、但已经做完的子进程算不算成功。以前超过 30 秒就是 `UNCERTAIN_LOCKS_RETAINED_NO_RETRY`，companion 照样报 `RELAY_REFUSED_NO_RETRY`。
+- 生效要重装两侧：桥 v4 的文件按字节受理（relay-public.ps1 每次搬运前逐字节核对 manifest），companion 配置里的 `bridgeManifestSha256` 也随之更新。
+- 不变：每轮仍重新做完整准入；绑定 nonce、序号与批次 claim 代际；发布阶段（3、5、7、8）自己再做完整准入，已发布的检查不重复、不伪造。
+- 仍未处理（后续）：
+  - 泵在扫描执行段停下、companion 已给出 Linux 静止证明时，常驻侧要等签发方到期才 UNCERTAIN→HALT，应尽早停下签发方并干净结束。
+  - 搬运慢在哪一步仍不知道：relay 的输出（`status`、`failureCode`）没有留下来，下次出事故时无从查起。
+  - `windows-issuer.mjs` 里“迟到后再等两个窗口”的说明，假设的是一次 ReceiveBlocked 很快；搬运调用长到接近 120 秒时，这两个窗口可能不够用。
+
 ---
 
 ## 8. Windows：服务账户与权限边界
@@ -886,7 +911,7 @@ v0.8 补充（2026-10-21，Owner 中止 §6.5，基于 main `8c2bfdcc`，推送�
   - 静止证明不成立时 HALT，之后照常复位；有界复查内静止也算数；停下的段结局不干净时 HALT；停止没送达、入口没写结局时 HALT；HALT 时中止不清 HALT；tick 开始时接受到一半失败，当场 HALT，不再启动别的批次；接受回执写失败时照样请求停止；中止中途重启以 `OWNER_ABORT_INTERRUPTED` 关闭并 HALT；
   - 引擎只把停止请求绑定在这一次交换上，还没调用的段不调用；先写代理停止，`STOP_SENT` 之后才取消泵，取消失败不挡代理停止；泵被取消时跳过 blocked 转交，取消随 issue 转交一起到达时不启动 worker。
   - 第二轮复审之后：接受到一半失败、以未知关闭也失败时，闸门照样不跑别的批次，回执记为 `owner-abort-unconfirmed` 而不是拒绝；已接受过的中止再请求被拒；tick 开始时 Source 漂移就拒绝；段运行中写出读不全的 `80-owner-abort` 时，段结束后 HALT，下一 tick 隔离，复位以 `rearm-quarantine` 归档；停止没送达时，这一段的调用一返回就取消泵，不再等泵的截止时间；段结束后补写“已请求停止”的回执；中止的未知结局带上安全点和请求摘要。
-  - bootstrap 安装源复审之后：relay 调用失败时取消已经写好，泵只等完那一次调用（最多 40 秒）就以 `COMPANION_PUMP_CANCELLED` 结束，不做 blocked 转交，也不再调 relay（ReceiveResult、ReceiveChallenge、ReceiveBlocked，超时和被拒各一）；blocked 转交途中收到取消，在下一个等待步骤结束；取消时已经写好的 response 不再转发。之后的复审又补了：列目录、或 relay 回答“没有”之后，不再发起下一次 relay 调用（没有列表时、主循环里、blocked 转交里各一）；失败的 SendIssue、blocked 转交自己被拒的 ReceiveBlocked 也回复 `COMPANION_PUMP_CANCELLED`；读不出取消文件时，泵和没有中止时完全一样。
+  - bootstrap 安装源复审之后：relay 调用失败时取消已经写好，泵只等完那一次调用（当时最多 40 秒，§7.9 起最多 120 秒）就以 `COMPANION_PUMP_CANCELLED` 结束，不做 blocked 转交，也不再调 relay（ReceiveResult、ReceiveChallenge、ReceiveBlocked，超时和被拒各一）；blocked 转交途中收到取消，在下一个等待步骤结束；取消时已经写好的 response 不再转发。之后的复审又补了：列目录、或 relay 回答“没有”之后，不再发起下一次 relay 调用（没有列表时、主循环里、blocked 转交里各一）；失败的 SendIssue、blocked 转交自己被拒的 ReceiveBlocked 也回复 `COMPANION_PUMP_CANCELLED`；读不出取消文件时，泵和没有中止时完全一样。
   - 推送前的最终核对之后：服务记下请求之前就死了、恢复关闭批次之后再读到这个请求，回执记为 `owner-abort-unconfirmed` 而不是拒绝；`FAILED_CLEAN` 已写、`batch-terminal` 回执写失败时不记成未确认；tick 开始时接受到一半失败，汇总回执是 `owner-request`（`HALTED`），不是拒绝。
 - 常驻层 Python **25/25**（在 Git Bash 里运行；在 PowerShell 里有 3 个 Linux 安装器用例因为解析到另一个 `/bin/bash` 而以 127 失败，与本次改动无关）；`node drill/offline-drill.mjs` **37/37**（新增 2 步：第 2 段卡住时 Owner 中止，之后这个 head 不再运行）。
 - `windows/test-resident-windows.ps1` **71 条**断言，其中 C# 纯逻辑 **28 条**（新增 18 条：停止请求只认这一次交换和扫描签发段，`StopRequest.Decide` 的每种状态）；`SwapBroker.cs` 编译通过。
