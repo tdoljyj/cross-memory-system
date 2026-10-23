@@ -7,7 +7,8 @@
 // no host write outside --out, no network, no secret. The same inputs always give the same bytes.
 //
 //   node derive-batch.mjs --subject-json <json> --batch-key <64hex> --batch-id <16hex-12hex> --out <new dir> [--record <dir>]
-// stdout: {status:'RESIDENT_BATCH_DERIVED', batchKey, batchId, packageSha256, ciSourceManifestSha256,
+// stdout: {status:'RESIDENT_BATCH_DERIVED', batchKey, batchId, packageSha256, ciSourceManifestSha256, sourceCommit, gitleaksTomlSha256,
+//          testSha (the tested commit S every job of the batch names; the engine copies it into the descriptor),
 //          stages:[{number,name,entryRole,jobId,jobIds,workManifestSha256,planSha256,directory,runMilliseconds,linuxWorker}]}
 // Stage R (hosted relay, free-minutes design S19) is not part of the batch derivation: its job list is the
 // relay candidates the resident decided after the hosted wait (20-plan-intent). One more deterministic call
@@ -53,7 +54,8 @@ export function deriveBatch({ recordDocs, subject, batchKey, batchId, now = Date
   // .gitleaks.toml (hash-pinned here), never from the PR head (b29 lesson).
   const sourceCommit = record.manifest.sourceSha;
   const gitleaksTomlSha256 = record.pins.get('.gitleaks.toml');
-  const jobs = batchJobsV2({ repo: subject.repo, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, sourceManifestSha256: ci, createdAt: subject.createdAt, attempt: subject.attempt });
+  // Job contract /3: the tested commit S is the head (S = H) until step 3c's train front batch brings another one.
+  const jobs = batchJobsV2({ repo: subject.repo, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: subject.headSha, sourceManifestSha256: ci, createdAt: subject.createdAt, attempt: subject.attempt });
   const out = {};
   const rows = [];
   for (const s of FORMAL_STAGES_V2) {
@@ -65,7 +67,7 @@ export function deriveBatch({ recordDocs, subject, batchKey, batchId, now = Date
     jobs: Object.fromEntries(Object.entries(jobs).map(([r, j]) => [r, j.id])), stages: rows, automaticRetryAllowed: false, claimBound: false };
   out['batch.json'] = canonical(batch);
   const packageSha256 = hash(canonical({ batch: hash(out['batch.json']), stages: rows.map(r => r.workManifestSha256) }));
-  return { files: out, result: { status: 'RESIDENT_BATCH_DERIVED', batchKey, batchId, packageSha256, ciSourceManifestSha256: ci, sourceCommit, gitleaksTomlSha256, stages: rows } };
+  return { files: out, result: { status: 'RESIDENT_BATCH_DERIVED', batchKey, batchId, packageSha256, ciSourceManifestSha256: ci, sourceCommit, gitleaksTomlSha256, testSha: jobs['work-admission'].testSha, stages: rows } };
 }
 
 // One sealed stage package (plan, stage row, jobs, work manifest), shared by the batch and stage R.
@@ -102,7 +104,7 @@ export function deriveRelayStage({ recordDocs, batchJson, roles, batchKey, batch
   const record = validateRecordV2(recordDocs, { now, required: [...Object.values(ENTRY_V2), '.gitleaks.toml'] });
   const ci = record.config.sourceManifestSha256;
   check(batch.ciSourceManifestSha256 === ci, 'RESIDENT_BATCH_RECORD_REFUSED');
-  const jobs = batchJobsV2({ repo: subject.repo, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, sourceManifestSha256: ci, createdAt: subject.createdAt, attempt: subject.attempt });
+  const jobs = batchJobsV2({ repo: subject.repo, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: subject.headSha, sourceManifestSha256: ci, createdAt: subject.createdAt, attempt: subject.attempt });
   check(plain(batch.jobs) && Object.keys(batch.jobs).length === Object.keys(jobs).length && Object.entries(jobs).every(([r, j]) => batch.jobs[r] === j.id), 'RESIDENT_BATCH_RECORD_REFUSED');
   const { files, row } = stagePackage({ record, s: RELAY_STAGE_V2, stageJobs: roles.map(r => jobs[r]), batchKey, batchId });
   return { files, result: { status: 'RESIDENT_RELAY_STAGE_DERIVED', batchKey, batchId, stage: row } };

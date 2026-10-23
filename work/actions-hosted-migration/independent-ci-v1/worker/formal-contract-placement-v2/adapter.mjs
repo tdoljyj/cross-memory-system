@@ -67,8 +67,9 @@ async function sealedCandidate(config,job,candidate,destination){
   }
   await copy(candidate,destination,true);
   const meta=path.join(destination,'.git');await fs.mkdir(path.join(meta,'objects','pack'),{recursive:true,mode:0o755});await fs.mkdir(path.join(meta,'refs'),{mode:0o755});
-  await fs.writeFile(path.join(meta,'HEAD'),job.headSha+'\n',{flag:'wx',mode:0o444});await fs.writeFile(path.join(meta,'config'),'[core]\nrepositoryformatversion = 0\nfilemode = true\nbare = false\nlogallrefupdates = false\n',{flag:'wx',mode:0o444});
-  const pack=await git(config,candidate,['pack-objects','--stdout','--revs'],{stdin:job.headSha+'\n'+job.baseSha+'\n',maxBytes:256*1024*1024});check(pack.length>=32,'PACK_BYTES_REQUIRED');const packfile=path.join(meta,'objects','pack','pack-'+pack.subarray(-20).toString('hex')+'.pack');await fs.writeFile(packfile,pack,{flag:'wx',mode:0o444});
+  // Job contract /3: the sealed candidate's HEAD is the tested commit S; its store also holds H and T (S = H outside the train).
+  await fs.writeFile(path.join(meta,'HEAD'),job.testSha+'\n',{flag:'wx',mode:0o444});await fs.writeFile(path.join(meta,'config'),'[core]\nrepositoryformatversion = 0\nfilemode = true\nbare = false\nlogallrefupdates = false\n',{flag:'wx',mode:0o444});
+  const pack=await git(config,candidate,['pack-objects','--stdout','--revs'],{stdin:[...new Set([job.testSha,job.headSha,job.baseSha])].join('\n')+'\n',maxBytes:256*1024*1024});check(pack.length>=32,'PACK_BYTES_REQUIRED');const packfile=path.join(meta,'objects','pack','pack-'+pack.subarray(-20).toString('hex')+'.pack');await fs.writeFile(packfile,pack,{flag:'wx',mode:0o444});
   await git(config,destination,['index-pack','--strict',packfile]);await readableSeal(destination);return{bytes,packSha256:hash(pack)};
 }
 // The fixed container user (65532) must read the sealed snapshot. Like trivy-v3's snapshotTree and

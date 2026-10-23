@@ -1737,6 +1737,86 @@ node tools\rearm-tool.mjs request-intake-resume --root <root> --reason <text> [-
 
 `test/status.test.mjs` 的键列表加 `intakePause`。
 
+## 21. 额度第二期·第 3b 步：作业合同 `/3`，按测试提交 S 建工作区（v1.2，Task `6451a55d`，子 Task `a3548216`）
+
+Owner Decision `0bb98194` 把设计 v0.5 的第 3 步拆成三个 PR，这是第二个，对应设计 §5.7 和 §5.2“怎么测”。列车仍然是关的：所有批次的测试提交 S 都等于 head H，装上后工作区和今天一模一样。
+
+### 21.1 作业合同 `/3`
+
+- 作业 id = sha256(JSON(["clued.independent-ci.job/3", repo, pr, headSha, baseSha, testSha, sourceManifestSha256, role, attempt]))。`testSha` 就是测试提交 S，紧跟在基础 T 之后。
+- 作业多一个字段 `testSha`。`makeJobV2` 不给 `testSha` 时取 `headSha`。现在只有一处会给：批次推导（`derive-batch.mjs`）。
+- 模块和导出名保留 V2（指 Source v2），只改合同字符串。
+- subject（签名结果、作用键和发布者用的那组字段）不加字段：它的 `id` 已经绑定 S，所以一个 S 的结果不会被当成另一个 S 的结果。这样准入、发布者、桥和中继都不用改。
+- 公式有五份副本，一起改：`job-v2.mjs`、`prepare-workspaces.py`、`linux/bin/clued-ci-resident-linux`、`FormalPublicBoundaryV2.cs`、`formal-contract-placement-v2/container-entry.mjs`。复核实测五份逐项相同，Node、Python 和 .NET 三种序列化逐字节一致。测试核对它们相等：Node 对 Python、Linux 工具对 ws-prep、C# 对 Node 推出的批次、容器入口对 `jobIdV2`。
+- `/2` 作业一律拒绝。C# 核对同一批的作业时也比较 `testSha`，和 JS 的 `sameBatchV2` 一致。
+
+### 21.2 描述符 `/3` 和工作区
+
+- 批次推导的结果带 `testSha`。常驻层把它抄进公开描述符 `resident-batch-descriptor/3`，并核对它等于 head，所以 S 只由推导决定。
+- ws-prep、companion 的打包脚本和 Linux 的归档工具只认 `/3`。ws-prep 和打包脚本要求 `testSha == headSha`（`TEST_COMMIT_NOT_HEAD`）。卸载会把整个 resident 目录连 outbox 一起改名，所以重装之后不会再有 `/2` 描述符要归档。
+- trivy 和 contract-placement 的候选工作区检出 S：先核对 S 的树只有普通文件，再检出，再核对 HEAD 是 S，H 和 T 都在库里。gitleaks 照旧扫 H 的提交历史。
+- worker（`worker-v2.mjs`）按 `job.testSha` 核对检出，另核对 H 和 T 在库里。
+- placement 的密封候选：HEAD 是 S，打包 S、H、T。容器里的构建标签和 `check_contract_placement.py --head` 都用 S，也就是 T..S 的改动。S = H 时和今天相同。
+
+### 21.3 留给 3c 的（S ≠ H，复核 M1 补全）
+
+设计 §6 规定第 4–7 步不再改 Source。S ≠ H 只出现在列车模式的车头批次，下面每一项都要在开车之前装上：
+
+- **S 的来源**：只取自第 10 段的受信实时读取，经阶段事实交给执行器。subject、批次认领记录（`batch-claim-v2.mjs`）和账本 batch key 都带上 S。`makeJobV2` 去掉默认值，所有调用点显式传 S，否则漏传会被默认值藏住（复核 m1）。
+- **第 8 段测过的树**：`independent-control-checks-v2/publisher.mjs` 的 `trainFacts` 现在读 H 的树，要改成读 `job.testSha` 的树。这个文件在 3a 之后先给主备 C4 用，所以放在 3c 改。
+- **控制消费者**（`consumer.mjs`）：重推作业时读记录里的 S；不能再用受保护脚本传进来的 `pr.base.sha` 去和 T 比较。
+- **对 `base.sha` 做等值比较的地方**都要按设计 §5.7 放宽：只要求 PR 打开、head 相同、base 分支是 main，`base.sha` 只记为读到的事实。涉及：
+  - `full-admission-v2.mjs` 的 `samePr`；
+  - `staged-check-publisher-v2.mjs` 的写前核对；
+  - `github.mjs` 的 `exactPr`；
+  - 两个发布者对 packet `baseSha` 的检查；
+  - `protected-controller-ports-v2/refs.mjs` 的 `samePr`。
+  关车时 head 含 main 尖端，保留今天的核对只会更严，所以 3b 不放宽。
+- **中继**：`publishHosted` 自己推作业时要带 S；`relay-entry-v2.mjs` 的 subject 和第 R 段推导也要带 S；E8 改为核对 S 的树。
+- **打包与 ws-prep**：
+  - companion 按 SHA 取 S。bundle 的引用命名空间要和 gitleaks 的“引用等于 bundle”核对一起设计。
+  - GitHub 重新生成试合并后，旧的 S 可能取不到。这算批次开始前的暂时原因（设计 §5.2 n-m6，不计释放上限），回到第 10 段重读 S。
+  - ws-prep 核对 S 恰好有两个父提交 [T, H]。凡是核对“还是不是那个 S”，都按父提交和树比较，不按 SHA。
+- 撤掉三处 S = H 守卫：`engine-windows.mjs` 的推导核对、`prepare-workspaces.py` 的 `TEST_COMMIT_NOT_HEAD`、`build-bundle.ps1` 的 `TEST_COMMIT_NOT_HEAD`，并改掉钉住它们的测试。设计 §5.3 第 4、6、8 条和 §5.4 属于第 10 段，也在 3c。
+- **测试**：用 S ≠ H 作固定输入，跑通第 1–8 段的单元路径（准入、桥签发、发布者写前核对、第 8 段、消费者），worker 用 HEAD = S ≠ H 的 git 工作区，并测密封候选的 HEAD 和打包内容。
+
+### 21.4 为什么装上是安全的
+
+- 关车时 S = H：作业 id 变了，工作区、测试输入和签名结果的内容都和今天一样。复核核实，placement 打包的内容和以前逐字节相同。
+- 不会重跑：已执行记录和 K(head, role) 按 head 记，不按作业 id。作业 id 本来每次重装都会变，因为身份里有 `sourceManifestSha256`。
+- 合同在两侧一起换：Windows 的 Source v2、C# 边界、Linux 的 ws-prep、worker、容器入口和 Linux 常驻工具都在同一次重装里换。没换的一侧会拒绝另一侧的 `/3` 作业，这是失败关闭，不会写出检查。
+- 按 Owner Decision `72ed7fb4`，3b 合入后不单独重装，3c 合入后两侧一起装。两侧必须一起装、一起回退：只换一侧时，Linux 归档读不懂另一侧的描述符，执行器 HALT（失败关闭，复核 r2 n2）。重装清单要写明这一条。
+
+### 21.5 测试
+
+- Source v2：201 项（200 通过、1 跳过）。新增 `test/job-v3.test.mjs`，共 6 项：
+  - 合同和身份；
+  - S 默认等于 H，另一个 S 是另一个作业；
+  - 拒绝 `/2` 和坏 S；
+  - 容器入口推出同一个 id；
+  - 容器用 S 构建并检查 T..S；
+  - 打包脚本只认 `/3`，并拒绝 S ≠ H。
+- `test/test_prepare_workspaces_v2.py`：Node 和 Python 对 S ≠ H 的 id 一致；拒绝 `/2` 描述符、缺 S、坏 S 和 S ≠ H（`TEST_COMMIT_NOT_HEAD`）。
+- 常驻层：
+  - `test_linux_privilege.py` 核对 Linux 工具和 ws-prep 的公式一致，拒绝 `/2` 和缺 S；
+  - 新增一项归档测试，从 outbox 按真实读取路径读描述符（复核 B1）；
+  - 核对先查 S 的树再检出、检出 S、HEAD 核对 S。
+  - `engine-v2.test.mjs` 核对描述符是 `/3`、S 来自推导，推导给出别的 S 就拒绝。
+- 常驻层 Node 286 项、离线演练 51 步、Python 照常通过。
+- C#：`test-pure-v2.ps1` 共 140 项断言，新增几项拒绝：S 改了、合同串改成 `/2`、`/2` 作业。
+
+### 21.6 独立复核
+
+- 第一轮（3177b549）：ACCEPT-WITH-FIXES，1 BLOCKER、1 MAJOR、4 MINOR、5 NIT。
+  - B1：Linux 工具新加的合同表和 outbox 路径常量同名，归档会读不到描述符；不修就装，第一个跑 Linux 角色的批次就会 HALT。已修：只认 `/3`，不再要合同表；加了走真实读取路径的测试。
+  - M1：3c 清单补全，见 §21.3。
+  - m1 写进 3c。m2 已修。m3 补了能现在补的测试，其余写进 3c。m4 已修：理由不成立，`/2` 兼容已去掉。
+  - NIT：过时注释已改；C# 合同串单独测；打包脚本的拒绝有测试；S 只由推导决定。
+- 第二轮（ef98de49）：ACCEPT，0 BLOCKER、0 MAJOR、1 MINOR、5 NIT。
+  - B1 彻底修好，没有引入新问题。上一轮存活的变异里，ws-prep 检出、HEAD 核对、打包脚本的拒绝、构建标签、`--head` 和 C# 合同串，现在都能抓到。
+  - 已改：m1（推导结果的 `testSha` 加了跨层断言）、n1（outbox 路径与 `layout.mjs` 的 `LINUX_DESCRIPTORS` 相等）、n2 和 n5（写进 §21.4、§21.3）、n4（过时注释）。
+  - n3（打包脚本只有源码断言；C# 同批核对没有测试）留到 3c，和 S ≠ H 的测试一起补。
+
 ## 附录 A：草稿文件
 
 | 文件 | 作用 |
@@ -1764,3 +1844,4 @@ node tools\rearm-tool.mjs request-intake-resume --root <root> --reason <text> [-
 | `CI/src/resident-v2/*`、`CI/src/*-v2.mjs`、`CI/src/formal-work-admission-check-v2/`、`CI/src/independent-control-checks-v2/`、`CI/runtime/one-shot-v2.mjs`、`CI/worker/*-v2|v3|v4/`、`CI/worker/protected-job-bridge-v4/` | v0.6：Source v2 本体（§7.1） |
 | `src/failure-table.json`、`src/executed-heads.mjs`、`src/status.mjs`、`src/pr-status.mjs`、`windows/test-install-carry.ps1` | v0.9：失败对照表、与 Source 无关的已执行记录与回填、状态快照、PR 页面状态与通知、安装带入旧账本的离线测试（§16） |
 | `CI/src/independent-control-checks-v2/train-rules.mjs`、`green-ledger.mjs` | v1.2：第 8 段的 main 规则与试合并核对、绿色台账（§19） |
+| `CI/src/job-v2.mjs`（合同 /3）、`CI/test/job-v3.test.mjs` | v1.2：作业身份加测试提交 S，描述符 /3，工作区检出 S（§21） |

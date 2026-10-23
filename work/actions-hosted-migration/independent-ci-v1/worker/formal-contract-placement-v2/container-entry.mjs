@@ -20,23 +20,23 @@ export function validateTools(tools){
   for(const tool of Object.values(tools))check(exact(tool,['path','sha256'])&&absolute(tool.path)&&HASH.test(tool.sha256)&&!['/input','/source','/request','/control','/scratch','/proc','/sys','/dev'].some(p=>tool.path===p||tool.path.startsWith(p+'/')),'FIXED_IMAGE_TOOL_PIN_REQUIRED');
   check(new Set(Object.values(tools).map(t=>t.path)).size===5,'DISTINCT_IMAGE_TOOLS_REQUIRED');return tools;
 }
-// Job contract v2 (claim-free, attempt-scoped). Self-contained on purpose: this file runs inside the image
-// with only node builtins, so it re-derives the v2 id exactly as src/job-v2.mjs#jobIdV2 does.
+// Job contract /3 (claim-free, attempt-scoped, names the tested commit S). Self-contained on purpose: this file runs
+// inside the image with only node builtins, so it re-derives the id exactly as src/job-v2.mjs#jobIdV2 does.
 export function validateEntryJob(job){
-  const fields=['contract','id','repo','pr','headSha','baseSha','role','sourceManifestSha256','createdAt','attempt'];
-  const identity=['repo','pr','headSha','baseSha','sourceManifestSha256','role','attempt'];
-  check(exact(job,fields)&&job.contract==='clued.independent-ci.job/2'&&job.repo==='tdoljyj/cross-memory-system'&&job.role==='contract-placement'&&Number.isSafeInteger(job.attempt)&&job.attempt>=1&&job.attempt<=2&&
-    Number.isSafeInteger(job.pr)&&job.pr>0&&SHA.test(job.headSha)&&SHA.test(job.baseSha)&&HASH.test(job.sourceManifestSha256)&&Number.isFinite(Date.parse(job.createdAt))&&
-    job.id===sha(JSON.stringify(['clued.independent-ci.job/2',...identity.map(k=>job[k])])),'EXACT_PLACEMENT_JOB_REQUIRED');return job;
+  const fields=['contract','id','repo','pr','headSha','baseSha','testSha','role','sourceManifestSha256','createdAt','attempt'];
+  const identity=['repo','pr','headSha','baseSha','testSha','sourceManifestSha256','role','attempt'];
+  check(exact(job,fields)&&job.contract==='clued.independent-ci.job/3'&&job.repo==='tdoljyj/cross-memory-system'&&job.role==='contract-placement'&&Number.isSafeInteger(job.attempt)&&job.attempt>=1&&job.attempt<=2&&
+    Number.isSafeInteger(job.pr)&&job.pr>0&&SHA.test(job.headSha)&&SHA.test(job.baseSha)&&SHA.test(job.testSha)&&HASH.test(job.sourceManifestSha256)&&Number.isFinite(Date.parse(job.createdAt))&&
+    job.id===sha(JSON.stringify(['clued.independent-ci.job/3',...identity.map(k=>job[k])])),'EXACT_PLACEMENT_JOB_REQUIRED');return job;
 }
 export function fixedCommands(job,tools){
   validateEntryJob(job);validateTools(tools);
   return Object.freeze([
     {id:'python-placement-fixtures',executable:tools.python.path,args:['-m','unittest','scripts/ci/test_check_contract_placement.py','-v']},
     {id:'bootstrap-fixtures',executable:tools.node.path,args:['--test','apps/clued-cloud/tests/agent-contract-bootstrap.test.mjs']},
-    {id:'actual-bootstrap-build',executable:tools.node.path,args:[tools.esbuildJs.path,'apps/clued-cloud/worker/continuity.ts','--bundle','--platform=node','--format=esm','--external:js-tiktoken/*',`--define:__CLUED_BUILD_SHA__=${JSON.stringify(job.headSha)}`,'--outfile=/scratch/contract-bootstrap.mjs']},
+    {id:'actual-bootstrap-build',executable:tools.node.path,args:[tools.esbuildJs.path,'apps/clued-cloud/worker/continuity.ts','--bundle','--platform=node','--format=esm','--external:js-tiktoken/*',`--define:__CLUED_BUILD_SHA__=${JSON.stringify(job.testSha)}`,'--outfile=/scratch/contract-bootstrap.mjs']},
     {id:'actual-and-synthetic-renderer',executable:tools.node.path,args:['apps/clued-cloud/scripts/render-agent-contract-budget.mjs','--worker-module','/scratch/contract-bootstrap.mjs','--output','/scratch/contract-responses.json']},
-    {id:'placement-and-production-floor',executable:tools.python.path,args:['scripts/ci/check_contract_placement.py','--base',job.baseSha,'--head',job.headSha,'--minimum-service-version','0.4.5','--rendered-responses','/scratch/contract-responses.json']},
+    {id:'placement-and-production-floor',executable:tools.python.path,args:['scripts/ci/check_contract_placement.py','--base',job.baseSha,'--head',job.testSha,'--minimum-service-version','0.4.5','--rendered-responses','/scratch/contract-responses.json']},
   ].map(v=>Object.freeze({...v,args:Object.freeze(v.args)})));
 }
 // Pure offline sequencing helper. Actual container main supplies only its fixed
