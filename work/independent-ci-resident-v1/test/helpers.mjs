@@ -86,6 +86,9 @@ export function fakeEngine(script = {}) {
     async runStage(batch, stage, o) { calls.push(['stage', stage.number]); opts.push([stage.number, o ?? null]); return script.stages?.[stage.number] ?? { ok: true, factsSha256: 'd'.repeat(64) }; },
     // Stage R: script.relay(roles) -> fact-like result; by default every candidate is relayed.
     async runRelayStage(batch, roles) { calls.push(['stage', 9]); engine.relayRoles = [...roles]; return script.relay ? script.relay(roles) : { ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(r => relayedRow(r)) }; },
+    // Stage 10 (quota phase 2 step 3c-1): script.train(mode) -> fact-like result; by default shadow facts with no front.
+    async runTrainStage(mode) { calls.push(['stage', 10, mode]); return script.train ? script.train(mode) : { ok: true, runId: `${'7'.repeat(16)}-${'0'.repeat(12)}`, proof: { windowsTreeZero: true, serviceOriginalStopped: true },
+      train: { contract: 'clued.independent-ci.train-facts/1', mode, at: '2026-10-23T05:00:00.000Z', onDuty: true, mainSha: null, rules: null, front: null, wouldDo: 'NO_FRONT', wouldRevoke: [], wouldRevokeCount: 0 } }; },
     async closeBatch(batch, opts) { calls.push(['close', opts?.linux ?? null]); return script.close ?? { verified: true, archived: 3 }; },
     async archiveFailure(batch, reason) { calls.push(['archive-windows', reason]); return script.archiveWindows ?? { verified: true, directory: `failed-x-${reason}-000000000000` }; },
     async windowsQuiescence() { return script.windows ?? WINDOWS_CLEAN; },
