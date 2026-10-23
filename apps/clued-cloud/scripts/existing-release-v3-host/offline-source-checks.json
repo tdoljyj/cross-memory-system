@@ -1,11 +1,11 @@
 {
   "contract": "clued.existing-release-v3-host-source-checks/1",
-  "revision": 6,
-  "packageManifestSha256": "71ee46c6c0d5bb0bafa5a85a5445b11c4f0b534141eb25010b06b51da04b8bf4",
+  "revision": 7,
+  "packageManifestSha256": "c9b1a43105bdfcf8631e1abeec0c3552a56797bb259f3bccd767899953bacc8c",
   "checks": {
-    "offlineChecksScript": "offline-checks-v6.mjs",
-    "offlineChecksScriptSha256": "d4267a1d5bd97808be6b2d002d29249d685e4a03268e16ba75c1a7a9394e8a37",
-    "result": "34/34 PASS on the Linux Host as the publisher (node v24.19.0, wrangler 4.125.0 dry-run)",
+    "offlineChecksScript": "offline-checks-v7.mjs",
+    "offlineChecksScriptSha256": "3651de72c171995827518842ba165b93867d7f281a51f7462670ab37bc57bc76",
+    "result": "NOT_RUN: run on the Linux Host as the publisher after installing v7, before the first release",
     "rootInstallExecuted": false,
     "credentialsRead": false,
     "productionExecuted": false
