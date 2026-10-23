@@ -41,8 +41,10 @@ export function observationLog(directory, jobId) {
 export async function controllerPrincipal(record) {
   const keyFile = APP_KEY_FILE, nativeFile = path.join(INSTALL_ROOT, 'secrets', 'ci-admission.token');
   await assertProtectedPaths(INSTALL_ROOT, [keyFile, nativeFile]);
-  const appKey = await readProtected(keyFile, { secret: true, secretRoot: path.dirname(keyFile) });
-  const nativeToken = (await readProtected(nativeFile, { secret: true, secretRoot: path.join(INSTALL_ROOT, 'secrets') })).trim();
+  // The secrets' only non-admin reader is this node's controller account, the one its record pins (acceptance `node`).
+  const controllerSid = record.accepted.node.controllerSid;
+  const appKey = await readProtected(keyFile, { secret: true, secretRoot: path.dirname(keyFile), controllerSid });
+  const nativeToken = (await readProtected(nativeFile, { secret: true, secretRoot: path.join(INSTALL_ROOT, 'secrets'), controllerSid })).trim();
   check(/^clued_bnd_[A-Za-z0-9_-]{8,480}$/.test(nativeToken) && digest('clued.independent-ci.ci-binding-pin/1\0' + nativeToken) === record.accepted.ciTokenPinSha256
     && createHash('sha256').update(createPublicKey(appKey).export({ type: 'spki', format: 'der' })).digest('base64') === record.accepted.appPublicKeySha256Base64, 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED');
   return { appKey, nativeToken };

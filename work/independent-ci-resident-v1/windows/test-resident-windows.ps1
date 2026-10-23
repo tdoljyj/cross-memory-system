@@ -129,6 +129,47 @@ if ((Test-Path -LiteralPath $probeNode) -and (Test-Path -LiteralPath $ca.path)) 
   Stop-Process -Id $seen.pid -Force -ErrorAction SilentlyContinue; Stop-Process -Id $host1.Id -Force -ErrorAction SilentlyContinue
 }
 
+# 4c. Node profile (resident active/standby design v0.4, section 9 C1): install-resident.ps1 takes the host identity
+#     from the package's install record (record\acceptance.json `node`) and holds it to the shape rules of
+#     resident-v2/prepare-record.mjs; TURING's profile (config\node-profile.turing.json) is the values this harness has
+#     always used. verify and uninstall read the installed record's profile (no host constant left in the three).
+foreach ($name in @('install-resident.ps1:Assert-NodeProfile', 'install-resident.ps1:Get-PackageNodeProfile', 'install-resident.ps1:Sha256Bytes')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }
+Yes ($installText -match '(?m)^\$NodeProfileKeys = @\([^\r\n]+\)') 'present:NodeProfileKeys'; . ([scriptblock]::Create($Matches[0]))
+$turingText = [IO.File]::ReadAllText((Join-Path $here '..\config\node-profile.turing.json'))
+$turing = $turingText | ConvertFrom-Json
+Assert-NodeProfile $turing; $n++
+Yes ($turing.hostname -ceq 'TURING' -and $turing.ownerSid -ceq $OwnerSid -and $turing.controllerSid -ceq $ControllerSid -and $turing.runnerService -ceq 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02' -and $turing.wslDistribution -ceq 'Ubuntu-24.04') 'turing-profile-is-todays-values'
+function Copy-Profile { $turingText | ConvertFrom-Json }
+function Test-Refused([scriptblock]$body, [string]$code) { try { & $body; return $false } catch { return $_.Exception.Message -ceq $code } }
+foreach ($case in @(@('hostname', 'turing'), @('hostname', 'ABCDEFGHIJKLMNOP'), @('mutationMutex', 'Global\CluedControlControllerMutationV1-TURING-1001'), @('controllerSid', 'S-1-5-21-1-2-3-500'),
+  @('ownerSid', $ControllerSid), @('runnerService', 'actions.runner.other-repo.clued-ci-x'), @('wslDistribution', 'Ubuntu 24.04'), @('ownerProfileDirectory', 'C:\Users\..'), @('nodeName', 'TURING'), @('contract', 'x'))) {
+  $c = Copy-Profile; $c.($case[0]) = $case[1]
+  Yes (Test-Refused { Assert-NodeProfile $c } 'NODE_PROFILE_INVALID') ('node-profile-refused:' + $case[0] + '=' + $case[1])
+}
+$c = Copy-Profile; $c.nodeName = 7; Yes (Test-Refused { Assert-NodeProfile $c } 'NODE_PROFILE_FIELDS_REQUIRED') 'node-profile-refused:non-string'
+$c = Copy-Profile; $c | Add-Member -NotePropertyName extra -NotePropertyValue 'x'; Yes (Test-Refused { Assert-NodeProfile $c } 'NODE_PROFILE_FIELDS_REQUIRED') 'node-profile-refused:extra-field'
+$c = Copy-Profile; $c.PSObject.Properties.Remove('wslDistribution'); Yes (Test-Refused { Assert-NodeProfile $c } 'NODE_PROFILE_FIELDS_REQUIRED') 'node-profile-refused:missing-field'
+Yes (Test-Refused { Assert-NodeProfile $null } 'NODE_PROFILE_FIELDS_REQUIRED') 'node-profile-refused:null'
+# The profile is read from the package bytes the reviewed manifest pins, never from anything else.
+$PackageRoot = Join-Path $Scratch 'node-package'; [void][IO.Directory]::CreateDirectory((Join-Path $PackageRoot 'record'))
+function Write-NodePackage([string]$acceptance) {
+  $ab = (New-Object Text.UTF8Encoding($false)).GetBytes($acceptance); [IO.File]::WriteAllBytes((Join-Path $PackageRoot 'record\acceptance.json'), $ab)
+  $script:pkgBytes = (New-Object Text.UTF8Encoding($false)).GetBytes('{"contract":"clued.independent-ci.resident-package/3","files":[{"path":"record/acceptance.json","target":"record\\acceptance.json","sha256":"' + (Sha256Bytes $ab) + '"}]}')
+  $script:ExpectedPackageManifestSha256 = Sha256Bytes $script:pkgBytes
+}
+Write-NodePackage ('{"accepted":true,"hostname":"TURING","node":' + $turingText + '}')
+Yes ((Get-PackageNodeProfile).nodeName -ceq 'turing') 'package-node-profile-read'
+$ExpectedPackageManifestSha256 = 'f' * 64; Yes (Test-Refused { Get-PackageNodeProfile } 'REVIEWED_PACKAGE_CHANGED') 'package-node-profile-manifest-pin'
+Write-NodePackage ('{"accepted":true,"hostname":"TURING","node":' + $turingText + '}'); [IO.File]::WriteAllText((Join-Path $PackageRoot 'record\acceptance.json'), '{"hostname":"TURING","node":' + $turingText + '}')
+Yes (Test-Refused { Get-PackageNodeProfile } 'PACKAGE_FILE_CHANGED:record\acceptance.json') 'package-node-profile-bytes-pin'
+Write-NodePackage '{"accepted":true,"hostname":"TURING"}'; Yes (Test-Refused { Get-PackageNodeProfile } 'PACKAGE_NODE_PROFILE_REQUIRED') 'package-node-profile-missing'
+Write-NodePackage ('{"accepted":true,"hostname":"OTHER","node":' + $turingText + '}'); Yes (Test-Refused { Get-PackageNodeProfile } 'NODE_PROFILE_INVALID') 'package-node-profile-hostname'
+Yes ($functions['install-resident.ps1:Assert-Owner'].Contains("throw 'NODE_HOST_REQUIRED'") -and $functions['install-resident.ps1:Assert-Owner'].Contains("throw 'NODE_PROFILE_ACCOUNTS_MISMATCH'")) 'install-host-and-accounts-from-profile'
+foreach ($s in @('install-resident.ps1', 'verify-resident.ps1', 'uninstall-resident.ps1')) {
+  $code = @((Get-Content -LiteralPath (Join-Path $here $s)) | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+  Yes (-not ($code -match 'clued-ci-home-win-02|S-1-5-21-\d+-\d+-\d+-\d+|''TURING''|\(\\\.\|TURING\)')) ('no-host-constant:' + $s)
+}
+
 # 5. C#: the broker's bounded read and both token checks (compiled into the scratch directory).
 $fw = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\'; $csc = Join-Path $fw 'csc.exe'
 $v2 = [IO.Path]::GetFullPath((Join-Path $here '..\..\actions-hosted-migration\independent-ci-v1\src\resident-v2\windows'))

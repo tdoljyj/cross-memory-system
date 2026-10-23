@@ -14,7 +14,7 @@
 
 ## 步骤
 
-在 Owner 会话里用 `wsl -d Ubuntu-24.04 -u root` 运行，时间窗口由协调会话排。
+在 Owner 会话里用 `wsl -d <发行版> -u root` 运行，发行版取该节点档案的 `wslDistribution`（TURING 是 `Ubuntu-24.04`）。时间窗口由协调会话排。
 
 | 文件 | sha256 |
 |---|---|

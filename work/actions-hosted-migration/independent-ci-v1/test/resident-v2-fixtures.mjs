@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto';
 import { canonical } from '../src/proof.mjs';
-import { assembleRecord, RECORD_INPUTS_CONTRACT } from '../src/resident-v2/prepare-record.mjs';
+import { assembleRecord, NODE_PROFILE_CONTRACT, RECORD_INPUTS_CONTRACT } from '../src/resident-v2/prepare-record.mjs';
 import { ENTRY_V2 } from '../src/resident-v2/layout.mjs';
 import { RESULT_CONTRACT_V2, ENVELOPE_CONTRACT_V2 } from '../src/proof-v2.mjs';
 import { subjectOfV2, claimGeneration } from '../src/job-v2.mjs';
@@ -48,9 +48,16 @@ export function signerKeys() {
   return { publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }), privateKey };
 }
 
+// A fixture node profile (prepare-record.mjs#validateNodeProfile); its controller is the stage tests' CONTROLLER.
+export function nodeProfile(o = {}) {
+  return { contract: NODE_PROFILE_CONTRACT, nodeName: 'fixture-node', hostname: 'FIXTURE-NODE', ownerSid: 'S-1-5-21-1-2-3-1001', ownerProfileDirectory: 'C:\\Users\\fixture-owner',
+    controllerSid: 'S-1-5-21-1-2-3-1015', runnerService: 'actions.runner.tdoljyj-cross-memory-system.clued-ci-fixture-win-02',
+    mutationMutex: 'Global\\CluedControlControllerMutationV1-FIXTURE-NODE-1015', wslDistribution: 'Fixture-24.04', ...o };
+}
+
 export function recordInputs(overrides = {}, refs = null, signer = signerKeys()) {
   const references = refs ?? Object.fromEntries(['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef', 'ownerPackageAcceptanceRef', 'installationReceiptRef'].map(k => [k, randomUUID()]));
-  return { contract: RECORD_INPUTS_CONTRACT, repository: 'tdoljyj/cross-memory-system', sourceCommit: 'c'.repeat(40), scope: `project:${randomUUID()}`, hostname: 'TURING',
+  return { contract: RECORD_INPUTS_CONTRACT, repository: 'tdoljyj/cross-memory-system', sourceCommit: 'c'.repeat(40), scope: `project:${randomUUID()}`, node: nodeProfile(),
     controllerAccount: 'clued-control', appId: 5368905, installationId: 172706661, repositoryId: 1334673495, appKeyId: 4918220,
     ciPrincipalBindingId: randomUUID(), ciPrincipalRoleRef: randomUUID(), ciTokenPinSha256: hex(32), appPublicKeySha256Base64: Buffer.from(randomBytes(32)).toString('base64'),
     supabaseUrl: 'https://fixtureproject.supabase.co', publishableKey: 'sb_publishable_fixture', controllerNodeSha256: hex(32), references,

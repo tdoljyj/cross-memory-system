@@ -1,6 +1,7 @@
 #!/bin/bash
 # One-time Owner install of the Linux half of the resident executor (DRAFT, not yet reviewed).
-# Run as root inside Ubuntu-24.04 (wsl -d Ubuntu-24.04 -u root -- bash <this> ...).
+# Run as root inside the node's WSL distribution, its node profile's wslDistribution (TURING: Ubuntu-24.04):
+#   wsl -d <wslDistribution> -u root -- bash <this> ...
 #
 #   install-resident-linux.sh --plan PACKAGE_DIR                         read-only: plan + sha256
 #   install-resident-linux.sh --apply PACKAGE_DIR PLAN_SHA256            install exactly that plan

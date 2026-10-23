@@ -1,7 +1,10 @@
 param([Parameter(Mandatory=$true)][string]$LiteralTarget, [Parameter(Mandatory=$true)][string]$ProtectedRoot, [switch]$AllowControllerWrite,
-  [switch]$ReadFile, [string]$SecretRoot)
+  [switch]$ReadFile, [string]$SecretRoot, [string]$ControllerSid)
 $ErrorActionPreference = 'Stop'
-$ControllerSid = 'S-1-5-21-1173730660-3877291096-655431861-1015'
+# The controller account is the caller's pinned node profile controllerSid (resident active/standby design v0.4
+# section 9 C1; Source v2: record acceptance `node`, passed by runtime/protected-files.mjs), never a constant here.
+# A secret read or a controller-writable check without it is refused; a plain ancestor check does not use it.
+if (($ReadFile -or $AllowControllerWrite) -and $ControllerSid -cnotmatch '^S-1-5-21-\d{1,10}-\d{1,10}-\d{1,10}-\d{1,10}$') { exit 2 }
 # Hold every ancestor against rename/replacement. Read only the handle whose
 # owner/DACL/type/path have actually been checked; return no diagnostics/bytes on refusal.
 Add-Type -TypeDefinition @'
