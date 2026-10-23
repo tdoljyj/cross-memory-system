@@ -33,7 +33,8 @@
 //     effect key under the batch claim) is read back on GitHub before its first publication (published-on-github-v2.mjs).
 //     This App's check of the same name there, published by another node or install, ends the publication cleanly with
 //     ROLE_ALREADY_ON_GITHUB: nothing posted, nothing revoked. publishPair reads both checks back before either is
-//     published, so this node never leaves the pair half published because the other half is already on GitHub.
+//     published (and before the green-ledger intent), so this node never leaves the pair half published because the
+//     other half is already on GitHub; a half with an unsettled journal entry skips that and keeps its reconciliation.
 import { digest } from '../proof.mjs';
 import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, CONTROL_ROLES_V2, MAX_ATTEMPT_V2, sameBatchV2 } from '../job-v2.mjs';
 import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from '../full-admission-v2.mjs';

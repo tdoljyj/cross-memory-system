@@ -297,16 +297,18 @@ async function controlPair(t, github) {
   const admission = { fixture: true, async evaluatePr(job, packet) {
     return admittedFacts(job, c, packet, { domain: 'fixture', mergeQueueHead: true, slotUntil: SLOT_UNTIL, batchClaim: claimGeneration(c) });
   } };
-  const pub = createFixtureControlPublisherV2({ github, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c), greenLedger: memoryLedger(), sleep: async () => {} });
-  return { pub, pair: [jobs['control-admission'], jobs['control-merge-slot']], journal, batchClaim: claimGeneration(c) };
+  const greenLedger = memoryLedger();
+  const pub = createFixtureControlPublisherV2({ github, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c), greenLedger, sleep: async () => {} });
+  return { pub, pair: [jobs['control-admission'], jobs['control-merge-slot']], journal, batchClaim: claimGeneration(c), greenLedger };
 }
 
 test('stage 8: a control check already on GitHub from another node ends the pair before either half is published', async t => {
   for (const name of ['kooyumi-admission-verified', 'kooyumi-merge-slot']) {
     const github = fakeGithub([run(7, name)]);
-    const { pub, pair } = await controlPair(t, github);
+    const { pub, pair, greenLedger } = await controlPair(t, github);
     const r = await pub.publishPair(pair, { waitUntil: Date.now() + 2 * QUEUE_POLL_MS });
     assert.deepEqual([r.status, r.reason, r.sideEffects], ['BLOCKED', ROLE_ALREADY_ON_GITHUB, 0], name);
+    assert.deepEqual(greenLedger.records, [], 'refused before the green-ledger intent: nothing recorded');
     assert.equal(r.role, name === 'kooyumi-merge-slot' ? 'control-merge-slot' : 'control-admission');
     assert.equal(github.calls.createCheck, 0);
   }
@@ -337,9 +339,10 @@ test('stage 8: one half this node published, the other already on GitHub: a clea
 
 test('stage 8: a pair this node published is known and re-verified on the next try; a read-back that is not complete refuses', async t => {
   const github = fakeGithub();
-  const { pub, pair } = await controlPair(t, github);
+  const { pub, pair, greenLedger } = await controlPair(t, github);
   const first = await pub.publishPair(pair, { waitUntil: Date.now() + 2 * QUEUE_POLL_MS });
   assert.deepEqual([first.status, first.sideEffects, github.calls.createCheck], ['SETTLED', 2, 2]);
+  assert.deepEqual(greenLedger.records.map(r => r.phase), ['intent', 'posted', 'settled'], 'the merge-slot green is ledgered before it is posted');
   const again = await pub.publishPair(pair, { waitUntil: Date.now() + 2 * QUEUE_POLL_MS });
   assert.deepEqual([again.status, again.sideEffects, github.calls.createCheck], ['SETTLED', 0, 2]);
   const broken = fakeGithub();
