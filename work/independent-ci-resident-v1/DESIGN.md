@@ -394,7 +394,7 @@ v0.9 起，释放还是烧号由机器可读的失败对照表 `src/failure-tabl
   1. 执行器在 `broker\requests\` 里找**正在进行的那一次交换**：代理已领取（有 `.taken`）、还没回复、段号相同、`configSha256` 等于这一批次该段包的计划哈希（从批次钉住的 work manifest 读出）。恰好一个时，在旁边新建 `<id>.stop`，字段恰好是 `contract`、`requestId`、`nonce`、`stage`、`configSha256`。执行器记下这个请求 id，交换被回复之后照样能读停止回执；
   2. 代理在这次交换的等待循环里每秒看一次（§8.2 第 9 条），条件全部满足时向 runner 服务发 `SERVICE_CONTROL_STOP`，并把结果写进只新建的停止回执 `broker\responses\<id>.stop.json`（`STOP_SENT`、`HELPER_ALREADY_STOPPING` 或某个拒绝码）。这个控制实际只生效一次：万一因为超时又发了一次，助手也只是再置一次同一个标志、终止同一个作业对象，没有别的作用；
   3. 通用助手按它现有的停止路径处理（`STOP_REQUESTED`，服务退出码 92）：只终止并排空**它自己建的作业对象**，写原生回执，报告 STOPPED。代理照常换回原始二进制并回复。执行器和代理都不杀任何进程，也不碰来历不明的进程树；
-  4. 只有停止回执是 `STOP_SENT`，或者这一段在 Windows 侧的调用（invoke-stage 子进程）已经带着阶段事实返回之后，执行器才给 companion 写 `mailbox\requests\<泵请求 id>.cancel.json`。带着阶段事实返回有三种：代理已经回复，不论回复码是什么（助手已停，或助手根本没启动）；调用在找代理之前就拒绝了这一段；调用等不到代理的回复而放弃，那时代理和泵自己的截止时间都已过。这三种情况下发行方都不再等泵能带来的任何东西。泵在下一个等待步骤以 `COMPANION_PUMP_CANCELLED` 结束，不再做 blocked 转交：取消之后不再发起任何 relay 调用（每次调用之前都先查取消，正在进行的那一次最多 40 秒，先等它结束），blocked 转交的每一步之前也查；以失败结束时，不论停在哪一步，回复都是 `COMPANION_PUMP_CANCELLED`（取消时恰好已经正常走完的，照实回复成功）；读不出的取消文件按没有取消处理；它只停止搬运，从不停止或杀掉 Linux worker，取消若随 issue 转交一起到达，就不再启动 worker。在这之前，泵和它的 blocked 转交都和没有中止时完全一样，所以停止没送达时，这一段的结局不会比不中止更差；调用一返回，这一段也不会再为泵多等到截止时间；
+  4. 只有停止回执是 `STOP_SENT`，或者这一段在 Windows 侧的调用（invoke-stage 子进程）已经带着阶段事实返回之后，执行器才给 companion 写 `mailbox\requests\<泵请求 id>.cancel.json`。带着阶段事实返回有三种：代理已经回复，不论回复码是什么（助手已停，或助手根本没启动）；调用在找代理之前就拒绝了这一段；调用等不到代理的回复而放弃，那时代理和泵自己的截止时间都已过。这三种情况下发行方都不再等泵能带来的任何东西。泵在下一个等待步骤以 `COMPANION_PUMP_CANCELLED` 结束，不再做 blocked 转交：取消之后不再发起任何 relay 调用（每次调用之前都先查取消，正在进行的那一次最多一个回调窗口（120 秒，`RELAY_TIMEOUT_MS`，§7.9），先等它结束），blocked 转交的每一步之前也查；以失败结束时，不论停在哪一步，回复都是 `COMPANION_PUMP_CANCELLED`（取消时恰好已经正常走完的，照实回复成功）；读不出的取消文件按没有取消处理；它只停止搬运，从不停止或杀掉 Linux worker，取消若随 issue 转交一起到达，就不再启动 worker。在这之前，泵和它的 blocked 转交都和没有中止时完全一样，所以停止没送达时，这一段的结局不会比不中止更差；调用一返回，这一段也不会再为泵多等到截止时间；
   5. 还没调用的段（例如还在 refs 闸门上）直接不调用，以 `OWNER_ABORT_REQUESTED` 结束。
 - **结束**（P0、P1、P2 相同）：
   1. 运行中被停下的段，结局码必须在白名单里（`classify.mjs#OWNER_ABORT_STAGE_ENDINGS`），而且该段自己的 Windows 证明齐全（作业树为 0、原始二进制已还原）。白名单是：本来就干净的码；`OWNER_ABORT_REQUESTED`；`COMPANION_PUMP_CANCELLED`；入口被停下、来不及写结局时的 `STAGE_OUTCOME_MISSING`。最后一个只在停止回执是 `STOP_SENT` 时才算，其他情况下它照旧是未知；
@@ -707,6 +707,25 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
   8. 改动文件读取在回调轮里失败一次后重试并回复；
   9. 结果后的准入越过 issue 窗口时为 UNCERTAIN。
 - 四轮独立只读审核均为 PASS（0 BLOCKER、0 MAJOR）：`8b1f6f7b`、`105adffc`、`5410d563`，以及自举安装审核 `11af4710` 第 4、5 条修复后的 `18c0afc5`。审核记录在 PR #899 正文里。
+
+### 7.9 搬运变慢时的回调（Task `576231fa`，Owner 决定 `6f1fb753`）
+
+**根因**（2026-10-23，只读核实）：三次被记成“签发方卡住”的事故里，签发方其实都按时作答了。慢的是 companion 的一次搬运调用（relay-public.ps1）：平常 4–6 秒，偶尔 25–45 秒。
+
+- PR #915 第 4 段（批次 `a0a76a17`）：签发方 07:20:38Z 写出 response-04，SendResponse(4) 约 30 秒后才在 Linux 侧校验。这时响应里的准入已超过 30 秒新鲜期，Linux 拒收。companion 以 `RELAY_REFUSED_NO_RETRY` 停泵；worker 在本轮截止写 uncertain，因为扫描已经跑过。
+- PR #911 第 4 段（批次 `0d379e72`）：签发方 04:57:30Z 写出 issue，SendIssue 用了约 43 秒，超过 companion 原来固定的 40 秒，泵当作失败停下，worker 没有启动。
+- PR #908 第 1 次：response-02 同样没送到 Linux。那一轮在准备之前，所以 worker 写了 `blocked`，干净结束。
+- 泵停下以后，签发方等到 issue 过期，以 `BRIDGE_RESULT_DEADLINE` 结束（UNCERTAIN），常驻侧判 `PUBLICATION_UNCERTAIN` 并 HALT。
+- 证据：Windows 侧桥记录的时间（Owner 一次 UAC 的只读收集）、Linux 侧归档与 journal、companion 的 relay-stage 答复。搬运慢在哪一步没有记录可查。
+
+**改动**：
+
+- 回调 response 里的准入按签出时刻判新鲜，和 issue 一样（`CI/worker/protected-job-bridge-v4/protocol.mjs#validateResponse`）：签出时准入不超过 30 秒；response 只要在自己的窗口内到达（不晚于本轮 challenge 的截止，最多 120 秒）；claim 在到达时仍有效（response 的 `expiresAt` 不晚于 `claimExpiresAt`，且晚于到达时刻）。
+- Linux 适配器对每轮回调结果自己的复核（`validateFormalAdmissionV2`）也一样：worker 把每个 response 的签出时间和过期时间记在它交给适配器的那份准入事实上（`linux-worker.mjs#callbackValue`、`admission-facts-v2.mjs#noteBridgeResponseTimes`）。在这个 response 有效期内，30 秒从签出时刻算；过了有效期，或者不是从回调来的事实，照旧从当前时刻算。Windows 侧的调用方从不登记，行为不变。
+- remote-refs 回调的 refs 快照仍按到达时刻判 30 秒，不在这次决定范围内。
+- companion 每次搬运调用最多等一个回调窗口（`RELAY_TIMEOUT_MS` = 120 秒），不再固定 40 秒。Runner 从不杀子进程，提前放弃并不能腾出 Runner，只会让泵以没用的答复结束。Owner 中止时，正在进行的那次调用最多多等这么久。
+- 不变：每轮仍重新做完整准入；绑定 nonce、序号与批次 claim 代际；发布阶段（3、5、7、8）自己再做完整准入，已发布的检查不重复、不伪造。
+- 仍未处理（后续）：泵在扫描执行段停下、companion 已给出 Linux 静止证明时，常驻侧要等签发方到期才 UNCERTAIN→HALT，应尽早停下签发方并干净结束。
 
 ---
 

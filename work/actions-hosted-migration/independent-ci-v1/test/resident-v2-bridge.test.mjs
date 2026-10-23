@@ -18,7 +18,7 @@ import { CALLBACK_WINDOW_MS, makeIssue, makeChallenge, makeResponse, makeBlocked
 import { createFixtureMailbox } from '../worker/protected-job-bridge-v4/mailbox.mjs';
 import { runIssuer, issuerEvaluate, blockedReason, refsFailureReason, ISSUER_SUCCESS } from '../worker/protected-job-bridge-v4/windows-issuer.mjs';
 import { resultPayload, observationFacts, verifySignedBridgeResult, RESULT_WRAPPER_CONTRACT_V2 } from '../worker/protected-job-bridge-v4/signed-result.mjs';
-import { cleanBlockedReason, isCleanBlocked } from '../worker/protected-job-bridge-v4/linux-worker.mjs';
+import { callbackValue, cleanBlockedReason, isCleanBlocked } from '../worker/protected-job-bridge-v4/linux-worker.mjs';
 import { cacheRefusal } from '../worker/formal-trivy-v4/adapter.mjs';
 import { bridgeManifest, BRIDGE_MANIFEST_CONTRACT } from '../worker/protected-job-bridge-v4/bridge-manifest.mjs';
 import { validatePolicyShape, validateQualificationPayload, qualificationDeadline, LINUX_NODE_V2 } from '../worker/qualification-v2.mjs';
@@ -94,6 +94,43 @@ test('protocol v4: issue -> challenge -> response round trip; a moved claim gene
   const short = claim({ expiresAt: iso(Date.now() + 60_000) });
   assert.ok(Date.parse(makeIssue(job, facts(job, short), refsSnapshot(), ctx).expiresAt) <= Date.parse(short.expiresAt));
   void accepted;
+});
+
+// Owner Decision 6f1fb753 (Task 576231fa): PR #915 stage 4 (2026-10-23) lost a response the issuer had written 10 s
+// after the challenge, because the relay call took about 30 s and the Linux side measured the admission's 30 s from
+// the arrival. Like the issue's, a response's admission is now fresh at its issuance; the response only has to arrive
+// inside its own window, and the claim must outlive the arrival.
+test('protocol v4: a callback response is fresh at its issuance and only has to arrive inside its window', () => {
+  const { jobs } = setup(), job = jobs.trivy, c = claim(), generation = { batchClaim: claimGeneration(c) };
+  const ctx = () => ({ sourceAcceptanceRef: randomUUID(), hostQualificationRef: randomUUID(), expiresAt: iso(Date.now() + 600_000) });
+  const issue = makeIssue(job, facts(job, c), null, ctx()), gl = jobs.gitleaks, gissue = makeIssue(gl, facts(gl, c), refsSnapshot(), ctx());
+  const t = Date.now(), ch = makeChallenge(issue, 'admission', 1, { now: t });
+  const answer = admittedFacts(job, c, PACKET, { batchClaim: c, observedAt: t + 10_000 });
+  const response = makeResponse(issue, ch, answer, null, { now: t + 10_500 });
+  const arrived = t + 10_500 + 35_000; // the relay call took 35 s
+  assert.ok(validateResponse(issue, ch, decode(encode(response)), arrived));
+  // The adapter re-checks the facts the worker hands it from the issuance while the response is valid ...
+  const given = callbackValue('admission', decode(encode(response)));
+  assert.ok(validateFormalAdmissionV2(job, given, arrived, generation));
+  assert.throws(() => validateFormalAdmissionV2(job, given, Date.parse(response.expiresAt), generation), { code: 'FRESH_COMPLETE_NATIVE_ADMISSION_REQUIRED' });
+  // ... and the same facts outside a validated response keep the 30 s from now.
+  assert.throws(() => validateFormalAdmissionV2(job, decode(encode(response)).admission, arrived, generation), { code: 'FRESH_COMPLETE_NATIVE_ADMISSION_REQUIRED' });
+  // Stale already at issuance: never issued, and a forged late issuedAt does not pass either.
+  const stale = admittedFacts(job, c, PACKET, { batchClaim: c, observedAt: t });
+  assert.throws(() => makeResponse(issue, ch, stale, null, { now: t + 31_000 }), { code: 'BRIDGE_FORMAL_ADMISSION_SHAPE_REQUIRED' });
+  assert.throws(() => validateResponse(issue, ch, { ...decode(encode(makeResponse(issue, ch, stale, null, { now: t + 1_000 }))), issuedAt: iso(t + 31_000) }, t + 32_000), { code: 'BRIDGE_FORMAL_ADMISSION_SHAPE_REQUIRED' });
+  // Arrival after the round's deadline is still refused.
+  assert.throws(() => validateResponse(issue, ch, decode(encode(response)), Date.parse(ch.deadline)), { code: 'BRIDGE_CHALLENGE_EXPIRED' });
+  // A claim that ends before the arrival: the response never outlives it.
+  const short = { ...c, expiresAt: iso(t + 20_000) };
+  const r2 = makeResponse(issue, ch, admittedFacts(job, short, PACKET, { batchClaim: c, observedAt: t + 10_000 }), null, { now: t + 10_500 });
+  assert.ok(Date.parse(r2.expiresAt) <= t + 20_000);
+  assert.ok(validateResponse(issue, ch, decode(encode(r2)), t + 19_000));
+  assert.throws(() => validateResponse(issue, ch, decode(encode(r2)), t + 25_000), { code: 'BRIDGE_RESPONSE_EXPIRED' });
+  // remote-refs responses are unchanged: their refs snapshot is measured from the arrival.
+  const refsCh = makeChallenge(gissue, 'remote-refs', 1, { now: t }), refsResponse = makeResponse(gissue, refsCh, null, refsSnapshot(t + 10_000), { now: t + 10_500 });
+  assert.ok(validateResponse(gissue, refsCh, decode(encode(refsResponse)), t + 10_500 + 15_000));
+  assert.throws(() => validateResponse(gissue, refsCh, decode(encode(refsResponse)), arrived), { code: 'FRESH_COMPLETE_REMOTE_REFS_REQUIRED' });
 });
 
 test('signed result v4: the wrapper binds the issue, the v2 subject and the observation; any change is refused', () => {
