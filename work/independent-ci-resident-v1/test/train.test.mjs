@@ -213,3 +213,64 @@ test('executor (review of 3c-1): the status says RUNNING TRAIN_MAINTENANCE while
   assert.deepEqual([during.state, during.reason], ['RUNNING', 'TRAIN_MAINTENANCE']);
   assert.equal(status.snapshot().executor.state, 'IDLE');
 });
+
+test('executor (review of 3c-1, round 2): the clean endings that are not BLOCKED stay clean; an incomplete proof HALTs', async t => {
+  const proof = { windowsTreeZero: true, serviceOriginalStopped: true };
+  const facts = { status: 'TRAIN_FACTS', reason: null, sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: null, safeToRerun: false };
+  const cases = [
+    [{ ok: false, code: 'BROKER_REQUEST_EXPIRED', proof, brokerNoLaunch: true }, null],
+    [{ ok: false, code: 'BROKER_REQUEST_REFUSED', proof, brokerNoLaunch: true }, null],
+    [{ ok: false, code: 'STAGE_HELPER_PREFLIGHT_REFUSED', proof }, null],
+    [{ ok: false, code: 'STAGE_CHILD_TIMEOUT', proof }, null],
+    // the child wrote its facts, then ran into the cap: the bound outcome is quiet (round 2, NIT 3)
+    [{ ok: false, code: 'PUBLICATION_UNCERTAIN', proof, outcome: facts }, null],
+    [{ ok: false, code: 'BROKER_REQUEST_EXPIRED', proof: { windowsTreeZero: true, serviceOriginalStopped: false } }, 'TRAIN_STAGE_CLEANUP_UNCONFIRMED'],
+  ];
+  for (const [answer, halt] of cases) {
+    const f = await executorFixture(t, { policy: shadowPolicy(), engine: fakeEngine({ train: () => answer }) });
+    await f.exec.tick();
+    assert.equal((await f.ledger.halted())?.value?.code ?? null, halt, `${answer.code} ${JSON.stringify(answer.proof)}`);
+  }
+});
+
+test('executor (review of 3c-1, round 2): a DEFERRED schedule still runs stage 10; a halted start runs nothing', async t => {
+  const f = await executorFixture(t, { policy: shadowPolicy(), companion: undefined });
+  f.companion.heartbeat = async () => null; // the companion is not ready: the trigger is deferred, nothing else runs
+  await f.drop(triggerBytes());
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.reason], ['DEFERRED', 'COMPANION_NOT_READY']);
+  assert.equal(trainCalls(f.engine).length, 1);
+  const h = await executorFixture(t, { policy: shadowPolicy() });
+  await h.ledger.halt('TEST_HALT', {});
+  assert.equal((await h.exec.tick()).state, 'HALTED');
+  assert.deepEqual(trainCalls(h.engine), []);
+});
+
+test('executor (review of 3c-1, round 2): an interruption found while halted is closed at once, so one re-arm is enough', async t => {
+  const first = await executorFixture(t, { policy: shadowPolicy() });
+  await first.receipts.append('train-run-intent', { mode: 'shadow' }); // a crash right after the intent
+  await first.ledger.halt('SOMETHING_ELSE', {}); // and a HALT from elsewhere
+  const second = await executorFixture(t, { policy: shadowPolicy(), root: first.root });
+  assert.equal((await second.exec.tick()).state, 'HALTED');
+  assert.deepEqual((await ofType(second.receipts, 'train-run')).map(b => b.failureCode), ['TRAIN_STAGE_INTERRUPTED'], 'closed although halted');
+  const third = await executorFixture(t, { policy: shadowPolicy(), root: first.root });
+  assert.equal(await third.exec.trainRecover(), null, 'nothing left for the next start after the re-arm');
+});
+
+test('the install authority keeps at least the helper\'s fixed margin; stage 10\'s cap is pinned in the policy and the two C# tables', async t => {
+  const at = Date.parse('2026-10-20T12:00:00Z');
+  const lowMargin = { ...rawPolicy().limits, stageMarginMs: 60_000 };
+  const f = await executorFixture(t, { policy: shadowPolicy({}, { limits: lowMargin, validUntil: new Date(at + 300_000 + 120_000).toISOString() }) });
+  await f.exec.tick();
+  assert.deepEqual(trainCalls(f.engine), [], 'the helper would refuse: its margin is 180 s whatever the policy says');
+  const { validatePolicy } = await import('../src/policy.mjs');
+  const caps = [...rawPolicy().stageRunMilliseconds];
+  caps[9] = 240_000;
+  assert.throws(() => validatePolicy(rawPolicy({ stageRunMilliseconds: caps })), { code: 'POLICY_STAGE_TIMES_INVALID' });
+  const fs = (await import('node:fs')).default;
+  const table = file => fs.readFileSync(new URL(file, import.meta.url), 'utf8').match(/StageMilliseconds\s*=\s*\{([0-9,\s]+)\}/)[1].split(',').map(n => Number(n.trim()));
+  const broker = table('../windows/SwapBroker.cs');
+  const boundary = table('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/windows/FormalPublicBoundaryV2.cs');
+  assert.deepEqual(broker, boundary);
+  assert.deepEqual([broker.length, broker[9]], [10, 300_000]);
+});

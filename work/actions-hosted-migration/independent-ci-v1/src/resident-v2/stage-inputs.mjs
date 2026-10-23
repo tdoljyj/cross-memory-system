@@ -94,8 +94,8 @@ export async function writeOutcome({ receiptsRoot = STATE_V2.receipts, nonce, pl
     // Stage R only: the per-role relay plan rows (hosted-relay-v1/relay-plan.mjs); a row set that does not
     // validate is written as an empty list, which the resident reads as "plan unconfirmed" (UNKNOWN).
     relay: plan?.entryRole === 'relay-publisher' ? (validateRelayPlanRows(r.relay) ?? []) : null,
-    // Stage 10 only: the train facts (train-facts.mjs); facts that do not validate are written as null, which the
-    // resident reads as "facts unconfirmed".
+    // Stage 10 only: the train facts (train-facts.mjs); facts that do not validate are written as null, and the stage fact
+    // is then no success (stage-fact.mjs: STAGE_OUTCOME_MISSING).
     train: plan?.entryRole === 'train-maintenance' ? trainFactsOrNull(r.train) : null,
     at: new Date(clock()).toISOString() };
   await fs.mkdir(receiptsRoot, { recursive: true });

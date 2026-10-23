@@ -22,7 +22,8 @@ const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 
-// The run key from a fresh seed (the resident's random bytes); the run id is the key's first 16 hex digits and a nonce.
+// A run key from a seed, for tests and fixtures. The resident draws its own random key and run id (engine-windows.mjs
+// #runTrainStage); the derivation checks only their shape: the id is the key's first 16 hex digits and a nonce.
 export function trainRunKey({ repo, seed }) {
   if (!REPO.test(repo ?? '') || !HEX64.test(seed ?? '')) fail('TRAIN_RUN_KEY_REFUSED');
   return digest({ contract: TRAIN_RUN_KEY_CONTRACT, repo, seed });
