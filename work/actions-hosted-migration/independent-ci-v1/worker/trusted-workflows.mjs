@@ -31,7 +31,7 @@ const ROWS = [
 // END TRUSTED WORKFLOW ROWS
 
 // BEGIN GITLEAKS SUCCESSOR (generated from a real workflow-freeze commit)
-const GITLEAKS_SUCCESSOR_ROW = null;
+const GITLEAKS_SUCCESSOR_ROW = {"path":".github/workflows/gitleaks.yml","sha256":"46627f909229d06a6b5c35112f7619b28c6aa9f0a196a526b067e3a962d9da2b","blob":"d0fe73eeabc9c163d3216e57ca6a7633288262c5","commit":"91f4411b8033f437c3043d9ae5fac1dab13d105e"};
 // END GITLEAKS SUCCESSOR
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
