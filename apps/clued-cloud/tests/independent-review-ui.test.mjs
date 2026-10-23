@@ -62,7 +62,7 @@ test('signed out: no calls, a link to sign in', async t => {
   const f = fixture(PAGE); t.after(() => f.unmount());
   f.emit('INITIAL_SESSION', null);
   assert.equal(f.calls.length, 0);
-  assert.ok(f.text().includes('登录 KooYomi'));
+  assert.ok(f.text().includes('登录 BeamingFace'));
 });
 
 test('the CI context suite actually imports the native review suite', () => {
@@ -110,7 +110,7 @@ test('a delegated login is refused in plain words', async t => {
   const f = fixture(PAGE); t.after(() => f.unmount());
   f.emit('INITIAL_SESSION', session('owner'));
   f.calls[0].resolve({ data: null, error: { message: 'direct_human_session_required', code: '42501' } }); await f.settle();
-  assert.ok(f.text().includes('需要你本人直接登录 KooYomi'));
+  assert.ok(f.text().includes('需要你本人直接登录 BeamingFace'));
   assert.equal(f.nodes('button').some(n => n.props.role === 'switch'), false, 'no switch without a read setting');
 });
 

@@ -213,7 +213,7 @@ test('resume folds in agent_inbox for this session; a failed summary is reported
       const result = (await (await worker.fetch(mcp(bindingToken, 'clued_session_resume', {}), enabled, ctx)).json()).result.structuredContent;
       assert.equal(result.agent_inbox.owner_answer_count, 1);
       assert.deepEqual(result.agent_inbox.owner_answers, [answer]);
-      assert.match(result.agent_inbox.owner_answer_how_to, /Owner's decisions as KooYomi recorded them/);
+      assert.match(result.agent_inbox.owner_answer_how_to, /Owner's decisions as BeamingFace recorded them/);
       assert.match(result.agent_inbox.owner_answer_how_to, /do not ask the Owner to confirm them again/);
       assert.equal('how_to' in result.agent_inbox, false, 'no message instructions without messages');
     } finally { restore(); }

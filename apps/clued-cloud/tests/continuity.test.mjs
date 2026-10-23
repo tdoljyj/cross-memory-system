@@ -63,7 +63,7 @@ test("implements MCP initialization and continuity tool discovery", async () => 
   );
   assert.equal(initialize.status, 200);
   const initialized = await initialize.json();
-  assert.equal(initialized.result.serverInfo.name, "KooYomi Continuity");
+  assert.equal(initialized.result.serverInfo.name, "BeamingFace Continuity");
   assert.equal(initialized.result.protocolVersion, "2026-07-28");
   assert.equal(initialized.result.serverInfo.version, EXPECTED_MCP_VERSION);
   assert.match(initialized.result.instructions, /https:\/\/clued\.test\/clued-agent\.md/);
@@ -127,7 +127,7 @@ test("publishes vendor-neutral agent instructions", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/markdown/);
   const markdown = await response.text();
   assert.match(markdown, /clued_session_resume/);
-  assert.match(markdown, /dedicated Clued Binding/);
+  assert.match(markdown, /dedicated BeamingFace Binding/);
 });
 
 test("serves MCP bootstrap without a binding token", async () => {

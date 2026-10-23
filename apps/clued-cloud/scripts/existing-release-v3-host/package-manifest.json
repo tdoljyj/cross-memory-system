@@ -1,0 +1,41 @@
+{
+  "contract": "clued.existing-release-v3-host-package/1",
+  "status": "DISABLED_SOURCE_CANDIDATE_NOT_INSTALLED_OR_AUTHORIZED",
+  "predecessorV3ManifestSha256": "5e156319973aa801304a7eb4da524951f8ab76e043eba352fffc1b98bdcdc8f6",
+  "files": {
+    "install-once.mjs": {
+      "bytes": 7046,
+      "sha256": "1a5e18e1258d89fb0c8b631b1688615c09936391e7904c2cb40d642e36fd5e7d"
+    },
+    "payload/release/existing-release-entry-v1/fixed-currentness-ports.mjs": {
+      "bytes": 5610,
+      "sha256": "93f95698f359c94585053d4331ae855bc07004245b4429ecaf6470aa40c25f3f"
+    },
+    "payload/release/existing-release-entry-v1/v3/existing-stages.mjs": {
+      "bytes": 20403,
+      "sha256": "ec611508e7a219cd9dbd791058d5fbf1b2e6d4ad6295c43aaefab75d65ace935"
+    },
+    "payload/release/existing-release-entry-v1/v3-host/host-files.mjs": {
+      "bytes": 10396,
+      "sha256": "cbf96b66f2e0d816f3c19219a812b438088351ab8c27f696989ddce1831b53cd"
+    },
+    "payload/release/existing-release-entry-v1/v3-host/release-once.mjs": {
+      "bytes": 8515,
+      "sha256": "70e5f69311b65c31b050a58475fe8c7517eb86d25bb9aa2a2161ba70148a7b6d"
+    },
+    "payload/release/linux-process-manager.mjs": {
+      "bytes": 28000,
+      "sha256": "b961dfc06794336f38f47d4f8f5d7c6a2724aee6ba5bac4ff69090ef30842f70"
+    },
+    "payload/release/verify-currentness-external.mjs": {
+      "bytes": 17696,
+      "sha256": "4bb88785021b73783bfe2b37972be11806f2c3b564ced8785dfbda25405106cd"
+    }
+  },
+  "sourceQualifiedByThisManifest": false,
+  "hostQualifiedByThisManifest": false,
+  "productionAuthorized": false,
+  "revision": 6,
+  "previousPackageManifestSha256": "590f00f3776391e81ed01f29f64de03ca65fd77aa0d1ccd8003abff8cc75a512",
+  "onlyExecutableDelta": "release-once deploys the PDF Worker through a derived copy of the pinned wrangler.pdf-extractor.jsonc without build (wrangler 4 has no --no-build); v5 manager fix kept"
+}

@@ -41,7 +41,7 @@ test("current source travels exactly once, while full public metadata stays in c
     assert.equal(response.structuredContent.agent_contract.version, contract.version);
     assert.equal(response.structuredContent.agent_contract.markdown_in, "content[1]");
     for (const field of ["endpoints", "authentication", "capabilities"]) assert.equal(field in response.structuredContent, false);
-    assert.equal(JSON.stringify(response.structuredContent).includes("# Clued Agent Contract"), false);
+    assert.equal(JSON.stringify(response.structuredContent).includes("# BeamingFace Agent Contract"), false);
     if (responses.length > 1) assert.match(response.content[2].text, index === responses.length - 1 ? /last part/ : /part=/);
   }
 });

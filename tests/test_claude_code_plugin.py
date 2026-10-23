@@ -96,7 +96,7 @@ class PluginStopHookTest(unittest.TestCase):
     def test_blocks_an_unchecked_write_in_another_project(self) -> None:
         run = self.run_stop(Path(self.tmp.name))
         self.assertEqual(run.returncode, 2, run.stderr)
-        self.assertIn("KooYomi capture guard", run.stderr)
+        self.assertIn("BeamingFace capture guard", run.stderr)
 
     def test_stays_quiet_where_the_project_runs_its_own_guard(self) -> None:
         # This repository's .claude/settings.json already runs the guard; the plugin must not run it twice.

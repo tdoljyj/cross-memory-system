@@ -15,7 +15,7 @@ import { validateJobV2, claimGeneration, sameClaimGeneration } from './job-v2.mj
 import { isCurrentMergeQueueHeadV2 } from './independent-control-checks-v2/queue-facts.mjs';
 import { evaluate, githubJson, parseClaimReference } from '../../../../scripts/ci/clued-work-admission.mjs';
 
-import { FULL_ADMISSION_CONTRACT_V2 } from './admission-facts-v2.mjs';
+import { FULL_ADMISSION_CONTRACT_V2, ownerKind, reasonCodes, sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2, schedulingFactsV2, verdict } from './admission-facts-v2.mjs';
 const REPO = 'tdoljyj/cross-memory-system';
 const ENGINE = 'scripts/ci/clued-work-admission.mjs#evaluate';
 const VARIABLE = 'CLUED_MERGE_ADMISSION_STATE';
@@ -28,38 +28,17 @@ const fresh = (value, now) => Number.isFinite(at(value)) && at(value) <= now && 
 const FAILURE_REASONS = new Set(['not_configured', 'subject_invalid', 'source_changed', 'clock_invalid', 'mode_unknown',
   'principal_unknown', 'observer_unknown', 'subject_changed', 'claim_changed', 'claim_missing', 'observation_expired', 'rejected',
   'native_unsupported', 'native_changed', 'incomplete', 'unavailable'].map(value => `full_admission_${value}`));
-const REASON_CODES = new Set(['claim_trailer_missing', 'claim_not_found', 'claim_not_current', 'fence_superseded',
-  'copy_not_adopted', 'claim_bound_to_other_pr', 'claim_head_cap_reached', 'task_ci_head_cap_reached', 'work_claim_conflict',
-  'path_outside_write_set', 'paths_outside_write_set', 'head_budget_exhausted', 'ci_budget_exhausted', 'merge_slot_required',
-  'merge_slot_missing', 'owner_grant_required', 'owner_grant_missing', 'owner_grant_revoked', 'owner_grant_expired',
-  'admission_binding_required', 'authorization_revoked_or_expired', 'binding_not_authorized', 'resource_action_not_authorized',
-  'evaluation_not_completed', 'workflow_change_not_authorized', 'workflow_missing_admission_gate', 'work_claim_execution_epoch_stale']);
-const REASON_PREFIXES = Object.freeze({ 'changed_files_truncated:': 'changed_files_truncated', 'claim_base_unknown:': 'claim_base_unknown',
-  'workflow_gate:': 'workflow_gate', 'policy_file_removed:': 'policy_file_removed', 'policy_file_invalid:': 'policy_file_invalid',
-  'protected_change_not_up_to_date:': 'protected_change_not_up_to_date', 'owner_review_required (': 'owner_review_required',
-  'owner_review_unavailable:': 'owner_review_unavailable', 'workflow runs unavailable:': 'workflow_runs_unavailable' });
-const DIAGNOSTIC_CODES = new Set([...REASON_CODES, ...Object.values(REASON_PREFIXES), 'unknown_reason']);
-const verdict = value => ['ADMITTED', 'REJECTED', 'ERROR', 'PR_NOT_OPEN', 'NOT_APPLICABLE'].includes(value) ? value : 'UNKNOWN';
-const ownerKind = value => ['granted', 'pending', 'transient', 'rpc_unavailable', 'refused'].includes(value) ? value : 'UNKNOWN';
-const reasonCodes = values => [...new Set((Array.isArray(values) ? values.slice(0, 64) : []).map(value => {
-  if (REASON_CODES.has(value)) return value;
-  return typeof value === 'string' ? Object.entries(REASON_PREFIXES).find(([prefix]) => value.startsWith(prefix))?.[1] ?? 'unknown_reason' : 'unknown_reason';
-}))].sort();
 const rejectionDiagnostic = (outcome, native, extra = {}) => ({ verdict: verdict(outcome?.verdict), reasonCodes: reasonCodes(outcome?.reasons),
   nativeVerdict: verdict(native?.verdict), nativeReasonCodes: reasonCodes(native?.reasons), ownerReviewKind: ownerKind(outcome?.owner_review?.kind),
-  workflowGateFindingsPresent: Array.isArray(outcome?.workflow_gate_findings) && outcome.workflow_gate_findings.length > 0, ...extra });
+  workflowGateFindingsPresent: Array.isArray(outcome?.workflow_gate_findings) && outcome.workflow_gate_findings.length > 0,
+  ...schedulingFactsV2(outcome, native, REPO), ...extra });
 
-// Diagnostics contain only fixed enums and booleans; no remote text, claim, path or credential.
+// Diagnostics contain only fixed enums, booleans, an ISO time and small integers; no remote text, claim, path or
+// credential (admission-facts-v2.mjs#sanitizeAdmissionDiagnosticV2).
 export function fullAdmissionFailureV2(facts) {
   if (facts?.contract !== FULL_ADMISSION_CONTRACT_V2 || facts.status !== 'BLOCKED' || facts.admitted !== false || !FAILURE_REASONS.has(facts.reason)) return null;
-  const d = facts.diagnostic, diagnostic = {};
-  if (plain(d)) {
-    diagnostic.verdict = verdict(d.verdict); diagnostic.nativeVerdict = verdict(d.nativeVerdict); diagnostic.ownerReviewKind = ownerKind(d.ownerReviewKind);
-    for (const field of ['reasonCodes', 'nativeReasonCodes']) diagnostic[field] = [...new Set((Array.isArray(d[field]) ? d[field].slice(0, 64) : []).map(value => DIAGNOSTIC_CODES.has(value) ? value : 'unknown_reason'))].sort();
-    for (const field of ['workflowGateFindingsPresent', 'modeFresh', 'recorderFresh']) if (typeof d[field] === 'boolean') diagnostic[field] = d[field];
-    if (['mode', 'principal', 'observer', 'pull_request', 'claim_reference', 'evaluate', 'post_evaluate', 'post_pull_request', 'native'].includes(d.phase)) diagnostic.phase = d.phase;
-  }
-  return { reason: facts.reason, ...(Object.keys(diagnostic).length ? { admissionDiagnostic: diagnostic } : {}) };
+  const diagnostic = sanitizeAdmissionDiagnosticV2(facts.diagnostic);
+  return { reason: facts.reason, ...(diagnostic ? { admissionDiagnostic: diagnostic } : {}) };
 }
 const blocked = (reason, diagnostic) => Object.freeze({ contract: FULL_ADMISSION_CONTRACT_V2, status: 'BLOCKED', admitted: false, reason, ...(diagnostic ? { diagnostic } : {}) });
 
@@ -78,7 +57,9 @@ const batchClaimValid = c => c === null || c === undefined || (plain(c) && uuid.
   && Number.isSafeInteger(c.epoch) && c.epoch > 0);
 
 // All providers are installed protected controller ports, never PR data. options.batchClaim is the
-// batch's sticky claim generation (null only for the batch's first admission, stage 1).
+// batch's sticky claim generation (null only for the batch's first admission, stage 1). options.scheduling
+// (optional) receives the scheduling facts (schedulingFactsV2) of every evaluation that reached Native,
+// admitted or not; it is told, never asked, and nothing it does can change the admission.
 export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, modeProvider, recorderProvider,
   fetchImpl = globalThis.fetch, clock = Date.now, fixtureHooks = null } = {}) {
   const config = plain(protectedConfig) ? structuredClone(protectedConfig) : null;
@@ -108,7 +89,9 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
       try {
         validateJobV2(job);
         const batchClaim = options?.batchClaim ?? null;
-        if (!plain(options) || Object.keys(options).some(k => k !== 'batchClaim') || !batchClaimValid(batchClaim)) return blocked('full_admission_subject_invalid');
+        if (!plain(options) || Object.keys(options).some(k => !['batchClaim', 'scheduling'].includes(k)) || !batchClaimValid(batchClaim)
+          || !(options.scheduling === undefined || typeof options.scheduling === 'function')) return blocked('full_admission_subject_invalid');
+        const tell = (outcome, native) => { try { options.scheduling?.(Object.freeze(sanitizeSchedulingV2(schedulingFactsV2(outcome, native, REPO)))); } catch { /* told, never asked */ } };
         if (job.repo !== config.repository || job.sourceManifestSha256 !== config.sourceManifestSha256 || !packetValid(job, packet)) return blocked('full_admission_subject_invalid');
         if (digest(evaluatorBytes()) !== config.evaluatorSha256) return blocked('full_admission_source_changed');
         const started = clock();
@@ -150,7 +133,7 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
         phase = 'evaluate'; const outcome = await evaluateImpl({ env, event: { pull_request: pr }, eventName: 'pull_request', fetchImpl,
           workspace: config.workspace, withSummary: false, readPolicyFile: () => config.policyText,
           observation_recorder: recorder, observation_entry: 'independent_pr' });
-        phase = 'post_evaluate'; const finished = clock(), prRef = `${REPO}#${job.pr}`;
+        phase = 'post_evaluate'; tell(outcome, native); const finished = clock(), prRef = `${REPO}#${job.pr}`;
         if (!Number.isSafeInteger(finished) || finished < started || !fresh(mode.observedAt, finished)
           || !fresh(observation.observedAt, finished)) return blocked('full_admission_observation_expired', rejectionDiagnostic(outcome, native, { modeFresh: fresh(mode.observedAt, finished), recorderFresh: fresh(observation.observedAt, finished) }));
         if (outcome.admitted !== true || outcome.verdict !== 'ADMITTED') return blocked('full_admission_rejected', rejectionDiagnostic(outcome, native));
@@ -194,4 +177,4 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
   });
 }
 
-export { FULL_ADMISSION_CONTRACT_V2, ADMISSION_FIELDS_V2, admittedFactsMatchJobV2 } from './admission-facts-v2.mjs';
+export { FULL_ADMISSION_CONTRACT_V2, ADMISSION_FIELDS_V2, admittedFactsMatchJobV2, sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2, schedulingFactsV2 } from './admission-facts-v2.mjs';

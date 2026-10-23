@@ -282,14 +282,14 @@ export default function OAuthProjectsPage() {
   }
 
   return <main className="oauth-shell"><section className="oauth-card" aria-busy={busy}>
-    <Link className="oauth-brand" href="/"><span className="brand-mark" aria-hidden="true">◆</span><span>KooYomi</span></Link>
+    <Link className="oauth-brand" href="/"><span className="brand-mark" aria-hidden="true" /><span>BeamingFace</span></Link>
     <h1>开发项目资格</h1><p className="oauth-copy">接受指定项目邀请，或管理你拥有的项目成员。加入项目后，仍由你选择授予每个客户端的权限。</p>
     {busy && <p role="status">正在核验账户与项目…</p>}
     {error && <div className="oauth-error" role="alert"><strong>尚未完成</strong><p>{error}</p>
       </div>}
     {hasPending && !working && <div className="oauth-note" role="status"><p>有一项待确认操作。先核对原结果，再开始新的操作。</p><button type="button" disabled={busy} onClick={() => void perform()}>核对原操作</button></div>}
     {notice && <p className="oauth-note" role="status">{notice}</p>}
-    {!session && !loading && <><h2>{register ? "注册 KooYomi 账户" : "登录 KooYomi 账户"}</h2>
+    {!session && !loading && <><h2>{register ? "注册 BeamingFace 账户" : "登录 BeamingFace 账户"}</h2>
       <form className="oauth-form" onSubmit={authenticate}>
         <label>邮箱<input type="email" required autoComplete="email" value={email} disabled={authBusy} onChange={event => setEmail(event.target.value)} /></label>
         <label>密码<input type="password" required minLength={8} autoComplete={register ? "new-password" : "current-password"} value={password} disabled={authBusy} onChange={event => setPassword(event.target.value)} /></label>

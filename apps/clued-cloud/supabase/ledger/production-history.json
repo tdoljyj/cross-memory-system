@@ -1,9 +1,9 @@
 {
   "contract": "clued.production-migration-ledger.v1",
   "database_project": "clued-prod",
-  "exported_at": "2026-10-19T14:46:30.527Z",
-  "history_through": "20261019144310",
-  "row_count": 283,
+  "exported_at": "2026-10-23T04:42:01.096Z",
+  "history_through": "20261023035740",
+  "row_count": 287,
   "rows": [
     {
       "version": "20260823154017",
@@ -2267,6 +2267,38 @@
       "statements_md5": "86813e5298ead4a94f376abcb031561e",
       "statements_length": 4859,
       "source": "history-only/20261019144310_clued_release_turing_login_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261022030829",
+      "name": "storage_directory_current_registration_v2",
+      "statements_md5": "1885fe858488961fc13875745b31db7b",
+      "statements_length": 2014,
+      "source": "migrations/20261017160500_storage_directory_current_registration_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261022030903",
+      "name": "agent_inbox_recipient_prefilter_v1",
+      "statements_md5": "986fd2c39b78f91c9f412d9307a0ca4c",
+      "statements_length": 2928,
+      "source": "migrations/20261017201529_agent_inbox_recipient_prefilter_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261022030930",
+      "name": "work_verify_shared_observation_v1",
+      "statements_md5": "ac3278c90bf2ca696744eeeb9898f43b",
+      "statements_length": 4697,
+      "source": "migrations/20261017215600_work_verify_shared_observation_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261023035740",
+      "name": "ci_admission_handover_v1",
+      "statements_md5": "fad0fe600e458d17b432ed01b1d617cf",
+      "statements_length": 43626,
+      "source": "migrations/20261023010000_ci_admission_handover_v1.sql",
       "transform": "identical"
     }
   ],

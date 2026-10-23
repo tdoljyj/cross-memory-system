@@ -155,7 +155,7 @@ test("failed attempts list their orphans; retry resumes without a new consent", 
   assert.match(closed.text(), /已在 Drive 中创建但未启用/);
   assert.equal(closed.find(n => n.type === "button" && /^重试/.test(String(n.props.children))), undefined);
   const f = fixture(); await f.settle(); f.respond(0, config({ attempts: [attempt] })); await f.settle();
-  assert.match(f.text(), /已在 Drive 中创建但未启用：根目录、子目录 资料/); assert.match(f.text(), /KooYomi 不会删除它们/);
+  assert.match(f.text(), /已在 Drive 中创建但未启用：根目录、子目录 资料/); assert.match(f.text(), /BeamingFace 不会删除它们/);
   f.button("重试").props.onClick(); await f.settle();
   assert.equal(f.calls[1].url, "/v1/storage/onboard/resume");
   assert.deepEqual(JSON.parse(f.calls[1].init.body), { onboard_attempt_id: attempt.onboard_attempt_id });

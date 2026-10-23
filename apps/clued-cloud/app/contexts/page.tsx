@@ -162,10 +162,10 @@ export default function ContextsPage() {
   const visibleListing = session && listingOwner === JSON.stringify([session.user.id, session.access_token]) ? listing : null;
   const selectedContext = visibleListing?.contexts.find(context => context.id === selectedContextId);
   return <main className="context-page">
-    <header><Link href="/">KooYomi / 账号</Link><Link href="/oauth/connections">客户端连接</Link></header>
+    <header><Link href="/">BeamingFace / 账号</Link><Link href="/oauth/connections">客户端连接</Link></header>
     <h1>上下文</h1>
     <p className="context-muted">为已有项目建立独立的记录空间，再通过已授权的 AI 客户端读取、保存或反馈上下文记录。</p>
-    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 KooYomi</Link> 后查看和创建自己的上下文。</p> : <>
+    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 BeamingFace</Link> 后查看和创建自己的上下文。</p> : <>
       <p>已登录 {session.user.email || session.user.id} <button type="button" onClick={() => void signOut()}>退出</button></p>
       <button type="button" disabled={busy} onClick={() => currentSession.current && void read(currentSession.current, epoch.current)}>刷新上下文</button>
       {loading && <p role="status">正在读取上下文…</p>}
@@ -181,7 +181,7 @@ export default function ContextsPage() {
           session={session} locale="zh-CN" developmentContextId={selectedContext.id} developmentContextName={selectedContext.name}
           projects={visibleListing.projects.filter(project => project.id === selectedContext.project_id)} />}
         <section aria-label="创建上下文"><h2>创建上下文</h2>
-          {!visibleListing.projects.length ? <p>当前账户尚无自己拥有的项目，请先在 KooYomi 中创建项目。</p> : <form onSubmit={create}>
+          {!visibleListing.projects.length ? <p>当前账户尚无自己拥有的项目，请先在 BeamingFace 中创建项目。</p> : <form onSubmit={create}>
             <label>所属项目<select required disabled={busy || hasPending} value={projectId} onChange={event => setProjectId(event.target.value)}><option value="">选择已有项目</option>{visibleListing.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
             <label>上下文名称<input required maxLength={120} disabled={busy || hasPending} value={name} onChange={event => setName(event.target.value)} /></label>
             <label>环境<select disabled={busy || hasPending} value={environment} onChange={event => setEnvironment(event.target.value)}>{Object.entries(environments).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>

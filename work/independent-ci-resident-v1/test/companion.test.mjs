@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { Mailbox, REQUEST_CONTRACT, validateRequest } from '../src/mailbox.mjs';
-import { COMPANION_CONFIG_CONTRACT, Companion, argv, validateCompanionConfig } from '../src/companion.mjs';
+import { COMPANION_CONFIG_CONTRACT, Companion, argv, parsePull, readPullArgv, validateCompanionConfig } from '../src/companion.mjs';
 import { Poller } from '../src/poller.mjs';
 import { tempRoot } from './helpers.mjs';
 
@@ -131,11 +131,13 @@ test('a refused relay or a missing issue is reported, with the observed quiescen
 test('poller proposes ready heads once, skips drafts and PRs without a claim trailer', async t => {
   const written = [];
   const pulls = [
-    { number: 884, headRefOid: 'a'.repeat(40), isDraft: false, body: 'x\nClued-Work-Claim: 842cf499-1519-4ba9-b3be-b9ac3f6e8ee4\n', updatedAt: 't1' },
+    { number: 884, headRefOid: 'a'.repeat(40), baseRefOid: 'd'.repeat(40), isDraft: false, body: 'x\nClued-Work-Claim: 842cf499-1519-4ba9-b3be-b9ac3f6e8ee4\n', updatedAt: 't1' },
     { number: 885, headRefOid: 'b'.repeat(40), isDraft: true, body: 'Clued-Work-Claim: 842cf499-1519-4ba9-b3be-b9ac3f6e8ee4', updatedAt: 't1' },
     { number: 886, headRefOid: 'c'.repeat(40), isDraft: false, body: 'no trailer', updatedAt: 't1' },
   ];
-  const run = async args => args.includes('api') ? { code: 0, stdout: `${'d'.repeat(40)}\n` } : { code: 0, stdout: JSON.stringify(pulls) };
+  // the main tip, the main...head compares (up to date: behind_by 0), the PR list
+  const run = async args => args.some(a => a.includes('/compare/')) ? { code: 0, stdout: JSON.stringify({ behind_by: 0, base: 'd'.repeat(40) }) }
+    : args.includes('api') ? { code: 0, stdout: `${'d'.repeat(40)}\n` } : { code: 0, stdout: JSON.stringify(pulls) };
   const p = new Poller({ repo: 'tdoljyj/cross-memory-system', ghExe: 'C:\\gh.exe', run, writeTrigger: async v => written.push(v), clock: () => 0 });
   assert.equal(await p.pass(), 1);
   assert.equal(await p.pass(), 0);
@@ -143,4 +145,41 @@ test('poller proposes ready heads once, skips drafts and PRs without a claim tra
   assert.equal(await p.pass(), 1);
   assert.deepEqual(Object.keys(written[0]).sort(), ['baseSha', 'contract', 'headSha', 'pr', 'repo']);
   assert.equal(written[0].baseSha, 'd'.repeat(40));
+});
+
+test('pr-head (phase 2): an exact request and answer shape; the companion reads the PR with a fixed gh argv, never anything else', async t => {
+  const root = await tempRoot(t);
+  const box = await Mailbox.open(root, () => Date.parse('2026-10-22T12:00:00Z'));
+  const req = await box.send('pr-head', { batchId: BATCH, pr: 884 }, 60_000);
+  assert.throws(() => validateRequest({ ...req, pr: 'x' }), { code: 'MAILBOX_PR_REFUSED' });
+  await assert.rejects(box.respond(req, { ok: true, pull: { number: 885, state: 'open', headSha: 'a'.repeat(40) } }), { code: 'MAILBOX_RESPONSE_PULL_REFUSED' });
+  const other = await box.send('linux-quiescence', { batchId: BATCH }, 60_000);
+  await assert.rejects(box.respond(other, { ok: true, pull: { number: 884, state: 'open', headSha: 'a'.repeat(40) } }), { code: 'MAILBOX_RESPONSE_PULL_REFUSED' });
+  const asked = [];
+  const run = async (args) => { asked.push(args); return { code: 0, stdout: JSON.stringify({ number: 884, state: 'closed', merged: true, head: 'a'.repeat(40) }) }; };
+  const c = new Companion({ cfg, mailbox: box, run, fileExists: async () => false, sleep: async () => {}, clock: () => Date.parse('2026-10-22T12:00:00Z'), readPull: pr => readPullArgv('C:\\gh.exe', 'tdoljyj/cross-memory-system', pr) });
+  await c.step();
+  assert.deepEqual((await box.poll(req)).pull, { number: 884, state: 'merged', headSha: 'a'.repeat(40) });
+  assert.deepEqual(asked.find(a => a.includes('api')), ['C:\\gh.exe', 'api', '--method', 'GET', 'repos/tdoljyj/cross-memory-system/pulls/884', '--jq', '{number: .number, state: .state, merged: .merged, head: .head.sha}']);
+  assert.equal(parsePull('{"number":884,"state":"open","merged":false,"head":"not-a-sha"}', 884), null);
+  assert.equal(parsePull('{"number":1,"state":"open","merged":false,"head":"' + 'a'.repeat(40) + '"}', 884), null, 'another PR is no answer');
+  assert.throws(() => readPullArgv('gh', 'tdoljyj/cross-memory-system', 1), { code: 'COMPANION_PR_HEAD_ARGS_INVALID' });
+  // without a read port the companion answers that it cannot, never a guess
+  const none = new Companion({ cfg, mailbox: box, run, fileExists: async () => false, sleep: async () => {}, clock: () => Date.parse('2026-10-22T12:00:00Z') });
+  const req2 = await box.send('pr-head', { batchId: BATCH, pr: 7 }, 60_000);
+  await none.step();
+  assert.deepEqual([(await box.poll(req2)).ok, (await box.poll(req2)).code], [false, 'PR_HEAD_UNAVAILABLE']);
+});
+
+test('poller (phase 2): trigger /2 with the PR\'s update time; a run queue that started over gets every head proposed again', async t => {
+  const written = [];
+  const pulls = [{ number: 884, headRefOid: 'a'.repeat(40), baseRefOid: 'd'.repeat(40), isDraft: false, body: 'Clued-Work-Claim: 842cf499-1519-4ba9-b3be-b9ac3f6e8ee4', updatedAt: '2026-10-22T11:59:00Z' }];
+  const run = async args => args.some(a => a.includes('/compare/')) ? { code: 0, stdout: JSON.stringify({ behind_by: 0, base: 'd'.repeat(40) }) }
+    : args.includes('api') ? { code: 0, stdout: `${'d'.repeat(40)}\n` } : { code: 0, stdout: JSON.stringify(pulls) };
+  const p = new Poller({ repo: 'tdoljyj/cross-memory-system', ghExe: 'C:\\gh.exe', run, writeTrigger: async v => written.push(v), clock: () => 0 });
+  assert.equal(await p.pass({ generation: 'aaaaaaaaaaaa' }), 1);
+  assert.deepEqual([written[0].contract, written[0].prUpdatedAt], ['clued.independent-ci.resident-trigger/2', '2026-10-22T11:59:00.000Z']);
+  assert.equal(await p.pass({ generation: 'aaaaaaaaaaaa' }), 0);
+  assert.equal(await p.pass({ generation: null }), 0, 'an unreadable status changes nothing');
+  assert.equal(await p.pass({ generation: 'bbbbbbbbbbbb' }), 1, 'the queue started over');
 });

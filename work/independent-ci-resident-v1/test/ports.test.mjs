@@ -18,7 +18,8 @@ const goodFact = {
 };
 
 test('stage terminal facts map to ok, a stable code and the Windows half of the cleanup proof', () => {
-  assert.deepEqual(parseStageFact(JSON.stringify(goodFact), M), { ok: true, code: null, proof: { windowsTreeZero: true, serviceOriginalStopped: true }, nativeReceiptSha256: 'a'.repeat(64), relay: null });
+  assert.deepEqual(parseStageFact(JSON.stringify(goodFact), M), { ok: true, code: null, proof: { windowsTreeZero: true, serviceOriginalStopped: true }, nativeReceiptSha256: 'a'.repeat(64), relay: null,
+    outcome: null, brokerNoLaunch: false });
   assert.deepEqual(parseStageFact(JSON.stringify({ ...goodFact, relay: [{ role: 'trivy' }] }), M).relay, [{ role: 'trivy' }], 'stage R rows are passed through for the executor to validate');
   const refused = parseStageFact(JSON.stringify({ ...goodFact, state: 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED' }), M);
   assert.equal(refused.ok, false);
@@ -100,4 +101,14 @@ test('service children get the service temp directory on top of the fixed enviro
   assert.deepEqual(Object.keys(env).sort(), [...Object.keys(FIXED_ENV), 'TEMP', 'TMP'].sort());
   assert.equal(FIXED_ENV.TEMP, undefined);
   for (const bad of ['', String.raw`relative\tmp`, String.raw`C:\a;b`, String.raw`C:\a"b`, null]) assert.throws(() => serviceEnv(bad), /SERVICE_TEMP_DIR_REFUSED/);
+});
+
+test('the service entry passes every port the executor needs (independent review of phase 2 step 1, B1)', async () => {
+  const { EXECUTOR_PORTS } = await import('../src/executor.mjs');
+  const fs = await import('node:fs/promises');
+  const text = await fs.readFile(new URL('../src/service-main.mjs', import.meta.url), 'utf8');
+  const block = /new ResidentExecutor\(\{([\s\S]*?)\n\s*\}\);/.exec(text)?.[1] ?? '';
+  const named = new Set([...block.matchAll(/\b([a-zA-Z]+)\b(?=\s*[,:}\n])/g)].map(m => m[1]));
+  for (const port of EXECUTOR_PORTS) assert.ok(named.has(port), `service-main.mjs does not pass ${port}`);
+  assert.match(text, /RunQueue\.open\(path\.join\(state, 'queue'\)/, 'the run queue lives in state\queue');
 });

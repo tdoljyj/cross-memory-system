@@ -107,7 +107,7 @@ test("revoked connections have no reads while a stopped active connection report
 test("each live connection receives only its own range and class truth",async()=>{
  const f=fixture({master:id=>({...master,connection_id:id,normal_use:id!=="11111111-1111-4111-8111-111111111112"})});await f.settle();f.respond(0,listing([connection,{...connection,id:"11111111-1111-4111-8111-111111111112",root_name:"Another root"}]));await f.settle();
  assert.equal(f.requests.length,9);replySettings(f,5,{...normal,normal_use:false});replySettings(f);await f.settle();
- assert.match(f.text(),/已允许读取目录内全部文件并按内容搜索/);assert.match(f.text(),/仅允许读取 KooYomi 创建的文本文件/);
+ assert.match(f.text(),/已允许读取目录内全部文件并按内容搜索/);assert.match(f.text(),/仅允许读取 BeamingFace 创建的文本文件/);
  assert.deepEqual(f.requests.slice(1).map(x=>JSON.parse(x.init.body).connection_id),[connection.id,connection.id,connection.id,connection.id,...Array(4).fill("11111111-1111-4111-8111-111111111112")]);
 });
 test("all-file range cannot advertise content search when directory or body reading is stopped",async()=>{

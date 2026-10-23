@@ -23,7 +23,7 @@ type HandoverSetting = { enabled: boolean; version: number; available: boolean }
 type PendingHandover = { delivery_id: string; receipt_id: string };
 const object = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
 const MESSAGES: Record<string, string> = {
-  direct_human_session_required: "需要你本人直接登录 KooYomi，授权给应用的登录不能查看或交接认领。",
+  direct_human_session_required: "需要你本人直接登录 BeamingFace，授权给应用的登录不能查看或交接认领。",
   confirmation_token_session_id_required: "当前登录缺少会话信息，请退出后重新登录。",
   work_claim_not_found: "找不到这条认领。",
   work_claim_not_active: "这条认领已经结束或过期，不能交接。",
@@ -92,7 +92,7 @@ const sessionUrl = (value: unknown) => /^https:\/\/claude\.ai\/code\/session_[A-
 
 function handoverText(claim: Json, key: string, receiptId: string) {
   return [
-    "请接手这份 KooYomi 工作认领（Owner 在 KooYomi 网页上交给你的；钥匙只给你，不要外传）。",
+    "请接手这份 BeamingFace 工作认领（Owner 在 BeamingFace 网页上交给你的；钥匙只给你，不要外传）。",
     "任务：" + text(claim.task_title) + "（" + text(claim.task_id) + "）",
     "scope: " + text(claim.context_key),
     "claim_id: " + text(claim.claim_id),
@@ -266,10 +266,10 @@ export default function WorkClaimsPage() {
 
   const now = Date.now();
   return <main className="context-page owner-confirm">
-    <header><Link href="/">KooYomi</Link> <Link href="/grants">我的授权</Link> <Link href="/work-claims/race">多份模式</Link></header>
+    <header><Link href="/">BeamingFace</Link> <Link href="/grants">我的授权</Link> <Link href="/work-claims/race">多份模式</Link></header>
     <h1>谁在做哪个任务</h1>
-    <p className="context-muted">这里列出你名下所有正在进行的认领。开启自由交接后，已获授权的 Agent 可以直接通过 KooYomi 交接，无需你复制钥匙。旧会话无法响应时，也可以使用“交给新会话”恢复。“标签”是 Agent 自己报的，KooYomi 无法核实。</p>
-    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 KooYomi</Link> 后查看认领。</p> : <>
+    <p className="context-muted">这里列出你名下所有正在进行的认领。开启自由交接后，已获授权的 Agent 可以直接通过 BeamingFace 交接，无需你复制钥匙。旧会话无法响应时，也可以使用“交给新会话”恢复。“标签”是 Agent 自己报的，BeamingFace 无法核实。</p>
+    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 BeamingFace</Link> 后查看认领。</p> : <>
       <p className="context-muted">已登录 {session.user.email || session.user.id}</p>
       <section aria-label="自由交接设置">
         <style>{`.context-page .handover-free-toggle{display:inline-flex;align-items:center;gap:12px;position:relative;font-weight:600}.handover-free-toggle input{position:absolute;left:0;top:0;width:44px;height:26px;opacity:0;margin:0;z-index:1;cursor:pointer}.handover-free-track{display:inline-block;width:44px;height:26px;border-radius:14px;background:#c8c8ce;padding:3px;box-sizing:border-box}.handover-free-track::after{content:"";display:block;width:20px;height:20px;background:#fff;border-radius:50%;box-shadow:0 1px 3px #0002;transition:transform .12s}.handover-free-toggle input:checked+.handover-free-track{background:#f47a36}.handover-free-toggle input:checked+.handover-free-track::after{transform:translateX(18px)}.handover-free-toggle input:focus-visible+.handover-free-track{outline:2px solid #bf520b;outline-offset:3px}.handover-free-toggle input:disabled{cursor:default}.handover-free-toggle input:disabled+.handover-free-track{opacity:.55}@media(prefers-reduced-motion:reduce){.handover-free-track::after{transition:none}}`}</style>
@@ -277,7 +277,7 @@ export default function WorkClaimsPage() {
           checked={handoverSetting.enabled} disabled={working}
           onChange={event => void changeHandoverSetting(event.target.checked)} /><span className="handover-free-track" aria-hidden="true" /><span>自由交接</span></label>
           : <p role="status">自由交接：设置读取中，当前无法修改。</p>}
-        <p className="context-muted">默认开启。允许已获授权的 Agent 通过 KooYomi 直接交接认领，无需你复制钥匙。关闭后，新的自动交接会被服务拒绝。</p>
+        <p className="context-muted">默认开启。允许已获授权的 Agent 通过 BeamingFace 直接交接认领，无需你复制钥匙。关闭后，新的自动交接会被服务拒绝。</p>
         {handoverSetting && !handoverSetting.available && <p role="status">自由交接尚未开放，设置会在开放后生效。</p>}
       </section>
       {pendingHandover && <section aria-label="交接处理中" role="status">

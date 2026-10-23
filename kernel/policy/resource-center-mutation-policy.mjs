@@ -3,6 +3,8 @@ export const RESOURCE_CENTER_POLICY_VERSION = "clued.resource-center-mutation-po
 // "restore" (StorageFullCapability P5) takes a trashed file out of the trash: source only, like delete.
 // "adopt" (P7) registers one existing item where it is: source only, nothing written.
 const MUTATIONS = new Set(["create", "write", "move", "rename", "replace", "delete", "restore", "adopt"]);
+const NAVIGATION_DIRECTORY = "00_从这里开始";
+const NAVIGATION_ENTRY = "Clued_资料中心使用前必读.md";
 const DEFAULT_STATUS_DIRECTORY_NAMES = [
   "current",
   "current baseline",
@@ -139,6 +141,17 @@ export function evaluateResourceCenterMutation(input) {
     if (!isWithin(path, managedRoot)) continue;
     const segments = relativeSegments(path, managedRoot);
     if (segments.length === 0) return deny("MANAGED_ROOT_MUTATION_FORBIDDEN");
+    // The existing live navigation entry is a reserved maintenance target,
+    // never a writable track. P7 adoption and P4 in-place replacement still
+    // require the Host's online authority, registered parent, provider identity,
+    // grants and CAS. No caller field or profile allowlist can widen this slot.
+    if (segments[0] === NAVIGATION_DIRECTORY) {
+      if (targetKind !== "file" || segments.length !== 2 || segments[1] !== NAVIGATION_ENTRY ||
+          (operation !== "adopt" && operation !== "replace")) {
+        return deny("RESOURCE_CENTER_NAVIGATION_ENTRY_PROTECTED");
+      }
+      continue;
+    }
     if (!allowedChildren.has(segments[0])) {
       return deny("RESOURCE_CENTER_ROOT_CHILD_FORBIDDEN", { root_child: segments[0] });
     }

@@ -2,7 +2,7 @@
   "tools": [
     {
       "name": "clued_agent_bootstrap",
-      "description": "Read public Clued connection metadata and the full Clued Agent Contract in content[1]. When agent_contract.parts is above 1, read every part in order before work. This call never returns user context or credentials. Public metadata call; no authenticated Clued scope is required.",
+      "description": "Read public Clued connection metadata and the full BeamingFace Agent Contract in content[1]. When agent_contract.parts is above 1, read every part in order before work. This call never returns user context or credentials. Public metadata call; no authenticated Clued scope is required.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2555,7 +2555,7 @@
     },
     {
       "name": "clued_integration_install",
-      "description": "Install or bind this connection as a KooYomi Integration: opens an Installation Request and consumes it in one call (both steps are idempotent; repeat with the same request_key and idempotency_key). intent create_or_bind creates or binds by the full identity; rebind, reauthorization, reinstall, recovery, adapter_migration, verification_repair and bind_connection target one existing Integration. The provider connection identity is always derived by the server. Connection-self operation: it acts on the Integration this KooYomi connection belongs to and never reads or writes your KooYomi context. Required Clued scope: context:read.",
+      "description": "Install or bind this connection as a BeamingFace Integration: opens an Installation Request and consumes it in one call (both steps are idempotent; repeat with the same request_key and idempotency_key). intent create_or_bind creates or binds by the full identity; rebind, reauthorization, reinstall, recovery, adapter_migration, verification_repair and bind_connection target one existing Integration. The provider connection identity is always derived by the server. Connection-self operation: it acts on the Integration this BeamingFace connection belongs to and never reads or writes your BeamingFace context. Required Clued scope: context:read.",
       "inputSchema": {
         "type": "object",
         "required": [
@@ -2708,7 +2708,7 @@
     },
     {
       "name": "clued_integration_status",
-      "description": "Read the Integration this connection belongs to: identity, claim state, lifecycle, revocation, the Canonical evaluation and effective capabilities. Optional profiles project READY(profile); emit_ready_receipt (with idempotency_key) binds the projection to a Receipt. Without integration_id it reports the Integration whose current connection this is, or NOT_ADOPTED. Connection-self operation: it acts on the Integration this KooYomi connection belongs to and never reads or writes your KooYomi context. Required Clued scope: context:read.",
+      "description": "Read the Integration this connection belongs to: identity, claim state, lifecycle, revocation, the Canonical evaluation and effective capabilities. Optional profiles project READY(profile); emit_ready_receipt (with idempotency_key) binds the projection to a Receipt. Without integration_id it reports the Integration whose current connection this is, or NOT_ADOPTED. Connection-self operation: it acts on the Integration this BeamingFace connection belongs to and never reads or writes your BeamingFace context. Required Clued scope: context:read.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2771,7 +2771,7 @@
     },
     {
       "name": "clued_integration_declare",
-      "description": "Declare this Integration's Host surface, capabilities (within the surface ceiling; a declaration can only narrow) and Host features, and record an adapter or package upgrade. Requires the Integration's base_version. Connection-self operation: it acts on the Integration this KooYomi connection belongs to and never reads or writes your KooYomi context. Required Clued scope: context:read.",
+      "description": "Declare this Integration's Host surface, capabilities (within the surface ceiling; a declaration can only narrow) and Host features, and record an adapter or package upgrade. Requires the Integration's base_version. Connection-self operation: it acts on the Integration this BeamingFace connection belongs to and never reads or writes your BeamingFace context. Required Clued scope: context:read.",
       "inputSchema": {
         "type": "object",
         "required": [
@@ -2855,7 +2855,7 @@
     },
     {
       "name": "clued_integration_report",
-      "description": "Report a narrowing Host or adapter fact (host_state DEGRADED / HARD_UNAVAILABLE, adapter_state DEGRADED / BLOCKED), or clear your own earlier report. An adapter can never widen or override an operator or policy fact. Connection-self operation: it acts on the Integration this KooYomi connection belongs to and never reads or writes your KooYomi context. Required Clued scope: context:read.",
+      "description": "Report a narrowing Host or adapter fact (host_state DEGRADED / HARD_UNAVAILABLE, adapter_state DEGRADED / BLOCKED), or clear your own earlier report. An adapter can never widen or override an operator or policy fact. Connection-self operation: it acts on the Integration this BeamingFace connection belongs to and never reads or writes your BeamingFace context. Required Clued scope: context:read.",
       "inputSchema": {
         "type": "object",
         "required": [
@@ -2943,7 +2943,7 @@
     },
     {
       "name": "clued_integration_identity_update",
-      "description": "Strengthen this Integration's tenant or account identity with verified evidence and re-claim it, or (action request_reconcile) move a CLAIM_CONFLICT Integration to PENDING_RECONCILE for the Owner to resolve in KooYomi. Verified dimensions cannot be withdrawn here. Connection-self operation: it acts on the Integration this KooYomi connection belongs to and never reads or writes your KooYomi context. Required Clued scope: context:read.",
+      "description": "Strengthen this Integration's tenant or account identity with verified evidence and re-claim it, or (action request_reconcile) move a CLAIM_CONFLICT Integration to PENDING_RECONCILE for the Owner to resolve in BeamingFace. Verified dimensions cannot be withdrawn here. Connection-self operation: it acts on the Integration this BeamingFace connection belongs to and never reads or writes your BeamingFace context. Required Clued scope: context:read.",
       "inputSchema": {
         "type": "object",
         "required": [
@@ -3051,7 +3051,7 @@
     },
     {
       "name": "clued_integration_verify",
-      "description": "Record a verification of this Integration: kind canonical_baseline checks the Canonical runtime baseline from server-observed evidence (the Worker supplies the MCP transport facts; a caller-supplied transport is ignored); kind ready_profile checks one READY profile and requires the Integration to be operable. Failures are recorded as FAIL results with a Receipt. A canonical_baseline retry with the same idempotency_key replays only under the same MCP protocol version and KooYomi build; after either changes, verify again with a new idempotency_key. Connection-self operation: it acts on the Integration this KooYomi connection belongs to and never reads or writes your KooYomi context. Required Clued scope: context:read.",
+      "description": "Record a verification of this Integration: kind canonical_baseline checks the Canonical runtime baseline from server-observed evidence (the Worker supplies the MCP transport facts; a caller-supplied transport is ignored); kind ready_profile checks one READY profile and requires the Integration to be operable. Failures are recorded as FAIL results with a Receipt. A canonical_baseline retry with the same idempotency_key replays only under the same MCP protocol version and BeamingFace build; after either changes, verify again with a new idempotency_key. Connection-self operation: it acts on the Integration this BeamingFace connection belongs to and never reads or writes your BeamingFace context. Required Clued scope: context:read.",
       "inputSchema": {
         "type": "object",
         "required": [
@@ -3113,7 +3113,7 @@
     },
     {
       "name": "clued_integration_revoke",
-      "description": "Revoke this Integration from the Host side. It always revokes every credential of this connection's own provider-connection identity; when the Integration also holds Bindings of another identity, the result is PARTIAL_CONNECTION_REVOKE and the Owner should revoke the whole Integration in KooYomi. A revoked Integration is only recovered by the Owner's explicit restore in KooYomi; reconnecting never restores it. Connection-self operation: it acts on the Integration this KooYomi connection belongs to and never reads or writes your KooYomi context. Required Clued scope: context:read.",
+      "description": "Revoke this Integration from the Host side. It always revokes every credential of this connection's own provider-connection identity; when the Integration also holds Bindings of another identity, the result is PARTIAL_CONNECTION_REVOKE and the Owner should revoke the whole Integration in BeamingFace. A revoked Integration is only recovered by the Owner's explicit restore in BeamingFace; reconnecting never restores it. Connection-self operation: it acts on the Integration this BeamingFace connection belongs to and never reads or writes your BeamingFace context. Required Clued scope: context:read.",
       "inputSchema": {
         "type": "object",
         "required": [

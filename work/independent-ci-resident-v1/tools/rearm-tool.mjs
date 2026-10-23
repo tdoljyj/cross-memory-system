@@ -2,34 +2,53 @@
 //   node rearm-tool.mjs inspect --root <resident root>
 //   node rearm-tool.mjs request-rearm  --root <root> --expected-halt-sha256 <sha> --reason <text> --by <sid>
 //   node rearm-tool.mjs request-resume --root <root> --expected-paused-sha256 <sha> --by <sid>
+//   node rearm-tool.mjs request-abort  --root <root> --batch-key <key> --expected-ledger-entry-sha256 <sha> --reason <text> --by <sid>
+//   node rearm-tool.mjs request-drain  --root <root> --reason <text> --by <sid>   (phase 2: end every parked batch, before a reinstall)
+//   node rearm-tool.mjs request-intake-pause  --root <root> --reason <text> [--minutes 1-120] [--holder owner]
+//   node rearm-tool.mjs request-intake-resume --root <root> --reason <text> [--holder owner]
+//     (primary/standby C6, DESIGN §20: start no new batch for at most two hours; nothing running or parked is touched.
+//     Any Owner session may write these, unelevated: they go to the user-writable requests\ directory, like a pause.)
 // inspect writes nothing and needs no elevation (state is Owner-readable). The request modes write
 // exactly one small create-only JSON file into the admin-only owner\ directory and nothing else:
 // no archive, no ledger write, no rename. The service then carries the request out with its own
 // limited rights (quiescence on both hosts, rename-only archive, HALT compare-and-swap), so no file
-// operation on an Owner-writable tree ever runs elevated (independent review X1).
+// operation on an Owner-writable tree ever runs elevated (independent review X1). The intake requests are the exception
+// in where they go (requests\, see above), never in what they may do: they only hold new batches.
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { HEX64, check } from '../src/canonical.mjs';
 import { Ledger } from '../src/ledger.mjs';
 import { ReceiptChain } from '../src/receipts.mjs';
 import { Inbox } from '../src/inbox.mjs';
-import { REARM_CONTRACT, RESUME_CONTRACT } from '../src/executor.mjs';
+import { ABORT_CONTRACT, DRAIN_CONTRACT, REARM_CONTRACT, RESUME_CONTRACT, validateAbortRequest } from '../src/executor.mjs';
 import { nonce, writeNew } from '../src/store.mjs';
+import { intakePauseRequest, intakeResumeRequest, readIntakePause } from '../src/intake-pause.mjs';
 
 const SID = /^S-1-5-21-\d+-\d+-\d+-\d+$/;
 
-export async function inspect({ ledger, receipts }) {
+export async function inspect({ ledger, receipts, intake = null }) {
   const halt = await ledger.halted();
   const paused = await ledger.paused();
   const head = await receipts.verify();
   const open = await ledger.open();
+  // Every open batch with the exact values an Owner abort names (DESIGN §6.5): its key and the SHA-256 of its latest
+  // ledger record. A batch whose abort was already accepted, or that cannot be read, has no target values.
+  const abortTargets = [];
+  for (const e of open) {
+    const latest = HEX64.test(e.key ?? '') ? await ledger.latestRecord(e.key) : null;
+    abortTargets.push({ batchKey: e.key, state: e.state, waiting: Ledger.waitingAt(e), parked: Ledger.parkedAt(e), aborting: !!e.abort,
+      latestLedgerEntry: latest?.name ?? null, ledgerEntrySha256: latest?.sha256 ?? null });
+  }
   const key = halt?.value?.facts?.key ?? null;
   const keys = Array.isArray(halt?.value?.facts?.keys) ? halt.value.facts.keys : (key ? [key] : []);
   return {
     haltedKeys: keys, toArchive: (await ledger.unknownUnarchived()).map(e => e.key), quarantined: (await ledger.quarantinedUnarchived()).map(q => q.key),
     halted: !!halt, halt: halt?.value ?? null, haltSha256: halt?.sha256 ?? null,
     paused: !!paused, pausedSha256: paused?.sha256 ?? null,
-    openBatches: open.length, haltedBatch: HEX64.test(key ?? '') ? await ledger.state(key) : null, receiptsHead: head,
+    // The intake pause's holds as the service last wrote them (null: none recorded; `unreadable` when the file does not
+    // validate, which the service turns into a two-hour hold of holder `unreadable`).
+    intakePause: intake,
+    openBatches: open.length, abortTargets, haltedBatch: HEX64.test(key ?? '') ? await ledger.state(key) : null, receiptsHead: head,
   };
 }
 
@@ -46,6 +65,23 @@ export function rearmRequest({ expectedHaltSha256, reason, by }, clock = Date.no
   return { contract: REARM_CONTRACT, haltSha256: expectedHaltSha256, reason, by, requestedAt: new Date(clock()).toISOString(), nonce: nonce(8) };
 }
 
+// The Owner abort of one batch (DESIGN §6.5), exactly as windows/rearm-resident.ps1 -Request Abort writes it.
+export function abortRequest({ batchKey, expectedLedgerEntrySha256, reason, by }, clock = Date.now) {
+  check(HEX64.test(batchKey ?? ''), 'BATCH_KEY_REQUIRED');
+  check(HEX64.test(expectedLedgerEntrySha256 ?? ''), 'REVIEWED_LEDGER_ENTRY_SHA_REQUIRED');
+  check(typeof reason === 'string' && reason.length > 0 && reason.length <= 200, 'ABORT_REASON_REQUIRED');
+  check(SID.test(by ?? ''), 'OWNER_SID_REQUIRED');
+  return validateAbortRequest({ contract: ABORT_CONTRACT, batchKey, ledgerEntrySha256: expectedLedgerEntrySha256, reason, by, requestedAt: new Date(clock()).toISOString(), nonce: nonce(8) });
+}
+
+// Phase 2, step 2: end every batch at a parking point (A or B) on the Owner abort's path, before a reinstall (the
+// uninstall refuses an open batch). The service carries it out at its next tick start.
+export function drainRequest({ reason, by }, clock = Date.now) {
+  check(typeof reason === 'string' && reason.length > 0 && reason.length <= 200, 'DRAIN_REASON_REQUIRED');
+  check(SID.test(by ?? ''), 'OWNER_SID_REQUIRED');
+  return { contract: DRAIN_CONTRACT, reason, by, requestedAt: new Date(clock()).toISOString(), nonce: nonce(8) };
+}
+
 export function resumeRequest({ expectedPausedSha256, by }, clock = Date.now) {
   check(HEX64.test(expectedPausedSha256 ?? ''), 'REVIEWED_PAUSE_SHA_REQUIRED');
   check(SID.test(by ?? ''), 'OWNER_SID_REQUIRED');
@@ -54,19 +90,34 @@ export function resumeRequest({ expectedPausedSha256, by }, clock = Date.now) {
 
 if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`) {
   const { positionals, values } = parseArgs({ allowPositionals: true, options: {
-    root: { type: 'string' }, 'expected-halt-sha256': { type: 'string' }, 'expected-paused-sha256': { type: 'string' }, reason: { type: 'string' }, by: { type: 'string' } } });
+    root: { type: 'string' }, 'expected-halt-sha256': { type: 'string' }, 'expected-paused-sha256': { type: 'string' }, reason: { type: 'string' }, by: { type: 'string' },
+    'batch-key': { type: 'string' }, 'expected-ledger-entry-sha256': { type: 'string' }, holder: { type: 'string' }, minutes: { type: 'string' } } });
   try {
     check(typeof values.root === 'string' && path.isAbsolute(values.root), 'ROOT_REQUIRED');
     const state = path.join(values.root, 'state');
     if (positionals[0] === 'inspect') {
       const ledger = new Ledger(state, Date.now);
-      console.log(JSON.stringify(await inspect({ ledger, receipts: new ReceiptChain(path.join(state, 'receipts'), Date.now) }), null, 2));
+      console.log(JSON.stringify(await inspect({ ledger, receipts: new ReceiptChain(path.join(state, 'receipts'), Date.now), intake: await readIntakePause(state) }), null, 2));
     } else if (positionals[0] === 'request-rearm') {
       const file = await writeOwnerRequest(path.join(values.root, 'owner'), rearmRequest({ expectedHaltSha256: values['expected-halt-sha256'], reason: values.reason, by: values.by }));
       console.log(JSON.stringify({ status: 'REARM_REQUESTED_SERVICE_WILL_VERIFY_AND_ARCHIVE', file }));
     } else if (positionals[0] === 'request-resume') {
       const file = await writeOwnerRequest(path.join(values.root, 'owner'), resumeRequest({ expectedPausedSha256: values['expected-paused-sha256'], by: values.by }));
       console.log(JSON.stringify({ status: 'RESUME_REQUESTED', file }));
+    } else if (positionals[0] === 'request-drain') {
+      const file = await writeOwnerRequest(path.join(values.root, 'owner'), drainRequest({ reason: values.reason, by: values.by }));
+      console.log(JSON.stringify({ status: 'DRAIN_REQUESTED_SERVICE_WILL_END_PARKED_BATCHES', file }));
+    } else if (positionals[0] === 'request-intake-pause') {
+      check(values.minutes === undefined || /^[0-9]{1,3}$/.test(values.minutes), 'INTAKE_REQUEST_REFUSED');
+      const file = await writeOwnerRequest(path.join(values.root, 'requests'), intakePauseRequest({ holder: values.holder ?? 'owner',
+        minutes: values.minutes === undefined ? undefined : Number(values.minutes), reason: values.reason }));
+      console.log(JSON.stringify({ status: 'INTAKE_PAUSE_REQUESTED_SERVICE_WILL_HOLD_NEW_BATCHES', file }));
+    } else if (positionals[0] === 'request-intake-resume') {
+      const file = await writeOwnerRequest(path.join(values.root, 'requests'), intakeResumeRequest({ holder: values.holder ?? 'owner', reason: values.reason }));
+      console.log(JSON.stringify({ status: 'INTAKE_RESUME_REQUESTED', file }));
+    } else if (positionals[0] === 'request-abort') {
+      const file = await writeOwnerRequest(path.join(values.root, 'owner'), abortRequest({ batchKey: values['batch-key'], expectedLedgerEntrySha256: values['expected-ledger-entry-sha256'], reason: values.reason, by: values.by }));
+      console.log(JSON.stringify({ status: 'ABORT_REQUESTED_SERVICE_WILL_VERIFY', file }));
     } else {
       check(false, 'MODE_REQUIRED');
     }

@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-  Owner re-arm after an UNKNOWN failure latched HALT, and Owner resume after a pause (DRAFT).
-  The one remaining UAC of the normal lifecycle besides install, upgrade and uninstall
+  Owner re-arm after an UNKNOWN failure latched HALT, Owner resume after a pause, and Owner abort of the
+  current batch (DRAFT). The one remaining UAC of the normal lifecycle besides install, upgrade and uninstall
   (Owner Decision 0d84ddbb item 4).
 
 .DESCRIPTION
@@ -11,19 +11,27 @@
   Without -Request it only inspects, NOT elevated: it refuses to run elevated, so the node process
   it starts never holds an admin token.
 
-  With -Request Rearm or -Request Resume (elevated) it starts NO other program: the request is
+  With -Request Rearm, Resume or Abort (elevated) it starts NO other program: the request is
   written in this script, as exactly one create-only JSON file in the admin-only owner\ directory,
   with its own time and nonce. Nothing else happens: no archive, no ledger write, no rename (review
   X1, M1). The service then proves quiescence on both hosts, archives every failed-unknown scene not
   archived yet (rename only, with its own limited rights) and clears HALT by compare-and-swap; a
   stale digest or missing quiescence is refused and recorded. Failed heads stay burned.
 
+  -Request Abort -BatchKey <key> -ExpectedLedgerEntrySha256 <sha> -Reason <text> (DESIGN 6.5): the key
+  and the SHA-256 of that batch's latest ledger record exactly as the inspection (abortTargets) printed
+  them. The service honours it only at a safe point: it stops a running scanner-issuer stage through the
+  broker and the helper's own stop path, proves quiescence on both hosts, archives the scene rename-only
+  and records FAILED_CLEAN OWNER_ABORTED. It never publishes or retracts a check and never kills a
+  process; when quiescence cannot be proven the batch HALTs as before and needs a re-arm.
+
   Residual, unchanged from today: any elevated .NET process of the Owner (including this one and the
   per-batch UAC launch it replaces) inherits the Owner's environment, e.g. COR_ENABLE_PROFILING;
   DESIGN.md §14 R10.
 #>
 [CmdletBinding()]
-param([ValidateSet('Rearm', 'Resume')][string]$Request, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedHaltSha256, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPausedSha256, [ValidateLength(1, 200)][string]$Reason)
+param([ValidateSet('Rearm', 'Resume', 'Abort')][string]$Request, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedHaltSha256, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPausedSha256, [ValidateLength(1, 200)][string]$Reason,
+  [ValidatePattern('^[0-9a-f]{64}$')][string]$BatchKey, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedLedgerEntrySha256)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'   # no user module directory
@@ -48,6 +56,11 @@ $now = [DateTimeOffset]::UtcNow
 $body = if ($Request -eq 'Rearm') {
   if (-not $ExpectedHaltSha256 -or -not $Reason) { throw 'REVIEWED_HALT_AND_REASON_REQUIRED' }
   [ordered]@{ by = $me.User.Value; contract = 'clued.independent-ci.resident-owner-rearm/1'; haltSha256 = $ExpectedHaltSha256; nonce = $hex; reason = $Reason; requestedAt = $now.ToString('o') }
+} elseif ($Request -eq 'Abort') {
+  if (-not $BatchKey -or -not $ExpectedLedgerEntrySha256 -or -not $Reason) { throw 'REVIEWED_BATCH_LEDGER_ENTRY_AND_REASON_REQUIRED' }
+  # ValidatePattern ignores case; the service accepts lower-case hex only.
+  if ($BatchKey -cnotmatch '^[0-9a-f]{64}$' -or $ExpectedLedgerEntrySha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'LOWER_CASE_HEX_REQUIRED' }
+  [ordered]@{ batchKey = $BatchKey; by = $me.User.Value; contract = 'clued.independent-ci.resident-owner-abort/1'; ledgerEntrySha256 = $ExpectedLedgerEntrySha256; nonce = $hex; reason = $Reason; requestedAt = $now.ToString('o') }
 } else {
   if (-not $ExpectedPausedSha256) { throw 'REVIEWED_PAUSE_REQUIRED' }
   [ordered]@{ by = $me.User.Value; contract = 'clued.independent-ci.resident-owner-resume/1'; nonce = $hex; pausedSha256 = $ExpectedPausedSha256; requestedAt = $now.ToString('o') }

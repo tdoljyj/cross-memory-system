@@ -1,0 +1,11 @@
+--- v3-host/payload/release/existing-release-entry-v1/v3-host/release-once.mjs
++++ v4-host/payload/release/existing-release-entry-v1/v3-host/release-once.mjs
+@@ -34,7 +34,7 @@
+   const grant=await existingStage(['--execute-once','--fixed-scope','existing-main-release-grant-and-currentness-v3','--stage','grant-before-deploy','--reviewed-context-sha256',contextSha]);
+   writeOnce('release-grant-stage.json',grant);if(grant.status!=='GRANT_CONSUMED')return {status:'BLOCKED_OR_PENDING',grant,automaticRetryAllowed:false};
+   const wr=SOURCE+'/'+WRANGLER;
+-  if(!run('storage-queue-info',[wr,'queues','info','clued-storage-jobs'],{env:cf(),allowFailure:true}))run('storage-queue-create',[wr,'queues','create','clued-storage-jobs'],{env:cf()});
++  run('storage-queue-info',[wr,'queues','info','clued-storage-jobs'],{env:cf()});
+   // Same accepted PDF artifact was already built without publisher credentials.
+   // --no-build avoids writing the root-protected dist from the original hook.
+   run('pdf-deploy',[wr,'deploy','--config','wrangler.pdf-extractor.jsonc','--no-build'],{env:cf()});

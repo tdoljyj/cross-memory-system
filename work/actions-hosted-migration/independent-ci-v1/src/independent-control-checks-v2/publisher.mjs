@@ -13,9 +13,35 @@
 //   - PR-A integration: the durable producer identity sourceBindingSha256 (v1's rule: everything but the
 //     renewable lease and slot timestamps) is journaled, and consume() is the v2 control consumer the merge
 //     gate reads through (consumer.mjs; scripts/ci/clued-work-admission.mjs provider independent-control-checks-v2).
+//   - Resident quota redesign phase 2, step 2 (parking, design v0.5 §4.9; Owner decision e1e19e2e item 4): the resident
+//     no longer waits inside the stage. It parks the batch after stage 7 and runs stage 8 again on its own back-off,
+//     so one stage-8 run only checks (STAGE8_CHECK_MS: the first observation and the polls inside it) and says why it is
+//     not ready yet, before any journal write and with zero side effects:
+//       RESIDENT_BASE_MOVED              main's tip is no longer this batch's base (with strict this head never merges);
+//       RESIDENT_MERGE_QUEUE_NOT_JOINED  the batch claim is not in the merge queue at all (the scheduling fact);
+//       RESIDENT_QUEUE_HEAD_NOT_REACHED  it is in the queue, not at its head yet.
+//   - Phase 2, step 3a (design v0.5 §5.3 rules 3, 5 and 7, §5.4 item 4; Owner decision 0bb98194; train-rules.mjs): once
+//     the claim is the queue head, and before any journal write, stage 8 reads main's branch rules and GitHub's test
+//     merge of the PR live. It writes no green while the six required checks are not all pinned to App 5368905, while
+//     `strict` is off and the node does not run the train, or while the test merge is not exactly [T, H] with the tested
+//     tree; each is a not-ready answer with zero side effects (TRAIN_TEST_MERGE_TREE_DIFFERS is final). The merge-slot
+//     green is recorded in the green ledger (green-ledger.mjs) before it is written; a ledger that cannot take the
+//     intent writes nothing (GREEN_LEDGER_UNAVAILABLE). After the write, a PR that GitHub has already merged with
+//     exactly [T, H] and the tested tree is success (SETTLED_MERGED), never revoked; before 3a the closed PR read as
+//     "authorization changed" and the green was revoked.
+//   - Resident primary/standby design v0.4 §6.2 (C4, Task c2af8d17): a control check this journal knows nothing of (no
+//     effect key under the batch claim) is read back on GitHub before its first publication (published-on-github-v2.mjs).
+//     This App's check of the same name there, published by another node or install, ends the publication cleanly with
+//     ROLE_ALREADY_ON_GITHUB: nothing posted, nothing revoked. publishPair reads both checks back before either is
+//     published (and before the green-ledger intent), so this node never leaves the pair half published because the
+//     other half is already on GitHub; a half with an unsettled journal entry skips that and keeps its reconciliation.
 import { digest } from '../proof.mjs';
 import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, CONTROL_ROLES_V2, MAX_ATTEMPT_V2, sameBatchV2 } from '../job-v2.mjs';
 import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from '../full-admission-v2.mjs';
+import { TRAIN_MODES, TRAIN_MODE_DEFAULT, RULESET_UNREADABLE, STRICT_OFF_WITHOUT_TRAIN, MERGE_METHODS_NOT_MERGE_ONLY, TRAIN_TEST_MERGE_NOT_READY,
+  TRAIN_TEST_MERGE_TREE_DIFFERS, rulesetFacts, rulesetDecision, testMergeDecision, mergedAsTested } from './train-rules.mjs';
+import { GREEN_LEDGER_UNAVAILABLE } from './green-ledger.mjs';
+import { ROLE_ALREADY_ON_GITHUB, publishedNames } from '../published-on-github-v2.mjs';
 
 export const APP_ID = 5368905, REPO = 'tdoljyj/cross-memory-system';
 export const CONTROL_CHECKS_V2 = Object.freeze({
@@ -24,6 +50,25 @@ export const CONTROL_CHECKS_V2 = Object.freeze({
 });
 export const QUEUE_POLL_MS = 30_000;
 export const MERGE_SLOT_WINDOW_MS = 45 * 60_000;
+// One stage-8 run (phase 2, step 2): the resident retries a parked batch, so a run only checks for this long.
+export const STAGE8_CHECK_MS = 90_000;
+// Why a stage-8 run was not ready (all BLOCKED, zero side effects, before any journal write).
+export const STAGE8_NOT_READY_REASONS = Object.freeze(['RESIDENT_BASE_MOVED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED',
+  // Phase 2, step 3a: the live branch rules and test merge, and the green ledger (all before any journal write).
+  RULESET_UNREADABLE, STRICT_OFF_WITHOUT_TRAIN, MERGE_METHODS_NOT_MERGE_ONLY, TRAIN_TEST_MERGE_NOT_READY, GREEN_LEDGER_UNAVAILABLE]);
+// Final for this head (step 3a): GitHub's merge of exactly [T, H] is not the tree that was tested. Zero side effects.
+export const STAGE8_FINAL_REASONS = Object.freeze([TRAIN_TEST_MERGE_TREE_DIFFERS]);
+// Inside one run these are waited out (polled until the window ends); every other not-ready answer returns at once.
+const TRAIN_WAITED = Object.freeze([RULESET_UNREADABLE, TRAIN_TEST_MERGE_NOT_READY]);
+const SHA = /^[a-f0-9]{40}$/;
+// Admission answers no wait can change: the run ends at once with the answer (stage-fact.mjs maps each one to its final
+// code). The claim changed or missing; Native rejected; the PR closed or its head or base moved; Native's policy
+// unsupported. Phase 2, step 2 (independent review M3): before, the last two were swallowed and came out as the retryable
+// RESIDENT_QUEUE_HEAD_NOT_REACHED after the check window. full_admission_native_changed (the claim inactive, its lease
+// lapsed, a verification older than 30 s) stays waited out: a renewal keeps the claim generation, so it can pass again,
+// and a final ending would burn a head whose stages 3, 5 and 7 are published (re-review m17).
+export const QUEUE_WAIT_FINAL_REASONS = Object.freeze(['full_admission_claim_changed', 'full_admission_rejected', 'full_admission_claim_missing',
+  'full_admission_subject_changed', 'full_admission_native_unsupported']);
 const ACTION = 'independent-control-check/2';
 const HASH = /^[a-f0-9]{64}$/, fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
@@ -71,9 +116,52 @@ function sourceBinding(job, packet, facts, authority) {
     slot: job.role === 'control-merge-slot' ? { state: facts.mergeSlot.state, ref: facts.mergeSlot.ref, tip: facts.mergeSlot.tip, queueHead: facts.mergeQueueHead } : null });
 }
 
-function engine({ github, journal, admission, assertLive, record, authority, batchClaim, clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)) }, production) {
+function engine({ github, journal, admission, assertLive, record, authority, batchClaim, greenLedger = null, trainMode = TRAIN_MODE_DEFAULT,
+  clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)) }, production) {
   const domain = production ? 'production' : 'fixture';
-  async function observe(job) { assertLive(); const packet = await github.readChangedPaths(job), facts = await admission.evaluatePr(job, packet, { batchClaim }); assertLive(); return { packet, facts }; }
+  // The green ledger is required where a green is written (publishPair), not here: the merge-gate consumer only reads (review M1).
+  check(TRAIN_MODES.includes(trainMode) && (greenLedger === null || typeof greenLedger?.append === 'function'), 'CONTROL_PUBLISHER_CONFIGURATION_REFUSED');
+  // Phase 2, step 3a: the live branch rules of main and GitHub's test merge of the PR (train-rules.mjs). Without the train
+  // the tested tree is the head's own (S = H). Any read that fails is a not-ready answer, never a stage failure: these
+  // facts change by themselves and the resident tries again.
+  async function trainFacts(job) {
+    let rules;
+    try { const reply = await github.readBranchRules('main'); check(reply?.complete === true, RULESET_UNREADABLE); rules = rulesetFacts(reply.rules, APP_ID); }
+    catch { return { reason: RULESET_UNREADABLE }; }
+    const ruleset = rulesetDecision(rules, trainMode);
+    if (ruleset) return { reason: ruleset, ruleset: rules };
+    let pull, head, mergeCommit = null;
+    try {
+      pull = await github.readPullRequest(job.pr);
+      head = await github.readGitCommit(job.headSha);
+      if (SHA.test(pull?.merge_commit_sha ?? '')) mergeCommit = await github.readGitCommit(pull.merge_commit_sha);
+    } catch { return { reason: TRAIN_TEST_MERGE_NOT_READY, ruleset: rules }; }
+    if (!SHA.test(head?.tree ?? '')) return { reason: TRAIN_TEST_MERGE_NOT_READY, ruleset: rules };
+    const reason = testMergeDecision({ pull, mergeCommit, job, testTree: head.tree });
+    return { reason, ruleset: rules, testTree: head.tree, testMergeSha: reason ? null : pull.merge_commit_sha };
+  }
+  // After the write: GitHub's own answer for the PR now. 'merged' when it merged exactly [T, H] with the tested tree;
+  // 'mismatch' when it merged any other way (squash, rebase, other parents or tree: review M3), or when the PR is open and
+  // the test merge is definitely other parents or another tree; otherwise 'open' (also when it cannot be read: the Native
+  // boundary decides then, as before 3a).
+  async function afterWrite(job, train) {
+    try {
+      const pull = await github.readPullRequest(job.pr);
+      const mergeCommit = SHA.test(pull?.merge_commit_sha ?? '') ? await github.readGitCommit(pull.merge_commit_sha) : null;
+      if (mergedAsTested({ pull, mergeCommit, job, testTree: train.testTree })) return { state: 'merged', mergeSha: pull.merge_commit_sha };
+      if (pull?.merged === true) return { state: 'mismatch' };
+      if (pull?.state === 'open' && pull.head?.sha === job.headSha && pull.mergeable === true && mergeCommit
+        && testMergeDecision({ pull, mergeCommit, job, testTree: train.testTree }) !== null) return { state: 'mismatch' };
+    } catch { /* unreadable: no new fact */ }
+    return { state: 'open' };
+  }
+  async function ledger(phase, job, train, key, externalId, checkRunId = null, detail = null, { required = false } = {}) {
+    if (!greenLedger || job.role !== 'control-merge-slot') return;
+    try { await greenLedger.append({ phase, job, testTree: train.testTree, testMergeSha: train.testMergeSha ?? null, effectKey: key, externalId, checkRunId, detail }); }
+    catch (e) { if (required) throw e; }
+  }
+  // scheduling (optional): told the scheduling facts of each evaluation (full-admission-v2 option; never authority).
+  async function observe(job, scheduling = null) { assertLive(); const packet = await github.readChangedPaths(job), facts = await admission.evaluatePr(job, packet, { batchClaim, ...(scheduling ? { scheduling } : {}) }); assertLive(); return { packet, facts }; }
   async function boundary(job) {
     const { packet, facts } = await observe(job); factsValid(job, packet, facts, domain, clock(), batchClaim);
     record('native_check_boundary', { jobId: job.id, nativeObservationSha256: facts.observationSha256, packetSha256: digest(packet) });
@@ -89,7 +177,12 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
   }
   async function readback(job, externalId, id, conclusion) { const m = await inventory(job, externalId); check(m.length === 1 && m[0].id === id && m[0].status === 'completed' && m[0].conclusion === conclusion, 'NATIVE_CHECK_READBACK_UNCONFIRMED'); return m[0]; }
   async function transition(key, phase, next, details) { try { return await journal.transition(key, phase, next, details); } catch { return null; } }
-  async function revoke({ job, key, externalId, known, phase, cause, sideEffects }) {
+  async function revoke({ job, key, externalId, known, phase, cause, sideEffects, train = null }) {
+    const r = await revokeOnce({ job, key, externalId, known, phase, cause, sideEffects });
+    if (r.status === 'REVOKED' && train) await ledger('revoked', job, train, key, externalId, known.id, cause);
+    return r;
+  }
+  async function revokeOnce({ job, key, externalId, known, phase, cause, sideEffects }) {
     const revKey = digest({ action: 'independent-control-revoke/2', effectKey: key, checkRunId: known.id }); let revPhase = 'intent', logged = false;
     try { const m = await inventory(job, externalId); check(m.length === 1 && m[0].id === known.id, 'NEGATIVE_COMPENSATION_IDENTITY_UNCONFIRMED'); }
     catch { return { status: 'UNCERTAIN', reason: 'NEGATIVE_COMPENSATION_IDENTITY_UNCONFIRMED', effectKey: key, sideEffects, productionAuthorized: false }; }
@@ -113,7 +206,17 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       return { status: 'UNCERTAIN', effectKey: key, checkRunId: known.id, sideEffects, productionAuthorized: false, reason: 'NEGATIVE_COMPENSATION_UNCONFIRMED' };
     }
   }
-  async function publishOne(input) {
+  // C4: this App's check of the job's name is on GitHub although this journal has no entry for it under the batch claim.
+  // It looks at this job's own entry only: a direct publishOne of one half does not see the other half's unsettled entry;
+  // publishPair, the stage-8 path, checks both halves' entries before it calls this.
+  async function onGithubOnly(job) {
+    if (await journal.read(admissionEffectKeyV2(ACTION, job, batchClaim, definitionFor(job)))) return false;
+    assertLive();
+    return (await publishedNames(github, job.headSha, [definitionFor(job).name], APP_ID)).length > 0;
+  }
+  // train: the facts trainFacts() read before the pair (publishPair); the merge-slot green is ledgered and checked
+  // against GitHub's test merge after the write. Without them (a direct call) the check is written as before 3a.
+  async function publishOne(input, { train = null } = {}) {
     let job, key, externalId, previous, before;
     try {
       job = fixedJob(input); key = admissionEffectKeyV2(ACTION, job, batchClaim, definitionFor(job)); externalId = admissionExternalIdV2(prefixFor(job), job, batchClaim);
@@ -121,6 +224,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       if (previous && previous.state !== 'settled') return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
       before = await boundary(job);
       if (previous) { await readback(job, externalId, previous.details.checkRunId, 'success'); return { status: 'SETTLED', effectKey: key, checkRunId: previous.details.checkRunId, sideEffects: 0, productionAuthorized: production }; }
+      if (await onGithubOnly(job)) return { status: 'BLOCKED', effectKey: key, reason: ROLE_ALREADY_ON_GITHUB, sideEffects: 0, productionAuthorized: false };
     } catch (e) {
       if (previous?.state === 'settled' && Number.isSafeInteger(previous.details?.checkRunId) && previous.details.checkRunId > 0) return revoke({ job, key, externalId, known: { id: previous.details.checkRunId }, phase: 'settled', cause: safe(e), sideEffects: 0 });
       return { status: 'BLOCKED', reason: safe(e), sideEffects: 0, productionAuthorized: false };
@@ -135,26 +239,76 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       const posted = await github.createCheck({ name: definitionFor(job).name, head_sha: job.headSha, status: 'completed', conclusion: 'success', external_id: externalId,
         output: { title: 'Complete Native control and exact subject verified', summary: `Independent Native control check for ${REPO}#${job.pr} (attempt ${job.attempt}); observation sha256 ${before.facts.observationSha256}. This is not a scanner execution, Native publication ticket, Receipt or qualification.` } });
       check(identity(posted, job, externalId) && posted.status === 'completed' && posted.conclusion === 'success', 'NATIVE_CHECK_IDENTITY_UNCONFIRMED'); known = posted;
+      if (train) await ledger('posted', job, train, key, externalId, known.id);
       const after = await boundary(job); check(after.bindingSha256 === before.bindingSha256, 'NATIVE_AUTHORIZATION_BINDING_CHANGED');
       await readback(job, externalId, known.id, 'success'); assertLive(); check(fresh(after.facts, clock()), 'NATIVE_OBSERVATION_EXPIRED_AFTER_WRITE');
-      await journal.transition(key, 'sent', 'settled', { checkRunId: known.id, externalId, conclusion: 'success', nativeObservationBeforeSha256: before.facts.observationSha256, nativeObservationAfterSha256: after.facts.observationSha256, bindingSha256: after.bindingSha256, sourceBindingSha256: after.sourceBindingSha256 });
+      // Step 3a, rule 3 after the write: an open PR whose test merge is now definitely something else loses the green.
+      const written = train && job.role === 'control-merge-slot' ? await afterWrite(job, train) : null;
+      check(written?.state !== 'mismatch', 'TRAIN_TEST_MERGE_CHANGED_AFTER_WRITE');
+      await journal.transition(key, 'sent', 'settled', { checkRunId: known.id, externalId, conclusion: 'success', nativeObservationBeforeSha256: before.facts.observationSha256, nativeObservationAfterSha256: after.facts.observationSha256, bindingSha256: after.bindingSha256, sourceBindingSha256: after.sourceBindingSha256,
+        ...(written?.state === 'merged' ? { settledMerged: written.mergeSha } : {}) });
       record('native_check_settled', { jobId: job.id, effectKey: key, checkRunId: known.id, beforeSha256: before.facts.observationSha256, afterSha256: after.facts.observationSha256 });
-      return { status: 'SETTLED', effectKey: key, checkRunId: known.id, sideEffects, productionAuthorized: production };
+      if (train) await ledger(written?.state === 'merged' ? 'merged' : 'settled', job, train, key, externalId, known.id, written?.state === 'merged' ? written.mergeSha : null);
+      return { status: 'SETTLED', effectKey: key, checkRunId: known.id, sideEffects, productionAuthorized: production, ...(written?.state === 'merged' ? { settledMerged: true } : {}) };
     } catch (e) {
       if (sent && !known) { try { const m = await inventory(job, externalId); if (m.length === 1) known = m[0]; } catch { /* read-only discovery cannot prove a missing POST */ } }
-      if (sent && known) return revoke({ job, key, externalId, known, phase, cause: safe(e), sideEffects });
+      // Step 3a, rule 7: the after-write boundary refuses a PR that is no longer open. When GitHub merged it with exactly
+      // [T, H] and the tested tree, the green did what it was for: SETTLED_MERGED, never revoked.
+      if (sent && known && train && job.role === 'control-merge-slot') {
+        const written = await afterWrite(job, train);
+        let settled = false;
+        if (written.state === 'merged') {
+          try {
+            await readback(job, externalId, known.id, 'success');
+            await journal.transition(key, 'sent', 'settled', { checkRunId: known.id, externalId, conclusion: 'success', settledMerged: written.mergeSha,
+              nativeObservationBeforeSha256: before.facts.observationSha256, bindingSha256: before.bindingSha256, sourceBindingSha256: before.sourceBindingSha256 });
+            settled = true;
+          } catch { /* not confirmed: compensate as before */ }
+        }
+        // Settled is settled: the log and the ledger after it are best-effort and can never turn it into a revoke (review N3).
+        if (settled) {
+          try { record('native_check_settled_merged', { jobId: job.id, effectKey: key, checkRunId: known.id, mergeSha: written.mergeSha, cause: safe(e) }); } catch { /* best-effort */ }
+          await ledger('merged', job, train, key, externalId, known.id, written.mergeSha);
+          return { status: 'SETTLED', effectKey: key, checkRunId: known.id, sideEffects, productionAuthorized: production, settledMerged: true };
+        }
+      }
+      if (sent && known) return revoke({ job, key, externalId, known, phase, cause: safe(e), sideEffects, train: job.role === 'control-merge-slot' ? train : null });
       await transition(key, phase, sent ? 'uncertain' : 'not_sent', { reason: safe(e), externalId });
       return { status: sent ? 'UNCERTAIN' : 'BLOCKED', effectKey: key, reason: safe(e), sideEffects, productionAuthorized: false };
     }
   }
-  // S8: read-only wait for the queue head, then publish the pair in the fixed order.
+  // S8: read-only wait for the queue head, then publish the pair in the fixed order. The latest scheduling facts
+  // (is the claim in the merge queue at all) travel with a not-ready answer (resident quota redesign v0.6 §9), and
+  // the answer names why (phase 2, step 2): main moved (at once: waiting cannot help), not in the queue, not its head.
   async function waitForQueueHead(slotJob, waitUntil) {
+    let scheduling = null, last = null, lastTrain = null;
+    const tell = facts => { scheduling = facts; };
     for (let polls = 1; ; polls++) {
-      let observed = null;
-      try { const { packet, facts } = await observe(slotJob); factsValid(slotJob, packet, facts, domain, clock(), batchClaim, { requireQueueHead: false }); observed = facts; }
-      catch (e) { if (['full_admission_claim_changed', 'full_admission_rejected', 'full_admission_claim_missing'].includes(e.code)) return { ready: false, reason: e.code, polls }; }
-      if (observed && queueHeadReady(slotJob, observed, clock())) return { ready: true, polls };
-      if (clock() + QUEUE_POLL_MS > waitUntil) return { ready: false, reason: 'RESIDENT_QUEUE_HEAD_NOT_REACHED', polls };
+      let observed = null, answered = null;
+      try { const { packet, facts } = await observe(slotJob, tell); answered = facts; factsValid(slotJob, packet, facts, domain, clock(), batchClaim, { requireQueueHead: false }); observed = facts; last = facts; }
+      catch (e) {
+        if (QUEUE_WAIT_FINAL_REASONS.includes(e.code)) {
+          // A protected change Native rejects as no longer up to date is main moving under the batch (review m6).
+          const d = e.code === 'full_admission_rejected' ? fullAdmissionFailureV2(answered)?.admissionDiagnostic : null;
+          const behind = [...(d?.reasonCodes ?? []), ...(d?.nativeReasonCodes ?? [])].includes('protected_change_not_up_to_date');
+          return { ready: false, reason: behind ? 'RESIDENT_BASE_MOVED' : e.code, polls, scheduling };
+        }
+      }
+      lastTrain = null;
+      if (observed && queueHeadReady(slotJob, observed, clock())) {
+        // Step 3a: the queue head may write only under live rules that still hold main, on a test merge of exactly [T, H].
+        const train = await trainFacts(slotJob);
+        if (!train.reason) return { ready: true, polls, scheduling, train };
+        record('native_train_not_ready', { jobId: slotJob.id, reason: train.reason });
+        if (!TRAIN_WAITED.includes(train.reason)) return { ready: false, reason: train.reason, polls, scheduling };
+        lastTrain = train.reason;
+      }
+      if (observed && typeof observed.mergeSlot?.tip === 'string' && observed.mergeSlot.tip !== slotJob.baseSha) return { ready: false, reason: 'RESIDENT_BASE_MOVED', polls, scheduling };
+      if (clock() + QUEUE_POLL_MS > waitUntil) {
+        if (lastTrain) return { ready: false, reason: lastTrain, polls, scheduling };
+        const notJoined = last !== null && scheduling?.mergeQueue?.entered === false;
+        return { ready: false, reason: notJoined ? 'RESIDENT_MERGE_QUEUE_NOT_JOINED' : 'RESIDENT_QUEUE_HEAD_NOT_REACHED', polls, scheduling };
+      }
       await sleep(QUEUE_POLL_MS);
     }
   }
@@ -197,10 +351,27 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     } catch (e) { return { status: 'BLOCKED', reason: safe(e), sideEffects: 0, productionAuthorized: false }; }
     const head = await waitForQueueHead(jobs[1], waitUntil);
     record('native_queue_wait', { jobId: jobs[1].id, ready: head.ready, polls: head.polls });
-    if (!head.ready) return { status: 'BLOCKED', reason: head.reason, sideEffects: 0, productionAuthorized: false, polls: head.polls };
+    if (!head.ready) return { status: 'BLOCKED', reason: head.reason, sideEffects: 0, productionAuthorized: false, polls: head.polls, scheduling: head.scheduling };
+    // C4: both halves are read back before either is published (nothing written yet: a refusal is a clean BLOCKED). A half
+    // with an unsettled journal entry (a write that may have happened) skips this and keeps its path (reconciliation).
+    let unsettled;
+    try { unsettled = (await Promise.all(jobs.map(job => journal.read(admissionEffectKeyV2(ACTION, job, batchClaim, definitionFor(job)))))).some(e => e && e.state !== 'settled'); }
+    catch (e) { return { status: 'BLOCKED', reason: safe(e), sideEffects: 0, productionAuthorized: false }; }
+    if (!unsettled) for (const job of jobs) {
+      let on;
+      try { on = await onGithubOnly(job); } catch (e) { return { status: 'BLOCKED', reason: safe(e), sideEffects: 0, productionAuthorized: false }; }
+      if (on) return { status: 'BLOCKED', reason: ROLE_ALREADY_ON_GITHUB, role: job.role, sideEffects: 0, productionAuthorized: false };
+    }
+    // Step 3a (§5.4 item 4): the merge-slot green is in the ledger before anything of the pair is written. Production
+    // without a ledger (it could not be opened: review M2) writes nothing and parks.
+    if (greenLedger || production) {
+      const slot = fixedJob(jobs[1]);
+      try { check(greenLedger, GREEN_LEDGER_UNAVAILABLE); await ledger('intent', slot, head.train, admissionEffectKeyV2(ACTION, slot, batchClaim, definitionFor(slot)), admissionExternalIdV2(prefixFor(slot), slot, batchClaim), null, null, { required: true }); }
+      catch { return { status: 'BLOCKED', reason: GREEN_LEDGER_UNAVAILABLE, sideEffects: 0, productionAuthorized: false, polls: head.polls, scheduling: head.scheduling }; }
+    }
     const results = []; let sideEffects = 0;
     for (const job of jobs) {
-      const r = await publishOne(job); sideEffects += r.sideEffects ?? 0; results.push({ role: job.role, ...r });
+      const r = await publishOne(job, { train: head.train }); sideEffects += r.sideEffects ?? 0; results.push({ role: job.role, ...r });
       if (r.status !== 'SETTLED') return { status: r.status === 'BLOCKED' && sideEffects > 0 ? 'UNCERTAIN' : r.status, reason: r.reason ?? 'CONTROL_PAIR_INCOMPLETE', results, sideEffects, productionAuthorized: false };
     }
     return { status: 'SETTLED', results, sideEffects, productionAuthorized: production, qualificationIssued: false, nativeTicketIssued: false };
@@ -216,6 +387,7 @@ export function takeActualControlConsumptionV2(value, selector) {
 export function createProductionControlPublisherV2(dependencies) { return engine(dependencies, true); }
 // Window of the S8 wait: merge slot 45 min, the batch claim's lease, the install's validUntil and the
 // stage cap minus the time two publications need.
-export function queueWindow({ startedAt, claimExpiresAt, validUntil, stageDeadline, publicationReserveMs = 7 * 60_000 }) {
-  return Math.min(startedAt + MERGE_SLOT_WINDOW_MS, Date.parse(claimExpiresAt), validUntil === null ? Infinity : Date.parse(validUntil), stageDeadline - publicationReserveMs);
+// Phase 2, step 2: checkMs (STAGE8_CHECK_MS) bounds one run; the resident parks and runs stage 8 again.
+export function queueWindow({ startedAt, claimExpiresAt, validUntil, stageDeadline, publicationReserveMs = 7 * 60_000, checkMs = Infinity }) {
+  return Math.min(startedAt + MERGE_SLOT_WINDOW_MS, startedAt + checkMs, Date.parse(claimExpiresAt), validUntil === null ? Infinity : Date.parse(validUntil), stageDeadline - publicationReserveMs);
 }

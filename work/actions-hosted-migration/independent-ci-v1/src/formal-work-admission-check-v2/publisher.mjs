@@ -9,10 +9,29 @@
 //     under the real effect key, so a later admitted evaluation of the same content is not wedged;
 //   - the journal and observation log live in state\v2\effects-work-admission, never in the spool (S13).
 // It is a control check, not a scanner result, ticket, Receipt or qualification.
+//
+// Resident quota redesign v0.6 §1 and §9 (phase 1): a BLOCKED result says whether the head is SAFE TO RE-RUN. The
+// resident releases a stage-1 failure (no burned head) only on this flag, never by inferring it from a reason code.
+// It is true only when the refusal came from inside the admission boundary (changed paths, full admission, fact
+// checks) of the FIRST admission of this batch (no batch claim recorded yet, so nothing local or remote was written
+// under the real effect key) and the reason is not a deterministic fault of the PR itself (DETERMINISTIC_*: the PR
+// changed or closed, too many files, a removed or invalid policy file, a protected change not up to date with main),
+// which would fail the same way again.
+// Results also carry the scheduling facts Native reported (ci_retry_after, merge-queue entry) when it was reached.
+//
+// Resident primary/standby design v0.4 §6.2 (C4, Task c2af8d17): before Native is asked and before this check is
+// published, the head's complete check-run inventory of this App is read on GitHub (published-on-github-v2.mjs). A head
+// that already carries a role or control check, published by another node, another Source install or another batch,
+// ends with HEAD_PUBLISHED_ON_GITHUB: nothing evaluated, nothing published, never reaching the Task's CI meter, never safe
+// to re-run (a new commit runs the PR again). So does this very job's own kooyumi-work-admission (same job id and attempt)
+// published by another node or install: a node taking over after the active one ran stage 1 would otherwise post a second
+// check of the same identity and HALT on the read-back. A batch that already recorded its claim is this node's own and
+// keeps its path. A read that is not complete refuses (fail closed).
 import { randomUUID } from 'node:crypto';
 import { digest } from '../proof.mjs';
 import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, MAX_ATTEMPT_V2 } from '../job-v2.mjs';
 import { fullAdmissionFailureV2, admittedFactsMatchJobV2 } from '../full-admission-v2.mjs';
+import { HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, readPublishedChecks } from '../published-on-github-v2.mjs';
 
 export const ROLE = 'work-admission', CHECK_NAME = 'kooyumi-work-admission', APP_ID = 5368905, REPO = 'tdoljyj/cross-memory-system';
 const DEFINITION = Object.freeze({ name: CHECK_NAME, appId: APP_ID });
@@ -24,6 +43,15 @@ const plain = v => v && Object.getPrototypeOf(v) === Object.prototype;
 // An uncoded exception is never a transport fact (PR-A review MINOR 5).
 const safe = e => /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(e?.code ?? '') ? e.code : 'WORK_ADMISSION_OPERATION_UNCONFIRMED';
 const diagnosticOf = e => fullAdmissionFailureV2({ contract: 'clued.independent-ci.full-admission/2', status: 'BLOCKED', admitted: false, reason: e?.code, diagnostic: e?.admissionDiagnostic })?.admissionDiagnostic;
+// Deterministic faults of the PR (mirrored in independent-ci-resident-v1/src/failure-table.json, test-pinned): the
+// boundary reasons of the changed-paths read and of full admission, and the Native/evaluator diagnostic codes.
+export const DETERMINISTIC_PR_REASONS = Object.freeze(['invalid_pr_subject', 'pr_subject_changed', 'pr_files_changed', 'incomplete_pr_files', 'invalid_pr_files',
+  'pr_files_page_limit', 'COMPLETE_CURRENT_PATHS_REQUIRED', 'full_admission_subject_changed', 'full_admission_subject_invalid']);
+export const DETERMINISTIC_PR_REASON_CODES = Object.freeze(['changed_files_truncated', 'policy_file_removed', 'policy_file_invalid', 'protected_change_not_up_to_date']);
+export function deterministicPrFault(reason, diagnostic) {
+  return DETERMINISTIC_PR_REASONS.includes(reason)
+    || [...(diagnostic?.reasonCodes ?? []), ...(diagnostic?.nativeReasonCodes ?? [])].some(c => DETERMINISTIC_PR_REASON_CODES.includes(c));
+}
 const freeze = v => { if (v && typeof v === 'object') { Object.values(v).forEach(freeze); Object.freeze(v); } return v; };
 const fixedJob = job => { validateJobV2(job); check(job.repo === REPO && job.role === ROLE && job.attempt >= 1 && job.attempt <= MAX_ATTEMPT_V2, 'FIXED_WORK_ADMISSION_JOB_REQUIRED'); return freeze(structuredClone(job)); };
 function identity(c, job, externalId) { return Number.isSafeInteger(c?.id) && c.id > 0 && c.app?.id === APP_ID && c.name === CHECK_NAME && c.head_sha === job.headSha && c.external_id === externalId; }
@@ -49,12 +77,17 @@ function binding(job, packet, facts, authority) {
 // batchClaims: { read(job) -> generation | null (missing), record(job, observedClaim, observedAt) }.
 function engine({ github, journal, admission, assertLive, record, authority, batchClaims, clock = Date.now }, production) {
   const domain = production ? 'production' : 'fixture';
-  async function boundary(job, batchClaim) {
-    assertLive(); const packet = await github.readChangedPaths(job), facts = await admission.evaluatePr(job, packet, { batchClaim }); assertLive();
+  // The admission boundary in two steps, so a refusal can be told apart from a failure after the facts were admitted.
+  async function evaluate(job, batchClaim, scheduling = null) {
+    assertLive(); const packet = await github.readChangedPaths(job), facts = await admission.evaluatePr(job, packet, { batchClaim, ...(scheduling ? { scheduling } : {}) }); assertLive();
     factsValid(job, packet, facts, domain, clock(), batchClaim);
+    return { packet, facts };
+  }
+  function bound(job, { packet, facts }) {
     record('native_check_boundary', { jobId: job.id, nativeObservationSha256: facts.observationSha256, packetSha256: digest(packet) });
     return { facts, bindingSha256: binding(job, packet, facts, authority) };
   }
+  async function boundary(job, batchClaim) { return bound(job, await evaluate(job, batchClaim)); }
   async function inventory(job, externalId) {
     const list = await github.readChecks(job.headSha);
     check(list?.complete === true && Array.isArray(list.checks) && list.checks.length <= 10000 && new Set(list.checks.map(c => c?.id)).size === list.checks.length
@@ -88,7 +121,9 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     }
   }
   return Object.freeze({ fixture: !production, async publish(input) {
-    let job, key = null, externalId = null, previous = null, before, claimed = null;
+    let job, key = null, externalId = null, previous = null, before, claimed = null, scheduling = null;
+    // 'boundary' while the first evaluation runs; a refusal there with no batch claim recorded is safe to re-run.
+    let step = 'start';
     try {
       job = fixedJob(input);
       // A claim recorded earlier for this exact batch names the one effect to reconcile.
@@ -97,8 +132,20 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         key = admissionEffectKeyV2(ACTION, job, claimed, DEFINITION); externalId = admissionExternalIdV2(PREFIX, job, claimed);
         previous = await journal.read(key);
         if (previous && previous.state !== 'settled') return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
+      } else {
+        // C4: GitHub is the shared record of what was published on this head, by any node or install.
+        step = 'published-on-github';
+        assertLive();
+        const sameJob = `${PREFIX}:v2:${job.id}:a${job.attempt}:`;
+        const published = [...new Set((await readPublishedChecks(github, job.headSha, APP_ID))
+          .filter(c => PUBLISHED_ROLE_CHECK_NAMES.includes(c.name) || (c.name === CHECK_NAME && typeof c.external_id === 'string' && c.external_id.startsWith(sameJob)))
+          .map(c => c.name))].sort();
+        if (published.length) throw Object.assign(new Error(HEAD_PUBLISHED_ON_GITHUB), { code: HEAD_PUBLISHED_ON_GITHUB, publishedChecks: published });
       }
-      before = await boundary(job, claimed);
+      step = 'boundary';
+      const evaluated = await evaluate(job, claimed, facts => { scheduling = facts; });
+      step = 'admitted';
+      before = bound(job, evaluated);
       if (!claimed) {
         // First admission of this batch: the observed generation becomes the sticky batch claim.
         await batchClaims.record(job, before.facts.observedClaim, before.facts.observedAt);
@@ -107,7 +154,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         previous = await journal.read(key);
         if (previous && previous.state !== 'settled') return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
       }
-      if (previous) { await readback(job, externalId, previous.details.checkRunId, 'success'); return { status: 'SETTLED', effectKey: key, checkRunId: previous.details.checkRunId, sideEffects: 0, productionAuthorized: production }; }
+      if (previous) { await readback(job, externalId, previous.details.checkRunId, 'success'); return { status: 'SETTLED', effectKey: key, checkRunId: previous.details.checkRunId, sideEffects: 0, productionAuthorized: production, scheduling }; }
     } catch (e) {
       if (previous?.state === 'settled' && Number.isSafeInteger(previous.details?.checkRunId) && previous.details.checkRunId > 0)
         return revoke({ job, key, externalId, known: { id: previous.details.checkRunId }, phase: 'settled', cause: safe(e), sideEffects: 0, admissionDiagnostic: diagnosticOf(e) });
@@ -117,10 +164,13 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         try {
           const diag = digest({ action: 'native-work-admission-blocked/2', jobId: job.id, evaluationRef: randomUUID() });
           await journal.begin(diag, { subject: subjectOfV2(job), definition: DEFINITION, observationKind: 'blocked-native-admission-control', diagnosticOnly: true });
-          await journal.transition(diag, 'intent', 'not_sent', { reason: safe(e), ...(diagnosticOf(e) ? { admissionDiagnostic: diagnosticOf(e) } : {}) });
+          await journal.transition(diag, 'intent', 'not_sent', { reason: safe(e), ...(diagnosticOf(e) ? { admissionDiagnostic: diagnosticOf(e) } : {}),
+            ...(e?.publishedChecks ? { publishedChecks: e.publishedChecks } : {}) });
         } catch { /* diagnostic only */ }
       }
-      return { status: 'BLOCKED', reason: safe(e), ...(diagnosticOf(e) ? { admissionDiagnostic: diagnosticOf(e) } : {}), sideEffects: 0, productionAuthorized: false };
+      const reason = safe(e), admissionDiagnostic = diagnosticOf(e);
+      return { status: 'BLOCKED', reason, ...(admissionDiagnostic ? { admissionDiagnostic } : {}), ...(e?.publishedChecks ? { publishedChecks: e.publishedChecks } : {}),
+        sideEffects: 0, productionAuthorized: false, safeToRerun: step === 'boundary' && claimed === null && !deterministicPrFault(reason, admissionDiagnostic), scheduling };
     }
     let phase = 'intent', sent = false, known = null, sideEffects = 0;
     try {
@@ -137,7 +187,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       await readback(job, externalId, known.id, 'success'); assertLive(); check(fresh(after.facts, clock()), 'NATIVE_OBSERVATION_EXPIRED_AFTER_WRITE');
       await journal.transition(key, 'sent', 'settled', { checkRunId: known.id, externalId, conclusion: 'success', nativeObservationBeforeSha256: before.facts.observationSha256, nativeObservationAfterSha256: after.facts.observationSha256, bindingSha256: after.bindingSha256 });
       record('native_check_settled', { effectKey: key, checkRunId: known.id, beforeSha256: before.facts.observationSha256, afterSha256: after.facts.observationSha256 });
-      return { status: 'SETTLED', effectKey: key, checkRunId: known.id, nativeObservationBeforeSha256: before.facts.observationSha256, nativeObservationAfterSha256: after.facts.observationSha256, sideEffects, productionAuthorized: production };
+      return { status: 'SETTLED', effectKey: key, checkRunId: known.id, nativeObservationBeforeSha256: before.facts.observationSha256, nativeObservationAfterSha256: after.facts.observationSha256, sideEffects, productionAuthorized: production, scheduling };
     } catch (e) {
       if (sent && !known) { try { const m = await inventory(job, externalId); if (m.length === 1) known = m[0]; } catch { /* read-only discovery cannot prove a missing POST */ } }
       if (sent && known) return revoke({ job, key, externalId, known, phase, cause: safe(e), sideEffects, admissionDiagnostic: diagnosticOf(e) });

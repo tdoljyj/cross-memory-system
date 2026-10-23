@@ -1,5 +1,5 @@
 {
-  "contract": "clued.independent-ci.resident-policy/3",
+  "contract": "clued.independent-ci.resident-policy/5",
   "repo": "tdoljyj/cross-memory-system",
   "baseBranch": "main",
   "sourceManifestSha256": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -11,13 +11,37 @@
   },
   "validUntil": null,
   "limits": {
-    "maxBatchesPer24h": 12,
-    "maxEvaluationsPer24h": 24,
+    "maxBatchesPer24h": 72,
+    "maxEvaluationsPer24h": 96,
+    "perPrBatchesPer24h": 6,
+    "waitingRetriesPer24h": 48,
+    "reevaluationsPerPrHeadPer24h": 6,
+    "releasesPerHeadPer24h": 2,
+    "queueDepth": 100,
     "maxConcurrent": 1,
     "inboxMaxFiles": 16,
     "unexecutedCooldownMs": 600000,
-    "unexecutedMaxPer24h": 3,
     "stageMarginMs": 180000
+  },
+  "breaker": {
+    "consecutive": 3,
+    "windowCount": 4,
+    "windowMs": 3600000,
+    "backoffMs": [
+      1800000,
+      3600000,
+      7200000
+    ]
+  },
+  "stage8": {
+    "mode": "park"
+  },
+  "park": {
+    "maxParked": 4,
+    "maxParkedOutsideTop2": 8,
+    "maxMs": 86400000,
+    "stage8MaxTries": 12,
+    "stage8RetriesPer24h": 100
   },
   "companion": {
     "userSid": "S-1-5-21-0-0-0-1001",

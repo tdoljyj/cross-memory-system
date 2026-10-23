@@ -14,3 +14,24 @@ node --test test/*.test.mjs
 python -I -B -m unittest discover -s test -p "test_*.py"
 node drill/offline-drill.mjs
 ```
+
+Windows-only offline checks (PowerShell 5.1; each needs a NEW empty scratch directory):
+
+```bash
+powershell -NoProfile -File windows/test-resident-windows.ps1 -Scratch <new dir>
+powershell -NoProfile -File windows/test-install-carry.ps1 -Scratch <new dir with a short path>
+```
+
+`test-install-carry.ps1` builds fake earlier installs with 64-hex record names. Give it a short scratch path, for example under `%TEMP%`, so the paths stay under the 260-character limit of Windows PowerShell 5.1.
+
+The failure table, the Source-independent executed heads and the status, PR page and notification features of the quota redesign's phase 1 are described in DESIGN.md §16 (Task `12ada80e`).
+
+Phase 2, step 1 (Task `6451a55d`) is described in DESIGN.md §17. It covers the executor's own run queue (`state\queue\queue.json`), the waits and back-off, the release cap, the budgets read from the ledger, the circuit breaker and supersession.
+
+Phase 2, step 2 (Task `6451a55d`) is described in DESIGN.md §18. It covers parking at points A and B, stage 8 as tries, the Owner's drain request before a reinstall, and policy `/5`.
+
+Phase 2, step 3a (Task `6451a55d`, Owner decision `0bb98194`) is described in DESIGN.md §19. Before writing a green, stage 8 now reads main's branch rules and GitHub's test merge of the PR. It records every merge-slot green in the green ledger (`state\v2\green-ledger`). A PR that GitHub has already merged as tested counts as success. The train stays off.
+
+Primary/standby C6 (Task `6444f88a`) is described in DESIGN.md §20. It adds the intake pause: any Owner session can hold new batches for at most two hours (`tools/rearm-tool.mjs request-intake-pause`), without touching a batch that runs or is parked. Each request names a holder, and a holder may lift only its own hold. status.json `/3` shows the holds.
+
+Phase 2, step 3b (Task `6451a55d`, sub-Task `a3548216`) is described in DESIGN.md §21. Job contract `/3` adds the tested commit S to the job identity. With the train off, S is the head itself, so the workspaces and tests are the same as before.

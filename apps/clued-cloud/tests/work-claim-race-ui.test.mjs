@@ -71,7 +71,7 @@ function fill(f) { f.type('份数', ' 3 '); f.type('共享资源', '  apps/site/
 
 test('signed-out page makes no calls and offers sign-in', t => {
   const f = fixture(RACE); t.after(() => f.unmount()); f.emit('INITIAL_SESSION', null);
-  assert.equal(f.calls.length, 0); assert.ok(f.text().includes('登录 KooYomi'));
+  assert.equal(f.calls.length, 0); assert.ok(f.text().includes('登录 BeamingFace'));
 });
 
 test('a link fills the Task; preview then confirm call the two Native RPCs with the exact inputs', async t => {

@@ -9,7 +9,7 @@
 #
 # Usage: sh run_python.sh <script.py> [args...]
 # CLUED_HOOK_PYTHON names an interpreter to use instead of probing.
-# Version: 1.0.2
+# Version: 1.0.3
 
 probe() {
   "$@" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' </dev/null >/dev/null 2>&1
@@ -33,5 +33,5 @@ for candidate in $candidates; do
   fi
 done
 
-echo "KooYomi hook: no working Python 3.8+ interpreter (tried: $candidates); $1 did not run." >&2
+echo "BeamingFace hook: no working Python 3.8+ interpreter (tried: $candidates); $1 did not run." >&2
 exit 1

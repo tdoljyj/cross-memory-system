@@ -7,7 +7,7 @@ import { batchKey, headKey } from '../src/ledger.mjs';
 import { ReceiptChain } from '../src/receipts.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { rearmRequest, resumeRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
-import { BASE, CLEAN_PROOF, HEAD, RESIDENT, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, rawPolicy, triggerBytes } from './helpers.mjs';
+import { BASE, CLEAN_PROOF, HEAD, RESIDENT, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, notAdmitted, rawPolicy, triggerBytes } from './helpers.mjs';
 
 const subject = (o = {}) => ({ repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 1, ...o });
 const keyFor = o => batchKey(subject(o));
@@ -23,8 +23,15 @@ test('happy path: bundle, stage 1, start, workspaces, stages 2..8 once; the same
   assert.deepEqual(f.companion.calls.map(c => c[0]), ['bundle', 'wsprep']);
   assert.equal((await f.ledger.state(keyFor())).outcome, 'COMPLETED');
   assert.equal(await f.ledger.headBurned(headKey(subject())), true);
+  // The same head again: the run queue has seen it, nothing is reserved (phase 2).
   await f.drop(triggerBytes());
-  assert.equal((await f.exec.tick()).reason, 'HEAD_ALREADY_EXECUTED_NO_RETRY');
+  assert.equal((await f.exec.tick()).state, 'IDLE');
+  assert.equal(stagesRun(f.engine).length, 8);
+  // A queue that started over (or another PR naming the head) still never runs it: the ledger decides.
+  const fresh = await executorFixture(t, { root: f.root });
+  await fresh.queue.save();
+  await fresh.drop(triggerBytes({ pr: 885 }));
+  assert.equal((await fresh.exec.tick()).reason, 'HEAD_ALREADY_EXECUTED_NO_RETRY');
   assert.equal(stagesRun(f.engine).length, 8);
   assert.ok((await f.receipts.verify()).seq >= 12);
 });
@@ -34,8 +41,8 @@ test('a burned head is never re-run under a new base, another PR number or any c
   const f = await executorFixture(t, { engine });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'FAILED_CLEAN');
-  await f.drop(triggerBytes({ baseSha: '3'.repeat(40) })); // main moved
-  assert.equal((await f.exec.tick()).reason, 'HEAD_ALREADY_EXECUTED_NO_RETRY');
+  await f.drop(triggerBytes({ baseSha: '3'.repeat(40) })); // main moved: a head this PR was already seen with
+  assert.equal((await f.exec.tick()).state, 'IDLE');
   await f.drop(triggerBytes({ pr: 999 }));                  // same head in another PR
   assert.equal((await f.exec.tick()).reason, 'HEAD_ALREADY_EXECUTED_NO_RETRY');
   assert.deepEqual(stagesRun(engine), [1, 2]);
@@ -49,7 +56,7 @@ test('malformed or foreign triggers are rejected without touching the engine; re
   assert.equal((await f.exec.tick()).state, 'IDLE');
   assert.equal(f.engine.calls.length, 0);
   assert.equal((await ls(path.join(f.root, 'state', 'inbox-archive', 'rejected'))).length, 3);
-  const receipts = await ls(path.join(f.root, 'state', 'receipts'));
+  const receipts = (await ls(path.join(f.root, 'state', 'receipts'))).filter(n => n.includes('trigger-rejected'));
   const first = JSON.parse(await fs.readFile(path.join(f.root, 'state', 'receipts', receipts[0]), 'utf8'));
   assert.match(first.body.bytesSha256 ?? '', /^[0-9a-f]{64}$/);
 });
@@ -63,24 +70,28 @@ test('the bundle is fetched before stage 1; its failure releases the key with no
   assert.equal(await f.ledger.headBurned(headKey(subject())), false);
 });
 
-test('stage-1 "not admitted" releases the key; cool-down and caps bound re-evaluation', async t => {
-  const engine = fakeEngine({ stages: { 1: { ok: false, code: 'NATIVE_NOT_ADMITTED', proof: WINDOWS_CLEAN } } });
+test('stage-1 "not admitted" releases the key; the queue retries on its own back-off and stops at the release cap', async t => {
+  const engine = fakeEngine({ stages: { 1: notAdmitted() } });
   const f = await executorFixture(t, { engine });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'NOT_ADMITTED');
   assert.equal(await f.ledger.headBurned(headKey(subject())), false);
-  f.advance(600_001);
-  assert.equal((await f.exec.tick()).state, 'IDLE', 'never re-asks without a new trigger');
-  await f.drop(triggerBytes());
-  assert.equal((await f.exec.tick()).state, 'NOT_ADMITTED');
-  await f.drop(triggerBytes());
-  assert.equal((await f.exec.tick()).reason, 'UNEXECUTED_COOLDOWN');
-  f.advance(600_001);
-  assert.equal((await f.exec.tick()).state, 'NOT_ADMITTED');
-  f.advance(600_001);
-  await f.drop(triggerBytes());
-  assert.equal((await f.exec.tick()).reason, 'UNEXECUTED_DAILY_CAP');
-  assert.deepEqual(stagesRun(engine), [1, 1, 1]);
+  assert.deepEqual([f.queue.row(884).state, f.queue.row(884).level], ['BACKOFF', 1]);
+  f.advance(9 * 60_000);
+  assert.equal((await f.exec.tick()).state, 'IDLE', 'its 10-minute back-off');
+  f.advance(60_001);
+  assert.equal((await f.exec.tick()).state, 'NOT_ADMITTED', 'retried without a new trigger (phase 2)');
+  assert.deepEqual([f.queue.row(884).state, f.queue.row(884).stopKind], ['STOPPED', 'release-cap'], 'at most two releases in 24 hours (design v0.5 §4.5)');
+  assert.ok(f.queue.notices.some(n => n.kind === 'stopped' && n.pr === 884));
+  f.advance(3_600_000);
+  assert.equal((await f.exec.tick()).state, 'IDLE');
+  // Only a new commit runs it again: a new trigger of the same commit does not (design v0.5 §4.5).
+  await f.drop(triggerBytes({ contract: 'clued.independent-ci.resident-trigger/2', prUpdatedAt: '2026-10-20T13:30:00Z' }));
+  assert.equal((await f.exec.tick()).state, 'IDLE');
+  engine.runStage = fakeEngine().runStage.bind(engine);
+  await f.drop(triggerBytes({ headSha: '7'.repeat(40) }));
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.deepEqual(stagesRun(engine).slice(0, 2), [1, 1]);
 });
 
 test('any other stage-1 failure burns the head even before 10-started (review M4)', async t => {
@@ -89,7 +100,7 @@ test('any other stage-1 failure burns the head even before 10-started (review M4
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'FAILED_CLEAN');
   assert.equal(await f.ledger.headBurned(headKey(subject())), true);
-  await f.drop(triggerBytes({ baseSha: '3'.repeat(40) }));
+  await f.drop(triggerBytes({ pr: 901, baseSha: '3'.repeat(40) }));
   assert.equal((await f.exec.tick()).reason, 'HEAD_ALREADY_EXECUTED_NO_RETRY');
 });
 
@@ -203,7 +214,7 @@ test('Source drift and an expiring install authority halt before any reservation
   await limited.drop(triggerBytes({ pr: 900, headSha: '4'.repeat(40) }));
   assert.equal((await limited.exec.tick()).reason, 'DAILY_BATCH_LIMIT');
   // Junk evaluations have their own cap and do not consume the execution budget.
-  const junk = await executorFixture(t, { engine: fakeEngine({ stages: { 1: { ok: false, code: 'NATIVE_NOT_ADMITTED', proof: WINDOWS_CLEAN } } }), policy: rawPolicy({ limits: { ...rawPolicy().limits, maxEvaluationsPer24h: 2 } }) });
+  const junk = await executorFixture(t, { engine: fakeEngine({ stages: { 1: notAdmitted() } }), policy: rawPolicy({ limits: { ...rawPolicy().limits, maxEvaluationsPer24h: 2 } }) });
   for (const n of [1, 2]) { await junk.drop(triggerBytes({ pr: n, headSha: String(n).repeat(40) })); assert.equal((await junk.exec.tick()).state, 'NOT_ADMITTED'); }
   await junk.drop(triggerBytes({ pr: 3, headSha: '3'.repeat(40) }));
   assert.equal((await junk.exec.tick()).reason, 'DAILY_EVALUATION_LIMIT');

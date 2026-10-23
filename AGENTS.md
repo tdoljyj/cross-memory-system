@@ -1,16 +1,18 @@
-# KooYomi continuity and memory contract (v1.6)
+# BeamingFace continuity and memory contract (v1.6)
+
+The current product brand is BeamingFace. Existing Clued/clued protocol, Skill, schema, component, repository and storage identifiers remain compatible; see [the branding maintenance note](docs/maintenance/beamingface-branding.md).
 
 This repository follows `Clued_单一数据源与两级五视图架构方案_v1.6`.
 
 ## Agent contract
 
-Every Agent working in this repository follows [protocol/agent/agent-contract.md](protocol/agent/agent-contract.md), the single normative contract for using KooYomi: start, read order, capture of material outcomes, write discipline, error handling and checkpoint. The KooYomi service serves the same text at `/clued-agent.md`. This file adds repository rules only; do not restate the contract here.
+Every Agent working in this repository follows [protocol/agent/agent-contract.md](protocol/agent/agent-contract.md), the single normative contract for using BeamingFace: start, read order, capture of material outcomes, write discipline, error handling and checkpoint. The BeamingFace service serves the same text at `/clued-agent.md`. This file adds repository rules only; do not restate the contract here.
 
-In Claude Code, `.claude/settings.json` runs `scripts/hooks/clued_capture_guard.py` as a Stop hook that enforces the contract's §3 and §5 (BUG-20260924-001 L3). It blocks a stop once per finding and state: a material outcome (merged PR, including through `gh api`, push to main, applied migration, deployed edge function), also inside a subagent, with no committed KooYomi write about it after it, committed KooYomi writes with no checkpoint after them, a human message since the last committed write that looks like an Owner decision, or an Owner answer to a question (AskUserQuestion, the channel for Owner decisions) with no committed KooYomi write after it. A rejected, failed or unanswered write settles nothing, an Event (`clued_append_event`, `clued_event_append`) never settles an Owner decision or answer, and a write about an outcome names its PR number or merge commit, migration or function. `CLUED_CAPTURE_GUARD=off` disables it.
+In Claude Code, `.claude/settings.json` runs `scripts/hooks/clued_capture_guard.py` as a Stop hook that enforces the contract's §3 and §5 (BUG-20260924-001 L3). It blocks a stop once per finding and state: a material outcome (merged PR, including through `gh api`, push to main, applied migration, deployed edge function), also inside a subagent, with no committed BeamingFace write about it after it, committed BeamingFace writes with no checkpoint after them, a human message since the last committed write that looks like an Owner decision, or an Owner answer to a question (AskUserQuestion, the channel for Owner decisions) with no committed BeamingFace write after it. A rejected, failed or unanswered write settles nothing, an Event (`clued_append_event`, `clued_event_append`) never settles an Owner decision or answer, and a write about an outcome names its PR number or merge commit, migration or function. `CLUED_CAPTURE_GUARD=off` disables it.
 
 ## Authority and storage
 
-- The authenticated KooYomi service backed by Supabase is the only online Canonical Store.
+- The authenticated BeamingFace service backed by Supabase is the only online Canonical Store.
 - Repository `memory/` is a read-only, versioned export of one canonical snapshot. It is never a write target.
 - `memory/manifest.json` and the files it hashes are one atomic publication unit. A snapshot proves only its recorded as-of boundary. A current-claimed snapshot requires `baseline_claim=current`, `source_verification=live_rechecked`, `views_complete=true`, and `status=ready`, but still does not establish online Current Truth. A legitimate historical/offline or incomplete snapshot follows its own manifest, authorization and integrity contract and must retain its historical/incomplete qualification.
 - `memory/index.json` is the only derived lookup index. Canonical Records, Projects, Events, Evidence and Receipts retain their stable service IDs.
@@ -21,7 +23,7 @@ In Claude Code, `.claude/settings.json` runs `scripts/hooks/clued_capture_guard.
 - Repository `memory/` is a single-user snapshot, not a system-wide or multi-user export.
 - Expected owner identity and bundle scope come only from the committed endpoint trust policy `config/clued-endpoint-trust.json`; do not duplicate account hints or owner identifiers in active instructions.
 - Readers must verify the snapshot Manifest against that independent trust policy before using the snapshot.
-- Other users must be accessed through authenticated KooYomi APIs or separate user-scoped exports; never treat or overwrite this root snapshot as another user's data.
+- Other users must be accessed through authenticated BeamingFace APIs or separate user-scoped exports; never treat or overwrite this root snapshot as another user's data.
 
 ## Memory Router
 
@@ -31,7 +33,7 @@ Default access is `NONE`. Decide before reading.
 - T1: identity, preferences, cross-session history, or memory-system maintenance. Read the smallest relevant part of `memory/profile.md` and the required views.
 - T2: active project work. Read Global priority, then exact Project `state.md`, `task.md`, and `decision.md`.
 - T3: uncertain relevance. Light-read only State/Task/Decision.
-- T4: writes. A material outcome (an Owner decision, finished or newly agreed work, a correction) or an explicit “remember this” is written once through authenticated KooYomi M1 tools in the same turn, with the record type and authority the contract's Capture section assigns. `authority=user_explicit` goes with `user_confirmed: true` when the claim is the Owner's own words in this conversation; the flag records that source and is not a step to ask the Owner again. Do not edit Markdown.
+- T4: writes. A material outcome (an Owner decision, finished or newly agreed work, a correction) or an explicit “remember this” is written once through authenticated BeamingFace M1 tools in the same turn, with the record type and authority the contract's Capture section assigns. `authority=user_explicit` goes with `user_confirmed: true` when the claim is the Owner's own words in this conversation; the flag records that source and is not a step to ask the Owner again. Do not edit Markdown.
 
 For online current work, resolve the effective Project by canonical project ID through the authenticated service and its Currentness contract. The deployed v1 Project schema may still expose legacy `certainty_status`; treat it as compatibility metadata, not as the product's organization model. The approved successor direction is `development/contracts/project-lifecycle/ProjectLifecycleSuccessor.v0.1.md` and is not production until its migration is reviewed, deployed and attested. The paths below are read-only snapshot lookup locations, not online Current Truth:
 

@@ -76,10 +76,10 @@ const encoder = new TextEncoder(), decoder = new TextDecoder("utf-8", { fatal: t
 /** Insufficient sealed validity is observed here; its cause is not known. */
 export const CREDENTIAL_RENEWAL_HINT = "The admitted Google credential does not have enough remaining validity for this read. " +
   "The read stopped before requesting Drive.";
-const CREDENTIAL_PENDING_HINT = "Kooyumi could not confirm Google access readiness within this read's bounded wait.";
+const CREDENTIAL_PENDING_HINT = "BeamingFace could not confirm Google access readiness within this read's bounded wait.";
 const CREDENTIAL_DISABLED_HINT = "Google access preparation could not continue because renewal was disabled or its authorization settings changed.";
-const CREDENTIAL_UNAVAILABLE_HINT = "Kooyumi could not confirm Google access readiness for this read.";
-const CREDENTIAL_UNKNOWN_HINT = "Kooyumi received an unrecognized Google access readiness result. This read was not started.";
+const CREDENTIAL_UNAVAILABLE_HINT = "BeamingFace could not confirm Google access readiness for this read.";
+const CREDENTIAL_UNKNOWN_HINT = "BeamingFace received an unrecognized Google access readiness result. This read was not started.";
 // StorageDemandRenewal caller_wait_max_seconds, shared by all preflight checks.
 const CREDENTIAL_WAIT_MS = 30_000, CREDENTIAL_CHECKS = 3;
 

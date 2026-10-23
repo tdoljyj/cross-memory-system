@@ -19,6 +19,11 @@ export const COMPANION_CONFIG_CONTRACT = 'clued.independent-ci.resident-companio
 export const LINUX_OUTGOING = '/var/lib/clued-independent-ci/formal-spool/outgoing';
 // One callback round, the same value as protected-job-bridge-v4/protocol.mjs CALLBACK_WINDOW_MS (test-pinned).
 export const CALLBACK_WINDOW_MS = 120_000;
+// How long the pump waits for one relay call. A relay call usually takes 4-6 s, but sometimes 25-45 s: PR #911 stage 4
+// (2026-10-23) lost a 43 s SendIssue to the old fixed 40 s, so no worker was started and the issuer waited out its
+// stage into a HALT (Task 576231fa). The runner never kills a child, so giving up earlier gains nothing: the runner
+// stays busy until the call ends. One callback round is the most a relay call can still help.
+export const RELAY_TIMEOUT_MS = CALLBACK_WINDOW_MS;
 
 export function validateCompanionConfig(c) {
   check(c && c.contract === COMPANION_CONFIG_CONTRACT, 'COMPANION_CONFIG_CONTRACT_INVALID');
@@ -65,8 +70,22 @@ export function argv(cfg) {
 
 const json = text => { try { return JSON.parse(text); } catch { return null; } };
 
+// pr-head (phase 2, step 1): the PR's state and head over the Owner's own gh login, read-only, fixed argv.
+export const PR_HEAD_TIMEOUT_MS = 30_000;
+export function readPullArgv(ghExe, repo, pr) {
+  check(typeof ghExe === 'string' && /^[A-Z]:\\/.test(ghExe) && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? '') && Number.isSafeInteger(pr) && pr > 0 && pr < 1e9, 'COMPANION_PR_HEAD_ARGS_INVALID');
+  return [ghExe, 'api', '--method', 'GET', `repos/${repo}/pulls/${pr}`, '--jq', '{number: .number, state: .state, merged: .merged, head: .head.sha}'];
+}
+// The gh answer -> { number, state: open | closed | merged, headSha }, or null when it is not exactly that shape.
+export function parsePull(stdout, pr) {
+  const v = json(stdout);
+  if (!v || v.number !== pr || !['open', 'closed'].includes(v.state) || typeof v.merged !== 'boolean' || !/^[0-9a-f]{40}$/.test(v.head ?? '')) return null;
+  return { number: pr, state: v.merged ? 'merged' : v.state, headSha: v.head };
+}
+
 export class Companion {
-  // ports: { cfg, mailbox, run(argv,{timeoutMs}) -> {code, stdout, stderr}, fileExists(path), sleep(ms), clock() }
+  // ports: { cfg, mailbox, run(argv,{timeoutMs}) -> {code, stdout, stderr}, fileExists(path), sleep(ms), clock(),
+  //   readPull(pr) -> argv (pr-head; without it the companion answers PR_HEAD_UNAVAILABLE) }
   constructor(ports) {
     Object.assign(this, ports);
     this.a = argv(ports.cfg);
@@ -114,13 +133,19 @@ export class Companion {
       }
       // Verbatim root-tool facts; the companion never synthesises a proof value itself.
       case 'linux-quiescence': return { ok: true, proof: await this.quiescence(request.batchId) };
+      case 'pr-head': {
+        if (typeof this.readPull !== 'function') return { ok: false, code: 'PR_HEAD_UNAVAILABLE' };
+        const r = await this.run(this.readPull(request.pr), { timeoutMs: PR_HEAD_TIMEOUT_MS });
+        const pull = r.code === 0 ? parsePull(r.stdout, request.pr) : null;
+        return pull ? { ok: true, pull } : { ok: false, code: 'PR_HEAD_UNAVAILABLE' };
+      }
       default: return { ok: false, code: 'COMPANION_REQUEST_KIND_REFUSED' };
     }
   }
 
   // relay: true = record transferred, false = nothing there yet, throws on any refusal.
   async relay(mode, seq) {
-    const r = await this.run(this.a.relay(mode, seq), { timeoutMs: 40_000 });
+    const r = await this.run(this.a.relay(mode, seq), { timeoutMs: RELAY_TIMEOUT_MS });
     const v = json(r.stdout);
     if (r.code === 0 && v?.status === 'PUBLIC_RECORD_TRANSFERRED' && v.terminalConfirmed === true) return true;
     if (v?.childError?.reason === 'ENOENT' && v.terminalConfirmed === true) return false;
@@ -140,12 +165,14 @@ export class Companion {
   // the Linux worker ends with its clean 'blocked' record (BRIDGE_CALLBACK_DEADLINE) while the Windows issuer
   // still waits for a record. Hand exactly that record over, once, so the issuer ends BLOCKED now instead of
   // UNCERTAIN at its own deadline. Never a result; a refused ReceiveBlocked is never tried again. Without a
-  // listing the relay itself is the probe (false = not there yet).
-  async handOverBlocked(deadline) {
+  // listing the relay itself is the probe (false = not there yet). The hand-over is a wait step like any other:
+  // `live` throws COMPANION_PUMP_CANCELLED once the service cancelled the pump (Owner abort).
+  async handOverBlocked(deadline, live = async () => {}) {
     const until = Math.min(deadline, this.clock() + CALLBACK_WINDOW_MS + 30_000);
     while (this.clock() < until) {
+      await live();
       const names = await this.linuxReady();
-      if (names === null || names.has('blocked.ready.json')) { try { if (await this.relay('ReceiveBlocked', 0)) return true; } catch { return false; } }
+      if (names === null || names.has('blocked.ready.json')) { await live(); try { if (await this.relay('ReceiveBlocked', 0)) return true; } catch { return false; } }
       await this.sleep(1000);
     }
     return false;
@@ -153,42 +180,52 @@ export class Companion {
 
   // The bridge pump that run-batch.ps1 performs today (lines 86-89), moved out of the elevated
   // process unchanged in meaning: issue -> worker -> challenge/response rounds -> result.
+  // Owner abort (DESIGN §6.5): a cancel of this request from the service ends the pump at its next wait step with
+  // COMPANION_PUMP_CANCELLED. No relay call starts after it; one already running ends first (at most RELAY_TIMEOUT_MS). It only
+  // stops relaying; the worker unit is never stopped or killed. A cancel file that cannot be read is no cancel.
   async pump(request) {
     const deadline = Date.parse(request.deadline);
     const spool = this.cfg.windowsSpool;
     const ready = name => this.fileExists(`${spool}\\outgoing\\${name}.ready.json`);
     // Without a listing, every record is "maybe there" and the relay itself is the probe (the v1 way).
     const listed = (names, name) => names === null || names.has(`${name}.ready.json`);
+    const cancelled = async () => { try { return await this.mailbox.cancelled(request); } catch { return false; } };
+    const live = async () => { check(!(await cancelled()), 'COMPANION_PUMP_CANCELLED'); };
+    const relay = async (mode, seq) => { await live(); return this.relay(mode, seq); };
     try {
-      while (!(await ready('issue'))) { check(this.clock() < deadline, 'ACTUAL_ISSUE_NOT_PUBLISHED'); await this.sleep(100); }
-      check(await this.relay('SendIssue', 0), 'ISSUE_TRANSFER_UNCONFIRMED');
+      while (!(await ready('issue'))) { check(this.clock() < deadline, 'ACTUAL_ISSUE_NOT_PUBLISHED'); await live(); await this.sleep(100); }
+      check(await relay('SendIssue', 0), 'ISSUE_TRANSFER_UNCONFIRMED');
+      await live(); // a cancel that came with the issue transfer starts no worker
       const start = await this.run(this.a.startNoBlock('clued-ci-worker', request.jobId), { timeoutMs: 30_000 });
       check(start.code === 0, 'LINUX_WORKER_START_UNCONFIRMED');
       let sequence = 1, blockedRefused = false;
       // A refused ReceiveBlocked is remembered (never tried twice); one that only found nothing is not.
-      const receiveBlocked = async () => { try { return await this.relay('ReceiveBlocked', 0); } catch (e) { blockedRefused = true; throw e; } };
+      const receiveBlocked = async () => { await live(); try { return await this.relay('ReceiveBlocked', 0); } catch (e) { blockedRefused = true; throw e; } };
       try {
         for (;;) {
           check(this.clock() < deadline, 'FORMAL_BRIDGE_STAGE_DEADLINE');
+          await live();
           const names = await this.linuxReady();
           // The worker's clean refusal (bridge v4 'blocked') means it has ended: it goes before a stale challenge.
           if (names?.has('blocked.ready.json') && await receiveBlocked()) break;
           // Then a challenge: a callback has a deadline (CALLBACK_WINDOW_MS), the result does not hurry.
-          if (sequence <= 32 && listed(names, `challenge-${String(sequence).padStart(2, '0')}`) && await this.relay('ReceiveChallenge', sequence)) {
+          if (sequence <= 32 && listed(names, `challenge-${String(sequence).padStart(2, '0')}`) && await relay('ReceiveChallenge', sequence)) {
             const responseDeadline = this.clock() + CALLBACK_WINDOW_MS;
             const name = `response-${String(sequence).padStart(2, '0')}`;
-            while (!(await ready(name))) { check(this.clock() < responseDeadline, 'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED'); await this.sleep(100); }
-            check(await this.relay('SendResponse', sequence), 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED');
+            while (!(await ready(name))) { check(this.clock() < responseDeadline, 'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED'); await live(); await this.sleep(100); }
+            check(await relay('SendResponse', sequence), 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED');
             sequence += 1;
             continue;
           }
-          if (listed(names, 'result') && await this.relay('ReceiveResult', 0)) break;
+          if (listed(names, 'result') && await relay('ReceiveResult', 0)) break;
           if (names === null && await receiveBlocked()) break;
           // A listing every second is ample against a 120 s round and keeps the wsl.exe launches low.
           await this.sleep(names === null ? 100 : 1000);
         }
       } catch (error) {
-        if (!blockedRefused) await this.handOverBlocked(deadline);
+        // An Owner abort stops the Windows issuer anyway: no blocked hand-over (it checks the cancel before each of its
+        // steps), and the outer catch answers COMPANION_PUMP_CANCELLED.
+        if (!blockedRefused && error?.code !== 'COMPANION_PUMP_CANCELLED') await this.handOverBlocked(deadline, live);
         throw error;
       }
       const until = this.clock() + 30_000;
@@ -196,12 +233,15 @@ export class Companion {
         const s = await this.run(this.a.activeState('clued-ci-worker', request.jobId), { timeoutMs: 15_000 });
         if (s.code === 0 && ['inactive', 'failed'].includes(s.stdout.trim())) break;
         check(this.clock() < until, 'FORMAL_WORKER_TERMINAL_UNCONFIRMED');
+        await live();
         await this.sleep(500);
       }
       return { ok: true, proof: await this.quiescence(request.batchId) };
     } catch (error) {
-      // Never stop or kill the worker: report what is known and let the service classify.
-      return { ok: false, code: /^[A-Z][A-Z0-9_]{1,79}$/.test(error.code ?? '') ? error.code : 'COMPANION_PUMP_UNCONFIRMED', proof: await this.quiescence(request.batchId) };
+      // Never stop or kill the worker: report what is known and let the service classify. A cancelled pump answers
+      // COMPANION_PUMP_CANCELLED whatever step it ended in, also a relay call that failed as the cancel came.
+      const code = (await cancelled()) ? 'COMPANION_PUMP_CANCELLED' : /^[A-Z][A-Z0-9_]{1,79}$/.test(error.code ?? '') ? error.code : 'COMPANION_PUMP_UNCONFIRMED';
+      return { ok: false, code, proof: await this.quiescence(request.batchId) };
     }
   }
 
@@ -213,7 +253,7 @@ export class Companion {
       if (this.clock() >= Date.parse(request.deadline)) { await this.mailbox.respond(request, { ok: false, code: 'COMPANION_REQUEST_EXPIRED' }); continue; }
       let answer;
       try { answer = await this.handle(request); } catch { answer = { ok: false, code: 'COMPANION_HANDLER_UNCONFIRMED' }; }
-      await this.mailbox.respond(request, { ok: answer.ok === true, code: answer.ok ? null : (answer.code ?? 'COMPANION_HANDLER_UNCONFIRMED'), proof: answer.proof ?? null, directory: answer.directory ?? null, verified: answer.verified ?? null, usage: answer.usage ?? null });
+      await this.mailbox.respond(request, { ok: answer.ok === true, code: answer.ok ? null : (answer.code ?? 'COMPANION_HANDLER_UNCONFIRMED'), proof: answer.proof ?? null, directory: answer.directory ?? null, verified: answer.verified ?? null, usage: answer.usage ?? null, pull: answer.pull ?? null });
     }
   }
 }

@@ -46,7 +46,7 @@ const reasons: Record<string, string> = {
   credential_seal_unavailable: "服务端凭据加密未完成",
   credential_commit_unconfirmed: "凭据保存回执未确认，请先返回连接页核对状态，不要重复授权",
   storage_root_busy: "该目录还有尚未完成的文件操作，稍后再试；原有授权保持不变",
-  refresh_token_limit: "该 Google 账号在 KooYomi 中的授权次数已达上限，暂时不能通过重新授权开启正常使用；原有授权保持不变，请联系维护者处理",
+  refresh_token_limit: "该 Google 账号在 BeamingFace 中的授权次数已达上限，暂时不能通过重新授权开启正常使用；原有授权保持不变，请联系维护者处理",
   // StorageNormalUse N0 page-only labels (§5.3); retry from the new-connection page.
   root_shared_drive: "所选目录在共享云端硬盘中，自助接入只支持“我的云端硬盘”里的目录",
   root_not_owned: "所选目录不属于你的 Google 账号，请选择你自己的目录",
@@ -102,7 +102,7 @@ function finish(): Promise<Delivery> {
   delivery = (async () => {
     if (invalid || !state || !code) throw new CallbackFailure("Google 授权未完成，请返回连接页检查。");
     const { data, error } = await supabase.auth.getSession();
-    if (error || !data.session) throw new CallbackFailure("请使用开始授权时的 KooYomi 登录会话，返回连接页检查。");
+    if (error || !data.session) throw new CallbackFailure("请使用开始授权时的 BeamingFace 登录会话，返回连接页检查。");
     const response = await fetch("/v1/storage/google/complete", {
       method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + data.session.access_token },
       body: JSON.stringify({ state, code }), cache: "no-store", redirect: "error", referrerPolicy: "no-referrer", signal: AbortSignal.timeout(15000),

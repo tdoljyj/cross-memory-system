@@ -16,10 +16,14 @@ lock, empty spool, no worker process; bundle sealed by streaming copy and hash; 
 header: v2, no prerequisites/capabilities, formal refs == the receipt's ls-remote list, main == base,
 exact reviewed refs; mirror + candidates without hardlinks; git-dir audits; fsck --full --strict;
 only 100644/100755 blobs; workspaces root:root 0700.
-Changed against b29 (each a lesson): job ids are contract /2 (content + attempt, no claim), so an
+Changed against b29 (each a lesson): job ids are content + attempt, no claim (contract /2, now /3), so an
 attempt 2 never collides with attempt 1's workspaces; the trusted Source is compared with the
 installed Source commit, NOT with the PR head (b29 only worked because they were the same commit);
 refusal codes report the caller's line; nothing is patched into this file per batch.
+Quota phase 2 step 3b: job contract /3 and descriptor /3 name the tested commit S (testSha) next to the head
+and the base; the trivy and placement candidates are checked out at S. Until step 3c's train front batch
+brings S from stage 10 (with the bundle holding S and a parents check here), S must be the head itself
+(TEST_COMMIT_NOT_HEAD), so every workspace is exactly what it was under /2.
 """
 import hashlib
 import json
@@ -43,7 +47,8 @@ TRUSTED = '/opt/clued-independent-ci/source-v2'
 NODE = f'{STATE}/toolchain-build-legacy-v1/node'
 GIT = '/usr/bin/git'
 REPO = 'tdoljyj/cross-memory-system'
-JOB_CONTRACT = 'clued.independent-ci.job/2'
+JOB_CONTRACT = 'clued.independent-ci.job/3'
+DESCRIPTOR_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/3'
 LINUX_ROLES = ('gitleaks', 'trivy', 'contract-placement')
 BATCH_ID = re.compile(r'^[0-9a-f]{16}-[0-9a-f]{12}$')
 HEX64 = re.compile(r'^[0-9a-f]{64}$')
@@ -75,15 +80,17 @@ def need(cond, code):
 # ---------- pure helpers (unit-tested on any OS) ----------
 
 def job_id_v2(d, role):
-    """Same formula as job-v2.mjs#jobIdV2 (JSON.stringify of the identity list)."""
-    ident = [JOB_CONTRACT, d['repo'], d['pr'], d['headSha'], d['baseSha'], d['ciSourceManifestSha256'], role, d['attempt']]
+    """Same formula as job-v2.mjs#jobIdV2 (JSON.stringify of the identity list, contract /3)."""
+    ident = [JOB_CONTRACT, d['repo'], d['pr'], d['headSha'], d['baseSha'], d['testSha'], d['ciSourceManifestSha256'], role, d['attempt']]
     return hashlib.sha256(json.dumps(ident, separators=(',', ':'), ensure_ascii=False).encode('utf-8')).hexdigest()
 
 
 def validate_descriptor(d, batch_id):
-    need(isinstance(d, dict) and d.get('contract') == 'clued.independent-ci.resident-batch-descriptor/2' and d.get('batchId') == batch_id, 'DESCRIPTOR_REFUSED')
+    need(isinstance(d, dict) and d.get('contract') == DESCRIPTOR_CONTRACT and d.get('batchId') == batch_id, 'DESCRIPTOR_REFUSED')
     need(d.get('repo') == REPO and isinstance(d.get('pr'), int) and not isinstance(d.get('pr'), bool) and d['pr'] > 0, 'DESCRIPTOR_REFUSED')
-    need(all(isinstance(d.get(k), str) and HEX40.fullmatch(d[k]) for k in ('headSha', 'baseSha', 'sourceCommit')), 'DESCRIPTOR_REFUSED')
+    need(all(isinstance(d.get(k), str) and HEX40.fullmatch(d[k]) for k in ('headSha', 'baseSha', 'testSha', 'sourceCommit')), 'DESCRIPTOR_REFUSED')
+    # Step 3b: S = H. Step 3c lifts this for the train's front batch, together with S in the bundle and its parents check.
+    need(d['testSha'] == d['headSha'], 'TEST_COMMIT_NOT_HEAD')
     need(all(isinstance(d.get(k), str) and HEX64.fullmatch(d[k]) for k in ('batchKey', 'ciSourceManifestSha256', 'gitleaksTomlSha256')), 'DESCRIPTOR_REFUSED')
     need(d.get('attempt') in (1, 2) and d['batchKey'][:16] == batch_id[:16], 'DESCRIPTOR_REFUSED')
     ids = d.get('linuxJobIds')
@@ -322,8 +329,9 @@ def prepare(batch_id):
             git(['clone', '--no-local', '--no-hardlinks', '--no-checkout', '--template=', '--', sealed, f'{target}/candidate'])
             # Review MINOR-7: the head tree's modes are validated from the object store BEFORE anything is
             # materialised (only 100644/100755 blobs: no symlink, submodule or other entry is ever written).
-            tree_modes_regular(git(['-C', f'{target}/candidate', 'ls-tree', '-r', '-z', '--full-tree', d['headSha']]))
-            git(['-C', f'{target}/candidate', 'checkout', '--quiet', '--detach', '--no-recurse-submodules', d['headSha']])
+            # The candidate is the tested commit S (job contract /3; S = H until step 3c).
+            tree_modes_regular(git(['-C', f'{target}/candidate', 'ls-tree', '-r', '-z', '--full-tree', d['testSha']]))
+            git(['-C', f'{target}/candidate', 'checkout', '--quiet', '--detach', '--no-recurse-submodules', d['testSha']])
     facts = {}
     for role, target in targets.items():
         st = os.lstat(target)
@@ -342,9 +350,10 @@ def prepare(batch_id):
             git(['--git-dir', gd, 'rev-list', '--objects', '--quiet', '--all'], timeout=600)  # full closure of every sealed tip
         else:
             cand = f'{target}/candidate'
-            need(git(['-C', cand, 'rev-parse', '--verify', 'HEAD^{commit}']).strip() == d['headSha'], 'CANDIDATE_HEAD_CHANGED')
+            need(git(['-C', cand, 'rev-parse', '--verify', 'HEAD^{commit}']).strip() == d['testSha'], 'CANDIDATE_HEAD_CHANGED')
             need(git(['-C', cand, 'status', '--porcelain=v1', '--untracked-files=all']).strip() == '', 'CANDIDATE_NOT_CLEAN')
-            need(git(['-C', cand, 'cat-file', '-t', d['baseSha']]).strip() == 'commit', 'HEAD_BASE_COMMIT_MISSING')
+            for c in (d['headSha'], d['baseSha']):
+                need(git(['-C', cand, 'cat-file', '-t', c]).strip() == 'commit', 'HEAD_BASE_COMMIT_MISSING')
             tree_modes_regular(git(['-C', cand, 'ls-tree', '-r', '-z', '--full-tree', 'HEAD']))
             facts[role] = {'treeSha': git(['-C', cand, 'rev-parse', 'HEAD^{tree}']).strip()}
     live_preconditions(list(jobs.values()))

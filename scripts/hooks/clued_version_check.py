@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Claude Code hooks that tell the session whether its KooYomi components are current.
+"""Claude Code hooks that tell the session whether its BeamingFace components are current.
 
-config/clued-components.json (scripts/clued_components.py) gives every KooYomi
+config/clued-components.json (scripts/clued_components.py) gives every BeamingFace
 component a version. This script compares what this machine holds with what
-the KooYomi service reports, at the two moments a session actually starts work;
+the BeamingFace service reports, at the two moments a session actually starts work;
 it never runs on a schedule (AGENTS.md: version checks are request-triggered).
 
 * SessionStart: reads the service's /.well-known/clued-continuity
   (`components.versions`, `lifecycle.contract.version`) and compares it with
-  this checkout's manifest and with every installed copy of the KooYomi Skill it
+  this checkout's manifest and with every installed copy of the BeamingFace Skill it
   can find (~/.claude/skills, synced claude.ai Skills, $CODEX_HOME/skills).
   A copy without a version, older than the latest, or whose files differ from
   its version is reported with the fix.
@@ -28,7 +28,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -130,7 +130,7 @@ def describe_copy(path: Path, skill: dict, root: Path, newest: str) -> str | Non
                  + (f" (missing: {', '.join(missing[:5])})" if missing else ""))
     else:
         return None
-    return f"- KooYomi Skill at {path} {state}."
+    return f"- BeamingFace Skill at {path} {state}."
 
 
 def session_report(payload: dict) -> str:
@@ -153,7 +153,7 @@ def session_report(payload: dict) -> str:
 
     behind = [f"{cid} {local[cid]} < {served[cid]}" for cid in sorted(served) if older(local.get(cid), served[cid])]
     if behind:
-        lines.append("- This checkout is older than the KooYomi service: " + ", ".join(behind)
+        lines.append("- This checkout is older than the BeamingFace service: " + ", ".join(behind)
                      + ". Fetch origin/main and merge it before relying on these hooks, scripts or the Skill.")
     if older(served.get(CONTRACT_ID), local.get(CONTRACT_ID)):
         lines.append(f"- This checkout's agent contract ({local[CONTRACT_ID]}) is newer than the one the service "
@@ -171,8 +171,8 @@ def session_report(payload: dict) -> str:
     summary = ", ".join(f"{cid} {local[cid]}" for cid in (SKILL_ID, CONTRACT_ID) if cid in local)
     source = f"service: {note}" if note else "compared with the service"
     if not lines:
-        return f"KooYomi components current ({summary}; {source})."
-    return "\n".join([f"KooYomi component versions ({summary}; {source}):"] + lines)
+        return f"BeamingFace components current ({summary}; {source})."
+    return "\n".join([f"BeamingFace component versions ({summary}; {source}):"] + lines)
 
 
 def response_body(response) -> dict | None:
@@ -217,7 +217,7 @@ def resume_report(payload: dict) -> str | None:
     if behind:
         lines.append("- This checkout is older than the service: " + ", ".join(behind)
                      + ". Fetch origin/main and merge it before relying on it.")
-    return "\n".join(["KooYomi version check on resume:"] + lines) if lines else None
+    return "\n".join(["BeamingFace version check on resume:"] + lines) if lines else None
 
 
 def main() -> int:
@@ -238,7 +238,7 @@ def main() -> int:
         else:
             text = None
     except Exception as error:  # noqa: BLE001 - a broken check must not break the session
-        text = f"KooYomi version check could not run ({type(error).__name__}: {error})."
+        text = f"BeamingFace version check could not run ({type(error).__name__}: {error})."
     if text:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}}))
     return 0

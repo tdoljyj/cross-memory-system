@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-test("production build includes the KooYomi account entry", async () => {
+test("production build includes the BeamingFace account entry", async () => {
   // The vinext bundle imports cloudflare:workers and cannot run in Node's ESM
   // loader. The build gate emits the server bundle; this verifies that its
   // compiled account entry still contains the expected content.
@@ -13,9 +13,9 @@ test("production build includes the KooYomi account entry", async () => {
     ...(await Promise.all((await readdir(chunks)).filter((name) => /^page-.*\.js$/.test(name))
       .map((name) => readFile(new URL(name, chunks), "utf8")))),
   ].join("\n");
-  assert.ok(/Let the good/i.test(built));
-  assert.ok(/continue\./i.test(built));
-  assert.ok(/KooYomi/.test(built));
+  assert.ok(/Good finds\./i.test(built));
+  assert.ok(/Happy faces\./i.test(built));
+  assert.ok(/BeamingFace/.test(built));
   assert.doesNotMatch(built, /Clued by Pixel Gravity/i);
 });
 
@@ -31,11 +31,11 @@ test("ships bilingual copy and an eight-character password rule", async () => {
     source,
     /normalized\.includes\("password"\).*normalized\.includes\("at least"\)/s,
   );
-  assert.match(source, /headlineOne: "让美好"/);
-  assert.match(source, /headlineTwo: "继续。"/);
-  assert.match(source, /headlineOne: "Let the good"/);
-  assert.match(source, /headlineTwo: "continue\."/);
-  assert.match(source, /lede: "Find what's good\. Keep it going\."/);
+  assert.match(source, /headlineOne: "好的发现，"/);
+  assert.match(source, /headlineTwo: "会写在脸上。"/);
+  assert.match(source, /headlineOne: "Good finds\."/);
+  assert.match(source, /headlineTwo: "Happy faces\."/);
+  assert.match(source, /lede: "有趣的内容，好用的应用，还有让人眼前一亮的新玩法。"/);
   assert.match(source, /byline: "Discover × Continue"/);
   assert.doesNotMatch(source, /Clued by Pixel Gravity/);
   assert.match(source, /workViewsTitle: "Current work"/);

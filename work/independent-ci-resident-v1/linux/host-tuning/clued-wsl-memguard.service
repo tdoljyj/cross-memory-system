@@ -1,0 +1,35 @@
+# Clued WSL memory guard (Task 7c2e4386): one pass of clued-wsl-memguard, started by clued-wsl-memguard.timer.
+# Writes only /proc/sys/vm/compact_memory and drop_caches (both 0200 root:root, writable by uid 0 without any
+# capability) and its own last-drop time under /run/clued-wsl-memguard.
+[Unit]
+Description=Clued WSL memory guard: keep hv_sock-sized free blocks available
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3.12 -I -B /usr/local/lib/clued-wsl-host-tuning/clued-wsl-memguard
+# A pass that hangs ends as Result=timeout, which guard-verify reports, instead of blocking the timer silently.
+TimeoutStartSec=120
+RuntimeDirectory=clued-wsl-memguard
+RuntimeDirectoryPreserve=yes
+Nice=10
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native

@@ -26,7 +26,7 @@ const reasons: Record<string, string> = {
   onboard_effect_ambiguous: "Drive 中找到多个本次接入创建的同名对象，无法确定使用哪一个，请联系维护者。",
   root_multiple_parents: "所选目录有多个上级目录，不支持作为资料根。",
   root_not_folder: "所选对象不是文件夹。", root_trashed: "所选目录在回收站中。",
-  root_not_authorized: "所选目录没有授权给 KooYomi，请通过“选择已有目录”重新选择。",
+  root_not_authorized: "所选目录没有授权给 BeamingFace，请通过“选择已有目录”重新选择。",
   root_not_writable: "当前 Google 账号不能在所选目录中新建文件夹。",
   root_metadata_unavailable: "暂时无法读取所选目录的信息，请稍后重试。", root_ancestry_unavailable: "暂时无法核对目录的上级关系，请稍后重试。",
   onboard_effect_unconfirmed: "Drive 目录创建结果未确认，可以重试（不会重复创建）。",
@@ -36,7 +36,7 @@ const reasons: Record<string, string> = {
   onboard_unavailable: "自助接入暂不可用，请联系维护者。", onboard_disabled: "自助接入尚未开放。",
   picker_unconfigured: "“选择已有目录”需要维护者先配置 Google Picker，目前只能新建目录。",
   refresh_unavailable: "后台自动续期尚未开放，请取消勾选后再连接。",
-  refresh_token_limit: "该账号在 KooYomi 中的 Google 授权次数已达上限，暂时不能新建连接，请联系维护者。",
+  refresh_token_limit: "该账号在 BeamingFace 中的 Google 授权次数已达上限，暂时不能新建连接，请联系维护者。",
   onboard_input_invalid: "目录名或子目录名不符合要求。", onboard_disclosure_changed: "说明已更新，请刷新页面后重新确认。",
   scope_mismatch: "Google 返回的权限与请求不一致，连接未建立。",
   token_exchange_unconfirmed: "Google 授权码兑换未确认，请重新开始，不要重复使用同一授权。",
@@ -93,7 +93,7 @@ export default function StorageOnboard() {
       setMessage(result.enabled !== true ? reasonText(result.reason ?? "onboard_disabled")
         : result.allowed !== true ? reasons.onboard_not_allowed : "");
     } catch (error) {
-      setConfig(null); setMessage(error instanceof RequestFailure && error.reason ? reasonText(error.reason) : "请登录 KooYomi 后刷新页面。");
+      setConfig(null); setMessage(error instanceof RequestFailure && error.reason ? reasonText(error.reason) : "请登录 BeamingFace 后刷新页面。");
     } finally { setBusy(false); }
   }, []);
   useEffect(() => { queueMicrotask(() => void load()); }, [load]);
@@ -167,7 +167,7 @@ export default function StorageOnboard() {
     <p role="status" className="my-4">{message}</p>
     {unfinished.map(a => <section key={a.onboard_attempt_id} className="my-3 rounded-xl border p-3 text-sm">
       <p>「{a.root.name}」：{a.state === "failed" ? "未完成" : a.state === "expired" ? "已过期" : "处理中"}{a.failure_code ? `（${reasonText(a.failure_code)}）` : ""}</p>
-      {a.orphans.length > 0 && <p>已在 Drive 中创建但未启用：{a.orphans.map(o => o.role === "root" ? "根目录" : o.role.replace(/^track:/, "子目录 ")).join("、")}。KooYomi 不会删除它们，可在 Drive 中自行处理。</p>}
+      {a.orphans.length > 0 && <p>已在 Drive 中创建但未启用：{a.orphans.map(o => o.role === "root" ? "根目录" : o.role.replace(/^track:/, "子目录 ")).join("、")}。BeamingFace 不会删除它们，可在 Drive 中自行处理。</p>}
       {/* The server expires attempts after 30 minutes; an expired one is listed as expired. Retry only
           while the staged credential is kept and no other run holds the attempt. */}
       {a.retryable === true &&
@@ -190,7 +190,7 @@ export default function StorageOnboard() {
       <label className="block"><input type="checkbox" checked={defaultRefresh} disabled={busy || !config.refresh_available}
         onChange={event => setDefaultRefresh(event.target.checked)} />连接后后台自动续签（默认选中，可随时停用）</label>
       {!defaultRefresh && <p className="text-sm">不开启后台续期时，连接约 1 小时后读写都不可用，需要回到本页重新授权。</p>}
-      {(config.refresh_token_count ?? 0) >= 50 && <p className="text-sm">该账号在 KooYomi 中的 Google 授权次数已较多。Google 超过上限时会静默作废最早的授权。</p>}
+      {(config.refresh_token_count ?? 0) >= 50 && <p className="text-sm">该账号在 BeamingFace 中的 Google 授权次数已较多。Google 超过上限时会静默作废最早的授权。</p>}
       {choice ? <div className="my-4 whitespace-pre-wrap rounded-xl border p-3 text-sm" aria-label="说明">{renderOnboardDisclosure(choice)}</div>
         : <p className="my-4 text-sm">{mode === "picked" && !picked ? "请先选择目录。" : "目录名或子目录名不符合要求：每个名称 1–160 个字符，不能含“/”或“\\”，子目录不能重复。"}</p>}
       <button disabled={busy || !ready} onClick={() => void confirm()}>确认并连接 Google Drive</button>

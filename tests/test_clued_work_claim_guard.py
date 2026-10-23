@@ -448,7 +448,7 @@ class AgentInboxTest(unittest.TestCase):
                     self.assertEqual(context["hookEventName"], "PostToolUse")
                     self.assertIn("1 request(s) to you not yet answered", context["additionalContext"])
                     self.assertIn("clued_agent_message_send reply_to", context["additionalContext"])
-                    self.assertIn("reconnect the KooYomi connector", context["additionalContext"])
+                    self.assertIn("reconnect the BeamingFace connector", context["additionalContext"])
 
     def test_disabled_inbox_reminder_requires_reading_without_replies(self):
         disabled = {**INBOX, "messages_enabled": False}

@@ -319,6 +319,14 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
   - **GitHub 强制**：准入运行另发一个 App 检查 `clued-merge-slot`（Merge Admission 第 6 步之前，准入为提示模式时不检查）：头提交已包含基础分支最新提交时，只有认领持有有效合并位才通过；没包含时通过（GitHub 本来就不让合并）；服务还不报 `merge_slot_until` 时通过并注明未检查。它不并进 `clued-admission-verified`，因为重型工作流的准入关卡看那个检查，恰好包含最新 main 的中间推送仍要跑 CI。每小时的复核对已通过但合并位已失效或已归还的头提交补发失败检查。拿合并位时 PR 已包含最新提交，就编辑 PR 正文重跑检查。
   - **上线顺序**：合并 → 备份 → 迁移 → Worker 发布（合同 v33）→ Owner 在 main 规则集里把 clued-admission App 的 `clued-merge-slot` 加为必需检查。加之前它只是提示。
   - **剩余限制**：检查结果是某一时刻的判断；合并位在两次复核之间失效或被归还，已通过的检查最多一小时后才转为失败；这段时间里能合并的只有已包含最新 main 的那一个 PR，别的 PR 都还要先合入 main，所以不会白跑 CI。账号里还没有标记 `ci-admission` 角色的 Binding 时，任何 Binding 都能调用归还接口（与 adopt 相同）。仓库管理员权限可以改规则集。
+- **ci-admission 的移交、用途与生效时间（常驻执行器主备 C10，Task `bb13efb5`，Owner Decision `bd86149e`、`1c5d34fd`，迁移 `20261023010000`）**：每条角色记录有生效时间 `effective_at` 和用途 `purpose`。
+  - 一条记录到了生效时间才放行它的 Binding。还没生效的记录照样算标过：`binding_role_admits_v1` 只有在这个用途一条未结束的记录都没有时，才对所有 Binding 开放。只认精确持有者的地方（受保护改动的 Grant 门、受保护的 verify、执行观测、CI 命令门）也都要求记录已生效。
+  - `/bindings` 上标 `ci-admission` 要选用途：常驻节点（`resident-node`）、停车位（`parking`）或其他（`other`，例如 GitHub 环境 `clued-admission` 的连接）。常驻节点和其他在确认 5 分钟后生效；停车位永不生效，只占住这个用途。迁移前的记录用途为 `unspecified`，按常驻节点对待。
+  - 已有活的常驻节点持有者（含 `unspecified`）时，再标常驻节点被拒绝（`binding_role_resident_holder_exists`）；标为其他的连接不挡常驻节点。停车位只有在另有一个停车位时才能取消（`binding_role_parking_protected`）。
+  - 「移交 CI 准入」（Native 两步：`clued_binding_role_handover_confirmation_issue_v1`、`clued_binding_role_handover_v1`）在一个事务里结束 X 的记录，给 Y 一条 5 分钟后生效的常驻节点记录；停车位和其他持有者不动。X 必须持有且不是停车位；Y 必须有效、有 `context:read`、还没有 ci-admission。轮换连接时，记录带着生效时间和用途搬走。
+  - **剩余限制**：
+    - 用途是 Owner 的声明，服务端不核实；把常驻节点标成「其他」，就绕开了常驻节点之间的这条约束。
+    - 轮换连接时，已生效的记录在新连接上也立即生效。若把轮换出的新 token 装到另一台节点上，旧节点在途的发布（准入后约 150 秒内）可能与新节点重叠。所以不要轮换当班节点的连接；要换，先移交到另一节点（设计 v0.4 §7.2）。
 
 ### 4.5 预算
 

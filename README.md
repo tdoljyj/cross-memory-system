@@ -1,37 +1,39 @@
-# KooYomi
+# BeamingFace
 
-> **发现美好，让美好继续。**
+> **好的发现，会写在脸上。**
 
-KooYomi（原 Clued）是一个围绕「发现与继续」建立的数字平台。
+BeamingFace 是一个让人发现有趣内容、好用应用和新玩法的数字平台。
 
-它让值得发现的内容、应用、作品与能力更容易被找到，也让重要的上下文、状态、决定和正在进行的事情能够跨会话、模型、Agent、设备与时间继续下去。KooYomi 不以“AI Memory”或单一记忆工具定义自己；模型和工具可以变化，连续性不应随之丢失。
+在 BeamingFace，顺着兴趣逛下去。看看大家做出了什么，遇见喜欢的，就点开试一试。可能是一件刚好用得上的小工具，也可能是一个让你忍不住分享的新发现。从“这是什么”，到“原来还能这样”，让好奇，变成脸上的笑意。
 
-本仓库 `cross-memory-system` 是 KooYomi 的研发与发布控制面之一，承载 Kernel、协议、运行时、Skills/MCP、治理合同、测试、验证和发布证据。**它不是普通用户产品运行链的必经组件，也不是用户在线 Canonical Store。**
+本仓库 `cross-memory-system` 是 BeamingFace 的研发与发布控制面之一，承载 Kernel、协议、运行时、Skills/MCP、治理合同、测试、验证和发布证据。**它不是普通用户产品运行链的必经组件，也不是用户在线 Canonical Store。**
 
 当前产品版本以根目录 [`VERSION`](./VERSION) 为准。
 
-当前品牌名称为 **KooYomi**，主站为 [kooyomi.com](https://kooyomi.com)；现行品牌材料见[品牌展示与更名规范 v0.3（固定，Google Drive）](https://drive.google.com/file/d/104uf7i4OgCxijlwNGewmUl0vYUILEC34/view)。`Kooyumi` / `Clued` / `clued` 仍保留在技术兼容标识中，包括目录和包名、Skill/MCP 工具名、RPC/Schema、协议字串、存储键、旧接口与域名、正式工作流、版本标签及历史原件。品牌展示名称变化不表示这些技术标识已经迁移，也不改写固定版本的披露或确认摘要；仓库名称仍为 `cross-memory-system`。
+当前品牌名称为 **BeamingFace**，正式域名为 [beamingface.com](https://beamingface.com)，开发域名为 [dev.beamingface.com](https://dev.beamingface.com)；现行品牌材料见[品牌展示与更名规范 v0.4（固定，Google Drive）](https://drive.google.com/file/d/1g7G1OPK_CLT4f39whfWyIcQzVm0ygeP5/view)。本次代码更名不代表新域名已经绑定或上线。
 
-## Use KooYomi / 使用 KooYomi
+`Kooyumi` / `KooYomi` / `Clued` / `clued` 仍保留在技术兼容标识中，包括目录和包名、Skill/MCP 工具名、RPC/Schema、协议字串、存储键、旧接口与域名、正式工作流、版本标签及历史原件。品牌展示名称变化不表示这些技术标识已经迁移，也不改写固定版本的披露或确认摘要；GitHub 仓库标识仍为 `cross-memory-system`。范围及发布状态见[品牌更名说明](./docs/maintenance/beamingface-branding.md)。
+
+## Use BeamingFace / 使用 BeamingFace
 
 普通用户不需要 clone、浏览或直接依赖本仓库。
 
-- KooYomi 主站：<https://kooyomi.com>
-- KooYomi Connect：<https://kooyomi.com/connect>
-- KooYomi Skill：[Skill 入口](./skills/clued/SKILL.md) · [安装与更新说明](./skills/README.md)。供支持 Skill 的 Agent 读取和维护经授权的个人与项目上下文，也用于 KooYomi 的开发与维护；技术兼容名称仍为 `clued`。
-- 使用 Skill 前，先在客户端连接 KooYomi MCP 并完成授权，再启用 Skill。Skill 提供操作指引；安装 Skill 本身不会建立 MCP 连接、创建账户或增加访问权限。
+- 正式域名：<https://beamingface.com>；开发域名：<https://dev.beamingface.com>（待完成绑定与上线核验）。
+- 切换前的现有网站与 Connect 入口：<https://kooyomi.com> · <https://kooyomi.com/connect>。
+- BeamingFace Skill：[Skill 入口](./skills/clued/SKILL.md) · [安装与更新说明](./skills/README.md)。供支持 Skill 的 Agent 读取和维护经授权的个人与项目上下文，也用于 BeamingFace 的开发与维护；技术兼容名称仍为 `clued`。
+- 使用 Skill 前，先在客户端连接 BeamingFace MCP 并完成授权，再启用 Skill。Skill 提供操作指引；安装 Skill 本身不会建立 MCP 连接、创建账户或增加访问权限。
 - MCP/OAuth 继续使用已注册的 `https://kooyumi.pixelgrav.com/mcp`；既有 `clued.pixelgrav.com` 连接保留各自的 resource、issuer 和 Binding。主站更名不迁移这些技术身份，不复制旧 token。
-- 产品运行时通过正式的 App / Web / Agent / MCP 入口访问 KooYomi 服务。
+- 产品运行时通过正式的 App / Web / Agent / MCP 入口访问 BeamingFace 服务。
 - Git/GitHub 仅参与开发、验证、构建、发布与治理，不作为普通用户请求中转层或产品可用性的前提。
 
 ## Current Architecture / 当前架构
 
-经认证的 KooYomi Production Service 是在线 Canonical Authority。结构化 Canonical 数据由 Supabase/PostgreSQL 承载；受治理的对象数据可由 R2 等对象存储承载。所有业务读取与写入都必须经过认证、授权和正式合同边界。
+经认证的 BeamingFace Production Service 是在线 Canonical Authority。结构化 Canonical 数据由 Supabase/PostgreSQL 承载；受治理的对象数据可由 R2 等对象存储承载。所有业务读取与写入都必须经过认证、授权和正式合同边界。
 
 正式生产运行链的逻辑架构边界为：
 
 ```text
-KooYomi App / Web / Agent / MCP
+BeamingFace App / Web / Agent / MCP
         ↓
 Identity
         ↓
@@ -79,7 +81,7 @@ CURRENT
 
 ## Data Generations / 数据世代
 
-KooYomi 的用户数据生命周期按三个独立世代管理：
+BeamingFace 的用户数据生命周期按三个独立世代管理：
 
 ```text
 Generation 0 — Development / Internal Test
@@ -100,10 +102,10 @@ Generation 2 — Formal Production
 
 | 路径 | 主要职责 |
 |---|---|
-| `apps/clued-cloud/` | KooYomi Cloud、账户与生产 Runtime 实现 |
-| `kernel/` | KooYomi Kernel 与核心执行/资格/发布能力 |
+| `apps/clued-cloud/` | BeamingFace Cloud、账户与生产 Runtime 实现 |
+| `kernel/` | BeamingFace Kernel 与核心执行/资格/发布能力 |
 | `protocol/` | Vendor-neutral 协议、Schema、FSM 与合同 |
-| `skills/` | KooYomi Skill 与 Agent 使用/维护入口 |
+| `skills/` | BeamingFace Skill 与 Agent 使用/维护入口 |
 | `development/` | 当前工程合同、治理、Schema、设计与只读投影 |
 | `tests/` / `evals/` | 自动化测试、Qualification 与回归 |
 | `memory/` | 单用户、版本化、只读 Repository Snapshot；不是在线 Canon |
@@ -121,7 +123,7 @@ Generation 2 — Formal Production
 - **Agent / Coding Agent / 仓库维护** → [`AGENTS.md`](./AGENTS.md)
 - **Cloud / Runtime 开发** → [`apps/clued-cloud/README.md`](./apps/clued-cloud/README.md)
 - **跨厂商导入/导出协议（Future Capability）** → [`protocol/continuity/v1/README.md`](./protocol/continuity/v1/README.md)
-- **KooYomi Skill** → [`skills/README.md`](./skills/README.md)
+- **BeamingFace Skill** → [`skills/README.md`](./skills/README.md)
 - **工程文档导航** → [`docs/README.md`](./docs/README.md)
 - **Repository Governance Projection** → [`development/projections/multitrack/CurrentGovernanceInventory.projection.md`](./development/projections/multitrack/CurrentGovernanceInventory.projection.md)
 
@@ -135,7 +137,7 @@ Generation 2 — Formal Production
 |---|---|
 | 代码、协议/合同、ADR、Schema/Migration、测试/Fixture、Runbook、Skill、构建/部署配置、当前执行控制、机器可验证 Evidence | 本 Git 仓库 |
 | 产品研究、战略、商业、品牌、视觉、汇报、会议/对话整理、历史评审、验收/Closeout 长报告、图片及办公文档 | Google Drive |
-| 用户与项目的在线 Canonical 状态、任务、决定和运行记录 | KooYomi Production Canonical Store |
+| 用户与项目的在线 Canonical 状态、任务、决定和运行记录 | BeamingFace Production Canonical Store |
 
 资料入口：
 

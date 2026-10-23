@@ -89,7 +89,7 @@ async function loaded(f, value = detail()) {
 
 test('task detail: signed out makes no RPC and offers the Owner sign-in', t => {
   const f = fixture(); t.after(() => f.unmount()); f.emit('INITIAL_SESSION', null);
-  assert.equal(f.calls.length, 0); assert.ok(f.text().includes('登录 KooYomi'));
+  assert.equal(f.calls.length, 0); assert.ok(f.text().includes('登录 BeamingFace'));
   assert.equal(f.nodes('pre').length, 0);
 });
 
@@ -155,16 +155,16 @@ test('task detail: signed-out events clear content and invalidate pending reads'
   const f = fixture(); t.after(() => f.unmount()); await loaded(f);
   f.button('刷新').props.onClick(); f.emit('SIGNED_OUT', null);
   f.calls[1].resolve({ data: detail(), error: null }); await f.settle();
-  assert.ok(f.text().includes('登录 KooYomi')); assert.ok(!f.text().includes('Owner task'));
+  assert.ok(f.text().includes('登录 BeamingFace')); assert.ok(!f.text().includes('Owner task'));
 });
 
 test('task detail: the logout button clears data before signOut resolves', async t => {
   const f = fixture(); t.after(() => f.unmount()); await loaded(f);
   f.button('退出登录').props.onClick(); f.render();
-  assert.equal(f.signouts(), 1); assert.ok(f.text().includes('登录 KooYomi')); assert.ok(!f.text().includes('Owner task'));
+  assert.equal(f.signouts(), 1); assert.ok(f.text().includes('登录 BeamingFace')); assert.ok(!f.text().includes('Owner task'));
 });
 
-for (const [code, message] of [['direct_human_session_required', '需要你本人直接登录 KooYomi'], ['record_not_found', '找不到这条记录，或当前账户无权查看']]) {
+for (const [code, message] of [['direct_human_session_required', '需要你本人直接登录 BeamingFace'], ['record_not_found', '找不到这条记录，或当前账户无权查看']]) {
   test(`task detail: ${code} is an explicit refusal without old or empty-success content`, async t => {
     const f = fixture(); t.after(() => f.unmount()); await loaded(f);
     f.button('刷新').props.onClick();
@@ -177,7 +177,7 @@ for (const [code, message] of [['direct_human_session_required', '需要你本�
 test('task detail: transport refusal is also explained', async t => {
   const f = fixture(); t.after(() => f.unmount()); f.emit('INITIAL_SESSION', session('owner'));
   f.calls[0].resolve({ data: null, error: { code: 'P0001', message: 'direct_human_session_required' } }); await f.settle();
-  assert.ok(f.text().includes('需要你本人直接登录 KooYomi')); assert.equal(f.nodes('pre').length, 0);
+  assert.ok(f.text().includes('需要你本人直接登录 BeamingFace')); assert.equal(f.nodes('pre').length, 0);
 });
 
 for (const data of [null, { status: 'ok' }, detail({ status: 'pending' }), detail({ record: record({ id: NOTE }) }),

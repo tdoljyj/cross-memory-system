@@ -13,9 +13,9 @@ Owner Decision `6e0371e3`，Task `364212a1`。迁移 `apps/clued-cloud/supabase/
 3. **最小权限。** Owner 逐项勾选资源（全局、个人资料、自己的项目、自己的开发上下文）和动作，写成 v12 授权条目（`authorization_entries_v12`）；令牌只能做勾选的事。签发后可在同一页面减少权限或撤销（沿用 `clued_authorization_manage_v12`）。
 4. **必须有有效期。** 1 到 90 天，页面提供 7、30、90 天。有效期只记在 v12 授权（`authorizations_v12.expires_at`）上，与迁移 `20260927232454` 的约定一致，`clued_agent_bindings` 不加有效期列。到期由两处保证：经过 `resolve_binding` 的调用由 `authorization_assert_entry_v12` 立即拒绝；`clued_private.binding_expiry_sweep_v1()` 每 5 分钟（生产库 pg_cron 任务 `clued-binding-expiry-sweep`）把到期的无头 Binding 标记为撤销，使只检查 `revoked_at` 的路径最多 5 分钟后也停止接受。
 5. **令牌只出现一次。** 原始令牌在数据库内生成，只在第二步的响应里返回一次；历史签发实现写入 SHA-256 证明值，P0-4 2a 生效后的认证列存带域的 `cv1:` 校验值，由受控触发器转换该证明值。客户端证明仍为 `sha256(token)`，存储校验值不能直接用于认证；重放第二步返回 `token: null`。回执（`HEADLESS_BINDING_ISSUED`）记录 Binding、权限、有效期、确认视图摘要和会话，不含令牌。
-6. **轮换。** 第一步可以指定被替换的 Binding（无头令牌，或没有 v12 授权记录的旧 Binding；OAuth 连接不能被替换）。签发后旧 Binding 再保留 1 小时然后失效（退役时间记在 `clued_private.binding_retirements_v1`，无头的旧 Binding 同时缩短其授权有效期；到点由同一个清扫撤销），它的 Binding 角色（`ci-admission`、`release-door`）在同一事务里移到新 Binding；新权限必须包含角色需要的权限，否则第一步就拒绝。
+6. **轮换。** 第一步可以指定被替换的 Binding（无头令牌，或没有 v12 授权记录的旧 Binding；OAuth 连接不能被替换）。签发后旧 Binding 再保留 1 小时然后失效（退役时间记在 `clued_private.binding_retirements_v1`，无头的旧 Binding 同时缩短其授权有效期；到点由同一个清扫撤销），它的 Binding 角色（`ci-admission`、`release-door`）在同一事务里移到新 Binding，每条角色记录保留原来的生效时间和用途（主备 C10，Task `bb13efb5`，迁移 `20261023010000`），所以轮换不会缩短移交后的 5 分钟等待；新权限必须包含角色需要的权限，否则第一步就拒绝。
 7. **上限。** 每个 Owner 同时最多 50 个有效的无头 Binding。
-8. **撤销旧方式创建的 Binding。** 没有 v12 授权记录的旧 Binding，`clued_authorization_manage_v12` 撤销不了，改由 `clued_headless_binding_revoke_v1` 在同一页面撤销：同样只接受 Owner 本人的直接登录会话，只能撤销自己名下、仍有效、没有 v12 授权记录的 Binding（无头令牌和 OAuth 连接仍走 `manage_v12`）。它同时结束这个 Binding 的角色，写回执 `LEGACY_BINDING_REVOKED`（含被结束的角色）和 v12 审计记录 `legacy_revoke`。被轮换、等待退役的旧 Binding 也可以这样提前撤销。
+8. **撤销旧方式创建的 Binding。** 没有 v12 授权记录的旧 Binding，`clued_authorization_manage_v12` 撤销不了，改由 `clued_headless_binding_revoke_v1` 在同一页面撤销：同样只接受 Owner 本人的直接登录会话，只能撤销自己名下、仍有效、没有 v12 授权记录的 Binding（无头令牌和 OAuth 连接仍走 `manage_v12`）。它不结束这个 Binding 的角色：角色锁在已撤销的 Binding 上，直到 Owner 在 `/bindings` 给有效的 Binding 标上或取消（迁移 `20261004220000`，与 `manage_v12` 撤销一致；常驻执行器的停车位靠的正是这一点）。回执 `LEGACY_BINDING_REVOKED` 写明保留的角色（`roles_kept`），v12 审计记录为 `legacy_revoke`。被轮换、等待退役的旧 Binding 也可以这样提前撤销。
 
 ## 令牌能用在哪里
 

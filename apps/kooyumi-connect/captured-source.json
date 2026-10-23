@@ -14,8 +14,8 @@
     "extracted_module_sha256": "fe2677bd4f9c34ad467aa47e121e78877487126ae97004d04bb0e1f9c2c581c3"
   },
   "candidate": {
-    "revision": "0.2.15",
-    "module_sha256": "8af324adc8457d8e8fefcd32807d31eeb8e2a77e283eddbd4f9ad8127ff9f3ac"
+    "revision": "0.2.16",
+    "module_sha256": "982ce62e7b14628a132cc6be1319ace037414b91d3e059ce48ff39327bd2a93f"
   },
   "bindings": [
     {
@@ -29,5 +29,9 @@
       "name": "CONNECT_KV",
       "namespace_id": "8b09d570d5ee4825a986409bc638423b"
     }
-  ]
+  ],
+  "predecessor_candidate": {
+    "revision": "0.2.15",
+    "module_sha256": "8af324adc8457d8e8fefcd32807d31eeb8e2a77e283eddbd4f9ad8127ff9f3ac"
+  }
 }

@@ -1,6 +1,11 @@
 // Offline drill of the resident lifecycle (no host, no network, no secret; temp directories only).
 // v0.7: a second instance with the hosted relay on drives one month of free-minutes scenarios (§7.6 of
 // the free-minutes design plus the first head after the minutes return) and checks receipt types and order.
+// v0.8: an Owner abort of a batch hanging in stage 2 (DESIGN §6.5).
+// v1.0 (phase 2, step 1, DESIGN §17): the run queue (a seen head is never reserved again, a release and a wait are
+// retried on their own back-off), a supersession before stage 1, and the breaker opening and closing on a trial.
+// v1.1 (phase 2, step 2, DESIGN §18): parking at B (the close archive before stage 8, stage 8 as tries on their own
+// back-off while other PRs run), main moving ending a parked batch, and the Owner drain before a reinstall.
 //   node drill/offline-drill.mjs            prints a step table and a JSON summary; exit 1 on any miss
 //
 // It drives the real executor, ledger, receipts, inboxes, protocol archive and Owner-request code
@@ -16,8 +21,11 @@ import { ReceiptChain } from '../src/receipts.mjs';
 import { Inbox, OwnerInbox } from '../src/inbox.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { TRIGGER_CONTRACT } from '../src/trigger.mjs';
+import { RunQueue } from '../src/queue.mjs';
 import { applyArchive, planArchive, protocolLeaves } from '../src/archive.mjs';
-import { inspect, rearmRequest, resumeRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
+import { abortRequest, drainRequest, inspect, rearmRequest, resumeRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
+import { ExecutedHeads, BACKFILL_MANIFEST_CONTRACT, CARRIED_FILE } from '../src/executed-heads.mjs';
+import { sha256 } from '../src/canonical.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const SOURCE = '5'.repeat(64);
@@ -36,9 +44,13 @@ await fs.writeFile(path.join(winSpool, 'outgoing', `${'e'.repeat(64)}.json`), '{
 let now = Date.parse('2026-10-21T00:00:00Z');
 const clock = () => now;
 const policyInput = {
-  contract: 'clued.independent-ci.resident-policy/3', repo: REPO, baseBranch: 'main', sourceManifestSha256: SOURCE, ciSourceManifestSha256: '9'.repeat(64), residentManifestSha256: RESIDENT,
+  contract: 'clued.independent-ci.resident-policy/5', repo: REPO, baseBranch: 'main', sourceManifestSha256: SOURCE, ciSourceManifestSha256: '9'.repeat(64), residentManifestSha256: RESIDENT,
   ownerAcceptance: { decisionRef: '0d84ddbb-ec1f-49c3-bbd0-953f72d53584', installReceiptRef: null }, validUntil: null,
-  limits: { maxBatchesPer24h: 12, maxEvaluationsPer24h: 24, maxConcurrent: 1, inboxMaxFiles: 16, unexecutedCooldownMs: 600_000, unexecutedMaxPer24h: 3, stageMarginMs: 180_000 },
+  limits: { maxBatchesPer24h: 72, maxEvaluationsPer24h: 96, perPrBatchesPer24h: 6, waitingRetriesPer24h: 48, reevaluationsPerPrHeadPer24h: 6, releasesPerHeadPer24h: 2, queueDepth: 100,
+    maxConcurrent: 1, inboxMaxFiles: 16, unexecutedCooldownMs: 600_000, stageMarginMs: 180_000 },
+  breaker: { consecutive: 3, windowCount: 4, windowMs: 3_600_000, backoffMs: [1_800_000, 3_600_000, 7_200_000] },
+  stage8: { mode: 'park' },
+  park: { maxParked: 4, maxParkedOutsideTop2: 8, maxMs: 86_400_000, stage8MaxTries: 12, stage8RetriesPer24h: 100 },
   companion: { userSid: OWNER, heartbeatMaxAgeMs: 60_000 },
   stageRunMilliseconds: [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000],
   linux: { distribution: 'Ubuntu-24.04', workerUnit: 'clued-ci-worker@.service', wsprepUnit: 'clued-ci-wsprep@.service', archiveUnit: 'clued-ci-archive@.service' },
@@ -67,22 +79,39 @@ const archive = async (spool, key, reason, layout) => {
 };
 const engine = {
   current: null,
-  async derive(subject, key) { this.current = { subject, key }; return { batchId: `${key.slice(0, 16)}-${'0'.repeat(12)}`, key, packageSha256: '7'.repeat(64) }; },
+  // A parked batch's later stage-8 tries run without a derive: each batch finds its own script by its key.
+  subjects: new Map(),
+  async derive(subject, key) { this.current = { subject, key }; this.subjects.set(key, subject); return { batchId: `${key.slice(0, 16)}-${'0'.repeat(12)}`, key, packageSha256: '7'.repeat(64) }; },
   async runStage(batch, stage) {
     now += 60_000;
     if ([4, 6].includes(stage.number)) { await archive(winSpool, batch.key, `between-roles-${stage.number}`); await archive(linSpool, batch.key, `between-roles-${stage.number}`, LINUX); }
     if ([2, 4, 6].includes(stage.number)) await exchange();
-    const r = script.get(`${this.current.subject.pr}:${this.current.subject.attempt}`)?.[stage.number] ?? script.get(this.current.subject.pr)?.[stage.number];
+    const subject = this.subjects.get(batch.key) ?? this.current.subject;
+    let r = script.get(`${subject.pr}:${subject.attempt}`)?.[stage.number] ?? script.get(subject.pr)?.[stage.number];
+    if (Array.isArray(r)) r = r.shift(); // one answer per run of the stage (stage 8 as tries), then success
     if (r?.leaveLinuxBusy) linuxBusy = true;
+    // The stage hangs (the 2026-10-21 refused relay) until it is asked to stop; the Owner looks and aborts meanwhile.
+    if (r?.hangUntilStop) {
+      const stopped = new Promise(resolve => { this.stopAsked = resolve; });
+      const latest = await ledger.latestRecord(batch.key);
+      await writeOwnerRequest(path.join(root, 'owner'), abortRequest({ batchKey: batch.key, expectedLedgerEntrySha256: latest.sha256, reason: 'stage 2 hangs', by: OWNER }), clock);
+      await stopped;
+      // The helper drained its own job before the entry wrote its outcome; the broker restored the original.
+      return { ok: false, code: 'STAGE_OUTCOME_MISSING', proof: WINDOWS_CLEAN };
+    }
     return r ?? { ok: true, factsSha256: '8'.repeat(64) };
   },
+  // Owner abort: the stop request of a running scanner-issuer stage (the real engine writes the broker stop and the pump cancel).
+  async requestStop(batch, number) { this.stopRequests = (this.stopRequests ?? 0) + 1; this.stopAsked?.(number); return { broker: true, requestId: '0d0d0d0d-0000-4000-8000-000000000909', stopCode: 'STOP_SENT', pump: true, done: true }; },
+  async stopOutcome() { return 'STOP_SENT'; }, // the broker's receipt: the one SERVICE_CONTROL_STOP was sent
   async closeBatch(batch) { const w = await archive(winSpool, batch.key, 'success-close'); const l = await archive(linSpool, batch.key, 'success-close', LINUX); return { verified: w.verified && l.verified, archived: w.moved + l.moved }; },
   async archiveFailure(batch, reason) { return archive(winSpool, batch.key, reason); },
   async windowsQuiescence() { return WINDOWS_CLEAN; },
 };
+let duringBundle = null; // a push while the bundle is built (phase 2 supersession)
 const companion = {
   async heartbeat() { return { at: now }; },
-  async buildBundle() { return { ok: true }; },
+  async buildBundle() { if (duringBundle) { const f = duringBundle; duringBundle = null; await f(); } return { ok: true }; },
   async prepareWorkspaces() { return { ok: true }; },
   async linuxQuiescence() { return { linuxUnitsInactive: !linuxBusy, containersZero: true }; },
   async archiveLinux(batch, reason) { return archive(linSpool, batch.key, reason, LINUX); },
@@ -94,7 +123,12 @@ const receipts = await ReceiptChain.open(path.join(state, 'receipts'), clock);
 const inbox = await Inbox.open(path.join(root, 'inbox'), path.join(state, 'inbox-archive'));
 const requests = await Inbox.open(path.join(root, 'requests'), path.join(state, 'requests-archive'));
 const owner = await OwnerInbox.open(path.join(root, 'owner'), path.join(state, 'owner-seen'));
-const exec = new ResidentExecutor({ policy, ledger, receipts, inbox, requests, owner, engine, companion, clock,
+// A fresh install with nothing carried forward: install\backfill-manifest.json lists no earlier state.
+const emptyManifest = async dir => { await fs.mkdir(dir, { recursive: true }); const f = path.join(dir, 'backfill-manifest.json'); await fs.writeFile(f, JSON.stringify({ contract: BACKFILL_MANIFEST_CONTRACT, sources: [] })); return f; };
+const executedHeads = await ExecutedHeads.open(state, clock, { manifestFile: await emptyManifest(path.join(root, 'install')), carriedRoot: path.join(state, 'backfill') });
+const queue = await RunQueue.open(path.join(state, 'queue'), clock);
+const exec = new ResidentExecutor({ policy, ledger, receipts, inbox, requests, owner, engine, companion, clock, executedHeads, queue,
+  sleep: () => new Promise(resolve => setImmediate(resolve)),
   sourceIntegrity: async () => ({ ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT }) });
 
 let seq = 0;
@@ -119,12 +153,14 @@ await step('normal PR 901: eight stages, between-role archives, close', async ()
 await step('forged repo, bad JSON and a script file are rejected', async () => {
   await drop(trigger(950, { repo: 'evil/repo' })); await drop('{not json'); await fs.writeFile(path.join(root, 'inbox', 'run.ps1'), 'Remove-Item C:\\ -Recurse'); return exec.tick();
 }, r => r.state === 'IDLE');
-await step('PR 901 head again with a moved main: never re-run', async () => { await drop(trigger(901, { baseSha: '1'.repeat(40) })); return exec.tick(); }, r => r.reason === 'HEAD_ALREADY_EXECUTED_NO_RETRY');
-script.set(902, { 1: { ok: false, code: 'PATHS_OUTSIDE_WRITE_SET', proof: WINDOWS_CLEAN } });
+await step('PR 901 head again with a moved main: the queue has seen it, nothing is reserved', async () => { await drop(trigger(901, { baseSha: '1'.repeat(40) })); return exec.tick(); }, r => r.state === 'IDLE');
+await step('  the same head in another PR: the ledger never runs it', async () => { await drop({ ...trigger(901), pr: 951 }); return exec.tick(); }, r => r.reason === 'HEAD_ALREADY_EXECUTED_NO_RETRY');
+// The Source's own stage-1 outcome says safe to re-run (a refusal inside the first admission's boundary): released.
+script.set(902, { 1: { ok: false, code: 'PATHS_OUTSIDE_WRITE_SET', proof: WINDOWS_CLEAN, outcome: { status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: null, safeToRerun: true } } });
 await step('PR 902 not admitted: released, nothing reached Linux', async () => { await drop(trigger(902)); return exec.tick(); }, r => r.state === 'NOT_ADMITTED');
-await step('PR 902 re-proposed inside the cool-down waits', async () => { await drop(trigger(902)); return exec.tick(); }, r => r.reason === 'UNEXECUTED_COOLDOWN');
+await step('PR 902 re-proposed inside its back-off waits', async () => { await drop(trigger(902)); return exec.tick(); }, r => r.state === 'IDLE' && queue.row(902).state === 'BACKOFF');
 script.delete(902);
-await step('after the cool-down (claim widened) PR 902 runs', async () => { now += 600_001; return exec.tick(); }, r => r.state === 'COMPLETED');
+await step('after its 10-minute back-off (claim widened) PR 902 is retried on its own and runs', async () => { now += 600_001; return exec.tick(); }, r => r.state === 'COMPLETED');
 script.set(903, { 4: { ok: false, code: 'FORMAL_BRIDGE_STAGE_DEADLINE', proof: WINDOWS_CLEAN } });
 await step('PR 903 fails cleanly at stage 4: archived, executor continues', async () => { await drop(trigger(903)); return exec.tick(); }, r => r.state === 'FAILED_CLEAN');
 script.set(904, { 6: { ok: false, code: 'FORMAL_BRIDGE_STAGE_DEADLINE', proof: WINDOWS_CLEAN, leaveLinuxBusy: true } });
@@ -140,7 +176,7 @@ linuxBusy = false; now += 1;
 await step('Owner re-arm request: the service archives, clears HALT and runs the waiting PR 905', async () => {
   await writeOwnerRequest(path.join(root, 'owner'), rearmRequest({ expectedHaltSha256: view.haltSha256, reason: 'worker confirmed exited', by: OWNER }), clock); return exec.tick();
 }, r => r.state === 'COMPLETED');
-await step('PR 904 is still never re-run automatically', async () => { await drop(trigger(904)); return exec.tick(); }, r => r.reason === 'HEAD_ALREADY_EXECUTED_NO_RETRY');
+await step('PR 904 is still never re-run automatically', async () => { await drop(trigger(904)); return exec.tick(); }, r => r.state === 'IDLE' && queue.row(904).state === 'STOPPED');
 await step('anyone may pause', async () => { await drop({ contract: PAUSE_CONTRACT, reason: 'drill pause' }, 'requests'); await drop(trigger(906)); return exec.tick(); }, r => r.state === 'PAUSED');
 await step('a resume dropped in the user-writable requests dir is ignored', async () => { await drop(resumeRequest({ expectedPausedSha256: (await ledger.paused()).sha256, by: OWNER }), 'requests'); return exec.tick(); }, r => r.state === 'PAUSED');
 await step('only the Owner resume request continues', async () => { await writeOwnerRequest(path.join(root, 'owner'), resumeRequest({ expectedPausedSha256: (await ledger.paused()).sha256, by: OWNER }), clock); return exec.tick(); }, r => r.state === 'COMPLETED');
@@ -150,6 +186,61 @@ await step('PR 907: a push between bundle and scan fails stage 2 cleanly and sch
 await step('attempt 2 waits for its delay, then runs all eight stages once', async () => { const early = await exec.tick(); now += 600_000; const r = await exec.tick(); return { ...r, early: early.state }; }, r => r.early === 'IDLE' && r.state === 'COMPLETED');
 script.set(908, { 3: { ok: false, code: 'GITHUB_TRANSIENT_UNAVAILABLE', proof: WINDOWS_CLEAN } });
 await step('PR 908: the same transient after a role published (stage 3) is final, no attempt 2', async () => { await drop(trigger(908)); const r = await exec.tick(); now += 600_000; const again = await exec.tick(); return { ...r, again: again.state }; }, r => r.state === 'FAILED_CLEAN' && !r.attempt2 && r.again === 'IDLE');
+// Owner abort (DESIGN §6.5): PR 909 hangs in stage 2; the Owner's abort stops it through the stop path.
+script.set(909, { 2: { hangUntilStop: true } });
+await step('PR 909 hangs in stage 2: the Owner aborts it mid-stage, it is stopped, archived and FAILED_CLEAN OWNER_ABORTED', async () => { await drop(trigger(909)); return exec.tick(); },
+  r => r.state === 'FAILED_CLEAN' && r.failureCode === 'OWNER_ABORTED' && r.safePoint === 'in-stage-2' && engine.stopRequests === 1);
+const leftAfterAbort = (await protocolLeaves(winSpool)).length + (await protocolLeaves(linSpool, LINUX)).length;
+await step('  nothing after stage 2 ran, the scene is archived on both hosts, and PR 909 never runs again', async () => { await drop(trigger(909)); const r = await exec.tick(); return { ...r, left: leftAfterAbort }; },
+  r => r.state === 'IDLE' && queue.row(909).state === 'STOPPED' && r.left === 0);
+// ---- phase 2, step 1: the run queue's waits, a supersession before stage 1, the breaker ----
+const WAIT = { ok: false, code: 'NATIVE_NOT_ADMITTED', proof: WINDOWS_CLEAN, outcome: { status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, mayHavePublished: false,
+  diagnostic: { verdict: 'REJECTED', nativeVerdict: 'REJECTED', reasonCodes: ['merge_slot_required'], nativeReasonCodes: [] }, scheduling: null, safeToRerun: true } };
+script.set(920, { 1: WAIT });
+await step('PR 920 waits for its merge slot: released as a wait, nothing burned', async () => { await drop(trigger(920)); return exec.tick(); }, r => r.state === 'NOT_ADMITTED' && queue.row(920).state === 'WAITING');
+script.delete(920);
+await step('  ten minutes later it is retried on its own (no new trigger) and runs', async () => { now += 600_001; return exec.tick(); }, r => r.state === 'COMPLETED');
+await step('PR 921 gets a newer commit while its bundle is built: released before stage 1, the newer commit runs next', async () => {
+  duringBundle = () => drop({ ...trigger(921), headSha: head(9210) });
+  await drop(trigger(921)); const first = await exec.tick(); const second = await exec.tick(); return { ...second, first: first.failureCode };
+}, r => r.first === 'BATCH_SUPERSEDED' && r.state === 'COMPLETED' && queue.row(921).current.headSha === head(9210));
+for (const pr of [922, 923, 924]) script.set(pr, { 3: { ok: false, code: 'STAGE_PACKAGE_REFUSED', proof: WINDOWS_CLEAN } });
+await step('three environment failures in a row (PRs 922-924) open the breaker; nothing starts until the trial', async () => {
+  for (const pr of [922, 923, 924, 925]) await drop(trigger(pr));
+  for (let i = 0; i < 3; i++) await exec.tick();
+  return exec.tick();
+}, r => r.state === 'DEFERRED' && r.reason === 'BREAKER_OPEN' && queue.breaker.state === 'open');
+await step('  thirty minutes later PR 925 is the trial (not a row that failed); it completes and closes the breaker', async () => { now += 1_800_000; return exec.tick(); },
+  r => r.state === 'COMPLETED' && queue.breaker.state === 'closed');
+// ---- phase 2, step 2: parking at B (stage 8 as tries), main moving, the Owner drain before a reinstall ----
+const notReady = (code, mergeQueue = { entered: false, state: null, position: null }) => ({ ok: false, code, proof: WINDOWS_CLEAN, brokerNoLaunch: false,
+  outcome: { status: 'BLOCKED', reason: code, sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: { ciRetryAfter: null, mergeQueue }, safeToRerun: false } });
+script.set(930, { 8: [notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), notReady('RESIDENT_QUEUE_HEAD_NOT_REACHED', { entered: true, state: 'waiting', position: 1 })] });
+await step('PR 930 has not joined the merge queue: closed on both hosts, it parks before stage 8 while PR 931 runs', async () => {
+  await drop(trigger(930)); const p = await exec.tick(); const left = (await protocolLeaves(winSpool)).length + (await protocolLeaves(linSpool, LINUX)).length;
+  await drop(trigger(931)); const r = await exec.tick(); return { ...r, parked: p.state, tries: p.tries, left };
+}, r => r.parked === 'PARKED' && r.tries === 1 && r.left === 0 && r.state === 'COMPLETED' && queue.row(930).state === 'PARKED');
+await step('  ten minutes later it is first in the merge queue: tried again a minute later, it completes on try 3', async () => {
+  now += 600_000; const second = await exec.tick(); now += 60_000; const third = await exec.tick(); return { ...third, second: second.state, position: second.position };
+}, r => r.second === 'PARKED' && r.position === 1 && r.state === 'COMPLETED' && r.tries === 3 && queue.row(930).state === 'DONE');
+script.set(932, { 8: [notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), notReady('RESIDENT_BASE_MOVED')] });
+await step('PR 932 parks, then main moves: the batch ends at once, FAILED_CLEAN RESIDENT_BASE_MOVED, never an attempt 2', async () => {
+  await drop(trigger(932)); const p = await exec.tick(); now += 600_000; const r = await exec.tick(); return { ...r, parked: p.state };
+}, r => r.parked === 'PARKED' && r.state === 'FAILED_CLEAN' && r.failureCode === 'RESIDENT_BASE_MOVED' && !r.attempt2);
+script.set(934, { 8: [notReady('STRICT_OFF_WITHOUT_TRAIN')] });
+await step('step 3a: PR 934 finds strict off on main without the train: it parks, the Owner is told; strict back on, it completes', async () => {
+  await drop(trigger(934)); const p = await exec.tick(); const told = queue.notices.some(n => n.kind === 'stage8-rules' && n.code === 'STRICT_OFF_WITHOUT_TRAIN');
+  now += 600_000; const r = await exec.tick(); return { ...r, parked: p.state, reason: p.reason, told };
+}, r => r.parked === 'PARKED' && r.reason === 'STRICT_OFF_WITHOUT_TRAIN' && r.told && r.state === 'COMPLETED' && queue.row(934).state === 'DONE');
+script.set(933, { 8: [notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')] });
+await step('PR 933 parks; the Owner drain before a reinstall ends it OWNER_ABORTED and leaves nothing open', async () => {
+  await drop(trigger(933)); const p = await exec.tick(); now += 1;
+  await writeOwnerRequest(path.join(root, 'owner'), drainRequest({ reason: 'drill reinstall', by: OWNER }, clock), clock);
+  await exec.tick();
+  const open = (await ledger.open()).length;
+  const ended = (await Promise.all((await fs.readdir(path.join(state, 'ledger'))).map(k => ledger.state(k)))).filter(e => e.reserved?.subject?.pr === 933);
+  return { state: ended[0]?.terminal?.facts?.failureCode ?? '-', safePoint: ended[0]?.terminal?.facts?.safePoint, parked: p.state, open };
+}, r => r.parked === 'PARKED' && r.state === 'OWNER_ABORTED' && r.safePoint === 'parked' && r.open === 0);
 const head1 = await receipts.verify();
 await step('receipt chain intact', async () => ({ state: `seq ${head1.seq}` }), () => head1.seq > 30);
 const files = (await fs.readdir(path.join(state, 'receipts'))).sort();
@@ -225,7 +316,9 @@ const rOwner = await OwnerInbox.open(path.join(relayRoot, 'owner'), path.join(rS
 // runToEnd ticks (one minute apart, like the loop's resting pause rounded up) until the batch is not waiting.
 let waitTicks = 0;
 const runToEnd = async () => { waitTicks = 0; let r = await relayExec.tick(); while (r.state === 'WAITING') { waitTicks += 1; now += 60_000; r = await relayExec.tick(); } return r; };
+const rExecutedHeads = await ExecutedHeads.open(rState, clock, { manifestFile: await emptyManifest(path.join(relayRoot, 'install')), carriedRoot: path.join(rState, 'backfill') });
 const relayExec = new ResidentExecutor({ policy: relayPolicy, ledger: rLedger, receipts: rReceipts, inbox: rInbox, requests: rRequests, owner: rOwner, engine: relayEngine, companion: relayCompanion, clock,
+  executedHeads: rExecutedHeads, queue: await RunQueue.open(path.join(rState, 'queue'), clock),
   sourceIntegrity: async () => ({ ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT }) });
 const rDrop = async value => { seq += 1; await fs.writeFile(path.join(relayRoot, 'inbox', `${String(now + seq).padStart(13, '0')}-${String(seq).padStart(12, '0')}.json`), JSON.stringify(value)); };
 // Receipt types of one batch, in chain order, from its batch-reserved receipt to its batch-terminal receipt.
@@ -287,9 +380,47 @@ await step('relay month 5 (PR 916): a pause during the hosted wait takes effect 
 await step('  only the Owner resume continues it; the stored t0 is past the cap, so it starts at once', async () => {
   await writeOwnerRequest(path.join(relayRoot, 'owner'), resumeRequest({ expectedPausedSha256: (await rLedger.paused()).sha256, by: OWNER }), clock); return relayExec.tick();
 }, r => r.state === 'COMPLETED' && same(stagesSeen, [1, 9, 2, 3, 6, 7, 8]) && same(r.relayed, ['trivy']));
-await step('every relayed head stays burned (PR 913 again: never re-run)', async () => { await rDrop(trigger(913)); return relayExec.tick(); }, r => r.reason === 'HEAD_ALREADY_EXECUTED_NO_RETRY');
+await step('every relayed head stays burned (PR 913 again: never re-run)', async () => { await rDrop({ ...trigger(913), pr: 9130 }); return relayExec.tick(); }, r => r.reason === 'HEAD_ALREADY_EXECUTED_NO_RETRY');
 const rHead = await rReceipts.verify();
 await step('relay month receipt chain intact', async () => ({ state: `seq ${rHead.seq}` }), () => rHead.seq > 20);
+
+// ---- a reinstall (resident quota redesign phase 1, v0.6 §9 item 7): new Source, fresh state, the old ledger carried ----
+// What install-resident.ps1 does: copy the old state's ledger-heads and ledger records into state\backfill\<name>\ and list
+// each with its SHA-256 in install\backfill-manifest.json. The first start backfills before any batch (2026-10-22: after
+// the r2 reinstall #896 head 21d6d7e3 was admitted again and HALTed at ROLE_ALREADY_PUBLISHED_ON_HEAD, Note 1550fef8).
+const SOURCE2 = '4'.repeat(64);
+const iRoot = path.join(root, 'reinstall'), iState = path.join(iRoot, 'state');
+const carriedName = 'resident-uninstalled-20261022T000000Z-drill01';
+const carriedFiles = [];
+const walk = async (base, rel = '') => {
+  for (const name of (await fs.readdir(path.join(base, rel)).catch(() => [])).sort()) {
+    const r = rel ? `${rel}/${name}` : name;
+    if ((await fs.stat(path.join(base, r))).isDirectory()) { if (/^(ledger-heads|ledger|ledger\/[0-9a-f]{64})$/.test(r)) await walk(base, r); continue; }
+    if (!CARRIED_FILE.test(r)) continue;
+    const bytes = await fs.readFile(path.join(base, r));
+    await fs.mkdir(path.dirname(path.join(iState, 'backfill', '1', r)), { recursive: true });
+    await fs.writeFile(path.join(iState, 'backfill', '1', r), bytes);
+    carriedFiles.push({ path: r, sha256: sha256(bytes), bytes: bytes.length });
+  }
+};
+await walk(state);
+await fs.mkdir(path.join(iRoot, 'install'), { recursive: true });
+await fs.writeFile(path.join(iRoot, 'install', 'backfill-manifest.json'), JSON.stringify({ contract: BACKFILL_MANIFEST_CONTRACT, sources: [{ name: carriedName, dir: '1', files: carriedFiles }] }));
+const iLedger = await Ledger.open(iState, clock);
+let iDerived = 0;
+const iEngine = { ...engine, current: null, async derive(subject, key) { iDerived += 1; return engine.derive.call(this, subject, key); } };
+const iExec = new ResidentExecutor({ policy: validatePolicy({ ...policyInput, sourceManifestSha256: SOURCE2 }), ledger: iLedger, receipts: await ReceiptChain.open(path.join(iState, 'receipts'), clock),
+  inbox: await Inbox.open(path.join(iRoot, 'inbox'), path.join(iState, 'inbox-archive')), requests: await Inbox.open(path.join(iRoot, 'requests'), path.join(iState, 'requests-archive')),
+  owner: await OwnerInbox.open(path.join(iRoot, 'owner'), path.join(iState, 'owner-seen')), engine: iEngine, companion, clock, sleep: () => new Promise(resolve => setImmediate(resolve)),
+  queue: await RunQueue.open(path.join(iState, 'queue'), clock),
+  executedHeads: await ExecutedHeads.open(iState, clock, { manifestFile: path.join(iRoot, 'install', 'backfill-manifest.json'), carriedRoot: path.join(iState, 'backfill') }),
+  sourceIntegrity: async () => ({ ok: true, sourceManifestSha256: SOURCE2, residentManifestSha256: RESIDENT }) });
+const iDrop = async value => { seq += 1; await fs.writeFile(path.join(iRoot, 'inbox', `${String(now + seq).padStart(13, '0')}-${String(seq).padStart(12, '0')}.json`), JSON.stringify(value)); };
+await step('reinstall (new Source, fresh state): the first tick backfills the carried ledger, then PR 901 (completed before) is never admitted', async () => { await iDrop(trigger(901)); const r = await iExec.tick(); return { ...r, derived: iDerived }; },
+  r => r.state === 'IGNORED' && r.reason === 'HEAD_ALREADY_PUBLISHED_NO_RETRY' && r.derived === 0);
+await step('  PR 904 (halted at stage 6 before the reinstall) is never admitted either', async () => { await iDrop(trigger(904)); return iExec.tick(); }, r => r.reason === 'HEAD_ALREADY_PUBLISHED_NO_RETRY');
+script.delete(909); // its stage 2 no longer hangs
+await step('  PR 909 (aborted inside stage 2, nothing published) runs under the new Source', async () => { await iDrop(trigger(909)); return iExec.tick(); }, r => r.state === 'COMPLETED');
 
 console.table(rows);
 const summary = { status: misses === 0 ? 'OFFLINE_DRILL_PASS' : 'OFFLINE_DRILL_FAIL', steps: rows.length, misses, receipts: head1 };

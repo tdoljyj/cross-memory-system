@@ -58,7 +58,7 @@ function isConnection(value: unknown): value is Connection {
 class RequestFailure extends Error { reason?: string; }
 async function accountRequest(body: object, path = "/v1/storage/owner", context?: { owner: string | null; current: () => boolean }) {
   const { data, error } = await supabase.auth.getSession();
-  if (error || !data.session) throw new Error("请登录 KooYomi 后重新读取连接。");
+  if (error || !data.session) throw new Error("请登录 BeamingFace 后重新读取连接。");
   if (context && (!context.current() || data.session.user.id !== context.owner)) throw new Error("账号已变化，请重新读取。");
   const response = await fetch(path, {
     method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + data.session.access_token },
@@ -128,7 +128,7 @@ function masterReadingStatus(master: MasterAccess | undefined) {
   if (!master.agent_enabled) return "当前执行条件未满足；读取与搜索已停止";
   if (!master.read_enabled || !master.read_classes.includes("read")) return "目录结构和正文读取均已停止";
   if (!master.read_content || !master.read_classes.includes("read_content")) return "当前仅允许查看文件名和目录结构";
-  return master.normal_use ? "已允许读取目录内全部文件并按内容搜索" : "仅允许读取 KooYomi 创建的文本文件；全部文件读取与搜索未开启";
+  return master.normal_use ? "已允许读取目录内全部文件并按内容搜索" : "仅允许读取 BeamingFace 创建的文本文件；全部文件读取与搜索未开启";
 }
 const masterStateName: Record<MasterState, string> = { on: "全开", off: "全关", partial: "部分开启", unknown: "状态未确认" };
 function MasterAccessSwitch({ state, statusId, disabled, onToggle }: { state: MasterState; statusId: string; disabled: boolean; onToggle: (enable: boolean) => void }) {
@@ -170,8 +170,8 @@ const startReasons: Record<string, string> = {
   storage_root_busy: "该目录还有尚未完成的文件操作，稍后再试。",
   // Until "撤回全部文件读取授权" exists, only a maintainer can reset the count
   // (runbook); a plain reconnect is never refused.
-  refresh_token_limit: "该 Google 账号在 KooYomi 中的授权次数已达上限，暂时不能通过重新授权开启正常使用。请联系维护者处理；现有功能和重新连接不受影响。",
-  refresh_token_limit_full: "该 Google 账号在 KooYomi 中的授权次数已达上限，暂时不能通过重新授权允许管理已有文件。请联系维护者处理；现有功能和重新连接不受影响。",
+  refresh_token_limit: "该 Google 账号在 BeamingFace 中的授权次数已达上限，暂时不能通过重新授权开启正常使用。请联系维护者处理；现有功能和重新连接不受影响。",
+  refresh_token_limit_full: "该 Google 账号在 BeamingFace 中的授权次数已达上限，暂时不能通过重新授权允许管理已有文件。请联系维护者处理；现有功能和重新连接不受影响。",
   storage_full_scope_disclosure_changed: "说明已更新，请重新读取设置后再确认。",
 };
 // StorageNormalUse.v0.1 §7.3 / §8.2 item 4 (N4): hourly read / upload budgets,
@@ -397,7 +397,7 @@ export default function StorageConnections() {
   async function connect(c: Connection) {
     if (operation.current || busy || !["awaiting_provider", "reauthorization_required"].includes(c.state)) return;
     const enrollRefresh = c.state === "awaiting_provider" && defaultRefresh;
-    if (enrollRefresh && !window.confirm("连接后允许 KooYomi 服务端按既有范围后台续签，直到主动停用？")) return;
+    if (enrollRefresh && !window.confirm("连接后允许 BeamingFace 服务端按既有范围后台续签，直到主动停用？")) return;
     operation.current = true; setBusy(true);
     const epoch = revision.current;
     try {
@@ -936,7 +936,7 @@ export default function StorageConnections() {
   }
   return <main className="mx-auto max-w-3xl px-6 py-16">
     <h1 className="text-2xl font-semibold">存储连接</h1>
-    <p className="my-4">Google Drive 的授权属于当前 KooYomi 账号。这里显示已登记范围与实际执行状态。</p>
+    <p className="my-4">Google Drive 的授权属于当前 BeamingFace 账号。这里显示已登记范围与实际执行状态。</p>
     <p role="status" className="my-4">{message}</p>
     {connections.map(c => {
       const available = c.state === "active" && c.auth_mode === "account_policy" && c.policy_active
@@ -1003,7 +1003,7 @@ export default function StorageConnections() {
                 : <button disabled={busy} onClick={() => void loadReadAccess(c)}>读取 Agent 查看设置</button>}
               {read?.active && <>
                 <p className="mt-2">Agent 读正文：{read.classes.includes("read_content")
-                  ? !readCurrent ? "已配置允许；文件范围未确认" : normal?.normal_use ? "已配置允许（目录内全部文件）" : "已配置允许（仅 KooYomi 创建的文本文件）" : "未配置允许"}</p>
+                  ? !readCurrent ? "已配置允许；文件范围未确认" : normal?.normal_use ? "已配置允许（目录内全部文件）" : "已配置允许（仅 BeamingFace 创建的文本文件）" : "未配置允许"}</p>
                 <button disabled={busy} onClick={() => void toggleRead(c, "read_content")}>
                   {read.classes.includes("read_content") ? "停止 Agent 读正文" : "允许 Agent 读正文"}</button>
               </>}
@@ -1011,7 +1011,7 @@ export default function StorageConnections() {
           </section>
           <section aria-labelledby={`file-scope-${c.id}`} className="my-4 border-t pt-4">
             <h3 id={`file-scope-${c.id}`} className="font-semibold">可操作的文件范围</h3>
-            <p className="my-2">修改对象：仅 KooYomi 创建或已纳管的文件和文件夹。</p>
+            <p className="my-2">修改对象：仅 BeamingFace 创建或已纳管的文件和文件夹。</p>
             {master?.state === "off" && <p className="my-1 text-sm">总开关已关闭，纳管与修改已停止；Google 授权范围保留。</p>}
             {fullScope === true ? <>
               <p className="my-1 text-sm">可纳管你拥有的已有文件和文件夹：需先允许“改名和移动文件”，再由 Agent 一次纳管一个；纳管只登记、不改动。</p>
@@ -1057,8 +1057,8 @@ export default function StorageConnections() {
             </div>}
           </section>
           {normal?.refresh_token_warning && <p role="status" className="my-1 text-sm">{normal.refresh_token_blocked
-            ? "该 Google 账号在 KooYomi 中的授权次数已达上限，暂时不能通过重新授权开启读取与搜索或扩大可纳管范围；请联系维护者处理。Google 超过上限时会静默作废最早的授权；若某个连接突然需要重新授权，可能是这个原因，重新连接仍可使用。"
-            : `该 Google 账号在 KooYomi 中的授权次数已较多（${normal.refresh_token_count} 次）。Google 超过上限时会静默作废最早的授权；若某个连接突然需要重新授权，可能是这个原因。`}</p>}
+            ? "该 Google 账号在 BeamingFace 中的授权次数已达上限，暂时不能通过重新授权开启读取与搜索或扩大可纳管范围；请联系维护者处理。Google 超过上限时会静默作废最早的授权；若某个连接突然需要重新授权，可能是这个原因，重新连接仍可使用。"
+            : `该 Google 账号在 BeamingFace 中的授权次数已较多（${normal.refresh_token_count} 次）。Google 超过上限时会静默作废最早的授权；若某个连接突然需要重新授权，可能是这个原因。`}</p>}
           <details className="my-4 border-t pt-4 text-sm">
             <summary className="cursor-pointer font-semibold">每小时额度：{budget[c.id]
               ? `每个已授权 Agent 读取 ${formatBytes(budget[c.id].connection.read_bytes_per_hour)}、上传 ${formatBytes(budget[c.id].connection.upload_bytes_per_hour)}；` +
@@ -1131,7 +1131,7 @@ export default function StorageConnections() {
           <p className="my-3">删除后会停止此连接的文件操作和后台续签，并从连接列表移除；操作记录会保留。</p>
           {dialog.reading ? <p role="status">正在核对文件夹及其中内容……</p> : dialog.preview ? <>
             <label className="block"><input type="checkbox" disabled={busy} checked={dialog.trashRoot}
-              onChange={event => { const trashRoot = event.target.checked; setDialog(current => current ? { ...current, trashRoot } : null); }} /> 同时把 KooYomi 新建的文件夹及其中全部内容移入 Drive 回收站</label>
+              onChange={event => { const trashRoot = event.target.checked; setDialog(current => current ? { ...current, trashRoot } : null); }} /> 同时把 BeamingFace 新建的文件夹及其中全部内容移入 Drive 回收站</label>
             {wholeRootPreview(dialog.preview) ? <>
               <p className="my-2 text-sm">刚才核对了其中 {dialog.preview.item_count} 个文件和子文件夹。勾选后，你确认回收上面标识的整个文件夹及执行时的全部内容，包括确认后新放进去的内容。</p>
               <p className="my-2 text-sm">显示的清单仅供参考；执行以这个文件夹标识为准，即使其名称、位置或内容在确认后发生变化，也会回收这个文件夹及当时其中的全部内容。</p>

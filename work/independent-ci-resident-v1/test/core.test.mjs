@@ -6,7 +6,7 @@ import { canonicalJson, digest, parseBoundedJson } from '../src/canonical.mjs';
 import { Ledger, batchKey, headKey } from '../src/ledger.mjs';
 import { ReceiptChain } from '../src/receipts.mjs';
 import { applyArchive, planArchive, protocolLeaves } from '../src/archive.mjs';
-import { coalesce, parseTrigger } from '../src/trigger.mjs';
+import { TRIGGER_CONTRACT_V2, parseTrigger } from '../src/trigger.mjs';
 import { archiveReason, classifyFailure } from '../src/classify.mjs';
 import { batchBudgetMs, validatePolicy } from '../src/policy.mjs';
 import { readFileSync } from 'node:fs';
@@ -193,15 +193,17 @@ test('archive stops when a leaf changed after inventory', async t => {
 
 test('trigger accepts only the exact data shape for the policy repository', () => {
   const policy = validatePolicy(rawPolicy());
-  assert.deepEqual(parseTrigger(triggerBytes(), policy), { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE });
+  assert.deepEqual(parseTrigger(triggerBytes(), policy), { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, prUpdatedAt: null });
+  // contract /2 (phase 2): an optional prUpdatedAt, exact ISO time; /1 never carries it
+  assert.equal(parseTrigger(triggerBytes({ contract: TRIGGER_CONTRACT_V2, prUpdatedAt: '2026-10-22T13:00:00Z' }), policy).prUpdatedAt, '2026-10-22T13:00:00Z');
+  assert.equal(parseTrigger(triggerBytes({ contract: TRIGGER_CONTRACT_V2 }), policy).prUpdatedAt, null);
+  assert.throws(() => parseTrigger(triggerBytes({ prUpdatedAt: '2026-10-22T13:00:00Z' }), policy), { code: 'TRIGGER_KEYS_REFUSED' });
+  assert.throws(() => parseTrigger(triggerBytes({ contract: TRIGGER_CONTRACT_V2, prUpdatedAt: 'yesterday' }), policy), { code: 'TRIGGER_UPDATED_AT_REFUSED' });
   assert.throws(() => parseTrigger(triggerBytes({ repo: 'evil/repo' }), policy), { code: 'TRIGGER_REPO_NOT_POLICY_REPO' });
   assert.throws(() => parseTrigger(triggerBytes({ command: 'calc.exe' }), policy), { code: 'TRIGGER_KEYS_REFUSED' });
   assert.throws(() => parseTrigger(triggerBytes({ headSha: 'HEAD' }), policy), { code: 'TRIGGER_HEAD_REFUSED' });
   assert.throws(() => parseTrigger(triggerBytes({ pr: -1 }), policy), { code: 'TRIGGER_PR_REFUSED' });
   assert.throws(() => parseTrigger(Buffer.alloc(2048, 32), policy), { code: 'TRIGGER_REFUSED' });
-  const t1 = { pr: 1, headSha: HEAD, baseSha: BASE };
-  const t2 = { pr: 2, headSha: HEAD, baseSha: BASE };
-  assert.deepEqual(coalesce([{ name: 'a', trigger: t1 }, { name: 'b', trigger: t2 }, { name: 'c', trigger: t1 }], 1), [{ trigger: t1, names: ['a', 'c'] }]);
 });
 
 test('classification is an allow-list and needs the complete cleanup proof', () => {
@@ -239,4 +241,30 @@ test('policy refuses general retries, concurrency and drifted shapes; attempt 2 
   assert.throws(() => validatePolicy(rawPolicy({ limits: { ...rawPolicy().limits, maxConcurrent: 2 } })), { code: 'POLICY_SERIAL_EXECUTION_REQUIRED' });
   assert.throws(() => validatePolicy(rawPolicy({ baseBranch: 'dev' })), { code: 'POLICY_BASE_BRANCH_FIXED_MAIN' });
   assert.throws(() => validatePolicy({ ...rawPolicy(), extra: 1 }), { code: 'POLICY_KEYS_INVALID' });
+});
+
+test('ledger usage (phase 2): every daily budget from the ledger, per origin and ending', async t => {
+  const root = await tempRoot(t);
+  let now = Date.parse('2026-10-22T12:00:00Z');
+  const ledger = await Ledger.open(root, () => now);
+  const s = (pr, n, o = {}) => subject({ pr, headSha: String(n).repeat(40), ...o });
+  // an execution
+  await ledger.reserve(batchKey(s(1, 1)), s(1, 1));
+  await ledger.markStarted(batchKey(s(1, 1)), { batchId: '0123456789abcdef-0123456789ab' });
+  // a real refusal (an evaluation), a wait from a waiting retry (its own budget), an environment release while the breaker
+  // was open (neither), a supersession (neither), a new-trigger re-evaluation (an evaluation and one re-evaluation)
+  const release = async (subj, origin, reason, facts) => { const k = batchKey(subj); await ledger.reserve(k, subj, { origin }); await ledger.releaseUnexecuted(k, reason, facts); };
+  await release(s(2, 2), 'queued', 'NOT_ADMITTED', { class: 'not-admitted' });
+  await release(s(3, 3), 'waiting-retry', 'NOT_ADMITTED', { class: 'waiting' });
+  await release(s(4, 4), 'queued', 'BROKER_NOT_LAUNCHED', { class: 'environment', breakerState: 'open' });
+  await release(s(4, 4, { baseSha: '9'.repeat(40) }), 'queued', 'BROKER_NOT_LAUNCHED', { class: 'environment', breakerState: 'closed' });
+  await release(s(5, 5), 'queued', 'SUPERSEDED', { class: 'superseded' });
+  await release(s(2, 2, { baseSha: '8'.repeat(40) }), 'new-trigger', 'NOT_ADMITTED', { class: 'not-admitted' });
+  const u = await ledger.usage(0);
+  assert.deepEqual([u.started, u.startedByPr.get(1), u.evaluations, u.waitingRetries], [1, 1, 2, 1]);
+  assert.deepEqual([u.reevaluations.get(`2:${'2'.repeat(40)}`), u.releasesByHead.get('2'.repeat(40)), u.releasesByHead.get('3'.repeat(40)), u.releasesByHead.get('4'.repeat(40)), u.releasesByHead.get('5'.repeat(40))],
+    [1, 2, undefined, 1, undefined]);
+  await assert.rejects(ledger.reserve(batchKey(s(6, 6)), s(6, 6), { origin: 'made-up' }), { code: 'RESERVATION_ORIGIN_INVALID' });
+  now += 86_400_001;
+  assert.equal((await ledger.usage(now - 86_400_000)).evaluations, 0, 'a day later nothing counts');
 });

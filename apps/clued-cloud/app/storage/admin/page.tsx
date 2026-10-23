@@ -107,7 +107,7 @@ const probeReasons: Record<string, string> = { DIRECTORY_NOT_APP_AUTHORIZED: "�
   PROVIDER_REDIRECT_REJECTED: "Google 请求出现不允许的跳转", PROVIDER_RESPONSE_INVALID: "Google 响应格式无效",
   METADATA_ID_MISMATCH: "Google 返回的对象 ID 与查询不一致", PAGINATION_INVALID: "目录分页标记无效或重复",
   PAGINATION_LIMIT: "目录分页超过本次检查上限", NAMESPACE_VISIBILITY_UNPROVEN: "目录枚举所需的只读元数据权限未确认",
-  UNAUTHORIZED_WORKSPACE_MUTATION: "发现未登记的 KooYomi 资料位置（UNAUTHORIZED_WORKSPACE_MUTATION）",
+  UNAUTHORIZED_WORKSPACE_MUTATION: "发现未登记的 BeamingFace 资料位置（UNAUTHORIZED_WORKSPACE_MUTATION）",
   BOUNDARY_PROFILE_UNQUALIFIED: "边界配置未通过验证", BOUNDARY_IDENTITY_INVALID: "边界对象身份无效",
   BOUNDARY_ROOT_CHANGED: "资料根身份发生变化", BOUNDARY_ALIAS_OR_CYCLE: "边界存在重复引用或循环",
   BOUNDARY_FOLDER_INVALID: "边界目录类型无效", BOUNDARY_CHANGED: "扫描期间边界发生变化",
@@ -146,7 +146,7 @@ function directoryIssueSummary(value: unknown): string {
 class ReviewRefreshError extends Error {}
 async function request(path: string, body: object | undefined, stillCurrent: () => boolean = () => true) {
   const { data, error } = await supabase.auth.getSession();
-  if (error || !data.session) throw new Error("请先登录 KooYomi，再返回此页。");
+  if (error || !data.session) throw new Error("请先登录 BeamingFace，再返回此页。");
   if (!stillCurrent()) throw new Error("账号或页面已变化，请重新确认。");
   const response = await fetch(path, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", authorization: "Bearer " + data.session.access_token },
     body: JSON.stringify(body), cache: "no-store", redirect: "error", signal: AbortSignal.timeout(30_000) });
@@ -483,7 +483,7 @@ export default function StorageConnections() {
     if (operationBusy.current || busy) return;
     const previous = renewals[c.id];
     if (action !== "status" && !previous) return;
-    if (action === "enable" && !window.confirm(`允许 KooYomi 服务端持续续签「${c.root_name}」的 Google 连接，直到你主动停用？手机、平板或电脑退出登录不影响续签。仅保留现有授权范围，不新增文件写入权限。`)) return;
+    if (action === "enable" && !window.confirm(`允许 BeamingFace 服务端持续续签「${c.root_name}」的 Google 连接，直到你主动停用？手机、平板或电脑退出登录不影响续签。仅保留现有授权范围，不新增文件写入权限。`)) return;
     if (action === "disable" && !window.confirm(`停用「${c.root_name}」的后台续签？停用后不再发起新的后台续签。已经开始的续签需要核对结果，不能靠重新开启跳过。`)) return;
     const epoch = revision.current; operationBusy.current = true; setBusy(true);
     try {
@@ -545,7 +545,7 @@ export default function StorageConnections() {
         </article>)}
         {abandonConfirmation?.context_connection_id === c.id && <section role="region" aria-label="确认停止管理旧登记" className="my-3 rounded border p-3">
           <h4>确认停止管理旧登记</h4><p className="my-2 break-all">{abandonConfirmation.file_name ?? "这条原作业的旧登记"}</p>
-          <p className="my-2 text-sm">这会停止 KooYomi 管理相关旧登记并解除这条保护，不删除或覆盖 Google 文件，不把原操作记为成功。需要再次通过 KooYomi 管理这个文件时，须重新登记。</p>
+          <p className="my-2 text-sm">这会停止 BeamingFace 管理相关旧登记并解除这条保护，不删除或覆盖 Google 文件，不把原操作记为成功。需要再次通过 BeamingFace 管理这个文件时，须重新登记。</p>
           <details className="text-sm"><summary>原操作记录</summary><p className="break-all">任务：{abandonConfirmation.job_id}；回执：{abandonConfirmation.source_receipt_id}</p></details>
           <div className="my-2 flex gap-4"><button disabled={busy} onClick={() => void abandonRegistration(c, abandonConfirmation)}>确认停止管理（不删除文件）</button>
             <button disabled={busy} onClick={() => { abandon.current = null; setAbandonConfirmation(null); }}>保留旧登记</button></div>

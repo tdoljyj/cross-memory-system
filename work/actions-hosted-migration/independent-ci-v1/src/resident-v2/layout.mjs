@@ -29,6 +29,8 @@ export const STATE_V2 = Object.freeze({
   batchClaims: `${WIN_STATE_V2}\\batch-claims`,
   receipts: `${WIN_STATE_V2}\\receipts`,
   temp: `${WIN_STATE_V2}\\temp`,
+  // Quota phase 2, step 3a: every kooyumi-merge-slot green stage 8 writes (green-ledger.mjs; clued-control only).
+  greenLedger: `${WIN_STATE_V2}\\green-ledger`,
 });
 export const NODE_EXE = 'C:\\Program Files\\nodejs\\node.exe';
 export const RUNNER_SERVICE = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02';

@@ -3,12 +3,12 @@
   "owner": {
     "name": "tdoljyj"
   },
-  "description": "Private KooYomi plugins for trial. Not published.",
+  "description": "Private BeamingFace plugins for trial. Not published.",
   "plugins": [
     {
       "name": "clued",
       "source": "./integrations/claude-code/clued",
-      "description": "The KooYomi Skill and the KooYomi capture Stop hook for Claude Code and Cowork."
+      "description": "The BeamingFace Skill and the BeamingFace capture Stop hook for Claude Code and Cowork."
     }
   ]
 }

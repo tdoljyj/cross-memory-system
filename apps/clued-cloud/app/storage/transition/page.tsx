@@ -38,7 +38,7 @@ function isTransitionStatus(value: unknown, manifestId: string): value is Transi
 
 async function request(body: Record<string, unknown>, owner: string) {
   const { data, error } = await supabase.auth.getSession();
-  if (error || !data.session || data.session.user.id !== owner) throw new Error("请先使用原 KooYomi 账号登录。");
+  if (error || !data.session || data.session.user.id !== owner) throw new Error("请先使用原 BeamingFace 账号登录。");
   const response = await fetch("/v1/storage/policy-transition", {
     method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${data.session.access_token}` },
     body: JSON.stringify(body), cache: "no-store", redirect: "error",
@@ -65,7 +65,7 @@ export default function StorageTransition() {
     try {
       const session = await supabase.auth.getSession();
       const owner = session.data.session?.user.id;
-      if (session.error || !owner) throw new Error("请先登录 KooYomi，再重新打开此确认链接。");
+      if (session.error || !owner) throw new Error("请先登录 BeamingFace，再重新打开此确认链接。");
       const value = await request({ action: "describe", manifest_id: manifestId }, owner);
       if (epoch !== revision.current || !isTransitionStatus(value, manifestId)) throw new Error("切换清单状态未确认。");
       setStatus(value);
@@ -88,13 +88,13 @@ export default function StorageTransition() {
   async function confirmTransition() {
     if (operationBusy.current || busy || status?.status !== "reviewed" || Date.parse(status.expires_at) <= Date.now()) return;
     operationBusy.current = true;
-    if (!window.confirm("确认把这条 Google Drive 连接切换为 KooYomi 账号统一存储入口？手机、平板和电脑将共用同一份账号规则；不会修改或删除云盘文件，也不会扩大 Google 授权范围。切换后旧的逐客户端存储授权入口不会恢复。")) { operationBusy.current = false; return; }
+    if (!window.confirm("确认把这条 Google Drive 连接切换为 BeamingFace 账号统一存储入口？手机、平板和电脑将共用同一份账号规则；不会修改或删除云盘文件，也不会扩大 Google 授权范围。切换后旧的逐客户端存储授权入口不会恢复。")) { operationBusy.current = false; return; }
     const epoch = revision.current;
     setBusy(true); setStatus(null); setMessage("正在切换；请勿重复提交……");
     try {
       const session = await supabase.auth.getSession();
       const owner = session.data.session?.user.id;
-      if (session.error || !owner) throw new Error("请先登录 KooYomi，再重新打开此确认链接。");
+      if (session.error || !owner) throw new Error("请先登录 BeamingFace，再重新打开此确认链接。");
       const value = await request({ action: "transition", manifest_id: status.manifest_id,
         manifest_sha256: status.manifest_sha256, expected_inventory_digest: status.expected_inventory_digest,
         idempotency_key: `storage-policy-transition-ui-v2:${status.manifest_id}:${status.manifest_sha256}` }, owner);
@@ -111,7 +111,7 @@ export default function StorageTransition() {
 
   return <main className="mx-auto max-w-2xl px-6 py-16">
     <h1 className="text-2xl font-semibold">启用账号统一存储入口</h1>
-    <p className="my-4">这是一次账号级切换，不按设备建权。Google 凭据仍只保存在 KooYomi 服务端。</p>
+    <p className="my-4">这是一次账号级切换，不按设备建权。Google 凭据仍只保存在 BeamingFace 服务端。</p>
     <p role="status" className="my-4">{message}</p>
     {status && <section className="my-4 rounded-xl border p-4">
       <p>Google Drive 连接：<span className="break-all">{status.connection_id}</span></p>

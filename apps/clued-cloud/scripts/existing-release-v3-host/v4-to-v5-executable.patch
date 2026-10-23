@@ -1,0 +1,36 @@
+diff --git a/payload/release/existing-release-entry-v1/v3/existing-stages.mjs b/payload/release/existing-release-entry-v1/v3/existing-stages.mjs
+index bfa4847..b924bb4 100644
+--- a/payload/release/existing-release-entry-v1/v3/existing-stages.mjs
++++ b/payload/release/existing-release-entry-v1/v3/existing-stages.mjs
+@@ -25,7 +25,7 @@ const MANAGER=new URL('../../linux-process-manager.mjs',import.meta.url);
+ const PORTS=new URL('../fixed-currentness-ports.mjs',import.meta.url);
+ const LOCAL_PINS=new Map([
+  [EXTERNAL,'4bb88785021b73783bfe2b37972be11806f2c3b564ced8785dfbda25405106cd'],
+- [MANAGER,'9cfec2d4cf62afc368fb484783d7e15c56cfe9e0872ee9e2a9c1d4fc5e3dff20'],
++ [MANAGER,'b961dfc06794336f38f47d4f8f5d7c6a2724aee6ba5bac4ff69090ef30842f70'],
+  [PORTS,'93f95698f359c94585053d4331ae855bc07004245b4429ecaf6470aa40c25f3f'],
+ ]);
+ const HASH=/^[a-f0-9]{64}$/,SHA=/^[a-f0-9]{40}$/,UUID=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+diff --git a/payload/release/linux-process-manager.mjs b/payload/release/linux-process-manager.mjs
+index 1f0cfb2..eda8911 100644
+--- a/payload/release/linux-process-manager.mjs
++++ b/payload/release/linux-process-manager.mjs
+@@ -137,6 +137,7 @@ const UNIT_PROPERTIES=['Id','LoadState','ActiveState','SubState','Result','MainP
+   'Environment','EnvironmentFiles','PassEnvironment','UnsetEnvironment','CapabilityBoundingSet','AmbientCapabilities','SupplementaryGroups',
+   'ProtectSystem','ProtectHome','PrivateDevices','PrivateTmp','ProtectProc','RestrictSUIDSGID','LockPersonality','UMask','ReadWritePaths',
+   'RootDirectory','RootImage','BindPaths','BindReadOnlyPaths','TemporaryFileSystem'];
++const OMITTED_WHEN_EMPTY=Object.freeze(['ExecStartPre','ExecStartPost','ExecCondition','ExecStop','ExecStopPost','ExecReload','EnvironmentFiles']);
+ export function fixedUnitName(op){if(!['head','branch','status','tests'].includes(op))fail('MANAGER_FIXED_OPERATION_REQUIRED');return `clued-currentness@${op}.service`;}
+ export function renderFixedSystemdUnit(c){
+   return `[Unit]\nDescription=Clued fixed currentness check (%i)\n[Service]\nType=oneshot\nRemainAfterExit=yes\nUser=${c.job_uid}\nGroup=${c.job_gid}\nSlice=system.slice\nExecStart=${c.node.path} ${c.manager.path} --systemd-job ${CONFIG_PATH} %i\nWorkingDirectory=${c.source_root}\nUnsetEnvironment=LD_PRELOAD LD_LIBRARY_PATH NODE_OPTIONS NODE_PATH\nCapabilityBoundingSet=\nAmbientCapabilities=\nNoNewPrivileges=yes\nProtectControlGroups=yes\nDelegate=no\nKillMode=control-group\nSendSIGKILL=yes\nTimeoutStartSec=2700s\nTimeoutStopSec=1s\nProtectSystem=strict\nProtectHome=yes\nPrivateDevices=yes\nPrivateTmp=yes\nProtectProc=invisible\nRestrictSUIDSGID=yes\nLockPersonality=yes\nUMask=0027\nReadWritePaths=${c.output_dir} ${c.environment.HOME} ${c.environment.TMPDIR}\nStandardOutput=null\nStandardError=null\n`;
+@@ -157,6 +158,10 @@ export function parseSystemdShow(text,c,op){
+   if(typeof text!=='string'||Buffer.byteLength(text)>65536)fail('MANAGER_SYSTEMD_REPLY_BOUND');
+   const values={};for(const line of text.trimEnd().split('\n')){const at=line.indexOf('=');if(at<1)fail('MANAGER_SYSTEMD_REPLY_INVALID');
+     const key=line.slice(0,at);if(!UNIT_PROPERTIES.includes(key)||Object.hasOwn(values,key))fail('MANAGER_SYSTEMD_REPLY_INVALID');values[key]=line.slice(at+1);}
++  // systemd 255 omits an empty exec-command list and an empty EnvironmentFiles
++  // from `systemctl show`, even with --all. Only for these list properties does
++  // absence mean empty; every other property must still be present.
++  for(const key of OMITTED_WHEN_EMPTY)if(!Object.hasOwn(values,key))values[key]='';
+   if(UNIT_PROPERTIES.some(k=>!Object.hasOwn(values,k))||values.Id!==fixedUnitName(op)||values.LoadState!=='loaded'||values.User!==String(c.job_uid)||values.Group!==String(c.job_gid)||
+     values.KillMode!=='control-group'||values.NoNewPrivileges!=='yes'||values.ProtectControlGroups!=='yes'||values.FragmentPath!==UNIT_TEMPLATE||
+     values.Delegate!=='no'||values.Slice!=='system.slice'||values.RemainAfterExit!=='yes'||values.Type!=='oneshot'||!/^[0-9]+$/.test(values.MainPID)||

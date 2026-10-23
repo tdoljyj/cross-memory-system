@@ -131,11 +131,20 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     const usage = async (taskId) => Number((await admin.query(`select count(*) n from clued_private.work_claim_door_usage_v1
       where user_id=$1 and door='github-ci' and task_id=$2`, [userId, taskId])).rows[0].n);
     const verifyAs = (who, c, input) => agent(who, 'clued_work_verify_v1', { scope: 'global', claim_id: c.claim_id, ...input });
+    // A ci-admission mark takes a purpose and starts 5 minutes later (C10,
+    // Task bb13efb5, tested in ci-admission-handover-db); here the CI Binding
+    // is the GitHub environment's ("other") and the 5 minutes are let pass.
+    const ciPurpose = (role, enabled) => role === 'ci-admission' && enabled ? { purpose: 'other' } : {};
+    const elapse = (binding) => admin.query(`update clued_private.binding_roles_v1 set granted_at=granted_at-interval '5 minutes',
+      effective_at=effective_at-interval '5 minutes' where binding_id=$1 and revoked_at is null and purpose<>'parking'`, [binding]);
     const setRole = async (binding, role, enabled, claims) => {
-      const issued = await native('clued_binding_role_confirmation_issue_v1', { binding_id: binding, role, enabled }, claims);
+      const issued = await native('clued_binding_role_confirmation_issue_v1',
+        { binding_id: binding, role, enabled, ...ciPurpose(role, enabled) }, claims);
       assert.equal(issued.status, 'issued', JSON.stringify(issued));
-      return native('clued_binding_role_set_v1',
+      const result = await native('clued_binding_role_set_v1',
         { confirmation_token: issued.confirmation_token, view_digest: issued.view_digest }, claims);
+      if (result.status === 'committed' && enabled) await elapse(binding);
+      return result;
     };
 
     // --- Before any role is marked, every Binding keeps the earlier behaviour. ---
@@ -174,11 +183,11 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     assert.equal(await issueErr({ binding_id: bindingIds.ci, role: 'ci-admission', enabled: true }, noSession),
       'confirmation_token_session_id_required');
     // The view is rendered by Clued; a newer issue revokes the older token.
-    const first = await native('clued_binding_role_confirmation_issue_v1', { binding_id: bindingIds.ci, role: 'ci-admission', enabled: true });
+    const first = await native('clued_binding_role_confirmation_issue_v1', { binding_id: bindingIds.ci, role: 'ci-admission', enabled: true, purpose: 'other' });
     assert.deepEqual([first.confirmation_view.agent_name, first.confirmation_view.role, first.confirmation_view.enabled,
       first.confirmation_view.others], ['ci', 'ci-admission', true, []]);
     assert.match(first.confirmation_view.role_title, /GitHub CI 准入/);
-    const second = await native('clued_binding_role_confirmation_issue_v1', { binding_id: bindingIds.ci, role: 'ci-admission', enabled: true });
+    const second = await native('clued_binding_role_confirmation_issue_v1', { binding_id: bindingIds.ci, role: 'ci-admission', enabled: true, purpose: 'other' });
     assert.equal((await native('clued_binding_role_set_v1', { confirmation_token: first.confirmation_token,
       view_digest: first.view_digest })).error_code, 'confirmation_token_revoked');
     assert.equal((await native('clued_binding_role_set_v1', { confirmation_token: second.confirmation_token,

@@ -1,0 +1,29 @@
+BeamingFace 笑脸 Logo（脸 M2b）底稿来源 / Third-party notice
+
+Source: Microsoft Fluent Emoji — "Beaming face with smiling eyes" (Color, Flat); blush construction from "Smiling face with smiling eyes" (Color)
+Repository: https://github.com/microsoft/fluentui-emoji
+Source SHA-256 (downloaded 20261021): beaming color 4c587ba48e8deb2b7886b03982ad66663d49df615fe3aa7f6012802874790957; beaming flat 1cbe6ae8d08d6a0398f6595e7cef5133f389d1c9f2fc679e31f82b0139342b95; smiling color f7db8d4f51409b7556993f1ae032c1a0a1e7028d237100c0af21ba6cc68b765b
+Modifications by BeamingFace: recolor (orange family), mouth cavity/teeth-shadow/eye colors, mouth outline reshaped and scaled, eye-shadow layer removed, radial blush added (pink #F7336E), mono/flat/motion derivatives.
+使用要求：凡分发含本图形的软件/资料，须随附以下 MIT 许可全文（app 内放"关于 → 开源许可"）。
+
+    MIT License
+
+    Copyright (c) Microsoft Corporation.
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE

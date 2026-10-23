@@ -37,9 +37,9 @@ export async function validatePackage(root, expectedVersion) {
   assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
   if (expectedVersion !== undefined) assert.equal(manifest.version, expectedVersion, "Installed version differs from the source version");
   assert.equal(manifest.apps, "./.app.json");
-  assert.equal(manifest.interface.displayName, "KooYomi");
+  assert.equal(manifest.interface.displayName, "BeamingFace");
   const app = JSON.parse(await readFile(resolve(root, ".app.json"), "utf8"));
-  assert.deepEqual(app, { apps: { kooyumi: { id: appId } } }, "Package must contain only the registered KooYomi app");
+  assert.deepEqual(app, { apps: { kooyumi: { id: appId } } }, "Package must contain only the registered BeamingFace app");
   return { version: manifest.version, registeredApps: 1, appIds: [appId], mcpServers: [] };
 }
 
@@ -47,7 +47,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     const source = JSON.parse(await readFile(new URL("./.codex-plugin/plugin.json", import.meta.url), "utf8"));
     const result = await validatePackage(resolve(process.argv[2] ?? sourceRoot), source.version);
-    console.log(`KooYomi package valid: ${JSON.stringify(result)}`);
+    console.log(`BeamingFace package valid: ${JSON.stringify(result)}`);
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;

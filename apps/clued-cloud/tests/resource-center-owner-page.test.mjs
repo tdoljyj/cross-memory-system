@@ -380,7 +380,7 @@ test("a level switch refused because the root has an unresolved job says so (fix
 test("overwrite is its own toggle with its own disclosure and keeps rename/move as is",async()=>{
   const f=fixture(normalStatus("normal",false),readStatus([],1),writeStatus(["modify"]));await f.settle();f.respond(f.pending("/v1/storage/lifecycle","list"),{connections:[active],worker_execution_enabled:false});await f.settle();
   assert.match(f.text(),/Agent 覆盖文件内容：未配置允许/);assert.match(f.text(),/Agent 改名和移动文件：已配置允许/);
-  assert.match(f.text(),/修改对象：仅 KooYomi 创建或已纳管的文件和文件夹/);
+  assert.match(f.text(),/修改对象：仅 BeamingFace 创建或已纳管的文件和文件夹/);
   f.button("允许 Agent 覆盖文件内容").props.onClick();await f.settle();
   assert.match(f.prompts.at(-1),/保存为永久保留的 Google Drive 版本/);assert.match(f.prompts.at(-1),/最近 10 个/);
   assert.deepEqual(JSON.parse(f.request("/v1/storage/write-access","set_classes").init.body),{action:"set_classes",connection_id:active.id,classes:["modify","overwrite"],
@@ -491,8 +491,8 @@ test("file scope is shown once while unknown read scope remains unconfirmed unti
   assert.match(f.text(),/Agent 读正文：已配置允许；文件范围未确认/);
   assert.match(f.text(),/Agent 改名和移动文件：已配置允许/);
   assert.match(f.text(),/Agent 移动整个文件夹：已配置允许/);
-  assert.equal(f.text().split("修改对象：仅 KooYomi 创建或已纳管的文件和文件夹").length-1,1);
-  assert.doesNotMatch(f.text(),/已允许（仅 KooYomi 创建的文件）/);
+  assert.equal(f.text().split("修改对象：仅 BeamingFace 创建或已纳管的文件和文件夹").length-1,1);
+  assert.doesNotMatch(f.text(),/已允许（仅 BeamingFace 创建的文件）/);
   f.button("重新读取读取与搜索状态").props.onClick();await f.settle();
   await replyReading(f,readStatus(["read","read_content"],3),normalStatus("normal",true));
   assert.match(f.text(),/Agent 读正文：已配置允许（目录内全部文件）/);
@@ -564,7 +564,7 @@ const fullStatus=(profile,extra={})=>normalStatus(profile,profile!=="legacy",{re
   full_scope:profile==="full",full_scope_disclosure_version:FULL_DISCLOSURE,...extra});
 test("managing existing files: one button starts Google re-consent with the full set under its own disclosure, nothing else",async()=>{
   const f=fixture(fullStatus("normal"));await f.settle();f.respond(f.pending("/v1/storage/lifecycle","list"),{connections:[active],worker_execution_enabled:false});await f.settle();
-  assert.match(f.text(),/修改对象：仅 KooYomi 创建或已纳管的文件和文件夹/);assert.match(f.text(),/只扩展可纳管范围，不开启任何写入操作/);
+  assert.match(f.text(),/修改对象：仅 BeamingFace 创建或已纳管的文件和文件夹/);assert.match(f.text(),/只扩展可纳管范围，不开启任何写入操作/);
   f.button("允许纳管已有文件").props.onClick();await f.settle();
   const prompt=f.prompts.at(-1);
   assert.match(prompt,/“纳管”「Clued_资料中心」里你自己拥有的已有文件和文件夹：一次一个，只登记、不改动/);

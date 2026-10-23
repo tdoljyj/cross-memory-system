@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble the private KooYomi plugin for Claude Code from its sources.
+"""Assemble the private BeamingFace plugin for Claude Code from its sources.
 
 A Claude Code plugin installed from a marketplace is copied as a directory, and
 symlinks inside it are not followed, so the plugin keeps its own copies of the

@@ -178,10 +178,10 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
   const submission = consentSubmission(details?.eligible || [], model, selection);
   const consentReady = !model.invalid && model.supportsFuturePolicies;
   return <main className="oauth-shell"><section className={'oauth-card oauth-consent ' + styles['selected-consent']} aria-busy={busy}>
-    <Link className="oauth-brand" href="/">KooYomi</Link>
+    <Link className="oauth-brand" href="/">BeamingFace</Link>
     {busy && <p role="status">正在核验授权…</p>}
     {error && <div className="oauth-error" role="alert"><strong>尚未完成</strong><p>{error}</p><button type="button" disabled={busy} onClick={() => void reload()}>重新读取请求</button></div>}
-    {!busy && !session && <><h1>登录 KooYomi 以继续</h1><p className="oauth-copy">开发和个人使用共用同一个账户。登录后选择允许此客户端使用的资源。</p>
+    {!busy && !session && <><h1>登录 BeamingFace 以继续</h1><p className="oauth-copy">开发和个人使用共用同一个账户。登录后选择允许此客户端使用的资源。</p>
       <form className="oauth-form" onSubmit={signIn}>
         <label>邮箱<input type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} /></label>
         <label>密码<input type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
@@ -189,7 +189,7 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
       </form><p><Link href="/oauth/account" target="_blank" rel="noopener noreferrer">忘记密码</Link></p><p>没有账户的开发者，请在<Link href="/oauth/projects" target="_blank" rel="noopener noreferrer">开发项目页面</Link>注册，并打开项目所有者提供的邀请链接。</p></>}
     {session && !details && <div className="oauth-details"><p>登录账户：{session.user.email || session.user.id}</p><button className="oauth-secondary" type="button" disabled={authBusy} onClick={() => void switchAccount()}>切换账户</button></div>}
     {details && <>
-      <h1>允许 {details.client_name} 使用 KooYomi</h1>
+      <h1>允许 {details.client_name} 使用 BeamingFace</h1>
       <dl className="oauth-details"><div><dt>当前账户</dt><dd className="oauth-account-inline">{details.user.email || details.user.id}<button className="oauth-account-switch" type="button" disabled={busy} onClick={() => void switchAccount()}>切换账户</button></dd></div><div><dt>客户端标识</dt><dd style={{ overflowWrap: 'anywhere' }}>{details.client_id}</dd></div></dl>
       <p className="oauth-copy">按内容选择权限，可展开后使用只读、读写或全部快捷设置，再逐项调整。</p>
       {model.allIds.length > 0 ? <ConsentPermissions model={model} selection={selection} busy={busy} notice={selectionNotice}

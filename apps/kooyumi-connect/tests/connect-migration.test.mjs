@@ -10,7 +10,7 @@ const publicOrigin = 'https://kooyomi.com';
 const canonical = 'https://kooyumi.pixelgrav.com';
 const legacy = 'https://clued.pixelgrav.com';
 const originalFetch = globalThis.fetch;
-const contract = '# KooYomi Agent Contract\n\nOffline fixture; no account or authority.\n';
+const contract = '# BeamingFace Agent Contract\n\nOffline fixture; no account or authority.\n';
 function fixture(upstream = canonical) {
   const rows = new Map(), calls = [];
   const env = {
@@ -76,19 +76,19 @@ test('candidate records captured provenance and preserves the reviewed source an
   assert.deepEqual(config.routes.map(r => r.pattern), ['kooyomi.com/connect*', 'kooyumi.pixelgrav.com/connect*', 'clued.pixelgrav.com/connect*', 'clued.pixelgrav.com/connect/*']);
 });
 
-test('new and existing entry origins render KooYomi and generate only public installation links', async () => {
+test('new and existing entry origins render BeamingFace and generate only public installation links', async () => {
   const f = fixture();
   try {
     for (const origin of [publicOrigin, canonical, legacy]) {
       const page = await f.run('/connect', {}, origin);
       assert.equal(page.status, 200);
       const html = await page.text();
-      assert.match(html, /KooYomi Connect/);
-      assert.match(html, /连接 KooYomi/);
+      assert.match(html, /BeamingFace Connect/);
+      assert.match(html, /连接 BeamingFace/);
       assert.equal(html.includes('Clued Connect'), false);
       const request = await create(f, origin);
       assert.equal(new URL(request.install_url).origin, publicOrigin);
-      assert.match(request.copy_text, /KooYomi/);
+      assert.match(request.copy_text, /BeamingFace/);
       noLegacyLinks(request);
       assert.equal(f.rows.size > 0, true);
     }
@@ -104,7 +104,7 @@ test('manifest and installation contract migrate public links while retaining pr
       const response = await f.run(`/connect/api/manifest/${id}?challenge=${challenge}&host=${host}`, {}, legacy);
       assert.equal(response.status, 200);
       const manifest = await response.json();
-      assert.deepEqual(manifest.issuer, { name: 'KooYomi', origin: publicOrigin });
+      assert.deepEqual(manifest.issuer, { name: 'BeamingFace', origin: publicOrigin });
       assert.equal(manifest.contract.type, 'clued_installation_contract');
       assert.equal(manifest.host_profile.host, host);
       assert.equal(new URL(manifest.host_profile.mcp.url).origin, publicOrigin);
@@ -119,7 +119,7 @@ test('manifest and installation contract migrate public links while retaining pr
     }
     const response = await f.run(`/connect/install/${id}/${challenge}`, {}, legacy);
     const text = await response.text();
-    assert.match(text, /# KooYomi Installation Contract/);
+    assert.match(text, /# BeamingFace Installation Contract/);
     assert.match(text, /clued_session_resume/);
     assert.equal(text.includes(legacy), false);
     assert.equal(f.calls.length, 0);
@@ -132,12 +132,12 @@ test('request-scoped ZIP keeps technical ids and issues the canonical MCP URL wi
     const { request_id: id, challenge } = await create(f);
     const response = await f.run(`/connect/plugin/claude/${id}/${challenge}.zip`, {}, legacy);
     assert.equal(response.status, 200);
-    assert.match(response.headers.get('content-disposition'), /KooYomi-for-Claude.zip/);
+    assert.match(response.headers.get('content-disposition'), /BeamingFace-for-Claude.zip/);
     const files = unzipStored(Buffer.from(await response.arrayBuffer()));
     assert.deepEqual([...files.keys()], ['.claude-plugin/plugin.json', 'skills/clued/SKILL.md', '.mcp.json', 'clued-carrier.json', 'README.md']);
     const plugin = JSON.parse(files.get('.claude-plugin/plugin.json'));
     assert.equal(plugin.name, 'clued');
-    assert.equal(plugin.displayName, 'KooYomi');
+    assert.equal(plugin.displayName, 'BeamingFace');
     assert.equal(plugin.version, '0.1.6');
     assert.equal(plugin.homepage, publicOrigin);
     const mcp = JSON.parse(files.get('.mcp.json'));

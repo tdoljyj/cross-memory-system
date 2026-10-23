@@ -32,8 +32,8 @@ BATCH = '0123456789abcdef-0123456789ab'
 
 
 def descriptor(**over):
-    d = {'contract': 'clued.independent-ci.resident-batch-descriptor/2', 'batchId': BATCH, 'batchKey': BATCH[:16] + 'a' * 48,
-         'repo': 'tdoljyj/cross-memory-system', 'pr': 884, 'headSha': '1' * 40, 'baseSha': '2' * 40, 'attempt': 1,
+    d = {'contract': 'clued.independent-ci.resident-batch-descriptor/3', 'batchId': BATCH, 'batchKey': BATCH[:16] + 'a' * 48,
+         'repo': 'tdoljyj/cross-memory-system', 'pr': 884, 'headSha': '1' * 40, 'baseSha': '2' * 40, 'testSha': '1' * 40, 'attempt': 1,
          'ciSourceManifestSha256': 'e' * 64, 'sourceCommit': 'c' * 40, 'gitleaksTomlSha256': '9' * 64, 'createdAt': '2026-10-21T08:00:00.000Z'}
     d['linuxJobIds'] = [tool.job_id_v2(d, r) for r in tool.LINUX_ROLES]
     d.update(over)
@@ -49,6 +49,32 @@ class ArchiveDescriptor(unittest.TestCase):
         raw = json.dumps(d).encode()
         self.assertEqual(tool.descriptor_job_ids(raw, BATCH), d['linuxJobIds'])
         self.assertEqual(list(wsprep.validate_descriptor(d, BATCH).values()), d['linuxJobIds'])
+        # job contract /3: the tested commit is in the id, and both tools agree on it; /2 and a missing S are refused
+        other = descriptor(testSha='4' * 40)
+        other['linuxJobIds'] = [tool.job_id_v2(other, r) for r in tool.LINUX_ROLES]
+        self.assertNotEqual(other['linuxJobIds'], d['linuxJobIds'])
+        self.assertEqual([tool.job_id_v2(other, r) for r in tool.LINUX_ROLES], [wsprep.job_id_v2(other, r) for r in tool.LINUX_ROLES])
+        for bad in ({**d, 'contract': 'clued.independent-ci.resident-batch-descriptor/2'}, {k: v for k, v in d.items() if k != 'testSha'}):
+            with self.assertRaises(tool.Refused):
+                tool.descriptor_job_ids(json.dumps(bad).encode(), BATCH)
+
+    def test_the_archive_reads_the_descriptor_from_the_outbox(self):
+        # 3b review B1: the outbox path and the descriptor contract must never share a name; read through the real path.
+        # The path is the one the Windows side writes (layout.mjs LINUX_DESCRIPTORS, review r2 n1).
+        self.assertIsInstance(tool.DESCRIPTORS, str)
+        layout = (CI / 'src' / 'resident-v2' / 'layout.mjs').read_text(encoding='utf8')
+        self.assertIn(f"export const LINUX_DESCRIPTORS = '{tool.DESCRIPTORS}';", layout)
+        d = descriptor()
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, BATCH))
+            with open(os.path.join(root, BATCH, 'descriptor.json'), 'wb') as f:
+                f.write(json.dumps(d).encode())
+            saved = tool.DESCRIPTORS
+            tool.DESCRIPTORS = root.replace('\\', '/')
+            try:
+                self.assertEqual(tool.descriptor_job_ids(tool.read_descriptor_bytes(BATCH), BATCH), d['linuxJobIds'])
+            finally:
+                tool.DESCRIPTORS = saved
 
     def test_a_list_that_disagrees_with_the_content_refuses_the_archive(self):
         # e.g. a descriptor naming another batch's (or an attacker-chosen) workspace ids
@@ -107,9 +133,14 @@ class WsPrepCheckout(unittest.TestCase):
     def test_checkout_never_materialises_symlinks_and_modes_are_checked_first(self):
         self.assertIn('core.symlinks=false', wsprep.GIT_PREFIX)
         text = (CI / 'src' / 'resident-v2' / 'prepare-workspaces.py').read_text(encoding='utf8')
-        ls = text.index("'ls-tree', '-r', '-z', '--full-tree', d['headSha']")
+        ls = text.index("'ls-tree', '-r', '-z', '--full-tree', d['testSha']")
         checkout = text.index("'checkout', '--quiet', '--detach'")
-        self.assertLess(ls, checkout, 'the head tree modes are validated before the checkout')
+        self.assertLess(ls, checkout, 'the tested tree modes are validated before the checkout')
+        # job contract /3 (3b review m3): the candidate is checked out at S and its HEAD is checked against S, with H and T in the store
+        self.assertIn("'checkout', '--quiet', '--detach', '--no-recurse-submodules', d['testSha']", text)
+        self.assertIn("'rev-parse', '--verify', 'HEAD^{commit}']).strip() == d['testSha'], 'CANDIDATE_HEAD_CHANGED'", text)
+        self.assertIn("for c in (d['headSha'], d['baseSha']):", text)
+        self.assertNotIn("'checkout', '--quiet', '--detach', '--no-recurse-submodules', d['headSha']", text)
         with self.assertRaises(wsprep.Refused):
             wsprep.tree_modes_regular('120000 blob ' + 'a' * 40 + '\tlink\0')
         with self.assertRaises(wsprep.Refused):

@@ -9,7 +9,7 @@ const { WindowsEngine } = eng;
 const PUMP_CODES = eng.PUMP_CODES ?? [];
 import { classifyFailure, isTransient } from '../src/classify.mjs';
 import { validatePolicy } from '../src/policy.mjs';
-import { BASE, CLEAN_PROOF, HEAD, RELAY_ON, SOURCE, RESIDENT, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
+import { BASE, CLEAN_PROOF, HEAD, RELAY_ON, SOURCE, RESIDENT, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, notAdmitted, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 
 const stage1Calls = engine => engine.calls.filter(c => c[0] === 'stage' && c[1] === 1).length;
 // Attempt 1 fails stage 2 with a clean transient code (schedules attempt 2); later stage-1 runs answer `later`.
@@ -27,7 +27,7 @@ function attempt2Engine(later = null) {
 
 test('MAJOR 1: attempt 2 is consumed at reservation; a NOT_ADMITTED or BUNDLE_UNAVAILABLE attempt 2 never runs again', async t => {
   for (const variant of ['not-admitted', 'bundle']) {
-    const engine = attempt2Engine(variant === 'not-admitted' ? { ok: false, code: 'PATHS_OUTSIDE_WRITE_SET', proof: WINDOWS_CLEAN } : null);
+    const engine = attempt2Engine(variant === 'not-admitted' ? notAdmitted('PATHS_OUTSIDE_WRITE_SET') : null);
     let bundles = 0;
     const companion = fakeCompanion();
     companion.buildBundle = async () => ({ ok: !(variant === 'bundle' && ++bundles > 1) });
@@ -75,13 +75,16 @@ test('MAJOR 3: every resume of a waiting batch re-runs the start checks; Source 
   assert.deepEqual(f.engine.calls.filter(c => c[0] === 'stage').map(c => c[1]), [1], 'no stage R, no local stage');
   const key = r.key;
   assert.equal((await f.ledger.state(key)).outcome, 'FAILED_UNKNOWN');
-  // validUntil expiring while waiting fails closed too
+  // validUntil expiring while waiting ends the waiting batch neutrally (phase 2, step 2: a batch at a parking point is
+  // closed, not halted; design v0.5 §4.8, review of step 2 m1): nothing ran after stage 1, nothing published
   const g = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => null }) });
   await g.drop(triggerBytes());
   assert.equal((await g.exec.tick()).state, 'WAITING');
   const later = new ResidentExecutor({ ...g.ports, policy: validatePolicy(rawPolicy({ relay: RELAY_ON, validUntil: new Date(g.clock() + 60_000).toISOString() })) });
   const r2 = await later.tick();
-  assert.deepEqual([r2.state, r2.failureCode], ['HALTED', 'RESIDENT_INSTALL_AUTHORITY_EXPIRING']);
+  assert.deepEqual([r2.state, r2.failureCode], ['FAILED_CLEAN', 'PARKED_AUTHORITY_EXPIRING']);
+  assert.equal(await g.ledger.halted(), null);
+  assert.deepEqual(g.engine.calls.filter(c => c[0] === 'stage').map(c => c[1]), [1]);
   // install-resident.ps1 refuses while any batch is open (also a waiting one)
   const ps = await fs.readFile(new URL('../windows/install-resident.ps1', import.meta.url), 'utf8');
   assert.ok(ps.indexOf("throw 'INSTALL_REQUIRES_NO_OPEN_BATCH_REARM_FIRST'") > 0 && ps.indexOf("throw 'INSTALL_REQUIRES_NO_OPEN_BATCH_REARM_FIRST'") < ps.indexOf('$receipt = [ordered]@'));
@@ -105,7 +108,7 @@ test('MINOR 9: a deferred attempt 2 does not block other PRs\' triggers', async 
   const first = await f.exec.tick();
   assert.ok(first.attempt2);
   const precheck = f.exec.precheck.bind(f.exec);
-  f.exec.precheck = async (key, hk) => (key === first.attempt2 ? { defer: 'COMPANION_NOT_READY' } : precheck(key, hk));
+  f.exec.precheck = async (key, hk, subject, o) => (key === first.attempt2 ? { defer: 'COMPANION_NOT_READY' } : precheck(key, hk, subject, o));
   f.advance(600_000);
   await f.drop(triggerBytes({ pr: 885, headSha: '3'.repeat(40) }));
   const r = await f.exec.tick();

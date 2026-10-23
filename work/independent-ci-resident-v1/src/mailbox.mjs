@@ -12,10 +12,19 @@ import { ensureDir, exists, readBounded, writeNew } from './store.mjs';
 export const REQUEST_CONTRACT = 'clued.independent-ci.resident-companion-request/1';
 export const RESPONSE_CONTRACT = 'clued.independent-ci.resident-companion-response/1';
 export const HEARTBEAT_CONTRACT = 'clued.independent-ci.resident-companion-heartbeat/1';
+// Owner abort (DESIGN §6.5): the service asks the companion to stop working on ONE pending request (today only the
+// bridge pump of a stage being stopped). Create-only <requestId>.cancel.json next to the request; pending() never
+// lists it as a request. The companion only stops what it does for that request; it never stops or kills a unit.
+export const CANCEL_CONTRACT = 'clued.independent-ci.resident-companion-cancel/1';
+export const CANCEL_REASONS = Object.freeze(['owner-abort']);
 export const BATCH_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/;
 const REASON = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const ARCHIVE_DIR = /^(failed|archive)-[0-9a-z-]{1,120}$/;
-export const KINDS = Object.freeze(['build-bundle', 'prepare-workspaces', 'relay-stage', 'archive-linux', 'linux-quiescence', 'check-refs', 'archive-usage']);
+export const KINDS = Object.freeze(['build-bundle', 'prepare-workspaces', 'relay-stage', 'archive-linux', 'linux-quiescence', 'check-refs', 'archive-usage', 'pr-head']);
+// pr-head (resident quota redesign phase 2, step 1: design v0.5 §4.2): one live read of a PR (state and head) over the
+// Owner's own gh login, for the run queue's supersession and falsification checks. Its answer can only stop a batch or
+// re-queue a commit; it never admits anything (stage 1 does).
+export const PULL_STATES = Object.freeze(['open', 'closed', 'merged']);
 // Hosted hints (free-minutes design S20, §7.1): the companion's read-only observation of the GitHub-hosted
 // runs of one PR head, as untrusted scheduling data (clued.independent-ci.hosted-hint/1, <= 2 KB). They are
 // not request kinds: the companion writes them on its own poll, create-only, next to its answers, and the
@@ -34,6 +43,7 @@ const REQUEST_FIELDS = {
   // Source v2: the "no push since the bundle" gate before stage 2, and the Linux archive size (retention).
   'check-refs': ['batchId'],
   'archive-usage': ['batchId'],
+  'pr-head': ['batchId', 'pr'],
 };
 
 export function validateRequest(v) {
@@ -44,18 +54,21 @@ export function validateRequest(v) {
   check(!Number.isNaN(Date.parse(v.createdAt)) && !Number.isNaN(Date.parse(v.deadline)) && Date.parse(v.deadline) > Date.parse(v.createdAt), 'MAILBOX_REQUEST_TIME_REFUSED');
   if (v.kind === 'relay-stage') check([2, 4, 6].includes(v.stage) && HEX64.test(v.jobId), 'MAILBOX_RELAY_FIELDS_REFUSED');
   if (v.kind === 'archive-linux') check(REASON.test(v.reason), 'MAILBOX_ARCHIVE_REASON_REFUSED');
+  if (v.kind === 'pr-head') check(Number.isSafeInteger(v.pr) && v.pr > 0 && v.pr < 1e9, 'MAILBOX_PR_REFUSED');
   return v;
 }
 
 const PROOF_KEYS = ['linuxUnitsInactive', 'containersZero'];
 export function validateResponse(v, request) {
-  exactKeys(v, ['contract', 'requestId', 'kind', 'ok', 'code', 'proof', 'directory', 'verified', 'usage', 'observedAt'], 'MAILBOX_RESPONSE_KEYS_REFUSED');
+  exactKeys(v, ['contract', 'requestId', 'kind', 'ok', 'code', 'proof', 'directory', 'verified', 'usage', 'pull', 'observedAt'], 'MAILBOX_RESPONSE_KEYS_REFUSED');
   check(v.contract === RESPONSE_CONTRACT && v.requestId === request.requestId && v.kind === request.kind, 'MAILBOX_RESPONSE_IDENTITY_REFUSED');
   check(typeof v.ok === 'boolean' && (v.code === null || (typeof v.code === 'string' && CODE.test(v.code))), 'MAILBOX_RESPONSE_STATUS_REFUSED');
   check(v.proof === null || (exactKeys(v.proof, PROOF_KEYS, 'MAILBOX_RESPONSE_PROOF_REFUSED'), PROOF_KEYS.every(k => typeof v.proof[k] === 'boolean')), 'MAILBOX_RESPONSE_PROOF_REFUSED');
   check(v.directory === null || (typeof v.directory === 'string' && ARCHIVE_DIR.test(v.directory)), 'MAILBOX_RESPONSE_DIRECTORY_REFUSED');
   check(v.verified === null || typeof v.verified === 'boolean', 'MAILBOX_RESPONSE_VERIFIED_REFUSED');
   check(v.usage === null || (exactKeys(v.usage, ['bytes', 'directories'], 'MAILBOX_RESPONSE_USAGE_REFUSED'), Number.isSafeInteger(v.usage.bytes) && v.usage.bytes >= 0 && Number.isSafeInteger(v.usage.directories) && v.usage.directories >= 0), 'MAILBOX_RESPONSE_USAGE_REFUSED');
+  check(v.pull === null || (request.kind === 'pr-head' && (exactKeys(v.pull, ['number', 'state', 'headSha'], 'MAILBOX_RESPONSE_PULL_REFUSED'),
+    v.pull.number === request.pr && PULL_STATES.includes(v.pull.state) && HEX40.test(v.pull.headSha ?? ''))), 'MAILBOX_RESPONSE_PULL_REFUSED');
   return v;
 }
 
@@ -98,6 +111,28 @@ export class Mailbox {
     return null; // No answer is never success.
   }
 
+  // Service side: idempotent (a cancel that already exists is the same cancel).
+  async cancel(request, reason) {
+    check(UUID.test(request?.requestId ?? '') && KINDS.includes(request.kind) && CANCEL_REASONS.includes(reason), 'MAILBOX_CANCEL_REFUSED');
+    try {
+      await writeNew(path.join(this.requests, `${request.requestId}.cancel.json`), { contract: CANCEL_CONTRACT, requestId: request.requestId, kind: request.kind, reason, at: isoNow(this.clock) });
+    } catch (error) {
+      if (error.code !== 'CREATE_ONLY_TARGET_EXISTS') throw error;
+    }
+    return true;
+  }
+
+  // Companion side: true only for a well-formed cancel of exactly this request.
+  async cancelled(request) {
+    const file = path.join(this.requests, `${request.requestId}.cancel.json`);
+    if (!(await exists(file))) return false;
+    try {
+      const v = parseBoundedJson(await readBounded(file, 1024, 'MAILBOX_CANCEL_REFUSED'), 1024, 'MAILBOX_CANCEL_REFUSED');
+      exactKeys(v, ['contract', 'requestId', 'kind', 'reason', 'at'], 'MAILBOX_CANCEL_REFUSED');
+      return v.contract === CANCEL_CONTRACT && v.requestId === request.requestId && v.kind === request.kind && CANCEL_REASONS.includes(v.reason);
+    } catch { return false; }
+  }
+
   async heartbeat() {
     if (!(await exists(this.heartbeatFile))) return null;
     try {
@@ -123,7 +158,7 @@ export class Mailbox {
   }
 
   async respond(request, fields) {
-    const response = validateResponse({ contract: RESPONSE_CONTRACT, requestId: request.requestId, kind: request.kind, ok: false, code: null, proof: null, directory: null, verified: null, usage: null, observedAt: isoNow(this.clock), ...fields }, request);
+    const response = validateResponse({ contract: RESPONSE_CONTRACT, requestId: request.requestId, kind: request.kind, ok: false, code: null, proof: null, directory: null, verified: null, usage: null, pull: null, observedAt: isoNow(this.clock), ...fields }, request);
     await writeNew(path.join(this.responses, `${request.requestId}.json`), response);
     return response;
   }

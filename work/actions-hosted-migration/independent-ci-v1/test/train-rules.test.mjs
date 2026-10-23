@@ -1,0 +1,133 @@
+// Phase 2, step 3a (design v0.5 §5.3 rules 3, 5, 7; §5.4 item 4): the live branch rules, GitHub's test merge, the green
+// ledger, and the GitHub port's branch-rules read.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { rulesetFacts, rulesetDecision, testMergeDecision, mergedAsTested, REQUIRED_CHECK_NAMES } from '../src/independent-control-checks-v2/train-rules.mjs';
+import { GreenLedger, validateGreenEntry, GREEN_LEDGER_CONTRACT } from '../src/independent-control-checks-v2/green-ledger.mjs';
+import { createGitHubChecksPort } from '../src/github.mjs';
+import { generateKeyPairSync } from 'node:crypto';
+import { tempDir } from './resident-v2-fixtures.mjs';
+
+const APP = 5368905, H = 'a'.repeat(40), T = 'b'.repeat(40), TREE = 'c'.repeat(40), M = 'd'.repeat(40);
+const required = ({ strict = true, pinned = APP, names = REQUIRED_CHECK_NAMES, extra = [] } = {}) => ({ type: 'required_status_checks',
+  parameters: { strict_required_status_checks_policy: strict, required_status_checks: [...names.map(context => ({ context, integration_id: pinned })), ...extra] } });
+const pullRule = methods => ({ type: 'pull_request', parameters: { allowed_merge_methods: methods } });
+const fails = (fn, code = 'RULESET_UNREADABLE') => assert.throws(fn, e => e.code === code);
+
+test('branch rules: the six checks pinned to 5368905, strict and merge methods; anything else is unreadable', () => {
+  assert.deepEqual(rulesetFacts([{ type: 'deletion', parameters: null }, pullRule(['merge', 'squash', 'rebase']), required()], APP), { requiredPinned: true, strict: true, mergeOnly: false });
+  // the ruleset disabled (no required checks), one check missing, one pinned elsewhere or to no integration
+  fails(() => rulesetFacts([{ type: 'deletion', parameters: null }], APP));
+  fails(() => rulesetFacts([required({ names: REQUIRED_CHECK_NAMES.slice(0, 5) })], APP));
+  fails(() => rulesetFacts([required({ pinned: 5164952 })], APP));
+  fails(() => rulesetFacts([required({ extra: [{ context: 'gitleaks' }] })], APP));
+  // malformed replies
+  for (const bad of [null, {}, [null], [{ type: '' }], [{ type: 'required_status_checks', parameters: null }],
+    [{ type: 'required_status_checks', parameters: { required_status_checks: [], strict_required_status_checks_policy: 'yes' } }], Array.from({ length: 100 }, () => required())]) fails(() => rulesetFacts(bad, APP));
+  // other required checks next to the six do not matter
+  assert.equal(rulesetFacts([required({ extra: [{ context: 'other', integration_id: 1 }] })], APP).requiredPinned, true);
+  // several rulesets aggregate: strict if any asks; the merge methods every pull_request rule allows
+  assert.equal(rulesetFacts([required({ strict: false }), required({ strict: true })], APP).strict, true);
+  assert.equal(rulesetFacts([required({ strict: false })], APP).strict, false);
+  assert.equal(rulesetFacts([required(), pullRule(['merge'])], APP).mergeOnly, true);
+  assert.equal(rulesetFacts([required(), pullRule(['merge', 'squash']), pullRule(['merge', 'rebase'])], APP).mergeOnly, true);
+  assert.equal(rulesetFacts([required()], APP).mergeOnly, false, 'no pull_request rule: the methods are unknown');
+  // unreadable merge methods are unknown, never "merge only", and never a reason to refuse the rules (review N6)
+  for (const parameters of [{ allowed_merge_methods: 'merge' }, {}, null, { allowed_merge_methods: [1] }])
+    assert.deepEqual(rulesetFacts([required(), pullRule(['merge']), { type: 'pull_request', parameters }], APP), { requiredPinned: true, strict: true, mergeOnly: false });
+});
+
+test('branch rules decide: strict off needs the train; with the train, strict off needs merge-only', () => {
+  const facts = (strict, mergeOnly) => ({ requiredPinned: true, strict, mergeOnly });
+  for (const mode of ['off', 'shadow']) {
+    assert.equal(rulesetDecision(facts(true, false), mode), null);
+    assert.equal(rulesetDecision(facts(false, true), mode), 'STRICT_OFF_WITHOUT_TRAIN');
+  }
+  assert.equal(rulesetDecision(facts(true, false), 'on'), null);
+  assert.equal(rulesetDecision(facts(false, true), 'on'), null);
+  assert.equal(rulesetDecision(facts(false, false), 'on'), 'MERGE_METHODS_NOT_MERGE_ONLY');
+  assert.equal(rulesetDecision(null, 'off'), 'RULESET_UNREADABLE');
+  assert.equal(rulesetDecision({ strict: true }, 'off'), 'RULESET_UNREADABLE');
+  assert.throws(() => rulesetDecision(facts(true, true), 'maybe'), e => e.code === 'TRAIN_MODE_REFUSED');
+  assert.equal(rulesetDecision(facts(true, true)), null, 'the default is the train off');
+});
+
+test('test merge: exactly [T, H] with the tested tree; waiting otherwise; another tree is final', () => {
+  const job = { pr: 9, headSha: H, baseSha: T };
+  const pull = (o = {}) => ({ number: 9, state: 'open', mergeable: true, merge_commit_sha: M, head: { sha: H }, ...o });
+  const merge = (o = {}) => ({ sha: M, tree: TREE, parents: [T, H], ...o });
+  const decide = (p, m) => testMergeDecision({ pull: p, mergeCommit: m, job, testTree: TREE });
+  assert.equal(decide(pull(), merge()), null);
+  for (const [p, m] of [[pull({ mergeable: null }), merge()], [pull({ mergeable: false }), merge()], [pull({ merge_commit_sha: null }), null], [pull(), null],
+    [pull(), merge({ sha: 'e'.repeat(40) })], [pull(), merge({ parents: [H, T] })], [pull(), merge({ parents: [T] })], [pull(), merge({ parents: ['9'.repeat(40), H] })],
+    [pull({ state: 'closed' }), merge()], [pull({ head: { sha: '8'.repeat(40) } }), merge()], [pull({ number: 10 }), merge()]]) assert.equal(decide(p, m), 'TRAIN_TEST_MERGE_NOT_READY');
+  assert.equal(decide(pull(), merge({ tree: '7'.repeat(40) })), 'TRAIN_TEST_MERGE_TREE_DIFFERS');
+  assert.throws(() => testMergeDecision({ pull: pull(), mergeCommit: merge(), job, testTree: 'x' }), e => e.code === 'TRAIN_TEST_SUBJECT_REQUIRED');
+  // merged as tested: the PR closed and merged, the merge commit exactly [T, H] with the tested tree
+  const merged = (o = {}) => ({ number: 9, state: 'closed', merged: true, merge_commit_sha: M, head: { sha: H }, base: { ref: 'main' }, ...o });
+  assert.equal(mergedAsTested({ pull: merged(), mergeCommit: merge(), job, testTree: TREE }), true);
+  for (const [p, m] of [[merged({ merged: false }), merge()], [merged({ state: 'open' }), merge()], [merged(), merge({ tree: '7'.repeat(40) })], [merged(), merge({ parents: ['9'.repeat(40), H] })],
+    [merged({ base: { ref: 'other' } }), merge()], [merged({ head: { sha: '8'.repeat(40) } }), merge()], [merged(), merge({ sha: 'e'.repeat(40) })]]) assert.equal(mergedAsTested({ pull: p, mergeCommit: m, job, testTree: TREE }), false);
+});
+
+test('green ledger: create-only records, intent before a check id, every complete record listed, anything else refused', async t => {
+  const dir = path.join(await tempDir(t), 'green');
+  let now = Date.parse('2026-10-23T03:00:00Z');
+  const ledger = await GreenLedger.open(dir); ledger.clock = () => now;
+  const job = { repo: 'tdoljyj/cross-memory-system', pr: 9, headSha: H, baseSha: T };
+  const base = { job, testTree: TREE, effectKey: 'f'.repeat(64), externalId: 'independent-ci:control:control-merge-slot:v2:x' };
+  await ledger.append({ ...base, phase: 'intent' });
+  now += 1000;
+  await ledger.append({ ...base, phase: 'posted', checkRunId: 55 });
+  await ledger.append({ ...base, phase: 'merged', checkRunId: 55, testMergeSha: M, detail: M });
+  await assert.rejects(ledger.append({ ...base, phase: 'posted' }), e => e.code === 'invalid_green_entry', 'a check id after the intent');
+  await assert.rejects(ledger.append({ ...base, phase: 'guessed', checkRunId: 1 }), e => e.code === 'invalid_green_entry');
+  await assert.rejects(ledger.append({ ...base, externalId: 'other', phase: 'intent' }), e => e.code === 'invalid_green_entry');
+  const { entries, refused } = await ledger.list();
+  // oldest first (by time; within one millisecond by effect key, then phase)
+  assert.deepEqual(entries.map(e => [e.entry.phase, e.entry.checkRunId]), [['intent', null], ['merged', 55], ['posted', 55]]);
+  assert.deepEqual(refused, []);
+  assert.equal(entries[0].entry.contract, GREEN_LEDGER_CONTRACT);
+  // a torn or foreign file is reported, never skipped; a leftover temporary file is ignored
+  await fs.writeFile(path.join(dir, `${'1'.repeat(13)}-${'f'.repeat(16)}-posted-00000000.json`), '{"half":');
+  await fs.writeFile(path.join(dir, 'notes.txt'), 'x');
+  await fs.writeFile(path.join(dir, `${'2'.repeat(13)}-${'f'.repeat(16)}-intent-00000000.json.tmp`), '{');
+  const again = await ledger.list();
+  assert.equal(again.entries.length, 3);
+  assert.deepEqual(again.refused.sort(), [`${'1'.repeat(13)}-${'f'.repeat(16)}-posted-00000000.json`, 'notes.txt']);
+  assert.throws(() => validateGreenEntry({ ...entries[0].entry, extra: 1 }), e => e.code === 'invalid_green_entry');
+  // a complete record under a name that says another phase, time or effect is refused (review N2)
+  const text = await fs.readFile(path.join(dir, entries[0].name), 'utf8');
+  const misnamed = [entries[0].name.replace('-intent-', '-posted-'), entries[0].name.replace(/^\d{13}/, '9'.repeat(13)), entries[0].name.replace(/-[a-f0-9]{16}-/, `-${'0'.repeat(16)}-`)];
+  for (const name of misnamed) await fs.writeFile(path.join(dir, name), text);
+  const third = await ledger.list();
+  assert.equal(third.entries.length, 3);
+  assert.deepEqual(third.refused.filter(n => misnamed.includes(n)).sort(), [...misnamed].sort());
+});
+
+test('GitHub port: the branch-rules read is one normalized GET of main, a full page refused', async () => {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const now = Date.parse('2026-10-23T03:00:00Z'), seen = [];
+  let rules = [{ type: 'deletion', ruleset_id: 24182890, ruleset_source_type: 'Repository', parameters: null }, { type: 'required_status_checks', ruleset_id: 24182890, parameters: { strict_required_status_checks_policy: true, required_status_checks: [] } }];
+  const reply = body => ({ ok: true, status: 200, json: async () => body });
+  const fetchImpl = async (url, options) => {
+    const u = new URL(url); seen.push(`${options.method} ${u.pathname}${u.search}`);
+    if (u.pathname === '/app') return reply({ id: 77 });
+    if (u.pathname === '/app/installations/99/access_tokens') return reply({ token: 't', expires_at: new Date(now + 3_600_000).toISOString(), permissions: { checks: 'write', contents: 'read', pull_requests: 'read', metadata: 'read' } });
+    if (u.pathname === '/installation/repositories') return reply({ total_count: 1, repositories: [{ id: 41, full_name: 'owner/repo' }] });
+    if (u.pathname === '/repos/owner/repo/rules/branches/main') return reply(rules);
+    throw new Error('unexpected');
+  };
+  const port = createGitHubChecksPort({ repository: 'owner/repo', repositoryId: 41, appId: 77, installationId: 99, privateKeyProvider: async () => privateKey, fetchImpl, clock: () => now });
+  const r = await port.readBranchRules('main');
+  assert.deepEqual(r, { complete: true, branch: 'main', rules: [{ type: 'deletion', rulesetId: 24182890, parameters: null },
+    { type: 'required_status_checks', rulesetId: 24182890, parameters: { strict_required_status_checks_policy: true, required_status_checks: [] } }] });
+  assert.ok(seen.includes('GET /repos/owner/repo/rules/branches/main?per_page=100'));
+  await assert.rejects(port.readBranchRules('dev'), e => e.code === 'invalid_branch');
+  for (const bad of [{}, [{ type: '' }], [{ type: 'x', parameters: [] }], Array.from({ length: 100 }, () => ({ type: 'deletion', parameters: null }))]) {
+    rules = bad;
+    await assert.rejects(port.readBranchRules('main'), e => e.code === 'invalid_rules_reply');
+  }
+});

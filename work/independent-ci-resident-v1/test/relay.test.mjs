@@ -71,7 +71,7 @@ test('minutes available: 1 -> R (gitleaks, trivy relayed) -> placement locally -
   const s = await f.ledger.state(r.key);
   assert.deepEqual(s.plan.relayed.map(x => x.role), ['gitleaks', 'trivy']);
   assert.equal(await f.ledger.headBurned(headKey(subject())), true, 'a batch that relayed its scanners still burns its head');
-  await f.drop(triggerBytes());
+  await f.drop(triggerBytes({ pr: 990 }));
   assert.equal((await f.exec.tick()).reason, 'HEAD_ALREADY_EXECUTED_NO_RETRY');
 });
 
@@ -132,7 +132,7 @@ test('pause during the wait stops the batch before stage R and any local stage; 
   const f = await waitingFixture(t);
   await f.drop(Buffer.from(JSON.stringify({ contract: PAUSE_CONTRACT, reason: 'emergency stop' })), 'requests');
   assert.equal((await f.exec.tick()).state, 'PAUSED', 'the pause takes effect on the very next tick');
-  f.advance(2 * 3_600_000); // paused far beyond the wait's total cap
+  f.advance(80 * 60_000); // paused beyond the wait's 60-minute total cap, inside the bundle's 100 minutes (park.test.mjs)
   assert.equal((await f.exec.tick()).state, 'PAUSED');
   assert.deepEqual(stagesRun(f.engine), [1], 'no stage R, no local stage while paused');
   // a resume from the user-writable requests directory does nothing; only the Owner's does
@@ -282,6 +282,13 @@ test('attempt 2 never follows a relay; with stage R relaying nothing, a stage-2 
   const r2 = await g.exec.tick();
   assert.equal(r2.state, 'FAILED_CLEAN');
   assert.equal(r2.attempt2, batchKey(subject({ attempt: 2 })));
+  // and it runs: attempt 1's own "before stage R" executed-head record does not stop it (independent review of phase 1,
+  // MINOR 5), while a new trigger of the head is still refused
+  g.advance(600_000);
+  const again = await g.exec.tick();
+  assert.deepEqual([again.state, again.key], ['COMPLETED', batchKey(subject({ attempt: 2 }))]);
+  await g.drop(triggerBytes({ pr: 990 }));
+  assert.ok(['HEAD_ALREADY_EXECUTED_NO_RETRY', 'HEAD_ALREADY_PUBLISHED_NO_RETRY'].includes((await g.exec.tick()).reason));
   // a clean failure of stage R itself is final for the head
   const refused = fakeEngine({ relay: () => ({ ok: false, code: 'RELAY_STAGE_REFUSED', proof: WINDOWS_CLEAN }) });
   const h = await executorFixture(t, { engine: refused, policy: ON, companion: fakeCompanion({ hint: () => hintFor(SUCCESS) }) });

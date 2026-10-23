@@ -27,7 +27,7 @@ function sharedClient(): SupabaseClient {
   const browser = window as AuthWindow;
   if (browser.__cluedBrowserSupabase && (browser.__cluedBrowserAuthConfig?.url !== SUPABASE_URL
     || browser.__cluedBrowserAuthConfig?.key !== SUPABASE_PUBLISHABLE_KEY)) {
-    throw new Error("KooYomi 登录服务配置已变化，请重新加载页面后继续。");
+    throw new Error("BeamingFace 登录服务配置已变化，请重新加载页面后继续。");
   }
   if (!browser.__cluedBrowserSupabase) {
     browser.__cluedBrowserSupabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {

@@ -43,7 +43,7 @@ const initialize = await rpc(1, "initialize", {
 assert.equal(initialize.status, 200);
 const initialized = await initialize.json();
 assert.equal(initialized.result.protocolVersion, "2025-06-18");
-assert.deepEqual(initialized.result.serverInfo, { name: "KooYomi Continuity", version: mcpServerVersion });
+assert.deepEqual(initialized.result.serverInfo, { name: "BeamingFace Continuity", version: mcpServerVersion });
 
 const ping = await rpc(2, "ping");
 assert.equal(ping.status, 200);
@@ -61,7 +61,7 @@ const protectedCall = await rpc(4, "tools/call", {
 }, false);
 assert.equal(protectedCall.status, 401);
 assert.match(protectedCall.headers.get("www-authenticate") ?? "", /^Bearer realm="Clued", resource_metadata=/);
-assert.match((await protectedCall.json()).error.message, /Authorize with Kooyumi OAuth or a Clued Binding Token/);
+assert.match((await protectedCall.json()).error.message, /Authorize with BeamingFace OAuth or a Clued Binding Token/);
 
 console.log(JSON.stringify({
   status: "PASS",

@@ -97,7 +97,7 @@ const workflowMessages: Record<string, string> = {
   task_workflow_declared_input_requires_owner: "未自动核验的版本声明，需要由你核对并接受交付。",
 };
 const MESSAGES: Record<string, string> = {
-  direct_human_session_required: "需要你本人直接登录 KooYomi，授权给应用的登录不能查看任务详情。",
+  direct_human_session_required: "需要你本人直接登录 BeamingFace，授权给应用的登录不能查看任务详情。",
   record_not_found: "找不到这条记录，或当前账户无权查看。",
 };
 const BEIJING = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit",
@@ -523,7 +523,7 @@ export default function TaskOwnerDetailPage() {
       <h3>完成条件</h3><ul>{definition.conditions.map(condition => <li key={condition.id}>{condition.text}{" · "}{condition.kind === "owner_review" ? "由我核对" : "文件核验"}</li>)}</ul>
       {editable && !editor && <button type="button" onClick={() => setEditor(JSON.parse(JSON.stringify(definition)) as Definition)}>修改完成约定</button>}
       {editable && renderEditor()}
-      <h3>文件交付</h3><p className="context-muted">复用已经通过 KooYomi 归档的文件。排队或结果未知时，文件尚未完成核验。</p>
+      <h3>文件交付</h3><p className="context-muted">复用已经通过 BeamingFace 归档的文件。排队或结果未知时，文件尚未完成核验。</p>
       {definition.deliverables.map(file => {
         const delivery = current.deliveries.find(item => item.deliverable_id === file.id);
         const binding = current.delivery_refs.find(item => item.deliverable_id === file.id);
@@ -576,10 +576,10 @@ export default function TaskOwnerDetailPage() {
     </>;
   }
   return <main className="context-page owner-confirm">
-    <header><Link href="/">KooYomi</Link> <Link href="/work-claims">谁在做哪个任务</Link> <Link href="/grants">我的授权</Link></header>
+    <header><Link href="/">BeamingFace</Link> <Link href="/work-claims">谁在做哪个任务</Link> <Link href="/grants">我的授权</Link></header>
     <h1>{visible ? kinds[visible.record.record_type] + "详情" : "任务详情"}</h1>
     <p className="context-muted">查看任务正文和关联记录，并按当前约定核对交付。</p>
-    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 KooYomi</Link> 后查看详情。</p> : <>
+    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 BeamingFace</Link> 后查看详情。</p> : <>
       <p className="context-muted">已登录 {session.user.email || session.user.id}</p>
       {!id ? <p role="alert">请使用完整的记录 ID，从认领页的任务链接打开详情。</p> : <>
         {loading && <p role="status">正在读取详情…</p>}

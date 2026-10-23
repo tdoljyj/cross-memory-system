@@ -23,7 +23,7 @@ const MAX_COPIES = 8;
 const MESSAGES: Record<string, string> = {
   reauthentication_required: "为安全起见，开启前 15 分钟内需要重新登录。请退出后重新登录，再从第一步开始。",
   confirmation_token_session_id_required: "当前登录缺少会话信息，请退出后重新登录。",
-  direct_human_session_required: "需要你本人直接登录 KooYomi，授权给应用的登录不能开启多份模式。",
+  direct_human_session_required: "需要你本人直接登录 BeamingFace，授权给应用的登录不能开启多份模式。",
   work_claim_task_invalid: "任务 ID 格式不对。",
   work_claim_task_unavailable: "找不到这个任务，或它不在所选范围内、已不是进行中的任务。",
   work_claim_multi_copies_invalid: "份数需在 2 到 " + MAX_COPIES + " 之间。",
@@ -162,10 +162,10 @@ export default function WorkClaimRacePage() {
 
   const viewShared = issued && Array.isArray(issued.view.shared_resources) ? issued.view.shared_resources.map(String) : [];
   return <main className="context-page">
-    <header><Link href="/">KooYomi</Link> <Link href="/grants">我的授权</Link></header>
+    <header><Link href="/">BeamingFace</Link> <Link href="/grants">我的授权</Link></header>
     <h1>多份模式（赛马）</h1>
     <p className="context-muted">让几个 Agent 同时做同一个任务，各自领取一份、互不冲突。谁的结果先写回共享资源（或先合并 PR），就采用谁的，其余各份随即作废。每个任务只能开启一次，只能由你本人登录开启：先生成预览，核对无误后再确认。</p>
-    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 KooYomi</Link> 后开启多份模式。</p> : <>
+    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 BeamingFace</Link> 后开启多份模式。</p> : <>
       <p>已登录 {session.user.email || session.user.id} <button type="button" onClick={() => void signOut()}>退出</button></p>
       {editing && <form onSubmit={preview} aria-label="多份模式内容">
         <label>任务 ID<input required maxLength={36} disabled={working} value={taskId} onChange={event => setTaskId(event.target.value)} /></label>
@@ -177,7 +177,7 @@ export default function WorkClaimRacePage() {
       {issued && <section aria-label="确认预览"><h2>请核对后确认</h2>
         <p>任务：{String(issued.view.task_title ?? "")}（{String(issued.view.task_id ?? "")}）</p>
         <p>范围：{String(issued.view.scope ?? "")}</p>
-        <p>份数：{String(issued.view.copies ?? "")}{issued.suggested_copies !== null && <>（建议 {issued.suggested_copies} 份：过去 7 天连接过 KooYomi 的不同 Agent 数，至少 2；上限 {issued.max_copies ?? MAX_COPIES}）</>}</p>
+        <p>份数：{String(issued.view.copies ?? "")}{issued.suggested_copies !== null && <>（建议 {issued.suggested_copies} 份：过去 7 天连接过 BeamingFace 的不同 Agent 数，至少 2；上限 {issued.max_copies ?? MAX_COPIES}）</>}</p>
         <p>共享资源：</p>
         <ul>{viewShared.map(item => <li key={item}><code>{item}</code></li>)}</ul>
         <p>开启后：每份领取都消耗任务的领取额度；第一份写回上述资源或合并 PR 的被采用，其余作废。</p>

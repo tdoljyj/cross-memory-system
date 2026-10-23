@@ -231,9 +231,14 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
     assert.ok(!listed.eligible.some((e) => e.resource_id === `project:${otherProject}`));
 
     // --- Rotation of the legacy CI Binding, which holds the ci-admission role. ---
-    const role = await native('clued_binding_role_confirmation_issue_v1', { binding_id: legacyId, role: 'ci-admission', enabled: true });
+    // Marked as a resident node, the role starts 5 minutes later (C10, Task bb13efb5).
+    const role = await native('clued_binding_role_confirmation_issue_v1',
+      { binding_id: legacyId, role: 'ci-admission', enabled: true, purpose: 'resident-node' });
     assert.equal((await native('clued_binding_role_set_v1',
       { confirmation_token: role.confirmation_token, view_digest: role.view_digest })).status, 'committed');
+    const markedRow = (await admin.query(`select effective_at,purpose from clued_private.binding_roles_v1
+      where binding_id=$1 and role='ci-admission' and revoked_at is null`, [legacyId])).rows[0];
+    assert.ok(markedRow.effective_at.getTime() > Date.now(), 'the marked row has not started yet');
     // The new Binding must hold each moving role's scope.
     assert.equal(await step1Error({ label: 'CI admission', days: 90, replaces_binding_id: legacyId,
       selected: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['audit'] }] }),
@@ -242,9 +247,14 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
     assert.deepEqual(rotated.confirmation.confirmation_view.replaces.roles, ['ci-admission']);
     assert.equal(rotated.result.status, 'committed', JSON.stringify(rotated.result));
     assert.deepEqual(rotated.result.replaced.roles_moved, ['ci-admission']);
-    const roles = (await admin.query(`select binding_id from clued_private.binding_roles_v1
-      where role='ci-admission' and revoked_at is null`)).rows.map((r) => r.binding_id);
-    assert.deepEqual(roles, [rotated.result.binding_id]);
+    const roles = (await admin.query(`select binding_id,effective_at,purpose from clued_private.binding_roles_v1
+      where role='ci-admission' and revoked_at is null`)).rows;
+    assert.deepEqual(roles.map((r) => r.binding_id), [rotated.result.binding_id]);
+    // The moved row keeps its start and purpose: a rotation never shortens the wait.
+    assert.equal(roles[0].effective_at.getTime(), markedRow.effective_at.getTime());
+    assert.equal(roles[0].purpose, 'resident-node');
+    assert.equal((await admin.query(`select clued_private.binding_role_admits_v1(b,'ci-admission') ok
+      from public.clued_agent_bindings b where b.id=$1`, [rotated.result.binding_id])).rows[0].ok, false);
     // The old token keeps working for the one-hour grace period; then the sweep revokes it.
     const retirement = (await admin.query(`select r.retire_at,r.replaced_by,b.revoked_at from clued_private.binding_retirements_v1 r
       join public.clued_agent_bindings b on b.id=r.binding_id where r.binding_id=$1`, [legacyId])).rows[0];
@@ -319,7 +329,8 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
     await assert.rejects(() => revokeLegacy({ binding_id: oauthLike }), /headless_binding_revoke_target_invalid/);
     await assert.rejects(() => revokeLegacy({ binding_id: rotated.result.binding_id }), /headless_binding_revoke_target_invalid/);
     await assert.rejects(() => revokeLegacy({ binding_id: legacyId }), /headless_binding_revoke_target_invalid/);
-    const untouchedRole = await native('clued_binding_role_confirmation_issue_v1', { binding_id: untouched, role: 'ci-admission', enabled: true });
+    const untouchedRole = await native('clued_binding_role_confirmation_issue_v1',
+      { binding_id: untouched, role: 'ci-admission', enabled: true, purpose: 'other' });
     assert.equal((await native('clued_binding_role_set_v1',
       { confirmation_token: untouchedRole.confirmation_token, view_digest: untouchedRole.view_digest })).status, 'committed');
     assert.equal((await resolve(untouchedHash, 'context:read', 'global')).rows[0].id, untouched);
