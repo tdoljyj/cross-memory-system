@@ -24,7 +24,7 @@ export const RELAY_ON = Object.freeze({ ...RELAY_OFF, enabled: true });
 
 export function rawPolicy(overrides = {}) {
   return {
-    contract: 'clued.independent-ci.resident-policy/5',
+    contract: 'clued.independent-ci.resident-policy/6',
     repo: 'tdoljyj/cross-memory-system',
     baseBranch: 'main',
     sourceManifestSha256: SOURCE,
@@ -38,11 +38,12 @@ export function rawPolicy(overrides = {}) {
     stage8: { mode: 'park' },
     park: { maxParked: 4, maxParkedOutsideTop2: 8, maxMs: 86_400_000, stage8MaxTries: 12, stage8RetriesPer24h: 100 },
     companion: { userSid: 'S-1-5-21-1-2-3-1001', heartbeatMaxAgeMs: 60_000 },
-    stageRunMilliseconds: [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000],
+    stageRunMilliseconds: [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000, 300000],
     linux: { distribution: 'Ubuntu-24.04', workerUnit: 'clued-ci-worker@.service', wsprepUnit: 'clued-ci-wsprep@.service', archiveUnit: 'clued-ci-archive@.service' },
     automaticAttempt2: { enabled: true, delayMs: 600_000 },
     retention: { reminderBytes: 50 * 1024 ** 3, checkEveryMs: 3_600_000 },
     relay: RELAY_OFF,
+    train: { enabled: 'off', nonFrontRuns: true, maintenanceEveryMs: 600_000, maintenanceMaxPerDay: 200 },
     ...overrides,
   };
 }
@@ -85,6 +86,9 @@ export function fakeEngine(script = {}) {
     async runStage(batch, stage, o) { calls.push(['stage', stage.number]); opts.push([stage.number, o ?? null]); return script.stages?.[stage.number] ?? { ok: true, factsSha256: 'd'.repeat(64) }; },
     // Stage R: script.relay(roles) -> fact-like result; by default every candidate is relayed.
     async runRelayStage(batch, roles) { calls.push(['stage', 9]); engine.relayRoles = [...roles]; return script.relay ? script.relay(roles) : { ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(r => relayedRow(r)) }; },
+    // Stage 10 (quota phase 2 step 3c-1): script.train(mode) -> fact-like result; by default shadow facts with no front.
+    async runTrainStage(mode) { calls.push(['stage', 10, mode]); return script.train ? script.train(mode) : { ok: true, runId: `${'7'.repeat(16)}-${'0'.repeat(12)}`, proof: { windowsTreeZero: true, serviceOriginalStopped: true },
+      train: { contract: 'clued.independent-ci.train-facts/1', mode, at: '2026-10-23T05:00:00.000Z', onDuty: true, mainSha: null, rules: null, front: null, wouldDo: 'NO_FRONT', wouldRevoke: [], wouldRevokeCount: 0 } }; },
     async closeBatch(batch, opts) { calls.push(['close', opts?.linux ?? null]); return script.close ?? { verified: true, archived: 3 }; },
     async archiveFailure(batch, reason) { calls.push(['archive-windows', reason]); return script.archiveWindows ?? { verified: true, directory: `failed-x-${reason}-000000000000` }; },
     async windowsQuiescence() { return script.windows ?? WINDOWS_CLEAN; },

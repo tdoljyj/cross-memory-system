@@ -14,14 +14,17 @@
 // Contract /4 (primary/standby C5, DESIGN §23): `node`, null until the node profile and the node mode (C1, C3) fill it:
 // { name, mode: ACTIVE | STANDBY | UNCERTAIN, probe: null | { at, result: held | not-held | uncertain, failures,
 // failingSince } }. The companion reads null as one ACTIVE node (node-duty.mjs#nodeOf).
+// Contract /5 (quota phase 2 step 3c-1, DESIGN §22.3): `train`, stage 10's mode (policy train.enabled) and the newest
+// run's summary (train.mjs#trainSummary; null before the first one). The companion's ruleset backstop reads the mode.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CODE, HEX40, HEX64, canonicalJson, check, exactKeys, parseBoundedJson } from './canonical.mjs';
 import { readBounded } from './store.mjs';
 import { HOLDER, INTAKE_HOLDS_MAX } from './intake-pause.mjs';
+import { parseTrainLast } from './train.mjs';
 import { NODE_NAME } from './node-duty.mjs';
 
-export const STATUS_CONTRACT = 'clued.independent-ci.resident-status/4';
+export const STATUS_CONTRACT = 'clued.independent-ci.resident-status/5';
 export const STATUS_FILE = 'status.json';
 export const STATUS_REFRESH_MS = 15_000;
 // The companion's reading: a status not rewritten for this long means the executor (or its service) stopped.
@@ -48,7 +51,7 @@ export class StatusBoard {
     this.clock = clock;
     this.pid = pid;
     this.content = { executor: { state: 'STARTING', since: iso(clock()), reason: null }, halt: null, paused: false, intakePause: null, node: null, backfill: { complete: false, published: null, unreadable: null },
-      current: null, pending: [], recent: [], limits: null, queue: null, breaker: null, notices: [] };
+      current: null, pending: [], recent: [], limits: null, queue: null, breaker: null, notices: [], train: { enabled: 'off', last: null } };
     this.changedAt = iso(clock());
   }
 
@@ -132,7 +135,7 @@ export function startStatusTimer({ board, file, intervalMs = STATUS_REFRESH_MS, 
 }
 
 // ---- the companion's reading (untrusted bytes in the resident's state, read-only for the Owner) ----
-const TOP = ['contract', 'writtenAt', 'changedAt', 'pid', 'executor', 'halt', 'paused', 'intakePause', 'node', 'backfill', 'current', 'pending', 'recent', 'limits', 'queue', 'breaker', 'notices'];
+const TOP = ['contract', 'writtenAt', 'changedAt', 'pid', 'executor', 'halt', 'paused', 'intakePause', 'node', 'backfill', 'current', 'pending', 'recent', 'limits', 'queue', 'breaker', 'notices', 'train'];
 const ms = v => (typeof v === 'string' && Number.isFinite(Date.parse(v))) ? Date.parse(v) : (Number.isSafeInteger(v) && v > 0 ? v : null);
 export function parseStatus(bytes) {
   const v = parseBoundedJson(bytes, STATUS_MAX_BYTES, 'STATUS_REFUSED');
@@ -170,6 +173,7 @@ export function parseStatus(bytes) {
     breaker: v.breaker && BREAKER_STATES.includes(v.breaker.state) ? { state: v.breaker.state, nextTrialAt: ms(v.breaker.nextTrialAt), openedAt: ms(v.breaker.openedAt) } : null,
     notices: Array.isArray(v.notices) ? v.notices.filter(n => n && NOTICE_KINDS.includes(n.kind) && typeof n.key === 'string' && /^[A-Za-z0-9:_-]{1,160}$/.test(n.key)).slice(0, NOTICES_MAX)
       .map(n => ({ key: n.key, kind: n.kind, pr: Number.isSafeInteger(n.pr) ? n.pr : null, headSha: head(n.headSha) ? n.headSha : null, code: codeOrNull(n.code), at: ms(n.at), until: ms(n.until) })) : [],
+    train: { enabled: ['off', 'shadow', 'on'].includes(v.train?.enabled) ? v.train.enabled : null, last: parseTrainLast(v.train?.last) },
   };
 }
 

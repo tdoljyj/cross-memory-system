@@ -45,7 +45,8 @@ public sealed class SwapBroker : ServiceBase
     // Stage caps (Source v2 resident-v2/layout.mjs STAGES_V2) + 180 s margin bound every deadline. Stage 9 is
     // stage R, the hosted relay (free-minutes design S22): the same one generic helper runs it (the helper's
     // own stage table maps 9 to the relay-publisher entry), so broker.json still pins exactly one helper.
-    static readonly long[] StageMilliseconds = { 900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000 };
+    // Stages 1-8, stage R (9) and stage 10 (train maintenance, quota phase 2 step 3c-1), each with its run cap.
+    static readonly long[] StageMilliseconds = { 900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000, 300000 };
     static readonly Regex Hex32 = new Regex("^[0-9a-f]{32}$"), Hex64 = new Regex("^[0-9a-f]{64}$"), Uuid = new Regex("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$");
     static readonly Regex Iso = new Regex(@"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,7})?Z$");
     readonly string root, configSha;
