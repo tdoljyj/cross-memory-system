@@ -1,0 +1,95 @@
+{
+  "schema": "clued.reviewed-gitleaks-exact-fixtures-candidate/1",
+  "status": "CANDIDATE_NOT_ACCEPTED",
+  "source_runtime_accepted": false,
+  "task_id": "6451a55d-5a77-4d3c-986f-1d6f8bd72328",
+  "base_commit": "f6ae29eda25c5ffa6131662e60251492e0878aa2",
+  "reviewed_commit": "fd10191533a5f2139b224a90a096880039d62034",
+  "legacy_records": 726,
+  "exact_additions": 3,
+  "total_records": 729,
+  "global_fingerprints": 0,
+  "default_detection_rules_unchanged": true,
+  "legacy_record_lines_sha256": "5ec9aef1a5af7f356152ba7dfc18e197a968cf3ac70ffd2b2aa7000a4801d35c",
+  "findings": [
+    {
+      "fingerprint": "fd10191533a5f2139b224a90a096880039d62034:apps/clued-cloud/tests/ci-scheduling-stage1-ui.test.mjs:private-key:283",
+      "classification": "SYNTHETIC_PEM_MARKER",
+      "commit": "fd10191533a5f2139b224a90a096880039d62034",
+      "path": "apps/clued-cloud/tests/ci-scheduling-stage1-ui.test.mjs",
+      "rule": "private-key",
+      "start_line": 283,
+      "end_line": 315,
+      "blob_id": "4081d1af33666e2194c7ffa8f3d0cccc176ca164",
+      "blob_sha256": "e0e4215310cba92eb27747a36ed001d5b46a154b46f56ef068145cc97f0a0aa5",
+      "blob_bytes": 23019,
+      "span_bytes_lf": 2432,
+      "span_sha256_lf": "2b8df28e8b3d44a0f220735283a7ea8a7eac9da1fb02c9bc69c20b5f129a9063",
+      "proof": {
+        "definition": "Only the exact diagnostic-message literal in the pinned mock UI test; invalid Base64 cannot encode ASN.1 private-key material.",
+        "representation_chars": 68,
+        "decoded_chars": 66,
+        "decoded_newlines": 2,
+        "body_chars": 12,
+        "strict_base64_valid": false
+      }
+    },
+    {
+      "fingerprint": "fd10191533a5f2139b224a90a096880039d62034:apps/clued-cloud/tests/ci-scheduling-stage1-ui.test.mjs:generic-api-key:315",
+      "classification": "SYNTHETIC_REJECTION_MARKER",
+      "commit": "fd10191533a5f2139b224a90a096880039d62034",
+      "path": "apps/clued-cloud/tests/ci-scheduling-stage1-ui.test.mjs",
+      "rule": "generic-api-key",
+      "start_line": 315,
+      "end_line": 315,
+      "blob_id": "4081d1af33666e2194c7ffa8f3d0cccc176ca164",
+      "blob_sha256": "e0e4215310cba92eb27747a36ed001d5b46a154b46f56ef068145cc97f0a0aa5",
+      "blob_bytes": 23019,
+      "span_bytes_lf": 126,
+      "span_sha256_lf": "1d852efee7dee22146fb7488cab1584667f7833cb38ab65b160dbebc069e875f",
+      "proof": {
+        "definition": "Only four fixed short credential-shaped rejection inputs in the pinned for-of negative array; a PEM header alone and short placeholders, with no usable key encoding.",
+        "literal_lengths": [
+          30,
+          24,
+          14,
+          14
+        ],
+        "static_use": "mock rejection/diagnostic chain; no environment or production network use in the inspected chain"
+      }
+    },
+    {
+      "fingerprint": "fd10191533a5f2139b224a90a096880039d62034:work/ci-scheduling-stage1-20261023/README.md:generic-api-key:78",
+      "classification": "PUBLIC_DOCUMENT_PROSE",
+      "commit": "fd10191533a5f2139b224a90a096880039d62034",
+      "path": "work/ci-scheduling-stage1-20261023/README.md",
+      "rule": "generic-api-key",
+      "start_line": 78,
+      "end_line": 78,
+      "blob_id": "98c9fbf54b67318274a14d1bcc96b1940add7f42",
+      "blob_sha256": "714b03bf2d60e00ff5519c2e6f4dd20f109421e98e232bb3ad061c095355446f",
+      "blob_bytes": 8936,
+      "span_bytes_lf": 79,
+      "span_sha256_lf": "1d5a4bd8cfccf414fb99d0bc2fb1e809472ce6e10f336f956db4082f78e64b92",
+      "proof": {
+        "definition": "Only the pinned ordinary ASCII English documentation line; not a token, credential or encoded key.",
+        "ascii": true,
+        "digit_count": 0,
+        "longest_ascii_word": 11,
+        "line_chars": 78
+      }
+    }
+  ],
+  "classification_scope": "These new kinds are admitted only by the three exact fingerprint identities, immutable Git blob mappings, whole-blob hashes, exact LF spans and classified-use checks in reviewed_gitleaks.py. No private-key or test-path general exemption.",
+  "limits": [
+    "A read-only disposition permits candidate preparation only; it is not Owner acceptance or Source/runtime qualification.",
+    "Static mocked use in the inspected immutable chain does not prove the values were never used outside that chain.",
+    "No scanner finding Secret, Match, PEM or bearer fixture value is reproduced in this evidence.",
+    "Existing default detector rules and the original 726 reviewed record lines remain unchanged; no history/ref rewriting or global fingerprint."
+  ],
+  "required_detector_regression_fields": [
+    "scheduling_marker_new_commit_detection",
+    "scheduling_marker_different_path_detection",
+    "valid_private_key_detection"
+  ]
+}
