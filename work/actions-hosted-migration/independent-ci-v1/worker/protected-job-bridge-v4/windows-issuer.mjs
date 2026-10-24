@@ -14,6 +14,8 @@
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {canonical,digest as proofDigest} from '../../src/proof.mjs';
+import {fullAdmissionFailureV2} from '../../src/full-admission-v2.mjs';
+import {DIAGNOSTIC_PHASES} from '../../src/admission-facts-v2.mjs';
 import {readBatchClaim} from '../../src/batch-claim-v2.mjs';
 import {collectCompleteRemoteRefs} from '../protected-controller-ports-v2/refs.mjs';
 import {STATE_V2,stageByNumber} from '../../src/resident-v2/layout.mjs';
@@ -56,11 +58,11 @@ export const issuerEvaluate=({github,admission,job,batchClaim})=>async()=>{
 // The issuer engine. Ports are injected so the offline tests drive the real protocol; production wires
 // them in main(). sideEffects counts "the Linux side may run": 0 until the issue is written.
 export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),stageDeadline,signal}){
-  takeAcceptedBridgeContext(context);const job=context.job;let sideEffects=0,gaveUp=null;
-  // A transient admission refusal given up on in this run, for the outcome record: a round that went late reports only
-  // the bridge reason otherwise. It is context, not necessarily the cause of the final reason. For the issuer's stages
-  // (2, 4, 6) the resident classifies by status and reason alone, so it changes no outcome.
-  const diagnosed=outcome=>gaveUp?{...outcome,admissionDiagnostic:gaveUp}:outcome;
+  takeAcceptedBridgeContext(context);const job=context.job;let sideEffects=0,admissionDiagnostic=null;
+  // Preserve only the shared sanitizer's refusal facts, plus bounded retry context when an admission round gave up.
+  // A late round may end with a bridge reason instead, so this is context, not necessarily the final failure's cause.
+  // The issuer's classification still depends only on status/reason/sideEffects, never this diagnostic.
+  const diagnosed=outcome=>admissionDiagnostic?{...outcome,admissionDiagnostic}:outcome;
   try{
     check(Number.isSafeInteger(stageDeadline)&&stageDeadline>clock(),'FORMAL_ISSUER_WINDOW_UNCONFIRMED');
     await box.lock();
@@ -74,9 +76,11 @@ export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sle
         const reason=/^full_admission_[a-z_]+$/.test(facts?.reason??'')?facts.reason:'ACTUAL_NATIVE_ADMISSION_REQUIRED';
         const wait=RETRY_WAITS_MS.get(reason)?.[attempt-1];
         if(wait===undefined||clock()+wait>=until){
+          const failure=fullAdmissionFailureV2(facts);
+          if(failure?.admissionDiagnostic)admissionDiagnostic=failure.admissionDiagnostic;
           const phase=facts?.diagnostic?.phase;
-          if(RETRY_WAITS_MS.has(reason))gaveUp={transientAdmission:reason,evaluations:attempt,
-            ...(typeof phase==='string'&&/^[a-z_]{1,32}$/.test(phase)?{phase}:{})};
+          if(RETRY_WAITS_MS.has(reason))admissionDiagnostic={...(failure?.admissionDiagnostic??{}),transientAdmission:reason,evaluations:attempt,
+            ...(DIAGNOSTIC_PHASES.includes(phase)?{phase}:{})};
           fail(reason);
         }
         if(wait)await sleep(wait);
