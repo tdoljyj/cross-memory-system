@@ -5,8 +5,8 @@
 // No network, Docker, Host path or credential. Fixtures live under os.tmpdir().
 // The trusted workflow bytes come from test/fixtures/trusted-workflows.json, never
 // from the working tree, so these tests hold on a head carrying either version.
-// The helper and .gitleaks.toml stay single exact pins and are read from the
-// working tree on purpose: a change there must change the pins.
+// This legacy Source keeps its old 726/helper bytes from its immutable source,
+// independently of the active Source v4 successor's config and helper.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -24,7 +24,14 @@ import { workflowBytes } from './fixtures/trusted-workflows.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../../../..');
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
-const CONFIG = fs.readFileSync(path.join(ROOT, '.gitleaks.toml'));
+const LEGACY_SOURCE = 'f6ae29eda25c5ffa6131662e60251492e0878aa2';
+function legacySource(relative) {
+  const result = spawnSync('git', ['-C', ROOT, 'show', `${LEGACY_SOURCE}:${relative}`], { windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
+  assert.equal(result.status, 0, `legacy Source object missing: ${relative}`);
+  assert.equal(sha256(result.stdout), SOURCE_PINS[relative], `legacy Source pin: ${relative}`);
+  return result.stdout;
+}
+const CONFIG = legacySource('.gitleaks.toml');
 const REVIEWED = reviewedCommitsFromConfig(CONFIG);
 
 // prepare.mjs refuses a hard-linked Git executable; Git for Windows hard-links
@@ -57,7 +64,7 @@ async function trustedSource(directory, workflow = MAIN_WORKFLOW) {
   for (const relative of Object.keys(SOURCE_PINS)) {
     const target = path.join(source, ...relative.split('/'));
     await fsp.mkdir(path.dirname(target), { recursive: true });
-    await fsp.copyFile(path.join(ROOT, ...relative.split('/')), target);
+    await fsp.writeFile(target, legacySource(relative));
   }
   const target = path.join(source, ...WORKFLOW_PATH.split('/'));
   await fsp.mkdir(path.dirname(target), { recursive: true }); await fsp.writeFile(target, workflow);

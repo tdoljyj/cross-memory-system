@@ -1842,6 +1842,93 @@ Owner Decision `0bb98194` 把设计 v0.5 的第 3 步拆成三个 PR，这是第
   - 已改：m1（推导结果的 `testSha` 加了跨层断言）、n1（outbox 路径与 `layout.mjs` 的 `LINUX_DESCRIPTORS` 相等）、n2 和 n5（写进 §21.4、§21.3）、n4（过时注释）。
   - n3（打包脚本只有源码断言；C# 同批核对没有测试）留到 3c，和 S ≠ H 的测试一起补。
 
+## 22. 额度第二期·第 3c-1 步：第 10 段（只读）与影子模式（v1.2，Task `6451a55d`，Decision `2eea28a1`）
+
+Owner Decision `2eea28a1` 把 3c 拆成两步。3c-1 只做影子模式（设计 v0.5 §6 第 4 步）要的部分。今晚装上后 `train.enabled=shadow`：第 10 段只读，不撤销、不写 KooYomi、不改发绿规则，第 8 段仍按关车规则走。开车所需（撤销、清扫、车头批次、S ≠ H、C9）在 3c-2。
+
+### 22.1 第 10 段怎么跑（设计 v0.5 没写打包方式，这里补）
+
+- 第 10 段是批次之外的一个正式段，照旧由通用助手以 clued-control 运行，经 SwapBroker 和 C# 边界，上限 5 分钟。
+- 一次运行叫一次“列车维护”（train run）。它的阶段包和批次的阶段包同一套格式（计划、作业列表、工作清单、密封），区别只在作业：
+  - 作业合同 `clued.independent-ci.train-run/1`，字段 `contract, id, repo, runId, mode, sourceManifestSha256, createdAt`；id = sha256(JSON([合同, repo, runId, mode, sourceManifestSha256]))。
+  - `runId` 是常驻层生成的 16+12 位十六进制（和批次 id 同形），`batchKey` 由它推出；`mode` 只能是 `shadow`（3c-2 才放开 `on`）。
+  - 作业角色 `train-run`，入口角色 `train-maintenance`，阶段号 10，种类 `train`，不属于任何批次的八段。
+- `derive-batch.mjs --train-run <runId> --train-key <key> --mode shadow --out <新目录>` 推出这个包，放在 `resident\work\train\<runId>`。常驻层 `engine-windows.mjs` 的 `runTrainStage` 照第 R 段的做法推导、调用、解析；run key 和 run id 是新的随机值，推导只核对形状。
+- C# 边界（`FormalPublicBoundaryV2.cs`）和 SwapBroker：阶段表加第 10 行（入口 train-maintenance、上限 5 分钟、作业角色 train-run）；第 10 段的作业按 train-run 合同校验（`ValidateTrainRun`：mode 只能是 shadow，run id 必须等于计划的 batchId，id 按公式重算），其他段不变。
+- 结果：入口写出 `status: 'TRAIN_FACTS'` 和 `train` 事实（`stage-inputs.mjs` 的 `writeOutcome` 像第 R 段的 `relay` 那样单独校验这一块）；`stage-fact.mjs` 认这个成功状态。
+
+### 22.2 第 10 段在影子模式下读什么、算什么（设计 §5.5 第 1、2、8 条）
+
+1. KooYomi `clued_work_merge_slot_holders_v1`（CI 身份）：车头的认领、PR、`merge_slot_until`、`taken_at`、CI 状态。它同时是当班探测：回答 `admission_binding_required` 就记“不当班”，其余照读。
+2. GitHub：main 尖端；车头 PR 的状态、head、草稿、`mergeable`、`merge_commit_sha` 与它的父提交和树；head 是否含 main 尖端（compare）；main 的规则（`strict`、合并方式、六项钉 5368905）。
+3. 绿色台账：列出全部记录，按 head 汇总最后阶段；对“成功且还没撤销”的，查它是否已在 main 里。
+4. 算出“如果开车会做什么”（设计 §5.2、§5.6）：没有车头；车头是别的 scope 的认领；车头不能跑（草稿、关闭）；车头需要作者先合 main（受保护且落后、冲突、`strict` 开着且落后）；车头已绿等合并；会开车头批次（T、S 与它的两个父提交）；以及会撤销哪些旧绿（台账里不在 main 里、又不是车头当前 head 的成功）。
+5. 每次运行写一条只新建的影子记录（`state\v2\train-shadow\`，`acl-model.json` 新增，只有 clued-control 能写），供第 4 步统计：车头变绿到合入的空档、第 2 位的等待、车头首次运行失败率、每个 PR 平均几个 head、GitHub 在 main 移动后多久重算试合并。统计离线从记录里算，不进执行器。
+6. 影子模式不做的：不撤销、不调用 touch/adopt/return、不改第 8 段、不开车头批次、不做 GitHub 全量枚举（GraphQL 强推事件留给 3c-2 的清扫）。
+
+### 22.3 常驻层
+
+- 策略 `/6` 新增 `train`（第 10 段上限钉在 300000，C# 边界和 SwapBroker 只允许 5 分钟）：`enabled`（`off`/`shadow`；`on` 在 3c-2 之前拒绝）、`nonFrontRuns`（只认 `true`，即今天的做法）、`maintenanceEveryMs`（默认 10 分钟）、`maintenanceMaxPerDay`（默认 200，设计 §4.7）。
+- 执行器（`executor.mjs#trainMaintenance`）：`enabled=shadow` 时，一次节拍里调度没有跑任何批次（结果是空闲或只有推迟，停靠中的批次不算在跑），且离上次第 10 段超过 `maintenanceEveryMs`，就跑一次。暂停接新（队列为空时也查，见 §22.7 M1）、PAUSE、HALT 时都不跑：执行器的 PAUSE 本来就只留读触发这一件事，3c-1 不改它的含义（设计 §4.3 说暂停只停发绿，那是为 3c-2 的清扫准备的，到时再定）。第 10 段也守开批次前的两条：安装授权在本段上限加余量（`limits.stageMarginMs`，不少于助手固定的 180 秒）内到期就不跑，Source 或常驻字节漂移就 HALT（`RESIDENT_SOURCE_DRIFT`）。运行期间状态显示 `RUNNING TRAIN_MAINTENANCE`。
+- 计数和中断：第 10 段没有账本条目，由回执链代替。运行前写 `train-run-intent`，结束写 `train-run`（runId、是否成功、失败码、会做什么、车头 PR、main、会撤几个）。每个进程启动后第一次节拍从回执链读最近的记录（`receipts.mjs#latest`）：取最近 24 小时的 intent 时刻计数，到 `maintenanceMaxPerDay` 就停到窗口滚动；如果最新的一条是没有 `train-run` 收尾的 intent（运行中途崩溃或被停），先 HALT `TRAIN_STAGE_INTERRUPTED`，再补一条收尾回执，所以只停一次；这一步放在 HALT 检查之前，已经停着时发现的中断也当场收尾，复位一次就够。回执链读不到时所有批次都等（排除不了没收尾的 intent），暂时性错误最多 30 分钟，之后 HALT `TRAIN_RECEIPTS_UNREADABLE`。
+- 失败：只有 Windows 证明齐全、结果里没有副作用，并且是白名单里的干净码（classify.mjs）、引擎自己在 broker 之前的拒绝（`TRAIN_STAGE_REFUSED`）或一个绑定的零副作用 BLOCKED 结果（也包括写完 TRAIN_FACTS 后撞上 5 分钟上限的）时，才算干净失败：只记 `train-run` 回执，不进熔断，下次照跑。清理没证实（Windows 进程树或 runner 原服务没确认）或调用抛异常 HALT `TRAIN_STAGE_CLEANUP_UNCONFIRMED`；有副作用、可能已发布或不是干净码（如 `BROKER_BUSY`）HALT `TRAIN_STAGE_OUTCOME_UNCONFIRMED`。
+- 阶段事实（`stage-fact.mjs`）：第 10 段只有 `TRAIN_FACTS`、零副作用、`mayHavePublished=false` 且事实通过 `validateTrainFacts` 才算成功，事实随阶段事实带回；其余都是现有的 `STAGE_OUTCOME_MISSING`，不新增失败码；这个结局干净与否由执行器按证明和绑定的结果判断（见下一条“失败”）。
+- 状态快照（合同 `/5`，即 C5 的 `/4` 加这一块）多一个 `train`：`enabled`（策略里的模式）和 `last`（最近一次成功运行的摘要，`train.mjs#trainSummary`）。PR 页面（`pr-status.mjs`）只在最近 30 分钟内的运行看到的车头正是这个 PR 的这个 head 时，把“列车影子（只记录，不执行）：……”接在执行器原来那句后面；失败、出错时不加。和 C5 的当班视图一起时，这行只出现在本节点当班或有结果的 head 上；备用节点、停滞和双活提示整句替换描述，这行随之不显示。
+- companion 规则集兜底（设计 §6 末，`ruleset-backstop.mjs#companionBackstop`，`companion-main.mjs` 每轮 poll 调一次）：用 Owner 的只读 gh 读 `rules/branches/main`；读到 `strict=false` 而状态快照里 `train.enabled` 不是 `on`（读不到也算不是），就往用户可写的 `requests\` 写一个暂停请求并弹紧急通知；读到六项不再全部钉 5368905 或没有 `required_status_checks`，只弹通知。每类每天一次，记在 companion 自己的存储里（`pr-status.mjs#LocalStore`，`backstop:` 键）。读不到规则什么都不做（第 8 段自己会以 `RULESET_UNREADABLE` 停靠）。
+
+### 22.4 为什么装上是安全的
+
+- 第 10 段只读：没有任何 GitHub 或 KooYomi 写，失败了也只是少一条影子记录。
+- 第 8 段的发绿规则不变（列车模式仍是 off；影子只读不发绿）。
+- 策略 `/6` 的 `train.enabled` 在测试里默认 `off`；策略样例写 `shadow`，今晚装的就是它。
+- 规则集兜底只会写暂停请求（只能停），不会多发绿。
+- 一处行为变化：开着 shadow 时，暂停接新的状态一直读不到，空队列也会在 30 分钟后 HALT `INTAKE_PAUSE_STATE_UNAVAILABLE`（第 10 段要过这道门）；关着列车时不会。
+
+### 22.5 留给 3c-2 的
+
+- 开车要做的部分：第 8 段的单绿规则（设计 §5.3 第 4 条）、检查说明（第 6 条）、`touch green`（第 8 条）；不依赖日志的撤销、增量与全量清扫（含 GraphQL 强推事件和失败关闭）、台账清理；车头批次调度（S 来自第 10 段）、请合 main、硬上限、touch、adopt、return；§21.3 所列的 S ≠ H 各项；C9（接手时清扫、撤别人的检查前核角色、撤自己的不要求角色）。
+- 保留：`retention.mjs` 只量 spool 归档、`work\` 和 `bundles\` 的字节，不管回执链、`state\v2\receipts`、`train-shadow`、broker 文件和 `resident\stage`。第 10 段每天约 280 条回执，现装节点约每天 590 条，回执链增长快约一半；每次启动读全部回执、每次追加列出整个目录。开车（3c-2）之前要定这些目录的保留办法。
+- **列车调度要支持优先级或截止时间**（Owner Decision `349f6e42`：常驻 CI 的排队协调改由合并列车承担，不另写协调机器人）。实际例子：主备 C5 改的是 3c 要用的文件，必须在某个时刻前合入，只按先来后到排的列车不知道这种期限。3c-2 设计时定来源（PR 标签、认领字段或 KooYomi Task 的截止时间）和规则（截止时间先于先来后到，且不能让车头之外的 PR 插队绕过“只有一个绿”）。
+
+### 22.6 测试
+
+- Source v2：`train-run.test.mjs`（作业合同、id 公式、阶段行、`--train-run` 推导与封包、invoke-stage 端到端：只有 TRAIN_FACTS + 零副作用 + 合格事实才算成功），`train-facts.test.mjs`（当班探测、车头事实、会做什么、会撤哪些旧绿），C# 纯测试第 10 段（入口、阶段表、`ValidateTrainRun` 拒 on、拒别的计划、拒别的 repo、train-run 不能当 /3 作业）。`source-closure.json` 重新生成，只多了五个新文件。
+- 常驻层：`train.test.mjs`（到期规则、摘要、状态副本、PR 页面行；执行器：空闲才跑、关车/PAUSE/每日上限不跑、失败只记回执、清理没证实或抛异常 HALT、漂移 HALT、中断的 intent 在下次启动 HALT 一次且计数跨重启），`ruleset-backstop.test.mjs`（规则读法、只暂停不恢复、每天一次、companion 接线），策略 /6 与各段上限的旧测试随之更新。
+- 离线演练多三步（第 52–54 步）：空闲时跑一次第 10 段只留两条回执；有 PR 时先跑批次，那一拍不跑第 10 段，十分钟后的空闲拍再跑；第 10 段清理没证实就 HALT。
+
+### 22.7 独立审核（规则 01d4ba7d）
+
+第 1 轮（预览树 fb97b65d：main c955068d + C4 #915 + 3c-1）：ACCEPT-WITH-FIXES，1 MAJOR、6 MINOR、5 NIT。确认成立的：第 10 段对 GitHub 和 KooYomi 没有写（只有安装令牌的签发是 POST，holders RPC 在迁移里是只读的），第 8 段不变，兜底只能暂停，两处 HALT 都在收尾回执之前，C# 边界和 SwapBroker 只认一个 train-run/1，阶段事实的成功条件，策略拒 `on`，批次预算不含第 10 段，closure 只多五个文件，状态与 PR 页面行对坏字节安全。
+
+- M1 队列为空时 `schedule()` 在暂停接新的门之前就回空闲，第 10 段照跑：`trainMaintenance` 自己先过一次暂停接新的门（读不到状态也算挡住）；测试补“空队列 + 暂停接新”。
+- m2 授权到期只看了本段上限，没加助手要求的 180 秒余量：改为上限加 `limits.stageMarginMs`；策略把第 10 段上限钉在 300000（C# 和 SwapBroker 都只允许 5 分钟）；测试补边界两侧。
+- m3 执行器没看第 10 段的结果：现在只有 Windows 证明齐全、结果里没有副作用、并且是白名单里的干净码（classify.mjs）、引擎自己在 broker 之前的拒绝或一个绑定的 BLOCKED 结果时才算干净失败；有副作用、可能已发布、`BROKER_BUSY` 之类一律 HALT（`TRAIN_STAGE_OUTCOME_UNCONFIRMED`）；测试逐类覆盖。
+- m4 回执链读不到时只挡第 10 段：现在挡所有批次（排除不了没收尾的 intent），暂时性错误最多 30 分钟（与回填同一上限），拒绝立刻，之后 HALT `TRAIN_RECEIPTS_UNREADABLE`；测试补。
+- m5 `test-migrate-acl.ps1` 的步数从 3a 起就过时（12）：改为 14，并核对 green-ledger 和 train-shadow 两个目录只有 clued-control 能写；离线跑通 14 条。
+- m6 测试缺口：补了暂停接新、授权余量、HALT 先于收尾回执（回执写失败时 HALT 仍在）、读不到回执链；`train-facts.test.mjs` 那条永远不会失败的只读断言换成按顺序核对每次读；新增接线测试：真的 GitHub 端口和 KooYomi 端口配一个只答读请求的 fetch，除令牌签发和 holders RPC 外全是 GET。SwapBroker 第 10 行没有单独的 broker 测试，由 C# 纯测试的阶段表断言和 `StageMilliseconds` 长度覆盖。
+- m7 运维上的取舍，不需要 Owner 另行决定：第 10 段运行中重启会 HALT 一次、要复位，这和任何一段运行中崩溃一样（复位前核对两台主机都静止）。每次运行留约 13 个小文件和 2 条回执：第 1 轮答复说由 `retention.mjs` 管，第 2 轮指出这不对（它只量 spool 归档、`work\`、`bundles\`），已更正，保留办法列入 §22.5，3c-2 之前定。
+- NIT：兜底改为先记“今天已处理”再弹通知，通知失败不再每轮写暂停请求；`receipts.mjs` 注释改指 `trainRecover`；第 10 段运行期间状态显示 `RUNNING TRAIN_MAINTENANCE`；窄窗口里崩溃可能 HALT 两次（`halt` 幂等，无害）；`trainRunKey` 只给测试和推导核对用，常驻层用自己的随机数。
+
+第 2 轮（预览树 b18f30bd）：ACCEPT-WITH-FIXES，2 MINOR、6 NIT，不挡今晚装。第 1 轮的 M1、m2、m3、m4、m5 已关；m6 部分关；m7 的复位理由成立。新的失败规则对追到的每种结局都对：GitHub 或 KooYomi 暂时读不到（绑定的 BLOCKED）、broker 启动前拒绝、助手预检拒绝、没有结果的子进程超时、引擎自己推导被拒，都保持干净；只有未知或没证实的结局 HALT。
+
+- m1 干净规则里走 classify 的那一支没有测试：补了 `BROKER_REQUEST_EXPIRED`、`BROKER_REQUEST_REFUSED`、`STAGE_HELPER_PREFLIGHT_REFUSED`、无结果的 `STAGE_CHILD_TIMEOUT`（都不 HALT），以及证明不齐的一例（HALT）。
+- m2 §22.7 m7 说第 10 段的文件由 `retention.mjs` 管，不对：已更正，保留办法列入 §22.5。
+- NIT：写完 TRAIN_FACTS 后撞上限的运行不再 HALT；授权余量不低于助手固定的 180 秒，策略里的 300000 也加了测试；SwapBroker 和 C# 边界的阶段表加了一致性测试（第 1 轮 m6.3 的理由不对，已补）；已经停着时发现的中断当场收尾，复位一次就够；过时的注释和本节文字已改；回执链暂读不到的那几分钟里，停在 A 点的批次暂时不显示在 PR 页面上，只在进程启动时遇到暂时性读错误才会发生，接受。
+- 补测：调度推迟（companion 没就绪）时第 10 段照跑、已停机启动时什么都不跑。
+
+第 3 轮（接合审核，预览树 3c9fe384 = 3c-1 + C5 #918 head 29deb110 + C4 #915 head 514b6e67）：ACCEPT-WITH-FIXES，1 MINOR、4 NIT，不挡推送。3c-1 的补丁在 C5、C4 的代码里位置正确，两边的东西没有丢也没有换序，运行时配合正常；状态 `/5` 里 C5 的 `node` 和 3c-1 的 `train` 并存；兜底从真实的 `/5` 状态读到 `shadow`；closure 在 C4 之上只多五个文件。
+
+- m1 companion 报告器里的列车影子行、执行器填 `status.train.last` 没有测试：两处都补了（报告器：车头 PR 有这一行，别的 PR 没有；执行器：一次运行后状态里有模式和摘要）。
+- NIT：停机时补写收尾回执失败不再让服务退出（HALT 已在，下次启动再补）；本节写明状态合同 `/5` 以及与当班视图一起时这行在哪些 head 上出现；附录 A 补了 3c-1 的文件；交班后 `已交班` 文字下可能留一行旧的影子说明，它本来就只记录，接受。
+
+### 22.8 Source31 CI 引导资格指针（Task `6451a55d`）
+
+本 PR 的普通 Source 引导继续按精确登记的工作流、Role 与 Source 组合核验。此次受查 Source 为 `31e757ac2d613c9e76d0b7e416d906fd9c7d48be`，Owner 接受依据为 Decision `ae3538a1-627d-49d4-b13a-bdf6d1223856` / Receipt `cf26ce6a-e6f7-4204-9195-9c3a55310e41`。
+
+2026-10-24 的双端标准安装与验证证据见 Canonical Note `7abd3c63-3bd7-42bf-8f36-670bf84552fb` 第 44 版：Linux readiness 原 SHA256 为 `eb11e62ab0494c2efa8bb6ebf505816ed12add61d0e81b52353f0233a86785d3`，Windows 正式完成回执原 SHA256 为 `598dd9f11122e38adebd03cf8cda7353d341c45fa4b51fd4a24c6f390baa3f76`。完整安装回执、独审与保留证据由该记录引用，仓库保留此短指针。
+
+本 PR 的交付范围仍为 3c-1 shadow；正式六项检查、受保护合并及其后 3c-2/C9 和第 4–7 步的当前状态由 Task `6451a55d` 跟踪，Source 安装证据不替代这些 Gate。
+
 ## 附录 A：草稿文件
 
 | 文件 | 作用 |
@@ -1870,3 +1957,5 @@ Owner Decision `0bb98194` 把设计 v0.5 的第 3 步拆成三个 PR，这是第
 | `src/failure-table.json`、`src/executed-heads.mjs`、`src/status.mjs`、`src/pr-status.mjs`、`windows/test-install-carry.ps1` | v0.9：失败对照表、与 Source 无关的已执行记录与回填、状态快照、PR 页面状态与通知、安装带入旧账本的离线测试（§16） |
 | `CI/src/independent-control-checks-v2/train-rules.mjs`、`green-ledger.mjs` | v1.2：第 8 段的 main 规则与试合并核对、绿色台账（§19） |
 | `CI/src/job-v2.mjs`（合同 /3）、`CI/test/job-v3.test.mjs` | v1.2：作业身份加测试提交 S，描述符 /3，工作区检出 S（§21） |
+| `src/train.mjs`、`src/ruleset-backstop.mjs` | v1.2：第 10 段的到期规则、状态摘要与 PR 页面行；companion 规则集兜底（§22） |
+| `CI/src/resident-v2/train-run.mjs`、`CI/src/independent-control-checks-v2/train-*.mjs`、`merge-slot-native.mjs` | v1.2：第 10 段的作业合同、入口、事实、影子记录与合并位只读读取（§22） |

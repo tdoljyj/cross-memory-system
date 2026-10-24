@@ -33,10 +33,16 @@
 //   - stage8.mode: 'park' (the Owner's choice; the design's alternative grace15 is not implemented);
 //   - park: maxParked (4: batches at A, or at B in the queue's first two places), maxParkedOutsideTop2 (8), maxMs (24 h
 //     at B), stage8MaxTries (12), stage8RetriesPer24h (100, every parked batch together).
+// Contract /6 (phase 2, step 3c-1: the merge train in shadow mode, design v0.5 §4.7, §5.5, §6 step 4; Owner decision
+// 2eea28a1; DESIGN §22):
+//   - train: enabled ('off' or 'shadow'; 'on' comes with step 3c-2), nonFrontRuns (only true, today's way: every
+//     pushed head is tested), maintenanceEveryMs (stage 10 at most this often when idle; design: 10 min),
+//     maintenanceMaxPerDay (design §4.7: 200);
+//   - stageRunMilliseconds has a tenth entry, stage 10 (train maintenance, outside the batch).
 import { HEX64, REPO, UUID, check, exactKeys } from './canonical.mjs';
 import { RELAY_ROLES } from './hosted-wait.mjs';
 
-export const POLICY_CONTRACT = 'clued.independent-ci.resident-policy/5';
+export const POLICY_CONTRACT = 'clued.independent-ci.resident-policy/6';
 export const REMINDER_BYTES_DEFAULT = 50 * 1024 ** 3;
 
 // The fixed eight stages of the six-check batch (stages.json of the installed Source).
@@ -51,8 +57,12 @@ export const FIXED_STAGES = Object.freeze([
   { number: 8, name: 'native-control-pair', jobRole: 'control-admission', linuxWorker: false },
   // Stage R (hosted relay): runs between stage 1 and the local roles, only for relay candidates.
   { number: 9, name: 'hosted-relay', jobRole: null, linuxWorker: false },
+  // Stage 10 (train maintenance): outside every batch; runs only when train.enabled is not 'off'.
+  { number: 10, name: 'train-maintenance', jobRole: null, linuxWorker: false },
 ]);
 export const RELAY_STAGE = 9;
+export const TRAIN_STAGE = 10;
+export const TRAIN_MODES = Object.freeze(['off', 'shadow']);
 // Local execution and publication stages of each heavy role (the dynamic part of a batch).
 export const ROLE_STAGES = Object.freeze({ gitleaks: Object.freeze([2, 3]), trivy: Object.freeze([4, 5]), 'contract-placement': Object.freeze([6, 7]) });
 
@@ -61,7 +71,7 @@ const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const int = (v, lo, hi) => Number.isSafeInteger(v) && v >= lo && v <= hi;
 
 export function validatePolicy(p) {
-  exactKeys(p, ['contract', 'repo', 'baseBranch', 'sourceManifestSha256', 'ciSourceManifestSha256', 'residentManifestSha256', 'ownerAcceptance', 'validUntil', 'limits', 'breaker', 'stage8', 'park', 'companion', 'stageRunMilliseconds', 'linux', 'automaticAttempt2', 'retention', 'relay'], 'POLICY_KEYS_INVALID');
+  exactKeys(p, ['contract', 'repo', 'baseBranch', 'sourceManifestSha256', 'ciSourceManifestSha256', 'residentManifestSha256', 'ownerAcceptance', 'validUntil', 'limits', 'breaker', 'stage8', 'park', 'train', 'companion', 'stageRunMilliseconds', 'linux', 'automaticAttempt2', 'retention', 'relay'], 'POLICY_KEYS_INVALID');
   check(p.contract === POLICY_CONTRACT, 'POLICY_CONTRACT_INVALID');
   check(REPO.test(p.repo), 'POLICY_REPO_INVALID');
   check(p.baseBranch === 'main', 'POLICY_BASE_BRANCH_FIXED_MAIN');
@@ -92,11 +102,14 @@ export function validatePolicy(p) {
   exactKeys(p.park, ['maxParked', 'maxParkedOutsideTop2', 'maxMs', 'stage8MaxTries', 'stage8RetriesPer24h'], 'POLICY_PARK_KEYS_INVALID');
   check(int(p.park.maxParked, 1, 8) && int(p.park.maxParkedOutsideTop2, 0, 16) && int(p.park.maxMs, 3_600_000, 86_400_000) && int(p.park.stage8MaxTries, 1, 24)
     && int(p.park.stage8RetriesPer24h, 0, 200), 'POLICY_PARK_INVALID');
+  validateTrain(p.train);
   exactKeys(p.companion, ['userSid', 'heartbeatMaxAgeMs'], 'POLICY_COMPANION_KEYS_INVALID');
   check(SID.test(p.companion.userSid), 'POLICY_COMPANION_SID_INVALID');
   check(int(p.companion.heartbeatMaxAgeMs, 5_000, 600_000), 'POLICY_HEARTBEAT_INVALID');
   check(Array.isArray(p.stageRunMilliseconds) && p.stageRunMilliseconds.length === FIXED_STAGES.length
     && p.stageRunMilliseconds.every(ms => int(ms, 60_000, 5_400_000)), 'POLICY_STAGE_TIMES_INVALID');
+  // Stage 10's cap is fixed: the C# boundary and SwapBroker allow exactly 5 minutes (independent review of 3c-1, m2).
+  check(p.stageRunMilliseconds[TRAIN_STAGE - 1] === 300_000, 'POLICY_STAGE_TIMES_INVALID');
   exactKeys(p.linux, ['distribution', 'workerUnit', 'wsprepUnit', 'archiveUnit'], 'POLICY_LINUX_KEYS_INVALID');
   check(p.linux.distribution === 'Ubuntu-24.04', 'POLICY_DISTRIBUTION_FIXED');
   check(p.linux.workerUnit === 'clued-ci-worker@.service' && p.linux.wsprepUnit === 'clued-ci-wsprep@.service'
@@ -108,6 +121,14 @@ export function validatePolicy(p) {
   check(int(p.retention.reminderBytes, 1024 ** 3, 1024 ** 4) && int(p.retention.checkEveryMs, 60_000, 86_400_000), 'POLICY_RETENTION_INVALID');
   validateRelay(p.relay);
   return Object.freeze({ ...p, stages: FIXED_STAGES.map((s, i) => ({ ...s, runMilliseconds: p.stageRunMilliseconds[i] })) });
+}
+
+// train (contract /6): stage 10's mode and schedule. 'on' is refused until step 3c-2 brings the code that acts on it.
+export function validateTrain(t) {
+  exactKeys(t, ['enabled', 'nonFrontRuns', 'maintenanceEveryMs', 'maintenanceMaxPerDay'], 'POLICY_TRAIN_KEYS_INVALID');
+  check(t.enabled !== 'on', 'POLICY_TRAIN_ON_NOT_SUPPORTED');
+  check(TRAIN_MODES.includes(t.enabled) && t.nonFrontRuns === true && int(t.maintenanceEveryMs, 60_000, 3_600_000) && int(t.maintenanceMaxPerDay, 0, 200), 'POLICY_TRAIN_INVALID');
+  return t;
 }
 
 // relay: { enabled, roles (a non-empty ordered subset of the registry's relayable roles), wait (§7.2) }.
@@ -126,6 +147,6 @@ export function validateRelay(r) {
 }
 
 // Worst-case wall time of one batch: every formal stage at its cap plus the per-stage margin, and, when the
-// relay is on, the bounded hosted wait plus stage R.
-export const batchBudgetMs = policy => policy.stages.filter(s => s.number !== RELAY_STAGE).reduce((sum, s) => sum + s.runMilliseconds + policy.limits.stageMarginMs, 0)
+// relay is on, the bounded hosted wait plus stage R. Stage 10 is never part of a batch.
+export const batchBudgetMs = policy => policy.stages.filter(s => s.number !== RELAY_STAGE && s.number !== TRAIN_STAGE).reduce((sum, s) => sum + s.runMilliseconds + policy.limits.stageMarginMs, 0)
   + (policy.relay?.enabled === true ? policy.relay.wait.totalMs + policy.stages.find(s => s.number === RELAY_STAGE).runMilliseconds + policy.limits.stageMarginMs : 0);

@@ -5,7 +5,8 @@
 // Pure.
 import { canonical } from '../proof.mjs';
 import { hash } from './prepare-record.mjs';
-import { HEX64, OUTCOME_CONTRACT, RELAY_STAGE_NUMBER } from './layout.mjs';
+import { HEX64, OUTCOME_CONTRACT, RELAY_STAGE_NUMBER, TRAIN_STAGE_NUMBER } from './layout.mjs';
+import { validateTrainFacts } from '../independent-control-checks-v2/train-facts.mjs';
 import { RELAY_HALT_CODES, relayPlanEnding, validateRelayPlanRows } from '../hosted-relay-v1/relay-plan.mjs';
 import { sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2 } from '../admission-facts-v2.mjs';
 import { HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB, ROLE_ALREADY_ON_GITHUB_REASON } from '../published-on-github-v2.mjs';
@@ -167,12 +168,13 @@ export function outcomeFacts(o) {
 // restored): the second way a stage may be released (v0.6 §9 phase 1, item 2). BROKER_BUSY and BROKER_UNCONFIRMED
 // never qualify (an unexpected concurrent controller, or no confirmed reading).
 export const BROKER_NO_LAUNCH_CODES = Object.freeze(['BROKER_RUNNER_NOT_ORIGINAL_STOPPED', 'BROKER_REQUEST_EXPIRED', 'BROKER_REQUEST_REFUSED']);
+const trainFactsOrNull = f => { try { return validateTrainFacts(f); } catch { return null; } };
 
 // The one stage fact the resident engine parses (engine-windows.mjs#parseStageFact keeps v1 names).
 export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha256, broker, receipt, receiptBytes, outcome, outcomeBytes, controllerSid, preflightCode = null }) {
   const fact = { contract: STAGE_FACT_CONTRACT, stage, nonce, manifest_sha256: workManifestSha256, state: 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED',
     failure_code: null, scm_start_call_issued: false, original_binary_restored: false, complete_original_readback: false, configuration_conflict_detected: false,
-    tree_cleanup_confirmed: false, tree_active_processes: null, root_exit_confirmed: false, native_receipt_sha256: null, outcome: null, relay: null, broker_no_launch: false };
+    tree_cleanup_confirmed: false, tree_active_processes: null, root_exit_confirmed: false, native_receipt_sha256: null, outcome: null, relay: null, train: null, broker_no_launch: false };
   const done = code => ({ ...fact, failure_code: code });
   if (preflightCode) {
     // Nothing was requested from the broker: no service change, no child; the original is untouched.
@@ -208,7 +210,17 @@ export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha
   // and on a HALT alike; rows that do not validate never pass as a completed relay stage.
   const relayRows = plan.stage === RELAY_STAGE_NUMBER && boundOutcome ? validateRelayPlanRows(outcome.relay) : null;
   if (plan.stage === RELAY_STAGE_NUMBER) fact.relay = relayRows;
+  // Stage 10 (quota phase 2 step 3c-1, DESIGN §22.1): the train facts travel with the fact, validated again; a run is a
+  // success only as TRAIN_FACTS with zero side effects and facts that validate. Anything else is the existing
+  // STAGE_OUTCOME_MISSING; the executor decides from the proof and the bound outcome whether that ending is clean
+  // (executor.mjs#trainMaintenance).
+  const trainFacts = plan.stage === TRAIN_STAGE_NUMBER && boundOutcome ? trainFactsOrNull(outcome.train) : null;
+  if (plan.stage === TRAIN_STAGE_NUMBER) fact.train = trainFacts;
   if (n.ok) {
+    if (plan.stage === TRAIN_STAGE_NUMBER) {
+      if (!boundOutcome || boundOutcome.status !== 'TRAIN_FACTS' || boundOutcome.sideEffects !== 0 || boundOutcome.mayHavePublished !== false || !trainFacts) return done('STAGE_OUTCOME_MISSING');
+      return { ...fact, state: SUCCESS_STATE };
+    }
     if (plan.stage === RELAY_STAGE_NUMBER) {
       if (!boundOutcome || boundOutcome.status !== 'RELAY_COMPLETE') return done('STAGE_OUTCOME_MISSING');
       // A complete plan (every row RELAYED or LOCAL_REQUIRED) with no reason, or one ending ON_GITHUB (C4) with exactly that reason.
