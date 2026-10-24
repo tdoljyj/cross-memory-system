@@ -12,7 +12,7 @@ import {validateJobV2 as validateJob,subjectOfV2 as subjectOf} from '../../src/j
 import {canonical,digest} from '../../src/proof.mjs';
 import {validateFormalAdmissionV2} from '../../src/admission-facts-v2.mjs';
 import {loadQualifiedPolicyV2 as loadQualifiedPolicy,protectedPath,qualificationDeadline} from '../qualification-v2.mjs';
-import {IMAGE,SCAN_ARGS,SOURCE_PINS,WORKFLOW_PATH,acceptedWorkflowSha256,prepareRequiredHistory,refsInStore,reviewedSelfTestPlan,runReviewedSelfTest,requiredScannerPlan,validateRemoteSnapshot} from './required-history/prepare.mjs';
+import {IMAGE,SCAN_ARGS,SOURCE_PINS,WORKFLOW_PATH,REVIEWED_COMMITS,REVIEWED_HISTORY_PROOF,acceptedWorkflowSha256,prepareRequiredHistory,refsInStore,reviewedSelfTestPlan,runReviewedSelfTest,requiredScannerPlan,validateRemoteSnapshot} from './required-history/prepare.mjs';
 import {observeUnsignedContainer} from '../verify-once/verify-worker.mjs';
 import {dockerInvoke} from '../formal-gitleaks-v3/docker-transport.mjs';
 
@@ -82,7 +82,8 @@ export function executionSummary(job,prepared,selfTest,plan,o,request,context){
   return deepFreeze({contract:'clued.independent-ci.formal-scanner-observation/2',domain:'production-observation',fixture:false,profile:'required-gitleaks-history/1',
     subject:subjectOf(job),sourceManifestSha256:job.sourceManifestSha256,sourceSha:prepared.sourceSha,nonce:request.nonce,
     requestSha256:digest(request),historyPackSha256:prepared.packedHistorySha256,remoteRefsSha256:prepared.remoteSnapshotSha256,
-    selfTestReportSha256:digest(selfTest),reviewedIgnoreSha256:selfTest.ignore_sha256,requiredHistoricalExceptions:726,
+    selfTestReportSha256:digest(selfTest),reviewedIgnoreSha256:selfTest.ignore_sha256,requiredHistoricalExceptions:REVIEWED_COMMITS.findings,
+    reviewedHistoryProof:REVIEWED_HISTORY_PROOF,
     image:IMAGE,nativeImageDigest:MANIFEST_DIGEST,nativeImageRepositoryDigest:NATIVE_IMAGE,nativeImageId:o.imageId,runtimeIdentity:context.runtimeIdentity,hostAcceptanceRef:context.hostAcceptanceRef,sourceAcceptanceRef:context.sourceAcceptanceRef,
     startedAt:o.startedAt,finishedAt:o.finishedAt,conclusion:o.state.ExitCode===0?'success':'failure',exitCode:o.state.ExitCode,
     logs:o.attached.logs,containerId:o.containerId,cleanup:{complete:true,wholeContainerTreeStopped:true,containerRemoved:true,observedAt:o.cleanupObservedAt},

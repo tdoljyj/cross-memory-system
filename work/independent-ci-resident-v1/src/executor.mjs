@@ -79,6 +79,15 @@
 // any holder's hold is in force (at most two hours, from the user-writable requests\ like PAUSE) no batch starts from the
 // queue (no row, no attempt 2); triggers are still read, and a batch in flight or at a parking point goes on. It is
 // neither PAUSE (which also stops the parked batches) nor the drain (which ends them); all three may be in force at once.
+//
+// Stage 10, the merge train in shadow mode (quota redesign phase 2, step 3c-1; design v0.5 §5.5, §4.7; Owner decision
+// 2eea28a1; train.mjs, DESIGN §22.3): with train.enabled 'shadow', a tick that ran nothing (the queue idle or only
+// deferred, never under an intake pause, PAUSE or HALT) runs one read-only train maintenance when it is due. It writes
+// nothing but its own shadow record (Source v2), so a failure whose cleanup is proven and whose outcome shows no side
+// effect is only a 'train-run' receipt and never feeds the breaker. Anything else HALTs, like any stage: an unproven
+// cleanup, a reported side effect, a failure that is not allow-listed as clean. Stage 10 has no ledger entry: its
+// 'train-run-intent' receipt stands for one, so an intent that no 'train-run' receipt closed (a crash or a stop in the
+// middle) HALTs as TRAIN_STAGE_INTERRUPTED at the next start, and a receipt chain that cannot be read holds every batch.
 import path from 'node:path';
 import { Ledger, MAX_TRIES, batchKey, headKey } from './ledger.mjs';
 import { ABORTABLE_IN_FLIGHT, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, proofComplete } from './classify.mjs';
@@ -92,6 +101,9 @@ import { RELAY_STAGE, ROLE_STAGES } from './policy.mjs';
 import { RELAY_RECEIPTS } from './receipts.mjs';
 import { CODE, HEX64, ResidentError, check, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 import { INTAKE_PAUSE_CONTRACT, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
+import { TRAIN_STAGE } from './policy.mjs';
+import { classifyFailure } from './classify.mjs';
+import { trainDue, trainSummary } from './train.mjs';
 
 export const PAUSE_CONTRACT = 'clued.independent-ci.resident-pause/1';
 export const REARM_CONTRACT = 'clued.independent-ci.resident-owner-rearm/1';
@@ -108,6 +120,14 @@ const OWNER_SCAN_MAX = 32;
 const DAY = 86_400_000;
 const codeOf = error => (error instanceof ResidentError && CODE.test(error.code)) ? error.code : 'RESIDENT_EXECUTOR_EXCEPTION';
 const validCode = code => (typeof code === 'string' && CODE.test(code)) ? code : 'FAILURE_CODE_INVALID';
+const TRAIN_RUN_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/;
+// The schedule results that ran nothing, after which stage 10 may run (an intake pause holds it as well).
+const TRAIN_QUIET_STATES = Object.freeze(['IDLE', 'DEFERRED']);
+const TRAIN_HELD_REASONS = Object.freeze(['INTAKE_PAUSED', 'INTAKE_PAUSE_UNCONFIRMED']);
+// The generic helper's own fixed margin after a stage's cap (FormalPublicBoundaryV2.cs), whatever limits.stageMarginMs says.
+const TRAIN_HELPER_MARGIN_MS = 180_000;
+// Stage 10 never touches Linux: its proof is the Windows half only.
+const TRAIN_LINUX_PROOF = Object.freeze({ linuxUnitsInactive: true, containersZero: true });
 const SID = /^S-1-5-21-\d+-\d+-\d+-\d+$/;
 const NONCE = /^[0-9a-f]{12,32}$/;
 
@@ -768,7 +788,7 @@ export class ResidentExecutor {
       const state = ['IDLE', 'RUNNING', 'WAITING', 'PARKED', 'DEFERRED', 'HALTED', 'PAUSED', 'BACKFILL_PENDING', 'COMPLETED', 'FAILED_CLEAN', 'NOT_ADMITTED', 'NOT_EXECUTED', 'IGNORED'].includes(result?.state) ? result.state : 'IDLE';
       this.report(s => {
         s.setState(halt ? 'HALTED' : state, halt ? (halt.value?.code ?? null) : (result?.reason ?? result?.failureCode ?? null));
-        s.update({ halt: halt ? { code: CODE.test(halt.value?.code ?? '') ? halt.value.code : 'HALT_RECORD_UNREADABLE', at: halt.value?.at ?? null } : null, paused: !!paused, ...intake });
+        s.update({ halt: halt ? { code: CODE.test(halt.value?.code ?? '') ? halt.value.code : 'HALT_RECORD_UNREADABLE', at: halt.value?.at ?? null } : null, paused: !!paused, ...intake, train: { enabled: this.policy.train.enabled, last: this.trainLast ?? null } });
         if (!['WAITING'].includes(result?.state)) s.setCurrent(null);
       });
       this.reportQueue();
@@ -823,13 +843,18 @@ export class ResidentExecutor {
       await this.haltWith('OWNER_ABORT_UNCONFIRMED', { keys: stuck.map(e => e.key) });
       return { state: 'HALTED' };
     }
+    // A stage-10 run that a crash or a stop interrupted (once per process; DESIGN §22.3). Looked at before the HALT check,
+    // so one found while halted is closed at once and the Owner's re-arm clears a single HALT (review of 3c-1, round 2).
+    const train = recovered ? await this.trainRecover() : null;
     // Even if the HALT itself could not be written, an unconfirmed recovery never runs a candidate,
     // and neither does a ledger with an unarchived failed-unknown or quarantined scene (N1).
-    if (!recovered || await this.ledger.halted()) return { state: 'HALTED' };
+    if (!recovered || await this.ledger.halted()) return train?.state === 'HALTED' ? train : { state: 'HALTED' };
     if ((await this.ledger.unarchivedScenes()) > 0) {
       await this.haltWith('UNARCHIVED_FAILURE_SCENE', {});
       return { state: 'HALTED' };
     }
+    // A held stage 10 (its receipt chain could not be read yet): no batch either.
+    if (train) return train;
     // No batch of any kind (a resumed wait, an attempt 2, a new trigger) before the executed-heads backfill finished.
     const backfill = await this.ensureBackfill();
     if (backfill) return backfill;
@@ -847,7 +872,85 @@ export class ResidentExecutor {
     const r = await this.schedule();
     // A batch resting at parking point A stays the tick's result (and the status's current batch) while only the intake
     // pause holds the new ones (independent review of C6, minor 3).
-    return waiting && (r.state === 'IDLE' || ['INTAKE_PAUSED', 'INTAKE_PAUSE_UNCONFIRMED'].includes(r.reason)) ? waiting : r;
+    const result = waiting && (r.state === 'IDLE' || ['INTAKE_PAUSED', 'INTAKE_PAUSE_UNCONFIRMED'].includes(r.reason)) ? waiting : r;
+    // Stage 10 only after a schedule that ran nothing (a batch resting at a parking point runs nothing either).
+    if (TRAIN_QUIET_STATES.includes(r.state) && !TRAIN_HELD_REASONS.includes(r.reason)) return (await this.trainMaintenance()) ?? result;
+    return result;
+  }
+
+  // ---- stage 10: train maintenance (phase 2, step 3c-1; DESIGN §22.3) ----
+
+  // Once per process, from the receipt chain: the start times of the newest train runs ('train-run-intent'), and an
+  // interrupted run (the newest of the two types is an intent: no 'train-run' receipt closed it). The HALT is latched
+  // before the closing receipt, so no crash point leaves the interruption without it. A chain that cannot be read holds
+  // every batch (the interruption cannot be ruled out): a transient error for at most BACKFILL_PENDING_MAX_MS since the
+  // first failure in a row, a refusal at once; then it HALTs (TRAIN_RECEIPTS_UNREADABLE).
+  async trainRecover() {
+    if (this.trainRuns) return null;
+    const max = this.policy.train.maintenanceMaxPerDay;
+    let rows;
+    try {
+      rows = await this.receipts.latest(['train-run-intent', 'train-run'], 2 * max + 1);
+    } catch (error) {
+      this.trainBookPendingSince ??= this.clock();
+      if (!(error instanceof ResidentError) && this.clock() - this.trainBookPendingSince < BACKFILL_PENDING_MAX_MS) return { state: 'DEFERRED', reason: 'TRAIN_RECEIPTS_PENDING' };
+      await this.haltWith('TRAIN_RECEIPTS_UNREADABLE', { phase: 'train-maintenance', failureCode: codeOf(error), pendingSince: new Date(this.trainBookPendingSince).toISOString() });
+      this.trainBookPendingSince = null;
+      return { state: 'HALTED', failureCode: 'TRAIN_RECEIPTS_UNREADABLE' };
+    }
+    this.trainBookPendingSince = null;
+    const last = rows[rows.length - 1];
+    if (last?.type === 'train-run-intent') {
+      await this.haltWith('TRAIN_STAGE_INTERRUPTED', { phase: 'train-maintenance', intentSeq: last.seq });
+      // The HALT holds; a closing receipt that cannot be written now is written by the next start (round 3, NIT 2).
+      try {
+        await this.receipt('train-run', { intentSeq: last.seq, runId: null, mode: last.value.body?.mode ?? null, ok: false, failureCode: 'TRAIN_STAGE_INTERRUPTED',
+          wouldDo: null, frontPr: null, mainSha: null, wouldRevokeCount: null });
+      } catch { /* see above */ }
+    }
+    this.trainRuns = rows.filter(e => e.type === 'train-run-intent').map(e => Date.parse(e.value.at)).filter(Number.isFinite);
+    return last?.type === 'train-run-intent' ? { state: 'HALTED', failureCode: 'TRAIN_STAGE_INTERRUPTED' } : null;
+  }
+
+  // One train run when it is due (train.mjs#trainDue): not under an intake pause (also with an empty queue, which ends
+  // schedule() before its gate; independent review of 3c-1, M1), within the install's authority with the helper's own
+  // margin, never below the helper's fixed one (the start-of-batch rule for this one stage; review m2, round 2 NIT 4), from
+  // the installed bytes. Returns a HALTED result,
+  // or null for any other ending. A failure is clean only with the Windows proof complete, no side effect in a bound
+  // outcome, and either an allow-listed clean code (classify.mjs), the engine's own refusal before the broker, or a bound
+  // outcome that says so: BLOCKED, or TRAIN_FACTS that ran into the cap after writing it (review m3; round 2, NIT 3).
+  async trainMaintenance() {
+    const train = this.policy.train;
+    if (!this.trainRuns || train.enabled === 'off') return null;
+    const now = this.clock();
+    this.trainRuns = this.trainRuns.filter(at => at > now - DAY);
+    if (!trainDue({ train, now, runs: this.trainRuns, busy: false })) return null;
+    const held = await this.intakeGate();
+    if (held) return held.state === 'HALTED' ? held : null;
+    if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < now + this.policy.stageRunMilliseconds[TRAIN_STAGE - 1] + Math.max(this.policy.limits.stageMarginMs, TRAIN_HELPER_MARGIN_MS)) return null;
+    const drift = await this.driftCode();
+    if (drift) {
+      await this.haltWith(drift, { phase: 'train-maintenance' });
+      return { state: 'HALTED', failureCode: drift };
+    }
+    const intent = await this.receipt('train-run-intent', { mode: train.enabled });
+    this.trainRuns.push(now);
+    this.report(s => s.setState('RUNNING', 'TRAIN_MAINTENANCE'));
+    let r;
+    try { r = await this.engine.runTrainStage(train.enabled); } catch (error) { r = { ok: false, code: codeOf(error), proof: null }; }
+    const proven = r?.proof?.windowsTreeZero === true && r?.proof?.serviceOriginalStopped === true;
+    const o = r?.outcome ?? null;
+    const quiet = o === null || (o.sideEffects === 0 && o.mayHavePublished === false);
+    const summary = r?.ok === true && quiet ? trainSummary(r.train) : null;
+    const failureCode = summary ? null : (r?.ok === true ? 'TRAIN_FACTS_UNCONFIRMED' : validCode(r?.code));
+    const clean = proven && quiet && (r?.ok === true || failureCode === 'TRAIN_STAGE_REFUSED' || (o !== null && ['BLOCKED', 'TRAIN_FACTS'].includes(o.status))
+      || classifyFailure(failureCode, { ...r.proof, ...TRAIN_LINUX_PROOF }, TRAIN_STAGE).klass === 'CLEAN');
+    const haltCode = !proven ? 'TRAIN_STAGE_CLEANUP_UNCONFIRMED' : 'TRAIN_STAGE_OUTCOME_UNCONFIRMED';
+    if (!clean) await this.haltWith(haltCode, { phase: 'train-maintenance', intentSeq: intent.seq, failureCode, sideEffects: o?.sideEffects ?? null });
+    await this.receipt('train-run', { intentSeq: intent.seq, runId: TRAIN_RUN_ID.test(r?.runId ?? '') ? r.runId : null, mode: train.enabled, ok: summary !== null, failureCode,
+      wouldDo: summary?.wouldDo ?? null, frontPr: summary?.front?.pr ?? null, mainSha: summary?.mainSha ?? null, wouldRevokeCount: summary?.wouldRevokeCount ?? null });
+    if (summary) this.trainLast = summary;
+    return clean ? null : { state: 'HALTED', failureCode: haltCode };
   }
 
   // ---- parking (phase 2, step 2; DESIGN §18) ----

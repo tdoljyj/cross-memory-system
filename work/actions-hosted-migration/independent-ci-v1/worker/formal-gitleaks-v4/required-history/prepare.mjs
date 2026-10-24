@@ -9,20 +9,19 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { validateJobV2 as validateJob, subjectOfV2 as subjectOf } from '../../../src/job-v2.mjs';
 import { canonical, digest } from '../../../src/proof.mjs';
-import { TRUSTED_WORKFLOW_PATHS, trustedWorkflowSha256s } from '../../trusted-workflows.mjs';
+import { TRUSTED_WORKFLOW_PATHS, activeGitleaksWorkflowSha256s } from '../../trusted-workflows.mjs';
 
 export const IMAGE = 'ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f';
 export const SCAN_ARGS = Object.freeze(['git', '/repo', '--config', '/repo/.gitleaks.toml', '--gitleaks-ignore-path', '/reviewed.ignore', '--redact', '--exit-code', '1']);
 export const SOURCE_PINS = Object.freeze({
-  'scripts/ci/reviewed_gitleaks.py': '433b24137a7d3430990b69e61c0b4ebcd9dad47d770c5df62d6e1fef28b7f7a9',
-  '.gitleaks.toml': 'cf631812810d997f42496af561f44930b51087737f146c4a7541c5dbc0a994cd',
+  'scripts/ci/reviewed_gitleaks.py': 'ce262ae31a44cfd486e9c8b56e6bc912e7259f18bf5b3b7bebcaf60f26206e4d',
+  '.gitleaks.toml': '167600934018e4761d80057321789a1c50486f35c32aa15eebc00ee53cf9aeec',
 });
-// The hosted workflow is pinned as an exact accepted set, never a pattern, taken from the one table
-// (worker/trusted-workflows.mjs: main before PR-B and the frozen PR-B bytes). The Source manifest declares
-// exactly one of them and the trusted checkout must hold exactly that one, so the same installed code
-// accepts a Source installed from either side of PR-B. Helper and config stay single exact pins.
+// This active Source pins only its exact 729-finding workflow successor. The legacy
+// main/PR-B set remains separate for v3/H5. A pending freeze has an empty active set,
+// never a fallback to a legacy 726 workflow. Helper and config stay single exact pins.
 export const WORKFLOW_PATH = TRUSTED_WORKFLOW_PATHS.gitleaks;
-export const WORKFLOW_SHA256S = trustedWorkflowSha256s(WORKFLOW_PATH);
+export const WORKFLOW_SHA256S = activeGitleaksWorkflowSha256s();
 // The role's declared workflow pin; refused unless it is declared once and is an accepted value.
 export function acceptedWorkflowSha256(role) {
   const declared = Array.isArray(role?.sourceFiles) ? role.sourceFiles.filter(pin => pin?.path === WORKFLOW_PATH) : [];
@@ -35,8 +34,17 @@ export function acceptedWorkflowSha256(role) {
 // commit of every record fingerprint in the scanned repository. The offline
 // self-test cannot fetch them, so preparation packs exactly this pinned set.
 // The set is the sorted, LF-joined (trailing LF) list of distinct commits.
-export const REVIEWED_COMMITS = Object.freeze({ findings: 726, commits: 100,
-  sha256: 'fcb2cc04ee35e01fbfc4bfc3dc9b0bb0ba78a6c4083ab5e17433c549450d59bb' });
+export const REVIEWED_COMMITS = Object.freeze({ findings: 729, commits: 101,
+  sha256: '37fcdae7442b1235f75f2325c13e508a0189443a24e62627bf338fa8285488bf' });
+// Recomputed by the pinned helper's actual verify_history, not inferred by adding counts.
+export const REVIEWED_HISTORY_PROOF = Object.freeze({ commits: REVIEWED_COMMITS.commits, files_at_commits: 172,
+  verified_git_objects: 130, reviewed_commits_sha256: REVIEWED_COMMITS.sha256,
+  reviewed_ignore_sha256: 'abbbece0db8ff3e524736006e0bc8ecf078358b48fae91c8d0bc3046728b8f5a' });
+export function matchesReviewedHistoryProof(value) {
+  return value && Object.getPrototypeOf(value) === Object.prototype
+    && Object.keys(value).sort().join('|') === Object.keys(REVIEWED_HISTORY_PROOF).sort().join('|')
+    && Object.entries(REVIEWED_HISTORY_PROOF).every(([key, expected]) => value[key] === expected);
+}
 const REVIEWED_FINDING_PREFIX = '# clued-reviewed-finding: ', REVIEWED_COUNT_PREFIX = '# clued-reviewed-count: ';
 const SHA = /^[a-f0-9]{40}$/;
 const HASH = /^[a-f0-9]{64}$/;
@@ -263,11 +271,22 @@ export async function requiredScannerPlan(prepared, selfTestReport) {
     requiredInputs: { ...prepared, selfTestReportSha256: digest(selfTestReport), reviewedIgnoreSha256: selfTestReport.ignore_sha256 },
     scanResultNotYetObserved: true, formalEligible: false });
 }
-function validateSelfTestReport(selfTestReport) {
-  check(selfTestReport?.exact_historical_fingerprints === 726 && selfTestReport.default_rules_unchanged === true
-    && selfTestReport.global_fingerprints === 0 && HASH.test(selfTestReport.ignore_sha256 ?? '')
+// Pure report check; this never adds the actual self-test completion brand.
+export function validateSelfTestReport(selfTestReport) {
+  check(plain(selfTestReport) && Object.keys(selfTestReport).sort().join('|') === 'commits|default_rules_unchanged|exact_historical_fingerprints|files_at_commits|global_fingerprints|ignore_sha256|regression|verified_git_objects'
+    && selfTestReport.exact_historical_fingerprints === REVIEWED_COMMITS.findings && selfTestReport.default_rules_unchanged === true
+    && selfTestReport.commits === REVIEWED_HISTORY_PROOF.commits && selfTestReport.files_at_commits === REVIEWED_HISTORY_PROOF.files_at_commits
+    && selfTestReport.verified_git_objects === REVIEWED_HISTORY_PROOF.verified_git_objects
+    && selfTestReport.global_fingerprints === 0 && selfTestReport.ignore_sha256 === REVIEWED_HISTORY_PROOF.reviewed_ignore_sha256
+    && Object.keys(selfTestReport.regression ?? {}).sort().join('|') === 'baseline_detection|different_path_detection|exact_history_only|handover_acceptance_artifact_proof|new_commit_detection|scheduling_marker_different_path_detection|scheduling_marker_new_commit_detection|synthetic_test_repository|valid_private_key_detection'
+    && typeof selfTestReport.regression.synthetic_test_repository === 'string' && selfTestReport.regression.synthetic_test_repository.length <= 4096
+    && !/[\x00-\x1f\x7f]/.test(selfTestReport.regression.synthetic_test_repository)
+    && path.posix.isAbsolute(selfTestReport.regression.synthetic_test_repository) && path.posix.basename(selfTestReport.regression.synthetic_test_repository) === 'repo'
     && selfTestReport.regression?.baseline_detection === true && selfTestReport.regression.exact_history_only === true
     && selfTestReport.regression.new_commit_detection === true && selfTestReport.regression.different_path_detection === true
+    && ['scheduling_marker_new_commit_detection', 'scheduling_marker_different_path_detection', 'valid_private_key_detection']
+      .every(key => selfTestReport.regression[key] === true)
+    && Object.keys(selfTestReport.regression.handover_acceptance_artifact_proof ?? {}).sort().join('|') === 'actual_git_artifact_passes|forged_digest_rejected|valid_nonancestor_rejected|wrong_line_rejected|wrong_path_rejected'
     && ['actual_git_artifact_passes', 'forged_digest_rejected', 'valid_nonancestor_rejected', 'wrong_line_rejected', 'wrong_path_rejected']
       .every(key => selfTestReport.regression.handover_acceptance_artifact_proof?.[key] === true), 'UNCHANGED_REVIEW_SELF_TEST_REQUIRED');
 }
