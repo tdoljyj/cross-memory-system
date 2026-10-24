@@ -257,15 +257,19 @@ export function createRecoverableCheckPublisherV2({ publisherOptions, authorityO
     }
     return value;
   }]));
-  const github = new Proxy(publisherOptions.github, { get(target, name) {
-    const value = Reflect.get(target, name);
+  // The production port is frozen. Keep it immutable and adapt through a private
+  // facade: a get trap cannot replace its non-configurable own function values.
+  // Read/call the original port so its receiver and later lookups stay unchanged.
+  const githubPort = publisherOptions.github;
+  const github = new Proxy({ ...githubPort }, { get(_adapter, name) {
+    const value = Reflect.get(githubPort, name);
     if (typeof value !== 'function') return value;
     return async (...args) => {
       safeLive();
       if (name === 'createCheck' || name === 'revokeCheck') markMutation();
       if (name === 'createCheck') guardNewPublication();
       // Revocation and journal persistence are compensation, never bounded by the retry deadline.
-      const result = await value.apply(target, args);
+      const result = await value.apply(githubPort, args);
       safeLive();
       return result;
     };
