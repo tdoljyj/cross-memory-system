@@ -32,6 +32,16 @@ export class ReceiptChain {
     });
   }
 
+  // The newest receipts of the given types (newest last), at most `limit`, with their contents (stage 10's
+  // bookkeeping, executor.mjs#trainRecover). Reads only the picked files.
+  async latest(types, limit) {
+    check(Number.isSafeInteger(limit) && limit > 0, 'RECEIPT_LIMIT_INVALID');
+    const picked = (await this.entries()).filter(e => types.includes(e.type)).slice(-limit);
+    const out = [];
+    for (const e of picked) out.push({ ...e, value: JSON.parse(await fs.readFile(path.join(this.dir, e.name), 'utf8')) });
+    return out;
+  }
+
   // Verify the whole chain and return its head; any gap, edit or foreign file fails closed.
   async verify() {
     let prev = GENESIS;

@@ -30,6 +30,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
 import { STATUS_STALE_MS } from './status.mjs';
+import { withTrainLine } from './train.mjs';
 import { DEFAULT_NODE, DUTY_REFRESH_MS, NODE_NAME, NodeDuty, REFRESH_MAX_POSTS, STANDBY_CONTEXT, TAKEOVER_TIME_TEXT, freshMemory, nodeContext, pruneMemory, validMemory } from './node-duty.mjs';
 
 // The context of a single node named DEFAULT_NODE (every node writes its own, node-duty.mjs#nodeContext).
@@ -345,7 +346,7 @@ export class PrStatusReporter {
         };
         for (const pull of pulls) {
           if (posted >= MAX_POSTS_PER_PASS || !this.inBudget()) break;
-          const want = this.duty.want(pull, status, now, describe({ pull, status, now }));
+          const want = this.duty.want(pull, status, now, withTrainLine(describe({ pull, status, now }), status?.train?.last ?? null, pull, now, DESCRIPTION_MAX));
           if (!want) continue;
           described.add(pull.headSha);
           const last = this.store.data.posted[pull.headSha];

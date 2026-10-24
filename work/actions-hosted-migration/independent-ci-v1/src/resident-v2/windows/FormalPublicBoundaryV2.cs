@@ -36,9 +36,12 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
  // Stage 9 is stage R, the hosted relay (free-minutes design S19/S22): entry relay-publisher, a non-empty
  // ordered subset of its job roles (the relay candidates; contract-placement is never relayed).
  public const int RelayStage=9;
- public static readonly string[] StageRole={"work-admission","scanner-issuer","check-publisher","scanner-issuer","check-publisher","scanner-issuer","check-publisher","control-checks","relay-publisher"};
- public static readonly uint[] StageMilliseconds={900000,2700000,900000,1800000,900000,600000,900000,2700000,900000};
- public static readonly string[][] StageJobRoles={new[]{"work-admission"},new[]{"gitleaks"},new[]{"gitleaks"},new[]{"trivy"},new[]{"trivy"},new[]{"contract-placement"},new[]{"contract-placement"},new[]{"control-admission","control-merge-slot"},new[]{"gitleaks","trivy"}};
+ // Stage 10 (quota phase 2 step 3c-1, DESIGN §22.1): train maintenance, outside every batch. Its one job is a train run
+ // (train-run.mjs: contract clued.independent-ci.train-run/1), never a job of contract /3.
+ public const int TrainStage=10;
+ public static readonly string[] StageRole={"work-admission","scanner-issuer","check-publisher","scanner-issuer","check-publisher","scanner-issuer","check-publisher","control-checks","relay-publisher","train-maintenance"};
+ public static readonly uint[] StageMilliseconds={900000,2700000,900000,1800000,900000,600000,900000,2700000,900000,300000};
+ public static readonly string[][] StageJobRoles={new[]{"work-admission"},new[]{"gitleaks"},new[]{"gitleaks"},new[]{"trivy"},new[]{"trivy"},new[]{"contract-placement"},new[]{"contract-placement"},new[]{"control-admission","control-merge-slot"},new[]{"gitleaks","trivy"},new[]{"train-run"}};
  // The job roles a stage package may carry: exactly the row's, or (stage R) a non-empty ordered subset.
  public static string[] SelectedJobRoles(int stage,object[] jobs){
   if(stage<1||stage>StageRole.Length||jobs==null)Deny("EXACT_STAGE_JOBS_REQUIRED");string[] row=StageJobRoles[stage-1];
@@ -53,6 +56,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   if(role=="check-publisher")return P+"runtime/one-shot-v2.mjs";
   if(role=="control-checks")return P+"src/independent-control-checks-v2/startup.mjs";
   if(role=="relay-publisher")return P+"src/hosted-relay-v1/relay-entry-v2.mjs";
+  if(role=="train-maintenance")return P+"src/independent-control-checks-v2/train-maintenance.mjs";
   Deny("FIXED_FORMAL_ENTRY_ROLE_REQUIRED");return null;
  }
  // Every v2 entry imports these; a record that does not pin them is not a Source v2 record.
@@ -144,6 +148,18 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   var identity=new List<object>{"clued.independent-ci.job/3",At(job,"repo"),At(job,"pr"),At(job,"headSha"),At(job,"baseSha"),At(job,"testSha"),At(job,"sourceManifestSha256"),At(job,"role"),At(job,"attempt")};
   byte[] raw=new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(identity));using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(raw)).Replace("-","").ToLowerInvariant();
  }
+ // Train run /1: id = sha256(JSON(["clued.independent-ci.train-run/1",repo,runId,mode,sourceManifestSha256])); step 3c-1 knows mode shadow only.
+ public static string TrainRunId(Dictionary<string,object> job){
+  var identity=new List<object>{"clued.independent-ci.train-run/1",At(job,"repo"),At(job,"runId"),At(job,"mode"),At(job,"sourceManifestSha256")};
+  byte[] raw=new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(identity));using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(raw)).Replace("-","").ToLowerInvariant();
+ }
+ public static Dictionary<string,object> ValidateTrainRun(Dictionary<string,object> job,string sourceManifest,string batchId){
+  Fields(job,new[]{"contract","id","repo","runId","mode","sourceManifestSha256","createdAt"});Exact(job,"contract","clued.independent-ci.train-run/1");Exact(job,"repo","tdoljyj/cross-memory-system");
+  Exact(job,"mode","shadow");Sha(job,"id");string run=Text(job,"runId");
+  if(run!=batchId||run.Length!=29||run[16]!='-'||!LowerHex(run.Substring(0,16))||!LowerHex(run.Substring(17))||Sha(job,"sourceManifestSha256")!=sourceManifest)Deny("FIXED_TRAIN_RUN_REQUIRED");
+  DateTimeOffset created;if(!DateTimeOffset.TryParse(Text(job,"createdAt"),CultureInfo.InvariantCulture,DateTimeStyles.None,out created)||created>DateTimeOffset.UtcNow.AddMinutes(5))Deny("FIXED_FORMAL_JOB_TIME_REQUIRED");
+  if(TrainRunId(job)!=Text(job,"id"))Deny("DETERMINISTIC_JOB_ID_REQUIRED");return job;
+ }
  public static Dictionary<string,object> ValidateJobV2(Dictionary<string,object> job,string expectedRole,string sourceManifest){
   Fields(job,new[]{"contract","id","repo","pr","headSha","baseSha","testSha","role","sourceManifestSha256","createdAt","attempt"});Exact(job,"contract","clued.independent-ci.job/3");Exact(job,"repo","tdoljyj/cross-memory-system");
   if(Text(job,"role")!=expectedRole)Deny("FIXED_FORMAL_JOB_ROLE_REQUIRED");Sha(job,"id");
@@ -191,7 +207,9 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   var manifest=Parse(Read(Record+"\\source-manifest.json",SourceManifestHash,true));Exact(manifest,"schema","independent-ci.sources.v2");Exact(manifest,"repo","tdoljyj/cross-memory-system");
   var jobsBytes=Read(stageDir+"\\jobs.json",Sha(plan,"jobSha256"),true);var jobs=new JavaScriptSerializer().DeserializeObject(new UTF8Encoding(false,true).GetString(jobsBytes)) as object[];
   string[] roles=SelectedJobRoles(Stage,jobs);
-  for(int i=0;i<roles.Length;i++){var j=jobs[i] as Dictionary<string,object>;if(j==null)Deny("EXACT_STAGE_JOBS_REQUIRED");ValidateJobV2(j,roles[i],SourceManifestHash);
+  for(int i=0;i<roles.Length;i++){var j=jobs[i] as Dictionary<string,object>;if(j==null)Deny("EXACT_STAGE_JOBS_REQUIRED");
+   if(Stage==TrainStage){ValidateTrainRun(j,SourceManifestHash,Text(plan,"batchId"));continue;}
+   ValidateJobV2(j,roles[i],SourceManifestHash);
    if(i>0)foreach(string k in new[]{"repo","pr","headSha","baseSha","testSha","sourceManifestSha256","createdAt","attempt"})if(!Object.Equals(At(j,k),At((Dictionary<string,object>)jobs[0],k)))Deny("EXACT_CONTROL_PAIR_SUBJECT_REQUIRED");}
   if(SelectedRole=="check-publisher")Read(stageDir+"\\result.json",null,false); // signed untrusted input; the entry verifies it
   RuntimeDeadlineUtc=BoundedDeadline(Stage,DateTimeOffset.UtcNow,validUntil);

@@ -23,7 +23,7 @@ import { cacheRefusal } from '../worker/formal-trivy-v4/adapter.mjs';
 import { bridgeManifest, BRIDGE_MANIFEST_CONTRACT } from '../worker/protected-job-bridge-v4/bridge-manifest.mjs';
 import { validatePolicyShape, validateQualificationPayload, qualificationDeadline, LINUX_NODE_V2 } from '../worker/qualification-v2.mjs';
 import { validateSelectedFacts, requiredSourcePaths, FIXED_ROLE_POLICIES } from '../worker/formal-fixed-role-policy-v3/policy.mjs';
-import { IMAGE as GITLEAKS_IMAGE, SCAN_ARGS } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
+import { IMAGE as GITLEAKS_IMAGE, SCAN_ARGS, REVIEWED_HISTORY_PROOF } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
 import { validateEntryJob } from '../worker/formal-contract-placement-v2/container-entry.mjs';
 import { HEAD, BASE, tempDir, fixtureRecord, admittedFacts, hex } from './resident-v2-fixtures.mjs';
 import { PLACEMENT as PLACEMENT_WORKFLOW, acceptedSha256s } from './fixtures/trusted-workflows.mjs';
@@ -57,6 +57,26 @@ function signedWrapper(issue, observation, signer) {
   const envelope = { contract: ENVELOPE_CONTRACT_V2, keyId: 'fixture-key', payload, signature: sign(null, Buffer.from(canonical(payload)), signer.privateKey).toString('base64url') };
   return { contract: RESULT_WRAPPER_CONTRACT_V2, domain: 'production', issueSha256: bridgeDigest(issue), envelope, observation };
 }
+
+test('gitleaks signed result v4 binds the exact 729/101/172/130 proof and rejects legacy or altered proof', () => {
+  const { jobs, signer, record } = setup(), job = jobs.gitleaks, c = claim(), now = Date.now();
+  const issue = makeIssue(job, facts(job, c), refsSnapshot(), { sourceAcceptanceRef: record.accepted.sourceAcceptanceRef,
+    hostQualificationRef: record.accepted.hostQualificationRef, expiresAt: iso(now + 600000) });
+  const observation = { contract: 'clued.independent-ci.formal-scanner-observation/2', domain: 'production-observation', fixture: false,
+    profile: 'required-gitleaks-history/1', subject: Object.fromEntries(['id', 'repo', 'pr', 'headSha', 'baseSha', 'role', 'sourceManifestSha256', 'attempt'].map(k => [k, job[k]])),
+    sourceManifestSha256: job.sourceManifestSha256, sourceSha: 'c'.repeat(40), requiredHistoricalExceptions: 729,
+    reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, startedAt: iso(now - 5000), finishedAt: iso(now - 1000), exitCode: 0, conclusion: 'success',
+    logs: { stdout: { sha256: hex(32) }, stderr: { sha256: hex(32) } },
+    cleanup: { complete: true, wholeContainerTreeStopped: true, containerRemoved: true, observedAt: iso(now - 500) },
+    formalEligible: false, checksWritten: false, qualificationIssued: false };
+  const wrapper = signedWrapper(issue, observation, signer);
+  assert.equal(verifySignedBridgeResult({ issue, wrapper, signers: record.signers }).payload.conclusion, 'success');
+  for (const changed of [{ ...observation, requiredHistoricalExceptions: 726 }, { ...observation, reviewedHistoryProof: undefined },
+    ...Object.keys(REVIEWED_HISTORY_PROOF).map(key => ({ ...observation, reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF, [key]: null } }))]) {
+    assert.throws(() => verifySignedBridgeResult({ issue, wrapper: { ...wrapper, observation: changed }, signers: record.signers }),
+      { code: 'ACTUAL_HISTORY_CLEANUP_REQUIRED' });
+  }
+});
 
 test('v2 admission check: the claim comes from the facts, the batch generation is required and sticky; renewal is the same generation', () => {
   const { jobs } = setup(), job = jobs.trivy, c = claim();
