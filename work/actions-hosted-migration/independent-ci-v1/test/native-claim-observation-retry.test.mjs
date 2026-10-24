@@ -7,6 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { digest } from '../src/proof.mjs';
 import { batchJobsV2, claimGeneration, scanEffectKeyV2 } from '../src/job-v2.mjs';
@@ -14,7 +15,7 @@ import { EffectJournal } from '../src/effect-journal.mjs';
 import { outcomeFailureCode } from '../src/resident-v2/stage-fact.mjs';
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
-import { protectedAuthority, transientFetchError, OBSERVE_RETRY_WAITS_MS, OBSERVE_BUDGET_MS } from '../runtime/one-shot-v2.mjs';
+import { protectedAuthority, createRecoverableCheckPublisherV2, createPublicationRecoveryAuditWriter, transientFetchError, OBSERVE_RETRY_WAITS_MS, OBSERVE_BUDGET_MS, PUBLICATION_OBSERVE_BUDGET_MS, PUBLICATION_READBACK_RESERVE_MS } from '../runtime/one-shot-v2.mjs';
 import { HEAD, BASE, tempDir, fixtureRecord, signResult } from './resident-v2-fixtures.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
@@ -276,11 +277,14 @@ test('the held record is checked again before every attempt', async () => {
 
 // The publisher with the real observation port: one transient verify failure costs a wait, never a head, and never a
 // second check; exhausted before the write, nothing is written and the effect key stays free.
-async function publisherWith(t, steps) {
+async function publisherWith(t, steps, { recover = false, clock = null, changeGithub = () => {}, readClaim = null, log = () => {} } = {}) {
+  const now = () => clock ? clock.now : Date.now();
   const { signer, docs } = fixtureRecord();
   const record = validateRecordV2(docs, { now: Date.now() });
   const job = jobsFor().trivy, c = claim();
-  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  const fixtureRoot = await tempDir(t), auditRoot = path.join(fixtureRoot, 'audit');
+  await fs.mkdir(auditRoot);
+  const journal = await EffectJournal.open(path.join(fixtureRoot, 'effects'));
   const accepted = Object.fromEntries(REFS.map(k => [k, record.accepted[k]]));
   const checks = []; let next = 100;
   const github = { fixture: true, checks,
@@ -296,16 +300,25 @@ async function publisherWith(t, steps) {
       claimId: observed.claimId, fence: observed.fence, epoch: observed.epoch, observedClaim: { ...observed }, batchClaimBound: options?.batchClaim ? claimGeneration(options.batchClaim) : null,
       sourceManifestSha256: j.sourceManifestSha256, executionPolicy: 'staged', guarded: false, executionHandoverPending: false, mergeQueueHead: false,
       mode: { state: 'normal', layer: 'code', policyVersion: 1 }, mergeSlot: { state: 'held', ref: `merge:${REPO}:main`, tip: j.baseSha, until: slotUntil },
-      ownerReview: null, workflowGateFindings: [], observedAt: iso(Date.now()), claimExpiresAt: observed.expiresAt, modeProofRef: 'mode', observationRef: 'obs',
+      ownerReview: null, workflowGateFindings: [], observedAt: iso(now()), claimExpiresAt: observed.expiresAt, modeProofRef: 'mode', observationRef: 'obs',
       packetSha256: digest(packet), evaluationSha256: digest('evaluation') };
     return { ...facts, observationSha256: digest(facts) };
   } };
-  const verify = scripted(steps(c));
-  const { auth, waits } = authorityWith({ fetchImpl: verify.fetchImpl, accepted, ciPrincipalBindingId: record.config.ciPrincipalBindingId });
+  changeGithub(github);
+  const verify = scripted(steps(c, now), { clock });
+  const { auth, waits } = authorityWith({ fetchImpl: verify.fetchImpl, accepted, ciPrincipalBindingId: record.config.ciPrincipalBindingId, clock });
   const signers = new Map([...record.signers].map(([k, s]) => [k, { ...s, domain: 'fixture' }]));
-  const publisher = createStagedCheckPublisherV2({ nativeAdmission, authority: { fixture: true, observe: auth.observe }, github, journal, signers, configuredChecks: record.config.checks,
+  const publisherOptions = { nativeAdmission, authority: { fixture: true, observe: auth.observe }, github, journal, signers, configuredChecks: record.config.checks,
     readChangedPaths: j => github.readChangedPaths(j), protectedDeployment: { enabled: true, domain: 'fixture', repository: REPO, ciPrincipalBindingId: record.config.ciPrincipalBindingId, ...accepted },
-    batchClaim: claimGeneration(c), domain: 'fixture' });
+    batchClaim: claimGeneration(c), domain: 'fixture', clock: now };
+  const recoveryContext = { nonce: randomUUID().replaceAll('-', ''), stage: 5, entryRole: 'check-publisher', batchKey: digest('fixture-batch'),
+    configSha256: digest('fixture-config'), sourceManifestSha256: job.sourceManifestSha256, acceptanceSha256: digest('fixture-acceptance'), entrySha256: digest('fixture-entry') };
+  const publisher = recover ? createRecoverableCheckPublisherV2({ publisherOptions, recoveryContext,
+    auditWriter: createPublicationRecoveryAuditWriter({ context: recoveryContext, domain: 'fixture', fixtureDirectory: auditRoot }), authorityOptions: {
+    config: { supabaseUrl: 'https://x.supabase.co/', publishableKey: 'k', scope: 'project:x', ciPrincipalBindingId: record.config.ciPrincipalBindingId },
+    accepted, fetchImpl: verify.fetchImpl, nativeToken: 't', sleep: async ms => { if (clock) clock.now += ms; }, timeoutSignal: () => new AbortController().signal },
+    readCurrentBatchClaim: readClaim ?? (async () => claimGeneration(c)), live() {}, log, clock: now,
+    ...(clock ? { monotonic: now } : {}) }) : createStagedCheckPublisherV2(publisherOptions);
   const envelope = signResult(job, signer, { finishedAt: Date.now() - 1000, startedAt: Date.now() - 5000, domain: 'fixture' });
   const result = await publisher.publish({ job, envelope });
   return { result, checks, waits, calls: verify.calls, journal, key: scanEffectKeyV2(job, record.config.checks.trivy) };
@@ -390,4 +403,102 @@ test('real fetch: reset, 503, a hang and a body cut off are retried; a redirect 
   const errorOf = async (url, opts = {}) => { try { await fetch(url, opts); } catch (error) { return error; } return null; };
   assert.equal(transientFetchError(await errorOf('not a url')), false);
   assert.equal(transientFetchError(await errorOf(`http://127.0.0.1:${server.address().port}/`, { headers: { apikey: 'a\nb' } })), false);
+});
+
+
+const firstBudgetExhaustion = () => [
+  { took: 10000, then: timeout() }, { took: 10000, then: timeout() }, { took: 7000, then: timeout() },
+];
+test('recovery: a genuine 30000ms exhaustion continues only the current publisher and creates one check', async t => {
+  const clock = { now: Date.now() }, started = clock.now, logs = [];
+  const r = await publisherWith(t, (c, now) => [...firstBudgetExhaustion(), () => reply(200, verifyBody(c, now()))],
+    { recover: true, clock, log: (kind, data) => logs.push({ kind, data }) });
+  assert.equal(clock.now - started, 30000);
+  assert.equal(r.result.status, 'SETTLED', JSON.stringify(r.result));
+  assert.equal(r.checks.length, 1);
+  assert.equal(r.calls.length, 5, 'three exhausted reads, one recovered read and the original post-write read');
+  const intent = logs.filter(x => x.kind === 'publication_recovery_intent');
+  assert.equal(intent.length, 1);
+  assert.equal(intent[0].data.effectKey, r.key);
+  assert.equal(intent[0].data.maxPublisherAttempts, 2);
+  const final = logs.at(-1).data;
+  assert.equal(final.publisherAttempts, 2);
+  assert.equal(final.fullEvaluations, 2, 'one successful pre-write evaluation and the required post-write evaluation');
+  assert.equal(final.maxObservationMs, 60000);
+  assert.equal(await r.journal.read(r.key).then(x => x.state), 'settled');
+});
+
+test('recovery: two genuine observation rounds remain bounded at 60000ms with no third publisher try', async t => {
+  const clock = { now: Date.now() }, started = clock.now, logs = [];
+  const r = await publisherWith(t, () => [...firstBudgetExhaustion(), ...firstBudgetExhaustion()],
+    { recover: true, clock, log: (kind, data) => logs.push({ kind, data }) });
+  assert.equal(clock.now - started, PUBLICATION_OBSERVE_BUDGET_MS);
+  assert.equal(r.result.status, 'BLOCKED');
+  assert.equal(r.result.reason, 'native_claim_observation_unavailable');
+  assert.equal(r.calls.length, 6);
+  assert.equal(r.checks.length, 0);
+  assert.equal(await r.journal.read(r.key), null);
+  assert.equal(logs.filter(x => x.kind === 'publication_recovery_intent').length, 1);
+  assert.equal(logs.at(-1).data.publisherAttempts, 2);
+});
+
+test('recovery: slow absence guards consume the original shared window and HALT instead of resetting it', async t => {
+  const clock = { now: Date.now() }, started = clock.now;
+  const r = await publisherWith(t, (c, now) => [...firstBudgetExhaustion(), () => reply(200, verifyBody(c, now()))],
+    { recover: true, clock, changeGithub: gh => { gh.readChecks = async () => { clock.now = started + 60001; return { complete: true, checks: [] }; }; } });
+  assert.equal(r.result.status, 'UNCERTAIN');
+  assert.equal(r.result.mayHavePublished, true);
+  assert.equal(r.calls.length, 3);
+  assert.equal(r.checks.length, 0);
+});
+
+test('recovery: a changed sticky generation prevents the second publisher boundary', async t => {
+  const clock = { now: Date.now() };
+  const r = await publisherWith(t, (c, now) => [...firstBudgetExhaustion(), () => reply(200, verifyBody(c, now()))],
+    { recover: true, clock, readClaim: async () => ({ claimId: randomUUID(), fence: 3, epoch: 1 }) });
+  assert.equal(r.result.status, 'UNCERTAIN');
+  assert.equal(r.calls.length, 3);
+  assert.equal(r.checks.length, 0);
+});
+
+test('recovery: any recovery log failure HALTs even with proven empty publication records', async t => {
+  const clock = { now: Date.now() };
+  const r = await publisherWith(t, (c, now) => [...firstBudgetExhaustion(), () => reply(200, verifyBody(c, now()))],
+    { recover: true, clock, log: kind => { if (kind === 'publication_recovery_intent') throw new Error('disk'); } });
+  assert.equal(r.result.status, 'UNCERTAIN');
+  assert.equal(r.calls.length, 3);
+  assert.equal(r.checks.length, 0);
+});
+
+test('recovery: refuses a new K or Check without the explicit 2000ms post-write reserve', async t => {
+  const clock = { now: Date.now() }, started = clock.now;
+  let prReads = 0;
+  const r = await publisherWith(t, (c, now) => [...firstBudgetExhaustion(), () => reply(200, verifyBody(c, now()))],
+    { recover: true, clock, changeGithub: gh => {
+      const read = gh.readPullRequest;
+      gh.readPullRequest = async n => { prReads++; clock.now = started + 60000 - PUBLICATION_READBACK_RESERVE_MS + 1; return read(n); };
+    } });
+  assert.equal(prReads, 1);
+  assert.equal(r.result.status, 'UNCERTAIN');
+  assert.equal(r.checks.length, 0);
+  assert.equal(await r.journal.read(r.key), null);
+});
+
+test('recovery: normal protected observations retain their original single 30000ms budget', () => {
+  assert.equal(OBSERVE_BUDGET_MS, 30000);
+  assert.equal(PUBLICATION_OBSERVE_BUDGET_MS, 60000);
+  assert.equal(PUBLICATION_READBACK_RESERVE_MS, 2000);
+});
+
+
+test('recovery: a slow changed-path read cannot reset the individual observation window', async t => {
+  const clock = { now: Date.now() };
+  const r = await publisherWith(t, (c, now) => [() => reply(200, verifyBody(c, now()))],
+    { recover: true, clock, changeGithub: gh => {
+      const read = gh.readChangedPaths;
+      gh.readChangedPaths = async j => { clock.now += 30001; return read(j); };
+    } });
+  assert.equal(r.result.status, 'UNCERTAIN');
+  assert.equal(r.calls.length, 0, 'no Native request after the individual observation window already expired');
+  assert.equal(r.checks.length, 0);
 });

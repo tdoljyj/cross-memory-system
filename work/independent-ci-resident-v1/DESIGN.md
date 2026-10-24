@@ -1921,6 +1921,14 @@ Owner Decision `2eea28a1` 把 3c 拆成两步。3c-1 只做影子模式（设计
 - m1 companion 报告器里的列车影子行、执行器填 `status.train.last` 没有测试：两处都补了（报告器：车头 PR 有这一行，别的 PR 没有；执行器：一次运行后状态里有模式和摘要）。
 - NIT：停机时补写收尾回执失败不再让服务退出（HALT 已在，下次启动再补）；本节写明状态合同 `/5` 以及与当班视图一起时这行在哪些 head 上出现；附录 A 补了 3c-1 的文件；交班后 `已交班` 文字下可能留一行旧的影子说明，它本来就只记录，接受。
 
+### 22.8 Source31 CI 引导资格指针（Task `6451a55d`）
+
+本 PR 的普通 Source 引导继续按精确登记的工作流、Role 与 Source 组合核验。此次受查 Source 为 `31e757ac2d613c9e76d0b7e416d906fd9c7d48be`，Owner 接受依据为 Decision `ae3538a1-627d-49d4-b13a-bdf6d1223856` / Receipt `cf26ce6a-e6f7-4204-9195-9c3a55310e41`。
+
+2026-10-24 的双端标准安装与验证证据见 Canonical Note `7abd3c63-3bd7-42bf-8f36-670bf84552fb` 第 44 版：Linux readiness 原 SHA256 为 `eb11e62ab0494c2efa8bb6ebf505816ed12add61d0e81b52353f0233a86785d3`，Windows 正式完成回执原 SHA256 为 `598dd9f11122e38adebd03cf8cda7353d341c45fa4b51fd4a24c6f390baa3f76`。完整安装回执、独审与保留证据由该记录引用，仓库保留此短指针。
+
+本 PR 的交付范围仍为 3c-1 shadow；正式六项检查、受保护合并及其后 3c-2/C9 和第 4–7 步的当前状态由 Task `6451a55d` 跟踪，Source 安装证据不替代这些 Gate。
+
 ## 附录 A：草稿文件
 
 | 文件 | 作用 |
