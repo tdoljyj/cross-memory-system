@@ -3,12 +3,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { createRecoverableCheckPublisherV2 } from '../../actions-hosted-migration/independent-ci-v1/runtime/one-shot-v2.mjs';
-import { batchJobsV2, claimGeneration, scanEffectKeyV2 } from '../../actions-hosted-migration/independent-ci-v1/src/job-v2.mjs';
+import fs from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { createRecoverableCheckPublisherV2, createPublicationRecoveryAuditWriter } from '../../actions-hosted-migration/independent-ci-v1/runtime/one-shot-v2.mjs';
+import { batchJobsV2, claimGeneration, scanEffectKeyV2, subjectOfV2 } from '../../actions-hosted-migration/independent-ci-v1/src/job-v2.mjs';
 import { EffectJournal, rolePublicationKey, claimRolePublication } from '../../actions-hosted-migration/independent-ci-v1/src/effect-journal.mjs';
 import { digest } from '../../actions-hosted-migration/independent-ci-v1/src/proof.mjs';
 import { validateRecordV2 } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/record.mjs';
+import { observationLog } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/entry-runtime.mjs';
 import { HEAD, BASE, tempDir, fixtureRecord, signResult, admittedFacts } from '../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
@@ -23,12 +25,13 @@ async function world(t, options = {}) {
   const accepted = Object.fromEntries(REFS.map(k => [k, record.accepted[k]]));
   const claim = { claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(t0 + 3_600_000) };
   const jobs = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(t0 - (options.createdAgeMs ?? 60_000)), attempt: 1 });
-  const dir = path.join(await tempDir(t), 'effects');
+  const fixtureRoot = await tempDir(t), dir = path.join(fixtureRoot, 'effects'), auditDir = path.join(fixtureRoot, 'audit');
+  fs.mkdirSync(auditDir);
   const rawJournal = await EffectJournal.open(dir);
   const events = [], checks = [], mutations = [], fetches = [], evaluations = [], ports = [];
   const state = { exhaust: options.exhaust ?? 3, onExhaust: null, sourceLive: true, claim: claimGeneration(claim),
     onCreate: null, onReadChecks: null, fetchDelay: 0, sleepDelay: 0, deny: false, logFailure: null, journalFailure: false,
-    createFailure: false, revokeFailure: false, admissionDeny: false, admissionError: null, pullDrift: false };
+    createFailure: false, revokeFailure: false, admissionDeny: false, admissionError: null, pullDrift: false, onAuditSaved: null };
   const signers = new Map([...record.signers].map(([k, s]) => [k, { ...s, domain: 'fixture' }]));
   let next = 100;
   const github = { fixture: true,
@@ -67,6 +70,13 @@ async function world(t, options = {}) {
   };
   const hostedVerifier = { fixture: true, registrySha256: digest('offline-registry'), publisherAppId: 5368905,
     async confirm(e) { ports.push('attestation'); return { confirmed: true, attestationSha256: e.attestationSha256 }; } };
+  const stage = options.stage ?? 5;
+  const recoveryContext = { nonce: randomUUID().replaceAll('-', ''), stage, entryRole: stage === 9 ? 'relay-publisher' : 'check-publisher',
+    batchKey: digest('offline-batch'), configSha256: digest(`offline-stage-plan-${stage}`), sourceManifestSha256: jobs.trivy.sourceManifestSha256,
+    acceptanceSha256: record.hashes.acceptanceSha256, entrySha256: digest('offline-installed-entry') };
+  const actualAuditWriter = createPublicationRecoveryAuditWriter({ context: recoveryContext, domain: 'fixture', fixtureDirectory: auditDir });
+  const hashLogDir = path.join(fixtureRoot, 'hash-log');
+  const actualHashLog = options.hashOnlyLog ? observationLog(hashLogDir, jobs.trivy.id) : null;
   const publisher = createRecoverableCheckPublisherV2({
     publisherOptions: { nativeAdmission, github, journal, signers,
       configuredChecks: record.config.checks, readChangedPaths: j => github.readChangedPaths(j), batchClaim: claimGeneration(claim), domain: 'fixture', hostedVerifier,
@@ -74,7 +84,11 @@ async function world(t, options = {}) {
     authorityOptions: { config: record.config, accepted, fetchImpl, nativeToken: 'offline-fixture-only',
       sleep: async ms => { time.now += ms + state.sleepDelay; }, timeoutSignal: ms => ({ testTimeout: ms }) },
     readCurrentBatchClaim: async () => { ports.push('current-claim'); return structuredClone(state.claim); }, live: () => { if (!state.sourceLive) fail('source_or_helper_no_longer_live'); },
-    log: (kind, value) => { if (state.logFailure === kind) fail('observation_log_unconfirmed'); events.push({ kind, ...structuredClone(value) }); },
+    log: (kind, value) => { if (state.logFailure === kind) fail('observation_log_unconfirmed'); actualHashLog?.(kind, value); events.push({ kind, ...structuredClone(value) }); },
+    recoveryContext: options.omitContext ? undefined : { ...recoveryContext, ...options.factoryContextDelta },
+    auditWriter: options.omitWriter ? undefined : options.hashOnlyWriter ? () => undefined : async record => {
+      const saved = actualAuditWriter(record); await state.onAuditSaved?.(record); return saved;
+    },
     clock: () => time.now, monotonic: () => time.now - t0,
   });
   const input = (role, times = {}) => ({ job: jobs[role], envelope: signResult(jobs[role], signer, { finishedAt: t0 - 1000, startedAt: t0 - 5000, ...times, domain: 'fixture' }) });
@@ -89,15 +103,45 @@ async function world(t, options = {}) {
     return { subject: { repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: jobs[role].sourceManifestSha256, ...claimGeneration(claim) },
       attempt: 1, envelope: { ...evidence, attestationSha256: digest(evidence) } };
   };
-  return { publisher, state, checks, mutations, fetches, evaluations, events, ports, signers, rawJournal, dir, time, t0, jobs, input, key, mutex, hosted };
+  return { publisher, state, checks, mutations, fetches, evaluations, events, ports, signers, rawJournal, dir, auditDir, hashLogDir, recoveryContext,
+    actualAuditWriter, time, t0, jobs, input, key, mutex, hosted };
 }
 
 const attempts = w => w.events.filter(e => e.kind === 'publication_recovery_result').at(-1)?.publisherAttempts;
 const intents = w => w.events.filter(e => e.kind === 'publication_recovery_intent');
 
+// Real writer, actual temporary files and real non-faulted syscalls. Only the one selected
+// audit-file operation fails. Restore all process-local methods even if an assertion throws.
+async function withAuditIoFault(directory, phase, operation, action) {
+  const methods = ['openSync', 'closeSync', 'writeSync', 'writeFileSync', 'fsyncSync', 'readSync', 'readFileSync'];
+  const original = Object.fromEntries(methods.map(name => [name, fs[name]]));
+  const prefix = path.resolve(directory).toLowerCase() + path.sep, handles = new Set();
+  const matches = value => typeof value === 'string' && path.resolve(value).toLowerCase().startsWith(prefix)
+    && value.endsWith(`-${phase}.json`);
+  let injected = false;
+  const fault = (name, fdOrPath) => {
+    if (!injected && name === operation && (handles.has(fdOrPath) || matches(fdOrPath))) {
+      injected = true; fail('offline_audit_io_failure');
+    }
+  };
+  fs.openSync = function (file, ...args) {
+    fault('open', file); const fd = original.openSync.call(this, file, ...args);
+    if (matches(file)) handles.add(fd); return fd;
+  };
+  fs.closeSync = function (fd, ...args) { try { return original.closeSync.call(this, fd, ...args); } finally { handles.delete(fd); } };
+  for (const name of ['writeSync', 'writeFileSync', 'fsyncSync', 'readSync', 'readFileSync']) {
+    fs[name] = function (fdOrPath, ...args) {
+      fault(name === 'fsyncSync' ? 'flush' : name.startsWith('write') ? 'write' : 'readback', fdOrPath);
+      return original[name].call(this, fdOrPath, ...args);
+    };
+  }
+  try { return { value: await action(), injected }; }
+  finally { for (const name of methods) fs[name] = original[name]; }
+}
+
 test('real wrapper: first30s exhaustion resumes only this publisher once and settles one real journaled Check', async t => {
   for (const role of ['gitleaks', 'trivy', 'contract-placement']) {
-    const w = await world(t); const r = await w.publisher.publish(w.input(role));
+    const w = await world(t, { stage: { gitleaks: 3, trivy: 5, 'contract-placement': 7 }[role] }); const r = await w.publisher.publish(w.input(role));
     assert.equal(r.status, 'SETTLED', JSON.stringify(r)); assert.equal(r.sideEffects, 1);
     assert.equal(w.checks.length, 1); assert.equal(w.mutations.filter(x => x === 'create').length, 1);
     assert.equal((await w.rawJournal.read(w.key(role))).state, 'settled');
@@ -226,7 +270,7 @@ test('a revoke attempt that cannot be confirmed stays UNCERTAIN and never POSTs 
 });
 
 test('hosted current-role recovery preserves an earlier SETTLED prefix and never republishes either role', async t => {
-  const w = await world(t, { exhaust: 0 }); const prefix = await w.publisher.publishHosted(w.hosted('gitleaks'));
+  const w = await world(t, { exhaust: 0, stage: 9 }); const prefix = await w.publisher.publishHosted(w.hosted('gitleaks'));
   assert.equal(prefix.status, 'SETTLED', JSON.stringify(prefix)); const old = structuredClone(w.checks[0]);
   w.state.exhaust = 3;
   const current = await w.publisher.publishHosted(w.hosted('trivy'));
@@ -239,7 +283,7 @@ test('hosted current-role recovery preserves an earlier SETTLED prefix and never
 });
 
 test('hosted SETTLED role reentry performs no ports and cannot exhaust or revoke its settled prefix', async t => {
-  const w = await world(t, { exhaust: 0 }); const input = w.hosted('gitleaks'); const prefix = await w.publisher.publishHosted(input);
+  const w = await world(t, { exhaust: 0, stage: 9 }); const input = w.hosted('gitleaks'); const prefix = await w.publisher.publishHosted(input);
   assert.equal(prefix.status, 'SETTLED'); w.state.exhaust = 3;
   const beforePorts = [...w.ports], beforeEvents = structuredClone(w.events), beforeCheck = structuredClone(w.checks[0]);
   const result = await w.publisher.publishHosted(input);
@@ -260,5 +304,151 @@ test('a terminal exhausted role cannot obtain a fresh allowance through another 
     const result = await repeat();
     assert.equal(result.status, 'UNCERTAIN'); assert.equal(result.reason, 'publication_recovery_reentry_refused'); assert.equal(result.sideEffects, 0);
     assert.deepEqual(w.ports, beforePorts); assert.deepEqual(w.events, beforeEvents); assert.equal(w.checks.length, 0);
+  }
+});
+
+test('G10: the actual hash-only production observation log cannot replace durable recovery proof', async t => {
+  for (const absent of [{ omitContext: true }, { omitWriter: true }, { hashOnlyWriter: true }]) {
+    const w = await world(t, { ...absent, hashOnlyLog: true });
+    const result = await w.publisher.publish(w.input('trivy'));
+    assert.equal(result.status, 'UNCERTAIN'); assert.equal(result.reason, 'publication_recovery_unconfirmed');
+    assert.equal(w.fetches.length, 3); assert.equal(w.evaluations.length, 0); assert.equal(w.checks.length, 0);
+    assert.equal(await w.rawJournal.read(w.key('trivy')), null); assert.equal(await w.rawJournal.read(rolePublicationKey(w.mutex('trivy'))), null);
+    assert.deepEqual(fs.readdirSync(w.auditDir), []);
+    const rows = fs.readFileSync(path.join(w.hashLogDir, 'observations.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+    assert.ok(rows.length > 0);
+    for (const row of rows) {
+      assert.deepEqual(Object.keys(row).sort(), ['contract', 'dataSha256', 'id', 'jobId', 'kind', 'observedAt']);
+      assert.equal(row.contract, 'clued.independent-ci.source-observation/1');
+      assert.equal(Object.hasOwn(row, 'data'), false); assert.equal(Object.hasOwn(row, 'nonce'), false);
+    }
+  }
+});
+
+test('G10: wrong real invocation binding or stage-role pairing cannot authorize continuation', async t => {
+  const changes = [
+    { factoryContextDelta: { nonce: '0'.repeat(32) } },
+    { factoryContextDelta: { configSha256: digest('wrong-stage-config') } },
+    { factoryContextDelta: { sourceManifestSha256: 'e'.repeat(64) } },
+    { factoryContextDelta: { acceptanceSha256: digest('wrong-acceptance') } },
+    { factoryContextDelta: { entrySha256: digest('wrong-entry') } },
+    { stage: 3 },
+  ];
+  for (const options of changes) {
+    const w = await world(t, options); const result = await w.publisher.publish(w.input('trivy'));
+    assert.equal(result.status, 'UNCERTAIN'); assert.equal(w.checks.length, 0); assert.equal(w.fetches.length, 3);
+    assert.equal(w.evaluations.length, 0); assert.equal(intents(w).length, 0);
+    assert.deepEqual(fs.readdirSync(w.auditDir), []);
+  }
+});
+
+test('G10: real intent CreateNew/write/flush/readback failures preserve files and forbid the second publisher', async t => {
+  for (const operation of ['open', 'write', 'flush', 'readback']) {
+    const w = await world(t);
+    const { value: result, injected } = await withAuditIoFault(w.auditDir, 'intent', operation, () => w.publisher.publish(w.input('trivy')));
+    assert.equal(injected, true, `${operation} fault must reach the actual audit writer`);
+    assert.equal(result.status, 'UNCERTAIN'); assert.equal(result.reason, 'publication_recovery_unconfirmed');
+    assert.equal(w.fetches.length, 3); assert.equal(w.evaluations.length, 0); assert.equal(w.checks.length, 0);
+    assert.equal(w.mutations.length, 0); assert.equal(intents(w).length, 0);
+    assert.equal(await w.rawJournal.read(w.key('trivy')), null); assert.equal(await w.rawJournal.read(rolePublicationKey(w.mutex('trivy'))), null);
+    const evidence = fs.readdirSync(w.auditDir);
+    assert.equal(evidence.length, operation === 'open' ? 0 : 1, 'failed CreateNew evidence is retained, never silently deleted or replaced');
+    if (evidence.length) assert.ok(evidence[0].endsWith('-intent.json'));
+  }
+});
+
+test('G10: result persistence failures cannot POST again or prevent known-Check compensation', async t => {
+  for (const compensate of [false, true]) {
+    const w = await world(t);
+    if (compensate) w.state.onCreate = () => { w.time.now += 30001; };
+    const { value: result, injected } = await withAuditIoFault(w.auditDir, 'result', 'flush', () => w.publisher.publish(w.input('trivy')));
+    assert.equal(injected, true); assert.equal(result.status, 'UNCERTAIN'); assert.equal(w.checks.length, 1);
+    assert.equal(w.mutations.filter(v => v === 'create').length, 1);
+    assert.equal(w.mutations.filter(v => v === 'revoke').length, compensate ? 1 : 0);
+    assert.equal((await w.rawJournal.read(w.key('trivy'))).state, compensate ? 'revoked' : 'settled');
+    if (compensate) { assert.equal(w.checks[0].conclusion, 'failure'); assert.ok(w.time.now - w.t0 > 60000); }
+    assert.equal(attempts(w), 2); assert.ok(w.fetches.length <= 5);
+    const evidence = fs.readdirSync(w.auditDir);
+    assert.equal(evidence.length, 2); assert.ok(evidence.some(v => v.endsWith('-intent.json'))); assert.ok(evidence.some(v => v.endsWith('-result.json')));
+    const before = [...w.ports]; const repeat = await w.publisher.publish(w.input('trivy'));
+    assert.equal(repeat.status, 'UNCERTAIN'); assert.deepEqual(w.ports, before);
+  }
+});
+
+test('G10: real intent and result files bind invocation, full negative proof and the unchanged clock anchor', async t => {
+  const w = await world(t), input = w.input('trivy');
+  const prefix = { id: 9000, app: { id: 5368905 }, name: w.mutex('gitleaks').checkName, head_sha: HEAD };
+  w.state.onExhaust = () => {
+    w.checks.push(structuredClone(prefix)); w.state.fetchDelay = 1000;
+    w.state.onReadChecks = () => { w.time.now += 5000; w.state.onReadChecks = null; };
+  };
+  const result = await w.publisher.publish(input);
+  assert.equal(result.status, 'SETTLED', JSON.stringify(result)); assert.deepEqual(w.checks[0], prefix);
+  const files = fs.readdirSync(w.auditDir).sort();
+  assert.deepEqual(files, ['intent', 'result'].map(kind => `publication-recovery-${w.recoveryContext.nonce}-${w.jobs.trivy.id}-${kind}.json`).sort());
+  const rawIntent = fs.readFileSync(path.join(w.auditDir, files.find(v => v.endsWith('-intent.json'))));
+  const rawResult = fs.readFileSync(path.join(w.auditDir, files.find(v => v.endsWith('-result.json'))));
+  const intent = JSON.parse(rawIntent), final = JSON.parse(rawResult), rawSha = b => createHash('sha256').update(b).digest('hex');
+  const fields = ['schema', 'domain', 'kind', 'auditOnly', 'grantsExecution', 'context', 'job', 'identity', 'clock', 'counters', 'firstExhaustion', 'negativeProof', 'intentSha256', 'publisherResult'].sort();
+  for (const record of [intent, final]) {
+    assert.deepEqual(Object.keys(record).sort(), fields); assert.equal(record.schema, 'clued.independent-ci.publication-recovery-audit/1');
+    assert.equal(record.domain, 'fixture'); assert.equal(record.auditOnly, true); assert.equal(record.grantsExecution, false);
+    assert.deepEqual(record.context, w.recoveryContext); assert.deepEqual(record.job, w.jobs.trivy);
+    assert.deepEqual(record.identity, { effectKey: w.key('trivy'), roleMutexKey: rolePublicationKey(w.mutex('trivy')),
+      inputSha256: digest(input), evidenceSha256: digest(input.envelope), claim: w.state.claim });
+    assert.equal(record.clock.monotonicAnchorMs, 0); assert.equal(record.clock.deadlineMonotonicMs, 60000);
+    assert.equal(record.clock.wallAnchorAt, iso(w.t0)); assert.equal(record.clock.budgetMs, 60000);
+    assert.deepEqual(record.firstExhaustion, intent.firstExhaustion);
+    assert.equal(record.firstExhaustion.subjectSha256, digest(subjectOfV2(w.jobs.trivy)));
+    assert.equal(record.firstExhaustion.claimSha256, digest(w.state.claim)); assert.equal(record.firstExhaustion.transient, true);
+    assert.equal(record.firstExhaustion.attempt, 3); assert.equal(record.firstExhaustion.exhaustedAtMonotonicMs, 30000);
+    assert.equal(record.firstExhaustion.observationDeadlineMonotonicMs, 30000);
+    assert.deepEqual(record.negativeProof, { ownEffectKeyNull: true, roleMutexKeyNull: true, remoteComplete: true,
+      appId: 5368905, checkName: w.mutex('trivy').checkName, headSha: HEAD, inventorySha256: digest([prefix]), inventoryCount: 1, matchingCount: 0, observedAt: iso(w.t0 + 35000) });
+  }
+  assert.equal(intent.clock.elapsedMs, 35000); assert.equal(intent.clock.remainingMs, 25000);
+  assert.equal(final.clock.elapsedMs, 37000); assert.equal(final.clock.remainingMs, 23000);
+  assert.deepEqual(intent.counters, { publisherAttempts: 1, observationCalls: 1, verifyRequests: 3, fullEvaluations: 0, mutationAttempted: false });
+  assert.deepEqual(final.counters, { publisherAttempts: 2, observationCalls: 3, verifyRequests: 5, fullEvaluations: 2, mutationAttempted: true });
+  assert.equal(intent.intentSha256, null); assert.equal(intent.publisherResult, null); assert.equal(final.intentSha256, rawSha(rawIntent));
+  assert.equal(final.publisherResult.status, 'SETTLED'); assert.equal(final.publisherResult.sideEffects, 1);
+  for (const [kind, bytes] of [['intent', rawIntent], ['result', rawResult]]) {
+    const logged = w.events.find(e => e.kind === `publication_recovery_${kind}_persisted`);
+    assert.equal(logged.sha256, rawSha(bytes)); assert.equal(logged.bytes, bytes.length); assert.equal(logged.nonce, w.recoveryContext.nonce);
+    assert.equal(logged.configSha256, w.recoveryContext.configSha256);
+    const stat = fs.lstatSync(path.join(w.auditDir, logged.fileName)); assert.equal(stat.isFile(), true); assert.equal(stat.isSymbolicLink(), false); assert.equal(stat.nlink, 1);
+  }
+  // Replaying a valid proof must fail CreateNew; the original bytes must stay identical.
+  assert.throws(() => w.actualAuditWriter(intent));
+  assert.deepEqual(fs.readFileSync(path.join(w.auditDir, files.find(v => v.endsWith('-intent.json')))), rawIntent);
+  // Unknown fields must be rejected before any file is opened, not merely collide with the prior filename.
+  let opened = 0; const open = fs.openSync;
+  fs.openSync = function (...args) { opened++; return open.apply(this, args); };
+  try {
+    for (const bad of [{ ...intent, extra: 'test-only-canary' }, { ...intent, context: { ...intent.context, extra: 'test-only-canary' } },
+      { ...intent, negativeProof: { ...intent.negativeProof, extra: 'test-only-canary' } }]) assert.throws(() => w.actualAuditWriter(bad));
+  } finally { fs.openSync = open; }
+  assert.equal(opened, 0); assert.equal(fs.readdirSync(w.auditDir).length, 2);
+  assert.equal(rawIntent.includes(Buffer.from('test-only-canary')), false); assert.equal(rawResult.includes(Buffer.from('test-only-canary')), false);
+});
+
+test('G10: own journal or K appearing after intent persistence is preserved without POST or revocation', async t => {
+  for (const cause of ['own', 'mutex']) {
+    const w = await world(t); let raced;
+    w.state.onAuditSaved = async record => {
+      if (record.kind !== 'intent') return;
+      if (cause === 'own') {
+        await w.rawJournal.begin(w.key('trivy'), { other: 'writer' });
+        raced = await w.rawJournal.read(w.key('trivy'));
+      } else {
+        await claimRolePublication(w.rawJournal, w.mutex('trivy'), { path: 'relay', effectKey: digest('other-after-intent'), externalId: 'independent-ci:other-after-intent' });
+        raced = await w.rawJournal.read(rolePublicationKey(w.mutex('trivy')));
+      }
+    };
+    const result = await w.publisher.publish(w.input('trivy'));
+    assert.equal(result.status, 'UNCERTAIN'); assert.equal(w.checks.length, 0);
+    assert.equal(w.mutations.filter(v => v === 'create').length, 0); assert.equal(w.mutations.filter(v => v === 'revoke').length, 0);
+    assert.deepEqual(await w.rawJournal.read(cause === 'own' ? w.key('trivy') : rolePublicationKey(w.mutex('trivy'))), raced);
+    assert.equal(fs.readdirSync(w.auditDir).length, 2); assert.equal(intents(w).length, 1);
   }
 });

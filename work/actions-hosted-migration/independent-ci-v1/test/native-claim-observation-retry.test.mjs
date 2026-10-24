@@ -7,6 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { digest } from '../src/proof.mjs';
 import { batchJobsV2, claimGeneration, scanEffectKeyV2 } from '../src/job-v2.mjs';
@@ -14,7 +15,7 @@ import { EffectJournal } from '../src/effect-journal.mjs';
 import { outcomeFailureCode } from '../src/resident-v2/stage-fact.mjs';
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
-import { protectedAuthority, createRecoverableCheckPublisherV2, transientFetchError, OBSERVE_RETRY_WAITS_MS, OBSERVE_BUDGET_MS, PUBLICATION_OBSERVE_BUDGET_MS, PUBLICATION_READBACK_RESERVE_MS } from '../runtime/one-shot-v2.mjs';
+import { protectedAuthority, createRecoverableCheckPublisherV2, createPublicationRecoveryAuditWriter, transientFetchError, OBSERVE_RETRY_WAITS_MS, OBSERVE_BUDGET_MS, PUBLICATION_OBSERVE_BUDGET_MS, PUBLICATION_READBACK_RESERVE_MS } from '../runtime/one-shot-v2.mjs';
 import { HEAD, BASE, tempDir, fixtureRecord, signResult } from './resident-v2-fixtures.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
@@ -281,7 +282,9 @@ async function publisherWith(t, steps, { recover = false, clock = null, changeGi
   const { signer, docs } = fixtureRecord();
   const record = validateRecordV2(docs, { now: Date.now() });
   const job = jobsFor().trivy, c = claim();
-  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  const fixtureRoot = await tempDir(t), auditRoot = path.join(fixtureRoot, 'audit');
+  await fs.mkdir(auditRoot);
+  const journal = await EffectJournal.open(path.join(fixtureRoot, 'effects'));
   const accepted = Object.fromEntries(REFS.map(k => [k, record.accepted[k]]));
   const checks = []; let next = 100;
   const github = { fixture: true, checks,
@@ -308,7 +311,10 @@ async function publisherWith(t, steps, { recover = false, clock = null, changeGi
   const publisherOptions = { nativeAdmission, authority: { fixture: true, observe: auth.observe }, github, journal, signers, configuredChecks: record.config.checks,
     readChangedPaths: j => github.readChangedPaths(j), protectedDeployment: { enabled: true, domain: 'fixture', repository: REPO, ciPrincipalBindingId: record.config.ciPrincipalBindingId, ...accepted },
     batchClaim: claimGeneration(c), domain: 'fixture', clock: now };
-  const publisher = recover ? createRecoverableCheckPublisherV2({ publisherOptions, authorityOptions: {
+  const recoveryContext = { nonce: randomUUID().replaceAll('-', ''), stage: 5, entryRole: 'check-publisher', batchKey: digest('fixture-batch'),
+    configSha256: digest('fixture-config'), sourceManifestSha256: job.sourceManifestSha256, acceptanceSha256: digest('fixture-acceptance'), entrySha256: digest('fixture-entry') };
+  const publisher = recover ? createRecoverableCheckPublisherV2({ publisherOptions, recoveryContext,
+    auditWriter: createPublicationRecoveryAuditWriter({ context: recoveryContext, domain: 'fixture', fixtureDirectory: auditRoot }), authorityOptions: {
     config: { supabaseUrl: 'https://x.supabase.co/', publishableKey: 'k', scope: 'project:x', ciPrincipalBindingId: record.config.ciPrincipalBindingId },
     accepted, fetchImpl: verify.fetchImpl, nativeToken: 't', sleep: async ms => { if (clock) clock.now += ms; }, timeoutSignal: () => new AbortController().signal },
     readCurrentBatchClaim: readClaim ?? (async () => claimGeneration(c)), live() {}, log, clock: now,
