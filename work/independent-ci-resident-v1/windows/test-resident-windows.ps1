@@ -122,7 +122,7 @@ if ((Test-Path -LiteralPath $probeNode) -and (Test-Path -LiteralPath $ca.path)) 
   $probeJs = Join-Path $probeDir 'companion-main.mjs'
   [IO.File]::WriteAllText($probeJs, "import fs from 'node:fs'; fs.writeFileSync(process.argv[1] + '.argv.json', JSON.stringify({ pid: process.pid, argv: process.argv.slice(2) })); setTimeout(() => {}, 60000);")
   $probeArgs = '--headless "' + $probeNode + '" "' + $probeJs + '" --root "' + $probeDir + '" --config-sha256 ' + $csha
-  $host1 = Start-Process -FilePath $ca.path -ArgumentList $probeArgs -PassThru
+  $host1 = Start-Process -FilePath $ca.path -ArgumentList $probeArgs -WindowStyle Hidden -PassThru
   $until = (Get-Date).AddSeconds(20); while (-not (Test-Path -LiteralPath ($probeJs + '.argv.json')) -and (Get-Date) -lt $until) { Start-Sleep -Milliseconds 200 }
   $host1.Refresh(); $seen = Get-Content -LiteralPath ($probeJs + '.argv.json') -Raw | ConvertFrom-Json
   Yes (((@($seen.argv) -join '|') -ceq ('--root|' + $probeDir + '|--config-sha256|' + $csha)) -and $host1.MainWindowHandle -eq [IntPtr]::Zero) 'conhost-headless-argv-and-no-window'
