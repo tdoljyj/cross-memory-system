@@ -137,7 +137,7 @@ Windows 用 `Win32_Service.StartName` 核对账号，再验证其实际 PATH。P
 2. 使用授权的隔离验收 workflow/标签，记录实际分配节点。已有健康节点的成功不能代替新增节点验收。
 3. 真实跑通 checkout、依赖安装、能力负载和 cleanup；Linux Docker 节点还要验证临时资源创建/清理。钩子必须有实际 ALLOW 和拒绝用例，不能仅看到文件存在。
 4. 对同机并发，验证目录不交叉、固定端口不冲突、负载下宿主可用及既有节点未被重启。
-5. 将条目推进到 validated/active；条目为 active 后再渲染看门狗（renderer 只纳入 active 的 Linux runner，主机没有 active Linux runner 时拒绝渲染），核对 active units 已纳入；最后恢复生产标签并核对路由/心跳。激活是配置、主机部署和调度状态三处一致，不能只改 JSON。
+5. 将条目推进到 validated/active；Linux 条目的有效状态为 active 后再渲染看门狗。每个 primary 或 additional Linux 条目显式声明的 `state` 优先，仅字段缺省时才继承 `host.state`；没有有效 active 条目时 renderer 拒绝渲染。核对 active units 已纳入，最后恢复生产标签并核对路由/心跳。激活是配置、主机部署和调度状态三处一致，不能只改 JSON。
 6. 完成配置 PR、机器验收与 KooYomi 回执。不写 online/busy 进清单。
 
 若验收 workflow 涉及新 workflow、手动 dispatch 或重任务，按当时准入合同执行；不临时移除门禁。作业此前 skipped 时要让适用作业实际执行。本基线常规 PR/分支工作流禁止直接重跑；需要重试时用实际修复提交，或按精确范围的 Owner 例外与实际钩子能力处理。
@@ -145,6 +145,8 @@ Windows 用 `Win32_Service.StartName` 核对账号，再验证其实际 PATH。P
 ## 5. 看门狗标准与部署
 
 看门狗由清单和 renderer 生成；不直接编辑生成文件来制造另一个配置来源。用最新受审配置在日常 WSL 所属 Windows 账号下生成到临时输出，解析并核对阈值、units、Windows report-only，然后在批准的主机部署窗口安装到 `watchdog_path`。
+
+renderer 按每个 Linux 条目的有效 `state` 选择 unit：显式 `linux_runner.state` 或额外槽位的 `state` 优先，仅未声明该字段时才取 `host.state`。例如主机为 `validated`、primary Linux 条目显式为 `active` 时，该条目可纳入预览；继承 `validated` 的条目仍不纳入。是否拒绝渲染取决于有效 active Linux 条目是否为空，这一选择规则不代替前述资格、激活或部署授权。
 
 ```powershell
 # 从仓库根目录执行；只生成预览，不安装启动项、不启动进程
