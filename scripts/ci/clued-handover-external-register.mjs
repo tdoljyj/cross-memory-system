@@ -1,7 +1,7 @@
 // Operator-only candidate. Registers only an exact independently accepted
 // empty disposable cluster. No production target or generic SQL entry.
 import assert from 'node:assert/strict';
-export const COMPONENT_VERSION = "1.0.1";
+export const COMPONENT_VERSION = "1.0.2";
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';

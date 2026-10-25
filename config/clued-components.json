@@ -278,7 +278,7 @@
     {
       "id": "script.handover-external-register",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Canonical External2 operator registration, catalog, profile and exact registration DDL.",
       "root": ".",
       "files": [
@@ -290,7 +290,7 @@
         "config/clued-handover-external-catalog.json",
         "config/clued-handover-external-profile.json"
       ],
-      "content_sha256": "48bb78e5c92b561b6cda8f4e68ff17fa33496d91461e89400f49a8209eb18012",
+      "content_sha256": "7f22c9a2cfde8ad81893b9d1b7e6a48958a2af1cabf0621a647a5847054e093b",
       "version_marker": {
         "file": "scripts/ci/clued-handover-external-register.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"

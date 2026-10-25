@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { WindowsEngine, DESCRIPTOR_CONTRACT, parseStageFact } from '../src/engine-windows.mjs';
+import { WindowsEngine, DESCRIPTOR_CONTRACT, parseStageFact, parseStageOutcome } from '../src/engine-windows.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { TEST_NODE, TEST_NODE_SHA, tempRoot, rawPolicy, HEAD, BASE, SOURCE } from './helpers.mjs';
 
@@ -51,6 +51,23 @@ async function engineFixture(t, { answers = {}, stdout = {}, testSha = null } = 
 }
 const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 2 };
 const stages = validatePolicy(rawPolicy()).stages;
+
+test('issuer diagnostics: resident second filter retains only allowed issuer context and never grants a retry', () => {
+  const diagnostic = { verdict: 'REJECTED', nativeVerdict: 'ERROR', ownerReviewKind: 'refused', reasonCodes: ['owner_grant_required'],
+    nativeReasonCodes: ['path_outside_write_set'], phase: 'changed_paths', transientAdmission: 'full_admission_unavailable', evaluations: 4,
+    workflowGateFindingsPresent: true, modeFresh: false, recorderFresh: true, rawBody: 'sensitive-details-must-not-survive' };
+  const input = { status: 'UNCERTAIN', reason: 'full_admission_rejected', sideEffects: 1, mayHavePublished: true, safeToRerun: true, diagnostic };
+  const r = parseStageOutcome(input);
+  for (const key of ['ownerReviewKind', 'phase', 'transientAdmission', 'evaluations', 'workflowGateFindingsPresent', 'modeFresh', 'recorderFresh'])
+    assert.deepEqual(r.diagnostic[key], diagnostic[key], key);
+  assert.equal(Object.hasOwn(r.diagnostic, 'rawBody'), false);
+  assert.equal(r.safeToRerun, false);
+  for (const evaluations of [0, -1, 5, 1.5, '4', Infinity])
+    assert.equal(Object.hasOwn(parseStageOutcome({ ...input, diagnostic: { ...diagnostic, evaluations } }).diagnostic, 'evaluations'), false);
+  const forged = parseStageOutcome({ ...input, diagnostic: { transientAdmission: 'full_admission_rejected', evaluations: 4,
+    ownerReviewKind: 'private_kind', phase: 'private_phase' } });
+  for (const key of ['transientAdmission', 'evaluations', 'ownerReviewKind', 'phase']) assert.equal(Object.hasOwn(forged.diagnostic, key), false);
+});
 
 test('derive passes the v2 subject (with createdAt) and writes the public descriptor /3', async t => {
   const f = await engineFixture(t);
