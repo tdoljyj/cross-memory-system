@@ -15,7 +15,8 @@ import { recordBatchClaim, readBatchClaim, validateBatchClaimRecord } from '../s
 import { controlJobsFor } from '../src/independent-control-checks-v2/consumer.mjs';
 import { CONTROL_CHECKS_V2 } from '../src/independent-control-checks-v2/publisher.mjs';
 import { mergeQueueEntryV2 } from '../src/independent-control-checks-v2/queue-facts.mjs';
-import { sanitizeSchedulingV2 } from '../src/admission-facts-v2.mjs';
+import { sanitizeSchedulingV2, sanitizeAdmissionDiagnosticV2 } from '../src/admission-facts-v2.mjs';
+import { parseStageOutcome } from '../../../independent-ci-resident-v1/src/engine-windows.mjs';
 import { outcomeFailureCode, outcomeFacts, buildStageFact, githubTransientReason, BROKER_NO_LAUNCH_CODES } from '../src/resident-v2/stage-fact.mjs';
 import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import { NOW, HEAD, BASE, iso, hex, tempDir } from './resident-v2-fixtures.mjs';
@@ -135,4 +136,40 @@ test('entry outcome: safeToRerun only on a clean BLOCKED with zero side effects;
   assert.equal((await write({ status: 'UNCERTAIN', reason: 'x', sideEffects: 0, safeToRerun: true })).safeToRerun, false);
   const none = await write({ status: 'SETTLED', sideEffects: 1 });
   assert.deepEqual([none.safeToRerun, none.scheduling, none.diagnostic], [false, null, null]);
+});
+
+test('issuer diagnostics: transient exhaustion keeps only bounded enums, counts and phases', () => {
+  for (const transientAdmission of ['full_admission_unavailable', 'full_admission_observation_expired']) {
+    const clean = sanitizeAdmissionDiagnosticV2({ transientAdmission, evaluations: 4, phase: 'changed_paths',
+      rawBody: 'sensitive-details-must-not-survive', changedPaths: ['private/file'], arbitrary: true });
+    assert.equal(clean.transientAdmission, transientAdmission);
+    assert.equal(clean.evaluations, 4);
+    assert.equal(clean.phase, 'changed_paths');
+    assert.deepEqual(sanitizeAdmissionDiagnosticV2(clean), clean, 'the second Source sanitizer is idempotent');
+    for (const key of ['rawBody', 'changedPaths', 'arbitrary']) assert.equal(Object.hasOwn(clean, key), false);
+    for (const evaluations of [0, -1, 5, 1.5, '4', null, Infinity, Number.MAX_SAFE_INTEGER]) {
+      assert.equal(Object.hasOwn(sanitizeAdmissionDiagnosticV2({ transientAdmission, evaluations }), 'evaluations'), false);
+    }
+  }
+  const forged = sanitizeAdmissionDiagnosticV2({ transientAdmission: 'full_admission_rejected', evaluations: 4, phase: 'private_phase' });
+  for (const key of ['transientAdmission', 'evaluations', 'phase']) assert.equal(Object.hasOwn(forged, key), false);
+});
+
+test('issuer diagnostics: actual entry JSON survives both Source and resident filters without changing failure semantics', async t => {
+  const receiptsRoot = await tempDir(t, 'clued-issuer-diagnostic-');
+  const raw = { verdict: 'REJECTED', nativeVerdict: 'REJECTED', ownerReviewKind: 'refused', reasonCodes: ['owner_grant_required'],
+    nativeReasonCodes: ['path_outside_write_set'], phase: 'changed_paths', transientAdmission: 'full_admission_unavailable', evaluations: 4,
+    workflowGateFindingsPresent: true, modeFresh: false, recorderFresh: true, rawBody: 'sensitive-details-must-not-survive' };
+  const written = await writeOutcome({ receiptsRoot, nonce: hex(16), plan: { stage: 4, entryRole: 'scanner-issuer' }, jobIds: [],
+    result: { status: 'UNCERTAIN', reason: 'full_admission_rejected', sideEffects: 1, admissionDiagnostic: raw, safeToRerun: true } });
+  const file = path.join(receiptsRoot, `outcome-${written.nonce}.json`);
+  const actual = JSON.parse(await fs.readFile(file, 'utf8'));
+  const resident = parseStageOutcome(outcomeFacts(actual));
+  for (const key of ['verdict', 'nativeVerdict', 'ownerReviewKind', 'reasonCodes', 'nativeReasonCodes', 'phase', 'transientAdmission', 'evaluations',
+    'workflowGateFindingsPresent', 'modeFresh', 'recorderFresh']) assert.deepEqual(resident.diagnostic[key], raw[key], key);
+  assert.equal(JSON.stringify(actual).includes(raw.rawBody), false);
+  assert.deepEqual([resident.status, resident.reason, resident.sideEffects, resident.mayHavePublished, resident.safeToRerun],
+    ['UNCERTAIN', 'full_admission_rejected', 1, true, false]);
+  assert.equal(outcomeFailureCode(actual, 4), 'PUBLICATION_UNCERTAIN');
+  assert.equal(outcomeFailureCode(actual, 4), outcomeFailureCode({ ...actual, diagnostic: null }, 4));
 });
