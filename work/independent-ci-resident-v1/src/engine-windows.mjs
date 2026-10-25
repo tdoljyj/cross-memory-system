@@ -19,8 +19,8 @@ import { randomBytes } from 'node:crypto';
 import { CODE, HEX64, check, fail, parseBoundedJson, sha256 } from './canonical.mjs';
 import { exists, readBounded, writeNew, ensureDir } from './store.mjs';
 import { ABORTABLE_IN_FLIGHT } from './classify.mjs';
+import { pinnedNodeProfile, validateNodeProfile } from './node-profile.mjs';
 
-export const RUNNER_SERVICE = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02';
 export const ORIGINAL_BINARY = '"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"';
 // /3 (quota phase 2 step 3b): also names the tested commit S (testSha); S = H until step 3c's train front batch.
 export const DESCRIPTOR_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/3';
@@ -122,12 +122,20 @@ export function parseScQueryex(text) {
   const pid = /PID\s*:\s*(\d+)/.exec(text)?.[1] ?? null;
   return { state: state === null ? null : Number(state), pid: pid === null ? null : Number(pid) };
 }
-export const originalStopped = (qc, q) => qc.binary === ORIGINAL_BINARY && qc.startType === 3 && /^(\.|TURING)\\clued-control$/i.test(qc.account ?? '') && q.state === 1 && q.pid === 0;
+export const originalStopped = (qc, q, node) => {
+  validateNodeProfile(node);
+  const account = String(qc.account ?? '').toLowerCase();
+  return qc.binary === ORIGINAL_BINARY && qc.startType === 3 && ['.\\clued-control', `${node.hostname.toLowerCase()}\\clued-control`].includes(account) && q.state === 1 && q.pid === 0;
+};
 
 export class WindowsEngine {
   // ports: { run (Runner.run), busy() (Runner.busy), companionMailbox, sleep, clock,
   //          paths: { sourceRoot, workRoot, outboxRoot, nodeExe, powershellExe, scExe } }
-  constructor(ports) { Object.assign(this, ports); }
+  constructor({ node, nodeProfileSha256, ...ports }) {
+    this.node = pinnedNodeProfile(node, nodeProfileSha256);
+    this.nodeProfileSha256 = nodeProfileSha256;
+    Object.assign(this, ports);
+  }
 
   v2(name) { return path.join(this.paths.sourceRoot, ...V2, name); }
 
@@ -203,9 +211,9 @@ export class WindowsEngine {
   async requireV2(name) { const p = this.v2(name); try { await fs.access(p); } catch { fail('SOURCE_V2_REQUIRED'); } return p; }
 
   async scReadback() {
-    const qc = parseScQc((await this.run([this.paths.scExe, 'qc', RUNNER_SERVICE], { timeoutMs: 15_000 })).stdout);
-    const q = parseScQueryex((await this.run([this.paths.scExe, 'queryex', RUNNER_SERVICE], { timeoutMs: 15_000 })).stdout);
-    return originalStopped(qc, q);
+    const qc = parseScQc((await this.run([this.paths.scExe, 'qc', this.node.runnerService], { timeoutMs: 15_000 })).stdout);
+    const q = parseScQueryex((await this.run([this.paths.scExe, 'queryex', this.node.runnerService], { timeoutMs: 15_000 })).stdout);
+    return originalStopped(qc, q, this.node);
   }
 
   async derive(subject, key) {
@@ -238,7 +246,7 @@ export class WindowsEngine {
   // renames on the Owner-writable spool, see archive.mjs header).
   async archiveWindows(batch, reason) {
     const tool = await this.requireV2('archive-windows-spool.ps1');
-    const r = await this.run([this.paths.powershellExe, '-NoProfile', '-NonInteractive', '-File', tool, '-BatchKey', batch.key, '-Reason', reason], { timeoutMs: 120_000 });
+    const r = await this.run([this.paths.powershellExe, '-NoProfile', '-NonInteractive', '-File', tool, '-BatchKey', batch.key, '-Reason', reason, '-ExpectedNodeProfileSha256', this.nodeProfileSha256], { timeoutMs: 120_000 });
     const v = r.code === 0 ? parseBoundedJson(Buffer.from(r.stdout, 'utf8'), 65536, 'WINDOWS_ARCHIVE_UNCONFIRMED') : null;
     return { verified: v?.verified === true, directory: typeof v?.directory === 'string' ? v.directory : null, moved: v?.moved ?? null };
   }

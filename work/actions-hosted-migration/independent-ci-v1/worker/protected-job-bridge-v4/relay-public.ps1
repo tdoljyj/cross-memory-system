@@ -2,7 +2,8 @@
 param(
   [Parameter(Mandatory=$true)][ValidateSet('SendIssue','SendResponse','ReceiveChallenge','ReceiveResult','ReceiveBlocked')][string]$Mode,
   [ValidateRange(0,32)][int]$Sequence=0,
-  [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedBundleSha256
+  [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedBundleSha256,
+  [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedNodeProfileSha256
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -51,7 +52,7 @@ function Json-Public([byte[]]$b){return (New-Object Text.UTF8Encoding($false,$tr
 function New-Public([string]$Path,[byte[]]$Bytes){$h=New-Object IO.FileStream($Path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{$h.Write($Bytes,0,$Bytes.Length);$h.Flush($true)}finally{$h.Dispose()}}
 function Check-Spool([string]$Target){
   # Separate metadata-only helper, pinned and locked above. Never reads bytes.
-  & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -File (Join-Path $FixedSource 'formal-spool-acl.ps1') -LiteralTarget $Target -ProtectedRoot $Spool -RelayReadOutgoing
+  & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -File (Join-Path $FixedSource 'formal-spool-acl.ps1') -LiteralTarget $Target -ProtectedRoot $Spool -RelayReadOutgoing -ExpectedNodeProfileSha256 $ExpectedNodeProfileSha256
   if($LASTEXITCODE -ne 0){throw 'FORMAL_SPOOL_ACL_REFUSED'}
 }
 function Safe-ChildError([string]$Text){
@@ -64,8 +65,10 @@ function Safe-ChildError([string]$Text){
   return [pscustomobject][ordered]@{status='BLOCKED';reason=$v.reason;stage=$v.stage;taskStarted=$false;qualificationIssued=$false}
 }
 try{
-  if([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne 'S-1-5-21-1173730660-3877291096-655431861-1001' -or $env:COMPUTERNAME -ine 'TURING'){throw 'FIXED_OWNER_ENDPOINT_REQUIRED'}
   if($FixedSource -cnotmatch $FixedSourcePattern){throw 'FIXED_SOURCE_LOCATION_REQUIRED'}
+  Add-Type -Path (Join-Path $FixedSource '..\..\src\resident-v2\windows\NodeProfileV2.cs') -ReferencedAssemblies @('System.dll','System.Core.dll','System.Web.Extensions.dll')
+  $nodeLease=[NodeProfileV2]::LoadProtectedProfile('C:\ProgramData\CluedIndependentCI\resident',$ExpectedNodeProfileSha256);$Held.Add($nodeLease);$Node=$nodeLease.Profile
+  if([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne $Node.OwnerSid -or [Environment]::MachineName -cne $Node.Hostname){throw 'FIXED_OWNER_ENDPOINT_REQUIRED'}
   $sequenced=$Mode -ceq 'SendResponse' -or $Mode -ceq 'ReceiveChallenge'
   if(($sequenced -and $Sequence -eq 0) -or (-not $sequenced -and $Sequence -ne 0)){throw 'FIXED_RELAY_SEQUENCE_REQUIRED'}
   Hold-Parents $FixedSource
@@ -88,9 +91,9 @@ try{
   }else{foreach($leaf in @($name+'.json',$name+'.ready.json')){if(Test-Path -LiteralPath (Join-Path (Join-Path $Spool 'incoming') $leaf)){throw 'EXISTING_RECORD_PRESERVED_NO_RETRY'}}}
   $utf8=New-Object Text.UTF8Encoding($false,$true);$ib=$utf8.GetBytes($inputText);if($ib.Length -gt 1399000){throw 'PUBLIC_STDIN_BOUND'}
   $psi=New-Object Diagnostics.ProcessStartInfo;$psi.FileName='C:\Windows\System32\wsl.exe'
-  $psi.Arguments='--distribution Ubuntu-24.04 --user root --exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C '+$LinuxNode+' '+$LinuxEntry+' '+$operation
+  $psi.Arguments='--distribution '+$Node.WslDistribution+' --user root --exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C '+$LinuxNode+' '+$LinuxEntry+' '+$operation
   $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true;$psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true;$psi.EnvironmentVariables.Clear()
-  foreach($p in @(@('SystemRoot','C:\Windows'),@('WINDIR','C:\Windows'),@('PATH','C:\Windows\System32;C:\Windows'),@('USERPROFILE','C:\Users\17531'),@('LOCALAPPDATA','C:\Users\17531\AppData\Local'))){$psi.EnvironmentVariables[$p[0]]=$p[1]}
+  foreach($p in @(@('SystemRoot','C:\Windows'),@('WINDIR','C:\Windows'),@('PATH','C:\Windows\System32;C:\Windows'),@('USERPROFILE',$Node.OwnerProfileDirectory),@('LOCALAPPDATA',(Join-Path $Node.OwnerProfileDirectory 'AppData\Local')))){$psi.EnvironmentVariables[$p[0]]=$p[1]}
   $proc=New-Object Diagnostics.Process;$proc.StartInfo=$psi;$previous=[Console]::InputEncoding
   try{[Console]::InputEncoding=$utf8;if(-not $proc.Start()){throw 'PUBLIC_START_UNCONFIRMED'};$started=$true;$result.processId=$proc.Id}finally{[Console]::InputEncoding=$previous}
   $ot=[CluedFormalRelayIO]::Read($proc.StandardOutput,1399000);$et=[CluedFormalRelayIO]::Read($proc.StandardError,4096)

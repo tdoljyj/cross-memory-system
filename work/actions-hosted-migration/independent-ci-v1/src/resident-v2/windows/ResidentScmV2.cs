@@ -17,9 +17,9 @@ using System.Text;
 using System.Threading;
 
 public static class ResidentScmV2 {
- public const string Name="actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02";
- public const string ControllerSid="S-1-5-21-1173730660-3877291096-655431861-1015";
- public const string MutationMutexName="Global\\CluedControlControllerMutationV1-TURING-1015";
+ public static string Name {get{return NodeProfileV2.Current.RunnerService;}}
+ public static string ControllerSid {get{return NodeProfileV2.Current.ControllerSid;}}
+ public static string MutationMutexName {get{return NodeProfileV2.Current.MutationMutex;}}
  // Review MINOR-3: only SYSTEM and Administrators manage the runner service and own/hold the mutation mutex.
  // The Owner's user SID is never trusted here (the live runner DACL has no Owner ACE, and an elevated Owner
  // acts through Administrators anyway); a mutex or service DACL that names it is refused.
@@ -45,7 +45,7 @@ public static class ResidentScmV2 {
  public sealed class Snapshot {public string Binary,Account,StableDigest,FailureDigest,ServiceSecurityDigest;public uint Type,Start,Error,FailureCount,FailureReset,TriggerCount;public bool FailureNonCrash,FailureCommandPresent,FailureRebootPresent,NoAutomaticFailureActions;public Status Status;}
  public static bool EmptyFailurePolicy(uint count,bool nonCrash,bool command,bool reboot){return count==0&&!nonCrash&&!command&&!reboot;}
  static void Fail(string code){throw new InvalidOperationException(code);}
- static void SystemIdentity(){using(var i=WindowsIdentity.GetCurrent()){if(Environment.MachineName!="TURING"||i.User.Value!="S-1-5-18")Fail("FIXED_BROKER_SYSTEM_REQUIRED");}}
+ static void SystemIdentity(){using(var i=WindowsIdentity.GetCurrent()){if(Environment.MachineName!=NodeProfileV2.Current.Hostname||i.User.Value!="S-1-5-18")Fail("FIXED_BROKER_SYSTEM_REQUIRED");}}
  static string Hash(string s){using(var h=SHA256.Create())return BitConverter.ToString(h.ComputeHash(Encoding.UTF8.GetBytes(s))).Replace("-","").ToLowerInvariant();}
  public static string ValidateMutexSecurity(byte[] bytes){
   var sd=new RawSecurityDescriptor(bytes,0);var management=Management();
@@ -110,6 +110,8 @@ public static class ResidentScmV2 {
  // the runner service with query rights only (no mutex, no SYSTEM identity, no effect); the broker later
  // re-reads the same digest under its own session before every swap, so a wrong pin only refuses swaps.
  public static string InstallTimeStableDigest(){
+  var node=NodeProfileV2.Current;
+  using(var identity=WindowsIdentity.GetCurrent()){if(Environment.MachineName!=node.Hostname||identity.User.Value!=node.OwnerSid||!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))Fail("FIXED_INSTALL_OWNER_REQUIRED");}
   IntPtr manager;IntPtr h=Service(1|4|0x20000u,out manager);
   try{return ReadSnapshotCore(h).StableDigest;}finally{CloseServiceHandle(h);CloseServiceHandle(manager);}
  }
@@ -130,8 +132,8 @@ public static class ResidentScmV2 {
   }finally{if(triggers!=IntPtr.Zero)Marshal.FreeHGlobal(triggers);if(flag!=IntPtr.Zero)Marshal.FreeHGlobal(flag);if(f!=IntPtr.Zero)Marshal.FreeHGlobal(f);if(b!=IntPtr.Zero)Marshal.FreeHGlobal(b);}
  }
  public static bool Matches(Snapshot s,string binary,string stable,bool requireStopped){
-  if(s.Binary!=binary||s.StableDigest!=stable||s.Type!=16||s.Start!=3||!s.NoAutomaticFailureActions||s.TriggerCount!=0||(s.Account!=".\\clued-control"&&s.Account!="TURING\\clued-control"))return false;
-  if(new NTAccount("TURING","clued-control").Translate(typeof(SecurityIdentifier)).Value!=ControllerSid)return false;
+  if(s.Binary!=binary||s.StableDigest!=stable||s.Type!=16||s.Start!=3||!s.NoAutomaticFailureActions||s.TriggerCount!=0||(s.Account!=".\\clued-control"&&s.Account!=NodeProfileV2.Current.Hostname+"\\clued-control"))return false;
+  if(new NTAccount(NodeProfileV2.Current.Hostname,"clued-control").Translate(typeof(SecurityIdentifier)).Value!=ControllerSid)return false;
   return !requireStopped||s.Status.State==1;
  }
  public static void AssertExpected(Snapshot s,string binary,string stable,bool requireStopped){if(!Matches(s,binary,stable,requireStopped)){conflict=true;Fail(requireStopped&&s.Binary==binary?"FIXED_SERVICE_NOT_STOPPED":"EXACT_SERVICE_CONFIG_MISMATCH");}}

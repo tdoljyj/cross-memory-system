@@ -47,11 +47,12 @@ export async function main(argv = process.argv.slice(2)) {
   // Windows archive tool compiles there, never in C:\Windows (first real batch, 2026-10-21).
   const tempDir = path.join(state, 'tmp');
   await fs.mkdir(tempDir, { recursive: true });
-  const runner = new Runner({ env: serviceEnv(tempDir) });
+  const runner = new Runner({ env: serviceEnv(tempDir, policy.node, policy.nodeProfileSha256) });
   // Source v2: the installed CI Source lives under the CI Source manifest hash of the install record (the
   // directory the generic helper loads code from); its installed-files manifest (A) pins every byte.
   const sourceRoot = path.join(root, 'source', policy.ciSourceManifestSha256);
   const engine = new WindowsEngine({
+    node: policy.node, nodeProfileSha256: policy.nodeProfileSha256,
     run: (a, o) => runner.run(a, o), busy: () => runner.busy, companionMailbox: mailbox, sleep, clock,
     paths: {
       sourceRoot,

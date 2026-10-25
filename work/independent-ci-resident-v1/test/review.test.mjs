@@ -9,7 +9,7 @@ const { WindowsEngine } = eng;
 const PUMP_CODES = eng.PUMP_CODES ?? [];
 import { classifyFailure, isTransient } from '../src/classify.mjs';
 import { validatePolicy } from '../src/policy.mjs';
-import { BASE, CLEAN_PROOF, HEAD, RELAY_ON, SOURCE, RESIDENT, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, notAdmitted, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
+import { TEST_NODE, TEST_NODE_SHA, BASE, CLEAN_PROOF, HEAD, RELAY_ON, SOURCE, RESIDENT, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, notAdmitted, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 
 const stage1Calls = engine => engine.calls.filter(c => c[0] === 'stage' && c[1] === 1).length;
 // Attempt 1 fails stage 2 with a clean transient code (schedules attempt 2); later stage-1 runs answer `later`.
@@ -128,7 +128,7 @@ test('MINOR 5 and 6: a refs gate without an explicit answer and a free-form comp
   const fact = { contract: 'clued.independent-ci.resident-stage-fact/2', manifest_sha256: 'f'.repeat(64), state: 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION', failure_code: null,
     scm_start_call_issued: true, original_binary_restored: true, complete_original_readback: true, configuration_conflict_detected: false, tree_cleanup_confirmed: true, tree_active_processes: 0, root_exit_confirmed: true, native_receipt_sha256: 'e'.repeat(64) };
   let answers = {};
-  const engine = new WindowsEngine({ run: async a => (a[0].endsWith('sc.exe') ? { code: 0, stdout: a[1] === 'qc' ? SC_QC : 'STATE : 1 STOPPED\r\n PID : 0\r\n' } : { code: 0, stdout: JSON.stringify(fact) }),
+  const engine = new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run: async a => (a[0].endsWith('sc.exe') ? { code: 0, stdout: a[1] === 'qc' ? SC_QC : 'STATE : 1 STOPPED\r\n PID : 0\r\n' } : { code: 0, stdout: JSON.stringify(fact) }),
     busy: () => false, sleep: async () => {}, clock: () => Date.now(), companionMailbox: { async send(kind) { return { kind }; }, async await(req) { return answers[req.kind]; } },
     paths: { sourceRoot: path.join(root, 'source'), workRoot: root, outboxRoot: root, nodeExe: 'C:\\node.exe', powershellExe: 'C:\\ps.exe', scExe: 'C:\\sc.exe' } });
   const batch = { batchId: 'b', key: 'a'.repeat(64), dir: root, stages: [1, 2, 3, 4, 5, 6, 7, 8].map(n => ({ number: n, jobId: 'd'.repeat(64), workManifestSha256: 'f'.repeat(64) })) };

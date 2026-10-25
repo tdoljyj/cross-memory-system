@@ -28,8 +28,8 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
  public const string StateV2=Root+"\\state\\v2",Receipts=StateV2+"\\receipts",Temp=StateV2+"\\temp";
  public const string Spool=Root+"\\formal-spool",Outgoing=Spool+"\\outgoing",Incoming=Spool+"\\incoming";
  public const string Node="C:\\Program Files\\nodejs\\node.exe";
- public const string Controller="S-1-5-21-1173730660-3877291096-655431861-1015";
- public const string OwnerUser="S-1-5-21-1173730660-3877291096-655431861-1001";
+ public static string Controller {get{return NodeProfileV2.Current.ControllerSid;}}
+ public static string OwnerUser {get{return NodeProfileV2.Current.OwnerSid;}}
  public const string ResidentSid="S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629";
  static readonly string[] Management={"S-1-5-18","S-1-5-32-544","S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"};
  const string P="work/actions-hosted-migration/independent-ci-v1/";
@@ -62,7 +62,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
  // Every v2 entry imports these; a record that does not pin them is not a Source v2 record.
  static readonly string[] CoreSource={"scripts/ci/clued-work-admission.mjs","config/merge-admission-policy.json",P+"src/proof.mjs",P+"src/job-v2.mjs",P+"src/proof-v2.mjs",
   P+"src/full-admission-v2.mjs",P+"src/batch-claim-v2.mjs",P+"src/effect-journal.mjs",P+"src/github.mjs",P+"src/resident-v2/layout.mjs",P+"src/resident-v2/prepare-record.mjs",
-  P+"src/resident-v2/record.mjs",P+"src/resident-v2/stage-package.mjs",P+"src/resident-v2/stage-inputs.mjs",P+"src/independent-control-checks-v2/queue-facts.mjs"};
+  P+"src/resident-v2/record.mjs",P+"src/resident-v2/stage-package.mjs",P+"src/resident-v2/stage-inputs.mjs",P+"src/resident-v2/windows/NodeProfileV2.cs",P+"src/independent-control-checks-v2/queue-facts.mjs"};
  public string Nonce,ConfigHash,SelectedRole,EntryHash,AcceptanceHash,SourceManifestHash,SourceRoot;public int Stage;public DateTimeOffset RuntimeDeadlineUtc;DateTimeOffset acceptedExpiry;
  public string Command {get{return CommandFor(SelectedRole,SourceRoot,Nonce,ConfigHash);}}
  public static string CommandFor(string role,string sourceRoot,string nonce,string config){
@@ -135,12 +135,12 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   try{int n;while((n=f.Read(buffer,0,buffer.Length))>0){Check();total+=n;if(total>512L*1024*1024)Deny("SOURCE_BYTE_BOUND_EXCEEDED");sha.TransformBlock(buffer,0,n,null,0);if(copy!=null)copy.Write(buffer,0,n);}sha.TransformFinalBlock(new byte[0],0,0);string actual=BitConverter.ToString(sha.Hash).Replace("-","").ToLowerInvariant();if(expected!=null&&actual!=expected)Deny("EXACT_PUBLIC_BYTES_REFUSED");return copy==null?null:copy.ToArray();}finally{sha.Dispose();if(copy!=null)copy.Dispose();}
  }
  public static void NoLegacy(object v){var m=v as Dictionary<string,object>;if(m!=null)foreach(var p in m){if(p.Key=="ciTokenSha256"||p.Key=="currentClaim")Deny("REPLAYABLE_OR_CLAIM_BOUND_INPUT_REFUSED");NoLegacy(p.Value);}var a=v as object[];if(a!=null)foreach(var x in a)NoLegacy(x);}
- static readonly string[] PlanFields={"contract","enabled","stage","entryRole","batchKey","batchId","ownerPackageAcceptanceRef","nodeSha256","entrySha256","acceptanceSha256","sourceManifestSha256","installationSha256","runtimeConfigPinSha256","jobSha256"};
+ static readonly string[] PlanFields={"contract","enabled","stage","entryRole","batchKey","batchId","ownerPackageAcceptanceRef","nodeSha256","nodeProfileSha256","entrySha256","acceptanceSha256","sourceManifestSha256","installationSha256","runtimeConfigPinSha256","jobSha256"};
  public static int PlanStage(Dictionary<string,object> plan){
-  Fields(plan,PlanFields);Exact(plan,"contract","clued.independent-ci.fixed-formal-windows-entry/2");True(plan,"enabled");long stage=Int(plan,"stage");if(stage<1||stage>StageRole.Length)Deny("FIXED_FORMAL_STAGE_REQUIRED");
+  Fields(plan,PlanFields);Exact(plan,"contract","clued.independent-ci.fixed-formal-windows-entry/3");True(plan,"enabled");long stage=Int(plan,"stage");if(stage<1||stage>StageRole.Length)Deny("FIXED_FORMAL_STAGE_REQUIRED");
   if(Text(plan,"entryRole")!=StageRole[stage-1])Deny("FIXED_FORMAL_ENTRY_ROLE_REQUIRED");Ref(plan,"ownerPackageAcceptanceRef");Sha(plan,"batchKey");
   string id=Text(plan,"batchId");if(id.Length!=29||id[16]!='-'||!LowerHex(id.Substring(0,16))||!LowerHex(id.Substring(17)))Deny("FIXED_BATCH_ID_REQUIRED");
-  foreach(string f in new[]{"nodeSha256","entrySha256","acceptanceSha256","sourceManifestSha256","installationSha256","runtimeConfigPinSha256","jobSha256"})Sha(plan,f);return (int)stage;
+  foreach(string f in new[]{"nodeSha256","nodeProfileSha256","entrySha256","acceptanceSha256","sourceManifestSha256","installationSha256","runtimeConfigPinSha256","jobSha256"})Sha(plan,f);return (int)stage;
  }
  // Job contract /3 (quota phase 2 step 3b): id = sha256(JSON(["clued.independent-ci.job/3",repo,pr,headSha,baseSha,testSha,sourceManifestSha256,role,attempt])).
  // testSha is the tested commit S (S = H outside the train). The method keeps its V2 (Source v2) name.
@@ -189,13 +189,15 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   string stageDir=StageRoot+"\\"+nonce;
   var plan=Parse(Read(stageDir+"\\formal-service-entry.json",ConfigHash,true));Stage=PlanStage(plan);SelectedRole=Text(plan,"entryRole");
   EntryHash=Sha(plan,"entrySha256");AcceptanceHash=Sha(plan,"acceptanceSha256");SourceManifestHash=Sha(plan,"sourceManifestSha256");string nodeHash=Sha(plan,"nodeSha256");
+  if(AcceptanceHash!=NodeProfileV2.AcceptanceSha256||Sha(plan,"nodeProfileSha256")!=NodeProfileV2.Current.Sha256)Deny("NODE_PROFILE_STAGE_BINDING_CHANGED");
   SourceRoot=SourceBase+"\\"+SourceManifestHash;
   var config=Parse(Read(Record+"\\installation.json",Sha(plan,"installationSha256"),true));NoLegacy(config);
   Exact(config,"contract","clued.independent-ci.one-shot/2");True(config,"enabled");Exact(config,"repository","tdoljyj/cross-memory-system");
   if(Int(config,"appId")!=5368905||Int(config,"installationId")!=172706661||Int(config,"repositoryId")!=1334673495)Deny("FIXED_APP_REPOSITORY_REQUIRED");
   if(Sha(config,"acceptanceSha256")!=AcceptanceHash||Sha(config,"sourceManifestSha256")!=SourceManifestHash||Sha(config,"controllerNodeSha256")!=nodeHash)Deny("INSTALLED_PUBLIC_BINDING_CHANGED");SixChecks(config);
   var accepted=Parse(Read(Record+"\\acceptance.json",AcceptanceHash,true));NoLegacy(accepted);Exact(accepted,"contract","clued.independent-ci.accepted-installation/2");Exact(accepted,"domain","production");
-  True(accepted,"accepted");True(accepted,"workerCannotReadController");Exact(accepted,"hostname","TURING");Exact(accepted,"platform","win32");Exact(accepted,"arch","x64");Exact(accepted,"controllerAccount","clued-control");
+  True(accepted,"accepted");True(accepted,"workerCannotReadController");Exact(accepted,"hostname",NodeProfileV2.Current.Hostname);Exact(accepted,"platform","win32");Exact(accepted,"arch","x64");Exact(accepted,"controllerAccount","clued-control");
+  if(NodeProfileV2.FromDictionary(At(accepted,"node")as Dictionary<string,object>).CanonicalJson!=NodeProfileV2.Current.CanonicalJson)Deny("NODE_PROFILE_ACCEPTANCE_CHANGED");
   if(!(At(accepted,"claimBound") is bool)||(bool)At(accepted,"claimBound"))Deny("CLAIM_FREE_ACCEPTANCE_REQUIRED");
   foreach(string key in new[]{"sourceAcceptanceRef","hostQualificationRef","ownerAuthorizationRef","publisherQualificationRef","ciPrincipalQualificationRef","ownerPackageAcceptanceRef","installationReceiptRef","ownerDecisionRef","ownerReceiptRef"})Ref(accepted,key);
   if(Text(accepted,"ownerPackageAcceptanceRef")!=Text(plan,"ownerPackageAcceptanceRef")||Text(accepted,"ciPrincipalBindingId")!=Text(config,"ciPrincipalBindingId")||Sha(accepted,"ciTokenPinSha256")!=Sha(config,"ciTokenPinSha256")||Sha(accepted,"configSha256")!=Sha(plan,"runtimeConfigPinSha256"))Deny("ACTUAL_ACCEPTED_PACKAGE_BINDING_REQUIRED");

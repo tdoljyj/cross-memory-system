@@ -105,33 +105,34 @@ test('held record: the lease process ran as the controller the record itself pin
   assert.throws(() => decodeHeldRecord(heldBytes({ ...docs, 'acceptance.json': noNode['acceptance.json'] }, 'S-1-5-21-1-2-3-1015')), { code: 'HELD_RECORD_CONTROLLER_REFUSED' });
 });
 
-// What still names the host in code (the broker, the generic helper, the resident's engine and policy, bridge v4
-// and the stage invoker) moves onto the profile in its own change; until then it must agree with TURING's profile,
-// which is what makes this change behaviour-neutral on TURING.
-test('TURING profile = the values the Source still carries; the files this change moved carry none', () => {
-  const turing = JSON.parse(read(TURING_FILE));
-  const sids = new Set([turing.ownerSid, turing.controllerSid]);
-  const still = [`${CI}src/resident-v2/windows/ResidentScmV2.cs`, `${CI}src/resident-v2/windows/FormalSession0V2.cs`, `${CI}src/resident-v2/windows/FormalPublicBoundaryV2.cs`,
-    `${CI}src/resident-v2/windows/ScmPidHandshakeV2.cs`, `${CI}src/resident-v2/invoke-stage.mjs`, `${CI}src/resident-v2/archive-windows-spool.ps1`, `${CI}src/resident-v2/layout.mjs`,
-    `${CI}worker/protected-job-bridge-v4/relay-public.ps1`, `${CI}worker/protected-job-bridge-v4/formal-spool-acl.ps1`,
-    `${RESIDENT}src/engine-windows.mjs`, `${RESIDENT}src/policy.mjs`, `${RESIDENT}src/companion.mjs`, `${RESIDENT}src/runner.mjs`];
-  for (const f of still) {
-    const text = read(f);
-    for (const m of text.matchAll(/S-1-5-21-\d+-\d+-\d+-\d+/g)) assert.ok(sids.has(m[0]), `${f}: ${m[0]}`);
-    for (const m of text.matchAll(/actions\.runner\.tdoljyj-cross-memory-system\.[a-z0-9-]+/g)) assert.equal(m[0], turing.runnerService, f);
-    for (const m of text.matchAll(/CluedControlControllerMutationV1-[A-Za-z0-9-]+/g)) assert.equal(`Global\\${m[0]}`, turing.mutationMutex, f);
+// C1b moves the current /2 provider's identity to its pinned node. The retained legacy /1
+// provider and eight transitive v2 bridge files remain separately bounded, not silently generalized.
+test('current node consumers contain no TURING authority fallback; legacy compatibility stays explicit', () => {
+  const turing=JSON.parse(read(TURING_FILE));
+  assert.equal(hash(turing),'4d006ddc5b8cb0a112f67ddf4c07f96ddb5c39623e3eb11617c076708acd9be6');
+  const current=[`${RESIDENT}windows/install-resident.ps1`,`${RESIDENT}windows/verify-resident.ps1`,`${RESIDENT}windows/uninstall-resident.ps1`,
+    `${CI}src/resident-v2/hold-record.ps1`,`${CI}src/resident-v2/held-record.mjs`,`${CI}src/resident-v2/entry-runtime.mjs`,
+    `${CI}runtime/verify-install-acl.ps1`,`${CI}runtime/protected-files.mjs`,`${CI}src/resident-v2/prepare-record.mjs`,`${CI}src/resident-v2/record.mjs`,
+    `${CI}src/resident-v2/windows/ResidentScmV2.cs`,`${CI}src/resident-v2/windows/FormalSession0V2.cs`,`${CI}src/resident-v2/windows/FormalPublicBoundaryV2.cs`,
+    `${CI}src/resident-v2/windows/ScmPidHandshakeV2.cs`,`${CI}src/resident-v2/windows/NodeProfileV2.cs`,`${CI}src/resident-v2/invoke-stage.mjs`,
+    `${CI}src/resident-v2/archive-windows-spool.ps1`,`${CI}src/resident-v2/layout.mjs`,`${CI}worker/protected-job-bridge-v4/relay-public.ps1`,
+    `${CI}worker/protected-job-bridge-v4/formal-spool-acl.ps1`,`${RESIDENT}src/engine-windows.mjs`,`${RESIDENT}src/policy.mjs`,
+    `${RESIDENT}src/companion.mjs`,`${RESIDENT}src/runner.mjs`];
+  for(const f of current){
+    const code=read(f).split(/\r?\n/).filter(l=>!/^\s*(#|\/\/)/.test(l)).join('\n');
+    assert.doesNotMatch(code,/S-1-5-21-\d+-\d+-\d+-\d+|clued-ci-home-win-02|Ubuntu-24\.04|'TURING'|"TURING"|\(\\\.\|TURING\)/,f);
   }
-  assert.match(read(`${CI}src/resident-v2/windows/ResidentScmV2.cs`), new RegExp(`Environment\\.MachineName!="${turing.hostname}"`));
-  assert.match(read(`${CI}src/resident-v2/windows/FormalPublicBoundaryV2.cs`), new RegExp(`Exact\\(accepted,"hostname","${turing.hostname}"\\)`));
-  assert.match(read(`${RESIDENT}src/policy.mjs`), new RegExp(`distribution === '${turing.wslDistribution}'`));
-  assert.ok(read(`${CI}worker/protected-job-bridge-v4/relay-public.ps1`).includes(`@('USERPROFILE','${turing.ownerProfileDirectory}')`));
-  const moved = [`${RESIDENT}windows/install-resident.ps1`, `${RESIDENT}windows/verify-resident.ps1`, `${RESIDENT}windows/uninstall-resident.ps1`,
-    `${CI}src/resident-v2/hold-record.ps1`, `${CI}src/resident-v2/held-record.mjs`, `${CI}src/resident-v2/entry-runtime.mjs`,
-    `${CI}runtime/verify-install-acl.ps1`, `${CI}runtime/protected-files.mjs`, `${CI}src/resident-v2/prepare-record.mjs`, `${CI}src/resident-v2/record.mjs`];
-  for (const f of moved) {
-    const code = read(f).split(/\r?\n/).filter(l => !/^\s*(#|\/\/)/.test(l)).join('\n');
-    assert.doesNotMatch(code, /S-1-5-21-\d+-\d+-\d+-\d+|clued-ci-home-win-02|Ubuntu-24\.04|'TURING'|"TURING"|\(\\\.\|TURING\)/, f);
+  assert.match(read(`${CI}worker/protected-job-bridge-v2/boundary.mjs`),/accepted-installation\/1/);
+});
+
+test('resident and Source validators use the same actual shared vectors and original canonical profile hash', async () => {
+  const resident=await import('../../../independent-ci-resident-v1/src/node-profile.mjs');
+  const turing=JSON.parse(read(TURING_FILE));
+  for(const p of [turing,...CASES.accepted.map(c=>applyCase(CASES.base,c))]){
+    assert.equal(resident.nodeProfileSha256(p),hash(p));
+    assert.deepEqual(resident.pinnedNodeProfile(p,hash(p)),p);
   }
+  for(const c of CASES.refused)assert.throws(()=>resident.validateNodeProfile(applyCase(CASES.base,c)),{code:c.code},JSON.stringify(c));
 });
 
 test('verify-install-acl.ps1: a secret read needs the pinned controller SID, given in its exact shape', { skip: process.platform !== 'win32' }, async t => {

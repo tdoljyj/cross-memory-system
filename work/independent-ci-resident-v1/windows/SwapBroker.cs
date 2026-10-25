@@ -34,8 +34,9 @@ public sealed class SwapBroker : ServiceBase
 {
     const string RequestContract = "clued.independent-ci.swap-broker-request/2";
     const string ResponseContract = "clued.independent-ci.swap-broker-response/2";
-    // Config /2 (review MINOR-3): no Owner SID; the mutex and runner-DACL managers are SYSTEM and Administrators only.
-    const string ConfigContract = "clued.independent-ci.swap-broker-config/2";
+    // C1 config /3 pins the full public node profile and original acceptance bytes.
+    // Node identity never adds a mutex or runner-DACL manager (SYSTEM/Administrators only).
+    const string ConfigContract = "clued.independent-ci.swap-broker-config/3";
     const int MaxRequestBytes = 4096;
     // Review MAJOR-1: LocalSystem cannot be made unprivileged by DACLs (its SID keeps every SY grant), but its
     // token privileges can be cut to these (`sc privs CluedCISwapBroker SeChangeNotifyPrivilege/SeCreateGlobalPrivilege`):
@@ -49,14 +50,25 @@ public sealed class SwapBroker : ServiceBase
     static readonly long[] StageMilliseconds = { 900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000, 300000 };
     static readonly Regex Hex32 = new Regex("^[0-9a-f]{32}$"), Hex64 = new Regex("^[0-9a-f]{64}$"), Uuid = new Regex("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$");
     static readonly Regex Iso = new Regex(@"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,7})?Z$");
-    readonly string root, configSha;
+    readonly string root, configSha, profileSha;
+    readonly NodeProfilePublicFileV2 heldConfig;
+    readonly NodeProfileLeaseV2 heldProfile;
+    readonly BrokerConfig installedConfig;
     Thread worker; volatile bool stopping; DateTime startedAt;
 
     SwapBroker(string[] a)
     {
         ServiceName = "CluedCISwapBroker"; CanStop = true;
-        if (a.Length != 2 || !Hex64.IsMatch(a[1])) throw new ArgumentException("ROOT CONFIG_SHA256");
-        root = a[0]; configSha = a[1];
+        if (a.Length != 3 || !NodeProfileV2.Hash(a[1]) || !NodeProfileV2.Hash(a[2])) throw new ArgumentException("ROOT CONFIG_SHA256 NODE_PROFILE_SHA256");
+        NodeProfileV2.RequireRoot(a[0]);root = NodeProfileV2.FixedResidentRoot; configSha = a[1];profileSha=a[2];
+        // Bootstrap before dispatcher, token record, restore, mutex, identity or SCM access.
+        // These two stable read leases live for the broker process, never one request only.
+        heldConfig=NodeProfileV2.ReadBrokerConfig(root,configSha);
+        try{
+            installedConfig=ParseConfig(heldConfig.Raw,profileSha);
+            heldProfile=NodeProfileV2.LoadAccepted(root,installedConfig.AcceptanceSha256,profileSha);
+            if(heldProfile.Profile.CanonicalJson!=installedConfig.Node.CanonicalJson)throw new BrokerRefusal("BROKER_CONFIG_CHANGED");
+        }catch{if(heldProfile!=null)heldProfile.Dispose();heldConfig.Dispose();throw;}
     }
 
     protected override void OnStart(string[] _)
@@ -77,28 +89,32 @@ public sealed class SwapBroker : ServiceBase
 
     protected override void OnStop() { stopping = true; } // finishes the current swap first; never kills
 
-    sealed class BrokerConfig { public string OriginalBinary, StableDigest, HelperName, HelperSha256; }
+    internal sealed class BrokerConfig { public string OriginalBinary, StableDigest, HelperName, HelperSha256,AcceptanceSha256;public NodeProfileV2 Node; }
 
     static string Sha(byte[] b) { using (var h = SHA256.Create()) return BitConverter.ToString(h.ComputeHash(b)).Replace("-", "").ToLowerInvariant(); }
     static string ShaFile(string path) { using (var s = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read)) using (var h = SHA256.Create()) return BitConverter.ToString(h.ComputeHash(s)).Replace("-", "").ToLowerInvariant(); }
 
     // Admin-only config, pinned by hash on the broker's own command line (only Administrators can
     // change the service configuration). Read and hashed from the same bytes.
-    BrokerConfig LoadConfig()
+    internal static BrokerConfig ParseConfig(byte[] bytes,string expectedProfileSha256)
     {
-        var bytes = File.ReadAllBytes(Path.Combine(root, "config", "broker.json"));
-        if (bytes.Length == 0 || bytes.Length > 16384 || Sha(bytes) != configSha) throw new BrokerRefusal("BROKER_CONFIG_CHANGED");
-        var v = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(Encoding.UTF8.GetString(bytes));
+        if(bytes==null||bytes.Length==0||bytes.Length>16384||!NodeProfileV2.Hash(expectedProfileSha256))throw new BrokerRefusal("BROKER_CONFIG_CHANGED");
+        var v = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(new UTF8Encoding(false,true).GetString(bytes));
         var helper = v != null && v.ContainsKey("helper") ? v["helper"] as Dictionary<string, object> : null;
-        if (v == null || v.Count != 4 || !v.ContainsKey("contract") || (v["contract"] as string) != ConfigContract || helper == null || helper.Count != 2) throw new BrokerRefusal("BROKER_CONFIG_CHANGED");
+        if (v == null || v.Count != 7 || !v.ContainsKey("contract") || (v["contract"] as string) != ConfigContract || helper == null || helper.Count != 2
+            ||!v.ContainsKey("node")||!v.ContainsKey("nodeProfileSha256")||!v.ContainsKey("acceptanceSha256")||(v["nodeProfileSha256"]as string)!=expectedProfileSha256) throw new BrokerRefusal("BROKER_CONFIG_CHANGED");
         var c = new BrokerConfig { OriginalBinary = v.ContainsKey("originalBinary") ? v["originalBinary"] as string : null, StableDigest = v.ContainsKey("stableDigest") ? v["stableDigest"] as string : null,
-            HelperName = helper.ContainsKey("name") ? helper["name"] as string : null, HelperSha256 = helper.ContainsKey("sha256") ? helper["sha256"] as string : null };
-        if (c.OriginalBinary == null || c.StableDigest == null || !Hex64.IsMatch(c.StableDigest)
-            || c.HelperName != "controller-formal-generic-v2.exe" || c.HelperSha256 == null || !Hex64.IsMatch(c.HelperSha256)) throw new BrokerRefusal("BROKER_CONFIG_CHANGED");
+            HelperName = helper.ContainsKey("name") ? helper["name"] as string : null, HelperSha256 = helper.ContainsKey("sha256") ? helper["sha256"] as string : null,
+            AcceptanceSha256=v["acceptanceSha256"]as string};
+        if (c.OriginalBinary != "\"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe\"" || !NodeProfileV2.Hash(c.StableDigest)
+            || c.HelperName != "controller-formal-generic-v2.exe" || !NodeProfileV2.Hash(c.HelperSha256)||!NodeProfileV2.Hash(c.AcceptanceSha256)) throw new BrokerRefusal("BROKER_CONFIG_CHANGED");
+        try{c.Node=NodeProfileV2.FromDictionary(v["node"]as Dictionary<string,object>);if(c.Node.Sha256!=expectedProfileSha256)throw new BrokerRefusal("BROKER_CONFIG_CHANGED");}
+        catch(InvalidOperationException){throw new BrokerRefusal("BROKER_CONFIG_CHANGED");}
         return c;
     }
+    BrokerConfig LoadConfig(){heldConfig.Revalidate();heldProfile.Revalidate();if(installedConfig.Node.Sha256!=profileSha||NodeProfileV2.Current.Sha256!=profileSha||NodeProfileV2.AcceptanceSha256!=installedConfig.AcceptanceSha256)throw new BrokerRefusal("BROKER_CONFIG_CHANGED");return installedConfig;}
 
-    string HelperBinary(BrokerConfig c) { return "\"" + Path.Combine(root, "helpers", c.HelperName) + "\""; }
+    string HelperBinary(BrokerConfig c) { return "\"" + Path.Combine(root, "helpers", c.HelperName) + "\" --acceptance-sha256 "+c.AcceptanceSha256+" --node-profile-sha256 "+c.Node.Sha256; }
 
     void Loop()
     {
@@ -310,7 +326,10 @@ public sealed class SwapBroker : ServiceBase
     // elevated install pins the printed digest into config\broker.json. Any other argv is the service.
     public static void Main(string[] args)
     {
-        if (args.Length == 1 && args[0] == "--stable-digest") { Console.Out.WriteLine(ResidentScmV2.InstallTimeStableDigest()); return; }
+        if (args.Length > 0 && args[0] == "--stable-digest") {
+            if(args.Length!=4||!NodeProfileV2.Hash(args[2])||!NodeProfileV2.Hash(args[3]))throw new ArgumentException("--stable-digest ROOT ACCEPTANCE_SHA256 NODE_PROFILE_SHA256");
+            using(var profile=NodeProfileV2.LoadAccepted(args[1],args[2],args[3]))Console.Out.WriteLine(ResidentScmV2.InstallTimeStableDigest());return;
+        }
         Run(new SwapBroker(args));
     }
 }

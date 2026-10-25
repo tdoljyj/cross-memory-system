@@ -19,12 +19,13 @@ import { validateJobV2 } from '../job-v2.mjs';
 import { ENVELOPE_CONTRACT_V2 } from '../proof-v2.mjs';
 import { hash } from './prepare-record.mjs';
 import { readSealedStage } from './stage-package.mjs';
+import { readRecordDocs } from './derive-batch.mjs';
+import { validateRecordV2 } from './record.mjs';
 import { makeBrokerRequest, validateBrokerResponse } from './broker-protocol.mjs';
 import { buildStageFact } from './stage-fact.mjs';
-import { HEX64, NONCE32, STATE_V2, WIN_RESIDENT, WIN_SPOOL, WIN_STAGE } from './layout.mjs';
+import { HEX64, NONCE32, STATE_V2, WIN_RESIDENT, WIN_RECORD, WIN_SPOOL, WIN_STAGE } from './layout.mjs';
 
 export const RESULT_WRAPPER_CONTRACT_V2 = 'clued.independent-ci.protected-job-result/2';
-export const CONTROLLER_SID = 'S-1-5-21-1173730660-3877291096-655431861-1015';
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
@@ -88,13 +89,18 @@ export async function askBroker({ brokerRoot, request, clock, sleep, waitUntil }
 }
 
 export async function invokeStage({ batchDir, stage, workManifestSha256, batchKey, stageRoot = WIN_STAGE, brokerRoot = path.join(WIN_RESIDENT, 'broker'),
-  spoolRoot = WIN_SPOOL, receiptsRoot = STATE_V2.receipts, controllerSid = CONTROLLER_SID, clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)),
+  spoolRoot = WIN_SPOOL, receiptsRoot = STATE_V2.receipts, recordDocs = null, clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)),
   nonce = randomBytes(16).toString('hex') }) {
-  let sealed;
+  let sealed, controllerSid;
   try {
     check(Number.isSafeInteger(stage) && HEX64.test(batchKey ?? ''), 'STAGE_PACKAGE_REFUSED');
     sealed = await readSealedStage(batchDir, stage, workManifestSha256);
     check(sealed.plan.batchKey === batchKey, 'STAGE_PACKAGE_REFUSED');
+    const record = validateRecordV2(recordDocs ?? readRecordDocs(WIN_RECORD), { now: clock() });
+    check(sealed.plan.acceptanceSha256 === record.hashes.acceptanceSha256 && sealed.plan.sourceManifestSha256 === record.hashes.sourceManifestSha256
+      && sealed.plan.installationSha256 === record.hashes.installationSha256 && sealed.plan.nodeSha256 === record.config.controllerNodeSha256
+      && sealed.plan.runtimeConfigPinSha256 === record.hashes.runtimeConfigPinSha256 && sealed.plan.nodeProfileSha256 === hash(record.accepted.node), 'STAGE_PACKAGE_REFUSED');
+    controllerSid = record.accepted.node.controllerSid;
   } catch { return buildStageFact({ stage, nonce, workManifestSha256, preflightCode: 'STAGE_PACKAGE_REFUSED' }); }
   let resultBytes = null;
   if (sealed.row.entryRole === 'check-publisher') {

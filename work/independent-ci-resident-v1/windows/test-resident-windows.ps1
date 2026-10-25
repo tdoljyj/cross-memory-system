@@ -77,7 +77,7 @@ foreach ($a in @($broker | Where-Object { $_.SecurityIdentifier.Value -ceq $res 
 Yes (@($broker | Where-Object { $_.SecurityIdentifier.Value -ceq 'S-1-3-4' }).Count -eq 1) 'broker-requests:owner-rights'
 
 # 4. verify-resident.ps1 checks.
-foreach ($name in @('Get-DaclPart', 'ConvertFrom-ScPrivs', 'Test-ExactPrivileges', 'Test-TokenRecord', 'Test-BrokerBinaryPath', 'Test-ScSddl')) {
+foreach ($name in @('Get-DaclPart', 'ConvertFrom-ScPrivs', 'Test-ExactPrivileges', 'Test-TokenRecord', 'Test-BrokerBinaryPath', 'Test-ScSddl', 'Read-ReviewedPublicJson')) {
   Yes ($functions.ContainsKey('verify-resident.ps1:' + $name)) ('verify-present:' + $name); . ([scriptblock]::Create($functions['verify-resident.ps1:' + $name]))
 }
 Yes (Test-ExactPrivileges (ConvertFrom-ScPrivs $qprivs) $BrokerPrivileges) 'verify-qprivs-broker'
@@ -86,11 +86,13 @@ Yes (Test-TokenRecord '{"contract":"clued.independent-ci.service-token-privilege
 Yes (-not (Test-TokenRecord '{"contract":"clued.independent-ci.service-token-privileges/1","pid":4,"privileges":["SeChangeNotifyPrivilege","SeImpersonatePrivilege"]}' $ResidentPrivileges)) 'token-impersonate-refused'
 Yes (-not (Test-TokenRecord '{"contract":"x","privileges":["SeChangeNotifyPrivilege"]}' $ResidentPrivileges)) 'token-contract'
 Yes (-not (Test-TokenRecord 'not json' $ResidentPrivileges)) 'token-garbage'
-$root = 'C:\ProgramData\CluedIndependentCI\resident'; $sha = 'a' * 64
-$qc = "SERVICE_NAME: CluedCISwapBroker`r`n        BINARY_PATH_NAME   : `"C:\ProgramData\CluedIndependentCI\resident\bin\SwapBroker.exe`" `"C:\ProgramData\CluedIndependentCI\resident`" $sha`r`n        SERVICE_START_NAME : LocalSystem`r`n"
-Yes (Test-BrokerBinaryPath $qc $root $sha) 'broker-binpath'
-Yes (-not (Test-BrokerBinaryPath $qc $root ('b' * 64))) 'broker-binpath-config-pin'
-Yes (-not (Test-BrokerBinaryPath ($qc.Replace('SwapBroker.exe', 'Other.exe')) $root $sha)) 'broker-binpath-exe'
+$root = 'C:\ProgramData\CluedIndependentCI\resident'; $sha = 'a' * 64; $profileSha = 'c' * 64
+$qc = "SERVICE_NAME: CluedCISwapBroker`r`n        BINARY_PATH_NAME   : `"C:\ProgramData\CluedIndependentCI\resident\bin\SwapBroker.exe`" `"C:\ProgramData\CluedIndependentCI\resident`" $sha $profileSha`r`n        SERVICE_START_NAME : LocalSystem`r`n"
+Yes (Test-BrokerBinaryPath $qc $root $sha $profileSha) 'broker-binpath'
+Yes (-not (Test-BrokerBinaryPath $qc $root ('b' * 64) $profileSha)) 'broker-binpath-config-pin'
+Yes (-not (Test-BrokerBinaryPath ($qc.Replace('SwapBroker.exe', 'Other.exe')) $root $sha $profileSha)) 'broker-binpath-exe'
+Yes (-not (Test-BrokerBinaryPath $qc $root $sha ('d' * 64))) 'broker-binpath-profile-pin'
+Yes (-not (Test-BrokerBinaryPath $qc $root $sha)) 'broker-binpath-profile-required'
 Yes (Test-ScSddl " D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)`r`n" 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)') 'sddl-exact'
 Yes (-not (Test-ScSddl 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;RPWP;;;IU)' 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)')) 'sddl-extra-ace'
 Yes (-not (Test-ScSddl 'D:x' $null)) 'sddl-no-receipt-value'
@@ -133,11 +135,13 @@ if ((Test-Path -LiteralPath $probeNode) -and (Test-Path -LiteralPath $ca.path)) 
 #     from the package's install record (record\acceptance.json `node`) and holds it to the shape rules of
 #     resident-v2/prepare-record.mjs; TURING's profile (config\node-profile.turing.json) is the values this harness has
 #     always used. verify and uninstall read the installed record's profile (no host constant left in the three).
-foreach ($name in @('install-resident.ps1:Assert-NodeProfile', 'install-resident.ps1:Get-PackageNodeProfile', 'install-resident.ps1:Sha256Bytes')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }
+foreach ($name in @('install-resident.ps1:Assert-NodeProfile', 'install-resident.ps1:Get-PackageNodeProfile', 'install-resident.ps1:Sha256Bytes', 'install-resident.ps1:ConvertTo-NodeProfileCanonical')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }
 Yes ($installText -match '(?m)^\$NodeProfileKeys = @\([^\r\n]+\)') 'present:NodeProfileKeys'; . ([scriptblock]::Create($Matches[0]))
 $turingText = [IO.File]::ReadAllText((Join-Path $here '..\config\node-profile.turing.json'))
 $turing = $turingText | ConvertFrom-Json
 Assert-NodeProfile $turing; $n++
+Yes ((ConvertTo-NodeProfileCanonical $turing) -ceq $turingText) 'profile-canonical-original-bytes'
+Yes ((Sha256Bytes ([Text.Encoding]::UTF8.GetBytes((ConvertTo-NodeProfileCanonical $turing)))) -ceq '4d006ddc5b8cb0a112f67ddf4c07f96ddb5c39623e3eb11617c076708acd9be6') 'profile-canonical-original-hash'
 Yes ($turing.hostname -ceq 'TURING' -and $turing.ownerSid -ceq $OwnerSid -and $turing.controllerSid -ceq $ControllerSid -and $turing.runnerService -ceq 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02' -and $turing.wslDistribution -ceq 'Ubuntu-24.04') 'turing-profile-is-todays-values'
 function Test-Refused([scriptblock]$body, [string]$code) { try { & $body; return $false } catch { return $_.Exception.Message -ceq $code } }
 # The shared cases (independent-ci-v1/test/fixtures/node-profile-cases.json): the JS validator is held to the same answers
@@ -175,16 +179,29 @@ foreach ($s in @('install-resident.ps1', 'verify-resident.ps1', 'uninstall-resid
   Yes (-not ($code -match 'clued-ci-home-win-02|S-1-5-21-\d+-\d+-\d+-\d+|''TURING''|\(\\\.\|TURING\)')) ('no-host-constant:' + $s)
 }
 
+# The same-buffer review pin must be checked before consuming any node-bearing public JSON.
+$reviewFile=Join-Path $Scratch 'reviewed-public.json';$reviewText='{"fixture":"public-only"}'
+[IO.File]::WriteAllText($reviewFile,$reviewText,(New-Object Text.UTF8Encoding($false)))
+$reviewSha=Sha256Bytes ([Text.Encoding]::UTF8.GetBytes($reviewText))
+Yes ((Read-ReviewedPublicJson $reviewFile $reviewSha).fixture -ceq 'public-only') 'reviewed-public-same-buffer-positive'
+Yes (Test-Refused { Read-ReviewedPublicJson $reviewFile ('0'*64) } 'INSTALL_RECEIPT_CHANGED') 'reviewed-public-wrong-pin-before-profile'
+[IO.File]::WriteAllBytes($reviewFile,(New-Object byte[] 0))
+Yes (Test-Refused { Read-ReviewedPublicJson $reviewFile $reviewSha } 'INSTALL_RECEIPT_BOUNDARY_REFUSED') 'reviewed-public-empty-refused'
+$largeText='{"padding":"'+('a'*(3MB))+'"}';[IO.File]::WriteAllText($reviewFile,$largeText,(New-Object Text.UTF8Encoding($false)))
+$largeSha=Sha256Bytes ([Text.Encoding]::UTF8.GetBytes($largeText))
+Yes ((Read-ReviewedPublicJson $reviewFile $largeSha 4MB).padding.Length -eq 3MB) 'acceptance-standard-four-mib-domain-kept'
+Yes (Test-Refused { Read-ReviewedPublicJson $reviewFile $largeSha } 'INSTALL_RECEIPT_BOUNDARY_REFUSED') 'receipt-config-small-bound-kept'
+
 # 5. C#: the broker's bounded read and both token checks (compiled into the scratch directory).
 $fw = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\'; $csc = Join-Path $fw 'csc.exe'
 $v2 = [IO.Path]::GetFullPath((Join-Path $here '..\..\actions-hosted-migration\independent-ci-v1\src\resident-v2\windows'))
 $refs = @("/reference:$($fw)System.dll", "/reference:$($fw)System.Core.dll", "/reference:$($fw)System.ServiceProcess.dll", "/reference:$($fw)System.Web.Extensions.dll")
-& $csc /nologo /noconfig /target:exe /main:BrokerPureTests $refs ('/out:' + (Join-Path $Scratch 'broker-pure.exe')) (Join-Path $here 'SwapBroker.cs') (Join-Path $here 'ResidentServiceHost.cs') (Join-Path $here 'BrokerPureTests.cs') (Join-Path $v2 'ResidentScmV2.cs') (Join-Path $v2 'ScmPidHandshakeV2.cs') | Out-Null
+& $csc /nologo /noconfig /target:exe /main:BrokerPureTests $refs ('/out:' + (Join-Path $Scratch 'broker-pure.exe')) (Join-Path $here 'SwapBroker.cs') (Join-Path $here 'ResidentServiceHost.cs') (Join-Path $here 'BrokerPureTests.cs') (Join-Path $v2 'ResidentScmV2.cs') (Join-Path $v2 'ScmPidHandshakeV2.cs') (Join-Path $v2 'NodeProfileV2.cs') | Out-Null
 Yes ($LASTEXITCODE -eq 0) 'compile-broker-pure'
 # exactly the install-time compile lines (install-resident.ps1 step service-hosts)
 & $csc /nologo /noconfig /target:exe /optimize+ ('/out:' + (Join-Path $Scratch 'ResidentServiceHost.exe')) "/reference:$($fw)System.dll" "/reference:$($fw)System.ServiceProcess.dll" (Join-Path $here 'ResidentServiceHost.cs') | Out-Null
 Yes ($LASTEXITCODE -eq 0) 'compile-resident-host'
-& $csc /nologo /noconfig /target:exe /optimize+ ('/out:' + (Join-Path $Scratch 'SwapBroker.exe')) $refs (Join-Path $here 'SwapBroker.cs') (Join-Path $v2 'ResidentScmV2.cs') (Join-Path $v2 'ScmPidHandshakeV2.cs') | Out-Null
+& $csc /nologo /noconfig /target:exe /optimize+ ('/out:' + (Join-Path $Scratch 'SwapBroker.exe')) $refs (Join-Path $here 'SwapBroker.cs') (Join-Path $v2 'ResidentScmV2.cs') (Join-Path $v2 'ScmPidHandshakeV2.cs') (Join-Path $v2 'NodeProfileV2.cs') | Out-Null
 Yes ($LASTEXITCODE -eq 0) 'compile-broker'
 $out = & (Join-Path $Scratch 'broker-pure.exe') | Out-String
 Yes ($LASTEXITCODE -eq 0 -and $out -match 'BROKER_PURE_PASS') ('broker-pure:' + $out.Trim())
