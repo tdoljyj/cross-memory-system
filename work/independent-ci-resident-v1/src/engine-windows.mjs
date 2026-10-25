@@ -66,6 +66,10 @@ export const STAGE_FACT_CONTRACT = 'clued.independent-ci.resident-stage-fact/2';
 // here to a fixed shape: anything that does not fit is dropped (null), never guessed, so a malformed outcome can only
 // lose a release, never gain one. Only diagnostics and scheduling: no free text crosses into the ledger or status.
 const ENUM = /^[A-Za-z_]{1,40}$/, DCODE = /^[a-z][a-z0-9_]{0,63}$/, ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
+// Mirror the Source diagnostic allow-list; these fields never authorize admission, retry or cleanup.
+const ADMISSION_PHASES = new Set(['mode', 'principal', 'observer', 'pull_request', 'claim_reference', 'evaluate', 'post_evaluate', 'post_pull_request', 'native', 'changed_paths']);
+const ISSUER_TRANSIENT_ADMISSIONS = new Set(['full_admission_observation_expired', 'full_admission_unavailable']);
+const OWNER_REVIEW_KINDS = new Set(['granted', 'pending', 'transient', 'rpc_unavailable', 'refused', 'UNKNOWN']);
 export const QUEUE_STATES = Object.freeze(['head', 'waiting', 'lapsed', 'out', 'none']);   // the Source's MERGE_QUEUE_STATES
 const isoOrNull = v => typeof v === 'string' && ISO.test(v) && Number.isFinite(Date.parse(v)) ? v : null;
 function queueEntry(v) {
@@ -80,10 +84,20 @@ export function parseStageOutcome(o) {
     || !Number.isSafeInteger(o.sideEffects) || o.sideEffects < 0 || typeof o.mayHavePublished !== 'boolean') return null;
   const d = o.diagnostic && typeof o.diagnostic === 'object' && !Array.isArray(o.diagnostic) ? o.diagnostic : null;
   const s = o.scheduling && typeof o.scheduling === 'object' && !Array.isArray(o.scheduling) ? o.scheduling : null;
+  const diagnostic = d ? { verdict: ENUM.test(d.verdict ?? '') ? d.verdict : 'UNKNOWN', nativeVerdict: ENUM.test(d.nativeVerdict ?? '') ? d.nativeVerdict : 'UNKNOWN',
+    reasonCodes: codeList(d.reasonCodes), nativeReasonCodes: codeList(d.nativeReasonCodes), ciRetryAfter: isoOrNull(d.ciRetryAfter), mergeQueue: queueEntry(d.mergeQueue) } : null;
+  if (diagnostic) {
+    if (OWNER_REVIEW_KINDS.has(d.ownerReviewKind)) diagnostic.ownerReviewKind = d.ownerReviewKind;
+    if (ADMISSION_PHASES.has(d.phase)) diagnostic.phase = d.phase;
+    for (const field of ['workflowGateFindingsPresent', 'modeFresh', 'recorderFresh']) if (typeof d[field] === 'boolean') diagnostic[field] = d[field];
+    if (ISSUER_TRANSIENT_ADMISSIONS.has(d.transientAdmission)) {
+      diagnostic.transientAdmission = d.transientAdmission;
+      if (Number.isSafeInteger(d.evaluations) && d.evaluations >= 1 && d.evaluations <= 4) diagnostic.evaluations = d.evaluations;
+    }
+  }
   return {
     status: o.status, reason: o.reason, sideEffects: o.sideEffects, mayHavePublished: o.mayHavePublished,
-    diagnostic: d ? { verdict: ENUM.test(d.verdict ?? '') ? d.verdict : 'UNKNOWN', nativeVerdict: ENUM.test(d.nativeVerdict ?? '') ? d.nativeVerdict : 'UNKNOWN',
-      reasonCodes: codeList(d.reasonCodes), nativeReasonCodes: codeList(d.nativeReasonCodes), ciRetryAfter: isoOrNull(d.ciRetryAfter), mergeQueue: queueEntry(d.mergeQueue) } : null,
+    diagnostic,
     scheduling: s ? { ciRetryAfter: isoOrNull(s.ciRetryAfter), mergeQueue: queueEntry(s.mergeQueue) } : null,
     // the flag holds only on a clean BLOCKED with zero side effects that may not have published
     safeToRerun: o.safeToRerun === true && o.status === 'BLOCKED' && o.sideEffects === 0 && o.mayHavePublished === false,

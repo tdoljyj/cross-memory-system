@@ -233,6 +233,32 @@ function issuerFixture(t, { evaluate, job = 'trivy' } = {}) {
   return { ...s, c, job: j, context, evaluate: evaluate ?? (async () => facts(j, c)), stop: () => { live = false; } };
 }
 
+const rejectedIssuerFacts = () => ({ contract: 'clued.independent-ci.full-admission/2', status: 'BLOCKED', admitted: false,
+  reason: 'full_admission_rejected', diagnostic: { verdict: 'REJECTED', nativeVerdict: 'REJECTED', ownerReviewKind: 'refused',
+    reasonCodes: ['owner_grant_required', 'sensitive-details-must-not-survive'], nativeReasonCodes: ['path_outside_write_set'],
+    phase: 'native', workflowGateFindingsPresent: true, rawBody: 'sensitive-details-must-not-survive' } });
+const expectedIssuerDiagnostic = () => ({ verdict: 'REJECTED', nativeVerdict: 'REJECTED', ownerReviewKind: 'refused',
+  reasonCodes: ['owner_grant_required', 'unknown_reason'], nativeReasonCodes: ['path_outside_write_set'], phase: 'native', workflowGateFindingsPresent: true });
+
+test('issuer diagnostics: complete rejection before issue retains its sanitized Native reason', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+  const f = issuerFixture(t); let writes = 0;
+  const r = await runIssuer({ context: f.context, evaluate: async () => rejectedIssuerFacts(), collect: async () => null,
+    box: { async lock() {}, async write() { writes++; } }, stageDeadline: Date.now() + 60_000 });
+  assert.deepEqual([r.status, r.reason, r.sideEffects, writes], ['BLOCKED', 'full_admission_rejected', 0, 0]);
+  assert.deepEqual(r.admissionDiagnostic, expectedIssuerDiagnostic());
+});
+
+test('issuer diagnostics: complete callback rejection keeps UNCERTAIN and the exact sanitized rejection context', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+  const f = issuerFixture(t); let n = 0, issue; const writes = [];
+  const box = { async lock() {}, async write(name, bytes) { writes.push(name); if (name === 'issue') issue = decode(bytes); },
+    async read(name) { if (name === 'challenge-01') return encode(makeChallenge(issue, 'admission', 1));
+      throw Object.assign(new Error('not present'), { code: 'ENOENT' }); } };
+  const r = await runIssuer({ context: f.context, evaluate: async () => ++n === 1 ? facts(f.job, f.c) : rejectedIssuerFacts(),
+    collect: async () => null, box, stageDeadline: Date.now() + 60_000 });
+  assert.deepEqual([r.status, r.reason, r.sideEffects, n, writes], ['UNCERTAIN', 'full_admission_rejected', 1, 2, ['issue']]);
+  assert.deepEqual(r.admissionDiagnostic, expectedIssuerDiagnostic());
+});
+
 test('issuer: one admission callback, then the signed result -> ISSUED_RESULT_RECEIVED; the protocol is driven for real', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
   const f = issuerFixture(t), root = await spool(t), box = await createFixtureMailbox(root, 'windows');
   const linux = (async () => {
