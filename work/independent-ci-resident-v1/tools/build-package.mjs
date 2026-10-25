@@ -22,6 +22,7 @@ import { validatePolicy } from '../src/policy.mjs';
 import { validateCompanionConfig, validateHintConfig } from '../src/companion.mjs';
 import { validateStatusConfig } from '../src/pr-status.mjs';
 import { INSTALLED_MANIFEST_CONTRACT } from '../src/service-ports.mjs';
+import { pinnedNodeProfile } from '../src/node-profile.mjs';
 
 const HERE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const RESIDENT_FILES = ['src', 'tools', 'windows'];
@@ -65,6 +66,10 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
   const ciSourceManifestSha256 = recordEntries.find(e => e.name === 'source-manifest.json').sha256;
   const recordManifest = JSON.parse(await fs.readFile(path.join(out, 'record', 'record-manifest.json'), 'utf8'));
   check(recordManifest.sourceManifestSha256 === ciSourceManifestSha256 && recordManifest.claimBound === false, 'PACKAGE_RECORD_REFUSED');
+  const accepted = JSON.parse(await fs.readFile(path.join(out, 'record', 'acceptance.json'), 'utf8'));
+  check(recordEntries.find(e => e.name === 'acceptance.json').sha256 === recordManifest.acceptanceSha256, 'PACKAGE_RECORD_REFUSED');
+  const node = pinnedNodeProfile(accepted.node, recordManifest.nodeProfileSha256);
+  const nodeProfileSha256 = recordManifest.nodeProfileSha256;
   const residentEntries = [];
   for (const rel of RESIDENT_FILES) for (const f of await listFiles(HERE, rel)) {
     residentEntries.push({ path: f, ...await copyNew(path.join(HERE, f), path.join(out, 'resident', f)) });
@@ -88,13 +93,17 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
   const policy = JSON.parse(await fs.readFile(policyFile, 'utf8'));
   const finalPolicy = { ...policy, sourceManifestSha256, ciSourceManifestSha256, residentManifestSha256 };
   validatePolicy(finalPolicy);
+  check(finalPolicy.nodeProfileSha256 === nodeProfileSha256 && canonicalJson(finalPolicy.node) === canonicalJson(node), 'PACKAGE_NODE_PROFILE_CHANGED');
   const companion = JSON.parse(await fs.readFile(companionFile, 'utf8'));
+  check(companion.status?.node === undefined || companion.status.node === node.nodeName, 'PACKAGE_NODE_PROFILE_CHANGED');
   const sub = s => s.replace('<sourceManifestSha256>', ciSourceManifestSha256);
   const finalCompanion = { ...companion, companion: { ...companion.companion, relayScript: sub(companion.companion.relayScript), bundleScript: sub(companion.companion.bundleScript),
     ...(bridgeManifestSha256 ? { bridgeManifestSha256 } : {}) },
     // Hint mode reads the installed CI Source's relay observer; it follows the policy's relay switch.
-    hints: { enabled: companion.hints?.enabled === true && finalPolicy.relay.enabled === true, ciSourceManifestSha256 } };
+    hints: { enabled: companion.hints?.enabled === true && finalPolicy.relay.enabled === true, ciSourceManifestSha256 },
+    status: { ...companion.status, node: node.nodeName } };
   validateCompanionConfig(finalCompanion.companion);
+  check(finalCompanion.companion.nodeProfileSha256 === nodeProfileSha256 && canonicalJson(finalCompanion.companion.node) === canonicalJson(node), 'PACKAGE_NODE_PROFILE_CHANGED');
   validateHintConfig(finalCompanion.hints);
   validateStatusConfig(finalCompanion.status);
   await fs.mkdir(path.join(out, 'config'));

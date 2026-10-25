@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { WindowsEngine, DESCRIPTOR_CONTRACT, parseStageFact, parseStageOutcome } from '../src/engine-windows.mjs';
 import { validatePolicy } from '../src/policy.mjs';
-import { tempRoot, rawPolicy, HEAD, BASE, SOURCE } from './helpers.mjs';
+import { TEST_NODE, TEST_NODE_SHA, tempRoot, rawPolicy, HEAD, BASE, SOURCE } from './helpers.mjs';
 
 const V2 = ['work', 'actions-hosted-migration', 'independent-ci-v1', 'src', 'resident-v2'];
 const KEY = 'a1'.repeat(32);
@@ -44,7 +44,7 @@ async function engineFixture(t, { answers = {}, stdout = {}, testSha = null } = 
     async send(kind, fields) { sent.push([kind, fields]); return { kind, fields }; },
     async await(req) { return Object.hasOwn(answers, req.kind) ? answers[req.kind] : { ok: true, code: null }; },
   };
-  const engine = new WindowsEngine({ run, busy: () => false, companionMailbox, sleep: async () => {}, clock: () => Date.parse('2026-10-21T08:00:00Z'),
+  const engine = new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run, busy: () => false, companionMailbox, sleep: async () => {}, clock: () => Date.parse('2026-10-21T08:00:00Z'),
     paths: { sourceRoot, workRoot: path.join(root, 'work'), outboxRoot: path.join(root, 'outbox'), nodeExe: 'C:\\resident\\runtime\\node.exe',
       powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', scExe: 'C:\\Windows\\System32\\sc.exe' } });
   return { root, engine, runs, sent };
@@ -131,4 +131,14 @@ test('stage 10 (quota phase 2 step 3c-1): a train run derived into work\train an
   assert.deepEqual([invoke[invoke.indexOf('--stage') + 1], invoke[invoke.indexOf('--batch-key') + 1]], ['10', key]);
   assert.equal(f.sent.length, 0, 'no companion request: Windows only, no relay pump');
   await assert.rejects(f.engine.runTrainStage('on'), e => e.code === 'RESIDENT_TRAIN_MODE_INVALID');
+});
+
+test('WindowsEngine requires the pinned full node before any process port and queries only its runner service', async () => {
+  let effects = 0;
+  const run = async a => { effects++; assert.equal(a[2], TEST_NODE.runnerService); return { code: 0, stdout: a[1] === 'qc' ? SC_QC : SC_Q }; };
+  assert.throws(() => new WindowsEngine({ run }), { code: 'NODE_PROFILE_PIN_CHANGED' });
+  assert.throws(() => new WindowsEngine({ run, node: { ...TEST_NODE, hostname: 'OTHER' }, nodeProfileSha256: TEST_NODE_SHA }));
+  assert.equal(effects, 0);
+  const e = new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run, paths: { scExe: 'C:\\Windows\\System32\\sc.exe' } });
+  assert.equal(await e.scReadback(), true); assert.equal(effects, 2);
 });

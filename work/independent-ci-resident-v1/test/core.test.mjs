@@ -9,8 +9,9 @@ import { applyArchive, planArchive, protocolLeaves } from '../src/archive.mjs';
 import { TRIGGER_CONTRACT_V2, parseTrigger } from '../src/trigger.mjs';
 import { archiveReason, classifyFailure } from '../src/classify.mjs';
 import { batchBudgetMs, validatePolicy } from '../src/policy.mjs';
+import { nodeProfileSha256, pinnedNodeProfile } from '../src/node-profile.mjs';
 import { readFileSync } from 'node:fs';
-import { BASE, CLEAN_PROOF, HEAD, RELAY_ON, SOURCE, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
+import { BASE, CLEAN_PROOF, HEAD, RELAY_ON, SOURCE, TEST_NODE, TEST_NODE_SHA, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 
 const subject = (o = {}) => ({ repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 1, ...o });
 
@@ -267,4 +268,22 @@ test('ledger usage (phase 2): every daily budget from the ledger, per origin and
   await assert.rejects(ledger.reserve(batchKey(s(6, 6)), s(6, 6), { origin: 'made-up' }), { code: 'RESERVATION_ORIGIN_INVALID' });
   now += 86_400_001;
   assert.equal((await ledger.usage(now - 86_400_000)).evaluations, 0, 'a day later nothing counts');
+});
+
+test('policy pins a complete immutable node and cross-binds Owner and WSL without changing quota or train authority', () => {
+  const p = validatePolicy(rawPolicy());
+  assert.equal(nodeProfileSha256(p.node), p.nodeProfileSha256);
+  assert.equal(p.nodeProfileSha256, TEST_NODE_SHA);
+  assert.ok(Object.isFrozen(p.node));
+  const input = { ...TEST_NODE }; const pinned = pinnedNodeProfile(input, TEST_NODE_SHA);
+  input.hostname = 'OTHER'; assert.equal(pinned.hostname, TEST_NODE.hostname);
+  assert.throws(() => validatePolicy(rawPolicy({ nodeProfileSha256: '0'.repeat(64) })), { code: 'NODE_PROFILE_PIN_CHANGED' });
+  assert.throws(() => validatePolicy(rawPolicy({ node: { ...TEST_NODE, extra: true } })), { code: 'NODE_PROFILE_FIELDS_REQUIRED' });
+  assert.throws(() => validatePolicy(rawPolicy({ companion: { ...p.companion, userSid: 'S-1-5-21-4-5-6-1001' } })), { code: 'POLICY_COMPANION_SID_INVALID' });
+  assert.throws(() => validatePolicy(rawPolicy({ linux: { ...p.linux, distribution: 'OTHER' } })), { code: 'POLICY_DISTRIBUTION_FIXED' });
+  const company = { ...TEST_NODE, nodeName: 'company-01', hostname: 'COMPANY-01', ownerSid: 'S-1-5-21-4-5-6-1001', controllerSid: 'S-1-5-21-4-5-6-1015',
+    mutationMutex: 'Global\\CluedControlControllerMutationV1-COMPANY-01-1015', ownerProfileDirectory: 'C:\\Users\\company-owner', wslDistribution: 'Company-Ubuntu' };
+  const q = validatePolicy(rawPolicy({ node: company, nodeProfileSha256: nodeProfileSha256(company), companion: { ...p.companion, userSid: company.ownerSid }, linux: { ...p.linux, distribution: company.wslDistribution } }));
+  assert.equal(q.node.hostname, 'COMPANY-01');
+  assert.deepEqual(q.limits, p.limits); assert.deepEqual(q.train, p.train); assert.deepEqual(q.stageRunMilliseconds, p.stageRunMilliseconds);
 });

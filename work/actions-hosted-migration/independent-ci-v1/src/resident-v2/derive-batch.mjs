@@ -80,7 +80,7 @@ function stagePackage({ record, s, stageJobs, batchKey, batchId, jobRoles = stag
   const ci = record.config.sourceManifestSha256;
   const jobsText = canonical(stageJobs);
   const plan = { contract: PLAN_CONTRACT_V2, enabled: true, stage: s.number, entryRole: s.entryRole, batchKey, batchId,
-    ownerPackageAcceptanceRef: record.accepted.ownerPackageAcceptanceRef, nodeSha256: record.config.controllerNodeSha256,
+    ownerPackageAcceptanceRef: record.accepted.ownerPackageAcceptanceRef, nodeSha256: record.config.controllerNodeSha256, nodeProfileSha256: hash(record.accepted.node),
     entrySha256: record.pins.get(ENTRY_V2[s.entryRole]), acceptanceSha256: record.hashes.acceptanceSha256, sourceManifestSha256: ci,
     installationSha256: record.hashes.installationSha256, runtimeConfigPinSha256: record.hashes.runtimeConfigPinSha256, jobSha256: hash(jobsText) };
   const stage = { contract: STAGE_CONTRACT, number: s.number, name: s.name, entryRole: s.entryRole, jobRoles, jobIds: stageJobs.map(j => j.id),

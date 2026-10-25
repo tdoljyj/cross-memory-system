@@ -41,8 +41,9 @@
 //   - stageRunMilliseconds has a tenth entry, stage 10 (train maintenance, outside the batch).
 import { HEX64, REPO, UUID, check, exactKeys } from './canonical.mjs';
 import { RELAY_ROLES } from './hosted-wait.mjs';
+import { pinnedNodeProfile } from './node-profile.mjs';
 
-export const POLICY_CONTRACT = 'clued.independent-ci.resident-policy/6';
+export const POLICY_CONTRACT = 'clued.independent-ci.resident-policy/7';
 export const REMINDER_BYTES_DEFAULT = 50 * 1024 ** 3;
 
 // The fixed eight stages of the six-check batch (stages.json of the installed Source).
@@ -71,8 +72,9 @@ const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const int = (v, lo, hi) => Number.isSafeInteger(v) && v >= lo && v <= hi;
 
 export function validatePolicy(p) {
-  exactKeys(p, ['contract', 'repo', 'baseBranch', 'sourceManifestSha256', 'ciSourceManifestSha256', 'residentManifestSha256', 'ownerAcceptance', 'validUntil', 'limits', 'breaker', 'stage8', 'park', 'train', 'companion', 'stageRunMilliseconds', 'linux', 'automaticAttempt2', 'retention', 'relay'], 'POLICY_KEYS_INVALID');
+  exactKeys(p, ['contract', 'repo', 'baseBranch', 'sourceManifestSha256', 'ciSourceManifestSha256', 'residentManifestSha256', 'ownerAcceptance', 'validUntil', 'limits', 'breaker', 'stage8', 'park', 'train', 'companion', 'stageRunMilliseconds', 'linux', 'automaticAttempt2', 'retention', 'relay', 'node', 'nodeProfileSha256'], 'POLICY_KEYS_INVALID');
   check(p.contract === POLICY_CONTRACT, 'POLICY_CONTRACT_INVALID');
+  const node = pinnedNodeProfile(p.node, p.nodeProfileSha256);
   check(REPO.test(p.repo), 'POLICY_REPO_INVALID');
   check(p.baseBranch === 'main', 'POLICY_BASE_BRANCH_FIXED_MAIN');
   check(HEX64.test(p.sourceManifestSha256) && HEX64.test(p.ciSourceManifestSha256) && HEX64.test(p.residentManifestSha256), 'POLICY_SOURCE_PIN_INVALID');
@@ -104,14 +106,14 @@ export function validatePolicy(p) {
     && int(p.park.stage8RetriesPer24h, 0, 200), 'POLICY_PARK_INVALID');
   validateTrain(p.train);
   exactKeys(p.companion, ['userSid', 'heartbeatMaxAgeMs'], 'POLICY_COMPANION_KEYS_INVALID');
-  check(SID.test(p.companion.userSid), 'POLICY_COMPANION_SID_INVALID');
+  check(SID.test(p.companion.userSid) && p.companion.userSid === node.ownerSid, 'POLICY_COMPANION_SID_INVALID');
   check(int(p.companion.heartbeatMaxAgeMs, 5_000, 600_000), 'POLICY_HEARTBEAT_INVALID');
   check(Array.isArray(p.stageRunMilliseconds) && p.stageRunMilliseconds.length === FIXED_STAGES.length
     && p.stageRunMilliseconds.every(ms => int(ms, 60_000, 5_400_000)), 'POLICY_STAGE_TIMES_INVALID');
   // Stage 10's cap is fixed: the C# boundary and SwapBroker allow exactly 5 minutes (independent review of 3c-1, m2).
   check(p.stageRunMilliseconds[TRAIN_STAGE - 1] === 300_000, 'POLICY_STAGE_TIMES_INVALID');
   exactKeys(p.linux, ['distribution', 'workerUnit', 'wsprepUnit', 'archiveUnit'], 'POLICY_LINUX_KEYS_INVALID');
-  check(p.linux.distribution === 'Ubuntu-24.04', 'POLICY_DISTRIBUTION_FIXED');
+  check(p.linux.distribution === node.wslDistribution, 'POLICY_DISTRIBUTION_FIXED');
   check(p.linux.workerUnit === 'clued-ci-worker@.service' && p.linux.wsprepUnit === 'clued-ci-wsprep@.service'
     && p.linux.archiveUnit === 'clued-ci-archive@.service', 'POLICY_UNIT_NAMES_FIXED');
   // No general automatic retry: only the one bounded attempt 2 of attempts.mjs exists.
@@ -120,7 +122,7 @@ export function validatePolicy(p) {
   exactKeys(p.retention, ['reminderBytes', 'checkEveryMs'], 'POLICY_RETENTION_KEYS_INVALID');
   check(int(p.retention.reminderBytes, 1024 ** 3, 1024 ** 4) && int(p.retention.checkEveryMs, 60_000, 86_400_000), 'POLICY_RETENTION_INVALID');
   validateRelay(p.relay);
-  return Object.freeze({ ...p, stages: FIXED_STAGES.map((s, i) => ({ ...s, runMilliseconds: p.stageRunMilliseconds[i] })) });
+  return Object.freeze({ ...p, node, stages: FIXED_STAGES.map((s, i) => ({ ...s, runMilliseconds: p.stageRunMilliseconds[i] })) });
 }
 
 // train (contract /6): stage 10's mode and schedule. 'on' is refused until step 3c-2 brings the code that acts on it.

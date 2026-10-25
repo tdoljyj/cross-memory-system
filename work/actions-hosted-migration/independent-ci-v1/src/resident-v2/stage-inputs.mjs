@@ -51,7 +51,7 @@ export async function loadStageInputs({ nonce, configSha256, entryRole, recordDo
   const record = validateRecordV2(recordDocs, { now, identity });
   check(plan.acceptanceSha256 === record.hashes.acceptanceSha256 && plan.sourceManifestSha256 === record.hashes.sourceManifestSha256
     && plan.installationSha256 === record.hashes.installationSha256 && plan.runtimeConfigPinSha256 === record.hashes.runtimeConfigPinSha256
-    && plan.nodeSha256 === record.config.controllerNodeSha256, 'INSTALLED_RECORD_BINDING_CHANGED');
+    && plan.nodeSha256 === record.config.controllerNodeSha256 && plan.nodeProfileSha256 === hash(record.accepted.node), 'INSTALLED_RECORD_BINDING_CHANGED');
   const jobsBytes = await readStageFile(dir, 'jobs.json', 65536);
   check(hash(jobsBytes) === plan.jobSha256, 'EXACT_SELECTED_JOB_PLAN_PIN_REQUIRED');
   const jobs = JSON.parse(jobsBytes.toString('utf8'));
