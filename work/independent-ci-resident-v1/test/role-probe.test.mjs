@@ -70,7 +70,7 @@ test('role probe sends only the fixed read RPC, scope/repository and token hash;
   assert.deepEqual(await huge.roleProbe(), uncertain);
 });
 test('controller entry reads exactly native token under the pinned full-profile SID; never App key', async () => {
-  const token = 'clued_bnd_fixture123456', reads = [], protectedCalls = [], native = [];
+  const token = 'clued_bnd_00000000', reads = [], protectedCalls = [], native = [];
   const record = { accepted: { node: { controllerSid: 'S-1-5-21-1-2-3-1015' }, ciTokenPinSha256: digest('clued.independent-ci.ci-binding-pin/1\0' + token) },
     config: { supabaseUrl: 'https://fixture.supabase.co', publishableKey: 'fixture', scope: 'project:fixture', repository: 'tdoljyj/cross-memory-system' } };
   const out = await probeRole({ record, live() {}, protect: async (...v) => protectedCalls.push(v), tokenReader: async (file, options) => { reads.push({ file, options }); return token; },
