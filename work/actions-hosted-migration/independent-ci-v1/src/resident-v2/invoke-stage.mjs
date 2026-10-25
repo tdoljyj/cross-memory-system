@@ -18,12 +18,13 @@ import { canonical } from '../proof.mjs';
 import { validateJobV2 } from '../job-v2.mjs';
 import { ENVELOPE_CONTRACT_V2 } from '../proof-v2.mjs';
 import { hash } from './prepare-record.mjs';
-import { readSealedStage } from './stage-package.mjs';
+import { readSealedStage, PLAN_CONTRACT_V2 } from './stage-package.mjs';
+import { makeRoleProbeRun } from './role-probe-run.mjs';
 import { readRecordDocs } from './derive-batch.mjs';
 import { validateRecordV2 } from './record.mjs';
 import { makeBrokerRequest, validateBrokerResponse } from './broker-protocol.mjs';
 import { buildStageFact } from './stage-fact.mjs';
-import { HEX64, NONCE32, STATE_V2, WIN_RESIDENT, WIN_RECORD, WIN_SPOOL, WIN_STAGE } from './layout.mjs';
+import { HEX64, NONCE32, STATE_V2, WIN_RESIDENT, WIN_RECORD, WIN_SPOOL, WIN_STAGE, ENTRY_V2 } from './layout.mjs';
 
 export const RESULT_WRAPPER_CONTRACT_V2 = 'clued.independent-ci.protected-job-result/2';
 const fail = code => { throw Object.assign(new Error(code), { code }); };
@@ -118,7 +119,46 @@ export async function invokeStage({ batchDir, stage, workManifestSha256, batchKe
     receipt: receiptBytes ? parse(receiptBytes) : null, receiptBytes, outcome: outcomeBytes ? parse(outcomeBytes) : null, outcomeBytes, controllerSid });
 }
 
+// C2 builds only a public stage-11 package, never a batch ledger/workspace. The intent manifest is
+// computed independently by the resident from its random key/id and pinned node-profile hash.
+export async function invokeRoleProbe({ runKey, runId, nodeProfileSha256, stageRoot = WIN_STAGE, brokerRoot = path.join(WIN_RESIDENT, 'broker'),
+  receiptsRoot = STATE_V2.receipts, recordDocs = null, clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)),
+  nonce = randomBytes(16).toString('hex') }) {
+  const intent = { contract: 'clued.independent-ci.role-probe-intent/1', runKey, runId, nodeProfileSha256 };
+  const workManifestSha256 = hash(canonical(intent));
+  let record, plan, jobsText, planText;
+  try {
+    check(HEX64.test(runKey ?? '') && /^[0-9a-f]{16}-[0-9a-f]{12}$/.test(runId ?? '') && runId.startsWith(runKey.slice(0, 16)) && HEX64.test(nodeProfileSha256 ?? ''), 'ROLE_PROBE_RUN_REFUSED');
+    record = validateRecordV2(recordDocs ?? readRecordDocs(WIN_RECORD), { now: clock(), required: [ENTRY_V2['role-probe']] });
+    check(hash(record.accepted.node) === nodeProfileSha256, 'ROLE_PROBE_RUN_REFUSED');
+    jobsText = canonical([makeRoleProbeRun({ repo: record.config.repository, runId, sourceManifestSha256: record.config.sourceManifestSha256,
+      nodeProfileSha256, createdAt: new Date(clock()).toISOString() })]);
+    plan = { contract: PLAN_CONTRACT_V2, enabled: true, stage: 11, entryRole: 'role-probe', batchKey: runKey, batchId: runId,
+      ownerPackageAcceptanceRef: record.accepted.ownerPackageAcceptanceRef, nodeSha256: record.config.controllerNodeSha256, nodeProfileSha256,
+      entrySha256: record.pins.get(ENTRY_V2['role-probe']), acceptanceSha256: record.hashes.acceptanceSha256, sourceManifestSha256: record.config.sourceManifestSha256,
+      installationSha256: record.hashes.installationSha256, runtimeConfigPinSha256: record.hashes.runtimeConfigPinSha256, jobSha256: hash(jobsText) };
+    planText = canonical(plan);
+  } catch { return buildStageFact({ stage: 11, nonce, workManifestSha256, preflightCode: 'STAGE_PACKAGE_REFUSED' }); }
+  await prepareStageDirectory({ stageRoot, nonce, sealed: { files: { 'formal-service-entry.json': Buffer.from(planText), 'jobs.json': Buffer.from(jobsText) } } });
+  const planSha256 = hash(planText);
+  const request = makeBrokerRequest({ stage: 11, nonce, configSha256: planSha256, now: clock() });
+  const { response } = await askBroker({ brokerRoot, request, clock, sleep, waitUntil: Date.parse(request.deadline) + 180_000 });
+  const receiptBytes = await readBounded(path.join(receiptsRoot, `windows-formal-entry-${nonce}.json`), 65536).catch(() => null);
+  const outcomeBytes = await readBounded(path.join(receiptsRoot, `outcome-${nonce}.json`), 65536).catch(() => null);
+  return buildStageFact({ stage: 11, nonce, plan, planSha256, workManifestSha256, broker: response,
+    receipt: receiptBytes ? parse(receiptBytes) : null, receiptBytes, outcome: outcomeBytes ? parse(outcomeBytes) : null, outcomeBytes,
+    controllerSid: record.accepted.node.controllerSid, expectedJobIds: JSON.parse(jobsText).map(j => j.id) });
+}
+
 export async function main(argv = process.argv.slice(2), output = process.stdout) {
+  if (argv[0] === '--role-probe') {
+    if (argv.length !== 6 || argv[2] !== '--probe-id' || argv[4] !== '--node-profile-sha256') {
+      output.write(JSON.stringify({ state: 'REFUSED', failure_code: 'STAGE_PACKAGE_REFUSED' }) + '\n'); return 2;
+    }
+    const fact = await invokeRoleProbe({ runKey: argv[1], runId: argv[3], nodeProfileSha256: argv[5] });
+    output.write(JSON.stringify(fact) + '\n');
+    return fact.state === 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' ? 0 : 41;
+  }
   const args = {};
   for (let i = 0; i < argv.length; i += 2) {
     if (!['--batch-dir', '--stage', '--work-manifest-sha256', '--batch-key'].includes(argv[i]) || typeof argv[i + 1] !== 'string' || Object.hasOwn(args, argv[i])) {

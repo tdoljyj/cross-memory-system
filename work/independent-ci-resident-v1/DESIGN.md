@@ -1959,3 +1959,12 @@ Owner Decision `2eea28a1` 把 3c 拆成两步。3c-1 只做影子模式（设计
 | `CI/src/job-v2.mjs`（合同 /3）、`CI/test/job-v3.test.mjs` | v1.2：作业身份加测试提交 S，描述符 /3，工作区检出 S（§21） |
 | `src/train.mjs`、`src/ruleset-backstop.mjs` | v1.2：第 10 段的到期规则、状态摘要与 PR 页面行；companion 规则集兜底（§22） |
 | `CI/src/resident-v2/train-run.mjs`、`CI/src/independent-control-checks-v2/train-*.mjs`、`merge-slot-native.mjs` | v1.2：第 10 段的作业合同、入口、事实、影子记录与合并位只读读取（§22） |
+
+## C2：主备角色的独立只读探测（代码候选，未做 P4 现场验收）
+
+- stage 11 `role-probe` 经过当前 record/2、完整 node-profile、固定 Source、原 SwapBroker 与同一个 generic helper。新增 60 秒子进程上限；原 stages 1–10、各自 deadline、互斥与清理语义不变。只在 ledger 无任何 open batch（包括 hosted wait/parked）、非 HALT/PAUSE、安装与 Source 未漂移时调用；本地 tick 串行，runner 非 original-stopped 时不提交 broker 请求，原全局互斥仍非等待取得，不抢占其他 controller。
+- 新 `role-probe-run/1` 只含 repository、随机 runId、Source/node-profile pin 与时间，不含 PR/head/claim/attempt。plan/3 的 `batchKey/batchId` 仅复用现有技术相关键；不会 reserve/markStarted/burn/evaluate/写 CI 批次，也不创建 Linux 工作区或调用 companion。stage fact 的 manifest pin 是 resident 与 invoker 独立计算的 `role-probe-intent/1` 原 canonical bytes 的 SHA。
+- controller entry 只打开固定 `ci-admission.token`，验证原 token fingerprint 与完整 profile 的 controller SID；不打开 App key，只调用 `clued_work_merge_slot_holders_v1`，10 秒请求界限、64 KiB 回复界限、拒重定向。`status:ok` 无 reason 为 held，`admission_binding_required` 为 not-held，其他为 uncertain。服务端的 `binding_not_authorized` / `authorization_revoked_or_expired` 不足以区分具体撤销、过期或权限不适用，因此仅输出 `ROLE_PROBE_CONNECTION_UNAUTHORIZED`，不伪造细分原因。
+- **parking holder 是解释 held 的硬前提。** 没有任何有效角色条目时，服务也可向所有 Binding 开放；holders RPC 无法证明已 parking。部署/启用主备前必须另有 Owner 的实际 parking 证据，本代码不能用 empty holders 或 held 代替。C2 不变更节点模式、不授 CI 执行权限；C3 负责启动 STANDBY、角色与失败后的模式转换。C2 的明确 mode 输入决定 STANDBY 15 分钟、ACTIVE idle 30 分钟；尚无 C3 输入时沿现有单节点语义用 ACTIVE 的 30 分钟间隔，状态展示仍为 UNCERTAIN。
+- 三态事实只有在同 nonce、plan/config、Source、完整 Native 回执、原始 outcome SHA、精确 jobId 与 Windows tree-zero/original-stopped 全部相符后有效。连接失效通知一次，连续三次 uncertain 通知一次，确认 held/not-held 后重置；本地 receipt 保留次数与间隔，重启不能重置不确定记录。中断、缺清理或错误绑定沿原 UNKNOWN/HALT 保留现场，不放通任何旧 head/retry。
+- C2 receipt 不进入批次 failure-table 的 release/burn/attempt2 规则。没有新 secret、App、Node 身份泛化；旧 /1 TURING 六生产入口保留原字节，当前 stage 11 只在完整 record/2 Source 中可达。离线纯测试不代替实际 P4 的双节点服务影响、日约 96 次切换、parking、撤销与过期验收。

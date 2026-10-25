@@ -234,3 +234,55 @@ test('the executor needs every port and a valid policy', () => {
   assert.throws(() => new ResidentExecutor({}), { code: 'EXECUTOR_PORT_MISSING' });
   assert.throws(() => validatePolicy(rawPolicy({ repo: 'not a repo' })), { code: 'POLICY_REPO_INVALID' });
 });
+
+const probeResult = (fact = { result: 'held', code: 'ROLE_PROBE_HELD' }, override = {}) => ({ ok: true, proof: { windowsTreeZero: true, serviceOriginalStopped: true },
+  roleProbe: fact, outcome: { status: 'BLOCKED', reason: fact.code, sideEffects: 0, mayHavePublished: false }, ...override });
+test('C2 idle probe has no batch, burned head, evaluation, Linux or companion; active cadence is 30min', async t => {
+  const f = await executorFixture(t); let calls = 0;
+  f.engine.runRoleProbe = async () => { calls++; return probeResult(); };
+  assert.equal((await f.exec.tick()).state, 'IDLE'); assert.equal(calls, 1);
+  assert.equal((await f.ledger.keys()).length, 0);
+  assert.deepEqual(await f.ledger.usage(f.clock() - 86400000), { started: 0, startedByPr: new Map(), evaluations: 0, waitingRetries: 0, reevaluations: new Map(), releasesByHead: new Map(), stage8Retries: 0 });
+  assert.equal(f.companion.calls.length, 0); assert.equal(f.engine.calls.length, 0);
+  await f.exec.tick(); assert.equal(calls, 1);
+  f.advance(1800000 - 1); await f.exec.tick(); assert.equal(calls, 1);
+  f.advance(1); await f.exec.tick(); assert.equal(calls, 2);
+});
+test('C2 probes never run during a batch or while paused/HALT; it never clears head burn', async t => {
+  const f = await executorFixture(t); let calls = 0;
+  f.engine.runRoleProbe = async () => { calls++; return probeResult(); };
+  await f.drop(triggerBytes()); await f.exec.tick(); assert.equal(calls, 0);
+  const hk = headKey(subject()); assert.equal(await f.ledger.headBurned(hk), true);
+  await f.ledger.halt('PUBLICATION_UNCERTAIN', {}); await f.exec.tick(); assert.equal(calls, 0);
+  assert.equal(await f.ledger.headBurned(hk), true);
+});
+test('C2 three uncertainties and connection authorization refusal notify without changing mode or retrying CI', async t => {
+  const f = await executorFixture(t); let calls = 0;
+  f.engine.runRoleProbe = async () => { calls++; return probeResult({ result: 'uncertain', code: 'ROLE_PROBE_CONNECTION_UNAUTHORIZED' }); };
+  f.exec.roleProbeMode = 'STANDBY';
+  await f.exec.tick(); f.advance(900000); await f.exec.tick(); f.advance(900000); await f.exec.tick();
+  assert.equal(calls, 3); assert.equal(f.exec.roleProbeMode, 'STANDBY');
+  assert.deepEqual(f.exec.roleProbeNotices.map(n => n.kind), ['role-probe-connection', 'role-probe-uncertain']);
+  assert.equal(await f.ledger.halted(), null); assert.equal((await f.ledger.keys()).length, 0);
+});
+test('C2 unproven Native cleanup or malformed outcome always HALTs; interrupted receipt never retries', async t => {
+  const f = await executorFixture(t);
+  f.engine.runRoleProbe = async () => probeResult(undefined, { proof: { windowsTreeZero: false, serviceOriginalStopped: true } });
+  assert.equal((await f.exec.tick()).state, 'HALTED');
+  assert.equal((await f.ledger.halted()).value.code, 'ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED');
+  assert.equal((await f.ledger.keys()).length, 0);
+  const g = await executorFixture(t); let calls = 0;
+  g.engine.runRoleProbe = async () => { calls++; return probeResult(); };
+  await g.receipts.append('role-probe-intent', { mode: 'ACTIVE' });
+  assert.equal((await g.exec.tick()).state, 'HALTED'); assert.equal(calls, 0);
+  assert.equal((await g.ledger.halted()).value.code, 'ROLE_PROBE_INTERRUPTED');
+  assert.equal((await g.receipts.latest(['role-probe-result'], 1)).length, 1);
+});
+test('C2 tick serialization refuses overlap while its one controller read is in flight', async t => {
+  const f = await executorFixture(t); let release, started;
+  const begin = new Promise(r => { started = r; }), hold = new Promise(r => { release = r; });
+  f.engine.runRoleProbe = async () => { started(); await hold; return probeResult(); };
+  const first = f.exec.tick(); await begin;
+  assert.deepEqual(await f.exec.tick(), { state: 'DEFERRED', reason: 'EXECUTOR_TICK_BUSY' });
+  release(); assert.equal((await first).state, 'IDLE');
+});

@@ -9,6 +9,7 @@ import path from 'node:path';
 import { canonical } from '../proof.mjs';
 import { validateJobV2, sameBatchV2, CONTROL_ROLES_V2 } from '../job-v2.mjs';
 import { validateTrainRun } from './train-run.mjs';
+import { validateRoleProbeRun } from './role-probe-run.mjs';
 import { validateTrainFacts } from '../independent-control-checks-v2/train-facts.mjs';
 import { hash } from './prepare-record.mjs';
 import { validateRelayPlanRows } from '../hosted-relay-v1/relay-plan.mjs';
@@ -61,6 +62,13 @@ export async function loadStageInputs({ nonce, configSha256, entryRole, recordDo
     check(entryRole === 'train-maintenance' && jobs.length === 1, 'EXACT_STAGE_JOBS_REQUIRED');
     try { validateTrainRun(jobs[0]); } catch { fail('EXACT_STAGE_JOBS_REQUIRED'); }
     check(jobs[0].repo === record.config.repository && jobs[0].sourceManifestSha256 === record.config.sourceManifestSha256 && jobs[0].runId === plan.batchId, 'EXACT_STAGE_JOBS_REQUIRED');
+    return Object.freeze({ nonce, dir, plan, row, jobs, resultEnvelope: null, record });
+  }
+  if (row.kind === 'role-probe') {
+    check(entryRole === 'role-probe' && jobs.length === 1, 'EXACT_STAGE_JOBS_REQUIRED');
+    try { validateRoleProbeRun(jobs[0]); } catch { fail('EXACT_STAGE_JOBS_REQUIRED'); }
+    check(jobs[0].repo === record.config.repository && jobs[0].sourceManifestSha256 === record.config.sourceManifestSha256
+      && jobs[0].nodeProfileSha256 === plan.nodeProfileSha256 && jobs[0].runId === plan.batchId, 'EXACT_STAGE_JOBS_REQUIRED');
     return Object.freeze({ nonce, dir, plan, row, jobs, resultEnvelope: null, record });
   }
   jobs.forEach(validateJobV2);

@@ -104,6 +104,7 @@ import { INTAKE_PAUSE_CONTRACT, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
 import { trainDue, trainSummary } from './train.mjs';
+import { RoleProbe, validateRoleProbeFact } from './role-probe.mjs';
 
 export const PAUSE_CONTRACT = 'clued.independent-ci.resident-pause/1';
 export const REARM_CONTRACT = 'clued.independent-ci.resident-owner-rearm/1';
@@ -231,6 +232,8 @@ export class ResidentExecutor {
     this.status ??= NO_STATUS;
     this.ownerReadFailures = new Map();
     this.intakeRequestFailures = new Map();
+    this.roleProbe = new RoleProbe();
+    this.roleProbeNotices = [];
   }
 
   receipt(type, body) { return this.receipts.append(type, body); }
@@ -771,9 +774,10 @@ export class ResidentExecutor {
   }
 
   async tick() {
-    const result = await this.tickInner();
-    await this.reportTick(result);
-    return result;
+    if (this.tickBusy) return { state: 'DEFERRED', reason: 'EXECUTOR_TICK_BUSY' };
+    this.tickBusy = true;
+    try { const result = await this.tickInner(); await this.reportTick(result); return result; }
+    finally { this.tickBusy = false; }
   }
 
   // The status board after a tick: the resting state, HALT and PAUSE as the ledger has them now, and the intake pause's
@@ -846,6 +850,7 @@ export class ResidentExecutor {
     // A stage-10 run that a crash or a stop interrupted (once per process; DESIGN §22.3). Looked at before the HALT check,
     // so one found while halted is closed at once and the Owner's re-arm clears a single HALT (review of 3c-1, round 2).
     const train = recovered ? await this.trainRecover() : null;
+    const probe = recovered ? await this.roleProbeRecover() : null;
     // Even if the HALT itself could not be written, an unconfirmed recovery never runs a candidate,
     // and neither does a ledger with an unarchived failed-unknown or quarantined scene (N1).
     if (!recovered || await this.ledger.halted()) return train?.state === 'HALTED' ? train : { state: 'HALTED' };
@@ -855,6 +860,7 @@ export class ResidentExecutor {
     }
     // A held stage 10 (its receipt chain could not be read yet): no batch either.
     if (train) return train;
+    if (probe) return probe;
     // No batch of any kind (a resumed wait, an attempt 2, a new trigger) before the executed-heads backfill finished.
     const backfill = await this.ensureBackfill();
     if (backfill) return backfill;
@@ -874,8 +880,70 @@ export class ResidentExecutor {
     // pause holds the new ones (independent review of C6, minor 3).
     const result = waiting && (r.state === 'IDLE' || ['INTAKE_PAUSED', 'INTAKE_PAUSE_UNCONFIRMED'].includes(r.reason)) ? waiting : r;
     // Stage 10 only after a schedule that ran nothing (a batch resting at a parking point runs nothing either).
+    if (!waiting && TRAIN_QUIET_STATES.includes(r.state) && !TRAIN_HELD_REASONS.includes(r.reason)) {
+      const probeResult = await this.roleProbeMaintenance();
+      if (probeResult) return probeResult;
+    }
     if (TRAIN_QUIET_STATES.includes(r.state) && !TRAIN_HELD_REASONS.includes(r.reason)) return (await this.trainMaintenance()) ?? result;
     return result;
+  }
+
+  // C2 recovery is independent of CI accounting. An interrupted swap still HALTs; it never authorizes
+  // a second swap or clears any head/scene. A bad public receipt cannot become a fresh role observation.
+  async roleProbeRecover() {
+    if (this.roleProbeRecovered || typeof this.engine.runRoleProbe !== 'function') return null;
+    try {
+      const rows = await this.receipts.latest(['role-probe-intent', 'role-probe-result'], 2), last = rows.at(-1);
+      if (last?.type === 'role-probe-intent') {
+        await this.haltWith('ROLE_PROBE_INTERRUPTED', { intentSeq: last.seq });
+        await this.receipt('role-probe-result', { intentSeq: last.seq, deferred: false, ok: false, fact: null, state: this.roleProbe.snapshot() });
+        return { state: 'HALTED', failureCode: 'ROLE_PROBE_INTERRUPTED' };
+      }
+      if (last) {
+        check(rows.length === 2 && rows[0].type === 'role-probe-intent' && last.value.body.intentSeq === rows[0].seq, 'ROLE_PROBE_BOOK_REFUSED');
+        this.roleProbe.restore(last.value.body.state);
+      }
+      this.roleProbeRecovered = true;
+    } catch {
+      await this.haltWith('ROLE_PROBE_RECEIPTS_UNCONFIRMED', {});
+      return { state: 'HALTED', failureCode: 'ROLE_PROBE_RECEIPTS_UNCONFIRMED' };
+    }
+    return null;
+  }
+
+  async roleProbeMaintenance() {
+    if (typeof this.engine.runRoleProbe !== 'function' || this.roleProbeRunning) return null;
+    // Existing single-node execution is not changed to a primary/standby mode by C2. C3 owns the
+    // explicit roleProbeMode input and all mode transitions; status (advisory) is never an input.
+    const mode = this.roleProbeMode ?? 'ACTIVE', now = this.clock();
+    const idle = !(await this.ledger.halted()) && !(await this.ledger.paused()) && (await this.ledger.open()).length === 0;
+    if (!this.roleProbe.due({ now, mode, idle })) return null;
+    if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < now + 240_000) return null;
+    const drift = await this.driftCode();
+    if (drift) { await this.haltWith(drift, { phase: 'role-probe' }); return { state: 'HALTED', failureCode: drift }; }
+    this.roleProbeRunning = true;
+    try {
+      const intent = await this.receipt('role-probe-intent', { mode });
+      let r;
+      try { r = await this.engine.runRoleProbe(); } catch { r = null; }
+      // Only the engine's pre-broker busy guard is a deferral, not a role fact. BROKER_BUSY after a
+      // request is not whitelisted here and retains the original unknown/HALT behavior.
+      const deferred = r?.deferred === true && r.code === 'ROLE_PROBE_BUSY';
+      let fact = null;
+      if (r?.ok === true && r.proof?.windowsTreeZero === true && r.proof?.serviceOriginalStopped === true
+        && r.outcome?.status === 'BLOCKED' && r.outcome.sideEffects === 0 && r.outcome.mayHavePublished === false) {
+        try { const f = validateRoleProbeFact(r.roleProbe); if (r.outcome.reason === f.code) fact = f; } catch { /* no fact */ }
+      }
+      if (!deferred && !fact) await this.haltWith('ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED', { intentSeq: intent.seq, failureCode: r?.code ?? null });
+      if (fact) {
+        const observation = this.roleProbe.observe(fact, this.clock());
+        this.roleProbeNotices.push(...observation.notices);
+        this.roleProbeNotices = this.roleProbeNotices.slice(-10);
+        this.report(s => s.setRoleProbe?.(this.policy.node.nodeName, observation.probe));
+      }
+      await this.receipt('role-probe-result', { intentSeq: intent.seq, deferred, ok: !!fact, fact, state: this.roleProbe.snapshot() });
+      return !deferred && !fact ? { state: 'HALTED', failureCode: 'ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED' } : null;
+    } finally { this.roleProbeRunning = false; }
   }
 
   // ---- stage 10: train maintenance (phase 2, step 3c-1; DESIGN §22.3) ----
@@ -1142,7 +1210,7 @@ export class ResidentExecutor {
     this.report(s => {
       const b = breakerOf(this.queue.breaker);
       s.update({ queue: { generation: this.queue.generation, live: this.queue.live().length, depth: this.policy.limits.queueDepth, parkingFull: this.parkingFull === true }, breaker: breakerView(b),
-        notices: this.queue.notices.slice(0, 50) });
+        notices: [...this.roleProbeNotices, ...this.queue.notices].slice(0, 50) });
       s.setPending(this.queue.view(this.clock(), { etaBatchMs: ETA_BATCH_MS }));
     });
   }
