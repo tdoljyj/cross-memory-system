@@ -99,6 +99,9 @@ export function outcomeFailureCode(outcome, stageNumber) {
   if (outcome.status !== 'BLOCKED') return 'PUBLICATION_UNCERTAIN';
   if (outcome.sideEffects !== 0 || outcome.mayHavePublished !== false) return 'PUBLICATION_UNCERTAIN';
   const r = outcome.reason;
+  // Only the bounded, explicit Native read exhaustion is transient. The status/effect guards above exclude
+  // any sent or uncertain publication; refusal and unconfirmed replies keep their existing final semantics.
+  if (r === 'native_claim_observation_unavailable') return 'NATIVE_ADMISSION_UNAVAILABLE';
   if (r === 'evidence_identity_conflict' || r === 'EVIDENCE_IDENTITY_CONFLICT') return 'EVIDENCE_IDENTITY_CONFLICT';
   // K(head, role) is held by the other path: a role on this head was (or may have been) published by it. Never
   // clean, on any stage (DESIGN §6.3; PR-A review MINOR 4).
