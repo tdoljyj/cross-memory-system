@@ -11,7 +11,12 @@ import { TRIGGER_CONTRACT } from '../src/trigger.mjs';
 import { ResidentExecutor } from '../src/executor.mjs';
 import { ExecutedHeads, BACKFILL_MANIFEST_CONTRACT } from '../src/executed-heads.mjs';
 import { RunQueue } from '../src/queue.mjs';
+import { nodeProfileSha256 } from '../src/node-profile.mjs';
 
+export const TEST_NODE = Object.freeze({ contract: 'clued.independent-ci.node-profile/1', nodeName: 'fixture-node', hostname: 'TURING',
+  ownerSid: 'S-1-5-21-1-2-3-1001', ownerProfileDirectory: 'C:\\Users\\fixture-owner', controllerSid: 'S-1-5-21-1-2-3-1015',
+  runnerService: 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02', mutationMutex: 'Global\\CluedControlControllerMutationV1-TURING-1015', wslDistribution: 'Ubuntu-24.04' });
+export const TEST_NODE_SHA = nodeProfileSha256(TEST_NODE);
 export const SOURCE = 'a'.repeat(64);
 export const RESIDENT = 'b'.repeat(64);
 export const CI_SOURCE = 'e'.repeat(64);
@@ -24,7 +29,8 @@ export const RELAY_ON = Object.freeze({ ...RELAY_OFF, enabled: true });
 
 export function rawPolicy(overrides = {}) {
   return {
-    contract: 'clued.independent-ci.resident-policy/6',
+    contract: 'clued.independent-ci.resident-policy/7',
+    node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA,
     repo: 'tdoljyj/cross-memory-system',
     baseBranch: 'main',
     sourceManifestSha256: SOURCE,

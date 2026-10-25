@@ -2,7 +2,7 @@
   "repo": "tdoljyj/cross-memory-system",
   "ghExe": "C:\\Program Files\\GitHub CLI\\gh.exe",
   "companion": {
-    "contract": "clued.independent-ci.resident-companion-config/1",
+    "contract": "clued.independent-ci.resident-companion-config/2",
     "wslExe": "C:\\Windows\\System32\\wsl.exe",
     "powershellExe": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
     "relayScript": "C:\\ProgramData\\CluedIndependentCI\\resident\\source\\<sourceManifestSha256>\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v4\\relay-public.ps1",
@@ -10,7 +10,19 @@
     "windowsSpool": "C:\\ProgramData\\CluedIndependentCI\\formal-spool",
     "distribution": "Ubuntu-24.04",
     "bridgeManifestSha256": "0000000000000000000000000000000000000000000000000000000000000000",
-    "linuxTool": "/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux"
+    "linuxTool": "/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux",
+    "node": {
+      "contract": "clued.independent-ci.node-profile/1",
+      "controllerSid": "S-1-5-21-1173730660-3877291096-655431861-1015",
+      "hostname": "TURING",
+      "mutationMutex": "Global\\CluedControlControllerMutationV1-TURING-1015",
+      "nodeName": "turing",
+      "ownerProfileDirectory": "C:\\Users\\17531",
+      "ownerSid": "S-1-5-21-1173730660-3877291096-655431861-1001",
+      "runnerService": "actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02",
+      "wslDistribution": "Ubuntu-24.04"
+    },
+    "nodeProfileSha256": "4d006ddc5b8cb0a112f67ddf4c07f96ddb5c39623e3eb11617c076708acd9be6"
   },
   "hints": {
     "enabled": false,

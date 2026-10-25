@@ -60,6 +60,7 @@ export async function main(args = process.argv.slice(2)) {
   check(sha256(bytes) === values['config-sha256'], 'COMPANION_CONFIG_CHANGED');
   const raw = parseBoundedJson(bytes, 65536, 'COMPANION_CONFIG_REFUSED');
   const cfg = validateCompanionConfig(raw.companion);
+  check(os.hostname().toUpperCase() === cfg.node.hostname && process.env.USERPROFILE === cfg.node.ownerProfileDirectory, 'COMPANION_NODE_IDENTITY_CHANGED');
   const runner = new Runner({ env: { ...process.env } }); // the Owner's own environment: gh/git credential helpers live here
   const advisory = new Runner({ env: { ...process.env } }); // the advisory lane's own (see lane)
   const mailbox = await Mailbox.open(path.join(values.root, 'mailbox'), Date.now);
@@ -86,7 +87,8 @@ export async function main(args = process.argv.slice(2)) {
   // PR page status and Windows notifications (pr-status.mjs). Their memory lives in the Owner's own profile, never in the
   // resident's directories.
   const statusCfg = validateStatusConfig(raw.status);
-  const store = await LocalStore.open(path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'CluedIndependentCI', 'companion-pr-status.json'));
+  check(statusCfg.node === cfg.node.nodeName, 'COMPANION_NODE_IDENTITY_CHANGED');
+  const store = await LocalStore.open(path.join(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local'), 'CluedIndependentCI', 'companion-pr-status.json'));
   // The node's duty (primary/standby C5, node-duty.mjs): its name while status.json names none, and the one write it may
   // make into the resident, the dual-active hold (an intake pause request in the user-writable requests\, like a pause).
   const requestsDir = path.join(values.root, 'requests');

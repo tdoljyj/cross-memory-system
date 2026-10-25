@@ -14,7 +14,7 @@ import { mailboxCompanion } from '../src/service-ports.mjs';
 import { validateHintConfig } from '../src/companion.mjs';
 import { WindowsEngine } from '../src/engine-windows.mjs';
 import { validatePolicy } from '../src/policy.mjs';
-import { tempRoot, rawPolicy, HEAD, BASE, SOURCE } from './helpers.mjs';
+import { TEST_NODE, TEST_NODE_SHA, tempRoot, rawPolicy, HEAD, BASE, SOURCE } from './helpers.mjs';
 import { createWorld, H, B, PR, REPO } from '../../actions-hosted-migration/independent-ci-v1/test/fixtures/hosted-relay/world.mjs';
 import { createHostedRelayObserver } from '../../actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/observe.mjs';
 import { hostedHint } from '../../actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/stage.mjs';
@@ -142,7 +142,7 @@ test('engine: stage R is derived for exactly the candidates and run as stage 9 w
     throw new Error('unexpected ' + argv.join(' '));
   };
   const companionMailbox = { async send(kind, fields) { sent.push(kind); return { kind, fields }; }, async await() { return { ok: true, code: null, verified: true }; } };
-  const engine = new WindowsEngine({ run, busy: () => false, companionMailbox, sleep: async () => {}, clock: () => T0,
+  const engine = new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run, busy: () => false, companionMailbox, sleep: async () => {}, clock: () => T0,
     paths: { sourceRoot, workRoot: path.join(root, 'work'), outboxRoot: path.join(root, 'outbox'), nodeExe: 'C:\\node.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', scExe: 'C:\\Windows\\System32\\sc.exe' } });
   const batch = { batchId: 'b', key: 'a1'.repeat(32), dir: path.join(root, 'work', 'b'), stages: [1, 2, 3, 4, 5, 6, 7, 8].map(n => ({ number: n, jobId: String(n).repeat(64).slice(0, 64), workManifestSha256: 'f'.repeat(64) })) };
   const r = await engine.runRelayStage(batch, ['trivy']);

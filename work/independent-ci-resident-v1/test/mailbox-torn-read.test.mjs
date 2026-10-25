@@ -7,7 +7,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { Mailbox } from '../src/mailbox.mjs';
 import { COMPANION_CONFIG_CONTRACT, Companion, validateCompanionConfig } from '../src/companion.mjs';
-import { tempRoot } from './helpers.mjs';
+import { TEST_NODE, TEST_NODE_SHA, tempRoot } from './helpers.mjs';
 
 const BATCH = '0123456789abcdef-0123456789ab';
 const T0 = Date.parse('2026-10-23T10:45:00Z');
@@ -99,12 +99,13 @@ test('companion: a request polled between its create and its last byte is left o
   const bytes = await twinBytes(t, clock, async twin => { sent = await twin.send('linux-quiescence', { batchId: BATCH }, 60_000); return path.join(twin.requests, `${sent.requestId}.json`); });
   const cfg = validateCompanionConfig({
     contract: COMPANION_CONFIG_CONTRACT,
+    node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA,
     wslExe: 'C:\\Windows\\System32\\wsl.exe',
     powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
     relayScript: 'C:\\ProgramData\\CluedIndependentCI\\resident\\source\\relay-public.ps1',
     bundleScript: 'C:\\ProgramData\\CluedIndependentCI\\resident\\source\\build-bundle.ps1',
     windowsSpool: 'C:\\ProgramData\\CluedIndependentCI\\formal-spool',
-    distribution: 'Ubuntu-24.04',
+    distribution: TEST_NODE.wslDistribution,
     bridgeManifestSha256: '9'.repeat(64),
     linuxTool: '/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux',
   });

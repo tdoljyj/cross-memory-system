@@ -10,9 +10,9 @@ import { mailboxCompanion } from '../src/service-ports.mjs';
 import { RetentionWatch, measureWindows, REMINDER_RECEIPT } from '../src/retention.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { ReceiptChain } from '../src/receipts.mjs';
-import { tempRoot, rawPolicy } from './helpers.mjs';
+import { TEST_NODE, TEST_NODE_SHA, tempRoot, rawPolicy } from './helpers.mjs';
 
-const cfg = validateCompanionConfig({ contract: COMPANION_CONFIG_CONTRACT, wslExe: 'C:\\Windows\\System32\\wsl.exe',
+const cfg = validateCompanionConfig({ contract: COMPANION_CONFIG_CONTRACT, node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, wslExe: 'C:\\Windows\\System32\\wsl.exe',
   powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
   relayScript: 'C:\\ProgramData\\CluedIndependentCI\\resident\\source\\x\\protected-job-bridge-v4\\relay-public.ps1',
   bundleScript: 'C:\\ProgramData\\CluedIndependentCI\\resident\\source\\x\\build-bundle.ps1', windowsSpool: 'C:\\ProgramData\\CluedIndependentCI\\formal-spool',

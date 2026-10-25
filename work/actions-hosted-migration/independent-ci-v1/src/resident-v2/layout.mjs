@@ -35,7 +35,6 @@ export const STATE_V2 = Object.freeze({
   trainShadow: `${WIN_STATE_V2}\\train-shadow`,
 });
 export const NODE_EXE = 'C:\\Program Files\\nodejs\\node.exe';
-export const RUNNER_SERVICE = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02';
 export const ORIGINAL_BINARY = '"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"';
 
 // Virtual service account SID: S-1-5-80 + SHA-1 of the upper-case service name (UTF-16LE).

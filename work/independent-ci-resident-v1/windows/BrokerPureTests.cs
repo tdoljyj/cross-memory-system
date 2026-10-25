@@ -3,6 +3,9 @@
 // temporary directory; no service, SCM handle or host path is used.
 using System;
 using System.IO;
+using System.Collections.Generic;
+using System.Text;
+using System.Web.Script.Serialization;
 
 public static class BrokerPureTests
 {
@@ -13,12 +16,28 @@ public static class BrokerPureTests
         try { a(); } catch (BrokerRefusal r) { Yes(r.Code == code, what + ":" + r.Code); return; }
         throw new Exception("NOT_REFUSED:" + what);
     }
+    static Dictionary<string,object> Profile(){return new Dictionary<string,object>{{"contract",NodeProfileV2.Contract},{"nodeName","company-node"},{"hostname","COMPANY-01"},{"ownerSid","S-1-5-21-9-8-7-1105"},{"ownerProfileDirectory","C:\\Users\\company-owner"},{"controllerSid","S-1-5-21-9-8-7-1016"},{"runnerService","actions.runner.tdoljyj-cross-memory-system.clued-ci-company-01"},{"mutationMutex","Global\\CluedControlControllerMutationV1-COMPANY-01-1016"},{"wslDistribution","Company-24.04"}};}
+    static void ProfileConfigCases(){
+        var map=Profile();var node=NodeProfileV2.FromDictionary(map);string acceptance=new string('a',64);
+        NodeProfileV2.BindForProcess(node,acceptance);Yes(ResidentScmV2.Name==node.RunnerService&&ResidentScmV2.ControllerSid==node.ControllerSid&&ResidentScmV2.MutationMutexName==node.MutationMutex,"company-profile-consumed");
+        Func<Dictionary<string,object>,byte[]> raw=v=>Encoding.UTF8.GetBytes(new JavaScriptSerializer().Serialize(v));
+        var config=new Dictionary<string,object>{{"contract","clued.independent-ci.swap-broker-config/3"},{"helper",new Dictionary<string,object>{{"name","controller-formal-generic-v2.exe"},{"sha256",new string('b',64)}}},{"originalBinary","\"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe\""},{"stableDigest",new string('c',64)},{"node",map},{"nodeProfileSha256",node.Sha256},{"acceptanceSha256",acceptance}};
+        var accepted=SwapBroker.ParseConfig(raw(config),node.Sha256);Yes(accepted.Node.CanonicalJson==node.CanonicalJson&&accepted.AcceptanceSha256==acceptance,"broker-full-profile-contract");
+        var bad=new Dictionary<string,object>(config);bad["nodeProfileSha256"]=new string('d',64);Refused(()=>SwapBroker.ParseConfig(raw(bad),node.Sha256),"BROKER_CONFIG_CHANGED","broker-profile-pin");
+        bad=new Dictionary<string,object>(config);bad["acceptanceSha256"]=acceptance+"\n";Refused(()=>SwapBroker.ParseConfig(raw(bad),node.Sha256),"BROKER_CONFIG_CHANGED","broker-acceptance-LF");
+        bad=new Dictionary<string,object>(config);bad["contract"]="clued.independent-ci.swap-broker-config/2";Refused(()=>SwapBroker.ParseConfig(raw(bad),node.Sha256),"BROKER_CONFIG_CHANGED","no-old-profileless-config");
+        bad=new Dictionary<string,object>(config);bad["extra"]="x";Refused(()=>SwapBroker.ParseConfig(raw(bad),node.Sha256),"BROKER_CONFIG_CHANGED","broker-extra-field");
+        var n2=new Dictionary<string,object>(map);n2["controllerSid"]="S-1-5-21-9-8-7-1017";n2["mutationMutex"]="Global\\CluedControlControllerMutationV1-COMPANY-01-1017";bad=new Dictionary<string,object>(config);bad["node"]=n2;Refused(()=>SwapBroker.ParseConfig(raw(bad),node.Sha256),"BROKER_CONFIG_CHANGED","broker-cross-profile");
+        // The validated object copies strings and does not retain caller-owned mutable dictionaries.
+        map["hostname"]="CHANGED";Yes(node.Hostname=="COMPANY-01"&&NodeProfileV2.Current.Hostname=="COMPANY-01","immutable-profile-after-input-mutation");
+    }
     public static int Main(string[] args)
     {
         string dir = Path.Combine(Path.GetTempPath(), "clued-broker-pure-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         try
         {
+            ProfileConfigCases();
             string ok = Path.Combine(dir, "ok.json"), big = Path.Combine(dir, "big.json"), empty = Path.Combine(dir, "empty.json");
             File.WriteAllBytes(ok, new byte[4096]); File.WriteAllBytes(big, new byte[4097]); File.WriteAllBytes(empty, new byte[0]);
             Yes(SwapBroker.ReadBounded(ok).Length == 4096, "bounded-at-limit");

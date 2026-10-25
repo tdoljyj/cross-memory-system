@@ -10,6 +10,7 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {createHash} from 'node:crypto';
 import {canonical} from '../../src/proof.mjs';
+import {hash as profileHash,validateNodeProfile} from '../../src/resident-v2/prepare-record.mjs';
 import {protectedPath} from '../qualification-v2.mjs';
 import {takeAcceptedBridgeContext} from './boundary.mjs';
 export const WINDOWS_ROOT='C:\\ProgramData\\CluedIndependentCI\\formal-spool';
@@ -27,11 +28,11 @@ export function validateRelayDescriptor(d,context){
     d.ownerBoundary==='owner-wsl-administrator'&&d.sourceAcceptanceRef===context?.sourceAcceptanceRef&&d.hostQualificationRef===context?.hostQualificationRef,
     'ACCEPTED_FORMAL_RELAY_MISSING');return d;
 }
-async function safeFile(file,root,{windows=false,fixtureOnly=false}={}){
+async function safeFile(file,root,{windows=false,fixtureOnly=false,nodeProfileSha256=null}={}){
   // Absence is a normal bounded wait. Do not turn a not-yet-created ready
   // marker into a generic PowerShell ACL refusal before observing ENOENT.
   await fsp.lstat(file);
-  if(!fixtureOnly){if(windows){await promisify(execFile)('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',['-NoProfile','-NonInteractive','-File',fileURLToPath(new URL('./formal-spool-acl.ps1',import.meta.url)),'-LiteralTarget',file,'-ProtectedRoot',root,'-AllowControllerWrite'],{windowsHide:true,timeout:10000,maxBuffer:4096});}
+  if(!fixtureOnly){if(windows){await promisify(execFile)('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',['-NoProfile','-NonInteractive','-File',fileURLToPath(new URL('./formal-spool-acl.ps1',import.meta.url)),'-LiteralTarget',file,'-ProtectedRoot',root,'-AllowControllerWrite','-ExpectedNodeProfileSha256',nodeProfileSha256],{windowsHide:true,timeout:10000,maxBuffer:4096});}
     else await protectedPath(file);}
   const h=await fsp.open(file,fs.constants.O_RDONLY|(fs.constants.O_NOFOLLOW??0));
   try{const before=await h.stat();check(before.isFile()&&before.nlink===1&&before.size>0&&before.size<=MAX,'FORMAL_MAILBOX_FILE_BOUNDARY');
@@ -40,10 +41,11 @@ async function safeFile(file,root,{windows=false,fixtureOnly=false}={}){
   }finally{await h.close();}
 }
 async function exclusive(file,bytes){const h=await fsp.open(file,'wx',0o600);try{await h.writeFile(bytes);await h.sync();}finally{await h.close();}}
-async function openFixed({side,root,fixtureOnly=false}){
+async function openFixed({side,root,fixtureOnly=false,nodeProfileSha256=null}){
   const windows=side==='windows';check(['windows','linux'].includes(side),'FORMAL_MAILBOX_SIDE_REQUIRED');
+  if(windows&&!fixtureOnly)check(/^[a-f0-9]{64}$/.test(nodeProfileSha256??''),'FORMAL_MAILBOX_NODE_PROFILE_REQUIRED');
   if(!fixtureOnly){check(windows?process.platform==='win32':process.platform==='linux'&&process.getuid?.()===0,'FORMAL_MAILBOX_PRINCIPAL_REQUIRED');
-    if(windows){await promisify(execFile)('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',['-NoProfile','-NonInteractive','-File',fileURLToPath(new URL('./formal-spool-acl.ps1',import.meta.url)),'-LiteralTarget',root,'-ProtectedRoot',root,'-AllowControllerWrite'],{windowsHide:true,timeout:10000,maxBuffer:4096});}
+    if(windows){await promisify(execFile)('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',['-NoProfile','-NonInteractive','-File',fileURLToPath(new URL('./formal-spool-acl.ps1',import.meta.url)),'-LiteralTarget',root,'-ProtectedRoot',root,'-AllowControllerWrite','-ExpectedNodeProfileSha256',nodeProfileSha256],{windowsHide:true,timeout:10000,maxBuffer:4096});}
     else for(const dir of [root,path.join(root,'incoming'),path.join(root,'outgoing')])await protectedPath(dir,{directory:true});}
   const box=Object.freeze({side,fixture:fixtureOnly,
     async lock(){await exclusive(path.join(root,'outgoing','active.lock'),Buffer.from(canonical({contract:'clued.independent-ci.formal-bridge-lock/2',pid:process.pid,automaticRetryAllowed:false})));},
@@ -53,14 +55,14 @@ async function openFixed({side,root,fixtureOnly=false}){
       if(process.platform==='linux'){const h=await fsp.open(path.dirname(file),'r');try{await h.sync();}finally{await h.close();}}
       return{bytes:bytes.length,sha256:hash(bytes)};
     },
-    async read(name){check(names(name),'FORMAL_MAILBOX_FIXED_READ_REQUIRED');const ready=await safeFile(path.join(root,'incoming',name+'.ready.json'),root,{windows,fixtureOnly}),r=JSON.parse(ready.toString('utf8'));
+    async read(name){check(names(name),'FORMAL_MAILBOX_FIXED_READ_REQUIRED');const ready=await safeFile(path.join(root,'incoming',name+'.ready.json'),root,{windows,fixtureOnly,nodeProfileSha256}),r=JSON.parse(ready.toString('utf8'));
       check(canonical(r)===ready.toString('utf8')&&Object.keys(r).sort().join('|')==='bytes|contract|sha256'&&r.contract==='clued.independent-ci.complete-public-file/1'&&Number.isSafeInteger(r.bytes)&&r.bytes>0&&r.bytes<=MAX&&/^[a-f0-9]{64}$/.test(r.sha256??''),'FORMAL_MAILBOX_READY_REQUIRED');
-      const bytes=await safeFile(path.join(root,'incoming',name+'.json'),root,{windows,fixtureOnly});check(bytes.length===r.bytes&&hash(bytes)===r.sha256,'FORMAL_MAILBOX_PACKET_CHANGED');return bytes;
+      const bytes=await safeFile(path.join(root,'incoming',name+'.json'),root,{windows,fixtureOnly,nodeProfileSha256});check(bytes.length===r.bytes&&hash(bytes)===r.sha256,'FORMAL_MAILBOX_PACKET_CHANGED');return bytes;
     },
     async wait(name,{deadline,signal}={}){check(Number.isFinite(deadline),'FORMAL_MAILBOX_DEADLINE_REQUIRED');while(true){check(!signal?.aborted&&Date.now()<deadline,'FORMAL_MAILBOX_WAIT_UNCONFIRMED');try{return await box.read(name);}catch(e){if(e.code!=='ENOENT')throw e;}await new Promise(resolve=>setTimeout(resolve,100));}}
   });(fixtureOnly?fixture:actual).add(box);return box;
 }
-export async function openAcceptedMailbox(context){takeAcceptedBridgeContext(context);validateRelayDescriptor(context.descriptor,context);return openFixed({side:context.side,root:context.side==='windows'?WINDOWS_ROOT:LINUX_ROOT});}
+export async function openAcceptedMailbox(context){takeAcceptedBridgeContext(context);validateRelayDescriptor(context.descriptor,context);const nodeProfileSha256=context.side==='windows'?profileHash(validateNodeProfile(context.accepted.node)):null;return openFixed({side:context.side,root:context.side==='windows'?WINDOWS_ROOT:LINUX_ROOT,nodeProfileSha256});}
 export function takeActualMailbox(box){check(actual.has(box)&&!fixture.has(box),'ACTUAL_ACCEPTED_FORMAL_MAILBOX_REQUIRED');return box;}
 // Actual disk tests use disposable work directories and cannot get the actual
 // mailbox brand or enter a production Linux adapter.
