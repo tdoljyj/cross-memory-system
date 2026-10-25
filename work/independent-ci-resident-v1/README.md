@@ -35,3 +35,5 @@ Phase 2, step 3a (Task `6451a55d`, Owner decision `0bb98194`) is described in DE
 Primary/standby C6 (Task `6444f88a`) is described in DESIGN.md §20. It adds the intake pause: any Owner session can hold new batches for at most two hours (`tools/rearm-tool.mjs request-intake-pause`), without touching a batch that runs or is parked. Each request names a holder, and a holder may lift only its own hold. status.json `/3` shows the holds.
 
 Phase 2, step 3b (Task `6451a55d`, sub-Task `a3548216`) is described in DESIGN.md §21. Job contract `/3` adds the tested commit S to the job identity. With the train off, S is the head itself, so the workspaces and tests are the same as before.
+
+Primary/standby C5 (Task `ade5df89`) is described in [DESIGN.md §23](DESIGN.md#23-主备-c5pr-页面节点状态接班核对与双活停机task-ade5df89). It covers each node's PR status, standby reminders, bounded takeover checks, and the dual-active intake hold with its three release conditions. These are advisory; the service-side ci-admission role and C4's GitHub read-back remain the publication controls.
