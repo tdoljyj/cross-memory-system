@@ -919,11 +919,11 @@
   },
   "successors": {
     "gitleaks729": {
-      "commit": "d3367a8cec39915d366bfd4ad8474a682704ca2f",
+      "commit": "5ede8053fbfdc9f62ad0d93c19112793a7760aec",
       "files": {
         ".github/workflows/gitleaks.yml": {
-          "blob": "2e4191f3436594f80e4428e813a608aa0fa4c270",
-          "sha256": "9bc0f09e3a7b44d054f3dc4b5b5096c7ac7ffa41af091587fd1abc73b6623953",
+          "blob": "ee2f4e85fd1c1417b68eb582f7f3cebe1fa00bcf",
+          "sha256": "c4e30aff4a2f4e293391480d27724ea85f468571a4d8194a4951709bf49444b1",
           "lines": [
             "name: gitleaks",
             "",
@@ -1013,7 +1013,7 @@
             "          scan=\"$RUNNER_TEMP/clued-gitleaks\"; repo=\"$scan/repo\"; control=\"$scan/control\"",
             "          mkdir \"$scan\" \"$repo\" \"$control\"",
             "          echo \"409462af3073b05a1511d5593afa784a82b447d398580e970e2e8bfa5430a780  .gitleaks.toml\" | sha256sum -c --quiet -",
-            "          echo \"259063e1a7d8579944cfe6dc5a35f97414c5e13de435fd66692cb5829dec024a  scripts/ci/reviewed_gitleaks.py\" | sha256sum -c --quiet -",
+            "          echo \"91340e850ebc02f74f828f74f75d7e305f043fb885e79e75b50d4c9f027c2bee  scripts/ci/reviewed_gitleaks.py\" | sha256sum -c --quiet -",
             "          sed -n 's/^# clued-reviewed-finding: {\"fingerprint\":\"\\([0-9a-f]\\{40\\}\\):.*$/\\1/p' .gitleaks.toml | sort -u > \"$control/reviewed-commits\"",
             "          echo \"f889be5ef30f8409db61b1130810b5088ca278d04886b10cf98a3a2558609192  $control/reviewed-commits\" | sha256sum -c --quiet -",
             "          git init --quiet --template= \"$repo\"",
