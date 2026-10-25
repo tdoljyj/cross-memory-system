@@ -47,15 +47,25 @@ function Escape-SingleQuoted([string]$value) {
 $manageDocker = if ([bool]$hostRecord.linux_runner.manage_native_docker) { '$true' } else { '$false' }
 
 # Additional Linux slots share the primary WSL distro and are supervised by the
-# same watchdog once they are active; enrolling slots are left alone.
-$linuxUnits = @($hostRecord.linux_runner.service_unit)
+# same watchdog. Every Linux runner, the primary included, is supervised only
+# while its own state (the host's when unset) is active; enrolling, retired and
+# other runners are left alone, so a retired unit is never restarted.
+$linuxRunners = @($hostRecord.linux_runner)
 if ($hostRecord.PSObject.Properties.Name -contains 'additional_linux_runners') {
-    foreach ($extra in @($hostRecord.additional_linux_runners)) {
-        $extraState = if ($extra.PSObject.Properties.Name -contains 'state') { $extra.state } else { $hostRecord.state }
-        if ($extraState -eq 'active') {
-            $linuxUnits += $extra.service_unit
-        }
+    $linuxRunners += @($hostRecord.additional_linux_runners)
+}
+$linuxUnits = @()
+foreach ($linuxRunner in $linuxRunners) {
+    $runnerState = if ($linuxRunner.PSObject.Properties.Name -contains 'state') { $linuxRunner.state } else { $hostRecord.state }
+    if ($runnerState -eq 'active') {
+        $linuxUnits += $linuxRunner.service_unit
     }
+}
+# The distro keepalive, native Docker and capacity suspend exist for these
+# runners. Without an active one there is nothing to supervise: keep the host's
+# watchdog stopped rather than render one.
+if ($linuxUnits.Count -eq 0) {
+    throw "$HostId has no active Linux runner, so the v1 watchdog has nothing to supervise. Keep its watchdog task and startup entries stopped."
 }
 $linuxUnitsLiteral = ($linuxUnits | ForEach-Object { "'" + (Escape-SingleQuoted $_) + "'" }) -join ','
 $template = @'
