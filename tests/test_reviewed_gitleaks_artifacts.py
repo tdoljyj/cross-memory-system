@@ -64,7 +64,7 @@ class ReviewedArtifactDigestTests(unittest.TestCase):
     def test_exact_record_count_and_artifact_reason(self):
         records = reviewed.parse_records(self.config)
         exact = [r for r in records if ':' + reviewed.REVIEW_DOCUMENT_PATH + ':' in r['fingerprint']]
-        self.assertEqual(len(records), 729)
+        self.assertEqual(len(records), 730)
         legacy_digest = hashlib.sha256(json.dumps(records[:484], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         self.assertEqual(legacy_digest, 'b10a7c8542f886ccce1daec04057ad5a5873ef9d75eae1643ccc879289b39172')
         prior_digest = hashlib.sha256(json.dumps(records[:491], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
@@ -150,7 +150,7 @@ class FinalEvidenceArtifactDigestTests(unittest.TestCase):
     def test_changed_registry_count_is_rejected(self):
         row = next(line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)
                    and reviewed.FINAL_EVIDENCE_COMMIT in line)
-        for changed in [self.config.replace('# clued-reviewed-count: 729', '# clued-reviewed-count: 728'),
+        for changed in [self.config.replace('# clued-reviewed-count: 730', '# clued-reviewed-count: 729'),
                         self.config.replace(row + '\n', '', 1), self.config + row + '\n']:
             with self.subTest():
                 with self.assertRaisesRegex(ValueError, 'Reviewed finding count changed'):
@@ -426,13 +426,13 @@ class SchedulingExactFixtureTests(unittest.TestCase):
 
     def test_only_three_exact_additions_preserve_every_legacy_record_byte(self):
         records = reviewed.parse_records(self.config)
-        self.assertEqual(len(records), 729)
+        self.assertEqual(len(records), 730)
         self.assertEqual(self.rows()[:726], self.rows(self.old_config))
         self.assertEqual(hashlib.sha256(('\n'.join(self.rows()[:726]) + '\n').encode()).hexdigest(),
                          reviewed.LEGACY_RECORD_LINES_SHA256)
         self.assertEqual(reviewed.tomllib.loads(self.config), reviewed.BASE_CONFIG)
         self.assertEqual(reviewed.tomllib.loads(self.config), reviewed.tomllib.loads(self.old_config))
-        self.assertEqual({r['fingerprint'] for r in records[726:]}, set(reviewed.SCHEDULING_FINDINGS))
+        self.assertEqual({r['fingerprint'] for r in records[726:729]}, set(reviewed.SCHEDULING_FINDINGS))
         self.assertEqual(sum(':private-key:' in r['fingerprint'] for r in records), 1)
         self.assertTrue(all(re.fullmatch(r'[a-f0-9]{40}:[^:]+:[^:]+:[1-9][0-9]*', r['fingerprint'])
                             for r in records))
@@ -459,7 +459,7 @@ class SchedulingExactFixtureTests(unittest.TestCase):
                    self.config.replace(rows[0] + '\n', '', 1),
                    self.config.replace(rows[0], fourth, 1),
                    self.config.replace(rows[0], rows[0].replace(':', ': ', 1), 1),
-                   self.config.replace('# clued-reviewed-count: 729', '# clued-reviewed-count: 730') + fourth + '\n']
+                   self.config.replace('# clued-reviewed-count: 730', '# clued-reviewed-count: 731') + fourth + '\n']
         for changed in changes:
             with self.subTest(), self.assertRaises(ValueError):
                 reviewed.parse_records(changed)
@@ -523,6 +523,94 @@ class SchedulingExactFixtureTests(unittest.TestCase):
         self.assertNotIn('-----BEGIN ', text)
         self.assertNotIn('"Secret"', text)
         self.assertNotIn('"Match"', text)
+
+
+class RoleProbeExactFixtureTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.config = (ROOT / '.gitleaks.toml').read_text(encoding='utf-8')
+        cls.source33 = reviewed.run(['git', 'cat-file', 'blob',
+                                    '4f45323938e5a6f9d775ac2958b743e739c7464d:.gitleaks.toml'], cwd=ROOT).decode()
+        cls.fingerprint = next(iter(reviewed.ROLE_PROBE_FINDINGS))
+        cls.text = reviewed.run(['git', 'cat-file', 'blob',
+                                f'{reviewed.ROLE_PROBE_COMMIT}:{reviewed.ROLE_PROBE_PATH}'], cwd=ROOT).decode()
+
+    def test_all_729_original_record_bytes_and_default_policy_are_preserved(self):
+        rows = lambda text: [line for line in text.splitlines(keepends=True) if line.startswith(reviewed.PREFIX)]
+        self.assertEqual(rows(self.config)[:729], rows(self.source33))
+        self.assertEqual(hashlib.sha256(''.join(rows(self.config)[:729]).encode()).hexdigest(),
+                         reviewed.SOURCE33_RECORD_LINES_SHA256)
+        self.assertEqual(reviewed.tomllib.loads(self.config), reviewed.tomllib.loads(self.source33))
+        records = reviewed.parse_records(self.config)
+        self.assertEqual(len(records), 730)
+        self.assertEqual({r['fingerprint'] for r in records[729:]}, {self.fingerprint})
+        self.assertEqual(records[729]['kinds'], ['SYNTHETIC_ROLE_PROBE_TOKEN'])
+
+    def test_source33_record_format_and_order_cannot_change(self):
+        rows = [line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)]
+        formatted = rows[726].replace('{"fingerprint":', '{"fingerprint": ', 1)
+        for changed in [self.config.replace(rows[726], formatted, 1),
+                        self.config.replace(rows[726] + '\n' + rows[727], rows[727] + '\n' + rows[726], 1)]:
+            with self.subTest(), self.assertRaisesRegex(ValueError, 'Source33 reviewed finding bytes changed'):
+                reviewed.parse_records(changed)
+
+    def test_new_identity_and_kind_are_exact_and_cannot_be_borrowed(self):
+        row = next(line for line in self.config.splitlines() if self.fingerprint in line)
+        record = json.loads(row[len(reviewed.PREFIX):])
+        commit, path, rule, line = self.fingerprint.split(':')
+        changes = [dict(record, fingerprint=':'.join([commit, path, rule, '74'])),
+                   dict(record, fingerprint=':'.join(['0' * 40, path, rule, line])),
+                   dict(record, fingerprint=':'.join([commit, 'work/other.test.mjs', rule, line])),
+                   dict(record, fingerprint=':'.join([commit, path, 'sourcegraph-access-token', line])),
+                   dict(record, kinds=['SYNTHETIC_TEST_TOKEN']), dict(record, kinds=['ARTIFACT_DIGEST'])]
+        for value in changes:
+            with self.subTest(), self.assertRaises(ValueError):
+                reviewed.parse_records(self.config.replace(row, reviewed.PREFIX + json.dumps(value, separators=(',', ':')), 1))
+
+    def test_actual_immutable_blob_line_and_mocked_use_are_verified(self):
+        reviewed.verify_role_probe_fixture(ROOT, self.fingerprint, self.text)
+
+    def test_new_commit_other_path_and_other_line_cannot_use_the_proof(self):
+        for changed in [self.fingerprint.replace(reviewed.ROLE_PROBE_COMMIT, '0' * 40),
+                        self.fingerprint.replace(reviewed.ROLE_PROBE_PATH, 'work/other.test.mjs'),
+                        self.fingerprint[:-2] + '74']:
+            with self.subTest(), self.assertRaisesRegex(ValueError, 'Unreviewed role-probe fixture identity'):
+                reviewed.verify_role_probe_fixture(ROOT, changed, self.text)
+
+    def test_modified_blob_or_git_binding_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'immutable blob changed'):
+            reviewed.verify_role_probe_fixture(ROOT, self.fingerprint, self.text + '\n')
+        with patch.object(reviewed, 'run', return_value=b'0' * 40 + b'\n'):
+            with self.assertRaisesRegex(ValueError, 'immutable blob changed'):
+                reviewed.verify_role_probe_fixture(ROOT, self.fingerprint, self.text)
+
+    def test_end_line_span_and_use_span_pins_are_enforced(self):
+        spec = reviewed.ROLE_PROBE_FINDINGS[self.fingerprint]
+        for changed in [dict(spec, end_line=74), dict(spec, span_bytes=spec['span_bytes'] + 1),
+                        dict(spec, span_sha256='0' * 64)]:
+            with self.subTest(), patch.dict(reviewed.ROLE_PROBE_FINDINGS, {self.fingerprint: changed}):
+                with self.assertRaisesRegex(ValueError, 'exact span changed'):
+                    reviewed.verify_role_probe_fixture(ROOT, self.fingerprint, self.text)
+        with patch.dict(reviewed.ROLE_PROBE_USE, {'sha256': '0' * 64}):
+            with self.assertRaisesRegex(ValueError, 'use span changed'):
+                reviewed.verify_role_probe_fixture(ROOT, self.fingerprint, self.text)
+
+    def test_mocked_fetch_and_same_token_pin_are_independent_use_requirements(self):
+        # Rebind the immutable test pins only in this negative unit fixture to reach
+        # the semantic use check: neither real fetch nor a different pin expression qualifies.
+        variants = [self.text.replace('fetchImpl: async (...v) => { native.push(v);',
+                                      'fetchImpl: async (...v) => { await fetch(...v); native.push(v);', 1),
+                    self.text.replace("\\0' + token)", "\\0' + digest(token))", 1)]
+        for text in variants:
+            self.assertNotEqual(text, self.text)
+            raw = text.encode(); blob = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+            pin = {'blob': blob, 'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)}
+            use = ''.join(text.splitlines(keepends=True)[71:82]).encode()
+            with self.subTest(), patch.dict(reviewed.ROLE_PROBE_BLOB, pin), \
+                    patch.dict(reviewed.ROLE_PROBE_USE, {'bytes': len(use), 'sha256': hashlib.sha256(use).hexdigest()}), \
+                    patch.object(reviewed, 'run', return_value=(blob + '\n').encode()):
+                with self.assertRaisesRegex(ValueError, 'mocked token use changed'):
+                    reviewed.verify_role_probe_fixture(ROOT, self.fingerprint, text)
 
 
 if __name__ == '__main__':

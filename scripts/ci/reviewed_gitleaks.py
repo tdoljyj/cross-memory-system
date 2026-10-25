@@ -16,7 +16,20 @@ PREFIX = "# clued-reviewed-finding: "
 COUNT_PREFIX = "# clued-reviewed-count: "
 LEGACY_COUNT = 726
 LEGACY_RECORD_LINES_SHA256 = "5ec9aef1a5af7f356152ba7dfc18e197a968cf3ac70ffd2b2aa7000a4801d35c"
-EXPECTED_COUNT = 729
+SOURCE33_COUNT = 729
+SOURCE33_RECORD_LINES_SHA256 = "3117636bb9809e0aa2f953340172e48ba171b010949112dbe79e5879309a45cd"
+EXPECTED_COUNT = 730
+ROLE_PROBE_COMMIT = "16f981cca5bdcae27e5eb08768013b36deafe44a"
+ROLE_PROBE_PATH = "work/independent-ci-resident-v1/test/role-probe.test.mjs"
+ROLE_PROBE_BLOB = {"blob": "cf3254de92881aa76a03dbd8714217c6cfd23abb",
+                   "sha256": "4c27c0a152006f0b7dd57b856155c221577967720fa05bc3211fd277fa8c296e", "bytes": 7681}
+ROLE_PROBE_FINDINGS = {
+    f"{ROLE_PROBE_COMMIT}:{ROLE_PROBE_PATH}:generic-api-key:73": {
+        "kind": "SYNTHETIC_ROLE_PROBE_TOKEN", "end_line": 73, "span_bytes": 89,
+        "span_sha256": "38515feffdf8a479abaf951cbd038bd01b06c13397ade3fa3654c76afd879aa6"},
+}
+ROLE_PROBE_USE = {"start_line": 72, "end_line": 82, "bytes": 1499,
+                  "sha256": "7923e0fe68718947ca236d9331ac50be9fe7dc08b125349e937a80aad39548d5"}
 SCHEDULING_COMMIT = "fd10191533a5f2139b224a90a096880039d62034"
 SCHEDULING_TEST_PATH = "apps/clued-cloud/tests/ci-scheduling-stage1-ui.test.mjs"
 SCHEDULING_README_PATH = "work/ci-scheduling-stage1-20261023/README.md"
@@ -138,6 +151,7 @@ KINDS = {
     "OAUTH_CLIENT_ID",
 }
 KINDS |= SCHEDULING_KINDS
+KINDS |= {spec["kind"] for spec in ROLE_PROBE_FINDINGS.values()}
 BASE_CONFIG = {
     "title": "Clued Gitleaks configuration",
     "extend": {"useDefault": True},
@@ -188,6 +202,10 @@ def parse_records(text):
         if (fixture is not None and record["kinds"] != [fixture["kind"]]
                 or set(record["kinds"]) & SCHEDULING_KINDS and fixture is None):
             raise ValueError("Scheduling fixture exception identity changed")
+        role_probe = ROLE_PROBE_FINDINGS.get(record["fingerprint"])
+        if (role_probe is not None and record["kinds"] != [role_probe["kind"]]
+                or "SYNTHETIC_ROLE_PROBE_TOKEN" in record["kinds"] and role_probe is None):
+            raise ValueError("Role-probe fixture exception identity changed")
         if rule == "sourcegraph-access-token" and record["kinds"] != ["GIT_OBJECT_METADATA"]:
             raise ValueError("Object rule requires object proof")
         if path == REVIEW_DOCUMENT_PATH and (
@@ -244,11 +262,16 @@ def parse_records(text):
                     if record["fingerprint"].split(":")[1] in EXACT_PATH_FINDINGS}
     if actual_exact != expected_exact:
         raise ValueError("Exact path exception set changed")
-    if {record["fingerprint"] for record in records[LEGACY_COUNT:]} != set(SCHEDULING_FINDINGS):
+    if {record["fingerprint"] for record in records[LEGACY_COUNT:SOURCE33_COUNT]} != set(SCHEDULING_FINDINGS):
         raise ValueError("Scheduling fixture exception set changed")
+    if {record["fingerprint"] for record in records[SOURCE33_COUNT:]} != set(ROLE_PROBE_FINDINGS):
+        raise ValueError("Role-probe fixture exception set changed")
     legacy_lines = [line for line in text.splitlines() if line.startswith(PREFIX)][:LEGACY_COUNT]
     if hashlib.sha256(("\n".join(legacy_lines) + "\n").encode()).hexdigest() != LEGACY_RECORD_LINES_SHA256:
         raise ValueError("Legacy reviewed finding bytes changed")
+    source33_lines = [line for line in text.splitlines() if line.startswith(PREFIX)][:SOURCE33_COUNT]
+    if hashlib.sha256(("\n".join(source33_lines) + "\n").encode()).hexdigest() != SOURCE33_RECORD_LINES_SHA256:
+        raise ValueError("Source33 reviewed finding bytes changed")
     return records
 
 
@@ -484,6 +507,46 @@ def verify_scheduling_fixture(repo, fingerprint, text):
         raise ValueError("Unreviewed scheduling fixture classification")
 
 
+def verify_role_probe_fixture(repo, fingerprint, text):
+    """Admit one immutable mocked token use, never a token-prefix or test-path category."""
+    spec = ROLE_PROBE_FINDINGS.get(fingerprint)
+    if spec is None:
+        raise ValueError("Unreviewed role-probe fixture identity")
+    commit, path, rule, line = fingerprint.split(":")
+    blob = text.encode("utf-8")
+    object_id = hashlib.sha1(b"blob " + str(len(blob)).encode() + b"\0" + blob).hexdigest()
+    if (len(blob) != ROLE_PROBE_BLOB["bytes"] or object_id != ROLE_PROBE_BLOB["blob"]
+            or hashlib.sha256(blob).hexdigest() != ROLE_PROBE_BLOB["sha256"]
+            or run(["git", "rev-parse", f"{commit}:{path}"], cwd=repo).decode().strip() != ROLE_PROBE_BLOB["blob"]):
+        raise ValueError("Role-probe fixture immutable blob changed")
+    lines = text.splitlines(keepends=True)
+    span = "".join(lines[int(line) - 1:spec["end_line"]]).encode()
+    if len(span) != spec["span_bytes"] or hashlib.sha256(span).hexdigest() != spec["span_sha256"]:
+        raise ValueError("Role-probe fixture exact span changed")
+    use = "".join(lines[ROLE_PROBE_USE["start_line"] - 1:ROLE_PROBE_USE["end_line"]])
+    if len(use.encode()) != ROLE_PROBE_USE["bytes"] or hashlib.sha256(use.encode()).hexdigest() != ROLE_PROBE_USE["sha256"]:
+        raise ValueError("Role-probe fixture use span changed")
+    source = lines[int(line) - 1].rstrip("\r\n")
+    declaration = re.fullmatch(r"  const token = ('[^'\\]*'), reads = \[\], protectedCalls = \[\], native = \[\];", source)
+    if rule != "generic-api-key" or not declaration:
+        raise ValueError("Role-probe synthetic token declaration changed")
+    token = ast.literal_eval(declaration.group(1))
+    if not re.fullmatch(r"clued_bnd_[A-Za-z0-9_-]{8,480}", token):
+        raise ValueError("Role-probe synthetic token shape changed")
+    required = [
+        "ciTokenPinSha256: digest('clued.independent-ci.ci-binding-pin/1\\0' + token)",
+        "protect: async (...v) => protectedCalls.push(v)",
+        "tokenReader: async (file, options) => { reads.push({ file, options }); return token; }",
+        "fetchImpl: async (...v) => { native.push(v); return new Response(JSON.stringify({ status: 'ok', repository: record.config.repository, holders: [] })); }",
+        "assert.equal(reads.length, 1)", "assert.equal(protectedCalls.length, 1)", "assert.equal(native.length, 1)",
+        "ciTokenPinSha256: '0'.repeat(64)", "fetchImpl: async () => { assert.fail('no request'); }",
+        "{ code: 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' }",
+    ]
+    if ("import { probeRole } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/role-probe-entry.mjs';" not in text.splitlines()
+            or not all(part in use for part in required)):
+        raise ValueError("Role-probe mocked token use changed")
+
+
 def verify_history(repo, records):
     commits = _ensure_reviewed_commits(repo, records)
     blobs = {}
@@ -497,6 +560,8 @@ def verify_history(repo, records):
             raise ValueError("Reviewed location no longer resolves")
         if record["fingerprint"] in SCHEDULING_FINDINGS:
             verify_scheduling_fixture(repo, record["fingerprint"], text)
+        if record["fingerprint"] in ROLE_PROBE_FINDINGS:
+            verify_role_probe_fixture(repo, record["fingerprint"], text)
         if path == REVIEW_DOCUMENT_PATH:
             verify_auth_review_digest(repo, text, int(line))
         if path in FINAL_EVIDENCE_DOCUMENTS:
@@ -667,6 +732,31 @@ def self_test(config, production_ignore):
     if code != 1 or not {("other-path/" + path, rule) for path, rule in required} <= {
             (finding["File"], finding["RuleID"]) for finding in different_path}:
         raise ValueError("Scheduling marker or prose was suppressed at a different path")
+    # Copy the exact historical mocked-use blob as data. A new commit, path or line
+    # must still be detected; the one old fingerprint grants none of these uses.
+    role_blob = run(["git", "cat-file", "blob", f"{ROLE_PROBE_COMMIT}:{ROLE_PROBE_PATH}"], cwd=config.parent)
+    if hashlib.sha256(role_blob).hexdigest() != ROLE_PROBE_BLOB["sha256"]:
+        raise ValueError("Role-probe detector fixture blob changed")
+    role_target = test_repo / ROLE_PROBE_PATH
+    role_target.parent.mkdir(parents=True, exist_ok=True)
+    role_target.write_bytes(role_blob)
+    commit()
+    code, role_new_commit = scan()
+    if code != 1 or not any(f["File"] == ROLE_PROBE_PATH and f["RuleID"] == "generic-api-key" and f["StartLine"] == 73 for f in role_new_commit):
+        raise ValueError("Role-probe marker was suppressed in a new commit")
+    other_role_path = "other-path/" + ROLE_PROBE_PATH
+    other_role_target = test_repo / other_role_path
+    other_role_target.parent.mkdir(parents=True, exist_ok=True)
+    other_role_target.write_bytes(role_blob)
+    commit()
+    code, role_different_path = scan()
+    if code != 1 or not any(f["File"] == other_role_path and f["RuleID"] == "generic-api-key" for f in role_different_path):
+        raise ValueError("Role-probe marker was suppressed at another path")
+    role_target.write_bytes(b"\n" + role_blob)
+    commit()
+    code, role_different_line = scan()
+    if code != 1 or not any(f["File"] == ROLE_PROBE_PATH and f["RuleID"] == "generic-api-key" and f["StartLine"] == 74 for f in role_different_line):
+        raise ValueError("Role-probe marker was suppressed at another line")
     (test_repo / "controlled-valid-private.pem").write_bytes(synthetic_valid_private_pem())
     commit()
     code, valid_private = scan()
@@ -677,6 +767,9 @@ def self_test(config, production_ignore):
             "new_commit_detection": True, "different_path_detection": True,
             "scheduling_marker_new_commit_detection": True,
             "scheduling_marker_different_path_detection": True,
+             "role_probe_new_commit_detection": True,
+             "role_probe_different_path_detection": True,
+             "role_probe_different_line_detection": True,
             "valid_private_key_detection": True,
             "synthetic_test_repository": str(test_repo),
             "handover_acceptance_artifact_proof": _self_test_handover_acceptance(root)}
