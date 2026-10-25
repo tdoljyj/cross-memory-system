@@ -47,8 +47,8 @@ test('actual provider cumulative one-commit preflight, canonical-to-synthetic ma
       disposable_pg_registration:'mock-registered-disposable',operator_authority_receipt:'33333333-3333-4333-8333-333333333333',
       source_baseline:'e'.repeat(40),registration_run_id:'30',valid_until:'2026-10-14T17:00:00Z'};
     p.idle_selection_policy={...p.idle_selection_policy,mode:'late-bound-single-original-journal',workflow,
-      workflow_blob:'3c94569a38f27ba34ac53ff3bb207d9ccd674f35',source_sha256:'f72524c1b5ab32a762aec59007bf85dc0ae1ddb9a9e74f38e768dbf712faaa0e',
-      primary_definition_sha256:'c26bfb67a0637206f3a26ad72bc9d9e45c039005e53602416df57871735d3647'};
+      workflow_blob:'97c39730ce75f2ea2427c9fa3845f9df32e998f8',source_sha256:'133554a025b122737198289925920b31992191a96a5321242d3c78cf119acf66',
+      primary_definition_sha256:'d6dce50d38f3a75a290776243f8065ad69cbfd4fa68327f75a8ce3055965fd3d'};
     // The actual journal's original immutable idle YAML identity is exercised,
     // while the full-A acceptance dependency remains explicitly substituted.
     const sourceRoot=path.resolve(sourceDir,'../..');

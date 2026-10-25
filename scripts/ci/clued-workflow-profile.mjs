@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-export const COMPONENT_VERSION = "1.0.0";
+export const COMPONENT_VERSION = "1.0.1";
 
 const digest=text=>createHash('sha256').update(text).digest('hex');
 const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?
@@ -417,4 +417,58 @@ export function verifyExternal2LateIdleSourceByteRelation({sourceBytes,programMa
     }
     return {passed:true,state:'candidate_byte_relation',authority:'none',actual_qualification:false,owner_accepted:false,operator_accepted:false,default_registered:false};
   }catch{return fail('Source3 byte relation unavailable or invalid');}
+}
+
+// Pending Source metadata is not an accepted Source or a Host qualification.
+// Keep it outside active/accepted workflow maps until an actual registrar successor.
+const NATIVE617_FILES=Object.freeze({
+  '.github/workflows/clued-work-admission-dispatch.yml':{job:'admit',route:'handover-native-control-once',jobs:['admit']},
+  '.github/workflows/clued-handover-external-qualification.yml':{job:'qualify',route:'handover-native-task617-once',jobs:['admission-gate','qualify']},
+  '.github/workflows/clued-handover-disposable-idle.yml':{job:'disposable-idle',route:'handover-native-task617-once',jobs:['admission-gate','disposable-idle']}
+});
+export function native617PendingWorkflowCatalogue(registry,specs){
+  const bad=reason=>({passed:false,structurally_valid:false,state:'unknown',reason,
+    authoritative:false,host_qualified:false,execution_permitted:false});
+  try{
+    if(registry?.schema!=='clued.gated-proof-profiles/2'||specs?.schema!=='clued.gated-proof-role-specs/2')
+      return bad('native617 pending schema');
+    const entries=registry.native617_pending_sources,roleEntries=specs.native617_pending_sources;
+    if(!Array.isArray(entries)||entries.length!==3||!Array.isArray(roleEntries)||roleEntries.length!==3)
+      return bad('native617 pending bounds');
+    const seen=new Set();
+    for(const entry of entries){
+      const fixed=NATIVE617_FILES[entry?.file];
+      if(!fixed||seen.has(entry.file)||!exactKeys(entry,['file','purpose','registration_status','source_yaml',
+        'workflow_blob','source_sha256','workflow_definition','source_acceptance','host_qualification'])||
+        entry.purpose!=='native617_free_entry_source_preparation'||
+        entry.registration_status!=='PENDING_INDEPENDENT_SOURCE_REVIEW_HOST_NOT_QUALIFIED'||
+        entry.source_acceptance!==null||entry.host_qualification!==null||
+        typeof entry.source_yaml!=='string'||Buffer.byteLength(entry.source_yaml)>524288||
+        workflowBlob(entry.source_yaml)!==entry.workflow_blob||digest(entry.source_yaml)!==entry.source_sha256)
+        return bad('native617 pending source');
+      seen.add(entry.file);
+      const rows=roleEntries.filter(row=>row?.file===entry.file&&row.workflow_blob===entry.workflow_blob);
+      if(rows.length!==1||!exactKeys(rows[0],['file','workflow_blob','roles'])||
+        !Array.isArray(rows[0].roles)||rows[0].roles.length!==1)return bad('native617 pending roles');
+      const role=rows[0].roles[0],definition=entry.workflow_definition;
+      if(!exactKeys(role,['job_id','definition_sha256','definition'])||role.job_id!==fixed.job||
+        !definition?.jobs||!same(Object.keys(definition.jobs).sort(),[...fixed.jobs].sort())||
+        !same(role.definition,definition.jobs[fixed.job])||roleDefinitionDigest(role.definition)!==role.definition_sha256)
+        return bad('native617 pending role definition');
+      const job=role.definition,labels=['self-hosted','Linux','X64','clued','trust-internal',fixed.route];
+      if(!same(job['runs-on'],labels)||job.uses||job.strategy||!Array.isArray(job.steps)||
+        job.steps.filter(step=>step?.name==='Refuse until independent Native E1 qualification'&&
+          step.run==='node scripts/ci/clued-handover-native-entry.mjs --check'&&step.env===undefined).length!==1)
+        return bad('native617 pending route/guard');
+      // These candidate bytes must not become another accepted source by being
+      // copied into the active registry. Historical entries remain untouched.
+      const active=registry.workflows?.[entry.file];
+      if(active?.workflow_blob===entry.workflow_blob||
+        (active?.accepted_sources??[]).some(source=>source.workflow_blob===entry.workflow_blob)||
+        Object.hasOwn(specs.workflows?.[entry.file]?.sources??{},entry.workflow_blob))
+        return bad('native617 candidate registered itself');
+    }
+    return {passed:false,structurally_valid:true,state:'pending_independent_source_and_host_review',
+      authoritative:false,host_qualified:false,execution_permitted:false,entries:structuredClone(entries)};
+  }catch{return bad('native617 pending invalid');}
 }

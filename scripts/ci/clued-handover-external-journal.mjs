@@ -1,6 +1,6 @@
 // Persistent PG journal for this exact approved disposable cancellation only.
 import assert from 'node:assert/strict';
-export const COMPONENT_VERSION = "1.0.1";
+export const COMPONENT_VERSION = "1.0.2";
 import crypto from 'node:crypto';
 import {assertCanonicalGateFact} from './clued-handover-external-gate-evidence.mjs';
 export function validateStarted(fact,runId){
@@ -183,9 +183,11 @@ export function assertIdleSelectionPolicy(profile){
   assert.equal(policy.mode,'late-bound-single-original-journal');
   assert.equal(policy.workflow,'clued-handover-disposable-idle.yml');
   assert.equal(profile.fixture_idle_workflow,policy.workflow);
-  assert.equal(policy.workflow_blob,'3c94569a38f27ba34ac53ff3bb207d9ccd674f35');
-  assert.equal(policy.source_sha256,'f72524c1b5ab32a762aec59007bf85dc0ae1ddb9a9e74f38e768dbf712faaa0e');
-  assert.equal(policy.primary_definition_sha256,'c26bfb67a0637206f3a26ad72bc9d9e45c039005e53602416df57871735d3647');
+  // Keep the original exact Source triplet for historical accepted records;
+  // the disabled Native successor is a second indivisible triplet, not a mix.
+  const sourcePins=[{"workflow_blob":"3c94569a38f27ba34ac53ff3bb207d9ccd674f35","source_sha256":"f72524c1b5ab32a762aec59007bf85dc0ae1ddb9a9e74f38e768dbf712faaa0e","primary_definition_sha256":"c26bfb67a0637206f3a26ad72bc9d9e45c039005e53602416df57871735d3647"},{"workflow_blob":"97c39730ce75f2ea2427c9fa3845f9df32e998f8","source_sha256":"133554a025b122737198289925920b31992191a96a5321242d3c78cf119acf66","primary_definition_sha256":"d6dce50d38f3a75a290776243f8065ad69cbfd4fa68327f75a8ce3055965fd3d"}];
+  assert.ok(sourcePins.some(pins=>Object.keys(pins).every(key=>policy[key]===pins[key])),
+    'IDLE_SOURCE_TRIPLET_NOT_ACCEPTED');
   for(const field of POLICY_KEYS.filter(k=>k.endsWith('_actor_id')))assert.ok(numericId(policy[field]),'ACTUAL_ACTOR_ACCEPTANCE_REQUIRED:'+field);
   assert.equal(profile.repository,'tdoljyj/cross-memory-system');
   assert.equal(profile.qualifier_workflow,'clued-handover-external-qualification.yml');
