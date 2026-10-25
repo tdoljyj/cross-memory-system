@@ -43,7 +43,7 @@ $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'   # no 
 $Root = 'C:\ProgramData\CluedIndependentCI\resident'
 $ServiceName = 'CluedCIResident'
 $BrokerName = 'CluedCISwapBroker'
-$RunnerService = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02'
+$RunnerService = $null   # the node profile's runnerService (Get-PackageNodeProfile, below)
 $OriginalBinary = '"C:\ProgramData\CluedControl\runner\bin\RunnerService.exe"'
 $Sc = 'C:\Windows\System32\sc.exe'
 $Csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
@@ -98,10 +98,51 @@ function Get-ServiceSid([string]$name) {
   'S-1-5-80-' + ((0..4 | ForEach-Object { [BitConverter]::ToUInt32($h, $_ * 4) }) -join '-')
 }
 
+# ---- Node profile (resident active/standby design v0.4, section 9 C1) ----
+# The host this package is pinned to is the install record's node profile: record\acceptance.json `node`, read from
+# the package, hashed against the reviewed manifest and parsed from those same bytes. Every host identity this
+# script used to carry as a TURING constant (computer name, runner service, Owner and controller accounts) comes
+# from it; TURING's profile is config\node-profile.turing.json, today's values. The shape rules are those of
+# resident-v2/prepare-record.mjs#validateNodeProfile; -OwnerSid and -ControllerSid must name the same accounts.
+$NodeProfileKeys = @('contract', 'nodeName', 'hostname', 'ownerSid', 'ownerProfileDirectory', 'controllerSid', 'runnerService', 'mutationMutex', 'wslDistribution')
+# .NET regex differs from JS here: `$` also matches before a final newline and `\d` matches any Unicode digit, so every
+# pattern is anchored with \z and spells digits [0-9]. The shared cases (independent-ci-v1/test/fixtures/
+# node-profile-cases.json) hold both validators to the same answers and refusal codes.
+function Assert-NodeProfile($n) {
+  $names = @(if ($n -is [pscustomobject]) { $n.PSObject.Properties.Name })
+  if ($names.Count -ne $NodeProfileKeys.Count -or @($NodeProfileKeys | Where-Object { $names -cnotcontains $_ -or $n.$_ -isnot [string] }).Count -ne 0 -or
+    $n.contract -cne 'clued.independent-ci.node-profile/1') { throw 'NODE_PROFILE_FIELDS_REQUIRED' }
+  $sid = '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-([0-9]{1,10})\z'
+  $rid = if ($n.controllerSid -cmatch $sid) { $Matches[1] } else { $null }
+  if ($n.nodeName -cnotmatch '^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\z' -or
+    $n.hostname -cnotmatch '^[A-Z0-9](?:[A-Z0-9-]{0,13}[A-Z0-9])?\z' -or $n.ownerSid -cnotmatch $sid -or $null -eq $rid -or [long]$rid -lt 1000 -or $n.ownerSid -ceq $n.controllerSid -or
+    $n.ownerProfileDirectory -cnotmatch '^C:\\Users\\[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?\z' -or
+    $n.runnerService -cnotmatch '^actions\.runner\.tdoljyj-cross-memory-system\.clued-ci-[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?\z' -or
+    $n.mutationMutex -cne ('Global\CluedControlControllerMutationV1-' + $n.hostname + '-' + $rid) -or
+    $n.wslDistribution -cnotmatch '^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?\z') { throw 'NODE_PROFILE_INVALID' }
+}
+function Get-PackageNodeProfile {
+  if ((Sha256Bytes $pkgBytes) -cne $ExpectedPackageManifestSha256) { throw 'REVIEWED_PACKAGE_CHANGED' }
+  $entry = @(([Text.Encoding]::UTF8.GetString($pkgBytes) | ConvertFrom-Json).files | Where-Object { $_.target -ceq 'record\acceptance.json' })
+  if ($entry.Count -ne 1 -or $entry[0].path -match '(^|[\\/])\.\.([\\/]|$)' -or [IO.Path]::IsPathRooted($entry[0].path)) { throw 'PACKAGE_NODE_PROFILE_REQUIRED' }
+  $bytes = [IO.File]::ReadAllBytes((Join-Path $PackageRoot $entry[0].path))
+  if ((Sha256Bytes $bytes) -cne $entry[0].sha256) { throw 'PACKAGE_FILE_CHANGED:record\acceptance.json' }
+  $accepted = (New-Object Text.UTF8Encoding($false, $true)).GetString($bytes) | ConvertFrom-Json
+  if (-not ($accepted.PSObject.Properties.Name -ccontains 'node')) { throw 'PACKAGE_NODE_PROFILE_REQUIRED' }
+  Assert-NodeProfile $accepted.node
+  if ($accepted.hostname -cne $accepted.node.hostname) { throw 'NODE_PROFILE_INVALID' }
+  $accepted.node
+}
+
 function Assert-Owner {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
   if ($id.User.Value -cne $OwnerSid) { throw 'OWNER_ACCOUNT_REQUIRED' }
-  if ($env:COMPUTERNAME -cne 'TURING') { throw 'TURING_HOST_REQUIRED' }
+  if ([Environment]::MachineName -cne $Node.hostname) { throw 'NODE_HOST_REQUIRED' }
+  if ($OwnerSid -cne $Node.ownerSid -or $ControllerSid -cne $Node.controllerSid) { throw 'NODE_PROFILE_ACCOUNTS_MISMATCH' }
+  # The ACL plan grants the record, source, stage and work directories to this SID and every runtime reader trusts the
+  # record's value, so it must be the real local .\clued-control of this host, not only the value the profile names.
+  $controllerActual = try { (New-Object Security.Principal.NTAccount([Environment]::MachineName, 'clued-control')).Translate([Security.Principal.SecurityIdentifier]).Value } catch { $null }
+  if ($controllerActual -cne $Node.controllerSid) { throw 'NODE_CONTROLLER_ACCOUNT_MISMATCH' }
   (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
@@ -113,7 +154,7 @@ function Read-RunnerState {
   $q = & $Sc queryex $RunnerService | Out-String
   $bin = if ($qc -match 'BINARY_PATH_NAME\s*:\s*(.+)') { $Matches[1].Trim() } else { $null }
   $acct = if ($qc -match 'SERVICE_START_NAME\s*:\s*(.+)') { $Matches[1].Trim() } else { $null }
-  [ordered]@{ binary = $bin; originalBinary = ($bin -ceq $OriginalBinary); account = $acct; accountIsController = ($acct -match '^(\.|TURING)\\clued-control$')
+  [ordered]@{ binary = $bin; originalBinary = ($bin -ceq $OriginalBinary); account = $acct; accountIsController = ($acct -match ('^(\.|' + [regex]::Escape($Node.hostname) + ')\\clued-control$'))
     stoppedPid0 = ($q -match 'STATE\s*:\s*1\s' -and $q -match 'PID\s*:\s*0\b'); manual = ($qc -match 'START_TYPE\s*:\s*3\s'); sddl = (Get-DaclPart (& $Sc sdshow $RunnerService | Out-String)) }
 }
 
@@ -238,6 +279,8 @@ function Copy-CarryForward($sources, [string]$stateRoot) {
 }
 
 $pkgBytes = [IO.File]::ReadAllBytes((Join-Path $PackageRoot 'package-manifest.json'))  # read ONCE
+$Node = Get-PackageNodeProfile
+$RunnerService = $Node.runnerService
 function Get-OpenBatchCount {
   $ledger = Join-Path $Root 'state\ledger'
   if (-not (Test-Path -LiteralPath $ledger)) { return 0 }
@@ -255,13 +298,14 @@ function Build-Plan {
   $find = { param($t) @($pkg.files | Where-Object { $_.target -ceq $t })[0].sha256 }
   if ($pkg.contract -cne 'clued.independent-ci.resident-package/3' -or $pkg.ciSourceManifestSha256 -cnotmatch '^[0-9a-f]{64}$' -or (& $find 'record\source-manifest.json') -cne $pkg.ciSourceManifestSha256) { throw 'SOURCE_V2_RECORD_PACKAGE_REQUIRED' }
   [ordered]@{
-    contract = 'clued.independent-ci.resident-install-plan/3'
+    contract = 'clued.independent-ci.resident-install-plan/4'
     root = $Root; rootExists = (Test-Path -LiteralPath $Root)
     # PR-A review MAJOR 3: never install over a resident with an open batch (also one that waits for hosted
     # signals); like uninstall-resident.ps1, the Owner re-arms or lets it finish first.
     openBatches = (Get-OpenBatchCount)
     servicesExist = [bool](Get-Service -Name $ServiceName, $BrokerName -ErrorAction SilentlyContinue)
     residentSid = $res; ownerSid = $OwnerSid; controllerSid = $ControllerSid
+    node = $Node   # plan /4: the node profile this install is pinned to (design section 9 C1)
     installScriptSha256 = (Sha256File $PSCommandPath)
     packageManifestSha256 = $ExpectedPackageManifestSha256
     sourceManifestSha256 = $pkg.sourceManifestSha256; residentManifestSha256 = $pkg.residentManifestSha256
@@ -332,7 +376,7 @@ if (-not ($r.originalBinary -and $r.stoppedPid0 -and $r.manual -and $r.accountIs
 # Before anything is written: every earlier state to carry, every file shape, no link anywhere.
 $carry = Get-CarryForwardPlan $CarryParent
 
-$receipt = [ordered]@{ contract = 'clued.independent-ci.resident-install-receipt/2'; planSha256 = $planSha; sourceManifestSha256 = $plan.sourceManifestSha256; residentManifestSha256 = $plan.residentManifestSha256; runnerSddlUnchanged = $r.sddl; steps = @(); startedAt = [DateTimeOffset]::UtcNow.ToString('o') }
+$receipt = [ordered]@{ contract = 'clued.independent-ci.resident-install-receipt/3'; planSha256 = $planSha; node = $Node; sourceManifestSha256 = $plan.sourceManifestSha256; residentManifestSha256 = $plan.residentManifestSha256; runnerSddlUnchanged = $r.sddl; steps = @(); startedAt = [DateTimeOffset]::UtcNow.ToString('o') }
 function Step([string]$name, [scriptblock]$body) { & $body; $script:receipt.steps += $name }
 
 # 1. Directories, created new with their final ACLs.
