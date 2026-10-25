@@ -752,6 +752,8 @@ def self_test(config, production_ignore):
     code, role_different_path = scan()
     if code != 1 or not any(f["File"] == other_role_path and f["RuleID"] == "generic-api-key" for f in role_different_path):
         raise ValueError("Role-probe marker was suppressed at another path")
+    role_target.unlink()
+    commit()
     role_target.write_bytes(b"\n" + role_blob)
     commit()
     code, role_different_line = scan()

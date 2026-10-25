@@ -14,7 +14,7 @@ import { TRUSTED_WORKFLOW_PATHS, activeGitleaksWorkflowSha256s } from '../../tru
 export const IMAGE = 'ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f';
 export const SCAN_ARGS = Object.freeze(['git', '/repo', '--config', '/repo/.gitleaks.toml', '--gitleaks-ignore-path', '/reviewed.ignore', '--redact', '--exit-code', '1']);
 export const SOURCE_PINS = Object.freeze({
-  'scripts/ci/reviewed_gitleaks.py': '259063e1a7d8579944cfe6dc5a35f97414c5e13de435fd66692cb5829dec024a',
+  'scripts/ci/reviewed_gitleaks.py': '91340e850ebc02f74f828f74f75d7e305f043fb885e79e75b50d4c9f027c2bee',
   '.gitleaks.toml': '409462af3073b05a1511d5593afa784a82b447d398580e970e2e8bfa5430a780',
 });
 // This active Source pins only its exact 730-finding workflow successor. The legacy

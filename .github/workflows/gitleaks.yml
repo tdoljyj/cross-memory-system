@@ -86,7 +86,7 @@ jobs:
           scan="$RUNNER_TEMP/clued-gitleaks"; repo="$scan/repo"; control="$scan/control"
           mkdir "$scan" "$repo" "$control"
           echo "409462af3073b05a1511d5593afa784a82b447d398580e970e2e8bfa5430a780  .gitleaks.toml" | sha256sum -c --quiet -
-          echo "259063e1a7d8579944cfe6dc5a35f97414c5e13de435fd66692cb5829dec024a  scripts/ci/reviewed_gitleaks.py" | sha256sum -c --quiet -
+          echo "91340e850ebc02f74f828f74f75d7e305f043fb885e79e75b50d4c9f027c2bee  scripts/ci/reviewed_gitleaks.py" | sha256sum -c --quiet -
           sed -n 's/^# clued-reviewed-finding: {"fingerprint":"\([0-9a-f]\{40\}\):.*$/\1/p' .gitleaks.toml | sort -u > "$control/reviewed-commits"
           echo "f889be5ef30f8409db61b1130810b5088ca278d04886b10cf98a3a2558609192  $control/reviewed-commits" | sha256sum -c --quiet -
           git init --quiet --template= "$repo"

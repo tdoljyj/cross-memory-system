@@ -8,6 +8,7 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -611,6 +612,78 @@ class RoleProbeExactFixtureTests(unittest.TestCase):
                     patch.object(reviewed, 'run', return_value=(blob + '\n').encode()):
                 with self.assertRaisesRegex(ValueError, 'mocked token use changed'):
                     reviewed.verify_role_probe_fixture(ROOT, self.fingerprint, text)
+
+    def test_self_test_reintroduces_shifted_marker_as_added_git_line(self):
+        # Drive the helper's real Git setup; the detector is a wire-only mock.
+        # A mere line-number shift of existing context cannot satisfy this contract.
+        actual_run = reviewed.subprocess.run
+        scans = []
+        controlled_docker = 'controlled-detector-wire-mock'
+
+        def result(args, code, findings):
+            return subprocess.CompletedProcess(args, code, json.dumps(findings).encode(), b'')
+
+        def finding(path, rule, line=1):
+            return {'File': path, 'RuleID': rule, 'StartLine': line,
+                    'Fingerprint': '0' * 40 + ':' + path + ':' + rule + ':' + str(line)}
+
+        def route(args, **options):
+            if args[0] != controlled_docker:
+                return actual_run(args, **options)
+            scan_index = len(scans)
+            mount = next(value for value in args if str(value).endswith('target=/test,readonly'))
+            repo = Path(mount.split('source=', 1)[1].split(',target=', 1)[0])
+            scans.append(repo)
+            rules = ['sourcegraph-access-token', 'generic-api-key']
+            scheduling = [(reviewed.SCHEDULING_TEST_PATH, 'private-key'),
+                          (reviewed.SCHEDULING_TEST_PATH, 'generic-api-key'),
+                          (reviewed.SCHEDULING_README_PATH, 'generic-api-key')]
+            if scan_index == 0:
+                return result(args, 1, [finding('probe.txt', rule) for rule in rules])
+            if scan_index == 1:
+                return result(args, 0, [])
+            if scan_index == 2:
+                return result(args, 1, [finding(path, rule) for path in ['probe.txt', 'other-path.txt'] for rule in rules])
+            if scan_index in [3, 4]:
+                prefix = '' if scan_index == 3 else 'other-path/'
+                return result(args, 1, [finding(prefix + path, rule) for path, rule in scheduling])
+            if scan_index in [5, 6]:
+                prefix = '' if scan_index == 5 else 'other-path/'
+                return result(args, 1, [finding(prefix + reviewed.ROLE_PROBE_PATH, 'generic-api-key', 73)])
+            if scan_index == 7:
+                previous = actual_run(['git', 'cat-file', '-e', 'HEAD^:' + reviewed.ROLE_PROBE_PATH],
+                                      cwd=repo, capture_output=True, check=False)
+                self.assertNotEqual(previous.returncode, 0,
+                                    'Shifted marker must be recreated after an absent parent blob')
+                diff = actual_run(['git', 'diff', '--no-ext-diff', '--unified=0', 'HEAD^', 'HEAD', '--', reviewed.ROLE_PROBE_PATH],
+                                  cwd=repo, capture_output=True, check=True).stdout
+                added = {}
+                line_number = None
+                for line in diff.splitlines():
+                    if line.startswith(b'@@'):
+                        line_number = int(re.search(rb'\+(\d+)', line).group(1))
+                    elif line_number is not None and line.startswith(b'+'):
+                        added[line_number] = line[1:]
+                        line_number += 1
+                    elif line_number is not None and line.startswith(b' '):
+                        line_number += 1
+                original_marker = self.text.splitlines()[72].encode()
+                self.assertTrue(added.get(74) == original_marker,
+                                'The shifted token must be an actual Git-added line at 74')
+                return result(args, 1, [finding(reviewed.ROLE_PROBE_PATH, 'generic-api-key', 74)])
+            if scan_index == 8:
+                return result(args, 1, [finding('controlled-valid-private.pem', 'private-key')])
+            self.fail('Unexpected extra detector call')
+
+        with tempfile.TemporaryDirectory(prefix='clued-role-line-git-') as temporary:
+            fake_root = Path(temporary) / 'helper-temp'
+            with patch.object(reviewed.shutil, 'which', return_value=controlled_docker), \
+                    patch.object(reviewed.tempfile, 'mkdtemp', side_effect=lambda **kwargs: str(fake_root.mkdir() or fake_root)), \
+                    patch.object(reviewed.subprocess, 'run', side_effect=route), \
+                    patch.object(reviewed, '_self_test_handover_acceptance', return_value={}):
+                report = reviewed.self_test(ROOT / '.gitleaks.toml', '')
+            self.assertTrue(report['role_probe_different_line_detection'])
+            self.assertEqual(len(scans), 9)
 
 
 if __name__ == '__main__':
