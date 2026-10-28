@@ -385,3 +385,20 @@ test('relay read arguments are validated before any request', async () => {
     [port => port.readCheckRunAnnotations(1, -1), 'invalid_annotation_request']]) await assert.rejects(call(fake.port), { code }, code);
   assert.equal(fake.calls.length, 0);
 });
+
+// Step 3c-2a (design v0.5 §5.7): the PR's base.sha is compared with T only for a job that tests the head. A train front
+// batch (testSha != headSha) takes whatever base.sha GitHub reports, the same on both reads; a v1 job (no testSha) and a
+// job whose S is the head stay exact.
+test('readChangedPaths: base.sha is a fact for a train front batch only, and both reads must agree', async () => {
+  const MOVED = '9'.repeat(40), S = '4'.repeat(40);
+  const moved = sha => reply({ ...pr, base: { ...pr.base, sha } });
+  const front = { ...job, testSha: S };
+  const ok = await github({ faults: { [prKey]: [moved(MOVED), moved(MOVED)] } }).port().readChangedPaths(front);
+  assert.deepEqual([ok.baseSha, ok.paths], [BASE, ['a.txt']], 'the packet still names the batch base T');
+  await assert.rejects(github({ faults: { [prKey]: [moved(MOVED), moved('8'.repeat(40))] } }).port().readChangedPaths(front), { code: 'pr_subject_changed' });
+  await assert.rejects(github({ faults: { [prKey]: [moved('X'.repeat(40))] } }).port().readChangedPaths(front), { code: 'pr_subject_changed' });
+  for (const exact of [job, { ...job, testSha: HEAD }, { ...job, testSha: null }]) {
+    await assert.rejects(github({ faults: { [prKey]: [moved(MOVED)] } }).port().readChangedPaths(exact), { code: 'pr_subject_changed' });
+    assert.deepEqual((await github().port().readChangedPaths(exact)).paths, ['a.txt']);
+  }
+});

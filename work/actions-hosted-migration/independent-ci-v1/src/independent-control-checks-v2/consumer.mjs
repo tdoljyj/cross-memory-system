@@ -60,7 +60,8 @@ export async function consumeControlV2({ candidates, consumerFor }) {
   }
   const usable = proofs.filter(p => p.proof?.contract === 'clued.independent-ci.control-consumption/2');
   if (usable.length === 0) fail(refusals.includes('TRUSTED_SETTLED_CONTROL_JOURNAL_REQUIRED') || refusals.length === 0 ? 'TRUSTED_SETTLED_CONTROL_JOURNAL_REQUIRED' : refusals[0]);
-  const subjects = new Set(usable.map(p => `${p.c.selector.pr}:${p.c.selector.baseSha}`));
+  // Step 3c-2: the tested commit is part of the subject; a head batch and a front batch of one head never merge into one.
+  const subjects = new Set(usable.map(p => `${p.c.selector.pr}:${p.c.selector.baseSha}:${p.c.job.testSha}`));
   check(subjects.size === 1, 'CONTROL_HEAD_AMBIGUOUS');
   return usable[0];
 }

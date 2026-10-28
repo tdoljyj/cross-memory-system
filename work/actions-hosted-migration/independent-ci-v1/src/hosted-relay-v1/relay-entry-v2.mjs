@@ -50,7 +50,8 @@ export function installedInputPins(manifest) {
 // head on GitHub's runners and its subject has no tested commit: a train front batch (S != H, step 3c-2) is refused
 // here as well as in its stage R derivation (derive-batch.mjs), never relayed under the head's ids.
 export function relaySubject(jobs, batchClaim) {
-  if (!Array.isArray(jobs) || jobs.length === 0 || jobs.some(isTrainFrontJobV2)) fail('RELAY_TEST_COMMIT_REFUSED');
+  if (!Array.isArray(jobs) || jobs.length === 0) fail('RELAY_SUBJECT_JOBS_REQUIRED');
+  if (jobs.some(isTrainFrontJobV2)) fail('RELAY_TEST_COMMIT_REFUSED');
   const j = jobs[0];
   return { repo: j.repo, pr: j.pr, headSha: j.headSha, baseSha: j.baseSha, claimId: batchClaim.claimId, fence: batchClaim.fence, epoch: batchClaim.epoch,
     sourceManifestSha256: j.sourceManifestSha256 };

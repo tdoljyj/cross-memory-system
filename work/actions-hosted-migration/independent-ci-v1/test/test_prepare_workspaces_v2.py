@@ -184,8 +184,14 @@ class PrepareWorkspacesV2Tests(unittest.TestCase):
             # a second test ref, or one not named by its own SHA, is refused
             with open(bundle, 'rb') as f:
                 data = f.read()
-            with self.assertRaises(pw.Refused):
+            with self.assertRaises(pw.Refused) as e:
                 pw.parse_bundle_header(data.replace(('refs/clued-test/' + s).encode(), ('refs/clued-test/' + '0' * 40).encode(), 1))
+            self.assertEqual(e.exception.code, 'EXACT_TEST_REF_REQUIRED')
+            line = (s + ' refs/clued-test/' + s).encode()
+            second = (tip + ' refs/clued-test/' + tip).encode()
+            with self.assertRaises(pw.Refused) as e:
+                pw.parse_bundle_header(data.replace(line, line + bytes([10]) + second, 1))
+            self.assertEqual(e.exception.code, 'EXACT_TEST_REF_REQUIRED')
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 

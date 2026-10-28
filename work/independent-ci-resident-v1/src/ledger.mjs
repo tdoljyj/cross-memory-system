@@ -521,7 +521,9 @@ export class Ledger {
     const s = await this.state(key1);
     check(s.state === 'TERMINAL' && s.outcome === 'FAILED_CLEAN' && s.reserved?.subject?.attempt === 1, 'ATTEMPT2_REQUIRES_CLEAN_ATTEMPT1_TERMINAL');
     const first = s.reserved.subject;
-    check(subject2.attempt === 2 && ['repo', 'pr', 'headSha', 'baseSha', 'sourceManifestSha256'].every(k => subject2[k] === first[k]), 'ATTEMPT2_SUBJECT_CHANGED');
+    // Step 3c-2: a train front batch's attempt 2 tests the same S (and a head batch's never gains one).
+    check(subject2.attempt === 2 && ['repo', 'pr', 'headSha', 'baseSha', 'sourceManifestSha256'].every(k => subject2[k] === first[k])
+      && Object.hasOwn(subject2, 'testSha') === Object.hasOwn(first, 'testSha') && subject2.testSha === first.testSha, 'ATTEMPT2_SUBJECT_CHANGED');
     const key2 = batchKey(subject2);
     await writeNew(path.join(this.attempts2, `${key1}.json`), { contract: 'clued.independent-ci.resident-attempt2/1', key1, key2, subject: subject2,
       notBefore: new Date(notBeforeMs).toISOString(), facts, at: isoNow(this.clock), automaticRetryAllowed: false });

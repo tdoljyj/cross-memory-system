@@ -107,7 +107,8 @@ test('hosted relay: a train front batch never gets a stage R package or a relay 
   const c = { claimId: randomUUID(), fence: 3, epoch: 1 };
   const head = batchJobsV2(base()), front = batchJobsV2(base({ testSha: S }));
   assert.equal(relaySubject([head.gitleaks, head.trivy], c).headSha, HEAD);
-  for (const jobs of [[front.gitleaks], [head.gitleaks, front.trivy], []]) assert.throws(() => relaySubject(jobs, c), { code: 'RELAY_TEST_COMMIT_REFUSED' });
+  for (const jobs of [[front.gitleaks], [head.gitleaks, front.trivy]]) assert.throws(() => relaySubject(jobs, c), { code: 'RELAY_TEST_COMMIT_REFUSED' });
+  assert.throws(() => relaySubject([], c), { code: 'RELAY_SUBJECT_JOBS_REQUIRED' });
 });
 
 test('protected refs observation: the PR base.sha is a fact for a front batch, and main must still be T', async () => {

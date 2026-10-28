@@ -352,7 +352,7 @@ def prepare(batch_id):
                 git(['-C', f'{target}/candidate', 'fetch', '--quiet', '--no-tags', '--', sealed, f'+{name}:{name}'])
             # Review MINOR-7: the head tree's modes are validated from the object store BEFORE anything is
             # materialised (only 100644/100755 blobs: no symlink, submodule or other entry is ever written).
-            # The candidate is the tested commit S (job contract /3; S = H until step 3c).
+            # The candidate is the tested commit S (job contract /3): the head, or a train front batch's test merge.
             tree_modes_regular(git(['-C', f'{target}/candidate', 'ls-tree', '-r', '-z', '--full-tree', d['testSha']]))
             git(['-C', f'{target}/candidate', 'checkout', '--quiet', '--detach', '--no-recurse-submodules', d['testSha']])
     facts = {}
@@ -378,6 +378,9 @@ def prepare(batch_id):
         else:
             cand = f'{target}/candidate'
             need(git(['-C', cand, 'rev-parse', '--verify', 'HEAD^{commit}']).strip() == d['testSha'], 'CANDIDATE_HEAD_CHANGED')
+            if test:
+                # The same parents check as the mirror store's, on this candidate's own copy of S (review n1).
+                need(test_parents_ok(git(['-C', cand, 'rev-list', '--parents', '-n', '1', d['testSha']]).strip(), d), 'TEST_COMMIT_PARENTS_REQUIRED')
             need(git(['-C', cand, 'status', '--porcelain=v1', '--untracked-files=all']).strip() == '', 'CANDIDATE_NOT_CLEAN')
             for c in (d['headSha'], d['baseSha']):
                 need(git(['-C', cand, 'cat-file', '-t', c]).strip() == 'commit', 'HEAD_BASE_COMMIT_MISSING')
