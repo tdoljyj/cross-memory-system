@@ -997,8 +997,9 @@ export class ResidentExecutor {
     // A batch resting at parking point A stays the tick's result (and the status's current batch) while only the intake
     // pause holds the new ones (independent review of C6, minor 3).
     const result = waiting && (r.state === 'IDLE' || [...TRAIN_HELD_REASONS, ...Object.values(NODE_DEFERRALS)].includes(r.reason)) ? waiting : r;
-    // Stage 10 only after a schedule that ran nothing (a batch resting at a parking point runs nothing either).
-    if (!waiting && TRAIN_QUIET_STATES.includes(r.state) && !TRAIN_HELD_REASONS.includes(r.reason)) {
+    // Stage 10 only after a schedule that ran nothing (a batch resting at a parking point runs nothing either). The role probe
+    // also while a batch rests at A, when it may be run at a parking point (probeAtParking, DESIGN §29.2 item 5).
+    if ((!waiting || this.probeAtParking()) && TRAIN_QUIET_STATES.includes(r.state) && !TRAIN_HELD_REASONS.includes(r.reason)) {
       const probeResult = await this.roleProbeMaintenance();
       if (probeResult) return probeResult;
     }
@@ -1029,12 +1030,21 @@ export class ResidentExecutor {
     return null;
   }
 
+  // Whether the role probe may run while batches rest at a parking point (A or B). Nothing of such a batch runs: no process, no
+  // broker request, Linux empty; ticks are serial, so the probe's swap cannot meet a stage of this executor. C2 still kept the
+  // periodic probe of an ACTIVE node away from every open batch (a parked one may rest for a day); but a node that is not ACTIVE
+  // must be able to leave UNCERTAIN, and an urgent probe (the role may be gone) must not wait for the parked batches to end:
+  // after a restart or a re-arm the batches parked before it would otherwise keep the node UNCERTAIN for park.maxMs.
+  probeAtParking() { return this.probing() && (this.nodeMode() !== 'ACTIVE' || this.roleProbe.urgent === true); }
+
   async roleProbeMaintenance() {
     if (typeof this.engine.runRoleProbe !== 'function' || this.roleProbeRunning) return null;
     // C3 owns the mode and all its transitions (DESIGN §29); status (advisory) is never an input. UNCERTAIN has STANDBY's
     // 15-minute interval, and `urgent` (a start, a re-arm, a failure that may mean the role is gone) is due at once.
     const mode = this.nodeMode(), now = this.clock();
-    const idle = !(await this.ledger.halted()) && !(await this.ledger.paused()) && (await this.ledger.open()).length === 0;
+    // Idle: no HALT, no PAUSE and no batch open; entries at a parking point do not count when probeAtParking() says so.
+    const open = await this.ledger.open();
+    const idle = !(await this.ledger.halted()) && !(await this.ledger.paused()) && (this.probeAtParking() ? open.every(e => Ledger.resumable(e)) : open.length === 0);
     if (!this.roleProbe.due({ now, mode: mode === 'ACTIVE' ? 'ACTIVE' : 'STANDBY', idle })) return null;
     if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < now + 240_000) return null;
     const drift = await this.driftCode();
@@ -2028,6 +2038,9 @@ export class ResidentExecutor {
         await this.closeOrThrow(batch);
         await this.ledger.releaseUnexecuted(key, release, { failureCode: failure.code, basis, ...facts, breakerState });
         await this.receipt('batch-unexecuted', { key, failureCode: failure.code, release, class: facts.class });
+        // C3 (DESIGN §29.10): attempt 2 is consumed before its reservation; a node-role release decided nothing about the PR, so the
+        // same attempt 2 is given back (its key is the same: never an attempt 3). A failure here only loses attempt 2 (the safe side).
+        if (row?.class === 'node-role' && this.current?.key === key && this.current.attempt === 2) await this.reopenAttempt2(key);
         this.reportOutcome(await subjectOf() ?? this.current, release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', { code: failure.code, row, key });
         return { state: release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', key, failureCode: failure.code, release, settle: { ...settle, kind: 'released', reason: release } };
       }
@@ -2051,6 +2064,16 @@ export class ResidentExecutor {
     } catch (error) {
       return this.unknown(key, codeOf(error), 'failure-handling-unconfirmed', batch);
     }
+  }
+
+  // The attempt-2 intent of this attempt-2 batch (key2), given back after a node-role release. Never throws.
+  async reopenAttempt2(key2) {
+    try {
+      const c = this.current;
+      const key1 = batchKey({ repo: this.policy.repo, pr: c.pr, headSha: c.headSha, baseSha: c.baseSha, sourceManifestSha256: this.policy.sourceManifestSha256, attempt: 1 });
+      await this.ledger.reopenAttempt2(key1, { key2, failureCode: 'NODE_ROLE_NOT_HELD' });
+      await this.receipt('attempt2-reopened', { key: key2, attempt1: key1 });
+    } catch { /* attempt 2 stays spent */ }
   }
 
   // The one automatic attempt 2 after a FAILED_CLEAN (attempts.mjs): its intent and receipt, or null when not eligible.

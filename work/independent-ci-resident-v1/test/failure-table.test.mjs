@@ -7,9 +7,10 @@ import { FAILURE_TABLE, failureRow, decideFailure, validateFailureTable, UNEXECU
 import { UNEXECUTED_REASONS } from '../src/ledger.mjs';
 import { PUMP_CODES } from '../src/engine-windows.mjs';
 import * as source from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
-import { DETERMINISTIC_PR_REASONS, DETERMINISTIC_PR_REASON_CODES } from '../../actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/publisher.mjs';
+import { DETERMINISTIC_PR_REASONS, DETERMINISTIC_PR_REASON_CODES, deterministicPrFault, refusalSafeToRerun } from '../../actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/publisher.mjs';
+import { writeOutcome } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-inputs.mjs';
 import { DIAGNOSTIC_CODES } from '../../actions-hosted-migration/independent-ci-v1/src/admission-facts-v2.mjs';
-import { CLEAN_PROOF, WINDOWS_CLEAN } from './helpers.mjs';
+import { CLEAN_PROOF, WINDOWS_CLEAN, tempRoot } from './helpers.mjs';
 import { ATTEMPT2_RESIDENT_CODES, attempt2Decision } from '../src/attempts.mjs';
 
 // Every code the executor can be handed: the Source catalogue, the resident's own clean endings, the companion pump's
@@ -161,29 +162,54 @@ test('a release needs the outcome\'s own safeToRerun or the broker\'s no-launch,
   assert.equal(decideFailure({ code: 'GITHUB_TRANSIENT_UNAVAILABLE', stage: 1, outcome: { ...safe, reason: 'github_http_503' }, proof: CLEAN_PROOF, started: false }).release, null);
 });
 
-test('NODE_ROLE_NOT_HELD (C3, DESIGN §29): a stage-1 node-role row released on the outcome\'s own flag; the older Source\'s reason form is the same answer and wins over every other reason', () => {
-  const noRole = { status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, mayHavePublished: false, safeToRerun: true, diagnostic: { reasonCodes: ['admission_binding_required'], nativeReasonCodes: [] } };
+test('NODE_ROLE_NOT_HELD (C3, DESIGN §29): a stage-1 node-role row released on the entry\'s own flag, also beside a deterministic PR reason; the older Source\'s reason form is the same answer', async t => {
+  const root = await tempRoot(t);
+  let n = 0;
+  // A stage-1 refusal as the entry really writes it: the publisher's own flag (refusalSafeToRerun; `old` is the publisher before
+  // C3, whose flag was false beside any deterministic reason), then the entry's outcome record and the stage fact's view of it.
+  const real = async (reasonCodes, { old = false, flag = undefined } = {}) => {
+    const diagnostic = { reasonCodes };
+    const safeToRerun = flag ?? (old ? !deterministicPrFault('full_admission_rejected', diagnostic)
+      : refusalSafeToRerun({ step: 'boundary', claimed: null, reason: 'full_admission_rejected', diagnostic }));
+    const written = await writeOutcome({ receiptsRoot: root, nonce: String(++n).padStart(32, '0'), plan: { stage: 1, entryRole: 'work-admission' }, jobIds: [],
+      result: { status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, admissionDiagnostic: diagnostic, safeToRerun } });
+    return { code: source.outcomeFailureCode(written, 1), outcome: source.outcomeFacts(written) };
+  };
   const row = failureRow({ code: 'NODE_ROLE_NOT_HELD', stage: 1 });
   assert.deepEqual([row.class, row.disposition, row.retry, row.breaker], ['node-role', 'release-if-safe', 'new-trigger', 'neutral']);
   assert.deepEqual(rowsOf('NODE_ROLE_NOT_HELD').map(r => r.stages), [[1], 'any']);
   assert.equal(failureRow({ code: 'NODE_ROLE_NOT_HELD', stage: 3 }).class, 'clean-final', 'never produced after stage 1');
   assert.ok(NOT_ADMITTED_CODES.includes('NODE_ROLE_NOT_HELD'));
-  // the Source names it, from the reason alone and before every other reason
-  assert.equal(source.outcomeFailureCode(noRole, 1), 'NODE_ROLE_NOT_HELD');
-  const mixed = { ...noRole, diagnostic: { reasonCodes: ['protected_change_not_up_to_date', 'owner_review_required'], nativeReasonCodes: ['admission_binding_required'] } };
-  assert.equal(source.outcomeFailureCode(mixed, 1), 'NODE_ROLE_NOT_HELD');
-  const decide = (code, outcome, o = {}) => decideFailure({ code, stage: 1, outcome, proof: WINDOWS_CLEAN, started: false, ...o });
-  // the new code and the older Source\'s form (NATIVE_NOT_ADMITTED + the reason) decide alike, also beside a deterministic reason
-  for (const code of ['NODE_ROLE_NOT_HELD', 'NATIVE_NOT_ADMITTED']) {
-    for (const outcome of [noRole, mixed]) {
-      const d = decide(code, outcome);
-      assert.deepEqual([d.row.class, d.release, d.klass, d.row.breaker], ['node-role', 'NOT_ADMITTED', 'NOT_ADMITTED', 'neutral'], code);
-    }
-    // never released by inference from the code: without the flag it burns like any other stage-1 answer
-    const burned = decide(code, { ...noRole, safeToRerun: false }, { proof: CLEAN_PROOF });
-    assert.deepEqual([burned.row.class, burned.release, burned.klass], ['node-role', null, 'CLEAN'], code);
-    assert.equal(decide(code, noRole, { started: true, proof: CLEAN_PROOF }).release, null, 'after 10-started nothing is released');
+  const decide = (x, o = {}) => decideFailure({ code: x.code, stage: 1, outcome: x.outcome, proof: WINDOWS_CLEAN, started: false, ...o });
+  // the Source names it from the reason alone, before every other reason, and its flag stays true beside a deterministic one
+  // (the 2026-10-29 review: it was false there, so the head was burned)
+  for (const reasonCodes of [['admission_binding_required'], ['admission_binding_required', 'protected_change_not_up_to_date'], ['changed_files_truncated', 'admission_binding_required'],
+    ['policy_file_removed', 'admission_binding_required', 'owner_review_required'], ['policy_file_invalid', 'admission_binding_required']]) {
+    const x = await real(reasonCodes);
+    assert.deepEqual([x.code, x.outcome.safeToRerun], ['NODE_ROLE_NOT_HELD', true], reasonCodes.join());
+    const d = decide(x);
+    assert.deepEqual([d.row.class, d.release, d.klass, d.row.breaker], ['node-role', 'NOT_ADMITTED', 'NOT_ADMITTED', 'neutral'], reasonCodes.join());
   }
+  // never released by inference from the code: without the entry's flag it burns like any other stage-1 answer
+  const noFlag = await real(['admission_binding_required'], { flag: false });
+  const burned = decide(noFlag, { proof: CLEAN_PROOF });
+  assert.deepEqual([burned.row.class, burned.release, burned.klass], ['node-role', null, 'CLEAN']);
+  assert.equal(decide(await real(['admission_binding_required']), { started: true, proof: CLEAN_PROOF }).release, null, 'after 10-started nothing is released');
+  // a deterministic reason WITHOUT the role reason stays unsafe to re-run: burned, as before
+  const stale = await real(['owner_review_required', 'protected_change_not_up_to_date']);
+  assert.deepEqual([stale.outcome.safeToRerun, decide(stale, { proof: CLEAN_PROOF }).release, decide(stale, { proof: CLEAN_PROOF }).row.class], [false, null, 'deterministic-pr']);
+  // The older Source: NATIVE_NOT_ADMITTED + the reason. Its publisher's flag is true for the reason alone, so it is the same answer
+  // (released, STANDBY); beside a deterministic reason its flag is false, so the head is burned as it was before C3, and the
+  // table still calls it node-role (the node is not on duty, whatever happened to the head)
+  const oldPlain = await real(['admission_binding_required'], { old: true });
+  assert.deepEqual([oldPlain.code, oldPlain.outcome.safeToRerun], ['NODE_ROLE_NOT_HELD', true], 'a fixture of the new mapping; the older Source says NATIVE_NOT_ADMITTED:');
+  const asOld = x => ({ ...x, code: 'NATIVE_NOT_ADMITTED' });
+  const od = decide(asOld(oldPlain));
+  assert.deepEqual([od.row.class, od.release, od.klass], ['node-role', 'NOT_ADMITTED', 'NOT_ADMITTED']);
+  const oldMixed = await real(['admission_binding_required', 'protected_change_not_up_to_date'], { old: true });
+  assert.equal(oldMixed.outcome.safeToRerun, false, 'the older publisher');
+  const om = decide(asOld(oldMixed), { proof: CLEAN_PROOF });
+  assert.deepEqual([om.row.class, om.release, om.klass], ['node-role', null, 'CLEAN']);
   // without the role reason the older code keeps its own answers
   assert.equal(failureRow({ code: 'NATIVE_NOT_ADMITTED', stage: 1, diagnostic: { reasonCodes: ['binding_not_authorized'] } }).class, 'not-admitted');
   assert.equal(failureRow({ code: 'NATIVE_NOT_ADMITTED', stage: 1, diagnostic: { reasonCodes: ['protected_change_not_up_to_date'] } }).class, 'deterministic-pr');

@@ -194,7 +194,23 @@ test('A: an unreadable memory read proves nothing: without a low reading the sta
 test('A: an Owner abort while the gate waits ends the wait: OWNER_ABORT_REQUESTED, the stage never invoked', async t => {
   const f = await gateEngine(t, [LOW], { onSleep: (engine, n) => { if (n === 2) engine.abortRequested = { batchId: BATCH, stage: 2 }; } });
   const r = await f.engine.runStage(f.batch, stages[1], plain);
-  assert.deepEqual([r.code, f.invoked, f.sent.includes('relay-stage'), f.reads()], ['OWNER_ABORT_REQUESTED', [], false, 3]);
+  assert.deepEqual([r.code, f.invoked, f.sent.includes('relay-stage'), f.reads()], ['OWNER_ABORT_REQUESTED', [], false, 2], 'seen right after the sleep, before another read');
+});
+
+test('A: an Owner abort asked while the gate sleeps wakes it at once (requestStop), not a poll later', async t => {
+  const f = await gateEngine(t, [LOW]);
+  let slept = 0;
+  f.engine.sleep = () => { slept += 1; return new Promise(() => {}); }; // a sleep that would last for ever
+  const running = f.engine.runStage(f.batch, stages[1], plain);
+  for (let i = 0; i < 200 && !f.engine.gateWake; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(typeof f.engine.gateWake, 'function', 'the gate sleeps after its first low reading');
+  await f.engine.requestStop(f.batch, 2);
+  const r = await Promise.race([running, new Promise(resolve => setTimeout(() => resolve('STILL_SLEEPING'), 3000))]);
+  assert.deepEqual([r.code, slept, f.reads(), f.invoked, f.engine.gateWake], ['OWNER_ABORT_REQUESTED', 1, 1, [], null]);
+  // a wake with nobody sleeping is nothing
+  const g = await gateEngine(t, [LOW]);
+  await g.engine.requestStop(g.batch, 4);
+  assert.ok(!g.engine.gateWake);
 });
 
 // ---------------- A: the executor's ending at stages 2, 4, 6 ----------------

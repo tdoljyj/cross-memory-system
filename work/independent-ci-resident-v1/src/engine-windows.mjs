@@ -215,6 +215,7 @@ export class WindowsEngine {
   async requestStop(batch, number) {
     check(ABORTABLE_IN_FLIGHT.includes(number) && batch && typeof batch.batchId === 'string', 'OWNER_ABORT_STOP_TARGET_INVALID');
     this.abortRequested = { batchId: batch.batchId, stage: number };
+    this.gateWake?.();
     const mine = s => s && s.batchId === batch.batchId && s.stage === number;
     const stop = await this.stageStop(batch, number);
     const out = { broker: stop.requestId !== null, requestId: stop.requestId, stopCode: stop.stopCode, pump: false, done: false };
@@ -483,8 +484,19 @@ export class WindowsEngine {
       if (m) gate.low = true;
       if (!gate.low) return end(null);
       if (gate.checks >= MEMORY_GATE_CHECKS || this.clock() - started >= MEMORY_GATE_WAIT_MS || this.stopRequested(batch, number)) return end(false);
-      await this.sleep(MEMORY_GATE_POLL_MS);
+      await this.gateSleep(MEMORY_GATE_POLL_MS);
+      // An Owner abort asked while the gate slept is seen at once, before another wsl.exe read (review n1 of the C3 fixes).
+      if (this.stopRequested(batch, number)) return end(false);
     }
+  }
+
+  // The gate's sleep between two reads: it ends early when an Owner abort is asked (requestStop wakes it), so an abort is not seen
+  // up to MEMORY_GATE_POLL_MS late. The timer itself is left to run out.
+  async gateSleep(ms) {
+    let wake;
+    const woken = new Promise(resolve => { wake = resolve; });
+    this.gateWake = wake;
+    try { await Promise.race([this.sleep(ms), woken]); } finally { if (this.gateWake === wake) this.gateWake = null; }
   }
 
   async invoke(batch, stage, row) {
