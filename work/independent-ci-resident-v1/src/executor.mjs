@@ -1592,7 +1592,7 @@ export class ResidentExecutor {
     // effect and publishes nothing, so its failure can release the reservation.
     this.atStage(0, 'bundle');
     const bundle = await this.companion.buildBundle(batch);
-    if (!bundle || bundle.ok !== true) return new StepFailure(0, 'BUNDLE_UNAVAILABLE', {}, 'bundle');
+    if (!bundle || bundle.ok !== true) return Object.assign(new StepFailure(0, 'BUNDLE_UNAVAILABLE', {}, 'bundle'), { companionJobTree: bundle?.jobTree ?? null });
     const early = await this.abortIfRequested(key, batch, 'before-stage-1');
     if (early) return early;
     // Phase 2: a newer commit of the PR arrived while the bundle was built. Nothing of this batch ran: released, not
@@ -1791,9 +1791,11 @@ export class ResidentExecutor {
     try {
       const started = (await this.ledger.state(key)).state === 'STARTED';
       if (!started && failure.phase === 'bundle') {
-        await this.closeOrThrow(batch);
+        // Nothing of this batch reached Linux yet (DESIGN §24): the close archives Windows only and asks the companion for
+        // nothing, so a companion still busy with, or done with, the failed bundle cannot turn this release into a HALT.
+        await this.closeOrThrow(batch, { linux: false });
         await this.ledger.releaseUnexecuted(key, 'BUNDLE_UNAVAILABLE', { failureCode: failure.code, class: 'environment', breaker: 'counts', breakerState });
-        await this.receipt('batch-unexecuted', { key, failureCode: failure.code });
+        await this.receipt('batch-unexecuted', { key, failureCode: failure.code, companionJobTree: failure.companionJobTree ?? null });
         this.reportOutcome(this.current, 'NOT_EXECUTED', { code: failure.code, key });
         return { state: 'NOT_EXECUTED', key, failureCode: failure.code,
           settle: { kind: 'released', reason: 'BUNDLE_UNAVAILABLE', code: failure.code, klass: 'environment', breaker: 'counts', breakerState, pos } };
@@ -1858,7 +1860,7 @@ export class ResidentExecutor {
   async supersededBeforeStart(key, subject, batch) {
     // attempt 2 is never released by the arrival order: runAttempt2 asked the PR live before it was reserved (review M2).
     if (subject.attempt !== 1 || !(await this.newerCommitArrived(subject))) return null;
-    await this.closeOrThrow(batch);
+    await this.closeOrThrow(batch, { linux: false }); // before stage 1: nothing on Linux (DESIGN §24)
     await this.ledger.releaseUnexecuted(key, 'SUPERSEDED', { failureCode: BATCH_SUPERSEDED, basis: 'newer-commit-before-stage-1', class: 'superseded', breaker: 'neutral' });
     await this.receipt('batch-superseded', { key, pr: subject.pr, headSha: subject.headSha, safePoint: 'before-stage-1' });
     this.reportOutcome(subject, 'NOT_EXECUTED', { code: BATCH_SUPERSEDED, key });
@@ -1920,8 +1922,9 @@ export class ResidentExecutor {
     }
   }
 
-  async closeOrThrow(batch) {
-    const closed = await this.engine.closeBatch(batch);
+  // opts.linux false: the batch never reached Linux (released before stage 1), so only Windows is archived.
+  async closeOrThrow(batch, opts = null) {
+    const closed = await this.engine.closeBatch(batch, opts);
     check(closed && closed.verified === true, 'UNEXECUTED_CLOSE_UNCONFIRMED');
   }
 
