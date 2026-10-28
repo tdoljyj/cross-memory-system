@@ -11,6 +11,10 @@
     against a temporary state directory with a fake executor (one stop per process, no stop file on the
     executor's own exit; Task fe6cd7bc);
   - node's uptimeMs() reads the same clock as the host's GetTickCount64 (Task d80fd886).
+  - node identity and the two secret files (primary/standby C7, DESIGN.md section 30): the identity derivations of install and verify
+    against the shared cases (test/fixtures/node-identity-cases.json), the package side, the receipt checks, the secret files'
+    security descriptors, and the fingerprint check and create-only placement against a scratch package and scratch targets with a
+    throw-away key and a made-up token (needs a node on this machine; the result says whether it ran).
   powershell -NoProfile -File test-resident-windows.ps1 -Scratch <new empty directory>
 #>
 param([Parameter(Mandatory)][string]$Scratch)
@@ -192,6 +196,266 @@ $largeSha=Sha256Bytes ([Text.Encoding]::UTF8.GetBytes($largeText))
 Yes ((Read-ReviewedPublicJson $reviewFile $largeSha 4MB).padding.Length -eq 3MB) 'acceptance-standard-four-mib-domain-kept'
 Yes (Test-Refused { Read-ReviewedPublicJson $reviewFile $largeSha } 'INSTALL_RECEIPT_BOUNDARY_REFUSED') 'receipt-config-small-bound-kept'
 
+$verifyText = Get-Content -LiteralPath (Join-Path $here 'verify-resident.ps1') -Raw
+
+# 4d. Node identity and the two secret files (primary/standby C7, Task 088ab175, DESIGN.md section 30). Nothing on the host is read or
+#     changed: every path below is in the scratch directory (the install's production targets are only compared as text), the
+#     only key is a throw-away RSA key node generates into the scratch directory, the only token a made-up string.
+foreach ($name in @('install-resident.ps1:Get-NodeIdentity', 'install-resident.ps1:ConvertTo-NodeIdentityCanonical', 'install-resident.ps1:Sha256Text', 'install-resident.ps1:Sha256File', 'install-resident.ps1:Read-PackageRecordFile', 'install-resident.ps1:Get-PackageNodeIdentity',
+  'install-resident.ps1:Get-SecretFileSddl', 'install-resident.ps1:Get-SecretDirectorySddl', 'install-resident.ps1:Open-PackageFileHeld', 'install-resident.ps1:Get-SecretFingerprint', 'install-resident.ps1:Read-SecretSource',
+  'install-resident.ps1:Get-SecretsPlan', 'install-resident.ps1:Clear-SecretBytes', 'install-resident.ps1:Write-NewSecret', 'install-resident.ps1:Get-DaclPart')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }
+foreach ($var in @('NodeIdentityRefs', 'NodeIdentityKeys')) {
+  Yes ($installText -match ('(?m)^\$' + $var + ' = @\([^\r\n]+\)')) ('present:' + $var); $line = $Matches[0]; . ([scriptblock]::Create($line))
+  Yes ($verifyText.Contains($line)) ('verify-has-the-same:' + $var)
+}
+foreach ($name in @('Get-NodeIdentity', 'ConvertTo-NodeIdentityCanonical')) { Yes ($functions['install-resident.ps1:' + $name] -ceq $functions['verify-resident.ps1:' + $name]) ('identity-function-identical:' + $name) }
+Yes ($installText -match '(?m)^\$SecretTargets = \[ordered\]@\{[^\r\n]+\}') 'present:SecretTargets'; $targetsLine = $Matches[0]
+Yes ($verifyText.Contains($targetsLine)) 'verify-has-the-same-secret-targets'
+Yes ($targetsLine.Contains("'C:\ProgramData\CluedControl\trusted\controller-checks-app.pem'") -and $targetsLine.Contains("'C:\ProgramData\CluedIndependentCI\secrets\ci-admission.token'")) 'secret-targets-are-the-runtime-paths'
+Yes ($NodeIdentityKeys.Count -eq 16 -and $NodeIdentityRefs.Count -eq 7) 'identity-keys'
+
+# The shared cases: this PowerShell derivation is held to the JavaScript one (test/node-identity.test.mjs reads the same file).
+$idCasesText = [IO.File]::ReadAllText((Join-Path $here '..\test\fixtures\node-identity-cases.json'), (New-Object Text.UTF8Encoding($false, $true)))
+$idCases = $idCasesText | ConvertFrom-Json
+Yes ($idCases.contract -ceq 'clued.independent-ci.node-identity-cases/1' -and @($idCases.refused).Count -ge 30) 'node-identity-cases'
+function Set-CasePath($object, [string]$dotted, $value) {
+  $parts = $dotted.Split('.'); $at = $object
+  for ($i = 0; $i -lt $parts.Count - 1; $i++) { $at = $at.($parts[$i]) }
+  $leaf = $parts[$parts.Count - 1]
+  if (@($at.PSObject.Properties.Name) -ccontains $leaf) { $at.$leaf = $value } else { $at | Add-Member -NotePropertyName $leaf -NotePropertyValue $value }
+}
+function New-IdentityCase($case) {
+  $n = ($idCasesText | ConvertFrom-Json).nodes.($case.node)
+  $docs = @{ installation = $n.installation; accepted = $n.accepted }; $pin = $n.acceptancePin
+  foreach ($doc in @('installation', 'accepted')) {
+    if (@($case.PSObject.Properties.Name) -ccontains $doc) {
+      $edit = $case.$doc
+      if (@($edit.PSObject.Properties.Name) -ccontains 'set') { foreach ($f in $edit.set.PSObject.Properties) { Set-CasePath $docs[$doc] $f.Name $f.Value } }
+      if (@($edit.PSObject.Properties.Name) -ccontains 'remove') { foreach ($k in @($edit.remove)) { [void]$docs[$doc].PSObject.Properties.Remove($k) } }
+    }
+  }
+  if (@($case.PSObject.Properties.Name) -ccontains 'pin') { $pin = $case.pin }
+  [pscustomobject]@{ installation = $docs.installation; accepted = $docs.accepted; pin = $pin }
+}
+foreach ($nodeName in @('turing', 'company')) {
+  $nd = ($idCasesText | ConvertFrom-Json).nodes.$nodeName
+  $id = Get-NodeIdentity $nd.installation $nd.accepted $nd.acceptancePin
+  Yes ((ConvertTo-NodeIdentityCanonical $id) -ceq (ConvertTo-NodeIdentityCanonical $nd.identity)) ('identity-derived:' + $nodeName)
+  Yes ((Sha256Text (ConvertTo-NodeIdentityCanonical $id)) -ceq $nd.identitySha256) ('identity-sha-equals-the-javascript-one:' + $nodeName)
+}
+Yes ((($idCases.nodes.turing.identity.nodeName) -ceq 'turing') -and (($idCases.nodes.company.identity.nodeName) -ceq 'company') -and $idCases.nodes.turing.identitySha256 -cne $idCases.nodes.company.identitySha256) 'two-different-node-identities'
+$i = 0; foreach ($case in @($idCases.refused)) { $i++; $c = New-IdentityCase $case; Yes (Test-Refused { Get-NodeIdentity $c.installation $c.accepted $c.pin } $case.code) ('node-identity-refused:' + $i + ':' + $case.node + ':' + $case.name) }
+Yes (Test-Refused { Get-NodeIdentity $null $null ('a' * 64) } 'NODE_IDENTITY_FIELDS_REQUIRED') 'node-identity-refused:null'
+
+# The package side: both record files are read once from the bytes the reviewed manifest pins, and the identity must be the one the build pinned.
+function Write-IdentityPackage([string]$dir, $nd, [string]$identitySha, [switch]$Disagree) {
+  [void][IO.Directory]::CreateDirectory((Join-Path $dir 'record'))
+  $enc = New-Object Text.UTF8Encoding($false)
+  $accBytes = $enc.GetBytes(($nd.accepted | ConvertTo-Json -Depth 8 -Compress))
+  $inst = $nd.installation | ConvertTo-Json -Depth 8 | ConvertFrom-Json; $inst.acceptanceSha256 = Sha256Bytes $accBytes
+  if ($Disagree) { $inst.ciTokenPinSha256 = 'f' * 64 }
+  $instBytes = $enc.GetBytes(($inst | ConvertTo-Json -Depth 8 -Compress))
+  [IO.File]::WriteAllBytes((Join-Path $dir 'record\acceptance.json'), $accBytes); [IO.File]::WriteAllBytes((Join-Path $dir 'record\installation.json'), $instBytes)
+  $manifest = [ordered]@{ contract = 'clued.independent-ci.resident-package/3'; files = @(
+    [ordered]@{ path = 'record/installation.json'; target = 'record\installation.json'; sha256 = (Sha256Bytes $instBytes) },
+    [ordered]@{ path = 'record/acceptance.json'; target = 'record\acceptance.json'; sha256 = (Sha256Bytes $accBytes) }) }
+  if ($identitySha) { $manifest.nodeIdentitySha256 = $identitySha }
+  $script:pkgBytes = $enc.GetBytes(($manifest | ConvertTo-Json -Depth 6)); $script:PackageRoot = $dir; $script:ExpectedPackageManifestSha256 = Sha256Bytes $script:pkgBytes
+}
+foreach ($nodeName in @('turing', 'company')) {
+  $nd = ($idCasesText | ConvertFrom-Json).nodes.$nodeName
+  Write-IdentityPackage (Join-Path $Scratch ('identity-package-' + $nodeName)) $nd $nd.identitySha256
+  $fromPackage = Get-PackageNodeIdentity
+  Yes ((ConvertTo-NodeIdentityCanonical $fromPackage) -ceq (ConvertTo-NodeIdentityCanonical $nd.identity) -and $fromPackage.nodeName -ceq $nodeName) ('package-identity:' + $nodeName)
+}
+$nd = ($idCasesText | ConvertFrom-Json).nodes.company
+Write-IdentityPackage (Join-Path $Scratch 'identity-package-no-pin') $nd ''; Yes (Test-Refused { Get-PackageNodeIdentity } 'PACKAGE_NODE_IDENTITY_REQUIRED') 'package-identity-pin-required'
+Write-IdentityPackage (Join-Path $Scratch 'identity-package-wrong-pin') $nd ('0' * 64); Yes (Test-Refused { Get-PackageNodeIdentity } 'PACKAGE_NODE_IDENTITY_CHANGED') 'package-identity-pin-mismatch'
+Write-IdentityPackage (Join-Path $Scratch 'identity-package-turing-pin') $nd $idCases.nodes.turing.identitySha256; Yes (Test-Refused { Get-PackageNodeIdentity } 'PACKAGE_NODE_IDENTITY_CHANGED') 'package-identity-other-nodes-pin'
+Write-IdentityPackage (Join-Path $Scratch 'identity-package-disagree') $nd $nd.identitySha256 -Disagree; Yes (Test-Refused { Get-PackageNodeIdentity } 'NODE_IDENTITY_RECORDS_DISAGREE') 'package-identity-record-files-disagree'
+Write-IdentityPackage (Join-Path $Scratch 'identity-package-edited') $nd $nd.identitySha256
+[IO.File]::WriteAllText((Join-Path $PackageRoot 'record\installation.json'), '{"appKeyId":1}'); Yes (Test-Refused { Get-PackageNodeIdentity } 'PACKAGE_FILE_CHANGED:record\installation.json') 'package-identity-bytes-pin'
+
+# The verify side: the receipt's identity against the installed record, and the receipt's word about the two files.
+foreach ($name in @('Get-Field', 'Sha256Text', 'Test-SecretFileSecurity', 'Test-NodeIdentityReceipt', 'Test-SecretsReceipt', 'Get-SecretFileState')) { Yes ($functions.ContainsKey('verify-resident.ps1:' + $name)) ('verify-present:' + $name); . ([scriptblock]::Create($functions['verify-resident.ps1:' + $name])) }
+Yes ($verifyText -match '(?m)^\$SecretAdmins = @\([^\r\n]+\)') 'verify-present:SecretAdmins'; . ([scriptblock]::Create($Matches[0]))
+. ([scriptblock]::Create($targetsLine))
+function New-IdentityReceipt($id, [string]$role = 'NONE', [bool]$keyPlaced = $true, [bool]$tokenPlaced = $false) {
+  $r = [ordered]@{ nodeIdentity = $id; nodeIdentitySha256 = (Sha256Text (ConvertTo-NodeIdentityCanonical $id)); roleAssumption = $role
+    secrets = [ordered]@{ appKey = [ordered]@{ target = $SecretTargets.appKey; placed = $keyPlaced; fingerprint = $(if ($keyPlaced) { $id.appPublicKeySha256Base64 } else { $null }) }
+      ciToken = [ordered]@{ target = $SecretTargets.ciToken; placed = $tokenPlaced; fingerprint = $(if ($tokenPlaced) { $id.ciTokenPinSha256 } else { $null }) } } }
+  if ($role -eq '') { $r.Remove('roleAssumption') }
+  ($r | ConvertTo-Json -Depth 6) | ConvertFrom-Json   # as verify reads the receipt: parsed from the file
+}
+foreach ($nodeName in @('turing', 'company')) {
+  $nd = ($idCasesText | ConvertFrom-Json).nodes.$nodeName
+  $receipt = New-IdentityReceipt $nd.identity
+  $res = Test-NodeIdentityReceipt $receipt $nd.installation $nd.accepted $nd.acceptancePin
+  Yes ($res.ok -eq $true -and $res.detail -ceq $nodeName -and $res.identity.nodeName -ceq $nodeName) ('verify-node-identity:' + $nodeName)
+  Yes ((Test-SecretsReceipt $receipt $res.identity) -and (Test-SecretsReceipt (New-IdentityReceipt $nd.identity 'NONE' $true $true) $res.identity) -and (Test-SecretsReceipt (New-IdentityReceipt $nd.identity 'NONE' $false $false) $res.identity)) ('verify-secrets-receipt:' + $nodeName)
+}
+$company = ($idCasesText | ConvertFrom-Json).nodes.company; $turing = ($idCasesText | ConvertFrom-Json).nodes.turing
+$res = Test-NodeIdentityReceipt (New-IdentityReceipt $turing.identity) $company.installation $company.accepted $company.acceptancePin
+Yes ($res.ok -eq $false -and $res.detail -ceq 'NODE_IDENTITY_CHANGED') 'verify-node-identity:another-nodes-receipt'
+foreach ($role in @('ACTIVE', 'STANDBY', '')) {
+  $res = Test-NodeIdentityReceipt (New-IdentityReceipt $company.identity $role) $company.installation $company.accepted $company.acceptancePin
+  Yes ($res.ok -eq $false -and $res.detail -ceq 'ROLE_ASSUMED_AT_INSTALL') ('verify-node-identity:role-assumed:' + $role)
+}
+$changed = $company.identity | ConvertTo-Json | ConvertFrom-Json; $changed.ciTokenPinSha256 = 'e' * 64
+$res = Test-NodeIdentityReceipt (New-IdentityReceipt $changed) $company.installation $company.accepted $company.acceptancePin
+Yes ($res.ok -eq $false -and $res.detail -ceq 'NODE_IDENTITY_CHANGED') 'verify-node-identity:receipt-token-pin-edited'
+$bad = New-IdentityReceipt $company.identity; $bad.nodeIdentitySha256 = '9' * 64
+Yes ((Test-NodeIdentityReceipt $bad $company.installation $company.accepted $company.acceptancePin).detail -ceq 'NODE_IDENTITY_CHANGED') 'verify-node-identity:receipt-sha-edited'
+$bad = New-IdentityReceipt $company.identity; $bad.nodeIdentity.PSObject.Properties.Remove('appKeyId')
+Yes ((Test-NodeIdentityReceipt $bad $company.installation $company.accepted $company.acceptancePin).detail -ceq 'NODE_IDENTITY_CHANGED') 'verify-node-identity:receipt-field-missing'
+$installedEdited = $company.installation | ConvertTo-Json -Depth 8 | ConvertFrom-Json; $installedEdited.ciTokenPinSha256 = 'd' * 64
+Yes ((Test-NodeIdentityReceipt (New-IdentityReceipt $company.identity) $installedEdited $company.accepted $company.acceptancePin).detail -ceq 'NODE_IDENTITY_RECORDS_DISAGREE') 'verify-node-identity:the-two-record-files-disagree'
+$bothEdited = $company.accepted | ConvertTo-Json -Depth 8 | ConvertFrom-Json; $bothEdited.ciTokenPinSha256 = 'd' * 64
+Yes ((Test-NodeIdentityReceipt (New-IdentityReceipt $company.identity) $installedEdited $bothEdited $company.acceptancePin).detail -ceq 'NODE_IDENTITY_CHANGED') 'verify-node-identity:both-files-edited-the-receipt-still-holds-the-old-identity'
+Yes ((Test-NodeIdentityReceipt (New-IdentityReceipt $company.identity) $company.installation $company.accepted ('c' * 64)).detail -ceq 'NODE_IDENTITY_ACCEPTANCE_PIN_MISMATCH') 'verify-node-identity:acceptance-bytes-changed'
+$ok = Test-NodeIdentityReceipt (New-IdentityReceipt $company.identity) $company.installation $company.accepted $company.acceptancePin
+$other = New-IdentityReceipt $company.identity; $other.secrets.appKey.fingerprint = 'A' * 43 + '='
+Yes (-not (Test-SecretsReceipt $other $ok.identity)) 'verify-secrets-receipt:placed-with-another-fingerprint'
+$other = New-IdentityReceipt $company.identity 'NONE' $false $false; $other.secrets.ciToken.fingerprint = $company.identity.ciTokenPinSha256
+Yes (-not (Test-SecretsReceipt $other $ok.identity)) 'verify-secrets-receipt:not-placed-but-a-fingerprint'
+$other = New-IdentityReceipt $company.identity; $other.secrets.appKey.target = 'C:\elsewhere\app.pem'
+Yes (-not (Test-SecretsReceipt $other $ok.identity)) 'verify-secrets-receipt:another-target'
+$other = New-IdentityReceipt $company.identity; $other.PSObject.Properties.Remove('secrets')
+Yes (-not (Test-SecretsReceipt $other $ok.identity) -and -not (Test-SecretsReceipt (New-IdentityReceipt $company.identity) $null)) 'verify-secrets-receipt:missing'
+
+# The secret files' security descriptors: what the install creates is what verify accepts, and what the runtime would refuse is refused.
+$ctrl = $ControllerSid; $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+function New-Acl([string]$sddl) { $a = New-Object Security.AccessControl.FileSecurity; $a.SetSecurityDescriptorSddlForm($sddl); $a }
+$goodSddl = Get-SecretFileSddl $ctrl
+Yes ($goodSddl -ceq ('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;' + $ctrl + ')')) 'secret-file-sddl'
+Yes (Test-SecretFileSecurity (New-Acl $goodSddl) $ctrl) 'secret-file-acl:what-install-creates-verify-accepts'
+$aces = @((New-Object Security.AccessControl.RawSecurityDescriptor($goodSddl)).DiscretionaryAcl)
+Yes ($aces.Count -eq 3 -and @($aces | Where-Object { $_.SecurityIdentifier.Value -ceq $ctrl -and $_.AccessMask -eq 0x120089 -and [int]$_.AceFlags -eq 0 }).Count -eq 1) 'secret-file-acl:controller-read-only-no-inheritance'
+Yes ((New-Object Security.AccessControl.RawSecurityDescriptor($goodSddl)).Owner.Value -ceq 'S-1-5-32-544' -and ((New-Object Security.AccessControl.RawSecurityDescriptor($goodSddl)).ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0) 'secret-file-acl:owner-administrators-protected'
+$dirAces = @((New-Object Security.AccessControl.RawSecurityDescriptor((Get-SecretDirectorySddl $ctrl))).DiscretionaryAcl)
+Yes ($dirAces.Count -eq 3 -and @($dirAces | Where-Object { $_.SecurityIdentifier.Value -ceq $ctrl -and $_.AccessMask -eq 0x1200a9 }).Count -eq 1) 'secret-directory-acl:controller-read-execute-only'
+foreach ($pair in @(
+  @('owner-is-not-an-administrator', ('O:' + $me + 'G:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;' + $ctrl + ')')),
+  @('a-user-can-read', ($goodSddl + '(A;;FR;;;BU)')), @('everyone-can-read', ($goodSddl + '(A;;FR;;;WD)')),
+  @('a-user-can-write-attributes', ($goodSddl + '(A;;0x100;;;BU)')), @('a-user-can-delete', ($goodSddl + '(A;;0x10000;;;BU)')),
+  @('the-controller-can-write', ('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;' + $ctrl + ')')),
+  @('the-controller-cannot-read', 'O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)'),
+  @('another-account-instead-of-the-controller', ('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;' + $me + ')')))) {
+  Yes (-not (Test-SecretFileSecurity (New-Acl $pair[1]) $ctrl)) ('secret-file-acl:refused:' + $pair[0])
+}
+
+# 4e. The fingerprint check and the placement, against a scratch package and scratch targets (the real node and the real tool of this
+#     checkout run on a throw-away key and a made-up token). Skipped, and said so in the result, when this machine has no node.
+$secretCheck = 'skipped-no-node'
+$secretState = Get-SecretFileState (Join-Path $Scratch 'secrets-fs\no-such-file') $ctrl
+Yes ($secretState -ceq 'absent') 'secret-file-state:absent'
+[void][IO.Directory]::CreateDirectory((Join-Path $Scratch 'secrets-fs')); $plainFile = Join-Path $Scratch 'secrets-fs\plain.bin'; [IO.File]::WriteAllText($plainFile, 'x')
+Yes ((Get-SecretFileState $plainFile $ctrl) -ceq 'acl-refused') 'secret-file-state:an-ordinary-file-is-refused'
+if (Test-Path -LiteralPath $probeNode) {
+  $secretCheck = 'checked'
+  $enc = New-Object Text.UTF8Encoding($false)
+  # A package with a space in its path (like a real Downloads folder), holding the pinned node and the reviewed tool.
+  $sp = Join-Path $Scratch 'secret package'; $residentSha = 'a' * 64
+  [void][IO.Directory]::CreateDirectory((Join-Path $sp 'runtime')); [void][IO.Directory]::CreateDirectory((Join-Path $sp 'resident\tools'))
+  Copy-Item -LiteralPath $probeNode -Destination (Join-Path $sp 'runtime\node.exe')
+  Copy-Item -LiteralPath (Join-Path $here '..\tools\secret-fingerprint.mjs') -Destination (Join-Path $sp 'resident\tools\secret-fingerprint.mjs')
+  function Write-SecretPackage {
+    $m = [ordered]@{ contract = 'clued.independent-ci.resident-package/3'; files = @(
+      [ordered]@{ path = 'runtime/node.exe'; target = 'runtime\node.exe'; sha256 = (Sha256File (Join-Path $sp 'runtime\node.exe')) },
+      [ordered]@{ path = 'resident/tools/secret-fingerprint.mjs'; target = ('resident\' + $residentSha + '\tools\secret-fingerprint.mjs'); sha256 = (Sha256File (Join-Path $sp 'resident\tools\secret-fingerprint.mjs')) }) }
+    $script:pkgBytes = $enc.GetBytes(($m | ConvertTo-Json -Depth 6)); $script:PackageRoot = $sp; $script:ExpectedPackageManifestSha256 = Sha256Bytes $script:pkgBytes
+  }
+  Write-SecretPackage
+  # A throw-away RSA key, made by node in the scratch directory, with the runtime's own formula for its fingerprint.
+  $gen = Join-Path $Scratch 'make-throwaway-key.mjs'
+  [IO.File]::WriteAllText($gen, "import { generateKeyPairSync, createHash, createPublicKey } from 'node:crypto'; import fs from 'node:fs';`nconst { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });`nconst pem = privateKey.export({ type: 'pkcs8', format: 'pem' }); fs.writeFileSync(process.argv[2], pem);`nconsole.log(createHash('sha256').update(createPublicKey(pem).export({ type: 'spki', format: 'der' })).digest('base64'));")
+  $keyA = Join-Path $Scratch 'secrets-fs\key-a.pem'; $keyB = Join-Path $Scratch 'secrets-fs\key-b.pem'
+  $fpA = (& $probeNode $gen $keyA | Out-String).Trim(); $fpB = (& $probeNode $gen $keyB | Out-String).Trim()
+  Yes ($LASTEXITCODE -eq 0 -and $fpA -cmatch '^[A-Za-z0-9+/]{43}=$' -and $fpB -cmatch '^[A-Za-z0-9+/]{43}=$' -and $fpA -cne $fpB) 'throwaway-keys'
+  $tokenText = 'clued_bnd_' + 'FixtureTokenValue0123456789'; $tokenFile = Join-Path $Scratch 'secrets-fs\token-a.txt'; [IO.File]::WriteAllText($tokenFile, $tokenText + "`r`n")
+  $tokenPin = Sha256Text ("clued.independent-ci.ci-binding-pin/1`0" + $tokenText)
+  $keyBytes = [IO.File]::ReadAllBytes($keyA); $tokenBytes = [IO.File]::ReadAllBytes($tokenFile)
+
+  Yes ((Get-SecretFingerprint 'app-key' $keyBytes) -ceq $fpA) 'fingerprint:app-key-equals-the-runtime-formula'
+  Yes ((Get-SecretFingerprint 'ci-token' $tokenBytes) -ceq $tokenPin) 'fingerprint:ci-token-equals-the-runtime-pin'
+  Yes ((Get-SecretFingerprint 'ci-token' $enc.GetBytes($tokenText)) -ceq $tokenPin) 'fingerprint:ci-token-without-newline'
+  Yes ($null -eq (Get-SecretFingerprint 'app-key' $enc.GetBytes('not a key')) -and $null -eq (Get-SecretFingerprint 'ci-token' $enc.GetBytes('clued_bnd_x')) -and $null -eq (Get-SecretFingerprint 'app-key' $tokenBytes)) 'fingerprint:not-a-key-not-a-token-refused'
+  # held open: no writer, no deleter while the install runs the tool; free again afterwards
+  $held = Open-PackageFileHeld ('resident\' + $residentSha + '\tools\secret-fingerprint.mjs')
+  $blocked = $false; try { $w = [IO.File]::Open($held.path, 'Open', 'Write', 'ReadWrite'); $w.Dispose() } catch [IO.IOException] { $blocked = $true }
+  $held.stream.Dispose()
+  $w = [IO.File]::Open((Join-Path $sp 'resident\tools\secret-fingerprint.mjs'), 'Open', 'Write', 'ReadWrite'); $w.Dispose()
+  Yes $blocked 'package-file-held-open-against-writers'
+  [IO.File]::AppendAllText((Join-Path $sp 'resident\tools\secret-fingerprint.mjs'), ' ')   # the tool changes after the manifest was reviewed
+  Yes (Test-Refused { Get-SecretFingerprint 'ci-token' $tokenBytes } ('PACKAGE_FILE_CHANGED:resident\' + $residentSha + '\tools\secret-fingerprint.mjs')) 'fingerprint:changed-tool-refused'
+  Copy-Item -LiteralPath (Join-Path $here '..\tools\secret-fingerprint.mjs') -Destination (Join-Path $sp 'resident\tools\secret-fingerprint.mjs') -Force
+  [IO.File]::AppendAllText((Join-Path $sp 'runtime\node.exe'), ' ')   # same for the node copy
+  Yes (Test-Refused { Get-SecretFingerprint 'ci-token' $tokenBytes } 'PACKAGE_FILE_CHANGED:runtime\node.exe') 'fingerprint:changed-node-refused'
+  Remove-Item -LiteralPath (Join-Path $sp 'runtime\node.exe') -Force; Copy-Item -LiteralPath $probeNode -Destination (Join-Path $sp 'runtime\node.exe')
+
+  # The plan's secrets part, against scratch targets: nothing supplied, everything right, and every way to fail closed.
+  $fakeProgramData = Join-Path $Scratch 'ProgramData'
+  $script:SecretTargets = [ordered]@{ appKey = (Join-Path $fakeProgramData 'CluedControl\trusted\controller-checks-app.pem'); ciToken = (Join-Path $fakeProgramData 'CluedIndependentCI\secrets\ci-admission.token') }
+  $script:Identity = [pscustomobject]@{ appPublicKeySha256Base64 = $fpA; ciTokenPinSha256 = $tokenPin }
+  $script:ControllerSid = $ctrl; $script:SecretBytes = @{}
+  $script:AppPrivateKeyFile = ''; $script:CiAdmissionTokenFile = ''
+  [void][IO.Directory]::CreateDirectory((Join-Path $fakeProgramData 'CluedControl\trusted')); [void][IO.Directory]::CreateDirectory((Join-Path $fakeProgramData 'CluedIndependentCI'))
+  $none = Get-SecretsPlan
+  Yes ($none.appKey.supplied -eq $false -and $none.ciToken.supplied -eq $false -and $none.appKey.verified -eq $false -and $script:SecretBytes.Count -eq 0 -and -not $none.appKey.createsDirectory) 'secrets-plan:nothing-supplied-nothing-read'
+  $script:AppPrivateKeyFile = $keyA; $script:CiAdmissionTokenFile = $tokenFile
+  $both = Get-SecretsPlan
+  Yes ($both.appKey.supplied -and $both.appKey.verified -and $both.ciToken.supplied -and $both.ciToken.verified -and $both.ciToken.createsDirectory -and -not $both.appKey.createsDirectory -and $both.ciToken.directorySddl -ceq (Get-SecretDirectorySddl $ctrl) -and $both.appKey.sddl -ceq $goodSddl) 'secrets-plan:supplied-and-verified'
+  Yes ((Sha256Bytes $script:SecretBytes.appKey) -ceq (Sha256Bytes $keyBytes) -and (Sha256Bytes $script:SecretBytes.ciToken) -ceq (Sha256Bytes $tokenBytes)) 'secrets-plan:exactly-the-fingerprinted-bytes-are-kept'
+  $planJson = $both | ConvertTo-Json -Depth 6
+  Yes (-not $planJson.Contains('PRIVATE KEY') -and -not $planJson.Contains($tokenText) -and $planJson.Contains($fpA) -and $planJson.Contains($tokenPin)) 'secrets-plan:fingerprints-only'
+  Clear-SecretBytes; Yes ($script:SecretBytes.Count -eq 0 -and (@($keyBytes).Count -gt 0)) 'secrets-plan:bytes-cleared'
+  $script:SecretBytes = @{}
+  # fail closed: a key or token with another fingerprint, files that are not what they should be, targets that exist
+  $script:AppPrivateKeyFile = $keyB; $script:CiAdmissionTokenFile = ''
+  Yes (Test-Refused { Get-SecretsPlan } 'APP_KEY_FINGERPRINT_MISMATCH') 'secrets-plan:another-app-key-refused'
+  $script:AppPrivateKeyFile = ''; $script:CiAdmissionTokenFile = $tokenFile
+  $script:Identity = [pscustomobject]@{ appPublicKeySha256Base64 = $fpA; ciTokenPinSha256 = ('0' * 64) }
+  Yes (Test-Refused { Get-SecretsPlan } 'CI_TOKEN_FINGERPRINT_MISMATCH') 'secrets-plan:another-token-refused'
+  $script:Identity = [pscustomobject]@{ appPublicKeySha256Base64 = $fpA; ciTokenPinSha256 = $tokenPin }
+  $notKey = Join-Path $Scratch 'secrets-fs\not-a-key.pem'; [IO.File]::WriteAllText($notKey, 'hello'); $script:AppPrivateKeyFile = $notKey; $script:CiAdmissionTokenFile = ''
+  Yes (Test-Refused { Get-SecretsPlan } 'APP_KEY_UNREADABLE') 'secrets-plan:not-a-private-key-refused'
+  $script:AppPrivateKeyFile = (Join-Path $Scratch 'secrets-fs\missing.pem'); Yes (Test-Refused { Get-SecretsPlan } 'APP_KEY_SOURCE_REFUSED') 'secrets-plan:missing-source-refused'
+  $script:AppPrivateKeyFile = (Join-Path $Scratch 'secrets-fs'); Yes (Test-Refused { Get-SecretsPlan } 'APP_KEY_SOURCE_REFUSED') 'secrets-plan:directory-source-refused'
+  $empty = Join-Path $Scratch 'secrets-fs\empty.pem'; [IO.File]::WriteAllBytes($empty, (New-Object byte[] 0)); $script:AppPrivateKeyFile = $empty; Yes (Test-Refused { Get-SecretsPlan } 'APP_KEY_SOURCE_REFUSED') 'secrets-plan:empty-source-refused'
+  $big = Join-Path $Scratch 'secrets-fs\big.txt'; [IO.File]::WriteAllBytes($big, (New-Object byte[] 5000)); $script:AppPrivateKeyFile = ''; $script:CiAdmissionTokenFile = $big
+  Yes (Test-Refused { Get-SecretsPlan } 'CI_TOKEN_SOURCE_REFUSED') 'secrets-plan:oversized-source-refused'
+  $script:AppPrivateKeyFile = $keyA; $script:CiAdmissionTokenFile = ''
+  [IO.File]::WriteAllText($script:SecretTargets.appKey, 'already here')
+  Yes (Test-Refused { Get-SecretsPlan } 'APP_KEY_TARGET_EXISTS_NOT_OVERWRITTEN') 'secrets-plan:existing-key-never-overwritten'
+  Remove-Item -LiteralPath $script:SecretTargets.appKey -Force
+  $script:SecretTargets = [ordered]@{ appKey = (Join-Path $fakeProgramData 'CluedControl\no-trusted-here\controller-checks-app.pem'); ciToken = $script:SecretTargets.ciToken }
+  Yes (Test-Refused { Get-SecretsPlan } 'APP_KEY_TARGET_DIRECTORY_MISSING') 'secrets-plan:controller-tree-is-not-created-by-this-install'
+  $linkTarget = Join-Path $Scratch 'elsewhere'; [void][IO.Directory]::CreateDirectory($linkTarget); $link = Join-Path $fakeProgramData 'CluedControl\linked'
+  $null = New-Item -ItemType Junction -Path $link -Target $linkTarget
+  $script:SecretTargets = [ordered]@{ appKey = (Join-Path $link 'controller-checks-app.pem'); ciToken = $script:SecretTargets.ciToken }
+  Yes (Test-Refused { Get-SecretsPlan } 'APP_KEY_TARGET_DIRECTORY_REFUSED') 'secrets-plan:linked-target-directory-refused'
+  Yes ($script:SecretBytes.Count -eq 0) 'secrets-plan:a-refusal-keeps-no-bytes'
+  $script:AppPrivateKeyFile = ''; $script:CiAdmissionTokenFile = $tokenFile
+  [void][IO.Directory]::CreateDirectory((Join-Path $fakeProgramData 'CluedIndependentCI\secrets')); [IO.File]::WriteAllText($script:SecretTargets.ciToken, 'already here')
+  Yes (Test-Refused { Get-SecretsPlan } 'CI_TOKEN_TARGET_EXISTS_NOT_OVERWRITTEN') 'secrets-plan:existing-token-never-overwritten'
+  Remove-Item -LiteralPath (Join-Path $fakeProgramData 'CluedIndependentCI\secrets') -Recurse -Force
+  [void][IO.Directory]::Delete($link)
+
+  # Placement: create-only, the exact bytes, the final security descriptor (here: this account stands in for .\clued-control).
+  $placeSddl = 'D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;' + $me + ')'
+  $placed = Join-Path $Scratch 'secrets-fs\placed.bin'
+  Write-NewSecret $placed $keyBytes $placeSddl
+  Yes ((Sha256File $placed) -ceq (Sha256Bytes $keyBytes)) 'place:exact-bytes'
+  $placedAces = @((New-Object Security.AccessControl.RawSecurityDescriptor((Get-Acl -LiteralPath $placed).Sddl)).DiscretionaryAcl)
+  Yes ($placedAces.Count -eq 3 -and @($placedAces | Where-Object { $_.SecurityIdentifier.Value -ceq $me -and $_.AccessMask -eq 0x120089 }).Count -eq 1) 'place:final-descriptor-from-the-first-moment'
+  $second = $false; try { Write-NewSecret $placed $tokenBytes $placeSddl } catch { $second = $true }
+  Yes ($second -and (Sha256File $placed) -ceq (Sha256Bytes $keyBytes)) 'place:create-only-never-overwrites'
+  # the file is read-only for this account by design (the stand-in controller): the owner takes delete back before the cleanup
+  $fi = New-Object IO.FileInfo($placed); $acl = $fi.GetAccessControl([Security.AccessControl.AccessControlSections]::Access); $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier($me)), 'FullControl', 'Allow'))); $fi.SetAccessControl($acl)
+  Remove-Item -LiteralPath $placed -Force
+  Remove-Item -LiteralPath (Join-Path $sp 'runtime\node.exe') -Force   # the scratch copy of node (about 90 MB)
+}
+
 # 5. C#: the broker's bounded read and both token checks (compiled into the scratch directory).
 $fw = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\'; $csc = Join-Path $fw 'csc.exe'
 $v2 = [IO.Path]::GetFullPath((Join-Path $here '..\..\actions-hosted-migration\independent-ci-v1\src\resident-v2\windows'))
@@ -228,4 +492,4 @@ if (Test-Path -LiteralPath $probeNode) {
   Yes ($LASTEXITCODE -eq 0 -and $nodeMs -ge $before -and $nodeMs -le $after) ('node-uptime-is-gettickcount64:' + $before + '/' + $nodeMs + '/' + $after)
   $uptimeClock = 'checked'
 }
-[ordered]@{ status = 'RESIDENT_WINDOWS_OFFLINE_PASS'; assertions = $n; csharpAssertions = $csharp; serviceHostCsharpAssertions = $serviceHostCsharp; uptimeClock = $uptimeClock; hostRead = $false; hostWrite = $false } | ConvertTo-Json -Compress
+[ordered]@{ status = 'RESIDENT_WINDOWS_OFFLINE_PASS'; assertions = $n; csharpAssertions = $csharp; serviceHostCsharpAssertions = $serviceHostCsharp; uptimeClock = $uptimeClock; secretFingerprint = $secretCheck; hostRead = $false; hostWrite = $false } | ConvertTo-Json -Compress

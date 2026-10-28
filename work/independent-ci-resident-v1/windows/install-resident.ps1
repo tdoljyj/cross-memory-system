@@ -21,6 +21,16 @@
   prompt itself (the plan prints installScriptSha256); after install, every elevated script
   (verify, re-arm, uninstall) is run from its installed admin-only copy under resident\<sha>\windows\.
 
+  Node identity and secrets (resident active/standby design v0.4 sections 7 and 9 C7, DESIGN.md section 30): the plan and the
+  receipt carry this node's identity, derived from the package's record\installation.json and record\acceptance.json (the same hashed
+  bytes; the two must agree): node name, App key id and public-key fingerprint, ci-admission token fingerprint and connection id,
+  the formal qualification refs. No role is assumed: a new connection is not marked with ci-admission, so a node installed on one
+  is STANDBY until the role probe says otherwise. -AppPrivateKeyFile and -CiAdmissionTokenFile are optional. A given file is read
+  once and its fingerprint computed with the package's pinned runtime\node.exe; it must equal the record's pin (a mismatch refuses
+  the install before anything is written), and exactly those bytes are placed, create-only, readable by .\clued-control only.
+  An existing target is never overwritten. Neither value is printed or kept: the plan and the receipt hold fingerprints only.
+  This script never deletes the file you downloaded; delete it yourself afterwards.
+
   Nothing existing is overwritten, deleted or re-ACLed. The runner service is NOT modified: its
   configuration is changed only by CluedCISwapBroker (LocalSystem), which can switch the binary path
   between the original and an installed, allow-listed helper and nothing else (review M2).
@@ -34,7 +44,9 @@ param(
   [Parameter(Mandatory)][ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$ControllerSid, # .\clued-control
   [switch]$Apply,
   [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPlanSha256,
-  [switch]$StartAfterInstall
+  [switch]$StartAfterInstall,
+  [string]$AppPrivateKeyFile,        # optional: this node's App private key, downloaded by the Owner on this machine (design 7.1)
+  [string]$CiAdmissionTokenFile      # optional: this node's ci-admission connection token (design 7.2)
 )
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -57,6 +69,9 @@ $GenericHelper = 'controller-formal-generic-v2.exe'
 # read and run by the Owner). The companion starts every child through it and refuses to start without it.
 $CompanionJobHost = 'CluedCompanionJobHost.exe'
 $SourceV2Windows = 'work\actions-hosted-migration\independent-ci-v1\src\resident-v2\windows'
+# Where the runtime reads the two controller secrets (runtime/protected-files.mjs APP_KEY_FILE; resident-v2/entry-runtime.mjs).
+$SecretTargets = [ordered]@{ appKey = 'C:\ProgramData\CluedControl\trusted\controller-checks-app.pem'; ciToken = 'C:\ProgramData\CluedIndependentCI\secrets\ci-admission.token' }
+$script:SecretBytes = @{}   # the verified secret bytes, in memory only, between the plan and the 'node-secrets' step
 
 # ---- Privilege boundary (independent review of PR-A: MAJOR-1, MINOR-2, MINOR-4, MINOR-5) ----
 # Required privileges cut the service tokens down to what the code needs; both hosts re-check the real
@@ -141,6 +156,180 @@ function Get-PackageNodeProfile {
   Assert-NodeProfile $accepted.node
   if ($accepted.hostname -cne $accepted.node.hostname) { throw 'NODE_PROFILE_INVALID' }
   $accepted.node
+}
+
+# ---- Node identity (resident active/standby design v0.4 sections 7.1, 7.2, 7.4 and 9 C7; DESIGN.md section 30) ----
+# Who this node is to the services it talks to, as the install pins it in its receipt: the node name, this node's GitHub App key
+# (appKeyId and the public-key fingerprint), its ci-admission connection (connection id and token fingerprint), the formal
+# qualification refs of the install record and the Owner decision that accepted it. Public ids and fingerprints only: never a key
+# or a token. ciPrincipalRoleRef is the Owner decision that this connection MAY hold ci-admission (design 7.2); whether it holds
+# it now is only ever the role probe's answer, so no role is assumed here. The identity is derived from the two install-record
+# files the package carries, read from the same hashed bytes; the two files state the connection, the token pin, the key
+# fingerprint and the principal qualification twice and must agree. src/node-identity.mjs is the JavaScript twin;
+# test/fixtures/node-identity-cases.json holds the three to the same answers and refusal codes.
+$NodeIdentityRefs = @('sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef', 'ownerPackageAcceptanceRef', 'installationReceiptRef')
+$NodeIdentityKeys = @('contract', 'nodeName', 'appKeyId', 'appPublicKeySha256Base64', 'ciTokenPinSha256', 'ciPrincipalBindingId', 'ciPrincipalRoleRef', 'sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef', 'ownerPackageAcceptanceRef', 'installationReceiptRef', 'ownerDecisionRef', 'ownerReceiptRef')
+# .NET regex notes as for the node profile: \z anchors, [0-9a-f] digits. A property that is absent reads as $null (StrictMode).
+function Get-NodeIdentity($installation, $accepted, [string]$acceptanceSha256) {
+  $get = { param($o, [string]$k) if (($o -is [pscustomobject]) -and (@($o.PSObject.Properties.Name) -ccontains $k)) { $o.$k } else { $null } }
+  $is = { param($v, [string]$re) ($v -is [string]) -and ($v -cmatch $re) }
+  $uuid = '^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\z'; $hex = '^[a-f0-9]{64}\z'; $key = '^[A-Za-z0-9+/]{43}=\z'
+  $node = & $get $accepted 'node'; $keyId = & $get $installation 'appKeyId'
+  $fields = ($installation -is [pscustomobject]) -and ($accepted -is [pscustomobject]) -and ($acceptanceSha256 -cmatch $hex) -and ($node -is [pscustomobject]) -and
+    (& $is (& $get $node 'nodeName') '^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\z') -and (($keyId -is [int]) -or ($keyId -is [long])) -and ([long]$keyId -ge 1) -and ([long]$keyId -le 9007199254740991) -and
+    (& $is (& $get $installation 'appPublicKeySha256Base64') $key) -and (& $is (& $get $installation 'ciTokenPinSha256') $hex) -and
+    (& $is (& $get $installation 'ciPrincipalBindingId') $uuid) -and (& $is (& $get $installation 'ciPrincipalRoleRef') $uuid) -and (& $is (& $get $installation 'acceptanceSha256') $hex) -and
+    (& $is (& $get $accepted 'ownerDecisionRef') $uuid) -and (& $is (& $get $accepted 'ownerReceiptRef') $uuid) -and
+    (@($NodeIdentityRefs | Where-Object { -not ((& $is (& $get $accepted $_) $uuid) -and ((& $get $accepted $_) -cnotmatch '^0{8}-')) }).Count -eq 0)
+  if (-not $fields) { throw 'NODE_IDENTITY_FIELDS_REQUIRED' }
+  if ((& $get $installation 'acceptanceSha256') -cne $acceptanceSha256) { throw 'NODE_IDENTITY_ACCEPTANCE_PIN_MISMATCH' }
+  foreach ($k in @('ciPrincipalBindingId', 'ciTokenPinSha256', 'appPublicKeySha256Base64', 'ciPrincipalQualificationRef')) {
+    if ((& $get $accepted $k) -cne (& $get $installation $k)) { throw 'NODE_IDENTITY_RECORDS_DISAGREE' }
+  }
+  $id = [ordered]@{ contract = 'clued.independent-ci.node-identity/1'; nodeName = $node.nodeName; appKeyId = [long]$keyId
+    appPublicKeySha256Base64 = $installation.appPublicKeySha256Base64; ciTokenPinSha256 = $installation.ciTokenPinSha256
+    ciPrincipalBindingId = $installation.ciPrincipalBindingId; ciPrincipalRoleRef = $installation.ciPrincipalRoleRef }
+  foreach ($k in $NodeIdentityRefs) { $id[$k] = $accepted.$k }
+  $id.ownerDecisionRef = $accepted.ownerDecisionRef; $id.ownerReceiptRef = $accepted.ownerReceiptRef
+  $id
+}
+# Sorted keys, compact JSON: the bytes the JavaScript twin hashes (src/node-identity.mjs, canonicalJson).
+function ConvertTo-NodeIdentityCanonical($id) {
+  [string[]]$keys = $NodeIdentityKeys.Clone(); [Array]::Sort($keys, [StringComparer]::Ordinal)
+  $rows = @(foreach ($key in $keys) { ($key | ConvertTo-Json -Compress) + ':' + ($id.$key | ConvertTo-Json -Compress) })
+  return '{' + ($rows -join ',') + '}'
+}
+# One file of the package by its install target: found in the reviewed manifest, read ONCE, hashed and compared; those bytes are returned.
+function Read-PackageRecordFile([string]$target) {
+  if ((Sha256Bytes $pkgBytes) -cne $ExpectedPackageManifestSha256) { throw 'REVIEWED_PACKAGE_CHANGED' }
+  $entry = @(([Text.Encoding]::UTF8.GetString($pkgBytes) | ConvertFrom-Json).files | Where-Object { $_.target -ceq $target })
+  if ($entry.Count -ne 1 -or $entry[0].path -match '(^|[\\/])\.\.([\\/]|$)' -or [IO.Path]::IsPathRooted($entry[0].path)) { throw ('PACKAGE_RECORD_FILE_REQUIRED:' + $target) }
+  $bytes = [IO.File]::ReadAllBytes((Join-Path $PackageRoot $entry[0].path))
+  if ((Sha256Bytes $bytes) -cne $entry[0].sha256) { throw ('PACKAGE_FILE_CHANGED:' + $target) }
+  return ,$bytes
+}
+function Get-PackageNodeIdentity {
+  $installationBytes = Read-PackageRecordFile 'record\installation.json'
+  $acceptanceBytes = Read-PackageRecordFile 'record\acceptance.json'
+  $strict = New-Object Text.UTF8Encoding($false, $true)
+  $id = Get-NodeIdentity ($strict.GetString($installationBytes) | ConvertFrom-Json) ($strict.GetString($acceptanceBytes) | ConvertFrom-Json) (Sha256Bytes $acceptanceBytes)
+  # build-package.mjs derived it too, from the same files, and pinned its hash in the reviewed package manifest.
+  $pkg = [Text.Encoding]::UTF8.GetString($pkgBytes) | ConvertFrom-Json
+  if (-not (@($pkg.PSObject.Properties.Name) -ccontains 'nodeIdentitySha256')) { throw 'PACKAGE_NODE_IDENTITY_REQUIRED' }
+  if ((Sha256Text (ConvertTo-NodeIdentityCanonical $id)) -cne $pkg.nodeIdentitySha256) { throw 'PACKAGE_NODE_IDENTITY_CHANGED' }
+  return $id
+}
+
+# ---- The App private key and the ci-admission token (design v0.4 sections 7.1, 7.2; DESIGN.md section 30) ----
+# Both are optional install parameters: the Owner downloaded the key on THIS machine and made the connection here; neither value
+# ever passes through an Agent, chat, KooYomi, the repository or a drive, and the plan and receipt keep fingerprints only. A supplied
+# file is read ONCE into memory (a regular file, no link, bounded), its fingerprint is computed by the package's pinned
+# runtime\node.exe running the package's reviewed tools\secret-fingerprint.mjs (both hash-checked and HELD OPEN, so neither can change
+# before or while it runs; the secret goes to it on stdin), and it must equal the record's pin: a mismatch refuses the install before
+# anything is written. Exactly the fingerprinted bytes are then placed, create-only, with their final security descriptor: owner
+# Administrators, protected DACL, SYSTEM and Administrators full, .\clued-control read only. An existing target is never
+# overwritten and nothing is deleted (the downloaded copy is the Owner's to delete). The formulas are the runtime's own
+# (resident-v2/entry-runtime.mjs#controllerPrincipal), so what matches here is what the runtime accepts.
+function Get-SecretFileSddl([string]$controllerSid) { 'O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;' + $controllerSid + ')' }
+function Get-SecretDirectorySddl([string]$controllerSid) { 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;' + $controllerSid + ')' }
+
+# A package file by its install target, hash-checked and kept open (no writer, no deleter) until the caller disposes the stream.
+function Open-PackageFileHeld([string]$target) {
+  if ((Sha256Bytes $pkgBytes) -cne $ExpectedPackageManifestSha256) { throw 'REVIEWED_PACKAGE_CHANGED' }
+  $entry = @(([Text.Encoding]::UTF8.GetString($pkgBytes) | ConvertFrom-Json).files | Where-Object { $_.target -ceq $target })
+  if ($entry.Count -ne 1 -or $entry[0].path -match '(^|[\\/])\.\.([\\/]|$)' -or [IO.Path]::IsPathRooted($entry[0].path)) { throw ('PACKAGE_RECORD_FILE_REQUIRED:' + $target) }
+  $full = Join-Path $PackageRoot $entry[0].path
+  $stream = [IO.File]::Open($full, 'Open', 'Read', 'Read')
+  try {
+    $h = [Security.Cryptography.SHA256]::Create()
+    try { $actual = ([BitConverter]::ToString($h.ComputeHash($stream))).Replace('-', '').ToLowerInvariant() } finally { $h.Dispose() }
+    if ($actual -cne $entry[0].sha256) { throw ('PACKAGE_FILE_CHANGED:' + $target) }
+  } catch { $stream.Dispose(); throw }
+  [pscustomobject]@{ path = $full; stream = $stream }
+}
+# kind 'app-key' | 'ci-token'. Returns the tool's fingerprint, or $null when the tool refused the secret (not a private RSA key / not a token).
+function Get-SecretFingerprint([string]$kind, [byte[]]$secret) {
+  $pkg = [Text.Encoding]::UTF8.GetString($pkgBytes) | ConvertFrom-Json
+  $tool = @($pkg.files | Where-Object { $_.target -cmatch '^resident\\[0-9a-f]{64}\\tools\\secret-fingerprint\.mjs\z' })
+  if ($tool.Count -ne 1) { throw 'PACKAGE_SECRET_TOOL_REQUIRED' }
+  $nodeFile = $null; $toolFile = $null
+  try {
+    $nodeFile = Open-PackageFileHeld 'runtime\node.exe'
+    $toolFile = Open-PackageFileHeld $tool[0].target
+    $psi = New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName = $nodeFile.path; $psi.Arguments = '"' + $toolFile.path + '" ' + $kind
+    $psi.UseShellExecute = $false; $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+    $psi.WorkingDirectory = 'C:\Windows\System32'
+    # A cleared, fixed environment (no NODE_OPTIONS or other variable of the Owner's session), as verify-resident.ps1 runs node.
+    $psi.EnvironmentVariables.Clear(); foreach ($kv in @(@('SystemRoot', 'C:\Windows'), @('WINDIR', 'C:\Windows'), @('PATH', 'C:\Windows\System32'))) { $psi.EnvironmentVariables[$kv[0]] = $kv[1] }
+    $p = [Diagnostics.Process]::Start($psi)
+    try {
+      try { $p.StandardInput.BaseStream.Write($secret, 0, $secret.Length); $p.StandardInput.Close() } catch { }   # a refusing tool may have exited already
+      $out = $p.StandardOutput.ReadToEndAsync(); $err = $p.StandardError.ReadToEndAsync()
+      if (-not $p.WaitForExit(30000)) { try { $p.Kill() } catch { }; throw 'SECRET_FINGERPRINT_TIMEOUT' }
+      $text = $out.Result; [void]$err.Result
+      if ($p.ExitCode -ne 0) { return $null }
+      $v = $text | ConvertFrom-Json
+      if ($v.kind -cne $kind -or $v.fingerprint -isnot [string]) { return $null }
+      return $v.fingerprint
+    } finally { $p.Dispose() }
+  } finally { if ($toolFile) { $toolFile.stream.Dispose() }; if ($nodeFile) { $nodeFile.stream.Dispose() } }
+}
+# One supplied secret file, read once: a regular file (no directory, no link), 1..$maximum bytes, unchanged while read.
+function Read-SecretSource([string]$path, [int]$maximum, [string]$code) {
+  $full = try { [IO.Path]::GetFullPath($path) } catch { throw ($code + '_SOURCE_REFUSED') }
+  if ($full -cnotmatch '^[A-Za-z]:\\') { throw ($code + '_SOURCE_REFUSED') }
+  $item = try { Get-Item -LiteralPath $full -Force -ErrorAction Stop } catch { throw ($code + '_SOURCE_REFUSED') }
+  if ($item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { throw ($code + '_SOURCE_REFUSED') }
+  $s = [IO.File]::Open($full, 'Open', 'Read', 'Read')
+  try {
+    if ($s.Length -lt 1 -or $s.Length -gt $maximum) { throw ($code + '_SOURCE_REFUSED') }
+    $bytes = New-Object byte[] ([int]$s.Length); $at = 0
+    while ($at -lt $bytes.Length) { $n = $s.Read($bytes, $at, $bytes.Length - $at); if ($n -lt 1) { throw ($code + '_SOURCE_REFUSED') }; $at += $n }
+    if ($s.ReadByte() -ne -1) { throw ($code + '_SOURCE_REFUSED') }
+  } finally { $s.Dispose() }
+  return ,$bytes
+}
+# The secrets part of the plan; verifies every supplied file against its pin. Nothing is written. The verified bytes wait in
+# $script:SecretBytes (memory) for the 'node-secrets' step, so what is placed is exactly what was fingerprinted.
+function Get-SecretsPlan {
+  $out = [ordered]@{}
+  foreach ($spec in @(@('appKey', $AppPrivateKeyFile, 'APP_KEY', 'app-key', $Identity.appPublicKeySha256Base64, 16384), @('ciToken', $CiAdmissionTokenFile, 'CI_TOKEN', 'ci-token', $Identity.ciTokenPinSha256, 4096))) {
+    $name = $spec[0]; $source = $spec[1]; $prefix = $spec[2]; $target = $SecretTargets[$name]; $dir = Split-Path -Parent $target
+    $dirExists = Test-Path -LiteralPath $dir -PathType Container
+    $entry = [ordered]@{ target = $target; supplied = [bool]$source; targetExists = (Test-Path -LiteralPath $target); createsDirectory = $false; directorySddl = $null; pin = $spec[4]; verified = $false; sddl = (Get-SecretFileSddl $ControllerSid) }
+    if ($source) {
+      if ($entry.targetExists) { throw ($prefix + '_TARGET_EXISTS_NOT_OVERWRITTEN') }
+      if ($dirExists -and (((Get-Item -LiteralPath $dir -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { throw ($prefix + '_TARGET_DIRECTORY_REFUSED') }
+      if (-not $dirExists) {
+        # Only the secrets folder of the CI install is made here (create-only, admin write, controller read); the controller's own
+        # tree (CluedControl\trusted) belongs to the controller install and must already be there.
+        if ($name -cne 'ciToken' -or -not (Test-Path -LiteralPath (Split-Path -Parent $dir) -PathType Container)) { throw ($prefix + '_TARGET_DIRECTORY_MISSING') }
+        $entry.createsDirectory = $true; $entry.directorySddl = (Get-SecretDirectorySddl $ControllerSid)
+      }
+      $bytes = Read-SecretSource $source $spec[5] $prefix
+      $fp = Get-SecretFingerprint $spec[3] $bytes
+      if ($null -eq $fp) { throw ($prefix + '_UNREADABLE') }
+      if ($fp -cne $spec[4]) { throw ($prefix + '_FINGERPRINT_MISMATCH') }
+      $entry.verified = $true
+      $script:SecretBytes[$name] = $bytes
+    }
+    $out[$name] = $entry
+  }
+  $out
+}
+function Clear-SecretBytes { foreach ($k in @($script:SecretBytes.Keys)) { [Array]::Clear($script:SecretBytes[$k], 0, $script:SecretBytes[$k].Length) }; $script:SecretBytes.Clear() }
+# Create-only, with the final security descriptor from the first moment (no window with an inherited ACL), then read back.
+function Write-NewSecret([string]$path, [byte[]]$bytes, [string]$sddl) {
+  $sec = New-Object Security.AccessControl.FileSecurity
+  $sec.SetSecurityDescriptorSddlForm($sddl)
+  $f = New-Object IO.FileStream($path, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::Write, [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough, $sec)
+  try { $f.Write($bytes, 0, $bytes.Length); $f.Flush($true) } finally { $f.Dispose() }
+  $back = Get-Acl -LiteralPath $path
+  if ((Get-DaclPart $back.Sddl) -cne (Get-DaclPart $sec.GetSecurityDescriptorSddlForm('Access'))) { throw ('ACL_READBACK_MISMATCH:' + $path) }
+  if ($sddl.StartsWith('O:BA', [StringComparison]::Ordinal) -and $back.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne 'S-1-5-32-544') { throw ('ACL_READBACK_MISMATCH:' + $path) }
+  $copy = [IO.File]::ReadAllBytes($path)
+  if ((Sha256Bytes $copy) -cne (Sha256Bytes $bytes)) { throw ('SECRET_WRITE_READBACK_MISMATCH:' + $path) }
 }
 
 function Assert-Owner {
@@ -292,6 +481,8 @@ $Node = Get-PackageNodeProfile
 $NodeCanonical = ConvertTo-NodeProfileCanonical $Node
 $NodeProfileSha256 = Sha256Text $NodeCanonical
 $RunnerService = $Node.runnerService
+$Identity = Get-PackageNodeIdentity
+$IdentitySha256 = Sha256Text (ConvertTo-NodeIdentityCanonical $Identity)
 function Get-OpenBatchCount {
   $ledger = Join-Path $Root 'state\ledger'
   if (-not (Test-Path -LiteralPath $ledger)) { return 0 }
@@ -309,7 +500,7 @@ function Build-Plan {
   $find = { param($t) @($pkg.files | Where-Object { $_.target -ceq $t })[0].sha256 }
   if ($pkg.contract -cne 'clued.independent-ci.resident-package/3' -or $pkg.ciSourceManifestSha256 -cnotmatch '^[0-9a-f]{64}$' -or (& $find 'record\source-manifest.json') -cne $pkg.ciSourceManifestSha256) { throw 'SOURCE_V2_RECORD_PACKAGE_REQUIRED' }
   [ordered]@{
-    contract = 'clued.independent-ci.resident-install-plan/5'
+    contract = 'clued.independent-ci.resident-install-plan/6'
     root = $Root; rootExists = (Test-Path -LiteralPath $Root)
     # PR-A review MAJOR 3: never install over a resident with an open batch (also one that waits for hosted
     # signals); like uninstall-resident.ps1, the Owner re-arms or lets it finish first.
@@ -317,6 +508,11 @@ function Build-Plan {
     servicesExist = [bool](Get-Service -Name $ServiceName, $BrokerName -ErrorAction SilentlyContinue)
     residentSid = $res; ownerSid = $OwnerSid; controllerSid = $ControllerSid
     node = $Node; nodeProfileSha256 = $NodeProfileSha256   # plan /5: the node profile this install is pinned to (design section 9 C1)
+    # plan /6 (design section 9 C7): who this node is (public ids and fingerprints), the role it assumes (none: the role probe decides),
+    # and the two optional secret files with their pins. A supplied file is verified against its pin while the plan is built.
+    nodeIdentity = $Identity; nodeIdentitySha256 = $IdentitySha256; installationSha256 = (& $find 'record\installation.json')
+    roleAssumption = 'NONE'
+    secrets = (Get-SecretsPlan)
     installScriptSha256 = (Sha256File $PSCommandPath)
     packageManifestSha256 = $ExpectedPackageManifestSha256
     sourceManifestSha256 = $pkg.sourceManifestSha256; residentManifestSha256 = $pkg.residentManifestSha256
@@ -375,6 +571,7 @@ if (-not $Apply) {
   # would be carried forward if the install ran now, or why it would be refused.
   # Get-CarryForwardPlan returns its list as ONE pipeline object (,$sources): assigned first, then walked with foreach.
   $preview = try { $all = Get-CarryForwardPlan $CarryParent; $p = @(); foreach ($s in $all) { $p += ,([ordered]@{ name = $s.name; files = @($s.files).Count }) }; ,$p } catch { $_.Exception.Message }
+  Clear-SecretBytes
   [ordered]@{ status = 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN'; planSha256 = $planSha; plan = $plan; carryForwardPreview = $preview } | ConvertTo-Json -Depth 10; exit 0
 }
 
@@ -387,7 +584,7 @@ if (-not ($r.originalBinary -and $r.stoppedPid0 -and $r.manual -and $r.accountIs
 # Before anything is written: every earlier state to carry, every file shape, no link anywhere.
 $carry = Get-CarryForwardPlan $CarryParent
 
-$receipt = [ordered]@{ contract = 'clued.independent-ci.resident-install-receipt/4'; planSha256 = $planSha; node = $Node; nodeProfileSha256 = $plan.nodeProfileSha256; acceptanceSha256 = $plan.acceptanceSha256; policySha256 = $plan.policySha256; companionConfigSha256 = $plan.companionConfigSha256; sourceManifestSha256 = $plan.sourceManifestSha256; residentManifestSha256 = $plan.residentManifestSha256; runnerSddlUnchanged = $r.sddl; steps = @(); startedAt = [DateTimeOffset]::UtcNow.ToString('o') }
+$receipt = [ordered]@{ contract = 'clued.independent-ci.resident-install-receipt/5'; planSha256 = $planSha; node = $Node; nodeProfileSha256 = $plan.nodeProfileSha256; nodeIdentity = $plan.nodeIdentity; nodeIdentitySha256 = $plan.nodeIdentitySha256; roleAssumption = $plan.roleAssumption; installationSha256 = $plan.installationSha256; acceptanceSha256 = $plan.acceptanceSha256; policySha256 = $plan.policySha256; companionConfigSha256 = $plan.companionConfigSha256; sourceManifestSha256 = $plan.sourceManifestSha256; residentManifestSha256 = $plan.residentManifestSha256; runnerSddlUnchanged = $r.sddl; steps = @(); startedAt = [DateTimeOffset]::UtcNow.ToString('o') }
 function Step([string]$name, [scriptblock]$body) { & $body; $script:receipt.steps += $name }
 
 # 1. Directories, created new with their final ACLs.
@@ -529,6 +726,23 @@ Step 'companion-task' {
   if (($t.Definition.Principal.RunLevel -ne 0) -or ($uidSid -cne $OwnerSid) -or $null -eq $act -or $act.Path -cne $ca.path -or $act.Arguments -cne $ca.arguments) { throw 'COMPANION_TASK_READBACK_MISMATCH' }
   $script:receipt.companionTaskXmlSha256 = Sha256Text $t.Xml
 }
+# 6b. The two controller secrets, when the Owner supplied them: exactly the bytes whose fingerprints equal the record's pins, create-only,
+#     with their final security descriptor. Nothing is placed that was not supplied, and the receipt keeps fingerprints only.
+Step 'node-secrets' {
+  try {
+    $placed = [ordered]@{}
+    foreach ($name in @('appKey', 'ciToken')) {
+      $s = $plan.secrets[$name]; $did = $false
+      if ($s.supplied) {
+        if ($s.createsDirectory) { New-DirectoryWithAcl (Split-Path -Parent $s.target) $s.directorySddl }
+        Write-NewSecret $s.target $script:SecretBytes[$name] $s.sddl
+        $did = $true
+      }
+      $placed[$name] = [ordered]@{ target = $s.target; placed = $did; fingerprint = $(if ($did) { $s.pin } else { $null }) }
+    }
+    $script:receipt.secrets = $placed
+  } finally { Clear-SecretBytes }
+}
 # 7. The runner service must be byte-for-byte what it was (this install never touches it).
 Step 'runner-unchanged' { if ((Read-RunnerState).sddl -cne $r.sddl) { throw 'RUNNER_SDDL_CHANGED_DURING_INSTALL' } }
 $receipt.completedAt = [DateTimeOffset]::UtcNow.ToString('o')
@@ -548,4 +762,6 @@ if ($StartAfterInstall) {
 }
 $out = Join-Path $Root 'install\install-receipt.json'                    # admin-only directory
 Write-New $out ((New-Object Text.UTF8Encoding($false)).GetBytes(($receipt | ConvertTo-Json -Depth 6)))
-[ordered]@{ status = 'RESIDENT_INSTALLED'; receipt = $out; receiptSha256 = (Sha256File $out); started = $receipt.started } | ConvertTo-Json
+[ordered]@{ status = 'RESIDENT_INSTALLED'; receipt = $out; receiptSha256 = (Sha256File $out); started = $receipt.started; nodeName = $Identity.nodeName; nodeIdentitySha256 = $IdentitySha256
+  secretsPlaced = @($receipt.secrets.Keys | Where-Object { $receipt.secrets[$_].placed })
+  ownerNextStep = $(if (@($receipt.secrets.Keys | Where-Object { $receipt.secrets[$_].placed }).Count) { 'Delete the downloaded App key / token file(s) yourself: this install never deletes anything.' } else { $null }) } | ConvertTo-Json

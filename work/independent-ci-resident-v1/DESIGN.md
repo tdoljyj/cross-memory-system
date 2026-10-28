@@ -2550,6 +2550,79 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 - 三态事实只有在同 nonce、plan/config、Source、完整 Native 回执、原始 outcome SHA、精确 jobId 与 Windows tree-zero/original-stopped 全部相符后有效。连接失效通知一次，连续三次 uncertain 通知一次，确认 held/not-held 后重置；本地 receipt 保留次数与间隔，重启不能重置不确定记录。中断、缺清理或错误绑定沿原 UNKNOWN/HALT 保留现场，不放通任何旧 head/retry。
 - C2 receipt 不进入批次 failure-table 的 release/burn/attempt2 规则。没有新 secret、App、Node 身份泛化；旧 /1 TURING 六生产入口保留原字节，当前 stage 11 只在完整 record/2 Source 中可达。离线纯测试不代替实际 P4 的双节点服务影响、日约 96 次切换、parking、撤销与过期验收。
 
+## 30. 主备 C7：节点身份与 STANDBY 安装
+
+Task `088ab175`；设计 v0.4 §7.1–§7.4、§9 C7、§10 P3。
+
+### 30.1 范围；合入不等于安装
+
+- 本节是代码、离线测试和文档。**合入它不会安装或重装任何机器**，不会生成、读取、复制或删除任何真实的私钥或 token，不改连接，不改规则集。
+- 安装、公司节点的正式资格（设计 §12 第 5 项）、公司节点的新 App 私钥和新连接，都是 Owner 的动作，各自另行授权。UAC 只有 Owner 本人能点。
+- 离线测试证明不了的：UAC 下真实创建文件时的属主与 ACL 读回、在 Program Files 之外运行包里的 `node.exe`、真实公司机器。这些留给 P3 的现场核对（`verify-resident.ps1`）。
+
+### 30.2 节点身份 `nodeIdentity`
+
+- 安装计划和回执都带一份节点身份：节点名；这个节点的 App 私钥编号和公钥指纹（`appKeyId`、`appPublicKeySha256Base64`）；ci-admission 连接 id 和 token 指纹（`ciPrincipalBindingId`、`ciTokenPinSha256`）；`ciPrincipalRoleRef`；七项正式资格引用（`resident-v2/prepare-record.mjs` 的 `REFS`）；Owner 的接受 Decision 与回执（`ownerDecisionRef`、`ownerReceiptRef`）。共 16 个字段，**只有公开的编号和指纹**，没有私钥或 token。
+- 来源：包里的 `record\installation.json` 和 `record\acceptance.json`。两份文件都按包清单的哈希核对字节，从同一份字节解析；`installation.json` 的 `acceptanceSha256` 必须等于 acceptance 字节的哈希。两份文件里重复出现的四项（连接 id、token 指纹、公钥指纹、`ciPrincipalQualificationRef`）必须一致。
+- 失败码：`NODE_IDENTITY_FIELDS_REQUIRED`（缺字段或形状不对）、`NODE_IDENTITY_ACCEPTANCE_PIN_MISMATCH`、`NODE_IDENTITY_RECORDS_DISAGREE`。
+- 三处实现，由同一份用例文件 `test/fixtures/node-identity-cases.json` 约束（两个节点：TURING 的节点档案加假指纹、一个公司夹具；39 个拒绝用例）：JS `src/node-identity.mjs`，`install-resident.ps1` 和 `verify-resident.ps1` 里的 `Get-NodeIdentity`（两份文字相同，测试逐字比较）。
+- `tools/build-package.mjs` 打包时独立导出一次，把 `nodeIdentitySha256` 写进包清单（合同仍是 `resident-package/3`，多一个必填字段）；安装脚本从同一批字节再导出一次，不一致就 `PACKAGE_NODE_IDENTITY_CHANGED`。Owner 审的包清单哈希因此覆盖了「这个包装的是哪个节点」。
+
+### 30.3 `ciPrincipalRoleRef` 的含义
+
+- 形状不变，仍是 UUID。含义改为：Owner 认可**这个连接可以持有** ci-admission 的那条 Decision（资格，设计 §7.2）。它不再是「此刻持有」的依据：公司节点以 STANDBY 装好时还没有角色，每次切换后也会过时。
+- 此刻是否持有，**只**以角色探测（C2/C3）的答案为准。`prepare-record.mjs` 的注释已改写；节点身份里的这一项只是资格引用，没有任何字段表示「持有」。
+- `control-install-delta-v2/prepare-payload.mjs` 是已退役的 v1 绑定器，没有改：它的字节被同目录 `manifest.json` 钉住，`.gitleaks.toml` 里还有按它的行号记的复核指纹。它里面的 `ciPrincipalRoleRef` 是写死的 TURING 值，按上面的含义读即可。
+
+### 30.4 版本
+
+- 安装计划 `resident-install-plan/5` → `/6`，回执 `resident-install-receipt/4` → `/5`。原因：新字段 `nodeIdentity`、`nodeIdentitySha256`、`installationSha256`、`roleAssumption` 和 `secrets`。C1 带来的 `node` 保留。
+- `verify-resident.ps1` 只认 `/5`；旧回执得到 `INSTALLED_NODE_PROFILE_REFUSED`，和 C1 一样要重装一次才能过。这次重装与 §24–§28 的 Windows 重装是同一次。
+
+### 30.5 App 私钥与 ci-admission token 的放置（设计 §7.1、§7.2）
+
+- 两个可选参数：`-AppPrivateKeyFile`、`-CiAdmissionTokenFile`。Owner 在那台机器上下载私钥、建连接拿到 token；它们**不经过 Agent、聊天、KooYomi、仓库或网盘**。计划和回执只记指纹。
+- 目标（运行时读取的路径，测试逐字比较）：`C:\ProgramData\CluedControl\trusted\controller-checks-app.pem`，`C:\ProgramData\CluedIndependentCI\secrets\ci-admission.token`。属主 Administrators，保护的 DACL：SYSTEM、Administrators 完全控制，`.\clued-control` 只读。文件创建时就带最终描述符，之后读回核对。
+- 流程（全部在写任何东西之前，干跑与 `-Apply` 都做）：
+  1. 来源文件只读一次进内存：普通文件、不是链接、大小有界（私钥 ≤ 16 KiB，token ≤ 4 KiB）、读的过程中没有变化。
+  2. 指纹由包里钉住的 `runtime\node.exe` 运行包里的 `tools\secret-fingerprint.mjs` 计算。两个文件都按包清单核对哈希，并**保持打开**（拒绝写入和删除）直到进程结束；node 用清空的固定环境运行；秘密走 stdin，不进命令行，工具只打印指纹。
+  3. 指纹必须等于安装记录的钉值；公式就是运行时每次启动用的那两个（`entry-runtime.mjs#controllerPrincipal`），测试里对拍。不符：`APP_KEY_FINGERPRINT_MISMATCH`、`CI_TOKEN_FINGERPRINT_MISMATCH`；工具拒绝（不是 RSA 私钥、不是 token）：`APP_KEY_UNREADABLE`、`CI_TOKEN_UNREADABLE`；来源文件不合格：`*_SOURCE_REFUSED`。
+  4. 目标已存在：`*_TARGET_EXISTS_NOT_OVERWRITTEN`，**从不覆盖**。目标目录是链接：`*_TARGET_DIRECTORY_REFUSED`。
+- 放置本身是 `-Apply` 的一步 `node-secrets`（在公司的计划任务之后、runner 未变核对之前）：放的正是被计算过指纹的那些字节，`CreateNew`。没有提供参数就什么都不放。放置后内存里的字节清零。
+- 目录：`CluedControl\trusted` 属于 controller 安装，**必须已存在**（`*_TARGET_DIRECTORY_MISSING`）；`CluedIndependentCI\secrets` 不存在且提供了 token 时由本安装创建一次（创建即带 ACL）。
+- 这个脚本不删任何东西：Owner 下载的那份私钥或 token 副本，装完后由 Owner 自己删（脚本输出里有一句提醒）。
+- 卸载不碰这两个文件（它们不在 `resident\` 里）。重装时目标已存在，不传参数即可；传了会被拒绝。
+
+### 30.6 `verify-resident.ps1` 核对什么
+
+- `node-identity`：回执里的节点身份等于从**已安装**记录（`record\installation.json`、`acceptance.json`，两者都由回执钉哈希）重新导出的那份；两份记录文件互相一致；回执的 `roleAssumption` 是 `NONE`。
+- `node-secrets-receipt`：回执说放了的，指纹等于记录的钉值；说没放的，没有指纹。
+- `app-key-file`、`ci-admission-token-file`：文件存在、不是链接、属主是管理员、读者只有 SYSTEM、Administrators 和档案里的 `controllerSid`、controller 能读且没有写权。规则取自运行时自己的 `runtime/verify-install-acl.ps1`。**不读内容**：指纹在安装时核对过，运行时每次入口启动又核对（不符以 `ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED` 失败关闭）。
+- 没提供参数、文件还没放的安装：这两项为 false（`absent`），整体结论是未通过。这是「节点还不能干活」的如实报告，不是安装错误。
+
+### 30.7 STANDBY 安装（公司节点，设计 §7.2、§10 P3）
+
+- 新连接**不标** ci-admission。安装不假定任何角色：计划与回执里 `roleAssumption = 'NONE'`，`verify-resident.ps1` 拒绝别的值；包里没有 trigger、账本、请求或状态文件；配置里没有角色或模式字段。
+- 安装之后，角色探测读 `ci-admission.token`，发一次只读 RPC，服务答 `admission_binding_required`，即「没有」；没有任何 GitHub 请求，没有发布。App 私钥这时不会被读（探测入口只开 token）。服务端一旦把角色标给这个连接，**同一份安装**就探测为「有」：角色在服务端，不在安装里。
+- 执行器启动后先按 UNCERTAIN 等于 STANDBY 处理（不取触发、不开批次）由 C3 实现（§29）。本节只保证安装侧不预设角色、不留下会触发发布的东西。
+- 切换时才标角色（设计 §5.4），是 Owner 在 KooYomi 的动作。
+
+### 30.8 公司节点安装清单里的其他项
+
+- **WSL 主机调优**（Task `f995d832`：P1 sysctl 和 P1b 内存保护）：`linux/host-tuning/README.md`。在公司节点的 Linux root 步骤旁做，不属于 Windows 安装脚本。
+- 新节点的基础目录是前提，本安装不建：`C:\ProgramData\CluedControl`（controller 安装，含载体 runner 的原二进制）和 `C:\ProgramData\CluedIndependentCI\{formal-spool,state}`（`migrate-acl.ps1` 要求已存在）。这些由设计 §10 P2 的节点准备步骤负责，C8 手册要写明。
+
+### 30.9 测试
+
+| 文件 | 内容 |
+|---|---|
+| `test/node-identity.test.mjs` | 两个节点（TURING 档案、公司夹具）各自导出身份并核对哈希；39 个拒绝用例（字段、acceptance 钉值、两份文件不一致）；身份里没有私钥、token 或角色字段；真实 `assembleRecord` 导出的两份记录 |
+| `test/secret-fingerprint.test.mjs` | 指纹公式与运行时对拍；非私钥、非 token、空、超长一律只打印一个码；进程方式：秘密走 stdin，输出里没有秘密 |
+| `test/standby-install.test.mjs` | 公司包的身份钉在清单里；STANDBY 安装不带状态、不带角色、安装脚本没有网络调用；角色探测答「没有」且只发一次只读 RPC，没有 GitHub 请求；密钥与 token 路径与运行时一致 |
+| `windows/test-resident-windows.ps1` §4d、§4e | 同一份用例跑 PowerShell 两份实现；包侧；回执核对；密钥文件描述符规则；用真实 node 和本仓库的工具、一个临时 RSA 私钥和一个编造的 token 做指纹核对和创建即带 ACL 的放置（断言 148 → 294） |
+
+- 离线、只用临时目录和夹具；那把 RSA 私钥由测试在内存或临时目录里生成，是一次性夹具，不是任何真实密钥。
+
 ## 32. 段前内存闸与“main 已移动”干净结束
 
 依据：第 2 批（Owner Decision `afd23e7e`）。A 是 Task `25851665`（WSL order-7 缓解设计 Task `7c2e4386`，Decision `941f9146` §2 B2）；B 是 Task `ea32aaf9` 的修法 1（Owner Decision `d8e3dea4`）。只改常驻层：`src/companion.mjs`、`src/mailbox.mjs`、`src/engine-windows.mjs`、`src/classify.mjs`、`src/failure-table.json`、`src/executor.mjs`（只多记一项回执字段）。不改 Source v2、Linux 工具或 `companion-main.mjs`。
