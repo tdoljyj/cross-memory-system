@@ -2279,6 +2279,7 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 5. **回执由执行器写**：引擎没有回执端口（服务入口不在本次改动范围），所以 `bridge-pump-lost`、`bridge-stop-requested` 由执行器的轮询和阶段后的补写产生。
 6. **`OWNER_ABORT_STAGE_ENDINGS` 加入 `BRIDGE_STAGE_STOPPED_PUMP_LOST`**（26.4 末条），设计稿没写，为“Owner 中止优先”在竞态下也成立。这个码只在“`STOP_SENT` 且没有绑定 outcome”时出现（26.3），所以中止接受它的范围与 M2 规则（`STOP_SENT` 下的缺 outcome）相同，没有扩大。
 7. **泵标记**（26.4）：设计稿没有。没有它时，伴侣在 120 s 内重启会对同一请求再开一个泵（改动前就有的行为，不会发布，但可能 HALT）。
+8. **两处比以前更保守，会 HALT**（实现复审第 2 轮 NIT）：伴侣写下泵标记后崩溃并重启，回 `COMPANION_PUMP_UNCONFIRMED`，按信号 A 停掉阶段；原来的 worker 若还在扫描，5 分钟内拿不到静止证明就 HALT（以前第二个泵也许能救回这一段，现在换成“一个请求只有一个泵”）。`STOP_SENT` 下阶段码若是 `STAGE_CHILD_TIMEOUT` 这类没有 outcome 的非 `STAGE_OUTCOME_MISSING` 码，保留原码并 HALT，不再改写成可收尾的结局。
 
 ### 26.6 测试
 
