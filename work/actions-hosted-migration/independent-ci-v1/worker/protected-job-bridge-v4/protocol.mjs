@@ -21,7 +21,9 @@ export const RESPONSE_CONTRACT='clued.independent-ci.protected-job-response/2';
 export const BLOCKED_CONTRACT='clued.independent-ci.protected-job-blocked/1';
 // One callback round (challenge -> relay -> Windows admission + refs -> relay -> response). 30 s was too tight
 // on TURING: measured 34 s and about 47 s round trips, the Windows step alone up to about 30 s (PR #889 stage 2,
-// 2026-10-21, Owner decision dd7378d2). Every round still re-runs the admission and the refs check.
+// 2026-10-21, Owner decision dd7378d2). Every round still re-runs the admission and the refs check. The relay alone
+// sometimes takes 25-45 s (PR #915 stage 4, 2026-10-23), so a response's admission is fresh at its issuance and the
+// response only has to arrive inside this window (Owner decision 6f1fb753, validateResponse).
 export const CALLBACK_WINDOW_MS=120000;
 const REPO='tdoljyj/cross-memory-system',HASH=/^[a-f0-9]{64}$/,SHA=/^[a-f0-9]{40}$/;
 const UUID=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -112,7 +114,9 @@ export function validateResponse(issue,challenge,response,now=Date.now()){
   const at=time(response.issuedAt),end=time(response.expiresAt);
   check(at>=time(challenge.createdAt)&&at<=now&&now-at<=CALLBACK_WINDOW_MS&&end>now&&end>at&&end-at<=CALLBACK_WINDOW_MS&&end<=time(challenge.deadline),'BRIDGE_RESPONSE_EXPIRED');
   if(challenge.action==='admission'){
-    check(response.remoteRefs===null,'BRIDGE_RESPONSE_REFS_NULL_REQUIRED');admissionValid(issue.job,response.admission,now,issueGeneration(issue));
+    // Fresh when issued, like the issue's admission (Owner Decision 6f1fb753): the 30 s bound is measured at issuedAt,
+    // and the response itself must still be inside its window (above). The claim outlives the arrival (end > now).
+    check(response.remoteRefs===null,'BRIDGE_RESPONSE_REFS_NULL_REQUIRED');admissionValid(issue.job,response.admission,at,issueGeneration(issue));
     check(sameClaimGeneration(response.admission.batchClaimBound,issueGeneration(issue)),'BRIDGE_RESPONSE_CLAIM_GENERATION_CHANGED');
     check(time(response.admission.observedAt)<=at&&end<=time(response.admission.claimExpiresAt),'BRIDGE_RESPONSE_ADMISSION_TIME_REQUIRED');
   }else{

@@ -20,6 +20,7 @@ import { canonicalJson } from './canonical.mjs';
 import os from 'node:os';
 import { readStatus } from './status.mjs';
 import { LocalStore, PrStatusReporter, validateStatusConfig } from './pr-status.mjs';
+import { companionBackstop } from './ruleset-backstop.mjs';
 
 // The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
 // phase 1, item 7); the poller still proposes every five minutes.
@@ -59,6 +60,7 @@ export async function main(args = process.argv.slice(2)) {
   check(sha256(bytes) === values['config-sha256'], 'COMPANION_CONFIG_CHANGED');
   const raw = parseBoundedJson(bytes, 65536, 'COMPANION_CONFIG_REFUSED');
   const cfg = validateCompanionConfig(raw.companion);
+  check(os.hostname().toUpperCase() === cfg.node.hostname && process.env.USERPROFILE === cfg.node.ownerProfileDirectory, 'COMPANION_NODE_IDENTITY_CHANGED');
   const runner = new Runner({ env: { ...process.env } }); // the Owner's own environment: gh/git credential helpers live here
   const advisory = new Runner({ env: { ...process.env } }); // the advisory lane's own (see lane)
   const mailbox = await Mailbox.open(path.join(values.root, 'mailbox'), Date.now);
@@ -85,9 +87,14 @@ export async function main(args = process.argv.slice(2)) {
   // PR page status and Windows notifications (pr-status.mjs). Their memory lives in the Owner's own profile, never in the
   // resident's directories.
   const statusCfg = validateStatusConfig(raw.status);
-  const store = await LocalStore.open(path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'CluedIndependentCI', 'companion-pr-status.json'));
+  check(statusCfg.node === cfg.node.nodeName, 'COMPANION_NODE_IDENTITY_CHANGED');
+  const store = await LocalStore.open(path.join(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local'), 'CluedIndependentCI', 'companion-pr-status.json'));
+  // The node's duty (primary/standby C5, node-duty.mjs): its name while status.json names none, and the one write it may
+  // make into the resident, the dual-active hold (an intake pause request in the user-writable requests\, like a pause).
+  const requestsDir = path.join(values.root, 'requests');
   const reporter = new PrStatusReporter({ repo: raw.repo, ghExe: raw.ghExe, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), clock: Date.now, store,
-    prStatus: statusCfg.prStatus, notifications: statusCfg.notifications });
+    prStatus: statusCfg.prStatus, notifications: statusCfg.notifications, node: statusCfg.node,
+    writeRequest: async v => { await fs.writeFile(path.join(requestsDir, Inbox.fileName(Date.now())), canonicalJson(v), { flag: 'wx' }); } });
   keepalive(companionArgv(cfg).keepalive());
   let lastPoll = 0, lastReport = 0;
   await Promise.all([
@@ -100,6 +107,8 @@ export async function main(args = process.argv.slice(2)) {
         let generation = null;
         try { generation = (await readStatus(values.root)).queue?.generation ?? null; } catch { generation = null; }
         try { await poller.pass({ generation }); } catch { /* next pass */ }
+        // The ruleset backstop (phase 2 step 3c-1, DESIGN §22.3): main's rules on every poll.
+        try { await companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), store }); } catch { /* next poll */ }
       }
       if (Date.now() - lastReport > REPORT_EVERY_MS) {
         lastReport = Date.now();

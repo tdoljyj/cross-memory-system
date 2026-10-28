@@ -26,7 +26,8 @@ export async function writeNew(file, value) {
 
 // Bounded read of a file someone else may control: one handle, the size and type come from that
 // handle (no lstat/readFile gap), at most `maximum` bytes are ever read, links and multi-link
-// files are refused.
+// files are refused. 'empty' is kept apart from 'size' so a caller can tell an unwritten file
+// from an oversized one.
 export async function readBounded(file, maximum, code = 'BOUNDED_READ_REFUSED') {
   const link = await fs.lstat(file);
   check(link.isFile() && !link.isSymbolicLink(), code, 'type');
@@ -34,7 +35,8 @@ export async function readBounded(file, maximum, code = 'BOUNDED_READ_REFUSED') 
   try {
     const stat = await handle.stat();
     check(stat.isFile() && stat.nlink === 1 && stat.ino === link.ino, code, 'identity');
-    check(stat.size > 0 && stat.size <= maximum, code, 'size');
+    check(stat.size > 0, code, 'empty');
+    check(stat.size <= maximum, code, 'size');
     const buffer = Buffer.alloc(maximum + 1);
     const { bytesRead } = await handle.read(buffer, 0, maximum + 1, 0);
     check(bytesRead === stat.size && bytesRead <= maximum, code, 'size-changed');

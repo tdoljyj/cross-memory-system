@@ -11,7 +11,7 @@ test('status board: fixed shape, state since only moves on a change, outcomes ne
   let now = Date.parse('2026-10-22T08:00:00Z');
   const b = new StatusBoard({ clock: () => now, pid: 7 });
   const s0 = b.snapshot();
-  assert.deepEqual(Object.keys(s0).sort(), ['backfill', 'breaker', 'changedAt', 'contract', 'current', 'executor', 'halt', 'intakePause', 'limits', 'notices', 'paused', 'pending', 'pid', 'queue', 'recent', 'writtenAt']);
+  assert.deepEqual(Object.keys(s0).sort(), ['backfill', 'breaker', 'changedAt', 'contract', 'current', 'executor', 'halt', 'intakePause', 'limits', 'node', 'notices', 'paused', 'pending', 'pid', 'queue', 'recent', 'train', 'writtenAt']);
   assert.equal(s0.contract, STATUS_CONTRACT);
   now += 1000;
   assert.equal(b.setState('IDLE'), true);

@@ -26,7 +26,8 @@ export const REASON_PREFIXES = Object.freeze({ 'changed_files_truncated:': 'chan
   'owner_review_unavailable:': 'owner_review_unavailable', 'workflow runs unavailable:': 'workflow_runs_unavailable' });
 export const DIAGNOSTIC_CODES = Object.freeze([...new Set([...REASON_CODES, ...Object.values(REASON_PREFIXES), 'unknown_reason'])]);
 const REASON_SET = new Set(REASON_CODES), DIAGNOSTIC_SET = new Set(DIAGNOSTIC_CODES);
-export const DIAGNOSTIC_PHASES = Object.freeze(['mode', 'principal', 'observer', 'pull_request', 'claim_reference', 'evaluate', 'post_evaluate', 'post_pull_request', 'native']);
+export const DIAGNOSTIC_PHASES = Object.freeze(['mode', 'principal', 'observer', 'pull_request', 'claim_reference', 'evaluate', 'post_evaluate', 'post_pull_request', 'native', 'changed_paths']);
+const ISSUER_TRANSIENT_ADMISSIONS = new Set(['full_admission_observation_expired', 'full_admission_unavailable']);
 export const verdict = value => ['ADMITTED', 'REJECTED', 'ERROR', 'PR_NOT_OPEN', 'NOT_APPLICABLE'].includes(value) ? value : 'UNKNOWN';
 export const ownerKind = value => ['granted', 'pending', 'transient', 'rpc_unavailable', 'refused'].includes(value) ? value : 'UNKNOWN';
 export const reasonCodes = values => [...new Set((Array.isArray(values) ? values.slice(0, 64) : []).map(value => {
@@ -62,6 +63,11 @@ export function sanitizeAdmissionDiagnosticV2(d) {
   for (const field of ['reasonCodes', 'nativeReasonCodes']) diagnostic[field] = [...new Set((Array.isArray(d[field]) ? d[field].slice(0, 64) : []).map(value => DIAGNOSTIC_SET.has(value) ? value : 'unknown_reason'))].sort();
   for (const field of ['workflowGateFindingsPresent', 'modeFresh', 'recorderFresh']) if (typeof d[field] === 'boolean') diagnostic[field] = d[field];
   if (DIAGNOSTIC_PHASES.includes(d.phase)) diagnostic.phase = d.phase;
+  // Issuer retry context is diagnostic only: one round has at most four evaluations.
+  if (ISSUER_TRANSIENT_ADMISSIONS.has(d.transientAdmission)) {
+    diagnostic.transientAdmission = d.transientAdmission;
+    if (Number.isSafeInteger(d.evaluations) && d.evaluations >= 1 && d.evaluations <= 4) diagnostic.evaluations = d.evaluations;
+  }
   if (Object.hasOwn(d, 'ciRetryAfter') || Object.hasOwn(d, 'mergeQueue')) Object.assign(diagnostic, sanitizeSchedulingV2({ ciRetryAfter: d.ciRetryAfter, mergeQueue: d.mergeQueue }));
   return diagnostic;
 }
@@ -84,6 +90,23 @@ export function admittedFactsMatchJobV2(facts, job, now, { batchClaim = null } =
   return sha.test(observationSha256 ?? '') && digest(body) === observationSha256;
 }
 
+// Owner Decision 6f1fb753 (Task 576231fa): the admission inside a bridge v4 callback response is fresh when the
+// Windows issuer issued that response, like the issue's own admission (protocol.mjs validateResponse); the response
+// then only has to arrive inside its own window. A relay call that took 30 s (PR #915 stage 4, 2026-10-23) refused
+// a response the issuer had answered in 10 s. The Linux worker notes the issuance and expiry of exactly the facts
+// object it hands an adapter; while that response is valid, and never past the claim, the 30 s bound below is measured
+// from its issuance. Facts that did not come out of a validated response (every Windows caller) keep `now`.
+const bridgeResponseTimes = new WeakMap();
+export function noteBridgeResponseTimes(facts, response) {
+  const issuedAt = at(response?.issuedAt), expiresAt = Math.min(at(response?.expiresAt), at(facts?.claimExpiresAt));
+  if (plain(facts) && Number.isSafeInteger(issuedAt) && Number.isSafeInteger(expiresAt) && issuedAt < expiresAt) bridgeResponseTimes.set(facts, { issuedAt, expiresAt });
+  return facts;
+}
+export function admissionReferenceTime(facts, now) {
+  const t = plain(facts) ? bridgeResponseTimes.get(facts) : undefined;
+  return t && Number.isSafeInteger(now) && t.issuedAt <= now && now < t.expiresAt ? t.issuedAt : now;
+}
+
 // The one admission check of the Linux scanner adapters and the bridge v4 protocol (replaces the three
 // per-adapter v1 validateAdmission copies). A scanner stage's admission is always made under the batch
 // claim recorded by stage 1, so batchClaimBound is required and must name the observed claim; a caller
@@ -92,7 +115,7 @@ export function validateFormalAdmissionV2(job, a, now = Date.now(), { batchClaim
   const generation = v => plain(v) && Object.keys(v).sort().join('|') === 'claimId|epoch|fence';
   if (!plain(a) || Object.keys(a).sort().join('|') !== [...ADMISSION_FIELDS_V2].sort().join('|') || a.domain !== 'production'
     || !generation(a.batchClaimBound) || !sameClaimGeneration(a.observedClaim, a.batchClaimBound)
-    || !admittedFactsMatchJobV2(a, job, now, { batchClaim })) {
+    || !admittedFactsMatchJobV2(a, job, admissionReferenceTime(a, now), { batchClaim })) {
     throw Object.assign(new Error('FRESH_COMPLETE_NATIVE_ADMISSION_REQUIRED'), { code: 'FRESH_COMPLETE_NATIVE_ADMISSION_REQUIRED' });
   }
   return a;

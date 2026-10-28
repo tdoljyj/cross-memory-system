@@ -4,6 +4,7 @@ param([string]$Powershell='C:\Windows\System32\WindowsPowerShell\v1.0\powershell
 $ErrorActionPreference='Stop';Set-StrictMode -Version 2.0
 $tool=Join-Path (Split-Path -Parent $PSScriptRoot) 'archive-windows-spool.ps1'
 $utf8=New-Object Text.UTF8Encoding($false);$cases=0
+$FixtureNodeProfile=[IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\..\..\..\..\independent-ci-resident-v1\config\node-profile.turing.json'))
 function Hash([byte[]]$b){$s=[Security.Cryptography.SHA256]::Create();try{([BitConverter]::ToString($s.ComputeHash($b))).Replace('-','').ToLowerInvariant()}finally{$s.Dispose()}}
 function Yes([bool]$v,[string]$what){if(-not $v){throw ('ARCHIVE_TEST_FAILED:'+$what)};$script:cases++}
 function New-Fixture{
@@ -21,7 +22,7 @@ function Pair([string]$spool,[string]$folder,[string]$name,[string]$text,[switch
  $b=$utf8.GetBytes($text);[IO.File]::WriteAllBytes((Join-Path $spool ($folder+'\'+$name+'.json')),$b)
  if(-not $NoReady){$sha=if($BadReady){'0'*64}else{Hash $b};[IO.File]::WriteAllText((Join-Path $spool ($folder+'\'+$name+'.ready.json')),('{"bytes":'+$b.Length+',"contract":"clued.independent-ci.complete-public-file/1","sha256":"'+$sha+'"}'),$utf8)}
 }
-function Run([string]$spool,[string]$reason){$key='a'*64;$out=& $Powershell -NoProfile -NonInteractive -File $tool -BatchKey $key -Reason $reason -OfflineFixtureSpool $spool;return ($out|Select-Object -Last 1)|ConvertFrom-Json}
+function Run([string]$spool,[string]$reason){$key='a'*64;$out=& $Powershell -NoProfile -NonInteractive -File $tool -BatchKey $key -Reason $reason -OfflineFixtureSpool $spool -OfflineFixtureNodeProfileBase64 ([Convert]::ToBase64String($utf8.GetBytes($FixtureNodeProfile)));return ($out|Select-Object -Last 1)|ConvertFrom-Json}
 $roots=@()
 try{
  # 1. completed protocol (between-roles-4): every record moves flat; journals and archives stay
@@ -32,7 +33,7 @@ try{
  [IO.File]::WriteAllText((Join-Path $s 'outgoing\active.lock'),'lock',$utf8);$journal=('b'*64)+'.json';[IO.File]::WriteAllText((Join-Path $s ('outgoing\'+$journal)),'{"journal":1}',$utf8)
  [IO.File]::WriteAllText((Join-Path $s 'outgoing\observations.jsonl'),'{}',$utf8);[void][IO.Directory]::CreateDirectory((Join-Path $s ('archive-'+('c'*64))))
  $v=Run $s 'between-roles-4'
- Yes ($v.verified -eq $true -and $v.moved -eq 11) 'completed-moves-all'
+ Yes ($v.verified -eq $true -and $v.moved -eq 11) ('completed-moves-all:'+($v|ConvertTo-Json -Compress))
  Yes (-not [IO.File]::Exists((Join-Path $s 'incoming\blocked.json')) -and -not [IO.File]::Exists((Join-Path $s 'incoming\blocked.ready.json'))) 'blocked-archived'
  $dir=Join-Path $s $v.directory;Yes ($v.directory -cmatch '^archive-aaaaaaaaaaaa-between-roles-4-[0-9a-f]{12}$') 'archive-name'
  Yes (@(Get-ChildItem -LiteralPath $dir -Directory).Count -eq 0) 'flat-destination'

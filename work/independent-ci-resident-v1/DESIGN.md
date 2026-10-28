@@ -394,7 +394,7 @@ v0.9 起，释放还是烧号由机器可读的失败对照表 `src/failure-tabl
   1. 执行器在 `broker\requests\` 里找**正在进行的那一次交换**：代理已领取（有 `.taken`）、还没回复、段号相同、`configSha256` 等于这一批次该段包的计划哈希（从批次钉住的 work manifest 读出）。恰好一个时，在旁边新建 `<id>.stop`，字段恰好是 `contract`、`requestId`、`nonce`、`stage`、`configSha256`。执行器记下这个请求 id，交换被回复之后照样能读停止回执；
   2. 代理在这次交换的等待循环里每秒看一次（§8.2 第 9 条），条件全部满足时向 runner 服务发 `SERVICE_CONTROL_STOP`，并把结果写进只新建的停止回执 `broker\responses\<id>.stop.json`（`STOP_SENT`、`HELPER_ALREADY_STOPPING` 或某个拒绝码）。这个控制实际只生效一次：万一因为超时又发了一次，助手也只是再置一次同一个标志、终止同一个作业对象，没有别的作用；
   3. 通用助手按它现有的停止路径处理（`STOP_REQUESTED`，服务退出码 92）：只终止并排空**它自己建的作业对象**，写原生回执，报告 STOPPED。代理照常换回原始二进制并回复。执行器和代理都不杀任何进程，也不碰来历不明的进程树；
-  4. 只有停止回执是 `STOP_SENT`，或者这一段在 Windows 侧的调用（invoke-stage 子进程）已经带着阶段事实返回之后，执行器才给 companion 写 `mailbox\requests\<泵请求 id>.cancel.json`。带着阶段事实返回有三种：代理已经回复，不论回复码是什么（助手已停，或助手根本没启动）；调用在找代理之前就拒绝了这一段；调用等不到代理的回复而放弃，那时代理和泵自己的截止时间都已过。这三种情况下发行方都不再等泵能带来的任何东西。泵在下一个等待步骤以 `COMPANION_PUMP_CANCELLED` 结束，不再做 blocked 转交：取消之后不再发起任何 relay 调用（每次调用之前都先查取消，正在进行的那一次最多 40 秒，先等它结束），blocked 转交的每一步之前也查；以失败结束时，不论停在哪一步，回复都是 `COMPANION_PUMP_CANCELLED`（取消时恰好已经正常走完的，照实回复成功）；读不出的取消文件按没有取消处理；它只停止搬运，从不停止或杀掉 Linux worker，取消若随 issue 转交一起到达，就不再启动 worker。在这之前，泵和它的 blocked 转交都和没有中止时完全一样，所以停止没送达时，这一段的结局不会比不中止更差；调用一返回，这一段也不会再为泵多等到截止时间；
+  4. 只有停止回执是 `STOP_SENT`，或者这一段在 Windows 侧的调用（invoke-stage 子进程）已经带着阶段事实返回之后，执行器才给 companion 写 `mailbox\requests\<泵请求 id>.cancel.json`。带着阶段事实返回有三种：代理已经回复，不论回复码是什么（助手已停，或助手根本没启动）；调用在找代理之前就拒绝了这一段；调用等不到代理的回复而放弃，那时代理和泵自己的截止时间都已过。这三种情况下发行方都不再等泵能带来的任何东西。泵在下一个等待步骤以 `COMPANION_PUMP_CANCELLED` 结束，不再做 blocked 转交：取消之后不再发起任何 relay 调用（每次调用之前都先查取消，正在进行的那一次最多一个回调窗口（120 秒，`RELAY_TIMEOUT_MS`，§7.9），先等它结束），blocked 转交的每一步之前也查；以失败结束时，不论停在哪一步，回复都是 `COMPANION_PUMP_CANCELLED`（取消时恰好已经正常走完的，照实回复成功）；读不出的取消文件按没有取消处理；它只停止搬运，从不停止或杀掉 Linux worker，取消若随 issue 转交一起到达，就不再启动 worker。在这之前，泵和它的 blocked 转交都和没有中止时完全一样，所以停止没送达时，这一段的结局不会比不中止更差；调用一返回，这一段也不会再为泵多等到截止时间；
   5. 还没调用的段（例如还在 refs 闸门上）直接不调用，以 `OWNER_ABORT_REQUESTED` 结束。
 - **结束**（P0、P1、P2 相同）：
   1. 运行中被停下的段，结局码必须在白名单里（`classify.mjs#OWNER_ABORT_STAGE_ENDINGS`），而且该段自己的 Windows 证明齐全（作业树为 0、原始二进制已还原）。白名单是：本来就干净的码；`OWNER_ABORT_REQUESTED`；`COMPANION_PUMP_CANCELLED`；入口被停下、来不及写结局时的 `STAGE_OUTCOME_MISSING`。最后一个只在停止回执是 `STOP_SENT` 时才算，其他情况下它照旧是未知；
@@ -708,6 +708,31 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
   9. 结果后的准入越过 issue 窗口时为 UNCERTAIN。
 - 四轮独立只读审核均为 PASS（0 BLOCKER、0 MAJOR）：`8b1f6f7b`、`105adffc`、`5410d563`，以及自举安装审核 `11af4710` 第 4、5 条修复后的 `18c0afc5`。审核记录在 PR #899 正文里。
 
+### 7.9 搬运变慢时的回调（Task `576231fa`，Owner 决定 `6f1fb753`）
+
+**根因**（2026-10-23，只读核实）：三次被记成“签发方卡住”的事故里，签发方其实都按时作答了。慢的是 companion 的一次搬运调用（relay-public.ps1）：平常 4–6 秒，偶尔 25–45 秒。
+
+- PR #915 第 4 段（批次 `a0a76a17`）：签发方 07:20:38Z 写出 response-04，SendResponse(4) 约 30 秒后才在 Linux 侧校验。这时响应里的准入已超过 30 秒新鲜期，Linux 拒收。companion 以 `RELAY_REFUSED_NO_RETRY` 停泵；worker 在本轮截止写 uncertain，因为扫描已经跑过。
+- PR #911 第 4 段（批次 `0d379e72`）：签发方 04:57:30Z 写出 issue，SendIssue 用了约 43 秒，超过 companion 原来固定的 40 秒，泵当作失败停下，worker 没有启动。
+- PR #908 第 1 次：response-02 同样没送到 Linux。那一轮在准备之前，所以 worker 写了 `blocked`，干净结束。
+- 泵停下以后，签发方等到 issue 过期，以 `BRIDGE_RESULT_DEADLINE` 结束（UNCERTAIN），常驻侧判 `PUBLICATION_UNCERTAIN` 并 HALT。
+- 证据：Windows 侧桥记录的时间（Owner 一次 UAC 的只读收集）、Linux 侧归档与 journal、companion 的 relay-stage 答复。搬运慢在哪一步没有记录可查。
+
+**改动**：
+
+- 回调 response 里的准入按签出时刻判新鲜，和 issue 一样（`CI/worker/protected-job-bridge-v4/protocol.mjs#validateResponse`）：签出时准入不超过 30 秒；response 只要在自己的窗口内到达（不晚于本轮 challenge 的截止，最多 120 秒）；claim 在到达时仍有效（response 的 `expiresAt` 不晚于 `claimExpiresAt`，且晚于到达时刻）。
+- Linux 适配器对每轮回调结果自己的复核（`validateFormalAdmissionV2`）也一样：worker 把每个 response 的签出时间和过期时间记在它交给适配器的那份准入事实上（`linux-worker.mjs#callbackValue`、`admission-facts-v2.mjs#noteBridgeResponseTimes`）。在这个 response 有效期内、且不晚于 claim 到期，30 秒从签出时刻算；过了这个时间，或者不是从回调来的事实，照旧从当前时刻算。适配器先校验端口交来的那个对象，再克隆；克隆出的对象不带登记。Windows 侧的调用方从不登记，行为不变。
+- 所以 Linux 侧用上一份准入时，它最多比 `observedAt` 晚约 150 秒（签出前 30 秒，加一个回调窗口），以前是 30 秒。
+- remote-refs 回调的 refs 快照仍按到达时刻判 30 秒，不在这次决定范围内。gitleaks 的 remote-refs 一轮走的是同样的搬运，变慢时仍会被拒（那一轮在准备之前，所以以干净的 `blocked` 结束，#908 就是这样）。
+- companion 每次搬运调用最多等一个回调窗口（`RELAY_TIMEOUT_MS` = 120 秒），不再固定 40 秒。Runner 从不杀子进程，提前放弃并不能腾出 Runner，只会让泵以没用的答复结束。Owner 中止时，正在进行的那次调用最多多等这么久。
+- relay-public.ps1 等 wsl 子进程的上限从 30 秒改为 90 秒。它的 `finally` 本来就会一直等到子进程结束，这个上限只决定一个慢了、但已经做完的子进程算不算成功。以前超过 30 秒就是 `UNCERTAIN_LOCKS_RETAINED_NO_RETRY`，companion 照样报 `RELAY_REFUSED_NO_RETRY`。
+- 生效要重装两侧：桥 v4 的文件按字节受理（relay-public.ps1 每次搬运前逐字节核对 manifest），companion 配置里的 `bridgeManifestSha256` 也随之更新。
+- 不变：每轮仍重新做完整准入；绑定 nonce、序号与批次 claim 代际；发布阶段（3、5、7、8）自己再做完整准入，已发布的检查不重复、不伪造。
+- 仍未处理（后续）：
+  - 泵在扫描执行段停下、companion 已给出 Linux 静止证明时，常驻侧要等签发方到期才 UNCERTAIN→HALT，应尽早停下签发方并干净结束。
+  - 搬运慢在哪一步仍不知道：relay 的输出（`status`、`failureCode`）没有留下来，下次出事故时无从查起。
+  - `windows-issuer.mjs` 里“迟到后再等两个窗口”的说明，假设的是一次 ReceiveBlocked 很快；搬运调用长到接近 120 秒时，这两个窗口可能不够用。
+
 ---
 
 ## 8. Windows：服务账户与权限边界
@@ -886,7 +911,7 @@ v0.8 补充（2026-10-21，Owner 中止 §6.5，基于 main `8c2bfdcc`，推送�
   - 静止证明不成立时 HALT，之后照常复位；有界复查内静止也算数；停下的段结局不干净时 HALT；停止没送达、入口没写结局时 HALT；HALT 时中止不清 HALT；tick 开始时接受到一半失败，当场 HALT，不再启动别的批次；接受回执写失败时照样请求停止；中止中途重启以 `OWNER_ABORT_INTERRUPTED` 关闭并 HALT；
   - 引擎只把停止请求绑定在这一次交换上，还没调用的段不调用；先写代理停止，`STOP_SENT` 之后才取消泵，取消失败不挡代理停止；泵被取消时跳过 blocked 转交，取消随 issue 转交一起到达时不启动 worker。
   - 第二轮复审之后：接受到一半失败、以未知关闭也失败时，闸门照样不跑别的批次，回执记为 `owner-abort-unconfirmed` 而不是拒绝；已接受过的中止再请求被拒；tick 开始时 Source 漂移就拒绝；段运行中写出读不全的 `80-owner-abort` 时，段结束后 HALT，下一 tick 隔离，复位以 `rearm-quarantine` 归档；停止没送达时，这一段的调用一返回就取消泵，不再等泵的截止时间；段结束后补写“已请求停止”的回执；中止的未知结局带上安全点和请求摘要。
-  - bootstrap 安装源复审之后：relay 调用失败时取消已经写好，泵只等完那一次调用（最多 40 秒）就以 `COMPANION_PUMP_CANCELLED` 结束，不做 blocked 转交，也不再调 relay（ReceiveResult、ReceiveChallenge、ReceiveBlocked，超时和被拒各一）；blocked 转交途中收到取消，在下一个等待步骤结束；取消时已经写好的 response 不再转发。之后的复审又补了：列目录、或 relay 回答“没有”之后，不再发起下一次 relay 调用（没有列表时、主循环里、blocked 转交里各一）；失败的 SendIssue、blocked 转交自己被拒的 ReceiveBlocked 也回复 `COMPANION_PUMP_CANCELLED`；读不出取消文件时，泵和没有中止时完全一样。
+  - bootstrap 安装源复审之后：relay 调用失败时取消已经写好，泵只等完那一次调用（当时最多 40 秒，§7.9 起最多 120 秒）就以 `COMPANION_PUMP_CANCELLED` 结束，不做 blocked 转交，也不再调 relay（ReceiveResult、ReceiveChallenge、ReceiveBlocked，超时和被拒各一）；blocked 转交途中收到取消，在下一个等待步骤结束；取消时已经写好的 response 不再转发。之后的复审又补了：列目录、或 relay 回答“没有”之后，不再发起下一次 relay 调用（没有列表时、主循环里、blocked 转交里各一）；失败的 SendIssue、blocked 转交自己被拒的 ReceiveBlocked 也回复 `COMPANION_PUMP_CANCELLED`；读不出取消文件时，泵和没有中止时完全一样。
   - 推送前的最终核对之后：服务记下请求之前就死了、恢复关闭批次之后再读到这个请求，回执记为 `owner-abort-unconfirmed` 而不是拒绝；`FAILED_CLEAN` 已写、`batch-terminal` 回执写失败时不记成未确认；tick 开始时接受到一半失败，汇总回执是 `owner-request`（`HALTED`），不是拒绝。
 - 常驻层 Python **25/25**（在 Git Bash 里运行；在 PowerShell 里有 3 个 Linux 安装器用例因为解析到另一个 `/bin/bash` 而以 127 失败，与本次改动无关）；`node drill/offline-drill.mjs` **37/37**（新增 2 步：第 2 段卡住时 Owner 中止，之后这个 head 不再运行）。
 - `windows/test-resident-windows.ps1` **71 条**断言，其中 C# 纯逻辑 **28 条**（新增 18 条：停止请求只认这一次交换和扫描签发段，`StopRequest.Decide` 的每种状态）；`SwapBroker.cs` 编译通过。
@@ -1817,6 +1842,93 @@ Owner Decision `0bb98194` 把设计 v0.5 的第 3 步拆成三个 PR，这是第
   - 已改：m1（推导结果的 `testSha` 加了跨层断言）、n1（outbox 路径与 `layout.mjs` 的 `LINUX_DESCRIPTORS` 相等）、n2 和 n5（写进 §21.4、§21.3）、n4（过时注释）。
   - n3（打包脚本只有源码断言；C# 同批核对没有测试）留到 3c，和 S ≠ H 的测试一起补。
 
+## 22. 额度第二期·第 3c-1 步：第 10 段（只读）与影子模式（v1.2，Task `6451a55d`，Decision `2eea28a1`）
+
+Owner Decision `2eea28a1` 把 3c 拆成两步。3c-1 只做影子模式（设计 v0.5 §6 第 4 步）要的部分。今晚装上后 `train.enabled=shadow`：第 10 段只读，不撤销、不写 KooYomi、不改发绿规则，第 8 段仍按关车规则走。开车所需（撤销、清扫、车头批次、S ≠ H、C9）在 3c-2。
+
+### 22.1 第 10 段怎么跑（设计 v0.5 没写打包方式，这里补）
+
+- 第 10 段是批次之外的一个正式段，照旧由通用助手以 clued-control 运行，经 SwapBroker 和 C# 边界，上限 5 分钟。
+- 一次运行叫一次“列车维护”（train run）。它的阶段包和批次的阶段包同一套格式（计划、作业列表、工作清单、密封），区别只在作业：
+  - 作业合同 `clued.independent-ci.train-run/1`，字段 `contract, id, repo, runId, mode, sourceManifestSha256, createdAt`；id = sha256(JSON([合同, repo, runId, mode, sourceManifestSha256]))。
+  - `runId` 是常驻层生成的 16+12 位十六进制（和批次 id 同形），`batchKey` 由它推出；`mode` 只能是 `shadow`（3c-2 才放开 `on`）。
+  - 作业角色 `train-run`，入口角色 `train-maintenance`，阶段号 10，种类 `train`，不属于任何批次的八段。
+- `derive-batch.mjs --train-run <runId> --train-key <key> --mode shadow --out <新目录>` 推出这个包，放在 `resident\work\train\<runId>`。常驻层 `engine-windows.mjs` 的 `runTrainStage` 照第 R 段的做法推导、调用、解析；run key 和 run id 是新的随机值，推导只核对形状。
+- C# 边界（`FormalPublicBoundaryV2.cs`）和 SwapBroker：阶段表加第 10 行（入口 train-maintenance、上限 5 分钟、作业角色 train-run）；第 10 段的作业按 train-run 合同校验（`ValidateTrainRun`：mode 只能是 shadow，run id 必须等于计划的 batchId，id 按公式重算），其他段不变。
+- 结果：入口写出 `status: 'TRAIN_FACTS'` 和 `train` 事实（`stage-inputs.mjs` 的 `writeOutcome` 像第 R 段的 `relay` 那样单独校验这一块）；`stage-fact.mjs` 认这个成功状态。
+
+### 22.2 第 10 段在影子模式下读什么、算什么（设计 §5.5 第 1、2、8 条）
+
+1. KooYomi `clued_work_merge_slot_holders_v1`（CI 身份）：车头的认领、PR、`merge_slot_until`、`taken_at`、CI 状态。它同时是当班探测：回答 `admission_binding_required` 就记“不当班”，其余照读。
+2. GitHub：main 尖端；车头 PR 的状态、head、草稿、`mergeable`、`merge_commit_sha` 与它的父提交和树；head 是否含 main 尖端（compare）；main 的规则（`strict`、合并方式、六项钉 5368905）。
+3. 绿色台账：列出全部记录，按 head 汇总最后阶段；对“成功且还没撤销”的，查它是否已在 main 里。
+4. 算出“如果开车会做什么”（设计 §5.2、§5.6）：没有车头；车头是别的 scope 的认领；车头不能跑（草稿、关闭）；车头需要作者先合 main（受保护且落后、冲突、`strict` 开着且落后）；车头已绿等合并；会开车头批次（T、S 与它的两个父提交）；以及会撤销哪些旧绿（台账里不在 main 里、又不是车头当前 head 的成功）。
+5. 每次运行写一条只新建的影子记录（`state\v2\train-shadow\`，`acl-model.json` 新增，只有 clued-control 能写），供第 4 步统计：车头变绿到合入的空档、第 2 位的等待、车头首次运行失败率、每个 PR 平均几个 head、GitHub 在 main 移动后多久重算试合并。统计离线从记录里算，不进执行器。
+6. 影子模式不做的：不撤销、不调用 touch/adopt/return、不改第 8 段、不开车头批次、不做 GitHub 全量枚举（GraphQL 强推事件留给 3c-2 的清扫）。
+
+### 22.3 常驻层
+
+- 策略 `/6` 新增 `train`（第 10 段上限钉在 300000，C# 边界和 SwapBroker 只允许 5 分钟）：`enabled`（`off`/`shadow`；`on` 在 3c-2 之前拒绝）、`nonFrontRuns`（只认 `true`，即今天的做法）、`maintenanceEveryMs`（默认 10 分钟）、`maintenanceMaxPerDay`（默认 200，设计 §4.7）。
+- 执行器（`executor.mjs#trainMaintenance`）：`enabled=shadow` 时，一次节拍里调度没有跑任何批次（结果是空闲或只有推迟，停靠中的批次不算在跑），且离上次第 10 段超过 `maintenanceEveryMs`，就跑一次。暂停接新（队列为空时也查，见 §22.7 M1）、PAUSE、HALT 时都不跑：执行器的 PAUSE 本来就只留读触发这一件事，3c-1 不改它的含义（设计 §4.3 说暂停只停发绿，那是为 3c-2 的清扫准备的，到时再定）。第 10 段也守开批次前的两条：安装授权在本段上限加余量（`limits.stageMarginMs`，不少于助手固定的 180 秒）内到期就不跑，Source 或常驻字节漂移就 HALT（`RESIDENT_SOURCE_DRIFT`）。运行期间状态显示 `RUNNING TRAIN_MAINTENANCE`。
+- 计数和中断：第 10 段没有账本条目，由回执链代替。运行前写 `train-run-intent`，结束写 `train-run`（runId、是否成功、失败码、会做什么、车头 PR、main、会撤几个）。每个进程启动后第一次节拍从回执链读最近的记录（`receipts.mjs#latest`）：取最近 24 小时的 intent 时刻计数，到 `maintenanceMaxPerDay` 就停到窗口滚动；如果最新的一条是没有 `train-run` 收尾的 intent（运行中途崩溃或被停），先 HALT `TRAIN_STAGE_INTERRUPTED`，再补一条收尾回执，所以只停一次；这一步放在 HALT 检查之前，已经停着时发现的中断也当场收尾，复位一次就够。回执链读不到时所有批次都等（排除不了没收尾的 intent），暂时性错误最多 30 分钟，之后 HALT `TRAIN_RECEIPTS_UNREADABLE`。
+- 失败：只有 Windows 证明齐全、结果里没有副作用，并且是白名单里的干净码（classify.mjs）、引擎自己在 broker 之前的拒绝（`TRAIN_STAGE_REFUSED`）或一个绑定的零副作用 BLOCKED 结果（也包括写完 TRAIN_FACTS 后撞上 5 分钟上限的）时，才算干净失败：只记 `train-run` 回执，不进熔断，下次照跑。清理没证实（Windows 进程树或 runner 原服务没确认）或调用抛异常 HALT `TRAIN_STAGE_CLEANUP_UNCONFIRMED`；有副作用、可能已发布或不是干净码（如 `BROKER_BUSY`）HALT `TRAIN_STAGE_OUTCOME_UNCONFIRMED`。
+- 阶段事实（`stage-fact.mjs`）：第 10 段只有 `TRAIN_FACTS`、零副作用、`mayHavePublished=false` 且事实通过 `validateTrainFacts` 才算成功，事实随阶段事实带回；其余都是现有的 `STAGE_OUTCOME_MISSING`，不新增失败码；这个结局干净与否由执行器按证明和绑定的结果判断（见下一条“失败”）。
+- 状态快照（合同 `/5`，即 C5 的 `/4` 加这一块）多一个 `train`：`enabled`（策略里的模式）和 `last`（最近一次成功运行的摘要，`train.mjs#trainSummary`）。PR 页面（`pr-status.mjs`）只在最近 30 分钟内的运行看到的车头正是这个 PR 的这个 head 时，把“列车影子（只记录，不执行）：……”接在执行器原来那句后面；失败、出错时不加。和 C5 的当班视图一起时，这行只出现在本节点当班或有结果的 head 上；备用节点、停滞和双活提示整句替换描述，这行随之不显示。
+- companion 规则集兜底（设计 §6 末，`ruleset-backstop.mjs#companionBackstop`，`companion-main.mjs` 每轮 poll 调一次）：用 Owner 的只读 gh 读 `rules/branches/main`；读到 `strict=false` 而状态快照里 `train.enabled` 不是 `on`（读不到也算不是），就往用户可写的 `requests\` 写一个暂停请求并弹紧急通知；读到六项不再全部钉 5368905 或没有 `required_status_checks`，只弹通知。每类每天一次，记在 companion 自己的存储里（`pr-status.mjs#LocalStore`，`backstop:` 键）。读不到规则什么都不做（第 8 段自己会以 `RULESET_UNREADABLE` 停靠）。
+
+### 22.4 为什么装上是安全的
+
+- 第 10 段只读：没有任何 GitHub 或 KooYomi 写，失败了也只是少一条影子记录。
+- 第 8 段的发绿规则不变（列车模式仍是 off；影子只读不发绿）。
+- 策略 `/6` 的 `train.enabled` 在测试里默认 `off`；策略样例写 `shadow`，今晚装的就是它。
+- 规则集兜底只会写暂停请求（只能停），不会多发绿。
+- 一处行为变化：开着 shadow 时，暂停接新的状态一直读不到，空队列也会在 30 分钟后 HALT `INTAKE_PAUSE_STATE_UNAVAILABLE`（第 10 段要过这道门）；关着列车时不会。
+
+### 22.5 留给 3c-2 的
+
+- 开车要做的部分：第 8 段的单绿规则（设计 §5.3 第 4 条）、检查说明（第 6 条）、`touch green`（第 8 条）；不依赖日志的撤销、增量与全量清扫（含 GraphQL 强推事件和失败关闭）、台账清理；车头批次调度（S 来自第 10 段）、请合 main、硬上限、touch、adopt、return；§21.3 所列的 S ≠ H 各项；C9（接手时清扫、撤别人的检查前核角色、撤自己的不要求角色）。
+- 保留：`retention.mjs` 只量 spool 归档、`work\` 和 `bundles\` 的字节，不管回执链、`state\v2\receipts`、`train-shadow`、broker 文件和 `resident\stage`。第 10 段每天约 280 条回执，现装节点约每天 590 条，回执链增长快约一半；每次启动读全部回执、每次追加列出整个目录。开车（3c-2）之前要定这些目录的保留办法。
+- **列车调度要支持优先级或截止时间**（Owner Decision `349f6e42`：常驻 CI 的排队协调改由合并列车承担，不另写协调机器人）。实际例子：主备 C5 改的是 3c 要用的文件，必须在某个时刻前合入，只按先来后到排的列车不知道这种期限。3c-2 设计时定来源（PR 标签、认领字段或 KooYomi Task 的截止时间）和规则（截止时间先于先来后到，且不能让车头之外的 PR 插队绕过“只有一个绿”）。
+
+### 22.6 测试
+
+- Source v2：`train-run.test.mjs`（作业合同、id 公式、阶段行、`--train-run` 推导与封包、invoke-stage 端到端：只有 TRAIN_FACTS + 零副作用 + 合格事实才算成功），`train-facts.test.mjs`（当班探测、车头事实、会做什么、会撤哪些旧绿），C# 纯测试第 10 段（入口、阶段表、`ValidateTrainRun` 拒 on、拒别的计划、拒别的 repo、train-run 不能当 /3 作业）。`source-closure.json` 重新生成，只多了五个新文件。
+- 常驻层：`train.test.mjs`（到期规则、摘要、状态副本、PR 页面行；执行器：空闲才跑、关车/PAUSE/每日上限不跑、失败只记回执、清理没证实或抛异常 HALT、漂移 HALT、中断的 intent 在下次启动 HALT 一次且计数跨重启），`ruleset-backstop.test.mjs`（规则读法、只暂停不恢复、每天一次、companion 接线），策略 /6 与各段上限的旧测试随之更新。
+- 离线演练多三步（第 52–54 步）：空闲时跑一次第 10 段只留两条回执；有 PR 时先跑批次，那一拍不跑第 10 段，十分钟后的空闲拍再跑；第 10 段清理没证实就 HALT。
+
+### 22.7 独立审核（规则 01d4ba7d）
+
+第 1 轮（预览树 fb97b65d：main c955068d + C4 #915 + 3c-1）：ACCEPT-WITH-FIXES，1 MAJOR、6 MINOR、5 NIT。确认成立的：第 10 段对 GitHub 和 KooYomi 没有写（只有安装令牌的签发是 POST，holders RPC 在迁移里是只读的），第 8 段不变，兜底只能暂停，两处 HALT 都在收尾回执之前，C# 边界和 SwapBroker 只认一个 train-run/1，阶段事实的成功条件，策略拒 `on`，批次预算不含第 10 段，closure 只多五个文件，状态与 PR 页面行对坏字节安全。
+
+- M1 队列为空时 `schedule()` 在暂停接新的门之前就回空闲，第 10 段照跑：`trainMaintenance` 自己先过一次暂停接新的门（读不到状态也算挡住）；测试补“空队列 + 暂停接新”。
+- m2 授权到期只看了本段上限，没加助手要求的 180 秒余量：改为上限加 `limits.stageMarginMs`；策略把第 10 段上限钉在 300000（C# 和 SwapBroker 都只允许 5 分钟）；测试补边界两侧。
+- m3 执行器没看第 10 段的结果：现在只有 Windows 证明齐全、结果里没有副作用、并且是白名单里的干净码（classify.mjs）、引擎自己在 broker 之前的拒绝或一个绑定的 BLOCKED 结果时才算干净失败；有副作用、可能已发布、`BROKER_BUSY` 之类一律 HALT（`TRAIN_STAGE_OUTCOME_UNCONFIRMED`）；测试逐类覆盖。
+- m4 回执链读不到时只挡第 10 段：现在挡所有批次（排除不了没收尾的 intent），暂时性错误最多 30 分钟（与回填同一上限），拒绝立刻，之后 HALT `TRAIN_RECEIPTS_UNREADABLE`；测试补。
+- m5 `test-migrate-acl.ps1` 的步数从 3a 起就过时（12）：改为 14，并核对 green-ledger 和 train-shadow 两个目录只有 clued-control 能写；离线跑通 14 条。
+- m6 测试缺口：补了暂停接新、授权余量、HALT 先于收尾回执（回执写失败时 HALT 仍在）、读不到回执链；`train-facts.test.mjs` 那条永远不会失败的只读断言换成按顺序核对每次读；新增接线测试：真的 GitHub 端口和 KooYomi 端口配一个只答读请求的 fetch，除令牌签发和 holders RPC 外全是 GET。SwapBroker 第 10 行没有单独的 broker 测试，由 C# 纯测试的阶段表断言和 `StageMilliseconds` 长度覆盖。
+- m7 运维上的取舍，不需要 Owner 另行决定：第 10 段运行中重启会 HALT 一次、要复位，这和任何一段运行中崩溃一样（复位前核对两台主机都静止）。每次运行留约 13 个小文件和 2 条回执：第 1 轮答复说由 `retention.mjs` 管，第 2 轮指出这不对（它只量 spool 归档、`work\`、`bundles\`），已更正，保留办法列入 §22.5，3c-2 之前定。
+- NIT：兜底改为先记“今天已处理”再弹通知，通知失败不再每轮写暂停请求；`receipts.mjs` 注释改指 `trainRecover`；第 10 段运行期间状态显示 `RUNNING TRAIN_MAINTENANCE`；窄窗口里崩溃可能 HALT 两次（`halt` 幂等，无害）；`trainRunKey` 只给测试和推导核对用，常驻层用自己的随机数。
+
+第 2 轮（预览树 b18f30bd）：ACCEPT-WITH-FIXES，2 MINOR、6 NIT，不挡今晚装。第 1 轮的 M1、m2、m3、m4、m5 已关；m6 部分关；m7 的复位理由成立。新的失败规则对追到的每种结局都对：GitHub 或 KooYomi 暂时读不到（绑定的 BLOCKED）、broker 启动前拒绝、助手预检拒绝、没有结果的子进程超时、引擎自己推导被拒，都保持干净；只有未知或没证实的结局 HALT。
+
+- m1 干净规则里走 classify 的那一支没有测试：补了 `BROKER_REQUEST_EXPIRED`、`BROKER_REQUEST_REFUSED`、`STAGE_HELPER_PREFLIGHT_REFUSED`、无结果的 `STAGE_CHILD_TIMEOUT`（都不 HALT），以及证明不齐的一例（HALT）。
+- m2 §22.7 m7 说第 10 段的文件由 `retention.mjs` 管，不对：已更正，保留办法列入 §22.5。
+- NIT：写完 TRAIN_FACTS 后撞上限的运行不再 HALT；授权余量不低于助手固定的 180 秒，策略里的 300000 也加了测试；SwapBroker 和 C# 边界的阶段表加了一致性测试（第 1 轮 m6.3 的理由不对，已补）；已经停着时发现的中断当场收尾，复位一次就够；过时的注释和本节文字已改；回执链暂读不到的那几分钟里，停在 A 点的批次暂时不显示在 PR 页面上，只在进程启动时遇到暂时性读错误才会发生，接受。
+- 补测：调度推迟（companion 没就绪）时第 10 段照跑、已停机启动时什么都不跑。
+
+第 3 轮（接合审核，预览树 3c9fe384 = 3c-1 + C5 #918 head 29deb110 + C4 #915 head 514b6e67）：ACCEPT-WITH-FIXES，1 MINOR、4 NIT，不挡推送。3c-1 的补丁在 C5、C4 的代码里位置正确，两边的东西没有丢也没有换序，运行时配合正常；状态 `/5` 里 C5 的 `node` 和 3c-1 的 `train` 并存；兜底从真实的 `/5` 状态读到 `shadow`；closure 在 C4 之上只多五个文件。
+
+- m1 companion 报告器里的列车影子行、执行器填 `status.train.last` 没有测试：两处都补了（报告器：车头 PR 有这一行，别的 PR 没有；执行器：一次运行后状态里有模式和摘要）。
+- NIT：停机时补写收尾回执失败不再让服务退出（HALT 已在，下次启动再补）；本节写明状态合同 `/5` 以及与当班视图一起时这行在哪些 head 上出现；附录 A 补了 3c-1 的文件；交班后 `已交班` 文字下可能留一行旧的影子说明，它本来就只记录，接受。
+
+### 22.8 Source31 CI 引导资格指针（Task `6451a55d`）
+
+本 PR 的普通 Source 引导继续按精确登记的工作流、Role 与 Source 组合核验。此次受查 Source 为 `31e757ac2d613c9e76d0b7e416d906fd9c7d48be`，Owner 接受依据为 Decision `ae3538a1-627d-49d4-b13a-bdf6d1223856` / Receipt `cf26ce6a-e6f7-4204-9195-9c3a55310e41`。
+
+2026-10-24 的双端标准安装与验证证据见 Canonical Note `7abd3c63-3bd7-42bf-8f36-670bf84552fb` 第 44 版：Linux readiness 原 SHA256 为 `eb11e62ab0494c2efa8bb6ebf505816ed12add61d0e81b52353f0233a86785d3`，Windows 正式完成回执原 SHA256 为 `598dd9f11122e38adebd03cf8cda7353d341c45fa4b51fd4a24c6f390baa3f76`。完整安装回执、独审与保留证据由该记录引用，仓库保留此短指针。
+
+本 PR 的交付范围仍为 3c-1 shadow；正式六项检查、受保护合并及其后 3c-2/C9 和第 4–7 步的当前状态由 Task `6451a55d` 跟踪，Source 安装证据不替代这些 Gate。
+
 ## 附录 A：草稿文件
 
 | 文件 | 作用 |
@@ -1845,3 +1957,5 @@ Owner Decision `0bb98194` 把设计 v0.5 的第 3 步拆成三个 PR，这是第
 | `src/failure-table.json`、`src/executed-heads.mjs`、`src/status.mjs`、`src/pr-status.mjs`、`windows/test-install-carry.ps1` | v0.9：失败对照表、与 Source 无关的已执行记录与回填、状态快照、PR 页面状态与通知、安装带入旧账本的离线测试（§16） |
 | `CI/src/independent-control-checks-v2/train-rules.mjs`、`green-ledger.mjs` | v1.2：第 8 段的 main 规则与试合并核对、绿色台账（§19） |
 | `CI/src/job-v2.mjs`（合同 /3）、`CI/test/job-v3.test.mjs` | v1.2：作业身份加测试提交 S，描述符 /3，工作区检出 S（§21） |
+| `src/train.mjs`、`src/ruleset-backstop.mjs` | v1.2：第 10 段的到期规则、状态摘要与 PR 页面行；companion 规则集兜底（§22） |
+| `CI/src/resident-v2/train-run.mjs`、`CI/src/independent-control-checks-v2/train-*.mjs`、`merge-slot-native.mjs` | v1.2：第 10 段的作业合同、入口、事实、影子记录与合并位只读读取（§22） |

@@ -63,22 +63,28 @@
           "sha256": "f6288615c4b6fe1e2cb8630405c8c618bd73fbe85d1b5336d331600730d9b1fd"
         },
         {
-          "blob": "95f4527be27d02889892d029b398ab1cf2e71429",
+          "blob": "d0fe73eeabc9c163d3216e57ca6a7633288262c5",
           "mode": "100644",
           "path": ".github/workflows/gitleaks.yml",
-          "sha256": "688073ac1281c4322c90673816b761852989f6849083c07eca2cbd8f4e424091"
+          "sha256": "46627f909229d06a6b5c35112f7619b28c6aa9f0a196a526b067e3a962d9da2b"
         },
         {
-          "blob": "7b4239864b4af470f95d399ace34045c31034f70",
+          "blob": "c63b3d404092c588addcee476fb793bd39e837a2",
           "mode": "100644",
           "path": ".gitleaks.toml",
-          "sha256": "cf631812810d997f42496af561f44930b51087737f146c4a7541c5dbc0a994cd"
+          "sha256": "167600934018e4761d80057321789a1c50486f35c32aa15eebc00ee53cf9aeec"
         },
         {
           "blob": "5717f72c9317a0a2d935fde232bdebe9dd6be3a7",
           "mode": "100644",
           "path": ".gitleaksignore",
           "sha256": "1caa1e9b97c4cae00d0d148e52770f4def734cbbdff60b67faf5f86707c37bae"
+        },
+        {
+          "blob": "e76304383ad74fe0f79e2d04ad29e8ad1d11f470",
+          "mode": "100644",
+          "path": "apps/clued-cloud/scripts/.gitattributes",
+          "sha256": "85909dcccb4f607e861146cc39cf3661ed4ddf235d2c1d64a859b9b307450397"
         },
         {
           "blob": "764a0e474a0aac5e390e2cc3ae04ee83e9398285",
@@ -171,10 +177,10 @@
           "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
         },
         {
-          "blob": "a2dfd90c06b80af22fb2e89d2144b7d83f5ee321",
+          "blob": "7f7c848f2a10935e73c9a43bc201bc647a5c9a79",
           "mode": "100644",
           "path": "scripts/ci/reviewed_gitleaks.py",
-          "sha256": "433b24137a7d3430990b69e61c0b4ebcd9dad47d770c5df62d6e1fef28b7f7a9"
+          "sha256": "ce262ae31a44cfd486e9c8b56e6bc912e7259f18bf5b3b7bebcaf60f26206e4d"
         },
         {
           "blob": "19421881d280bc351fc1992b1a6ec1f15a62e8fb",
@@ -189,7 +195,7 @@
           "sha256": "aa20458a6ba4eab07db3d623a255cecfa367d3e82845ec2440a17302b5f9f32a"
         }
       ],
-      "closureSha256": "d8f8f2cea789fac2ba652289ee14aadb124d08343d5ea67ff1e0e65cb8eef337",
+      "closureSha256": "22f51404f524efca947b358d23bc4ea2d3bee0daae97042c937cc63c253e8b16",
       "forbiddenChangePrefixes": [
         "scripts/ci/"
       ],
@@ -198,9 +204,9 @@
       "hostedJobTimeoutMinutes": 25,
       "mustNotExist": [],
       "runsOn": "ubuntu-latest",
-      "workflowBlob": "95f4527be27d02889892d029b398ab1cf2e71429",
+      "workflowBlob": "d0fe73eeabc9c163d3216e57ca6a7633288262c5",
       "workflowPath": ".github/workflows/gitleaks.yml",
-      "workflowSha256": "688073ac1281c4322c90673816b761852989f6849083c07eca2cbd8f4e424091"
+      "workflowSha256": "46627f909229d06a6b5c35112f7619b28c6aa9f0a196a526b067e3a962d9da2b"
     },
     "trivy": {
       "checkName": "trivy",
@@ -249,6 +255,12 @@
           "sha256": "94e9ac722e3a3e0c4f924ce3b27371803dc2a04b5e177a7b0bcffd2bdf28b810"
         },
         {
+          "blob": "e76304383ad74fe0f79e2d04ad29e8ad1d11f470",
+          "mode": "100644",
+          "path": "apps/clued-cloud/scripts/.gitattributes",
+          "sha256": "85909dcccb4f607e861146cc39cf3661ed4ddf235d2c1d64a859b9b307450397"
+        },
+        {
           "blob": "764a0e474a0aac5e390e2cc3ae04ee83e9398285",
           "mode": "100644",
           "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/docker-observation-20260908/.gitattributes",
@@ -351,7 +363,7 @@
           "sha256": "aa20458a6ba4eab07db3d623a255cecfa367d3e82845ec2440a17302b5f9f32a"
         }
       ],
-      "closureSha256": "1f80bf3c4fb9782ebe3e66c0f94d2665aa70f38fdc03d09d070b724cb6ee799b",
+      "closureSha256": "b21e871f35fa404842715159369ba20d2dfae0925f93b4b601b23f401f132f4d",
       "forbiddenChangePrefixes": [],
       "hostedCheckName": "trivy-hosted-executor",
       "hostedJobId": "trivy-trusted-self-hosted",
@@ -369,7 +381,7 @@
     }
   },
   "runnerEnvironment": "github-hosted",
-  "sourceCommit": "3be6bd96c7cc932ba104a8ec4a1f18844c551c49",
-  "sourceTree": "1802f3374f0fc40ebc014b0d2a5bd5022e3c0a2e",
+  "sourceCommit": "91f4411b8033f437c3043d9ae5fac1dab13d105e",
+  "sourceTree": "56eb45e56021c23651e37b7e186917237ae08280",
   "specSha256": "4b360ec93f6a53a5b2024b9e38d5cc70dab555b28147f20b9965dc46dc9b6e70"
 }

@@ -2,15 +2,16 @@
 // fixed environment, bounded output. A child that outlives its timeout is never killed (the
 // existing CI's rule: never kill an unknown process tree); the caller is told it timed out and the
 // runner stays "busy" until the child exits, so no new work starts on top of it.
+import { pinnedNodeProfile } from './node-profile.mjs';
 import { spawn } from 'node:child_process';
 
-export const FIXED_ENV = Object.freeze({ SystemRoot: 'C:\\Windows', WINDIR: 'C:\\Windows', PATH: 'C:\\Windows\\System32;C:\\Windows', OS: 'Windows_NT', COMPUTERNAME: 'TURING' });
+export const FIXED_ENV = Object.freeze({ SystemRoot: 'C:\\Windows', WINDIR: 'C:\\Windows', PATH: 'C:\\Windows\\System32;C:\\Windows', OS: 'Windows_NT' });
 // The service passes its own temp directory on top of FIXED_ENV (see service-main.mjs): without TEMP/TMP a
 // child of a profile-less service account resolves the temp path to C:\Windows (GetTempPath), where Windows
 // PowerShell's Add-Type (archive-windows-spool.ps1) cannot write.
-export function serviceEnv(tempDir) {
+export function serviceEnv(tempDir, node, nodeProfileSha256) {
   if (typeof tempDir !== 'string' || !/^[A-Za-z]:\\/.test(tempDir) || /[\0;"]/.test(tempDir)) throw new Error('SERVICE_TEMP_DIR_REFUSED');
-  return Object.freeze({ ...FIXED_ENV, TEMP: tempDir, TMP: tempDir });
+  return Object.freeze({ ...FIXED_ENV, COMPUTERNAME: pinnedNodeProfile(node, nodeProfileSha256).hostname, TEMP: tempDir, TMP: tempDir });
 }
 // USERPROFILE / LOCALAPPDATA, which run-batch.ps1:12 sets to the Owner's profile today, are left out
 // on purpose: the service account must not resolve anything from a user profile (Source v2 review).

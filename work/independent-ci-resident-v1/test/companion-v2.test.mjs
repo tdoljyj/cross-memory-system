@@ -5,14 +5,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Mailbox } from '../src/mailbox.mjs';
-import { CALLBACK_WINDOW_MS, COMPANION_CONFIG_CONTRACT, Companion, LINUX_OUTGOING, argv, validateCompanionConfig } from '../src/companion.mjs';
+import { CALLBACK_WINDOW_MS, COMPANION_CONFIG_CONTRACT, Companion, LINUX_OUTGOING, RELAY_TIMEOUT_MS, argv, validateCompanionConfig } from '../src/companion.mjs';
 import { mailboxCompanion } from '../src/service-ports.mjs';
 import { RetentionWatch, measureWindows, REMINDER_RECEIPT } from '../src/retention.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { ReceiptChain } from '../src/receipts.mjs';
-import { tempRoot, rawPolicy } from './helpers.mjs';
+import { TEST_NODE, TEST_NODE_SHA, tempRoot, rawPolicy } from './helpers.mjs';
 
-const cfg = validateCompanionConfig({ contract: COMPANION_CONFIG_CONTRACT, wslExe: 'C:\\Windows\\System32\\wsl.exe',
+const cfg = validateCompanionConfig({ contract: COMPANION_CONFIG_CONTRACT, node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, wslExe: 'C:\\Windows\\System32\\wsl.exe',
   powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
   relayScript: 'C:\\ProgramData\\CluedIndependentCI\\resident\\source\\x\\protected-job-bridge-v4\\relay-public.ps1',
   bundleScript: 'C:\\ProgramData\\CluedIndependentCI\\resident\\source\\x\\build-bundle.ps1', windowsSpool: 'C:\\ProgramData\\CluedIndependentCI\\formal-spool',
@@ -104,6 +104,38 @@ test('a refused late response: the worker blocked record is handed to the issuer
   assert.deepEqual([r.ok, r.code], [false, 'RELAY_REFUSED_NO_RETRY']);
   assert.deepEqual(f.h.log.map(mode).filter(Boolean), ['SendIssue', 'ReceiveChallenge', 'SendResponse', 'ReceiveBlocked']);
   assert.equal(f.h.log.some(a => a.includes('stop') || a.includes('kill')), false);
+});
+
+// PR #911 stage 4 (2026-10-23): the SendIssue relay call took about 43 s. The pump gave up at its old fixed 40 s, no
+// worker was started and the issuer waited out its stage into a HALT (Task 576231fa). Every relay call now gets one
+// callback window; the runner never kills it either way.
+test('a slow relay call (43 s SendIssue) still counts: every relay call may take one callback window', async t => {
+  const root = await tempRoot(t);
+  let now = T0;
+  const mailbox = await Mailbox.open(root, () => now);
+  const log = [], timeouts = [];
+  const run = async (a, { timeoutMs } = {}) => {
+    log.push(a);
+    const m = mode(a);
+    if (m) {
+      timeouts.push(timeoutMs);
+      const took = m === 'SendIssue' ? 43_000 : 5_000;
+      if (took > timeoutMs) { now += timeoutMs; return { code: null, stdout: '', stderr: '', timedOut: true }; }
+      now += took;
+      return m === 'ReceiveChallenge' ? absent : transferred;
+    }
+    if (a.includes('/usr/bin/ls')) return { code: 0, stdout: 'result.ready.json\n' };
+    return worker(a) ?? { code: 0, stdout: '' };
+  };
+  const c = new Companion({ cfg, mailbox, run, fileExists: async () => true, sleep: async ms => { now += ms; }, clock: () => now });
+  const req = await mailbox.send('relay-stage', { batchId: BATCH, stage: 4, jobId: JOB }, 45 * 60_000);
+  await c.step();
+  const r = await mailbox.poll(req);
+  assert.deepEqual([r.ok, r.code], [true, null]);
+  assert.deepEqual(log.map(mode).filter(Boolean), ['SendIssue', 'ReceiveResult']);
+  assert.ok(log.some(a => a.join(' ').includes('start --no-block')), 'the worker unit was started after the slow issue transfer');
+  assert.equal(RELAY_TIMEOUT_MS, CALLBACK_WINDOW_MS);
+  assert.ok(timeouts.length === 2 && timeouts.every(ms => ms === RELAY_TIMEOUT_MS), `relay timeouts ${timeouts}`);
 });
 
 test('a late issuer (no response within the callback window) also hands over the blocked record; nothing listed means no hand-over', async t => {

@@ -14,7 +14,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {validateJobV2 as validateJob,subjectOfV2 as subjectOf,SCANNER_ROLES_V2} from '../../src/job-v2.mjs';
 import {canonical,digest} from '../../src/proof.mjs';
 import {loadQualifiedPolicyV2 as loadQualifiedPolicy,protectedPath,LINUX_NODE_V2,POLICY_SCHEMA_V3} from '../qualification-v2.mjs';
-import {IMAGE as GITLEAKS_IMAGE,SCAN_ARGS} from '../formal-gitleaks-v4/required-history/prepare.mjs';
+import {IMAGE as GITLEAKS_IMAGE,SCAN_ARGS,REVIEWED_COMMITS,matchesReviewedHistoryProof} from '../formal-gitleaks-v4/required-history/prepare.mjs';
 import {IMAGE as TRIVY_IMAGE} from '../required-trivy-v3/plans.mjs';
 import {TRUSTED_WORKFLOW_PATHS,trustedWorkflowSha256s} from '../trusted-workflows.mjs';
 const P='work/actions-hosted-migration/independent-ci-v1/worker/formal-fixed-role-policy-v3/policy.mjs';
@@ -101,7 +101,7 @@ export function takeActualRolePolicy(value){check(actual.has(value),'ACTUAL_FIXE
 export function validateCleanupObservation(job,o){
   fixedPolicyPath(job.role);check(o?.domain==='production-observation'&&o.fixture===false&&canonical(o.subject)===canonical(subjectOf(job))&&o.sourceManifestSha256===job.sourceManifestSha256&&o.formalEligible===false&&o.qualificationIssued===false&&o.checksWritten===false,'ACTUAL_ROLE_OBSERVATION_REQUIRED');
   if(job.role==='trivy')check(o.profile==='required-trivy-three-scanners/1'&&o.scans?.length===3&&o.scans.every(s=>s.cleanupConfirmed===true&&s.complete===true)&&o.cleanup?.containersRemoved===true&&o.cleanup.wholeContainerTreesStopped===true&&o.cleanup.snapshotRemoved===true,'ACTUAL_ROLE_CLEANUP_UNCONFIRMED');
-  else check(o.profile===(job.role==='gitleaks'?'required-gitleaks-history/1':'required-contract-placement/1')&&(job.role!=='gitleaks'||o.requiredHistoricalExceptions===726)&&o.cleanup?.complete===true&&o.cleanup.wholeContainerTreeStopped===true&&o.cleanup.containerRemoved===true,'ACTUAL_ROLE_CLEANUP_UNCONFIRMED');return o;
+  else check(o.profile===(job.role==='gitleaks'?'required-gitleaks-history/1':'required-contract-placement/1')&&(job.role!=='gitleaks'||o.requiredHistoricalExceptions===REVIEWED_COMMITS.findings&&matchesReviewedHistoryProof(o.reviewedHistoryProof))&&o.cleanup?.complete===true&&o.cleanup.wholeContainerTreeStopped===true&&o.cleanup.containerRemoved===true,'ACTUAL_ROLE_CLEANUP_UNCONFIRMED');return o;
 }
 export async function openFixedRoleSession(job){
   const context=takeActualRolePolicy(await loadFixedRolePolicy(job));await protectedPath(path.dirname(SERIAL_LOCK),{directory:true});

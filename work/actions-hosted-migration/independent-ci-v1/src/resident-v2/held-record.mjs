@@ -10,7 +10,7 @@ import { RECORD_FILES, STATE_V2 } from './layout.mjs';
 const leases = new WeakSet();
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (v, c) => { if (!v) fail(c); };
-const MAX = 16 * 1024 * 1024, CONTROLLER = 'S-1-5-21-1173730660-3877291096-655431861-1015';
+const MAX = 16 * 1024 * 1024, SID = /^S-1-5-21-\d{1,10}-\d{1,10}-\d{1,10}-\d{1,10}$/;
 const hash = b => createHash('sha256').update(b).digest('hex');
 const exact = (v, keys) => v && Object.getPrototypeOf(v) === Object.prototype && Object.keys(v).sort().join('|') === [...keys].sort().join('|');
 function bytes(v) { check(typeof v === 'string' && v.length <= 5592408, 'HELD_RECORD_DOCUMENT_BOUND'); const b = Buffer.from(v, 'base64'); check(b.toString('base64') === v && b.length <= 4194304, 'HELD_RECORD_DOCUMENT_BOUND'); return b; }
@@ -19,9 +19,13 @@ export function decodeHeldRecord(raw, now = Date.now()) {
   check(Buffer.isBuffer(raw) && raw.length > 0 && raw.length <= MAX, 'HELD_RECORD_OUTPUT_BOUND');
   let v; try { v = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw)); } catch { fail('HELD_RECORD_JSON_REFUSED'); }
   check(exact(v, ['contract', 'controllerSid', 'sourceRoot', 'expiresAt', 'documents', 'sourceHashes', 'policyBase64']) && v.contract === 'clued.independent-ci.held-record-bytes/1'
-    && v.controllerSid === CONTROLLER && /^C:\\ProgramData\\CluedIndependentCI\\resident\\source\\[0-9a-f]{64}$/.test(v.sourceRoot) && Date.parse(v.expiresAt) > now, 'HELD_RECORD_REFUSED');
+    && SID.test(v.controllerSid ?? '') && /^C:\\ProgramData\\CluedIndependentCI\\resident\\source\\[0-9a-f]{64}$/.test(v.sourceRoot) && Date.parse(v.expiresAt) > now, 'HELD_RECORD_REFUSED');
   check(exact(v.documents, RECORD_FILES), 'HELD_RECORD_DOCUMENTS_REFUSED');
   const documents = Object.fromEntries(Object.entries(v.documents).map(([k, x]) => [k, bytes(x)]));
+  // The lease process ran as the controller of the record's own node profile (acceptance `node`, design §9 C1);
+  // the whole record, profile included, is validated by every reader (record.mjs#validateRecordV2).
+  let accepted = null; try { accepted = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(documents['acceptance.json'])); } catch { fail('HELD_RECORD_REFUSED'); }
+  check(accepted?.node?.controllerSid === v.controllerSid, 'HELD_RECORD_CONTROLLER_REFUSED');
   check(v.sourceHashes && Object.getPrototypeOf(v.sourceHashes) === Object.prototype && Object.keys(v.sourceHashes).length > 0 && Object.keys(v.sourceHashes).length <= 10000, 'HELD_RECORD_PINS_REFUSED');
   for (const [p, s] of Object.entries(v.sourceHashes)) check(typeof p === 'string' && !p.startsWith('/') && !/[\\:\x00-\x1f]/.test(p) && p.split('/').every(x => x && x !== '.' && x !== '..') && /^[a-f0-9]{64}$/.test(s), 'HELD_RECORD_PINS_REFUSED');
   const policy = bytes(v.policyBase64);

@@ -44,7 +44,7 @@ await fs.writeFile(path.join(winSpool, 'outgoing', `${'e'.repeat(64)}.json`), '{
 let now = Date.parse('2026-10-21T00:00:00Z');
 const clock = () => now;
 const policyInput = {
-  contract: 'clued.independent-ci.resident-policy/5', repo: REPO, baseBranch: 'main', sourceManifestSha256: SOURCE, ciSourceManifestSha256: '9'.repeat(64), residentManifestSha256: RESIDENT,
+  contract: 'clued.independent-ci.resident-policy/6', repo: REPO, baseBranch: 'main', sourceManifestSha256: SOURCE, ciSourceManifestSha256: '9'.repeat(64), residentManifestSha256: RESIDENT,
   ownerAcceptance: { decisionRef: '0d84ddbb-ec1f-49c3-bbd0-953f72d53584', installReceiptRef: null }, validUntil: null,
   limits: { maxBatchesPer24h: 72, maxEvaluationsPer24h: 96, perPrBatchesPer24h: 6, waitingRetriesPer24h: 48, reevaluationsPerPrHeadPer24h: 6, releasesPerHeadPer24h: 2, queueDepth: 100,
     maxConcurrent: 1, inboxMaxFiles: 16, unexecutedCooldownMs: 600_000, stageMarginMs: 180_000 },
@@ -52,7 +52,8 @@ const policyInput = {
   stage8: { mode: 'park' },
   park: { maxParked: 4, maxParkedOutsideTop2: 8, maxMs: 86_400_000, stage8MaxTries: 12, stage8RetriesPer24h: 100 },
   companion: { userSid: OWNER, heartbeatMaxAgeMs: 60_000 },
-  stageRunMilliseconds: [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000],
+  stageRunMilliseconds: [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000, 300000],
+  train: { enabled: 'off', nonFrontRuns: true, maintenanceEveryMs: 600_000, maintenanceMaxPerDay: 200 },
   linux: { distribution: 'Ubuntu-24.04', workerUnit: 'clued-ci-worker@.service', wsprepUnit: 'clued-ci-wsprep@.service', archiveUnit: 'clued-ci-archive@.service' },
   automaticAttempt2: { enabled: true, delayMs: 600_000 }, retention: { reminderBytes: 50 * 1024 ** 3, checkEveryMs: 3_600_000 },
   // The shipped default: the relay is off (Owner decision); the relay month below runs a second instance with it on.
@@ -421,6 +422,45 @@ await step('reinstall (new Source, fresh state): the first tick backfills the ca
 await step('  PR 904 (halted at stage 6 before the reinstall) is never admitted either', async () => { await iDrop(trigger(904)); return iExec.tick(); }, r => r.reason === 'HEAD_ALREADY_PUBLISHED_NO_RETRY');
 script.delete(909); // its stage 2 no longer hangs
 await step('  PR 909 (aborted inside stage 2, nothing published) runs under the new Source', async () => { await iDrop(trigger(909)); return iExec.tick(); }, r => r.state === 'COMPLETED');
+
+// ---- step 3c-1: the merge train in shadow mode (stage 10, DESIGN §22.3), on a fresh install with train.enabled shadow ----
+const tRoot = path.join(root, 'train-shadow'), tState = path.join(tRoot, 'state');
+for (const d of ['inbox', 'requests', 'owner']) await fs.mkdir(path.join(tRoot, d), { recursive: true });
+let trainAnswer = null; // the next stage-10 answer; null = shadow facts with no merge-queue front
+const tEngine = { ...engine, current: null, subjects: new Map(), trainRuns: 0,
+  async runTrainStage(mode) {
+    this.trainRuns += 1;
+    now += 30_000;
+    const a = trainAnswer;
+    trainAnswer = null;
+    return a ?? { ok: true, runId: `${'7'.repeat(16)}-${String(this.trainRuns).padStart(12, '0')}`, proof: WINDOWS_CLEAN, train: { contract: 'clued.independent-ci.train-facts/1', mode,
+      at: new Date(now).toISOString(), onDuty: true, mainSha: BASE, rules: { strict: true, mergeOnly: true }, front: null, wouldDo: 'NO_FRONT', wouldRevoke: [], wouldRevokeCount: 0 } };
+  } };
+const tLedger = await Ledger.open(tState, clock);
+const tReceipts = await ReceiptChain.open(path.join(tState, 'receipts'), clock);
+const tExec = new ResidentExecutor({ policy: validatePolicy({ ...policyInput, train: { ...policyInput.train, enabled: 'shadow' } }), ledger: tLedger, receipts: tReceipts,
+  inbox: await Inbox.open(path.join(tRoot, 'inbox'), path.join(tState, 'inbox-archive')), requests: await Inbox.open(path.join(tRoot, 'requests'), path.join(tState, 'requests-archive')),
+  owner: await OwnerInbox.open(path.join(tRoot, 'owner'), path.join(tState, 'owner-seen')), engine: tEngine, companion, clock, sleep: () => new Promise(resolve => setImmediate(resolve)),
+  queue: await RunQueue.open(path.join(tState, 'queue'), clock),
+  executedHeads: await ExecutedHeads.open(tState, clock, { manifestFile: await emptyManifest(path.join(tRoot, 'install')), carriedRoot: path.join(tState, 'backfill') }),
+  sourceIntegrity: async () => ({ ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT }) });
+const tDrop = async value => { seq += 1; await fs.writeFile(path.join(tRoot, 'inbox', `${String(now + seq).padStart(13, '0')}-${String(seq).padStart(12, '0')}.json`), JSON.stringify(value)); };
+const trainTypes = async () => (await tReceipts.entries()).map(e => e.type).filter(t => t.startsWith('train-')).join(',');
+await step('train shadow (step 3c-1): an idle tick runs stage 10 once, leaving only its two receipts', async () => { const r = await tExec.tick(); return { ...r, runs: tEngine.trainRuns, types: await trainTypes() }; },
+  r => r.state === 'IDLE' && r.runs === 1 && r.types === 'train-run-intent,train-run');
+await step('  a PR batch comes first: that tick runs no stage 10, the next idle tick ten minutes later does', async () => {
+  await tDrop(trigger(940));
+  const a = await tExec.tick();
+  const between = tEngine.trainRuns;
+  now += 600_000;
+  const c = await tExec.tick();
+  return { state: a.state, between, after: tEngine.trainRuns, idle: c.state };
+}, r => r.state === 'COMPLETED' && r.between === 1 && r.after === 2 && r.idle === 'IDLE');
+await step('  a stage 10 whose cleanup is not proven HALTs like any stage', async () => {
+  now += 600_000;
+  trainAnswer = { ok: false, code: 'STAGE_CHILD_TREE_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: true } };
+  return tExec.tick();
+}, r => r.state === 'HALTED' && r.failureCode === 'TRAIN_STAGE_CLEANUP_UNCONFIRMED');
 
 console.table(rows);
 const summary = { status: misses === 0 ? 'OFFLINE_DRILL_PASS' : 'OFFLINE_DRILL_FAIL', steps: rows.length, misses, receipts: head1 };

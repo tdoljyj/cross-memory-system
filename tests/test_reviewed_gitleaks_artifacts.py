@@ -1,9 +1,12 @@
 import base64
+import ast
 import collections
 import copy
 import hashlib
 import importlib.util
 import json
+import re
+import shutil
 import subprocess
 from pathlib import Path
 import unittest
@@ -61,7 +64,7 @@ class ReviewedArtifactDigestTests(unittest.TestCase):
     def test_exact_record_count_and_artifact_reason(self):
         records = reviewed.parse_records(self.config)
         exact = [r for r in records if ':' + reviewed.REVIEW_DOCUMENT_PATH + ':' in r['fingerprint']]
-        self.assertEqual(len(records), 726)
+        self.assertEqual(len(records), 729)
         legacy_digest = hashlib.sha256(json.dumps(records[:484], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         self.assertEqual(legacy_digest, 'b10a7c8542f886ccce1daec04057ad5a5873ef9d75eae1643ccc879289b39172')
         prior_digest = hashlib.sha256(json.dumps(records[:491], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
@@ -147,7 +150,7 @@ class FinalEvidenceArtifactDigestTests(unittest.TestCase):
     def test_changed_registry_count_is_rejected(self):
         row = next(line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)
                    and reviewed.FINAL_EVIDENCE_COMMIT in line)
-        for changed in [self.config.replace('# clued-reviewed-count: 726', '# clued-reviewed-count: 725'),
+        for changed in [self.config.replace('# clued-reviewed-count: 729', '# clued-reviewed-count: 728'),
                         self.config.replace(row + '\n', '', 1), self.config + row + '\n']:
             with self.subTest():
                 with self.assertRaisesRegex(ValueError, 'Reviewed finding count changed'):
@@ -406,6 +409,120 @@ class PatchGitObjectMetadataTests(unittest.TestCase):
                 with self.subTest(line=line, code=code), patch.object(reviewed.subprocess, 'run', side_effect=route):
                     with self.assertRaisesRegex(ValueError, 'object is not an ancestor'):
                         self.verify(line)
+
+
+class SchedulingExactFixtureTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.config = (ROOT / '.gitleaks.toml').read_text(encoding='utf-8')
+        cls.old_config = reviewed.run(['git', 'cat-file', 'blob',
+                                      'f6ae29eda25c5ffa6131662e60251492e0878aa2:.gitleaks.toml'], cwd=ROOT).decode()
+        cls.blobs = {path: reviewed.run(['git', 'cat-file', 'blob', f'{reviewed.SCHEDULING_COMMIT}:{path}'],
+                                       cwd=ROOT).decode() for path in reviewed.SCHEDULING_BLOBS}
+
+    def rows(self, text=None):
+        return [line for line in (self.config if text is None else text).splitlines()
+                if line.startswith(reviewed.PREFIX)]
+
+    def test_only_three_exact_additions_preserve_every_legacy_record_byte(self):
+        records = reviewed.parse_records(self.config)
+        self.assertEqual(len(records), 729)
+        self.assertEqual(self.rows()[:726], self.rows(self.old_config))
+        self.assertEqual(hashlib.sha256(('\n'.join(self.rows()[:726]) + '\n').encode()).hexdigest(),
+                         reviewed.LEGACY_RECORD_LINES_SHA256)
+        self.assertEqual(reviewed.tomllib.loads(self.config), reviewed.BASE_CONFIG)
+        self.assertEqual(reviewed.tomllib.loads(self.config), reviewed.tomllib.loads(self.old_config))
+        self.assertEqual({r['fingerprint'] for r in records[726:]}, set(reviewed.SCHEDULING_FINDINGS))
+        self.assertEqual(sum(':private-key:' in r['fingerprint'] for r in records), 1)
+        self.assertTrue(all(re.fullmatch(r'[a-f0-9]{40}:[^:]+:[^:]+:[1-9][0-9]*', r['fingerprint'])
+                            for r in records))
+
+    def test_commit_path_rule_line_and_classification_are_not_transferable(self):
+        for row in self.rows()[726:]:
+            value = json.loads(row[len(reviewed.PREFIX):])
+            commit, path, rule, line = value['fingerprint'].split(':')
+            mutations = [dict(value, fingerprint=':'.join(['0' * 40, path, rule, line])),
+                         dict(value, fingerprint=':'.join([commit, 'apps/clued-cloud/tests/other.mjs', rule, line])),
+                         dict(value, fingerprint=':'.join([commit, path, rule, str(int(line) + 1)])),
+                         dict(value, fingerprint=':'.join([commit, path, 'unreviewed-rule', line])),
+                         dict(value, kinds=['ARTIFACT_DIGEST']), dict(value, kinds=['FAKE_MARKER_KIND'])]
+            for changed in mutations:
+                replacement = reviewed.PREFIX + json.dumps(changed, separators=(',', ':'))
+                with self.subTest(fingerprint=value['fingerprint'], changed=changed), self.assertRaises(ValueError):
+                    reviewed.parse_records(self.config.replace(row, replacement, 1))
+
+    def test_duplicate_deleted_legacy_fourth_or_rewritten_legacy_record_is_rejected(self):
+        rows = self.rows()
+        fourth = reviewed.PREFIX + json.dumps({'fingerprint': '0' * 40 + ':work/other.txt:generic-api-key:1',
+                                               'kinds': ['ARTIFACT_DIGEST']}, separators=(',', ':'))
+        changes = [self.config.replace(rows[-1], rows[-2], 1),
+                   self.config.replace(rows[0] + '\n', '', 1),
+                   self.config.replace(rows[0], fourth, 1),
+                   self.config.replace(rows[0], rows[0].replace(':', ': ', 1), 1),
+                   self.config.replace('# clued-reviewed-count: 729', '# clued-reviewed-count: 730') + fourth + '\n']
+        for changed in changes:
+            with self.subTest(), self.assertRaises(ValueError):
+                reviewed.parse_records(changed)
+
+    def test_actual_immutable_blob_and_span_proof(self):
+        for fingerprint in reviewed.SCHEDULING_FINDINGS:
+            path = fingerprint.split(':')[1]
+            with self.subTest(fingerprint=fingerprint):
+                reviewed.verify_scheduling_fixture(ROOT, fingerprint, self.blobs[path])
+
+    def test_wrong_blob_bytes_or_git_binding_are_rejected(self):
+        real_run = reviewed.run
+        for fingerprint in reviewed.SCHEDULING_FINDINGS:
+            path = fingerprint.split(':')[1]
+            with self.subTest(fingerprint=fingerprint), self.assertRaisesRegex(ValueError, 'immutable blob changed'):
+                reviewed.verify_scheduling_fixture(ROOT, fingerprint, self.blobs[path] + '\n')
+            def route(args, *, cwd=None):
+                if args[:2] == ['git', 'rev-parse']:
+                    return b'0' * 40 + b'\n'
+                return real_run(args, cwd=cwd)
+            with self.subTest(fingerprint=fingerprint), patch.object(reviewed, 'run', side_effect=route):
+                with self.assertRaisesRegex(ValueError, 'immutable blob changed'):
+                    reviewed.verify_scheduling_fixture(ROOT, fingerprint, self.blobs[path])
+
+    def test_new_commit_and_other_path_cannot_borrow_the_marker_proof(self):
+        fingerprint = next(iter(reviewed.SCHEDULING_FINDINGS))
+        text = self.blobs[reviewed.SCHEDULING_TEST_PATH]
+        for changed in [fingerprint.replace(reviewed.SCHEDULING_COMMIT, '0' * 40),
+                        fingerprint.replace(reviewed.SCHEDULING_TEST_PATH, 'apps/clued-cloud/tests/other.mjs')]:
+            with self.subTest(fingerprint=changed), self.assertRaisesRegex(ValueError, 'Unreviewed scheduling fixture'):
+                reviewed.verify_scheduling_fixture(ROOT, changed, text)
+
+    def test_valid_private_pem_is_not_an_admitted_marker(self):
+        pem = reviewed.synthetic_valid_private_pem()
+        der = base64.b64decode(pem.splitlines()[1], validate=True)
+        self.assertEqual(len(der), 48)
+        self.assertEqual(der[:16].hex(), '302e020100300506032b657004220420')
+        if shutil.which('node'):
+            checked = subprocess.run(['node', '-e',
+                "const fs=require('fs'),c=require('crypto');const k=c.createPrivateKey(fs.readFileSync(0));"
+                "process.stdout.write(k.asymmetricKeyType==='ed25519'?'valid':'invalid');"],
+                input=pem, capture_output=True, check=False)
+            self.assertEqual(checked.returncode, 0, 'Controlled private fixture did not parse')
+            self.assertEqual(checked.stdout, b'valid')
+        fingerprint = next(iter(reviewed.SCHEDULING_FINDINGS))
+        text = self.blobs[reviewed.SCHEDULING_TEST_PATH]
+        lines = text.splitlines(keepends=True)
+        lines[282] = re.sub(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"",
+                            lambda _: json.dumps(pem.decode().rstrip('\n')), lines[282])
+        with self.assertRaisesRegex(ValueError, 'immutable blob changed'):
+            reviewed.verify_scheduling_fixture(ROOT, fingerprint, ''.join(lines))
+
+    def test_candidate_evidence_contains_metadata_only_and_no_acceptance(self):
+        path = ROOT / 'development/contracts/context-authorization/evidence/pr920-gitleaks-fixtures-20261023.json'
+        text = path.read_text(encoding='utf-8')
+        document = json.loads(text)
+        self.assertEqual(document['status'], 'CANDIDATE_NOT_ACCEPTED')
+        self.assertFalse(document['source_runtime_accepted'])
+        self.assertEqual(document['legacy_record_lines_sha256'], reviewed.LEGACY_RECORD_LINES_SHA256)
+        self.assertEqual({item['fingerprint'] for item in document['findings']}, set(reviewed.SCHEDULING_FINDINGS))
+        self.assertNotIn('-----BEGIN ', text)
+        self.assertNotIn('"Secret"', text)
+        self.assertNotIn('"Match"', text)
 
 
 if __name__ == '__main__':

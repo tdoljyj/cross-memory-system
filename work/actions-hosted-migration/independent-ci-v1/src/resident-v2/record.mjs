@@ -2,7 +2,7 @@
 // derive-batch (resident), the stage inputs reader of the four v2 node entries (clued-control) and the
 // generic helper's C# twin (FormalPublicBoundaryV2.cs). Pure: bytes in, frozen facts out.
 import { canonical } from '../proof.mjs';
-import { ACCEPTANCE_CONTRACT_V2, CHECKS_V2, INSTALLATION_CONTRACT_V2, REFS, SOURCES_SCHEMA_V2, hash } from './prepare-record.mjs';
+import { ACCEPTANCE_CONTRACT_V2, CHECKS_V2, INSTALLATION_CONTRACT_V2, REFS, SOURCES_SCHEMA_V2, hash, validateNodeProfile } from './prepare-record.mjs';
 import { REPO } from './layout.mjs';
 
 export const FIXED_APP = Object.freeze({ appId: 5368905, installationId: 172706661, repositoryId: 1334673495 });
@@ -48,6 +48,9 @@ export function validateRecordV2(docs, { now = Date.now(), required = [], identi
     && accepted.ciPrincipalBindingId === config.ciPrincipalBindingId && accepted.ciPrincipalQualificationRef === config.ciPrincipalQualificationRef
     && accepted.ciTokenPinSha256 === config.ciTokenPinSha256 && accepted.appPublicKeySha256Base64 === config.appPublicKeySha256Base64
     && Date.parse(accepted.acceptedAt) <= now && (accepted.validUntil === null || Date.parse(accepted.validUntil) > now), 'RECORD_ACCEPTANCE_REQUIRED');
+  // The pinned node profile (inputs /2, design §9 C1): `hostname` is its hostname, the controller account the fixed one.
+  try { validateNodeProfile(accepted.node); } catch { fail('RECORD_NODE_PROFILE_REQUIRED'); }
+  check(accepted.hostname === accepted.node.hostname && accepted.controllerAccount === 'clued-control', 'RECORD_NODE_PROFILE_REQUIRED');
   if (identity) check(accepted.arch === identity.arch && accepted.controllerAccount === identity.account && /^[A-Za-z0-9-]+$/.test(accepted.hostname ?? '')
     && accepted.hostname.toLowerCase() === String(identity.hostname).toLowerCase(), 'RECORD_HOST_IDENTITY_REQUIRED');
   const pins = validateSourcePinsV2(accepted.sourceFiles, required);

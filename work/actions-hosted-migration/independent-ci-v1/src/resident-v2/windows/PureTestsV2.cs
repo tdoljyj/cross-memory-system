@@ -12,9 +12,38 @@ public static class PureTestsV2 {
  static int n;
  static void Yes(bool v,string what){if(!v)throw new Exception("PURE_V2_ASSERTION_FAILED:"+what);n++;}
  static void Refuse(Action f,string what){bool no=false;try{f();}catch(InvalidOperationException){no=true;}Yes(no,what);}
+ static void ProfileCases(Dictionary<string,object> fixture){
+  var vectors=fixture["nodeProfileVectors"]as object[];Yes(vectors!=null&&vectors.Length>=20,"shared-profile-vectors-present");
+  foreach(object item in vectors){var row=(Dictionary<string,object>)item;var node=row["node"]as Dictionary<string,object>;
+   if((bool)row["accepted"]){var p=NodeProfileV2.FromDictionary(node);Yes(p.CanonicalJson==(string)row["canonicalJson"],"profile-JS-canonical");Yes(p.Sha256==(string)row["sha256"],"profile-JS-hash");Yes(!p.CanonicalJson.EndsWith("\n"),"profile-no-LF");}
+   else{string code=null;try{NodeProfileV2.FromDictionary(node);}catch(InvalidOperationException e){code=e.Message;}Yes(code==(string)row["code"],"profile-shared-refusal");}
+  }
+  var actual=NodeProfileV2.FromDictionary((Dictionary<string,object>)fixture["node"]);Yes(actual.Sha256==(string)fixture["nodeProfileSha256"],"fixture-profile-JS-hash");
+  var plans=(object[])fixture["plans"];string acceptance=(string)((Dictionary<string,object>)plans[0])["acceptanceSha256"];
+  NodeProfileV2.BindForProcess(actual,acceptance);
+  Yes(FormalPublicBoundaryV2.Controller==actual.ControllerSid&&FormalPublicBoundaryV2.OwnerUser==actual.OwnerSid&&FormalScmPidHandshakeV2.Controller==actual.ControllerSid,"all-controller-owner-consumers");
+  Yes(ResidentScmV2.Name==actual.RunnerService&&CluedWindowsFormalEntryV2.ServiceName==actual.RunnerService&&ResidentScmV2.MutationMutexName==actual.MutationMutex,"service-mutex-profile");
+  var changed=new Dictionary<string,object>((Dictionary<string,object>)fixture["node"]);changed["nodeName"]="changed-profile";var other=NodeProfileV2.FromDictionary(changed);
+  Refuse(()=>NodeProfileV2.BindForProcess(other,acceptance),"no-process-profile-rebind");Refuse(()=>NodeProfileV2.BindForProcess(actual,new string('e',64)),"no-process-acceptance-rebind");
+  string[] keys=NodeProfileV2.Keys;keys[0]="modified";Yes(NodeProfileV2.Keys[0]=="contract","no-mutable-key-array");
+  var argv=new[]{"--acceptance-sha256",acceptance,"--node-profile-sha256",actual.Sha256};Yes(NodeProfileV2.HelperBootstrapPins(argv)[1]==actual.Sha256,"helper-bootstrap-pins");
+  Refuse(()=>NodeProfileV2.HelperBootstrapPins(new string[0]),"no-profileless-helper");
+  Refuse(()=>NodeProfileV2.HelperBootstrapPins(new[]{argv[2],argv[3],argv[0],argv[1]}),"bootstrap-flags-order");
+  Refuse(()=>NodeProfileV2.HelperBootstrapPins(new[]{argv[0],argv[1]+"\n",argv[2],argv[3]}),"bootstrap-no-trailing-LF");
+  Refuse(()=>NodeProfileV2.LoadProtectedProfile("C:\\untrusted-profile",actual.Sha256),"profile-fixed-root-before-open");
+  Func<string,byte[]> sd=t=>{var a=new RawSecurityDescriptor(t);var b=new byte[a.BinaryLength];a.GetBinaryForm(b,0);return b;};
+  NodeProfilePublicFileV2.ValidateBootstrapAcl(sd("O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;"+actual.ControllerSid+")"),NodeProfileV2.FixedResidentRoot+"\\record\\acceptance.json");n++;
+  Refuse(()=>NodeProfilePublicFileV2.ValidateBootstrapAcl(sd("O:BAG:BAD:P(A;;FA;;;BA)(A;;FW;;;"+actual.ControllerSid+")"),NodeProfileV2.FixedResidentRoot+"\\record\\acceptance.json"),"bootstrap-controller-cannot-write");
+  foreach(var right in new[]{"GA","GW"})Refuse(()=>NodeProfilePublicFileV2.ValidateBootstrapAcl(sd("O:BAG:BAD:P(A;;FA;;;BA)(A;;"+right+";;;"+actual.ControllerSid+")"),NodeProfileV2.FixedResidentRoot+"\\record\\acceptance.json"),"bootstrap-controller-no-generic-write-"+right);
+  Refuse(()=>NodeProfilePublicFileV2.ValidateBootstrapAcl(sd("O:BAG:BAD:P(A;;FA;;;BA)(A;;GA;;;"+actual.OwnerSid+")"),"C:\\ProgramData"),"bootstrap-parent-no-generic-all");
+  var callback=new RawSecurityDescriptor("O:BAG:BAD:P(A;;FA;;;BA)");callback.DiscretionaryAcl.InsertAce(1,new CommonAce(AceFlags.None,AceQualifier.AccessAllowed,1,new SecurityIdentifier(actual.ControllerSid),true,new byte[0]));var callbackBytes=new byte[callback.BinaryLength];callback.GetBinaryForm(callbackBytes,0);
+  Refuse(()=>NodeProfilePublicFileV2.ValidateBootstrapAcl(callbackBytes,NodeProfileV2.FixedResidentRoot+"\\record\\acceptance.json"),"bootstrap-callback-ace-refused");
+  Refuse(()=>NodeProfilePublicFileV2.ValidateBootstrapAcl(sd("O:"+actual.OwnerSid+"G:BAD:P(A;;FA;;;BA)"),NodeProfileV2.FixedResidentRoot+"\\record\\acceptance.json"),"bootstrap-owner-user-not-admin-owner");
+ }
  public static int Main(string[] args){
   try{
    var fixture=new JavaScriptSerializer{MaxJsonLength=8*1024*1024}.DeserializeObject(File.ReadAllText(args[0])) as Dictionary<string,object>;
+   ProfileCases(fixture);
    // 1. job ids: the C# formula equals the Node formula for all six roles (DETERMINISTIC_JOB_ID_REQUIRED)
    foreach(object o in (object[])fixture["jobs"]){var job=(Dictionary<string,object>)o;Yes(FormalPublicBoundaryV2.JobIdV2(job)==(string)job["id"],"job-id "+job["role"]);
     FormalPublicBoundaryV2.ValidateJobV2(job,(string)job["role"],(string)job["sourceManifestSha256"]);
@@ -29,6 +58,7 @@ public static class PureTestsV2 {
     var old=new Dictionary<string,object>(job);old.Remove("testSha");old["contract"]="clued.independent-ci.job/2";Refuse(()=>FormalPublicBoundaryV2.ValidateJobV2(old,(string)job["role"],(string)job["sourceManifestSha256"]),"job-v2-refused");}
    // 2. plans: every derived plan passes; a tampered stage/role fails
    foreach(object o in (object[])fixture["plans"]){var plan=(Dictionary<string,object>)o;int s=FormalPublicBoundaryV2.PlanStage(plan);Yes(FormalPublicBoundaryV2.StageRole[s-1]==(string)plan["entryRole"],"plan-role");
+    Yes((string)plan["nodeProfileSha256"]==NodeProfileV2.Current.Sha256,"plan-profile-pin");var missingProfile=new Dictionary<string,object>(plan);missingProfile.Remove("nodeProfileSha256");Refuse(()=>FormalPublicBoundaryV2.PlanStage(missingProfile),"plan-profile-required");
     var bad=new Dictionary<string,object>(plan);bad["entryRole"]=s==1?"control-checks":"work-admission";Refuse(()=>FormalPublicBoundaryV2.PlanStage(bad),"plan-wrong-role");
     var extra=new Dictionary<string,object>(plan);extra["currentClaim"]="x";Refuse(()=>FormalPublicBoundaryV2.PlanStage(extra),"plan-extra-field");}
    // 3. command line: fixed node, installed Source root, exact two arguments
@@ -45,7 +75,16 @@ public static class PureTestsV2 {
    // 5. S5 window: null validUntil = install lifetime; a near deadline refuses; stage 8 waits longest
    var now=DateTimeOffset.UtcNow;Yes(FormalPublicBoundaryV2.BoundedDeadline(8,now,null)==now.AddMilliseconds(2700000),"window-null");
    Refuse(()=>FormalPublicBoundaryV2.BoundedDeadline(2,now,now.AddMinutes(30)),"window-near");Yes(FormalPublicBoundaryV2.BoundedDeadline(1,now,now.AddDays(30))==now.AddMinutes(15),"window-far");
-   Refuse(()=>FormalPublicBoundaryV2.BoundedDeadline(10,now,null),"window-stage");Yes(FormalPublicBoundaryV2.BoundedDeadline(9,now,null)==now.AddMilliseconds(900000),"window-stage-r");
+   Refuse(()=>FormalPublicBoundaryV2.BoundedDeadline(11,now,null),"window-stage");Yes(FormalPublicBoundaryV2.BoundedDeadline(10,now,null)==now.AddMilliseconds(300000),"window-stage-10");Yes(FormalPublicBoundaryV2.BoundedDeadline(9,now,null)==now.AddMilliseconds(900000),"window-stage-r");
+   // 5a. stage 10 (quota phase 2 step 3c-1): entry train-maintenance, exactly one train run (contract /1, shadow, of the plan's run id)
+   Yes(FormalPublicBoundaryV2.RelativeEntryForRole("train-maintenance").EndsWith("src/independent-control-checks-v2/train-maintenance.mjs"),"train-entry");
+   Yes(FormalPublicBoundaryV2.StageRole.Length==10&&FormalPublicBoundaryV2.StageMilliseconds[9]==300000&&FormalPublicBoundaryV2.SelectedJobRoles(10,new object[]{new Dictionary<string,object>{{"role","train-run"}}})[0]=="train-run","train-row");
+   foreach(object o in (object[])fixture["trainRuns"]){var run=(Dictionary<string,object>)o;string trId=(string)run["runId"],tm=(string)run["sourceManifestSha256"];
+    Yes(FormalPublicBoundaryV2.TrainRunId(run)==(string)run["id"],"train-run-id");FormalPublicBoundaryV2.ValidateTrainRun(run,tm,trId);
+    var on=new Dictionary<string,object>(run);on["mode"]="on";Refuse(()=>FormalPublicBoundaryV2.ValidateTrainRun(on,tm,trId),"train-run-on");
+    var other=new Dictionary<string,object>(run);Refuse(()=>FormalPublicBoundaryV2.ValidateTrainRun(other,tm,new string('0',16)+"-"+new string('1',12)),"train-run-other-plan");
+    var moved=new Dictionary<string,object>(run);moved["repo"]="other/repo";Refuse(()=>FormalPublicBoundaryV2.ValidateTrainRun(moved,tm,trId),"train-run-repo");
+    var asJob=new Dictionary<string,object>(run);Refuse(()=>FormalPublicBoundaryV2.ValidateJobV2(asJob,"train-run",tm),"train-run-is-no-job");}
    // 5b. stage R: entry relay-publisher, a non-empty ordered subset of gitleaks/trivy, nothing else
    Yes(FormalPublicBoundaryV2.RelativeEntryForRole("relay-publisher").EndsWith("src/hosted-relay-v1/relay-entry-v2.mjs"),"relay-entry");
    Func<string[],object[]> js=rs=>{var o=new object[rs.Length];for(int i=0;i<rs.Length;i++)o[i]=new Dictionary<string,object>{{"role",rs[i]}};return o;};

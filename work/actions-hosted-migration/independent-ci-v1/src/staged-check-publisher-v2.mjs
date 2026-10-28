@@ -20,12 +20,19 @@
 //   - the role-on-head mutex K(head, role) (effect-journal.mjs#claimRolePublication) is begun before the
 //     own effect key by BOTH entries, local and relay, in the same journal (state\v2\effects-scan);
 //   - the boundary takes a proof { kind: 'signed' | 'hosted' } instead of a bare signed envelope.
+// Resident primary/standby design v0.4 §6.2 (C4, Task c2af8d17), both entries: before a role's first publication, once
+// the boundary passed, a role this journal knows nothing of (no own effect key, no K(head, role)) is read back on
+// GitHub (published-on-github-v2.mjs). A check of App 5368905 of the same name there, published by another node or
+// install, ends the publication cleanly with role_already_on_github: no K, no effect key, nothing posted or revoked,
+// no HALT. Whatever this journal knows keeps its existing path (a settled key is re-verified; K held by the other path
+// is role_already_published_on_head). A read-back that is not complete refuses (fail closed).
 import { canonical, digest } from './proof.mjs';
 import { validateJobV2, subjectOfV2, scanEffectKeyV2, scanExternalIdV2, sameClaimGeneration, claimGeneration, makeJobV2 } from './job-v2.mjs';
 import { verifyResultV2 } from './proof-v2.mjs';
 import { admittedFactsMatchJobV2 } from './full-admission-v2.mjs';
 import { claimRolePublication, readRolePublication, rolePublicationKey } from './effect-journal.mjs';
 import { relayExternalId, validateHostedEnvelope } from './hosted-relay-v1/attest.mjs';
+import { ROLE_ALREADY_ON_GITHUB_REASON, publishedNames } from './published-on-github-v2.mjs';
 
 const HASH = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -75,6 +82,12 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     const actual = list.checks.find(c => c.id === known.id);
     if (!identity(actual, definition, job, externalId) || actual.status !== 'completed' || actual.conclusion !== conclusion) stop('check_readback_unconfirmed');
     return actual;
+  }
+  // C4: true only when this journal holds nothing for the role on the head (no K record, whatever it holds) and GitHub
+  // holds a check of this App by that name. The caller has already found no own effect key.
+  async function onGithubOnly(mutex, job, definition) {
+    if (await journal.read(rolePublicationKey(mutex))) return false;
+    return (await publishedNames(github, job.headSha, [definition.name], definition.appId)).length > 0;
   }
   async function discoverKnown(definition, job, externalId) {
     const list = await github.readChecks(job.headSha);
@@ -198,13 +211,14 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     fixture: domain === 'fixture',
     async publish(input) {
       if (!configured) return { status: 'BLOCKED', reason: 'staged_publisher_not_configured', sideEffects: 0, productionAuthorized: false };
-      let job, envelope, definition, key, externalId, previous, before;
+      let job, envelope, definition, key, mutex, externalId, previous, before;
       try {
         if (!plain(input) || Object.keys(input).length !== 2 || !Object.hasOwn(input, 'job') || !Object.hasOwn(input, 'envelope')) stop('publication_input_invalid');
         job = structuredClone(input.job); envelope = structuredClone(input.envelope); validateJobV2(job);
         if (job.repo !== deployment.repository) stop('repository_not_configured');
         definition = definitionFor(job);
         key = scanEffectKeyV2(job, definition);
+        mutex = { repo: job.repo, headSha: job.headSha, role: job.role, checkName: definition.name, appId: definition.appId };
         externalId = scanExternalIdV2(job);
         previous = await journal.read(key);
         if (previous && previous.state !== 'settled') return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
@@ -214,6 +228,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
           await readback({ id: previous.details.checkRunId }, definition, job, externalId, previous.details.conclusion);
           return { status: 'SETTLED', effectKey: key, checkRunId: previous.details.checkRunId, sideEffects: 0, productionAuthorized: domain === 'production', mode: 'staged' };
         }
+        if (await onGithubOnly(mutex, job, definition)) return { status: 'BLOCKED', effectKey: key, reason: ROLE_ALREADY_ON_GITHUB_REASON, sideEffects: 0, productionAuthorized: false };
       } catch (error) {
         if (previous?.state === 'settled' && positive(previous.details?.checkRunId)) {
           const known = { id: previous.details.checkRunId, app: { id: definition.appId }, head_sha: job.headSha, name: definition.name, external_id: externalId };
@@ -226,8 +241,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         // K(head, role) first: a hosted relay that already holds this role on this head refuses the local
         // publication before its own key exists (free-minutes design §7.4).
         try {
-          await claimRolePublication(journal, { repo: job.repo, headSha: job.headSha, role: job.role, checkName: definition.name,
-            appId: definition.appId }, { path: 'local', effectKey: key, externalId });
+          await claimRolePublication(journal, mutex, { path: 'local', effectKey: key, externalId });
         } catch (error) {
           if (error?.code === 'role_already_published_on_head') return { status: 'BLOCKED', effectKey: key, reason: 'role_already_published_on_head', sideEffects: 0, productionAuthorized: false };
           throw error;
@@ -306,6 +320,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
           return { ...(await reverifySettled({ key, settled: previous, definition, job, externalId, envelope })), roleMutex: { key: mutexKey, held: true } };
         }
         before = await boundary(job, { kind: 'hosted', envelope, fresh: true }, definition);
+        if (await onGithubOnly(mutex, job, definition)) return result({ status: 'BLOCKED', effectKey: key, reason: ROLE_ALREADY_ON_GITHUB_REASON, sideEffects: 0 }, mutexKey, false);
       } catch (error) {
         return result({ status: 'BLOCKED', ...(key ? { effectKey: key } : {}), reason: reason(error), sideEffects: 0 }, mutexKey, false);
       }
