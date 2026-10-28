@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { HEX64, canonicalJson, check, sha256 } from '../src/canonical.mjs';
 import { validatePolicy } from '../src/policy.mjs';
-import { validateCompanionConfig, validateHintConfig } from '../src/companion.mjs';
+import { RESIDENT_INSTALL_ROOT, validateCompanionConfig, validateHintConfig } from '../src/companion.mjs';
 import { validateStatusConfig } from '../src/pr-status.mjs';
 import { INSTALLED_MANIFEST_CONTRACT } from '../src/service-ports.mjs';
 import { pinnedNodeProfile } from '../src/node-profile.mjs';
@@ -103,13 +103,15 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
   check(finalPolicy.nodeProfileSha256 === nodeProfileSha256 && canonicalJson(finalPolicy.node) === canonicalJson(node), 'PACKAGE_NODE_PROFILE_CHANGED');
   const companion = JSON.parse(await fs.readFile(companionFile, 'utf8'));
   check(companion.status?.node === undefined || companion.status.node === node.nodeName, 'PACKAGE_NODE_PROFILE_CHANGED');
-  const sub = s => s.replace('<sourceManifestSha256>', ciSourceManifestSha256);
+  const sub = s => s.replaceAll('<sourceManifestSha256>', ciSourceManifestSha256);
   const finalCompanion = { ...companion, companion: { ...companion.companion, relayScript: sub(companion.companion.relayScript), bundleScript: sub(companion.companion.bundleScript),
     ...(bridgeManifestSha256 ? { bridgeManifestSha256 } : {}) },
     // Hint mode reads the installed CI Source's relay observer; it follows the policy's relay switch.
     hints: { enabled: companion.hints?.enabled === true && finalPolicy.relay.enabled === true, ciSourceManifestSha256 },
     status: { ...companion.status, node: node.nodeName } };
-  validateCompanionConfig(finalCompanion.companion);
+  // DESIGN §33: every Source script path lies under source\<this package's ciSourceManifestSha256>\ (a literal hash of another Source
+  // in the input file is not replaced above and is refused here), so the installed config never names a Source that is not installed.
+  validateCompanionConfig(finalCompanion.companion, { root: RESIDENT_INSTALL_ROOT, ciSourceManifestSha256 });
   check(finalCompanion.companion.nodeProfileSha256 === nodeProfileSha256 && canonicalJson(finalCompanion.companion.node) === canonicalJson(node), 'PACKAGE_NODE_PROFILE_CHANGED');
   validateHintConfig(finalCompanion.hints);
   validateStatusConfig(finalCompanion.status);

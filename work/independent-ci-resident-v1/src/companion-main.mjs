@@ -115,7 +115,10 @@ export async function main(args = process.argv.slice(2)) {
   const bytes = await fs.readFile(path.join(values.root, 'config', 'companion.json'));
   check(sha256(bytes) === values['config-sha256'], 'COMPANION_CONFIG_CHANGED');
   const raw = parseBoundedJson(bytes, 65536, 'COMPANION_CONFIG_REFUSED');
-  const cfg = validateCompanionConfig(raw.companion);
+  // DESIGN §33: the Source directory is named by the hash of the installed record's source-manifest.json (the install put the Source
+  // there); the config's script paths must lie under it, or the companion does not start with a stale Source in its hands.
+  const ciSourceManifestSha256 = sha256(await fs.readFile(path.join(values.root, 'record', 'source-manifest.json')));
+  const cfg = validateCompanionConfig(raw.companion, { root: values.root, ciSourceManifestSha256 });
   check(os.hostname().toUpperCase() === cfg.node.hostname && process.env.USERPROFILE === cfg.node.ownerProfileDirectory, 'COMPANION_NODE_IDENTITY_CHANGED');
   // Every child of both lanes runs under the installed job host (DESIGN §24): a child that outlives its limit is ended with
   // exactly the job it was started in, and the lane goes on. Without the host the companion does not start.

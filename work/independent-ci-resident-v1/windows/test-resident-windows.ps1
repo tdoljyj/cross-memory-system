@@ -456,6 +456,136 @@ if (Test-Path -LiteralPath $probeNode) {
   Remove-Item -LiteralPath (Join-Path $sp 'runtime\node.exe') -Force   # the scratch copy of node (about 90 MB)
 }
 
+# 4f. First HALT of 2026-10-29 (DESIGN.md section 33). Everything below runs in the scratch directory; the host is not read.
+#     (a) verify-resident.ps1#Test-CompanionSourceScripts over the cases the JavaScript validator is held to (test/fixtures/
+#         companion-source-cases.json): the companion's Source scripts lie under source\<hash>\ and exist there;
+#     (b) the CI root's READ_CONTROL entry for the resident service: the install plan's state and append (install-resident.ps1#
+#         Get-ParentAclState, Add-ParentAce) on scratch folders with a protected DACL like the real one, and verify's rule
+#         (verify-resident.ps1#Test-ParentAclRule) over the same folders.
+foreach ($name in @('install-resident.ps1:Get-ServiceSid', 'install-resident.ps1:Get-ParentAce', 'install-resident.ps1:Get-AceKeys', 'install-resident.ps1:Get-ParentAclState', 'install-resident.ps1:Add-ParentAce')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }
+foreach ($name in @('Get-ServiceSid', 'Test-ParentAclRule', 'Test-CompanionSourceScripts')) { Yes ($functions.ContainsKey('verify-resident.ps1:' + $name)) ('verify-present:' + $name); . ([scriptblock]::Create($functions['verify-resident.ps1:' + $name])) }
+Yes ($functions['install-resident.ps1:Get-ServiceSid'] -ceq $functions['verify-resident.ps1:Get-ServiceSid']) 'service-sid-function-identical'
+$svcSid = Get-ServiceSid 'CluedCIResident'
+Yes ($svcSid -ceq 'S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629') 'service-sid-is-the-one-the-plan-and-the-spool-helpers-use'
+
+# (a) the companion's Source scripts, over the shared cases.
+$srcCases = [IO.File]::ReadAllText((Join-Path $here '..\test\fixtures\companion-source-cases.json'), (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json
+Yes ($srcCases.contract -ceq 'clued.independent-ci.companion-source-cases/1' -and @($srcCases.accepted).Count -ge 4 -and @($srcCases.refused).Count -ge 19) 'companion-source-cases'
+$vroot = Join-Path $Scratch 'verify-root'
+function Expand-CaseText($text, [string]$root) { if ($text -isnot [string]) { return $text }; $text.Replace('{base}', $root + '\source\' + $srcCases.sha).Replace('{root}', $root).Replace('{sha}', $srcCases.sha).Replace('{other}', $srcCases.other) }
+function Test-HasProperty($o, [string]$k) { @($o.PSObject.Properties | Where-Object { $_.Name -ceq $k }).Count -gt 0 }
+function Get-CaseScripts($case, [string]$root) {
+  $o = [ordered]@{}
+  foreach ($k in @('relayScript', 'bundleScript')) { $v = if (Test-HasProperty $case $k) { $case.$k } else { $srcCases.good.$k }; $o[$k] = Expand-CaseText $v $root }
+  [pscustomobject]$o
+}
+foreach ($c in @($srcCases.accepted)) {
+  $s = Get-CaseScripts $c $vroot
+  foreach ($k in @('relayScript', 'bundleScript')) { [void][IO.Directory]::CreateDirectory((Split-Path -Parent $s.$k)); if (-not (Test-Path -LiteralPath $s.$k)) { [IO.File]::WriteAllText($s.$k, '#') } }
+  if ((Test-HasProperty $c 'upperCase') -and $c.upperCase) { $s = [pscustomobject]@{ relayScript = $s.relayScript.ToUpperInvariant(); bundleScript = $s.bundleScript.ToUpperInvariant() } }
+  $rootArg = $vroot + $(if (Test-HasProperty $c 'rootSuffix') { $c.rootSuffix } else { '' })
+  $r = Test-CompanionSourceScripts $s $rootArg $srcCases.sha
+  Yes ($r.ok -eq $true -and $null -eq $r.detail) ('companion-source-scripts:accepted:' + $c.name)
+}
+foreach ($c in @($srcCases.refused)) {
+  $r = Test-CompanionSourceScripts (Get-CaseScripts $c $vroot) $vroot $srcCases.sha
+  Yes (($r.ok -eq $false) -and $r.detail -ceq ('COMPANION_SCRIPT_NOT_IN_SOURCE:' + $c.key) -and -not ([string]$r.detail).Contains($vroot) -and -not ([string]$r.detail).Contains($srcCases.other)) ('companion-source-scripts:refused:' + $c.name)
+}
+$goodScripts = Get-CaseScripts ([pscustomobject]@{}) $vroot
+Yes ((Test-CompanionSourceScripts $goodScripts $vroot $srcCases.sha).ok -eq $true) 'companion-source-scripts:good-paths-exist'
+Remove-Item -LiteralPath $goodScripts.bundleScript -Force
+$r = Test-CompanionSourceScripts $goodScripts $vroot $srcCases.sha
+Yes ($r.ok -eq $false -and $r.detail -ceq 'COMPANION_SCRIPT_MISSING:bundleScript') 'companion-source-scripts:a-missing-file-is-named'
+[void][IO.Directory]::CreateDirectory($goodScripts.bundleScript)
+$r = Test-CompanionSourceScripts $goodScripts $vroot $srcCases.sha
+Yes ($r.ok -eq $false -and $r.detail -ceq 'COMPANION_SCRIPT_MISSING:bundleScript') 'companion-source-scripts:a-directory-is-no-script'
+foreach ($badSha in @('abc', ('A' * 64), '', ('g' * 64))) { $r = Test-CompanionSourceScripts $goodScripts $vroot $badSha; Yes ($r.ok -eq $false -and $r.detail -ceq 'COMPANION_SOURCE_HASH_INVALID') ('companion-source-scripts:hash-invalid:' + $badSha.Length) }
+Yes ((Test-CompanionSourceScripts $goodScripts $vroot $srcCases.other).detail -ceq 'COMPANION_SCRIPT_NOT_IN_SOURCE:relayScript') 'companion-source-scripts:the-config-is-for-another-source'
+
+# The glue in verify's main flow, run as written against a scratch install root: the record's hash names the Source directory, the
+# companion section is read through the receipt's pin, and the check is recorded.
+$glueFrom = $verifyText.IndexOf('$ciSourceSha = Sha256File'); $glueMark = "Record 'companion-source-scripts' `$companionScripts.ok `$companionScripts.detail"; $glueTo = $verifyText.IndexOf($glueMark)
+Yes ($glueFrom -gt 0 -and $glueTo -gt $glueFrom) 'verify-glue:found'
+$glue = [scriptblock]::Create($verifyText.Substring($glueFrom, $glueTo + $glueMark.Length - $glueFrom))
+function Record([string]$name, $ok, $detail = $null) { $script:checks[$name] = [ordered]@{ ok = $ok; detail = $detail } }
+function Invoke-VerifyGlue([string]$Root, $receipt) { $script:checks = [ordered]@{}; & $glue; $script:checks['companion-source-scripts'] }
+$groot = Join-Path $Scratch 'glue-root'
+foreach ($d in @('record', 'config')) { [void][IO.Directory]::CreateDirectory((Join-Path $groot $d)) }
+[IO.File]::WriteAllText((Join-Path $groot 'record\source-manifest.json'), '{"contract":"fixture"}')
+$gsha = Sha256File (Join-Path $groot 'record\source-manifest.json')
+$gscripts = @{}
+foreach ($k in @('relayScript', 'bundleScript')) { $gscripts[$k] = $groot + '\source\' + $gsha + '\work\' + $k + '.ps1'; [void][IO.Directory]::CreateDirectory((Split-Path -Parent $gscripts[$k])); [IO.File]::WriteAllText($gscripts[$k], '#') }
+function Write-GlueConfig($relay, $bundle) {
+  $file = Join-Path $groot 'config\companion.json'
+  [IO.File]::WriteAllText($file, ([ordered]@{ repo = 'x/y'; companion = [ordered]@{ relayScript = $relay; bundleScript = $bundle; windowsSpool = 'C:\x' } } | ConvertTo-Json -Depth 4))
+  [pscustomobject]@{ companionConfigSha256 = (Sha256File $file) }
+}
+$check = Invoke-VerifyGlue $groot (Write-GlueConfig $gscripts.relayScript $gscripts.bundleScript)
+Yes ($check.ok -eq $true -and $null -eq $check.detail) 'verify-glue:an-installed-config-passes'
+$oldSource = $groot + '\source\' + ('0' * 64) + '\work\relayScript.ps1'; [void][IO.Directory]::CreateDirectory((Split-Path -Parent $oldSource)); [IO.File]::WriteAllText($oldSource, '#')
+$check = Invoke-VerifyGlue $groot (Write-GlueConfig $oldSource $gscripts.bundleScript)
+Yes ($check.ok -eq $false -and $check.detail -ceq 'COMPANION_SCRIPT_NOT_IN_SOURCE:relayScript') 'verify-glue:a-config-for-an-older-source-fails-even-though-its-file-exists'
+$check = Invoke-VerifyGlue $groot ([pscustomobject]@{ companionConfigSha256 = ('f' * 64) })
+Yes ($check.ok -eq $false -and $check.detail -ceq 'COMPANION_CONFIG_UNREADABLE') 'verify-glue:a-config-that-is-not-the-receipts-fails'
+Remove-Item -LiteralPath $gscripts.bundleScript -Force
+$check = Invoke-VerifyGlue $groot (Write-GlueConfig $gscripts.relayScript $gscripts.bundleScript)
+Yes ($check.ok -eq $false -and $check.detail -ceq 'COMPANION_SCRIPT_MISSING:bundleScript') 'verify-glue:a-missing-script-fails'
+
+# (b) the CI root entry for the resident service.
+$parentBase = 'D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;' + $me + ')(A;OICI;0x1200a9;;;' + $ctrl + ')(A;;0x120080;;;' + $OwnerSid + ')'
+function New-ScratchParent([string]$name, [string]$sddl) {
+  $p = Join-Path $Scratch $name
+  $sec = New-Object Security.AccessControl.DirectorySecurity; $sec.SetSecurityDescriptorSddlForm($sddl)
+  $null = [IO.Directory]::CreateDirectory($p, $sec)
+  $p
+}
+function Get-Mine([string]$dir) { @((New-Object Security.AccessControl.RawSecurityDescriptor((Get-Acl -LiteralPath $dir).Sddl)).DiscretionaryAcl | Where-Object { $_.SecurityIdentifier.Value -ceq $svcSid }) }
+$pd = New-ScratchParent 'ci-root' $parentBase
+$st = Get-ParentAclState $pd $svcSid
+Yes ($st.present -eq $false -and $st.mask -ceq '0x120080' -and $st.ace -ceq ('(A;;0x120080;;;' + $svcSid + ')') -and $st.path -ceq $pd -and $st.inheritance -ceq 'none (this folder only)' -and $st.before.StartsWith('D:') -and -not $st.before.Contains('S:')) 'parent-acl:plan-shows-the-ace-and-the-dacl-it-expects'
+Yes (-not (Test-ParentAclRule (Get-Acl -LiteralPath $pd).Sddl $svcSid)) 'parent-acl:verify-refuses-a-folder-without-the-entry'
+$sddlBefore = (Get-Acl -LiteralPath $pd).Sddl; $keysBefore = @(Get-AceKeys $sddlBefore); $ownerBefore = (Get-Acl -LiteralPath $pd).GetOwner([Security.Principal.SecurityIdentifier]).Value
+Yes ((Add-ParentAce $st) -eq $true) 'parent-acl:appended'
+$sddlAfter = (Get-Acl -LiteralPath $pd).Sddl; $keysAfter = @(Get-AceKeys $sddlAfter)
+$mine = @(Get-Mine $pd)
+Yes ($mine.Count -eq 1 -and $mine[0].AccessMask -eq 0x120080 -and [int]$mine[0].AceFlags -eq 0 -and [string]$mine[0].AceQualifier -ceq 'AccessAllowed') 'parent-acl:exactly-0x120080-this-folder-only'
+Yes (($mine[0].AccessMask -band (0x1 -bor 0x8 -bor 0x20 -bor 0x40 -bor $fileWrite)) -eq 0) 'parent-acl:no-data-no-write-no-delete-no-permission-right'
+$ownersAce = @((New-Object Security.AccessControl.RawSecurityDescriptor($sddlAfter)).DiscretionaryAcl | Where-Object { $_.SecurityIdentifier.Value -ceq $OwnerSid -and [int]$_.AceFlags -eq 0 })   # this folder only (the account running this test may be the Owner and hold its own full-control entry too)
+Yes ($ownersAce.Count -eq 1 -and $ownersAce[0].AccessMask -eq $mine[0].AccessMask -and [int]$ownersAce[0].AceFlags -eq [int]$mine[0].AceFlags) 'parent-acl:the-same-entry-as-the-owners'
+Yes ($keysAfter.Count -eq $keysBefore.Count + 1 -and @($keysBefore | Where-Object { $keysAfter -cnotcontains $_ }).Count -eq 0) 'parent-acl:every-earlier-ace-kept'
+Yes ((New-Object Security.AccessControl.RawSecurityDescriptor($sddlAfter)).ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) 'parent-acl:still-protected'
+Yes ((Get-Acl -LiteralPath $pd).GetOwner([Security.Principal.SecurityIdentifier]).Value -ceq $ownerBefore) 'parent-acl:owner-unchanged'
+Yes (Test-ParentAclRule $sddlAfter $svcSid) 'parent-acl:verify-accepts-what-the-install-appended'
+$st2 = Get-ParentAclState $pd $svcSid
+Yes ($st2.present -eq $true) 'parent-acl:plan-sees-the-entry-as-present'
+Yes ((Add-ParentAce $st2) -eq $false -and (Get-Acl -LiteralPath $pd).Sddl -ceq $sddlAfter) 'parent-acl:present-is-a-no-op'
+# The entry made by hand (icacls with (Rc,S,RA)) is the same ACE and counts as present.
+$byHand = New-ScratchParent 'ci-root-by-hand' ($parentBase + '(A;;0x120080;;;' + $svcSid + ')')
+Yes ((Get-ParentAclState $byHand $svcSid).present -eq $true -and (Test-ParentAclRule (Get-Acl -LiteralPath $byHand).Sddl $svcSid)) 'parent-acl:an-entry-made-by-hand-counts'
+# Anything else for the service SID is refused by the plan and by verify: broader, with write, inherited, a deny.
+foreach ($pair in @(@('read-and-execute', ('(A;;0x1200a9;;;' + $svcSid + ')')), @('modify', ('(A;;0x1301bf;;;' + $svcSid + ')')), @('inherited-to-children', ('(A;OICI;0x120080;;;' + $svcSid + ')')),
+  @('this-folder-only-read-data', ('(A;;0x120089;;;' + $svcSid + ')')), @('a-deny', ('(D;;0x120080;;;' + $svcSid + ')')))) {
+  $odd = New-ScratchParent ('ci-root-' + $pair[0]) ($parentBase + $pair[1])
+  Yes (Test-Refused { Get-ParentAclState $odd $svcSid } 'PARENT_ACL_HAS_OTHER_RESIDENT_ACES') ('parent-acl:plan-refuses:' + $pair[0])
+  Yes (-not (Test-ParentAclRule (Get-Acl -LiteralPath $odd).Sddl $svcSid)) ('parent-acl:verify-refuses:' + $pair[0])
+}
+# The folder must be what the install expects: there, a real folder, with a protected DACL.
+$unprotected = Join-Path $Scratch 'ci-root-unprotected'; [void][IO.Directory]::CreateDirectory($unprotected)
+Yes (Test-Refused { Get-ParentAclState $unprotected $svcSid } 'PARENT_ACL_NOT_PROTECTED') 'parent-acl:an-inheriting-dacl-is-refused'
+Yes (Test-Refused { Get-ParentAclState (Join-Path $Scratch 'no-such-ci-root') $svcSid } 'PARENT_ACL_TARGET_MISSING') 'parent-acl:a-missing-folder-is-refused'
+$aFile = Join-Path $Scratch 'ci-root-is-a-file'; [IO.File]::WriteAllText($aFile, 'x')
+Yes (Test-Refused { Get-ParentAclState $aFile $svcSid } 'PARENT_ACL_TARGET_REFUSED') 'parent-acl:a-file-is-refused'
+$aLink = Join-Path $Scratch 'ci-root-link'; $null = New-Item -ItemType Junction -Path $aLink -Target $pd
+Yes (Test-Refused { Get-ParentAclState $aLink $svcSid } 'PARENT_ACL_TARGET_REFUSED') 'parent-acl:a-link-is-refused'
+[void][IO.Directory]::Delete($aLink)
+# Changed since the reviewed plan: nothing is written.
+$changing = New-ScratchParent 'ci-root-changing' $parentBase
+$reviewed = Get-ParentAclState $changing $svcSid
+$moved = New-Object Security.AccessControl.DirectorySecurity; $moved.SetSecurityDescriptorSddlForm((Get-Acl -LiteralPath $changing).Sddl + '(A;;0x120080;;;BU)', [Security.AccessControl.AccessControlSections]::Access); [IO.Directory]::SetAccessControl($changing, $moved)
+$movedSddl = (Get-Acl -LiteralPath $changing).Sddl
+Yes (Test-Refused { Add-ParentAce $reviewed } 'PARENT_ACL_CHANGED_SINCE_PLAN') 'parent-acl:changed-since-the-plan-is-refused'
+Yes ((Get-Acl -LiteralPath $changing).Sddl -ceq $movedSddl -and @(Get-Mine $changing).Count -eq 0) 'parent-acl:a-refusal-writes-nothing'
+
 # 5. C#: the broker's bounded read and both token checks (compiled into the scratch directory).
 $fw = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\'; $csc = Join-Path $fw 'csc.exe'
 $v2 = [IO.Path]::GetFullPath((Join-Path $here '..\..\actions-hosted-migration\independent-ci-v1\src\resident-v2\windows'))

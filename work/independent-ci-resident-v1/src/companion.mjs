@@ -171,10 +171,39 @@ export function relayLogEntry({ at, mode, seq, attempt, ms, runner, receipt, kla
     class: klass, stderrTail: stderrTail(r.stderr) };
 }
 
-export function validateCompanionConfig(c) {
+// DESIGN §33 (the 2026-10-29 first HALT): the path-valued keys of companion.json and which of them point into the installed CI
+// Source, <root>\source\<ciSourceManifestSha256>\. A path key is a Source script unless it is named here as not one, so a new path
+// key is held to the Source directory by default. A config whose script paths name another (older) Source directory runs
+// nothing: the stage-0 bundle then reports BUNDLE_UNAVAILABLE and the relay cannot start.
+export const COMPANION_PATH_KEYS = Object.freeze(['wslExe', 'powershellExe', 'relayScript', 'bundleScript', 'windowsSpool']);
+export const NON_SOURCE_PATH_KEYS = Object.freeze(['wslExe', 'powershellExe', 'windowsSpool']);
+export const SOURCE_SCRIPT_KEYS = Object.freeze(COMPANION_PATH_KEYS.filter(k => !NON_SOURCE_PATH_KEYS.includes(k)));
+export const RESIDENT_INSTALL_ROOT = 'C:\\ProgramData\\CluedIndependentCI\\resident';
+const SCRIPT_SEGMENT = /^[A-Za-z0-9_.@-]+$/;
+// The directory the installed CI Source lives in, with its closing backslash (the install puts it at source\<ciSourceManifestSha256>).
+export function sourceDirectory(root, ciSourceManifestSha256) {
+  check(typeof root === 'string' && /^[A-Za-z]:\\/.test(root) && !root.includes('/'), 'COMPANION_SOURCE_ROOT_INVALID');
+  check(HEX64.test(ciSourceManifestSha256 ?? ''), 'COMPANION_SOURCE_HASH_INVALID');
+  return `${root.replace(/\\+$/, '')}\\source\\${ciSourceManifestSha256}\\`;
+}
+// Every Source script path lies under that directory (compared as Windows compares: without regard to case), as a plain chain of
+// names: no "." or ".." segment, no empty one. Fixed code and the key's name only; the path is never put in the refusal.
+export function assertSourceScripts(c, { root = RESIDENT_INSTALL_ROOT, ciSourceManifestSha256 } = {}) {
+  const base = sourceDirectory(root, ciSourceManifestSha256).toLowerCase();
+  for (const k of SOURCE_SCRIPT_KEYS) {
+    const p = c?.[k];
+    const rest = typeof p === 'string' && p.toLowerCase().startsWith(base) ? p.slice(base.length).split('\\') : null;
+    check(rest !== null && rest.every(s => SCRIPT_SEGMENT.test(s) && s !== '.' && s !== '..'), 'COMPANION_SCRIPT_NOT_IN_SOURCE', k);
+  }
+}
+
+// source (optional): { root, ciSourceManifestSha256 } of the install this config belongs to. The package build and the companion's
+// start pass it, so a config that points into another Source directory is refused where it is made and where it is loaded.
+export function validateCompanionConfig(c, source = null) {
   exactKeys(c, ['contract', 'wslExe', 'powershellExe', 'relayScript', 'bundleScript', 'windowsSpool', 'distribution', 'bridgeManifestSha256', 'linuxTool', 'node', 'nodeProfileSha256'], 'COMPANION_CONFIG_KEYS_INVALID');
   check(c && c.contract === COMPANION_CONFIG_CONTRACT, 'COMPANION_CONFIG_CONTRACT_INVALID');
-  for (const k of ['wslExe', 'powershellExe', 'relayScript', 'bundleScript', 'windowsSpool']) check(typeof c[k] === 'string' && /^[A-Z]:\\/.test(c[k]), 'COMPANION_CONFIG_PATH_INVALID', k);
+  for (const k of COMPANION_PATH_KEYS) check(typeof c[k] === 'string' && /^[A-Z]:\\/.test(c[k]), 'COMPANION_CONFIG_PATH_INVALID', k);
+  if (source) assertSourceScripts(c, source);
   const node = pinnedNodeProfile(c.node, c.nodeProfileSha256);
   check(c.distribution === node.wslDistribution, 'COMPANION_DISTRIBUTION_FIXED');
   check(HEX64.test(c.bridgeManifestSha256), 'COMPANION_BRIDGE_PIN_INVALID');

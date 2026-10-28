@@ -17,6 +17,9 @@
   compared; the receipt assumes no role. The App key and the ci-admission token files are checked for existence and security
   (owner an administrator principal, readable by SYSTEM, Administrators and the pinned controller only, no write for the
   controller); their content is never read here: the fingerprints were checked at install, and the runtime checks them on every start.
+  First HALT of 2026-10-29 (DESIGN.md section 33): the companion's relay and bundle scripts (config\companion.json) lie under the installed
+  CI Source, source\<SHA-256 of record\source-manifest.json>\, and exist there; and the CI root C:\ProgramData\CluedIndependentCI carries the
+  resident service's one READ_CONTROL entry (0x120080, this folder only), read from the live ACL.
   Prints one JSON verdict; exit 0 only if every check passes. Elevated for the complete check
   (service DACLs need READ_CONTROL); a non-elevated run reports those as unreadable and exits 2.
 #>
@@ -126,6 +129,36 @@ function Get-SecretFileState([string]$target, [string]$controllerSid) {
     if (Test-SecretFileSecurity (Get-Acl -LiteralPath $target) $controllerSid) { return 'ok' } else { return 'acl-refused' }
   } catch { return 'unreadable' }
 }
+# ---- DESIGN.md section 33 (first HALT of 2026-10-29): two things the install must leave right and nothing else checked ----
+# Virtual service account SID: S-1-5-80 + SHA-1 of the upper-case service name (UTF-16LE); the same function as install-resident.ps1.
+function Get-ServiceSid([string]$name) {
+  $h = [Security.Cryptography.SHA1]::Create().ComputeHash([Text.Encoding]::Unicode.GetBytes($name.ToUpperInvariant()))
+  'S-1-5-80-' + ((0..4 | ForEach-Object { [BitConverter]::ToUInt32($h, $_ * 4) }) -join '-')
+}
+# The CI root C:\ProgramData\CluedIndependentCI carries exactly one ACE for the resident service: allow, 0x120080 (READ_CONTROL,
+# SYNCHRONIZE, READ_ATTRIBUTES), this folder only. The archive tool runs as the service and opens every ancestor of the node profile
+# with that access (NodeProfileV2.LoadProtectedProfile); without it every batch close is refused. More than that is also refused.
+function Test-ParentAclRule([string]$sddl, [string]$res) {
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor($sddl)
+  $mine = @(foreach ($a in $raw.DiscretionaryAcl) { if ($a.SecurityIdentifier.Value -ceq $res) { $a } })
+  $mine.Count -eq 1 -and $mine[0] -is [Security.AccessControl.CommonAce] -and $mine[0].AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed -and $mine[0].AccessMask -eq 0x120080 -and [int]$mine[0].AceFlags -eq 0
+}
+# The companion's two Source scripts (config\companion.json relayScript and bundleScript) lie under the installed CI Source,
+# <root>\source\<SHA-256 of record\source-manifest.json>\, as plain names, and the files are there. A config written for another
+# Source runs nothing (stage 0 reported BUNDLE_UNAVAILABLE). Never throws: ok/detail; the detail is a fixed code and a key name.
+function Test-CompanionSourceScripts($companion, [string]$root, [string]$ciSha) {
+  $no = { param([string]$why) [pscustomobject]@{ ok = $false; detail = $why } }
+  if ($ciSha -cnotmatch '^[0-9a-f]{64}\z') { return & $no 'COMPANION_SOURCE_HASH_INVALID' }
+  $base = $root.TrimEnd('\') + '\source\' + $ciSha + '\'
+  foreach ($key in @('relayScript', 'bundleScript')) {
+    $p = Get-Field $companion $key
+    if ($p -isnot [string] -or -not $p.StartsWith($base, [StringComparison]::OrdinalIgnoreCase)) { return & $no ('COMPANION_SCRIPT_NOT_IN_SOURCE:' + $key) }
+    $segments = @($p.Substring($base.Length).Split('\'))
+    if (@($segments | Where-Object { $_ -cnotmatch '^[A-Za-z0-9_.@-]+\z' -or $_ -ceq '.' -or $_ -ceq '..' }).Count -ne 0) { return & $no ('COMPANION_SCRIPT_NOT_IN_SOURCE:' + $key) }
+    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return & $no ('COMPANION_SCRIPT_MISSING:' + $key) }
+  }
+  [pscustomobject]@{ ok = $true; detail = $null }
+}
 # The receipt's node identity against the identity re-derived from the installed record. Never throws: ok/detail/identity.
 function Test-NodeIdentityReceipt($receipt, $installation, $accepted, [string]$acceptanceSha256) {
   $no = { param([string]$why) [pscustomobject]@{ ok = $false; detail = $why; identity = $null } }
@@ -182,6 +215,14 @@ foreach($pair in @(@('config\policy.json',$receipt.policySha256),@('config\compa
   $file=Join-Path $Root $pair[0];$cfg=Read-ReviewedPublicJson $file $pair[1];if($pair[0] -ceq 'config\companion.json'){$cfg=$cfg.companion}
   if($cfg.nodeProfileSha256 -cne $NodeProfileSha256 -or (ConvertTo-NodeProfileCanonical $cfg.node) -cne $NodeCanonical){throw 'INSTALLED_NODE_CONFIG_CHANGED'}
 }
+
+# DESIGN.md section 33: the companion's Source scripts are in the installed Source and exist; the CI root grants the resident service
+# its READ_CONTROL entry (live ACL, not the receipt: an install by hand or an earlier install counts the same).
+$ciSourceSha = Sha256File (Join-Path $Root 'record\source-manifest.json')
+$companionScripts = try { $companionSection = (Read-ReviewedPublicJson (Join-Path $Root 'config\companion.json') $receipt.companionConfigSha256).companion; Test-CompanionSourceScripts $companionSection $Root $ciSourceSha } catch { [pscustomobject]@{ ok = $false; detail = 'COMPANION_CONFIG_UNREADABLE' } }
+Record 'companion-source-scripts' $companionScripts.ok $companionScripts.detail
+$ciRootSddl = try { (Get-Acl -LiteralPath 'C:\ProgramData\CluedIndependentCI').Sddl } catch { $null }
+Record 'ci-root-resident-read-control' $(if ([string]::IsNullOrEmpty($ciRootSddl)) { 'unreadable' } else { try { Test-ParentAclRule $ciRootSddl (Get-ServiceSid 'CluedCIResident') } catch { $false } })
 
 # Node identity (C7): re-derived from the installed record and compared with the receipt; the receipt assumes no role.
 $identityCheck = try { Test-NodeIdentityReceipt $receipt (Read-ReviewedPublicJson (Join-Path $Root 'record\installation.json') ([string](Get-Field $receipt 'installationSha256')) 4MB) $Accepted $receipt.acceptanceSha256 } catch { [pscustomobject]@{ ok = $false; detail = $_.Exception.Message; identity = $null } }

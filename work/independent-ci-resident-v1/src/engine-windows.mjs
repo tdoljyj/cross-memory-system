@@ -177,6 +177,15 @@ export const originalStopped = (qc, q, node) => {
   return qc.binary === ORIGINAL_BINARY && qc.startType === 3 && ['.\\clued-control', `${node.hostname.toLowerCase()}\\clued-control`].includes(account) && q.state === 1 && q.pid === 0;
 };
 
+// The code of a Windows archive that did not verify (DESIGN §33): the tool's own `code` when it is a fixed code (CODE), else the
+// runner's refusal, a timeout, or WINDOWS_ARCHIVE_UNCONFIRMED. Never the tool's free text, its stderr, or a path.
+export function windowsArchiveCode(r, v) {
+  if (typeof v?.code === 'string' && CODE.test(v.code)) return v.code;
+  if (typeof r?.refused === 'string' && CODE.test(r.refused)) return r.refused;
+  if (r?.timedOut === true) return 'WINDOWS_ARCHIVE_TIMED_OUT';
+  return 'WINDOWS_ARCHIVE_UNCONFIRMED';
+}
+
 export class WindowsEngine {
   // ports: { run (Runner.run), busy() (Runner.busy), companionMailbox, sleep, clock,
   //          paths: { sourceRoot, workRoot, outboxRoot, nodeExe, powershellExe, scExe } }
@@ -365,11 +374,16 @@ export class WindowsEngine {
 
   // Windows half of a protocol archive through the Source v2 handle-based tool (never Node path
   // renames on the Owner-writable spool, see archive.mjs header).
+  // The answer carries `archiveCode` (DESIGN §33): null when the archive verified; otherwise the tool's own refusal code (it prints its
+  // verdict with that code also when it exits 2), or the engine's own fixed code when the tool said none (windowsArchiveCode).
   async archiveWindows(batch, reason) {
     const tool = await this.requireV2('archive-windows-spool.ps1');
     const r = await this.run([this.paths.powershellExe, '-NoProfile', '-NonInteractive', '-File', tool, '-BatchKey', batch.key, '-Reason', reason, '-ExpectedNodeProfileSha256', this.nodeProfileSha256], { timeoutMs: 120_000 });
-    const v = r.code === 0 ? parseBoundedJson(Buffer.from(r.stdout, 'utf8'), 65536, 'WINDOWS_ARCHIVE_UNCONFIRMED') : null;
-    return { verified: v?.verified === true, directory: typeof v?.directory === 'string' ? v.directory : null, moved: v?.moved ?? null };
+    let v = null;
+    if (r.code === 0) v = parseBoundedJson(Buffer.from(r.stdout, 'utf8'), 65536, 'WINDOWS_ARCHIVE_UNCONFIRMED');
+    else if (r.code !== null) { try { v = parseBoundedJson(Buffer.from(r.stdout ?? '', 'utf8'), 65536, 'WINDOWS_ARCHIVE_UNCONFIRMED'); } catch { v = null; } }
+    const verified = r.code === 0 && v?.verified === true;
+    return { verified, directory: typeof v?.directory === 'string' ? v.directory : null, moved: v?.moved ?? null, archiveCode: verified ? null : windowsArchiveCode(r, v) };
   }
 
   async archiveLinux(batch, reason) {
@@ -592,7 +606,7 @@ export class WindowsEngine {
   async closeBatch(batch, opts = null) {
     const w = await this.archiveWindows(batch, 'success-close');
     const l = opts?.linux === false ? { verified: true } : await this.archiveLinux(batch, 'success-close');
-    return { verified: w.verified === true && l.verified === true, archived: w.moved };
+    return { verified: w.verified === true && l.verified === true, archived: w.moved, archiveCode: w.verified === true ? null : (w.archiveCode ?? null) };
   }
 
   async archiveFailure(batch, reason) {

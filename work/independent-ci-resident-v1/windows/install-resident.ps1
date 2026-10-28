@@ -31,7 +31,8 @@
   An existing target is never overwritten. Neither value is printed or kept: the plan and the receipt hold fingerprints only.
   This script never deletes the file you downloaded; delete it yourself afterwards.
 
-  Nothing existing is overwritten, deleted or re-ACLed. The runner service is NOT modified: its
+  Nothing existing is overwritten, deleted or re-ACLed, with one exception: one read-only ACE is APPENDED to the existing CI root
+  C:\ProgramData\CluedIndependentCI (step parent-acl, DESIGN.md section 33; the plan shows the DACL it expects). The runner service is NOT modified: its
   configuration is changed only by CluedCISwapBroker (LocalSystem), which can switch the binary path
   between the original and an installed, allow-listed helper and nothing else (review M2).
   The Linux half is linux/install-resident-linux.sh, run separately as root.
@@ -52,6 +53,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'   # no user module directory (review M1)
 
+$CiRoot = 'C:\ProgramData\CluedIndependentCI'   # the parent of $Root; it exists before this install (the v1 one-shot install made it)
 $Root = 'C:\ProgramData\CluedIndependentCI\resident'
 $ServiceName = 'CluedCIResident'
 $BrokerName = 'CluedCISwapBroker'
@@ -396,6 +398,54 @@ function Get-AclPlan([string]$res) {
   }
 }
 
+# ---- The CI root's READ_CONTROL entry for the resident service (DESIGN.md section 33, first HALT of 2026-10-29) ----
+# The resident service runs the Windows spool archive (resident-v2/archive-windows-spool.ps1), which loads the node profile through
+# NodeProfileV2.LoadProtectedProfile: that opens EVERY ancestor directory of the profile with CreateFileW access 0x20080
+# (READ_CONTROL | FILE_READ_ATTRIBUTES), C:\ProgramData\CluedIndependentCI included. The v1 one-shot install gave that folder to SYSTEM,
+# Administrators, clued-control and (by hand, DESIGN.md section 8.3) the Owner, and nothing to the service SID, so the archive refused and
+# the first batch close HALTed. The service gets exactly the Owner's entry: 0x120080 on this folder only (no inheritance), no data
+# right and no write right. It is the one ACE this script appends to an existing directory; the plan shows the DACL it expects, the
+# step refuses if the DACL changed since the plan, and the result is read back with every earlier ACE kept.
+function Get-ParentAce([string]$res) { '(A;;0x120080;;;' + $res + ')' }
+function Get-AceKeys([string]$sddl) {
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor($sddl)
+  @(foreach ($a in $raw.DiscretionaryAcl) { if ($a -is [Security.AccessControl.CommonAce]) { $a.SecurityIdentifier.Value + '|' + [string]$a.AccessMask + '|' + [int]$a.AceFlags + '|' + [string]$a.AceQualifier } else { 'other|' + $a.GetType().Name } })
+}
+# The state of the folder for the service SID: refuses a missing or linked folder, a DACL that is not protected, and any ACE of the
+# service SID that is not exactly the planned one. present: that ACE is already there (an earlier install or the Owner's own icacls).
+function Get-ParentAclState([string]$path, [string]$res) {
+  $item = try { Get-Item -LiteralPath $path -Force -ErrorAction Stop } catch { $null }
+  if ($null -eq $item) { throw 'PARENT_ACL_TARGET_MISSING' }
+  if (-not $item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { throw 'PARENT_ACL_TARGET_REFUSED' }
+  $sddl = try { (Get-Acl -LiteralPath $path).Sddl } catch { $null }
+  if ([string]::IsNullOrEmpty($sddl)) { throw 'PARENT_ACL_UNREADABLE' }   # READ_CONTROL on this folder is the Owner's own entry (DESIGN.md section 8.3)
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor($sddl)
+  if (($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -eq 0) { throw 'PARENT_ACL_NOT_PROTECTED' }
+  $mine = @(foreach ($a in $raw.DiscretionaryAcl) { if ($a.SecurityIdentifier.Value -ceq $res) { $a } })
+  $present = $false
+  if ($mine.Count -gt 0) {
+    $exact = $mine.Count -eq 1 -and $mine[0] -is [Security.AccessControl.CommonAce] -and $mine[0].AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed -and $mine[0].AccessMask -eq 0x120080 -and [int]$mine[0].AceFlags -eq 0
+    if (-not $exact) { throw 'PARENT_ACL_HAS_OTHER_RESIDENT_ACES' }
+    $present = $true
+  }
+  [ordered]@{ path = $path; sid = $res; ace = (Get-ParentAce $res); mask = '0x120080'; inheritance = 'none (this folder only)'; present = $present; before = (Get-DaclPart $sddl) }
+}
+# Appends the ACE (nothing else is written: no owner, group or SACL section), then reads the folder back: the ACE is there and every
+# earlier ACE is kept. A no-op ($false) when the exact ACE is already there.
+function Add-ParentAce($p) {
+  if ($p.present -eq $true) { return $false }
+  $now = (Get-Acl -LiteralPath $p.path).Sddl
+  if ((Get-DaclPart $now) -cne $p.before) { throw 'PARENT_ACL_CHANGED_SINCE_PLAN' }
+  $oldKeys = @(Get-AceKeys $now)
+  $acl = New-Object Security.AccessControl.DirectorySecurity
+  $acl.SetSecurityDescriptorSddlForm($now + $p.ace, [Security.AccessControl.AccessControlSections]::Access)
+  [IO.Directory]::SetAccessControl($p.path, $acl)
+  $back = Get-ParentAclState $p.path $p.sid
+  $newKeys = @(Get-AceKeys (Get-Acl -LiteralPath $p.path).Sddl)
+  if (-not $back.present -or $newKeys.Count -ne $oldKeys.Count + 1 -or @($oldKeys | Where-Object { $newKeys -cnotcontains $_ }).Count -ne 0) { throw ('PARENT_ACL_READBACK_MISMATCH:' + $p.path) }
+  return $true
+}
+
 # ---- Carry-forward of the executed heads (resident quota redesign v0.6 + section 9, phase 1, item 7) ----
 # uninstall-resident.ps1 renames the whole resident directory to resident-uninstalled-<UTC>-<hex>, so a reinstall starts
 # with an empty state. The resident's Source-independent executed heads (src/executed-heads.mjs) must survive that: this
@@ -500,7 +550,7 @@ function Build-Plan {
   $find = { param($t) @($pkg.files | Where-Object { $_.target -ceq $t })[0].sha256 }
   if ($pkg.contract -cne 'clued.independent-ci.resident-package/3' -or $pkg.ciSourceManifestSha256 -cnotmatch '^[0-9a-f]{64}$' -or (& $find 'record\source-manifest.json') -cne $pkg.ciSourceManifestSha256) { throw 'SOURCE_V2_RECORD_PACKAGE_REQUIRED' }
   [ordered]@{
-    contract = 'clued.independent-ci.resident-install-plan/6'
+    contract = 'clued.independent-ci.resident-install-plan/7'   # /7 (DESIGN.md section 33): parentAcl
     root = $Root; rootExists = (Test-Path -LiteralPath $Root)
     # PR-A review MAJOR 3: never install over a resident with an open batch (also one that waits for hosted
     # signals); like uninstall-resident.ps1, the Owner re-arms or lets it finish first.
@@ -522,6 +572,7 @@ function Build-Plan {
     recordSourceManifestSha256 = (& $find 'record\source-manifest.json'); acceptanceSha256 = (& $find 'record\acceptance.json'); genericHelper = $GenericHelper; companionJobHost = ('bin\' + $CompanionJobHost)
     files = @($pkg.files).Count
     acl = Get-AclPlan $res
+    parentAcl = Get-ParentAclState $CiRoot $res   # the one ACE appended to an existing folder, with the DACL it expects (DESIGN.md section 33)
     runnerBefore = Read-RunnerState
     runnerModified = $false
     services = [ordered]@{
@@ -590,6 +641,11 @@ function Step([string]$name, [scriptblock]$body) { & $body; $script:receipt.step
 # 1. Directories, created new with their final ACLs.
 Step 'directories' {
   foreach ($rel in $plan.acl.Keys) { New-DirectoryWithAcl $(if ($rel) { Join-Path $Root $rel } else { $Root }) $plan.acl[$rel] }
+}
+# 1a. The CI root's READ_CONTROL entry for the resident service (DESIGN.md section 33): the one ACE appended to an existing folder.
+Step 'parent-acl' {
+  $wrote = Add-ParentAce $plan.parentAcl
+  $script:receipt.parentAcl = [ordered]@{ path = $plan.parentAcl.path; sid = $plan.parentAcl.sid; ace = $plan.parentAcl.ace; wrote = $wrote }
 }
 # 1b. Carry the earlier states' executed heads forward (the resident backfills from them before its first batch).
 Step 'carry-forward' {
