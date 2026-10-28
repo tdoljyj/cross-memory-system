@@ -515,9 +515,12 @@ export class WindowsEngine {
         // the entry's: no outcome travels with it.
         if (fact.ok && answer?.ok !== true) return { ok: false, code: heartbeatLost ? 'COMPANION_HEARTBEAT_LOST' : (answerCode ?? 'COMPANION_PUMP_UNCONFIRMED'), proof, outcome: null, brokerNoLaunch: false, bridge };
         // The bridge stop ended the stage: the broker sent the stop (its receipt says STOP_SENT) and the helper's tree is
-        // drained (stage-fact.mjs tree facts). Anything else keeps the stage fact's own code.
-        if (!fact.ok && !ownerAbort && stopRequestId && stopCode === 'STOP_SENT' && fact.proof.windowsTreeZero === true) {
-          return { ok: false, code: BRIDGE_STAGE_STOPPED_PUMP_LOST, proof, factsSha256: fact.nativeReceiptSha256, outcome: fact.outcome, brokerNoLaunch: false, bridge };
+        // drained (stage-fact.mjs tree facts), and the issuer bound no outcome (a stopped stage reads STAGE_OUTCOME_MISSING).
+        // A bound outcome keeps its own code whatever the stop did (r3 review MAJOR 1): a never-clean outcome code must not
+        // become an abandonable ending, and a clean one must not be put through the quiescence proof.
+        if (!fact.ok && !ownerAbort && stopRequestId && stopCode === 'STOP_SENT' && fact.proof.windowsTreeZero === true
+          && fact.code === 'STAGE_OUTCOME_MISSING' && fact.outcome == null) {
+          return { ok: false, code: BRIDGE_STAGE_STOPPED_PUMP_LOST, proof, factsSha256: fact.nativeReceiptSha256, outcome: null, brokerNoLaunch: false, bridge };
         }
       }
       const ok = fact.ok && scOk;

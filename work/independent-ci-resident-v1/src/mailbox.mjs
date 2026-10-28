@@ -26,6 +26,10 @@ export const HEARTBEAT_CONTRACT = 'clued.independent-ci.resident-companion-heart
 // every reason the same way (COMPANION_PUMP_CANCELLED); only the ledger's 80-owner-abort makes an Owner abort.
 export const CANCEL_CONTRACT = 'clued.independent-ci.resident-companion-cancel/1';
 export const CANCEL_REASONS = Object.freeze(['owner-abort', 'stage-ended', 'heartbeat-lost']);
+// One pump per relay-stage request (DESIGN §26.5; r3 implementation review MINOR 1): the companion's first pump of a request
+// creates <requestId>.pump.json in responses/ (create-only). A companion restarted while that pump ran finds it and starts no
+// second one: no second issue transfer, no second worker start. pending() and the hint reads never list it.
+export const PUMP_MARK_CONTRACT = 'clued.independent-ci.resident-companion-pump-mark/1';
 export const BATCH_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/;
 const REASON = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const ARCHIVE_DIR = /^(failed|archive)-[0-9a-z-]{1,120}$/;
@@ -165,6 +169,18 @@ export class Mailbox {
       exactKeys(v, ['contract', 'at'], 'HEARTBEAT_REFUSED');
       return v.contract === HEARTBEAT_CONTRACT && Number.isSafeInteger(v.at) ? { at: v.at } : null;
     } catch { return null; }
+  }
+
+  // Companion side: true for the first pump of this request, false when one already began (its mark exists). A mark that
+  // cannot be written throws: no pump starts without one.
+  async claimPump(request) {
+    try {
+      await writeNew(path.join(this.responses, `${request.requestId}.pump.json`), { contract: PUMP_MARK_CONTRACT, requestId: request.requestId, at: isoNow(this.clock) });
+      return true;
+    } catch (error) {
+      if (error.code === 'CREATE_ONLY_TARGET_EXISTS') return false;
+      throw error;
+    }
   }
 
   // Companion side. A request the service is still writing is left out (the next pass reads it again), never refused.

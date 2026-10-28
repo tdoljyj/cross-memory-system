@@ -511,7 +511,7 @@ await step('  a stage 10 whose cleanup is not proven HALTs like any stage', asyn
     if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
     return { code: 0, stdout: '' };
   };
-  const pump = new Companion({ cfg: flapCfg, mailbox: { cancelled: async () => false }, run, fileExists: async p => p.includes('\\outgoing\\'), sleep: async ms => { now += ms; }, clock });
+  const pump = new Companion({ cfg: flapCfg, mailbox: { cancelled: async () => false, claimPump: async () => true }, run, fileExists: async p => p.includes('\\outgoing\\'), sleep: async ms => { now += ms; }, clock });
   await step('relay-flap-under-load: round 3 fails fast once, the bounded retry moves it, the stage gets its result and nothing HALTs', async () => {
     const r = await pump.pump({ deadline: new Date(now + 45 * 60_000).toISOString(), jobId: 'e'.repeat(64), batchId: '0123456789abcdef-0123456789ab' });
     return { state: r.ok ? 'PUMP_OK' : r.code, calls: calls.join(',') };

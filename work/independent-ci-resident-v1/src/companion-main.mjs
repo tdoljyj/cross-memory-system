@@ -126,9 +126,6 @@ export async function main(args = process.argv.slice(2)) {
   const advisory = new Runner({ env: { ...process.env }, jobHost }); // the advisory lane's own (see lane)
   await probeJobHost(runner);
   const mailbox = await Mailbox.open(path.join(values.root, 'mailbox'), Date.now);
-  // Only now, with a usable job host: a companion whose job host cannot start a child sends no heartbeat, so the service
-  // starts no batch (DESIGN §24; independent review r3, MINOR 1).
-  startHeartbeat(mailbox);
   // pr-head (phase 2): the run queue's live PR read runs in the mailbox lane, like every other service request.
   const relayLog = createRelayLog({ dir: path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-log') });
   const companion = new Companion({ cfg, mailbox, run: (a, o) => runner.run(a, o), fileExists: exists, sleep, clock: Date.now, readPull: pr => readPullArgv(raw.ghExe, raw.repo, pr),
@@ -164,29 +161,38 @@ export async function main(args = process.argv.slice(2)) {
     writeRequest: async v => { await fs.writeFile(path.join(requestsDir, Inbox.fileName(Date.now())), canonicalJson(v), { flag: 'wx' }); } });
   keepalive(companionArgv(cfg).keepalive());
   let lastPoll = 0, lastReport = 0;
-  await Promise.all([
-    // the service times out and classifies a request the companion did not answer; never retried here
-    lane({ runner, work: () => companion.step() }),
-    lane({ runner: advisory, work: async () => {
-      if (Date.now() - lastPoll > POLL_EVERY_MS) {
-        lastPoll = Date.now();
-        // The run queue's generation (phase 2): a queue that started over gets every open PR proposed again.
-        let generation = null;
-        try { generation = (await readStatus(values.root)).queue?.generation ?? null; } catch { generation = null; }
-        try { await poller.pass({ generation }); } catch { /* next pass */ }
-        // The ruleset backstop (phase 2 step 3c-1, DESIGN §22.3): main's rules on every poll.
-        try { await companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), store }); } catch { /* next poll */ }
-      }
-      if (Date.now() - lastReport > REPORT_EVERY_MS) {
-        lastReport = Date.now();
-        let status = null, statusError = false;
-        try { status = await readStatus(values.root); } catch { statusError = true; }
-        try { await reporter.pass({ pulls: poller.lastPass?.pulls ?? [], status, statusError }); } catch { /* advisory: the next minute tries again */ }
-      }
-    } }),
-  ]);
+  // Only now, with a usable job host and every part of the companion set up: a companion whose job host cannot start a
+  // child, or whose set-up failed, sends no heartbeat, so the service starts no batch (DESIGN §24; design r3 review MINOR 1;
+  // r3 implementation review MAJOR 2). The beat stops with the lanes; the entry below exits outright, so no timer keeps a
+  // companion alive that answers nothing.
+  const beating = startHeartbeat(mailbox);
+  try {
+    await Promise.all([
+      // the service times out and classifies a request the companion did not answer; never retried here
+      lane({ runner, work: () => companion.step() }),
+      lane({ runner: advisory, work: async () => {
+        if (Date.now() - lastPoll > POLL_EVERY_MS) {
+          lastPoll = Date.now();
+          // The run queue's generation (phase 2): a queue that started over gets every open PR proposed again.
+          let generation = null;
+          try { generation = (await readStatus(values.root)).queue?.generation ?? null; } catch { generation = null; }
+          try { await poller.pass({ generation }); } catch { /* next pass */ }
+          // The ruleset backstop (phase 2 step 3c-1, DESIGN §22.3): main's rules on every poll.
+          try { await companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), store }); } catch { /* next poll */ }
+        }
+        if (Date.now() - lastReport > REPORT_EVERY_MS) {
+          lastReport = Date.now();
+          let status = null, statusError = false;
+          try { status = await readStatus(values.root); } catch { statusError = true; }
+          try { await reporter.pass({ pulls: poller.lastPass?.pulls ?? [], status, statusError }); } catch { /* advisory: the next minute tries again */ }
+        }
+      } }),
+    ]);
+  } finally {
+    clearInterval(beating);
+  }
 }
 
 if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`) {
-  main().catch(() => { process.exitCode = 4; });
+  main().catch(() => { process.exit(4); });
 }

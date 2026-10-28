@@ -402,6 +402,11 @@ export class Companion {
       // A request cancelled before its pump began (a companion restarted after the service gave its heartbeat up, DESIGN §26)
       // never starts one: it answers COMPANION_PUMP_CANCELLED.
       await live();
+      // One pump per request (r3 implementation review MINOR 1): a companion restarted while this request's pump ran (before
+      // any cancel) finds that pump's mark and starts no second one; the service reads the answer as a dead pump (signal A).
+      let first = false;
+      try { first = await this.mailbox.claimPump(request); } catch { first = false; }
+      check(first === true, 'COMPANION_PUMP_UNCONFIRMED');
       while (!(await ready('issue'))) { check(this.clock() < deadline, 'ACTUAL_ISSUE_NOT_PUBLISHED'); await live(); await this.sleep(100); }
       check(await relay('SendIssue', 0, { deadline }), 'ISSUE_TRANSFER_UNCONFIRMED');
       await live(); // a cancel that came with the issue transfer starts no worker

@@ -11,6 +11,7 @@ import { CANCEL_CONTRACT, CANCEL_REASONS, Mailbox } from '../src/mailbox.mjs';
 import { COMPANION_CONFIG_CONTRACT, Companion, RELAY_TIMEOUT_MS, WORKER_FACTS_EVERY_MS, WORKER_START_WAIT_MS, argv, parseUnitFacts, validateCompanionConfig, workerRanEvidence } from '../src/companion.mjs';
 import { HEARTBEAT_EVERY_MS, startHeartbeat } from '../src/companion-main.mjs';
 import { validatePolicy } from '../src/policy.mjs';
+import { abortStageEndingClean } from '../src/classify.mjs';
 import { TEST_NODE, TEST_NODE_SHA, rawPolicy, tempRoot } from './helpers.mjs';
 
 const cfg = validateCompanionConfig({ contract: COMPANION_CONFIG_CONTRACT, node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, wslExe: 'C:\\Windows\\System32\\wsl.exe',
@@ -128,6 +129,34 @@ test('a companion restarted after the cancel answers COMPANION_PUMP_CANCELLED an
   assert.deepEqual(runs.filter(a => mode(a) || a.includes('start')).length, 0, 'no relay call, no worker start');
 });
 
+test('a companion restarted while its pump ran (no cancel yet) starts no second pump: the mark answers COMPANION_PUMP_UNCONFIRMED (r3 review MINOR 1)', async t => {
+  // the first pump of a request writes the mark, and a request answered so is never listed again
+  const first = await pump(t, { relay: m => (m === 'SendIssue' ? TRANSFERRED : m === 'ReceiveResult' ? TRANSFERRED : NOT_THERE), listing: () => 'result.ready.json\n',
+    unitFacts: () => ({ code: 0, stdout: 'ActiveState=active\nInvocationID=ab\nExecMainStartTimestampMonotonic=5\n' }) });
+  assert.deepEqual(first.modes.slice(0, 1), ['SendIssue']);
+  // a restart: the request is still pending (no answer yet) and its mark exists
+  const root = await tempRoot(t);
+  const box = await Mailbox.open(root, () => T0);
+  const req = await box.send('relay-stage', { batchId: BATCH, stage: 2, jobId: JOB }, 45 * 60_000);
+  assert.equal(await box.claimPump(req), true, 'the first pump takes the mark');
+  assert.deepEqual((await fs.readdir(path.join(root, 'responses'))).sort(), [`${req.requestId}.pump.json`]);
+  assert.deepEqual((await box.pending()).map(r => r.requestId), [req.requestId], 'the mark is no answer: the request stays pending');
+  const runs = [];
+  const c = new Companion({ cfg, mailbox: box, run: async a => { runs.push(a); return { code: 0, stdout: '' }; }, fileExists: async () => true, sleep: async () => {}, clock: () => T0 });
+  await c.step();
+  assert.equal((await box.poll(req)).code, 'COMPANION_PUMP_UNCONFIRMED');
+  assert.equal(runs.filter(a => mode(a) || a.includes('start')).length, 0, 'no relay call, no worker start');
+  assert.equal(PUMP_DEAD_CODES.includes('COMPANION_PUMP_UNCONFIRMED'), true, 'the service reads it as a dead pump (signal A)');
+  // a mark that cannot be written starts no pump either
+  const box2 = await Mailbox.open(await tempRoot(t), () => T0);
+  const req2 = await box2.send('relay-stage', { batchId: BATCH, stage: 2, jobId: JOB }, 45 * 60_000);
+  box2.claimPump = async () => { throw new Error('EPERM'); };
+  const runs2 = [];
+  await new Companion({ cfg, mailbox: box2, run: async a => { runs2.push(a); return { code: 0, stdout: '' }; }, fileExists: async () => true, sleep: async () => {}, clock: () => T0 }).step();
+  assert.equal((await box2.poll(req2)).code, 'COMPANION_PUMP_UNCONFIRMED');
+  assert.equal(runs2.filter(a => mode(a) || a.includes('start')).length, 0);
+});
+
 test('cancel reasons: owner-abort, stage-ended and heartbeat-lost on both sides; anything else is refused and no cancel', async t => {
   assert.deepEqual([...CANCEL_REASONS], ['owner-abort', 'stage-ended', 'heartbeat-lost']);
   const root = await tempRoot(t);
@@ -169,12 +198,24 @@ test('the heartbeat timer: a beat at once and every 10 s apart from the lanes; a
   assert.equal((await box2.poll(q)).ok, true);
 });
 
-test('the heartbeat timer starts only after the job host probe succeeded (independent review r3, MINOR 1)', async () => {
+test('the heartbeat timer starts only after the job host probe and every set-up step, and stops with the lanes (design r3 review MINOR 1; r3 review MAJOR 2)', async () => {
   const src = await fs.readFile(new URL('../src/companion-main.mjs', import.meta.url), 'utf8');
-  const main = src.slice(src.indexOf('export async function main'));
-  const probe = main.indexOf('await probeJobHost(runner);'), beat = main.indexOf('startHeartbeat(mailbox);');
-  assert.ok(probe > 0 && beat > probe, 'startHeartbeat comes after the awaited probe');
+  const entry = src.indexOf('\nif (import.meta.url');
+  const main = src.slice(src.indexOf('export async function main'), entry);
+  const at = needle => { const i = main.indexOf(needle); assert.ok(i > 0, needle); return i; };
+  const beat = at('const beating = startHeartbeat(mailbox);');
   assert.equal(main.split('startHeartbeat(').length - 1, 1, 'started once');
+  // every step that can throw in set-up comes before the first beat: a companion that failed to set up sends none
+  for (const step of ['await probeJobHost(runner);', 'validateHintConfig(raw.hints)', 'validateStatusConfig(raw.status)', "check(statusCfg.node === cfg.node.nodeName", 'await LocalStore.open(', 'keepalive(companionArgv(cfg).keepalive());']) {
+    assert.ok(at(step) < beat, `${step} comes before the heartbeat`);
+  }
+  // the lanes run right after it, and the timer is cleared whatever ends them
+  const lanes = main.indexOf('await Promise.all([', beat); // the lanes' (the hint modules load with one earlier)
+  assert.ok(lanes > beat && main.slice(beat, lanes).trim().endsWith('try {'), 'the lanes start right after the heartbeat, inside try');
+  assert.ok(at('clearInterval(beating);') > lanes && /}\s*finally\s*{\s*clearInterval\(beating\);/.test(main), 'finally clears the timer');
+  // a failed main exits the process outright (an uncleared timer or the keepalive child could keep it alive otherwise)
+  assert.ok(entry > 0);
+  assert.match(src.slice(entry), /main\(\)\.catch\(\(\) => { process\.exit\(4\); }\)/);
 });
 
 // ---- the engine: the pump observer, the bridge stop, the pump-quiet step ----
@@ -196,7 +237,7 @@ const stageFact = (manifest, o = {}) => JSON.stringify({ contract: 'clued.indepe
 // with holdStop only once the test releases it), or on its own at `endsAt` (virtual ms after the start) with `ownEnding`. A
 // stop file is noticed at the virtual moment it was written: the sleep port looks before it moves the clock. The companion
 // side is a scripted mailbox: script(ms, mb, ev) may set its answer or stop its heartbeat.
-async function engineWith(t, { endsAt = null, ownEnding = null, beats = true, script = () => {}, stopCode = 'STOP_SENT', linuxWorker = true, number = 2, holdStop = false } = {}) {
+async function engineWith(t, { endsAt = null, ownEnding = null, beats = true, script = () => {}, stopCode = 'STOP_SENT', linuxWorker = true, number = 2, holdStop = false, stopFact = {} } = {}) {
   const root = await tempRoot(t);
   const sourceRoot = path.join(root, 'source', 'e'.repeat(64));
   await fs.mkdir(path.join(sourceRoot, ...V2), { recursive: true });
@@ -238,7 +279,7 @@ async function engineWith(t, { endsAt = null, ownEnding = null, beats = true, sc
         await fs.writeFile(path.join(brokerRoot, 'responses', `${SWAP}.stop.json`), JSON.stringify({ contract: 'clued.independent-ci.swap-broker-stop-receipt/1', requestId: SWAP, code: stopCode, at: new Date(now).toISOString() }));
         await fs.writeFile(path.join(brokerRoot, 'responses', `${SWAP}.json`), '{}');
         ev.endedAt = now - T0;
-        return { code: 41, stdout: stageFact(manifest) };
+        return { code: 41, stdout: stageFact(manifest, stopFact) };
       }
       if (endsAt !== null && now - T0 >= endsAt) { await fs.writeFile(path.join(brokerRoot, 'responses', `${SWAP}.json`), '{}'); return { code: ownEnding.ok ? 0 : 41, stdout: stageFact(manifest, ownEnding.fact ?? {}) }; }
       // the stage runs on: virtual time only moves with the engine's own sleeps (the observer), or here when nothing observes
@@ -361,6 +402,44 @@ test('a stop the broker did not send keeps the stage\'s own code (no BRIDGE_STAG
   const r = await f.invoke();
   assert.equal(r.code, 'STAGE_OUTCOME_MISSING');
   assert.equal(r.bridge.stopCode, 'BROKER_STOP_NOT_THIS_HELPER');
+});
+
+test('a bound outcome keeps its own code through a bridge stop (r3 review MAJOR 1): only a missing outcome reads BRIDGE_STAGE_STOPPED_PUMP_LOST', async t => {
+  // the issuer bound a never-clean outcome just as the stop arrived: the stage keeps that code and its outcome
+  const bound = { status: 'BLOCKED', reason: 'ROLE_ALREADY_PUBLISHED_ON_HEAD', sideEffects: 1, mayHavePublished: true };
+  const f = await engineWith(t, { stopFact: { failure_code: 'ROLE_ALREADY_PUBLISHED_ON_HEAD', outcome: bound }, script: (ms, mb) => { if (ms >= 1000) mb.answer = DEAD; } });
+  const r = await f.invoke();
+  assert.equal(r.code, 'ROLE_ALREADY_PUBLISHED_ON_HEAD');
+  assert.equal(r.outcome.reason, 'ROLE_ALREADY_PUBLISHED_ON_HEAD');
+  assert.deepEqual([r.bridge.stopCode, r.bridge.stageCode], ['STOP_SENT', 'ROLE_ALREADY_PUBLISHED_ON_HEAD'], 'the bridge facts stay on record');
+  // a clean outcome code bound at the same moment also keeps its code (no quiescence proof forced on it)
+  const clean = { status: 'BLOCKED', reason: 'NOT_ADMITTED', sideEffects: 0, mayHavePublished: false };
+  const g = await engineWith(t, { stopFact: { failure_code: 'NATIVE_NOT_ADMITTED', outcome: clean }, script: (ms, mb) => { if (ms >= 1000) mb.answer = DEAD; } });
+  assert.equal((await g.invoke()).code, 'NATIVE_NOT_ADMITTED');
+  // a missing-outcome code that still carries an outcome object is not rewritten either
+  const h = await engineWith(t, { stopFact: { failure_code: 'STAGE_OUTCOME_MISSING', outcome: clean }, script: (ms, mb) => { if (ms >= 1000) mb.answer = DEAD; } });
+  assert.equal((await h.invoke()).code, 'STAGE_OUTCOME_MISSING');
+});
+
+test('an Owner abort accepted after the engine read it, while a bridge stop ends the stage (deviation 5; r3 review MINOR 2): only a missing outcome under STOP_SENT is a clean abort ending', async t => {
+  // the abort lands between the engine's ownerAbort read and its return: here, while it reads the broker's stop receipt
+  // (the bridge stop's own path reads that receipt too, while the stage still runs: only a read after the stage child returned)
+  const lateAbort = f => { const orig = f.engine.stopOutcome.bind(f.engine); let once = false;
+    f.engine.stopOutcome = async id => { if (f.ev.endedAt !== undefined && !once) { once = true; await f.engine.requestStop(f.batch, 2); } return orig(id); }; };
+  const f = await engineWith(t, { script: (ms, mb) => { if (ms >= 1000) mb.answer = DEAD; } });
+  lateAbort(f);
+  const r = await f.invoke();
+  assert.equal(f.engine.abortRequested?.stage, 2, 'the abort was accepted during the stage');
+  assert.deepEqual([r.code, r.outcome, r.bridge.stopCode], [BRIDGE_STAGE_STOPPED_PUMP_LOST, null, 'STOP_SENT']);
+  assert.equal(abortStageEndingClean(r, { stopSent: true }), true, 'the abort takes the bridge stop\'s ending under STOP_SENT');
+  assert.equal(abortStageEndingClean(r, { stopSent: false }), false, 'and never without it');
+  // the same race with an outcome the issuer bound as the stop arrived: the stage keeps that code, which no abort accepts
+  const bound = { status: 'BLOCKED', reason: 'ROLE_ALREADY_PUBLISHED_ON_HEAD', sideEffects: 1, mayHavePublished: true };
+  const g = await engineWith(t, { stopFact: { failure_code: 'ROLE_ALREADY_PUBLISHED_ON_HEAD', outcome: bound }, script: (ms, mb) => { if (ms >= 1000) mb.answer = DEAD; } });
+  lateAbort(g);
+  const r2 = await g.invoke();
+  assert.equal(r2.code, 'ROLE_ALREADY_PUBLISHED_ON_HEAD');
+  assert.equal(abortStageEndingClean(r2, { stopSent: true }), false, 'a never-clean outcome stays a HALT under an abort');
 });
 
 test('an Owner abort and a bridge stop together: one stop file, and the Owner abort wins (the stage keeps its own code)', async t => {

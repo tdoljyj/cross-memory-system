@@ -2252,7 +2252,8 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 - A 或 D 之后**宽限 `BRIDGE_STOP_GRACE_MS`（60 s）**，阶段仍在跑，就每轮调用 `bridgeStop()`，直到读到 broker 的回执。
 - `bridgeStop()` 与 Owner 中止的 `requestStop()` 共用新抽出的 `stageStop()`：找到本批本段唯一在途的 swap，只新建 `.stop`（已存在即同一个停止，所以两者交错只会有一个 stop 文件），记住它，读 broker 回执。`bridgeStop()` **不**写 `80-owner-abort`，**不**置中止标志，**不**取消泵。
 - 阶段结束后的结局：
-  - 被桥停下，broker 回执 `STOP_SENT`，阶段事实的 Windows 进程树为零：`BRIDGE_STAGE_STOPPED_PUMP_LOST`；
+  - 被桥停下，broker 回执 `STOP_SENT`，阶段事实的 Windows 进程树为零，**并且发行器没有绑定 outcome**（阶段码 `STAGE_OUTCOME_MISSING`）：`BRIDGE_STAGE_STOPPED_PUMP_LOST`；
+  - 停止送达的同一刻发行器已绑定 outcome：保留 outcome 自己的码（实现审核 MAJOR 1）。“永不干净”的码不能借改写变成可收尾的结局，干净的码也不必再过静止证明；
   - 发行器自己先结束了：它自己的码；
   - 其他：阶段事实的原码。
   - 这一段若有 Owner 中止（`requestStop` 已被调用），一律保留阶段自己的码，由中止路径决定（Owner 中止优先）。
@@ -2263,6 +2264,8 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 
 - `CANCEL_REASONS` = `owner-abort`、`stage-ended`、`heartbeat-lost`，写取消和读取消两侧都校验。伴侣对所有原因一样处理（停止中继，回 `COMPANION_PUMP_CANCELLED`）；只有账本里的 `80-owner-abort` 才走 Owner 中止。取消文件的合同 `/1` 不变。
 - `mailbox.beat()` 改为同一时刻只写一次（定时器和 `step()` 都会调用，不再共用同一个临时文件）。
+- **一个请求只开一个泵**（实现审核 MINOR 1）：伴侣开泵时先在 `responses\` 下只新建 `<requestId>.pump.json`（合同 `clued.independent-ci.resident-companion-pump-mark/1`）。伴侣在泵运行中（取消写下之前）重启，看到这个标记就回 `COMPANION_PUMP_UNCONFIRMED`，不再搬 issue、不再启动 worker；服务把它当泵死（信号 A）。标记写不出来也不开泵。`pending()` 和提示读取都不会把它当答复。
+- **心跳定时器的位置**（实现审核 MAJOR 2）：在伴侣全部初始化（作业宿主探针、提示配置、状态配置与节点名、本地存储、keepalive）完成之后、两条通道开跑之前才启动，通道结束时清掉。入口出错直接 `process.exit(4)`，不会留下一个只发心跳、不干活的伴侣。
 - 执行器在第 2/4/6 段的中止轮询里，从 `engine.bridgeState()` 读观察者看到的东西，各写一次回执 `bridge-pump-lost`、`bridge-stop-requested`；轮询没赶上的，阶段结束后按结果里的桥事实补写。
 - 新码：`LINUX_WORKER_ENDED_WITHOUT_RECORD`、`LINUX_WORKER_NOT_STARTED`、`COMPANION_HEARTBEAT_LOST`（加入 `PUMP_CODES`），`BRIDGE_STAGE_STOPPED_PUMP_LOST`（阶段码）。失败表四行都是 `unknown/halt/owner-rearm/counts`；不进 `classify.mjs` 里与 Source 镜像的四个数组（交叉测试强制）。烧头、熔断计入、日额度不变、不进 attempt 2。
 - `OWNER_ABORT_STAGE_ENDINGS` 加入 `BRIDGE_STAGE_STOPPED_PUMP_LOST`，与 `STAGE_OUTCOME_MISSING` 同样只在 `STOP_SENT` 时成立：Owner 中止若恰在桥停止结束阶段的同一刻被接受，不会因此变成 HALT；两台主机的静止证明照样要过。
@@ -2274,11 +2277,12 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 3. **桥事实多两个字段**：`stopRequestId`（回执要用）和 `pumpQuiet`（§27 第 5 条要用）。
 4. **D 只在取消写成功后成立**；D 成立后，阶段结束时不再等泵答复；阶段若在 D 之后成功，结局码是 `COMPANION_HEARTBEAT_LOST`。
 5. **回执由执行器写**：引擎没有回执端口（服务入口不在本次改动范围），所以 `bridge-pump-lost`、`bridge-stop-requested` 由执行器的轮询和阶段后的补写产生。
-6. **`OWNER_ABORT_STAGE_ENDINGS` 加入 `BRIDGE_STAGE_STOPPED_PUMP_LOST`**（26.4 末条），设计稿没写，为“Owner 中止优先”在竞态下也成立。
+6. **`OWNER_ABORT_STAGE_ENDINGS` 加入 `BRIDGE_STAGE_STOPPED_PUMP_LOST`**（26.4 末条），设计稿没写，为“Owner 中止优先”在竞态下也成立。这个码只在“`STOP_SENT` 且没有绑定 outcome”时出现（26.3），所以中止接受它的范围与 M2 规则（`STOP_SENT` 下的缺 outcome）相同，没有扩大。
+7. **泵标记**（26.4）：设计稿没有。没有它时，伴侣在 120 s 内重启会对同一请求再开一个泵（改动前就有的行为，不会发布，但可能 HALT）。
 
 ### 26.6 测试
 
-- `test/bridge-observer.test.mjs`：unit 事实的解析与证据；`inactive` 无证据不结束（MAJOR 1）；`activating` 后 `inactive` 且列表空 → `LINUX_WORKER_ENDED_WITHOUT_RECORD`，不做交接；`failed` 结束；结束但列表里还有 result、blocked 照常搬；列表失败不算定论；只有 `InvocationID` 不算；5 分钟无证据 → `LINUX_WORKER_NOT_STARTED`，事实读失败或列到过记录不判；泵死 60 s 内不写 stop、之后写且只写一个；`FORMAL_WORKER_TERMINAL_UNCONFIRMED`、`ok:true`、`COMPANION_PUMP_CANCELLED` 从不停止；第 1、3、5、7、8、9、10 段从不观察、从不停止；心跳 120 s 不更新 → 先取消（`heartbeat-lost`）后停止、之后不等；慢而健康的中继（120 + 60 + 15 s）不触发 D；泵安静的取消与上限；没有 `STOP_SENT` 不改码；与 Owner 中止两种顺序交错都只有一个 stop 文件、中止优先；重启的伴侣看到取消不开第二个泵；三个取消原因两侧校验；心跳定时器、`beat()` 不重叠、`step()` 的 beat 失败不影响答复；定时器在探针之后启动。
+- `test/bridge-observer.test.mjs`：unit 事实的解析与证据；`inactive` 无证据不结束（MAJOR 1）；`activating` 后 `inactive` 且列表空 → `LINUX_WORKER_ENDED_WITHOUT_RECORD`，不做交接；`failed` 结束；结束但列表里还有 result、blocked 照常搬；列表失败不算定论；只有 `InvocationID` 不算；5 分钟无证据 → `LINUX_WORKER_NOT_STARTED`，事实读失败或列到过记录不判；泵死 60 s 内不写 stop、之后写且只写一个；`FORMAL_WORKER_TERMINAL_UNCONFIRMED`、`ok:true`、`COMPANION_PUMP_CANCELLED` 从不停止；第 1、3、5、7、8、9、10 段从不观察、从不停止；心跳 120 s 不更新 → 先取消（`heartbeat-lost`）后停止、之后不等；慢而健康的中继（120 + 60 + 15 s）不触发 D；泵安静的取消与上限；没有 `STOP_SENT` 不改码；与 Owner 中止两种顺序交错都只有一个 stop 文件、中止优先；重启的伴侣看到取消不开第二个泵；重启的伴侣在取消之前看到泵标记也不开第二个泵，标记写不出来不开泵；三个取消原因两侧校验；心跳定时器、`beat()` 不重叠、`step()` 的 beat 失败不影响答复；定时器在探针和全部初始化之后启动、随通道结束清掉，入口出错直接退出；停止送达时已绑定 outcome（“永不干净”的码、干净的码、带 outcome 的缺 outcome 码）保留原码；Owner 中止在引擎读过中止状态之后、桥停止结束阶段时才被接受：只有“`STOP_SENT` 且缺 outcome”算干净的中止结局，已绑定的“永不干净”码照旧 HALT。
 - 已有的伴侣测试里，`ActiveState` 的模拟输出改成 `KEY=VALUE` 三行。
 - 离线演练 `incident-20261028-replay`（见 §27.6）：中继失败到阶段结束 217 s（不超过 5 分钟）。
 
@@ -2323,6 +2327,7 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 2. **“当前没有 HALT”的检查**用 `ledger.halted()` 读取，与每个 tick 开头的读取完全相同。设计 §5 第 3 条说自动逻辑“从不读写或清除 `HALT.json`”，这里理解为不写、不清除；这次读取只会让它更保守（有 HALT 就不走，照旧 HALT）。
 3. **状态板**：`status.json` 的合同 `/5` 只放码，不放文字，所以没有改 `status.mjs`；最近结局里就是 `FAILED_CLEAN` + `BRIDGE_ABANDONED_UNPUBLISHED`（`class environment`，第 2 段 `retry attempt2`）。PR 页面的文字在 `pr-status.mjs`，不在本次改动范围；它现有的 `FAILED_CLEAN` 文字已带上这个码（第 2 段显示“将自动第二次尝试”）。如需专门的“已证明未发布，干净结束”一句，另开一个小改动。
 4. 回执多一个字段 `originalCode`，终结记录多 `stageCode`、`class/retry/breaker`，便于事后查。
+5. **烧头记录里的码**（实现审核 NIT 1）：`fail()` 在判断能否收尾之前就烧头，烧头记录（create-only）的 `failureCode` 是当时的原码；收尾成功时终结记录是 `BRIDGE_ABANDONED_UNPUBLISHED`，其中 `originalCode` 等于烧头记录的码，两处按它对应。收尾过程中抛异常时，HALT 用异常的码（与其他失败处理的“未确认”路径相同），原码留在 HALT 的 context 里。
 
 ### 27.6 测试
 
