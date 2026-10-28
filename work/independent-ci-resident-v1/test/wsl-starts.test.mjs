@@ -78,6 +78,7 @@ async function stage(t, { challengesAt, resultAt, endsAt }, ports = {}, { cancel
 // scan), the result seconds later, the unit gone three seconds after that.
 const TYPICAL = { challengesAt: [4_000, 70_000, 225_000], resultAt: 228_000, endsAt: 231_000 };
 const LONG = { challengesAt: [4_000, 40_000, 20 * 60_000], resultAt: 20 * 60_000 + 3_000, endsAt: 20 * 60_000 + 6_000 };
+const FULL = { challengesAt: [4_000, 40_000, 44 * 60_000], resultAt: 44 * 60_000 + 3_000, endsAt: 44 * 60_000 + 6_000 }; // a scan that takes nearly the stage's 45 minutes
 const OLD_PACE = { listingDelay: () => 1000 };
 
 test('the pace: a second right after anything happened, half the quiet time after that, never more than the cap', () => {
@@ -112,6 +113,15 @@ test('wsl.exe starts of a 20-minute stage, before and after', async t => {
   assert.ok(after.total * 5 <= before.total, `all starts ${before.total} -> ${after.total}`);
   // what is left is the facts read every WORKER_FACTS_EVERY_MS (signals B and C keep their timing) and the listing beside it
   assert.ok(after.starts.facts >= Math.floor(LONG.endsAt / WORKER_FACTS_EVERY_MS) - 1 && after.starts.facts <= Math.ceil(LONG.endsAt / WORKER_FACTS_EVERY_MS) + 6, `facts ${after.starts.facts}`);
+});
+
+test('wsl.exe starts of a stage that runs nearly its 45 minutes, before and after', async t => {
+  const before = await stage(t, FULL, OLD_PACE);
+  const after = await stage(t, FULL);
+  t.diagnostic(`45-minute stage: before ${JSON.stringify(before.starts)} = ${before.total}, after ${JSON.stringify(after.starts)} = ${after.total}; relay calls ${before.relays.length} / ${after.relays.length}`);
+  assert.deepEqual([after.answer.ok, after.answer.code], [true, null]);
+  assert.ok(after.starts.listing * 10 <= before.starts.listing, `listings ${before.starts.listing} -> ${after.starts.listing}`);
+  assert.ok(after.total * 5 <= before.total, `all starts ${before.total} -> ${after.total}`);
 });
 
 test('worst-case added latency: a challenge is found within the cap (plus one listing call) of its creation, whenever in the quiet phase it appears', async t => {
