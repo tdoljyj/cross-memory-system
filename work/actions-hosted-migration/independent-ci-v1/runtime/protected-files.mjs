@@ -16,12 +16,14 @@ export const regular = async file => {
   return stat;
 };
 
-export async function readProtected(file, { secret = false, secretRoot = null } = {}) {
+// controllerSid: the node profile's controller account (Source v2: the record's acceptance `node`, design §9 C1). On
+// Windows verify-install-acl.ps1 refuses a secret read without it; the Source carries no controller SID of its own.
+export async function readProtected(file, { secret = false, secretRoot = null, controllerSid = null } = {}) {
   if (secret && process.platform === 'win32') {
     try {
       const { stdout } = await promisify(execFile)('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
         ['-NoProfile', '-NonInteractive', '-File', fileURLToPath(new URL('./verify-install-acl.ps1', import.meta.url)),
-          '-LiteralTarget', file, '-ReadFile', '-SecretRoot', secretRoot, '-ProtectedRoot', path.dirname(secretRoot)],
+          '-LiteralTarget', file, '-ReadFile', '-SecretRoot', secretRoot, '-ProtectedRoot', path.dirname(secretRoot), ...(controllerSid ? ['-ControllerSid', controllerSid] : [])],
         { windowsHide: true, timeout: 10000, maxBuffer: 2 * 1024 * 1024 });
       return Buffer.from(stdout.trim(), 'base64').toString('utf8');
     } catch { stop('secret_file_boundary_unconfirmed'); }

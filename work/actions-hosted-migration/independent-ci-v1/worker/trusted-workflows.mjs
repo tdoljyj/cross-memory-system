@@ -1,4 +1,6 @@
-// The ONE table of hosted workflow bytes that the local formal roles trust in an installed Source (PR-A x PR-B).
+// Exact hosted workflow bytes pinned by each installed Source generation.
+// ROWS is the immutable legacy PR-A x PR-B set; the active 729-finding gitleaks
+// Source v4 uses the separate successor block, never that old 726 set.
 // Every role, role policy and signed-result check derives its accepted set from here, on the Source v2 path
 // (gitleaks v4, trivy v4 + required-trivy-v3, placement v2, policy v3, bridge v4) and on the H5 one-shot
 // fallback (gitleaks v3, trivy v3 + required-trivy-v2, placement v1, policy v2, bridge v3).
@@ -28,6 +30,10 @@ const ROWS = [
 ];
 // END TRUSTED WORKFLOW ROWS
 
+// BEGIN GITLEAKS SUCCESSOR (generated from a real workflow-freeze commit)
+const GITLEAKS_SUCCESSOR_ROW = {"path":".github/workflows/gitleaks.yml","sha256":"46627f909229d06a6b5c35112f7619b28c6aa9f0a196a526b067e3a962d9da2b","blob":"d0fe73eeabc9c163d3216e57ca6a7633288262c5","commit":"91f4411b8033f437c3043d9ae5fac1dab13d105e"};
+// END GITLEAKS SUCCESSOR
+
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const paths = new Set(Object.values(TRUSTED_WORKFLOW_PATHS)), table = {};
 for (const row of ROWS) {
@@ -41,6 +47,17 @@ for (const path of paths) if (!ROWS.some(row => row[0] === path)) fail('TRUSTED_
 
 // Keyed by the sha256 of the bytes.
 export const TRUSTED_WORKFLOWS = Object.freeze(table);
+
+// The 729-finding Source v4 consumes only this independently frozen successor.
+// Legacy v3/H5 continues to use ROWS above and never inherits the new bytes.
+// null is a preparation state: the active successor has no accepted workflow.
+if (GITLEAKS_SUCCESSOR_ROW !== null && (Object.keys(GITLEAKS_SUCCESSOR_ROW).sort().join('|') !== 'blob|commit|path|sha256'
+  || GITLEAKS_SUCCESSOR_ROW.path !== TRUSTED_WORKFLOW_PATHS.gitleaks || !/^[a-f0-9]{40}$/.test(GITLEAKS_SUCCESSOR_ROW.commit)
+  || !/^[a-f0-9]{40}$/.test(GITLEAKS_SUCCESSOR_ROW.blob) || !/^[a-f0-9]{64}$/.test(GITLEAKS_SUCCESSOR_ROW.sha256)
+  || Object.hasOwn(table, GITLEAKS_SUCCESSOR_ROW.sha256))) fail('TRUSTED_WORKFLOW_TABLE_INVALID');
+export const GITLEAKS_SUCCESSOR_WORKFLOW = GITLEAKS_SUCCESSOR_ROW === null ? null : Object.freeze(GITLEAKS_SUCCESSOR_ROW);
+const gitleaksSuccessorSet = Object.freeze(GITLEAKS_SUCCESSOR_WORKFLOW ? [GITLEAKS_SUCCESSOR_WORKFLOW.sha256] : []);
+export const activeGitleaksWorkflowSha256s = () => gitleaksSuccessorSet;
 
 const sets = Object.freeze(Object.fromEntries([...paths].map(path =>
   [path, Object.freeze(ROWS.filter(row => row[0] === path).map(row => row[1]))])));

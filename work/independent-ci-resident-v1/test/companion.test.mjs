@@ -5,10 +5,10 @@ import fs from 'node:fs/promises';
 import { Mailbox, REQUEST_CONTRACT, validateRequest } from '../src/mailbox.mjs';
 import { COMPANION_CONFIG_CONTRACT, Companion, argv, parsePull, readPullArgv, validateCompanionConfig } from '../src/companion.mjs';
 import { Poller } from '../src/poller.mjs';
-import { tempRoot } from './helpers.mjs';
+import { TEST_NODE, TEST_NODE_SHA, tempRoot } from './helpers.mjs';
 
 const cfg = validateCompanionConfig({
-  contract: COMPANION_CONFIG_CONTRACT,
+  contract: COMPANION_CONFIG_CONTRACT, node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA,
   wslExe: 'C:\\Windows\\System32\\wsl.exe',
   powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
   relayScript: 'C:\\ProgramData\\CluedIndependentCI\\resident\\source\\relay-public.ps1',

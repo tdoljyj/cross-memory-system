@@ -10,6 +10,7 @@ import * as source from '../../actions-hosted-migration/independent-ci-v1/src/re
 import { DETERMINISTIC_PR_REASONS, DETERMINISTIC_PR_REASON_CODES } from '../../actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/publisher.mjs';
 import { DIAGNOSTIC_CODES } from '../../actions-hosted-migration/independent-ci-v1/src/admission-facts-v2.mjs';
 import { CLEAN_PROOF, WINDOWS_CLEAN } from './helpers.mjs';
+import { attempt2Decision } from '../src/attempts.mjs';
 
 // Every code the executor can be handed: the Source catalogue, the resident's own clean endings, the companion pump's
 // codes and the engine's and executor's own refusals.
@@ -19,6 +20,35 @@ const RESIDENT_CODES = ['FULL_NEXT_STAGE_AUTHORITY_WINDOW_REQUIRED', 'FORMAL_CHI
   'SUPERSEDED_AT_SAFE_POINT'];
 const ALL = [...new Set([...source.ALL_STAGE_CODES, ...RESIDENT_CODES, ...PUMP_CODES])];
 const rowsOf = code => FAILURE_TABLE.rows.filter(r => r.code === code);
+
+test('explicit claim-observation exhaustion is transient only before a possible write; publishing stages still cannot rerun a batch', () => {
+  const clean = { status: 'BLOCKED', reason: 'native_claim_observation_unavailable', sideEffects: 0, mayHavePublished: false };
+  for (const stage of [3, 5, 7, 9]) {
+    const code = source.outcomeFailureCode(clean, stage);
+    assert.equal(code, 'NATIVE_ADMISSION_UNAVAILABLE');
+    const decision = decideFailure({ code, stage, outcome: clean, proof: CLEAN_PROOF, started: true });
+    assert.deepEqual([decision.klass, decision.row.class, decision.row.retry, decision.release], ['CLEAN', 'transient', 'attempt2', null]);
+    assert.deepEqual(attempt2Decision({ policy: { automaticAttempt2: { enabled: true } }, subject: { attempt: 1 }, outcome: 'FAILED_CLEAN',
+      failure: { code, stageNumber: stage, relayedRoles: 0 } }), { eligible: false, reason: 'ATTEMPT2_ROLE_MAY_BE_PUBLISHED' });
+    for (const field of ['windowsTreeZero', 'serviceOriginalStopped', 'linuxUnitsInactive', 'containersZero']) {
+      assert.equal(decideFailure({ code, stage, outcome: clean, proof: { ...CLEAN_PROOF, [field]: false }, started: true }).klass, 'UNKNOWN', field);
+    }
+    for (const [patch, expected] of [
+      [{ sideEffects: 1 }, 'PUBLICATION_UNCERTAIN'], [{ mayHavePublished: true }, 'PUBLICATION_UNCERTAIN'],
+      [{ mayHavePublished: undefined }, 'PUBLICATION_UNCERTAIN'], [{ status: 'UNCERTAIN' }, 'PUBLICATION_UNCERTAIN'],
+      [{ status: 'RECONCILIATION_REQUIRED' }, 'RECONCILIATION_REQUIRED'], [{ status: 'REVOKED' }, 'PUBLICATION_REVOKED']]) {
+      const outcome = { ...clean, ...patch }, mapped = source.outcomeFailureCode(outcome, stage);
+      assert.equal(mapped, expected);
+      assert.ok(!TRANSIENT_CODES.includes(mapped));
+    }
+    for (const reason of ['native_claim_observation_refused', 'native_claim_observation_unconfirmed']) {
+      const outcome = { ...clean, reason }, mapped = source.outcomeFailureCode(outcome, stage);
+      assert.equal(mapped, 'PUBLICATION_BLOCKED');
+      assert.deepEqual([decideFailure({ code: mapped, stage, outcome, proof: CLEAN_PROOF, started: true }).row.class,
+        failureRow({ code: mapped, stage, reason }).retry], ['clean-final', 'new-commit']);
+    }
+  }
+});
 
 test('the table validates, and every code the executor can be handed has a row for every stage (or its phase)', async () => {
   assert.equal(FAILURE_TABLE.contract, 'clued.independent-ci.resident-failure-table/1');

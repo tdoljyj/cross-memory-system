@@ -26,7 +26,8 @@ export const REASON_PREFIXES = Object.freeze({ 'changed_files_truncated:': 'chan
   'owner_review_unavailable:': 'owner_review_unavailable', 'workflow runs unavailable:': 'workflow_runs_unavailable' });
 export const DIAGNOSTIC_CODES = Object.freeze([...new Set([...REASON_CODES, ...Object.values(REASON_PREFIXES), 'unknown_reason'])]);
 const REASON_SET = new Set(REASON_CODES), DIAGNOSTIC_SET = new Set(DIAGNOSTIC_CODES);
-export const DIAGNOSTIC_PHASES = Object.freeze(['mode', 'principal', 'observer', 'pull_request', 'claim_reference', 'evaluate', 'post_evaluate', 'post_pull_request', 'native']);
+export const DIAGNOSTIC_PHASES = Object.freeze(['mode', 'principal', 'observer', 'pull_request', 'claim_reference', 'evaluate', 'post_evaluate', 'post_pull_request', 'native', 'changed_paths']);
+const ISSUER_TRANSIENT_ADMISSIONS = new Set(['full_admission_observation_expired', 'full_admission_unavailable']);
 export const verdict = value => ['ADMITTED', 'REJECTED', 'ERROR', 'PR_NOT_OPEN', 'NOT_APPLICABLE'].includes(value) ? value : 'UNKNOWN';
 export const ownerKind = value => ['granted', 'pending', 'transient', 'rpc_unavailable', 'refused'].includes(value) ? value : 'UNKNOWN';
 export const reasonCodes = values => [...new Set((Array.isArray(values) ? values.slice(0, 64) : []).map(value => {
@@ -62,6 +63,11 @@ export function sanitizeAdmissionDiagnosticV2(d) {
   for (const field of ['reasonCodes', 'nativeReasonCodes']) diagnostic[field] = [...new Set((Array.isArray(d[field]) ? d[field].slice(0, 64) : []).map(value => DIAGNOSTIC_SET.has(value) ? value : 'unknown_reason'))].sort();
   for (const field of ['workflowGateFindingsPresent', 'modeFresh', 'recorderFresh']) if (typeof d[field] === 'boolean') diagnostic[field] = d[field];
   if (DIAGNOSTIC_PHASES.includes(d.phase)) diagnostic.phase = d.phase;
+  // Issuer retry context is diagnostic only: one round has at most four evaluations.
+  if (ISSUER_TRANSIENT_ADMISSIONS.has(d.transientAdmission)) {
+    diagnostic.transientAdmission = d.transientAdmission;
+    if (Number.isSafeInteger(d.evaluations) && d.evaluations >= 1 && d.evaluations <= 4) diagnostic.evaluations = d.evaluations;
+  }
   if (Object.hasOwn(d, 'ciRetryAfter') || Object.hasOwn(d, 'mergeQueue')) Object.assign(diagnostic, sanitizeSchedulingV2({ ciRetryAfter: d.ciRetryAfter, mergeQueue: d.mergeQueue }));
   return diagnostic;
 }

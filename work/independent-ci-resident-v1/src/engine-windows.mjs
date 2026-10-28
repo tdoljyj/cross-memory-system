@@ -19,8 +19,8 @@ import { randomBytes } from 'node:crypto';
 import { CODE, HEX64, check, fail, parseBoundedJson, sha256 } from './canonical.mjs';
 import { exists, readBounded, writeNew, ensureDir } from './store.mjs';
 import { ABORTABLE_IN_FLIGHT } from './classify.mjs';
+import { pinnedNodeProfile, validateNodeProfile } from './node-profile.mjs';
 
-export const RUNNER_SERVICE = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02';
 export const ORIGINAL_BINARY = '"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"';
 // /3 (quota phase 2 step 3b): also names the tested commit S (testSha); S = H until step 3c's train front batch.
 export const DESCRIPTOR_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/3';
@@ -66,6 +66,10 @@ export const STAGE_FACT_CONTRACT = 'clued.independent-ci.resident-stage-fact/2';
 // here to a fixed shape: anything that does not fit is dropped (null), never guessed, so a malformed outcome can only
 // lose a release, never gain one. Only diagnostics and scheduling: no free text crosses into the ledger or status.
 const ENUM = /^[A-Za-z_]{1,40}$/, DCODE = /^[a-z][a-z0-9_]{0,63}$/, ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
+// Mirror the Source diagnostic allow-list; these fields never authorize admission, retry or cleanup.
+const ADMISSION_PHASES = new Set(['mode', 'principal', 'observer', 'pull_request', 'claim_reference', 'evaluate', 'post_evaluate', 'post_pull_request', 'native', 'changed_paths']);
+const ISSUER_TRANSIENT_ADMISSIONS = new Set(['full_admission_observation_expired', 'full_admission_unavailable']);
+const OWNER_REVIEW_KINDS = new Set(['granted', 'pending', 'transient', 'rpc_unavailable', 'refused', 'UNKNOWN']);
 export const QUEUE_STATES = Object.freeze(['head', 'waiting', 'lapsed', 'out', 'none']);   // the Source's MERGE_QUEUE_STATES
 const isoOrNull = v => typeof v === 'string' && ISO.test(v) && Number.isFinite(Date.parse(v)) ? v : null;
 function queueEntry(v) {
@@ -80,10 +84,20 @@ export function parseStageOutcome(o) {
     || !Number.isSafeInteger(o.sideEffects) || o.sideEffects < 0 || typeof o.mayHavePublished !== 'boolean') return null;
   const d = o.diagnostic && typeof o.diagnostic === 'object' && !Array.isArray(o.diagnostic) ? o.diagnostic : null;
   const s = o.scheduling && typeof o.scheduling === 'object' && !Array.isArray(o.scheduling) ? o.scheduling : null;
+  const diagnostic = d ? { verdict: ENUM.test(d.verdict ?? '') ? d.verdict : 'UNKNOWN', nativeVerdict: ENUM.test(d.nativeVerdict ?? '') ? d.nativeVerdict : 'UNKNOWN',
+    reasonCodes: codeList(d.reasonCodes), nativeReasonCodes: codeList(d.nativeReasonCodes), ciRetryAfter: isoOrNull(d.ciRetryAfter), mergeQueue: queueEntry(d.mergeQueue) } : null;
+  if (diagnostic) {
+    if (OWNER_REVIEW_KINDS.has(d.ownerReviewKind)) diagnostic.ownerReviewKind = d.ownerReviewKind;
+    if (ADMISSION_PHASES.has(d.phase)) diagnostic.phase = d.phase;
+    for (const field of ['workflowGateFindingsPresent', 'modeFresh', 'recorderFresh']) if (typeof d[field] === 'boolean') diagnostic[field] = d[field];
+    if (ISSUER_TRANSIENT_ADMISSIONS.has(d.transientAdmission)) {
+      diagnostic.transientAdmission = d.transientAdmission;
+      if (Number.isSafeInteger(d.evaluations) && d.evaluations >= 1 && d.evaluations <= 4) diagnostic.evaluations = d.evaluations;
+    }
+  }
   return {
     status: o.status, reason: o.reason, sideEffects: o.sideEffects, mayHavePublished: o.mayHavePublished,
-    diagnostic: d ? { verdict: ENUM.test(d.verdict ?? '') ? d.verdict : 'UNKNOWN', nativeVerdict: ENUM.test(d.nativeVerdict ?? '') ? d.nativeVerdict : 'UNKNOWN',
-      reasonCodes: codeList(d.reasonCodes), nativeReasonCodes: codeList(d.nativeReasonCodes), ciRetryAfter: isoOrNull(d.ciRetryAfter), mergeQueue: queueEntry(d.mergeQueue) } : null,
+    diagnostic,
     scheduling: s ? { ciRetryAfter: isoOrNull(s.ciRetryAfter), mergeQueue: queueEntry(s.mergeQueue) } : null,
     // the flag holds only on a clean BLOCKED with zero side effects that may not have published
     safeToRerun: o.safeToRerun === true && o.status === 'BLOCKED' && o.sideEffects === 0 && o.mayHavePublished === false,
@@ -100,10 +114,12 @@ export function parseStageFact(text, expectedManifestSha256) {
   const code = ok ? null : (typeof f.failure_code === 'string' && CODE.test(f.failure_code) ? f.failure_code : (typeof f.state === 'string' && CODE.test(f.state) ? f.state : 'STAGE_TERMINAL_UNCONFIRMED'));
   // Stage R only: the relay rows as the Source wrote them; the executor validates them (classify.mjs).
   const relay = Array.isArray(f.relay) ? f.relay : null;
+  // Stage 10 only: the train facts as the Source wrote them; the executor keeps only what train.mjs#trainSummary reads.
+  const train = f.train && typeof f.train === 'object' && !Array.isArray(f.train) ? f.train : null;
   // The broker refused before any start and re-read the original (stage-fact.mjs BROKER_NO_LAUNCH_CODES): one of the
   // two ways a stage-1 failure may be released (classify.mjs#decideFailure); only with the fact's own readback.
   const brokerNoLaunch = !ok && f.broker_no_launch === true && f.scm_start_call_issued === false && restored && treeZero && f.configuration_conflict_detected === false;
-  return { ok, code, proof: { windowsTreeZero: treeZero, serviceOriginalStopped: restored }, nativeReceiptSha256: HEX64.test(f.native_receipt_sha256 ?? '') ? f.native_receipt_sha256 : null, relay,
+  return { ok, code, proof: { windowsTreeZero: treeZero, serviceOriginalStopped: restored }, nativeReceiptSha256: HEX64.test(f.native_receipt_sha256 ?? '') ? f.native_receipt_sha256 : null, relay, train,
     outcome: parseStageOutcome(f.outcome), brokerNoLaunch };
 }
 
@@ -120,12 +136,20 @@ export function parseScQueryex(text) {
   const pid = /PID\s*:\s*(\d+)/.exec(text)?.[1] ?? null;
   return { state: state === null ? null : Number(state), pid: pid === null ? null : Number(pid) };
 }
-export const originalStopped = (qc, q) => qc.binary === ORIGINAL_BINARY && qc.startType === 3 && /^(\.|TURING)\\clued-control$/i.test(qc.account ?? '') && q.state === 1 && q.pid === 0;
+export const originalStopped = (qc, q, node) => {
+  validateNodeProfile(node);
+  const account = String(qc.account ?? '').toLowerCase();
+  return qc.binary === ORIGINAL_BINARY && qc.startType === 3 && ['.\\clued-control', `${node.hostname.toLowerCase()}\\clued-control`].includes(account) && q.state === 1 && q.pid === 0;
+};
 
 export class WindowsEngine {
   // ports: { run (Runner.run), busy() (Runner.busy), companionMailbox, sleep, clock,
   //          paths: { sourceRoot, workRoot, outboxRoot, nodeExe, powershellExe, scExe } }
-  constructor(ports) { Object.assign(this, ports); }
+  constructor({ node, nodeProfileSha256, ...ports }) {
+    this.node = pinnedNodeProfile(node, nodeProfileSha256);
+    this.nodeProfileSha256 = nodeProfileSha256;
+    Object.assign(this, ports);
+  }
 
   v2(name) { return path.join(this.paths.sourceRoot, ...V2, name); }
 
@@ -201,9 +225,9 @@ export class WindowsEngine {
   async requireV2(name) { const p = this.v2(name); try { await fs.access(p); } catch { fail('SOURCE_V2_REQUIRED'); } return p; }
 
   async scReadback() {
-    const qc = parseScQc((await this.run([this.paths.scExe, 'qc', RUNNER_SERVICE], { timeoutMs: 15_000 })).stdout);
-    const q = parseScQueryex((await this.run([this.paths.scExe, 'queryex', RUNNER_SERVICE], { timeoutMs: 15_000 })).stdout);
-    return originalStopped(qc, q);
+    const qc = parseScQc((await this.run([this.paths.scExe, 'qc', this.node.runnerService], { timeoutMs: 15_000 })).stdout);
+    const q = parseScQueryex((await this.run([this.paths.scExe, 'queryex', this.node.runnerService], { timeoutMs: 15_000 })).stdout);
+    return originalStopped(qc, q, this.node);
   }
 
   async derive(subject, key) {
@@ -236,7 +260,7 @@ export class WindowsEngine {
   // renames on the Owner-writable spool, see archive.mjs header).
   async archiveWindows(batch, reason) {
     const tool = await this.requireV2('archive-windows-spool.ps1');
-    const r = await this.run([this.paths.powershellExe, '-NoProfile', '-NonInteractive', '-File', tool, '-BatchKey', batch.key, '-Reason', reason], { timeoutMs: 120_000 });
+    const r = await this.run([this.paths.powershellExe, '-NoProfile', '-NonInteractive', '-File', tool, '-BatchKey', batch.key, '-Reason', reason, '-ExpectedNodeProfileSha256', this.nodeProfileSha256], { timeoutMs: 120_000 });
     const v = r.code === 0 ? parseBoundedJson(Buffer.from(r.stdout, 'utf8'), 65536, 'WINDOWS_ARCHIVE_UNCONFIRMED') : null;
     return { verified: v?.verified === true, directory: typeof v?.directory === 'string' ? v.directory : null, moved: v?.moved ?? null };
   }
@@ -262,6 +286,29 @@ export class WindowsEngine {
     if (!row) return { ok: false, code: 'RELAY_STAGE_REFUSED', proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() }, relay: null };
     batch.relayRow = row;
     return this.invoke(batch, { number: 9, runMilliseconds: row.runMilliseconds, linuxWorker: false }, row);
+  }
+
+  // Stage 10 (quota phase 2 step 3c-1, DESIGN §22.1): one train run outside any batch. Its package is derived into a
+  // new work\train\<runId> directory (create-only), then it runs like any Windows-only stage. The run key and id are
+  // fresh random values (the derivation checks their shape); the fact carries the train facts.
+  async runTrainStage(mode) {
+    check(mode === 'shadow', 'RESIDENT_TRAIN_MODE_INVALID');
+    const entry = await this.requireV2('derive-batch.mjs');
+    const key = randomBytes(32).toString('hex');
+    const runId = `${key.slice(0, 16)}-${randomBytes(6).toString('hex')}`;
+    const root = path.join(this.paths.workRoot, 'train');
+    await ensureDir(root);
+    const out = path.join(root, runId);
+    const d = await this.run([this.paths.nodeExe, entry, '--train-run', runId, '--train-key', key, '--mode', mode, '--out', out], { timeoutMs: 5 * 60_000 });
+    let row = null;
+    if (d.code === 0) {
+      const v = parseBoundedJson(Buffer.from(d.stdout, 'utf8'), 65536, 'RESIDENT_DERIVATION_REFUSED');
+      if (v.status === 'RESIDENT_TRAIN_RUN_DERIVED' && v.runKey === key && v.runId === runId && v.mode === mode && v.stage?.number === 10
+        && HEX64.test(v.stage.workManifestSha256 ?? '') && HEX64.test(v.stage.jobId ?? '') && Number.isSafeInteger(v.stage.runMilliseconds)) row = v.stage;
+    }
+    // Nothing was requested from the broker yet: a refused derivation is a clean stage-10 refusal.
+    if (!row) return { ok: false, code: 'TRAIN_STAGE_REFUSED', proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() }, train: null, runId };
+    return { ...(await this.invoke({ batchId: runId, key, dir: out }, { number: 10, runMilliseconds: row.runMilliseconds, linuxWorker: false }, row)), runId };
   }
 
   // opts.betweenRoles: archive the previous local Linux role's protocol records first (stages 4 and 6
@@ -326,7 +373,7 @@ export class WindowsEngine {
       // The stage outcome (diagnostic, scheduling facts, safeToRerun) travels to the executor (v0.6 §9 phase 1). The
       // broker's no-launch fact counts only with this engine's own sc.exe readback of the original, stopped runner.
       return { ok, code: ok ? null : (fact.code ?? 'SCM_READBACK_NOT_ORIGINAL'), proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk }, factsSha256: fact.nativeReceiptSha256,
-        relay: stage.number === 9 ? fact.relay : null, outcome: fact.outcome, brokerNoLaunch: fact.brokerNoLaunch === true && scOk };
+        relay: stage.number === 9 ? fact.relay : null, train: stage.number === 10 ? fact.train : null, outcome: fact.outcome, brokerNoLaunch: fact.brokerNoLaunch === true && scOk };
     } finally {
       this.inflight = null;
     }

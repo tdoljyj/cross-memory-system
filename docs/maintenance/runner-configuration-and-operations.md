@@ -137,7 +137,7 @@ Windows 用 `Win32_Service.StartName` 核对账号，再验证其实际 PATH。P
 2. 使用授权的隔离验收 workflow/标签，记录实际分配节点。已有健康节点的成功不能代替新增节点验收。
 3. 真实跑通 checkout、依赖安装、能力负载和 cleanup；Linux Docker 节点还要验证临时资源创建/清理。钩子必须有实际 ALLOW 和拒绝用例，不能仅看到文件存在。
 4. 对同机并发，验证目录不交叉、固定端口不冲突、负载下宿主可用及既有节点未被重启。
-5. 将条目推进到 validated/active，渲染看门狗，核对 active extra units 已纳入；最后恢复生产标签并核对路由/心跳。激活是配置、主机部署和调度状态三处一致，不能只改 JSON。
+5. 将条目推进到 validated/active；Linux 条目的有效状态为 active 后再渲染看门狗。每个 primary 或 additional Linux 条目显式声明的 `state` 优先，仅字段缺省时才继承 `host.state`；没有有效 active 条目时 renderer 拒绝渲染。核对 active units 已纳入，最后恢复生产标签并核对路由/心跳。激活是配置、主机部署和调度状态三处一致，不能只改 JSON。
 6. 完成配置 PR、机器验收与 KooYomi 回执。不写 online/busy 进清单。
 
 若验收 workflow 涉及新 workflow、手动 dispatch 或重任务，按当时准入合同执行；不临时移除门禁。作业此前 skipped 时要让适用作业实际执行。本基线常规 PR/分支工作流禁止直接重跑；需要重试时用实际修复提交，或按精确范围的 Owner 例外与实际钩子能力处理。
@@ -146,9 +146,11 @@ Windows 用 `Win32_Service.StartName` 核对账号，再验证其实际 PATH。P
 
 看门狗由清单和 renderer 生成；不直接编辑生成文件来制造另一个配置来源。用最新受审配置在日常 WSL 所属 Windows 账号下生成到临时输出，解析并核对阈值、units、Windows report-only，然后在批准的主机部署窗口安装到 `watchdog_path`。
 
+renderer 按每个 Linux 条目的有效 `state` 选择 unit：显式 `linux_runner.state` 或额外槽位的 `state` 优先，仅未声明该字段时才取 `host.state`。例如主机为 `validated`、primary Linux 条目显式为 `active` 时，该条目可纳入预览；继承 `validated` 的条目仍不纳入。是否拒绝渲染取决于有效 active Linux 条目是否为空，这一选择规则不代替前述资格、激活或部署授权。
+
 ```powershell
 # 从仓库根目录执行；只生成预览，不安装启动项、不启动进程
-$HostId = 'home-primary' # 目标电脑实际 HostId
+$HostId = 'company-primary' # 目标电脑实际 HostId
 $preview = Join-Path $env:TEMP "watchdog-$HostId.preview.ps1"
 powershell.exe -NoProfile -File .\scripts\ci\self-hosted\render-host-watchdog.ps1 -HostId $HostId -OutputPath $preview
 $tokens = $null; $parseErrors = $null
@@ -160,7 +162,7 @@ if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
 
 调度定义最低要求：WSL 所属日常账号，Interactive/Limited；登录触发 + 每分钟无限重复；IgnoreNew；ExecutionTimeLimit=0；失败后间隔一分钟重启三次；电池供电不停。沿用脚本的 mutex；不能让不同启动入口竞争管理同一主机。不得改成 SYSTEM 来“保证开机”，SYSTEM 看不到同一用户的 WSL 发行版。
 
-已核对部署与主线分开记录：家里 `Clued-CI-Watchdog-home-primary` 的计划任务与 53 秒恢复为既有验收，仍需按后续变更判断适用性。公司于 2026-10-08 已部署 `Clued-CI-Watchdog-company-primary`；2026-10-10 现场复读为 Enabled/Running、每日触发带重复恢复、日常 Windows 账号 Interactive/Limited、`pythonw.exe -I -S` 无控制台启动器承载 PowerShell 看门狗、标准输出/错误写日志。此前公司受控退出恢复实测为 36.08 秒；本轮未重跑退出测试、冷启动或登出无人值守测试。主线 renderer 仍只提供旧 Startup/HKCU Run 安装路径；PR #615 的无窗口计划任务安装器尚未合入，不能用“已部署”证明“已进入主线”。
+已核对部署与主线分开记录：家里 `Clued-CI-Watchdog-home-primary` 的计划任务与 53 秒恢复为既有验收，仍需按后续变更判断适用性。home-linux-01 退役后家里没有 active Linux runner，renderer 拒绝渲染 home-primary，家里看门狗须保持停用。2026-10-21 复读：计划任务为 Disabled，无看门狗进程，Startup 启动文件已改名为 `.task-backup`（HKCU Run 项仍在，所指文件不存在）。公司于 2026-10-08 已部署 `Clued-CI-Watchdog-company-primary`；2026-10-10 现场复读为 Enabled/Running、每日触发带重复恢复、日常 Windows 账号 Interactive/Limited、`pythonw.exe -I -S` 无控制台启动器承载 PowerShell 看门狗、标准输出/错误写日志。此前公司受控退出恢复实测为 36.08 秒；本轮未重跑退出测试、冷启动或登出无人值守测试。主线 renderer 仍只提供旧 Startup/HKCU Run 安装路径；PR #615 的无窗口计划任务安装器尚未合入，不能用“已部署”证明“已进入主线”。
 
 无窗口要求不能只靠 `/min` 或 `PowerShell -WindowStyle Hidden`。监督应使用不分配控制台的启动器，关闭标准输入并落盘 stdout/stderr、启动/退出结果。停维护前核对整条启动器→PowerShell→WSL keepalive 链；计划任务结束或启动器退出不证明所有后代已退出。只按已复读 PID、创建时间、完整启动命令和目标主机确认对应进程，不全机结束 PowerShell、pythonw 或 WSL 进程。
 
@@ -248,7 +250,7 @@ C 盘可用空间、VHDX 在宿主的占用和 Linux `df`/`du` 的使用量是�
 
 ### 7.1 排空不是修改 JSON 状态
 
-`draining/maintenance/retired` 是清单状态，不是 GitHub 的暂停按钮。当前 renderer 不执行这些状态对应的停止操作；extra 只在 active 时纳入，而 primary 总是纳入。也不能一停止服务就保证正在运行的 job 安全退出，KillMode=control-group 会终止后代。
+`draining/maintenance/retired` 是清单状态，不是 GitHub 的暂停按钮。当前 renderer 不执行这些状态对应的停止操作；primary 与 extra 都只在自身 state（未写时取主机 state）为 active 时纳入，没有 active Linux runner 的主机拒绝渲染。已部署的看门狗不会因改清单而停止监督，须按下列步骤停监督。也不能一停止服务就保证正在运行的 job 安全退出，KillMode=control-group 会终止后代。
 
 1. 在授权变更中登记 draining，保存原标签与服务/监督状态。
 2. 用 GitHub 标签/路由变更阻断新的可匹配派单，并确认标签已生效。移除唯一 route_label 不会阻止通用能力作业；必须撤除本仓库每种可匹配 runs-on 至少一个必要自定义标签。心跳暂停/覆盖变化一并登记。
@@ -264,7 +266,7 @@ C 盘可用空间、VHDX 在宿主的占用和 Linux `df`/`du` 的使用量是�
 ### 7.3 永久减少 / 退役
 
 1. 完成 7.1，核对准确 runner/根目录，不影响共享 distro 的其他槽位。
-2. 对额外 Linux，将配置推进到 retired，重新生成并部署不含该 unit 的看门狗；核对 actual units，避免删除后被自动恢复。
+2. 对 Linux runner（额外槽位或 primary），将配置推进到 retired，重新生成并部署不含该 unit 的看门狗；主机已没有 active Linux runner 时 renderer 拒绝渲染，改为停用该主机的看门狗及其全部启动入口。核对 actual units，避免删除后被自动恢复。
 3. 删除 primary 前必须先设计同机另一个活节点升为 primary 的配置迁移，保持其原 name/root/service，不为“成为01”改身份；旧节点保留为 retired 记录。没有替代节点时，现有 renderer 的 Windows+Linux 配对模型不支持继续照旧监督，应明确退役整机/停用监督或先实现新的受审模型。不能删除 primary 字段后假定 renderer 仍可运行。
 4. 停止并卸载目标服务，再按 GitHub Settings → Actions → Runners → 精确节点 → Remove 给出的当前 OS 指令和临时 removal token 取消注册；不存在机器时，Force remove 仅在确认目标离线且有明确授权时使用。[官方移除说明](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/remove-runners)
 5. 验证 GitHub 注册消失、服务消失、没有目标进程、监督不会拉回，剩余节点真实作业正常；移除或更新退役节点的心跳条目，保存历史证据。
@@ -319,7 +321,6 @@ C 盘可用空间、VHDX 在宿主的占用和 Linux `df`/`du` 的使用量是�
 | 主线清单七个条目（六个 active，home-linux-01 已退役）；历史 P7/P8/P14 资格只覆盖当时受查对象 | 当前数量由清单/API读取；旧四节点资格不能推广为六个 active 节点或本轮主机重验 |
 | 清单 auto_update_after_registration=true；bootstrap 没有 --disableupdate/完整标准账号加固入口 | 不以基础安装成功直接上线；使用受审管理员安装/加固方案并验收，代码统一另走 PR |
 | 心跳 matrix 仅覆盖四节点，未列公司 Linux03/04（已退役的 home-linux-01 已移出） | 保留 API/实际定点 job 核对；新增/退役流程必须安排 matrix 对应变更，不能称完整覆盖 |
-| renderer 不读 primary `linux_runner` 的 `state` | 家里清单已标 retired，但按现主线重渲染家里看门狗仍会监督已退役的 unit；renderer 修正前不要重渲染家里看门狗，修正另走受审 PR |
 | 主线 renderer 仍只安装 Startup/HKCU Run；无窗口计划任务安装器在未合入 PR #615 | 公司现场已安装无窗口 Limited 计划任务，家里有既有计划任务验收；部署事实不冒充主线工具能力，安装器更新另按原 Task/PR 受审 |
 | 公司已部署任务为每日触发并带重复恢复；规范目标是登录触发 | 既有受控退出恢复通过不等于已符合全部调度定义；公司登录/冷启动/登出无人值守仍未实测，不据此新增或变更任务 |
 | 清单 draining/maintenance/retired 不自动阻断 GitHub 或停止 primary 服务 | 必须按第 7 节隔离派单、停监督并排空，不能只改状态 |

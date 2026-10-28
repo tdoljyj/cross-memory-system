@@ -43,7 +43,7 @@ $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'   # no 
 $Root = 'C:\ProgramData\CluedIndependentCI\resident'
 $ServiceName = 'CluedCIResident'
 $BrokerName = 'CluedCISwapBroker'
-$RunnerService = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02'
+$RunnerService = $null   # the node profile's runnerService (Get-PackageNodeProfile, below)
 $OriginalBinary = '"C:\ProgramData\CluedControl\runner\bin\RunnerService.exe"'
 $Sc = 'C:\Windows\System32\sc.exe'
 $Csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
@@ -98,10 +98,57 @@ function Get-ServiceSid([string]$name) {
   'S-1-5-80-' + ((0..4 | ForEach-Object { [BitConverter]::ToUInt32($h, $_ * 4) }) -join '-')
 }
 
+# ---- Node profile (resident active/standby design v0.4, section 9 C1) ----
+# The host this package is pinned to is the install record's node profile: record\acceptance.json `node`, read from
+# the package, hashed against the reviewed manifest and parsed from those same bytes. Every host identity this
+# script used to carry as a TURING constant (computer name, runner service, Owner and controller accounts) comes
+# from it; TURING's profile is config\node-profile.turing.json, today's values. The shape rules are those of
+# resident-v2/prepare-record.mjs#validateNodeProfile; -OwnerSid and -ControllerSid must name the same accounts.
+$NodeProfileKeys = @('contract', 'nodeName', 'hostname', 'ownerSid', 'ownerProfileDirectory', 'controllerSid', 'runnerService', 'mutationMutex', 'wslDistribution')
+# .NET regex differs from JS here: `$` also matches before a final newline and `\d` matches any Unicode digit, so every
+# pattern is anchored with \z and spells digits [0-9]. The shared cases (independent-ci-v1/test/fixtures/
+# node-profile-cases.json) hold both validators to the same answers and refusal codes.
+function Assert-NodeProfile($n) {
+  $names = @(if ($n -is [pscustomobject]) { $n.PSObject.Properties.Name })
+  if ($names.Count -ne $NodeProfileKeys.Count -or @($NodeProfileKeys | Where-Object { $names -cnotcontains $_ -or $n.$_ -isnot [string] }).Count -ne 0 -or
+    $n.contract -cne 'clued.independent-ci.node-profile/1') { throw 'NODE_PROFILE_FIELDS_REQUIRED' }
+  $sid = '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-([0-9]{1,10})\z'
+  $rid = if ($n.controllerSid -cmatch $sid) { $Matches[1] } else { $null }
+  if ($n.nodeName -cnotmatch '^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\z' -or
+    $n.hostname -cnotmatch '^[A-Z0-9](?:[A-Z0-9-]{0,13}[A-Z0-9])?\z' -or $n.ownerSid -cnotmatch $sid -or $null -eq $rid -or [long]$rid -lt 1000 -or $n.ownerSid -ceq $n.controllerSid -or
+    $n.ownerProfileDirectory -cnotmatch '^C:\\Users\\[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?\z' -or
+    $n.runnerService -cnotmatch '^actions\.runner\.tdoljyj-cross-memory-system\.clued-ci-[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?\z' -or
+    $n.mutationMutex -cne ('Global\CluedControlControllerMutationV1-' + $n.hostname + '-' + $rid) -or
+    $n.wslDistribution -cnotmatch '^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?\z') { throw 'NODE_PROFILE_INVALID' }
+}
+function ConvertTo-NodeProfileCanonical($n) {
+  Assert-NodeProfile $n
+  [string[]]$keys=$NodeProfileKeys.Clone();[Array]::Sort($keys,[StringComparer]::Ordinal)
+  $rows=@(foreach($key in $keys) { ($key | ConvertTo-Json -Compress)+':'+($n.$key | ConvertTo-Json -Compress) })
+  return '{'+($rows -join ',')+'}'
+}
+function Get-PackageNodeProfile {
+  if ((Sha256Bytes $pkgBytes) -cne $ExpectedPackageManifestSha256) { throw 'REVIEWED_PACKAGE_CHANGED' }
+  $entry = @(([Text.Encoding]::UTF8.GetString($pkgBytes) | ConvertFrom-Json).files | Where-Object { $_.target -ceq 'record\acceptance.json' })
+  if ($entry.Count -ne 1 -or $entry[0].path -match '(^|[\\/])\.\.([\\/]|$)' -or [IO.Path]::IsPathRooted($entry[0].path)) { throw 'PACKAGE_NODE_PROFILE_REQUIRED' }
+  $bytes = [IO.File]::ReadAllBytes((Join-Path $PackageRoot $entry[0].path))
+  if ((Sha256Bytes $bytes) -cne $entry[0].sha256) { throw 'PACKAGE_FILE_CHANGED:record\acceptance.json' }
+  $accepted = (New-Object Text.UTF8Encoding($false, $true)).GetString($bytes) | ConvertFrom-Json
+  if (-not ($accepted.PSObject.Properties.Name -ccontains 'node')) { throw 'PACKAGE_NODE_PROFILE_REQUIRED' }
+  Assert-NodeProfile $accepted.node
+  if ($accepted.hostname -cne $accepted.node.hostname) { throw 'NODE_PROFILE_INVALID' }
+  $accepted.node
+}
+
 function Assert-Owner {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
   if ($id.User.Value -cne $OwnerSid) { throw 'OWNER_ACCOUNT_REQUIRED' }
-  if ($env:COMPUTERNAME -cne 'TURING') { throw 'TURING_HOST_REQUIRED' }
+  if ([Environment]::MachineName -cne $Node.hostname) { throw 'NODE_HOST_REQUIRED' }
+  if ($OwnerSid -cne $Node.ownerSid -or $ControllerSid -cne $Node.controllerSid) { throw 'NODE_PROFILE_ACCOUNTS_MISMATCH' }
+  # The ACL plan grants the record, source, stage and work directories to this SID and every runtime reader trusts the
+  # record's value, so it must be the real local .\clued-control of this host, not only the value the profile names.
+  $controllerActual = try { (New-Object Security.Principal.NTAccount([Environment]::MachineName, 'clued-control')).Translate([Security.Principal.SecurityIdentifier]).Value } catch { $null }
+  if ($controllerActual -cne $Node.controllerSid) { throw 'NODE_CONTROLLER_ACCOUNT_MISMATCH' }
   (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
@@ -113,7 +160,7 @@ function Read-RunnerState {
   $q = & $Sc queryex $RunnerService | Out-String
   $bin = if ($qc -match 'BINARY_PATH_NAME\s*:\s*(.+)') { $Matches[1].Trim() } else { $null }
   $acct = if ($qc -match 'SERVICE_START_NAME\s*:\s*(.+)') { $Matches[1].Trim() } else { $null }
-  [ordered]@{ binary = $bin; originalBinary = ($bin -ceq $OriginalBinary); account = $acct; accountIsController = ($acct -match '^(\.|TURING)\\clued-control$')
+  [ordered]@{ binary = $bin; originalBinary = ($bin -ceq $OriginalBinary); account = $acct; accountIsController = ($acct -match ('^(\.|' + [regex]::Escape($Node.hostname) + ')\\clued-control$'))
     stoppedPid0 = ($q -match 'STATE\s*:\s*1\s' -and $q -match 'PID\s*:\s*0\b'); manual = ($qc -match 'START_TYPE\s*:\s*3\s'); sddl = (Get-DaclPart (& $Sc sdshow $RunnerService | Out-String)) }
 }
 
@@ -238,6 +285,10 @@ function Copy-CarryForward($sources, [string]$stateRoot) {
 }
 
 $pkgBytes = [IO.File]::ReadAllBytes((Join-Path $PackageRoot 'package-manifest.json'))  # read ONCE
+$Node = Get-PackageNodeProfile
+$NodeCanonical = ConvertTo-NodeProfileCanonical $Node
+$NodeProfileSha256 = Sha256Text $NodeCanonical
+$RunnerService = $Node.runnerService
 function Get-OpenBatchCount {
   $ledger = Join-Path $Root 'state\ledger'
   if (-not (Test-Path -LiteralPath $ledger)) { return 0 }
@@ -255,20 +306,21 @@ function Build-Plan {
   $find = { param($t) @($pkg.files | Where-Object { $_.target -ceq $t })[0].sha256 }
   if ($pkg.contract -cne 'clued.independent-ci.resident-package/3' -or $pkg.ciSourceManifestSha256 -cnotmatch '^[0-9a-f]{64}$' -or (& $find 'record\source-manifest.json') -cne $pkg.ciSourceManifestSha256) { throw 'SOURCE_V2_RECORD_PACKAGE_REQUIRED' }
   [ordered]@{
-    contract = 'clued.independent-ci.resident-install-plan/3'
+    contract = 'clued.independent-ci.resident-install-plan/5'
     root = $Root; rootExists = (Test-Path -LiteralPath $Root)
     # PR-A review MAJOR 3: never install over a resident with an open batch (also one that waits for hosted
     # signals); like uninstall-resident.ps1, the Owner re-arms or lets it finish first.
     openBatches = (Get-OpenBatchCount)
     servicesExist = [bool](Get-Service -Name $ServiceName, $BrokerName -ErrorAction SilentlyContinue)
     residentSid = $res; ownerSid = $OwnerSid; controllerSid = $ControllerSid
+    node = $Node; nodeProfileSha256 = $NodeProfileSha256   # plan /5: the node profile this install is pinned to (design section 9 C1)
     installScriptSha256 = (Sha256File $PSCommandPath)
     packageManifestSha256 = $ExpectedPackageManifestSha256
     sourceManifestSha256 = $pkg.sourceManifestSha256; residentManifestSha256 = $pkg.residentManifestSha256
     policySha256 = (& $find 'config\policy.json'); companionConfigSha256 = (& $find 'config\companion.json')
     nodeSha256 = (& $find 'runtime\node.exe')
     ciSourceManifestSha256 = $pkg.ciSourceManifestSha256; bridgeManifestSha256 = $pkg.bridgeManifestSha256
-    recordSourceManifestSha256 = (& $find 'record\source-manifest.json'); genericHelper = $GenericHelper
+    recordSourceManifestSha256 = (& $find 'record\source-manifest.json'); acceptanceSha256 = (& $find 'record\acceptance.json'); genericHelper = $GenericHelper
     files = @($pkg.files).Count
     acl = Get-AclPlan $res
     runnerBefore = Read-RunnerState
@@ -332,7 +384,7 @@ if (-not ($r.originalBinary -and $r.stoppedPid0 -and $r.manual -and $r.accountIs
 # Before anything is written: every earlier state to carry, every file shape, no link anywhere.
 $carry = Get-CarryForwardPlan $CarryParent
 
-$receipt = [ordered]@{ contract = 'clued.independent-ci.resident-install-receipt/2'; planSha256 = $planSha; sourceManifestSha256 = $plan.sourceManifestSha256; residentManifestSha256 = $plan.residentManifestSha256; runnerSddlUnchanged = $r.sddl; steps = @(); startedAt = [DateTimeOffset]::UtcNow.ToString('o') }
+$receipt = [ordered]@{ contract = 'clued.independent-ci.resident-install-receipt/4'; planSha256 = $planSha; node = $Node; nodeProfileSha256 = $plan.nodeProfileSha256; acceptanceSha256 = $plan.acceptanceSha256; policySha256 = $plan.policySha256; companionConfigSha256 = $plan.companionConfigSha256; sourceManifestSha256 = $plan.sourceManifestSha256; residentManifestSha256 = $plan.residentManifestSha256; runnerSddlUnchanged = $r.sddl; steps = @(); startedAt = [DateTimeOffset]::UtcNow.ToString('o') }
 function Step([string]$name, [scriptblock]$body) { & $body; $script:receipt.steps += $name }
 
 # 1. Directories, created new with their final ACLs.
@@ -370,14 +422,14 @@ Step 'service-hosts' {
   try {
   foreach ($pair in @(@('ResidentServiceHost', @("/reference:$($fw)System.dll", "/reference:$($fw)System.ServiceProcess.dll"), @()),
                       @('SwapBroker', @("/reference:$($fw)System.dll", "/reference:$($fw)System.Core.dll", "/reference:$($fw)System.ServiceProcess.dll", "/reference:$($fw)System.Web.Extensions.dll"),
-                        @((Join-Path $v2 'ResidentScmV2.cs'), (Join-Path $v2 'ScmPidHandshakeV2.cs'))))) {
+                        @((Join-Path $v2 'ResidentScmV2.cs'), (Join-Path $v2 'ScmPidHandshakeV2.cs'), (Join-Path $v2 'NodeProfileV2.cs'))))) {
     $exe = Join-Path $Root ('bin\' + $pair[0] + '.exe')
     & $Csc /nologo /noconfig /target:exe /optimize+ ("/out:" + $exe) $pair[1] (Join-Path $Root ('bin\' + $pair[0] + '.cs')) $pair[2] | Out-Null
     if ($LASTEXITCODE -ne 0) { throw ('SERVICE_HOST_COMPILE_FAILED:' + $pair[0]) }
     $script:receipt[($pair[0] + 'Sha256')] = Sha256File $exe
   }
   $helper = Join-Path $Root ('helpers\' + $GenericHelper)
-  & $Csc /nologo /noconfig /target:winexe /platform:x64 /optimize+ /main:CluedWindowsFormalEntryV2 "/reference:$($fw)System.dll" "/reference:$($fw)System.Core.dll" "/reference:$($fw)System.Web.Extensions.dll" ("/out:" + $helper) (Join-Path $v2 'FormalPublicBoundaryV2.cs') (Join-Path $v2 'FormalSession0V2.cs') (Join-Path $v2 'ScmPidHandshakeV2.cs') | Out-Null
+  & $Csc /nologo /noconfig /target:winexe /platform:x64 /optimize+ /main:CluedWindowsFormalEntryV2 "/reference:$($fw)System.dll" "/reference:$($fw)System.Core.dll" "/reference:$($fw)System.Web.Extensions.dll" ("/out:" + $helper) (Join-Path $v2 'FormalPublicBoundaryV2.cs') (Join-Path $v2 'FormalSession0V2.cs') (Join-Path $v2 'ScmPidHandshakeV2.cs') (Join-Path $v2 'NodeProfileV2.cs') | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'GENERIC_HELPER_COMPILE_FAILED' }
   $script:receipt.genericHelperSha256 = Sha256File $helper
   } finally { Pop-Location }
@@ -386,11 +438,11 @@ Step 'service-hosts' {
 #     stable configuration digest (read-only, with the just-compiled broker) and the helper pin. Written
 #     once, CreateNew; its SHA-256 is the broker's second command-line argument.
 Step 'broker-config' {
-  $stable = (& (Join-Path $Root 'bin\SwapBroker.exe') --stable-digest | Out-String).Trim()
+  $stable = (& (Join-Path $Root 'bin\SwapBroker.exe') --stable-digest $Root $plan.acceptanceSha256 $plan.nodeProfileSha256 | Out-String).Trim()
   if ($LASTEXITCODE -ne 0 -or $stable -cnotmatch '^[0-9a-f]{64}$') { throw 'RUNNER_STABLE_DIGEST_UNCONFIRMED' }
   if ((Read-RunnerState).sddl -cne $r.sddl) { throw 'RUNNER_SDDL_CHANGED_DURING_INSTALL' }
   # Config /2 (review MINOR-3): no Owner SID; mutex and runner-DACL managers are SYSTEM and Administrators only.
-  $json = '{"contract":"clued.independent-ci.swap-broker-config/2","helper":{"name":"' + $GenericHelper + '","sha256":"' + $script:receipt.genericHelperSha256 + '"},"originalBinary":' + ($OriginalBinary | ConvertTo-Json -Compress) + ',"stableDigest":"' + $stable + '"}'
+  $json = '{"contract":"clued.independent-ci.swap-broker-config/3","helper":{"name":"' + $GenericHelper + '","sha256":"' + $script:receipt.genericHelperSha256 + '"},"originalBinary":' + ($OriginalBinary | ConvertTo-Json -Compress) + ',"stableDigest":"' + $stable + '","node":' + $NodeCanonical + ',"nodeProfileSha256":"' + $plan.nodeProfileSha256 + '","acceptanceSha256":"' + $plan.acceptanceSha256 + '"}'
   $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($json)
   Write-New (Join-Path $Root 'config\broker.json') $bytes
   $script:receipt.brokerConfigSha256 = Sha256Bytes $bytes; $script:receipt.runnerStableDigest = $stable
@@ -412,7 +464,7 @@ Step 'services' {
   $null = Invoke-Sc 'RESIDENT_SERVICE_FAILURE_FAILED' @('failure', $ServiceName, 'reset=', '86400', 'actions=', 'restart/60000//60000')
   $null = Invoke-Sc 'RESIDENT_SERVICE_FAILUREFLAG_FAILED' @('failureflag', $ServiceName, '1')
   $null = Invoke-Sc 'RESIDENT_SERVICE_SDSET_FAILED' @('sdset', $ServiceName, $plan.services.resident.sddl)
-  $bbin = '"' + (Join-Path $Root 'bin\SwapBroker.exe') + '" "' + $Root + '" ' + $script:receipt.brokerConfigSha256
+  $bbin = '"' + (Join-Path $Root 'bin\SwapBroker.exe') + '" "' + $Root + '" ' + $script:receipt.brokerConfigSha256 + ' ' + $plan.nodeProfileSha256
   $null = Invoke-Sc 'BROKER_SERVICE_CREATE_FAILED' @('create', $BrokerName, 'binPath=', $bbin.Replace('"', '\"'), 'start=', 'auto', 'type=', 'own')
   Assert-ServiceBinary $BrokerName $bbin
   $null = Invoke-Sc 'BROKER_SERVICE_PRIVS_FAILED' @('privs', $BrokerName, ($BrokerPrivileges -join '/'))

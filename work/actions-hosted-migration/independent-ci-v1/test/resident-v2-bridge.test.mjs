@@ -23,7 +23,7 @@ import { cacheRefusal } from '../worker/formal-trivy-v4/adapter.mjs';
 import { bridgeManifest, BRIDGE_MANIFEST_CONTRACT } from '../worker/protected-job-bridge-v4/bridge-manifest.mjs';
 import { validatePolicyShape, validateQualificationPayload, qualificationDeadline, LINUX_NODE_V2 } from '../worker/qualification-v2.mjs';
 import { validateSelectedFacts, requiredSourcePaths, FIXED_ROLE_POLICIES } from '../worker/formal-fixed-role-policy-v3/policy.mjs';
-import { IMAGE as GITLEAKS_IMAGE, SCAN_ARGS } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
+import { IMAGE as GITLEAKS_IMAGE, SCAN_ARGS, REVIEWED_HISTORY_PROOF } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
 import { validateEntryJob } from '../worker/formal-contract-placement-v2/container-entry.mjs';
 import { HEAD, BASE, tempDir, fixtureRecord, admittedFacts, hex } from './resident-v2-fixtures.mjs';
 import { PLACEMENT as PLACEMENT_WORKFLOW, acceptedSha256s } from './fixtures/trusted-workflows.mjs';
@@ -57,6 +57,26 @@ function signedWrapper(issue, observation, signer) {
   const envelope = { contract: ENVELOPE_CONTRACT_V2, keyId: 'fixture-key', payload, signature: sign(null, Buffer.from(canonical(payload)), signer.privateKey).toString('base64url') };
   return { contract: RESULT_WRAPPER_CONTRACT_V2, domain: 'production', issueSha256: bridgeDigest(issue), envelope, observation };
 }
+
+test('gitleaks signed result v4 binds the exact 729/101/172/130 proof and rejects legacy or altered proof', () => {
+  const { jobs, signer, record } = setup(), job = jobs.gitleaks, c = claim(), now = Date.now();
+  const issue = makeIssue(job, facts(job, c), refsSnapshot(), { sourceAcceptanceRef: record.accepted.sourceAcceptanceRef,
+    hostQualificationRef: record.accepted.hostQualificationRef, expiresAt: iso(now + 600000) });
+  const observation = { contract: 'clued.independent-ci.formal-scanner-observation/2', domain: 'production-observation', fixture: false,
+    profile: 'required-gitleaks-history/1', subject: Object.fromEntries(['id', 'repo', 'pr', 'headSha', 'baseSha', 'role', 'sourceManifestSha256', 'attempt'].map(k => [k, job[k]])),
+    sourceManifestSha256: job.sourceManifestSha256, sourceSha: 'c'.repeat(40), requiredHistoricalExceptions: 729,
+    reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, startedAt: iso(now - 5000), finishedAt: iso(now - 1000), exitCode: 0, conclusion: 'success',
+    logs: { stdout: { sha256: hex(32) }, stderr: { sha256: hex(32) } },
+    cleanup: { complete: true, wholeContainerTreeStopped: true, containerRemoved: true, observedAt: iso(now - 500) },
+    formalEligible: false, checksWritten: false, qualificationIssued: false };
+  const wrapper = signedWrapper(issue, observation, signer);
+  assert.equal(verifySignedBridgeResult({ issue, wrapper, signers: record.signers }).payload.conclusion, 'success');
+  for (const changed of [{ ...observation, requiredHistoricalExceptions: 726 }, { ...observation, reviewedHistoryProof: undefined },
+    ...Object.keys(REVIEWED_HISTORY_PROOF).map(key => ({ ...observation, reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF, [key]: null } }))]) {
+    assert.throws(() => verifySignedBridgeResult({ issue, wrapper: { ...wrapper, observation: changed }, signers: record.signers }),
+      { code: 'ACTUAL_HISTORY_CLEANUP_REQUIRED' });
+  }
+});
 
 test('v2 admission check: the claim comes from the facts, the batch generation is required and sticky; renewal is the same generation', () => {
   const { jobs } = setup(), job = jobs.trivy, c = claim();
@@ -212,6 +232,32 @@ function issuerFixture(t, { evaluate, job = 'trivy' } = {}) {
   const context = createWindowsContext({ inputs: { jobs: [j], record: s.record }, policyText: '{}', sourceRoot: 'C:\\fixture', live: () => { if (!live) throw Object.assign(new Error('HELD_RECORD_LEASE_LOST'), { code: 'HELD_RECORD_LEASE_LOST' }); } });
   return { ...s, c, job: j, context, evaluate: evaluate ?? (async () => facts(j, c)), stop: () => { live = false; } };
 }
+
+const rejectedIssuerFacts = () => ({ contract: 'clued.independent-ci.full-admission/2', status: 'BLOCKED', admitted: false,
+  reason: 'full_admission_rejected', diagnostic: { verdict: 'REJECTED', nativeVerdict: 'REJECTED', ownerReviewKind: 'refused',
+    reasonCodes: ['owner_grant_required', 'sensitive-details-must-not-survive'], nativeReasonCodes: ['path_outside_write_set'],
+    phase: 'native', workflowGateFindingsPresent: true, rawBody: 'sensitive-details-must-not-survive' } });
+const expectedIssuerDiagnostic = () => ({ verdict: 'REJECTED', nativeVerdict: 'REJECTED', ownerReviewKind: 'refused',
+  reasonCodes: ['owner_grant_required', 'unknown_reason'], nativeReasonCodes: ['path_outside_write_set'], phase: 'native', workflowGateFindingsPresent: true });
+
+test('issuer diagnostics: complete rejection before issue retains its sanitized Native reason', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+  const f = issuerFixture(t); let writes = 0;
+  const r = await runIssuer({ context: f.context, evaluate: async () => rejectedIssuerFacts(), collect: async () => null,
+    box: { async lock() {}, async write() { writes++; } }, stageDeadline: Date.now() + 60_000 });
+  assert.deepEqual([r.status, r.reason, r.sideEffects, writes], ['BLOCKED', 'full_admission_rejected', 0, 0]);
+  assert.deepEqual(r.admissionDiagnostic, expectedIssuerDiagnostic());
+});
+
+test('issuer diagnostics: complete callback rejection keeps UNCERTAIN and the exact sanitized rejection context', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+  const f = issuerFixture(t); let n = 0, issue; const writes = [];
+  const box = { async lock() {}, async write(name, bytes) { writes.push(name); if (name === 'issue') issue = decode(bytes); },
+    async read(name) { if (name === 'challenge-01') return encode(makeChallenge(issue, 'admission', 1));
+      throw Object.assign(new Error('not present'), { code: 'ENOENT' }); } };
+  const r = await runIssuer({ context: f.context, evaluate: async () => ++n === 1 ? facts(f.job, f.c) : rejectedIssuerFacts(),
+    collect: async () => null, box, stageDeadline: Date.now() + 60_000 });
+  assert.deepEqual([r.status, r.reason, r.sideEffects, n, writes], ['UNCERTAIN', 'full_admission_rejected', 1, 2, ['issue']]);
+  assert.deepEqual(r.admissionDiagnostic, expectedIssuerDiagnostic());
+});
 
 test('issuer: one admission callback, then the signed result -> ISSUED_RESULT_RECEIVED; the protocol is driven for real', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
   const f = issuerFixture(t), root = await spool(t), box = await createFixtureMailbox(root, 'windows');

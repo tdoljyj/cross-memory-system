@@ -23,14 +23,66 @@ Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\ScheduledTasks
 $Root = 'C:\ProgramData\CluedIndependentCI\resident'
 if (-not ([IO.Path]::GetFullPath($PSCommandPath)).StartsWith((Join-Path $Root 'resident\'), [StringComparison]::OrdinalIgnoreCase)) { throw 'RUN_THE_INSTALLED_COPY' }
 $Sc = 'C:\Windows\System32\sc.exe'
-$Runner = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02'
+# This node's runner service and host: the installed record's node profile (record\acceptance.json `node`, admin-only,
+# validated by the install; design section 9 C1). The name is still held to its fixed shape before it reaches sc.exe.
+$NodeProfileKeys = @('contract', 'nodeName', 'hostname', 'ownerSid', 'ownerProfileDirectory', 'controllerSid', 'runnerService', 'mutationMutex', 'wslDistribution')
+# .NET regex differs from JS here: `$` also matches before a final newline and `\d` matches any Unicode digit, so every
+# pattern is anchored with \z and spells digits [0-9]. The shared cases (independent-ci-v1/test/fixtures/
+# node-profile-cases.json) hold both validators to the same answers and refusal codes.
+function Assert-NodeProfile($n) {
+  $names = @(if ($n -is [pscustomobject]) { $n.PSObject.Properties.Name })
+  if ($names.Count -ne $NodeProfileKeys.Count -or @($NodeProfileKeys | Where-Object { $names -cnotcontains $_ -or $n.$_ -isnot [string] }).Count -ne 0 -or
+    $n.contract -cne 'clued.independent-ci.node-profile/1') { throw 'NODE_PROFILE_FIELDS_REQUIRED' }
+  $sid = '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-([0-9]{1,10})\z'
+  $rid = if ($n.controllerSid -cmatch $sid) { $Matches[1] } else { $null }
+  if ($n.nodeName -cnotmatch '^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\z' -or
+    $n.hostname -cnotmatch '^[A-Z0-9](?:[A-Z0-9-]{0,13}[A-Z0-9])?\z' -or $n.ownerSid -cnotmatch $sid -or $null -eq $rid -or [long]$rid -lt 1000 -or $n.ownerSid -ceq $n.controllerSid -or
+    $n.ownerProfileDirectory -cnotmatch '^C:\\Users\\[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?\z' -or
+    $n.runnerService -cnotmatch '^actions\.runner\.tdoljyj-cross-memory-system\.clued-ci-[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?\z' -or
+    $n.mutationMutex -cne ('Global\CluedControlControllerMutationV1-' + $n.hostname + '-' + $rid) -or
+    $n.wslDistribution -cnotmatch '^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?\z') { throw 'NODE_PROFILE_INVALID' }
+}
+function ConvertTo-NodeProfileCanonical($n) {
+  Assert-NodeProfile $n
+  [string[]]$keys=$NodeProfileKeys.Clone();[Array]::Sort($keys,[StringComparer]::Ordinal)
+  $rows=@(foreach($key in $keys) { ($key | ConvertTo-Json -Compress)+':'+($n.$key | ConvertTo-Json -Compress) })
+  return '{'+($rows -join ',')+'}'
+}
 $checks = [ordered]@{}
 function Sha256File([string]$p) { $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash([IO.File]::ReadAllBytes($p)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() } }
+function Read-ReviewedPublicJson([string]$file, [string]$expected, [ValidateRange(1,4194304)][int]$maximum=1048576) {
+  if ($expected -cnotmatch '^[0-9a-f]{64}\z') { throw 'INSTALL_RECEIPT_PIN_REQUIRED' }
+  $item=Get-Item -LiteralPath $file -Force
+  if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'INSTALL_RECEIPT_BOUNDARY_REFUSED' }
+  $stream=[IO.File]::Open($file,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+  try {
+    if($stream.Length -lt 1 -or $stream.Length -gt $maximum){throw 'INSTALL_RECEIPT_BOUNDARY_REFUSED'}
+    $bytes=New-Object byte[] ([int]$stream.Length);$at=0
+    while($at -lt $bytes.Length){$count=$stream.Read($bytes,$at,$bytes.Length-$at);if($count -lt 1){throw 'INSTALL_RECEIPT_CHANGED'};$at+=$count}
+    if($stream.ReadByte() -ne -1 -or $stream.Length -ne $bytes.Length){throw 'INSTALL_RECEIPT_CHANGED'}
+    $h=[Security.Cryptography.SHA256]::Create()
+    try{$actual=([BitConverter]::ToString($h.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()}finally{$h.Dispose()}
+    if($actual -cne $expected){throw 'INSTALL_RECEIPT_CHANGED'}
+    return ((New-Object Text.UTF8Encoding($false,$true)).GetString($bytes)|ConvertFrom-Json)
+  }finally{$stream.Dispose()}
+}
 function Record([string]$name, $ok, $detail = $null) { $script:checks[$name] = [ordered]@{ ok = $ok; detail = $detail } }
 
 $receiptFile = Join-Path $Root 'install\install-receipt.json'
-Record 'install-receipt' ((Sha256File $receiptFile) -ceq $ExpectedInstallReceiptSha256)
-$receipt = Get-Content -LiteralPath $receiptFile -Raw | ConvertFrom-Json
+$receipt = Read-ReviewedPublicJson $receiptFile $ExpectedInstallReceiptSha256
+Record 'install-receipt' $true
+if ($receipt.contract -cne 'clued.independent-ci.resident-install-receipt/4' -or $receipt.nodeProfileSha256 -cnotmatch '^[0-9a-f]{64}\z' -or $receipt.acceptanceSha256 -cnotmatch '^[0-9a-f]{64}\z') { throw 'INSTALLED_NODE_PROFILE_REFUSED' }
+$acceptancePath=Join-Path $Root 'record\acceptance.json'
+$Node=(Read-ReviewedPublicJson $acceptancePath $receipt.acceptanceSha256 4MB).node
+$NodeCanonical=ConvertTo-NodeProfileCanonical $Node
+$nh=[Security.Cryptography.SHA256]::Create();try{$NodeProfileSha256=([BitConverter]::ToString($nh.ComputeHash([Text.Encoding]::UTF8.GetBytes($NodeCanonical)))).Replace('-','').ToLowerInvariant()}finally{$nh.Dispose()}
+if($NodeProfileSha256 -cne $receipt.nodeProfileSha256 -or (ConvertTo-NodeProfileCanonical $receipt.node) -cne $NodeCanonical){throw 'INSTALLED_NODE_PROFILE_CHANGED'}
+$Runner=[string]$Node.runnerService
+foreach($pair in @(@('config\policy.json',$receipt.policySha256),@('config\companion.json',$receipt.companionConfigSha256),@('config\broker.json',$receipt.brokerConfigSha256))){
+  $file=Join-Path $Root $pair[0];$cfg=Read-ReviewedPublicJson $file $pair[1];if($pair[0] -ceq 'config\companion.json'){$cfg=$cfg.companion}
+  if($cfg.nodeProfileSha256 -cne $NodeProfileSha256 -or (ConvertTo-NodeProfileCanonical $cfg.node) -cne $NodeCanonical){throw 'INSTALLED_NODE_CONFIG_CHANGED'}
+}
+
 foreach ($s in @($receipt.sourceManifestSha256, $receipt.residentManifestSha256)) { if ($s -cnotmatch '^[0-9a-f]{64}$') { throw 'INSTALL_RECEIPT_SHAPE_REFUSED' } }
 # Resident quota redesign phase 1: the carried-forward executed heads the install listed, and the resident's backfill of
 # them (no batch runs before it; state\executed-heads\BACKFILL-COMPLETE.json once done).
@@ -65,9 +117,9 @@ function Test-TokenRecord([string]$json, $allowed) {
   $have = @($v.privileges); ($have -ccontains 'SeChangeNotifyPrivilege') -and (@($have | Where-Object { $allowed -cnotcontains $_ }).Count -eq 0)
 }
 # `sc qc` of the broker: exactly "<Root>\bin\SwapBroker.exe" "<Root>" <broker.json SHA-256>.
-function Test-BrokerBinaryPath([string]$qcText, [string]$root, [string]$configSha) {
-  if ($configSha -cnotmatch '^[0-9a-f]{64}$' -or $qcText -notmatch 'BINARY_PATH_NAME\s*:\s*(.+?)\s*(\r?\n|$)') { return $false }
-  $Matches[1] -ceq ('"' + (Join-Path $root 'bin\SwapBroker.exe') + '" "' + $root + '" ' + $configSha)
+function Test-BrokerBinaryPath([string]$qcText, [string]$root, [string]$configSha, [string]$nodeProfileSha) {
+  if ($nodeProfileSha -cnotmatch '^[0-9a-f]{64}\z' -or $configSha -cnotmatch '^[0-9a-f]{64}$' -or $qcText -notmatch 'BINARY_PATH_NAME\s*:\s*(.+?)\s*(\r?\n|$)') { return $false }
+  $Matches[1] -ceq ('"' + (Join-Path $root 'bin\SwapBroker.exe') + '" "' + $root + '" ' + $configSha + ' ' + $nodeProfileSha)
 }
 # sc.exe sdshow also prints the SACL ("S:...") when the caller may read it (elevated) and not otherwise;
 # every service-descriptor comparison uses the DACL section alone, so both views agree.
@@ -80,7 +132,7 @@ foreach ($pair in @(@('CluedCIResident', 'resident', $ResidentPrivileges), @('Cl
   $d = Get-ScText @('sdshow', $pair[0])
   Record ($pair[1] + '-service-dacl') $(if ($d -eq 'unreadable') { 'unreadable' } else { Test-ScSddl $d $receipt.($pair[1] + 'Sddl') })
 }
-Record 'broker-binary-path-and-config-pin' (Test-BrokerBinaryPath $bq $Root $receipt.brokerConfigSha256)
+Record 'broker-binary-path-and-config-pin' (Test-BrokerBinaryPath $bq $Root $receipt.brokerConfigSha256 $NodeProfileSha256)
 Record 'broker-config-hash' ((Sha256File (Join-Path $Root 'config\broker.json')) -ceq $receipt.brokerConfigSha256)
 Record 'broker-failure-actions' ((Get-ScText @('qfailure', 'CluedCISwapBroker', '8192')) -match 'RESTART')
 foreach ($pair in @(@('state\service-token.json', $ResidentPrivileges, 'resident'), @('broker\token.json', $BrokerPrivileges, 'broker'))) {
@@ -97,7 +149,9 @@ try {
 $runnerSddl = try { Get-DaclPart (& $Sc sdshow $Runner | Out-String) } catch { 'unreadable' }
 Record 'runner-sddl-unchanged' $(if ($runnerSddl -eq 'unreadable') { 'unreadable' } else { $runnerSddl -ceq $receipt.runnerSddlUnchanged })
 $rq = & $Sc qc $Runner | Out-String
-Record 'runner-original-and-controller' (($rq -match 'C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe') -and ($rq -match 'SERVICE_START_NAME\s*:\s*(\.|TURING)\\clued-control'))
+Record 'runner-original-and-controller' (($rq -match 'C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe') -and ($rq -match ('SERVICE_START_NAME\s*:\s*(\.|' + [regex]::Escape($Node.hostname) + ')\\clued-control')))
+# Receipt /3: the install pinned this node profile; the installed record still carries it, and this is that host.
+Record 'node-profile' (($receipt.PSObject.Properties.Name -ccontains 'node') -and (($receipt.node | ConvertTo-Json -Compress) -ceq ($Node | ConvertTo-Json -Compress)) -and [Environment]::MachineName -ceq $Node.hostname) $Node.nodeName
 
 foreach ($m in @('config\source-installed-manifest.json', 'config\resident-installed-manifest.json')) {
   $man = Get-Content -LiteralPath (Join-Path $Root $m) -Raw | ConvertFrom-Json
