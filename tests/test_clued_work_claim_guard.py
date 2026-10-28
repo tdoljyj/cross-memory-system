@@ -766,7 +766,7 @@ class RuntimeBoundaryTest(unittest.TestCase):
 
 PROJECT_SCOPE = "project:5d3a1c22-7f0e-4b8a-9c1d-2e3f4a5b6c7d"
 OTHER_ID = "9f0e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f"
-REPOSITORY_NAME = GUARD.REPOSITORY_NAME
+OWNER, REPOSITORY_NAME = GUARD.REPOSITORY.split("/")
 CLAIM_LINE = f"Clued-Work-Claim: {CLAIM_ID}"
 SCOPE_LINE = f"Clued-Work-Scope: {PROJECT_SCOPE}"
 
@@ -1006,8 +1006,11 @@ class PublishTrailerTest(unittest.TestCase):
         # Pull requests into another base and other repositories are not judged by this admission.
         for n, (name, tool_input) in enumerate((
                 ("Bash", {"command": "gh pr create --base feature/x --body 'Summary only'"}),
-                ("mcp__github__create_pull_request", {"repo": REPOSITORY_NAME, "base": "dev", "body": "x"}),
-                ("mcp__github__push_files", {"owner": "someone", "repo": "blog", "message": "x"}))):
+                ("mcp__github__create_pull_request", {"owner": OWNER, "repo": REPOSITORY_NAME, "base": "dev",
+                                                      "body": "x"}),
+                ("mcp__github__push_files", {"owner": "someone", "repo": "blog", "message": "x"}),
+                ("mcp__github__push_files", {"owner": "someone", "repo": REPOSITORY_NAME, "message": "x"}),
+                ("mcp__github__create_or_update_file", {"owner": OWNER, "repo": "blog", "message": "x"}))):
             with self.subTest(name=name, tool_input=tool_input):
                 self.assertEqual(self.pre(name, tool_input, session=f"target-{n}").returncode, 0)
         (self.project / ".clued" / "work-claim.json").unlink()
@@ -1082,6 +1085,32 @@ class PublishTrailerTest(unittest.TestCase):
         self.assertEqual(bash_kind("cat <<'EOF' > f\nx\nEOF\ngit push"), "publish")
         # A << that opens no heredoc does not hide a real one later on the same line.
         self.assertIsNone(bash_kind("echo 'a<<b'; cat <<'EOF' > runbook.md\ngit push\nEOF"))
+
+    def test_gh_options_are_read_as_gh_reads_them(self):
+        self.commit(f"Fix the guard\n\n{CLAIM_LINE}\n{SCOPE_LINE}")
+        (self.project / "body.md").write_text("Summary only\n", encoding="utf-8")
+        (self.project / "good.md").write_text(f"Summary\n\n{CLAIM_LINE}\n{SCOPE_LINE}\n", encoding="utf-8")
+        blocked = ("gh pr create -bSummary", "gh pr edit 5 -Fbody.md", "gh pr create -db=Summary",
+                   "gh pr create --title -Bdev --body 'Summary only'", "gh pr edit 5 --title x -bSummary",
+                   "gh pr create -Rtdoljyj/cross-memory-system --body x",
+                   "gh pr create --repo github.com/TDOLJYJ/Cross-Memory-System --body x")
+        for n, command in enumerate(blocked):
+            with self.subTest(command=command):
+                self.assertEqual(bash_kind(command), "publish")
+                result = self.bash(command, session=f"gh-block-{n}")
+                self.assertEqual(result.returncode, 2, command)
+                self.assertIn("The pull request body", result.stderr)
+        passed = ("gh pr create --title '-better docs' --body-file good.md", "gh pr create -B=dev -bx",
+                  "gh pr create -Bdev --body x", "gh pr create -R someone/cross-memory-system --body x",
+                  "gh pr create --repo tdoljyj/blog -b x", "gh pr create --title -b --body-file good.md")
+        for n, command in enumerate(passed):
+            with self.subTest(command=command):
+                result = self.bash(command, session=f"gh-pass-{n}")
+                self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(GUARD.gh_options(["-t", "-b", "-dFx.md", "--", "-bz"]), {"--title": "-b", "--body-file": "x.md"})
+        result = self.pre("mcp__github__create_pull_request",
+                          {"owner": OWNER.upper(), "repo": REPOSITORY_NAME.title(), "body": "x"}, session="mcp-case")
+        self.assertEqual(result.returncode, 2)
 
     def test_an_odd_command_never_breaks_the_session(self):
         self.commit("No trailers")

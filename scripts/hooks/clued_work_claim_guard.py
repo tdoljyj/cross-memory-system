@@ -92,9 +92,9 @@ READ_ONLY_AGENTS = {"explore", "plan", "claude-code-guide", "statusline-setup"}
 # separator, so text such as a commit message that mentions it does not match.
 COMMAND_START = r"(?:^|[;&|(]\s*|&&\s*|\|\|\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*"
 PUBLISH_COMMAND = re.compile(
-    COMMAND_START + r"(?:git(?:\s+-[Cc]\s+(?:\"[^\"\n]*\"|'[^'\n]*'|\S+)|\s+-(?![Cc]\s)[\w-]+(?:=\S*)?)*\s+push"
-    r"|gh\s+pr\s+create"
-    r"|gh\s+pr\s+edit\b(?:[^\n;&|\\]|\\[\s\S])*?(?:\s|\\\n)(?:--body|-[bF]))\b", re.MULTILINE)
+    COMMAND_START + r"(?:git(?:\s+-[Cc]\s+(?:\"[^\"\n]*\"|'[^'\n]*'|\S+)|\s+-(?![Cc]\s)[\w-]+(?:=\S*)?)*\s+push\b"
+    r"|gh\s+pr\s+create\b"
+    r"|gh\s+pr\s+edit\b(?:[^\n;&|\\]|\\[\s\S])*?(?:\s|\\\n)(?:--body|-[bF]))", re.MULTILINE)
 SPEND_COMMAND = re.compile(
     COMMAND_START
     + r"(?:(?:npm|pnpm|yarn)\s+(?:ci|install|i|add|test|t|run\s+[\w:.-]+)\b"
@@ -355,7 +355,14 @@ SCOPE_VALUE = re.compile(r"global|project:[0-9a-fA-F-]{36}")
 HEREDOC_START = re.compile(r"(?<!<)<<(?!<)(-?)[ \t]*(['\"]?)(\w+)\2([^\n]*)\n")
 WORD_LINE = re.compile(r"^[ \t]*(\w+)[ \t\r]*$", re.MULTILINE)
 LIFTED = re.compile(r'"?\$\(\s*cat\s+@@heredoc(\d+)@@\s*\)"?')
-REPOSITORY_NAME = "cross-memory-system"
+REPOSITORY = "tdoljyj/cross-memory-system"  # as clued-work-admission names it
+# gh pr create / gh pr edit options that take a value, and their one-letter forms.
+GH_SHORT_OPTIONS = {"t": "--title", "b": "--body", "F": "--body-file", "B": "--base", "H": "--head", "l": "--label",
+                    "r": "--reviewer", "a": "--assignee", "m": "--milestone", "p": "--project", "R": "--repo",
+                    "T": "--template"}
+GH_VALUE_OPTIONS = set(GH_SHORT_OPTIONS.values()) | {
+    "--recover", "--add-label", "--remove-label", "--add-reviewer", "--remove-reviewer", "--add-assignee",
+    "--remove-assignee", "--add-project", "--remove-project"}
 # Steps that leave every branch where it is. After any other step (a merge, a script, gh pr
 # checkout, a command substitution) a branch may have moved, so a later push is not read.
 STILL_HEAD = {"cd", "echo", "printf", "true", ":", "ls", "pwd", "cat", "grep", "rg", "head", "tail", "wc", "test",
@@ -693,15 +700,44 @@ def local_path(cwd: Path | None, value: str | None) -> Path | None:
     return cwd / value
 
 
-def option_value(args: list[str | None], names: tuple[str, ...], default):
-    """The last value given as `name value` or `name=value`; default when absent, None when unreadable."""
-    value = default
-    for at, arg in enumerate(args):
-        if arg in names:
-            value = args[at + 1] if at + 1 < len(args) else None
-        elif arg is not None and "=" in arg and arg.partition("=")[0] in names:
-            value = arg.partition("=")[2]
-    return value
+def gh_options(args: list[str | None]) -> dict[str, str | None]:
+    """The value options of `gh pr create` / `gh pr edit`, read as gh (pflag) reads them.
+
+    Each value is consumed with its option, so a title such as `-Bdev` is not read
+    as an option; `-bvalue`, `-b=value` and `--body=value` are attached forms. The
+    last value wins; None marks one that is unreadable.
+    """
+    found: dict[str, str | None] = {}
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        i += 1
+        if arg == "--":
+            break
+        if arg is None or arg[:1] != "-" or arg == "-":
+            continue
+        if arg.startswith("--"):
+            name, eq, value = arg.partition("=")
+            if eq:
+                found[name] = value
+            elif name in GH_VALUE_OPTIONS:
+                found[name], i = (args[i] if i < len(args) else None), i + 1
+            continue
+        for at, letter in enumerate(arg[1:], 1):  # a cluster of boolean flags may end in a value flag
+            name = GH_SHORT_OPTIONS.get(letter)
+            if name is not None:
+                value = arg[at + 1:]
+                value = value[1:] if value[:1] == "=" else value
+                if not value:
+                    value, i = (args[i] if i < len(args) else None), i + 1
+                found[name] = value
+                break
+    return found
+
+
+def other_repository(name: str) -> bool:
+    """Whether [HOST/]OWNER/REPO names a repository other than this one."""
+    return "/".join(name.lower().split("/")[-2:]) != REPOSITORY
 
 
 def git_invocation(values: list[str | None], cwd: Path | None) -> tuple[str | None, list[str | None], Path | None]:
@@ -719,12 +755,11 @@ def git_invocation(values: list[str | None], cwd: Path | None) -> tuple[str | No
 ABSENT = object()
 
 
-def pr_body(args: list[str | None], cwd: Path | None, before: str) -> str | None:
+def pr_body(options: dict[str, str | None], cwd: Path | None, before: str) -> str | None:
     """The --body or --body-file text of `gh pr create` / `gh pr edit`, when it can be read now."""
-    body = option_value(args, ("--body", "-b"), ABSENT)
-    if body is not ABSENT:
-        return body
-    name = option_value(args, ("--body-file", "-F"), ABSENT)
+    if "--body" in options:
+        return options["--body"]
+    name = options.get("--body-file", ABSENT)
     # Stdin, a device and a file this command line writes first cannot be read now.
     if name is ABSENT or name is None or name in before:
         return None
@@ -790,15 +825,16 @@ def bash_publish_texts(command: str, cwd: Path | None, home_dir: Path | None = N
                 if message is not None:
                     found.append(("commit", f"The head commit of {source}", message))
         elif head == "gh" and values[:2] in (["pr", "create"], ["pr", "edit"]):
-            repository = option_value(values[2:], ("--repo", "-R"), ABSENT)
+            options = gh_options(values[2:])
+            repository = options.get("--repo", ABSENT)
             elsewhere = (not ours(cwd) if repository is ABSENT
-                         else repository is None or repository.rsplit("/", 1)[-1].lower() != REPOSITORY_NAME)
-            if elsewhere or option_value(values[2:], ("--base", "-B"), "main") != "main":
+                         else repository is None or other_repository(repository))
+            if elsewhere or options.get("--base", "main") != "main":
                 continue  # clued-work-admission judges pull requests into this repository's main only
-            body = pr_body(values[2:], cwd, text[:words[0][0]])
+            body = pr_body(options, cwd, text[:words[0][0]])
             if body is not None:
                 found.append(("body", "The pull request body", body))
-            branch = option_value(values[2:], ("--head", "-H"), "HEAD")
+            branch = options.get("--head", "HEAD")
             message = (head_message(cwd, branch)
                        if values[1] == "create" and not moved and branch and ours(cwd) else None)
             if message is not None:
@@ -819,7 +855,8 @@ def publish_texts(payload: dict) -> list[tuple[str, str, str]]:
              "push_files": ("message", "commit", "The commit message"),
              "create_or_update_file": ("message", "commit", "The commit message")}.get(tool_suffix(name))
     if (field is None or not isinstance(tool_input.get(field[0]), str)
-            or str(tool_input.get("repo") or REPOSITORY_NAME).lower() != REPOSITORY_NAME
+            or ((tool_input.get("owner") or tool_input.get("repo"))
+                and other_repository(f"{tool_input.get('owner') or ''}/{tool_input.get('repo') or ''}"))
             or str(tool_input.get("base") or "main") != "main"):
         return []
     return [(field[1], field[2], tool_input[field[0]])]
