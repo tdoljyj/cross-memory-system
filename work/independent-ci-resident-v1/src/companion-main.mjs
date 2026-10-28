@@ -16,7 +16,6 @@ import { Mailbox } from './mailbox.mjs';
 import { Runner, JOB_HOST_EXE } from './runner.mjs';
 import { Poller } from './poller.mjs';
 import { Inbox } from './inbox.mjs';
-import { canonicalJson } from './canonical.mjs';
 import os from 'node:os';
 import { readStatus } from './status.mjs';
 import { LocalStore, PrStatusReporter, validateStatusConfig } from './pr-status.mjs';
@@ -146,7 +145,7 @@ export async function main(args = process.argv.slice(2)) {
   }
   const poller = new Poller({
     repo: raw.repo, ghExe: raw.ghExe, run: (a, o) => advisory.run(a, o), clock: Date.now, hints,
-    writeTrigger: async v => { await fs.writeFile(path.join(inboxDir, Inbox.fileName(Date.now())), canonicalJson(v), { flag: 'wx' }); },
+    writeTrigger: v => Inbox.drop(inboxDir, v), // a create-only drop box: the reader waits for a file still being written (DESIGN §31.3)
   });
   // PR page status and Windows notifications (pr-status.mjs). Their memory lives in the Owner's own profile, never in the
   // resident's directories.
@@ -158,7 +157,7 @@ export async function main(args = process.argv.slice(2)) {
   const requestsDir = path.join(values.root, 'requests');
   const reporter = new PrStatusReporter({ repo: raw.repo, ghExe: raw.ghExe, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), clock: Date.now, store,
     prStatus: statusCfg.prStatus, notifications: statusCfg.notifications, node: statusCfg.node,
-    writeRequest: async v => { await fs.writeFile(path.join(requestsDir, Inbox.fileName(Date.now())), canonicalJson(v), { flag: 'wx' }); } });
+    writeRequest: v => Inbox.drop(requestsDir, v) });
   keepalive(companionArgv(cfg).keepalive());
   let lastPoll = 0, lastReport = 0;
   // Only now, with a usable job host and every part of the companion set up: a companion whose job host cannot start a
