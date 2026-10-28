@@ -6,9 +6,10 @@ import { digest } from '../src/proof.mjs';
 import { batchJobsV2, claimGeneration, scanEffectKeyV2, subjectOfV2 } from '../src/job-v2.mjs';
 import { EffectJournal } from '../src/effect-journal.mjs';
 import { recordBatchClaim, readBatchClaim } from '../src/batch-claim-v2.mjs';
-import { createFixtureWorkAdmissionPublisherV2 } from '../src/formal-work-admission-check-v2/publisher.mjs';
+import { createFixtureWorkAdmissionPublisherV2, notOnDuty, refusalSafeToRerun } from '../src/formal-work-admission-check-v2/publisher.mjs';
 import { createFixtureControlPublisherV2, createProductionControlPublisherV2, queueWindow, QUEUE_POLL_MS, QUEUE_WAIT_FINAL_REASONS, STAGE8_CHECK_MS } from '../src/independent-control-checks-v2/publisher.mjs';
-import { outcomeFailureCode } from '../src/resident-v2/stage-fact.mjs';
+import { outcomeFailureCode, outcomeFacts } from '../src/resident-v2/stage-fact.mjs';
+import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { protectedFactsFromVerify } from '../runtime/one-shot-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
@@ -212,6 +213,26 @@ test('work admission v2: safeToRerun only for a first-admission boundary refusal
   assert.equal((await run({ answer: () => ({ ...blocked('full_admission_rejected'), diagnostic: { reasonCodes: ['changed_files_truncated'] } }) })).safeToRerun, false);
   // not up to date with main: also deterministic, even together with a waiting reason
   assert.equal((await run({ answer: () => ({ ...blocked('full_admission_rejected'), diagnostic: { reasonCodes: ['owner_review_required', 'protected_change_not_up_to_date'] } }) })).safeToRerun, false);
+  // Primary/standby C3: a node that holds no ci-admission role (Native's admission_binding_required) decides nothing about the
+  // PR, so a deterministic reason that comes with it never makes the refusal unsafe to re-run: nothing was written (first
+  // evaluation, no batch claim, sideEffects 0), and the stage names it NODE_ROLE_NOT_HELD
+  for (const reasonCodes of [['admission_binding_required'], ['admission_binding_required', 'protected_change_not_up_to_date'], ['changed_files_truncated', 'admission_binding_required'],
+    ['policy_file_removed', 'admission_binding_required', 'owner_review_required']]) {
+    const x = await run({ answer: () => ({ ...blocked('full_admission_rejected'), diagnostic: { reasonCodes } }) });
+    assert.deepEqual([x.status, x.reason, x.sideEffects, x.safeToRerun], ['BLOCKED', 'full_admission_rejected', 0, true], reasonCodes.join());
+    // through the entry's real outcome record and the stage fact's view of it
+    const written = await writeOutcome({ receiptsRoot: await tempDir(t, 'clued-no-role-'), nonce: randomUUID().replace(/-/g, ''), plan: { stage: 1, entryRole: 'work-admission' }, jobIds: [], result: x });
+    const facts = outcomeFacts(written);
+    assert.deepEqual([facts.safeToRerun, facts.sideEffects, facts.mayHavePublished, facts.diagnostic.reasonCodes.includes('admission_binding_required')], [true, 0, false, true], reasonCodes.join());
+    assert.equal(outcomeFailureCode(written, 1), 'NODE_ROLE_NOT_HELD', reasonCodes.join());
+    assert.equal(outcomeFailureCode(written, 3), 'BATCH_CLAIM_CHANGED', 'after stage 1 it keeps its old code');
+  }
+  // only the rejection of the first evaluation says it; no other reason, and not past the boundary or with a claim recorded
+  assert.deepEqual([notOnDuty('full_admission_rejected', { reasonCodes: ['admission_binding_required'] }), notOnDuty('full_admission_rejected', { nativeReasonCodes: ['admission_binding_required'] }),
+    notOnDuty('pr_subject_changed', { reasonCodes: ['admission_binding_required'] }), notOnDuty('full_admission_rejected', { reasonCodes: ['binding_not_authorized'] }), notOnDuty('full_admission_rejected', null)], [true, true, false, false, false]);
+  const d = { reasonCodes: ['admission_binding_required', 'protected_change_not_up_to_date'] };
+  assert.deepEqual([refusalSafeToRerun({ step: 'boundary', claimed: null, reason: 'full_admission_rejected', diagnostic: d }), refusalSafeToRerun({ step: 'admitted', claimed: null, reason: 'full_admission_rejected', diagnostic: d }),
+    refusalSafeToRerun({ step: 'boundary', claimed: c, reason: 'full_admission_rejected', diagnostic: d }), refusalSafeToRerun({ step: 'boundary', claimed: null, reason: 'pr_subject_changed', diagnostic: d })], [true, false, false, false]);
   for (const code of ['pr_files_page_limit', 'pr_subject_changed', 'invalid_pr_files']) {
     const github = { ...fakeGithub(), async readChangedPaths() { throw Object.assign(new Error(code), { code }); } };
     const x = await run({ answer: () => rejected, github });
