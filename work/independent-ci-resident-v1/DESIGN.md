@@ -2639,7 +2639,7 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 ### 31.2 写侧：先写临时名，再整体换名（`store.mjs#writeNewAtomic`）
 
 - 字节先写进同目录的 `.tmp-<12 位十六进制>-<目标名>` 并 `sync`，再用一次 `rename` 给它目标名；目标要么不存在，要么完整。写失败或换名失败，临时文件被删。
-- **仍然 create-only。** Windows 的 `fs.rename` 会覆盖已有目标；硬链接（`link` + `unlink`）倒是拒绝已有目标，却让文件有一刻两个名字，`readBounded` 的 `nlink === 1` 身份检查会把它当成被改过的文件拒绝，读者就会 HALT。所以换名前后各看一次目标，已有就拒绝（`CREATE_ONLY_TARGET_EXISTS`，与 `writeNew` 同码）。两次检查之间仍有一个窗口：同一个名字有第二个写者时，后到者会覆盖先到者。下面这些名字都只有一个写者：请求号是 UUID，一个请求只有一个应答，提示序号来自 companion 的同一条顾问通道，取消文件重复写只是同义写。**会被两个写者争的名字不用这个原语**：泵标记 `<requestId>.pump.json` 的独占创建本身就是认领，没有人读它的内容，仍用 `writeNew`。
+- **仍然 create-only。** Windows 的 `fs.rename` 会覆盖已有目标；硬链接（`link` + `unlink`）倒是拒绝已有目标，却让文件有一刻两个名字，`readBounded` 的 `nlink === 1` 身份检查会把它当成被改过的文件拒绝，读者就会 HALT。所以换名前后各看一次目标，已有就拒绝（`CREATE_ONLY_TARGET_EXISTS`，与 `writeNew` 同码）。两次检查之间仍有一个窗口：同一个名字有第二个写者时，后到者会覆盖先到者。下面这些名字都只有一个写者：请求号是 UUID，一个请求只有一个应答，提示序号来自 companion 的同一条顾问通道，取消文件重复写只是同义写。**会被两个写者争的名字不用这个原语**：泵标记 `<requestId>.pump.json` 的独占创建本身就是认领，没有人读它的内容，仍用 `writeNew`。单写者的前提：companion 的计划任务设为 `MultipleInstances = 2`（IgnoreNew，`install-resident.ps1` 的 `companion-task`），同一时刻只有一个 companion 进程；服务端有实例锁（`instance-lock.mjs`）。评审（NIT-3）提过另一种做法：先独占创建一个空占位文件，再把临时文件换名覆盖它，这样是严格的 create-only。没有采用：目标名会有一刻是空文件，正是这一节要消除的空档（读者与测试都得改成容忍空文件）；占位之后崩溃，这个名字会被一个空文件永远占着（应答槽或请求槽卡死）。所以保留单写者前提，由上面的名单和计划任务的 IgnoreNew 承担。
 - 换名遇到 `EPERM`/`EBUSY`/`EACCES`（杀毒或索引器短暂占着新文件）重试，间隔 20、50、100、250、500 ms，之后抛出。以前这些路径没有换名，所以这是新增的失败面；失败的 `respond` 会让 `step()` 抛出、下一轮重新处理同一个请求，重试把这种情况压到最低。
 - 临时名不会被任何读者当成记录：`pending()` 只认 `^[0-9a-f-]{36}\.json$`，`poll`/`cancelled` 按确切名读，提示列表要求 `hosted-hint-…` 前缀与序号。`Mailbox.open` 顺手清掉超过 1 小时的 `.tmp-` 残留（崩溃留下的），目录写不了就留着。`beat()` 的临时名也改用这个形状，换名失败时删除。
 - 只用在写者有换名权利的目录：`mailbox\requests`（服务写）和 `mailbox\responses`（companion 写，心跳早就这样换名）。
@@ -2648,7 +2648,7 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 
 ### 31.3 读侧
 
-- **`latestHint`**：取最新的至多 3 个提示文件，从新到旧，返回第一个**完整**的（`readBounded` 之后 JSON 能解析）。最新的是空文件或半截时（安装期间旧版 companion 还在跑），上一个完整的提示就是当前值，下次再读就读到新的；只有一个且没写完则回 null（“还没有提示”）。完整但形状不对的照旧交给 `parseHint` 拒绝；超长、链接、身份不符照旧抛出。读到上一个观察而不是最新的，最多让排程晚一个 tick；提示从来不是授权，第 R 段自己会再验证。
+- **`latestHint`**：取最新的至多 3 个提示文件，从新到旧，返回第一个**完整**的（`readBounded` 之后 JSON 能解析）。最新的是空文件或半截时（安装期间旧版 companion 还在跑），上一个完整的提示就是当前值，下次再读就读到新的；只有一个且没写完则回 null（“还没有提示”）。完整的 JSON 但形状不对的照旧交给 `parseHint` 拒绝；超长、链接、身份不符照旧抛出。内容根本不是 JSON 的最新文件分不清是“没写完”（JSON 的前缀本身也不是 JSON）还是写坏了，按没写完处理，用上一个完整的提示；以前这种文件会到 `parseHint` 被拒并记 `hintRefused`，现在静默跳过（评审 NIT-1），提示只是排程线索，所以接受。读到上一个观察而不是最新的，最多让排程晚一个 tick；提示从来不是授权，第 R 段自己会再验证。
 - **inbox 与 requests 不能原子发布。** 这两个目录对 Owner 是只能新建：目录 ACE 只有 `0x1000a2`（新建文件、遍历），文件上的继承 ACE 和 OWNER RIGHTS 只给读（`install-resident.ps1` 的 `Get-AclPlan`，§8.3 末尾的“只能新建”一条，`test-resident-windows.ps1` 的 `owner-folder-add-file-only`、`owner-files-read-only`）。companion 在 inbox 里没有 DELETE，也没有 DELETE_CHILD，所以既不能写临时名再改名，也不能覆盖。改这条 ACL 会撤销 MINOR-9 的性质（触发和请求建好后不能再被改写），也属于安装脚本，本次不动。
 - 所以由读者等：`Inbox.read` 遇到空文件（`empty`）或读取中尺寸变了（`size-changed`）时，**不列出、不拒绝、留在原处**，下一轮再读；从第一次遇到它的那一轮算起满 `INBOX_UNFINISHED_GRACE_MS`（30 s，读者自己的时钟，`Inbox.open(dir, archive, clock)` 可注入）仍没写完，才像以前一样列为 `INBOX_ENTRY_SHAPE_REFUSED`（执行器归档到 `rejected`，写者在建与写之间崩溃就是这样收场）。`requests\`（暂停请求）走同一个读者，所以紧急暂停请求也不会因空档被丢。
 - 只等 `empty` 与 `size-changed`，**不**因为 JSON 不完整而等：触发与请求最多 1 KB，由 `writeNew` 一次 `write` 写出，空档里只会是“空”；而完整但不是 JSON 的文件（`{not json`）今天立即被拒，已有测试依赖这一点，把它们当成“还没写完”会让垃圾文件多占 30 s。
@@ -2696,7 +2696,7 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 | 项目 | 以前 | 现在 | 预算与理由 |
 |---|---|---|---|
 | 挑战从产生到被发现 | ≤ 约 1 s + 一次列表（0.3 s） | 刚有事件后 ≤ 约 1–2 s；安静时 ≤ 15 s + 一次列表。测试里实测 0.1–14.6 s | 回调窗口 `CALLBACK_WINDOW_MS` = 120 s。中继一次通常 4–6 s、观察到过 25–45 s。最坏再加 15 s = 窗口的 12.5%；“收挑战 45 s + 签发器评估约 10 s + 回送 45 s”的双长尾加 15 s 是 115 s，仍在 120 s 内 |
-| ReceiveChallenge 的重试预算（§25.4） | `firstSeen + 120 s − 60 s`，`firstSeen` 是第一次列到的时刻 | `firstSeen` 取**前一次成功列表的开始时刻**；该次没列到，挑战一定是在它之后产生的 | 预算现在是“产生时刻 + 60 s”的保守下界，与列表间隔无关：§25.4 留给签发器评估与回送的 60 s 储备不被间隔吃掉。代价是间隔大时少一次重试机会，而不是更晚 |
+| ReceiveChallenge 的重试预算（§25.4） | `firstSeen + 120 s − 60 s`，`firstSeen` 是第一次列到的时刻 | `firstSeen` 取**下界**：挑战一定还不存在的最晚时刻。依次是：没列到它的最近一次成功列表的开始时刻；一轮回调之后，那一轮 `SendResponse` 开始的时刻（worker 拿到响应 k 之后才会产生挑战 k+1，两个回调可以紧挨着）；都没有时，要求启动 worker 的时刻。列表失败时沿用这个下界，不把失败列表的时刻当作看到它的时刻，也不记入 `firstSeen` | 下界永远不晚于创建时刻，所以重试窗口 `下界 + 60 s` 不晚于“创建时刻 + 60 s”，§25.4 留给签发器评估与回送的 60 s 储备不被吃掉，列表失败时也一样。窗口会早于创建时刻结束多少，取决于下界早出多少：安静时 ≤ 一个列表间隔；紧挨着的回调加慢中继时，是上一次 `SendResponse` 的时长（慢到 40 s 时窗口在挑战产生后还开约 20 s，第一次尝试快速失败的重试仍在窗口内）。这部分不是“与列表间隔无关”，间隔大时窗口更短，但永远不会在挑战出现之前就已关上 |
 | SendResponse 的重试预算 | 挑战记录自己的 `deadline − 15 s` | 不变 | 读的是挑战记录里的字段，与列表无关 |
 | result / blocked 的发现 | ≤ 约 1 s | ≤ 15 s | result 不赶时间；blocked 交接只是让签发器以 BLOCKED 而不是 UNCERTAIN 结束，不论早晚 |
 | 信号 B | 结束后 ≤ 15 s 内发现 | 同样（读取节奏不变） | `test/wsl-starts.test.mjs` 检查读取间隔不超过 15 s 加一轮 |
@@ -2718,8 +2718,9 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 
 ### 31.6 测试
 
-- `test/mailbox-atomic.test.mjs`（14 条）：`writeNewAtomic` 的 create-only、目标在写的途中出现、失败清理、瞬时 `EPERM` 重试；send、respond、cancel、writeHint 在“建/写/刷盘/换名前/换名后”每一步，目录里没有空的或不完整的目标文件，`pending`、`poll`、`cancelled`、`latestHint` 此刻都不抛错、不拒绝，且在换名前看不到新记录；第二个应答与第二个取消的语义；临时名不被当成请求、应答、提示、取消，旧的被清理、新的和别的名字不动；心跳；半写的提示（0、1、一半、差两字节）时 `latestHint` 返回旧的完整值，写完后返回新的，经执行器的 `hint()` 也不是 `refused`；只有一个且未写完回 null；完整但形状不对、超长照旧；`Inbox.drop` 过程中读者不列空文件、不拒绝，写完后读到并能被 `parseTrigger` 解析；超过宽限期的空文件照旧被拒；执行器里空触发不被归档、写完后批次运行、从未写完的 30 s 后被拒；空的暂停请求不丢，写完后 `PAUSED`；源码检查。
+- `test/mailbox-atomic.test.mjs`（15 条，含评审 NIT-1：最新文件不是 JSON 时用上一个完整的提示）：`writeNewAtomic` 的 create-only、目标在写的途中出现、失败清理、瞬时 `EPERM` 重试；send、respond、cancel、writeHint 在“建/写/刷盘/换名前/换名后”每一步，目录里没有空的或不完整的目标文件，`pending`、`poll`、`cancelled`、`latestHint` 此刻都不抛错、不拒绝，且在换名前看不到新记录；第二个应答与第二个取消的语义；临时名不被当成请求、应答、提示、取消，旧的被清理、新的和别的名字不动；心跳；半写的提示（0、1、一半、差两字节）时 `latestHint` 返回旧的完整值，写完后返回新的，经执行器的 `hint()` 也不是 `refused`；只有一个且未写完回 null；完整但形状不对、超长照旧；`Inbox.drop` 过程中读者不列空文件、不拒绝，写完后读到并能被 `parseTrigger` 解析；超过宽限期的空文件照旧被拒；执行器里空触发不被归档、写完后批次运行、从未写完的 30 s 后被拒；空的暂停请求不丢，写完后 `PAUSED`；源码检查。
 - `test/wsl-starts.test.mjs`（10 条）：步调公式；上表各场景的前后启动数；挑战发现延迟不超过上限加一次列表；ReceiveChallenge 的预算锚点从不晚于挑战产生时刻；信号 B 的读取间隔与结束后的发现时间；信号 C 的 5 分钟；终止等待的退避；交接 blocked 的间隔。
+- `test/relay-anchor.test.mjs`（5 条，评审 MAJOR-1、MAJOR-2）：紧挨着的两个回调加 40 s 的 `SendResponse`（新、旧两种列表节奏）：挑战 2 的锚点等于那次 `SendResponse` 的开始、不晚于创建、重试窗口在挑战出现时仍开着，第一次快速失败后确实重试并完成；锚点从启动、上一次成功列表、上一次响应取最晚者；列表失败（15 s 超时）时锚点仍是失败之前最后一次成功的列表，同样能重试；一次列表都没有时锚点是启动 worker 的时刻。五条在修改前的代码上都失败。
 - 离线演练不用改：`incident-20261028-replay` 与 `relay-flap-under-load` 的假宿主不依赖列表节奏，61 步仍全过。
 
 ### 31.7 偏离、残余与安装
