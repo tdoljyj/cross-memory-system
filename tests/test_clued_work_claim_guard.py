@@ -1015,6 +1015,59 @@ class PublishTrailerTest(unittest.TestCase):
         self.commit(f"Fix the guard\n\n{CLAIM_LINE}\n{SCOPE_LINE}")
         self.assertEqual(self.bash("git push", session="draining").returncode, 0)
 
+    def test_other_repositories_are_not_judged(self):
+        other = Path(self.tmp.name) / "other"
+        other.mkdir()
+        for args in (("init", "-q"), ("config", "user.name", "Test"), ("config", "user.email", "t@example.invalid"),
+                     ("config", "commit.gpgsign", "false"), ("commit", "-q", "--allow-empty", "-m", "No trailers")):
+            subprocess.run(["git", "-C", str(other), *args], check=True, capture_output=True, env=self.env, timeout=30)
+        self.commit("No trailers")
+        good = heredoc(f"Fix the guard\n\n{CLAIM_LINE}\n{SCOPE_LINE}")
+        for n, command in enumerate(("cd ../other && git push", "git -C ../other push origin HEAD",
+                                     f"git commit -m {good} && cd ../other && git push",
+                                     "cd ../other && git commit -m x && cd ../project && git push",
+                                     "gh pr create -R someone/blog --title x --body 'Blog post'",
+                                     "cd ../other && gh pr create --title x --body 'Blog post'")):
+            with self.subTest(command=command):
+                result = self.bash(command, session=f"other-{n}")
+                self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.bash("gh pr create --repo tdoljyj/cross-memory-system --body 'Summary only'", session="ours")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("The pull request body has no `Clued-Work-Claim:` line", result.stderr)
+
+    def test_git_options_before_push_still_publish(self):
+        for command in ("git -C x push", "git --no-pager push origin HEAD", "git -c a.b=c push",
+                        'git -C "dir with space" -c x=y push', "cd a && git -C . push"):
+            with self.subTest(command=command):
+                self.assertEqual(bash_kind(command), "publish")
+        self.commit("No trailers")
+        result = self.bash("git -C . push origin HEAD")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("The head commit of HEAD has no `Clued-Work-Claim:` line", result.stderr)
+
+    def test_payload_is_read_as_utf8_whatever_the_console_code_page(self):
+        self.commit(f"修复\n\n{CLAIM_LINE}\n{SCOPE_LINE}")
+        env = {**self.env, "PYTHONIOENCODING": "gbk", "PYTHONUTF8": "0"}
+        for n, (body, expected) in enumerate(((f"说明 修\n{CLAIM_LINE}\n{SCOPE_LINE}", 0), ("只有说明", 2))):
+            with self.subTest(body=body):
+                payload = {"hook_event_name": "PreToolUse", "session_id": f"gbk-{n}", "tool_name": "Bash",
+                           "tool_input": {"command": f"gh pr create --title x --body '{body}'"}}
+                result = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload).encode("utf-8"),
+                                        capture_output=True, env=env, timeout=30)
+                self.assertEqual(result.returncode, expected, result.stderr.decode("utf-8", "replace"))
+
+    def test_long_heredocs_full_of_shift_operators_stay_fast(self):
+        source = "\n".join(f"    std::cout << value{n} << std::endl;" for n in range(3000))
+        command = f"cat > a.cpp <<'END-OF-FILE'\n{source}\nEND-OF-FILE\ngit push"
+        for name, call in (("classify", lambda: bash_kind(command)),
+                           ("read", lambda: GUARD.bash_publish_texts(command, None))):
+            with self.subTest(name=name):
+                started = time.perf_counter()
+                call()
+                self.assertLess(time.perf_counter() - started, 2.0)
+        self.assertEqual(bash_kind("cat <<'EOF' > f\ngit push\nEOF\n"), None)
+        self.assertEqual(bash_kind("cat <<'EOF' > f\nx\nEOF\ngit push"), "publish")
+
     def test_an_odd_command_never_breaks_the_session(self):
         self.commit("No trailers")
         for n, command in enumerate(("cd a\x00b && git push", "git -C 'a\x00b' push", "git push origin 'a\x00b'")):
@@ -1043,6 +1096,14 @@ class PublishTrailerTest(unittest.TestCase):
         self.assertEqual(GUARD.lift_heredocs("cat <<-EOF\n\tx\n\tEOF")[1], ["x\n"])
         self.assertEqual(GUARD.join_lines("a \\\nb 'c \\\nd' \"e \\\nf\" g\\\\\nh"),
                          "a b 'c \\\nd' \"e f\" g\\\\\nh")
+        if os.name == "nt":
+            self.assertEqual(GUARD.local_path(Path("C:/w"), "/c/Users/x"), Path("c:/Users/x"))
+            self.assertIsNone(GUARD.local_path(Path("C:/w"), "/tmp/x"))
+        else:
+            self.assertEqual(GUARD.local_path(Path("/w"), "/tmp/x"), Path("/tmp/x"))
+        for value in ("-", "~/x", "/dev/stdin", "/proc/self/fd/0", "", None):
+            with self.subTest(value=value):
+                self.assertIsNone(GUARD.local_path(Path("w"), value))
 
 
 if __name__ == "__main__":

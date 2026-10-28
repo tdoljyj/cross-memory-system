@@ -44,6 +44,7 @@ always exit 0; PreToolUse and Stop exit 2 with a stderr reason to block.
 """
 from __future__ import annotations
 
+import bisect
 import hashlib
 import json
 import os
@@ -91,7 +92,8 @@ READ_ONLY_AGENTS = {"explore", "plan", "claude-code-guide", "statusline-setup"}
 # separator, so text such as a commit message that mentions it does not match.
 COMMAND_START = r"(?:^|[;&|(]\s*|&&\s*|\|\|\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*"
 PUBLISH_COMMAND = re.compile(
-    COMMAND_START + r"(?:git\s+push|gh\s+pr\s+create"
+    COMMAND_START + r"(?:git(?:\s+-[Cc]\s+(?:\"[^\"\n]*\"|'[^'\n]*'|\S+)|\s+-[\w-]+(?:=\S*)?)*\s+push"
+    r"|gh\s+pr\s+create"
     r"|gh\s+pr\s+edit\b(?:[^\n;&|\\]|\\[\s\S])*?(?:\s|\\\n)(?:--body|-[bF]))\b", re.MULTILINE)
 SPEND_COMMAND = re.compile(
     COMMAND_START
@@ -105,8 +107,6 @@ SPEND_COMMAND = re.compile(
     r"|(?:cargo|go)\s+(?:build|test)\b)",
     re.MULTILINE,
 )
-# Heredoc bodies (commit messages, inline scripts) are data, not commands.
-HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^\s*\2\s*$", re.MULTILINE | re.DOTALL)
 
 # Quoted arguments of these read-only text commands are data (a search pattern,
 # a commit message), so a | ; ( or command word inside them is not a command
@@ -352,8 +352,8 @@ CLAIM_TRAILER = re.compile(r"^Clued-Work-Claim:[ \t]*([0-9a-fA-F]{8}-[0-9a-fA-F]
 SCOPE_TRAILER = re.compile(r"^Clued-Work-Scope:[ \t]*(global|project:[0-9a-fA-F-]{36})[ \t]*$", re.MULTILINE)
 SCOPE_VALUE = re.compile(r"global|project:[0-9a-fA-F-]{36}")
 # A heredoc body is lifted out, so the command line parses and a quoted body can be read.
-HEREDOC_BODY = re.compile(r"(?<!<)<<(?!<)(-?)[ \t]*(['\"]?)(\w+)\2([^\n]*)\n(.*?)^[ \t]*\3[ \t]*$",
-                          re.MULTILINE | re.DOTALL)
+HEREDOC_START = re.compile(r"(?<!<)<<(?!<)(-?)[ \t]*(['\"]?)(\w+)\2([^\n]*)\n")
+WORD_LINE = re.compile(r"^[ \t]*(\w+)[ \t\r]*$", re.MULTILINE)
 LIFTED = re.compile(r'"?\$\(\s*cat\s+@@heredoc(\d+)@@\s*\)"?')
 REPOSITORY_NAME = "cross-memory-system"
 # Steps that leave every branch where it is. After any other step (a merge, a script, gh pr
@@ -463,7 +463,8 @@ def guarded_kind(payload: dict) -> str | None:
     name = payload.get("tool_name", "")
     tool_input = payload.get("tool_input") or {}
     if name == "Bash":
-        command = scannable(HEREDOC.sub("", str(tool_input.get("command", ""))))
+        # Heredoc bodies (commit messages, inline scripts) are data, not commands.
+        command = scannable(lift_heredocs(str(tool_input.get("command", "")))[0])
         if PUBLISH_COMMAND.search(command):
             return "publish"
         if SPEND_COMMAND.search(command):
@@ -523,17 +524,30 @@ def lift_heredocs(command: str) -> tuple[str, list[str | None]]:
     """The command with each heredoc replaced by a marker word, and the bodies.
 
     A body is None when the shell would expand it: an unquoted delimiter and a $, ` or \\ inside.
+    A `<<` with no closing line is left as written. Closing lines are indexed once, so a
+    long text full of `<<` (C++ in a heredoc) stays near linear time.
     """
+    closings: dict[str, list[tuple[int, int]]] = {}
+    for line in WORD_LINE.finditer(command):
+        closings.setdefault(line.group(1), []).append((line.start(), line.end()))
     bodies: list[str | None] = []
-
-    def lift(match: re.Match) -> str:
-        dash, quote, _, rest, body = match.groups()
+    out, pos = [], 0
+    for start in HEREDOC_START.finditer(command):
+        if start.start() < pos:
+            continue  # inside a body already lifted
+        dash, quote, delimiter, rest = start.groups()
+        candidates = closings.get(delimiter, [])
+        at = bisect.bisect_left(candidates, (start.end(), -1))
+        if at == len(candidates):
+            continue
+        body = command[start.end():candidates[at][0]]
         if dash:
             body = re.sub(r"(?m)^\t+", "", body)
         bodies.append(body if quote or not re.search(r"[$`\\]", body) else None)
-        return f"@@heredoc{len(bodies) - 1}@@{rest}"
-
-    return HEREDOC_BODY.sub(lift, command), bodies
+        out.append(command[pos:start.start()] + f"@@heredoc{len(bodies) - 1}@@{rest}")
+        pos = candidates[at][1]
+    out.append(command[pos:])
+    return "".join(out), bodies
 
 
 def join_lines(text: str) -> str:
@@ -582,6 +596,12 @@ def git_output(cwd: Path, *args: str) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return result.stdout if result.returncode == 0 else None
+
+
+def repository_of(cwd: Path | None) -> str | None:
+    """The git common directory of cwd: one value for a repository and all its worktrees."""
+    common = (git_output(cwd, "rev-parse", "--git-common-dir") or "").strip() if cwd is not None else ""
+    return os.path.normcase(str((cwd / common).resolve())) if common else None
 
 
 def commit_message(args: list[str | None]) -> str | None:
@@ -729,7 +749,17 @@ def bash_publish_texts(command: str, cwd: Path | None) -> list[tuple[str, str, s
     if segments is None:
         return []
     found = []
-    moved, pending = False, None  # a step before the push may have moved HEAD; a git commit's message
+    moved, pending, pending_dir = False, None, None  # a step may have moved HEAD; a git commit's message
+    origin, home = cwd, []
+
+    def ours(where: Path | None) -> bool:
+        """Whether where is in the repository the command started in (any of its worktrees)."""
+        if where is None or where == origin:
+            return where is not None
+        if not home:
+            home.append(repository_of(origin))
+        return home[0] is not None and repository_of(where) == home[0]
+
     for words, _ in segments:
         head, index = command_head(text, words)
         substitutes = any("$(" in text[start:end] or "`" in text[start:end] for start, end, _, _ in words)
@@ -742,13 +772,16 @@ def bash_publish_texts(command: str, cwd: Path | None) -> list[tuple[str, str, s
         if head == "cd":
             cwd = local_path(cwd, values[0] if values else None)
         elif head == "git" and sub == "commit":
-            moved, pending = True, commit_message(args) if where == cwd else None
+            moved, pending, pending_dir = True, commit_message(args), where
         elif head == "git" and sub == "push":
+            if not ours(where):
+                continue  # another repository's claims are not recorded here
             sources = push_sources(args)
             if moved:
-                branch = (git_output(where, "symbolic-ref", "--short", "-q", "HEAD") or "").strip() if where else ""
+                branch = (git_output(where, "symbolic-ref", "--short", "-q", "HEAD") or "").strip()
                 heads = {"HEAD", "@"} | ({branch, "refs/heads/" + branch} if branch else set())
-                if pending is not None and where == cwd and sources and all(source in heads for source in sources):
+                if (pending is not None and where == pending_dir and sources
+                        and all(source in heads for source in sources)):
                     found.append(("commit", "The message of the `git commit` before this push", pending))
                 continue
             for source in sources:
@@ -756,13 +789,17 @@ def bash_publish_texts(command: str, cwd: Path | None) -> list[tuple[str, str, s
                 if message is not None:
                     found.append(("commit", f"The head commit of {source}", message))
         elif head == "gh" and values[:2] in (["pr", "create"], ["pr", "edit"]):
-            if option_value(values[2:], ("--base", "-B"), "main") != "main":
-                continue  # clued-work-admission judges pull requests into main only
+            repository = option_value(values[2:], ("--repo", "-R"), ABSENT)
+            elsewhere = (not ours(cwd) if repository is ABSENT
+                         else repository is None or repository.rsplit("/", 1)[-1].lower() != REPOSITORY_NAME)
+            if elsewhere or option_value(values[2:], ("--base", "-B"), "main") != "main":
+                continue  # clued-work-admission judges pull requests into this repository's main only
             body = pr_body(values[2:], cwd, text[:words[0][0]])
             if body is not None:
                 found.append(("body", "The pull request body", body))
             branch = option_value(values[2:], ("--head", "-H"), "HEAD")
-            message = head_message(cwd, branch) if values[1] == "create" and not moved and branch else None
+            message = (head_message(cwd, branch)
+                       if values[1] == "create" and not moved and branch and ours(cwd) else None)
             if message is not None:
                 found.append(("commit", f"The head commit of {branch}", message))
         elif substitutes or not (head in STILL_HEAD or (head == "git" and sub in STILL_HEAD_GIT and not (
@@ -1168,7 +1205,8 @@ def main() -> int:
     if os.environ.get("CLUED_WORK_CLAIM_GUARD", "").lower() == "off":
         return 0
     try:
-        payload = json.load(sys.stdin)
+        # Claude Code sends UTF-8 whatever the console code page is.
+        payload = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))
     except ValueError:
         return 0
     if not isinstance(payload, dict):

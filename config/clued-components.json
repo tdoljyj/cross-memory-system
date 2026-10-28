@@ -92,7 +92,7 @@
       "files": [
         "clued_work_claim_guard.py"
       ],
-      "content_sha256": "54eabcde3c4d2c12275c51b81adeb5ee77f0b4a95ef85635e01b22de21d93867",
+      "content_sha256": "84a78052fd375ac2bb33281197dd2415b34fd3d50b5d3d31038a95b9587ddbd5",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""
