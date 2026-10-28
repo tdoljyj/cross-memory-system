@@ -202,6 +202,13 @@ export const STAGE8_NOT_READY_CODES = Object.freeze(['RESIDENT_BASE_MOVED', 'RES
 // [T, H] is not what was tested.
 export const STAGE8_OWNER_NOTICE_CODES = Object.freeze(['STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_TREE_DIFFERS']);
 export const PARK_RETRY_MS = Object.freeze([10 * 60_000, 20 * 60_000, 40 * 60_000, 80 * 60_000, 120 * 60_000]);
+// DESIGN §28 (design r3 4a, PR #930): a stage-8 try that ended BLOCKED with zero side effects on a transient admission or GitHub
+// failure parks the batch at B again instead of burning a head whose stages 1-7 passed. Fixed here, not in the policy (no
+// policy contract change): at most STAGE8_TRANSIENT_MAX_TRIES such parks, after 1, 3 and 10 minutes; the next one ends the batch
+// through fail() as before. They count towards park.stage8MaxTries, park.maxMs and park.stage8RetriesPer24h like any try.
+export const STAGE8_TRANSIENT_PARK_CODES = Object.freeze(['NATIVE_ADMISSION_UNAVAILABLE', 'GITHUB_TRANSIENT_UNAVAILABLE']);
+export const STAGE8_TRANSIENT_MAX_TRIES = 3;
+export const STAGE8_TRANSIENT_RETRY_MS = Object.freeze([60_000, 3 * 60_000, 10 * 60_000]);
 // A parked batch whose claim was first in the queue at its last try is tried again this soon; a nudge (a trigger that
 // says main moved or the PR changed) makes a try due at most this often.
 export const PARK_HEAD_RETRY_MS = 60_000;
@@ -1073,13 +1080,16 @@ export class ResidentExecutor {
   static lastTry(entry) { return entry.tries?.length ? entry.tries[entry.tries.length - 1].ended : null; }
 
   // A parked batch counts towards park.maxParked when it waits at A, or when its claim was in the merge queue's first two
-  // places at its last try (design v0.5 §4.7, review M4); the others are bounded by park.maxParkedOutsideTop2.
+  // places at its last try (design v0.5 §4.7, review M4); the others are bounded by park.maxParkedOutsideTop2. A batch parked by
+  // a transient stage-8 ending (DESIGN §28) has no true place (null): it counts by its assumed place (independent review r3,
+  // NIT 2), so it never pushes other batches over the outside bound.
   async parkedCounts(entries = null) {
     const all = entries ?? await this.ledger.parkedEntries();
     let inside = 0, outside = 0;
     for (const e of all) {
       if (Ledger.waitingAt(e)) { inside += 1; continue; }
-      const p = ResidentExecutor.lastTry(e)?.position;
+      const last = ResidentExecutor.lastTry(e);
+      const p = Number.isSafeInteger(last?.position) ? last.position : (last?.transient === true ? last.assumedPosition : null);
       if (Number.isSafeInteger(p) && p <= 2) inside += 1; else outside += 1;
     }
     return { inside, outside };
@@ -1241,6 +1251,21 @@ export class ResidentExecutor {
       await this.receipt('stage8-not-ready', { key, try: n, failureCode: control.code, nextAt: new Date(nextAt).toISOString(), position });
       return { state: 'PARKED', key, reason: control.code, until: nextAt, position, tries: n,
         settle: { kind: 'parked', code: control.code, klass: 'queue', breaker: 'neutral', pos: POSITIONS[8], linux: false, nextAt, position } };
+    }
+    // DESIGN §28: a transient zero-effect ending parks again, at most STAGE8_TRANSIENT_MAX_TRIES times (the next one burns as
+    // before). The try records its true place (null when the outcome named none), so it counts towards stage8MaxTries and never
+    // as a try at the queue's head; assumedPosition (the last try's place, else 1: the Source reaches this boundary only once the
+    // claim was judged at the head) only exempts it from the outside bound and is what the status shows. Its own back-off.
+    const transientParks = before.filter(t => t.ended.transient === true).length;
+    if (zero && STAGE8_TRANSIENT_PARK_CODES.includes(control.code) && !final && transientParks < STAGE8_TRANSIENT_MAX_TRIES) {
+      const last = before.length ? before[before.length - 1].ended : null;
+      const assumedPosition = Number.isSafeInteger(position) ? position : Number.isSafeInteger(last?.position) ? last.position
+        : Number.isSafeInteger(last?.assumedPosition) ? last.assumedPosition : 1;
+      const nextAt = now + STAGE8_TRANSIENT_RETRY_MS[transientParks];
+      await this.ledger.endTry(key, n, { code: control.code, nextAt: new Date(nextAt).toISOString(), position, entered: queueFact?.entered ?? null, transient: true, assumedPosition });
+      await this.receipt('stage8-transient-parked', { key, try: n, failureCode: control.code, nextAt: new Date(nextAt).toISOString(), position, assumedPosition, park: transientParks + 1 });
+      return { state: 'PARKED', key, reason: control.code, until: nextAt, position: assumedPosition, tries: n,
+        settle: { kind: 'parked', code: control.code, klass: 'transient', breaker: 'neutral', pos: POSITIONS[8], linux: false, nextAt, position: assumedPosition } };
     }
     return windowsOnly(new StepFailure(8, control.code, control.proof, 'stage', relayed, control));
   }
