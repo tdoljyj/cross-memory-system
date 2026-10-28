@@ -37,7 +37,8 @@
 // own budget, the environment releases and the supersessions), the waiting retries, the new-trigger re-evaluations per
 // (PR, commit), and the counted releases per head (waits never count; an environment release while the breaker was not
 // closed does not either). A new release reason, SUPERSEDED, closes a reservation whose PR got a newer commit before
-// stage 1 (nothing of it ran).
+// stage 1 (nothing of it ran). Primary/standby C3 (DESIGN §29): a release of the failure-table class node-role (this node
+// holds no ci-admission role) says nothing about the PR; it counts neither as an evaluation nor towards the release cap.
 //
 // Phase 2, step 2 (parking, design v0.5 §4.3, §4.8, §4.9): an entry can rest at two parking points, with nothing of it
 // running and Linux empty:
@@ -479,8 +480,9 @@ export class Ledger {
       if (origin === 'waiting-retry') u.waitingRetries += 1;
       if (origin === 'new-trigger') bump(u.reevaluations, `${s.pr}:${s.headSha}`);
       const environment = ['environment', 'transient'].includes(facts?.class);
-      if (!started && origin !== 'waiting-retry' && !UNCOUNTED_RELEASES.includes(reason) && !environment) u.evaluations += 1;
-      if (reason && reason !== 'SUPERSEDED' && facts?.class !== 'waiting' && !(environment && facts?.breakerState && facts.breakerState !== 'closed') && HEX40.test(s.headSha ?? '')) bump(u.releasesByHead, s.headSha);
+      const nodeRole = facts?.class === 'node-role';
+      if (!started && origin !== 'waiting-retry' && !UNCOUNTED_RELEASES.includes(reason) && !environment && !nodeRole) u.evaluations += 1;
+      if (reason && reason !== 'SUPERSEDED' && facts?.class !== 'waiting' && !nodeRole && !(environment && facts?.breakerState && facts.breakerState !== 'closed') && HEX40.test(s.headSha ?? '')) bump(u.releasesByHead, s.headSha);
     };
     const read = async file => (await exists(file)) ? (await readJson(file)).value : null;
     for (const key of await this.keys()) {

@@ -9,8 +9,10 @@ import { readFileSync } from 'node:fs';
 import { CODE, HEX64, check } from './canonical.mjs';
 
 // Stage 1 only: Native said no. Nothing was published, nothing executed.
+// NODE_ROLE_NOT_HELD (primary/standby C3, DESIGN §29): the last one, the answer "this node holds no ci-admission role".
 export const NOT_ADMITTED_CODES = Object.freeze(['NATIVE_NOT_ADMITTED', 'OWNER_REVIEW_REQUIRED', 'PROTECTED_CHANGE_NOT_UP_TO_DATE', 'PATHS_OUTSIDE_WRITE_SET',
-  'CLAIM_NOT_CURRENT', 'TASK_CI_HEAD_CAP_REACHED', 'CLAIM_HEAD_CAP_REACHED', 'CI_BUDGET_EXHAUSTED', 'WORKFLOW_CHANGE_NOT_AUTHORIZED', 'PR_NOT_OPEN_OR_CHANGED']);
+  'CLAIM_NOT_CURRENT', 'TASK_CI_HEAD_CAP_REACHED', 'CLAIM_HEAD_CAP_REACHED', 'CI_BUDGET_EXHAUSTED', 'WORKFLOW_CHANGE_NOT_AUTHORIZED', 'PR_NOT_OPEN_OR_CHANGED',
+  'NODE_ROLE_NOT_HELD']);
 // Clean transient: an outside, passing condition. The only codes the one automatic attempt 2 may follow
 // (attempts.mjs; Owner decision 1b5d3687).
 // NATIVE_ADMISSION_UNAVAILABLE also covers explicit protected-observation exhaustion, but only after the Source
@@ -182,7 +184,9 @@ export function archiveReason(code) {
 // Loaded once from the installed resident layer (its bytes are pinned by the resident manifest like every other
 // file) and validated here; a table that does not validate stops the module from loading (fail closed).
 export const FAILURE_TABLE_CONTRACT = 'clued.independent-ci.resident-failure-table/1';
-export const FAILURE_CLASSES_V1 = Object.freeze(['not-admitted', 'waiting', 'deterministic-pr', 'unmapped-stage-1', 'transient', 'environment', 'clean-final', 'queue', 'abort', 'unknown']);
+// 'node-role' (primary/standby C3, DESIGN §29): this node holds no ci-admission role. It says nothing about the PR: the release
+// is counted neither as an evaluation nor towards the head's release cap (ledger.mjs#usage), and the executor goes to STANDBY.
+export const FAILURE_CLASSES_V1 = Object.freeze(['not-admitted', 'node-role', 'waiting', 'deterministic-pr', 'unmapped-stage-1', 'transient', 'environment', 'clean-final', 'queue', 'abort', 'unknown']);
 export const DISPOSITIONS = Object.freeze(['release', 'release-if-safe', 'burn', 'halt']);
 export const RETRY_RULES = Object.freeze(['new-trigger', 'attempt2', 'new-commit', 'owner-rearm']);
 const ROW_KEYS = ['code', 'stages', 'phase', 'reasons', 'reasonCodesAny', 'reasonCodesWithin', 'class', 'disposition', 'retry', 'breaker', 'note'];
@@ -256,8 +260,9 @@ export function decideFailure({ code, stage, phase = 'stage', outcome = null, br
   if (!row || row.disposition === 'halt') return { klass: 'UNKNOWN', basis: row ? 'failure-table-halt' : 'not-an-allow-listed-clean-failure', row, release: null };
   const windows = proof?.windowsTreeZero === true && proof?.serviceOriginalStopped === true;
   const deterministic = diagnosticCodes(outcome?.diagnostic).some(c => DETERMINISTIC_REASON_CODES.includes(c));
-  // What the deterministic code makes of a release-if-safe row is what the ledger and the status record.
-  if (deterministic && row.disposition === 'release-if-safe') row = Object.freeze({ ...row, class: 'deterministic-pr', disposition: 'burn', retry: 'new-commit', breaker: 'neutral' });
+  // What the deterministic code makes of a release-if-safe row is what the ledger and the status record. Except a node that
+  // holds no role (DESIGN §29): it decided nothing about the PR, so no reason beside it can burn the head.
+  if (deterministic && row.disposition === 'release-if-safe' && row.class !== 'node-role') row = Object.freeze({ ...row, class: 'deterministic-pr', disposition: 'burn', retry: 'new-commit', breaker: 'neutral' });
   if (started !== true && row.disposition === 'release-if-safe' && windows) {
     if (outcome?.safeToRerun === true) return { klass: 'NOT_ADMITTED', basis: 'stage-1-safe-to-rerun', row, release: 'NOT_ADMITTED' };
     if (brokerNoLaunch === true) return { klass: 'NOT_ADMITTED', basis: 'stage-1-broker-not-launched', row, release: 'BROKER_NOT_LAUNCHED' };
