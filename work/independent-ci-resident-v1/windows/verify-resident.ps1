@@ -11,6 +11,12 @@
   hash, the broker's failure actions, the resident's outbound firewall block and the firewall being on),
   the runner service byte-for-byte unchanged (SDDL, binary, account), the companion task
   (principal, LeastPrivilege, trigger), the receipt chain and the HALT / PAUSE latches.
+  Node identity (resident active/standby design v0.4 section 9 C7, DESIGN.md section 30): the receipt's node identity (node name,
+  App key id and fingerprint, token fingerprint, connection id, formal qualification refs) is re-derived from the installed record
+  (record\installation.json and record\acceptance.json, both hash-pinned by the receipt, which must agree with each other) and
+  compared; the receipt assumes no role. The App key and the ci-admission token files are checked for existence and security
+  (owner an administrator principal, readable by SYSTEM, Administrators and the pinned controller only, no write for the
+  controller); their content is never read here: the fingerprints were checked at install, and the runtime checks them on every start.
   Prints one JSON verdict; exit 0 only if every check passes. Elevated for the complete check
   (service DACLs need READ_CONTROL); a non-elevated run reports those as unreadable and exits 2.
 #>
@@ -48,6 +54,99 @@ function ConvertTo-NodeProfileCanonical($n) {
   $rows=@(foreach($key in $keys) { ($key | ConvertTo-Json -Compress)+':'+($n.$key | ConvertTo-Json -Compress) })
   return '{'+($rows -join ',')+'}'
 }
+
+# ---- Node identity (resident active/standby design v0.4 sections 7.1, 7.2, 7.4 and 9 C7; DESIGN.md section 30) ----
+# Who this node is to the services it talks to, as the install pins it in its receipt: the node name, this node's GitHub App key
+# (appKeyId and the public-key fingerprint), its ci-admission connection (connection id and token fingerprint), the formal
+# qualification refs of the install record and the Owner decision that accepted it. Public ids and fingerprints only: never a key
+# or a token. ciPrincipalRoleRef is the Owner decision that this connection MAY hold ci-admission (design 7.2); whether it holds
+# it now is only ever the role probe's answer, so no role is assumed here. The identity is derived from the two install-record
+# files the package carries, read from the same hashed bytes; the two files state the connection, the token pin, the key
+# fingerprint and the principal qualification twice and must agree. src/node-identity.mjs is the JavaScript twin;
+# test/fixtures/node-identity-cases.json holds the three to the same answers and refusal codes.
+$NodeIdentityRefs = @('sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef', 'ownerPackageAcceptanceRef', 'installationReceiptRef')
+$NodeIdentityKeys = @('contract', 'nodeName', 'appKeyId', 'appPublicKeySha256Base64', 'ciTokenPinSha256', 'ciPrincipalBindingId', 'ciPrincipalRoleRef', 'sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef', 'ownerPackageAcceptanceRef', 'installationReceiptRef', 'ownerDecisionRef', 'ownerReceiptRef')
+# .NET regex notes as for the node profile: \z anchors, [0-9a-f] digits. A property that is absent reads as $null (StrictMode).
+function Get-NodeIdentity($installation, $accepted, [string]$acceptanceSha256) {
+  $get = { param($o, [string]$k) if (($o -is [pscustomobject]) -and (@($o.PSObject.Properties.Name) -ccontains $k)) { $o.$k } else { $null } }
+  $is = { param($v, [string]$re) ($v -is [string]) -and ($v -cmatch $re) }
+  $uuid = '^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\z'; $hex = '^[a-f0-9]{64}\z'; $key = '^[A-Za-z0-9+/]{43}=\z'
+  $node = & $get $accepted 'node'; $keyId = & $get $installation 'appKeyId'
+  $fields = ($installation -is [pscustomobject]) -and ($accepted -is [pscustomobject]) -and ($acceptanceSha256 -cmatch $hex) -and ($node -is [pscustomobject]) -and
+    (& $is (& $get $node 'nodeName') '^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\z') -and (($keyId -is [int]) -or ($keyId -is [long])) -and ([long]$keyId -ge 1) -and ([long]$keyId -le 9007199254740991) -and
+    (& $is (& $get $installation 'appPublicKeySha256Base64') $key) -and (& $is (& $get $installation 'ciTokenPinSha256') $hex) -and
+    (& $is (& $get $installation 'ciPrincipalBindingId') $uuid) -and (& $is (& $get $installation 'ciPrincipalRoleRef') $uuid) -and (& $is (& $get $installation 'acceptanceSha256') $hex) -and
+    (& $is (& $get $accepted 'ownerDecisionRef') $uuid) -and (& $is (& $get $accepted 'ownerReceiptRef') $uuid) -and
+    (@($NodeIdentityRefs | Where-Object { -not ((& $is (& $get $accepted $_) $uuid) -and ((& $get $accepted $_) -cnotmatch '^0{8}-')) }).Count -eq 0)
+  if (-not $fields) { throw 'NODE_IDENTITY_FIELDS_REQUIRED' }
+  if ((& $get $installation 'acceptanceSha256') -cne $acceptanceSha256) { throw 'NODE_IDENTITY_ACCEPTANCE_PIN_MISMATCH' }
+  foreach ($k in @('ciPrincipalBindingId', 'ciTokenPinSha256', 'appPublicKeySha256Base64', 'ciPrincipalQualificationRef')) {
+    if ((& $get $accepted $k) -cne (& $get $installation $k)) { throw 'NODE_IDENTITY_RECORDS_DISAGREE' }
+  }
+  $id = [ordered]@{ contract = 'clued.independent-ci.node-identity/1'; nodeName = $node.nodeName; appKeyId = [long]$keyId
+    appPublicKeySha256Base64 = $installation.appPublicKeySha256Base64; ciTokenPinSha256 = $installation.ciTokenPinSha256
+    ciPrincipalBindingId = $installation.ciPrincipalBindingId; ciPrincipalRoleRef = $installation.ciPrincipalRoleRef }
+  foreach ($k in $NodeIdentityRefs) { $id[$k] = $accepted.$k }
+  $id.ownerDecisionRef = $accepted.ownerDecisionRef; $id.ownerReceiptRef = $accepted.ownerReceiptRef
+  $id
+}
+# Sorted keys, compact JSON: the bytes the JavaScript twin hashes (src/node-identity.mjs, canonicalJson).
+function ConvertTo-NodeIdentityCanonical($id) {
+  [string[]]$keys = $NodeIdentityKeys.Clone(); [Array]::Sort($keys, [StringComparer]::Ordinal)
+  $rows = @(foreach ($key in $keys) { ($key | ConvertTo-Json -Compress) + ':' + ($id.$key | ConvertTo-Json -Compress) })
+  return '{' + ($rows -join ',') + '}'
+}
+
+# ---- Verify-only helpers for the node identity and the two secret files (DESIGN.md section 30) ----
+function Sha256Text([string]$t) { $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash([Text.Encoding]::UTF8.GetBytes($t)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() } }
+function Get-Field($o, [string]$k) { if (($o -is [pscustomobject]) -and (@($o.PSObject.Properties.Name) -ccontains $k)) { $o.$k } else { $null } }
+# Where the runtime reads the two controller secrets (the same literals as install-resident.ps1).
+$SecretTargets = [ordered]@{ appKey = 'C:\ProgramData\CluedControl\trusted\controller-checks-app.pem'; ciToken = 'C:\ProgramData\CluedIndependentCI\secrets\ci-admission.token' }
+$SecretAdmins = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+# The runtime's rule for a private secret file (runtime/verify-install-acl.ps1, -ReadFile), plus: the pinned controller can read it.
+# The owner is an administrator principal; only an administrator principal holds a write, delete or permission right; nobody but an
+# administrator principal and the controller can read data; the controller holds no write right. $acl: the file's security object.
+function Test-SecretFileSecurity($acl, [string]$controllerSid) {
+  $write = 0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000
+  if ($SecretAdmins -cnotcontains $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value) { return $false }
+  $controllerReads = $false
+  foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+    if ([string]$rule.AccessControlType -cne 'Allow' -or (([int]$rule.PropagationFlags -band 2) -ne 0)) { continue }
+    $sid = $rule.IdentityReference.Value; $rights = [int]$rule.FileSystemRights; $admin = $SecretAdmins -ccontains $sid
+    if ((($rights -band $write) -ne 0) -and -not $admin) { return $false }
+    if ((($rights -band 0x1) -ne 0) -and -not $admin -and $sid -cne $controllerSid) { return $false }
+    if ($sid -ceq $controllerSid -and (($rights -band 0x1) -ne 0)) { $controllerReads = $true }
+  }
+  return $controllerReads
+}
+function Get-SecretFileState([string]$target, [string]$controllerSid) {
+  try {
+    if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { return 'absent' }
+    if (((Get-Item -LiteralPath $target -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return 'link-refused' }
+    if (Test-SecretFileSecurity (Get-Acl -LiteralPath $target) $controllerSid) { return 'ok' } else { return 'acl-refused' }
+  } catch { return 'unreadable' }
+}
+# The receipt's node identity against the identity re-derived from the installed record. Never throws: ok/detail/identity.
+function Test-NodeIdentityReceipt($receipt, $installation, $accepted, [string]$acceptanceSha256) {
+  $no = { param([string]$why) [pscustomobject]@{ ok = $false; detail = $why; identity = $null } }
+  try { $have = Get-NodeIdentity $installation $accepted $acceptanceSha256 } catch { return & $no $_.Exception.Message }
+  $canonical = ConvertTo-NodeIdentityCanonical $have
+  if ((Get-Field $receipt 'roleAssumption') -cne 'NONE') { return & $no 'ROLE_ASSUMED_AT_INSTALL' }
+  $want = try { ConvertTo-NodeIdentityCanonical (Get-Field $receipt 'nodeIdentity') } catch { $null }
+  if ($null -eq $want -or $want -cne $canonical -or (Get-Field $receipt 'nodeIdentitySha256') -cne (Sha256Text $canonical)) { return & $no 'NODE_IDENTITY_CHANGED' }
+  [pscustomobject]@{ ok = $true; detail = $have.nodeName; identity = $have }
+}
+# What the receipt says about the two files: placed with the record's pin as fingerprint, or nothing placed by this install.
+function Test-SecretsReceipt($receipt, $identity) {
+  if ($null -eq $identity) { return $false }
+  foreach ($spec in @(@('appKey', 'appPublicKeySha256Base64'), @('ciToken', 'ciTokenPinSha256'))) {
+    $r = Get-Field (Get-Field $receipt 'secrets') $spec[0]
+    if ($null -eq $r -or (Get-Field $r 'target') -cne $SecretTargets[$spec[0]]) { return $false }
+    $placed = Get-Field $r 'placed'; $fingerprint = Get-Field $r 'fingerprint'
+    if (-not ((($placed -eq $false) -and ($null -eq $fingerprint)) -or (($placed -eq $true) -and ($fingerprint -ceq $identity.($spec[1]))))) { return $false }
+  }
+  return $true
+}
 $checks = [ordered]@{}
 function Sha256File([string]$p) { $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash([IO.File]::ReadAllBytes($p)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() } }
 function Read-ReviewedPublicJson([string]$file, [string]$expected, [ValidateRange(1,4194304)][int]$maximum=1048576) {
@@ -71,9 +170,10 @@ function Record([string]$name, $ok, $detail = $null) { $script:checks[$name] = [
 $receiptFile = Join-Path $Root 'install\install-receipt.json'
 $receipt = Read-ReviewedPublicJson $receiptFile $ExpectedInstallReceiptSha256
 Record 'install-receipt' $true
-if ($receipt.contract -cne 'clued.independent-ci.resident-install-receipt/4' -or $receipt.nodeProfileSha256 -cnotmatch '^[0-9a-f]{64}\z' -or $receipt.acceptanceSha256 -cnotmatch '^[0-9a-f]{64}\z') { throw 'INSTALLED_NODE_PROFILE_REFUSED' }
+if ($receipt.contract -cne 'clued.independent-ci.resident-install-receipt/5' -or $receipt.nodeProfileSha256 -cnotmatch '^[0-9a-f]{64}\z' -or $receipt.acceptanceSha256 -cnotmatch '^[0-9a-f]{64}\z') { throw 'INSTALLED_NODE_PROFILE_REFUSED' }
 $acceptancePath=Join-Path $Root 'record\acceptance.json'
-$Node=(Read-ReviewedPublicJson $acceptancePath $receipt.acceptanceSha256 4MB).node
+$Accepted=Read-ReviewedPublicJson $acceptancePath $receipt.acceptanceSha256 4MB
+$Node=$Accepted.node
 $NodeCanonical=ConvertTo-NodeProfileCanonical $Node
 $nh=[Security.Cryptography.SHA256]::Create();try{$NodeProfileSha256=([BitConverter]::ToString($nh.ComputeHash([Text.Encoding]::UTF8.GetBytes($NodeCanonical)))).Replace('-','').ToLowerInvariant()}finally{$nh.Dispose()}
 if($NodeProfileSha256 -cne $receipt.nodeProfileSha256 -or (ConvertTo-NodeProfileCanonical $receipt.node) -cne $NodeCanonical){throw 'INSTALLED_NODE_PROFILE_CHANGED'}
@@ -81,6 +181,15 @@ $Runner=[string]$Node.runnerService
 foreach($pair in @(@('config\policy.json',$receipt.policySha256),@('config\companion.json',$receipt.companionConfigSha256),@('config\broker.json',$receipt.brokerConfigSha256))){
   $file=Join-Path $Root $pair[0];$cfg=Read-ReviewedPublicJson $file $pair[1];if($pair[0] -ceq 'config\companion.json'){$cfg=$cfg.companion}
   if($cfg.nodeProfileSha256 -cne $NodeProfileSha256 -or (ConvertTo-NodeProfileCanonical $cfg.node) -cne $NodeCanonical){throw 'INSTALLED_NODE_CONFIG_CHANGED'}
+}
+
+# Node identity (C7): re-derived from the installed record and compared with the receipt; the receipt assumes no role.
+$identityCheck = try { Test-NodeIdentityReceipt $receipt (Read-ReviewedPublicJson (Join-Path $Root 'record\installation.json') ([string](Get-Field $receipt 'installationSha256')) 4MB) $Accepted $receipt.acceptanceSha256 } catch { [pscustomobject]@{ ok = $false; detail = $_.Exception.Message; identity = $null } }
+Record 'node-identity' $identityCheck.ok $identityCheck.detail
+Record 'node-secrets-receipt' (Test-SecretsReceipt $receipt $identityCheck.identity)
+foreach ($spec in @(@('app-key-file', 'appKey'), @('ci-admission-token-file', 'ciToken'))) {
+  $state = Get-SecretFileState $SecretTargets[$spec[1]] $Node.controllerSid
+  Record $spec[0] $(if ($state -ceq 'ok') { $true } elseif ($state -ceq 'unreadable') { 'unreadable' } else { $false }) $state
 }
 
 foreach ($s in @($receipt.sourceManifestSha256, $receipt.residentManifestSha256)) { if ($s -cnotmatch '^[0-9a-f]{64}$') { throw 'INSTALL_RECEIPT_SHAPE_REFUSED' } }
