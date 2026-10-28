@@ -291,7 +291,7 @@ companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ 
   - 其他请求照常执行，执行器停下：本次开机的、空的、残缺的、超长的、读不了的、格式不对的，都算。已死执行器的残留（SCM 停止之后、确认之前，执行器崩溃、被杀或自己出错退出）就是这样，由下一个执行器确认一次：`service-start`、`service-stop` 两条回执，改名进 `state\locks`，不删除。再下一次启动正常运行。
   - 还有两种情况没有覆盖。一是判断只朝一个方向：服务延迟启动，执行器第一次看时开机已有几分钟；上一次开机里，开机时长不超过（这次第一次看时的开机时长 + 60 秒）时写下的请求认不出来，照常执行，第一次启动以 0 退出，和修复前一样。二是残留还在时（从服务报 RUNNING 到执行器第一次看，几秒钟）来的 SCM 停止，会看到"文件已经在了"，什么都不写；执行器随后把残留改名，这次停止就丢了。宿主等 20 秒后报 STOPPED，执行器没有宿主，继续运行，SCM 再也停不了它；下一次启动会被单实例锁拒绝，Owner 能看到，手工建 `STOP-REQUESTED` 或结束进程。
 - **串行**：`maxConcurrent` 只能是 1；交换代理有自己的全局互斥量；Linux `formal-role.lock` 不变；Linux guard 要求同时只有一个 clued-ci unit 活动。
-- **companion**：有子进程超时未退时进入 busy，不接新请求，也不发心跳。
+- **companion**：每个子进程都建在作业宿主自己的作业对象里，超时后宿主终止并排空这个作业，companion 接着处理下一个请求（§24）。只有宿主本身还没结束时才 busy，这时不接新请求，也不发心跳。
 
 ### 6.3 失败分类（`src/classify.mjs`，白名单，Decision `0d84ddbb` 第 4 项）
 
@@ -1252,7 +1252,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 - 去重记录放在 Owner 自己的 `%LOCALAPPDATA%\CluedIndependentCI\`，不放在常驻目录。
 - `companion.json` 的 `status` 可以分别关掉这两项，默认都开。
 - **两条线**（`companion-main.mjs#lane`）：companion 自己的动作（邮箱：bundle、工作区、Linux 归档和静止证明、转发泵）和咨询性工作（poller、PR 页面状态、通知）各走一条线，各用自己的 Runner。
-  - Runner 从不杀子进程，所以一个卡住的 gh 只会占住它自己那条线；服务要的证明（例如 2 分钟期限的 `linux-quiescence`）照常应答，GitHub 再慢也不会让邮箱请求过期，进而导致不该有的 HALT（独立复核 M1）。
+  - 一个卡住的 gh 只会占住它自己那条线；服务要的证明（例如 2 分钟期限的 `linux-quiescence`）照常应答，GitHub 再慢也不会让邮箱请求过期，进而导致不该有的 HALT（独立复核 M1）。§24 起，两条线的子进程都由作业宿主在时限处连同它的作业一起结束，卡住的 gh 也只占到时限为止。
   - 咨询性的每次调用最多 15 秒，每轮 PR 页面加通知最多 60 秒，超时后这一轮不再发起新调用。
   - 调用超时或 Runner 仍忙时，这一轮就此结束；没做成的事不记为已做或失败：没弹出的通知下一轮再弹，没写成的 PR 状态不进 10 分钟的失败名单。
   - 通知先于 PR 页面：通知只在本机，不应排在慢的 GitHub 后面。
@@ -1929,6 +1929,227 @@ Owner Decision `2eea28a1` 把 3c 拆成两步。3c-1 只做影子模式（设计
 
 本 PR 的交付范围仍为 3c-1 shadow；正式六项检查、受保护合并及其后 3c-2/C9 和第 4–7 步的当前状态由 Task `6451a55d` 跟踪，Source 安装证据不替代这些 Gate。
 
+## 24. companion 子进程超时：作业对象收尾，第 0 段不靠 companion 收尾（Task `8e1f07d3`）
+
+这是设计层面的改动：companion 的 Runner 不再沿用“从不杀子进程”。下面写清改的范围、理由和边界，已经过独立审核（§24.8）。服务自己的 Runner 不变。
+
+### 24.1 现象与链路
+
+- 2026-10-23，PR #916 的批次：companion 跑 `build-bundle` 到 30 分钟上限，答复 `BUNDLE_UNAVAILABLE`，可它起的进程树（powershell 加 4 个 git）还在（Note `d1c2eac3`）。
+- 链路（main `c955068d` 只读核实）：
+  1. `runner.mjs` 从不杀子进程，超时后 Runner 一直 busy，直到子进程自己结束；
+  2. `companion-main.mjs` 的 `lane` 在 busy 时什么请求都不取，整条邮箱通道停摆，心跳也停；
+  3. 执行器在第 0 段失败时调 `closeOrThrow`，`engine.closeBatch` 要向 companion 要 `archive-linux` 的结果。没人答，6 分钟后过期，报 `UNEXECUTED_CLOSE_UNCONFIRMED`，09:14Z HALT。
+- 恢复靠 Owner 结束遗留进程并 rearm（Decision `901a8968`）。一次 HALT 要 Owner 点一次 UAC。
+- Task `4d3aaa64`（`build-bundle.ps1` 低速超时 + 在新库里重做一次）写本节时仍未合入 main。即使合入，下面几种情况仍会走到这条链路：慢而不断的传输、git 卡在 curl 之外（例如凭据助手弹窗）、companion 的其他子进程（wsl、relay、gh）超时。
+
+### 24.2 决定：companion 的每个子进程都建在它自己的作业对象里
+
+- **宿主** `windows/CompanionJobHost.cs`，安装时编译为 `bin\CluedCompanionJobHost.exe`（只有管理员能写，Owner 可读可执行）。调用方式：`<nonce> <时限毫秒> <绝对路径的程序> [参数...]`。
+  1. 新建一个作业对象，标志是 `KILL_ON_JOB_CLOSE | DIE_ON_UNHANDLED_EXCEPTION`（`0x2400`）。不许脱离：没有 `BREAKAWAY_OK`，也没有 `SILENT_BREAKAWAY_OK`。node 直接起子进程时，子进程所在的 libuv 作业标志是 `0x3c00`，即这两项再加两个脱离许可。所以崩溃的子进程仍然立即结束，不会在错误报告里挂到时限。
+  2. 子进程**直接建在这个作业里**：
+     - 用 `PROC_THREAD_ATTRIBUTE_JOB_LIST` 创建（Windows 10 1607 起可用；TURING 是 Windows 11），同时挂起（`CREATE_SUSPENDED | CREATE_NO_WINDOW`）；
+     - 宿主用 `IsProcessInJob` 核实它确在作业里，然后才恢复运行；
+     - 所以子进程从来不在这个作业之外，连运行前也不在，它起的一切进程也都在作业里；
+     - 内核不确认它在作业里时，就地结束这个还没运行过的子进程，不会恢复它（`CHILD_JOB_UNCONFIRMED`）。
+  3. 子进程只继承三个句柄：NUL 作 stdin，加上宿主自己的 stdout 和 stderr（用 `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` 限定）。
+     - companion 读到的输出和直接起子进程时一样；
+     - 环境变量和当前目录沿用宿主自己的，也就是 companion 原来给子进程的那一份；
+     - 参数按 libuv 的规则重新加引号，子进程拿到的参数逐字相同（测试覆盖空格、引号、结尾反斜杠和空串）。
+  4. 子进程自己结束，或者超过时限时：
+     - 宿主终止这个作业（`TerminateJobObject`），然后等到内核计的作业存活进程数为 0（`ActiveProcesses = 0`），并且子进程的退出码已知；
+     - 等待期间如果还有进程，每 500 毫秒再终止一次作业；
+     - 最多等 30 秒。
+  5. 报告是宿主在 stderr 上写的最后一行：`clued-job-host <nonce> {...}`，合同 `clued.independent-ci.companion-job-host-report/1`。
+     - 字段恰好是 `started`、`failure`、`childPid`、`timedOut`、`exitCode`、`leftover`（等待结束时作业里还活着的进程数）、`activeProcesses`、`totalProcesses`、`treeZero`；
+     - 退出码：子进程自己结束时取它的退出码，超时 121，没起子进程 120，其他 122。
+- **原则和 §6.5 的通用助手相同**：只终止并排空自己建的作业对象。作业外的进程一个都不看、不碰，也不按父进程号遍历进程树（父进程号可能被复用，这正是原规则要防的“来历不明的进程树”）。宿主一结束，作业随之关闭，内核结束作业里剩下的每个进程（`KILL_ON_JOB_CLOSE`），这仍然只涉及这一棵树。
+- **TURING 实测**：作业里实际有哪些进程（`JobObjectBasicProcessIdList`）。
+  - wsl：`System32\wsl.exe` → `Program Files\WSL\wsl.exe` → `wslhost.exe` → `conhost.exe`；
+  - git：`cmd\git.exe` → mingw `git.exe` → `git-remote-http(s).exe`；
+  - powershell、node 各带一个 `conhost.exe`。
+
+  这些进程都随这次调用自己结束。子进程退出后剩下的，只有一个正在退出的 conhost。没有哪个需要在调用之后继续存在，所以每次调用后都排空作业不会伤到 WSL 或 git。
+- **Linux 一侧**：结束 wsl.exe 时，它直接起的 Linux 进程也立即结束（审核实测：`sleep` 和 `sh -c 'exec sleep'` 都是）。只有 systemd unit 继续运行，Linux worker 从不受影响。Linux 的静止事实仍然只来自 root 工具。
+- **半路被结束的子进程，各自的后果**：
+  - `build-bundle.ps1`：每批一个只新建的 `bundles\<batchId>\`，残留不会再读；下一批用新的 batchId。
+  - `-CheckRefs`、gh：只读。
+  - `relay-public.ps1`：
+    - 它自己的规则是：wsl 子进程 90 秒没结束就报 `PUBLIC_TERMINAL_UNCONFIRMED_LOCKS_RETAINED`，然后不杀 wsl，一直持着父目录锁，直到 wsl 结束。宿主在 companion 的时限（`RELAY_TIMEOUT_MS`，120 秒）处覆盖这条规则：relay、它起的 wsl.exe 和 Linux 上的 `relay-record.mjs` 一起结束，写方和锁同时消失；
+    - 这个脚本自己有界的部分（Add-Type、哈希，加 5+90+5 秒）在 120 秒内做完。被覆盖的只是“wsl 一直不结束、就一直持锁”这一段，也就是卡死的情形；
+    - 两侧都是先写数据并落盘，最后才新建 ready 标记：Windows incoming 用 `CreateNew`，Linux incoming 由 `relay-record.mjs` 用 `wx` 加 fsync。半路结束，最多留下一份没有标记的数据，读方不会取它；同一条记录也不会再转一次（`EXISTING_RECORD_PRESERVED_NO_RETRY`）。泵本来就把搬运超时当成 `RELAY_REFUSED_NO_RETRY`。
+  - `systemctl start --wait`：unit 由 systemd 继续运行；其余 wsl 调用都是只读工具。
+- **Runner**（`src/runner.mjs`，只有 companion 给它 `jobHost`）：
+  - 起子进程时实际起的是宿主：`[宿主, nonce, 时限, ...argv]`。时限只收 1 秒到 1 小时。
+  - 结果按报告来：
+    - 自己结束并排空：返回它的退出码和输出，报告行从 stderr 里去掉；
+    - 自己结束、但剩下的进程没排空：仍返回它的退出码，另加 `tree: 'unconfirmed'`；
+    - 超时：`timedOut`，`tree` 是 `'zero'` 或 `'unconfirmed'`；
+    - 没有报告、nonce 不对、报告有失败码、退出码对不上：`JOB_HOST_UNCONFIRMED`，从不当成功。
+  - stderr 照常最多留 4 MiB；另有一份末尾 4 KB，专门用来找报告，所以子进程写了很多 stderr 也不影响。
+  - 宿主自己超过“时限 + 60 秒”还没结束时，Runner 结束这个宿主。宿主是它自己的直接子进程，句柄一直在它手里，不存在进程号复用。宿主一结束，它的作业就关闭。
+  - companion 的 Runner 只在宿主运行期间 busy。结束请求被系统拒绝时（`error` 事件，有 pid），仍然 busy，直到宿主真的结束；只有宿主根本没起来（没有 pid）时才立即空闲。
+- **服务自己的 Runner 不变**：从不杀子进程，超时后 busy。Windows 侧的证明（`windowsTreeZero`）依赖这一条。
+
+### 24.3 邮箱通道不再停摆
+
+- 子进程超时后，宿主在时限之后最多 30 秒排空作业，Runner 随即空闲，`lane` 接着处理下一个请求。`linux-quiescence` 等证明用 root 工具的新鲜事实回答；泵在 relay 超时之后，它的 blocked 转交也能真正发出去。
+- `lane` 仍会 busy 的情况只剩一种：宿主进程本身还活着，或者作业里有一个结束不了、又还握着输出管道的进程。这是原规则用在宿主上。这时心跳停，执行器不开新批次（`COMPANION_NOT_READY`）。
+- 两条 lane 都用宿主，所以 gh 卡住也不会让 PR 页面状态一直停着。
+- **答复 `/2`**：`clued.independent-ci.resident-companion-response/2` 多一个字段 `jobTree`：
+  - `null`：这个请求的每个子进程都自己结束，并且已排空；
+  - `'zero'`：至少一个子进程超时，每一个都已终止，并且作业里没有剩下的进程；
+  - `'unconfirmed'`：其余情况，包括子进程自己结束但没排空、宿主没给报告。
+
+  这只是记录，两端的证明都不依赖 companion 自己的进程树。companion 和服务来自同一个安装包，一起升级；重装前要先卸载，卸载会结束 companion 进程（`uninstall-resident.ps1`），邮箱里不会留着两种版本的答复。
+
+### 24.4 第 0 段失败不靠 companion 收尾
+
+- 第 1 段之前，这一批的东西都没到 Linux：
+  - 描述符和 bundle 都只在 Windows 上（`outbox\<batchId>\`、Owner 的投放目录 `resident\bundles\<batchId>\`）；
+  - 第 1 段不起 Linux worker（policy `linuxWorker: false`）；
+  - 工作区准备在第 1 段之后才做。
+
+  所以第 1 段之前释放的批次，收尾只归档 Windows：`closeOrThrow(batch, { linux: false })`。这包括 bundle 失败，也包括第 1 段之前被新提交取代。这个参数原来就有，第 R 段把所有重角色都转出去时用的就是它。
+- 释放不再等 companion 的任何答复。companion 忙着、刚结束或根本不在，都不会再把第 0 段失败变成 `UNEXECUTED_CLOSE_UNCONFIRMED` 和 HALT。Windows 归档用的是服务自己的 `archive-windows-spool.ps1`，不经过 companion。
+- `batch-unexecuted` 回执多记一项 `companionJobTree`，取自 bundle 答复的 `jobTree`。
+- 宿主自己还没结束时，companion 的 Runner 仍然 busy，不发心跳，下一批不会开始（既有闸门）。
+
+### 24.5 没有做的，以及理由
+
+- **`build-bundle.ps1` 自设总时限**：不需要。宿主在每个子进程的时限到点时结束它的整棵树，覆盖 bundle、`-CheckRefs`、工作区准备、relay、gh。卡住的传输按 Task `4d3aaa64` 的设计约 60 秒就会由低速超时先处理（合入之后）。脚本自设时限只能多报一个阶段名，却要改 Source v2、要重装 Source，所以没做。本改动不动 Source v2：安装记录和 `ciSourceManifestSha256` 都不变。
+- 第 1 段失败后的释放（`NOT_ADMITTED` 等），仍然两端归档，没有改。
+- 第 1 段之前的安全点上，Owner 中止仍要 companion 的静止证明和 `archive-linux`（`executor.mjs`，Owner 中止的结束步骤），没有改。有了宿主，companion 在这时也总能回答。
+- 崩溃恢复对未终结批次仍然 HALT（`EXECUTOR_RESTARTED_WITH_OPEN_BATCH`），没有改。
+- **残余**：
+  - `tree: 'unconfirmed'` 之后 companion 照常往下走。依据是作业已经终止并随宿主关闭，这是内核的保证，不是观察到的事实。
+  - `archive-linux` 在 companion 里最坏是 5 分钟加 30 秒，再加排空，可能超过服务的 6 分钟。超过时服务按没有答复处理，结局和原来一样。
+
+### 24.6 安装与生效
+
+- `install-resident.ps1` 的 `service-hosts` 步骤：
+  - 从已安装的常驻副本 `resident\<sha>\windows\CompanionJobHost.cs` 编译 `bin\CluedCompanionJobHost.exe`；
+  - 编译器与其他宿主相同，参数和通用助手一样（`/target:winexe /platform:x64`，只引用 `System.dll`）；两个服务宿主是 `/target:exe`；
+  - 回执记 `companionJobHostSha256`，安装计划多一项 `companionJobHost`；
+  - `verify-resident.ps1` 核对这个哈希；
+  - `windows/test-job-host.ps1` 用同一组参数编译，并逐字核对安装脚本的编译行、回执钉值和 verify 那一行。
+- companion 用固定路径 `<root>\bin\CluedCompanionJobHost.exe`，`companion.json` 不变。找不到宿主时 companion 不启动（`COMPANION_JOB_HOST_REQUIRED`），所以宿主和 companion 必须一起装。
+- 要重装 Windows 常驻包才生效。Source v2 和 Linux 都不用重装。
+- 安装后的核验：在 Owner 自己的非提权会话里跑一次 `windows/test-job-host.ps1 -Wsl`，这和 companion 的环境只差计划任务那一层作业。离线时，联机用例已经在一层不许脱离的外层作业里跑过（`IsProcessInJob` 为真，`CREATE_BREAKAWAY_FROM_JOB` 报错误 5），子进程照样直接建进宿主的作业。
+
+### 24.7 测试
+
+- `test/job-host.test.mjs`：
+  - 报告只认最后一行、这个 nonce、恰好这些字段；
+  - 自己结束时退出码、输出原样，报告从 stderr 去掉；
+  - 超时并排空后 Runner 立刻空闲，下一个子进程马上开始；
+  - 排空没确认、没有报告、没起子进程（含建了没确认结束的）、退出码对不上、报告带失败码、nonce 不对，各自给出该有的 `tree` 和拒绝码；只有自己结束的子进程才会是 code 0；
+  - stderr 超过 4 MiB 仍能找到报告；
+  - 宿主超过时限加 60 秒时，Runner 只结束宿主，并且在宿主结束前保持 busy；结束被拒绝时同样保持 busy；宿主没起来时立即空闲；
+  - 时限越界、宿主路径不对，什么都不起；
+  - 服务的 Runner 照旧不杀、超时后 busy；
+  - `lane` 在一次超时之后继续回答；
+  - companion：超时的 bundle 答 `jobTree: 'zero'`，同一轮里 `linux-quiescence` 用 root 工具的事实回答；relay 超时后 blocked 转交只发一次；
+  - 答复 `/2` 的 `jobTree` 只收三种值；服务端口把它原样传给执行器；
+  - 执行器：第 0 段失败只关 Windows，不向 companion 要任何东西。即使 `archive-linux` 和静止证明都会失败，也照样干净释放、不 HALT，回执带 `companionJobTree`。第 1 段之前被取代同样只关 Windows。
+- 联机用例（`CLUED_JOB_HOST_EXE` 指向编译好的宿主时运行）：
+  - 参数逐字到达，输出和退出码原样；
+  - 超时的子进程和孙进程都结束，Runner 随即能跑下一个；
+  - 子进程退出后留下的孙进程（包括 detached 的）也结束，作业外的进程照常运行；
+  - powershell 跑 git，连到一个只接受、不回应的本地端口卡住：到时限整棵树结束，那个 git 不在了；
+  - `-Wsl` 时还跑真实的 wsl（含超时的 `sleep 30`）、powershell 和 git。
+- `windows/test-job-host.ps1`：解析三个脚本；核对安装与校验脚本里的那几行；用安装时的参数编译宿主；参数不对时退出码 120 并写报告；原样转发；再带联机用例跑上面的 node 测试。
+- 另做过一次探针：作业里的子进程读到的作业标志是 `0x2400`。
+
+### 24.8 独立审核
+
+第 1 轮（新上下文、只读，审 `b4377086`）：有条件 PASS，没有 BLOCKER。x64 结构体布局、句柄名单、失败路径（不会恢复不在作业里的子进程，不会误报成功）、引号还原、服务 Runner 不变、第 0 段 `linux:false`，都核对无误。修正如下：
+
+- MAJOR：安装与校验的改动必须和本改动进同一个 PR；“编译参数与其他宿主相同”不对，已改为与通用助手相同。
+- MINOR：
+  1. 作业标志补上 `DIE_ON_UNHANDLED_EXCEPTION`，否则崩溃会变成慢超时；
+  2. 原先挂起的子进程在 `CreateProcess` 和 `AssignProcessToJobObject` 之间不在任何作业里。宿主若恰在此时被结束，会留下握着管道的孤儿，lane 又会停摆。已改为 `PROC_THREAD_ATTRIBUTE_JOB_LIST` 直接建在作业里，再用 `IsProcessInJob` 核实；
+  3. Runner 在结束宿主被拒绝时不再清 busy；
+  4. 文档：§6.2、§16 和附录 A 里“companion 的 Runner 从不杀子进程”的说法一起改；`unconfirmed` 的来源写全；Task `4d3aaa64` 尚未合入；Linux 一侧和 relay 规则被覆盖的事实；Owner 中止仍要 companion；stderr 的 4 MiB 与 4 KB。
+- NIT：排空时重复终止作业；没起来的子进程没确认结束时保留 `tree`；为 stdout、stderr 新建的 NUL 句柄已关闭。
+
+第 2 轮：（见下）
+
+## 25. 中继稳健：逐次分类、有界重试、本地日志（Task `241de382`，设计 r3 第一部分）
+
+依据：常驻容错设计 r3（`DESIGN.r3.md`，sha256 `8d4627a2…3289`，三轮独立审核最终 PASS，KooYomi Note `178957cb`）第一部分；Owner Decision `7303ab04` 把它与 §24 放进同一个 PR、先装。只改常驻层（`src/companion.mjs`、`src/companion-main.mjs`、`src/engine-windows.mjs`、`src/failure-table.json`），不改 Source v2、`relay-public.ps1` 或 Linux 工具。
+
+### 25.1 为什么
+
+伴侣的 `relay()` 原来对“暂无记录”以外的任何失败都回 `RELAY_REFUSED_NO_RETRY`，泵随即放弃。Linux worker 等不到回调就自己退出，Windows 发行器等满段截止，以 `BRIDGE_RESULT_DEADLINE` 结束，常驻判 `PUBLICATION_UNCERTAIN` 并 HALT（10-21 #891，10-23 #911、#915、#918，10-28 #929、#928）。其中很多次只是一次 wsl.exe 或 VM 层的抖动，几秒内就失败了，再试一次就会成功。
+
+### 25.2 每次尝试的分类（`classifyRelayAttempt`，表里没有的一律 PERMANENT）
+
+| 类别 | 判定 | 处理 |
+|---|---|---|
+| OK | `code 0`，`PUBLIC_RECORD_TRANSFERRED`，`terminalConfirmed` | 返回 true |
+| NOT_YET | `childError.reason ENOENT`，`terminalConfirmed` | 返回 false（不变） |
+| NO_CHILD | runner `RUNNER_SPAWN_FAILED`；或 `JOB_HOST_UNCONFIRMED` 且没有 `tree` 键、没有超时；或回执 `PUBLIC_TRANSFER_UNCONFIRMED` 且 `processId`、`exitCode` 都是 null | 最多再试 1 次（可能是持久问题，如 spool 的 IO 或 ACL） |
+| CHILD_FAILED | `PUBLIC_CHILD_EXIT_REFUSED_NO_RETRY` 且 `childError` 为 null（wsl.exe 或 VM 层，或 OOM）；或 `PUBLIC_CHILD_REFUSED_NO_RETRY` 且 reason ∈ {EBUSY, EMFILE, ENFILE, EINTR, FORMAL_RELAY_STDIN_TIMEOUT}、stage ∈ {OPERATION, CONTEXT, STDIN, TRANSPORT, PACKET} | 先做 §25.3 的核对；Send* 还要先确认 Linux 上没有残留的 relay-record |
+| AMBIGUOUS | 作业宿主超时结束且 `tree zero`；`PUBLIC_TERMINAL_UNCONFIRMED_LOCKS_RETAINED`、`PUBLIC_OUTPUT_UNCONFIRMED_NO_RETRY`、`PUBLIC_STDIN_UNCERTAIN_NO_RETRY`；`childError.reason EEXIST` | §25.3：已到 → true；一半 → 永久失败；没到（Send* 还要求没有残留进程）→ 再试 |
+| EXISTING | Receive* 的 `EXISTING_RECORD_PRESERVED_NO_RETRY` | 只有完整的同名记录才算已到，其他一律永久失败 |
+| PERMANENT | 其余一切：身份、位置、清单类；`FORMAL_SPOOL_ACL_REFUSED`；`PUBLIC_PARENT_*`、`PUBLIC_INPUT_*`、`PUBLIC_READY_CHANGED`、`PUBLIC_RECORD_*`、`PUBLIC_IMPORT_UNCONFIRMED_NO_RETRY`；`childError` 的其他 reason，或 stage 为 BINDING、RECORD、COMPLETE；`tree unconfirmed`；runner 的其他拒绝；回执无法解析 | `RELAY_REFUSED_NO_RETRY`（码和失败表行都不变） |
+
+- OK 与 NOT_YET 按字段读取，和改动前一样；可能导致重试的类别（NO_CHILD 的回执形状、CHILD_FAILED、AMBIGUOUS、EXISTING）还要求回执的 `contract` 是 `clued.independent-ci.formal-public-relay-receipt/2`，因为它们的安全论证依赖 /2 的语义。
+- 作业宿主报 `tree unconfirmed` 时，即使回执写着已转移，也判 PERMANENT（设计 r3 §1.6：不在没证明结束的进程上叠新调用）。这比改动前严：改动前这种回执算成功。
+
+### 25.3 到达核对与残留进程检查
+
+一个记录名在一段里只用一次，两端都只新建、先写数据再写 ready，所以“到没到”直接看目标：
+
+- Receive*：Windows `formal-spool\incoming`（现有的 `fileExists` 端口）。数据与 ready 都在 = 已到；都不在 = 没到；其他 = 一半。
+- Send*：Linux `formal-spool/incoming`，新增固定 argv `ls -1 -A -- /var/lib/clued-independent-ci/formal-spool/incoming`。
+- 残留进程：新增固定 argv `pgrep -f -a protected-job-bridge-v4/relay-record.mjs`。退出码 1 = 没有；0 = 2 秒后再看一次，仍有就永久失败；其他退出码 = 永久失败。作业宿主结束了 Windows 一侧的 powershell 和 wsl.exe，但没有证明 Linux 一侧的 relay-record 也随之退出，所以每次 Send* 重试前都查。
+- 一半的记录：新码 `RELAY_PARTIAL_RECORD_PRESERVED`，加入 `PUMP_CODES` 和失败表（halt，`owner-rearm`，与 `RELAY_REFUSED_NO_RETRY` 同行为）。不删、不覆盖。
+- 核对本身失败（`ls`、`pgrep` 的非预期退出码，或子进程没有被证明结束）：不重试，按永久失败处理。两个新调用都走作业宿主，各 15 秒上限。
+
+### 25.4 次数、超时与预算
+
+每次尝试的超时仍是 `RELAY_TIMEOUT_MS`（120 秒），不缩短：在“数据已写、ready 未写”之间结束 relay-public 会留下一半的记录。所以只有失败得快的那一次后面才有时间重试。
+
+| 调用 | 最多尝试 | 间隔 | 下一次只在 |
+|---|---|---|---|
+| `SendIssue`、`ReceiveResult`、`ReceiveBlocked` | 3 | 3 s、8 s | 距段截止（请求的 `deadline`）还有 ≥ 150 s |
+| `ReceiveChallenge` | 2 | 3 s | `now ≤ firstSeen + 120 s − 60 s` |
+| `SendResponse` | 2 | 2 s | `now ≤ 挑战记录自己的 deadline − 15 s` |
+
+- 任何调用的重试都不会在段截止之后发起：那时服务已不再等这个答复。
+- `firstSeen`：泵第一次在 Linux outgoing 里列到这个挑战的时刻；记下后不再改，之后某次列表失败也照用。从没列到过（列表一直失败）时，用这次调用开始的时刻代替。估错只会让应答晚到（发行器有“迟到”处理），影响的是活性，不是安全。
+- `SendResponse` 的预算读 Windows incoming 里那条挑战记录的 `deadline` 字段（公开字节，只读这一个字段，只用来决定要不要再试）；读不到就不重试。
+- 每次尝试前都先做取消检查（Owner 中止优先）。泵里的 `ReceiveBlocked` 只有在永久失败后才记为“已拒绝”；只是重试用完时，失败后的“交出 blocked 记录”仍会再试一次。
+- 没有给预算的调用（例如测试或将来的新调用）不会重试。
+
+### 25.5 本地日志
+
+- 每次尝试一行：`{at, mode, seq, attempt, ms, runner:{code, timedOut, tree, refused}, receipt:{status, failureCode, exitCode, processIdPresent, terminalConfirmed, childError}, class, stderrTail}`。只记码与计数；码不合格式的字段记为 null。
+- `stderrTail`：powershell stderr 的尾部，最多 512 个字符，只留可打印 ASCII，`C:\Users\<名>` 换成 `%USERPROFILE%`，32 位以上的十六进制串换成 `<hex>`，40 位以上像 base64 的串换成 `<b64>`，连续空白折成一个。
+- 位置：Owner 自己的配置目录 `%LOCALAPPDATA%\CluedIndependentCI\companion-log\relay-YYYYMMDD.jsonl`（UTC 日期），与 PR 页面状态的本地记忆同处。
+  - 这与设计 r3 §1.5 写的 `resident\companion-log` 不同：伴侣不提权，常驻目录只由安装器和服务写；放在 Owner 目录下不必改安装脚本和 ACL。
+- 只追加；单个文件到 2 MB 时写一行 `LOG_TRUNCATED` 后当天不再写；每天第一次写时删除 14 天以前的文件。日志写失败一律忽略，从不影响判断。
+- 邮箱的应答合同不变，泵失败时的答复码不变；要查原因看这份日志。
+
+### 25.6 不变的
+
+- 不增加任何发布路径，不碰 GitHub，不用 App 凭据。
+- 不杀 Linux worker；Windows 一侧只由作业宿主结束伴侣自己起的子进程（§24）。
+- 失败表仍是白名单。新码不进 `classify.mjs` 里与 Source 镜像的数组。
+- 不需要 Source 或 Linux 工具重装；随 §24 一次常驻层 Windows 重装（Owner 一次 UAC，同一次 UAC 重签 policy 文件里的 `residentManifestSha256`）。
+
+### 25.7 测试与残余
+
+- `test/relay-retry.test.mjs`：分类表逐行（含“看起来相近但带 `tree` 键的 `JOB_HOST_UNCONFIRMED`”和 BINDING 段的 EBUSY 都是 PERMANENT）；三类预算的边界；Send* 的残留进程与到达核对（含核对本身失败）；一半的记录；EXISTING；NO_CHILD 只重试一次；取消优先；日志的字段、脱敏、2 MB 上限与 14 天清理；泵里 `ReceiveBlocked` 用完重试后仍能交出 blocked 记录。
+- `test/job-host.test.mjs`：“一次中继调用超过上限”改为超时真的耗掉 120 秒、Windows incoming 里没有记录，结果仍是 `RELAY_REFUSED_NO_RETRY`。
+- 离线演练新增 `relay-flap-under-load`：第 3 轮 `ReceiveChallenge` 第一次 2 秒内失败，第二次成功，泵答 ok，这一段成功，不 HALT。
+- 残余：
+  - 像 10-28 #929 那样 wsl.exe 卡满 90 秒的，这里救不了，交给设计 r3 第二、三部分。
+  - `pgrep` 不存在或误配了别的进程：检查失败或判“有残留”，都按不重试处理，与改动前相同。
+  - 伴侣的“已到达”判断只用来少跑一次中继；记录的真假仍由两端各自校验。
+
 ## 附录 A：草稿文件
 
 | 文件 | 作用 |
@@ -1941,7 +2162,7 @@ Owner Decision `2eea28a1` 把 3c 拆成两步。3c-1 只做影子模式（设计
 | `src/policy.mjs` | 安装策略 |
 | `src/executor.mjs` | 常驻状态机 |
 | `src/archive.mjs` | 协议记录白名单归档（参考实现与离线实现） |
-| `src/mailbox.mjs`、`companion.mjs`、`poller.mjs`、`runner.mjs` | companion 协议、泵、轮询、不杀进程的运行器 |
+| `src/mailbox.mjs`、`companion.mjs`、`poller.mjs`、`runner.mjs` | companion 协议、泵、轮询、运行器（服务的不杀子进程；companion 的经作业宿主，§24） |
 | `src/service-ports.mjs`、`engine-windows.mjs`、`service-main.mjs`、`companion-main.mjs`、`instance-lock.mjs`、`stop-request.mjs` | 真实端口与入口（引擎依赖 Source v2，缺了就 `SOURCE_V2_REQUIRED`） |
 | `windows/install-resident.ps1`、`verify-resident.ps1`、`uninstall-resident.ps1`、`rearm-resident.ps1` | 安装、校验、卸载、复位与恢复请求 |
 | `windows/ResidentServiceHost.cs`、`SwapBroker.cs` | 两个服务宿主（`HostPureTests.cs`：宿主停止处理的离线测试） |
@@ -1959,3 +2180,5 @@ Owner Decision `2eea28a1` 把 3c 拆成两步。3c-1 只做影子模式（设计
 | `CI/src/job-v2.mjs`（合同 /3）、`CI/test/job-v3.test.mjs` | v1.2：作业身份加测试提交 S，描述符 /3，工作区检出 S（§21） |
 | `src/train.mjs`、`src/ruleset-backstop.mjs` | v1.2：第 10 段的到期规则、状态摘要与 PR 页面行；companion 规则集兜底（§22） |
 | `CI/src/resident-v2/train-run.mjs`、`CI/src/independent-control-checks-v2/train-*.mjs`、`merge-slot-native.mjs` | v1.2：第 10 段的作业合同、入口、事实、影子记录与合并位只读读取（§22） |
+| `windows/CompanionJobHost.cs`、`windows/test-job-host.ps1`、`test/job-host.test.mjs` | companion 的作业宿主（安装时编译为 `bin\CluedCompanionJobHost.exe`）与它的离线、联机测试（§24） |
+| `test/relay-retry.test.mjs` | 中继逐次分类、到达核对、有界重试与本地日志（§25） |

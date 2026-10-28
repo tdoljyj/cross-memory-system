@@ -26,6 +26,7 @@ import { applyArchive, planArchive, protocolLeaves } from '../src/archive.mjs';
 import { abortRequest, drainRequest, inspect, rearmRequest, resumeRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
 import { ExecutedHeads, BACKFILL_MANIFEST_CONTRACT, CARRIED_FILE } from '../src/executed-heads.mjs';
 import { sha256 } from '../src/canonical.mjs';
+import { Companion } from '../src/companion.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const SOURCE = '5'.repeat(64);
@@ -461,6 +462,38 @@ await step('  a stage 10 whose cleanup is not proven HALTs like any stage', asyn
   trainAnswer = { ok: false, code: 'STAGE_CHILD_TREE_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: true } };
   return tExec.tick();
 }, r => r.state === 'HALTED' && r.failureCode === 'TRAIN_STAGE_CLEANUP_UNCONFIRMED');
+
+// ---- relay-flap-under-load (design r3 part one, DESIGN §25) ----
+// The real companion pump over a scripted host. Under load, the first ReceiveChallenge of round 3 fails within 2 s (wsl.exe
+// exits non-zero with an empty stderr); the bounded retry moves it on the second try, and the stage ends with its result:
+// the pump answers ok, so the stage succeeds and nothing HALTs.
+{
+  const flapCfg = { wslExe: 'C:\\Windows\\System32\\wsl.exe', distribution: 'Ubuntu-24.04', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    relayScript: 'C:\\drill\\relay-public.ps1', bundleScript: 'C:\\drill\\build-bundle.ps1', windowsSpool: 'C:\\drill\\formal-spool', bridgeManifestSha256: '9'.repeat(64),
+    nodeProfileSha256: '8'.repeat(64), linuxTool: '/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux' };
+  const relayReceipt = fields => JSON.stringify({ contract: 'clued.independent-ci.formal-public-relay-receipt/2', status: 'BLOCKED', processId: 1, exitCode: 1, terminalConfirmed: true, failureCode: null, childError: null, ...fields });
+  const calls = [];
+  let responses = 0, flapped = false;
+  const run = async a => {
+    if (a.includes('-Mode')) {
+      const mode = a[a.indexOf('-Mode') + 1], seq = Number(a[a.indexOf('-Sequence') + 1]);
+      calls.push(`${mode}${seq || ''}`);
+      if (mode === 'ReceiveChallenge' && seq === 3 && !flapped) { flapped = true; now += 2000; return { code: 2, stdout: relayReceipt({ failureCode: 'PUBLIC_CHILD_EXIT_REFUSED_NO_RETRY' }), stderr: '' }; }
+      if (mode === 'SendResponse') responses = seq;
+      now += 5000;
+      return { code: 0, stdout: relayReceipt({ status: 'PUBLIC_RECORD_TRANSFERRED', exitCode: 0 }) };
+    }
+    if (a.includes('/var/lib/clued-independent-ci/formal-spool/outgoing')) return { code: 0, stdout: responses >= 3 ? 'result.ready.json\n' : `challenge-0${responses + 1}.ready.json\n` };
+    if (a.includes('--property=ActiveState')) return { code: 0, stdout: 'inactive\n' };
+    if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
+    return { code: 0, stdout: '' };
+  };
+  const pump = new Companion({ cfg: flapCfg, mailbox: { cancelled: async () => false }, run, fileExists: async p => p.includes('\\outgoing\\'), sleep: async ms => { now += ms; }, clock });
+  await step('relay-flap-under-load: round 3 fails fast once, the bounded retry moves it, the stage gets its result and nothing HALTs', async () => {
+    const r = await pump.pump({ deadline: new Date(now + 45 * 60_000).toISOString(), jobId: 'e'.repeat(64), batchId: '0123456789abcdef-0123456789ab' });
+    return { state: r.ok ? 'PUMP_OK' : r.code, calls: calls.join(',') };
+  }, r => r.state === 'PUMP_OK' && r.calls === 'SendIssue,ReceiveChallenge1,SendResponse1,ReceiveChallenge2,SendResponse2,ReceiveChallenge3,ReceiveChallenge3,SendResponse3,ReceiveResult');
+}
 
 console.table(rows);
 const summary = { status: misses === 0 ? 'OFFLINE_DRILL_PASS' : 'OFFLINE_DRILL_FAIL', steps: rows.length, misses, receipts: head1 };

@@ -27,7 +27,7 @@ export const DESCRIPTOR_CONTRACT = 'clued.independent-ci.resident-batch-descript
 // The codes the companion's bridge pump can end with (companion.mjs#pump); a stage's companion answer is taken
 // only from this list, and none of them is an attempt-2 transient code.
 export const PUMP_CODES = Object.freeze(['ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED', 'LINUX_WORKER_START_UNCONFIRMED', 'FORMAL_BRIDGE_STAGE_DEADLINE',
-  'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED', 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED', 'FORMAL_WORKER_TERMINAL_UNCONFIRMED', 'RELAY_REFUSED_NO_RETRY',
+  'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED', 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED', 'FORMAL_WORKER_TERMINAL_UNCONFIRMED', 'RELAY_REFUSED_NO_RETRY', 'RELAY_PARTIAL_RECORD_PRESERVED',
   'COMPANION_PUMP_UNCONFIRMED', 'COMPANION_REQUEST_EXPIRED', 'COMPANION_HANDLER_UNCONFIRMED', 'COMPANION_PUMP_CANCELLED']);
 // The broker request the Source v2 invoker writes (resident-v2/broker-protocol.mjs) and the stop request the
 // resident may write next to it for an Owner abort (windows/SwapBroker.cs, StopRequest).

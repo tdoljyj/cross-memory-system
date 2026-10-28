@@ -113,6 +113,7 @@
     { "code": "NATIVE_CALLBACK_TRANSFER_UNCONFIRMED", "stages": "any", "class": "unknown", "disposition": "halt", "retry": "owner-rearm", "breaker": "counts", "note": "companion pump: a callback transfer was not confirmed" },
     { "code": "FORMAL_WORKER_TERMINAL_UNCONFIRMED", "stages": "any", "class": "unknown", "disposition": "halt", "retry": "owner-rearm", "breaker": "counts", "note": "companion pump: the worker did not end in time" },
     { "code": "RELAY_REFUSED_NO_RETRY", "stages": "any", "class": "unknown", "disposition": "halt", "retry": "owner-rearm", "breaker": "counts", "note": "companion pump: a relay call was refused" },
+    { "code": "RELAY_PARTIAL_RECORD_PRESERVED", "stages": "any", "class": "unknown", "disposition": "halt", "retry": "owner-rearm", "breaker": "counts", "note": "companion pump: a relayed record arrived only in part (data without its ready marker); kept, never overwritten (DESIGN §25.3)" },
     { "code": "COMPANION_PUMP_UNCONFIRMED", "stages": "any", "class": "unknown", "disposition": "halt", "retry": "owner-rearm", "breaker": "counts", "note": "companion pump: no allow-listed answer" },
     { "code": "COMPANION_REQUEST_EXPIRED", "stages": "any", "class": "unknown", "disposition": "halt", "retry": "owner-rearm", "breaker": "counts", "note": "companion: the request expired unanswered" },
     { "code": "COMPANION_HANDLER_UNCONFIRMED", "stages": "any", "class": "unknown", "disposition": "halt", "retry": "owner-rearm", "breaker": "counts", "note": "companion: the handler failed" },

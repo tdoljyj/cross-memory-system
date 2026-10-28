@@ -18,13 +18,91 @@ export const COMPANION_CONFIG_CONTRACT = 'clued.independent-ci.resident-companio
 // The Linux side of the Source v2 bridge spool (protected-job-bridge-v4/mailbox.mjs LINUX_ROOT): only its
 // outgoing names are listed, to know when a relay call has something to move.
 export const LINUX_OUTGOING = '/var/lib/clued-independent-ci/formal-spool/outgoing';
+// Its incoming names, listed only to tell whether a relayed record arrived (DESIGN §25.3).
+export const LINUX_INCOMING = '/var/lib/clued-independent-ci/formal-spool/incoming';
+// The Linux end of every relay call; a Send* retry waits until none is left running (DESIGN §25.3).
+export const RELAY_RECORD_PROCESS = 'protected-job-bridge-v4/relay-record.mjs';
 // One callback round, the same value as protected-job-bridge-v4/protocol.mjs CALLBACK_WINDOW_MS (test-pinned).
 export const CALLBACK_WINDOW_MS = 120_000;
 // How long the pump waits for one relay call. A relay call usually takes 4-6 s, but sometimes 25-45 s: PR #911 stage 4
 // (2026-10-23) lost a 43 s SendIssue to the old fixed 40 s, so no worker was started and the issuer waited out its
-// stage into a HALT (Task 576231fa). The runner never kills a child, so giving up earlier gains nothing: the runner
-// stays busy until the call ends. One callback round is the most a relay call can still help.
+// stage into a HALT (Task 576231fa). One callback round is the most a relay call can still help; at this limit the job
+// host ends the call with its whole job (DESIGN §24) and the pump goes on to its blocked hand-over.
 export const RELAY_TIMEOUT_MS = CALLBACK_WINDOW_MS;
+// Bounded relay retries (DESIGN §25.4). Every attempt keeps RELAY_TIMEOUT_MS: a call ended between relay-public.ps1's data
+// and ready writes would leave half a record. So only a call that failed fast leaves time for another; each next attempt
+// starts only while its budget holds: the stage deadline 150 s ahead, the challenge's first sighting plus one callback
+// round less 60 s (the issuer's evaluation and the response), or the challenge's own deadline less 15 s.
+export const RELAY_ATTEMPTS = Object.freeze({
+  SendIssue: Object.freeze([3000, 8000]), ReceiveResult: Object.freeze([3000, 8000]), ReceiveBlocked: Object.freeze([3000, 8000]),
+  ReceiveChallenge: Object.freeze([3000]), SendResponse: Object.freeze([2000]),
+}); // the gaps before attempts 2, 3, ...
+export const STAGE_RESERVE_MS = 150_000;
+export const CHALLENGE_RESERVE_MS = 60_000;
+export const RESPONSE_RESERVE_MS = 15_000;
+export const RELAY_CHECK_TIMEOUT_MS = 15_000;
+const RELAY_RECEIPT_CONTRACT = 'clued.independent-ci.formal-public-relay-receipt/2';
+const CHILD_TRANSIENT_REASONS = new Set(['EBUSY', 'EMFILE', 'ENFILE', 'EINTR', 'FORMAL_RELAY_STDIN_TIMEOUT']);
+const CHILD_TRANSIENT_STAGES = new Set(['OPERATION', 'CONTEXT', 'STDIN', 'TRANSPORT', 'PACKET']);
+const AMBIGUOUS_FAILURES = new Set(['PUBLIC_TERMINAL_UNCONFIRMED_LOCKS_RETAINED', 'PUBLIC_OUTPUT_UNCONFIRMED_NO_RETRY', 'PUBLIC_STDIN_UNCERTAIN_NO_RETRY']);
+const plainObject = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// The record a relay call moves: relay-public.ps1's own names (one per stage; both ends only create).
+export function relayRecordName(mode, seq) {
+  const suffix = String(seq).padStart(2, '0');
+  return { SendIssue: 'issue', SendResponse: `response-${suffix}`, ReceiveChallenge: `challenge-${suffix}`, ReceiveResult: 'result', ReceiveBlocked: 'blocked' }[mode];
+}
+export const relaySends = mode => mode === 'SendIssue' || mode === 'SendResponse';
+
+// One relay attempt -> OK | NOT_YET | NO_CHILD | CHILD_FAILED | AMBIGUOUS | EXISTING | PERMANENT (DESIGN §25.2). runner is
+// runner.mjs's answer, receipt the parsed stdout of relay-public.ps1. Anything not named here is PERMANENT.
+export function classifyRelayAttempt(runner, receipt) {
+  const r = runner ?? {};
+  // No child ran at all: the job host never started, or it reported started:false with its job drained (no `tree` key).
+  if (r.refused === 'RUNNER_SPAWN_FAILED') return 'NO_CHILD';
+  if (r.refused === 'JOB_HOST_UNCONFIRMED' && !('tree' in r) && !r.timedOut) return 'NO_CHILD';
+  // The job host ended the call at its limit with its whole tree: it may have written.
+  if (r.timedOut === true && r.tree === 'zero' && !r.refused) return 'AMBIGUOUS';
+  // A tree not shown ended, or any other runner refusal (busy, timeout or argv refused, a host that may still run).
+  if (r.tree === 'unconfirmed' || r.refused || r.timedOut) return 'PERMANENT';
+  // relay-public.ps1's receipt (contract formal-public-relay-receipt/2): read by its fields, as before (DESIGN §25.2).
+  const v = receipt;
+  if (!plainObject(v)) return 'PERMANENT';
+  if (r.code === 0 && v.status === 'PUBLIC_RECORD_TRANSFERRED' && v.terminalConfirmed === true) return 'OK';
+  const ce = plainObject(v.childError) ? v.childError : null;
+  if (ce?.reason === 'ENOENT' && v.terminalConfirmed === true) return 'NOT_YET';
+  // wsl.exe did not start, or relay-public failed before it: an exception id with no process and no exit code.
+  // The classes below may lead to a retry; their safety rests on receipt /2's meaning, so they require its contract.
+  if (v.contract !== RELAY_RECEIPT_CONTRACT) return 'PERMANENT';
+  if (v.failureCode === 'PUBLIC_TRANSFER_UNCONFIRMED' && v.processId === null && v.exitCode === null) return 'NO_CHILD';
+  if (v.terminalConfirmed === true && v.failureCode === 'PUBLIC_CHILD_EXIT_REFUSED_NO_RETRY' && v.childError === null) return 'CHILD_FAILED';
+  if (v.terminalConfirmed === true && v.failureCode === 'PUBLIC_CHILD_REFUSED_NO_RETRY' && ce && CHILD_TRANSIENT_REASONS.has(ce.reason) && CHILD_TRANSIENT_STAGES.has(ce.stage)) return 'CHILD_FAILED';
+  if (AMBIGUOUS_FAILURES.has(v.failureCode) || ce?.reason === 'EEXIST') return 'AMBIGUOUS';
+  // A Receive* that found the record already in Windows incoming: settled by the arrival check alone.
+  if (v.failureCode === 'EXISTING_RECORD_PRESERVED_NO_RETRY') return 'EXISTING';
+  return 'PERMANENT';
+}
+
+// The relay log's stderr tail (DESIGN §25.5): printable ASCII only, no user name, no long hex or base64, at most 512 chars.
+export function stderrTail(stderr) {
+  return String(stderr ?? '').replace(/[^\x20-\x7e]+/g, ' ')
+    .replace(/[A-Za-z]:\\Users\\[^\\\s"']+/gi, '%USERPROFILE%')
+    .replace(/[0-9a-fA-F]{32,}/g, '<hex>')
+    .replace(/[A-Za-z0-9+/=_-]{40,}/g, '<b64>')
+    .replace(/\s+/g, ' ').trim().slice(-512);
+}
+
+// One log entry per relay attempt: fixed keys, codes and counts only.
+export function relayLogEntry({ at, mode, seq, attempt, ms, runner, receipt, klass }) {
+  const r = runner ?? {}, v = plainObject(receipt) ? receipt : {};
+  const code = s => (typeof s === 'string' && /^[A-Z][A-Z0-9_]{1,79}$/.test(s) ? s : null);
+  const ce = plainObject(v.childError) ? { reason: code(v.childError.reason), stage: code(v.childError.stage) } : null;
+  return { at: new Date(at).toISOString(), mode, seq, attempt, ms,
+    runner: { code: Number.isSafeInteger(r.code) ? r.code : null, timedOut: r.timedOut === true, tree: ['zero', 'unconfirmed'].includes(r.tree) ? r.tree : null, refused: code(r.refused) },
+    receipt: { status: code(v.status), failureCode: code(v.failureCode), exitCode: Number.isSafeInteger(v.exitCode) ? v.exitCode : null,
+      processIdPresent: v.processId !== null && v.processId !== undefined, terminalConfirmed: v.terminalConfirmed === true, childError: ce },
+    class: klass, stderrTail: stderrTail(r.stderr) };
+}
 
 export function validateCompanionConfig(c) {
   exactKeys(c, ['contract', 'wslExe', 'powershellExe', 'relayScript', 'bundleScript', 'windowsSpool', 'distribution', 'bridgeManifestSha256', 'linuxTool', 'node', 'nodeProfileSha256'], 'COMPANION_CONFIG_KEYS_INVALID');
@@ -60,6 +138,8 @@ export function argv(cfg) {
     linuxTool: (sub, id) => { check(['quiescence'].includes(sub) && BATCH_ID.test(id), 'COMPANION_TOOL_ARGS_INVALID'); return wsl(cfg.linuxTool, sub, '--batch', id); },
     archiveUsage: () => wsl(cfg.linuxTool, 'archive-usage'),
     linuxOutgoing: () => wsl('/usr/bin/ls', '-1', '-A', '--', LINUX_OUTGOING),
+    linuxIncoming: () => wsl('/usr/bin/ls', '-1', '-A', '--', LINUX_INCOMING),
+    linuxRelayProcs: () => wsl('/usr/bin/pgrep', '-f', '-a', RELAY_RECORD_PROCESS),
     archiveStatus: instance => { check(/^[0-9a-f]{16}-[0-9a-f]{12}_[a-z0-9][a-z0-9-]{0,39}$/.test(instance), 'COMPANION_TOOL_ARGS_INVALID'); return wsl(cfg.linuxTool, 'archive-status', '--instance', instance); },
     relay: (mode, seq) => {
       check(['SendIssue', 'ReceiveChallenge', 'SendResponse', 'ReceiveResult', 'ReceiveBlocked'].includes(mode) && Number.isSafeInteger(seq) && seq >= 0 && seq <= 32, 'COMPANION_RELAY_ARGS_INVALID');
@@ -86,12 +166,28 @@ export function parsePull(stdout, pr) {
   return { number: pr, state: v.merged ? 'merged' : v.state, headSha: v.head };
 }
 
+// DESIGN §24: the answer's jobTree from what the job host said about each child of one request that did not simply end
+// on its own (runner.mjs `tree`): none -> null; all drained -> 'zero'; any other -> 'unconfirmed'.
+export function jobTreeOf(trees) {
+  if (trees.length === 0) return null;
+  return trees.every(t => t === 'zero') ? 'zero' : 'unconfirmed';
+}
+
 export class Companion {
-  // ports: { cfg, mailbox, run(argv,{timeoutMs}) -> {code, stdout, stderr}, fileExists(path), sleep(ms), clock(),
-  //   readPull(pr) -> argv (pr-head; without it the companion answers PR_HEAD_UNAVAILABLE) }
+  // ports: { cfg, mailbox, run(argv,{timeoutMs}) -> {code, stdout, stderr, timedOut?, tree?}, fileExists(path), sleep(ms), clock(),
+  //   readPull(pr) -> argv (pr-head; without it the companion answers PR_HEAD_UNAVAILABLE),
+  //   readText(path) -> string (bounded; a SendResponse retry reads its challenge's deadline, DESIGN §25.4; without it no
+  //   SendResponse retry), log(entry) (the local relay log, DESIGN §25.5; optional, its failures are swallowed) }
   constructor(ports) {
     Object.assign(this, ports);
     this.a = argv(ports.cfg);
+    // Every child of the request in hand that the job host had to end (or could not show ended) is noted for its answer.
+    this.trees = [];
+    this.run = async (a, o) => {
+      const r = await ports.run(a, o);
+      if (r?.tree === 'zero' || r?.tree === 'unconfirmed') this.trees.push(r.tree);
+      return r;
+    };
   }
 
   async quiescence(batchId) {
@@ -146,13 +242,92 @@ export class Companion {
     }
   }
 
-  // relay: true = record transferred, false = nothing there yet, throws on any refusal.
-  async relay(mode, seq) {
-    const r = await this.run(this.a.relay(mode, seq), { timeoutMs: RELAY_TIMEOUT_MS });
-    const v = json(r.stdout);
-    if (r.code === 0 && v?.status === 'PUBLIC_RECORD_TRANSFERRED' && v.terminalConfirmed === true) return true;
-    if (v?.childError?.reason === 'ENOENT' && v.terminalConfirmed === true) return false;
-    check(false, 'RELAY_REFUSED_NO_RETRY');
+  // relay (DESIGN §25): true = record transferred, false = nothing there yet. A refusal throws RELAY_REFUSED_NO_RETRY, or
+  // RELAY_PARTIAL_RECORD_PRESERVED for half a record; `permanent` is false only when retries or their budget ran out.
+  // budget: { live (the pump's cancel check, before every attempt), deadline (stage), firstSeen (ReceiveChallenge),
+  // challengeDeadline() (SendResponse) }. Without a budget an attempt is never repeated.
+  async relay(mode, seq, budget = {}) {
+    const gaps = RELAY_ATTEMPTS[mode] ?? [], name = relayRecordName(mode, seq);
+    const refuse = (code, permanent) => { throw Object.assign(new Error(code), { code, permanent }); };
+    let noChildRetried = false;
+    for (let attempt = 1; ; attempt += 1) {
+      if (budget.live) await budget.live();
+      const started = this.clock();
+      const r = await this.run(this.a.relay(mode, seq), { timeoutMs: RELAY_TIMEOUT_MS });
+      const v = json(r.stdout);
+      const klass = classifyRelayAttempt(r, v);
+      try { await this.log?.(relayLogEntry({ at: started, mode, seq, attempt, ms: this.clock() - started, runner: r, receipt: v, klass })); } catch { /* the log never decides */ }
+      if (klass === 'OK') return true;
+      if (klass === 'NOT_YET') return false;
+      if (klass === 'PERMANENT') refuse('RELAY_REFUSED_NO_RETRY', true);
+      if (klass === 'NO_CHILD') {
+        if (noChildRetried) refuse('RELAY_REFUSED_NO_RETRY', false); // once: it may be lasting (spool IO, an ACL)
+        noChildRetried = true;
+      } else {
+        // CHILD_FAILED, AMBIGUOUS, EXISTING: settled by the target itself. A Send* first waits for its Linux writer to be gone
+        // (a CHILD_FAILED one before looking, an AMBIGUOUS one before trying again); a check that fails settles nothing.
+        if (klass === 'CHILD_FAILED' && relaySends(mode) && await this.linuxRelayIdle() !== true) refuse('RELAY_REFUSED_NO_RETRY', true);
+        const where = await this.arrived(mode, name);
+        if (where === 'arrived') return true;
+        if (where === 'partial') refuse('RELAY_PARTIAL_RECORD_PRESERVED', true);
+        if (where !== 'none' || klass === 'EXISTING') refuse('RELAY_REFUSED_NO_RETRY', true);
+        if (klass === 'AMBIGUOUS' && relaySends(mode) && await this.linuxRelayIdle() !== true) refuse('RELAY_REFUSED_NO_RETRY', true);
+      }
+      if (attempt > gaps.length) refuse('RELAY_REFUSED_NO_RETRY', false);
+      await this.sleep(gaps[attempt - 1]);
+      if (!(await this.relayBudgetHolds(mode, budget))) refuse('RELAY_REFUSED_NO_RETRY', false);
+    }
+  }
+
+  // Whether another attempt may start now (DESIGN §25.4).
+  async relayBudgetHolds(mode, budget) {
+    const now = this.clock();
+    // Never past the stage's own deadline: the service no longer waits for this answer then.
+    if (Number.isFinite(budget.deadline) && now >= budget.deadline) return false;
+    if (mode === 'ReceiveChallenge') return Number.isFinite(budget.firstSeen) && now <= budget.firstSeen + CALLBACK_WINDOW_MS - CHALLENGE_RESERVE_MS;
+    if (mode === 'SendResponse') {
+      const end = typeof budget.challengeDeadline === 'function' ? await budget.challengeDeadline() : null;
+      return Number.isFinite(end) && now <= end - RESPONSE_RESERVE_MS;
+    }
+    return Number.isFinite(budget.deadline) && budget.deadline - now >= STAGE_RESERVE_MS;
+  }
+
+  // Did the record reach its target (DESIGN §25.3)? Both ends only create, data first and its ready marker last, and a name
+  // is used once per stage. 'arrived' = both, 'none' = neither, 'partial' = anything else, null = could not tell.
+  async arrived(mode, name) {
+    let data, ready;
+    if (relaySends(mode)) {
+      const r = await this.run(this.a.linuxIncoming(), { timeoutMs: RELAY_CHECK_TIMEOUT_MS });
+      if (r.code !== 0 || 'tree' in r) return null;
+      const names = new Set(String(r.stdout).split(/\r?\n/).map(s => s.trim()));
+      [data, ready] = [names.has(`${name}.json`), names.has(`${name}.ready.json`)];
+    } else {
+      const dir = `${this.cfg.windowsSpool}\\incoming`;
+      try { [data, ready] = [await this.fileExists(`${dir}\\${name}.json`), await this.fileExists(`${dir}\\${name}.ready.json`)]; } catch { return null; }
+    }
+    return data && ready ? 'arrived' : !data && !ready ? 'none' : 'partial';
+  }
+
+  // No Linux relay-record.mjs left running (DESIGN §25.3): the job host ended Windows' powershell and wsl.exe, but nothing
+  // shows the Linux end went with them. pgrep exit 1 = none; exit 0 = look once more after 2 s; anything else = not idle.
+  async linuxRelayIdle() {
+    for (let look = 1; look <= 2; look += 1) {
+      if (look === 2) await this.sleep(2000);
+      const r = await this.run(this.a.linuxRelayProcs(), { timeoutMs: RELAY_CHECK_TIMEOUT_MS });
+      if (r.code === 1 && !('tree' in r)) return true;
+      if (r.code !== 0) return false;
+    }
+    return false;
+  }
+
+  // A SendResponse retry's budget: the deadline field of the challenge it answers, read from that record in Windows incoming
+  // (public bytes, only this field, only to decide whether to try again). null = no retry.
+  async challengeDeadline(seq) {
+    if (typeof this.readText !== 'function') return null;
+    try {
+      const t = Date.parse(json(await this.readText(`${this.cfg.windowsSpool}\\incoming\\${relayRecordName('ReceiveChallenge', seq)}.json`))?.deadline);
+      return Number.isFinite(t) ? t : null;
+    } catch { return null; }
   }
 
   // The names of the complete Linux outgoing records (their ready markers), from one root `ls` (about
@@ -175,7 +350,7 @@ export class Companion {
     while (this.clock() < until) {
       await live();
       const names = await this.linuxReady();
-      if (names === null || names.has('blocked.ready.json')) { await live(); try { if (await this.relay('ReceiveBlocked', 0)) return true; } catch { return false; } }
+      if (names === null || names.has('blocked.ready.json')) { try { if (await this.relay('ReceiveBlocked', 0, { live, deadline })) return true; } catch (e) { if (e?.code === 'COMPANION_PUMP_CANCELLED') throw e; return false; } }
       await this.sleep(1000);
     }
     return false;
@@ -194,16 +369,22 @@ export class Companion {
     const listed = (names, name) => names === null || names.has(`${name}.ready.json`);
     const cancelled = async () => { try { return await this.mailbox.cancelled(request); } catch { return false; } };
     const live = async () => { check(!(await cancelled()), 'COMPANION_PUMP_CANCELLED'); };
-    const relay = async (mode, seq) => { await live(); return this.relay(mode, seq); };
+    // Every relay call checks the cancel before each of its attempts and retries only within its budget (DESIGN §25.4).
+    const relay = (mode, seq, budget = {}) => this.relay(mode, seq, { live, ...budget });
     try {
       while (!(await ready('issue'))) { check(this.clock() < deadline, 'ACTUAL_ISSUE_NOT_PUBLISHED'); await live(); await this.sleep(100); }
-      check(await relay('SendIssue', 0), 'ISSUE_TRANSFER_UNCONFIRMED');
+      check(await relay('SendIssue', 0, { deadline }), 'ISSUE_TRANSFER_UNCONFIRMED');
       await live(); // a cancel that came with the issue transfer starts no worker
       const start = await this.run(this.a.startNoBlock('clued-ci-worker', request.jobId), { timeoutMs: 30_000 });
       check(start.code === 0, 'LINUX_WORKER_START_UNCONFIRMED');
       let sequence = 1, blockedRefused = false;
-      // A refused ReceiveBlocked is remembered (never tried twice); one that only found nothing is not.
-      const receiveBlocked = async () => { await live(); try { return await this.relay('ReceiveBlocked', 0); } catch (e) { blockedRefused = true; throw e; } };
+      // When the pump first saw each challenge listed (its ReceiveChallenge retry budget). Without a listing the call itself
+      // is the probe, and that call's own start stands in for it: a wrong guess only makes a response later (DESIGN §25.4).
+      const firstSeen = new Map();
+      const seenAt = (names, seq) => { if (firstSeen.has(seq)) return firstSeen.get(seq); if (names === null) return this.clock(); firstSeen.set(seq, this.clock()); return firstSeen.get(seq); };
+      // A ReceiveBlocked refused for good is remembered (never tried twice); one that only found nothing, or ran out of
+      // retries, is not.
+      const receiveBlocked = async () => { try { return await relay('ReceiveBlocked', 0, { deadline }); } catch (e) { if (e?.permanent) blockedRefused = true; throw e; } };
       try {
         for (;;) {
           check(this.clock() < deadline, 'FORMAL_BRIDGE_STAGE_DEADLINE');
@@ -212,15 +393,18 @@ export class Companion {
           // The worker's clean refusal (bridge v4 'blocked') means it has ended: it goes before a stale challenge.
           if (names?.has('blocked.ready.json') && await receiveBlocked()) break;
           // Then a challenge: a callback has a deadline (CALLBACK_WINDOW_MS), the result does not hurry.
-          if (sequence <= 32 && listed(names, `challenge-${String(sequence).padStart(2, '0')}`) && await relay('ReceiveChallenge', sequence)) {
-            const responseDeadline = this.clock() + CALLBACK_WINDOW_MS;
-            const name = `response-${String(sequence).padStart(2, '0')}`;
-            while (!(await ready(name))) { check(this.clock() < responseDeadline, 'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED'); await live(); await this.sleep(100); }
-            check(await relay('SendResponse', sequence), 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED');
-            sequence += 1;
-            continue;
+          const challenge = relayRecordName('ReceiveChallenge', sequence);
+          if (sequence <= 32 && listed(names, challenge)) {
+            if (await relay('ReceiveChallenge', sequence, { deadline, firstSeen: seenAt(names, sequence) })) {
+              const responseDeadline = this.clock() + CALLBACK_WINDOW_MS;
+              const name = relayRecordName('SendResponse', sequence), seq = sequence;
+              while (!(await ready(name))) { check(this.clock() < responseDeadline, 'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED'); await live(); await this.sleep(100); }
+              check(await relay('SendResponse', seq, { deadline, challengeDeadline: () => this.challengeDeadline(seq) }), 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED');
+              sequence += 1;
+              continue;
+            }
           }
-          if (listed(names, 'result') && await relay('ReceiveResult', 0)) break;
+          if (listed(names, 'result') && await relay('ReceiveResult', 0, { deadline })) break;
           if (names === null && await receiveBlocked()) break;
           // A listing every second is ample against a 120 s round and keeps the wsl.exe launches low.
           await this.sleep(names === null ? 100 : 1000);
@@ -255,8 +439,10 @@ export class Companion {
       if (request.refused) continue; // unreadable requests are left for the service's own audit
       if (this.clock() >= Date.parse(request.deadline)) { await this.mailbox.respond(request, { ok: false, code: 'COMPANION_REQUEST_EXPIRED' }); continue; }
       let answer;
+      this.trees = [];
       try { answer = await this.handle(request); } catch { answer = { ok: false, code: 'COMPANION_HANDLER_UNCONFIRMED' }; }
-      await this.mailbox.respond(request, { ok: answer.ok === true, code: answer.ok ? null : (answer.code ?? 'COMPANION_HANDLER_UNCONFIRMED'), proof: answer.proof ?? null, directory: answer.directory ?? null, verified: answer.verified ?? null, usage: answer.usage ?? null, pull: answer.pull ?? null });
+      await this.mailbox.respond(request, { ok: answer.ok === true, code: answer.ok ? null : (answer.code ?? 'COMPANION_HANDLER_UNCONFIRMED'), proof: answer.proof ?? null, directory: answer.directory ?? null, verified: answer.verified ?? null, usage: answer.usage ?? null, pull: answer.pull ?? null,
+        jobTree: jobTreeOf(this.trees) });
     }
   }
 }
