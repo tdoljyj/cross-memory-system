@@ -26,7 +26,13 @@ foreach ($file in @('test-job-host.ps1', 'install-resident.ps1', 'verify-residen
 $install = [IO.File]::ReadAllText((Join-Path $here 'install-resident.ps1'))
 Yes ($install.Contains('& $Csc /nologo /noconfig /target:winexe /platform:x64 /optimize+ "/reference:$($fw)System.dll" ("/out:" + $jobHost) (Join-Path $Root (''resident\'' + $plan.residentManifestSha256 + ''\windows\CompanionJobHost.cs''))')) 'install-compiles-host'
 Yes ($install.Contains('$script:receipt.companionJobHostSha256 = Sha256File $jobHost') -and $install.Contains("`$CompanionJobHost = 'CluedCompanionJobHost.exe'")) 'install-pins-host'
-Yes ([IO.File]::ReadAllText((Join-Path $here 'verify-resident.ps1')).Contains("Record 'companion-job-host-pin' ((Sha256File (Join-Path `$Root 'bin\CluedCompanionJobHost.exe')) -ceq [string]`$receipt.companionJobHostSha256)")) 'verify-checks-host-pin'
+Yes ([IO.File]::ReadAllText((Join-Path $here 'verify-resident.ps1')).Contains("Record 'companion-job-host-pin' ((`$receipt.PSObject.Properties.Name -ccontains 'companionJobHostSha256') -and (Test-Path -LiteralPath `$jobHost -PathType Leaf) -and ((Sha256File `$jobHost) -ceq [string]`$receipt.companionJobHostSha256))")) 'verify-checks-host-pin'
+Yes ([IO.File]::ReadAllText((Join-Path $here 'uninstall-resident.ps1')).Contains("(Join-Path `$Root 'bin\CluedCompanionJobHost.exe')")) 'uninstall-waits-for-hosts'
+foreach ($file in @('uninstall-resident.ps1')) {
+  $tokens = $null; $errors = $null
+  [void][Management.Automation.Language.Parser]::ParseFile((Join-Path $here $file), [ref]$tokens, [ref]$errors)
+  Yes ($errors.Count -eq 0) ('parse:' + $file)
+}
 
 # 1. Compile exactly as install-resident.ps1 does (winexe: never a console window of its own).
 $fw = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\'
@@ -69,7 +75,14 @@ $env:CLUED_JOB_HOST_WSL = $(if ($Wsl) { '1' } else { '0' })
 $suite = Join-Path (Split-Path -Parent $here) 'test\job-host.test.mjs'
 $lines = & $node --test $suite 2>&1 | ForEach-Object { [string]$_ }
 Yes ($LASTEXITCODE -eq 0) ('node-suite:' + (($lines | Select-Object -Last 30) -join "`n"))
-$skipped = [int](([regex]::Match(($lines -join "`n"), '(?m)^. skipped (\d+)')).Groups[1].Value)
-Yes ($skipped -eq $(if ($Wsl) { 0 } else { 1 })) 'live-cases-ran'
+function Skipped([string]$text) { $m = [regex]::Match($text, '(?m)^\S+ skipped (\d+)\s*$'); if (-not $m.Success) { throw 'FAILED:skipped-count-not-found' }; return [int]$m.Groups[1].Value }
+Yes ((Skipped ($lines -join "`n")) -eq $(if ($Wsl) { 0 } else { 1 })) 'live-cases-ran'
+
+# 4. The live cases again, nested: node itself runs inside an outer job host's job (no breakaway, as under the companion's
+#    scheduled task), so every inner host must create its child inside that job's hierarchy.
+$nested = Invoke-Host @('fedcba9876543210fedcba9876543210', '600000', $node, '--test', '--test-name-pattern=^live', $suite)
+Yes ($nested.code -eq 0) ('nested-suite:' + (($nested.stdout -split "`n" | Select-Object -Last 30) -join "`n"))
+Yes ((@($nested.stderr.Trim() -split "`n")[-1]) -match '^clued-job-host fedcba9876543210fedcba9876543210 \{.*"timedOut":false,"exitCode":0.*"treeZero":true\}$') 'nested-outer-report'
+Yes ((Skipped $nested.stdout) -eq $(if ($Wsl) { 0 } else { 1 })) 'nested-live-cases-ran'
 $n++
 [pscustomobject]@{ status = 'COMPANION_JOB_HOST_OFFLINE_PASS'; checks = $n; wsl = [bool]$Wsl; hostRead = $false; hostWrite = $false } | ConvertTo-Json -Compress

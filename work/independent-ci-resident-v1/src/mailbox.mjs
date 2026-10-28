@@ -11,9 +11,10 @@ import { ensureDir, exists, readBounded, writeNew } from './store.mjs';
 
 export const REQUEST_CONTRACT = 'clued.independent-ci.resident-companion-request/1';
 // /2 (DESIGN §24, Task 8e1f07d3): every answer also says what the companion's job host found about the children of this
-// request: jobTree null (each ended on its own and its job was drained), 'zero' (one or more outlived the limit; each job was
-// terminated and no process of it was left) or 'unconfirmed' (anything else, also a leftover not drained or no host report).
-// A fact for the record only; no proof of either host rests on the companion's own tree.
+// request: jobTree null (each child ended on its own and its job was drained, or no child started at all), 'zero' (a child's
+// job had to be ended - it outlived the limit, or the host reported a failure after it started - and no process of it was
+// left) or 'unconfirmed' (the host could not show that, including a leftover not drained or no host report). A fact for the
+// record only; no proof of either host rests on the companion's own tree.
 export const RESPONSE_CONTRACT = 'clued.independent-ci.resident-companion-response/2';
 export const JOB_TREES = Object.freeze(['zero', 'unconfirmed']);
 export const HEARTBEAT_CONTRACT = 'clued.independent-ci.resident-companion-heartbeat/1';

@@ -102,7 +102,9 @@ Record 'resident-host-pin' ((Sha256File (Join-Path $Root 'bin\ResidentServiceHos
 $bq = & $Sc qc CluedCISwapBroker | Out-String
 Record 'broker-account' ($bq -match 'SERVICE_START_NAME\s*:\s*LocalSystem')
 Record 'broker-host-pin' ((Sha256File (Join-Path $Root 'bin\SwapBroker.exe')) -ceq $receipt.SwapBrokerSha256)
-Record 'companion-job-host-pin' ((Sha256File (Join-Path $Root 'bin\CluedCompanionJobHost.exe')) -ceq [string]$receipt.companionJobHostSha256)   # DESIGN §24
+# DESIGN §24: an install from before the job host has no pin and no exe; that is a false check, never a broken verify.
+$jobHost = Join-Path $Root 'bin\CluedCompanionJobHost.exe'
+Record 'companion-job-host-pin' (($receipt.PSObject.Properties.Name -ccontains 'companionJobHostSha256') -and (Test-Path -LiteralPath $jobHost -PathType Leaf) -and ((Sha256File $jobHost) -ceq [string]$receipt.companionJobHostSha256))
 # ---- Privilege boundary (independent review of PR-A: MAJOR-1, MINOR-4, MINOR-5) ----
 $ResidentPrivileges = @('SeChangeNotifyPrivilege')
 $BrokerPrivileges = @('SeChangeNotifyPrivilege', 'SeCreateGlobalPrivilege')

@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { JOB_HOST_GRACE_MS, JOB_HOST_REPORT_CONTRACT, Runner, parseJobHostReport } from '../src/runner.mjs';
-import { lane } from '../src/companion-main.mjs';
+import { JOB_HOST_PROBE, lane, probeJobHost } from '../src/companion-main.mjs';
 import { COMPANION_CONFIG_CONTRACT, Companion, jobTreeOf, validateCompanionConfig } from '../src/companion.mjs';
 import { Mailbox, RESPONSE_CONTRACT } from '../src/mailbox.mjs';
 import { mailboxCompanion } from '../src/service-ports.mjs';
@@ -153,6 +153,22 @@ test('hosted limits outside the host\'s range and a malformed host path are refu
   assert.equal(h.spawned.length, 0);
   assert.throws(() => new Runner({ jobHost: 'bin\\host.exe' }), /RUNNER_JOB_HOST_REFUSED/);
   assert.throws(() => new Runner({ jobHost: 'C:\\a"b.exe' }), /RUNNER_JOB_HOST_REFUSED/);
+});
+
+test('start-up probe: the companion starts only when the host really ran its fixed child and drained it', async () => {
+  const run = async ending => {
+    const h = fakeHost();
+    const runner = new Runner({ jobHost: HOST, spawnImpl: h.spawnImpl, nonce: () => NONCE });
+    const p = probeJobHost(runner);
+    assert.deepEqual(h.spawned[0].args.slice(2), [...JOB_HOST_PROBE]);
+    h.end(0, ending);
+    return p;
+  };
+  await run({ err: report(), code: 0 });
+  await assert.rejects(run({ err: 'no report\n', code: 255 }), { code: 'COMPANION_JOB_HOST_UNAVAILABLE' });
+  await assert.rejects(run({ err: report({ fields: { started: false, failure: 'CHILD_JOB_LIST_FAILED', childPid: null, exitCode: null } }), code: 120 }), { code: 'COMPANION_JOB_HOST_UNAVAILABLE' });
+  await assert.rejects(run({ err: report({ fields: { activeProcesses: 1, treeZero: false } }), code: 0 }), { code: 'COMPANION_JOB_HOST_UNAVAILABLE' });
+  await assert.rejects(run({ err: report({ fields: { exitCode: 1 } }), code: 1 }), { code: 'COMPANION_JOB_HOST_UNAVAILABLE' });
 });
 
 test('the service runner (no job host) keeps the old rule: it never kills and stays busy after a timeout', async () => {
@@ -314,6 +330,10 @@ test('superseded before stage 1: also a Windows-only close', async t => {
 // ---- live, against the real job host (windows/test-job-host.ps1 compiles it and sets CLUED_JOB_HOST_EXE) ----
 const LIVE = process.env.CLUED_JOB_HOST_EXE ?? null;
 const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+test('live: the start-up probe passes against the real host', { skip: !LIVE }, async () => {
+  await probeJobHost(new Runner({ jobHost: LIVE, env: { ...process.env } }));
+});
 
 test('live: output and exit code pass through unchanged, arguments arrive exactly', { skip: !LIVE }, async () => {
   const runner = new Runner({ jobHost: LIVE, env: { ...process.env } });
