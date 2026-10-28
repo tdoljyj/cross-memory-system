@@ -852,11 +852,11 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 
 1. 执行器在导出时写公开描述符 `outbox\<batchId>\descriptor.json`。
 2. companion 在第 1 段**之前**用 Owner 的 git 凭据运行 `build-bundle.ps1 -BatchId`，规则同今天：只用 https、关闭 hooks、refs 等于 ls-remote、main 等于 base、按 SHA 取已审查提交。
-   - **传输卡住**（Task `4d3aaa64`）：2026-10-23 PR #916 的批次，fetch 经本地代理拉到 47 MB 后连接卡死。git 没有低速限制，一直等到服务侧 35 分钟期限才以 `BUNDLE_UNAVAILABLE` 失败，同一时间网络正常。现在所有 git 调用都带 `http.lowSpeedLimit=1000`、`http.lowSpeedTime=60`：连续 60 秒低于 1000 字节/秒，git 自己中止。Runner 从不杀子进程，所以这也是 companion 邮箱通道能尽早空出来的唯一办法。
+   - **传输卡住**（Task `4d3aaa64`）：2026-10-23 PR #916 的批次，fetch 经本地代理拉到 47 MB 后连接卡死。git 没有低速限制，一直等到服务侧 35 分钟期限才以 `BUNDLE_UNAVAILABLE` 失败，同一时间网络正常。现在所有 git 调用都带 `http.lowSpeedLimit=1000`、`http.lowSpeedTime=60`：连续 60 秒低于 1000 字节/秒，git 自己中止。到 companion 的 30 分钟时限时，作业宿主还会连同作业一起结束它（§24）；低速限制让这件事早得多。
    - **重来一次**：三个联网步骤（全部 heads 和 tags 的 fetch、ls-remote、按 SHA 取已审查提交）之一由 git 失败时，整个对象库重建一次（`Fetch-Store`）。第 2 次在新的 bare 库 `fetch-2.git`（只新建）里从头走每一步、每一项核对；第 1 次留下的东西（半截 pack、refs）原样留着，从不再读。限制：只重来一次；只在脚本开始后 10 分钟内失败才重来，第 2 次因此至少还有 20 分钟（整次建 bundle 平时 40–100 秒，见过最长 283 秒；companion 等 30 分钟）；脚本自己的拒绝（main 变了、refs 不等、对象库里缺提交等）和 git 没能启动都不重来；不读 stderr，所以会重复的联网失败（凭据、GitHub 上已没有的已审查提交）也会多花一次。回执和失败答复记 `storeAttempts`，以及第 1 次停在哪一段、哪一步（`firstAttempt`）。
    - 代价：`--quiet` 时服务器准备 pack 的阶段没有进度输出，只有心跳包。这一段若超过 60 秒，也会被当成卡住。平常整个 fetch 只要 5–11 秒；真遇上了，就落到上面那一次重来。
    - `-CheckRefs` 的 ls-remote 也带低速限制，但不重来：它失败就是 `REMOTE_REFS_UNAVAILABLE`，由常驻侧照旧分类。
-   - 仍未处理：慢但不停（一直略高于 1000 字节/秒）的传输没有总时限，脚本不杀 git 的进程树。companion 的子进程超过它的等待之后，Runner 一直忙，邮箱通道停摆，常驻因此拿不到证明而 HALT（同一批次 09:14Z）；这一点另由 Task `8e1f07d3` 处理。
+   - 慢但不停（一直略高于 1000 字节/秒）的传输：脚本本身没有总时限，到 companion 的时限由作业宿主连同进程树一起结束；邮箱通道不再停摆，第 0 段失败只关 Windows、不 HALT（§24，Task `8e1f07d3`）。
    - 测试：`windows/test-build-bundle.ps1` 从脚本的语法树取出 `Invoke-Git`、`Build-Store`、`Fetch-Store`，对一个本地 file:// 远端和一个只接受连接、从不回应的回环端口跑真实 git（低速窗口在测试里改成 2 秒）：卡住后在新库里成功、已审查提交那一步卡住、不卡、两次都卡（没有第 3 次）、过了 10 分钟才卡（不重来）、脚本自己的拒绝（不重来）；另把脚本复制一份、只换常驻目录、远端和 git 路径，跑完整主块、`-CheckRefs` 和同一批次的第二次运行（只新建），共 50 例。`CI/test/resident-v2-build-bundle.test.mjs` 在任何主机上钉住这些固定值。
    - 生效要重装（Source v2 文件）。
 3. 第 1 段准入之后写 `10-started`。
@@ -2006,7 +2006,7 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
   2. `companion-main.mjs` 的 `lane` 在 busy 时什么请求都不取，整条邮箱通道停摆，心跳也停；
   3. 执行器在第 0 段失败时调 `closeOrThrow`，`engine.closeBatch` 要向 companion 要 `archive-linux` 的结果。没人答，6 分钟后过期，报 `UNEXECUTED_CLOSE_UNCONFIRMED`，09:14Z HALT。
 - 恢复靠 Owner 结束遗留进程并 rearm（Decision `901a8968`）。一次 HALT 要 Owner 点一次 UAC。
-- Task `4d3aaa64`（`build-bundle.ps1` 低速超时 + 在新库里重做一次）写本节时仍未合入 main。即使合入，下面几种情况仍会走到这条链路：慢而不断的传输、git 卡在 curl 之外（例如凭据助手弹窗）、companion 的其他子进程（wsl、relay、gh）超时。
+- Task `4d3aaa64`（`build-bundle.ps1` 低速超时 + 在新库里重做一次）写本节时仍未合入 main，现随集成 PR 合入（原 PR #928，§10.1）。即使有了它，下面几种情况仍会走到这条链路：慢而不断的传输、git 卡在 curl 之外（例如凭据助手弹窗）、companion 的其他子进程（wsl、relay、gh）超时。
 
 ### 24.2 决定：companion 的每个子进程都建在它自己的作业对象里
 
@@ -2042,7 +2042,7 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
   - `relay-public.ps1`：
     - 它自己的规则是：wsl 子进程 90 秒没结束就报 `PUBLIC_TERMINAL_UNCONFIRMED_LOCKS_RETAINED`，然后不杀 wsl，一直持着父目录锁，直到 wsl 结束。宿主在 companion 的时限（`RELAY_TIMEOUT_MS`，120 秒）处覆盖这条规则：relay、它起的 wsl.exe 和 Linux 上的 `relay-record.mjs` 一起结束，写方和锁同时消失；
     - 这个脚本自己有界的部分（Add-Type、哈希，加 5+90+5 秒）在 120 秒内做完。被覆盖的只是“wsl 一直不结束、就一直持锁”这一段，也就是卡死的情形；
-    - 两侧都是先写数据并落盘，最后才新建 ready 标记：Windows incoming 用 `CreateNew`，Linux incoming 由 `relay-record.mjs` 用 `wx` 加 fsync。半路结束，最多留下一份没有标记的数据，读方不会取它；同一条记录也不会再转一次（`EXISTING_RECORD_PRESERVED_NO_RETRY`）。泵本来就把搬运超时当成 `RELAY_REFUSED_NO_RETRY`。
+    - 两侧都是先写数据并落盘，最后才新建 ready 标记：Windows incoming 用 `CreateNew`，Linux incoming 由 `relay-record.mjs` 用 `wx` 加 fsync。半路结束，最多留下一份没有标记的数据，读方不会取它；同一条记录也不会再转一次（`EXISTING_RECORD_PRESERVED_NO_RETRY`）。泵原来把搬运超时当成 `RELAY_REFUSED_NO_RETRY`；§25 起，被结束的调用归 AMBIGUOUS，由到达核对裁定是否已到、能否再试。
   - `systemctl start --wait`：unit 由 systemd 继续运行；其余 wsl 调用都是只读工具。
 - **Runner**（`src/runner.mjs`，只有 companion 给它 `jobHost`）：
   - 起子进程时实际起的是宿主：`[宿主, nonce, 时限, ...argv]`。时限只收 1 秒到 1 小时。
@@ -2054,6 +2054,7 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
   - stderr 照常最多留 4 MiB；另有一份末尾 4 KB，专门用来找报告，所以子进程写了很多 stderr 也不影响。
   - 宿主自己超过“时限 + 60 秒”还没结束时，Runner 结束这个宿主。宿主是它自己的直接子进程，句柄一直在它手里，不存在进程号复用。宿主一结束，它的作业就关闭。
   - companion 的 Runner 只在宿主运行期间 busy。结束请求被系统拒绝时（`error` 事件，有 pid），仍然 busy，直到宿主真的结束；只有宿主根本没起来（没有 pid）时才立即空闲。
+  - 启动时，companion 经宿主跑一个固定的无害子进程（`cmd /d /c exit 0`）。没跑起来、退出码不是 0 或没排空，companion 就不启动（`COMPANION_JOB_HOST_UNAVAILABLE`），不发心跳，执行器不开批次；不会在心跳正常的情况下让每个请求都悄悄失败。
 - **服务自己的 Runner 不变**：从不杀子进程，超时后 busy。Windows 侧的证明（`windowsTreeZero`）依赖这一条。
 
 ### 24.3 邮箱通道不再停摆
@@ -2062,9 +2063,9 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 - `lane` 仍会 busy 的情况只剩一种：宿主进程本身还活着，或者作业里有一个结束不了、又还握着输出管道的进程。这是原规则用在宿主上。这时心跳停，执行器不开新批次（`COMPANION_NOT_READY`）。
 - 两条 lane 都用宿主，所以 gh 卡住也不会让 PR 页面状态一直停着。
 - **答复 `/2`**：`clued.independent-ci.resident-companion-response/2` 多一个字段 `jobTree`：
-  - `null`：这个请求的每个子进程都自己结束，并且已排空；
-  - `'zero'`：至少一个子进程超时，每一个都已终止，并且作业里没有剩下的进程；
-  - `'unconfirmed'`：其余情况，包括子进程自己结束但没排空、宿主没给报告。
+  - `null`：每个子进程都自己结束并已排空，或者根本没起子进程；
+  - `'zero'`：某个子进程的作业不得不由宿主结束（超过时限，或子进程起来之后宿主报了失败），并且作业里没有剩下的进程；
+  - `'unconfirmed'`：宿主没能证明这一点，包括剩下的进程没排空、宿主没给报告。
 
   这只是记录，两端的证明都不依赖 companion 自己的进程树。companion 和服务来自同一个安装包，一起升级；重装前要先卸载，卸载会结束 companion 进程（`uninstall-resident.ps1`），邮箱里不会留着两种版本的答复。
 
@@ -2082,7 +2083,7 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 
 ### 24.5 没有做的，以及理由
 
-- **`build-bundle.ps1` 自设总时限**：不需要。宿主在每个子进程的时限到点时结束它的整棵树，覆盖 bundle、`-CheckRefs`、工作区准备、relay、gh。卡住的传输按 Task `4d3aaa64` 的设计约 60 秒就会由低速超时先处理（合入之后）。脚本自设时限只能多报一个阶段名，却要改 Source v2、要重装 Source，所以没做。本改动不动 Source v2：安装记录和 `ciSourceManifestSha256` 都不变。
+- **`build-bundle.ps1` 自设总时限**：不需要。宿主在每个子进程的时限到点时结束它的整棵树，覆盖 bundle、`-CheckRefs`、工作区准备、relay、gh。卡住的传输按 Task `4d3aaa64`（§10.1）约 60 秒就会由低速超时先处理。脚本自设时限只能多报一个阶段名，却要改 Source v2、要重装 Source，所以没做。本改动不动 Source v2：安装记录和 `ciSourceManifestSha256` 都不变。
 - 第 1 段失败后的释放（`NOT_ADMITTED` 等），仍然两端归档，没有改。
 - 第 1 段之前的安全点上，Owner 中止仍要 companion 的静止证明和 `archive-linux`（`executor.mjs`，Owner 中止的结束步骤），没有改。有了宿主，companion 在这时也总能回答。
 - 崩溃恢复对未终结批次仍然 HALT（`EXECUTOR_RESTARTED_WITH_OPEN_BATCH`），没有改。
@@ -2100,7 +2101,9 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
   - `windows/test-job-host.ps1` 用同一组参数编译，并逐字核对安装脚本的编译行、回执钉值和 verify 那一行。
 - companion 用固定路径 `<root>\bin\CluedCompanionJobHost.exe`，`companion.json` 不变。找不到宿主时 companion 不启动（`COMPANION_JOB_HOST_REQUIRED`），所以宿主和 companion 必须一起装。
 - 要重装 Windows 常驻包才生效。Source v2 和 Linux 都不用重装。
-- 安装后的核验：在 Owner 自己的非提权会话里跑一次 `windows/test-job-host.ps1 -Wsl`，这和 companion 的环境只差计划任务那一层作业。离线时，联机用例已经在一层不许脱离的外层作业里跑过（`IsProcessInJob` 为真，`CREATE_BREAKAWAY_FROM_JOB` 报错误 5），子进程照样直接建进宿主的作业。
+- 安装后的核验：在 Owner 自己的非提权会话里跑一次 `windows/test-job-host.ps1 -Wsl`，这和 companion 的环境只差计划任务那一层作业。`test-job-host.ps1` 第 4 步把联机用例再跑一遍，这次 node 本身就跑在外层宿主的作业里（`IsProcessInJob` 为真，`CREATE_BREAKAWAY_FROM_JOB` 报错误 5），每个内层宿主都要在这层作业下面建子进程。
+- `verify-resident.ps1`：没有这项钉值或没有宿主 exe 的安装（§24 之前装的），这一项记 false，不会让整个 verify 抛异常中断。
+- `uninstall-resident.ps1`：改名常驻目录之前，除了已安装的 node，也等 companion 的作业宿主结束。宿主随 node 的作业关闭而结束，但这是异步的。
 
 ### 24.7 测试
 
@@ -2117,13 +2120,14 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
   - companion：超时的 bundle 答 `jobTree: 'zero'`，同一轮里 `linux-quiescence` 用 root 工具的事实回答；relay 超时后 blocked 转交只发一次；
   - 答复 `/2` 的 `jobTree` 只收三种值；服务端口把它原样传给执行器；
   - 执行器：第 0 段失败只关 Windows，不向 companion 要任何东西。即使 `archive-linux` 和静止证明都会失败，也照样干净释放、不 HALT，回执带 `companionJobTree`。第 1 段之前被取代同样只关 Windows。
+  - 启动探针：真跑了、排空了才算；没报告、没起子进程、没排空、退出码不是 0 都拒绝启动。
 - 联机用例（`CLUED_JOB_HOST_EXE` 指向编译好的宿主时运行）：
   - 参数逐字到达，输出和退出码原样；
   - 超时的子进程和孙进程都结束，Runner 随即能跑下一个；
   - 子进程退出后留下的孙进程（包括 detached 的）也结束，作业外的进程照常运行；
   - powershell 跑 git，连到一个只接受、不回应的本地端口卡住：到时限整棵树结束，那个 git 不在了；
   - `-Wsl` 时还跑真实的 wsl（含超时的 `sleep 30`）、powershell 和 git。
-- `windows/test-job-host.ps1`：解析三个脚本；核对安装与校验脚本里的那几行；用安装时的参数编译宿主；参数不对时退出码 120 并写报告；原样转发；再带联机用例跑上面的 node 测试。
+- `windows/test-job-host.ps1`：解析三个脚本；核对安装与校验脚本里的那几行；用安装时的参数编译宿主；参数不对时退出码 120 并写报告；原样转发；再带联机用例跑上面的 node 测试；skipped 数必须找到；联机用例嵌套在外层宿主里再跑一遍；核对卸载会等宿主。
 - 另做过一次探针：作业里的子进程读到的作业标志是 `0x2400`。
 
 ### 24.8 独立审核
@@ -2138,7 +2142,11 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
   4. 文档：§6.2、§16 和附录 A 里“companion 的 Runner 从不杀子进程”的说法一起改；`unconfirmed` 的来源写全；Task `4d3aaa64` 尚未合入；Linux 一侧和 relay 规则被覆盖的事实；Owner 中止仍要 companion；stderr 的 4 MiB 与 4 KB。
 - NIT：排空时重复终止作业；没起来的子进程没确认结束时保留 `tree`；为 stdout、stderr 新建的 NUL 句柄已关闭。
 
-第 2 轮：（见下）
+第 2 轮（新上下文、只读，审 `d3c155b9`，与 main `f0a401d4` 比）：PASS，没有 BLOCKER 或 MAJOR。第 1 轮的修正都在代码里，并且正确。与 main 的合并（C1a/C1b 节点档案、3c-1、邮箱 torn-read 修正）解冲突正确；安装、计划、回执、verify 一致。审核另外实测：wsl 被结束后 Linux 一侧的进程（包括孙进程）都不在了；node 在外层宿主的作业里时，内层宿主照常工作。修正如下（在 `23f31976`）：
+
+- MINOR：verify 遇到 §24 之前的安装记 false，不抛异常；companion 启动时经宿主跑一次探针。
+- NIT：卸载等待宿主结束；jobTree 各个取值的条件写准；skipped 数必须找到；联机用例嵌套再跑一遍。
+- 没有改的：stderr 到 4 MiB 上限时可能留下半行报告，只影响外观。
 
 ## 25. 中继稳健：逐次分类、有界重试、本地日志（Task `241de382`，设计 r3 第一部分）
 
