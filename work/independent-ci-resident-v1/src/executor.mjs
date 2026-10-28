@@ -130,6 +130,19 @@ const OWNER_SCAN_MAX = 32;
 const DAY = 86_400_000;
 const codeOf = error => (error instanceof ResidentError && CODE.test(error.code)) ? error.code : 'RESIDENT_EXECUTOR_EXCEPTION';
 const validCode = code => (typeof code === 'string' && CODE.test(code)) ? code : 'FAILURE_CODE_INVALID';
+// DESIGN §33 (the first HALT of 2026-10-29 said only UNEXECUTED_CLOSE_UNCONFIRMED): the Windows archive's own code when it did not
+// verify (engine-windows.mjs archiveWindows, closeBatch, archiveFailure answer `archiveCode`), a fixed code or nothing. An archive
+// check that fails carries it on the refusal as `windowsArchiveCode`; the HALT facts, the FAILED_UNKNOWN terminal facts and the
+// batch-terminal receipt then name it, so the next HALT says why the archive did not verify. Codes only, never text or paths.
+const archiveCodeOf = answer => (answer && answer.verified !== true && typeof answer.archiveCode === 'string' && CODE.test(answer.archiveCode)) ? answer.archiveCode : null;
+function archiveCheck(ok, code, windows) {
+  if (ok) return;
+  const error = new ResidentError(code);
+  const archive = archiveCodeOf(windows);
+  if (archive) error.windowsArchiveCode = archive;
+  throw error;
+}
+const archiveFacts = error => (typeof error?.windowsArchiveCode === 'string' && CODE.test(error.windowsArchiveCode)) ? { windowsArchiveCode: error.windowsArchiveCode } : {};
 const TRAIN_RUN_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/;
 // The schedule results that ran nothing, after which stage 10 may run (an intake pause holds it as well).
 const TRAIN_QUIET_STATES = Object.freeze(['IDLE', 'DEFERRED']);
@@ -433,7 +446,7 @@ export class ResidentExecutor {
           accepted = s?.abort?.requestSha256 === requestSha256
             && !(s.state === 'TERMINAL' && s.outcome === 'FAILED_CLEAN' && s.terminal?.facts?.failureCode === OWNER_ABORTED);
         } catch { accepted = false; }
-        await this.receipt(accepted ? 'owner-abort-unconfirmed' : 'owner-request-refused', { requestSha256, failureCode: codeOf(error) });
+        await this.receipt(accepted ? 'owner-abort-unconfirmed' : 'owner-request-refused', { requestSha256, failureCode: codeOf(error), ...archiveFacts(error) });
       }
       await this.owner.remember(entry.name, requestSha256);
     }
@@ -458,7 +471,7 @@ export class ResidentExecutor {
     for (const q of await this.ledger.quarantinedUnarchived()) {
       const batch = { key: q.key, batchId: q.batchId };
       const w = await this.engine.archiveFailure(batch, 'rearm-quarantine');
-      check(w && w.verified === true, 'REARM_WINDOWS_ARCHIVE_UNCONFIRMED');
+      archiveCheck(w && w.verified === true, 'REARM_WINDOWS_ARCHIVE_UNCONFIRMED', w);
       const l = await this.companion.archiveLinux(batch, 'rearm-quarantine');
       check(l && l.verified === true, 'REARM_LINUX_ARCHIVE_UNCONFIRMED');
       await this.ledger.markQuarantineArchived(q.marker, { windows: w.directory, linux: l.directory, haltSha256 });
@@ -467,7 +480,7 @@ export class ResidentExecutor {
     for (const entry of await this.ledger.unknownUnarchived()) {
       const batch = { key: entry.key, batchId: entry.started?.facts?.batchId ?? entry.terminal?.facts?.batchId ?? null };
       const w = await this.engine.archiveFailure(batch, code);
-      check(w && w.verified === true, 'REARM_WINDOWS_ARCHIVE_UNCONFIRMED');
+      archiveCheck(w && w.verified === true, 'REARM_WINDOWS_ARCHIVE_UNCONFIRMED', w);
       let l = null;
       if (batch.batchId) {
         l = await this.companion.archiveLinux(batch, code);
@@ -519,7 +532,7 @@ export class ResidentExecutor {
         }
         let r;
         try {
-          r = await this.unknown(e.key, codeOf(error), 'owner-drain-unconfirmed', batch, { safePoint, stage: null, requestSha256 });
+          r = await this.unknown(e.key, codeOf(error), 'owner-drain-unconfirmed', batch, { safePoint, stage: null, requestSha256, ...archiveFacts(error) });
         } catch (inner) {
           // After an earlier entry ended, a failure here is no refusal of the request: the drain stops and says what it
           // ended and which entry is unconfirmed (still open, or ended without its summary). This tick stops HALTed either
@@ -569,7 +582,7 @@ export class ResidentExecutor {
     } catch (error) {
       // Nothing accepted: a plain refusal. Accepted half-way (80-owner-abort written): UNKNOWN, HALT now (review M1).
       if (!(await this.ledger.state(v.batchKey)).abort) throw error;
-      const r = await this.unknown(v.batchKey, codeOf(error), 'owner-abort-unconfirmed', Ledger.parkedAt(s) ? s.parked.batch : s.wait.batch, { safePoint: Ledger.parkedAt(s) ? 'parked' : 'waiting', stage: null, requestSha256 });
+      const r = await this.unknown(v.batchKey, codeOf(error), 'owner-abort-unconfirmed', Ledger.parkedAt(s) ? s.parked.batch : s.wait.batch, { safePoint: Ledger.parkedAt(s) ? 'parked' : 'waiting', stage: null, requestSha256, ...archiveFacts(error) });
       return { key: v.batchKey, outcome: r.state, failureCode: r.failureCode };
     }
     const parkedB = Ledger.parkedAt(s);
@@ -628,7 +641,7 @@ export class ResidentExecutor {
     try {
       request = await this.acceptAbort(key, found, safePoint, null);
     } catch (error) {
-      return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch, { safePoint, stage: null, requestSha256: found.requestSha256 });
+      return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch, { safePoint, stage: null, requestSha256: found.requestSha256, ...archiveFacts(error) });
     }
     return this.concludeAbort(key, batch, { safePoint, request });
   }
@@ -752,7 +765,7 @@ export class ResidentExecutor {
       try { this.reportOutcome((await this.ledger.state(key)).reserved?.subject, 'FAILED_CLEAN', { code: OWNER_ABORTED, key }); } catch { /* advisory */ }
       return { state: 'FAILED_CLEAN', key, failureCode: OWNER_ABORTED, safePoint, settle: { kind: 'burned', code: OWNER_ABORTED, klass: 'abort', breaker: 'neutral', pos: null } };
     } catch (error) {
-      return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch, context);
+      return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch, { ...context, ...archiveFacts(error) });
     }
   }
 
@@ -767,7 +780,7 @@ export class ResidentExecutor {
     if (burn) await this.ledger.burnHead(key, { failureCode });
     const windows = await this.engine.archiveFailure(batch, reason);
     const linux = await this.companion.archiveLinux(batch, reason);
-    check(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED');
+    archiveCheck(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED', windows);
     await this.ledger.terminal(key, 'FAILED_CLEAN', facts(windows.directory, linux.directory));
     await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode, ...receipt });
     return { windows: windows.directory, linux: linux.directory };
@@ -1228,7 +1241,7 @@ export class ResidentExecutor {
     try {
       outcome = await this.supersededAfterStart(key, subject, batch, 'parked', POSITIONS[8], 8);
     } catch (error) {
-      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch);
+      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch, archiveFacts(error));
     }
     return outcome ? this.afterBatch(subject, entry.reserved.origin ?? 'queued', outcome) : null;
   }
@@ -1244,7 +1257,7 @@ export class ResidentExecutor {
       outcome = drift ? await this.unknown(key, drift, 'resume-start-checks', batch)
         : await this.fail(key, batch, Object.assign(new StepFailure(8, code, {}, 'stage', entry.plan?.relayed?.length ?? 0), { windowsOnly: true }));
     } catch (error) {
-      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch);
+      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch, archiveFacts(error));
     }
     return this.afterBatch(subject, entry.reserved.origin ?? 'queued', outcome);
   }
@@ -1268,7 +1281,7 @@ export class ResidentExecutor {
       }
       if (outcome instanceof StepFailure) outcome = await this.fail(key, batch, outcome);
     } catch (error) {
-      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch);
+      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch, archiveFacts(error));
     }
     return this.afterBatch(subject, origin, outcome);
   }
@@ -1690,7 +1703,7 @@ export class ResidentExecutor {
       if (outcome instanceof StepFailure) outcome = await this.fail(key, batch, outcome);
     } catch (error) {
       // An exception in the executor itself (or a port) is never classified as clean.
-      outcome = await this.unknown(key, codeOf(error), 'executor-exception');
+      outcome = await this.unknown(key, codeOf(error), 'executor-exception', null, archiveFacts(error));
     }
     return this.afterBatch(subject, origin, outcome);
   }
@@ -1864,7 +1877,7 @@ export class ResidentExecutor {
       outcome = await this.continueBatch(key, subject, batch, t0);
       if (outcome instanceof StepFailure) outcome = await this.fail(key, batch, outcome);
     } catch (error) {
-      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch);
+      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch, archiveFacts(error));
     }
     return this.afterBatch(subject, entry.reserved.origin ?? 'queued', outcome);
   }
@@ -1914,7 +1927,7 @@ export class ResidentExecutor {
     // Phase 2, step 2: the close archive on both hosts ends the Linux exclusive zone; then the batch rests at parking
     // point B and stage 8 runs as tries (the first one right away). Stage 8 touches only Windows.
     const closed = await this.engine.closeBatch(batch, { linux: localRoles.length > 0 });
-    check(closed && closed.verified === true, 'SUCCESS_PATH_ARCHIVE_UNCONFIRMED');
+    archiveCheck(closed && closed.verified === true, 'SUCCESS_PATH_ARCHIVE_UNCONFIRMED', closed);
     await this.ledger.park(key, { batch, closed: closed.archived ?? null, local: localRoles });
     await this.receipt('batch-parked', { key, local: localRoles, relayed: plan.relayed.map(r => r.role) });
     // Everything up to stage 7 passed (Linux too when a role ran locally): the breaker learns it now. A view: a failure
@@ -2052,7 +2065,7 @@ export class ResidentExecutor {
         const reason = archiveReason(failure.code);
         const windows = await this.engine.archiveFailure(batch, reason);
         const linux = await this.companion.archiveLinux(batch, reason);
-        check(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED');
+        archiveCheck(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED', windows);
         await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: failure.code, basis, stage: failure.stageNumber, batchId: batch?.batchId ?? null, windows: windows.directory, linux: linux.directory, ...facts });
         await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: failure.code, class: facts.class });
         const subject = (await this.ledger.state(key)).reserved?.subject;
@@ -2062,7 +2075,7 @@ export class ResidentExecutor {
       }
       return { ...(await this.unknown(key, failure.code, basis, batch, { stage: failure.stageNumber, ...facts })), settle: { ...settle, kind: 'burned', klass: 'unknown' } };
     } catch (error) {
-      return this.unknown(key, codeOf(error), 'failure-handling-unconfirmed', batch);
+      return this.unknown(key, codeOf(error), 'failure-handling-unconfirmed', batch, archiveFacts(error));
     }
   }
 
@@ -2131,7 +2144,7 @@ export class ResidentExecutor {
       const key2 = await this.attempt2IfEligible(key, subject, { ...failure, code: BRIDGE_ABANDONED_UNPUBLISHED });
       return { state: 'FAILED_CLEAN', key, failureCode: BRIDGE_ABANDONED_UNPUBLISHED, originalCode: failure.code, ...(key2 ? { attempt2: key2 } : {}), settle: end };
     } catch (error) {
-      return { ...(await this.unknown(key, codeOf(error), 'scanner-abandon-unconfirmed', batch, context)), settle: { ...settle, kind: 'burned', klass: 'unknown' } };
+      return { ...(await this.unknown(key, codeOf(error), 'scanner-abandon-unconfirmed', batch, { ...context, ...archiveFacts(error) })), settle: { ...settle, kind: 'burned', klass: 'unknown' } };
     }
   }
 
@@ -2195,7 +2208,7 @@ export class ResidentExecutor {
       await this.ledger.burnHead(key, { failureCode: SUPERSEDED_AT_SAFE_POINT });
       const windows = await this.engine.archiveFailure(batch, SUPERSEDED_ARCHIVE_REASON);
       const linux = await this.companion.archiveLinux(batch, SUPERSEDED_ARCHIVE_REASON);
-      check(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED');
+      archiveCheck(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED', windows);
       // stage: the last stage that ran (executed-heads.mjs#mayHavePublished): 1 before the workspace (nothing after stage 1
       // published, unless stage R relayed a role, which its plan says); 8 at parking point B (stages 3, 5 and 7 published).
       await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: SUPERSEDED_AT_SAFE_POINT, basis: 'superseded-live-read', safePoint, stage, batchId: batch?.batchId ?? null,
@@ -2206,26 +2219,29 @@ export class ResidentExecutor {
       return { state: 'FAILED_CLEAN', key, failureCode: SUPERSEDED_AT_SAFE_POINT, safePoint,
         settle: { kind: 'burned', code: SUPERSEDED_AT_SAFE_POINT, klass: 'clean-final', breaker: 'neutral', pos, ...(stage === 8 ? { windowsOnly: true } : {}) } };
     } catch (error) {
-      return this.unknown(key, codeOf(error), 'superseded-end-unconfirmed', batch, context);
+      return this.unknown(key, codeOf(error), 'superseded-end-unconfirmed', batch, { ...context, ...archiveFacts(error) });
     }
   }
 
   // opts.linux false: the batch never reached Linux (released before stage 1), so only Windows is archived.
   async closeOrThrow(batch, opts = null) {
     const closed = await this.engine.closeBatch(batch, opts);
-    check(closed && closed.verified === true, 'UNEXECUTED_CLOSE_UNCONFIRMED');
+    archiveCheck(closed && closed.verified === true, 'UNEXECUTED_CLOSE_UNCONFIRMED', closed);
   }
 
   // extra: further facts of the terminal record (an Owner abort's safe point, stage and stop code).
+  // DESIGN §33: extra.windowsArchiveCode (the Windows archive's own refusal, archiveFacts) is written to the HALT facts, the terminal
+  // record (it rides in extra) and the batch-terminal receipt: only when it is a fixed code.
   async unknown(key, failureCode, basis, batch = null, extra = {}) {
-    await this.haltWith(failureCode, { key, basis }); // HALT first: no crash point leaves a closed unknown without it (N1)
+    const archive = archiveFacts(extra);
+    await this.haltWith(failureCode, { key, basis, ...archive }); // HALT first: no crash point leaves a closed unknown without it (N1)
     const s = await this.ledger.state(key);
     if (['RESERVED', 'STARTED', 'INCOMPLETE'].includes(s.state)) {
       await this.ledger.burnHead(key, { failureCode });
       await this.ledger.terminal(key, 'FAILED_UNKNOWN', { ...extra, failureCode, basis, batchId: batch?.batchId ?? s.started?.facts?.batchId ?? null });
     }
-    await this.receipt('batch-terminal', { key, outcome: 'FAILED_UNKNOWN', failureCode });
-    await this.haltWith(failureCode, { key, basis });
+    await this.receipt('batch-terminal', { key, outcome: 'FAILED_UNKNOWN', failureCode, ...archive });
+    await this.haltWith(failureCode, { key, basis, ...archive });
     this.reportOutcome(s.reserved?.subject ?? this.current, 'FAILED_UNKNOWN', { code: failureCode, key });
     return { state: 'HALTED', key, failureCode };
   }
