@@ -2223,6 +2223,150 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
   - `pgrep` 不存在或误配了别的进程：检查失败或判“有残留”，都按不重试处理，与改动前相同。
   - 伴侣的“已到达”判断只用来少跑一次中继；记录的真假仍由两端各自校验。
 
+## 26. 通道断了就快速结束：泵观察者、桥停止、信号 A–D（设计 r3 第二部分）
+
+依据：常驻容错设计 r3（`DESIGN.r3.md`，sha256 `8d4627a2…3289`）第二部分，以及最终复核 `REVIEW.r3.md` 的 MINOR 1。只改常驻层（`src/engine-windows.mjs`、`src/companion.mjs`、`src/companion-main.mjs`、`src/mailbox.mjs`、`src/executor.mjs`、`src/classify.mjs`、`src/failure-table.json`），不改 Source v2、`relay-public.ps1` 或 Linux 工具。设计稿引用的是 main `f0a401d4` 的行号，代码已因 #933、#934 移动，以下全部按名字定位。
+
+### 26.1 为什么
+
+10-28 #929：第 2 段第 3 轮中继失败后，泵在约 2.5 分钟内就答复了失败，worker 两分钟后无记录退出，可 Windows 发行器一直等到 45 分钟的段截止，最后 `PUBLICATION_UNCERTAIN` → HALT。引擎要等阶段子进程整个结束才读泵的答复；伴侣的心跳在泵运行期间又一直不更新。
+
+### 26.2 四个信号
+
+| 信号 | 谁发现 | 条件 | 泵代码 |
+|---|---|---|---|
+| A 泵死了 | 引擎的泵观察者 | 泵以 `ok:false` 答复，代码属于 `PUMP_DEAD_CODES`（`PUMP_CODES` 以外的码按 `COMPANION_PUMP_UNCONFIRMED` 算）。不含 `FORMAL_WORKER_TERMINAL_UNCONFIRMED`、`COMPANION_PUMP_CANCELLED` | 泵自己的码 |
+| B worker 跑过并结束，却没留记录 | 伴侣的泵 | 有“跑过”的证据，且 unit 现在是 `inactive`/`failed`，并且之后这次列表里既没有 blocked、result，也没有待搬的挑战 | `LINUX_WORKER_ENDED_WITHOUT_RECORD` |
+| C worker 一直没启动 | 伴侣的泵 | `start --no-block` 后 5 分钟，既无证据，也从没列到过任何记录 | `LINUX_WORKER_NOT_STARTED` |
+| D 伴侣挂了 | 引擎的泵观察者 | 泵没答复，心跳超过 `PUMP_HEARTBEAT_STALE_MS`（120 s）没更新（从本段开始算起） | `COMPANION_HEARTBEAT_LOST` |
+
+- **B 的证据**（处理设计审查 MAJOR 1）：新固定 argv `unitFacts` = `systemctl show --property=ActiveState,InvocationID,ExecMainStartTimestampMonotonic <unit>`，按 `KEY=VALUE` 逐行解析，替代原来只读 `ActiveState` 的 `activeState`（泵结束后的“worker 已终止”核对也改用它）。证据任一即可：看到过 `activating/active/deactivating`；`failed`；`InvocationID` 非空且启动时间 > 0；本段已搬过挑战。泵自己记住“跑过”（unit 结束后可能被回收）。启动后立即查一次，之后每 15 s 一次。单独的 `inactive` 永远不算结束。
+- **列表必须是结束之后取的**：先读 unit 事实、判定结束，再列 Linux outgoing；这时列表就是定论。列表失败（`null`）不算定论。列表里还有 blocked、result 或下一个挑战的，照常搬运。
+- **D 的心跳来自独立定时器**：`companion-main.mjs` 的 `startHeartbeat()` 每 10 s 调一次 `mailbox.beat()`，整个包在 try/catch 里，永远不抛进泵或 lane；`step()` 开头那次也包住了。**只在 `probeJobHost` 成功之后才启动**（复核 r3 MINOR 1：作业宿主不能用就没有心跳，执行器就不开批）。
+  - 代价（复核 r3 已接受）：心跳不再反映 mailbox lane 是否卡住，执行器 `heartbeatMaxAgeMs` 的开批前检查也看不出 lane 卡死；每个子进程都被作业宿主限时（§24），所以 lane 不会无限卡住。
+- **D 先写取消，再停**：观察者先给这个 `relay-stage` 请求写取消（原因 `heartbeat-lost`），写成功才认定 D；被计划任务重启的伴侣看到取消，泵一开始就回 `COMPANION_PUMP_CANCELLED`，不开第二个泵（`pump()` 开头新增一次取消检查）。
+
+### 26.3 泵观察者与桥停止（`engine-windows.mjs`）
+
+- `invoke()` 发出 `relay-stage` 后，`observePump()` 与阶段子进程并行运行，每 `BRIDGE_POLL_MS`（5 s）读一次泵的答复和心跳。它只读写邮箱和 broker 的文件，不起任何进程（服务的 Runner 正忙着跑阶段），只对第 2/4/6 段启用。
+- A 或 D 之后**宽限 `BRIDGE_STOP_GRACE_MS`（60 s）**，阶段仍在跑，就每轮调用 `bridgeStop()`，直到读到 broker 的回执。
+- `bridgeStop()` 与 Owner 中止的 `requestStop()` 共用新抽出的 `stageStop()`：找到本批本段唯一在途的 swap，只新建 `.stop`（已存在即同一个停止，所以两者交错只会有一个 stop 文件），记住它，读 broker 回执。`bridgeStop()` **不**写 `80-owner-abort`，**不**置中止标志，**不**取消泵。
+- 阶段结束后的结局：
+  - 被桥停下，broker 回执 `STOP_SENT`，阶段事实的 Windows 进程树为零：`BRIDGE_STAGE_STOPPED_PUMP_LOST`；
+  - 发行器自己先结束了：它自己的码；
+  - 其他：阶段事实的原码。
+  - 这一段若有 Owner 中止（`requestStop` 已被调用），一律保留阶段自己的码，由中止路径决定（Owner 中止优先）。
+- **桥事实**随结果返回，写进 `stage-terminal` 回执：`bridge: { pumpCode, stopRequestId, stopCode, stageCode, pumpQuiet }`。
+- **泵安静**（推广 c18eac1d）：阶段没成功、泵还没答复时，写取消（原因 `stage-ended`），最多等 `PUMP_QUIET_MS` = `RELAY_TIMEOUT_MS + 60 s`。阶段成功时不取消，照旧等答复。D 已成立时不等（伴侣被视为已死），只看一眼。
+
+### 26.4 邮箱、执行器、失败表
+
+- `CANCEL_REASONS` = `owner-abort`、`stage-ended`、`heartbeat-lost`，写取消和读取消两侧都校验。伴侣对所有原因一样处理（停止中继，回 `COMPANION_PUMP_CANCELLED`）；只有账本里的 `80-owner-abort` 才走 Owner 中止。取消文件的合同 `/1` 不变。
+- `mailbox.beat()` 改为同一时刻只写一次（定时器和 `step()` 都会调用，不再共用同一个临时文件）。
+- 执行器在第 2/4/6 段的中止轮询里，从 `engine.bridgeState()` 读观察者看到的东西，各写一次回执 `bridge-pump-lost`、`bridge-stop-requested`；轮询没赶上的，阶段结束后按结果里的桥事实补写。
+- 新码：`LINUX_WORKER_ENDED_WITHOUT_RECORD`、`LINUX_WORKER_NOT_STARTED`、`COMPANION_HEARTBEAT_LOST`（加入 `PUMP_CODES`），`BRIDGE_STAGE_STOPPED_PUMP_LOST`（阶段码）。失败表四行都是 `unknown/halt/owner-rearm/counts`；不进 `classify.mjs` 里与 Source 镜像的四个数组（交叉测试强制）。烧头、熔断计入、日额度不变、不进 attempt 2。
+- `OWNER_ABORT_STAGE_ENDINGS` 加入 `BRIDGE_STAGE_STOPPED_PUMP_LOST`，与 `STAGE_OUTCOME_MISSING` 同样只在 `STOP_SENT` 时成立：Owner 中止若恰在桥停止结束阶段的同一刻被接受，不会因此变成 HALT；两台主机的静止证明照样要过。
+
+### 26.5 与设计稿的差异（都是更保守或必要的补充）
+
+1. **信号 C 多两个前提**：最近一次 unit 事实必须真的读到（读失败不算“没启动”）；Linux outgoing 曾经列到过任何记录就不再判 C。
+2. **B、C 不做 blocked 交接**：B 的定论列表里没有 blocked，C 的 worker 没跑过，交接只会白等 150 s。
+3. **桥事实多两个字段**：`stopRequestId`（回执要用）和 `pumpQuiet`（§27 第 5 条要用）。
+4. **D 只在取消写成功后成立**；D 成立后，阶段结束时不再等泵答复；阶段若在 D 之后成功，结局码是 `COMPANION_HEARTBEAT_LOST`。
+5. **回执由执行器写**：引擎没有回执端口（服务入口不在本次改动范围），所以 `bridge-pump-lost`、`bridge-stop-requested` 由执行器的轮询和阶段后的补写产生。
+6. **`OWNER_ABORT_STAGE_ENDINGS` 加入 `BRIDGE_STAGE_STOPPED_PUMP_LOST`**（26.4 末条），设计稿没写，为“Owner 中止优先”在竞态下也成立。
+
+### 26.6 测试
+
+- `test/bridge-observer.test.mjs`：unit 事实的解析与证据；`inactive` 无证据不结束（MAJOR 1）；`activating` 后 `inactive` 且列表空 → `LINUX_WORKER_ENDED_WITHOUT_RECORD`，不做交接；`failed` 结束；结束但列表里还有 result、blocked 照常搬；列表失败不算定论；只有 `InvocationID` 不算；5 分钟无证据 → `LINUX_WORKER_NOT_STARTED`，事实读失败或列到过记录不判；泵死 60 s 内不写 stop、之后写且只写一个；`FORMAL_WORKER_TERMINAL_UNCONFIRMED`、`ok:true`、`COMPANION_PUMP_CANCELLED` 从不停止；第 1、3、5、7、8、9、10 段从不观察、从不停止；心跳 120 s 不更新 → 先取消（`heartbeat-lost`）后停止、之后不等；慢而健康的中继（120 + 60 + 15 s）不触发 D；泵安静的取消与上限；没有 `STOP_SENT` 不改码；与 Owner 中止两种顺序交错都只有一个 stop 文件、中止优先；重启的伴侣看到取消不开第二个泵；三个取消原因两侧校验；心跳定时器、`beat()` 不重叠、`step()` 的 beat 失败不影响答复；定时器在探针之后启动。
+- 已有的伴侣测试里，`ActiveState` 的模拟输出改成 `KEY=VALUE` 三行。
+- 离线演练 `incident-20261028-replay`（见 §27.6）：中继失败到阶段结束 217 s（不超过 5 分钟）。
+
+## 27. 自动收尾：证明没发布就干净结束（设计 r3 第三部分，Task `d2974298`；Owner Decision `eaa7d5e4`）
+
+依据：设计 r3 第三部分；Owner Decision `eaa7d5e4` 选了 O-2（第 2 段可以有一次自动 attempt 2），不做 4b、4c 和只读 GitHub 探针。只改常驻层，不需要 Source、不加第 11 段、不读 GitHub、不加 policy 开关。
+
+### 27.1 为什么能证明没发布
+
+第 2/4/6 段唯一运行的 Windows 进程是扫描发行器，它没有写 Check 的口；Linux worker 没有 GitHub 凭据；签名结果只能经同一批次的第 3/5/7 段变成检查，执行器进了 `fail()` 就不会再跑它们。所以“有没有发布”只依赖这些结构事实，加上伴侣伪造不了的 Windows 事实（broker 的 `STOP_SENT`、helper 原生回执的作业树为零、服务自己的 SCM 读回）。Linux 静止只决定能不能马上开下一批，与今天所有带 Linux 的 `FAILED_CLEAN`（包括 Owner 中止）同一信任等级。
+
+### 27.2 触发条件（全部满足才走；`classify.mjs#scannerAbandonEligible` 加执行器自己的检查）
+
+1. 第 2/4/6 段，phase 为 `stage`。
+2. **先看泵代码**：`bridge.pumpCode` 不属于 `PUMP_CODES_UNPROVABLE` = `COMPANION_HEARTBEAT_LOST`、`COMPANION_REQUEST_EXPIRED`、`COMPANION_HANDLER_UNCONFIRMED`，不论阶段码是什么（为 null 时不受限）。
+3. 失败码属于 `SCANNER_ABANDON_ENDINGS`：`PUBLICATION_UNCERTAIN`；`STAGE_OUTCOME_MISSING` 和 `BRIDGE_STAGE_STOPPED_PUMP_LOST`（仅当 `stopCode === 'STOP_SENT'`）；阶段成功但泵没确认时的 `RELAY_REFUSED_NO_RETRY`、`RELAY_PARTIAL_RECORD_PRESERVED`、`COMPANION_PUMP_UNCONFIRMED`、`FORMAL_WORKER_TERMINAL_UNCONFIRMED`、`LINUX_WORKER_ENDED_WITHOUT_RECORD`。这些码在失败表里全是 halt 行，所以它从不改动一个本来干净的判定。
+4. 阶段自己的证明 `windowsTreeZero && serviceOriginalStopped`。
+5. 泵已安静（`bridge.pumpQuiet`：答复过，或取消后答复了）。
+6. 当前没有 HALT、`driftCode()` 为空、账本条目是 `STARTED` 且不在中止或自我中止路径上。没有桥事实一律不走。
+
+### 27.3 流程（与 `ownerAbort` 共用 `provenCleanEnd()`）
+
+在 `fail()` 里，失败表判为 UNKNOWN、头已烧（`fail()` 前面已烧，这里不再烧）之后，满足 27.2 就改走 `abandonScannerStage()`：
+
+1. `abortQuiescence()`：最多 9 次、间隔 20 s、总共不超过 5 分钟。不完整 → `unknown(原码, 'scanner-abandon-quiescence-unproven')`，HALT，现场不动。
+2. 归档：Windows 与 Linux 都只改名，原因段固定 `scanner-abandoned`；未确认 → `FAILURE_ARCHIVE_UNCONFIRMED`，HALT。
+3. 终结记录 `FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED`，facts：`originalCode、outcomeReason、pumpCode、stopCode、stageCode、stage（数字）、basis: 'scanner-abandon-quiescence-proven'、batchId、windows、linux、class、retry、breaker`；回执 `batch-terminal`（`class: environment`）。
+4. 第 2 段：一次自动 attempt 2（O-2）。
+
+`ownerAbort` 与它共用 `provenCleanEnd()`（静止 → [烧头] → 归档 → 终结 → 回执），中止的行为不变（回归测试覆盖）。崩溃安全：终结记录写下之前任何一处崩溃，账本都是“STARTED 没有终结”，下一个 tick 的恢复照旧判 UNKNOWN 并 HALT，不需要意图文件。
+
+### 27.4 失败表、attempt 2、executed-heads、额度
+
+- 失败表两行：`BRIDGE_ABANDONED_UNPUBLISHED` 第 2 段 `environment/burn/attempt2/counts`，其他段 `environment/burn/new-commit/counts`。
+- attempt 2（Owner Decision `eaa7d5e4`，O-2）：常驻层白名单 `ATTEMPT2_RESIDENT_CODES = { BRIDGE_ABANDONED_UNPUBLISHED: [2] }`，`attempts.mjs#attempt2Decision` 据此放行，仍要求 attempt 1、`FAILED_CLEAN`、没有已转发的角色；`classify.mjs` 的失败表校验相应放宽：这个码只有在“恰好是名单所列段”的行上才可以写 `attempt2`。第 4/6 段永远不进 attempt 2，attempt 2 自己也不会再有 attempt 3。
+- executed-heads：第 2 段 → `mayHavePublished` 为 `published:false`（换 Source 后可重跑；同 Source 下账本已烧头）；第 4/6 段 → `true`（第 3 段已发布，执行器在第 3 段前已记录）。
+- 熔断计入；日额度不变；自动逻辑只决定写不写 HALT，从不写或清除 `HALT.json`。
+
+### 27.5 与设计稿的差异
+
+1. **白名单放在 `classify.mjs`**：设计稿说放在 `attempts.mjs`。`attempts.mjs` 引用 `classify.mjs`，而失败表在 `classify.mjs` 加载时就要用到这个名单，放在 `attempts.mjs` 会形成加载环。`attempts.mjs` 照样导出它，判定也在 `attempts.mjs`。
+2. **“当前没有 HALT”的检查**用 `ledger.halted()` 读取，与每个 tick 开头的读取完全相同。设计 §5 第 3 条说自动逻辑“从不读写或清除 `HALT.json`”，这里理解为不写、不清除；这次读取只会让它更保守（有 HALT 就不走，照旧 HALT）。
+3. **状态板**：`status.json` 的合同 `/5` 只放码，不放文字，所以没有改 `status.mjs`；最近结局里就是 `FAILED_CLEAN` + `BRIDGE_ABANDONED_UNPUBLISHED`（`class environment`，第 2 段 `retry attempt2`）。PR 页面的文字在 `pr-status.mjs`，不在本次改动范围；它现有的 `FAILED_CLEAN` 文字已带上这个码（第 2 段显示“将自动第二次尝试”）。如需专门的“已证明未发布，干净结束”一句，另开一个小改动。
+4. 回执多一个字段 `originalCode`，终结记录多 `stageCode`、`class/retry/breaker`，便于事后查。
+
+### 27.6 测试
+
+- `test/scanner-abandon.test.mjs`：资格矩阵（11 段 × 23 个码 × 3 种 stop 码 × Windows 一半 × 泵安静 × 6 种泵码），泵码优先；新码都不在 Source 镜像数组里；10-28 结局在第 2 段 → `FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED`、归档 `scanner-abandoned`、`mayHavePublished=false`、回执齐全、一次 attempt 2；attempt 2 跑一次，再收尾也没有 attempt 3；第 4/6 段不进 attempt 2、`mayHavePublished=true`；5 分钟内静止不成立 → HALT 且保留原码；归档失败 → HALT；已 HALT、字节漂移、泵不可证明、泵没安静、没有 `STOP_SENT` → 都 HALT，`clearHalt` 从未调用；在静止、Windows 静止、静止轮询的等待、两边归档、终结记录各处注入崩溃 → 下一个 tick 恢复时 HALT；Owner 中止回归与优先。
+- `test/failure-table.test.mjs`：交叉测试改为“attempt2 恰好属于临时码，或白名单码在其所列段上”；新码有覆盖所有段的行。
+- 离线演练，真实的伴侣泵、邮箱、Windows 引擎和执行器跑在虚拟时钟上：
+  - `incident-20261028-replay`：第 3 轮 `ReceiveChallenge` 卡 90 s 后失败，泵答 `RELAY_REFUSED_NO_RETRY`，60 s 宽限后桥停止，`FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED`，没有 HALT，排了一次 attempt 2；
+  - 变体：worker 一直 active → 静止证明在 5 分钟上限内不成立 → HALT，保留原码；
+  - 变体：伴侣在失败时挂了 → 心跳过期、写 `heartbeat-lost` 取消、桥停止、快速 HALT，不走收尾。
+
+## 28. 第 8 段零副作用临时失败不烧头（设计 r3 4a，PR #930）
+
+依据：设计 r3 §4.3（4a）；Owner Decision `eaa7d5e4`：3 次、间隔 1/3/10 分钟，写死在代码里（不升级 policy 合同）。另含复核 r3 NIT 2。
+
+### 28.1 规则（`executor.mjs#stage8Try`）
+
+- 与 `STAGE8_NOT_READY_CODES` 并列新增 `STAGE8_TRANSIENT_PARK_CODES` = `NATIVE_ADMISSION_UNAVAILABLE`、`GITHUB_TRANSIENT_UNAVAILABLE`。
+- 条件：现有的 `zero`（`BLOCKED`、`sideEffects 0`、`mayHavePublished false`、Windows 一半证明）、码在表里、不满足 `final`、此前临时停车少于 `STAGE8_TRANSIENT_MAX_TRIES`（3）次。
+- 满足就停在 B 点：间隔 `STAGE8_TRANSIENT_RETRY_MS` = 1、3、10 分钟；第 4 次走今天的 `fail()`（烧头，计入熔断），最坏情况与今天一样。
+- 每次停车：`kind 'parked'`、`klass 'transient'`、`breaker 'neutral'`；回执 `stage8-transient-parked`。照样计入 `stage8MaxTries`、`park.maxMs`、`stage8RetriesPer24h`，这些先到就按现有规则结束。
+- 安全性同设计：同一批次、同一个封装好的第 8 段包、每次新 nonce；某次失败若其实在 `journal.begin` 之后，下一次试读到没 settle 的条目回 `RECONCILIATION_REQUIRED`，HALT；认领代变了是 `BATCH_CLAIM_CHANGED`。
+
+### 28.2 队列位置（复核 r3 MINOR 3、NIT 2）
+
+- `72-tried` 记录的 `position` 写真实值（临时失败时为 null），所以这次试照常计入次数，也不会被当成队首试。
+- 另记 `transient: true` 和 `assumedPosition`：真实值有就用真实值，否则取上一次试的位置，再否则取上一次的 `assumedPosition`，都没有就填 1（按设计 §4.2，这个结局只会在判定已到队首之后出现）。它只用于两件事：豁免 `maxParkedOutsideTop2` 的容量检查；状态板显示（PARKED 结果和队列行的 `queuePosition`）。
+- `parkedCounts()`（NIT 2）：临时停车的批次按 `assumedPosition` 计数（通常 1，算在前两名之内），不会把别的未就绪批次挤成 `PARKED_OVER_CAPACITY`。
+- 代价照设计：一个临时停车批次的认领最多在合并队列队首占约 14 分钟（1 + 3 + 10 分钟加三次试各自的运行时间）。
+
+### 28.3 与设计稿的差异
+
+1. 回执用了新的类型名 `stage8-transient-parked`（与 `stage8-not-ready` 分开，便于数），并带 `assumedPosition` 和第几次停车。
+2. `assumedPosition` 的取值链多了一步“上一次的 `assumedPosition`”：连续两次临时失败时，第二次的上一次真实位置是 null。
+
+### 28.4 测试
+
+- `test/park.test.mjs`：`NATIVE_ADMISSION_UNAVAILABLE`/`GITHUB_TRANSIENT_UNAVAILABLE` 依次停 1、3、10 分钟，第 4 次烧头；#930 重放（停 1 分钟后同一批次 `COMPLETED`，1–7 段只跑一次）；位置为 null 时沿用上一次或按 1，`maxParkedOutsideTop2: 0` 也不会 `PARKED_OVER_CAPACITY`，计数按假定位置；`sideEffects>0`、`mayHavePublished`、`UNCERTAIN`、Windows 一半缺失 → 不停车；`stage8MaxTries`、`maxMs` 先到 → 按现有规则结束；下一次试 `RECONCILIATION_REQUIRED` → HALT；认领代变化 → `BATCH_CLAIM_CHANGED`。
+- 离线演练：#930 重放（PR 936：attempt 1 第 2 段 `REMOTE_REFS_CHANGED_SINCE_BUNDLE`，attempt 2 的第 8 段第 1 次 `unavailable`，停 1 分钟，第 2 次 `COMPLETED`）。
+
+### 28.5 §26–§28 共同的安装与不变量
+
+- 只需一次常驻层 Windows 重装（与 §24、§25 同一次即可；同一次 UAC 里重签 policy 文件的 `residentManifestSha256`），不碰 policy 合同、Source 或 Linux 工具。
+- 不增加发布路径；证明不了就 HALT；自动逻辑不写、不清除 `HALT.json`；不增加 GitHub 读写，不在新地方用 App 凭据；不杀未知进程（Linux worker 照旧不被结束，Windows 侧只用审过的 broker 停止通道）；executed-heads 只增不减；失败表仍是白名单。
+
 ## 附录 A：草稿文件
 
 | 文件 | 作用 |
@@ -2255,6 +2399,7 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 | `CI/src/resident-v2/train-run.mjs`、`CI/src/independent-control-checks-v2/train-*.mjs`、`merge-slot-native.mjs` | v1.2：第 10 段的作业合同、入口、事实、影子记录与合并位只读读取（§22） |
 | `windows/CompanionJobHost.cs`、`windows/test-job-host.ps1`、`test/job-host.test.mjs` | companion 的作业宿主（安装时编译为 `bin\CluedCompanionJobHost.exe`）与它的离线、联机测试（§24） |
 | `test/relay-retry.test.mjs` | 中继逐次分类、到达核对、有界重试与本地日志（§25） |
+| `test/bridge-observer.test.mjs`、`test/scanner-abandon.test.mjs` | 泵观察者、桥停止、信号 A–D、心跳定时器（§26）；自动收尾与第 2 段的 attempt 2（§27）；第 8 段临时停车见 `test/park.test.mjs`（§28） |
 
 ## C2：主备角色的独立只读探测（代码候选，未做 P4 现场验收）
 
