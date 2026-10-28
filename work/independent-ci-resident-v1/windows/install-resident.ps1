@@ -28,6 +28,11 @@
   is STANDBY until the role probe says otherwise. -AppPrivateKeyFile and -CiAdmissionTokenFile are optional. A given file is read
   once and its fingerprint computed with the package's pinned runtime\node.exe; it must equal the record's pin (a mismatch refuses
   the install before anything is written), and exactly those bytes are placed, create-only, readable by .\clued-control only.
+  The package directory is usually writable by non-admins and node.exe loads DLLs from its own directory first, so the elevated
+  process never runs anything from it: node.exe and the reviewed tool are read once, hash-checked against the manifest, and the
+  SAME bytes are written into a directory this script creates itself (random name under C:\Windows\Temp, owner Administrators,
+  protected DACL, SYSTEM and Administrators only) and run from there; the directory is removed when the check ends. Only a
+  supplied key or token file makes the script do that, and it then needs the elevated token even for the dry run.
   An existing target is never overwritten. Neither value is printed or kept: the plan and the receipt hold fingerprints only.
   This script never deletes the file you downloaded; delete it yourself afterwards.
 
@@ -74,6 +79,9 @@ $SourceV2Windows = 'work\actions-hosted-migration\independent-ci-v1\src\resident
 # Where the runtime reads the two controller secrets (runtime/protected-files.mjs APP_KEY_FILE; resident-v2/entry-runtime.mjs).
 $SecretTargets = [ordered]@{ appKey = 'C:\ProgramData\CluedControl\trusted\controller-checks-app.pem'; ciToken = 'C:\ProgramData\CluedIndependentCI\secrets\ci-admission.token' }
 $script:SecretBytes = @{}   # the verified secret bytes, in memory only, between the plan and the 'node-secrets' step
+# Where the fingerprint check runs the package's node.exe and tool (DESIGN.md section 30.5): a directory this script creates, never the package directory.
+$SecretWorkParent = 'C:\Windows\Temp'
+$SecretWorkSddl = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
 
 # ---- Privilege boundary (independent review of PR-A: MAJOR-1, MINOR-2, MINOR-4, MINOR-5) ----
 # Required privileges cut the service tokens down to what the code needs; both hosts re-check the real
@@ -235,31 +243,37 @@ function Get-PackageNodeIdentity {
 function Get-SecretFileSddl([string]$controllerSid) { 'O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;' + $controllerSid + ')' }
 function Get-SecretDirectorySddl([string]$controllerSid) { 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;' + $controllerSid + ')' }
 
-# A package file by its install target, hash-checked and kept open (no writer, no deleter) until the caller disposes the stream.
-function Open-PackageFileHeld([string]$target) {
-  if ((Sha256Bytes $pkgBytes) -cne $ExpectedPackageManifestSha256) { throw 'REVIEWED_PACKAGE_CHANGED' }
-  $entry = @(([Text.Encoding]::UTF8.GetString($pkgBytes) | ConvertFrom-Json).files | Where-Object { $_.target -ceq $target })
-  if ($entry.Count -ne 1 -or $entry[0].path -match '(^|[\\/])\.\.([\\/]|$)' -or [IO.Path]::IsPathRooted($entry[0].path)) { throw ('PACKAGE_RECORD_FILE_REQUIRED:' + $target) }
-  $full = Join-Path $PackageRoot $entry[0].path
-  $stream = [IO.File]::Open($full, 'Open', 'Read', 'Read')
-  try {
-    $h = [Security.Cryptography.SHA256]::Create()
-    try { $actual = ([BitConverter]::ToString($h.ComputeHash($stream))).Replace('-', '').ToLowerInvariant() } finally { $h.Dispose() }
-    if ($actual -cne $entry[0].sha256) { throw ('PACKAGE_FILE_CHANGED:' + $target) }
-  } catch { $stream.Dispose(); throw }
-  [pscustomobject]@{ path = $full; stream = $stream }
+# A directory this script creates for the fingerprint check: random name, owner Administrators, protected DACL (SYSTEM and Administrators
+# only, inherited by what is put in it). Nobody else can create, enter, rename or delete it, so what is copied into it is what runs.
+# $leaf is only for tests; the production name is random. Returns the path.
+function New-SecretWorkDirectory([string]$parent, [string]$sddl, [string]$leaf = ('clued-secret-check-' + [guid]::NewGuid().ToString('N'))) {
+  $path = Join-Path $parent $leaf
+  if (Test-Path -LiteralPath $path) { throw 'SECRET_WORK_DIRECTORY_EXISTS' }
+  $acl = New-Object Security.AccessControl.DirectorySecurity
+  $acl.SetSecurityDescriptorSddlForm($sddl)
+  $null = [IO.Directory]::CreateDirectory($path, $acl)
+  $back = Get-Acl -LiteralPath $path
+  if ((Get-DaclPart $back.Sddl) -cne (Get-DaclPart $acl.GetSecurityDescriptorSddlForm('Access'))) { throw 'SECRET_WORK_DIRECTORY_ACL_MISMATCH' }
+  if ($sddl.StartsWith('O:BA', [StringComparison]::Ordinal) -and $back.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne 'S-1-5-32-544') { throw 'SECRET_WORK_DIRECTORY_ACL_MISMATCH' }
+  $path
 }
 # kind 'app-key' | 'ci-token'. Returns the tool's fingerprint, or $null when the tool refused the secret (not a private RSA key / not a token).
+# node.exe and the tool are read from the package ONCE and hash-checked against the reviewed manifest; those same bytes are written into a
+# fresh admin-only directory and run from there (never from the package directory: it is usually writable by non-admins, and node.exe loads
+# DLLs such as WINMM, IPHLPAPI, USERENV and dbghelp from its own directory before System32). The directory is removed afterwards.
 function Get-SecretFingerprint([string]$kind, [byte[]]$secret) {
   $pkg = [Text.Encoding]::UTF8.GetString($pkgBytes) | ConvertFrom-Json
   $tool = @($pkg.files | Where-Object { $_.target -cmatch '^resident\\[0-9a-f]{64}\\tools\\secret-fingerprint\.mjs\z' })
   if ($tool.Count -ne 1) { throw 'PACKAGE_SECRET_TOOL_REQUIRED' }
-  $nodeFile = $null; $toolFile = $null
+  $nodeBytes = Read-PackageRecordFile 'runtime\node.exe'
+  $toolBytes = Read-PackageRecordFile $tool[0].target
+  $work = New-SecretWorkDirectory $SecretWorkParent $SecretWorkSddl
   try {
-    $nodeFile = Open-PackageFileHeld 'runtime\node.exe'
-    $toolFile = Open-PackageFileHeld $tool[0].target
+    $nodePath = Join-Path $work 'node.exe'; $toolPath = Join-Path $work 'secret-fingerprint.mjs'
+    Write-New $nodePath $nodeBytes
+    Write-New $toolPath $toolBytes
     $psi = New-Object Diagnostics.ProcessStartInfo
-    $psi.FileName = $nodeFile.path; $psi.Arguments = '"' + $toolFile.path + '" ' + $kind
+    $psi.FileName = $nodePath; $psi.Arguments = '"' + $toolPath + '" ' + $kind
     $psi.UseShellExecute = $false; $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
     $psi.WorkingDirectory = 'C:\Windows\System32'
     # A cleared, fixed environment (no NODE_OPTIONS or other variable of the Owner's session), as verify-resident.ps1 runs node.
@@ -275,7 +289,7 @@ function Get-SecretFingerprint([string]$kind, [byte[]]$secret) {
       if ($v.kind -cne $kind -or $v.fingerprint -isnot [string]) { return $null }
       return $v.fingerprint
     } finally { $p.Dispose() }
-  } finally { if ($toolFile) { $toolFile.stream.Dispose() }; if ($nodeFile) { $nodeFile.stream.Dispose() } }
+  } finally { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
 }
 # One supplied secret file, read once: a regular file (no directory, no link), 1..$maximum bytes, unchanged while read.
 function Read-SecretSource([string]$path, [int]$maximum, [string]$code) {
@@ -301,6 +315,8 @@ function Get-SecretsPlan {
     $dirExists = Test-Path -LiteralPath $dir -PathType Container
     $entry = [ordered]@{ target = $target; supplied = [bool]$source; targetExists = (Test-Path -LiteralPath $target); createsDirectory = $false; directorySddl = $null; pin = $spec[4]; verified = $false; sddl = (Get-SecretFileSddl $ControllerSid) }
     if ($source) {
+      # The fingerprint check needs the admin-only work directory (owner Administrators), so it needs the elevated token, also in a dry run.
+      if (-not $elevated) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED_FOR_SECRETS' }
       if ($entry.targetExists) { throw ($prefix + '_TARGET_EXISTS_NOT_OVERWRITTEN') }
       if ($dirExists -and (((Get-Item -LiteralPath $dir -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { throw ($prefix + '_TARGET_DIRECTORY_REFUSED') }
       if (-not $dirExists) {
@@ -310,9 +326,11 @@ function Get-SecretsPlan {
         $entry.createsDirectory = $true; $entry.directorySddl = (Get-SecretDirectorySddl $ControllerSid)
       }
       $bytes = Read-SecretSource $source $spec[5] $prefix
-      $fp = Get-SecretFingerprint $spec[3] $bytes
-      if ($null -eq $fp) { throw ($prefix + '_UNREADABLE') }
-      if ($fp -cne $spec[4]) { throw ($prefix + '_FINGERPRINT_MISMATCH') }
+      try {
+        $fp = Get-SecretFingerprint $spec[3] $bytes
+        if ($null -eq $fp) { throw ($prefix + '_UNREADABLE') }
+        if ($fp -cne $spec[4]) { throw ($prefix + '_FINGERPRINT_MISMATCH') }
+      } catch { [Array]::Clear($bytes, 0, $bytes.Length); Clear-SecretBytes; throw }
       $entry.verified = $true
       $script:SecretBytes[$name] = $bytes
     }
@@ -330,8 +348,11 @@ function Write-NewSecret([string]$path, [byte[]]$bytes, [string]$sddl) {
   $back = Get-Acl -LiteralPath $path
   if ((Get-DaclPart $back.Sddl) -cne (Get-DaclPart $sec.GetSecurityDescriptorSddlForm('Access'))) { throw ('ACL_READBACK_MISMATCH:' + $path) }
   if ($sddl.StartsWith('O:BA', [StringComparison]::Ordinal) -and $back.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne 'S-1-5-32-544') { throw ('ACL_READBACK_MISMATCH:' + $path) }
-  $copy = [IO.File]::ReadAllBytes($path)
-  if ((Sha256Bytes $copy) -cne (Sha256Bytes $bytes)) { throw ('SECRET_WRITE_READBACK_MISMATCH:' + $path) }
+  if (-not (Test-BytesEqualClear ([IO.File]::ReadAllBytes($path)) $bytes)) { throw ('SECRET_WRITE_READBACK_MISMATCH:' + $path) }
+}
+# Compares a secret read back from disk with the expected bytes, then zeroes the read-back copy (the caller keeps no reference to it).
+function Test-BytesEqualClear([byte[]]$copy, [byte[]]$expected) {
+  try { return ((Sha256Bytes $copy) -ceq (Sha256Bytes $expected)) } finally { [Array]::Clear($copy, 0, $copy.Length) }
 }
 
 function Assert-Owner {
@@ -563,6 +584,8 @@ function Build-Plan {
     nodeIdentity = $Identity; nodeIdentitySha256 = $IdentitySha256; installationSha256 = (& $find 'record\installation.json')
     roleAssumption = 'NONE'
     secrets = (Get-SecretsPlan)
+    # Only when a key or token file is supplied: the fingerprint check runs the package's node.exe from a directory this script creates, admin-only, and removes it afterwards (DESIGN.md section 30.5).
+    secretsFingerprintDirectory = $(if ($AppPrivateKeyFile -or $CiAdmissionTokenFile) { [ordered]@{ parent = $SecretWorkParent; sddl = $SecretWorkSddl; removedAfterwards = $true } } else { $null })
     installScriptSha256 = (Sha256File $PSCommandPath)
     packageManifestSha256 = $ExpectedPackageManifestSha256
     sourceManifestSha256 = $pkg.sourceManifestSha256; residentManifestSha256 = $pkg.residentManifestSha256

@@ -16,7 +16,10 @@
   (record\installation.json and record\acceptance.json, both hash-pinned by the receipt, which must agree with each other) and
   compared; the receipt assumes no role. The App key and the ci-admission token files are checked for existence and security
   (owner an administrator principal, readable by SYSTEM, Administrators and the pinned controller only, no write for the
-  controller); their content is never read here: the fingerprints were checked at install, and the runtime checks them on every start.
+  controller); so are the folders that hold them (CluedControl\trusted, CluedIndependentCI\secrets) and every ancestor up to the drive
+  root, by the runtime's own rule (runtime/verify-install-acl.ps1): administrator owners, no other reader of the secret folders, no
+  non-administrator write or replace right on the way. Their content is never read here: the fingerprints were checked at install,
+  and the runtime checks them on every start.
   First HALT of 2026-10-29 (DESIGN.md section 33): the companion's relay and bundle scripts (config\companion.json) lie under the installed
   CI Source, source\<SHA-256 of record\source-manifest.json>\, and exist there; and the CI root C:\ProgramData\CluedIndependentCI carries the
   resident service's one READ_CONTROL entry (0x120080, this folder only), read from the live ACL.
@@ -121,6 +124,41 @@ function Test-SecretFileSecurity($acl, [string]$controllerSid) {
     if ($sid -ceq $controllerSid -and (($rights -band 0x1) -ne 0)) { $controllerReads = $true }
   }
   return $controllerReads
+}
+# The runtime's rule (runtime/verify-install-acl.ps1, -ReadFile) for the folders that hold a secret and every ancestor up to the drive root.
+# $items run from the drive root down: @{ acl = <security object>; protected = <at or under the protected root, the folder above the secret
+# folder>; secret = <at or under the secret folder> }. Every owner is an administrator principal; no non-administrator holds a right to
+# replace (delete, change permissions, take ownership, delete children) and, at or under the protected root, none to write; at or under the
+# secret folder nobody but an administrator principal and the pinned controller can read. Returns 'ok' or the first reason.
+function Test-SecretAclChain($items, [string]$controllerSid) {
+  $replace = 0x40 -bor 0x10000 -bor 0x40000 -bor 0x80000
+  $write = 0x2 -bor 0x4 -bor 0x10 -bor 0x100 -bor $replace
+  foreach ($item in $items) {
+    if ($SecretAdmins -cnotcontains $item.acl.GetOwner([Security.Principal.SecurityIdentifier]).Value) { return 'owner-refused' }
+    $mask = if ($item.protected) { $write } else { $replace }
+    foreach ($rule in $item.acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+      if ([string]$rule.AccessControlType -cne 'Allow' -or (([int]$rule.PropagationFlags -band 2) -ne 0)) { continue }
+      $sid = $rule.IdentityReference.Value; $rights = [int]$rule.FileSystemRights; $admin = $SecretAdmins -ccontains $sid
+      if ((($rights -band $mask) -ne 0) -and -not $admin) { return 'writable-ancestor' }
+      if ($item.secret -and (($rights -band 0x1) -ne 0) -and -not $admin -and $sid -cne $controllerSid) { return 'secret-reader' }
+    }
+  }
+  return 'ok'
+}
+# The live folders above a secret file: the secret folder is its parent, the protected root the folder above that (as the runtime computes them).
+function Get-SecretPathState([string]$target, [string]$controllerSid) {
+  try {
+    $secretRoot = Split-Path -Parent $target; $protectedRoot = Split-Path -Parent $secretRoot
+    $items = New-Object System.Collections.ArrayList
+    for ($c = $secretRoot; $c; $c = [IO.Path]::GetDirectoryName($c)) {
+      if (-not (Test-Path -LiteralPath $c -PathType Container)) { return 'absent' }
+      if (((Get-Item -LiteralPath $c -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return 'link-refused' }
+      $inProtected = ($c -ieq $protectedRoot) -or $c.StartsWith($protectedRoot + '\', [StringComparison]::OrdinalIgnoreCase)
+      $inSecret = ($c -ieq $secretRoot) -or $c.StartsWith($secretRoot + '\', [StringComparison]::OrdinalIgnoreCase)
+      [void]$items.Insert(0, @{ acl = (Get-Acl -LiteralPath $c); protected = $inProtected; secret = $inSecret })
+    }
+    return (Test-SecretAclChain $items $controllerSid)
+  } catch { return 'unreadable' }
 }
 function Get-SecretFileState([string]$target, [string]$controllerSid) {
   try {
@@ -228,9 +266,12 @@ Record 'ci-root-resident-read-control' $(if ([string]::IsNullOrEmpty($ciRootSddl
 $identityCheck = try { Test-NodeIdentityReceipt $receipt (Read-ReviewedPublicJson (Join-Path $Root 'record\installation.json') ([string](Get-Field $receipt 'installationSha256')) 4MB) $Accepted $receipt.acceptanceSha256 } catch { [pscustomobject]@{ ok = $false; detail = $_.Exception.Message; identity = $null } }
 Record 'node-identity' $identityCheck.ok $identityCheck.detail
 Record 'node-secrets-receipt' (Test-SecretsReceipt $receipt $identityCheck.identity)
-foreach ($spec in @(@('app-key-file', 'appKey'), @('ci-admission-token-file', 'ciToken'))) {
+foreach ($spec in @(@('app-key-file', 'appKey', 'app-key-directories'), @('ci-admission-token-file', 'ciToken', 'ci-admission-token-directories'))) {
   $state = Get-SecretFileState $SecretTargets[$spec[1]] $Node.controllerSid
   Record $spec[0] $(if ($state -ceq 'ok') { $true } elseif ($state -ceq 'unreadable') { 'unreadable' } else { $false }) $state
+  # The folders holding the file and every ancestor: what the runtime's own check requires on the way to the file (MINOR-2 of the C7 review).
+  $pathState = Get-SecretPathState $SecretTargets[$spec[1]] $Node.controllerSid
+  Record $spec[2] $(if ($pathState -ceq 'ok') { $true } elseif ($pathState -ceq 'unreadable') { 'unreadable' } else { $false }) $pathState
 }
 
 foreach ($s in @($receipt.sourceManifestSha256, $receipt.residentManifestSha256)) { if ($s -cnotmatch '^[0-9a-f]{64}$') { throw 'INSTALL_RECEIPT_SHAPE_REFUSED' } }

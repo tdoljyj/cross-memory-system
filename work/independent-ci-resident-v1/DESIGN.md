@@ -2616,10 +2616,11 @@ Task `088ab175`；设计 v0.4 §7.1–§7.4、§9 C7、§10 P3。
 - 目标（运行时读取的路径，测试逐字比较）：`C:\ProgramData\CluedControl\trusted\controller-checks-app.pem`，`C:\ProgramData\CluedIndependentCI\secrets\ci-admission.token`。属主 Administrators，保护的 DACL：SYSTEM、Administrators 完全控制，`.\clued-control` 只读。文件创建时就带最终描述符，之后读回核对。
 - 流程（全部在写任何东西之前，干跑与 `-Apply` 都做）：
   1. 来源文件只读一次进内存：普通文件、不是链接、大小有界（私钥 ≤ 16 KiB，token ≤ 4 KiB）、读的过程中没有变化。
-  2. 指纹由包里钉住的 `runtime\node.exe` 运行包里的 `tools\secret-fingerprint.mjs` 计算。两个文件都按包清单核对哈希，并**保持打开**（拒绝写入和删除）直到进程结束；node 用清空的固定环境运行；秘密走 stdin，不进命令行，工具只打印指纹。
+  2. 指纹由包里钉住的 `runtime\node.exe` 运行包里的 `tools\secret-fingerprint.mjs` 计算，但**不在包目录里运行**（复核 MINOR-1，见 30.10）。两个文件各读一次、按包清单核对哈希，把**同一批字节**写进本脚本自己新建的目录再从那里运行；node 用清空的固定环境运行；秘密走 stdin，不进命令行，工具只打印指纹。
   3. 指纹必须等于安装记录的钉值；公式就是运行时每次启动用的那两个（`entry-runtime.mjs#controllerPrincipal`），测试里对拍。不符：`APP_KEY_FINGERPRINT_MISMATCH`、`CI_TOKEN_FINGERPRINT_MISMATCH`；工具拒绝（不是 RSA 私钥、不是 token）：`APP_KEY_UNREADABLE`、`CI_TOKEN_UNREADABLE`；来源文件不合格：`*_SOURCE_REFUSED`。
   4. 目标已存在：`*_TARGET_EXISTS_NOT_OVERWRITTEN`，**从不覆盖**。目标目录是链接：`*_TARGET_DIRECTORY_REFUSED`。
-- 放置本身是 `-Apply` 的一步 `node-secrets`（在公司的计划任务之后、runner 未变核对之前）：放的正是被计算过指纹的那些字节，`CreateNew`。没有提供参数就什么都不放。放置后内存里的字节清零。
+- 因为要建那个 Owner 属主的目录，只要提供了私钥或 token 文件，**干跑也要提权的令牌**（`ELEVATED_OWNER_TOKEN_REQUIRED_FOR_SECRETS`）；没提供文件的干跑不变，不需要。
+- 放置本身是 `-Apply` 的一步 `node-secrets`（在公司的计划任务之后、runner 未变核对之前）：放的正是被计算过指纹的那些字节，`CreateNew`。没有提供参数就什么都不放。内存里的字节在放置后清零，放置后读回比对用的那份副本比对完立刻清零（`Test-BytesEqualClear`，复核 NIT-2），任何一次拒绝也先清零已读入的字节。
 - 目录：`CluedControl\trusted` 属于 controller 安装，**必须已存在**（`*_TARGET_DIRECTORY_MISSING`）；`CluedIndependentCI\secrets` 不存在且提供了 token 时由本安装创建一次（创建即带 ACL）。
 - 这个脚本不删任何东西：Owner 下载的那份私钥或 token 副本，装完后由 Owner 自己删（脚本输出里有一句提醒）。
 - 卸载不碰这两个文件（它们不在 `resident\` 里）。重装时目标已存在，不传参数即可；传了会被拒绝。
@@ -2628,7 +2629,9 @@ Task `088ab175`；设计 v0.4 §7.1–§7.4、§9 C7、§10 P3。
 
 - `node-identity`：回执里的节点身份等于从**已安装**记录（`record\installation.json`、`acceptance.json`，两者都由回执钉哈希）重新导出的那份；两份记录文件互相一致；回执的 `roleAssumption` 是 `NONE`。
 - `node-secrets-receipt`：回执说放了的，指纹等于记录的钉值；说没放的，没有指纹。
-- `app-key-file`、`ci-admission-token-file`：文件存在、不是链接、属主是管理员、读者只有 SYSTEM、Administrators 和档案里的 `controllerSid`、controller 能读且没有写权。规则取自运行时自己的 `runtime/verify-install-acl.ps1`。**不读内容**：指纹在安装时核对过，运行时每次入口启动又核对（不符以 `ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED` 失败关闭）。
+- `app-key-file`、`ci-admission-token-file`：文件存在、不是链接、属主是管理员、读者只有 SYSTEM、Administrators 和档案里的 `controllerSid`、controller 能读且没有写权。规则取自运行时自己的 `runtime/verify-install-acl.ps1`。
+- `app-key-directories`、`ci-admission-token-directories`（复核 MINOR-2）：放文件的目录（`CluedControl\trusted`、`CluedIndependentCI\secrets`）和一路到盘符根的每一级上级，逐级按运行时同一条规则（`Test-SecretAclChain`）：属主都是管理方（SYSTEM、Administrators、TrustedInstaller）；放文件的目录自身及其下，除管理方和 controller 外没有人有读数据权；没有非管理方持有替换权（删除、改权限、取得所有权、删子项），在「保护根」（放文件目录的上一级）及其下还不得有写权；链接一律拒绝。只对 `Allow`、非仅继承的条目判断（与运行时相同）。结果：`absent`、`link-refused`、`owner-refused`、`writable-ancestor`、`secret-reader`，读不了记 `unreadable`。这样新节点预建的、继承了 Users 读取的 `trusted\`，不会过了 verify 却在运行时因 `SECRET_READER_REFUSED` 失败。
+- **不读内容**：指纹在安装时核对过，运行时每次入口启动又核对（不符以 `ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED` 失败关闭）。
 - 没提供参数、文件还没放的安装：这两项为 false（`absent`），整体结论是未通过。这是「节点还不能干活」的如实报告，不是安装错误。
 
 ### 30.7 STANDBY 安装（公司节点，设计 §7.2、§10 P3）
@@ -2650,9 +2653,19 @@ Task `088ab175`；设计 v0.4 §7.1–§7.4、§9 C7、§10 P3。
 | `test/node-identity.test.mjs` | 两个节点（TURING 档案、公司夹具）各自导出身份并核对哈希；39 个拒绝用例（字段、acceptance 钉值、两份文件不一致）；身份里没有私钥、token 或角色字段；真实 `assembleRecord` 导出的两份记录 |
 | `test/secret-fingerprint.test.mjs` | 指纹公式与运行时对拍；非私钥、非 token、空、超长一律只打印一个码；进程方式：秘密走 stdin，输出里没有秘密 |
 | `test/standby-install.test.mjs` | 公司包的身份钉在清单里；STANDBY 安装不带状态、不带角色、安装脚本没有网络调用；角色探测答「没有」且只发一次只读 RPC，没有 GitHub 请求；密钥与 token 路径与运行时一致 |
-| `windows/test-resident-windows.ps1` §4d、§4e | 同一份用例跑 PowerShell 两份实现；包侧；回执核对；密钥文件描述符规则；用真实 node 和本仓库的工具、一个临时 RSA 私钥和一个编造的 token 做指纹核对和创建即带 ACL 的放置（断言 148 → 294） |
+| `windows/test-resident-windows.ps1` §4d、§4e | 同一份用例跑 PowerShell 两份实现；包侧；回执核对；密钥文件描述符规则；用真实 node 和本仓库的工具、一个临时 RSA 私钥和一个编造的 token 做指纹核对和创建即带 ACL 的放置（断言 148 → 294）。复核修正后 §4d-2 和 §4e 另加：上级目录链的规则（16 个拒绝、4 个放行、活链三种）、读回副本清零、新建目录的值与行为、包目录里的 DLL 不被加载、提权要求（共 +47，370 → 417） |
 
 - 离线、只用临时目录和夹具；那把 RSA 私钥由测试在内存或临时目录里生成，是一次性夹具，不是任何真实密钥。
+
+### 30.10 独立复核的修正（2 个 MINOR、1 个 NIT；C7 本身 0 BLOCKER、0 MAJOR）
+
+- **MINOR-1，不在包目录里运行 node.exe。** 以前指纹计算直接运行 `$PackageRoot\runtime\node.exe`。包目录通常非管理员可写，而 node.exe 会先从自己所在目录加载 WINMM、IPHLPAPI、USERENV、dbghelp 这类不在 KnownDLLs 里的 DLL；非提权进程可以往 `runtime\` 放一个 DLL，让它以管理员身份被加载，还能从 stdin 读到秘密。包清单的哈希只管清单里列的文件，管不到多出来的文件。
+  - 做法（取复核建议的“拷贝”一种）：`Get-SecretFingerprint` 把 node.exe 和工具各读一次、按清单核对哈希，把同一批字节写进 `New-SecretWorkDirectory` 新建的目录，从那里运行，结束后删除该目录。目录在 `C:\Windows\Temp` 下，名字随机（`clued-secret-check-<32 位十六进制>`），属主 Administrators，DACL 受保护，只有 SYSTEM 和 Administrators（`O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)`，写在脚本顶部的 `$SecretWorkSddl`）。非管理员在 `C:\Windows\Temp` 里没有删除或改名他人对象的权利，也进不去这个目录，名字又猜不到。创建后读回 DACL（和属主）核对，不符 `SECRET_WORK_DIRECTORY_ACL_MISMATCH`，已存在 `SECRET_WORK_DIRECTORY_EXISTS`。进程的 DLL 搜索顺序是新目录、System32；工作目录是 System32，环境清空。
+  - 取代了原来的“包文件保持打开”（`Open-PackageFileHeld` 已删除）：现在运行的文件在管理方独占的目录里，不再需要靠打开句柄防改。
+  - 计划多一个字段 `secretsFingerprintDirectory`（只有提供了私钥或 token 文件时才有：父目录、SDDL、事后删除），计划合同仍是 `/7`（`/7` 还没有装到任何机器上）。脚本说明里“从不删除”的例外多了这一个：只删自己刚建的这个目录。
+  - 测试里有对照：往一个 node.exe 旁边放 `WINMM.dll` 等四个假 DLL，从那里运行的 node 确实起不来；同样四个文件放在**包**的 `runtime\` 里（清单管不到它们），指纹仍然算对。
+- **MINOR-2，verify 检查放文件的目录和上级。** 见 30.6 的两个新检查。规则取自 `runtime/verify-install-acl.ps1` 的 `-ReadFile` 分支，不比它严也不比它松；`C:\`、`C:\ProgramData` 这类系统上级只受“替换权”一条约束（它们本来允许 Users 在里面建东西）。没有要求 controller 对每一级有 READ_CONTROL（运行时需要，但那要算组成员的有效权限，这里不做）。
+- **NIT-2，读回副本清零。** `Write-NewSecret` 不再自己留一份读回的字节；比对和清零都在 `Test-BytesEqualClear` 里。
 
 ## 31. 信箱原子写与少开 wsl.exe
 
