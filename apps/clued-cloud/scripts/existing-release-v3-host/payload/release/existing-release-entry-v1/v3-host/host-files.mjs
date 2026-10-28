@@ -77,6 +77,16 @@ export function verifyBuildFiles(c){
  if(seen.size<4||seen.size>100000||Object.keys(m.files).some(p=>!seen.has(p)))fail('EXACT_BUILD_FILE_CLOSURE_REQUIRED');
  if(!seen.has('apps/clued-cloud/dist/server/index.js')||!seen.has('apps/clued-cloud/dist/pdf-extractor/index.js'))fail('REQUIRED_WORKER_ARTIFACT_MISSING');return {sourceCommit:c.sourceCommit,fileCount:seen.size,manifestSha256:c.sourcePins[INPUT]};
 }
+// WSL interop starts a Windows process for anyone who can reach a
+// /run/WSL/*_interop socket, and PrivateDevices=yes still binds the Host's
+// /dev/shm. The release unit makes both inaccessible ('-': no /run/WSL, no interop).
+export const INACCESSIBLE=Object.freeze(['-/run/WSL','/dev/shm']);
+export function interopBoundary(access=(dir,mode)=>fs.accessSync(dir,mode)){
+ for(const dir of INACCESSIBLE.map(p=>p.replace(/^-/,'')))for(const mode of [fs.constants.R_OK,fs.constants.X_OK]){
+  try{access(dir,mode);}catch(e){if(e.code==='EACCES'||e.code==='ENOENT')continue;throw e;}
+  fail('WSL_INTEROP_OR_SHM_REACHABLE');
+ }
+}
 export function renderPublisherUnit(c,manager,contextSha,packageSha){
  return ['[Unit]','Description=Clued existing exact-main release once','[Service]','Type=exec','User='+c.publisherUid,'Group='+c.publisherGid,'SupplementaryGroups='+manager.job_gid,
  'ExecStart='+c.node.path+' '+BASE+'/release/existing-release-entry-v1/v3-host/release-once.mjs --execute-once --fixed-scope existing-production-release-v3-host --reviewed-context-sha256 '+contextSha+' --reviewed-package-sha256 '+packageSha,
@@ -85,5 +95,6 @@ export function renderPublisherUnit(c,manager,contextSha,packageSha){
  'NoNewPrivileges=yes','CapabilityBoundingSet=','AmbientCapabilities=','ProtectControlGroups=yes','Delegate=no','KillMode=control-group','SendSIGKILL=yes','TimeoutStopSec=30s','RuntimeMaxSec=7200s','Restart=no',
  'ProtectSystem=strict','ProtectHome=yes','PrivateDevices=yes','PrivateTmp=yes','ProtectProc=invisible','RestrictSUIDSGID=yes','LockPersonality=yes','UMask=0077',
  'ReadWritePaths='+[RUN,ROOT+'/currentness-evidence',ROOT+'/publisher-home',ROOT+'/publisher-tmp',manager.state_dir,APP+'/.wrangler'].join(' '),
+ 'InaccessiblePaths='+INACCESSIBLE.join(' '),
  'StandardOutput=journal','StandardError=journal',''].join('\n');
 }

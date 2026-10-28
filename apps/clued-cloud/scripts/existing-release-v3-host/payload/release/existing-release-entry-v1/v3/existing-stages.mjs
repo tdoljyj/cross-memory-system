@@ -25,7 +25,7 @@ const MANAGER=new URL('../../linux-process-manager.mjs',import.meta.url);
 const PORTS=new URL('../fixed-currentness-ports.mjs',import.meta.url);
 const LOCAL_PINS=new Map([
  [EXTERNAL,'4bb88785021b73783bfe2b37972be11806f2c3b564ced8785dfbda25405106cd'],
- [MANAGER,'b961dfc06794336f38f47d4f8f5d7c6a2724aee6ba5bac4ff69090ef30842f70'],
+ [MANAGER,'bc85acde10bc55a0866aac0aa9554d8c5de876b12a12d8faf492fa3d91c44223'],
  [PORTS,'93f95698f359c94585053d4331ae855bc07004245b4429ecaf6470aa40c25f3f'],
 ]);
 const HASH=/^[a-f0-9]{64}$/,SHA=/^[a-f0-9]{40}$/,UUID=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
