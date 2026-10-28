@@ -26,11 +26,16 @@ def at(minutes_ago: float) -> str:
     return panel.iso(NOW - timedelta(minutes=minutes_ago))
 
 
-def probe(conclusion: str | None, created: float, completed: float | None = None, runner: str = NAME) -> dict:
+def probe(conclusion: str | None, created: float, completed: float | None = None, runner: str = NAME,
+          gate: float | None | str = "auto") -> dict:
+    """A probe of the run created `created` minutes ago; its gate passed half a minute later unless told otherwise."""
+    gate_done = created - 0.5 if gate == "auto" else gate
     return {
-        "id": int(created * 100), "name": panel.PROBE_PREFIX + NAME, "conclusion": conclusion,
+        "id": int(created * 100), "run_id": int(created * 100), "name": panel.PROBE_PREFIX + NAME,
+        "conclusion": conclusion, "status": "completed" if conclusion else "queued",
         "created_at": at(created), "completed_at": at(completed) if completed is not None else None,
         "runner_name": runner if conclusion == "success" else "",
+        "gate_done": at(gate_done) if gate_done is not None else None,
     }
 
 
@@ -50,12 +55,23 @@ class ClassifyNodeTests(unittest.TestCase):
         row = panel.classify_node(NAME, [], {NAME: own}, NOW)
         self.assertEqual((row["status"], row["busy"], row["current_job"]), ("online", False, None))
 
-    def test_unpicked_probe_after_four_minutes_is_offline(self) -> None:
-        jobs = [probe("success", 20, 19), probe("cancelled", 10), probe(None, 5)]
+    def test_two_unpicked_runs_are_offline(self) -> None:
+        jobs = [probe("success", 20, 19), probe("cancelled", 10, 5), probe(None, 5)]
         self.assertEqual(panel.classify_node(NAME, jobs, {}, NOW)["status"], "offline")
 
-    def test_fresh_unpicked_probe_is_not_yet_offline(self) -> None:
-        self.assertEqual(panel.classify_node(NAME, [probe(None, 2)], {}, NOW)["status"], "unknown")
+    def test_one_unpicked_run_is_not_yet_offline(self) -> None:
+        jobs = [probe("success", 20, 19), probe("cancelled", 10, 5), probe(None, 2)]
+        self.assertEqual(panel.classify_node(NAME, jobs, {}, NOW)["status"], "unknown")
+
+    def test_skipped_or_gate_less_probes_never_count(self) -> None:
+        # Review MAJOR 1: a skipped probe (gate failed) or one cancelled before the gate passed.
+        jobs = [probe("success", 20, 19), probe("skipped", 11, 10.5, gate=None),
+                probe("cancelled", 6, 1, gate=None), probe("skipped", 16, 15.5)]
+        self.assertEqual(panel.classify_node(NAME, jobs, {}, NOW)["status"], "unknown")
+
+    def test_cancelled_soon_after_its_gate_does_not_count(self) -> None:
+        jobs = [probe("cancelled", 10, 8), probe("cancelled", 5, 3)]
+        self.assertEqual(panel.classify_node(NAME, jobs, {}, NOW)["status"], "unknown")
 
     def test_no_probe_at_all_is_unknown(self) -> None:
         self.assertEqual(panel.classify_node(NAME, [], {}, NOW)["status"], "unknown")
@@ -131,6 +147,27 @@ class ResidentTests(unittest.TestCase):
         row = panel.resident_latest(combined)["turing"]
         self.assertEqual((row["halted"], row["activity"], row["pr"]), (True, "halted", 2))
 
+    def test_old_error_clears_once_the_executor_writes_again(self) -> None:
+        # Review MAJOR 3: an error left on an open PR must not keep the node halted.
+        combined = [
+            (1, {"statuses": [status(30, "error", "执行器停机（X），等 Owner 复位")]}),
+            (2, {"statuses": [status(2, "pending", "当班：运行中：第 1 段（准备）")]}),
+        ]
+        row = panel.resident_latest(combined)["turing"]
+        self.assertEqual((row["halted"], row["activity"]), (False, "running"))
+
+    def test_queue_wait_ignores_hints_before_the_queue(self) -> None:
+        rows = [status(90, "failure", "落后 main 1 个提交：请合入最新 main 并推送"),
+                status(30, "pending", "排队第 2 位"),
+                status(20, "pending", "当班：运行中：第 0 段（准备）"),
+                status(10, "success", "已完成")]
+        summary = panel.summarize_batches([panel.resident_batches(rows)["turing"]], NOW, 1)
+        self.assertEqual(summary["queue_wait_minutes_median"], 10.0)
+
+    def test_unsafe_node_names_are_ignored(self) -> None:
+        bad = {**status(1, "error", "x"), "context": "resident-queue/a|b @x (info only)"}
+        self.assertEqual(panel.resident_latest([(1, {"statuses": [bad]})]), {})
+
     def test_running_row_beats_a_newer_hint(self) -> None:
         combined = [
             (1, {"statuses": [status(1, "failure", "落后 main 1 个提交：请合入最新 main 并推送")]}),
@@ -150,6 +187,14 @@ class AlertAndStateTests(unittest.TestCase):
         comment = panel.alert_comment({"halt:turing": "停机"}, {"offline:x": "x 离线"}, "owner")
         self.assertTrue(comment.startswith("@owner 新告警："))
         self.assertIn("已恢复：", comment)
+
+    def test_untrusted_text_is_inert(self) -> None:
+        self.assertEqual(panel.cell("a|b `c` @owner <x>\nnext"), "a\\|b 'c' ＠owner &lt;x&gt; next")
+
+    def test_the_last_state_comment_wins(self) -> None:
+        forged = panel.write_state({"alerts": {"forged": "x"}})
+        real = panel.write_state({"alerts": {}})
+        self.assertEqual(panel.read_state(f"{forged}\n...\n{real}\n"), {"alerts": {}})
 
     def test_state_round_trip_inside_the_issue_body(self) -> None:
         state = {"alerts": {"halt:turing": "停机"}, "samples": {}}

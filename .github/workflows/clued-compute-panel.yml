@@ -249,9 +249,10 @@ jobs:
             tests/test_compute_panel.py
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
+      # -I: the runner is shared, so ignore user site-packages and PYTHON* settings.
       - name: Self-test the panel (no network)
-        run: python3 -m unittest tests/test_compute_panel.py
+        run: python3 -I tests/test_compute_panel.py
       - name: Rebuild the panel issue
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci/self-hosted/compute_panel.py
+        run: python3 -I scripts/ci/self-hosted/compute_panel.py

@@ -40,13 +40,19 @@ PROBE_LINE = re.compile(r"COMPUTE_PANEL_PROBE (\{.*\})")
 MARKER = "<!-- clued-compute-panel:v1 -->"
 STATE_RE = re.compile(r"<!-- clued-compute-panel-state:([A-Za-z0-9+/=]+) -->")
 ISSUE_TITLE = "算力面板（自动更新）"
-RESIDENT_CONTEXT = re.compile(r"^resident-queue/(.+) \(info only\)$")
+RESIDENT_CONTEXT = re.compile(r"^resident-queue/([A-Za-z0-9._-]{1,40}) \(info only\)$")
+GATE_JOB = "admission-gate"
 
-ONLINE_WINDOW = timedelta(minutes=8)
+ONLINE_WINDOW = timedelta(minutes=12)
 UNPICKED_AFTER = timedelta(minutes=4)
+UNPICKED_RUNS = 2
 LOOKBACK_RUNS = 4
+ACTIVE_RUNS = 20
+RESIDENT_PULLS = 10
+HEALTH_EVERY = timedelta(minutes=30)
+LOW_BUDGET = 300
 METRICS_EVERY = timedelta(minutes=55)
-METRICS_PULLS = 30
+METRICS_PULLS = 50
 UTILIZATION_HOURS = 24
 LOW_DISK_GB = 20.0
 LOW_MEMORY_GB = 1.0
@@ -89,6 +95,14 @@ def iso(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def cell(value: Any) -> str:
+    """Text from job names or status descriptions, made inert inside a Markdown table or list."""
+    text = " ".join(str(value).split())
+    for old, new in (("|", "\\|"), ("`", "'"), ("@", "＠"), ("<", "&lt;"), (">", "&gt;")):
+        text = text.replace(old, new)
+    return text[:200]
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):  # noqa: D401 - keep the token off the log host
         return None
@@ -100,9 +114,14 @@ class GitHub:
         self.repository = repository
         self.api_url = api_url.rstrip("/")
         self.requests = 0
+        self.remaining: int | None = None
 
-    def _request(self, method: str, path: str, params: dict | None = None, body: Any = None,
-                 follow: bool = True) -> tuple[int, Any, dict]:
+    def low(self) -> bool:
+        """True when the shared GITHUB_TOKEN budget is nearly spent: skip optional reads."""
+        return self.remaining is not None and self.remaining < LOW_BUDGET
+
+    def _request(self, method: str, path: str, params: dict | None = None,
+                 body: Any = None) -> tuple[int, Any, dict]:
         url = f"{self.api_url}{path}"
         if params:
             url += "?" + urllib.parse.urlencode(params)
@@ -113,26 +132,39 @@ class GitHub:
             "User-Agent": "clued-compute-panel/1",
             "X-GitHub-Api-Version": "2022-11-28",
         })
-        opener = urllib.request.build_opener() if follow else urllib.request.build_opener(_NoRedirect)
+        # Never follow a redirect with the token attached; callers that expect one handle it.
+        opener = urllib.request.build_opener(_NoRedirect)
         self.requests += 1
         try:
             with opener.open(request, timeout=30) as response:
                 raw = response.read()
+                self._budget(response.headers)
                 return response.status, (json.loads(raw) if raw else None), dict(response.headers)
         except urllib.error.HTTPError as error:
-            if not follow and error.code in (301, 302, 303, 307, 308):
+            self._budget(error.headers)
+            if error.code in (301, 302, 303, 307, 308):
                 return error.code, None, dict(error.headers)
             raise RuntimeError(f"{method} {path} failed ({error.code})") from None
 
+    def _budget(self, headers: Any) -> None:
+        value = headers.get("X-RateLimit-Remaining") if headers else None
+        if value is not None and str(value).isdigit():
+            self.remaining = int(value)
+
     def get(self, path: str, params: dict | None = None) -> Any:
-        return self._request("GET", f"/repos/{self.repository}{path}", params)[1]
+        status, body, _ = self._request("GET", f"/repos/{self.repository}{path}", params)
+        if status >= 300:
+            raise RuntimeError(f"GET {path} redirected ({status})")
+        return body
 
     def send(self, method: str, path: str, body: Any) -> Any:
-        return self._request(method, f"/repos/{self.repository}{path}", body=body)[1]
+        status, result, _ = self._request(method, f"/repos/{self.repository}{path}", body=body)
+        if status >= 300:
+            raise RuntimeError(f"{method} {path} redirected ({status})")
+        return result
 
     def job_log(self, job_id: int) -> str:
-        status, _, headers = self._request("GET", f"/repos/{self.repository}/actions/jobs/{job_id}/logs",
-                                           follow=False)
+        status, _, headers = self._request("GET", f"/repos/{self.repository}/actions/jobs/{job_id}/logs")
         location = headers.get("Location") or headers.get("location")
         if status not in (301, 302, 303, 307, 308) or not location:
             return ""
@@ -152,22 +184,40 @@ def parse_probe(log: str) -> dict | None:
     return None
 
 
+def unpicked(job: dict, now: datetime) -> bool:
+    """A probe nobody took although its run's gate passed at least UNPICKED_AFTER earlier.
+
+    A skipped probe (the gate failed) or one cancelled before the gate finished
+    says nothing about its runner and never counts.
+    """
+    gate_done = parse_time(job.get("gate_done"))
+    if gate_done is None or job.get("runner_name"):
+        return False
+    if job.get("conclusion") == "cancelled":
+        ended = parse_time(job.get("completed_at"))
+        return ended is not None and ended - gate_done >= UNPICKED_AFTER
+    return job.get("status") == "queued" and now - gate_done >= UNPICKED_AFTER
+
+
 def classify_node(name: str, probe_jobs: list[dict], active: dict[str, dict], now: datetime) -> dict:
-    """Online/offline/unknown and busy for one pool runner."""
+    """Online/offline/unknown and busy for one pool runner.
+
+    Offline needs unpicked probes in UNPICKED_RUNS different runs, so one
+    saturated moment or a runner busy on a job outside the active-run window
+    does not page the Owner.
+    """
     mine = [job for job in probe_jobs if job.get("name") == PROBE_PREFIX + name]
     successes = [parse_time(job.get("completed_at")) for job in mine if job.get("conclusion") == "success"]
     successes = [time for time in successes if time]
     last_success = max(successes) if successes else None
-    unpicked = [job for job in mine
-                if job.get("conclusion") != "success" and not job.get("runner_name")
-                and (created := parse_time(job.get("created_at"))) and now - created >= UNPICKED_AFTER]
+    unpicked_runs = {job.get("run_id") for job in mine if unpicked(job, now)}
     running = active.get(name)
     current = None if running is None or running.get("own") else running
     if running:
         status = "online"
     elif last_success and now - last_success <= ONLINE_WINDOW:
         status = "online"
-    elif unpicked:
+    elif len(unpicked_runs) >= UNPICKED_RUNS:
         status = "offline"
     else:
         status = "unknown"
@@ -179,7 +229,7 @@ def classify_node(name: str, probe_jobs: list[dict], active: dict[str, dict], no
     }
 
 
-def active_jobs(client: GitHub, limit: int = 10) -> dict[str, dict]:
+def active_jobs(client: GitHub, limit: int = ACTIVE_RUNS) -> dict[str, dict]:
     """runner_name -> the job it is running now, across every workflow.
 
     This workflow's own probe/panel jobs prove the runner is up but are not
@@ -210,12 +260,15 @@ def probe_jobs(client: GitHub) -> list[dict]:
     jobs: list[dict] = []
     for run in runs[:LOOKBACK_RUNS]:
         found = (client.get(f"/actions/runs/{run['id']}/jobs", {"filter": "latest", "per_page": 100}) or {}).get("jobs", [])
-        jobs.extend(job for job in found if str(job.get("name", "")).startswith(PROBE_PREFIX))
+        gate = next((job for job in found if job.get("name") == GATE_JOB), None)
+        gate_done = gate.get("completed_at") if gate and gate.get("conclusion") == "success" else None
+        jobs.extend({**job, "run_id": run["id"], "gate_done": gate_done}
+                    for job in found if str(job.get("name", "")).startswith(PROBE_PREFIX))
     return jobs
 
 
-def latest_health(client: GitHub, jobs: list[dict], cache: dict) -> dict[str, dict]:
-    """The newest probe line per runner; a job's log is read once (cache by job id)."""
+def latest_health(client: GitHub, jobs: list[dict], cache: dict, now: datetime) -> dict[str, dict]:
+    """Disk/memory per runner from its newest successful probe, read at most every HEALTH_EVERY."""
     newest: dict[str, dict] = {}
     for job in jobs:
         if job.get("conclusion") != "success":
@@ -223,16 +276,20 @@ def latest_health(client: GitHub, jobs: list[dict], cache: dict) -> dict[str, di
         name = str(job["name"])[len(PROBE_PREFIX):]
         if name not in newest or (job.get("completed_at") or "") > (newest[name].get("completed_at") or ""):
             newest[name] = job
-    health: dict[str, dict] = {}
     for name, job in newest.items():
-        key = str(job["id"])
-        if key not in cache:
-            try:
-                cache[key] = parse_probe(client.job_log(job["id"])) or {}
-            except (RuntimeError, OSError):
-                cache[key] = {}
-        health[name] = {**cache[key], "job_id": job["id"]}
-    return health
+        seen = cache.get(name) or {}
+        fetched = parse_time(seen.get("fetched_at"))
+        if client.low() or (fetched and now - fetched < HEALTH_EVERY):
+            continue
+        try:
+            values = parse_probe(client.job_log(job["id"])) or {}
+        except (RuntimeError, OSError):
+            continue
+        cache[name] = {key: values[key] for key in ("disk_free_gb", "mem_available_gb")
+                       if isinstance(values.get(key), (int, float))}
+        cache[name]["fetched_at"] = iso(now)
+    return {name: {k: v for k, v in row.items() if k != "fetched_at"} for name, row in cache.items()
+            if name in {node["name"] for node in POOL}}
 
 
 def health_flags(health: dict) -> list[str]:
@@ -280,8 +337,10 @@ def resident_batches(statuses: list[dict]) -> dict[str, dict]:
         last = rows[-1]
         terminal = last.get("state") in ("success", "failure", "error")
         result[node] = {
-            # Queue wait runs from the first resident status of this head to its first running stage.
-            "queued_at": rows[0].get("created_at"),
+            # Queue wait runs from the first queue row (or the start itself) to the first running
+            # stage; hints such as "落后 main" before it do not count as queueing.
+            "queued_at": next((row.get("created_at") for row in rows[:start]
+                               if "排队" in str(row.get("description", ""))), rows[start].get("created_at")),
             "started_at": rows[start].get("created_at"),
             "ended_at": last.get("created_at") if terminal else None,
             "outcome": {"success": "passed", "failure": "failed", "error": "failed"}.get(last.get("state"), "running"),
@@ -339,8 +398,10 @@ def resident_latest(combined: list[tuple[int, dict]]) -> dict[str, dict]:
     """Executor state per resident node over the open PRs' combined statuses.
 
     An error row is executor-wide (HALT, or no status update: possibly stopped)
-    and wins; otherwise a running stage; otherwise the newest row. Per-PR hints
-    such as "落后 main" are only shown when nothing better exists.
+    and wins while it is newer than every progress row of that node, so an old
+    error left on an open PR clears once the executor writes again; otherwise a
+    running stage; otherwise the newest row. Per-PR hints such as "落后 main"
+    are only shown when nothing better exists.
     """
     rows: dict[str, list[dict]] = {}
     for number, status in combined:
@@ -353,7 +414,14 @@ def resident_latest(combined: list[tuple[int, dict]]) -> dict[str, dict]:
     latest: dict[str, dict] = {}
     for node, items in rows.items():
         items.sort(key=lambda item: item["at"], reverse=True)
-        chosen = (next((i for i in items if i["state"] == "error"), None)
+        error = next((i for i in items if i["state"] == "error"), None)
+        # Hints such as "落后 main" are written even while HALTed, so only a row of real
+        # executor progress (queued, running, finished) clears an older error.
+        healthy = next((i for i in items if i["state"] != "error"
+                        and any(word in str(i["description"]) for word in ("运行中", "排队", "已完成"))), None)
+        if error and healthy and healthy["at"] > error["at"]:
+            error = None
+        chosen = (error
                   or next((i for i in items if "运行中" in str(i["description"])), None)
                   or items[0])
         halted = chosen["state"] == "error"
@@ -363,7 +431,7 @@ def resident_latest(combined: list[tuple[int, dict]]) -> dict[str, dict]:
     return latest
 
 
-def collect_residents(client: GitHub, limit: int = 20) -> dict[str, dict]:
+def collect_residents(client: GitHub, limit: int = RESIDENT_PULLS) -> dict[str, dict]:
     pulls = client.get("/pulls", {"state": "open", "sort": "updated", "direction": "desc", "per_page": limit}) or []
     combined = [(pull["number"], client.get(f"/commits/{pull['head']['sha']}/status") or {}) for pull in pulls[:limit]]
     return resident_latest(combined)
@@ -378,16 +446,17 @@ def alerts_for(pool: dict[str, dict], residents: dict[str, dict]) -> dict[str, s
             alerts[f"{flag}:{name}"] = f"{name} {'磁盘' if flag == 'disk' else '内存'}不足"
     for node, row in residents.items():
         if row["halted"]:
-            alerts[f"halt:{node}"] = f"常驻执行器 {node} 停机或未更新：{row.get('description')}（PR #{row.get('pr')}）"
+            alerts[f"halt:{node}"] = f"常驻执行器 {node} 停机或未更新：{cell(row.get('description'))}（PR #{row.get('pr')}）"
     return alerts
 
 
 def read_state(body: str | None) -> dict:
-    match = STATE_RE.search(body or "")
-    if not match:
+    # The panel writes its state last; read the last match so text earlier in the body cannot shadow it.
+    matches = STATE_RE.findall(body or "")
+    if not matches:
         return {}
     try:
-        value = json.loads(base64.b64decode(match.group(1)).decode("utf-8"))
+        value = json.loads(base64.b64decode(matches[-1]).decode("utf-8"))
     except (ValueError, json.JSONDecodeError):
         return {}
     return value if isinstance(value, dict) else {}
@@ -420,7 +489,7 @@ def render(report: dict, state: dict) -> str:
         lines.append("| {} | {} | {} | {} | {} | {} | {} | {} | {} |".format(
             name, STATUS_TEXT[node["status"]],
             ("忙" if node["busy"] else "闲") if node["status"] == "online" else "—",
-            f"{job['workflow']} / {job['job']}" if job else "—",
+            cell(f"{job['workflow']} / {job['job']}") if job else "—",
             "、".join(node["can_run"]),
             f"{health['disk_free_gb']} GB" if "disk_free_gb" in health else "—",
             f"{health['mem_available_gb']} GB" if "mem_available_gb" in health else "—",
@@ -430,7 +499,7 @@ def render(report: dict, state: dict) -> str:
     lines += ["", "| 其他机器 | 状态 | 说明 |", "|---|---|---|"]
     for name, row in report["residents"].items():
         activity = {"halted": "停机", "running": "运行中", "idle": "空闲（无运行中批次）"}[row["activity"]]
-        lines.append(f"| 常驻 {name} | {activity} | 最近状态：{row.get('description')}（PR #{row.get('pr')}，{row.get('at')}） |")
+        lines.append(f"| 常驻 {name} | {activity} | 最近状态：{cell(row.get('description'))}（PR #{row.get('pr')}，{row.get('at')}） |")
     if not report["residents"]:
         lines.append("| 常驻执行器 | 未知 | 没有开放 PR 带常驻状态 |")
     for other in OTHERS:
@@ -452,8 +521,9 @@ def render(report: dict, state: dict) -> str:
     if report["alerts"]:
         lines += ["", "### 当前告警", ""] + [f"- {text}" for text in report["alerts"].values()]
     lines += ["", "<details><summary>机器可读数据（clued.compute-panel/v1）</summary>", "", "```json",
-              json.dumps({k: v for k, v in report.items()}, ensure_ascii=False, indent=1), "```", "</details>",
-              "", "由 `.github/workflows/clued-compute-panel.yml` 每 5 分钟更新；离线判定需要至少一次探测在 4 分钟内无人接。",
+              json.dumps(report, ensure_ascii=False, indent=1).replace("`", "\\u0060"), "```", "</details>",
+              "", "由 `.github/workflows/clued-compute-panel.yml` 每 5 分钟更新；离线判定需要连续两轮探测在门禁通过 4 分钟后仍无人接。"
+              + (f" 本轮未完成：{cell('；'.join(report['errors']))}" if report.get("errors") else ""),
               write_state(state)]
     return "\n".join(lines) + "\n"
 
@@ -467,27 +537,38 @@ def find_issue(client: GitHub) -> dict | None:
 
 
 def build(client: GitHub, now: datetime, state: dict) -> dict:
-    cache = state.setdefault("probe_cache", {})
-    jobs = probe_jobs(client)
-    active = active_jobs(client)
-    health = latest_health(client, jobs, cache)
-    live_ids = {str(row["job_id"]) for row in health.values()}
-    state["probe_cache"] = {key: value for key, value in cache.items() if key in live_ids}
+    """Each read degrades on its own: a failed section is reported, and the panel and alerts still publish."""
+    errors: list[str] = []
+
+    def attempt(label: str, call, fallback):
+        try:
+            return call()
+        except (RuntimeError, OSError) as error:
+            errors.append(f"{label}: {error}")
+            return fallback
+
+    jobs = attempt("probes", lambda: probe_jobs(client), [])
+    active = attempt("active jobs", lambda: active_jobs(client), {})
+    health = attempt("health", lambda: latest_health(client, jobs, state.setdefault("health", {}), now), {})
     pool: dict[str, dict] = {}
     for node in POOL:
         row = classify_node(node["name"], jobs, active, now)
         row.update(os=node["os"], site=node["site"], can_run=node["can_run"])
-        row["health"] = {k: v for k, v in health.get(node["name"], {}).items() if k != "job_id"}
+        row["health"] = dict(health.get(node["name"], {}))
         row["flags"] = health_flags(row["health"]) if row["status"] == "online" else []
         pool[node["name"]] = row
     utilization = record_utilization(state.setdefault("samples", {}), pool, now)
     metrics = state.get("metrics") or {}
-    if not metrics.get("as_of") or now - parse_time(metrics["as_of"]) >= METRICS_EVERY:
-        batches = collect_batches(client, now)
-        metrics = {"as_of": iso(now), "day": summarize_batches(batches, now, 1),
-                   "week": summarize_batches(batches, now, 7)}
-        state["metrics"] = metrics
-    residents = collect_residents(client)
+    if not client.low() and (not metrics.get("as_of") or now - parse_time(metrics["as_of"]) >= METRICS_EVERY):
+        batches = attempt("batch metrics", lambda: collect_batches(client, now), None)
+        if batches is not None:
+            metrics = {"as_of": iso(now), "day": summarize_batches(batches, now, 1),
+                       "week": summarize_batches(batches, now, 7)}
+            state["metrics"] = metrics
+    residents = attempt("residents", lambda: collect_residents(client), None)
+    if residents is None:  # keep the last known resident state (and its HALT alert) rather than clearing it
+        residents = state.get("residents") or {}
+    state["residents"] = residents
     return {
         "schema": SCHEMA,
         "generated_at": iso(now),
@@ -497,6 +578,7 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
         "others": OTHERS,
         "metrics": metrics,
         "alerts": alerts_for(pool, residents),
+        "errors": errors,
     }
 
 
@@ -506,10 +588,10 @@ def alert_comment(new: dict[str, str], resolved: dict[str, str], owner: str | No
     lines = []
     if new:
         lines.append(("@" + owner + " " if owner else "") + "新告警：")
-        lines += [f"- {text}" for text in new.values()]
+        lines += [f"- {cell(text)}" for text in new.values()]
     if resolved:
         lines.append("已恢复：")
-        lines += [f"- {text}" for text in resolved.values()]
+        lines += [f"- {cell(text)}" for text in resolved.values()]
     return "\n".join(lines)
 
 
@@ -534,15 +616,16 @@ def main() -> int:
         print(body.replace(write_state(state), ""))
         print(json.dumps({"requests": client.requests}))
         return 0
-    if issue is None:
-        issue = client.send("POST", "/issues", {"title": ISSUE_TITLE, "body": body})
-    else:
-        client.send("PATCH", f"/issues/{issue['number']}", {"body": body})
     new = {k: v for k, v in report["alerts"].items() if k not in previous}
     resolved = {k: v for k, v in previous.items() if k not in report["alerts"]}
     comment = alert_comment(new, resolved, os.environ.get("GITHUB_REPOSITORY_OWNER"))
+    if issue is None:
+        # Created without alert state, so the alerts are announced by the comment below.
+        issue = client.send("POST", "/issues", {"title": ISSUE_TITLE, "body": render(report, {**state, "alerts": {}})})
+    # Announce first and save the alert state after: a failed comment is retried next run, never lost.
     if comment:
         client.send("POST", f"/issues/{issue['number']}/comments", {"body": comment})
+    client.send("PATCH", f"/issues/{issue['number']}", {"body": body})
     if args.output:
         with open(args.output, "w", encoding="utf-8") as handle:
             json.dump(report, handle, ensure_ascii=False, indent=1)
