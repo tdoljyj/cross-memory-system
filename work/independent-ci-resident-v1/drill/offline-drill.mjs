@@ -484,7 +484,7 @@ await step('  a stage 10 whose cleanup is not proven HALTs like any stage', asyn
       return { code: 0, stdout: relayReceipt({ status: 'PUBLIC_RECORD_TRANSFERRED', exitCode: 0 }) };
     }
     if (a.includes('/var/lib/clued-independent-ci/formal-spool/outgoing')) return { code: 0, stdout: responses >= 3 ? 'result.ready.json\n' : `challenge-0${responses + 1}.ready.json\n` };
-    if (a.includes('ActiveState')) return { code: 0, stdout: 'inactive\n' };
+    if (a.includes('--property=ActiveState')) return { code: 0, stdout: 'inactive\n' };
     if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
     return { code: 0, stdout: '' };
   };
