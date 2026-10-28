@@ -89,9 +89,9 @@ test('a stored breaker that does not validate starts closed', () => {
   assert.throws(() => breakerRecord(closedBreaker(), { pos: 99 }, policy, 0), { code: 'BREAKER_EVENT_INVALID' });
 });
 
-test('policy /6: the queue, breaker, parking and train settings are bounded; the phase-1 daily cap per key is gone', () => {
+test('policy /7: the queue, breaker, parking and train settings are bounded; the phase-1 daily cap per key is gone', () => {
   const p = rawPolicy();
-  assert.equal(validatePolicy(p).contract, 'clued.independent-ci.resident-policy/6');
+  assert.equal(validatePolicy(p).contract, 'clued.independent-ci.resident-policy/7');
   assert.equal(validatePolicy({ ...p, limits: { ...p.limits, maxBatchesPer24h: 72 } }).limits.maxBatchesPer24h, 72);
   for (const [k, v, code] of [['maxBatchesPer24h', 73, 'POLICY_RATE_INVALID'], ['maxEvaluationsPer24h', 97, 'POLICY_EVALUATION_RATE_INVALID'], ['queueDepth', 101, 'POLICY_QUEUE_DEPTH_INVALID'],
     ['releasesPerHeadPer24h', 7, 'POLICY_RELEASE_CAP_INVALID'], ['waitingRetriesPer24h', 97, 'POLICY_WAITING_BUDGET_INVALID'], ['reevaluationsPerPrHeadPer24h', 13, 'POLICY_REEVALUATION_CAP_INVALID']]) {
@@ -99,7 +99,8 @@ test('policy /6: the queue, breaker, parking and train settings are bounded; the
   }
   assert.throws(() => validatePolicy({ ...p, limits: { ...p.limits, unexecutedMaxPer24h: 3 } }), { code: 'POLICY_LIMIT_KEYS_INVALID' });
   assert.throws(() => validatePolicy({ ...p, breaker: { ...p.breaker, backoffMs: [3_600_000, 1_800_000] } }), { code: 'POLICY_BREAKER_INVALID' });
-  assert.throws(() => validatePolicy({ ...p, contract: 'clued.independent-ci.resident-policy/5' }), { code: 'POLICY_CONTRACT_INVALID' });
+  for (const contract of ['clued.independent-ci.resident-policy/5', 'clued.independent-ci.resident-policy/6'])
+    assert.throws(() => validatePolicy({ ...p, contract }), { code: 'POLICY_CONTRACT_INVALID' }, contract);
   // phase 2, step 3c-1: the train runs in shadow at most; 'on' needs step 3c-2
   assert.equal(validatePolicy({ ...p, train: { ...p.train, enabled: 'shadow' } }).train.enabled, 'shadow');
   assert.throws(() => validatePolicy({ ...p, train: { ...p.train, enabled: 'on' } }), { code: 'POLICY_TRAIN_ON_NOT_SUPPORTED' });

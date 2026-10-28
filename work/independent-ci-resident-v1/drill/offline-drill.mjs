@@ -6,6 +6,7 @@
 // retried on their own back-off), a supersession before stage 1, and the breaker opening and closing on a trial.
 // v1.1 (phase 2, step 2, DESIGN §18): parking at B (the close archive before stage 8, stage 8 as tries on their own
 // back-off while other PRs run), main moving ending a parked batch, and the Owner drain before a reinstall.
+// Policy /7 (C1b, node profiles): the policy names the accepted node profile and its hash; the drill's node is a fixture.
 //   node drill/offline-drill.mjs            prints a step table and a JSON summary; exit 1 on any miss
 //
 // It drives the real executor, ledger, receipts, inboxes, protocol archive and Owner-request code
@@ -26,6 +27,7 @@ import { applyArchive, planArchive, protocolLeaves } from '../src/archive.mjs';
 import { abortRequest, drainRequest, inspect, rearmRequest, resumeRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
 import { ExecutedHeads, BACKFILL_MANIFEST_CONTRACT, CARRIED_FILE } from '../src/executed-heads.mjs';
 import { sha256 } from '../src/canonical.mjs';
+import { nodeProfileSha256 } from '../src/node-profile.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const SOURCE = '5'.repeat(64);
@@ -34,6 +36,10 @@ const BASE = '0'.repeat(40);
 const OWNER = 'S-1-5-21-1-2-3-1001';
 const head = n => `a${n.toString(16).padStart(39, '0')}`;
 const WINDOWS_CLEAN = { windowsTreeZero: true, serviceOriginalStopped: true };
+// The accepted node profile (policy /7) of a fixture node: its owner is the companion's user, its distribution the Linux one.
+const NODE = Object.freeze({ contract: 'clued.independent-ci.node-profile/1', nodeName: 'drill-node', hostname: 'TURING', ownerSid: OWNER,
+  ownerProfileDirectory: 'C:\\Users\\drill-owner', controllerSid: 'S-1-5-21-1-2-3-1015', runnerService: 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02',
+  mutationMutex: 'Global\\CluedControlControllerMutationV1-TURING-1015', wslDistribution: 'Ubuntu-24.04' });
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-resident-drill-'));
 const winSpool = path.join(root, 'windows-formal-spool');
@@ -44,7 +50,7 @@ await fs.writeFile(path.join(winSpool, 'outgoing', `${'e'.repeat(64)}.json`), '{
 let now = Date.parse('2026-10-21T00:00:00Z');
 const clock = () => now;
 const policyInput = {
-  contract: 'clued.independent-ci.resident-policy/6', repo: REPO, baseBranch: 'main', sourceManifestSha256: SOURCE, ciSourceManifestSha256: '9'.repeat(64), residentManifestSha256: RESIDENT,
+  contract: 'clued.independent-ci.resident-policy/7', node: NODE, nodeProfileSha256: nodeProfileSha256(NODE), repo: REPO, baseBranch: 'main', sourceManifestSha256: SOURCE, ciSourceManifestSha256: '9'.repeat(64), residentManifestSha256: RESIDENT,
   ownerAcceptance: { decisionRef: '0d84ddbb-ec1f-49c3-bbd0-953f72d53584', installReceiptRef: null }, validUntil: null,
   limits: { maxBatchesPer24h: 72, maxEvaluationsPer24h: 96, perPrBatchesPer24h: 6, waitingRetriesPer24h: 48, reevaluationsPerPrHeadPer24h: 6, releasesPerHeadPer24h: 2, queueDepth: 100,
     maxConcurrent: 1, inboxMaxFiles: 16, unexecutedCooldownMs: 600_000, stageMarginMs: 180_000 },
