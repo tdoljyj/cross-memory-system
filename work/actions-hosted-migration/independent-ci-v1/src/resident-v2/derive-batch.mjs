@@ -66,7 +66,7 @@ export function deriveBatch({ recordDocs, subject, batchKey, batchId, now = Date
   // .gitleaks.toml (hash-pinned here), never from the PR head (b29 lesson).
   const sourceCommit = record.manifest.sourceSha;
   const gitleaksTomlSha256 = record.pins.get('.gitleaks.toml');
-  // Job contract /3: the tested commit S is the head (S = H) until step 3c's train front batch brings another one.
+  // Job contract /3: the tested commit S is the head (S = H), or a train front batch's own S (step 3c-2, subjectTestSha).
   const jobs = batchJobsV2({ repo: subject.repo, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: subjectTestSha(subject), sourceManifestSha256: ci, createdAt: subject.createdAt, attempt: subject.attempt });
   const out = {};
   const rows = [];
@@ -116,7 +116,8 @@ export function deriveRelayStage({ recordDocs, batchJson, roles, batchKey, batch
   const record = validateRecordV2(recordDocs, { now, required: [...Object.values(ENTRY_V2), '.gitleaks.toml'] });
   const ci = record.config.sourceManifestSha256;
   check(batch.ciSourceManifestSha256 === ci, 'RESIDENT_BATCH_RECORD_REFUSED');
-  // The hosted relay tests the head on GitHub's runners: a train front batch (S != H) never relays (DESIGN §24).
+  // The hosted relay tests the head on GitHub's runners: a train front batch (S != H) never relays (design v0.5 §5.2,
+  // step 3c-2; relay-entry-v2.mjs#relaySubject refuses it too).
   check(!Object.hasOwn(subject, 'testSha'), 'RESIDENT_RELAY_TEST_COMMIT_REFUSED');
   const jobs = batchJobsV2({ repo: subject.repo, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: subject.headSha, sourceManifestSha256: ci, createdAt: subject.createdAt, attempt: subject.attempt });
   check(plain(batch.jobs) && Object.keys(batch.jobs).length === Object.keys(jobs).length && Object.entries(jobs).every(([r, j]) => batch.jobs[r] === j.id), 'RESIDENT_BATCH_RECORD_REFUSED');

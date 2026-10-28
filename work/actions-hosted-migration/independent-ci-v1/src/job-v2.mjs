@@ -63,7 +63,7 @@ export const subjectOfV2 = job => Object.fromEntries(SUBJECT_V2.map(k => [k, job
 
 // Step 3c-2 (design v0.5 §5.2, §5.7): a train front batch tests GitHub's test merge S of [T, H], so S != H; every other
 // batch tests the head itself (S = H).
-export const isTrainFrontJobV2 = job => job?.testSha !== job?.headSha;
+export const isTrainFrontJobV2 = job => SHA.test(job?.testSha ?? '') && SHA.test(job?.headSha ?? '') && job.testSha !== job.headSha;
 // The PR base GitHub (and Native) report for a job. S = H: exactly the batch base T, as before (the head contains main's
 // tip). A train front batch: GitHub moves base.sha only on a push, so it is whatever commit it reads, recorded as a fact;
 // each admission still requires every read of it to agree (full-admission-v2.mjs).

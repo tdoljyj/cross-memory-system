@@ -1,5 +1,4 @@
 import { createHash, createSign } from 'node:crypto';
-import { prBaseAcceptedV2 } from './job-v2.mjs';
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const positive = value => Number.isSafeInteger(value) && value > 0;
@@ -141,11 +140,13 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     if (!route.startsWith('/') || route.includes('..')) fail('invalid_github_route');
     return request(`${root}${route}`, method, await credential(options?.until ?? null), body, options);
   }
-  // base.sha: the batch base T for a batch that tests the head; a train front batch (S != H) records what GitHub reads
-  // (job-v2.mjs#prBaseAcceptedV2), and both reads of one call must agree.
+  // base.sha: the batch base T for every job that tests the head (v1 jobs have no testSha); a v2 train front batch
+  // (S != H) accepts what GitHub reads (job-v2.mjs#prBaseAcceptedV2, inlined: the v1 one-shot closure never loads
+  // job-v2.mjs), and both reads of one call must agree.
   function exactPr(pr, job) {
+    const front = typeof job.testSha === 'string' && /^[0-9a-f]{40}$/.test(job.testSha) && job.testSha !== job.headSha;
     return pr?.number === job.pr && pr.state === 'open' && pr.head?.sha === job.headSha
-      && prBaseAcceptedV2(job, pr.base?.sha) && pr.base?.ref === 'main'
+      && /^[0-9a-f]{40}$/.test(pr.base?.sha ?? '') && (front || pr.base.sha === job.baseSha) && pr.base?.ref === 'main'
       && pr.head?.repo?.full_name === repository && pr.base?.repo?.full_name === repository
       && Number.isSafeInteger(pr.changed_files) && pr.changed_files > 0 && pr.changed_files <= 3000;
   }

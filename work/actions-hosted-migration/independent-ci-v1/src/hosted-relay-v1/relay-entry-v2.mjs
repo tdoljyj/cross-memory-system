@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { EffectJournal } from '../effect-journal.mjs';
 import { readBatchClaim } from '../batch-claim-v2.mjs';
+import { isTrainFrontJobV2 } from '../job-v2.mjs';
 import { createRecoverableCheckPublisherV2, createPublicationRecoveryAuditWriter } from '../../runtime/one-shot-v2.mjs';
 import { runEntry, controllerPrincipal, controllerPorts, observationLog } from '../resident-v2/entry-runtime.mjs';
 import { STATE_V2, STATE_RELAY_JWKS } from '../resident-v2/layout.mjs';
@@ -45,8 +46,11 @@ export function installedInputPins(manifest) {
 }
 
 // The relay stage subject: the batch content of the candidate jobs plus the sticky batch claim generation
-// stage 1 recorded (the relay publication must observe that same generation again, A-strict).
+// stage 1 recorded (the relay publication must observe that same generation again, A-strict). The relay tests the
+// head on GitHub's runners and its subject has no tested commit: a train front batch (S != H, step 3c-2) is refused
+// here as well as in its stage R derivation (derive-batch.mjs), never relayed under the head's ids.
 export function relaySubject(jobs, batchClaim) {
+  if (!Array.isArray(jobs) || jobs.length === 0 || jobs.some(isTrainFrontJobV2)) fail('RELAY_TEST_COMMIT_REFUSED');
   const j = jobs[0];
   return { repo: j.repo, pr: j.pr, headSha: j.headSha, baseSha: j.baseSha, claimId: batchClaim.claimId, fence: batchClaim.fence, epoch: batchClaim.epoch,
     sourceManifestSha256: j.sourceManifestSha256 };
