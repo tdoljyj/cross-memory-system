@@ -311,5 +311,6 @@ test('the install authority keeps at least the helper\'s fixed margin; stage 10\
   const broker = table('../windows/SwapBroker.cs');
   const boundary = table('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/windows/FormalPublicBoundaryV2.cs');
   assert.deepEqual(broker, boundary);
-  assert.deepEqual([broker.length, broker[9]], [10, 300_000]);
+  // Stage 11 (C2's role probe, 60 s) follows stage 10 in both tables.
+  assert.deepEqual([broker.length, broker[9], broker[10]], [11, 300_000, 60_000]);
 });
