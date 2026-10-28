@@ -103,7 +103,8 @@ test('invoke-stage stage 10: train facts are a success fact carrying the facts; 
     };
     let time = NOW;
     return invokeStage({ batchDir: path.join(root, 'work', runId), stage: 10, workManifestSha256: d.result.stage.workManifestSha256, batchKey: runKey, stageRoot: path.join(root, 'stage'),
-      brokerRoot: path.join(root, 'broker'), receiptsRoot: path.join(root, 'receipts'), spoolRoot: path.join(root, 'spool'), controllerSid: CONTROLLER,
+      // #926: the invoker checks the sealed plan against the record's node profile and takes the controller SID from it
+      brokerRoot: path.join(root, 'broker'), receiptsRoot: path.join(root, 'receipts'), spoolRoot: path.join(root, 'spool'), recordDocs: rec.docs,
       clock: () => time, sleep: async ms => { time += ms; await broker(); } });
   };
   const ok = await run({ status: 'TRAIN_FACTS', reason: null, sideEffects: 0, train: facts });
