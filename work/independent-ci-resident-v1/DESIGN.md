@@ -2075,6 +2075,79 @@ Owner Decision `2eea28a1` 把 3c 拆成两步。3c-1 只做影子模式（设计
 
 第 2 轮：（见下）
 
+## 25. 中继稳健：逐次分类、有界重试、本地日志（Task `241de382`，设计 r3 第一部分）
+
+依据：常驻容错设计 r3（`DESIGN.r3.md`，sha256 `8d4627a2…3289`，三轮独立审核最终 PASS，KooYomi Note `178957cb`）第一部分；Owner Decision `7303ab04` 把它与 §24 放进同一个 PR、先装。只改常驻层（`src/companion.mjs`、`src/companion-main.mjs`、`src/engine-windows.mjs`、`src/failure-table.json`），不改 Source v2、`relay-public.ps1` 或 Linux 工具。
+
+### 25.1 为什么
+
+伴侣的 `relay()` 原来对“暂无记录”以外的任何失败都回 `RELAY_REFUSED_NO_RETRY`，泵随即放弃。Linux worker 等不到回调就自己退出，Windows 发行器等满段截止，以 `BRIDGE_RESULT_DEADLINE` 结束，常驻判 `PUBLICATION_UNCERTAIN` 并 HALT（10-21 #891，10-23 #911、#915、#918，10-28 #929、#928）。其中很多次只是一次 wsl.exe 或 VM 层的抖动，几秒内就失败了，再试一次就会成功。
+
+### 25.2 每次尝试的分类（`classifyRelayAttempt`，表里没有的一律 PERMANENT）
+
+| 类别 | 判定 | 处理 |
+|---|---|---|
+| OK | `code 0`，`PUBLIC_RECORD_TRANSFERRED`，`terminalConfirmed` | 返回 true |
+| NOT_YET | `childError.reason ENOENT`，`terminalConfirmed` | 返回 false（不变） |
+| NO_CHILD | runner `RUNNER_SPAWN_FAILED`；或 `JOB_HOST_UNCONFIRMED` 且没有 `tree` 键、没有超时；或回执 `PUBLIC_TRANSFER_UNCONFIRMED` 且 `processId`、`exitCode` 都是 null | 最多再试 1 次（可能是持久问题，如 spool 的 IO 或 ACL） |
+| CHILD_FAILED | `PUBLIC_CHILD_EXIT_REFUSED_NO_RETRY` 且 `childError` 为 null（wsl.exe 或 VM 层，或 OOM）；或 `PUBLIC_CHILD_REFUSED_NO_RETRY` 且 reason ∈ {EBUSY, EMFILE, ENFILE, EINTR, FORMAL_RELAY_STDIN_TIMEOUT}、stage ∈ {OPERATION, CONTEXT, STDIN, TRANSPORT, PACKET} | 先做 §25.3 的核对；Send* 还要先确认 Linux 上没有残留的 relay-record |
+| AMBIGUOUS | 作业宿主超时结束且 `tree zero`；`PUBLIC_TERMINAL_UNCONFIRMED_LOCKS_RETAINED`、`PUBLIC_OUTPUT_UNCONFIRMED_NO_RETRY`、`PUBLIC_STDIN_UNCERTAIN_NO_RETRY`；`childError.reason EEXIST` | §25.3：已到 → true；一半 → 永久失败；没到（Send* 还要求没有残留进程）→ 再试 |
+| EXISTING | Receive* 的 `EXISTING_RECORD_PRESERVED_NO_RETRY` | 只有完整的同名记录才算已到，其他一律永久失败 |
+| PERMANENT | 其余一切：身份、位置、清单类；`FORMAL_SPOOL_ACL_REFUSED`；`PUBLIC_PARENT_*`、`PUBLIC_INPUT_*`、`PUBLIC_READY_CHANGED`、`PUBLIC_RECORD_*`、`PUBLIC_IMPORT_UNCONFIRMED_NO_RETRY`；`childError` 的其他 reason，或 stage 为 BINDING、RECORD、COMPLETE；`tree unconfirmed`；runner 的其他拒绝；回执无法解析 | `RELAY_REFUSED_NO_RETRY`（码和失败表行都不变） |
+
+回执按字段读取，和改动前一样，不额外要求 `contract` 字段。
+
+### 25.3 到达核对与残留进程检查
+
+一个记录名在一段里只用一次，两端都只新建、先写数据再写 ready，所以“到没到”直接看目标：
+
+- Receive*：Windows `formal-spool\incoming`（现有的 `fileExists` 端口）。数据与 ready 都在 = 已到；都不在 = 没到；其他 = 一半。
+- Send*：Linux `formal-spool/incoming`，新增固定 argv `ls -1 -A -- /var/lib/clued-independent-ci/formal-spool/incoming`。
+- 残留进程：新增固定 argv `pgrep -f -a protected-job-bridge-v4/relay-record.mjs`。退出码 1 = 没有；0 = 2 秒后再看一次，仍有就永久失败；其他退出码 = 永久失败。作业宿主结束了 Windows 一侧的 powershell 和 wsl.exe，但没有证明 Linux 一侧的 relay-record 也随之退出，所以每次 Send* 重试前都查。
+- 一半的记录：新码 `RELAY_PARTIAL_RECORD_PRESERVED`，加入 `PUMP_CODES` 和失败表（halt，`owner-rearm`，与 `RELAY_REFUSED_NO_RETRY` 同行为）。不删、不覆盖。
+- 核对本身失败（`ls`、`pgrep` 的非预期退出码，或子进程没有被证明结束）：不重试，按永久失败处理。两个新调用都走作业宿主，各 15 秒上限。
+
+### 25.4 次数、超时与预算
+
+每次尝试的超时仍是 `RELAY_TIMEOUT_MS`（120 秒），不缩短：在“数据已写、ready 未写”之间结束 relay-public 会留下一半的记录。所以只有失败得快的那一次后面才有时间重试。
+
+| 调用 | 最多尝试 | 间隔 | 下一次只在 |
+|---|---|---|---|
+| `SendIssue`、`ReceiveResult`、`ReceiveBlocked` | 3 | 3 s、8 s | 距段截止（请求的 `deadline`）还有 ≥ 150 s |
+| `ReceiveChallenge` | 2 | 3 s | `now ≤ firstSeen + 120 s − 60 s` |
+| `SendResponse` | 2 | 2 s | `now ≤ 挑战记录自己的 deadline − 15 s` |
+
+- `firstSeen`：泵第一次在 Linux outgoing 里列到这个挑战的时刻。没有列表时，用这次调用开始的时刻代替。估错只会让应答晚到（发行器有“迟到”处理），影响的是活性，不是安全。
+- `SendResponse` 的预算读 Windows incoming 里那条挑战记录的 `deadline` 字段（公开字节，只读这一个字段，只用来决定要不要再试）；读不到就不重试。
+- 每次尝试前都先做取消检查（Owner 中止优先）。泵里的 `ReceiveBlocked` 只有在永久失败后才记为“已拒绝”；只是重试用完时，失败后的“交出 blocked 记录”仍会再试一次。
+- 没有给预算的调用（例如测试或将来的新调用）不会重试。
+
+### 25.5 本地日志
+
+- 每次尝试一行：`{at, mode, seq, attempt, ms, runner:{code, timedOut, tree, refused}, receipt:{status, failureCode, exitCode, processIdPresent, terminalConfirmed, childError}, class, stderrTail}`。只记码与计数；码不合格式的字段记为 null。
+- `stderrTail`：powershell stderr 的尾部，最多 512 个字符，只留可打印 ASCII，`C:\Users\<名>` 换成 `%USERPROFILE%`，32 位以上的十六进制串换成 `<hex>`，40 位以上像 base64 的串换成 `<b64>`，连续空白折成一个。
+- 位置：Owner 自己的配置目录 `%LOCALAPPDATA%\CluedIndependentCI\companion-log\relay-YYYYMMDD.jsonl`（UTC 日期），与 PR 页面状态的本地记忆同处。
+  - 这与设计 r3 §1.5 写的 `resident\companion-log` 不同：伴侣不提权，常驻目录只由安装器和服务写；放在 Owner 目录下不必改安装脚本和 ACL。
+- 只追加；单个文件到 2 MB 时写一行 `LOG_TRUNCATED` 后当天不再写；每天第一次写时删除 14 天以前的文件。日志写失败一律忽略，从不影响判断。
+- 邮箱的应答合同不变，泵失败时的答复码不变；要查原因看这份日志。
+
+### 25.6 不变的
+
+- 不增加任何发布路径，不碰 GitHub，不用 App 凭据。
+- 不杀 Linux worker；Windows 一侧只由作业宿主结束伴侣自己起的子进程（§24）。
+- 失败表仍是白名单。新码不进 `classify.mjs` 里与 Source 镜像的数组。
+- 不需要 Source 或 Linux 工具重装；随 §24 一次常驻层 Windows 重装（Owner 一次 UAC，同一次 UAC 重签 policy 文件里的 `residentManifestSha256`）。
+
+### 25.7 测试与残余
+
+- `test/relay-retry.test.mjs`：分类表逐行（含“看起来相近但带 `tree` 键的 `JOB_HOST_UNCONFIRMED`”和 BINDING 段的 EBUSY 都是 PERMANENT）；三类预算的边界；Send* 的残留进程与到达核对（含核对本身失败）；一半的记录；EXISTING；NO_CHILD 只重试一次；取消优先；日志的字段、脱敏、2 MB 上限与 14 天清理；泵里 `ReceiveBlocked` 用完重试后仍能交出 blocked 记录。
+- `test/job-host.test.mjs`：“一次中继调用超过上限”改为超时真的耗掉 120 秒、Windows incoming 里没有记录，结果仍是 `RELAY_REFUSED_NO_RETRY`。
+- 离线演练新增 `relay-flap-under-load`：第 3 轮 `ReceiveChallenge` 第一次 2 秒内失败，第二次成功，泵答 ok，这一段成功，不 HALT。
+- 残余：
+  - 像 10-28 #929 那样 wsl.exe 卡满 90 秒的，这里救不了，交给设计 r3 第二、三部分。
+  - `pgrep` 不存在或误配了别的进程：检查失败或判“有残留”，都按不重试处理，与改动前相同。
+  - 伴侣的“已到达”判断只用来少跑一次中继；记录的真假仍由两端各自校验。
+
 ## 附录 A：草稿文件
 
 | 文件 | 作用 |
@@ -2106,3 +2179,4 @@ Owner Decision `2eea28a1` 把 3c 拆成两步。3c-1 只做影子模式（设计
 | `src/train.mjs`、`src/ruleset-backstop.mjs` | v1.2：第 10 段的到期规则、状态摘要与 PR 页面行；companion 规则集兜底（§22） |
 | `CI/src/resident-v2/train-run.mjs`、`CI/src/independent-control-checks-v2/train-*.mjs`、`merge-slot-native.mjs` | v1.2：第 10 段的作业合同、入口、事实、影子记录与合并位只读读取（§22） |
 | `windows/CompanionJobHost.cs`、`windows/test-job-host.ps1`、`test/job-host.test.mjs` | companion 的作业宿主（安装时编译为 `bin\CluedCompanionJobHost.exe`）与它的离线、联机测试（§24） |
+| `test/relay-retry.test.mjs` | 中继逐次分类、到达核对、有界重试与本地日志（§25） |
