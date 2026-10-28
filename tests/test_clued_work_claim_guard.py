@@ -1034,12 +1034,25 @@ class PublishTrailerTest(unittest.TestCase):
         result = self.bash("gh pr create --repo tdoljyj/cross-memory-system --body 'Summary only'", session="ours")
         self.assertEqual(result.returncode, 2)
         self.assertIn("The pull request body has no `Clued-Work-Claim:` line", result.stderr)
+        # A session whose shell stands in another repository is judged against that repository.
+        for n, command in enumerate(("git push", "gh pr create --title x --body 'Blog post'")):
+            with self.subTest(cwd="other", command=command):
+                result = self.run_hook({"hook_event_name": "PreToolUse", "session_id": f"cwd-{n}",
+                                        "tool_name": "Bash", "cwd": str(other), "tool_input": {"command": command}})
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_git_options_before_push_still_publish(self):
         for command in ("git -C x push", "git --no-pager push origin HEAD", "git -c a.b=c push",
                         'git -C "dir with space" -c x=y push', "cd a && git -C . push"):
             with self.subTest(command=command):
                 self.assertEqual(bash_kind(command), "publish")
+        for command in ("git -c push.default=current status", "git -C push-service log",
+                        "git -c push.autoSetupRemote=true commit -m x"):
+            with self.subTest(command=command):
+                self.assertIsNone(bash_kind(command))
+        started = time.perf_counter()
+        bash_kind("git" + " -c" * 40 + " status")
+        self.assertLess(time.perf_counter() - started, 1.0)
         self.commit("No trailers")
         result = self.bash("git -C . push origin HEAD")
         self.assertEqual(result.returncode, 2)
@@ -1067,6 +1080,8 @@ class PublishTrailerTest(unittest.TestCase):
                 self.assertLess(time.perf_counter() - started, 2.0)
         self.assertEqual(bash_kind("cat <<'EOF' > f\ngit push\nEOF\n"), None)
         self.assertEqual(bash_kind("cat <<'EOF' > f\nx\nEOF\ngit push"), "publish")
+        # A << that opens no heredoc does not hide a real one later on the same line.
+        self.assertIsNone(bash_kind("echo 'a<<b'; cat <<'EOF' > runbook.md\ngit push\nEOF"))
 
     def test_an_odd_command_never_breaks_the_session(self):
         self.commit("No trailers")

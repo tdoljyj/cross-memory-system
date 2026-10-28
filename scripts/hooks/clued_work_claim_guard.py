@@ -92,7 +92,7 @@ READ_ONLY_AGENTS = {"explore", "plan", "claude-code-guide", "statusline-setup"}
 # separator, so text such as a commit message that mentions it does not match.
 COMMAND_START = r"(?:^|[;&|(]\s*|&&\s*|\|\|\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*"
 PUBLISH_COMMAND = re.compile(
-    COMMAND_START + r"(?:git(?:\s+-[Cc]\s+(?:\"[^\"\n]*\"|'[^'\n]*'|\S+)|\s+-[\w-]+(?:=\S*)?)*\s+push"
+    COMMAND_START + r"(?:git(?:\s+-[Cc]\s+(?:\"[^\"\n]*\"|'[^'\n]*'|\S+)|\s+-(?![Cc]\s)[\w-]+(?:=\S*)?)*\s+push"
     r"|gh\s+pr\s+create"
     r"|gh\s+pr\s+edit\b(?:[^\n;&|\\]|\\[\s\S])*?(?:\s|\\\n)(?:--body|-[bF]))\b", re.MULTILINE)
 SPEND_COMMAND = re.compile(
@@ -531,21 +531,20 @@ def lift_heredocs(command: str) -> tuple[str, list[str | None]]:
     for line in WORD_LINE.finditer(command):
         closings.setdefault(line.group(1), []).append((line.start(), line.end()))
     bodies: list[str | None] = []
-    out, pos = [], 0
-    for start in HEREDOC_START.finditer(command):
-        if start.start() < pos:
-            continue  # inside a body already lifted
+    out, pos, at_char = [], 0, 0
+    while (start := HEREDOC_START.search(command, at_char)) is not None:
         dash, quote, delimiter, rest = start.groups()
         candidates = closings.get(delimiter, [])
         at = bisect.bisect_left(candidates, (start.end(), -1))
         if at == len(candidates):
+            at_char = start.start() + 2  # not a heredoc; one may still follow on this line
             continue
         body = command[start.end():candidates[at][0]]
         if dash:
             body = re.sub(r"(?m)^\t+", "", body)
         bodies.append(body if quote or not re.search(r"[$`\\]", body) else None)
         out.append(command[pos:start.start()] + f"@@heredoc{len(bodies) - 1}@@{rest}")
-        pos = candidates[at][1]
+        pos = at_char = candidates[at][1]
     out.append(command[pos:])
     return "".join(out), bodies
 
@@ -736,7 +735,7 @@ def pr_body(args: list[str | None], cwd: Path | None, before: str) -> str | None
         return None
 
 
-def bash_publish_texts(command: str, cwd: Path | None) -> list[tuple[str, str, str]]:
+def bash_publish_texts(command: str, cwd: Path | None, home_dir: Path | None = None) -> list[tuple[str, str, str]]:
     """(where, label, text) for each head commit message and pull request body the command publishes.
 
     Only top-level simple commands are read. What cannot be read without running
@@ -750,15 +749,17 @@ def bash_publish_texts(command: str, cwd: Path | None) -> list[tuple[str, str, s
         return []
     found = []
     moved, pending, pending_dir = False, None, None  # a step may have moved HEAD; a git commit's message
-    origin, home = cwd, []
+    home = home_dir or cwd
+    repositories: dict[Path, str | None] = {}
 
     def ours(where: Path | None) -> bool:
-        """Whether where is in the repository the command started in (any of its worktrees)."""
-        if where is None or where == origin:
+        """Whether where is in the repository whose claims are recorded (any of its worktrees)."""
+        if where is None or where == home:
             return where is not None
-        if not home:
-            home.append(repository_of(origin))
-        return home[0] is not None and repository_of(where) == home[0]
+        for directory in (home, where):
+            if directory not in repositories:
+                repositories[directory] = repository_of(directory)
+        return repositories[home] is not None and repositories[where] == repositories[home]
 
     for words, _ in segments:
         head, index = command_head(text, words)
@@ -813,7 +814,7 @@ def publish_texts(payload: dict) -> list[tuple[str, str, str]]:
     tool_input = payload.get("tool_input") or {}
     if name == "Bash":
         cwd = Path(payload.get("cwd") or project_dir(payload))
-        return bash_publish_texts(str(tool_input.get("command", "")), cwd)
+        return bash_publish_texts(str(tool_input.get("command", "")), cwd, project_dir(payload))
     field = {"create_pull_request": ("body", "body", "The pull request body"),
              "push_files": ("message", "commit", "The commit message"),
              "create_or_update_file": ("message", "commit", "The commit message")}.get(tool_suffix(name))
