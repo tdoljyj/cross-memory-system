@@ -2623,6 +2623,113 @@ Task `088ab175`；设计 v0.4 §7.1–§7.4、§9 C7、§10 P3。
 
 - 离线、只用临时目录和夹具；那把 RSA 私钥由测试在内存或临时目录里生成，是一次性夹具，不是任何真实密钥。
 
+## 31. 信箱原子写与少开 wsl.exe
+
+Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.exe，来自 WSL order-7 缓解设计 Task `7c2e4386` / Decision `941f9146` §2 D2）。只改常驻层（`src/store.mjs`、`mailbox.mjs`、`inbox.mjs`、`companion.mjs`、`companion-main.mjs`、`ruleset-backstop.mjs`），不改 Source、安装脚本、Linux 工具、policy 合同。两件事互相独立，放在一起只是因为都动 companion 与信箱。
+
+### 31.1 信箱：为什么（Task `32d10618`）
+
+两个症状，同一个根因：`writeNew` 先 `open(wx)` 建文件、再写、再 `sync`，读的一方可以在中间打开它，读到空文件或半截 JSON。
+
+1. `Mailbox.latestHint` 直接读最新的托管提示文件。读到空文件抛 `HOSTED_HINT_REFUSED`，服务端口接住后回 null（“没有提示”）；读到半截 JSON，`parseHint` 拒绝。两种结局都让这一轮按没有提示处理（计划意图里记 `hintRefused`；等待窗口已到时，这个 head 就按“全部本地”排程），白等或白跑一次。
+2. companion 的 `writeTrigger` 是 `fs.writeFile(..., { flag: 'wx' })`，同样先建后写。执行器恰在空档读 inbox 时，把触发当成 `INBOX_ENTRY_SHAPE_REFUSED` 归档到 `rejected`，触发就丢了；轮询器的 `sent` 记忆让它在 PR 更新或 main 变化前不再重发。
+
+两者都不会 HALT。10-23 的 `archive-linux` 应答被拒（Task `67ae9ccb`）是同一个根因，当时只修了请求和应答的读者。
+
+### 31.2 写侧：先写临时名，再整体换名（`store.mjs#writeNewAtomic`）
+
+- 字节先写进同目录的 `.tmp-<12 位十六进制>-<目标名>` 并 `sync`，再用一次 `rename` 给它目标名；目标要么不存在，要么完整。写失败或换名失败，临时文件被删。
+- **仍然 create-only。** Windows 的 `fs.rename` 会覆盖已有目标；硬链接（`link` + `unlink`）倒是拒绝已有目标，却让文件有一刻两个名字，`readBounded` 的 `nlink === 1` 身份检查会把它当成被改过的文件拒绝，读者就会 HALT。所以换名前后各看一次目标，已有就拒绝（`CREATE_ONLY_TARGET_EXISTS`，与 `writeNew` 同码）。两次检查之间仍有一个窗口：同一个名字有第二个写者时，后到者会覆盖先到者。下面这些名字都只有一个写者：请求号是 UUID，一个请求只有一个应答，提示序号来自 companion 的同一条顾问通道，取消文件重复写只是同义写。**会被两个写者争的名字不用这个原语**：泵标记 `<requestId>.pump.json` 的独占创建本身就是认领，没有人读它的内容，仍用 `writeNew`。
+- 换名遇到 `EPERM`/`EBUSY`/`EACCES`（杀毒或索引器短暂占着新文件）重试，间隔 20、50、100、250、500 ms，之后抛出。以前这些路径没有换名，所以这是新增的失败面；失败的 `respond` 会让 `step()` 抛出、下一轮重新处理同一个请求，重试把这种情况压到最低。
+- 临时名不会被任何读者当成记录：`pending()` 只认 `^[0-9a-f-]{36}\.json$`，`poll`/`cancelled` 按确切名读，提示列表要求 `hosted-hint-…` 前缀与序号。`Mailbox.open` 顺手清掉超过 1 小时的 `.tmp-` 残留（崩溃留下的），目录写不了就留着。`beat()` 的临时名也改用这个形状，换名失败时删除。
+- 只用在写者有换名权利的目录：`mailbox\requests`（服务写）和 `mailbox\responses`（companion 写，心跳早就这样换名）。
+
+用到它的：`Mailbox.send`、`cancel`、`respond`、`writeHint`。
+
+### 31.3 读侧
+
+- **`latestHint`**：取最新的至多 3 个提示文件，从新到旧，返回第一个**完整**的（`readBounded` 之后 JSON 能解析）。最新的是空文件或半截时（安装期间旧版 companion 还在跑），上一个完整的提示就是当前值，下次再读就读到新的；只有一个且没写完则回 null（“还没有提示”）。完整但形状不对的照旧交给 `parseHint` 拒绝；超长、链接、身份不符照旧抛出。读到上一个观察而不是最新的，最多让排程晚一个 tick；提示从来不是授权，第 R 段自己会再验证。
+- **inbox 与 requests 不能原子发布。** 这两个目录对 Owner 是只能新建：目录 ACE 只有 `0x1000a2`（新建文件、遍历），文件上的继承 ACE 和 OWNER RIGHTS 只给读（`install-resident.ps1` 的 `Get-AclPlan`，§8.3 末尾的“只能新建”一条，`test-resident-windows.ps1` 的 `owner-folder-add-file-only`、`owner-files-read-only`）。companion 在 inbox 里没有 DELETE，也没有 DELETE_CHILD，所以既不能写临时名再改名，也不能覆盖。改这条 ACL 会撤销 MINOR-9 的性质（触发和请求建好后不能再被改写），也属于安装脚本，本次不动。
+- 所以由读者等：`Inbox.read` 遇到空文件（`empty`）或读取中尺寸变了（`size-changed`）时，**不列出、不拒绝、留在原处**，下一轮再读；从第一次遇到它的那一轮算起满 `INBOX_UNFINISHED_GRACE_MS`（30 s，读者自己的时钟，`Inbox.open(dir, archive, clock)` 可注入）仍没写完，才像以前一样列为 `INBOX_ENTRY_SHAPE_REFUSED`（执行器归档到 `rejected`，写者在建与写之间崩溃就是这样收场）。`requests\`（暂停请求）走同一个读者，所以紧急暂停请求也不会因空档被丢。
+- 只等 `empty` 与 `size-changed`，**不**因为 JSON 不完整而等：触发与请求最多 1 KB，由 `writeNew` 一次 `write` 写出，空档里只会是“空”；而完整但不是 JSON 的文件（`{not json`）今天立即被拒，已有测试依赖这一点，把它们当成“还没写完”会让垃圾文件多占 30 s。
+- 偏离验收第 2 条的前半句：“写触发的任何时刻，inbox 里都没有空的或不完整的触发文件”在 inbox 里做不到（见上），做到的是后半句：读者在这个空档里从不拒绝一个有效的触发。`companion-main` 的 `writeTrigger`、`writeRequest` 与 `ruleset-backstop` 的 `writePauseRequest` 现在都走同一个 `Inbox.drop`（`writeNew`，名字 `Inbox.fileName`），触发多了结尾换行与 `sync`，其余不变。
+
+### 31.4 检查过的写路径
+
+| 路径 | 结论 |
+|---|---|
+| `Mailbox.send`（服务 → `mailbox\requests`） | 改为 `writeNewAtomic` |
+| `Mailbox.cancel`（服务 → `mailbox\requests`） | 改为 `writeNewAtomic`；已存在仍是同一个取消 |
+| `Mailbox.respond`（companion → `mailbox\responses`） | 改为 `writeNewAtomic`；第二个应答被拒，第一个保留 |
+| `Mailbox.writeHint`（companion → `mailbox\responses`） | 改为 `writeNewAtomic` |
+| `Mailbox.claimPump` | **保留 `writeNew`**：独占创建就是认领，无人读内容 |
+| `Mailbox.beat` | 原本就是临时名 + `rename`；临时名改成共享形状（会被清理），失败时删除 |
+| 读者 `pending`、`poll`、`cancelled`、`heartbeat`、`latestHint` | `pending`/`poll` 本来就把未写完的文件当“还没有”（Task `67ae9ccb`），保留给旧版写者；`latestHint` 见 31.3；`cancelled`/`heartbeat` 读不到就当没有 |
+| `companion-main` 的 `writeTrigger`（→ `inbox`） | 改走 `Inbox.drop`；读者等（31.3） |
+| `companion-main` 的 `writeRequest`（→ `requests`，主备的双活保持请求，经 `node-duty.mjs` 的端口） | 同上 |
+| `ruleset-backstop.writePauseRequest`（→ `requests`） | 改走 `Inbox.drop` |
+| `companion-main` 的 `createRelayLog`（追加到 Owner 配置目录的 jsonl） | 不是信箱，常驻没有读者；追加写，最后一行可能不完整，不影响判断 |
+| `pr-status.mjs` 的 `LocalStore.save`（Owner 配置目录） | 本来就是临时名 + `rename`，只有 companion 自己读 |
+| `tools/rearm-tool.mjs` 写 `requests\`、`owner\` | 不在本次范围（`tools/`）；它写的 `requests\` 由 31.3 的读者保护，`owner\` 是只有提权 Owner 能建文件的目录 |
+| `broker\requests`（引擎 → 交换代理） | 不在本次范围（读者是 `SwapBroker.cs`）；常驻对它也只有新建权利，没有换名权利 |
+
+`test/mailbox-atomic.test.mjs` 末条用源码检查守住：`mailbox.mjs` 只剩一处 `writeNew(`（泵标记），`companion-main.mjs` 没有 `flag: 'wx'`。
+
+### 31.5 少开 wsl.exe（Task `463e8148`）
+
+**问题。** 泵每一段 Linux 阶段里，约每秒用一个新的 `wsl.exe` 列一次 `outgoing`，设计 r3 又加了每 15 s 一次的 `unitFacts`。每个 `wsl.exe` 要开六条 hv_sock 通道，每条占一块 order-7（宿主调优 P1 之后是 order-5）的连续内存，碎片化时这就是 wsl.exe 卡住的原因（10-28）。一个跑满 45 分钟的段就是两千多次启动。
+
+**没有采用常驻列表通道。** 一个长驻的 `wsl.exe` 子进程要和现有约束共处，而这几条都过不去：companion 的 `Runner` 一次只跑一个子进程，且 `run()` 只在子进程结束时返回，没有流式输出；作业宿主不转发 stdin，并且在上限（最长 1 小时）到时结束整个 job；而“等目录变化再打印”的 Linux 程序，在固定 argv、不用 shell 的前提下，基础镜像里没有（`inotifywait` 不在其中）。要做就得给 root 工具加一个子命令、重装 Linux 侧、再给作业宿主加流式读取，三件都在本次范围之外（Task `463e8148` 只改 Windows 常驻层）。
+
+**采用的：按安静时间退避的列表间隔。**
+
+- 间隔 = `clamp(安静时间 / 2, 1 s, 15 s)`（`listingDelayMs`）。“安静时间”从最近一次事件算起：阶段开始、列表内容变了、中继搬过一条记录（`eventAt`）。事件之后每秒列一次，安静下来逐渐拉长到 15 s。
+- 上限 15 s = `WORKER_FACTS_EVERY_MS`：安静时一轮同时做列表与 `unitFacts`，各 15 s 一次。每次睡眠还被截到下一次读 `unitFacts` 之前，所以信号 B、C 的读取节奏不变（仍是启动后立即一次、之后每 15 s 一次）；B 的“结束后取的下一次列表是定论”顺序不变，C 的 5 分钟不变。
+- 列表失败（`names === null`）仍是 100 ms 后重试并用中继本身探测，没有变。
+- 交接 blocked 记录（`handOverBlocked`）原来每秒列一次，最长 150 s：改为同一公式，上限 5 s（`HANDOVER_LISTING_CAP_MS`），窗口不变。
+- 泵结束后等 worker unit 消失的循环原来每 0.5 s 读一次 `unitFacts`，最长 30 s：改为 0.5、1、2 s 然后每 2 s，同样的 30 s 上限，最多约 17 次。
+- 测试可以传端口 `listingDelay`，`() => 1000` 就是改动前的节奏；生产不传。
+- 一次一个子进程、作业宿主限时、固定 argv 三条约束原样保留：没有新的子进程种类，没有新的 argv。
+
+**每个回合增加的最坏延迟，以及为什么仍在预算之内。**
+
+| 项目 | 以前 | 现在 | 预算与理由 |
+|---|---|---|---|
+| 挑战从产生到被发现 | ≤ 约 1 s + 一次列表（0.3 s） | 刚有事件后 ≤ 约 1–2 s；安静时 ≤ 15 s + 一次列表。测试里实测 0.1–14.6 s | 回调窗口 `CALLBACK_WINDOW_MS` = 120 s。中继一次通常 4–6 s、观察到过 25–45 s。最坏再加 15 s = 窗口的 12.5%；“收挑战 45 s + 签发器评估约 10 s + 回送 45 s”的双长尾加 15 s 是 115 s，仍在 120 s 内 |
+| ReceiveChallenge 的重试预算（§25.4） | `firstSeen + 120 s − 60 s`，`firstSeen` 是第一次列到的时刻 | `firstSeen` 取**前一次成功列表的开始时刻**；该次没列到，挑战一定是在它之后产生的 | 预算现在是“产生时刻 + 60 s”的保守下界，与列表间隔无关：§25.4 留给签发器评估与回送的 60 s 储备不被间隔吃掉。代价是间隔大时少一次重试机会，而不是更晚 |
+| SendResponse 的重试预算 | 挑战记录自己的 `deadline − 15 s` | 不变 | 读的是挑战记录里的字段，与列表无关 |
+| result / blocked 的发现 | ≤ 约 1 s | ≤ 15 s | result 不赶时间；blocked 交接只是让签发器以 BLOCKED 而不是 UNCERTAIN 结束，不论早晚 |
+| 信号 B | 结束后 ≤ 15 s 内发现 | 同样（读取节奏不变） | `test/wsl-starts.test.mjs` 检查读取间隔不超过 15 s 加一轮 |
+| 信号 C | 启动后 5 分钟（306 s） | 5 分钟（301 s） | 仍在第一次满 5 分钟的读取上触发 |
+| Owner 取消 / 泵安静 | 泵 ≤ 约 1 s 后看到取消 | 睡眠中 ≤ 15 s 后看到 | 服务等泵安静最多 `PUMP_QUIET_MS` = 180 s；取消后泵再做一次 30 s 的静止检查，合计远小于它 |
+| 心跳 | 独立定时器 | 不变 | 与泵节奏无关 |
+
+**wsl.exe 启动次数**（`test/wsl-starts.test.mjs`：虚拟时钟，假宿主，每次 wsl.exe 调用 0.25 s，每次中继调用 5 s；只数 companion 直接起的 `wsl.exe`。每次中继调用另外由 powershell 起至少一个 `wsl.exe`，两种节奏下典型段都是 8 次，不变）：
+
+| 场景 | 列表 | `unitFacts` | 启动与静止 | 合计 以前 → 现在 | 倍数 |
+|---|---|---|---|---|---|
+| 典型段（247 s，三轮回调） | 165 → 35 | 17 → 17 | 2 → 2 | 184 → 54 | 3.4 |
+| 20 分钟的段 | 932 → 100 | 81 → 82 | 2 → 2 | 1015 → 184 | 5.5 |
+| 近 45 分钟的段（段上限） | 2065 → 196 | 175 → 178 | 2 → 2 | 2242 → 376 | 6.0 |
+| 5 分钟里 worker 一直没起（信号 C） | — | — | — | 263 → 49 | 5.4 |
+| 交接 blocked，记录 100 s 后出现 | 约 100 → 24 | — | — | — | 4 |
+
+**目标没有达到：** Task `463e8148` 要的是约两个数量级，这里只有列表本身 4.7–10.5 倍、整段 3.4–6 倍。两个约束把轮询式方案卡在这里：每个 `unitFacts` 读取都是一次 `wsl.exe`，信号 B、C 的节奏要求保留，所以每 15 s 一次的下限还在（占现在总数的三成到五成）；挑战的发现延迟不能拉过窗口的一成多一点，所以列表间隔也不能超过 15 s。再往下要靠推送式的通道（上文没有采用的那一条：Linux 侧“目录有变化就返回”，把整个阶段的列表降到约一两次启动），需要 Owner 另行决定是否排这一步。
+
+### 31.6 测试
+
+- `test/mailbox-atomic.test.mjs`（14 条）：`writeNewAtomic` 的 create-only、目标在写的途中出现、失败清理、瞬时 `EPERM` 重试；send、respond、cancel、writeHint 在“建/写/刷盘/换名前/换名后”每一步，目录里没有空的或不完整的目标文件，`pending`、`poll`、`cancelled`、`latestHint` 此刻都不抛错、不拒绝，且在换名前看不到新记录；第二个应答与第二个取消的语义；临时名不被当成请求、应答、提示、取消，旧的被清理、新的和别的名字不动；心跳；半写的提示（0、1、一半、差两字节）时 `latestHint` 返回旧的完整值，写完后返回新的，经执行器的 `hint()` 也不是 `refused`；只有一个且未写完回 null；完整但形状不对、超长照旧；`Inbox.drop` 过程中读者不列空文件、不拒绝，写完后读到并能被 `parseTrigger` 解析；超过宽限期的空文件照旧被拒；执行器里空触发不被归档、写完后批次运行、从未写完的 30 s 后被拒；空的暂停请求不丢，写完后 `PAUSED`；源码检查。
+- `test/wsl-starts.test.mjs`（10 条）：步调公式；上表各场景的前后启动数；挑战发现延迟不超过上限加一次列表；ReceiveChallenge 的预算锚点从不晚于挑战产生时刻；信号 B 的读取间隔与结束后的发现时间；信号 C 的 5 分钟；终止等待的退避；交接 blocked 的间隔。
+- 离线演练不用改：`incident-20261028-replay` 与 `relay-flap-under-load` 的假宿主不依赖列表节奏，61 步仍全过。
+
+### 31.7 偏离、残余与安装
+
+- 偏离：验收第 2 条前半句（31.3）；约两个数量级的目标没有达到（31.5）。
+- 残余：写者在建与写之间崩溃的空触发，30 s 后仍被归档到 `rejected`，和以前一样，poller 在 PR 更新前不会重发；读者只等 `empty`/`size-changed`，更长的触发若被拆成多次写才可能露出前缀，现在的写法做不到；`writeNewAtomic` 在同一个名字上有第二个写者时后到者覆盖先到者（31.2 的名单里没有这样的名字）。
+- 未能在真机验证：`mailbox\requests` 上服务账户的 `rename`（ACL 的 `0x1301bf` 含 DELETE，心跳在 `mailbox\responses` 已证明 companion 一侧可行）；杀毒对新文件的短暂占用只有重试这一层保护，没有真机数据；wsl.exe 启动数只在虚拟时钟的假宿主里数过，没有在真机上数。
+- 混合版本：新服务配旧 companion，`latestHint` 与 `pending`/`poll` 仍容忍未写完的文件；旧服务配新 companion，邮箱文件一律完整，inbox 的空档与以前相同（旧读者仍会拒绝，写者没变）。
+- 安装：只需一次常驻层 Windows 重装（与 §24–§28 同一次即可），不碰 policy、Source、Linux 工具与安装脚本。
+
 ## 32. 段前内存闸与“main 已移动”干净结束
 
 依据：第 2 批（Owner Decision `afd23e7e`）。A 是 Task `25851665`（WSL order-7 缓解设计 Task `7c2e4386`，Decision `941f9146` §2 B2）；B 是 Task `ea32aaf9` 的修法 1（Owner Decision `d8e3dea4`）。只改常驻层：`src/companion.mjs`、`src/mailbox.mjs`、`src/engine-windows.mjs`、`src/classify.mjs`、`src/failure-table.json`、`src/executor.mjs`（只多记一项回执字段）。不改 Source v2、Linux 工具或 `companion-main.mjs`。

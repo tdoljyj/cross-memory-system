@@ -10,7 +10,6 @@
 // Pure decision plus thin ports; the caller supplies the gh read, the pause writer and the notifier.
 import path from 'node:path';
 import { Inbox } from './inbox.mjs';
-import { writeNew } from './store.mjs';
 import { readStatus } from './status.mjs';
 import { toastArgv } from './pr-status.mjs';
 
@@ -64,9 +63,7 @@ export async function backstopPass({ readRules, trainMode, writePause, notify, m
 
 // The pause request, written create-only into the executor's requests inbox (inbox.mjs file name shape).
 export async function writePauseRequest(requestsDir, reason, clock = Date.now) {
-  const name = Inbox.fileName(clock());
-  await writeNew(path.join(requestsDir, name), { contract: PAUSE_CONTRACT, reason: String(reason).slice(0, 200) });
-  return name;
+  return Inbox.drop(requestsDir, { contract: PAUSE_CONTRACT, reason: String(reason).slice(0, 200) }, clock);
 }
 
 // The companion's ports for one pass (companion-main.mjs calls it on every poll): main's rules with the Owner's read-only

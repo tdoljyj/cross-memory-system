@@ -7,7 +7,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { CODE, HEX40, HEX64, UUID, canonicalJson, check, exactKeys, isoNow, parseBoundedJson } from './canonical.mjs';
-import { ensureDir, exists, readBounded, writeNew } from './store.mjs';
+import { TEMP_PREFIX, ensureDir, exists, nonce, readBounded, sweepTemp, writeNew, writeNewAtomic } from './store.mjs';
 
 export const REQUEST_CONTRACT = 'clued.independent-ci.resident-companion-request/1';
 // /2 (DESIGN §24, Task 8e1f07d3): every answer also says what the companion's job host found about the children of this
@@ -94,19 +94,27 @@ export function validateResponse(v, request) {
   return v;
 }
 
-// writeNew creates a mailbox file before it writes it, so the other side can find the file empty, growing, or holding
-// only a prefix of its JSON (2026-10-23 10:45:42Z: a verified archive-linux answer read so was refused and HALTed batch
-// 523849a6). Such a file is not there yet: null, and the next poll reads it again; one still unfinished at the request's
-// deadline is no answer. A finished file is refused, as before, for its type, links, identity, size and exact shape.
+// The mailbox writers publish a file whole (store.mjs#writeNewAtomic: a temporary name, then one rename; DESIGN §31), so a reader
+// finds a file complete or not at all. Before that, writeNew created a mailbox file before it wrote it, so the other side could
+// find the file empty, growing, or holding only a prefix of its JSON (2026-10-23 10:45:42Z: a verified archive-linux answer
+// read so was refused and HALTed batch 523849a6). The readers keep treating such a file as not there yet - a writer of an
+// earlier version may still be running during a reinstall: null, and the next poll reads it again; one still unfinished at the
+// request's deadline is no answer. A finished file is refused, as before, for its type, links, identity, size and exact shape.
 const UNFINISHED = new Set(['empty', 'size-changed', 'utf8', 'json']);
-async function readFinished(file, maximum, code) {
+async function readFinishedBoth(file, maximum, code) {
   try {
-    return parseBoundedJson(await readBounded(file, maximum, code), maximum, code);
+    const bytes = await readBounded(file, maximum, code);
+    return { bytes, value: parseBoundedJson(bytes, maximum, code) };
   } catch (error) {
     if (error.code === code && UNFINISHED.has(error.detail)) return null;
     throw error;
   }
 }
+async function readFinished(file, maximum, code) {
+  return (await readFinishedBoth(file, maximum, code))?.value ?? null;
+}
+// How many of the newest hint files latestHint looks at when the newest is unfinished.
+export const HINT_LOOKBACK = 3;
 
 export class Mailbox {
   constructor(root, clock) {
@@ -121,6 +129,9 @@ export class Mailbox {
     const m = new Mailbox(root, clock);
     await ensureDir(m.requests);
     await ensureDir(m.responses);
+    // Temporary files of a write that a crash cut short (DESIGN §31): each side can delete only in the directory it writes.
+    await sweepTemp(m.requests);
+    await sweepTemp(m.responses);
     return m;
   }
 
@@ -128,7 +139,7 @@ export class Mailbox {
   async send(kind, fields, timeoutMs) {
     const now = this.clock();
     const request = validateRequest({ contract: REQUEST_CONTRACT, requestId: randomUUID(), kind, createdAt: new Date(now).toISOString(), deadline: new Date(now + timeoutMs).toISOString(), ...fields });
-    await writeNew(path.join(this.requests, `${request.requestId}.json`), request);
+    await writeNewAtomic(path.join(this.requests, `${request.requestId}.json`), request);
     return request;
   }
 
@@ -152,7 +163,7 @@ export class Mailbox {
   async cancel(request, reason) {
     check(UUID.test(request?.requestId ?? '') && KINDS.includes(request.kind) && CANCEL_REASONS.includes(reason), 'MAILBOX_CANCEL_REFUSED');
     try {
-      await writeNew(path.join(this.requests, `${request.requestId}.cancel.json`), { contract: CANCEL_CONTRACT, requestId: request.requestId, kind: request.kind, reason, at: isoNow(this.clock) });
+      await writeNewAtomic(path.join(this.requests, `${request.requestId}.cancel.json`), { contract: CANCEL_CONTRACT, requestId: request.requestId, kind: request.kind, reason, at: isoNow(this.clock) });
     } catch (error) {
       if (error.code !== 'CREATE_ONLY_TARGET_EXISTS') throw error;
     }
@@ -180,7 +191,8 @@ export class Mailbox {
   }
 
   // Companion side: true for the first pump of this request, false when one already began (its mark exists). A mark that
-  // cannot be written throws: no pump starts without one.
+  // cannot be written throws: no pump starts without one. The one mailbox file that stays with writeNew (DESIGN §31): the
+  // exclusive create IS the claim two companions would contend for, and nobody reads its bytes (only whether it exists).
   async claimPump(request) {
     try {
       await writeNew(path.join(this.responses, `${request.requestId}.pump.json`), { contract: PUMP_MARK_CONTRACT, requestId: request.requestId, at: isoNow(this.clock) });
@@ -209,7 +221,7 @@ export class Mailbox {
 
   async respond(request, fields) {
     const response = validateResponse({ contract: RESPONSE_CONTRACT, requestId: request.requestId, kind: request.kind, ok: false, code: null, proof: null, directory: null, verified: null, usage: null, pull: null, jobTree: null, memory: null, observedAt: isoNow(this.clock), ...fields }, request);
-    await writeNew(path.join(this.responses, `${request.requestId}.json`), response);
+    await writeNewAtomic(path.join(this.responses, `${request.requestId}.json`), response);
     return response;
   }
 
@@ -223,17 +235,24 @@ export class Mailbox {
     const next = (seqs.length ? Math.max(...seqs) : 0) + 1;
     check(next <= 999_999, 'HOSTED_HINT_SEQUENCE_EXHAUSTED');
     const file = path.join(this.responses, `${prefix}${String(next).padStart(6, '0')}.json`);
-    await writeNew(file, record);
+    await writeNewAtomic(file, record);
     return file;
   }
 
-  // Service side: the newest hint bytes for this PR head, or null. Bounded read; the caller parses.
+  // Service side: the newest COMPLETE hint's bytes for this PR head, or null. Bounded read; the caller parses. A hint file that
+  // is still being written (empty, or a prefix of its JSON: a companion of before DESIGN §31, which created the file before it
+  // wrote it) is not there yet: the previous complete hint stands, and the next call reads the new one. Looking at an older
+  // observation of the same head for a moment only delays the scheduling hint by one tick; a hint is never authority. A
+  // finished file that is oversize, a link or not JSON is refused, as before.
   async latestHint(pr, headSha) {
     check(Number.isSafeInteger(pr) && pr > 0 && HEX40.test(headSha ?? ''), 'HOSTED_HINT_SUBJECT_INVALID');
     const prefix = hintPrefix(pr, headSha);
     const names = (await fs.readdir(this.responses)).filter(n => n.startsWith(prefix) && HINT_FILE.test(n)).sort();
-    if (names.length === 0) return null;
-    return readBounded(path.join(this.responses, names[names.length - 1]), HINT_FILE_MAX_BYTES, 'HOSTED_HINT_REFUSED');
+    for (const name of names.slice(-HINT_LOOKBACK).reverse()) {
+      const read = await readFinishedBoth(path.join(this.responses, name), HINT_FILE_MAX_BYTES, 'HOSTED_HINT_REFUSED');
+      if (read !== null) return read.bytes;
+    }
+    return null;
   }
 
   // One beat at a time (DESIGN §26: the companion's own timer and its step() both beat): a beat asked for while one is
@@ -241,9 +260,14 @@ export class Mailbox {
   async beat() {
     if (this.beating) return this.beating;
     this.beating = (async () => {
-      const tmp = `${this.heartbeatFile}.${process.pid}.tmp`;
-      await fs.writeFile(tmp, JSON.stringify({ contract: HEARTBEAT_CONTRACT, at: this.clock() }));
-      await fs.rename(tmp, this.heartbeatFile); // The heartbeat is a liveness hint, not evidence.
+      const tmp = path.join(this.responses, `${TEMP_PREFIX}${nonce()}-heartbeat.json`); // swept like every other temporary name
+      try {
+        await fs.writeFile(tmp, JSON.stringify({ contract: HEARTBEAT_CONTRACT, at: this.clock() }));
+        await fs.rename(tmp, this.heartbeatFile); // The heartbeat is a liveness hint, not evidence.
+      } catch (error) {
+        await fs.unlink(tmp).catch(() => {});
+        throw error;
+      }
     })();
     try { await this.beating; } finally { this.beating = null; }
   }
