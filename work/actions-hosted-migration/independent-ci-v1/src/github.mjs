@@ -1,4 +1,5 @@
 import { createHash, createSign } from 'node:crypto';
+import { prBaseAcceptedV2 } from './job-v2.mjs';
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const positive = value => Number.isSafeInteger(value) && value > 0;
@@ -140,9 +141,11 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     if (!route.startsWith('/') || route.includes('..')) fail('invalid_github_route');
     return request(`${root}${route}`, method, await credential(options?.until ?? null), body, options);
   }
+  // base.sha: the batch base T for a batch that tests the head; a train front batch (S != H) records what GitHub reads
+  // (job-v2.mjs#prBaseAcceptedV2), and both reads of one call must agree.
   function exactPr(pr, job) {
     return pr?.number === job.pr && pr.state === 'open' && pr.head?.sha === job.headSha
-      && pr.base?.sha === job.baseSha && pr.base?.ref === 'main'
+      && prBaseAcceptedV2(job, pr.base?.sha) && pr.base?.ref === 'main'
       && pr.head?.repo?.full_name === repository && pr.base?.repo?.full_name === repository
       && Number.isSafeInteger(pr.changed_files) && pr.changed_files > 0 && pr.changed_files <= 3000;
   }
@@ -229,7 +232,7 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
       }
       if (!complete) fail('pr_files_page_limit');
       const after = await scoped(`/pulls/${job.pr}`);
-      if (!exactPr(after, job) || after.changed_files !== before.changed_files) fail('pr_subject_changed');
+      if (!exactPr(after, job) || after.changed_files !== before.changed_files || after.base.sha !== before.base.sha) fail('pr_subject_changed');
       return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: [...paths].sort() };
     },
     async readChecks(headSha) { return inventory(headSha); },

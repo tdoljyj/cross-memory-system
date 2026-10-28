@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { digest } from './proof.mjs';
-import { validateJobV2, claimGeneration, sameClaimGeneration } from './job-v2.mjs';
+import { validateJobV2, claimGeneration, sameClaimGeneration, prBaseAcceptedV2 } from './job-v2.mjs';
 import { isCurrentMergeQueueHeadV2 } from './independent-control-checks-v2/queue-facts.mjs';
 import { evaluate, githubJson, parseClaimReference } from '../../../../scripts/ci/clued-work-admission.mjs';
 
@@ -49,8 +49,11 @@ function packetValid(job, packet) {
     && packet.paths.every(value => typeof value === 'string' && value.length > 0 && value.length <= 4096
       && !/[\x00-\x1f\\:]/.test(value) && !value.startsWith('/') && value.split('/').every(part => part && part !== '.' && part !== '..'));
 }
-function samePr(pr, job) {
-  return pr?.number === job.pr && pr.state === 'open' && pr.head?.sha === job.headSha && pr.base?.sha === job.baseSha
+// The PR's base.sha: the batch base for a batch that tests the head; for a train front batch (S != H) the commit GitHub
+// reads, which every read of one admission must report alike (`base`: the first read's; design v0.5 §5.7).
+function samePr(pr, job, base = null) {
+  return pr?.number === job.pr && pr.state === 'open' && pr.head?.sha === job.headSha && prBaseAcceptedV2(job, pr.base?.sha)
+    && (base === null || pr.base.sha === base)
     && pr.head.repo?.full_name === job.repo && pr.base.repo?.full_name === job.repo && pr.base.ref === 'main';
 }
 const batchClaimValid = c => c === null || c === undefined || (plain(c) && uuid.test(c.claimId ?? '') && Number.isSafeInteger(c.fence) && c.fence > 0
@@ -120,6 +123,7 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
           CLUED_SUPABASE_PUBLISHABLE_KEY: config.publishableKey, [VARIABLE]: mode.exists ? mode.value : '' };
         phase = 'pull_request'; const pr = await githubJson(fetchImpl, env, `/repos/${REPO}/pulls/${job.pr}`);
         if (!samePr(pr, job)) return blocked('full_admission_subject_changed');
+        const prBase = pr.base.sha;
         // A-strict: the claim is whatever the PR names NOW (body trailer, else head commit trailer).
         phase = 'claim_reference'; let reference = parseClaimReference(pr.body);
         if (!reference) reference = parseClaimReference((await githubJson(fetchImpl, env, `/repos/${REPO}/commits/${job.headSha}`))?.commit?.message);
@@ -138,10 +142,10 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
           || !fresh(observation.observedAt, finished)) return blocked('full_admission_observation_expired', rejectionDiagnostic(outcome, native, { modeFresh: fresh(mode.observedAt, finished), recorderFresh: fresh(observation.observedAt, finished) }));
         if (outcome.admitted !== true || outcome.verdict !== 'ADMITTED') return blocked('full_admission_rejected', rejectionDiagnostic(outcome, native));
         phase = 'post_pull_request';
-        if (outcome.head_sha !== job.headSha || outcome.base_sha !== job.baseSha || outcome.pr_ref !== prRef
+        if (outcome.head_sha !== job.headSha || outcome.base_sha !== prBase || outcome.pr_ref !== prRef
           || outcome.claim_id !== reference.claim_id || outcome.scope !== config.scope
           || digest([...outcome.changed_paths].sort()) !== digest([...packet.paths].sort())
-          || !samePr(await githubJson(fetchImpl, env, `/repos/${REPO}/pulls/${job.pr}`), job)) return blocked('full_admission_subject_changed');
+          || !samePr(await githubJson(fetchImpl, env, `/repos/${REPO}/pulls/${job.pr}`), job, prBase)) return blocked('full_admission_subject_changed');
         phase = 'native'; const claim = native?.claim;
         if (native?.status !== 'ok' || native.verdict !== 'ADMITTED' || native.execution_authorized !== true
           || native.execution_policy !== 'staged' || claim?.lease_key_required !== false
@@ -150,7 +154,7 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
         if (claim.claim_id !== reference.claim_id || native.current_fence !== claim.fence || native.execution_epoch !== claim.execution_epoch
           || !Number.isSafeInteger(claim.fence) || claim.fence < 1 || !Number.isSafeInteger(claim.execution_epoch) || claim.execution_epoch < 1
           || claim.context_key !== config.scope || claim.status !== 'ACTIVE' || claim.bound_pr !== prRef || native.bound_pr !== prRef
-          || native.pr_ref !== prRef || native.head_sha !== job.headSha || native.base_sha !== job.baseSha || !fresh(native.verified_at, finished)
+          || native.pr_ref !== prRef || native.head_sha !== job.headSha || native.base_sha !== prBase || !fresh(native.verified_at, finished)
           || !(at(claim.expires_at) > finished) || !Array.isArray(native.paths_outside_write_set)
           || native.paths_outside_write_set.length) return blocked('full_admission_native_changed');
         const observedClaim = { claimId: claim.claim_id, fence: claim.fence, epoch: claim.execution_epoch, expiresAt: claim.expires_at };

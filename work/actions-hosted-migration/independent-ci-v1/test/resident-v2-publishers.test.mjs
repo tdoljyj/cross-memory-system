@@ -16,7 +16,7 @@ import { HEAD, BASE, tempDir, fixtureRecord, signResult } from './resident-v2-fi
 
 const REPO = 'tdoljyj/cross-memory-system';
 const iso = ms => new Date(ms).toISOString();
-const jobsFor = (attempt = 1) => batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt });
+const jobsFor = (attempt = 1) => batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt });
 const claim = (o = {}) => ({ claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000), ...o });
 
 // A complete admitted v2 observation for `job` under `observed` (shape of full-admission-v2 facts).

@@ -2,13 +2,14 @@
 // Read-only complete refs observation. No git fetch, token export, mutating
 // GraphQL, partial-page success or caller-supplied repository/query.
 import {canonical,digest} from '../../src/proof.mjs';
-import {validateJobV2 as validateJob} from '../../src/job-v2.mjs';
+import {validateJobV2 as validateJob,prBaseAcceptedV2} from '../../src/job-v2.mjs';
 import {validateRemoteSnapshot} from '../formal-gitleaks-v4/required-history/prepare.mjs';
 const REPO='tdoljyj/cross-memory-system',SHA=/^[a-f0-9]{40}$/;
 const fail=code=>{throw Object.assign(new Error(code),{code});};
 const check=(v,c)=>{if(!v)fail(c);};
 export const REFS_QUERY='query CluedCompleteRefs($prefix:String!,$after:String){repository(owner:"tdoljyj",name:"cross-memory-system"){databaseId nameWithOwner refs(refPrefix:$prefix,first:100,after:$after){totalCount edges{cursor node{name prefix target{oid __typename}}} pageInfo{hasNextPage endCursor}}}}';
-const samePr=(p,j)=>p?.number===j.pr&&p.state==='open'&&p.head?.sha===j.headSha&&p.base?.sha===j.baseSha&&p.base?.ref==='main'&&p.head.repo?.full_name===REPO&&p.base.repo?.full_name===REPO;
+// base.sha: the batch base for a batch that tests the head; a train front batch (S != H) records GitHub's (job-v2.mjs).
+const samePr=(p,j)=>p?.number===j.pr&&p.state==='open'&&p.head?.sha===j.headSha&&prBaseAcceptedV2(j,p.base?.sha)&&p.base?.ref==='main'&&p.head.repo?.full_name===REPO&&p.base.repo?.full_name===REPO;
 async function boundedJson(response){
   check(response?.ok===true&&response.body?.getReader,'REFS_HTTP_UNCONFIRMED');
   const reader=response.body.getReader(),parts=[];let bytes=0;

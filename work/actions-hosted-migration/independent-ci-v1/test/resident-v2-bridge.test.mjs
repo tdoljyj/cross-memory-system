@@ -38,7 +38,7 @@ const refsSnapshot = (now = Date.now()) => ({ contract: 'clued.independent-ci.re
 function setup({ attempt = 1 } = {}) {
   const fx = fixtureRecord({}, { paths: REQUIRED_SOURCE_PATHS });
   const record = validateRecordV2(fx.docs, { now: Date.now() });
-  const jobs = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: record.config.sourceManifestSha256, createdAt: iso(Date.now() - 60_000), attempt });
+  const jobs = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: record.config.sourceManifestSha256, createdAt: iso(Date.now() - 60_000), attempt });
   return { ...fx, record, jobs };
 }
 const facts = (job, c, batch = c) => admittedFacts(job, c, PACKET, { batchClaim: batch });
@@ -202,7 +202,7 @@ test('placement (Source v2): policy v3 and the v4 signed result accept both revi
     const manifestBytes = Buffer.from(canonical({ schema: 'independent-ci.sources.v2', repo: REPO, sourceSha: 'c'.repeat(40), roles: { 'contract-placement': {
       formalContractPlacement: { profile: 'required-contract-placement/1', workflowSha256, esbuildVersion: '0.28.1', tools },
       sourceFiles: requiredSourcePaths('contract-placement').map(p => ({ path: p, sha256: hex(32) })) } } }));
-    const placement = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: sha(manifestBytes), createdAt: iso(Date.now() - 1000), attempt: 1 })['contract-placement'];
+    const placement = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: sha(manifestBytes), createdAt: iso(Date.now() - 1000), attempt: 1 })['contract-placement'];
     const config = { schema: 'independent-ci.linux-policy.v3', role: 'contract-placement', formalEnabled: true, sourceManifestSha256: sha(manifestBytes), nodeExecutable: LINUX_NODE_V2,
       dockerRootDirectory: '/var/lib/docker', containerUser: '65532:65532', executionMode: 'node-entry', image, containerNodeExecutable: tools.node.path, containerNodeSha256: tools.node.sha256, ...refs };
     const qualification = { payload: { schema: 'independent-ci.runtime-qualification.v2', fixture: false, image, sourceManifestSha256: sha(manifestBytes), ...refs, qualifiedAt: iso(Date.now() - 1000), expiresAt: null } };
@@ -674,7 +674,7 @@ test('qualification v2 and role policy v3 (S6, S10): no claim anywhere, the pinn
   const manifestBytes = Buffer.from(canonical({ schema: 'independent-ci.sources.v2', repo: REPO, sourceSha: 'c'.repeat(40), roles: { gitleaks: {
     containerCommand: { image: GITLEAKS_IMAGE, scanner: 'gitleaks', executable: '/usr/bin/gitleaks', args: [...SCAN_ARGS], cwd: '/input' },
     hostTools: { python: { path: '/usr/bin/python3.12', sha256: hex(32) } }, sourceFiles: pins } } }));
-  const job = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: sha(manifestBytes), createdAt: iso(Date.now() - 1000), attempt: 2 }).gitleaks;
+  const job = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: sha(manifestBytes), createdAt: iso(Date.now() - 1000), attempt: 2 }).gitleaks;
   const refs = { runtimeIdentity: 'turing-linux', sourceAcceptanceRef: randomUUID(), hostAcceptanceRef: randomUUID() };
   const config = { schema: 'independent-ci.linux-policy.v3', role: 'gitleaks', formalEnabled: true, sourceManifestSha256: sha(manifestBytes), nodeExecutable: LINUX_NODE_V2,
     dockerRootDirectory: '/var/lib/docker', containerUser: '65532:65532', memoryBytes: 2147483648, cpus: 2, pids: 128, executionMode: 'scanner', image: GITLEAKS_IMAGE, ...refs };
@@ -744,7 +744,7 @@ test('refsInStore: every fresh ref tip, head and base must already be in the wor
   await fs.writeFile(path.join(dir, 'b.txt'), 'b'); git('add', 'b.txt'); git('commit', '-q', '-m', 'head');
   const head = git('rev-parse', 'HEAD');
   const gitSha = sha(await fs.readFile(GIT));
-  const job = batchJobsV2({ repo: REPO, pr: 888, headSha: head, baseSha: base, sourceManifestSha256: 'e'.repeat(64), createdAt: iso(Date.now() - 1000), attempt: 1 }).gitleaks;
+  const job = batchJobsV2({ repo: REPO, pr: 888, headSha: head, baseSha: base, testSha: head, sourceManifestSha256: 'e'.repeat(64), createdAt: iso(Date.now() - 1000), attempt: 1 }).gitleaks;
   const snapshot = extra => ({ contract: 'clued.independent-ci.remote-heads-tags/1', repository: REPO, complete: true, observedAt: iso(Date.now()), refs: [{ name: 'refs/heads/main', objectSha: base }, { name: 'refs/heads/pr', objectSha: head }, ...extra] });
   const store = path.join(dir, '.git');
   assert.deepEqual(await refsInStore({ job, remoteSnapshot: snapshot([]), gitDirectory: store, gitExecutable: GIT, expectedGitSha256: gitSha }), { tips: 2, refs: 2 });

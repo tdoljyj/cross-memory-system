@@ -13,7 +13,7 @@ const SCOPE = `project:${randomUUID()}`;
 const iso = ms => new Date(ms).toISOString();
 
 function world({ trailer, claimId = randomUUID(), fence = 3, epoch = 1, nativeOverrides = {}, claimOverrides = {}, commitTrailer = null, outcomeOverrides = {} } = {}) {
-  const job = makeJobV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt: 1, role: 'control-merge-slot' });
+  const job = makeJobV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt: 1, role: 'control-merge-slot' });
   const prRef = `${REPO}#888`;
   const body = trailer === undefined ? `Fix\n\nClued-Work-Claim: ${claimId}\nClued-Work-Scope: ${SCOPE}\n` : trailer;
   const pr = { number: 888, state: 'open', body, head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: BASE, ref: 'main', repo: { full_name: REPO } } };
@@ -93,7 +93,7 @@ test('full admission v2: missing trailer, commit trailer fallback, guarded claim
 });
 
 test('queue facts v2: head only for the observed claim generation', () => {
-  const job = makeJobV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now()), attempt: 1, role: 'control-merge-slot' });
+  const job = makeJobV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now()), attempt: 1, role: 'control-merge-slot' });
   const now = Date.now(), id = randomUUID();
   const claim = { claim_id: id, fence: 2, execution_epoch: 1, execution_handover_pending: false, lease_key_required: false, merge_slot_until: iso(now + 1000),
     merge_queue: [{ ref: `merge:${REPO}:main`, state: 'head', position: 1, ahead: [], head: { claim_id: id, bound_pr: `${REPO}#888`, since: iso(now - 1), until: iso(now + 1000) } }] };

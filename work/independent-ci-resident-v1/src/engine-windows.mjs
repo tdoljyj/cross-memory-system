@@ -243,7 +243,7 @@ export class WindowsEngine {
     check(v.status === 'RESIDENT_BATCH_DERIVED' && v.batchKey === key && v.batchId === batchId && HEX64.test(v.packageSha256) && HEX64.test(v.ciSourceManifestSha256 ?? '')
       && /^[0-9a-f]{40}$/.test(v.sourceCommit ?? '') && HEX64.test(v.gitleaksTomlSha256 ?? '') && Array.isArray(v.stages) && v.stages.length === 8
       // the tested commit S comes from the derivation alone; until step 3c it is the head itself
-      && v.testSha === subject.headSha, 'RESIDENT_DERIVATION_REFUSED');
+      && v.testSha === (Object.hasOwn(subject, 'testSha') ? subject.testSha : subject.headSha), 'RESIDENT_DERIVATION_REFUSED');
     const linuxJobIds = v.stages.filter(s => [2, 4, 6].includes(s.number)).map(s => s.jobId);
     check(linuxJobIds.length === 3 && linuxJobIds.every(j => HEX64.test(j)), 'RESIDENT_DERIVATION_REFUSED');
     // Public descriptor (/3) for the companion's bundle and ws-prep, and (through /mnt/c, read-only) the

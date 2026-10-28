@@ -27,7 +27,7 @@
 // no HALT. Whatever this journal knows keeps its existing path (a settled key is re-verified; K held by the other path
 // is role_already_published_on_head). A read-back that is not complete refuses (fail closed).
 import { canonical, digest } from './proof.mjs';
-import { validateJobV2, subjectOfV2, scanEffectKeyV2, scanExternalIdV2, sameClaimGeneration, claimGeneration, makeJobV2 } from './job-v2.mjs';
+import { validateJobV2, subjectOfV2, scanEffectKeyV2, scanExternalIdV2, sameClaimGeneration, claimGeneration, makeJobV2, prBaseAcceptedV2 } from './job-v2.mjs';
 import { verifyResultV2 } from './proof-v2.mjs';
 import { admittedFactsMatchJobV2 } from './full-admission-v2.mjs';
 import { claimRolePublication, readRolePublication, rolePublicationKey } from './effect-journal.mjs';
@@ -130,7 +130,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         || verified.signer.qualificationRef !== facts.hostQualificationRef)))
       stop('protected_qualification_changed', true);
     const pr = await github.readPullRequest(job.pr);
-    if (pr.state !== 'open' || pr.head?.sha !== job.headSha || pr.base?.sha !== job.baseSha || pr.base?.ref !== 'main'
+    if (pr.state !== 'open' || pr.head?.sha !== job.headSha || !prBaseAcceptedV2(job, pr.base?.sha) || pr.base?.ref !== 'main'
       || pr.head?.repo?.full_name !== job.repo || pr.base?.repo?.full_name !== job.repo) stop('github_subject_changed', true);
     const packet = await readChangedPaths(job);
     if (!packet || Object.keys(packet).some(k => !['complete', 'pr', 'headSha', 'baseSha', 'paths'].includes(k))
@@ -299,7 +299,8 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         // the role. It is never issued to the bridge, scheduled or published under (the relay has its own
         // effect key and external id), so a relayed role never gets a local run.
         try {
-          job = makeJobV2({ repo: subject.repo, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, role: envelope.role,
+          // The relay never carries a train front batch (relay-entry-v2.mjs refuses S != H): it tests the head itself.
+          job = makeJobV2({ repo: subject.repo, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: subject.headSha, role: envelope.role,
             sourceManifestSha256: subject.sourceManifestSha256, createdAt: new Date(clock()).toISOString(), attempt: input.attempt });
         } catch { stop('publication_input_invalid'); }
         if (job.repo !== deployment.repository) stop('repository_not_configured');
