@@ -2,7 +2,7 @@
 
 状态：**候选（Candidate），未接受。** 本文是 [MergeAdmission.v0.1.md](MergeAdmission.v0.1.md) 的后继，只写与 v0.1 不同的地方，其余全部沿用 v0.1。
 
-**本文只在合并列车开着时适用，分两层生效。** Owner 接受本文（写一条 Decision）之前，全部以 v0.1 为准。
+**本文只管合并列车的上线、运行、回退和应急，分两层生效。** Owner 接受本文（写一条 Decision）之前，全部以 v0.1 为准。§3 是信任论证，不另行生效；§5 是列车模式下对 v0.1 §14 的补充，随第 2 层适用。
 
 1. **接受时起**，§3.3（上线前提）、§4（上线、回退与应急）和 §2.3 第 2、3 条约束列车的上线、回退和应急。其中“§3.3 的前提全部满足之后，Owner 可以关 `strict`、合并方式只留 merge”这一条取代 v0.1 §0、§7.5 里“`strict` 必须开着”的结论，也只取代到这一步。
 2. **§2 其余各条**取代 v0.1 的对应小节，只在两件事同时成立时适用：
@@ -213,7 +213,7 @@ v0.1 §5.3：`efficiency` 下 `code`、`docs` 两层 `merge_slot: advise`，检�
 
 列车开着（`train.enabled=on`）时，Owner 应急停用规则集、或灾备切换必需检查的来源，都必须先做这些前置步骤：
 
-- **暂停执行器**：写 PAUSE 请求（合同 `clued.independent-ci.resident-pause/1`，写进 `requests\`，只有提权的 Owner 能恢复）。不能用“暂停接新”代替：它不停正在跑的批次和停在 B 点的批次，它们仍可能在第 8 段发出新绿。等状态显示已暂停、没有批次在跑，再做下一步。
+- **暂停执行器**：写 PAUSE 请求（合同 `clued.independent-ci.resident-pause/1`，写进 `requests\`，只有提权的 Owner 能恢复）。不能用“暂停接新”代替：它不停正在跑的批次和停在 B 点的批次，它们仍可能在第 8 段发出新绿。等状态显示已暂停、没有批次在跑，再做下一步。写请求的命令、怎么确认已暂停、事后怎么恢复（提权运行 `rearm-resident.ps1 -Request Resume`），见 `docs/maintenance/independent-ci.md`。
 - **跑一次第 10 段**，撤销车头的绿并读回确认。第 3c-2 步必须让只做撤销和清扫的第 10 段在 PAUSE 期间也能运行（设计 §4.3）；第 3c-1 步的 PAUSE 期间第 10 段不跑（`work/independent-ci-resident-v1/DESIGN.md` §22.3）。做不到时，按下面第 1 条的“没能撤销并读回确认”处理。
 - **关掉所有打开 PR 的 auto-merge。**
 - 灾备切换还要先把 `strict` 开回 true，再改来源。
@@ -227,7 +227,7 @@ v0.1 §5.3：`efficiency` 下 `code`、`docs` 两层 `merge_slot: advise`，检�
    - 以前已合入、带着六项绿的 head 不再在 main 里，从它新开一个 PR 就能合入（`strict` 开着时，只要它含 X 也能）；
    - 车头的 head 也可能不经测过的基础，直接落下它自己的树。
 
-   万一必须回退：停用之前先把 `strict` 开回 true，并把 `CLUED_MERGE_ADMISSION_STATE` 切到 `frozen`（按 v0.1 §4.1 写 Decision；Agent 在 `frozen` 下不合并、不开 auto-merge），直到全量清扫完成，再切回、关 `strict`。
+   万一必须回退：停用之前先把 `strict` 开回 true，并把 `CLUED_MERGE_ADMISSION_STATE` 切到 `frozen`（按 v0.1 §4.1 第 2 条写 Decision；Agent 在 `frozen` 下不合并、不开 auto-merge），直到全量清扫完成，再切回、关 `strict`。
 
 规则集停用期间，也建议都切到 `frozen`：Owner 的脚本只能在停用之前关一次 auto-merge，挡不住之后有人再打开或手动合并。
 
@@ -236,7 +236,7 @@ v0.1 §5.3：`efficiency` 下 `code`、`docs` 两层 `merge_slot: advise`，检�
 具体步骤和关 auto-merge 的 Owner 脚本见：
 
 - [GitConnectorWriteContract](../repository/GitConnectorWriteContract.v0.1.md) 的 “Emergency or recovery”；
-- [docs/maintenance/independent-ci.md](../../../docs/maintenance/independent-ci.md) 的“合并列车开着时：应急与灾备的前置步骤”。
+- [docs/maintenance/independent-ci.md](../../../docs/maintenance/independent-ci.md) 的“应急与灾备的前置步骤（含合并列车）”。
 
 为什么必须这样（设计 §5.10）：
 

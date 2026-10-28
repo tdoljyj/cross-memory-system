@@ -1,7 +1,7 @@
 # Merge Admission v0.1：合并到 main 的准入、合并队列与模式切换
 
 状态：**Accepted（Owner 2026-10-08 接受，Decision `d130195e`；接受的规范内容为 commit `33d858b1`，此后的接受提交只改状态行、来源与 Task ID）。** 接受只认可方案，本文件不授予任何实施、准入脚本改动、规则集改动、合同版本、生产迁移或 Worker 发布的权限；每一步实施仍由 Owner 单独授权，每步一个 PR。与 [WorkClaimAdmission.v0.1.md](WorkClaimAdmission.v0.1.md)（认领、准入检查、Owner 复核、合并位的现行实现）并列：本文规定「合并到 main 要保证什么」以及如何按路径分层和全局状态执行；v0.1 现行实现中与本文不同的部分，在 §13 对应步骤实施后由对应小节取代，实施前以现行实现为准。
-后继：[MergeAdmission.v0.2.md](MergeAdmission.v0.2.md)（候选，未接受）只写常驻执行器的合并列车开着时与本文不同的地方（G3、G5、`strict`、`strict_only`、auto-merge、§7.5、`efficiency` 的合并位）。它被 Owner 接受之前，以及列车关着或 `strict` 开着的任何时候，本文的对应小节照旧适用；它分两层生效，见它的开头。
+后继：[MergeAdmission.v0.2.md](MergeAdmission.v0.2.md)（候选，未接受）只写常驻执行器的合并列车开着时与本文不同的地方（G3、G5、`strict`、`strict_only`、auto-merge、§7.5、`efficiency` 的合并位）。它被 Owner 接受之前，以本文为准。接受之后分两层：上线、回退与应急（包括满足前提后允许关 `strict`）从接受时起生效；其余各条只在列车开着、清扫完成且 `strict` 关着时取代本文对应小节。详见它的开头。
 日期：2026-10-08
 来源：Owner Decision `8e767ed8`（先研究写方案再实施；模式切换形态「路径分级 × 全局状态」）、Decision `f303f861`（P0-1 治理精简四项；按本文修订后由 `610eeaaa` 替换）、Task `ada1334c`（审计度量与摩擦排序）、Decision `d130195e`（Owner 接受本文）；研究报告与数据见 Google Drive 资料中心 `10_E_工程与平台/CI基础设施/`（报告 v0.1 候选 r2，文件 ID `1ETCsBd1ol9f_lIMNbxn1z7ph7H8JYUxJ`，SHA-256 `63a2b6d1bb9980e9ca07fc78ebd996a4c7ddad77a4ef0fa50e44a476aa2d8903`；三轮独立复审记录文件 ID `14TuVeFBnzebmJR7ErXYuj5lxxcQYIpi0`，SHA-256 `a1e575ed126dd36aaedb71ca6182033bf11fa1397daa447569ae1922a48c7228`；Clued Note `7bea039d`）；选择理由见 [ADR-EA-001-MergeAdmissionPolicy.md](ADR-EA-001-MergeAdmissionPolicy.md)。
 对照基线：main `0b11b095`（2026-10-08），`main write policy (#292)` 规则集 `24182890`（五个必需检查，`strict_required_status_checks_policy=true`，0 审批，bypass 为空），仓库变量 `CLUED_WORK_ADMISSION_ENFORCE=true`、`CLUED_OWNER_REVIEW_ENFORCE=true`，仓库设置 `allow_auto_merge=false`。

@@ -45,7 +45,7 @@
 - merge slot 的有效期为距最后一次续期 45 分钟，stage 8 要求 `merge_slot_until > now`。本地批次可以在 stage 6 期间续期，绝不能在 stage 3、5、7 或 8 期间续期。只做转发的批次中途不续期：开始前离过期不足 20 分钟就推迟开始，由持有方按现有机制续期。
 - 归档时绝不移动 `state\effects` 或 outgoing journal 记录。
 
-## 合并列车开着时：应急与灾备的前置步骤
+## 应急与灾备的前置步骤（含合并列车）
 
 依据：额度第二期设计 v0.5 §5.10（资料中心 `10_E_工程与平台/CI基础设施/常驻执行器额度第二期_含合并列车_设计说明_v0.5_20261022.md`，sha256 `bd20941b…6d64cb`）、[MergeAdmission v0.2](../../development/contracts/execution-admission/MergeAdmission.v0.2.md)（候选，未接受）、[GitConnectorWriteContract](../../development/contracts/repository/GitConnectorWriteContract.v0.1.md) 的 “Emergency or recovery”。
 
@@ -63,11 +63,19 @@
 **应急停用规则集**（Owner 修 main）：
 
 1. 停用之前：
-   - **暂停执行器**：写 PAUSE 请求，也就是往常驻目录的 `requests\` 放一个合同为 `clued.independent-ci.resident-pause/1` 的请求，只有提权的 Owner 能恢复。不能用“暂停接新”（`rearm-tool.mjs request-intake-pause`）代替：它不停正在跑的批次和停在 B 点的批次，它们仍可能在第 8 段发出新绿。等状态显示已暂停、没有批次在跑，再做下一步。执行器不可达时跳过这一步；
-   - **跑一次第 10 段**，撤销车头的绿（若有）并读回确认。第 3c-2 步必须让只做撤销和清扫的第 10 段在 PAUSE 期间也能运行（设计 §4.3）；第 3c-1 步的 PAUSE 期间第 10 段不跑（`work/independent-ci-resident-v1/DESIGN.md` §22.3）。做不到时，按下一条的“没能撤销并读回确认”处理；
+   - **暂停执行器**：写 PAUSE 请求，也就是往常驻目录的 `requests\` 放一个合同为 `clued.independent-ci.resident-pause/1` 的请求，只有提权的 Owner 能恢复。不能用“暂停接新”（`rearm-tool.mjs request-intake-pause`）代替：它不停正在跑的批次和停在 B 点的批次，它们仍可能在第 8 段发出新绿。执行器不可达时跳过这一步。
+     - 怎么写：仓库里还没有写 PAUSE 的命令（第 3c-2 步要给 `rearm-tool.mjs` 加一个，Task `6451a55d`）。在那之前，在 PowerShell 里运行下面这一行（不用提权）。文件名必须是“13 位毫秒时间-12 位十六进制.json”，内容恰好 `contract`、`reason` 两个键，不能带 BOM，否则执行器会默默拒绝；这条命令三样都满足。
+
+       ```powershell
+       $n = '{0:D13}-{1}.json' -f [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(), (-join (1..12 | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })); [IO.File]::WriteAllText((Join-Path 'C:\ProgramData\CluedIndependentCI\resident\requests' $n), '{"contract":"clued.independent-ci.resident-pause/1","reason":"Owner emergency: ruleset change"}', (New-Object Text.UTF8Encoding $false))
+       ```
+
+     - 怎么确认：`C:\ProgramData\CluedIndependentCI\resident\state\PAUSED.json` 出现，并且状态显示没有批次在跑（不带 `-Request` 运行已安装的 `windows\rearm-resident.ps1` 也会显示是否已暂停和 `PAUSED.json` 的 sha256）。确认之后再做下一步。
+     - 事后恢复：应急结束（列车开着时还要等全量清扫完成）后，提权运行已安装的 `windows\rearm-resident.ps1 -Request Resume -ExpectedPausedSha256 <PAUSED.json 的 sha256>`。不恢复的话，独立 CI 会一直停着；
+   - **跑一次第 10 段**，撤销车头的绿（若有）并读回确认。第 3c-2 步必须让只做撤销和清扫的第 10 段在 PAUSE 期间也能运行（设计 §4.3）；第 3c-1 步的 PAUSE 期间第 10 段不跑（`work/independent-ci-resident-v1/DESIGN.md` §22.3）。做不到时，按下面“先把 `strict` 改回 true”那一条处理；
    - 按下面“关掉 auto-merge”关掉所有打开 PR 的 auto-merge，停用前一刻再列一次；
    - 执行器不可达（例如 TURING 不在线），或者车头的绿没能撤销并读回确认时，**Owner 先把 `strict` 改回 true**，规则集重新启用后保持 true，第 3 步的全量清扫完成后才再关。理由：main 向前修时（新尖端含旧尖端），`strict` 开着，没撤掉的旧绿只能合入一个已含新 main 尖端的 head，这个 head 也就含旧尖端，落地的就是它自己测过的树；`strict` 关着时，它可能落在修过的 main 上，而那棵树没测过；
-   - 建议停用期间把仓库变量 `CLUED_MERGE_ADMISSION_STATE` 切到 `frozen`（按 MergeAdmission v0.1 §4.1 写 Decision）。Agent 按合同在 `frozen` 下不合并、不开 auto-merge；脚本只能在停用前关一次 auto-merge，挡不住之后有人再打开或手动合并。
+   - 建议停用期间把仓库变量 `CLUED_MERGE_ADMISSION_STATE` 切到 `frozen`（按 MergeAdmission v0.1 §4.1 第 2 条写 Decision）。Agent 按合同在 `frozen` 下不合并、不开 auto-merge；脚本只能在停用前关一次 auto-merge，挡不住之后有人再打开或手动合并。
 2. 停用规则集、修 main、重新启用，回读规则集确认。**修 main 只用向前的提交**（例如 revert 提交）；列车开着时，不把 main 强推回旧提交。强推回旧提交之后，以前已合入、带着六项绿的 head 不再在 main 里，从它新开一个 PR 就能在清扫之前合入。万一必须回退：停用之前先把 `strict` 改回 true、状态切到 `frozen`，两样都保持到全量清扫完成。
 3. 重新启用之后、恢复列车之前，做一次**全量**清扫（不是增量）。main 已经在列车之外动过，所有旧绿都要撤销（包括停用前来不及撤的），列车从新的 main 尖端重新开始。切过 `frozen` 的，清扫完成后再切回。
 
@@ -106,7 +114,7 @@
 
 只在 TURING 长时间不可用、同时又有免费分钟时使用。这是只有 Owner 才能决定和操作的应急动作，不是每月的例行操作，默认不用。
 
-每次切换都先做上一节“合并列车开着时：应急与灾备的前置步骤”里的“灾备切换”第 1 步（列车开着时包括把 `strict` 改回 true），再从下面第 1 步开始。恢复时按上一节“恢复时”的顺序：先停用 `clued-work-admission.yml`，再钉回 `5368905`；列车开着时还要全量清扫，最后才关 `strict`。它取代下面第 6 步原来的顺序。
+每次切换都先做上一节“应急与灾备的前置步骤（含合并列车）”里的“灾备切换”第 1 步（列车开着时包括把 `strict` 改回 true），再从下面第 1 步开始。恢复时按上一节“恢复时”的顺序：先停用 `clued-work-admission.yml`，再钉回 `5368905`；列车开着时还要全量清扫，最后才关 `strict`。它取代下面第 6 步原来的顺序。
 
 1. **前提**：托管执行者版本的三个工作流已合入 `main`；merge slot 报告器和合并执行器按规则集实际来源计数。
 2. **快照**：切换前先保存规则集，`gh api repos/tdoljyj/cross-memory-system/rulesets/24182890 > ruleset-before.json`。
@@ -124,4 +132,5 @@
    每一项都必须钉 integration，绝不能留空成“任意来源”：那样任何工作流都能发一个同名的通过检查，门禁被悄悄关掉。其余规则（空的 bypass 列表等）不变；`strict` 在切换期间必须是 true（列车开着时先按上一节改回）。
 4. **Owner 重新启用 `clued-work-admission.yml`**。它发布 `kooyumi-work-admission`，以及 App `5164952` 的 `kooyumi-admission-verified` 和 `kooyumi-merge-slot`；TURING 不在线时，三个 `admission-gate` 靠它的 `kooyumi-admission-verified` 放行托管重型 job。
 5. 切换的那一刻，在另一个来源下已经变绿的 PR 会失去绿灯，要在新事件上重新出检查（检查挂在 head 上）。规则集回读确认后再继续合并。
+   恢复时不要照第 6 步的顺序做，按本节开头和上一节“恢复时”的顺序：先停用工作流、再钉回；列车开着时还要全量清扫，最后才关 `strict`。
 6. **恢复**：TURING 恢复后，Owner 把六项改回原来的六个名字并钉回 App `5368905`，再停用 `clued-work-admission.yml`（按 `bc6fdad1`，它的托管 job 名就是 `kooyumi-work-admission`），回读规则集确认。同样，切换前后的绿灯不能互相继承。
