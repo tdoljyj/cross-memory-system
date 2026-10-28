@@ -42,6 +42,41 @@ export async function lane({ runner, work, sleep: wait = sleep, everyMs = 2_000,
   }
 }
 const exists = async p => { try { await fs.access(p); return true; } catch { return false; } };
+// A record the companion reads for itself (a challenge's deadline, DESIGN §25.4), bounded like a bridge record.
+const readText = async p => { const b = await fs.readFile(p); check(b.length <= 1_400_000, 'COMPANION_READ_BOUND'); return b.toString('utf8'); };
+
+// The local relay log (DESIGN §25.5): one JSON line per relay attempt in <dir>\relay-YYYYMMDD.jsonl (UTC day), append-only,
+// at most 2 MB a file (then one LOG_TRUNCATED line and nothing more that day), files older than 14 days removed once a day.
+// It lives in the Owner's own profile like the PR status memory: the companion is not elevated, and the resident's
+// directories are written only by the installer and the service.
+export const RELAY_LOG_MAX_BYTES = 2 * 1024 * 1024;
+export const RELAY_LOG_KEEP_DAYS = 14;
+export function createRelayLog({ dir, clock = Date.now, fsImpl = fs }) {
+  const state = { day: null, truncated: false };
+  const dayOf = ms => new Date(ms).toISOString().slice(0, 10).replace(/-/g, '');
+  return async entry => {
+    const now = clock(), day = dayOf(now), file = path.join(dir, `relay-${day}.jsonl`);
+    if (state.day !== day) {
+      state.day = day; state.truncated = false;
+      await fsImpl.mkdir(dir, { recursive: true });
+      const oldest = dayOf(now - RELAY_LOG_KEEP_DAYS * 86_400_000);
+      for (const name of await fsImpl.readdir(dir)) {
+        const m = /^relay-(\d{8})\.jsonl$/.exec(name);
+        if (m && m[1] < oldest) await fsImpl.rm(path.join(dir, name), { force: true });
+      }
+    }
+    if (state.truncated) return;
+    const line = `${JSON.stringify(entry)}\n`;
+    let size = 0;
+    try { size = (await fsImpl.stat(file)).size; } catch { size = 0; }
+    if (size + Buffer.byteLength(line) > RELAY_LOG_MAX_BYTES) {
+      state.truncated = true;
+      await fsImpl.appendFile(file, `${JSON.stringify({ at: new Date(now).toISOString(), LOG_TRUNCATED: true })}\n`);
+      return;
+    }
+    await fsImpl.appendFile(file, line);
+  };
+}
 
 // The job host must be able to start a child in this very environment (the scheduled task and its own job objects): one
 // fixed, harmless child at start-up (DESIGN §24). Otherwise every request would fail quietly while the heartbeat looked
@@ -80,7 +115,9 @@ export async function main(args = process.argv.slice(2)) {
   await probeJobHost(runner);
   const mailbox = await Mailbox.open(path.join(values.root, 'mailbox'), Date.now);
   // pr-head (phase 2): the run queue's live PR read runs in the mailbox lane, like every other service request.
-  const companion = new Companion({ cfg, mailbox, run: (a, o) => runner.run(a, o), fileExists: exists, sleep, clock: Date.now, readPull: pr => readPullArgv(raw.ghExe, raw.repo, pr) });
+  const relayLog = createRelayLog({ dir: path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-log') });
+  const companion = new Companion({ cfg, mailbox, run: (a, o) => runner.run(a, o), fileExists: exists, sleep, clock: Date.now, readPull: pr => readPullArgv(raw.ghExe, raw.repo, pr),
+    readText, log: relayLog });
   const inboxDir = path.join(values.root, 'inbox');
   // Hint mode: the installed (admin-only, read by the Owner) CI Source's relay observer and pure hint
   // attestation over the Owner's own read-only gh login. Off unless companion.json enables it.

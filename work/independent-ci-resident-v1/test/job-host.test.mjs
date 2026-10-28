@@ -253,7 +253,8 @@ test('a relay call past its limit: the pump refuses as before, and its blocked h
       const mode = a[a.indexOf('-Mode') + 1];
       modes.push(mode);
       if (mode === 'SendIssue') return { code: 0, stdout: JSON.stringify({ status: 'PUBLIC_RECORD_TRANSFERRED', terminalConfirmed: true }) };
-      if (mode === 'ReceiveChallenge') { gaveUp = true; return { code: null, stdout: '', stderr: '', timedOut: true, tree: 'zero' }; }
+      // the call ran its whole RELAY_TIMEOUT_MS: no time is left in this callback round for another try (DESIGN §25.4)
+      if (mode === 'ReceiveChallenge') { gaveUp = true; now += 120_000; return { code: null, stdout: '', stderr: '', timedOut: true, tree: 'zero' }; }
       if (mode === 'ReceiveBlocked') return { code: 0, stdout: JSON.stringify({ status: 'PUBLIC_RECORD_TRANSFERRED', terminalConfirmed: true }) };
     }
     // the worker gives up on the round it never got an answer for: its clean 'blocked' record
@@ -261,7 +262,8 @@ test('a relay call past its limit: the pump refuses as before, and its blocked h
     if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
     return { code: 0, stdout: '' };
   };
-  const companion = new Companion({ cfg, mailbox: box, run, fileExists: async () => true, sleep: async ms => { now += ms; }, clock: () => now });
+  // The ended call may have written: the arrival check finds no challenge in Windows incoming (DESIGN §25.3).
+  const companion = new Companion({ cfg, mailbox: box, run, fileExists: async p => !p.includes('\\incoming\\'), sleep: async ms => { now += ms; }, clock: () => now });
   await companion.step();
   const r = await box.poll(req);
   assert.deepEqual([r.ok, r.code, r.jobTree], [false, 'RELAY_REFUSED_NO_RETRY', 'zero']);
