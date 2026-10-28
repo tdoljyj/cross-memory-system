@@ -724,7 +724,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 - Linux 适配器对每轮回调结果自己的复核（`validateFormalAdmissionV2`）也一样：worker 把每个 response 的签出时间和过期时间记在它交给适配器的那份准入事实上（`linux-worker.mjs#callbackValue`、`admission-facts-v2.mjs#noteBridgeResponseTimes`）。在这个 response 有效期内、且不晚于 claim 到期，30 秒从签出时刻算；过了这个时间，或者不是从回调来的事实，照旧从当前时刻算。适配器先校验端口交来的那个对象，再克隆；克隆出的对象不带登记。Windows 侧的调用方从不登记，行为不变。
 - 所以 Linux 侧用上一份准入时，它最多比 `observedAt` 晚约 150 秒（签出前 30 秒，加一个回调窗口），以前是 30 秒。
 - remote-refs 回调的 refs 快照仍按到达时刻判 30 秒，不在这次决定范围内。gitleaks 的 remote-refs 一轮走的是同样的搬运，变慢时仍会被拒（那一轮在准备之前，所以以干净的 `blocked` 结束，#908 就是这样）。
-- companion 每次搬运调用最多等一个回调窗口（`RELAY_TIMEOUT_MS` = 120 秒），不再固定 40 秒。Runner 从不杀子进程，提前放弃并不能腾出 Runner，只会让泵以没用的答复结束。Owner 中止时，正在进行的那次调用最多多等这么久。
+- companion 每次搬运调用最多等一个回调窗口（`RELAY_TIMEOUT_MS` = 120 秒），不再固定 40 秒。（写本节时 Runner 从不杀子进程，提前放弃并不能腾出 Runner，只会让泵以没用的答复结束；§24 起，到这个时限由作业宿主连同进程树一起结束，§25 再按到达核对裁定。）Owner 中止时，正在进行的那次调用最多多等这么久。
 - relay-public.ps1 等 wsl 子进程的上限从 30 秒改为 90 秒。它的 `finally` 本来就会一直等到子进程结束，这个上限只决定一个慢了、但已经做完的子进程算不算成功。以前超过 30 秒就是 `UNCERTAIN_LOCKS_RETAINED_NO_RETRY`，companion 照样报 `RELAY_REFUSED_NO_RETRY`。
 - 生效要重装两侧：桥 v4 的文件按字节受理（relay-public.ps1 每次搬运前逐字节核对 manifest），companion 配置里的 `bridgeManifestSha256` 也随之更新。
 - 不变：每轮仍重新做完整准入；绑定 nonce、序号与批次 claim 代际；发布阶段（3、5、7、8）自己再做完整准入，已发布的检查不重复、不伪造。
