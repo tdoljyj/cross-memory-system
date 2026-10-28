@@ -294,3 +294,37 @@ test('the pump: a ReceiveBlocked that ran out of retries does not stop the later
   assert.equal(blocked, 4);
   assert.deepEqual([r.ok, r.code], [false, 'RELAY_REFUSED_NO_RETRY']);
 });
+
+test('review fixes: no retry past the stage deadline for any call; retry classes need receipt /2; a recorded first sighting stays', async t => {
+  // ReceiveChallenge and SendResponse also stop at the stage deadline
+  let f = await companion(t, mode => (mode === 'ReceiveChallenge' ? VM_FLAP : null));
+  await assert.rejects(f.c.relay('ReceiveChallenge', 1, { deadline: T0 + 2000, firstSeen: T0 }), e => e.code === 'RELAY_REFUSED_NO_RETRY' && e.permanent === false);
+  assert.equal(attempts(f.calls, 'ReceiveChallenge'), 1);
+  f = await companion(t, mode => (mode === 'ReceiveChallenge' ? VM_FLAP : null));
+  assert.equal(await f.c.relay('ReceiveChallenge', 1, { deadline: T0 + 3001, firstSeen: T0 }).catch(() => 'refused'), 'refused');
+  assert.equal(attempts(f.calls, 'ReceiveChallenge'), 2, 'one ms before the deadline it still tries');
+  // a retry class without the /2 contract is PERMANENT; OK and NOT_YET read their fields as before
+  const bare = { code: 2, stdout: out({ failureCode: 'PUBLIC_CHILD_EXIT_REFUSED_NO_RETRY', processId: 1, exitCode: 1, terminalConfirmed: true, childError: null }) };
+  assert.equal(classifyRelayAttempt(bare, JSON.parse(bare.stdout)), 'PERMANENT');
+  assert.equal(classifyRelayAttempt({ code: 0 }, { status: 'PUBLIC_RECORD_TRANSFERRED', terminalConfirmed: true }), 'OK');
+  assert.equal(classifyRelayAttempt({ code: 2 }, { childError: { reason: 'ENOENT' }, terminalConfirmed: true }), 'NOT_YET');
+  // the pump keeps a challenge's first sighting when a later listing fails: no retry once that round's budget is gone
+  const root = await tempRoot(t);
+  let now = T0, listing = 0, tries = 0;
+  const box = await Mailbox.open(root, () => now);
+  const req = await box.send('relay-stage', { batchId: '0123456789abcdef-0123456789ab', stage: 2, jobId: 'e'.repeat(64) }, 10 * 60_000);
+  const run = async a => {
+    if (a.includes('-Mode')) {
+      const mode = a[a.indexOf('-Mode') + 1];
+      if (mode === 'SendIssue') return OK;
+      if (mode === 'ReceiveChallenge') { tries += 1; if (tries === 1) return NOT_YET; now += 70_000; return VM_FLAP; }
+      if (mode === 'ReceiveBlocked') return NOT_YET;
+    }
+    if (a.includes('/var/lib/clued-independent-ci/formal-spool/outgoing')) { listing += 1; return listing === 1 ? { code: 0, stdout: 'challenge-01.ready.json\n' } : { code: 2, stdout: '' }; }
+    if (a.includes('quiescence')) return { code: 0, stdout: out({ linuxUnitsInactive: true, containersZero: true }) };
+    return { code: 0, stdout: '' };
+  };
+  const c = new Companion({ cfg, mailbox: box, run, fileExists: async p => !p.includes('\\incoming\\'), sleep: async ms => { now += ms; }, clock: () => now });
+  await c.step();
+  assert.deepEqual([(await box.poll(req)).code, tries], ['RELAY_REFUSED_NO_RETRY', 2], 'the second try failed past first sighting + 60 s: not tried again');
+});

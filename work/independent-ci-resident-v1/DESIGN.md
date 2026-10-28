@@ -2095,7 +2095,8 @@ Owner Decision `2eea28a1` 把 3c 拆成两步。3c-1 只做影子模式（设计
 | EXISTING | Receive* 的 `EXISTING_RECORD_PRESERVED_NO_RETRY` | 只有完整的同名记录才算已到，其他一律永久失败 |
 | PERMANENT | 其余一切：身份、位置、清单类；`FORMAL_SPOOL_ACL_REFUSED`；`PUBLIC_PARENT_*`、`PUBLIC_INPUT_*`、`PUBLIC_READY_CHANGED`、`PUBLIC_RECORD_*`、`PUBLIC_IMPORT_UNCONFIRMED_NO_RETRY`；`childError` 的其他 reason，或 stage 为 BINDING、RECORD、COMPLETE；`tree unconfirmed`；runner 的其他拒绝；回执无法解析 | `RELAY_REFUSED_NO_RETRY`（码和失败表行都不变） |
 
-回执按字段读取，和改动前一样，不额外要求 `contract` 字段。
+- OK 与 NOT_YET 按字段读取，和改动前一样；可能导致重试的类别（NO_CHILD 的回执形状、CHILD_FAILED、AMBIGUOUS、EXISTING）还要求回执的 `contract` 是 `clued.independent-ci.formal-public-relay-receipt/2`，因为它们的安全论证依赖 /2 的语义。
+- 作业宿主报 `tree unconfirmed` 时，即使回执写着已转移，也判 PERMANENT（设计 r3 §1.6：不在没证明结束的进程上叠新调用）。这比改动前严：改动前这种回执算成功。
 
 ### 25.3 到达核对与残留进程检查
 
@@ -2117,7 +2118,8 @@ Owner Decision `2eea28a1` 把 3c 拆成两步。3c-1 只做影子模式（设计
 | `ReceiveChallenge` | 2 | 3 s | `now ≤ firstSeen + 120 s − 60 s` |
 | `SendResponse` | 2 | 2 s | `now ≤ 挑战记录自己的 deadline − 15 s` |
 
-- `firstSeen`：泵第一次在 Linux outgoing 里列到这个挑战的时刻。没有列表时，用这次调用开始的时刻代替。估错只会让应答晚到（发行器有“迟到”处理），影响的是活性，不是安全。
+- 任何调用的重试都不会在段截止之后发起：那时服务已不再等这个答复。
+- `firstSeen`：泵第一次在 Linux outgoing 里列到这个挑战的时刻；记下后不再改，之后某次列表失败也照用。从没列到过（列表一直失败）时，用这次调用开始的时刻代替。估错只会让应答晚到（发行器有“迟到”处理），影响的是活性，不是安全。
 - `SendResponse` 的预算读 Windows incoming 里那条挑战记录的 `deadline` 字段（公开字节，只读这一个字段，只用来决定要不要再试）；读不到就不重试。
 - 每次尝试前都先做取消检查（Owner 中止优先）。泵里的 `ReceiveBlocked` 只有在永久失败后才记为“已拒绝”；只是重试用完时，失败后的“交出 blocked 记录”仍会再试一次。
 - 没有给预算的调用（例如测试或将来的新调用）不会重试。

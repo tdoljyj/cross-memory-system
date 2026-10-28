@@ -69,6 +69,7 @@ export function createRelayLog({ dir, clock = Date.now, fsImpl = fs }) {
     const line = `${JSON.stringify(entry)}\n`;
     let size = 0;
     try { size = (await fsImpl.stat(file)).size; } catch { size = 0; }
+    if (size >= RELAY_LOG_MAX_BYTES) { state.truncated = true; return; } // truncated before a restart
     if (size + Buffer.byteLength(line) > RELAY_LOG_MAX_BYTES) {
       state.truncated = true;
       await fsImpl.appendFile(file, `${JSON.stringify({ at: new Date(now).toISOString(), LOG_TRUNCATED: true })}\n`);

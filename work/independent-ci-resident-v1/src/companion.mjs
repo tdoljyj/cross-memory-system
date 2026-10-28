@@ -41,6 +41,7 @@ export const STAGE_RESERVE_MS = 150_000;
 export const CHALLENGE_RESERVE_MS = 60_000;
 export const RESPONSE_RESERVE_MS = 15_000;
 export const RELAY_CHECK_TIMEOUT_MS = 15_000;
+const RELAY_RECEIPT_CONTRACT = 'clued.independent-ci.formal-public-relay-receipt/2';
 const CHILD_TRANSIENT_REASONS = new Set(['EBUSY', 'EMFILE', 'ENFILE', 'EINTR', 'FORMAL_RELAY_STDIN_TIMEOUT']);
 const CHILD_TRANSIENT_STAGES = new Set(['OPERATION', 'CONTEXT', 'STDIN', 'TRANSPORT', 'PACKET']);
 const AMBIGUOUS_FAILURES = new Set(['PUBLIC_TERMINAL_UNCONFIRMED_LOCKS_RETAINED', 'PUBLIC_OUTPUT_UNCONFIRMED_NO_RETRY', 'PUBLIC_STDIN_UNCERTAIN_NO_RETRY']);
@@ -71,6 +72,8 @@ export function classifyRelayAttempt(runner, receipt) {
   const ce = plainObject(v.childError) ? v.childError : null;
   if (ce?.reason === 'ENOENT' && v.terminalConfirmed === true) return 'NOT_YET';
   // wsl.exe did not start, or relay-public failed before it: an exception id with no process and no exit code.
+  // The classes below may lead to a retry; their safety rests on receipt /2's meaning, so they require its contract.
+  if (v.contract !== RELAY_RECEIPT_CONTRACT) return 'PERMANENT';
   if (v.failureCode === 'PUBLIC_TRANSFER_UNCONFIRMED' && v.processId === null && v.exitCode === null) return 'NO_CHILD';
   if (v.terminalConfirmed === true && v.failureCode === 'PUBLIC_CHILD_EXIT_REFUSED_NO_RETRY' && v.childError === null) return 'CHILD_FAILED';
   if (v.terminalConfirmed === true && v.failureCode === 'PUBLIC_CHILD_REFUSED_NO_RETRY' && ce && CHILD_TRANSIENT_REASONS.has(ce.reason) && CHILD_TRANSIENT_STAGES.has(ce.stage)) return 'CHILD_FAILED';
@@ -279,6 +282,8 @@ export class Companion {
   // Whether another attempt may start now (DESIGN §25.4).
   async relayBudgetHolds(mode, budget) {
     const now = this.clock();
+    // Never past the stage's own deadline: the service no longer waits for this answer then.
+    if (Number.isFinite(budget.deadline) && now >= budget.deadline) return false;
     if (mode === 'ReceiveChallenge') return Number.isFinite(budget.firstSeen) && now <= budget.firstSeen + CALLBACK_WINDOW_MS - CHALLENGE_RESERVE_MS;
     if (mode === 'SendResponse') {
       const end = typeof budget.challengeDeadline === 'function' ? await budget.challengeDeadline() : null;
@@ -376,7 +381,7 @@ export class Companion {
       // When the pump first saw each challenge listed (its ReceiveChallenge retry budget). Without a listing the call itself
       // is the probe, and that call's own start stands in for it: a wrong guess only makes a response later (DESIGN §25.4).
       const firstSeen = new Map();
-      const seenAt = (names, seq) => { if (names === null) return this.clock(); if (!firstSeen.has(seq)) firstSeen.set(seq, this.clock()); return firstSeen.get(seq); };
+      const seenAt = (names, seq) => { if (firstSeen.has(seq)) return firstSeen.get(seq); if (names === null) return this.clock(); firstSeen.set(seq, this.clock()); return firstSeen.get(seq); };
       // A ReceiveBlocked refused for good is remembered (never tried twice); one that only found nothing, or ran out of
       // retries, is not.
       const receiveBlocked = async () => { try { return await relay('ReceiveBlocked', 0, { deadline }); } catch (e) { if (e?.permanent) blockedRefused = true; throw e; } };
@@ -390,11 +395,11 @@ export class Companion {
           // Then a challenge: a callback has a deadline (CALLBACK_WINDOW_MS), the result does not hurry.
           const challenge = relayRecordName('ReceiveChallenge', sequence);
           if (sequence <= 32 && listed(names, challenge)) {
-            if (await relay('ReceiveChallenge', sequence, { firstSeen: seenAt(names, sequence) })) {
+            if (await relay('ReceiveChallenge', sequence, { deadline, firstSeen: seenAt(names, sequence) })) {
               const responseDeadline = this.clock() + CALLBACK_WINDOW_MS;
               const name = relayRecordName('SendResponse', sequence), seq = sequence;
               while (!(await ready(name))) { check(this.clock() < responseDeadline, 'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED'); await live(); await this.sleep(100); }
-              check(await relay('SendResponse', seq, { challengeDeadline: () => this.challengeDeadline(seq) }), 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED');
+              check(await relay('SendResponse', seq, { deadline, challengeDeadline: () => this.challengeDeadline(seq) }), 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED');
               sequence += 1;
               continue;
             }
