@@ -49,7 +49,11 @@
 
 依据：额度第二期设计 v0.5 §5.10（资料中心 `10_E_工程与平台/CI基础设施/常驻执行器额度第二期_含合并列车_设计说明_v0.5_20261022.md`，sha256 `bd20941b…6d64cb`）、[MergeAdmission v0.2](../../development/contracts/execution-admission/MergeAdmission.v0.2.md)（候选，未接受）、[GitConnectorWriteContract](../../development/contracts/repository/GitConnectorWriteContract.v0.1.md) 的 “Emergency or recovery”。
 
-**什么时候适用。** 常驻执行器的列车开着（`train.enabled=on`），并且 Owner 已经把规则集 `24182890` 的 `strict` 关掉、合并方式只留 merge。现在（2026-10-28）列车还没开：代码做到第 3c-1 步，只有影子模式；`strict` 仍是 true，合并方式仍允许 merge、squash、rebase。在那之前，下一节“灾备”照旧，只是“关掉 auto-merge”这一步现在就建议做。
+**什么时候适用。**
+
+- 下面的“暂停执行器”和“关掉 auto-merge”两步，从 2026-10-28 起每次应急停用规则集、灾备切换都要做，不论列车开没开（GitConnectorWriteContract 同日写明）。
+- “第 10 段撤销”和“先把 `strict` 改回 true”两步，只在常驻执行器的列车开着（`train.enabled=on`）时适用。第 5、6 步（列车开着、`strict` 仍开着）时，第 10 段照做，`strict` 本来就开着。
+- 现在（2026-10-28）列车还没开：代码做到第 3c-1 步，只有影子模式；`strict` 仍是 true，合并方式仍允许 merge、squash、rebase。
 
 **为什么要先做这些。**
 
@@ -59,25 +63,26 @@
 **应急停用规则集**（Owner 修 main）：
 
 1. 停用之前：
-   - 暂停执行器（写暂停请求），不再发新绿；
-   - 跑一次第 10 段（暂停期间第 10 段仍可运行），撤销车头的绿（若有）并读回确认；
-   - 按下面“关掉 auto-merge”关掉所有打开 PR 的 auto-merge；
-   - 执行器不可达（例如 TURING 不在线），或者车头的绿没能撤销并读回确认时，**Owner 先把 `strict` 改回 true**，规则集重新启用后保持 true，第 3 步的全量清扫完成后才再关。`strict` 开着时，没撤掉的旧绿只能合入一个已含 main 尖端的 head，落地的就是它自己测过的树；`strict` 关着时，它可能落在修过的 main 上，而那棵树没测过。
-2. 停用规则集、修 main、重新启用，回读规则集确认。
-3. 重新启用之后、恢复列车之前，做一次**全量**清扫（不是增量）。main 已经在列车之外动过，所有旧绿都要撤销（包括停用前来不及撤的），列车从新的 main 尖端重新开始。
+   - **暂停执行器**：写 PAUSE 请求，也就是往常驻目录的 `requests\` 放一个合同为 `clued.independent-ci.resident-pause/1` 的请求，只有提权的 Owner 能恢复。不能用“暂停接新”（`rearm-tool.mjs request-intake-pause`）代替：它不停正在跑的批次和停在 B 点的批次，它们仍可能在第 8 段发出新绿。等状态显示已暂停、没有批次在跑，再做下一步。执行器不可达时跳过这一步；
+   - **跑一次第 10 段**，撤销车头的绿（若有）并读回确认。第 3c-2 步必须让只做撤销和清扫的第 10 段在 PAUSE 期间也能运行（设计 §4.3）；第 3c-1 步的 PAUSE 期间第 10 段不跑（`work/independent-ci-resident-v1/DESIGN.md` §22.3）。做不到时，按下一条的“没能撤销并读回确认”处理；
+   - 按下面“关掉 auto-merge”关掉所有打开 PR 的 auto-merge，停用前一刻再列一次；
+   - 执行器不可达（例如 TURING 不在线），或者车头的绿没能撤销并读回确认时，**Owner 先把 `strict` 改回 true**，规则集重新启用后保持 true，第 3 步的全量清扫完成后才再关。理由：main 向前修时（新尖端含旧尖端），`strict` 开着，没撤掉的旧绿只能合入一个已含新 main 尖端的 head，这个 head 也就含旧尖端，落地的就是它自己测过的树；`strict` 关着时，它可能落在修过的 main 上，而那棵树没测过；
+   - 建议停用期间把仓库变量 `CLUED_MERGE_ADMISSION_STATE` 切到 `frozen`（按 MergeAdmission v0.1 §4.1 写 Decision）。Agent 按合同在 `frozen` 下不合并、不开 auto-merge；脚本只能在停用前关一次 auto-merge，挡不住之后有人再打开或手动合并。
+2. 停用规则集、修 main、重新启用，回读规则集确认。**修 main 只用向前的提交**（例如 revert 提交）；列车开着时，不把 main 强推回旧提交。强推回旧提交之后，以前已合入、带着六项绿的 head 不再在 main 里，从它新开一个 PR 就能在清扫之前合入。万一必须回退：停用之前先把 `strict` 改回 true、状态切到 `frozen`，两样都保持到全量清扫完成。
+3. 重新启用之后、恢复列车之前，做一次**全量**清扫（不是增量）。main 已经在列车之外动过，所有旧绿都要撤销（包括停用前来不及撤的），列车从新的 main 尖端重新开始。切过 `frozen` 的，清扫完成后再切回。
 
 **灾备切换必需检查的来源**（下一节）：
 
 1. 切换来源之前：
-   - 和上面第 1 步一样：执行器可达时，暂停执行器，跑一次第 10 段撤销车头的绿并读回确认；不论可达与否，关掉所有打开 PR 的 auto-merge；
-   - **Owner 先把 `strict` 改回 true**，回读确认后，再按下一节第 3 步改必需检查的来源。灾备时 TURING 往往不在线，车头的绿撤不掉；`strict` 开回之后它只能合入一个已含 main 尖端的 head，而且来源一改，`5368905` 的检查就不再算数。
-2. 恢复时，按这个顺序：
+   - 和上面第 1 步一样：执行器可达时，写 PAUSE 请求并跑一次第 10 段，撤销车头的绿并读回确认；不论可达与否，关掉所有打开 PR 的 auto-merge；
+   - 列车开着时，**Owner 先把 `strict` 改回 true**，回读确认后，再按下一节第 3 步改必需检查的来源。灾备时 TURING 往往不在线，车头的绿撤不掉；`strict` 开回之后，它只能合入一个已含 main 尖端的 head，而且来源一改，`5368905` 的检查就不再算数。
+2. 恢复时，按这个顺序（取代下一节第 6 步的顺序）：
    - 先停用灾备期间重新启用的 `clued-work-admission.yml`（它的托管 job 名就是 `kooyumi-work-admission`）；
-   - 把六项钉回 `5368905`，回读规则集确认；
-   - 做一次全量清扫。灾备期间 main 动过的话，清扫的例外自然不成立，灾备前车头的绿会被撤销；
+   - 把六项改回原来的名字并钉回 `5368905`，回读规则集确认；
+   - 列车开着时，做一次全量清扫。灾备期间 main 动过的话，清扫的例外自然不成立，灾备前车头的绿会被撤销；
    - 最后才关 `strict`，恢复列车。
 
-**第 10 段和全量清扫怎么触发**，以第 3c-2 步（开车所需的撤销与清扫）合入后 `work/independent-ci-resident-v1/README.md` 的说明为准。第 3c-2 步合入之前列车开不了，这两步也就用不上。
+**第 10 段和全量清扫怎么触发**：第 3c-2 步（开车所需的撤销与清扫，Task `6451a55d`）的 PR 必须把具体命令补进本节，免得应急时 Owner 手里没有命令。第 3c-2 步合入之前列车开不了，这两步也就用不上。
 
 **关掉 auto-merge**（Owner 脚本）。这是 Owner 应急流程的一部分，不是 Agent 的日常动作。Owner 用自己的 GitHub 身份在终端里运行，每条命令一行，PowerShell 和 bash 都能用：
 
@@ -93,7 +98,7 @@
    gh pr merge <PR 编号> --repo tdoljyj/cross-memory-system --disable-auto
    ```
 
-3. 再运行一次第 1 条命令，没有任何输出才算完成。有输出就回到第 2 条。
+3. 再运行一次第 1 条命令，没有任何输出才算完成。有输出就回到第 2 条。停用规则集或切换来源之前一刻，再运行一次第 1 条命令。
 
 **托管工作流**：`clued-merge-executor.yml`（会把 main 合进车头分支）、`clued-merge-slot-ci.yml`、`clued-work-admission.yml`、`clued-work-admission-reverify.yml` 在列车开着期间保持停用（现在都是 `disabled_manually`），重新启用之前要先改造。灾备时临时重新启用 `clued-work-admission.yml` 是唯一的例外，而且只在 `strict` 已改回 true 之后。
 
@@ -101,7 +106,7 @@
 
 只在 TURING 长时间不可用、同时又有免费分钟时使用。这是只有 Owner 才能决定和操作的应急动作，不是每月的例行操作，默认不用。
 
-列车开着（`strict` 已关）时，先做上一节“合并列车开着时：应急与灾备的前置步骤”，`strict` 改回 true 之后再从第 1 步开始。
+每次切换都先做上一节“合并列车开着时：应急与灾备的前置步骤”里的“灾备切换”第 1 步（列车开着时包括把 `strict` 改回 true），再从下面第 1 步开始。恢复时按上一节“恢复时”的顺序：先停用 `clued-work-admission.yml`，再钉回 `5368905`；列车开着时还要全量清扫，最后才关 `strict`。它取代下面第 6 步原来的顺序。
 
 1. **前提**：托管执行者版本的三个工作流已合入 `main`；merge slot 报告器和合并执行器按规则集实际来源计数。
 2. **快照**：切换前先保存规则集，`gh api repos/tdoljyj/cross-memory-system/rulesets/24182890 > ruleset-before.json`。
