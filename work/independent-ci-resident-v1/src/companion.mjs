@@ -52,7 +52,7 @@ export const WORKER_START_WAIT_MS = 5 * 60_000;
 // after, then half of the quiet time, at most LISTING_CAP_MS. A challenge is therefore found at most LISTING_CAP_MS (plus
 // the listing call) after its creation, where it was found within about a second; the cap equals WORKER_FACTS_EVERY_MS so that,
 // quiet, one pass does both reads and signals B and C keep their timing. A relay budget measured from the first sighting is
-// anchored at the listing before it (see pump), so the cap never eats into DESIGN §25.4's reserves.
+// anchored at a moment the challenge certainly did not exist yet (see pump), so the cap never eats into DESIGN §25.4's reserves.
 export const LISTING_MIN_MS = 1000;
 export const LISTING_CAP_MS = WORKER_FACTS_EVERY_MS;
 export const LISTING_QUIET_DIVISOR = 2;
@@ -469,6 +469,7 @@ export class Companion {
       while (!(await ready('issue'))) { check(this.clock() < deadline, 'ACTUAL_ISSUE_NOT_PUBLISHED'); await live(); await this.sleep(100); }
       check(await relay('SendIssue', 0, { deadline }), 'ISSUE_TRANSFER_UNCONFIRMED');
       await live(); // a cancel that came with the issue transfer starts no worker
+      const startCalledAt = this.clock(); // no challenge can exist before the worker was asked to start
       const start = await this.run(this.a.startNoBlock('clued-ci-worker', request.jobId), { timeoutMs: 30_000 });
       check(start.code === 0, 'LINUX_WORKER_START_UNCONFIRMED');
       let sequence = 1, blockedRefused = false;
@@ -488,15 +489,16 @@ export class Companion {
         check(!f || worker.ran || worker.listedRecord || this.clock() - startedAt < WORKER_START_WAIT_MS, 'LINUX_WORKER_NOT_STARTED');
       };
       const RECORD = /^(challenge-[0-9]{2}|result|blocked)\.ready\.json$/;
-      // When the pump first saw each challenge listed (its ReceiveChallenge retry budget). Without a listing the call itself
-      // is the probe, and that call's own start stands in for it: a wrong guess only makes a response later (DESIGN §25.4).
-      // The anchor is the start of the listing BEFORE the one that first showed the challenge (the challenge was made after that
-      // one, so this is never later than its creation, and DESIGN §25.4's "creation + 60 s" holds however far apart the listings
-      // are, DESIGN §31.5); without an earlier listing, the listing itself.
+      // The ReceiveChallenge retry budget counts from an anchor that is never later than the challenge's creation (DESIGN §31.5):
+      // `lowerBound` = the latest moment the challenge certainly did not exist yet. That is the start of the last successful
+      // listing that did not show it; after a response, the moment its transfer began (challenge k+1 is made only after the
+      // worker has the response k); before any of these, the moment the worker was asked to start. A challenge is stored at its
+      // first sighting in a listing. A listing that failed shows nothing, so the bound stands: the relay call is the probe and
+      // the budget is no later than a listing would have given it (review of §31, MAJOR-2).
       const firstSeen = new Map();
-      const seenAt = (names, seq, anchor) => { if (firstSeen.has(seq)) return firstSeen.get(seq); if (names === null) return this.clock(); firstSeen.set(seq, anchor); return anchor; };
+      const seenAt = (names, seq, anchor) => { if (firstSeen.has(seq)) return firstSeen.get(seq); if (names !== null) firstSeen.set(seq, anchor); return anchor; };
       // Pace of the listing (DESIGN §31.5): what has happened last (the start, a changed listing, a relayed record).
-      let eventAt = startedAt, previousListing = null, previousNames = null;
+      let eventAt = startedAt, lowerBound = startCalledAt, previousNames = null;
       // A ReceiveBlocked refused for good is remembered (never tried twice); one that only found nothing, or ran out of
       // retries, is not.
       const receiveBlocked = async () => { try { return await relay('ReceiveBlocked', 0, { deadline }); } catch (e) { if (e?.permanent) blockedRefused = true; throw e; } };
@@ -507,9 +509,9 @@ export class Companion {
           await observeWorker();
           const listingAt = this.clock();
           const names = await this.linuxReady();
-          const anchor = previousListing ?? listingAt;
+          const anchor = lowerBound;
           if (names !== null) {
-            previousListing = listingAt;
+            lowerBound = Math.max(lowerBound, listingAt);
             const signature = [...names].sort().join('|');
             if (previousNames !== null && signature !== previousNames) eventAt = this.clock();
             previousNames = signature;
@@ -525,7 +527,11 @@ export class Companion {
               const responseDeadline = this.clock() + CALLBACK_WINDOW_MS;
               const name = relayRecordName('SendResponse', sequence), seq = sequence;
               while (!(await ready(name))) { check(this.clock() < responseDeadline, 'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED'); await live(); await this.sleep(100); }
+              const sendingAt = this.clock();
               check(await relay('SendResponse', seq, { deadline, challengeDeadline: () => this.challengeDeadline(seq) }), 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED');
+              // The worker makes challenge k+1 only after it has response k, which cannot be before this transfer began; the
+              // listing taken before the round (even one that already ran long) says nothing about the next challenge (MAJOR-1).
+              lowerBound = Math.max(lowerBound, sendingAt);
               sequence += 1;
               eventAt = this.clock();
               continue;

@@ -390,3 +390,16 @@ test('no mailbox or companion write is create-then-write any more, except the tw
   assert.equal([...main.matchAll(/Inbox\.drop\(/g)].length, 2);
   assert.doesNotMatch(await read('ruleset-backstop.mjs'), /\bwriteNew\(/);
 });
+
+test('hint (review NIT-1): a newest file that is not JSON cannot be told from one still being written - the older complete hint stands; oversize and linked ones still throw', async t => {
+  const box = await Mailbox.open(await tempRoot(t), () => T0);
+  const at = n => path.join(box.responses, `hosted-hint-${SUBJECT.pr}-${HEAD.slice(0, 12)}-${String(n).padStart(6, '0')}.json`);
+  await box.writeHint(hintFor(PENDING));
+  const old = await box.latestHint(SUBJECT.pr, SUBJECT.headSha);
+  await fs.writeFile(at(2), 'this is not json at all\n');
+  assert.deepEqual(await box.latestHint(SUBJECT.pr, SUBJECT.headSha), old, 'skipped like a prefix, the older complete hint is returned');
+  await fs.writeFile(at(2), Buffer.from([0x7b, 0x22, 0xe2, 0x82])); // a cut multi-byte character
+  assert.deepEqual(await box.latestHint(SUBJECT.pr, SUBJECT.headSha), old);
+  await fs.writeFile(at(2), 'x'.repeat(4096));
+  await assert.rejects(box.latestHint(SUBJECT.pr, SUBJECT.headSha), { code: 'HOSTED_HINT_REFUSED', detail: 'size' });
+});

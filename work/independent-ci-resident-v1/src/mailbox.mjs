@@ -242,8 +242,11 @@ export class Mailbox {
   // Service side: the newest COMPLETE hint's bytes for this PR head, or null. Bounded read; the caller parses. A hint file that
   // is still being written (empty, or a prefix of its JSON: a companion of before DESIGN §31, which created the file before it
   // wrote it) is not there yet: the previous complete hint stands, and the next call reads the new one. Looking at an older
-  // observation of the same head for a moment only delays the scheduling hint by one tick; a hint is never authority. A
-  // finished file that is oversize, a link or not JSON is refused, as before.
+  // observation of the same head for a moment only delays the scheduling hint by one tick; a hint is never authority. A prefix
+  // of a JSON object is itself not JSON, so a newest file that is not JSON cannot be told from one still being written (or from
+  // garbage) and is skipped the same way: the older complete hint stands, where it used to reach parseHint and be recorded as
+  // hintRefused. A file that is oversize, a link or has a second name is still refused; complete JSON of the wrong shape is
+  // returned for parseHint to refuse (DESIGN §31.3; review of §31, NIT-1).
   async latestHint(pr, headSha) {
     check(Number.isSafeInteger(pr) && pr > 0 && HEX40.test(headSha ?? ''), 'HOSTED_HINT_SUBJECT_INVALID');
     const prefix = hintPrefix(pr, headSha);
