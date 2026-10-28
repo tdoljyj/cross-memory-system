@@ -10,7 +10,7 @@ import * as source from '../../actions-hosted-migration/independent-ci-v1/src/re
 import { DETERMINISTIC_PR_REASONS, DETERMINISTIC_PR_REASON_CODES } from '../../actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/publisher.mjs';
 import { DIAGNOSTIC_CODES } from '../../actions-hosted-migration/independent-ci-v1/src/admission-facts-v2.mjs';
 import { CLEAN_PROOF, WINDOWS_CLEAN } from './helpers.mjs';
-import { attempt2Decision } from '../src/attempts.mjs';
+import { ATTEMPT2_RESIDENT_CODES, attempt2Decision } from '../src/attempts.mjs';
 
 // Every code the executor can be handed: the Source catalogue, the resident's own clean endings, the companion pump's
 // codes and the engine's and executor's own refusals.
@@ -18,8 +18,8 @@ const RESIDENT_CODES = ['FULL_NEXT_STAGE_AUTHORITY_WINDOW_REQUIRED', 'FORMAL_CHI
   'ISSUE_TRANSFER_UNCONFIRMED', 'FORMAL_BRIDGE_STAGE_DEADLINE', 'REFS_GATE_UNCONFIRMED', 'STAGE_TERMINAL_UNCONFIRMED', 'STAGE_INVOKER_TERMINAL_UNCONFIRMED', 'SCM_READBACK_NOT_ORIGINAL',
   'BETWEEN_ROLES_ARCHIVE_UNCONFIRMED', 'WORKSPACE_PREPARATION_UNCONFIRMED', 'EXECUTED_HEAD_RECORD_UNCONFIRMED', 'BUNDLE_UNAVAILABLE', 'OWNER_ABORTED', 'OWNER_ABORT_REQUESTED',
   'SUPERSEDED_AT_SAFE_POINT',
-  // DESIGN §26: the bridge stop's stage code (resident-side, never Source-mirrored)
-  'BRIDGE_STAGE_STOPPED_PUMP_LOST'];
+  // DESIGN §26, §27: the bridge stop's stage code and the abandonment's terminal code (resident-side, never Source-mirrored)
+  'BRIDGE_STAGE_STOPPED_PUMP_LOST', 'BRIDGE_ABANDONED_UNPUBLISHED'];
 const ALL = [...new Set([...source.ALL_STAGE_CODES, ...RESIDENT_CODES, ...PUMP_CODES])];
 const rowsOf = code => FAILURE_TABLE.rows.filter(r => r.code === code);
 
@@ -70,7 +70,9 @@ test('the table validates, and every code the executor can be handed has a row f
 test('the table agrees with the Source catalogue: unknown halts, the rest never does; attempt 2 exactly for the transient codes', () => {
   for (const code of UNKNOWN_CODES) for (const r of rowsOf(code)) assert.deepEqual([r.class, r.disposition, r.retry], ['unknown', 'halt', 'owner-rearm'], code);
   for (const code of [...NOT_ADMITTED_CODES, ...TRANSIENT_CODES, ...CLEAN_FINAL_CODES]) for (const r of rowsOf(code)) assert.notEqual(r.disposition, 'halt', code);
-  for (const r of FAILURE_TABLE.rows) assert.equal(r.retry === 'attempt2', TRANSIENT_CODES.includes(r.code), r.code);
+  // besides, a resident code of ATTEMPT2_RESIDENT_CODES on a row of exactly its stages (Owner decision eaa7d5e4, DESIGN §27)
+  for (const r of FAILURE_TABLE.rows) assert.equal(r.retry === 'attempt2', TRANSIENT_CODES.includes(r.code) || (Object.hasOwn(ATTEMPT2_RESIDENT_CODES, r.code)
+    && Array.isArray(r.stages) && r.stages.every(s => ATTEMPT2_RESIDENT_CODES[r.code].includes(s))), r.code);
   // releases only before 10-started: stage 1, or the bundle before it
   for (const r of FAILURE_TABLE.rows.filter(x => x.disposition.startsWith('release'))) assert.ok(Array.isArray(r.stages) && r.stages.every(s => s <= 1), r.code);
   // the validator refuses a table that breaks these rules

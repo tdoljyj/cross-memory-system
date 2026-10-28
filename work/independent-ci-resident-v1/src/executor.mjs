@@ -90,7 +90,8 @@
 // middle) HALTs as TRAIN_STAGE_INTERRUPTED at the next start, and a receipt chain that cannot be read holds every batch.
 import path from 'node:path';
 import { Ledger, MAX_TRIES, batchKey, headKey } from './ledger.mjs';
-import { ABORTABLE_IN_FLIGHT, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, proofComplete } from './classify.mjs';
+import { ABORTABLE_IN_FLIGHT, BRIDGE_ABANDONED_UNPUBLISHED, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, failureRow, proofComplete,
+  scannerAbandonEligible } from './classify.mjs';
 import { parseTrigger } from './trigger.mjs';
 import { POSITIONS, breakerGate, breakerOf, breakerRecord, breakerView, positionOf } from './breaker.mjs';
 import { batchBudgetMs } from './policy.mjs';
@@ -164,6 +165,8 @@ function bridgeFacts(b) {
     stopCode: code(b.stopCode ?? null), stageCode: code(b.stageCode ?? null), pumpQuiet: b.pumpQuiet === true };
   return Object.values(f).includes(undefined) ? null : f;
 }
+// Scanner abandonment (DESIGN §27): the fixed archive reason segment and the terminal basis.
+export const SCANNER_ABANDON_ARCHIVE_REASON = 'scanner-abandoned';
 
 // The stages before which the executor records the head as "may have published" (executed-heads.mjs): every stage that
 // can publish a role or control check.
@@ -669,21 +672,34 @@ export class ResidentExecutor {
     const context = { safePoint, stage, stopCode: typeof stopCode === 'string' && CODE.test(stopCode) ? stopCode : null, requestSha256: request?.requestSha256 ?? null };
     try {
       if (result && !abortStageEndingClean(result, { stopSent: stopCode === 'STOP_SENT' })) return await this.unknown(key, validCode(result.code ?? 'OWNER_ABORT_STAGE_UNCONFIRMED'), 'owner-abort-stage-not-stopped-cleanly', batch, context);
-      const proof = await this.abortQuiescence(batch, result?.proof ?? {});
-      if (!proofComplete(proof)) return await this.unknown(key, 'OWNER_ABORT_QUIESCENCE_UNPROVEN', 'owner-abort-quiescence-unproven', batch, context);
-      await this.ledger.burnHead(key, { failureCode: OWNER_ABORTED });
-      const windows = await this.engine.archiveFailure(batch, OWNER_ABORT_ARCHIVE_REASON);
-      const linux = await this.companion.archiveLinux(batch, OWNER_ABORT_ARCHIVE_REASON);
-      check(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED');
-      await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: OWNER_ABORTED, basis: 'owner-abort-quiescence-proven', safePoint, stage,
-        stageCode: result && result.ok !== true ? validCode(result.code) : null, stopCode: typeof stopCode === 'string' && CODE.test(stopCode) ? stopCode : null,
-        batchId: batch?.batchId ?? null, windows: windows.directory, linux: linux.directory, requestSha256: request.requestSha256 });
-      await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: OWNER_ABORTED, safePoint });
+      const closed = await this.provenCleanEnd(key, batch, { stageProof: result?.proof ?? {}, reason: OWNER_ABORT_ARCHIVE_REASON, failureCode: OWNER_ABORTED, burn: true,
+        facts: (windows, linux) => ({ failureCode: OWNER_ABORTED, basis: 'owner-abort-quiescence-proven', safePoint, stage,
+          stageCode: result && result.ok !== true ? validCode(result.code) : null, stopCode: typeof stopCode === 'string' && CODE.test(stopCode) ? stopCode : null,
+          batchId: batch?.batchId ?? null, windows, linux, requestSha256: request.requestSha256 }),
+        receipt: { safePoint } });
+      if (!closed) return await this.unknown(key, 'OWNER_ABORT_QUIESCENCE_UNPROVEN', 'owner-abort-quiescence-unproven', batch, context);
       try { this.reportOutcome((await this.ledger.state(key)).reserved?.subject, 'FAILED_CLEAN', { code: OWNER_ABORTED, key }); } catch { /* advisory */ }
       return { state: 'FAILED_CLEAN', key, failureCode: OWNER_ABORTED, safePoint, settle: { kind: 'burned', code: OWNER_ABORTED, klass: 'abort', breaker: 'neutral', pos: null } };
     } catch (error) {
       return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch, context);
     }
+  }
+
+  // The proven clean end the Owner abort and the scanner abandonment share (DESIGN §6.5, §27): quiescence on both hosts within
+  // the abort's bounded re-check, the head burned (unless the caller already did), a rename-only archive on both hosts with a
+  // fixed reason, then the FAILED_CLEAN terminal record and its batch-terminal receipt. null: quiescence unproven, nothing
+  // written (the caller HALTs with its own code). An archive or record that cannot be confirmed throws (the caller HALTs).
+  // A crash anywhere in it leaves STARTED without a terminal: the next tick's recovery HALTs.
+  async provenCleanEnd(key, batch, { stageProof, reason, failureCode, burn, facts, receipt }) {
+    const proof = await this.abortQuiescence(batch, stageProof);
+    if (!proofComplete(proof)) return null;
+    if (burn) await this.ledger.burnHead(key, { failureCode });
+    const windows = await this.engine.archiveFailure(batch, reason);
+    const linux = await this.companion.archiveLinux(batch, reason);
+    check(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED');
+    await this.ledger.terminal(key, 'FAILED_CLEAN', facts(windows.directory, linux.directory));
+    await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode, ...receipt });
+    return { windows: windows.directory, linux: linux.directory };
   }
 
   // Pause requests may come from the user session: stopping is always allowed, resuming is not.
@@ -1916,6 +1932,8 @@ export class ResidentExecutor {
       }
       // Every other failure burns the head, also before 10-started (stage 1 may have published).
       await this.ledger.burnHead(key, { failureCode: failure.code });
+      // DESIGN §27: a scanner-issuer stage that would HALT is closed clean when its abandonment can be proven.
+      if (klass !== 'CLEAN' && await this.scannerAbandonable(key, failure)) return await this.abandonScannerStage(key, batch, failure, settle);
       if (klass === 'CLEAN') {
         const reason = archiveReason(failure.code);
         const windows = await this.engine.archiveFailure(batch, reason);
@@ -1925,24 +1943,71 @@ export class ResidentExecutor {
         await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: failure.code, class: facts.class });
         const subject = (await this.ledger.state(key)).reserved?.subject;
         this.reportOutcome(subject, 'FAILED_CLEAN', { code: failure.code, row, key });
-        const decision = attempt2Decision({ policy: this.policy, subject, outcome: 'FAILED_CLEAN', failure });
-        if (decision.eligible) {
-          const key2 = await this.ledger.scheduleAttempt2(key, attempt2Subject(subject), { failureCode: failure.code, stage: failure.stageNumber },
-            this.clock() + this.policy.automaticAttempt2.delayMs);
-          try {
-            await this.receipt('attempt2-scheduled', { key, attempt2: key2, failureCode: failure.code, stage: failure.stageNumber });
-          } catch (error) {
-            // An intent without its receipt is cancelled before the HALT, so no re-arm can ever run it (MINOR 7).
-            await this.ledger.closeAttempt2(key, { failureCode: 'ATTEMPT2_RECEIPT_UNCONFIRMED' });
-            throw error;
-          }
-          return { state: 'FAILED_CLEAN', key, failureCode: failure.code, attempt2: key2, settle: { ...settle, kind: 'burned' } };
-        }
-        return { state: 'FAILED_CLEAN', key, failureCode: failure.code, settle: { ...settle, kind: 'burned' } };
+        const key2 = await this.attempt2IfEligible(key, subject, failure);
+        return { state: 'FAILED_CLEAN', key, failureCode: failure.code, ...(key2 ? { attempt2: key2 } : {}), settle: { ...settle, kind: 'burned' } };
       }
       return { ...(await this.unknown(key, failure.code, basis, batch, { stage: failure.stageNumber, ...facts })), settle: { ...settle, kind: 'burned', klass: 'unknown' } };
     } catch (error) {
       return this.unknown(key, codeOf(error), 'failure-handling-unconfirmed', batch);
+    }
+  }
+
+  // The one automatic attempt 2 after a FAILED_CLEAN (attempts.mjs): its intent and receipt, or null when not eligible.
+  async attempt2IfEligible(key, subject, failure) {
+    const decision = attempt2Decision({ policy: this.policy, subject, outcome: 'FAILED_CLEAN', failure });
+    if (!decision.eligible) return null;
+    const key2 = await this.ledger.scheduleAttempt2(key, attempt2Subject(subject), { failureCode: failure.code, stage: failure.stageNumber },
+      this.clock() + this.policy.automaticAttempt2.delayMs);
+    try {
+      await this.receipt('attempt2-scheduled', { key, attempt2: key2, failureCode: failure.code, stage: failure.stageNumber });
+    } catch (error) {
+      // An intent without its receipt is cancelled before the HALT, so no re-arm can ever run it (MINOR 7).
+      await this.ledger.closeAttempt2(key, { failureCode: 'ATTEMPT2_RECEIPT_UNCONFIRMED' });
+      throw error;
+    }
+    return key2;
+  }
+
+  // ---- the scanner abandonment (DESIGN §27; design r3 part three, Task d2974298) ----
+
+  // Eligibility: the pure rule (classify.mjs#scannerAbandonEligible: stage 2, 4 or 6, the pump code first, an allow-listed
+  // ending, the Windows half of the stage's own proof, a quiet pump), then the executor's own: no HALT latched (read through the
+  // ledger exactly as the tick start reads it; the abandonment itself never writes or clears HALT.json), no drift of the
+  // installed bytes, and an entry that is STARTED and on no abort path. Any doubt is "no": the failure HALTs as before.
+  async scannerAbandonable(key, failure) {
+    try {
+      if (!scannerAbandonEligible({ stage: failure.stageNumber, phase: failure.phase, code: failure.code, bridge: failure.bridge, proof: failure.proof }).eligible) return false;
+      if (await this.ledger.halted()) return false;
+      if (await this.driftCode()) return false;
+      const s = await this.ledger.state(key);
+      return s.state === 'STARTED' && !s.abort && !s.selfAbort;
+    } catch { return false; }
+  }
+
+  // The abandonment (DESIGN §27, the Owner abort's path): quiescence on both hosts (at most ABORT_QUIESCENCE_ATTEMPTS looks
+  // within ABORT_QUIESCENCE_WAIT_MS), the rename-only archive with the fixed reason scanner-abandoned, and FAILED_CLEAN
+  // BRIDGE_ABANDONED_UNPUBLISHED with the numeric stage (executed-heads.mjs#mayHavePublished: stage 2 = not published). The head
+  // was burned by fail() already. Unproven quiescence: UNKNOWN with the original code, HALT; an unconfirmed archive or record:
+  // UNKNOWN, HALT. Then the failure table's row (breaker counts) and, at stage 2 only, the one attempt 2 (Owner decision eaa7d5e4).
+  async abandonScannerStage(key, batch, failure, settle) {
+    const b = failure.bridge;
+    const row = failureRow({ code: BRIDGE_ABANDONED_UNPUBLISHED, stage: failure.stageNumber });
+    const context = { stage: failure.stageNumber, originalCode: failure.code, pumpCode: b.pumpCode, stopCode: b.stopCode };
+    try {
+      check(row && row.disposition === 'burn', 'FAILURE_TABLE_ROW_MISSING');
+      const facts = (windows, linux) => ({ failureCode: BRIDGE_ABANDONED_UNPUBLISHED, basis: 'scanner-abandon-quiescence-proven', originalCode: failure.code,
+        outcomeReason: failure.outcome?.reason ?? null, pumpCode: b.pumpCode, stopCode: b.stopCode, stageCode: b.stageCode, stage: failure.stageNumber,
+        batchId: batch?.batchId ?? null, windows, linux, class: row.class, retry: row.retry, breaker: row.breaker });
+      const closed = await this.provenCleanEnd(key, batch, { stageProof: failure.proof, reason: SCANNER_ABANDON_ARCHIVE_REASON, failureCode: BRIDGE_ABANDONED_UNPUBLISHED,
+        burn: false, facts, receipt: { class: row.class, originalCode: failure.code } });
+      if (!closed) return { ...(await this.unknown(key, failure.code, 'scanner-abandon-quiescence-unproven', batch, context)), settle: { ...settle, kind: 'burned', klass: 'unknown' } };
+      const subject = (await this.ledger.state(key)).reserved?.subject;
+      this.reportOutcome(subject, 'FAILED_CLEAN', { code: BRIDGE_ABANDONED_UNPUBLISHED, row, key });
+      const end = { ...settle, code: BRIDGE_ABANDONED_UNPUBLISHED, klass: row.class, breaker: row.breaker, kind: 'burned' };
+      const key2 = await this.attempt2IfEligible(key, subject, { ...failure, code: BRIDGE_ABANDONED_UNPUBLISHED });
+      return { state: 'FAILED_CLEAN', key, failureCode: BRIDGE_ABANDONED_UNPUBLISHED, originalCode: failure.code, ...(key2 ? { attempt2: key2 } : {}), settle: end };
+    } catch (error) {
+      return { ...(await this.unknown(key, codeOf(error), 'scanner-abandon-unconfirmed', batch, context)), settle: { ...settle, kind: 'burned', klass: 'unknown' } };
     }
   }
 

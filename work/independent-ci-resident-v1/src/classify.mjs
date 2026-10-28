@@ -133,6 +133,44 @@ export function abortStageEndingClean(result, { stopSent = false } = {}) {
     && result.proof?.windowsTreeZero === true && result.proof?.serviceOriginalStopped === true;
 }
 
+// ---- the scanner abandonment (DESIGN §27; design r3 part three, Task d2974298) ----
+// Resident-side lists, never mirrored from the Source: a stage-2/4/6 ending that would HALT is closed FAILED_CLEAN
+// BRIDGE_ABANDONED_UNPUBLISHED when the Owner abort's quiescence proof holds. That stage's only Windows process is the scanner
+// issuer, which has no way to write a check; the Linux worker holds no GitHub credential; a signed result becomes a check only
+// through stage 3, 5 or 7 of the same batch, which the executor never runs after fail(). So "nothing was published" rests on
+// those structural facts and on Windows facts the companion cannot forge (the broker's STOP_SENT, the helper's drained tree,
+// the service's own SCM readback); the Linux half of the proof only decides whether the next batch may start.
+export const BRIDGE_ABANDONED_UNPUBLISHED = 'BRIDGE_ABANDONED_UNPUBLISHED';
+export const SCANNER_ABANDON_STAGES = Object.freeze([2, 4, 6]);
+// The endings it may close: the issuer's own UNCERTAIN; a stopped stage's missing outcome or the bridge stop's own code (both
+// only with the broker's STOP_SENT, the abort's M2 rule); and the pump codes of a stage that succeeded while its pump was not
+// confirmed (engine-windows.mjs#invoke).
+export const SCANNER_ABANDON_ENDINGS = Object.freeze(['PUBLICATION_UNCERTAIN', 'STAGE_OUTCOME_MISSING', 'BRIDGE_STAGE_STOPPED_PUMP_LOST',
+  'RELAY_REFUSED_NO_RETRY', 'RELAY_PARTIAL_RECORD_PRESERVED', 'COMPANION_PUMP_UNCONFIRMED', 'FORMAL_WORKER_TERMINAL_UNCONFIRMED', 'LINUX_WORKER_ENDED_WITHOUT_RECORD']);
+const ABANDON_NEEDS_STOP_SENT = Object.freeze(['STAGE_OUTCOME_MISSING', 'BRIDGE_STAGE_STOPPED_PUMP_LOST']);
+// Pump codes after which no Linux quiescence proof can be had (the companion did not handle the request, or is gone): checked
+// first, whatever the stage code; these stages HALT at once.
+export const PUMP_CODES_UNPROVABLE = Object.freeze(['COMPANION_HEARTBEAT_LOST', 'COMPANION_REQUEST_EXPIRED', 'COMPANION_HANDLER_UNCONFIRMED']);
+// The pure part of the eligibility (DESIGN §27.2, design §3.3 items 1-5): stage, pump code first, ending, the Windows half of
+// the stage's own proof, and a quiet pump. The executor adds the rest (no HALT, no drift, not the Owner abort's path).
+// bridge: the engine's bridge facts { pumpCode, stopRequestId, stopCode, stageCode, pumpQuiet } (engine-windows.mjs#invoke).
+export function scannerAbandonEligible({ stage, phase = 'stage', code, bridge = null, proof = null } = {}) {
+  const no = reason => ({ eligible: false, reason });
+  if (!SCANNER_ABANDON_STAGES.includes(stage) || phase !== 'stage') return no('ABANDON_STAGE_NOT_SCANNER_ISSUER');
+  if (!bridge || typeof bridge !== 'object') return no('ABANDON_BRIDGE_FACTS_MISSING');
+  if (bridge.pumpCode !== null && (typeof bridge.pumpCode !== 'string' || PUMP_CODES_UNPROVABLE.includes(bridge.pumpCode))) return no('ABANDON_PUMP_UNPROVABLE');
+  if (!SCANNER_ABANDON_ENDINGS.includes(code)) return no('ABANDON_ENDING_NOT_LISTED');
+  if (ABANDON_NEEDS_STOP_SENT.includes(code) && bridge.stopCode !== 'STOP_SENT') return no('ABANDON_STOP_NOT_SENT');
+  if (proof?.windowsTreeZero !== true || proof?.serviceOriginalStopped !== true) return no('ABANDON_WINDOWS_PROOF_INCOMPLETE');
+  if (bridge.pumpQuiet !== true) return no('ABANDON_PUMP_NOT_QUIET');
+  return { eligible: true, reason: null };
+}
+// Owner decision eaa7d5e4 (design r3 §3.6 option O-2): the one automatic attempt 2 also follows these resident codes, at these
+// stages only (attempts.mjs). Here, not in attempts.mjs, because the failure table's own check below needs it while this module
+// loads (attempts.mjs imports this module).
+export const ATTEMPT2_RESIDENT_CODES = Object.freeze({ [BRIDGE_ABANDONED_UNPUBLISHED]: Object.freeze([2]) });
+const residentAttempt2 = (code, stages) => Object.hasOwn(ATTEMPT2_RESIDENT_CODES, code) && Array.isArray(stages) && stages.every(s => ATTEMPT2_RESIDENT_CODES[code].includes(s));
+
 // The archive reason segment is derived from the stable code, never taken from untrusted text.
 export function archiveReason(code) {
   check(typeof code === 'string' && CODE.test(code), 'ARCHIVE_REASON_CODE_INVALID');
@@ -164,8 +202,9 @@ export function validateFailureTable(t) {
       && ((r.disposition === 'halt') === (r.class === 'unknown')) && ((r.disposition === 'halt') === (r.retry === 'owner-rearm'))
       // releases exist only before 10-started: stage 1 (or the bundle, stage 0)
       && (!r.disposition.startsWith('release') || (Array.isArray(r.stages) && r.stages.every(s => s <= 1)))
-      // the one automatic attempt 2 only follows a transient code, and every transient code may select it
-      && ((r.retry === 'attempt2') === TRANSIENT.has(r.code)), 'FAILURE_TABLE_INVALID', r?.code);
+      // the one automatic attempt 2 only follows a transient code, and every transient code may select it; besides, a resident
+      // code of ATTEMPT2_RESIDENT_CODES may, on a row of exactly its listed stages (Owner decision eaa7d5e4)
+      && (TRANSIENT.has(r.code) ? r.retry === 'attempt2' : (r.retry !== 'attempt2' || residentAttempt2(r.code, r.stages))), 'FAILURE_TABLE_INVALID', r?.code);
   }
   return t;
 }
