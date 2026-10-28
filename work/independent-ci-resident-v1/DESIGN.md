@@ -852,6 +852,13 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 
 1. 执行器在导出时写公开描述符 `outbox\<batchId>\descriptor.json`。
 2. companion 在第 1 段**之前**用 Owner 的 git 凭据运行 `build-bundle.ps1 -BatchId`，规则同今天：只用 https、关闭 hooks、refs 等于 ls-remote、main 等于 base、按 SHA 取已审查提交。
+   - **传输卡住**（Task `4d3aaa64`）：2026-10-23 PR #916 的批次，fetch 经本地代理拉到 47 MB 后连接卡死。git 没有低速限制，一直等到服务侧 35 分钟期限才以 `BUNDLE_UNAVAILABLE` 失败，同一时间网络正常。现在所有 git 调用都带 `http.lowSpeedLimit=1000`、`http.lowSpeedTime=60`：连续 60 秒低于 1000 字节/秒，git 自己中止。Runner 从不杀子进程，所以这也是 companion 邮箱通道能尽早空出来的唯一办法。
+   - **重来一次**：三个联网步骤（全部 heads 和 tags 的 fetch、ls-remote、按 SHA 取已审查提交）之一由 git 失败时，整个对象库重建一次（`Fetch-Store`）。第 2 次在新的 bare 库 `fetch-2.git`（只新建）里从头走每一步、每一项核对；第 1 次留下的东西（半截 pack、refs）原样留着，从不再读。限制：只重来一次；只在脚本开始后 10 分钟内失败才重来，第 2 次因此至少还有 20 分钟（整次建 bundle 平时 40–100 秒，见过最长 283 秒；companion 等 30 分钟）；脚本自己的拒绝（main 变了、refs 不等、对象库里缺提交等）和 git 没能启动都不重来；不读 stderr，所以会重复的联网失败（凭据、GitHub 上已没有的已审查提交）也会多花一次。回执和失败答复记 `storeAttempts`，以及第 1 次停在哪一段、哪一步（`firstAttempt`）。
+   - 代价：`--quiet` 时服务器准备 pack 的阶段没有进度输出，只有心跳包。这一段若超过 60 秒，也会被当成卡住。平常整个 fetch 只要 5–11 秒；真遇上了，就落到上面那一次重来。
+   - `-CheckRefs` 的 ls-remote 也带低速限制，但不重来：它失败就是 `REMOTE_REFS_UNAVAILABLE`，由常驻侧照旧分类。
+   - 仍未处理：慢但不停（一直略高于 1000 字节/秒）的传输没有总时限，脚本不杀 git 的进程树。companion 的子进程超过它的等待之后，Runner 一直忙，邮箱通道停摆，常驻因此拿不到证明而 HALT（同一批次 09:14Z）；这一点另由 Task `8e1f07d3` 处理。
+   - 测试：`windows/test-build-bundle.ps1` 从脚本的语法树取出 `Invoke-Git`、`Build-Store`、`Fetch-Store`，对一个本地 file:// 远端和一个只接受连接、从不回应的回环端口跑真实 git（低速窗口在测试里改成 2 秒）：卡住后在新库里成功、已审查提交那一步卡住、不卡、两次都卡（没有第 3 次）、过了 10 分钟才卡（不重来）、脚本自己的拒绝（不重来）；另把脚本复制一份、只换常驻目录、远端和 git 路径，跑完整主块、`-CheckRefs` 和同一批次的第二次运行（只新建），共 50 例。`CI/test/resident-v2-build-bundle.test.mjs` 在任何主机上钉住这些固定值。
+   - 生效要重装（Source v2 文件）。
 3. 第 1 段准入之后写 `10-started`。
 4. companion 启动 `clued-ci-wsprep@<batchId>`，由 root：按内容重算作业 id、核对已安装 Source 和角色策略、密封 bundle（ls-remote 时间不超过 2 小时）、`fsck --full --strict`、只允许 100644 和 100755 的 blob、建 root:root 0700 工作区。MINOR-7：候选的 head 树先在对象库里核对模式（只许 100644、100755），**然后**才检出，检出带 `core.symlinks=false`、`core.protectNTFS`、`core.protectHFS`，所以 root 从不写出符号链接或子模块。（以非 root 身份检出没有采用：工作区必须是 root:root，换身份要加 chown 步骤，留作 P2 评估。）
 
