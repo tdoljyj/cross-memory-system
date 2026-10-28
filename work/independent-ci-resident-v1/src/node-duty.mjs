@@ -17,7 +17,7 @@
 // write one reminder per (PR, commit, reason) under STANDBY_CONTEXT when the node on duty does not pick a PR up (§5.3).
 // What another node wrote counts by its LATEST status on a commit, whatever that says: a result after 当班 is no duty.
 //
-// The node's name and mode come from status.json `node` (C1/C3 fill it). Absent (null): one node, ACTIVE, named by
+// The node's name and mode come from status.json `node` (C1/C3 fill it; `source` is for the people who read it). Absent (null): one node, ACTIVE, named by
 // the companion's configuration (default DEFAULT_NODE), and no take-over check: the behaviour of a single node.
 //
 // Take-over check (§5.2): every time the node's role probe confirms the role (status.json node.probe), the companion
@@ -34,6 +34,8 @@ import { intakePauseRequest, intakeResumeRequest } from './intake-pause.mjs';
 const MIN = 60_000;
 // The node profile's rule (clued.independent-ci.node-profile/1 nodeName, C1): at most 32 characters, no '-' at the end.
 export const NODE_NAME = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+// status.json `node.source` (contract /6, C3): the first 12 hex digits of the installed CI Source's ciSourceManifestSha256.
+export const NODE_SOURCE = /^[0-9a-f]{12}$/;
 export const DEFAULT_NODE = 'turing';
 export const LEGACY_CONTEXT = 'resident-queue (info only)';
 export const STANDBY_CONTEXT = 'resident-standby (info only)';

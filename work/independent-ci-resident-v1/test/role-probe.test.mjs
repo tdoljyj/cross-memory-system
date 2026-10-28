@@ -25,6 +25,24 @@ test('idle-only cadence is 15min STANDBY, 30min ACTIVE; clocks never reset the f
   }
   assert.throws(() => p.observe(held, at - 1));
 });
+test('C3 urgent: the next idle tick probes without waiting for the interval; any observation clears it; a backward clock is never due; it is not stored', () => {
+  const p = new RoleProbe();
+  p.observe(held, at);
+  assert.equal(p.due({ now: at + 1000, mode: 'ACTIVE', idle: true }), false);
+  p.markUrgent();
+  assert.equal(p.due({ now: at + 1000, mode: 'ACTIVE', idle: true }), true);
+  assert.equal(p.due({ now: at + 1000, mode: 'STANDBY', idle: true }), true);
+  assert.equal(p.due({ now: at + 1000, mode: 'ACTIVE', idle: false }), false, 'only when nothing runs');
+  assert.equal(p.due({ now: at - 1, mode: 'ACTIVE', idle: true }), false, 'a backward clock is never due');
+  assert.equal(p.due({ now: at + 1000, mode: 'UNCERTAIN', idle: true }), false, 'the executor maps UNCERTAIN to the STANDBY interval');
+  assert.deepEqual(Object.keys(p.snapshot()).sort(), ['connectionNotified', 'failingSince', 'failures', 'last', 'uncertainNotified'], 'urgent is not part of the book');
+  p.observe(uncertain, at + 1000);
+  assert.equal(p.urgent, false);
+  assert.equal(p.due({ now: at + 1001, mode: 'STANDBY', idle: true }), false);
+  const restored = new RoleProbe();
+  restored.restore(p.snapshot());
+  assert.equal(restored.urgent, false, 'a restart is urgent by the executor, not by the stored book');
+});
 test('uncertain notifies once at three consecutive failures and resets only on confirmed role', () => {
   const p = new RoleProbe();
   assert.equal(p.observe(uncertain, at).notices.length, 0);

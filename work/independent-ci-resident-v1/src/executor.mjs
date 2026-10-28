@@ -80,6 +80,13 @@
 // queue (no row, no attempt 2); triggers are still read, and a batch in flight or at a parking point goes on. It is
 // neither PAUSE (which also stops the parked batches) nor the drain (which ends them); all three may be in force at once.
 //
+// The node mode (primary/standby C3; Task 17b703a0; DESIGN §29): ACTIVE, STANDBY or UNCERTAIN (this.roleProbeMode). A start and an
+// Owner re-arm begin UNCERTAIN with a role probe due at once; the probe (stage 11, DESIGN C2) says held -> ACTIVE, not-held ->
+// STANDBY, uncertain -> the mode stays. Stage 1's NODE_ROLE_NOT_HELD goes to STANDBY too. While the mode is not ACTIVE the
+// schedule starts nothing (no row, no attempt 2, no waiting-retry; DEFERRED NODE_STANDBY / NODE_ROLE_UNCERTAIN, a quiet
+// result so the probe still runs): triggers are still read, and a batch in flight or at a parking point goes on, its live
+// admission deciding. A failure that may mean the role is gone makes the next probe due at once (roleProbe.urgent).
+//
 // Stage 10, the merge train in shadow mode (quota redesign phase 2, step 3c-1; design v0.5 §5.5, §4.7; Owner decision
 // 2eea28a1; train.mjs, DESIGN §22.3): with train.enabled 'shadow', a tick that ran nothing (the queue idle or only
 // deferred, never under an intake pause, PAUSE or HALT) runs one read-only train maintenance when it is due. It writes
@@ -90,8 +97,8 @@
 // middle) HALTs as TRAIN_STAGE_INTERRUPTED at the next start, and a receipt chain that cannot be read holds every batch.
 import path from 'node:path';
 import { Ledger, MAX_TRIES, batchKey, headKey } from './ledger.mjs';
-import { ABORTABLE_IN_FLIGHT, BRIDGE_ABANDONED_UNPUBLISHED, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, failureRow, proofComplete,
-  scannerAbandonEligible } from './classify.mjs';
+import { ABORTABLE_IN_FLIGHT, BRIDGE_ABANDONED_UNPUBLISHED, NOT_ADMITTED_CODES, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, failureRow,
+  proofComplete, scannerAbandonEligible } from './classify.mjs';
 import { parseTrigger } from './trigger.mjs';
 import { POSITIONS, breakerGate, breakerOf, breakerRecord, breakerView, positionOf } from './breaker.mjs';
 import { batchBudgetMs } from './policy.mjs';
@@ -106,6 +113,7 @@ import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
 import { trainDue, trainSummary } from './train.mjs';
 import { RoleProbe, validateRoleProbeFact } from './role-probe.mjs';
+import { NODE_MODES } from './status.mjs';
 
 export const PAUSE_CONTRACT = 'clued.independent-ci.resident-pause/1';
 export const REARM_CONTRACT = 'clued.independent-ci.resident-owner-rearm/1';
@@ -126,6 +134,13 @@ const TRAIN_RUN_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/;
 // The schedule results that ran nothing, after which stage 10 may run (an intake pause holds it as well).
 const TRAIN_QUIET_STATES = Object.freeze(['IDLE', 'DEFERRED']);
 const TRAIN_HELD_REASONS = Object.freeze(['INTAKE_PAUSED', 'INTAKE_PAUSE_UNCONFIRMED']);
+// Primary/standby C3 (DESIGN §29): why the schedule starts nothing while the node mode is not ACTIVE. These results are quiet (the
+// role probe and stage 10 may run) and, like an intake pause, leave a batch resting at parking point A as the tick's result.
+export const NODE_DEFERRALS = Object.freeze({ STANDBY: 'NODE_STANDBY', UNCERTAIN: 'NODE_ROLE_UNCERTAIN' });
+// Endings after stage 1 that may mean the node lost its role (a live admission or a publisher refused): the next quiet tick
+// probes at once. The Source maps a refused live admission after stage 1 to BATCH_CLAIM_CHANGED and a refused publisher to
+// PUBLICATION_BLOCKED; the not-admitted codes are listed because PR_NOT_OPEN_OR_CHANGED can come at any stage.
+export const ROLE_LOST_SUSPECT_CODES = Object.freeze([...NOT_ADMITTED_CODES, 'PUBLICATION_BLOCKED', 'BATCH_CLAIM_CHANGED']);
 // The generic helper's own fixed margin after a stage's cap (FormalPublicBoundaryV2.cs), whatever limits.stageMarginMs says.
 const TRAIN_HELPER_MARGIN_MS = 180_000;
 // Stage 10 never touches Linux: its proof is the Windows half only.
@@ -257,6 +272,46 @@ export class ResidentExecutor {
     this.intakeRequestFailures = new Map();
     this.roleProbe = new RoleProbe();
     this.roleProbeNotices = [];
+    // C3: every start begins UNCERTAIN (behaves like STANDBY) with the probe due at once; nothing is taken from before the start.
+    this.roleProbeMode = 'UNCERTAIN';
+    this.roleProbe.markUrgent();
+    this.reportNode();
+  }
+
+  // ---- the node mode (primary/standby C3; DESIGN §29) ----
+
+  // The mode only exists for an engine that can probe the role (the real Windows engine does). Without it the executor is the
+  // single node it always was: no gate, no status node, no mode changes.
+  probing() { return typeof this.engine.runRoleProbe === 'function'; }
+
+  // An unknown value is UNCERTAIN: fail safe.
+  nodeMode() { return NODE_MODES.includes(this.roleProbeMode) ? this.roleProbeMode : 'UNCERTAIN'; }
+
+  reportNode() {
+    if (this.probing()) this.report(s => s.setNode?.(this.policy.node.nodeName, this.policy.ciSourceManifestSha256, this.nodeMode()));
+  }
+
+  // The mode is in force before its receipt is written (the receipt is the record, not a condition).
+  async setNodeMode(to, why) {
+    const from = this.nodeMode();
+    if (!this.probing() || from === to) return false;
+    this.roleProbeMode = to;
+    this.reportNode();
+    try { await this.receipt('node-mode', { from, to, why }); } catch { /* see above */ }
+    return true;
+  }
+
+  // The same beginning as a start (an Owner re-arm cleared a HALT): UNCERTAIN, probe due at once.
+  async nodeRestart(why) {
+    this.roleProbe.markUrgent();
+    await this.setNodeMode('UNCERTAIN', why);
+  }
+
+  // null while this node may start batches; otherwise the deferral the schedule returns.
+  nodeGate() {
+    if (!this.probing()) return null;
+    const mode = this.nodeMode();
+    return mode === 'ACTIVE' ? null : { state: 'DEFERRED', reason: mode === 'STANDBY' ? NODE_DEFERRALS.STANDBY : NODE_DEFERRALS.UNCERTAIN };
   }
 
   receipt(type, body) { return this.receipts.append(type, body); }
@@ -415,6 +470,8 @@ export class ResidentExecutor {
       archived.push(entry.key);
     }
     const kept = await this.ledger.clearHalt(haltSha256, { by, reason, archived });
+    // C3: a HALT may have been the end of anything; the role is asked again before this node takes a trigger.
+    await this.nodeRestart('rearm');
     return { haltSha256, archived, haltKeptAs: path.basename(kept) };
   }
 
@@ -849,6 +906,7 @@ export class ResidentExecutor {
         if (!['WAITING'].includes(result?.state)) s.setCurrent(null);
       });
       this.reportQueue();
+      this.reportNode();
     } catch { /* advisory */ }
   }
 
@@ -931,7 +989,7 @@ export class ResidentExecutor {
     const r = await this.schedule();
     // A batch resting at parking point A stays the tick's result (and the status's current batch) while only the intake
     // pause holds the new ones (independent review of C6, minor 3).
-    const result = waiting && (r.state === 'IDLE' || ['INTAKE_PAUSED', 'INTAKE_PAUSE_UNCONFIRMED'].includes(r.reason)) ? waiting : r;
+    const result = waiting && (r.state === 'IDLE' || [...TRAIN_HELD_REASONS, ...Object.values(NODE_DEFERRALS)].includes(r.reason)) ? waiting : r;
     // Stage 10 only after a schedule that ran nothing (a batch resting at a parking point runs nothing either).
     if (!waiting && TRAIN_QUIET_STATES.includes(r.state) && !TRAIN_HELD_REASONS.includes(r.reason)) {
       const probeResult = await this.roleProbeMaintenance();
@@ -966,17 +1024,17 @@ export class ResidentExecutor {
 
   async roleProbeMaintenance() {
     if (typeof this.engine.runRoleProbe !== 'function' || this.roleProbeRunning) return null;
-    // Existing single-node execution is not changed to a primary/standby mode by C2. C3 owns the
-    // explicit roleProbeMode input and all mode transitions; status (advisory) is never an input.
-    const mode = this.roleProbeMode ?? 'ACTIVE', now = this.clock();
+    // C3 owns the mode and all its transitions (DESIGN §29); status (advisory) is never an input. UNCERTAIN has STANDBY's
+    // 15-minute interval, and `urgent` (a start, a re-arm, a failure that may mean the role is gone) is due at once.
+    const mode = this.nodeMode(), now = this.clock();
     const idle = !(await this.ledger.halted()) && !(await this.ledger.paused()) && (await this.ledger.open()).length === 0;
-    if (!this.roleProbe.due({ now, mode, idle })) return null;
+    if (!this.roleProbe.due({ now, mode: mode === 'ACTIVE' ? 'ACTIVE' : 'STANDBY', idle })) return null;
     if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < now + 240_000) return null;
     const drift = await this.driftCode();
     if (drift) { await this.haltWith(drift, { phase: 'role-probe' }); return { state: 'HALTED', failureCode: drift }; }
     this.roleProbeRunning = true;
     try {
-      const intent = await this.receipt('role-probe-intent', { mode });
+      const intent = await this.receipt('role-probe-intent', { mode, urgent: this.roleProbe.urgent === true });
       let r;
       try { r = await this.engine.runRoleProbe(); } catch { r = null; }
       // Only the engine's pre-broker busy guard is a deferral, not a role fact. BROKER_BUSY after a
@@ -993,8 +1051,11 @@ export class ResidentExecutor {
         this.roleProbeNotices.push(...observation.notices);
         this.roleProbeNotices = this.roleProbeNotices.slice(-10);
         this.report(s => s.setRoleProbe?.(this.policy.node.nodeName, observation.probe));
+        // not-held is the safe direction and takes effect first; held only after the result is recorded. uncertain changes nothing.
+        if (fact.result === 'not-held') await this.setNodeMode('STANDBY', 'probe-not-held');
       }
       await this.receipt('role-probe-result', { intentSeq: intent.seq, deferred, ok: !!fact, fact, state: this.roleProbe.snapshot() });
+      if (fact?.result === 'held') await this.setNodeMode('ACTIVE', 'probe-held');
       return !deferred && !fact ? { state: 'HALTED', failureCode: 'ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED' } : null;
     } finally { this.roleProbeRunning = false; }
   }
@@ -1391,6 +1452,10 @@ export class ResidentExecutor {
     const rows = this.queue.candidates(now);
     this.reportQueue();
     if (attempts.length === 0 && rows.length === 0) { await this.persistQueue(); return { state: 'IDLE' }; }
+    // The node gate (C3, DESIGN §29): no new batch of any kind unless this node is ACTIVE, and before the intake pause, so a node
+    // that is not ACTIVE shows why and still runs the role probe. Triggers were read already; a batch in flight went on.
+    const notActive = this.nodeGate();
+    if (notActive) { await this.persistQueue(); return notActive; }
     // The intake pause (C6, DESIGN §20): no new batch of any kind while a hold is in force. The batches in flight and at a
     // parking point were already resumed by tickInner; nothing of theirs waits for this gate.
     const held = await this.intakeGate();
@@ -1655,7 +1720,7 @@ export class ResidentExecutor {
       this.queue.breaker = b;
       // This release counts towards the head's cap unless it is a wait, a supersession, or an environment fault while
       // the breaker is not closed (ledger.mjs#usage counts the same way; the tick's usage is from before this batch).
-      const counted = s?.kind === 'released' && s.klass !== 'waiting' && s.reason !== 'SUPERSEDED' && !(environment && s.breakerState !== 'closed');
+      const counted = s?.kind === 'released' && s.klass !== 'waiting' && s.klass !== 'node-role' && s.reason !== 'SUPERSEDED' && !(environment && s.breakerState !== 'closed');
       const releases24h = (this.tickUsage?.releasesByHead.get(subject.headSha) ?? 0) + (counted ? 1 : 0);
       const ciRetryAfter = typeof s?.ciRetryAfter === 'string' && Number.isFinite(Date.parse(s.ciRetryAfter)) ? Date.parse(s.ciRetryAfter) : null;
       const settled = this.queue.settle(subject.pr, subject.headSha, s ? { kind: s.kind, code: s.code ?? null, klass: s.klass ?? null, reason: s.reason ?? null, ciRetryAfter,
@@ -1946,6 +2011,10 @@ export class ResidentExecutor {
       const { klass, basis, row, release } = decideFailure({ code: failure.code, stage: failure.stageNumber, phase: failure.phase, outcome: failure.outcome,
         brokerNoLaunch: failure.brokerNoLaunch, proof, started });
       const facts = ResidentExecutor.failureFacts(failure, row);
+      // C3 (DESIGN §29): stage 1 said this node holds no role (NODE_ROLE_NOT_HELD, or the older Source's NATIVE_NOT_ADMITTED with
+      // admission_binding_required): STANDBY, whatever else the ending is. A later live refusal may mean the same: probe at once.
+      if (row?.class === 'node-role') await this.setNodeMode('STANDBY', 'role-not-held');
+      else if (failure.stageNumber !== 1 && ROLE_LOST_SUSPECT_CODES.includes(failure.code)) this.roleProbe.markUrgent();
       const settle = { code: failure.code, klass: row?.class ?? 'unknown', breaker: row?.breaker ?? 'counts', breakerState, pos, ciRetryAfter: facts.ciRetryAfter, outcomeReason: facts.reason,
         ...(typeof failure.windowsOnly === 'boolean' ? { windowsOnly: failure.windowsOnly } : {}) };
       if (!started && release) {
