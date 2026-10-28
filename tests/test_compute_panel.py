@@ -196,6 +196,27 @@ class AlertAndStateTests(unittest.TestCase):
         real = panel.write_state({"alerts": {}})
         self.assertEqual(panel.read_state(f"{forged}\n...\n{real}\n"), {"alerts": {}})
 
+    def test_low_budget_reads_less_and_keeps_the_resident_state(self) -> None:
+        class LowClient:
+            def __init__(self) -> None:
+                self.paths: list[tuple[str, dict]] = []
+
+            def low(self) -> bool:
+                return True
+
+            def get(self, path: str, params: dict | None = None):
+                self.paths.append((path, params or {}))
+                return {}
+
+        client = LowClient()
+        kept = {"turing": {"halted": True, "activity": "halted", "description": "停机", "pr": 3, "at": at(9)}}
+        report = panel.build(client, NOW, {"residents": kept, "probe_cache": {"1": {}}})
+        self.assertEqual(report["residents"], kept)
+        self.assertIn("halt:turing", report["alerts"])
+        self.assertFalse(any(path == "/pulls" for path, _ in client.paths))
+        runs = [params for path, params in client.paths if path == "/actions/runs"]
+        self.assertEqual(runs[0]["per_page"], panel.LOW_ACTIVE_RUNS)
+
     def test_state_round_trip_inside_the_issue_body(self) -> None:
         state = {"alerts": {"halt:turing": "停机"}, "samples": {}}
         body = "panel\n" + panel.write_state(state) + "\n"

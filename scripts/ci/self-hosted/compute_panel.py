@@ -48,6 +48,7 @@ UNPICKED_AFTER = timedelta(minutes=4)
 UNPICKED_RUNS = 2
 LOOKBACK_RUNS = 4
 ACTIVE_RUNS = 20
+LOW_ACTIVE_RUNS = 5
 RESIDENT_PULLS = 10
 HEALTH_EVERY = timedelta(minutes=30)
 LOW_BUDGET = 300
@@ -548,7 +549,9 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
             return fallback
 
     jobs = attempt("probes", lambda: probe_jobs(client), [])
-    active = attempt("active jobs", lambda: active_jobs(client), {})
+    state.pop("probe_cache", None)  # replaced by "health"
+    # Below LOW_BUDGET the shared token is nearly spent: read fewer runs and reuse the resident state.
+    active = attempt("active jobs", lambda: active_jobs(client, LOW_ACTIVE_RUNS if client.low() else ACTIVE_RUNS), {})
     health = attempt("health", lambda: latest_health(client, jobs, state.setdefault("health", {}), now), {})
     pool: dict[str, dict] = {}
     for node in POOL:
@@ -565,7 +568,11 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
             metrics = {"as_of": iso(now), "day": summarize_batches(batches, now, 1),
                        "week": summarize_batches(batches, now, 7)}
             state["metrics"] = metrics
-    residents = attempt("residents", lambda: collect_residents(client), None)
+    if client.low():
+        errors.append("residents: 额度不足，沿用上一轮常驻状态")
+        residents = None
+    else:
+        residents = attempt("residents", lambda: collect_residents(client), None)
     if residents is None:  # keep the last known resident state (and its HALT alert) rather than clearing it
         residents = state.get("residents") or {}
     state["residents"] = residents
@@ -588,10 +595,10 @@ def alert_comment(new: dict[str, str], resolved: dict[str, str], owner: str | No
     lines = []
     if new:
         lines.append(("@" + owner + " " if owner else "") + "新告警：")
-        lines += [f"- {cell(text)}" for text in new.values()]
+        lines += [f"- {text}" for text in new.values()]  # alerts_for already escaped the untrusted parts
     if resolved:
         lines.append("已恢复：")
-        lines += [f"- {cell(text)}" for text in resolved.values()]
+        lines += [f"- {text}" for text in resolved.values()]
     return "\n".join(lines)
 
 
