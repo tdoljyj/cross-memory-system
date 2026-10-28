@@ -46,6 +46,20 @@ export const RELAY_CHECK_TIMEOUT_MS = 15_000;
 // with no sign of having run 5 minutes after its start ends it as LINUX_WORKER_NOT_STARTED.
 export const WORKER_FACTS_EVERY_MS = 15_000;
 export const WORKER_START_WAIT_MS = 5 * 60_000;
+// How often the pump lists Linux outgoing (DESIGN §31.5, Task 463e8148). Every listing and every facts read starts a wsl.exe, and
+// each wsl.exe opens six hv_sock channels: at once a second for a whole stage that was thousands of starts (10-28 incident). The
+// pace follows how long nothing has happened (the stage began, the listing changed, a record was relayed): every second right
+// after, then half of the quiet time, at most LISTING_CAP_MS. A challenge is therefore found at most LISTING_CAP_MS (plus
+// the listing call) after its creation, where it was found within about a second; the cap equals WORKER_FACTS_EVERY_MS so that,
+// quiet, one pass does both reads and signals B and C keep their timing. A relay budget measured from the first sighting is
+// anchored at the listing before it (see pump), so the cap never eats into DESIGN §25.4's reserves.
+export const LISTING_MIN_MS = 1000;
+export const LISTING_CAP_MS = WORKER_FACTS_EVERY_MS;
+export const LISTING_QUIET_DIVISOR = 2;
+// After a failed callback round, the hand-over of the worker's blocked record is looked for at most this far apart (its window
+// is CALLBACK_WINDOW_MS + 30 s; DESIGN §31.5).
+export const HANDOVER_LISTING_CAP_MS = 5000;
+export const listingDelayMs = (quietMs, capMs = LISTING_CAP_MS) => Math.min(capMs, Math.max(LISTING_MIN_MS, Math.floor(quietMs / LISTING_QUIET_DIVISOR)));
 const WORKER_RUNNING_STATES = new Set(['activating', 'active', 'deactivating']);
 const RELAY_RECEIPT_CONTRACT ='clued.independent-ci.formal-public-relay-receipt/2';
 const CHILD_TRANSIENT_REASONS = new Set(['EBUSY', 'EMFILE', 'ENFILE', 'EINTR', 'FORMAL_RELAY_STDIN_TIMEOUT']);
@@ -204,7 +218,9 @@ export class Companion {
   // ports: { cfg, mailbox, run(argv,{timeoutMs}) -> {code, stdout, stderr, timedOut?, tree?}, fileExists(path), sleep(ms), clock(),
   //   readPull(pr) -> argv (pr-head; without it the companion answers PR_HEAD_UNAVAILABLE),
   //   readText(path) -> string (bounded; a SendResponse retry reads its challenge's deadline, DESIGN §25.4; without it no
-  //   SendResponse retry), log(entry) (the local relay log, DESIGN §25.5; optional, its failures are swallowed) }
+  //   SendResponse retry), log(entry) (the local relay log, DESIGN §25.5; optional, its failures are swallowed),
+  //   listingDelay({ quietMs, untilFactsMs, capMs }) -> ms (the pause between two listings of Linux outgoing, DESIGN §31.5; the
+  //   default is listingDelayMs; a test passes () => 1000 for the one-listing-a-second pace of before) }
   constructor(ports) {
     Object.assign(this, ports);
     this.a = argv(ports.cfg);
@@ -373,14 +389,22 @@ export class Companion {
   // listing the relay itself is the probe (false = not there yet). The hand-over is a wait step like any other:
   // `live` throws COMPANION_PUMP_CANCELLED once the service cancelled the pump (Owner abort).
   async handOverBlocked(deadline, live = async () => {}) {
-    const until = Math.min(deadline, this.clock() + CALLBACK_WINDOW_MS + 30_000);
+    const began = this.clock();
+    const until = Math.min(deadline, began + CALLBACK_WINDOW_MS + 30_000);
     while (this.clock() < until) {
       await live();
       const names = await this.linuxReady();
       if (names === null || names.has('blocked.ready.json')) { try { if (await this.relay('ReceiveBlocked', 0, { live, deadline })) return true; } catch (e) { if (e?.code === 'COMPANION_PUMP_CANCELLED') throw e; return false; } }
-      await this.sleep(1000);
+      await this.sleep(this.paceListing({ quietMs: this.clock() - began, capMs: HANDOVER_LISTING_CAP_MS }));
     }
     return false;
+  }
+
+  // The pause before the next listing of Linux outgoing (DESIGN §31.5): quietMs since anything happened, untilFactsMs to the next
+  // read of the worker's unit facts (a pause never runs past it, so those reads keep WORKER_FACTS_EVERY_MS), capMs the longest pause.
+  paceListing({ quietMs, untilFactsMs = Infinity, capMs = LISTING_CAP_MS }) {
+    if (typeof this.listingDelay === 'function') return this.listingDelay({ quietMs, untilFactsMs, capMs });
+    return Math.max(100, Math.min(listingDelayMs(quietMs, capMs), untilFactsMs));
   }
 
   // The bridge pump that run-batch.ps1 performs today (lines 86-89), moved out of the elevated
@@ -431,8 +455,13 @@ export class Companion {
       const RECORD = /^(challenge-[0-9]{2}|result|blocked)\.ready\.json$/;
       // When the pump first saw each challenge listed (its ReceiveChallenge retry budget). Without a listing the call itself
       // is the probe, and that call's own start stands in for it: a wrong guess only makes a response later (DESIGN §25.4).
+      // The anchor is the start of the listing BEFORE the one that first showed the challenge (the challenge was made after that
+      // one, so this is never later than its creation, and DESIGN §25.4's "creation + 60 s" holds however far apart the listings
+      // are, DESIGN §31.5); without an earlier listing, the listing itself.
       const firstSeen = new Map();
-      const seenAt = (names, seq) => { if (firstSeen.has(seq)) return firstSeen.get(seq); if (names === null) return this.clock(); firstSeen.set(seq, this.clock()); return firstSeen.get(seq); };
+      const seenAt = (names, seq, anchor) => { if (firstSeen.has(seq)) return firstSeen.get(seq); if (names === null) return this.clock(); firstSeen.set(seq, anchor); return anchor; };
+      // Pace of the listing (DESIGN §31.5): what has happened last (the start, a changed listing, a relayed record).
+      let eventAt = startedAt, previousListing = null, previousNames = null;
       // A ReceiveBlocked refused for good is remembered (never tried twice); one that only found nothing, or ran out of
       // retries, is not.
       const receiveBlocked = async () => { try { return await relay('ReceiveBlocked', 0, { deadline }); } catch (e) { if (e?.permanent) blockedRefused = true; throw e; } };
@@ -441,19 +470,29 @@ export class Companion {
           check(this.clock() < deadline, 'FORMAL_BRIDGE_STAGE_DEADLINE');
           await live();
           await observeWorker();
+          const listingAt = this.clock();
           const names = await this.linuxReady();
+          const anchor = previousListing ?? listingAt;
+          if (names !== null) {
+            previousListing = listingAt;
+            const signature = [...names].sort().join('|');
+            if (previousNames !== null && signature !== previousNames) eventAt = this.clock();
+            previousNames = signature;
+          }
           if (names && [...names].some(n => RECORD.test(n))) worker.listedRecord = true;
           // The worker's clean refusal (bridge v4 'blocked') means it has ended: it goes before a stale challenge.
           if (names?.has('blocked.ready.json') && await receiveBlocked()) break;
           // Then a challenge: a callback has a deadline (CALLBACK_WINDOW_MS), the result does not hurry.
           const challenge = relayRecordName('ReceiveChallenge', sequence);
           if (sequence <= 32 && listed(names, challenge)) {
-            if (await relay('ReceiveChallenge', sequence, { deadline, firstSeen: seenAt(names, sequence) })) {
+            if (await relay('ReceiveChallenge', sequence, { deadline, firstSeen: seenAt(names, sequence, anchor) })) {
+              eventAt = this.clock();
               const responseDeadline = this.clock() + CALLBACK_WINDOW_MS;
               const name = relayRecordName('SendResponse', sequence), seq = sequence;
               while (!(await ready(name))) { check(this.clock() < responseDeadline, 'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED'); await live(); await this.sleep(100); }
               check(await relay('SendResponse', seq, { deadline, challengeDeadline: () => this.challengeDeadline(seq) }), 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED');
               sequence += 1;
+              eventAt = this.clock();
               continue;
             }
           }
@@ -464,8 +503,8 @@ export class Companion {
           if (worker.ended && names !== null && !names.has('blocked.ready.json') && !names.has('result.ready.json') && !(sequence <= 32 && names.has(`${challenge}.ready.json`))) {
             fail('LINUX_WORKER_ENDED_WITHOUT_RECORD');
           }
-          // A listing every second is ample against a 120 s round and keeps the wsl.exe launches low.
-          await this.sleep(names === null ? 100 : 1000);
+          // Every second right after anything happened, then less and less often (DESIGN §31.5): a listing is a wsl.exe start.
+          await this.sleep(names === null ? 100 : this.paceListing({ quietMs: this.clock() - eventAt, untilFactsMs: worker.factsAt - this.clock() }));
         }
       } catch (error) {
         // An Owner abort stops the Windows issuer anyway: no blocked hand-over (it checks the cancel before each of its
@@ -475,12 +514,12 @@ export class Companion {
         throw error;
       }
       const until = this.clock() + 30_000;
-      for (;;) {
+      for (let look = 0; ; look += 1) {
         const s = parseUnitFacts(await this.run(this.a.unitFacts('clued-ci-worker', request.jobId), { timeoutMs: 15_000 }));
         if (s && ['inactive', 'failed'].includes(s.activeState)) break;
         check(this.clock() < until, 'FORMAL_WORKER_TERMINAL_UNCONFIRMED');
         await live();
-        await this.sleep(500);
+        await this.sleep(Math.min(2000, 500 * 2 ** look)); // 0.5, 1, 2 s, then every 2 s: at most about 17 reads in the 30 s, not 60
       }
       return { ok: true, proof: await this.quiescence(request.batchId) };
     } catch (error) {
