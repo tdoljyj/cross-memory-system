@@ -81,8 +81,11 @@ export function relayPlanFromRows(rows, candidates) {
 // one-shot states kept for an unchanged reading of older receipts).
 // REFS_GATE_UNCONFIRMED: the refs gate before the first local scanner got no explicit answer; nothing ran; clean
 // but final (never the transient REMOTE_REFS_CHANGED_SINCE_BUNDLE, PR-A review MINOR 5).
+// LINUX_MEMORY_NOT_READY (DESIGN §32, Task 25851665): the pre-stage memory gate refused a scanner stage before it was invoked
+// (the VM showed too few free hv_sock-sized blocks for the whole bounded wait); nothing of the stage ran.
+export const LINUX_MEMORY_NOT_READY = 'LINUX_MEMORY_NOT_READY';
 const RESIDENT_CLEAN = Object.freeze(['FULL_NEXT_STAGE_AUTHORITY_WINDOW_REQUIRED', 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED', 'FIXED_PUBLIC_CHILD_REFUSED',
-  'ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED', 'FORMAL_BRIDGE_STAGE_DEADLINE', 'REFS_GATE_UNCONFIRMED']);
+  'ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED', 'FORMAL_BRIDGE_STAGE_DEADLINE', 'REFS_GATE_UNCONFIRMED', LINUX_MEMORY_NOT_READY]);
 
 const NOT_ADMITTED = new Set(NOT_ADMITTED_CODES);
 const TRANSIENT = new Set(TRANSIENT_CODES);
@@ -170,7 +173,8 @@ export function scannerAbandonEligible({ stage, phase = 'stage', code, bridge = 
 // Owner decision eaa7d5e4 (design r3 §3.6 option O-2): the one automatic attempt 2 also follows these resident codes, at these
 // stages only (attempts.mjs). Here, not in attempts.mjs, because the failure table's own check below needs it while this module
 // loads (attempts.mjs imports this module).
-export const ATTEMPT2_RESIDENT_CODES = Object.freeze({ [BRIDGE_ABANDONED_UNPUBLISHED]: Object.freeze([2]) });
+// DESIGN §32: a stage-2 refusal of the memory gate (nothing of stage 2 ran, nothing was published) takes the same one attempt 2.
+export const ATTEMPT2_RESIDENT_CODES = Object.freeze({ [BRIDGE_ABANDONED_UNPUBLISHED]: Object.freeze([2]), [LINUX_MEMORY_NOT_READY]: Object.freeze([2]) });
 const residentAttempt2 = (code, stages) => Object.hasOwn(ATTEMPT2_RESIDENT_CODES, code) && Array.isArray(stages) && stages.every(s => ATTEMPT2_RESIDENT_CODES[code].includes(s));
 
 // The archive reason segment is derived from the stable code, never taken from untrusted text.

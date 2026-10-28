@@ -15,7 +15,10 @@ export const REQUEST_CONTRACT = 'clued.independent-ci.resident-companion-request
 // job had to be ended - it outlived the limit, or the host reported a failure after it started - and no process of it was
 // left) or 'unconfirmed' (the host could not show that, including a leftover not drained or no host report). A fact for the
 // record only; no proof of either host rests on the companion's own tree.
-export const RESPONSE_CONTRACT = 'clued.independent-ci.resident-companion-response/2';
+// /3 (DESIGN §32, Task 25851665): also `memory`, the facts of a memory-ready answer ({ order, blocks }: the hv_sock ring order and the
+// free blocks of at least that order over all zones), null in every other answer. Same practice as /2: the companion and the
+// service come from one package and are installed together.
+export const RESPONSE_CONTRACT = 'clued.independent-ci.resident-companion-response/3';
 export const JOB_TREES = Object.freeze(['zero', 'unconfirmed']);
 export const HEARTBEAT_CONTRACT = 'clued.independent-ci.resident-companion-heartbeat/1';
 // Owner abort (DESIGN §6.5): the service asks the companion to stop working on ONE pending request (today only the
@@ -33,7 +36,9 @@ export const PUMP_MARK_CONTRACT = 'clued.independent-ci.resident-companion-pump-
 export const BATCH_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/;
 const REASON = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const ARCHIVE_DIR = /^(failed|archive)-[0-9a-z-]{1,120}$/;
-export const KINDS = Object.freeze(['build-bundle', 'prepare-workspaces', 'relay-stage', 'archive-linux', 'linux-quiescence', 'check-refs', 'archive-usage', 'pr-head']);
+export const KINDS = Object.freeze(['build-bundle', 'prepare-workspaces', 'relay-stage', 'archive-linux', 'linux-quiescence', 'check-refs', 'archive-usage', 'pr-head', 'memory-ready']);
+// memory-ready (DESIGN §32): one read of the VM's hv_sock memory facts before a scanner stage. Its answer can only delay or
+// refuse that stage cleanly; it never admits or publishes anything.
 // pr-head (resident quota redesign phase 2, step 1: design v0.5 §4.2): one live read of a PR (state and head) over the
 // Owner's own gh login, for the run queue's supersession and falsification checks. Its answer can only stop a batch or
 // re-queue a commit; it never admits anything (stage 1 does).
@@ -57,6 +62,7 @@ const REQUEST_FIELDS = {
   'check-refs': ['batchId'],
   'archive-usage': ['batchId'],
   'pr-head': ['batchId', 'pr'],
+  'memory-ready': ['batchId'],
 };
 
 export function validateRequest(v) {
@@ -73,7 +79,7 @@ export function validateRequest(v) {
 
 const PROOF_KEYS = ['linuxUnitsInactive', 'containersZero'];
 export function validateResponse(v, request) {
-  exactKeys(v, ['contract', 'requestId', 'kind', 'ok', 'code', 'proof', 'directory', 'verified', 'usage', 'pull', 'jobTree', 'observedAt'], 'MAILBOX_RESPONSE_KEYS_REFUSED');
+  exactKeys(v, ['contract', 'requestId', 'kind', 'ok', 'code', 'proof', 'directory', 'verified', 'usage', 'pull', 'jobTree', 'memory', 'observedAt'], 'MAILBOX_RESPONSE_KEYS_REFUSED');
   check(v.contract === RESPONSE_CONTRACT && v.requestId === request.requestId && v.kind === request.kind, 'MAILBOX_RESPONSE_IDENTITY_REFUSED');
   check(typeof v.ok === 'boolean' && (v.code === null || (typeof v.code === 'string' && CODE.test(v.code))), 'MAILBOX_RESPONSE_STATUS_REFUSED');
   check(v.proof === null || (exactKeys(v.proof, PROOF_KEYS, 'MAILBOX_RESPONSE_PROOF_REFUSED'), PROOF_KEYS.every(k => typeof v.proof[k] === 'boolean')), 'MAILBOX_RESPONSE_PROOF_REFUSED');
@@ -83,6 +89,8 @@ export function validateResponse(v, request) {
   check(v.pull === null || (request.kind === 'pr-head' && (exactKeys(v.pull, ['number', 'state', 'headSha'], 'MAILBOX_RESPONSE_PULL_REFUSED'),
     v.pull.number === request.pr && PULL_STATES.includes(v.pull.state) && HEX40.test(v.pull.headSha ?? ''))), 'MAILBOX_RESPONSE_PULL_REFUSED');
   check(v.jobTree === null || JOB_TREES.includes(v.jobTree), 'MAILBOX_RESPONSE_JOB_TREE_REFUSED');
+  check(v.memory === null || (request.kind === 'memory-ready' && (exactKeys(v.memory, ['order', 'blocks'], 'MAILBOX_RESPONSE_MEMORY_REFUSED'),
+    Number.isSafeInteger(v.memory.order) && v.memory.order >= 0 && v.memory.order <= 10 && Number.isSafeInteger(v.memory.blocks) && v.memory.blocks >= 0)), 'MAILBOX_RESPONSE_MEMORY_REFUSED');
   return v;
 }
 
@@ -200,7 +208,7 @@ export class Mailbox {
   }
 
   async respond(request, fields) {
-    const response = validateResponse({ contract: RESPONSE_CONTRACT, requestId: request.requestId, kind: request.kind, ok: false, code: null, proof: null, directory: null, verified: null, usage: null, pull: null, jobTree: null, observedAt: isoNow(this.clock), ...fields }, request);
+    const response = validateResponse({ contract: RESPONSE_CONTRACT, requestId: request.requestId, kind: request.kind, ok: false, code: null, proof: null, directory: null, verified: null, usage: null, pull: null, jobTree: null, memory: null, observedAt: isoNow(this.clock), ...fields }, request);
     await writeNew(path.join(this.responses, `${request.requestId}.json`), response);
     return response;
   }

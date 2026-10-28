@@ -16,7 +16,8 @@
 // anything attempt 1 created, and attempt 1's settled job ids are never run again.
 // Besides the transient codes, the resident allow-list ATTEMPT2_RESIDENT_CODES (Owner decision eaa7d5e4, design r3 §3.6 O-2):
 // a stage-2 FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED (DESIGN §27; the scanner issuer was proven to have published nothing)
-// also gets the one attempt 2, at stage 2 only. It lives in classify.mjs, whose failure table check needs it at load time.
+// also gets the one attempt 2, at stage 2 only; so does a stage-2 LINUX_MEMORY_NOT_READY (DESIGN §32: the memory gate refused the stage
+// before it was invoked). It lives in classify.mjs, whose failure table check needs it at load time.
 import { ATTEMPT2_RESIDENT_CODES, isTransient } from './classify.mjs';
 
 export { ATTEMPT2_RESIDENT_CODES };

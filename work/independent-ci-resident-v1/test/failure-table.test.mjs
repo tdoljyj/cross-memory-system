@@ -19,7 +19,9 @@ const RESIDENT_CODES = ['FULL_NEXT_STAGE_AUTHORITY_WINDOW_REQUIRED', 'FORMAL_CHI
   'BETWEEN_ROLES_ARCHIVE_UNCONFIRMED', 'WORKSPACE_PREPARATION_UNCONFIRMED', 'EXECUTED_HEAD_RECORD_UNCONFIRMED', 'BUNDLE_UNAVAILABLE', 'OWNER_ABORTED', 'OWNER_ABORT_REQUESTED',
   'SUPERSEDED_AT_SAFE_POINT',
   // DESIGN §26, §27: the bridge stop's stage code and the abandonment's terminal code (resident-side, never Source-mirrored)
-  'BRIDGE_STAGE_STOPPED_PUMP_LOST', 'BRIDGE_ABANDONED_UNPUBLISHED'];
+  'BRIDGE_STAGE_STOPPED_PUMP_LOST', 'BRIDGE_ABANDONED_UNPUBLISHED',
+  // DESIGN §32: the pre-stage memory gate's refusal (resident-side, never Source-mirrored)
+  'LINUX_MEMORY_NOT_READY'];
 const ALL = [...new Set([...source.ALL_STAGE_CODES, ...RESIDENT_CODES, ...PUMP_CODES])];
 const rowsOf = code => FAILURE_TABLE.rows.filter(r => r.code === code);
 

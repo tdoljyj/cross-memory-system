@@ -180,6 +180,13 @@ function bridgeFacts(b) {
     stopCode: code(b.stopCode ?? null), stageCode: code(b.stageCode ?? null), pumpQuiet: b.pumpQuiet === true };
   return Object.values(f).includes(undefined) ? null : f;
 }
+// The pre-stage memory gate's facts (engine-windows.mjs#memoryGate, DESIGN §32) as the stage-terminal receipt records them: counts,
+// the ring order and the outcome only, each re-checked (anything else is null).
+const nonNegative = v => (Number.isSafeInteger(v) && v >= 0 ? v : null);
+function memoryGateFacts(g) {
+  if (!g || typeof g !== 'object' || Array.isArray(g)) return null;
+  return { checks: nonNegative(g.checks), order: nonNegative(g.order), blocks: nonNegative(g.blocks), waitedMs: nonNegative(g.waitedMs), ready: [true, false].includes(g.ready) ? g.ready : null, refused: g.refused === true };
+}
 // Scanner abandonment (DESIGN §27): the fixed archive reason segment and the terminal basis.
 export const SCANNER_ABANDON_ARCHIVE_REASON = 'scanner-abandoned';
 
@@ -1886,7 +1893,7 @@ export class ResidentExecutor {
         const execution = number === ROLE_STAGES[role][0];
         const { result: r, abort, stopCode, unconfirmed } = await this.runStageWatched(key, batch, number, { betweenRoles: execution && index > 0, firstLinux: execution && index === 0 });
         await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r),
-          ...(r.bridge ? { bridge: bridgeFacts(r.bridge) } : {}) });
+          ...(r.bridge ? { bridge: bridgeFacts(r.bridge) } : {}), ...(r.memoryGate ? { memoryGate: memoryGateFacts(r.memoryGate) } : {}) });
         if (unconfirmed) return this.unknown(key, 'OWNER_ABORT_UNCONFIRMED', 'owner-abort-unconfirmed', batch, { safePoint: `in-stage-${number}`, stage: number });
         if (abort) return this.concludeAbort(key, batch, { safePoint: `in-stage-${number}`, stage: number, result: r, request: abort, stopCode });
         if (r.ok !== true) return new StepFailure(number, r.code, r.proof, 'stage', relayed, r);

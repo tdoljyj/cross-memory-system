@@ -118,6 +118,33 @@ export function parseUnitFacts(r) {
 // challenge it relayed.)
 export const workerRanEvidence = f => !!f && (WORKER_RUNNING_STATES.has(f.activeState) || f.activeState === 'failed' || (f.invocationId !== '' && f.mainStartMonotonic > 0));
 
+// The pre-stage memory gate (DESIGN §32, Task 25851665): the same arithmetic as linux/host-tuning/clued-wsl-memguard. Every
+// Windows->WSL hv_sock channel needs one free block of the ring order: each direction's socket default clamped to 6..64 pages,
+// both in one allocation (order 7 at the 212992-byte defaults, order 5 with host tuning P1). An allocation fails only when no
+// zone has such a block, so the count is the free blocks of at least that order summed over the zones of /proc/buddyinfo.
+export const MEMORY_FACTS_FILES = Object.freeze(['/proc/sys/net/core/rmem_default', '/proc/sys/net/core/wmem_default', '/proc/buddyinfo']);
+export function ringOrder(rmem, wmem) {
+  const pages = buf => Math.ceil(Math.min(Math.max(buf, 6 * 4096), 64 * 4096) / 4096);
+  return (pages(rmem) + pages(wmem) - 1).toString(2).length;
+}
+// `cat rmem_default wmem_default buddyinfo` -> { order, blocks }, or null when the text is not exactly that: two sizes, then at
+// least one zone line ("Node N, zone NAME" and the free counts of orders 0..10; like memguard, columns past order 10 are ignored).
+export function parseMemoryFacts(stdout) {
+  const lines = String(stdout ?? '').split(/\r?\n/).map(l => l.trim()).filter(l => l !== '');
+  if (lines.length < 3 || !lines.slice(0, 2).every(l => /^[0-9]{1,10}$/.test(l))) return null;
+  const order = ringOrder(Number(lines[0]), Number(lines[1]));
+  let blocks = 0, zones = 0;
+  for (const line of lines.slice(2)) {
+    const p = line.split(/\s+/);
+    if (p.length < 15 || p[0] !== 'Node' || p[2] !== 'zone') return null;
+    const counts = p.slice(4, 15);
+    if (!counts.every(c => /^[0-9]{1,12}$/.test(c))) return null;
+    blocks += counts.slice(order).reduce((sum, c) => sum + Number(c), 0);
+    zones += 1;
+  }
+  return zones > 0 && Number.isSafeInteger(blocks) ? { order, blocks } : null;
+}
+
 // One log entry per relay attempt: fixed keys, codes and counts only.
 export function relayLogEntry({ at, mode, seq, attempt, ms, runner, receipt, klass }) {
   const r = runner ?? {}, v = plainObject(receipt) ? receipt : {};
@@ -167,6 +194,8 @@ export function argv(cfg) {
     linuxOutgoing: () => wsl('/usr/bin/ls', '-1', '-A', '--', LINUX_OUTGOING),
     linuxIncoming: () => wsl('/usr/bin/ls', '-1', '-A', '--', LINUX_INCOMING),
     linuxRelayProcs: () => wsl('/usr/bin/pgrep', '-f', '-a', RELAY_RECORD_PROCESS),
+    // DESIGN §32: the memory gate's one wsl.exe per check.
+    memoryFacts: () => wsl('/usr/bin/cat', '--', ...MEMORY_FACTS_FILES),
     archiveStatus: instance => { check(/^[0-9a-f]{16}-[0-9a-f]{12}_[a-z0-9][a-z0-9-]{0,39}$/.test(instance), 'COMPANION_TOOL_ARGS_INVALID'); return wsl(cfg.linuxTool, 'archive-status', '--instance', instance); },
     relay: (mode, seq) => {
       check(['SendIssue', 'ReceiveChallenge', 'SendResponse', 'ReceiveResult', 'ReceiveBlocked'].includes(mode) && Number.isSafeInteger(seq) && seq >= 0 && seq <= 32, 'COMPANION_RELAY_ARGS_INVALID');
@@ -259,6 +288,12 @@ export class Companion {
       }
       // Verbatim root-tool facts; the companion never synthesises a proof value itself.
       case 'linux-quiescence': return { ok: true, proof: await this.quiescence(request.batchId) };
+      // DESIGN §32: the facts only (ring order, free blocks of at least that order); the service applies its threshold.
+      case 'memory-ready': {
+        const r = await this.run(this.a.memoryFacts(), { timeoutMs: RELAY_CHECK_TIMEOUT_MS });
+        const memory = r.code === 0 && !('tree' in r) ? parseMemoryFacts(r.stdout) : null;
+        return memory ? { ok: true, memory } : { ok: false, code: 'LINUX_MEMORY_UNREADABLE' };
+      }
       case 'pr-head': {
         if (typeof this.readPull !== 'function') return { ok: false, code: 'PR_HEAD_UNAVAILABLE' };
         const r = await this.run(this.readPull(request.pr), { timeoutMs: PR_HEAD_TIMEOUT_MS });
@@ -502,7 +537,7 @@ export class Companion {
       this.trees = [];
       try { answer = await this.handle(request); } catch { answer = { ok: false, code: 'COMPANION_HANDLER_UNCONFIRMED' }; }
       await this.mailbox.respond(request, { ok: answer.ok === true, code: answer.ok ? null : (answer.code ?? 'COMPANION_HANDLER_UNCONFIRMED'), proof: answer.proof ?? null, directory: answer.directory ?? null, verified: answer.verified ?? null, usage: answer.usage ?? null, pull: answer.pull ?? null,
-        jobTree: jobTreeOf(this.trees) });
+        jobTree: jobTreeOf(this.trees), memory: answer.memory ?? null });
     }
   }
 }

@@ -18,7 +18,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { CODE, HEX64, check, fail, parseBoundedJson, sha256, canonicalJson } from './canonical.mjs';
 import { exists, readBounded, writeNew, ensureDir } from './store.mjs';
-import { ABORTABLE_IN_FLIGHT } from './classify.mjs';
+import { ABORTABLE_IN_FLIGHT, LINUX_MEMORY_NOT_READY } from './classify.mjs';
 import { pinnedNodeProfile, validateNodeProfile } from './node-profile.mjs';
 import { validateRoleProbeFact } from './role-probe.mjs';
 import { RELAY_TIMEOUT_MS } from './companion.mjs';
@@ -49,6 +49,19 @@ export const PUMP_HEARTBEAT_STALE_MS = 120_000;
 export const PUMP_QUIET_MS = RELAY_TIMEOUT_MS + 60_000;
 // The stage code of a scanner-issuer stage the bridge stop ended (STOP_SENT, its Windows tree drained).
 export const BRIDGE_STAGE_STOPPED_PUMP_LOST = 'BRIDGE_STAGE_STOPPED_PUMP_LOST';
+// The pre-stage memory gate (DESIGN §32, Task 25851665), right before a scanner stage (2, 4, 6) is invoked, so before its issue
+// exists: the companion's memory-ready facts (one wsl.exe per check). Ready: at least MEMORY_GATE_MIN_BLOCKS free blocks of the
+// hv_sock ring order, memguard's own LOW_BLOCKS (linux/host-tuning/clued-wsl-memguard): six channels for each wsl.exe, and about
+// ten wsl.exe calls a stage cannot do without in its first minutes. A low reading waits for memguard (it runs every 60 s and
+// compacts below the same number; its back-off and cache drop are 5 minutes), looking again every MEMORY_GATE_POLL_MS, for at
+// most MEMORY_GATE_WAIT_MS / MEMORY_GATE_CHECKS; still low then: LINUX_MEMORY_NOT_READY, the stage never invoked. A reading
+// that cannot be had proves nothing: without an earlier low reading the stage runs at once, as before the gate.
+export const MEMORY_GATE_MIN_BLOCKS = 64;
+export const MEMORY_GATE_POLL_MS = 60_000;
+export const MEMORY_GATE_WAIT_MS = 6 * 60_000;
+export const MEMORY_GATE_CHECKS = 7;
+export const MEMORY_READ_TIMEOUT_MS = 60_000;
+const memoryFacts = m => m && typeof m === 'object' && Number.isSafeInteger(m.order) && m.order >= 0 && m.order <= 10 && Number.isSafeInteger(m.blocks) && m.blocks >= 0 ? m : null;
 // The broker request the Source v2 invoker writes (resident-v2/broker-protocol.mjs) and the stop request the
 // resident may write next to it for an Owner abort (windows/SwapBroker.cs, StopRequest).
 export const BROKER_REQUEST_CONTRACT = 'clued.independent-ci.swap-broker-request/2';
@@ -452,10 +465,42 @@ export class WindowsEngine {
     return this.invoke(batch, stage, row);
   }
 
+  // The pre-stage memory gate (DESIGN §32). { checks, order, blocks, low, ready, waitedMs, refused }: ready true (a reading at or
+  // above the threshold), false (refused: a low reading and none ready within the bound, or an Owner abort while waiting) or null
+  // (no reading could be had and none was low: the stage runs as before). Never more than MEMORY_GATE_CHECKS reads, never longer
+  // than MEMORY_GATE_WAIT_MS plus one read; a read that fails is only "no reading", never a refusal or a HALT by itself.
+  async memoryGate(batch, number) {
+    const started = this.clock();
+    const gate = { checks: 0, order: null, blocks: null, low: false, ready: null, waitedMs: 0, refused: false };
+    const end = ready => Object.assign(gate, { ready, refused: ready === false, waitedMs: this.clock() - started });
+    for (;;) {
+      gate.checks += 1;
+      let answer = null;
+      try { answer = await this.companionMailbox.await(await this.companionMailbox.send('memory-ready', { batchId: batch.batchId }, MEMORY_READ_TIMEOUT_MS), this.sleep); } catch { answer = null; }
+      const m = answer?.ok === true ? memoryFacts(answer.memory) : null;
+      if (m) Object.assign(gate, { order: m.order, blocks: m.blocks });
+      if (m && m.blocks >= MEMORY_GATE_MIN_BLOCKS) return end(true);
+      if (m) gate.low = true;
+      if (!gate.low) return end(null);
+      if (gate.checks >= MEMORY_GATE_CHECKS || this.clock() - started >= MEMORY_GATE_WAIT_MS || this.stopRequested(batch, number)) return end(false);
+      await this.sleep(MEMORY_GATE_POLL_MS);
+    }
+  }
+
   async invoke(batch, stage, row) {
     const invoke = await this.requireV2('invoke-stage.mjs');
     // Owner abort: a stage asked to stop before it was invoked is never invoked (nothing ran, the runner is untouched).
     if (this.stopRequested(batch, stage.number)) return { ok: false, code: 'OWNER_ABORT_REQUESTED', proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() } };
+    if (!stage.linuxWorker) return this.invokeStage(batch, stage, row, invoke);
+    // DESIGN §32: a scanner stage is invoked only on a memory reading that is not low (or on none at all); its facts travel with
+    // the result. Refused: nothing of the stage ran, no issue exists, no pump was asked for.
+    const memoryGate = await this.memoryGate(batch, stage.number);
+    if (this.stopRequested(batch, stage.number)) return { ok: false, code: 'OWNER_ABORT_REQUESTED', proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() }, memoryGate };
+    if (memoryGate.refused) return { ok: false, code: LINUX_MEMORY_NOT_READY, proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() }, memoryGate };
+    return { ...(await this.invokeStage(batch, stage, row, invoke)), memoryGate };
+  }
+
+  async invokeStage(batch, stage, row, invoke) {
     const relay = stage.linuxWorker
       ? this.companionMailbox.send('relay-stage', { batchId: batch.batchId, stage: stage.number, jobId: row.jobId }, stage.runMilliseconds + 120_000)
       : null;

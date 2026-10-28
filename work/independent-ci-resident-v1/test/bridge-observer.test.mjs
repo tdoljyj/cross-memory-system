@@ -256,7 +256,8 @@ async function engineWith(t, { endsAt = null, ownEnding = null, beats = true, sc
     answer: null, beatAt: T0, sent: [],
     async send(kind, fields, timeoutMs) { mb.sent.push(kind); return { requestId: PUMP_REQ, kind, createdAt: new Date(now).toISOString(), deadline: new Date(now + timeoutMs).toISOString(), ...fields }; },
     async poll() { return mb.answer; },
-    async await(req, sleep) { while (now < Date.parse(req.deadline)) { if (mb.answer) return mb.answer; await sleep(500); } return null; },
+    // DESIGN §32: the memory gate's read gets no reading here (the stage runs at once, as before the gate)
+    async await(req, sleep) { if (req.kind === 'memory-ready') return null; while (now < Date.parse(req.deadline)) { if (mb.answer) return mb.answer; await sleep(500); } return null; },
     async heartbeat() { return mb.beatAt === null ? null : { at: mb.beatAt }; },
     async cancel(req, reason) { ev.cancels.push([reason, now - T0]); if (mb.onCancel) mb.onCancel(reason); return true; },
   };

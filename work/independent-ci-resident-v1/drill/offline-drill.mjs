@@ -563,7 +563,7 @@ async function incidentReplay(variant) {
   const clock = () => vt.now;
   const iRoot = path.join(root, `incident-${variant}`);
   const at = () => new Date(vt.now).toISOString().slice(11, 19);
-  const log = { failedAt: null, answeredAt: null, stopAt: null, stageEndedAt: null, diedAt: null, quiescenceAsks: 0, archiveReasons: [] };
+  const log = { failedAt: null, answeredAt: null, stopAt: null, stageEndedAt: null, diedAt: null, quiescenceAsks: 0, archiveReasons: [], memoryReads: 0, gateStartedAt: null, gateEndedAt: null };
   // ---- the companion's hosts: relay-public.ps1, systemctl, the Linux root tool, the bundle script, all scripted ----
   const SPOOL = 'C:\\drill\\incident\\formal-spool';
   const ccfg = { wslExe: 'C:\\Windows\\System32\\wsl.exe', distribution: 'Ubuntu-24.04', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
@@ -604,6 +604,16 @@ async function incidentReplay(variant) {
     }
     if (a.includes('/var/lib/clued-independent-ci/formal-spool/incoming')) return { code: 0, stdout: '' };
     if (s.includes('/usr/bin/pgrep')) return { code: 1, stdout: '' };
+    // DESIGN §32: the memory gate's read (rmem_default, wmem_default, /proc/buddyinfo); 'memory-low' keeps the VM without one free
+    // order-7 block (the 2026-10-22 13:22Z picture), every other run has plenty
+    if (a.includes('/proc/buddyinfo')) {
+      log.memoryReads += 1; log.gateStartedAt ??= vt.now; log.gateEndedAt = vt.now;
+      const zone = n => `Node 0, zone   Normal   1037    597    194     44     21     21      5 ${String(n).padStart(6)}      0      0      0
+`;
+      return { code: 0, stdout: `212992
+212992
+${zone(variant === 'memory-low' ? 0 : 900)}` };
+    }
     if (a.includes('quiescence')) { log.quiescenceAsks += 1; return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: !workerActive(), containersZero: true }) }; }
     if (a.includes('archive-status')) { const inst = a[a.indexOf('--instance') + 1]; log.archiveReasons.push(inst.split('_')[1]); return { code: 0, stdout: JSON.stringify({ verified: true, directory: `failed-${inst.slice(0, 16)}-${inst.split('_')[1]}-000000000000` }) }; }
     if (a.includes('-CheckRefs')) return { code: 0, stdout: JSON.stringify({ status: 'REMOTE_REFS_UNCHANGED' }) };
@@ -695,7 +705,7 @@ async function incidentReplay(variant) {
   const cancels = (await fs.readdir(path.join(iRoot, 'mailbox', 'requests'))).filter(n => n.endsWith('.cancel.json'));
   const cancelReasons = await Promise.all(cancels.map(async n => JSON.parse(await fs.readFile(path.join(iRoot, 'mailbox', 'requests', n), 'utf8')).reason));
   return { r, s, log, types, cancelReasons, halted: await iLedger.halted(), stopFiles: (await fs.readdir(path.join(brokerRoot, 'requests'))).filter(n => n.endsWith('.stop')).length,
-    pending: await iLedger.pendingAttempts2(), at: at() };
+    pending: await iLedger.pendingAttempts2(), at: at(), issued: w.issued };
 }
 
 {
@@ -717,6 +727,13 @@ async function incidentReplay(variant) {
     r => r.state === 'HALTED' && r.failureCode === 'BRIDGE_STAGE_STOPPED_PUMP_LOST' && dead.cancelReasons.includes('heartbeat-lost') && dead.stopFiles === 1
       && dead.log.stopAt - dead.log.diedAt <= 3 * 60_000 + 30_000 && dead.log.stageEndedAt - dead.log.diedAt < 10 * 60_000
       && !dead.log.archiveReasons.some(x => x.includes('scanner-abandoned')) && dead.halted?.value?.code === 'BRIDGE_STAGE_STOPPED_PUMP_LOST');
+  await step('  the memory gate read the VM once before stage 2 in each run above (plenty free: no wait)', async () => ({ state: [inc, active, dead].map(x => x.log.memoryReads).join(',') }),
+    () => [inc, active, dead].every(x => x.log.memoryReads === 1));
+  const low = await incidentReplay('memory-low');
+  await step('memory gate (DESIGN §32): no free order-7 block for 6 minutes -> stage 2 never invoked, FAILED_CLEAN LINUX_MEMORY_NOT_READY, no HALT, one attempt 2', async () => ({ state: low.r.state, failureCode: low.r.failureCode, reason: `${low.r.failureCode} after ${low.log.memoryReads} reads in ${Math.round((low.log.gateEndedAt - low.log.gateStartedAt) / 1000)} s` }),
+    r => r.state === 'FAILED_CLEAN' && r.failureCode === 'LINUX_MEMORY_NOT_READY' && low.halted === null && low.issued === false && low.log.memoryReads === 7
+      && low.log.gateEndedAt - low.log.gateStartedAt <= 6 * 60_000 + 30_000 && low.s?.terminal?.facts?.stage === 2 && low.pending.length === 1
+      && low.log.archiveReasons.includes('windows:linux-memory-not-ready') && low.log.archiveReasons.includes('linux-memory-not-ready'));
 }
 
 console.table(rows);
