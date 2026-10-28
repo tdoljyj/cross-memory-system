@@ -14,6 +14,34 @@ const ISO = v => typeof v === 'string' && Number.isFinite(Date.parse(v));
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 
+// C2 sanitizes to three states only: no holder/claim data reaches the resident. The database intentionally
+// shares binding_not_authorized for revoked, expired and scope-refused; do not pretend to distinguish them.
+export function parseRoleProbe(status, body, repository) {
+  if ((status === 401 || status === 403) && plain(body) && body.code === '42501' && ['binding_not_authorized', 'authorization_revoked_or_expired'].includes(body.message))
+    return { result: 'uncertain', code: 'ROLE_PROBE_CONNECTION_UNAUTHORIZED' };
+  if (plain(body) && body.reason === NOT_ON_DUTY && (!Array.isArray(body.holders) || body.holders.length !== 0)) return { result: 'uncertain', code: 'ROLE_PROBE_UNCERTAIN' };
+  try { return parseHolders(status, body, repository).onDuty
+    ? { result: 'held', code: 'ROLE_PROBE_HELD' } : { result: 'not-held', code: 'ROLE_PROBE_NOT_HELD' }; }
+  catch { return { result: 'uncertain', code: 'ROLE_PROBE_UNCERTAIN' }; }
+}
+
+// C2 consumes at most 64 KiB; neither an arbitrary upstream error nor a holder list is logged.
+async function roleProbeBody(response) {
+  const reader = response.body?.getReader();
+  if (!reader) throw Error('ROLE_PROBE_BODY_MISSING');
+  const chunks = []; let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read(); if (done) break;
+      size += value.byteLength;
+      if (size > 65536) { await reader.cancel(); throw Error('ROLE_PROBE_BODY_LIMIT'); }
+      chunks.push(Buffer.from(value));
+    }
+    if (size === 0) throw Error('ROLE_PROBE_BODY_MISSING');
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, size)));
+  } finally { reader.releaseLock(); }
+}
+
 // Pure: the reply -> { onDuty, holders }. Anything else is unreadable (MERGE_SLOT_HOLDERS_UNREADABLE).
 export function parseHolders(status, body, repository) {
   if (status !== 200 || !plain(body) || body.status !== 'ok' || !Array.isArray(body.holders)) fail('MERGE_SLOT_HOLDERS_UNREADABLE');
@@ -33,6 +61,16 @@ export function parseHolders(status, body, repository) {
 // The read port. config: the installed record's {supabaseUrl, publishableKey, scope, repository}.
 export function createMergeSlotNative({ config, fetchImpl, nativeToken }) {
   return Object.freeze({
+    async roleProbe() {
+      let response, body;
+      try {
+        response = await fetchImpl(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/${HOLDERS_RPC}`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
+          headers: { apikey: config.publishableKey, authorization: `Bearer ${config.publishableKey}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ p_token_hash: digest(nativeToken), p_input: { scope: config.scope, repository: config.repository } }) });
+        body = await roleProbeBody(response);
+      } catch { return { result: 'uncertain', code: 'ROLE_PROBE_UNCERTAIN' }; }
+      return parseRoleProbe(response.status, body, config.repository);
+    },
     async holders() {
       let response, body;
       try {

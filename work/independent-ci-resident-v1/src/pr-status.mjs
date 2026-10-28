@@ -178,6 +178,8 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
   for (const n of status.notices ?? []) {
     const head = n.headSha ? n.headSha.slice(0, 8) : '';
     switch (n.kind) {
+      case 'role-probe-connection': out.push({ key: `notice:${n.key}`, title: '节点角色连接授权已失效', body: '只读探测收到连接授权拒绝，可能已撤销、过期或不再适用。角色状态不确定；请检查连接与角色安排。此通知不启动或重试 CI。' }); break;
+      case 'role-probe-uncertain': out.push({ key: `notice:${n.key}`, title: '节点角色连续三次无法确认', body: '三次连续只读探测未确认角色。请检查网络、连接与 parking holder；不会据此切换节点模式或重跑已有提交。' }); break;
       case 'new-trigger': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 收到新触发`, body: `提交 ${head} 等待中的重试已提前，冷却 10 分钟后重新评估。` }); break;
       case 'stopped': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${n.code ?? '?'}）。请修正后推新提交。` }); break;
       case 'stage8-budget': out.push({ key: `notice:${n.key}`, title: '今日第 8 段重试额度已用完', body: '停靠批次的第 8 段重试今天已用完，明天继续。' }); break;

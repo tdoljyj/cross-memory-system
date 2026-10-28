@@ -38,6 +38,9 @@ public static class BrokerPureTests
         try
         {
             ProfileConfigCases();
+            var stageCaps=(long[])typeof(SwapBroker).GetField("StageMilliseconds",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic).GetValue(null);
+            Yes(stageCaps.Length==11&&stageCaps[10]==60000,"C2-probe-cap");
+            Yes(string.Join(",",Array.ConvertAll(stageCaps,x=>x.ToString()))=="900000,2700000,900000,1800000,900000,600000,900000,2700000,900000,300000,60000","existing-ten-caps-unchanged");
             string ok = Path.Combine(dir, "ok.json"), big = Path.Combine(dir, "big.json"), empty = Path.Combine(dir, "empty.json");
             File.WriteAllBytes(ok, new byte[4096]); File.WriteAllBytes(big, new byte[4097]); File.WriteAllBytes(empty, new byte[0]);
             Yes(SwapBroker.ReadBounded(ok).Length == 4096, "bounded-at-limit");
@@ -66,6 +69,7 @@ public static class BrokerPureTests
             Refused(() => StopRequest.Validate(utf8(stop(id, 2, nonce, new string('d', 64))), id, nonce, 2, config), "BROKER_STOP_NOT_THIS_SWAP", "stop-other-config");
             Refused(() => StopRequest.Validate(utf8(stop(id, 3, nonce, config)), id, nonce, 3, config), "BROKER_STOP_STAGE_NOT_ABORTABLE", "stop-publisher-stage");
             Refused(() => StopRequest.Validate(utf8(stop(id, 8, nonce, config)), id, nonce, 8, config), "BROKER_STOP_STAGE_NOT_ABORTABLE", "stop-control-stage");
+            Refused(() => StopRequest.Validate(utf8(stop(id, 11, nonce, config)), id, nonce, 11, config), "BROKER_STOP_STAGE_NOT_ABORTABLE", "stop-role-probe-stage");
             Refused(() => StopRequest.Validate(utf8(stop(id, 2, nonce, config).Replace("}", ",\"extra\":1}")), id, nonce, 2, config), "BROKER_STOP_SHAPE", "stop-extra-key");
             Refused(() => StopRequest.Validate(utf8(stop(id, 2, nonce, config).Replace(StopRequest.Contract, "clued.independent-ci.swap-broker-stop/2")), id, nonce, 2, config), "BROKER_STOP_SHAPE", "stop-contract");
             Refused(() => StopRequest.Validate(utf8("{\"contract\":"), id, nonce, 2, config), "BROKER_STOP_SHAPE", "stop-torn");

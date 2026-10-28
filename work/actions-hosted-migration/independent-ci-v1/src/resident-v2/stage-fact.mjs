@@ -7,6 +7,7 @@ import { canonical } from '../proof.mjs';
 import { hash } from './prepare-record.mjs';
 import { HEX64, OUTCOME_CONTRACT, RELAY_STAGE_NUMBER, TRAIN_STAGE_NUMBER } from './layout.mjs';
 import { validateTrainFacts } from '../independent-control-checks-v2/train-facts.mjs';
+import { roleProbeFact } from './role-probe-run.mjs';
 import { RELAY_HALT_CODES, relayPlanEnding, validateRelayPlanRows } from '../hosted-relay-v1/relay-plan.mjs';
 import { sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2 } from '../admission-facts-v2.mjs';
 import { HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB, ROLE_ALREADY_ON_GITHUB_REASON } from '../published-on-github-v2.mjs';
@@ -171,7 +172,7 @@ export const BROKER_NO_LAUNCH_CODES = Object.freeze(['BROKER_RUNNER_NOT_ORIGINAL
 const trainFactsOrNull = f => { try { return validateTrainFacts(f); } catch { return null; } };
 
 // The one stage fact the resident engine parses (engine-windows.mjs#parseStageFact keeps v1 names).
-export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha256, broker, receipt, receiptBytes, outcome, outcomeBytes, controllerSid, preflightCode = null }) {
+export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha256, broker, receipt, receiptBytes, outcome, outcomeBytes, controllerSid, preflightCode = null, expectedJobIds = null }) {
   const fact = { contract: STAGE_FACT_CONTRACT, stage, nonce, manifest_sha256: workManifestSha256, state: 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED',
     failure_code: null, scm_start_call_issued: false, original_binary_restored: false, complete_original_readback: false, configuration_conflict_detected: false,
     tree_cleanup_confirmed: false, tree_active_processes: null, root_exit_confirmed: false, native_receipt_sha256: null, outcome: null, relay: null, train: null, broker_no_launch: false };
@@ -217,6 +218,17 @@ export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha
   const trainFacts = plan.stage === TRAIN_STAGE_NUMBER && boundOutcome ? trainFactsOrNull(outcome.train) : null;
   if (plan.stage === TRAIN_STAGE_NUMBER) fact.train = trainFacts;
   if (n.ok) {
+    // Stage 11: only a zero-effect bound outcome from this exact role/job can assert a role observation.
+    // A generic pre-input refusal (null stage/role/jobs) remains unconfirmed and cannot become held.
+    if (plan.stage === 11) {
+      const probe = boundOutcome && boundOutcome.stage === 11 && boundOutcome.entryRole === 'role-probe'
+        && Array.isArray(boundOutcome.jobIds) && boundOutcome.jobIds.length === 1 && HEX64.test(boundOutcome.jobIds[0] ?? '')
+        && Array.isArray(expectedJobIds) && expectedJobIds.length === 1 && boundOutcome.jobIds[0] === expectedJobIds[0]
+        && boundOutcome.status === 'BLOCKED' && boundOutcome.sideEffects === 0 && boundOutcome.mayHavePublished === false
+        ? roleProbeFact(boundOutcome.reason) : null;
+      if (!probe) return done('STAGE_OUTCOME_MISSING');
+      return { ...fact, state: SUCCESS_STATE, roleProbe: probe };
+    }
     if (plan.stage === TRAIN_STAGE_NUMBER) {
       if (!boundOutcome || boundOutcome.status !== 'TRAIN_FACTS' || boundOutcome.sideEffects !== 0 || boundOutcome.mayHavePublished !== false || !trainFacts) return done('STAGE_OUTCOME_MISSING');
       return { ...fact, state: SUCCESS_STATE };

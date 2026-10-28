@@ -37,7 +37,7 @@ const RECENT_MAX = 50, PENDING_MAX = 100, NOTICES_MAX = 50;
 export const ROW_STATES = Object.freeze(['QUEUED', 'RUNNING', 'PARKED', 'WAITING', 'BACKOFF', 'STOPPED', 'DONE']);
 export const NOTICE_KINDS = Object.freeze(['new-trigger', 'stopped', 'waiting-budget', 'batch-limit', 'breaker-open', 'queue-full', 'queue-unsaved', 'stage8-budget',
   // Phase 2, step 3a: main's branch rules do not hold it for a green, or a test merge is not the tested tree.
-  'stage8-rules']);
+  'stage8-rules', 'role-probe-uncertain', 'role-probe-connection']);
 export const BREAKER_STATES = Object.freeze(['closed', 'open', 'half-open']);
 export const NODE_MODES = Object.freeze(['ACTIVE', 'STANDBY', 'UNCERTAIN']);
 export const PROBE_RESULTS = Object.freeze(['held', 'not-held', 'uncertain']);
@@ -61,6 +61,13 @@ export class StatusBoard {
     this.content = next;
     this.changedAt = iso(this.clock());
     return true;
+  }
+
+  // Observation only: a held reply never changes mode. With no C3 mode installed it stays UNCERTAIN.
+  setRoleProbe(name, probe) {
+    if (!NODE_NAME.test(name ?? '')) return false;
+    const node = this.content.node;
+    return this.update({ node: { name, mode: node?.mode ?? 'UNCERTAIN', probe } });
   }
 
   // The executor's resting state after a tick; `since` moves only when the state or its reason changes.
