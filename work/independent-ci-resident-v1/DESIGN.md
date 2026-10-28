@@ -2829,3 +2829,68 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 - 随第 2 批的一次常驻层 Windows 重装生效（同一次 UAC 里重签 policy 的 `residentManifestSha256`）。不改 policy 合同、Source 或 Linux 工具。
 - 闸门不依赖 memguard 是否已装：没装时照样能读，只是低读数等不来整理，到上限就干净拒绝。
 - 不增加发布路径，不碰 GitHub，不用 App 凭据；伴侣只多一个只读的固定 argv。闸门只会让执行器晚开或不开一个扫描段，从不让它多做事；证明不了照旧 HALT；自动逻辑不写、不清除 `HALT.json`。
+
+## 33. r4 首次 HALT 的三项修复
+
+依据：2026-10-29 刚重装的 TURING 常驻在 PR #935 那一批上第一次 HALT（`UNEXECUTED_CLOSE_UNCONFIRMED`）。协调会话只读诊断出三件事；本节是对应的三项修复（第 2 批，代码、离线测试和本节，不装、不推）。
+
+### 33.1 现象与根因
+
+1. 已装的 `config\companion.json` 里 `bundleScript`、`relayScript` 指向 `source\0146f406…`（旧 Source），而机器上只装了 `source\03a75f76…`。第 0 段因此报 `BUNDLE_UNAVAILABLE`。`tools/build-package.mjs` 只替换占位符；`validateCompanionConfig` 和 `verify-resident.ps1` 都不看这两条路径。
+2. 关闭一个没执行的批次要跑 `archive-windows-spool.ps1`（Source resident-v2），它以服务账户 `NT SERVICE\CluedCIResident` 运行，调用 `NodeProfileV2.LoadProtectedProfile`。后者对档案文件的**每一级上级目录**用 `CreateFileW` 以 `0x20080`（READ_CONTROL | FILE_READ_ATTRIBUTES）打开（`NodeProfileV2.cs:124`、`:138-139`）。`C:\ProgramData\CluedIndependentCI` 当时给 SYSTEM F、Administrators F、Owner `0x120080`（只此目录）、clued-control RX，**没有**服务账户；而 `...\resident` 和 `...\resident\record` 是给了的。归档拒绝，`closeBatch` 返回 `verified=false`。
+3. 归档脚本自己的拒绝码没有带进回执和终止记录，只留下 `UNEXECUTED_CLOSE_UNCONFIRMED`，诊断因此很慢。
+
+### 33.2 (a) companion 的 Source 脚本路径必须在已装的 Source 里
+
+- `src/companion.mjs`：
+  - `COMPANION_PATH_KEYS`（五个带路径的键）、`NON_SOURCE_PATH_KEYS`（`wslExe`、`powershellExe`、`windowsSpool`）、`SOURCE_SCRIPT_KEYS`（其余：`relayScript`、`bundleScript`）。**带路径的键默认就是 Source 脚本**：以后新增一个路径键，不点名为“非 Source”就要受同一条规则约束。这是“其他任何 Source 脚本路径”的做法（现在配置的键集合固定，所以目前只有这两条）。
+  - `sourceDirectory(root, ciSourceManifestSha256)` 给出 `<root>\source\<hash>\`；`assertSourceScripts(c, { root, ciSourceManifestSha256 })` 要求每条 Source 脚本路径以它开头（不分大小写，同 Windows），其余部分是普通名字链：段只含 `[A-Za-z0-9_.@-]`，不为空，不为 `.` 或 `..`；因此没有正斜杠、冒号（数据流）和空格。
+  - 拒绝码固定：`COMPANION_SCRIPT_NOT_IN_SOURCE`，`detail` 只放键名（`relayScript` 或 `bundleScript`），不放路径和哈希；另有 `COMPANION_SOURCE_HASH_INVALID`、`COMPANION_SOURCE_ROOT_INVALID`。
+  - `validateCompanionConfig(c, source = null)`：给了 `source`（`{ root, ciSourceManifestSha256 }`）才查路径，不给则与以前完全一样，所以其余套件里用任意路径的夹具配置不受影响。已有检查的次序和码不变。
+- `tools/build-package.mjs`：占位符 `<sourceManifestSha256>` 改用 `replaceAll`；替换后用**这个包自己的** `ciSourceManifestSha256`（`record\source-manifest.json` 的哈希，也是 `source\<hash>\` 目录名）和固定安装根 `RESIDENT_INSTALL_ROOT` 调 `validateCompanionConfig`。输入文件里手写了别的 Source 的哈希（这次事故的样子），构建就以 `COMPANION_SCRIPT_NOT_IN_SOURCE` 失败，不会产出包。写了这个包自己哈希的字面路径同样可以。
+- `src/companion-main.mjs`：启动时读已装的 `record\source-manifest.json` 算哈希，用 `{ root: --root, ciSourceManifestSha256 }` 校验配置。配置指向别的 Source，伴侣不启动（`config\companion.json` 本来就由任务命令行里的 `--config-sha256` 钉住；这一步补的是它与已装 Source 的对应关系）。这一步在心跳之前，所以失败的伴侣不发心跳。
+- `windows/verify-resident.ps1`：新检查 `companion-source-scripts`（`Test-CompanionSourceScripts`）：两条脚本路径在 `<root>\source\<record\source-manifest.json 的哈希>\` 下、名字链合规、而且文件存在（是文件，不是目录）。detail 只有固定码加键名：`COMPANION_SCRIPT_NOT_IN_SOURCE:<key>`、`COMPANION_SCRIPT_MISSING:<key>`、`COMPANION_SOURCE_HASH_INVALID`、`COMPANION_CONFIG_UNREADABLE`。
+- 两边对同一份案例负责：`test/fixtures/companion-source-cases.json`（4 个接受、19 个拒绝，含事故里的两种、占位符未替换、`..`、空段、斜杠、数据流、兄弟目录、别的根）。JavaScript 侧在 `test/r4-first-halt.test.mjs`，PowerShell 侧在 `windows/test-resident-windows.ps1` 的 4f。
+
+### 33.3 (b) CI 根目录给服务账户一条 READ_CONTROL
+
+- 授予的东西与 Owner 在那里已有的一条完全一样：`(A;;0x120080;;;S-1-5-80-…)`，即 `NT SERVICE\CluedCIResident`（SID 与计划里 `...\resident` 用的是同一个字符串，`Get-ServiceSid`），**只此目录、不继承、无数据权、无写权、无删除、无改权限**。没有授予任何更宽的东西。
+- 做法放在安装计划里，不放在 Source 的 `acl-model.json`：`Get-AclPlan` 只能“新建带最终 ACL 的目录”，而这个目录早已存在（v1 一次性安装建的）；`acl-model.json` 的追加要到安装中途（服务建好之后）才跑，目录不合格时安装已经做了一半。放在安装计划里，演练（不带 `-Apply`）就能看到并拒绝。
+  - 安装计划 `resident-install-plan/6` → `/7`：新字段 `parentAcl`：`{ path, sid, ace, mask, inheritance, present, before }`。`before` 是那个目录现在的 DACL；计划哈希因此钉住“我看到的是这样”。
+  - `Get-ParentAclState`：目录必须存在、是真目录（不是链接）、DACL 受保护；服务 SID 在上面没有 ACE，或恰好有这一条（`present`，例如 Owner 已用 icacls 手工加过）。别的任何服务 SID 的 ACE（更宽、带写、带继承、拒绝）都是 `PARENT_ACL_HAS_OTHER_RESIDENT_ACES`。其他码：`PARENT_ACL_TARGET_MISSING`、`PARENT_ACL_TARGET_REFUSED`、`PARENT_ACL_UNREADABLE`（读不了那个目录的 DACL：Owner 自己那条 READ_CONTROL 不在）、`PARENT_ACL_NOT_PROTECTED`。
+  - 新步骤 `parent-acl`，在 `directories` 之后、`package-copy` 之前：`Add-ParentAce` 重新读 DACL，与计划的 `before` 不同则 `PARENT_ACL_CHANGED_SINCE_PLAN`（什么都不写）；否则只写 DACL 一节（不写所有者、组、SACL），在原 SDDL 末尾追加这一条；读回要求：服务 SID 恰好这一条、原有每条 ACE 都在、总数多一。`present` 时什么都不写（幂等）。回执多一个 `parentAcl: { path, sid, ace, wrote }`（回执合同不变，仍是 `/5`，字段只增不减）。
+  - 这是安装脚本唯一对**已有**目录追加的 ACE；脚本头部“不覆盖、不删除、不改 ACL”的说明已写明这个例外。
+- `verify-resident.ps1`：新检查 `ci-root-resident-read-control`（`Test-ParentAclRule`）：读 `C:\ProgramData\CluedIndependentCI` 的**现场** ACL，服务 SID 恰有一条允许 ACE，掩码 `0x120080`，标志为 0（不继承）。多了、少了、更宽、带继承、是拒绝，都不过。读的是现场而不是回执，所以手工加的也算。读不到记 `unreadable`（与其他需要提权的检查相同）。`Get-ServiceSid` 在安装与 verify 里逐字相同（测试钉住）。
+- **`formal-spool-acl.ps1`（桥 v4）**：它也调 `LoadProtectedProfile`，但它不以服务账户运行：`-RelayReadOutgoing` 要求当前 SID 是 Owner，`-AllowControllerWrite` 要求是 clued-control，否则以 `FIXED_PUBLIC_SPOOL_REQUIRED` 退出。所以这条服务 ACE 不是为它加的，也不影响它：Owner 的上级目录访问靠 Owner 自己那条（§8.3 的前提），clued-control 靠它的 RX。反过来，它沿路检查上级目录的“可写祖先”时，服务这条 `0x120080` 不含任何写、删除、改权限的位，不会触发 `WRITABLE_ANCESTOR_REFUSED`。`LoadProtectedProfile` 的另外两个调用者：`relay-public.ps1`（Owner 的伴侣）和 `archive-windows-spool.ps1`（服务账户，本次事故）；SwapBroker 用 `ReadBrokerConfig`，以 LocalSystem 运行，SYSTEM 在那里是 F。
+- `NodeProfilePublicFileV2.ValidateBootstrapAcl` 不会因这一条拒绝：它只拒非管理方持有的写、删除、改权限、改所有者位（受保护树里还拒绝 `Write`），`0x120080` 都不含。
+
+### 33.4 (c) 归档自己的码带进回执和终止记录
+
+- `src/engine-windows.mjs`：
+  - `windowsArchiveCode(r, v)`：脚本打印的 `code`（符合 `CODE`）→ 否则 Runner 的 `refused` 码 → 否则超时给 `WINDOWS_ARCHIVE_TIMED_OUT` → 否则 `WINDOWS_ARCHIVE_UNCONFIRMED`。不符合 `CODE` 的字符串（自由文本、路径、系统消息）一律丢弃，用后面的固定码。
+  - `archiveWindows` 现在也解析脚本**非零退出时**的标准输出（脚本失败时打印 JSON 判决，退出码 2；以前只在退出 0 时解析，失败的码就丢了）。返回 `{ verified, directory, moved, archiveCode }`，`verified` 时 `archiveCode` 为 `null`。退出 0 但输出不是判决，仍然抛 `WINDOWS_ARCHIVE_UNCONFIRMED`（没改）。`verified` 仍要求退出 0。
+  - `closeBatch` 返回 `{ verified, archived, archiveCode }`（Windows 一半没过才有码；Windows 过了而 Linux 没过，码为 `null`：它不说 Linux 的事）；`archiveFailure` 返回 `archiveWindows` 的结果。
+- `src/executor.mjs`：
+  - 归档检查改用 `archiveCheck(ok, code, windows)`：失败时抛的 `ResidentError` 带 `windowsArchiveCode`（只有在 `windows.verified !== true` 且码符合 `CODE` 时）。涉及 `REARM_WINDOWS_ARCHIVE_UNCONFIRMED`（两处）、`FAILURE_ARCHIVE_UNCONFIRMED`（三处）、`SUCCESS_PATH_ARCHIVE_UNCONFIRMED`、`UNEXECUTED_CLOSE_UNCONFIRMED`。
+  - 所有把这类错误交给 `unknown()` 的 `catch` 都把 `archiveFacts(error)` 并进 `extra`；`unknown()` 把 `windowsArchiveCode` 写进 **HALT 的 facts**（两次 `haltWith`）、**`FAILED_UNKNOWN` 终止记录的 facts**（本来就展开 `extra`）和 **`batch-terminal` 回执**；`halt` 回执跟着 HALT 的 facts 带上它。重新武装时归档被拒，`owner-request-refused` 回执带上它。
+  - 没有归档码、或码不符合 `CODE`：所有记录与以前逐字节相同（测试断言键不存在）。
+- 这次事故重放后，HALT 记录会是：`code: UNEXECUTED_CLOSE_UNCONFIRMED`，`facts: { key, basis: 'failure-handling-unconfirmed', windowsArchiveCode: 'PROFILE_HANDLE_OPEN_REFUSED' }`（`PROFILE_HANDLE_OPEN_REFUSED` 是 `NodeProfileV2` 的 `Deny` 码，由脚本的 catch 取出）。
+- 不做的事：不改 Source 的归档脚本，不加自由文本，不把 Linux 的码也塞进来（Linux 一半的码本来在伴侣答复里，不在本次范围）。
+
+### 33.5 与任务说明的差异
+
+1. 任务说明写“安装 ACL 计划（`Get-AclPlan`）加这一条”。`Get-AclPlan` 的键都是 `$Root`（`...\resident`）之下**新建**的目录，父目录放不进去；所以新增 `parentAcl`（计划字段）和 `parent-acl`（步骤），不改 `Get-AclPlan` 本身。计划合同 `/6` → `/7`；回执合同不动。
+2. 没有 JS 镜像：计划只有 PowerShell 一份。JS 侧的文本级测试只钉住形状（掩码、没有继承位、步骤顺序、唯一的 `SetAccessControl`）；行为在 `test-resident-windows.ps1` 里对草稿目录实测。
+3. 没有改 `work/actions-hosted-migration/independent-ci-v1` 下任何文件（任务说明允许改，但没有需要）。
+
+### 33.6 测试与演练
+
+- `test/r4-first-halt.test.mjs`（新，14 项）：共享案例（JS 侧）；拒绝不泄路径；键分类；`validateCompanionConfig` 带与不带 Source；伴侣启动的文本钉住；包构建（占位符、字面的本包哈希、两种旧 Source、别的根）；安装/verify 的文本级事实；`windowsArchiveCode`；`archiveWindows`/`closeBatch`/`archiveFailure` 的码（含退出 2、垃圾输出、自由文本码、超时、Runner 拒绝）；执行器四条路径（没执行的关闭、失败归档、成功路径、重新武装）和“没有码则记录不变”。
+- `windows/test-resident-windows.ps1` 新增 4f（76 项，294 → 370）：verify 的 Source 脚本检查对同一份案例（含文件缺失、目录不是脚本、坏哈希、另一个 Source），以及 verify 主流程里的那几行原样对草稿安装根跑一遍（旧 Source 的配置哪怕文件存在也不过；配置不是回执钉的那份；脚本缺失）；`Get-ServiceSid` 与已知 SID 一致、安装与 verify 逐字相同；`parent-acl` 在草稿目录（受保护 DACL，像真的那样）上：计划状态、追加、恰好 `0x120080`/无继承/无数据与写权、与 Owner 那条相同、原有 ACE 全留、仍受保护、所有者不变、verify 接受；幂等；手工加的算已有；更宽、带写、带继承、读数据、拒绝五种都被计划和 verify 拒绝；不受保护、缺失、文件、链接被拒；计划后变了被拒且什么都没写。
+- 其余：`node --test`、离线演练、`test-install-carry.ps1`、PowerShell 离线测试全部通过，数量见任务报告。
+
+### 33.7 生效与不变量
+
+- 都要随第 2 批的一次常驻层 Windows 重装才在这台机器上生效。重装时 `parent-acl` 会把那条 ACE 加上；如果 Owner 事先已手工加了完全相同的一条（`icacls C:\ProgramData\CluedIndependentCI /grant "NT SERVICE\CluedCIResident:(Rc,S,RA)"` 得到的就是 `0x120080`、不继承），计划里 `present = true`，步骤什么都不写。本次没有对机器做任何事，这条命令也没有运行。
+- 新主机的前提不变：CI 根目录要先有 Owner 自己的 `0x120080`（§8.3）；安装不替 Owner 加这一条。
+- 没有新的发布路径，不碰 GitHub、凭据或网络；不读写 `HALT.json`；服务账户只多一条只读的、只此目录的 `0x120080`。
