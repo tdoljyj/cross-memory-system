@@ -11,7 +11,7 @@ import { lane } from '../src/companion-main.mjs';
 import { COMPANION_CONFIG_CONTRACT, Companion, jobTreeOf, validateCompanionConfig } from '../src/companion.mjs';
 import { Mailbox, RESPONSE_CONTRACT } from '../src/mailbox.mjs';
 import { mailboxCompanion } from '../src/service-ports.mjs';
-import { executorFixture, fakeCompanion, fakeEngine, tempRoot, triggerBytes } from './helpers.mjs';
+import { TEST_NODE, TEST_NODE_SHA, executorFixture, fakeCompanion, fakeEngine, tempRoot, triggerBytes } from './helpers.mjs';
 
 const NONCE = '0123456789abcdef0123456789abcdef';
 const HOST = 'C:\\ProgramData\\CluedIndependentCI\\resident\\bin\\CluedCompanionJobHost.exe';
@@ -185,7 +185,7 @@ test('the mailbox lane goes on after a timed-out child: the next request is answ
 });
 
 const cfg = validateCompanionConfig({
-  contract: COMPANION_CONFIG_CONTRACT,
+  contract: COMPANION_CONFIG_CONTRACT, node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA,
   wslExe: 'C:\\Windows\\System32\\wsl.exe',
   powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
   relayScript: 'C:\\ProgramData\\CluedIndependentCI\\resident\\source\\relay-public.ps1',

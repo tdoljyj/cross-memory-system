@@ -17,9 +17,16 @@ $here = $PSScriptRoot
 $n = 0
 function Yes([bool]$ok, [string]$what) { if (-not $ok) { throw ('FAILED:' + $what) }; $script:n++ }
 
-$tokens = $null; $errors = $null
-[void][Management.Automation.Language.Parser]::ParseFile((Join-Path $here 'test-job-host.ps1'), [ref]$tokens, [ref]$errors)
-Yes ($errors.Count -eq 0) 'parse:test-job-host.ps1'
+foreach ($file in @('test-job-host.ps1', 'install-resident.ps1', 'verify-resident.ps1')) {
+  $tokens = $null; $errors = $null
+  [void][Management.Automation.Language.Parser]::ParseFile((Join-Path $here $file), [ref]$tokens, [ref]$errors)
+  Yes ($errors.Count -eq 0) ('parse:' + $file)
+}
+# The installer compiles the host with exactly the flags used below, from the installed resident copy, and pins it; verify checks the pin.
+$install = [IO.File]::ReadAllText((Join-Path $here 'install-resident.ps1'))
+Yes ($install.Contains('& $Csc /nologo /noconfig /target:winexe /platform:x64 /optimize+ "/reference:$($fw)System.dll" ("/out:" + $jobHost) (Join-Path $Root (''resident\'' + $plan.residentManifestSha256 + ''\windows\CompanionJobHost.cs''))')) 'install-compiles-host'
+Yes ($install.Contains('$script:receipt.companionJobHostSha256 = Sha256File $jobHost') -and $install.Contains("`$CompanionJobHost = 'CluedCompanionJobHost.exe'")) 'install-pins-host'
+Yes ([IO.File]::ReadAllText((Join-Path $here 'verify-resident.ps1')).Contains("Record 'companion-job-host-pin' ((Sha256File (Join-Path `$Root 'bin\CluedCompanionJobHost.exe')) -ceq [string]`$receipt.companionJobHostSha256)")) 'verify-checks-host-pin'
 
 # 1. Compile exactly as install-resident.ps1 does (winexe: never a console window of its own).
 $fw = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\'

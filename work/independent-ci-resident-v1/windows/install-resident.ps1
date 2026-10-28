@@ -53,6 +53,9 @@ $TargetShape = '^(?:(?:resident|source)\\[0-9a-f]{64}(?:\\[A-Za-z0-9_.@-]+)+|(?:
 # source\<ciSourceManifestSha256>\ (the directory the generic helper loads code from), and the ONE generic
 # helper is compiled here from that installed Source and pinned in config\broker.json.
 $GenericHelper = 'controller-formal-generic-v2.exe'
+# DESIGN §24 (Task 8e1f07d3): the companion's job host, compiled here from the installed resident copy into bin\ (admin-only,
+# read and run by the Owner). The companion starts every child through it and refuses to start without it.
+$CompanionJobHost = 'CluedCompanionJobHost.exe'
 $SourceV2Windows = 'work\actions-hosted-migration\independent-ci-v1\src\resident-v2\windows'
 
 # ---- Privilege boundary (independent review of PR-A: MAJOR-1, MINOR-2, MINOR-4, MINOR-5) ----
@@ -320,7 +323,7 @@ function Build-Plan {
     policySha256 = (& $find 'config\policy.json'); companionConfigSha256 = (& $find 'config\companion.json')
     nodeSha256 = (& $find 'runtime\node.exe')
     ciSourceManifestSha256 = $pkg.ciSourceManifestSha256; bridgeManifestSha256 = $pkg.bridgeManifestSha256
-    recordSourceManifestSha256 = (& $find 'record\source-manifest.json'); acceptanceSha256 = (& $find 'record\acceptance.json'); genericHelper = $GenericHelper
+    recordSourceManifestSha256 = (& $find 'record\source-manifest.json'); acceptanceSha256 = (& $find 'record\acceptance.json'); genericHelper = $GenericHelper; companionJobHost = ('bin\' + $CompanionJobHost)
     files = @($pkg.files).Count
     acl = Get-AclPlan $res
     runnerBefore = Read-RunnerState
@@ -432,6 +435,11 @@ Step 'service-hosts' {
   & $Csc /nologo /noconfig /target:winexe /platform:x64 /optimize+ /main:CluedWindowsFormalEntryV2 "/reference:$($fw)System.dll" "/reference:$($fw)System.Core.dll" "/reference:$($fw)System.Web.Extensions.dll" ("/out:" + $helper) (Join-Path $v2 'FormalPublicBoundaryV2.cs') (Join-Path $v2 'FormalSession0V2.cs') (Join-Path $v2 'ScmPidHandshakeV2.cs') (Join-Path $v2 'NodeProfileV2.cs') | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'GENERIC_HELPER_COMPILE_FAILED' }
   $script:receipt.genericHelperSha256 = Sha256File $helper
+  # The companion's job host (DESIGN §24), with the generic helper's flags (winexe: never a console window of its own).
+  $jobHost = Join-Path $Root ('bin\' + $CompanionJobHost)
+  & $Csc /nologo /noconfig /target:winexe /platform:x64 /optimize+ "/reference:$($fw)System.dll" ("/out:" + $jobHost) (Join-Path $Root ('resident\' + $plan.residentManifestSha256 + '\windows\CompanionJobHost.cs')) | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw 'COMPANION_JOB_HOST_COMPILE_FAILED' }
+  $script:receipt.companionJobHostSha256 = Sha256File $jobHost
   } finally { Pop-Location }
 }
 # 3b. Broker configuration: the Owner SID of the v1 mutation mutex, the original binary, the runner's
