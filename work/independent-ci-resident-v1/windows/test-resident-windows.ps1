@@ -202,7 +202,7 @@ $verifyText = Get-Content -LiteralPath (Join-Path $here 'verify-resident.ps1') -
 #     changed: every path below is in the scratch directory (the install's production targets are only compared as text), the
 #     only key is a throw-away RSA key node generates into the scratch directory, the only token a made-up string.
 foreach ($name in @('install-resident.ps1:Get-NodeIdentity', 'install-resident.ps1:ConvertTo-NodeIdentityCanonical', 'install-resident.ps1:Sha256Text', 'install-resident.ps1:Sha256File', 'install-resident.ps1:Read-PackageRecordFile', 'install-resident.ps1:Get-PackageNodeIdentity',
-  'install-resident.ps1:Get-SecretFileSddl', 'install-resident.ps1:Get-SecretDirectorySddl', 'install-resident.ps1:Open-PackageFileHeld', 'install-resident.ps1:Get-SecretFingerprint', 'install-resident.ps1:Read-SecretSource',
+  'install-resident.ps1:Get-SecretFileSddl', 'install-resident.ps1:Get-SecretDirectorySddl', 'install-resident.ps1:New-SecretWorkDirectory', 'install-resident.ps1:Test-BytesEqualClear', 'install-resident.ps1:Write-New', 'install-resident.ps1:Get-SecretFingerprint', 'install-resident.ps1:Read-SecretSource',
   'install-resident.ps1:Get-SecretsPlan', 'install-resident.ps1:Clear-SecretBytes', 'install-resident.ps1:Write-NewSecret', 'install-resident.ps1:Get-DaclPart')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }
 foreach ($var in @('NodeIdentityRefs', 'NodeIdentityKeys')) {
   Yes ($installText -match ('(?m)^\$' + $var + ' = @\([^\r\n]+\)')) ('present:' + $var); $line = $Matches[0]; . ([scriptblock]::Create($line))
@@ -277,7 +277,7 @@ Write-IdentityPackage (Join-Path $Scratch 'identity-package-edited') $nd $nd.ide
 [IO.File]::WriteAllText((Join-Path $PackageRoot 'record\installation.json'), '{"appKeyId":1}'); Yes (Test-Refused { Get-PackageNodeIdentity } 'PACKAGE_FILE_CHANGED:record\installation.json') 'package-identity-bytes-pin'
 
 # The verify side: the receipt's identity against the installed record, and the receipt's word about the two files.
-foreach ($name in @('Get-Field', 'Sha256Text', 'Test-SecretFileSecurity', 'Test-NodeIdentityReceipt', 'Test-SecretsReceipt', 'Get-SecretFileState')) { Yes ($functions.ContainsKey('verify-resident.ps1:' + $name)) ('verify-present:' + $name); . ([scriptblock]::Create($functions['verify-resident.ps1:' + $name])) }
+foreach ($name in @('Get-Field', 'Sha256Text', 'Test-SecretFileSecurity', 'Test-NodeIdentityReceipt', 'Test-SecretsReceipt', 'Get-SecretFileState', 'Test-SecretAclChain', 'Get-SecretPathState')) { Yes ($functions.ContainsKey('verify-resident.ps1:' + $name)) ('verify-present:' + $name); . ([scriptblock]::Create($functions['verify-resident.ps1:' + $name])) }
 Yes ($verifyText -match '(?m)^\$SecretAdmins = @\([^\r\n]+\)') 'verify-present:SecretAdmins'; . ([scriptblock]::Create($Matches[0]))
 . ([scriptblock]::Create($targetsLine))
 function New-IdentityReceipt($id, [string]$role = 'NONE', [bool]$keyPlaced = $true, [bool]$tokenPlaced = $false) {
@@ -344,6 +344,83 @@ foreach ($pair in @(
   Yes (-not (Test-SecretFileSecurity (New-Acl $pair[1]) $ctrl)) ('secret-file-acl:refused:' + $pair[0])
 }
 
+# 4d-2. (C7 review MINOR-2, NIT-2, MINOR-1 literals.) The folders that hold the secrets and every ancestor, by the runtime's own rule
+#       (runtime/verify-install-acl.ps1, -ReadFile); the read-back copy of a placed secret is zeroed; the work directory's production values.
+$ti = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'   # NT SERVICE\TrustedInstaller, an administrator principal for the runtime
+$pdFolder = 'O:SYG:SYD:(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;BU)(A;;0x6;;;BU)(A;OICIIO;FA;;;CO)'   # C:\ProgramData like: users may create siblings
+$rootFolder = 'O:' + $ti + 'G:SYD:(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;BU)(A;;0x4;;;AU)(A;OICIIO;0x1301bf;;;AU)'   # C:\ like
+$protFolder = 'O:BAG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;' + $ctrl + ')'                         # CluedControl: the protected root
+$secFolder = 'O:BAG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;' + $ctrl + ')'                          # trusted / secrets: the secret folder
+function New-ChainItem([string]$sddl, [bool]$protected, [bool]$secret) { $a = New-Object Security.AccessControl.DirectorySecurity; $a.SetSecurityDescriptorSddlForm($sddl); @{ acl = $a; protected = $protected; secret = $secret } }
+function Pick-Edit($edit, [string]$key, [string]$default) { if ($edit.ContainsKey($key)) { $edit[$key] } else { $default } }
+function Get-Chain([string]$root = $rootFolder, [string]$pd = $pdFolder, [string]$prot = $protFolder, [string]$sec = $secFolder) { @((New-ChainItem $root $false $false), (New-ChainItem $pd $false $false), (New-ChainItem $prot $true $false), (New-ChainItem $sec $true $true)) }
+Yes ((Test-SecretAclChain (Get-Chain) $ctrl) -ceq 'ok') 'secret-path:what-the-controller-install-and-this-install-leave-passes'
+foreach ($case in @(
+  @('a pre-created secret folder inheriting Users read and execute', 'secret-reader', @{ sec = $secFolder + '(A;OICI;0x1200a9;;;BU)' }),
+  @('the secret folder readable by Authenticated Users', 'secret-reader', @{ sec = $secFolder + '(A;;0x1200a9;;;AU)' }),
+  @('the secret folder listable by Everyone', 'secret-reader', @{ sec = $secFolder + '(A;;0x1;;;WD)' }),
+  @('Users may create files in the secret folder', 'writable-ancestor', @{ sec = $secFolder + '(A;;0x2;;;BU)' }),
+  @('the controller may write in the secret folder', 'writable-ancestor', @{ sec = 'O:BAG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;' + $ctrl + ')' }),
+  @('Users may append in the protected root', 'writable-ancestor', @{ prot = $protFolder + '(A;;0x4;;;BU)' }),
+  @('Users may delete children of the protected root', 'writable-ancestor', @{ prot = $protFolder + '(A;;0x40;;;BU)' }),
+  @('Users may delete C:\ProgramData', 'writable-ancestor', @{ pd = $pdFolder + '(A;;0x10000;;;BU)' }),
+  @('Users may change permissions of C:\ProgramData', 'writable-ancestor', @{ pd = $pdFolder + '(A;;0x40000;;;BU)' }),
+  @('Users may take ownership of C:\ProgramData', 'writable-ancestor', @{ pd = $pdFolder + '(A;;0x80000;;;BU)' }),
+  @('Users may delete children of C:\ProgramData', 'writable-ancestor', @{ pd = $pdFolder + '(A;;0x40;;;BU)' }),
+  @('Authenticated Users have modify (with delete) on C:\', 'writable-ancestor', @{ root = $rootFolder + '(A;;0x1301bf;;;AU)' }),
+  @('the owner of the drive root is not an administrator', 'owner-refused', @{ root = 'O:' + $me + 'G:SYD:(A;;FA;;;SY)(A;;FA;;;BA)' }),
+  @('the owner of C:\ProgramData is not an administrator', 'owner-refused', @{ pd = 'O:' + $me + 'G:SYD:(A;;FA;;;SY)(A;;FA;;;BA)' }),
+  @('the owner of the protected root is not an administrator', 'owner-refused', @{ prot = 'O:BUG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)' }),
+  @('the owner of the secret folder is not an administrator', 'owner-refused', @{ sec = 'O:' + $me + 'G:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;' + $ctrl + ')' }))) {
+  $edit = $case[2]
+  $items = Get-Chain (Pick-Edit $edit 'root' $rootFolder) (Pick-Edit $edit 'pd' $pdFolder) (Pick-Edit $edit 'prot' $protFolder) (Pick-Edit $edit 'sec' $secFolder)
+  Yes ((Test-SecretAclChain $items $ctrl) -ceq $case[1]) ('secret-path:refused:' + $case[0])
+}
+# what the runtime lets pass is not refused here either: reads in the non-secret folders, create-only rights in OS ancestors, entries that
+# only apply to children (inherit-only), deny entries, attribute-only reads
+foreach ($case in @(
+  @('Users may read the protected root (not a secret folder)', @{ prot = $protFolder + '(A;;0x1200a9;;;BU)' }),
+  @('an inherit-only entry for Users in the secret folder (it applies to children, which the file check judges)', @{ sec = $secFolder + '(A;OICIIO;FA;;;BU)' }),
+  @('a deny entry for Users in the secret folder', @{ sec = 'O:BAG:SYD:P(D;;FA;;;BU)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;' + $ctrl + ')' }),
+  @('Users may read attributes of the secret folder', @{ sec = $secFolder + '(A;;0x80;;;BU)' }))) {
+  $edit = $case[1]
+  $items = Get-Chain (Pick-Edit $edit 'root' $rootFolder) (Pick-Edit $edit 'pd' $pdFolder) (Pick-Edit $edit 'prot' $protFolder) (Pick-Edit $edit 'sec' $secFolder)
+  Yes ((Test-SecretAclChain $items $ctrl) -ceq 'ok') ('secret-path:passes:' + $case[0])
+}
+# the live walk: a missing secret folder, a link, and an ordinary folder under the scratch directory (its owner is not an administrator)
+$walk = Join-Path $Scratch 'secret-walk'; [void][IO.Directory]::CreateDirectory($walk)
+Yes ((Get-SecretPathState (Join-Path $walk 'nowhere\controller-checks-app.pem') $ctrl) -ceq 'absent') 'secret-path:live:a-missing-secret-folder'
+$walkTarget = Join-Path $walk 'real'; [void][IO.Directory]::CreateDirectory($walkTarget); $walkLink = Join-Path $walk 'linked'
+$null = New-Item -ItemType Junction -Path $walkLink -Target $walkTarget
+Yes ((Get-SecretPathState (Join-Path $walkLink 'ci-admission.token') $ctrl) -ceq 'link-refused') 'secret-path:live:a-linked-secret-folder'
+[IO.Directory]::Delete($walkLink)
+Yes (@('owner-refused', 'writable-ancestor') -ccontains (Get-SecretPathState (Join-Path $walkTarget 'ci-admission.token') $ctrl)) 'secret-path:live:an-ordinary-folder-is-refused'
+Yes ($verifyText.Contains("'app-key-directories'") -and $verifyText.Contains("'ci-admission-token-directories'") -and $verifyText.Contains('Get-SecretPathState $SecretTargets[$spec[1]] $Node.controllerSid')) 'secret-path:verify-records-both-folder-checks'
+# the read-back copy of a placed secret is compared and then zeroed (the caller never sees it)
+$a = [byte[]](1..40); $b = [byte[]](1..40)
+Yes ((Test-BytesEqualClear $a $b) -eq $true -and @($a | Where-Object { $_ -ne 0 }).Count -eq 0 -and @($b | Where-Object { $_ -eq 0 }).Count -eq 0) 'place:read-back-copy-is-zeroed-after-a-match'
+$a = [byte[]](1..40); $b = [byte[]](2..41)
+Yes ((Test-BytesEqualClear $a $b) -eq $false -and @($a | Where-Object { $_ -ne 0 }).Count -eq 0) 'place:read-back-copy-is-zeroed-after-a-mismatch'
+Yes ($functions['install-resident.ps1:Write-NewSecret'].Contains('Test-BytesEqualClear ([IO.File]::ReadAllBytes($path)) $bytes') -and -not $functions['install-resident.ps1:Write-NewSecret'].Contains('$copy')) 'place:write-new-secret-keeps-no-copy'
+# the work directory the fingerprint check runs from: production values, and what it is
+Yes ($installText -match "(?m)^\`$SecretWorkParent = 'C:\\Windows\\Temp'\s*$") 'fingerprint-work:parent-is-windows-temp'
+Yes ($installText -match "(?m)^\`$SecretWorkSddl = '(O:BAG:BAD:P\(A;OICI;FA;;;SY\)\(A;OICI;FA;;;BA\))'\s*$") 'fingerprint-work:production-sddl'; $workSddl = $Matches[1]
+$workAces = @((New-Object Security.AccessControl.RawSecurityDescriptor($workSddl)).DiscretionaryAcl)
+Yes ($workAces.Count -eq 2 -and @($workAces | Where-Object { $_.SecurityIdentifier.Value -in @('S-1-5-18', 'S-1-5-32-544') -and $_.AccessMask -eq 0x1f01ff -and [int]$_.AceFlags -eq 3 }).Count -eq 2 -and (New-Object Security.AccessControl.RawSecurityDescriptor($workSddl)).Owner.Value -ceq 'S-1-5-32-544' -and ((New-Object Security.AccessControl.RawSecurityDescriptor($workSddl)).ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0) 'fingerprint-work:only-system-and-administrators-owner-administrators-protected'
+$installCode = @((Get-Content -LiteralPath (Join-Path $here 'install-resident.ps1')) | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+Yes (-not $installCode.Contains('Open-PackageFileHeld') -and -not ($functions['install-resident.ps1:Get-SecretFingerprint'] -match '\$PackageRoot|Join-Path \$PackageRoot')) 'fingerprint-work:nothing-runs-from-the-package-directory'
+$workParentScratch = Join-Path $Scratch 'secret-work'; [void][IO.Directory]::CreateDirectory($workParentScratch)
+$workTestSddl = 'D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;' + $me + ')'   # this account stands in for the elevated Owner
+$wd1 = New-SecretWorkDirectory $workParentScratch $workTestSddl; $wd2 = New-SecretWorkDirectory $workParentScratch $workTestSddl
+Yes ((Split-Path -Leaf $wd1) -cmatch '^clued-secret-check-[0-9a-f]{32}$' -and $wd1 -cne $wd2 -and (Test-Path -LiteralPath $wd1 -PathType Container)) 'fingerprint-work:random-name'
+$fixedLeaf = New-SecretWorkDirectory $workParentScratch $workTestSddl 'fixed-leaf'
+Yes (Test-Refused { New-SecretWorkDirectory $workParentScratch $workTestSddl 'fixed-leaf' } 'SECRET_WORK_DIRECTORY_EXISTS') 'fingerprint-work:an-existing-directory-is-never-reused'
+Write-New (Join-Path $fixedLeaf 'node.exe') ([byte[]](1..20))
+$inside = @((New-Object Security.AccessControl.RawSecurityDescriptor((Get-Acl -LiteralPath (Join-Path $fixedLeaf 'node.exe')).Sddl)).DiscretionaryAcl | ForEach-Object { $_.SecurityIdentifier.Value })
+Yes (@($inside | Where-Object { @('S-1-5-18', 'S-1-5-32-544', $me) -cnotcontains $_ }).Count -eq 0 -and $inside.Count -eq 3) 'fingerprint-work:what-is-copied-in-inherits-the-same-short-list'
+Yes ((@(New-Object Security.AccessControl.RawSecurityDescriptor((Get-Acl -LiteralPath $fixedLeaf).Sddl)).ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0) 'fingerprint-work:protected-against-inheritance'
+foreach ($d in @($wd1, $wd2, $fixedLeaf)) { Remove-Item -LiteralPath $d -Recurse -Force }
+
 # 4e. The fingerprint check and the placement, against a scratch package and scratch targets (the real node and the real tool of this
 #     checkout run on a throw-away key and a made-up token). Skipped, and said so in the result, when this machine has no node.
 $secretCheck = 'skipped-no-node'
@@ -366,6 +443,8 @@ if (Test-Path -LiteralPath $probeNode) {
     $script:pkgBytes = $enc.GetBytes(($m | ConvertTo-Json -Depth 6)); $script:PackageRoot = $sp; $script:ExpectedPackageManifestSha256 = Sha256Bytes $script:pkgBytes
   }
   Write-SecretPackage
+  # The fingerprint check runs from a work directory it creates: here under the scratch directory, with this account standing in for the elevated Owner.
+  $script:SecretWorkParent = $workParentScratch; $script:SecretWorkSddl = $workTestSddl; $script:elevated = $true
   # A throw-away RSA key, made by node in the scratch directory, with the runtime's own formula for its fingerprint.
   $gen = Join-Path $Scratch 'make-throwaway-key.mjs'
   [IO.File]::WriteAllText($gen, "import { generateKeyPairSync, createHash, createPublicKey } from 'node:crypto'; import fs from 'node:fs';`nconst { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });`nconst pem = privateKey.export({ type: 'pkcs8', format: 'pem' }); fs.writeFileSync(process.argv[2], pem);`nconsole.log(createHash('sha256').update(createPublicKey(pem).export({ type: 'spki', format: 'der' })).digest('base64'));")
@@ -380,12 +459,31 @@ if (Test-Path -LiteralPath $probeNode) {
   Yes ((Get-SecretFingerprint 'ci-token' $tokenBytes) -ceq $tokenPin) 'fingerprint:ci-token-equals-the-runtime-pin'
   Yes ((Get-SecretFingerprint 'ci-token' $enc.GetBytes($tokenText)) -ceq $tokenPin) 'fingerprint:ci-token-without-newline'
   Yes ($null -eq (Get-SecretFingerprint 'app-key' $enc.GetBytes('not a key')) -and $null -eq (Get-SecretFingerprint 'ci-token' $enc.GetBytes('clued_bnd_x')) -and $null -eq (Get-SecretFingerprint 'app-key' $tokenBytes)) 'fingerprint:not-a-key-not-a-token-refused'
-  # held open: no writer, no deleter while the install runs the tool; free again afterwards
-  $held = Open-PackageFileHeld ('resident\' + $residentSha + '\tools\secret-fingerprint.mjs')
-  $blocked = $false; try { $w = [IO.File]::Open($held.path, 'Open', 'Write', 'ReadWrite'); $w.Dispose() } catch [IO.IOException] { $blocked = $true }
-  $held.stream.Dispose()
-  $w = [IO.File]::Open((Join-Path $sp 'resident\tools\secret-fingerprint.mjs'), 'Open', 'Write', 'ReadWrite'); $w.Dispose()
-  Yes $blocked 'package-file-held-open-against-writers'
+  # C7 review MINOR-1: nothing is run from the package directory (usually writable by non-admins; node.exe loads DLLs from its own directory
+  # first). Control first: planted DLLs next to a node.exe do break that node when it is run from there (error mode set so no dialog opens).
+  Add-Type -Namespace CluedResidentTest -Name ErrorMode -MemberDefinition '[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern uint SetErrorMode(uint mode);'
+  $dlls = @('WINMM', 'IPHLPAPI', 'USERENV', 'dbghelp')
+  $oldMode = [CluedResidentTest.ErrorMode]::SetErrorMode(0x8003)
+  try {
+    $control = Join-Path $Scratch 'dll-control'; [void][IO.Directory]::CreateDirectory($control); Copy-Item -LiteralPath $probeNode -Destination (Join-Path $control 'node.exe')
+    foreach ($dll in $dlls) { [IO.File]::WriteAllBytes((Join-Path $control ($dll + '.dll')), [byte[]](1..64)) }
+    $null = & (Join-Path $control 'node.exe') -v 2>&1
+    Yes ($LASTEXITCODE -ne 0) 'sideload-control:planted-dlls-break-a-node-run-from-its-own-directory'
+    Remove-Item -LiteralPath $control -Recurse -Force
+    # The same files next to the PACKAGE's node.exe: they are not in the manifest, so the hash checks cannot see them, and the fingerprint
+    # still comes out right because the copy in the fresh directory is what runs.
+    foreach ($dll in $dlls) { [IO.File]::WriteAllBytes((Join-Path $sp ('runtime\' + $dll + '.dll')), [byte[]](1..64)) }
+    Yes ((Get-SecretFingerprint 'ci-token' $tokenBytes) -ceq $tokenPin -and (Get-SecretFingerprint 'app-key' $keyBytes) -ceq $fpA) 'fingerprint:planted-dlls-next-to-the-package-node-are-never-loaded'
+    foreach ($dll in $dlls) { Remove-Item -LiteralPath (Join-Path $sp ('runtime\' + $dll + '.dll')) -Force }
+  } finally { [void][CluedResidentTest.ErrorMode]::SetErrorMode($oldMode) }
+  Yes (@(Get-ChildItem -LiteralPath $script:SecretWorkParent -Force).Count -eq 0) 'fingerprint:the-work-directory-is-removed-afterwards'
+  # the copies written into the work directory are the hash-checked package bytes, and only there
+  $written = New-Object System.Collections.ArrayList
+  $realWriteNew = $functions['install-resident.ps1:Write-New']
+  function Write-New([string]$path, [byte[]]$bytes) { [void]$written.Add($path); [IO.File]::WriteAllBytes($path, $bytes) }
+  [void](Get-SecretFingerprint 'ci-token' $tokenBytes)
+  . ([scriptblock]::Create($realWriteNew))
+  Yes ($written.Count -eq 2 -and @($written | Where-Object { $_.StartsWith($script:SecretWorkParent + '\', [StringComparison]::OrdinalIgnoreCase) -and -not $_.StartsWith($sp, [StringComparison]::OrdinalIgnoreCase) }).Count -eq 2 -and (Split-Path -Leaf $written[0]) -ceq 'node.exe' -and (Split-Path -Leaf $written[1]) -ceq 'secret-fingerprint.mjs') 'fingerprint:node-and-tool-are-written-into-the-fresh-directory-only'
   [IO.File]::AppendAllText((Join-Path $sp 'resident\tools\secret-fingerprint.mjs'), ' ')   # the tool changes after the manifest was reviewed
   Yes (Test-Refused { Get-SecretFingerprint 'ci-token' $tokenBytes } ('PACKAGE_FILE_CHANGED:resident\' + $residentSha + '\tools\secret-fingerprint.mjs')) 'fingerprint:changed-tool-refused'
   Copy-Item -LiteralPath (Join-Path $here '..\tools\secret-fingerprint.mjs') -Destination (Join-Path $sp 'resident\tools\secret-fingerprint.mjs') -Force
@@ -401,8 +499,14 @@ if (Test-Path -LiteralPath $probeNode) {
   $script:AppPrivateKeyFile = ''; $script:CiAdmissionTokenFile = ''
   [void][IO.Directory]::CreateDirectory((Join-Path $fakeProgramData 'CluedControl\trusted')); [void][IO.Directory]::CreateDirectory((Join-Path $fakeProgramData 'CluedIndependentCI'))
   $none = Get-SecretsPlan
+  $script:elevated = $false
+  Yes ($null -ne (Get-SecretsPlan) -and $script:SecretBytes.Count -eq 0) 'secrets-plan:nothing-supplied-needs-no-elevation'
+  $script:elevated = $true
   Yes ($none.appKey.supplied -eq $false -and $none.ciToken.supplied -eq $false -and $none.appKey.verified -eq $false -and $script:SecretBytes.Count -eq 0 -and -not $none.appKey.createsDirectory) 'secrets-plan:nothing-supplied-nothing-read'
   $script:AppPrivateKeyFile = $keyA; $script:CiAdmissionTokenFile = $tokenFile
+  $script:elevated = $false
+  Yes ((Test-Refused { Get-SecretsPlan } 'ELEVATED_OWNER_TOKEN_REQUIRED_FOR_SECRETS') -and $script:SecretBytes.Count -eq 0) 'secrets-plan:a-supplied-file-needs-the-elevated-token-also-in-a-dry-run'
+  $script:elevated = $true
   $both = Get-SecretsPlan
   Yes ($both.appKey.supplied -and $both.appKey.verified -and $both.ciToken.supplied -and $both.ciToken.verified -and $both.ciToken.createsDirectory -and -not $both.appKey.createsDirectory -and $both.ciToken.directorySddl -ceq (Get-SecretDirectorySddl $ctrl) -and $both.appKey.sddl -ceq $goodSddl) 'secrets-plan:supplied-and-verified'
   Yes ((Sha256Bytes $script:SecretBytes.appKey) -ceq (Sha256Bytes $keyBytes) -and (Sha256Bytes $script:SecretBytes.ciToken) -ceq (Sha256Bytes $tokenBytes)) 'secrets-plan:exactly-the-fingerprinted-bytes-are-kept'
@@ -411,6 +515,11 @@ if (Test-Path -LiteralPath $probeNode) {
   Clear-SecretBytes; Yes ($script:SecretBytes.Count -eq 0 -and (@($keyBytes).Count -gt 0)) 'secrets-plan:bytes-cleared'
   $script:SecretBytes = @{}
   # fail closed: a key or token with another fingerprint, files that are not what they should be, targets that exist
+  # the key is right and the token is wrong: the key's bytes already read are not left behind
+  $script:Identity = [pscustomobject]@{ appPublicKeySha256Base64 = $fpA; ciTokenPinSha256 = ('0' * 64) }; $script:AppPrivateKeyFile = $keyA; $script:CiAdmissionTokenFile = $tokenFile
+  Yes (Test-Refused { Get-SecretsPlan } 'CI_TOKEN_FINGERPRINT_MISMATCH') 'secrets-plan:key-right-token-wrong-refused'
+  Yes ($script:SecretBytes.Count -eq 0) 'secrets-plan:key-bytes-are-zeroed-and-dropped-when-the-token-is-refused'
+  $script:Identity = [pscustomobject]@{ appPublicKeySha256Base64 = $fpA; ciTokenPinSha256 = $tokenPin }
   $script:AppPrivateKeyFile = $keyB; $script:CiAdmissionTokenFile = ''
   Yes (Test-Refused { Get-SecretsPlan } 'APP_KEY_FINGERPRINT_MISMATCH') 'secrets-plan:another-app-key-refused'
   $script:AppPrivateKeyFile = ''; $script:CiAdmissionTokenFile = $tokenFile
