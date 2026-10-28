@@ -32,3 +32,10 @@ test('the closure covers every Source v2 pin list', () => {
   assert.ok(pins.length >= 14);
   assert.deepEqual(missing(pins), [], 'generic helper CoreSource');
 });
+
+test('node profile native source is pinned and no retained legacy bridge member is dropped', () => {
+  const closure = new Set(computeClosure(REPO));
+  assert.ok(closure.has(CI+'src/resident-v2/windows/NodeProfileV2.cs'));
+  for(const name of ['boundary.mjs','formal-spool-acl.ps1','held-source.mjs','hold-source.ps1','linux-worker.mjs','mailbox.mjs','protocol.mjs','signed-result.mjs'])
+    assert.ok(closure.has(CI+'worker/protected-job-bridge-v2/'+name),name);
+});

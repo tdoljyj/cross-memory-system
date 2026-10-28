@@ -6,7 +6,7 @@
 public static class FormalScmPidHandshakeV2 {
  public const uint MaximumObservationWaitMilliseconds=135000;
  public const uint MaximumNativeAckWaitMilliseconds=30000;
- public const string Controller="S-1-5-21-1173730660-3877291096-655431861-1015";
+ public static string Controller {get{return NodeProfileV2.Current.ControllerSid;}}
  public const string SystemSid="S-1-5-18";
  static readonly string[] Managers={"S-1-5-18","S-1-5-32-544"};
  static void Deny(string code){throw new System.InvalidOperationException(code);}

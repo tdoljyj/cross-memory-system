@@ -11,9 +11,10 @@
 //   - its answers to the service only steer classification, and a false "clean" can at worst make
 //     the next batch fail at its own root preflight (DoS), never run something unsafe.
 import { BATCH_ID } from './mailbox.mjs';
-import { HEX64, check } from './canonical.mjs';
+import { HEX64, check, exactKeys } from './canonical.mjs';
+import { pinnedNodeProfile } from './node-profile.mjs';
 
-export const COMPANION_CONFIG_CONTRACT = 'clued.independent-ci.resident-companion-config/1';
+export const COMPANION_CONFIG_CONTRACT = 'clued.independent-ci.resident-companion-config/2';
 // The Linux side of the Source v2 bridge spool (protected-job-bridge-v4/mailbox.mjs LINUX_ROOT): only its
 // outgoing names are listed, to know when a relay call has something to move.
 export const LINUX_OUTGOING = '/var/lib/clued-independent-ci/formal-spool/outgoing';
@@ -26,12 +27,14 @@ export const CALLBACK_WINDOW_MS = 120_000;
 export const RELAY_TIMEOUT_MS = CALLBACK_WINDOW_MS;
 
 export function validateCompanionConfig(c) {
+  exactKeys(c, ['contract', 'wslExe', 'powershellExe', 'relayScript', 'bundleScript', 'windowsSpool', 'distribution', 'bridgeManifestSha256', 'linuxTool', 'node', 'nodeProfileSha256'], 'COMPANION_CONFIG_KEYS_INVALID');
   check(c && c.contract === COMPANION_CONFIG_CONTRACT, 'COMPANION_CONFIG_CONTRACT_INVALID');
   for (const k of ['wslExe', 'powershellExe', 'relayScript', 'bundleScript', 'windowsSpool']) check(typeof c[k] === 'string' && /^[A-Z]:\\/.test(c[k]), 'COMPANION_CONFIG_PATH_INVALID', k);
-  check(c.distribution === 'Ubuntu-24.04', 'COMPANION_DISTRIBUTION_FIXED');
+  const node = pinnedNodeProfile(c.node, c.nodeProfileSha256);
+  check(c.distribution === node.wslDistribution, 'COMPANION_DISTRIBUTION_FIXED');
   check(HEX64.test(c.bridgeManifestSha256), 'COMPANION_BRIDGE_PIN_INVALID');
   check(c.linuxTool === '/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux', 'COMPANION_LINUX_TOOL_FIXED');
-  return Object.freeze({ ...c });
+  return Object.freeze({ ...c, node });
 }
 
 // Hint mode (free-minutes design S20) is off unless the installed companion.json says so; it names the
@@ -60,7 +63,7 @@ export function argv(cfg) {
     archiveStatus: instance => { check(/^[0-9a-f]{16}-[0-9a-f]{12}_[a-z0-9][a-z0-9-]{0,39}$/.test(instance), 'COMPANION_TOOL_ARGS_INVALID'); return wsl(cfg.linuxTool, 'archive-status', '--instance', instance); },
     relay: (mode, seq) => {
       check(['SendIssue', 'ReceiveChallenge', 'SendResponse', 'ReceiveResult', 'ReceiveBlocked'].includes(mode) && Number.isSafeInteger(seq) && seq >= 0 && seq <= 32, 'COMPANION_RELAY_ARGS_INVALID');
-      return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.relayScript, '-Mode', mode, '-Sequence', String(seq), '-ExpectedBundleSha256', cfg.bridgeManifestSha256];
+      return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.relayScript, '-Mode', mode, '-Sequence', String(seq), '-ExpectedBundleSha256', cfg.bridgeManifestSha256, '-ExpectedNodeProfileSha256', cfg.nodeProfileSha256];
     },
     bundle: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.bundleScript, '-BatchId', id]; },
     checkRefs: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.bundleScript, '-BatchId', id, '-CheckRefs']; },

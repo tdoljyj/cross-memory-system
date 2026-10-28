@@ -27,10 +27,13 @@ Rules (same allow-list as independent-ci-resident-v1/src/archive.mjs, the offlin
 param(
   [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$BatchKey,
   [Parameter(Mandatory=$true)][ValidatePattern('^[a-z0-9][a-z0-9-]{0,39}$')][string]$Reason,
-  [string]$OfflineFixtureSpool
+  [string]$OfflineFixtureSpool,
+  [string]$OfflineFixtureNodeProfileBase64,
+  [ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedNodeProfileSha256
 )
 $ErrorActionPreference='Stop';Set-StrictMode -Version 2.0
 $Spool='C:\ProgramData\CluedIndependentCI\formal-spool'
+Add-Type -Path (Join-Path $PSScriptRoot 'windows\NodeProfileV2.cs') -ReferencedAssemblies @('System.dll','System.Core.dll','System.Web.Extensions.dll')
 Add-Type -TypeDefinition @'
 using System;using System.IO;using System.Text;using System.Runtime.InteropServices;using Microsoft.Win32.SafeHandles;
 public static class CluedSpoolArchiveV2 {
@@ -68,6 +71,15 @@ try{
   # Offline tests only: a fixture spool must live under this process's own temp directory.
   $t=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\');$f=[IO.Path]::GetFullPath($OfflineFixtureSpool).TrimEnd('\')
   if(-not $f.StartsWith($t+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'OFFLINE_FIXTURE_OUTSIDE_TEMP_REFUSED'};$Spool=$f
+  if(-not $OfflineFixtureNodeProfileBase64 -or $OfflineFixtureNodeProfileBase64.Length -gt 4096){throw 'OFFLINE_NODE_PROFILE_REQUIRED'}
+  $profileBytes=[Convert]::FromBase64String($OfflineFixtureNodeProfileBase64)
+  if($profileBytes.Length -gt 4096 -or [Convert]::ToBase64String($profileBytes) -cne $OfflineFixtureNodeProfileBase64){throw 'OFFLINE_NODE_PROFILE_REQUIRED'}
+  $fixtureProfile=(New-Object Text.UTF8Encoding($false,$true)).GetString($profileBytes)|ConvertFrom-Json
+  $map=New-Object 'Collections.Generic.Dictionary[string,object]';foreach($property in $fixtureProfile.PSObject.Properties){$map.Add($property.Name,$property.Value)}
+  $Node=[NodeProfileV2]::FromDictionary($map)
+ }else{
+  if($OfflineFixtureNodeProfileBase64){throw 'OFFLINE_NODE_PROFILE_WITHOUT_FIXTURE_REFUSED'}
+  $nodeLease=[NodeProfileV2]::LoadProtectedProfile('C:\ProgramData\CluedIndependentCI\resident',$ExpectedNodeProfileSha256);$held.Add($nodeLease);$Node=$nodeLease.Profile
  }
  $protocolScope=$Reason -ceq 'success-close' -or $Reason -cmatch '^between-roles-[46]$'
  $result.scope=if($protocolScope){'completed-protocol'}else{'failure-scene'}
@@ -116,7 +128,7 @@ try{
  # modify, clued-control read. The resident's spool ACEs are this-folder-only (S3), so nothing else
  # would let it add files to a directory it just created.
  $me=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;$ds=New-Object Security.AccessControl.DirectorySecurity;$ds.SetAccessRuleProtection($true,$false)
- foreach($p in @(@('S-1-5-18','FullControl'),@('S-1-5-32-544','FullControl'),@($me,'Modify'),@('S-1-5-21-1173730660-3877291096-655431861-1015','ReadAndExecute'))){$ds.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier($p[0])),$p[1],'ContainerInherit,ObjectInherit','None','Allow')))}
+ foreach($p in @(@('S-1-5-18','FullControl'),@('S-1-5-32-544','FullControl'),@($me,'Modify'),@($Node.ControllerSid,'ReadAndExecute'))){$ds.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier($p[0])),$p[1],'ContainerInherit,ObjectInherit','None','Allow')))}
  [void][IO.Directory]::CreateDirectory($target,$ds);$held.Add([CluedSpoolArchiveV2]::HoldDirectory($target))
  $moved=@();$names=@{}
  foreach($o in $opened){

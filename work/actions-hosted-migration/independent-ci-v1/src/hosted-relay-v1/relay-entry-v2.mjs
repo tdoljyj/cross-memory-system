@@ -15,8 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { EffectJournal } from '../effect-journal.mjs';
 import { readBatchClaim } from '../batch-claim-v2.mjs';
-import { createStagedCheckPublisherV2 } from '../staged-check-publisher-v2.mjs';
-import { protectedAuthority } from '../../runtime/one-shot-v2.mjs';
+import { createRecoverableCheckPublisherV2, createPublicationRecoveryAuditWriter } from '../../runtime/one-shot-v2.mjs';
 import { runEntry, controllerPrincipal, controllerPorts, observationLog } from '../resident-v2/entry-runtime.mjs';
 import { STATE_V2, STATE_RELAY_JWKS } from '../resident-v2/layout.mjs';
 import { validateRegistry, OCI_DIGEST, RELAY_AUDIENCE } from './registry.mjs';
@@ -55,7 +54,7 @@ export function relaySubject(jobs, batchClaim) {
 
 export async function main(argv = process.argv.slice(2), output = process.stdout) {
   return runEntry({ argv, entryRole: 'relay-publisher', moduleUrl: import.meta.url, output, successStatuses: ['RELAY_COMPLETE'],
-    body: async ({ inputs, held, live, sourceRoot }) => {
+    body: async ({ args, inputs, held, live, sourceRoot }) => {
       const jobs = inputs.jobs, { config, accepted } = inputs.record;
       const registry = installedRegistry(held);
       const batchClaim = await readBatchClaim(STATE_V2.batchClaims, jobs[0]);
@@ -68,10 +67,13 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
       // paths exclude each other for one role on one head across batches, bases and attempts (K has neither the
       // base nor the attempt since PR-A review MAJOR 2; the v1 one-shot never takes K).
       const journal = await EffectJournal.open(STATE_V2.effectsScan);
-      const publisher = createStagedCheckPublisherV2({ nativeAdmission: admission, authority: protectedAuthority({ config, accepted, github, fetchImpl, nativeToken, live, log }),
+      const recoveryContext = { nonce: args.nonce, stage: inputs.plan.stage, entryRole: inputs.plan.entryRole, batchKey: inputs.plan.batchKey,
+        configSha256: args.configSha256, sourceManifestSha256: inputs.plan.sourceManifestSha256, acceptanceSha256: inputs.plan.acceptanceSha256, entrySha256: inputs.plan.entrySha256 };
+      const publisher = createRecoverableCheckPublisherV2({ recoveryContext, auditWriter: createPublicationRecoveryAuditWriter({ context: recoveryContext }), authorityOptions: { config, accepted, github, fetchImpl, nativeToken },
+        readCurrentBatchClaim: j => readBatchClaim(STATE_V2.batchClaims, j), live, log, publisherOptions: { nativeAdmission: admission,
         github, journal, signers: inputs.record.signers, configuredChecks: config.checks, readChangedPaths: subject => github.readChangedPaths(subject), batchClaim,
         protectedDeployment: { enabled: true, domain: 'production', repository: config.repository, ciPrincipalBindingId: config.ciPrincipalBindingId, ...Object.fromEntries(REFS.map(r => [r, accepted[r]])) },
-        domain: 'production', hostedVerifier: verifier });
+        domain: 'production', hostedVerifier: verifier } });
       const stage = createHostedRelayStage({ registry, verifier, publisher, localInputPins: installedInputPins(inputs.record.manifest) });
       const result = await stage.run({ subject: relaySubject(jobs, batchClaim), attempt: jobs[0].attempt, roles: jobs.map(j => j.role) });
       log('hosted_relay_stage_result', { jobId: jobs[0].id, resultSha256: result.resultSha256, status: result.status, code: result.code });

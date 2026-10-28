@@ -10,7 +10,7 @@ import { BROKER_STOP_CONTRACT, PUMP_CODES, WindowsEngine, findInflightSwap } fro
 import { CANCEL_CONTRACT, Mailbox } from '../src/mailbox.mjs';
 import { CALLBACK_WINDOW_MS, Companion, RELAY_TIMEOUT_MS } from '../src/companion.mjs';
 import { validatePolicy } from '../src/policy.mjs';
-import { rawPolicy, tempRoot } from './helpers.mjs';
+import { TEST_NODE, TEST_NODE_SHA, rawPolicy, tempRoot } from './helpers.mjs';
 
 const V2 = ['work', 'actions-hosted-migration', 'independent-ci-v1', 'src', 'resident-v2'];
 const sha = b => createHash('sha256').update(b).digest('hex');
@@ -51,7 +51,7 @@ async function fixture(t, { invoke } = {}) {
     },
     async cancel(req, reason) { if (companionMailbox.cancelThrows) throw new Error('mailbox'); cancelled.push([req.requestId, reason]); companionMailbox.unblock?.(); return true; },
   };
-  const engine = new WindowsEngine({ run, busy: () => false, companionMailbox, sleep: async () => {}, clock: () => Date.parse('2026-10-21T08:00:00Z'),
+  const engine = new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run, busy: () => false, companionMailbox, sleep: async () => {}, clock: () => Date.parse('2026-10-21T08:00:00Z'),
     paths: { sourceRoot, workRoot: path.join(root, 'work'), outboxRoot: path.join(root, 'outbox'), nodeExe: 'C:\\resident\\runtime\\node.exe',
       powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', scExe: 'C:\\Windows\\System32\\sc.exe', brokerRoot } });
   const request = async (id, { stage = 2, config = PLAN, taken = true, answered = false, nonce = 'a'.repeat(32) } = {}) => {
@@ -182,7 +182,7 @@ test('the companion pump stops relaying on a cancel of its own request and never
   const mailbox = await Mailbox.open(root, clock);
   const log = [];
   const run = async argv => { log.push(argv.join(' ')); return argv.join(' ').includes('quiescence') ? { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) } : { code: 0, stdout: '' }; };
-  const cfg = { contract: 'clued.independent-ci.resident-companion-config/1', wslExe: 'C:\\Windows\\System32\\wsl.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+  const cfg = { contract: 'clued.independent-ci.resident-companion-config/2', node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, wslExe: 'C:\\Windows\\System32\\wsl.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
     relayScript: 'C:\\x\\relay-public.ps1', bundleScript: 'C:\\x\\build-bundle.ps1', windowsSpool: 'C:\\ProgramData\\CluedIndependentCI\\formal-spool', distribution: 'Ubuntu-24.04',
     bridgeManifestSha256: 'b'.repeat(64), linuxTool: '/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux' };
   let polls = 0;
@@ -217,7 +217,7 @@ test('a cancel that comes with the issue transfer starts no worker', async t => 
     if (a.includes('-Mode SendIssue')) { await mailbox.cancel(req, 'owner-abort'); return { code: 0, stdout: JSON.stringify({ status: 'PUBLIC_RECORD_TRANSFERRED', terminalConfirmed: true }) }; }
     return { code: 0, stdout: '' };
   };
-  const cfg = { contract: 'clued.independent-ci.resident-companion-config/1', wslExe: 'C:\\Windows\\System32\\wsl.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+  const cfg = { contract: 'clued.independent-ci.resident-companion-config/2', node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, wslExe: 'C:\\Windows\\System32\\wsl.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
     relayScript: 'C:\\x\\relay-public.ps1', bundleScript: 'C:\\x\\build-bundle.ps1', windowsSpool: 'C:\\ProgramData\\CluedIndependentCI\\formal-spool', distribution: 'Ubuntu-24.04',
     bridgeManifestSha256: 'b'.repeat(64), linuxTool: '/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux' };
   const c = new Companion({ cfg, mailbox, run, fileExists: async p => p.endsWith('issue.ready.json'), sleep: async ms => { now += ms; }, clock });
@@ -248,7 +248,7 @@ async function pumpWith(t, { listing, relay, fileExists = async p => p.endsWith(
     if (mode) { log.push({ mode, afterCancel: cancelAt !== null }); return relay(mode, { ...ctx, timeoutMs }); }
     return { code: 0, stdout: '' }; // the worker start
   };
-  const cfg = { contract: 'clued.independent-ci.resident-companion-config/1', wslExe: 'C:\\Windows\\System32\\wsl.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+  const cfg = { contract: 'clued.independent-ci.resident-companion-config/2', node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, wslExe: 'C:\\Windows\\System32\\wsl.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
     relayScript: 'C:\\x\\relay-public.ps1', bundleScript: 'C:\\x\\build-bundle.ps1', windowsSpool: 'C:\\ProgramData\\CluedIndependentCI\\formal-spool', distribution: 'Ubuntu-24.04',
     bridgeManifestSha256: 'b'.repeat(64), linuxTool: '/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux' };
   const c = new Companion({ cfg, mailbox, run, fileExists, sleep: async ms => { now += ms; await onSleep(ctx); }, clock });
@@ -361,7 +361,7 @@ test('a cancel during the callback rounds skips the blocked hand-over: the pump 
     if (a.includes('-Mode SendIssue')) return { code: 0, stdout: JSON.stringify({ status: 'PUBLIC_RECORD_TRANSFERRED', terminalConfirmed: true }) };
     return { code: 0, stdout: '' }; // worker start, and an empty Linux outgoing listing: nothing to relay yet
   };
-  const cfg = { contract: 'clued.independent-ci.resident-companion-config/1', wslExe: 'C:\\Windows\\System32\\wsl.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+  const cfg = { contract: 'clued.independent-ci.resident-companion-config/2', node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, wslExe: 'C:\\Windows\\System32\\wsl.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
     relayScript: 'C:\\x\\relay-public.ps1', bundleScript: 'C:\\x\\build-bundle.ps1', windowsSpool: 'C:\\ProgramData\\CluedIndependentCI\\formal-spool', distribution: 'Ubuntu-24.04',
     bridgeManifestSha256: 'b'.repeat(64), linuxTool: '/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux' };
   let req, polls = 0;

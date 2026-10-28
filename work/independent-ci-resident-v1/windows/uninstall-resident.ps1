@@ -24,7 +24,10 @@ Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\ScheduledTasks
 $Root = 'C:\ProgramData\CluedIndependentCI\resident'
 if (-not ([IO.Path]::GetFullPath($PSCommandPath)).StartsWith((Join-Path $Root 'resident\'), [StringComparison]::OrdinalIgnoreCase)) { throw 'RUN_THE_INSTALLED_COPY' }
 $Sc = 'C:\Windows\System32\sc.exe'
-$Runner = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02'
+# This node's runner service: the installed record's node profile (record\acceptance.json `node`, admin-only, validated by
+# the install; design section 9 C1), held to its fixed shape before it reaches sc.exe.
+$Runner = [string](([IO.File]::ReadAllText((Join-Path $Root 'record\acceptance.json'), (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json).node.runnerService)
+if ($Runner -cnotmatch '^actions\.runner\.tdoljyj-cross-memory-system\.clued-ci-[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?\z') { throw 'INSTALLED_NODE_PROFILE_REFUSED' }
 function Sha256Text([string]$t) { $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash([Text.Encoding]::UTF8.GetBytes($t)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() } }
 function ExecutorAlive {
   $h = Join-Path $Root 'state\executor.lock\holder.json'

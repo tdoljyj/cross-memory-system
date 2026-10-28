@@ -8,7 +8,9 @@ $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 $Root='C:\ProgramData\CluedIndependentCI'
 $Record=Join-Path $Root 'resident\record'
 $Source=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..\..\..')).TrimEnd('\')
-$Controller='S-1-5-21-1173730660-3877291096-655431861-1015'
+# The controller is the one of the record's pinned node profile (acceptance.json `node`, design §9 C1): the four
+# admin-only record files are read (handles held) before the identity check, and no Source file before it.
+$Controller=$null
 $MaxLeaseHours=4
 $Held=New-Object 'Collections.Generic.List[Microsoft.Win32.SafeHandles.SafeFileHandle]'
 $Opened=@{};$ReadCache=@{};$code=2
@@ -63,11 +65,12 @@ function Hold-Read([string]$File,[string]$ProtectedRoot){
  if(-not $ReadCache.ContainsKey($target)){$ReadCache[$target]=[CluedRecordLease]::Read($Opened[$target])};return ,$ReadCache[$target]
 }
 try{
- if([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne $Controller){throw 'EXACT_CONTROLLER_REQUIRED'}
  if($Source -cnotmatch '^C:\\ProgramData\\CluedIndependentCI\\resident\\source\\[0-9a-f]{64}$'){throw 'INSTALLED_SOURCE_ROOT_REQUIRED'}
  $documents=[ordered]@{};foreach($name in @('installation.json','acceptance.json','source-manifest.json','signers.json')){$documents[$name]=[Convert]::ToBase64String((Hold-Read (Join-Path $Record $name) $Root))}
  $utf8=New-Object Text.UTF8Encoding($false,$true);$config=$utf8.GetString([Convert]::FromBase64String($documents['installation.json']))|ConvertFrom-Json;$acceptanceBytes=[Convert]::FromBase64String($documents['acceptance.json']);$accepted=$utf8.GetString($acceptanceBytes)|ConvertFrom-Json
  if((Hash $acceptanceBytes) -cne $config.acceptanceSha256 -or $accepted.sourceFiles -isnot [Array] -or $accepted.sourceFiles.Count -lt 1 -or $accepted.sourceFiles.Count -gt 10000){throw 'SOURCE_ACCEPTANCE_BYTES_REFUSED'}
+ $Controller=[string]$accepted.node.controllerSid
+ if($Controller -cnotmatch '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}\z' -or [Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne $Controller){throw 'EXACT_CONTROLLER_REQUIRED'}
  # validUntil null = until Source change or uninstall; the lease itself is always bounded.
  $expiry=[DateTimeOffset]::UtcNow.AddHours($MaxLeaseHours)
  if($null -ne $accepted.validUntil){$until=[DateTimeOffset]::Parse([string]$accepted.validUntil);if($until -le [DateTimeOffset]::UtcNow){throw 'SOURCE_ACCEPTANCE_EXPIRED'};if($until -lt $expiry){$expiry=$until}}

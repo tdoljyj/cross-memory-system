@@ -473,6 +473,19 @@ const BOOTSTRAP_ORDINARY_SOURCES=Object.freeze([
     ]
   },
   {
+    "file": ".github/workflows/gitleaks.yml",
+    "predecessor_blob": "95f4527be27d02889892d029b398ab1cf2e71429",
+    "candidate_blob": "d0fe73eeabc9c163d3216e57ca6a7633288262c5",
+    "candidate_sha256": "46627f909229d06a6b5c35112f7619b28c6aa9f0a196a526b067e3a962d9da2b",
+    "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
+    "roles": [
+      {
+        "job_id": "gitleaks-trusted-self-hosted",
+        "definition_sha256": "ce19a253d56ca6b81ad83cb6d86045f30e679397e815f14a632fe8aada46dacc"
+      }
+    ]
+  },
+  {
     "file": ".github/workflows/trivy.yml",
     "predecessor_blob": "f7f8d075d1a0f314a7c5eb295e459599288d538c",
     "candidate_blob": "300ad19a59bf529ccebd45ae7fbb76189f806316",
@@ -598,12 +611,17 @@ export function bootstrapOrdinaryRegistryView(profiles,roleSpecs){
 
 export function registeredBootstrapOrdinarySuccessor({file,headText,baseText,profiles,roleSpecs}={}){
   try{
-    const descriptor=BOOTSTRAP_ORDINARY_SOURCES.find(row=>row.file===file?.filename);
-    if(!descriptor||file.status!=='modified'||file.previous_filename!==undefined&&file.previous_filename!==file.filename||
+    const candidates=BOOTSTRAP_ORDINARY_SOURCES.filter(row=>row.file===file?.filename);
+    if(!candidates.length||file.status!=='modified'||file.previous_filename!==undefined&&file.previous_filename!==file.filename||
       typeof headText!=='string'||typeof baseText!=='string')return bootstrapOrdinaryRefusal('exact modified ordinary-CI identity');
     const beforeBlob=workflowBlob(baseText),headBlob=workflowBlob(headText);
-    if(![descriptor.predecessor_blob,descriptor.candidate_blob].includes(beforeBlob)||headBlob!==descriptor.candidate_blob||
-      sha256Hex(headText)!==descriptor.candidate_sha256)return bootstrapOrdinaryRefusal('exact ordinary-CI Source bytes');
+    // Each exact successor keeps its own predecessor and already-installed self-pair.
+    // A catalogue entry alone cannot permit a skipped generation or rollback.
+    const matches=candidates.filter(row=>headBlob===row.candidate_blob&&
+      [row.predecessor_blob,row.candidate_blob].includes(beforeBlob));
+    if(matches.length!==1||sha256Hex(headText)!==matches[0].candidate_sha256)
+      return bootstrapOrdinaryRefusal('exact ordinary-CI Source bytes');
+    const descriptor=matches[0];
     ({profiles,roleSpecs}=bootstrapOrdinaryRegistryView(profiles,roleSpecs));
     const before=registeredWorkflowSource(profiles,descriptor.file,beforeBlob),after=registeredWorkflowSource(profiles,descriptor.file,headBlob);
     if(!before.passed||!after.passed||before.profile.source_yaml!==baseText||after.profile.source_yaml!==headText)
