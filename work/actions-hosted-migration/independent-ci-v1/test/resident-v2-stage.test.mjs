@@ -72,7 +72,7 @@ function fakeBroker(f, { response = {}, receipt = {}, outcome = { status: 'SETTL
 
 const run = (f, stage, broker, extra = {}) => {
   let time = NOW;
-  return invokeStage({ batchDir: f.batchDir, stage, workManifestSha256: f.d.result.stages[stage - 1].workManifestSha256, batchKey: f.key, ...f.roots, controllerSid: CONTROLLER,
+  return invokeStage({ batchDir: f.batchDir, stage, workManifestSha256: f.d.result.stages[stage - 1].workManifestSha256, batchKey: f.key, ...f.roots, recordDocs: f.rec.docs,
     clock: () => time, sleep: async ms => { time += ms; await broker(); }, ...extra });
 };
 
@@ -208,4 +208,13 @@ test('stage-fact catalogue: every mapped code is catalogued; transient codes are
   assert.ok(TRANSIENT_CODES.every(c => ALL_STAGE_CODES.includes(c)));
   assert.equal(buildStageFact({ stage: 1, nonce: hex(16), workManifestSha256: hex(32), preflightCode: 'STAGE_PACKAGE_REFUSED' }).tree_active_processes, 0);
   void plan; void randomUUID;
+});
+
+test('invoker rejects a cross-profile sealed plan before creating stage inputs or a broker request', async t => {
+  const f = await fixture(t);
+  const other = fixtureRecord({ node: { ...f.rec.inputs.node, nodeName: 'other-node', hostname: 'OTHER-NODE', mutationMutex: 'Global\\CluedControlControllerMutationV1-OTHER-NODE-1015' } });
+  const fact = await run(f, 1, fakeBroker(f), { recordDocs: other.docs });
+  assert.equal(fact.failure_code, 'STAGE_PACKAGE_REFUSED');
+  assert.deepEqual(await fs.readdir(f.roots.stageRoot), []);
+  assert.deepEqual(await fs.readdir(path.join(f.roots.brokerRoot, 'requests')), []);
 });

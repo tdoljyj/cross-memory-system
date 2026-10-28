@@ -1,9 +1,11 @@
 # Source v2 copy of protected-job-bridge-v3/formal-spool-acl.ps1 (DESIGN S3): the resident service SID's exact
 # migrated grants are allowed and the 'blocked' record names are fixed spool leaves. Metadata only.
 param([Parameter(Mandatory=$true)][string]$LiteralTarget, [Parameter(Mandatory=$true)][string]$ProtectedRoot, [switch]$AllowControllerWrite,
-  [switch]$RelayReadOutgoing, [switch]$ReadFile, [string]$SecretRoot)
+  [switch]$RelayReadOutgoing, [switch]$ReadFile, [string]$SecretRoot,
+  [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedNodeProfileSha256)
 $ErrorActionPreference = 'Stop'
-$ControllerSid = 'S-1-5-21-1173730660-3877291096-655431861-1015'
+$NodeLease=$null
+Add-Type -Path (Join-Path $PSScriptRoot '..\..\src\resident-v2\windows\NodeProfileV2.cs') -ReferencedAssemblies @('System.dll','System.Core.dll','System.Web.Extensions.dll')
 # Source v2 (DESIGN S3): NT SERVICE\CluedCIResident holds exactly the masks resident-v2/acl-model.json adds
 # (list/traverse + add-subdirectory on the spool, list/traverse + delete-child on incoming/outgoing, read on
 # their files). Those exact grants are the only extra allowance; any other right for it, or any other SID, is
@@ -61,6 +63,8 @@ public static class CluedRuntimeRead {
 '@ | Out-Null
 $held = New-Object 'System.Collections.Generic.List[Microsoft.Win32.SafeHandles.SafeFileHandle]'
 try {
+  $NodeLease=[NodeProfileV2]::LoadProtectedProfile('C:\ProgramData\CluedIndependentCI\resident',$ExpectedNodeProfileSha256)
+  $ControllerSid=$NodeLease.Profile.ControllerSid;$OwnerSid=$NodeLease.Profile.OwnerSid
   $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
   $target = [IO.Path]::GetFullPath($LiteralTarget)
   if ($target -cnotmatch '^[A-Za-z]:\\' -or $target.Substring(2).Contains(':')) { throw 'LOCAL_FIXED_PATH_REQUIRED' }
@@ -73,7 +77,7 @@ try {
   $leaves=@('issue.json','issue.ready.json','result.json','result.ready.json','blocked.json','blocked.ready.json','active.lock','observations.jsonl')
   foreach($i in 1..32){$n=$i.ToString('00');$leaves+=@(('challenge-'+$n+'.json'),('challenge-'+$n+'.ready.json'),('response-'+$n+'.json'),('response-'+$n+'.ready.json'))}
   $controller = $AllowControllerWrite -and -not $RelayReadOutgoing -and $currentSid -ceq $ControllerSid
-  $relay = $RelayReadOutgoing -and -not $AllowControllerWrite -and $currentSid -ceq 'S-1-5-21-1173730660-3877291096-655431861-1001'
+  $relay = $RelayReadOutgoing -and -not $AllowControllerWrite -and $currentSid -ceq $OwnerSid
   if ((-not $controller -and -not $relay) -or $ReadFile -or $protected -ine $spool) { throw 'FIXED_PUBLIC_SPOOL_REQUIRED' }
   # Owner relay is metadata-only and cannot request arbitrary files/secrets.
   if ($relay -and $target -ine $spool -and $target -ine $outgoing -and $target -ine $incoming -and [IO.Path]::GetDirectoryName($target) -ine $outgoing) { throw 'FIXED_RELAY_PUBLIC_PATH_REQUIRED' }
@@ -109,7 +113,7 @@ try {
     if ($item -ieq $outgoing -or ([IO.Path]::GetDirectoryName($item) -ieq $outgoing -and $leaves -contains [IO.Path]::GetFileName($item))) { $allowedWrite += $ControllerSid }
     # Incoming public challenges/results may be imported by the existing Owner
     # relay. They are untrusted input, never Native verdicts or Source config.
-    if ($item -ieq $incoming -or ([IO.Path]::GetDirectoryName($item) -ieq $incoming -and $leaves -contains [IO.Path]::GetFileName($item))) { $allowedWrite += 'S-1-5-21-1173730660-3877291096-655431861-1001' }
+    if ($item -ieq $incoming -or ([IO.Path]::GetDirectoryName($item) -ieq $incoming -and $leaves -contains [IO.Path]::GetFileName($item))) { $allowedWrite += $OwnerSid }
     if ($allowedWrite -notcontains $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value) { throw 'OWNER_REFUSED' }
     $private = $ReadFile -and ($item -ieq $secret -or $item.StartsWith($secret+'\',[StringComparison]::OrdinalIgnoreCase))
     $residentMask = 0
@@ -130,4 +134,4 @@ try {
   if ($ReadFile) { [Console]::Out.Write([Convert]::ToBase64String([CluedRuntimeRead]::Read($held[$held.Count-1]))) }
   exit 0
 } catch { exit 2 }
-finally { foreach ($handle in $held) { $handle.Dispose() } }
+finally { foreach ($handle in $held) { $handle.Dispose() }; if($null -ne $NodeLease){$NodeLease.Dispose()} }

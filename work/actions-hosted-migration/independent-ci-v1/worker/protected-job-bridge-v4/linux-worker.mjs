@@ -16,6 +16,7 @@ import {createFormalContractPlacementAdapter} from '../formal-contract-placement
 import {openFixedRoleSession,takeActualRoleSession} from '../formal-fixed-role-policy-v3/policy.mjs';
 import {readFixedIssueJob} from './issue-job.mjs';
 import {canonical} from '../../src/proof.mjs';
+import {noteBridgeResponseTimes} from '../../src/admission-facts-v2.mjs';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 const fail=code=>{throw Object.assign(new Error(code),{code});},check=(v,c)=>{if(!v)fail(c);};
@@ -27,6 +28,9 @@ export function cleanBlockedReason(reason){
   return /^[A-Z][A-Z0-9_]{1,79}$/.test(reason??'')?reason:'LINUX_PREPARATION_REFUSED';
 }
 export const isCleanBlocked=r=>r?.status==='BLOCKED'&&r.sideEffectsMayHaveStarted===false&&r.snapshotRetained!==true&&!r.observation;
+// What a validated callback response gives the adapter. An admission keeps its response's issuance and expiry, so the
+// adapter's own re-check measures freshness from the issuance while that response is valid (Owner Decision 6f1fb753).
+export const callbackValue=(action,response)=>action==='admission'?noteBridgeResponseTimes(response.admission,response):response.remoteRefs;
 export async function executeProtectedIssuedJob(options={}){
   let locked=false,executionMayHaveStarted=false;
   try{
@@ -39,7 +43,7 @@ export async function executeProtectedIssuedJob(options={}){
       const fresh=await loadLinuxContext(job);check(fresh.sourceAcceptanceRef===context.sourceAcceptanceRef&&fresh.hostQualificationRef===context.hostQualificationRef&&fresh.config.sourceManifestSha256===job.sourceManifestSha256,'FORMAL_CALLBACK_AUTHORITY_CHANGED');
       const request=makeChallenge(issue,action,++sequence),suffix=String(sequence).padStart(2,'0');await box.write('challenge-'+suffix,encode(request));
       const response=validateResponse(issue,request,decode(await box.wait('response-'+suffix,{deadline:Date.parse(request.deadline),signal})));
-      return action==='admission'?response.admission:response.remoteRefs;
+      return callbackValue(action,response);
     };
     // Adapters cannot prepare until their first callback gets a fresh actual
     // production response through the accepted Root-protected relay.

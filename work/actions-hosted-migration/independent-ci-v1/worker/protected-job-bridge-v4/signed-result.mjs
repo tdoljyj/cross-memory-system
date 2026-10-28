@@ -10,6 +10,7 @@ import {subjectOfV2} from '../../src/job-v2.mjs';
 import {verifyResultV2,RESULT_CONTRACT_V2,ENVELOPE_CONTRACT_V2} from '../../src/proof-v2.mjs';
 import {protectedPath,qualificationDeadline,QUALIFICATION_SCHEMA_V2} from '../qualification-v2.mjs';
 import {takeActualObservation as takeGitleaks} from '../formal-gitleaks-v4/adapter.mjs';
+import {REVIEWED_COMMITS,matchesReviewedHistoryProof} from '../formal-gitleaks-v4/required-history/prepare.mjs';
 import {takeActualObservation as takeTrivy} from '../formal-trivy-v4/adapter.mjs';
 import {takeActualObservation as takePlacement,WORKFLOW_SHA256S as PLACEMENT_WORKFLOW_SHA256S} from '../formal-contract-placement-v2/adapter.mjs';
 import {loadFixedRolePolicy} from '../formal-fixed-role-policy-v3/policy.mjs';
@@ -33,7 +34,7 @@ export function observationFacts(issue,o,now=Date.now()){
     check(o.logs&&Object.keys(o.logs).sort().join('|')==='stderr|stdout'&&['stdout','stderr'].every(k=>Object.keys(o.logs[k]??{}).sort().join('|')==='bytes|sha256|truncated'&&/^[a-f0-9]{64}$/.test(o.logs[k].sha256??'')&&Number.isSafeInteger(o.logs[k].bytes)&&o.logs[k].bytes>=0&&o.logs[k].bytes<=16777216&&o.logs[k].truncated===false)&&Object.keys(o.cleanup??{}).sort().join('|')==='complete|containerRemoved|observedAt|wholeContainerTreeStopped'&&Date.parse(o.finishedAt)>=Date.parse(o.startedAt)&&Date.parse(o.cleanup.observedAt)>=Date.parse(o.finishedAt),'ACTUAL_PLACEMENT_TERMINAL_EVIDENCE_REQUIRED');
   }
   let start,end,exit,stdout,stderr;
-  if(gl||placement){check((!gl||o.requiredHistoricalExceptions===726)&&o.cleanup?.complete===true&&o.cleanup.wholeContainerTreeStopped===true&&o.cleanup.containerRemoved===true,'ACTUAL_HISTORY_CLEANUP_REQUIRED');
+  if(gl||placement){check((!gl||o.requiredHistoricalExceptions===REVIEWED_COMMITS.findings&&matchesReviewedHistoryProof(o.reviewedHistoryProof))&&o.cleanup?.complete===true&&o.cleanup.wholeContainerTreeStopped===true&&o.cleanup.containerRemoved===true,'ACTUAL_HISTORY_CLEANUP_REQUIRED');
     start=o.startedAt;end=o.cleanup.observedAt;exit=o.exitCode;stdout=o.logs?.stdout?.sha256;stderr=o.logs?.stderr?.sha256;
   }else{check(o.scans?.length===3&&o.scans.every(s=>s.complete===true&&s.cleanupConfirmed===true&&Number.isInteger(s.exitCode))&&o.cleanup?.containersRemoved===true&&o.cleanup.wholeContainerTreesStopped===true&&o.cleanup.snapshotRemoved===true,'ACTUAL_THREE_SCANNERS_CLEANUP_REQUIRED');
     start=new Date(Math.min(...o.scans.map(s=>Date.parse(s.startedAt)))).toISOString();end=o.cleanup.observedAt;exit=o.scans.find(s=>s.exitCode!==0)?.exitCode??0;

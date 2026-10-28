@@ -28,7 +28,7 @@ export const FIXED_FILES = Object.freeze([
     'src/resident-v2/acl-model.json', 'src/resident-v2/archive-windows-spool.ps1', 'src/resident-v2/build-bundle.ps1', 'src/resident-v2/hold-record.ps1',
     'src/resident-v2/migrate-acl.ps1', 'src/resident-v2/prepare-workspaces.py',
     'src/resident-v2/windows/FormalPublicBoundaryV2.cs', 'src/resident-v2/windows/FormalSession0V2.cs', 'src/resident-v2/windows/ScmPidHandshakeV2.cs',
-    'src/resident-v2/windows/ResidentScmV2.cs',
+    'src/resident-v2/windows/ResidentScmV2.cs', 'src/resident-v2/windows/NodeProfileV2.cs',
     'worker/protected-job-bridge-v4/relay-public.ps1', 'worker/protected-job-bridge-v4/formal-spool-acl.ps1'].map(p => CI + p)].sort());
 
 const SPECIFIERS = [/(?:import|export)\s[^'";]*?from\s*['"]([^'"]+)['"]/g, /import\(\s*['"]([^'"]+)['"]\s*\)/g, /new URL\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*,\s*import\.meta\.url\s*\)/g,

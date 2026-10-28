@@ -11,22 +11,30 @@
 //   - its answers to the service only steer classification, and a false "clean" can at worst make
 //     the next batch fail at its own root preflight (DoS), never run something unsafe.
 import { BATCH_ID } from './mailbox.mjs';
-import { HEX64, check } from './canonical.mjs';
+import { HEX64, check, exactKeys } from './canonical.mjs';
+import { pinnedNodeProfile } from './node-profile.mjs';
 
-export const COMPANION_CONFIG_CONTRACT = 'clued.independent-ci.resident-companion-config/1';
+export const COMPANION_CONFIG_CONTRACT = 'clued.independent-ci.resident-companion-config/2';
 // The Linux side of the Source v2 bridge spool (protected-job-bridge-v4/mailbox.mjs LINUX_ROOT): only its
 // outgoing names are listed, to know when a relay call has something to move.
 export const LINUX_OUTGOING = '/var/lib/clued-independent-ci/formal-spool/outgoing';
 // One callback round, the same value as protected-job-bridge-v4/protocol.mjs CALLBACK_WINDOW_MS (test-pinned).
 export const CALLBACK_WINDOW_MS = 120_000;
+// How long the pump waits for one relay call. A relay call usually takes 4-6 s, but sometimes 25-45 s: PR #911 stage 4
+// (2026-10-23) lost a 43 s SendIssue to the old fixed 40 s, so no worker was started and the issuer waited out its
+// stage into a HALT (Task 576231fa). The runner never kills a child, so giving up earlier gains nothing: the runner
+// stays busy until the call ends. One callback round is the most a relay call can still help.
+export const RELAY_TIMEOUT_MS = CALLBACK_WINDOW_MS;
 
 export function validateCompanionConfig(c) {
+  exactKeys(c, ['contract', 'wslExe', 'powershellExe', 'relayScript', 'bundleScript', 'windowsSpool', 'distribution', 'bridgeManifestSha256', 'linuxTool', 'node', 'nodeProfileSha256'], 'COMPANION_CONFIG_KEYS_INVALID');
   check(c && c.contract === COMPANION_CONFIG_CONTRACT, 'COMPANION_CONFIG_CONTRACT_INVALID');
   for (const k of ['wslExe', 'powershellExe', 'relayScript', 'bundleScript', 'windowsSpool']) check(typeof c[k] === 'string' && /^[A-Z]:\\/.test(c[k]), 'COMPANION_CONFIG_PATH_INVALID', k);
-  check(c.distribution === 'Ubuntu-24.04', 'COMPANION_DISTRIBUTION_FIXED');
+  const node = pinnedNodeProfile(c.node, c.nodeProfileSha256);
+  check(c.distribution === node.wslDistribution, 'COMPANION_DISTRIBUTION_FIXED');
   check(HEX64.test(c.bridgeManifestSha256), 'COMPANION_BRIDGE_PIN_INVALID');
   check(c.linuxTool === '/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux', 'COMPANION_LINUX_TOOL_FIXED');
-  return Object.freeze({ ...c });
+  return Object.freeze({ ...c, node });
 }
 
 // Hint mode (free-minutes design S20) is off unless the installed companion.json says so; it names the
@@ -55,7 +63,7 @@ export function argv(cfg) {
     archiveStatus: instance => { check(/^[0-9a-f]{16}-[0-9a-f]{12}_[a-z0-9][a-z0-9-]{0,39}$/.test(instance), 'COMPANION_TOOL_ARGS_INVALID'); return wsl(cfg.linuxTool, 'archive-status', '--instance', instance); },
     relay: (mode, seq) => {
       check(['SendIssue', 'ReceiveChallenge', 'SendResponse', 'ReceiveResult', 'ReceiveBlocked'].includes(mode) && Number.isSafeInteger(seq) && seq >= 0 && seq <= 32, 'COMPANION_RELAY_ARGS_INVALID');
-      return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.relayScript, '-Mode', mode, '-Sequence', String(seq), '-ExpectedBundleSha256', cfg.bridgeManifestSha256];
+      return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.relayScript, '-Mode', mode, '-Sequence', String(seq), '-ExpectedBundleSha256', cfg.bridgeManifestSha256, '-ExpectedNodeProfileSha256', cfg.nodeProfileSha256];
     },
     bundle: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.bundleScript, '-BatchId', id]; },
     checkRefs: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.bundleScript, '-BatchId', id, '-CheckRefs']; },
@@ -140,7 +148,7 @@ export class Companion {
 
   // relay: true = record transferred, false = nothing there yet, throws on any refusal.
   async relay(mode, seq) {
-    const r = await this.run(this.a.relay(mode, seq), { timeoutMs: 40_000 });
+    const r = await this.run(this.a.relay(mode, seq), { timeoutMs: RELAY_TIMEOUT_MS });
     const v = json(r.stdout);
     if (r.code === 0 && v?.status === 'PUBLIC_RECORD_TRANSFERRED' && v.terminalConfirmed === true) return true;
     if (v?.childError?.reason === 'ENOENT' && v.terminalConfirmed === true) return false;
@@ -176,7 +184,7 @@ export class Companion {
   // The bridge pump that run-batch.ps1 performs today (lines 86-89), moved out of the elevated
   // process unchanged in meaning: issue -> worker -> challenge/response rounds -> result.
   // Owner abort (DESIGN §6.5): a cancel of this request from the service ends the pump at its next wait step with
-  // COMPANION_PUMP_CANCELLED. No relay call starts after it; one already running ends first (at most 40 s). It only
+  // COMPANION_PUMP_CANCELLED. No relay call starts after it; one already running ends first (at most RELAY_TIMEOUT_MS). It only
   // stops relaying; the worker unit is never stopped or killed. A cancel file that cannot be read is no cancel.
   async pump(request) {
     const deadline = Date.parse(request.deadline);

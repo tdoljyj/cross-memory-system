@@ -31,9 +31,10 @@ export const STATE_V2 = Object.freeze({
   temp: `${WIN_STATE_V2}\\temp`,
   // Quota phase 2, step 3a: every kooyumi-merge-slot green stage 8 writes (green-ledger.mjs; clued-control only).
   greenLedger: `${WIN_STATE_V2}\\green-ledger`,
+  // Quota phase 2, step 3c-1: one shadow record per stage-10 run (train-shadow-store.mjs; clued-control only).
+  trainShadow: `${WIN_STATE_V2}\\train-shadow`,
 });
 export const NODE_EXE = 'C:\\Program Files\\nodejs\\node.exe';
-export const RUNNER_SERVICE = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02';
 export const ORIGINAL_BINARY = '"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"';
 
 // Virtual service account SID: S-1-5-80 + SHA-1 of the upper-case service name (UTF-16LE).
@@ -59,7 +60,7 @@ export const LINUX_POLICY_DIR = '/etc/clued-independent-ci/roles-v3';
 export const LINUX_DESCRIPTORS = '/mnt/c/ProgramData/CluedIndependentCI/resident/outbox';
 export const LINUX_WSPREP = id => `${LINUX_STATE}/ws-prep-${id}`;
 
-// ---- the fixed eight stages and stage R (stages.json semantics; S11 gives each a stable failure catalogue) ----
+// ---- the fixed eight stages, stage R and stage 10 (stages.json semantics; S11 gives each a stable failure catalogue) ----
 const P = 'work/actions-hosted-migration/independent-ci-v1/';
 export const ENTRY_V2 = Object.freeze({
   'work-admission': `${P}src/formal-work-admission-check-v2/startup.mjs`,
@@ -68,6 +69,8 @@ export const ENTRY_V2 = Object.freeze({
   'control-checks': `${P}src/independent-control-checks-v2/startup.mjs`,
   // Stage R (hosted relay, free-minutes design S17/S19): verify GitHub-hosted runs and relay them to App 5368905.
   'relay-publisher': `${P}src/hosted-relay-v1/relay-entry-v2.mjs`,
+  // Stage 10 (quota phase 2, step 3c-1): train maintenance, read-only in shadow mode.
+  'train-maintenance': `${P}src/independent-control-checks-v2/train-maintenance.mjs`,
 });
 // Kind 'formal': the fixed eight stages, all derived with the batch. Kind 'hosted-relay': stage R, number 9,
 // derived only after the hosted wait (derive-batch.mjs --relay-roles) for the relay candidates the resident
@@ -85,11 +88,16 @@ const ROWS = [
   { number: 8, kind: 'formal', name: 'native-control-pair', entryRole: 'control-checks', jobRoles: ['control-admission', 'control-merge-slot'], runMilliseconds: 2_700_000, linuxWorker: false },
   // Stage R: only the relayable roles of the installed relay registry (contract-placement is never relayed).
   { number: 9, kind: 'hosted-relay', name: 'hosted-relay', entryRole: 'relay-publisher', jobRoles: ['gitleaks', 'trivy'], variableJobRoles: true, runMilliseconds: 900_000, linuxWorker: false },
+  // Stage 10 (quota phase 2, step 3c-1; DESIGN §21.1): train maintenance, outside any batch. Its one job is a train run
+  // (train-run.mjs), not a job of contract /3; derive-batch.mjs --train-run derives it.
+  { number: 10, kind: 'train', name: 'train-maintenance', entryRole: 'train-maintenance', jobRoles: ['train-run'], runMilliseconds: 300_000, linuxWorker: false },
 ];
 export const STAGES_V2 = Object.freeze(ROWS.map(s => Object.freeze({ variableJobRoles: false, ...s, jobRoles: Object.freeze([...s.jobRoles]) })));
 export const FORMAL_STAGES_V2 = Object.freeze(STAGES_V2.filter(s => s.kind === 'formal'));
 export const RELAY_STAGE_NUMBER = 9;
 export const RELAY_STAGE_V2 = STAGES_V2.find(s => s.number === RELAY_STAGE_NUMBER);
+export const TRAIN_STAGE_NUMBER = 10;
+export const TRAIN_STAGE_V2 = STAGES_V2.find(s => s.number === TRAIN_STAGE_NUMBER);
 // The job roles of one stage package: exactly the row's roles, or (stage R) a non-empty subset in row order.
 export function stageJobRolesValid(row, roles) {
   if (!row || !Array.isArray(roles)) return false;

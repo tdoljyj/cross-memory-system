@@ -7,6 +7,7 @@ import { buildPackage } from '../tools/build-package.mjs';
 import { installedIntegrity } from '../src/service-ports.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { sha256 } from '../src/canonical.mjs';
+import { nodeProfileSha256 } from '../src/node-profile.mjs';
 import { tempRoot } from './helpers.mjs';
 // Test-only use of the Source v2 record assembler and bridge manifest (the resident never imports them).
 import { fixtureRecord } from '../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
@@ -27,9 +28,17 @@ test('the install package is assembled create-only, pins every file and binds po
   const fx = fixtureRecord();
   writeRecord(record, { files: fx.files, recordManifest: fx.recordManifest });
   const out = path.join(root, 'pkg');
+  const profile = JSON.parse(fx.files['acceptance.json']).node;
+  const policyInput = JSON.parse(await fs.readFile(path.join(HERE, 'config', 'policy.example.json'), 'utf8'));
+  policyInput.node = profile; policyInput.nodeProfileSha256 = nodeProfileSha256(profile);
+  policyInput.companion.userSid = profile.ownerSid; policyInput.linux.distribution = profile.wslDistribution;
+  const companionInput = JSON.parse(await fs.readFile(path.join(HERE, 'config', 'companion.example.json'), 'utf8'));
+  Object.assign(companionInput.companion, { node: profile, nodeProfileSha256: nodeProfileSha256(profile), distribution: profile.wslDistribution });
+  const policyFile = path.join(root, 'policy.json'), companionFile = path.join(root, 'companion.json');
+  await fs.writeFile(policyFile, JSON.stringify(policyInput)); await fs.writeFile(companionFile, JSON.stringify(companionInput));
   const pins = [{ installedPath: '/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node', sha256: 'c'.repeat(64) }];
   const sourceFiles = ['work/actions-hosted-migration/independent-ci-v1/src/resident-v2/derive-batch.mjs', ...BRIDGE_FILES.map(n => `${BRIDGE}/${n}`)];
-  const r = await buildPackage({ out, policyFile: path.join(HERE, 'config', 'policy.example.json'), companionFile: path.join(HERE, 'config', 'companion.example.json'), nodeExe: node,
+  const r = await buildPackage({ out, policyFile, companionFile, nodeExe: node,
     recordDir: record, sourceRoot: REPO_ROOT, sourceFiles, linuxExternalPins: pins });
   assert.equal(r.ciSourceManifestSha256, fx.recordManifest.sourceManifestSha256);
   const linux = JSON.parse(await fs.readFile(path.join(out, 'linux', 'manifest.json'), 'utf8'));
@@ -57,6 +66,8 @@ test('the install package is assembled create-only, pins every file and binds po
   assert.equal(policy.sourceManifestSha256, r.sourceManifestSha256);
   assert.equal(policy.ciSourceManifestSha256, r.ciSourceManifestSha256);
   const companion = JSON.parse(await fs.readFile(path.join(out, 'config', 'companion.json'), 'utf8'));
+  assert.equal(companion.status.node, profile.nodeName, 'the PR-page node name is bound to the same installed profile');
+  assert.equal(companion.companion.nodeProfileSha256, fx.recordManifest.nodeProfileSha256);
   assert.ok(companion.companion.relayScript.includes(r.ciSourceManifestSha256));
   // the generated bridge manifest is the one bridge-manifest.mjs computes over the same bytes
   assert.equal(companion.companion.bridgeManifestSha256, bridgeManifest(path.join(REPO_ROOT, ...BRIDGE.split('/'))).sha256);

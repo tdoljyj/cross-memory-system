@@ -13,6 +13,8 @@ export const NOT_ADMITTED_CODES = Object.freeze(['NATIVE_NOT_ADMITTED', 'OWNER_R
   'CLAIM_NOT_CURRENT', 'TASK_CI_HEAD_CAP_REACHED', 'CLAIM_HEAD_CAP_REACHED', 'CI_BUDGET_EXHAUSTED', 'WORKFLOW_CHANGE_NOT_AUTHORIZED', 'PR_NOT_OPEN_OR_CHANGED']);
 // Clean transient: an outside, passing condition. The only codes the one automatic attempt 2 may follow
 // (attempts.mjs; Owner decision 1b5d3687).
+// NATIVE_ADMISSION_UNAVAILABLE also covers explicit protected-observation exhaustion, but only after the Source
+// proved BLOCKED/zero effects/no possible publication. It does not widen attempts.mjs's stage 0/1/2 boundary.
 export const TRANSIENT_CODES = Object.freeze(['NATIVE_ADMISSION_UNAVAILABLE', 'GITHUB_TRANSIENT_UNAVAILABLE', 'BRIDGE_TRANSPORT_TIMEOUT',
   'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'ARCHIVE_PRECONDITION_NOT_MET']);
 // Clean, but final for this head and attempt.
@@ -25,7 +27,10 @@ export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_
   // Phase 2, step 3a: main's live branch rules, GitHub's test merge, the green ledger (parked and tried again), and a
   // test merge of exactly [T, H] that is not the tested tree (final for the head).
   'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE',
-  'TRAIN_TEST_MERGE_TREE_DIFFERS']);
+  'TRAIN_TEST_MERGE_TREE_DIFFERS',
+  // App 5368905 already published on this head, found on GitHub (primary/standby design v0.4 §6.2, C4): at stage 1
+  // before Native was asked, or before a role's first publication that this node knew nothing of. A new commit is needed.
+  'HEAD_PUBLISHED_ON_GITHUB', 'ROLE_ALREADY_ON_GITHUB']);
 // Never clean (listed for the cross-check and the reader; anything not allow-listed is UNKNOWN anyway).
 export const UNKNOWN_CODES = Object.freeze(['BROKER_RESPONSE_UNCONFIRMED', 'STAGE_HELPER_NOT_STOPPED_IN_TIME', 'STAGE_ORIGINAL_NOT_RESTORED',
   'BROKER_CONFIGURATION_CONFLICT', 'NATIVE_RECEIPT_UNCONFIRMED', 'STAGE_CHILD_TREE_UNCONFIRMED', 'STAGE_OUTCOME_MISSING', 'PUBLICATION_UNCERTAIN',
@@ -43,21 +48,32 @@ export const RELAY_LOCAL_REASONS = Object.freeze(['RELAY_ROLE_NOT_RELAYABLE', 'R
 export const RELAY_ROW_FIELDS = Object.freeze(['role', 'outcome', 'reason', 'receipt', 'checkRunId', 'externalId', 'attestationSha256', 'detail']);
 const EXTERNAL = /^independent-ci:relay:(gitleaks|trivy):[a-f0-9]{12}:run[1-9][0-9]{0,19}:a[1-9][0-9]{0,3}$/;
 
-// Stage R rows for exactly the candidates (in order) -> { relayed: [row], local: [row] }, or null when any row
-// is not a clean RELAYED / LOCAL_REQUIRED row (HALT, NOT_PROCESSED, an unknown reason, a missing field).
+// Stage R rows for exactly the candidates (in order) -> { relayed: [row], local: [row], onGithub: row | null }, or null
+// when the rows are not a plan the executor acts on. A plan is every row a clean RELAYED / LOCAL_REQUIRED row, or such
+// rows, then one ON_GITHUB row (ROLE_ALREADY_ON_GITHUB: App 5368905 already published that role on the head and this node
+// knew nothing of it; C4), then only NOT_PROCESSED rows or never-relayable LOCAL_REQUIRED rows (mirror of the Source's
+// relay-plan.mjs#relayPlanEnding). Anything else (HALT, NOT_PROCESSED without ON_GITHUB before it, an unknown reason, a
+// missing field) is null.
 export function relayPlanFromRows(rows, candidates) {
   if (!Array.isArray(rows) || !Array.isArray(candidates) || rows.length !== candidates.length || rows.length === 0) return null;
-  const relayed = [], local = [];
+  const relayed = [], local = []; let onGithub = null;
   for (const [i, r] of rows.entries()) {
     if (r === null || typeof r !== 'object' || Array.isArray(r) || Object.keys(r).length !== RELAY_ROW_FIELDS.length || !RELAY_ROW_FIELDS.every(k => Object.hasOwn(r, k))) return null;
     if (r.role !== candidates[i]) return null;
+    const nothing = r.checkRunId === null && r.externalId === null && r.attestationSha256 === null;
+    const localRow = r.outcome === 'LOCAL_REQUIRED' && RELAY_LOCAL_REASONS.includes(r.reason) && ['relay-local-fallback', 'relay-billing-refused'].includes(r.receipt) && nothing;
+    if (onGithub) {
+      if (r.outcome === 'NOT_PROCESSED' && r.reason === null && r.receipt === null && nothing) continue;
+      if (localRow && r.reason === 'RELAY_ROLE_NOT_RELAYABLE') { local.push(r); continue; }
+      return null;
+    }
     if (r.outcome === 'RELAYED' && r.reason === null && r.receipt === 'relay-attested' && Number.isSafeInteger(r.checkRunId) && r.checkRunId > 0
       && typeof r.externalId === 'string' && EXTERNAL.test(r.externalId) && r.externalId.split(':')[2] === r.role && HEX64.test(r.attestationSha256 ?? '')) relayed.push(r);
-    else if (r.outcome === 'LOCAL_REQUIRED' && RELAY_LOCAL_REASONS.includes(r.reason) && ['relay-local-fallback', 'relay-billing-refused'].includes(r.receipt)
-      && r.checkRunId === null && r.externalId === null && r.attestationSha256 === null) local.push(r);
+    else if (localRow) local.push(r);
+    else if (r.outcome === 'ON_GITHUB' && r.reason === 'ROLE_ALREADY_ON_GITHUB' && r.receipt === null && nothing) onGithub = r;
     else return null;
   }
-  return { relayed, local };
+  return { relayed, local, onGithub };
 }
 // Resident-side codes that end a stage cleanly before or around the Source stage (companion pump, the v1
 // one-shot states kept for an unchanged reading of older receipts).

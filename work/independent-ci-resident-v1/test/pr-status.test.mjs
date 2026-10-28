@@ -193,7 +193,8 @@ test('the status context can never be a required check: its shape, and a live re
   assert.equal(contextShapeSafe(PR_STATUS_CONTEXT), true);
   for (const r of REQUIRED) assert.equal(contextShapeSafe(r), false, r);
   assert.equal(contextFree(PR_STATUS_CONTEXT, REQUIRED), true);
-  assert.equal(contextFree(PR_STATUS_CONTEXT, [...REQUIRED, ' RESIDENT-QUEUE (INFO ONLY) ']), false);
+  assert.equal(contextFree(PR_STATUS_CONTEXT, [...REQUIRED, ' RESIDENT-QUEUE/TURING (INFO ONLY) ']), false);
+  assert.equal(PR_STATUS_CONTEXT, 'resident-queue/turing (info only)', 'review NIT 1: each node its own name');
   assert.equal(contextFree(PR_STATUS_CONTEXT, null), false, 'unknown rules: never');
 });
 
@@ -258,8 +259,8 @@ test('the reporter writes a status only when it changes, never over a required c
   const fresh = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
     store: await LocalStore.open(path.join(root, 'other.json'), () => now), notifications: false });
   assert.equal((await fresh.pass({ pulls, status })).posted, 0);
-  assert.deepEqual(validateStatusConfig(undefined), { prStatus: true, notifications: true });
-  assert.deepEqual(validateStatusConfig({ notifications: false }), { prStatus: true, notifications: false });
+  assert.deepEqual(validateStatusConfig(undefined), { prStatus: true, notifications: true, node: 'turing' });
+  assert.deepEqual(validateStatusConfig({ notifications: false }), { prStatus: true, notifications: false, node: 'turing' });
   assert.throws(() => validateStatusConfig({ other: true }), { code: 'COMPANION_STATUS_CONFIG_INVALID' });
   assert.ok((await fs.readdir(root)).includes('store.json'));
 });
@@ -297,4 +298,124 @@ test('phase 2: the executor\'s notices become one notification each; a stopped o
   assert.deepEqual(e.map(x => x.key), [`wait:8:${H(8)}:OWNER_REVIEW_REQUIRED`, `notice:poke:7:${H(7)}`, `notice:stopped:8:${H(8)}:CLAIM_NOT_CURRENT`,
     'notice:waiting-budget:2026-10-22', 'notice:batch-limit:2026-10-22', 'notice:breaker:1792658000000']);
   assert.match(e.at(-1).body, /约 09:30Z 试跑一批/);
+});
+
+// ---- primary/standby C5 (DESIGN §23, node-duty.mjs) ----
+
+test('C5: the node writes its own context on its own commits; duty texts are written again every 14 minutes; STANDBY hands over once', async t => {
+  const root = await tempRoot(t);
+  let now = Date.parse('2026-10-23T06:00:00Z');
+  const calls = [];
+  const run = async argv => {
+    calls.push(argv);
+    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
+    if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
+    return { code: 0, stdout: '{}' };
+  };
+  const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const reporter = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now),
+    notifications: false, writeRequest: async () => {} });
+  const pulls = [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }, { pr: 8, headSha: H(8), eligible: true, hint: null, behindBy: 0 }];
+  const board = (fn, at = now) => boardStatus(b => { b.setState('IDLE'); b.update({ backfill: { complete: true, published: 0, unreadable: 0 } }); b.setPending([{ pr: 7, headSha: H(7), baseSha: MAIN, position: 1 }]); fn(b); }, at);
+  const posts = () => calls.filter(a => a.includes('POST'));
+  assert.equal((await reporter.pass({ pulls, status: board(() => {}) })).posted, 1, 'only its own commit (PR 8 was never queued here)');
+  const first = posts().at(-1);
+  assert.ok(first.includes('context=resident-queue/turing (info only)'));
+  assert.match(first.find(a => a.startsWith('description=')), /^description=当班：排队第 1 位/);
+  now += 5 * 60_000;
+  assert.equal((await reporter.pass({ pulls, status: board(() => {}) })).posted, 0, 'unchanged within 14 minutes');
+  now += 9 * 60_000;
+  assert.equal((await reporter.pass({ pulls, status: board(() => {}) })).posted, 1, 'written again after 14 minutes (NIT 4)');
+  assert.equal(reporter.store.data.posted[H(7)].kind, 'duty');
+  // the node turns STANDBY (C3): its 当班 becomes 已交班 once; nothing else is written under its context
+  now += 60_000;
+  const standby = board(b => b.update({ node: { name: 'turing', mode: 'STANDBY', probe: { at: new Date(now).toISOString(), result: 'not-held', failures: 0, failingSince: null } } }));
+  assert.equal((await reporter.pass({ pulls, status: standby })).posted, 1);
+  assert.match(posts().at(-1).find(a => a.startsWith('description=')), /^description=已交班：/);
+  now += 60_000;
+  assert.equal((await reporter.pass({ pulls, status: standby })).posted, 0, 'once');
+});
+
+test('C5: another node on duty locks this one: the dual-active hold goes into requests\\, its commits say 双活停机; both contexts are checked against the rules', async t => {
+  const root = await tempRoot(t);
+  let now = Date.parse('2026-10-23T06:00:00Z');
+  const requests = [];
+  let required = REQUIRED;
+  const other = [{ context: 'resident-queue/company-01 (info only)', state: 'pending', description: '当班：运行中：第 3 段（gitleaks 发布）', created_at: new Date(now - 60_000).toISOString(), login: 'tdoljyj' }];
+  const calls = [];
+  const run = async argv => {
+    calls.push(argv);
+    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: required.join('\n') + '\n' };
+    if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
+    if (argv[4]?.includes(`/commits/${H(9)}/statuses?`)) return { code: 0, stdout: JSON.stringify(other) };
+    if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
+    return { code: 0, stdout: '{}' };
+  };
+  const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const store = await LocalStore.open(path.join(root, 's.json'), () => now);
+  const reporter = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store, writeRequest: async v => { requests.push(v); } });
+  const pulls = [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }, { pr: 9, headSha: H(9), eligible: true, hint: null, behindBy: 0 }];
+  const node = { name: 'turing', mode: 'ACTIVE', probe: { at: new Date(now - 30_000).toISOString(), result: 'held', failures: 0, failingSince: null } };
+  const status = boardStatus(b => { b.setState('IDLE'); b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, node }); b.setPending([{ pr: 7, headSha: H(7), baseSha: MAIN, position: 1 }]); }, now);
+  const r = await reporter.pass({ pulls, status });
+  assert.equal(requests.length, 1);
+  assert.deepEqual([requests[0].contract, requests[0].holder], ['clued.independent-ci.resident-intake-pause/1', 'dual-active']);
+  assert.ok(r.toasts >= 1, 'the Owner is told');
+  assert.match(calls.filter(a => a.includes('POST') && a.includes(`repos/${REPO}/statuses/${H(7)}`)).at(-1).find(a => a.startsWith('description=')), /^description=双活停机：另一节点 company-01 也在当班/);
+  // the lock survives a companion restart (the reporter's own store)
+  const again = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now),
+    writeRequest: async v => { requests.push(v); } });
+  assert.equal(again.store.data.node.lock.other, 'company-01');
+  // either context among the required checks: nothing is written, the Owner is told which
+  required = [...REQUIRED, 'resident-standby (info only)'];
+  now += 31 * 60_000;
+  const before = calls.filter(a => a.includes('POST')).length;
+  const c = await again.pass({ pulls, status: boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, node }); }, now) });
+  assert.deepEqual([c.collision, calls.filter(a => a.includes('POST')).length - before], [true, 0]);
+  assert.equal(again.collision, 'resident-standby (info only)');
+  assert.deepEqual(validateStatusConfig({ node: 'company-01' }), { prStatus: true, notifications: true, node: 'company-01' });
+  assert.throws(() => validateStatusConfig({ node: 'Company 01' }), { code: 'COMPANION_STATUS_CONFIG_INVALID' });
+});
+
+test('C5 review: notifications before the duty reads; a pass whose duty fails writes nothing; a reminder toast owed is shown later; refreshes stop at 900', async t => {
+  const root = await tempRoot(t);
+  let now = Date.parse('2026-10-23T06:00:00Z');
+  const calls = [];
+  const run = async argv => {
+    calls.push(argv);
+    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
+    if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
+    return { code: 0, stdout: '{}' };
+  };
+  const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const reporter = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now), writeRequest: async () => {} });
+  const node = { name: 'turing', mode: 'ACTIVE', probe: { at: new Date(now - 30_000).toISOString(), result: 'held', failures: 0, failingSince: null } };
+  const halted = boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, node, halt: { code: 'X_Y', at: '2026-10-23T05:59:00Z' } }); }, now);
+  await reporter.pass({ pulls: [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }], status: halted });
+  const toastAt = calls.findIndex(a => a.includes('-EncodedCommand')), readAt = calls.findIndex(a => a[4]?.includes('/statuses?'));
+  assert.ok(toastAt >= 0 && readAt > toastAt, 'the HALT toast before any status read (review M4)');
+  // m1: the duty throws: no PR page write at all this pass (never under a fallback name)
+  reporter.duty.prepare = async () => { throw new Error('bad memory'); };
+  const posts = () => calls.filter(a => a.includes('POST')).length;
+  const before = posts();
+  now += 60_000;
+  await reporter.pass({ pulls: [{ pr: 9, headSha: H(9), eligible: false, hint: 'merge-main', behindBy: 2 }], status: halted });
+  assert.equal(posts(), before);
+  // m8: a duty text is refreshed at most REFRESH_MAX_POSTS times per head
+  const r2 = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 'r.json'), () => now), notifications: false });
+  const queued = () => boardStatus(b => { b.setState('IDLE'); b.update({ backfill: { complete: true, published: 0, unreadable: 0 } }); b.setPending([{ pr: 7, headSha: H(7), baseSha: MAIN, position: 1 }]); }, now);
+  const pulls = [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }];
+  assert.equal((await r2.pass({ pulls, status: queued() })).posted, 1);
+  r2.store.data.posted[H(7)].n = 900;
+  now += 15 * 60_000;
+  assert.equal((await r2.pass({ pulls, status: queued() })).posted, 0, 'no refresh past 900 writes');
+  // m6: a reminder toast that could not be shown is owed and shown in a later pass
+  const store = await LocalStore.open(path.join(root, 'm.json'), () => now);
+  store.data.node.toasts['standby:7:x:unclaimed'] = { title: 'PR #7：当班节点没接手', body: 'b', at: new Date(now).toISOString() };
+  const r3 = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store });
+  assert.equal((await r3.pass({ pulls: [], status: queued() })).toasts, 1);
+  assert.deepEqual(store.data.node.toasts, {});
+  assert.ok(store.data.notified['standby:7:x:unclaimed']);
 });

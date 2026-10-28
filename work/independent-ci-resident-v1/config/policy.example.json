@@ -1,5 +1,5 @@
 {
-  "contract": "clued.independent-ci.resident-policy/5",
+  "contract": "clued.independent-ci.resident-policy/7",
   "repo": "tdoljyj/cross-memory-system",
   "baseBranch": "main",
   "sourceManifestSha256": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -43,8 +43,14 @@
     "stage8MaxTries": 12,
     "stage8RetriesPer24h": 100
   },
+  "train": {
+    "enabled": "shadow",
+    "nonFrontRuns": true,
+    "maintenanceEveryMs": 600000,
+    "maintenanceMaxPerDay": 200
+  },
   "companion": {
-    "userSid": "S-1-5-21-0-0-0-1001",
+    "userSid": "S-1-5-21-1173730660-3877291096-655431861-1001",
     "heartbeatMaxAgeMs": 60000
   },
   "stageRunMilliseconds": [
@@ -56,7 +62,8 @@
     600000,
     900000,
     2700000,
-    900000
+    900000,
+    300000
   ],
   "linux": {
     "distribution": "Ubuntu-24.04",
@@ -89,5 +96,17 @@
         "trivy": 1500000
       }
     }
-  }
+  },
+  "node": {
+    "contract": "clued.independent-ci.node-profile/1",
+    "controllerSid": "S-1-5-21-1173730660-3877291096-655431861-1015",
+    "hostname": "TURING",
+    "mutationMutex": "Global\\CluedControlControllerMutationV1-TURING-1015",
+    "nodeName": "turing",
+    "ownerProfileDirectory": "C:\\Users\\17531",
+    "ownerSid": "S-1-5-21-1173730660-3877291096-655431861-1001",
+    "runnerService": "actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02",
+    "wslDistribution": "Ubuntu-24.04"
+  },
+  "nodeProfileSha256": "4d006ddc5b8cb0a112f67ddf4c07f96ddb5c39623e3eb11617c076708acd9be6"
 }
