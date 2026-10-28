@@ -2549,3 +2549,103 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 - **parking holder 是解释 held 的硬前提。** 没有任何有效角色条目时，服务也可向所有 Binding 开放；holders RPC 无法证明已 parking。部署/启用主备前必须另有 Owner 的实际 parking 证据，本代码不能用 empty holders 或 held 代替。C2 不变更节点模式、不授 CI 执行权限；C3 负责启动状态、角色与失败后的模式转换。C2 的明确 mode 输入决定 STANDBY 15 分钟、ACTIVE idle 30 分钟。（C3 之后：节点启动是 UNCERTAIN，用 STANDBY 的 15 分钟间隔，启动、复位和疑似失去角色时立即探测；见 §29。）
 - 三态事实只有在同 nonce、plan/config、Source、完整 Native 回执、原始 outcome SHA、精确 jobId 与 Windows tree-zero/original-stopped 全部相符后有效。连接失效通知一次，连续三次 uncertain 通知一次，确认 held/not-held 后重置；本地 receipt 保留次数与间隔，重启不能重置不确定记录。中断、缺清理或错误绑定沿原 UNKNOWN/HALT 保留现场，不放通任何旧 head/retry。
 - C2 receipt 不进入批次 failure-table 的 release/burn/attempt2 规则。没有新 secret、App、Node 身份泛化；旧 /1 TURING 六生产入口保留原字节，当前 stage 11 只在完整 record/2 Source 中可达。离线纯测试不代替实际 P4 的双节点服务影响、日约 96 次切换、parking、撤销与过期验收。
+
+## 32. 段前内存闸与“main 已移动”干净结束
+
+依据：第 2 批（Owner Decision `afd23e7e`）。A 是 Task `25851665`（WSL order-7 缓解设计 Task `7c2e4386`，Decision `941f9146` §2 B2）；B 是 Task `ea32aaf9` 的修法 1（Owner Decision `d8e3dea4`）。只改常驻层：`src/companion.mjs`、`src/mailbox.mjs`、`src/engine-windows.mjs`、`src/classify.mjs`、`src/failure-table.json`、`src/executor.mjs`（只多记一项回执字段）。不改 Source v2、Linux 工具或 `companion-main.mjs`。
+
+### 32.1 A 为什么
+
+- Windows 到 WSL 的每条 hv_sock 通道，都要一块空闲的环形缓冲块，阶数由 socket 默认值决定：默认是 order 7，装了 P1 是 order 5。每个 wsl.exe 开六条通道。
+- 所有 zone 都没有这么大的空闲块时，wsl.exe 卡住或失败。扫描段里这会让中继失败，段以 UNCERTAIN 结束，烧掉 head（10-22、10-28）。
+- `linux/host-tuning/clued-wsl-memguard` 每 60 s 算一次同样的数（`ring_order`、`blocks_at_least`），低于 `LOW_BLOCKS`（64）就整理内存。但它只管修，不管段开不开始。
+
+### 32.2 A 的做法：调用扫描段之前读一次，低就等，等不到就干净拒绝
+
+1. **读数**（伴侣）：新请求种类 `memory-ready`（字段只有 `batchId`），固定 argv，一次 wsl.exe：`/usr/bin/cat -- /proc/sys/net/core/rmem_default /proc/sys/net/core/wmem_default /proc/buddyinfo`，以 root 运行，经作业宿主，15 s 上限。
+   - `parseMemoryFacts` 与 memguard 的算法逐项相同：每个方向夹在 6 到 64 页，合成一次分配求阶数；各 zone 中不小于这个阶数的空闲块相加；超过 order 10 的列不计。
+   - 答复只给事实 `memory: { order, blocks }`，阈值由服务判断。读不到（退出码不为 0、超时、作业树、文本不合格式）答 `LINUX_MEMORY_UNREADABLE`。
+   - 答复合同升到 `/3`，多一个字段 `memory`，只有 `memory-ready` 的答复里可以不为 null。做法与 §24.3 的 `/2`（`jobTree`）相同：伴侣和服务来自同一个安装包，一起升级。新请求种类不升请求合同，与 `pr-head` 的先例相同。
+2. **闸门**（引擎 `memoryGate()`）：只对第 2/4/6 段，在 Owner 中止检查之后、发 `relay-stage` 与调用 `invoke-stage.mjs` 之前。这时这一段的 issue 还不存在，泵也还没开。
+   - 读数 ≥ `MEMORY_GATE_MIN_BLOCKS`（64）：照常调用这一段。正常情况下只多一次 wsl.exe，不等。
+   - 读数低：每 60 s（memguard 的周期）再读一次，最多 7 次读数（`MEMORY_GATE_CHECKS`），约 6 分钟（`MEMORY_GATE_WAIT_MS`，再加最后一次读的时间）。期间一旦够数，就在同一批里照常调用这一段。
+   - 到上限仍然低：段不调用，返回 `LINUX_MEMORY_NOT_READY`。Windows 一半的证明是“什么都没起”加服务自己的 SCM 读回。
+   - 等待中 Owner 中止被接受：停止等待，返回 `OWNER_ABORT_REQUESTED`，走中止路径。
+   - 每次检查最多一次 wsl.exe；每次读最多等 60 s 答复。
+3. **记录**：闸门的事实（次数、阶数、块数、等了多久、结果）随段结果返回，执行器写进这一段 `stage-terminal` 回执的 `memoryGate`。
+4. **失败表**：新码 `LINUX_MEMORY_NOT_READY` 只进 `failure-table.json` 和常驻侧名单（`RESIDENT_CLEAN`、`ATTEMPT2_RESIDENT_CODES`），不进与 Source 镜像的四个数组。
+   - 第 2 段：`environment / burn / attempt2 / counts`；
+   - 其他段：`environment / burn / new-commit / counts`。
+
+### 32.3 各段的结局与“不烧头”的确切含义
+
+- 第 1 段之后，`markStarted` 已经记下 attempt 1 的 head 键。所以闸门拒绝不会再多烧什么；这里“不烧头”指这个提交还能再跑。
+- **第 2 段**：`FAILED_CLEAN LINUX_MEMORY_NOT_READY`，归档原因 `linux-memory-not-ready`，不 HALT。
+  - executed-heads 按第 2 段记为未发布，换 Source 也能重跑；
+  - 同一 Source 下由一次自动 attempt 2 重跑这个提交（它自己的 head 键，`automaticAttempt2.delayMs` 之后）；
+  - 例外与 §27 相同：attempt 2 自己再被拒绝，不会有 attempt 3；第 R 段已转发过角色时，不进 attempt 2；
+  - 这一条把 attempt 2 名单扩到一个新的常驻码。依据是 Decision `1b5d3687` 的规则（发布之前、干净的临时失败），做法与 Owner Decision `eaa7d5e4` 对 `BRIDGE_ABANDONED_UNPUBLISHED` 的处理相同。
+- **第 4、6 段**：第 3 段已经发布，这个 head 不可能“不烧”。闸门在这里做两件事：
+  - 先在原地等 memguard。多数情况下这一段随后照常运行，批次完成；
+  - 等不到时以 `FAILED_CLEAN LINUX_MEMORY_NOT_READY` 结束（`new-commit`，计入熔断），而不是开段后多半落成 UNCERTAIN 再 HALT。PR 要推新提交才会再跑，与第 3 段之后的任何干净失败相同。
+- 拒绝之后照常要两台主机的完整清理证明（`proofFor`），归档也照常经伴侣（`archive-linux`）。证明不完整仍然 HALT，与每个干净码相同。
+
+### 32.4 阈值：64
+
+- 一个扫描段开头几分钟里离不开的 wsl.exe 调用：SendIssue 的中继、启动 worker、头两轮回调（admission 与 remote-refs）的 ReceiveChallenge 和 SendResponse、unit 事实的读取、首次列表，约 10 次。每次六条通道。最坏情况下，用过的块来不及在 memguard 下一遍（≤ 60 s）之前合并回来，需要约 60 块。
+- 64 正好是 memguard 的 `LOW_BLOCKS`：低于它，memguard 已经在整理。闸门和守护用同一个数，闸门等的正是守护在修的时候；memguard 每 10 分钟的状态行也就直接说明闸门多常会等。
+- 健康时的块数是几百到几千（`test/test_host_tuning.py` 的 HIGH 样本，order 7 时 2356 块），故障时是 0（10-22 13:22Z）。64 只在接近悬崖时才挡。
+
+### 32.5 读不到时：照常运行，不拒绝、不 HALT
+
+- 闸门只凭证据拒绝：至少一次合格的低读数，并且之后没有一次够数的读数。
+- 第一次就读不到（伴侣不答、答复不合格式、伴侣报 `LINUX_MEMORY_UNREADABLE`、邮箱抛错）：这一段立即照常调用，和没有闸门时完全一样，回执里 `ready` 为 null。
+- 理由：读不到什么也证明不了。把它当成拒绝，任何伴侣故障或格式问题都会让每个扫描段被拒，批次永远过不了第 2 段；当成照常运行，最坏就是今天的行为，§25–§27 照常兜底。
+- 已经有过低读数之后又读不到：不算“够了”，继续在上限内等，到上限按低处理。这时读不到更可能是内存更紧了。
+- 所以读数失败从不无限阻塞（次数和时间都有上限），也从不自己造成 HALT。
+- 残余：内存已经耗尽到连闸门自己的 wsl.exe 都起不来时，闸门读不到，只能照常运行，结果与今天相同。闸门管的是块数在 [6, 64) 之间、“快到悬崖”的状态。
+
+### 32.6 B：“main 已移动 / 主体已变”在第一次发布之前
+
+逐个核对了能在第一次发布（第 3 段；第 R 段转发过角色则更早）之前结束批次、意思是“main 移动或主体变了”的码。结论：它们都已是干净结束；唯一会 HALT 的那一种（10-22 #887 的结局）已由设计 r3 第三部分（§27）覆盖。本节没有为 B 改代码。
+
+| 在哪里 | 到常驻时的码 | 失败表 / 处理 | 结果 |
+|---|---|---|---|
+| bundle：`build-bundle.ps1` 发现 main 不再是 base（`REMOTE_MAIN_BASE_CHANGED`） | `BUNDLE_UNAVAILABLE` | `release`（第 1 段之前） | `NOT_EXECUTED`，头不烧 |
+| 工作区：`prepare-workspaces.py` 的 `REMOTE_MAIN_BASE_CHANGED`（核对的是 bundle 头与描述符，不是实时的 main） | `WORKSPACE_PREPARATION_REFUSED` | `environment / burn` | `FAILED_CLEAN` |
+| 第 2 段之前的 refs 闸门 | `REMOTE_REFS_CHANGED_SINCE_BUNDLE` | `transient / attempt2` | `FAILED_CLEAN`，attempt 2 |
+| 第 1 段：PR 变了、main 越过了 head、文件两次读不一致 | `PR_NOT_OPEN_OR_CHANGED`、`PROTECTED_CHANGE_NOT_UP_TO_DATE`、`STAGE_CHILD_REFUSED`（`pr_subject_changed` 等） | `deterministic-pr / burn` | `FAILED_CLEAN` |
+| 第 1 段发布之后的复核被拒 | `PUBLICATION_REVOKED` | `clean-final` | `FAILED_CLEAN` |
+| 第 2 段签发之前：refs 或准入发现主体变了 | `PR_NOT_OPEN_OR_CHANGED`（`full_admission_subject_changed`）、`BATCH_CLAIM_CHANGED`（`full_admission_rejected` 等） | `deterministic-pr` / `clean-final` | `FAILED_CLEAN` |
+| 第 2 段：worker 的干净 blocked 记录 | `REMOTE_REFS_CHANGED_SINCE_BUNDLE`（透传）或 `STAGE_CHILD_REFUSED` | `transient` / `clean-final` | `FAILED_CLEAN` |
+| 第 2 段签发之后：回调轮的准入或 refs 读取发现 main 移动（`REFS_MAIN_BASE_CHANGED` 变成 `full_admission_subject_changed`），发行器以 UNCERTAIN 结束（10-22 #887） | `PUBLICATION_UNCERTAIN` | `halt` 行 | **§27 覆盖**：泵被取消（`stage-ended`）后答复、两台主机静止，得 `FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED`，第 2 段 attempt 2；证明不了才 HALT |
+| 第 2 段：worker 在 main 移动后没留记录就退出 | 信号 B、桥停止、`BRIDGE_STAGE_STOPPED_PUMP_LOST` | `halt` 行 | **§27 覆盖**，同上 |
+
+- **Owner 要的说明**：10-22 #887 的 HALT 就是表里倒数第二行。设计 r3 第三部分把它收成 `FAILED_CLEAN`。这部分已在本分支（`146d8adf`）上，随第 2 批一起装上才生效。
+- 第一次发布之后，同样的码照旧：发布段（3/5/7）的 `PUBLICATION_UNCERTAIN` 仍然 HALT；干净码仍是 `FAILED_CLEAN`（`new-commit`）；第 4/6 段的 UNCERTAIN 由 §27 照旧收尾（`new-commit`）。
+- 没有改 Source，也没有码需要只在常驻侧改分类。
+- 残余，供 Owner 决定（Owner Decision `d8e3dea4` 的修法 1 范围之外）：§27 收尾的码对“main 已移动”并不贴切。`BRIDGE_ABANDONED_UNPUBLISHED` 计入熔断，并在第 2 段排一次 attempt 2；同一 base 的 attempt 2 会在 bundle 处遇到 `REMOTE_MAIN_BASE_CHANGED`，以 `BUNDLE_UNAVAILABLE` 释放（也计入熔断）。结果仍然干净、不 HALT，只是多跑一次 bundle、熔断多计两次。如要改成不计熔断、不排 attempt 2，可按结局里的 `outcomeReason`（`full_admission_subject_changed`）再做一个小改动。
+
+### 32.7 与任务说明的差异
+
+1. 闸门放在引擎的 `invoke()` 里，紧挨着调用扫描段，而不是在第 4/6 段的“角色间归档”之前。好处是离 issue 最近，Owner 中止已检查过；代价是角色间归档（两次 wsl.exe）不受闸门保护。块数在 [6, 64) 时这两次调用通常仍能成功。
+2. 时间上限是“约 6 分钟，再加最后一次读”：最后一次读在第 6 次等待之后开始。离线演练实测 7 次读、366 s。
+3. B 没有改代码（见 32.6），只加了钉住现状的测试。这些测试在 `146d8adf` 上就能通过，因为 §27 已在其中；10-22 那一行在没有 §27 的 main 上会 HALT。
+
+### 32.8 测试与演练
+
+- `test/memory-gate.test.mjs`（12 项）：
+  - A：阶数与块数用 memguard 的 buddyinfo 样本（order 7、order 5、夹紧、超过 order 10 的列、各种不合格式）；伴侣只起一次固定 argv 的 wsl.exe，答复 `/3` 带 `memory`，读不到答 `LINUX_MEMORY_UNREADABLE`；`memory` 只在 `memory-ready` 的答复里出现，只收 `{ order, blocks }`；
+  - A：够数时第 2/4/6 段照常运行（一次读，然后泵与调用），第 1/3/5/7/8 段从不读；低两次后够数，等两分钟后同一批照常运行；一直低，得 `LINUX_MEMORY_NOT_READY`，没有调用、没有泵、7 次读，时间也有上限；读不到，立即照常运行；先低后读不到，继续等到上限再拒绝；等待中 Owner 中止，得 `OWNER_ABORT_REQUESTED`；
+  - A（执行器）：第 2 段拒绝，`FAILED_CLEAN`、不 HALT、未发布、attempt 2 排上并能完成，回执带 `memoryGate`；第 4/6 段，`FAILED_CLEAN`、没有 attempt 2、记为已发布；Linux 证明不完整仍 HALT；新码每一段都有行，不在 Source 镜像数组里；
+  - B：上表每个第一次发布之前的码，`FAILED_CLEAN`、不 HALT、未发布；bundle 得 `NOT_EXECUTED`；第一次发布之后照旧。
+- 改了的已有测试：`engine-v2`（发送顺序多一个 `memory-ready`）、`job-host`（合同 `/3`）、`failure-table`（常驻码名单）、`scanner-abandon`（attempt 2 名单）、`bridge-observer` 与 `abort-ports`（假邮箱对 `memory-ready` 不给读数）。
+- 离线演练：
+  - 三个事故重放里，闸门在第 2 段之前各读一次、不等；
+  - 新增 `memory-low`：VM 一直没有 order 7 的空闲块，第 2 段从未调用，`FAILED_CLEAN LINUX_MEMORY_NOT_READY`，不 HALT，两边归档 `linux-memory-not-ready`，排上一次 attempt 2。
+
+### 32.9 安装与不变量
+
+- 随第 2 批的一次常驻层 Windows 重装生效（同一次 UAC 里重签 policy 的 `residentManifestSha256`）。不改 policy 合同、Source 或 Linux 工具。
+- 闸门不依赖 memguard 是否已装：没装时照样能读，只是低读数等不来整理，到上限就干净拒绝。
+- 不增加发布路径，不碰 GitHub，不用 App 凭据；伴侣只多一个只读的固定 argv。闸门只会让执行器晚开或不开一个扫描段，从不让它多做事；证明不了照旧 HALT；自动逻辑不写、不清除 `HALT.json`。
