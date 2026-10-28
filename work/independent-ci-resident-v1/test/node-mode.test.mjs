@@ -12,6 +12,7 @@ import { nodeOf, stallCode } from '../src/node-duty.mjs';
 import { batchKey, headKey } from '../src/ledger.mjs';
 import { intakePauseRequest } from '../src/intake-pause.mjs';
 import { rearmRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
+import { refusalSafeToRerun } from '../../actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/publisher.mjs';
 import { BASE, CI_SOURCE, HEAD, RELAY_ON, SAFE_REFUSAL, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, notAdmitted, rawPolicy, triggerBytes } from './helpers.mjs';
 
 const MIN = 60_000;
@@ -183,8 +184,12 @@ test('an engine that cannot probe the role is the single node it always was: no 
 
 // ---- NODE_ROLE_NOT_HELD ----
 
+// The facts are what the Source's publisher really writes: refusalSafeToRerun is its flag, true beside a deterministic reason now.
+const noRoleWith = reasonCodes => ({ ...NO_ROLE, safeToRerun: refusalSafeToRerun({ step: 'boundary', claimed: null, reason: 'full_admission_rejected', diagnostic: { reasonCodes } }),
+  diagnostic: { ...NO_ROLE.diagnostic, reasonCodes } });
 for (const [form, answer] of [['NODE_ROLE_NOT_HELD', notAdmitted('NODE_ROLE_NOT_HELD', NO_ROLE)], ['NATIVE_NOT_ADMITTED with admission_binding_required (an older Source)', notAdmitted('NATIVE_NOT_ADMITTED', NO_ROLE)],
-  ['NATIVE_NOT_ADMITTED with admission_binding_required beside a deterministic reason', notAdmitted('NATIVE_NOT_ADMITTED', { ...NO_ROLE, diagnostic: { ...NO_ROLE.diagnostic, reasonCodes: ['admission_binding_required', 'protected_change_not_up_to_date'] } })]]) {
+  ['NODE_ROLE_NOT_HELD beside a deterministic reason (protected_change_not_up_to_date)', notAdmitted('NODE_ROLE_NOT_HELD', noRoleWith(['admission_binding_required', 'protected_change_not_up_to_date']))],
+  ['NODE_ROLE_NOT_HELD beside a deterministic reason (changed_files_truncated)', notAdmitted('NODE_ROLE_NOT_HELD', noRoleWith(['admission_binding_required', 'changed_files_truncated']))]]) {
   test(`stage 1 ${form}: STANDBY, released, no evaluation and no release counted, the row waits and is never stopped`, async t => {
     const f = await nodeFx(t, { engine: fakeEngine({ stages: { 1: answer } }), facts: [HELD] });
     await f.exec.tick();
@@ -216,6 +221,16 @@ for (const [form, answer] of [['NODE_ROLE_NOT_HELD', notAdmitted('NODE_ROLE_NOT_
   });
 }
 
+test('an older Source beside a deterministic reason: its flag is false, so the head is burned as before C3, and the node still goes STANDBY', async t => {
+  const old = { ...NO_ROLE, safeToRerun: false, diagnostic: { ...NO_ROLE.diagnostic, reasonCodes: ['admission_binding_required', 'protected_change_not_up_to_date'] } };
+  const f = await nodeFx(t, { engine: fakeEngine({ stages: { 1: notAdmitted('NATIVE_NOT_ADMITTED', old) } }), facts: [HELD] });
+  await f.exec.tick();
+  await f.drop(triggerBytes());
+  const r = await f.exec.tick();
+  assert.notEqual(r.state, 'NOT_ADMITTED');
+  assert.deepEqual([f.exec.roleProbeMode, await f.ledger.headBurned(headKey(subject()))], ['STANDBY', true]);
+});
+
 test('a node that holds no role never has a PR burned for it: a stage-1 answer without the safe-to-rerun flag still burns like any other', async t => {
   const f = await nodeFx(t, { engine: fakeEngine({ stages: { 1: notAdmitted('NODE_ROLE_NOT_HELD', { ...NO_ROLE, safeToRerun: false }) } }), facts: [HELD] });
   await f.exec.tick();
@@ -223,6 +238,74 @@ test('a node that holds no role never has a PR burned for it: a stage-1 answer w
   const r = await f.exec.tick();
   assert.notEqual(r.state, 'NOT_ADMITTED', 'no flag, no release: the existing rule');
   assert.equal(f.exec.roleProbeMode, 'STANDBY', 'but the node is no longer on duty');
+});
+
+test('m1: a node-role release is no new-trigger re-evaluation either (the cap of 6 a day per commit counts decisions about the PR)', async t => {
+  const f = await executorFixture(t);
+  for (const [n, klass] of [[1, 'node-role'], [2, 'not-admitted']]) {
+    const sj = subject({ headSha: H(n) }), key = batchKey(sj);
+    await f.ledger.reserve(key, sj, { origin: 'new-trigger' });
+    await f.ledger.releaseUnexecuted(key, 'NOT_ADMITTED', { failureCode: 'X_Y', class: klass });
+  }
+  const u = await f.ledger.usage(0);
+  assert.deepEqual([...u.reevaluations], [[`884:${H(2)}`, 1]]);
+  assert.deepEqual([u.evaluations, [...u.releasesByHead]], [1, [[H(2), 1]]]);
+});
+
+// An engine whose attempt 1 ends in a transient stage-2 failure (so attempt 2 is scheduled) and whose attempt 2 meets `refuse` at stage 1.
+function attempt2Engine(refuse) {
+  const engine = fakeEngine({ stages: { 2: { ok: false, code: 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', proof: WINDOWS_CLEAN } } });
+  const run = engine.runStage, derive = engine.derive;
+  engine.attempts = [];
+  engine.refuse = [...refuse];
+  engine.derive = async (s, key) => { engine.attempts.push(s.attempt); return { ...(await derive(s, key)), attempt: s.attempt }; };
+  engine.runStage = async (batch, stage, o) => {
+    if (stage.number === 1 && batch.attempt === 2 && engine.refuse.length) { engine.calls.push(['stage', 1]); return engine.refuse.shift(); }
+    return run(batch, stage, o);
+  };
+  return engine;
+}
+
+test('m2: a node-role release of attempt 2 gives the same attempt 2 back (never an attempt 3); any other release still spends it', async t => {
+  const f = await nodeFx(t, { engine: attempt2Engine([notAdmitted('NODE_ROLE_NOT_HELD', NO_ROLE)]), facts: [HELD] });
+  await f.exec.tick();
+  await f.drop(triggerBytes());
+  const first = await f.exec.tick();
+  assert.equal(first.state, 'FAILED_CLEAN');
+  const key2 = first.attempt2;
+  assert.match(key2, /^[0-9a-f]{64}$/);
+  f.advance(11 * MIN);
+  const second = await f.exec.tick();
+  assert.deepEqual([second.state, second.failureCode, f.exec.roleProbeMode], ['NOT_ADMITTED', 'NODE_ROLE_NOT_HELD', 'STANDBY']);
+  assert.deepEqual((await f.ledger.pendingAttempts2()).map(a => a.key2), [key2], 'the same attempt 2 is pending again');
+  assert.deepEqual(await receiptBodies(f, 'attempt2-reopened'), [{ key: key2, attempt1: first.key }]);
+  // STANDBY runs nothing; once the node is ACTIVE again (and the 10-minute cool-down is over) attempt 2 runs, with the same key
+  f.advance(11 * MIN);
+  assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'NODE_STANDBY']);
+  assert.deepEqual(f.engine.attempts, [1, 2]);
+  await f.exec.setNodeMode('ACTIVE', 'test');
+  const third = await f.exec.tick();
+  assert.deepEqual([third.state, third.key, third.attempt2], ['FAILED_CLEAN', key2, undefined], 'it ends like attempt 2 does, and schedules no attempt 3');
+  assert.deepEqual(f.engine.attempts, [1, 2, 2]);
+  assert.deepEqual(await f.ledger.pendingAttempts2(), []);
+  for (let i = 0; i < 3; i++) { f.advance(60 * MIN); await f.exec.tick(); }
+  assert.deepEqual(f.engine.attempts, [1, 2, 2], 'nothing runs again without a new commit');
+  // any other release of attempt 2 stays spent (review MAJOR 1)
+  const g = await nodeFx(t, { engine: attempt2Engine([notAdmitted('PATHS_OUTSIDE_WRITE_SET')]), facts: [HELD] });
+  await g.exec.tick();
+  await g.drop(triggerBytes());
+  assert.equal((await g.exec.tick()).state, 'FAILED_CLEAN');
+  g.advance(11 * MIN);
+  assert.equal((await g.exec.tick()).state, 'NOT_ADMITTED');
+  assert.deepEqual(await g.ledger.pendingAttempts2(), []);
+  assert.deepEqual(await receiptBodies(g, 'attempt2-reopened'), []);
+  // the ledger's own rules: a reopening needs a consumption not reopened yet, and a closed intent stays closed
+  await assert.rejects(g.ledger.reopenAttempt2('a'.repeat(64), {}), { code: 'ATTEMPT2_NOT_REOPENABLE' }, 'never consumed');
+  await f.ledger.reopenAttempt2(first.key, {}); // (attempt 2 is terminal by now, so it is not pending: a reservation needs an absent entry)
+  await assert.rejects(f.ledger.reopenAttempt2(first.key, {}), { code: 'ATTEMPT2_NOT_REOPENABLE' }, 'once per consumption');
+  await f.ledger.closeAttempt2(first.key, {});
+  assert.deepEqual(await f.ledger.pendingAttempts2(), []);
+  await assert.rejects(f.ledger.consumeAttempt2(first.key, {}), { code: 'ATTEMPT2_NOT_PENDING' });
 });
 
 // ---- the immediate probe ----
@@ -249,7 +332,8 @@ for (const [name, stage, answer, urgent] of [
   });
 }
 
-test('the immediate probe waits for the executor to be idle: with a batch at a parking point nothing probes until it ends', async t => {
+// A stage-8 engine for the parking tests: PR 884's first stage-8 try is not ready (it parks at B); PR 900 is refused by a publisher at stage 3.
+function parkingEngine() {
   let tries = 0;
   const engine = fakeEngine();
   const run = engine.runStage, derive = engine.derive;
@@ -259,20 +343,81 @@ test('the immediate probe waits for the executor to be idle: with a batch at a p
     if (stage.number === 3 && batch.pr === 900) { engine.calls.push(['stage', 3]); return { ok: false, code: 'PUBLICATION_BLOCKED', proof: WINDOWS_CLEAN }; }
     return run(batch, stage, o);
   };
-  const f = await nodeFx(t, { engine, facts: [HELD] });
+  return engine;
+}
+
+test('the immediate probe does not wait for a batch resting at a parking point (nothing of it runs); the periodic probe of an ACTIVE node still does', async t => {
+  // periodic: ACTIVE, not urgent, 31 minutes on, PR 884 parked at B: no probe (the maintenance is called directly; a tick would
+  // first run 884's due stage-8 try)
+  const p = await nodeFx(t, { engine: parkingEngine(), facts: [HELD] });
+  await p.exec.tick();
+  await p.drop(triggerBytes());
+  assert.equal((await p.exec.tick()).state, 'PARKED');
+  p.advance(31 * MIN);
+  assert.equal(await p.exec.roleProbeMaintenance(), null);
+  assert.equal(p.engine.probes.length, 1, 'C2: the periodic probe keeps away from every open batch');
+  p.exec.roleProbe.markUrgent();
+  assert.equal(await p.exec.roleProbeMaintenance(), null);
+  assert.equal(p.engine.probes.length, 2, 'urgent: it runs, the parked batch is not in its way');
+
+  // urgent after a publisher refused PR 900 at stage 3, while PR 884 rests at B: the next quiet tick probes at once
+  const f = await nodeFx(t, { engine: parkingEngine(), facts: [HELD] });
   await f.exec.tick();
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'PARKED');
-  // PR 900 is refused by a publisher after stage 1: the probe is due at once, but PR 884 still rests at B (an open batch)
   await f.drop(triggerBytes({ pr: 900, headSha: H(4) }));
   assert.equal((await f.exec.tick()).state, 'FAILED_CLEAN');
-  assert.equal((await f.exec.tick()).state, 'IDLE');
-  assert.equal(f.engine.probes.length, 1, 'a batch is open: no probe');
-  f.advance(10 * MIN);
-  assert.equal((await f.exec.tick()).state, 'COMPLETED', 'PR 884\'s stage-8 try finishes it');
   assert.equal(f.engine.probes.length, 1);
   assert.equal((await f.exec.tick()).state, 'IDLE');
-  assert.equal(f.engine.probes.length, 2, 'idle now: the pending immediate probe runs, well before the 30 minutes of an ACTIVE node');
+  assert.equal(f.engine.probes.length, 2, 'probed at once, well before the 30 minutes of an ACTIVE node');
+  assert.equal(f.queue.row(884).state, 'PARKED', 'and PR 884 still rests at B');
+  f.advance(10 * MIN);
+  assert.equal((await f.exec.tick()).state, 'COMPLETED', 'its stage-8 try finishes it');
+  assert.equal(f.engine.probes.length, 2);
+});
+
+test('M1: after a restart or a re-arm a batch parked at B or A does not keep the node UNCERTAIN: the probe runs at the next quiet tick', async t => {
+  // B, restart: PR 884 rests at B; the restarted executor is UNCERTAIN and takes no new PR, yet it probes at once and leaves UNCERTAIN
+  const f = await nodeFx(t, { engine: parkingEngine(), facts: [HELD] });
+  await f.exec.tick();
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  assert.equal(f.engine.probes.length, 1);
+  const restarted = new ResidentExecutor(f.ports);
+  assert.equal(restarted.roleProbeMode, 'UNCERTAIN');
+  await f.drop(triggerBytes({ pr: 901, headSha: H(5) }));
+  const before = derives(f);
+  assert.deepEqual(pick(await restarted.tick()), ['DEFERRED', 'NODE_ROLE_UNCERTAIN'], 'a new PR is not started before the probe');
+  assert.equal(f.engine.probes.length, 2, 'the parked batch did not stop the probe');
+  assert.equal(restarted.roleProbeMode, 'ACTIVE');
+  assert.equal(derives(f), before);
+  assert.equal((await restarted.tick()).state, 'COMPLETED', 'now PR 901 is taken');
+  assert.equal(f.queue.row(884).state, 'PARKED', 'PR 884 rests at B all the while');
+
+  // B, re-arm: a HALT cleared by the Owner while PR 884 rests at B
+  const h = await nodeFx(t, { engine: parkingEngine(), facts: [HELD] });
+  await h.exec.tick();
+  await h.drop(triggerBytes());
+  assert.equal((await h.exec.tick()).state, 'PARKED');
+  await h.ledger.halt('X_Y', {});
+  const halt = await h.ledger.halted();
+  await writeOwnerRequest(path.join(h.root, 'owner'), rearmRequest({ expectedHaltSha256: halt.sha256, reason: 'checked', by: OWNER }), h.clock);
+  h.advance(1);
+  await h.exec.tick();
+  assert.equal(await h.ledger.halted(), null);
+  assert.deepEqual([h.engine.probes.length, h.exec.roleProbeMode], [2, 'ACTIVE']);
+  assert.deepEqual((await receiptBodies(h, 'node-mode')).map(b => `${b.from}>${b.to}:${b.why}`), ['UNCERTAIN>ACTIVE:probe-held', 'ACTIVE>UNCERTAIN:rearm', 'UNCERTAIN>ACTIVE:probe-held']);
+
+  // A, restart: a batch waiting for hosted signals stays the tick's result, and the probe still runs
+  const g = await nodeFx(t, { policy: rawPolicy({ relay: RELAY_ON }), hint: () => Buffer.from('{"contract":"x"}'), facts: [HELD] });
+  await g.exec.tick();
+  await g.drop(triggerBytes());
+  assert.equal((await g.exec.tick()).state, 'WAITING');
+  const again = new ResidentExecutor(g.ports);
+  g.advance(MIN);
+  assert.equal((await again.tick()).state, 'WAITING');
+  assert.deepEqual([g.engine.probes.length, again.roleProbeMode], [2, 'ACTIVE']);
+  assert.equal(derives(g), 1);
 });
 
 // ---- STANDBY and UNCERTAIN behave alike; a batch in flight goes on ----

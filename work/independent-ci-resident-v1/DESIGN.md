@@ -2402,7 +2402,12 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
    - 触发照常读进排队表，不丢。方案里的“不取新触发”，在这里的意思是不从队列取行去开批次，和暂停接新（§20）一致。
    - 在途批次照常续跑：停在 A 的批次每个 tick 照常判断，停在 B 的照常尝试第 8 段，去留由实时准入决定。停在 A 的批次仍是 tick 的结果，状态里的 `current` 也不消失（和暂停接新一样）。
 4. **节点闸门排在暂停接新之前**，也排在“队列为空就是 IDLE”之后。所以不是 ACTIVE 的节点显示 `NODE_*` 的原因，探测不会被暂停接新挡住。空队列时仍是 `IDLE`。
-5. **探测间隔**：`UNCERTAIN` 用 `STANDBY` 的 15 分钟，空闲的 `ACTIVE` 用 30 分钟；`urgent` 时不等。仍然只在没有任何在途批次（包括停靠的）、没有 HALT 和暂停时探测。任何一次探测结果（包括 uncertain）都清掉 `urgent`，所以不确定时不会每个 tick 探一次。
+5. **探测间隔**：`UNCERTAIN` 用 `STANDBY` 的 15 分钟，空闲的 `ACTIVE` 用 30 分钟；`urgent` 时不等。任何一次探测结果（包括 uncertain）都清掉 `urgent`，所以不确定时不会每个 tick 探一次。
+   - 探测只在没有 HALT、没有暂停、没有批次正在跑某一段时进行。
+   - **停在 A、B 的批次不挡探测，当节点不是 `ACTIVE`，或这次探测是 `urgent` 时**（`probeAtParking()`；2026-10-29 复核 M1）。空闲 `ACTIVE` 节点的定期探测保持 C2 的做法：账本里有任何打开的批次就不探。
+   - 为什么可以：C2 要求账本里没有打开的条目，是因为探测要经交换代理切换一次 runner 服务，不能和正式的段抢。但 tick 是串行的，探测只在 tick 里运行，不会与本执行器自己的段重叠。停在 A、B 的批次没有进程，没有 broker 请求，Linux 是空的（§18.1）。不在停靠点的打开条目（崩溃现场）在每个 tick 开头已被恢复处理成 HALT，到不了探测这一步。
+   - 为什么要这样：重启或复位之后，停靠的批次（最长 `park.maxMs`，24 小时）否则会让节点一直是 `UNCERTAIN`，拿不到任何新触发；§29.9 说的“单节点行为和以前一样”也不成立（第 2 批的重装本身就是一次重启）。
+   - 定期探测仍不在停靠批次旁边运行，因为停靠可以很久，每 30 分钟切换一次 runner 会一直打断它。
 6. **立即探测**：第 1 段以外的批次以下面这些码结束时，标 `urgent`，下一个安静 tick 就探测。
    - NOT_ADMITTED 家族的码（`PR_NOT_OPEN_OR_CHANGED` 在任何段都可能出现）；
    - `PUBLICATION_BLOCKED`；
@@ -2415,17 +2420,20 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 
 - **Source**（`resident-v2/stage-fact.mjs`）：
   - `NOT_ADMITTED_CODES` 末尾加 `NODE_ROLE_NOT_HELD`；
-  - `notAdmittedCode` 把 `admission_binding_required` 排在第一位，映射到这个码。节点不当班时对 PR 什么也没说，不能因为同时有别的原因（例如 `protected_change_not_up_to_date`）就烧头。
+  - `notAdmittedCode` 把 `admission_binding_required` 排在第一位，映射到这个码。节点不当班时对 PR 什么也没说，不能因为同时有别的原因（例如 `protected_change_not_up_to_date`）就烧头；
+  - `formal-work-admission-check-v2/publisher.mjs`（2026-10-29 复核 B1）：入口自己的“可重跑”标志 `safeToRerun` 原来在任何确定性 PR 码同在时都是 false，而常驻只认这个标志，所以 `NODE_ROLE_NOT_HELD` 与 `protected_change_not_up_to_date`（或 `changed_files_truncated`）同在时放不掉，头被烧。现在 `notOnDuty(reason, diagnostic)` 为真（原因是第一次评估的 `full_admission_rejected`，诊断里有 `admission_binding_required`）时，标志不再受 `deterministicPrFault` 影响（`refusalSafeToRerun()`）。
+  - 这条路径上什么也没发布：被拒的是边界里的第一次评估（`step === 'boundary'`），没有记批次认领，真正的 effect key 下什么也没写（只有一条 diagnostic-only 的日志，用新 key，状态 `not_sent`），`sideEffects` 为 0，所以 `mayHavePublished` 为 false。发布者“知道不当班”的唯一办法就是 Native 的这条拒绝原因。
 - **常驻侧**：
   - `classify.mjs` 的 `NOT_ADMITTED_CODES` 同样加在末尾（和 Source 逐项相同，交叉测试强制）；
   - 失败表：`NODE_ROLE_NOT_HELD` 第 1 段 `node-role / release-if-safe / new-trigger / neutral`；其他段和别的未准入码一样是 `clean-final`（第 1 段之后不会出现，但每个码在每一段都要有一行）；
   - 新的类 `node-role` 加进 `FAILURE_CLASSES_V1`；
   - `decideFailure` 对 `node-role` 行不再套“diagnostic 里有确定性 PR 码就改成烧”的覆盖。
 - **账**：
-  - `ledger.mjs#usage` 不把这种释放计入评估，也不计入这个头的释放次数；
+  - `ledger.mjs#usage` 不把这种释放计入评估，也不计入这个头的释放次数，也不计入“新触发重评估”（`reevaluations`，每个提交每天 6 次；复核 m1）；
   - 执行器 `afterBatch` 同样不把它计入释放上限，所以这一行不会因此变成 `STOPPED`。
 - **执行器**：失败表判为 `node-role`，节点就转 `STANDBY`。释放的条件不变（`release-if-safe`：要有阶段结果自己的 safeToRerun 或 broker 的未启动，要有 Windows 一半的证明）；没有这些时照旧烧，但节点仍然转 `STANDBY`，因为“不当班”这个事实不依赖那次释放。
-- **兼容旧 Source**：新常驻配没有这个码的 Source 时，`admission_binding_required` 仍以 `NATIVE_NOT_ADMITTED` 加原因码到达。失败表在 `NATIVE_NOT_ADMITTED` 的最前面加一行：第 1 段、`reasonCodesAny: [admission_binding_required]`，同样是 `node-role`。同分时前一行优先，所以它排在“确定性 PR 码”那一行前面，和新 Source 的优先级一致。有测试。
+- **兼容旧 Source**：新常驻配没有这个码的 Source 时，`admission_binding_required` 仍以 `NATIVE_NOT_ADMITTED` 加原因码到达。失败表在 `NATIVE_NOT_ADMITTED` 的最前面加一行：第 1 段、`reasonCodesAny: [admission_binding_required]`，同样是 `node-role`，节点转 `STANDBY`。同分时前一行优先，所以它排在“确定性 PR 码”那一行前面。
+  - 头放不放，看旧 Source 自己的标志：只有这一个原因时标志是 true，放；与确定性原因同在时旧发布者的标志是 false，常驻只认这个标志，所以仍然烧头（和 C3 之前一样），节点照样转 `STANDBY`。这一点常驻一侧改不了，想要旧 Source 也不烧，只能装新 Source。（复核前的文字和测试说旧 Source 同在时也放，那是错的：真实的旧发布者写不出这样的事实。）
 - **安装**：Source 的改动要随下一个被接受的 Source 一起装（Owner 闸门，不在本 PR 内）。
 
 ### 29.4 status.json 合同 `/6`
@@ -2483,28 +2491,51 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 
 ### 29.8 测试
 
-- `test/node-mode.test.mjs`（21 项）：
+- `test/node-mode.test.mjs`（26 项）：
   - 启动、重启、复位都从 `UNCERTAIN` 开始，探测立即运行，held 之前不取触发；
   - not-held → `STANDBY`，15 分钟间隔，后来 held 回到 `ACTIVE`；
   - uncertain 保持原模式（启动时仍是 `UNCERTAIN`，`ACTIVE`、`STANDBY` 各一）；
   - 没有探测能力的引擎保持单节点行为；
-  - 第 1 段 `NODE_ROLE_NOT_HELD` 和旧 Source 的两种写法（含与确定性原因同时出现）：`STANDBY`、释放、不计评估和释放、连续三次也不 `STOPPED`、排队行进入 `BACKOFF`；没有 safeToRerun 时照旧烧但仍转 `STANDBY`；
-  - 第 1 段以外的 `PUBLICATION_BLOCKED`、`BATCH_CLAIM_CHANGED`、`PR_NOT_OPEN_OR_CHANGED` 之后下一个安静 tick 立即探测；第 1 段的未准入和无关的干净结束不触发；有在途（停靠）批次时不探测，批次结束后才探测；
+  - 第 1 段 `NODE_ROLE_NOT_HELD`（含与 `protected_change_not_up_to_date`、`changed_files_truncated` 同在，标志用真实发布者的 `refusalSafeToRerun` 算）和旧 Source 的写法：`STANDBY`、释放、不计评估和释放、连续三次也不 `STOPPED`、排队行进入 `BACKOFF`；没有 safeToRerun 时照旧烧但仍转 `STANDBY`；旧 Source 与确定性原因同在时（标志 false）烧头、仍转 `STANDBY`；
+  - 第 1 段以外的 `PUBLICATION_BLOCKED`、`BATCH_CLAIM_CHANGED`、`PR_NOT_OPEN_OR_CHANGED` 之后下一个安静 tick 立即探测；第 1 段的未准入和无关的干净结束不触发；有批次停在 B 时：定期探测（`ACTIVE`、不 urgent）不运行，urgent 的探测运行；
   - `STANDBY` 时：停在 B 的批次照常尝试第 8 段并完成，停在 A 的批次续跑到完成且 `current` 不消失，新 PR 和到期的重试不开；到期的 attempt 2 和 waiting-retry 不开，回到 `ACTIVE` 后各自运行；
   - 状态 `/6`：`node` 的字段、`parseStatus` 与 `node-duty` 对拍、`/5` 仍可读、其他合同拒绝、不合格的 `source` 当作没有；
+  - M1：重启、复位之后有批次停在 B 或 A，节点仍在下一个安静 tick 探测并离开 `UNCERTAIN`；
+  - m1：node-role 释放不计新触发重评估；m2：node-role 释放的 attempt 2 退回同一个 attempt 2（同一个 key，没有 attempt 3），别的释放仍花掉它，账本的规则；
   - N3：熔断、暂停接新写出，暂停和 HALT 时仍在。
-- `test/failure-table.test.mjs`：`NODE_ROLE_NOT_HELD` 与旧 Source 写法的失败表行和 `decideFailure`；交叉测试（`attempts.test.mjs` 与本文件）要求两个 `NOT_ADMITTED_CODES` 逐项相同。
+- `test/failure-table.test.mjs`：`NODE_ROLE_NOT_HELD` 与旧 Source 写法的失败表行和 `decideFailure`，事实经真实的 `refusalSafeToRerun`、`writeOutcome`、`outcomeFacts`；交叉测试（`attempts.test.mjs` 与本文件）要求两个 `NOT_ADMITTED_CODES` 逐项相同。
 - `test/role-probe.test.mjs`：`urgent`。`test/status.test.mjs`：`setNode` 与 `/6`。
 - 原有两项因 C3 改了：C2 的“探测不在批次中运行”要先把节点设成 `ACTIVE`（启动时是 `UNCERTAIN`）；失败表的“确定性 PR 码”一项按类找行。
-- Source：`test/resident-v2-stage.test.mjs` 里 `notAdmittedCode` 的优先级与 `NODE_ROLE_NOT_HELD`。
+- Source：`test/resident-v2-stage.test.mjs` 里 `notAdmittedCode` 的优先级与 `NODE_ROLE_NOT_HELD`；`test/resident-v2-publishers.test.mjs` 里发布者在 `admission_binding_required` 与各确定性原因同在时 `safeToRerun` 为 true，经 `writeOutcome`、`outcomeFacts` 到 `outcomeFailureCode`。
 - 离线演练不用改（它的引擎没有探测能力）。
 
 ### 29.9 安装与不变量
 
 - 需要先接受新的 Source（它的 `stage-fact.mjs` 变了），再做一次常驻层 Windows 重装，同一次 UAC 里重签 policy 里的 `residentManifestSha256` 和 `ciSourceManifestSha256`。policy 合同不变（`/7`）。
 - 重装后每个节点从 `UNCERTAIN` 开始，第一个安静 tick 探测。探测用的是 Source 的第 11 段（C2）；按 C2 的实现，探测拿不到有效事实就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`），所以装的 Source 必须带第 11 段。
-- 单节点、没有做过 parking 的部署：服务端对所有 Binding 开放，探测得到 held，节点变 `ACTIVE`，行为和以前一样，只多了启动时的一次探测。
+- 单节点、没有做过 parking 的部署：服务端对所有 Binding 开放，探测得到 held，节点变 `ACTIVE`，行为和以前一样，只多了启动时的一次探测。重启时有批次停在 A、B 也一样：探测不等它们结束（§29.2 第 5 条）。
 - 不增加发布路径，不增加 GitHub 读写，不碰 App 凭据；模式只会让执行器少做事，从不让它多做事。
+
+### 29.10 node-role 释放与 attempt 2（复核 m2）
+
+- attempt 2 在预定之前就被消费（`consumed` 记录是 create-only，先于预定，PR-A 复核 MAJOR 1）。所以 attempt 2 的第 1 段若遇到 `NODE_ROLE_NOT_HELD`，原先它就白白花掉了：节点之后回到 `ACTIVE`，也不再有 attempt 2。
+- **选择：退回同一个 attempt 2**，因为这种释放对 PR 什么也没说，而且改动很小：
+  - 账本：`consumed.json` 之后的再次消费写 `consumed-2.json`、`consumed-3.json`…；新的 `reopenAttempt2` 写 `reopened-1.json`…（create-only）。意图“待办”当且仅当没有 `closed` 记录、且消费次数等于退回次数。`consumeAttempt2` 在已消费未退回时拒绝（`ATTEMPT2_NOT_PENDING`），`reopenAttempt2` 在没有未退回的消费或已关闭时拒绝（`ATTEMPT2_NOT_REOPENABLE`）；
+  - 执行器：只有失败表判为 `node-role`、已经释放、而且这一批是 attempt 2 时，才调用（`reopenAttempt2`），并写回执 `attempt2-reopened`。别的释放（例如 `PATHS_OUTSIDE_WRITE_SET`）照旧花掉 attempt 2；
+  - key 不变（attempt 2 的批次 key 和头 key 本来就含 attempt 编号），所以永远不会有 attempt 3：attempt 2 自己的结局不排新的 attempt；
+  - 释放后仍适用 10 分钟的冷却（`NOT_ADMITTED` 释放记录），并且 `STANDBY` 时 attempt 2 不开。
+- 释放写成之后、退回之前崩溃，attempt 2 就丢了：和今天所有 attempt 2 的崩溃窗口一样，偏向安全的一边。退回失败（吞掉异常）同样只是保持“已花掉”。
+- 测试：`test/node-mode.test.mjs` 的 m2。
+
+### 29.11 2026-10-29 独立复核的修正一览
+
+| 项 | 修正 |
+|---|---|
+| B1 | Source 发布者：不当班时标志不受确定性原因影响（§29.3）；真实路径的测试；撤回“旧 Source 同在时也放”的说法 |
+| M1 | 节点不是 `ACTIVE` 或探测 urgent 时，停靠批次不挡探测（§29.2 第 5 条） |
+| m1 | node-role 释放不计新触发重评估（§29.3） |
+| m2 | 退回同一个 attempt 2（§29.10） |
+| n1 | 内存闸的睡眠被 Owner 中止叫醒（§32.2） |
 
 ## 附录 A：草稿文件
 
@@ -2543,7 +2574,7 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 
 ## C2：主备角色的独立只读探测（代码候选，未做 P4 现场验收）
 
-- stage 11 `role-probe` 经过当前 record/2、完整 node-profile、固定 Source、原 SwapBroker 与同一个 generic helper。新增 60 秒子进程上限；原 stages 1–10、各自 deadline、互斥与清理语义不变。只在 ledger 无任何 open batch（包括 hosted wait/parked）、非 HALT/PAUSE、安装与 Source 未漂移时调用；本地 tick 串行，runner 非 original-stopped 时不提交 broker 请求，原全局互斥仍非等待取得，不抢占其他 controller。
+- stage 11 `role-probe` 经过当前 record/2、完整 node-profile、固定 Source、原 SwapBroker 与同一个 generic helper。新增 60 秒子进程上限；原 stages 1–10、各自 deadline、互斥与清理语义不变。只在 ledger 无任何 open batch（包括 hosted wait/parked；C3 起，节点不是 ACTIVE 或探测 urgent 时停靠的批次不算，§29.2 第 5 条）、非 HALT/PAUSE、安装与 Source 未漂移时调用；本地 tick 串行，runner 非 original-stopped 时不提交 broker 请求，原全局互斥仍非等待取得，不抢占其他 controller。
 - 新 `role-probe-run/1` 只含 repository、随机 runId、Source/node-profile pin 与时间，不含 PR/head/claim/attempt。plan/3 的 `batchKey/batchId` 仅复用现有技术相关键；不会 reserve/markStarted/burn/evaluate/写 CI 批次，也不创建 Linux 工作区或调用 companion。stage fact 的 manifest pin 是 resident 与 invoker 独立计算的 `role-probe-intent/1` 原 canonical bytes 的 SHA。
 - controller entry 只打开固定 `ci-admission.token`，验证原 token fingerprint 与完整 profile 的 controller SID；不打开 App key，只调用 `clued_work_merge_slot_holders_v1`，10 秒请求界限、64 KiB 回复界限、拒重定向。`status:ok` 无 reason 为 held，`admission_binding_required` 为 not-held，其他为 uncertain。服务端的 `binding_not_authorized` / `authorization_revoked_or_expired` 不足以区分具体撤销、过期或权限不适用，因此仅输出 `ROLE_PROBE_CONNECTION_UNAUTHORIZED`，不伪造细分原因。
 - **parking holder 是解释 held 的硬前提。** 没有任何有效角色条目时，服务也可向所有 Binding 开放；holders RPC 无法证明已 parking。部署/启用主备前必须另有 Owner 的实际 parking 证据，本代码不能用 empty holders 或 held 代替。C2 不变更节点模式、不授 CI 执行权限；C3 负责启动状态、角色与失败后的模式转换。C2 的明确 mode 输入决定 STANDBY 15 分钟、ACTIVE idle 30 分钟。（C3 之后：节点启动是 UNCERTAIN，用 STANDBY 的 15 分钟间隔，启动、复位和疑似失去角色时立即探测；见 §29。）
@@ -2750,7 +2781,7 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
    - 读数 ≥ `MEMORY_GATE_MIN_BLOCKS`（64）：照常调用这一段。正常情况下只多一次 wsl.exe，不等。
    - 读数低：每 60 s（memguard 的周期）再读一次，最多 7 次读数（`MEMORY_GATE_CHECKS`），约 6 分钟（`MEMORY_GATE_WAIT_MS`，再加最后一次读的时间）。期间一旦够数，就在同一批里照常调用这一段。
    - 到上限仍然低：段不调用，返回 `LINUX_MEMORY_NOT_READY`。Windows 一半的证明是“什么都没起”加服务自己的 SCM 读回。
-   - 等待中 Owner 中止被接受：停止等待，返回 `OWNER_ABORT_REQUESTED`，走中止路径。
+   - 等待中 Owner 中止被接受：停止等待，返回 `OWNER_ABORT_REQUESTED`，走中止路径。60 秒的睡眠由 `requestStop` 立刻叫醒（`gateSleep`），醒来先看中止、再读，所以中止不会最多晚 60 秒才被看到，也不会多读一次 wsl.exe（2026-10-29 复核 n1）。
    - 每次检查最多一次 wsl.exe；每次读最多等 60 s 答复。
 3. **记录**：闸门的事实（次数、阶数、块数、等了多久、结果）随段结果返回，执行器写进这一段 `stage-terminal` 回执的 `memoryGate`。
 4. **失败表**：新码 `LINUX_MEMORY_NOT_READY` 只进 `failure-table.json` 和常驻侧名单（`RESIDENT_CLEAN`、`ATTEMPT2_RESIDENT_CODES`），不进与 Source 镜像的四个数组。
@@ -2814,9 +2845,9 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 
 ### 32.8 测试与演练
 
-- `test/memory-gate.test.mjs`（12 项）：
+- `test/memory-gate.test.mjs`（13 项）：
   - A：阶数与块数用 memguard 的 buddyinfo 样本（order 7、order 5、夹紧、超过 order 10 的列、各种不合格式）；伴侣只起一次固定 argv 的 wsl.exe，答复 `/3` 带 `memory`，读不到答 `LINUX_MEMORY_UNREADABLE`；`memory` 只在 `memory-ready` 的答复里出现，只收 `{ order, blocks }`；
-  - A：够数时第 2/4/6 段照常运行（一次读，然后泵与调用），第 1/3/5/7/8 段从不读；低两次后够数，等两分钟后同一批照常运行；一直低，得 `LINUX_MEMORY_NOT_READY`，没有调用、没有泵、7 次读，时间也有上限；读不到，立即照常运行；先低后读不到，继续等到上限再拒绝；等待中 Owner 中止，得 `OWNER_ABORT_REQUESTED`；
+  - A：够数时第 2/4/6 段照常运行（一次读，然后泵与调用），第 1/3/5/7/8 段从不读；低两次后够数，等两分钟后同一批照常运行；一直低，得 `LINUX_MEMORY_NOT_READY`，没有调用、没有泵、7 次读，时间也有上限；读不到，立即照常运行；先低后读不到，继续等到上限再拒绝；等待中 Owner 中止，得 `OWNER_ABORT_REQUESTED`，睡醒后不再多读；一个永远睡不醒的睡眠也会被 `requestStop` 叫醒；
   - A（执行器）：第 2 段拒绝，`FAILED_CLEAN`、不 HALT、未发布、attempt 2 排上并能完成，回执带 `memoryGate`；第 4/6 段，`FAILED_CLEAN`、没有 attempt 2、记为已发布；Linux 证明不完整仍 HALT；新码每一段都有行，不在 Source 镜像数组里；
   - B：上表每个第一次发布之前的码，`FAILED_CLEAN`、不 HALT、未发布；bundle 得 `NOT_EXECUTED`；第一次发布之后照旧。
 - 改了的已有测试：`engine-v2`（发送顺序多一个 `memory-ready`）、`job-host`（合同 `/3`）、`failure-table`（常驻码名单）、`scanner-abandon`（attempt 2 名单）、`bridge-observer` 与 `abort-ports`（假邮箱对 `memory-ready` 不给读数）。
