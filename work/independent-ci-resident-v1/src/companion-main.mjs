@@ -88,6 +88,17 @@ export async function probeJobHost(runner) {
   check(r.code === 0 && !('tree' in r) && !r.refused && !r.timedOut, 'COMPANION_JOB_HOST_UNAVAILABLE');
 }
 
+// The heartbeat's own timer (DESIGN §26, signal D): every 10 s, apart from the lanes, so that a slow but healthy relay call
+// (120 s plus the job host's 60 s, plus 15 s checks) never makes the heartbeat look stale; the service gives a running stage
+// up only after PUMP_HEARTBEAT_STALE_MS (120 s) without one. A beat that fails is only that beat: it never throws into a lane
+// or the pump. It proves only that the companion process lives; each child of the pump is time-limited by the job host.
+export const HEARTBEAT_EVERY_MS = 10_000;
+export function startHeartbeat(mailbox, { everyMs = HEARTBEAT_EVERY_MS, schedule = setInterval } = {}) {
+  const beat = async () => { try { await mailbox.beat(); } catch { /* the next beat */ } };
+  beat();
+  return schedule(beat, everyMs);
+}
+
 // Keep the WSL VM alive (an idle VM is shut down by WSL; a cold boot mid-batch broke b19/b20).
 function keepalive(cmd) {
   let child = null;
@@ -115,6 +126,9 @@ export async function main(args = process.argv.slice(2)) {
   const advisory = new Runner({ env: { ...process.env }, jobHost }); // the advisory lane's own (see lane)
   await probeJobHost(runner);
   const mailbox = await Mailbox.open(path.join(values.root, 'mailbox'), Date.now);
+  // Only now, with a usable job host: a companion whose job host cannot start a child sends no heartbeat, so the service
+  // starts no batch (DESIGN §24; independent review r3, MINOR 1).
+  startHeartbeat(mailbox);
   // pr-head (phase 2): the run queue's live PR read runs in the mailbox lane, like every other service request.
   const relayLog = createRelayLog({ dir: path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-log') });
   const companion = new Companion({ cfg, mailbox, run: (a, o) => runner.run(a, o), fileExists: exists, sleep, clock: Date.now, readPull: pr => readPullArgv(raw.ghExe, raw.repo, pr),

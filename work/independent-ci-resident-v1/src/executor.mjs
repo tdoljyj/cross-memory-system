@@ -145,11 +145,24 @@ export function validateAbortRequest(v) {
 const adopted = a => ({ requestSha256: a.requestSha256, by: a.by, reason: a.reason });
 
 // A step failure travels as a value, so the failure path runs exactly once, outside the step loop. result: the stage
-// result it came from (its bound outcome and the broker's no-launch fact decide a release, classify.mjs#decideFailure).
+// result it came from (its bound outcome and the broker's no-launch fact decide a release, classify.mjs#decideFailure; the
+// bridge facts of a scanner-issuer stage decide an abandonment, DESIGN §27).
 class StepFailure {
   constructor(stageNumber, code, proof, phase, relayedRoles = 0, result = null) {
-    Object.assign(this, { stageNumber, code: validCode(code), proof: proof ?? {}, phase, relayedRoles, outcome: result?.outcome ?? null, brokerNoLaunch: result?.brokerNoLaunch === true });
+    Object.assign(this, { stageNumber, code: validCode(code), proof: proof ?? {}, phase, relayedRoles, outcome: result?.outcome ?? null, brokerNoLaunch: result?.brokerNoLaunch === true,
+      bridge: bridgeFacts(result?.bridge) });
   }
+}
+
+// The bridge facts of a scanner-issuer stage (engine-windows.mjs#invoke, DESIGN §26) as the executor keeps them: codes, one
+// broker request id and one flag, each re-checked; anything else is null (no facts, so never an abandonment).
+const UUID_RE = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+function bridgeFacts(b) {
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return null;
+  const code = v => (v === null ? null : typeof v === 'string' && CODE.test(v) ? v : undefined);
+  const f = { pumpCode: code(b.pumpCode ?? null), stopRequestId: b.stopRequestId === null || b.stopRequestId === undefined ? null : (UUID_RE.test(b.stopRequestId) ? b.stopRequestId : undefined),
+    stopCode: code(b.stopCode ?? null), stageCode: code(b.stageCode ?? null), pumpQuiet: b.pumpQuiet === true };
+  return Object.values(f).includes(undefined) ? null : f;
 }
 
 // The stages before which the executor records the head as "may have published" (executed-heads.mjs): every stage that
@@ -568,6 +581,8 @@ export class ResidentExecutor {
     if (watch.state.stop?.broker === true && !watch.state.stopReceipt) {
       try { await this.receipt('owner-abort-stop-requested', { key, stage: number, requestId: watch.state.stop.requestId }); } catch { /* the broker's receipt and the terminal facts remain */ }
     }
+    // What the pump observer saw (DESIGN §26), when the poll did not record it while the stage ran.
+    try { await this.bridgeReceipts(key, number, bridgeFacts(result?.bridge), watch.state); } catch { /* the stage-terminal receipt carries the same facts */ }
     let abort = watch.state.accepted;
     let unconfirmed = false;
     if (!abort) {
@@ -614,10 +629,25 @@ export class ResidentExecutor {
             await this.receipt('owner-abort-stop-requested', { key, stage: number, requestId: state.stop.requestId });
             state.stopReceipt = true;
           }
+          await this.bridgeReceipts(key, number, this.engine.bridgeState?.(batch, number) ?? null, state);
         } catch { /* a failed poll never ends the stage; the next poll tries again */ }
       }
     })();
     return { state, stop: async () => { stopped = true; wake(); await running; } };
+  }
+
+  // DESIGN §26: the pump observer's findings, each recorded once: the pump was lost (signal A or D), and the bridge stop was
+  // written next to the in-flight swap. Records only; the stage's own ending decides.
+  async bridgeReceipts(key, stage, b, state) {
+    if (!b) return;
+    if (b.pumpCode && !state.bridgePumpLost) {
+      await this.receipt('bridge-pump-lost', { key, stage, failureCode: b.pumpCode });
+      state.bridgePumpLost = true;
+    }
+    if (b.stopRequestId && !state.bridgeStop) {
+      await this.receipt('bridge-stop-requested', { key, stage, requestId: b.stopRequestId, failureCode: b.pumpCode ?? null });
+      state.bridgeStop = true;
+    }
   }
 
   // Quiescence after an abort: the same fresh two-host proof as any failure, re-checked for a bounded time (the Linux
@@ -1749,7 +1779,8 @@ export class ResidentExecutor {
         this.atStage(number, 'stage');
         const execution = number === ROLE_STAGES[role][0];
         const { result: r, abort, stopCode, unconfirmed } = await this.runStageWatched(key, batch, number, { betweenRoles: execution && index > 0, firstLinux: execution && index === 0 });
-        await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r) });
+        await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r),
+          ...(r.bridge ? { bridge: bridgeFacts(r.bridge) } : {}) });
         if (unconfirmed) return this.unknown(key, 'OWNER_ABORT_UNCONFIRMED', 'owner-abort-unconfirmed', batch, { safePoint: `in-stage-${number}`, stage: number });
         if (abort) return this.concludeAbort(key, batch, { safePoint: `in-stage-${number}`, stage: number, result: r, request: abort, stopCode });
         if (r.ok !== true) return new StepFailure(number, r.code, r.proof, 'stage', relayed, r);

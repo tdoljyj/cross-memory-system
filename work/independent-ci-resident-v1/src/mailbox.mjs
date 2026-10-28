@@ -21,8 +21,11 @@ export const HEARTBEAT_CONTRACT = 'clued.independent-ci.resident-companion-heart
 // Owner abort (DESIGN §6.5): the service asks the companion to stop working on ONE pending request (today only the
 // bridge pump of a stage being stopped). Create-only <requestId>.cancel.json next to the request; pending() never
 // lists it as a request. The companion only stops what it does for that request; it never stops or kills a unit.
+// DESIGN §26 adds two reasons, both written and read: stage-ended (the Windows stage ended without success while its pump
+// had not answered yet) and heartbeat-lost (the companion's heartbeat stopped while the stage ran). The companion treats
+// every reason the same way (COMPANION_PUMP_CANCELLED); only the ledger's 80-owner-abort makes an Owner abort.
 export const CANCEL_CONTRACT = 'clued.independent-ci.resident-companion-cancel/1';
-export const CANCEL_REASONS = Object.freeze(['owner-abort']);
+export const CANCEL_REASONS = Object.freeze(['owner-abort', 'stage-ended', 'heartbeat-lost']);
 export const BATCH_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/;
 const REASON = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const ARCHIVE_DIR = /^(failed|archive)-[0-9a-z-]{1,120}$/;
@@ -209,9 +212,15 @@ export class Mailbox {
     return readBounded(path.join(this.responses, names[names.length - 1]), HINT_FILE_MAX_BYTES, 'HOSTED_HINT_REFUSED');
   }
 
+  // One beat at a time (DESIGN §26: the companion's own timer and its step() both beat): a beat asked for while one is
+  // being written is that beat, so two never share the temporary file.
   async beat() {
-    const tmp = `${this.heartbeatFile}.${process.pid}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify({ contract: HEARTBEAT_CONTRACT, at: this.clock() }));
-    await fs.rename(tmp, this.heartbeatFile); // The heartbeat is a liveness hint, not evidence.
+    if (this.beating) return this.beating;
+    this.beating = (async () => {
+      const tmp = `${this.heartbeatFile}.${process.pid}.tmp`;
+      await fs.writeFile(tmp, JSON.stringify({ contract: HEARTBEAT_CONTRACT, at: this.clock() }));
+      await fs.rename(tmp, this.heartbeatFile); // The heartbeat is a liveness hint, not evidence.
+    })();
+    try { await this.beating; } finally { this.beating = null; }
   }
 }

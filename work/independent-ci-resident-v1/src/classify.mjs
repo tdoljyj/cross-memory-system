@@ -120,12 +120,15 @@ export const OWNER_ABORTED = 'OWNER_ABORTED';
 // receipt says STOP_SENT: the stop control reached the running helper, whose only answer to it is STOP_REQUESTED
 // (independent review, M2). A scanner-issuer publishes no check, and both hosts must still prove quiescence.
 // Always together with the Windows half of the cleanup proof (helper tree drained, original binary restored).
+// DESIGN §26: the bridge stop's own code joins them under the same STOP_SENT rule. The engine keeps a stage's own code once an
+// abort asked it to stop, but an abort accepted in the instant a bridge stop ended the stage must not turn into a HALT: the
+// stage ended through the same reviewed stop path, and both hosts must still prove quiescence.
 export const OWNER_ABORT_STAGE_ENDINGS = Object.freeze([...TRANSIENT_CODES, ...CLEAN_FINAL_CODES, ...RESIDENT_CLEAN,
-  'STAGE_OUTCOME_MISSING', 'OWNER_ABORT_REQUESTED', 'COMPANION_PUMP_CANCELLED']);
+  'STAGE_OUTCOME_MISSING', 'OWNER_ABORT_REQUESTED', 'COMPANION_PUMP_CANCELLED', 'BRIDGE_STAGE_STOPPED_PUMP_LOST']);
 const ABORT_ENDINGS = new Set(OWNER_ABORT_STAGE_ENDINGS);
 export function abortStageEndingClean(result, { stopSent = false } = {}) {
   if (!result || result.ok === true) return !!result;
-  if (result.code === 'STAGE_OUTCOME_MISSING' && stopSent !== true) return false;
+  if (['STAGE_OUTCOME_MISSING', 'BRIDGE_STAGE_STOPPED_PUMP_LOST'].includes(result.code) && stopSent !== true) return false;
   return typeof result.code === 'string' && ABORT_ENDINGS.has(result.code)
     && result.proof?.windowsTreeZero === true && result.proof?.serviceOriginalStopped === true;
 }

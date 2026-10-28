@@ -21,6 +21,7 @@ import { exists, readBounded, writeNew, ensureDir } from './store.mjs';
 import { ABORTABLE_IN_FLIGHT } from './classify.mjs';
 import { pinnedNodeProfile, validateNodeProfile } from './node-profile.mjs';
 import { validateRoleProbeFact } from './role-probe.mjs';
+import { RELAY_TIMEOUT_MS } from './companion.mjs';
 
 export const ORIGINAL_BINARY = '"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"';
 // /3 (quota phase 2 step 3b): also names the tested commit S (testSha); S = H until step 3c's train front batch.
@@ -29,7 +30,25 @@ export const DESCRIPTOR_CONTRACT = 'clued.independent-ci.resident-batch-descript
 // only from this list, and none of them is an attempt-2 transient code.
 export const PUMP_CODES = Object.freeze(['ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED', 'LINUX_WORKER_START_UNCONFIRMED', 'FORMAL_BRIDGE_STAGE_DEADLINE',
   'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED', 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED', 'FORMAL_WORKER_TERMINAL_UNCONFIRMED', 'RELAY_REFUSED_NO_RETRY', 'RELAY_PARTIAL_RECORD_PRESERVED',
-  'COMPANION_PUMP_UNCONFIRMED', 'COMPANION_REQUEST_EXPIRED', 'COMPANION_HANDLER_UNCONFIRMED', 'COMPANION_PUMP_CANCELLED']);
+  'COMPANION_PUMP_UNCONFIRMED', 'COMPANION_REQUEST_EXPIRED', 'COMPANION_HANDLER_UNCONFIRMED', 'COMPANION_PUMP_CANCELLED',
+  // DESIGN §26: the worker ran and ended with no record left (signal B), never started (signal C), and the engine's own code
+  // for a companion whose heartbeat stopped while the stage ran (signal D).
+  'LINUX_WORKER_ENDED_WITHOUT_RECORD', 'LINUX_WORKER_NOT_STARTED', 'COMPANION_HEARTBEAT_LOST']);
+// The pump answers after which it relays nothing more for its stage (DESIGN §26 signal A). Not FORMAL_WORKER_TERMINAL_UNCONFIRMED
+// (the result or blocked record was moved already) and not COMPANION_PUMP_CANCELLED (only a cancel ends a pump so).
+export const PUMP_DEAD_CODES = Object.freeze(['RELAY_REFUSED_NO_RETRY', 'RELAY_PARTIAL_RECORD_PRESERVED', 'ISSUE_TRANSFER_UNCONFIRMED', 'LINUX_WORKER_START_UNCONFIRMED',
+  'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED', 'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED', 'LINUX_WORKER_ENDED_WITHOUT_RECORD', 'LINUX_WORKER_NOT_STARTED',
+  'COMPANION_PUMP_UNCONFIRMED', 'COMPANION_HANDLER_UNCONFIRMED', 'COMPANION_REQUEST_EXPIRED']);
+// A dead pump, or a lost heartbeat, leaves the issuer this long to take a record the pump moved just before; then the stage is
+// asked to stop through its own stop path (bridgeStop). The observer looks every BRIDGE_POLL_MS.
+export const BRIDGE_STOP_GRACE_MS = 60_000;
+export const BRIDGE_POLL_MS = 5_000;
+// Signal D: no heartbeat for this long while the stage runs (the companion's timer beats every 10 s).
+export const PUMP_HEARTBEAT_STALE_MS = 120_000;
+// Pump quiet (c18eac1d generalised): after a stage that ended without success, the cancelled pump's answer is awaited this long.
+export const PUMP_QUIET_MS = RELAY_TIMEOUT_MS + 60_000;
+// The stage code of a scanner-issuer stage the bridge stop ended (STOP_SENT, its Windows tree drained).
+export const BRIDGE_STAGE_STOPPED_PUMP_LOST = 'BRIDGE_STAGE_STOPPED_PUMP_LOST';
 // The broker request the Source v2 invoker writes (resident-v2/broker-protocol.mjs) and the stop request the
 // resident may write next to it for an Owner abort (windows/SwapBroker.cs, StopRequest).
 export const BROKER_REQUEST_CONTRACT = 'clued.independent-ci.swap-broker-request/2';
@@ -184,24 +203,8 @@ export class WindowsEngine {
     check(ABORTABLE_IN_FLIGHT.includes(number) && batch && typeof batch.batchId === 'string', 'OWNER_ABORT_STOP_TARGET_INVALID');
     this.abortRequested = { batchId: batch.batchId, stage: number };
     const mine = s => s && s.batchId === batch.batchId && s.stage === number;
-    const out = { broker: false, requestId: mine(this.abortStop) ? this.abortStop.requestId : null, stopCode: null, pump: false, done: false };
-    if (!out.requestId) {
-      try {
-        const swap = await findInflightSwap(this.paths.brokerRoot, number, await this.stagePlanSha256(batch, number));
-        if (swap) {
-          try {
-            await writeNew(path.join(this.paths.brokerRoot, 'requests', `${swap.requestId}.stop`), { contract: BROKER_STOP_CONTRACT, ...swap });
-          } catch (error) {
-            if (error.code !== 'CREATE_ONLY_TARGET_EXISTS') throw error;
-          }
-          // Remembered: once the broker answers the swap it is no longer "in flight", but its stop receipt stays readable.
-          this.abortStop = { batchId: batch.batchId, stage: number, requestId: swap.requestId };
-          out.requestId = swap.requestId;
-        }
-      } catch { /* not found or not written yet: the next poll tries again */ }
-    }
-    out.broker = out.requestId !== null;
-    if (out.requestId) out.stopCode = await this.stopOutcome(out.requestId);
+    const stop = await this.stageStop(batch, number);
+    const out = { broker: stop.requestId !== null, requestId: stop.requestId, stopCode: stop.stopCode, pump: false, done: false };
     const pump = this.inflight;
     const pumpInFlight = mine(pump);
     if (pumpInFlight && (out.stopCode === 'STOP_SENT' || pump.windowsEnded === true)) {
@@ -211,6 +214,94 @@ export class WindowsEngine {
     // broker has settled the stop request. Until then the executor asks again on its next poll.
     out.done = pumpInFlight ? out.pump : out.stopCode !== null;
     return out;
+  }
+
+  // The stop path of a running scanner-issuer stage, shared by the Owner abort (requestStop) and the bridge stop (bridgeStop,
+  // DESIGN §26): the one in-flight swap of this batch's stage gets its broker stop request (create-only: one already there is
+  // the same stop, so an abort and a bridge stop together leave one file), which is remembered, and the broker's receipt is read.
+  // Nothing else: no pump cancel, no ledger record, no process ended here. { requestId, stopCode }, both null until found.
+  async stageStop(batch, number) {
+    check(ABORTABLE_IN_FLIGHT.includes(number) && batch && typeof batch.batchId === 'string', 'OWNER_ABORT_STOP_TARGET_INVALID');
+    const mine = s => s && s.batchId === batch.batchId && s.stage === number;
+    let requestId = mine(this.stageStopFor) ? this.stageStopFor.requestId : null;
+    if (!requestId) {
+      try {
+        const swap = await findInflightSwap(this.paths.brokerRoot, number, await this.stagePlanSha256(batch, number));
+        if (swap) {
+          try {
+            await writeNew(path.join(this.paths.brokerRoot, 'requests', `${swap.requestId}.stop`), { contract: BROKER_STOP_CONTRACT, ...swap });
+          } catch (error) {
+            if (error.code !== 'CREATE_ONLY_TARGET_EXISTS') throw error;
+          }
+          // Remembered: once the broker answers the swap it is no longer "in flight", but its stop receipt stays readable.
+          this.stageStopFor = { batchId: batch.batchId, stage: number, requestId: swap.requestId };
+          requestId = swap.requestId;
+        }
+      } catch { /* not found or not written yet: the next poll tries again */ }
+    }
+    return { requestId, stopCode: requestId ? await this.stopOutcome(requestId) : null };
+  }
+
+  // DESIGN §26: the pump of a running scanner-issuer stage is dead (signal A) or its companion's heartbeat stopped (signal D),
+  // and the stage still runs after the grace: it is asked to stop through its own stop path. Never 80-owner-abort, never the
+  // abort flag (a stage asked so is still invoked as usual), never a kill. Idempotent, like requestStop.
+  async bridgeStop(batch, number) {
+    return this.stageStop(batch, number);
+  }
+
+  // What the pump observer of this batch's running stage has seen (DESIGN §26), for the executor's receipts; null otherwise.
+  bridgeState(batch, number) {
+    const b = this.bridge;
+    if (!b || b.batchId !== batch?.batchId || b.stage !== number) return null;
+    return { pumpCode: b.state.pumpCode, stopRequestId: b.state.stop?.requestId ?? null, stopCode: b.state.stop?.stopCode ?? null };
+  }
+
+  // The pump observer (DESIGN §26), while a scanner-issuer stage runs: the stage's relay-stage answer and the companion's
+  // heartbeat, every BRIDGE_POLL_MS.
+  //   A: the pump answered with a PUMP_DEAD_CODES code (an answer outside PUMP_CODES counts as COMPANION_PUMP_UNCONFIRMED);
+  //   D: no answer, and no heartbeat newer than PUMP_HEARTBEAT_STALE_MS (counted from the stage's start at the earliest): first
+  //      the pump's cancel (heartbeat-lost) is written, so a companion restarted by its scheduled task answers
+  //      COMPANION_PUMP_CANCELLED instead of running a second pump; only once it is written is D taken.
+  // BRIDGE_STOP_GRACE_MS after A or D, with the stage still running, bridgeStop() on every poll until the broker's receipt is
+  // read. Only mailbox and broker files: the service runner is busy with the stage, and nothing here runs a process.
+  observePump(batch, number, relay) {
+    const mb = this.companionMailbox;
+    const state = { answer: null, pumpCode: null, lostAt: null, stop: null };
+    if (!ABORTABLE_IN_FLIGHT.includes(number) || typeof mb?.poll !== 'function' || typeof mb.heartbeat !== 'function') return { state, stop: async () => {} };
+    this.bridge = { batchId: batch.batchId, stage: number, state };
+    let stopped = false, wake;
+    const stopSignal = new Promise(resolve => { wake = resolve; });
+    let beatAt = this.clock();
+    const running = (async () => {
+      let request;
+      try { request = await relay; } catch { return; }
+      while (!stopped) {
+        try {
+          if (state.answer === null) state.answer = (await mb.poll(request)) ?? null;
+          if (state.lostAt === null) {
+            const a = state.answer;
+            if (a && a.ok !== true) {
+              const code = PUMP_CODES.includes(a.code) ? a.code : 'COMPANION_PUMP_UNCONFIRMED';
+              if (PUMP_DEAD_CODES.includes(code)) Object.assign(state, { pumpCode: code, lostAt: this.clock() });
+            } else if (!a) {
+              let hb = null;
+              try { hb = await mb.heartbeat(); } catch { hb = null; }
+              if (Number.isSafeInteger(hb?.at) && hb.at > beatAt) beatAt = hb.at;
+              if (this.clock() - beatAt > PUMP_HEARTBEAT_STALE_MS && typeof mb.cancel === 'function') {
+                await mb.cancel(request, 'heartbeat-lost');
+                Object.assign(state, { pumpCode: 'COMPANION_HEARTBEAT_LOST', lostAt: this.clock() });
+              }
+            }
+          }
+          if (state.lostAt !== null && this.clock() - state.lostAt >= BRIDGE_STOP_GRACE_MS && !(state.stop?.requestId && state.stop.stopCode)) {
+            state.stop = await this.bridgeStop(batch, number);
+          }
+        } catch { /* a failed look is no signal; the next poll looks again */ }
+        await Promise.race([this.sleep(BRIDGE_POLL_MS), stopSignal]);
+        await new Promise(resolve => setImmediate(resolve)); // never a busy loop, whatever the sleep port does
+      }
+    })();
+    return { state, stop: async () => { stopped = true; wake(); await running; } };
   }
 
   // The broker's create-only receipt of one stop request (SwapBroker.cs TryOwnerStop): its code, or null when there is
@@ -369,9 +460,17 @@ export class WindowsEngine {
       ? this.companionMailbox.send('relay-stage', { batchId: batch.batchId, stage: stage.number, jobId: row.jobId }, stage.runMilliseconds + 120_000)
       : null;
     this.inflight = relay ? { batchId: batch.batchId, stage: stage.number, request: relay } : null;
+    // DESIGN §26: while a scanner-issuer stage runs, its pump and the companion's heartbeat are watched (and the stage is
+    // stopped through its own stop path when the pump is lost), next to the stage, never blocking it.
+    const observer = relay ? this.observePump(batch, stage.number, relay) : null;
     try {
-      const r = await this.run([this.paths.nodeExe, invoke, '--batch-dir', batch.dir, '--stage', String(stage.number), '--work-manifest-sha256', row.workManifestSha256,
-        '--batch-key', batch.key], { timeoutMs: stage.runMilliseconds + 360_000 });
+      let r;
+      try {
+        r = await this.run([this.paths.nodeExe, invoke, '--batch-dir', batch.dir, '--stage', String(stage.number), '--work-manifest-sha256', row.workManifestSha256,
+          '--batch-key', batch.key], { timeoutMs: stage.runMilliseconds + 360_000 });
+      } finally {
+        await observer?.stop();
+      }
       if (r.timedOut || r.code === null) return { ok: false, code: 'STAGE_INVOKER_TERMINAL_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: false } };
       // The invoke-stage child has returned with a stage fact: the broker answered (whatever its code), the invoker refused
       // the stage before asking the broker, or it gave up waiting for the answer (past the broker's and the pump's own
@@ -380,20 +479,56 @@ export class WindowsEngine {
       if (this.inflight) this.inflight.windowsEnded = true;
       const fact = parseStageFact(r.stdout, row.workManifestSha256);
       const scOk = await this.scReadback();
+      const proof = { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk };
+      let bridge = null;
       if (relay) {
-        const answer = await this.companionMailbox.await(await relay, this.sleep);
+        const request = await relay;
+        const seen = observer.state;
+        // An Owner abort of this stage wins over everything the bridge did: its own path cancels the pump and decides.
+        const ownerAbort = this.stopRequested(batch, stage.number);
+        const heartbeatLost = seen.pumpCode === 'COMPANION_HEARTBEAT_LOST';
+        let answer = seen.answer;
+        if (!answer) {
+          if (heartbeatLost) {
+            // The companion is taken for dead (its pump is cancelled already): one look, no wait.
+            try { answer = (await this.companionMailbox.poll(request)) ?? null; } catch { answer = null; }
+          } else if (fact.ok || ownerAbort) {
+            answer = await this.companionMailbox.await(request, this.sleep);
+          } else {
+            // Pump quiet (DESIGN §26, c18eac1d generalised): the stage ended without success while its pump still runs. The
+            // pump is cancelled (stage-ended) and its answer awaited at most PUMP_QUIET_MS: one relay call it may be inside,
+            // plus the job host's margin. No answer by then: the pump is not quiet, and nothing is decided on it.
+            try { await this.companionMailbox.cancel?.(request, 'stage-ended'); } catch { /* the bounded wait still runs */ }
+            const deadline = Date.parse(request.deadline);
+            const until = Math.min(Number.isFinite(deadline) ? deadline : Infinity, this.clock() + PUMP_QUIET_MS);
+            answer = await this.companionMailbox.await({ ...request, deadline: new Date(until).toISOString() }, this.sleep);
+          }
+        }
+        const stopRequestId = seen.stop?.requestId ?? null;
+        let stopCode = seen.stop?.stopCode ?? null;
+        if (stopRequestId) stopCode = (await this.stopOutcome(stopRequestId)) ?? stopCode;
+        const answerCode = answer && answer.ok !== true ? (PUMP_CODES.includes(answer.code) ? answer.code : 'COMPANION_PUMP_UNCONFIRMED') : null;
+        // The bridge facts the executor records with the stage (stage-terminal) and decides an abandonment on (DESIGN §27).
+        bridge = { pumpCode: seen.pumpCode ?? answerCode, stopRequestId, stopCode, stageCode: fact.ok ? null : (fact.code ?? 'STAGE_TERMINAL_UNCONFIRMED'), pumpQuiet: !!answer };
         // The Windows stage succeeded but the companion did not confirm the pump: take only an allow-listed pump
         // code (none of them transient), never a free-form one (PR-A review MINOR 6). That ending is the pump's, not
         // the entry's: no outcome travels with it.
-        if (fact.ok && answer?.ok !== true) return { ok: false, code: PUMP_CODES.includes(answer?.code) ? answer.code : 'COMPANION_PUMP_UNCONFIRMED', proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk }, outcome: null, brokerNoLaunch: false };
+        if (fact.ok && answer?.ok !== true) return { ok: false, code: heartbeatLost ? 'COMPANION_HEARTBEAT_LOST' : (answerCode ?? 'COMPANION_PUMP_UNCONFIRMED'), proof, outcome: null, brokerNoLaunch: false, bridge };
+        // The bridge stop ended the stage: the broker sent the stop (its receipt says STOP_SENT) and the helper's tree is
+        // drained (stage-fact.mjs tree facts). Anything else keeps the stage fact's own code.
+        if (!fact.ok && !ownerAbort && stopRequestId && stopCode === 'STOP_SENT' && fact.proof.windowsTreeZero === true) {
+          return { ok: false, code: BRIDGE_STAGE_STOPPED_PUMP_LOST, proof, factsSha256: fact.nativeReceiptSha256, outcome: fact.outcome, brokerNoLaunch: false, bridge };
+        }
       }
       const ok = fact.ok && scOk;
       // The stage outcome (diagnostic, scheduling facts, safeToRerun) travels to the executor (v0.6 §9 phase 1). The
       // broker's no-launch fact counts only with this engine's own sc.exe readback of the original, stopped runner.
-      return { ok, code: ok ? null : (fact.code ?? 'SCM_READBACK_NOT_ORIGINAL'), proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk }, factsSha256: fact.nativeReceiptSha256,
-        relay: stage.number === 9 ? fact.relay : null, train: stage.number === 10 ? fact.train : null, outcome: fact.outcome, brokerNoLaunch: fact.brokerNoLaunch === true && scOk };
+      return { ok, code: ok ? null : (fact.code ?? 'SCM_READBACK_NOT_ORIGINAL'), proof, factsSha256: fact.nativeReceiptSha256,
+        relay: stage.number === 9 ? fact.relay : null, train: stage.number === 10 ? fact.train : null, outcome: fact.outcome, brokerNoLaunch: fact.brokerNoLaunch === true && scOk,
+        ...(bridge ? { bridge } : {}) };
     } finally {
       this.inflight = null;
+      this.bridge = null;
     }
   }
 

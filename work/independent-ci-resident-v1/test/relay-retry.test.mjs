@@ -284,7 +284,7 @@ test('the pump: a ReceiveBlocked that ran out of retries does not stop the later
     if (a.includes(LINUX_INCOMING)) return { code: 0, stdout: '' };
     if (a.includes('/usr/bin/ls')) return { code: 0, stdout: 'blocked.ready.json\n' };
     if (a.includes('quiescence')) return { code: 0, stdout: out({ linuxUnitsInactive: true, containersZero: true }) };
-    if (a.includes('ActiveState')) return { code: 0, stdout: 'inactive\n' };
+    if (a.some(x => x.startsWith('--property=ActiveState'))) return { code: 0, stdout: 'ActiveState=inactive\nInvocationID=\nExecMainStartTimestampMonotonic=0\n' };
     return { code: 0, stdout: '' };
   };
   const c = new Companion({ cfg, mailbox: box, run, fileExists: async p => !p.includes('\\incoming\\'), sleep: async ms => { now += ms; }, clock: () => now });

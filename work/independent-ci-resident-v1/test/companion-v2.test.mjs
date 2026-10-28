@@ -84,7 +84,7 @@ test('a clean Linux refusal (bridge v4 blocked record) ends the pump without wai
 // a record until its own deadline (UNCERTAIN -> HALT at 45 min). Now the pump hands that record over once.
 const refused = { code: 2, stdout: JSON.stringify({ status: 'BLOCKED', failureCode: 'PUBLIC_CHILD_REFUSED_NO_RETRY', terminalConfirmed: true }) };
 function worker(a) {
-  if (a.join(' ').includes('show --property=ActiveState')) return { code: 0, stdout: 'inactive\n' };
+  if (a.join(' ').includes('show --property=ActiveState')) return { code: 0, stdout: 'ActiveState=inactive\nInvocationID=\nExecMainStartTimestampMonotonic=0\n' };
   if (a.join(' ').includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
   return null;
 }

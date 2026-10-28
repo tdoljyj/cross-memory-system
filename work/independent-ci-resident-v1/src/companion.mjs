@@ -11,7 +11,7 @@
 //   - its answers to the service only steer classification, and a false "clean" can at worst make
 //     the next batch fail at its own root preflight (DoS), never run something unsafe.
 import { BATCH_ID } from './mailbox.mjs';
-import { HEX64, check, exactKeys } from './canonical.mjs';
+import { HEX64, check, exactKeys, fail } from './canonical.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
 
 export const COMPANION_CONFIG_CONTRACT = 'clued.independent-ci.resident-companion-config/2';
@@ -41,7 +41,13 @@ export const STAGE_RESERVE_MS = 150_000;
 export const CHALLENGE_RESERVE_MS = 60_000;
 export const RESPONSE_RESERVE_MS = 15_000;
 export const RELAY_CHECK_TIMEOUT_MS = 15_000;
-const RELAY_RECEIPT_CONTRACT = 'clued.independent-ci.formal-public-relay-receipt/2';
+// Signals B and C (DESIGN §26): the pump reads the worker unit's facts right after starting it and then every 15 s. A worker
+// that has run and ended with nothing left in Linux outgoing ends the pump at once (LINUX_WORKER_ENDED_WITHOUT_RECORD); one
+// with no sign of having run 5 minutes after its start ends it as LINUX_WORKER_NOT_STARTED.
+export const WORKER_FACTS_EVERY_MS = 15_000;
+export const WORKER_START_WAIT_MS = 5 * 60_000;
+const WORKER_RUNNING_STATES = new Set(['activating', 'active', 'deactivating']);
+const RELAY_RECEIPT_CONTRACT ='clued.independent-ci.formal-public-relay-receipt/2';
 const CHILD_TRANSIENT_REASONS = new Set(['EBUSY', 'EMFILE', 'ENFILE', 'EINTR', 'FORMAL_RELAY_STDIN_TIMEOUT']);
 const CHILD_TRANSIENT_STAGES = new Set(['OPERATION', 'CONTEXT', 'STDIN', 'TRANSPORT', 'PACKET']);
 const AMBIGUOUS_FAILURES = new Set(['PUBLIC_TERMINAL_UNCONFIRMED_LOCKS_RETAINED', 'PUBLIC_OUTPUT_UNCONFIRMED_NO_RETRY', 'PUBLIC_STDIN_UNCERTAIN_NO_RETRY']);
@@ -92,6 +98,26 @@ export function stderrTail(stderr) {
     .replace(/\s+/g, ' ').trim().slice(-512);
 }
 
+// `systemctl show --property=ActiveState,InvocationID,ExecMainStartTimestampMonotonic` (KEY=VALUE per line) -> { activeState,
+// invocationId ('' when none), mainStartMonotonic (0 when none) }, or null when the call failed or its output is not that.
+export function parseUnitFacts(r) {
+  if (!r || r.code !== 0 || 'tree' in r || r.timedOut || r.refused) return null;
+  const v = {};
+  for (const line of String(r.stdout ?? '').split(/\r?\n/)) {
+    const m = /^([A-Za-z]{1,64})=(.*)$/.exec(line.trim());
+    if (m && !Object.hasOwn(v, m[1])) v[m[1]] = m[2];
+  }
+  if (!/^[a-z-]{1,32}$/.test(v.ActiveState ?? '')) return null;
+  return { activeState: v.ActiveState, invocationId: /^[0-9a-f]{32}$/.test(v.InvocationID ?? '') ? v.InvocationID : '',
+    mainStartMonotonic: /^[0-9]{1,20}$/.test(v.ExecMainStartTimestampMonotonic ?? '') ? Number(v.ExecMainStartTimestampMonotonic) : 0 };
+}
+
+// Evidence that the worker unit has really run (DESIGN §26 signal B): right after `start --no-block`, and under load for some
+// seconds, the unit reads inactive before systemd runs it, so inactive alone is never "ended". Any one of: seen activating,
+// active or deactivating; failed (kept until reset); an invocation id with a main-process start time. (The pump also counts a
+// challenge it relayed.)
+export const workerRanEvidence = f => !!f && (WORKER_RUNNING_STATES.has(f.activeState) || f.activeState === 'failed' || (f.invocationId !== '' && f.mainStartMonotonic > 0));
+
 // One log entry per relay attempt: fixed keys, codes and counts only.
 export function relayLogEntry({ at, mode, seq, attempt, ms, runner, receipt, klass }) {
   const r = runner ?? {}, v = plainObject(receipt) ? receipt : {};
@@ -134,7 +160,8 @@ export function argv(cfg) {
   return {
     startWait: (template, instance) => wsl('/usr/bin/systemctl', 'start', '--wait', unit(template, instance)),
     startNoBlock: (template, instance) => wsl('/usr/bin/systemctl', 'start', '--no-block', unit(template, instance)),
-    activeState: (template, instance) => wsl('/usr/bin/systemctl', 'show', '--property=ActiveState', '--value', unit(template, instance)),
+    // DESIGN §26: the unit's state with the two facts that show it really ran (replaces the ActiveState-only read).
+    unitFacts: (template, instance) => wsl('/usr/bin/systemctl', 'show', '--property=ActiveState,InvocationID,ExecMainStartTimestampMonotonic', unit(template, instance)),
     linuxTool: (sub, id) => { check(['quiescence'].includes(sub) && BATCH_ID.test(id), 'COMPANION_TOOL_ARGS_INVALID'); return wsl(cfg.linuxTool, sub, '--batch', id); },
     archiveUsage: () => wsl(cfg.linuxTool, 'archive-usage'),
     linuxOutgoing: () => wsl('/usr/bin/ls', '-1', '-A', '--', LINUX_OUTGOING),
@@ -372,12 +399,31 @@ export class Companion {
     // Every relay call checks the cancel before each of its attempts and retries only within its budget (DESIGN §25.4).
     const relay = (mode, seq, budget = {}) => this.relay(mode, seq, { live, ...budget });
     try {
+      // A request cancelled before its pump began (a companion restarted after the service gave its heartbeat up, DESIGN §26)
+      // never starts one: it answers COMPANION_PUMP_CANCELLED.
+      await live();
       while (!(await ready('issue'))) { check(this.clock() < deadline, 'ACTUAL_ISSUE_NOT_PUBLISHED'); await live(); await this.sleep(100); }
       check(await relay('SendIssue', 0, { deadline }), 'ISSUE_TRANSFER_UNCONFIRMED');
       await live(); // a cancel that came with the issue transfer starts no worker
       const start = await this.run(this.a.startNoBlock('clued-ci-worker', request.jobId), { timeoutMs: 30_000 });
       check(start.code === 0, 'LINUX_WORKER_START_UNCONFIRMED');
       let sequence = 1, blockedRefused = false;
+      // Signals B and C (DESIGN §26). The pump remembers that the worker ran (a unit reaped after its end reads empty), and
+      // whether Linux outgoing ever listed a record (then it did run, whatever its unit says: never "not started").
+      const startedAt = this.clock();
+      const worker = { ran: false, ended: false, listedRecord: false, factsAt: startedAt };
+      const observeWorker = async () => {
+        if (this.clock() < worker.factsAt) return;
+        worker.factsAt = this.clock() + WORKER_FACTS_EVERY_MS;
+        const f = parseUnitFacts(await this.run(this.a.unitFacts('clued-ci-worker', request.jobId), { timeoutMs: RELAY_CHECK_TIMEOUT_MS }));
+        if (workerRanEvidence(f) || sequence > 1) worker.ran = true;
+        // Ended: it ran, and its unit is inactive or failed now. The listing the loop takes next is then final: nobody writes
+        // Linux outgoing once the worker is gone.
+        worker.ended = worker.ran && !!f && ['inactive', 'failed'].includes(f.activeState);
+        // Signal C only on a fact actually read (a failed read shows nothing either way) and never once a record was listed.
+        check(!f || worker.ran || worker.listedRecord || this.clock() - startedAt < WORKER_START_WAIT_MS, 'LINUX_WORKER_NOT_STARTED');
+      };
+      const RECORD = /^(challenge-[0-9]{2}|result|blocked)\.ready\.json$/;
       // When the pump first saw each challenge listed (its ReceiveChallenge retry budget). Without a listing the call itself
       // is the probe, and that call's own start stands in for it: a wrong guess only makes a response later (DESIGN §25.4).
       const firstSeen = new Map();
@@ -389,7 +435,9 @@ export class Companion {
         for (;;) {
           check(this.clock() < deadline, 'FORMAL_BRIDGE_STAGE_DEADLINE');
           await live();
+          await observeWorker();
           const names = await this.linuxReady();
+          if (names && [...names].some(n => RECORD.test(n))) worker.listedRecord = true;
           // The worker's clean refusal (bridge v4 'blocked') means it has ended: it goes before a stale challenge.
           if (names?.has('blocked.ready.json') && await receiveBlocked()) break;
           // Then a challenge: a callback has a deadline (CALLBACK_WINDOW_MS), the result does not hurry.
@@ -406,19 +454,25 @@ export class Companion {
           }
           if (listed(names, 'result') && await relay('ReceiveResult', 0, { deadline })) break;
           if (names === null && await receiveBlocked()) break;
+          // Signal B: the worker ran and ended, and the listing taken after that holds no blocked record, no result and no
+          // challenge still to relay. Without a listing nothing is final.
+          if (worker.ended && names !== null && !names.has('blocked.ready.json') && !names.has('result.ready.json') && !(sequence <= 32 && names.has(`${challenge}.ready.json`))) {
+            fail('LINUX_WORKER_ENDED_WITHOUT_RECORD');
+          }
           // A listing every second is ample against a 120 s round and keeps the wsl.exe launches low.
           await this.sleep(names === null ? 100 : 1000);
         }
       } catch (error) {
         // An Owner abort stops the Windows issuer anyway: no blocked hand-over (it checks the cancel before each of its
-        // steps), and the outer catch answers COMPANION_PUMP_CANCELLED.
-        if (!blockedRefused && error?.code !== 'COMPANION_PUMP_CANCELLED') await this.handOverBlocked(deadline, live);
+        // steps), and the outer catch answers COMPANION_PUMP_CANCELLED. Signals B and C need none either: the final listing
+        // held no blocked record, or the worker never ran (DESIGN §26).
+        if (!blockedRefused && !['COMPANION_PUMP_CANCELLED', 'LINUX_WORKER_ENDED_WITHOUT_RECORD', 'LINUX_WORKER_NOT_STARTED'].includes(error?.code)) await this.handOverBlocked(deadline, live);
         throw error;
       }
       const until = this.clock() + 30_000;
       for (;;) {
-        const s = await this.run(this.a.activeState('clued-ci-worker', request.jobId), { timeoutMs: 15_000 });
-        if (s.code === 0 && ['inactive', 'failed'].includes(s.stdout.trim())) break;
+        const s = parseUnitFacts(await this.run(this.a.unitFacts('clued-ci-worker', request.jobId), { timeoutMs: 15_000 }));
+        if (s && ['inactive', 'failed'].includes(s.activeState)) break;
         check(this.clock() < until, 'FORMAL_WORKER_TERMINAL_UNCONFIRMED');
         await live();
         await this.sleep(500);
@@ -434,7 +488,8 @@ export class Companion {
 
   // One pass over pending requests, oldest first. A malformed request is answered as refused.
   async step() {
-    await this.mailbox.beat();
+    // The companion's own timer beats as well (companion-main.mjs, DESIGN §26); a beat that fails only misses this beat.
+    try { await this.mailbox.beat(); } catch { /* a liveness hint only */ }
     for (const request of await this.mailbox.pending()) {
       if (request.refused) continue; // unreadable requests are left for the service's own audit
       if (this.clock() >= Date.parse(request.deadline)) { await this.mailbox.respond(request, { ok: false, code: 'COMPANION_REQUEST_EXPIRED' }); continue; }
