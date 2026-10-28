@@ -17,6 +17,10 @@ Differences to the b29 script (each a lesson): the reviewed set comes from the i
 commit's .gitleaks.toml (descriptor.sourceCommit, hash-pinned by the install record), not from the PR
 head; the output directory is resident\bundles\<batchId>\ (Owner drop box, read by root through /mnt/c);
 a receipt binds batchId, descriptor digest and Source commit.
+
+Stalled transfers (lesson #916, 2026-10-23: a fetch stalled at 47 MB and held the resident until the companion's
+35-minute deadline): an HTTP transfer slower than 1000 bytes/s for 60 s is aborted, and a failed network step gets one
+more complete attempt in a second fresh bare repository (Fetch-Store), only while most of the companion's wait is left.
 #>
 [CmdletBinding()]
 param([Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{16}-[0-9a-f]{12}$')][string]$BatchId,[switch]$CheckRefs)
@@ -27,11 +31,18 @@ $Descriptor=Join-Path $Resident ('outbox\'+$BatchId+'\descriptor.json')
 $Root=Join-Path $Resident ('bundles\'+$BatchId)
 $Git='C:\Program Files\Git\cmd\git.exe'
 $Url='https://github.com/tdoljyj/cross-memory-system.git'
-$FetchDir=Join-Path $Root 'fetch.git';$Bundle=Join-Path $Root 'all-refs.bundle';$ReceiptPath=Join-Path $Root 'all-refs.receipt.json'
+$FetchDir=Join-Path $Root 'fetch.git';$FetchDir2=Join-Path $Root 'fetch-2.git';$Bundle=Join-Path $Root 'all-refs.bundle';$ReceiptPath=Join-Path $Root 'all-refs.receipt.json'
 $ReviewedPrefix='refs/reviewed/'
 $Common=@('-c','core.hooksPath=C:/nonexistent-clued-hooks','-c','core.fsmonitor=false','-c','gc.auto=0','-c','maintenance.auto=false',
-  '-c','fetch.writeCommitGraph=false','-c','protocol.allow=never','-c','protocol.https.allow=always','-c','init.templateDir=','-c','advice.defaultBranchName=false')
-$stage='fixed-preflight';$created=@();$writesStarted=$false;$lastGit=$null
+  '-c','fetch.writeCommitGraph=false','-c','protocol.allow=never','-c','protocol.https.allow=always','-c','init.templateDir=','-c','advice.defaultBranchName=false',
+  '-c','http.lowSpeedLimit=1000','-c','http.lowSpeedTime=60')
+# The steps that talk to GitHub. A full build takes 40-283 s (receipts of 2026-10-23); the companion waits 30 minutes
+# (companion.mjs build-bundle). A retry starts only within the first 10 of them, so the second attempt has at least
+# 20 minutes, twice what the first one can have used. A transfer that stays just above the low-speed limit is still
+# not bounded: nothing here kills git.
+$NetworkSteps=@('fetch','ls-remote','fetch-reviewed');$RetryWithinSeconds=600
+$Clock=[Diagnostics.Stopwatch]::StartNew()
+$stage='fixed-preflight';$created=@();$writesStarted=$false;$lastGit=$null;$attempts=1;$firstAttempt=$null
 function Utc{return [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'",[Globalization.CultureInfo]::InvariantCulture)}
 function Hash-Bytes([byte[]]$Bytes){$a=[Security.Cryptography.SHA256]::Create();try{return ([BitConverter]::ToString($a.ComputeHash($Bytes))).Replace('-','').ToLowerInvariant()}finally{$a.Dispose()}}
 function Hash-File([string]$Path){$a=[Security.Cryptography.SHA256]::Create();$s=[IO.File]::Open($Path,'Open','Read','Read');try{return ([BitConverter]::ToString($a.ComputeHash($s))).Replace('-','').ToLowerInvariant()}finally{$s.Dispose();$a.Dispose()}}
@@ -127,6 +138,65 @@ function Read-Descriptor{
  if($d.testSha -cne $d.headSha){throw 'TEST_COMMIT_NOT_HEAD'}
  return [pscustomobject]@{value=$d;sha256=(Hash-Bytes $raw)}
 }
+# One complete attempt at the fetched store, in a fresh bare repository of its own ($Dir must not exist yet): all heads
+# and tags, ls-remote equality, main == base, then the reviewed commits fetched by SHA, each read back.
+function Build-Store([string]$Dir){
+ $script:stage='fresh-bare-repository';Absent $Dir
+ $null=Invoke-Git 'init-bare' (@('-c','init.templateDir=','init','--bare','--quiet','--template=',$Dir));$script:created+=$Dir
+ if(Test-Path -LiteralPath (Join-Path $Dir 'hooks')){if(@(Get-ChildItem -LiteralPath (Join-Path $Dir 'hooks') -Force -Recurse -File).Count -ne 0){throw 'TEMPLATE_HOOKS_REFUSED'}}
+ $gd='--git-dir='+$Dir
+ $script:stage='fetch-all-heads-and-tags';$fetchStartedAt=Utc
+ $null=Invoke-Git 'fetch' ($Common+@($gd,'fetch','--quiet','--no-tags','--no-write-fetch-head','--no-recurse-submodules',$Url,'+refs/heads/*:refs/heads/*','+refs/tags/*:refs/tags/*'))
+ $fetchCompletedAt=Utc
+ $script:stage='ls-remote-after-fetch'
+ $remote=Ref-Map (Invoke-Git 'ls-remote' ($Common+@($gd,'ls-remote','--branches','--tags',$Url))) "`t" $true
+ $lsRemoteCompletedAt=Utc
+ $script:stage='fetched-store-readback'
+ if((Invoke-Git 'is-shallow' ($Common+@($gd,'rev-parse','--is-shallow-repository'))).Trim() -cne 'false'){throw 'COMPLETE_HISTORY_REQUIRED'}
+ foreach($f in @('shallow','info\grafts','objects\info\alternates','objects\info\http-alternates')){Absent (Join-Path $Dir $f)}
+ $local=Ref-Map (Invoke-Git 'for-each-ref' ($Common+@($gd,'for-each-ref','--format=%(objectname) %(refname)'))) ' ' $false
+ if(-not (Same-Map $local $remote)){throw 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE'}
+ if(-not $local.ContainsKey('refs/heads/main') -or $local['refs/heads/main'] -cne $Base){throw 'REMOTE_MAIN_BASE_CHANGED'}
+ foreach($s in @($Head,$Base,$desc.value.sourceCommit)){if((Invoke-Git 'cat-file' ($Common+@($gd,'cat-file','-t',$s))).Trim() -cne 'commit'){throw 'HEAD_BASE_SOURCE_COMMIT_MISSING'}}
+ foreach($k in $local.Keys){$t=(Invoke-Git 'cat-file' ($Common+@($gd,'cat-file','-t',$local[$k]))).Trim()
+  if(($k.StartsWith('refs/heads/') -and $t -cne 'commit') -or ($k.StartsWith('refs/tags/') -and $t -cne 'commit' -and $t -cne 'tag')){throw 'REMOTE_REF_TARGET_TYPE_UNSUPPORTED'}}
+ $branchesAtHead=@($local.Keys|Where-Object{$_.StartsWith('refs/heads/') -and $local[$_] -ceq $Head}|Sort-Object)
+ $script:stage='reviewed-commit-set'
+ # From the INSTALLED Source commit's .gitleaks.toml (pinned by the record), never from the PR head.
+ $toml=Invoke-Git 'source-gitleaks-toml' ($Common+@($gd,'cat-file','blob',($desc.value.sourceCommit+':.gitleaks.toml')))
+ if((Hash-Text $toml) -cne $desc.value.gitleaksTomlSha256){throw 'TRUSTED_REVIEW_SOURCE_CHANGED'}
+ $reviewed=Reviewed-Commits $toml;$expectedReviewed=Reviewed-Map $reviewed.commits
+ $script:stage='fetch-reviewed-commits-by-sha';$reviewedFetchStartedAt=Utc
+ $null=Invoke-Git 'fetch-reviewed' ($Common+@($gd,'fetch','--quiet','--no-tags','--no-write-fetch-head','--no-recurse-submodules',$Url)+@($reviewed.commits|ForEach-Object{'+'+$_+':'+$ReviewedPrefix+$_}))
+ $reviewedFetchCompletedAt=Utc
+ $script:stage='reviewed-store-readback'
+ if((Invoke-Git 'is-shallow-2' ($Common+@($gd,'rev-parse','--is-shallow-repository'))).Trim() -cne 'false'){throw 'COMPLETE_HISTORY_REQUIRED'}
+ foreach($f in @('shallow','info\grafts','objects\info\alternates','objects\info\http-alternates')){Absent (Join-Path $Dir $f)}
+ $all=Split-Refs (Invoke-Git 'for-each-ref-2' ($Common+@($gd,'for-each-ref','--format=%(objectname) %(refname)'))) ' ' $false $true
+ if(-not (Same-Map $all.formal $remote)){throw 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE'}
+ if(-not (Same-Map $all.reviewed $expectedReviewed)){throw 'EXACT_REVIEWED_REF_SET_REQUIRED'}
+ foreach($c in $reviewed.commits){if((Invoke-Git 'reviewed-cat-file' ($Common+@($gd,'cat-file','-t',$c))).Trim() -cne 'commit'){throw 'REVIEWED_COMMIT_NOT_IN_STORE'}}
+ $null=Invoke-Git 'reviewed-closure' ($Common+@($gd,'rev-list','--objects','--quiet','--glob=refs/reviewed/*'))
+ return [pscustomobject]@{dir=$Dir;gd=$gd;remote=$remote;branchesAtHead=$branchesAtHead;reviewed=$reviewed;expectedReviewed=$expectedReviewed
+  fetchStartedAt=$fetchStartedAt;fetchCompletedAt=$fetchCompletedAt;lsRemoteCompletedAt=$lsRemoteCompletedAt;reviewedFetchStartedAt=$reviewedFetchStartedAt;reviewedFetchCompletedAt=$reviewedFetchCompletedAt}
+}
+# Only a network step that git itself failed is retried, and only early enough: never a refusal of this script
+# (main moved, refs differ, a commit missing from the store), never a git that did not start. Stderr is not read, so
+# a network failure that will repeat (credentials, a reviewed commit gone from GitHub) also costs one more attempt.
+function Retry-Allowed([string]$Reason,$Step,[double]$ElapsedSeconds){
+ return ($Reason -ceq 'GIT_STEP_FAILED' -and $null -ne $Step -and $NetworkSteps -ccontains $Step.label -and $Step.exitCode -ne 0 -and $ElapsedSeconds -lt $RetryWithinSeconds)
+}
+# The store with at most one retry. The second attempt runs every step and check again in its own new bare repository;
+# whatever the first one left (a partial pack, refs) stays where it is and is never read again.
+function Fetch-Store{
+ try{return Build-Store $FetchDir}
+ catch{
+  if(-not (Retry-Allowed $_.Exception.Message $script:lastGit $Clock.Elapsed.TotalSeconds)){throw}
+  $script:firstAttempt=[ordered]@{stage=$script:stage;git=$script:lastGit;failedAfterSeconds=[int]$Clock.Elapsed.TotalSeconds}
+ }
+ $script:attempts=2
+ return Build-Store $FetchDir2
+}
 try{
  $id=[Security.Principal.WindowsIdentity]::GetCurrent();$principal=New-Object Security.Principal.WindowsPrincipal($id)
  if($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'NON_ELEVATED_RUN_REQUIRED'}
@@ -145,42 +215,8 @@ try{
  Absent $Root
  $stage='batch-directory';$writesStarted=$true;[void][IO.Directory]::CreateDirectory($Root);$created+=$Root
  $gitVersion=(Invoke-Git 'version' @('--version')).Trim();$gitSha=Hash-File $Git
- $stage='fresh-bare-repository'
- $null=Invoke-Git 'init-bare' (@('-c','init.templateDir=','init','--bare','--quiet','--template=',$FetchDir));$created+=$FetchDir
- if(Test-Path -LiteralPath (Join-Path $FetchDir 'hooks')){if(@(Get-ChildItem -LiteralPath (Join-Path $FetchDir 'hooks') -Force -Recurse -File).Count -ne 0){throw 'TEMPLATE_HOOKS_REFUSED'}}
- $gd='--git-dir='+$FetchDir
- $stage='fetch-all-heads-and-tags';$fetchStartedAt=Utc
- $null=Invoke-Git 'fetch' ($Common+@($gd,'fetch','--quiet','--no-tags','--no-write-fetch-head','--no-recurse-submodules',$Url,'+refs/heads/*:refs/heads/*','+refs/tags/*:refs/tags/*'))
- $fetchCompletedAt=Utc
- $stage='ls-remote-after-fetch'
- $remote=Ref-Map (Invoke-Git 'ls-remote' ($Common+@($gd,'ls-remote','--branches','--tags',$Url))) "`t" $true
- $lsRemoteCompletedAt=Utc
- $stage='fetched-store-readback'
- if((Invoke-Git 'is-shallow' ($Common+@($gd,'rev-parse','--is-shallow-repository'))).Trim() -cne 'false'){throw 'COMPLETE_HISTORY_REQUIRED'}
- foreach($f in @('shallow','info\grafts','objects\info\alternates','objects\info\http-alternates')){Absent (Join-Path $FetchDir $f)}
- $local=Ref-Map (Invoke-Git 'for-each-ref' ($Common+@($gd,'for-each-ref','--format=%(objectname) %(refname)'))) ' ' $false
- if(-not (Same-Map $local $remote)){throw 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE'}
- if(-not $local.ContainsKey('refs/heads/main') -or $local['refs/heads/main'] -cne $Base){throw 'REMOTE_MAIN_BASE_CHANGED'}
- foreach($s in @($Head,$Base,$desc.value.sourceCommit)){if((Invoke-Git 'cat-file' ($Common+@($gd,'cat-file','-t',$s))).Trim() -cne 'commit'){throw 'HEAD_BASE_SOURCE_COMMIT_MISSING'}}
- foreach($k in $local.Keys){$t=(Invoke-Git 'cat-file' ($Common+@($gd,'cat-file','-t',$local[$k]))).Trim()
-  if(($k.StartsWith('refs/heads/') -and $t -cne 'commit') -or ($k.StartsWith('refs/tags/') -and $t -cne 'commit' -and $t -cne 'tag')){throw 'REMOTE_REF_TARGET_TYPE_UNSUPPORTED'}}
- $branchesAtHead=@($local.Keys|Where-Object{$_.StartsWith('refs/heads/') -and $local[$_] -ceq $Head}|Sort-Object)
- $stage='reviewed-commit-set'
- # From the INSTALLED Source commit's .gitleaks.toml (pinned by the record), never from the PR head.
- $toml=Invoke-Git 'source-gitleaks-toml' ($Common+@($gd,'cat-file','blob',($desc.value.sourceCommit+':.gitleaks.toml')))
- if((Hash-Text $toml) -cne $desc.value.gitleaksTomlSha256){throw 'TRUSTED_REVIEW_SOURCE_CHANGED'}
- $reviewed=Reviewed-Commits $toml;$reviewedCommits=$reviewed.commits;$expectedReviewed=Reviewed-Map $reviewedCommits
- $stage='fetch-reviewed-commits-by-sha';$reviewedFetchStartedAt=Utc
- $null=Invoke-Git 'fetch-reviewed' ($Common+@($gd,'fetch','--quiet','--no-tags','--no-write-fetch-head','--no-recurse-submodules',$Url)+@($reviewedCommits|ForEach-Object{'+'+$_+':'+$ReviewedPrefix+$_}))
- $reviewedFetchCompletedAt=Utc
- $stage='reviewed-store-readback'
- if((Invoke-Git 'is-shallow-2' ($Common+@($gd,'rev-parse','--is-shallow-repository'))).Trim() -cne 'false'){throw 'COMPLETE_HISTORY_REQUIRED'}
- foreach($f in @('shallow','info\grafts','objects\info\alternates','objects\info\http-alternates')){Absent (Join-Path $FetchDir $f)}
- $all=Split-Refs (Invoke-Git 'for-each-ref-2' ($Common+@($gd,'for-each-ref','--format=%(objectname) %(refname)'))) ' ' $false $true
- if(-not (Same-Map $all.formal $remote)){throw 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE'}
- if(-not (Same-Map $all.reviewed $expectedReviewed)){throw 'EXACT_REVIEWED_REF_SET_REQUIRED'}
- foreach($c in $reviewedCommits){if((Invoke-Git 'reviewed-cat-file' ($Common+@($gd,'cat-file','-t',$c))).Trim() -cne 'commit'){throw 'REVIEWED_COMMIT_NOT_IN_STORE'}}
- $null=Invoke-Git 'reviewed-closure' ($Common+@($gd,'rev-list','--objects','--quiet','--glob=refs/reviewed/*'))
+ $store=Fetch-Store
+ $gd=$store.gd;$remote=$store.remote;$reviewed=$store.reviewed;$reviewedCommits=$reviewed.commits;$expectedReviewed=$store.expectedReviewed
  $stage='bundle-create'
  $null=Invoke-Git 'bundle-create' ($Common+@($gd,'bundle','create','--quiet','--version=2',$Bundle,'--branches','--tags','--glob=refs/reviewed/*'));$created+=$Bundle;$bundleCreatedAt=Utc
  $stage='bundle-verify'
@@ -197,17 +233,18 @@ try{
   refCount=$header.formal.Count;refListSha256=(Ref-List-Sha $header.formal);refListCanonical='ordinal-sorted "<sha> <refname>\n", non-peeled tag objects, refs/heads and refs/tags only'
   reviewedRefPrefix=$ReviewedPrefix;reviewedRefCount=$header.reviewed.Count;reviewedRefListSha256=(Ref-List-Sha $header.reviewed)
   reviewedCommitCount=$reviewedCommits.Count;reviewedFindingCount=$reviewed.findings;reviewedCommitsSha256=$reviewed.sha256;gitleaksTomlSha256=$desc.value.gitleaksTomlSha256;sourceCommit=$desc.value.sourceCommit
-  mainSha=$Base;headSha=$Head;headPresent=$true;basePresent=$true;branchesAtHead=$branchesAtHead
-  fetchStartedAt=$fetchStartedAt;fetchCompletedAt=$fetchCompletedAt;lsRemoteCompletedAt=$lsRemoteCompletedAt
-  reviewedFetchStartedAt=$reviewedFetchStartedAt;reviewedFetchCompletedAt=$reviewedFetchCompletedAt;bundleCreatedAt=$bundleCreatedAt
+  mainSha=$Base;headSha=$Head;headPresent=$true;basePresent=$true;branchesAtHead=$store.branchesAtHead
+  fetchStartedAt=$store.fetchStartedAt;fetchCompletedAt=$store.fetchCompletedAt;lsRemoteCompletedAt=$store.lsRemoteCompletedAt
+  reviewedFetchStartedAt=$store.reviewedFetchStartedAt;reviewedFetchCompletedAt=$store.reviewedFetchCompletedAt;bundleCreatedAt=$bundleCreatedAt
+  storeAttempts=$attempts;firstAttempt=$firstAttempt
   gitExecutableSha256=$gitSha;gitVersion=$gitVersion
   credentialsPrinted=$false;credentialsWrittenByScript=$false;existingCheckoutTouched=$false;wslTouched=$false;automaticRetryAllowed=$false}
  $json=($receipt|ConvertTo-Json -Depth 5 -Compress)
  $rb=(New-Object Text.UTF8Encoding($false)).GetBytes($json+[char]10);$f=[IO.File]::Open($ReceiptPath,'CreateNew','Write','None');try{$f.Write($rb,0,$rb.Length);$f.Flush($true)}finally{$f.Dispose()};$created+=$ReceiptPath
- [ordered]@{status='BUNDLE_WRITTEN';batchId=$BatchId;bundleSha256=$sha;bundleBytes=$bytes;receiptSha256=(Hash-Bytes $rb);refListSha256=$receipt.refListSha256;lsRemoteCompletedAt=$lsRemoteCompletedAt}|ConvertTo-Json -Compress
+ [ordered]@{status='BUNDLE_WRITTEN';batchId=$BatchId;bundleSha256=$sha;bundleBytes=$bytes;receiptSha256=(Hash-Bytes $rb);refListSha256=$receipt.refListSha256;lsRemoteCompletedAt=$store.lsRemoteCompletedAt}|ConvertTo-Json -Compress
  exit 0
 }catch{
  $code=if($_.Exception.Message -cmatch '\A[A-Z][A-Z0-9_]{1,90}\z'){$_.Exception.Message}else{'FIXED_BUNDLE_BUILD_UNCONFIRMED'}
  [ordered]@{status=$(if($writesStarted){'PARTIAL_STATE_PRESERVED_NO_RETRY'}else{'REFUSED_BEFORE_WRITE'});stage=$stage;reason=$code;git=$lastGit;created=$created
-  credentialsPrinted=$false;existingCheckoutTouched=$false;automaticRetryAllowed=$false}|ConvertTo-Json -Depth 5 -Compress;exit 2
+  storeAttempts=$attempts;firstAttempt=$firstAttempt;credentialsPrinted=$false;existingCheckoutTouched=$false;automaticRetryAllowed=$false}|ConvertTo-Json -Depth 5 -Compress;exit 2
 }

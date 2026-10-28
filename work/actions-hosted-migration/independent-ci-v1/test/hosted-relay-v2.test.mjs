@@ -137,7 +137,7 @@ async function stageRFixture(t, roles = ['gitleaks', 'trivy']) {
   const r = deriveRelayStage({ recordDocs: rec.docs, batchJson: d.files['batch.json'], roles, batchKey: key, batchId: id, now: NOW });
   writeRelayStage(batchDir, r.files);
   for (const p of ['stage', 'broker/requests', 'broker/responses', 'receipts']) await fsp.mkdir(path.join(root, p), { recursive: true });
-  return { root, key, batchDir, row: r.result.stage };
+  return { root, key, batchDir, row: r.result.stage, rec };
 }
 function relayBroker(f, result) {
   const handled = new Set();
@@ -165,7 +165,8 @@ function relayBroker(f, result) {
 const invokeR = (f, broker) => {
   let time = NOW;
   return invokeStage({ batchDir: f.batchDir, stage: 9, workManifestSha256: f.row.workManifestSha256, batchKey: f.key, stageRoot: path.join(f.root, 'stage'),
-    brokerRoot: path.join(f.root, 'broker'), receiptsRoot: path.join(f.root, 'receipts'), spoolRoot: path.join(f.root, 'spool'), controllerSid: CONTROLLER,
+    // #926: the invoker checks the sealed plan against the record's node profile and takes the controller SID from it
+    brokerRoot: path.join(f.root, 'broker'), receiptsRoot: path.join(f.root, 'receipts'), spoolRoot: path.join(f.root, 'spool'), recordDocs: f.rec.docs,
     clock: () => time, sleep: async ms => { time += ms; await broker(); } });
 };
 

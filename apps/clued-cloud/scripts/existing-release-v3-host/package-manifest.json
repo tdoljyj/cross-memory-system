@@ -13,19 +13,19 @@
     },
     "payload/release/existing-release-entry-v1/v3/existing-stages.mjs": {
       "bytes": 20403,
-      "sha256": "ec611508e7a219cd9dbd791058d5fbf1b2e6d4ad6295c43aaefab75d65ace935"
+      "sha256": "eb4f26f876fb22c692f05c528ec13a718bf26f89f3c75bab0911fb3321f33d85"
     },
     "payload/release/existing-release-entry-v1/v3-host/host-files.mjs": {
-      "bytes": 10396,
-      "sha256": "cbf96b66f2e0d816f3c19219a812b438088351ab8c27f696989ddce1831b53cd"
+      "bytes": 11068,
+      "sha256": "5199b7aa04c738224a1f8b90fe0c85cb8afecb18e7e6d9f47930e97c62a4749e"
     },
     "payload/release/existing-release-entry-v1/v3-host/release-once.mjs": {
-      "bytes": 8515,
-      "sha256": "70e5f69311b65c31b050a58475fe8c7517eb86d25bb9aa2a2161ba70148a7b6d"
+      "bytes": 8685,
+      "sha256": "c3e7dff762266b8befa57a780761d8a30159233937c6c581d14a25ed14181817"
     },
     "payload/release/linux-process-manager.mjs": {
-      "bytes": 28000,
-      "sha256": "b961dfc06794336f38f47d4f8f5d7c6a2724aee6ba5bac4ff69090ef30842f70"
+      "bytes": 28776,
+      "sha256": "bc85acde10bc55a0866aac0aa9554d8c5de876b12a12d8faf492fa3d91c44223"
     },
     "payload/release/verify-currentness-external.mjs": {
       "bytes": 17696,
@@ -35,7 +35,7 @@
   "sourceQualifiedByThisManifest": false,
   "hostQualifiedByThisManifest": false,
   "productionAuthorized": false,
-  "revision": 6,
-  "previousPackageManifestSha256": "590f00f3776391e81ed01f29f64de03ca65fd77aa0d1ccd8003abff8cc75a512",
-  "onlyExecutableDelta": "release-once deploys the PDF Worker through a derived copy of the pinned wrangler.pdf-extractor.jsonc without build (wrangler 4 has no --no-build); v5 manager fix kept"
+  "revision": 7,
+  "previousPackageManifestSha256": "71ee46c6c0d5bb0bafa5a85a5445b11c4f0b534141eb25010b06b51da04b8bf4",
+  "onlyExecutableDelta": "both fixed units make /run/WSL and /dev/shm inaccessible, the manager requires that of the loaded currentness unit, and the manager and release entry stop where either is reachable; v6 PDF config derivation and v5 manager fix kept"
 }

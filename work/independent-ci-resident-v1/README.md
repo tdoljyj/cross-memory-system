@@ -37,4 +37,6 @@ Primary/standby C6 (Task `6444f88a`) is described in DESIGN.md §20. It adds the
 
 Phase 2, step 3b (Task `6451a55d`, sub-Task `a3548216`) is described in DESIGN.md §21. Job contract `/3` adds the tested commit S to the job identity. With the train off, S is the head itself, so the workspaces and tests are the same as before.
 
+Primary/standby C5 (Task `ade5df89`) is described in [DESIGN.md §23](DESIGN.md#23-主备-c5pr-页面节点状态接班核对与双活停机task-ade5df89). It covers each node's PR status, standby reminders, bounded takeover checks, and the dual-active intake hold with its three release conditions. These are advisory; the service-side ci-admission role and C4's GitHub read-back remain the publication controls.
+
 The companion job host (Task `8e1f07d3`) is described in DESIGN.md §24. Every companion child now runs in a job object of the companion's own (`windows/CompanionJobHost.cs`, compiled at install into `bin\CluedCompanionJobHost.exe`). A child that outlives its time limit is ended with exactly that job, so the mailbox lane goes on, and a stage-0 failure is released without asking the companion for anything. The service's own runner still never kills a child. `test-job-host.ps1` compiles the host and runs `test/job-host.test.mjs` with its live cases; `-Wsl` adds the real wsl, PowerShell and git chains.

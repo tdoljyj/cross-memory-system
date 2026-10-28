@@ -7,6 +7,15 @@ import path from 'node:path';
 import { STATUS_CONTRACT, StatusBoard, StatusFile, parseStatus, readStatus, startStatusTimer } from '../src/status.mjs';
 import { HEAD, executorFixture, fakeEngine, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 
+test('C2 status carries observations without promoting held to ACTIVE or altering existing mode', () => {
+  const b = new StatusBoard({ clock: () => Date.parse('2026-10-25T00:00:00Z') });
+  const probe = { at: '2026-10-25T00:00:00.000Z', result: 'held', failures: 0, failingSince: null };
+  b.setRoleProbe('fixture-node', probe); assert.equal(b.content.node.mode, 'UNCERTAIN');
+  b.update({ node: { name: 'fixture-node', mode: 'STANDBY', probe: null } }); b.setRoleProbe('fixture-node', probe);
+  const parsed = parseStatus(Buffer.from(JSON.stringify(b.snapshot())));
+  assert.equal(parsed.node.mode, 'STANDBY'); assert.equal(parsed.node.probe.result, 'held');
+});
+
 test('status board: fixed shape, state since only moves on a change, outcomes newest first per head, bounded', () => {
   let now = Date.parse('2026-10-22T08:00:00Z');
   const b = new StatusBoard({ clock: () => now, pid: 7 });

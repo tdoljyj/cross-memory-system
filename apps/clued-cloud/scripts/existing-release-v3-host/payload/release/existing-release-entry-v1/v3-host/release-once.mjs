@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {BASE,APP,ROOT,RUN,SOURCE,CONNECT,WRANGLER,HASH,hash,fail,readContext,verifyPackage,safeEnv,exactMain,writeOnce,readSecret,verifyBuildFiles,protectedBytes,utf8} from './host-files.mjs';
+import {BASE,APP,ROOT,RUN,SOURCE,CONNECT,WRANGLER,HASH,hash,fail,readContext,verifyPackage,safeEnv,exactMain,writeOnce,readSecret,verifyBuildFiles,protectedBytes,utf8,interopBoundary} from './host-files.mjs';
 import {main as existingStage} from '../v3/existing-stages.mjs';
 const SCOPE='existing-production-release-v3-host';
 const sleep=ms=>new Promise(done=>setTimeout(done,ms));
@@ -39,7 +39,9 @@ export async function main(argv=[]){
  if(argv.length!==7||argv[0]!=='--execute-once'||argv[1]!=='--fixed-scope'||argv[2]!==SCOPE||argv[3]!=='--reviewed-context-sha256'||!HASH.test(argv[4])||argv[5]!=='--reviewed-package-sha256'||!HASH.test(argv[6]))return {status:'BLOCKED',code:'FIXED_EXPLICIT_SCOPE_REQUIRED'};
  const contextSha=argv[4],packageSha=argv[6];let intent=false;
  try{
-  verifyPackage(packageSha);let c=readContext(contextSha);exactMain(c);const build=verifyBuildFiles(c);
+  // The fixed unit makes /run/WSL and /dev/shm inaccessible; stop before any
+  // read, write or credential where either is reachable.
+  interopBoundary();verifyPackage(packageSha);let c=readContext(contextSha);exactMain(c);const build=verifyBuildFiles(c);
   writeOnce('release-intent.json',{contract:'clued.existing-production-release-intent/1',contextSha256:contextSha,packageSha256:packageSha,sourceCommit:c.sourceCommit,build,startedAt:new Date().toISOString(),automaticRetryAllowed:false});intent=true;
   // Validate fixed credential presence/format before consuming the real Grant.
   const cloudflare=readSecret('cloudflare-deploy-token'),account=readSecret('cloudflare-account-id');
