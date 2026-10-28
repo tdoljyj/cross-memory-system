@@ -184,7 +184,7 @@ LEGACY_HOSTED_DEBT = {
         }
     },
     "clued-merge-slot-ci.yml": {
-        "control_sha256": "500da29fb3c1fbe9df2be795e84f92908249a8ee057bef709e17e5aa7c5e341f",
+        "control_sha256": "004f96edaf2552b256bed691d6f320e5eccfe2c2e045a5329ab4b53abcc983dd",
         "jobs": {
             "report": "13d032eddeef15d56c9b98d7e74cc09325e6b40fbbe190820bd9aa86a2f41089"
         }
@@ -384,11 +384,23 @@ REQUIRED_CHECK_NAMES = frozenset({
 
 # These existing heartbeat arrays contain literal self-hosted/trust-internal
 # labels, plus one matrix selector. They cannot fall back to a hosted runner.
-# No new dynamic selector or entire expression-based route is admitted.
+# These entries authorize no other matrix selector or whole-expression route.
 EXISTING_SELF_HOSTED_MATRIX_ROUTES = {
     "clued-ci-runner-heartbeat.yml/windows-route": "[self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312, \"${{ matrix.site_label }}\"]",
     "clued-ci-runner-heartbeat.yml/linux-route": "[self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux, runtime-wsl2, \"${{ matrix.route_label }}\"]"
 }
+# One credential-free, disposable qualification job uses a dedicated capability
+# boundary instead of the general pool's trust-internal label. Only this exact
+# workflow/job and complete route are recognized; the run/attempt label cannot
+# select a hosted runner. Recognition grants no dispatch, Source or production
+# authority and does not change the workflow's admission/PR/Owner gates.
+PUBLISHER_QUALIFICATION_WORKFLOW = "clued-production-publisher-guest-qualification.yml"
+PUBLISHER_QUALIFICATION_JOB = "qualify"
+PUBLISHER_QUALIFICATION_RUN_LABEL = "${{ format('clued-publisher-{0}-{1}', github.run_id, github.run_attempt) }}"
+PUBLISHER_QUALIFICATION_ROUTE = (
+    '[self-hosted, Linux, X64, clued-production-publisher-v1, "'
+    + PUBLISHER_QUALIFICATION_RUN_LABEL + '"]'
+)
 STATE_CHANGE_RUNNER = (
     "$" + "{{ inputs.reason == 'state_change' && 'ubuntu-latest' || 'ubuntu-slim' }}"
 )
@@ -506,6 +518,14 @@ def scalar(text: str) -> str:
     return value
 
 
+def exact_publisher_qualification_route(filename: str, job_id: str, fields: dict[str, str]) -> bool:
+    route = "\n".join(strip_comment(line) for line in fields.get("runs-on", "").splitlines()).strip()
+    return (filename == PUBLISHER_QUALIFICATION_WORKFLOW
+            and job_id == PUBLISHER_QUALIFICATION_JOB
+            and "uses" not in fields
+            and route == PUBLISHER_QUALIFICATION_ROUTE)
+
+
 def classify_route(filename: str, job_id: str, fields: dict[str, str]) -> tuple[str, list[str]]:
     value = fields.get("runs-on", "")
     if "uses" in fields or not value.strip():
@@ -515,6 +535,11 @@ def classify_route(filename: str, job_id: str, fields: dict[str, str]) -> tuple[
         return "legacy-hosted-dynamic", []
     if "\n" not in route and HOSTED_LABEL.fullmatch(scalar(route)):
         return "hosted", []
+    if filename == PUBLISHER_QUALIFICATION_WORKFLOW and job_id == PUBLISHER_QUALIFICATION_JOB:
+        if not exact_publisher_qualification_route(filename, job_id, fields):
+            return "unknown", []
+        return "self-hosted", ["self-hosted", "Linux", "X64", "clued-production-publisher-v1",
+                               PUBLISHER_QUALIFICATION_RUN_LABEL]
     if route.startswith("[") and route.endswith("]") and "\n" not in route:
         labels = [scalar(part) for part in route[1:-1].split(",")]
     elif "\n" in value and not strip_comment(value.splitlines()[0]):
@@ -665,7 +690,7 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
                 if not legacy_hash and not owner_hash:
                     reject(filename, "new GitHub-hosted execution is prohibited; use literal self-hosted routing", job_id)
             else:
-                if "trust-internal" not in labels:
+                if "trust-internal" not in labels and not exact_publisher_qualification_route(filename, job_id, fields[job_id]):
                     reject(filename, "self-hosted job is missing literal trust-internal capability boundary", job_id)
                 if pr_triggered and filename not in CONCURRENCY_EXEMPTIONS:
                     if not concurrency:

@@ -1,4 +1,5 @@
 import {registeredPublisherSource} from './clued-production-publisher-source.mjs';
+import {registeredPublisherPrQualificationSource} from './clued-publisher-qualification-source.mjs';
 // Merge Admission v0.1 §7.3, step 3: the merge slot follows CI
 // (clued-merge-slot-ci.mjs). No network: fetch is mocked.
 import assert from "node:assert/strict";
@@ -36,6 +37,12 @@ const OTHER = "b".repeat(40);
 const CLAIM = "11111111-2222-4333-8444-555555555555";
 const SCOPE = "project:0597aa60-9b98-4da6-a4ab-63d7705b632f";
 const WORKFLOWS = ciWorkflows(ROOT);
+const QUALIFICATION_CATALOGUE = JSON.parse(fs.readFileSync(path.join(ROOT,'scripts/ci/clued-publisher-qualification-sources.json'),'utf8'));
+const QUALIFICATION_NAMES = Object.entries(QUALIFICATION_CATALOGUE.workflows).flatMap(([file,entry])=>entry.sources.map(source=>{
+  const registered=registeredPublisherPrQualificationSource(QUALIFICATION_CATALOGUE,file,source.source_yaml);
+  assert.equal(registered.passed,true,'watcher names come only from exact registered qualification Source/Role bytes');
+  return registered.profile.workflow_definition.name;
+}));
 test('default CI enumeration excludes only exact registered dispatch publisher bytes',()=>{
   const registry=JSON.parse(fs.readFileSync(path.join(ROOT,'scripts/ci/clued-production-publisher-sources.json'),'utf8'));
   const file='.github/workflows/clued-cloud-production-release.yml';
@@ -46,6 +53,14 @@ test('default CI enumeration excludes only exact registered dispatch publisher b
     /unregistered default publisher/);
   assert.equal(ciWorkflows(ROOT,()=>['unregistered-dispatch.yml'],readFile).size,1,
     'an arbitrary gated dispatch is never a basename exclusion');
+});
+test('qualification Sources are outside application requiredSuccess only after exact registration',()=>{
+  const file='.github/workflows/clued-production-publisher-host-qualification.yml';
+  const source=QUALIFICATION_CATALOGUE.workflows[file].sources[0].source_yaml;
+  const readFile=p=>Buffer.from(p.endsWith('clued-publisher-qualification-sources.json')?JSON.stringify(QUALIFICATION_CATALOGUE):source);
+  assert.equal(ciWorkflows(ROOT,()=>[path.basename(file)],readFile).size,0);
+  assert.throws(()=>ciWorkflows(ROOT,()=>[path.basename(file)],p=>p.endsWith('clued-publisher-qualification-sources.json')?readFile(p):Buffer.from(source+'\n')),
+    /unregistered default PR qualification Source/);
 });
 const GITLEAKS = ".github/workflows/gitleaks.yml";
 const QUALITY = ".github/workflows/clued-cloud-quality-gate.yml";
@@ -127,6 +142,10 @@ test("the CI workflows are gitleaks, trivy and the gated workflows of this branc
   const publisherCatalogue=JSON.parse(fs.readFileSync(path.join(ROOT,'scripts/ci/clued-production-publisher-sources.json'),'utf8'));
   const prGated=gated.filter(name=>{
     const file='.github/workflows/'+name;
+    if(Object.hasOwn(QUALIFICATION_CATALOGUE.workflows,file)){
+      assert.equal(registeredPublisherPrQualificationSource(QUALIFICATION_CATALOGUE,file,fs.readFileSync(path.join(dir,name),'utf8')).passed,true);
+      return false;
+    }
     if(!Object.hasOwn(publisherCatalogue.workflows,file))return true;
     const text=fs.readFileSync(path.join(dir,name),'utf8');
     assert.equal(registeredPublisherSource(publisherCatalogue,file,text).passed,true,'an exact registered dispatch Source is required');
@@ -143,7 +162,7 @@ test("the workflow is triggered by every CI workflow's completion, runs default-
   const names = listed[1].trim().split("\n").map((line) => line.replace(/^\s*- /, "").trim());
   const dir = path.join(ROOT, ".github", "workflows");
   const nameOf = (file) => /^name:\s*(.+)$/m.exec(fs.readFileSync(path.join(dir, file), "utf8"))[1].trim();
-  const expected = [...[...WORKFLOWS.keys()].map((p) => nameOf(path.basename(p))), nameOf("clued-work-admission.yml")];
+  const expected = [...[...WORKFLOWS.keys()].map((p) => nameOf(path.basename(p))), nameOf("clued-work-admission.yml"), ...QUALIFICATION_NAMES];
   assert.deepEqual([...names].sort(), [...new Set(expected)].sort());
   assert.match(text, /types: \[completed\]/);
   assert.doesNotMatch(text, /schedule:/, "the hourly report is a step of the re-verification run");

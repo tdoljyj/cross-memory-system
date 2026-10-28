@@ -101,9 +101,12 @@ test('actual provider event time, stable pagination and interval scope are retai
   assert.deepEqual(changed.quarantined_ids,['91']);assert.equal(changed.quarantine[0].observations.length,2);
 });
 
-function intakeVersionFixture({succession=false,renamed=false}={}){
-  const jobId=renamed?'clued-work-admission':'admission',oldName=renamed?'clued-work-admission':'source-job',currentName=renamed?'kooyumi-work-admission':'source-job';
-  const paths={script:'scripts/ci/clued-work-admission.mjs',workflow:'.github/workflows/clued-work-admission.yml',
+function intakeVersionFixture({succession=false,renamed=false,slotReport=false}={}){
+  const jobId=slotReport?'report':renamed?'clued-work-admission':'admission',
+    oldName=slotReport?'clued-merge-slot-ci':renamed?'clued-work-admission':'source-job',
+    currentName=slotReport?'clued-merge-slot-ci':renamed?'kooyumi-work-admission':'source-job';
+  const paths={script:slotReport?'scripts/ci/clued-merge-slot-ci.mjs':'scripts/ci/clued-work-admission.mjs',
+    workflow:slotReport?'.github/workflows/clued-merge-slot-ci.yml':'.github/workflows/clued-work-admission.yml',
     reverify_workflow:'.github/workflows/clued-work-admission-reverify.yml',policy:'config/merge-admission-policy.json'},runtimePath='scripts/ci/clued-gated-proof-runtime.mjs',
     sourcePaths=[...Object.values(paths),...(succession?[runtimePath]:[])],
     oldTexts={[paths.script]:'// reviewed old script\n',[paths.workflow]:'name: reviewed producer\n',[paths.reverify_workflow]:'name: reviewed reverify\n',[paths.policy]:'{"version":"old"}\n',
@@ -147,30 +150,34 @@ function intakeVersionFixture({succession=false,renamed=false}={}){
   return {paths,runtimePath,sourcePaths,oldMap,middleMap,currentMap,oldDescriptor,middleDescriptor,currentDescriptor,descriptor,oldTexts,middleTexts,currentTexts,textsByCommit,records,native,selection,routes,request,collect};
 }
 
-function namedSuccessorFixture({capacitySuccessor=false,publisherSuccessor=false}={}){
-  const f=intakeVersionFixture({succession:true,renamed:true}),pins=texts=>Object.fromEntries(f.sourcePaths.map(p=>[p,blob(texts[p])])),
+function namedSuccessorFixture({capacitySuccessor=false,publisherSuccessor=false,slotReport=false}={}){
+  const f=intakeVersionFixture({succession:true,renamed:!slotReport,slotReport}),
+    oldName=f.oldDescriptor.job_name,currentName=f.currentDescriptor.job_name,jobId=f.currentDescriptor.job_id,
+    pins=texts=>Object.fromEntries(f.sourcePaths.map(p=>[p,blob(texts[p])])),
     thirdTexts={...f.middleTexts,[f.paths.script]:'// reviewed third legacy script\n'},
     successorTexts={...f.currentTexts,[f.paths.script]:'// reviewed Kooyumi successor script\n'},
     rows=[
-      {run:'42',artifact:'9',commit:base,texts:f.oldTexts,name:'clued-work-admission'},
-      {run:'46',artifact:'13',commit:'c'.repeat(40),texts:f.middleTexts,name:'clued-work-admission'},
-      {run:'48',artifact:'15',commit:'d'.repeat(40),texts:thirdTexts,name:'clued-work-admission'},
-      {run:'44',artifact:'11',commit:head,texts:f.currentTexts,name:'kooyumi-work-admission'},
-      {run:'50',artifact:'17',commit:'e'.repeat(40),texts:successorTexts,name:'kooyumi-work-admission'}
+      {run:'42',artifact:'9',commit:base,texts:f.oldTexts,name:oldName},
+      {run:'46',artifact:'13',commit:'c'.repeat(40),texts:f.middleTexts,name:oldName},
+      {run:'48',artifact:'15',commit:'d'.repeat(40),texts:thirdTexts,name:oldName},
+      {run:'44',artifact:'11',commit:head,texts:f.currentTexts,name:currentName},
+      {run:'50',artifact:'17',commit:'e'.repeat(40),texts:successorTexts,name:currentName}
     ];
-  if(capacitySuccessor||publisherSuccessor)rows.push({run:'52',artifact:'19',commit:'f'.repeat(40),
-    texts:{...successorTexts,[f.paths.script]:'// reviewed profile-capacity successor script\n'},name:'kooyumi-work-admission'});
-  if(publisherSuccessor)rows.push({run:'54',artifact:'21',commit:'9'.repeat(40),
-    texts:{...successorTexts,[f.paths.script]:'// reviewed dispatch publisher Source successor script\n'},name:'kooyumi-work-admission'});
+  if(capacitySuccessor||publisherSuccessor||slotReport)rows.push({run:'52',artifact:'19',commit:'f'.repeat(40),
+    texts:{...successorTexts,[f.paths.script]:'// reviewed profile-capacity successor script\n'},name:currentName});
+  if(publisherSuccessor||slotReport)rows.push({run:'54',artifact:'21',commit:'9'.repeat(40),
+    texts:{...successorTexts,[f.paths.script]:'// reviewed dispatch publisher Source successor script\n'},name:currentName});
+  if(slotReport)rows.push({run:'56',artifact:'23',commit:'8'.repeat(40),
+    texts:{...successorTexts,[f.paths.workflow]:'name: reviewed Host and Guest completion watcher\n'},name:currentName});
   for(const row of rows){
     row.map=pins(row.texts);f.textsByCommit[row.commit]=row.texts;
     row.descriptor={...f.currentDescriptor,job_name:row.name,workflow_blob:row.map[f.paths.workflow],source_blobs:row.map};
-    const recorder=createNaturalRecorder({env:{GITHUB_REPOSITORY:repository,GITHUB_RUN_ID:row.run,GITHUB_RUN_ATTEMPT:'1',GITHUB_JOB:'clued-work-admission'},
+    const recorder=createNaturalRecorder({env:{GITHUB_REPOSITORY:repository,GITHUB_RUN_ID:row.run,GITHUB_RUN_ATTEMPT:'1',GITHUB_JOB:jobId},
       sourcePath:f.paths.script,write:()=>{},now:()=>at(1)}),
       session={...recorder.finish(),executed_checkout_sha:row.commit,source_sha256:h(row.texts[f.paths.script])},
-      bytes=Buffer.from(JSON.stringify({schema:'clued.merge-admission-natural-artifact/1',identity:{repository,run_id:row.run,attempt:1,logical_job_key:'clued-work-admission'},
+      bytes=Buffer.from(JSON.stringify({schema:'clued.merge-admission-natural-artifact/1',identity:{repository,run_id:row.run,attempt:1,logical_job_key:jobId},
         events:[],sessions:[session],files:[],local_stream:{status:'CLOSED_LOCAL_STREAM',known_gaps:[]}}));
-    row.record={commit:row.commit,bytes,artifact:{id:row.artifact,name:`clued-r9-natural-source-${row.run}-1-clued-work-admission`,expired:false,
+    row.record={commit:row.commit,bytes,artifact:{id:row.artifact,name:`clued-r9-natural-source-${row.run}-1-${jobId}`,expired:false,
       digest:'sha256:'+h(bytes),workflow_run:{id:row.run,head_sha:row.commit}},
       native:{run:{run_id:row.run,run_attempt:1,status:'completed',conclusion:'success',head_sha:row.commit,path:f.paths.workflow,event:'push'},
         jobs:[{id:String(Number(row.run)+1),name:row.name,status:'completed',conclusion:'success',steps:['Export','Upload'].map(name=>({name,status:'completed',conclusion:'success'}))}]}};
@@ -227,6 +234,52 @@ test('dispatch Source successor retains six exact prior generations; a seventh u
   assert.equal(refused.status,'PARTIAL');assert.equal(reads,0);
   assert.ok(refused.gaps.some(g=>g.code==='NATURAL_PRODUCER_SELECTION_INVALID'));
   assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
+
+test('only the exact slot report retains seven prior maps and preserves every cached descriptor identity',async()=>{
+  const f=namedSuccessorFixture({slotReport:true}),before=JSON.stringify(f.selection),r=await f.collect();
+  assert.equal(f.descriptor.previous_source_versions.length,7);
+  assert.equal(r.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(r.gaps));assert.equal(r.entries.length,8);
+  for(const [i,row]of f.rows.entries())assert.equal(r.entries[i].descriptor_digest,h(JSON.stringify(row.descriptor)));
+  const entries=[],sources={};
+  for(const row of f.rows.slice(0,-1)){
+    const old=await f.collect({native:{status:'COMPLETE',population_packets:[row.record.native]},
+      selection:{...f.selection,natural_producers:[row.descriptor]}});
+    assert.equal(old.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(old.gaps));
+    entries.push(...old.entries);Object.assign(sources,old.source_bytes);
+  }
+  let reads=0;const reused=await f.collect({native:{status:'COMPLETE',population_packets:f.rows.slice(0,-1).map(row=>row.record.native)},
+    authenticatedEntries:entries,authenticatedSourceBytes:sources,
+    request:async()=>{reads++;throw Error('EXACT_SLOT_HISTORY_MUST_REUSE_OLD_AUTHENTICATED_CACHE');}});
+  assert.equal(reused.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(reused.gaps));assert.equal(reads,0);
+  assert.deepEqual(reused.entries,entries);assert.equal(JSON.stringify(f.selection),before);
+  assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
+
+test('slot report eighth prior map and every other role seventh prior map refuse before HTTP',async()=>{
+  const f=namedSuccessorFixture({slotReport:true}),copy=()=>structuredClone(f.descriptor),
+    changes=[['slot eighth',d=>d.previous_source_versions.push({job_name:d.job_name,
+      source_blobs:{...d.source_blobs,[f.paths.script]:'1'.repeat(40)}})],
+      ['different job id',d=>d.job_id='other-report'],
+      ['different job name',d=>{d.job_name='other-report';for(const row of d.previous_source_versions)row.job_name=d.job_name;}],
+      ...[
+        ['.github/workflows/clued-work-admission.yml','clued-work-admission','kooyumi-work-admission'],
+        ['.github/workflows/clued-work-admission-reverify.yml','clued-work-admission-reverify','clued-work-admission-reverify'],
+        ['.github/workflows/clued-work-admission-dispatch.yml','clued-work-admission-dispatch','clued-work-admission-dispatch'],
+        ['.github/workflows/clued-merge-executor.yml','executor','clued-merge-executor']
+      ].map(([workflow,jobId,jobName])=>[workflow,d=>{
+        const old=d.workflow_path;d.workflow_path=workflow;d.job_id=jobId;d.job_name=jobName;
+        d.source_paths=d.source_paths.map(p=>p===old?workflow:p);
+        const rename=map=>Object.fromEntries(Object.entries(map).map(([p,v])=>[p===old?workflow:p,v]));
+        d.source_blobs=rename(d.source_blobs);
+        for(const row of d.previous_source_versions){row.job_name=jobName;row.source_blobs=rename(row.source_blobs);}
+      }])];
+  for(const [label,change]of changes){
+    const d=copy();change(d);let reads=0;const r=await f.collect({native:{status:'COMPLETE',population_packets:[]},
+      selection:{...f.selection,natural_producers:[d]},request:async()=>{reads++;throw Error('OVERBOUND_HISTORY_MUST_NOT_READ');}});
+    assert.equal(r.status,'PARTIAL',label);assert.equal(r.entries.length,0,label);assert.equal(reads,0,label);
+    assert.ok(r.gaps.some(g=>g.code==='NATURAL_PRODUCER_SELECTION_INVALID'),label);
+  }
 });
 
 test('explicit Source histories reject ambiguous formats, names, incomplete maps and duplicates before HTTP',async()=>{

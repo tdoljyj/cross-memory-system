@@ -26,6 +26,8 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.storage-google-redirect-cutover": "1.0.0",
   "script.storage-zip": "1.0.0",
   "script.production-publisher-source": "1.0.0",
-  "script.publisher-pr-qualification-source": "1.0.0"
+  "script.publisher-pr-qualification-source": "1.0.0",
+  "script.production-publisher-vm": "1.0.0",
+  "script.publisher-pr-qualification": "1.0.2"
 };
 export const MCP_SERVER_VERSION = "0.8.5";

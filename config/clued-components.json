@@ -392,6 +392,36 @@
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
       "content_sha256": "a959297dd7cb49436caa2269cd2cddb800e236351092af06c4392ff2194db47e"
+    },
+    {
+      "id": "script.production-publisher-vm",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Bounded Hyper-V qualification lifecycle and unqualified guest base preparation; no production registration or secret delivery.",
+      "root": ".",
+      "files": [
+        "scripts/runner/clued-production-vm.ps1",
+        "scripts/runner/clued-production-vm-guest-init.sh",
+        "scripts/runner/clued-production-vm.test.mjs",
+        "scripts/ci/self-hosted/production-publisher-profile.json"
+      ],
+      "content_sha256": "ad4dc0e6cc72f7cc5afdef31f28f95301a88437508376c869fe7e053e88bc598"
+    },
+    {
+      "id": "script.publisher-pr-qualification",
+      "kind": "script",
+      "version": "1.0.2",
+      "description": "Fixed public Host qualification case and actual Windows CI principal observations; Guest installation and production qualification remain separate.",
+      "root": ".",
+      "files": [
+        ".github/workflows/clued-production-publisher-host-qualification.yml",
+        "scripts/ci/self-hosted/publisher-qualification-case.json",
+        "scripts/ci/self-hosted/run-publisher-qualification-case.mjs",
+        "scripts/ci/self-hosted/run-publisher-qualification-case.test.mjs",
+        "scripts/ci/self-hosted/qualify-publisher-host-principal.ps1",
+        "scripts/ci/self-hosted/qualify-publisher-host-principal.test.mjs"
+      ],
+      "content_sha256": "81cbbbb039eee534fa1f0d5c3885774d73d86eca66cbff9926cf16c76b1e911b"
     }
   ]
 }

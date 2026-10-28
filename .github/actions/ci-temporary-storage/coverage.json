@@ -1924,6 +1924,42 @@
           "persistent_action_caches": []
         }
       }
+    },
+    "clued-production-publisher-host-qualification.yml": {
+      "jobs": {
+        "admission-gate": {
+          "mode": "job-temp",
+          "purpose": "Credential-free nonproduction publisher qualification; fixed public case, no artifact or cache upload",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "host-principal-probe": {
+          "mode": "job-temp",
+          "purpose": "Credential-free nonproduction publisher qualification; fixed public case, no artifact or cache upload",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.pull_request.head.sha }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
     }
   }
 }

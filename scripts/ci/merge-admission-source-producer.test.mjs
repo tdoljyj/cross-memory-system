@@ -125,6 +125,15 @@ test('five original workflow blocks preserve exact accepted successors and added
       assert.equal(ordinary.split(exact).length-1,1,name+': exact accepted trigger additions appear once');
       ordinary=ordinary.replace(exact,additions.anchor);
     }
+    if(name==='clued-merge-slot-ci.yml'){
+      // The bounded Host/Guest Source installation adds only these completion
+      // signals. Every other workflow byte still matches the fixed witness.
+      const anchor='      - public-mcp-protocol\n',exact=anchor+
+        '      - Clued production publisher Host qualification\n'+
+        '      - Clued production publisher Guest qualification\n';
+      assert.equal(ordinary.split(exact).length-1,1,'exact qualification completion signals appear once');
+      ordinary=ordinary.replace(exact,anchor);
+    }
     const removed=ordinary.replace(/      - name: Export the closed local natural R9 packet\n[\s\S]*?        run: node scripts\/ci\/merge-admission-source-producer.mjs --export[^\n]*\n/,'').replace(/      - name: Preserve natural R9 source observations\n[\s\S]*?          retention-days: 90\n/,'').replace(/\n\n\n/g,'\n\n');
     assert.equal(removed.trim(),old.replace(/\n\n\n/g,'\n\n').trim(),name);
     assert.equal((next.match(/name: Preserve natural R9/g)||[]).length,1);assert.equal((next.match(/if: \$\{\{ always\(\) \}\}/g)||[]).length,2);
@@ -343,10 +352,27 @@ test('runtime loader validates the current Source registry against actual bytes 
     assert.deepEqual(Object.keys(d.source_blobs).sort(),[...d.source_paths].sort());
     for(const p of d.source_paths)assert.equal(d.source_blobs[p],gitBlob(fs.readFileSync(path.join(repo,p))));
     assert.equal(Object.hasOwn(d,'previous_source_blobs'),false);assert.equal(Object.hasOwn(d,'previous_job_name'),false);
-    assert.equal(d.previous_source_versions.length,6);
+    const slotReport=d.workflow_path==='.github/workflows/clued-merge-slot-ci.yml'&&d.job_id==='report';
+    assert.equal(d.previous_source_versions.length,slotReport?7:6);
     const old=previous.natural_producers.find(p=>p.workflow_path===d.workflow_path&&p.job_id===d.job_id);
     assert.ok(old);assert.deepEqual(d.previous_source_versions.slice(0,5),old.previous_source_versions);
     assert.deepEqual(d.previous_source_versions[5],{job_name:old.job_name,source_blobs:old.source_blobs});
+    if(slotReport){
+      // Complete immediate predecessor from immutable main 2d9fcc99. Keep all
+      // older generations in their original order and preserve their digests.
+      const prior={job_name:'clued-merge-slot-ci',source_blobs:{
+        'scripts/ci/clued-work-admission.mjs':'b413917364fccdda1d10ec1fee799f82b313a29f',
+        'scripts/ci/clued-merge-slot-ci.mjs':'f043aa3badd6e861bce69ac38134399e04a21115',
+        'scripts/ci/clued-merge-executor.mjs':'ca3b23fa07d733c2163e33375424961de6190ff4',
+        'scripts/ci/merge-admission-source-producer.mjs':'2f428d400de4dbf0a9feca2bd27269c0dd353033',
+        'scripts/ci/clued-gated-proof-runtime.mjs':'1015f7afb9eb1c089027918640a934e0f32b9289',
+        '.github/workflows/clued-merge-slot-ci.yml':'662dbc3e846311379efa5f081b3cca518a881f74',
+        '.github/workflows/clued-work-admission.yml':'19e67fd3b6b706b3c957506a7bfce6d8aeb7fd3b',
+        '.github/workflows/clued-work-admission-reverify.yml':'8d112ceea21487b9ef871558a2e3bab8decef126',
+        'config/merge-admission-policy.json':'a54ea27028f6361765fffce30f9ffa227a91b2ea'}};
+      assert.deepEqual(d.previous_source_versions[6],prior);
+      assert.equal(sha256(JSON.stringify(prior)),'b05a1561942e86d2fc8967b44356f041c6cc63413ff5603e090e0eb5e70a299d');
+    }
     assert.deepEqual(d.previous_source_versions.slice(0,4).map(v=>v.job_name),d.job_id==='clued-work-admission'
       ?['clued-work-admission','clued-work-admission','clued-work-admission','kooyumi-work-admission']:Array(4).fill(d.job_name));
   }
