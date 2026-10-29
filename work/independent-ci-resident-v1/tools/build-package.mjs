@@ -2,6 +2,7 @@
 //   node tools/build-package.mjs --out <new dir> --policy <policy.json> --companion <companion.json>
 //        --node <node.exe> --record <prepared claim-free record dir> [--source-root <Source v2 checkout>
 //        --source-files <list.txt>] [--linux-external-pins <pins.json>]
+//        [--state-compat <stateCompat.json>] [--source-v2 <sourceV2.json>] [--fresh-install --upgrader-config <upgrader.json>]
 // Source v2 (DESIGN S5, S12): the claim-free install record (resident-v2/prepare-record.mjs output) is
 // installed admin-only into record\; the CI Source goes to source\<ciSourceManifestSha256>\ (the record's
 // source-manifest.json hash, the directory the generic helper loads code from); no helper binary is
@@ -13,11 +14,28 @@
 // lists each Linux file with its INSTALLED path (review M7), plus the external entry points the units
 // run from the installed Source (node, linux-worker.mjs, prepare-workspaces.py), so the unit guard
 // pins exactly what systemd executes. Nothing on any host is touched.
+//
+// Package /4 (in-place upgrade channel, Task 018da927, spec A1, DESIGN §34) adds to /3:
+//   nodeProfileSha256, windowsLayout (clued.independent-ci.resident-layout/1), stateCompat ({ schema, readableBySchemas }, --state-compat),
+//   acceptance ({ decisionRef } = the policy's ownerAcceptance.decisionRef);
+//   linux: { manifestSha256 (of linux/manifest.json), sourceV2: null | { commit, bundlePath, bundleSha256, rolesDerivedSha256: { gitleaks,
+//     trivy, contract-placement } } (--source-v2: the accepted commit, its bundle file and the role hashes the Linux upgrade tool's stage
+//     must derive; the bundle is copied to linux/source-v2/source.bundle), files: [{ path, sha256, bytes }] of every file under linux/ };
+//     the frozen Linux upgrade tool and the signer go to linux/upgrade-v1/bin/ with linux/upgrade-v1/manifest.json
+//     (clued.independent-ci.linux-upgrade-tool-manifest/1: both at their installed paths under /opt/clued-independent-ci/upgrade-v1/);
+//   upgrader: { manifestSha256, files } of the upgrader's frozen code copy, upgrader\<manifestSha256>\, laid out as in this tree so its
+//     relative imports resolve: upgrader\src\* (R/upgrader/src), src\* (the resident modules they import, transitively; nothing else)
+//     and windows\upgrade-apply.ps1. Always computed, so an upgrade package names the upgrader it was built with and the upgrader
+//     refuses a different one (UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL).
+// Install targets under upgrader\ are written into `files` only with --fresh-install (the upgrader refuses them in an in-place upgrade):
+// the code copy, upgrader\bin\UpgraderServiceHost.cs, upgrader\runtime\node.exe (the same node.exe) and upgrader\config\upgrader.json
+// (--upgrader-config, clued.independent-ci.resident-upgrader-config/1).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { HEX64, canonicalJson, check, sha256 } from '../src/canonical.mjs';
+import { HEX40, HEX64, UUID, canonicalJson, check, sha256 } from '../src/canonical.mjs';
+import { validateStateCompat } from '../src/upgrade-mailbox.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { RESIDENT_INSTALL_ROOT, validateCompanionConfig, validateHintConfig } from '../src/companion.mjs';
 import { validateStatusConfig } from '../src/pr-status.mjs';
@@ -58,7 +76,70 @@ const BRIDGE_DIR = 'work/actions-hosted-migration/independent-ci-v1/worker/prote
 const BRIDGE_FILES = ['boundary.mjs', 'formal-spool-acl.ps1', 'issue-job.mjs', 'linux-worker.mjs', 'mailbox.mjs', 'protocol.mjs', 'relay-public.ps1', 'relay-record.mjs', 'signed-result.mjs', 'windows-issuer.mjs'];
 export const BRIDGE_MANIFEST_CONTRACT = 'clued.independent-ci.protected-job-bridge-source/4';
 
-export async function buildPackage({ out, policyFile, companionFile, nodeExe, recordDir, sourceRoot = null, sourceFiles = [], linuxExternalPins = [] }) {
+// ---- package /4 (DESIGN §34) ----
+export const PACKAGE_CONTRACT = 'clued.independent-ci.resident-package/4';
+export const WINDOWS_LAYOUT = 'clued.independent-ci.resident-layout/1';
+export const DEFAULT_STATE_COMPAT = Object.freeze({ schema: 1, readableBySchemas: Object.freeze([1]) });
+export const UPGRADER_MANIFEST_CONTRACT = 'clued.independent-ci.resident-upgrader-manifest/1';
+export const UPGRADER_CONFIG_CONTRACT = 'clued.independent-ci.resident-upgrader-config/1';
+export const LINUX_UPGRADE_TOOL_MANIFEST_CONTRACT = 'clued.independent-ci.linux-upgrade-tool-manifest/1';
+export const LINUX_UPGRADE_V1 = '/opt/clued-independent-ci/upgrade-v1';
+// The frozen Linux upgrade tool and the qualification signer (B3): repository file -> package path under linux/upgrade-v1/bin/.
+export const LINUX_UPGRADE_FILES = Object.freeze([['bin/clued-ci-upgrade-linux', 'clued-ci-upgrade-linux'], ['bin/clued-ci-sign-qualification-v2.mjs', 'clued-ci-sign-qualification-v2.mjs']]);
+export const LINUX_ROLES = Object.freeze(['gitleaks', 'trivy', 'contract-placement']);
+export const SOURCE_V2_BUNDLE = 'linux/source-v2/source.bundle';
+// The upgrader's frozen copy: its own code, its entry for upgrade-apply.ps1 (B2), and the resident modules its code imports.
+const UPGRADER_DIRS = ['upgrader/src'];
+const UPGRADER_WINDOWS = ['windows/upgrade-apply.ps1'];
+const IMPORT_RE = /\bfrom\s*['"](\.{1,2}\/[^'"]+)['"]|\bimport\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]|new URL\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*,\s*import\.meta\.url/g;
+
+// Every repository file (forward-slash path from HERE) the given .mjs files reach through relative imports, including themselves.
+// An import that leaves src/ or upgrader/src/ is refused: the copy holds nothing else.
+export async function importClosure(base, start) {
+  const seen = new Set(), todo = [...start];
+  while (todo.length > 0) {
+    const rel = todo.pop();
+    if (seen.has(rel)) continue;
+    check(/^(?:src|upgrader\/src)\/[A-Za-z0-9_.-]+$/.test(rel), 'PACKAGE_UPGRADER_IMPORT_REFUSED', rel);
+    seen.add(rel);
+    if (!rel.endsWith('.mjs')) continue;
+    const text = await fs.readFile(path.join(base, ...rel.split('/')), 'utf8');
+    for (const m of text.matchAll(IMPORT_RE)) {
+      const spec = m[1] ?? m[2] ?? m[3];
+      todo.push(path.posix.normalize(path.posix.join(path.posix.dirname(rel), spec)));
+    }
+  }
+  return [...seen].sort();
+}
+
+// The upgrader's manifest over the copy (paths relative to upgrader\<manifestSha256>\).
+export async function upgraderCopy(base = HERE) {
+  const own = [];
+  for (const d of UPGRADER_DIRS) own.push(...(await listFiles(base, d)).filter(f => f.endsWith('.mjs')));
+  check(own.length > 0, 'PACKAGE_UPGRADER_REQUIRED');
+  const rels = [...new Set([...(await importClosure(base, own)), ...UPGRADER_WINDOWS])].sort();
+  const files = [];
+  for (const rel of rels) {
+    const bytes = await fs.readFile(path.join(base, ...rel.split('/')));
+    files.push({ path: rel, sha256: sha256(bytes), bytes: bytes.length });
+  }
+  const manifest = { contract: UPGRADER_MANIFEST_CONTRACT, root: 'upgrader', files };
+  return { manifest, manifestSha256: sha256(Buffer.from(canonicalJson(manifest) + '\n')) };
+}
+
+// --source-v2 input: { commit, bundle (a file path), rolesDerivedSha256: { gitleaks, trivy, contract-placement } }.
+function validateSourceV2Input(s) {
+  check(s && typeof s === 'object' && HEX40.test(s.commit ?? '') && typeof s.bundle === 'string' && s.bundle.length > 0
+    && s.rolesDerivedSha256 && typeof s.rolesDerivedSha256 === 'object' && Object.keys(s.rolesDerivedSha256).sort().join('|') === [...LINUX_ROLES].sort().join('|')
+    && LINUX_ROLES.every(r => HEX64.test(s.rolesDerivedSha256[r] ?? '')), 'PACKAGE_SOURCE_V2_INPUT_REFUSED');
+  return s;
+}
+
+export async function buildPackage({ out, policyFile, companionFile, nodeExe, recordDir, sourceRoot = null, sourceFiles = [], linuxExternalPins = [],
+  stateCompat = DEFAULT_STATE_COMPAT, sourceV2 = null, freshInstall = false, upgraderConfigFile = null }) {
+  validateStateCompat(stateCompat, 'PACKAGE_STATE_COMPAT_REFUSED');
+  if (sourceV2 !== null) validateSourceV2Input(sourceV2);
+  check(!freshInstall || typeof upgraderConfigFile === 'string', 'PACKAGE_UPGRADER_CONFIG_REQUIRED');
   check(typeof recordDir === 'string', 'PACKAGE_RECORD_REQUIRED');
   await fs.mkdir(out, { recursive: false });
   // The claim-free install record: copied as is; its source-manifest.json names the Source directory.
@@ -132,6 +213,31 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
   // The Linux half of the Source v2 install (bin/clued-ci-install-source-v2) is run once by root from this
   // reviewed copy, never installed or pinned by the unit guard; its hash is reported for the Owner's review.
   const sourceV2Installer = await copyNew(path.join(HERE, 'linux', 'bin', 'clued-ci-install-source-v2'), path.join(out, 'linux', 'bin', 'clued-ci-install-source-v2'));
+  // Package /4: the frozen Linux upgrade tool and the signer (installed once by root with install-resident-linux.sh --apply-upgrade-v1,
+  // pinned by their own manifest), and the accepted Source v2 bundle the tool's stage clones from.
+  const upgradeTool = [];
+  for (const [rel, name] of LINUX_UPGRADE_FILES) upgradeTool.push({ name, ...await copyNew(path.join(HERE, 'linux', ...rel.split('/')), path.join(out, 'linux', 'upgrade-v1', 'bin', name)) });
+  await writeJson(path.join(out, 'linux', 'upgrade-v1', 'manifest.json'), { contract: LINUX_UPGRADE_TOOL_MANIFEST_CONTRACT,
+    files: upgradeTool.map(f => ({ installedPath: `${LINUX_UPGRADE_V1}/bin/${f.name}`, sha256: f.sha256 })) });
+  let sourceV2Section = null;
+  if (sourceV2 !== null) {
+    const bundle = await copyNew(sourceV2.bundle, path.join(out, ...SOURCE_V2_BUNDLE.split('/')));
+    sourceV2Section = { commit: sourceV2.commit, bundlePath: SOURCE_V2_BUNDLE, bundleSha256: bundle.sha256, rolesDerivedSha256: { ...sourceV2.rolesDerivedSha256 } };
+  }
+  // Every file under linux/ but the bundle (named by sourceV2 on its own), with its size: what the Linux upgrade tool may take.
+  const linuxListed = [];
+  for (const f of await listFiles(out, 'linux')) {
+    if (f === SOURCE_V2_BUNDLE) continue;
+    const bytes = await fs.readFile(path.join(out, ...f.split('/')));
+    linuxListed.push({ path: f, sha256: sha256(bytes), bytes: bytes.length });
+  }
+  const linuxManifestSha256 = sha256(await fs.readFile(path.join(out, 'linux', 'manifest.json')));
+  // The upgrader's frozen code copy (always: its hash names the upgrader this package was built with).
+  const upgrader = await upgraderCopy(HERE);
+  for (const f of upgrader.manifest.files) {
+    const c = await copyNew(path.join(HERE, ...f.path.split('/')), path.join(out, 'upgrader', ...f.path.split('/')));
+    check(c.sha256 === f.sha256, 'PACKAGE_UPGRADER_CHANGED_WHILE_BUILT', f.path);
+  }
   const files = [];
   const add = async (rel, target) => { files.push({ path: rel, target, sha256: sha256(await fs.readFile(path.join(out, rel))) }); };
   for (const e of residentEntries) await add(`resident/${e.path}`, `resident\\${residentManifestSha256}\\${e.path.replace(/\//g, '\\')}`);
@@ -141,16 +247,41 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
   await add('runtime/node.exe', 'runtime\\node.exe');
   await add('resident/windows/ResidentServiceHost.cs', 'bin\\ResidentServiceHost.cs');
   await add('resident/windows/SwapBroker.cs', 'bin\\SwapBroker.cs');
-  const pkg = { contract: 'clued.independent-ci.resident-package/3', sourceManifestSha256, ciSourceManifestSha256, residentManifestSha256, bridgeManifestSha256, nodeIdentitySha256: nodeIdentitySha, files };
+  if (freshInstall) {
+    // Only a fresh install places the upgrader (install-resident.ps1 steps upgrader-files, upgrader-host, upgrader-service).
+    const cfgBytes = await fs.readFile(upgraderConfigFile);
+    const cfg = JSON.parse(cfgBytes.toString('utf8'));
+    check(cfg?.contract === UPGRADER_CONFIG_CONTRACT && cfg.nodeProfileSha256 === nodeProfileSha256 && (cfg.node === undefined || cfg.node === node.nodeName)
+      && (cfg.ownerSid === undefined || cfg.ownerSid === node.ownerSid), 'PACKAGE_UPGRADER_CONFIG_REFUSED');
+    await fs.mkdir(path.join(out, 'upgrader-config'));
+    await fs.writeFile(path.join(out, 'upgrader-config', 'upgrader.json'), cfgBytes, { flag: 'wx' });
+    for (const f of upgrader.manifest.files) await add(`upgrader/${f.path}`, `upgrader\\${upgrader.manifestSha256}\\${f.path.replace(/\//g, '\\')}`);
+    await add('resident/windows/UpgraderServiceHost.cs', 'upgrader\\bin\\UpgraderServiceHost.cs');
+    await add('runtime/node.exe', 'upgrader\\runtime\\node.exe');
+    await add('upgrader-config/upgrader.json', 'upgrader\\config\\upgrader.json');
+  }
+  const decisionRef = finalPolicy.ownerAcceptance?.decisionRef;
+  check(UUID.test(decisionRef ?? ''), 'PACKAGE_ACCEPTANCE_DECISION_REQUIRED');
+  const pkg = { contract: PACKAGE_CONTRACT, sourceManifestSha256, ciSourceManifestSha256, residentManifestSha256, bridgeManifestSha256, nodeIdentitySha256: nodeIdentitySha,
+    nodeProfileSha256, windowsLayout: WINDOWS_LAYOUT, stateCompat: { schema: stateCompat.schema, readableBySchemas: [...stateCompat.readableBySchemas] }, acceptance: { decisionRef },
+    files, linux: { manifestSha256: linuxManifestSha256, sourceV2: sourceV2Section, files: linuxListed },
+    upgrader: { manifestSha256: upgrader.manifestSha256, files: upgrader.manifest.files } };
   await writeJson(path.join(out, 'package-manifest.json'), pkg);
   return { packageManifestSha256: sha256(await fs.readFile(path.join(out, 'package-manifest.json'))), sourceManifestSha256, ciSourceManifestSha256, residentManifestSha256, bridgeManifestSha256, files: files.length, runtimeSha256: runtime.sha256,
-    nodeName: nodeIdentity.nodeName, nodeIdentitySha256: nodeIdentitySha,
-    linuxSourceV2InstallerSha256: sourceV2Installer.sha256 };
+    nodeName: nodeIdentity.nodeName, nodeIdentitySha256: nodeIdentitySha, nodeProfileSha256,
+    linuxSourceV2InstallerSha256: sourceV2Installer.sha256, linuxManifestSha256, upgraderManifestSha256: upgrader.manifestSha256,
+    linuxUpgradeToolSha256: upgradeTool.find(f => f.name === 'clued-ci-upgrade-linux').sha256, linuxSignerSha256: upgradeTool.find(f => f.name === 'clued-ci-sign-qualification-v2.mjs').sha256,
+    freshInstall: freshInstall === true };
 }
 
 if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`) {
-  const { values } = parseArgs({ options: { out: { type: 'string' }, policy: { type: 'string' }, companion: { type: 'string' }, node: { type: 'string' }, record: { type: 'string' }, 'source-root': { type: 'string' }, 'source-files': { type: 'string' }, 'linux-external-pins': { type: 'string' } } });
+  const { values } = parseArgs({ options: { out: { type: 'string' }, policy: { type: 'string' }, companion: { type: 'string' }, node: { type: 'string' }, record: { type: 'string' }, 'source-root': { type: 'string' }, 'source-files': { type: 'string' }, 'linux-external-pins': { type: 'string' },
+    'state-compat': { type: 'string' }, 'source-v2': { type: 'string' }, 'fresh-install': { type: 'boolean' }, 'upgrader-config': { type: 'string' } } });
   const sourceFiles = values['source-files'] ? (await fs.readFile(values['source-files'], 'utf8')).split(/\r?\n/).filter(Boolean) : [];
   const linuxExternalPins = values['linux-external-pins'] ? JSON.parse(await fs.readFile(values['linux-external-pins'], 'utf8')) : [];
-  console.log(JSON.stringify(await buildPackage({ out: values.out, policyFile: values.policy, companionFile: values.companion, nodeExe: values.node, recordDir: values.record, sourceRoot: values['source-root'] ?? null, sourceFiles, linuxExternalPins })));
+  // --state-compat <json file> { schema, readableBySchemas }; --source-v2 <json file> { commit, bundle, rolesDerivedSha256 }.
+  const stateCompat = values['state-compat'] ? JSON.parse(await fs.readFile(values['state-compat'], 'utf8')) : DEFAULT_STATE_COMPAT;
+  const sourceV2 = values['source-v2'] ? JSON.parse(await fs.readFile(values['source-v2'], 'utf8')) : null;
+  console.log(JSON.stringify(await buildPackage({ out: values.out, policyFile: values.policy, companionFile: values.companion, nodeExe: values.node, recordDir: values.record, sourceRoot: values['source-root'] ?? null, sourceFiles, linuxExternalPins,
+    stateCompat, sourceV2, freshInstall: values['fresh-install'] === true, upgraderConfigFile: values['upgrader-config'] ?? null })));
 }

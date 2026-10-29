@@ -20,6 +20,12 @@
 // cannot probe the role) and gains `source`, the first 12 hex digits of the installed ciSourceManifestSha256:
 // { name, source, mode, probe }. The mode is the executor's own (ACTIVE | STANDBY | UNCERTAIN); the reader below accepts /5 and /6,
 // so a companion that is installed before its executor has restarted still reads the old file.
+// Contract /7 (in-place upgrade channel, Task 018da927, DESIGN §34): a new top-level key `versions`, what this node runs on both
+// sides and the upgrade in flight: { generation, windows: { packageManifestSha256, residentManifestSha256, ciSourceManifestSha256,
+// policySha256 }, linux: null | { observedAt, generation, ciSourceManifestSha256, manifestSha256, pinsOk }, consistent: true | false |
+// null, upgrade: null | { opId, state, phase, since, code, confirmUrl } } (readVersions below), and five notice kinds (version-skew and
+// the upgrade's own four). The reader accepts /5 and /6 (no `versions`: read as null) and /7, so a companion installed or switched before its
+// executor restarted still reads the old file, and the old companion of a rolled-back generation reads /6 as it always did.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CODE, HEX40, HEX64, canonicalJson, check, exactKeys, parseBoundedJson } from './canonical.mjs';
@@ -27,11 +33,13 @@ import { readBounded } from './store.mjs';
 import { HOLDER, INTAKE_HOLDS_MAX } from './intake-pause.mjs';
 import { parseTrainLast } from './train.mjs';
 import { NODE_NAME, NODE_SOURCE } from './node-duty.mjs';
+import { GENERATION_CURRENT_CONTRACT, LINUX_VERSION_FACTS_CONTRACT, UPGRADE_OP_STATES, UPGRADE_STATUS_CONTRACT, VERSION_FACTS_FILE,
+  consistent as versionsConsistent } from './upgrade-mailbox.mjs';
 
-export const STATUS_CONTRACT = 'clued.independent-ci.resident-status/6';
-// What the reader accepts: /5 and /6 have the same top-level keys (/6 only adds node.source), so the install window, in which the
-// new companion may read the old executor's last snapshot, shows what that executor wrote instead of "unreadable".
-export const STATUS_CONTRACTS_READABLE = Object.freeze(['clued.independent-ci.resident-status/5', STATUS_CONTRACT]);
+export const STATUS_CONTRACT = 'clued.independent-ci.resident-status/7';
+export const STATUS_CONTRACT_V6 = 'clued.independent-ci.resident-status/6';
+// What the reader accepts: /5 and /6 (the same top-level keys; the executor before the upgrade channel) and /7.
+export const STATUS_CONTRACTS_READABLE = Object.freeze(['clued.independent-ci.resident-status/5', STATUS_CONTRACT_V6, STATUS_CONTRACT]);
 export const STATUS_FILE = 'status.json';
 export const STATUS_REFRESH_MS = 15_000;
 // The companion's reading: a status not rewritten for this long means the executor (or its service) stopped.
@@ -44,7 +52,10 @@ const RECENT_MAX = 50, PENDING_MAX = 100, NOTICES_MAX = 50;
 export const ROW_STATES = Object.freeze(['QUEUED', 'RUNNING', 'PARKED', 'WAITING', 'BACKOFF', 'STOPPED', 'DONE']);
 export const NOTICE_KINDS = Object.freeze(['new-trigger', 'stopped', 'waiting-budget', 'batch-limit', 'breaker-open', 'queue-full', 'queue-unsaved', 'stage8-budget',
   // Phase 2, step 3a: main's branch rules do not hold it for a green, or a test merge is not the tested tree.
-  'stage8-rules', 'role-probe-uncertain', 'role-probe-connection']);
+  'stage8-rules', 'role-probe-uncertain', 'role-probe-connection',
+  // Status /7 (DESIGN §34): the two sides run different versions; the upgrade waits for the Owner's page approval, is deferred,
+  // was rolled back (the node stays paused), or its rollback failed (the Owner must act).
+  'version-skew', 'upgrade-grant-pending', 'upgrade-deferred', 'upgrade-rolled-back', 'upgrade-rollback-failed']);
 export const BREAKER_STATES = Object.freeze(['closed', 'open', 'half-open']);
 export const NODE_MODES = Object.freeze(['ACTIVE', 'STANDBY', 'UNCERTAIN']);
 export const PROBE_RESULTS = Object.freeze(['held', 'not-held', 'uncertain']);
@@ -58,8 +69,13 @@ export class StatusBoard {
     this.clock = clock;
     this.pid = pid;
     this.content = { executor: { state: 'STARTING', since: iso(clock()), reason: null }, halt: null, paused: false, intakePause: null, node: null, backfill: { complete: false, published: null, unreadable: null },
-      current: null, pending: [], recent: [], limits: null, queue: null, breaker: null, notices: [], train: { enabled: 'off', last: null } };
+      current: null, pending: [], recent: [], limits: null, queue: null, breaker: null, notices: [], train: { enabled: 'off', last: null }, versions: null };
     this.changedAt = iso(clock());
+  }
+
+  // Status /7: the versions view (readVersions); anything that does not fit is shown as nothing (null).
+  setVersions(v) {
+    return this.update({ versions: parseVersions(v) });
   }
 
   update(patch) {
@@ -156,12 +172,14 @@ export function startStatusTimer({ board, file, intervalMs = STATUS_REFRESH_MS, 
 }
 
 // ---- the companion's reading (untrusted bytes in the resident's state, read-only for the Owner) ----
-const TOP = ['contract', 'writtenAt', 'changedAt', 'pid', 'executor', 'halt', 'paused', 'intakePause', 'node', 'backfill', 'current', 'pending', 'recent', 'limits', 'queue', 'breaker', 'notices', 'train'];
+const TOP_V6 = ['contract', 'writtenAt', 'changedAt', 'pid', 'executor', 'halt', 'paused', 'intakePause', 'node', 'backfill', 'current', 'pending', 'recent', 'limits', 'queue', 'breaker', 'notices', 'train'];
+const TOP = [...TOP_V6, 'versions'];
 const ms = v => (typeof v === 'string' && Number.isFinite(Date.parse(v))) ? Date.parse(v) : (Number.isSafeInteger(v) && v > 0 ? v : null);
 export function parseStatus(bytes) {
   const v = parseBoundedJson(bytes, STATUS_MAX_BYTES, 'STATUS_REFUSED');
-  exactKeys(v, TOP, 'STATUS_REFUSED');
-  check(STATUS_CONTRACTS_READABLE.includes(v.contract) && Number.isFinite(Date.parse(v.writtenAt)) && Number.isFinite(Date.parse(v.changedAt)), 'STATUS_REFUSED');
+  check(v && typeof v === 'object' && STATUS_CONTRACTS_READABLE.includes(v.contract), 'STATUS_REFUSED');
+  exactKeys(v, v.contract === STATUS_CONTRACT ? TOP : TOP_V6, 'STATUS_REFUSED');
+  check(Number.isFinite(Date.parse(v.writtenAt)) && Number.isFinite(Date.parse(v.changedAt)), 'STATUS_REFUSED');
   check(v.executor && EXECUTOR_STATES.includes(v.executor.state), 'STATUS_REFUSED');
   const head = h => typeof h === 'string' && HEX40.test(h);
   return {
@@ -195,7 +213,108 @@ export function parseStatus(bytes) {
     notices: Array.isArray(v.notices) ? v.notices.filter(n => n && NOTICE_KINDS.includes(n.kind) && typeof n.key === 'string' && /^[A-Za-z0-9:_-]{1,160}$/.test(n.key)).slice(0, NOTICES_MAX)
       .map(n => ({ key: n.key, kind: n.kind, pr: Number.isSafeInteger(n.pr) ? n.pr : null, headSha: head(n.headSha) ? n.headSha : null, code: codeOrNull(n.code), at: ms(n.at), until: ms(n.until) })) : [],
     train: { enabled: ['off', 'shadow', 'on'].includes(v.train?.enabled) ? v.train.enabled : null, last: parseTrainLast(v.train?.last) },
+    // /7 only; /6 has none. Read with the same rules as written (parseVersions), so what does not fit is null, never a refusal.
+    versions: v.contract === STATUS_CONTRACT ? parseVersions(v.versions) : null,
   };
+}
+
+// ---- status /7 `versions` (in-place upgrade channel, Task 018da927, DESIGN §34) ----
+// Files the executor reads every tick (each one leniently: a file that is missing, torn or of another shape is "unknown", never an
+// error and never a HALT; the view only shows and the version-skew hold only acts on consistent === false):
+//   upgrade\current.json                             the generation the upgrader (or the install's generation-1 step) last made current;
+//   upgrade\mailbox\responses\version-facts.json     the Linux side's facts, written by the companion (upgrade-mailbox.mjs /1);
+//   upgrade\status.json                              the upgrader's own status (clued.independent-ci.resident-upgrade-status/1).
+export const UPGRADE_STATES = UPGRADE_OP_STATES;
+export const VERSION_FILE_MAX_BYTES = 64 * 1024;
+const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+const PHASE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+// The Owner's confirm page (confirmOrigin + confirm_path, A2): https only, no credentials, no spaces or quotes, bounded.
+export const CONFIRM_URL = /^https:\/\/[A-Za-z0-9.-]{1,253}(?::[0-9]{1,5})?\/[A-Za-z0-9._~\/?=&%#-]{0,400}$/;
+const generationOf = v => (Number.isSafeInteger(v) && v >= 1 ? v : null);
+const hexOrNull = v => (typeof v === 'string' && HEX64.test(v) ? v : null);
+const isoMs = v => { const t = ms(v); return t === null ? null : iso(t); };
+const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// The view as the board keeps it and the reader returns it: every field re-checked, null for what does not fit.
+export function parseVersions(v) {
+  if (!plain(v) || !plain(v.windows) || !HEX64.test(v.windows.residentManifestSha256 ?? '') || !HEX64.test(v.windows.ciSourceManifestSha256 ?? '')) return null;
+  const l = plain(v.linux) ? v.linux : null;
+  const u = plain(v.upgrade) && UUID.test(v.upgrade.opId ?? '') && UPGRADE_STATES.includes(v.upgrade.state) ? v.upgrade : null;
+  return {
+    generation: generationOf(v.generation),
+    windows: { packageManifestSha256: hexOrNull(v.windows.packageManifestSha256), residentManifestSha256: v.windows.residentManifestSha256,
+      ciSourceManifestSha256: v.windows.ciSourceManifestSha256, policySha256: hexOrNull(v.windows.policySha256) },
+    linux: l ? { observedAt: isoMs(l.observedAt), generation: generationOf(l.generation), ciSourceManifestSha256: hexOrNull(l.ciSourceManifestSha256),
+      manifestSha256: hexOrNull(l.manifestSha256), pinsOk: l.pinsOk === true } : null,
+    consistent: [true, false].includes(v.consistent) ? v.consistent : null,
+    upgrade: u ? { opId: u.opId, state: u.state, phase: typeof u.phase === 'string' && PHASE.test(u.phase) ? u.phase : null, since: isoMs(u.since),
+      code: codeOrNull(u.code), confirmUrl: typeof u.confirmUrl === 'string' && CONFIRM_URL.test(u.confirmUrl) ? u.confirmUrl : null } : null,
+  };
+}
+
+async function readJsonLenient(file) {
+  try { return JSON.parse((await readBounded(file, VERSION_FILE_MAX_BYTES, 'VERSION_FILE_REFUSED')).toString('utf8')); } catch { return null; }
+}
+
+// The three files of one root as raw values (null for a file that cannot be read now).
+export async function readVersionInputs(root) {
+  const upgrade = path.join(root, 'upgrade');
+  const [current, facts, status] = await Promise.all([readJsonLenient(path.join(upgrade, 'current.json')),
+    readJsonLenient(path.join(upgrade, 'mailbox', 'responses', VERSION_FACTS_FILE)), readJsonLenient(path.join(upgrade, 'status.json'))]);
+  return { current: plain(current) && current.contract === GENERATION_CURRENT_CONTRACT ? current : null,
+    facts: plain(facts) && facts.contract === LINUX_VERSION_FACTS_CONTRACT ? facts : null,
+    status: plain(status) && status.contract === UPGRADE_STATUS_CONTRACT ? status : null };
+}
+
+// The view from the raw values. windows: what this executor runs (its policy and the policy's own hash), never taken from a file.
+// consistent: upgrade-mailbox.mjs#consistent (B1, frozen /1); without a current.json (a node installed before the channel, or
+// one whose current.json cannot be read now) nothing is compared and it is null: the version-skew hold never acts on "unknown".
+export function versionsView({ current, facts, status }, { policy, policySha256 = null, now = Date.now() }) {
+  let agreed = null;
+  if (current && facts) { try { const c = versionsConsistent(current, facts, now); agreed = [true, false].includes(c) ? c : null; } catch { agreed = null; } }
+  const op = plain(status?.op) ? status.op : null;
+  return parseVersions({
+    generation: current?.generation ?? null,
+    windows: { packageManifestSha256: current?.packageManifestSha256 ?? null, residentManifestSha256: policy.residentManifestSha256,
+      ciSourceManifestSha256: policy.ciSourceManifestSha256, policySha256 },
+    linux: facts ? { observedAt: facts.observedAt, generation: facts.generation, ciSourceManifestSha256: facts.ciSourceManifestSha256, manifestSha256: facts.manifestSha256, pinsOk: facts.pinsOk } : null,
+    consistent: agreed,
+    upgrade: op ? { opId: op.opId, state: op.state, phase: op.phase, since: op.phaseSince, code: op.code, confirmUrl: op.grant?.confirmUrl ?? null } : null,
+  });
+}
+
+// The executor's port (service-main.mjs): { view, notices } of one root, read now. The engine's gate before the first Linux stage
+// uses the view only.
+export async function readVersionState({ root, policy, policySha256 = null, clock = Date.now }) {
+  const inputs = await readVersionInputs(root);
+  const view = versionsView(inputs, { policy, policySha256, now: clock() });
+  return { view, notices: versionNotices(view, inputs.status) };
+}
+
+// The upgrade's notices (one key per fact, so the companion shows each once): the two sides disagree; the op in upgrade\status.json
+// waits for the Owner's page approval or is deferred; an op (current or among the recent ones) ended rolled back or with a failed
+// rollback. No free text: codes, generations and the op id only.
+export function versionNotices(view, upgradeStatus = null) {
+  const out = [];
+  if (!view) return out;
+  if (view.consistent === false) out.push({ key: `version-skew:w${view.generation ?? 'x'}:l${view.linux?.generation ?? 'x'}`, kind: 'version-skew', pr: null, headSha: null, code: 'UPGRADE_VERSION_SKEW', at: view.linux?.observedAt ?? null, until: null });
+  const u = view.upgrade;
+  if (u?.state === 'WAITING_GRANT') out.push({ key: `upgrade-grant-pending:${u.opId}`, kind: 'upgrade-grant-pending', pr: null, headSha: null, code: null, at: u.since, until: null });
+  if (u?.state === 'DEFERRED') out.push({ key: `upgrade-deferred:${u.opId}:${u.code ?? 'x'}`, kind: 'upgrade-deferred', pr: null, headSha: null, code: u.code, at: u.since, until: null });
+  const ended = [];
+  if (u && ['ROLLED_BACK_PAUSED', 'ROLLBACK_FAILED'].includes(u.state)) ended.push({ opId: u.opId, outcome: u.state, code: u.code, at: u.since });
+  for (const r of Array.isArray(upgradeStatus?.recent) ? upgradeStatus.recent.slice(0, 10) : []) {
+    if (plain(r) && UUID.test(r.opId ?? '') && ['ROLLED_BACK_PAUSED', 'ROLLBACK_FAILED'].includes(r.outcome)) ended.push({ opId: r.opId, outcome: r.outcome, code: codeOrNull(r.code), at: isoMs(r.at) });
+  }
+  const seen = new Set();
+  for (const e of ended) {
+    const kind = e.outcome === 'ROLLED_BACK_PAUSED' ? 'upgrade-rolled-back' : 'upgrade-rollback-failed';
+    const key = `${kind}:${e.opId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ key, kind, pr: null, headSha: null, code: e.code, at: e.at, until: null });
+  }
+  return out;
 }
 
 // One bounded read (the writer may rename a new snapshot in at any moment: a read that loses that race fails and the

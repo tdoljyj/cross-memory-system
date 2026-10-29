@@ -2939,3 +2939,71 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 - 都要随第 2 批的一次常驻层 Windows 重装才在这台机器上生效。重装时 `parent-acl` 会把那条 ACE 加上；如果 Owner 事先已手工加了完全相同的一条（`icacls C:\ProgramData\CluedIndependentCI /grant "NT SERVICE\CluedCIResident:(Rc,S,RA)"` 得到的就是 `0x120080`、不继承），计划里 `present = true`，步骤什么都不写。本次没有对机器做任何事，这条命令也没有运行。
 - 新主机的前提不变：CI 根目录要先有 Owner 自己的 `0x120080`（§8.3）；安装不替 Owner 加这一条。
 - 没有新的发布路径，不碰 GitHub、凭据或网络；不读写 `HALT.json`；服务账户只多一条只读的、只此目录的 `0x120080`。
+
+## 34. 原地升级通道：常驻层接线
+
+依据：KooYomi Task `018da927`（Owner 决定 `dda41297`、`3ce5200c`）的实现规格 §B4。本节只讲常驻层（`CluedCIResident`、companion、打包与 Owner 工具）为升级通道做的接线；升级代理 `CluedCIUpgrader`（`upgrader/`）、Windows 执行面（`windows/upgrade-apply.ps1` 等）和 Linux 升级工具（`linux/bin/clued-ci-upgrade-linux`）各有其规格，这里只写常驻层与它们之间的接口。代码与离线测试，不装、不推。
+
+### 34.1 常驻层给升级代理留的观察面（规格 A11，冻结）
+
+以后的常驻版本必须保留：`state\PAUSED.json` 的原字节与 `source.requestSha256`；ledger 里没有 `90-terminal.json` 的条目数；`state\status.json` 的 `executor.state`、`current`、`writtenAt`；回执文件名，以及 `service-start`、`train-run-intent`、`train-run` 三种回执的 body；`requests\` 里暂停与 intake 的合同；`owner\` 里的 `clued.independent-ci.resident-upgrade-resume/1`。
+
+### 34.2 升级代理的恢复请求（`src/executor.mjs`）
+
+- 合同 `clued.independent-ci.resident-upgrade-resume/1`：`{pausedSha256, opId, generation, requestedAt, nonce}`，校验用 `src/upgrade-mailbox.mjs#validateUpgradeResume`（与升级代理写请求用同一个函数）。
+- **只从 `owner\` 读**（只有管理员和 SYSTEM 能在里面建文件，升级代理以 LocalSystem 运行）。同样的字节放进用户可写的 `requests\`，那里只认暂停与 intake 合同，按“格式不对”拒收，不会恢复。
+- 和 Owner 的恢复一样按 `pausedSha256` 做比较交换（`Ledger.resume`）：`PAUSED.json` 变过就 `PAUSE_CHANGED_SINCE_REVIEW`，回执 `owner-request-refused`，仍然暂停。成功时 `PAUSED.json` 照旧改名进 `halts\`，旁边的 `.resume.json` 记 `by: "CluedCIUpgrader"`；回执是 `upgrade-resumed`：`{requestSha256, pausedSha256, opId, generation}`（不再另写 `owner-request`）。同一份字节再来是 `owner-request-duplicate`。
+
+### 34.3 每个 tick 的两侧版本（status `/7`）
+
+- `src/status.mjs`：status 合同升到 `/7`，顶层多一个 `versions`：`{generation, windows:{packageManifestSha256, residentManifestSha256, ciSourceManifestSha256, policySha256}, linux:null|{observedAt, generation, ciSourceManifestSha256, manifestSha256, pinsOk}, consistent:true|false|null, upgrade:null|{opId, state, phase, since, code, confirmUrl}}`。读者接受 `/5`、`/6`（没有 `versions`，读作 null）和 `/7`；`/7` 缺 `versions`、`/6` 多 `versions` 都拒。写入和读回都过 `parseVersions`：不合形状的字段显示为 null，从不信任（`confirmUrl` 只收 https、无引号空格、有长度上限）。
+- 来源（`readVersionState`，每个 tick 现读，宽松：缺失、写了一半、形状不对都当“未知”，从不报错、从不 HALT）：`upgrade\current.json`（代数与包）、`upgrade\mailbox\responses\version-facts.json`（companion 写的 Linux 事实）、`upgrade\status.json`（升级代理的状态）。`windows` 一项取自执行器自己的 policy 和命令行上的 policy 哈希，不取自文件。`consistent` 就是 `upgrade-mailbox.mjs#consistent(current, facts, now)`：两侧代数、CI Source、Linux 清单相同且 pins 成立为 true；事实超过 15 分钟、没有 `current.json`、没记 Linux 一半为 null。
+- 新的 notice 种类：`version-skew`（键带两侧代数）、`upgrade-grant-pending`（键带 opId）、`upgrade-deferred`（opId 加码）、`upgrade-rolled-back`、`upgrade-rollback-failed`（当前 op 或 `recent` 里的结局，每个 op 一次）。companion 把它们转成 Windows 通知（`src/pr-status.mjs`）；等批准的通知里给出确认页地址。
+- `service-main.mjs` 把同一个读取函数作为执行器的 `versions` 端口，引擎用它的 `view`。没有端口（测试、别的引擎）时执行器什么都不显示，也不加任何 hold。
+
+### 34.4 版本不一致的 intake hold
+
+- 只在 `consistent === false` 时加：holder `version-skew`，120 分钟，剩余不足 90 分钟时续期（与 `dual-active` 相同的规则，规格 A10）。它就是 intake pause 里执行器自己的一句话（`IntakePause.apply`，回执 `intake-paused`，`reason: UPGRADE_VERSION_SKEW`），所以 PAUSE、HALT 和其他 holder 都不受影响；Owner 可以手动解除，版本仍不一致时下一个 tick 会再加上。
+- `consistent === true` 时解除（`intake-resumed`，`reason: VERSIONS_CONSISTENT`）；`null`（未知）既不加也不解，已有的 hold 到点自己结束。
+- 放在 tick 里 Owner 请求之后、排程之前，所以版本不一致时不开新批次；正在跑或停靠的批次不受影响（这是 intake pause 的本义）。
+
+### 34.5 引擎的版本闸与失败码 `UPGRADE_VERSION_SKEW`
+
+- `src/engine-windows.mjs#runStage`：第一个 Linux 段（`firstLinux`，第 2、4 或 6 段）之前现读一次版本；`consistent === false` 就不调用该段，返回 `UPGRADE_VERSION_SKEW`（Windows 一半的证明：树为零、原始服务已停；失败路径照常补 Linux 静默）。`null`、`true`、端口出错或没有端口：照旧往下走（refs 闸等）。只有第一个 Linux 段会问。
+- `src/failure-table.json` 加两行：`stages [2,4,6]` 与 `any`，`class environment`、`disposition burn`、`retry new-commit`、`breaker neutral`。**与规格的出入**：规格写的是 `release-if-safe` 加 `new-trigger`，但失败表自己的校验（`classify.mjs#validateFailureTable`）只允许第 0、1 段出现 release（10-started 之后不存在放行），写成 release 会让模块加载失败；第 2 段以后的干净结束只能烧掉，烧掉的提交 `new-trigger` 也不会再跑，所以写 `new-commit`。实际出现的机会很小：版本不一致时 34.4 的 hold 已经不让新批次开始，这一闸只挡“批次开始后、第一个 Linux 段之前”变成不一致的竞态。`test/failure-table.test.mjs` 的 `RESIDENT_CODES` 已加入该码。
+
+### 34.6 service-start 的代数与 `resident-upgraded` 回执（`src/service-main.mjs`）
+
+- `service-start` 的 body 是 `{policySha256, pid, generation}`，`generation` 取自 `upgrade\current.json`，读不到为 null。
+- 上一条 `service-start` 有代数、这一次也有、两者不同，就紧接着追加 `resident-upgraded`：`{fromGeneration, toGeneration, opId, packageManifestSha256, policySha256}`（opId 与包取自同一份 `current.json`）。回滚也是代数变化（`toGeneration < fromGeneration`）。任何一边未知都不写，所以首次安装（g1）、通道之前的老回执、读不到的 `current.json` 都不会被说成升级。
+
+### 34.7 companion 的升级邮箱 lane（`src/companion.mjs`、`src/companion-main.mjs`）
+
+- 第三个 lane，自己的 Runner（20 分钟的 Linux stage 不会挡住常驻邮箱和咨询工作），每 5 秒看一次 `upgrade\mailbox\requests\`。目录不存在（通道之前的安装）时 lane 每次重试打开，companion 其余部分照旧；companion 从不建这些目录。
+- 每个请求按 `upgrade-mailbox.mjs#upgradeToolArgs` 生成参数，再由 `argv(cfg).upgradeTool` 以固定前缀（`wsl.exe --distribution … --user root --exec /usr/bin/env -i …`）和固定路径 `/opt/clued-independent-ci/upgrade-v1/bin/clued-ci-upgrade-linux` 运行。参数先过 `upgradeToolArgvOk`：每个元素是 `[a-z0-9-]` 的单个记号，拼起来必须完全匹配五种之一（`version-facts`；`stage --op --package --generation --linux-manifest`；`switch --op --from --to --linux-manifest`；`rollback --op --from --to`；`verify --op --generation`），否则 `COMPANION_UPGRADE_TOOL_ARGS_INVALID`，什么都不运行。
+- 工具的一行 JSON 按 `responseFromTool` 原样写回 `responses\<requestId>.json`（`/1` 冻结，以后的 companion 都要原样应答）；超时或起不来的子进程是 exit -1/null，永不算成功。**截止时间已过的请求不运行**（升级代理可能已当作“没有应答”继续了），应答 `UPGRADE_MAILBOX_REQUEST_EXPIRED`。读不了的请求文件不动，由升级代理自己超时。
+- Linux 事实每 5 分钟整文件替换写一次 `responses\version-facts.json`；每次 switch、rollback 之后（不论结果）立刻再写；被请求的 `linux-version-facts` 应答也顺带写入。读失败 60 秒后再试。
+
+### 34.8 包 `/4`（`tools/build-package.mjs`）
+
+- 合同 `clued.independent-ci.resident-package/4`，在 `/3` 上加：`nodeProfileSha256`、`windowsLayout`（`clued.independent-ci.resident-layout/1`）、`stateCompat`（`--state-compat`，默认 `{schema:1, readableBySchemas:[1]}`，用 `validateStateCompat` 校验）、`acceptance:{decisionRef}`（等于 policy 的 `ownerAcceptance.decisionRef`，必须是 UUID）。
+- `linux`：`manifestSha256`（`linux/manifest.json` 的哈希，仍是 `/2`）；`sourceV2`（`--source-v2` 给出 `{commit, bundle, rolesDerivedSha256}`；bundle 复制到 `linux/source-v2/source.bundle`，单独点名，不列入 `files`；三个 role 的派生哈希是输入，由 Linux 升级工具的 stage 重新派生核对）；`files` 列出 `linux/` 下其余每个文件及其字节数。冻结的升级工具和签名器复制到 `linux/upgrade-v1/bin/`，并生成 `linux/upgrade-v1/manifest.json`（`clued.independent-ci.linux-upgrade-tool-manifest/1`，按安装路径钉住两个文件），供 `install-resident-linux.sh --apply-upgrade-v1` 使用。
+- `upgrader`：`{manifestSha256, files}`，升级代理冻结副本 `upgrader\<manifestSha256>\` 的清单（`clued.independent-ci.resident-upgrader-manifest/1`）。副本保持本仓库的相对布局，使 `upgrader/src/*.mjs` 里的 `../../src/…` 导入能解析：`upgrader\src\*`、它们按相对导入（传递闭包）用到的 `src\*`（只这些，导入跑出 `src/` 或 `upgrader/src/` 就拒）、`windows\upgrade-apply.ps1`。**总是**计算，所以升级包名出构建它的升级代理，升级代理遇到不同的就 `UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL`；被冻结的常驻模块（`canonical`、`store`、`inbox`、`intake-pause`、`upgrade-mailbox` 等）一改，就需要全量重装。
+- `upgrader\` 下的安装目标只在 `--fresh-install` 时写进 `files`（升级包里出现就是 `CHANNEL_CHANGE_NEEDS_REINSTALL`）：副本、`upgrader\bin\UpgraderServiceHost.cs`、`upgrader\runtime\node.exe`（同一个 node.exe）、`upgrader\config\upgrader.json`（`--upgrader-config`，合同 `clued.independent-ci.resident-upgrader-config/1`，`nodeProfileSha256` 必须是本包的）。不加 `--fresh-install` 时所有目标仍落在 `/3` 的白名单里。
+- 升级代理入口因此是 `upgrader\<manifestSha256>\upgrader\src\upgrader-main.mjs`（相对导入决定，见上）。
+
+### 34.9 Owner 工具
+
+`tools/rearm-tool.mjs inspect` 多一项 `upgrade`：当前代数与包、升级代理的 op（状态、阶段、码、等批准时的确认页、`pausedBy`）、最近的结局、保留的各代、Linux 事实，以及两侧是否一致（读已装的 `config\policy.json`；读不到就只显示文件、不判断一致）。只读，不需要提权。
+
+### 34.10 测试
+
+- `test/upgrade-wiring.test.mjs`：status `/7` 的读写与 `/5`、`/6` 兼容、形状复核；`consistent` 的真、假（代数、Source、清单、pins）与未知（过期、缺文件、写了一半）；五种 notice 与通知文字；skew hold 的加、不续、续期、null 不动、一致后解除，没有端口或端口出错时不动；upgrade-resume 只认 `owner\`、比较交换、拒绝与重复、`by`；`service-start` 的代数与 `resident-upgraded`（升级与回滚，未知不写），回执链仍然完整；引擎闸（2、4、6 段、未知照旧、只问第一个 Linux 段）；失败表行；companion 的 argv 校验（五种接受、十二种拒绝）与 lane 的每个 kind、工具码透传、switch/rollback 后立即刷新、过期不运行、超时与非 JSON 不算成功、失败重试间隔、目录缺失；inspect。
+- `test/package.test.mjs`：`/4` 的各键、规范字节、Linux 段（含 bundle 与升级工具清单）、升级代理副本与闭包（不含未导入的模块、同一树两次构建哈希相同）、`--fresh-install` 的目标和安装白名单、各类输入拒绝；并用升级代理的 `validatePackageManifest` 复核。
+- `test/status.test.mjs`、`test/node-mode.test.mjs` 改为 `/7`；`test/failure-table.test.mjs` 加码。
+
+### 34.11 不变量
+
+- 常驻服务不运行升级代理、不写 `upgrade\` 下任何文件；它只读三份文件，只在自己的 intake 状态里加或解 `version-skew` 这一个 holder。
+- 版本信息只用于显示、hold 和第一个 Linux 段前的闸，从不让任何东西更早开始；未知永远当作“不动”。
+- companion 仍只运行固定 argv；新增的只是一个冻结路径的 root 工具和五种逐字校验的参数形状。

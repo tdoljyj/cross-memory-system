@@ -9,7 +9,8 @@ import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { HEX64, check, parseBoundedJson, sha256 } from './canonical.mjs';
 import { pathToFileURL } from 'node:url';
-import { Companion, argv as companionArgv, readPullArgv, validateCompanionConfig, validateHintConfig } from './companion.mjs';
+import { Companion, UpgradeLane, argv as companionArgv, readPullArgv, validateCompanionConfig, validateHintConfig } from './companion.mjs';
+import { UpgradeMailbox } from './upgrade-mailbox.mjs';
 import { HostedHints, sourceHintObserver } from './hosted-hints.mjs';
 import { createGhReadPort } from './gh-read-port.mjs';
 import { Mailbox } from './mailbox.mjs';
@@ -25,6 +26,8 @@ import { companionBackstop } from './ruleset-backstop.mjs';
 // phase 1, item 7); the poller still proposes every five minutes.
 export const REPORT_EVERY_MS = 60_000;
 export const POLL_EVERY_MS = 5 * 60_000;
+// The upgrade mailbox lane looks for requests this often (the upgrader polls its answers once a second; the shortest deadline is 60 s).
+export const UPGRADE_LANE_EVERY_MS = 5_000;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -126,6 +129,8 @@ export async function main(args = process.argv.slice(2)) {
   check(await exists(jobHost), 'COMPANION_JOB_HOST_REQUIRED');
   const runner = new Runner({ env: { ...process.env }, jobHost }); // the Owner's own environment: gh/git credential helpers live here
   const advisory = new Runner({ env: { ...process.env }, jobHost }); // the advisory lane's own (see lane)
+  // DESIGN §34: the upgrade mailbox lane's own (a 20-minute Linux stage never holds up the resident's mailbox or the advisory work).
+  const upgradeRunner = new Runner({ env: { ...process.env }, jobHost });
   await probeJobHost(runner);
   const mailbox = await Mailbox.open(path.join(values.root, 'mailbox'), Date.now);
   // pr-head (phase 2): the run queue's live PR read runs in the mailbox lane, like every other service request.
@@ -161,6 +166,14 @@ export async function main(args = process.argv.slice(2)) {
   const reporter = new PrStatusReporter({ repo: raw.repo, ghExe: raw.ghExe, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), clock: Date.now, store,
     prStatus: statusCfg.prStatus, notifications: statusCfg.notifications, node: statusCfg.node,
     writeRequest: v => Inbox.drop(requestsDir, v) });
+  // The upgrade mailbox lane (DESIGN §34): upgrade\mailbox\ is opened once it exists (an install before the channel has none; the
+  // lane then tries again each pass and the companion runs as before). The companion never creates it.
+  const upgradeLane = new UpgradeLane({ cfg, run: (a, o) => upgradeRunner.run(a, o), clock: Date.now,
+    openMailbox: async () => {
+      const dir = path.join(values.root, 'upgrade', 'mailbox');
+      check(await exists(path.join(dir, 'requests')) && await exists(path.join(dir, 'responses')), 'UPGRADE_MAILBOX_ABSENT');
+      return UpgradeMailbox.open(dir, Date.now);
+    } });
   keepalive(companionArgv(cfg).keepalive());
   let lastPoll = 0, lastReport = 0;
   // Only now, with a usable job host and every part of the companion set up: a companion whose job host cannot start a
@@ -172,6 +185,7 @@ export async function main(args = process.argv.slice(2)) {
     await Promise.all([
       // the service times out and classifies a request the companion did not answer; never retried here
       lane({ runner, work: () => companion.step() }),
+      lane({ runner: upgradeRunner, work: () => upgradeLane.step(), everyMs: UPGRADE_LANE_EVERY_MS }),
       lane({ runner: advisory, work: async () => {
         if (Date.now() - lastPoll > POLL_EVERY_MS) {
           lastPoll = Date.now();
