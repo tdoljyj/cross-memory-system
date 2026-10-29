@@ -62,7 +62,7 @@ alter table clued_private.owner_requests_v1 add constraint owner_requests_v1_res
 alter table clued_private.owner_grants_v1 add constraint owner_grants_v1_resident_upgrade_check
   check (action<>'ci.resident_upgrade' or (cardinality(resources)=1
     and resources[1] ~ '^ci-resident:[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?/[0-9a-f]{64}$'
-    and max_uses=1 and grantee_binding_id is not null and request_id is not null
+    and max_uses is not distinct from 1 and grantee_binding_id is not null and request_id is not null
     and expires_at<=granted_at+interval '24 hours'));
 
 -- 2. Binding role resident-upgrade ----------------------------------------------
@@ -122,7 +122,7 @@ $r$  -- Task 018da927: a resident-upgrade Binding is one node's upgrader and not
       raise exception 'binding_role_node_name_invalid' using errcode='22023'; end if;
     if exists(select 1 from clued_private.binding_roles_v1 x join public.clued_agent_bindings o on o.id=x.binding_id
         where x.user_id=p_binding.user_id and x.role='resident-upgrade' and x.revoked_at is null
-          and o.id<>p_binding.id and o.agent_name=p_binding.agent_name) then
+          and o.id<>p_binding.id and o.agent_name=p_binding.agent_name and clued_private.binding_live_v1(o)) then
       raise exception 'binding_role_node_taken' using errcode='22023'; end if;
   elsif exists(select 1 from clued_private.binding_roles_v1 x
       where x.binding_id=p_binding.id and x.role='resident-upgrade' and x.revoked_at is null) then

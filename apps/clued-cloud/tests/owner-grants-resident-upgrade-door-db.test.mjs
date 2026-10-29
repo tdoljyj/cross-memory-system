@@ -175,6 +175,14 @@ test('owner grants: the resident-upgrader door uses an exact Owner Grant once pe
     assert.equal((await issueRole('claude', true)).error_code, 'binding_role_scope_invalid');
     assert.equal((await issueRole('Node_X', true)).error_code, 'binding_role_node_name_invalid');
     assert.equal((await issueRole('node-a-copy', true)).error_code, 'binding_role_node_taken');
+    // A revoked Binding no longer holds its node name.
+    await bind('node-c-old', ['context:read'], owner, 'node-c');
+    await bind('node-c', ['context:read']);
+    await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id)
+      values($1,$2,'resident-upgrade',now(),$3)`, [owner, ids['node-c-old'], roleReceipt]);
+    assert.equal((await issueRole('node-c', true)).error_code, 'binding_role_node_taken');
+    await admin.query('update public.clued_agent_bindings set revoked_at=now() where id=$1', [ids['node-c-old']]);
+    issued(await issueRole('node-c', true));
     const issueOther = (binding, role, extra = {}) => native('clued_binding_role_confirmation_issue_v1',
       { binding_id: ids[binding], role, enabled: true, ...extra });
     assert.equal((await issueOther('node-a', 'ci-admission', { purpose: 'other' })).error_code, 'binding_role_exclusive');
@@ -288,7 +296,7 @@ test('owner grants: the resident-upgrader door uses an exact Owner Grant once pe
     await fails(upgrade('node-a', [A2], op1), '22023', /owner_grant_door_input_invalid/);
     await fails(upgrade('node-a-twin', [A1], op1), '22023', /owner_grant_door_input_invalid/);
     // The table keeps every grant of the action once, exact and personal.
-    for (const change of [`max_uses=2`, `resources=array['ci-resident:node-a/**']`, `grantee_binding_id=null`,
+    for (const change of [`max_uses=2`, `max_uses=null`, `resources=array['ci-resident:node-a/**']`, `grantee_binding_id=null`,
       `expires_at=granted_at+interval '25 hours'`]) {
       await assert.rejects(() => admin.query(`update clued_private.owner_grants_v1 set ${change} where id=$1`, [given.grant.grant_id]),
         /owner_grants_v1_resident_upgrade_check/, change);
