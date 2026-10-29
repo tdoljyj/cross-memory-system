@@ -22,7 +22,9 @@ const RESIDENT_CODES = ['FULL_NEXT_STAGE_AUTHORITY_WINDOW_REQUIRED', 'FORMAL_CHI
   // DESIGN §26, §27: the bridge stop's stage code and the abandonment's terminal code (resident-side, never Source-mirrored)
   'BRIDGE_STAGE_STOPPED_PUMP_LOST', 'BRIDGE_ABANDONED_UNPUBLISHED',
   // DESIGN §32: the pre-stage memory gate's refusal (resident-side, never Source-mirrored)
-  'LINUX_MEMORY_NOT_READY'];
+  'LINUX_MEMORY_NOT_READY',
+  // DESIGN §34: the engine's version gate before the first Linux stage (resident-side, never Source-mirrored)
+  'UPGRADE_VERSION_SKEW'];
 const ALL = [...new Set([...source.ALL_STAGE_CODES, ...RESIDENT_CODES, ...PUMP_CODES])];
 const rowsOf = code => FAILURE_TABLE.rows.filter(r => r.code === code);
 

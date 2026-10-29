@@ -23,11 +23,20 @@
   First HALT of 2026-10-29 (DESIGN.md section 33): the companion's relay and bundle scripts (config\companion.json) lie under the installed
   CI Source, source\<SHA-256 of record\source-manifest.json>\, and exist there; and the CI root C:\ProgramData\CluedIndependentCI carries the
   resident service's one READ_CONTROL entry (0x120080, this folder only), read from the live ACL.
+  Upgrade channel (018da927): receipts /5 and /6 are both accepted. A /6 receipt (written by install-resident.ps1 or by CluedCIUpgrader)
+  adds upgrader-service (LocalSystem, delayed-auto, SeChangeNotify only, the receipt's DACL, running, its own token record minimal),
+  upgrader-pin (host, node, config and entry pins of the command line, upgrade-apply.ps1 present, upgrader\ and the resident-upgrade token
+  for SYSTEM and Administrators only), generation-current (upgrade\current.json and generations\g<N>\generation.json agree with the receipt,
+  the live command lines, the companion task and the generation's files) and two-sides-consistent (the Linux version facts: -LinuxVersionFactsFile,
+  or upgrade\mailbox\responses\version-facts.json no older than 15 minutes). -ExpectPausedSha256: the resident is expected paused by exactly
+  that PAUSED.json (the upgrader verifies a paused resident): 'paused-as-expected' replaces 'not-paused'.
   Prints one JSON verdict; exit 0 only if every check passes. Elevated for the complete check
   (service DACLs need READ_CONTROL); a non-elevated run reports those as unreadable and exits 2.
 #>
 [CmdletBinding()]
-param([Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedInstallReceiptSha256)
+param([Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedInstallReceiptSha256,
+  [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectPausedSha256,
+  [string]$LinuxVersionFactsFile)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'   # no user module directory (review M1)
@@ -218,6 +227,129 @@ function Test-SecretsReceipt($receipt, $identity) {
   }
   return $true
 }
+# ---- PR-1 review M2: resident\<sha> and source\<sha> inherit exactly what their live parent passes down (no ACE kept from upgrade\staged).
+# Shared with upgrade-apply.ps1 (one text, held identical by test-upgrade-windows.ps1). ----
+function Get-InheritableAceKeys([string]$parentSddl, [int]$flag) {
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor($parentSddl)
+  (@(foreach ($a in $raw.DiscretionaryAcl) { if (([int]$a.AceFlags -band $flag) -ne 0) { $a.SecurityIdentifier.Value + '|' + $a.AccessMask } }) | Sort-Object -Unique) -join ','
+}
+function Test-ItemAcl($item, [string]$wantDir, [string]$wantFile) {
+  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return 'link' }
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor((Get-Acl -LiteralPath $item.FullName).Sddl)
+  if (($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0) { return 'protected' }
+  if (@($raw.DiscretionaryAcl | Where-Object { ([int]$_.AceFlags -band 0x10) -eq 0 }).Count -ne 0) { return 'explicit' }
+  $have = (@(foreach ($a in $raw.DiscretionaryAcl) { $a.SecurityIdentifier.Value + '|' + $a.AccessMask }) | Sort-Object -Unique) -join ','
+  if ($have -cne $(if ($item.PSIsContainer) { $wantDir } else { $wantFile })) { return 'aces' }
+  'ok'
+}
+function Test-ContentAcl([string]$dir) {
+  $parent = (Get-Acl -LiteralPath (Split-Path -Parent $dir)).Sddl
+  $wantDir = Get-InheritableAceKeys $parent 2; $wantFile = Get-InheritableAceKeys $parent 1
+  foreach ($i in @(@(Get-Item -LiteralPath $dir -Force) + @(Get-ChildItem -LiteralPath $dir -Recurse -Force))) {
+    $why = Test-ItemAcl $i $wantDir $wantFile
+    if ($why -cne 'ok') { return ($why + ':' + $i.FullName.Substring($dir.Length).TrimStart('\')) }
+  }
+  'ok'
+}
+# ---- The upgrade channel (018da927). Shared with install-resident.ps1: Get-UpgraderBinPath, Get-GenerationFilesSha256 (one text in
+# both, held identical by test-upgrade-windows.ps1). ----
+function Get-UpgraderBinPath([string]$root, [string]$configSha, [string]$nodeSha, [string]$manifestSha, [string]$entrySha) {
+  '"' + (Join-Path $root 'upgrader\bin\UpgraderServiceHost.exe') + '" "' + $root + '" ' + $configSha + ' "' + (Join-Path $root 'upgrader\runtime\node.exe') + '" ' + $nodeSha + ' "' + (Join-Path $root ('upgrader\' + $manifestSha + '\upgrader\src\upgrader-main.mjs')) + '" ' + $entrySha
+}
+function Get-GenerationFilesSha256([string]$root) {
+  [string[]]$slots = @('config\policy.json', 'config\companion.json', 'config\resident-installed-manifest.json', 'config\source-installed-manifest.json',
+    'record\installation.json', 'record\acceptance.json', 'record\source-manifest.json', 'record\signers.json', 'record\record-manifest.json',
+    'bin\ResidentServiceHost.cs', 'bin\SwapBroker.cs', 'runtime\node.exe',
+    'bin\ResidentServiceHost.exe', 'bin\SwapBroker.exe', 'bin\CluedCompanionJobHost.exe', 'helpers\controller-formal-generic-v2.exe', 'config\broker.json')
+  [Array]::Sort($slots, [StringComparer]::Ordinal)
+  $rows = @(foreach ($s in $slots) {
+      $f = Join-Path $root $s
+      $item = Get-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+      if ($null -ne $item -and (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { throw ('GENERATION_FILE_LINK_REFUSED:' + $s) }
+      ($s | ConvertTo-Json -Compress) + ':' + $(if ($null -ne $item -and -not $item.PSIsContainer) { '"' + (Sha256File $f) + '"' } else { 'null' }) })
+  Sha256Text ('{' + ($rows -join ',') + '}')
+}
+# A security descriptor only SYSTEM and Administrators can use: an administrator owner and no ACE for anybody else.
+function Test-AdminOnlySddl([string]$sddl) {
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor($sddl)
+  if (@('S-1-5-18', 'S-1-5-32-544') -cnotcontains $raw.Owner.Value) { return $false }
+  @($raw.DiscretionaryAcl | Where-Object { -not ($_ -is [Security.AccessControl.CommonAce]) -or @('S-1-5-18', 'S-1-5-32-544') -cnotcontains $_.SecurityIdentifier.Value }).Count -eq 0
+}
+# upgrader-pin: the command line is the receipt's and the formula's over the live files; upgrade-apply.ps1 is there; upgrader\ and the token
+# (when the install placed one) are SYSTEM and Administrators only. $qc: the `sc qc` text, or $null when unreadable. Detail in $script:upgraderPinDetail.
+$script:upgraderPinDetail = $null
+function Test-UpgraderPins([string]$root, $u, $qc) {
+  try {
+    $m = [string](Get-Field $u 'manifestSha256')
+    if ($m -cnotmatch '^[0-9a-f]{64}\z') { $script:upgraderPinDetail = 'manifest'; return $false }
+    foreach ($pin in @(@('upgrader\bin\UpgraderServiceHost.exe', 'hostSha256'), @('upgrader\runtime\node.exe', 'nodeSha256'), @('upgrader\config\upgrader.json', 'configSha256'))) {
+      if ((Sha256File (Join-Path $root $pin[0])) -cne [string](Get-Field $u $pin[1])) { $script:upgraderPinDetail = $pin[1]; return $false }
+    }
+    $want = Get-UpgraderBinPath $root $u.configSha256 $u.nodeSha256 $m (Sha256File (Join-Path $root ('upgrader\' + $m + '\upgrader\src\upgrader-main.mjs')))
+    if ($want -cne [string](Get-Field $u 'binaryPath')) { $script:upgraderPinDetail = 'receipt-binary-path'; return $false }
+    if ($null -ne $qc -and ($qc -notmatch 'BINARY_PATH_NAME\s*:\s*(.+?)\s*(\r?\n|$)' -or $Matches[1] -cne $want)) { $script:upgraderPinDetail = 'scm-binary-path'; return $false }
+    if (-not (Test-Path -LiteralPath (Join-Path $root ('upgrader\' + $m + '\windows\upgrade-apply.ps1')) -PathType Leaf)) { $script:upgraderPinDetail = 'upgrade-apply'; return $false }
+    if (-not (Test-AdminOnlySddl (Get-Acl -LiteralPath (Join-Path $root 'upgrader')).Sddl)) { $script:upgraderPinDetail = 'upgrader-acl'; return $false }
+    if ($null -ne (Get-Field $u 'tokenFingerprint')) {
+      $token = Join-Path $root 'secrets\resident-upgrade.token'
+      if (-not (Test-Path -LiteralPath $token -PathType Leaf) -or (((Get-Item -LiteralPath $token -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) -or
+        -not (Test-AdminOnlySddl (Get-Acl -LiteralPath $token).Sddl) -or -not (Test-AdminOnlySddl (Get-Acl -LiteralPath (Split-Path -Parent $token)).Sddl)) { $script:upgraderPinDetail = 'upgrade-token'; return $false }
+    }
+    $script:upgraderPinDetail = $m
+    return $true
+  } catch { $script:upgraderPinDetail = 'unreadable'; return 'unreadable' }
+}
+# generation-current: upgrade\current.json names the receipt being verified and its generation; generations\g<N>\generation.json holds the
+# receipt's command lines, which the SCM and the companion task hold now, and the hash of the generation's files where they are.
+function Test-GenerationCurrent([string]$root, $receipt, [string]$receiptSha) {
+  $no = { param([string]$why) [pscustomobject]@{ ok = $false; detail = $why } }
+  try {
+    $cur = Get-Content -LiteralPath (Join-Path $root 'upgrade\current.json') -Raw | ConvertFrom-Json
+    $g = Get-Field $cur 'generation'
+    if ((Get-Field $cur 'contract') -cne 'clued.independent-ci.resident-generation/1' -or -not (($g -is [int]) -or ($g -is [long])) -or $g -ne (Get-Field $receipt 'generation')) { return & $no 'CURRENT_GENERATION' }
+    foreach ($k in @('packageManifestSha256', 'residentManifestSha256', 'policySha256')) { if ((Get-Field $cur $k) -cne (Get-Field $receipt $k)) { return & $no ('CURRENT_' + $k) } }
+    if ((Get-Field $cur 'installReceiptSha256') -cne $receiptSha) { return & $no 'CURRENT_RECEIPT' }
+    $gen = Get-Content -LiteralPath (Join-Path $root ('generations\g' + $g + '\generation.json')) -Raw | ConvertFrom-Json
+    if ((Get-Field $gen 'generation') -ne $g -or (Get-Field $gen 'packageManifestSha256') -cne (Get-Field $receipt 'packageManifestSha256')) { return & $no 'GENERATION_RECORD' }
+    if ((Get-Field $gen 'residentBinPath') -cne (Get-Field $receipt 'residentBinaryPath') -or (Get-Field $gen 'brokerBinPath') -cne (Get-Field $receipt 'brokerBinaryPath') -or
+      (Get-Field $gen 'companionTaskArguments') -cne (Get-Field (Get-Field $receipt 'companionTaskAction') 'arguments')) { return & $no 'GENERATION_RECORD_NOT_THE_RECEIPT' }
+    $live = { param([string]$name) $t = & $Sc qc $name 8192 | Out-String; if ($t -match 'BINARY_PATH_NAME\s*:\s*(.+?)\s*(\r?\n|$)') { $Matches[1] } else { $null } }
+    if ((& $live 'CluedCIResident') -cne $gen.residentBinPath) { return & $no 'RESIDENT_BINARY_PATH' }
+    if ((& $live 'CluedCISwapBroker') -cne $gen.brokerBinPath) { return & $no 'BROKER_BINARY_PATH' }
+    $task = Get-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -ErrorAction SilentlyContinue
+    if ($null -eq $task -or @($task.Actions).Count -ne 1 -or [string]@($task.Actions)[0].Arguments -cne $gen.companionTaskArguments) { return & $no 'COMPANION_TASK_ARGUMENTS' }
+    if ((Get-GenerationFilesSha256 $root) -cne (Get-Field $gen 'filesSha256')) { return & $no 'GENERATION_FILES' }
+    [pscustomobject]@{ ok = $true; detail = ('g' + $g) }
+  } catch { [pscustomobject]@{ ok = 'unreadable'; detail = 'UNREADABLE' } }
+}
+# two-sides-consistent: the rule of src/upgrade-mailbox.mjs consistent(current, facts): the Linux side's own facts name the same generation
+# as upgrade\current.json, the same CI Source, the Linux manifest current.json records, with its pins intact. The companion's file says
+# nothing once older than 15 minutes or more than 5 minutes ahead (VERSION_FACTS_MAX_AGE_MS, VERSION_FACTS_FUTURE_MS); a file given by
+# the caller is taken as it is.
+function Test-VersionFacts($current, $facts, [DateTimeOffset]$now, [bool]$checkAge) {
+  if ((Get-Field $facts 'contract') -cne 'clued.independent-ci.linux-version-facts/1') { return 'FACTS_CONTRACT' }
+  if ($checkAge) {
+    $at = [DateTimeOffset]::MinValue
+    if (-not [DateTimeOffset]::TryParse([string](Get-Field $facts 'observedAt'), [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$at) -or ($now - $at).TotalMinutes -gt 15 -or ($at - $now).TotalMinutes -gt 5) { return 'FACTS_STALE' }
+  }
+  $linux = Get-Field $current 'linux'
+  $fg = Get-Field $facts 'generation'
+  if ($null -eq $fg -or $null -eq $linux -or $fg -ne (Get-Field $current 'generation')) { return 'GENERATION' }
+  if ((Get-Field $facts 'ciSourceManifestSha256') -cne (Get-Field $current 'ciSourceManifestSha256')) { return 'CI_SOURCE' }
+  if ((Get-Field $facts 'manifestSha256') -cne (Get-Field $linux 'manifestSha256')) { return 'LINUX_MANIFEST' }
+  $pins = Get-Field $facts 'pinsOk'
+  if (-not (($pins -is [bool]) -and $pins)) { return 'PINS' }
+  'ok'
+}
+function Test-TwoSidesConsistent([string]$root, [string]$factsFile, [DateTimeOffset]$now) {
+  try {
+    $current = Get-Content -LiteralPath (Join-Path $root 'upgrade\current.json') -Raw | ConvertFrom-Json
+    $file = if ($factsFile) { $factsFile } else { Join-Path $root 'upgrade\mailbox\responses\version-facts.json' }
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return [pscustomobject]@{ ok = $false; detail = 'FACTS_MISSING' } }
+    $why = Test-VersionFacts $current (Get-Content -LiteralPath $file -Raw | ConvertFrom-Json) $now (-not $factsFile)
+    [pscustomobject]@{ ok = ($why -ceq 'ok'); detail = $why }
+  } catch { [pscustomobject]@{ ok = $false; detail = 'FACTS_UNREADABLE' } }
+}
 $checks = [ordered]@{}
 function Sha256File([string]$p) { $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash([IO.File]::ReadAllBytes($p)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() } }
 function Read-ReviewedPublicJson([string]$file, [string]$expected, [ValidateRange(1,4194304)][int]$maximum=1048576) {
@@ -241,7 +373,8 @@ function Record([string]$name, $ok, $detail = $null) { $script:checks[$name] = [
 $receiptFile = Join-Path $Root 'install\install-receipt.json'
 $receipt = Read-ReviewedPublicJson $receiptFile $ExpectedInstallReceiptSha256
 Record 'install-receipt' $true
-if ($receipt.contract -cne 'clued.independent-ci.resident-install-receipt/5' -or $receipt.nodeProfileSha256 -cnotmatch '^[0-9a-f]{64}\z' -or $receipt.acceptanceSha256 -cnotmatch '^[0-9a-f]{64}\z') { throw 'INSTALLED_NODE_PROFILE_REFUSED' }
+$ReceiptContracts = @('clued.independent-ci.resident-install-receipt/5', 'clued.independent-ci.resident-install-receipt/6')
+if ($ReceiptContracts -cnotcontains $receipt.contract -or $receipt.nodeProfileSha256 -cnotmatch '^[0-9a-f]{64}\z' -or $receipt.acceptanceSha256 -cnotmatch '^[0-9a-f]{64}\z') { throw 'INSTALLED_NODE_PROFILE_REFUSED' }
 $acceptancePath=Join-Path $Root 'record\acceptance.json'
 $Accepted=Read-ReviewedPublicJson $acceptancePath $receipt.acceptanceSha256 4MB
 $Node=$Accepted.node
@@ -261,6 +394,10 @@ $companionScripts = try { $companionSection = (Read-ReviewedPublicJson (Join-Pat
 Record 'companion-source-scripts' $companionScripts.ok $companionScripts.detail
 $ciRootSddl = try { (Get-Acl -LiteralPath 'C:\ProgramData\CluedIndependentCI').Sddl } catch { $null }
 Record 'ci-root-resident-read-control' $(if ([string]::IsNullOrEmpty($ciRootSddl)) { 'unreadable' } else { try { Test-ParentAclRule $ciRootSddl (Get-ServiceSid 'CluedCIResident') } catch { $false } })
+# The content-addressed trees of this generation (PR-1 review M2): an upgrade moves them in from upgrade\staged\, and a moved tree must have
+# taken its live parent's ACL (source\ grants .\clued-control read; nothing of upgrade\ may stay).
+$contentAcl = try { $ra = Test-ContentAcl (Join-Path $Root ('resident\' + $receipt.residentManifestSha256)); $sa = Test-ContentAcl (Join-Path $Root ('source\' + $ciSourceSha)); [pscustomobject]@{ ok = ($ra -ceq 'ok' -and $sa -ceq 'ok'); detail = ('resident:' + $ra + ' source:' + $sa) } } catch { [pscustomobject]@{ ok = 'unreadable'; detail = 'UNREADABLE' } }
+Record 'content-addressed-acl' $contentAcl.ok $contentAcl.detail
 
 # Node identity (C7): re-derived from the installed record and compared with the receipt; the receipt assumes no role.
 $identityCheck = try { Test-NodeIdentityReceipt $receipt (Read-ReviewedPublicJson (Join-Path $Root 'record\installation.json') ([string](Get-Field $receipt 'installationSha256')) 4MB) $Accepted $receipt.acceptanceSha256 } catch { [pscustomobject]@{ ok = $false; detail = $_.Exception.Message; identity = $null } }
@@ -370,7 +507,9 @@ if ($task) {
   Record 'companion-task-windowless' (($actions.Count -eq 1) -and (Test-CompanionAction ([string]$actions[0].Execute) ([string]$actions[0].Arguments) $Root $receipt.residentManifestSha256))
 }
 Record 'not-halted' (-not (Test-Path -LiteralPath (Join-Path $Root 'state\HALT.json')))
-Record 'not-paused' (-not (Test-Path -LiteralPath (Join-Path $Root 'state\PAUSED.json')))
+$pausedFile = Join-Path $Root 'state\PAUSED.json'
+if ($ExpectPausedSha256) { Record 'paused-as-expected' ((Test-Path -LiteralPath $pausedFile -PathType Leaf) -and ((Sha256File $pausedFile) -ceq $ExpectPausedSha256)) }
+else { Record 'not-paused' (-not (Test-Path -LiteralPath $pausedFile)) }
 $node = Join-Path $Root 'runtime\node.exe'
 $verifier = Join-Path $Root ('resident\' + $receipt.residentManifestSha256 + '\tools\verify-receipts.mjs')
 # node is started with a cleared, fixed environment (no NODE_OPTIONS or other user variables) so an
@@ -381,6 +520,32 @@ $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.CreateN
 $psi.EnvironmentVariables.Clear(); foreach ($kv in @(@('SystemRoot', 'C:\Windows'), @('WINDIR', 'C:\Windows'), @('PATH', 'C:\Windows\System32'))) { $psi.EnvironmentVariables[$kv[0]] = $kv[1] }
 $proc = [Diagnostics.Process]::Start($psi); $chain = $proc.StandardOutput.ReadToEnd(); $proc.WaitForExit()
 Record 'receipt-chain' ($proc.ExitCode -eq 0) ($chain.Trim())
+
+# ---- Receipt /6: the upgrade channel (018da927) ----
+if ($receipt.contract -ceq 'clued.independent-ci.resident-install-receipt/6') {
+  $u = Get-Field $receipt 'upgrader'
+  # upgrader-service: the SCM's view and the host's own token record.
+  $uq = Get-ScText @('qc', 'CluedCIUpgrader', '8192')
+  if ($uq -eq 'unreadable' -or $null -eq $u) { Record 'upgrader-service' $false 'UPGRADER_SERVICE_MISSING' }
+  else {
+    $bad = @()
+    if ($uq -notmatch 'SERVICE_START_NAME\s*:\s*LocalSystem') { $bad += 'account' }
+    if ($uq -notmatch 'START_TYPE\s*:\s*2\s+AUTO_START\s+\(DELAYED\)') { $bad += 'start-type' }
+    if ((Get-ScText @('queryex', 'CluedCIUpgrader')) -notmatch 'STATE\s*:\s*4\s') { $bad += 'not-running' }
+    $up = Get-ScText @('qprivs', 'CluedCIUpgrader', '8192'); $ud = Get-ScText @('sdshow', 'CluedCIUpgrader')
+    if ($up -ne 'unreadable' -and -not ((Test-ExactPrivileges (ConvertFrom-ScPrivs $up) @('SeChangeNotifyPrivilege')) -and (Test-ExactPrivileges (ConvertFrom-ScPrivs $up) @(Get-Field $u 'requiredPrivileges')))) { $bad += 'required-privileges' }
+    if ($ud -ne 'unreadable' -and -not (Test-ScSddl $ud (Get-Field $u 'sddl'))) { $bad += 'service-dacl' }
+    $tokenRecord = Join-Path $Root 'upgrade\upgrader-token.json'
+    if (-not ((Test-Path -LiteralPath $tokenRecord -PathType Leaf) -and (Test-TokenRecord (Get-Content -LiteralPath $tokenRecord -Raw) @('SeChangeNotifyPrivilege')))) { $bad += 'effective-token-privileges' }
+    Record 'upgrader-service' $(if ($bad.Count) { $false } elseif ($up -eq 'unreadable' -or $ud -eq 'unreadable') { 'unreadable' } else { $true }) ($bad -join ',')
+  }
+  $pinOk = if ($null -eq $u) { $false } else { Test-UpgraderPins $Root $u $(if ($uq -eq 'unreadable') { $null } else { $uq }) }
+  Record 'upgrader-pin' $pinOk $script:upgraderPinDetail
+  $gc = Test-GenerationCurrent $Root $receipt $ExpectedInstallReceiptSha256
+  Record 'generation-current' $gc.ok $gc.detail
+  $tc = Test-TwoSidesConsistent $Root $LinuxVersionFactsFile ([DateTimeOffset]::UtcNow)
+  Record 'two-sides-consistent' $tc.ok $tc.detail
+}
 
 $allOk = -not ($checks.Values | Where-Object { $_.ok -ne $true })
 $unreadable = [bool]($checks.Values | Where-Object { $_.ok -eq 'unreadable' })

@@ -190,6 +190,12 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
       case 'batch-limit': out.push({ key: `notice:${n.key}`, title: '今日执行批次额度已满', body: '常驻执行器今天的执行批次已满，排队的 PR 明天继续，不会丢弃。' }); break;
       case 'queue-full': out.push({ key: `notice:${n.key}`, title: '常驻执行器排队表已满', body: '活着的排队行已达上限，新的 PR 暂不排队；排队的 PR 跑完或停住后再提议。' }); break;
       case 'breaker-open': out.push({ key: `notice:${n.key}`, title: '常驻执行器熔断', body: `连续出现环境故障（${n.code ?? '?'}），暂停开新批次${n.until ? `，约 ${hhmm(n.until)} 试跑一批` : ''}。` }); break;
+      // Status /7 (in-place upgrade channel, DESIGN §34): the versions of both sides and the upgrader's op.
+      case 'version-skew': out.push({ key: `notice:${n.key}`, title: 'Windows 与 Linux 两侧版本不一致', body: `Windows 第 ${status.versions?.generation ?? '?'} 代，Linux 第 ${status.versions?.linux?.generation ?? '?'} 代（UPGRADE_VERSION_SKEW）。已暂停接新批次，两侧恢复一致后自动解除。` }); break;
+      case 'upgrade-grant-pending': out.push({ key: `notice:${n.key}`, title: '常驻升级等待 Owner 批准', body: `请在页面批准本次升级${status.versions?.upgrade?.confirmUrl ? `：${status.versions.upgrade.confirmUrl}` : '（批准地址见 upgrade\\status.json）'}。` }); break;
+      case 'upgrade-deferred': out.push({ key: `notice:${n.key}`, title: '常驻升级已延后', body: `原因：${n.code ?? '?'}。升级代理稍后自动再试，没有改动任何文件。` }); break;
+      case 'upgrade-rolled-back': out.push({ key: `notice:${n.key}`, title: '常驻升级已回滚，执行器保持暂停', body: `升级未通过验证（${n.code ?? '?'}），已回到上一代。执行器保持暂停，请检查后由 Owner 恢复。` }); break;
+      case 'upgrade-rollback-failed': out.push({ key: `notice:${n.key}`, title: '常驻升级回滚失败，需要 Owner 处理', body: `回滚没有完成（${n.code ?? '?'}）。执行器保持暂停；请用管理员权限按 upgrade-apply.ps1 -Recover 处理。` }); break;
       default: break;
     }
   }

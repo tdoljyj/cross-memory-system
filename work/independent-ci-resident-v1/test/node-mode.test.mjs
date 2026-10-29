@@ -518,9 +518,9 @@ test('the deferral reasons are fixed codes and a quiet result: the probe and sta
 
 // ---- status.json /6 and the companion ----
 
-test('status /6: node carries name, source (12 hex), mode and the last probe; the companion reads it; the old /5 file is still read', async t => {
-  assert.equal(STATUS_CONTRACT, 'clued.independent-ci.resident-status/6');
-  assert.deepEqual([...STATUS_CONTRACTS_READABLE], ['clued.independent-ci.resident-status/5', 'clued.independent-ci.resident-status/6']);
+test('status /6 (written as /7 since DESIGN §34): node carries name, source (12 hex), mode and the last probe; the companion reads it; the old /5 file is still read', async t => {
+  assert.equal(STATUS_CONTRACT, 'clued.independent-ci.resident-status/7');
+  assert.deepEqual([...STATUS_CONTRACTS_READABLE], ['clued.independent-ci.resident-status/5', 'clued.independent-ci.resident-status/6', 'clued.independent-ci.resident-status/7']);
   const f = await nodeFx(t, { facts: [HELD] });
   const file = new StatusFile(path.join(f.root, 'state', 'status.json'));
   // a start: UNCERTAIN, no probe yet; the companion reads "not on duty" (停摆 NODE_ROLE_UNCERTAIN)
@@ -534,7 +534,7 @@ test('status /6: node carries name, source (12 hex), mode and the last probe; th
   await f.exec.tick();
   await file.write(f.board.snapshot());
   const raw = JSON.parse(await fs.readFile(path.join(f.root, 'state', 'status.json'), 'utf8'));
-  assert.equal(raw.contract, 'clued.independent-ci.resident-status/6');
+  assert.equal(raw.contract, 'clued.independent-ci.resident-status/7');
   assert.deepEqual(Object.keys(raw.node).sort(), ['mode', 'name', 'probe', 'source']);
   assert.match(raw.node.source, /^[0-9a-f]{12}$/);
   const s = await readStatus(f.root);
@@ -549,8 +549,9 @@ test('status /6: node carries name, source (12 hex), mode and the last probe; th
   // the /5 file of the executor that was running before the install: still read (no source); other contracts are refused
   const old = { ...JSON.parse(JSON.stringify(g.board.snapshot())), contract: 'clued.independent-ci.resident-status/5' };
   delete old.node.source;
+  delete old.versions;
   assert.deepEqual(parseStatus(Buffer.from(JSON.stringify(old))).node, { name: 'fixture-node', source: null, mode: 'STANDBY', probe: parseStatus(Buffer.from(JSON.stringify(old))).node.probe });
-  for (const contract of ['clued.independent-ci.resident-status/4', 'clued.independent-ci.resident-status/7']) {
+  for (const contract of ['clued.independent-ci.resident-status/4', 'clued.independent-ci.resident-status/8']) {
     assert.throws(() => parseStatus(Buffer.from(JSON.stringify({ ...old, contract }))), { code: 'STATUS_REFUSED' }, contract);
   }
   // a source that does not fit is no source

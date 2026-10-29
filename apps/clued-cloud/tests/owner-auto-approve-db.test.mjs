@@ -119,7 +119,7 @@ test('owner auto-approval: the switch approves requests at once, never connectio
     assert.equal(list.auto_approve.expires_at, null);
     assert.equal((await admin.query(`select count(*)::int n from clued_private.owner_auto_approve_settings_v1
       where user_id=$1`, [userId])).rows[0].n, 0, 'reading a default does not create a setting or receipt');
-    const excluded = ['connection.permission', 'model.dataset_split.bootstrap', 'model.dataset_split.producer', 'model.dataset_split.recognize',
+    const excluded = ['ci.resident_upgrade', 'connection.permission', 'model.dataset_split.bootstrap', 'model.dataset_split.producer', 'model.dataset_split.recognize',
       'model.dataset_split.verify'];
     assert.deepEqual(list.auto_approve.excluded.map((x) => x.action), excluded);
     assert.deepEqual(list.auto_approve.covers,
