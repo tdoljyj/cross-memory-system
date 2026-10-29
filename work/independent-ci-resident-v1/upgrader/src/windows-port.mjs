@@ -21,6 +21,10 @@ export const ACTIONS = Object.freeze(['ReadScm', 'Compile', 'StopServices', 'Swi
 export const ACTION_TIMEOUT_MS = Object.freeze({ ReadScm: 60_000, Compile: 600_000, StopServices: 300_000, SwitchScm: 120_000, RegisterCompanionTask: 120_000,
   RestartCompanion: 120_000, StartServices: 300_000, Verify: 600_000 });
 const OUTPUT_MAX = 64 * 1024;
+// The whole environment upgrade-apply.ps1 runs in; nothing else of the upgrader's own is inherited. PATHEXT is required: without
+// it Windows PowerShell 5.1 runs no native .exe at all (no error, no output, $LASTEXITCODE empty), so csc, sc.exe and the rest
+// silently did nothing and every action was refused (op 8c5efb1a, Note ee73b1a0). A fixed value; no other variable is added.
+export const APPLY_ENV = Object.freeze({ SystemRoot: process.env.SystemRoot ?? 'C:\\Windows', PATHEXT: '.COM;.EXE;.BAT;.CMD' });
 
 // The argv for one action: fixed names, values checked by shape.
 export function applyArgs(scriptPath, action, { opId, planSha256, generation = null, expectPausedSha256 = null }) {
@@ -44,7 +48,7 @@ function run(file, argv, timeoutMs) {
   return new Promise(resolve => {
     let out = '';
     let child;
-    try { child = spawn(file, argv, { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], env: { SystemRoot: process.env.SystemRoot ?? 'C:\\Windows' } }); } catch { resolve({ exit: null, stdout: '' }); return; }
+    try { child = spawn(file, argv, { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], env: { ...APPLY_ENV } }); } catch { resolve({ exit: null, stdout: '' }); return; }
     const timer = setTimeout(() => child.kill(), timeoutMs);
     child.stdout.on('data', d => { if (out.length < OUTPUT_MAX) out += d.toString('utf8'); });
     child.on('error', () => { clearTimeout(timer); resolve({ exit: null, stdout: out }); });

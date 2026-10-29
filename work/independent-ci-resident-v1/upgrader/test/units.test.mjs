@@ -9,7 +9,7 @@ import { loadUpgraderConfig, validateUpgraderConfig } from '../src/config.mjs';
 import { parseInboxEntry, grantResource, UPGRADE_CANCEL_CONTRACT } from '../src/request.mjs';
 import { Journal } from '../src/journal.mjs';
 import { grantClient, interpret } from '../src/grant-client.mjs';
-import { applyArgs, parseApplyOutput, WindowsPort } from '../src/windows-port.mjs';
+import { APPLY_ENV, applyArgs, parseApplyOutput, WindowsPort } from '../src/windows-port.mjs';
 import { ResidentPort, pauseRequestBytes } from '../src/resident-ports.mjs';
 import { LinuxPort, MAX_TRIES_PER_CALL } from '../src/linux-port.mjs';
 import { ROLLBACK_WAIT_MAX_MS } from '../src/machine.mjs';
@@ -142,6 +142,26 @@ test('windows port: fixed argv, one JSON line, exit 0 only on success', async ()
   assert.equal((await port.stopServices({ opId: OP, planSha256: PKG })).ok, true);
   assert.equal(seen[0][0], 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
   assert.ok(seen[0][1].includes(path.join('C:\\up\\abc', 'windows', 'upgrade-apply.ps1')));
+});
+
+test('windows port: the apply environment is SystemRoot and PATHEXT only', () => {
+  assert.deepEqual(Object.keys(APPLY_ENV).sort(), ['PATHEXT', 'SystemRoot']);
+  assert.equal(APPLY_ENV.PATHEXT, '.COM;.EXE;.BAT;.CMD');
+});
+
+// op 8c5efb1a: with SystemRoot alone, Windows PowerShell 5.1 ran no native command, silently. The real port (its own run and
+// APPLY_ENV) starts the real powershell.exe on a stand-in upgrade-apply.ps1 that runs cmd.exe and reports what it saw.
+test('windows port (live): a native command runs under the apply environment', { skip: process.platform !== 'win32' }, async t => {
+  const dir = await tempDir(t);
+  await fs.mkdir(path.join(dir, 'windows'));
+  await fs.writeFile(path.join(dir, 'windows', 'upgrade-apply.ps1'), [
+    'param([string]$Action, [string]$OpId, [string]$PlanSha256)',
+    "$out = & ($env:SystemRoot + '\\System32\\cmd.exe') /c echo native-ran",   // a full path, as upgrade-apply.ps1 calls every program
+    '$code = $LASTEXITCODE',
+    "[Console]::Out.WriteLine((@{ ok = ($code -eq 0); code = 'NATIVE_COMMAND_DID_NOT_RUN'; nativeExit = $code; nativeOut = \"$out\" } | ConvertTo-Json -Compress))",
+  ].join('\r\n'));
+  const r = await new WindowsPort({ upgraderDir: dir }).readScm({ opId: OP, planSha256: PKG });
+  assert.deepEqual({ ok: r.ok, nativeExit: r.nativeExit, nativeOut: r.nativeOut }, { ok: true, nativeExit: 0, nativeOut: 'native-ran' });
 });
 
 test('resident port: the frozen observation surface and the drop boxes, with the resident contracts', async t => {
