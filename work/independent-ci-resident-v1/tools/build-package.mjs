@@ -19,10 +19,11 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { HEX64, canonicalJson, check, sha256 } from '../src/canonical.mjs';
 import { validatePolicy } from '../src/policy.mjs';
-import { validateCompanionConfig, validateHintConfig } from '../src/companion.mjs';
+import { RESIDENT_INSTALL_ROOT, validateCompanionConfig, validateHintConfig } from '../src/companion.mjs';
 import { validateStatusConfig } from '../src/pr-status.mjs';
 import { INSTALLED_MANIFEST_CONTRACT } from '../src/service-ports.mjs';
 import { pinnedNodeProfile } from '../src/node-profile.mjs';
+import { nodeIdentityOf, nodeIdentitySha256 } from '../src/node-identity.mjs';
 
 const HERE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const RESIDENT_FILES = ['src', 'tools', 'windows'];
@@ -69,6 +70,12 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
   const accepted = JSON.parse(await fs.readFile(path.join(out, 'record', 'acceptance.json'), 'utf8'));
   check(recordEntries.find(e => e.name === 'acceptance.json').sha256 === recordManifest.acceptanceSha256, 'PACKAGE_RECORD_REFUSED');
   const node = pinnedNodeProfile(accepted.node, recordManifest.nodeProfileSha256);
+  // Node identity (DESIGN section 30): derived from the two record files, which must agree; its hash goes into the package manifest, where the
+  // install derives it again from the same bytes and refuses a different answer. Public ids and fingerprints only.
+  const installation = JSON.parse(await fs.readFile(path.join(out, 'record', 'installation.json'), 'utf8'));
+  check(recordEntries.find(e => e.name === 'installation.json').sha256 === recordManifest.installationSha256, 'PACKAGE_RECORD_REFUSED');
+  const nodeIdentity = nodeIdentityOf(installation, accepted, recordManifest.acceptanceSha256);
+  const nodeIdentitySha = nodeIdentitySha256(nodeIdentity);
   const nodeProfileSha256 = recordManifest.nodeProfileSha256;
   const residentEntries = [];
   for (const rel of RESIDENT_FILES) for (const f of await listFiles(HERE, rel)) {
@@ -96,13 +103,15 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
   check(finalPolicy.nodeProfileSha256 === nodeProfileSha256 && canonicalJson(finalPolicy.node) === canonicalJson(node), 'PACKAGE_NODE_PROFILE_CHANGED');
   const companion = JSON.parse(await fs.readFile(companionFile, 'utf8'));
   check(companion.status?.node === undefined || companion.status.node === node.nodeName, 'PACKAGE_NODE_PROFILE_CHANGED');
-  const sub = s => s.replace('<sourceManifestSha256>', ciSourceManifestSha256);
+  const sub = s => s.replaceAll('<sourceManifestSha256>', ciSourceManifestSha256);
   const finalCompanion = { ...companion, companion: { ...companion.companion, relayScript: sub(companion.companion.relayScript), bundleScript: sub(companion.companion.bundleScript),
     ...(bridgeManifestSha256 ? { bridgeManifestSha256 } : {}) },
     // Hint mode reads the installed CI Source's relay observer; it follows the policy's relay switch.
     hints: { enabled: companion.hints?.enabled === true && finalPolicy.relay.enabled === true, ciSourceManifestSha256 },
     status: { ...companion.status, node: node.nodeName } };
-  validateCompanionConfig(finalCompanion.companion);
+  // DESIGN §33: every Source script path lies under source\<this package's ciSourceManifestSha256>\ (a literal hash of another Source
+  // in the input file is not replaced above and is refused here), so the installed config never names a Source that is not installed.
+  validateCompanionConfig(finalCompanion.companion, { root: RESIDENT_INSTALL_ROOT, ciSourceManifestSha256 });
   check(finalCompanion.companion.nodeProfileSha256 === nodeProfileSha256 && canonicalJson(finalCompanion.companion.node) === canonicalJson(node), 'PACKAGE_NODE_PROFILE_CHANGED');
   validateHintConfig(finalCompanion.hints);
   validateStatusConfig(finalCompanion.status);
@@ -132,9 +141,10 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
   await add('runtime/node.exe', 'runtime\\node.exe');
   await add('resident/windows/ResidentServiceHost.cs', 'bin\\ResidentServiceHost.cs');
   await add('resident/windows/SwapBroker.cs', 'bin\\SwapBroker.cs');
-  const pkg = { contract: 'clued.independent-ci.resident-package/3', sourceManifestSha256, ciSourceManifestSha256, residentManifestSha256, bridgeManifestSha256, files };
+  const pkg = { contract: 'clued.independent-ci.resident-package/3', sourceManifestSha256, ciSourceManifestSha256, residentManifestSha256, bridgeManifestSha256, nodeIdentitySha256: nodeIdentitySha, files };
   await writeJson(path.join(out, 'package-manifest.json'), pkg);
   return { packageManifestSha256: sha256(await fs.readFile(path.join(out, 'package-manifest.json'))), sourceManifestSha256, ciSourceManifestSha256, residentManifestSha256, bridgeManifestSha256, files: files.length, runtimeSha256: runtime.sha256,
+    nodeName: nodeIdentity.nodeName, nodeIdentitySha256: nodeIdentitySha,
     linuxSourceV2InstallerSha256: sourceV2Installer.sha256 };
 }
 

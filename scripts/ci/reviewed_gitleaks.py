@@ -16,7 +16,9 @@ PREFIX = "# clued-reviewed-finding: "
 COUNT_PREFIX = "# clued-reviewed-count: "
 LEGACY_COUNT = 726
 LEGACY_RECORD_LINES_SHA256 = "5ec9aef1a5af7f356152ba7dfc18e197a968cf3ac70ffd2b2aa7000a4801d35c"
-EXPECTED_COUNT = 729
+SCHEDULING_END = 729
+PRIOR_RECORD_LINES_SHA256 = "3117636bb9809e0aa2f953340172e48ba171b010949112dbe79e5879309a45cd"
+EXPECTED_COUNT = 730
 SCHEDULING_COMMIT = "fd10191533a5f2139b224a90a096880039d62034"
 SCHEDULING_TEST_PATH = "apps/clued-cloud/tests/ci-scheduling-stage1-ui.test.mjs"
 SCHEDULING_README_PATH = "work/ci-scheduling-stage1-20261023/README.md"
@@ -40,6 +42,19 @@ SCHEDULING_FINDINGS = {
         "span_sha256": "1d5a4bd8cfccf414fb99d0bc2fb1e809472ce6e10f336f956db4082f78e64b92"},
 }
 SCHEDULING_KINDS = {spec["kind"] for spec in SCHEDULING_FINDINGS.values()}
+# Batch-2 (#937) candidate: one synthetic token literal in the C2 role-probe test,
+# usable only by this exact fingerprint with immutable blob, span and usage proof.
+ROLE_PROBE_COMMIT = "16f981cca5bdcae27e5eb08768013b36deafe44a"
+ROLE_PROBE_PATH = "work/independent-ci-resident-v1/test/role-probe.test.mjs"
+ROLE_PROBE_BLOB = {"blob": "cf3254de92881aa76a03dbd8714217c6cfd23abb",
+                   "sha256": "4c27c0a152006f0b7dd57b856155c221577967720fa05bc3211fd277fa8c296e", "bytes": 7681}
+ROLE_PROBE_FINDINGS = {
+    f"{ROLE_PROBE_COMMIT}:{ROLE_PROBE_PATH}:generic-api-key:73": {
+        "kind": "SYNTHETIC_ROLE_PROBE_TOKEN", "end_line": 73, "span_bytes": 89,
+        "span_sha256": "38515feffdf8a479abaf951cbd038bd01b06c13397ade3fa3654c76afd879aa6",
+        "test_start_line": 72, "test_end_line": 82},
+}
+ROLE_PROBE_KINDS = {spec["kind"] for spec in ROLE_PROBE_FINDINGS.values()}
 REVIEW_DOCUMENT_PATH = "development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json"
 REVIEW_DOCUMENT_COMMIT = "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904"
 REVIEW_DOCUMENT_SHA256 = "d223d30902ead65ac193a2166cc081a2a2b326d71af3e8a898994427e72e1d21"
@@ -138,6 +153,7 @@ KINDS = {
     "OAUTH_CLIENT_ID",
 }
 KINDS |= SCHEDULING_KINDS
+KINDS |= ROLE_PROBE_KINDS
 BASE_CONFIG = {
     "title": "Clued Gitleaks configuration",
     "extend": {"useDefault": True},
@@ -188,6 +204,10 @@ def parse_records(text):
         if (fixture is not None and record["kinds"] != [fixture["kind"]]
                 or set(record["kinds"]) & SCHEDULING_KINDS and fixture is None):
             raise ValueError("Scheduling fixture exception identity changed")
+        token_fixture = ROLE_PROBE_FINDINGS.get(record["fingerprint"])
+        if (token_fixture is not None and record["kinds"] != [token_fixture["kind"]]
+                or set(record["kinds"]) & ROLE_PROBE_KINDS and token_fixture is None):
+            raise ValueError("Role-probe token exception identity changed")
         if rule == "sourcegraph-access-token" and record["kinds"] != ["GIT_OBJECT_METADATA"]:
             raise ValueError("Object rule requires object proof")
         if path == REVIEW_DOCUMENT_PATH and (
@@ -244,11 +264,16 @@ def parse_records(text):
                     if record["fingerprint"].split(":")[1] in EXACT_PATH_FINDINGS}
     if actual_exact != expected_exact:
         raise ValueError("Exact path exception set changed")
-    if {record["fingerprint"] for record in records[LEGACY_COUNT:]} != set(SCHEDULING_FINDINGS):
+    if {record["fingerprint"] for record in records[LEGACY_COUNT:SCHEDULING_END]} != set(SCHEDULING_FINDINGS):
         raise ValueError("Scheduling fixture exception set changed")
+    if {record["fingerprint"] for record in records[SCHEDULING_END:]} != set(ROLE_PROBE_FINDINGS):
+        raise ValueError("Role-probe token exception set changed")
     legacy_lines = [line for line in text.splitlines() if line.startswith(PREFIX)][:LEGACY_COUNT]
     if hashlib.sha256(("\n".join(legacy_lines) + "\n").encode()).hexdigest() != LEGACY_RECORD_LINES_SHA256:
         raise ValueError("Legacy reviewed finding bytes changed")
+    prior_lines = [line for line in text.splitlines() if line.startswith(PREFIX)][:SCHEDULING_END]
+    if hashlib.sha256(("\n".join(prior_lines) + "\n").encode()).hexdigest() != PRIOR_RECORD_LINES_SHA256:
+        raise ValueError("Prior reviewed finding bytes changed")
     return records
 
 
@@ -484,6 +509,54 @@ def verify_scheduling_fixture(repo, fingerprint, text):
         raise ValueError("Unreviewed scheduling fixture classification")
 
 
+ROLE_PROBE_STRING = re.compile(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|`(?:\\.|[^`\\])*`")
+ROLE_PROBE_IDENTIFIER = re.compile(r"(?<![\w$.])token(?![\w$])")
+
+
+def verify_role_probe_token(repo, fingerprint, text):
+    """Prove only the pinned test-local literal: digested and returned by in-test fakes, never a credential."""
+    spec = ROLE_PROBE_FINDINGS.get(fingerprint)
+    if spec is None:
+        raise ValueError("Unreviewed role-probe token identity")
+    commit, path, rule, line = fingerprint.split(":")
+    blob = text.encode("utf-8")
+    object_id = hashlib.sha1(b"blob " + str(len(blob)).encode() + b"\0" + blob).hexdigest()
+    if (len(blob) != ROLE_PROBE_BLOB["bytes"] or object_id != ROLE_PROBE_BLOB["blob"]
+            or hashlib.sha256(blob).hexdigest() != ROLE_PROBE_BLOB["sha256"]
+            or run(["git", "rev-parse", f"{commit}:{path}"], cwd=repo).decode().strip() != ROLE_PROBE_BLOB["blob"]):
+        raise ValueError("Role-probe token immutable blob changed")
+    lines = text.splitlines(keepends=True)
+    first = int(line) - 1
+    span = "".join(lines[first:spec["end_line"]]).encode()
+    if len(span) != spec["span_bytes"] or hashlib.sha256(span).hexdigest() != spec["span_sha256"]:
+        raise ValueError("Role-probe token exact span changed")
+    declaration = re.fullmatch(r"  const token = ('[A-Za-z0-9_]+'), reads = \[\], protectedCalls = \[\], native = \[\];",
+                               lines[first].rstrip("\r\n"))
+    if (rule != "generic-api-key" or declaration is None or not path.startswith("work/")
+            or "/test/" not in path or not path.endswith(".test.mjs")):
+        raise ValueError("Role-probe token declaration changed")
+    value = ast.literal_eval(declaration.group(1))
+    if not re.fullmatch(r"clued_bnd_fixture[0-9]{6}", value) or text.count(value) != 1:
+        raise ValueError("Role-probe token value changed")
+    # Every use of the local `token` (strings removed) is inside the one enclosing test:
+    # one digest input and two in-test fake tokenReader return values. Nothing else.
+    start, end = spec["test_start_line"] - 1, spec["test_end_line"]
+    if not lines[start].startswith("test('controller entry reads exactly native token ") or lines[end - 1] != "});\n":
+        raise ValueError("Role-probe token test boundary changed")
+    uses = []
+    for number, source in enumerate(lines, 1):
+        code = ROLE_PROBE_STRING.sub('""', source)
+        uses += [(number, code[max(0, match.start() - 3):match.end() + 1]) for match in ROLE_PROBE_IDENTIFIER.finditer(code)]
+    block = "".join(lines[start:end])
+    if (uses != [(73, "st token "), (74, " + token)"), (76, "rn token;"), (81, "=> token,")]
+            or "tokenReader: async (file, options) => { reads.push({ file, options }); return token; }" not in block
+            or "fetchImpl: async (...v) => { native.push(v); return new Response(" not in block
+            or "tokenReader: async () => token, fetchImpl: async () => { assert.fail('no request'); }" not in block
+            or set(re.findall(r"https?://[^'\"/ ]+", block)) != {"https://fixture.supabase.co"}
+            or "process.env" in text):
+        raise ValueError("Role-probe token use changed")
+
+
 def verify_history(repo, records):
     commits = _ensure_reviewed_commits(repo, records)
     blobs = {}
@@ -497,6 +570,8 @@ def verify_history(repo, records):
             raise ValueError("Reviewed location no longer resolves")
         if record["fingerprint"] in SCHEDULING_FINDINGS:
             verify_scheduling_fixture(repo, record["fingerprint"], text)
+        if record["fingerprint"] in ROLE_PROBE_FINDINGS:
+            verify_role_probe_token(repo, record["fingerprint"], text)
         if path == REVIEW_DOCUMENT_PATH:
             verify_auth_review_digest(repo, text, int(line))
         if path in FINAL_EVIDENCE_DOCUMENTS:

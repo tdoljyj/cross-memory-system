@@ -53,6 +53,17 @@ export function deterministicPrFault(reason, diagnostic) {
   return DETERMINISTIC_PR_REASONS.includes(reason)
     || [...(diagnostic?.reasonCodes ?? []), ...(diagnostic?.nativeReasonCodes ?? [])].some(c => DETERMINISTIC_PR_REASON_CODES.includes(c));
 }
+// Primary/standby C3 (resident DESIGN §29): Native's rejection reason admission_binding_required says this node holds no
+// ci-admission role. Only the rejection of the first evaluation carries it (full_admission_rejected with the diagnostic), so
+// nothing was written under the real effect key, no batch claim was recorded and nothing was published (sideEffects 0). A
+// node that is not on duty decides nothing about the PR: no deterministic reason beside it may make the refusal unsafe to re-run.
+export const NOT_ON_DUTY_REASON_CODE = 'admission_binding_required';
+export function notOnDuty(reason, diagnostic) {
+  return reason === 'full_admission_rejected' && [...(diagnostic?.reasonCodes ?? []), ...(diagnostic?.nativeReasonCodes ?? [])].includes(NOT_ON_DUTY_REASON_CODE);
+}
+// The entry's own "safe to re-run" flag of a refusal (the resident releases a stage-1 failure only on it): inside the first
+// evaluation's boundary (step), with no batch claim recorded, and either a node that is not on duty or not a deterministic PR fault.
+export const refusalSafeToRerun = ({ step, claimed, reason, diagnostic }) => step === 'boundary' && claimed === null && (notOnDuty(reason, diagnostic) || !deterministicPrFault(reason, diagnostic));
 const freeze = v => { if (v && typeof v === 'object') { Object.values(v).forEach(freeze); Object.freeze(v); } return v; };
 const fixedJob = job => { validateJobV2(job); check(job.repo === REPO && job.role === ROLE && job.attempt >= 1 && job.attempt <= MAX_ATTEMPT_V2, 'FIXED_WORK_ADMISSION_JOB_REQUIRED'); return freeze(structuredClone(job)); };
 function identity(c, job, externalId) { return Number.isSafeInteger(c?.id) && c.id > 0 && c.app?.id === APP_ID && c.name === CHECK_NAME && c.head_sha === job.headSha && c.external_id === externalId; }
@@ -172,7 +183,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       }
       const reason = safe(e), admissionDiagnostic = diagnosticOf(e);
       return { status: 'BLOCKED', reason, ...(admissionDiagnostic ? { admissionDiagnostic } : {}), ...(e?.publishedChecks ? { publishedChecks: e.publishedChecks } : {}),
-        sideEffects: 0, productionAuthorized: false, safeToRerun: step === 'boundary' && claimed === null && !deterministicPrFault(reason, admissionDiagnostic), scheduling };
+        sideEffects: 0, productionAuthorized: false, safeToRerun: refusalSafeToRerun({ step, claimed, reason, diagnostic: admissionDiagnostic }), scheduling };
     }
     let phase = 'intent', sent = false, known = null, sideEffects = 0;
     try {

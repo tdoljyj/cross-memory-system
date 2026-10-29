@@ -20,7 +20,10 @@ export const SUCCESS_STATE = 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFI
 // ---- catalogue (mirrored, and cross-checked by a test, in independent-ci-resident-v1/src/classify.mjs) ----
 // Stage 1 only: Native said no. Nothing was published, nothing executed.
 export const NOT_ADMITTED_CODES = Object.freeze(['NATIVE_NOT_ADMITTED', 'OWNER_REVIEW_REQUIRED', 'PROTECTED_CHANGE_NOT_UP_TO_DATE', 'PATHS_OUTSIDE_WRITE_SET',
-  'CLAIM_NOT_CURRENT', 'TASK_CI_HEAD_CAP_REACHED', 'CLAIM_HEAD_CAP_REACHED', 'CI_BUDGET_EXHAUSTED', 'WORKFLOW_CHANGE_NOT_AUTHORIZED', 'PR_NOT_OPEN_OR_CHANGED']);
+  'CLAIM_NOT_CURRENT', 'TASK_CI_HEAD_CAP_REACHED', 'CLAIM_HEAD_CAP_REACHED', 'CI_BUDGET_EXHAUSTED', 'WORKFLOW_CHANGE_NOT_AUTHORIZED', 'PR_NOT_OPEN_OR_CHANGED',
+  // Primary/standby C3 (resident DESIGN §29): the server says this node holds no ci-admission role (admission_binding_required).
+  // Nothing is decided about the PR; the resident goes to STANDBY and releases the reservation.
+  'NODE_ROLE_NOT_HELD']);
 // Clean transient: an outside, passing condition (network, GitHub 5xx, a push between bundle and
 // scan, a precondition not yet met). Eligible for the one automatic attempt 2 when nothing was
 // published (Owner decision 1b5d3687; the resident decides eligibility, see attempts.mjs).
@@ -63,7 +66,8 @@ const DIAG = Object.freeze({ owner_review_required: 'OWNER_REVIEW_REQUIRED', own
   claim_trailer_missing: 'CLAIM_NOT_CURRENT', claim_not_found: 'CLAIM_NOT_CURRENT', claim_not_current: 'CLAIM_NOT_CURRENT', fence_superseded: 'CLAIM_NOT_CURRENT',
   claim_bound_to_other_pr: 'CLAIM_NOT_CURRENT', work_claim_execution_epoch_stale: 'CLAIM_NOT_CURRENT', task_ci_head_cap_reached: 'TASK_CI_HEAD_CAP_REACHED',
   claim_head_cap_reached: 'CLAIM_HEAD_CAP_REACHED', ci_budget_exhausted: 'CI_BUDGET_EXHAUSTED', head_budget_exhausted: 'CI_BUDGET_EXHAUSTED',
-  workflow_change_not_authorized: 'WORKFLOW_CHANGE_NOT_AUTHORIZED', workflow_runs_unavailable: 'NATIVE_ADMISSION_UNAVAILABLE' });
+  workflow_change_not_authorized: 'WORKFLOW_CHANGE_NOT_AUTHORIZED', workflow_runs_unavailable: 'NATIVE_ADMISSION_UNAVAILABLE',
+  admission_binding_required: 'NODE_ROLE_NOT_HELD' });
 // Explicit transport facts only (PR-A review MINOR 5): the publishers' defaults for an uncoded exception
 // (publication_operation_unconfirmed, *_OPERATION_UNCONFIRMED; before PR-A publication_observation_unconfirmed
 // and NATIVE_CHECK_UNCONFIRMED) are never transient, so they can never select the automatic attempt 2.
@@ -81,10 +85,12 @@ const CONFIG_REASONS = new Set(['full_admission_not_configured', 'full_admission
 
 // Native diagnostic -> the one not-admitted code (first match in a fixed priority order). A head that is not up to
 // date with main can never pass whatever else Native says, so that code comes first (independent review of the quota
-// redesign phase 1, MINOR 1: with owner_review_required it must not become a waiting code).
+// redesign phase 1, MINOR 1: with owner_review_required it must not become a waiting code). One thing comes before even that
+// (primary/standby C3): admission_binding_required, "this node holds no ci-admission role". A node that is not on duty says
+// nothing about the PR, so no other reason may turn that answer into a burned or PR-specific one.
 export function notAdmittedCode(diagnostic) {
   const codes = Array.isArray(diagnostic?.reasonCodes) ? [...diagnostic.reasonCodes, ...(diagnostic.nativeReasonCodes ?? [])] : [];
-  for (const c of ['protected_change_not_up_to_date', 'owner_review_required', 'owner_grant_required', 'owner_grant_missing', 'owner_grant_revoked', 'owner_grant_expired',
+  for (const c of ['admission_binding_required', 'protected_change_not_up_to_date', 'owner_review_required', 'owner_grant_required', 'owner_grant_missing', 'owner_grant_revoked', 'owner_grant_expired',
     'path_outside_write_set', 'paths_outside_write_set', 'claim_trailer_missing', 'claim_not_found', 'claim_not_current', 'fence_superseded', 'claim_bound_to_other_pr',
     'work_claim_execution_epoch_stale', 'task_ci_head_cap_reached', 'claim_head_cap_reached', 'ci_budget_exhausted', 'head_budget_exhausted',
     'workflow_change_not_authorized', 'workflow_runs_unavailable', 'owner_review_unavailable']) if (codes.includes(c)) return DIAG[c];

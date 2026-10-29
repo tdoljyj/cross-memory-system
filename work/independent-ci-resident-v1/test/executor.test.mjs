@@ -251,6 +251,7 @@ test('C2 idle probe has no batch, burned head, evaluation, Linux or companion; a
 test('C2 probes never run during a batch or while paused/HALT; it never clears head burn', async t => {
   const f = await executorFixture(t); let calls = 0;
   f.engine.runRoleProbe = async () => { calls++; return probeResult(); };
+  f.exec.roleProbeMode = 'ACTIVE'; // C3: a start is UNCERTAIN and takes no trigger before its first probe; this node has probed already
   await f.drop(triggerBytes()); await f.exec.tick(); assert.equal(calls, 0);
   const hk = headKey(subject()); assert.equal(await f.ledger.headBurned(hk), true);
   await f.ledger.halt('PUBLICATION_UNCERTAIN', {}); await f.exec.tick(); assert.equal(calls, 0);

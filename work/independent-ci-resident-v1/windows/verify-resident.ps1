@@ -11,6 +11,18 @@
   hash, the broker's failure actions, the resident's outbound firewall block and the firewall being on),
   the runner service byte-for-byte unchanged (SDDL, binary, account), the companion task
   (principal, LeastPrivilege, trigger), the receipt chain and the HALT / PAUSE latches.
+  Node identity (resident active/standby design v0.4 section 9 C7, DESIGN.md section 30): the receipt's node identity (node name,
+  App key id and fingerprint, token fingerprint, connection id, formal qualification refs) is re-derived from the installed record
+  (record\installation.json and record\acceptance.json, both hash-pinned by the receipt, which must agree with each other) and
+  compared; the receipt assumes no role. The App key and the ci-admission token files are checked for existence and security
+  (owner an administrator principal, readable by SYSTEM, Administrators and the pinned controller only, no write for the
+  controller); so are the folders that hold them (CluedControl\trusted, CluedIndependentCI\secrets) and every ancestor up to the drive
+  root, by the runtime's own rule (runtime/verify-install-acl.ps1): administrator owners, no other reader of the secret folders, no
+  non-administrator write or replace right on the way. Their content is never read here: the fingerprints were checked at install,
+  and the runtime checks them on every start.
+  First HALT of 2026-10-29 (DESIGN.md section 33): the companion's relay and bundle scripts (config\companion.json) lie under the installed
+  CI Source, source\<SHA-256 of record\source-manifest.json>\, and exist there; and the CI root C:\ProgramData\CluedIndependentCI carries the
+  resident service's one READ_CONTROL entry (0x120080, this folder only), read from the live ACL.
   Prints one JSON verdict; exit 0 only if every check passes. Elevated for the complete check
   (service DACLs need READ_CONTROL); a non-elevated run reports those as unreadable and exits 2.
 #>
@@ -48,6 +60,164 @@ function ConvertTo-NodeProfileCanonical($n) {
   $rows=@(foreach($key in $keys) { ($key | ConvertTo-Json -Compress)+':'+($n.$key | ConvertTo-Json -Compress) })
   return '{'+($rows -join ',')+'}'
 }
+
+# ---- Node identity (resident active/standby design v0.4 sections 7.1, 7.2, 7.4 and 9 C7; DESIGN.md section 30) ----
+# Who this node is to the services it talks to, as the install pins it in its receipt: the node name, this node's GitHub App key
+# (appKeyId and the public-key fingerprint), its ci-admission connection (connection id and token fingerprint), the formal
+# qualification refs of the install record and the Owner decision that accepted it. Public ids and fingerprints only: never a key
+# or a token. ciPrincipalRoleRef is the Owner decision that this connection MAY hold ci-admission (design 7.2); whether it holds
+# it now is only ever the role probe's answer, so no role is assumed here. The identity is derived from the two install-record
+# files the package carries, read from the same hashed bytes; the two files state the connection, the token pin, the key
+# fingerprint and the principal qualification twice and must agree. src/node-identity.mjs is the JavaScript twin;
+# test/fixtures/node-identity-cases.json holds the three to the same answers and refusal codes.
+$NodeIdentityRefs = @('sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef', 'ownerPackageAcceptanceRef', 'installationReceiptRef')
+$NodeIdentityKeys = @('contract', 'nodeName', 'appKeyId', 'appPublicKeySha256Base64', 'ciTokenPinSha256', 'ciPrincipalBindingId', 'ciPrincipalRoleRef', 'sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef', 'ownerPackageAcceptanceRef', 'installationReceiptRef', 'ownerDecisionRef', 'ownerReceiptRef')
+# .NET regex notes as for the node profile: \z anchors, [0-9a-f] digits. A property that is absent reads as $null (StrictMode).
+function Get-NodeIdentity($installation, $accepted, [string]$acceptanceSha256) {
+  $get = { param($o, [string]$k) if (($o -is [pscustomobject]) -and (@($o.PSObject.Properties.Name) -ccontains $k)) { $o.$k } else { $null } }
+  $is = { param($v, [string]$re) ($v -is [string]) -and ($v -cmatch $re) }
+  $uuid = '^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\z'; $hex = '^[a-f0-9]{64}\z'; $key = '^[A-Za-z0-9+/]{43}=\z'
+  $node = & $get $accepted 'node'; $keyId = & $get $installation 'appKeyId'
+  $fields = ($installation -is [pscustomobject]) -and ($accepted -is [pscustomobject]) -and ($acceptanceSha256 -cmatch $hex) -and ($node -is [pscustomobject]) -and
+    (& $is (& $get $node 'nodeName') '^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\z') -and (($keyId -is [int]) -or ($keyId -is [long])) -and ([long]$keyId -ge 1) -and ([long]$keyId -le 9007199254740991) -and
+    (& $is (& $get $installation 'appPublicKeySha256Base64') $key) -and (& $is (& $get $installation 'ciTokenPinSha256') $hex) -and
+    (& $is (& $get $installation 'ciPrincipalBindingId') $uuid) -and (& $is (& $get $installation 'ciPrincipalRoleRef') $uuid) -and (& $is (& $get $installation 'acceptanceSha256') $hex) -and
+    (& $is (& $get $accepted 'ownerDecisionRef') $uuid) -and (& $is (& $get $accepted 'ownerReceiptRef') $uuid) -and
+    (@($NodeIdentityRefs | Where-Object { -not ((& $is (& $get $accepted $_) $uuid) -and ((& $get $accepted $_) -cnotmatch '^0{8}-')) }).Count -eq 0)
+  if (-not $fields) { throw 'NODE_IDENTITY_FIELDS_REQUIRED' }
+  if ((& $get $installation 'acceptanceSha256') -cne $acceptanceSha256) { throw 'NODE_IDENTITY_ACCEPTANCE_PIN_MISMATCH' }
+  foreach ($k in @('ciPrincipalBindingId', 'ciTokenPinSha256', 'appPublicKeySha256Base64', 'ciPrincipalQualificationRef')) {
+    if ((& $get $accepted $k) -cne (& $get $installation $k)) { throw 'NODE_IDENTITY_RECORDS_DISAGREE' }
+  }
+  $id = [ordered]@{ contract = 'clued.independent-ci.node-identity/1'; nodeName = $node.nodeName; appKeyId = [long]$keyId
+    appPublicKeySha256Base64 = $installation.appPublicKeySha256Base64; ciTokenPinSha256 = $installation.ciTokenPinSha256
+    ciPrincipalBindingId = $installation.ciPrincipalBindingId; ciPrincipalRoleRef = $installation.ciPrincipalRoleRef }
+  foreach ($k in $NodeIdentityRefs) { $id[$k] = $accepted.$k }
+  $id.ownerDecisionRef = $accepted.ownerDecisionRef; $id.ownerReceiptRef = $accepted.ownerReceiptRef
+  $id
+}
+# Sorted keys, compact JSON: the bytes the JavaScript twin hashes (src/node-identity.mjs, canonicalJson).
+function ConvertTo-NodeIdentityCanonical($id) {
+  [string[]]$keys = $NodeIdentityKeys.Clone(); [Array]::Sort($keys, [StringComparer]::Ordinal)
+  $rows = @(foreach ($key in $keys) { ($key | ConvertTo-Json -Compress) + ':' + ($id.$key | ConvertTo-Json -Compress) })
+  return '{' + ($rows -join ',') + '}'
+}
+
+# ---- Verify-only helpers for the node identity and the two secret files (DESIGN.md section 30) ----
+function Sha256Text([string]$t) { $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash([Text.Encoding]::UTF8.GetBytes($t)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() } }
+function Get-Field($o, [string]$k) { if (($o -is [pscustomobject]) -and (@($o.PSObject.Properties.Name) -ccontains $k)) { $o.$k } else { $null } }
+# Where the runtime reads the two controller secrets (the same literals as install-resident.ps1).
+$SecretTargets = [ordered]@{ appKey = 'C:\ProgramData\CluedControl\trusted\controller-checks-app.pem'; ciToken = 'C:\ProgramData\CluedIndependentCI\secrets\ci-admission.token' }
+$SecretAdmins = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+# The runtime's rule for a private secret file (runtime/verify-install-acl.ps1, -ReadFile), plus: the pinned controller can read it.
+# The owner is an administrator principal; only an administrator principal holds a write, delete or permission right; nobody but an
+# administrator principal and the controller can read data; the controller holds no write right. $acl: the file's security object.
+function Test-SecretFileSecurity($acl, [string]$controllerSid) {
+  $write = 0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000
+  if ($SecretAdmins -cnotcontains $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value) { return $false }
+  $controllerReads = $false
+  foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+    if ([string]$rule.AccessControlType -cne 'Allow' -or (([int]$rule.PropagationFlags -band 2) -ne 0)) { continue }
+    $sid = $rule.IdentityReference.Value; $rights = [int]$rule.FileSystemRights; $admin = $SecretAdmins -ccontains $sid
+    if ((($rights -band $write) -ne 0) -and -not $admin) { return $false }
+    if ((($rights -band 0x1) -ne 0) -and -not $admin -and $sid -cne $controllerSid) { return $false }
+    if ($sid -ceq $controllerSid -and (($rights -band 0x1) -ne 0)) { $controllerReads = $true }
+  }
+  return $controllerReads
+}
+# The runtime's rule (runtime/verify-install-acl.ps1, -ReadFile) for the folders that hold a secret and every ancestor up to the drive root.
+# $items run from the drive root down: @{ acl = <security object>; protected = <at or under the protected root, the folder above the secret
+# folder>; secret = <at or under the secret folder> }. Every owner is an administrator principal; no non-administrator holds a right to
+# replace (delete, change permissions, take ownership, delete children) and, at or under the protected root, none to write; at or under the
+# secret folder nobody but an administrator principal and the pinned controller can read. Returns 'ok' or the first reason.
+function Test-SecretAclChain($items, [string]$controllerSid) {
+  $replace = 0x40 -bor 0x10000 -bor 0x40000 -bor 0x80000
+  $write = 0x2 -bor 0x4 -bor 0x10 -bor 0x100 -bor $replace
+  foreach ($item in $items) {
+    if ($SecretAdmins -cnotcontains $item.acl.GetOwner([Security.Principal.SecurityIdentifier]).Value) { return 'owner-refused' }
+    $mask = if ($item.protected) { $write } else { $replace }
+    foreach ($rule in $item.acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+      if ([string]$rule.AccessControlType -cne 'Allow' -or (([int]$rule.PropagationFlags -band 2) -ne 0)) { continue }
+      $sid = $rule.IdentityReference.Value; $rights = [int]$rule.FileSystemRights; $admin = $SecretAdmins -ccontains $sid
+      if ((($rights -band $mask) -ne 0) -and -not $admin) { return 'writable-ancestor' }
+      if ($item.secret -and (($rights -band 0x1) -ne 0) -and -not $admin -and $sid -cne $controllerSid) { return 'secret-reader' }
+    }
+  }
+  return 'ok'
+}
+# The live folders above a secret file: the secret folder is its parent, the protected root the folder above that (as the runtime computes them).
+function Get-SecretPathState([string]$target, [string]$controllerSid) {
+  try {
+    $secretRoot = Split-Path -Parent $target; $protectedRoot = Split-Path -Parent $secretRoot
+    $items = New-Object System.Collections.ArrayList
+    for ($c = $secretRoot; $c; $c = [IO.Path]::GetDirectoryName($c)) {
+      if (-not (Test-Path -LiteralPath $c -PathType Container)) { return 'absent' }
+      if (((Get-Item -LiteralPath $c -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return 'link-refused' }
+      $inProtected = ($c -ieq $protectedRoot) -or $c.StartsWith($protectedRoot + '\', [StringComparison]::OrdinalIgnoreCase)
+      $inSecret = ($c -ieq $secretRoot) -or $c.StartsWith($secretRoot + '\', [StringComparison]::OrdinalIgnoreCase)
+      [void]$items.Insert(0, @{ acl = (Get-Acl -LiteralPath $c); protected = $inProtected; secret = $inSecret })
+    }
+    return (Test-SecretAclChain $items $controllerSid)
+  } catch { return 'unreadable' }
+}
+function Get-SecretFileState([string]$target, [string]$controllerSid) {
+  try {
+    if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { return 'absent' }
+    if (((Get-Item -LiteralPath $target -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return 'link-refused' }
+    if (Test-SecretFileSecurity (Get-Acl -LiteralPath $target) $controllerSid) { return 'ok' } else { return 'acl-refused' }
+  } catch { return 'unreadable' }
+}
+# ---- DESIGN.md section 33 (first HALT of 2026-10-29): two things the install must leave right and nothing else checked ----
+# Virtual service account SID: S-1-5-80 + SHA-1 of the upper-case service name (UTF-16LE); the same function as install-resident.ps1.
+function Get-ServiceSid([string]$name) {
+  $h = [Security.Cryptography.SHA1]::Create().ComputeHash([Text.Encoding]::Unicode.GetBytes($name.ToUpperInvariant()))
+  'S-1-5-80-' + ((0..4 | ForEach-Object { [BitConverter]::ToUInt32($h, $_ * 4) }) -join '-')
+}
+# The CI root C:\ProgramData\CluedIndependentCI carries exactly one ACE for the resident service: allow, 0x120080 (READ_CONTROL,
+# SYNCHRONIZE, READ_ATTRIBUTES), this folder only. The archive tool runs as the service and opens every ancestor of the node profile
+# with that access (NodeProfileV2.LoadProtectedProfile); without it every batch close is refused. More than that is also refused.
+function Test-ParentAclRule([string]$sddl, [string]$res) {
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor($sddl)
+  $mine = @(foreach ($a in $raw.DiscretionaryAcl) { if ($a.SecurityIdentifier.Value -ceq $res) { $a } })
+  $mine.Count -eq 1 -and $mine[0] -is [Security.AccessControl.CommonAce] -and $mine[0].AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed -and $mine[0].AccessMask -eq 0x120080 -and [int]$mine[0].AceFlags -eq 0
+}
+# The companion's two Source scripts (config\companion.json relayScript and bundleScript) lie under the installed CI Source,
+# <root>\source\<SHA-256 of record\source-manifest.json>\, as plain names, and the files are there. A config written for another
+# Source runs nothing (stage 0 reported BUNDLE_UNAVAILABLE). Never throws: ok/detail; the detail is a fixed code and a key name.
+function Test-CompanionSourceScripts($companion, [string]$root, [string]$ciSha) {
+  $no = { param([string]$why) [pscustomobject]@{ ok = $false; detail = $why } }
+  if ($ciSha -cnotmatch '^[0-9a-f]{64}\z') { return & $no 'COMPANION_SOURCE_HASH_INVALID' }
+  $base = $root.TrimEnd('\') + '\source\' + $ciSha + '\'
+  foreach ($key in @('relayScript', 'bundleScript')) {
+    $p = Get-Field $companion $key
+    if ($p -isnot [string] -or -not $p.StartsWith($base, [StringComparison]::OrdinalIgnoreCase)) { return & $no ('COMPANION_SCRIPT_NOT_IN_SOURCE:' + $key) }
+    $segments = @($p.Substring($base.Length).Split('\'))
+    if (@($segments | Where-Object { $_ -cnotmatch '^[A-Za-z0-9_.@-]+\z' -or $_ -ceq '.' -or $_ -ceq '..' }).Count -ne 0) { return & $no ('COMPANION_SCRIPT_NOT_IN_SOURCE:' + $key) }
+    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return & $no ('COMPANION_SCRIPT_MISSING:' + $key) }
+  }
+  [pscustomobject]@{ ok = $true; detail = $null }
+}
+# The receipt's node identity against the identity re-derived from the installed record. Never throws: ok/detail/identity.
+function Test-NodeIdentityReceipt($receipt, $installation, $accepted, [string]$acceptanceSha256) {
+  $no = { param([string]$why) [pscustomobject]@{ ok = $false; detail = $why; identity = $null } }
+  try { $have = Get-NodeIdentity $installation $accepted $acceptanceSha256 } catch { return & $no $_.Exception.Message }
+  $canonical = ConvertTo-NodeIdentityCanonical $have
+  if ((Get-Field $receipt 'roleAssumption') -cne 'NONE') { return & $no 'ROLE_ASSUMED_AT_INSTALL' }
+  $want = try { ConvertTo-NodeIdentityCanonical (Get-Field $receipt 'nodeIdentity') } catch { $null }
+  if ($null -eq $want -or $want -cne $canonical -or (Get-Field $receipt 'nodeIdentitySha256') -cne (Sha256Text $canonical)) { return & $no 'NODE_IDENTITY_CHANGED' }
+  [pscustomobject]@{ ok = $true; detail = $have.nodeName; identity = $have }
+}
+# What the receipt says about the two files: placed with the record's pin as fingerprint, or nothing placed by this install.
+function Test-SecretsReceipt($receipt, $identity) {
+  if ($null -eq $identity) { return $false }
+  foreach ($spec in @(@('appKey', 'appPublicKeySha256Base64'), @('ciToken', 'ciTokenPinSha256'))) {
+    $r = Get-Field (Get-Field $receipt 'secrets') $spec[0]
+    if ($null -eq $r -or (Get-Field $r 'target') -cne $SecretTargets[$spec[0]]) { return $false }
+    $placed = Get-Field $r 'placed'; $fingerprint = Get-Field $r 'fingerprint'
+    if (-not ((($placed -eq $false) -and ($null -eq $fingerprint)) -or (($placed -eq $true) -and ($fingerprint -ceq $identity.($spec[1]))))) { return $false }
+  }
+  return $true
+}
 $checks = [ordered]@{}
 function Sha256File([string]$p) { $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash([IO.File]::ReadAllBytes($p)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() } }
 function Read-ReviewedPublicJson([string]$file, [string]$expected, [ValidateRange(1,4194304)][int]$maximum=1048576) {
@@ -71,9 +241,10 @@ function Record([string]$name, $ok, $detail = $null) { $script:checks[$name] = [
 $receiptFile = Join-Path $Root 'install\install-receipt.json'
 $receipt = Read-ReviewedPublicJson $receiptFile $ExpectedInstallReceiptSha256
 Record 'install-receipt' $true
-if ($receipt.contract -cne 'clued.independent-ci.resident-install-receipt/4' -or $receipt.nodeProfileSha256 -cnotmatch '^[0-9a-f]{64}\z' -or $receipt.acceptanceSha256 -cnotmatch '^[0-9a-f]{64}\z') { throw 'INSTALLED_NODE_PROFILE_REFUSED' }
+if ($receipt.contract -cne 'clued.independent-ci.resident-install-receipt/5' -or $receipt.nodeProfileSha256 -cnotmatch '^[0-9a-f]{64}\z' -or $receipt.acceptanceSha256 -cnotmatch '^[0-9a-f]{64}\z') { throw 'INSTALLED_NODE_PROFILE_REFUSED' }
 $acceptancePath=Join-Path $Root 'record\acceptance.json'
-$Node=(Read-ReviewedPublicJson $acceptancePath $receipt.acceptanceSha256 4MB).node
+$Accepted=Read-ReviewedPublicJson $acceptancePath $receipt.acceptanceSha256 4MB
+$Node=$Accepted.node
 $NodeCanonical=ConvertTo-NodeProfileCanonical $Node
 $nh=[Security.Cryptography.SHA256]::Create();try{$NodeProfileSha256=([BitConverter]::ToString($nh.ComputeHash([Text.Encoding]::UTF8.GetBytes($NodeCanonical)))).Replace('-','').ToLowerInvariant()}finally{$nh.Dispose()}
 if($NodeProfileSha256 -cne $receipt.nodeProfileSha256 -or (ConvertTo-NodeProfileCanonical $receipt.node) -cne $NodeCanonical){throw 'INSTALLED_NODE_PROFILE_CHANGED'}
@@ -81,6 +252,26 @@ $Runner=[string]$Node.runnerService
 foreach($pair in @(@('config\policy.json',$receipt.policySha256),@('config\companion.json',$receipt.companionConfigSha256),@('config\broker.json',$receipt.brokerConfigSha256))){
   $file=Join-Path $Root $pair[0];$cfg=Read-ReviewedPublicJson $file $pair[1];if($pair[0] -ceq 'config\companion.json'){$cfg=$cfg.companion}
   if($cfg.nodeProfileSha256 -cne $NodeProfileSha256 -or (ConvertTo-NodeProfileCanonical $cfg.node) -cne $NodeCanonical){throw 'INSTALLED_NODE_CONFIG_CHANGED'}
+}
+
+# DESIGN.md section 33: the companion's Source scripts are in the installed Source and exist; the CI root grants the resident service
+# its READ_CONTROL entry (live ACL, not the receipt: an install by hand or an earlier install counts the same).
+$ciSourceSha = Sha256File (Join-Path $Root 'record\source-manifest.json')
+$companionScripts = try { $companionSection = (Read-ReviewedPublicJson (Join-Path $Root 'config\companion.json') $receipt.companionConfigSha256).companion; Test-CompanionSourceScripts $companionSection $Root $ciSourceSha } catch { [pscustomobject]@{ ok = $false; detail = 'COMPANION_CONFIG_UNREADABLE' } }
+Record 'companion-source-scripts' $companionScripts.ok $companionScripts.detail
+$ciRootSddl = try { (Get-Acl -LiteralPath 'C:\ProgramData\CluedIndependentCI').Sddl } catch { $null }
+Record 'ci-root-resident-read-control' $(if ([string]::IsNullOrEmpty($ciRootSddl)) { 'unreadable' } else { try { Test-ParentAclRule $ciRootSddl (Get-ServiceSid 'CluedCIResident') } catch { $false } })
+
+# Node identity (C7): re-derived from the installed record and compared with the receipt; the receipt assumes no role.
+$identityCheck = try { Test-NodeIdentityReceipt $receipt (Read-ReviewedPublicJson (Join-Path $Root 'record\installation.json') ([string](Get-Field $receipt 'installationSha256')) 4MB) $Accepted $receipt.acceptanceSha256 } catch { [pscustomobject]@{ ok = $false; detail = $_.Exception.Message; identity = $null } }
+Record 'node-identity' $identityCheck.ok $identityCheck.detail
+Record 'node-secrets-receipt' (Test-SecretsReceipt $receipt $identityCheck.identity)
+foreach ($spec in @(@('app-key-file', 'appKey', 'app-key-directories'), @('ci-admission-token-file', 'ciToken', 'ci-admission-token-directories'))) {
+  $state = Get-SecretFileState $SecretTargets[$spec[1]] $Node.controllerSid
+  Record $spec[0] $(if ($state -ceq 'ok') { $true } elseif ($state -ceq 'unreadable') { 'unreadable' } else { $false }) $state
+  # The folders holding the file and every ancestor: what the runtime's own check requires on the way to the file (MINOR-2 of the C7 review).
+  $pathState = Get-SecretPathState $SecretTargets[$spec[1]] $Node.controllerSid
+  Record $spec[2] $(if ($pathState -ceq 'ok') { $true } elseif ($pathState -ceq 'unreadable') { 'unreadable' } else { $false }) $pathState
 }
 
 foreach ($s in @($receipt.sourceManifestSha256, $receipt.residentManifestSha256)) { if ($s -cnotmatch '^[0-9a-f]{64}$') { throw 'INSTALL_RECEIPT_SHAPE_REFUSED' } }

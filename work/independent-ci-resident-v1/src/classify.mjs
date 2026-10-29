@@ -9,8 +9,10 @@ import { readFileSync } from 'node:fs';
 import { CODE, HEX64, check } from './canonical.mjs';
 
 // Stage 1 only: Native said no. Nothing was published, nothing executed.
+// NODE_ROLE_NOT_HELD (primary/standby C3, DESIGN §29): the last one, the answer "this node holds no ci-admission role".
 export const NOT_ADMITTED_CODES = Object.freeze(['NATIVE_NOT_ADMITTED', 'OWNER_REVIEW_REQUIRED', 'PROTECTED_CHANGE_NOT_UP_TO_DATE', 'PATHS_OUTSIDE_WRITE_SET',
-  'CLAIM_NOT_CURRENT', 'TASK_CI_HEAD_CAP_REACHED', 'CLAIM_HEAD_CAP_REACHED', 'CI_BUDGET_EXHAUSTED', 'WORKFLOW_CHANGE_NOT_AUTHORIZED', 'PR_NOT_OPEN_OR_CHANGED']);
+  'CLAIM_NOT_CURRENT', 'TASK_CI_HEAD_CAP_REACHED', 'CLAIM_HEAD_CAP_REACHED', 'CI_BUDGET_EXHAUSTED', 'WORKFLOW_CHANGE_NOT_AUTHORIZED', 'PR_NOT_OPEN_OR_CHANGED',
+  'NODE_ROLE_NOT_HELD']);
 // Clean transient: an outside, passing condition. The only codes the one automatic attempt 2 may follow
 // (attempts.mjs; Owner decision 1b5d3687).
 // NATIVE_ADMISSION_UNAVAILABLE also covers explicit protected-observation exhaustion, but only after the Source
@@ -79,8 +81,11 @@ export function relayPlanFromRows(rows, candidates) {
 // one-shot states kept for an unchanged reading of older receipts).
 // REFS_GATE_UNCONFIRMED: the refs gate before the first local scanner got no explicit answer; nothing ran; clean
 // but final (never the transient REMOTE_REFS_CHANGED_SINCE_BUNDLE, PR-A review MINOR 5).
+// LINUX_MEMORY_NOT_READY (DESIGN §32, Task 25851665): the pre-stage memory gate refused a scanner stage before it was invoked
+// (the VM showed too few free hv_sock-sized blocks for the whole bounded wait); nothing of the stage ran.
+export const LINUX_MEMORY_NOT_READY = 'LINUX_MEMORY_NOT_READY';
 const RESIDENT_CLEAN = Object.freeze(['FULL_NEXT_STAGE_AUTHORITY_WINDOW_REQUIRED', 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED', 'FIXED_PUBLIC_CHILD_REFUSED',
-  'ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED', 'FORMAL_BRIDGE_STAGE_DEADLINE', 'REFS_GATE_UNCONFIRMED']);
+  'ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED', 'FORMAL_BRIDGE_STAGE_DEADLINE', 'REFS_GATE_UNCONFIRMED', LINUX_MEMORY_NOT_READY]);
 
 const NOT_ADMITTED = new Set(NOT_ADMITTED_CODES);
 const TRANSIENT = new Set(TRANSIENT_CODES);
@@ -120,15 +125,57 @@ export const OWNER_ABORTED = 'OWNER_ABORTED';
 // receipt says STOP_SENT: the stop control reached the running helper, whose only answer to it is STOP_REQUESTED
 // (independent review, M2). A scanner-issuer publishes no check, and both hosts must still prove quiescence.
 // Always together with the Windows half of the cleanup proof (helper tree drained, original binary restored).
+// DESIGN §26: the bridge stop's own code joins them under the same STOP_SENT rule. The engine keeps a stage's own code once an
+// abort asked it to stop, but an abort accepted in the instant a bridge stop ended the stage must not turn into a HALT: the
+// stage ended through the same reviewed stop path, and both hosts must still prove quiescence.
 export const OWNER_ABORT_STAGE_ENDINGS = Object.freeze([...TRANSIENT_CODES, ...CLEAN_FINAL_CODES, ...RESIDENT_CLEAN,
-  'STAGE_OUTCOME_MISSING', 'OWNER_ABORT_REQUESTED', 'COMPANION_PUMP_CANCELLED']);
+  'STAGE_OUTCOME_MISSING', 'OWNER_ABORT_REQUESTED', 'COMPANION_PUMP_CANCELLED', 'BRIDGE_STAGE_STOPPED_PUMP_LOST']);
 const ABORT_ENDINGS = new Set(OWNER_ABORT_STAGE_ENDINGS);
 export function abortStageEndingClean(result, { stopSent = false } = {}) {
   if (!result || result.ok === true) return !!result;
-  if (result.code === 'STAGE_OUTCOME_MISSING' && stopSent !== true) return false;
+  if (['STAGE_OUTCOME_MISSING', 'BRIDGE_STAGE_STOPPED_PUMP_LOST'].includes(result.code) && stopSent !== true) return false;
   return typeof result.code === 'string' && ABORT_ENDINGS.has(result.code)
     && result.proof?.windowsTreeZero === true && result.proof?.serviceOriginalStopped === true;
 }
+
+// ---- the scanner abandonment (DESIGN §27; design r3 part three, Task d2974298) ----
+// Resident-side lists, never mirrored from the Source: a stage-2/4/6 ending that would HALT is closed FAILED_CLEAN
+// BRIDGE_ABANDONED_UNPUBLISHED when the Owner abort's quiescence proof holds. That stage's only Windows process is the scanner
+// issuer, which has no way to write a check; the Linux worker holds no GitHub credential; a signed result becomes a check only
+// through stage 3, 5 or 7 of the same batch, which the executor never runs after fail(). So "nothing was published" rests on
+// those structural facts and on Windows facts the companion cannot forge (the broker's STOP_SENT, the helper's drained tree,
+// the service's own SCM readback); the Linux half of the proof only decides whether the next batch may start.
+export const BRIDGE_ABANDONED_UNPUBLISHED = 'BRIDGE_ABANDONED_UNPUBLISHED';
+export const SCANNER_ABANDON_STAGES = Object.freeze([2, 4, 6]);
+// The endings it may close: the issuer's own UNCERTAIN; a stopped stage's missing outcome or the bridge stop's own code (both
+// only with the broker's STOP_SENT, the abort's M2 rule); and the pump codes of a stage that succeeded while its pump was not
+// confirmed (engine-windows.mjs#invoke).
+export const SCANNER_ABANDON_ENDINGS = Object.freeze(['PUBLICATION_UNCERTAIN', 'STAGE_OUTCOME_MISSING', 'BRIDGE_STAGE_STOPPED_PUMP_LOST',
+  'RELAY_REFUSED_NO_RETRY', 'RELAY_PARTIAL_RECORD_PRESERVED', 'COMPANION_PUMP_UNCONFIRMED', 'FORMAL_WORKER_TERMINAL_UNCONFIRMED', 'LINUX_WORKER_ENDED_WITHOUT_RECORD']);
+const ABANDON_NEEDS_STOP_SENT = Object.freeze(['STAGE_OUTCOME_MISSING', 'BRIDGE_STAGE_STOPPED_PUMP_LOST']);
+// Pump codes after which no Linux quiescence proof can be had (the companion did not handle the request, or is gone): checked
+// first, whatever the stage code; these stages HALT at once.
+export const PUMP_CODES_UNPROVABLE = Object.freeze(['COMPANION_HEARTBEAT_LOST', 'COMPANION_REQUEST_EXPIRED', 'COMPANION_HANDLER_UNCONFIRMED']);
+// The pure part of the eligibility (DESIGN §27.2, design §3.3 items 1-5): stage, pump code first, ending, the Windows half of
+// the stage's own proof, and a quiet pump. The executor adds the rest (no HALT, no drift, not the Owner abort's path).
+// bridge: the engine's bridge facts { pumpCode, stopRequestId, stopCode, stageCode, pumpQuiet } (engine-windows.mjs#invoke).
+export function scannerAbandonEligible({ stage, phase = 'stage', code, bridge = null, proof = null } = {}) {
+  const no = reason => ({ eligible: false, reason });
+  if (!SCANNER_ABANDON_STAGES.includes(stage) || phase !== 'stage') return no('ABANDON_STAGE_NOT_SCANNER_ISSUER');
+  if (!bridge || typeof bridge !== 'object') return no('ABANDON_BRIDGE_FACTS_MISSING');
+  if (bridge.pumpCode !== null && (typeof bridge.pumpCode !== 'string' || PUMP_CODES_UNPROVABLE.includes(bridge.pumpCode))) return no('ABANDON_PUMP_UNPROVABLE');
+  if (!SCANNER_ABANDON_ENDINGS.includes(code)) return no('ABANDON_ENDING_NOT_LISTED');
+  if (ABANDON_NEEDS_STOP_SENT.includes(code) && bridge.stopCode !== 'STOP_SENT') return no('ABANDON_STOP_NOT_SENT');
+  if (proof?.windowsTreeZero !== true || proof?.serviceOriginalStopped !== true) return no('ABANDON_WINDOWS_PROOF_INCOMPLETE');
+  if (bridge.pumpQuiet !== true) return no('ABANDON_PUMP_NOT_QUIET');
+  return { eligible: true, reason: null };
+}
+// Owner decision eaa7d5e4 (design r3 §3.6 option O-2): the one automatic attempt 2 also follows these resident codes, at these
+// stages only (attempts.mjs). Here, not in attempts.mjs, because the failure table's own check below needs it while this module
+// loads (attempts.mjs imports this module).
+// DESIGN §32: a stage-2 refusal of the memory gate (nothing of stage 2 ran, nothing was published) takes the same one attempt 2.
+export const ATTEMPT2_RESIDENT_CODES = Object.freeze({ [BRIDGE_ABANDONED_UNPUBLISHED]: Object.freeze([2]), [LINUX_MEMORY_NOT_READY]: Object.freeze([2]) });
+const residentAttempt2 = (code, stages) => Object.hasOwn(ATTEMPT2_RESIDENT_CODES, code) && Array.isArray(stages) && stages.every(s => ATTEMPT2_RESIDENT_CODES[code].includes(s));
 
 // The archive reason segment is derived from the stable code, never taken from untrusted text.
 export function archiveReason(code) {
@@ -141,7 +188,9 @@ export function archiveReason(code) {
 // Loaded once from the installed resident layer (its bytes are pinned by the resident manifest like every other
 // file) and validated here; a table that does not validate stops the module from loading (fail closed).
 export const FAILURE_TABLE_CONTRACT = 'clued.independent-ci.resident-failure-table/1';
-export const FAILURE_CLASSES_V1 = Object.freeze(['not-admitted', 'waiting', 'deterministic-pr', 'unmapped-stage-1', 'transient', 'environment', 'clean-final', 'queue', 'abort', 'unknown']);
+// 'node-role' (primary/standby C3, DESIGN §29): this node holds no ci-admission role. It says nothing about the PR: the release
+// is counted neither as an evaluation nor towards the head's release cap (ledger.mjs#usage), and the executor goes to STANDBY.
+export const FAILURE_CLASSES_V1 = Object.freeze(['not-admitted', 'node-role', 'waiting', 'deterministic-pr', 'unmapped-stage-1', 'transient', 'environment', 'clean-final', 'queue', 'abort', 'unknown']);
 export const DISPOSITIONS = Object.freeze(['release', 'release-if-safe', 'burn', 'halt']);
 export const RETRY_RULES = Object.freeze(['new-trigger', 'attempt2', 'new-commit', 'owner-rearm']);
 const ROW_KEYS = ['code', 'stages', 'phase', 'reasons', 'reasonCodesAny', 'reasonCodesWithin', 'class', 'disposition', 'retry', 'breaker', 'note'];
@@ -161,8 +210,9 @@ export function validateFailureTable(t) {
       && ((r.disposition === 'halt') === (r.class === 'unknown')) && ((r.disposition === 'halt') === (r.retry === 'owner-rearm'))
       // releases exist only before 10-started: stage 1 (or the bundle, stage 0)
       && (!r.disposition.startsWith('release') || (Array.isArray(r.stages) && r.stages.every(s => s <= 1)))
-      // the one automatic attempt 2 only follows a transient code, and every transient code may select it
-      && ((r.retry === 'attempt2') === TRANSIENT.has(r.code)), 'FAILURE_TABLE_INVALID', r?.code);
+      // the one automatic attempt 2 only follows a transient code, and every transient code may select it; besides, a resident
+      // code of ATTEMPT2_RESIDENT_CODES may, on a row of exactly its listed stages (Owner decision eaa7d5e4)
+      && (TRANSIENT.has(r.code) ? r.retry === 'attempt2' : (r.retry !== 'attempt2' || residentAttempt2(r.code, r.stages))), 'FAILURE_TABLE_INVALID', r?.code);
   }
   return t;
 }
@@ -214,8 +264,9 @@ export function decideFailure({ code, stage, phase = 'stage', outcome = null, br
   if (!row || row.disposition === 'halt') return { klass: 'UNKNOWN', basis: row ? 'failure-table-halt' : 'not-an-allow-listed-clean-failure', row, release: null };
   const windows = proof?.windowsTreeZero === true && proof?.serviceOriginalStopped === true;
   const deterministic = diagnosticCodes(outcome?.diagnostic).some(c => DETERMINISTIC_REASON_CODES.includes(c));
-  // What the deterministic code makes of a release-if-safe row is what the ledger and the status record.
-  if (deterministic && row.disposition === 'release-if-safe') row = Object.freeze({ ...row, class: 'deterministic-pr', disposition: 'burn', retry: 'new-commit', breaker: 'neutral' });
+  // What the deterministic code makes of a release-if-safe row is what the ledger and the status record. Except a node that
+  // holds no role (DESIGN §29): it decided nothing about the PR, so no reason beside it can burn the head.
+  if (deterministic && row.disposition === 'release-if-safe' && row.class !== 'node-role') row = Object.freeze({ ...row, class: 'deterministic-pr', disposition: 'burn', retry: 'new-commit', breaker: 'neutral' });
   if (started !== true && row.disposition === 'release-if-safe' && windows) {
     if (outcome?.safeToRerun === true) return { klass: 'NOT_ADMITTED', basis: 'stage-1-safe-to-rerun', row, release: 'NOT_ADMITTED' };
     if (brokerNoLaunch === true) return { klass: 'NOT_ADMITTED', basis: 'stage-1-broker-not-launched', row, release: 'BROKER_NOT_LAUNCHED' };

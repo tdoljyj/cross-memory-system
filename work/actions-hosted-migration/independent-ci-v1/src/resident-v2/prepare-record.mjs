@@ -15,6 +15,10 @@
 // (= node.hostname). It is the host identity the Source used to carry as TURING constants. The acceptance contract
 // stays /2: a reader that does not use `node` yet (the generic helper's FormalPublicBoundaryV2.cs) is unaffected,
 // and every JS reader (record.mjs) refuses a record without a valid one.
+// ciPrincipalRoleRef (primary/standby C7, design v0.4 section 7.2, resident DESIGN.md section 30) changes meaning, not shape: it is the
+// Owner decision that this ci-admission connection MAY hold the role (a qualification), no longer the ground for "it holds the role
+// now". A node is installed as STANDBY on a connection the service has not marked, and every hand-over changes who holds the role;
+// whether this connection holds it now is only ever the role probe's answer. Validation is unchanged: a UUID.
 // Pure WORK: no host path is read or written except --source-root (a checkout) and the new --out.
 import fs from 'node:fs';
 import path from 'node:path';

@@ -16,15 +16,22 @@
 // failingSince } }. The companion reads null as one ACTIVE node (node-duty.mjs#nodeOf).
 // Contract /5 (quota phase 2 step 3c-1, DESIGN §22.3): `train`, stage 10's mode (policy train.enabled) and the newest
 // run's summary (train.mjs#trainSummary; null before the first one). The companion's ruleset backstop reads the mode.
+// Contract /6 (primary/standby C3, DESIGN §29): `node` is filled by the executor from the start (null only for an engine that
+// cannot probe the role) and gains `source`, the first 12 hex digits of the installed ciSourceManifestSha256:
+// { name, source, mode, probe }. The mode is the executor's own (ACTIVE | STANDBY | UNCERTAIN); the reader below accepts /5 and /6,
+// so a companion that is installed before its executor has restarted still reads the old file.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CODE, HEX40, HEX64, canonicalJson, check, exactKeys, parseBoundedJson } from './canonical.mjs';
 import { readBounded } from './store.mjs';
 import { HOLDER, INTAKE_HOLDS_MAX } from './intake-pause.mjs';
 import { parseTrainLast } from './train.mjs';
-import { NODE_NAME } from './node-duty.mjs';
+import { NODE_NAME, NODE_SOURCE } from './node-duty.mjs';
 
-export const STATUS_CONTRACT = 'clued.independent-ci.resident-status/5';
+export const STATUS_CONTRACT = 'clued.independent-ci.resident-status/6';
+// What the reader accepts: /5 and /6 have the same top-level keys (/6 only adds node.source), so the install window, in which the
+// new companion may read the old executor's last snapshot, shows what that executor wrote instead of "unreadable".
+export const STATUS_CONTRACTS_READABLE = Object.freeze(['clued.independent-ci.resident-status/5', STATUS_CONTRACT]);
 export const STATUS_FILE = 'status.json';
 export const STATUS_REFRESH_MS = 15_000;
 // The companion's reading: a status not rewritten for this long means the executor (or its service) stopped.
@@ -63,11 +70,18 @@ export class StatusBoard {
     return true;
   }
 
-  // Observation only: a held reply never changes mode. With no C3 mode installed it stays UNCERTAIN.
+  // The executor's node (C3): its name, the Source it runs, its mode. The last probe stays as it was.
+  setNode(name, source, mode) {
+    if (!NODE_NAME.test(name ?? '') || !NODE_MODES.includes(mode)) return false;
+    const node = this.content.node;
+    return this.update({ node: { name, source: key12(source), mode, probe: node?.probe ?? null } });
+  }
+
+  // Observation only: a probe reply never changes the mode here (the executor does, through setNode). With no mode set it is UNCERTAIN.
   setRoleProbe(name, probe) {
     if (!NODE_NAME.test(name ?? '')) return false;
     const node = this.content.node;
-    return this.update({ node: { name, mode: node?.mode ?? 'UNCERTAIN', probe } });
+    return this.update({ node: { name, source: node?.source ?? null, mode: node?.mode ?? 'UNCERTAIN', probe } });
   }
 
   // The executor's resting state after a tick; `since` moves only when the state or its reason changes.
@@ -147,7 +161,7 @@ const ms = v => (typeof v === 'string' && Number.isFinite(Date.parse(v))) ? Date
 export function parseStatus(bytes) {
   const v = parseBoundedJson(bytes, STATUS_MAX_BYTES, 'STATUS_REFUSED');
   exactKeys(v, TOP, 'STATUS_REFUSED');
-  check(v.contract === STATUS_CONTRACT && Number.isFinite(Date.parse(v.writtenAt)) && Number.isFinite(Date.parse(v.changedAt)), 'STATUS_REFUSED');
+  check(STATUS_CONTRACTS_READABLE.includes(v.contract) && Number.isFinite(Date.parse(v.writtenAt)) && Number.isFinite(Date.parse(v.changedAt)), 'STATUS_REFUSED');
   check(v.executor && EXECUTOR_STATES.includes(v.executor.state), 'STATUS_REFUSED');
   const head = h => typeof h === 'string' && HEX40.test(h);
   return {
@@ -159,9 +173,9 @@ export function parseStatus(bytes) {
     intakePause: v.intakePause && typeof v.intakePause === 'object' && !Array.isArray(v.intakePause)
       ? { until: ms(v.intakePause.until), holders: Array.isArray(v.intakePause.holders) ? v.intakePause.holders.filter(h => typeof h?.holder === 'string' && HOLDER.test(h.holder))
         .slice(0, INTAKE_HOLDS_MAX).map(h => ({ holder: h.holder, since: ms(h.since), until: ms(h.until) })) : [] } : null,
-    // The node (C1, C3); null: one node. A name that does not fit is no node: the companion falls back to its own.
+    // The node (C1, C3); null: one node. A name that does not fit is no node: the companion falls back to its own. source: /6 only.
     node: v.node && typeof v.node === 'object' && NODE_NAME.test(v.node.name ?? '')
-      ? { name: v.node.name, mode: NODE_MODES.includes(v.node.mode) ? v.node.mode : 'UNCERTAIN',
+      ? { name: v.node.name, source: NODE_SOURCE.test(v.node.source ?? '') ? v.node.source : null, mode: NODE_MODES.includes(v.node.mode) ? v.node.mode : 'UNCERTAIN',
         probe: v.node.probe && typeof v.node.probe === 'object' ? { at: ms(v.node.probe.at), result: PROBE_RESULTS.includes(v.node.probe.result) ? v.node.probe.result : 'uncertain',
           failures: Number.isSafeInteger(v.node.probe.failures) && v.node.probe.failures >= 0 ? v.node.probe.failures : 0, failingSince: ms(v.node.probe.failingSince) } : null } : null,
     backfill: { complete: v.backfill?.complete === true },

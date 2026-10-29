@@ -14,10 +14,11 @@ import { TRUSTED_WORKFLOW_PATHS, activeGitleaksWorkflowSha256s } from '../../tru
 export const IMAGE = 'ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f';
 export const SCAN_ARGS = Object.freeze(['git', '/repo', '--config', '/repo/.gitleaks.toml', '--gitleaks-ignore-path', '/reviewed.ignore', '--redact', '--exit-code', '1']);
 export const SOURCE_PINS = Object.freeze({
-  'scripts/ci/reviewed_gitleaks.py': 'ce262ae31a44cfd486e9c8b56e6bc912e7259f18bf5b3b7bebcaf60f26206e4d',
-  '.gitleaks.toml': '167600934018e4761d80057321789a1c50486f35c32aa15eebc00ee53cf9aeec',
+  'scripts/ci/reviewed_gitleaks.py': '8ed25b9e24b32fbba27f2f6f1cc156d7b1ae88e4c2237414d13678e699b42676',
+  '.gitleaks.toml': '8aae8a204add7e201ff141a9035c0400b300b08c691ff483f09d24383b53b5ba',
 });
-// This active Source pins only its exact 729-finding workflow successor. The legacy
+// This active Source pins the 730-record reviewed set (729 + the 16f981cc role-probe fixture, PR #937); the
+// hosted workflow successor row is still the 729-record freeze (re-freezing it is a follow-up). The legacy
 // main/PR-B set remains separate for v3/H5. A pending freeze has an empty active set,
 // never a fallback to a legacy 726 workflow. Helper and config stay single exact pins.
 export const WORKFLOW_PATH = TRUSTED_WORKFLOW_PATHS.gitleaks;
@@ -34,12 +35,12 @@ export function acceptedWorkflowSha256(role) {
 // commit of every record fingerprint in the scanned repository. The offline
 // self-test cannot fetch them, so preparation packs exactly this pinned set.
 // The set is the sorted, LF-joined (trailing LF) list of distinct commits.
-export const REVIEWED_COMMITS = Object.freeze({ findings: 729, commits: 101,
-  sha256: '37fcdae7442b1235f75f2325c13e508a0189443a24e62627bf338fa8285488bf' });
+export const REVIEWED_COMMITS = Object.freeze({ findings: 730, commits: 102,
+  sha256: 'f889be5ef30f8409db61b1130810b5088ca278d04886b10cf98a3a2558609192' });
 // Recomputed by the pinned helper's actual verify_history, not inferred by adding counts.
-export const REVIEWED_HISTORY_PROOF = Object.freeze({ commits: REVIEWED_COMMITS.commits, files_at_commits: 172,
+export const REVIEWED_HISTORY_PROOF = Object.freeze({ commits: REVIEWED_COMMITS.commits, files_at_commits: 173,
   verified_git_objects: 130, reviewed_commits_sha256: REVIEWED_COMMITS.sha256,
-  reviewed_ignore_sha256: 'abbbece0db8ff3e524736006e0bc8ecf078358b48fae91c8d0bc3046728b8f5a' });
+  reviewed_ignore_sha256: 'e727e450499b2b63f247d54d6bcfe749ab21d68b3135ef11b56c7405f883aff7' });
 export function matchesReviewedHistoryProof(value) {
   return value && Object.getPrototypeOf(value) === Object.prototype
     && Object.keys(value).sort().join('|') === Object.keys(REVIEWED_HISTORY_PROOF).sort().join('|')
