@@ -1,0 +1,1123 @@
+#!/usr/bin/python3.12 -I
+"""Linux execution side of the resident in-place upgrade (DESIGN, task 018da927, spec B3). FROZEN: installed by
+root as /opt/clued-independent-ci/upgrade-v1/bin/clued-ci-upgrade-linux and changed only by a full reinstall;
+every rollback is executed by this same frozen code.
+
+  clued-ci-upgrade-linux version-facts
+  clued-ci-upgrade-linux stage    --op UUID --package SHA256 --generation N --linux-manifest SHA256
+  clued-ci-upgrade-linux switch   --op UUID --from N --to M --linux-manifest SHA256
+  clued-ci-upgrade-linux rollback --op UUID --from M --to N        (M = the generation given up, N = the one restored)
+  clued-ci-upgrade-linux verify   --generation N
+  clued-ci-upgrade-linux retain   --generation N [--op UUID]
+  clued-ci-upgrade-linux adopt    --generation 1 --package SHA256  (root, once, from install-resident-linux.sh)
+
+One JSON object on one stdout line; exit 0 only on success. Root on Linux only.
+
+Layout (spec A6): the active paths never change (loadQualifiedPolicyV2 refuses links):
+  /opt/clued-independent-ci/{source-v2,resident-v1}, /etc/clued-independent-ci/{roles-v3,formal-source-manifest-v2.json},
+  /etc/systemd/system/clued-ci-{worker,wsprep,archive}@.service
+  staging   /opt/clued-independent-ci/.next-<opId>/{package/, source-v2, resident-v1, roles-work/, roles-v3,
+            formal-source-manifest-v2.json, units/}
+  parked    /opt/clued-independent-ci/generations/g<N>/<item>     (what generation N had live before it was replaced)
+  archive   /opt/clued-independent-ci/archive/                     (retention and leftovers: renamed, never deleted)
+  state     /var/lib/clued-independent-ci/resident/upgrade/{current.json, g<N>.json}
+
+Every item is identified by (st_dev, st_ino), which a rename keeps, so a re-run re-observes where each item is:
+"the old one still live / parked under generations / the new one live" (spec A4). g<N>.json is the commit point of
+`stage` (written create-only, last); current.json (whole-file replace) is the commit point of switch and rollback.
+Every move is a rename without replace: the destination is checked absent and renameat2(RENAME_NOREPLACE) is used
+where libc and the file system offer it; otherwise (ENOSYS/EINVAL, or a libc without renameat2) a checked
+os.rename is used and the result reports renameMode "checked-rename" (no other writer exists under quiescence and
+the single-instance lock).
+
+roles-v3 derivation: the installed policy and the installed signed v2 payload are copied, and ONLY the Source
+binding fields of qualification-v2.mjs:46-56 change (sourceManifestSha256, entrySha256, qualificationSha256,
+workerSha256, proofSha256, jobSha256, sourceAcceptanceRef); host facts (image, key, runtime, host acceptance,
+executables) are carried. The derived policy file bytes (canonical JSON + "\\n") must hash to the package's
+linux.sourceV2.rolesDerivedSha256[role]; the installed signer signs them against the installed v2 qualification.
+"""
+import ctypes
+import datetime
+import errno
+import hashlib
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+
+PACKAGE_CONTRACT = 'clued.independent-ci.resident-package/4'
+LINUX_MANIFEST_CONTRACT = 'clued.independent-ci.resident-linux-manifest/2'
+UPGRADE_TOOL_MANIFEST_CONTRACT = 'clued.independent-ci.linux-upgrade-tool-manifest/1'
+FACTS_CONTRACT = 'clued.independent-ci.linux-version-facts/1'
+CURRENT_CONTRACT = 'clued.independent-ci.linux-upgrade-current/1'
+GENERATION_CONTRACT = 'clued.independent-ci.linux-upgrade-generation/1'
+ROLES = ('gitleaks', 'trivy', 'contract-placement')
+UNITS = ('clued-ci-worker@.service', 'clued-ci-wsprep@.service', 'clued-ci-archive@.service')
+CI = 'work/actions-hosted-migration/independent-ci-v1/'
+# qualification-v2.mjs:46-56: the qualification fields that bind the Source (everything else is a host fact).
+SOURCE_KEYS = ('sourceManifestSha256', 'entrySha256', 'qualificationSha256', 'workerSha256', 'proofSha256', 'jobSha256', 'sourceAcceptanceRef')
+PIN_FILES = {'qualificationSha256': CI + 'worker/qualification-v2.mjs', 'workerSha256': CI + 'src/worker-v2.mjs',
+             'proofSha256': CI + 'src/proof.mjs', 'jobSha256': CI + 'src/job-v2.mjs'}
+BIND = ('runtimeIdentity', 'sourceManifestSha256', 'image', 'entrySha256', 'qualificationSha256', 'executionMode', 'workerSha256', 'proofSha256',
+        'jobSha256', 'nodeExecutable', 'keyId', 'hostAcceptanceRef', 'sourceAcceptanceRef')
+HOST_PINS = (('dockerExecutable', 'dockerExecutableSha256'), ('nodeExecutable', 'nodeExecutableSha256'), ('gitExecutable', 'gitExecutableSha256'))
+
+PRODUCTION = {
+    'opt': '/opt/clued-independent-ci',
+    'source': '/opt/clued-independent-ci/source-v2',
+    'resident': '/opt/clued-independent-ci/resident-v1',
+    'upgrade': '/opt/clued-independent-ci/upgrade-v1',
+    'generations': '/opt/clued-independent-ci/generations',
+    'archive': '/opt/clued-independent-ci/archive',
+    'etc': '/etc/clued-independent-ci',
+    'roles': '/etc/clued-independent-ci/roles-v3',
+    'manifest': '/etc/clued-independent-ci/formal-source-manifest-v2.json',
+    'units': '/etc/systemd/system',
+    'state': '/var/lib/clued-independent-ci/resident/upgrade',
+    'packages': '/mnt/c/ProgramData/CluedIndependentCI/resident/upgrade/staged',
+    'node': '/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node',
+}
+TOOL_NAME = 'clued-ci-upgrade-linux'
+SIGNER_NAME = 'clued-ci-sign-qualification-v2.mjs'
+# (item, key in PRODUCTION or None for a unit, kind); the order of every switch and rollback.
+ITEMS = (('source-v2', 'source', 'dir'), ('formal-source-manifest-v2.json', 'manifest', 'file'), ('roles-v3', 'roles', 'dir'),
+         ('resident-v1', 'resident', 'dir')) + tuple((f'units/{u}', None, 'file') for u in UNITS)
+SOURCE_ITEMS = ('source-v2', 'formal-source-manifest-v2.json', 'roles-v3')
+RESIDENT_FILES = {'linux/bin/clued-ci-resident-linux': ('resident-v1/bin/clued-ci-resident-linux', 0o755),
+                  'linux/manifest.json': ('resident-v1/manifest.json', 0o644),
+                  **{f'linux/systemd/{u}': (f'units/{u}', 0o644) for u in UNITS}}
+UPGRADE_FILES = {'linux/upgrade-v1/bin/' + TOOL_NAME: 'bin/' + TOOL_NAME, 'linux/upgrade-v1/bin/' + SIGNER_NAME: 'bin/' + SIGNER_NAME,
+                 'linux/upgrade-v1/manifest.json': 'manifest.json'}
+IGNORED_FILES = ('linux/bin/clued-ci-install-source-v2',)  # run once by root from the package, never installed
+HEX40 = re.compile(r'^[0-9a-f]{40}$')
+HEX64 = re.compile(r'^[0-9a-f]{64}$')
+UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+GEN = re.compile(r'^[1-9][0-9]{0,8}$')
+SAFE = re.compile(r'^[A-Za-z0-9_.@+-]+(/[A-Za-z0-9_.@+-]+)*$')
+GIT_ENV = {'PATH': '/usr/bin:/bin', 'LANG': 'C', 'LC_ALL': 'C', 'HOME': '/nonexistent', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': os.devnull,
+           'GIT_CONFIG_SYSTEM': os.devnull, 'GIT_NO_REPLACE_OBJECTS': '1', 'GIT_TERMINAL_PROMPT': '0', 'GIT_OPTIONAL_LOCKS': '0'}
+GIT_C = ['-c', 'core.hooksPath=/nonexistent-independent-ci-hooks', '-c', 'core.fsmonitor=false', '-c', 'core.autocrlf=false',
+         '-c', 'protocol.allow=never', '-c', 'protocol.file.allow=always']
+ENV = {'PATH': '/usr/bin:/bin', 'LANG': 'C', 'LC_ALL': 'C'}
+
+# A8 mapping: the detailed code stays in "code", the class code the upgrader acts on goes in "upgradeCode".
+A8 = {'LINUX_HOST_FACTS_CHANGED': 'UPGRADE_LINUX_HOST_FACTS_CHANGED', 'CHANNEL_CHANGE_NEEDS_REINSTALL': 'UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL',
+      'TARGET_OUTSIDE_WHITELIST': 'UPGRADE_TARGET_OUTSIDE_WHITELIST', 'PACKAGE_CHANGED': 'UPGRADE_PACKAGE_CHANGED',
+      'PACKAGE_UNREADABLE': 'UPGRADE_PACKAGE_UNREADABLE', 'LINUX_QUIESCENCE_UNCONFIRMED': 'UPGRADE_LINUX_QUIESCENCE_UNCONFIRMED',
+      'JOURNAL_INCONSISTENT': 'UPGRADE_JOURNAL_INCONSISTENT'}
+A8_DEFAULT = {'stage': 'UPGRADE_LINUX_STAGE_REFUSED', 'switch': 'UPGRADE_SWITCH_FAILED', 'rollback': 'UPGRADE_ROLLBACK_FAILED',
+              'verify': 'UPGRADE_VERIFY_FAILED'}
+
+
+class Refused(Exception):
+    def __init__(self, code, **detail):
+        super().__init__(code)
+        self.code = code
+        self.detail = detail
+
+
+def need(cond, code, **detail):
+    if not cond:
+        raise Refused(code, **detail)
+
+
+def paths(prefix=''):
+    """The path map. Production: prefix ''. Tests: a temporary directory that stands for '/'."""
+    p = {k: prefix + v for k, v in PRODUCTION.items()}
+    p['prefix'] = prefix
+    p['tool'] = p['upgrade'] + '/bin/' + TOOL_NAME
+    p['signer'] = p['upgrade'] + '/bin/' + SIGNER_NAME
+    p['git'] = '/usr/bin/git'
+    return p
+
+
+def live_of(P, installed_path):
+    """A production absolute path as seen under the (test) prefix."""
+    return P['prefix'] + installed_path
+
+
+def item_path(P, base, item):
+    return f'{base}/{item}'
+
+
+def live_item(P, item):
+    key = next(k for name, k, _ in ITEMS if name == item)
+    return P[key] if key else f"{P['units']}/{item[len('units/'):]}"
+
+
+def next_dir(P, op):
+    return f"{P['opt']}/.next-{op}"
+
+
+def gen_dir(P, n):
+    return f"{P['generations']}/g{n}"
+
+
+def sha256(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+
+
+def canonical_bytes(value):
+    return (canonical(value) + '\n').encode('utf-8')
+
+
+def read_regular(path, limit=64 << 20, code='PACKAGE_UNREADABLE'):
+    """One no-follow read of a regular single-link file; the size bound is taken from the handle that is read."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_CLOEXEC', 0) | getattr(os, 'O_BINARY', 0))
+    except OSError:
+        raise Refused(code, path=os.path.basename(path))
+    try:
+        st = os.fstat(fd)
+        need(stat.S_ISREG(st.st_mode) and not os.path.islink(path) and st.st_nlink == 1 and 0 < st.st_size <= limit, code, path=os.path.basename(path))
+        chunks, left = [], st.st_size + 1
+        while left > 0:
+            b = os.read(fd, min(left, 1 << 20))
+            if not b:
+                break
+            chunks.append(b)
+            left -= len(b)
+        data = b''.join(chunks)
+        need(len(data) == st.st_size, 'PACKAGE_CHANGED', path=os.path.basename(path))
+        return data
+    finally:
+        os.close(fd)
+
+
+def sha_file(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def sha_or_none(path):
+    try:
+        return sha_file(path) if os.path.isfile(path) and not os.path.islink(path) else None
+    except OSError:
+        return None
+
+
+def no_links_below(base, rel):
+    """Every component of base/rel below base is a real entry (no symlink is followed out of the package)."""
+    cur = base
+    for part in rel.split('/'):
+        cur = f'{cur}/{part}'
+        need(not os.path.islink(cur), 'TARGET_OUTSIDE_WHITELIST', path=rel)
+
+
+def safe_rel(rel):
+    need(isinstance(rel, str) and len(rel) <= 400 and SAFE.match(rel) is not None and '..' not in rel.split('/') and not rel.startswith('/'),
+         'TARGET_OUTSIDE_WHITELIST', path=str(rel)[:200])
+    return rel
+
+
+def content_digest(path):
+    """Digest of a small directory tree: (relative path, kind, file sha256); a link anywhere refuses."""
+    h = hashlib.sha256()
+    for base, dirs, files in os.walk(path, followlinks=False):
+        dirs.sort()
+        for name in sorted(dirs + files):
+            full = os.path.join(base, name)
+            need(not os.path.islink(full), 'LINK_IN_TREE_REFUSED', path=name)
+            rel = os.path.relpath(full, path).replace(os.sep, '/')
+            kind = 'd' if os.path.isdir(full) else 'f'
+            h.update(f"{rel}\0{kind}\0{sha_file(full) if kind == 'f' else ''}\n".encode())
+    return h.hexdigest()
+
+
+def ident(path, with_content=False, item=None):
+    """Where an item is: (dev, ino, kind) survives every rename; content only on request."""
+    if not os.path.lexists(path):
+        return None
+    st = os.lstat(path)
+    kind = 'dir' if stat.S_ISDIR(st.st_mode) else 'file' if stat.S_ISREG(st.st_mode) else 'other'
+    out = {'kind': kind, 'dev': st.st_dev, 'ino': st.st_ino}
+    if with_content:
+        if kind == 'file':
+            out['sha256'] = sha_file(path)
+        elif kind == 'dir' and item != 'source-v2':  # the checkout is bound by its commit and the pins instead
+            out['sha256'] = content_digest(path)
+        else:
+            out['sha256'] = None
+    return out
+
+
+def same(observed, record):
+    return observed is not None and record is not None and observed['kind'] == record['kind'] and observed['dev'] == record['dev'] and observed['ino'] == record['ino']
+
+
+def now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+
+
+# ---------- rename without replace ----------
+
+_RENAMEAT2 = None
+
+
+def _renameat2():
+    global _RENAMEAT2
+    if _RENAMEAT2 is None:
+        _RENAMEAT2 = False
+        if sys.platform.startswith('linux'):
+            try:
+                libc = ctypes.CDLL('libc.so.6', use_errno=True)
+                fn = libc.renameat2
+                fn.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+                _RENAMEAT2 = fn
+            except (OSError, AttributeError):
+                _RENAMEAT2 = False
+    return _RENAMEAT2
+
+
+def rename_noreplace(src, dst):
+    """Returns the mode used. The destination must be absent before anything is tried."""
+    need(not os.path.lexists(dst), 'RENAME_TARGET_EXISTS', target=os.path.basename(dst))
+    fn = _renameat2()
+    if fn:
+        AT_FDCWD, RENAME_NOREPLACE = -100, 1
+        if fn(AT_FDCWD, os.fsencode(src), AT_FDCWD, os.fsencode(dst), RENAME_NOREPLACE) == 0:
+            return 'renameat2'
+        err = ctypes.get_errno()
+        need(err in (errno.ENOSYS, errno.EINVAL), 'RENAME_REFUSED', errno=err)
+        need(not os.path.lexists(dst), 'RENAME_TARGET_EXISTS', target=os.path.basename(dst))
+    os.rename(src, dst)
+    return 'checked-rename'
+
+
+def ensure_dir(path, mode, as_root):
+    if not os.path.isdir(path):
+        need(not os.path.lexists(path), 'LAYOUT_REDIRECTED', path=os.path.basename(path))
+        os.makedirs(path, mode)
+        if as_root:
+            os.chown(path, 0, 0)
+        os.chmod(path, mode)
+    need(not os.path.islink(path), 'LAYOUT_REDIRECTED', path=os.path.basename(path))
+
+
+def write_new(path, data, mode, as_root):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_BINARY', 0), mode)
+    try:
+        need(os.write(fd, data) == len(data), 'WRITE_UNCONFIRMED')
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    if as_root:
+        os.chown(path, 0, 0)
+    os.chmod(path, mode)
+
+
+def replace_file(path, data, as_root):
+    """Whole-file replace of a state file (current.json): temp file, fsync, rename over."""
+    tmp = f'{path}.tmp-{os.getpid()}'
+    if os.path.lexists(tmp):
+        os.unlink(tmp)  # only ever our own unfinished temp file of the same pid
+    write_new(tmp, data, 0o644, as_root)
+    os.replace(tmp, path)
+
+
+def archive_name(P, name):
+    base = f"{P['archive']}/{name}"
+    if not os.path.lexists(base):
+        return base
+    k = 1
+    while os.path.lexists(f'{base}-{k}'):
+        k += 1
+    return f'{base}-{k}'
+
+
+# ---------- state ----------
+
+def read_json(path, code):
+    try:
+        return json.loads(read_regular(path, 1 << 20, code).decode('utf-8'))
+    except (UnicodeDecodeError, ValueError):
+        raise Refused(code)
+
+
+def current_path(P):
+    return f"{P['state']}/current.json"
+
+
+def gen_record_path(P, n):
+    return f"{P['state']}/g{n}.json"
+
+
+def read_current(P):
+    c = read_json(current_path(P), 'GENERATION_NOT_ADOPTED')
+    need(isinstance(c, dict) and c.get('contract') == CURRENT_CONTRACT and isinstance(c.get('generation'), int) and c['generation'] >= 1, 'GENERATION_NOT_ADOPTED')
+    return c
+
+
+def read_gen(P, n):
+    g = read_json(gen_record_path(P, n), 'GENERATION_RECORD_MISSING')
+    need(isinstance(g, dict) and g.get('contract') == GENERATION_CONTRACT and g.get('generation') == n and isinstance(g.get('items'), dict)
+         and all(name in g['items'] for name, _, _ in ITEMS), 'GENERATION_RECORD_MISSING', generation=n)
+    return g
+
+
+def write_current(P, host, gen_record, op, rolled_back_from=None):
+    body = {'contract': CURRENT_CONTRACT, 'generation': gen_record['generation'], 'opId': op, 'packageManifestSha256': gen_record['packageManifestSha256'],
+            'linuxManifestSha256': gen_record['linuxManifestSha256'], 'ciSourceManifestSha256': gen_record['ciSourceManifestSha256'],
+            'sourceCommit': gen_record['sourceCommit'], 'rolledBackFrom': rolled_back_from, 'at': host.now()}
+    replace_file(current_path(P), canonical_bytes(body), host.as_root)
+    return body
+
+
+# ---------- host facts (Linux, root): quiescence copied from clued-ci-resident-linux:362-371 ----------
+
+UNIT = re.compile(r'^(clued-ci-(?:worker|wsprep|archive)@[0-9a-z_-]{1,120}\.service)\s+\S+\s+(\S+)\s+(\S+)')
+SYSTEMCTL = '/usr/bin/systemctl'
+DOCKER = '/usr/bin/docker'
+
+
+def run(argv, timeout=30):
+    r = subprocess.run(argv, env=ENV, capture_output=True, text=True, timeout=timeout, check=False)
+    return r.returncode, r.stdout
+
+
+def other_units_quiet(list_units_output, self_unit):
+    busy = []
+    for line in list_units_output.splitlines():
+        m = UNIT.match(line.strip())
+        if m and m.group(1) != self_unit and m.group(2) not in ('inactive', 'failed'):
+            busy.append(m.group(1))
+    return busy
+
+
+def cgroup_unpopulated(events_text):
+    if events_text is None:
+        return False
+    values = dict(line.split(' ', 1) for line in events_text.strip().splitlines() if ' ' in line)
+    return values.get('populated') == '0'
+
+
+def containers_quiet(ps_lines):
+    states = [line.split()[1] for line in ps_lines if len(line.split()) >= 2]
+    return all(s in ('exited', 'dead') for s in states), states
+
+
+def list_units():
+    code, out = run([SYSTEMCTL, 'list-units', '--all', '--plain', '--no-legend', 'clued-ci-*@*.service'])
+    need(code == 0, 'SYSTEMCTL_LIST_UNCONFIRMED')
+    return out
+
+
+def cgroup_events(unit):
+    code, out = run([SYSTEMCTL, 'show', '--property=ControlGroup', '--value', unit])
+    if code != 0:
+        return None
+    cg = out.strip()
+    if not cg:
+        return 'populated 0\n'
+    try:
+        with open(f'/sys/fs/cgroup{cg}/cgroup.events') as f:
+            return f.read()
+    except OSError:
+        return 'populated 0\n' if not os.path.exists(f'/sys/fs/cgroup{cg}') else None
+
+
+def nonce_containers():
+    code, out = run([DOCKER, 'ps', '--all', '--filter', 'label=clued.verify.nonce', '--format', '{{.ID}} {{.State}}'], timeout=60)
+    need(code == 0, 'DOCKER_READ_UNCONFIRMED')
+    return [line for line in out.splitlines() if line.strip()]
+
+
+def worker_processes():
+    hits = []
+    for pid in filter(str.isdigit, os.listdir('/proc')):
+        try:
+            cmd = open(f'/proc/{pid}/cmdline', 'rb').read().replace(b'\0', b' ')
+        except OSError:
+            continue
+        if b'linux-worker.mjs' in cmd or b'/var/lib/clued-independent-ci/runs/' in cmd:
+            hits.append(int(pid))
+    return hits
+
+
+def quiescence(self_unit=None):
+    need(os.path.exists('/sys/fs/cgroup/cgroup.controllers'), 'CGROUP_V2_REQUIRED')
+    out = list_units()
+    busy = other_units_quiet(out, self_unit)
+    names = [m.group(1) for m in (UNIT.match(l.strip()) for l in out.splitlines()) if m and m.group(1) != self_unit]
+    unpopulated = all(cgroup_unpopulated(cgroup_events(n)) for n in names)
+    quiet, states = containers_quiet(nonce_containers())
+    procs = worker_processes()
+    return {'linuxUnitsInactive': not busy and unpopulated and not procs, 'containersZero': quiet,
+            'details': {'busyUnits': busy, 'cgroupsUnpopulated': unpopulated, 'containerStates': states, 'workerProcesses': procs}}
+
+
+def is_root_linux():
+    return sys.platform.startswith('linux') and hasattr(os, 'geteuid') and os.geteuid() == 0
+
+
+class RealHost:
+    """The production ports. Tests replace this object; nothing else in the tool talks to the host."""
+
+    def __init__(self, P):
+        self.P = P
+        self.as_root = is_root_linux()
+
+    def now(self):
+        return now_iso()
+
+    def quiescence(self):
+        return quiescence()
+
+    def daemon_reload(self):
+        return run([SYSTEMCTL, 'daemon-reload'], timeout=120)[0] == 0
+
+    def sign(self, in_dir, out_dir, policy_sha256):
+        argv = [self.P['node'], self.P['signer'], '--in', in_dir, '--out', out_dir, '--against-installed-v2', ','.join(policy_sha256[r] for r in ROLES)]
+        p = subprocess.run(argv, env={}, capture_output=True, timeout=300, check=False)
+        try:
+            out = json.loads(p.stdout.decode('utf-8'))
+        except ValueError:
+            out = {}
+        return out if p.returncode == 0 else {'status': 'REFUSED', 'code': str(out.get('code', 'SIGNING_REFUSED'))[:80]}
+
+    def readiness(self):
+        """loadQualifiedPolicyV2 for every role, run by the pinned toolchain node with an empty environment."""
+        module = f"file://{self.P['source']}/{CI}worker/qualification-v2.mjs"
+        script = (f"const m=await import({json.dumps(module)});const out={{}};for(const r of {json.dumps(list(ROLES))})"
+                  "{try{await m.loadQualifiedPolicyV2('/etc/clued-independent-ci/roles-v3/'+r+'.json');out[r]=true;}catch(e){out[r]=String(e.code||'REFUSED');}}"
+                  "process.stdout.write(JSON.stringify(out));")
+        p = subprocess.run([self.P['node'], '--input-type=module', '-e', script], env={}, capture_output=True, timeout=180, check=False)
+        try:
+            return json.loads(p.stdout.decode('utf-8'))
+        except ValueError:
+            return {}
+
+
+def git(P, args, timeout=900):
+    p = subprocess.run([P['git'], *GIT_C, *args], env=GIT_ENV, capture_output=True, timeout=timeout, check=False)
+    need(p.returncode == 0, 'GIT_OPERATION_REFUSED')
+    return p.stdout.decode('utf-8', 'strict')
+
+
+def head_commit(source_dir):
+    """The detached HEAD of a checkout, read from .git/HEAD (no git process, nothing written)."""
+    try:
+        with open(f'{source_dir}/.git/HEAD', 'rb') as f:
+            text = f.read(200).decode('ascii').strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return text if HEX40.match(text) else None
+
+
+# ---------- pins ----------
+
+def manifest_pins(P, manifest_bytes, contract, resolve=None):
+    """[(installedPath, expected, resolvedPath)] of a pin manifest; resolve maps an installed path to where it is read."""
+    try:
+        m = json.loads(manifest_bytes.decode('utf-8'))
+    except (UnicodeDecodeError, ValueError):
+        raise Refused('PIN_MANIFEST_REFUSED')
+    need(isinstance(m, dict) and m.get('contract') == contract and isinstance(m.get('files'), list) and m['files'], 'PIN_MANIFEST_REFUSED')
+    out = []
+    for f in m['files']:
+        p, s = f.get('installedPath') if isinstance(f, dict) else None, f.get('sha256') if isinstance(f, dict) else None
+        need(isinstance(p, str) and p.startswith('/') and '..' not in p.split('/') and SAFE.match(p[1:]) is not None and isinstance(s, str) and HEX64.match(s),
+             'PIN_MANIFEST_REFUSED')
+        out.append((p, s, (resolve or (lambda x: live_of(P, x)))(p)))
+    return out
+
+
+def pins_ok(P):
+    """The live resident-linux manifest and the live upgrade-v1 manifest: every pinned file at its installed path."""
+    try:
+        res = manifest_pins(P, read_regular(P['resident'] + '/manifest.json', 1 << 20, 'PIN_MANIFEST_REFUSED'), LINUX_MANIFEST_CONTRACT)
+        upg = manifest_pins(P, read_regular(P['upgrade'] + '/manifest.json', 1 << 20, 'PIN_MANIFEST_REFUSED'), UPGRADE_TOOL_MANIFEST_CONTRACT)
+        need(all(p.startswith(PRODUCTION['upgrade'] + '/bin/') for p, _, _ in upg), 'PIN_MANIFEST_REFUSED')
+        return all(sha_or_none(r) == s for _, s, r in res + upg)
+    except (Refused, OSError):
+        return False
+
+
+# ---------- version-facts ----------
+
+def version_facts(P, host):
+    try:
+        cur = read_current(P)
+    except Refused:
+        cur = None
+    roles = {}
+    for role in ROLES:
+        roles[role] = {'policySha256': sha_or_none(f"{P['roles']}/{role}.json"), 'qualificationSha256': sha_or_none(f"{P['roles']}/{role}.qualification.json")}
+    staged = None
+    if cur is not None and os.path.isdir(P['opt']):
+        for name in sorted(os.listdir(P['opt'])):
+            op = name[len('.next-'):] if name.startswith('.next-') else None
+            if not op or not UUID.match(op):
+                continue
+            for fname in sorted(os.listdir(P['state'])) if os.path.isdir(P['state']) else []:
+                m = re.fullmatch(r'g([1-9][0-9]{0,8})\.json', fname)
+                if not m or int(m.group(1)) <= cur['generation']:
+                    continue
+                try:
+                    g = read_gen(P, int(m.group(1)))
+                except Refused:
+                    continue
+                if g.get('opId') == op and cur.get('rolledBackFrom') != g['generation'] and (staged is None or g['generation'] > staged['generation']):
+                    staged = {'opId': op, 'generation': g['generation']}
+    facts = {'contract': FACTS_CONTRACT, 'generation': cur['generation'] if cur else None, 'ciSourceManifestSha256': sha_or_none(P['manifest']),
+             'sourceCommit': head_commit(P['source']), 'manifestSha256': sha_or_none(P['resident'] + '/manifest.json'), 'roles': roles,
+             'pinsOk': pins_ok(P), 'staged': staged, 'upgradeToolSha256': sha_or_none(P['tool']), 'observedAt': host.now()}
+    # /1 has no "unknown" digest: an unreadable one is a refusal, never a null the reader could take for a value.
+    need(all(facts[k] for k in ('ciSourceManifestSha256', 'manifestSha256', 'upgradeToolSha256')) and all(all(v.values()) for v in roles.values()),
+         'LINUX_FACTS_UNREADABLE')
+    return facts
+
+
+# ---------- stage ----------
+
+def read_package(P, pkg_sha, linux_manifest):
+    """Read every needed package byte once, check it against the package manifest; nothing is written here."""
+    pkg = f"{P['packages']}/{pkg_sha}"
+    need(os.path.isdir(pkg) and not os.path.islink(pkg), 'PACKAGE_UNREADABLE')
+    raw = read_regular(f'{pkg}/package-manifest.json', 4 << 20)
+    need(sha256(raw) == pkg_sha, 'PACKAGE_CHANGED')
+    try:
+        m = json.loads(raw.decode('utf-8'))
+    except (UnicodeDecodeError, ValueError):
+        raise Refused('PACKAGE_CONTRACT_REFUSED')
+    need(isinstance(m, dict) and m.get('contract') == PACKAGE_CONTRACT and HEX64.match(m.get('ciSourceManifestSha256') or '')
+         and isinstance(m.get('linux'), dict) and isinstance(m.get('files'), list), 'PACKAGE_CONTRACT_REFUSED')
+    lx = m['linux']
+    need(set(lx) == {'manifestSha256', 'sourceV2', 'files'} and isinstance(lx['files'], list), 'PACKAGE_CONTRACT_REFUSED')
+    need(lx['manifestSha256'] == linux_manifest, 'LINUX_MANIFEST_NOT_THE_REQUESTED_ONE')
+    data = {}
+
+    def take(rel, digest, size=None, limit=64 << 20):
+        safe_rel(rel)
+        need(HEX64.match(digest or '') is not None, 'PACKAGE_CONTRACT_REFUSED')
+        no_links_below(pkg, rel)
+        b = read_regular(f'{pkg}/{rel}', limit)
+        need(sha256(b) == digest and (size is None or len(b) == size), 'PACKAGE_CHANGED', path=rel)
+        need(rel not in data, 'PACKAGE_CONTRACT_REFUSED', path=rel)
+        data[rel] = b
+
+    for f in lx['files']:
+        need(isinstance(f, dict) and set(f) == {'path', 'sha256', 'bytes'} and isinstance(f['bytes'], int), 'PACKAGE_CONTRACT_REFUSED')
+        safe_rel(f['path'])
+        need(f['path'] in RESIDENT_FILES or f['path'] in UPGRADE_FILES or f['path'] in IGNORED_FILES, 'TARGET_OUTSIDE_WHITELIST', path=f['path'])
+        if f['path'] in IGNORED_FILES:
+            continue
+        take(f['path'], f['sha256'], f['bytes'])
+    need(all(r in data for r in RESIDENT_FILES), 'PACKAGE_CONTRACT_REFUSED', missing=sorted(r for r in RESIDENT_FILES if r not in data))
+    need(sha256(data['linux/manifest.json']) == linux_manifest, 'PACKAGE_CHANGED', path='linux/manifest.json')
+    sv = lx['sourceV2']
+    if sv is not None:
+        need(isinstance(sv, dict) and set(sv) == {'commit', 'bundlePath', 'bundleSha256', 'rolesDerivedSha256'} and HEX40.match(sv['commit'] or '')
+             and isinstance(sv['rolesDerivedSha256'], dict) and set(sv['rolesDerivedSha256']) == set(ROLES)
+             and all(HEX64.match(v or '') for v in sv['rolesDerivedSha256'].values()), 'PACKAGE_CONTRACT_REFUSED')
+        take(sv['bundlePath'], sv['bundleSha256'], None, 4 << 30)
+        entry = [f for f in m['files'] if isinstance(f, dict) and f.get('path') == 'record/source-manifest.json']
+        need(len(entry) == 1 and entry[0].get('sha256') == m['ciSourceManifestSha256'], 'PACKAGE_CONTRACT_REFUSED')
+        take('record/source-manifest.json', m['ciSourceManifestSha256'])
+    return {'manifest': m, 'raw': raw, 'data': data, 'sourceV2': sv}
+
+
+def source_pins(manifest):
+    """All Source files the accepted manifest pins (union of the roles' sourceFiles), path -> sha256."""
+    need(isinstance(manifest, dict) and manifest.get('schema') == 'independent-ci.sources.v2' and manifest.get('repo') == 'tdoljyj/cross-memory-system'
+         and HEX40.match(manifest.get('sourceSha') or ''), 'SOURCE_MANIFEST_V2_REQUIRED')
+    pins = {}
+    roles = manifest.get('roles')
+    need(isinstance(roles, dict) and roles, 'SOURCE_MANIFEST_V2_REQUIRED')
+    for role in roles.values():
+        for pin in (role.get('sourceFiles') if isinstance(role, dict) else None) or []:
+            rel, digest = pin.get('path'), pin.get('sha256')
+            need(isinstance(rel, str) and SAFE.match(rel) and '..' not in rel.split('/') and HEX64.match(digest or ''), 'SOURCE_PIN_INVALID')
+            need(pins.get(rel, digest) == digest, 'SOURCE_PIN_CONFLICT')
+            pins[rel] = digest
+    need(pins, 'SOURCE_MANIFEST_V2_REQUIRED')
+    return pins
+
+
+def derive_role(role, policy, payload, new_manifest_sha, new_manifest, file_sha):
+    """Pure: the role policy v3 and the unsigned v2 payload for the new Source. Only SOURCE_KEYS change.
+    file_sha(rel) -> sha256 of a file of the NEW checkout (relative to the trusted Source directory)."""
+    need(isinstance(policy, dict) and policy.get('schema') == 'independent-ci.linux-policy.v3' and policy.get('role') == role and policy.get('formalEnabled') is True
+         and 'currentClaim' not in policy and 'claimId' not in policy, 'INSTALLED_POLICY_REFUSED', role=role)
+    need(isinstance(payload, dict) and payload.get('schema') == 'independent-ci.runtime-qualification.v2' and payload.get('role') == role
+         and payload.get('fixture') is False and 'currentClaim' not in payload, 'INSTALLED_QUALIFICATION_REFUSED', role=role)
+    need(all(payload.get(k) == policy.get(k) for k in BIND), 'INSTALLED_PAYLOAD_NOT_ITS_POLICY', role=role)
+    trusted = PRODUCTION['source'] + '/'
+    need(isinstance(policy.get('entryFile'), str) and policy['entryFile'].startswith(trusted), 'ENTRY_OUTSIDE_TRUSTED', role=role)
+    roles = new_manifest.get('roles') if isinstance(new_manifest, dict) else None
+    entry = roles.get(role) if isinstance(roles, dict) else None
+    relay = entry.get('controllerRelay') if isinstance(entry, dict) else None
+    need(isinstance(relay, dict) and isinstance(relay.get('sourceAcceptanceRef'), str) and UUID.match(relay['sourceAcceptanceRef']), 'NEW_SOURCE_ACCEPTANCE_REQUIRED', role=role)
+    # The relay descriptor is validated against the policy's hostAcceptanceRef (boundary.mjs): a host change is not a Source change.
+    need(relay.get('hostQualificationRef') == policy.get('hostAcceptanceRef'), 'LINUX_HOST_FACTS_CHANGED', role=role, field='hostAcceptanceRef')
+    values = {'sourceManifestSha256': new_manifest_sha, 'entrySha256': file_sha(policy['entryFile'][len(trusted):]),
+              'sourceAcceptanceRef': relay['sourceAcceptanceRef'], **{k: file_sha(rel) for k, rel in PIN_FILES.items()}}
+    new_policy, new_payload = dict(policy), dict(payload)
+    for k in SOURCE_KEYS:
+        new_policy[k] = values[k]
+        new_payload[k] = values[k]
+    new_payload['qualifiedAt'] = None
+    changed = sorted(k for k in policy if policy[k] != new_policy[k])
+    need(set(changed) <= set(SOURCE_KEYS) and set(new_policy) == set(policy), 'POLICY_DIFF_OUTSIDE_SOURCE_BINDING', role=role)
+    return new_policy, new_payload
+
+
+def check_host_pins(P, policy, role):
+    for path_key, sha_key in HOST_PINS:
+        exe = policy.get(path_key)
+        need(isinstance(exe, str) and exe.startswith('/') and sha_or_none(live_of(P, exe)) == policy.get(sha_key), 'LINUX_HOST_FACTS_CHANGED', role=role, field=sha_key)
+
+
+def same_device(P):
+    """Every rename stays on one file system (renameat2 cannot cross one): the parents of all live items, the
+    generations and the staging directory."""
+    devs = {os.lstat(os.path.dirname(live_item(P, name))).st_dev for name, _, _ in ITEMS}
+    devs.add(os.lstat(P['opt']).st_dev)
+    need(len(devs) == 1, 'CROSS_DEVICE_LAYOUT')
+
+
+def chown_tree(path, as_root, dir_mode=0o755):
+    if not as_root:
+        return
+    for d, _dirs, names in os.walk(path):
+        os.chown(d, 0, 0)
+        os.chmod(d, dir_mode)
+        for n in names:
+            p = os.path.join(d, n)
+            if not os.path.islink(p):
+                os.chown(p, 0, 0)
+                os.chmod(p, 0o755 if os.access(p, os.X_OK) else 0o644)
+
+
+def stage(P, host, op, pkg_sha, gen, linux_manifest):
+    cur = read_current(P)
+    rec_path = gen_record_path(P, gen)
+    given_up = None
+    if os.path.lexists(rec_path):  # the commit point exists: replay; or a generation number given up earlier is reused
+        rec = read_gen(P, gen)
+        if rec.get('opId') == op:
+            need(rec.get('packageManifestSha256') == pkg_sha and rec.get('linuxManifestSha256') == linux_manifest, 'GENERATION_ALREADY_USED')
+            return {'status': 'LINUX_STAGED', 'replayed': True, 'generation': gen, 'fromGeneration': rec['fromGeneration'], 'opId': op,
+                    'switched': [n for n, _, _ in ITEMS if rec['items'][n]['switched']], 'roles': rec['roles']}
+        need(gen > cur['generation'] and rec.get('opId') is not None, 'GENERATION_ALREADY_USED')
+        given_up = give_up(P, host, gen, rec['opId'])
+    need(gen == cur['generation'] + 1, 'GENERATION_NOT_NEXT')
+    frm = cur['generation']
+    rec_from = read_gen(P, frm)
+    nd = next_dir(P, op)
+    moved_aside = None
+    if os.path.lexists(nd):  # an interrupted earlier attempt without its commit point: kept aside, staged again
+        ensure_dir(P['archive'], 0o700, host.as_root)
+        moved_aside = archive_name(P, f'next-{op}-partial')
+        rename_noreplace(nd, moved_aside)
+    pkg = read_package(P, pkg_sha, linux_manifest)
+    m, data, sv = pkg['manifest'], pkg['data'], pkg['sourceV2']
+    # The frozen channel: the upgrade tool, the signer and their manifest may only be the installed bytes.
+    for rel, inst in UPGRADE_FILES.items():
+        if rel in data:
+            need(sha_or_none(f"{P['upgrade']}/{inst}") == sha256(data[rel]), 'CHANNEL_CHANGE_NEEDS_REINSTALL', path=rel)
+    old_ci = sha_or_none(P['manifest'])
+    need(old_ci is not None and old_ci == rec_from['ciSourceManifestSha256'], 'LIVE_NOT_THE_CURRENT_GENERATION', item='formal-source-manifest-v2.json')
+    for name, _, _ in ITEMS:
+        need(same(ident(live_item(P, name)), rec_from['items'][name]), 'LIVE_NOT_THE_CURRENT_GENERATION', item=name)
+    if sv is None:
+        need(m['ciSourceManifestSha256'] == old_ci, 'SOURCE_V2_REQUIRED')
+    same_device(P)
+    installed = {}
+    for role in ROLES:
+        policy = read_json(f"{P['roles']}/{role}.json", 'INSTALLED_POLICY_REFUSED')
+        q = read_json(f"{P['roles']}/{role}.qualification.json", 'INSTALLED_QUALIFICATION_REFUSED')
+        need(isinstance(q, dict) and set(q) == {'payload', 'signature'}, 'INSTALLED_QUALIFICATION_REFUSED', role=role)
+        need(isinstance(policy, dict) and policy.get('sourceManifestSha256') == old_ci, 'INSTALLED_NOT_THE_LIVE_MANIFEST', role=role)
+        check_host_pins(P, policy, role)
+        installed[role] = (policy, q['payload'])
+
+    ensure_dir(P['opt'], 0o755, host.as_root)
+    os.mkdir(nd, 0o700)
+    if host.as_root:
+        os.chown(nd, 0, 0)
+    os.chmod(nd, 0o700)
+    # 1. the verified copy of every package byte used (read once above; never read from /mnt/c again)
+    for rel, b in sorted(data.items()):
+        target = f'{nd}/package/{rel}'
+        ensure_dir(os.path.dirname(target), 0o700, host.as_root)
+        write_new(target, b, 0o600, host.as_root)
+    # 2. resident-v1 and the unit files
+    for d in ('resident-v1', 'resident-v1/bin', 'units'):
+        ensure_dir(f'{nd}/{d}', 0o755 if d != 'units' else 0o700, host.as_root)
+    for rel, (item, mode) in RESIDENT_FILES.items():
+        write_new(f'{nd}/{item}', data[rel], mode, host.as_root)
+    switched = ['resident-v1'] + [f'units/{u}' for u in UNITS]
+    roles_out = rec_from['roles']
+    source_commit = rec_from['sourceCommit']
+    if sv is not None:
+        new_manifest_bytes = data['record/source-manifest.json']
+        new_manifest = json.loads(new_manifest_bytes.decode('utf-8'))
+        pins = source_pins(new_manifest)
+        need(new_manifest['sourceSha'] == sv['commit'], 'PACKAGE_CONTRACT_REFUSED')
+        # 3. the trusted checkout: clone the bundle copy, detach at the accepted commit, clean, every pin
+        src = f'{nd}/source-v2'
+        git(P, ['clone', '--no-checkout', '--no-hardlinks', '--quiet', f"{nd}/package/{sv['bundlePath']}", src])
+        git(P, ['-C', src, 'checkout', '--quiet', '--detach', sv['commit']])
+        need(git(P, ['-C', src, 'rev-parse', '--verify', 'HEAD^{commit}']).strip() == sv['commit'], 'TRUSTED_SOURCE_NOT_ACCEPTED_COMMIT')
+        need(git(P, ['-C', src, 'status', '--porcelain=v1', '--untracked-files=all']).strip() == '', 'DIRTY_SOURCE_NOT_QUALIFIED')
+        for rel, digest in pins.items():
+            need(sha256(read_regular(f'{src}/{rel}', 256 << 20, 'TRUSTED_SOURCE_PIN_MISMATCH')) == digest, 'TRUSTED_SOURCE_PIN_MISMATCH', path=rel)
+        chown_tree(src, host.as_root)
+        write_new(f'{nd}/formal-source-manifest-v2.json', new_manifest_bytes, 0o644, host.as_root)
+        # 4. roles-v3: derive (Source binding only), compare with the package, sign with the installed signer
+        work = f'{nd}/roles-work'
+        ensure_dir(work, 0o700, host.as_root)
+        derived = {}
+
+        def file_sha(rel):
+            safe_rel(rel)
+            return sha256(read_regular(f'{src}/{rel}', 256 << 20, 'PINNED_FILE_MISSING_IN_NEW_COMMIT'))
+
+        for role in ROLES:
+            new_policy, new_payload = derive_role(role, *installed[role], m['ciSourceManifestSha256'], new_manifest, file_sha)
+            policy_bytes = canonical_bytes(new_policy)
+            derived[role] = sha256(policy_bytes)
+            need(derived[role] == sv['rolesDerivedSha256'][role], 'ROLES_DERIVED_MISMATCH', role=role, derived=derived[role])
+            write_new(f'{work}/{role}.json', policy_bytes, 0o600, host.as_root)
+            write_new(f'{work}/{role}.qualification.payload.json', canonical_bytes(new_payload), 0o600, host.as_root)
+        signed = host.sign(work, f'{nd}/roles-v3', derived)
+        need(isinstance(signed, dict) and signed.get('status') == 'QUALIFICATIONS_V2_SIGNED', 'SIGNING_REFUSED', signer=str((signed or {}).get('code'))[:80])
+        rv = f'{nd}/roles-v3'
+        need(os.path.isdir(rv) and not os.path.islink(rv) and sorted(os.listdir(rv)) == sorted(f'{r}{s}' for r in ROLES for s in ('.json', '.qualification.json')),
+             'SIGNED_OUTPUT_REFUSED')
+        roles_out = {}
+        for role in ROLES:
+            need(sha_file(f'{rv}/{role}.json') == derived[role], 'SIGNED_OUTPUT_REFUSED', role=role)
+            roles_out[role] = {'policySha256': derived[role], 'qualificationSha256': sha_file(f'{rv}/{role}.qualification.json')}
+        # loadQualifiedPolicyV2 requires the policy private (no group/other bits) and a root-owned path
+        if host.as_root:
+            os.chown(rv, 0, 0)
+        os.chmod(rv, 0o700)
+        for name in os.listdir(rv):
+            if host.as_root:
+                os.chown(f'{rv}/{name}', 0, 0)
+            os.chmod(f'{rv}/{name}', 0o600)
+        switched = list(SOURCE_ITEMS) + switched
+        source_commit = sv['commit']
+    # 5. the resident-linux manifest pins what the units execute: check it against the staged bytes
+    staged_set = set(switched)
+
+    def resolve(installed_path):
+        for name, key, _ in ITEMS:
+            prod = PRODUCTION[key] if key else f"{PRODUCTION['units']}/{name[len('units/'):]}"
+            if name in staged_set and (installed_path == prod or installed_path.startswith(prod + '/')):
+                return f'{nd}/{name}' + installed_path[len(prod):]
+        return live_of(P, installed_path)
+
+    for p, s, r in manifest_pins(P, data['linux/manifest.json'], LINUX_MANIFEST_CONTRACT, resolve):
+        need(sha_or_none(r) == s, 'STAGED_PIN_MISMATCH', path=p)
+    # 6. the commit point: the generation record (identities of what will be live in generation `gen`)
+    items = {}
+    for name, _, _ in ITEMS:
+        if name in staged_set:
+            items[name] = {**ident(f'{nd}/{name}', True, name), 'switched': True}
+        else:
+            items[name] = {**{k: rec_from['items'][name][k] for k in ('kind', 'dev', 'ino', 'sha256')}, 'switched': False}
+    record = {'contract': GENERATION_CONTRACT, 'generation': gen, 'opId': op, 'fromGeneration': frm, 'packageManifestSha256': pkg_sha,
+              'linuxManifestSha256': linux_manifest, 'ciSourceManifestSha256': m['ciSourceManifestSha256'], 'sourceCommit': source_commit,
+              'items': items, 'roles': roles_out, 'stagedAt': host.now()}
+    ensure_dir(P['state'], 0o700, host.as_root)
+    write_new(rec_path, canonical_bytes(record), 0o644, host.as_root)
+    return {'status': 'LINUX_STAGED', 'replayed': False, 'generation': gen, 'fromGeneration': frm, 'opId': op, 'switched': [n for n, _, _ in ITEMS if n in staged_set],
+            'roles': roles_out, 'movedAsidePartial': moved_aside is not None, 'givenUpKeptAs': given_up}
+
+
+def give_up(P, host, gen, old_op):
+    """A generation number above the live one was given up (rolled back, or staged by an aborted op): its parked items,
+    its staging leftover and finally its record are renamed into the archive, so the number can be staged again.
+    Re-running after an interruption repeats only what is still in place; nothing is deleted."""
+    ensure_dir(P['archive'], 0o700, host.as_root)
+    kept = []
+    if os.path.lexists(gen_dir(P, gen)):
+        dst = archive_name(P, f'g{gen}-given-up-{old_op}')
+        rename_noreplace(gen_dir(P, gen), dst)
+        kept.append(os.path.basename(dst))
+    if os.path.lexists(next_dir(P, old_op)):
+        dst = archive_name(P, f'next-{old_op}')
+        rename_noreplace(next_dir(P, old_op), dst)
+        kept.append(os.path.basename(dst))
+    ensure_dir(f"{P['state']}/given-up", 0o700, host.as_root)
+    rename_noreplace(gen_record_path(P, gen), f"{P['state']}/given-up/g{gen}-{old_op}.json")
+    return kept
+
+
+# ---------- switch / rollback: converge every item by re-observation ----------
+
+def classify(live, want, want_src, out, out_park):
+    """done: the wanted item is live. todo: the outgoing item is live, its parking slot free, the wanted one ready.
+    half: nothing live, the wanted one ready (the outgoing one was parked). Anything else: inconsistent."""
+    cur = ident(live)
+    if same(cur, want):
+        return 'done'
+    if same(cur, out) and not os.path.lexists(out_park) and same(ident(want_src), want):
+        return 'todo'
+    if cur is None and same(ident(want_src), want) and (out is None or same(ident(out_park), out) or not os.path.lexists(out_park)):
+        return 'half'
+    return 'inconsistent'
+
+
+def converge(P, host, plan, rename):
+    """plan: [(item, live, want, want_src, out, out_park)]. Classify everything first (nothing moves when any item is
+    inconsistent), then move item by item."""
+    states = {p[0]: classify(*p[1:]) for p in plan}
+    bad = sorted(k for k, v in states.items() if v == 'inconsistent')
+    need(not bad, 'JOURNAL_INCONSISTENT', items=bad)
+    modes = set()
+    for item, live, want, want_src, out, out_park in plan:
+        if states[item] == 'todo':
+            ensure_dir(os.path.dirname(out_park), 0o700, host.as_root)
+            modes.add(rename(live, out_park))
+        if states[item] in ('todo', 'half'):
+            need(not os.path.lexists(live) and same(ident(want_src), want), 'JOURNAL_INCONSISTENT', items=[item])
+            modes.add(rename(want_src, live))
+        need(same(ident(live), want), 'SWITCH_UNCONFIRMED', item=item)
+    return states, sorted(m for m in modes if m)
+
+
+def switch(P, host, op, frm, to, linux_manifest, rename=rename_noreplace):
+    cur = read_current(P)
+    rec_to, rec_from = read_gen(P, to), read_gen(P, frm)
+    need(rec_to.get('opId') == op and rec_to.get('fromGeneration') == frm and rec_to.get('linuxManifestSha256') == linux_manifest, 'SWITCH_NOT_THE_STAGED_GENERATION')
+    need(cur['generation'] == frm or (cur['generation'] == to and cur.get('opId') == op and cur.get('rolledBackFrom') is None), 'CURRENT_GENERATION_MISMATCH',
+         current=cur['generation'])
+    nd = next_dir(P, op)
+    plan = [(name, live_item(P, name), rec_to['items'][name], f'{nd}/{name}', rec_from['items'][name], f'{gen_dir(P, frm)}/{name}')
+            for name, _, _ in ITEMS if rec_to['items'][name]['switched']]
+    states = {p[0]: classify(*p[1:]) for p in plan}
+    all_done = all(v == 'done' for v in states.values())
+    if not all_done:
+        q = host.quiescence()
+        need(q.get('linuxUnitsInactive') is True and q.get('containersZero') is True, 'LINUX_QUIESCENCE_UNCONFIRMED', quiescence=q.get('details'))
+        ensure_dir(P['generations'], 0o700, host.as_root)
+        ensure_dir(gen_dir(P, frm), 0o700, host.as_root)
+    states, modes = converge(P, host, plan, rename)
+    replayed = all_done and cur['generation'] == to
+    if cur['generation'] != to:
+        write_current(P, host, rec_to, op)
+    leftover = None
+    if os.path.lexists(nd):  # what stays of the staging directory (package copy, roles-work, empty units/) is kept, renamed
+        ensure_dir(P['archive'], 0o700, host.as_root)
+        leftover = archive_name(P, f'next-{op}')
+        rename(nd, leftover)
+    need(host.daemon_reload(), 'DAEMON_RELOAD_FAILED')
+    return {'status': 'LINUX_SWITCHED', 'replayed': replayed, 'fromGeneration': frm, 'generation': to, 'opId': op, 'items': states,
+            'renameMode': modes, 'stagingKeptAs': os.path.basename(leftover) if leftover else None}
+
+
+def rollback(P, host, op, frm, to, rename=rename_noreplace):
+    """frm: the generation given up (its op is `op`), to: the generation it was staged from. Works after a complete
+    switch and after a switch interrupted anywhere (items never switched are already 'done')."""
+    cur = read_current(P)
+    bad, good = read_gen(P, frm), read_gen(P, to)
+    need(bad.get('opId') == op and bad.get('fromGeneration') == to, 'ROLLBACK_NOT_THE_STAGED_PAIR')
+    need(cur['generation'] in (frm, to), 'CURRENT_GENERATION_MISMATCH', current=cur['generation'])
+    plan = []
+    for name, _, _ in ITEMS:
+        if bad['items'][name]['switched']:
+            plan.append((name, live_item(P, name), good['items'][name], f'{gen_dir(P, to)}/{name}', bad['items'][name], f'{gen_dir(P, frm)}/{name}'))
+    states = {p[0]: classify(*p[1:]) for p in plan}
+    all_done = all(v == 'done' for v in states.values())
+    if not all_done:
+        q = host.quiescence()
+        need(q.get('linuxUnitsInactive') is True and q.get('containersZero') is True, 'LINUX_QUIESCENCE_UNCONFIRMED', quiescence=q.get('details'))
+        ensure_dir(P['generations'], 0o700, host.as_root)
+        ensure_dir(gen_dir(P, frm), 0o700, host.as_root)
+    states, modes = converge(P, host, plan, rename)
+    replayed = all_done and cur['generation'] == to and cur.get('rolledBackFrom') == frm
+    if not (cur['generation'] == to and cur.get('rolledBackFrom') == frm):
+        write_current(P, host, good, op, rolled_back_from=frm)
+    need(host.daemon_reload(), 'DAEMON_RELOAD_FAILED')
+    return {'status': 'LINUX_ROLLED_BACK', 'replayed': replayed, 'fromGeneration': frm, 'generation': to, 'opId': op, 'items': states, 'renameMode': modes}
+
+
+# ---------- verify / retain / adopt ----------
+
+def verify(P, host, gen):
+    cur = read_current(P)
+    rec = read_gen(P, gen)
+    checks = {'current': cur['generation'] == gen}
+    checks['identities'] = all(same(ident(live_item(P, n)), rec['items'][n]) for n, _, _ in ITEMS)
+    checks['contents'] = all(rec['items'][n].get('sha256') is None or (ident(live_item(P, n), True, n) or {}).get('sha256') == rec['items'][n]['sha256']
+                             for n, _, _ in ITEMS)
+    checks['pins'] = pins_ok(P)
+    checks['linuxManifest'] = sha_or_none(P['resident'] + '/manifest.json') == rec['linuxManifestSha256']
+    checks['formalManifest'] = sha_or_none(P['manifest']) == rec['ciSourceManifestSha256']
+    checks['sourceCommit'] = rec['sourceCommit'] is None or head_commit(P['source']) == rec['sourceCommit']
+    checks['roles'] = all(sha_or_none(f"{P['roles']}/{r}.json") == rec['roles'][r]['policySha256']
+                          and sha_or_none(f"{P['roles']}/{r}.qualification.json") == rec['roles'][r]['qualificationSha256'] for r in ROLES)
+    ready = host.readiness() if all(checks.values()) else {}
+    checks['qualified'] = isinstance(ready, dict) and all(ready.get(r) is True for r in ROLES)
+    failed = sorted(k for k, v in checks.items() if not v)
+    need(not failed, 'LINUX_GENERATION_NOT_VERIFIED', failed=failed, readiness={r: ready.get(r) for r in ROLES} if isinstance(ready, dict) else None)
+    return {'status': 'LINUX_GENERATION_VERIFIED', 'generation': gen, 'checks': checks, 'readiness': ready}
+
+
+def retain(P, host, gen, op=None, keep=3, rename=rename_noreplace):
+    """Keep the `keep` most recent generations up to the current one (the current one is live, not parked) and every
+    generation above it (given up by a rollback, kept as evidence); older parked generations and leftover staging
+    directories are renamed into archive/. Nothing is deleted."""
+    cur = read_current(P)
+    need(cur['generation'] == gen, 'CURRENT_GENERATION_MISMATCH', current=cur['generation'])
+    parked = []
+    if os.path.isdir(P['generations']):
+        for name in os.listdir(P['generations']):
+            mm = re.fullmatch(r'g([1-9][0-9]{0,8})', name)
+            if mm:
+                parked.append(int(mm.group(1)))
+    recent = sorted({k for k in parked if k <= gen} | {gen}, reverse=True)[:keep]
+    kept = sorted(k for k in parked if k in recent or k > gen)
+    archived = []
+    for k in sorted(parked):
+        if k not in kept:
+            ensure_dir(P['archive'], 0o700, host.as_root)
+            dst = archive_name(P, f'g{k}')
+            rename(gen_dir(P, k), dst)
+            archived.append({'from': f'generations/g{k}', 'to': 'archive/' + os.path.basename(dst)})
+    if os.path.isdir(P['opt']):
+        for name in sorted(os.listdir(P['opt'])):
+            other = name[len('.next-'):] if name.startswith('.next-') else None
+            if other and other != op:
+                ensure_dir(P['archive'], 0o700, host.as_root)
+                dst = archive_name(P, f'next-{other}')
+                rename(f"{P['opt']}/{name}", dst)
+                archived.append({'from': name, 'to': 'archive/' + os.path.basename(dst)})
+    return {'status': 'LINUX_RETAINED', 'generation': gen, 'kept': kept, 'archived': archived, 'deleted': 0}
+
+
+def adopt(P, host, gen, pkg_sha):
+    """Generation 1 = what is installed now. Writes g1.json and current.json; moves nothing."""
+    need(gen == 1, 'ADOPT_GENERATION_ONE_ONLY')
+    if os.path.lexists(current_path(P)):
+        cur = read_current(P)
+        need(cur['generation'] == 1 and cur.get('packageManifestSha256') == pkg_sha and cur.get('opId') is None, 'ALREADY_ADOPTED')
+        return {'status': 'LINUX_GENERATION_ADOPTED', 'replayed': True, 'generation': 1}
+    items = {}
+    for name, _, kind in ITEMS:
+        i = ident(live_item(P, name), True, name)
+        need(i is not None and i['kind'] == kind, 'LIVE_ITEM_MISSING', item=name)
+        items[name] = {**i, 'switched': False}
+    manifest_sha = sha_or_none(P['resident'] + '/manifest.json')
+    roles = {r: {'policySha256': sha_or_none(f"{P['roles']}/{r}.json"), 'qualificationSha256': sha_or_none(f"{P['roles']}/{r}.qualification.json")} for r in ROLES}
+    need(manifest_sha and all(v['policySha256'] and v['qualificationSha256'] for v in roles.values()), 'LIVE_ITEM_MISSING')
+    record = {'contract': GENERATION_CONTRACT, 'generation': 1, 'opId': None, 'fromGeneration': None, 'packageManifestSha256': pkg_sha,
+              'linuxManifestSha256': manifest_sha, 'ciSourceManifestSha256': sha_or_none(P['manifest']), 'sourceCommit': head_commit(P['source']),
+              'items': items, 'roles': roles, 'stagedAt': host.now()}
+    ensure_dir(P['state'], 0o700, host.as_root)
+    if os.path.lexists(gen_record_path(P, 1)):
+        old = read_gen(P, 1)
+        need(old.get('opId') is None and all(same(items[n], old['items'][n]) for n, _, _ in ITEMS), 'ALREADY_ADOPTED')
+        record = old
+    else:
+        write_new(gen_record_path(P, 1), canonical_bytes(record), 0o644, host.as_root)
+    write_current(P, host, record, None)
+    return {'status': 'LINUX_GENERATION_ADOPTED', 'replayed': False, 'generation': 1, 'linuxManifestSha256': manifest_sha}
+
+
+# ---------- command line ----------
+
+SPEC = {'version-facts': ({}, {}), 'stage': ({'--op', '--package', '--generation', '--linux-manifest'}, {}),
+        'switch': ({'--op', '--from', '--to', '--linux-manifest'}, {}), 'rollback': ({'--op', '--from', '--to'}, {}),
+        'verify': ({'--generation'}, {'--op'}), 'retain': ({'--generation'}, {'--op'}), 'adopt': ({'--generation', '--package'}, {})}
+SHAPES = {'--op': UUID, '--package': HEX64, '--linux-manifest': HEX64, '--generation': GEN, '--from': GEN, '--to': GEN}
+
+
+def parse(argv):
+    need(argv and argv[0] in SPEC and len(argv) % 2 == 1, 'USAGE_REFUSED')
+    required, optional = SPEC[argv[0]]
+    keys, values = argv[1::2], argv[2::2]
+    need(len(set(keys)) == len(keys) and required <= set(keys) <= required | set(optional), 'USAGE_REFUSED')
+    args = dict(zip(keys, values))
+    for k, v in args.items():
+        need(SHAPES[k].match(v) is not None, 'USAGE_REFUSED', argument=k)
+    for k in ('--generation', '--from', '--to'):
+        if k in args:
+            args[k] = int(args[k])
+    return argv[0], args
+
+
+def dispatch(sub, a, P, host):
+    if sub == 'version-facts':
+        return version_facts(P, host)
+    if sub == 'stage':
+        return stage(P, host, a['--op'], a['--package'], a['--generation'], a['--linux-manifest'])
+    if sub == 'switch':
+        need(a['--to'] > a['--from'], 'USAGE_REFUSED')
+        return switch(P, host, a['--op'], a['--from'], a['--to'], a['--linux-manifest'])
+    if sub == 'rollback':
+        need(a['--from'] > a['--to'], 'USAGE_REFUSED')
+        return rollback(P, host, a['--op'], a['--from'], a['--to'])
+    if sub == 'verify':
+        return verify(P, host, a['--generation'])
+    if sub == 'retain':
+        return retain(P, host, a['--generation'], a.get('--op'))
+    return adopt(P, host, a['--generation'], a['--package'])
+
+
+class Lock:
+    """Single instance per host (flock on a state file); absent where fcntl is not available (offline tests)."""
+
+    def __init__(self, P, as_root):
+        self.P, self.as_root, self.fd = P, as_root, None
+
+    def __enter__(self):
+        try:
+            import fcntl
+        except ImportError:
+            return self
+        ensure_dir(self.P['state'], 0o700, self.as_root)
+        self.fd = os.open(f"{self.P['state']}/.tool.lock", os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(self.fd)
+            self.fd = None
+            raise Refused('UPGRADE_TOOL_BUSY')
+        return self
+
+    def __exit__(self, *exc):
+        if self.fd is not None:
+            os.close(self.fd)
+        return False
+
+
+def main(argv, P=None, host=None, root_check=is_root_linux):
+    """Returns (exit code, the one JSON object printed)."""
+    P = P or paths()
+    sub = argv[0] if argv else None
+    try:
+        need(root_check(), 'ROOT_LINUX_REQUIRED')
+        sub, a = parse(argv)
+        host = host or RealHost(P)
+        if sub in ('version-facts', 'verify'):  # read-only: no lock file is created
+            out = dispatch(sub, a, P, host)
+        else:
+            with Lock(P, host.as_root):
+                out = dispatch(sub, a, P, host)
+        return 0, out
+    except Refused as e:
+        return 1, {'status': 'REFUSED', 'sub': sub if sub in SPEC else None, 'code': e.code,
+                   'upgradeCode': A8.get(e.code, A8_DEFAULT.get(sub)), 'detail': e.detail}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as e:
+        return 1, {'status': 'REFUSED', 'sub': sub if sub in SPEC else None, 'code': 'LINUX_UPGRADE_TOOL_UNCONFIRMED', 'kind': type(e).__name__,
+                   'upgradeCode': A8_DEFAULT.get(sub)}
+
+
+if __name__ == '__main__':
+    code, out = main(sys.argv[1:])
+    print(json.dumps(out, sort_keys=True, separators=(',', ':')))
+    sys.exit(code)
