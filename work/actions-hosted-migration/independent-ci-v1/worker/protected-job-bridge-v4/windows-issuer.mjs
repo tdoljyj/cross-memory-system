@@ -128,7 +128,14 @@ export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sle
     const takeRefs=async()=>({refs:await collectRefs({context,collect,until:before,clock,sleep}),at:clock()});
     let r=job.role==='gitleaks'?await takeRefs():null;
     let first=await admitted(before),firstAt=clock();
-    if(r&&clock()-r.at>ISSUE_FRESH_MARGIN_MS){r=await takeRefs();if(clock()-firstAt>ISSUE_FRESH_MARGIN_MS){first=await admitted(before);firstAt=clock();}}
+    // The extra round only while it still ends before `before` (round-2 review m2); and after it, refs that aged again are
+    // given up as unavailable rather than issued stale (round-2 review m1): either way a clean BLOCKED before any issue.
+    if(r&&clock()-r.at>ISSUE_FRESH_MARGIN_MS){
+      if(clock()>=before)fail(REFS_UNAVAILABLE);
+      r=await takeRefs();
+      if(clock()-firstAt>ISSUE_FRESH_MARGIN_MS){if(clock()>=before)fail(REFS_UNAVAILABLE);first=await admitted(before);firstAt=clock();}
+      if(clock()-r.at>REFS_COLLECTION_MS-ISSUE_FRESH_MARGIN_MS)fail(REFS_UNAVAILABLE);
+    }
     const refs=r?r.refs:null;
     const until=Math.min(stageDeadline,context.accepted.validUntil===null?Infinity:Date.parse(context.accepted.validUntil));
     const issue=makeIssue(job,first,refs,{sourceAcceptanceRef:context.sourceAcceptanceRef,hostQualificationRef:context.hostQualificationRef,expiresAt:new Date(until).toISOString(),now:clock()});
