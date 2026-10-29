@@ -35,7 +35,7 @@ test('stage 10: a train row outside the batch, with its own entry and state dire
   assert.equal(TRAIN_STAGE_NUMBER, 10);
   assert.deepEqual([TRAIN_STAGE_V2.kind, TRAIN_STAGE_V2.entryRole, TRAIN_STAGE_V2.jobRoles, TRAIN_STAGE_V2.runMilliseconds, TRAIN_STAGE_V2.linuxWorker],
     ['train', 'train-maintenance', ['train-run'], 300_000, false]);
-  assert.equal(STAGES_V2.length, 11, 'stages 1-10 and the C2 role probe (stage 11)');
+  assert.equal(STAGES_V2.length, 12, 'stages 1-10, the C2 role probe (11) and independent revocation maintenance (12)');
   assert.ok(!FORMAL_STAGES_V2.some(s => s.number === 10), 'stage 10 is never one of the batch stages');
   assert.equal(ENTRY_V2['train-maintenance'], 'work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-maintenance.mjs');
   assert.match(STATE_V2.trainShadow, /\\state\\v2\\train-shadow$/);

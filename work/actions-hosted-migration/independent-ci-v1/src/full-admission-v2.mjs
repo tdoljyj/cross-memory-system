@@ -7,7 +7,9 @@
 // internally consistent about that claim (claim id, fence, epoch, ACTIVE, bound PR, lease left).
 // Inside one batch the caller passes the sticky batch claim (batch-claim-v2.mjs): a different claim
 // id, fence or epoch fails closed (a renewal, which only moves expires_at, does not).
-// No gate is relaxed: guarded claims (lease_key_required) and pending handovers are still refused.
+// Active guarded claims additionally bind the real private head authorization;
+// staged guarded claims and every pending handover remain refused. Publication
+// still needs its separately qualified Native ticket port.
 import fs from 'node:fs';
 import path from 'node:path';
 import { digest } from './proof.mjs';
@@ -15,7 +17,7 @@ import { validateJobV2, claimGeneration, sameClaimGeneration } from './job-v2.mj
 import { isCurrentMergeQueueHeadV2 } from './independent-control-checks-v2/queue-facts.mjs';
 import { evaluate, githubJson, parseClaimReference } from '../../../../scripts/ci/clued-work-admission.mjs';
 
-import { FULL_ADMISSION_CONTRACT_V2, ownerKind, reasonCodes, sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2, schedulingFactsV2, verdict } from './admission-facts-v2.mjs';
+import { FULL_ADMISSION_CONTRACT_V2, FULL_ADMISSION_CONTRACT_V3, supportedNativeExecution, ownerKind, reasonCodes, sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2, schedulingFactsV2, verdict } from './admission-facts-v2.mjs';
 const REPO = 'tdoljyj/cross-memory-system';
 const ENGINE = 'scripts/ci/clued-work-admission.mjs#evaluate';
 const VARIABLE = 'CLUED_MERGE_ADMISSION_STATE';
@@ -144,7 +146,8 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
           || !samePr(await githubJson(fetchImpl, env, `/repos/${REPO}/pulls/${job.pr}`), job)) return blocked('full_admission_subject_changed');
         phase = 'native'; const claim = native?.claim;
         if (native?.status !== 'ok' || native.verdict !== 'ADMITTED' || native.execution_authorized !== true
-          || native.execution_policy !== 'staged' || claim?.lease_key_required !== false
+          || !supportedNativeExecution(native.execution_policy, claim?.lease_key_required)
+          || (claim.lease_key_required && !uuid.test(native.head_authorization_id ?? ''))
           || claim.execution_handover_pending !== false) return blocked('full_admission_native_unsupported');
         // Native must be internally consistent about the claim the PR names now.
         if (claim.claim_id !== reference.claim_id || native.current_fence !== claim.fence || native.execution_epoch !== claim.execution_epoch
@@ -158,12 +161,14 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
         if (batchClaim && !sameClaimGeneration(observedClaim, batchClaim)) return blocked('full_admission_claim_changed');
         if (!plain(outcome.admission_mode) || !plain(outcome.merge_slot)
           || !['normal', 'efficiency', 'frozen'].includes(outcome.admission_mode.state)) return blocked('full_admission_incomplete');
-        const facts = { contract: FULL_ADMISSION_CONTRACT_V2, status: 'ADMITTED', admitted: true,
+        const active = native.execution_policy === 'active';
+        const facts = { contract: active ? FULL_ADMISSION_CONTRACT_V3 : FULL_ADMISSION_CONTRACT_V2, status: 'ADMITTED', admitted: true,
           completeAdmission: true, evaluator: ENGINE, domain: config.domain, repository: REPO, scope: config.scope,
           prRef, headSha: job.headSha, baseSha: job.baseSha, jobId: job.id, role: job.role, attempt: job.attempt,
           claimId: observedClaim.claimId, fence: observedClaim.fence, epoch: observedClaim.epoch, observedClaim,
           batchClaimBound: batchClaim ? claimGeneration(batchClaim) : null,
           sourceManifestSha256: job.sourceManifestSha256, executionPolicy: native.execution_policy, guarded: claim.lease_key_required, executionHandoverPending: claim.execution_handover_pending,
+          ...(active ? { publicationRequired: true, headAuthorizationId: claim.lease_key_required ? native.head_authorization_id : null } : {}),
           mergeQueueHead: isCurrentMergeQueueHeadV2(claim, observedClaim, job, finished),
           mode: { state: outcome.admission_mode.state, layer: outcome.admission_mode.layer, policyVersion: outcome.admission_mode.policy_version },
           mergeSlot: structuredClone(outcome.merge_slot), ownerReview: outcome.owner_review ? {
@@ -177,4 +182,4 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
   });
 }
 
-export { FULL_ADMISSION_CONTRACT_V2, ADMISSION_FIELDS_V2, admittedFactsMatchJobV2, sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2, schedulingFactsV2 } from './admission-facts-v2.mjs';
+export { FULL_ADMISSION_CONTRACT_V2, FULL_ADMISSION_CONTRACT_V3, ADMISSION_FIELDS_V2, ADMISSION_FIELDS_V3, supportedNativeExecution, admittedFactsMatchJobV2, sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2, schedulingFactsV2 } from './admission-facts-v2.mjs';

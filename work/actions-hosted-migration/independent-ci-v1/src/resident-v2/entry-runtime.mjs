@@ -16,6 +16,10 @@ import { openHeldRecord, takeHeldRecord, assertOwnSourceRoot, sourceRootOfModule
 import { loadStageInputs, parseEntryArgs, writeOutcome } from './stage-inputs.mjs';
 import { STATE_V2 } from './layout.mjs';
 import { FIXED_APP } from './record.mjs';
+import { cluedRpc } from '../../../../../scripts/ci/clued-work-admission.mjs';
+import { createIndependentPublicationPortsForJobs, independentControllerId } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
+import { registerIndependentController } from '../../../../../scripts/ci/clued-independent-revoker.mjs';
+import { revocationQualification } from './revocation-run.mjs';
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
@@ -58,7 +62,41 @@ export function controllerPorts({ record, appKey, nativeToken, policyText, sourc
     modeProvider: () => github.readAdmissionMode(),
     tokenProvider: async () => ({ githubToken: await github.getInstallationToken(), ciAdmissionToken: nativeToken, ciPrincipalBindingId: record.config.ciPrincipalBindingId, ciPrincipalQualificationRef: record.config.ciPrincipalQualificationRef }),
     recorderProvider: async () => ({ domain: 'production', kind: 'independent-controller', observedAt: new Date().toISOString(), observationRef: randomUUID(), recorder: { newId: randomUUID, record: log } }) });
-  return { github, admission, fetchImpl };
+  const env = { CLUED_CONTEXT_READ_TOKEN: nativeToken, CLUED_SUPABASE_URL: record.config.supabaseUrl,
+    CLUED_SUPABASE_PUBLISHABLE_KEY: record.config.publishableKey };
+  const commands = new Set(['publication_begin_independent','publication_finish','publication_abort_independent','publication_reconcile','revocations_list',
+    'independent_revocation_heads','independent_legacy_drain_finish']);
+  const native = Object.freeze({ async command(input) {
+    live(); check(commands.has(input?.action) && input.scope === record.config.scope, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+    const reply = await cluedRpc(fetchImpl, env, sourceRoot, 'clued_work_verify_v1', input);
+    check(reply.status === 200 && reply.body && typeof reply.body === 'object', 'NATIVE_PUBLICATION_UNAVAILABLE');
+    return reply.body;
+  }, async current(identity,mode) {
+    live();if(mode?.scope!==record.config.scope||identity.job.repo!==record.config.repository
+      ||!Array.isArray(mode.paths)||!mode.paths.length)return false;
+    const reply = await cluedRpc(fetchImpl, env, sourceRoot, 'clued_work_verify_v1', { scope: mode.scope, claim_id: identity.claim.claim_id,
+      head_sha: identity.job.headSha, base_sha: identity.job.baseSha, changed_paths: mode.paths });
+    const b=reply.body,c=b?.claim,now=Date.now();
+    return reply.status===200&&b?.status==='ok'&&b.verdict==='ADMITTED'&&b.execution_policy===mode.executionPolicy
+      &&c?.lease_key_required===mode.guarded&&c.execution_handover_pending===false&&c.status==='ACTIVE'
+      &&c.claim_id===identity.claim.claim_id&&c.fence===identity.claim.fence&&c.execution_epoch===identity.claim.execution_epoch
+      &&b.current_fence===c.fence&&b.execution_epoch===c.execution_epoch&&c.context_key===mode.scope
+      &&c.bound_pr===`${identity.job.repo}#${identity.job.pr}`&&Date.parse(c.expires_at)>now
+      &&Date.parse(b.verified_at)<=now&&now-Date.parse(b.verified_at)<=30000;
+  }});
+  return { github, admission, fetchImpl, native };
+}
+
+// Root-held Source/record verification and the existing protected permanent
+// role journal remain prerequisites. No extra secret reader or worker token.
+export function publicationControllerGithub({ ports, jobs, journal, args, record, plan }) {
+  return createIndependentPublicationPortsForJobs({ jobs, journal, github: ports.github, native: ports.native,
+    controllerIdFor: job => independentControllerId({ invocationNonce: args.nonce, jobId: job.id, nodeId: record.accepted.node.hostname }),
+    registerController: (identity,mode) => {
+      if(mode.executionPolicy==='active'&&!revocationQualification(record,{reserveMs:300_000}))fail('independent_revoker_qualification_required');
+      return registerIndependentController({ identity, journal, args, record, plan });
+    },
+    assertCurrent: (identity,mode) => ports.native.current(identity,mode) });
 }
 
 // The authority facts every v2 publisher binds (the seven install refs + acceptance window).

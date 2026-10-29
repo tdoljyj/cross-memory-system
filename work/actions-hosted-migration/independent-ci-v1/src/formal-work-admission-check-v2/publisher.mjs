@@ -27,6 +27,7 @@
 // published by another node or install: a node taking over after the active one ran stage 1 would otherwise post a second
 // check of the same identity and HALT on the read-back. A batch that already recorded its claim is this node's own and
 // keeps its path. A read that is not complete refuses (fail closed).
+import { prepareNativePublication, nativePublicationNoPostProof } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { randomUUID } from 'node:crypto';
 import { digest } from '../proof.mjs';
 import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, MAX_ATTEMPT_V2 } from '../job-v2.mjs';
@@ -71,6 +72,7 @@ export function factsValid(job, packet, facts, domain, now, batchClaim) {
 const fresh = (f, now) => Number.isSafeInteger(now) && Date.parse(f.observedAt) <= now && now - Date.parse(f.observedAt) <= 30000 && Date.parse(f.claimExpiresAt) > now;
 function binding(job, packet, facts, authority) {
   return digest({ subject: subjectOfV2(job), claim: claimGeneration(facts.observedClaim), pathsSha256: digest(packet.paths), scope: facts.scope, executionPolicy: facts.executionPolicy,
+    ...(facts.publicationRequired ? { guarded: facts.guarded, publicationRequired: true, headAuthorizationId: facts.headAuthorizationId } : {}),
     mode: facts.mode, mergeSlot: facts.mergeSlot, ownerReview: facts.ownerReview, workflowGateFindings: facts.workflowGateFindings, claimExpiresAt: facts.claimExpiresAt, authority, definition: DEFINITION });
 }
 
@@ -85,7 +87,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
   }
   function bound(job, { packet, facts }) {
     record('native_check_boundary', { jobId: job.id, nativeObservationSha256: facts.observationSha256, packetSha256: digest(packet) });
-    return { facts, bindingSha256: binding(job, packet, facts, authority) };
+    return { facts, packet, bindingSha256: binding(job, packet, facts, authority) };
   }
   async function boundary(job, batchClaim) { return bound(job, await evaluate(job, batchClaim)); }
   async function inventory(job, externalId) {
@@ -179,9 +181,11 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       if (intent.existing) return { status: 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects, productionAuthorized: false };
       await journal.transition(key, 'intent', 'authorized', { nativeObservationSha256: before.facts.observationSha256 }); phase = 'authorized';
       assertLive(); check(fresh(before.facts, clock()), 'NATIVE_OBSERVATION_EXPIRED_BEFORE_WRITE');
+      const payload = { name: CHECK_NAME, head_sha: job.headSha, status: 'completed', conclusion: 'success', external_id: externalId,
+        output: { title: 'Work claim and complete Native admission verified', summary: `Independent Native control check for ${REPO}#${job.pr} (attempt ${job.attempt}); observation sha256 ${before.facts.observationSha256}. ${before.facts.publicationRequired ? 'This observation is not scanner execution or qualification. The protected publisher attaches its Native Receipt.' : 'This is not a scanner execution, Native publication ticket, Receipt or qualification.'}` } };
+      const nativeHandle = await prepareNativePublication(github, { facts: before.facts, packet: before.packet, payload });
       await journal.transition(key, 'authorized', 'sent', { externalId, nativeObservationSha256: before.facts.observationSha256 }); phase = 'sent'; sent = true; sideEffects++;
-      const posted = await github.createCheck({ name: CHECK_NAME, head_sha: job.headSha, status: 'completed', conclusion: 'success', external_id: externalId,
-        output: { title: 'Work claim and complete Native admission verified', summary: `Independent Native control check for ${REPO}#${job.pr} (attempt ${job.attempt}); observation sha256 ${before.facts.observationSha256}. This is not a scanner execution, Native publication ticket, Receipt or qualification.` } });
+      const posted = await github.createCheck(payload, nativeHandle);
       check(identity(posted, job, externalId) && posted.status === 'completed' && posted.conclusion === 'success', 'NATIVE_CHECK_IDENTITY_UNCONFIRMED'); known = posted;
       const after = await boundary(job, claimed); check(after.bindingSha256 === before.bindingSha256, 'NATIVE_AUTHORIZATION_BINDING_CHANGED');
       await readback(job, externalId, known.id, 'success'); assertLive(); check(fresh(after.facts, clock()), 'NATIVE_OBSERVATION_EXPIRED_AFTER_WRITE');
@@ -189,6 +193,10 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       record('native_check_settled', { effectKey: key, checkRunId: known.id, beforeSha256: before.facts.observationSha256, afterSha256: after.facts.observationSha256 });
       return { status: 'SETTLED', effectKey: key, checkRunId: known.id, nativeObservationBeforeSha256: before.facts.observationSha256, nativeObservationAfterSha256: after.facts.observationSha256, sideEffects, productionAuthorized: production, scheduling };
     } catch (e) {
+      if (sent && !known && sideEffects === 1 && nativePublicationNoPostProof(e)?.notSent === true) {
+        await transition(key, phase, 'revoked', { reason: 'native_publication_not_sent', notSent: true, externalId });
+        return { status: 'BLOCKED', effectKey: key, reason: 'native_publication_not_sent', sideEffects: 0, productionAuthorized: false };
+      }
       if (sent && !known) { try { const m = await inventory(job, externalId); if (m.length === 1) known = m[0]; } catch { /* read-only discovery cannot prove a missing POST */ } }
       if (sent && known) return revoke({ job, key, externalId, known, phase, cause: safe(e), sideEffects, admissionDiagnostic: diagnosticOf(e) });
       await transition(key, phase, sent ? 'uncertain' : 'not_sent', { reason: safe(e), externalId });

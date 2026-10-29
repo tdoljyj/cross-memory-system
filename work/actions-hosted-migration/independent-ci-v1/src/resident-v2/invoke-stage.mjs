@@ -20,6 +20,7 @@ import { ENVELOPE_CONTRACT_V2 } from '../proof-v2.mjs';
 import { hash } from './prepare-record.mjs';
 import { readSealedStage, PLAN_CONTRACT_V2 } from './stage-package.mjs';
 import { makeRoleProbeRun } from './role-probe-run.mjs';
+import { makeRevocationRun, revocationQualification } from './revocation-run.mjs';
 import { readRecordDocs } from './derive-batch.mjs';
 import { validateRecordV2 } from './record.mjs';
 import { makeBrokerRequest, validateBrokerResponse } from './broker-protocol.mjs';
@@ -150,7 +151,55 @@ export async function invokeRoleProbe({ runKey, runId, nodeProfileSha256, stageR
     controllerSid: record.accepted.node.controllerSid, expectedJobIds: JSON.parse(jobsText).map(j => j.id) });
 }
 
+export async function invokeRevocationMaintenance({ runKey, runId, nodeProfileSha256, stageRoot = WIN_STAGE, brokerRoot = path.join(WIN_RESIDENT, 'broker'),
+  receiptsRoot = STATE_V2.receipts, recordDocs = null, clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)),
+  nonce = randomBytes(16).toString('hex') }) {
+  const intent = { contract: 'clued.independent-ci.revocation-maintenance-intent/1', runKey, runId, nodeProfileSha256 };
+  const workManifestSha256 = hash(canonical(intent));
+  let record, plan, jobsText, planText;
+  try {
+    check(HEX64.test(runKey ?? '') && /^[0-9a-f]{16}-[0-9a-f]{12}$/.test(runId ?? '') && runId.startsWith(runKey.slice(0,16))
+      && HEX64.test(nodeProfileSha256 ?? ''), 'REVOCATION_RUN_REFUSED');
+    record = validateRecordV2(recordDocs ?? readRecordDocs(WIN_RECORD), { now: clock(), required: [ENTRY_V2['revocation-maintenance']] });
+    check(hash(record.accepted.node) === nodeProfileSha256, 'REVOCATION_RUN_REFUSED');
+    check(revocationQualification(record,{now:clock(),reserveMs:300_000}), 'REVOCATION_QUALIFICATION_REQUIRED');
+    jobsText = canonical([makeRevocationRun({repo:record.config.repository,runId,sourceManifestSha256:record.config.sourceManifestSha256,
+      nodeProfileSha256,createdAt:new Date(clock()).toISOString()})]);
+    plan = {contract:PLAN_CONTRACT_V2,enabled:true,stage:12,entryRole:'revocation-maintenance',batchKey:runKey,batchId:runId,
+      ownerPackageAcceptanceRef:record.accepted.ownerPackageAcceptanceRef,nodeSha256:record.config.controllerNodeSha256,nodeProfileSha256,
+      entrySha256:record.pins.get(ENTRY_V2['revocation-maintenance']),acceptanceSha256:record.hashes.acceptanceSha256,
+      sourceManifestSha256:record.config.sourceManifestSha256,installationSha256:record.hashes.installationSha256,
+      runtimeConfigPinSha256:record.hashes.runtimeConfigPinSha256,jobSha256:hash(jobsText)};
+    planText=canonical(plan);
+  } catch { return buildStageFact({stage:12,nonce,workManifestSha256,preflightCode:'STAGE_PACKAGE_REFUSED'}); }
+  await prepareStageDirectory({stageRoot,nonce,sealed:{files:{'formal-service-entry.json':Buffer.from(planText),'jobs.json':Buffer.from(jobsText)}}});
+  const planSha256=hash(planText),request=makeBrokerRequest({stage:12,nonce,configSha256:planSha256,now:clock()});
+  const {response}=await askBroker({brokerRoot,request,clock,sleep,waitUntil:Date.parse(request.deadline)+180_000});
+  const receiptBytes=await readBounded(path.join(receiptsRoot,`windows-formal-entry-${nonce}.json`),65536).catch(()=>null);
+  const outcomeBytes=await readBounded(path.join(receiptsRoot,`outcome-${nonce}.json`),65536).catch(()=>null);
+  return buildStageFact({stage:12,nonce,plan,planSha256,workManifestSha256,broker:response,
+    receipt:receiptBytes?parse(receiptBytes):null,receiptBytes,outcome:outcomeBytes?parse(outcomeBytes):null,outcomeBytes,
+    controllerSid:record.accepted.node.controllerSid,expectedJobIds:JSON.parse(jobsText).map(j=>j.id)});
+}
+
 export async function main(argv = process.argv.slice(2), output = process.stdout) {
+  if (argv[0] === '--revocation-maintenance-qualification') {
+    try {
+      check(argv.length===3 && argv[1]==='--node-profile-sha256' && HEX64.test(argv[2]??''),'REVOCATION_QUALIFICATION_REQUIRED');
+      const record=validateRecordV2(readRecordDocs(WIN_RECORD),{required:[ENTRY_V2['revocation-maintenance']]});
+      check(hash(record.accepted.node)===argv[2],'REVOCATION_QUALIFICATION_REQUIRED');
+      const qualification=revocationQualification(record,{reserveMs:300_000});
+      output.write(JSON.stringify({qualified:qualification!==null,qualification,sourceManifestSha256:record.config.sourceManifestSha256})+'\n');return 0;
+    } catch { output.write(JSON.stringify({qualified:false,qualification:null,sourceManifestSha256:null})+'\n');return 2; }
+  }
+  if (argv[0] === '--revocation-maintenance') {
+    if (argv.length !== 7 || argv[1] !== '--run-key' || argv[3] !== '--run-id' || argv[5] !== '--node-profile-sha256') {
+      output.write(JSON.stringify({state:'REFUSED',failure_code:'STAGE_PACKAGE_REFUSED'})+'\n');return 2;
+    }
+    const fact=await invokeRevocationMaintenance({runKey:argv[2],runId:argv[4],nodeProfileSha256:argv[6]});
+    output.write(JSON.stringify(fact)+'\n');
+    return ['FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION','REVOCATION_MAINTENANCE_PENDING_ORIGINAL_STOPPED_NO_QUALIFICATION'].includes(fact.state)?0:41;
+  }
   if (argv[0] === '--role-probe') {
     if (argv.length !== 6 || argv[2] !== '--probe-id' || argv[4] !== '--node-profile-sha256') {
       output.write(JSON.stringify({ state: 'REFUSED', failure_code: 'STAGE_PACKAGE_REFUSED' }) + '\n'); return 2;
