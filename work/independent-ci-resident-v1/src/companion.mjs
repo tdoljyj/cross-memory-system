@@ -175,6 +175,8 @@ export function relayLogEntry({ at, mode, seq, attempt, ms, runner, receipt, kla
 // Source, <root>\source\<ciSourceManifestSha256>\. A path key is a Source script unless it is named here as not one, so a new path
 // key is held to the Source directory by default. A config whose script paths name another (older) Source directory runs
 // nothing: the stage-0 bundle then reports BUNDLE_UNAVAILABLE and the relay cannot start.
+// build-bundle.ps1's refusals that mean the batch's refs moved on since its first bundle (DESIGN §36).
+export const REBUNDLE_REFS_CHANGED = Object.freeze(['REMOTE_MAIN_BASE_CHANGED', 'REMOTE_HEAD_MOVED']);
 export const COMPANION_PATH_KEYS = Object.freeze(['wslExe', 'powershellExe', 'relayScript', 'bundleScript', 'windowsSpool']);
 export const NON_SOURCE_PATH_KEYS = Object.freeze(['wslExe', 'powershellExe', 'windowsSpool']);
 export const SOURCE_SCRIPT_KEYS = Object.freeze(COMPANION_PATH_KEYS.filter(k => !NON_SOURCE_PATH_KEYS.includes(k)));
@@ -248,6 +250,7 @@ export function argv(cfg) {
     },
     bundle: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.bundleScript, '-BatchId', id]; },
     checkRefs: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.bundleScript, '-BatchId', id, '-CheckRefs']; },
+    rebundle: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.bundleScript, '-BatchId', id, '-Rebundle']; },
     keepalive: () => [cfg.wslExe, '--distribution', cfg.distribution, '--exec', '/bin/sleep', 'infinity'],
   };
 }
@@ -305,6 +308,14 @@ export class Companion {
         const r = await this.run(this.a.bundle(request.batchId), { timeoutMs: 30 * 60_000 });
         const v = r.code === 0 ? json(r.stdout) : null;
         return { ok: v?.status === 'BUNDLE_WRITTEN', code: v?.status === 'BUNDLE_WRITTEN' ? null : 'BUNDLE_UNAVAILABLE' };
+      }
+      // DESIGN §36: the second generation. Refs no longer the batch's (main moved, or no branch still at the head) is the clean
+      // transient REMOTE_REFS_CHANGED_SINCE_BUNDLE; anything else (including no answer) only says the bundle could not be renewed.
+      case 'rebuild-bundle': {
+        const r = await this.run(this.a.rebundle(request.batchId), { timeoutMs: 30 * 60_000 });
+        const v = r.code === 0 || r.code === 2 ? json(r.stdout) : null;
+        if (r.code === 0 && v?.status === 'BUNDLE_WRITTEN' && v.generation === 2) return { ok: true, code: null };
+        return { ok: false, code: REBUNDLE_REFS_CHANGED.includes(v?.reason) ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'BUNDLE_UNAVAILABLE' };
       }
       case 'prepare-workspaces': {
         const r = await this.run(this.a.startWait('clued-ci-wsprep', request.batchId), { timeoutMs: 20 * 60_000 });

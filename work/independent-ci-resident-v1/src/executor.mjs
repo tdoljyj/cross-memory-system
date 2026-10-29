@@ -264,6 +264,13 @@ export const INTAKE_REQUEST_TRIES = 3;
 // The oldest bundle a batch takes into the workspace preparation (which accepts at most 2 hours), measured from the
 // reservation, which comes before the bundle (design v0.5 §4.3 item 3).
 export const BUNDLE_MAX_AGE_AT_WORKSPACE_MS = 100 * 60_000;
+// Task 4012c1b9 (DESIGN §36): a batch whose workspace comes this long after its reservation (it waited at parking point A)
+// first gets its second and last bundle (build-bundle.ps1 -Rebundle): fresh refs for stage 2's refs gate, and a bundle the
+// workspace preparation accepts. The refs must still be the batch's (REMOTE_REFS_CHANGED_SINCE_BUNDLE, a clean transient
+// ending); any other refusal ends it as before (PARKED_BUNDLE_TOO_OLD). A batch that never waited is not touched.
+export const REBUNDLE_AFTER_MS = 30 * 60_000;
+// The status row reason of a batch that rests at parking point A (the hosted wait).
+export const PARKED_A_REASON = 'PARKED_A';
 const dayKey = ms => new Date(ms).toISOString().slice(0, 10);
 
 // The stage-terminal receipt's summary of a stage outcome: codes and flags only.
@@ -1295,6 +1302,9 @@ export class ResidentExecutor {
   // still-waiting result when one only waits }.
   async resumeParked() {
     const entries = await this.ledger.parkedEntries();
+    // Every batch resting at parking point A, for the status page (Task 4012c1b9, review N4 of step 2): several may wait at
+    // once, each shown on its own row as PARKED_A, not only the one in `current`.
+    this.parkedA = new Set(entries.filter(x => Ledger.waitingAt(x)).map(x => `${x.reserved?.subject?.pr}:${x.reserved?.subject?.headSha}`));
     // Whether new batches wait for the parking places: shown on the status of every tick, not only one that deferred
     // (re-review of step 2, m8).
     const counts = await this.parkedCounts(entries);
@@ -1470,7 +1480,9 @@ export class ResidentExecutor {
       const b = breakerOf(this.queue.breaker);
       s.update({ queue: { generation: this.queue.generation, live: this.queue.live().length, depth: this.policy.limits.queueDepth, parkingFull: this.parkingFull === true }, breaker: breakerView(b),
         notices: [...this.roleProbeNotices, ...this.queue.notices].slice(0, 50) });
-      s.setPending(this.queue.view(this.clock(), { etaBatchMs: ETA_BATCH_MS }));
+      const parkedA = this.parkedA ?? new Set();
+      s.setPending(this.queue.view(this.clock(), { etaBatchMs: ETA_BATCH_MS })
+        .map(r => r.state === 'RUNNING' && parkedA.has(`${r.pr}:${r.headSha}`) ? { ...r, reason: PARKED_A_REASON } : r));
     });
   }
 
@@ -2004,11 +2016,21 @@ export class ResidentExecutor {
     if (localRoles.length > 0) {
       if ((aborted = await this.abortIfRequested(key, batch, 'before-workspace'))) return aborted;
       if ((aborted = await this.supersededAfterStart(key, subject, batch, 'before-workspace', plan.candidates.length > 0 ? POSITIONS[RELAY_STAGE] : POSITIONS[1]))) return aborted;
-      // A batch resumed from parking point A after other batches ran may hold a bundle too old for the workspace: it ends
-      // here, nothing of it on Linux. The design's re-bundle needs a second bundle generation in the companion and comes
-      // with the relay (off until the Owner's November test; DESIGN §18.2).
+      // A batch resumed from parking point A gets its second bundle before the workspace (Task 4012c1b9, DESIGN §36). When
+      // that is refused, it ends here, nothing of it on Linux: refs no longer the batch's as the clean transient
+      // REMOTE_REFS_CHANGED_SINCE_BUNDLE, anything else as before (PARKED_BUNDLE_TOO_OLD, also without a re-bundle port).
       const reservedAt = Date.parse((await this.ledger.state(key)).reserved?.reservedAt ?? '');
-      if (Number.isFinite(reservedAt) && this.clock() - reservedAt > BUNDLE_MAX_AGE_AT_WORKSPACE_MS) return new StepFailure(0, 'PARKED_BUNDLE_TOO_OLD', {}, 'workspace', relayed);
+      if (Number.isFinite(reservedAt) && this.clock() - reservedAt > REBUNDLE_AFTER_MS) {
+        if (typeof this.companion.rebuildBundle !== 'function') {
+          if (this.clock() - reservedAt > BUNDLE_MAX_AGE_AT_WORKSPACE_MS) return new StepFailure(0, 'PARKED_BUNDLE_TOO_OLD', {}, 'workspace', relayed);
+        } else {
+          this.atStage(0, 'rebundle');
+          const rb = await this.companion.rebuildBundle(batch);
+          const code = rb?.ok === true ? null : (rb?.code === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'PARKED_BUNDLE_TOO_OLD');
+          await this.receipt('batch-rebundled', { key, failureCode: code, ageMinutes: Math.floor((this.clock() - reservedAt) / 60_000), companionJobTree: rb?.jobTree ?? null });
+          if (code) return new StepFailure(0, code, {}, 'workspace', relayed);
+        }
+      }
       this.atStage(0, 'workspace');
       const prep = await this.companion.prepareWorkspaces(batch);
       if (!prep || prep.ok !== true) return new StepFailure(0, prep?.code ?? 'WORKSPACE_PREPARATION_UNCONFIRMED', {}, 'workspace', relayed);

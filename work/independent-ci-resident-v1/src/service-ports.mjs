@@ -5,7 +5,7 @@ import path from 'node:path';
 import { HEX64, check, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 
 // Timeouts are upper bounds for one companion action; no answer by then is never success.
-const TIMEOUTS = { 'build-bundle': 35 * 60_000, 'prepare-workspaces': 25 * 60_000, 'archive-linux': 6 * 60_000, 'linux-quiescence': 2 * 60_000, 'check-refs': 6 * 60_000, 'archive-usage': 3 * 60_000,
+const TIMEOUTS = { 'build-bundle': 35 * 60_000, 'rebuild-bundle': 35 * 60_000, 'prepare-workspaces': 25 * 60_000, 'archive-linux': 6 * 60_000, 'linux-quiescence': 2 * 60_000, 'check-refs': 6 * 60_000, 'archive-usage': 3 * 60_000,
   'pr-head': 2 * 60_000, 'archive-prune': 10 * 60_000 };
 const NO_BATCH = '0000000000000000-000000000000';
 
@@ -19,6 +19,11 @@ export function mailboxCompanion(mailbox, sleep) {
     // also when no answer came. Recorded with a stage-0 failure; the release never waits for it.
     async buildBundle(batch) {
       const r = await ask('build-bundle', { batchId: batch.batchId });
+      return { ok: r?.ok === true, code: r?.code ?? 'BUNDLE_UNAVAILABLE', jobTree: r?.jobTree ?? null };
+    },
+    // DESIGN §36: the batch's second bundle; no answer is BUNDLE_UNAVAILABLE (the executor then ends the batch as before).
+    async rebuildBundle(batch) {
+      const r = await ask('rebuild-bundle', { batchId: batch.batchId });
       return { ok: r?.ok === true, code: r?.code ?? 'BUNDLE_UNAVAILABLE', jobTree: r?.jobTree ?? null };
     },
     async prepareWorkspaces(batch) {

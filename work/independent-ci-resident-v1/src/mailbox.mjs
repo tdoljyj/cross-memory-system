@@ -42,7 +42,9 @@ const ARCHIVE_DIR = /^(failed|archive)-[0-9a-z-]{1,120}$/;
 // The retention pass's archive names (retention.mjs#ARCHIVE_NAME).
 const PRUNE_NAME = /^(archive|completed|failed)-[0-9A-Za-z-]{1,90}$/;
 export const KINDS = Object.freeze(['build-bundle', 'prepare-workspaces', 'relay-stage', 'archive-linux', 'linux-quiescence', 'check-refs', 'archive-usage', 'pr-head', 'memory-ready',
-  'archive-prune']);
+  'archive-prune', 'rebuild-bundle']);
+// rebuild-bundle (Task 4012c1b9, DESIGN §36): the batch's second and last bundle (build-bundle.ps1 -Rebundle), asked only for a
+// batch resumed from parking point A, right before its workspace. Its answer can only let the batch go on or end it cleanly.
 // archive-prune (DESIGN §34): one retention pass of the Linux spool by the root tool, asked only between batches with no open
 // batch and a fresh heartbeat. Its answer is a record for the receipt; it never admits or publishes anything.
 // memory-ready (DESIGN §32): one read of the VM's hv_sock memory facts before a scanner stage. Its answer can only delay or
@@ -72,6 +74,7 @@ const REQUEST_FIELDS = {
   'pr-head': ['batchId', 'pr'],
   'memory-ready': ['batchId'],
   'archive-prune': ['batchId'],
+  'rebuild-bundle': ['batchId'],
 };
 
 export function validateRequest(v) {
