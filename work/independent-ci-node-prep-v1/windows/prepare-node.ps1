@@ -26,15 +26,23 @@
   that account, because the service needs a password and none is ever stored.
 
   Secrets: the runner registration token is typed by the Owner into the elevated window (Read-Host -AsSecureString),
-  only when the plan has a registration step, and only after every check passed. It goes to the runner's own
-  configure command and nowhere else; it is never printed, logged or stored. The controller password is random,
-  generated in memory for the account and the service, and never shown or stored. No App key or token is handled here.
+  only when the plan has a registration step, and only after every check passed. It reaches the runner's configure
+  process through that child's environment only (ACTIONS_RUNNER_INPUT_TOKEN), never a command line, and is never printed
+  or stored; afterwards the runner's _diag logs are checked for it. The controller password is random, generated in
+  memory for the account and the service (New-Service -Credential: API, not a command line), and never shown or stored.
+  Both live as managed strings until the process ends; nothing here claims to wipe them. No App key or token is handled.
+
+  Where it runs (review r1 MAJOR-1): the elevated run (-Apply, or a dry run with an elevated token) refuses unless this
+  script sits in a folder only administrators can change (TOOL_LOCATION_NOT_ADMIN_ONLY); the field guide copies it there
+  and checks its sha256 against the value recorded in KooYomi before running it. Module autoloading is limited to the
+  Windows directory and nothing is compiled at run time.
 
   WSL: the dry run (not elevated) lists the distributions and, for each RUNNING one, reads whether it hosts GitHub
   runners (units, runner directories, listener processes, docker socket). Stopped distributions are not started. These
-  observations are not part of the plan hash. The elevated apply never enters any distribution.
+  observations are not part of the plan hash and are reported by the distribution itself, so the field guide also
+  checks GitHub's runner list. The elevated run never enters any distribution.
 
-  Usage (from an admin-reviewed copy of this script):
+  Usage (from an admin-only copy of this script whose sha256 was checked):
     prepare-node.ps1 -ProfilePath <node-prep.json> [-RunnerPackageZip <actions-runner-win-x64-*.zip>]
     prepare-node.ps1 -ProfilePath <...> [-RunnerPackageZip <...>] -Apply -ExpectedPlanSha256 <sha256>
 #>
@@ -51,6 +59,7 @@ param(
 )
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+$env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'   # no user module directory (as install-resident.ps1, review M1)
 
 $ProgramData = 'C:\ProgramData'
 $ControlRoot = 'C:\ProgramData\CluedControl'
@@ -102,6 +111,9 @@ function Get-DirectoryModel {
   )
 }
 $ControlDirectoryCount = 6   # the first six belong to the controller install, before the runner steps
+# migrate-acl.ps1 (ACL_TARGET_NOT_PROTECTED) and install-resident.ps1 (PARENT_ACL_NOT_PROTECTED) append to these, so an existing one must
+# also be protected; the others only need the same grants (TURING's trusted\ and runner\ inherit theirs).
+$MustBeProtected = @('C:\ProgramData\CluedIndependentCI', 'C:\ProgramData\CluedIndependentCI\formal-spool', 'C:\ProgramData\CluedIndependentCI\formal-spool\outgoing', 'C:\ProgramData\CluedIndependentCI\formal-spool\incoming')
 
 function Get-Field($o, [string]$k) {
   if ($null -eq $o) { return $null }
@@ -169,14 +181,55 @@ function Get-AceKeys([string]$sddl) {
 }
 function Get-SddlOwner([string]$sddl) { $raw = New-Object Security.AccessControl.RawSecurityDescriptor($sddl); if ($raw.Owner) { $raw.Owner.Value } else { $null } }
 # 'same' when the existing descriptor grants exactly the planned ACEs (plus only the allowed resident ACEs) and is owned by an admin.
-function Compare-DirectoryAcl([string]$have, [string]$want, [string[]]$extra) {
+function Test-SddlProtected([string]$sddl) { ((New-Object Security.AccessControl.RawSecurityDescriptor($sddl)).ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0 }
+function Compare-DirectoryAcl([string]$have, [string]$want, [string[]]$extra, [bool]$mustProtect = $false) {
   if ($AdminSids -cnotcontains (Get-SddlOwner $have)) { return 'owner-refused' }
+  if ($mustProtect -and -not (Test-SddlProtected $have)) { return 'not-protected' }
   $h = @(Get-AceKeys $have); $w = @(Get-AceKeys $want); $x = @(foreach ($e in $extra) { Get-AceKeys ('D:' + $e) })
   $rest = New-Object System.Collections.ArrayList; foreach ($k in $h) { [void]$rest.Add($k) }
   foreach ($k in $w) { if ($rest -ccontains $k) { $rest.Remove($k) } else { return 'missing-ace' } }
   foreach ($k in @($rest)) { if ($x -ccontains $k) { $rest.Remove($k) } }
   if ($rest.Count) { return 'extra-ace' }
   'same'
+}
+# A directory this script just created, read back: exactly the planned ACEs, protected, and (on the real host) owned by Administrators,
+# so a folder a user created first under C:\ProgramData (BU may create folders there) is never accepted. Returns 'ok' or the reason.
+function Test-CreatedSddl([string]$after, [string]$expect, [bool]$requireAdminsOwner) {
+  if ((@(Get-AceKeys $after) -join ';') -cne (@(Get-AceKeys $expect) -join ';')) { return 'ace-mismatch' }
+  if (-not (Test-SddlProtected $after)) { return 'not-protected' }
+  if ($requireAdminsOwner -and (Get-SddlOwner $after) -cne 'S-1-5-32-544') { return 'owner' }
+  'ok'
+}
+# Review r1 MAJOR-1: the elevated run must not execute a script a non-administrator can change. Allowed: the script file and every folder
+# from it up to the drive root are owned by an administrator principal and grant no non-administrator a right to write, append, delete,
+# replace or re-ACL them (inherit-only entries apply to children, not to the item, and are checked on the children themselves).
+function Get-AdminOnlyState($items) {
+  $write = 0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000
+  $replace = 0x40 -bor 0x10000 -bor 0x40000 -bor 0x80000
+  foreach ($it in $items) {
+    if ($AdminSids -cnotcontains $it.acl.GetOwner([Security.Principal.SecurityIdentifier]).Value) { return ('owner:' + $it.path) }
+    # The script and its own folder: no write at all. Folders above: no replace right (C:\ and C:\ProgramData let users add siblings).
+    $mask = if ($it.strict) { $write } else { $replace }
+    foreach ($rule in $it.acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+      if ([string]$rule.AccessControlType -cne 'Allow' -or (([int]$rule.PropagationFlags -band 2) -ne 0)) { continue }
+      if ((([int]$rule.FileSystemRights -band $mask) -ne 0) -and $AdminSids -cnotcontains $rule.IdentityReference.Value) { return ('writable:' + $it.path) }
+    }
+  }
+  'ok'
+}
+function Assert-ToolLocation([string]$scriptPath) {
+  $items = New-Object System.Collections.ArrayList
+  $leaf = Get-Item -LiteralPath $scriptPath -Force
+  if (($leaf.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'TOOL_LOCATION_NOT_ADMIN_ONLY:link' }
+  [void]$items.Add(@{ path = $scriptPath; acl = (Get-Acl -LiteralPath $scriptPath); strict = $true })
+  $dir = [IO.Path]::GetDirectoryName($scriptPath); $first = $true
+  for ($c = $dir; $c; $c = [IO.Path]::GetDirectoryName($c)) {
+    $it = Get-Item -LiteralPath $c -Force
+    if (($it.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw ('TOOL_LOCATION_NOT_ADMIN_ONLY:link:' + $c) }
+    [void]$items.Add(@{ path = $c; acl = (Get-Acl -LiteralPath $c); strict = $first }); $first = $false
+  }
+  $s = Get-AdminOnlyState $items
+  if ($s -cne 'ok') { throw ('TOOL_LOCATION_NOT_ADMIN_ONLY:' + $s) }
 }
 
 # ---- Host facts (live) ----
@@ -221,7 +274,9 @@ function Get-ZipEntries([byte[]]$zip) {
   } finally { $za.Dispose(); $ms.Dispose() }
 }
 # absent | empty (only the work folders) | extracted (exactly the package, not registered) | registered | unexpected | unreadable
-function Get-RunnerRootFact($entries) {
+# Every item of the tree must also be owned by an administrator principal ($requireAdminOwner; the offline tests run on a user-owned temp
+# tree): an owner keeps WRITE_DAC, so a runner file owned by the Owner's account could be re-ACLed and replaced from a non-elevated process.
+function Get-RunnerRootFact($entries, [bool]$requireAdminOwner = $true) {
   $kind = (Get-PathFact $RunnerRoot).kind
   if ($kind -ceq 'absent') { return 'absent' }
   if ($kind -cne 'directory') { return $(if ($kind -ceq 'unreadable') { 'unreadable' } else { 'unexpected' }) }
@@ -231,6 +286,12 @@ function Get-RunnerRootFact($entries) {
   } catch { return 'unreadable' }
   $link = @($files | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 } | Select-Object -First 1)
   if ($link.Count) { return ('unexpected:link:' + $link[0].FullName.Substring($RunnerRoot.Length + 1)) }
+  if ($requireAdminOwner) {
+    foreach ($f in $files) {
+      $o = try { (Get-Acl -LiteralPath $f.FullName).GetOwner([Security.Principal.SecurityIdentifier]).Value } catch { return 'unreadable' }
+      if ($AdminSids -cnotcontains $o) { return ('unexpected:owner:' + $f.FullName.Substring($RunnerRoot.Length + 1)) }
+    }
+  }
   $plain = @($files | Where-Object { -not $_.PSIsContainer })
   if ($plain.Count -eq 0) { return 'empty' }
   if ($null -eq $entries) { return 'package-required' }
@@ -319,7 +380,7 @@ function Get-NodePrepPlan($profile, $facts, [hashtable]$meta) {
       if ($kind -ceq 'absent') { $skip = $false }
       elseif ($kind -cne 'directory') { throw ('DIRECTORY_TARGET_REFUSED:' + $d.path) }
       elseif ($null -eq $ctrl) { throw ('DIRECTORY_EXISTS_BEFORE_ACCOUNT:' + $d.path) }
-      else { $c = Compare-DirectoryAcl (Get-Field $f 'sddl') $want @($d.extra | ForEach-Object { Resolve-Sddl $_ $ctrlRef $profile.ownerSid }); if ($c -cne 'same') { throw ('DIRECTORY_EXISTS_DIFFERENT:' + $d.path + ':' + $c) }; $skip = $true }
+      else { $c = Compare-DirectoryAcl (Get-Field $f 'sddl') $want @($d.extra | ForEach-Object { Resolve-Sddl $_ $ctrlRef $profile.ownerSid }) ($MustBeProtected -ccontains $d.path); if ($c -cne 'same') { throw ('DIRECTORY_EXISTS_DIFFERENT:' + $d.path + ':' + $c) }; $skip = $true }
       [ordered]@{ id = ('dir:' + $d.path); kind = 'directory'; path = $d.path; sddl = $want; skip = $skip }
     })
   for ($i = 0; $i -lt $ControlDirectoryCount; $i++) { [void]$steps.Add($dirSteps[$i]) }
@@ -375,6 +436,7 @@ function Get-PlanSha256($plan) { Sha256Text (ConvertTo-PlanJson $plan) }
 # ---- Effects (all create-only; each stubbed in the offline fixture) ----
 $script:Fixture = $null          # the fixture root when -OfflineFixtureRoot is used
 $script:EffectLog = New-Object System.Collections.ArrayList
+$script:Partial = $null          # set when an apply stops after its first step (review r1 MAJOR-4)
 function Get-MappedPath([string]$p) {
   if ($null -eq $script:Fixture) { return $p }
   if (-not $p.StartsWith($ProgramData, [StringComparison]::OrdinalIgnoreCase)) { throw 'FIXTURE_PATH_REFUSED' }
@@ -392,10 +454,8 @@ function New-DirectoryExact([string]$path, [string]$sddl) {
   [void][IO.Directory]::CreateDirectory($p, $ds)
   $after = (Get-Acl -LiteralPath $p).Sddl
   $expect = if ($script:Fixture) { $effective } else { $sddl }
-  if ((@(Get-AceKeys $after) -join ';') -cne (@(Get-AceKeys $expect) -join ';')) { throw ('DIRECTORY_READBACK_MISMATCH:' + $path) }
-  $raw = New-Object Security.AccessControl.RawSecurityDescriptor($after)
-  if (($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -eq 0) { throw ('DIRECTORY_READBACK_NOT_PROTECTED:' + $path) }
-  if (-not $script:Fixture -and (Get-SddlOwner $after) -cne 'S-1-5-32-544') { throw ('DIRECTORY_READBACK_OWNER:' + $path) }
+  $c = Test-CreatedSddl $after $expect (-not $script:Fixture)
+  if ($c -cne 'ok') { throw ('DIRECTORY_READBACK_MISMATCH:' + $path + ':' + $c) }
   $after
 }
 function Write-NewFile([string]$path, [byte[]]$bytes) {
@@ -427,25 +487,6 @@ function New-ControllerPassword {
   $b = New-Object byte[] 36; $rng = [Security.Cryptography.RandomNumberGenerator]::Create(); try { $rng.GetBytes($b) } finally { $rng.Dispose() }
   'Cc9!' + [Convert]::ToBase64String($b)
 }
-$ScmSource = @'
-using System;
-using System.Runtime.InteropServices;
-public static class CluedNodePrepScm {
-  [DllImport("advapi32.dll", SetLastError=true, CharSet=CharSet.Unicode)] static extern IntPtr OpenSCManagerW(string m, string d, uint a);
-  [DllImport("advapi32.dll", SetLastError=true, CharSet=CharSet.Unicode)] static extern IntPtr CreateServiceW(IntPtr scm, string name, string display, uint access, uint type, uint start, uint error, string bin, string group, IntPtr tag, string deps, string account, string password);
-  [DllImport("advapi32.dll", SetLastError=true)] static extern bool CloseServiceHandle(IntPtr h);
-  // SERVICE_WIN32_OWN_PROCESS, SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL; the password goes to the SCM in memory, never on a command line.
-  public static void Create(string name, string display, string bin, string account, string password) {
-    IntPtr scm = OpenSCManagerW(null, null, 0x0002);
-    if (scm == IntPtr.Zero) throw new InvalidOperationException("SCM_OPEN_FAILED:" + Marshal.GetLastWin32Error());
-    try {
-      IntPtr s = CreateServiceW(scm, name, display, 0x000F01FF, 0x10, 3, 1, bin, null, IntPtr.Zero, null, account, password);
-      if (s == IntPtr.Zero) throw new InvalidOperationException("SERVICE_CREATE_FAILED:" + Marshal.GetLastWin32Error());
-      CloseServiceHandle(s);
-    } finally { CloseServiceHandle(scm); }
-  }
-}
-'@
 function New-ControllerAccount([string]$password) {
   if ($script:Fixture) { [void]$script:EffectLog.Add('account-create'); return 'S-1-5-21-1-2-3-1015' }
   $sec = ConvertTo-SecureString -String $password -AsPlainText -Force
@@ -462,22 +503,31 @@ function Reset-ControllerPassword([string]$password) {
 }
 function New-ControllerService([string]$name, [string]$password) {
   if ($script:Fixture) { [void]$script:EffectLog.Add('service-create:' + $name); return }
-  if (-not ('CluedNodePrepScm' -as [type])) { Add-Type -TypeDefinition $ScmSource }
-  try { [CluedNodePrepScm]::Create($name, $ServiceDisplayName, $OriginalBinary, ('.\' + $AccountName), $password) }
-  catch { $m = $_.Exception.InnerException; if ($m) { throw $m.Message } else { throw } }
+  # New-Service hands the credential to CreateService through the API (no command line, nothing compiled). It does not start the service.
+  $sec = ConvertTo-SecureString -String $password -AsPlainText -Force
+  $cred = New-Object Management.Automation.PSCredential(('.\' + $AccountName), $sec)
+  [void](New-Service -Name $name -BinaryPathName $OriginalBinary -DisplayName $ServiceDisplayName -StartupType Manual -Credential $cred)
+  $sec.Dispose()
 }
+# The runner's configure reads ACTIONS_RUNNER_INPUT_<ARG> from its environment (Runner.Listener CommandSettings; the prefix is present in
+# the pinned 2.337.0 Runner.Listener.dll). Only that child gets the token, so it is on no command line (review r1 MAJOR-3). If a runner
+# ever ignored it, the unattended configure would fail for want of a token: a clean RUNNER_REGISTRATION_FAILED.
 function Invoke-RunnerRegistration($step, [string]$token) {
   if ($script:Fixture) { [void]$script:EffectLog.Add('runner-register:' + $step.name + ':' + ($step.labels -join ',')); return }
-  $listener = Join-Path $RunnerRoot 'bin\Runner.Listener.exe'
   $labels = ($step.labels | Where-Object { @('self-hosted', 'Windows', 'X64') -cnotcontains $_ }) -join ','
-  Push-Location $RunnerRoot
-  try {
-    $out = & $listener configure --unattended --url $step.url --token $token --name $step.name --labels $labels --work $step.work --disableupdate 2>&1 | Out-String
-    $code = $LASTEXITCODE
-  } finally { Pop-Location }
-  $safe = $out.Replace($token, '<token>')
-  Write-Host $safe
-  if ($code -ne 0) { throw ('RUNNER_REGISTRATION_FAILED:' + $code) }
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = Join-Path $RunnerRoot 'bin\Runner.Listener.exe'
+  $psi.Arguments = 'configure --unattended --url ' + $step.url + ' --name ' + $step.name + ' --labels ' + $labels + ' --work ' + $step.work + ' --disableupdate'
+  $psi.WorkingDirectory = $RunnerRoot; $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+  $psi.EnvironmentVariables['ACTIONS_RUNNER_INPUT_TOKEN'] = $token
+  $proc = [Diagnostics.Process]::Start($psi)
+  $stderr = $proc.StandardError.ReadToEndAsync(); $stdout = $proc.StandardOutput.ReadToEnd(); $proc.WaitForExit()
+  $psi.EnvironmentVariables.Remove('ACTIONS_RUNNER_INPUT_TOKEN')
+  Write-Host (($stdout + $stderr.Result).Replace($token, '<token>'))
+  # The token must not have reached the runner's own logs.
+  $leak = @(Get-ChildItem -LiteralPath (Join-Path $RunnerRoot '_diag') -File -Force -ErrorAction SilentlyContinue | Where-Object { [IO.File]::ReadAllText($_.FullName).Contains($token) })
+  if ($leak.Count) { throw ('RUNNER_LOG_CONTAINS_TOKEN:' + $leak[0].Name) }
+  if ($proc.ExitCode -ne 0) { throw ('RUNNER_REGISTRATION_FAILED:' + $proc.ExitCode) }
   $r = try { [IO.File]::ReadAllText((Join-Path $RunnerRoot '.runner')) | ConvertFrom-Json } catch { $null }
   if ($null -eq $r -or (Get-Field $r 'agentName') -cne $step.name -or (Get-Field $r 'gitHubUrl') -cne $step.url) { throw 'RUNNER_REGISTRATION_READBACK_MISMATCH' }
 }
@@ -499,8 +549,10 @@ function Invoke-NodePrepApply($plan, [byte[]]$zip) {
   $token = if ($register.Count) { Read-RegistrationToken } else { $null }
   $password = if ($needPassword) { New-ControllerPassword } else { $null }
   $ctrl = $plan.controllerSid
+  $current = $null
   try {
     foreach ($s in $plan.steps) {
+      $current = $s.id
       $r = [ordered]@{ id = $s.id; skipped = [bool]$s.skip; result = $null }
       if (-not $s.skip) {
         switch -CaseSensitive ($s.kind) {
@@ -518,12 +570,19 @@ function Invoke-NodePrepApply($plan, [byte[]]$zip) {
       }
       [void]$results.Add($r)
     }
-  } finally { $token = $null; $password = $null; [GC]::Collect() }
+  } catch {
+    # Review r1 MAJOR-4: a stop part-way says what was done, where it stopped and which account exists, so the field can re-plan.
+    $script:Partial = [ordered]@{ controllerSid = $ctrl; completedSteps = @($results); failedStep = $current }
+    throw
+  } finally { $token = $null; $password = $null }   # drops the references; the strings themselves stay in memory until the process ends
   [ordered]@{ controllerSid = $ctrl; steps = @($results) }
 }
 
-# Post-apply checks on the live host: the six paths of the field step 1, the account, our service, and every other runner unchanged.
-function Get-Postconditions($plan, [string]$ctrl) {
+# Post-apply checks on the live host: the six paths of the field step 1, the account, our service, every other runner unchanged, and the
+# plan computed again from the host as it now is: it must be NOTHING_TO_DO, which re-checks every folder's owner and DACL, the account's
+# groups and flags, the runner tree against the package, the package copy, .service and the service configuration (review r1 NIT-5).
+function Get-Postconditions($plan, [string]$ctrl, $profile, $entries, [hashtable]$meta) {
+  $replan = try { (Get-NodePrepPlan $profile (Get-LiveHostFacts $profile $entries) $meta).status } catch { [string]$_.Exception.Message }
   $svc = @(Get-RunnerServiceFacts)
   $ours = @($svc | Where-Object { $_.name -ceq $plan.profile.runnerService })
   $others = @(foreach ($s in $svc) { if ($s.name -cne $plan.profile.runnerService) { [ordered]@{ name = $s.name; binary = $s.binary; account = $s.account; startMode = $s.startMode } } })
@@ -539,6 +598,8 @@ function Get-Postconditions($plan, [string]$ctrl) {
     state = (Test-Path -LiteralPath (Join-Path $CiRoot 'state') -PathType Container)
     service = ($ours.Count -eq 1 -and $ours[0].binary -ceq $OriginalBinary -and (Test-ServiceAccountIsController $ours[0].account $plan.profile.hostname) -and $ours[0].startMode -ceq 'Manual' -and $ours[0].state -ceq 'Stopped' -and $q -match 'PID\s*:\s*0\b')
     otherServicesUnchanged = ((ConvertTo-Json @($others) -Compress -Depth 4) -ceq (ConvertTo-Json @($plan.untouchedServices) -Compress -Depth 4))
+    replanNothingToDo = ($replan -ceq 'NOTHING_TO_DO')
+    replanStatus = $replan
   }
 }
 
@@ -546,29 +607,32 @@ function Get-Postconditions($plan, [string]$ctrl) {
 $WslProbe = @'
 echo "user=$(id -un) groups=$(id -Gn | tr ' ' ',')"
 systemctl list-units --all --no-legend --plain 'actions.runner.*' 2>/dev/null | awk '{print "unit="$1"/"$3"/"$4}'
-for d in /home/*/actions-runner* /home/*/*/actions-runner* /opt/actions-runner* /opt/*/actions-runner* /srv/*/actions-runner*; do [ -e "$d/.runner" ] && echo "runnerdir=$d"; done 2>/dev/null
+systemctl list-unit-files --no-legend 'actions.runner.*' 2>/dev/null | awk '{print "unit="$1"/"$2}'
+find /home /opt /srv /root /usr/local /var/lib -maxdepth 4 -name .runner -type f 2>/dev/null | sed 's/^/runnerdir=/'
 echo "listeners=$(ps -eo comm= 2>/dev/null | grep -c '^Runner.Listener')"
 [ -S /var/run/docker.sock ] && echo "dockersock=yes"
 [ -e /run/WSL ] && echo "run_wsl=present"
 grep -iA3 '^\[interop\]' /etc/wsl.conf 2>/dev/null | tr '\n' ' ' | sed 's/^/interopconf=/'; echo
 '@
+# `wsl -l -q` / `wsl -l --running -q` print bare names (UTF-16 with NULs), whatever the display language (review r1 MINOR-4).
+function ConvertFrom-WslNames([string]$raw) { @(($raw -replace "`0", '') -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 function Get-WslObservations {
   if (Test-Elevated) { return [ordered]@{ probed = $false; reason = 'elevated: the apply never enters a distribution' } }
-  $raw = try { (& wsl.exe -l -v 2>$null | Out-String) -replace "`0", '' } catch { $null }
-  if (-not $raw) { return [ordered]@{ probed = $false; reason = 'wsl.exe unavailable' } }
-  $rows = @(foreach ($line in ($raw -split "`r?`n" | Select-Object -Skip 1)) {
-      if ($line -match '^\s*(\*)?\s*(\S+)\s+(\S+)\s+(\d+)\s*$') {
-        $row = [ordered]@{ name = $Matches[2]; default = [bool]$Matches[1]; state = $Matches[3]; version = $Matches[4]; probe = $null; hostsRunners = $null }
-        if ($row.state -ceq 'Running' -and $row.name -cmatch '^[A-Za-z0-9._-]{1,64}\z') {
-          # The probe travels base64-encoded: Windows PowerShell 5.1 does not escape embedded quotes in native arguments.
-          $b64 = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($WslProbe.Replace("`r`n", "`n")))
-          $out = try { (& wsl.exe -d $row.name --exec /bin/sh -c ('echo ' + $b64 + ' | base64 -d | /bin/sh') 2>$null | Out-String) -replace "`0", '' } catch { 'probe-failed' }
-          $row.probe = @($out -split "`r?`n" | Where-Object { $_ })
-          $row.hostsRunners = [bool]($out -match '(?m)^(unit=|runnerdir=)' -or $out -match '(?m)^listeners=[1-9]')
-        } else { $row.probe = @('not probed: distribution not running (not started by this tool)') }
-        $row
-      } })
-  [ordered]@{ probed = $true; distributions = $rows }
+  $all = try { ConvertFrom-WslNames (& wsl.exe --list --quiet 2>$null | Out-String) } catch { @() }
+  if (-not $all.Count) { return [ordered]@{ probed = $false; reason = 'wsl.exe unavailable or no distribution' } }
+  $running = try { ConvertFrom-WslNames (& wsl.exe --list --running --quiet 2>$null | Out-String) } catch { @() }
+  $rows = @(foreach ($name in $all) {
+      $row = [ordered]@{ name = $name; state = $(if ($running -ccontains $name) { 'Running' } else { 'Stopped' }); probe = $null; hostsRunners = $null }
+      if ($row.state -ceq 'Running' -and $row.name -cmatch '^[A-Za-z0-9._-]{1,64}\z') {
+        # The probe travels base64-encoded: Windows PowerShell 5.1 does not escape embedded quotes in native arguments.
+        $b64 = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($WslProbe.Replace("`r`n", "`n")))
+        $out = try { (& wsl.exe -d $row.name --exec /bin/sh -c ('echo ' + $b64 + ' | base64 -d | /bin/sh') 2>$null | Out-String) -replace "`0", '' } catch { 'probe-failed' }
+        $row.probe = @($out -split "`r?`n" | Where-Object { $_ })
+        $row.hostsRunners = [bool]($out -match '(?m)^(unit=|runnerdir=)' -or $out -match '(?m)^listeners=[1-9]')
+      } else { $row.probe = @('not probed: distribution not running (not started by this tool)') }
+      $row })
+  # The answer comes from inside each distribution and may be forged by what runs there: cross-check GitHub's runner list (field guide 0.4).
+  [ordered]@{ probed = $true; selfReported = $true; distributions = $rows }
 }
 
 if ($DefinitionsOnly) { return }
@@ -599,6 +663,9 @@ try {
     $pkgMeta = [ordered]@{ sha256 = $zsha; bytes = $zip.Length; entries = $entries.Count }
   }
   $meta = @{ toolSha256 = (Sha256Bytes $toolBytes); profileSha256 = (Sha256Bytes $profileBytes); package = $pkgMeta }
+  $out.toolSha256 = $meta.toolSha256
+  # Any elevated run executes from an admin-only copy (review r1 MAJOR-1); the field guide checks that copy's sha256 against KooYomi first.
+  if (-not $script:Fixture -and -not $OfflineHostFacts -and (Test-Elevated)) { Assert-ToolLocation $PSCommandPath }
   if ($Apply) {
     if (-not $ExpectedPlanSha256) { throw 'EXPECTED_PLAN_SHA256_REQUIRED' }
     if (-not $script:Fixture) {
@@ -624,7 +691,7 @@ try {
     $out.derivedNodeProfileSha256 = if ($derived) { Sha256Text (ConvertTo-CanonicalJson $derived) } else { $null }
     if ($script:Fixture) { $out.effects = @($script:EffectLog); $out.status = 'NODE_PREPARED_FIXTURE'; $exit = 0 }
     else {
-      $post = Get-Postconditions $plan $done.controllerSid; $out.postconditions = $post
+      $post = Get-Postconditions $plan $done.controllerSid $profile $entries $meta; $out.postconditions = $post
       if (@($post.Values | Where-Object { -not $_ }).Count) { $out.status = 'NODE_PREP_POSTCONDITION_FAILED'; $out.code = 'NODE_PREP_POSTCONDITION_FAILED' }
       else { $out.status = 'NODE_PREPARED'; $exit = 0 }
     }
@@ -634,6 +701,11 @@ try {
   $m = [string]$_.Exception.Message
   $out.code = if ($m -cmatch '^[A-Z][A-Z0-9_]{1,79}(:[^\r\n]{0,300})?\z') { $m } else { 'NODE_PREP_UNCONFIRMED' }
   $out.exceptionType = $_.Exception.GetType().Name
+  if ($null -ne $script:Partial) {
+    # Stopped part-way: what is done is on the host now. Re-plan with an elevated dry run (field guide 0.7) before anything else.
+    $out.status = 'APPLY_PARTIAL'; $out.controllerSid = $script:Partial.controllerSid
+    $out.completedSteps = $script:Partial.completedSteps; $out.failedStep = $script:Partial.failedStep
+  } elseif ($out.status -ceq 'APPLY_STARTED') { $out.status = 'REFUSED' }
 }
 $out | ConvertTo-Json -Depth 12
 if ($out.Contains('planSha256')) { 'PLAN_SHA256=' + $out.planSha256 }

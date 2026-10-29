@@ -1,8 +1,9 @@
 #!/bin/bash
 # New-node preparation, Linux half (Task 25ac6c5f; design v0.4 section 10 P2). Run as root inside the WSL distribution the
 # Owner chose for the resident's Linux side (the node-prep profile's wslDistribution), never in one that hosts GitHub runners:
-#   wsl -d <dist> -u root -- bash prepare-node-linux.sh --plan  --distribution <dist>                 read-only: plan + sha256
-#   wsl -d <dist> -u root -- bash prepare-node-linux.sh --apply --distribution <dist> <PLAN_SHA256>   create exactly that plan
+#   wsl -d <dist> -u root -- bash /root/clued-nodeprep/prepare-node-linux.sh --plan  --distribution <dist>               read-only
+#   wsl -d <dist> -u root -- bash /root/clued-nodeprep/prepare-node-linux.sh --apply --distribution <dist> <PLAN_SHA256>
+# As root it runs only from a root-only copy outside /mnt (SCRIPT_LOCATION_REFUSED); the field guide makes that copy and checks its hash.
 #
 # Creates only the base directories the resident and Source v2 expect, each root:root 0700 (as on TURING):
 #   /var/lib/clued-independent-ci{,/formal-spool,/runs,/workspaces}, /var/lib/clued-independent-ci-trivy-cache,
@@ -39,17 +40,45 @@ dir_state() {
   echo present
 }
 
-# Lines naming GitHub runners in this distribution (empty when none is seen).
+# Lines naming GitHub runners in this distribution (empty when none is seen): any `.runner` registration file under the usual roots,
+# any actions.runner.* unit (loaded or only installed), any Runner.Listener process (review r1 MINOR-4).
 runners_seen() {
   local d
-  for d in "$ROOT"/home/*/actions-runner* "$ROOT"/home/*/*/actions-runner* "$ROOT"/opt/actions-runner* "$ROOT"/opt/*/actions-runner* "$ROOT"/srv/*/actions-runner*; do
-    [ -e "$d/.runner" ] && echo "runnerdir=${d#"$ROOT"}"
+  for d in "$ROOT"/home "$ROOT"/opt "$ROOT"/srv "$ROOT"/root "$ROOT"/usr/local "$ROOT"/var/lib; do
+    [ -d "$d" ] || continue
+    { find "$d" -maxdepth 4 -name .runner -type f 2>/dev/null || true; } | sed "s|^$ROOT||; s|^|runnerfile=|"
   done
   if [ -z "$ROOT" ]; then
     { systemctl list-units --all --no-legend --plain 'actions.runner.*' 2>/dev/null || true; } | awk '{print "unit="$1}'
+    { systemctl list-unit-files --no-legend 'actions.runner.*' 2>/dev/null || true; } | awk '{print "unitfile="$1}'
     { ps -eo comm= 2>/dev/null || true; } | { grep '^Runner.Listener' || true; } | sed 's/^/process=/'
   fi
   return 0
+}
+
+# Review r1 MAJOR-2: as root, run only a copy only root can change: not under /mnt (Windows paths stay writable from Windows), the
+# file and every folder above it owned by root and writable by nobody else. The field guide copies it to /root/clued-nodeprep and
+# checks its sha256 against KooYomi first.
+script_location_ok() {
+  local p
+  p=$(readlink -f -- "${BASH_SOURCE[0]}") || return 1
+  case "$p" in /mnt/*) return 1 ;; esac
+  while [ -n "$p" ]; do
+    [ ! -L "$p" ] || return 1
+    [ "$(stat -c %u "$p")" = 0 ] || return 1
+    [ $(( 0$(stat -c %a "$p") & 022 )) = 0 ] || return 1
+    [ "$p" = / ] && break
+    p=$(dirname -- "$p")
+  done
+  return 0
+}
+
+# /var/lib, /opt and /etc themselves: real folders owned by root (review r1 NIT-3).
+parents_ok() {
+  local d
+  for d in /var/lib /opt /etc; do
+    [ -d "$ROOT$d" ] && [ ! -L "$ROOT$d" ] && [ "$(stat -c %u "$ROOT$d")" = "$(want_uid)" ] || return 1
+  done
 }
 
 plan_text() {
@@ -87,8 +116,10 @@ main() {
     [ -d "$ROOT" ] && [ ! -L "$ROOT" ] || refuse TEST_ROOT_REFUSED
   else
     [ "$(id -u)" = 0 ] || refuse ROOT_REQUIRED
+    script_location_ok || refuse SCRIPT_LOCATION_REFUSED
   fi
   [ "${WSL_DISTRO_NAME:-}" = "$dist" ] || refuse WRONG_DISTRIBUTION
+  parents_ok || refuse PARENT_DIRECTORY_REFUSED
   seen=$(runners_seen)
   [ -z "$seen" ] || { printf '%s\n' "$seen" >&2; refuse DISTRIBUTION_HOSTS_GITHUB_RUNNERS; }
   t=$(plan_text "$dist")

@@ -145,6 +145,7 @@ $cases = @(
   @{ n = 'folder owned by a user'; j = $TuringFactsJson; e = { param($o) $o.paths.'C:\ProgramData\CluedControl'.sddl = 'O:S-1-5-21-1173730660-3877291096-655431861-1001D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;S-1-5-21-1173730660-3877291096-655431861-1015)' }; c = 'DIRECTORY_EXISTS_DIFFERENT:C:\ProgramData\CluedControl:owner-refused'; p = 'turing' }
   @{ n = 'controller writes CluedControl'; j = $TuringFactsJson; e = { param($o) $o.paths.'C:\ProgramData\CluedControl'.sddl = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-21-1173730660-3877291096-655431861-1015)' }; c = 'DIRECTORY_EXISTS_DIFFERENT:C:\ProgramData\CluedControl:missing-ace'; p = 'turing' }
   @{ n = 'resident ACE wider than install-resident'; j = $TuringFactsJson; e = { param($o) $o.paths.'C:\ProgramData\CluedIndependentCI'.sddl += '(A;OICI;0x1301bf;;;S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629)' }; c = 'DIRECTORY_EXISTS_DIFFERENT:C:\ProgramData\CluedIndependentCI:extra-ace'; p = 'turing' }
+  @{ n = 'spool not protected'; j = $TuringFactsJson; e = { param($o) $o.paths.'C:\ProgramData\CluedIndependentCI\formal-spool\outgoing'.sddl = $o.paths.'C:\ProgramData\CluedIndependentCI\formal-spool\outgoing'.sddl.Replace('D:PAI', 'D:AI') }; c = 'DIRECTORY_EXISTS_DIFFERENT:C:\ProgramData\CluedIndependentCI\formal-spool\outgoing:not-protected'; p = 'turing' }
 )
 foreach ($c in $cases) {
   $prof = if ($c.ContainsKey('p')) { $Turing } else { $Desk }
@@ -167,6 +168,30 @@ Ok ($pp.steps[0].kind -ceq 'account-password-reset' -and -not $pp.steps[0].skip 
 Ok ((Compare-DirectoryAcl 'O:BAD:AI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;0x1200a9;;;S-1-5-21-1-2-3-1015)' 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;S-1-5-21-1-2-3-1015)' @()) -ceq 'same') 'inherited equals explicit'
 Ok ((Compare-DirectoryAcl 'O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x120080;;;S-1-5-21-1-2-3-1001)(A;OICI;0x1200a9;;;S-1-5-21-1-2-3-1015)(A;;0x1200a5;;;S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629)' 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x120080;;;S-1-5-21-1-2-3-1001)(A;OICI;0x1200a9;;;S-1-5-21-1-2-3-1015)' @('(A;;0x1200a5;;;{RES})' | ForEach-Object { Resolve-Sddl $_ 'x' 'y' })) -ceq 'same') 'the planned resident ACE is accepted'
 Ok ((Compare-DirectoryAcl 'O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(D;;FA;;;WD)' 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)' @()) -ceq 'extra-ace') 'a deny entry is not ignored'
+# Read-back of a folder this script created (the real-host rule; the fixture cannot set owner BA).
+$cr = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;S-1-5-21-1-2-3-1015)'
+Ok ((Test-CreatedSddl $cr $cr $true) -ceq 'ok') 'readback: exact, protected, owned by Administrators'
+Ok ((Test-CreatedSddl $cr.Replace('O:BA', 'O:S-1-5-21-1-2-3-1001') $cr $true) -ceq 'owner') 'readback: same ACEs but owned by a user (folder pre-created by a user) refused'
+Ok ((Test-CreatedSddl $cr.Replace('D:P', 'D:') $cr $true) -ceq 'not-protected') 'readback: inheriting DACL refused'
+Ok ((Test-CreatedSddl ($cr + '(A;OICI;FA;;;BU)') $cr $true) -ceq 'ace-mismatch') 'readback: extra entry refused'
+
+# ---- 5b. Where the elevated run may execute from (review r1 MAJOR-1) ----
+function AclOf([string]$sddl) { $a = New-Object Security.AccessControl.DirectorySecurity; $a.SetSecurityDescriptorSddlForm($sddl); $a }
+$driveRoot = 'O:S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464G:S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464D:PAI(A;;LC;;;AU)(A;OICIIO;SDGXGWGR;;;AU)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)'
+$pdata = $df.paths.'C:\ProgramData'.sddl
+function FileAcl([string]$sddl) { $a = New-Object Security.AccessControl.FileSecurity; $a.SetSecurityDescriptorSddlForm($sddl); $a }
+$adminFile = FileAcl 'O:BAG:BAD:PAI(A;;FA;;;SY)(A;;FA;;;BA)'
+$adminDir = AclOf 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
+$pdAcl = AclOf $pdata
+$rootAcl = AclOf $driveRoot
+function Loc($f, $d) { @(@{ path = 'f'; acl = $f; strict = $true }, @{ path = 'd'; acl = $d; strict = $true }, @{ path = 'C:\ProgramData'; acl = $pdAcl; strict = $false }, @{ path = 'C:\'; acl = $rootAcl; strict = $false }) }
+Ok ((Get-AdminOnlyState (Loc $adminFile $adminDir)) -ceq 'ok') 'admin-only copy under ProgramData accepted (ProgramData and C:\ only lack replace rights for users)'
+Ok ((Get-AdminOnlyState (Loc $adminFile (AclOf 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-21-1-2-3-1001)'))) -ceq 'writable:d') 'a folder the Owner can modify is refused'
+Ok ((Get-AdminOnlyState (Loc (FileAcl 'O:S-1-5-21-1-2-3-1001D:PAI(A;;FA;;;SY)(A;;FA;;;BA)') $adminDir)) -ceq 'owner:f') 'a script owned by a user is refused'
+Ok ((Get-AdminOnlyState (Loc (FileAcl 'O:BAG:BAD:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x116;;;BU)') $adminDir)) -ceq 'writable:f') 'a script users can append to is refused'
+$userProfileDir = AclOf 'O:S-1-5-21-1-2-3-1001D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;S-1-5-21-1-2-3-1001)'
+Ok ((Get-AdminOnlyState @(@{ path = 'f'; acl = $adminFile; strict = $true }, @{ path = 'Documents'; acl = $userProfileDir; strict = $true })) -cmatch '^(owner|writable):') 'a copy in the Owner''s Documents is refused'
+Ok ((Code { Assert-ToolLocation $Tool }) -cmatch '^TOOL_LOCATION_NOT_ADMIN_ONLY:') 'this checkout (user-writable) is refused for an elevated run'
 
 # ---- 6. The planned trees pass the runtime's secret ACL rule (verify-resident.ps1 Test-SecretAclChain, extracted unchanged) ----
 $vr = [IO.File]::ReadAllText((Join-Path $Repo 'work\independent-ci-resident-v1\windows\verify-resident.ps1'))
@@ -197,9 +222,52 @@ $text = [IO.File]::ReadAllText($Tool)
 foreach ($w in @('Remove-Item', 'Remove-LocalUser', 'Set-Acl', 'icacls', 'SetAccessControl', 'sc.exe delete', 'DeleteService', 'Start-Service', 'StartService', '--runasservice', ' remove ', 'Delete(', 'Move-Item', 'Rename-Item', 'net.exe', 'Add-LocalGroupMember', 'secedit')) { Ok (-not $text.Contains($w)) ('tool never uses ' + $w) }
 Ok ([regex]::Matches($text, 'FileMode\]::CreateNew').Count -eq 2 -and -not $text.Contains('FileMode]::Create)') -and -not $text.Contains('WriteAllBytes') -and -not $text.Contains('WriteAllText')) 'files only CreateNew'
 $wslStart = $text.IndexOf('function Get-WslObservations'); $wslEnd = $text.IndexOf('if ($DefinitionsOnly)')
-Ok (@([regex]::Matches($text, '& wsl\.exe') | Where-Object { $_.Index -lt $wslStart -or $_.Index -gt $wslEnd }).Count -eq 0 -and [regex]::Matches($text, '& wsl\.exe').Count -eq 2) 'wsl.exe only inside Get-WslObservations'
+Ok (@([regex]::Matches($text, '& wsl\.exe') | Where-Object { $_.Index -lt $wslStart -or $_.Index -gt $wslEnd }).Count -eq 0 -and [regex]::Matches($text, '& wsl\.exe').Count -eq 3) 'wsl.exe only inside Get-WslObservations'
 Ok ($text -match "if \(Test-Elevated\) \{ return \[ordered\]@\{ probed = \`$false") 'the elevated run never enters a distribution'
-Ok ($text.Contains("Read-Host -AsSecureString") -and -not ($text -match 'Write-(Host|Output)[^\r\n]*\$token\b') -and $text.Contains("Replace(`$token, '<token>')")) 'token only typed, never printed'
+Ok ($text.Contains("Read-Host -AsSecureString") -and @($text -split "`n" | Where-Object { $_ -match 'Write-(Host|Output)' -and $_ -match '\$token\b' -and $_ -notmatch 'Replace\(\$token, ''<token>''\)' }).Count -eq 0 -and $text.Contains("Replace(`$token, '<token>')")) 'token only typed, never printed'
+Ok (-not $text.Contains('--token') -and $text.Contains("EnvironmentVariables['ACTIONS_RUNNER_INPUT_TOKEN'] = `$token") -and $text.Contains('RUNNER_LOG_CONTAINS_TOKEN')) 'token reaches configure through its environment only; logs are checked'
+Ok (-not $text.Contains('-TypeDefinition') -and @([regex]::Matches($text, 'Add-Type ') | Where-Object { $text.Substring($_.Index, 46) -notmatch '^Add-Type -AssemblyName System\.IO\.Compression' }).Count -eq 0) 'nothing compiled at run time'
+Ok ($text.Contains("`$env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'")) 'module path pinned to the Windows directory'
+Ok ($text -match "Test-Elevated\)\) \{ Assert-ToolLocation \`$PSCommandPath \}") 'every elevated run checks its own location'
+Ok ($text.Contains('New-Service -Name $name -BinaryPathName $OriginalBinary -DisplayName $ServiceDisplayName -StartupType Manual -Credential $cred')) 'service created Manual through New-Service -Credential'
+$rawWsl = "U`0b`0u`0n`0t`0u`0-`02`04`0.`00`04`0`r`0`n`0C`0l`0u`0e`0d`0C`0I`0-`0L`0i`0n`0u`0x`0`r`0`n`0`r`0`n`0"
+Ok ((@(ConvertFrom-WslNames $rawWsl) -join '|') -ceq 'Ubuntu-24.04|CluedCI-Linux') 'wsl --list --quiet names parsed (UTF-16 NULs, any language)'
+
+# ---- 7b. Fact readers on real temporary trees (review r1 MINOR-5) ----
+$ft = Join-Path ([IO.Path]::GetTempPath()) ('nodeprep-facts-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory $ft | Out-Null
+try {
+  Ok ((Get-PathFact (Join-Path $ft 'none')).kind -ceq 'absent') 'path fact: absent'
+  Ok ((Get-PathFact $ft).kind -ceq 'directory' -and (Get-PathFact $ft).sddl) 'path fact: directory with its SDDL'
+  [IO.File]::WriteAllText((Join-Path $ft 'f.txt'), 'x'); Ok ((Get-PathFact (Join-Path $ft 'f.txt')).kind -ceq 'file') 'path fact: file'
+  New-Item -ItemType Directory (Join-Path $ft 'target') | Out-Null
+  & cmd.exe /c mklink /J (Join-Path $ft 'junction') (Join-Path $ft 'target') | Out-Null
+  Ok ((Get-PathFact (Join-Path $ft 'junction')).kind -ceq 'reparse') 'path fact: junction is a reparse point'
+  # Runner tree classification against a small package.
+  Add-Type -AssemblyName System.IO.Compression
+  $ms2 = New-Object IO.MemoryStream; $za2 = New-Object IO.Compression.ZipArchive($ms2, [IO.Compression.ZipArchiveMode]::Create, $true)
+  foreach ($e in @('bin/RunnerService.exe', 'bin/Runner.Listener.exe', 'config.cmd')) { $w = New-Object IO.StreamWriter($za2.CreateEntry($e).Open()); $w.Write('pkg ' + $e); $w.Dispose() }
+  $za2.Dispose(); $en2 = Get-ZipEntries $ms2.ToArray()
+  $savedRoot = $RunnerRoot; $RunnerRoot = Join-Path $ft 'runner'
+  try {
+    Ok ((Get-RunnerRootFact $en2 $false) -ceq 'absent') 'runner tree: absent'
+    New-Item -ItemType Directory (Join-Path $RunnerRoot '_diag') -Force | Out-Null; [IO.File]::WriteAllText((Join-Path $RunnerRoot '_diag\x.log'), 'log')
+    Ok ((Get-RunnerRootFact $en2 $false) -ceq 'empty') 'runner tree: only work folders'
+    New-Item -ItemType Directory (Join-Path $RunnerRoot 'bin') | Out-Null
+    foreach ($e in @('bin\RunnerService.exe', 'bin\Runner.Listener.exe', 'config.cmd')) { [IO.File]::WriteAllText((Join-Path $RunnerRoot $e), 'pkg ' + $e.Replace('\', '/')) }
+    Ok ((Get-RunnerRootFact $en2 $false) -ceq 'extracted') 'runner tree: exactly the package'
+    Ok ((Get-RunnerRootFact $en2) -cmatch '^unexpected:owner:') 'runner tree: an item not owned by Administrators is refused (real-host rule)'
+    [IO.File]::WriteAllText((Join-Path $RunnerRoot '.runner'), '{}'); [IO.File]::WriteAllText((Join-Path $RunnerRoot '.credentials'), '{}')
+    Ok ((Get-RunnerRootFact $en2 $false) -ceq 'registered') 'runner tree: registered'
+    Ok ((Get-RunnerRootFact $null $false) -ceq 'package-required') 'runner tree: needs the package to judge'
+    [IO.File]::WriteAllText((Join-Path $RunnerRoot 'bin\extra.dll'), 'x')
+    Ok ((Get-RunnerRootFact $en2 $false) -ceq 'unexpected:extra:bin\extra.dll') 'runner tree: extra file named'
+    [IO.File]::Delete((Join-Path $RunnerRoot 'bin\extra.dll')); [IO.File]::WriteAllText((Join-Path $RunnerRoot 'config.cmd'), 'changed')
+    Ok ((Get-RunnerRootFact $en2 $false) -ceq 'unexpected:changed:config.cmd') 'runner tree: changed file named'
+    [IO.File]::Delete((Join-Path $RunnerRoot 'config.cmd'))
+    Ok ((Get-RunnerRootFact $en2 $false) -ceq 'unexpected:missing:1') 'runner tree: missing file counted'
+  } finally { $RunnerRoot = $savedRoot }
+} finally { & cmd.exe /c rmdir (Join-Path $ft 'junction') | Out-Null; Remove-Item -LiteralPath $ft -Recurse -Force }
 
 # ---- 8. End-to-end in a fixture (dry run, apply, refusals) ----
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('nodeprep-test-' + [guid]::NewGuid().ToString('N'))
@@ -253,6 +321,13 @@ try {
   # Create-only: the same plan applied again (facts still say absent) refuses at the first existing target.
   $again = Run @('-ProfilePath', $profPath, '-RunnerPackageZip', $zipPath, '-OfflineHostFacts', $factsPath, '-OfflineFixtureRoot', $fx1, '-Apply', '-ExpectedPlanSha256', $dry.out.planSha256)
   Ok ($again.code -eq 2 -and $again.out.code -ceq 'DIRECTORY_APPEARED_SINCE_PLAN:C:\ProgramData\CluedControl') 'second apply refuses, nothing overwritten'
+  # Review r1 MAJOR-4: a stop part-way reports what was done, where it stopped and the account.
+  Ok ($again.out.status -ceq 'APPLY_PARTIAL' -and $again.out.failedStep -ceq 'dir:C:\ProgramData\CluedControl' -and $again.out.controllerSid -ceq $fsid -and
+    (@($again.out.completedSteps | ForEach-Object { $_.id }) -join ',') -ceq 'account') 'partial apply: status, failed step, completed steps, controller SID'
+  $fx3 = Join-Path $tmp 'pd3'; New-Item -ItemType Directory (Join-Path $fx3 'CluedIndependentCI') -Force | Out-Null
+  $mid = Run @('-ProfilePath', $profPath, '-RunnerPackageZip', $zipPath, '-OfflineHostFacts', $factsPath, '-OfflineFixtureRoot', $fx3, '-Apply', '-ExpectedPlanSha256', $dry.out.planSha256)
+  Ok ($mid.out.status -ceq 'APPLY_PARTIAL' -and $mid.out.failedStep -ceq 'dir:C:\ProgramData\CluedIndependentCI' -and @($mid.out.completedSteps).Count -eq 12 -and $mid.out.completedSteps[11].id -ceq 'service') 'partial apply after the service: twelve steps reported done'
+  Ok ($wrong.out.status -ceq 'REFUSED' -and $noHash.out.status -ceq 'REFUSED') 'a refusal before the first step is REFUSED, not partial'
   # A profile with the WSL distribution: the receipt then carries the resident node profile.
   $prof2 = Join-Path $tmp 'node-prep.fixture2.json'
   [IO.File]::WriteAllText($prof2, (Mutate ([IO.File]::ReadAllText($profPath)) { param($o) $o.wslDistribution = 'CluedResident-Linux' }), (New-Object Text.UTF8Encoding($false)))
