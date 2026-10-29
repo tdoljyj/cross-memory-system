@@ -19,7 +19,7 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
     const { admission } = ports;
     const journal = await EffectJournal.open(STATE_V2.effectsControl);
-    const github = publicationControllerGithub({ ports, jobs: inputs.jobs, journal, args, record: inputs.record });
+    const github = publicationControllerGithub({ ports, jobs: inputs.jobs, journal, args, record: inputs.record, plan: inputs.plan });
     // Phase 2, step 3a: the green ledger (migrate-acl.ps1 creates the directory, clued-control only); the train stays off.
     // A ledger that cannot be opened never burns the head: publishPair then answers GREEN_LEDGER_UNAVAILABLE and the
     // batch parks (review M2).

@@ -63,7 +63,7 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
       const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
       const { admission, fetchImpl } = ports;
       const journal = await EffectJournal.open(STATE_V2.effectsScan);
-      const github = publicationControllerGithub({ ports, jobs, journal, args, record: inputs.record });
+      const github = publicationControllerGithub({ ports, jobs, journal, args, record: inputs.record, plan: inputs.plan });
       const oidc = createGitHubOidcVerifier({ audience: RELAY_AUDIENCE, jwksPort: createJwksPort({ fetchImpl }), cache: createJwksFileCache(STATE_RELAY_JWKS) });
       const verifier = createHostedRelayVerifier({ registry, observer: createHostedRelayObserver({ github, registry }), oidc });
       // K(head, role) and the relay's own effect keys live in the local v2 scanner publisher's journal, so the two

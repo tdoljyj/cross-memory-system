@@ -247,14 +247,15 @@
     {
       "id": "script.handover-external-source-check",
       "kind": "script",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "description": "Canonical External2 accepted-source guard and pinned migration bundle.",
       "root": ".",
       "files": [
         "scripts/ci/clued-handover-external-source-check.mjs",
-        "scripts/ci/clued-handover-external-source-pins.json"
+        "scripts/ci/clued-handover-external-source-pins.json",
+        "scripts/ci/clued-handover-external-source-check.test.mjs"
       ],
-      "content_sha256": "9214633d5bedebf40053c5994c5bfaa29b3cad4fe6eb9b4e74f5974c2a9c9576",
+      "content_sha256": "01e25984256e6574775d75cd0bd0c91ffbe4ef245bffe55621b03d0646d1e82b",
       "version_marker": {
         "file": "scripts/ci/clued-handover-external-source-check.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -414,35 +415,67 @@
       "id": "script.independent-native-publication",
       "kind": "script",
       "version": "1.0.0",
-      "description": "Typed Native publication for independent App 5368905, protected journal recovery and real Source v2 entry integration; activation remains separately qualified.",
+      "description": "Typed App536 Native publication and negative-only stage12 revocation, protected physical-stop observations, full legacy drain and exact Source/CI-principal qualification; installation and activation require separate formal acceptance.",
       "root": ".",
       "files": [
         "apps/clued-cloud/supabase/migrations/20261029050000_work_claim_independent_publication_v1.sql",
+        "scripts/ci/clued-independent-legacy-drain.mjs",
+        "scripts/ci/clued-independent-legacy-drain.test.mjs",
         "scripts/ci/clued-independent-publication-identity.mjs",
         "scripts/ci/clued-independent-publication-identity.test.mjs",
         "scripts/ci/clued-independent-publication-port.mjs",
         "scripts/ci/clued-independent-publication-port.test.mjs",
         "scripts/ci/clued-independent-publication-runtime.mjs",
         "scripts/ci/clued-independent-publication-runtime.test.mjs",
+        "scripts/ci/clued-independent-revocation-controller.mjs",
+        "scripts/ci/clued-independent-revocation-controller.test.mjs",
+        "scripts/ci/clued-independent-revoker.mjs",
+        "scripts/ci/clued-independent-revoker.test.mjs",
+        "scripts/ci/clued-independent-supervisor.mjs",
+        "scripts/ci/clued-independent-supervisor.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/runtime/one-shot-v2.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/admission-facts-v2.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/publisher.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/startup.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/full-admission-v2.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/github.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/relay-entry-v2.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/publisher.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/queue-facts.mjs",
         "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/startup.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/acl-model.json",
         "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/entry-runtime.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/invoke-stage.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/layout.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/migrate-acl.ps1",
+        "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/prepare-record.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/revocation-entry.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/revocation-run.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/source-closure.json",
+        "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-inputs.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/windows/FormalPublicBoundaryV2.cs",
+        "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/windows/test-migrate-acl.ps1",
         "work/actions-hosted-migration/independent-ci-v1/src/staged-check-publisher-v2.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/github.test.mjs",
         "work/actions-hosted-migration/independent-ci-v1/test/native-guarded-publication.test.mjs",
-        "work/actions-hosted-migration/independent-ci-v1/test/native-publisher-entry-wiring.test.mjs"
+        "work/actions-hosted-migration/independent-ci-v1/test/native-publisher-entry-wiring.test.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/native-revocation-record.test.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/native-revocation-stage.test.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/train-run.test.mjs",
+        "work/independent-ci-resident-v1/src/engine-windows.mjs",
+        "work/independent-ci-resident-v1/src/executor.mjs",
+        "work/independent-ci-resident-v1/src/revocation-maintenance.mjs",
+        "work/independent-ci-resident-v1/test/native-revocation-maintenance.test.mjs",
+        "work/independent-ci-resident-v1/test/train.test.mjs",
+        "work/independent-ci-resident-v1/windows/BrokerPureTests.cs",
+        "work/independent-ci-resident-v1/windows/SwapBroker.cs"
       ],
       "version_marker": {
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "a17433cfbc40620761e10b28a0402aaa91b71ed1f444b047042f7110e59af22c"
+      "content_sha256": "a28a83b5415b94422a9f73e1b012287bdf96b9a60d9efaad62dac53e16317247"
     }
   ]
 }

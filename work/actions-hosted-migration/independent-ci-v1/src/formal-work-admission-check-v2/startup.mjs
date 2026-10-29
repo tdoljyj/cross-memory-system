@@ -16,7 +16,7 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
     const { admission } = ports;
     const journal = await EffectJournal.open(STATE_V2.effectsWorkAdmission);
-    const github = publicationControllerGithub({ ports, jobs: inputs.jobs, journal, args, record: inputs.record });
+    const github = publicationControllerGithub({ ports, jobs: inputs.jobs, journal, args, record: inputs.record, plan: inputs.plan });
     const batchClaims = {
       read: async j => { try { return await readBatchClaim(STATE_V2.batchClaims, j); } catch (e) { if (e.code === 'BATCH_CLAIM_MISSING') return null; throw e; } },
       record: (j, claim, at) => recordBatchClaim(STATE_V2.batchClaims, j, claim, at),

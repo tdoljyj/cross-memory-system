@@ -34,7 +34,7 @@ export function independentControllerId({ invocationNonce, jobId, nodeId }) {
   return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20,32)}`;
 }
 export function createIndependentPublicationPort({ job, controllerId, github, native, journal, assertCurrent,
-  observeStopped, clock = Date.now }) {
+  observeStopped, registerController, clock = Date.now }) {
   if (typeof assertCurrent !== 'function') fail('independent_current_observer_required');
   const handles = new WeakMap(), modes = new Map();
   const inventory = async head => {
@@ -62,6 +62,7 @@ export function createIndependentPublicationPort({ job, controllerId, github, na
     const mode = { executionPolicy: facts.executionPolicy, guarded: facts.guarded, scope: facts.scope, paths: [...packet.paths] };
     modes.set(identity.effect_key, mode);
     if (await assertCurrent(clone(identity), clone(mode)) !== true) throw noPost('independent_current_authority_refused', identity);
+    if (registerController) await registerController(clone(identity), clone(mode));
     const context = { identity, scope: facts.scope, paths: packet.paths, payload };
     const nativeHandle = facts.executionPolicy === 'active' ? await runtime.prepare(context) : null;
     const handle = Object.freeze({ native: nativeHandle !== null, publicationId: nativeHandle?.publicationId ?? null });

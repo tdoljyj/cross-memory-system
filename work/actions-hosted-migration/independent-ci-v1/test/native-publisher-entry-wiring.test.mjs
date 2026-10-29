@@ -5,7 +5,9 @@ import { randomUUID } from 'node:crypto';
 import { publicationControllerGithub, controllerPorts } from '../src/resident-v2/entry-runtime.mjs';
 import { makeIndependentPublicationIdentity } from '../../../../scripts/ci/clued-independent-publication-identity.mjs';
 import { batchJobsV2, claimGeneration, subjectOfV2 } from '../src/job-v2.mjs';
-import { digest } from '../src/proof.mjs';
+import { digest, canonical } from '../src/proof.mjs';
+import { ENTRY_V2 } from '../src/resident-v2/layout.mjs';
+import { PLAN_CONTRACT_V2 } from '../src/resident-v2/stage-package.mjs';
 import { EffectJournal } from '../src/effect-journal.mjs';
 import { createFixtureWorkAdmissionPublisherV2 } from '../src/formal-work-admission-check-v2/publisher.mjs';
 import { createFixtureControlPublisherV2 } from '../src/independent-control-checks-v2/publisher.mjs';
@@ -15,6 +17,21 @@ import { fixtureRecord, tempDir, subject, admittedFacts, signResult } from './re
 import { createWorld } from './fixtures/hosted-relay/world.mjs';
 import { createHostedRelayStage } from '../src/hosted-relay-v1/stage.mjs';
 import { makeJobV2 } from '../src/job-v2.mjs';
+
+function entryFacade({ports,jobs,journal,record,nonce}) {
+ const [stage,entryRole]=jobs.length===2 ? (jobs[0].role==='control-admission'?[8,'control-checks']:[9,'relay-publisher'])
+  : jobs[0].role==='work-admission'?[1,'work-admission']:[3,'check-publisher'];
+ const plan={contract:PLAN_CONTRACT_V2,enabled:true,stage,entryRole,batchKey:'b'.repeat(64),batchId:'b'.repeat(16)+'-'+'c'.repeat(12),
+  ownerPackageAcceptanceRef:record.accepted.ownerPackageAcceptanceRef,nodeSha256:record.config.controllerNodeSha256,nodeProfileSha256:digest(record.accepted.node),
+  entrySha256:record.pins.get(ENTRY_V2[entryRole]),acceptanceSha256:record.hashes.acceptanceSha256,sourceManifestSha256:jobs[0].sourceManifestSha256,
+  installationSha256:record.hashes.installationSha256,runtimeConfigPinSha256:record.hashes.runtimeConfigPinSha256,jobSha256:digest(jobs)};
+ // Local fixture metadata only; real entries already hold the accepted record
+ // and source-bound jobs from loadStageInputs.
+ const fixtureRecord={...record,config:{...record.config,sourceManifestSha256:jobs[0].sourceManifestSha256},
+  accepted:{...record.accepted,revocationMaintenanceQualification:{contract:'clued.independent-ci.revocation-maintenance-qualification/1',
+   qualificationRef:'receipt:'+randomUUID(),sourceManifestSha256:jobs[0].sourceManifestSha256,allowWhileHalted:false,validUntil:null}}};
+ return publicationControllerGithub({ports,jobs,journal,args:{nonce,configSha256:digest(plan)},record:fixtureRecord,plan});
+}
 
 // These exercise the actual entry adapter and publisher engines, with simulated
 // service ports. They are local integration checks, not runtime qualification.
@@ -67,8 +84,7 @@ async function fixture(t, active = true) {
   }};
   const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
   const { docs, signer } = fixtureRecord(), record = validateRecordV2(docs, { now: time });
-  const wrap = selected => publicationControllerGithub({ ports: { github: rawGithub, native }, jobs: selected, journal,
-    args: { nonce: 'a'.repeat(32) }, record });
+  const wrap = selected => entryFacade({ ports: { github: rawGithub, native }, jobs: selected, journal, nonce: 'a'.repeat(32), record });
   return { jobs, claim, checks, calls, journal, admission, wrap, record, signer, setCurrent: value => { current = value; } };
 }
 
@@ -152,7 +168,7 @@ test('active hosted relay reaches the actual entry adapter without replacing its
   }return {status:'committed',receipt_id:randomUUID(),must_revoke:false};
  }};
  const {docs}=fixtureRecord(),record=validateRecordV2(docs,{now:w.state.now});
- const github=publicationControllerGithub({ports:{github:w.github,native},jobs,journal,args:{nonce:'b'.repeat(32)},record});
+ const github=entryFacade({ports:{github:w.github,native},jobs,journal,nonce:'b'.repeat(32),record});
  const headAuthorizationId=randomUUID(),nativeAdmission={fixture:true,async evaluatePr(job,packet,options={}){
   const facts=admittedFacts(job,claim,packet,{domain:'fixture',observedAt:w.state.now,batchClaim:options.batchClaim,slotUntil:w.state.now+3600000});
   delete facts.observationSha256;const body={...facts,contract:'clued.independent-ci.full-admission/3',executionPolicy:'active',guarded:true,publicationRequired:true,headAuthorizationId};

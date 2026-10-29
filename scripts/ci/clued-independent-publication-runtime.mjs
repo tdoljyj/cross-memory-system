@@ -200,7 +200,8 @@ export function createIndependentPublicationRuntime({ native, github, journal, a
     if (!ticket || typeof observeStopped !== 'function') fail('independent_publisher_stop_unconfirmed');
     const stopped = await observeStopped(clone(context.identity));
     if (stopped?.stopped !== true || stopped.controller_id !== context.identity.controller_id || stopped.job_id !== context.identity.job.id
-      || stopped.source !== 'qualified-controller-supervisor' || !/^receipt:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(stopped.proofRef ?? '')) fail('independent_publisher_stop_unconfirmed');
+      || stopped.source !== 'qualified-controller-supervisor'
+      || !/^(?:receipt:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|sha256:[0-9a-f]{64})$/.test(stopped.proofRef ?? '')) fail('independent_publisher_stop_unconfirmed');
     if (record.details?.notSentConfirmed) return { status: 'NOT_SENT', ticket };
     if (['intent', 'authorized'].includes(record.state) || record.details?.abortingNotSent) {
       // Reserve a non-POST recovery state BEFORE the remote abort. `sent` here

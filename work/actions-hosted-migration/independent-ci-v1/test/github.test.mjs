@@ -67,6 +67,16 @@ const ours = (extra = {}) => ({ ...publication, id: 600, app: { id: APP_ID }, ..
 const prKey = `GET /repos/${REPO}/pulls/7`, filesKey = `GET /repos/${REPO}/pulls/7/files`;
 const postKey = `POST /repos/${REPO}/check-runs`, listKey = `GET /repos/${REPO}/commits/${HEAD}/check-runs`;
 const patchKey = `PATCH /repos/${REPO}/check-runs/600`, runKey = `GET /repos/${REPO}/check-runs/600`;
+test('revocation reads the complete current PR commit history and refuses truncation or drift',async()=>{
+ const historyKey=`GET /repos/${REPO}/pulls/7/commits`,pull={...pr,commits:2};
+ const f=github({faults:{[prKey]:[reply(pull),reply(pull)],[historyKey]:[reply([{sha:BASE},{sha:HEAD}])]}});
+ assert.deepEqual(await f.port().readPullRequestCommits(7),{complete:true,commits:[{sha:BASE},{sha:HEAD}]});
+ const short=github({faults:{[prKey]:[reply(pull)],[historyKey]:[reply([{sha:HEAD}])]}});
+ await assert.rejects(()=>short.port().readPullRequestCommits(7),/pr_history_incomplete/);
+ const changed=github({faults:{[prKey]:[reply(pull),reply({...pull,head:{...pull.head,sha:'f'.repeat(40)}})],
+  [historyKey]:[reply([{sha:BASE},{sha:HEAD}])]}});
+ await assert.rejects(()=>changed.port().readPullRequestCommits(7),/pr_history_changed/);
+});
 
 test('a read that hits a transport failure is repeated and succeeds', async () => {
   const fake = github({ faults: { [prKey]: [reset] } });

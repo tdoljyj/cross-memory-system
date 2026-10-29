@@ -18,6 +18,8 @@ import { STATE_V2 } from './layout.mjs';
 import { FIXED_APP } from './record.mjs';
 import { cluedRpc } from '../../../../../scripts/ci/clued-work-admission.mjs';
 import { createIndependentPublicationPortsForJobs, independentControllerId } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
+import { registerIndependentController } from '../../../../../scripts/ci/clued-independent-revoker.mjs';
+import { revocationQualification } from './revocation-run.mjs';
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
@@ -62,7 +64,8 @@ export function controllerPorts({ record, appKey, nativeToken, policyText, sourc
     recorderProvider: async () => ({ domain: 'production', kind: 'independent-controller', observedAt: new Date().toISOString(), observationRef: randomUUID(), recorder: { newId: randomUUID, record: log } }) });
   const env = { CLUED_CONTEXT_READ_TOKEN: nativeToken, CLUED_SUPABASE_URL: record.config.supabaseUrl,
     CLUED_SUPABASE_PUBLISHABLE_KEY: record.config.publishableKey };
-  const commands = new Set(['publication_begin_independent','publication_finish','publication_abort_independent','publication_reconcile','revocations_list']);
+  const commands = new Set(['publication_begin_independent','publication_finish','publication_abort_independent','publication_reconcile','revocations_list',
+    'independent_revocation_heads','independent_legacy_drain_finish']);
   const native = Object.freeze({ async command(input) {
     live(); check(commands.has(input?.action) && input.scope === record.config.scope, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
     const reply = await cluedRpc(fetchImpl, env, sourceRoot, 'clued_work_verify_v1', input);
@@ -86,9 +89,13 @@ export function controllerPorts({ record, appKey, nativeToken, policyText, sourc
 
 // Root-held Source/record verification and the existing protected permanent
 // role journal remain prerequisites. No extra secret reader or worker token.
-export function publicationControllerGithub({ ports, jobs, journal, args, record }) {
+export function publicationControllerGithub({ ports, jobs, journal, args, record, plan }) {
   return createIndependentPublicationPortsForJobs({ jobs, journal, github: ports.github, native: ports.native,
     controllerIdFor: job => independentControllerId({ invocationNonce: args.nonce, jobId: job.id, nodeId: record.accepted.node.hostname }),
+    registerController: (identity,mode) => {
+      if(mode.executionPolicy==='active'&&!revocationQualification(record,{reserveMs:300_000}))fail('independent_revoker_qualification_required');
+      return registerIndependentController({ identity, journal, args, record, plan });
+    },
     assertCurrent: (identity,mode) => ports.native.current(identity,mode) });
 }
 

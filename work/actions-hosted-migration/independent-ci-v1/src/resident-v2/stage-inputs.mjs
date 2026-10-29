@@ -10,6 +10,7 @@ import { canonical } from '../proof.mjs';
 import { validateJobV2, sameBatchV2, CONTROL_ROLES_V2 } from '../job-v2.mjs';
 import { validateTrainRun } from './train-run.mjs';
 import { validateRoleProbeRun } from './role-probe-run.mjs';
+import { validateRevocationRun, validateRevocationFacts } from './revocation-run.mjs';
 import { validateTrainFacts } from '../independent-control-checks-v2/train-facts.mjs';
 import { hash } from './prepare-record.mjs';
 import { validateRelayPlanRows } from '../hosted-relay-v1/relay-plan.mjs';
@@ -71,6 +72,13 @@ export async function loadStageInputs({ nonce, configSha256, entryRole, recordDo
       && jobs[0].nodeProfileSha256 === plan.nodeProfileSha256 && jobs[0].runId === plan.batchId, 'EXACT_STAGE_JOBS_REQUIRED');
     return Object.freeze({ nonce, dir, plan, row, jobs, resultEnvelope: null, record });
   }
+  if (row.kind === 'revocation-maintenance') {
+    check(entryRole === 'revocation-maintenance' && jobs.length === 1, 'EXACT_STAGE_JOBS_REQUIRED');
+    try { validateRevocationRun(jobs[0]); } catch { fail('EXACT_STAGE_JOBS_REQUIRED'); }
+    check(jobs[0].repo === record.config.repository && jobs[0].sourceManifestSha256 === record.config.sourceManifestSha256
+      && jobs[0].nodeProfileSha256 === plan.nodeProfileSha256 && jobs[0].runId === plan.batchId, 'EXACT_STAGE_JOBS_REQUIRED');
+    return Object.freeze({ nonce, dir, plan, row, jobs, resultEnvelope: null, record });
+  }
   jobs.forEach(validateJobV2);
   check(stageJobRolesValid(row, jobs.map(j => j.role)) && jobs.every(j => j.repo === record.config.repository && j.sourceManifestSha256 === record.config.sourceManifestSha256 && sameBatchV2(j, jobs[0]))
     && (entryRole !== 'control-checks' || jobs.map(j => j.role).join('|') === CONTROL_ROLES_V2.join('|')), 'EXACT_STAGE_JOBS_REQUIRED');
@@ -105,6 +113,7 @@ export async function writeOutcome({ receiptsRoot = STATE_V2.receipts, nonce, pl
     // Stage 10 only: the train facts (train-facts.mjs); facts that do not validate are written as null, and the stage fact
     // is then no success (stage-fact.mjs: STAGE_OUTCOME_MISSING).
     train: plan?.entryRole === 'train-maintenance' ? trainFactsOrNull(r.train) : null,
+    ...(plan?.entryRole === 'revocation-maintenance' ? { revocation: (() => { try { return validateRevocationFacts(r.revocation); } catch { return null; } })() } : {}),
     at: new Date(clock()).toISOString() };
   await fs.mkdir(receiptsRoot, { recursive: true });
   const h = await fs.open(path.join(receiptsRoot, `outcome-${nonce}.json`), 'wx', 0o600);
