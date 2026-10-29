@@ -250,6 +250,8 @@ export class FakeWindows {
     this.calls.push(`SwitchScm:${generation}`);
     if (this.failSwitch(generation)) return { ok: false, code: 'SCM_SWITCH_FAILED' };
     const s = await this.state();
+    // upgrade-apply.ps1 Invoke-SwitchScm: SERVICES_NOT_STOPPED.
+    if (s.resident.state !== 'stopped' || s.broker.state !== 'stopped') return { ok: false, code: 'SERVICES_NOT_STOPPED' };
     const rec = await this.record(generation);
     s.resident.binPath = rec?.residentBinPath ?? `gen ${generation} policy ${await shaOf(path.join(this.root, 'config', 'policy.json'))}`;
     s.broker.binPath = rec?.brokerBinPath ?? `gen ${generation} broker ${await shaOf(path.join(this.root, 'config', 'broker.json'))}`;
@@ -327,6 +329,7 @@ export class FakeLinux {
     return { ok: true, code: null, result: { status: 'LINUX_RETAINED', generation } };
   }
   async verify({ generation }) {
+    if (this.unavailable('verify')) return { ok: false, code: U.COMPANION_UNAVAILABLE };
     const s = await this.state();
     return s.generation === generation && !this.failVerify(generation) ? { ok: true, code: null } : { ok: false, code: 'UPGRADE_LINUX_VERIFY_REFUSED' };
   }

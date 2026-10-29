@@ -488,6 +488,47 @@ test('M4: the companion away during a rollback is a bounded wait, then ROLLBACK_
   assert.equal(r3.terminal.outcome, 'ROLLED_BACK_PAUSED');
 });
 
+test('round 2: a Linux half away for 23 h of its rollback still rolls back; a reboot during the wait is stopped again; rollback-verify waits for the Linux half too', async t => {
+  let linuxDown = true;
+  const env = await makeEnv(t, { windowsOptions: { failVerify: g => g === 2 }, linuxOptions: { unavailable: k => k === 'rollback' && linuxDown } });
+  const op = await openOp(env, 'n2');
+  let at = null;
+  const r = await runOp(env, op, { onMove: async m => {
+    if (at === null && m.view.code === U.ROLLBACK_COMPANION_UNAVAILABLE) at = env.clock.now;
+    if (at !== null && env.clock.now - at >= 23 * HOUR) linuxDown = false;
+  } });
+  assert.equal(r.terminal.outcome, 'ROLLED_BACK_PAUSED');
+  assert.ok(at !== null);
+  // The companion away during rollback-switch-windows; after one hour the host reboots and starts both services by itself.
+  let down = true, rebooted = false;
+  const env2 = await makeEnv(t, { windowsOptions: { failVerify: g => g === 2, companionDown: () => down } });
+  const op2 = await openOp(env2, 'n2');
+  let at2 = null;
+  const r2 = await runOp(env2, op2, { onMove: async m => {
+    if (at2 === null && m.view.code === U.ROLLBACK_COMPANION_UNAVAILABLE) at2 = env2.clock.now;
+    if (at2 !== null && !rebooted && env2.clock.now - at2 >= HOUR) {
+      rebooted = true;
+      const s = await readJson(path.join(env2.root, 'fake-scm.json'));
+      s.resident.state = 'running'; s.broker.state = 'running';
+      await fs.writeFile(path.join(env2.root, 'fake-scm.json'), JSON.stringify(s));
+    }
+    if (at2 !== null && env2.clock.now - at2 >= 2 * HOUR) down = false;
+  } });
+  assert.ok(rebooted);
+  assert.equal(r2.terminal.outcome, 'ROLLED_BACK_PAUSED');
+  // The Linux half's verify unanswered during rollback-verify: a wait, not ROLLBACK_FAILED.
+  let verifyDown = true;
+  const env3 = await makeEnv(t, { windowsOptions: { failVerify: g => g === 2 }, linuxOptions: { unavailable: k => k === 'verify' && verifyDown } });
+  const op3 = await openOp(env3, 'n2');
+  let at3 = null;
+  const r3 = await runOp(env3, op3, { onMove: async m => {
+    if (at3 === null && m.view.code === U.ROLLBACK_COMPANION_UNAVAILABLE) at3 = env3.clock.now;
+    if (at3 !== null && env3.clock.now - at3 >= 2 * HOUR) verifyDown = false;
+  } });
+  assert.ok(at3 !== null);
+  assert.equal(r3.terminal.outcome, 'ROLLED_BACK_PAUSED');
+});
+
 test('m1: a HALT while the pause is being confirmed defers (RESIDENT_HALTED), the pause request withdrawn, and the next cycle goes on', async t => {
   const env = await makeEnv(t, { residentOptions: { pauseDelayMs: 120_000 } });
   const op = await openOp(env, 'n2');

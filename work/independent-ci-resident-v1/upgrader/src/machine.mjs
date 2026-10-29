@@ -362,11 +362,14 @@ export class Machine {
       const w = await this.windows.verify(this.applyArgs(j, { generation, expectPausedSha256: ps?.sha256 ?? null }));
       if (!w.ok) return { ok: false, code: codes.fail, detail: { cause: 'windows', windowsCode: w.code ?? null } };
       const l = await this.linux.verify({ opId: this.opId, generation }, intent.seq);
+      if (!l.ok && l.code === U.COMPANION_UNAVAILABLE && codes.companion && now < Date.parse(intent.at) + companionWaitMs) return waitFor(POLL.transient, { code: codes.companion, waiting: 'linux-verify' });
       if (!l.ok) return { ok: false, code: codes.fail, detail: { cause: 'linux', linuxCode: l.code ?? null } };
       return okd({ generation });
     }
     // Waiting only for the companion (its heartbeat, its version facts): a rollback waits up to companionWaitMs for it.
-    const onlyCompanion = waiting.every(k => k === 'companion' || k === 'versions') && cons !== false;
+    // Versions count as waiting for the companion only while there are no fresh facts; facts that disagree (or another
+    // generation) are not something the companion's return can mend.
+    const onlyCompanion = waiting.every(k => k === 'companion' || (k === 'versions' && cons === null));
     if (now >= deadline && onlyCompanion && codes.companion && now < Date.parse(intent.at) + companionWaitMs) return waitFor(POLL.transient, { code: codes.companion, waiting: waiting[0] });
     if (now >= deadline) return { ok: false, code: onlyCompanion && codes.companion ? codes.companion : (cons === false ? codes.skew : codes.timeout), detail: { waiting: waiting[0] } };
     return waitFor(Math.min(POLL.verify, deadline - now), { code: null, waiting: waiting[0] });
@@ -716,6 +719,8 @@ const STEPS = {
     observe: (m, j) => m.restoreObservation(j),
     async run(m, j, intent) {
       const plan = m.planOf(j);
+      // A re-run after a reboot during the wait finds the services started again (delayed-auto): stopped first (idempotent).
+      if (!(await m.windows.stopServices(m.applyArgs(j))).ok) return failed(U.ROLLBACK_FAILED);
       await m.gens.restore(plan.fromGeneration, plan);
       await m.gens.restoreCurrent(plan.fromGeneration, plan.toGeneration, plan.current.fileSha256);
       const a = m.applyArgs(j, { generation: plan.fromGeneration });
@@ -733,6 +738,8 @@ const STEPS = {
   'rollback-switch-linux': {
     async run(m, j, intent) {
       const plan = m.planOf(j);
+      // The node stays stopped while the Linux half goes back, a reboot during the wait included.
+      if (!(await m.windows.stopServices(m.applyArgs(j))).ok) return failed(U.ROLLBACK_FAILED);
       const r = await m.linux.rollback({ opId: m.opId, fromGeneration: plan.toGeneration, toGeneration: plan.fromGeneration }, intent.seq);
       if (r.ok) return okd();
       if (r.code === U.COMPANION_UNAVAILABLE) return m.rollbackWait(intent);

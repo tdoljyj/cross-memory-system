@@ -11,7 +11,9 @@ import { Journal } from '../src/journal.mjs';
 import { grantClient, interpret } from '../src/grant-client.mjs';
 import { applyArgs, parseApplyOutput, WindowsPort } from '../src/windows-port.mjs';
 import { ResidentPort, pauseRequestBytes } from '../src/resident-ports.mjs';
-import { LinuxPort } from '../src/linux-port.mjs';
+import { LinuxPort, MAX_TRIES_PER_CALL } from '../src/linux-port.mjs';
+import { ROLLBACK_WAIT_MAX_MS } from '../src/machine.mjs';
+import { UPGRADE_TIMEOUT_MS } from '../../src/upgrade-mailbox.mjs';
 import { readPackageOnce } from '../src/package.mjs';
 import { U, categoryOf, outcomeOf, UPGRADE_CODES } from '../src/codes.mjs';
 import { validateIntakeRequest } from '../../src/intake-pause.mjs';
@@ -41,6 +43,8 @@ test('config: exact keys, pauseConfirmMs >= 420 s, a public key only, and the ha
   assert.throws(() => validateUpgraderConfig({ ...c, supabaseUrl: 'http://insecure.example' }), { detail: 'origins' });
   assert.throws(() => validateUpgraderConfig({ ...c, tokenFile: '\\\\server\\share\\t' }), { detail: 'paths' });
   assert.throws(() => validateUpgraderConfig({ ...c, extra: 1 }), { code: 'UPGRADER_CONFIG_REFUSED' });
+  // The Linux half keeps 3 generations: the Windows side the same (round 2 of the PR-1 review).
+  for (const keepGenerations of [2, 4, 10]) assert.throws(() => validateUpgraderConfig({ ...c, keepGenerations }), { detail: 'keepGenerations' });
   assert.throws(() => validateUpgraderConfig({ ...c, timeouts: { ...c.timeouts, drainMaxMinutes: 121 } }), { detail: 'timeouts' });
   const file = path.join(root, 'upgrader.json');
   const bytes = Buffer.from(JSON.stringify(c));
@@ -279,4 +283,33 @@ test('package: twenty files of 1 MiB and more are read whole, each with a buffer
   // A file that grows between fstat and the end of the read is refused (simulated by a size mismatch on a second read).
   const { readFileOnce } = await import('../src/package.mjs');
   await assert.rejects(readFileOnce(path.join(big.dir, 'source', 'big', 'blob-0.bin'), 1024), { code: U.PACKAGE_UNREADABLE, detail: 'size' });
+});
+
+test('linux port: a rollback re-run every minute for a whole day keeps sending tries; the companion back after 23 h is answered (round 2 of the PR-1 review)', async t => {
+  assert.ok(MAX_TRIES_PER_CALL * Math.min(...Object.values(UPGRADE_TIMEOUT_MS)) > ROLLBACK_WAIT_MAX_MS, 'the try bound outlasts the rollback wait');
+  const root = await tempDir(t);
+  let now = T0;
+  const companion = new UpgradeMailbox(path.join(root, 'mailbox'), () => now);
+  let up = false;
+  const pass = async () => {
+    if (!up) return;
+    for (const r of await companion.pending()) if (!r.refused) {
+      const resp = responseFromTool(r, { exit: 0, stdout: '{"status":"LINUX_ROLLED_BACK","generation":1}' }, () => now);
+      await companion.respond(r, { ok: resp.ok, code: resp.code, tool: resp.tool, result: resp.result });
+    }
+  };
+  const port = await LinuxPort.open(path.join(root, 'mailbox'), { clock: () => now, sleep: async ms => { await pass(); now += ms; }, pollMs: 60_000 });
+  // The machine's rollback-switch-linux: the same key (its intent's seq) on every re-run, then the 60 s wait.
+  let r, calls = 0;
+  while (now - T0 < 23 * 3_600_000) {
+    r = await port.rollback({ opId: OP, fromGeneration: 2, toGeneration: 1 }, 220);
+    assert.equal(r.code, U.COMPANION_UNAVAILABLE);
+    assert.notEqual(r.requestId, null, `call ${calls}: a request was sent`);
+    calls += 1;
+    now += 60_000;
+  }
+  assert.ok(calls > 50, `${calls} calls`);
+  up = true;
+  r = await port.rollback({ opId: OP, fromGeneration: 2, toGeneration: 1 }, 220);
+  assert.deepEqual([r.ok, r.code], [true, null]);
 });

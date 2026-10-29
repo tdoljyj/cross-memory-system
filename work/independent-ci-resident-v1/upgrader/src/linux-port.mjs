@@ -8,7 +8,10 @@
 import { CHANNEL_CODE, UPGRADE_RETAIN_KEEP, UpgradeMailbox, derivedRequestId } from '../../src/upgrade-mailbox.mjs';
 import { U } from './codes.mjs';
 
-export const MAX_TRIES_PER_CALL = 50;
+// A safety bound only, above any wait the machine runs: a rollback waits up to 24 h for the companion (ROLLBACK_WAIT_MAX_MS) and
+// every re-run of its step uses one more try of the same key, so even the shortest request (60 s) needs no more than 1440.
+// Each call sends one new request at most. (Round 2 of the PR-1 review: 50 ended the rollback wait after about 5 hours.)
+export const MAX_TRIES_PER_CALL = 2000;
 
 export class LinuxPort {
   constructor(mailbox, { clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)), pollMs = 1000 } = {}) {

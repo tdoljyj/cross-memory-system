@@ -63,7 +63,7 @@ export class Upgrader {
     const ops = await this.ops();
     this.activeId = ops.find(o => o.terminal === null)?.opId ?? null;
     for (const o of ops.filter(x => x.terminal)) this.noteTerminal(o.opId, o.terminal);
-    const since = Date.now() - DAY;
+    const since = this.clock() - DAY;
     this.opened = ops.filter(o => o.createdMs >= since).map(() => this.clock());
     return this;
   }

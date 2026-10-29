@@ -44,7 +44,8 @@ export function validateUpgraderConfig(v) {
   check(intIn(t.pauseConfirmMs, PAUSE_CONFIRM_MIN_MS, 3_600_000), code, 'pauseConfirmMs');
   check(intIn(t.verifyMaxMs, 60_000, 6 * 3_600_000), code, 'verifyMaxMs');
   check(Array.isArray(t.grantPollMs) && t.grantPollMs.length === 2 && intIn(t.grantPollMs[0], 1_000, 600_000) && intIn(t.grantPollMs[1], t.grantPollMs[0], 600_000), code, 'grantPollMs');
-  check(intIn(v.keepGenerations, 2, 10), code, 'keepGenerations');
+  // The Linux half keeps 3 (the frozen upgrade mailbox's linux-upgrade-retain, UPGRADE_RETAIN_KEEP): both sides the same.
+  check(v.keepGenerations === 3, code, 'keepGenerations');
   return v;
 }
 
