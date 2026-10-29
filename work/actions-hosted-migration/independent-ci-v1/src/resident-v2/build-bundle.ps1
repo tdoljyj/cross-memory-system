@@ -21,6 +21,11 @@ a receipt binds batchId, descriptor digest and Source commit.
 Stalled transfers (lesson #916, 2026-10-23: a fetch stalled at 47 MB and held the resident until the companion's
 35-minute deadline): an HTTP transfer slower than 1000 bytes/s for 60 s is aborted, and a failed network step gets one
 more complete attempt in a second fresh bare repository (Fetch-Store), only while most of the companion's wait is left.
+
+Train front batch (quota phase 2 step 3c-2, design v0.5 §5.2): the descriptor's tested commit S is GitHub's test merge of
+[T, H] (S != H). Build-Store fetches it by SHA under refs/clued-test/<S> (no other name, at most one), checks that it is a
+commit whose parents are exactly [T, H], and the bundle carries that one ref; the receipt counts it (testRefCount 0 when
+S = H). Old test merges can disappear when GitHub recomputes: the fetch then fails like any network step, before the batch.
 #>
 [CmdletBinding()]
 param([Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{16}-[0-9a-f]{12}$')][string]$BatchId,[switch]$CheckRefs)
@@ -32,7 +37,7 @@ $Root=Join-Path $Resident ('bundles\'+$BatchId)
 $Git='C:\Program Files\Git\cmd\git.exe'
 $Url='https://github.com/tdoljyj/cross-memory-system.git'
 $FetchDir=Join-Path $Root 'fetch.git';$FetchDir2=Join-Path $Root 'fetch-2.git';$Bundle=Join-Path $Root 'all-refs.bundle';$ReceiptPath=Join-Path $Root 'all-refs.receipt.json'
-$ReviewedPrefix='refs/reviewed/'
+$ReviewedPrefix='refs/reviewed/';$TestPrefix='refs/clued-test/'
 $Common=@('-c','core.hooksPath=C:/nonexistent-clued-hooks','-c','core.fsmonitor=false','-c','gc.auto=0','-c','maintenance.auto=false',
   '-c','fetch.writeCommitGraph=false','-c','protocol.allow=never','-c','protocol.https.allow=always','-c','init.templateDir=','-c','advice.defaultBranchName=false',
   '-c','http.lowSpeedLimit=1000','-c','http.lowSpeedTime=60')
@@ -40,7 +45,7 @@ $Common=@('-c','core.hooksPath=C:/nonexistent-clued-hooks','-c','core.fsmonitor=
 # (companion.mjs build-bundle). A retry starts only within the first 10 of them, so the second attempt has at least
 # 20 minutes, twice what the first one can have used. A transfer that stays just above the low-speed limit is still
 # not bounded: nothing here kills git.
-$NetworkSteps=@('fetch','ls-remote','fetch-reviewed');$RetryWithinSeconds=600
+$NetworkSteps=@('fetch','ls-remote','fetch-reviewed','fetch-test');$RetryWithinSeconds=600
 $Clock=[Diagnostics.Stopwatch]::StartNew()
 $stage='fixed-preflight';$created=@();$writesStarted=$false;$lastGit=$null;$attempts=1;$firstAttempt=$null
 function Utc{return [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'",[Globalization.CultureInfo]::InvariantCulture)}
@@ -72,7 +77,7 @@ function Assert-FormalRefName([string]$Name){
 }
 function New-RefMap{return ,(New-Object 'Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal))}
 function Split-Refs([string]$Text,[string]$Separator,[bool]$SkipPeeled,[bool]$AllowReviewed){
- $formal=New-RefMap;$reviewed=New-RefMap
+ $formal=New-RefMap;$reviewed=New-RefMap;$test=New-RefMap
  foreach($line in ($Text -split "`n")){
   $l=$line.TrimEnd("`r");if($l.Length -eq 0){continue}
   $parts=$l.Split([char[]]$Separator,2);if($parts.Count -ne 2 -or $parts[0] -cnotmatch '\A[0-9a-f]{40}\z'){throw 'EXACT_REF_LINE_REQUIRED'}
@@ -81,10 +86,13 @@ function Split-Refs([string]$Text,[string]$Separator,[bool]$SkipPeeled,[bool]$Al
    if($parts[1] -cne ($ReviewedPrefix+$parts[0])){throw 'EXACT_REVIEWED_REF_REQUIRED'}
    if($reviewed.ContainsKey($parts[1])){throw 'DUPLICATE_REF_REFUSED'};$reviewed[$parts[1]]=$parts[0];continue
   }
+  if($AllowReviewed -and $parts[1].StartsWith($TestPrefix,[StringComparison]::Ordinal)){
+   if($parts[1] -cne ($TestPrefix+$parts[0]) -or $test.Count -ne 0){throw 'EXACT_TEST_REF_REQUIRED'};$test[$parts[1]]=$parts[0];continue
+  }
   Assert-FormalRefName $parts[1];if($formal.ContainsKey($parts[1])){throw 'DUPLICATE_REF_REFUSED'};$formal[$parts[1]]=$parts[0]
  }
  if($formal.Count -lt 1 -or $formal.Count -gt 10000){throw 'REF_COUNT_BOUND'}
- return [pscustomobject]@{formal=$formal;reviewed=$reviewed}
+ return [pscustomobject]@{formal=$formal;reviewed=$reviewed;test=$test}
 }
 function Ref-Map([string]$Text,[string]$Separator,[bool]$SkipPeeled){return ,((Split-Refs $Text $Separator $SkipPeeled $false).formal)}
 function Same-Map($A,$B){if($A.Count -ne $B.Count){return $false};foreach($k in $A.Keys){if(-not $B.ContainsKey($k) -or $B[$k] -cne $A[$k]){return $false}};return $true}
@@ -134,12 +142,12 @@ function Read-Descriptor{
  $i=Get-Item -LiteralPath $Descriptor -Force;if($i.PSIsContainer -or ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $i.Length -lt 1 -or $i.Length -gt 65536){throw 'DESCRIPTOR_REFUSED'}
  $raw=[IO.File]::ReadAllBytes($Descriptor);$d=(New-Object Text.UTF8Encoding($false,$true)).GetString($raw)|ConvertFrom-Json
  if($d.contract -cne 'clued.independent-ci.resident-batch-descriptor/3' -or $d.testSha -cnotmatch '\A[0-9a-f]{40}\z' -or $d.batchId -cne $BatchId -or $d.repo -cne 'tdoljyj/cross-memory-system' -or $d.headSha -cnotmatch '\A[0-9a-f]{40}\z' -or $d.baseSha -cnotmatch '\A[0-9a-f]{40}\z' -or $d.sourceCommit -cnotmatch '\A[0-9a-f]{40}\z' -or $d.gitleaksTomlSha256 -cnotmatch '\A[0-9a-f]{64}\z'){throw 'DESCRIPTOR_REFUSED'}
- # Quota phase 2 step 3b: the tested commit S is the head until step 3c fetches GitHub's test merge by SHA for the train.
- if($d.testSha -cne $d.headSha){throw 'TEST_COMMIT_NOT_HEAD'}
+ # Step 3c-2: S != H only for a train front batch (GitHub's test merge of [T, H]); Build-Store fetches and checks it.
  return [pscustomobject]@{value=$d;sha256=(Hash-Bytes $raw)}
 }
 # One complete attempt at the fetched store, in a fresh bare repository of its own ($Dir must not exist yet): all heads
-# and tags, ls-remote equality, main == base, then the reviewed commits fetched by SHA, each read back.
+# and tags, ls-remote equality, main == base, then the reviewed commits fetched by SHA, each read back, then (train
+# front batch only) the tested commit S by SHA with its parents [T, H].
 function Build-Store([string]$Dir){
  $script:stage='fresh-bare-repository';Absent $Dir
  $null=Invoke-Git 'init-bare' (@('-c','init.templateDir=','init','--bare','--quiet','--template=',$Dir));$script:created+=$Dir
@@ -177,7 +185,21 @@ function Build-Store([string]$Dir){
  if(-not (Same-Map $all.reviewed $expectedReviewed)){throw 'EXACT_REVIEWED_REF_SET_REQUIRED'}
  foreach($c in $reviewed.commits){if((Invoke-Git 'reviewed-cat-file' ($Common+@($gd,'cat-file','-t',$c))).Trim() -cne 'commit'){throw 'REVIEWED_COMMIT_NOT_IN_STORE'}}
  $null=Invoke-Git 'reviewed-closure' ($Common+@($gd,'rev-list','--objects','--quiet','--glob=refs/reviewed/*'))
- return [pscustomobject]@{dir=$Dir;gd=$gd;remote=$remote;branchesAtHead=$branchesAtHead;reviewed=$reviewed;expectedReviewed=$expectedReviewed
+ $expectedTest=New-RefMap
+ if($Test -cne $Head){
+  $script:stage='fetch-test-commit-by-sha'
+  $null=Invoke-Git 'fetch-test' ($Common+@($gd,'fetch','--quiet','--no-tags','--no-write-fetch-head','--no-recurse-submodules',$Url,('+'+$Test+':'+$TestPrefix+$Test)))
+  $script:stage='test-store-readback';$expectedTest[$TestPrefix+$Test]=$Test
+  if((Invoke-Git 'is-shallow-3' ($Common+@($gd,'rev-parse','--is-shallow-repository'))).Trim() -cne 'false'){throw 'COMPLETE_HISTORY_REQUIRED'}
+  foreach($f in @('shallow','info\grafts','objects\info\alternates','objects\info\http-alternates')){Absent (Join-Path $Dir $f)}
+  if((Invoke-Git 'test-cat-file' ($Common+@($gd,'cat-file','-t',$Test))).Trim() -cne 'commit'){throw 'TEST_COMMIT_MISSING'}
+  # Design v0.5 §5.2: S is GitHub's merge of exactly [T, H], checked on the object itself.
+  if((Invoke-Git 'test-parents' ($Common+@($gd,'rev-list','--parents','-n','1',$Test))).Trim() -cne ($Test+' '+$Base+' '+$Head)){throw 'TEST_COMMIT_PARENTS_REQUIRED'}
+ }
+ $final=Split-Refs (Invoke-Git 'for-each-ref-3' ($Common+@($gd,'for-each-ref','--format=%(objectname) %(refname)'))) ' ' $false $true
+ if(-not (Same-Map $final.formal $remote) -or -not (Same-Map $final.reviewed $expectedReviewed)){throw 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE'}
+ if(-not (Same-Map $final.test $expectedTest)){throw 'EXACT_TEST_REF_REQUIRED'}
+ return [pscustomobject]@{dir=$Dir;gd=$gd;remote=$remote;branchesAtHead=$branchesAtHead;reviewed=$reviewed;expectedReviewed=$expectedReviewed;expectedTest=$expectedTest
   fetchStartedAt=$fetchStartedAt;fetchCompletedAt=$fetchCompletedAt;lsRemoteCompletedAt=$lsRemoteCompletedAt;reviewedFetchStartedAt=$reviewedFetchStartedAt;reviewedFetchCompletedAt=$reviewedFetchCompletedAt}
 }
 # Only a network step that git itself failed is retried, and only early enough: never a refusal of this script
@@ -201,7 +223,7 @@ try{
  $id=[Security.Principal.WindowsIdentity]::GetCurrent();$principal=New-Object Security.Principal.WindowsPrincipal($id)
  if($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'NON_ELEVATED_RUN_REQUIRED'}
  if(-not (Test-Path -LiteralPath $Git -PathType Leaf)){throw 'FIXED_GIT_FOR_WINDOWS_REQUIRED'}
- $desc=Read-Descriptor;$Head=$desc.value.headSha;$Base=$desc.value.baseSha
+ $desc=Read-Descriptor;$Head=$desc.value.headSha;$Base=$desc.value.baseSha;$Test=$desc.value.testSha
  if($CheckRefs){
   $stage='check-refs'
   $rec=[IO.File]::ReadAllText($ReceiptPath)|ConvertFrom-Json
@@ -216,22 +238,24 @@ try{
  $stage='batch-directory';$writesStarted=$true;[void][IO.Directory]::CreateDirectory($Root);$created+=$Root
  $gitVersion=(Invoke-Git 'version' @('--version')).Trim();$gitSha=Hash-File $Git
  $store=Fetch-Store
- $gd=$store.gd;$remote=$store.remote;$reviewed=$store.reviewed;$reviewedCommits=$reviewed.commits;$expectedReviewed=$store.expectedReviewed
+ $gd=$store.gd;$remote=$store.remote;$reviewed=$store.reviewed;$reviewedCommits=$reviewed.commits;$expectedReviewed=$store.expectedReviewed;$expectedTest=$store.expectedTest
  $stage='bundle-create'
- $null=Invoke-Git 'bundle-create' ($Common+@($gd,'bundle','create','--quiet','--version=2',$Bundle,'--branches','--tags','--glob=refs/reviewed/*'));$created+=$Bundle;$bundleCreatedAt=Utc
+ $null=Invoke-Git 'bundle-create' ($Common+@($gd,'bundle','create','--quiet','--version=2',$Bundle,'--branches','--tags','--glob=refs/reviewed/*','--glob=refs/clued-test/*'));$created+=$Bundle;$bundleCreatedAt=Utc
  $stage='bundle-verify'
  $null=Invoke-Git 'bundle-verify' ($Common+@($gd,'bundle','verify','--quiet',$Bundle))
  $header=Bundle-Header $Bundle
  if(-not (Same-Map $header.formal $remote)){throw 'BUNDLE_REFS_DIFFER_FROM_LS_REMOTE'}
  if(-not (Same-Map $header.reviewed $expectedReviewed)){throw 'BUNDLE_REVIEWED_REFS_CHANGED'}
+ if(-not (Same-Map $header.test $expectedTest)){throw 'BUNDLE_TEST_REF_CHANGED'}
  $heads=Split-Refs (Invoke-Git 'bundle-list-heads' ($Common+@($gd,'bundle','list-heads',$Bundle))) ' ' $false $true
- if(-not (Same-Map $heads.formal $header.formal) -or -not (Same-Map $heads.reviewed $header.reviewed)){throw 'BUNDLE_LIST_HEADS_CHANGED'}
+ if(-not (Same-Map $heads.formal $header.formal) -or -not (Same-Map $heads.reviewed $header.reviewed) -or -not (Same-Map $heads.test $header.test)){throw 'BUNDLE_LIST_HEADS_CHANGED'}
  $bytes=(Get-Item -LiteralPath $Bundle -Force).Length;$sha=Hash-File $Bundle
  $stage='receipt'
  $receipt=[ordered]@{contract='clued.independent-ci.resident-bundle-receipt/1';status='EXACT_ALL_REFS_AND_REVIEWED_BUNDLE_CREATED';batchId=$BatchId;descriptorSha256=$desc.sha256
   repository='tdoljyj/cross-memory-system';url=$Url;bundleSha256=$sha;bundleBytes=$bytes;bundleVersion=2;prerequisites=0
   refCount=$header.formal.Count;refListSha256=(Ref-List-Sha $header.formal);refListCanonical='ordinal-sorted "<sha> <refname>\n", non-peeled tag objects, refs/heads and refs/tags only'
   reviewedRefPrefix=$ReviewedPrefix;reviewedRefCount=$header.reviewed.Count;reviewedRefListSha256=(Ref-List-Sha $header.reviewed)
+  testSha=$Test;testRefPrefix=$TestPrefix;testRefCount=$header.test.Count;testRefListSha256=(Ref-List-Sha $header.test)
   reviewedCommitCount=$reviewedCommits.Count;reviewedFindingCount=$reviewed.findings;reviewedCommitsSha256=$reviewed.sha256;gitleaksTomlSha256=$desc.value.gitleaksTomlSha256;sourceCommit=$desc.value.sourceCommit
   mainSha=$Base;headSha=$Head;headPresent=$true;basePresent=$true;branchesAtHead=$store.branchesAtHead
   fetchStartedAt=$store.fetchStartedAt;fetchCompletedAt=$store.fetchCompletedAt;lsRemoteCompletedAt=$store.lsRemoteCompletedAt

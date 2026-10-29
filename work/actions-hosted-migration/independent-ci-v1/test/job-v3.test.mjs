@@ -68,9 +68,12 @@ test('job /3: the placement container builds and checks the tested commit S, aga
   assert.ok(!Object.values(byId).flat().includes(H), 'the head is never what the container checks');
 });
 
-test('job /3: the bundle builder accepts descriptor /3 only and refuses S != H until step 3c', () => {
+test('job /3: the bundle builder accepts descriptor /3 only; since step 3c-2 it carries S != H as refs/clued-test/<S>', () => {
   const text = fs.readFileSync(new URL('../src/resident-v2/build-bundle.ps1', import.meta.url), 'utf8');
   assert.ok(text.includes("$d.contract -cne 'clued.independent-ci.resident-batch-descriptor/3'"));
   assert.ok(!text.includes('resident-batch-descriptor/2'));
-  assert.ok(text.includes("if($d.testSha -cne $d.headSha){throw 'TEST_COMMIT_NOT_HEAD'}"));
+  assert.ok(!text.includes('TEST_COMMIT_NOT_HEAD'));
+  assert.ok(text.includes("$TestPrefix='refs/clued-test/'"));
+  assert.ok(text.includes("'--glob=refs/clued-test/*'"));
+  assert.ok(text.includes("throw 'TEST_COMMIT_PARENTS_REQUIRED'"));
 });
