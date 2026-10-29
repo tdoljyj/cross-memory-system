@@ -34,7 +34,7 @@ Task `25ac6c5f`；Decision `76c5ac24`（开发授权）；设计《常驻执行�
 
 计划绑定：脚本自身字节的 sha256、档案字节的 sha256、runner 包的 sha256 与条目数、每个目标的现状、现有每个 runner 服务的名字/二进制/账户/启动方式。其中任何一项在干跑和执行之间变了，执行以 `PLAN_CHANGED_SINCE_REVIEW` 拒绝。
 
-运行位置（独立审核 r1 MAJOR-1）：计划哈希是脚本自己算的，证明不了脚本是哪一份，所以凡是**提权**运行（`-Apply`，或提权干跑），脚本先检查自己所在的位置：脚本文件以及往上每一级目录，属主都必须是管理方，且没有非管理方的写、追加、删除、替换或改权限的权利；脚本所在目录之上只看替换类权利，因为 `C:\` 和 `C:\ProgramData` 本来允许用户新建同级目录。不满足就拒绝（`TOOL_LOCATION_NOT_ADMIN_ONLY:<原因>`）。现场说明 0.7 先用一段不从文件读取的提权命令（以完整路径拉起 `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`，当前目录先切到 `C:\Windows`）在 `C:\ProgramData` 下新建随机名目录 `CluedNodePrep-<GUID>`（已存在即拒绝；读回属主 Administrators、受保护、只有 SYSTEM 和 Administrators），文件在内存里对照 KooYomi 记录的 sha256 核对后才写进去（属主 Administrators），再从那里运行；回执写到 Owner 文件夹里随机名的新文件（审核 r2 NEW-1、NEW-2、NEW-4）。脚本开头把 `PSModulePath` 固定为 Windows 目录（同 `install-resident.ps1`），运行时不编译任何代码（不用 `Add-Type -TypeDefinition`），runner 包和档案只读一次进内存。
+运行位置（独立审核 r1 MAJOR-1）：计划哈希是脚本自己算的，证明不了脚本是哪一份，所以凡是**提权**运行（`-Apply`，或提权干跑），脚本先检查自己所在的位置：脚本文件以及往上每一级目录，属主都必须是管理方，且没有非管理方的写、追加、删除、替换或改权限的权利；脚本所在目录之上只看替换类权利，因为 `C:\` 和 `C:\ProgramData` 本来允许用户新建同级目录。不满足就拒绝（`TOOL_LOCATION_NOT_ADMIN_ONLY:<原因>`）。现场说明 0.7 先用一段不从文件读取的提权命令（以完整路径拉起 `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`，当前目录先切到 `C:\Windows`）在 `C:\ProgramData` 下新建随机名目录 `CluedNodePrep-<GUID>`（已存在即拒绝；读回属主 Administrators、受保护、只有 SYSTEM 和 Administrators），文件在内存里对照 KooYomi 记录的 sha256 核对后才写进去（属主 Administrators），再从那里运行；回执写进同一运行目录的 `receipt.txt`（Owner 只读，不往用户可写位置写任何东西）；提权命令块第一行先固定 `PSModulePath`（审核 r2 NEW-1、NEW-2、NEW-4，r3 N-A、N-C）。脚本开头把 `PSModulePath` 固定为 Windows 目录（同 `install-resident.ps1`），运行时不编译任何代码（不用 `Add-Type -TypeDefinition`），runner 包和档案只读一次进内存。
 
 步骤（按顺序；已存在且完全一致的跳过）：
 
@@ -118,7 +118,7 @@ wsl -d <任一发行版> -- bash work/independent-ci-node-prep-v1/linux/test-pre
 
 可选：环境变量 `NODEPREP_RUNNER_ZIP` 指向官方 `actions-runner-win-x64-2.337.0.zip`，再核对真实包（钉值、275 个文件条目全部通过路径检查）。
 
-结果：Windows 184/184，Linux 41/41。
+结果：Windows 186/186（其中 2 项需设环境变量 `NODEPREP_RUNNER_ZIP` 指向官方包，不设时 184/184），Linux 41/41。
 
 Windows 测试覆盖：档案的 20 个拒绝用例；TURING 档案推出的 node profile 与 `node-profile.turing.json` 逐字段相同、摘要与 `src/node-profile.mjs` 相同（有 node 时现算对拍）；DESK-W-591 的完整计划（顺序、标签、服务、未动 runner、包要求）；计划哈希绑定脚本、档案、现有 runner；TURING 实测 ACL 得到 `NOTHING_TO_DO`；35 个主机现状拒绝用例；部分执行后的密码重置；新建目录读回规则（属主是用户、未受保护、多出条目都拒绝）；提权运行位置规则（Owner 文档目录、用户可改目录、用户属主、可追加的脚本都拒绝，本仓库检出目录也拒绝）；临时目录树上的真实事实读取（不存在、目录、文件、junction；runner 目录的空、恰为包、已注册、多出、改动、缺少、属主）；`wsl --list --quiet` 输出解析；规划的 App key 与 ci-admission token 目录链通过 `verify-resident.ps1` 的 `Test-SecretAclChain`（原文抽取，不复制）；`migrate-acl.ps1` 的追加目标都已准备、它要建的都不在这里建；工具文本的静态保证；夹具根里的端到端干跑与执行（错误哈希、无哈希、错误包、离线事实不能用于真机、夹具根在 TEMP 外、二次执行不覆盖、中途停下的 `APPLY_PARTIAL` 回执、回执里的 node profile 通过常驻校验）。夹具里的建账户、注册和建服务是桩，只记录调用。
 

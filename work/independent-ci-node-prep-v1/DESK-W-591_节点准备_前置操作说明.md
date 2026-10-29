@@ -91,10 +91,12 @@ Owner 在 DESK-W-591 的浏览器打开 `https://github.com/tdoljyj/cross-memory
 1. 在 `C:\ProgramData` 下直接新建一个随机名的目录 `CluedNodePrep-<GUID>`。名字不可预测，目录已存在就拒绝。建完立即读回：不是链接，属主是 Administrators，DACL 受保护，只有 SYSTEM 和 Administrators。
 2. 每个文件先读进内存。脚本和档案在内存里先核 sha256，通过后才逐字节写进去，属主是 Administrators；工具会再核一次，属主是用户账户的文件一律拒绝。
 3. 从这个目录执行。
-4. 回执写到 Owner 文件夹里一个随机名的新文件（`CreateNew`，不跟随已有的文件或链接），同时显示在窗口里。
+4. 回执写进同一个运行目录的 `receipt.txt`（`CreateNew`；SYSTEM、Administrators 完全控制，Owner 只读），同时显示在窗口里。不往任何用户可写的位置写东西。
+5. 第一行先把 `PSModulePath` 固定为 Windows 目录，之后才用任何命令，这样 Owner 文档目录里的模块不会被加载。
 
 ```powershell
 $cmd = @'
+$env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'
 $ErrorActionPreference = 'Stop'
 $src = 'C:\Users\Windows\Documents\nodeprep'
 $d = 'C:\ProgramData\CluedNodePrep-' + [guid]::NewGuid().ToString('N')
@@ -117,14 +119,15 @@ foreach ($n in 'prepare-node.ps1', 'node-prep.desk-w-591.json', 'actions-runner-
 Set-Location $d
 $r = & (Join-Path $d 'prepare-node.ps1') -ProfilePath .\node-prep.desk-w-591.json -RunnerPackageZip .\actions-runner-win-x64-2.337.0.zip <MODE> | Out-String
 $r
-$o = Join-Path $src ('DESK-W-591_nodeprep_' + [guid]::NewGuid().ToString('N') + '.txt')
-$w = New-Object IO.StreamWriter((New-Object IO.FileStream($o, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)), (New-Object Text.UTF8Encoding($false)))
+$o = Join-Path $d 'receipt.txt'
+$rs = New-Object Security.AccessControl.FileSecurity; $rs.SetSecurityDescriptorSddlForm('O:BAG:BAD:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value + ')')
+$w = New-Object IO.StreamWriter((New-Object IO.FileStream($o, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::Write, [IO.FileShare]::None, 4096, [IO.FileOptions]::None, $rs)), (New-Object Text.UTF8Encoding($false)))
 try { $w.Write($r) } finally { $w.Dispose() }
 'receipt: ' + $o
 '@
 $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
-Set-Location $env:SystemRoot
-Start-Process -Verb RunAs -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-EncodedCommand', $enc
+Set-Location 'C:\Windows'
+Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-EncodedCommand', $enc
 ```
 
 **Owner 点 UAC 之前先看弹窗**：程序必须是 `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`，发布者必须是 Microsoft Windows。不是的话点“否”，并报告协调方。拉起命令用的是完整路径，当前目录也先切到了 `C:\Windows`，正常情况下不会出现别的程序。
@@ -155,7 +158,7 @@ Start-Process -Verb RunAs -FilePath "$env:SystemRoot\System32\WindowsPowerShell\
 - `RUNNER_LOG_CONTAINS_TOKEN:*`：runner 自己的日志里出现了令牌。停下回传；令牌一小时后失效，必要时 Owner 在 GitHub 上删掉该 runner。
 - 其他码：停下回传。
 
-执行完，把窗口最后一行 `receipt:` 指向的回执文件写入 KooYomi Task `b7d84de2`（令牌从不打印，回执里没有秘密），并在 Task `25ac6c5f` 记下 controller SID。下载的 runner 包副本 Owner 可以自行删除。`C:\ProgramData\CluedNodePrep-<GUID>` 只有管理员能访问，工具不会删它，留着作为记录。
+执行完，把窗口最后一行 `receipt:` 指向的回执文件写入 KooYomi Task `b7d84de2`（在普通权限的 PowerShell 里用 `Get-Content -LiteralPath <该完整路径>` 读取：运行目录本身不能列出，但 Owner 对这个文件有读权限）（令牌从不打印，回执里没有秘密），并在 Task `25ac6c5f` 记下 controller SID。下载的 runner 包副本 Owner 可以自行删除。`C:\ProgramData\CluedNodePrep-<GUID>` 只有管理员能访问，工具不会删它，留着作为记录。
 
 ## 0.8 Linux 侧（发行版定了以后）
 

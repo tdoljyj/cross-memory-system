@@ -238,9 +238,11 @@ $tk = $null; $pe = $null; [void][Management.Automation.Language.Parser]::ParseIn
 $elev = $launcher.Substring($launcher.IndexOf("`n") + 1); $elev = $elev.Substring(0, $elev.IndexOf("`n'@")) -replace '<MODE>', '' -replace '<[^>]+的 sha256>', '0'
 $tk2 = $null; $pe2 = $null; [void][Management.Automation.Language.Parser]::ParseInput($elev, [ref]$tk2, [ref]$pe2)
 Ok ($pe.Count -eq 0 -and $pe2.Count -eq 0) 'guide launcher and its elevated block parse'
-Ok ($launcher.Contains('-FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"') -and $launcher.Contains('Set-Location $env:SystemRoot') -and -not ($launcher -match '-FilePath powershell')) 'guide launches PowerShell by full path from C:\Windows'
+Ok ($launcher.Contains("-FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'") -and $launcher.Contains("Set-Location 'C:\Windows'") -and -not ($launcher -match '-FilePath powershell')) 'guide launches PowerShell by full literal path from C:\Windows'
+Ok (($elev -split "`n")[0].Trim() -ceq "`$env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'") 'guide: elevated block pins the module path before any command (review r3 N-A)'
+Ok ($elev.Contains("`$o = Join-Path `$d 'receipt.txt'") -and -not ($elev -match 'Join-Path \$src \(')) 'guide: receipt written inside the admin-only run folder, nothing written under the Owner folder (review r3 N-C)'
 Ok ($elev.Contains("'C:\ProgramData\CluedNodePrep-' + [guid]::NewGuid()") -and $elev.Contains("throw 'RUN_DIRECTORY_EXISTS'") -and $elev.Contains("throw 'RUN_DIRECTORY_REFUSED'") -and -not $elev.Contains('Test-Path -LiteralPath $p')) 'guide: fresh random run folder, refused if present, read back'
-Ok ($elev.IndexOf("throw ('SHA256_MISMATCH:'") -lt $elev.IndexOf('$fs.Write(') -and -not $elev.Contains('Tee-Object') -and $elev.Contains('[IO.FileMode]::CreateNew, [IO.FileAccess]::Write')) 'guide: hashes checked in memory before writing; receipt CreateNew under a random name'
+Ok ($elev.IndexOf("throw ('SHA256_MISMATCH:'") -lt $elev.IndexOf('$fs.Write(') -and -not $elev.Contains('Tee-Object') -and $elev.Contains('New-Object IO.FileStream($o, [IO.FileMode]::CreateNew')) 'guide: hashes checked in memory before writing; receipt created CreateNew'
 $rawWsl = "U`0b`0u`0n`0t`0u`0-`02`04`0.`00`04`0`r`0`n`0C`0l`0u`0e`0d`0C`0I`0-`0L`0i`0n`0u`0x`0`r`0`n`0`r`0`n`0"
 Ok ((@(ConvertFrom-WslNames $rawWsl) -join '|') -ceq 'Ubuntu-24.04|CluedCI-Linux') 'wsl --list --quiet names parsed (UTF-16 NULs, any language)'
 
