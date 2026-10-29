@@ -37,7 +37,7 @@ Invoke-WebRequest -UseBasicParsing -Uri https://github.com/actions/runner/releas
 
 ```powershell
 cd C:\Users\Windows\Documents\nodeprep
-powershell -NoProfile -ExecutionPolicy Bypass -File .\prepare-node.ps1 -ProfilePath .\node-prep.desk-w-591.json -RunnerPackageZip .\actions-runner-win-x64-2.337.0.zip | Tee-Object -FilePath .\DESK-W-591_nodeprep_dryrun.txt
+& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File .\prepare-node.ps1 -ProfilePath .\node-prep.desk-w-591.json -RunnerPackageZip .\actions-runner-win-x64-2.337.0.zip | Tee-Object -FilePath .\DESK-W-591_nodeprep_dryrun.txt
 ```
 
 预期 `"status": "DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN"`，最后一行是 `PLAN_SHA256=<64 位十六进制>`。逐项核对：
@@ -84,34 +84,50 @@ Owner 在 DESK-W-591 的浏览器打开 `https://github.com/tdoljyj/cross-memory
 
 ## 0.7 提权执行（Owner 点 UAC，输入令牌）
 
-现场 Agent 先在普通 PowerShell 里拼好下面这段命令（把两处 `<...>` 换成 KooYomi 里记录的 sha256 和 0.3 的 `PLAN_SHA256`），再以提权方式拉起；Owner 点 UAC。命令做的事：
+现场 Agent 在普通 PowerShell 里拼好下面这段命令，再以提权方式拉起，由 Owner 点 UAC。拼之前先把三处 `<...>` 换掉：两个 sha256 用 KooYomi 里记录的值；`<MODE>` 执行时填 `-Apply -ExpectedPlanSha256 <0.3 的 PLAN_SHA256>`，只做提权干跑时留空。
 
-1. 在 `C:\ProgramData\CluedNodePrep\run-<时间>` 建一个只有 SYSTEM 和 Administrators 能访问的目录；
-2. 把三个文件逐字节写进去，属主是 Administrators（工具会核对，属主是用户账户的文件一律拒绝）；
-3. 核对脚本和档案的 sha256；
-4. 从这个目录执行。
+命令做的事：
+
+1. 在 `C:\ProgramData` 下直接新建一个随机名的目录 `CluedNodePrep-<GUID>`。名字不可预测，目录已存在就拒绝。建完立即读回：不是链接，属主是 Administrators，DACL 受保护，只有 SYSTEM 和 Administrators。
+2. 每个文件先读进内存。脚本和档案在内存里先核 sha256，通过后才逐字节写进去，属主是 Administrators；工具会再核一次，属主是用户账户的文件一律拒绝。
+3. 从这个目录执行。
+4. 回执写到 Owner 文件夹里一个随机名的新文件（`CreateNew`，不跟随已有的文件或链接），同时显示在窗口里。
 
 ```powershell
 $cmd = @'
 $ErrorActionPreference = 'Stop'
 $src = 'C:\Users\Windows\Documents\nodeprep'
-$parent = 'C:\ProgramData\CluedNodePrep'; $d = Join-Path $parent ('run-' + (Get-Date -Format 'yyyyMMddHHmmss'))
+$d = 'C:\ProgramData\CluedNodePrep-' + [guid]::NewGuid().ToString('N')
+if (Test-Path -LiteralPath $d) { throw 'RUN_DIRECTORY_EXISTS' }
 $s = New-Object Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)')
-foreach ($p in $parent, $d) { if (-not (Test-Path -LiteralPath $p)) { [void][IO.Directory]::CreateDirectory($p, $s) } }
+[void][IO.Directory]::CreateDirectory($d, $s)
+$raw = New-Object Security.AccessControl.RawSecurityDescriptor((Get-Acl -LiteralPath $d).Sddl)
+$aces = @($raw.DiscretionaryAcl | ForEach-Object { $_.SecurityIdentifier.Value + '|' + $_.AccessMask }) -join ','
+if (((Get-Item -LiteralPath $d -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -or $raw.Owner.Value -ne 'S-1-5-32-544' -or
+  ($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -eq 0 -or $aces -ne 'S-1-5-18|2032127,S-1-5-32-544|2032127') { throw 'RUN_DIRECTORY_REFUSED' }
+$pins = @{ 'prepare-node.ps1' = '<prepare-node.ps1 的 sha256>'; 'node-prep.desk-w-591.json' = '<node-prep.desk-w-591.json 的 sha256>' }
 $fsSec = New-Object Security.AccessControl.FileSecurity; $fsSec.SetSecurityDescriptorSddlForm('O:BAG:BAD:PAI(A;;FA;;;SY)(A;;FA;;;BA)')
+$sha = [Security.Cryptography.SHA256]::Create()
 foreach ($n in 'prepare-node.ps1', 'node-prep.desk-w-591.json', 'actions-runner-win-x64-2.337.0.zip') {
   $b = [IO.File]::ReadAllBytes((Join-Path $src $n))
+  if ($pins.ContainsKey($n) -and ([BitConverter]::ToString($sha.ComputeHash($b)).Replace('-', '').ToLower()) -ne $pins[$n]) { throw ('SHA256_MISMATCH:' + $n) }
   $fs = New-Object IO.FileStream((Join-Path $d $n), [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::Write, [IO.FileShare]::None, 4096, [IO.FileOptions]::None, $fsSec)
   try { $fs.Write($b, 0, $b.Length) } finally { $fs.Dispose() }
 }
-if ((Get-FileHash (Join-Path $d 'prepare-node.ps1') -Algorithm SHA256).Hash.ToLower() -ne '<prepare-node.ps1 的 sha256>') { throw 'TOOL_SHA256_MISMATCH' }
-if ((Get-FileHash (Join-Path $d 'node-prep.desk-w-591.json') -Algorithm SHA256).Hash.ToLower() -ne '<node-prep.desk-w-591.json 的 sha256>') { throw 'PROFILE_SHA256_MISMATCH' }
 Set-Location $d
-& (Join-Path $d 'prepare-node.ps1') -ProfilePath .\node-prep.desk-w-591.json -RunnerPackageZip .\actions-runner-win-x64-2.337.0.zip -Apply -ExpectedPlanSha256 <PLAN_SHA256> | Tee-Object -FilePath (Join-Path $src 'DESK-W-591_nodeprep_apply.txt')
+$r = & (Join-Path $d 'prepare-node.ps1') -ProfilePath .\node-prep.desk-w-591.json -RunnerPackageZip .\actions-runner-win-x64-2.337.0.zip <MODE> | Out-String
+$r
+$o = Join-Path $src ('DESK-W-591_nodeprep_' + [guid]::NewGuid().ToString('N') + '.txt')
+$w = New-Object IO.StreamWriter((New-Object IO.FileStream($o, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)), (New-Object Text.UTF8Encoding($false)))
+try { $w.Write($r) } finally { $w.Dispose() }
+'receipt: ' + $o
 '@
 $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
-Start-Process -Verb RunAs -FilePath powershell.exe -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-EncodedCommand', $enc
+Set-Location $env:SystemRoot
+Start-Process -Verb RunAs -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-EncodedCommand', $enc
 ```
+
+**Owner 点 UAC 之前先看弹窗**：程序必须是 `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`，发布者必须是 Microsoft Windows。不是的话点“否”，并报告协调方。拉起命令用的是完整路径，当前目录也先切到了 `C:\Windows`，正常情况下不会出现别的程序。
 
 窗口提示 `GitHub runner registration token ...` 时，Owner 输入令牌（不回显）并回车。脚本随后依次建账户、目录，解包，注册（令牌只经子进程的环境变量传给 runner，不上命令行），建服务，再建 CI 目录。
 
@@ -128,17 +144,18 @@ Start-Process -Verb RunAs -FilePath powershell.exe -ArgumentList '-NoProfile', '
 
 **出问题时**：
 
-- `TOOL_SHA256_MISMATCH` / `PROFILE_SHA256_MISMATCH` / `TOOL_LOCATION_NOT_ADMIN_ONLY:*`：文件被改过，或者没从受保护目录运行。停下回传，什么都没写。
+- `SHA256_MISMATCH:*`、`RUN_DIRECTORY_EXISTS`、`RUN_DIRECTORY_REFUSED`、`TOOL_LOCATION_NOT_ADMIN_ONLY:*`：文件被改过，或者运行目录不是只有管理员能访问。停下回传。主机上什么都没改，至多留下那个随机名目录（只有管理员能访问）。
 - `PLAN_CHANGED_SINCE_REVIEW`：主机或文件在干跑后变了，什么都没写。回到 0.3。
 - `REGISTRATION_TOKEN_SHAPE_REFUSED`：令牌格式不对（多半输错）。这一步在**任何写入之前**，什么都没写。重新取令牌，重跑 0.7。
-- `"status": "APPLY_PARTIAL"`：执行到一半停了。`completedSteps` 列出已做的步骤，`failedStep` 是停在哪一步，`controllerSid` 是已建账户的 SID。写入 KooYomi 后，**用提权干跑重算计划**：把上面命令里 `-Apply -ExpectedPlanSha256 <PLAN_SHA256>` 换成空（只读），输出文件名改为 `DESK-W-591_nodeprep_dryrun2.txt`，同样以提权方式拉起（提权运行不做 WSL 探测）。新计划只含没做完的步骤：
+- `"status": "APPLY_DONE_NOT_VERIFIED"`：全部步骤都执行了，但执行后的核对本身出错。不要重跑执行。先用提权干跑核对主机现状（做法见下一条），再回传。
+- `"status": "APPLY_PARTIAL"`：执行到一半停了。`completedSteps` 列出已做的步骤，`failedStep` 是停在哪一步，`controllerSid` 是已建账户的 SID。写入 KooYomi 后，**用提权干跑重算计划**：上面命令里 `<MODE>` 留空（只读），同样以提权方式拉起（提权运行不做 WSL 探测），会再建一个新的随机名运行目录和回执文件。新计划只含没做完的步骤：
   - 若停在注册（`RUNNER_REGISTRATION_FAILED:*`，常见原因是令牌过期），计划里会有 `account-password-reset`（账户从未登录过，重置它的随机密码以便建服务）。Owner 确认新的 `PLAN_SHA256`、取新令牌后，再执行 0.7。
   - 若重算得到 `RUNNER_ROOT_UNEXPECTED:missing:*`（解包到一半就停了，例如磁盘满或杀毒软件锁文件）：工具不删东西，也不允许手工补装。请 Owner 弹窗决定是否由 Owner 本人删掉 `C:\ProgramData\CluedControl\runner` 后重来。删除之前先确认 GitHub 上没有注册同名 runner。
   - 若注册报错说 runner 名已存在（GitHub 那边注册成功了，本地却没写出 `.runner`，例如网络中断）：工具不带 `--replace`。请 Owner 在 GitHub 的 Runners 页面删掉那个离线的 `clued-ci-company-win-02` 后，用新令牌重来。
 - `RUNNER_LOG_CONTAINS_TOKEN:*`：runner 自己的日志里出现了令牌。停下回传；令牌一小时后失效，必要时 Owner 在 GitHub 上删掉该 runner。
 - 其他码：停下回传。
 
-执行完把 `DESK-W-591_nodeprep_apply.txt` 写入 KooYomi Task `b7d84de2`（令牌从不打印，文件里没有秘密），并在 Task `25ac6c5f` 记下 controller SID。下载的 runner 包副本 Owner 可以自行删除。`C:\ProgramData\CluedNodePrep` 只有管理员能访问，工具不会删它，留着作为记录。
+执行完，把窗口最后一行 `receipt:` 指向的回执文件写入 KooYomi Task `b7d84de2`（令牌从不打印，回执里没有秘密），并在 Task `25ac6c5f` 记下 controller SID。下载的 runner 包副本 Owner 可以自行删除。`C:\ProgramData\CluedNodePrep-<GUID>` 只有管理员能访问，工具不会删它，留着作为记录。
 
 ## 0.8 Linux 侧（发行版定了以后）
 

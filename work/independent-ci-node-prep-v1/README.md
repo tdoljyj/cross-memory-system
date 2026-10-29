@@ -34,7 +34,7 @@ Task `25ac6c5f`；Decision `76c5ac24`（开发授权）；设计《常驻执行�
 
 计划绑定：脚本自身字节的 sha256、档案字节的 sha256、runner 包的 sha256 与条目数、每个目标的现状、现有每个 runner 服务的名字/二进制/账户/启动方式。其中任何一项在干跑和执行之间变了，执行以 `PLAN_CHANGED_SINCE_REVIEW` 拒绝。
 
-运行位置（独立审核 r1 MAJOR-1）：计划哈希是脚本自己算的，证明不了脚本是哪一份，所以凡是**提权**运行（`-Apply`，或提权干跑），脚本先检查自己所在的位置：脚本文件以及往上每一级目录，属主都必须是管理方，且没有非管理方的写、追加、删除、替换或改权限的权利；脚本所在目录之上只看替换类权利，因为 `C:\` 和 `C:\ProgramData` 本来允许用户新建同级目录。不满足就拒绝（`TOOL_LOCATION_NOT_ADMIN_ONLY:<原因>`）。现场说明 0.7 先用一段不从文件读取的提权命令建 `C:\ProgramData\CluedNodePrep\run-<时间>`（只有 SYSTEM、Administrators），把文件写进去（属主 Administrators），对照 KooYomi 记录的 sha256 核对后，再从那里运行。脚本开头把 `PSModulePath` 固定为 Windows 目录（同 `install-resident.ps1`），运行时不编译任何代码（不用 `Add-Type -TypeDefinition`），runner 包和档案只读一次进内存。
+运行位置（独立审核 r1 MAJOR-1）：计划哈希是脚本自己算的，证明不了脚本是哪一份，所以凡是**提权**运行（`-Apply`，或提权干跑），脚本先检查自己所在的位置：脚本文件以及往上每一级目录，属主都必须是管理方，且没有非管理方的写、追加、删除、替换或改权限的权利；脚本所在目录之上只看替换类权利，因为 `C:\` 和 `C:\ProgramData` 本来允许用户新建同级目录。不满足就拒绝（`TOOL_LOCATION_NOT_ADMIN_ONLY:<原因>`）。现场说明 0.7 先用一段不从文件读取的提权命令（以完整路径拉起 `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`，当前目录先切到 `C:\Windows`）在 `C:\ProgramData` 下新建随机名目录 `CluedNodePrep-<GUID>`（已存在即拒绝；读回属主 Administrators、受保护、只有 SYSTEM 和 Administrators），文件在内存里对照 KooYomi 记录的 sha256 核对后才写进去（属主 Administrators），再从那里运行；回执写到 Owner 文件夹里随机名的新文件（审核 r2 NEW-1、NEW-2、NEW-4）。脚本开头把 `PSModulePath` 固定为 Windows 目录（同 `install-resident.ps1`），运行时不编译任何代码（不用 `Add-Type -TypeDefinition`），runner 包和档案只读一次进内存。
 
 步骤（按顺序；已存在且完全一致的跳过）：
 
@@ -56,7 +56,7 @@ Task `25ac6c5f`；Decision `76c5ac24`（开发授权）；设计《常驻执行�
 | `formal-spool\incoming` | Owner 修改（OICI）；controller 读（OICI） |
 | `state` | controller 本目录读、子项修改（OICIIO） |
 
-不建的：`state\v2*`、`state\relay*`（`migrate-acl.ps1` 建）、`CluedIndependentCI\secrets` 和两个秘密文件、`resident\`（`install-resident.ps1` 建）；常驻服务 SID 的 ACE（`install-resident.ps1` 的 parent-acl 步和 `migrate-acl.ps1` 追加）。v1 遗留的 `inbox`、`source`、`verify-spool` 新节点不需要。TURING `trusted\` 里还有 v1 一次性安装放的 controller 运行文件（`controller-job-started.{ps1,mjs}`、`controller-policy.json`、`upstream\clued-runner-job-started.mjs`、`controller-readonly-app.pem`、两个 probe exe）。常驻 v2（resident-v1、`src/resident-v2`、`protected-job-bridge-v4`、`runtime`）不引用它们，所以不属于 v2 的前提，这里不建。原 v1 安装器（`stagec\first-free-install\controller\install-controller.ps1`、`bundle-v1`）在 TURING 的 C:、D:、Drive（G:）和仓库全历史里都已找不到，`host-baseline.ps1` 只核对 TURING 已装状态，本身不安装。若 P3 发现某个 v2 组件需要它们，由协调方在 C8 运维手册里另定。
+不建的：`state\v2*`、`state\relay*`（`migrate-acl.ps1` 建）、`CluedIndependentCI\secrets` 和两个秘密文件、`resident\`（`install-resident.ps1` 建）；常驻服务 SID 的 ACE（`install-resident.ps1` 的 parent-acl 步和 `migrate-acl.ps1` 追加）。v1 遗留的 `inbox`、`source`、`verify-spool` 新节点不需要。TURING `trusted\` 里还有 v1 一次性安装放的 controller 运行文件（`controller-job-started.{ps1,mjs}`、`controller-policy.json`、`upstream\clued-runner-job-started.mjs`、`controller-readonly-app.pem`、两个 probe exe）。常驻 v2（resident-v1、`src/resident-v2`、`protected-job-bridge-v4`、`runtime`）不引用它们，所以不属于 v2 的前提，这里不建。原 v1 安装器（`stagec\first-free-install\controller\install-controller.ps1`、`bundle-v1`）在 TURING 的 C:、D:、Drive（G:）和仓库全历史里都已找不到，`host-baseline.ps1` 只核对 TURING 已装状态，本身不安装。Owner 已决定不复刻它们和原安装器（Decision `6c6b716b`）；若 P3 发现某个 v2 组件需要它们，由协调方在 C8 运维手册里另定。
 
 已存在的目录：只有授予的权限与计划完全相同才接受（继承来的与显式的视为相同；只额外接受上面那两个工具给常驻服务 SID 追加的那几条），属主必须是管理方；`CluedIndependentCI`、`formal-spool`、`outgoing`、`incoming` 还必须是受保护 DACL（`migrate-acl.ps1` 和 parent-acl 步的要求）。其他一律拒绝，不改。所以一台已装好的节点（TURING 的实测 ACL）干跑得到 `NOTHING_TO_DO`。新建的目录读回时，要求 ACE 完全一致、受保护、属主是 Administrators；普通用户抢先在 `C:\ProgramData` 下建的同名目录因此不会被接受。runner 目录里每一项也必须属主是管理方，否则 `RUNNER_ROOT_UNEXPECTED:owner:<名>`。
 
@@ -78,7 +78,7 @@ WSL：干跑（非提权）用 `wsl --list --quiet` 和 `wsl --list --running --
 
 任何一项不满足，状态是 `NODE_PREP_POSTCONDITION_FAILED`。
 
-执行到一半停下（审核 r1 MAJOR-4）：状态 `APPLY_PARTIAL`，回执给出 `completedSteps`、`failedStep` 和已建账户的 `controllerSid`。这时主机上已有只有管理员能读的目录，重算计划要用**提权干跑**（现场说明 0.7）。在任何写入之前的拒绝（令牌格式、计划变了、位置不对等）状态是 `REFUSED`，什么都没写。
+执行到一半停下（审核 r1 MAJOR-4）：状态 `APPLY_PARTIAL`，回执给出 `completedSteps`、`failedStep` 和已建账户的 `controllerSid`。这时主机上已有只有管理员能读的目录，重算计划要用**提权干跑**（现场说明 0.7）。全部步骤都执行了、但执行后的核对本身出错时，状态是 `APPLY_DONE_NOT_VERIFIED`（审核 r2 NEW-3），不要重跑执行，先提权干跑核对。在任何写入之前的拒绝（令牌格式、计划变了、位置不对等）状态是 `REFUSED`，什么都没写。
 
 ## Linux 侧做什么（`prepare-node-linux.sh`）
 
@@ -118,13 +118,13 @@ wsl -d <任一发行版> -- bash work/independent-ci-node-prep-v1/linux/test-pre
 
 可选：环境变量 `NODEPREP_RUNNER_ZIP` 指向官方 `actions-runner-win-x64-2.337.0.zip`，再核对真实包（钉值、275 个文件条目全部通过路径检查）。
 
-结果：Windows 179/179，Linux 41/41。
+结果：Windows 184/184，Linux 41/41。
 
 Windows 测试覆盖：档案的 20 个拒绝用例；TURING 档案推出的 node profile 与 `node-profile.turing.json` 逐字段相同、摘要与 `src/node-profile.mjs` 相同（有 node 时现算对拍）；DESK-W-591 的完整计划（顺序、标签、服务、未动 runner、包要求）；计划哈希绑定脚本、档案、现有 runner；TURING 实测 ACL 得到 `NOTHING_TO_DO`；35 个主机现状拒绝用例；部分执行后的密码重置；新建目录读回规则（属主是用户、未受保护、多出条目都拒绝）；提权运行位置规则（Owner 文档目录、用户可改目录、用户属主、可追加的脚本都拒绝，本仓库检出目录也拒绝）；临时目录树上的真实事实读取（不存在、目录、文件、junction；runner 目录的空、恰为包、已注册、多出、改动、缺少、属主）；`wsl --list --quiet` 输出解析；规划的 App key 与 ci-admission token 目录链通过 `verify-resident.ps1` 的 `Test-SecretAclChain`（原文抽取，不复制）；`migrate-acl.ps1` 的追加目标都已准备、它要建的都不在这里建；工具文本的静态保证；夹具根里的端到端干跑与执行（错误哈希、无哈希、错误包、离线事实不能用于真机、夹具根在 TEMP 外、二次执行不覆盖、中途停下的 `APPLY_PARTIAL` 回执、回执里的 node profile 通过常驻校验）。夹具里的建账户、注册和建服务是桩，只记录调用。
 
 Linux 测试另覆盖：`/var/lib`、`/root` 下的 runner 注册文件，链接或缺失的父目录，root 独占位置规则对 `/mnt` 副本和用户副本的拒绝。另在 TURING 的 Ubuntu-24.04 以 root 实测：从 `/mnt` 直接运行得到 `SCRIPT_LOCATION_REFUSED`。
 
-离线测试证明不了的（留给现场）：真实 UAC 下的建账户与组成员、`New-Service`、`Runner.Listener configure` 的真实网络注册（包括读 `ACTIONS_RUNNER_INPUT_TOKEN`）、真实 ACL 属主读回、`Get-AccountFact` 的 ADSI 读组、`Get-Postconditions` 本身、WSL 探测在真机上的结果。
+离线测试证明不了的（留给现场）：真实 UAC 下的建账户与组成员、`New-Service`、`Runner.Listener configure` 的真实网络注册（包括读 `ACTIONS_RUNNER_INPUT_TOKEN`）、真实 ACL 属主读回、`Get-AccountFact` 的 ADSI 读组、`Get-Postconditions` 本身（含执行后的重算）、runner 目录属主扫描在真实完整树上的结果（TURING 转储里 runner 下 16 项属主都是 BA）、WSL 探测在真机上的结果。
 
 ## 已知限制与残余
 

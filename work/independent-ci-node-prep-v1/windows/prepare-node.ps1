@@ -685,6 +685,8 @@ try {
     if ($planSha -cne $ExpectedPlanSha256) { throw 'PLAN_CHANGED_SINCE_REVIEW' }
     $out.status = 'APPLY_STARTED'
     $done = Invoke-NodePrepApply $plan $zip
+    # Every step ran: from here on a failure must not read as "nothing written" (review r2 NEW-3).
+    $out.status = 'APPLY_DONE_NOT_VERIFIED'
     $out.steps = $done.steps; $out.controllerSid = $done.controllerSid
     $derived = Get-DerivedNodeProfile $profile $done.controllerSid
     $out.derivedNodeProfile = $derived

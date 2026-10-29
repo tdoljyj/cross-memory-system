@@ -230,6 +230,17 @@ Ok (-not $text.Contains('-TypeDefinition') -and @([regex]::Matches($text, 'Add-T
 Ok ($text.Contains("`$env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'")) 'module path pinned to the Windows directory'
 Ok ($text -match "Test-Elevated\)\) \{ Assert-ToolLocation \`$PSCommandPath \}") 'every elevated run checks its own location'
 Ok ($text.Contains('New-Service -Name $name -BinaryPathName $OriginalBinary -DisplayName $ServiceDisplayName -StartupType Manual -Credential $cred')) 'service created Manual through New-Service -Credential'
+Ok ($text.Contains("`$out.status = 'APPLY_DONE_NOT_VERIFIED'")) 'a failure after every step ran is not reported as REFUSED (review r2 NEW-3)'
+# The field guide's elevated launcher (review r2 NEW-1, NEW-2, NEW-4): it parses, and keeps its guarantees.
+$guide = [IO.File]::ReadAllText((Join-Path $Root 'DESK-W-591_节点准备_前置操作说明.md'))
+$ga = $guide.IndexOf("`$cmd = @'"); $gb = $guide.IndexOf('Start-Process -Verb RunAs', $ga); $launcher = $guide.Substring($ga, $guide.IndexOf("`n", $gb) - $ga)
+$tk = $null; $pe = $null; [void][Management.Automation.Language.Parser]::ParseInput($launcher, [ref]$tk, [ref]$pe)
+$elev = $launcher.Substring($launcher.IndexOf("`n") + 1); $elev = $elev.Substring(0, $elev.IndexOf("`n'@")) -replace '<MODE>', '' -replace '<[^>]+的 sha256>', '0'
+$tk2 = $null; $pe2 = $null; [void][Management.Automation.Language.Parser]::ParseInput($elev, [ref]$tk2, [ref]$pe2)
+Ok ($pe.Count -eq 0 -and $pe2.Count -eq 0) 'guide launcher and its elevated block parse'
+Ok ($launcher.Contains('-FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"') -and $launcher.Contains('Set-Location $env:SystemRoot') -and -not ($launcher -match '-FilePath powershell')) 'guide launches PowerShell by full path from C:\Windows'
+Ok ($elev.Contains("'C:\ProgramData\CluedNodePrep-' + [guid]::NewGuid()") -and $elev.Contains("throw 'RUN_DIRECTORY_EXISTS'") -and $elev.Contains("throw 'RUN_DIRECTORY_REFUSED'") -and -not $elev.Contains('Test-Path -LiteralPath $p')) 'guide: fresh random run folder, refused if present, read back'
+Ok ($elev.IndexOf("throw ('SHA256_MISMATCH:'") -lt $elev.IndexOf('$fs.Write(') -and -not $elev.Contains('Tee-Object') -and $elev.Contains('[IO.FileMode]::CreateNew, [IO.FileAccess]::Write')) 'guide: hashes checked in memory before writing; receipt CreateNew under a random name'
 $rawWsl = "U`0b`0u`0n`0t`0u`0-`02`04`0.`00`04`0`r`0`n`0C`0l`0u`0e`0d`0C`0I`0-`0L`0i`0n`0u`0x`0`r`0`n`0`r`0`n`0"
 Ok ((@(ConvertFrom-WslNames $rawWsl) -join '|') -ceq 'Ubuntu-24.04|CluedCI-Linux') 'wsl --list --quiet names parsed (UTF-16 NULs, any language)'
 
