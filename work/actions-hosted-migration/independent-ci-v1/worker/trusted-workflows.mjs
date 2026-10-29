@@ -1,5 +1,5 @@
 // Exact hosted workflow bytes pinned by each installed Source generation.
-// ROWS is the immutable legacy PR-A x PR-B set; the active 729-finding gitleaks
+// ROWS is the immutable legacy PR-A x PR-B set; the active 730-finding gitleaks
 // Source v4 uses the separate successor block, never that old 726 set.
 // Every role, role policy and signed-result check derives its accepted set from here, on the Source v2 path
 // (gitleaks v4, trivy v4 + required-trivy-v3, placement v2, policy v3, bridge v4) and on the H5 one-shot
@@ -48,7 +48,7 @@ for (const path of paths) if (!ROWS.some(row => row[0] === path)) fail('TRUSTED_
 // Keyed by the sha256 of the bytes.
 export const TRUSTED_WORKFLOWS = Object.freeze(table);
 
-// The 729-finding Source v4 consumes only this independently frozen successor.
+// The 730-finding Source v4 consumes only this independently frozen successor.
 // Legacy v3/H5 continues to use ROWS above and never inherits the new bytes.
 // null is a preparation state: the active successor has no accepted workflow.
 if (GITLEAKS_SUCCESSOR_ROW !== null && (Object.keys(GITLEAKS_SUCCESSOR_ROW).sort().join('|') !== 'blob|commit|path|sha256'
