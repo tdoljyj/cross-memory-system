@@ -54,7 +54,7 @@ const REFS_UNAVAILABLE='REMOTE_REFS_UNAVAILABLE';
 // before the issue one callback window short of the stage's). Worst case 3 x 30 s + 3 s = 93 s, inside one 120 s
 // round. Only a complete collection is ever used, never part of a failed one; it is fresh at its own end, and the
 // caller writes it at once (protocol.mjs measures its 30 s at that issuance). Given up: REMOTE_REFS_UNAVAILABLE.
-export const REFS_RETRY_WAITS_MS=Object.freeze([1000,2000]),REFS_COLLECTION_MS=30000;
+export const REFS_RETRY_WAITS_MS=Object.freeze([1000,2000]),REFS_COLLECTION_MS=30000,ISSUE_FRESH_MARGIN_MS=10000;
 export async function collectRefs({context,collect,until,clock=Date.now,sleep}){
   for(let attempt=1;;attempt++){
     assertWindowsContextLive(context);let code;
@@ -121,7 +121,15 @@ export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sle
     };
     // The first admission retries too (nothing is issued yet), but only while its wait leaves the Linux side at least
     // one callback window of the stage.
-    const first=await admitted(stageDeadline-CALLBACK_WINDOW_MS),refs=job.role==='gitleaks'?await collectRefs({context,collect,until:stageDeadline-CALLBACK_WINDOW_MS,clock,sleep}):null;
+    // gitleaks: the refs first, then the admission, so a slow refs collection (up to three, Task 576231fa) never leaves the
+    // admission older than makeIssue's 30 s (review M2 of 576231fa). Whichever of the two aged past ISSUE_FRESH_MARGIN_MS
+    // while the other was taken is taken once more (one extra round at most); both are then fresh at the issue.
+    const before=stageDeadline-CALLBACK_WINDOW_MS;
+    const takeRefs=async()=>({refs:await collectRefs({context,collect,until:before,clock,sleep}),at:clock()});
+    let r=job.role==='gitleaks'?await takeRefs():null;
+    let first=await admitted(before),firstAt=clock();
+    if(r&&clock()-r.at>ISSUE_FRESH_MARGIN_MS){r=await takeRefs();if(clock()-firstAt>ISSUE_FRESH_MARGIN_MS){first=await admitted(before);firstAt=clock();}}
+    const refs=r?r.refs:null;
     const until=Math.min(stageDeadline,context.accepted.validUntil===null?Infinity:Date.parse(context.accepted.validUntil));
     const issue=makeIssue(job,first,refs,{sourceAcceptanceRef:context.sourceAcceptanceRef,hostQualificationRef:context.hostQualificationRef,expiresAt:new Date(until).toISOString(),now:clock()});
     assertWindowsContextLive(context);sideEffects=1;await box.write('issue',encode(issue));

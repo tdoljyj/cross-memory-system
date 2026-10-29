@@ -183,6 +183,24 @@ test('issuer (gitleaks): before the issue a transient refs failure is collected 
   assert.deepEqual([r.status, r.reason, r.sideEffects, s.calls.length, w], ['BLOCKED', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 0, 2, [1000]]);
 });
 
+test('issuer (gitleaks): a slow refs collection (35 s, then retried) does not leave the admission stale at the issue (review M2)', WINDOWS, async t => {
+  const realNow = Date.now;
+  let skew = 0;
+  Date.now = () => realNow() + skew;
+  t.after(() => { Date.now = realNow; });
+  const f = issuerFixture(t), root = await spool(t), w = [], calls = [];
+  // the first collection takes 35 s and fails transiently (its own window ran out); the second is complete at once
+  const collect = async () => { calls.push(calls.length); if (calls.length === 1) { skew += 35_000; throw coded('REFS_WINDOW_EXPIRED'); } return refsSnapshot(); };
+  const linux = (async () => { const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
+    await put(root, 'blocked', encode(makeBlocked(issue, 'REMOTE_REFS_CHANGED_SINCE_BUNDLE'))); })();
+  const r = await runIssuer({ context: f.context, evaluate: f.evaluate, collect, box: await createFixtureMailbox(root, 'windows'),
+    sleep: backoffSleep(w), stageDeadline: Date.now() + CALLBACK_WINDOW_MS + 120_000 });
+  await linux;
+  // issued (the Linux side then ended it cleanly), not BLOCKED on a stale admission before the issue
+  assert.deepEqual([r.status, r.reason, calls.length, w], ['BLOCKED', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 2, [1000]]);
+  assert.equal(await exists(path.join(root, 'outgoing', 'issue.json')), true);
+});
+
 test('issuer (gitleaks): a remote-refs callback retries a transient failure and answers the complete snapshot; still unavailable it is late (no UNCERTAIN); a refusal stays UNCERTAIN', WINDOWS, async t => {
   // [refs plan after the issue's collection, Linux: answer expected?, outcome status, reason, side effects, waits]
   for (const [plan, answered, status, reason, sideEffects, waits] of [

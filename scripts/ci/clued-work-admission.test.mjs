@@ -2176,6 +2176,13 @@ test("gate guard (Task b5234943, P3): a strategy against a base whose flow or qu
   const indentedHead = withStrategy(["    strategy:", "      matrix:", "        include: [", "          {n: 1},", "          {n: 2},", "          {n: 3}]"]);
   assert.deepEqual(gateFindings(indentedHead, indentedBase), STRATEGY_CHANGED);
   assert.deepEqual(gateFindings(indentedBase, indentedBase), []);
+  // Review of b5234943 (M1): a base whose quoted env value runs over a phantom four-entry matrix (YAML reads no strategy
+  // there at all) is never excused as a shrink by a head with a real three-entry matrix.
+  const phantomBase = withStrategy(["    env: \"x", "    strategy:", "      matrix:", "        os: [a, b, c, d]", "    timeout-minutes: 5\""]);
+  const realHead = withStrategy(["    env: \"x\"", "    strategy:", "      matrix:", "        os: [a, b, c]"]);
+  assert.match(gateFindings(realHead, phantomBase).join(" "), /self_hosted_strategy_changed_ungated|workflow_not_canonical/);
+  const phantomFlowBase = withStrategy(["    env: {X: \"1\",", "    strategy:", "      matrix:", "        os: [a, b, c, d]", "    timeout-minutes: 5}"]);
+  assert.match(gateFindings(realHead, phantomFlowBase).join(" "), /self_hosted_strategy_changed_ungated|workflow_not_canonical/);
 });
 
 test("gate guard (Task b5234943, P4): a column-0 continuation or top-level key in another form cannot end the jobs block early", () => {

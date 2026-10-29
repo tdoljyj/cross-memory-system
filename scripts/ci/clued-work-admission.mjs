@@ -1255,9 +1255,11 @@ export function gateFindings(headText, baseText, { registeredPublisherTransition
         // merge key (strategyRegions), a strategy that names an alias, and any
         // strategy against a base not read with certainty.
         const regions = strategyRegions(job);
-        if (((jobField(job, "strategy") ?? "").trim() !== (jobField(old, "strategy") ?? "").trim() ||
-          strategyRegion(job) !== strategyRegion(old) || regions !== strategyRegions(old) ||
-          strategyHasAlias(regions) || baseUnread) && !strategyShrinks(job, old)) {
+        // Review of b5234943 (M1): a base not read with certainty, or a strategy naming an alias, is never
+        // excused as a shrink: the line reader may have seen a matrix the base never had.
+        if (baseUnread || strategyHasAlias(regions) ||
+          (((jobField(job, "strategy") ?? "").trim() !== (jobField(old, "strategy") ?? "").trim() ||
+          strategyRegion(job) !== strategyRegion(old) || regions !== strategyRegions(old)) && !strategyShrinks(job, old))) {
           findings.push(`self_hosted_strategy_changed_ungated:${job.name}`);
         }
       }
