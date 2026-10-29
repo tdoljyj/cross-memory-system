@@ -101,6 +101,15 @@ export function createIndependentPublicationRuntime({ native, github, journal, a
     if (record.state !== 'settled') await journal.transition(key, record.state, 'settled', { ticket, checkRunId: check.id, finishReceiptId: finished.receipt_id });
     return { status: 'SETTLED', check: observed, ticket };
   }
+  async function confirmTicket(context, ticket = null) {
+    const reply = await command({ action: 'publication_begin_independent', scope: context.scope,
+      claim_id: context.identity.claim.claim_id, pr_ref: `${context.identity.job.repo}#${context.identity.job.pr}`,
+      head_sha: context.identity.job.headSha, base_sha: context.identity.job.baseSha, target_branch: 'main',
+      changed_paths: context.paths, independent_identity: context.identity });
+    const confirmed = ticketOf(reply, context.identity);
+    if (ticket && (ticket.publication_id !== confirmed.publication_id || ticket.receipt_id !== confirmed.receipt_id)) fail('independent_ticket_journal_invalid');
+    return confirmed;
+  }
   async function prepare(input) {
     const context = contextOf(input), key = nativePublicationJournalKey(context.identity);
     const begun = await journal.begin(key, context);
@@ -112,13 +121,7 @@ export function createIndependentPublicationRuntime({ native, github, journal, a
       {
         // Revalidate even an authorized local ticket: Native may have committed
         // an abort before an older caller lost its reply or local final write.
-        const reply = await command({ action: 'publication_begin_independent', scope: context.scope,
-          claim_id: context.identity.claim.claim_id, pr_ref: `${context.identity.job.repo}#${context.identity.job.pr}`,
-          head_sha: context.identity.job.headSha, base_sha: context.identity.job.baseSha, target_branch: 'main',
-          changed_paths: context.paths, independent_identity: context.identity });
-        const confirmed = ticketOf(reply, context.identity);
-        if (ticket && (ticket.publication_id !== confirmed.publication_id || ticket.receipt_id !== confirmed.receipt_id)) fail('independent_ticket_journal_invalid');
-        ticket = confirmed;
+        ticket = await confirmTicket(context, ticket);
         if (begun.value.state === 'intent') await journal.transition(key, 'intent', 'authorized', { ticket });
       }
       if (!ticket || independentPublicationIdentityDigest(ticket.identity) !== independentPublicationIdentityDigest(context.identity)) fail('independent_ticket_journal_invalid');
@@ -133,7 +136,13 @@ export function createIndependentPublicationRuntime({ native, github, journal, a
     const { key, context, ticket } = entry;
     // A competing instance may only discover the original effect, never POST.
     if ((await journal.read(key)).state !== 'authorized') return recover(key);
-    try { await current(context); } catch (error) { throw await noPost(error, key, context, ticket); }
+    try {
+      await current(context);
+      // Claim freshness alone does not establish the CI principal's current
+      // role or exact-head grant. Recheck the original Native ticket at the
+      // final non-POST boundary, without issuing another publication.
+      await confirmTicket(context, ticket);
+    } catch (error) { throw await noPost(error, key, context, ticket); }
     await journal.transition(key, 'authorized', 'sent', { ticket });
     try {
       const payload = clone(context.payload); payload.output.summary += '\n\n' + marker(ticket);

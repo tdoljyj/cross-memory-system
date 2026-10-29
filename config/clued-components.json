@@ -409,6 +409,40 @@
         "file": "scripts/ci/clued-handover-native-entry.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
       }
+    },
+    {
+      "id": "script.independent-native-publication",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Typed Native publication for independent App 5368905, protected journal recovery and real Source v2 entry integration; activation remains separately qualified.",
+      "root": ".",
+      "files": [
+        "apps/clued-cloud/supabase/migrations/20261029050000_work_claim_independent_publication_v1.sql",
+        "scripts/ci/clued-independent-publication-identity.mjs",
+        "scripts/ci/clued-independent-publication-identity.test.mjs",
+        "scripts/ci/clued-independent-publication-port.mjs",
+        "scripts/ci/clued-independent-publication-port.test.mjs",
+        "scripts/ci/clued-independent-publication-runtime.mjs",
+        "scripts/ci/clued-independent-publication-runtime.test.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/runtime/one-shot-v2.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/admission-facts-v2.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/publisher.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/startup.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/full-admission-v2.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/relay-entry-v2.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/publisher.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/queue-facts.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/startup.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/entry-runtime.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/src/staged-check-publisher-v2.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/native-guarded-publication.test.mjs",
+        "work/actions-hosted-migration/independent-ci-v1/test/native-publisher-entry-wiring.test.mjs"
+      ],
+      "version_marker": {
+        "file": "scripts/ci/clued-independent-publication-port.mjs",
+        "pattern": "export const COMPONENT_VERSION = '{version}';"
+      },
+      "content_sha256": "7a81b89b81f2a72ae4faf8a01cfd3ffb91008df87ec1ca4ace4187a13f205c14"
     }
   ]
 }

@@ -7,6 +7,9 @@ import { sameClaimGeneration } from './job-v2.mjs';
 import { mergeQueueEntryV2, MERGE_QUEUE_STATES } from './independent-control-checks-v2/queue-facts.mjs';
 
 export const FULL_ADMISSION_CONTRACT_V2 = 'clued.independent-ci.full-admission/2';
+// /2 retains its frozen staged+unguarded meaning. Active facts use a separate
+// contract so an old bridge or publisher cannot silently accept new authority.
+export const FULL_ADMISSION_CONTRACT_V3 = 'clued.independent-ci.full-admission/3';
 export const ADMISSION_ENGINE = 'scripts/ci/clued-work-admission.mjs#evaluate';
 const sha = /^[a-f0-9]{64}$/;
 const plain = value => value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype;
@@ -77,11 +80,23 @@ export const ADMISSION_FIELDS_V2 = Object.freeze(['contract', 'status', 'admitte
   'prRef', 'headSha', 'baseSha', 'jobId', 'role', 'attempt', 'claimId', 'fence', 'epoch', 'observedClaim', 'batchClaimBound', 'sourceManifestSha256',
   'executionPolicy', 'guarded', 'executionHandoverPending', 'mergeQueueHead', 'mode', 'mergeSlot', 'ownerReview', 'workflowGateFindings', 'observedAt',
   'claimExpiresAt', 'modeProofRef', 'observationRef', 'packetSha256', 'evaluationSha256', 'observationSha256']);
+export const ADMISSION_FIELDS_V3 = Object.freeze([...ADMISSION_FIELDS_V2, 'publicationRequired', 'headAuthorizationId']);
+const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+export function supportedNativeExecution(policy, guarded) {
+  return policy === 'staged' && guarded === false || policy === 'active' && typeof guarded === 'boolean';
+}
+function executionFactsValid(facts) {
+  if (facts.contract === FULL_ADMISSION_CONTRACT_V2) return facts.executionPolicy === 'staged' && facts.guarded === false;
+  return facts.contract === FULL_ADMISSION_CONTRACT_V3 && facts.executionPolicy === 'active' && typeof facts.guarded === 'boolean'
+    && facts.publicationRequired === true && (facts.guarded ? typeof facts.headAuthorizationId === 'string' && uuid.test(facts.headAuthorizationId) : facts.headAuthorizationId === null);
+}
+const fieldsFor = facts => facts?.contract === FULL_ADMISSION_CONTRACT_V3 ? ADMISSION_FIELDS_V3 : ADMISSION_FIELDS_V2;
 export function admittedFactsMatchJobV2(facts, job, now, { batchClaim = null } = {}) {
-  if (!plain(facts) || facts.contract !== FULL_ADMISSION_CONTRACT_V2 || facts.status !== 'ADMITTED' || facts.admitted !== true || facts.completeAdmission !== true
+  if (!plain(facts) || !executionFactsValid(facts) || Object.keys(facts).sort().join('|') !== [...fieldsFor(facts)].sort().join('|')
+    || facts.status !== 'ADMITTED' || facts.admitted !== true || facts.completeAdmission !== true
     || facts.evaluator !== ADMISSION_ENGINE || facts.repository !== job.repo || facts.prRef !== `${job.repo}#${job.pr}` || facts.headSha !== job.headSha
     || facts.baseSha !== job.baseSha || facts.jobId !== job.id || facts.role !== job.role || facts.attempt !== job.attempt
-    || facts.sourceManifestSha256 !== job.sourceManifestSha256 || facts.executionPolicy !== 'staged' || facts.guarded !== false
+    || facts.sourceManifestSha256 !== job.sourceManifestSha256
     || facts.executionHandoverPending !== false || !plain(facts.observedClaim) || facts.observedClaim.claimId !== facts.claimId
     || facts.observedClaim.fence !== facts.fence || facts.observedClaim.epoch !== facts.epoch || facts.observedClaim.expiresAt !== facts.claimExpiresAt
     || !Number.isSafeInteger(now) || !(at(facts.observedAt) <= now) || now - at(facts.observedAt) > 30_000 || !(at(facts.claimExpiresAt) > now)) return false;
@@ -113,7 +128,7 @@ export function admissionReferenceTime(facts, now) {
 // that already holds the run's generation passes it as batchClaim (renewal = same generation).
 export function validateFormalAdmissionV2(job, a, now = Date.now(), { batchClaim = null } = {}) {
   const generation = v => plain(v) && Object.keys(v).sort().join('|') === 'claimId|epoch|fence';
-  if (!plain(a) || Object.keys(a).sort().join('|') !== [...ADMISSION_FIELDS_V2].sort().join('|') || a.domain !== 'production'
+  if (!plain(a) || Object.keys(a).sort().join('|') !== [...fieldsFor(a)].sort().join('|') || a.domain !== 'production'
     || !generation(a.batchClaimBound) || !sameClaimGeneration(a.observedClaim, a.batchClaimBound)
     || !admittedFactsMatchJobV2(a, job, admissionReferenceTime(a, now), { batchClaim })) {
     throw Object.assign(new Error('FRESH_COMPLETE_NATIVE_ADMISSION_REQUIRED'), { code: 'FRESH_COMPLETE_NATIVE_ADMISSION_REQUIRED' });

@@ -36,7 +36,7 @@ async function fixture(t){
 test('Native begin precedes the only POST; finish and readback settle the original ticket',async t=>{
  const f=await fixture(t),handle=await f.runtime.prepare(input);assert.equal(f.posts,0);
  const result=await f.runtime.createCheck(handle);assert.equal(result.status,'SETTLED');assert.equal(f.posts,1);
- assert.deepEqual(f.calls.map(c=>c.action),['publication_begin_independent','publication_finish']);
+ assert.deepEqual(f.calls.map(c=>c.action),['publication_begin_independent','publication_begin_independent','publication_finish']);
  assert.match(result.check.output.summary,new RegExp(pub));assert.equal((await f.journal.read(handle.key)).state,'settled');
 });
 test('a rejected Native consumer never reaches GitHub and produces an in-process no-POST proof',async t=>{
@@ -44,6 +44,12 @@ test('a rejected Native consumer never reaches GitHub and produces an in-process
  let error;try{await f.runtime.prepare(input);}catch(e){error=e;}
  assert.equal(nativeNoPostProof(error)?.notSent,true);assert.equal(f.posts,0);
  assert.equal(nativeNoPostProof({...error}),null);
+});
+test('revoked CI role or closed ticket after preparation blocks the final POST',async t=>{
+ const f=await fixture(t),handle=await f.runtime.prepare(input);f.setDenyBegin(true);
+ let error;try{await f.runtime.createCheck(handle);}catch(e){error=e;}
+ assert.equal(nativeNoPostProof(error)?.publicationId,pub);assert.equal(f.posts,0);
+ assert.equal((await f.journal.read(handle.key)).state,'authorized');
 });
 test('changed subject, role or path is refused before Native or GitHub',async t=>{
  const f=await fixture(t);

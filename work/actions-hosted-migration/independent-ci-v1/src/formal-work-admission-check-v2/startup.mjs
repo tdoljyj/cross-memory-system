@@ -4,17 +4,19 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { EffectJournal } from '../effect-journal.mjs';
 import { recordBatchClaim, readBatchClaim } from '../batch-claim-v2.mjs';
-import { runEntry, controllerPrincipal, controllerPorts, observationLog, authorityOf } from '../resident-v2/entry-runtime.mjs';
+import { runEntry, controllerPrincipal, controllerPorts, publicationControllerGithub, observationLog, authorityOf } from '../resident-v2/entry-runtime.mjs';
 import { STATE_V2 } from '../resident-v2/layout.mjs';
 import { createProductionWorkAdmissionPublisherV2 } from './publisher.mjs';
 
 export async function main(argv = process.argv.slice(2), output = process.stdout) {
-  return runEntry({ argv, entryRole: 'work-admission', moduleUrl: import.meta.url, output, body: async ({ inputs, held, live, sourceRoot }) => {
+  return runEntry({ argv, entryRole: 'work-admission', moduleUrl: import.meta.url, output, body: async ({ args, inputs, held, live, sourceRoot }) => {
     const job = inputs.jobs[0];
     const { appKey, nativeToken } = await controllerPrincipal(inputs.record);
     const log = observationLog(STATE_V2.effectsWorkAdmission, job.id);
-    const { github, admission } = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
+    const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
+    const { admission } = ports;
     const journal = await EffectJournal.open(STATE_V2.effectsWorkAdmission);
+    const github = publicationControllerGithub({ ports, jobs: inputs.jobs, journal, args, record: inputs.record });
     const batchClaims = {
       read: async j => { try { return await readBatchClaim(STATE_V2.batchClaims, j); } catch (e) { if (e.code === 'BATCH_CLAIM_MISSING') return null; throw e; } },
       record: (j, claim, at) => recordBatchClaim(STATE_V2.batchClaims, j, claim, at),

@@ -17,7 +17,8 @@ import { relayExternalId, validateHostedEnvelope } from '../src/hosted-relay-v1/
 import { EffectJournal, rolePublicationKey } from '../src/effect-journal.mjs';
 import { readBatchClaim } from '../src/batch-claim-v2.mjs';
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
-import { runEntry, controllerPrincipal, controllerPorts, observationLog } from '../src/resident-v2/entry-runtime.mjs';
+import { runEntry, controllerPrincipal, controllerPorts, publicationControllerGithub, observationLog } from '../src/resident-v2/entry-runtime.mjs';
+import { supportedNativeExecution } from '../src/admission-facts-v2.mjs';
 import { STATE_V2 } from '../src/resident-v2/layout.mjs';
 
 const REFS = ['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef'];
@@ -26,15 +27,15 @@ const stop = code => { throw Object.assign(new Error(code), { code }); };
 // Pure verification of the clued_work_verify_v1 reply for the batch claim generation.
 export function protectedFactsFromVerify({ job, batchClaim, body, status, config, accepted, now }) {
   const claim = body?.claim;
-  if (status !== 200 || body?.status !== 'ok' || body.verdict !== 'ADMITTED' || body.execution_policy !== 'staged'
-    || claim?.lease_key_required !== false || claim.execution_handover_pending !== false || claim.status !== 'ACTIVE'
+  if (status !== 200 || body?.status !== 'ok' || body.verdict !== 'ADMITTED' || !supportedNativeExecution(body.execution_policy,claim?.lease_key_required)
+    || claim.execution_handover_pending !== false || claim.status !== 'ACTIVE'
     || claim.claim_id !== batchClaim.claimId || claim.context_key !== config.scope || claim.fence !== batchClaim.fence
     || body.current_fence !== batchClaim.fence || claim.execution_epoch !== batchClaim.epoch || body.execution_epoch !== batchClaim.epoch
     || !Array.isArray(body.paths_outside_write_set) || body.paths_outside_write_set.length
     || !(Date.parse(claim.expires_at) > now) || !(Date.parse(body.verified_at) <= now) || now - Date.parse(body.verified_at) > 30000) stop('native_claim_observation_refused');
   return { ...subjectOfV2(job), ...Object.fromEntries(REFS.map(r => [r, accepted[r]])), ciPrincipalBindingId: config.ciPrincipalBindingId,
     sourceAccepted: true, hostQualified: true, publisherQualified: true, ciPrincipalQualified: true, observedAt: body.verified_at, claimExpiresAt: claim.expires_at,
-    claim: { claimId: claim.claim_id, fence: claim.fence, epoch: claim.execution_epoch } };
+    claim: { claimId: claim.claim_id, fence: claim.fence, epoch: claim.execution_epoch }, executionPolicy: body.execution_policy, guarded: claim.lease_key_required };
 }
 
 // Bounded retry of the verify request (KooYomi Task a3ad42a9; the issuer's RETRY_WAITS_MS, resident DESIGN §7.8). A
@@ -419,8 +420,10 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const batchClaim = await readBatchClaim(STATE_V2.batchClaims, job);
     const { appKey, nativeToken } = await controllerPrincipal(inputs.record);
     const log = observationLog(STATE_V2.effectsScan, job.id);
-    const { github, admission, fetchImpl } = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
+    const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
+    const { admission, fetchImpl } = ports;
     const journal = await EffectJournal.open(STATE_V2.effectsScan);
+    const github = publicationControllerGithub({ ports, jobs: inputs.jobs, journal, args, record: inputs.record });
     const recoveryContext = { nonce: args.nonce, stage: inputs.plan.stage, entryRole: inputs.plan.entryRole, batchKey: inputs.plan.batchKey,
       configSha256: args.configSha256, sourceManifestSha256: inputs.plan.sourceManifestSha256, acceptanceSha256: inputs.plan.acceptanceSha256, entrySha256: inputs.plan.entrySha256 };
     const publisher = createRecoverableCheckPublisherV2({ recoveryContext, auditWriter: createPublicationRecoveryAuditWriter({ context: recoveryContext }), authorityOptions: { config, accepted, github, fetchImpl, nativeToken },
