@@ -226,7 +226,7 @@ Agent 在这台机器上用的就是 Owner 的 GitHub 身份（resident constrai
 ## 5. 一批的流程
 
 ```
-companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ inbox 里的触发记录
+companion 轮询（每 60 秒，条件请求，§39；用 Owner 的 gh 登录）或 Agent ──▶ inbox 里的触发记录
 执行器 tick（空闲每 15 秒一次）：
   崩溃恢复（每 tick 都做，HALT 时也做）：未终结的条目（包括“目录已建、记录没写”的） → FAILED_UNKNOWN、烧掉 head、HALT
       例外（v0.7）：只在等托管信号的批次（有 15-relay-wait、没有 20-plan-intent）什么都没在运行，不关，由 tick 继续
@@ -3194,5 +3194,7 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
   - `gh api --include` 在 304 时退出码为 1，但仍打印状态行和响应头，所以只看状态行。只认 200 与"有缓存时的 304"；其余（无应答、别的状态、body 形状不对、304 却没有缓存）照旧是 `POLLER_PULLS_UNAVAILABLE` / `POLLER_MAIN_TIP_UNAVAILABLE`，本轮作废、下一分钟再来。
   - ETag 要回填进 argv，所以只保留 GitHub 的形状（`ETAG`：可带 `W/`，引号内 1–128 个 `[0-9A-Za-z_-]`）；其他形状一律不保存，下一次不带条件。
   - REST 的字段映射回原来的形状（`number`、`head.sha`→`headRefOid`、`base.sha`→`baseRefOid`、`draft`→`isDraft`、`body`、`updated_at`→`updatedAt`），后面的过滤（草稿、claim trailer、与 main 同步、compare 缓存与预算）不变。`lastPass.reads` 记本轮 200 与 304 各几次。
-- **额度**：没变时每分钟 2 次 304（一天约 2880 次，都不计额度）；有变化时与原来一样，外加按需的 compare（已有缓存与每轮上限）。
-- **测试**：`test/poller-conditional.test.mjs`（节奏常量；连续两轮 304、If-None-Match 的 argv 逐字、PR 被编辑后 200 只提一次；main 移动；四种拒绝；坏 ETag 不回填；`parseIncluded` 的 CRLF/LF 与拒绝）；`test/gh-rest-stub.mjs` 供其余 poller 测试按 REST 形状作答。
+- **额度**：没变时每分钟 2 次 304（一天约 2880 次，按 GitHub 的规则不计额度；本机实测过一次 304，剩余额度同时少 1，同一账号另有调用，未能单独确认）。原来按 5 分钟一轮的两类调用不随轮次变密：GitHub 没答上的 compare 对同一 (main, head) 隔 `COMPARE_RETRY_MS`（5 分钟）才再问；提示模式下同一 head 的观察（每次几次读）隔 `HINT_OBSERVE_EVERY_MS`（5 分钟）一次。答上的 compare 照旧缓存。
+- 304 只在 gh 退出码为 1 时采用（gh 对 304 退出 1，对 200 退出 0），超时、拒绝或其他退出码都不算。
+- REST 的 PR 对象比 GraphQL 大（带完整的 head/base repo），50 个约 1 MB 量级，仍在 Runner 的 4 MiB 输出上限内；不变的分钟只有响应头。
+- **测试**：`test/poller-conditional.test.mjs`（节奏常量；连续两轮 304、If-None-Match 的 argv 逐字、PR 被编辑后 200 只提一次；main 移动；两条读各四种拒绝与退出码不为 1 的 304；200 不带 ETag 时丢掉旧 ETag；坏 ETag 不回填；compare 失败与提示观察的 5 分钟节流；路由字面值；`parseIncluded` 的 CRLF/LF 与拒绝）；`test/gh-rest-stub.mjs` 供其余 poller 测试按 REST 形状作答。

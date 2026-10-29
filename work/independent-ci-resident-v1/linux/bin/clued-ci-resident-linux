@@ -9,7 +9,7 @@ Sub-commands (all print one JSON object; exit 0 only on success):
   archive --instance <batchId>_<reason>                rename-only archive (archive unit only)
   archive-status --instance <batchId>_<reason>         the receipt of exactly that archive run
   archive-usage                                        bytes kept by earlier archives (50 GB reminder)
-  archive-prune                                        one retention pass of the spool archives (DESIGN S34)
+  archive-prune                                        one retention pass of the spool archives (DESIGN S35)
 
 Threat model: WSL root is reachable from the Owner's own user session (wsl -u root), so these facts
 are as trustworthy as the Owner/root boundary accepted in constraint 4fedfc84, no more. What this tool
@@ -39,7 +39,7 @@ Source v2 (DESIGN S14, lessons b22/b28), mirroring resident-v2/archive-windows-s
   - a failure part-way leaves a durable partial status (verified false), never a missing one;
   - archive-usage reports the bytes kept by earlier archives (the resident's 50 GB reminder).
 
-Retention and slimming (DESIGN S34, Task 4aedda54):
+Retention and slimming (DESIGN S35, Task 4aedda54):
   - success-close archives keep no candidate source tree: after every move is verified, each
     workspace-<jobId>/candidate and run-<name>/candidate is replaced by candidate.slim.json (the commit SHA
     and a manifest hash of the whole tree), since git restores it from the commit; a tree whose commit is
@@ -245,7 +245,7 @@ def plan_archive(root, batch_id, reason, job_ids, nonce_hex):
             moves.append(_leaf(root, f'ws-prep-{batch_id}', target, f'ws-prep-{batch_id}'))
     flats = [m['to'] for m in moves]
     need(len(set(flats)) == len(flats), 'ARCHIVE_FLAT_NAME_COLLISION')
-    # S34: a success-close archive keeps the commit SHA and manifest hash of each candidate tree instead of the tree.
+    # S35: a success-close archive keeps the commit SHA and manifest hash of each candidate tree instead of the tree.
     slim = reason == 'success-close'
     return {'contract': 'clued.independent-ci.resident-linux-archive/3', 'batchId': batch_id, 'reason': reason,
             'scope': 'protocol' if protocol_only else 'batch', 'completed': completed, 'target': target, 'moves': moves,
@@ -318,7 +318,7 @@ def candidate_commit(cand):
 
 
 def slim_success_archive(target, flats, rmtree=shutil.rmtree):
-    """S34: replace each candidate tree of a verified success archive by its commit SHA and manifest hash. A run's
+    """S35: replace each candidate tree of a verified success archive by its commit SHA and manifest hash. A run's
     candidate without its own .git takes the commit of the same job's workspace (run-placement-<jobId>). Never raises:
     a tree that cannot be slimmed safely is kept and reported."""
     found = []
@@ -409,7 +409,7 @@ def archive_usage(root):
     return {'contract': 'clued.independent-ci.linux-archive-usage/1', 'bytes': total, 'directories': dirs}
 
 
-# ---------- retention (S34; the same rule as src/retention.mjs, held to test/fixtures/retention-cases.json) ----------
+# ---------- retention (S35; the same rule as src/retention.mjs, held to test/fixtures/retention-cases.json) ----------
 
 def archive_class(name):
     m = ARCHIVE_NAME.fullmatch(name)

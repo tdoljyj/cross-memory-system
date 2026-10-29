@@ -175,7 +175,7 @@ class Archive(unittest.TestCase):
 
 
 class Retention(unittest.TestCase):
-    """DESIGN S34: the same rule as src/retention.mjs (shared cases), the keep list, a pass, and success-archive slimming."""
+    """DESIGN S35: the same rule as src/retention.mjs (shared cases), the keep list, a pass, and success-archive slimming."""
     CASES = json.loads((HERE / 'fixtures' / 'retention-cases.json').read_text(encoding='utf-8'))
 
     def setUp(self):

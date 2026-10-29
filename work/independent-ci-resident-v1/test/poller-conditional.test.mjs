@@ -83,6 +83,40 @@ test('refusals: no answer, another status, a 304 with nothing kept, a body of th
   for (const e of ['"a b"', 'W/"x"y"', '', '"' + 'a'.repeat(129) + '"', 'abc']) assert.equal(ETAG.test(e), false, e);
 });
 
+test('main\'s ref: the same refusals; a 304 counts only with gh\'s exit code 1; a 200 without an ETag drops the kept one; routes are literal', async () => {
+  assert.equal(PULLS_ROUTE(REPO), 'repos/tdoljyj/cross-memory-system/pulls?state=open&base=main&per_page=50');
+  assert.equal(MAIN_REF_ROUTE(REPO), 'repos/tdoljyj/cross-memory-system/git/ref/heads/main');
+  const bad = [{ code: 1, stdout: '' }, { code: 1, stdout: 'HTTP/2.0 404 Not Found\r\n\r\n' }, { code: 1, stdout: 'HTTP/2.0 304 Not Modified\r\n\r\n' },
+    { code: 0, stdout: 'HTTP/2.0 200 OK\r\n\r\n{"object":{"sha":"short"}}' }];
+  for (const answer of bad) {
+    const p = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run: async () => answer, writeTrigger: async () => {}, clock: () => 0 });
+    await assert.rejects(p.pass(), { code: 'POLLER_MAIN_TIP_UNAVAILABLE' }, answer.stdout);
+  }
+  // a kept value exists, but the 304 comes with another exit code (a timed-out or refused call): not taken
+  let mode = 'fresh';
+  const run = async argv => {
+    if (!argv.some(a => a.endsWith('/git/ref/heads/main'))) return restAnswer(argv, []);
+    if (mode === 'fresh') return { code: 0, stdout: `HTTP/2.0 200 OK\r\nEtag: "m1"\r\n\r\n${JSON.stringify({ object: { sha: MAIN } })}` };
+    if (mode === 'timedOut') return { code: null, stdout: 'HTTP/2.0 304 Not Modified\r\n\r\n', timedOut: true };
+    if (mode === 'noEtag') return { code: 0, stdout: `HTTP/2.0 200 OK\r\n\r\n${JSON.stringify({ object: { sha: MAIN } })}` };
+    return { code: 1, stdout: 'HTTP/2.0 304 Not Modified\r\n\r\n', stderr: 'gh: HTTP 304' };
+  };
+  const calls = [];
+  const p = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run: async (a, o) => { calls.push(a); return run(a, o); }, writeTrigger: async () => {}, clock: () => 0 });
+  await p.pass();
+  mode = 'timedOut';
+  await assert.rejects(p.pass(), { code: 'POLLER_MAIN_TIP_UNAVAILABLE' });
+  mode = 'notModified';
+  await p.pass();
+  assert.equal(p.lastPass.mainSha, MAIN);
+  mode = 'noEtag';
+  await p.pass();
+  calls.length = 0;
+  mode = 'notModified';
+  await assert.rejects(p.pass(), { code: 'POLLER_MAIN_TIP_UNAVAILABLE' }, 'no ETag kept after a 200 without one: a 304 has nothing to stand for');
+  assert.ok(!calls[0].includes('-H'), 'and no If-None-Match was sent');
+});
+
 test('parseIncluded reads gh\'s --include output with CRLF or LF, takes the last ETag line, and refuses anything else', () => {
   assert.deepEqual(parseIncluded('HTTP/2.0 200 OK\r\nEtag: W/"ab"\r\n\r\n[1]'), { status: 200, etag: 'W/"ab"', body: '[1]' });
   assert.deepEqual(parseIncluded('HTTP/1.1 304 Not Modified\nETag: "cd"\n\n'), { status: 304, etag: '"cd"', body: '' });

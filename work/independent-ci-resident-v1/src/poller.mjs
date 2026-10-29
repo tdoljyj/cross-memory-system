@@ -33,6 +33,11 @@ const COMPARE_CACHE_MAX = 512;
 export const COMPARE_TIMEOUT_MS = 15_000;
 export const MAX_COMPARES_PER_PASS = 10;
 export const SLOW_COMPARE_SKIP_MS = 15 * 60_000;
+// The 60-second poll (Decision 1b99e7e4) must not multiply what was paced by the old five-minute pass: a compare GitHub did not
+// answer is asked again for the same (main, head) only after COMPARE_RETRY_MS, and a head's hint observation (several reads)
+// runs at most every HINT_OBSERVE_EVERY_MS. Both were once per five-minute pass before.
+export const COMPARE_RETRY_MS = 5 * 60_000;
+export const HINT_OBSERVE_EVERY_MS = 5 * 60_000;
 const stalledCall = r => r?.timedOut === true || r?.refused === 'RUNNER_BUSY_WITH_UNFINISHED_CHILD';
 // The two conditional reads. An ETag goes back into an argv (If-None-Match), so only GitHub's shape is kept.
 export const PULLS_ROUTE = repo => `repos/${repo}/pulls?state=open&base=main&per_page=50`;
@@ -73,7 +78,7 @@ export class Poller {
     Object.assign(this, ports);
     this.sent = new Map(); this.firstSeen = new Map(); this.compares = new Map(); this.slow = new Map(); this.lastPass = null;
     this.compareBudget = MAX_COMPARES_PER_PASS; this.stalled = false;
-    this.etags = new Map(); this.reads = { fresh: 0, notModified: 0 };
+    this.etags = new Map(); this.reads = { fresh: 0, notModified: 0 }; this.retryAt = new Map(); this.observedAt = new Map();
   }
 
   // One conditional REST read: the value of a 200 (kept with its ETag once `accept` takes it), or the kept value on a 304.
@@ -82,7 +87,8 @@ export class Poller {
     const kept = this.etags.get(route);
     const r = await this.run([this.ghExe, 'api', '--include', '--method', 'GET', ...(kept ? ['-H', `If-None-Match: ${kept.etag}`] : []), route], { timeoutMs });
     const p = parseIncluded(r?.stdout);
-    if (p && p.status === 304 && kept) { this.reads.notModified += 1; return kept.value; }
+    // gh exits 1 on a 304 (and 0 on a 200): a 304 counts only with exit code 1, nothing timed out or refused.
+    if (r?.code === 1 && p && p.status === 304 && kept) { this.reads.notModified += 1; return kept.value; }
     check(r?.code === 0 && p !== null && p.status === 200, code);
     const value = accept(json(p.body));
     check(value !== null, code);
@@ -107,7 +113,7 @@ export class Poller {
   async behindBy(mainSha, headSha) {
     const id = `${mainSha}...${headSha}`;
     if (this.compares.has(id)) return this.compares.get(id);
-    if (this.compareBudget <= 0 || this.stalled || (this.slow.get(id) ?? 0) > this.clock()) return null;
+    if (this.compareBudget <= 0 || this.stalled || (this.slow.get(id) ?? 0) > this.clock() || (this.retryAt.get(id) ?? 0) > this.clock()) return null;
     const r = await this.run([this.ghExe, 'api', '--method', 'GET', `repos/${this.repo}/compare/${mainSha}...${headSha}?per_page=1`, '--jq', '{behind_by: .behind_by, base: .base_commit.sha}'], { timeoutMs: COMPARE_TIMEOUT_MS });
     if (stalledCall(r)) {
       this.stalled = true;
@@ -116,7 +122,11 @@ export class Poller {
     }
     this.compareBudget -= 1;
     const v = r.code === 0 ? json(r.stdout) : null;
-    if (!v || v.base !== mainSha || !Number.isSafeInteger(v.behind_by) || v.behind_by < 0) return null;
+    if (!v || v.base !== mainSha || !Number.isSafeInteger(v.behind_by) || v.behind_by < 0) {
+      this.retryAt.set(id, this.clock() + COMPARE_RETRY_MS);
+      if (this.retryAt.size > COMPARE_CACHE_MAX) this.retryAt.delete(this.retryAt.keys().next().value);
+      return null;
+    }
     this.compares.set(id, v.behind_by);
     if (this.compares.size > COMPARE_CACHE_MAX) this.compares.delete(this.compares.keys().next().value);
     return v.behind_by;
@@ -144,7 +154,8 @@ export class Poller {
       if (!verdict.eligible) continue;
       const id = `${p.number}:${p.headRefOid}:${base}`;
       if (!this.firstSeen.has(id)) this.firstSeen.set(id, this.clock());
-      if (this.hints && this.clock() - this.firstSeen.get(id) <= HINT_WINDOW_MS) {
+      if (this.hints && this.clock() - this.firstSeen.get(id) <= HINT_WINDOW_MS && !(this.clock() - (this.observedAt.get(id) ?? -Infinity) < HINT_OBSERVE_EVERY_MS)) {
+        this.observedAt.set(id, this.clock());
         try { await this.hints.observe({ pr: p.number, headSha: p.headRefOid, baseSha: base }); } catch { /* a hint is advisory */ }
       }
       if (this.sent.get(id) === p.updatedAt) continue;
@@ -154,6 +165,7 @@ export class Poller {
       proposed += 1;
     }
     if (this.firstSeen.size > 512) for (const k of [...this.firstSeen.keys()].slice(0, this.firstSeen.size - 512)) this.firstSeen.delete(k);
+    if (this.observedAt.size > 512) for (const k of [...this.observedAt.keys()].slice(0, this.observedAt.size - 512)) this.observedAt.delete(k);
     // What the PR page status shows for the PRs this pass looked at (pr-status.mjs).
     this.lastPass = { at: this.clock(), mainSha: base, pulls, reads: { ...this.reads } };
     return proposed;
