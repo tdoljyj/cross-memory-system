@@ -201,7 +201,7 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     const listed = await native('clued_binding_roles_list_v1', {});
     assert.deepEqual(listed.bindings.find((b) => b.binding_id === bindingIds.ci).roles, ['ci-admission']);
     assert.deepEqual(listed.bindings.find((b) => b.binding_id === bindingIds.claude).roles, []);
-    assert.deepEqual(listed.roles.map((r) => r.role), ['ci-admission', 'release-door']);
+    assert.deepEqual(listed.roles.map((r) => r.role), ['ci-admission', 'release-door', 'resident-upgrade']);
 
     // --- N2: once marked, only the CI Binding binds, meters and admits dispatches. ---
     const task = await createTask('roles');
