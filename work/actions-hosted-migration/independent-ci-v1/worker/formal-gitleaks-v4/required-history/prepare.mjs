@@ -17,7 +17,8 @@ export const SOURCE_PINS = Object.freeze({
   'scripts/ci/reviewed_gitleaks.py': '8ed25b9e24b32fbba27f2f6f1cc156d7b1ae88e4c2237414d13678e699b42676',
   '.gitleaks.toml': '8aae8a204add7e201ff141a9035c0400b300b08c691ff483f09d24383b53b5ba',
 });
-// This active Source pins only its exact 729-finding workflow successor. The legacy
+// This active Source pins the 730-record reviewed set (729 + the 16f981cc role-probe fixture, PR #937); the
+// hosted workflow successor row is still the 729-record freeze (re-freezing it is a follow-up). The legacy
 // main/PR-B set remains separate for v3/H5. A pending freeze has an empty active set,
 // never a fallback to a legacy 726 workflow. Helper and config stay single exact pins.
 export const WORKFLOW_PATH = TRUSTED_WORKFLOW_PATHS.gitleaks;

@@ -41,7 +41,7 @@
         "identifier_uses_outside_enclosing_test": 0,
         "network_hosts_in_enclosing_test": ["https://fixture.supabase.co"],
         "static_use": "digest input for a fixture pin and the return value of in-test tokenReader fakes; requests go only to an in-test fetchImpl fake",
-        "replaced_by_commit": "338a4e13"
+        "replaced_by_commit": "338a4e139acbfd9a879d829f643158b6c7dc8cad"
       }
     }
   ],
