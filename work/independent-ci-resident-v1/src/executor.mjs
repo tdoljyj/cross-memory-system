@@ -97,7 +97,7 @@
 // middle) HALTs as TRAIN_STAGE_INTERRUPTED at the next start, and a receipt chain that cannot be read holds every batch.
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { Ledger, MAX_TRIES, batchKey, headKey } from './ledger.mjs';
+import { Ledger, MAX_TRIES, QUOTA_TIER_EVALUATION, batchKey, headKey } from './ledger.mjs';
 import { ABORTABLE_IN_FLIGHT, BRIDGE_ABANDONED_UNPUBLISHED, NOT_ADMITTED_CODES, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, failureRow,
   proofComplete, scannerAbandonEligible } from './classify.mjs';
 import { parseTrigger } from './trigger.mjs';
@@ -293,6 +293,7 @@ export class ResidentExecutor {
     this.status ??= NO_STATUS;
     this.ownerReadFailures = new Map();
     this.intakeRequestFailures = new Map();
+    this.deferralReceipts = new Set(); // `${reason}:${day}` of the global deferrals already receipted (deferral())
     this.roleProbe = new RoleProbe();
     this.roleProbeNotices = [];
     this.revocationBook = new RevocationMaintenanceBook();
@@ -1692,9 +1693,18 @@ export class ResidentExecutor {
   }
 
   // A precheck's deferral: the row's own one is shown on it and the pass goes on; a global one ends the pass.
-  deferral(pre, key, pr) {
+  async deferral(pre, key, pr) {
     if (pre.notice) this.queue.notice(pre.notice);
     if (pre.perRow) { this.queue.defer(pr, pre.defer, this.clock(), { dropPoke: pre.dropPoke === true, until: pre.until ?? null }); return { state: 'DEFERRED', key, reason: pre.defer, next: true }; }
+    // A global deferral (a full daily budget, the companion not ready) holds the whole queue; one receipt per reason and
+    // UTC day says so (Task 12ada80e, from c0ff5167: the executor standing still was visible nowhere but the status page).
+    const day = `${pre.defer}:${dayKey(this.clock())}`;
+    if (!this.deferralReceipts.has(day)) {
+      this.deferralReceipts.add(day);
+      const u = this.tickUsage;
+      try { await this.receipt('batch-deferred', { key, failureCode: pre.defer, usage: u ? { started: u.started, evaluations: u.evaluations, lowRiskBurns: u.lowRiskBurns } : null }); }
+      catch { this.deferralReceipts.delete(day); }
+    }
     return { state: 'DEFERRED', key, reason: pre.defer };
   }
 
@@ -2153,8 +2163,11 @@ export class ResidentExecutor {
         this.reportOutcome(await subjectOf() ?? this.current, release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', { code: failure.code, row, key });
         return { state: release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', key, failureCode: failure.code, release, settle: { ...settle, kind: 'released', reason: release } };
       }
-      // Every other failure burns the head, also before 10-started (stage 1 may have published).
-      await this.ledger.burnHead(key, { failureCode: failure.code });
+      // Every other failure burns the head, also before 10-started (stage 1 may have published). Risk tier (Task 12ada80e,
+      // DESIGN §35): a stage-1 ending that proves it published nothing (clean on both hosts, bound outcome with zero side
+      // effects and mayHavePublished false) still burns the head, but uses the evaluation budget, not the execution one.
+      const lowRisk = !started && failure.stageNumber === 1 && klass === 'CLEAN' && failure.outcome?.sideEffects === 0 && failure.outcome?.mayHavePublished === false;
+      await this.ledger.burnHead(key, { failureCode: failure.code, ...(lowRisk ? { quotaTier: QUOTA_TIER_EVALUATION } : {}) });
       // DESIGN §27: a scanner-issuer stage that would HALT is closed clean when its abandonment can be proven.
       if (klass !== 'CLEAN' && await this.scannerAbandonable(key, failure)) return await this.abandonScannerStage(key, batch, failure, settle);
       if (klass === 'CLEAN') {
