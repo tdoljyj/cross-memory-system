@@ -220,7 +220,7 @@
     {
       "id": "script.handover-external-driver",
       "kind": "script",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "description": "Canonical External2 driver and supporting modules; exact Source acceptance remains required for execution.",
       "root": ".",
       "files": [
@@ -238,7 +238,7 @@
         "scripts/ci/resources/supabase-official-prod-ca-2021.crt",
         "apps/clued-cloud/tests/handover-external-ci.test.mjs"
       ],
-      "content_sha256": "3e7420fc35e027ab25c8f406dbd709ad0074bb77f9750f61a722532324cd58cc",
+      "content_sha256": "6a1b6f2a55a7a24b62282e0e44a81323efe91d3c5bbdb4911c0aa246ba7871b9",
       "version_marker": {
         "file": "scripts/ci/clued-handover-external-driver.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -247,14 +247,14 @@
     {
       "id": "script.handover-external-source-check",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Canonical External2 accepted-source guard and pinned migration bundle.",
       "root": ".",
       "files": [
         "scripts/ci/clued-handover-external-source-check.mjs",
         "scripts/ci/clued-handover-external-source-pins.json"
       ],
-      "content_sha256": "12f1a07fc577109ffa50ce9175a355027c3663334cef2e4f596a228790c18d7a",
+      "content_sha256": "9214633d5bedebf40053c5994c5bfaa29b3cad4fe6eb9b4e74f5974c2a9c9576",
       "version_marker": {
         "file": "scripts/ci/clued-handover-external-source-check.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -263,13 +263,13 @@
     {
       "id": "script.handover-external-journal",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Canonical External2 original-idle and cancellation journal.",
       "root": "scripts/ci",
       "files": [
         "clued-handover-external-journal.mjs"
       ],
-      "content_sha256": "91857388a38077e415c80f81ef29ce8b2be42f6cca83b81c3cfb7984e7ff1594",
+      "content_sha256": "7919a5492e178dc57685f1347464cde7d072873227da5d7aac23e69028fa61fb",
       "version_marker": {
         "file": "clued-handover-external-journal.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -278,7 +278,7 @@
     {
       "id": "script.handover-external-register",
       "kind": "script",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "description": "Canonical External2 operator registration, catalog, profile and exact registration DDL.",
       "root": ".",
       "files": [
@@ -290,7 +290,7 @@
         "config/clued-handover-external-catalog.json",
         "config/clued-handover-external-profile.json"
       ],
-      "content_sha256": "7f22c9a2cfde8ad81893b9d1b7e6a48958a2af1cabf0621a647a5847054e093b",
+      "content_sha256": "94b48d901f6ff07cee89ea74f723b12a207a67c743c6f991c37397622607386d",
       "version_marker": {
         "file": "scripts/ci/clued-handover-external-register.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -299,13 +299,13 @@
     {
       "id": "script.workflow-source-profile",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.3",
       "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
       "root": "scripts/ci",
       "files": [
         "clued-workflow-profile.mjs"
       ],
-      "content_sha256": "42ac7ebfdf7f0d2cb3b94af67c6da2c7234fda462da6b70bc70ddc2a137623b9",
+      "content_sha256": "83d88c6b7c9f06d36d1f3a4654d0e1ac2f4d647cb09d4050d850a34218f4b689",
       "version_marker": {
         "file": "clued-workflow-profile.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -392,6 +392,23 @@
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
       "content_sha256": "a959297dd7cb49436caa2269cd2cddb800e236351092af06c4392ff2194db47e"
+    },
+    {
+      "id": "script.native617-entry",
+      "kind": "script",
+      "version": "1.0.3",
+      "description": "Disabled Task617 public Native job binding guard; Source-only preparation does not qualify a Host or permit execution.",
+      "root": ".",
+      "files": [
+        "scripts/ci/clued-handover-native-entry.mjs",
+        "scripts/ci/clued-handover-native-entry.test.mjs",
+        "config/clued-handover-native-entry-policy.json"
+      ],
+      "content_sha256": "6276be4cba7e97dd24b55cb8653da1be8d738e69ccea4fbabf00c45c7fb57494",
+      "version_marker": {
+        "file": "scripts/ci/clued-handover-native-entry.mjs",
+        "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
     }
   ]
 }

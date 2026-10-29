@@ -1,6 +1,6 @@
 // Planned scripts/ci/ source entry. Pure local validation: no secret, PG or network.
 import assert from 'node:assert/strict';
-export const COMPONENT_VERSION = "1.0.1";
+export const COMPONENT_VERSION = "1.0.2";
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -29,6 +29,7 @@ export const REQUIRED_FILES=Object.freeze([
   '.github/workflows/clued-handover-disposable-idle.yml',
   '.github/workflows/clued-work-admission.yml',
   '.github/workflows/clued-work-admission-dispatch.yml',
+  '.github/workflows/clued-native617-admission-dispatch.yml',
   'config/clued-handover-external-profile.json',
   'config/clued-handover-external-catalog.json',
   'scripts/ci/clued-handover-external-source-pins.json',

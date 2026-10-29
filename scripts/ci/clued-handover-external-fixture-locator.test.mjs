@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {resolveFixtureLocator,assertFixturePull,fixturePublicationInput} from './clued-handover-external-fixture-locator.mjs';
 import {assertEarlyFixtureLocators,assertFixtureSelectionPolicy,applyFixtureLocator,fixtureClaimDomains,
   bindingIdentity,assertIdleBinding,assertCanonicalClaimMatch,cancellationJournal,cancellationPlan,
-  providerGetBudget} from './clued-handover-external-journal.mjs';
+  providerGetBudget,assertIdleSelectionPolicy} from './clued-handover-external-journal.mjs';
 
 const repo='tdoljyj/cross-memory-system',task='6176fdcc-c5b0-46c9-9769-d5e0bc0ce4f8';
 const project='0597aa60-9b98-4da6-a4ab-63d7705b632f',scope='project:'+project;
@@ -22,9 +22,9 @@ function fixture(){
       branch_prefix:'clued-handover-disposable-',pr_state:'open',draft:true,auto_merge:null,unique_match:true,
       claim_relation:'single_canonical_claim',log_download_policy:'github_native_job_log_single_redirect_v1'},
     idle_selection_policy:{mode:'late-bound-single-original-journal',workflow:'clued-handover-disposable-idle.yml',
-      workflow_blob:'3c94569a38f27ba34ac53ff3bb207d9ccd674f35',
-      source_sha256:'f72524c1b5ab32a762aec59007bf85dc0ae1ddb9a9e74f38e768dbf712faaa0e',
-      primary_definition_sha256:'c26bfb67a0637206f3a26ad72bc9d9e45c039005e53602416df57871735d3647',
+      workflow_blob:'97c39730ce75f2ea2427c9fa3845f9df32e998f8',
+      source_sha256:'133554a025b122737198289925920b31992191a96a5321242d3c78cf119acf66',
+      primary_definition_sha256:'d6dce50d38f3a75a290776243f8065ad69cbfd4fa68327f75a8ce3055965fd3d',
       qualifier_actor_id:'10',qualifier_triggering_actor_id:'10',idle_actor_id:'10',idle_triggering_actor_id:'10'},
     gate_source_pins:Object.fromEntries(['scripts/ci/clued-work-admission.mjs','scripts/ci/clued-gated-proof-runtime.mjs',
       '.github/workflows/clued-work-admission-dispatch.yml','.github/workflows/clued-handover-disposable-idle.yml',
@@ -160,4 +160,16 @@ test('unknown cancellation response retains same run and prevents another POST c
 test('shared provider GET budget is exactly160; actualGET161 is rejected before transport',()=>{
   const b=providerGetBudget();for(let n=0;n<160;n++)b.take();assert.equal(b.count,160);
   assert.throws(()=>b.take(),/PROVIDER_GET_BUDGET_EXCEEDED/);assert.equal(b.count,160);
+});
+
+test('Native idle Source uses exact new triplet, historical triplet stays indivisible',()=>{
+  const p=fixture().p;assertIdleSelectionPolicy(p);
+  const previous={workflow_blob:'3c94569a38f27ba34ac53ff3bb207d9ccd674f35',
+    source_sha256:'f72524c1b5ab32a762aec59007bf85dc0ae1ddb9a9e74f38e768dbf712faaa0e',
+    primary_definition_sha256:'c26bfb67a0637206f3a26ad72bc9d9e45c039005e53602416df57871735d3647'};
+  const old=structuredClone(p);Object.assign(old.idle_selection_policy,previous);assertIdleSelectionPolicy(old);
+  for(const key of Object.keys(previous)){
+    const mixed=structuredClone(p);mixed.idle_selection_policy[key]=previous[key];
+    assert.throws(()=>assertIdleSelectionPolicy(mixed));
+  }
 });
