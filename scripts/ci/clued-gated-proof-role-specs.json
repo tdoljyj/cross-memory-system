@@ -2934,14 +2934,14 @@
   "external2_future_workflows": [],
   "native617_pending_sources": [
     {
-      "file": ".github/workflows/clued-work-admission-dispatch.yml",
-      "workflow_blob": "b7574577c5f8abc8072c19c0cddb99ead2cc23af",
+      "file": ".github/workflows/clued-native617-admission-dispatch.yml",
+      "workflow_blob": "7a4e448bd703a35bcb960fc7fc79b9bc7c92a97f",
       "roles": [
         {
           "job_id": "admit",
-          "definition_sha256": "8d7133d187f83a0d6204f6bdd33fdedcf6fdc8fbd54e85290fa9bf467f8759bb",
+          "definition_sha256": "dccc4c9cdca85a5b7d5c5a230d61090085a2e2604d5ba3eb1c2ec6325274c782",
           "definition": {
-            "name": "clued-work-admission-dispatch",
+            "name": "clued-native617-admission-dispatch",
             "if": "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
             "runs-on": [
               "self-hosted",

@@ -197,6 +197,12 @@ LEGACY_HOSTED_DEBT = {
             "configure": "3eae19b64efda785730509f28bcdd5752a16721f8d2b5eedeb38fa50d3a7375a"
         }
     },
+    "clued-work-admission-dispatch.yml": {
+        "control_sha256": "ebb3e31056796a46bdfddabb880da1173bdb5128b9e88dded3ee4792b7491745",
+        "jobs": {
+            "admit": "fc0a420fe04b4df0e0fdf17101b5b0ef07e0d439f5fbed0500bf6fca73590388"
+        }
+    },
     "clued-work-admission-reverify.yml": {
         "control_sha256": "82d8df5d5125990053d96d3a652f882dc8ede64571401c115ceb2b4604a72513",
         "jobs": {

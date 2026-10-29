@@ -299,13 +299,13 @@
     {
       "id": "script.workflow-source-profile",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
       "root": "scripts/ci",
       "files": [
         "clued-workflow-profile.mjs"
       ],
-      "content_sha256": "6b7aaaf243c88d767c9512f52c021e1cd71116e3ff1e7303630f97cac2e676de",
+      "content_sha256": "2e1c05957cec681b790e66bb15900b595630f5d9cbb20afe2eeba6cc88c974d0",
       "version_marker": {
         "file": "clued-workflow-profile.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -396,7 +396,7 @@
     {
       "id": "script.native617-entry",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Disabled Task617 public Native job binding guard; Source-only preparation does not qualify a Host or permit execution.",
       "root": ".",
       "files": [
@@ -404,7 +404,7 @@
         "scripts/ci/clued-handover-native-entry.test.mjs",
         "config/clued-handover-native-entry-policy.json"
       ],
-      "content_sha256": "4b984be9b5161673212de0e84b32ac61ba8d87ef8b31acc74bd8b8ecb7bcdff8",
+      "content_sha256": "cfbe71f04ef4a33a68e9c8b9c2674974828a9697dad330ef506a8fd456a1a1c5",
       "version_marker": {
         "file": "scripts/ci/clued-handover-native-entry.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"

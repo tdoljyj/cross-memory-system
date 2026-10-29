@@ -450,7 +450,7 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
 class Native617MigrationTests(unittest.TestCase):
     def test_three_primary_routes_leave_no_hosted_debt_permit(self):
         workflows = {
-            "clued-work-admission-dispatch.yml": "admit",
+            "clued-native617-admission-dispatch.yml": "admit",
             "clued-handover-external-qualification.yml": "qualify",
             "clued-handover-disposable-idle.yml": "disposable-idle",
         }

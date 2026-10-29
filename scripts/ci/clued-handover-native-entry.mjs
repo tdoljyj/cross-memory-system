@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import {fileURLToPath} from 'node:url';
 
-export const COMPONENT_VERSION = "1.0.0";
+export const COMPONENT_VERSION = "1.0.1";
 const TASK='6176fdcc-c5b0-46c9-9769-d5e0bc0ce4f8',REPO='tdoljyj/cross-memory-system';
 const SHA=/^[0-9a-f]{64}$/,COMMIT=/^[0-9a-f]{40}$/;
 const UUID=/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/,ID=/^[1-9][0-9]{0,19}$/;
@@ -35,7 +35,7 @@ const CONTEXT_KEYS=['schema','task_id','repository','repository_id','actor_id','
   'event_name','workflow_path','workflow_sha','head_sha','ref','job_key','run_id','run_attempt','phase','input_class'];
 const QUALIFIER='.github/workflows/clued-handover-external-qualification.yml';
 const IDLE='.github/workflows/clued-handover-disposable-idle.yml';
-const CONTROL='.github/workflows/clued-work-admission-dispatch.yml';
+const CONTROL='.github/workflows/clued-native617-admission-dispatch.yml';
 const INPUTS=freeze({
   'source-only':['job-token'],'idle':['job-token'],'control':['job-token','clued-admission-token'],
   'register':['pg-url'],'publish':['job-token','app516','pg-url','fixture-proof'],

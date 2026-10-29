@@ -12,7 +12,7 @@ function context(phase='publish'){
   return {schema:'clued.native617-job-context/1',task_id:NATIVE617_POLICY.task_id,
     repository:NATIVE617_POLICY.repository,repository_id:'1334673495',actor_id:'52366662',
     triggering_actor_id:'52366662',event_name:kind==='source-only'?'pull_request':'workflow_dispatch',
-    workflow_path:'.github/workflows/'+(kind==='control'?'clued-work-admission-dispatch.yml':
+    workflow_path:'.github/workflows/'+(kind==='control'?'clued-native617-admission-dispatch.yml':
       kind==='idle'?'clued-handover-disposable-idle.yml':'clued-handover-external-qualification.yml'),
     workflow_sha:'a'.repeat(40),head_sha:'a'.repeat(40),ref:kind==='source-only'?'refs/pull/123/merge':
       kind==='idle'?'refs/heads/clued-handover-disposable-fixture':'refs/heads/main',
@@ -97,4 +97,9 @@ test('default CLI and refused production CLI do not consume ambient authority or
   const refused=spawnSync(process.execPath,[file,'--check'],{encoding:'utf8',env});
   assert.equal(refused.status,1);assert.equal(JSON.parse(refused.stderr).execution_permitted,false);
   assert.ok(!refused.stderr.includes('UNREAD_SYNTHETIC_PRIVATE_CANARY'));
+});
+
+test('shared dispatch cannot impersonate the dedicated Native617 control entry',()=>{
+  const c=context('control'); c.workflow_path='.github/workflows/clued-work-admission-dispatch.yml';
+  assert.throws(()=>validateNative617Context(c));
 });
