@@ -17,7 +17,7 @@ const reply=()=>({contract:'clued.independent-ci.protected-stop-bundle/1',nonce,
 const maintenance=()=>({nonce,configSha256:sha,stage:12,controllerSid:sid,nodeId:'FIXTURE-NODE',runnerService:'actions.runner.tdoljyj-cross-memory-system.fixture',nodePid:1234});
 const maintenanceReply=()=>({contract:'clued.independent-ci.scm-maintenance-window/1',...maintenance(),helperPid:1233,sourceManifestSha256:'c'.repeat(64),observedAt:new Date().toISOString()});
 function legacyFixture(){
- const job=makeJobV2({repo:'tdoljyj/cross-memory-system',pr:937,headSha:'a'.repeat(40),baseSha:'b'.repeat(40),sourceManifestSha256:'c'.repeat(64),role:'gitleaks',createdAt:'2026-10-29T05:00:00.000Z',attempt:1});
+ const job=makeJobV2({repo:'tdoljyj/cross-memory-system',pr:937,headSha:'a'.repeat(40),baseSha:'b'.repeat(40),testSha:'a'.repeat(40),sourceManifestSha256:'c'.repeat(64),role:'gitleaks',createdAt:'2026-10-29T05:00:00.000Z',attempt:1});
  const input={repository:job.repo,heads:[job.headSha],claimId:'11111111-2222-4333-8444-555555555555',beforeExecutionEpoch:3};
  const claim={claimId:input.claimId,fence:4,epoch:2},plan={contract:'clued.independent-ci.fixed-formal-windows-entry/3',enabled:true,stage:3,entryRole:'check-publisher',
   batchKey:'d'.repeat(64),batchId:'d'.repeat(16)+'-'+'e'.repeat(12),ownerPackageAcceptanceRef:requestId,nodeSha256:'f'.repeat(64),nodeProfileSha256:'1'.repeat(64),

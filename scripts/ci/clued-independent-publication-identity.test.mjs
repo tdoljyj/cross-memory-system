@@ -5,7 +5,7 @@ import { APP_ID, CHECKS, makeIndependentPublicationIdentity as make, validateInd
   assertIndependentPublicationTarget as bind, independentPublicationExternalId as externalId } from './clued-independent-publication-identity.mjs';
 const claim = { claim_id: '11111111-2222-4333-8444-555555555555', fence: 4, execution_epoch: 3 };
 const controller_id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
-const job = role => makeJobV2({ repo: 'tdoljyj/cross-memory-system', pr: 937, headSha: 'a'.repeat(40), baseSha: 'b'.repeat(40),
+const job = role => makeJobV2({ repo: 'tdoljyj/cross-memory-system', pr: 937, headSha: 'a'.repeat(40), baseSha: 'b'.repeat(40), testSha: 'a'.repeat(40),
   testSha: 'c'.repeat(40), sourceManifestSha256: 'd'.repeat(64), role, createdAt: '2026-10-29T04:00:00Z', attempt: 1 });
 const identity = role => make({ job: job(role), claim, controller_id });
 const changed = (value, edit) => { const next = structuredClone(value); edit(next); return next; };

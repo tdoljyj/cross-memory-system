@@ -12,7 +12,7 @@ const now=Date.parse('2026-10-29T05:00:00Z');
 const controllerId='aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',pub='11111111-aaaa-4bbb-8ccc-222222222222',receipt='33333333-aaaa-4bbb-8ccc-444444444444';
 async function fixture(t,active=true){
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'native-port-unit-'));t.after(()=>fs.rm(directory,{recursive:true,force:true}));
- const job=makeJobV2({...subject(),role:'gitleaks'}),claim={claimId:'11111111-2222-4333-8444-555555555555',fence:4,epoch:3,expiresAt:new Date(now+3600000).toISOString()};
+ const job=makeJobV2({...subject(),testSha:subject().headSha,role:'gitleaks'}),claim={claimId:'11111111-2222-4333-8444-555555555555',fence:4,epoch:3,expiresAt:new Date(now+3600000).toISOString()};
  const packet={complete:true,pr:job.pr,headSha:job.headSha,baseSha:job.baseSha,paths:['scripts/ci/example.mjs']};
  let facts=admittedFacts(job,claim,packet,{batchClaim:claim,observedAt:now});
  if(active){delete facts.observationSha256;facts={...facts,contract:'clued.independent-ci.full-admission/3',executionPolicy:'active',guarded:true,
