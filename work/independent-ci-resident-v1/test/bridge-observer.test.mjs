@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { BRIDGE_POLL_MS, BRIDGE_STAGE_STOPPED_PUMP_LOST, BRIDGE_STOP_GRACE_MS, PUMP_CODES, PUMP_DEAD_CODES, PUMP_HEARTBEAT_STALE_MS, PUMP_QUIET_MS, WindowsEngine } from '../src/engine-windows.mjs';
@@ -282,7 +283,9 @@ async function engineWith(t, { endsAt = null, ownEnding = null, beats = true, sc
         ev.endedAt = now - T0;
         return { code: 41, stdout: stageFact(manifest, stopFact) };
       }
-      if (endsAt !== null && now - T0 >= endsAt) { await fs.writeFile(path.join(brokerRoot, 'responses', `${SWAP}.json`), '{}'); return { code: ownEnding.ok ? 0 : 41, stdout: stageFact(manifest, ownEnding.fact ?? {}) }; }
+      // The scripted end is one virtual-time event. Real asynchronous disk I/O here would let the observer
+      // advance the fake clock beyond the grace while this fixture's terminal write was still pending.
+      if (endsAt !== null && now - T0 >= endsAt) { writeFileSync(path.join(brokerRoot, 'responses', `${SWAP}.json`), '{}'); return { code: ownEnding.ok ? 0 : 41, stdout: stageFact(manifest, ownEnding.fact ?? {}) }; }
       // the stage runs on: virtual time only moves with the engine's own sleeps (the observer), or here when nothing observes
       if (!linuxWorker) await sleep(1000); else await new Promise(r => setImmediate(r));
     }
