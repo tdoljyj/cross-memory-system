@@ -695,6 +695,22 @@ $movedSddl = (Get-Acl -LiteralPath $changing).Sddl
 Yes (Test-Refused { Add-ParentAce $reviewed } 'PARENT_ACL_CHANGED_SINCE_PLAN') 'parent-acl:changed-since-the-plan-is-refused'
 Yes ((Get-Acl -LiteralPath $changing).Sddl -ceq $movedSddl -and @(Get-Mine $changing).Count -eq 0) 'parent-acl:a-refusal-writes-nothing'
 
+# 4g. The verdict (Task 018da927 b): only a check whose ok is the string 'unreadable' asks for an elevated run; a plain failure next to
+#     passing checks is RESIDENT_VERIFICATION_FAILED (before the fix every passing $true counted as 'unreadable').
+Yes ($functions.ContainsKey('verify-resident.ps1:Get-VerifyVerdict')) 'verify-present:Get-VerifyVerdict'; . ([scriptblock]::Create($functions['verify-resident.ps1:Get-VerifyVerdict']))
+function New-Checks($pairs) { $c = [ordered]@{}; foreach ($p in $pairs) { $c[$p[0]] = [ordered]@{ ok = $p[1]; detail = $null } }; $c }
+foreach ($case in @(
+    @(@(@('a', $true), @('b', $true)), 'RESIDENT_VERIFIED', 0, 'all-pass'),
+    @(@(@('a', $true), @('b', $false)), 'RESIDENT_VERIFICATION_FAILED', 1, 'a-failure-is-not-run-elevated'),
+    @(@(,@('a', $false)), 'RESIDENT_VERIFICATION_FAILED', 1, 'only-failures'),
+    @(@(@('a', $true), @('b', 'absent')), 'RESIDENT_VERIFICATION_FAILED', 1, 'another-string-is-not-unreadable'),
+    @(@(@('a', $true), @('b', 'UNREADABLE')), 'RESIDENT_VERIFICATION_FAILED', 1, 'case-sensitive'),
+    @(@(@('a', $true), @('b', 'unreadable')), 'RESIDENT_PARTIALLY_VERIFIED_RUN_ELEVATED', 2, 'unreadable-asks-for-elevation'),
+    @(@(@('a', $false), @('b', 'unreadable')), 'RESIDENT_PARTIALLY_VERIFIED_RUN_ELEVATED', 2, 'unreadable-with-a-failure'))) {
+  $v = Get-VerifyVerdict (New-Checks $case[0])
+  Yes ($v.status -ceq $case[1] -and $v.exit -eq $case[2]) ('verify-verdict:' + $case[3])
+}
+
 # 5. C#: the broker's bounded read and both token checks (compiled into the scratch directory).
 $fw = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\'; $csc = Join-Path $fw 'csc.exe'
 $v2 = [IO.Path]::GetFullPath((Join-Path $here '..\..\actions-hosted-migration\independent-ci-v1\src\resident-v2\windows'))

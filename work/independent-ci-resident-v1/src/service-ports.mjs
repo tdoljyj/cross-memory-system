@@ -6,7 +6,7 @@ import { HEX64, check, exactKeys, parseBoundedJson, sha256 } from './canonical.m
 
 // Timeouts are upper bounds for one companion action; no answer by then is never success.
 const TIMEOUTS = { 'build-bundle': 35 * 60_000, 'prepare-workspaces': 25 * 60_000, 'archive-linux': 6 * 60_000, 'linux-quiescence': 2 * 60_000, 'check-refs': 6 * 60_000, 'archive-usage': 3 * 60_000,
-  'pr-head': 2 * 60_000 };
+  'pr-head': 2 * 60_000, 'archive-prune': 10 * 60_000 };
 const NO_BATCH = '0000000000000000-000000000000';
 
 export function mailboxCompanion(mailbox, sleep) {
@@ -39,6 +39,13 @@ export function mailboxCompanion(mailbox, sleep) {
     async archiveUsage() {
       const r = await ask('archive-usage', { batchId: NO_BATCH });
       return r?.ok === true && r.usage ? { ok: true, ...r.usage } : { ok: false };
+    },
+    // DESIGN §34: one retention pass of the Linux spool. Asked only between batches, with no open batch and a fresh heartbeat
+    // (retention.mjs). The facts come back even when the pass was refused or stopped; no answer is { ok: false } without facts.
+    async archivePrune() {
+      const r = await ask('archive-prune', { batchId: NO_BATCH });
+      if (!r) return { ok: false, code: 'LINUX_ARCHIVE_PRUNE_UNCONFIRMED' };
+      return { ok: r.ok === true, code: r.ok === true ? null : (r.code ?? 'LINUX_ARCHIVE_PRUNE_UNCONFIRMED'), prune: r.prune ?? null, usage: r.usage ?? null };
     },
     // Phase 2, step 1: one live read of the PR (state, head) for the run queue, or null (no answer is never a fact).
     async prHead(pr, batch = null) {

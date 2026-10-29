@@ -41,6 +41,38 @@ async function seal(directory) {
   await fs.chown(directory, 0, 0); await fs.chmod(directory, 0o555); await syncDirectory(directory);
 }
 
+// Depth first, never following a link: a link is removed as itself (unlink), a real directory is entered.
+async function removeCacheTree(directory) {
+  const stat = await fs.lstat(directory); check(!stat.isSymbolicLink() && stat.isDirectory(), 'CACHE_RECLAIM_TYPE_REFUSED');
+  for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+    const file = path.join(directory, entry.name), s = await fs.lstat(file);
+    if (s.isDirectory() && !s.isSymbolicLink()) await removeCacheTree(file); else await fs.unlink(file);
+  }
+  await fs.rmdir(directory);
+}
+// Reclaim after a confirmed promotion (resident Task 4aedda54, DESIGN §34): every promotion left its staging copy and a new
+// generation behind and nothing was ever removed (about +3.3 GB per DB rotation). Now, once the pointer readback confirmed
+// the activation, the kind's staging copies (this promotion's and any earlier leftover; the prepare lock is held, so no
+// other preparation of this root can be using one) and every generation of the kind other than the current and the
+// previous one are removed. Only names of the kind's own shape directly below staging/ and generations/ are touched; the
+// other kind is never touched; a failure here never fails or undoes the promotion (it is reported; the next one retries).
+export async function reclaimCache({ root, kind, currentDirectory, previousDirectory = null, removeTree = removeCacheTree }) {
+  check(['db', 'checks'].includes(kind) && typeof root === 'string' && typeof currentDirectory === 'string'
+    && path.dirname(currentDirectory) === path.join(root, 'generations')
+    && (previousDirectory === null || path.dirname(previousDirectory) === path.join(root, 'generations')), 'CACHE_RECLAIM_SCOPE');
+  const stagingName = new RegExp('^' + kind + '-[a-f0-9]{64}$'), generationName = new RegExp('^gen-' + kind + '-[a-f0-9]{64}$');
+  const kept = [currentDirectory, previousDirectory].filter(Boolean).map(d => path.basename(d));
+  check(kept.every(name => generationName.test(name)), 'CACHE_RECLAIM_SCOPE');
+  const removed = { staging: [], generations: [] }, failed = [];
+  for (const [sub, pattern, list] of [['staging', stagingName, removed.staging], ['generations', generationName, removed.generations]]) {
+    for (const name of (await fs.readdir(path.join(root, sub))).sort()) {
+      if (!pattern.test(name) || kept.includes(name)) continue;
+      try { await removeTree(path.join(root, sub, name)); list.push(name); } catch (error) { failed.push({ name, code: error?.code ?? 'CACHE_RECLAIM_UNCONFIRMED' }); }
+    }
+  }
+  return { ok: failed.length === 0, kept: [...new Set(kept)].sort(), removed, failed };
+}
+
 // Actual storage has no caller-supplied filesystem operations. Every new stage
 // is exclusive and under the one protected Source-bound cache root.
 export async function createActualStorage(root) {
@@ -99,7 +131,11 @@ export async function createActualStorage(root) {
       const nextFile = originalPointer.file + '.next-' + randomBytes(32).toString('hex'); await durable(nextFile, next); await syncDirectory(directory);
       const after = await activatePointer({ next, originalPointer, readPointer: () => readPointer(kind),
         rename: () => fs.rename(nextFile, originalPointer.file), syncRoot: () => syncDirectory(root) });
-      return { facts: fresh, pointerSha256: after.sha256, activationSha256: digest({ previous: originalPointer.sha256, next: after.sha256, kind }), previousGenerationRetained: true };
+      // Only after the activation is confirmed: the current and the previous generation stay, the rest of the kind goes.
+      const reclaimed = await reclaimCache({ root, kind, currentDirectory: directory, previousDirectory: originalPointer.value?.directory ?? null })
+        .catch(error => ({ ok: false, code: error?.code ?? 'CACHE_RECLAIM_UNCONFIRMED' }));
+      return { facts: fresh, pointerSha256: after.sha256, activationSha256: digest({ previous: originalPointer.sha256, next: after.sha256, kind }), previousGenerationRetained: true,
+        reclaimed };
     },
   };
   actualStores.add(storage); return storage;

@@ -63,7 +63,7 @@ test('A: the companion reads the facts with one fixed-argv wsl.exe and answers t
   const ask = async () => { const req = await mailbox.send('memory-ready', { batchId: BATCH }, 60_000); await c.step(); return mailbox.poll(req); };
   const ok = await ask();
   assert.deepEqual([ok.contract, ok.ok, ok.code, ok.memory], [RESPONSE_CONTRACT, true, null, { order: 7, blocks: 2356 }]);
-  assert.equal(RESPONSE_CONTRACT, 'clued.independent-ci.resident-companion-response/3');
+  assert.equal(RESPONSE_CONTRACT, 'clued.independent-ci.resident-companion-response/4'); // /4 adds prune (DESIGN §34)
   assert.deepEqual(runs.map(([a, o]) => [a, o.timeoutMs]), [[expected, 15_000]], 'one wsl.exe, under the job host limit of the other checks');
   for (const r of [{ code: 1, stdout: '' }, { code: 0, stdout: 'garbage' }, { code: null, timedOut: true, tree: 'zero', stdout: facts(HIGH_BUDDY) }, { code: 0, tree: 'unconfirmed', stdout: facts(HIGH_BUDDY) },
     { refused: 'JOB_HOST_UNCONFIRMED', code: null, stdout: '' }]) {

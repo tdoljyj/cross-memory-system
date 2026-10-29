@@ -10,7 +10,7 @@
 //   - every Linux unit it starts re-checks its own preconditions as root;
 //   - its answers to the service only steer classification, and a false "clean" can at worst make
 //     the next batch fail at its own root preflight (DoS), never run something unsafe.
-import { BATCH_ID } from './mailbox.mjs';
+import { BATCH_ID, validatePrune } from './mailbox.mjs';
 import { HEX64, check, exactKeys, fail } from './canonical.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
 
@@ -234,6 +234,8 @@ export function argv(cfg) {
     unitFacts: (template, instance) => wsl('/usr/bin/systemctl', 'show', '--property=ActiveState,InvocationID,ExecMainStartTimestampMonotonic', unit(template, instance)),
     linuxTool: (sub, id) => { check(['quiescence'].includes(sub) && BATCH_ID.test(id), 'COMPANION_TOOL_ARGS_INVALID'); return wsl(cfg.linuxTool, sub, '--batch', id); },
     archiveUsage: () => wsl(cfg.linuxTool, 'archive-usage'),
+    // DESIGN §34: one retention pass of the Linux spool (the root tool plans, re-checks and deletes; nothing variable here).
+    archivePrune: () => wsl(cfg.linuxTool, 'archive-prune'),
     linuxOutgoing: () => wsl('/usr/bin/ls', '-1', '-A', '--', LINUX_OUTGOING),
     linuxIncoming: () => wsl('/usr/bin/ls', '-1', '-A', '--', LINUX_INCOMING),
     linuxRelayProcs: () => wsl('/usr/bin/pgrep', '-f', '-a', RELAY_RECORD_PROCESS),
@@ -330,6 +332,18 @@ export class Companion {
         const v = r.code === 0 ? json(r.stdout) : null;
         const ok = v?.contract === 'clued.independent-ci.linux-archive-usage/1' && Number.isSafeInteger(v.bytes) && v.bytes >= 0 && Number.isSafeInteger(v.directories) && v.directories >= 0;
         return ok ? { ok: true, usage: { bytes: v.bytes, directories: v.directories } } : { ok: false, code: 'LINUX_ARCHIVE_USAGE_UNCONFIRMED' };
+      }
+      // DESIGN §34: the root tool's facts of one retention pass, carried as they are (exact shape) with the usage after it. A
+      // refused pass (exit 1 with the tool's own facts) is carried too: the service records why nothing was deleted.
+      case 'archive-prune': {
+        const r = await this.run(this.a.archivePrune(), { timeoutMs: 9 * 60_000 });
+        const v = 'tree' in r ? null : json(r.stdout);
+        let prune = null;
+        try { prune = v?.contract === 'clued.independent-ci.linux-archive-prune/1' ? validatePrune(v.prune) : null; } catch { prune = null; }
+        const usage = v?.usage && Number.isSafeInteger(v.usage.bytes) && v.usage.bytes >= 0 && Number.isSafeInteger(v.usage.directories) && v.usage.directories >= 0
+          ? { bytes: v.usage.bytes, directories: v.usage.directories } : null;
+        if (!prune) return { ok: false, code: 'LINUX_ARCHIVE_PRUNE_UNCONFIRMED' };
+        return r.code === 0 && prune.refused === null && prune.stopped === null ? { ok: true, prune, usage } : { ok: false, code: prune.refused ?? prune.stopped?.code ?? 'LINUX_ARCHIVE_PRUNE_UNCONFIRMED', prune, usage };
       }
       // Verbatim root-tool facts; the companion never synthesises a proof value itself.
       case 'linux-quiescence': return { ok: true, proof: await this.quiescence(request.batchId) };
@@ -611,7 +625,7 @@ export class Companion {
       this.trees = [];
       try { answer = await this.handle(request); } catch { answer = { ok: false, code: 'COMPANION_HANDLER_UNCONFIRMED' }; }
       await this.mailbox.respond(request, { ok: answer.ok === true, code: answer.ok ? null : (answer.code ?? 'COMPANION_HANDLER_UNCONFIRMED'), proof: answer.proof ?? null, directory: answer.directory ?? null, verified: answer.verified ?? null, usage: answer.usage ?? null, pull: answer.pull ?? null,
-        jobTree: jobTreeOf(this.trees), memory: answer.memory ?? null });
+        jobTree: jobTreeOf(this.trees), memory: answer.memory ?? null, prune: answer.prune ?? null });
     }
   }
 }

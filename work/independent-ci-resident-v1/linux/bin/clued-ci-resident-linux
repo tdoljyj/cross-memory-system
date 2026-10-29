@@ -9,6 +9,7 @@ Sub-commands (all print one JSON object; exit 0 only on success):
   archive --instance <batchId>_<reason>                rename-only archive (archive unit only)
   archive-status --instance <batchId>_<reason>         the receipt of exactly that archive run
   archive-usage                                        bytes kept by earlier archives (50 GB reminder)
+  archive-prune                                        one retention pass of the spool archives (DESIGN S34)
 
 Threat model: WSL root is reachable from the Owner's own user session (wsl -u root), so these facts
 are as trustworthy as the Owner/root boundary accepted in constraint 4fedfc84, no more. What this tool
@@ -37,6 +38,20 @@ Source v2 (DESIGN S14, lessons b22/b28), mirroring resident-v2/archive-windows-s
     directory tree is inventoried before and verified after the move, and every source is gone after;
   - a failure part-way leaves a durable partial status (verified false), never a missing one;
   - archive-usage reports the bytes kept by earlier archives (the resident's 50 GB reminder).
+
+Retention and slimming (DESIGN S34, Task 4aedda54):
+  - success-close archives keep no candidate source tree: after every move is verified, each
+    workspace-<jobId>/candidate and run-<name>/candidate is replaced by candidate.slim.json (the commit SHA
+    and a manifest hash of the whole tree), since git restores it from the commit; a tree whose commit is
+    unknown, that holds a special file, or that cannot be removed safely is kept and reported. Failure
+    archives stay complete;
+  - archive-prune applies the resident's retention rule (src/retention.mjs, the same cases): per class
+    (success: archive-*, completed-*; failure: failed-*) the newest 20 GiB and never fewer than the newest
+    10 directories are kept, the Owner's keep list (resident/owner/retention-keep.json, read through /mnt/c)
+    protects what it names, and the rest is deleted oldest first, at most 16 per pass. Only directly below
+    the spool, only names of the three kinds, only when quiescent; a link, an unreadable size, an unreadable
+    keep list or a directory that changed after planning deletes nothing more. Every pass writes a durable
+    receipt under resident/retention/.
 """
 import ctypes
 import hashlib
@@ -44,8 +59,11 @@ import json
 import os
 import re
 import secrets
+import shutil
+import stat as _st
 import subprocess
 import sys
+import time
 
 STATE = '/var/lib/clued-independent-ci'
 SPOOL = f'{STATE}/formal-spool'
@@ -67,6 +85,13 @@ LINUX_PROTOCOL = {
 }
 MAX_LEAF = 1 << 20
 MAX_TREE = 1_000_000
+KEEP_FILE = '/mnt/c/ProgramData/CluedIndependentCI/resident/owner/retention-keep.json'
+KEEP_CONTRACT = 'clued.independent-ci.archive-retention-keep/1'
+PRUNE_CONTRACT = 'clued.independent-ci.linux-archive-prune/1'
+SLIM_CONTRACT = 'clued.independent-ci.resident-linux-archive-slim/1'
+ARCHIVE_NAME = re.compile(r'^(archive|completed|failed)-[0-9A-Za-z-]{1,90}$')
+GIB = 1024 ** 3
+RETENTION_RULE = {'classBudgetBytes': 20 * GIB, 'minKeepPerClass': 10, 'maxDeletesPerPass': 16}
 
 
 class Refused(Exception):
@@ -220,9 +245,11 @@ def plan_archive(root, batch_id, reason, job_ids, nonce_hex):
             moves.append(_leaf(root, f'ws-prep-{batch_id}', target, f'ws-prep-{batch_id}'))
     flats = [m['to'] for m in moves]
     need(len(set(flats)) == len(flats), 'ARCHIVE_FLAT_NAME_COLLISION')
-    return {'contract': 'clued.independent-ci.resident-linux-archive/2', 'batchId': batch_id, 'reason': reason,
+    # S34: a success-close archive keeps the commit SHA and manifest hash of each candidate tree instead of the tree.
+    slim = reason == 'success-close'
+    return {'contract': 'clued.independent-ci.resident-linux-archive/3', 'batchId': batch_id, 'reason': reason,
             'scope': 'protocol' if protocol_only else 'batch', 'completed': completed, 'target': target, 'moves': moves,
-            'remainderLeftInPlace': unknown, 'halfPairs': halves, 'deletesAnything': False}
+            'remainderLeftInPlace': unknown, 'halfPairs': halves, 'slimCandidates': slim, 'deletesAnything': slim}
 
 
 def earlier_result(done_path):
@@ -254,6 +281,78 @@ def _durable_new(path, value):
         os.fsync(f.fileno())
 
 
+def candidate_manifest(path):
+    """One hash over the whole tree (relative path, kind, mode, size, content hash or link text), links not followed."""
+    h, files, total, links, n = hashlib.sha256(), 0, 0, 0, 0
+    for base, dirs, names in os.walk(path, followlinks=False):
+        dirs.sort()
+        for name in sorted(dirs + names):
+            full = os.path.join(base, name)
+            st = os.lstat(full)
+            rel = os.path.relpath(full, path).replace(os.sep, '/')
+            if _st.S_ISLNK(st.st_mode):
+                kind, extra, size = 'l', os.readlink(full), 0
+                links += 1
+            elif _st.S_ISDIR(st.st_mode):
+                kind, extra, size = 'd', '', 0
+            elif _st.S_ISREG(st.st_mode):
+                kind, extra, size = 'f', sha256_file(full), st.st_size
+                files += 1
+                total += st.st_size
+            else:
+                raise Refused('SLIM_SPECIAL_FILE_REFUSED')
+            h.update(f'{rel}\0{kind}\0{st.st_mode & 0o7777:o}\0{size}\0{extra}\n'.encode('utf-8', 'surrogateescape'))
+            n += 1
+            need(n <= MAX_TREE, 'SLIM_TREE_BOUND')
+    return {'manifestSha256': h.hexdigest(), 'files': files, 'bytes': total, 'links': links}
+
+
+def candidate_commit(cand):
+    """The detached HEAD of a candidate checkout (prepare-workspaces.py checks S out detached), or None."""
+    head = os.path.join(cand, '.git', 'HEAD')
+    if os.path.islink(head) or not os.path.isfile(head):
+        return None
+    with open(head, 'rb') as f:
+        text = f.read(128).decode('ascii', 'replace').strip()
+    return text if re.fullmatch(r'[0-9a-f]{40}', text) else None
+
+
+def slim_success_archive(target, flats, rmtree=shutil.rmtree):
+    """S34: replace each candidate tree of a verified success archive by its commit SHA and manifest hash. A run's
+    candidate without its own .git takes the commit of the same job's workspace (run-placement-<jobId>). Never raises:
+    a tree that cannot be slimmed safely is kept and reported."""
+    found = []
+    for flat in sorted(flats):
+        if not re.fullmatch(r'workspace-[0-9a-f]{64}|run-[A-Za-z0-9][A-Za-z0-9._-]{0,200}', flat):
+            continue
+        cand = os.path.join(target, flat, 'candidate')
+        if os.path.lexists(cand):
+            found.append((flat, cand))
+    commits = {flat: (candidate_commit(cand) if not os.path.islink(cand) else None) for flat, cand in found}
+    for flat, _ in found:
+        m = re.fullmatch(r'run-.*-([0-9a-f]{64})', flat)
+        if commits[flat] is None and m:
+            commits[flat] = commits.get(f'workspace-{m.group(1)}')
+    slimmed, kept = [], []
+    for flat, cand in found:
+        try:
+            need(not os.path.islink(cand) and os.path.isdir(cand), 'SLIM_LINK_REFUSED')
+            need(commits[flat] is not None, 'SLIM_COMMIT_UNKNOWN')
+            facts = candidate_manifest(cand)
+            # A tree with links is removed only where rmtree cannot be led outside it (fd-based, Linux).
+            need(facts['links'] == 0 or rmtree is not shutil.rmtree or shutil.rmtree.avoids_symlink_attacks, 'SLIM_LINK_REFUSED')
+            record = {'contract': SLIM_CONTRACT, 'path': f'{flat}/candidate', 'commitSha': commits[flat], 'restoreFrom': 'git',
+                      'manifestSha256': facts['manifestSha256'], 'files': facts['files'], 'bytes': facts['bytes'], 'links': facts['links']}
+            _durable_new(os.path.join(target, flat, 'candidate.slim.json'), record)
+            rmtree(cand)
+            slimmed.append({k: record[k] for k in ('path', 'commitSha', 'manifestSha256', 'files', 'bytes')})
+        except Refused as e:
+            kept.append({'path': f'{flat}/candidate', 'code': e.code})
+        except OSError:
+            kept.append({'path': f'{flat}/candidate', 'code': 'SLIM_UNCONFIRMED'})
+    return slimmed, kept
+
+
 def apply_archive(root, plan, rename=rename_noreplace):
     target = os.path.join(root, plan['target'])
     os.mkdir(target, 0o700)
@@ -283,8 +382,11 @@ def apply_archive(root, plan, rename=rename_noreplace):
         # Part-way: durable partial status, so the failure is visible and never mistaken for "not run".
         _durable_new(os.path.join(target, 'partial.json'), {'verified': False, 'moved': moved, 'code': e.code})
         raise Refused(e.code) from None
-    result = {'verified': True, 'moved': moved, 'deleted': 0, 'directory': os.path.basename(plan['target']), 'scope': plan['scope'],
-              'remainderLeftInPlace': plan['remainderLeftInPlace'], 'halfPairs': plan['halfPairs']}
+    slimmed, slim_kept = [], []
+    if plan.get('slimCandidates'):  # only after every move was verified; the moved trees themselves are already proven
+        slimmed, slim_kept = slim_success_archive(target, [os.path.basename(m['to']) for m in plan['moves'] if m['isDir']])
+    result = {'verified': True, 'moved': moved, 'deleted': len(slimmed), 'directory': os.path.basename(plan['target']), 'scope': plan['scope'],
+              'remainderLeftInPlace': plan['remainderLeftInPlace'], 'halfPairs': plan['halfPairs'], 'slimmed': slimmed, 'slimKept': slim_kept}
     _durable_new(os.path.join(target, 'receipt.json'), result)
     return result
 
@@ -305,6 +407,197 @@ def archive_usage(root):
                     need(n <= 10 * MAX_TREE, 'ARCHIVE_USAGE_BOUND')
                     total += os.lstat(os.path.join(base, f)).st_size
     return {'contract': 'clued.independent-ci.linux-archive-usage/1', 'bytes': total, 'directories': dirs}
+
+
+# ---------- retention (S34; the same rule as src/retention.mjs, held to test/fixtures/retention-cases.json) ----------
+
+def archive_class(name):
+    m = ARCHIVE_NAME.fullmatch(name)
+    return None if m is None else ('failure' if m.group(1) == 'failed' else 'success')
+
+
+def parse_keep_list(raw):
+    try:
+        v = json.loads(raw.decode('utf-8'))
+    except (UnicodeDecodeError, ValueError):
+        raise Refused('RETENTION_KEEP_LIST_INVALID')
+    need(isinstance(v, dict) and sorted(v) == ['contract', 'keep'] and v['contract'] == KEEP_CONTRACT and isinstance(v['keep'], list)
+         and len(v['keep']) <= 2000, 'RETENTION_KEEP_LIST_INVALID')
+    for k in v['keep']:
+        need(isinstance(k, dict) and sorted(k) == ['name', 'ref', 'spool'] and isinstance(k['name'], str) and ARCHIVE_NAME.fullmatch(k['name'])
+             and k['spool'] in ('windows', 'linux', 'any') and isinstance(k['ref'], str) and 1 <= len(k['ref']) <= 200, 'RETENTION_KEEP_LIST_INVALID')
+    return v['keep']
+
+
+def read_keep_list(path, spool):
+    """{'ok': True, 'names': set} or {'ok': False, 'code': ...}. A missing file is an empty list only when its folder is there."""
+    try:
+        if not os.path.lexists(path):
+            parent = os.path.dirname(path)
+            ok = os.path.isdir(parent) and not os.path.islink(parent)
+            return {'ok': True, 'names': set()} if ok else {'ok': False, 'code': 'RETENTION_KEEP_LIST_UNREADABLE'}
+        st = os.lstat(path)
+        if not _st.S_ISREG(st.st_mode) or st.st_size > 256 * 1024:
+            return {'ok': False, 'code': 'RETENTION_KEEP_LIST_INVALID'}
+        with open(path, 'rb') as f:
+            keep = parse_keep_list(f.read(256 * 1024 + 1))
+        return {'ok': True, 'names': {k['name'] for k in keep if k['spool'] in (spool, 'any')}}
+    except Refused as e:
+        return {'ok': False, 'code': e.code}
+    except OSError:
+        return {'ok': False, 'code': 'RETENTION_KEEP_LIST_UNREADABLE'}
+
+
+class _Desc:
+    """Descending order for a string inside an ascending sort key."""
+    def __init__(self, s):
+        self.s = s
+
+    def __lt__(self, other):
+        return self.s > other.s
+
+    def __eq__(self, other):
+        return self.s == other.s
+
+
+def plan_retention(entries, keep=frozenset(), rule=RETENTION_RULE):
+    """Pure. entries: [{name, mtimeMs, bytes (None = unreadable), complete, isDir, links}]."""
+    classes = {'success': [], 'failure': []}
+    prot = {'directories': 0, 'bytes': 0, 'complete': True, 'names': []}
+    for e in entries:
+        cls = archive_class(e['name'])
+        if cls is None:
+            continue
+        if e['name'] in keep:
+            prot['directories'] += 1
+            prot['bytes'] += e['bytes'] or 0
+            prot['complete'] = prot['complete'] and e['bytes'] is not None and e['complete'] is True
+            prot['names'].append(e['name'])
+            continue
+        classes[cls].append(e)
+    prot['names'].sort()
+    out = {'classes': {}, 'protected': prot, 'deletes': [], 'deferred': 0}
+    deletes = []
+    for cls in ('success', 'failure'):
+        lst = classes[cls]
+        refused = ('RETENTION_LINK_REFUSED' if any(e['isDir'] is not True or e['links'] > 0 for e in lst)
+                   else 'RETENTION_SIZE_UNREADABLE' if any(e['bytes'] is None or e['complete'] is not True for e in lst) else None)
+        total = sum(e['bytes'] or 0 for e in lst)
+        summary = {'directories': len(lst), 'bytes': total, 'deleteDirectories': 0, 'deleteBytes': 0, 'refused': refused}
+        out['classes'][cls] = summary
+        if refused:
+            continue
+        newest_first = sorted(lst, key=lambda e: (-e['mtimeMs'], _Desc(e['name'])))
+        remaining = len(newest_first)
+        for e in reversed(newest_first):
+            if total <= rule['classBudgetBytes'] or remaining <= rule['minKeepPerClass']:
+                break
+            deletes.append({'name': e['name'], 'class': cls, 'bytes': e['bytes'], 'mtimeMs': e['mtimeMs']})
+            total -= e['bytes']
+            remaining -= 1
+            summary['deleteDirectories'] += 1
+            summary['deleteBytes'] += e['bytes']
+    deletes.sort(key=lambda d: (d['mtimeMs'], d['name']))
+    out['deferred'] = max(0, len(deletes) - rule['maxDeletesPerPass'])
+    out['deletes'] = [{'name': d['name'], 'class': d['class'], 'bytes': d['bytes']} for d in deletes[:rule['maxDeletesPerPass']]]
+    return out
+
+
+def tree_facts(path):
+    total, entries, links, complete = 0, 0, 0, True
+
+    def onerror(_):
+        nonlocal complete
+        complete = False
+    for base, dirs, names in os.walk(path, followlinks=False, onerror=onerror):
+        for name in dirs + names:
+            entries += 1
+            if entries > 10 * MAX_TREE:
+                return {'bytes': total, 'entries': entries, 'links': links, 'complete': False}
+            try:
+                st = os.lstat(os.path.join(base, name))
+            except OSError:
+                complete = False
+                continue
+            if _st.S_ISLNK(st.st_mode):
+                links += 1
+            elif _st.S_ISREG(st.st_mode):
+                total += st.st_size
+            elif not _st.S_ISDIR(st.st_mode):
+                links += 1  # a device, pipe or socket in an archive is as suspect as a link
+    return {'bytes': total, 'entries': entries, 'links': links, 'complete': complete}
+
+
+def entry_facts(spool, name):
+    p = os.path.join(spool, name)
+    try:
+        st = os.lstat(p)
+    except OSError:
+        return {'name': name, 'mtimeMs': 0, 'bytes': None, 'complete': False, 'isDir': True, 'links': 0, 'entries': 0}
+    if not _st.S_ISDIR(st.st_mode):
+        return {'name': name, 'mtimeMs': st.st_mtime_ns // 1_000_000, 'bytes': None, 'complete': False, 'isDir': False, 'links': 1, 'entries': 0}
+    t = tree_facts(p)
+    return {'name': name, 'mtimeMs': st.st_mtime_ns // 1_000_000, 'bytes': t['bytes'] if t['complete'] else None, 'complete': t['complete'],
+            'isDir': True, 'links': t['links'], 'entries': t['entries']}
+
+
+def remove_tree(path):
+    """Depth first, never following a link: a link met on the way stops the deletion (fail closed)."""
+    st = os.lstat(path)
+    need(_st.S_ISDIR(st.st_mode), 'RETENTION_LINK_REFUSED')
+    for name in sorted(os.listdir(path)):
+        p = os.path.join(path, name)
+        s = os.lstat(p)
+        need(not _st.S_ISLNK(s.st_mode), 'RETENTION_LINK_REFUSED')
+        if _st.S_ISDIR(s.st_mode):
+            remove_tree(p)
+        else:
+            os.unlink(p)
+    os.rmdir(path)
+
+
+def _refused_pass(rule, code):
+    return {'rule': dict(rule), 'refused': code, 'classes': None, 'protected': None, 'deferred': 0, 'deleted': [], 'deletedBytes': 0, 'stopped': None}
+
+
+def prune_spool(spool, keep, rule=RETENTION_RULE, remove=remove_tree):
+    """One retention pass: inventory, plan, apply (each directory re-checked right before it goes)."""
+    if not keep.get('ok'):
+        return _refused_pass(rule, keep.get('code', 'RETENTION_KEEP_LIST_UNREADABLE'))
+    try:
+        if os.path.islink(spool) or not os.path.isdir(spool) or os.path.realpath(spool) != os.path.abspath(spool):
+            return _refused_pass(rule, 'RETENTION_SPOOL_REDIRECTED')
+        entries = [entry_facts(spool, n) for n in sorted(os.listdir(spool)) if archive_class(n)]
+    except OSError:
+        return _refused_pass(rule, 'RETENTION_SPOOL_UNREADABLE')
+    plan = plan_retention(entries, keep['names'], rule)
+    by_name = {e['name']: e for e in entries}
+    deleted, stopped = [], None
+    for d in plan['deletes']:
+        now, before = entry_facts(spool, d['name']), by_name[d['name']]
+        if not now['isDir'] or now['links'] > 0:
+            stopped = {'name': d['name'], 'code': 'RETENTION_LINK_REFUSED', 'partial': False}
+            break
+        if now['bytes'] != before['bytes'] or now['entries'] != before['entries']:
+            stopped = {'name': d['name'], 'code': 'RETENTION_CHANGED_SINCE_PLAN', 'partial': False}
+            break
+        try:
+            remove(os.path.join(spool, d['name']))
+            deleted.append(d)
+        except Refused as e:
+            stopped = {'name': d['name'], 'code': e.code, 'partial': True}
+            break
+        except OSError as e:
+            stopped = {'name': d['name'], 'code': 'RETENTION_PERMISSION_REFUSED' if isinstance(e, PermissionError) else 'RETENTION_DELETE_UNCONFIRMED', 'partial': True}
+            break
+    return {'rule': dict(rule), 'refused': None, 'classes': plan['classes'], 'protected': plan['protected'], 'deferred': plan['deferred'],
+            'deleted': deleted, 'deletedBytes': sum(d['bytes'] for d in deleted), 'stopped': stopped}
+
+
+def public_prune(facts):
+    """The answer's shape (mailbox.mjs#validatePrune): the protected names stay in the local receipt."""
+    prot = facts['protected']
+    return {**facts, 'protected': None if prot is None else {k: prot[k] for k in ('directories', 'bytes', 'complete')}}
 
 
 def verify_pins(manifest):
@@ -472,6 +765,16 @@ def main(argv):
         return json.load(open(f'{RESIDENT_STATE}/archive-status/{inst}.json'))
     if cmd == 'archive-usage':
         return archive_usage(STATE)
+    if cmd == 'archive-prune':
+        q = quiescence()
+        if q['linuxUnitsInactive'] and q['containersZero']:
+            facts = prune_spool(SPOOL, read_keep_list(KEEP_FILE, 'linux'))
+        else:
+            facts = _refused_pass(RETENTION_RULE, 'ARCHIVE_PRUNE_REQUIRES_QUIESCENCE')
+        receipts = f'{RESIDENT_STATE}/retention'
+        os.makedirs(receipts, mode=0o700, exist_ok=True)
+        _durable_new(f'{receipts}/{int(time.time() * 1000):013d}-{secrets.token_hex(6)}.json', {'contract': PRUNE_CONTRACT, **facts})
+        return {'contract': PRUNE_CONTRACT, 'prune': public_prune(facts), 'usage': archive_usage(STATE)}
     raise Refused('COMMAND_REFUSED')
 
 

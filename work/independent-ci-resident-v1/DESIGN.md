@@ -2939,3 +2939,58 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 - 都要随第 2 批的一次常驻层 Windows 重装才在这台机器上生效。重装时 `parent-acl` 会把那条 ACE 加上；如果 Owner 事先已手工加了完全相同的一条（`icacls C:\ProgramData\CluedIndependentCI /grant "NT SERVICE\CluedCIResident:(Rc,S,RA)"` 得到的就是 `0x120080`、不继承），计划里 `present = true`，步骤什么都不写。本次没有对机器做任何事，这条命令也没有运行。
 - 新主机的前提不变：CI 根目录要先有 Owner 自己的 `0x120080`（§8.3）；安装不替 Owner 加这一条。
 - 没有新的发布路径，不碰 GitHub、凭据或网络；不读写 `HALT.json`；服务账户只多一条只读的、只此目录的 `0x120080`。
+
+## 34. 归档保留与瘦身、trivy 缓存回收、C: 余量提醒、无心跳不量 Linux（Task `4aedda54`；Task `018da927` 子项 b、c）
+
+### 34.1 归档保留规则（`src/retention.mjs`，Linux 侧 `clued-ci-resident-linux archive-prune`，同一规则）
+
+- 分两类，各自独立计算：**成功类** `archive-*`、`completed-*`；**失败类** `failed-*`（失败、HALT、Owner 中止的归档都以 `failed-` 开头）。名字必须匹配 `^(archive|completed|failed)-[0-9A-Za-z-]{1,90}$`，其他名字（`incoming`、`outgoing`、未知名字）永远不进计划。
+- 每类保留最新（目录修改时间，同时按名字）的 20 GiB，且无论多大都至少保留最新 10 个；超出部分从最旧的删。每轮最多删 16 个（其余记为 `deferred`，下一轮再删）。数值是常量（Owner 给定），**不进 policy**：policy 合同不变。
+- 50 GB 总提醒（`archive-retention-reminder`）照旧。
+- Windows spool（`C:\ProgramData\CluedIndependentCI\formal-spool`）由服务自己执行；Linux spool（`/var/lib/clued-independent-ci/formal-spool`）由 root 工具执行，经邮箱新请求 `archive-prune`（响应合同 `/4` 多一个 `prune` 字段，形状由 `mailbox.mjs#validatePrune` 精确校验）。两边的计划函数用同一份案例 `test/fixtures/retention-cases.json` 约束。
+
+### 34.2 例外：Owner 的保留清单
+
+常驻侧没有可靠办法查询 KooYomi 里哪些 Task、Bug、Evidence 还没关闭、引用了哪个归档，所以改用**显式保留清单**：`C:\ProgramData\CluedIndependentCI\resident\owner\retention-keep.json`（`owner\` 只有提权的 Owner 能写，服务只读；名字不是 Owner 请求的名字形状，`OwnerInbox` 不会读它）。合同 `clued.independent-ci.archive-retention-keep/1`：`{ contract, keep: [{ name, spool: windows|linux|any, ref }] }`，`ref` 写引用它的 Task/Bug/Evidence id 或 `owner`，只记录不解释；最多 2000 条、256 KB。Linux 工具经 `/mnt/c/...` 读同一个文件。被列出的归档不删，单独计量（回执 `protected`：目录数、字节数、是否量全；Windows 回执另列名字，最多 64 个）。Owner 关闭相关 Task 后自己从清单里删掉那一行。
+
+### 34.3 安全措施（任何一条不满足都不删，写回执说明）
+
+- **只在批次之间、且无未关闭批次**时执行：服务循环的 `betweenBatches`（IDLE/DEFERRED/PAUSED/WAITING）里，`idle` 再查：没有子进程在跑、没有 HALT、账本里没有非终止条目（运行中、等待、停车 A/B 都算）、没有未归档的现场。Linux 侧另要 root 自己证明静止（`quiescence`），且必须有新鲜的 companion 心跳。
+- 先算计划再执行；每个要删的目录在删之前重新清点，字节数或条目数变了（`RETENTION_CHANGED_SINCE_PLAN`）、出现链接就停。
+- 只删 spool 根下、名字匹配三种已知模式的目录；spool 根本身必须是真目录且真实路径未被重定向（`RETENTION_SPOOL_REDIRECTED`）。
+- fail-closed：某类里任何一个目录大小读不到（`RETENTION_SIZE_UNREADABLE`）或含符号链接/联接点/特殊文件（`RETENTION_LINK_REFUSED`），该类本轮一个都不删；保留清单读不到或不合合同（`RETENTION_KEEP_LIST_UNREADABLE`/`_INVALID`），整个 spool 不删；删除自己写（深度优先，遇到链接就停，从不跟进），权限错误记 `RETENTION_PERMISSION_REFUSED` 并停止本轮。
+- Windows 上服务账户对 spool 根只有“新建子目录”，但对它自己建的归档目录有修改权（含 DELETE），所以能删它自己的归档；Owner 早年手工建的 `completed-*` 等会以 `RETENTION_PERMISSION_REFUSED` 停下，留给 Owner。
+
+### 34.4 回执
+
+- `archive-retention-prune`：`{ spool, rule, refused, classes: { success|failure: { directories, bytes, deleteDirectories, deleteBytes, refused } }, protected, deferred, deleted: [{ name, class, bytes }], deletedBytes, stopped: { name, code, partial } | null, deletesAnything }`。有删除的每轮都写；被拒或中途停的同一原因每天最多一条。Linux 工具另在 `/var/lib/clued-independent-ci/resident/retention/` 写一份本地持久回执（含保护名单全文）。
+- `disk-space-reminder`：C: 可用空间低于 30 GiB 时每天最多一条 `{ drive: 'C:', freeBytes, thresholdBytes, action: 'owner-free-disk-space', blocksAnything: false }`；读不到就不提醒，从不阻断。
+
+### 34.5 成功归档瘦身（`clued-ci-resident-linux`）
+
+- 归档合同 `resident-linux-archive/3`：`success-close` 的计划带 `slimCandidates: true`。所有移动都核实之后，归档里的 `workspace-<作业 id>/candidate` 和 `run-<名字>/candidate` 各写一份 `candidate.slim.json`（合同 `resident-linux-archive-slim/1`：提交 SHA、整树清单哈希、文件数、字节数、`restoreFrom: git`），再删掉那棵树（三份候选树约 660 MB，单个成功归档约 850 MB → 约 190 MB）。提交 SHA 取候选检出的分离 HEAD；`run-placement-<作业 id>` 的候选没有 `.git` 时取同一作业工作区的提交。
+- 提交 SHA 未知（`SLIM_COMMIT_UNKNOWN`）、含特殊文件、含链接而 rmtree 不能防符号链接攻击、删除失败的，树原样保留并在 `slimKept` 里报告；瘦身失败不影响归档本身的 `verified`。
+- 失败归档、角色间归档保持完整。Windows 侧归档（`archive-windows-spool.ps1`、`src/archive.mjs`）只搬协议记录，本来就没有候选树，不改。
+
+### 34.6 trivy 缓存回收（`worker/formal-trivy-v3/cache.mjs`）
+
+现装的是角色策略 v3 → `formal-trivy-v4/adapter.mjs`，它没有自己的 cache.mjs，用的就是 v3 的，所以只改这一个文件（`formal-trivy-v2/cache.mjs` 只属于已退役的 v2 策略，没改）。`promote()` 在指针改名、父目录 fsync、读回确认之后调用 `reclaimCache`：删掉该种类（db 或 checks）在 `staging/` 下的全部副本（准备锁在手，没有别的准备在用），以及 `generations/` 下除当前和上一代之外的该种类各代；只碰名字形状正确的目录，另一种类不动，链接只删链接本身。回收失败只记录在返回值 `reclaimed` 里，不让提升失败，下次提升再试。
+
+### 34.7 无心跳不量 Linux（Task `018da927` 子项 c）
+
+`RetentionWatch` 先问 `companionReady`（心跳年龄不超过 `policy.companion.heartbeatMaxAgeMs`，与执行器开批用同一标准）。没有心跳时不发 `archive-usage`、也不发 `archive-prune`，Linux 部分记为 `skipped: COMPANION_HEARTBEAT_ABSENT`；以前这一步要等满 3 分钟超时，期间主循环不动。
+
+### 34.8 verify-resident.ps1 的结论（Task `018da927` 子项 b）
+
+结论抽成 `Get-VerifyVerdict`，“需要提权再跑”只认值是字符串且恰为 `'unreadable'` 的检查（`-is [string] -and -ceq`）。原来 `-eq` 左边是 `$true` 时会把字符串转成布尔，任何通过的检查都算“读不到”，所以任何失败都报 `RESIDENT_PARTIALLY_VERIFIED_RUN_ELEVATED`。
+
+### 34.9 测试
+
+- `test/retention.test.mjs`（新）：共享案例；保留清单；Windows 一轮（删最旧、保护、最新 N 个、其他名字不动）；联接点、清单坏、spool 被重定向都不删；无心跳不调测量、主循环一轮立即返回；只在 idle 时删、回执频率；C: 提醒；`archive-prune` 经邮箱的形状；service-main 接线。
+- `test/verify-verdict.test.mjs`（新）与 `windows/test-resident-windows.ps1` 新增 4g（7 项）：失败原因不是 unreadable 时不报 RUN_ELEVATED。
+- `test/test_linux_tool.py` 新增 `Retention`（共享案例、清单、一轮、链接、计划后变化、成功瘦身、失败归档完整与提交未知时保留）。
+- `independent-ci-v1/test/formal-trivy-cache-reclaim.test.mjs`（新）：保留当前与上一代、首次提升、另一种类与其他形状不动、链接不跟进、失败只报告、越界拒绝、回收在读回之后。
+
+### 34.10 生效与不变量
+
+需要常驻层 Windows 与 Linux 重装（companion 与服务一起，响应合同 `/4`），trivy 回收需要 Source 重装。删除只发生在上面的条件下；没有新的发布路径，不碰 GitHub、凭据或网络。
