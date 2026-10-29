@@ -2935,14 +2935,14 @@
   "native617_pending_sources": [
     {
       "file": ".github/workflows/clued-native617-admission-dispatch.yml",
-      "workflow_blob": "7a4e448bd703a35bcb960fc7fc79b9bc7c92a97f",
+      "workflow_blob": "b3bac281913f30e0a30ad2adba28e1c9e822e5a5",
       "roles": [
         {
           "job_id": "admit",
-          "definition_sha256": "dccc4c9cdca85a5b7d5c5a230d61090085a2e2604d5ba3eb1c2ec6325274c782",
+          "definition_sha256": "9cfb9fb59855803c42ba4f554be031265e86425eadc1d2ecdbda74fb1e5c2467",
           "definition": {
             "name": "clued-native617-admission-dispatch",
-            "if": "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
+            "if": "needs.admission-gate.outputs.admitted == 'true' && (github.ref == 'refs/heads/main')",
             "runs-on": [
               "self-hosted",
               "Linux",
@@ -3004,7 +3004,8 @@
                   "retention-days": 90
                 }
               }
-            ]
+            ],
+            "needs": "admission-gate"
           }
         }
       ]

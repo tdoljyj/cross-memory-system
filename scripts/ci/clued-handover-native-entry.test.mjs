@@ -108,3 +108,9 @@ test('complete executable subject includes the dedicated control workflow',async
   const {REQUIRED_FILES}=await import('./clued-handover-external-source-check.mjs');
   assert.ok(REQUIRED_FILES.includes('.github/workflows/clued-native617-admission-dispatch.yml'));
 });
+
+test('dedicated control respects the trusted main workflow gate',async()=>{
+  const {gateFindings}=await import('./clued-work-admission.mjs');
+  const raw=fs.readFileSync(new URL('../../.github/workflows/clued-native617-admission-dispatch.yml',import.meta.url),'utf8');
+  assert.deepEqual(gateFindings(raw,null),[]);
+});

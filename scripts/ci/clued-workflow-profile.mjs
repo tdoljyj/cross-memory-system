@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-export const COMPONENT_VERSION = "1.0.2";
+export const COMPONENT_VERSION = "1.0.3";
 
 const digest=text=>createHash('sha256').update(text).digest('hex');
 const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?
@@ -422,7 +422,7 @@ export function verifyExternal2LateIdleSourceByteRelation({sourceBytes,programMa
 // Pending Source metadata is not an accepted Source or a Host qualification.
 // Keep it outside active/accepted workflow maps until an actual registrar successor.
 const NATIVE617_FILES=Object.freeze({
-  '.github/workflows/clued-native617-admission-dispatch.yml':{job:'admit',route:'handover-native-control-once',jobs:['admit']},
+  '.github/workflows/clued-native617-admission-dispatch.yml':{job:'admit',route:'handover-native-control-once',jobs:['admission-gate','admit']},
   '.github/workflows/clued-handover-external-qualification.yml':{job:'qualify',route:'handover-native-task617-once',jobs:['admission-gate','qualify']},
   '.github/workflows/clued-handover-disposable-idle.yml':{job:'disposable-idle',route:'handover-native-task617-once',jobs:['admission-gate','disposable-idle']}
 });
