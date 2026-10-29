@@ -37,7 +37,9 @@
 // own budget, the environment releases and the supersessions), the waiting retries, the new-trigger re-evaluations per
 // (PR, commit), and the counted releases per head (waits never count; an environment release while the breaker was not
 // closed does not either). A new release reason, SUPERSEDED, closes a reservation whose PR got a newer commit before
-// stage 1 (nothing of it ran).
+// stage 1 (nothing of it ran). Primary/standby C3 (DESIGN §29): a release of the failure-table class node-role (this node
+// holds no ci-admission role) says nothing about the PR; it counts neither as an evaluation, nor as a new-trigger
+// re-evaluation, nor towards the release cap.
 //
 // Phase 2, step 2 (parking, design v0.5 §4.3, §4.8, §4.9): an entry can rest at two parking points, with nothing of it
 // running and Linux empty:
@@ -477,10 +479,11 @@ export class Ledger {
       const origin = RESERVATION_ORIGINS.includes(reserved.origin) ? reserved.origin : 'queued';
       const s = reserved.subject ?? {};
       if (origin === 'waiting-retry') u.waitingRetries += 1;
-      if (origin === 'new-trigger') bump(u.reevaluations, `${s.pr}:${s.headSha}`);
+      const nodeRole = facts?.class === 'node-role';
+      if (origin === 'new-trigger' && !nodeRole) bump(u.reevaluations, `${s.pr}:${s.headSha}`);
       const environment = ['environment', 'transient'].includes(facts?.class);
-      if (!started && origin !== 'waiting-retry' && !UNCOUNTED_RELEASES.includes(reason) && !environment) u.evaluations += 1;
-      if (reason && reason !== 'SUPERSEDED' && facts?.class !== 'waiting' && !(environment && facts?.breakerState && facts.breakerState !== 'closed') && HEX40.test(s.headSha ?? '')) bump(u.releasesByHead, s.headSha);
+      if (!started && origin !== 'waiting-retry' && !UNCOUNTED_RELEASES.includes(reason) && !environment && !nodeRole) u.evaluations += 1;
+      if (reason && reason !== 'SUPERSEDED' && facts?.class !== 'waiting' && !nodeRole && !(environment && facts?.breakerState && facts.breakerState !== 'closed') && HEX40.test(s.headSha ?? '')) bump(u.releasesByHead, s.headSha);
     };
     const read = async file => (await exists(file)) ? (await readJson(file)).value : null;
     for (const key of await this.keys()) {
@@ -527,11 +530,24 @@ export class Ledger {
   // Intents that were neither consumed (attempt 2 reserved once) nor closed, oldest first. Consumption is a
   // create-only record written BEFORE the reservation, so any outcome of attempt 2 (also NOT_ADMITTED or
   // BUNDLE_UNAVAILABLE, which release its ledger entry again) ends the intent for good (PR-A review MAJOR 1).
+  //
+  // Primary/standby C3 (DESIGN §29.10): a node-role release of attempt 2 (this node held no role at its stage 1; nothing about the
+  // PR was decided) gives the same attempt 2 back with reopenAttempt2. The intent is pending while it is not closed and every
+  // consumption (consumed.json, consumed-2.json, ...) has been reopened (reopened-1.json, ...); the key is the same, so it is
+  // never an attempt 3.
+  async attempt2Marks(key1) {
+    const names = await fs.readdir(this.attempts2);
+    const count = re => names.filter(n => n.startsWith(`${key1}.`) && re.test(n.slice(key1.length + 1))).length;
+    return { closed: names.includes(`${key1}.closed.json`), consumed: count(/^consumed(-\d+)?\.json$/), reopened: count(/^reopened-\d+\.json$/) };
+  }
+
   async pendingAttempts2() {
     const out = [];
     for (const name of (await fs.readdir(this.attempts2)).sort()) {
       const m = /^([0-9a-f]{64})\.json$/.exec(name);
-      if (!m || await exists(path.join(this.attempts2, `${m[1]}.closed.json`)) || await exists(path.join(this.attempts2, `${m[1]}.consumed.json`))) continue;
+      if (!m) continue;
+      const marks = await this.attempt2Marks(m[1]);
+      if (marks.closed || marks.consumed !== marks.reopened) continue;
       let v;
       try { v = (await readJson(path.join(this.attempts2, name))).value; } catch (error) { if (!contentError(error)) throw error; continue; }
       if (v.key1 !== m[1] || !HEX64.test(v.key2 ?? '') || batchKey(v.subject) !== v.key2) continue;
@@ -544,7 +560,18 @@ export class Ledger {
   // Written once, right before attempt 2 is reserved; a crash in between loses attempt 2 (the safe side).
   async consumeAttempt2(key1, facts) {
     check(HEX64.test(key1), 'BATCH_KEY_INVALID');
-    await writeNew(path.join(this.attempts2, `${key1}.consumed.json`), { key1, facts, at: isoNow(this.clock) });
+    const marks = await this.attempt2Marks(key1);
+    check(!marks.closed && marks.consumed === marks.reopened, 'ATTEMPT2_NOT_PENDING');
+    await writeNew(path.join(this.attempts2, marks.consumed === 0 ? `${key1}.consumed.json` : `${key1}.consumed-${marks.consumed + 1}.json`), { key1, facts, at: isoNow(this.clock) });
+  }
+
+  // Gives a consumed attempt 2 back once: create-only, only when the latest consumption is not reopened yet and the intent is
+  // not closed. The executor calls it for a node-role release of attempt 2 only (DESIGN §29.10).
+  async reopenAttempt2(key1, facts) {
+    check(HEX64.test(key1), 'BATCH_KEY_INVALID');
+    const marks = await this.attempt2Marks(key1);
+    check(!marks.closed && marks.consumed === marks.reopened + 1, 'ATTEMPT2_NOT_REOPENABLE');
+    await writeNew(path.join(this.attempts2, `${key1}.reopened-${marks.reopened + 1}.json`), { key1, facts, at: isoNow(this.clock) });
   }
 
   async closeAttempt2(key1, facts) {

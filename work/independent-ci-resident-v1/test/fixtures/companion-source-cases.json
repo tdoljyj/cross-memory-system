@@ -1,0 +1,34 @@
+{
+  "contract": "clued.independent-ci.companion-source-cases/1",
+  "note": "Shared cases for the two checks that the companion's Source scripts lie under the installed CI Source (DESIGN section 33): src/companion.mjs#assertSourceScripts (package build, companion start) and windows/verify-resident.ps1#Test-CompanionSourceScripts (verify). test/r4-first-halt.test.mjs runs the JavaScript side over this file with the install root C:\\ProgramData\\CluedIndependentCI\\resident; windows/test-resident-windows.ps1 runs the PowerShell side over it with a scratch root (the accepted paths exist there). {root} is the install root, {sha} the CI Source hash the install is for, {other} an older Source hash, {base} = {root}\\source\\{sha}. The refused cases name the key that is refused first; a refused case whose other script is fine puts the good path in the other key.",
+  "sha": "03a75f76b2c51a8d7e9f04c6b1a3d58e2f9047c1b6a85d3e0f12c7a9b4d6e851",
+  "other": "0146f406a9d3c5e7b1f2084d6c9a3e5b7d1f02c4a6e8b0d2f4a6c8e0b2d4f6a8",
+  "good": { "relayScript": "{base}\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v4\\relay-public.ps1", "bundleScript": "{base}\\work\\actions-hosted-migration\\independent-ci-v1\\src\\resident-v2\\build-bundle.ps1" },
+  "accepted": [
+    { "name": "the installed Source paths" },
+    { "name": "the root with a trailing backslash is the same root", "rootSuffix": "\\" },
+    { "name": "Windows ignores case", "upperCase": true },
+    { "name": "names with dots, at signs and dashes", "relayScript": "{base}\\a.b\\c@d\\e-f_g.ps1" }
+  ],
+  "refused": [
+    { "name": "relay script in an older Source (the 2026-10-29 case)", "relayScript": "{root}\\source\\{other}\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v4\\relay-public.ps1", "key": "relayScript" },
+    { "name": "bundle script in an older Source (the 2026-10-29 case)", "bundleScript": "{root}\\source\\{other}\\work\\actions-hosted-migration\\independent-ci-v1\\src\\resident-v2\\build-bundle.ps1", "key": "bundleScript" },
+    { "name": "both in an older Source: the first key is named", "relayScript": "{root}\\source\\{other}\\x\\relay-public.ps1", "bundleScript": "{root}\\source\\{other}\\x\\build-bundle.ps1", "key": "relayScript" },
+    { "name": "the placeholder was never replaced", "bundleScript": "{root}\\source\\<sourceManifestSha256>\\work\\build-bundle.ps1", "key": "bundleScript" },
+    { "name": "the resident directory instead of the Source", "relayScript": "{root}\\resident\\{sha}\\relay-public.ps1", "key": "relayScript" },
+    { "name": "another root", "relayScript": "C:\\Other\\source\\{sha}\\relay-public.ps1", "key": "relayScript" },
+    { "name": "a sibling whose name only starts with the hash", "bundleScript": "{root}\\source\\{sha}x\\build-bundle.ps1", "key": "bundleScript" },
+    { "name": "the Source directory itself", "relayScript": "{base}", "key": "relayScript" },
+    { "name": "the Source directory with a closing backslash", "relayScript": "{base}\\", "key": "relayScript" },
+    { "name": "a parent segment out of the Source", "relayScript": "{base}\\..\\..\\resident\\x.ps1", "key": "relayScript" },
+    { "name": "a parent segment into another Source", "bundleScript": "{base}\\..\\{other}\\build-bundle.ps1", "key": "bundleScript" },
+    { "name": "a current-directory segment", "relayScript": "{base}\\.\\relay-public.ps1", "key": "relayScript" },
+    { "name": "an empty segment", "bundleScript": "{base}\\work\\\\build-bundle.ps1", "key": "bundleScript" },
+    { "name": "forward slashes", "relayScript": "{base}/work/relay-public.ps1", "key": "relayScript" },
+    { "name": "an alternate data stream", "bundleScript": "{base}\\work\\build-bundle.ps1:stream", "key": "bundleScript" },
+    { "name": "a space in a name", "relayScript": "{base}\\work dir\\relay-public.ps1", "key": "relayScript" },
+    { "name": "a relative path", "relayScript": "source\\{sha}\\relay-public.ps1", "key": "relayScript" },
+    { "name": "a non-string", "relayScript": 7, "key": "relayScript" },
+    { "name": "no value", "bundleScript": null, "key": "bundleScript" }
+  ]
+}

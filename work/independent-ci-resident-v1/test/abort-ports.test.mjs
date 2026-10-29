@@ -46,6 +46,7 @@ async function fixture(t, { invoke } = {}) {
     // pumpBlocks: the relay-stage pump answers only once it is cancelled (a pump still waiting on Linux).
     async await(req) {
       if (req.kind === 'check-refs') return { ok: true, code: null };
+      if (req.kind === 'memory-ready') return null; // DESIGN §32: no reading, the stage runs as before the gate
       if (companionMailbox.pumpBlocks) await new Promise(resolve => { companionMailbox.unblock = resolve; });
       return { ok: false, code: 'COMPANION_PUMP_CANCELLED' };
     },

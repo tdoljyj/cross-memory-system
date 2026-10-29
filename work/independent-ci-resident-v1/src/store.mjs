@@ -24,6 +24,70 @@ export async function writeNew(file, value) {
   return sha256(bytes);
 }
 
+// writeNew for a file the other side reads while it is still being written (DESIGN §31, Task 32d10618). writeNew creates the
+// target and only then writes it, so a reader that opens it in between finds it empty or short. Here the bytes are written
+// and flushed under a temporary name in the same directory first, and one rename gives them the target name: the target is
+// either not there or complete. The temporary name starts with TEMP_PREFIX, which no reader's name pattern accepts.
+//
+// Create-only, as writeNew: an existing target is refused. fs.rename replaces an existing file on Windows, and a hard link
+// (which would refuse) leaves the file with two names for a moment, which readBounded refuses as a changed identity; so the
+// target is looked at before the rename. That leaves a window for a second writer of the very same name. It is for names
+// that have one writer (request ids are UUIDs, a request has one answer, hint numbers come from one advisory lane); a
+// claim that two writers contend for (the pump mark) stays with writeNew's exclusive create.
+//
+// Only for a directory the writer may rename in. The Owner's drop boxes (inbox\, requests\) are create-only for the Owner,
+// who has neither DELETE nor DELETE_CHILD there (install-resident.ps1 Get-AclPlan): the readers of those wait instead
+// (inbox.mjs, DESIGN §31.3).
+export const TEMP_PREFIX = '.tmp-';
+export const TEMP_FILE = /^\.tmp-[0-9a-f]{12}-/;
+// A rename can fail for a moment on Windows while a scanner or indexer holds the new file open.
+const RENAME_TRANSIENT = new Set(['EPERM', 'EBUSY', 'EACCES']);
+const RENAME_RETRY_MS = Object.freeze([20, 50, 100, 250, 500]);
+
+export async function writeNewAtomic(file, value, { sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+  const bytes = Buffer.from(canonicalJson(value) + '\n', 'utf8');
+  if (await exists(file)) fail('CREATE_ONLY_TARGET_EXISTS', path.basename(file));
+  const temporary = path.join(path.dirname(file), `${TEMP_PREFIX}${nonce()}-${path.basename(file)}`);
+  const handle = await fs.open(temporary, 'wx');
+  try {
+    try {
+      await handle.writeFile(bytes);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    if (await exists(file)) fail('CREATE_ONLY_TARGET_EXISTS', path.basename(file));
+    for (let attempt = 0; ; attempt += 1) {
+      try { await fs.rename(temporary, file); break; } catch (error) {
+        if (!RENAME_TRANSIENT.has(error?.code) || attempt >= RENAME_RETRY_MS.length) throw error;
+        await sleep(RENAME_RETRY_MS[attempt]);
+      }
+    }
+  } catch (error) {
+    await fs.unlink(temporary).catch(() => {}); // a failed write leaves no temporary file behind
+    throw error;
+  }
+  return sha256(bytes);
+}
+
+// Temporary files a crash left behind (older than the minimum age: a write that is still going on is never touched). Best
+// effort, in the directory the caller writes to; a directory it may not delete in leaves them alone.
+export async function sweepTemp(dir, { olderThanMs = 3_600_000, clock = Date.now } = {}) {
+  let names;
+  try { names = await fs.readdir(dir); } catch { return 0; }
+  let removed = 0;
+  for (const name of names) {
+    if (!TEMP_FILE.test(name)) continue;
+    try {
+      const stat = await fs.lstat(path.join(dir, name));
+      if (!stat.isFile() || clock() - stat.mtimeMs < olderThanMs) continue;
+      await fs.unlink(path.join(dir, name));
+      removed += 1;
+    } catch { /* not ours to delete, or already gone */ }
+  }
+  return removed;
+}
+
 // Bounded read of a file someone else may control: one handle, the size and type come from that
 // handle (no lstat/readFile gap), at most `maximum` bytes are ever read, links and multi-link
 // files are refused. 'empty' is kept apart from 'size' so a caller can tell an unwritten file

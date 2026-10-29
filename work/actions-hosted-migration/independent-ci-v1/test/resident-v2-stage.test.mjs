@@ -8,7 +8,7 @@ import { hash } from '../src/resident-v2/prepare-record.mjs';
 import { deriveBatch, residentBatchKey, writeBatch } from '../src/resident-v2/derive-batch.mjs';
 import { invokeStage, invokeRoleProbe, readSpoolResult, RESULT_WRAPPER_CONTRACT_V2 } from '../src/resident-v2/invoke-stage.mjs';
 import { loadStageInputs, parseEntryArgs, writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
-import { buildStageFact, outcomeFailureCode, validateOutcome, notAdmittedCode, ALL_STAGE_CODES, TRANSIENT_CODES, NATIVE_RECEIPT_CONTRACT_V2 } from '../src/resident-v2/stage-fact.mjs';
+import { buildStageFact, outcomeFailureCode, validateOutcome, notAdmittedCode, ALL_STAGE_CODES, NOT_ADMITTED_CODES, TRANSIENT_CODES, NATIVE_RECEIPT_CONTRACT_V2 } from '../src/resident-v2/stage-fact.mjs';
 import { BROKER_RESPONSE_CONTRACT, validateBrokerRequest } from '../src/resident-v2/broker-protocol.mjs';
 import { OUTCOME_CONTRACT, ENTRY_V2, stageByNumber } from '../src/resident-v2/layout.mjs';
 import { sourceRootOfModule } from '../src/resident-v2/held-record.mjs';
@@ -233,6 +233,16 @@ test('stage-fact catalogue: every mapped code is catalogued; transient codes are
   assert.equal(notAdmittedCode({ reasonCodes: ['owner_review_required', 'protected_change_not_up_to_date'] }), 'PROTECTED_CHANGE_NOT_UP_TO_DATE');
   assert.equal(notAdmittedCode({}), 'NATIVE_NOT_ADMITTED');
   assert.ok(TRANSIENT_CODES.every(c => ALL_STAGE_CODES.includes(c)));
+  // Primary/standby C3: "this node holds no ci-admission role" is a not-admitted code, and it dominates every other reason,
+  // protected_change_not_up_to_date included: a node that is not on duty decides nothing about the PR.
+  assert.ok(NOT_ADMITTED_CODES.includes('NODE_ROLE_NOT_HELD') && ALL_STAGE_CODES.includes('NODE_ROLE_NOT_HELD'));
+  assert.equal(notAdmittedCode({ reasonCodes: ['admission_binding_required'] }), 'NODE_ROLE_NOT_HELD');
+  assert.equal(notAdmittedCode({ reasonCodes: ['owner_review_required', 'admission_binding_required'] }), 'NODE_ROLE_NOT_HELD');
+  assert.equal(notAdmittedCode({ reasonCodes: ['protected_change_not_up_to_date'], nativeReasonCodes: ['admission_binding_required'] }), 'NODE_ROLE_NOT_HELD');
+  assert.equal(notAdmittedCode({ reasonCodes: ['binding_not_authorized'] }), 'NATIVE_NOT_ADMITTED', 'only the role reason is the role code');
+  const noRole = { status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, mayHavePublished: false, diagnostic: { reasonCodes: ['admission_binding_required'], nativeReasonCodes: [] } };
+  assert.equal(outcomeFailureCode(noRole, 1), 'NODE_ROLE_NOT_HELD');
+  assert.equal(outcomeFailureCode(noRole, 3), 'BATCH_CLAIM_CHANGED', 'after stage 1 the same answer keeps its old code');
   assert.equal(buildStageFact({ stage: 1, nonce: hex(16), workManifestSha256: hex(32), preflightCode: 'STAGE_PACKAGE_REFUSED' }).tree_active_processes, 0);
   void plan; void randomUUID;
 });

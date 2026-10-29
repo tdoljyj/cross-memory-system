@@ -1,4 +1,4 @@
-// C2 only: a read-only role observation. This module never changes node mode or grants a batch.
+// C2: a read-only role observation. This module never changes node mode or grants a batch; the executor does (C3, DESIGN §29).
 // A held reply is useful only after Owner parking established a retained role row (design 1.4).
 // The RPC deliberately cannot tell a holder from an open-to-all role; C3 must not infer parking.
 import { check, exactKeys } from './canonical.mjs';
@@ -20,8 +20,12 @@ export function validateRoleProbeFact(v) {
 
 // `idle` comes from the executor's authoritative ledger, never from the advisory status file.
 // A backward or invalid clock is not due. No timer, receipt, ledger or network lives in this class.
+// `urgent` (C3, DESIGN §29): the next idle tick probes without waiting for the interval. The executor sets it at a start, after an
+// Owner re-arm, and after a failure that may mean the role is gone; any observation clears it. It is not part of the stored
+// book (snapshot/restore): a restart is urgent anyway.
 export class RoleProbe {
-  constructor() { this.last = null; this.failures = 0; this.failingSince = null; this.connectionNotified = false; this.uncertainNotified = false; }
+  constructor() { this.last = null; this.failures = 0; this.failingSince = null; this.connectionNotified = false; this.uncertainNotified = false; this.urgent = false; }
+  markUrgent() { this.urgent = true; }
   snapshot() { return { last: this.last, failures: this.failures, failingSince: this.failingSince, connectionNotified: this.connectionNotified, uncertainNotified: this.uncertainNotified }; }
   restore(v) {
     exactKeys(v, ['last', 'failures', 'failingSince', 'connectionNotified', 'uncertainNotified'], 'ROLE_PROBE_BOOK_REFUSED');
@@ -39,7 +43,7 @@ export class RoleProbe {
   }
   due({ now, mode, idle }) {
     return idle === true && Number.isSafeInteger(now) && now > 0 && Object.hasOwn(ROLE_PROBE_INTERVAL_MS, mode)
-      && (this.last === null || (now >= this.last.at && now - this.last.at >= ROLE_PROBE_INTERVAL_MS[mode]));
+      && (this.last === null || (now >= this.last.at && (this.urgent === true || now - this.last.at >= ROLE_PROBE_INTERVAL_MS[mode])));
   }
   observe(fact, now) {
     const f = validateRoleProbeFact(fact);
@@ -60,6 +64,7 @@ export class RoleProbe {
       this.failures = 0; this.failingSince = null; this.connectionNotified = false; this.uncertainNotified = false;
     }
     this.last = Object.freeze({ at: now, ...f });
+    this.urgent = false;
     return { probe: { at: new Date(now).toISOString(), result: f.result, failures: this.failures,
       failingSince: this.failingSince === null ? null : new Date(this.failingSince).toISOString() }, notices };
   }

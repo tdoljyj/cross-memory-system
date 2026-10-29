@@ -114,7 +114,8 @@ test('stage 2 first proves no push since the bundle; a moved ref ends the stage 
   const h = await engineFixture(t);
   const r3 = await h.engine.runStage(await h.engine.derive(subject, KEY), stages[1]);
   assert.equal(r3.ok, true);
-  assert.deepEqual(h.sent.map(([k]) => k), ['check-refs', 'relay-stage']);
+  // DESIGN §32: the memory gate reads once right before the stage (a default answer carries no reading: the stage runs as before)
+  assert.deepEqual(h.sent.map(([k]) => k), ['check-refs', 'memory-ready', 'relay-stage']);
 });
 
 test('stage 10 (quota phase 2 step 3c-1): a train run derived into work\train and run as stage 10; the fact carries the train facts', async t => {

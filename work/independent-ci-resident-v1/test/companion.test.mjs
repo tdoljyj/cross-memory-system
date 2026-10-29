@@ -72,7 +72,8 @@ function fakeHost({ challenges = 1, workerExit = 'inactive', failSendIssue = fal
       const ch = `challenge-${String(next).padStart(2, '0')}`;
       return { code: 0, stdout: state.challengesLeft > 0 ? `active.lock\n${ch}.json\n${ch}.ready.json\n` : 'result.json\nresult.ready.json\n' };
     }
-    if (joined.includes('show --property=ActiveState')) return { code: 0, stdout: `${workerExit}\n` };
+    // systemctl show of the worker unit (DESIGN §26: KEY=VALUE lines; a reaped unit has no invocation left)
+    if (joined.includes('show --property=ActiveState')) return { code: 0, stdout: `ActiveState=${workerExit}\nInvocationID=\nExecMainStartTimestampMonotonic=0\n` };
     if (joined.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
     if (joined.includes('start --no-block')) return { code: 0, stdout: '' };
     return { code: 0, stdout: '' };
