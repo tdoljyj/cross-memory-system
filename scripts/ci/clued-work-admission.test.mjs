@@ -1917,6 +1917,7 @@ test("gate guard (re-review 4, m3): an ungated self-hosted job may not add or ch
 // matrix entries, and change nothing else.
 const SHRUNK = [];
 const STRATEGY_CHANGED = ["self_hosted_strategy_changed_ungated:trivy-trusted-self-hosted"];
+const NOT_PLAIN_JOB_KEY = /^workflow_not_canonical:job_key:\d+$/;
 const INCLUDE_STRATEGY = [
   "    strategy:",
   "      fail-fast: false",
@@ -1941,7 +1942,9 @@ function assertShrinkCases(cases) {
     const baseText = withStrategy(base);
     const headText = withStrategy(head);
     assert.notEqual(headText, baseText, label);
-    assert.deepEqual(gateFindings(headText, baseText), expected, label);
+    // A RegExp: the head is refused, by its form (Task b5234943) rather than by the strategy check.
+    if (expected instanceof RegExp) assert.match(gateFindings(headText, baseText).join(" "), expected, label);
+    else assert.deepEqual(gateFindings(headText, baseText), expected, label);
   }
 }
 
@@ -2070,7 +2073,8 @@ test("gate guard (Owner Decision 586181ec): a strategy that is not read with cer
     both("a duplicate key", insertLines(S, 8, "            route_label: route-z")),
     both("a no-break space", setLine(S, 7, "            route_label: route-a ")),
     both("a merge key in the job", insertLines(S, 0, "    <<: *defaults")),
-    both("a quoted second strategy key", [...S, "    \"strategy\":", "      matrix:", "        n: [1, 2, 3]"]),
+    // Task b5234943: a job key that is not plain is refused by its form.
+    [...both("a quoted second strategy key", [...S, "    \"strategy\":", "      matrix:", "        n: [1, 2, 3]"]).slice(0, 3), NOT_PLAIN_JOB_KEY],
     both("a second strategy key in another case", [...S, "    Strategy:", "      matrix:", "        n: [1, 2, 3]"]),
     both("a strategy line with a value", setLine(S, 0, "    strategy: # entries below")),
     ["a flow mapping include", ["    strategy:", "      matrix:", "        include: [{runner_name: runner-a}, {runner_name: runner-b}]"],
@@ -2082,7 +2086,7 @@ test("gate guard (Owner Decision 586181ec): a strategy that is not read with cer
     ["a NEL in the base", setLine(S, 11, "            route_label: \"route-c\u0085      fail-fast: true\""), dropLines(S, 10, 11), STRATEGY_CHANGED],
     // A second strategy key the head adds in a tagged, anchored, aliased or quoted spelling.
     ...["!!str strategy:", "&k strategy:", "*k :", "\"strategy\":"].map((key) => [`a second strategy key ${key} in the head`, S,
-      [...dropLines(S, 10, 11), `    ${key}`, "      matrix:", "        n: [1, 2, 3, 4, 5]"], STRATEGY_CHANGED]),
+      [...dropLines(S, 10, 11), `    ${key}`, "      matrix:", "        n: [1, 2, 3, 4, 5]"], NOT_PLAIN_JOB_KEY]),
     // Comments are read through at any indent: entries after a comment line
     // indented less than the strategy still count.
     ["entries added after a less indented comment", insertLines(S, 10, "    # note"),
@@ -2091,6 +2095,159 @@ test("gate guard (Owner Decision 586181ec): a strategy that is not read with cer
     ["a list under another strategy key", ["    strategy:", "      other:", "        include:", "          - a: 1", "          - a: 2"],
       ["    strategy:", "      other:", "        include:", "          - a: 1"], STRATEGY_CHANGED],
   ]);
+});
+
+// --- Task b5234943: forms of a strategy, job or job key the line reader did not see.
+
+const SELF_HOSTED = "trivy-trusted-self-hosted";
+const MATRIX = ["      matrix:", "        n: [1, 2, 3, 4, 5]"];
+
+test("gate guard (Task b5234943, P1 and 6): a strategy key in another spelling is refused where the base had none", () => {
+  const base = historicalUngatedTrivy();
+  for (const key of ["\"strategy\":", "'strategy':", "strategy :", "!!str strategy:", "&a strategy:", "!!str &a strategy:"]) {
+    const head = withStrategy([`    ${key}`, ...MATRIX]);
+    assert.match(gateFindings(head, base).join(" "), NOT_PLAIN_JOB_KEY, key);
+    assert.match(workflowFormFindings(head).join(" "), /workflow_not_canonical:job_key:/, key);
+  }
+  for (const lines of [["    ? strategy", "    :", ...MATRIX], ["    ? strategy", "    : {matrix: {n: [1, 2, 3]}}"]]) {
+    assert.notDeepEqual(gateFindings(withStrategy(lines), base), [], lines.join("\n"));
+  }
+  // A plain key in another case is readable form; the strategy check sees it.
+  assert.deepEqual(gateFindings(withStrategy(["    Strategy:", ...MATRIX]), base), STRATEGY_CHANGED);
+  assert.deepEqual(gateFindings(withStrategy(["    STRATEGY:", ...MATRIX]), withStrategy(["    STRATEGY:", "      matrix:", "        n: [1]"])),
+    STRATEGY_CHANGED, "an entry added under a key in another case");
+  // A second strategy key, or any other job key, given twice.
+  assert.deepEqual(workflowFormFindings(withStrategy(["    strategy:", ...MATRIX, "    strategy:", ...MATRIX])).length, 1);
+  assert.match(workflowFormFindings(base.replace("    timeout-minutes: 25\n", "    timeout-minutes: 25\n    timeout-minutes: 300\n")).join(" "),
+    /duplicate_job_key/);
+  // Plain forms are judged as before.
+  assert.deepEqual(gateFindings(base, base), []);
+  assert.deepEqual(gateFindings(withStrategy(["    strategy:", ...MATRIX]), base), STRATEGY_CHANGED);
+  assert.deepEqual(gateFindings(withStrategy(["    strategy:", ...MATRIX]), withStrategy(["    strategy:", ...MATRIX])), []);
+});
+
+test("gate guard (Task b5234943, P2): a quoted value running over lines indented four spaces or less is refused", () => {
+  const base = historicalUngatedTrivy();
+  const hosted = "name: x\non: pull_request\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n";
+  const cases = [
+    // A forged strategy the reader would take for the job's own.
+    withStrategy(["    env:", "      NOTE: \"text", "    strategy:", ...MATRIX, "    \""]),
+    withStrategy(["    env:", "      NOTE: 'text", "    strategy:", ...MATRIX, "    '"]),
+    // A forged hosted job and a forged runs-on.
+    `${base}  evil:\n    runs-on: [self-hosted, Linux]\n    timeout-minutes: 5\n    name: "x\n  fake:\n    runs-on: ubuntu-latest\n    "\n`,
+    hosted.replace("    runs-on: ubuntu-latest\n", "    name: \"x\n    runs-on: ubuntu-latest\n    \"\n    runs-on: [self-hosted]\n"),
+    hosted.replace("      - run: npm test\n", "      - run: \"npm test\n\"\n"),
+    hosted.replace("      - run: npm test\n", "      - run: \"npm \\\n  test\"\n"),
+  ];
+  for (const text of cases) {
+    assert.match(gateFindings(text, base).join(" "), /workflow_not_canonical:(continuation|duplicate_job_key)/, text.slice(-160));
+    assert.match(workflowFormFindings(text).join(" "), /workflow_not_canonical:continuation/, text.slice(-160));
+  }
+  // Indented five spaces or more inside the jobs block, or one or more above
+  // it, a value over several lines stays in its key and is read as before.
+  for (const text of [
+    hosted.replace("      - run: npm test\n", "      - run: \"npm\n          test\"\n"),
+    hosted.replace("      - run: npm test\n", "      - run: 'npm\n\n          test'\n"),
+    hosted.replace("    runs-on: ubuntu-latest\n", "    name: \"build\n     job\"\n    runs-on: ubuntu-latest\n"),
+    hosted.replace("on: pull_request\n", "on: [pull_request,\n  push]\nenv:\n  A: \"a\n  b\"\n"),
+    hosted.replace("      - run: npm test\n", "      - run: |\n          echo \"unclosed [ {\n          echo '\n      - run: echo \"a [b\" 'c'\n"),
+  ]) {
+    assert.deepEqual(workflowFormFindings(text), [], text);
+    assert.deepEqual(gateFindings(text, null), [], text);
+  }
+});
+
+test("gate guard (Task b5234943, P3): a strategy against a base whose flow or quoted lines run at four spaces is reported", () => {
+  // The base's include list runs on in lines indented four spaces, past the
+  // end of jobField's and strategyRegion's view; the head appends an entry.
+  const flowBase = withStrategy(["    strategy:", "      matrix:", "        include: [", "    {n: 1},", "    {n: 2}]"]);
+  const flowHead = withStrategy(["    strategy:", "      matrix:", "        include: [", "    {n: 1},", "    {n: 2},", "    {n: 3}]"]);
+  assert.match(gateFindings(flowHead, flowBase).join(" "), /workflow_not_canonical:continuation/);
+  const quotedBase = withStrategy(["    strategy:", "      matrix:", "        n: [1]", "        note: \"a", "    b\""]);
+  assert.match(gateFindings(quotedBase.replace("    b\"", "    b\",\n    x: 1"), quotedBase).join(" "), /workflow_not_canonical/);
+  // A head in the plain form is still compared with such a base as unread.
+  const strategy = ["    strategy:", "      matrix:", "        n: [1, 2]"];
+  const unreadBase = withStrategy([...strategy, "    env:", "      NOTE: \"a", "    b\""]);
+  const plainHead = withStrategy([...strategy, "    env:", "      NOTE: \"a b\""]);
+  assert.deepEqual(workflowFormFindings(plainHead), []);
+  assert.deepEqual(gateFindings(plainHead, unreadBase), STRATEGY_CHANGED);
+  // A flow list indented five spaces or more is inside the region and compared.
+  const indentedBase = withStrategy(["    strategy:", "      matrix:", "        include: [", "          {n: 1},", "          {n: 2}]"]);
+  const indentedHead = withStrategy(["    strategy:", "      matrix:", "        include: [", "          {n: 1},", "          {n: 2},", "          {n: 3}]"]);
+  assert.deepEqual(gateFindings(indentedHead, indentedBase), STRATEGY_CHANGED);
+  assert.deepEqual(gateFindings(indentedBase, indentedBase), []);
+});
+
+test("gate guard (Task b5234943, P4): a column-0 continuation or top-level key in another form cannot end the jobs block early", () => {
+  const base = historicalUngatedTrivy();
+  const evil = "  evil:\n    runs-on: [self-hosted, Linux]\n    timeout-minutes: 300\n    steps:\n      - run: x\n";
+  const cases = [
+    [`${base}  hosted:\n    runs-on: ubuntu-latest\n    steps: [\n]\n${evil}`, /workflow_not_canonical:continuation/],
+    [`${base}  hosted:\n    runs-on: ubuntu-latest\n    steps: [{run: x},\n# note\n  ]\n${evil}`, /workflow_not_canonical:continuation/],
+    [`${base}  hosted:\n    runs-on: ubuntu-latest\n    steps:\n      - run: "x\n"\n${evil}`, /workflow_not_canonical:continuation/],
+    [`${base}!!str jobs:\n${evil}`, /workflow_not_canonical:top_level/],
+    [`${base}&j jobs:\n${evil}`, /workflow_not_canonical:top_level/],
+    [`${base}? jobs\n:\n${evil}`, /workflow_not_canonical:top_level/],
+    [`${base}Jobs:\n${evil}`, /workflow_not_canonical:top_level/],
+    [`${base}<<: *more\n`, /workflow_not_canonical:top_level/],
+    [`%YAML 1.1\n---\n${base}`, /workflow_not_canonical:top_level/],
+    [`name: "x\njobs:\n  fake:\n    runs-on: ubuntu-latest\n"\n${base.replace(/^name: trivy\n/, "")}`, /workflow_not_canonical:/],
+  ];
+  for (const [text, finding] of cases) {
+    assert.match(gateFindings(text, base).join(" "), finding, text.slice(-120));
+    assert.match(gateFindings(text, null).join(" "), finding);
+  }
+  // A job given twice is refused; a top-level key quoted plainly is not.
+  assert.match(workflowFormFindings(`${base}${evil}${evil}`).join(" "), /duplicate_job/);
+  assert.deepEqual(workflowFormFindings(base.replace("permissions:", "\"permissions\":")), []);
+  assert.deepEqual(gateFindings(`${base}  hosted:\n    runs-on: ubuntu-latest\n    steps: [{run: x}]\n`, base), []);
+});
+
+test("gate guard (Task b5234943, 5): a strategy that names an alias is reported though its text is unchanged", () => {
+  // The anchor sits outside the strategy, so the head changes the matrix
+  // without touching a line of the strategy region.
+  const base = withStrategy(["    env: &m", "      n: [1]", "    strategy:", "      matrix: *m"]);
+  const head = withStrategy(["    env: &m", "      n: [1, 2, 3, 4, 5, 6]", "    strategy:", "      matrix: *m"]);
+  assert.deepEqual(gateFindings(head, base), STRATEGY_CHANGED);
+  assert.deepEqual(gateFindings(base, base), STRATEGY_CHANGED, "an alias is never read as unchanged");
+  for (const value of ["[*a, 2]", "{n: *a}"]) {
+    const text = withStrategy(["    strategy:", "      matrix:", `        n: ${value}`]);
+    assert.deepEqual(gateFindings(text, text), STRATEGY_CHANGED, value);
+  }
+  // A glob, a quoted star or a star in a comment line is no alias.
+  for (const value of ["[src/*.js]", "['*']", "[\"a *b\"]"]) {
+    const text = withStrategy(["    strategy:", "      # *not an alias", "      matrix:", `        n: ${value}`]);
+    assert.deepEqual(gateFindings(text, text), value === "[\"a *b\"]" ? STRATEGY_CHANGED : [], value);
+  }
+});
+
+test("gate guard (Task b5234943, 7): a merge key in any spelling cannot bring in a strategy", () => {
+  const base = withStrategy(["    env: &d", "      A: \"1\"", "    <<: *d"]);
+  const head = withStrategy(["    env: &d", "      A: \"1\"", "      strategy: {matrix: {n: [1, 2, 3]}}", "    <<: *d"]);
+  assert.deepEqual(gateFindings(head, base), STRATEGY_CHANGED);
+  for (const key of ["!!merge <<: *d", "!<tag:yaml.org,2002:merge> <<: *d", "&x <<: *d", "\"<<\": *d", "<< : *d"]) {
+    const text = withStrategy(["    env: &d", "      A: \"1\"", `    ${key}`]);
+    assert.match(gateFindings(text, base).join(" "), NOT_PLAIN_JOB_KEY, key);
+  }
+  // A hosted job with a tagged merge key deeper down is not judged hosted.
+  const hosted = "name: x\non: pull_request\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n";
+  assert.deepEqual(gateFindings(hosted.replace("      - run: npm test\n", "      - !!merge <<: *s\n        run: x\n"), null), ["admission_gate_missing"]);
+  assert.deepEqual(gateFindings(hosted.replace("    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    Runs-On: [self-hosted]\n"), null), ["admission_gate_missing"]);
+  assert.deepEqual(gateFindings(hosted.replace("    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    USES: ./.github/workflows/x.yml\n"), null), ["admission_gate_missing"]);
+  assert.deepEqual(gateFindings(hosted, null), []);
+});
+
+test("gate guard (Task b5234943, 8): a deeply nested strategy is unread, not a stack overflow", () => {
+  const deep = (levels) => ["    strategy:", "      matrix:", ...Array.from({ length: levels }, (_, n) => `${" ".repeat(8 + n)}k:`), `${" ".repeat(8 + levels)}x: 1`];
+  const base = withStrategy(["    strategy:", "      matrix:", "        n: [1, 2]"]);
+  for (const levels of [40, 2000, 5000]) {
+    assert.deepEqual(gateFindings(withStrategy(deep(levels)), base), STRATEGY_CHANGED, String(levels));
+    assert.deepEqual(gateFindings(base, withStrategy(deep(levels))), STRATEGY_CHANGED, String(levels));
+  }
+  // A strategy of ordinary depth is read and may still shrink.
+  const shallow = ["    strategy:", "      matrix:", "        include:", "          - a: {b: [1]}", "          - a: x", "          - a: y"];
+  assert.deepEqual(gateFindings(withStrategy(dropLines(shallow, 5)), withStrategy(shallow)), STRATEGY_CHANGED, "a flow mapping is not read");
+  assert.deepEqual(gateFindings(withStrategy(dropLines(INCLUDE_STRATEGY, 10, 11)), withStrategy(INCLUDE_STRATEGY)), SHRUNK);
 });
 
 test("gate guard (Owner Decision 586181ec): PR #890's heartbeat matrix removal passes", () => {

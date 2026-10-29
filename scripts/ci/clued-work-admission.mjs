@@ -486,6 +486,19 @@ const BOOTSTRAP_ORDINARY_SOURCES=Object.freeze([
     ]
   },
   {
+    "file": ".github/workflows/gitleaks.yml",
+    "predecessor_blob": "d0fe73eeabc9c163d3216e57ca6a7633288262c5",
+    "candidate_blob": "8d172bdfeda9b554d2c8c0e5868ccae6e1a3096d",
+    "candidate_sha256": "6f61572b6cd7550772925b8ad3b26e129cf010901f04122662ceeb00d01c7cd1",
+    "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
+    "roles": [
+      {
+        "job_id": "gitleaks-trusted-self-hosted",
+        "definition_sha256": "6c30ca4a766e00abe10aa225ff8296d3903857d384e43ecbae5fd8c374281103"
+      }
+    ]
+  },
+  {
     "file": ".github/workflows/trivy.yml",
     "predecessor_blob": "f7f8d075d1a0f314a7c5eb295e459599288d538c",
     "candidate_blob": "300ad19a59bf529ccebd45ae7fbb76189f806316",
@@ -787,16 +800,203 @@ export function workflowFormFindings(text) {
     if (started && /^(---|\.\.\.)\s*$/.test(line)) findings.push(`workflow_not_canonical:document:${i + 1}`);
     if (/^\S/.test(line) && !/^#/.test(line)) started = true;
   });
+  const jobsStart = jobsLines[0][1];
+  let jobsEnd = jobsStart + 1;
+  while (jobsEnd < lines.length && !/^[^\s#]/.test(lines[jobsEnd])) jobsEnd += 1;
+  findings.push(...layoutFindings(lines, jobsStart, jobsEnd));
+  // Task b5234943, P4: every top-level line is a plain (or simply quoted) key
+  // or a bare document marker, so none can be a tagged, anchored, explicit or
+  // differently cased second `jobs` key, a merge key or a directive.
+  lines.forEach((line, i) => {
+    if (!/^[^\s#]/.test(line) || i === jobsStart || /^(---|\.\.\.)(\s+#.*|\s*)$/.test(line)) return;
+    const key = /^(?:([A-Za-z0-9_-]+)|"([A-Za-z0-9_-]+)"|'([A-Za-z0-9_-]+)'):(?:\s|$)/.exec(line);
+    if (!key || /^jobs$/i.test(key[1] ?? key[2] ?? key[3])) findings.push(`workflow_not_canonical:top_level:${i + 1}`);
+  });
   let inJob = false;
-  for (let i = jobsLines[0][1] + 1; i < lines.length; i += 1) {
+  const jobNames = new Set();
+  let jobKeys = new Set();
+  for (let i = jobsStart + 1; i < jobsEnd; i += 1) {
     const line = lines[i];
-    if (/^[^\s#]/.test(line)) break;
     if (/^\s*(#.*)?$/.test(line)) continue;
-    if (/^  [A-Za-z0-9_-]+:\s*(#.*)?$/.test(line)) { inJob = true; continue; }
-    if (inJob && /^ {4,}\S/.test(line)) continue;
+    const job = /^  ([A-Za-z0-9_-]+):\s*(#.*)?$/.exec(line);
+    if (job) {
+      // A second job of the same name replaces the first in lenient parsers.
+      if (jobNames.has(job[1])) findings.push(`workflow_not_canonical:duplicate_job:${i + 1}`);
+      jobNames.add(job[1]);
+      jobKeys = new Set();
+      inJob = true;
+      continue;
+    }
+    if (inJob && /^ {4}\S/.test(line)) {
+      // Task b5234943, P1, P6 and 7: a job key is plain and written once
+      // (`strategy :`, `"strategy":`, `? strategy`, `!!str runs-on:`,
+      // `&a needs:` and `!!merge <<:` are refused). A bare `<<:` merge key
+      // stays readable here; jobIsHosted and the strategy check refuse it.
+      // An indentless `- ` item belongs to the key above it.
+      if (/^ {4}-(?: |$)/.test(line)) continue;
+      const key = /^ {4}([A-Za-z0-9_-]+|<<):(?:\s|$)/.exec(line);
+      if (!key) findings.push(`workflow_not_canonical:job_key:${i + 1}`);
+      else if (jobKeys.has(key[1])) findings.push(`workflow_not_canonical:duplicate_job_key:${i + 1}`);
+      else jobKeys.add(key[1]);
+      continue;
+    }
+    if (inJob && /^ {5,}\S/.test(line)) continue;
     findings.push(`workflow_not_canonical:job_line:${i + 1}`);
   }
   return [...new Set(findings)];
+}
+
+// Task b5234943, P2 to P4: the line reader takes a line's indentation as its
+// place in the YAML tree. A quoted scalar or a flow collection written over
+// several lines breaks that: YAML reads its later lines as text of the one
+// value (lenient parsers at any indentation), so such a line could pass for a
+// job, a job key or the end of the jobs block, and one indented four spaces or
+// less ends jobField's and strategyRegion's view of a strategy that YAML reads
+// on. Inside the jobs block such a line must be indented five spaces or more,
+// so it stays inside the job key it started under; elsewhere at least one, so
+// it cannot pass for a top-level key. Block scalars and plain multi-line
+// scalars are followed as YAML reads them (their lines are text). Explicit
+// keys (`? `), block scalars with an indentation indicator, a quote inside an
+// unquoted flow item and anything after a closed quote or flow collection
+// other than a comment (or a key's `:`) are not read and are refused.
+function quoteEnd(line, from, quote) {
+  for (let i = from; i < line.length; i += 1) {
+    if (quote === '"' && line[i] === "\\") { i += 1; continue; }
+    if (line[i] !== quote) continue;
+    if (quote === "'" && line[i + 1] === "'") { i += 1; continue; }
+    return i + 1;
+  }
+  return -1;
+}
+function layoutFindings(lines, jobsStart, jobsEnd) {
+  const unread = (i, what) => [`workflow_not_canonical:${what}:${i + 1}`];
+  const isComment = (line, i) => line[i] === "#" && (i === 0 || line[i - 1] === " ");
+  const restIsEmpty = (line, i) => { while (line[i] === " ") i += 1; return i >= line.length || isComment(line, i); };
+  let block = null; // { n, content }: the lines of a block scalar.
+  let plain = null; // n: a plain scalar that may go on below.
+  let flow = null; // { depth, start, quote, quoted, threshold }: an open quoted scalar or flow collection.
+  // Reads a flow collection from line[i] on; returns the index after it, or -1 at the end of the line.
+  const scanFlow = (line, i, lineNo) => {
+    while (i < line.length) {
+      if (flow.quote) {
+        const end = quoteEnd(line, i, flow.quote);
+        if (end < 0) return -1;
+        flow.quote = null;
+        flow.start = false;
+        flow.quoted = true;
+        i = end;
+        if (flow.depth === 0) return i;
+        continue;
+      }
+      const ch = line[i];
+      if (ch === " ") { i += 1; continue; }
+      if (isComment(line, i)) return -1;
+      const quoted = flow.quoted;
+      flow.quoted = false;
+      if (ch === "[" || ch === "{") { flow.depth += 1; flow.start = true; i += 1; continue; }
+      if (ch === "]" || ch === "}") {
+        flow.depth -= 1;
+        flow.start = false;
+        i += 1;
+        if (flow.depth === 0) return i;
+        continue;
+      }
+      if (ch === ",") { flow.start = true; i += 1; continue; }
+      if (ch === '"' || ch === "'") {
+        if (!flow.start) throw unread(lineNo, "flow_quote");
+        flow.quote = ch;
+        i += 1;
+        continue;
+      }
+      if ((ch === ":" || ch === "?") && (quoted || i + 1 >= line.length || /[ ,[\]{}]/.test(line[i + 1]))) {
+        flow.start = true;
+        i += 1;
+        continue;
+      }
+      if (flow.start && (ch === "|" || ch === ">" || ch === "%" || ch === "@" || ch === "`")) throw unread(lineNo, "flow_item");
+      if (flow.start && (ch === "&" || ch === "!" || ch === "*")) {
+        while (i < line.length && !/[ ,[\]{}]/.test(line[i])) i += 1;
+        flow.start = ch !== "*";
+        continue;
+      }
+      flow.start = false;
+      i += 1;
+    }
+    return -1;
+  };
+  // Reads one node of a block line from line[i] on; n is the indentation it belongs to.
+  const scanNode = (line, i, n, lineNo) => {
+    for (;;) {
+      while (line[i] === " ") i += 1;
+      if (i >= line.length || isComment(line, i)) return;
+      const ch = line[i];
+      if (ch === "-" && (i + 1 >= line.length || line[i + 1] === " ")) { n = i; i += 1; continue; }
+      if ((ch === "?" || ch === ":") && (i + 1 >= line.length || line[i + 1] === " ")) throw unread(lineNo, "explicit_key");
+      if (ch === "&" || ch === "!") { while (i < line.length && line[i] !== " ") i += 1; continue; }
+      if (ch === "|" || ch === ">") {
+        const header = /^[|>]([+-]?)(?:\s+#.*|\s*)$/.exec(line.slice(i));
+        if (!header) throw unread(lineNo, "block_scalar");
+        block = { n, content: null };
+        return;
+      }
+      if (ch === '"' || ch === "'" || ch === "[" || ch === "{") {
+        flow = { depth: 0, start: true, quote: null, quoted: false };
+        if (ch === '"' || ch === "'") flow.quote = ch; else flow.depth = 1;
+        const end = scanFlow(line, i + 1, lineNo);
+        if (end < 0) {
+          flow.threshold = lineNo > jobsStart && lineNo < jobsEnd ? 5 : 1;
+          return;
+        }
+        flow = null;
+        let j = end;
+        while (line[j] === " ") j += 1;
+        if (line[j] === ":" && (j + 1 >= line.length || line[j + 1] === " ")) { n = i; i = j + 1; continue; }
+        if (!restIsEmpty(line, j)) throw unread(lineNo, "after_value");
+        return;
+      }
+      // A plain scalar, or a plain key when `: ` follows.
+      let j = i;
+      while (j < line.length && !(line[j] === ":" && (j + 1 >= line.length || line[j + 1] === " ")) && !isComment(line, j)) j += 1;
+      if (j < line.length && line[j] === ":") { n = i; i = j + 1; continue; }
+      if (j >= line.length) plain = n;
+      return;
+    }
+  };
+  try {
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      const indent = line.length - line.trimStart().length;
+      const blank = line.trim() === "";
+      if (block) {
+        if (blank) continue;
+        if (block.content === null ? indent > block.n : indent >= block.content) { block.content ??= indent; continue; }
+        block = null;
+      }
+      if (flow) {
+        if (blank) continue;
+        if (indent < flow.threshold) return unread(i, "continuation");
+        const end = scanFlow(line, 0, i);
+        if (end < 0) continue;
+        flow = null;
+        if (!restIsEmpty(line, end)) return unread(i, "after_value");
+        continue;
+      }
+      if (blank) continue;
+      if (plain !== null) {
+        if (line.trimStart().startsWith("#")) { plain = null; continue; }
+        if (indent > plain) {
+          if (/ #/.test(line)) plain = null;
+          continue;
+        }
+        plain = null;
+      }
+      scanNode(line, 0, indent, i);
+    }
+  } catch (error) {
+    if (Array.isArray(error)) return error;
+    throw error;
+  }
+  return flow ? unread(lines.length - 1, "continuation") : [];
 }
 
 // A job's literal timeout-minutes, or null when it has none or an expression.
@@ -816,6 +1016,12 @@ const HOSTED_LABEL = /^(ubuntu|windows|macos)-[A-Za-z0-9.-]+$/;
 const HOSTED_STATE_CHANGE_RUNNER = "${{ inputs.reason == 'state_change' && 'ubuntu-latest' || 'ubuntu-slim' }}";
 export function jobIsHosted(job) {
   if (job.lines.some((line) => /^ {4}uses:/.test(line) || /^\s*<<\s*:/.test(line))) return false;
+  // Task b5234943: one runs-on key in its own spelling; a second one in
+  // another case, a uses key in another case, or a job key that is not plain
+  // (tagged, anchored, quoted, explicit or a tagged merge) is not hosted.
+  const runners = job.lines.filter((line) => /^ {4}(?:runs-on|uses)\s*:/i.test(line));
+  if (runners.length !== 1 || !runners[0].startsWith("    runs-on:") ||
+    job.lines.some((line) => /^ {4}[^\sA-Za-z0-9_#-]/.test(line) || /!!merge|tag:yaml\.org,2002:merge/.test(line))) return false;
   const value = jobField(job, "runs-on");
   if (value === null) return false;
   const text = value.replace(/(^|\s)#.*$/gm, "").trim();
@@ -833,6 +1039,7 @@ export function jobIsHosted(job) {
 // with a strategy key written in another case or given twice, or any job key
 // that does not start with a plain key character (quoted, tagged, anchored).
 const STRATEGY_KEY = /^([A-Za-z0-9_-]+):(?: +(.+))?$/;
+const STRATEGY_MAX_DEPTH = 32;
 const STRATEGY_PLAIN = /^(?:[^ [\]{},#&*!|>'"%@`?:-]|-[^ ])/;
 const STRATEGY_FLOW_ITEM = /^(?:(?!-$)[A-Za-z0-9_./+-]+|"[^"\\,[\]{}]*"|'[^',[\]{}]*')$/;
 function strategyValue(text) {
@@ -861,7 +1068,11 @@ function strategyTree(job) {
   }
   let i = 0;
   const unread = new Error("strategy not read");
+  // Task b5234943, item 8: nesting is read to a fixed depth (a strategy has a
+  // few levels), so a deep one is unread rather than a stack overflow.
+  let depth = 0;
   const block = (indent) => {
+    if (++depth > STRATEGY_MAX_DEPTH) throw unread;
     const node = rows[i].text.startsWith("- ") ? { seq: [] } : { map: [] };
     const names = new Set();
     while (i < rows.length && rows[i].indent === indent) {
@@ -894,6 +1105,7 @@ function strategyTree(job) {
       }
       if (i < rows.length && rows[i].indent > indent) throw unread;
     }
+    depth -= 1;
     return node;
   };
   try {
@@ -901,9 +1113,36 @@ function strategyTree(job) {
     const tree = block(rows[0].indent);
     return i === rows.length && tree.map ? tree : null;
   } catch (error) {
-    if (error === unread) return null;
+    if (error === unread || error instanceof RangeError) return null;
     throw error;
   }
+}
+
+// Task b5234943, P1, 5, 6 and 7: every place a job could hold a strategy that
+// YAML reads and jobField or strategyRegion do not: each job key that is not
+// a plain key (a merge key above all) or is `strategy` in any spelling or
+// case, with the lines that belong to it as in strategyRegion, and indentless
+// `- ` items after it. workflowFormFindings refuses most of these spellings
+// at the head; the base may still hold them.
+const STRATEGY_KEY_LINE = /^ {4}(?:[^\sA-Za-z0-9_#-]|strategy\s*:)/i;
+function strategyRegions(job) {
+  const regions = [];
+  for (let start = 0; start < job.lines.length; start += 1) {
+    if (!STRATEGY_KEY_LINE.test(job.lines[start])) continue;
+    let end = start + 1;
+    while (end < job.lines.length && (/^\s*(#.*)?$/.test(job.lines[end]) || job.lines[end].startsWith("     ") ||
+      /^ {4}-(?: |$)/.test(job.lines[end]))) end += 1;
+    while (end > start + 1 && /^\s*(#.*)?$/.test(job.lines[end - 1])) end -= 1;
+    regions.push(job.lines.slice(start, end).join("\n"));
+  }
+  return regions.join("\n\u0000\n");
+}
+
+// Item 5: an alias in a strategy region names a node written elsewhere in the
+// file, so equal text does not mean an equal strategy. Any `*name` that may be
+// an alias (outside whole-line comments) counts.
+function strategyHasAlias(regions) {
+  return regions.split("\n").some((line) => !/^\s*#/.test(line) && /(?:^|[\s[{,:])\*[^\s,[\]{}]/.test(line));
 }
 
 // The lines of a job's strategy as YAML reads them, or null without one.
@@ -991,6 +1230,11 @@ export function gateFindings(headText, baseText, { registeredPublisherTransition
     // self-hosted runner, and (re-review 3, N-R5) no self-hosted job that
     // drops or raises its timeout-minutes.
     if (baseText === null) return [];
+    // Task b5234943, P3: a base the line reader does not follow (a flow or
+    // quoted value running over lines indented four spaces or less, say) may
+    // hold a strategy it does not see, so no self-hosted strategy counts as
+    // unchanged against it.
+    const baseUnread = workflowFormFindings(baseText).length > 0;
     const before = new Map(workflowJobs(baseText).map((job) => [job.name, job]));
     const findings = [];
     for (const job of jobs) {
@@ -1007,8 +1251,13 @@ export function gateFindings(headText, baseText, { registeredPublisherTransition
         // Decision 586181ec: a strategy that only loses matrix entries runs the
         // job fewer times and passes (strategyShrinks). A change counts in
         // jobField's view or in the whole region (strategyRegion).
+        // Task b5234943: also every other spelling of a strategy key and every
+        // merge key (strategyRegions), a strategy that names an alias, and any
+        // strategy against a base not read with certainty.
+        const regions = strategyRegions(job);
         if (((jobField(job, "strategy") ?? "").trim() !== (jobField(old, "strategy") ?? "").trim() ||
-          strategyRegion(job) !== strategyRegion(old)) && !strategyShrinks(job, old)) {
+          strategyRegion(job) !== strategyRegion(old) || regions !== strategyRegions(old) ||
+          strategyHasAlias(regions) || baseUnread) && !strategyShrinks(job, old)) {
           findings.push(`self_hosted_strategy_changed_ungated:${job.name}`);
         }
       }

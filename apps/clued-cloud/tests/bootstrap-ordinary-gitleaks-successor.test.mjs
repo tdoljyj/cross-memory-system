@@ -12,6 +12,8 @@ const FILE = '.github/workflows/gitleaks.yml';
 const LEGACY = '74043d68d20dbee9f9404a66f0a02d3285fea0aa';
 const BEFORE = '95f4527be27d02889892d029b398ab1cf2e71429';
 const AFTER = 'd0fe73eeabc9c163d3216e57ca6a7633288262c5';
+// The refrozen hosted gitleaks workflow (730 entries, frozen commit a38e8fef).
+const NEXT = '8d172bdfeda9b554d2c8c0e5868ccae6e1a3096d';
 const HEAD = 'f88785c9f93bae4ad7e06e4f9be93d9471125a18';
 const BASE = 'f6ae29eda25c5ffa6131662e60251492e0878aa2';
 const ROOT = new URL('../../../', import.meta.url);
@@ -29,11 +31,34 @@ const check = (before = BEFORE, after = AFTER, extra = {}) => registeredBootstra
   file: { filename: FILE, status: 'modified' }, baseText: text(before), headText: text(after), profiles, roleSpecs, ...extra,
 });
 
-test('actual gitleaks successor bytes match the registered 729-entry Source', () => {
+test('actual gitleaks successor bytes match the registered 730-entry Source', () => {
   const actual = fs.readFileSync(new URL(FILE, ROOT), 'utf8');
-  assert.equal(actual, text(AFTER));
-  assert.equal(workflowBlob(actual), AFTER);
-  assert.equal(sha256Hex(actual), '46627f909229d06a6b5c35112f7619b28c6aa9f0a196a526b067e3a962d9da2b');
+  assert.equal(actual, text(NEXT));
+  assert.equal(workflowBlob(actual), NEXT);
+  assert.equal(sha256Hex(actual), '6f61572b6cd7550772925b8ad3b26e129cf010901f04122662ceeb00d01c7cd1');
+  // The 729-entry generation stays registered as its predecessor.
+  assert.equal(workflowBlob(text(AFTER)), AFTER);
+  assert.equal(sha256Hex(text(AFTER)), '46627f909229d06a6b5c35112f7619b28c6aa9f0a196a526b067e3a962d9da2b');
+});
+
+test('ordinary gitleaks admits the exact d0fe73ee to 8d172bdf generation and its self-pair', () => {
+  for (const before of [AFTER, NEXT]) {
+    const result = check(before, NEXT);
+    assert.equal(result.passed, true, result.reason);
+    assert.equal(result.registeredBootstrapOrdinaryTransition, false);
+    assert.equal(result.execution_authority, false);
+    assert.equal(result.roles[0].definition_sha256, '6c30ca4a766e00abe10aa225ff8296d3903857d384e43ecbae5fd8c374281103');
+  }
+  // A skipped generation, a rollback and changed bytes stay refused.
+  assert.equal(check(BEFORE, NEXT).passed, false);
+  assert.equal(check(LEGACY, NEXT).passed, false);
+  assert.equal(check(NEXT, AFTER).passed, false);
+  assert.equal(check(NEXT, BEFORE).passed, false);
+  assert.equal(check(AFTER, NEXT, { headText: `${text(NEXT)}
+` }).passed, false);
+  const copy = structuredClone(roleSpecs);
+  copy.workflows[FILE].sources[NEXT][0].definition.steps.push({ run: 'echo unregistered-role' });
+  assert.equal(check(AFTER, NEXT, { roleSpecs: copy }).passed, false);
 });
 
 test('ordinary gitleaks keeps the original conversion and its already-installed self-pair', () => {
