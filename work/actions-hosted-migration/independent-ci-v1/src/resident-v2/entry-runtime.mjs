@@ -69,9 +69,10 @@ export function controllerPorts({ record, appKey, nativeToken, policyText, sourc
     check(reply.status === 200 && reply.body && typeof reply.body === 'object', 'NATIVE_PUBLICATION_UNAVAILABLE');
     return reply.body;
   }, async current(identity,mode) {
-    live();if(mode?.scope!==record.config.scope||identity.job.repo!==record.config.repository)return false;
+    live();if(mode?.scope!==record.config.scope||identity.job.repo!==record.config.repository
+      ||!Array.isArray(mode.paths)||!mode.paths.length)return false;
     const reply = await cluedRpc(fetchImpl, env, sourceRoot, 'clued_work_verify_v1', { scope: mode.scope, claim_id: identity.claim.claim_id,
-      head_sha: identity.job.headSha, base_sha: identity.job.baseSha, changed_paths: [] });
+      head_sha: identity.job.headSha, base_sha: identity.job.baseSha, changed_paths: mode.paths });
     const b=reply.body,c=b?.claim,now=Date.now();
     return reply.status===200&&b?.status==='ok'&&b.verdict==='ADMITTED'&&b.execution_policy===mode.executionPolicy
       &&c?.lease_key_required===mode.guarded&&c.execution_handover_pending===false&&c.status==='ACTIVE'

@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { admittedFactsMatchJobV2 } from '../../work/actions-hosted-migration/independent-ci-v1/src/admission-facts-v2.mjs';
 import { digest } from '../../work/actions-hosted-migration/independent-ci-v1/src/proof.mjs';
 import { makeIndependentPublicationIdentity, CHECKS } from './clued-independent-publication-identity.mjs';
-import { createIndependentPublicationRuntime, nativeNoPostProof } from './clued-independent-publication-runtime.mjs';
+import { createIndependentPublicationRuntime, nativeNoPostProof, independentCheckExternalIdMatchesJob } from './clued-independent-publication-runtime.mjs';
 
 export const COMPONENT_VERSION = '1.0.0';
 const BRAND = Symbol('qualified-native-publication-facade');
@@ -59,7 +59,7 @@ export function createIndependentPublicationPort({ job, controllerId, github, na
     const identity = makeIndependentPublicationIdentity({ job, controller_id: controllerId,
       claim: { claim_id: facts.claimId, fence: facts.fence, execution_epoch: facts.epoch } });
     if (payload?.name !== CHECKS[job.role] || payload.head_sha !== job.headSha) throw noPost('independent_publication_subject_changed', identity);
-    const mode = { executionPolicy: facts.executionPolicy, guarded: facts.guarded, scope: facts.scope };
+    const mode = { executionPolicy: facts.executionPolicy, guarded: facts.guarded, scope: facts.scope, paths: [...packet.paths] };
     modes.set(identity.effect_key, mode);
     if (await assertCurrent(clone(identity), clone(mode)) !== true) throw noPost('independent_current_authority_refused', identity);
     const context = { identity, scope: facts.scope, paths: packet.paths, payload };
@@ -91,7 +91,7 @@ export function createIndependentPublicationPort({ job, controllerId, github, na
   facade.revokeCheck = async (checkId, payload) => {
     const check = await nativeGithub.readCheck(checkId);
     if (check?.app?.id !== 5368905 || check.name !== CHECKS[job.role] || check.head_sha !== job.headSha
-      || typeof check.external_id !== 'string' || !check.external_id.includes(job.id)) fail('independent_revocation_subject_changed');
+      || !independentCheckExternalIdMatchesJob(check.external_id, job)) fail('independent_revocation_subject_changed');
     if (check.status === 'completed' && check.conclusion === 'failure') return check;
     const tag = String(check.output?.summary ?? '').split('\n').find(line => line.startsWith(`Native publication independent-ci:native:v1:${job.id}:p`));
     const body = clone(payload);

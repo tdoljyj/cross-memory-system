@@ -11,6 +11,16 @@ const fail = code => { throw Object.assign(new Error(code), { code }); };
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const clone = value => JSON.parse(JSON.stringify(value));
 const id = value => Number.isSafeInteger(value) && value > 0;
+// Hosted relay has its own attested run identity and intentionally keeps that
+// external_id. Its exact role/head form is checked here; its Native marker
+// separately binds the complete local job and original publication ticket.
+export function independentCheckExternalIdMatchesJob(value, job) {
+  if (typeof value !== 'string' || value.length > 200) return false;
+  if (value.startsWith('independent-ci:') && value.includes(job.id)) return true;
+  if (!['gitleaks','trivy'].includes(job.role)) return false;
+  const prefix = `independent-ci:relay:${job.role}:${job.headSha.slice(0,12)}:run`;
+  return value.startsWith(prefix) && /^[1-9][0-9]{0,19}:a[1-9][0-9]{0,9}$/.test(value.slice(prefix.length));
+}
 export const nativeNoPostProof = error => proofByError.get(error) ?? null;
 export function nativePublicationJournalKey(identity) {
   return digest(['independent-native-publication-journal/1', validateIndependentPublicationIdentity(identity).effect_key]);
@@ -36,7 +46,7 @@ function contextOf({ identity, scope, paths, payload }) {
     || payload?.name !== identity.check_name || payload.head_sha !== identity.job.headSha || payload.status !== 'completed'
     || !['success', 'failure', 'neutral', 'cancelled', 'timed_out', 'action_required', 'skipped'].includes(payload.conclusion)
     || typeof payload.external_id !== 'string' || payload.external_id.length > 200
-    || !payload.external_id.startsWith('independent-ci:') || !payload.external_id.includes(identity.job.id)
+    || !independentCheckExternalIdMatchesJob(payload.external_id, identity.job)
     || typeof payload.output?.title !== 'string' || typeof payload.output.summary !== 'string'
     || payload.output.summary.length > 64000) fail('independent_publication_context_invalid');
   return clone({ identity, scope, paths: [...paths].sort(), payload });

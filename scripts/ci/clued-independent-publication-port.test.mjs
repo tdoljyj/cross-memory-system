@@ -61,3 +61,13 @@ test('controller identity binds the actual supervisor nonce, node and job, never
  assert.notEqual(independentControllerId(input),independentControllerId({...input,invocationNonce:'c'.repeat(32)}));
  assert.throws(()=>independentControllerId({...input,invocationNonce:'123'}));
 });
+test('active and legacy relay external identities retain exact role/head binding and compensation',async t=>{
+ for(const active of [true,false]){
+  const f=await fixture(t,active);f.payload.external_id=`independent-ci:relay:gitleaks:${f.job.headSha.slice(0,12)}:run39000000001:a1`;
+  const handle=await f.port.prepareNativePublication({facts:f.facts,packet:f.packet,payload:f.payload});
+  const check=await f.port.createCheck(f.payload,handle);
+  const revoked=await f.port.revokeCheck(check.id,{status:'completed',conclusion:'failure',output:{title:'revoked',summary:'authorization changed'}});
+  assert.equal(revoked.conclusion,'failure');assert.equal(f.posts,1);assert.equal(f.patches,1);
+  if(active)assert.match(revoked.output.summary,new RegExp(pub));
+ }
+});

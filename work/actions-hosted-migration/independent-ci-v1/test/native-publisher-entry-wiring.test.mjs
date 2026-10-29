@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { publicationControllerGithub } from '../src/resident-v2/entry-runtime.mjs';
+import { publicationControllerGithub, controllerPorts } from '../src/resident-v2/entry-runtime.mjs';
+import { makeIndependentPublicationIdentity } from '../../../../scripts/ci/clued-independent-publication-identity.mjs';
 import { batchJobsV2, claimGeneration, subjectOfV2 } from '../src/job-v2.mjs';
 import { digest } from '../src/proof.mjs';
 import { EffectJournal } from '../src/effect-journal.mjs';
@@ -11,6 +12,9 @@ import { createFixtureControlPublisherV2 } from '../src/independent-control-chec
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
 import { fixtureRecord, tempDir, subject, admittedFacts, signResult } from './resident-v2-fixtures.mjs';
+import { createWorld } from './fixtures/hosted-relay/world.mjs';
+import { createHostedRelayStage } from '../src/hosted-relay-v1/stage.mjs';
+import { makeJobV2 } from '../src/job-v2.mjs';
 
 // These exercise the actual entry adapter and publisher engines, with simulated
 // service ports. They are local integration checks, not runtime qualification.
@@ -115,4 +119,54 @@ test('legacy entry wiring still publishes without creating a Native publication'
     assertLive() {}, record() {}, authority: {}, batchClaims: { async read() { return batchClaim; }, async record(j, c) { batchClaim = claimGeneration(c); } } });
   const result = await publisher.publish(job); assert.equal(result.status, 'SETTLED', JSON.stringify(result));
   assert.equal(f.checks.length, 1); assert.equal(f.calls.length, 0);
+});
+
+test('the real read-only controller request carries the complete admitted packet paths',async t=>{
+ const {docs}=fixtureRecord(),record=validateRecordV2(docs,{now:Date.now()}),job=batchJobsV2(subject()).gitleaks;
+ const identity=makeIndependentPublicationIdentity({job,claim:{claim_id:randomUUID(),fence:4,execution_epoch:3},controller_id:randomUUID()});
+ const paths=['scripts/ci/a.mjs','work/a.mjs'],requests=[],original=globalThis.fetch;
+ t.after(()=>{globalThis.fetch=original;});
+ globalThis.fetch=async(url,options)=>{
+  const input=JSON.parse(options.body).p_input;requests.push(input);
+  assert.deepEqual(input.changed_paths,paths);assert.equal(Object.hasOwn(input,'pr_ref'),false,'Agent observation must not bind or spend a CI head');
+  return new Response(JSON.stringify({status:'ok',verdict:'ADMITTED',execution_policy:'staged',current_fence:4,execution_epoch:3,
+   verified_at:new Date().toISOString(),claim:{...identity.claim,status:'ACTIVE',lease_key_required:false,execution_handover_pending:false,
+   context_key:record.config.scope,bound_pr:`${job.repo}#${job.pr}`,expires_at:new Date(Date.now()+60000).toISOString()}}),{status:200});
+ };
+ const ports=controllerPorts({record,appKey:'fixture-unused-key',nativeToken:'fixture-unused-token',policyText:'',sourceRoot:'.',live(){},log(){}});
+ assert.equal(await ports.native.current(identity,{scope:record.config.scope,executionPolicy:'staged',guarded:false,paths}),true);
+ assert.equal(await ports.native.current(identity,{scope:record.config.scope,executionPolicy:'staged',guarded:false,paths:[]}),false);
+ assert.equal(requests.length,1);
+});
+
+test('active hosted relay reaches the actual entry adapter without replacing its attested external identity',async t=>{
+ const w=createWorld({now:Date.now()});w.allHosted();
+ const journal=await EffectJournal.open(path.join(await tempDir(t),'effects')),s=w.subject();
+ const jobs=['gitleaks','trivy'].map(role=>makeJobV2({repo:s.repo,pr:s.pr,headSha:s.headSha,baseSha:s.baseSha,sourceManifestSha256:s.sourceManifestSha256,
+  role,createdAt:new Date(w.state.now-1200000).toISOString(),attempt:1}));
+ const claim={claimId:s.claimId,fence:s.fence,epoch:s.epoch,expiresAt:new Date(w.state.now+3600000).toISOString()};
+ const calls=[],tickets=new Map(),native={async current(){return true;},async command(input){calls.push(input);
+  if(input.action==='publication_begin_independent'){
+   const identity=input.independent_identity;if(!tickets.has(identity.effect_key))tickets.set(identity.effect_key,{publication_id:randomUUID(),receipt_id:randomUUID()});
+   return {status:'ok',verdict:'ADMITTED',execution_policy:'active',execution_authorized:true,publication_required:true,...tickets.get(identity.effect_key),independent_identity:identity};
+  }return {status:'committed',receipt_id:randomUUID(),must_revoke:false};
+ }};
+ const {docs}=fixtureRecord(),record=validateRecordV2(docs,{now:w.state.now});
+ const github=publicationControllerGithub({ports:{github:w.github,native},jobs,journal,args:{nonce:'b'.repeat(32)},record});
+ const headAuthorizationId=randomUUID(),nativeAdmission={fixture:true,async evaluatePr(job,packet,options={}){
+  const facts=admittedFacts(job,claim,packet,{domain:'fixture',observedAt:w.state.now,batchClaim:options.batchClaim,slotUntil:w.state.now+3600000});
+  delete facts.observationSha256;const body={...facts,contract:'clued.independent-ci.full-admission/3',executionPolicy:'active',guarded:true,publicationRequired:true,headAuthorizationId};
+  return {...body,observationSha256:digest(body)};
+ }};
+ const sample=await w.authority.observe(jobs[0]),refs=Object.fromEntries(['sourceAcceptanceRef','hostQualificationRef','ownerAuthorizationRef','publisherQualificationRef','ciPrincipalQualificationRef'].map(k=>[k,sample[k]]));
+ const authority={fixture:true,async observe(job){return {...await w.authority.observe(job),claim:claimGeneration(claim),claimExpiresAt:claim.expiresAt};}};
+ const verifier=w.verifier(),publisher=createStagedCheckPublisherV2({nativeAdmission,authority,github,journal,signers:w.signers,
+  configuredChecks:record.config.checks,readChangedPaths:j=>github.readChangedPaths(j),batchClaim:claimGeneration(claim),domain:'fixture',clock:()=>w.state.now,
+  hostedVerifier:verifier,protectedDeployment:{enabled:true,domain:'fixture',repository:s.repo,ciPrincipalBindingId:sample.ciPrincipalBindingId,...refs}});
+ const stage=createHostedRelayStage({registry:w.registry,verifier,publisher,localInputPins:{trivy:{checksDigest:w.registry.roles.trivy.checksDigest}}});
+ const result=await stage.run({subject:s,attempt:1,roles:['gitleaks','trivy']});
+ assert.equal(result.status,'COMPLETE',JSON.stringify(result));assert.ok(result.roles.every(r=>r.outcome==='RELAYED'));
+ const checks=w.state.checkRuns.filter(c=>c.app.id===5368905);assert.equal(checks.length,2);
+ assert.ok(checks.every(c=>c.external_id.startsWith('independent-ci:relay:')&&c.output.summary.includes('Native publication independent-ci:native:v1:')));
+ assert.equal(calls.filter(c=>c.action==='publication_finish').length,2);
 });
