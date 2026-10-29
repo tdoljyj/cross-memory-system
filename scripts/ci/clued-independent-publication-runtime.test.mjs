@@ -16,11 +16,11 @@ const input={identity,scope,paths:['scripts/ci/test.mjs'],payload:{name:'gitleak
 const pub='11111111-aaaa-4bbb-8ccc-222222222222',receipt='33333333-aaaa-4bbb-8ccc-444444444444';
 async function fixture(t){
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'native-pub-unit-'));t.after(()=>fs.rm(directory,{recursive:true,force:true}));
- const journal=await EffectJournal.open(directory),checks=[],calls=[];let current=true,finishRevoke=false,losePost=false,hideChecks=false,denyBegin=false,loseBegin=false;
+ const journal=await EffectJournal.open(directory),checks=[],calls=[];let current=true,finishRevoke=false,losePost=false,hideChecks=false,denyBegin=false,loseBegin=false,loseAbort=false,aborted=false;
  const native={async command(body){calls.push(body);switch(body.action){
-  case 'publication_begin_independent':if(denyBegin)return {status:'rejected',error_code:'not_qualified'};if(loseBegin)throw Error('lost begin reply');return {status:'ok',verdict:'ADMITTED',execution_policy:'active',execution_authorized:true,publication_required:true,publication_id:pub,receipt_id:receipt,independent_identity:identity};
+  case 'publication_begin_independent':if(denyBegin||aborted)return {status:'rejected',error_code:'not_qualified_or_closed'};if(loseBegin)throw Error('lost begin reply');return {status:'ok',verdict:'ADMITTED',execution_policy:'active',execution_authorized:true,publication_required:true,publication_id:pub,receipt_id:receipt,independent_identity:identity};
   case 'publication_finish':return {status:'committed',receipt_id:receipt,must_revoke:finishRevoke};
-  case 'publication_abort':return {status:'committed',receipt_id:receipt};
+  case 'publication_abort_independent':{const replayed=aborted;aborted=true;if(loseAbort){loseAbort=false;throw Error('lost committed abort reply');}return {status:'committed',receipt_id:receipt,publication_id:pub,replayed};}
   case 'publication_reconcile':return {status:'committed',receipt_id:receipt,must_revoke:true};
   default:throw Error('unexpected command');
  }}};
@@ -31,7 +31,7 @@ async function fixture(t){
  const runtime=createIndependentPublicationRuntime({native,github,journal,assertCurrent:async()=>current,
   observeStopped:async()=>({stopped:true,controller_id:identity.controller_id,job_id:job.id,source:'qualified-controller-supervisor',proofRef:'receipt:'+receipt})});
  return {runtime,journal,calls,checks,setCurrent:v=>current=v,setFinishRevoke:v=>finishRevoke=v,setLosePost:v=>losePost=v,
-  setHideChecks:v=>hideChecks=v,setDenyBegin:v=>denyBegin=v,setLoseBegin:v=>loseBegin=v,get posts(){return posts;},get patches(){return patches;}};
+  setHideChecks:v=>hideChecks=v,setDenyBegin:v=>denyBegin=v,setLoseBegin:v=>loseBegin=v,setLoseAbort:v=>loseAbort=v,get posts(){return posts;},get patches(){return patches;}};
 }
 test('Native begin precedes the only POST; finish and readback settle the original ticket',async t=>{
  const f=await fixture(t),handle=await f.runtime.prepare(input);assert.equal(f.posts,0);
@@ -57,7 +57,7 @@ test('a handover after prepare is still proven not sent and cannot start a check
  let error;try{await f.runtime.createCheck(handle);}catch(e){error=e;}
  assert.equal(nativeNoPostProof(error)?.publicationId,pub);assert.equal(f.posts,0);
  assert.equal((await f.runtime.reconcileStopped(handle.key)).status,'NOT_SENT');
- assert.equal(f.calls.at(-1).action,'publication_abort');
+ assert.equal(f.calls.at(-1).action,'publication_abort_independent');
 });
 test('a lost POST reply is recovered by identity without a second POST',async t=>{
  const f=await fixture(t),handle=await f.runtime.prepare(input);f.setLosePost(true);
@@ -68,7 +68,7 @@ test('a lost POST reply is recovered by identity without a second POST',async t=
 test('an uncertain invisible POST stays unresolved even after the publisher stopped',async t=>{
  const f=await fixture(t),handle=await f.runtime.prepare(input);f.setLosePost(true);await assert.rejects(()=>f.runtime.createCheck(handle));f.setHideChecks(true);
  await assert.rejects(()=>f.runtime.reconcileStopped(handle.key),/unknown_post_not_found/);
- assert.equal(f.posts,1);assert.equal(f.calls.some(c=>['publication_abort','publication_reconcile'].includes(c.action)),false);
+ assert.equal(f.posts,1);assert.equal(f.calls.some(c=>['publication_abort_independent','publication_reconcile'].includes(c.action)),false);
  assert.equal((await f.journal.read(handle.key)).state,'uncertain');
 });
 test('late finish revokes the check but leaves Native open until actual supervisor stop observation',async t=>{
@@ -92,4 +92,20 @@ test('a lost begin reply is recovered from the original Native row and aborted o
  assert.equal((await f.runtime.adoptOpenTicket(key,row)).status,'REGISTRATION_RECOVERED');
  assert.equal((await f.runtime.reconcileStopped(key)).status,'NOT_SENT');assert.equal(f.posts,0);
  assert.equal(f.calls.filter(c=>c.action==='publication_begin_independent').length,1);
+});
+test('a committed abort with a lost reply cannot reopen a POST and recovers the original receipt',async t=>{
+ const f=await fixture(t),handle=await f.runtime.prepare(input);f.setLoseAbort(true);
+ await assert.rejects(()=>f.runtime.reconcileStopped(handle.key),/lost committed abort reply/);
+ assert.equal((await f.journal.read(handle.key)).details.abortingNotSent,true);
+ assert.equal((await f.runtime.prepare(input)).recoveryRequired,true);assert.equal(f.posts,0);
+ assert.equal((await f.runtime.recover(handle.key)).status,'NOT_SENT');
+ assert.equal((await f.journal.read(handle.key)).details.abortReceiptId,receipt);assert.equal(f.posts,0);
+});
+test('a failed local final write after committed abort is replayed without a POST',async t=>{
+ const f=await fixture(t),handle=await f.runtime.prepare(input),transition=f.journal.transition.bind(f.journal);let injected=false;
+ f.journal.transition=async(...args)=>{if(!injected&&args[2]==='revoked'&&args[3]?.notSentConfirmed){injected=true;throw Error('final journal write failed');}return transition(...args);};
+ await assert.rejects(()=>f.runtime.reconcileStopped(handle.key),/final journal write failed/);
+ assert.equal((await f.runtime.prepare(input)).recoveryRequired,true);
+ assert.equal((await f.runtime.recover(handle.key)).status,'NOT_SENT');assert.equal(f.posts,0);
+ assert.equal(f.calls.filter(c=>c.action==='publication_abort_independent').length,2);
 });

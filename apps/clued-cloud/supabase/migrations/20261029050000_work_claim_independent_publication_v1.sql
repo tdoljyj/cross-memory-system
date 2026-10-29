@@ -158,6 +158,47 @@ end $$;
 revoke all on function clued_private.work_claim_independent_begin_v1(text,jsonb)
   from public,anon,authenticated,service_role,clued_worker_gateway;
 
+-- Recover only this provider's exact never-sent abort, including a lost commit
+-- response. A generic reconciled row or another operation is not an abort proof.
+create function clued_private.work_claim_independent_abort_v1(p_token_hash text,p_input jsonb) returns jsonb
+language plpgsql volatile security definer set search_path='' as $$
+declare b public.clued_agent_bindings; p clued_private.work_claim_publications_v1; receipt uuid;
+  scope text:=coalesce(p_input->>'scope','global');
+begin
+  perform clued_private.intake_payload_cap_v1(p_input);
+  b:=clued_private.resolve_binding(p_token_hash,'context:read',scope);
+  if not exists(select 1 from clued_private.binding_roles_v1 r where r.user_id=b.user_id and r.binding_id=b.id
+    and r.role='ci-admission' and r.revoked_at is null and r.effective_at<=clock_timestamp()) then
+    return jsonb_build_object('status','rejected','error_code','admission_binding_required'); end if;
+  perform clued_private.work_claim_lock(b.user_id);
+  if p_input->>'action' is distinct from 'publication_abort_independent'
+    or not(p_input ?& array['publication_id','independent_identity','not_sent','publisher_stopped'])
+    or p_input-array['action','scope','publication_id','independent_identity','not_sent','publisher_stopped']<>'{}'::jsonb
+    or p_input->'not_sent' is distinct from 'true'::jsonb or p_input->'publisher_stopped' is distinct from 'true'::jsonb
+    or coalesce(p_input->>'publication_id','') !~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
+    or not coalesce(clued_private.work_claim_independent_identity_valid_v1(p_input->'independent_identity'),false) then
+    raise exception 'work_claim_ci_command_invalid' using errcode='22023'; end if;
+  select pubs.* into p from clued_private.work_claim_publications_v1 pubs
+    join clued_private.work_claims_v1 c on c.claim_id=pubs.claim_id
+    where pubs.user_id=b.user_id and c.context_key=scope and pubs.publication_id=(p_input->>'publication_id')::uuid for update of pubs;
+  if p.publication_id is null or p.independent_identity is distinct from p_input->'independent_identity' or p.check_run_id is not null then
+    return jsonb_build_object('status','rejected','error_code','work_claim_publication_unresolved'); end if;
+  if p.state='reconciled' and exists(select 1 from public.clued_audit_receipts r where r.id=p.finished_receipt_id
+    and r.user_id=b.user_id and r.context_key=scope and r.operation='work_claim_publication_abort_independent'
+    and r.object_id=p.claim_id and r.metadata->>'publication_id'=p.publication_id::text
+    and r.metadata->'independent_identity'=p.independent_identity and r.metadata->'not_sent'='true'::jsonb
+    and r.metadata->'publisher_stopped'='true'::jsonb) then
+    return jsonb_build_object('status','committed','replayed',true,'receipt_id',p.finished_receipt_id,'publication_id',p.publication_id);
+  end if;
+  if p.state<>'open' then return jsonb_build_object('status','rejected','error_code','work_claim_publication_unresolved'); end if;
+  receipt:=clued_private.work_claim_ci_receipt_v1(b,scope,'work_claim_publication_abort_independent',p.claim_id,p.execution_epoch,
+    jsonb_build_object('publication_id',p.publication_id,'independent_identity',p.independent_identity,'not_sent',true,'publisher_stopped',true));
+  update clued_private.work_claim_publications_v1 set state='reconciled',finished_at=clock_timestamp(),finished_receipt_id=receipt where publication_id=p.publication_id;
+  return jsonb_build_object('status','committed','replayed',false,'receipt_id',receipt,'publication_id',p.publication_id);
+end $$;
+revoke all on function clued_private.work_claim_independent_abort_v1(text,jsonb)
+  from public,anon,authenticated,service_role,clued_worker_gateway;
+
 -- Published independent effects must become unresolved before the old claim's
 -- handover can complete. Do not rely on the GitHub-only legacy revoker finding
 -- an App536 effect by accident; this keeps its ACK blocked until reconciliation.
@@ -191,6 +232,9 @@ begin
     raise exception 'work_claim_independent_command_source_unexpected'; end if;
   body:=replace(body,anchor,$a$  if op='publication_begin_independent' then
     return clued_private.work_claim_independent_begin_v1(p_token_hash,p_input);
+  end if;
+  if op='publication_abort_independent' then
+    return clued_private.work_claim_independent_abort_v1(p_token_hash,p_input);
   end if;
   if op='revocations_contexts' then$a$);
   body:=replace(body,columns,columns||',pubs.independent_identity,pubs.started_receipt_id');

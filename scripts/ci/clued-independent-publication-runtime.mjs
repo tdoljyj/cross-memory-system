@@ -43,6 +43,8 @@ function contextOf({ identity, scope, paths, payload }) {
 }
 
 export function createIndependentPublicationRuntime({ native, github, journal, assertCurrent, observeStopped }) {
+  // Every invocation for one identity MUST use the same permanent protected
+  // CAS journal. A Native unique ticket is not a cross-journal POST mutex.
   if (typeof native?.command !== 'function' || !['createCheck', 'readCheck', 'readChecks', 'revokeCheck'].every(k => typeof github?.[k] === 'function')
     || !['begin', 'read', 'transition'].every(k => typeof journal?.[k] === 'function') || typeof assertCurrent !== 'function') fail('independent_publication_ports_required');
   const handles = new WeakMap();
@@ -107,13 +109,17 @@ export function createIndependentPublicationRuntime({ native, github, journal, a
     let ticket = begun.value.details?.ticket ?? null;
     try {
       await current(context);
-      if (begun.value.state === 'intent') {
+      {
+        // Revalidate even an authorized local ticket: Native may have committed
+        // an abort before an older caller lost its reply or local final write.
         const reply = await command({ action: 'publication_begin_independent', scope: context.scope,
           claim_id: context.identity.claim.claim_id, pr_ref: `${context.identity.job.repo}#${context.identity.job.pr}`,
           head_sha: context.identity.job.headSha, base_sha: context.identity.job.baseSha, target_branch: 'main',
           changed_paths: context.paths, independent_identity: context.identity });
-        ticket = ticketOf(reply, context.identity);
-        await journal.transition(key, 'intent', 'authorized', { ticket });
+        const confirmed = ticketOf(reply, context.identity);
+        if (ticket && (ticket.publication_id !== confirmed.publication_id || ticket.receipt_id !== confirmed.receipt_id)) fail('independent_ticket_journal_invalid');
+        ticket = confirmed;
+        if (begun.value.state === 'intent') await journal.transition(key, 'intent', 'authorized', { ticket });
       }
       if (!ticket || independentPublicationIdentityDigest(ticket.identity) !== independentPublicationIdentityDigest(context.identity)) fail('independent_ticket_journal_invalid');
       const handle = Object.freeze({ key, publicationId: ticket.publication_id });
@@ -145,6 +151,7 @@ export function createIndependentPublicationRuntime({ native, github, journal, a
     if (!record || !['sent', 'uncertain', 'settled', 'revoked'].includes(record.state)) fail('independent_recovery_state_invalid');
     const context = contextOf(record.subject), ticket = record.details?.ticket;
     if (!ticket || nativePublicationJournalKey(context.identity) !== key) fail('independent_ticket_journal_invalid');
+    if (record.details.abortingNotSent || record.details.notSentConfirmed) return reconcileStopped(key);
     const check = await find(context, ticket, record.details?.checkRunId ?? null);
     if (record.state === 'revoked') return { status: 'REVOKED_PENDING_DRAIN', check, ticket };
     // No createCheck is reachable from this method, even after a lost reply.
@@ -175,10 +182,15 @@ export function createIndependentPublicationRuntime({ native, github, journal, a
     const stopped = await observeStopped(clone(context.identity));
     if (stopped?.stopped !== true || stopped.controller_id !== context.identity.controller_id || stopped.job_id !== context.identity.job.id
       || stopped.source !== 'qualified-controller-supervisor' || !/^receipt:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(stopped.proofRef ?? '')) fail('independent_publisher_stop_unconfirmed');
-    if (['intent', 'authorized'].includes(record.state)) {
-      const reply = await command({ action: 'publication_abort', scope: context.scope, publication_id: ticket.publication_id, not_sent: true });
-      if (reply.status !== 'committed' || !UUID.test(reply.receipt_id ?? '')) fail('independent_native_abort_unconfirmed');
-      await journal.transition(key, record.state, 'not_sent', { ticket, stopProofRef: stopped.proofRef, abortReceiptId: reply.receipt_id });
+    if (record.details?.notSentConfirmed) return { status: 'NOT_SENT', ticket };
+    if (['intent', 'authorized'].includes(record.state) || record.details?.abortingNotSent) {
+      // Reserve a non-POST recovery state BEFORE the remote abort. `sent` here
+      // records the abort intent; the explicit flag forbids a GitHub POST.
+      if (!record.details?.abortingNotSent) await journal.transition(key, record.state, 'sent', { ticket, abortingNotSent: true, stopProofRef: stopped.proofRef });
+      const reply = await command({ action: 'publication_abort_independent', scope: context.scope, publication_id: ticket.publication_id,
+        independent_identity: context.identity, not_sent: true, publisher_stopped: true });
+      if (reply.status !== 'committed' || reply.publication_id !== ticket.publication_id || !UUID.test(reply.receipt_id ?? '')) fail('independent_native_abort_unconfirmed');
+      await journal.transition(key, 'sent', 'revoked', { ticket, notSentConfirmed: true, stopProofRef: stopped.proofRef, abortReceiptId: reply.receipt_id });
       return { status: 'NOT_SENT', ticket };
     }
     if (record.state === 'not_sent') return { status: 'NOT_SENT', ticket };
