@@ -7,6 +7,16 @@ import path from 'node:path';
 import { COMPARE_TIMEOUT_MS, MAX_COMPARES_PER_PASS, Poller, SLOW_COMPARE_SKIP_MS, upToDate } from '../src/poller.mjs';
 import { ADVISORY_TIMEOUT_MS, LocalStore, PASS_BUDGET_MS, POST_RETRY_MS, PR_STATUS_CONTEXT, PrStatusReporter, contextFree, contextShapeSafe, describe, events, toastArgv, validateStatusConfig } from '../src/pr-status.mjs';
 import { lane } from '../src/companion-main.mjs';
+
+test('C2 role notices are fixed local notifications without a PR status or retry instruction', () => {
+  const now = Date.parse('2026-10-25T00:00:00Z');
+  const s = { writtenAt: now, current: null, halt: null, pending: [], notices: [
+    { kind: 'role-probe-connection', key: 'connection:1', code: 'ROLE_PROBE_CONNECTION_UNAUTHORIZED' },
+    { kind: 'role-probe-uncertain', key: 'uncertain:1', code: 'ROLE_PROBE_UNCERTAIN' } ] };
+  const notes = events({ status: s, now }); assert.equal(notes.length, 2);
+  assert.match(notes[0].title, /连接授权/); assert.match(notes[1].title, /三次/);
+  assert.ok(notes.every(x => !x.title.includes('PR #')));
+});
 import { Runner } from '../src/runner.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
 import { tempRoot } from './helpers.mjs';

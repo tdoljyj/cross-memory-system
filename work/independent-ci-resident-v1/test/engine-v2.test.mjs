@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { WindowsEngine, DESCRIPTOR_CONTRACT, parseStageFact, parseStageOutcome } from '../src/engine-windows.mjs';
+import { canonicalJson, sha256 } from '../src/canonical.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { TEST_NODE, TEST_NODE_SHA, tempRoot, rawPolicy, HEAD, BASE, SOURCE } from './helpers.mjs';
 
@@ -141,4 +142,22 @@ test('WindowsEngine requires the pinned full node before any process port and qu
   assert.equal(effects, 0);
   const e = new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run, paths: { scExe: 'C:\\Windows\\System32\\sc.exe' } });
   assert.equal(await e.scReadback(), true); assert.equal(effects, 2);
+});
+test('C2 engine refuses busy/live runner before invoking broker and uses no companion', async t => {
+  const f = await engineFixture(t); f.engine.busy = () => true;
+  assert.equal((await f.engine.runRoleProbe()).deferred, true); assert.equal(f.runs.length, 0); assert.equal(f.sent.length, 0);
+  f.engine.busy = () => false; f.engine.scReadback = async () => false;
+  assert.equal((await f.engine.runRoleProbe()).deferred, true); assert.equal(f.runs.length, 0);
+});
+test('C2 engine intent manifest is independently computed; full cleanup/outcome is retained', async t => {
+  const f = await engineFixture(t); let invoked = 0;
+  f.engine.scReadback = async () => true;
+  f.engine.run = async a => {
+    invoked++; assert.equal(a[2], '--role-probe');
+    const runKey = a[3], runId = a[5], nodeProfileSha256 = a[7];
+    const manifest = sha256(Buffer.from(canonicalJson({ contract: 'clued.independent-ci.role-probe-intent/1', runKey, runId, nodeProfileSha256 })));
+    return { code: 0, stdout: JSON.stringify(fact({ stage: 11, manifest_sha256: manifest, roleProbe: { result: 'held', code: 'ROLE_PROBE_HELD' },
+      outcome: { status: 'BLOCKED', reason: 'ROLE_PROBE_HELD', sideEffects: 0, mayHavePublished: false } })) };
+  };
+  const r = await f.engine.runRoleProbe(); assert.equal(r.ok, true); assert.equal(r.roleProbe.result, 'held'); assert.equal(invoked, 1); assert.equal(f.sent.length, 0);
 });

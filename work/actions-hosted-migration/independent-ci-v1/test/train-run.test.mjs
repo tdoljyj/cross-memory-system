@@ -35,7 +35,7 @@ test('stage 10: a train row outside the batch, with its own entry and state dire
   assert.equal(TRAIN_STAGE_NUMBER, 10);
   assert.deepEqual([TRAIN_STAGE_V2.kind, TRAIN_STAGE_V2.entryRole, TRAIN_STAGE_V2.jobRoles, TRAIN_STAGE_V2.runMilliseconds, TRAIN_STAGE_V2.linuxWorker],
     ['train', 'train-maintenance', ['train-run'], 300_000, false]);
-  assert.equal(STAGES_V2.length, 10);
+  assert.equal(STAGES_V2.length, 11, 'stages 1-10 and the C2 role probe (stage 11)');
   assert.ok(!FORMAL_STAGES_V2.some(s => s.number === 10), 'stage 10 is never one of the batch stages');
   assert.equal(ENTRY_V2['train-maintenance'], 'work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-maintenance.mjs');
   assert.match(STATE_V2.trainShadow, /\\state\\v2\\train-shadow$/);
@@ -103,7 +103,8 @@ test('invoke-stage stage 10: train facts are a success fact carrying the facts; 
     };
     let time = NOW;
     return invokeStage({ batchDir: path.join(root, 'work', runId), stage: 10, workManifestSha256: d.result.stage.workManifestSha256, batchKey: runKey, stageRoot: path.join(root, 'stage'),
-      brokerRoot: path.join(root, 'broker'), receiptsRoot: path.join(root, 'receipts'), spoolRoot: path.join(root, 'spool'), controllerSid: CONTROLLER,
+      // #926: the invoker checks the sealed plan against the record's node profile and takes the controller SID from it
+      brokerRoot: path.join(root, 'broker'), receiptsRoot: path.join(root, 'receipts'), spoolRoot: path.join(root, 'spool'), recordDocs: rec.docs,
       clock: () => time, sleep: async ms => { time += ms; await broker(); } });
   };
   const ok = await run({ status: 'TRAIN_FACTS', reason: null, sideEffects: 0, train: facts });

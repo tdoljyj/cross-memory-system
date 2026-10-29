@@ -70,6 +70,16 @@ function privilegeBoundary(){
   const docker=fs.readFileSync('/etc/group','utf8').split('\n').find(line=>line.startsWith('docker:'));
   if(docker&&groups.includes(Number(docker.split(':')[2])))fail('MANAGER_DOCKER_GROUP_FORBIDDEN');
 }
+// WSL interop starts a Windows process for anyone who can reach a
+// /run/WSL/*_interop socket, and PrivateDevices=yes still binds the Host's
+// /dev/shm. The fixed unit makes both inaccessible ('-': no /run/WSL, no interop).
+const INACCESSIBLE=Object.freeze(['-/run/WSL','/dev/shm']);
+export function interopBoundary(access=(dir,mode)=>fs.accessSync(dir,mode)){
+  for(const dir of INACCESSIBLE.map(p=>p.replace(/^-/,'')))for(const mode of [fs.constants.R_OK,fs.constants.X_OK]){
+    try{access(dir,mode);}catch(e){if(e.code==='EACCES'||e.code==='ENOENT')continue;throw e;}
+    fail('MANAGER_WSL_INTEROP_OR_SHM_REACHABLE');
+  }
+}
 function outputDirectory(c){
   protectedAncestors(c.output_dir);const s=fs.lstatSync(c.output_dir);
   if(!s.isDirectory()||s.isSymbolicLink()||s.uid!==0||(s.mode&0o027)||s.gid!==c.job_gid)fail('MANAGER_OUTPUT_DIRECTORY_UNPROTECTED');
@@ -88,7 +98,7 @@ function readConfig(configPath,expectedDigest,asJob=false){
   executable(c.node);executable(c.git);executable(c.systemctl);readPinned(c.manager.path,c.manager.sha256);
   const unit=readPinned(c.unit_template.path,c.unit_template.sha256);
   if(unit.toString('utf8')!==renderFixedSystemdUnit(c))fail('MANAGER_UNIT_BYTES_MISMATCH');
-  privilegeBoundary();trustedSearchDirectories(c);outputDirectory(c);privateDirectory(c.environment.HOME,c.job_uid);privateDirectory(c.environment.TMPDIR,c.job_uid);
+  privilegeBoundary();interopBoundary();trustedSearchDirectories(c);outputDirectory(c);privateDirectory(c.environment.HOME,c.job_uid);privateDirectory(c.environment.TMPDIR,c.job_uid);
   if(asJob){if(process.getgid()!==c.job_gid)fail('MANAGER_JOB_GROUP_MISMATCH');}
   else{privateDirectory(c.state_dir,c.uid);if(!process.getgroups().includes(c.job_gid))fail('MANAGER_OUTPUT_READER_GROUP_REQUIRED');}
   return {c,digest};
@@ -135,12 +145,12 @@ export class ProcessIntentJournal{
 const UNIT_PROPERTIES=['Id','LoadState','ActiveState','SubState','Result','MainPID','ExecMainCode','ExecMainStatus','InvocationID','ControlGroup','User','Group','KillMode','NoNewPrivileges','ProtectControlGroups','FragmentPath','Delegate','Slice','RemainAfterExit','Type',
   'ExecStart','WorkingDirectory','DropInPaths','NeedDaemonReload','ExecStartPre','ExecStartPost','ExecCondition','ExecStop','ExecStopPost','ExecReload',
   'Environment','EnvironmentFiles','PassEnvironment','UnsetEnvironment','CapabilityBoundingSet','AmbientCapabilities','SupplementaryGroups',
-  'ProtectSystem','ProtectHome','PrivateDevices','PrivateTmp','ProtectProc','RestrictSUIDSGID','LockPersonality','UMask','ReadWritePaths',
+  'ProtectSystem','ProtectHome','PrivateDevices','PrivateTmp','ProtectProc','RestrictSUIDSGID','LockPersonality','UMask','ReadWritePaths','InaccessiblePaths',
   'RootDirectory','RootImage','BindPaths','BindReadOnlyPaths','TemporaryFileSystem'];
 const OMITTED_WHEN_EMPTY=Object.freeze(['ExecStartPre','ExecStartPost','ExecCondition','ExecStop','ExecStopPost','ExecReload','EnvironmentFiles']);
 export function fixedUnitName(op){if(!['head','branch','status','tests'].includes(op))fail('MANAGER_FIXED_OPERATION_REQUIRED');return `clued-currentness@${op}.service`;}
 export function renderFixedSystemdUnit(c){
-  return `[Unit]\nDescription=Clued fixed currentness check (%i)\n[Service]\nType=oneshot\nRemainAfterExit=yes\nUser=${c.job_uid}\nGroup=${c.job_gid}\nSlice=system.slice\nExecStart=${c.node.path} ${c.manager.path} --systemd-job ${CONFIG_PATH} %i\nWorkingDirectory=${c.source_root}\nUnsetEnvironment=LD_PRELOAD LD_LIBRARY_PATH NODE_OPTIONS NODE_PATH\nCapabilityBoundingSet=\nAmbientCapabilities=\nNoNewPrivileges=yes\nProtectControlGroups=yes\nDelegate=no\nKillMode=control-group\nSendSIGKILL=yes\nTimeoutStartSec=2700s\nTimeoutStopSec=1s\nProtectSystem=strict\nProtectHome=yes\nPrivateDevices=yes\nPrivateTmp=yes\nProtectProc=invisible\nRestrictSUIDSGID=yes\nLockPersonality=yes\nUMask=0027\nReadWritePaths=${c.output_dir} ${c.environment.HOME} ${c.environment.TMPDIR}\nStandardOutput=null\nStandardError=null\n`;
+  return `[Unit]\nDescription=Clued fixed currentness check (%i)\n[Service]\nType=oneshot\nRemainAfterExit=yes\nUser=${c.job_uid}\nGroup=${c.job_gid}\nSlice=system.slice\nExecStart=${c.node.path} ${c.manager.path} --systemd-job ${CONFIG_PATH} %i\nWorkingDirectory=${c.source_root}\nUnsetEnvironment=LD_PRELOAD LD_LIBRARY_PATH NODE_OPTIONS NODE_PATH\nCapabilityBoundingSet=\nAmbientCapabilities=\nNoNewPrivileges=yes\nProtectControlGroups=yes\nDelegate=no\nKillMode=control-group\nSendSIGKILL=yes\nTimeoutStartSec=2700s\nTimeoutStopSec=1s\nProtectSystem=strict\nProtectHome=yes\nPrivateDevices=yes\nPrivateTmp=yes\nProtectProc=invisible\nRestrictSUIDSGID=yes\nLockPersonality=yes\nUMask=0027\nReadWritePaths=${c.output_dir} ${c.environment.HOME} ${c.environment.TMPDIR}\nInaccessiblePaths=${INACCESSIBLE.join(' ')}\nStandardOutput=null\nStandardError=null\n`;
 }
 function fixedWords(actual,expected){return typeof actual==='string'&&actual.trim().split(/\s+/).sort().join('|')===[...expected].sort().join('|');}
 export function requireLoadedExecStart(value,c,op){
@@ -172,7 +182,7 @@ export function parseSystemdShow(text,c,op){
   if(empty.some(k=>values[k]!=='')||values.WorkingDirectory!==c.source_root||values.NeedDaemonReload!=='no'||
     !fixedWords(values.UnsetEnvironment,['LD_PRELOAD','LD_LIBRARY_PATH','NODE_OPTIONS','NODE_PATH'])||values.ProtectSystem!=='strict'||values.ProtectHome!=='yes'||
     values.PrivateDevices!=='yes'||values.PrivateTmp!=='yes'||values.ProtectProc!=='invisible'||values.RestrictSUIDSGID!=='yes'||values.LockPersonality!=='yes'||values.UMask!=='0027'||
-    !fixedWords(values.ReadWritePaths,[c.output_dir,c.environment.HOME,c.environment.TMPDIR]))fail('MANAGER_LOADED_UNIT_MISMATCH');
+    !fixedWords(values.ReadWritePaths,[c.output_dir,c.environment.HOME,c.environment.TMPDIR])||!fixedWords(values.InaccessiblePaths,INACCESSIBLE))fail('MANAGER_LOADED_UNIT_MISMATCH');
   return values;
 }
 export function requireStoppedSystemdTree(actual,tree){

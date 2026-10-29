@@ -16,10 +16,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { CODE, HEX64, check, fail, parseBoundedJson, sha256 } from './canonical.mjs';
+import { CODE, HEX64, check, fail, parseBoundedJson, sha256, canonicalJson } from './canonical.mjs';
 import { exists, readBounded, writeNew, ensureDir } from './store.mjs';
 import { ABORTABLE_IN_FLIGHT } from './classify.mjs';
 import { pinnedNodeProfile, validateNodeProfile } from './node-profile.mjs';
+import { validateRoleProbeFact } from './role-probe.mjs';
 
 export const ORIGINAL_BINARY = '"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"';
 // /3 (quota phase 2 step 3b): also names the tested commit S (testSha); S = H until step 3c's train front batch.
@@ -27,7 +28,7 @@ export const DESCRIPTOR_CONTRACT = 'clued.independent-ci.resident-batch-descript
 // The codes the companion's bridge pump can end with (companion.mjs#pump); a stage's companion answer is taken
 // only from this list, and none of them is an attempt-2 transient code.
 export const PUMP_CODES = Object.freeze(['ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED', 'LINUX_WORKER_START_UNCONFIRMED', 'FORMAL_BRIDGE_STAGE_DEADLINE',
-  'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED', 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED', 'FORMAL_WORKER_TERMINAL_UNCONFIRMED', 'RELAY_REFUSED_NO_RETRY',
+  'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED', 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED', 'FORMAL_WORKER_TERMINAL_UNCONFIRMED', 'RELAY_REFUSED_NO_RETRY', 'RELAY_PARTIAL_RECORD_PRESERVED',
   'COMPANION_PUMP_UNCONFIRMED', 'COMPANION_REQUEST_EXPIRED', 'COMPANION_HANDLER_UNCONFIRMED', 'COMPANION_PUMP_CANCELLED']);
 // The broker request the Source v2 invoker writes (resident-v2/broker-protocol.mjs) and the stop request the
 // resident may write next to it for an Owner abort (windows/SwapBroker.cs, StopRequest).
@@ -119,7 +120,9 @@ export function parseStageFact(text, expectedManifestSha256) {
   // The broker refused before any start and re-read the original (stage-fact.mjs BROKER_NO_LAUNCH_CODES): one of the
   // two ways a stage-1 failure may be released (classify.mjs#decideFailure); only with the fact's own readback.
   const brokerNoLaunch = !ok && f.broker_no_launch === true && f.scm_start_call_issued === false && restored && treeZero && f.configuration_conflict_detected === false;
-  return { ok, code, proof: { windowsTreeZero: treeZero, serviceOriginalStopped: restored }, nativeReceiptSha256: HEX64.test(f.native_receipt_sha256 ?? '') ? f.native_receipt_sha256 : null, relay, train,
+  let roleProbe = null;
+  if (f.stage === 11 && ok) { try { roleProbe = validateRoleProbeFact(f.roleProbe); } catch { /* no fact */ } }
+  return { ok, code, proof: { windowsTreeZero: treeZero, serviceOriginalStopped: restored }, nativeReceiptSha256: HEX64.test(f.native_receipt_sha256 ?? '') ? f.native_receipt_sha256 : null, relay, train, roleProbe,
     outcome: parseStageOutcome(f.outcome), brokerNoLaunch };
 }
 
@@ -309,6 +312,21 @@ export class WindowsEngine {
     // Nothing was requested from the broker yet: a refused derivation is a clean stage-10 refusal.
     if (!row) return { ok: false, code: 'TRAIN_STAGE_REFUSED', proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() }, train: null, runId };
     return { ...(await this.invoke({ batchId: runId, key, dir: out }, { number: 10, runMilliseconds: row.runMilliseconds, linuxWorker: false }, row)), runId };
+  }
+
+  // C2 never derives a PR/batch, starts Linux or contacts the companion. The installed invoker creates
+  // one stage-11 plan and asks the same serialized broker; independent SCM readback remains mandatory.
+  async runRoleProbe() {
+    const entry = await this.requireV2('invoke-stage.mjs');
+    const runKey = randomBytes(32).toString('hex'), runId = `${runKey.slice(0, 16)}-${randomBytes(6).toString('hex')}`;
+    const manifest = sha256(Buffer.from(canonicalJson({ contract: 'clued.independent-ci.role-probe-intent/1', runKey, runId, nodeProfileSha256: this.nodeProfileSha256 })));
+    if (this.busy?.() === true || this.inflight) return { ok: false, code: 'ROLE_PROBE_BUSY', deferred: true, proof: null, roleProbe: null };
+    // A live original runner is not ours to stop: do not even request a swap.
+    if (!(await this.scReadback())) return { ok: false, code: 'ROLE_PROBE_BUSY', deferred: true, proof: null, roleProbe: null };
+    const r = await this.run([this.paths.nodeExe, entry, '--role-probe', runKey, '--probe-id', runId, '--node-profile-sha256', this.nodeProfileSha256], { timeoutMs: 420_000 });
+    if (r.timedOut || r.code === null) return { ok: false, code: 'STAGE_INVOKER_TERMINAL_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: false }, roleProbe: null };
+    const fact = parseStageFact(r.stdout, manifest), stopped = await this.scReadback();
+    return { ...fact, proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && stopped }, runId };
   }
 
   // opts.betweenRoles: archive the previous local Linux role's protocol records first (stages 4 and 6

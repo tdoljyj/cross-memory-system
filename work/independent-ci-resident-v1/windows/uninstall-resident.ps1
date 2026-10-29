@@ -70,12 +70,13 @@ while (ExecutorAlive) { if ((Get-Date) -gt $deadline) { throw 'EXECUTOR_STILL_RU
 Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -Confirm:$false
 # The companion runs as conhost --headless -> node (install-resident.ps1 Get-CompanionAction); ending or
 # unregistering its task ends conhost, not node. With both services stopped only the companion can still run
-# the installed node copy, so every such process is stopped before the resident directory is renamed.
+# the installed node copy, so every such process is stopped before the resident directory is renamed. The companion's
+# job hosts (bin\CluedCompanionJobHost.exe, DESIGN §24) end with node's job, but asynchronously: they are waited for too.
 Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\CimCmdlets\CimCmdlets.psd1'
-$installedNode = Join-Path $Root 'runtime\node.exe'
+$installed = @((Join-Path $Root 'runtime\node.exe'), (Join-Path $Root 'bin\CluedCompanionJobHost.exe'))
 $until = (Get-Date).AddSeconds(30)
 do {
-  $left = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='node.exe'" | Where-Object { [string]::Equals([string]$_.ExecutablePath, $installedNode, [StringComparison]::OrdinalIgnoreCase) })
+  $left = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='node.exe' OR Name='CluedCompanionJobHost.exe'" | Where-Object { $p = [string]$_.ExecutablePath; @($installed | Where-Object { [string]::Equals($p, $_, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0 })
   foreach ($p in $left) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
   if ($left.Count) { Start-Sleep -Milliseconds 500 }
 } while ($left.Count -and (Get-Date) -lt $until)

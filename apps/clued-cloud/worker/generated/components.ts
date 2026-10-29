@@ -8,7 +8,7 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "mcp.server": "0.8.5",
   "hook.runner-job-started": "1.0.0",
   "hook.capture-guard": "1.0.4",
-  "hook.work-claim-guard": "1.1.7",
+  "hook.work-claim-guard": "1.1.8",
   "hook.version-check": "1.0.4",
   "hook.run-python": "1.0.3",
   "hook.settings": "1.1.1",
