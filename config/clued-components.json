@@ -247,14 +247,14 @@
     {
       "id": "script.handover-external-source-check",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Canonical External2 accepted-source guard and pinned migration bundle.",
       "root": ".",
       "files": [
         "scripts/ci/clued-handover-external-source-check.mjs",
         "scripts/ci/clued-handover-external-source-pins.json"
       ],
-      "content_sha256": "12f1a07fc577109ffa50ce9175a355027c3663334cef2e4f596a228790c18d7a",
+      "content_sha256": "9214633d5bedebf40053c5994c5bfaa29b3cad4fe6eb9b4e74f5974c2a9c9576",
       "version_marker": {
         "file": "scripts/ci/clued-handover-external-source-check.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -396,7 +396,7 @@
     {
       "id": "script.native617-entry",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Disabled Task617 public Native job binding guard; Source-only preparation does not qualify a Host or permit execution.",
       "root": ".",
       "files": [
@@ -404,7 +404,7 @@
         "scripts/ci/clued-handover-native-entry.test.mjs",
         "config/clued-handover-native-entry-policy.json"
       ],
-      "content_sha256": "cfbe71f04ef4a33a68e9c8b9c2674974828a9697dad330ef506a8fd456a1a1c5",
+      "content_sha256": "bb17a6b1b132d74e7bdf48a5364ed4076d629f42a802f6fdbf50f03e356056c1",
       "version_marker": {
         "file": "scripts/ci/clued-handover-native-entry.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"

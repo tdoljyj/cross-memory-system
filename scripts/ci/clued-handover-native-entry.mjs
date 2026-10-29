@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import {fileURLToPath} from 'node:url';
 
-export const COMPONENT_VERSION = "1.0.1";
+export const COMPONENT_VERSION = "1.0.2";
 const TASK='6176fdcc-c5b0-46c9-9769-d5e0bc0ce4f8',REPO='tdoljyj/cross-memory-system';
 const SHA=/^[0-9a-f]{64}$/,COMMIT=/^[0-9a-f]{40}$/;
 const UUID=/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/,ID=/^[1-9][0-9]{0,19}$/;

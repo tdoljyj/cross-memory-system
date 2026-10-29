@@ -103,3 +103,8 @@ test('shared dispatch cannot impersonate the dedicated Native617 control entry',
   const c=context('control'); c.workflow_path='.github/workflows/clued-work-admission-dispatch.yml';
   assert.throws(()=>validateNative617Context(c));
 });
+
+test('complete executable subject includes the dedicated control workflow',async()=>{
+  const {REQUIRED_FILES}=await import('./clued-handover-external-source-check.mjs');
+  assert.ok(REQUIRED_FILES.includes('.github/workflows/clued-native617-admission-dispatch.yml'));
+});
