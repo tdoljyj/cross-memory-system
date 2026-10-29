@@ -1,0 +1,20 @@
+{
+  "contract": "clued.independent-ci.resident-upgrader-config/1",
+  "node": "turing",
+  "nodeProfileSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "ownerSid": "S-1-5-21-1-2-3-1001",
+  "root": "C:\\ProgramData\\CluedIndependentCI\\resident",
+  "supabaseUrl": "https://example-project.supabase.co",
+  "publishableKey": "sb_publishable_EXAMPLE_ONLY_NOT_A_KEY",
+  "confirmOrigin": "https://kooyumi.pixelgrav.com",
+  "tokenFile": "C:\\ProgramData\\CluedIndependentCI\\resident\\secrets\\resident-upgrade.token",
+  "timeouts": {
+    "drainMaxMinutes": 120,
+    "drainRetryMinutes": 60,
+    "deferMaxHours": 24,
+    "pauseConfirmMs": 600000,
+    "verifyMaxMs": 2700000,
+    "grantPollMs": [30000, 120000]
+  },
+  "keepGenerations": 3
+}
