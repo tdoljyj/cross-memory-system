@@ -170,7 +170,7 @@ def validate_receipt(r, d, descriptor_sha, now):
 
 
 def bundle_generation(base, d, descriptor_sha, now):
-    """Task 4012c1b9 (DESIGN §36): the newest complete bundle generation of the batch and its validated receipt. gen-2/ (the
+    """Task 4012c1b9 (DESIGN §37): the newest complete bundle generation of the batch and its validated receipt. gen-2/ (the
     second bundle of a batch resumed from parking point A) when it exists: then its receipt must exist, name generation 2
     and the first generation's exact bundle, and the first one must be this batch's too. A gen-2/ without its receipt is
     refused, never skipped. Otherwise the first generation, whose receipt never names a generation."""

@@ -1,6 +1,6 @@
 {
   "contract": "clued.independent-ci.retention-cases/1",
-  "comment": "DESIGN §34. One rule, two implementations: src/retention.mjs#planRetention and clued-ci-resident-linux#plan_retention are both held to these cases (test/retention.test.mjs, test/test_linux_tool.py). Entries default to isDir true, links 0, complete true. rule: classBudgetBytes 100, minKeepPerClass 2, maxDeletesPerPass 16 unless a case says otherwise.",
+  "comment": "DESIGN §35. One rule, two implementations: src/retention.mjs#planRetention and clued-ci-resident-linux#plan_retention are both held to these cases (test/retention.test.mjs, test/test_linux_tool.py). Entries default to isDir true, links 0, complete true. rule: classBudgetBytes 100, minKeepPerClass 2, maxDeletesPerPass 16 unless a case says otherwise.",
   "rule": { "classBudgetBytes": 100, "minKeepPerClass": 2, "maxDeletesPerPass": 16 },
   "cases": [
     {

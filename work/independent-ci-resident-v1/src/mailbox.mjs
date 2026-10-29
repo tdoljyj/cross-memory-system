@@ -18,7 +18,7 @@ export const REQUEST_CONTRACT = 'clued.independent-ci.resident-companion-request
 // /3 (DESIGN §32, Task 25851665): also `memory`, the facts of a memory-ready answer ({ order, blocks }: the hv_sock ring order and the
 // free blocks of at least that order over all zones), null in every other answer. Same practice as /2: the companion and the
 // service come from one package and are installed together.
-// /4 (DESIGN §34, Task 4aedda54): also `prune`, the facts of an archive-prune answer (the Linux spool's retention pass: what
+// /4 (DESIGN §35, Task 4aedda54): also `prune`, the facts of an archive-prune answer (the Linux spool's retention pass: what
 // was deleted, what each class keeps, what the Owner's keep list protects, and why a pass stopped or was refused), null in
 // every other answer. Same practice: one package, installed together.
 export const RESPONSE_CONTRACT = 'clued.independent-ci.resident-companion-response/4';
@@ -43,9 +43,9 @@ const ARCHIVE_DIR = /^(failed|archive)-[0-9a-z-]{1,120}$/;
 const PRUNE_NAME = /^(archive|completed|failed)-[0-9A-Za-z-]{1,90}$/;
 export const KINDS = Object.freeze(['build-bundle', 'prepare-workspaces', 'relay-stage', 'archive-linux', 'linux-quiescence', 'check-refs', 'archive-usage', 'pr-head', 'memory-ready',
   'archive-prune', 'rebuild-bundle']);
-// rebuild-bundle (Task 4012c1b9, DESIGN §36): the batch's second and last bundle (build-bundle.ps1 -Rebundle), asked only for a
+// rebuild-bundle (Task 4012c1b9, DESIGN §37): the batch's second and last bundle (build-bundle.ps1 -Rebundle), asked only for a
 // batch resumed from parking point A, right before its workspace. Its answer can only let the batch go on or end it cleanly.
-// archive-prune (DESIGN §34): one retention pass of the Linux spool by the root tool, asked only between batches with no open
+// archive-prune (DESIGN §35): one retention pass of the Linux spool by the root tool, asked only between batches with no open
 // batch and a fresh heartbeat. Its answer is a record for the receipt; it never admits or publishes anything.
 // memory-ready (DESIGN §32): one read of the VM's hv_sock memory facts before a scanner stage. Its answer can only delay or
 // refuse that stage cleanly; it never admits or publishes anything.

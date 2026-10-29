@@ -41,6 +41,16 @@
   configuration is changed only by CluedCISwapBroker (LocalSystem), which can switch the binary path
   between the original and an installed, allow-listed helper and nothing else (review M2).
   The Linux half is linux/install-resident-linux.sh, run separately as root.
+
+  In-place upgrade channel (Task 018da927): the package is /4 and carries the upgrader (package section `upgrader`, targets under
+  upgrader\, accepted ONLY by this fresh install). The plan (/8) adds the upgrader and generation 1; the steps add upgrader-files,
+  upgrader-host (UpgraderServiceHost.cs compiled into upgrader\bin), upgrader-service (CluedCIUpgrader: LocalSystem, delayed-auto,
+  SeChangeNotifyPrivilege only, the services' DACL) and, after the receipt (/6) is written, generation-1 (generations\g1\generation.json
+  and upgrade\current.json; nothing is moved). The directories of the channel (upgrader\, upgrade\ with its inbox and mailbox,
+  generations\, archive\, secrets\) are created with their final ACLs like every other. -UpgradeTokenFile (optional) is this node's own
+  resident-upgrade connection token (never the ci-admission token): read once, fingerprinted like the ci-admission token, placed
+  create-only at secrets\resident-upgrade.token readable by SYSTEM and Administrators only. Every later version comes through
+  CluedCIUpgrader (windows\request-upgrade.ps1); a reinstall is needed only when the channel itself changes.
 #>
 [CmdletBinding()]
 param(
@@ -52,7 +62,8 @@ param(
   [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPlanSha256,
   [switch]$StartAfterInstall,
   [string]$AppPrivateKeyFile,        # optional: this node's App private key, downloaded by the Owner on this machine (design 7.1)
-  [string]$CiAdmissionTokenFile      # optional: this node's ci-admission connection token (design 7.2)
+  [string]$CiAdmissionTokenFile,     # optional: this node's ci-admission connection token (design 7.2)
+  [string]$UpgradeTokenFile          # optional: this node's resident-upgrade connection token (018da927; its own connection, Owner decision 3ce5200c)
 )
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -66,7 +77,8 @@ $RunnerService = $null   # the node profile's runnerService (Get-PackageNodeProf
 $OriginalBinary = '"C:\ProgramData\CluedControl\runner\bin\RunnerService.exe"'
 $Sc = 'C:\Windows\System32\sc.exe'
 $Csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-$TargetShape = '^(?:(?:resident|source)\\[0-9a-f]{64}(?:\\[A-Za-z0-9_.@-]+)+|(?:config|runtime|bin|helpers|record)\\[A-Za-z0-9_.@-]+)$'
+# upgrader\<64 hex>\... and upgrader\{config,runtime,bin}\<name>: the upgrader's own files, accepted only by this fresh install (018da927).
+$TargetShape = '^(?:(?:resident|source|upgrader)\\[0-9a-f]{64}(?:\\[A-Za-z0-9_.@-]+)+|(?:config|runtime|bin|helpers|record)\\[A-Za-z0-9_.@-]+|upgrader\\(?:config|runtime|bin)\\[A-Za-z0-9_.@-]+)$'
 # Source v2 (DESIGN S5, S12): the claim-free install record goes to record\ (admin-only; read by the
 # resident's derivation and by the generic helper as clued-control), the CI Source to
 # source\<ciSourceManifestSha256>\ (the directory the generic helper loads code from), and the ONE generic
@@ -82,6 +94,13 @@ $script:SecretBytes = @{}   # the verified secret bytes, in memory only, between
 # Where the fingerprint check runs the package's node.exe and tool (DESIGN.md section 30.5): a directory this script creates, never the package directory.
 $SecretWorkParent = 'C:\Windows\Temp'
 $SecretWorkSddl = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
+# ---- The in-place upgrade channel (Task 018da927) ----
+$UpgraderName = 'CluedCIUpgrader'
+$UpgraderPrivileges = @('SeChangeNotifyPrivilege')   # LocalSystem cut to SeChangeNotify; UpgraderServiceHost.cs refuses any other at start
+$UpgradeTokenTarget = 'C:\ProgramData\CluedIndependentCI\resident\secrets\resident-upgrade.token'
+$UpgradeTokenSddl = 'O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)'   # SYSTEM and Administrators only: the upgrader reads it, nobody else
+$WindowsLayout = 'clued.independent-ci.resident-layout/1'
+$ServiceSddl = 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)'
 
 # ---- Privilege boundary (independent review of PR-A: MAJOR-1, MINOR-2, MINOR-4, MINOR-5) ----
 # Required privileges cut the service tokens down to what the code needs; both hosts re-check the real
@@ -114,6 +133,96 @@ function Get-PrivilegePlan {
 function Get-CompanionAction([string]$root, [string]$residentSha, [string]$configSha) {
   [ordered]@{ path = 'C:\Windows\System32\conhost.exe'
     arguments = '--headless "' + (Join-Path $root 'runtime\node.exe') + '" "' + (Join-Path $root ('resident\' + $residentSha + '\src\companion-main.mjs')) + '" --root "' + $root + '" --config-sha256 ' + $configSha }
+}
+
+# ---- Shared with windows/upgrade-apply.ps1 (018da927): one text in both, held identical by test-upgrade-windows.ps1 ----
+# The two service command lines (the generation records hold exactly these strings; the upgrader switches between them).
+function Get-ResidentBinPath([string]$root, [string]$policySha, [string]$nodeSha, [string]$residentSha, [string]$entrySha) {
+  '"' + (Join-Path $root 'bin\ResidentServiceHost.exe') + '" "' + $root + '" ' + $policySha + ' "' + (Join-Path $root 'runtime\node.exe') + '" ' + $nodeSha + ' "' + (Join-Path $root ('resident\' + $residentSha + '\src\service-main.mjs')) + '" ' + $entrySha
+}
+function Get-BrokerBinPath([string]$root, [string]$brokerConfigSha, [string]$nodeProfileSha) {
+  '"' + (Join-Path $root 'bin\SwapBroker.exe') + '" "' + $root + '" ' + $brokerConfigSha + ' ' + $nodeProfileSha
+}
+# Config /3 of the broker (install-resident.ps1 step 'broker-config').
+function Get-BrokerConfigJson([string]$helperSha, [string]$stable, [string]$nodeCanonical, [string]$nodeProfileSha, [string]$acceptanceSha) {
+  '{"contract":"clued.independent-ci.swap-broker-config/3","helper":{"name":"' + $GenericHelper + '","sha256":"' + $helperSha + '"},"originalBinary":' + ($OriginalBinary | ConvertTo-Json -Compress) + ',"stableDigest":"' + $stable + '","node":' + $nodeCanonical + ',"nodeProfileSha256":"' + $nodeProfileSha + '","acceptanceSha256":"' + $acceptanceSha + '"}'
+}
+# The compile recipe (install-resident.ps1 step 'service-hosts'): the two service hosts and the companion job host into $binOut, the ONE
+# generic helper into $helpersOut, with the in-box compiler, full reference paths and the caller's directory never used. Returns the hashes.
+function Invoke-CompileRecipe([string]$compiler, [string]$fw, [string]$binOut, [string]$helpersOut, [string]$residentHostCs, [string]$brokerCs, [string]$v2, [string]$jobHostCs) {
+  $hashes = [ordered]@{}
+  Push-Location $binOut
+  try {
+    foreach ($pair in @(@('ResidentServiceHost', @("/reference:$($fw)System.dll", "/reference:$($fw)System.ServiceProcess.dll"), $residentHostCs, @()),
+                        @('SwapBroker', @("/reference:$($fw)System.dll", "/reference:$($fw)System.Core.dll", "/reference:$($fw)System.ServiceProcess.dll", "/reference:$($fw)System.Web.Extensions.dll"), $brokerCs,
+                          @((Join-Path $v2 'ResidentScmV2.cs'), (Join-Path $v2 'ScmPidHandshakeV2.cs'), (Join-Path $v2 'NodeProfileV2.cs'))))) {
+      $exe = Join-Path $binOut ($pair[0] + '.exe')
+      & $compiler /nologo /noconfig /target:exe /optimize+ ("/out:" + $exe) $pair[1] $pair[2] $pair[3] | Out-Null
+      if ($LASTEXITCODE -ne 0) { throw ('SERVICE_HOST_COMPILE_FAILED:' + $pair[0]) }
+      $hashes[($pair[0] + 'Sha256')] = Sha256File $exe
+    }
+    $helper = Join-Path $helpersOut $GenericHelper
+    & $compiler /nologo /noconfig /target:winexe /platform:x64 /optimize+ /main:CluedWindowsFormalEntryV2 "/reference:$($fw)System.dll" "/reference:$($fw)System.Core.dll" "/reference:$($fw)System.Web.Extensions.dll" ("/out:" + $helper) (Join-Path $v2 'FormalPublicBoundaryV2.cs') (Join-Path $v2 'FormalSession0V2.cs') (Join-Path $v2 'ScmPidHandshakeV2.cs') (Join-Path $v2 'NodeProfileV2.cs') | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'GENERIC_HELPER_COMPILE_FAILED' }
+    $hashes.genericHelperSha256 = Sha256File $helper
+    # The companion's job host (DESIGN §24), with the generic helper's flags (winexe: never a console window of its own).
+    $jobHost = Join-Path $binOut $CompanionJobHost
+    & $compiler /nologo /noconfig /target:winexe /platform:x64 /optimize+ "/reference:$($fw)System.dll" ("/out:" + $jobHost) $jobHostCs | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'COMPANION_JOB_HOST_COMPILE_FAILED' }
+    $hashes.companionJobHostSha256 = Sha256File $jobHost
+  } finally { Pop-Location }
+  $hashes
+}
+# The companion task (install-resident.ps1 step 'companion-task'): the Owner's interactive token, not elevated, at log-on, one instance,
+# no time limit, three restarts a minute apart, protected by $sddl; registered (6 = TASK_CREATE_OR_UPDATE) and read back. Returns the XML hash.
+function Register-CompanionTask([string]$ownerSid, $ca, [string]$sddl) {
+  $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
+  $folder = try { $svc.GetFolder('\Clued') } catch { $svc.GetFolder('\').CreateFolder('Clued') }
+  $def = $svc.NewTask(0)
+  $def.Principal.UserId = $ownerSid; $def.Principal.LogonType = 3; $def.Principal.RunLevel = 0
+  $t = $def.Triggers.Create(9); $t.UserId = $ownerSid
+  $def.Settings.MultipleInstances = 2; $def.Settings.ExecutionTimeLimit = 'PT0S'; $def.Settings.DisallowStartIfOnBatteries = $false; $def.Settings.StopIfGoingOnBatteries = $false
+  $def.Settings.RestartCount = 3; $def.Settings.RestartInterval = 'PT1M'
+  $a = $def.Actions.Create(0); $a.Path = $ca.path; $a.Arguments = $ca.arguments
+  $null = $folder.RegisterTaskDefinition('CluedCIResidentCompanion', $def, 6, $null, $null, 3, $sddl)
+  $t = $folder.GetTask('CluedCIResidentCompanion')
+  $uid = $t.Definition.Principal.UserId
+  $uidSid = if ($uid -match '^S-1-') { $uid } else { (New-Object Security.Principal.NTAccount($uid)).Translate([Security.Principal.SecurityIdentifier]).Value }
+  $act = if ($t.Definition.Actions.Count -eq 1) { $t.Definition.Actions.Item(1) } else { $null }
+  if (($t.Definition.Principal.RunLevel -ne 0) -or ($uidSid -cne $ownerSid) -or $null -eq $act -or $act.Path -cne $ca.path -or $act.Arguments -cne $ca.arguments) { throw 'COMPANION_TASK_READBACK_MISMATCH' }
+  Sha256Text $t.Xml
+}
+function Get-CompanionTaskSddl([string]$ownerSid) { "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;$ownerSid)" }
+
+# ---- The upgrader (018da927; shared with verify-resident.ps1) ----
+# CluedCIUpgrader's command line: UpgraderServiceHost.exe ROOT CONFIG_SHA NODE NODE_SHA ENTRY ENTRY_SHA (UpgraderServiceHost.cs UpgraderArgs).
+function Get-UpgraderBinPath([string]$root, [string]$configSha, [string]$nodeSha, [string]$manifestSha, [string]$entrySha) {
+  '"' + (Join-Path $root 'upgrader\bin\UpgraderServiceHost.exe') + '" "' + $root + '" ' + $configSha + ' "' + (Join-Path $root 'upgrader\runtime\node.exe') + '" ' + $nodeSha + ' "' + (Join-Path $root ('upgrader\' + $manifestSha + '\upgrader\src\upgrader-main.mjs')) + '" ' + $entrySha
+}
+# The files of a generation (A6): everything under config\, record\, bin\ and helpers\, and install\install-receipt.json. The hash is the
+# SHA-256 of [{"path":"<relative, backslashes>","sha256":"<hex>"},...] sorted by path (ordinal), compact, UTF-8: generation.json filesSha256.
+function Get-GenerationFilesSha256([string]$root) {
+  [string[]]$slots = @('config\policy.json', 'config\companion.json', 'config\resident-installed-manifest.json', 'config\source-installed-manifest.json',
+    'record\installation.json', 'record\acceptance.json', 'record\source-manifest.json', 'record\signers.json', 'record\record-manifest.json',
+    'bin\ResidentServiceHost.cs', 'bin\SwapBroker.cs', 'runtime\node.exe',
+    'bin\ResidentServiceHost.exe', 'bin\SwapBroker.exe', 'bin\CluedCompanionJobHost.exe', 'helpers\controller-formal-generic-v2.exe', 'config\broker.json')
+  [Array]::Sort($slots, [StringComparer]::Ordinal)
+  $rows = @(foreach ($s in $slots) {
+      $f = Join-Path $root $s
+      $item = Get-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+      if ($null -ne $item -and (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { throw ('GENERATION_FILE_LINK_REFUSED:' + $s) }
+      ($s | ConvertTo-Json -Compress) + ':' + $(if ($null -ne $item -and -not $item.PSIsContainer) { '"' + (Sha256File $f) + '"' } else { 'null' }) })
+  Sha256Text ('{' + ($rows -join ',') + '}')
+}
+# The upgrader's service host, compiled like the resident's (target exe, System and System.ServiceProcess only). Returns its hash.
+function Invoke-UpgraderHostCompile([string]$compiler, [string]$fw, [string]$binOut, [string]$hostCs) {
+  Push-Location $binOut
+  try {
+    $exe = Join-Path $binOut 'UpgraderServiceHost.exe'
+    & $compiler /nologo /noconfig /target:exe /optimize+ ("/out:" + $exe) "/reference:$($fw)System.dll" "/reference:$($fw)System.ServiceProcess.dll" $hostCs | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'UPGRADER_HOST_COMPILE_FAILED' }
+    Sha256File $exe
+  } finally { Pop-Location }
 }
 
 function Sha256Bytes([byte[]]$b) { $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash($b))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() } }
@@ -416,6 +525,16 @@ function Get-AclPlan([string]$res) {
     'mailbox'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"
     'mailbox\requests'  = "$base(A;OICI;$mod;;;$res)(A;OICI;$rx;;;$OwnerSid)"
     'mailbox\responses' = "$base(A;OICI;$rx;;;$res)(A;OICI;$mod;;;$OwnerSid)"            # responses + companion heartbeat
+    # ---- The in-place upgrade channel (018da927, A6). CluedCIUpgrader runs as LocalSystem: SY full (base) is its only write. ----
+    'upgrader'                  = "$base"                                                 # its code, node, host and config: SYSTEM and Administrators only
+    'secrets'                   = "$base"                                                 # resident-upgrade.token: SYSTEM and Administrators only
+    'upgrade'                   = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"      # current.json, status.json, ops, staged (the Owner's WSL reads staged)
+    'upgrade\inbox'             = "$base(A;;$drop;;;$OwnerSid)(A;OIIO;0x120089;;;$OwnerSid)(A;OIIO;0x120089;;;OW)"   # the 'inbox' rule: Owner create-only
+    'upgrade\mailbox'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"
+    'upgrade\mailbox\requests'  = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"      # the upgrader writes, the companion reads
+    'upgrade\mailbox\responses' = "$base(A;OICI;$rx;;;$res)(A;OICI;$mod;;;$OwnerSid)"     # the companion answers (and version-facts.json)
+    'generations'               = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"      # as config
+    'archive'                   = "$base(A;OICI;$rx;;;$OwnerSid)"
   }
 }
 
@@ -560,6 +679,60 @@ function Get-OpenBatchCount {
   return @(Get-ChildItem -LiteralPath $ledger -Directory | Where-Object { -not (Test-Path -LiteralPath (Join-Path $_.FullName '90-terminal.json')) }).Count
 }
 
+# ---- The upgrader and its token (018da927) ----
+function Get-JsonField($o, [string]$k) { if (($o -is [pscustomobject]) -and (@($o.PSObject.Properties.Name) -ccontains $k)) { $o.$k } else { $null } }
+# The resident-upgrade token: optional; read once, fingerprinted like the ci-admission token (the same binding-token formula), and it must
+# NOT be the ci-admission token (each node has its own resident-upgrade connection). The bytes wait in $script:SecretBytes.
+function Get-UpgradeTokenPlan {
+  $entry = [ordered]@{ target = $UpgradeTokenTarget; supplied = [bool]$UpgradeTokenFile; targetExists = (Test-Path -LiteralPath $UpgradeTokenTarget); sddl = $UpgradeTokenSddl; fingerprint = $null; verified = $false }
+  if ($UpgradeTokenFile) {
+    if (-not $elevated) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED_FOR_SECRETS' }
+    $bytes = Read-SecretSource $UpgradeTokenFile 4096 'UPGRADE_TOKEN'
+    try {
+      $fp = Get-SecretFingerprint 'ci-token' $bytes
+      if ($null -eq $fp) { throw 'UPGRADE_TOKEN_UNREADABLE' }
+      if ($fp -ceq $Identity.ciTokenPinSha256) { throw 'UPGRADE_TOKEN_IS_THE_CI_ADMISSION_TOKEN' }
+    } catch { [Array]::Clear($bytes, 0, $bytes.Length); Clear-SecretBytes; throw }
+    $entry.fingerprint = $fp; $entry.verified = $true
+    $script:SecretBytes['upgradeToken'] = $bytes
+  }
+  $entry
+}
+# The package's upgrader section (A1) and files: one copy, under upgrader\<manifestSha256>\, with its host source, node, entry, the frozen
+# upgrade-apply.ps1 and its configuration; the configuration names this root, this Owner, this node profile and the token target.
+function Get-UpgraderPlan($pkg) {
+  $find = { param($t) $hit = @($pkg.files | Where-Object { $_.target -ceq $t }); if ($hit.Count -ne 1) { throw ('PACKAGE_UPGRADER_FILE_REQUIRED:' + $t) }; $hit[0].sha256 }
+  $u = Get-JsonField $pkg 'upgrader'
+  if ([string](Get-JsonField $u 'manifestSha256') -cnotmatch '^[0-9a-f]{64}\z') { throw 'PACKAGE_UPGRADER_SECTION_REQUIRED' }
+  $m = $u.manifestSha256
+  foreach ($f in @($pkg.files | Where-Object { $_.target -cmatch '^upgrader\\[0-9a-f]{64}\\' })) { if ($f.target.Substring(9, 64) -cne $m) { throw 'PACKAGE_UPGRADER_COPY_REFUSED' } }
+  $config = 'upgrader\config\upgrader.json'; $entry = 'upgrader\' + $m + '\upgrader\src\upgrader-main.mjs'
+  $sha = [ordered]@{ hostSource = (& $find 'upgrader\bin\UpgraderServiceHost.cs'); node = (& $find 'upgrader\runtime\node.exe'); config = (& $find $config); entry = (& $find $entry)
+    apply = (& $find ('upgrader\' + $m + '\windows\upgrade-apply.ps1')) }
+  $cfg = (New-Object Text.UTF8Encoding($false, $true)).GetString((Read-PackageRecordFile $config)) | ConvertFrom-Json
+  $cfgNode = Get-JsonField $cfg 'node'
+  if ((Get-JsonField $cfg 'contract') -cne 'clued.independent-ci.resident-upgrader-config/1' -or (Get-JsonField $cfg 'root') -cne $Root -or (Get-JsonField $cfg 'ownerSid') -cne $OwnerSid -or
+    (Get-JsonField $cfg 'nodeProfileSha256') -cne $NodeProfileSha256 -or (Get-JsonField $cfg 'tokenFile') -cne $UpgradeTokenTarget -or ($cfgNode -is [string] -and $cfgNode -cne $Node.nodeName)) { throw 'PACKAGE_UPGRADER_CONFIG_REFUSED' }
+  [ordered]@{ service = $UpgraderName; account = 'LocalSystem'; start = 'delayed-auto'; requiredPrivileges = $UpgraderPrivileges; sddl = $ServiceSddl
+    failure = 'restart after 60 s, then after 300 s, reset daily, also on non-crash failure'
+    manifestSha256 = $m; hostSourceSha256 = $sha.hostSource; nodeSha256 = $sha.node; configSha256 = $sha.config; entrySha256 = $sha.entry; applySha256 = $sha.apply
+    binaryPath = (Get-UpgraderBinPath $Root $sha.config $sha.node $m $sha.entry)
+    files = @($pkg.files | Where-Object { $_.target -cmatch '^upgrader\\' }).Count
+    stopFile = 'upgrade\STOP-REQUESTED'; tokenRecord = 'upgrade\upgrader-token.json'
+    token = (Get-UpgradeTokenPlan) }
+}
+# Package /4 (A1): the layout, the state compatibility, the acceptance (= the policy's), the Linux manifest.
+function Assert-Package4($pkg) {
+  if ($pkg.contract -cne 'clued.independent-ci.resident-package/4') { throw 'RESIDENT_PACKAGE_4_REQUIRED' }
+  if ((Get-JsonField $pkg 'windowsLayout') -cne $WindowsLayout) { throw 'PACKAGE_WINDOWS_LAYOUT_REFUSED' }
+  $sc = Get-JsonField $pkg 'stateCompat'; $schema = Get-JsonField $sc 'schema'; $readable = @(Get-JsonField $sc 'readableBySchemas')   # @(): a one-element array comes back unrolled
+  if (-not (($schema -is [int]) -or ($schema -is [long])) -or $schema -lt 1 -or $readable.Count -lt 1 -or @($readable | Where-Object { -not (($_ -is [int]) -or ($_ -is [long])) -or $_ -lt 1 }).Count -ne 0) { throw 'PACKAGE_STATE_COMPAT_REFUSED' }
+  $decision = Get-JsonField (Get-JsonField $pkg 'acceptance') 'decisionRef'
+  $policy = (New-Object Text.UTF8Encoding($false, $true)).GetString((Read-PackageRecordFile 'config\policy.json')) | ConvertFrom-Json
+  if ($decision -isnot [string] -or $decision -cnotmatch '^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\z' -or $decision -cne (Get-JsonField (Get-JsonField $policy 'ownerAcceptance') 'decisionRef')) { throw 'PACKAGE_ACCEPTANCE_REFUSED' }
+  if ([string](Get-JsonField (Get-JsonField $pkg 'linux') 'manifestSha256') -cnotmatch '^[0-9a-f]{64}\z') { throw 'PACKAGE_LINUX_MANIFEST_REQUIRED' }
+}
+
 function Build-Plan {
   $res = Get-ServiceSid $ServiceName
   if ((Sha256Bytes $pkgBytes) -cne $ExpectedPackageManifestSha256) { throw 'REVIEWED_PACKAGE_CHANGED' }
@@ -569,14 +742,15 @@ function Build-Plan {
     if ($f.path -match '(^|[\\/])\.\.([\\/]|$)' -or [IO.Path]::IsPathRooted($f.path)) { throw 'PACKAGE_SOURCE_PATH_REFUSED' }
   }
   $find = { param($t) @($pkg.files | Where-Object { $_.target -ceq $t })[0].sha256 }
-  if ($pkg.contract -cne 'clued.independent-ci.resident-package/3' -or $pkg.ciSourceManifestSha256 -cnotmatch '^[0-9a-f]{64}$' -or (& $find 'record\source-manifest.json') -cne $pkg.ciSourceManifestSha256) { throw 'SOURCE_V2_RECORD_PACKAGE_REQUIRED' }
+  if ($pkg.ciSourceManifestSha256 -cnotmatch '^[0-9a-f]{64}$' -or (& $find 'record\source-manifest.json') -cne $pkg.ciSourceManifestSha256) { throw 'SOURCE_V2_RECORD_PACKAGE_REQUIRED' }
+  Assert-Package4 $pkg
   [ordered]@{
-    contract = 'clued.independent-ci.resident-install-plan/7'   # /7 (DESIGN.md section 33): parentAcl
+    contract = 'clued.independent-ci.resident-install-plan/8'   # /7 (DESIGN.md section 33): parentAcl; /8 (018da927): package /4, upgrader, generation
     root = $Root; rootExists = (Test-Path -LiteralPath $Root)
     # PR-A review MAJOR 3: never install over a resident with an open batch (also one that waits for hosted
     # signals); like uninstall-resident.ps1, the Owner re-arms or lets it finish first.
     openBatches = (Get-OpenBatchCount)
-    servicesExist = [bool](Get-Service -Name $ServiceName, $BrokerName -ErrorAction SilentlyContinue)
+    servicesExist = [bool](Get-Service -Name $ServiceName, $BrokerName, $UpgraderName -ErrorAction SilentlyContinue)
     residentSid = $res; ownerSid = $OwnerSid; controllerSid = $ControllerSid
     node = $Node; nodeProfileSha256 = $NodeProfileSha256   # plan /5: the node profile this install is pinned to (design section 9 C1)
     # plan /6 (design section 9 C7): who this node is (public ids and fingerprints), the role it assumes (none: the role probe decides),
@@ -585,7 +759,7 @@ function Build-Plan {
     roleAssumption = 'NONE'
     secrets = (Get-SecretsPlan)
     # Only when a key or token file is supplied: the fingerprint check runs the package's node.exe from a directory this script creates, admin-only, and removes it afterwards (DESIGN.md section 30.5).
-    secretsFingerprintDirectory = $(if ($AppPrivateKeyFile -or $CiAdmissionTokenFile) { [ordered]@{ parent = $SecretWorkParent; sddl = $SecretWorkSddl; removedAfterwards = $true } } else { $null })
+    secretsFingerprintDirectory = $(if ($AppPrivateKeyFile -or $CiAdmissionTokenFile -or $UpgradeTokenFile) { [ordered]@{ parent = $SecretWorkParent; sddl = $SecretWorkSddl; removedAfterwards = $true } } else { $null })
     installScriptSha256 = (Sha256File $PSCommandPath)
     packageManifestSha256 = $ExpectedPackageManifestSha256
     sourceManifestSha256 = $pkg.sourceManifestSha256; residentManifestSha256 = $pkg.residentManifestSha256
@@ -609,6 +783,13 @@ function Build-Plan {
     # The earlier states are only known after the uninstall renamed the current one, so the plan names the rule, and the
     # install receipt and install\backfill-manifest.json name the files.
     carryForward = 'every resident-uninstalled-* state under the parent directory: ledger-heads, ledger records 00/10/25/80/90, executed-heads -> state\backfill\<n>\, listed with SHA-256 in install\backfill-manifest.json'
+    # plan /8 (018da927): the frozen upgrade channel and the first generation. generation-1 runs after the receipt is written (current.json
+    # pins the receipt's hash) and moves nothing: it only writes generations\g1\generation.json and upgrade\current.json, create-only.
+    windowsLayout = $WindowsLayout; stateCompat = $pkg.stateCompat; acceptanceDecisionRef = $pkg.acceptance.decisionRef
+    upgrader = (Get-UpgraderPlan $pkg)
+    generation = [ordered]@{ number = 1; record = 'generations\g1\generation.json'; current = 'upgrade\current.json'; movesFiles = $false; afterReceipt = $true
+      files = 'config\*, record\*, bin\*, helpers\*, install\install-receipt.json (Get-GenerationFilesSha256)'
+      linux = [ordered]@{ generation = 1; manifestSha256 = $pkg.linux.manifestSha256; ciSourceManifestSha256 = $pkg.ciSourceManifestSha256 } }
     deletesAnything = $false
   }
 }
@@ -652,13 +833,22 @@ if (-not $Apply) {
 if (-not $elevated) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED' }
 if ($ExpectedPlanSha256 -cne $planSha) { throw 'PLAN_CHANGED_SINCE_REVIEW' }
 if ($plan.openBatches -ne 0) { throw 'INSTALL_REQUIRES_NO_OPEN_BATCH_REARM_FIRST' }
-if ($plan.rootExists -or $plan.servicesExist) { throw 'FRESH_INSTALL_REQUIRED_USE_UPGRADE_PATH' }
+# An installed resident is upgraded in place by CluedCIUpgrader (windows\request-upgrade.ps1, one Owner approval on the Grant page);
+# this script installs only a fresh one (the uninstall comes first when the upgrade channel itself changes).
+if ($plan.rootExists -or $plan.servicesExist) { throw 'FRESH_INSTALL_REQUIRED_UPGRADE_THROUGH_CLUEDCIUPGRADER_REQUEST_UPGRADE' }
+if ($plan.upgrader.token.targetExists) { throw 'UPGRADE_TOKEN_TARGET_EXISTS_NOT_OVERWRITTEN' }
 $r = $plan.runnerBefore
 if (-not ($r.originalBinary -and $r.stoppedPid0 -and $r.manual -and $r.accountIsController)) { throw 'RUNNER_SERVICE_NOT_ORIGINAL_STOPPED_MANUAL_CONTROLLER' }
 # Before anything is written: every earlier state to carry, every file shape, no link anywhere.
 $carry = Get-CarryForwardPlan $CarryParent
 
-$receipt = [ordered]@{ contract = 'clued.independent-ci.resident-install-receipt/5'; planSha256 = $planSha; node = $Node; nodeProfileSha256 = $plan.nodeProfileSha256; nodeIdentity = $plan.nodeIdentity; nodeIdentitySha256 = $plan.nodeIdentitySha256; roleAssumption = $plan.roleAssumption; installationSha256 = $plan.installationSha256; acceptanceSha256 = $plan.acceptanceSha256; policySha256 = $plan.policySha256; companionConfigSha256 = $plan.companionConfigSha256; sourceManifestSha256 = $plan.sourceManifestSha256; residentManifestSha256 = $plan.residentManifestSha256; runnerSddlUnchanged = $r.sddl; steps = @(); startedAt = [DateTimeOffset]::UtcNow.ToString('o') }
+# Receipt /6 (018da927, A6) = /5 and: generation, package, layout, state compatibility, the three command lines, the Linux generation, the
+# upgrader, who wrote it, what it inherits from (null: a fresh install) and the upgrade that wrote it (null: this install).
+$receipt = [ordered]@{ contract = 'clued.independent-ci.resident-install-receipt/6'; generation = 1; packageManifestSha256 = $ExpectedPackageManifestSha256; windowsLayout = $plan.windowsLayout; stateCompat = $plan.stateCompat
+  residentBinaryPath = $null; brokerBinaryPath = $null; companionTaskAction = $null
+  linux = [ordered]@{ generation = 1; manifestSha256 = $plan.generation.linux.manifestSha256; ciSourceManifestSha256 = $plan.ciSourceManifestSha256; qualificationsSha256 = $null }
+  upgrader = $null; writtenBy = 'install-resident.ps1'; inheritedFrom = $null; upgrade = $null
+  planSha256 = $planSha; node = $Node; nodeProfileSha256 = $plan.nodeProfileSha256; nodeIdentity = $plan.nodeIdentity; nodeIdentitySha256 = $plan.nodeIdentitySha256; roleAssumption = $plan.roleAssumption; installationSha256 = $plan.installationSha256; acceptanceSha256 = $plan.acceptanceSha256; policySha256 = $plan.policySha256; companionConfigSha256 = $plan.companionConfigSha256; sourceManifestSha256 = $plan.sourceManifestSha256; residentManifestSha256 = $plan.residentManifestSha256; runnerSddlUnchanged = $r.sddl; steps = @(); startedAt = [DateTimeOffset]::UtcNow.ToString('o') }
 function Step([string]$name, [scriptblock]$body) { & $body; $script:receipt.steps += $name }
 
 # 1. Directories, created new with their final ACLs.
@@ -681,7 +871,7 @@ Step 'carry-forward' {
 # 2. Package files: read once, hash, compare, write those same bytes (CreateNew).
 Step 'package-copy' {
   $pkg = [Text.Encoding]::UTF8.GetString($pkgBytes) | ConvertFrom-Json
-  foreach ($f in $pkg.files) {
+  foreach ($f in @($pkg.files | Where-Object { $_.target -cnotmatch '^upgrader\\' })) {   # the upgrader's files: step upgrader-files
     $bytes = [IO.File]::ReadAllBytes((Join-Path $PackageRoot $f.path))
     if ((Sha256Bytes $bytes) -cne $f.sha256) { throw ('PACKAGE_FILE_CHANGED:' + $f.path) }
     $to = Join-Path $Root $f.target
@@ -694,29 +884,11 @@ Step 'package-copy' {
 #    from the package directory.
 Step 'service-hosts' {
   # csc runs from the admin-only bin directory with full reference paths, so nothing is resolved
-  # from the caller's current directory (review M1).
+  # from the caller's current directory (review M1). The recipe is Invoke-CompileRecipe, the one the upgrader uses (upgrade-apply.ps1 Compile).
   $fw = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\'
   $v2 = Join-Path $Root ('source\' + $plan.ciSourceManifestSha256 + '\' + $SourceV2Windows)
-  Push-Location (Join-Path $Root 'bin')
-  try {
-  foreach ($pair in @(@('ResidentServiceHost', @("/reference:$($fw)System.dll", "/reference:$($fw)System.ServiceProcess.dll"), @()),
-                      @('SwapBroker', @("/reference:$($fw)System.dll", "/reference:$($fw)System.Core.dll", "/reference:$($fw)System.ServiceProcess.dll", "/reference:$($fw)System.Web.Extensions.dll"),
-                        @((Join-Path $v2 'ResidentScmV2.cs'), (Join-Path $v2 'ScmPidHandshakeV2.cs'), (Join-Path $v2 'NodeProfileV2.cs'))))) {
-    $exe = Join-Path $Root ('bin\' + $pair[0] + '.exe')
-    & $Csc /nologo /noconfig /target:exe /optimize+ ("/out:" + $exe) $pair[1] (Join-Path $Root ('bin\' + $pair[0] + '.cs')) $pair[2] | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw ('SERVICE_HOST_COMPILE_FAILED:' + $pair[0]) }
-    $script:receipt[($pair[0] + 'Sha256')] = Sha256File $exe
-  }
-  $helper = Join-Path $Root ('helpers\' + $GenericHelper)
-  & $Csc /nologo /noconfig /target:winexe /platform:x64 /optimize+ /main:CluedWindowsFormalEntryV2 "/reference:$($fw)System.dll" "/reference:$($fw)System.Core.dll" "/reference:$($fw)System.Web.Extensions.dll" ("/out:" + $helper) (Join-Path $v2 'FormalPublicBoundaryV2.cs') (Join-Path $v2 'FormalSession0V2.cs') (Join-Path $v2 'ScmPidHandshakeV2.cs') (Join-Path $v2 'NodeProfileV2.cs') | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw 'GENERIC_HELPER_COMPILE_FAILED' }
-  $script:receipt.genericHelperSha256 = Sha256File $helper
-  # The companion's job host (DESIGN §24), with the generic helper's flags (winexe: never a console window of its own).
-  $jobHost = Join-Path $Root ('bin\' + $CompanionJobHost)
-  & $Csc /nologo /noconfig /target:winexe /platform:x64 /optimize+ "/reference:$($fw)System.dll" ("/out:" + $jobHost) (Join-Path $Root ('resident\' + $plan.residentManifestSha256 + '\windows\CompanionJobHost.cs')) | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw 'COMPANION_JOB_HOST_COMPILE_FAILED' }
-  $script:receipt.companionJobHostSha256 = Sha256File $jobHost
-  } finally { Pop-Location }
+  $hashes = Invoke-CompileRecipe $Csc $fw (Join-Path $Root 'bin') (Join-Path $Root 'helpers') (Join-Path $Root 'bin\ResidentServiceHost.cs') (Join-Path $Root 'bin\SwapBroker.cs') $v2 (Join-Path $Root ('resident\' + $plan.residentManifestSha256 + '\windows\CompanionJobHost.cs'))
+  foreach ($k in @($hashes.Keys)) { $script:receipt[$k] = $hashes[$k] }
 }
 # 3b. Broker configuration: the Owner SID of the v1 mutation mutex, the original binary, the runner's
 #     stable configuration digest (read-only, with the just-compiled broker) and the helper pin. Written
@@ -726,7 +898,7 @@ Step 'broker-config' {
   if ($LASTEXITCODE -ne 0 -or $stable -cnotmatch '^[0-9a-f]{64}$') { throw 'RUNNER_STABLE_DIGEST_UNCONFIRMED' }
   if ((Read-RunnerState).sddl -cne $r.sddl) { throw 'RUNNER_SDDL_CHANGED_DURING_INSTALL' }
   # Config /2 (review MINOR-3): no Owner SID; mutex and runner-DACL managers are SYSTEM and Administrators only.
-  $json = '{"contract":"clued.independent-ci.swap-broker-config/3","helper":{"name":"' + $GenericHelper + '","sha256":"' + $script:receipt.genericHelperSha256 + '"},"originalBinary":' + ($OriginalBinary | ConvertTo-Json -Compress) + ',"stableDigest":"' + $stable + '","node":' + $NodeCanonical + ',"nodeProfileSha256":"' + $plan.nodeProfileSha256 + '","acceptanceSha256":"' + $plan.acceptanceSha256 + '"}'
+  $json = Get-BrokerConfigJson $script:receipt.genericHelperSha256 $stable $NodeCanonical $plan.nodeProfileSha256 $plan.acceptanceSha256
   $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($json)
   Write-New (Join-Path $Root 'config\broker.json') $bytes
   $script:receipt.brokerConfigSha256 = Sha256Bytes $bytes; $script:receipt.runnerStableDigest = $stable
@@ -734,9 +906,8 @@ Step 'broker-config' {
 # 4. The resident service (virtual account, Session 0, no right on the runner service) and the
 #    broker (LocalSystem, binary-path-only swaps between the original and allow-listed helpers).
 Step 'services' {
-  $node = Join-Path $Root 'runtime\node.exe'
   $entry = Join-Path $Root ('resident\' + $plan.residentManifestSha256 + '\src\service-main.mjs')
-  $bin = '"' + (Join-Path $Root 'bin\ResidentServiceHost.exe') + '" "' + $Root + '" ' + $plan.policySha256 + ' "' + $node + '" ' + $plan.nodeSha256 + ' "' + $entry + '" ' + (Sha256File $entry)
+  $bin = Get-ResidentBinPath $Root $plan.policySha256 $plan.nodeSha256 $plan.residentManifestSha256 (Sha256File $entry)
   # Windows PowerShell 5.1 does not escape embedded quotes when it builds a native command line, so the
   # binPath= argument carries them as \" (sc.exe's C runtime turns them back into quotes); read back below.
   $null = Invoke-Sc 'RESIDENT_SERVICE_CREATE_FAILED' @('create', $ServiceName, 'binPath=', $bin.Replace('"', '\"'), 'start=', 'delayed-auto', 'obj=', "NT SERVICE\$ServiceName", 'type=', 'own')
@@ -748,7 +919,7 @@ Step 'services' {
   $null = Invoke-Sc 'RESIDENT_SERVICE_FAILURE_FAILED' @('failure', $ServiceName, 'reset=', '86400', 'actions=', 'restart/60000//60000')
   $null = Invoke-Sc 'RESIDENT_SERVICE_FAILUREFLAG_FAILED' @('failureflag', $ServiceName, '1')
   $null = Invoke-Sc 'RESIDENT_SERVICE_SDSET_FAILED' @('sdset', $ServiceName, $plan.services.resident.sddl)
-  $bbin = '"' + (Join-Path $Root 'bin\SwapBroker.exe') + '" "' + $Root + '" ' + $script:receipt.brokerConfigSha256 + ' ' + $plan.nodeProfileSha256
+  $bbin = Get-BrokerBinPath $Root $script:receipt.brokerConfigSha256 $plan.nodeProfileSha256
   $null = Invoke-Sc 'BROKER_SERVICE_CREATE_FAILED' @('create', $BrokerName, 'binPath=', $bbin.Replace('"', '\"'), 'start=', 'auto', 'type=', 'own')
   Assert-ServiceBinary $BrokerName $bbin
   $null = Invoke-Sc 'BROKER_SERVICE_PRIVS_FAILED' @('privs', $BrokerName, ($BrokerPrivileges -join '/'))
@@ -763,7 +934,7 @@ Step 'services' {
     $script:receipt[($pair[2] + 'RequiredPrivileges')] = $have
     $script:receipt[($pair[2] + 'Sddl')] = Get-DaclPart (Invoke-Sc 'SERVICE_SDSHOW_FAILED' @('sdshow', $pair[0]))
   }
-  $script:receipt.brokerBinaryPath = $bbin
+  $script:receipt.brokerBinaryPath = $bbin; $script:receipt.residentBinaryPath = $bin
 }
 # 4b. Outbound network block scoped to the resident's service SID (review MINOR-5). It covers the service's
 #     node processes (they carry the service SID); the companion (Owner) and the runner (clued-control) are
@@ -787,23 +958,40 @@ Step 'source-v2-acl' {
 }
 # 6. Companion task in the Owner's session, not elevated, protected from modification.
 Step 'companion-task' {
-  $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
-  $folder = try { $svc.GetFolder('\Clued') } catch { $svc.GetFolder('\').CreateFolder('Clued') }
-  $def = $svc.NewTask(0)
-  $def.Principal.UserId = $OwnerSid; $def.Principal.LogonType = 3; $def.Principal.RunLevel = 0
-  $t = $def.Triggers.Create(9); $t.UserId = $OwnerSid
-  $def.Settings.MultipleInstances = 2; $def.Settings.ExecutionTimeLimit = 'PT0S'; $def.Settings.DisallowStartIfOnBatteries = $false; $def.Settings.StopIfGoingOnBatteries = $false
-  $def.Settings.RestartCount = 3; $def.Settings.RestartInterval = 'PT1M'
-  $ca = $plan.companionTask.action
-  $a = $def.Actions.Create(0); $a.Path = $ca.path; $a.Arguments = $ca.arguments
-  # 6 = TASK_CREATE_OR_UPDATE (1 would only validate; review M7). Read back what was registered.
-  $null = $folder.RegisterTaskDefinition('CluedCIResidentCompanion', $def, 6, $null, $null, 3, $plan.companionTask.sddl)
-  $t = $folder.GetTask('CluedCIResidentCompanion')
-  $uid = $t.Definition.Principal.UserId
-  $uidSid = if ($uid -match '^S-1-') { $uid } else { (New-Object Security.Principal.NTAccount($uid)).Translate([Security.Principal.SecurityIdentifier]).Value }
-  $act = if ($t.Definition.Actions.Count -eq 1) { $t.Definition.Actions.Item(1) } else { $null }
-  if (($t.Definition.Principal.RunLevel -ne 0) -or ($uidSid -cne $OwnerSid) -or $null -eq $act -or $act.Path -cne $ca.path -or $act.Arguments -cne $ca.arguments) { throw 'COMPANION_TASK_READBACK_MISMATCH' }
-  $script:receipt.companionTaskXmlSha256 = Sha256Text $t.Xml
+  # 6 = TASK_CREATE_OR_UPDATE (1 would only validate; review M7), read back (Register-CompanionTask, the upgrader's recipe too).
+  if ($plan.companionTask.sddl -cne (Get-CompanionTaskSddl $OwnerSid)) { throw 'COMPANION_TASK_SDDL_REFUSED' }
+  $script:receipt.companionTaskXmlSha256 = Register-CompanionTask $OwnerSid $plan.companionTask.action $plan.companionTask.sddl
+  $script:receipt.companionTaskAction = [ordered]@{ path = $plan.companionTask.action.path; arguments = $plan.companionTask.action.arguments }
+}
+# 6a. The upgrader (018da927): its files (read once, hashed, CreateNew, into the admin-only upgrader\), its host compiled there, its
+#     service. LocalSystem, delayed-auto, required privileges SeChangeNotify only, the services' DACL, restarted after a failure.
+Step 'upgrader-files' {
+  $pkg = [Text.Encoding]::UTF8.GetString($pkgBytes) | ConvertFrom-Json
+  foreach ($f in @($pkg.files | Where-Object { $_.target -cmatch '^upgrader\\' })) {
+    $bytes = [IO.File]::ReadAllBytes((Join-Path $PackageRoot $f.path))
+    if ((Sha256Bytes $bytes) -cne $f.sha256) { throw ('PACKAGE_FILE_CHANGED:' + $f.path) }
+    $to = Join-Path $Root $f.target
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
+    Write-New $to $bytes
+  }
+}
+Step 'upgrader-host' {
+  $hostCs = Join-Path $Root 'upgrader\bin\UpgraderServiceHost.cs'
+  if ((Sha256File $hostCs) -cne $plan.upgrader.hostSourceSha256) { throw 'UPGRADER_HOST_SOURCE_CHANGED' }
+  $script:upgraderHostSha256 = Invoke-UpgraderHostCompile $Csc 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\' (Join-Path $Root 'upgrader\bin') $hostCs
+}
+Step 'upgrader-service' {
+  $u = $plan.upgrader
+  $null = Invoke-Sc 'UPGRADER_SERVICE_CREATE_FAILED' @('create', $UpgraderName, 'binPath=', $u.binaryPath.Replace('"', '\"'), 'start=', 'delayed-auto', 'type=', 'own')
+  Assert-ServiceBinary $UpgraderName $u.binaryPath
+  $null = Invoke-Sc 'UPGRADER_SERVICE_PRIVS_FAILED' @('privs', $UpgraderName, ($UpgraderPrivileges -join '/'))
+  $null = Invoke-Sc 'UPGRADER_SERVICE_FAILURE_FAILED' @('failure', $UpgraderName, 'reset=', '86400', 'actions=', 'restart/60000/restart/300000//300000')
+  $null = Invoke-Sc 'UPGRADER_SERVICE_FAILUREFLAG_FAILED' @('failureflag', $UpgraderName, '1')
+  $null = Invoke-Sc 'UPGRADER_SERVICE_SDSET_FAILED' @('sdset', $UpgraderName, $u.sddl)
+  $have = ConvertFrom-ScPrivs (Invoke-Sc 'SERVICE_QPRIVS_FAILED' @('qprivs', $UpgraderName, '8192'))
+  if (($have -join '/') -cne ((@($UpgraderPrivileges) | Sort-Object -CaseSensitive) -join '/')) { throw ('SERVICE_PRIVILEGES_READBACK_MISMATCH:' + $UpgraderName) }
+  $script:receipt.upgrader = [ordered]@{ service = $UpgraderName; binaryPath = $u.binaryPath; hostSha256 = $script:upgraderHostSha256; manifestSha256 = $u.manifestSha256; nodeSha256 = $u.nodeSha256
+    configSha256 = $u.configSha256; sddl = (Get-DaclPart (Invoke-Sc 'SERVICE_SDSHOW_FAILED' @('sdshow', $UpgraderName))); requiredPrivileges = $have; tokenFingerprint = $null }
 }
 # 6b. The two controller secrets, when the Owner supplied them: exactly the bytes whose fingerprints equal the record's pins, create-only,
 #     with their final security descriptor. Nothing is placed that was not supplied, and the receipt keeps fingerprints only.
@@ -820,6 +1008,11 @@ Step 'node-secrets' {
       $placed[$name] = [ordered]@{ target = $s.target; placed = $did; fingerprint = $(if ($did) { $s.pin } else { $null }) }
     }
     $script:receipt.secrets = $placed
+    # The resident-upgrade token (018da927): SYSTEM and Administrators only, into the secrets\ folder made by step 'directories'.
+    $ut = $plan.upgrader.token; $did = $false
+    if ($ut.supplied) { Write-NewSecret $ut.target $script:SecretBytes['upgradeToken'] $ut.sddl; $did = $true }
+    $script:receipt.upgradeToken = [ordered]@{ target = $ut.target; placed = $did; fingerprint = $(if ($did) { $ut.fingerprint } else { $null }) }
+    $script:receipt.upgrader.tokenFingerprint = $(if ($did) { $ut.fingerprint } else { $null })
   } finally { Clear-SecretBytes }
 }
 # 7. The runner service must be byte-for-byte what it was (this install never touches it).
@@ -841,6 +1034,29 @@ if ($StartAfterInstall) {
 }
 $out = Join-Path $Root 'install\install-receipt.json'                    # admin-only directory
 Write-New $out ((New-Object Text.UTF8Encoding($false)).GetBytes(($receipt | ConvertTo-Json -Depth 6)))
-[ordered]@{ status = 'RESIDENT_INSTALLED'; receipt = $out; receiptSha256 = (Sha256File $out); started = $receipt.started; nodeName = $Identity.nodeName; nodeIdentitySha256 = $IdentitySha256
-  secretsPlaced = @($receipt.secrets.Keys | Where-Object { $receipt.secrets[$_].placed })
-  ownerNextStep = $(if (@($receipt.secrets.Keys | Where-Object { $receipt.secrets[$_].placed }).Count) { 'Delete the downloaded App key / token file(s) yourself: this install never deletes anything.' } else { $null }) } | ConvertTo-Json
+$receiptSha256 = Sha256File $out
+# 8. generation-1 (018da927): after the receipt, because upgrade\current.json pins its hash. Nothing is moved: the record of generation 1 is
+#    the command lines just registered and the hash of its files where they are; current.json names it. Both create-only.
+$genDir = Join-Path $Root 'generations\g1'
+[void][IO.Directory]::CreateDirectory($genDir)   # inherits generations\ (as config)
+$genRecord = [ordered]@{ generation = 1; packageManifestSha256 = $ExpectedPackageManifestSha256; residentBinPath = $receipt.residentBinaryPath; brokerBinPath = $receipt.brokerBinaryPath
+  companionTaskArguments = $receipt.companionTaskAction.arguments; filesSha256 = (Get-GenerationFilesSha256 $Root) }
+Write-New (Join-Path $genDir 'generation.json') ((New-Object Text.UTF8Encoding($false)).GetBytes(($genRecord | ConvertTo-Json -Compress)))
+$current = [ordered]@{ contract = 'clued.independent-ci.resident-generation/1'; generation = 1; packageManifestSha256 = $ExpectedPackageManifestSha256; residentManifestSha256 = $plan.residentManifestSha256
+  ciSourceManifestSha256 = $plan.ciSourceManifestSha256; policySha256 = $plan.policySha256; installReceiptSha256 = $receiptSha256; stateCompat = $plan.stateCompat
+  linux = $plan.generation.linux; opId = $null; at = [DateTimeOffset]::UtcNow.ToString('o') }
+Write-New (Join-Path $Root 'upgrade\current.json') ((New-Object Text.UTF8Encoding($false)).GetBytes(($current | ConvertTo-Json -Depth 5 -Compress)))
+# 9. The upgrader starts last, once generation 1 is recorded; it records its own token like the two hosts.
+$upgraderTokenPrivileges = $null
+if ($StartAfterInstall) {
+  $null = Invoke-Sc 'UPGRADER_SERVICE_START_FAILED' @('start', $UpgraderName)
+  $file = Join-Path $Root $plan.upgrader.tokenRecord; $until = [DateTime]::UtcNow.AddSeconds(30)
+  while (-not (Test-Path -LiteralPath $file) -and [DateTime]::UtcNow -lt $until) { Start-Sleep -Milliseconds 500 }
+  $upgraderTokenPrivileges = @((Get-Content -LiteralPath $file -Raw | ConvertFrom-Json).privileges)
+  if (@($upgraderTokenPrivileges | Where-Object { $UpgraderPrivileges -cnotcontains $_ }).Count -gt 0) { throw ('EFFECTIVE_TOKEN_PRIVILEGES_NOT_MINIMAL:' + $plan.upgrader.tokenRecord) }
+}
+$placedSecrets = @(@($receipt.secrets.Keys | Where-Object { $receipt.secrets[$_].placed }) + @(if ($receipt.upgradeToken.placed) { 'upgradeToken' }))
+[ordered]@{ status = 'RESIDENT_INSTALLED'; receipt = $out; receiptSha256 = $receiptSha256; started = $receipt.started; nodeName = $Identity.nodeName; nodeIdentitySha256 = $IdentitySha256
+  generation = 1; afterReceipt = @('generation-1') + @(if ($StartAfterInstall) { 'upgrader-start' }); upgraderTokenPrivileges = $upgraderTokenPrivileges
+  secretsPlaced = $placedSecrets
+  ownerNextStep = $(if ($placedSecrets.Count) { 'Delete the downloaded App key / token file(s) yourself: this install never deletes anything.' } else { $null }) } | ConvertTo-Json

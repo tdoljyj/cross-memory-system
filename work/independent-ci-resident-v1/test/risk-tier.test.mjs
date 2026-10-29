@@ -1,4 +1,4 @@
-// Risk tiers of the daily budgets (Task 12ada80e, from c0ff5167; DESIGN §35). A stage-1 ending that proves it published
+// Risk tiers of the daily budgets (Task 12ada80e, from c0ff5167; DESIGN §36). A stage-1 ending that proves it published
 // nothing still burns its head, but counts against the evaluation budget, not the execution one; a global deferral is
 // receipted once per reason and day. The values stay the interim 48/96 (Decision ca70ea31): only the counting changes.
 import test from 'node:test';

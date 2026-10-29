@@ -95,6 +95,10 @@
 // cleanup, a reported side effect, a failure that is not allow-listed as clean. Stage 10 has no ledger entry: its
 // 'train-run-intent' receipt stands for one, so an intent that no 'train-run' receipt closed (a crash or a stop in the
 // middle) HALTs as TRAIN_STAGE_INTERRUPTED at the next start, and a receipt chain that cannot be read holds every batch.
+//
+// The in-place upgrade channel (Task 018da927, DESIGN §34): the upgrader's resume (UPGRADE_RESUME_CONTRACT, owner\ only, a CAS on
+// PAUSED.json, receipt 'upgrade-resumed'); every tick the versions of both sides (status /7) and the version-skew intake hold
+// while they disagree (consistent === false only; lifted when they agree again; an unknown answer changes nothing).
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { Ledger, MAX_TRIES, QUOTA_TIER_EVALUATION, batchKey, headKey } from './ledger.mjs';
@@ -108,8 +112,9 @@ import { decide, parseHint, HEAVY_ROLES, RELAY_ROLES } from './hosted-wait.mjs';
 import { relayPlanFromRows } from './classify.mjs';
 import { RELAY_STAGE, ROLE_STAGES } from './policy.mjs';
 import { RELAY_RECEIPTS } from './receipts.mjs';
-import { CODE, HEX64, ResidentError, check, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
-import { INTAKE_PAUSE_CONTRACT, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
+import { CODE, HEX64, ResidentError, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
+import { UPGRADE_RESUME_CONTRACT, validateUpgradeResume } from './upgrade-mailbox.mjs';
+import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
 import { trainDue, trainSummary } from './train.mjs';
@@ -123,6 +128,19 @@ export const REARM_CONTRACT = 'clued.independent-ci.resident-owner-rearm/1';
 export const DRAIN_CONTRACT = 'clued.independent-ci.resident-owner-drain-parked/1';
 export const RESUME_CONTRACT = 'clued.independent-ci.resident-owner-resume/1';
 export const ABORT_CONTRACT = 'clued.independent-ci.resident-owner-abort/1';
+// In-place upgrade channel (Task 018da927, DESIGN §34; frozen observation surface A11): the upgrader (CluedCIUpgrader, LocalSystem)
+// lifts the PAUSE it set for an upgrade through the admin-only owner\ directory, by the exact PAUSED.json bytes it saw. Taken from
+// owner\ only (never from the user-writable requests\, where its contract is no pause and is rejected); its receipt is
+// 'upgrade-resumed'. Later resident versions must keep accepting it.
+export { UPGRADE_RESUME_CONTRACT };
+export const UPGRADE_RESUMED_BY = 'CluedCIUpgrader';
+// The executor's own intake hold while the two sides run different versions (A10): holder version-skew, two hours, renewed when
+// less than 90 minutes are left, lifted when the versions agree again. An unknown answer (null) neither adds nor lifts it.
+export const VERSION_SKEW_HOLDER = 'version-skew';
+export const VERSION_SKEW_RENEW_BELOW_MS = 90 * 60_000;
+export const UPGRADE_VERSION_SKEW = 'UPGRADE_VERSION_SKEW';
+// The precheck's global deferral while the sides disagree (before any reservation; nothing burned, nothing counted).
+export const VERSION_SKEW = 'VERSION_SKEW';
 export const OWNER_ABORT_ARCHIVE_REASON = 'owner-aborted';
 // Poll of the owner directory while a scanner-issuer stage runs, and the bounded re-check of quiescence after an abort.
 export const ABORT_POLL_MS = 5_000;
@@ -264,7 +282,7 @@ export const INTAKE_REQUEST_TRIES = 3;
 // The oldest bundle a batch takes into the workspace preparation (which accepts at most 2 hours), measured from the
 // reservation, which comes before the bundle (design v0.5 §4.3 item 3).
 export const BUNDLE_MAX_AGE_AT_WORKSPACE_MS = 100 * 60_000;
-// Task 4012c1b9 (DESIGN §36): a batch whose workspace comes this long after its reservation (it waited at parking point A)
+// Task 4012c1b9 (DESIGN §37): a batch whose workspace comes this long after its reservation (it waited at parking point A)
 // first gets its second and last bundle (build-bundle.ps1 -Rebundle): fresh refs for stage 2's refs gate, and a bundle the
 // workspace preparation accepts. The refs must still be the batch's (REMOTE_REFS_CHANGED_SINCE_BUNDLE, a clean transient
 // ending); any other refusal ends it as before (PARKED_BUNDLE_TOO_OLD). A batch that never waited is not touched.
@@ -292,6 +310,8 @@ export class ResidentExecutor {
   //   sleep (optional): the wait between abort polls and quiescence re-checks.
   //   status (optional): status.mjs#StatusBoard (a view; nothing the executor decides ever reads it).
   //   intakePause (optional): intake-pause.mjs#IntakePause; opened from the ledger's state directory when not given.
+  //   versions (optional): async () -> { view, notices } (status.mjs#readVersionState; DESIGN §34): status /7 `versions`, the
+  //     upgrade notices and the version-skew hold. Without it the executor shows no versions and holds nothing for them.
   constructor(ports) {
     //   queue: queue.mjs#RunQueue (the run queue and the breaker's state; a view the ledger always overrules).
     for (const k of EXECUTOR_PORTS) check(ports[k], 'EXECUTOR_PORT_MISSING', k);
@@ -429,6 +449,11 @@ export class ResidentExecutor {
           check(HEX64.test(v.pausedSha256) && SID.test(v.by) && NONCE.test(v.nonce) && !Number.isNaN(Date.parse(v.requestedAt)), 'OWNER_REQUEST_REFUSED');
           await this.ledger.resume(v.pausedSha256, v.by);
           outcome = { kind: 'resume' };
+        } else if (v.contract === UPGRADE_RESUME_CONTRACT) {
+          // The upgrader's resume (DESIGN §34): the same compare-and-swap on the PAUSED.json bytes, its own receipt.
+          validateUpgradeResume(v);
+          await this.ledger.resume(v.pausedSha256, UPGRADE_RESUMED_BY);
+          outcome = { kind: 'upgrade-resume', pausedSha256: v.pausedSha256, opId: v.opId, generation: v.generation };
         } else if (v.contract === REARM_CONTRACT) {
           exactKeys(v, ['contract', 'haltSha256', 'reason', 'by', 'requestedAt', 'nonce'], 'OWNER_REQUEST_REFUSED');
           check(HEX64.test(v.haltSha256) && SID.test(v.by) && NONCE.test(v.nonce) && !Number.isNaN(Date.parse(v.requestedAt))
@@ -446,6 +471,7 @@ export class ResidentExecutor {
         }
         // A concluded abort has its terminal record and batch receipts; a failed summary receipt is no refusal of it.
         if (outcome.kind === 'abort') { try { await this.receipt('owner-request', { requestSha256, ...outcome }); } catch { /* see above */ } }
+        else if (outcome.kind === 'upgrade-resume') { const { kind, ...facts } = outcome; await this.receipt('upgrade-resumed', { requestSha256, ...facts }); }
         else await this.receipt('owner-request', { requestSha256, ...outcome });
       } catch (error) {
         // An abort whose acceptance names this very request in 80-owner-abort but was not concluded cleanly is no
@@ -937,9 +963,57 @@ export class ResidentExecutor {
         s.update({ halt: halt ? { code: CODE.test(halt.value?.code ?? '') ? halt.value.code : 'HALT_RECORD_UNREADABLE', at: halt.value?.at ?? null } : null, paused: !!paused, ...intake, train: { enabled: this.policy.train.enabled, last: this.trainLast ?? null } });
         if (!['WAITING'].includes(result?.state)) s.setCurrent(null);
       });
+      if (typeof this.versions === 'function') this.report(s => s.setVersions?.(this.versionState?.view ?? null));
       this.reportQueue();
       this.reportNode();
     } catch { /* advisory */ }
+  }
+
+  // ---- the versions of both sides and the version-skew hold (in-place upgrade channel, Task 018da927, DESIGN §34) ----
+
+  // Once a tick, right after the Owner's requests: the versions port (service-main.mjs: status.mjs#readVersionState over
+  // upgrade\current.json, upgrade\mailbox\responses\version-facts.json and upgrade\status.json) gives { view, notices } for the
+  // status board, and the view's consistent decides the hold. Without the port (a test, an engine of its own) nothing changes.
+  async versionsRefresh() {
+    if (typeof this.versions !== 'function') return null;
+    let state = null;
+    try { state = await this.versions(); } catch { state = null; }
+    this.versionState = state && typeof state === 'object' ? { view: state.view ?? null, notices: Array.isArray(state.notices) ? state.notices : [] } : null;
+    try { await this.versionSkewHold(this.versionState?.view?.consistent ?? null); } catch { /* the next tick tries again; the engine's gate still holds */ }
+    return this.versionState;
+  }
+
+  // The precheck's gate (DESIGN §34.5): true only when a fresh read says the sides disagree; a read that fails is unknown.
+  async versionSkewNow() {
+    if (typeof this.versions !== 'function') return false;
+    try { return (await this.versions())?.view?.consistent === false; } catch { return false; }
+  }
+
+  // consistent false: hold new batches (holder version-skew, two hours, renewed below 90 minutes left); true: lift that hold;
+  // null (unknown: no current.json, facts older than 15 minutes, unreadable): leave it as it is. The hold is the executor's own
+  // word in the intake pause (intake-pause.mjs#apply), so PAUSE, HALT and the other holders are untouched and the Owner may
+  // still lift it by hand (it then comes back on the next tick while the versions still disagree). Returns the receipt kind written.
+  async versionSkewHold(consistent) {
+    if (consistent !== true && consistent !== false) return null;
+    try { await this.intakeRefresh(); } catch { return null; }
+    const p = this.intakePause, now = this.clock();
+    const hold = p.active(now).find(h => h.holder === VERSION_SKEW_HOLDER) ?? null;
+    const word = { holder: VERSION_SKEW_HOLDER, requestedAt: new Date(now).toISOString(), nonce: randomBytes(8).toString('hex') };
+    let request;
+    if (consistent === false) {
+      if (hold && Date.parse(hold.until) - now >= VERSION_SKEW_RENEW_BELOW_MS) return null;
+      request = { contract: INTAKE_PAUSE_CONTRACT, ...word, minutes: INTAKE_PAUSE_MAX_MINUTES, reason: UPGRADE_VERSION_SKEW };
+    } else {
+      if (!hold) return null;
+      request = { contract: INTAKE_RESUME_CONTRACT, ...word, reason: 'VERSIONS_CONSISTENT' };
+    }
+    const requestSha256 = digest(request);
+    const next = p.apply(request, requestSha256, now);
+    try { await p.save(next.data); } catch (error) { await this.intakeTrouble(error, 'write'); return null; }
+    this.intakeTroubleSince = null;
+    const { kind, ...facts } = next.result;
+    try { await this.receipt(kind, { requestSha256, ...facts, reason: request.reason }); } catch { /* the hold took effect */ }
+    return kind;
   }
 
   // Resident quota redesign v0.6 §9 phase 1, items 6 and 7: on the first start of an install, before any batch, every
@@ -980,6 +1054,8 @@ export class ResidentExecutor {
     }
     this.recoveredThisTick = recovered;
     await this.takeOwnerRequests();
+    // DESIGN §34: the versions of both sides, and the version-skew hold, before anything is scheduled.
+    await this.versionsRefresh();
     // The run queue follows the ledger for any row a crash or an earlier tick left marked running (a view: also while
     // halted, so the status shows what the ledger says).
     try { await this.reconcileQueue(); } catch { /* the next tick */ }
@@ -1479,7 +1555,7 @@ export class ResidentExecutor {
     this.report(s => {
       const b = breakerOf(this.queue.breaker);
       s.update({ queue: { generation: this.queue.generation, live: this.queue.live().length, depth: this.policy.limits.queueDepth, parkingFull: this.parkingFull === true }, breaker: breakerView(b),
-        notices: [...this.roleProbeNotices, ...this.queue.notices].slice(0, 50) });
+        notices: [...(this.versionState?.notices ?? []), ...this.roleProbeNotices, ...this.queue.notices].slice(0, 50) });
       const parkedA = this.parkedA ?? new Set();
       s.setPending(this.queue.view(this.clock(), { etaBatchMs: ETA_BATCH_MS })
         .map(r => r.state === 'RUNNING' && parkedA.has(`${r.pr}:${r.headSha}`) ? { ...r, reason: PARKED_A_REASON } : r));
@@ -1662,6 +1738,9 @@ export class ResidentExecutor {
     if (await this.executedHeads.published(subject)
       && !(attempt1Key && await this.executedHeads.onlyRelayRecordOf(subject, attempt1Key, RELAY_STAGE) && await this.relayedNothing(attempt1Key))) return { ignore: 'HEAD_ALREADY_PUBLISHED_NO_RETRY' };
     if ((await this.ledger.state(key)).state !== 'ABSENT') return { ignore: 'CONTENT_ALREADY_EXECUTED_NO_RETRY' };
+    // DESIGN §34.5: while the two sides run different versions (consistent false, read now) nothing is reserved: a global
+    // deferral, the PR pays nothing for the node's skew. Unknown (null) or no versions port: as before.
+    if (await this.versionSkewNow()) return { defer: VERSION_SKEW };
     // The 10-minute cool-down of the batch key after a release it applies to (classify.mjs#UNEXECUTED_REASON_RULES).
     const recent = (await this.ledger.unexecutedRecords(key, now - DAY)).filter(r => UNEXECUTED_REASON_RULES[r.reason]?.cooldown !== false);
     if (recent.length > 0 && now - Math.max(...recent.map(r => r.at)) < l.unexecutedCooldownMs) return { defer: 'UNEXECUTED_COOLDOWN', perRow: true, until: Math.max(...recent.map(r => r.at)) + l.unexecutedCooldownMs };
@@ -2003,7 +2082,7 @@ export class ResidentExecutor {
   // Everything after 15-relay-wait: one wait evaluation, then (unless still waiting) 20-plan-intent,
   // stage R, 25-plan, the local roles, stage 8 and the close.
   //   resumed: this call resumes a batch that rested at parking point A in an earlier tick (resumeWaiting), never the
-  //   batch's own first pass (DESIGN §36: only a batch that waited is re-bundled; independent review M1).
+  //   batch's own first pass (DESIGN §37: only a batch that waited is re-bundled; independent review M1).
   async continueBatch(key, subject, batch, t0, { resumed = false } = {}) {
     let aborted = await this.abortIfRequested(key, batch, 'before-relay-plan');
     if (aborted) return aborted;
@@ -2018,7 +2097,7 @@ export class ResidentExecutor {
     if (localRoles.length > 0) {
       if ((aborted = await this.abortIfRequested(key, batch, 'before-workspace'))) return aborted;
       if ((aborted = await this.supersededAfterStart(key, subject, batch, 'before-workspace', plan.candidates.length > 0 ? POSITIONS[RELAY_STAGE] : POSITIONS[1]))) return aborted;
-      // A batch resumed from parking point A gets its second bundle before the workspace (Task 4012c1b9, DESIGN §36). When
+      // A batch resumed from parking point A gets its second bundle before the workspace (Task 4012c1b9, DESIGN §37). When
       // that is refused, it ends here, nothing of it on Linux: refs no longer the batch's as the clean transient
       // REMOTE_REFS_CHANGED_SINCE_BUNDLE, anything else as before (PARKED_BUNDLE_TOO_OLD). A batch that never waited, or a
       // companion without the re-bundle port, keeps the old rule: a bundle older than 100 minutes ends the batch here.
@@ -2188,7 +2267,7 @@ export class ResidentExecutor {
         return { state: release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', key, failureCode: failure.code, release, settle: { ...settle, kind: 'released', reason: release } };
       }
       // Every other failure burns the head, also before 10-started (stage 1 may have published). Risk tier (Task 12ada80e,
-      // DESIGN §35): a stage-1 ending that proves it published nothing (clean on both hosts, bound outcome with zero side
+      // DESIGN §36): a stage-1 ending that proves it published nothing (clean on both hosts, bound outcome with zero side
       // effects and mayHavePublished false) still burns the head, but uses the evaluation budget, not the execution one.
       const lowRisk = !started && failure.stageNumber === 1 && klass === 'CLEAN' && failure.outcome?.sideEffects === 0 && failure.outcome?.mayHavePublished === false;
       await this.ledger.burnHead(key, { failureCode: failure.code, ...(lowRisk ? { quotaTier: QUOTA_TIER_EVALUATION } : {}) });

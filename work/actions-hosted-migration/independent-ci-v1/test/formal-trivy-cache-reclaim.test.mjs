@@ -1,4 +1,4 @@
-// Trivy cache reclaim (resident Task 4aedda54, independent-ci-resident-v1 DESIGN §34): after a confirmed promotion the
+// Trivy cache reclaim (resident Task 4aedda54, independent-ci-resident-v1 DESIGN §35): after a confirmed promotion the
 // kind's staging copies and every generation of the kind but the current and the previous one are removed; nothing of
 // the other kind, nothing of another shape, and never through a link. Temporary directories only.
 import test from 'node:test';

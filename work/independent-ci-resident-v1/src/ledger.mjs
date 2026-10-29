@@ -63,7 +63,7 @@ export const OUTCOMES = Object.freeze(['COMPLETED', 'FAILED_CLEAN', 'FAILED_UNKN
 export const UNEXECUTED_REASONS = Object.freeze(['NOT_ADMITTED', 'BUNDLE_UNAVAILABLE', 'BROKER_NOT_LAUNCHED', 'SUPERSEDED']);
 // Releases that never count as an evaluation nor towards a head's release cap (nothing about the PR was decided).
 export const UNCOUNTED_RELEASES = Object.freeze(['BUNDLE_UNAVAILABLE', 'BROKER_NOT_LAUNCHED', 'SUPERSEDED']);
-// Risk tiers of the daily budgets (Task 12ada80e, DESIGN §35): a head burned by a stage-1 ending that proved it published
+// Risk tiers of the daily budgets (Task 12ada80e, DESIGN §36): a head burned by a stage-1 ending that proved it published
 // nothing (clean on both hosts, zero side effects, mayHavePublished false) carries quotaTier 'evaluation' in its burn
 // facts. usage() counts it once, as the evaluation its batch entry already is, not as an execution. Every other head
 // record (10-started, any other burn, an older record without the field, one that cannot be read) is an execution.
@@ -498,7 +498,7 @@ export class Ledger {
       if (origin === 'new-trigger' && !nodeRole) bump(u.reevaluations, `${s.pr}:${s.headSha}`);
       const environment = ['environment', 'transient'].includes(facts?.class);
       // A burned entry that never started (a low-risk tier burn among them) is an evaluation whatever its class: it no
-      // longer counts as an execution, so it must count somewhere (DESIGN §35).
+      // longer counts as an execution, so it must count somewhere (DESIGN §36).
       if (!started && origin !== 'waiting-retry' && !UNCOUNTED_RELEASES.includes(reason) && (burned || (!environment && !nodeRole))) u.evaluations += 1;
       if (reason && reason !== 'SUPERSEDED' && facts?.class !== 'waiting' && !nodeRole && !(environment && facts?.breakerState && facts.breakerState !== 'closed') && HEX40.test(s.headSha ?? '')) bump(u.releasesByHead, s.headSha);
     };

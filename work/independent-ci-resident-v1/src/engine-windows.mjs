@@ -513,6 +513,15 @@ export class WindowsEngine {
       const l = await this.archiveLinux(batch, reason);
       if (w.verified !== true || l.verified !== true) return { ok: false, code: 'BETWEEN_ROLES_ARCHIVE_UNCONFIRMED', proof: {} };
     }
+    // DESIGN §34 (in-place upgrade channel): the first Linux stage runs only while the two sides do not disagree on their versions.
+    // versions (optional port) -> status.mjs view; consistent false is UPGRADE_VERSION_SKEW, a clean refusal before anything of the
+    // stage ran (Windows proof only; the failure path adds Linux quiescence). Unknown (null) or no port: the stage runs as before
+    // (the executor's version-skew hold already keeps new batches from starting while they disagree).
+    if (firstLinux && typeof this.versions === 'function') {
+      let consistent = null;
+      try { consistent = (await this.versions())?.consistent ?? null; } catch { consistent = null; }
+      if (consistent === false) return { ok: false, code: 'UPGRADE_VERSION_SKEW', proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() } };
+    }
     // Lesson b29: no push between the bundle and the first scanner stage. A moved ref is a clean,
     // transient refusal before anything ran (eligible for the automatic attempt 2).
     if (firstLinux) {

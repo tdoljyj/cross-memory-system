@@ -27,7 +27,7 @@ Train front batch (quota phase 2 step 3c-2, design v0.5 §5.2): the descriptor's
 commit whose parents are exactly [T, H], and the bundle carries that one ref; the receipt counts it (testRefCount 0 when
 S = H). Old test merges can disappear when GitHub recomputes: the fetch then fails like any network step, before the batch.
 
-Second generation (Task 4012c1b9, DESIGN §36): a batch resumed from parking point A after a long hosted wait gets one more
+Second generation (Task 4012c1b9, DESIGN §37): a batch resumed from parking point A after a long hosted wait gets one more
 bundle, right before its workspace, in bundles\<batchId>\gen-2\ with the same checks and a receipt that also names the
 generation and the first bundle. The batch's refs must still be its own: main still the base T and some branch still at
 the head H (REMOTE_HEAD_MOVED otherwise). Only with a complete first generation (REBUNDLE_REQUIRES_FIRST_GENERATION), never

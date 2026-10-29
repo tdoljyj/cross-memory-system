@@ -1,4 +1,4 @@
-// Archive retention (Owner decision 1b5d3687; Task 4aedda54, DESIGN §34). Three parts:
+// Archive retention (Owner decision 1b5d3687; Task 4aedda54, DESIGN §35). Three parts:
 //
 // 1. The 50 GB reminder (unchanged): when what the archives keep exceeds the policy threshold the service writes ONE
 //    reminder receipt per day. Measured: the Windows spool archives (formal-spool\archive-*, failed-*), the resident's own
@@ -6,7 +6,7 @@
 //    (clued-ci-resident-linux archive-usage). An unreadable entry makes the measurement incomplete; an incomplete
 //    measurement can still remind (never the other way round), and says so.
 //
-// 2. The retention rule (§34): per spool (Windows here, Linux in clued-ci-resident-linux archive-prune, the same rule), the
+// 2. The retention rule (§35): per spool (Windows here, Linux in clued-ci-resident-linux archive-prune, the same rule), the
 //    success class (archive-*, completed-*) and the failure class (failed-*: failures, HALTs, Owner aborts) each keep their
 //    newest 20 GiB, never fewer than their newest 10 directories; beyond that the oldest are deleted. Archives the Owner
 //    lists in the keep list (resident\owner\retention-keep.json: the archives an open Task, Bug or Evidence refers to, or
@@ -16,7 +16,7 @@
 //    a keep list that cannot be read, a redirected spool, a permission error or a directory that changed after planning
 //    deletes nothing more and is written into the receipt.
 //
-// 3. The C: reminder (§34): below 30 GiB free on C: one disk-space-reminder receipt per day. It blocks nothing.
+// 3. The C: reminder (§35): below 30 GiB free on C: one disk-space-reminder receipt per day. It blocks nothing.
 //
 // No Linux measurement and no Linux prune without a fresh companion heartbeat (Task 018da927 c): the request would wait
 // for its whole timeout (archive-usage: 3 minutes) and the service loop with it.
@@ -31,7 +31,7 @@ export const KEEP_CONTRACT = 'clued.independent-ci.archive-retention-keep/1';
 export const KEEP_FILE = 'retention-keep.json';
 const DAY = 86_400_000;
 const GIB = 1024 ** 3;
-// The Owner's numbers (Task 4aedda54). Constants, not policy: the installed policy contract stays as it is (DESIGN §34).
+// The Owner's numbers (Task 4aedda54). Constants, not policy: the installed policy contract stays as it is (DESIGN §35).
 export const RETENTION_RULE = Object.freeze({ classBudgetBytes: 20 * GIB, minKeepPerClass: 10, maxDeletesPerPass: 16 });
 export const DISK_REMINDER_BYTES = 30 * GIB;
 // The archive kinds the archive tools create (src/archive.mjs, resident-v2/archive-windows-spool.ps1, clued-ci-resident-linux);

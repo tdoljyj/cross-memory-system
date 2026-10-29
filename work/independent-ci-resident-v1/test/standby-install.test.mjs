@@ -65,7 +65,7 @@ test('a STANDBY install carries no state, no role and no publishing path; the ro
   const { out, fx, token, tokenFile } = await companyInstall(t);
   const pkg = JSON.parse(await read(path.join(out, 'package-manifest.json')));
   // 1. The package puts programs, configuration and the install record in place. It brings no trigger, ledger, request or state.
-  for (const f of pkg.files) assert.match(f.target, /^(?:resident|source|config|runtime|bin|helpers|record)\\/, f.target);
+  for (const f of pkg.files) assert.match(f.target, /^(?:resident|source|config|runtime|bin|helpers|record|upgrader)\\/, f.target);   // upgrader\: package /4 (018da927)
   assert.equal(pkg.files.some(f => /(^|\\)(state|inbox|requests|outbox|mailbox|stage|work)\\/.test(f.target)), false);
   // 2. No role anywhere in what is installed: not in the configuration, not in the node identity, not in the install's plan or receipt text.
   const forbidden = /^(nodeMode|nodeRole|activeNode|standby|active|holdsRole|holdsCiAdmission|roleHeld)$/i;

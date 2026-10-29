@@ -21,7 +21,7 @@ export function mailboxCompanion(mailbox, sleep) {
       const r = await ask('build-bundle', { batchId: batch.batchId });
       return { ok: r?.ok === true, code: r?.code ?? 'BUNDLE_UNAVAILABLE', jobTree: r?.jobTree ?? null };
     },
-    // DESIGN §36: the batch's second bundle; no answer is BUNDLE_UNAVAILABLE (the executor then ends the batch as before).
+    // DESIGN §37: the batch's second bundle; no answer is BUNDLE_UNAVAILABLE (the executor then ends the batch as before).
     async rebuildBundle(batch) {
       const r = await ask('rebuild-bundle', { batchId: batch.batchId });
       return { ok: r?.ok === true, code: r?.code ?? 'BUNDLE_UNAVAILABLE', jobTree: r?.jobTree ?? null };
@@ -45,7 +45,7 @@ export function mailboxCompanion(mailbox, sleep) {
       const r = await ask('archive-usage', { batchId: NO_BATCH });
       return r?.ok === true && r.usage ? { ok: true, ...r.usage } : { ok: false };
     },
-    // DESIGN §34: one retention pass of the Linux spool. Asked only between batches, with no open batch and a fresh heartbeat
+    // DESIGN §35: one retention pass of the Linux spool. Asked only between batches, with no open batch and a fresh heartbeat
     // (retention.mjs). The facts come back even when the pass was refused or stopped; no answer is { ok: false } without facts.
     async archivePrune() {
       const r = await ask('archive-prune', { batchId: NO_BATCH });

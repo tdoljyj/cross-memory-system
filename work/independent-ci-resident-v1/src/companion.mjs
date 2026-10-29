@@ -13,6 +13,7 @@
 import { BATCH_ID, validatePrune } from './mailbox.mjs';
 import { HEX64, check, exactKeys, fail } from './canonical.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
+import { TOOL_NOT_RUN, UPGRADE_TIMEOUT_MS, UPGRADE_TOOL_PATH, VERSION_FACTS_REFRESH_MS, responseFromTool, upgradeMailboxRequest, upgradeToolArgs, validateVersionFacts } from './upgrade-mailbox.mjs';
 
 export const COMPANION_CONFIG_CONTRACT = 'clued.independent-ci.resident-companion-config/2';
 // The Linux side of the Source v2 bridge spool (protected-job-bridge-v4/mailbox.mjs LINUX_ROOT): only its
@@ -175,7 +176,7 @@ export function relayLogEntry({ at, mode, seq, attempt, ms, runner, receipt, kla
 // Source, <root>\source\<ciSourceManifestSha256>\. A path key is a Source script unless it is named here as not one, so a new path
 // key is held to the Source directory by default. A config whose script paths name another (older) Source directory runs
 // nothing: the stage-0 bundle then reports BUNDLE_UNAVAILABLE and the relay cannot start.
-// build-bundle.ps1's refusals that mean the batch's refs moved on since its first bundle (DESIGN §36).
+// build-bundle.ps1's refusals that mean the batch's refs moved on since its first bundle (DESIGN §37).
 export const REBUNDLE_REFS_CHANGED = Object.freeze(['REMOTE_MAIN_BASE_CHANGED', 'REMOTE_HEAD_MOVED']);
 export const COMPANION_PATH_KEYS = Object.freeze(['wslExe', 'powershellExe', 'relayScript', 'bundleScript', 'windowsSpool']);
 export const NON_SOURCE_PATH_KEYS = Object.freeze(['wslExe', 'powershellExe', 'windowsSpool']);
@@ -222,6 +223,22 @@ export function validateHintConfig(h) {
   return Object.freeze({ enabled: h.enabled, ciSourceManifestSha256: h.ciSourceManifestSha256 ?? null });
 }
 
+// The frozen Linux upgrade tool's arguments (in-place upgrade channel, Task 018da927, DESIGN §34): exactly one of these lines once
+// joined by single spaces, every element a plain token of its own (no space, no quote, no path). upgrade-mailbox.mjs#upgradeToolArgs
+// builds them from a validated request; this is the companion's own second check before anything runs as root.
+const UPGRADE_UUID = '[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', UPGRADE_SHA = '[0-9a-f]{64}', UPGRADE_GEN = '[1-9][0-9]{0,9}';
+export const UPGRADE_TOOL_ARGV = Object.freeze([
+  new RegExp('^version-facts$'),
+  new RegExp(`^stage --op ${UPGRADE_UUID} --package ${UPGRADE_SHA} --generation ${UPGRADE_GEN} --linux-manifest ${UPGRADE_SHA}$`),
+  new RegExp(`^switch --op ${UPGRADE_UUID} --from ${UPGRADE_GEN} --to ${UPGRADE_GEN} --linux-manifest ${UPGRADE_SHA}$`),
+  new RegExp(`^rollback --op ${UPGRADE_UUID} --from ${UPGRADE_GEN} --to ${UPGRADE_GEN}$`),
+  new RegExp(`^verify --op ${UPGRADE_UUID} --generation ${UPGRADE_GEN}$`),
+  // linux-upgrade-retain { keep, generation }: the root tool keeps 2..10 generations (clued-ci-upgrade-linux retain).
+  new RegExp(`^retain --op ${UPGRADE_UUID} --keep (?:[2-9]|10) --generation ${UPGRADE_GEN}$`),
+]);
+export const upgradeToolArgvOk = args => Array.isArray(args) && args.length >= 1 && args.length <= 11 && args.every(a => typeof a === 'string' && /^[a-z0-9-]{1,64}$/.test(a))
+  && UPGRADE_TOOL_ARGV.some(re => re.test(args.join(' ')));
+
 // Fixed argv builders. Every variable part is an id that matched a strict pattern first.
 export function argv(cfg) {
   const wsl = (...linux) => [cfg.wslExe, '--distribution', cfg.distribution, '--user', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'LANG=C', 'LC_ALL=C', ...linux];
@@ -236,7 +253,7 @@ export function argv(cfg) {
     unitFacts: (template, instance) => wsl('/usr/bin/systemctl', 'show', '--property=ActiveState,InvocationID,ExecMainStartTimestampMonotonic', unit(template, instance)),
     linuxTool: (sub, id) => { check(['quiescence'].includes(sub) && BATCH_ID.test(id), 'COMPANION_TOOL_ARGS_INVALID'); return wsl(cfg.linuxTool, sub, '--batch', id); },
     archiveUsage: () => wsl(cfg.linuxTool, 'archive-usage'),
-    // DESIGN §34: one retention pass of the Linux spool (the root tool plans, re-checks and deletes; nothing variable here).
+    // DESIGN §35: one retention pass of the Linux spool (the root tool plans, re-checks and deletes; nothing variable here).
     archivePrune: () => wsl(cfg.linuxTool, 'archive-prune'),
     linuxOutgoing: () => wsl('/usr/bin/ls', '-1', '-A', '--', LINUX_OUTGOING),
     linuxIncoming: () => wsl('/usr/bin/ls', '-1', '-A', '--', LINUX_INCOMING),
@@ -252,6 +269,8 @@ export function argv(cfg) {
     checkRefs: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.bundleScript, '-BatchId', id, '-CheckRefs']; },
     rebundle: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.bundleScript, '-BatchId', id, '-Rebundle']; },
     keepalive: () => [cfg.wslExe, '--distribution', cfg.distribution, '--exec', '/bin/sleep', 'infinity'],
+    // DESIGN §34: the frozen upgrade tool, as root, with the fixed path and arguments that pass upgradeToolArgvOk only.
+    upgradeTool: args => { check(upgradeToolArgvOk(args), 'COMPANION_UPGRADE_TOOL_ARGS_INVALID'); return wsl(UPGRADE_TOOL_PATH, ...args); },
   };
 }
 
@@ -309,7 +328,7 @@ export class Companion {
         const v = r.code === 0 ? json(r.stdout) : null;
         return { ok: v?.status === 'BUNDLE_WRITTEN', code: v?.status === 'BUNDLE_WRITTEN' ? null : 'BUNDLE_UNAVAILABLE' };
       }
-      // DESIGN §36: the second generation. Refs no longer the batch's (main moved, or no branch still at the head) is the clean
+      // DESIGN §37: the second generation. Refs no longer the batch's (main moved, or no branch still at the head) is the clean
       // transient REMOTE_REFS_CHANGED_SINCE_BUNDLE; anything else (including no answer) only says the bundle could not be renewed.
       case 'rebuild-bundle': {
         const r = await this.run(this.a.rebundle(request.batchId), { timeoutMs: 30 * 60_000 });
@@ -344,7 +363,7 @@ export class Companion {
         const ok = v?.contract === 'clued.independent-ci.linux-archive-usage/1' && Number.isSafeInteger(v.bytes) && v.bytes >= 0 && Number.isSafeInteger(v.directories) && v.directories >= 0;
         return ok ? { ok: true, usage: { bytes: v.bytes, directories: v.directories } } : { ok: false, code: 'LINUX_ARCHIVE_USAGE_UNCONFIRMED' };
       }
-      // DESIGN §34: the root tool's facts of one retention pass, carried as they are (exact shape) with the usage after it. A
+      // DESIGN §35: the root tool's facts of one retention pass, carried as they are (exact shape) with the usage after it. A
       // refused pass (exit 1 with the tool's own facts) is carried too: the service records why nothing was deleted.
       case 'archive-prune': {
         const r = await this.run(this.a.archivePrune(), { timeoutMs: 9 * 60_000 });
@@ -638,5 +657,96 @@ export class Companion {
       await this.mailbox.respond(request, { ok: answer.ok === true, code: answer.ok ? null : (answer.code ?? 'COMPANION_HANDLER_UNCONFIRMED'), proof: answer.proof ?? null, directory: answer.directory ?? null, verified: answer.verified ?? null, usage: answer.usage ?? null, pull: answer.pull ?? null,
         jobTree: jobTreeOf(this.trees), memory: answer.memory ?? null, prune: answer.prune ?? null });
     }
+  }
+}
+
+// ---- the upgrade mailbox lane (in-place upgrade channel, Task 018da927, DESIGN §34) ----
+//
+// A lane of its own (companion-main.mjs): upgrade\mailbox\requests\ (written by the upgrader, SYSTEM) is read here, each request is
+// carried to the frozen root tool with the fixed argv above, and the tool's one line of JSON goes back as is into
+// upgrade\mailbox\responses\ (upgrade-mailbox.mjs#responseFromTool, protocol frozen at /1: every later companion answers /1 exactly
+// so). Besides, the Linux version facts are rewritten whole into responses\version-facts.json every VERSION_FACTS_REFRESH_MS and at
+// once after every switch or rollback (whatever its answer), so the resident's status /7 and its version-skew hold read fresh facts.
+// A request whose deadline has passed is never run (its upgrader may already have concluded "no answer"): it is answered as refused.
+// A request the lane cannot read is left alone (its upgrader times out). Nothing here decides anything: the upgrader and the root
+// tool re-check what they are given.
+export const UPGRADE_REQUEST_EXPIRED = 'UPGRADE_MAILBOX_REQUEST_EXPIRED';
+// A facts read that failed is tried again this soon (not every lane pass).
+export const VERSION_FACTS_RETRY_MS = 60_000;
+export class UpgradeLane {
+  // ports: { cfg, mailbox (upgrade-mailbox.mjs#UpgradeMailbox, or openMailbox() -> one, tried again each pass until it opens: a node
+  //   without the channel's directories runs the companion as before), run(argv, { timeoutMs }) -> { code, stdout, timedOut? },
+  //   clock() }
+  constructor(ports) {
+    Object.assign(this, ports);
+    this.a = argv(ports.cfg);
+    this.factsAt = null;       // the last facts written (lane clock)
+    this.factsTriedAt = null;  // the last facts read tried
+    this.factsDue = true;
+  }
+
+  async box() {
+    if (this.mailbox) return this.mailbox;
+    if (typeof this.openMailbox !== 'function') return null;
+    try { this.mailbox = await this.openMailbox(); } catch { this.mailbox = null; }
+    return this.mailbox;
+  }
+
+  // One run of the root tool for a request (or the lane's own facts read): { exit, stdout } as responseFromTool takes it. A child
+  // that timed out or could not start is exit -1 / null: never success.
+  async tool(request, timeoutMs) {
+    const r = await this.run(this.a.upgradeTool(upgradeToolArgs(request)), { timeoutMs: Math.max(1000, timeoutMs) });
+    return { exit: r?.timedOut ? -1 : (Number.isSafeInteger(r?.code) ? r.code : null), stdout: typeof r?.stdout === 'string' ? r.stdout : '' };
+  }
+
+  // The facts, read now and written whole; true when written.
+  async refreshFacts(box) {
+    const now = this.clock();
+    this.factsTriedAt = now;
+    let request, response;
+    try { request = upgradeMailboxRequest({ kind: 'linux-version-facts' }, this.clock); } catch { return false; }
+    try { response = responseFromTool(request, await this.tool(request, UPGRADE_TIMEOUT_MS['linux-version-facts']), this.clock); } catch { return false; }
+    if (!response.ok) return false;
+    try { validateVersionFacts(response.result); await box.writeVersionFacts(response.result); } catch { return false; }
+    this.factsAt = this.clock();
+    this.factsDue = false;
+    return true;
+  }
+
+  // Due (never written, or a switch or rollback asked for it) or older than VERSION_FACTS_REFRESH_MS; a failed read waits VERSION_FACTS_RETRY_MS.
+  factsWanted(now) {
+    const retryOk = this.factsTriedAt === null || now - this.factsTriedAt >= VERSION_FACTS_RETRY_MS;
+    if (this.factsDue || this.factsAt === null) return retryOk;
+    return retryOk && now - this.factsAt >= VERSION_FACTS_REFRESH_MS;
+  }
+
+  // One pass: every unanswered request, oldest first, then the facts when they are due. Returns what it did (for tests and logs).
+  async step() {
+    const box = await this.box();
+    if (!box) return { answered: [], facts: false };
+    const answered = [];
+    let pending = [];
+    try { pending = await box.pending(); } catch { pending = []; }
+    for (const request of pending) {
+      if (request.refused) continue;
+      const left = Date.parse(request.deadline) - this.clock();
+      let fields;
+      if (left <= 0) fields = { ok: false, code: UPGRADE_REQUEST_EXPIRED, tool: { exit: null, status: null }, result: null };
+      else {
+        let response;
+        try { response = responseFromTool(request, await this.tool(request, Math.min(left, UPGRADE_TIMEOUT_MS[request.kind])), this.clock); }
+        catch { response = { ok: false, code: TOOL_NOT_RUN, tool: { exit: null, status: null }, result: null }; }
+        fields = { ok: response.ok, code: response.code, tool: response.tool, result: response.result };
+        // The facts as an answer are the freshest facts there are.
+        if (request.kind === 'linux-version-facts' && response.ok) { try { await box.writeVersionFacts(response.result); this.factsAt = this.clock(); this.factsDue = false; } catch { /* the next refresh */ } }
+        if (['linux-upgrade-switch', 'linux-upgrade-rollback'].includes(request.kind)) this.factsDue = true;
+      }
+      try { await box.respond(request, fields); answered.push([request.kind, fields.ok, fields.code]); } catch { /* answered already, or the next pass */ }
+      if (this.factsDue && ['linux-upgrade-switch', 'linux-upgrade-rollback'].includes(request.kind)) await this.refreshFacts(box);
+    }
+    let facts = false;
+    if (this.factsWanted(this.clock())) facts = await this.refreshFacts(box);
+    try { await box.sweep('responses'); } catch { /* best effort */ }
+    return { answered, facts };
   }
 }

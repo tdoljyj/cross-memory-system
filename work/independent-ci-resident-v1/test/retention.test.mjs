@@ -1,4 +1,4 @@
-// Archive retention (DESIGN §34, Task 4aedda54) and the heartbeat gate of the Linux measurement (Task 018da927 c).
+// Archive retention (DESIGN §35, Task 4aedda54) and the heartbeat gate of the Linux measurement (Task 018da927 c).
 // Temporary directories only: nothing on the host is read, changed or deleted.
 import test from 'node:test';
 import assert from 'node:assert/strict';

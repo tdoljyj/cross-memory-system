@@ -50,7 +50,7 @@ async function removeCacheTree(directory) {
   }
   await fs.rmdir(directory);
 }
-// Reclaim after a confirmed promotion (resident Task 4aedda54, DESIGN §34): every promotion left its staging copy and a new
+// Reclaim after a confirmed promotion (resident Task 4aedda54, DESIGN §35): every promotion left its staging copy and a new
 // generation behind and nothing was ever removed (about +3.3 GB per DB rotation). Now, once the pointer readback confirmed
 // the activation, the kind's staging copies (this promotion's and any earlier leftover; the prepare lock is held, so no
 // other preparation of this root can be using one) and every generation of the kind other than the current and the

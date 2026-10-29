@@ -148,7 +148,7 @@ test('the install plan carries the CI root entry, the verify checks it from the 
   assert.match(install, /PARENT_ACL_UNREADABLE/);
   assert.match(install, /parentAcl = Get-ParentAclState \$CiRoot \$res/);
   assert.match(install, /function Get-ParentAce\(\[string\]\$res\) \{ '\(A;;0x120080;;;' \+ \$res \+ '\)' \}/, 'this folder only: no inheritance flags, mask 0x120080');
-  assert.match(install, /contract = 'clued\.independent-ci\.resident-install-plan\/7'/);
+  assert.match(install, /contract = 'clued\.independent-ci\.resident-install-plan\/8'/);   // /8 (018da927): the upgrader; parentAcl unchanged
   // the step runs after the directories and before any file is placed
   const at = needle => { const i = install.indexOf(needle); assert.ok(i > 0, needle); return i; };
   assert.ok(at("Step 'directories'") < at("Step 'parent-acl'") && at("Step 'parent-acl'") < at("Step 'package-copy'"));

@@ -1,4 +1,4 @@
-// Parking point A's second bundle (Task 4012c1b9, DESIGN §36): a batch resumed from the hosted wait gets one more bundle right
+// Parking point A's second bundle (Task 4012c1b9, DESIGN §37): a batch resumed from the hosted wait gets one more bundle right
 // before its workspace; refs that moved on end it as the clean transient REMOTE_REFS_CHANGED_SINCE_BUNDLE, anything else as
 // before (PARKED_BUNDLE_TOO_OLD). A batch that never waited is not touched. The status page shows every batch resting at A.
 import test from 'node:test';
