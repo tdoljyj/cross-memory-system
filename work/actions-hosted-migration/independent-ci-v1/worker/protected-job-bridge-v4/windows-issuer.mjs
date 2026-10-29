@@ -7,6 +7,7 @@
 //     stage 1 recorded (A-strict, batch-claim-v2.mjs); a moved claim fails closed;
 //   - a transient admission refusal (stale, or unavailable: the admission threw) is evaluated again within
 //     its window; in a callback round one that outlasts it answers nothing (late) instead of failing itself;
+//     a transient remote refs failure likewise (collectRefs);
 //   - the stage ends with an outcome record (S11): ISSUED_RESULT_RECEIVED, a clean BLOCKED with zero side
 //     effects (nothing issued, or the Linux worker's clean 'blocked' record), or UNCERTAIN after an issue
 //     without a verified result (the Linux side may still run: UNKNOWN for the resident).
@@ -17,7 +18,7 @@ import {canonical,digest as proofDigest} from '../../src/proof.mjs';
 import {fullAdmissionFailureV2} from '../../src/full-admission-v2.mjs';
 import {DIAGNOSTIC_PHASES} from '../../src/admission-facts-v2.mjs';
 import {readBatchClaim} from '../../src/batch-claim-v2.mjs';
-import {collectCompleteRemoteRefs} from '../protected-controller-ports-v2/refs.mjs';
+import {collectCompleteRemoteRefs,refsTransient} from '../protected-controller-ports-v2/refs.mjs';
 import {STATE_V2,stageByNumber} from '../../src/resident-v2/layout.mjs';
 import {runEntry,controllerPrincipal,controllerPorts,observationLog} from '../../src/resident-v2/entry-runtime.mjs';
 import {createWindowsContext,takeAcceptedBridgeContext,assertWindowsContextLive,closeWindowsContext} from './boundary.mjs';
@@ -37,21 +38,53 @@ const fail=code=>{throw Object.assign(new Error(code),{code});},check=(v,c)=>{if
 // refusal before preparation is final for this attempt.
 const PASS_THROUGH=new Set(['REMOTE_REFS_CHANGED_SINCE_BUNDLE','BRIDGE_CALLBACK_DEADLINE']);
 export const blockedReason=reason=>PASS_THROUGH.has(reason)?reason:'LINUX_PREPARATION_REFUSED';
-// Remote refs observation failures (protected-controller-ports-v2/refs.mjs) -> stable reasons.
+// Remote refs observation failures (protected-controller-ports-v2/refs.mjs) -> stable reasons. Only a failure that may
+// pass on its own (refsTransient: GitHub 5xx or 429, no complete answer, the observation window outrun) is
+// REMOTE_REFS_UNAVAILABLE, a clean transient before the issue; any other code is a refusal, REMOTE_REFS_REFUSED, final
+// for the attempt (stage-fact.mjs: STAGE_CHILD_REFUSED), never collected again (Task 576231fa).
 export function refsFailureReason(code){
   if(['REFS_SNAPSHOT_CHANGED','REFS_TOTAL_CHANGED'].includes(code))return 'REMOTE_REFS_CHANGED_SINCE_BUNDLE';
   if(['REFS_PR_SUBJECT_CHANGED','REFS_MAIN_BASE_CHANGED','REMOTE_MAIN_BASE_CHANGED'].includes(code))return 'full_admission_subject_changed';
-  return 'REMOTE_REFS_UNAVAILABLE';
+  return refsTransient(code)?REFS_UNAVAILABLE:'REMOTE_REFS_REFUSED';
 }
-const refsStep=async collect=>{try{return await collect();}catch(e){fail(refsFailureReason(e?.code));}};
+const REFS_UNAVAILABLE='REMOTE_REFS_UNAVAILABLE';
+// One complete refs collection (gitleaks: the issue and each remote-refs callback). A transient failure is collected
+// again, in full, after 1 and then 2 s: three collections at most, and a next one only while its wait plus a whole
+// collection (REFS_COLLECTION_MS, the port's own 30 s observation window) ends before `until` (the round's deadline, or
+// before the issue one callback window short of the stage's). Worst case 3 x 30 s + 3 s = 93 s, inside one 120 s
+// round. Only a complete collection is ever used, never part of a failed one; it is fresh at its own end, and the
+// caller writes it at once (protocol.mjs measures its 30 s at that issuance). Given up: REMOTE_REFS_UNAVAILABLE.
+export const REFS_RETRY_WAITS_MS=Object.freeze([1000,2000]),REFS_COLLECTION_MS=30000;
+export async function collectRefs({context,collect,until,clock=Date.now,sleep}){
+  for(let attempt=1;;attempt++){
+    assertWindowsContextLive(context);let code;
+    try{const refs=await collect();assertWindowsContextLive(context);return refs;}catch(e){code=e?.code;}
+    assertWindowsContextLive(context);
+    const reason=refsFailureReason(code),wait=REFS_RETRY_WAITS_MS[attempt-1];
+    if(reason!==REFS_UNAVAILABLE||wait===undefined||clock()+wait+REFS_COLLECTION_MS>=until)fail(reason);
+    await sleep(wait);
+  }
+}
 // The issuer's evaluate(): the changed-paths read, then the complete admission. The read sits outside
-// full-admission-v2.mjs's catch-all, so its failures are mapped the same way: a PR that is no longer open on the job's
-// head and base (pr_subject_changed) is the subject change evaluatePr reports itself; any other exception (mostly
-// GitHub after the port's own retries) is unavailable, which runIssuer retries (Task 576231fa).
+// full-admission-v2.mjs's catch-all, so its failures are mapped here (Task 576231fa):
+//   - a PR that is no longer open on the job's head and base (pr_subject_changed) is the subject change evaluatePr
+//     reports itself;
+//   - the port's own refusal of the read (PATHS_REFUSALS: a file list that is invalid, changed, incomplete or past the
+//     page limit; an unexpected App identity or token scope) is full_admission_paths_refused;
+//   - GitHub's 403 (permission, secondary rate limit, a refused App: ambiguous, never transient) is
+//     full_admission_github_forbidden.
+// These three are refusals, final at once (not in RETRY_WAITS_MS; stage-fact.mjs: PR_NOT_OPEN_OR_CHANGED, or
+// STAGE_CHILD_REFUSED). Any other exception (GitHub 5xx or 429, no answer, after the port's own retries) is
+// unavailable, which runIssuer retries.
+export const PATHS_REFUSED='full_admission_paths_refused',GITHUB_FORBIDDEN='full_admission_github_forbidden';
+export const PATHS_REFUSALS=Object.freeze(['invalid_pr_subject','pr_files_changed','incomplete_pr_files','invalid_pr_files','pr_files_page_limit',
+  'unexpected_app_identity','unexpected_installation_token_scope','unexpected_repository_scope','invalid_github_route']);
+export const changedPathsFailure=code=>code==='pr_subject_changed'?'full_admission_subject_changed':PATHS_REFUSALS.includes(code)?PATHS_REFUSED
+  :code==='github_http_403'?GITHUB_FORBIDDEN:UNAVAILABLE_ADMISSION;
 export const issuerEvaluate=({github,admission,job,batchClaim})=>async()=>{
   let packet;
   try{packet=await github.readChangedPaths(job);}
-  catch(e){return{status:'BLOCKED',reason:e?.code==='pr_subject_changed'?'full_admission_subject_changed':UNAVAILABLE_ADMISSION,diagnostic:{phase:'changed_paths'}};}
+  catch(e){return{status:'BLOCKED',reason:changedPathsFailure(e?.code),diagnostic:{phase:'changed_paths'}};}
   return admission.evaluatePr(job,packet,{batchClaim});
 };
 
@@ -88,12 +121,12 @@ export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sle
     };
     // The first admission retries too (nothing is issued yet), but only while its wait leaves the Linux side at least
     // one callback window of the stage.
-    const first=await admitted(stageDeadline-CALLBACK_WINDOW_MS),refs=job.role==='gitleaks'?await refsStep(collect):null;
+    const first=await admitted(stageDeadline-CALLBACK_WINDOW_MS),refs=job.role==='gitleaks'?await collectRefs({context,collect,until:stageDeadline-CALLBACK_WINDOW_MS,clock,sleep}):null;
     const until=Math.min(stageDeadline,context.accepted.validUntil===null?Infinity:Date.parse(context.accepted.validUntil));
     const issue=makeIssue(job,first,refs,{sourceAcceptanceRef:context.sourceAcceptanceRef,hostQualificationRef:context.hostQualificationRef,expiresAt:new Date(until).toISOString(),now:clock()});
     assertWindowsContextLive(context);sideEffects=1;await box.write('issue',encode(issue));
     // late: the deadline of the round this issuer did not answer (null = still answering): out of time, or a
-    // transient admission refusal outlasted its retries. Past it the Linux worker accepts no response; in a round
+    // transient admission refusal or refs failure outlasted its retries. Past it the Linux worker accepts no response; in a round
     // before it prepared anything it ends with its clean 'blocked' record (BRIDGE_CALLBACK_DEADLINE). So answer
     // nothing more and wait for that record instead of failing UNCERTAIN on an expired challenge (PR #889 stage 2
     // attempt 2, 2026-10-21): two more windows at most, since the companion waits one window for a response from its
@@ -115,7 +148,12 @@ export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sle
       // A transient refusal that outlasts this round's retries answers nothing: late, as above.
       let current;
       try{current=await admitted(Date.parse(challenge.deadline));}catch(e){if(RETRY_WAITS_MS.has(e?.code))return goLate(challenge);throw e;}
-      const fresh=challenge.action==='admission'?null:await refsStep(collect);
+      // Remote refs still unavailable after collectRefs' retries: late as well (the worker has prepared nothing before
+      // its refs callback, so it ends with its clean blocked record). A refusal still fails.
+      let fresh=null;
+      if(challenge.action!=='admission'){
+        try{fresh=await collectRefs({context,collect,until:Date.parse(challenge.deadline),clock,sleep});}catch(e){if(e?.code===REFS_UNAVAILABLE)return goLate(challenge);throw e;}
+      }
       const now=clock();if(now>=Date.parse(challenge.deadline))return goLate(challenge);
       const response=challenge.action==='admission'?makeResponse(issue,challenge,current,null,{now}):makeResponse(issue,challenge,null,fresh,{now});
       assertWindowsContextLive(context);await box.write('response-'+String(seq).padStart(2,'0'),encode(response));next++;return true;

@@ -154,10 +154,11 @@ test('protocol v4: a callback response is fresh at its issuance and only has to 
   assert.throws(() => validateResponse(issue, ch, stretched, t + 25_000), { code: 'BRIDGE_RESPONSE_ADMISSION_TIME_REQUIRED' });
   // Noted facts never get the issuance time past their claim, whatever the response window says.
   assert.throws(() => validateFormalAdmissionV2(job, callbackValue('admission', stretched), t + 25_000, generation), { code: 'FRESH_COMPLETE_NATIVE_ADMISSION_REQUIRED' });
-  // remote-refs responses are unchanged: their refs snapshot is measured from the arrival.
+  // remote-refs responses likewise (Task 576231fa): the refs snapshot is fresh at the response's issuance, not its arrival
+  // (test/issuer-refs-transient.test.mjs has the details).
   const refsCh = makeChallenge(gissue, 'remote-refs', 1, { now: t }), refsResponse = makeResponse(gissue, refsCh, null, refsSnapshot(t + 10_000), { now: t + 10_500 });
   assert.ok(validateResponse(gissue, refsCh, decode(encode(refsResponse)), t + 10_500 + 15_000));
-  assert.throws(() => validateResponse(gissue, refsCh, decode(encode(refsResponse)), arrived), { code: 'FRESH_COMPLETE_REMOTE_REFS_REQUIRED' });
+  assert.ok(validateResponse(gissue, refsCh, decode(encode(refsResponse)), arrived));
 });
 
 test('signed result v4: the wrapper binds the issue, the v2 subject and the observation; any change is refused', () => {
@@ -482,13 +483,18 @@ test('issuer: the first admission retries an unavailable evaluation while a call
   await assert.rejects(fs.lstat(path.join(rootC, 'outgoing', 'issue.json')), { code: 'ENOENT' });
 });
 
-test('issuer evaluate: a failed changed-paths read is unavailable (retried), a PR that moved is the subject change; otherwise the complete admission runs', async () => {
+test('issuer evaluate: a failed changed-paths read is unavailable (retried), a PR that moved is the subject change, a refusal is its own reason; otherwise the complete admission runs', async () => {
   const job = { id: 'job' }, batchClaim = { claimId: 'c' }, packet = { complete: true, paths: ['a.txt'] }, calls = [];
   const admission = { evaluatePr: async (...args) => { calls.push(args); return { status: 'ADMITTED', marker: 1 }; } };
   const throwing = code => ({ readChangedPaths: async () => { throw code === undefined ? undefined : Object.assign(new Error(code), { code }); } });
-  for (const code of ['github_transport_unconfirmed', 'github_http_502', 'pr_files_changed', 'invalid_pr_files', undefined]) {
+  for (const code of ['github_transport_unconfirmed', 'github_http_502', 'github_http_429', undefined]) {
     assert.deepEqual(await issuerEvaluate({ github: throwing(code), admission, job, batchClaim })(),
       { status: 'BLOCKED', reason: 'full_admission_unavailable', diagnostic: { phase: 'changed_paths' } }, String(code));
+  }
+  // the port's own refusal and GitHub's 403 are no longer unavailable (DESIGN §7.8 review, MINOR; Task 576231fa)
+  for (const [code, reason] of [['pr_files_changed', 'full_admission_paths_refused'], ['invalid_pr_files', 'full_admission_paths_refused'], ['github_http_403', 'full_admission_github_forbidden']]) {
+    assert.deepEqual(await issuerEvaluate({ github: throwing(code), admission, job, batchClaim })(),
+      { status: 'BLOCKED', reason, diagnostic: { phase: 'changed_paths' } }, code);
   }
   assert.deepEqual(await issuerEvaluate({ github: throwing('pr_subject_changed'), admission, job, batchClaim })(),
     { status: 'BLOCKED', reason: 'full_admission_subject_changed', diagnostic: { phase: 'changed_paths' } });
@@ -624,7 +630,8 @@ test('issuer: no result before the stage window ends is UNCERTAIN (the Linux sid
   assert.deepEqual([r.status, r.reason, r.sideEffects], ['UNCERTAIN', 'BRIDGE_RESULT_DEADLINE', 1]);
   assert.equal(refsFailureReason('REFS_SNAPSHOT_CHANGED'), 'REMOTE_REFS_CHANGED_SINCE_BUNDLE');
   assert.equal(refsFailureReason('REFS_PR_SUBJECT_CHANGED'), 'full_admission_subject_changed');
-  assert.equal(refsFailureReason('REFS_HTTP_UNCONFIRMED'), 'REMOTE_REFS_UNAVAILABLE');
+  assert.equal(refsFailureReason('REFS_HTTP_UNCONFIRMED'), 'REMOTE_REFS_REFUSED');
+  assert.equal(refsFailureReason('REFS_HTTP_503'), 'REMOTE_REFS_UNAVAILABLE');
   // gitleaks: a refs observation that saw a push fails before anything is issued
   const g = issuerFixture(t, { job: 'gitleaks' }), root2 = await spool(t);
   const r2 = await runIssuer({ context: g.context, evaluate: g.evaluate, collect: async () => { throw Object.assign(new Error('REFS_SNAPSHOT_CHANGED'), { code: 'REFS_SNAPSHOT_CHANGED' }); }, box: await createFixtureMailbox(root2, 'windows'), stageDeadline: Date.now() + 5_000 });

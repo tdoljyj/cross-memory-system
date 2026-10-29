@@ -165,8 +165,11 @@ export async function refsInStore({ job, remoteSnapshot, gitDirectory, gitExecut
   return Object.freeze({ tips: tips.length, refs: refs.length });
 }
 
+// `now`: the time the remote snapshot's freshness is measured at. The adapter passes the same reference time it used
+// before its run directory (a bridge v4 response's issuedAt while that response is valid, else its own now; Task
+// 576231fa), so a snapshot accepted there is never refused here, past the point where a failure is UNCERTAIN.
 export async function prepareRequiredHistory({ job, sourceManifestBytes, expectedSourceManifestSha256,
-  trustedSourceDirectory, gitDirectory, remoteSnapshot, outputDirectory, gitExecutable, expectedGitSha256 }) {
+  trustedSourceDirectory, gitDirectory, remoteSnapshot, outputDirectory, gitExecutable, expectedGitSha256, now = Date.now() }) {
   validateJob(job); check(job.repo === 'tdoljyj/cross-memory-system' && job.role === 'gitleaks', 'FIXED_REQUIRED_ROLE_REQUIRED');
   check(createHashForBytes().update(sourceManifestBytes).digest('hex') === expectedSourceManifestSha256 && job.sourceManifestSha256 === expectedSourceManifestSha256, 'SOURCE_MANIFEST_CHANGED');
   const manifest = JSON.parse(sourceManifestBytes), role = manifest.roles?.gitleaks;
@@ -182,7 +185,7 @@ export async function prepareRequiredHistory({ job, sourceManifestBytes, expecte
   await noLinks(path.dirname(outputDirectory));
   check(![source, cache].some(root => path.resolve(outputDirectory) === root || path.resolve(outputDirectory).startsWith(root + path.sep)
     || root.startsWith(path.resolve(outputDirectory) + path.sep)), 'INPUT_OUTPUT_OVERLAP');
-  const refs = validateRemoteSnapshot(remoteSnapshot, job);
+  const refs = validateRemoteSnapshot(remoteSnapshot, job, now);
   check(refs.find(ref => ref.name === 'refs/heads/main')?.objectSha === job.baseSha, 'REMOTE_MAIN_BASE_CHANGED');
   for (const [filename, hash] of Object.entries(SOURCE_PINS)) {
     const declared = role.sourceFiles.filter(pin => pin.path === filename);
