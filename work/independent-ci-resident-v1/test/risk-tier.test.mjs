@@ -25,7 +25,7 @@ test('a stage-1 burn that proves it published nothing uses the evaluation budget
   const rec = await headRecord(f, subjectOf(884, HEAD));
   assert.equal(rec.burnedBy.quotaTier, 'evaluation');
   const u = await f.ledger.usage(f.clock() - DAY);
-  assert.deepEqual([u.started, u.lowRiskBurns, u.evaluations, u.startedByPr.get(884) ?? 0], [0, 1, 1, 0]);
+  assert.deepEqual([u.started, u.lowRiskBurns, u.evaluations, u.startedByPr.get(884) ?? 0], [0, 1, 1, 1], 'still counted against the PR cap (review m4)');
   // burned all the same: the same head is never reserved again
   await f.drop(triggerBytes({ pr: 885 }));
   const again = await f.exec.tick();

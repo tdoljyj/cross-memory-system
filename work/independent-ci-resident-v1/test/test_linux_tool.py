@@ -198,8 +198,12 @@ class Retention(unittest.TestCase):
         owner = self.root / 'owner'
         owner.mkdir()
         f = owner / 'retention-keep.json'
+        # a missing file refuses (review M2); only the Owner's file, even with an empty list, allows deletion
+        self.assertEqual(tool.read_keep_list(str(f), 'linux'), {'ok': False, 'code': 'RETENTION_KEEP_LIST_MISSING'})
+        self.assertEqual(tool.read_keep_list(str(self.root / 'nowhere' / 'k.json'), 'linux')['code'], 'RETENTION_KEEP_LIST_MISSING')
+        f.write_text(json.dumps({'contract': tool.KEEP_CONTRACT, 'keep': []}))
         self.assertEqual(tool.read_keep_list(str(f), 'linux'), {'ok': True, 'names': set()})
-        self.assertEqual(tool.read_keep_list(str(self.root / 'nowhere' / 'k.json'), 'linux')['code'], 'RETENTION_KEEP_LIST_UNREADABLE')
+        f.unlink()
         f.write_text(json.dumps({'contract': tool.KEEP_CONTRACT, 'keep': [{'name': 'failed-a-1', 'spool': 'linux', 'ref': 'Task 4aedda54'},
                                                                           {'name': 'archive-b', 'spool': 'windows', 'ref': 'owner'}, {'name': 'failed-c', 'spool': 'any', 'ref': 'Bug x'}]}))
         self.assertEqual(tool.read_keep_list(str(f), 'linux')['names'], {'failed-a-1', 'failed-c'})

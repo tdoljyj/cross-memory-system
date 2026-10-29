@@ -91,15 +91,15 @@ export function parseKeepList(bytes) {
   return v.keep;
 }
 
-// The names kept on one spool. A missing file is an empty list only when its folder is there; a file that is not a plain
-// file, too large, or not exactly the contract refuses (nothing is deleted then).
+// The names kept on one spool. A missing file refuses like an unreadable one (RETENTION_KEEP_LIST_MISSING): an unknown list
+// is never an empty one (independent review M2), so nothing is deleted until the Owner has written the file, even as
+// {"contract":…,"keep":[]}, which is what allows deletion. A file that is not a plain file, too large, or not exactly the
+// contract refuses too.
 export async function readKeepList(file, spool) {
   try {
     let st;
     try { st = await fs.lstat(file); } catch (error) {
-      if (error.code !== 'ENOENT') return { ok: false, code: 'RETENTION_KEEP_LIST_UNREADABLE' };
-      const parent = await fs.lstat(path.dirname(file)).catch(() => null);
-      return parent?.isDirectory() && !parent.isSymbolicLink() ? { ok: true, names: new Set(), entries: 0 } : { ok: false, code: 'RETENTION_KEEP_LIST_UNREADABLE' };
+      return { ok: false, code: error.code === 'ENOENT' ? 'RETENTION_KEEP_LIST_MISSING' : 'RETENTION_KEEP_LIST_UNREADABLE' };
     }
     if (!st.isFile() || st.isSymbolicLink() || st.size > KEEP_MAX_BYTES) return { ok: false, code: 'RETENTION_KEEP_LIST_INVALID' };
     const keep = parseKeepList(await fs.readFile(file));

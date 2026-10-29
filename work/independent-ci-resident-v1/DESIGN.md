@@ -2953,6 +2953,8 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 
 常驻侧没有可靠办法查询 KooYomi 里哪些 Task、Bug、Evidence 还没关闭、引用了哪个归档，所以改用**显式保留清单**：`C:\ProgramData\CluedIndependentCI\resident\owner\retention-keep.json`（`owner\` 只有提权的 Owner 能写，服务只读；名字不是 Owner 请求的名字形状，`OwnerInbox` 不会读它）。合同 `clued.independent-ci.archive-retention-keep/1`：`{ contract, keep: [{ name, spool: windows|linux|any, ref }] }`，`ref` 写引用它的 Task/Bug/Evidence id 或 `owner`，只记录不解释；最多 2000 条、256 KB。Linux 工具经 `/mnt/c/...` 读同一个文件。被列出的归档不删，单独计量（回执 `protected`：目录数、字节数、是否量全；Windows 回执另列名字，最多 64 个）。Owner 关闭相关 Task 后自己从清单里删掉那一行。
 
+**清单不存在时一个都不删**（`RETENTION_KEEP_LIST_MISSING`，独立复核 M2）：未知的清单从不当作空清单。安装或重装之后，由 Owner 写下这个文件（可以是 `{"contract":"clued.independent-ci.archive-retention-keep/1","keep":[]}`）才开始删除，这一步就是对删除的显式授权；之前回执每天一条说明原因。Linux 工具只把 `FileNotFoundError` 当作“不存在”，其他读错误一律是读不到（复核 m3）。
+
 ### 34.3 安全措施（任何一条不满足都不删，写回执说明）
 
 - **只在批次之间、且无未关闭批次**时执行：服务循环的 `betweenBatches`（IDLE/DEFERRED/PAUSED/WAITING）里，`idle` 再查：没有子进程在跑、没有 HALT、账本里没有非终止条目（运行中、等待、停车 A/B 都算）、没有未归档的现场。Linux 侧另要 root 自己证明静止（`quiescence`），且必须有新鲜的 companion 心跳。
@@ -3003,7 +3005,7 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 
 ### 35.2 两档
 
-- **评估档（低风险）**：同时满足以下几条的第 1 段结局——10-started 之前；对照表判为 CLEAN（两端清理证明齐全）；绑定的阶段结果 `sideEffects` 为 0 且 `mayHavePublished` 为 false。照样烧号（这个 head 永不再跑），但烧号记录的 `burnedBy` 带 `quotaTier: 'evaluation'`；`usage()` 不把它计入执行（`started`、`startedByPr`），另计 `lowRiskBurns`，它的批次条目照常计一次评估。
+- **评估档（低风险）**：同时满足以下几条的第 1 段结局——10-started 之前；对照表判为 CLEAN（两端清理证明齐全）；绑定的阶段结果 `sideEffects` 为 0 且 `mayHavePublished` 为 false。照样烧号（这个 head 永不再跑），但烧号记录的 `burnedBy` 带 `quotaTier: 'evaluation'`；`usage()` 不把它计入执行（`started`），另计 `lowRiskBurns`，它的批次条目照常计一次评估；它仍计入本 PR 每天的批次上限 `startedByPr`（复核 m4：一个 PR 不能用第 1 段被拒的提交耗尽全局评估额度）。
 - **执行档**：其余一切——10-started 的记录、其他烧号、没有 `quotaTier` 的旧记录、读不出的记录。与以前相同。
 - 另外，从未 10-started 却以 FAILED_CLEAN / FAILED_UNKNOWN 结束（即烧号）的批次条目，不论对照表类别（环境、暂时类也一样）都计一次评估：它在执行档里不再出现时必须在别处被计数。执行档的烧号仍同时计执行与评估，与以前一样严格。
 
@@ -3027,10 +3029,10 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 
 ### 36.2 做法
 
-- 执行器：在工作区准备之前，批次距预留超过 `REBUNDLE_AFTER_MS`（30 分钟，只有在 A 等过的批次才会这样）时，向 companion 发邮箱请求 `rebuild-bundle`，写一条 `batch-rebundled` 回执。
+- 执行器：只对从停靠点 A 恢复的批次（`resumeWaiting` 进来的，复核 M1），在工作区准备之前、距预留超过 `REBUNDLE_AFTER_MS`（30 分钟）时，向 companion 发邮箱请求 `rebuild-bundle`，写一条 `batch-rebundled` 回执。
   - 成功：照常准备工作区，ws-prep 用第 2 代。
   - companion 答 `REMOTE_REFS_CHANGED_SINCE_BUNDLE`（main 已不是 T，或没有任何分支还指着 H）：第 0 段干净的暂时性结局，对照表照旧（attempt 2 可跟进）。
-  - 其他拒绝或没有答复：照旧 `PARKED_BUNDLE_TOO_OLD`。没有该端口的旧 companion 仍按 100 分钟判断。
+  - 其他拒绝或没有答复：照旧 `PARKED_BUNDLE_TOO_OLD`。没有等过的批次（例如打包和第 1 段本身就慢）和没有该端口的旧 companion 都照旧按 100 分钟判断，行为与以前完全相同。
 - `build-bundle.ps1 -Rebundle`：只在第 1 代完整（回执可读、同一批次与描述符、没有 `generation` 字段）时运行，写到 `bundles\<batchId>\gen-2\`（必须不存在：最多两代），检查与第 1 代相同；另要求有分支仍指着 H（`REMOTE_HEAD_MOVED`）。回执多 `generation: 2`、`previousBundleSha256`、`previousRefListSha256`。`-CheckRefs` 与 `-Rebundle` 互斥（`ONE_MODE_REQUIRED`）。
 - `-CheckRefs` 与 `prepare-workspaces.py` 用最新的完整一代：`gen-2\` 存在就必须有回执，且回执绑定第 1 代的精确 bundle；`gen-2\` 没有回执一律拒绝（`BUNDLE_GENERATION_INCOMPLETE`），绝不退回第 1 代。
 - force-push 掉了 head 的情形在取 head 对象时就失败（git 步骤），按“其他拒绝”处理。

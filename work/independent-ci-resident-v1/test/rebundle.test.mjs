@@ -78,6 +78,28 @@ test('a batch that never waited (relay off) is not re-bundled', async t => {
   assert.equal(companion.rebuilds, 0);
 });
 
+test('a slow first pass that never parked (relay off, bundle and stage 1 took 31 minutes) is not re-bundled (review M1)', async t => {
+  const companion = withRebundle(() => ({ ok: false, code: 'BUNDLE_UNAVAILABLE' }), {});
+  let f;
+  const slow = companion.buildBundle;
+  companion.buildBundle = async (...a) => { f.advance(31 * MIN); return slow(...a); };
+  f = await executorFixture(t, { companion });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.equal(companion.rebuilds, 0);
+});
+
+test('without the re-bundle port the old 100-minute rule still holds for a first pass', async t => {
+  const companion = fakeCompanion({});
+  let f;
+  const slow = companion.buildBundle;
+  companion.buildBundle = async (...a) => { f.advance(101 * MIN); return slow(...a); };
+  f = await executorFixture(t, { companion });
+  await f.drop(triggerBytes());
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'PARKED_BUNDLE_TOO_OLD']);
+});
+
 test('the status page shows each batch resting at parking point A on its own row', async t => {
   const status = new StatusBoard({ clock: () => Date.parse('2026-10-20T12:00:00Z') });
   const f = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: withRebundle(() => ({ ok: true, code: null })), status });

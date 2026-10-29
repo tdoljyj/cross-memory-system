@@ -30,13 +30,16 @@ test('the plan: every shared case (the Linux tool is held to the same file)', ()
   assert.deepEqual(['archive-a', 'completed-a', 'failed-a', 'incoming', 'archive-', 'failed'].map(archiveClass), ['success', 'success', 'failure', null, null, null]);
 });
 
-test('the keep list: exact contract, else refused; a missing file is empty only when its folder exists', async t => {
+test('the keep list: exact contract, else refused; a missing file refuses too (review M2), an empty keep list allows', async t => {
   const root = await tempRoot(t);
   const owner = path.join(root, 'owner');
   await fs.mkdir(owner);
   const file = path.join(owner, 'retention-keep.json');
+  assert.deepEqual(await readKeepList(file, 'windows'), { ok: false, code: 'RETENTION_KEEP_LIST_MISSING' });
+  assert.deepEqual(await readKeepList(path.join(root, 'absent', 'retention-keep.json'), 'windows'), { ok: false, code: 'RETENTION_KEEP_LIST_MISSING' });
+  await fs.writeFile(file, JSON.stringify({ contract: KEEP_CONTRACT, keep: [] }));
   assert.deepEqual(await readKeepList(file, 'windows'), { ok: true, names: new Set(), entries: 0 });
-  assert.deepEqual(await readKeepList(path.join(root, 'absent', 'retention-keep.json'), 'windows'), { ok: false, code: 'RETENTION_KEEP_LIST_UNREADABLE' });
+  await fs.rm(file);
   const good = { contract: KEEP_CONTRACT, keep: [{ name: 'failed-a-1', spool: 'windows', ref: 'Bug 1234abcd' }, { name: 'archive-b-2', spool: 'linux', ref: 'owner' },
     { name: 'failed-c-3', spool: 'any', ref: 'Evidence 9' }] };
   await fs.writeFile(file, JSON.stringify(good));

@@ -1992,7 +1992,7 @@ export class ResidentExecutor {
       // Every resume re-runs the start-of-batch checks; any drift fails closed (UNKNOWN, HALT).
       const startCode = await this.batchStartChecks(subject);
       if (startCode) return this.afterBatch(subject, entry.reserved.origin ?? 'queued', await this.unknown(key, startCode, 'resume-start-checks', batch));
-      outcome = await this.continueBatch(key, subject, batch, t0);
+      outcome = await this.continueBatch(key, subject, batch, t0, { resumed: true });
       if (outcome instanceof StepFailure) outcome = await this.fail(key, batch, outcome);
     } catch (error) {
       outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch, archiveFacts(error));
@@ -2002,7 +2002,9 @@ export class ResidentExecutor {
 
   // Everything after 15-relay-wait: one wait evaluation, then (unless still waiting) 20-plan-intent,
   // stage R, 25-plan, the local roles, stage 8 and the close.
-  async continueBatch(key, subject, batch, t0) {
+  //   resumed: this call resumes a batch that rested at parking point A in an earlier tick (resumeWaiting), never the
+  //   batch's own first pass (DESIGN §36: only a batch that waited is re-bundled; independent review M1).
+  async continueBatch(key, subject, batch, t0, { resumed = false } = {}) {
     let aborted = await this.abortIfRequested(key, batch, 'before-relay-plan');
     if (aborted) return aborted;
     if ((aborted = await this.supersededAfterStart(key, subject, batch, 'before-relay-plan', POSITIONS[1]))) return aborted;
@@ -2018,18 +2020,18 @@ export class ResidentExecutor {
       if ((aborted = await this.supersededAfterStart(key, subject, batch, 'before-workspace', plan.candidates.length > 0 ? POSITIONS[RELAY_STAGE] : POSITIONS[1]))) return aborted;
       // A batch resumed from parking point A gets its second bundle before the workspace (Task 4012c1b9, DESIGN §36). When
       // that is refused, it ends here, nothing of it on Linux: refs no longer the batch's as the clean transient
-      // REMOTE_REFS_CHANGED_SINCE_BUNDLE, anything else as before (PARKED_BUNDLE_TOO_OLD, also without a re-bundle port).
+      // REMOTE_REFS_CHANGED_SINCE_BUNDLE, anything else as before (PARKED_BUNDLE_TOO_OLD). A batch that never waited, or a
+      // companion without the re-bundle port, keeps the old rule: a bundle older than 100 minutes ends the batch here.
       const reservedAt = Date.parse((await this.ledger.state(key)).reserved?.reservedAt ?? '');
-      if (Number.isFinite(reservedAt) && this.clock() - reservedAt > REBUNDLE_AFTER_MS) {
-        if (typeof this.companion.rebuildBundle !== 'function') {
-          if (this.clock() - reservedAt > BUNDLE_MAX_AGE_AT_WORKSPACE_MS) return new StepFailure(0, 'PARKED_BUNDLE_TOO_OLD', {}, 'workspace', relayed);
-        } else {
-          this.atStage(0, 'rebundle');
-          const rb = await this.companion.rebuildBundle(batch);
-          const code = rb?.ok === true ? null : (rb?.code === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'PARKED_BUNDLE_TOO_OLD');
-          await this.receipt('batch-rebundled', { key, failureCode: code, ageMinutes: Math.floor((this.clock() - reservedAt) / 60_000), companionJobTree: rb?.jobTree ?? null });
-          if (code) return new StepFailure(0, code, {}, 'workspace', relayed);
-        }
+      const rebundle = resumed && typeof this.companion.rebuildBundle === 'function' && Number.isFinite(reservedAt) && this.clock() - reservedAt > REBUNDLE_AFTER_MS;
+      if (!rebundle) {
+        if (Number.isFinite(reservedAt) && this.clock() - reservedAt > BUNDLE_MAX_AGE_AT_WORKSPACE_MS) return new StepFailure(0, 'PARKED_BUNDLE_TOO_OLD', {}, 'workspace', relayed);
+      } else {
+        this.atStage(0, 'rebundle');
+        const rb = await this.companion.rebuildBundle(batch);
+        const code = rb?.ok === true ? null : (rb?.code === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'PARKED_BUNDLE_TOO_OLD');
+        await this.receipt('batch-rebundled', { key, failureCode: code, ageMinutes: Math.floor((this.clock() - reservedAt) / 60_000), companionJobTree: rb?.jobTree ?? null });
+        if (code) return new StepFailure(0, code, {}, 'workspace', relayed);
       }
       this.atStage(0, 'workspace');
       const prep = await this.companion.prepareWorkspaces(batch);

@@ -175,11 +175,18 @@ def bundle_generation(base, d, descriptor_sha, now):
     and the first generation's exact bundle, and the first one must be this batch's too. A gen-2/ without its receipt is
     refused, never skipped. Otherwise the first generation, whose receipt never names a generation."""
     gen2 = f'{base}/gen-2'
-    if not os.path.lexists(gen2):
+    try:
+        gen2_stat = os.lstat(gen2)
+    except FileNotFoundError:
+        gen2_stat = None
+    # Only a gen-2 that does not exist means the first generation; any other error of the lstat refuses (review m3).
+    except OSError:
+        raise Refused('BUNDLE_GENERATION_INCOMPLETE')
+    if gen2_stat is None:
         r = validate_receipt(json.loads(read_public(f'{base}/all-refs.receipt.json', 1 << 20)), d, descriptor_sha, now)
         need('generation' not in r, 'BUNDLE_RECEIPT_REFUSED')
         return base, r
-    need(os.path.isdir(gen2) and not os.path.islink(gen2) and os.path.lexists(f'{gen2}/all-refs.receipt.json'), 'BUNDLE_GENERATION_INCOMPLETE')
+    need(stat.S_ISDIR(gen2_stat.st_mode) and os.path.isfile(f'{gen2}/all-refs.receipt.json'), 'BUNDLE_GENERATION_INCOMPLETE')
     r = validate_receipt(json.loads(read_public(f'{gen2}/all-refs.receipt.json', 1 << 20)), d, descriptor_sha, now)
     first = json.loads(read_public(f'{base}/all-refs.receipt.json', 1 << 20))
     need(isinstance(first, dict) and first.get('contract') == r['contract'] and first.get('batchId') == d['batchId'] and first.get('descriptorSha256') == descriptor_sha

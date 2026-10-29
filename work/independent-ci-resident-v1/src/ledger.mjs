@@ -481,8 +481,11 @@ export class Ledger {
       try {
         const v = (await readJson(path.join(this.heads, name))).value;
         if (Date.parse(v.startedAt) >= sinceMs) {
+          // A low-risk burn still counts against its PR's own daily cap (independent review m4): one PR cannot spend the
+          // whole evaluation budget on commits that stage 1 refuses.
+          if (Number.isSafeInteger(v.subject?.pr)) bump(u.startedByPr, v.subject.pr);
           if (v.burnedBy?.quotaTier === QUOTA_TIER_EVALUATION) { u.lowRiskBurns += 1; continue; }
-          u.started += 1; if (Number.isSafeInteger(v.subject?.pr)) bump(u.startedByPr, v.subject.pr);
+          u.started += 1;
         }
       } catch (error) { if (!contentError(error)) throw error; u.started += 1; }
     }

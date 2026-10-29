@@ -430,13 +430,14 @@ def parse_keep_list(raw):
 
 
 def read_keep_list(path, spool):
-    """{'ok': True, 'names': set} or {'ok': False, 'code': ...}. A missing file is an empty list only when its folder is there."""
+    """{'ok': True, 'names': set} or {'ok': False, 'code': ...}. A missing file refuses (RETENTION_KEEP_LIST_MISSING): an unknown
+    list is never an empty one; only the Owner's file, even with an empty keep list, allows deletion. Only FileNotFoundError
+    means missing: any other error of the lstat (EACCES, EIO on drvfs) is unreadable, never absent."""
     try:
-        if not os.path.lexists(path):
-            parent = os.path.dirname(path)
-            ok = os.path.isdir(parent) and not os.path.islink(parent)
-            return {'ok': True, 'names': set()} if ok else {'ok': False, 'code': 'RETENTION_KEEP_LIST_UNREADABLE'}
-        st = os.lstat(path)
+        try:
+            st = os.lstat(path)
+        except FileNotFoundError:
+            return {'ok': False, 'code': 'RETENTION_KEEP_LIST_MISSING'}
         if not _st.S_ISREG(st.st_mode) or st.st_size > 256 * 1024:
             return {'ok': False, 'code': 'RETENTION_KEEP_LIST_INVALID'}
         with open(path, 'rb') as f:
