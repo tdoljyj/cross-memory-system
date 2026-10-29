@@ -2994,3 +2994,120 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 ### 34.10 生效与不变量
 
 需要常驻层 Windows 与 Linux 重装（companion 与服务一起，响应合同 `/4`），trivy 回收需要 Source 重装。删除只发生在上面的条件下；没有新的发布路径，不碰 GitHub、凭据或网络。
+
+## 35. 按风险分档计每日额度（Task `12ada80e`，来自 c0ff5167；Decision `ca70ea31`）
+
+### 35.1 为什么
+
+第 1 段被干净拒绝、证明没有任何发布的批次（例如 2026-10-21 那 8 个旧 PR 的 `STAGE_CHILD_REFUSED`）照样烧号，也照样写一条 `ledger-heads` 记录，于是 `usage()` 把它算成一次执行，占掉 48 批的执行额度；同一个条目又在批次账本里算一次评估。Owner 决定（`ca70ea31`）第 3 批只做按风险分档的机制，数值保持临时的 48/96，等算力面板有实际数据再调。
+
+### 35.2 两档
+
+- **评估档（低风险）**：同时满足以下几条的第 1 段结局——10-started 之前；对照表判为 CLEAN（两端清理证明齐全）；绑定的阶段结果 `sideEffects` 为 0 且 `mayHavePublished` 为 false。照样烧号（这个 head 永不再跑），但烧号记录的 `burnedBy` 带 `quotaTier: 'evaluation'`；`usage()` 不把它计入执行（`started`、`startedByPr`），另计 `lowRiskBurns`，它的批次条目照常计一次评估。
+- **执行档**：其余一切——10-started 的记录、其他烧号、没有 `quotaTier` 的旧记录、读不出的记录。与以前相同。
+- 另外，从未 10-started 却以 FAILED_CLEAN / FAILED_UNKNOWN 结束（即烧号）的批次条目，不论对照表类别（环境、暂时类也一样）都计一次评估：它在执行档里不再出现时必须在别处被计数。执行档的烧号仍同时计执行与评估，与以前一样严格。
+
+### 35.3 看得见的推迟
+
+全局推迟（今日执行额度已满、评估额度已满、companion 没就绪）每个原因每个 UTC 日写一条 `batch-deferred` 回执，带当时的 `started`、`evaluations`、`lowRiskBurns`。之前只有状态页能看出执行器为什么不动。
+
+### 35.4 不变的
+
+上限值（48/96，policy `/7` 不变）、烧号与已执行记录、第 1 段释放的前提（只认 `safeToRerun` 或 broker 没启动）。
+
+### 35.5 测试
+
+`test/risk-tier.test.mjs`：低风险烧号只计评估且 head 不再跑；可能发布、有副作用、没有绑定结果、第 3 段失败、Linux 一侧不干净都仍是执行档；低风险烧号不占执行额度，额度满时回执每天只写一次。`test/executor.test.mjs` 的 `usage()` 形状随 `lowRiskBurns` 更新。
+
+## 36. 停靠点 A 重打 bundle（Task `4012c1b9`）
+
+### 36.1 为什么
+
+停在 A（等托管结果）的批次恢复时可能已过很久：第 1 代 bundle 的 refs 过期，第 2 段的 refs 闸门几乎必然失败；超过 100 分钟则以 `PARKED_BUNDLE_TOO_OLD` 结束（§18.2）。托管转发打开之前要补上。现在转发仍关着（Decision `b0087f98` 第 4 项：实测推到第 3 批装好之后），所以本节在今天的批次上不会触发。
+
+### 36.2 做法
+
+- 执行器：在工作区准备之前，批次距预留超过 `REBUNDLE_AFTER_MS`（30 分钟，只有在 A 等过的批次才会这样）时，向 companion 发邮箱请求 `rebuild-bundle`，写一条 `batch-rebundled` 回执。
+  - 成功：照常准备工作区，ws-prep 用第 2 代。
+  - companion 答 `REMOTE_REFS_CHANGED_SINCE_BUNDLE`（main 已不是 T，或没有任何分支还指着 H）：第 0 段干净的暂时性结局，对照表照旧（attempt 2 可跟进）。
+  - 其他拒绝或没有答复：照旧 `PARKED_BUNDLE_TOO_OLD`。没有该端口的旧 companion 仍按 100 分钟判断。
+- `build-bundle.ps1 -Rebundle`：只在第 1 代完整（回执可读、同一批次与描述符、没有 `generation` 字段）时运行，写到 `bundles\<batchId>\gen-2\`（必须不存在：最多两代），检查与第 1 代相同；另要求有分支仍指着 H（`REMOTE_HEAD_MOVED`）。回执多 `generation: 2`、`previousBundleSha256`、`previousRefListSha256`。`-CheckRefs` 与 `-Rebundle` 互斥（`ONE_MODE_REQUIRED`）。
+- `-CheckRefs` 与 `prepare-workspaces.py` 用最新的完整一代：`gen-2\` 存在就必须有回执，且回执绑定第 1 代的精确 bundle；`gen-2\` 没有回执一律拒绝（`BUNDLE_GENERATION_INCOMPLETE`），绝不退回第 1 代。
+- force-push 掉了 head 的情形在取 head 对象时就失败（git 步骤），按“其他拒绝”处理。
+
+### 36.3 状态页（第 2 步复核 N4）
+
+几个批次可以同时停在 A。状态的 `pending` 里，每个停在 A 的批次所在的行原因写 `PARKED_A`，不只靠 `current` 显示一个。
+
+### 36.4 测试
+
+`test/rebundle.test.mjs`（执行器：等过之后重打一次再准备工作区；超过 100 分钟也能继续；refs 变了干净结束、Linux 上什么都没做；其他拒绝照旧；没等过的批次不重打；两个停在 A 的批次都显示；companion 的固定命令与结论映射）；`test-build-bundle.ps1` 加 10 条（第 2 代、`-CheckRefs` 读第 2 代、不能第 3 代、互斥、没有第 1 代、第 2 代不完整、head 被推进），共 80 条；`test_prepare_workspaces_v2.py` 加 `bundle_generation`。
+
+### 36.5 安装
+
+`build-bundle.ps1`、`prepare-workspaces.py` 属 Source v2，邮箱新请求属常驻层：必须一起装（同一次两侧重装）。
+
+## 37. 额度第二期·第 3c-2a 步：车头批次测 GitHub 试合并提交 S（S ≠ H 全链路，Task `6451a55d`）
+
+3c-2 分两步。3c-2a 只把 S ≠ H 从头到尾接通（§21.3 所列各项）；开车要的部分（第 8 段单绿、撤销与清扫、车头批次调度、优先级与期限、C9）在 3c-2b。3c-2a 装上后没有任何地方会产生 S ≠ H 的批次：subject 里的 `testSha` 只由 3c-2b 的车头调度写入，触发文件不接受这个字段。
+
+### 37.1 S 怎么走
+
+- **subject 与 batch key**：车头批次的 subject 多一个 `testSha`（S，必须是 40 位十六进制且不等于 head）；其他 subject 没有这个字段。batch key 只在字段存在时把 `testSha` 加进摘要，所以今天所有的 key 不变。常驻层 `ledger.mjs#batchKey` 和 Source v2 `derive-batch.mjs#residentBatchKey` 是同一个公式，测试核对两边相等。head key（每个 head 只执行一次，不变量 I2）不含 S。
+- **推导**：`engine-windows.mjs#derive` 把 subject 的 `testSha` 一并传给 `derive-batch.mjs`；推导结果里的 S 必须等于 subject 的 S（没有就等于 head），描述符 `/3` 写推导出的 S。
+- **作业 `/3`**：`makeJobV2` 去掉 S 的默认值，每个调用点都显式传 S（复核 m1）。`isTrainFrontJobV2` = S 与 H 都是合法 SHA 且 S ≠ H。
+- **批次认领记录**：S = H 的批次照旧写合同 `/1`，逐字节不变；S ≠ H 写 `/2`，在 `baseSha` 后多一个 `testSha`。`/1` 永远表示 S = H。控制消费者从记录本身取 S（`recordTestShaV2`），按记录的 T 和 S 重推作业。
+- **第 8 段**：`trainFacts` 读的是 `job.testSha` 的树，S = H 时就是 head 的树，和今天一样。
+
+### 37.2 base.sha 只在 S ≠ H 时放宽（设计 §5.7）
+
+列车模式下 H 不必含 main 尖端，GitHub 的 `base.sha` 也只在推送时更新。所以只有车头批次不再要求 PR 的 `base.sha` 等于批次 base T，只要求它是合法 SHA；S = H 的批次（以及没有 S 的 v1 作业）照旧要求相等。涉及：
+
+- `full-admission-v2.mjs#samePr`：第一次读到的 `base.sha` 记为本次准入的 PR base；第二次读 GitHub、评估结果和 Native 的 `base_sha` 都必须与它相同，否则 `full_admission_subject_changed` / `full_admission_native_changed`。准入事实里的 `baseSha` 仍是作业的 T。
+- `staged-check-publisher-v2.mjs` 写前核对、`github.mjs#exactPr`（同一次调用前后两次读到的 `base.sha` 必须相同）、`protected-controller-ports-v2/refs.mjs#samePr`。`github.mjs` 也被 v1 一次性发布者加载，所以判断写在本文件里，不引入 `job-v2.mjs`（v1 的加载闭包不变）。
+- 不改的：两个发布者对 packet `baseSha` 的检查（packet 由 `readChangedPaths` 按作业的 T 生成，本来就相等）；`refs.mjs` 里 main 必须等于 T；控制发布者的合并位 `tip` 等于 T（属 3c-2b）。
+
+### 37.3 打包与 ws-prep
+
+- `build-bundle.ps1`：去掉 `TEST_COMMIT_NOT_HEAD`。S ≠ H 时，在 `Build-Store` 里取完已审核提交之后按 SHA 取 S，放在 `refs/clued-test/<S>`（只能这一个名字、最多一个），核对它是提交、父提交恰好是 [T, H]，再读一次全部引用。这一步的 git 标签 `fetch-test` 算网络步骤，和其他网络步骤一样可在新库里整体重试一次。bundle 加 `--glob=refs/clued-test/*`，头部和 `list-heads` 都核对这个引用；回执多 `testSha`、`testRefPrefix`、`testRefCount`（S = H 时为 0）、`testRefListSha256`。GitHub 重算试合并后旧的 S 可能取不到：这一步失败，属于批次开始前的失败（BUNDLE_UNAVAILABLE，不计释放上限）；回第 10 段重读 S 由 3c-2b 的调度负责。
+- `prepare-workspaces.py`：去掉 `TEST_COMMIT_NOT_HEAD`。回执必须带上面四个字段，`testRefCount` 必须等于应有的个数；bundle 头部的测试引用必须正好是应有的那一个（S = H 时为空）。普通克隆不映射 `refs/clued-test/`，所以两个候选在克隆后再单独取这个引用；镜像库核对引用集合包含它，并核对 S 是提交、父提交恰好是 [T, H]。
+
+### 37.4 中继不带车头批次
+
+托管中继在 GitHub 的 runner 上测 head，它的 subject 里没有 S。车头批次（S ≠ H）一律不走中继：`derive-batch.mjs#deriveRelayStage` 拒绝带 `testSha` 的 subject（`RESIDENT_RELAY_TEST_COMMIT_REFUSED`），`relay-entry-v2.mjs#relaySubject` 也拒绝 S ≠ H 的作业（`RELAY_TEST_COMMIT_REFUSED`）。这与 §21.3 的原计划（中继也带 S、E8 核 S 的树）不同：车头批次只在本地跑，需要中继时由 3c-2b 的调度让它等或回第 10 段。
+
+### 37.5 为什么装上是安全的
+
+- 没有任何地方产生 S ≠ H 的 subject，所有放宽都只在 S ≠ H 时生效。S = H 的批次：作业 id、批次认领记录 `/1`、batch key、各处 base 核对都和今天一样。
+- bundle 回执多了四个字段，ws-prep 要求它们。所以 `build-bundle.ps1` 和 `prepare-workspaces.py` 必须一起装（同一个 Source），不能只装一个。
+
+### 37.6 测试
+
+- Source v2：`s-not-h.test.mjs`（S ≠ H 的判定和 base 放宽；批次认领 `/2` 与 `/1` 不变；控制消费者按记录的 S 重推、不按传入的 base 匹配；subject 与 batch key；推导出的作业都测 S；中继两处拒绝；`refs.mjs` 放宽 base 但 main 仍须等于 T），`resident-v2-admission.test.mjs`（准入：S ≠ H 时三处读到的 base 一致就准入，不一致就拒；S = H 仍要求等于 T），`resident-v2-publishers.test.mjs`（第 8 段按 S 的树发绿；S 取不到不发绿；扫描发布者 S ≠ H 时不比 base），`test_prepare_workspaces_v2.py`（真实 git：试合并 S 放进 `refs/clued-test/<S>`，解析、父提交核对、候选取引用；回执字段），`job-v3.test.mjs`（S 没有默认值）。
+- 常驻层：`s-not-h-resident.test.mjs`（`ledger.mjs` 与 `derive-batch.mjs` 的 batch key 有无 S 都相等），`engine-v2.test.mjs`（S 随 subject 传给推导，描述符写 S，推导报别的 S 就拒）。
+- `build-bundle.ps1`：`test-build-bundle.ps1` 加 S ≠ H 一例（本地仓库里造一个 [T, H] 的合并提交作 S）。
+
+### 37.7 独立审核（规则 01d4ba7d）
+
+第 1 轮：ACCEPT-WITH-FIXES（1 BLOCKER、1 MAJOR、3 MINOR、7 NIT）。S = H 的作业 id、认领记录 `/1`、batch key、描述符和 bundle 字节（空的 `--glob=refs/clued-test/*` 不改 bundle）逐一核对不变；三种语言的引用前缀、引用列表哈希、父提交顺序一致。处理：
+
+- B1：受保护的 `scripts/ci/clued-work-admission.test.mjs` 有两处调用没传 S。已补；同一个测试的控制对部分原本就因 3a（第 8 段读规则集和试合并）和 C4（已在 GitHub 上的角色不再发布）在 main 上失败，一并跟上。本 PR 因此属于受保护层。
+- M1：`job-v3.test.mjs` 钉的 `TEST_COMMIT_NOT_HEAD` 文本、`test-build-bundle.ps1` 缺 `$TestPrefix`，随 bundle 部分一起改，并补 S ≠ H 的用例（见 37.6）。
+- m2：补了 `github.mjs#exactPr` 的三种情形、bundle 头里第二个测试引用；n1（每个候选都核 S 的父提交）、n4（S 进歧义键和第 2 次尝试的主体核对）、n6 已改。
+
+### 37.8 留给 3c-2b 的（开车之前必须做，Task `a3701d3d`）
+
+- **车头批次不走中继**（审核 m1）：执行器 `relayPlan` 对带 `testSha` 的 subject 一律留在本地，在写 `20-plan-intent` 之前决定；现在要到第 R 段推导才拒绝，批次会白白失败。
+- **S ≠ H 只在列车开着时被接受**（审核 m3）：今天 base 的放宽只看作业本身。第 1 段和第 8 段的发布者在 `train.enabled` 不是 `on` 时拒绝 S ≠ H 的作业。
+- **读到的 base 一致**（n2）：`refs.mjs` 和 staged 发布者也要求各自前后两次读到的 `base.sha` 相同。
+- **把读到的 PR base 记进准入事实**（n3，设计 §5.7 “只记为读到的事实”）：今天只在 `evaluationSha256` 里。
+- **S 被 GitHub 重算掉**（n7）：第 8 段按 SHA 读 S，GitHub 重新生成试合并后可能读不到，批次会一直“没就绪”。调度遇到这种情况回第 10 段重读 S、开新批次；或者 ws-prep 把 S 的树带给第 8 段，按（父提交、树）比较。
+- **回执合同仍是 `/1`**（n5）：新 ws-prep 要求回执的四个测试字段，所以 `build-bundle.ps1` 和 `prepare-workspaces.py` 必须同一次装上（重装清单写明）。
+- **还缺的 S ≠ H 测试**（§21.3 的测试一条）：桥签发、HEAD = S ≠ H 的 worker 工作区、placement 密封候选的 HEAD 和打包内容（S、H、T）、C# 同批核对（`PureTestsV2.cs` 现在在 #927 手里）。
+
+### 37.9 并入第 3 批（2026-10-29）
+
+- 3c-2a 的三个本地提交（基于 main `f0a401d4`）普通合并进第 3 批集成分支（基于 SourceB `43883c31`），无冲突；随后应用了原先等 #928 的 bundle 补丁（审核 M1）。
+- 合并带出两处跟进：SourceB 新加的 Native 发布测试仍依赖 `makeJobV2` 的 S 默认值，已显式传 S；`test-build-bundle.ps1` 的“父提交顺序反了”用例原先用 merge 造 W，因 c1 是 c2 的祖先只会快进，W 就是 head，用例从未真正生效，改用 `commit-tree` 造 [H, T]。
+- 37.8 各项仍属 3c-2b，未在第 3 批实现。
+
