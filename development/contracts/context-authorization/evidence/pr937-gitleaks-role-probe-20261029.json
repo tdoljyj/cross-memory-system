@@ -1,0 +1,56 @@
+{
+  "schema": "clued.reviewed-gitleaks-exact-fixtures-candidate/1",
+  "status": "CANDIDATE_NOT_ACCEPTED",
+  "source_runtime_accepted": false,
+  "work_claim_id": "9717111e-6858-4960-aaf1-6aa884273456",
+  "base_commit": "91288d285ab679ac731be5b03c8ae5f6dbf2d777",
+  "reviewed_commit": "16f981cca5bdcae27e5eb08768013b36deafe44a",
+  "legacy_records": 726,
+  "prior_exact_additions": 3,
+  "exact_additions": 1,
+  "total_records": 730,
+  "global_fingerprints": 0,
+  "default_detection_rules_unchanged": true,
+  "legacy_record_lines_sha256": "5ec9aef1a5af7f356152ba7dfc18e197a968cf3ac70ffd2b2aa7000a4801d35c",
+  "prior_record_lines_sha256": "3117636bb9809e0aa2f953340172e48ba171b010949112dbe79e5879309a45cd",
+  "findings": [
+    {
+      "fingerprint": "16f981cca5bdcae27e5eb08768013b36deafe44a:work/independent-ci-resident-v1/test/role-probe.test.mjs:generic-api-key:73",
+      "classification": "SYNTHETIC_ROLE_PROBE_TOKEN",
+      "commit": "16f981cca5bdcae27e5eb08768013b36deafe44a",
+      "path": "work/independent-ci-resident-v1/test/role-probe.test.mjs",
+      "rule": "generic-api-key",
+      "start_line": 73,
+      "end_line": 73,
+      "blob_id": "cf3254de92881aa76a03dbd8714217c6cfd23abb",
+      "blob_sha256": "4c27c0a152006f0b7dd57b856155c221577967720fa05bc3211fd277fa8c296e",
+      "blob_bytes": 7681,
+      "span_bytes_lf": 89,
+      "span_sha256_lf": "38515feffdf8a479abaf951cbd038bd01b06c13397ade3fa3654c76afd879aa6",
+      "proof": {
+        "definition": "Only the one string literal assigned to the local const token in the pinned C2 controller-entry test; a fixed fixture marker, never read from the environment or a secret store.",
+        "literal_chars": 23,
+        "literal_pattern": "clued_bnd_fixture followed by 6 digits",
+        "literal_occurrences_in_blob": 1,
+        "enclosing_test_lines": [72, 82],
+        "identifier_uses": {
+          "declaration": 1,
+          "digest_input": 1,
+          "in_test_fake_token_reader_return": 2
+        },
+        "identifier_uses_outside_enclosing_test": 0,
+        "network_hosts_in_enclosing_test": ["https://fixture.supabase.co"],
+        "static_use": "digest input for a fixture pin and the return value of in-test tokenReader fakes; requests go only to an in-test fetchImpl fake",
+        "replaced_by_commit": "338a4e13"
+      }
+    }
+  ],
+  "classification_scope": "This new kind is admitted only by the one exact fingerprint identity, immutable Git blob mapping, whole-blob hash, exact LF span and classified-use checks in reviewed_gitleaks.py. No test-path or token-prefix general exemption.",
+  "limits": [
+    "A read-only disposition permits candidate preparation only; it is not Owner acceptance or Source/runtime qualification.",
+    "Static use in the pinned immutable blob does not prove the value was never used outside that blob.",
+    "No scanner finding Secret or Match value is reproduced in this evidence.",
+    "Existing default detector rules and the 729 earlier reviewed record lines remain unchanged; no history/ref rewriting or global fingerprint."
+  ],
+  "required_detector_regression_fields": []
+}
