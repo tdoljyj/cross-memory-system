@@ -3165,7 +3165,7 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 第 1 轮：ACCEPT-WITH-FIXES（1 BLOCKER、1 MAJOR、3 MINOR、7 NIT）。S = H 的作业 id、认领记录 `/1`、batch key、描述符和 bundle 字节（空的 `--glob=refs/clued-test/*` 不改 bundle）逐一核对不变；三种语言的引用前缀、引用列表哈希、父提交顺序一致。处理：
 
 - B1：受保护的 `scripts/ci/clued-work-admission.test.mjs` 有两处调用没传 S。已补；同一个测试的控制对部分原本就因 3a（第 8 段读规则集和试合并）和 C4（已在 GitHub 上的角色不再发布）在 main 上失败，一并跟上。本 PR 因此属于受保护层。
-- M1：`job-v3.test.mjs` 钉的 `TEST_COMMIT_NOT_HEAD` 文本、`test-build-bundle.ps1` 缺 `$TestPrefix`，随 bundle 部分一起改，并补 S ≠ H 的用例（见 37.6）。
+- M1：`job-v3.test.mjs` 钉的 `TEST_COMMIT_NOT_HEAD` 文本、`test-build-bundle.ps1` 缺 `$TestPrefix`，随 bundle 部分一起改，并补 S ≠ H 的用例（见 38.6）。
 - m2：补了 `github.mjs#exactPr` 的三种情形、bundle 头里第二个测试引用；n1（每个候选都核 S 的父提交）、n4（S 进歧义键和第 2 次尝试的主体核对）、n6 已改。
 
 ### 38.8 留给 3c-2b 的（开车之前必须做，Task `a3701d3d`）
@@ -3182,5 +3182,17 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 
 - 3c-2a 的三个本地提交（基于 main `f0a401d4`）普通合并进第 3 批集成分支（基于 SourceB `43883c31`），无冲突；随后应用了原先等 #928 的 bundle 补丁（审核 M1）。
 - 合并带出两处跟进：SourceB 新加的 Native 发布测试仍依赖 `makeJobV2` 的 S 默认值，已显式传 S；`test-build-bundle.ps1` 的“父提交顺序反了”用例原先用 merge 造 W，因 c1 是 c2 的祖先只会快进，W 就是 head，用例从未真正生效，改用 `commit-tree` 造 [H, T]。
-- 37.8 各项仍属 3c-2b，未在第 3 批实现。
+- 38.8 各项仍属 3c-2b，未在第 3 批实现。
 
+
+## 39. 新 PR 每 60 秒发现一次，条件请求（Decision `1b99e7e4`，Task `a3701d3d` 第 3 批）
+
+- **为什么**：companion 的 poller 原来 5 分钟看一次 open PR，新 head 最多晚 5 分钟才进队。改为 60 秒；不做 webhook。
+- **做法**（`src/poller.mjs`、`src/companion-main.mjs`）：
+  - `POLL_EVERY_MS` 从 5 分钟改为 60 秒；ruleset 兜底（§22.3）单独计时，仍是 5 分钟（`BACKSTOP_EVERY_MS`），不随轮询变密。PR 页状态与通知仍每分钟一次（`REPORT_EVERY_MS`）。
+  - 每轮两次读都改为 REST 条件请求：`repos/<repo>/git/ref/heads/main` 与 `repos/<repo>/pulls?state=open&base=main&per_page=50`（原来的 `gh pr list` 走 GraphQL，不能带 ETag）。第一次不带条件；之后带上一次 200 的 `If-None-Match: <ETag>`。没变时 GitHub 回 304：按 GitHub 的条件请求规则，带授权的 304 不计入 REST 主额度；本轮沿用上次的结果，不会重复提出已提过的 head。
+  - `gh api --include` 在 304 时退出码为 1，但仍打印状态行和响应头，所以只看状态行。只认 200 与"有缓存时的 304"；其余（无应答、别的状态、body 形状不对、304 却没有缓存）照旧是 `POLLER_PULLS_UNAVAILABLE` / `POLLER_MAIN_TIP_UNAVAILABLE`，本轮作废、下一分钟再来。
+  - ETag 要回填进 argv，所以只保留 GitHub 的形状（`ETAG`：可带 `W/`，引号内 1–128 个 `[0-9A-Za-z_-]`）；其他形状一律不保存，下一次不带条件。
+  - REST 的字段映射回原来的形状（`number`、`head.sha`→`headRefOid`、`base.sha`→`baseRefOid`、`draft`→`isDraft`、`body`、`updated_at`→`updatedAt`），后面的过滤（草稿、claim trailer、与 main 同步、compare 缓存与预算）不变。`lastPass.reads` 记本轮 200 与 304 各几次。
+- **额度**：没变时每分钟 2 次 304（一天约 2880 次，都不计额度）；有变化时与原来一样，外加按需的 compare（已有缓存与每轮上限）。
+- **测试**：`test/poller-conditional.test.mjs`（节奏常量；连续两轮 304、If-None-Match 的 argv 逐字、PR 被编辑后 200 只提一次；main 移动；四种拒绝；坏 ETag 不回填；`parseIncluded` 的 CRLF/LF 与拒绝）；`test/gh-rest-stub.mjs` 供其余 poller 测试按 REST 形状作答。

@@ -6,6 +6,7 @@ import { Mailbox, REQUEST_CONTRACT, validateRequest } from '../src/mailbox.mjs';
 import { COMPANION_CONFIG_CONTRACT, Companion, argv, parsePull, readPullArgv, validateCompanionConfig } from '../src/companion.mjs';
 import { Poller } from '../src/poller.mjs';
 import { TEST_NODE, TEST_NODE_SHA, tempRoot } from './helpers.mjs';
+import { restPolls } from './gh-rest-stub.mjs';
 
 const cfg = validateCompanionConfig({
   contract: COMPANION_CONFIG_CONTRACT, node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA,
@@ -139,7 +140,7 @@ test('poller proposes ready heads once, skips drafts and PRs without a claim tra
   // the main tip, the main...head compares (up to date: behind_by 0), the PR list
   const run = async args => args.some(a => a.includes('/compare/')) ? { code: 0, stdout: JSON.stringify({ behind_by: 0, base: 'd'.repeat(40) }) }
     : args.includes('api') ? { code: 0, stdout: `${'d'.repeat(40)}\n` } : { code: 0, stdout: JSON.stringify(pulls) };
-  const p = new Poller({ repo: 'tdoljyj/cross-memory-system', ghExe: 'C:\\gh.exe', run, writeTrigger: async v => written.push(v), clock: () => 0 });
+  const p = new Poller({ repo: 'tdoljyj/cross-memory-system', ghExe: 'C:\\gh.exe', run: restPolls(run, { main: () => 'd'.repeat(40), pulls: () => pulls }), writeTrigger: async v => written.push(v), clock: () => 0 });
   assert.equal(await p.pass(), 1);
   assert.equal(await p.pass(), 0);
   pulls[0].updatedAt = 't2';
@@ -177,7 +178,7 @@ test('poller (phase 2): trigger /2 with the PR\'s update time; a run queue that 
   const pulls = [{ number: 884, headRefOid: 'a'.repeat(40), baseRefOid: 'd'.repeat(40), isDraft: false, body: 'Clued-Work-Claim: 842cf499-1519-4ba9-b3be-b9ac3f6e8ee4', updatedAt: '2026-10-22T11:59:00Z' }];
   const run = async args => args.some(a => a.includes('/compare/')) ? { code: 0, stdout: JSON.stringify({ behind_by: 0, base: 'd'.repeat(40) }) }
     : args.includes('api') ? { code: 0, stdout: `${'d'.repeat(40)}\n` } : { code: 0, stdout: JSON.stringify(pulls) };
-  const p = new Poller({ repo: 'tdoljyj/cross-memory-system', ghExe: 'C:\\gh.exe', run, writeTrigger: async v => written.push(v), clock: () => 0 });
+  const p = new Poller({ repo: 'tdoljyj/cross-memory-system', ghExe: 'C:\\gh.exe', run: restPolls(run, { main: () => 'd'.repeat(40), pulls: () => pulls }), writeTrigger: async v => written.push(v), clock: () => 0 });
   assert.equal(await p.pass({ generation: 'aaaaaaaaaaaa' }), 1);
   assert.deepEqual([written[0].contract, written[0].prUpdatedAt], ['clued.independent-ci.resident-trigger/2', '2026-10-22T11:59:00.000Z']);
   assert.equal(await p.pass({ generation: 'aaaaaaaaaaaa' }), 0);
