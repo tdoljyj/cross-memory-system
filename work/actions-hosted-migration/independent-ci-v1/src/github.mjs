@@ -207,6 +207,24 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
         proofRef: `independent-observation:sha256:${createHash('sha256').update(JSON.stringify(proof)).digest('hex')}` };
     },
     async readPullRequest(number) { if (!positive(number)) fail('invalid_pr'); return scoped(`/pulls/${number}`); },
+    async readPullRequestCommits(number) {
+      if(!positive(number))fail('invalid_pr');
+      const before=await scoped(`/pulls/${number}`),commits=[],seen=new Set();
+      if(before?.number!==number||!positive(before.commits)||before.commits>5000||!sha.test(before.head?.sha??''))fail('pr_history_unconfirmed');
+      for(let page=1;page<=maxPages;page++){
+        const rows=await scoped(`/pulls/${number}/commits?per_page=100&page=${page}`);
+        if(!Array.isArray(rows)||rows.length>100)fail('pr_history_unconfirmed');
+        for(const row of rows){if(!sha.test(row?.sha??'')||seen.has(row.sha))fail('pr_history_unconfirmed');seen.add(row.sha);commits.push({sha:row.sha});}
+        if(commits.length>before.commits)fail('pr_history_changed');
+        if(commits.length===before.commits){
+          const after=await scoped(`/pulls/${number}`);
+          if(after?.number!==number||after.head?.sha!==before.head.sha||after.commits!==before.commits)fail('pr_history_changed');
+          return {complete:true,commits};
+        }
+        if(rows.length<100)fail('pr_history_incomplete');
+      }
+      fail('pr_history_page_limit');
+    },
     async readChangedPaths(job) {
       if (job?.repo !== repository || !positive(job.pr) || !sha.test(job.headSha) || !sha.test(job.baseSha)) fail('invalid_pr_subject');
       const before = await scoped(`/pulls/${job.pr}`);

@@ -50,10 +50,12 @@ jobs:
     needs: admission-gate
     if: >-
       needs.admission-gate.outputs.admitted == 'true' &&
-      ((github.event_name == 'pull_request') ||
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.actor_id == '52366662' && github.triggering_actor == github.repository_owner) ||
        (github.event_name == 'workflow_dispatch' &&
         startsWith(github.ref, 'refs/heads/clued-handover-disposable-')))
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, clued, trust-internal, handover-native-task617-once]
     timeout-minutes: 45
     environment: clued-handover-source-only
     permissions:
@@ -63,6 +65,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
           persist-credentials: false
+      - name: Refuse until independent Native E1 qualification
+        run: node scripts/ci/clued-handover-native-entry.mjs --check
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24.19.0

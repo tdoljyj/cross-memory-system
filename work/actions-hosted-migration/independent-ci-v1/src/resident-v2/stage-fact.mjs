@@ -8,6 +8,7 @@ import { hash } from './prepare-record.mjs';
 import { HEX64, OUTCOME_CONTRACT, RELAY_STAGE_NUMBER, TRAIN_STAGE_NUMBER } from './layout.mjs';
 import { validateTrainFacts } from '../independent-control-checks-v2/train-facts.mjs';
 import { roleProbeFact } from './role-probe-run.mjs';
+import { validateRevocationFacts } from './revocation-run.mjs';
 import { RELAY_HALT_CODES, relayPlanEnding, validateRelayPlanRows } from '../hosted-relay-v1/relay-plan.mjs';
 import { sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2 } from '../admission-facts-v2.mjs';
 import { HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB, ROLE_ALREADY_ON_GITHUB_REASON } from '../published-on-github-v2.mjs';
@@ -224,6 +225,19 @@ export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha
   const trainFacts = plan.stage === TRAIN_STAGE_NUMBER && boundOutcome ? trainFactsOrNull(outcome.train) : null;
   if (plan.stage === TRAIN_STAGE_NUMBER) fact.train = trainFacts;
   if (n.ok) {
+    if (plan.stage === 12) {
+      let revocation = null;
+      try { revocation = validateRevocationFacts(boundOutcome?.revocation); } catch { /* unconfirmed */ }
+      const pending = boundOutcome?.status === 'PENDING';
+      if (!boundOutcome || boundOutcome.entryRole !== 'revocation-maintenance' || !revocation
+        || !['REVOCATION_MAINTENANCE','PENDING'].includes(boundOutcome.status)
+        || revocation.complete === pending || !Array.isArray(boundOutcome.jobIds) || boundOutcome.jobIds.length !== 1
+        || !Array.isArray(expectedJobIds) || expectedJobIds.length !== 1 || boundOutcome.jobIds[0] !== expectedJobIds[0]) return done('STAGE_OUTCOME_MISSING');
+      // Negative effects are real effects. Neither their count nor pending work
+      // may be disguised as a zero-effect role probe or shadow observation.
+      return { ...fact, state: pending ? 'REVOCATION_MAINTENANCE_PENDING_ORIGINAL_STOPPED_NO_QUALIFICATION' : SUCCESS_STATE,
+        revocation, maintenancePending: pending };
+    }
     // Stage 11: only a zero-effect bound outcome from this exact role/job can assert a role observation.
     // A generic pre-input refusal (null stage/role/jobs) remains unconfirmed and cannot become held.
     if (plan.stage === 11) {

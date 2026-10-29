@@ -1,0 +1,33 @@
+{
+  "schema": "clued.native617-entry-policy/1",
+  "task_id": "6176fdcc-c5b0-46c9-9769-d5e0bc0ce4f8",
+  "repository": "tdoljyj/cross-memory-system",
+  "repository_id": "1334673495",
+  "actor_id": "52366662",
+  "required_app_id": 5164952,
+  "execution_enabled": false,
+  "status": "PENDING_INDEPENDENT_E1_HOST_QUALIFICATION",
+  "source_ttl_ceiling": "2026-10-26T03:52:25.032Z",
+  "host_id": null,
+  "image_sha256": null,
+  "runner_group_id": null,
+  "host_qualification_ref": null,
+  "routes": {
+    "control": [
+      "self-hosted",
+      "Linux",
+      "X64",
+      "clued",
+      "trust-internal",
+      "handover-native-control-once"
+    ],
+    "native": [
+      "self-hosted",
+      "Linux",
+      "X64",
+      "clued",
+      "trust-internal",
+      "handover-native-task617-once"
+    ]
+  }
+}

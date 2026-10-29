@@ -39,8 +39,10 @@ public static class BrokerPureTests
         {
             ProfileConfigCases();
             var stageCaps=(long[])typeof(SwapBroker).GetField("StageMilliseconds",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic).GetValue(null);
-            Yes(stageCaps.Length==11&&stageCaps[10]==60000,"C2-probe-cap");
-            Yes(string.Join(",",Array.ConvertAll(stageCaps,x=>x.ToString()))=="900000,2700000,900000,1800000,900000,600000,900000,2700000,900000,300000,60000","existing-ten-caps-unchanged");
+            Yes(stageCaps.Length==12&&stageCaps[10]==60000,"C2-probe-cap");
+            Yes(stageCaps[11]==300000,"revocation-maintenance-cap");
+            var existingStageCaps=new long[11];Array.Copy(stageCaps,existingStageCaps,11);
+            Yes(string.Join(",",Array.ConvertAll(existingStageCaps,x=>x.ToString()))=="900000,2700000,900000,1800000,900000,600000,900000,2700000,900000,300000,60000","existing-ten-caps-unchanged");
             string ok = Path.Combine(dir, "ok.json"), big = Path.Combine(dir, "big.json"), empty = Path.Combine(dir, "empty.json");
             File.WriteAllBytes(ok, new byte[4096]); File.WriteAllBytes(big, new byte[4097]); File.WriteAllBytes(empty, new byte[0]);
             Yes(SwapBroker.ReadBounded(ok).Length == 4096, "bounded-at-limit");

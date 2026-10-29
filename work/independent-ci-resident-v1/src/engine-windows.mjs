@@ -22,6 +22,8 @@ import { ABORTABLE_IN_FLIGHT, LINUX_MEMORY_NOT_READY } from './classify.mjs';
 import { pinnedNodeProfile, validateNodeProfile } from './node-profile.mjs';
 import { validateRoleProbeFact } from './role-probe.mjs';
 import { RELAY_TIMEOUT_MS } from './companion.mjs';
+import { REVOCATION_STAGE, REVOCATION_RUN_MS, REVOCATION_PENDING_STATE, REVOCATION_RUN_ID,
+  validateRevocationFacts,validateRevocationQualification } from './revocation-maintenance.mjs';
 
 export const ORIGINAL_BINARY = '"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"';
 // /3 (quota phase 2 step 3b): also names the tested commit S (testSha); S = H until step 3c's train front batch.
@@ -142,7 +144,21 @@ export function parseStageFact(text, expectedManifestSha256) {
   if (f.contract !== undefined && f.contract !== STAGE_FACT_CONTRACT) return { ok: false, code: 'STAGE_TERMINAL_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: false }, nativeReceiptSha256: null, outcome: null, brokerNoLaunch: false };
   const restored = f.original_binary_restored === true && f.complete_original_readback === true;
   const treeZero = f.tree_cleanup_confirmed === true && f.tree_active_processes === 0 && f.root_exit_confirmed === true;
-  const ok = f.state === 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' && restored && treeZero
+  const outcome = parseStageOutcome(f.outcome);
+  let revocation = null, maintenancePending = false;
+  if (f.stage === REVOCATION_STAGE && f.contract === STAGE_FACT_CONTRACT) {
+    try {
+      const facts = validateRevocationFacts(f.revocation);
+      check(f.maintenancePending === !facts.complete && f.failure_code === null && outcome !== null
+        && outcome.status === (facts.complete ? 'REVOCATION_MAINTENANCE' : 'PENDING')
+        && f.state === (facts.complete ? 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' : REVOCATION_PENDING_STATE)
+        && HEX64.test(f.native_receipt_sha256 ?? ''),'REVOCATION_FACTS_REFUSED');
+      revocation = facts;maintenancePending = !facts.complete;
+    } catch { /* an unbound maintenance result is never a successful stage */ }
+  }
+  const terminalState = f.state === 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION'
+    || f.stage === REVOCATION_STAGE && f.state === REVOCATION_PENDING_STATE;
+  const ok = terminalState && (f.stage !== REVOCATION_STAGE || revocation !== null) && restored && treeZero
     && f.manifest_sha256 === expectedManifestSha256 && f.scm_start_call_issued === true && f.configuration_conflict_detected === false;
   const code = ok ? null : (typeof f.failure_code === 'string' && CODE.test(f.failure_code) ? f.failure_code : (typeof f.state === 'string' && CODE.test(f.state) ? f.state : 'STAGE_TERMINAL_UNCONFIRMED'));
   // Stage R only: the relay rows as the Source wrote them; the executor validates them (classify.mjs).
@@ -155,7 +171,7 @@ export function parseStageFact(text, expectedManifestSha256) {
   let roleProbe = null;
   if (f.stage === 11 && ok) { try { roleProbe = validateRoleProbeFact(f.roleProbe); } catch { /* no fact */ } }
   return { ok, code, proof: { windowsTreeZero: treeZero, serviceOriginalStopped: restored }, nativeReceiptSha256: HEX64.test(f.native_receipt_sha256 ?? '') ? f.native_receipt_sha256 : null, relay, train, roleProbe,
-    outcome: parseStageOutcome(f.outcome), brokerNoLaunch };
+    ...(f.stage === REVOCATION_STAGE ? { revocation,maintenancePending } : {}),outcome, brokerNoLaunch };
 }
 
 // Independent SCM readback (sc.exe qc / queryex), so "original and stopped" never rests on the
@@ -446,6 +462,35 @@ export class WindowsEngine {
     if (r.timedOut || r.code === null) return { ok: false, code: 'STAGE_INVOKER_TERMINAL_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: false }, roleProbe: null };
     const fact = parseStageFact(r.stdout, manifest), stopped = await this.scReadback();
     return { ...fact, proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && stopped }, runId };
+  }
+
+  // Read-only, token-free qualification lookup through this installed Source's
+  // existing protected record reader. A missing block or old Source defers.
+  async revocationMaintenanceQualification() {
+    try {
+      const entry=await this.requireV2('invoke-stage.mjs');
+      const r=await this.run([this.paths.nodeExe,entry,'--revocation-maintenance-qualification','--node-profile-sha256',this.nodeProfileSha256],{timeoutMs:15_000});
+      if(r.code!==0||r.timedOut)return null;
+      const reply=parseBoundedJson(Buffer.from(r.stdout,'utf8'),16384,'REVOCATION_QUALIFICATION_REFUSED');
+      if(reply.qualified!==true||!HEX64.test(reply.sourceManifestSha256??''))return null;
+      return validateRevocationQualification(reply.qualification,{sourceManifestSha256:reply.sourceManifestSha256,now:this.clock()});
+    }catch{return null;}
+  }
+
+  // Intent key/id belong to the executor's durable receipt, not to a PR or a
+  // batch. A busy helper or live runner is never stopped by this method.
+  async runRevocationMaintenance({runKey,runId}) {
+    check(HEX64.test(runKey??'')&&REVOCATION_RUN_ID.test(runId??'')&&runId.startsWith(runKey.slice(0,16)),'REVOCATION_RUN_REFUSED');
+    if(this.busy?.()===true||this.inflight)return {ok:false,code:'REVOCATION_MAINTENANCE_BUSY',deferred:true,proof:null};
+    if(!(await this.revocationMaintenanceQualification()))return {ok:false,code:'REVOCATION_MAINTENANCE_NOT_QUALIFIED',deferred:true,proof:null};
+    if(!(await this.scReadback()))return {ok:false,code:'REVOCATION_MAINTENANCE_BUSY',deferred:true,proof:null};
+    const entry=await this.requireV2('invoke-stage.mjs');
+    const manifest=sha256(Buffer.from(canonicalJson({contract:'clued.independent-ci.revocation-maintenance-intent/1',runKey,runId,nodeProfileSha256:this.nodeProfileSha256})));
+    const r=await this.run([this.paths.nodeExe,entry,'--revocation-maintenance','--run-key',runKey,'--run-id',runId,
+      '--node-profile-sha256',this.nodeProfileSha256],{timeoutMs:REVOCATION_RUN_MS+360_000});
+    if(r.timedOut||r.code===null)return {ok:false,code:'STAGE_INVOKER_TERMINAL_UNCONFIRMED',proof:{windowsTreeZero:false,serviceOriginalStopped:false},runId};
+    const fact=parseStageFact(r.stdout,manifest),stopped=await this.scReadback();
+    return {...fact,ok:fact.ok&&stopped,proof:{...fact.proof,serviceOriginalStopped:fact.proof.serviceOriginalStopped&&stopped},runId};
   }
 
   // opts.betweenRoles: archive the previous local Linux role's protocol records first (stages 4 and 6

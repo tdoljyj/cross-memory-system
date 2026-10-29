@@ -16,7 +16,7 @@ import { createHash } from 'node:crypto';
 import { EffectJournal } from '../effect-journal.mjs';
 import { readBatchClaim } from '../batch-claim-v2.mjs';
 import { createRecoverableCheckPublisherV2, createPublicationRecoveryAuditWriter } from '../../runtime/one-shot-v2.mjs';
-import { runEntry, controllerPrincipal, controllerPorts, observationLog } from '../resident-v2/entry-runtime.mjs';
+import { runEntry, controllerPrincipal, controllerPorts, publicationControllerGithub, observationLog } from '../resident-v2/entry-runtime.mjs';
 import { STATE_V2, STATE_RELAY_JWKS } from '../resident-v2/layout.mjs';
 import { validateRegistry, OCI_DIGEST, RELAY_AUDIENCE } from './registry.mjs';
 import { createGitHubOidcVerifier, createJwksFileCache, createJwksPort } from './oidc.mjs';
@@ -60,13 +60,15 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
       const batchClaim = await readBatchClaim(STATE_V2.batchClaims, jobs[0]);
       const { appKey, nativeToken } = await controllerPrincipal(inputs.record);
       const log = observationLog(STATE_V2.effectsScan, jobs[0].id);
-      const { github, admission, fetchImpl } = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
+      const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
+      const { admission, fetchImpl } = ports;
+      const journal = await EffectJournal.open(STATE_V2.effectsScan);
+      const github = publicationControllerGithub({ ports, jobs, journal, args, record: inputs.record, plan: inputs.plan });
       const oidc = createGitHubOidcVerifier({ audience: RELAY_AUDIENCE, jwksPort: createJwksPort({ fetchImpl }), cache: createJwksFileCache(STATE_RELAY_JWKS) });
       const verifier = createHostedRelayVerifier({ registry, observer: createHostedRelayObserver({ github, registry }), oidc });
       // K(head, role) and the relay's own effect keys live in the local v2 scanner publisher's journal, so the two
       // paths exclude each other for one role on one head across batches, bases and attempts (K has neither the
       // base nor the attempt since PR-A review MAJOR 2; the v1 one-shot never takes K).
-      const journal = await EffectJournal.open(STATE_V2.effectsScan);
       const recoveryContext = { nonce: args.nonce, stage: inputs.plan.stage, entryRole: inputs.plan.entryRole, batchKey: inputs.plan.batchKey,
         configSha256: args.configSha256, sourceManifestSha256: inputs.plan.sourceManifestSha256, acceptanceSha256: inputs.plan.acceptanceSha256, entrySha256: inputs.plan.entrySha256 };
       const publisher = createRecoverableCheckPublisherV2({ recoveryContext, auditWriter: createPublicationRecoveryAuditWriter({ context: recoveryContext }), authorityOptions: { config, accepted, github, fetchImpl, nativeToken },

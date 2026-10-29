@@ -5840,5 +5840,511 @@
     }
   },
   "future_workflows": [],
-  "external2_future_workflows": []
+  "external2_future_workflows": [],
+  "native617_pending_sources": [
+    {
+      "file": ".github/workflows/clued-native617-admission-dispatch.yml",
+      "purpose": "native617_free_entry_source_preparation",
+      "registration_status": "PENDING_INDEPENDENT_SOURCE_REVIEW_HOST_NOT_QUALIFIED",
+      "source_yaml": "name: clued-native617-admission-dispatch\nrun-name: admit ${{ inputs.workflow }} ${{ inputs.ref }} ${{ inputs.claim_id }}\n\n# Work Claim Admission v0.1 §4.6, hand dispatch (Owner Decision 75abfe80,\n# Task 29128827). Agents act through the Owner's account, so a heavy workflow\n# dispatched by hand must first have its claim verified here:\n#\n#   1. Dispatch this workflow on the default branch with the heavy workflow,\n#      the ref it will run on and the claim id. This run verifies the claim\n#      with Clued and is named \"admit <workflow> <ref> <claim_id>\".\n#   2. Dispatch the heavy workflow on that ref with admission_run_id = this\n#      run's id. Its admission-gate admits only when this run succeeded on the\n#      default branch within 30 minutes and names that workflow and ref.\n#\n# The Clued token comes from the `clued-admission` environment, whose\n# deployment branches are limited to main; the job also refuses any other ref.\n# Default-branch code only; the dedicated runner stays disabled pending qualification.\n\non:\n  workflow_dispatch:\n    inputs:\n      admission_run_id:\n        description: Existing exact workflow/ref dispatch admission\n        required: true\n        type: string\n      workflow:\n        description: Heavy workflow that will be dispatched\n        required: true\n        type: choice\n        options:\n          - clued-handover-external-qualification.yml\n          - clued-handover-disposable-idle.yml\n      ref:\n        description: Branch or tag the heavy workflow will run on\n        required: true\n        type: string\n      claim_id:\n        description: Live Clued work claim covering this run\n        required: true\n        type: string\n      scope:\n        description: Claim scope, global or project:<canonical_project_id>\n        required: false\n        default: global\n        type: string\n\npermissions:\n  contents: read\n\njobs:\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  admit:\n    name: clued-native617-admission-dispatch\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      (github.ref == 'refs/heads/main')\n    runs-on: [self-hosted, Linux, X64, clued, trust-internal, handover-native-control-once]\n    timeout-minutes: 5\n    environment: clued-admission\n    steps:\n      # Re-review 4, m6: the default branch as it is now, so a re-run of an\n      # old run does not replay that run's older code with today's secrets.\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          ref: ${{ github.event.repository.default_branch || 'main' }}\n          persist-credentials: false\n      - name: Refuse until independent Native E1 qualification\n        run: node scripts/ci/clued-handover-native-entry.mjs --check\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: \"22\"\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Verify the work claim with Clued\n        env:\n          ADMIT_WORKFLOW: ${{ inputs.workflow }}\n          ADMIT_REF: ${{ inputs.ref }}\n          ADMIT_CLAIM_ID: ${{ inputs.claim_id }}\n          ADMIT_SCOPE: ${{ inputs.scope }}\n          CLUED_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}\n          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode dispatch-admit\n      - name: Export the closed local natural R9 packet\n        if: ${{ always() }}\n        run: node scripts/ci/merge-admission-source-producer.mjs --export admission\n      - name: Preserve natural R9 source observations\n        if: ${{ always() }}\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: clued-r9-natural-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}\n          path: .clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json\n          if-no-files-found: warn\n          retention-days: 90\n",
+      "workflow_blob": "b3bac281913f30e0a30ad2adba28e1c9e822e5a5",
+      "source_sha256": "03528c7c651114476d596e16944643108743681024bc32a54760f8ad93dbe460",
+      "workflow_definition": {
+        "name": "clued-native617-admission-dispatch",
+        "run-name": "admit ${{ inputs.workflow }} ${{ inputs.ref }} ${{ inputs.claim_id }}",
+        "on": {
+          "workflow_dispatch": {
+            "inputs": {
+              "workflow": {
+                "description": "Heavy workflow that will be dispatched",
+                "required": true,
+                "type": "choice",
+                "options": [
+                  "clued-handover-external-qualification.yml",
+                  "clued-handover-disposable-idle.yml"
+                ]
+              },
+              "ref": {
+                "description": "Branch or tag the heavy workflow will run on",
+                "required": true,
+                "type": "string"
+              },
+              "claim_id": {
+                "description": "Live Clued work claim covering this run",
+                "required": true,
+                "type": "string"
+              },
+              "scope": {
+                "description": "Claim scope, global or project:<canonical_project_id>",
+                "required": false,
+                "default": "global",
+                "type": "string"
+              },
+              "admission_run_id": {
+                "description": "Existing exact workflow/ref dispatch admission",
+                "required": true,
+                "type": "string"
+              }
+            }
+          }
+        },
+        "permissions": {
+          "contents": "read"
+        },
+        "jobs": {
+          "admit": {
+            "name": "clued-native617-admission-dispatch",
+            "if": "needs.admission-gate.outputs.admitted == 'true' && (github.ref == 'refs/heads/main')",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "trust-internal",
+              "handover-native-control-once"
+            ],
+            "timeout-minutes": 5,
+            "environment": "clued-admission",
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "ref": "${{ github.event.repository.default_branch || 'main' }}",
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Refuse until independent Native E1 qualification",
+                "run": "node scripts/ci/clued-handover-native-entry.mjs --check"
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "22"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "name": "Verify the work claim with Clued",
+                "env": {
+                  "ADMIT_WORKFLOW": "${{ inputs.workflow }}",
+                  "ADMIT_REF": "${{ inputs.ref }}",
+                  "ADMIT_CLAIM_ID": "${{ inputs.claim_id }}",
+                  "ADMIT_SCOPE": "${{ inputs.scope }}",
+                  "CLUED_DEFAULT_BRANCH": "${{ github.event.repository.default_branch }}",
+                  "CLUED_CONTEXT_READ_TOKEN": "${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}",
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "run": "node scripts/ci/clued-work-admission.mjs --mode dispatch-admit"
+              },
+              {
+                "name": "Export the closed local natural R9 packet",
+                "if": "${{ always() }}",
+                "run": "node scripts/ci/merge-admission-source-producer.mjs --export admission"
+              },
+              {
+                "name": "Preserve natural R9 source observations",
+                "if": "${{ always() }}",
+                "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                "with": {
+                  "name": "clued-r9-natural-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
+                  "path": ".clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json",
+                  "if-no-files-found": "warn",
+                  "retention-days": 90
+                }
+              }
+            ],
+            "needs": "admission-gate"
+          },
+          "admission-gate": {
+            "name": "admission-gate",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal"
+            ],
+            "timeout-minutes": 10,
+            "permissions": {
+              "actions": "read",
+              "checks": "read",
+              "contents": "read",
+              "pull-requests": "read"
+            },
+            "outputs": {
+              "admitted": "${{ steps.gate.outputs.admitted }}",
+              "enforced": "${{ steps.gate.outputs.enforced }}",
+              "verdict": "${{ steps.gate.outputs.verdict }}"
+            },
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false,
+                  "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+                }
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "id": "gate",
+                "env": {
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+              }
+            ]
+          }
+        }
+      },
+      "source_acceptance": null,
+      "host_qualification": null
+    },
+    {
+      "file": ".github/workflows/clued-handover-external-qualification.yml",
+      "purpose": "native617_free_entry_source_preparation",
+      "registration_status": "PENDING_INDEPENDENT_SOURCE_REVIEW_HOST_NOT_QUALIFIED",
+      "source_yaml": "# Candidate External2 Source: separate exact Source/Role acceptance required.\n# PR source-only success never qualifies actual publication/revocation.\nname: Clued disposable external handover qualification\non:\n  pull_request:\n    paths:\n      - '.github/workflows/clued-handover-external-qualification.yml'\n      - '.github/workflows/clued-handover-disposable-idle.yml'\n      - 'scripts/ci/clued-handover-external-*'\n      - 'scripts/ci/fixtures/clued-handover-*'\n      - 'config/clued-handover-external-*'\n  workflow_dispatch:\n    inputs:\n      admission_run_id:\n        description: Existing exact workflow/ref dispatch admission\n        required: true\n        type: string\n      phase:\n        description: Registered External2 phase\n        required: true\n        type: choice\n        options: [register, publish, revoke]\n      idle_run_id:\n        description: Exact real idle run; publish only, permanently bound in original journal\n        required: false\n        type: string\n      publisher_run_id:\n        description: Exact completed successful original publisher, required for revoke\n        required: false\n        type: string\npermissions:\n  contents: read\nconcurrency:\n  group: clued-handover-disposable-external-qualification\n  cancel-in-progress: false\njobs:\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  qualify:\n    name: clued-handover-external2\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'pull_request' &&\n        github.event.pull_request.head.repo.full_name == github.repository &&\n        github.actor_id == '52366662' && github.triggering_actor == github.repository_owner) ||\n       (github.event_name == 'workflow_dispatch' &&\n        github.ref == format('refs/heads/{0}', github.event.repository.default_branch)))\n    runs-on: [self-hosted, Linux, X64, clued, trust-internal, handover-native-task617-once]\n    timeout-minutes: 25\n    environment: ${{ github.event_name == 'workflow_dispatch' && 'clued-admission' || 'clued-handover-source-only' }}\n    env:\n      QUALIFICATION_PHASE: ${{ inputs.phase }}\n      QUALIFICATION_IDLE_RUN_ID: ${{ inputs.idle_run_id }}\n      QUALIFICATION_OPERATOR_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.phase == 'register' && 'register-empty-disposable' || '' }}\n      QUALIFICATION_PUBLISHER_RUN_ID: ${{ inputs.publisher_run_id }}\n      CLUED_HANDOVER_ACCEPTANCE_SHA256: ${{ vars.CLUED_HANDOVER_ACCEPTANCE_SHA256 }}\n    permissions:\n      contents: read\n      actions: write\n      checks: read\n      pull-requests: read\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          ref: ${{ github.event.pull_request.head.sha || github.event.repository.default_branch }}\n          fetch-depth: 0\n          persist-credentials: false\n      - name: Refuse until independent Native E1 qualification\n        run: node scripts/ci/clued-handover-native-entry.mjs --check\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Verify declared Source path before dependencies\n        run: |\n          if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n            node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\n          elif [ \"$GITHUB_EVENT_NAME\" = workflow_dispatch ]; then\n            node scripts/ci/clued-handover-external-source-check.mjs --accepted-check\n          else\n            exit 1\n          fi\n      - name: Prepare declared Source runtime\n        env:\n          ONNXRUNTIME_NODE_INSTALL: skip\n        run: |\n          if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n            node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\n          else\n            npm ci --prefix apps/clued-cloud\n          fi\n      - name: Revalidate exact Source after runtime preparation\n        run: |\n          if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n            node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\n          else\n            node scripts/ci/clued-handover-external-source-check.mjs --accepted-check\n          fi\n      - name: Execute declared source-only or actual External2 path\n        env:\n          GITHUB_TOKEN: ${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && github.token || '' }}\n          CLUED_ADMISSION_APP_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && secrets.CLUED_ADMISSION_APP_ID || '' }}\n          CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && secrets.CLUED_ADMISSION_APP_KEY || '' }}\n          QUALIFICATION_DISPOSABLE_PG_URL: ${{ github.event_name == 'workflow_dispatch' && secrets.CLUED_HANDOVER_DISPOSABLE_PG_URL || '' }}\n          QUALIFICATION_TEST_CI_PROOF: ${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && secrets.CLUED_HANDOVER_TEST_CI_PROOF || '' }}\n        run: |\n          if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n            node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\n          elif [ \"$QUALIFICATION_PHASE\" = register ]; then\n            node scripts/ci/clued-handover-external-register.mjs\n          else\n            node scripts/ci/clued-handover-external-driver.mjs --execute\n          fi\n      - name: Preserve secret-free actual qualification evidence\n        if: ${{ always() && github.event_name == 'workflow_dispatch' }}\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: clued-disposable-handover-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/clued-handover-evidence/*.json\n          if-no-files-found: error\n          retention-days: 30\n",
+      "workflow_blob": "689a1c5fcdbefa5353715f55e39c0fc08a9f5230",
+      "source_sha256": "c42ab88ddb6e8f0774ec55cecf3507578870f8233d6ec11c09162212f3442d5f",
+      "workflow_definition": {
+        "name": "Clued disposable external handover qualification",
+        "on": {
+          "pull_request": {
+            "paths": [
+              ".github/workflows/clued-handover-external-qualification.yml",
+              ".github/workflows/clued-handover-disposable-idle.yml",
+              "scripts/ci/clued-handover-external-*",
+              "scripts/ci/fixtures/clued-handover-*",
+              "config/clued-handover-external-*"
+            ]
+          },
+          "workflow_dispatch": {
+            "inputs": {
+              "admission_run_id": {
+                "description": "Existing exact workflow/ref dispatch admission",
+                "required": true,
+                "type": "string"
+              },
+              "phase": {
+                "description": "Registered External2 phase",
+                "required": true,
+                "type": "choice",
+                "options": [
+                  "register",
+                  "publish",
+                  "revoke"
+                ]
+              },
+              "idle_run_id": {
+                "description": "Exact real idle run; publish only, permanently bound in original journal",
+                "required": false,
+                "type": "string"
+              },
+              "publisher_run_id": {
+                "description": "Exact completed successful original publisher, required for revoke",
+                "required": false,
+                "type": "string"
+              }
+            }
+          }
+        },
+        "permissions": {
+          "contents": "read"
+        },
+        "concurrency": {
+          "group": "clued-handover-disposable-external-qualification",
+          "cancel-in-progress": false
+        },
+        "jobs": {
+          "admission-gate": {
+            "name": "admission-gate",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal"
+            ],
+            "timeout-minutes": 10,
+            "permissions": {
+              "actions": "read",
+              "checks": "read",
+              "contents": "read",
+              "pull-requests": "read"
+            },
+            "outputs": {
+              "admitted": "${{ steps.gate.outputs.admitted }}",
+              "enforced": "${{ steps.gate.outputs.enforced }}",
+              "verdict": "${{ steps.gate.outputs.verdict }}"
+            },
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false,
+                  "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+                }
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "id": "gate",
+                "env": {
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+              }
+            ]
+          },
+          "qualify": {
+            "name": "clued-handover-external2",
+            "needs": "admission-gate",
+            "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'pull_request' &&\n  github.event.pull_request.head.repo.full_name == github.repository &&\n  github.actor_id == '52366662' && github.triggering_actor == github.repository_owner) ||\n (github.event_name == 'workflow_dispatch' &&\n  github.ref == format('refs/heads/{0}', github.event.repository.default_branch)))",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "trust-internal",
+              "handover-native-task617-once"
+            ],
+            "timeout-minutes": 25,
+            "environment": "${{ github.event_name == 'workflow_dispatch' && 'clued-admission' || 'clued-handover-source-only' }}",
+            "env": {
+              "QUALIFICATION_PHASE": "${{ inputs.phase }}",
+              "QUALIFICATION_IDLE_RUN_ID": "${{ inputs.idle_run_id }}",
+              "QUALIFICATION_OPERATOR_MODE": "${{ github.event_name == 'workflow_dispatch' && inputs.phase == 'register' && 'register-empty-disposable' || '' }}",
+              "QUALIFICATION_PUBLISHER_RUN_ID": "${{ inputs.publisher_run_id }}",
+              "CLUED_HANDOVER_ACCEPTANCE_SHA256": "${{ vars.CLUED_HANDOVER_ACCEPTANCE_SHA256 }}"
+            },
+            "permissions": {
+              "contents": "read",
+              "actions": "write",
+              "checks": "read",
+              "pull-requests": "read"
+            },
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "ref": "${{ github.event.pull_request.head.sha || github.event.repository.default_branch }}",
+                  "fetch-depth": 0,
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Refuse until independent Native E1 qualification",
+                "run": "node scripts/ci/clued-handover-native-entry.mjs --check"
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "name": "Verify declared Source path before dependencies",
+                "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelif [ \"$GITHUB_EVENT_NAME\" = workflow_dispatch ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --accepted-check\nelse\n  exit 1\nfi\n"
+              },
+              {
+                "name": "Prepare declared Source runtime",
+                "env": {
+                  "ONNXRUNTIME_NODE_INSTALL": "skip"
+                },
+                "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelse\n  npm ci --prefix apps/clued-cloud\nfi\n"
+              },
+              {
+                "name": "Revalidate exact Source after runtime preparation",
+                "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelse\n  node scripts/ci/clued-handover-external-source-check.mjs --accepted-check\nfi\n"
+              },
+              {
+                "name": "Execute declared source-only or actual External2 path",
+                "env": {
+                  "GITHUB_TOKEN": "${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && github.token || '' }}",
+                  "CLUED_ADMISSION_APP_ID": "${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && secrets.CLUED_ADMISSION_APP_ID || '' }}",
+                  "CLUED_ADMISSION_APP_PRIVATE_KEY": "${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && secrets.CLUED_ADMISSION_APP_KEY || '' }}",
+                  "QUALIFICATION_DISPOSABLE_PG_URL": "${{ github.event_name == 'workflow_dispatch' && secrets.CLUED_HANDOVER_DISPOSABLE_PG_URL || '' }}",
+                  "QUALIFICATION_TEST_CI_PROOF": "${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && secrets.CLUED_HANDOVER_TEST_CI_PROOF || '' }}"
+                },
+                "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelif [ \"$QUALIFICATION_PHASE\" = register ]; then\n  node scripts/ci/clued-handover-external-register.mjs\nelse\n  node scripts/ci/clued-handover-external-driver.mjs --execute\nfi\n"
+              },
+              {
+                "name": "Preserve secret-free actual qualification evidence",
+                "if": "${{ always() && github.event_name == 'workflow_dispatch' }}",
+                "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                "with": {
+                  "name": "clued-disposable-handover-${{ github.run_id }}-${{ github.run_attempt }}",
+                  "path": "${{ runner.temp }}/clued-handover-evidence/*.json",
+                  "if-no-files-found": "error",
+                  "retention-days": 30
+                }
+              }
+            ]
+          }
+        }
+      },
+      "source_acceptance": null,
+      "host_qualification": null
+    },
+    {
+      "file": ".github/workflows/clued-handover-disposable-idle.yml",
+      "purpose": "native617_free_entry_source_preparation",
+      "registration_status": "PENDING_INDEPENDENT_SOURCE_REVIEW_HOST_NOT_QUALIFIED",
+      "source_yaml": "# Candidate External2 idle Source; no App/PG/Clued secret, no readonly-purpose inheritance.\nname: Clued disposable cancellation fixture\non:\n  pull_request:\n    paths:\n      - '.github/workflows/clued-handover-disposable-idle.yml'\n      - 'scripts/ci/clued-handover-external-*'\n  workflow_dispatch:\n    inputs:\n      admission_run_id:\n        description: Existing exact workflow/ref dispatch admission\n        required: true\n        type: string\npermissions:\n  contents: read\nconcurrency:\n  group: clued-handover-idle-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\njobs:\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  disposable-idle:\n    name: disposable-idle\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'pull_request' &&\n        github.event.pull_request.head.repo.full_name == github.repository &&\n        github.actor_id == '52366662' && github.triggering_actor == github.repository_owner) ||\n       (github.event_name == 'workflow_dispatch' &&\n        startsWith(github.ref, 'refs/heads/clued-handover-disposable-')))\n    runs-on: [self-hosted, Linux, X64, clued, trust-internal, handover-native-task617-once]\n    timeout-minutes: 45\n    environment: clued-handover-source-only\n    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          ref: ${{ github.event.pull_request.head.sha || github.ref }}\n          persist-credentials: false\n      - name: Refuse until independent Native E1 qualification\n        run: node scripts/ci/clued-handover-native-entry.mjs --check\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Bounded idle process to prove real provider cancellation\n        run: |\n          if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n            node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\n          else\n            sleep 2400\n          fi\n",
+      "workflow_blob": "97c39730ce75f2ea2427c9fa3845f9df32e998f8",
+      "source_sha256": "133554a025b122737198289925920b31992191a96a5321242d3c78cf119acf66",
+      "workflow_definition": {
+        "name": "Clued disposable cancellation fixture",
+        "on": {
+          "pull_request": {
+            "paths": [
+              ".github/workflows/clued-handover-disposable-idle.yml",
+              "scripts/ci/clued-handover-external-*"
+            ]
+          },
+          "workflow_dispatch": {
+            "inputs": {
+              "admission_run_id": {
+                "description": "Existing exact workflow/ref dispatch admission",
+                "required": true,
+                "type": "string"
+              }
+            }
+          }
+        },
+        "permissions": {
+          "contents": "read"
+        },
+        "concurrency": {
+          "group": "clued-handover-idle-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}",
+          "cancel-in-progress": "${{ github.event_name == 'pull_request' }}"
+        },
+        "jobs": {
+          "admission-gate": {
+            "name": "admission-gate",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal"
+            ],
+            "timeout-minutes": 10,
+            "permissions": {
+              "actions": "read",
+              "checks": "read",
+              "contents": "read",
+              "pull-requests": "read"
+            },
+            "outputs": {
+              "admitted": "${{ steps.gate.outputs.admitted }}",
+              "enforced": "${{ steps.gate.outputs.enforced }}",
+              "verdict": "${{ steps.gate.outputs.verdict }}"
+            },
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false,
+                  "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+                }
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "id": "gate",
+                "env": {
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+              }
+            ]
+          },
+          "disposable-idle": {
+            "name": "disposable-idle",
+            "needs": "admission-gate",
+            "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'pull_request' &&\n  github.event.pull_request.head.repo.full_name == github.repository &&\n  github.actor_id == '52366662' && github.triggering_actor == github.repository_owner) ||\n (github.event_name == 'workflow_dispatch' &&\n  startsWith(github.ref, 'refs/heads/clued-handover-disposable-')))",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "trust-internal",
+              "handover-native-task617-once"
+            ],
+            "timeout-minutes": 45,
+            "environment": "clued-handover-source-only",
+            "permissions": {
+              "contents": "read"
+            },
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "ref": "${{ github.event.pull_request.head.sha || github.ref }}",
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Refuse until independent Native E1 qualification",
+                "run": "node scripts/ci/clued-handover-native-entry.mjs --check"
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "name": "Bounded idle process to prove real provider cancellation",
+                "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelse\n  sleep 2400\nfi\n"
+              }
+            ]
+          }
+        }
+      },
+      "source_acceptance": null,
+      "host_qualification": null
+    }
+  ]
 }

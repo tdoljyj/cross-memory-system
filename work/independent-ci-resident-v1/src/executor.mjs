@@ -96,6 +96,7 @@
 // 'train-run-intent' receipt stands for one, so an intent that no 'train-run' receipt closed (a crash or a stop in the
 // middle) HALTs as TRAIN_STAGE_INTERRUPTED at the next start, and a receipt chain that cannot be read holds every batch.
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { Ledger, MAX_TRIES, batchKey, headKey } from './ledger.mjs';
 import { ABORTABLE_IN_FLIGHT, BRIDGE_ABANDONED_UNPUBLISHED, NOT_ADMITTED_CODES, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, failureRow,
   proofComplete, scannerAbandonEligible } from './classify.mjs';
@@ -114,6 +115,8 @@ import { classifyFailure } from './classify.mjs';
 import { trainDue, trainSummary } from './train.mjs';
 import { RoleProbe, validateRoleProbeFact } from './role-probe.mjs';
 import { NODE_MODES } from './status.mjs';
+import { RevocationMaintenanceBook,validateRevocationFacts,validateRevocationQualification,
+  REVOCATION_RUN_MS,REVOCATION_HELPER_MARGIN_MS,REVOCATION_RUN_ID } from './revocation-maintenance.mjs';
 
 export const PAUSE_CONTRACT = 'clued.independent-ci.resident-pause/1';
 export const REARM_CONTRACT = 'clued.independent-ci.resident-owner-rearm/1';
@@ -292,6 +295,7 @@ export class ResidentExecutor {
     this.intakeRequestFailures = new Map();
     this.roleProbe = new RoleProbe();
     this.roleProbeNotices = [];
+    this.revocationBook = new RevocationMaintenanceBook();
     // C3: every start begins UNCERTAIN (behaves like STANDBY) with the probe due at once; nothing is taken from before the start.
     this.roleProbeMode = 'UNCERTAIN';
     this.roleProbe.markUrgent();
@@ -982,6 +986,16 @@ export class ResidentExecutor {
     // so one found while halted is closed at once and the Owner's re-arm clears a single HALT (review of 3c-1, round 2).
     const train = recovered ? await this.trainRecover() : null;
     const probe = recovered ? await this.roleProbeRecover() : null;
+    const revocationRecovery = recovered ? await this.revocationMaintenanceRecover() : null;
+    if (revocationRecovery) return revocationRecovery;
+    // Qualified safety maintenance may revoke old work while CI is halted or
+    // paused. It neither clears that latch nor starts a PR/batch, and its
+    // pre-broker engine guards still require the actual helper/SCM to be idle.
+    if (recovered) {
+      const originalHalt=await this.ledger.halted();
+      const maintenance=await this.revocationMaintenance({halted:!!originalHalt});
+      if(maintenance)return originalHalt?{...maintenance,state:'HALTED',failureCode:originalHalt.value?.code??null}:maintenance;
+    }
     // Even if the HALT itself could not be written, an unconfirmed recovery never runs a candidate,
     // and neither does a ledger with an unarchived failed-unknown or quarantined scene (N1).
     if (!recovered || await this.ledger.halted()) return train?.state === 'HALTED' ? train : { state: 'HALTED' };
@@ -1088,6 +1102,88 @@ export class ResidentExecutor {
       if (fact?.result === 'held') await this.setNodeMode('ACTIVE', 'probe-held');
       return !deferred && !fact ? { state: 'HALTED', failureCode: 'ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED' } : null;
     } finally { this.roleProbeRunning = false; }
+  }
+
+  async revocationMaintenanceRecover() {
+    if(typeof this.engine.runRevocationMaintenance!=='function')return null;
+    if(this.revocationRecovered)return this.revocationBook.blocked?{state:'HALTED',failureCode:'REVOCATION_MAINTENANCE_INTERRUPTED'}:null;
+    try{
+      const rows=await this.receipts.latest(['revocation-maintenance-intent','revocation-maintenance-result'],2),last=rows.at(-1);
+      if(last?.type==='revocation-maintenance-intent'){
+        this.revocationBook.blocked=true;
+        await this.haltWith('REVOCATION_MAINTENANCE_INTERRUPTED',{intentSeq:last.seq});
+        // Leave the actual intent open. No new helper is dispatched until a
+        // separately authorized recovery proves and closes the old execution.
+        return {state:'HALTED',failureCode:'REVOCATION_MAINTENANCE_INTERRUPTED'};
+      }
+      if(last){
+        const intent=rows[0]?.value?.body,result=last.value?.body;
+        check(rows.length===2&&rows[0].type==='revocation-maintenance-intent'&&result?.intentSeq===rows[0].seq
+          &&HEX64.test(intent?.runKey??'')&&REVOCATION_RUN_ID.test(intent?.runId??'')&&intent.runId.startsWith(intent.runKey.slice(0,16))
+          &&result.runId===intent.runId,'REVOCATION_BOOK_REFUSED');
+        this.revocationBook.restore(result.state);
+        check(this.revocationBook.lastRunId===intent.runId,'REVOCATION_BOOK_REFUSED');
+      }
+      this.revocationRecovered=true;
+      if(this.revocationBook.blocked){
+        await this.haltWith('REVOCATION_MAINTENANCE_INTERRUPTED',{});
+        return {state:'HALTED',failureCode:'REVOCATION_MAINTENANCE_INTERRUPTED'};
+      }
+      return null;
+    }catch{
+      this.revocationBook.blocked=true;
+      await this.haltWith('REVOCATION_MAINTENANCE_RECEIPTS_UNCONFIRMED',{});
+      return {state:'HALTED',failureCode:'REVOCATION_MAINTENANCE_RECEIPTS_UNCONFIRMED'};
+    }
+  }
+
+  async revocationMaintenance({halted}) {
+    if(!this.revocationRecovered||this.revocationBook.blocked||typeof this.engine.runRevocationMaintenance!=='function'
+      ||typeof this.engine.revocationMaintenanceQualification!=='function'||!this.revocationBook.due(this.clock()))return null;
+    const now=this.clock();let qualification;
+    try{
+      qualification=validateRevocationQualification(await this.engine.revocationMaintenanceQualification(),{
+        sourceManifestSha256:this.policy.ciSourceManifestSha256,now});
+    }catch{return null;} // No exact Source qualification: retain the existing CI/HALT behavior.
+    if(halted&&!qualification.allowWhileHalted)return null;
+    if(this.policy.validUntil!==null&&Date.parse(this.policy.validUntil)<=now+REVOCATION_RUN_MS+REVOCATION_HELPER_MARGIN_MS)return null;
+    const drift=await this.driftCode();
+    if(drift){await this.haltWith(drift,{phase:'revocation-maintenance'});return {state:'HALTED',failureCode:drift};}
+    const runKey=randomBytes(32).toString('hex'),runId=`${runKey.slice(0,16)}-${randomBytes(6).toString('hex')}`;
+    let intent;
+    try{intent=await this.receipt('revocation-maintenance-intent',{runKey,runId,qualificationRef:qualification.qualificationRef,
+      sourceManifestSha256:qualification.sourceManifestSha256,halted});}
+    catch{
+      this.revocationBook.blocked=true;this.revocationRecovered=false;
+      await this.haltWith('REVOCATION_MAINTENANCE_RECEIPTS_UNCONFIRMED',{});
+      return {state:'HALTED',failureCode:'REVOCATION_MAINTENANCE_RECEIPTS_UNCONFIRMED'};
+    }
+    let result;
+    try{result=await this.engine.runRevocationMaintenance({runKey,runId});}catch{result=null;}
+    const deferred=result?.deferred===true&&['REVOCATION_MAINTENANCE_BUSY','REVOCATION_MAINTENANCE_NOT_QUALIFIED'].includes(result.code);
+    const proven=result?.proof?.windowsTreeZero===true&&result.proof.serviceOriginalStopped===true;
+    let facts=null;
+    if(!deferred&&result?.ok===true&&proven&&result.runId===runId){
+      try{
+        facts=validateRevocationFacts(result.revocation);
+        check(result.maintenancePending===!facts.complete&&result.outcome?.status===(facts.complete?'REVOCATION_MAINTENANCE':'PENDING')
+          &&Number.isSafeInteger(result.outcome.sideEffects)&&result.outcome.sideEffects>=0&&typeof result.outcome.mayHavePublished==='boolean',
+        'REVOCATION_FACTS_REFUSED');
+      }catch{facts=null;}
+    }
+    const blocked=!deferred&&!facts;
+    if(blocked)await this.haltWith('REVOCATION_MAINTENANCE_CLEANUP_OR_FACT_UNCONFIRMED',{intentSeq:intent.seq,failureCode:validCode(result?.code)});
+    const state=this.revocationBook.observe({now:this.clock(),runId,pending:facts?.complete===false,deferred,blocked});
+    try{await this.receipt('revocation-maintenance-result',{intentSeq:intent.seq,runId,deferred,ok:!!facts,
+      failureCode:blocked?'REVOCATION_MAINTENANCE_CLEANUP_OR_FACT_UNCONFIRMED':null,facts,state});}
+    catch{
+      this.revocationBook.blocked=true;this.revocationRecovered=false;
+      await this.haltWith('REVOCATION_MAINTENANCE_RECEIPTS_UNCONFIRMED',{intentSeq:intent.seq});
+      return {state:'HALTED',failureCode:'REVOCATION_MAINTENANCE_RECEIPTS_UNCONFIRMED'};
+    }
+    if(blocked)return {state:'HALTED',failureCode:'REVOCATION_MAINTENANCE_CLEANUP_OR_FACT_UNCONFIRMED'};
+    return {state:deferred||facts?.complete===false?'DEFERRED':'IDLE',reason:deferred?result.code:
+      facts.complete?'REVOCATION_MAINTENANCE_COMPLETED':'REVOCATION_MAINTENANCE_PENDING',maintenancePending:facts?.complete===false};
   }
 
   // ---- stage 10: train maintenance (phase 2, step 3c-1; DESIGN §22.3) ----

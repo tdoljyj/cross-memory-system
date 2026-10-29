@@ -1,4 +1,44 @@
 import assert from 'node:assert/strict';
+
+test('Native617 candidate Source catalogue is complete but never an accepted registration',async()=>{
+  const {native617PendingWorkflowCatalogue}=await import('./clued-workflow-profile.mjs');
+  const registry=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
+  const specs=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)));
+  const result=native617PendingWorkflowCatalogue(registry,specs);
+  assert.equal(result.structurally_valid,true);assert.equal(result.passed,false);
+  assert.equal(result.authoritative,false);assert.equal(result.host_qualified,false);
+  assert.equal(result.execution_permitted,false);assert.equal(result.entries.length,3);
+  for(const entry of result.entries){
+    const actual=fs.readFileSync(new URL('../../'+entry.file,import.meta.url),'utf8');
+    assert.equal(entry.source_yaml,actual);assert.equal(entry.workflow_blob,workflowBlob(actual));
+    const role=specs.native617_pending_sources.find(x=>x.file===entry.file).roles[0];
+    assert.deepEqual(role.definition,entry.workflow_definition.jobs[role.job_id]);
+    assert.equal(roleDefinitionDigest(role.definition),role.definition_sha256);
+    assert.equal(entry.source_acceptance,null);assert.equal(entry.host_qualification,null);
+  }
+});
+test('pending Native617 data refuses invented receipts, partial roles, route mixing and self registration',async()=>{
+  const {native617PendingWorkflowCatalogue}=await import('./clued-workflow-profile.mjs');
+  const read=()=>({registry:JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url))),
+    specs:JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)))});
+  for(const edit of [
+    x=>x.registry.native617_pending_sources.pop(),
+    x=>x.specs.native617_pending_sources.pop(),
+    x=>x.registry.native617_pending_sources.push(x.registry.native617_pending_sources[0]),
+    x=>x.registry.native617_pending_sources[0].source_acceptance={receipt_id:'invented'},
+    x=>x.registry.native617_pending_sources[0].host_qualification={qualified:true},
+    x=>x.registry.native617_pending_sources[0].source_yaml+='changed',
+    x=>x.specs.native617_pending_sources[0].roles[0].definition_sha256='a'.repeat(64),
+    x=>x.registry.native617_pending_sources[0].workflow_definition.jobs.admit['runs-on'].push('pool-general'),
+    x=>{const e=x.registry.native617_pending_sources[0];x.registry.workflows[e.file]={workflow_blob:e.workflow_blob};},
+    x=>{const e=x.registry.native617_pending_sources[0];x.specs.workflows[e.file]={sources:{[e.workflow_blob]:[]}};}
+  ]){
+    const x=read();edit(x);
+    const result=native617PendingWorkflowCatalogue(x.registry,x.specs);
+    assert.equal(result.structurally_valid,false);assert.equal(result.passed,false);
+    assert.equal(result.execution_permitted,false);
+  }
+});
 import test from 'node:test';
 import {compileRegisteredWorkflow,selectRegisteredProfiles,roleDefinitionDigest,workflowBlob,futureWorkflowSubject,
   futureWorkflowCatalogue,acceptedFutureWorkflowSource} from './clued-workflow-profile.mjs';

@@ -26,6 +26,7 @@ import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { canonical } from '../proof.mjs';
 import { REPO } from './layout.mjs';
+import { revocationQualification } from './revocation-run.mjs';
 
 export const RECORD_INPUTS_CONTRACT = 'clued.independent-ci.resident-record-inputs/2';
 export const RECORD_MANIFEST_CONTRACT = 'clued.independent-ci.resident-record/2';
@@ -111,7 +112,7 @@ export function validateRecordInputs(v, now = Date.now()) {
   noSecrets(v);
   check(exact(v, ['contract', 'repository', 'sourceCommit', 'scope', 'node', 'controllerAccount', 'appId', 'installationId', 'repositoryId', 'appKeyId',
     'ciPrincipalBindingId', 'ciPrincipalRoleRef', 'ciTokenPinSha256', 'appPublicKeySha256Base64', 'supabaseUrl', 'publishableKey', 'controllerNodeSha256',
-    'references', 'owner', 'formalRoles', 'signers']), 'EXACT_RECORD_INPUT_FIELDS_REQUIRED');
+    'references', 'owner', 'formalRoles', 'signers', ...(Object.hasOwn(v,'revocationMaintenanceQualification')?['revocationMaintenanceQualification']:[])]), 'EXACT_RECORD_INPUT_FIELDS_REQUIRED');
   check(v.contract === RECORD_INPUTS_CONTRACT && v.repository === REPO && SHA.test(v.sourceCommit)
     && (v.scope === 'global' || /^project:[a-f0-9-]{36}$/.test(v.scope)), 'ACTUAL_REPOSITORY_SOURCE_SCOPE_REQUIRED');
   validateNodeProfile(v.node);
@@ -125,6 +126,11 @@ export function validateRecordInputs(v, now = Date.now()) {
     && (o.validUntil === null || (ISO.test(o.validUntil) && Date.parse(o.validUntil) > now && Date.parse(o.validUntil) > Date.parse(o.acceptedAt))), 'SOURCE_ACCEPTANCE_WINDOW_REQUIRED');
   validateRoles(v.formalRoles);
   check(plain(v.signers) && Array.isArray(v.signers.signers) && v.signers.signers.length > 0, 'ACTUAL_EXISTING_PUBLIC_SIGNER_FILE_REQUIRED');
+  if(Object.hasOwn(v,'revocationMaintenanceQualification')){
+    const q=v.revocationMaintenanceQualification;
+    check(revocationQualification({accepted:{revocationMaintenanceQualification:q},config:{sourceManifestSha256:q?.sourceManifestSha256}}, {now})
+      && HASH.test(q.sourceManifestSha256), 'GENUINE_REVOCATION_QUALIFICATION_REFERENCE_REQUIRED');
+  }
   return v;
 }
 
@@ -155,6 +161,12 @@ export function assembleRecord(inputs, sourceFiles) {
     ciPrincipalBindingId: inputs.ciPrincipalBindingId, ciTokenPinSha256: inputs.ciTokenPinSha256, appPublicKeySha256Base64: inputs.appPublicKeySha256Base64,
     sourceFiles: pins, signerRegistrySha256: hash(inputs.signers), ownerDecisionRef: inputs.owner.ownerDecisionRef, ownerReceiptRef: inputs.owner.ownerReceiptRef,
     acceptedAt: inputs.owner.acceptedAt, validUntil: inputs.owner.validUntil, claimBound: false, configSha256: hash({ ...config, acceptanceSha256: null }) };
+  // An existing accepted qualification may be bound into a new record. This
+  // tool validates and preserves that reference; it never issues qualification.
+  if(Object.hasOwn(inputs,'revocationMaintenanceQualification')){
+    check(inputs.revocationMaintenanceQualification.sourceManifestSha256===config.sourceManifestSha256,'REVOCATION_QUALIFICATION_SOURCE_CHANGED');
+    accepted.revocationMaintenanceQualification=structuredClone(inputs.revocationMaintenanceQualification);
+  }
   const acceptanceText = canonical(accepted);
   config.acceptanceSha256 = hash(acceptanceText);
   const installationText = canonical(config);
