@@ -5,7 +5,7 @@ import { digest } from '../src/proof.mjs';
 import { admittedFactsMatchJobV2, validateFormalAdmissionV2, FULL_ADMISSION_CONTRACT_V3, supportedNativeExecution } from '../src/admission-facts-v2.mjs';
 import { admittedFacts, subject } from './resident-v2-fixtures.mjs';
 const now=Date.parse('2026-10-29T05:00:00Z');
-const job=makeJobV2({...subject(),role:'gitleaks'});
+const job=makeJobV2({...subject(),testSha:subject().headSha,role:'gitleaks'});
 const claim={claimId:'11111111-2222-4333-8444-555555555555',fence:4,epoch:3,expiresAt:new Date(now+3600000).toISOString()};
 const packet={complete:true,pr:job.pr,headSha:job.headSha,baseSha:job.baseSha,paths:['scripts/ci/example.mjs']};
 const sign=facts=>{const {observationSha256,...body}=facts;return {...body,observationSha256:digest(body)};};
