@@ -145,6 +145,9 @@ test('ci-admission handover (Z1): one transaction, delayed start, purposes, park
       'clued_private.binding_role_holders_v1(uuid,text,uuid[])', 'clued_private.binding_role_resident_held_v1(uuid,uuid[])',
       'clued_private.headless_binding_view_before_sources_v2(uuid,jsonb)', 'clued_private.owner_grant_resident_upgrade_door_v1(text,jsonb)',
       'clued_private.work_claim_ci_command_v1(text,jsonb)', 'clued_private.work_claim_execution_current_v1(jsonb)',
+      // 20261029050000 (independent publication) readers, listed after the fact.
+      'clued_private.work_claim_independent_abort_v1(text,jsonb)', 'clued_private.work_claim_independent_begin_v1(text,jsonb)',
+      'clued_private.work_claim_independent_drain_command_v1(text,jsonb)',
       'clued_private.work_claim_verify_before_execution_v1(text,jsonb)', 'clued_work_verify_v1(text,jsonb)',
     ].sort(), 'a new reader of binding_roles_v1 must be reviewed for rows that have not started');
     const started = (sig) => readers.find((r) => r.sig === sig).prosrc.split('effective_at<=clock_timestamp()').length - 1;

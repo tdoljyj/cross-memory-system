@@ -13,24 +13,35 @@
 --    a check keeps it false, and the door never calls the auto-approval step,
 --    so even with the switch on a request stays pending until the Owner
 --    approves it on the page.
--- 2. Binding role resident-upgrade (context:read), marked by the Owner on
---    /bindings like release-door. Each node has its own Binding.
+--    Every request and grant of the action names exactly one resource of the
+--    ci-resident pattern; a grant is once (one use, at most 24 hours) and goes
+--    to the requesting Binding only (table checks).
+-- 2. Binding role resident-upgrade, marked by the Owner on /bindings like
+--    release-door. Each node has its own Binding, and the node is that
+--    Binding's name: the Owner marks only a Binding whose agent_name is a node
+--    name, that has no other role, whose scopes are exactly context:read, and
+--    whose name no other live resident-upgrade Binding of the Owner carries.
+--    No other role (by hand or by ci-admission handover) is marked on a
+--    resident-upgrade Binding.
 -- 3. clued_private.owner_grant_resident_upgrade_door_v1: input {action,
 --    resources, op_id, note?}; only a Binding whose resident-upgrade row is
---    live and started (exact holder, no "role unmarked" opening); exactly one
---    resource matching the ci-resident pattern, no glob; a repeated op_id
---    replays its use receipt; otherwise a live grant whose resources contain
---    the resource exactly (no covers) is used once and the use receipt records
---    door resident-upgrader and op_id; otherwise the op's request (idempotency
---    key resident-upgrade:<op_id>) is returned as it stands, or opened (origin
---    resident-upgrader, one use, 24 hours). A rejected or expired request is
---    returned as it is; a new op needs a new grant.
+--    live and started (exact holder, no "role unmarked" opening) and that can
+--    only read; exactly one resource matching the ci-resident pattern, no
+--    glob, naming the caller's own node (its agent_name); a repeated op_id
+--    replays its use receipt unless the Owner revoked that grant; otherwise a
+--    live grant given to this Binding for exactly this resource is used once
+--    and the use receipt records door resident-upgrader and op_id; otherwise
+--    the op's request (idempotency key resident-upgrade:<op_id>) is returned
+--    as it stands, or opened (origin resident-upgrader, one use, 24 hours). A
+--    rejected or expired request is returned as it is; a new op needs a new
+--    grant.
 -- 4. clued_owner_grant_door_consume_v1 hands this action to (3) right after
 --    its payload cap. release.production and migration.production keep every
 --    other statement as it was.
--- 5. An Agent cannot open this request itself (door-only), cannot bundle it,
---    and the confirmation page offers only the exact resource and accepts no
---    other; the page names the upgrader as the author of its note.
+-- 5. An Agent cannot open this request itself (door-only), cannot bundle it;
+--    the Owner cannot grant it without a request; the confirmation page
+--    approves it only once, for the requesting Binding and the exact resource;
+--    the page names the upgrader as the author of its note.
 --
 -- Anchored patches: each replaces one statement and fails unless the anchor
 -- occurs exactly once.
@@ -45,6 +56,14 @@ insert into clued_private.owner_grant_actions(action,doors,title,risk,auto_appro
 alter table clued_private.owner_grant_actions drop constraint owner_grant_actions_auto_approvable_check;
 alter table clued_private.owner_grant_actions add constraint owner_grant_actions_auto_approvable_check
   check (not auto_approvable or action not in ('connection.permission','ci.resident_upgrade'));
+alter table clued_private.owner_requests_v1 add constraint owner_requests_v1_resident_upgrade_check
+  check (action<>'ci.resident_upgrade' or (cardinality(resources)=1
+    and resources[1] ~ '^ci-resident:[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?/[0-9a-f]{64}$'));
+alter table clued_private.owner_grants_v1 add constraint owner_grants_v1_resident_upgrade_check
+  check (action<>'ci.resident_upgrade' or (cardinality(resources)=1
+    and resources[1] ~ '^ci-resident:[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?/[0-9a-f]{64}$'
+    and max_uses=1 and grantee_binding_id is not null and request_id is not null
+    and expires_at<=granted_at+interval '24 hours'));
 
 -- 2. Binding role resident-upgrade ----------------------------------------------
 
@@ -87,6 +106,37 @@ $a$    if v_enabled and not ((case v_role when 'ci-admission' then 'context:read
 $r$    if v_enabled and not ((case v_role when 'ci-admission' then 'context:read' when 'resident-upgrade' then 'context:read'
         else 'context:write' end)=any(b.scopes)) then$r$);
 
+-- Both Native steps of a hand change (confirmation and set, under the role's
+-- lock) run this check; only marking reaches the anchor.
+select clued_private.resident_upgrade_door_patch_v1(
+  'clued_private.binding_role_change_check_v1(public.clued_agent_bindings,text,boolean,jsonb)',
+$a$  if p_role<>'ci-admission' then
+    if p_purpose is not null then raise exception 'binding_role_purpose_invalid' using errcode='22023'; end if;$a$,
+$r$  -- Task 018da927: a resident-upgrade Binding is one node's upgrader and nothing else.
+  if p_role='resident-upgrade' then
+    if exists(select 1 from clued_private.binding_roles_v1 x where x.binding_id=p_binding.id and x.revoked_at is null) then
+      raise exception 'binding_role_exclusive' using errcode='22023'; end if;
+    if not (p_binding.scopes <@ array['context:read'] and 'context:read'=any(p_binding.scopes)) then
+      raise exception 'binding_role_scope_invalid' using errcode='22023'; end if;
+    if p_binding.agent_name !~ '^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$' then
+      raise exception 'binding_role_node_name_invalid' using errcode='22023'; end if;
+    if exists(select 1 from clued_private.binding_roles_v1 x join public.clued_agent_bindings o on o.id=x.binding_id
+        where x.user_id=p_binding.user_id and x.role='resident-upgrade' and x.revoked_at is null
+          and o.id<>p_binding.id and o.agent_name=p_binding.agent_name) then
+      raise exception 'binding_role_node_taken' using errcode='22023'; end if;
+  elsif exists(select 1 from clued_private.binding_roles_v1 x
+      where x.binding_id=p_binding.id and x.role='resident-upgrade' and x.revoked_at is null) then
+    raise exception 'binding_role_exclusive' using errcode='22023';
+  end if;
+  if p_role<>'ci-admission' then
+    if p_purpose is not null then raise exception 'binding_role_purpose_invalid' using errcode='22023'; end if;$r$);
+
+-- A ci-admission handover never lands on a resident-upgrade Binding.
+select clued_private.resident_upgrade_door_patch_v1(
+  'clued_private.binding_role_handover_check_v1(public.clued_agent_bindings,public.clued_agent_bindings)',
+$a$      where r.binding_id=p_to.id and r.role='ci-admission' and r.revoked_at is null) then$a$,
+$r$      where r.binding_id=p_to.id and r.role in ('ci-admission','resident-upgrade') and r.revoked_at is null) then$r$);
+
 -- 3. The resident-upgrader door ---------------------------------------------------
 
 create function clued_private.owner_grant_resident_upgrade_door_v1(p_token_hash text,p_input jsonb)
@@ -107,10 +157,11 @@ begin
   v_note:=nullif(btrim(p_input->>'note'),'');
   v_binding:=clued_private.resolve_binding(p_token_hash,'context:read','global');
   -- Exact holder: only a Binding the Owner marked resident-upgrade, whose row
-  -- has started. An unmarked role admits nobody.
+  -- has started and which can only read. An unmarked role admits nobody.
   if not exists(select 1 from clued_private.binding_roles_v1 r
       where r.user_id=v_binding.user_id and r.binding_id=v_binding.id and r.role='resident-upgrade'
-        and r.revoked_at is null and r.effective_at<=clock_timestamp()) then
+        and r.revoked_at is null and r.effective_at<=clock_timestamp())
+      or not (v_binding.scopes <@ array['context:read']) then
     raise exception 'owner_grant_door_binding_not_authorized' using errcode='42501'; end if;
   if jsonb_typeof(p_input->'resources') is distinct from 'array'
       or jsonb_array_length(p_input->'resources')<>1
@@ -121,8 +172,14 @@ begin
   v_resources:=clued_private.work_claim_normalize_paths(p_input->'resources');
   if v_resources is distinct from array[v_resource] then
     raise exception 'owner_grant_door_resources_invalid' using errcode='22023'; end if;
+  -- The node is the Binding's own name (checked when the Owner marked it).
+  if split_part(substr(v_resource,char_length('ci-resident:')+1),'/',1)<>v_binding.agent_name then
+    raise exception 'owner_grant_door_resources_invalid' using errcode='22023',detail='resident_node_mismatch'; end if;
   perform clued_private.owner_grant_lock_v1(v_binding.user_id);
-  -- The same op again: its use receipt decides.
+  v_key:='resident-upgrade:'||v_op;
+  -- The same op again: its use receipt decides, unless the Owner has revoked
+  -- that grant since (its expiry does not matter). A revoked op stays
+  -- unconsumed; a new op needs a new grant.
   select * into v_prior from public.clued_audit_receipts r
     where r.user_id=v_binding.user_id and r.operation='owner_grant_use' and r.object_type='owner_grant'
       and r.metadata->>'door'='resident-upgrader' and r.metadata->>'op_id'=v_op
@@ -131,15 +188,25 @@ begin
     if v_prior.binding_id is distinct from v_binding.id or v_prior.metadata->'resources'<>to_jsonb(v_resources) then
       raise exception 'owner_grant_door_input_invalid' using errcode='22023'; end if;
     select * into g from clued_private.owner_grants_v1 where id=(v_prior.metadata->>'grant_id')::uuid;
+    if g.revoked_at is not null then
+      select * into v_req from clued_private.owner_requests_v1 r
+        where r.user_id=v_binding.user_id and r.binding_id=v_binding.id and r.idempotency_key=v_key;
+      return jsonb_build_object('status','ok','consumed',false,'revoked',true,'action','ci.resident_upgrade',
+        'resources',to_jsonb(v_resources),'grant',jsonb_build_object('grant_id',g.id,'receipt_id',v_prior.id,
+          'use',(v_prior.metadata->>'use')::integer,'max_uses',g.max_uses,'expires_at',g.expires_at,
+          'replayed',true,'revoked',true),
+        'owner_request',case when v_req.id is null then null else clued_private.owner_request_public_v1(v_req) end);
+    end if;
     return jsonb_build_object('status','ok','consumed',true,'action','ci.resident_upgrade',
       'resources',to_jsonb(v_resources),'grant',jsonb_build_object('grant_id',g.id,'receipt_id',v_prior.id,
         'use',(v_prior.metadata->>'use')::integer,'max_uses',g.max_uses,'expires_at',g.expires_at,'replayed',true));
   end if;
-  -- A live grant that names this node and package exactly.
+  -- A live grant given to this Binding for exactly this node and package.
   select * into g from clued_private.owner_grants_v1 x
     where x.user_id=v_binding.user_id and x.action='ci.resident_upgrade' and x.revoked_at is null
+      and x.grantee_binding_id=v_binding.id
       and x.expires_at>clock_timestamp() and (x.max_uses is null or x.uses<x.max_uses)
-      and x.resources @> v_resources
+      and x.resources=v_resources
     order by x.expires_at,x.granted_at limit 1 for update;
   if found then
     update clued_private.owner_grants_v1 set uses=uses+1 where id=g.id;
@@ -153,7 +220,6 @@ begin
         'use',g.uses+1,'max_uses',g.max_uses,'expires_at',g.expires_at,'replayed',false));
   end if;
   -- No grant: this op's request as it stands, or a new one. Never automatic.
-  v_key:='resident-upgrade:'||v_op;
   select * into v_req from clued_private.owner_requests_v1 r
     where r.user_id=v_binding.user_id and r.binding_id=v_binding.id and r.idempotency_key=v_key;
   if found then
@@ -204,6 +270,21 @@ $r$    'resource_options',case when v_req.action in ('repo.protected_change','ci
 select clued_private.resident_upgrade_door_patch_v1('public.clued_owner_grant_confirmation_issue_v1(jsonb)',
 $a$            or (v_req.action='repo.protected_change' and not (v_resources <@ v_req.resources))) then$a$,
 $r$            or (v_req.action in ('repo.protected_change','ci.resident_upgrade') and not (v_resources <@ v_req.resources))) then$r$);
+
+-- Approved only once (one use, 24 hours) and only for the requesting Binding,
+-- like connection.permission; with the request's resources fixed for "once".
+select clued_private.resident_upgrade_door_patch_v1('public.clued_owner_grant_confirmation_issue_v1(jsonb)',
+$a$      if v_req.action='connection.permission'
+          and (v_choice<>'once'$a$,
+$r$      if v_req.action in ('connection.permission','ci.resident_upgrade')
+          and (v_choice<>'once'$r$);
+
+-- Never granted without the door's request.
+select clued_private.resident_upgrade_door_patch_v1('public.clued_owner_grant_confirmation_issue_v1(jsonb)',
+$a$      if p_input->>'action'='connection.permission' then
+        raise exception 'owner_grant_action_request_only'$a$,
+$r$      if p_input->>'action' in ('connection.permission','ci.resident_upgrade') then
+        raise exception 'owner_grant_action_request_only'$r$);
 
 -- The note_source of 20261005140000 is in owner_grant_view_v1, which
 -- 20261014044323 renames to owner_grant_view_before_contexts_v2 (the new

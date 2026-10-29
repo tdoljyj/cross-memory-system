@@ -82,12 +82,16 @@ test('owner grants: the resident-upgrader door uses an exact Owner Grant once pe
       values($1,'resident-upgrade@example.invalid',now()),($2,'resident-upgrade-other@example.invalid',now())`, [owner, stranger]);
     const tokens = {};
     const ids = {};
-    const bind = async (name, scopes, user = owner) => {
+    // The agent_name of a resident-upgrade Binding is its node name.
+    const bind = async (name, scopes, user = owner, agentName = name) => {
       tokens[name] = hash();
       ids[name] = (await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
-        values($1,'synthetic',$2,$3,$4,array['*']) returning id`, [user, name, tokens[name], scopes])).rows[0].id;
+        values($1,'synthetic',$2,$3,$4,array['*']) returning id`, [user, agentName, tokens[name], scopes])).rows[0].id;
     };
-    for (const name of ['node-a', 'node-b', 'early', 'ended', 'plain']) await bind(name, ['context:read']);
+    for (const name of ['node-a', 'node-b', 'early', 'ended', 'plain', 'ciadm']) await bind(name, ['context:read']);
+    await bind('node-a-twin', ['context:read'], owner, 'node-a');
+    await bind('node-a-copy', ['context:read'], owner, 'node-a');
+    await bind('Node_X', ['context:read']);
     await bind('writer', ['context:write']);
     await bind('claude', ['context:read', 'context:write']);
     await bind('release', ['context:read', 'context:write']);
@@ -167,14 +171,40 @@ test('owner grants: the resident-upgrader door uses an exact Owner Grant once pe
     assert.equal(after.roles.find((r) => r.role === 'resident-upgrade').marked, true);
     assert.deepEqual(after.bindings.find((b) => b.binding_id === ids['node-a']).roles, ['resident-upgrade']);
 
+    // --- The role stands alone, reads only, and names one node. ---
+    assert.equal((await issueRole('claude', true)).error_code, 'binding_role_scope_invalid');
+    assert.equal((await issueRole('Node_X', true)).error_code, 'binding_role_node_name_invalid');
+    assert.equal((await issueRole('node-a-copy', true)).error_code, 'binding_role_node_taken');
+    const issueOther = (binding, role, extra = {}) => native('clued_binding_role_confirmation_issue_v1',
+      { binding_id: ids[binding], role, enabled: true, ...extra });
+    assert.equal((await issueOther('node-a', 'ci-admission', { purpose: 'other' })).error_code, 'binding_role_exclusive');
+    const ciToken = issued(await issueOther('ciadm', 'ci-admission', { purpose: 'other' }));
+    committed(await native('clued_binding_role_set_v1', { confirmation_token: ciToken.confirmation_token, view_digest: ciToken.view_digest }));
+    assert.equal((await issueRole('ciadm', true)).error_code, 'binding_role_exclusive');
+    // A ci-admission handover cannot land on a resident-upgrade Binding.
+    assert.equal((await native('clued_binding_role_handover_confirmation_issue_v1',
+      { from_binding_id: ids.ciadm, to_binding_id: ids['node-a'] })).error_code, 'binding_role_handover_target_holds_role');
+    // A twin of node-a's name marked behind the page's back (it could not be
+    // marked there) still cannot use node-a's grant: grants go to the requester.
+    await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id)
+      values($1,$2,'resident-upgrade',now(),$3)`, [owner, ids['node-a-twin'], roleReceipt]);
+
     const A1 = resource('node-a', 'a');
     const A2 = resource('node-a', 'b');
 
     // --- Not the exact started holder: 42501, whatever else the input says. ---
-    for (const who of ['plain', 'early', 'ended', 'release', 'foreign', 'claude']) {
+    for (const who of ['plain', 'early', 'ended', 'release', 'foreign', 'claude', 'ciadm']) {
       await fails(upgrade(who, [A1], uuid()), '42501', /owner_grant_door_binding_not_authorized/);
     }
     await fails(upgrade('plain', ['bad'], uuid()), '42501', /owner_grant_door_binding_not_authorized/);
+    // A marked Binding whose scopes were widened later reads no more: refused.
+    await admin.query(`update public.clued_agent_bindings set scopes=array['context:read','context:write'] where id=$1`, [ids['node-b']]);
+    await fails(upgrade('node-b', [resource('node-b', 'a')], uuid()), '42501', /owner_grant_door_binding_not_authorized/);
+    await admin.query(`update public.clued_agent_bindings set scopes=array['context:read'] where id=$1`, [ids['node-b']]);
+    // A node asks only for itself: node-b cannot name node-a, before any grant or request.
+    await assert.rejects(upgrade('node-b', [resource('node-a', 'a')], uuid()), (error) =>
+      error.code === '22023' && /owner_grant_door_resources_invalid/.test(error.message) && error.detail === 'resident_node_mismatch');
+    assert.equal(await requests(ids['node-b']), 0);
 
     // --- Malformed input or resources: 400 (22023). ---
     for (const res of [[], [A1, A2], ['ci-resident:node-a/*'], ['ci-resident:node-a/**'], [`ci-resident:Node-a/${pkg('a')}`],
@@ -227,9 +257,18 @@ test('owner grants: the resident-upgrader door uses an exact Owner Grant once pe
     assert.equal(view.default_choice, 'once');
     assert.deepEqual(view.resource_options, [{ resource: A1, options: [A1] }]);
     assert.deepEqual([view.view.request.note_source, view.view.request.agent_note_unverified], ['resident-upgrader', '升级到 r6']);
-    for (const wider of [['ci-resident:node-a/**'], ['ci-resident:**'], [A2]]) {
-      assert.equal((await native('clued_owner_grant_confirmation_issue_v1',
-        { request_id: pending.request_id, choice: 'grant', resources: wider })).error_code, 'owner_grant_resources_not_offered');
+    // Only "once", for the requesting Binding, on the request's own resource.
+    for (const input of [{ choice: 'grant' }, { choice: 'grant', resources: ['ci-resident:node-a/**'] },
+      { choice: 'grant', resources: [A1], max_uses: 5 }, { choice: 'once', grantee: 'any_agent' }]) {
+      assert.equal((await native('clued_owner_grant_confirmation_issue_v1', { request_id: pending.request_id, ...input })).error_code,
+        'owner_grant_choice_invalid', JSON.stringify(input));
+    }
+    assert.equal((await native('clued_owner_grant_confirmation_issue_v1',
+      { request_id: pending.request_id, choice: 'once', resources: [A2] })).error_code, 'owner_grant_request_fields_fixed');
+    // Never granted on the page without the door's request, glob or not.
+    for (const res of [['ci-resident:node-a/**'], [A1]]) {
+      assert.equal((await native('clued_owner_grant_confirmation_issue_v1', { action: ACTION, resources: res })).error_code,
+        'owner_grant_action_request_only');
     }
 
     // --- Approved once on the page: used once; the same op replays; a new op does not use it. ---
@@ -247,20 +286,46 @@ test('owner grants: the resident-upgrader door uses an exact Owner Grant once pe
       [true, given.grant.grant_id, result.grant.receipt_id, 1, true]);
     assert.equal((await admin.query('select uses from clued_private.owner_grants_v1 where id=$1', [given.grant.grant_id])).rows[0].uses, 1);
     await fails(upgrade('node-a', [A2], op1), '22023', /owner_grant_door_input_invalid/);
-    await fails(upgrade('node-b', [A1], op1), '22023', /owner_grant_door_input_invalid/);
+    await fails(upgrade('node-a-twin', [A1], op1), '22023', /owner_grant_door_input_invalid/);
+    // The table keeps every grant of the action once, exact and personal.
+    for (const change of [`max_uses=2`, `resources=array['ci-resident:node-a/**']`, `grantee_binding_id=null`,
+      `expires_at=granted_at+interval '25 hours'`]) {
+      await assert.rejects(() => admin.query(`update clued_private.owner_grants_v1 set ${change} where id=$1`, [given.grant.grant_id]),
+        /owner_grants_v1_resident_upgrade_check/, change);
+    }
     const op2 = uuid();
     result = await upgrade('node-a', [A1], op2);
     assert.equal(result.consumed, false, 'a new op needs a new grant');
-    assert.equal(result.owner_request.status, 'pending');
-    assert.notEqual(result.owner_request.request_id, pending.request_id);
+    const pending2 = result.owner_request;
+    assert.equal(pending2.status, 'pending');
+    assert.notEqual(pending2.request_id, pending.request_id);
 
-    // --- A grant for another package, or a glob, never admits (exact match, no covers). ---
-    await approve({ action: ACTION, resources: ['ci-resident:node-a/**'] });
-    await approve({ action: ACTION, resources: [A2] });
+    // --- A grant goes to the requesting Binding: another Binding with node-a's name cannot use it. ---
+    const given2 = await approve({ request_id: pending2.request_id, choice: 'once' });
+    result = await upgrade('node-a-twin', [A1], uuid());
+    assert.equal(result.consumed, false, 'node-a-twin opens its own request instead');
+    assert.equal(result.owner_request.status, 'pending');
+    result = await upgrade('node-a', [A1], op2);
+    assert.deepEqual([result.consumed, result.grant.grant_id, result.grant.replayed], [true, given2.grant.grant_id, false]);
+
+    // --- Revoked after use: the op's replay is no longer consumed, and nothing else is used for it. ---
+    committed(await native('clued_owner_grant_revoke_v1', { grant_id: given2.grant.grant_id }));
+    const before = await requests(ids['node-a']);
+    result = await upgrade('node-a', [A1], op2);
+    assert.deepEqual([result.consumed, result.revoked, result.grant.grant_id, result.grant.revoked, result.owner_request.request_id],
+      [false, true, given2.grant.grant_id, true, pending2.request_id]);
+    assert.equal(await requests(ids['node-a']), before);
+    // The earlier op's grant was not revoked: it still replays.
+    assert.equal((await upgrade('node-a', [A1], op1)).consumed, true);
+
+    // --- A grant for another package never admits (exact match, no covers). ---
+    const op5 = uuid();
+    const forA2 = (await upgrade('node-a', [A2], op5)).owner_request;
+    await approve({ request_id: forA2.request_id, choice: 'once' });
     result = await upgrade('node-a', [resource('node-a', 'd')], uuid());
     assert.equal(result.consumed, false);
-    result = await upgrade('node-a', [A2], uuid());
-    assert.equal(result.consumed, true, 'the direct grant naming A2 exactly admits A2');
+    result = await upgrade('node-a', [A2], op5);
+    assert.equal(result.consumed, true, 'the grant naming A2 exactly admits A2');
 
     // --- Rejected and expired requests come back as they are; no new request. ---
     const op3 = uuid();
