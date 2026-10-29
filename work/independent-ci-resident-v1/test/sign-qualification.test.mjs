@@ -69,7 +69,8 @@ test('the original mode (v1 reference) still signs exactly as before', t => {
   const w = world(); t.after(w.cleanup);
   const r = signAll({ ...K, v1Dir: w.v1, inDir: w.in, outDir: w.out, now: new Date('2026-10-29T00:00:00.000Z') });
   assert.equal(r.status, 'QUALIFICATIONS_V2_SIGNED');
-  assert.equal(r.reference, 'installed-v1');
+  // The original signer's output, key for key (and in that order): the upgrade mode's `reference` is not added here.
+  assert.deepEqual(Object.keys(r), ['status', 'qualifiedAt', 'publicKeySha256', 'roles', 'privateKeyPrinted']);
   for (const role of ROLES) {
     const q = JSON.parse(fs.readFileSync(path.join(w.out, `${role}.qualification.json`), 'utf8'));
     assert.ok(verify(null, Buffer.from(canonicalJson(q.payload)), K.pubPem, Buffer.from(q.signature, 'base64')));

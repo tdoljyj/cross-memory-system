@@ -18,7 +18,8 @@ import { UPGRADE_TOOL_PATH, UpgradeMailbox, VERSION_FACTS_REFRESH_MS, upgradeRes
 import { events } from '../src/pr-status.mjs';
 import { inspectUpgrade } from '../tools/rearm-tool.mjs';
 import { validatePolicy } from '../src/policy.mjs';
-import { CI_SOURCE, CLEAN_PROOF, RESIDENT, TEST_NODE, TEST_NODE_SHA, executorFixture, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
+import { BASE, CI_SOURCE, CLEAN_PROOF, HEAD, RESIDENT, TEST_NODE, TEST_NODE_SHA, executorFixture, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
+import { headKey } from '../src/ledger.mjs';
 
 const T0 = Date.parse('2026-10-29T08:00:00Z');
 const OP = '0a1b2c3d-0000-4000-8000-0000000000aa';
@@ -35,6 +36,7 @@ const op = (state, over = {}) => ({ opId: OP, node: 'fixture-node', fromGenerati
   phaseSince: new Date(T0 - 120_000).toISOString(), code: null, grant: { requestId: OP, confirmUrl: `https://kooyomi.example/confirm/${OP}`, status: 'pending', grantId: null },
   drain: null, pausedBy: null, ...over });
 const policy = validatePolicy(rawPolicy());
+const headKeyOf = () => headKey({ repo: policy.repo, pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: policy.sourceManifestSha256, attempt: 1 });
 
 async function upgradeRoot(t, { cur = current(), fx = facts(), status = null } = {}) {
   const root = await tempRoot(t);
@@ -156,6 +158,28 @@ test('version skew: consistent false holds new batches (holder version-skew, ren
   assert.deepEqual(holds(), []);
   assert.deepEqual((await f.receipts.latest(['intake-resumed'], 5)).map(e => [e.value.body.holder, e.value.body.held, e.value.body.reason]), [[VERSION_SKEW_HOLDER, true, 'VERSIONS_CONSISTENT']]);
   assert.equal(r2.state, 'COMPLETED');
+});
+
+test('version skew at the precheck: a global VERSION_SKEW deferral, nothing reserved or burned; once they agree the batch runs', async t => {
+  const f = await executorFixture(t, { now: T0 });
+  // the tick's own read says they agree (no hold), the precheck's fresh read says they do not: the race the precheck closes
+  let reads = 0, skew = true;
+  const agree = () => ({ view: versionsView({ current: current(), facts: facts({ observedAt: new Date(f.clock()).toISOString() }), status: null }, { policy, now: f.clock() }), notices: [] });
+  const differ = () => ({ view: versionsView({ current: current(), facts: facts({ generation: 1, observedAt: new Date(f.clock()).toISOString() }), status: null }, { policy, now: f.clock() }), notices: [] });
+  f.exec.versions = async () => { reads += 1; return reads % 2 === 1 || !skew ? agree() : differ(); };
+  await f.drop(triggerBytes());
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.reason], ['DEFERRED', 'VERSION_SKEW']);
+  assert.deepEqual(f.engine.calls, [], 'no stage');
+  assert.deepEqual(await f.ledger.open(), [], 'no reservation');
+  assert.equal((await f.receipts.latest(['batch-reserved'], 5)).length, 0);
+  assert.equal(await f.ledger.headBurned(headKeyOf()), false, 'nothing burned');
+  assert.deepEqual(f.exec.intakePause.active(f.clock()), [], 'no hold was written in this race');
+  // the skew is gone: the same head runs as usual
+  skew = false;
+  f.advance(60_000);
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.equal((await f.receipts.latest(['batch-reserved'], 5)).length, 1);
 });
 
 test('version skew: never acts without the port, and never on null from the start', async t => {
@@ -302,7 +326,8 @@ const cfg = validateCompanionConfig({ contract: COMPANION_CONFIG_CONTRACT, node:
 
 test('companion: the upgrade tool argv is fixed and strictly checked', () => {
   const ok = [['version-facts'], ['stage', '--op', OP, '--package', PKG, '--generation', '3', '--linux-manifest', LINUX_MANIFEST],
-    ['switch', '--op', OP, '--from', '2', '--to', '3', '--linux-manifest', LINUX_MANIFEST], ['rollback', '--op', OP, '--from', '3', '--to', '2'], ['verify', '--op', OP, '--generation', '3']];
+    ['switch', '--op', OP, '--from', '2', '--to', '3', '--linux-manifest', LINUX_MANIFEST], ['rollback', '--op', OP, '--from', '3', '--to', '2'], ['verify', '--op', OP, '--generation', '3'],
+    ['retain', '--op', OP, '--keep', '3', '--generation', '3'], ['retain', '--op', OP, '--keep', '2', '--generation', '5'], ['retain', '--op', OP, '--keep', '10', '--generation', '5']];
   for (const a of ok) {
     assert.equal(upgradeToolArgvOk(a), true, a.join(' '));
     const full = argv(cfg).upgradeTool(a);
@@ -311,7 +336,10 @@ test('companion: the upgrade tool argv is fixed and strictly checked', () => {
   }
   const bad = [[], ['adopt', '--generation', '1'], ['version-facts', '--op', OP], ['stage', '--op', OP, '--package', PKG, '--generation', '3'], ['stage', '--op', OP.toUpperCase(), '--package', PKG, '--generation', '3', '--linux-manifest', LINUX_MANIFEST],
     ['switch', '--op', OP, '--from', '0', '--to', '3', '--linux-manifest', LINUX_MANIFEST], ['rollback', '--op', OP, '--from', '3', '--to', '2', '--force'], ['verify', '--op', OP, '--generation', '3; rm -rf /'],
-    ['verify --op x', '--generation', '3'], ['verify', '--op', OP, '--generation', '../3'], ['verify', '--generation', '3', '--op', OP], 'version-facts'];
+    ['verify --op x', '--generation', '3'], ['verify', '--op', OP, '--generation', '../3'], ['verify', '--generation', '3', '--op', OP], 'version-facts',
+    ['retain', '--op', OP], ['retain', '--op', OP, '--keep', '3'], ['retain', '--op', OP, '--generation', '3'], ['retain', '--op', OP, '--generation', '3', '--keep', '3'],
+    ['retain', '--op', OP, '--keep', '1', '--generation', '3'], ['retain', '--op', OP, '--keep', '11', '--generation', '3'], ['retain', '--op', OP, '--keep', '03', '--generation', '3'],
+    ['retain', '--op', OP, '--keep', '3', '--generation', '0']];
   for (const a of bad) {
     assert.equal(upgradeToolArgvOk(a), false, JSON.stringify(a));
     assert.throws(() => argv(cfg).upgradeTool(a), { code: 'COMPANION_UPGRADE_TOOL_ARGS_INVALID' }, JSON.stringify(a));
@@ -334,8 +362,8 @@ async function lane(t, script) {
 const factsAnswer = clock => ({ code: 0, stdout: JSON.stringify(facts({ observedAt: new Date(clock()).toISOString() })) + '\n' });
 
 test('companion lane: each kind goes to the root tool and its JSON back as is; a refusal carries the tool code; the facts are refreshed', async t => {
-  const answers = { stage: { code: 0, stdout: '{"status":"STAGED","generation":3}\n' }, switch: { code: 0, stdout: '{"status":"SWITCHED"}\n' }, rollback: { code: 3, stdout: '{"status":"REFUSED","code":"QUIESCENCE_UNCONFIRMED"}\n' },
-    verify: { code: 0, stdout: '{"status":"VERIFIED","generation":3}\n' } };
+  const answers = { stage: { code: 0, stdout: '{"status":"STAGED","generation":3}\n' }, switch: { code: 0, stdout: '{"status":"SWITCHED"}\n' }, rollback: { code: 3, stdout: '{"status":"REFUSED","code":"QUIESCENCE_UNCONFIRMED","upgradeCode":"UPGRADE_LINUX_QUIESCENCE_UNCONFIRMED"}\n' },
+    verify: { code: 0, stdout: '{"status":"VERIFIED","generation":3}\n' }, retain: { code: 0, stdout: '{"status":"LINUX_RETAINED","generation":3,"keep":3,"kept":[1,2],"archived":[],"deleted":0}\n' } };
   const f = await lane(t, (args, clock) => (args[0] === 'version-facts' ? factsAnswer(clock) : answers[args[0]]));
   // first pass: nothing asked, the facts are due at once
   assert.deepEqual(await f.l.step(), { answered: [], facts: true });
@@ -344,15 +372,18 @@ test('companion lane: each kind goes to the root tool and its JSON back as is; a
     await f.box.send({ kind: 'linux-upgrade-switch', opId: OP, args: { fromGeneration: 2, toGeneration: 3, linuxManifestSha256: LINUX_MANIFEST } }),
     await f.box.send({ kind: 'linux-upgrade-rollback', opId: OP, args: { fromGeneration: 3, toGeneration: 2 } }),
     await f.box.send({ kind: 'linux-upgrade-verify', opId: OP, args: { generation: 3 } }),
-    await f.box.send({ kind: 'linux-version-facts' })];
+    await f.box.send({ kind: 'linux-version-facts' }),
+    await f.box.send({ kind: 'linux-upgrade-retain', opId: OP, args: { generation: 3, keep: 3 } })];
   f.runs.length = 0;
   f.advance(1000);
   const step = await f.l.step();
-  assert.deepEqual(step.answered.map(a => a[0]).sort(), ['linux-upgrade-rollback', 'linux-upgrade-stage', 'linux-upgrade-switch', 'linux-upgrade-verify', 'linux-version-facts'].sort());
+  assert.deepEqual(step.answered.map(a => a[0]).sort(), ['linux-upgrade-retain', 'linux-upgrade-rollback', 'linux-upgrade-stage', 'linux-upgrade-switch', 'linux-upgrade-verify', 'linux-version-facts'].sort());
   const got = Object.fromEntries(await Promise.all(reqs.map(async r => [r.kind, await f.box.poll(r)])));
   assert.deepEqual([got['linux-upgrade-stage'].ok, got['linux-upgrade-stage'].result, got['linux-upgrade-stage'].tool], [true, { status: 'STAGED', generation: 3 }, { exit: 0, status: 'STAGED' }]);
   assert.deepEqual([got['linux-upgrade-switch'].ok, got['linux-upgrade-verify'].ok, got['linux-version-facts'].ok], [true, true, true]);
-  assert.deepEqual([got['linux-upgrade-rollback'].ok, got['linux-upgrade-rollback'].code, got['linux-upgrade-rollback'].tool.exit], [false, 'QUIESCENCE_UNCONFIRMED', 3]);
+  assert.deepEqual([got['linux-upgrade-rollback'].ok, got['linux-upgrade-rollback'].code, got['linux-upgrade-rollback'].tool.exit], [false, 'UPGRADE_LINUX_QUIESCENCE_UNCONFIRMED', 3]);
+  assert.deepEqual([got['linux-upgrade-retain'].ok, got['linux-upgrade-retain'].result.status], [true, 'LINUX_RETAINED']);
+  assert.ok(f.runs.some(r => r[0] === 'retain'));
   // the facts right after the switch and right after the rollback (whatever its answer), besides the asked ones
   const order = f.runs.map(r => r[0]);
   assert.ok(order.indexOf('switch') >= 0 && order[order.indexOf('switch') + 1] === 'version-facts', order.join());

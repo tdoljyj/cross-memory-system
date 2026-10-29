@@ -75,13 +75,21 @@ async function assertNoLinks(base, rel) {
 // One file, one handle: not a link, one name, the size from the open handle (fstat) under the cap; exactly that many bytes
 // are allocated (no buffer of the cap's size per file: a real package holds hundreds of files), and a file that grew or
 // shrank under the read is refused.
-export async function readFileOnce(file, max = FILE_MAX_BYTES) {
+//
+// The path to it (review m3): `recheck` walks every component again with lstat (no link, no junction) AFTER the read, and
+// the file's own lstat must give the same dev/ino as the handle: a component swapped for a junction between the walk before
+// the open and the open itself would have to be swapped back before the walk after the read. O_NOFOLLOW is used where the
+// platform has it (not on Windows). Remaining risk, accepted: a swap and a swap back, both inside that window, by a process
+// that can write the package directory (the Owner's session); its bytes are then still bound by the sha256 of each file
+// against the manifest whose hash the Owner's Grant names, so it can at most substitute identical bytes.
+export async function readFileOnce(file, max = FILE_MAX_BYTES, { recheck = null } = {}) {
   const link = await fs.lstat(file);
   check(link.isFile() && !link.isSymbolicLink(), U.PACKAGE_UNREADABLE, 'type');
-  const handle = await fs.open(file, 'r');
+  const flags = fs.constants?.O_NOFOLLOW ? (fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW) : 'r';
+  const handle = await fs.open(file, flags);
   try {
     const st = await handle.stat();
-    check(st.isFile() && st.nlink === 1 && st.ino === link.ino, U.PACKAGE_UNREADABLE, 'identity');
+    check(st.isFile() && st.nlink === 1 && st.ino === link.ino && st.dev === link.dev, U.PACKAGE_UNREADABLE, 'identity');
     check(st.size <= max, U.PACKAGE_UNREADABLE, 'size');
     const out = Buffer.allocUnsafe(st.size);
     let at = 0;
@@ -94,6 +102,9 @@ export async function readFileOnce(file, max = FILE_MAX_BYTES) {
     // One byte more than fstat said means the file grew under the read.
     const { bytesRead: extra } = await handle.read(Buffer.alloc(1), 0, 1, st.size);
     check(extra === 0, U.PACKAGE_UNREADABLE, 'size-changed');
+    if (recheck) await recheck();
+    const after = await fs.lstat(file);
+    check(after.isFile() && !after.isSymbolicLink() && after.ino === st.ino && after.dev === st.dev, U.PACKAGE_UNREADABLE, 'identity');
     return out;
   } finally {
     await handle.close();
@@ -116,8 +127,7 @@ export async function readPackageOnce(dir, expectedSha) {
   const read = async (rel, max) => {
     try {
       await assertNoLinks(dir, rel);
-      const file = path.join(dir, ...rel.split('/'));
-      return await readFileOnce(path.join(dir, ...rel.split('/')), max);
+      return await readFileOnce(path.join(dir, ...rel.split('/')), max, { recheck: () => assertNoLinks(dir, rel) });
     } catch (error) {
       if (error?.code === U.PACKAGE_UNREADABLE) throw error;
       return fail(U.PACKAGE_UNREADABLE, 'read');
@@ -142,5 +152,8 @@ export async function readPackageOnce(dir, expectedSha) {
     bytesByPath.set(rel, bytes);
   }
   for (const f of manifest.linux.files) check(bytesByPath.get(f.path).length === f.bytes, U.PACKAGE_CHANGED, f.path);
+  // The directory itself still is what it was (no junction swapped in above it during the reads).
+  const real = await fs.realpath(dir).catch(() => null);
+  check(real !== null && path.resolve(real).toLowerCase() === path.resolve(dir).toLowerCase(), U.PACKAGE_UNREADABLE, 'realpath');
   return { manifest, manifestBytes, packageManifestSha256: expectedSha, bytesByPath };
 }

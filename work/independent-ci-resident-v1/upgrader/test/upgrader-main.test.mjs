@@ -85,3 +85,22 @@ test('main: refuses a configuration that does not hash to --config-sha256; one p
   // A second instance while the first holds the lock (its pid is alive and its liveness fresh) is refused.
   await assert.rejects(main({ argv: ['--root', env.root, '--config-sha256', sha256(bytes), '--once'], ports: env.ports, clock: env.clock.fn }), { code: 'EXECUTOR_ALREADY_RUNNING' });
 });
+
+test('the inbox is bounded: 8 files a pass, at most 48 operations a day; more requests are archived as ignored', async t => {
+  const env = await makeEnv(t, { doorOptions: { approveAt: null } });
+  const up = await new Upgrader({ root: env.root, config: env.config, clock: env.clock.fn, pid: 7, ports: env.ports }).open();
+  for (let i = 0; i < 60; i += 1) {
+    const id = `5e1f0000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`;
+    await fs.writeFile(path.join(env.root, 'upgrade', 'inbox', `${String(env.clock.now + i).padStart(13, '0')}-${sha256(id).slice(0, 12)}.json`), upgradeRequestBytes(env.pkgs.n2, { requestId: id }));
+  }
+  await up.tick();
+  assert.equal((await fs.readdir(path.join(env.root, 'upgrade', 'inbox'))).length, 52, 'eight a pass');
+  for (let i = 0; i < 8; i += 1) { env.clock.advance(1_000); await up.tick(); }
+  assert.equal((await fs.readdir(path.join(env.root, 'upgrade', 'ops'))).length, 48);
+  assert.equal((await fs.readdir(path.join(env.root, 'upgrade', 'inbox-archive', 'ignored'))).length, 12);
+  // A day later there is room again.
+  env.clock.advance(24 * 3_600_000);
+  await drop(env, upgradeRequestBytes(env.pkgs.n2, { requestId: '5e1f0000-0000-4000-8000-0000000000ee' }));
+  await up.tick();
+  await fs.access(path.join(env.root, 'upgrade', 'ops', '5e1f0000-0000-4000-8000-0000000000ee'));
+});

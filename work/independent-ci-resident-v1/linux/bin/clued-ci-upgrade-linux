@@ -8,8 +8,9 @@ every rollback is executed by this same frozen code.
   clued-ci-upgrade-linux switch   --op UUID --from N --to M --linux-manifest SHA256
   clued-ci-upgrade-linux rollback --op UUID --from M --to N        (M = the generation given up, N = the one restored)
   clued-ci-upgrade-linux verify   --generation N
-  clued-ci-upgrade-linux retain   --generation N [--op UUID]
-  clued-ci-upgrade-linux adopt    --generation 1 --package SHA256  (root, once, from install-resident-linux.sh)
+  clued-ci-upgrade-linux retain   --op UUID --keep K [--generation N]   (mailbox kind linux-upgrade-retain {keep}; K 2..10)
+  clued-ci-upgrade-linux adopt    --generation 1 --package SHA256  (root, from install-resident-linux.sh: first install and
+                                                                    every full reinstall, after the uninstall archived the old state)
 
 One JSON object on one stdout line; exit 0 only on success. Root on Linux only.
 
@@ -967,11 +968,14 @@ def verify(P, host, gen):
     return {'status': 'LINUX_GENERATION_VERIFIED', 'generation': gen, 'checks': checks, 'readiness': ready}
 
 
-def retain(P, host, gen, op=None, keep=3, rename=rename_noreplace):
-    """Keep the `keep` most recent generations up to the current one (the current one is live, not parked) and every
-    generation above it (given up by a rollback, kept as evidence); older parked generations and leftover staging
-    directories are renamed into archive/. Nothing is deleted."""
+def retain(P, host, keep, gen=None, op=None, rename=rename_noreplace):
+    """Same rule as the Windows side (upgrader/src/generations.mjs retain): the parked generations k > current - keep
+    are kept (with the live current one that makes `keep` generations), and every generation above the current one (given
+    up by a rollback, kept as evidence); older parked generations and leftover staging directories other than `op`'s
+    are renamed into archive/. Nothing is deleted. Re-running repeats only what is still in place."""
+    need(isinstance(keep, int) and 2 <= keep <= 10, 'USAGE_REFUSED')
     cur = read_current(P)
+    gen = cur['generation'] if gen is None else gen
     need(cur['generation'] == gen, 'CURRENT_GENERATION_MISMATCH', current=cur['generation'])
     parked = []
     if os.path.isdir(P['generations']):
@@ -979,8 +983,7 @@ def retain(P, host, gen, op=None, keep=3, rename=rename_noreplace):
             mm = re.fullmatch(r'g([1-9][0-9]{0,8})', name)
             if mm:
                 parked.append(int(mm.group(1)))
-    recent = sorted({k for k in parked if k <= gen} | {gen}, reverse=True)[:keep]
-    kept = sorted(k for k in parked if k in recent or k > gen)
+    kept = sorted(k for k in parked if k > gen - keep)
     archived = []
     for k in sorted(parked):
         if k not in kept:
@@ -996,16 +999,31 @@ def retain(P, host, gen, op=None, keep=3, rename=rename_noreplace):
                 dst = archive_name(P, f'next-{other}')
                 rename(f"{P['opt']}/{name}", dst)
                 archived.append({'from': name, 'to': 'archive/' + os.path.basename(dst)})
-    return {'status': 'LINUX_RETAINED', 'generation': gen, 'kept': kept, 'archived': archived, 'deleted': 0}
+    return {'status': 'LINUX_RETAINED', 'generation': gen, 'keep': keep, 'kept': kept, 'archived': archived, 'deleted': 0}
+
+
+def stale_upgrade_state(P):
+    """What an earlier installation left (its generation records, parked generations, given-up records). A full
+    reinstall numbers from 1 again only after uninstall-resident-linux.sh renamed all of it into its evidence directory."""
+    stale = []
+    if os.path.isdir(P['state']):
+        stale += [n for n in sorted(os.listdir(P['state'])) if re.fullmatch(r'g[1-9][0-9]{0,8}\.json|given-up', n) and n != 'g1.json']
+    if os.path.isdir(P['generations']):
+        stale += ['generations/' + n for n in sorted(os.listdir(P['generations']))]
+    return stale
 
 
 def adopt(P, host, gen, pkg_sha):
-    """Generation 1 = what is installed now. Writes g1.json and current.json; moves nothing."""
+    """Generation 1 = what is installed now (first install, or a full reinstall that numbers from 1 again). Writes g1.json
+    and current.json; moves nothing. Refuses while an earlier installation's upgrade state is still in place."""
     need(gen == 1, 'ADOPT_GENERATION_ONE_ONLY')
     if os.path.lexists(current_path(P)):
         cur = read_current(P)
-        need(cur['generation'] == 1 and cur.get('packageManifestSha256') == pkg_sha and cur.get('opId') is None, 'ALREADY_ADOPTED')
+        need(cur['generation'] == 1 and cur.get('packageManifestSha256') == pkg_sha and cur.get('opId') is None, 'ALREADY_ADOPTED',
+             current=cur['generation'], hint='full reinstall: uninstall-resident-linux.sh archives the old upgrade state first')
         return {'status': 'LINUX_GENERATION_ADOPTED', 'replayed': True, 'generation': 1}
+    stale = stale_upgrade_state(P)
+    need(not stale, 'STALE_UPGRADE_STATE_ARCHIVE_FIRST', stale=stale[:20])
     items = {}
     for name, _, kind in ITEMS:
         i = ident(live_item(P, name), True, name)
@@ -1030,10 +1048,10 @@ def adopt(P, host, gen, pkg_sha):
 
 # ---------- command line ----------
 
-SPEC = {'version-facts': ({}, {}), 'stage': ({'--op', '--package', '--generation', '--linux-manifest'}, {}),
+SPEC = {'version-facts': (set(), set()), 'stage': ({'--op', '--package', '--generation', '--linux-manifest'}, {}),
         'switch': ({'--op', '--from', '--to', '--linux-manifest'}, {}), 'rollback': ({'--op', '--from', '--to'}, {}),
-        'verify': ({'--generation'}, {'--op'}), 'retain': ({'--generation'}, {'--op'}), 'adopt': ({'--generation', '--package'}, {})}
-SHAPES = {'--op': UUID, '--package': HEX64, '--linux-manifest': HEX64, '--generation': GEN, '--from': GEN, '--to': GEN}
+        'verify': ({'--generation'}, {'--op'}), 'retain': ({'--op', '--keep'}, {'--generation'}), 'adopt': ({'--generation', '--package'}, {})}
+SHAPES = {'--op': UUID, '--package': HEX64, '--linux-manifest': HEX64, '--generation': GEN, '--from': GEN, '--to': GEN, '--keep': re.compile(r'^(?:[2-9]|10)$')}
 
 
 def parse(argv):
@@ -1044,7 +1062,7 @@ def parse(argv):
     args = dict(zip(keys, values))
     for k, v in args.items():
         need(SHAPES[k].match(v) is not None, 'USAGE_REFUSED', argument=k)
-    for k in ('--generation', '--from', '--to'):
+    for k in ('--generation', '--from', '--to', '--keep'):
         if k in args:
             args[k] = int(args[k])
     return argv[0], args
@@ -1064,7 +1082,7 @@ def dispatch(sub, a, P, host):
     if sub == 'verify':
         return verify(P, host, a['--generation'])
     if sub == 'retain':
-        return retain(P, host, a['--generation'], a.get('--op'))
+        return retain(P, host, a['--keep'], a.get('--generation'), a['--op'])
     return adopt(P, host, a['--generation'], a['--package'])
 
 

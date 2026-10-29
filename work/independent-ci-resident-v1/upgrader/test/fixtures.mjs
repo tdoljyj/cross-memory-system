@@ -215,8 +215,8 @@ const shaOf = async file => { try { return sha256(await fs.readFile(file)); } ca
 
 // upgrade-apply.ps1 as a JSON "SCM" file in the temporary root.
 export class FakeWindows {
-  constructor(root, resident, { failVerify = () => false, failCompile = false, failStart = () => false, failSwitch = () => false } = {}) {
-    Object.assign(this, { root, resident, failVerify, failCompile, failStart, failSwitch });
+  constructor(root, resident, { failVerify = () => false, failCompile = false, failStart = () => false, failSwitch = () => false, companionDown = () => false } = {}) {
+    Object.assign(this, { root, resident, failVerify, failCompile, failStart, failSwitch, companionDown });
     this.file = path.join(root, 'fake-scm.json');
     this.calls = [];
   }
@@ -264,7 +264,12 @@ export class FakeWindows {
     await this.save(s);
     return { ok: true, code: null };
   }
-  async restartCompanion() { this.calls.push('RestartCompanion'); this.resident.companionAlive = true; return { ok: true, code: null }; }
+  async restartCompanion() {
+    this.calls.push('RestartCompanion');
+    if (this.companionDown()) { this.resident.companionAlive = false; return { ok: false, code: 'COMPANION_TASK_NOT_RUNNING' }; }
+    this.resident.companionAlive = true;
+    return { ok: true, code: null };
+  }
   async startServices() {
     this.calls.push('StartServices');
     const cur = JSON.parse(await fs.readFile(path.join(this.root, 'upgrade', 'current.json'), 'utf8'));
@@ -286,6 +291,7 @@ export class FakeWindows {
 export class FakeLinux {
   constructor(root, clock, { failStage = null, failSwitch = null, failRollback = false, failVerify = () => false, unavailable = () => false } = {}) {
     Object.assign(this, { root, clock, failStage, failSwitch, failRollback, failVerify, unavailable });
+    this.retained = [];
     this.file = path.join(root, 'fake-linux.json');
   }
   async state() { return JSON.parse(await fs.readFile(this.file, 'utf8')); }
@@ -298,7 +304,8 @@ export class FakeLinux {
     s.history[generation] = { manifestSha256: pkg.linux.manifestSha256, ciSourceManifestSha256: pkg.ciSourceManifestSha256 };
     s.staged = generation;
     await this.save(s);
-    return { ok: true, code: null, result: { status: 'staged' } };
+    return { ok: true, code: null, result: { status: 'LINUX_STAGED', roles: Object.fromEntries(['gitleaks', 'trivy', 'contract-placement'].map((r, i) => [r,
+      { policySha256: sha256(`policy ${r} ${packageManifestSha256}`), qualificationSha256: sha256(`qualification ${r} ${i} ${packageManifestSha256}`) }])) } };
   }
   async switch({ toGeneration }) {
     if (this.unavailable('switch')) return { ok: false, code: U.COMPANION_UNAVAILABLE };
@@ -308,16 +315,23 @@ export class FakeLinux {
     return { ok: true, code: null, result: { status: 'switched' } };
   }
   async rollback({ toGeneration }) {
-    if (this.failRollback) return { ok: false, code: 'UPGRADE_LINUX_ROLLBACK_REFUSED' };
+    if (this.unavailable('rollback')) return { ok: false, code: U.COMPANION_UNAVAILABLE };
+    if (this.failRollback) return { ok: false, code: 'UPGRADE_ROLLBACK_FAILED' };
     const s = await this.state();
     if (s.generation !== toGeneration) { s.generation = toGeneration; s.at = this.clock.fn(); await this.save(s); }
     return { ok: true, code: null, result: { status: 'rolled-back' } };
+  }
+  async retain({ generation }) {
+    if (this.unavailable('retain')) return { ok: false, code: U.COMPANION_UNAVAILABLE };
+    this.retained.push(generation);
+    return { ok: true, code: null, result: { status: 'LINUX_RETAINED', generation } };
   }
   async verify({ generation }) {
     const s = await this.state();
     return s.generation === generation && !this.failVerify(generation) ? { ok: true, code: null } : { ok: false, code: 'UPGRADE_LINUX_VERIFY_REFUSED' };
   }
   async readFacts() {
+    if (this.unavailable('facts')) return null;
     const s = await this.state();
     const now = this.clock.fn();
     const at = Math.max(s.at, Math.floor(now / (5 * MIN)) * 5 * MIN);

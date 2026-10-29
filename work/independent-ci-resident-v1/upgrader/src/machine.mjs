@@ -37,6 +37,11 @@ const MIN = 60_000, HOUR = 3_600_000;
 export const POLL = Object.freeze({ drain: 60_000, pause: 15_000, verify: 15_000, halted: 5 * MIN, transient: MIN, grantSwitchMs: 10 * MIN });
 export const HEARTBEAT_FRESH_MS = 60_000;
 export const GRANT_DOOR_GIVE_UP_MS = 24 * HOUR;
+// A rollback that cannot reach the companion (the Owner is not logged on, the host restarted) waits this long, the node
+// stopped or paused, before it ends ROLLBACK_FAILED with UPGRADE_ROLLBACK_COMPANION_UNAVAILABLE.
+export const ROLLBACK_WAIT_MAX_MS = 24 * HOUR;
+const ROLE_NAME = /^[a-z][a-z0-9-]{0,39}$/;
+const HEX = /^[0-9a-f]{64}$/;
 export const RECEIPT_CONTRACT_V6 = 'clued.independent-ci.resident-install-receipt/6';
 const ABORT_AT_SWITCH = new Set([U.LINUX_QUIESCENCE_UNCONFIRMED, U.LINUX_HOST_FACTS_CHANGED]);
 const LINUX_STAGE_CODES = new Set([U.LINUX_STAGE_REFUSED, U.LINUX_HOST_FACTS_CHANGED]);
@@ -49,6 +54,14 @@ const COMPILED_RECEIPT_KEYS = Object.freeze({ 'bin\\ResidentServiceHost.exe': 'R
 const entryOf = (j, step) => j.steps.find(s => s.step === step) ?? null;
 const all = (j, step) => j.steps.filter(s => s.step === step);
 const lastOkPause = j => all(j, 'pause').filter(p => p.result?.ok).pop() ?? null;
+// When the Grant was consumed (the start of the deferral bound, spec: at most 24 h after it): the door's own time when it gives
+// one, else the time the upgrader saw the consumption; a use that was only replayed (seen again after a restart) counts from
+// the grant step's intent, the earliest it can have been.
+export function grantConsumedAt(entry) {
+  const d = entry.result.detail ?? {};
+  if (typeof d.consumedAt === 'string' && Number.isFinite(Date.parse(d.consumedAt))) return Date.parse(d.consumedAt);
+  return Date.parse(entry.intent.at);
+}
 export const staged = j => j.steps.some(s => s.step === 'stage-windows');
 
 export function decide(j, { now, halted }, t) {
@@ -68,7 +81,7 @@ export function decide(j, { now, halted }, t) {
   const grant = done('grant');
   if (!grant) return next('grant');
   if (!grant.ok) return term(grant.code);
-  const staleAt = Date.parse(grant.at) + t.deferMaxHours * HOUR;
+  const staleAt = grantConsumedAt(entryOf(j, 'grant')) + t.deferMaxHours * HOUR;
   const hold = done('hold');
   if (!hold) {
     if (now >= staleAt) return term(U.GRANT_STALE, { cleanup: true });
@@ -80,7 +93,8 @@ export function decide(j, { now, halted }, t) {
   // The cycles: drain c -> pause -> stage-windows -> stage-linux, each later step marked with its cycle.
   const drains = all(j, 'drain');
   const startCycle = c => {
-    if (now >= staleAt || c >= RETRY_SLOTS.drain) return term(U.GRANT_STALE, { cleanup: true });
+    if (now >= staleAt) return term(U.GRANT_STALE, { cleanup: true });
+    if (c >= RETRY_SLOTS.drain) return term(U.RETRIES_EXHAUSTED, { cleanup: true });
     if (halted) return wait(U.RESIDENT_HALTED, Math.min(now + POLL.halted, staleAt));
     return next('drain', c, { cycle: c });
   };
@@ -101,7 +115,7 @@ export function decide(j, { now, halted }, t) {
   for (const [i, step] of [[1, 'pause'], [2, 'stage-windows'], [3, 'stage-linux']]) {
     if (chain[i]) continue;
     const used = all(j, step).length;
-    if (used >= RETRY_SLOTS[step]) return term(U.GRANT_STALE, { cleanup: true });
+    if (used >= RETRY_SLOTS[step]) return term(U.RETRIES_EXHAUSTED, { cleanup: true });
     return next(step, used, { cycle: c });
   }
 
@@ -120,12 +134,13 @@ export function decide(j, { now, halted }, t) {
 function rollbackNext(j, failCode, { done, term, next }) {
   const aborted = categoryOf(failCode) === 'aborted';
   const chain = ['rollback-stop', 'rollback-switch-windows'];
-  if (!aborted && j.steps.some(s => s.step === 'switch-linux')) chain.push('rollback-switch-linux');
+  // Whenever switch-linux ran, its rollback runs too (idempotent: after a refusal that moved nothing it only records it).
+  if (j.steps.some(s => s.step === 'switch-linux')) chain.push('rollback-switch-linux');
   chain.push('rollback-start', 'rollback-verify', aborted ? 'resume' : 'keep-paused-notify');
   for (const step of chain) {
     const r = done(step);
     if (!r) return next(step, 0, step === 'resume' ? { mode: 'aborted' } : {});
-    if (!r.ok) return term(U.ROLLBACK_FAILED);
+    if (!r.ok) return term(r.code === U.ROLLBACK_COMPANION_UNAVAILABLE ? r.code : U.ROLLBACK_FAILED);
   }
   return { kind: 'terminal', outcome: aborted ? 'REFUSED' : 'ROLLED_BACK_PAUSED', code: failCode };
 }
@@ -277,6 +292,14 @@ export class Machine {
     }
   }
 
+  // A rollback step that needs the companion and does not get it: wait (ROLLING_BACK, node stopped or paused) up to
+  // ROLLBACK_WAIT_MAX_MS from the step's intent, then end with the code that says why.
+  rollbackWait(intent) {
+    const left = Date.parse(intent.at) + ROLLBACK_WAIT_MAX_MS - this.clock();
+    if (left <= 0) return failed(U.ROLLBACK_COMPANION_UNAVAILABLE);
+    return waitFor(Math.min(POLL.transient, left), { code: U.ROLLBACK_COMPANION_UNAVAILABLE });
+  }
+
   heartbeatFresh(hb, now, since = 0) { return hb !== null && hb >= since && now - hb <= HEARTBEAT_FRESH_MS && hb - now <= HEARTBEAT_FRESH_MS; }
 
   async markerOnce(name, bytes) {
@@ -309,7 +332,7 @@ export class Machine {
   }
 
   // The verify conditions (spec B1) for generation `generation`, then upgrade-apply Verify and linux-upgrade-verify.
-  async verifyPoll(j, intent, { generation, policySha256, stopStep, startStep, codes }) {
+  async verifyPoll(j, intent, { generation, policySha256, stopStep, startStep, codes, companionWaitMs = 0 }) {
     const now = this.clock();
     const deadline = Date.parse(intent.at) + this.t.verifyMaxMs;
     const stop = entryOf(j, stopStep).intent;
@@ -342,12 +365,15 @@ export class Machine {
       if (!l.ok) return { ok: false, code: codes.fail, detail: { cause: 'linux', linuxCode: l.code ?? null } };
       return okd({ generation });
     }
-    if (now >= deadline) return { ok: false, code: cons === false ? codes.skew : codes.timeout, detail: { waiting: waiting[0] } };
+    // Waiting only for the companion (its heartbeat, its version facts): a rollback waits up to companionWaitMs for it.
+    const onlyCompanion = waiting.every(k => k === 'companion' || k === 'versions') && cons !== false;
+    if (now >= deadline && onlyCompanion && codes.companion && now < Date.parse(intent.at) + companionWaitMs) return waitFor(POLL.transient, { code: codes.companion, waiting: waiting[0] });
+    if (now >= deadline) return { ok: false, code: onlyCompanion && codes.companion ? codes.companion : (cons === false ? codes.skew : codes.timeout), detail: { waiting: waiting[0] } };
     return waitFor(Math.min(POLL.verify, deadline - now), { code: null, waiting: waiting[0] });
   }
 
   // The install receipt /6 of the new generation: every field of the previous one, then what this upgrade changed.
-  receiptOf(j, intent, prev, prevSha, scm, newShas) {
+  receiptOf(j, intent, prev, prevSha, scm, newShas, rolesOf = null) {
     const plan = j.plan;
     const grant = entryOf(j, 'grant').result;
     const out = { ...prev, contract: RECEIPT_CONTRACT_V6, generation: plan.toGeneration, packageManifestSha256: plan.packageManifestSha256,
@@ -357,7 +383,7 @@ export class Machine {
       residentBinaryPath: scm.resident.binPath, brokerBinaryPath: scm.broker.binPath,
       companionTaskAction: { path: scm.companionTask.path, arguments: scm.companionTask.arguments },
       linux: { generation: plan.toGeneration, manifestSha256: plan.target.linux.manifestSha256, ciSourceManifestSha256: plan.target.ciSourceManifestSha256,
-        qualificationsSha256: prev.linux?.qualificationsSha256 ?? {} },
+        qualificationsSha256: rolesOf ?? prev.linux?.qualificationsSha256 ?? {} },
       upgrader: prev.upgrader ?? null, writtenBy: 'CluedCIUpgrader', inheritedFrom: prevSha,
       upgrade: { opId: this.opId, requestId: j.request.requestId, grantId: grant.detail.grantId, grantReceiptId: grant.detail.receiptId, decisionRef: plan.acceptanceDecisionRef,
         fromGeneration: plan.fromGeneration, startedAt: grant.at, completedAt: intent.at } };
@@ -426,7 +452,10 @@ const STEPS = {
       const now = m.clock();
       const r = await m.door.consume({ opId: m.opId, resource: plan.grantResource, note: typeof j.request.note === 'string' ? j.request.note : null });
       const since = now - Date.parse(intent.at);
-      if (r.kind === 'consumed') return okd({ grantId: r.grant.grantId, receiptId: r.grant.receiptId, replayed: r.grant.replayed, use: r.grant.use });
+      if (r.kind === 'consumed') {
+        const consumedAt = r.grant.consumedAt ?? (r.grant.replayed ? intent.at : new Date(now).toISOString());
+        return okd({ grantId: r.grant.grantId, receiptId: r.grant.receiptId, replayed: r.grant.replayed, use: r.grant.use, consumedAt });
+      }
       if (r.kind === 'refused') return failed(r.code);
       if (r.kind === 'pending') {
         return waitFor(since < POLL.grantSwitchMs ? m.t.grantPollMs[0] : m.t.grantPollMs[1],
@@ -448,7 +477,7 @@ const STEPS = {
     async run(m, j, intent) {
       const plan = m.planOf(j);
       const now = m.clock();
-      const staleAt = Date.parse(entryOf(j, 'grant').result.at) + m.t.deferMaxHours * HOUR;
+      const staleAt = grantConsumedAt(entryOf(j, 'grant')) + m.t.deferMaxHours * HOUR;
       if (now >= staleAt) { await m.resident.liftHold(m.opId); return failed(U.GRANT_STALE); }
       if (await m.resident.halted()) { await m.resident.liftHold(m.opId); return failed(U.RESIDENT_HALTED); }
       await m.resident.hold(m.opId);
@@ -473,6 +502,8 @@ const STEPS = {
       const plan = m.planOf(j);
       const { requestName: name, requestSha256: ours } = intent.args;
       const seq3 = String(intent.seq).padStart(3, '0');
+      // A HALT before the pause is confirmed: no pause for an upgrade now (deferred, the request withdrawn or lifted).
+      if (await m.resident.halted()) { await m.cleanup(j, {}); return failed(U.RESIDENT_HALTED); }
       const marker = m.opFile(`${seq3}-pause.request.json`);
       const bytes = pauseRequestBytes(m.opId, intent.seq);
       if (!(await exists(marker))) {
@@ -507,6 +538,7 @@ const STEPS = {
     async run(m, j) {
       const plan = m.planOf(j);
       const abort = async () => { await m.cleanup(j, { withdrawStaged: true }); return failed(U.WINDOWS_STAGE_REFUSED); };
+      if (await m.resident.halted()) { await m.cleanup(j, {}); return failed(U.RESIDENT_HALTED); }
       let pkg;
       try { pkg = await m.readPackage(plan.packageDirectory, plan.packageManifestSha256); } catch (error) {
         if (error instanceof ResidentError) return abort();
@@ -535,9 +567,19 @@ const STEPS = {
   'stage-linux': {
     async run(m, j, intent) {
       const plan = m.planOf(j);
+      if (await m.resident.halted()) { await m.cleanup(j, {}); return failed(U.RESIDENT_HALTED); }
       const r = await m.linux.stage({ opId: m.opId, packageManifestSha256: plan.packageManifestSha256, generation: plan.toGeneration,
         linuxManifestSha256: plan.target.linux.manifestSha256 }, intent.seq);
-      if (r.ok) return okd();
+      if (r.ok) {
+        // The roles the stage derived and signed: the new install receipt's linux.qualificationsSha256 (one file, written once).
+        const roles = r.result?.roles;
+        if (roles && typeof roles === 'object' && !Array.isArray(roles)) {
+          const q = {};
+          for (const [role, v] of Object.entries(roles)) if (ROLE_NAME.test(role) && HEX.test(v?.qualificationSha256 ?? '')) q[role] = v.qualificationSha256;
+          await m.markerOnce(`${String(intent.seq).padStart(3, '0')}-stage-linux.roles.json`, jsonBytes(q));
+        }
+        return okd();
+      }
       if (r.code === U.COMPANION_UNAVAILABLE) { await m.cleanup(j, {}); return failed(U.COMPANION_UNAVAILABLE); }
       const code = LINUX_STAGE_CODES.has(r.code) ? r.code : U.LINUX_STAGE_REFUSED;
       await m.cleanup(j, { withdrawStaged: true });
@@ -601,7 +643,10 @@ const STEPS = {
       const receiptSlot = plan.slots.find(s => s.kind === 'receipt');
       await m.gens.snapshotItem(n, receiptSlot);
       const prevBytes = await fs.readFile(m.gens.kept(n, RECEIPT_SLOT));
-      const receiptBytes = jsonBytes(m.receiptOf(j, intent, JSON.parse(prevBytes.toString('utf8')), sha256(prevBytes), scm, newShas));
+      const stageL = all(j, 'stage-linux').filter(s => s.result?.ok).pop();
+      let rolesOf = null;
+      try { rolesOf = JSON.parse(await fs.readFile(m.opFile(`${String(stageL.seq).padStart(3, '0')}-stage-linux.roles.json`), 'utf8')); } catch { rolesOf = null; }
+      const receiptBytes = jsonBytes(m.receiptOf(j, intent, JSON.parse(prevBytes.toString('utf8')), sha256(prevBytes), scm, newShas, rolesOf));
       await m.gens.writeOnce(m.gens.live(RECEIPT_SLOT), receiptBytes);
       await m.gens.switchCurrent(n, jsonBytes(m.currentOf(j, intent, sha256(receiptBytes))));
       return okd({ generation: n1 });
@@ -648,9 +693,11 @@ const STEPS = {
   },
 
   retention: {
-    async run(m, j) {
+    async run(m, j, intent) {
       const archived = await m.gens.retain(m.config.keepGenerations, j.plan.toGeneration);
-      return okd({ archived: archived.length });
+      // The Linux half keeps its own three (linux-upgrade-retain); its failure is recorded, the upgrade is done either way.
+      const l = await m.linux.retain({ opId: m.opId, generation: j.plan.toGeneration }, intent.seq);
+      return okd({ archived: archived.length, linuxRetain: l.ok ? 'ok' : (l.code ?? 'failed') });
     },
   },
 
@@ -667,15 +714,16 @@ const STEPS = {
       return { before: await m.restoreObservation(j), planned, args: {} };
     },
     observe: (m, j) => m.restoreObservation(j),
-    async run(m, j) {
+    async run(m, j, intent) {
       const plan = m.planOf(j);
       await m.gens.restore(plan.fromGeneration, plan);
       await m.gens.restoreCurrent(plan.fromGeneration, plan.toGeneration, plan.current.fileSha256);
       const a = m.applyArgs(j, { generation: plan.fromGeneration });
       if (!(await m.windows.switchScm(a)).ok) return failed(U.ROLLBACK_FAILED);
       if (!(await m.windows.registerCompanionTask(a)).ok) return failed(U.ROLLBACK_FAILED);
-      // The companion of N comes back before the Linux half is switched back (it carries that request).
-      if (!(await m.windows.restartCompanion(m.applyArgs(j))).ok) return failed(U.ROLLBACK_FAILED);
+      // The companion of N comes back before the Linux half is switched back (it carries that request). Not there (the Owner
+      // is not logged on): a bounded wait, the node stopped.
+      if (!(await m.windows.restartCompanion(m.applyArgs(j))).ok) return m.rollbackWait(intent);
       // The rolled-back generation's number is free again; its files stay in archive\.
       await m.gens.retire(plan.toGeneration, m.opId.slice(0, 8));
       return okd({ generation: plan.fromGeneration });
@@ -686,7 +734,9 @@ const STEPS = {
     async run(m, j, intent) {
       const plan = m.planOf(j);
       const r = await m.linux.rollback({ opId: m.opId, fromGeneration: plan.toGeneration, toGeneration: plan.fromGeneration }, intent.seq);
-      return r.ok ? okd() : failed(U.ROLLBACK_FAILED);
+      if (r.ok) return okd();
+      if (r.code === U.COMPANION_UNAVAILABLE) return m.rollbackWait(intent);
+      return failed(U.ROLLBACK_FAILED);
     },
   },
 
@@ -696,7 +746,8 @@ const STEPS = {
 
   'rollback-verify': {
     run: (m, j, intent) => m.verifyPoll(j, intent, { generation: j.plan.fromGeneration, policySha256: j.plan.current.policySha256, stopStep: 'rollback-stop',
-      startStep: 'rollback-start', codes: { fail: U.ROLLBACK_FAILED, timeout: U.ROLLBACK_FAILED, skew: U.ROLLBACK_FAILED } }),
+      startStep: 'rollback-start', codes: { fail: U.ROLLBACK_FAILED, timeout: U.ROLLBACK_FAILED, skew: U.ROLLBACK_FAILED, companion: U.ROLLBACK_COMPANION_UNAVAILABLE },
+      companionWaitMs: ROLLBACK_WAIT_MAX_MS }),
   },
 
   'keep-paused-notify': {

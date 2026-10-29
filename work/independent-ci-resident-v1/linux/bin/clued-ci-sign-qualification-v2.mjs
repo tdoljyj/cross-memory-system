@@ -112,7 +112,8 @@ export function signAll({ keyPem, pubPem, v1Dir, inDir, outDir, now = new Date()
     fs.writeFileSync(path.join(outDir, `${role}.qualification.json`), qText, { flag: 'wx', mode: fileMode });
     roles[role] = { policySha256: sha256(policyBytes), unsignedPayloadSha256: sha256(payloadBytes), qualificationSha256: sha256(Buffer.from(qText)) };
   }
-  return { status: 'QUALIFICATIONS_V2_SIGNED', qualifiedAt, publicKeySha256: pubSha, roles, reference: against ? 'installed-v2' : 'installed-v1', privateKeyPrinted: false };
+  // The original (v1-referenced) output is unchanged, byte for byte; only the upgrade mode names its reference.
+  return { status: 'QUALIFICATIONS_V2_SIGNED', qualifiedAt, publicKeySha256: pubSha, roles, ...(against ? { reference: 'installed-v2' } : {}), privateKeyPrinted: false };
 }
 
 // The private key's whole path is root-owned and not group/other-writable, the file is 0600 and single-link.

@@ -27,7 +27,10 @@ export const UPGRADE_STATUS_CONTRACT = 'clued.independent-ci.resident-upgrade-st
 export const UPGRADE_RESUME_CONTRACT = 'clued.independent-ci.resident-upgrade-resume/1';
 
 const MIN = 60_000;
-export const UPGRADE_KINDS = Object.freeze(['linux-version-facts', 'linux-upgrade-stage', 'linux-upgrade-switch', 'linux-upgrade-rollback', 'linux-upgrade-verify']);
+// linux-upgrade-retain (added with the review of PR-1): the RETENTION step's Linux half, the tool's `retain` (it keeps 3).
+export const UPGRADE_KINDS = Object.freeze(['linux-version-facts', 'linux-upgrade-stage', 'linux-upgrade-switch', 'linux-upgrade-rollback', 'linux-upgrade-verify',
+  'linux-upgrade-retain']);
+export const UPGRADE_RETAIN_KEEP = 3;
 // The longest a request may wait for its answer (deadline - createdAt); a request asks for no more than this.
 export const UPGRADE_TIMEOUT_MS = Object.freeze({
   'linux-version-facts': 60_000,
@@ -35,11 +38,12 @@ export const UPGRADE_TIMEOUT_MS = Object.freeze({
   'linux-upgrade-switch': 5 * MIN,
   'linux-upgrade-rollback': 5 * MIN,
   'linux-upgrade-verify': 5 * MIN,
+  'linux-upgrade-retain': 5 * MIN,
 });
 // The root tool's sub-command per kind.
 export const UPGRADE_TOOL_SUBCOMMANDS = Object.freeze({
   'linux-version-facts': 'version-facts', 'linux-upgrade-stage': 'stage', 'linux-upgrade-switch': 'switch',
-  'linux-upgrade-rollback': 'rollback', 'linux-upgrade-verify': 'verify',
+  'linux-upgrade-rollback': 'rollback', 'linux-upgrade-verify': 'verify', 'linux-upgrade-retain': 'retain',
 });
 export const UPGRADE_TOOL_PATH = '/opt/clued-independent-ci/upgrade-v1/bin/clued-ci-upgrade-linux';
 export const UPGRADE_STAGED_PREFIX = '/mnt/c/ProgramData/CluedIndependentCI/resident/upgrade/staged/';
@@ -62,7 +66,7 @@ export const UPGRADE_OUTCOMES = Object.freeze(['SUCCEEDED', 'SUCCEEDED_STILL_PAU
   'CANCELLED', 'STALE', 'ROLLBACK_FAILED']);
 export const UPGRADE_OP_STATES = Object.freeze(['WAITING_GRANT', 'WAITING_DRAIN', 'DEFERRED', 'RUNNING', 'ROLLING_BACK', ...UPGRADE_OUTCOMES]);
 
-const GENERATION_MAX = 1_000_000_000;
+const GENERATION_MAX = 999_999_999; // the root tool's GEN: [1-9][0-9]{0,8}
 export const isGeneration = n => Number.isSafeInteger(n) && n >= 1 && n <= GENERATION_MAX;
 const ROLE = /^[a-z][a-z0-9-]{0,39}$/;
 const TOOL_STATUS = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -95,6 +99,11 @@ export function validateUpgradeArgs(kind, args) {
     case 'linux-upgrade-verify':
       exactKeys(args, ['generation'], code);
       check(isGeneration(args.generation), code);
+      break;
+    case 'linux-upgrade-retain':
+      // keep goes to the tool as --keep (it takes 2..10); this channel always asks for 3.
+      exactKeys(args, ['generation', 'keep'], code);
+      check(isGeneration(args.generation) && args.keep === UPGRADE_RETAIN_KEEP, code);
       break;
     default:
       check(false, 'UPGRADE_MAILBOX_KIND_REFUSED');
@@ -133,6 +142,7 @@ export function upgradeToolArgs(request) {
     case 'linux-upgrade-switch': return [sub, '--op', request.opId, '--from', String(a.fromGeneration), '--to', String(a.toGeneration), '--linux-manifest', a.linuxManifestSha256];
     case 'linux-upgrade-rollback': return [sub, '--op', request.opId, '--from', String(a.fromGeneration), '--to', String(a.toGeneration)];
     case 'linux-upgrade-verify': return [sub, '--op', request.opId, '--generation', String(a.generation)];
+    case 'linux-upgrade-retain': return [sub, '--op', request.opId, '--keep', String(a.keep), '--generation', String(a.generation)];
     default: return check(false, 'UPGRADE_MAILBOX_KIND_REFUSED');
   }
 }
@@ -166,7 +176,9 @@ export function upgradeMailboxResponse(request, { ok, code = null, tool, result 
 }
 
 // The companion's mapping of the root tool's run to an answer: exit 0 and one JSON object is success; anything else is a
-// refusal carrying the tool's own code when it gave one. A tool that could not be run at all: exit null.
+// refusal. The answer's code is the tool's `upgradeCode` (its A8 class code, the one the upgrader acts on) and only a code of
+// this channel (UPGRADE_*); the tool's detailed `code` stays in the result as it gave it. A tool that could not be run: exit null.
+export const CHANNEL_CODE = /^UPGRADE_[A-Z0-9_]{1,72}$/;
 export const TOOL_NOT_RUN = 'UPGRADE_LINUX_TOOL_NOT_RUN';
 export const TOOL_OUTPUT_REFUSED = 'UPGRADE_LINUX_TOOL_OUTPUT_REFUSED';
 export const TOOL_FAILED = 'UPGRADE_LINUX_TOOL_FAILED';
@@ -184,7 +196,7 @@ export function responseFromTool(request, { exit, stdout }, clock = Date.now) {
     try { return upgradeMailboxResponse(request, { ok: true, tool: { exit: 0, status }, result: parsed }, clock); } catch { /* falls through: refused */ }
     return upgradeMailboxResponse(request, { ok: false, code: TOOL_OUTPUT_REFUSED, tool: { exit: -1, status }, result: null }, clock);
   }
-  const own = parsed && typeof parsed.code === 'string' && CODE.test(parsed.code) ? parsed.code : null;
+  const own = parsed && typeof parsed.upgradeCode === 'string' && CHANNEL_CODE.test(parsed.upgradeCode) ? parsed.upgradeCode : null;
   const code = toolExit === null ? TOOL_NOT_RUN : (own ?? (toolExit === 0 ? TOOL_OUTPUT_REFUSED : TOOL_FAILED));
   const result = parsed && resultBytesOk(parsed) ? parsed : null;
   return upgradeMailboxResponse(request, { ok: false, code, tool: { exit: toolExit === 0 ? -1 : toolExit, status }, result }, clock);

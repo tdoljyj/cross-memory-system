@@ -227,6 +227,30 @@ function Test-SecretsReceipt($receipt, $identity) {
   }
   return $true
 }
+# ---- PR-1 review M2: resident\<sha> and source\<sha> inherit exactly what their live parent passes down (no ACE kept from upgrade\staged).
+# Shared with upgrade-apply.ps1 (one text, held identical by test-upgrade-windows.ps1). ----
+function Get-InheritableAceKeys([string]$parentSddl, [int]$flag) {
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor($parentSddl)
+  (@(foreach ($a in $raw.DiscretionaryAcl) { if (([int]$a.AceFlags -band $flag) -ne 0) { $a.SecurityIdentifier.Value + '|' + $a.AccessMask } }) | Sort-Object -Unique) -join ','
+}
+function Test-ItemAcl($item, [string]$wantDir, [string]$wantFile) {
+  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return 'link' }
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor((Get-Acl -LiteralPath $item.FullName).Sddl)
+  if (($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0) { return 'protected' }
+  if (@($raw.DiscretionaryAcl | Where-Object { ([int]$_.AceFlags -band 0x10) -eq 0 }).Count -ne 0) { return 'explicit' }
+  $have = (@(foreach ($a in $raw.DiscretionaryAcl) { $a.SecurityIdentifier.Value + '|' + $a.AccessMask }) | Sort-Object -Unique) -join ','
+  if ($have -cne $(if ($item.PSIsContainer) { $wantDir } else { $wantFile })) { return 'aces' }
+  'ok'
+}
+function Test-ContentAcl([string]$dir) {
+  $parent = (Get-Acl -LiteralPath (Split-Path -Parent $dir)).Sddl
+  $wantDir = Get-InheritableAceKeys $parent 2; $wantFile = Get-InheritableAceKeys $parent 1
+  foreach ($i in @(@(Get-Item -LiteralPath $dir -Force) + @(Get-ChildItem -LiteralPath $dir -Recurse -Force))) {
+    $why = Test-ItemAcl $i $wantDir $wantFile
+    if ($why -cne 'ok') { return ($why + ':' + $i.FullName.Substring($dir.Length).TrimStart('\')) }
+  }
+  'ok'
+}
 # ---- The upgrade channel (018da927). Shared with install-resident.ps1: Get-UpgraderBinPath, Get-GenerationFilesSha256 (one text in
 # both, held identical by test-upgrade-windows.ps1). ----
 function Get-UpgraderBinPath([string]$root, [string]$configSha, [string]$nodeSha, [string]$manifestSha, [string]$entrySha) {
@@ -370,6 +394,10 @@ $companionScripts = try { $companionSection = (Read-ReviewedPublicJson (Join-Pat
 Record 'companion-source-scripts' $companionScripts.ok $companionScripts.detail
 $ciRootSddl = try { (Get-Acl -LiteralPath 'C:\ProgramData\CluedIndependentCI').Sddl } catch { $null }
 Record 'ci-root-resident-read-control' $(if ([string]::IsNullOrEmpty($ciRootSddl)) { 'unreadable' } else { try { Test-ParentAclRule $ciRootSddl (Get-ServiceSid 'CluedCIResident') } catch { $false } })
+# The content-addressed trees of this generation (PR-1 review M2): an upgrade moves them in from upgrade\staged\, and a moved tree must have
+# taken its live parent's ACL (source\ grants .\clued-control read; nothing of upgrade\ may stay).
+$contentAcl = try { $ra = Test-ContentAcl (Join-Path $Root ('resident\' + $receipt.residentManifestSha256)); $sa = Test-ContentAcl (Join-Path $Root ('source\' + $ciSourceSha)); [pscustomobject]@{ ok = ($ra -ceq 'ok' -and $sa -ceq 'ok'); detail = ('resident:' + $ra + ' source:' + $sa) } } catch { [pscustomobject]@{ ok = 'unreadable'; detail = 'UNREADABLE' } }
+Record 'content-addressed-acl' $contentAcl.ok $contentAcl.detail
 
 # Node identity (C7): re-derived from the installed record and compared with the receipt; the receipt assumes no role.
 $identityCheck = try { Test-NodeIdentityReceipt $receipt (Read-ReviewedPublicJson (Join-Path $Root 'record\installation.json') ([string](Get-Field $receipt 'installationSha256')) 4MB) $Accepted $receipt.acceptanceSha256 } catch { [pscustomobject]@{ ok = $false; detail = $_.Exception.Message; identity = $null } }

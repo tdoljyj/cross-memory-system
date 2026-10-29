@@ -426,3 +426,114 @@ test('decide() is pure: the same journal and facts give the same answer', () => 
   assert.deepEqual(decide(j, { now: T0, halted: false }, t), decide(j, { now: T0, halted: true }, t));
   assert.equal(decide(j, { now: T0, halted: false }, t).step, 'accept');
 });
+
+// ---- review of PR-1 ----
+
+test('B1: a rollback where N+1 had a slot with N\'s very bytes leaves no copy in g<N>; the next upgrade (another slot set) goes through', async t => {
+  // n2 keeps runtime\node.exe byte for byte (v1), n3 changes it (v2).
+  const env = await makeEnv(t, { packages: ['n2', 'n3'], windowsOptions: { failVerify: g => g === 2 && env.failNext } });
+  env.failNext = true;
+  const op = await openOp(env, 'n2');
+  assert.equal((await runOp(env, op)).terminal.outcome, 'ROLLED_BACK_PAUSED');
+  const g1 = await treeDigest(path.join(env.root, 'generations', 'g1'));
+  assert.deepEqual(Object.keys(g1).filter(k => !k.endsWith('/')), ['generation.json'], 'g1 holds no file but its record');
+  await fs.access(path.join(env.root, 'archive', 'g2-rolled-back-5e1f0000', 'runtime', 'node.exe'));
+  env.failNext = false;
+  env.resident.paused = null; // the Owner resumed
+  const op3 = await openOp(env, 'n3');
+  const r = await runOp(env, op3);
+  assert.equal(r.terminal.outcome, 'SUCCEEDED');
+  assert.deepEqual(await live(env, 'runtime\\node.exe'), env.pkgs.n3.files.get('runtime/node.exe'));
+  assert.deepEqual(await fs.readFile(path.join(env.root, 'generations', 'g1', 'runtime', 'node.exe')), env.pkgs.n1.files.get('runtime/node.exe'));
+});
+
+test('M1: a Linux switch refused for quiescence still runs rollback-switch-linux, then resumes (REFUSED)', async t => {
+  const env = await makeEnv(t, { linuxOptions: { failSwitch: U.LINUX_QUIESCENCE_UNCONFIRMED } });
+  const op = await openOp(env, 'n2');
+  const r = await runOp(env, op);
+  assert.deepEqual([r.terminal.outcome, r.terminal.code], ['REFUSED', U.LINUX_QUIESCENCE_UNCONFIRMED]);
+  const j = await loadJournal(env, op);
+  // Journal order is by number: resume (110) sorts before the rollback steps (200..230) it follows.
+  assert.deepEqual(j.steps.filter(s => s.seq >= 110).map(s => s.step), ['resume', 'rollback-stop', 'rollback-switch-windows', 'rollback-switch-linux', 'rollback-start', 'rollback-verify']);
+  assert.ok(Date.parse(j.steps.find(s => s.step === 'resume').intent.at) >= Date.parse(j.steps.find(s => s.step === 'rollback-verify').result.at));
+  assert.equal(env.resident.paused, null);
+});
+
+test('M4: the companion away during a rollback is a bounded wait, then ROLLBACK_COMPANION_UNAVAILABLE; back in time, the rollback ends normally', async t => {
+  let down = true;
+  const env = await makeEnv(t, { windowsOptions: { failVerify: g => g === 2, companionDown: () => down } });
+  // Away for the first two hours of the rollback only.
+  const op = await openOp(env, 'n2');
+  let rollbackAt = null;
+  const r = await runOp(env, op, { onMove: async m => {
+    if (rollbackAt === null && m.view.code === U.ROLLBACK_COMPANION_UNAVAILABLE) { rollbackAt = env.clock.now; assert.equal(m.view.state, 'ROLLING_BACK'); }
+    if (rollbackAt !== null && env.clock.now - rollbackAt >= 2 * HOUR) down = false;
+  } });
+  assert.equal(r.terminal.outcome, 'ROLLED_BACK_PAUSED');
+  assert.ok(rollbackAt !== null);
+  // Away for good: ends after the bound with its own code; the node stays stopped and paused.
+  const env2 = await makeEnv(t, { windowsOptions: { failVerify: g => g === 2, companionDown: () => env2.resident.receipts.length > 0 } });
+  const op2 = await openOp(env2, 'n2');
+  const r2 = await runOp(env2, op2);
+  assert.deepEqual([r2.terminal.outcome, r2.terminal.code], ['ROLLBACK_FAILED', U.ROLLBACK_COMPANION_UNAVAILABLE]);
+  const j2 = await loadJournal(env2, op2);
+  const step = j2.steps.find(s => s.step === 'rollback-switch-windows');
+  assert.ok(Date.parse(step.result.at) - Date.parse(step.intent.at) >= 24 * HOUR);
+  assert.ok(env2.resident.paused);
+  // The Linux half away during its rollback: the same bounded wait.
+  let linuxDown = true;
+  const env3 = await makeEnv(t, { windowsOptions: { failVerify: g => g === 2 }, linuxOptions: { unavailable: k => k === 'rollback' && linuxDown } });
+  const op3 = await openOp(env3, 'n2');
+  const r3 = await runOp(env3, op3, { onMove: async m => { if (m.view.code === U.ROLLBACK_COMPANION_UNAVAILABLE && env3.clock.now > T0 + 3 * HOUR) linuxDown = false; } });
+  assert.equal(r3.terminal.outcome, 'ROLLED_BACK_PAUSED');
+});
+
+test('m1: a HALT while the pause is being confirmed defers (RESIDENT_HALTED), the pause request withdrawn, and the next cycle goes on', async t => {
+  const env = await makeEnv(t, { residentOptions: { pauseDelayMs: 120_000 } });
+  const op = await openOp(env, 'n2');
+  let halted = false;
+  const r = await runOp(env, op, { onMove: async () => {
+    const j = await loadJournal(env, op);
+    if (!halted && j.steps.some(s => s.step === 'pause' && s.result === null)) { halted = true; env.resident.isHalted = true; }
+    if (halted && env.resident.isHalted && j.steps.some(s => s.step === 'pause' && s.result?.code === U.RESIDENT_HALTED)) {
+      assert.equal(env.resident.pending.size, 0);
+      assert.deepEqual([...env.resident.holds], []);
+      env.resident.isHalted = false; // re-armed
+    }
+  } });
+  assert.equal(r.terminal.outcome, 'SUCCEEDED');
+  const j = await loadJournal(env, op);
+  assert.deepEqual(j.steps.filter(s => s.step === 'pause').map(s => `${s.seq}:${s.result.code}`), [`50:${U.RESIDENT_HALTED}`, '51:null']);
+});
+
+test('m2: the 24 h bound counts from the consumption (the door\'s time, else the grant step\'s intent for a replayed use)', async t => {
+  const env = await makeEnv(t, { residentOptions: { openBatches: () => 1 }, doorOptions: { approveAt: T0 } });
+  const real = env.door.consume.bind(env.door);
+  env.door.consume = async a => { const r = await real(a); if (r.kind === 'consumed') r.grant = { ...r.grant, consumedAt: new Date(T0 - 20 * HOUR).toISOString() }; return r; };
+  const op = await openOp(env, 'n2');
+  const r = await runOp(env, op);
+  assert.equal(r.terminal.outcome, 'STALE');
+  assert.ok(env.clock.now - T0 <= 4 * HOUR + MIN, 'stale 24 h after the door\'s consumption, not after the result was written');
+  const j = await loadJournal(env, op);
+  assert.equal(j.steps.find(s => s.step === 'grant').result.detail.consumedAt, new Date(T0 - 20 * HOUR).toISOString());
+});
+
+test('m4 and m6: the receipt\'s Linux qualifications come from the stage result; RETENTION asks the Linux half to retain as well', async t => {
+  const env = await makeEnv(t);
+  const op = await openOp(env, 'n2');
+  assert.equal((await runOp(env, op)).terminal.outcome, 'SUCCEEDED');
+  const receipt = JSON.parse(await live(env, RECEIPT_SLOT));
+  assert.deepEqual(Object.keys(receipt.linux.qualificationsSha256).sort(), ['contract-placement', 'gitleaks', 'trivy']);
+  assert.equal(receipt.linux.qualificationsSha256.gitleaks, sha256(`qualification gitleaks 0 ${env.pkgs.n2.sha}`));
+  assert.deepEqual(env.linux.retained, [2]);
+  assert.equal((await loadJournal(env, op)).steps.find(s => s.step === 'retention').result.detail.linuxRetain, 'ok');
+});
+
+test('retry numbers used up end with UPGRADE_RETRIES_EXHAUSTED (not GRANT_STALE)', async t => {
+  const env = await makeEnv(t, { residentOptions: { openBatches: () => 1 },
+    configOver: { timeouts: { drainMaxMinutes: 10, drainRetryMinutes: 1, deferMaxHours: 24, pauseConfirmMs: 600_000, verifyMaxMs: 2_700_000, grantPollMs: [30_000, 120_000] } } });
+  const op = await openOp(env, 'n2', { drainMaxMinutes: 10 });
+  const r = await runOp(env, op);
+  assert.deepEqual([r.terminal.outcome, r.terminal.code], ['STALE', U.RETRIES_EXHAUSTED]);
+  assert.equal((await loadJournal(env, op)).steps.filter(s => s.step === 'drain').length, 10);
+});

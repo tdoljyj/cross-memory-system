@@ -139,6 +139,8 @@ export const UPGRADE_RESUMED_BY = 'CluedCIUpgrader';
 export const VERSION_SKEW_HOLDER = 'version-skew';
 export const VERSION_SKEW_RENEW_BELOW_MS = 90 * 60_000;
 export const UPGRADE_VERSION_SKEW = 'UPGRADE_VERSION_SKEW';
+// The precheck's global deferral while the sides disagree (before any reservation; nothing burned, nothing counted).
+export const VERSION_SKEW = 'VERSION_SKEW';
 export const OWNER_ABORT_ARCHIVE_REASON = 'owner-aborted';
 // Poll of the owner directory while a scanner-issuer stage runs, and the bounded re-check of quiescence after an abort.
 export const ABORT_POLL_MS = 5_000;
@@ -973,6 +975,12 @@ export class ResidentExecutor {
     return this.versionState;
   }
 
+  // The precheck's gate (DESIGN §34.5): true only when a fresh read says the sides disagree; a read that fails is unknown.
+  async versionSkewNow() {
+    if (typeof this.versions !== 'function') return false;
+    try { return (await this.versions())?.view?.consistent === false; } catch { return false; }
+  }
+
   // consistent false: hold new batches (holder version-skew, two hours, renewed below 90 minutes left); true: lift that hold;
   // null (unknown: no current.json, facts older than 15 minutes, unreadable): leave it as it is. The hold is the executor's own
   // word in the intake pause (intake-pause.mjs#apply), so PAUSE, HALT and the other holders are untouched and the Owner may
@@ -1717,6 +1725,9 @@ export class ResidentExecutor {
     if (await this.executedHeads.published(subject)
       && !(attempt1Key && await this.executedHeads.onlyRelayRecordOf(subject, attempt1Key, RELAY_STAGE) && await this.relayedNothing(attempt1Key))) return { ignore: 'HEAD_ALREADY_PUBLISHED_NO_RETRY' };
     if ((await this.ledger.state(key)).state !== 'ABSENT') return { ignore: 'CONTENT_ALREADY_EXECUTED_NO_RETRY' };
+    // DESIGN §34.5: while the two sides run different versions (consistent false, read now) nothing is reserved: a global
+    // deferral, the PR pays nothing for the node's skew. Unknown (null) or no versions port: as before.
+    if (await this.versionSkewNow()) return { defer: VERSION_SKEW };
     // The 10-minute cool-down of the batch key after a release it applies to (classify.mjs#UNEXECUTED_REASON_RULES).
     const recent = (await this.ledger.unexecutedRecords(key, now - DAY)).filter(r => UNEXECUTED_REASON_RULES[r.reason]?.cooldown !== false);
     if (recent.length > 0 && now - Math.max(...recent.map(r => r.at)) < l.unexecutedCooldownMs) return { defer: 'UNEXECUTED_COOLDOWN', perRow: true, until: Math.max(...recent.map(r => r.at)) + l.unexecutedCooldownMs };

@@ -141,7 +141,15 @@ class FileResident {
 // ---- the companion's upgrade lane and a JS stand-in of the root tool (A7 contract: argv in, one JSON line out) ----
 
 class LinuxToolStandIn {
-  constructor(root, clock, { failVerify = () => false } = {}) { Object.assign(this, { root, clock, failVerify }); this.file = path.join(root, 'fake-linux.json'); this.changed = false; }
+  constructor(root, clock, { failVerify = () => false } = {}) {
+    Object.assign(this, { root, clock, failVerify });
+    this.file = path.join(root, 'fake-linux.json');
+    this.changed = false;
+    this.quiescent = true;
+    this.retained = [];
+  }
+  // A refusal as clued-ci-upgrade-linux prints it (main(): the detailed code, and the A8 class code the upgrader acts on).
+  refuse(sub, code, upgradeCode) { return this.out(1, { status: 'REFUSED', sub, code, upgradeCode, detail: {} }); }
   async state() { return JSON.parse(await fs.readFile(this.file, 'utf8')); }
   async save(s) { await fs.writeFile(this.file, canonicalJson(s) + '\n'); }
   out(exit, v) { return { exit, stdout: `${JSON.stringify(v)}\n` }; }
@@ -154,23 +162,32 @@ class LinuxToolStandIn {
       case 'stage': {
         // The package from the fixed staged prefix (upgrade\staged\<pkgSha>\ on the Windows side).
         let m;
-        try { m = JSON.parse(await fs.readFile(path.join(this.root, 'upgrade', 'staged', flag('package'), 'package-manifest.json'), 'utf8')); } catch { return this.out(2, { status: 'refused', code: 'UPGRADE_LINUX_STAGE_REFUSED' }); }
-        if (sha256(await fs.readFile(path.join(this.root, 'upgrade', 'staged', flag('package'), 'linux', 'manifest.json'))) !== flag('linux-manifest')) return this.out(2, { status: 'refused', code: 'UPGRADE_LINUX_STAGE_REFUSED' });
+        try { m = JSON.parse(await fs.readFile(path.join(this.root, 'upgrade', 'staged', flag('package'), 'package-manifest.json'), 'utf8')); } catch { return this.refuse('stage', 'PACKAGE_UNREADABLE', 'UPGRADE_PACKAGE_UNREADABLE'); }
+        if (sha256(await fs.readFile(path.join(this.root, 'upgrade', 'staged', flag('package'), 'linux', 'manifest.json'))) !== flag('linux-manifest')) return this.refuse('stage', 'LINUX_MANIFEST_MISMATCH', 'UPGRADE_LINUX_STAGE_REFUSED');
         s.history[flag('generation')] = { manifestSha256: m.linux.manifestSha256, ciSourceManifestSha256: m.ciSourceManifestSha256 };
         await this.save(s);
-        return this.out(0, { status: 'staged', generation: Number(flag('generation')) });
+        return this.out(0, { status: 'LINUX_STAGED', replayed: false, generation: Number(flag('generation')), roles: Object.fromEntries(['gitleaks', 'trivy', 'contract-placement']
+          .map(r => [r, { policySha256: sha256(`${r} policy ${flag('package')}`), qualificationSha256: sha256(`${r} qualification ${flag('package')}`) }])) });
       }
       case 'switch': case 'rollback': {
         const to = Number(flag('to'));
-        if (!s.history[to]) return this.out(3, { status: 'refused', code: 'UPGRADE_LINUX_SWITCH_REFUSED' });
+        if (!s.history[to]) return this.refuse(sub, 'GENERATION_NOT_STAGED', sub === 'switch' ? 'UPGRADE_SWITCH_FAILED' : 'UPGRADE_ROLLBACK_FAILED');
+        if (sub === 'switch' && !this.quiescent && s.generation !== to) return this.refuse('switch', 'LINUX_QUIESCENCE_UNCONFIRMED', 'UPGRADE_LINUX_QUIESCENCE_UNCONFIRMED');
         if (s.generation !== to) { s.generation = to; s.at = this.clock.now; await this.save(s); this.changed = true; }
-        return this.out(0, { status: sub === 'switch' ? 'switched' : 'rolled-back', generation: to });
+        return this.out(0, { status: sub === 'switch' ? 'LINUX_SWITCHED' : 'LINUX_ROLLED_BACK', generation: to });
       }
       case 'verify': {
         const g = Number(flag('generation'));
-        return s.generation === g && !this.failVerify(g) ? this.out(0, { status: 'verified', generation: g }) : this.out(4, { status: 'refused', code: 'UPGRADE_LINUX_VERIFY_REFUSED' });
+        return s.generation === g && !this.failVerify(g) ? this.out(0, { status: 'LINUX_GENERATION_VERIFIED', generation: g }) : this.refuse('verify', 'PINS_MISMATCH', 'UPGRADE_VERIFY_FAILED');
       }
-      default: return this.out(64, { status: 'refused', code: 'UPGRADE_LINUX_USAGE' });
+      case 'retain': {
+        const g = Number(flag('generation'));
+        if (!/^(?:[2-9]|10)$/.test(flag('keep') ?? '') || !argv.includes('--op')) return this.refuse('retain', 'USAGE_REFUSED', null);
+        if (s.generation !== g) return this.refuse('retain', 'CURRENT_GENERATION_MISMATCH', null);
+        this.retained.push(g);
+        return this.out(0, { status: 'LINUX_RETAINED', generation: g, kept: [], archived: [], deleted: 0 });
+      }
+      default: return this.refuse(null, 'USAGE_REFUSED', null);
     }
   }
   async facts() {
@@ -252,8 +269,8 @@ const managed = node => treeDigest(node.root, { exclude: rel => /^(?:requests|ow
 const readJson = async f => JSON.parse(await fs.readFile(f, 'utf8'));
 
 test('drill: N -> N+1, a rejected Grant, a failed verify rolled back and kept paused, the Owner resumes, five generations with three kept', async t => {
-  const shared = await buildPackages(t, 6);
-  const [, n1, n2, n3, n4, n5] = shared.pkgs;
+  const shared = await buildPackages(t, 7);
+  const [, n1, n2, n3, n4, n5, n6] = shared.pkgs;
   const node = await makeNode(t, shared, { failVerify: g => g === 3 && node.failNext });
   node.failNext = false;
 
@@ -307,6 +324,21 @@ test('drill: N -> N+1, a rejected Grant, a failed verify rolled back and kept pa
   assert.equal(current.packageManifestSha256, n5.sha);
   const facts = await node.companion.box.readVersionFacts();
   assert.equal(facts.generation, 5);
+  // The receipt's Linux qualifications are the ones the stage derived; every success asked the Linux half to retain.
+  const receipt = await readJson(path.join(node.root, 'install', 'install-receipt.json'));
+  assert.equal(receipt.linux.qualificationsSha256.gitleaks, sha256(`gitleaks qualification ${n5.sha}`));
+  assert.deepEqual(node.tool.retained, [2, 3, 4, 5]);
+
+  // The Linux side not quiescent at the switch, in the root tool's own refusal format through the real mailbox: the class
+  // code is acted on (aborted: back on generation 5, the node resumed, outcome REFUSED), not taken for a failed switch.
+  node.tool.quiescent = false;
+  const q = await upgrade(node, n6);
+  assert.deepEqual([q.terminal.outcome, q.terminal.code], ['REFUSED', 'UPGRADE_LINUX_QUIESCENCE_UNCONFIRMED']);
+  const qj = await new Journal(path.join(node.root, 'upgrade', 'ops', q.opId), { opId: q.opId }).load();
+  assert.ok(qj.steps.some(s => s.step === 'rollback-switch-linux' && s.result.ok), 'the Linux rollback ran (and moved nothing)');
+  assert.equal((await readJson(path.join(node.root, 'upgrade', 'current.json'))).generation, 5);
+  assert.equal(await node.resident.pausedBytes(), null, 'resumed');
+  assert.deepEqual(await fs.readFile(path.join(node.root, 'config', 'policy.json')), n5.files.get('config/policy.json'));
 });
 
 test('drill: every step boundary of an upgrade (intent written, result not) crashed and resumed ends where the uninterrupted one does', async t => {

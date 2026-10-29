@@ -417,6 +417,18 @@ class SwitchTests(World):
         r, pkg, lm = self.staged()
         return tool.switch(self.P, self.host, OP2, 1, 2, lm), pkg, lm
 
+    def test_parse_accepts_every_subcommand_shape(self):
+        # Each argv the upgrader sends (upgrade-mailbox.mjs#upgradeToolArgs) goes through the real parser; version-facts
+        # takes no argument at all (an empty SPEC entry once made it refuse every call).
+        op, sha = '0' * 8 + '-0000-4000-8000-' + '0' * 12, 'a' * 64
+        cases = [['version-facts'], ['stage', '--op', op, '--package', sha, '--generation', '2', '--linux-manifest', sha],
+                 ['switch', '--op', op, '--from', '1', '--to', '2', '--linux-manifest', sha], ['rollback', '--op', op, '--from', '2', '--to', '1'],
+                 ['verify', '--generation', '2', '--op', op], ['retain', '--op', op, '--keep', '3', '--generation', '2']]
+        for argv in cases:
+            self.assertEqual(tool.parse(argv)[0], argv[0], argv)
+        with self.assertRaises(tool.Refused):
+            tool.parse(['version-facts', '--op', op])
+
     def test_switch_verify_and_version_facts(self):
         before = self.live_idents()
         r, pkg, lm = self.switched()
@@ -563,13 +575,86 @@ class RetainTests(World):
             self.assertTrue(all(tool.verify(self.P, self.host, gen)['checks'].values()))
             if gen == 4:
                 files_before = sorted(v for k, v in snapshot(self.root).items() if v not in ('dir', 'git'))
-                r = tool.retain(self.P, self.host, 4, op)
+                r = tool.retain(self.P, self.host, 3, 4, op)
                 self.assertEqual((r['kept'], r['archived'], r['deleted']), ([2, 3], [{'from': 'generations/g1', 'to': 'archive/g1'}], 0))
                 self.assertTrue(tool.same(tool.ident(f"{self.P['archive']}/g1/resident-v1"), parked[1]), 'renamed, same inode')
                 self.assertEqual(sorted(v for k, v in snapshot(self.root).items() if v not in ('dir', 'git')), files_before, 'no byte lost')
-        r = tool.retain(self.P, self.host, 5)
-        self.assertEqual(r['kept'], [3, 4])
+        # the mailbox kind linux-upgrade-retain {keep} runs exactly: retain --op <opId> --keep <keep>
+        self.assertEqual(tool.main(['retain', '--op', ops[3], '--keep', '1'], P=self.P, host=self.host, root_check=lambda: True)[1]['code'], 'USAGE_REFUSED')
+        code, r = tool.main(['retain', '--op', ops[3], '--keep', '3'], P=self.P, host=self.host, root_check=lambda: True)
+        self.assertEqual((code, r['status'], r['generation'], r['keep'], r['kept']), (0, 'LINUX_RETAINED', 5, 3, [3, 4]))
         self.assertEqual(sorted(os.listdir(self.P['archive'])), sorted(['g1', 'g2'] + [f'next-{op}' for op in ops[:4]]))
+
+
+@unittest.skipIf(BASH is None, 'no bash')
+class ReinstallTests(World):
+    """Review M3: a full reinstall (the only way the frozen channel changes) numbers both halves from 1 again."""
+
+    def uninstall(self, keep):
+        """What uninstall-resident-linux.sh main() does, under the test prefix: units and resident-v1 by its own mv -n, then the
+        script's keep_upgrade_channel function itself."""
+        os.makedirs(f'{keep}/units')
+        for u in UNITS:
+            os.rename(tool.live_item(self.P, f'units/{u}'), f'{keep}/units/{u}')
+        os.rename(self.P['resident'], f'{keep}/resident-v1')
+        root = pathlib.Path(self.root).as_posix()
+        call = ('source "$1"; CI_OPT="$2/opt/clued-independent-ci"; STATE="$2/var/lib/clued-independent-ci"; UPG="$CI_OPT/upgrade-v1"; '
+                'GENS="$CI_OPT/generations"; ARCH="$CI_OPT/archive"; UPG_STATE="$STATE/resident/upgrade"; '
+                'SAVED_PLANS="$STATE/resident/install-plan.json $STATE/resident/upgrade-v1-install-plan.json"; '
+                'upgrade_channel_text; keep_upgrade_channel "$3"')
+        return subprocess.run([BASH, '-c', call, 'x', (R / 'linux' / 'uninstall-resident-linux.sh').as_posix(), root, pathlib.Path(keep).as_posix()],
+                              capture_output=True, text=True, timeout=120)
+
+    def test_upgrade_to_g3_uninstall_reinstall_adopt_numbers_both_halves_from_1(self):
+        for gen, op in ((2, OP1), (3, OP2)):
+            pkg, lm = self.package(text=f'resident r{gen}', source=None)
+            tool.stage(self.P, self.host, op, pkg, gen, lm)
+            tool.switch(self.P, self.host, op, gen - 1, gen, lm)
+        self.assertEqual(tool.read_current(self.P)['generation'], 3)
+        pkg_re = '9' * 64
+        e = self.refused('ALREADY_ADOPTED', tool.adopt, self.P, self.host, 1, pkg_re)
+        self.assertEqual(e.detail['current'], 3)
+        state_resident = f"{self.root}/var/lib/clued-independent-ci/resident"
+        for name in ('install-plan.json', 'upgrade-v1-install-plan.json'):
+            write(f'{state_resident}/{name}', b'{"planSha256":"x"}\n')
+        keep = f"{self.root}/var/lib/clued-independent-ci/resident-uninstalled-T"
+        r = self.uninstall(keep)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('generations=g1 g2', r.stdout)
+        for p in (self.P['upgrade'], self.P['generations'], self.P['archive'], self.P['state'], f'{state_resident}/install-plan.json'):
+            self.assertFalse(os.path.lexists(p), p)
+        for p in ('upgrade-v1/manifest.json', 'generations/g1/resident-v1', 'generations/g2/resident-v1', f'opt-archive/next-{OP2}',
+                  'upgrade-state/current.json', 'upgrade-state/g3.json', 'install-plan.json', 'upgrade-v1-install-plan.json'):
+            self.assertTrue(os.path.lexists(f'{keep}/{p}'), f'kept, not deleted: {p}')
+        # reinstall: fresh resident-linux files, units and the (frozen) upgrade tool, then --adopt-generation 1
+        self.resident_files(self.P, 'resident reinstall', 'A', None)
+        write(self.P['tool'], TOOL.read_bytes(), 0o755)
+        write(self.P['signer'], SIGNER.read_bytes(), 0o644)
+        write(self.P['upgrade'] + '/manifest.json', self.upgrade_manifest())
+        os.makedirs(self.P['state'])
+        write(f"{self.P['state']}/g2.json", b'{}')  # an old record that the uninstall did not move
+        self.assertEqual(self.refused('STALE_UPGRADE_STATE_ARCHIVE_FIRST', tool.adopt, self.P, self.host, 1, pkg_re).detail['stale'], ['g2.json'])
+        os.unlink(f"{self.P['state']}/g2.json")
+        a = tool.adopt(self.P, self.host, 1, pkg_re)
+        lm_re = sha(self.resident_texts('resident reinstall', 'A')['linux/manifest.json'])
+        self.assertEqual((a['status'], a['replayed'], a['linuxManifestSha256']), ('LINUX_GENERATION_ADOPTED', False, lm_re))
+        facts = tool.version_facts(self.P, self.host)
+        self.assertEqual((facts['generation'], facts['manifestSha256'], facts['pinsOk'], facts['staged']), (1, lm_re, True, None))
+        if NODE:  # the resident's own consistency function, with the reinstalled Windows half at g1
+            current = {'contract': 'clued.independent-ci.resident-generation/1', 'generation': 1, 'packageManifestSha256': pkg_re, 'residentManifestSha256': '2' * 64,
+                       'ciSourceManifestSha256': facts['ciSourceManifestSha256'], 'policySha256': '3' * 64, 'installReceiptSha256': '4' * 64,
+                       'stateCompat': {'schema': 1, 'readableBySchemas': [1]}, 'opId': None, 'at': NOW,
+                       'linux': {'generation': 1, 'manifestSha256': lm_re, 'ciSourceManifestSha256': facts['ciSourceManifestSha256']}}
+            js = (f"import {{consistent}} from {json.dumps((R / 'src' / 'upgrade-mailbox.mjs').as_uri())};"
+                  "const [c,f,n]=process.argv.slice(1);process.stdout.write(JSON.stringify(consistent(JSON.parse(c),JSON.parse(f),Date.parse(n))));")
+            out = subprocess.run([NODE, '--input-type=module', '-e', js, json.dumps(current), json.dumps(facts), NOW], capture_output=True, text=True, timeout=60)
+            self.assertEqual(out.stdout, 'true', out.stderr)
+        # the renumbered channel upgrades again: g1 -> g2 parks into a fresh generations/g1
+        op3 = '33333333-3333-4333-8333-333333333333'
+        pkg, lm = self.package(text='after reinstall', source=None)
+        tool.stage(self.P, self.host, op3, pkg, 2, lm)
+        self.assertEqual(tool.switch(self.P, self.host, op3, 1, 2, lm)['generation'], 2)
+        self.assertTrue(all(tool.verify(self.P, self.host, 2)['checks'].values()))
 
 
 class Primitives(unittest.TestCase):
@@ -602,7 +687,7 @@ class Primitives(unittest.TestCase):
 @unittest.skipIf(BASH is None, 'no bash')
 class LinuxScripts(unittest.TestCase):
     def test_scripts_parse_and_the_upgrade_plan_binds_the_script_and_every_tool_file(self):
-        for s in ('install-resident-linux.sh', 'verify-resident-linux.sh'):
+        for s in ('install-resident-linux.sh', 'verify-resident-linux.sh', 'uninstall-resident-linux.sh'):
             r = subprocess.run([BASH, '-n', (R / 'linux' / s).as_posix()], capture_output=True, text=True, timeout=60)
             self.assertEqual(r.returncode, 0, r.stderr)
         with tempfile.TemporaryDirectory() as d:

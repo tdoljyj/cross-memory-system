@@ -148,7 +148,16 @@ export class Generations {
   // One slot: whatever of N+1 is live goes to g<N+1>, then N's file comes back from g<N>.
   async restoreItem(n, n1, s) {
     let live = await fileSha(this.live(s.target));
-    if (live === s.oldSha256) return;
+    if (live === s.oldSha256) {
+      // N's bytes are live. When N+1 brought the very same bytes, N's own copy is still kept in g<N> (snapshot moved it there
+      // and place put an identical copy back): it goes with N+1's files into g<N+1> (archived by retire), so that g<N> holds
+      // no leftover a later upgrade from N would take for "already kept".
+      const kept = await fileSha(this.kept(n, s.target));
+      if (kept === null) return;
+      check(kept === s.oldSha256 && (await fileSha(this.kept(n1, s.target))) === null, U.ROLLBACK_FAILED, `restore-kept:${s.target}`);
+      await this.ops.rename(this.kept(n, s.target), this.kept(n1, s.target));
+      return;
+    }
     if (live !== null) {
       check(await fileSha(this.kept(n1, s.target)) === null, U.ROLLBACK_FAILED, `restore:${s.target}`);
       await this.ops.rename(this.live(s.target), this.kept(n1, s.target));

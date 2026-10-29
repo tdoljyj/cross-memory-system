@@ -68,7 +68,9 @@ export function interpret(status, body, { resource, origin }) {
     const ok = g && UUID.test(g.grant_id ?? '') && UUID.test(g.receipt_id ?? '') && Number.isSafeInteger(g.use) && Number.isSafeInteger(g.max_uses) && g.use >= 1 && g.use <= g.max_uses
       && typeof g.replayed === 'boolean' && ISO(g.expires_at);
     if (!ok) return { kind: 'unavailable', code: U.GRANT_DOOR_UNAVAILABLE, http: status };
-    return { kind: 'consumed', grant: { grantId: g.grant_id, receiptId: g.receipt_id, use: g.use, maxUses: g.max_uses, expiresAt: g.expires_at, replayed: g.replayed } };
+    // consumed_at: when the door used the Grant (the start of the 24 h deferral bound), when the door says so.
+    return { kind: 'consumed', grant: { grantId: g.grant_id, receiptId: g.receipt_id, use: g.use, maxUses: g.max_uses, expiresAt: g.expires_at, replayed: g.replayed,
+      consumedAt: ISO(g.consumed_at) ? new Date(Date.parse(g.consumed_at)).toISOString() : null } };
   }
   const r = body.owner_request;
   if (!r || typeof r !== 'object' || !UUID.test(r.request_id ?? '')) return { kind: 'unavailable', code: U.GRANT_DOOR_UNAVAILABLE, http: status };

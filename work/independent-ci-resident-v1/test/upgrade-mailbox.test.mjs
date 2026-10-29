@@ -28,11 +28,13 @@ const ARGS = {
   'linux-upgrade-switch': { fromGeneration: 3, toGeneration: 4, linuxManifestSha256: H('d') },
   'linux-upgrade-rollback': { fromGeneration: 4, toGeneration: 3 },
   'linux-upgrade-verify': { generation: 4 },
+  'linux-upgrade-retain': { generation: 4, keep: 3 },
 };
 
 test('every kind has exact arguments, a fixed timeout and fixed tool argv', () => {
   assert.deepEqual(UPGRADE_KINDS, Object.keys(ARGS));
-  assert.deepEqual(Object.values(UPGRADE_TIMEOUT_MS), [60_000, 1_200_000, 300_000, 300_000, 300_000]);
+  assert.deepEqual(Object.values(UPGRADE_TIMEOUT_MS), [60_000, 1_200_000, 300_000, 300_000, 300_000, 300_000]);
+  assert.throws(() => validateUpgradeArgs('linux-upgrade-retain', { generation: 4, keep: 5 }), { code: 'UPGRADE_MAILBOX_ARGS_REFUSED' }, 'the tool keeps exactly 3');
   for (const kind of UPGRADE_KINDS) {
     const r = upgradeMailboxRequest({ kind, opId: kind === 'linux-version-facts' ? null : OP, args: ARGS[kind] }, clockAt(T0));
     assert.equal(Date.parse(r.deadline) - Date.parse(r.createdAt), UPGRADE_TIMEOUT_MS[kind]);
@@ -83,8 +85,15 @@ test('the companion maps a tool run to an answer: its own code, its JSON, or a f
   const r = upgradeMailboxRequest({ kind: 'linux-upgrade-stage', opId: OP, args: ARGS['linux-upgrade-stage'] }, clockAt(T0));
   const ok = responseFromTool(r, { exit: 0, stdout: 'noise\n{"status":"staged","generation":4}\n' }, clockAt(T0));
   assert.equal(ok.ok, true); assert.deepEqual(ok.result, { status: 'staged', generation: 4 }); assert.deepEqual(ok.tool, { exit: 0, status: 'staged' });
-  const refused = responseFromTool(r, { exit: 2, stdout: '{"status":"refused","code":"UPGRADE_LINUX_STAGE_REFUSED"}' }, clockAt(T0));
-  assert.equal(refused.ok, false); assert.equal(refused.code, 'UPGRADE_LINUX_STAGE_REFUSED');
+  // The root tool's own refusal format (clued-ci-upgrade-linux main()): the detailed code stays in the result, the answer
+  // carries the A8 class code (upgradeCode), and only a code of this channel.
+  const refused = responseFromTool(r, { exit: 1, stdout: '{"status":"REFUSED","sub":"stage","code":"LINUX_MANIFEST_MISMATCH","upgradeCode":"UPGRADE_LINUX_STAGE_REFUSED","detail":{}}' }, clockAt(T0));
+  assert.equal(refused.ok, false); assert.equal(refused.code, 'UPGRADE_LINUX_STAGE_REFUSED'); assert.equal(refused.result.code, 'LINUX_MANIFEST_MISMATCH');
+  const sw = upgradeMailboxRequest({ kind: 'linux-upgrade-switch', opId: OP, args: ARGS['linux-upgrade-switch'] }, clockAt(T0));
+  const quiet = responseFromTool(sw, { exit: 1, stdout: '{"status":"REFUSED","sub":"switch","code":"LINUX_QUIESCENCE_UNCONFIRMED","upgradeCode":"UPGRADE_LINUX_QUIESCENCE_UNCONFIRMED","detail":{}}' }, clockAt(T0));
+  assert.equal(quiet.code, 'UPGRADE_LINUX_QUIESCENCE_UNCONFIRMED');
+  assert.equal(responseFromTool(r, { exit: 1, stdout: '{"status":"REFUSED","code":"LINUX_X","upgradeCode":"NOT_OURS"}' }, clockAt(T0)).code, 'UPGRADE_LINUX_TOOL_FAILED');
+  assert.equal(responseFromTool(r, { exit: 1, stdout: '{"status":"REFUSED","code":"UPGRADE_LINUX_STAGE_REFUSED"}' }, clockAt(T0)).code, 'UPGRADE_LINUX_TOOL_FAILED', 'only upgradeCode is read');
   assert.equal(responseFromTool(r, { exit: 0, stdout: 'not json' }, clockAt(T0)).code, 'UPGRADE_LINUX_TOOL_OUTPUT_REFUSED');
   assert.equal(responseFromTool(r, { exit: 7, stdout: '' }, clockAt(T0)).code, 'UPGRADE_LINUX_TOOL_FAILED');
   assert.equal(responseFromTool(r, { exit: null, stdout: '' }, clockAt(T0)).code, 'UPGRADE_LINUX_TOOL_NOT_RUN');

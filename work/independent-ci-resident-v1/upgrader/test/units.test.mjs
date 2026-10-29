@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { canonicalJson, sha256 } from '../../src/canonical.mjs';
-import { UpgradeMailbox, responseFromTool } from '../../src/upgrade-mailbox.mjs';
+import { UpgradeMailbox, responseFromTool, upgradeToolArgs } from '../../src/upgrade-mailbox.mjs';
 import { loadUpgraderConfig, validateUpgraderConfig } from '../src/config.mjs';
 import { parseInboxEntry, grantResource, UPGRADE_CANCEL_CONTRACT } from '../src/request.mjs';
 import { Journal } from '../src/journal.mjs';
@@ -22,7 +22,7 @@ const OP = '5e1f0000-0000-4000-8000-000000000001';
 const PKG = 'ab'.repeat(32);
 
 test('codes: every A8 code has one category; terminal outcomes follow the category', () => {
-  assert.equal(UPGRADE_CODES.length, 33); // the 32 of A8 and UPGRADE_CANCELLED
+  assert.equal(UPGRADE_CODES.length, 35); // the 32 of A8, CANCELLED, RETRIES_EXHAUSTED, ROLLBACK_COMPANION_UNAVAILABLE
   assert.equal(categoryOf(U.DRAIN_TIMEOUT), 'deferred');
   assert.equal(categoryOf(U.GRANT_DOOR_UNAVAILABLE), 'transient');
   assert.equal(outcomeOf(U.GRANT_STALE), 'STALE');
@@ -197,32 +197,39 @@ test('resident port: the frozen observation surface and the drop boxes, with the
 test('linux port: through the upgrade mailbox; a resumed call finds its own request; no answer is COMPANION_UNAVAILABLE', async t => {
   const root = await tempDir(t);
   let now = T0;
-  const sleeps = [];
-  const port = await LinuxPort.open(path.join(root, 'mailbox'), { clock: () => now, sleep: async ms => { sleeps.push(ms); await new Promise(r => setTimeout(r, 5)); now += ms; }, pollMs: 10_000 });
+  // The companion is a function the port's own sleep calls (deterministic: no timer races with the fake clock).
   const companion = new UpgradeMailbox(path.join(root, 'mailbox'), () => now);
-  // A companion that answers every pending request once, from a fake tool run.
-  const answerAll = async () => { for (const r of await companion.pending()) if (!r.refused) await companion.respond(r, { ok: true, tool: { exit: 0, status: 'switched' }, result: { status: 'switched' } }); };
-  const call = port.switch({ opId: OP, fromGeneration: 1, toGeneration: 2, linuxManifestSha256: PKG }, 80);
-  await new Promise(r => setTimeout(r, 50));
-  await answerAll();
-  const r = await call;
+  let answer = null;
+  const pass = async () => {
+    if (!answer) return;
+    for (const r of await companion.pending()) if (!r.refused) {
+      const resp = responseFromTool(r, answer(r), () => now);
+      await companion.respond(r, { ok: resp.ok, code: resp.code, tool: resp.tool, result: resp.result });
+    }
+  };
+  const port = await LinuxPort.open(path.join(root, 'mailbox'), { clock: () => now, sleep: async ms => { await pass(); now += ms; }, pollMs: 10_000 });
+  answer = () => ({ exit: 0, stdout: '{"status":"LINUX_SWITCHED","generation":2}' });
+  const r = await port.switch({ opId: OP, fromGeneration: 1, toGeneration: 2, linuxManifestSha256: PKG }, 80);
   assert.equal(r.ok, true);
   // Again with the same key: the same request, already answered (no second request file).
   const again = await port.switch({ opId: OP, fromGeneration: 1, toGeneration: 2, linuxManifestSha256: PKG }, 80);
   assert.equal(again.requestId, r.requestId);
   assert.equal((await fs.readdir(path.join(root, 'mailbox', 'requests'))).length, 1);
   // Nobody answers: after the 5 minute deadline, unavailable.
+  answer = null;
   const lost = await port.verify({ opId: OP, generation: 2 }, 100);
   assert.equal(lost.code, U.COMPANION_UNAVAILABLE);
-  assert.ok(sleeps.length > 0);
-  // A refusal carries the tool's own code.
-  const stage = port.stage({ opId: OP, packageManifestSha256: PKG, generation: 2, linuxManifestSha256: PKG }, 65);
-  await new Promise(r2 => setTimeout(r2, 50));
-  for (const req of await companion.pending()) if (req.kind === 'linux-upgrade-stage') {
-    const resp = responseFromTool(req, { exit: 3, stdout: '{"status":"refused","code":"UPGRADE_LINUX_STAGE_REFUSED"}' }, () => now);
-    await fs.writeFile(path.join(root, 'mailbox', 'responses', `${req.requestId}.json`), canonicalJson(resp));
-  }
-  assert.equal((await stage).code, U.LINUX_STAGE_REFUSED);
+  // A refusal in the root tool's own format: the class code (upgradeCode) is what the upgrader acts on.
+  answer = () => ({ exit: 1, stdout: JSON.stringify({ status: 'REFUSED', sub: 'switch', code: 'LINUX_QUIESCENCE_UNCONFIRMED', upgradeCode: 'UPGRADE_LINUX_QUIESCENCE_UNCONFIRMED', detail: {} }) });
+  const q = await port.switch({ opId: OP, fromGeneration: 2, toGeneration: 3, linuxManifestSha256: PKG }, 81);
+  assert.deepEqual([q.ok, q.code, q.result.code], [false, U.LINUX_QUIESCENCE_UNCONFIRMED, 'LINUX_QUIESCENCE_UNCONFIRMED']);
+  // A class code from outside this channel is not taken.
+  answer = () => ({ exit: 1, stdout: JSON.stringify({ status: 'REFUSED', sub: 'stage', code: 'X', upgradeCode: 'SOMETHING_ELSE' }) });
+  const s = await port.stage({ opId: OP, packageManifestSha256: PKG, generation: 2, linuxManifestSha256: PKG }, 65);
+  assert.equal(s.code, 'UPGRADE_LINUX_TOOL_FAILED');
+  // retain: the tool's argv (clued-ci-upgrade-linux SPEC: --op and --keep required, --generation = current).
+  answer = r2 => { assert.deepEqual(upgradeToolArgs(r2), ['retain', '--op', OP, '--keep', '3', '--generation', '2']); return { exit: 0, stdout: '{"status":"LINUX_RETAINED","generation":2}' }; };
+  assert.equal((await port.retain({ opId: OP, generation: 2 }, 300)).ok, true);
 });
 
 test('package: read once, every byte hashed; links, a changed file and a non-canonical manifest are refused', async t => {

@@ -267,6 +267,58 @@ $null = Put 'upgrade\current.json' (([ordered]@{ contract = 'clued.independent-c
 Yes ((Read-CurrentRecord $Root).generation -eq 1) 'current-record-read'
 $null = Put 'upgrade\current.json' (([ordered]@{ contract = 'x'; generation = 1; residentManifestSha256 = $r1; installReceiptSha256 = (& $h '0') }) | ConvertTo-Json -Compress)
 Yes (Test-Refused { Read-CurrentRecord $Root } 'CURRENT_RECORD_REFUSED') 'current-record-refused'
+# 4c. PR-1 review M2: a tree moved in from upgrade\staged keeps the ACEs it inherited there; SwitchScm gives generation N's resident\<sha>
+#     and source\<sha> their live parent's inheritance back (Repair-GenerationContentAcl) and verify checks it (Test-ContentAcl, shared).
+. (Use 'upgrade-apply.ps1' @('Get-InheritableAceKeys', 'Test-ItemAcl', 'Test-ContentAcl', 'Reset-InheritedAcl', 'Repair-ContentAcl', 'Repair-GenerationContentAcl'))
+foreach ($name in @('Get-InheritableAceKeys', 'Test-ItemAcl', 'Test-ContentAcl')) { Yes ($functions['upgrade-apply.ps1:' + $name] -ceq $functions['verify-resident.ps1:' + $name]) ('content-acl-shared-with-verify:' + $name) }
+$me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$ctrl = 'S-1-5-21-1-2-3-1015'; $stagedReader = 'S-1-5-21-1-2-3-1001'
+function New-AclDir([string]$path, [string]$sddl) { $sec = New-Object Security.AccessControl.DirectorySecurity; $sec.SetSecurityDescriptorSddlForm($sddl); [void][IO.Directory]::CreateDirectory($path, $sec) }
+$m2 = Join-Path $Scratch 'm2'; [void][IO.Directory]::CreateDirectory($m2)
+New-AclDir (Join-Path $m2 'source') "D:P(A;OICI;FA;;;$me)(A;OICI;0x1200a9;;;$ctrl)"
+New-AclDir (Join-Path $m2 'staged') "D:P(A;OICI;FA;;;$me)(A;OICI;0x1200a9;;;$stagedReader)"
+$tree = Join-Path $m2 ('staged\' + $c2)
+[void][IO.Directory]::CreateDirectory((Join-Path $tree 'work\deep')); [IO.File]::WriteAllText((Join-Path $tree 'work\deep\a.cs'), 'a'); [IO.File]::WriteAllText((Join-Path $tree 'top.txt'), 't')
+$placed = Join-Path $m2 ('source\' + $c2)
+[IO.Directory]::Move($tree, $placed)
+$sourceSddl = (Get-Acl -LiteralPath (Join-Path $m2 'source')).Sddl
+Yes ((Test-ContentAcl $placed) -cne 'ok') ('moved-tree-keeps-the-staged-aces:' + (Test-ContentAcl $placed))
+$fileAces = { param([string]$f) @((New-Object Security.AccessControl.RawSecurityDescriptor((Get-Acl -LiteralPath $f).Sddl)).DiscretionaryAcl | ForEach-Object { $_.SecurityIdentifier.Value }) }
+Yes ((& $fileAces (Join-Path $placed 'work\deep\a.cs')) -ccontains $stagedReader -and (& $fileAces (Join-Path $placed 'work\deep\a.cs')) -cnotcontains $ctrl) 'moved-file-has-no-controller-read'
+$n1 = Repair-ContentAcl $placed
+Yes ($n1 -ge 1 -and (Test-ContentAcl $placed) -ceq 'ok') ('repair-gives-the-live-inheritance:' + $n1)
+Yes ((& $fileAces (Join-Path $placed 'work\deep\a.cs')) -ccontains $ctrl -and (& $fileAces (Join-Path $placed 'work\deep\a.cs')) -cnotcontains $stagedReader -and (& $fileAces (Join-Path $placed 'top.txt')) -ccontains $ctrl) 'repaired-files-carry-the-controller-read'
+Yes ((Get-Acl -LiteralPath (Join-Path $m2 'source')).Sddl -ceq $sourceSddl) 'repair-leaves-the-live-parent-alone'
+Yes ((Repair-ContentAcl $placed) -eq 0) 'repair-again-is-a-no-op'
+# A child with an explicit ACE, and one protected: found, and reset.
+$f = Join-Path $placed 'top.txt'; $fs = Get-Acl -LiteralPath $f; $fs.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier($stagedReader)), 'Read', 'Allow'))); [IO.File]::SetAccessControl($f, $fs)
+Yes ((Test-ContentAcl $placed) -ceq 'explicit:top.txt') 'explicit-ace-found'
+$d = Join-Path $placed 'work'; $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm("D:P(A;OICI;FA;;;$me)", 'Access'); [IO.Directory]::SetAccessControl($d, $ds)
+Yes ((Test-ContentAcl $placed) -cmatch '^(?:protected:work|explicit:top\.txt)$') 'protected-child-found'
+Yes ((Repair-ContentAcl $placed) -ge 2 -and (Test-ContentAcl $placed) -ceq 'ok') 'explicit-and-protected-children-reset'
+# A link inside a content tree is refused, never followed.
+$lt = Join-Path $Scratch 'm2-link-target'; [void][IO.Directory]::CreateDirectory($lt)
+[void](New-Item -ItemType Junction -Path (Join-Path $placed 'link') -Target $lt)
+Yes (Test-Refused { Repair-ContentAcl $placed } 'LINK_REFUSED:content') 'repair-refuses-a-link'
+Yes ((Test-ContentAcl $placed) -ceq 'link:link') 'verify-refuses-a-link'
+[IO.Directory]::Delete((Join-Path $placed 'link'))
+# SwitchScm's own call: generation N's two trees (the to generation: the plan's target; the from generation: the plan's current).
+$Root = Join-Path $Scratch 'root'
+[void][IO.Directory]::CreateDirectory((Join-Path $Root ('source\' + $c2))); [void][IO.Directory]::CreateDirectory((Join-Path $Root ('source\' + (& $h 'c'))))
+$rg2 = Repair-GenerationContentAcl $Root $plan $g2
+Yes ($null -ne $rg2 -and (Test-ContentAcl (Join-Path $Root ('resident\' + $r2))) -ceq 'ok' -and (Test-ContentAcl (Join-Path $Root ('source\' + $c2))) -ceq 'ok') 'repair-generation-to'
+$rg1 = Repair-GenerationContentAcl $Root $plan $g1
+Yes ($rg1.repaired -eq 0) 'repair-generation-from-already-right'
+$sw = $functions['upgrade-apply.ps1:Invoke-SwitchScm']
+Yes ($sw.IndexOf('Repair-GenerationContentAcl $Root $plan $gen') -gt 0 -and $sw.IndexOf('Repair-GenerationContentAcl $Root $plan $gen') -lt $sw.IndexOf("Invoke-Sc (`$pair[3]")) 'switch-repairs-before-the-binary-paths'
+Yes ($functions['upgrade-apply.ps1:Invoke-Recover'].Contains("'repair-content-acl'")) 'recover-repairs-the-content-acl'
+Yes ($verify.Contains("Record 'content-addressed-acl'") -and $verify.Contains("Test-ContentAcl (Join-Path `$Root ('source\' + `$ciSourceSha))")) 'verify-checks-the-content-acl'
+# PR-1 review m8: an earlier op's compile output of the same package is set aside, never a refusal of the new op.
+$cf = $functions['upgrade-apply.ps1:Invoke-Compile']
+Yes ($cf.Contains('$asideOther = ($null -ne $earlier) -and ((Get-Field $earlier ''opId'') -cne $plan.opId)') -and $cf.Contains("-and -not `$asideOther)") -and $cf.IndexOf('[IO.Directory]::Move($out, $out + $why') -gt 0) 'compile-sets-aside-an-earlier-op'
+# NIT: the verify script that runs as SYSTEM is the one generation N's resident manifest pins.
+$vf = $functions['upgrade-apply.ps1:Invoke-Verify']
+Yes ($vf.IndexOf("'VERIFY_SCRIPT_NOT_THE_GENERATION'") -gt 0 -and $vf.IndexOf("'VERIFY_SCRIPT_NOT_THE_GENERATION'") -lt $vf.IndexOf('& $PowerShellExe') -and $vf.Contains("'RESIDENT_MANIFEST_NOT_THE_GENERATION'")) 'verify-script-hash-checked-before-it-runs'
 $Root = $ProdRoot
 
 # 5. install-resident.ps1: plan /8, receipt /6, the dry run, the plan hash and the new steps.

@@ -30,6 +30,11 @@ import { U } from './codes.mjs';
 
 export const MAX_MOVES_PER_PASS = 64;
 export const IDLE_MS = 60_000;
+// The inbox is untrusted (any process of the Owner's session can drop files there): at most this many files are read a pass,
+// and at most this many operations are opened in 24 hours; more requests are archived as ignored, with no operation.
+export const INBOX_PER_TICK = 8;
+export const MAX_NEW_OPS_PER_DAY = 48;
+const DAY = 86_400_000;
 const UUID_DIR = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 
 export class Upgrader {
@@ -46,12 +51,27 @@ export class Upgrader {
     this.statusFile = path.join(this.upgradeRoot, 'status.json');
     this.machines = new Map();
     this.lastView = null;
+    // The operations are scanned once, at open(); afterwards this process keeps the index itself (it is their only writer).
+    this.activeId = null;
+    this.recent = [];
+    this.opened = [];
   }
 
   async open() {
     await ensureDir(this.opsRoot);
     this.inbox = await Inbox.open(path.join(this.upgradeRoot, 'inbox'), path.join(this.upgradeRoot, 'inbox-archive'), this.clock);
+    const ops = await this.ops();
+    this.activeId = ops.find(o => o.terminal === null)?.opId ?? null;
+    for (const o of ops.filter(x => x.terminal)) this.noteTerminal(o.opId, o.terminal);
+    const since = Date.now() - DAY;
+    this.opened = ops.filter(o => o.createdMs >= since).map(() => this.clock());
     return this;
+  }
+
+  noteTerminal(opId, t) {
+    this.recent.push({ opId, outcome: t.outcome, code: t.code, generation: t.generation, at: t.at });
+    this.recent.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+    this.recent = this.recent.slice(-10);
   }
 
   async ops() {
@@ -67,7 +87,7 @@ export class Upgrader {
     return out.sort((a, b) => a.createdMs - b.createdMs || (a.opId < b.opId ? -1 : 1));
   }
 
-  async active() { return (await this.ops()).find(o => o.terminal === null) ?? null; }
+  active() { return this.activeId ? { opId: this.activeId } : null; }
 
   async currentGeneration() {
     try { return parseGenerationCurrent(await readBounded(this.gens.currentFile, 8192, 'GENERATION_CURRENT_REFUSED')); } catch { return null; }
@@ -76,17 +96,21 @@ export class Upgrader {
   // New requests: an upgrade opens its operation (refused at once when another is active), a cancel is recorded in its
   // operation when that has not staged anything yet. Everything read is archived (processed / rejected / ignored).
   async intake() {
-    for (const entry of await this.inbox.read(8, REQUEST_MAX_BYTES)) {
+    for (const entry of await this.inbox.read(INBOX_PER_TICK, REQUEST_MAX_BYTES)) {
       if (!entry.bytes) { await this.inbox.dispose(entry.name, 'rejected'); continue; }
       const parsed = parseInboxEntry(entry.bytes);
       let disposition = 'rejected';
       if (parsed.kind === 'upgrade') {
         const id = parsed.value.requestId;
+        const now = this.clock();
+        this.opened = this.opened.filter(at => now - at < DAY);
         if (await exists(path.join(this.opsRoot, id))) disposition = 'ignored';
+        else if (this.opened.length >= MAX_NEW_OPS_PER_DAY) disposition = 'ignored';
         else {
-          const active = await this.active();
           const journal = await Journal.create(this.opsRoot, id, entry.bytes, { clock: this.clock, pid: this.pid });
-          if (active) await journal.terminal({ outcome: 'REFUSED', code: U.ANOTHER_OP_ACTIVE, generation: (await this.currentGeneration())?.generation ?? 0 });
+          this.opened.push(now);
+          if (this.activeId) this.noteTerminal(id, await journal.terminal({ outcome: 'REFUSED', code: U.ANOTHER_OP_ACTIVE, generation: (await this.currentGeneration())?.generation ?? 0 }));
+          else this.activeId = id;
           disposition = 'processed';
         }
       } else if (parsed.kind === 'cancel') {
@@ -116,13 +140,19 @@ export class Upgrader {
     await this.intake();
     let wait = IDLE_MS;
     let error = null;
-    const active = await this.active();
+    const active = this.active();
     if (active) {
       const m = this.machine(active.opId);
       try {
         for (let i = 0; i < MAX_MOVES_PER_PASS; i += 1) {
           const r = await m.step();
-          if (r.done) { wait = 0; break; }
+          if (r.done) {
+            wait = 0;
+            this.noteTerminal(active.opId, r.terminal);
+            this.activeId = null;
+            this.machines.delete(active.opId);
+            break;
+          }
           if (r.wait > 0) { wait = r.wait; break; }
         }
       } catch (e) {
@@ -163,9 +193,7 @@ export class Upgrader {
 
   async writeStatus(opId, error) {
     const current = await this.currentGeneration();
-    const ops = await this.ops();
-    const recent = ops.filter(o => o.terminal).sort((a, b) => Date.parse(a.terminal.at) - Date.parse(b.terminal.at)).slice(-10)
-      .map(o => ({ opId: o.opId, outcome: o.terminal.outcome, code: o.terminal.code, generation: o.terminal.generation, at: o.terminal.at }));
+    const recent = this.recent;
     const generations = [];
     for (const n of await this.gens.list()) {
       let pkg = null;

@@ -24,16 +24,20 @@
                                   (Invoke-CompileRecipe, the same function as install-resident.ps1), from the staged or content-addressed
                                   sources whose hashes the staged package manifest gives, and the broker configuration: all into
                                   upgrade\staged\<pkg>\compiled\{bin,helpers,config} (each created with the live directory's DACL);
-                                  compiled\compile.json last, create-only. Run again: re-observed (replayed).
+                                  compiled\compile.json last, create-only. Run again: re-observed (replayed); an earlier op's compiled\
+                                  (a rolled-back op of the same package) is set aside by rename and compiled again.
     -Action StopServices          stops the resident, waits until its executor has exited by itself (never killed), then the broker.
     -Action SwitchScm -Generation N       both binary paths of generation N, read back. N = the plan's toGeneration: from the plan and
                                   compile.json (generations\g<N>\generation.json, once written, must agree); N = fromGeneration: from its
-                                  generation record. The files the command lines pin must already be in place.
+                                  generation record. The files the command lines pin must already be in place. First, generation N's
+                                  resident\<sha> and source\<sha> get their live parent's inheritance back (Repair-GenerationContentAcl: a
+                                  rename out of upgrade\staged keeps the staged ACEs); the result carries contentAcl { repaired, resident, source }.
     -Action RegisterCompanionTask -Generation N   the companion task with the install's configuration and N's arguments.
     -Action RestartCompanion      ends the companion (task, node and job hosts of the installed copy) and runs the task again.
     -Action StartServices         starts the broker, then the resident.
     -Action Verify -Generation N [-ExpectPausedSha256 <sha>]   runs generation N's installed verify-resident.ps1 against the receipt
-                                  upgrade\current.json names (N must be current).
+                                  upgrade\current.json names (N must be current), once its hash is the one generation N's
+                                  config\resident-installed-manifest.json (the plan's slot hash) pins.
 
     -Recover -OpId <id> [-Apply]  the Owner's emergency entry (scheme C), elevated: dry run by default. -Apply stops the upgrader, the
                                   resident (waiting for its executor) and the broker, then points both binary paths and the companion
@@ -398,6 +402,72 @@ function Read-CurrentRecord([string]$root) {
   $cur
 }
 
+# ---- The content-addressed directories' ACLs (PR-1 review M2) ----
+# resident\<sha> and source\<sha> are moved in from upgrade\staged\ by one rename each (generations.mjs placeDirs), and a rename keeps the
+# security descriptor: the tree would keep what it inherited under upgrade\ and miss, for one, .\clued-control's read on source\. Every item
+# of such a tree must hold exactly what its live parent passes down: not protected, no explicit ACE, the parent's inheritable ACEs (SID and
+# mask) and nothing else. Test-ContentAcl is shared with verify-resident.ps1 (one text, held identical by test-upgrade-windows.ps1).
+function Get-InheritableAceKeys([string]$parentSddl, [int]$flag) {
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor($parentSddl)
+  (@(foreach ($a in $raw.DiscretionaryAcl) { if (([int]$a.AceFlags -band $flag) -ne 0) { $a.SecurityIdentifier.Value + '|' + $a.AccessMask } }) | Sort-Object -Unique) -join ','
+}
+function Test-ItemAcl($item, [string]$wantDir, [string]$wantFile) {
+  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return 'link' }
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor((Get-Acl -LiteralPath $item.FullName).Sddl)
+  if (($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0) { return 'protected' }
+  if (@($raw.DiscretionaryAcl | Where-Object { ([int]$_.AceFlags -band 0x10) -eq 0 }).Count -ne 0) { return 'explicit' }
+  $have = (@(foreach ($a in $raw.DiscretionaryAcl) { $a.SecurityIdentifier.Value + '|' + $a.AccessMask }) | Sort-Object -Unique) -join ','
+  if ($have -cne $(if ($item.PSIsContainer) { $wantDir } else { $wantFile })) { return 'aces' }
+  'ok'
+}
+# 'ok', or the first reason with the item's path under $dir.
+function Test-ContentAcl([string]$dir) {
+  $parent = (Get-Acl -LiteralPath (Split-Path -Parent $dir)).Sddl
+  $wantDir = Get-InheritableAceKeys $parent 2; $wantFile = Get-InheritableAceKeys $parent 1
+  foreach ($i in @(@(Get-Item -LiteralPath $dir -Force) + @(Get-ChildItem -LiteralPath $dir -Recurse -Force))) {
+    $why = Test-ItemAcl $i $wantDir $wantFile
+    if ($why -cne 'ok') { return ($why + ':' + $i.FullName.Substring($dir.Length).TrimStart('\')) }
+  }
+  'ok'
+}
+# Inheritance back on, explicit ACEs off (only the DACL section is written); on a directory Windows passes the parent's inheritable ACEs
+# down the whole tree again.
+function Reset-InheritedAcl([string]$path, [bool]$container) {
+  $sec = if ($container) { New-Object Security.AccessControl.DirectorySecurity } else { New-Object Security.AccessControl.FileSecurity }
+  $sec.SetSecurityDescriptorSddlForm('D:', [Security.AccessControl.AccessControlSections]::Access)
+  $sec.SetAccessRuleProtection($false, $false)
+  if ($container) { [IO.Directory]::SetAccessControl($path, $sec) } else { [IO.File]::SetAccessControl($path, $sec) }
+}
+# Returns how many items were reset (0: already right); refuses a link; reads the result back.
+function Repair-ContentAcl([string]$dir) {
+  $parent = (Get-Acl -LiteralPath (Split-Path -Parent $dir)).Sddl
+  $wantDir = Get-InheritableAceKeys $parent 2; $wantFile = Get-InheritableAceKeys $parent 1
+  $n = 0
+  $top = Get-Item -LiteralPath $dir -Force
+  $why = Test-ItemAcl $top $wantDir $wantFile
+  if ($why -ceq 'link') { throw 'LINK_REFUSED:content' }
+  if ($why -cne 'ok') { Reset-InheritedAcl $dir $true; $n++ }
+  foreach ($i in @(Get-ChildItem -LiteralPath $dir -Recurse -Force)) {
+    $why = Test-ItemAcl $i $wantDir $wantFile
+    if ($why -ceq 'link') { throw 'LINK_REFUSED:content' }
+    if ($why -cne 'ok') { Reset-InheritedAcl $i.FullName ([bool]$i.PSIsContainer); $n++ }
+  }
+  if ((Test-ContentAcl $dir) -cne 'ok') { throw 'CONTENT_ACL_READBACK_MISMATCH' }
+  $n
+}
+# Generation N's resident\<sha> and source\<sha>: the to generation's from the plan's target, the from generation's from its current.
+function Repair-GenerationContentAcl([string]$root, $plan, $gen) {
+  $sourceSha = if ($gen.generation -eq $plan.toGeneration) { $plan.target.ciSourceManifestSha256 } else { $plan.current.ciSourceManifestSha256 }
+  $out = [ordered]@{ repaired = 0; resident = 0; source = 0 }
+  foreach ($pair in @(@('resident', $gen.resident.residentManifestSha256), @('source', $sourceSha))) {
+    $dir = Join-Path $root ($pair[0] + '\' + $pair[1])
+    Assert-NoLinkChain $root $dir
+    $n = Repair-ContentAcl $dir
+    $out[$pair[0]] = $n; $out.repaired += $n
+  }
+  $out
+}
+
 # ---- The host: services, executor, companion ----
 function Get-ServiceFacts([string]$name) {
   $q = & $Sc queryex $name | Out-String
@@ -459,7 +529,13 @@ function Invoke-Compile($plan) {
   $out = Join-Path $Root ('upgrade\staged\' + $plan.packageManifestSha256 + '\compiled')
   $record = Join-Path $out 'compile.json'
   $staged = Read-StagedManifest $Root $plan
+  $asideOther = $false
   if (Test-Path -LiteralPath $out) {
+    # Compiled for an earlier op of the same package (it was rolled back or withdrawn after staging): set aside, compiled again for this op.
+    $earlier = if (Test-Path -LiteralPath $record -PathType Leaf) { try { ConvertFrom-StrictJson (Read-SmallFile $record 1048576 'COMPILE_RECORD') 'COMPILE_RECORD' } catch { $null } } else { $null }
+    $asideOther = ($null -ne $earlier) -and ((Get-Field $earlier 'opId') -cne $plan.opId)
+  }
+  if ((Test-Path -LiteralPath $out) -and -not $asideOther) {
     if (Test-Path -LiteralPath $record -PathType Leaf) {
       # Already compiled for this op: re-observe every output.
       $done = Read-CompileRecord $Root $plan
@@ -476,9 +552,11 @@ function Invoke-Compile($plan) {
   $v2 = Split-Path -Parent $v2Files[0]
   if (@($v2Files | Where-Object { (Split-Path -Parent $_) -cne $v2 }).Count -ne 0) { throw 'COMPILE_INPUT_SOURCE_SPLIT' }
   if (Test-Path -LiteralPath $out) {
-    # An attempt cut before its record: set aside by rename (nothing is deleted), compiled again.
+    # An attempt cut before its record, or an earlier op's output: set aside by rename (nothing is deleted), compiled again.
     $script:Touched = $true
-    [IO.Directory]::Move($out, $out + '.abandoned-' + [DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))
+    $why = if ($asideOther) { '.op-' + [string](Get-Field $earlier 'opId') } else { '.abandoned' }
+    if ($why -cnotmatch '^\.(?:abandoned|op-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\z') { $why = '.op-other' }
+    [IO.Directory]::Move($out, $out + $why + '-' + [DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))
   }
   $script:Touched = $true
   [void][IO.Directory]::CreateDirectory($out)
@@ -519,6 +597,9 @@ function Invoke-SwitchScm($plan, [int]$g) {
   $gen = Get-PlanGeneration $plan $g
   Assert-GenerationInPlace $Root $gen
   foreach ($name in @($ServiceName, $BrokerName)) { if ((Get-ServiceFacts $name).state -cne 'stopped') { throw ('SERVICES_NOT_STOPPED:' + $name) } }
+  # The content-addressed directories of generation N first (M2 of the PR-1 review): before any service can run code from them.
+  $script:Touched = $true
+  $acl = Repair-GenerationContentAcl $Root $plan $gen
   $did = [ordered]@{}
   foreach ($pair in @(@($ServiceName, $gen.record.residentBinPath, 'resident', 'RESIDENT'), @($BrokerName, $gen.record.brokerBinPath, 'broker', 'BROKER'))) {
     $have = (Get-ServiceFacts $pair[0]).binPath
@@ -530,7 +611,7 @@ function Invoke-SwitchScm($plan, [int]$g) {
     Assert-ServiceBinary $pair[0] $pair[1]
     $did[$pair[2]] = [ordered]@{ changed = ($have -cne $pair[1]); binPath = $pair[1] }
   }
-  [ordered]@{ replayed = (-not $did.resident.changed -and -not $did.broker.changed); generation = $g; resident = $did.resident; broker = $did.broker }
+  [ordered]@{ replayed = (-not $did.resident.changed -and -not $did.broker.changed -and $acl.repaired -eq 0); generation = $g; resident = $did.resident; broker = $did.broker; contentAcl = $acl }
 }
 function Invoke-RegisterCompanionTask($plan, [int]$g) {
   $gen = Get-PlanGeneration $plan $g
@@ -593,6 +674,14 @@ function Invoke-Verify($plan, [int]$g, [string]$pausedSha) {
   $script = Join-Path $Root ('resident\' + $residentSha + '\windows\verify-resident.ps1')
   Assert-NoLinkChain $Root (Split-Path -Parent $script)
   if (-not (Test-Path -LiteralPath $script -PathType Leaf)) { throw 'VERIFY_SCRIPT_MISSING' }
+  # Run as SYSTEM only the reviewed bytes: the live config\resident-installed-manifest.json must be generation N's (the plan's slot hash:
+  # new for the to generation, old for the from generation) and it must pin this verify-resident.ps1.
+  $slot = Find-PlanSlot $plan 'config\resident-installed-manifest.json'
+  $wantManifest = if ($g -eq $plan.toGeneration) { $slot.sha256 } else { Get-Field $slot 'oldSha256' }
+  $manifestBytes = Read-SmallFile (Join-Path $Root 'config\resident-installed-manifest.json') 16777216 'RESIDENT_MANIFEST'
+  if (-not (Test-Hex $wantManifest) -or (Sha256Bytes $manifestBytes) -cne $wantManifest) { throw 'RESIDENT_MANIFEST_NOT_THE_GENERATION' }
+  $pin = @(@((ConvertFrom-StrictJson $manifestBytes 'RESIDENT_MANIFEST').files) | Where-Object { $_.path -ceq 'windows/verify-resident.ps1' })
+  if ($pin.Count -ne 1 -or -not (Test-Hex $pin[0].sha256) -or (Sha256Bytes (Read-SmallFile $script 4194304 'VERIFY_SCRIPT')) -cne $pin[0].sha256) { throw 'VERIFY_SCRIPT_NOT_THE_GENERATION' }
   $verifyArgs = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $script, '-ExpectedInstallReceiptSha256', $cur.installReceiptSha256)
   if ($pausedSha) { $verifyArgs += @('-ExpectPausedSha256', $pausedSha) }
   $text = & $PowerShellExe @verifyArgs | Out-String
@@ -625,12 +714,15 @@ function Invoke-Recover([string]$opId, [bool]$apply) {
   if ($b.state -cne 'stopped') { $todo += 'stop-broker' }
   if ($r.binPath -cne $gen.record.residentBinPath -or $b.binPath -cne $gen.record.brokerBinPath) { $todo += 'switch-scm' }
   if (-not $c.exists -or $c.arguments -cne $gen.record.companionTaskArguments) { $todo += 'register-companion-task' }
+  $srcSha = if ($g -eq $plan.toGeneration) { $plan.target.ciSourceManifestSha256 } else { $plan.current.ciSourceManifestSha256 }
+  if ((Test-ContentAcl (Join-Path $Root ('resident\' + $gen.resident.residentManifestSha256))) -cne 'ok' -or (Test-ContentAcl (Join-Path $Root ('source\' + $srcSha))) -cne 'ok') { $todo += 'repair-content-acl' }
   $view = [ordered]@{ mode = $(if ($apply) { 'apply' } else { 'dry-run' }); planSha256 = (Sha256Bytes $planBytes); currentGeneration = $g; lastJournalEntry = $(if ($journal.Count) { $journal[-1] } else { $null })
     services = [ordered]@{ resident = $r.state; broker = $b.state; upgrader = $u.state }; todo = $todo; startsAnything = $false }
   if (-not $apply) { return $view }
   $script:Touched = $true
   if ($todo -ccontains 'stop-upgrader') { Invoke-ScAllowing 'UPGRADER_STOP_FAILED' @(0, 1061, 1062) @('stop', $UpgraderName); Wait-ServiceState $UpgraderName 'stopped' 120 'UPGRADER_STOP_TIMEOUT' }
   $null = Invoke-StopServices
+  if ($todo -ccontains 'repair-content-acl') { $null = Repair-GenerationContentAcl $Root $plan $gen }
   if ($todo -ccontains 'switch-scm') { $null = Invoke-SwitchScm $plan $g }
   if ($todo -ccontains 'register-companion-task') { $null = Invoke-RegisterCompanionTask $plan $g }
   $stamp = [DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')

@@ -5,7 +5,7 @@
 // Request ids are derived from (opId, step number, try): a resumed step finds the request it already sent and waits for
 // that answer instead of sending a second one; a request that ran out without an answer is followed by the next try. The
 // root tool re-observes before it acts (spec B3), so a repeated request is safe as well.
-import { UpgradeMailbox, derivedRequestId } from '../../src/upgrade-mailbox.mjs';
+import { CHANNEL_CODE, UPGRADE_RETAIN_KEEP, UpgradeMailbox, derivedRequestId } from '../../src/upgrade-mailbox.mjs';
 import { U } from './codes.mjs';
 
 export const MAX_TRIES_PER_CALL = 50;
@@ -32,7 +32,11 @@ export class LinuxPort {
       }
       const answer = await this.mailbox.await(request, this.sleep, this.pollMs);
       if (answer === null) return { ok: false, code: U.COMPANION_UNAVAILABLE, result: null, requestId };
-      return { ok: answer.ok, code: answer.code, result: answer.result, requestId };
+      // The class code the upgrader acts on: the answer's (responseFromTool takes the tool's upgradeCode), or, from a companion
+      // that put the tool's detailed code there, the tool's own upgradeCode in the result. Only this channel's codes.
+      let code = answer.code;
+      if (!answer.ok && !CHANNEL_CODE.test(code ?? '') && CHANNEL_CODE.test(answer.result?.upgradeCode ?? '')) code = answer.result.upgradeCode;
+      return { ok: answer.ok, code, result: answer.result, requestId };
     }
     return { ok: false, code: U.COMPANION_UNAVAILABLE, result: null, requestId: null };
   }
@@ -42,6 +46,7 @@ export class LinuxPort {
   switch({ opId, fromGeneration, toGeneration, linuxManifestSha256 }, key) { return this.call('linux-upgrade-switch', opId, { fromGeneration, toGeneration, linuxManifestSha256 }, key); }
   rollback({ opId, fromGeneration, toGeneration }, key) { return this.call('linux-upgrade-rollback', opId, { fromGeneration, toGeneration }, key); }
   verify({ opId, generation }, key) { return this.call('linux-upgrade-verify', opId, { generation }, key); }
+  retain({ opId, generation }, key) { return this.call('linux-upgrade-retain', opId, { generation, keep: UPGRADE_RETAIN_KEEP }, key); }
   // The facts the companion keeps in responses\version-facts.json (null: none or invalid).
   readFacts() { return this.mailbox.readVersionFacts(); }
 }

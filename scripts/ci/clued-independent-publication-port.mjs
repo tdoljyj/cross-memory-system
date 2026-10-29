@@ -7,7 +7,7 @@ import { digest } from '../../work/actions-hosted-migration/independent-ci-v1/sr
 import { makeIndependentPublicationIdentity, CHECKS } from './clued-independent-publication-identity.mjs';
 import { createIndependentPublicationRuntime, nativeNoPostProof, independentCheckExternalIdMatchesJob } from './clued-independent-publication-runtime.mjs';
 
-export const COMPONENT_VERSION = '1.0.2';
+export const COMPONENT_VERSION = '1.0.3';
 const BRAND = Symbol('qualified-native-publication-facade');
 const brand = Object.freeze({});
 const noPostErrors = new WeakMap();

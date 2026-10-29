@@ -2967,10 +2967,13 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 - `consistent === true` 时解除（`intake-resumed`，`reason: VERSIONS_CONSISTENT`）；`null`（未知）既不加也不解，已有的 hold 到点自己结束。
 - 放在 tick 里 Owner 请求之后、排程之前，所以版本不一致时不开新批次；正在跑或停靠的批次不受影响（这是 intake pause 的本义）。
 
-### 34.5 引擎的版本闸与失败码 `UPGRADE_VERSION_SKEW`
+### 34.5 版本闸：预留之前的全局延后，第一个 Linux 段之前的兜底
 
-- `src/engine-windows.mjs#runStage`：第一个 Linux 段（`firstLinux`，第 2、4 或 6 段）之前现读一次版本；`consistent === false` 就不调用该段，返回 `UPGRADE_VERSION_SKEW`（Windows 一半的证明：树为零、原始服务已停；失败路径照常补 Linux 静默）。`null`、`true`、端口出错或没有端口：照旧往下走（refs 闸等）。只有第一个 Linux 段会问。
-- `src/failure-table.json` 加两行：`stages [2,4,6]` 与 `any`，`class environment`、`disposition burn`、`retry new-commit`、`breaker neutral`。**与规格的出入**：规格写的是 `release-if-safe` 加 `new-trigger`，但失败表自己的校验（`classify.mjs#validateFailureTable`）只允许第 0、1 段出现 release（10-started 之后不存在放行），写成 release 会让模块加载失败；第 2 段以后的干净结束只能烧掉，烧掉的提交 `new-trigger` 也不会再跑，所以写 `new-commit`。实际出现的机会很小：版本不一致时 34.4 的 hold 已经不让新批次开始，这一闸只挡“批次开始后、第一个 Linux 段之前”变成不一致的竞态。`test/failure-table.test.mjs` 的 `RESIDENT_CODES` 已加入该码。
+节点自己的版本偏差不应由 PR 付代价，所以主闸放在**预留之前**，引擎里的闸只兜竞态。
+
+- **主闸**：`src/executor.mjs#precheck`（只读、无密钥、无网络的预检）在决定预留之前现读一次版本（`versionSkewNow`）；`consistent === false` 就返回全局延后 `VERSION_SKEW`：本轮排程到此结束，不预留、不写 ledger、不烧号、不计入任何每日额度或放行上限，行仍在排队表里，版本一致后照常运行。`null`、端口出错或没有端口：照旧。它与 34.4 的 hold 互补：hold 在 tick 开头按那一刻的读数加上（之后读到偏差的同一个 tick 里 hold 还没有写，或者 hold 写不进 intake 状态），预检的现读把这个窗口也关上；attempt 2 走同一个预检。
+- **兜底**：`src/engine-windows.mjs#runStage` 在第一个 Linux 段（`firstLinux`，第 2、4 或 6 段）之前再现读一次；`consistent === false` 就不调用该段，返回 `UPGRADE_VERSION_SKEW`（Windows 一半的证明：树为零、原始服务已停；失败路径照常补 Linux 静默）。`null`、`true`、端口出错或没有端口：照旧往下走（refs 闸等）。只有第一个 Linux 段会问。只有“批次已预留并开始后、第一个 Linux 段之前”才变成不一致的竞态会走到这里。
+- `src/failure-table.json` 为兜底码加两行：`stages [2,4,6]` 与 `any`，`class environment`、`disposition burn`、`retry new-commit`、`breaker neutral`。第 2 段以后的干净结束只能烧掉：失败表自己的校验（`classify.mjs#validateFailureTable`）只允许第 0、1 段出现 release（10-started 之后不存在放行），所以规格原写的 `release-if-safe` 加 `new-trigger` 会让模块加载失败，烧掉的提交 `new-trigger` 也不会再跑。`test/failure-table.test.mjs` 的 `RESIDENT_CODES` 已加入该码。
 
 ### 34.6 service-start 的代数与 `resident-upgraded` 回执（`src/service-main.mjs`）
 
@@ -2980,7 +2983,7 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 ### 34.7 companion 的升级邮箱 lane（`src/companion.mjs`、`src/companion-main.mjs`）
 
 - 第三个 lane，自己的 Runner（20 分钟的 Linux stage 不会挡住常驻邮箱和咨询工作），每 5 秒看一次 `upgrade\mailbox\requests\`。目录不存在（通道之前的安装）时 lane 每次重试打开，companion 其余部分照旧；companion 从不建这些目录。
-- 每个请求按 `upgrade-mailbox.mjs#upgradeToolArgs` 生成参数，再由 `argv(cfg).upgradeTool` 以固定前缀（`wsl.exe --distribution … --user root --exec /usr/bin/env -i …`）和固定路径 `/opt/clued-independent-ci/upgrade-v1/bin/clued-ci-upgrade-linux` 运行。参数先过 `upgradeToolArgvOk`：每个元素是 `[a-z0-9-]` 的单个记号，拼起来必须完全匹配五种之一（`version-facts`；`stage --op --package --generation --linux-manifest`；`switch --op --from --to --linux-manifest`；`rollback --op --from --to`；`verify --op --generation`），否则 `COMPANION_UPGRADE_TOOL_ARGS_INVALID`，什么都不运行。
+- 每个请求按 `upgrade-mailbox.mjs#upgradeToolArgs` 生成参数，再由 `argv(cfg).upgradeTool` 以固定前缀（`wsl.exe --distribution … --user root --exec /usr/bin/env -i …`）和固定路径 `/opt/clued-independent-ci/upgrade-v1/bin/clued-ci-upgrade-linux` 运行。参数先过 `upgradeToolArgvOk`：每个元素是 `[a-z0-9-]` 的单个记号，拼起来必须完全匹配六种之一（`version-facts`；`stage --op --package --generation --linux-manifest`；`switch --op --from --to --linux-manifest`；`rollback --op --from --to`；`verify --op --generation`；`retain --op --keep --generation`，即 `linux-upgrade-retain {keep, generation}`，keep 只收 2..10，形状与 B3 工具和 `upgradeToolArgs` 一致），否则 `COMPANION_UPGRADE_TOOL_ARGS_INVALID`，什么都不运行。
 - 工具的一行 JSON 按 `responseFromTool` 原样写回 `responses\<requestId>.json`（`/1` 冻结，以后的 companion 都要原样应答）；超时或起不来的子进程是 exit -1/null，永不算成功。**截止时间已过的请求不运行**（升级代理可能已当作“没有应答”继续了），应答 `UPGRADE_MAILBOX_REQUEST_EXPIRED`。读不了的请求文件不动，由升级代理自己超时。
 - Linux 事实每 5 分钟整文件替换写一次 `responses\version-facts.json`；每次 switch、rollback 之后（不论结果）立刻再写；被请求的 `linux-version-facts` 应答也顺带写入。读失败 60 秒后再试。
 
@@ -2998,12 +3001,12 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 
 ### 34.10 测试
 
-- `test/upgrade-wiring.test.mjs`：status `/7` 的读写与 `/5`、`/6` 兼容、形状复核；`consistent` 的真、假（代数、Source、清单、pins）与未知（过期、缺文件、写了一半）；五种 notice 与通知文字；skew hold 的加、不续、续期、null 不动、一致后解除，没有端口或端口出错时不动；upgrade-resume 只认 `owner\`、比较交换、拒绝与重复、`by`；`service-start` 的代数与 `resident-upgraded`（升级与回滚，未知不写），回执链仍然完整；引擎闸（2、4、6 段、未知照旧、只问第一个 Linux 段）；失败表行；companion 的 argv 校验（五种接受、十二种拒绝）与 lane 的每个 kind、工具码透传、switch/rollback 后立即刷新、过期不运行、超时与非 JSON 不算成功、失败重试间隔、目录缺失；inspect。
+- `test/upgrade-wiring.test.mjs`：status `/7` 的读写与 `/5`、`/6` 兼容、形状复核；`consistent` 的真、假（代数、Source、清单、pins）与未知（过期、缺文件、写了一半）；五种 notice 与通知文字；skew hold 的加、不续、续期、null 不动、一致后解除，没有端口或端口出错时不动；预检的 `VERSION_SKEW` 全局延后（不预留、不烧号、偏差消失后同一提交照常运行）；upgrade-resume 只认 `owner\`、比较交换、拒绝与重复、`by`；`service-start` 的代数与 `resident-upgraded`（升级与回滚，未知不写），回执链仍然完整；引擎闸（2、4、6 段、未知照旧、只问第一个 Linux 段）；失败表行；companion 的 argv 校验（六种形状接受、二十种拒绝）与 lane 的每个 kind、工具码透传、switch/rollback 后立即刷新、过期不运行、超时与非 JSON 不算成功、失败重试间隔、目录缺失；inspect。
 - `test/package.test.mjs`：`/4` 的各键、规范字节、Linux 段（含 bundle 与升级工具清单）、升级代理副本与闭包（不含未导入的模块、同一树两次构建哈希相同）、`--fresh-install` 的目标和安装白名单、各类输入拒绝；并用升级代理的 `validatePackageManifest` 复核。
 - `test/status.test.mjs`、`test/node-mode.test.mjs` 改为 `/7`；`test/failure-table.test.mjs` 加码。
 
 ### 34.11 不变量
 
 - 常驻服务不运行升级代理、不写 `upgrade\` 下任何文件；它只读三份文件，只在自己的 intake 状态里加或解 `version-skew` 这一个 holder。
-- 版本信息只用于显示、hold 和第一个 Linux 段前的闸，从不让任何东西更早开始；未知永远当作“不动”。
-- companion 仍只运行固定 argv；新增的只是一个冻结路径的 root 工具和五种逐字校验的参数形状。
+- 版本信息只用于显示、hold、预检的全局延后和第一个 Linux 段前的兜底闸，从不让任何东西更早开始；未知永远当作“不动”。
+- companion 仍只运行固定 argv；新增的只是一个冻结路径的 root 工具和六种逐字校验的参数形状。

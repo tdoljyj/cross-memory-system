@@ -231,6 +231,8 @@ export const UPGRADE_TOOL_ARGV = Object.freeze([
   new RegExp(`^switch --op ${UPGRADE_UUID} --from ${UPGRADE_GEN} --to ${UPGRADE_GEN} --linux-manifest ${UPGRADE_SHA}$`),
   new RegExp(`^rollback --op ${UPGRADE_UUID} --from ${UPGRADE_GEN} --to ${UPGRADE_GEN}$`),
   new RegExp(`^verify --op ${UPGRADE_UUID} --generation ${UPGRADE_GEN}$`),
+  // linux-upgrade-retain { keep, generation }: the root tool keeps 2..10 generations (clued-ci-upgrade-linux retain).
+  new RegExp(`^retain --op ${UPGRADE_UUID} --keep (?:[2-9]|10) --generation ${UPGRADE_GEN}$`),
 ]);
 export const upgradeToolArgvOk = args => Array.isArray(args) && args.length >= 1 && args.length <= 11 && args.every(a => typeof a === 'string' && /^[a-z0-9-]{1,64}$/.test(a))
   && UPGRADE_TOOL_ARGV.some(re => re.test(args.join(' ')));
