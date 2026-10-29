@@ -49,6 +49,8 @@ const PURPOSES: { purpose: string; label: string }[] = [
   { purpose: "parking", label: "停车位" },
   { purpose: "other", label: "其他" },
 ];
+// Button labels of the single-holder roles; a role this page does not know shows its server title.
+const ROLE_LABELS: Record<string, string> = { "release-door": "发布门口", "resident-upgrade": "常驻节点升级门口" };
 class RequestFailure extends Error {}
 
 async function rpc(name: string, input: Json): Promise<Json> {
@@ -254,7 +256,7 @@ export default function BindingRolesPage() {
                 if (key !== "ci-admission") {
                   if (!live && !has) return null;
                   return <button key={key} type="button" disabled={busy}
-                    onClick={() => void ask(String(binding.binding_id), key, !has)}>{(has ? "取消：" : "设为：") + "发布门口"}</button>;
+                    onClick={() => void ask(String(binding.binding_id), key, !has)}>{(has ? "取消：" : "设为：") + (ROLE_LABELS[key] ?? String(role.title ?? key))}</button>;
                 }
                 if (!has) return live ? PURPOSES.map(p => <button key={key + p.purpose} type="button" disabled={busy}
                   onClick={() => void ask(String(binding.binding_id), key, true, p.purpose)}>{"设为 CI 准入：" + p.label}</button>) : null;
