@@ -169,6 +169,25 @@ def validate_receipt(r, d, descriptor_sha, now):
     return r
 
 
+def bundle_generation(base, d, descriptor_sha, now):
+    """Task 4012c1b9 (DESIGN §36): the newest complete bundle generation of the batch and its validated receipt. gen-2/ (the
+    second bundle of a batch resumed from parking point A) when it exists: then its receipt must exist, name generation 2
+    and the first generation's exact bundle, and the first one must be this batch's too. A gen-2/ without its receipt is
+    refused, never skipped. Otherwise the first generation, whose receipt never names a generation."""
+    gen2 = f'{base}/gen-2'
+    if not os.path.lexists(gen2):
+        r = validate_receipt(json.loads(read_public(f'{base}/all-refs.receipt.json', 1 << 20)), d, descriptor_sha, now)
+        need('generation' not in r, 'BUNDLE_RECEIPT_REFUSED')
+        return base, r
+    need(os.path.isdir(gen2) and not os.path.islink(gen2) and os.path.lexists(f'{gen2}/all-refs.receipt.json'), 'BUNDLE_GENERATION_INCOMPLETE')
+    r = validate_receipt(json.loads(read_public(f'{gen2}/all-refs.receipt.json', 1 << 20)), d, descriptor_sha, now)
+    first = json.loads(read_public(f'{base}/all-refs.receipt.json', 1 << 20))
+    need(isinstance(first, dict) and first.get('contract') == r['contract'] and first.get('batchId') == d['batchId'] and first.get('descriptorSha256') == descriptor_sha
+         and 'generation' not in first and isinstance(first.get('bundleSha256'), str) and HEX64.fullmatch(first['bundleSha256']), 'BUNDLE_RECEIPT_REFUSED')
+    need(r.get('generation') == 2 and r.get('previousBundleSha256') == first['bundleSha256'] and r.get('previousRefListSha256') == first.get('refListSha256'), 'BUNDLE_RECEIPT_REFUSED')
+    return gen2, r
+
+
 def tree_modes_regular(ls_tree_z):
     """Only regular blobs (100644/100755): no symlink (120000), submodule (160000) or other mode."""
     for row in filter(None, ls_tree_z.split('\0')):
@@ -301,9 +320,7 @@ def prepare(batch_id):
     need(not os.path.lexists(prep) and not any(os.path.lexists(t) for t in targets.values()), 'FIXED_TARGET_ALREADY_EXISTS')
     live_preconditions(list(jobs.values()))
     # Bundle: the receipt binds batch, descriptor, head, base, Source commit and freshness.
-    src = f'{WINDOWS}/bundles/{batch_id}'
-    receipt_raw = read_public(f'{src}/all-refs.receipt.json', 1 << 20)
-    receipt = validate_receipt(json.loads(receipt_raw), d, descriptor_sha, time.time())
+    src, receipt = bundle_generation(f'{WINDOWS}/bundles/{batch_id}', d, descriptor_sha, time.time())
     created = []
     new_dir(prep)
     created.append(prep)

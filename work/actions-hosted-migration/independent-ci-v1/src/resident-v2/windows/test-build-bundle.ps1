@@ -183,6 +183,28 @@ if($git){
    Yes ($code -eq 0 -and $v.status -ceq 'REMOTE_REFS_UNCHANGED' -and $v.mainStillBase -eq $true) ('check-refs:'+$out)
    $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $batch)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
    Yes ($code -eq 2 -and $v.status -ceq 'REFUSED_BEFORE_WRITE' -and $v.reason -ceq 'FIXED_TARGET_ALREADY_EXISTS') ('create-only:'+$out)
+   # Task 4012c1b9: the second generation of the same batch, under gen-2\; -CheckRefs then reads it; never a third
+   $gen1=[IO.File]::ReadAllText((Join-Path $res ('bundles\'+$batch+'\all-refs.receipt.json')))|ConvertFrom-Json
+   $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $batch -Rebundle)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+   Yes ($code -eq 0 -and $v.status -ceq 'BUNDLE_WRITTEN' -and $v.generation -eq 2) ('rebundle-answer:'+$out)
+   $rc2=[IO.File]::ReadAllText((Join-Path $res ('bundles\'+$batch+'\gen-2\all-refs.receipt.json')))|ConvertFrom-Json
+   Yes ($rc2.generation -eq 2 -and $rc2.previousBundleSha256 -ceq $gen1.bundleSha256 -and $rc2.previousRefListSha256 -ceq $gen1.refListSha256 -and $rc2.bundleSha256 -ceq $v.bundleSha256 -and
+     $rc2.descriptorSha256 -ceq $gen1.descriptorSha256 -and $rc2.refListSha256 -ceq (Ref-List-Sha $expected) -and (Test-Path -LiteralPath (Join-Path $res ('bundles\'+$batch+'\gen-2\all-refs.bundle')))) 'rebundle-receipt'
+   $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $batch -CheckRefs)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+   Yes ($code -eq 0 -and $v.status -ceq 'REMOTE_REFS_UNCHANGED' -and $v.bundleRefListSha256 -ceq $rc2.refListSha256) ('check-refs-gen-2:'+$out)
+   $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $batch -Rebundle)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+   Yes ($code -eq 2 -and $v.status -ceq 'REFUSED_BEFORE_WRITE' -and $v.reason -ceq 'FIXED_TARGET_ALREADY_EXISTS') ('rebundle-once:'+$out)
+   $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $batch -Rebundle -CheckRefs)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+   Yes ($code -eq 2 -and $v.reason -ceq 'ONE_MODE_REQUIRED') ('one-mode:'+$out)
+   # no first generation: refused before any write; a gen-2\ without its receipt: -CheckRefs refuses, never falls back
+   $nbatch='0123456789abcdef-111111111111';$nob=Join-Path $res ('outbox\'+$nbatch);[void][IO.Directory]::CreateDirectory($nob)
+   $nd=[ordered]@{};foreach($k in $descriptor.Keys){$nd[$k]=$descriptor[$k]};$nd['batchId']=$nbatch;[IO.File]::WriteAllText((Join-Path $nob 'descriptor.json'),($nd|ConvertTo-Json -Compress))
+   $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $nbatch -Rebundle)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+   Yes ($code -eq 2 -and $v.status -ceq 'REFUSED_BEFORE_WRITE' -and $v.reason -ceq 'REBUNDLE_REQUIRES_FIRST_GENERATION' -and -not (Test-Path -LiteralPath (Join-Path $res ('bundles\'+$nbatch)))) ('rebundle-needs-gen-1:'+$out)
+   $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $nbatch)-join '';Yes ($LASTEXITCODE -eq 0) ('gen-1-of-n:'+$out)
+   [void][IO.Directory]::CreateDirectory((Join-Path $res ('bundles\'+$nbatch+'\gen-2')))
+   $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $nbatch -CheckRefs)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+   Yes ($code -eq 2 -and $v.reason -ceq 'BUNDLE_GENERATION_INCOMPLETE') ('gen-2-incomplete:'+$out)
    # step 3c-2: a train front batch's whole run carries S in the bundle and the receipt
    $fbatch='0123456789abcdef-abcdef012345';$fob=Join-Path $res ('outbox\'+$fbatch);[void][IO.Directory]::CreateDirectory($fob)
    $fd=[ordered]@{contract='clued.independent-ci.resident-batch-descriptor/3';batchId=$fbatch;repo='tdoljyj/cross-memory-system';headSha=$c2;testSha=$cS;baseSha=$c1;sourceCommit=$c1;gitleaksTomlSha256=(Hash-Text $toml)}
@@ -193,6 +215,12 @@ if($git){
    $tm=New-RefMap;$tm[$TestPrefix+$cS]=$cS
    Yes ($rc.testSha -ceq $cS -and $rc.testRefCount -eq 1 -and $rc.testRefListSha256 -ceq (Ref-List-Sha $tm) -and $rc.refListSha256 -ceq (Ref-List-Sha $expected)) 'front-main-block-receipt'
    $fh=Bundle-Header (Join-Path $res ('bundles\'+$fbatch+'\all-refs.bundle'));Yes ((Same-Map $fh.test $tm) -and (Same-Map $fh.formal $expected)) 'front-main-block-bundle'
+   # Task 4012c1b9: a push to the head's branch since the first bundle (a new commit on top of the head): the second generation
+   # is refused (REMOTE_HEAD_MOVED). A force-push that drops the head fails earlier, at the head's object (a git step).
+   $c3=(& $g commit-tree -p $c2 -m c3 ((& $g rev-parse "$c2^{tree}").Trim())).Trim();& $g update-ref refs/heads/feature $c3
+   $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $fbatch -Rebundle)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+   Yes ($code -eq 2 -and $v.reason -ceq 'REMOTE_HEAD_MOVED') ('rebundle-head-moved:'+$out)
+   & $g update-ref refs/heads/feature $c2
   }
  }finally{if($listener){$listener.Stop()};Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue;Remove-Item Env:\GIT_CONFIG_GLOBAL,Env:\GIT_CONFIG_NOSYSTEM -ErrorAction SilentlyContinue}
 }

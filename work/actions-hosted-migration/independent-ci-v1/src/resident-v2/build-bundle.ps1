@@ -8,7 +8,7 @@ Run by the companion in the Owner's own logon session, NOT elevated, with the Ow
 credential helper (read only; nothing is pushed or published):
   build-bundle.ps1 -BatchId <16hex-12hex>              build the bundle and receipt
   build-bundle.ps1 -BatchId <16hex-12hex> -CheckRefs   re-run ls-remote now and compare with the receipt
-
+  build-bundle.ps1 -BatchId <16hex-12hex> -Rebundle    the batch's second (and last) bundle generation, under gen-2
 -CheckRefs is the deterministic "no push since the bundle" gate (lesson b29: the gitleaks preparation
 needs every remote ref sealed; any push between bundle build and stage 2 is detected here and becomes
 the clean transient failure REMOTE_REFS_CHANGED_SINCE_BUNDLE, eligible for the automatic attempt 2).
@@ -26,9 +26,16 @@ Train front batch (quota phase 2 step 3c-2, design v0.5 §5.2): the descriptor's
 [T, H] (S != H). Build-Store fetches it by SHA under refs/clued-test/<S> (no other name, at most one), checks that it is a
 commit whose parents are exactly [T, H], and the bundle carries that one ref; the receipt counts it (testRefCount 0 when
 S = H). Old test merges can disappear when GitHub recomputes: the fetch then fails like any network step, before the batch.
+
+Second generation (Task 4012c1b9, DESIGN §36): a batch resumed from parking point A after a long hosted wait gets one more
+bundle, right before its workspace, in bundles\<batchId>\gen-2\ with the same checks and a receipt that also names the
+generation and the first bundle. The batch's refs must still be its own: main still the base T and some branch still at
+the head H (REMOTE_HEAD_MOVED otherwise). Only with a complete first generation (REBUNDLE_REQUIRES_FIRST_GENERATION), never
+twice (gen-2\ must not exist). -CheckRefs and prepare-workspaces.py use the newest complete generation; a gen-2\ without its
+receipt is refused, never skipped (BUNDLE_GENERATION_INCOMPLETE).
 #>
 [CmdletBinding()]
-param([Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{16}-[0-9a-f]{12}$')][string]$BatchId,[switch]$CheckRefs)
+param([Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{16}-[0-9a-f]{12}$')][string]$BatchId,[switch]$CheckRefs,[switch]$Rebundle)
 Set-StrictMode -Version 2
 $ErrorActionPreference='Stop'
 $Resident='C:\ProgramData\CluedIndependentCI\resident'
@@ -37,6 +44,7 @@ $Root=Join-Path $Resident ('bundles\'+$BatchId)
 $Git='C:\Program Files\Git\cmd\git.exe'
 $Url='https://github.com/tdoljyj/cross-memory-system.git'
 $FetchDir=Join-Path $Root 'fetch.git';$FetchDir2=Join-Path $Root 'fetch-2.git';$Bundle=Join-Path $Root 'all-refs.bundle';$ReceiptPath=Join-Path $Root 'all-refs.receipt.json'
+$Gen2Name='gen-2';$Gen1Root=$Root;$Gen1Receipt=$ReceiptPath;$Gen2Root=Join-Path $Root $Gen2Name;$Gen2Receipt=Join-Path $Gen2Root 'all-refs.receipt.json'
 $ReviewedPrefix='refs/reviewed/';$TestPrefix='refs/clued-test/'
 $Common=@('-c','core.hooksPath=C:/nonexistent-clued-hooks','-c','core.fsmonitor=false','-c','gc.auto=0','-c','maintenance.auto=false',
   '-c','fetch.writeCommitGraph=false','-c','protocol.allow=never','-c','protocol.https.allow=always','-c','init.templateDir=','-c','advice.defaultBranchName=false',
@@ -145,6 +153,18 @@ function Read-Descriptor{
  # Step 3c-2: S != H only for a train front batch (GitHub's test merge of [T, H]); Build-Store fetches and checks it.
  return [pscustomobject]@{value=$d;sha256=(Hash-Bytes $raw)}
 }
+# A bundle receipt of this batch and descriptor (either generation).
+function Read-BundleReceipt([string]$Path,[string]$DescriptorSha){
+ $i=Get-Item -LiteralPath $Path -Force;if($i.PSIsContainer -or ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $i.Length -lt 1 -or $i.Length -gt 1048576){throw 'BUNDLE_RECEIPT_REFUSED'}
+ $r=[IO.File]::ReadAllText($Path)|ConvertFrom-Json
+ if($r.contract -cne 'clued.independent-ci.resident-bundle-receipt/1' -or $r.batchId -cne $BatchId -or $r.descriptorSha256 -cne $DescriptorSha -or $r.bundleSha256 -cnotmatch '\A[0-9a-f]{64}\z' -or $r.refListSha256 -cnotmatch '\A[0-9a-f]{64}\z'){throw 'BUNDLE_RECEIPT_REFUSED'}
+ return $r
+}
+# The receipt of the newest complete generation: gen-2\ when it exists (its receipt then must exist too), else the first.
+function Current-Receipt{
+ if(Test-Path -LiteralPath $Gen2Root){if(-not (Test-Path -LiteralPath $Gen2Receipt -PathType Leaf)){throw 'BUNDLE_GENERATION_INCOMPLETE'};return $Gen2Receipt}
+ return $Gen1Receipt
+}
 # One complete attempt at the fetched store, in a fresh bare repository of its own ($Dir must not exist yet): all heads
 # and tags, ls-remote equality, main == base, then the reviewed commits fetched by SHA, each read back, then (train
 # front batch only) the tested commit S by SHA with its parents [T, H].
@@ -223,15 +243,23 @@ try{
  $id=[Security.Principal.WindowsIdentity]::GetCurrent();$principal=New-Object Security.Principal.WindowsPrincipal($id)
  if($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'NON_ELEVATED_RUN_REQUIRED'}
  if(-not (Test-Path -LiteralPath $Git -PathType Leaf)){throw 'FIXED_GIT_FOR_WINDOWS_REQUIRED'}
+ if($CheckRefs -and $Rebundle){throw 'ONE_MODE_REQUIRED'}
  $desc=Read-Descriptor;$Head=$desc.value.headSha;$Base=$desc.value.baseSha;$Test=$desc.value.testSha
  if($CheckRefs){
   $stage='check-refs'
-  $rec=[IO.File]::ReadAllText($ReceiptPath)|ConvertFrom-Json
-  if($rec.contract -cne 'clued.independent-ci.resident-bundle-receipt/1' -or $rec.batchId -cne $BatchId -or $rec.descriptorSha256 -cne $desc.sha256){throw 'BUNDLE_RECEIPT_REFUSED'}
+  $rec=Read-BundleReceipt (Current-Receipt) $desc.sha256
   $now=Ref-Map (Invoke-Git 'ls-remote-check' ($Common+@('ls-remote','--branches','--tags',$Url))) "`t" $true
   $sha=Ref-List-Sha $now;$same=$sha -ceq $rec.refListSha256
   [ordered]@{status=$(if($same){'REMOTE_REFS_UNCHANGED'}else{'REMOTE_REFS_CHANGED_SINCE_BUNDLE'});batchId=$BatchId;refListSha256=$sha;bundleRefListSha256=$rec.refListSha256;mainStillBase=($now.ContainsKey('refs/heads/main') -and $now['refs/heads/main'] -ceq $Base);checkedAt=(Utc);networkWrite=$false}|ConvertTo-Json -Compress
   exit 0
+ }
+ $previous=$null
+ if($Rebundle){
+  $stage='first-generation'
+  if(-not (Test-Path -LiteralPath $Gen1Receipt -PathType Leaf)){throw 'REBUNDLE_REQUIRES_FIRST_GENERATION'}
+  $previous=Read-BundleReceipt $Gen1Receipt $desc.sha256
+  if($null -ne $previous.PSObject.Properties['generation']){throw 'REBUNDLE_REQUIRES_FIRST_GENERATION'}
+  $Root=$Gen2Root;$FetchDir=Join-Path $Root 'fetch.git';$FetchDir2=Join-Path $Root 'fetch-2.git';$Bundle=Join-Path $Root 'all-refs.bundle';$ReceiptPath=$Gen2Receipt
  }
  $ri=Get-Item -LiteralPath (Split-Path -Parent $Root) -Force;if(-not $ri.PSIsContainer -or ($ri.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'FIXED_REAL_BUNDLE_ROOT_REQUIRED'}
  Absent $Root
@@ -239,6 +267,8 @@ try{
  $gitVersion=(Invoke-Git 'version' @('--version')).Trim();$gitSha=Hash-File $Git
  $store=Fetch-Store
  $gd=$store.gd;$remote=$store.remote;$reviewed=$store.reviewed;$reviewedCommits=$reviewed.commits;$expectedReviewed=$store.expectedReviewed;$expectedTest=$store.expectedTest
+ # The second generation is still this batch's: some branch is still at the head (main == base is Build-Store's own check).
+ if($Rebundle -and @($store.branchesAtHead).Count -eq 0){throw 'REMOTE_HEAD_MOVED'}
  $stage='bundle-create'
  $null=Invoke-Git 'bundle-create' ($Common+@($gd,'bundle','create','--quiet','--version=2',$Bundle,'--branches','--tags','--glob=refs/reviewed/*','--glob=refs/clued-test/*'));$created+=$Bundle;$bundleCreatedAt=Utc
  $stage='bundle-verify'
@@ -263,9 +293,10 @@ try{
   storeAttempts=$attempts;firstAttempt=$firstAttempt
   gitExecutableSha256=$gitSha;gitVersion=$gitVersion
   credentialsPrinted=$false;credentialsWrittenByScript=$false;existingCheckoutTouched=$false;wslTouched=$false;automaticRetryAllowed=$false}
+ if($Rebundle){$receipt['generation']=2;$receipt['previousBundleSha256']=$previous.bundleSha256;$receipt['previousRefListSha256']=$previous.refListSha256}
  $json=($receipt|ConvertTo-Json -Depth 5 -Compress)
  $rb=(New-Object Text.UTF8Encoding($false)).GetBytes($json+[char]10);$f=[IO.File]::Open($ReceiptPath,'CreateNew','Write','None');try{$f.Write($rb,0,$rb.Length);$f.Flush($true)}finally{$f.Dispose()};$created+=$ReceiptPath
- [ordered]@{status='BUNDLE_WRITTEN';batchId=$BatchId;bundleSha256=$sha;bundleBytes=$bytes;receiptSha256=(Hash-Bytes $rb);refListSha256=$receipt.refListSha256;lsRemoteCompletedAt=$store.lsRemoteCompletedAt}|ConvertTo-Json -Compress
+ [ordered]@{status='BUNDLE_WRITTEN';batchId=$BatchId;generation=$(if($Rebundle){2}else{1});bundleSha256=$sha;bundleBytes=$bytes;receiptSha256=(Hash-Bytes $rb);refListSha256=$receipt.refListSha256;lsRemoteCompletedAt=$store.lsRemoteCompletedAt}|ConvertTo-Json -Compress
  exit 0
 }catch{
  $code=if($_.Exception.Message -cmatch '\A[A-Z][A-Z0-9_]{1,90}\z'){$_.Exception.Message}else{'FIXED_BUNDLE_BUILD_UNCONFIRMED'}

@@ -97,6 +97,52 @@ class PrepareWorkspacesV2Tests(unittest.TestCase):
                 pw.validate_receipt(bad, d, 'f' * 64, now)
             self.assertEqual(e.exception.code, code)
 
+    def test_bundle_generation(self):
+        """Task 4012c1b9: gen-2/ wins only when complete and bound to the first generation; never skipped when incomplete."""
+        d = descriptor()
+        now = time.time()
+        stamp = datetime.fromtimestamp(now - 60, timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        old = datetime.fromtimestamp(now - 7300, timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        r1 = {'contract': 'clued.independent-ci.resident-bundle-receipt/1', 'status': 'EXACT_ALL_REFS_AND_REVIEWED_BUNDLE_CREATED', 'batchId': BATCH, 'descriptorSha256': 'f' * 64,
+              'headSha': d['headSha'], 'mainSha': d['baseSha'], 'sourceCommit': d['sourceCommit'], 'gitleaksTomlSha256': d['gitleaksTomlSha256'], 'prerequisites': 0, 'bundleVersion': 2,
+              'headPresent': True, 'basePresent': True, 'bundleSha256': 'a' * 64, 'refListSha256': 'b' * 64, 'reviewedRefListSha256': 'c' * 64, 'lsRemoteCompletedAt': stamp,
+              'testSha': d['testSha'], 'testRefCount': 0, 'testRefListSha256': pw.ref_list_sha({})}
+        r2 = {**r1, 'bundleSha256': '5' * 64, 'refListSha256': '6' * 64, 'generation': 2, 'previousBundleSha256': 'a' * 64, 'previousRefListSha256': 'b' * 64}
+        with tempfile.TemporaryDirectory() as tmp:
+            base = os.path.join(tmp, BATCH)
+            os.mkdir(base)
+            def put(path, v):
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(json.dumps(v))
+            put(os.path.join(base, 'all-refs.receipt.json'), r1)
+            self.assertEqual(pw.bundle_generation(base, d, 'f' * 64, now), (base, r1))
+            # an old first generation is refused for freshness when it is the one used
+            put(os.path.join(base, 'all-refs.receipt.json'), {**r1, 'lsRemoteCompletedAt': old})
+            with self.assertRaises(pw.Refused) as e:
+                pw.bundle_generation(base, d, 'f' * 64, now)
+            self.assertEqual(e.exception.code, 'FRESH_BUNDLE_REQUIRED')
+            # ... and accepted behind a fresh, bound second generation
+            gen2 = os.path.join(base, 'gen-2')
+            os.mkdir(gen2)
+            with self.assertRaises(pw.Refused) as e:
+                pw.bundle_generation(base, d, 'f' * 64, now)
+            self.assertEqual(e.exception.code, 'BUNDLE_GENERATION_INCOMPLETE')
+            put(os.path.join(gen2, 'all-refs.receipt.json'), r2)
+            self.assertEqual(pw.bundle_generation(base, d, 'f' * 64, now), (f'{base}/gen-2', r2))
+            for bad in ({**r2, 'generation': 3}, {**r2, 'previousBundleSha256': '7' * 64}, {k: v for k, v in r2.items() if k != 'generation'},
+                        {**r2, 'previousRefListSha256': '7' * 64}, {**r2, 'descriptorSha256': '0' * 64}):
+                put(os.path.join(gen2, 'all-refs.receipt.json'), bad)
+                with self.assertRaises(pw.Refused) as e:
+                    pw.bundle_generation(base, d, 'f' * 64, now)
+                self.assertEqual(e.exception.code, 'BUNDLE_RECEIPT_REFUSED')
+            # a first generation that names a generation, or belongs to another descriptor, is refused
+            put(os.path.join(gen2, 'all-refs.receipt.json'), r2)
+            for bad in ({**r1, 'generation': 1}, {**r1, 'descriptorSha256': '0' * 64}):
+                put(os.path.join(base, 'all-refs.receipt.json'), bad)
+                with self.assertRaises(pw.Refused) as e:
+                    pw.bundle_generation(base, d, 'f' * 64, now)
+                self.assertEqual(e.exception.code, 'BUNDLE_RECEIPT_REFUSED')
+
     def test_tree_modes_and_git_config(self):
         self.assertTrue(pw.tree_modes_regular('100644 blob ' + 'a' * 40 + '\tx\0100755 blob ' + 'b' * 40 + '\ty\0'))
         for row in ('120000 blob ' + 'a' * 40 + '\tlink\0', '160000 commit ' + 'a' * 40 + '\tsub\0'):
