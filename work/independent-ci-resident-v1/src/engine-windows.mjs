@@ -26,7 +26,8 @@ import { REVOCATION_STAGE, REVOCATION_RUN_MS, REVOCATION_PENDING_STATE, REVOCATI
   validateRevocationFacts,validateRevocationQualification } from './revocation-maintenance.mjs';
 
 export const ORIGINAL_BINARY = '"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"';
-// /3 (quota phase 2 step 3b): also names the tested commit S (testSha); S = H until step 3c's train front batch.
+// /3 (quota phase 2 step 3b): also names the tested commit S (testSha); S = H except for a train front batch, whose
+// subject names its own S (step 3c-2).
 export const DESCRIPTOR_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/3';
 // The codes the companion's bridge pump can end with (companion.mjs#pump); a stage's companion answer is taken
 // only from this list, and none of them is an attempt-2 transient code.
@@ -367,16 +368,17 @@ export class WindowsEngine {
     const entry = await this.requireV2('derive-batch.mjs');
     const batchId = `${key.slice(0, 16)}-${randomBytes(6).toString('hex')}`;
     const out = path.join(this.paths.workRoot, batchId);
-    // The jobs' createdAt (job contract v2) is the derivation time; it is not part of any id or key.
+    // The jobs' createdAt (job contract v2) is the derivation time; it is not part of any id or key. A train front
+    // batch's subject also names its tested commit S (step 3c-2), which joins the batch key on both sides.
     const v2 = { repo: subject.repo, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, sourceManifestSha256: subject.sourceManifestSha256,
-      attempt: subject.attempt, createdAt: new Date(this.clock()).toISOString() };
+      attempt: subject.attempt, createdAt: new Date(this.clock()).toISOString(), ...(Object.hasOwn(subject, 'testSha') ? { testSha: subject.testSha } : {}) };
     const r = await this.run([this.paths.nodeExe, entry, '--subject-json', JSON.stringify(v2), '--batch-key', key, '--batch-id', batchId, '--out', out], { timeoutMs: 10 * 60_000 });
     check(r.code === 0, 'RESIDENT_DERIVATION_REFUSED');
     const v = parseBoundedJson(Buffer.from(r.stdout, 'utf8'), 1024 * 1024, 'RESIDENT_DERIVATION_REFUSED');
     check(v.status === 'RESIDENT_BATCH_DERIVED' && v.batchKey === key && v.batchId === batchId && HEX64.test(v.packageSha256) && HEX64.test(v.ciSourceManifestSha256 ?? '')
       && /^[0-9a-f]{40}$/.test(v.sourceCommit ?? '') && HEX64.test(v.gitleaksTomlSha256 ?? '') && Array.isArray(v.stages) && v.stages.length === 8
-      // the tested commit S comes from the derivation alone; until step 3c it is the head itself
-      && v.testSha === subject.headSha, 'RESIDENT_DERIVATION_REFUSED');
+      // the tested commit S: the head itself, or the train front batch's own S, as the derivation reports it
+      && v.testSha === (Object.hasOwn(subject, 'testSha') ? subject.testSha : subject.headSha), 'RESIDENT_DERIVATION_REFUSED');
     const linuxJobIds = v.stages.filter(s => [2, 4, 6].includes(s.number)).map(s => s.jobId);
     check(linuxJobIds.length === 3 && linuxJobIds.every(j => HEX64.test(j)), 'RESIDENT_DERIVATION_REFUSED');
     // Public descriptor (/3) for the companion's bundle and ws-prep, and (through /mnt/c, read-only) the

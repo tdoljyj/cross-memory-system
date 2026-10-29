@@ -72,7 +72,7 @@ test('all actual current formal/R/train producers bind the same complete-node ha
 
 test('the actual v2 admission environment cannot inherit an ambient request for the legacy installed consumer', async () => {
   const repo='tdoljyj/cross-memory-system', scope=`project:${uuid}`, policyText='{"fixture":"policy"}';
-  const job=makeJobV2({...subject(),role:'control-admission',sourceManifestSha256:'d'.repeat(64)});
+  const job=makeJobV2({...subject(),testSha:subject().headSha,role:'control-admission',sourceManifestSha256:'d'.repeat(64)});
   const config={domain:'fixture',repository:repo,scope,workspace:os.tmpdir(),sourceManifestSha256:job.sourceManifestSha256,
     evaluatorSha256:digest('FIXTURE_EVALUATOR'),policyText,policySha256:digest(policyText),ciPrincipalBindingId:uuid,
     ciPrincipalQualificationRef:'fixture-qualification',publishableKey:'sb_publishable_fixture',supabaseUrl:'https://fixture.example.invalid'};

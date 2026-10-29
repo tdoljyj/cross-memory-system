@@ -18,7 +18,7 @@ const rsa=generateKeyPairSync('rsa',{modulusLength:2048}).privateKey.export({typ
 async function world(t,options={}){
  const t0=Date.now(),time={now:t0},calls={key:0,http:0,create:0,revoke:0,verify:0,evaluate:0};
  const {docs,signer}=fixtureRecord(),record=validateRecordV2(docs,{now:t0});
- const job=batchJobsV2({repo:REPO,pr:888,headSha:HEAD,baseSha:BASE,sourceManifestSha256:'d'.repeat(64),createdAt:iso(t0-60000),attempt:1}).gitleaks;
+ const job=batchJobsV2({repo:REPO,pr:888,headSha:HEAD,baseSha:BASE,testSha:HEAD,sourceManifestSha256:'d'.repeat(64),createdAt:iso(t0-60000),attempt:1}).gitleaks;
  const claim={claimId:randomUUID(),fence:3,epoch:1,expiresAt:iso(t0+3600000)};
  const state={exhaust:options.exhaust??0,deny:options.deny??false,admissionDeny:options.admissionDeny??false,live:true,generation:claimGeneration(claim),onExhaust:null};
  const checks=[],events=[],audit=[];let id=200;

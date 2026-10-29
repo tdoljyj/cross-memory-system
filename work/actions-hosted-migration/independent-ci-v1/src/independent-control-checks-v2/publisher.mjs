@@ -124,24 +124,25 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
   const domain = production ? 'production' : 'fixture';
   // The green ledger is required where a green is written (publishPair), not here: the merge-gate consumer only reads (review M1).
   check(TRAIN_MODES.includes(trainMode) && (greenLedger === null || typeof greenLedger?.append === 'function'), 'CONTROL_PUBLISHER_CONFIGURATION_REFUSED');
-  // Phase 2, step 3a: the live branch rules of main and GitHub's test merge of the PR (train-rules.mjs). Without the train
-  // the tested tree is the head's own (S = H). Any read that fails is a not-ready answer, never a stage failure: these
-  // facts change by themselves and the resident tries again.
+  // Phase 2, step 3a: the live branch rules of main and GitHub's test merge of the PR (train-rules.mjs). The tested tree is
+  // the tree of the job's tested commit S: the head's own when S = H, GitHub's test merge of [T, H] for a train front
+  // batch (step 3c-2, DESIGN §21.3). Any read that fails is a not-ready answer, never a stage failure: these facts change
+  // by themselves and the resident tries again.
   async function trainFacts(job) {
     let rules;
     try { const reply = await github.readBranchRules('main'); check(reply?.complete === true, RULESET_UNREADABLE); rules = rulesetFacts(reply.rules, APP_ID); }
     catch { return { reason: RULESET_UNREADABLE }; }
     const ruleset = rulesetDecision(rules, trainMode);
     if (ruleset) return { reason: ruleset, ruleset: rules };
-    let pull, head, mergeCommit = null;
+    let pull, tested, mergeCommit = null;
     try {
       pull = await github.readPullRequest(job.pr);
-      head = await github.readGitCommit(job.headSha);
+      tested = await github.readGitCommit(job.testSha);
       if (SHA.test(pull?.merge_commit_sha ?? '')) mergeCommit = await github.readGitCommit(pull.merge_commit_sha);
     } catch { return { reason: TRAIN_TEST_MERGE_NOT_READY, ruleset: rules }; }
-    if (!SHA.test(head?.tree ?? '')) return { reason: TRAIN_TEST_MERGE_NOT_READY, ruleset: rules };
-    const reason = testMergeDecision({ pull, mergeCommit, job, testTree: head.tree });
-    return { reason, ruleset: rules, testTree: head.tree, testMergeSha: reason ? null : pull.merge_commit_sha };
+    if (!SHA.test(tested?.tree ?? '') || tested.sha !== job.testSha) return { reason: TRAIN_TEST_MERGE_NOT_READY, ruleset: rules };
+    const reason = testMergeDecision({ pull, mergeCommit, job, testTree: tested.tree });
+    return { reason, ruleset: rules, testTree: tested.tree, testMergeSha: reason ? null : pull.merge_commit_sha };
   }
   // After the write: GitHub's own answer for the PR now. 'merged' when it merged exactly [T, H] with the tested tree;
   // 'mismatch' when it merged any other way (squash, rebase, other parents or tree: review M3), or when the PR is open and

@@ -59,13 +59,19 @@ class PrepareWorkspacesV2Tests(unittest.TestCase):
                           ({**d, 'batchId': 'f' * 16 + '-' + '0' * 12}, 'DESCRIPTOR_REFUSED'), ({**d, 'pr': True}, 'DESCRIPTOR_REFUSED'),
                           ({**d, 'contract': 'clued.independent-ci.resident-batch-descriptor/1'}, 'DESCRIPTOR_REFUSED'),
                           ({**d, 'contract': 'clued.independent-ci.resident-batch-descriptor/2'}, 'DESCRIPTOR_REFUSED'),
-                          ({k: v for k, v in d.items() if k != 'testSha'}, 'DESCRIPTOR_REFUSED'), ({**d, 'testSha': 'X' * 40}, 'DESCRIPTOR_REFUSED'),
-                          # step 3b: S = H; another tested commit is refused until step 3c (ids recomputed so only S differs)
-                          (descriptor(testSha='4' * 40), 'TEST_COMMIT_NOT_HEAD')]:
+                          ({k: v for k, v in d.items() if k != 'testSha'}, 'DESCRIPTOR_REFUSED'), ({**d, 'testSha': 'X' * 40}, 'DESCRIPTOR_REFUSED')]:
             with self.assertRaises(pw.Refused) as e:
                 pw.validate_descriptor(bad, BATCH)
             self.assertEqual(e.exception.code, code)
             self.assertIsNotNone(e.exception.line)
+        # step 3c-2: a train front batch tests S != H (its ids name S); its bundle must carry exactly that test ref
+        front = descriptor(testSha='4' * 40)
+        self.assertEqual(pw.validate_descriptor(front, BATCH)['trivy'], front['linuxJobIds'][1])
+        self.assertEqual(pw.expected_test_refs(front), {'refs/clued-test/' + '4' * 40: '4' * 40})
+        self.assertEqual(pw.expected_test_refs(d), {})
+        self.assertTrue(pw.test_parents_ok(' '.join(['4' * 40, d['baseSha'], d['headSha']]), front))
+        for line in (' '.join(['4' * 40, d['headSha'], d['baseSha']]), ' '.join(['4' * 40, d['baseSha']]), ' '.join(['4' * 40, d['baseSha'], d['headSha'], '5' * 40]), ''):
+            self.assertFalse(pw.test_parents_ok(line, front))
 
     def test_receipt_binding_and_freshness(self):
         d = descriptor()
@@ -73,8 +79,17 @@ class PrepareWorkspacesV2Tests(unittest.TestCase):
         stamp = datetime.fromtimestamp(now - 60, timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
         r = {'contract': 'clued.independent-ci.resident-bundle-receipt/1', 'status': 'EXACT_ALL_REFS_AND_REVIEWED_BUNDLE_CREATED', 'batchId': BATCH, 'descriptorSha256': 'f' * 64,
              'headSha': d['headSha'], 'mainSha': d['baseSha'], 'sourceCommit': d['sourceCommit'], 'gitleaksTomlSha256': d['gitleaksTomlSha256'], 'prerequisites': 0, 'bundleVersion': 2,
-             'headPresent': True, 'basePresent': True, 'bundleSha256': 'a' * 64, 'refListSha256': 'b' * 64, 'reviewedRefListSha256': 'c' * 64, 'lsRemoteCompletedAt': stamp}
+             'headPresent': True, 'basePresent': True, 'bundleSha256': 'a' * 64, 'refListSha256': 'b' * 64, 'reviewedRefListSha256': 'c' * 64, 'lsRemoteCompletedAt': stamp,
+             'testSha': d['testSha'], 'testRefCount': 0, 'testRefListSha256': pw.ref_list_sha({})}
         self.assertIs(pw.validate_receipt(r, d, 'f' * 64, now), r)
+        front = descriptor(testSha='4' * 40)
+        fr = {**r, 'testSha': front['testSha'], 'testRefCount': 1, 'testRefListSha256': 'd' * 64}
+        self.assertIs(pw.validate_receipt(fr, front, 'f' * 64, now), fr)
+        for bad, desc in (({**fr, 'testRefCount': 0}, front), ({**fr, 'testSha': d['headSha']}, front), (fr, d), ({**r, 'testRefCount': 1}, d),
+                          ({k: v for k, v in r.items() if k != 'testRefListSha256'}, d), ({k: v for k, v in r.items() if k != 'testSha'}, d)):
+            with self.assertRaises(pw.Refused) as e:
+                pw.validate_receipt(bad, desc, 'f' * 64, now)
+            self.assertEqual(e.exception.code, 'BUNDLE_RECEIPT_REFUSED')
         old = datetime.fromtimestamp(now - 7300, timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
         for bad, code in [({**r, 'lsRemoteCompletedAt': old}, 'FRESH_BUNDLE_REQUIRED'), ({**r, 'descriptorSha256': '0' * 64}, 'BUNDLE_RECEIPT_REFUSED'),
                           ({**r, 'mainSha': '9' * 40}, 'BUNDLE_RECEIPT_REFUSED'), ({**r, 'sourceCommit': d['headSha']}, 'BUNDLE_RECEIPT_REFUSED')]:
@@ -108,14 +123,75 @@ class PrepareWorkspacesV2Tests(unittest.TestCase):
             run('bundle', 'create', '--quiet', '--version=2', bundle, '--branches', '--tags', '--glob=refs/reviewed/*')
             with open(bundle, 'rb') as f:
                 data = f.read()
-            formal, reviewed = pw.parse_bundle_header(data)
+            formal, reviewed, test = pw.parse_bundle_header(data)
             self.assertEqual(formal, {'refs/heads/main': head, 'refs/tags/v1': head})
             self.assertEqual(reviewed, {'refs/reviewed/' + head: head})
+            self.assertEqual(test, {})
             self.assertEqual(pw.ref_list_sha(formal), hashlib.sha256(f'{head} refs/heads/main\n{head} refs/tags/v1\n'.encode()).hexdigest())
             with self.assertRaises(pw.Refused):
                 pw.parse_bundle_header(b'# v3 git bundle\n' + data.split(b'\n', 1)[1])
             with self.assertRaises(pw.Refused):
                 pw.parse_bundle_header(data.replace(b'refs/tags/v1', b'refs/tags/v.lock', 1))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    @unittest.skipUnless(shutil.which('git'), 'git required')
+    def test_real_test_merge_in_the_bundle(self):
+        """Step 3c-2: GitHub's test merge S of [T, H], carried under refs/clued-test/<S>, parses and passes the parents check."""
+        tmp = tempfile.mkdtemp(prefix='clued-wsprep-s-')
+        try:
+            env = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_AUTHOR_NAME': 'f', 'GIT_AUTHOR_EMAIL': 'f@f', 'GIT_COMMITTER_NAME': 'f', 'GIT_COMMITTER_EMAIL': 'f@f'}
+            run = lambda *a: subprocess.run(['git', '-C', tmp, *a], env=env, capture_output=True, text=True, check=True).stdout
+            run('init', '-q', '-b', 'main')
+            for name in ('a.txt',):
+                with open(os.path.join(tmp, name), 'w') as f:
+                    f.write('a' + chr(10))
+            run('add', '.')
+            run('commit', '-q', '-m', 'root')
+            run('checkout', '-q', '-b', 'pr')
+            with open(os.path.join(tmp, 'b.txt'), 'w') as f:
+                f.write('b' + chr(10))
+            run('add', '.')
+            run('commit', '-q', '-m', 'head')
+            head = run('rev-parse', 'HEAD').strip()
+            run('checkout', '-q', 'main')
+            with open(os.path.join(tmp, 'c.txt'), 'w') as f:
+                f.write('c' + chr(10))
+            run('add', '.')
+            run('commit', '-q', '-m', 'main moved')
+            tip = run('rev-parse', 'HEAD').strip()
+            run('merge', '-q', '--no-ff', '-m', 'test merge', 'pr')
+            s = run('rev-parse', 'HEAD').strip()
+            run('reset', '-q', '--hard', tip)
+            run('update-ref', 'refs/clued-test/' + s, s)
+            bundle = os.path.join(tmp, 'all.bundle')
+            run('bundle', 'create', '--quiet', '--version=2', bundle, '--branches', '--tags', '--glob=refs/clued-test/*')
+            with open(bundle, 'rb') as f:
+                formal, reviewed, test = pw.parse_bundle_header(f.read())
+            d = descriptor(headSha=head, baseSha=tip, testSha=s)
+            self.assertEqual(formal['refs/heads/main'], tip)
+            self.assertEqual(test, pw.expected_test_refs(d))
+            self.assertTrue(pw.test_parents_ok(run('rev-list', '--parents', '-n', '1', s).strip(), d))
+            self.assertFalse(pw.test_parents_ok(run('rev-list', '--parents', '-n', '1', s).strip(), descriptor(headSha=tip, baseSha=head, testSha=s)))
+            # a plain clone maps no ref to S (only branches and tags); fetching the test ref gives S its ref
+            cand = os.path.join(tmp, 'cand')
+            show = lambda: subprocess.run(['git', '-C', cand, 'for-each-ref', '--format=%(objectname) %(refname)', 'refs/clued-test/'], env=env, capture_output=True, text=True, check=True).stdout.split()
+            subprocess.run(['git', 'clone', '-q', '--no-checkout', '--', bundle, cand], env=env, check=True, capture_output=True)
+            self.assertEqual(show(), [])
+            subprocess.run(['git', '-C', cand, 'fetch', '-q', '--no-tags', '--', bundle, '+refs/clued-test/' + s + ':refs/clued-test/' + s], env=env, check=True, capture_output=True)
+            self.assertEqual(show(), [s, 'refs/clued-test/' + s])
+            self.assertEqual(subprocess.run(['git', '-C', cand, 'cat-file', '-t', s], env=env, capture_output=True, text=True, check=True).stdout.strip(), 'commit')
+            # a second test ref, or one not named by its own SHA, is refused
+            with open(bundle, 'rb') as f:
+                data = f.read()
+            with self.assertRaises(pw.Refused) as e:
+                pw.parse_bundle_header(data.replace(('refs/clued-test/' + s).encode(), ('refs/clued-test/' + '0' * 40).encode(), 1))
+            self.assertEqual(e.exception.code, 'EXACT_TEST_REF_REQUIRED')
+            line = (s + ' refs/clued-test/' + s).encode()
+            second = (tip + ' refs/clued-test/' + tip).encode()
+            with self.assertRaises(pw.Refused) as e:
+                pw.parse_bundle_header(data.replace(line, line + bytes([10]) + second, 1))
+            self.assertEqual(e.exception.code, 'EXACT_TEST_REF_REQUIRED')
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 

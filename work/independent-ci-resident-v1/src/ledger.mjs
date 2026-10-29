@@ -73,16 +73,20 @@ const TRY = /^7(?:(1)-try|(2)-tried)-(\d{2})\.json$/;
 const tryName = (begun, n) => `${begun ? '71-try' : '72-tried'}-${String(n).padStart(2, '0')}.json`;
 export const SELF_ABORT_RECORD = '81-self-abort.json';
 
-function subjectCheck({ repo, pr, headSha, baseSha, sourceManifestSha256, attempt }) {
+// Step 3c-2: a train front batch's subject also names its tested commit S (never the head); every other subject has no
+// `testSha` and its key stays what it always was (Source v2 derive-batch.mjs#residentBatchKey computes the same).
+function subjectCheck({ repo, pr, headSha, baseSha, sourceManifestSha256, attempt, ...rest }) {
   check(REPO.test(repo) && Number.isSafeInteger(pr) && pr > 0, 'BATCH_KEY_SUBJECT_INVALID');
   check(HEX40.test(headSha) && HEX40.test(baseSha), 'BATCH_KEY_COMMIT_INVALID');
+  check(!Object.hasOwn(rest, 'testSha') || (HEX40.test(rest.testSha) && rest.testSha !== headSha), 'BATCH_KEY_COMMIT_INVALID');
   check(HEX64.test(sourceManifestSha256), 'BATCH_KEY_SOURCE_INVALID');
   check(Number.isSafeInteger(attempt) && attempt >= 1 && attempt <= 9, 'BATCH_KEY_ATTEMPT_INVALID');
 }
 
 export function batchKey(s) {
   subjectCheck(s);
-  return digest({ contract: BATCH_KEY_CONTRACT, repo: s.repo, pr: s.pr, headSha: s.headSha, baseSha: s.baseSha, sourceManifestSha256: s.sourceManifestSha256, attempt: s.attempt });
+  return digest({ contract: BATCH_KEY_CONTRACT, repo: s.repo, pr: s.pr, headSha: s.headSha, baseSha: s.baseSha, sourceManifestSha256: s.sourceManifestSha256, attempt: s.attempt,
+    ...(Object.hasOwn(s, 'testSha') ? { testSha: s.testSha } : {}) });
 }
 
 export function headKey(s) {
@@ -520,7 +524,9 @@ export class Ledger {
     const s = await this.state(key1);
     check(s.state === 'TERMINAL' && s.outcome === 'FAILED_CLEAN' && s.reserved?.subject?.attempt === 1, 'ATTEMPT2_REQUIRES_CLEAN_ATTEMPT1_TERMINAL');
     const first = s.reserved.subject;
-    check(subject2.attempt === 2 && ['repo', 'pr', 'headSha', 'baseSha', 'sourceManifestSha256'].every(k => subject2[k] === first[k]), 'ATTEMPT2_SUBJECT_CHANGED');
+    // Step 3c-2: a train front batch's attempt 2 tests the same S (and a head batch's never gains one).
+    check(subject2.attempt === 2 && ['repo', 'pr', 'headSha', 'baseSha', 'sourceManifestSha256'].every(k => subject2[k] === first[k])
+      && Object.hasOwn(subject2, 'testSha') === Object.hasOwn(first, 'testSha') && subject2.testSha === first.testSha, 'ATTEMPT2_SUBJECT_CHANGED');
     const key2 = batchKey(subject2);
     await writeNew(path.join(this.attempts2, `${key1}.json`), { contract: 'clued.independent-ci.resident-attempt2/1', key1, key2, subject: subject2,
       notBefore: new Date(notBeforeMs).toISOString(), facts, at: isoNow(this.clock), automaticRetryAllowed: false });

@@ -22,7 +22,7 @@ import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import { NOW, HEAD, BASE, iso, hex, tempDir } from './resident-v2-fixtures.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
-const base = (o = {}) => ({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(NOW), attempt: 1, ...o });
+const base = (o = {}) => ({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(NOW), attempt: 1, ...o });
 
 test('batch claim: a later batch of the same content and attempt (another createdAt) reads the same record', async t => {
   const dir = await tempDir(t);

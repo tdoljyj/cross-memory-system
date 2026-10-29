@@ -2768,12 +2768,22 @@ test("independent-control-checks-v2: a settled v2 control pair counts; another c
     const repo = "tdoljyj/cross-memory-system", head = "a".repeat(40), base = "b".repeat(40), ci = "d".repeat(64);
     const now = Date.now(), iso = ms => new Date(ms).toISOString();
     const claim = { claimId: crypto.randomUUID(), fence: 3, epoch: 1, expiresAt: iso(now + 3_600_000) };
-    const jobs = batchJobsV2({ repo, pr: 888, headSha: head, baseSha: base, sourceManifestSha256: ci, createdAt: iso(now - 60_000), attempt: 1 });
+    const jobs = batchJobsV2({ repo, pr: 888, headSha: head, baseSha: base, testSha: head, sourceManifestSha256: ci, createdAt: iso(now - 60_000), attempt: 1 });
     const claims = path.join(root, "batch-claims");
     const { record } = await recordBatchClaim(claims, jobs["work-admission"], claim, iso(now - 30_000));
     const checks = []; let next = 100;
+    // Stage 8 (quota phase 2, step 3a) also reads main's rules and GitHub's test merge: strict on, the six checks pinned
+    // to 5368905, and a test merge of exactly [base, head] with the head's tree (the head contains the base).
+    const tree = "c".repeat(40), testMerge = "e".repeat(40);
+    const six = ["kooyumi-work-admission", "gitleaks", "trivy", "contract-placement", "kooyumi-admission-verified", "kooyumi-merge-slot"];
+    const commits = { [head]: { sha: head, tree, parents: [base] }, [testMerge]: { sha: testMerge, tree, parents: [base, head] } };
     const github = { fixture: true,
       async readChangedPaths(j) { return { complete: true, pr: j.pr, headSha: j.headSha, baseSha: j.baseSha, paths: ["a.txt"] }; },
+      async readBranchRules(branch) { return { complete: true, branch, rules: [{ type: "deletion", rulesetId: 24182890, parameters: null },
+        { type: "pull_request", rulesetId: 24182890, parameters: { allowed_merge_methods: ["merge", "squash", "rebase"], required_approving_review_count: 0 } },
+        { type: "required_status_checks", rulesetId: 24182890, parameters: { strict_required_status_checks_policy: true, required_status_checks: six.map(context => ({ context, integration_id: 5368905 })) } }] }; },
+      async readPullRequest(n) { return { number: n, state: "open", merged: false, mergeable: true, merge_commit_sha: testMerge, head: { sha: head, repo: { full_name: repo } }, base: { sha: base, ref: "main", repo: { full_name: repo } } }; },
+      async readGitCommit(sha) { if (!commits[sha]) throw Object.assign(new Error("github_http_404"), { code: "github_http_404" }); return structuredClone(commits[sha]); },
       async readChecks(h) { return { complete: true, checks: checks.filter(c => c.head_sha === h).map(c => structuredClone(c)) }; },
       async createCheck(body) { const c = { id: next++, app: { id: 5368905 }, ...structuredClone(body) }; checks.push(c); return structuredClone(c); },
       async revokeCheck(id, body) { const c = checks.find(x => x.id === id); Object.assign(c, structuredClone(body)); return structuredClone(c); } };
@@ -2802,13 +2812,14 @@ test("independent-control-checks-v2: a settled v2 control pair counts; another c
     await assert.rejects(consumeControlV2({ candidates: controlJobsFor([record], { repository: repo, pr: 888, headSha: head, name: "kooyumi-admission-verified" }, ci), consumerFor }));
     assert.equal(checks.find(c => c.name === "kooyumi-admission-verified" && c.external_id.includes(jobs["control-admission"].id)).conclusion, "failure");
     observed = claim;
-    // the same head under a second PR: the newer judgement on the head wins (NEWER_CONTROL_JUDGEMENT_PRESENT),
-    // so a head-only reader counts exactly one batch, never two
-    const jobs2 = batchJobsV2({ repo, pr: 889, headSha: head, baseSha: base, sourceManifestSha256: ci, createdAt: iso(now - 60_000), attempt: 1 });
+    // the same head under a second PR: the role is already on GitHub for this head (C4, cross-node "already published"),
+    // so that batch never publishes it again; the head's compensated check counts for no batch, under any PR
+    const jobs2 = batchJobsV2({ repo, pr: 889, headSha: head, baseSha: base, testSha: head, sourceManifestSha256: ci, createdAt: iso(now - 60_000), attempt: 1 });
     const second = (await recordBatchClaim(claims, jobs2["work-admission"], claim, iso(now - 30_000))).record;
-    assert.equal((await pub.publishOne(jobs2["control-admission"])).status, "SETTLED");
-    const both = await consumeControlV2({ candidates: controlJobsFor([record, second], { repository: repo, headSha: head, name: "kooyumi-admission-verified" }, ci), consumerFor });
-    assert.equal(both.proof.subject.pr, 889);
+    const again = await pub.publishOne(jobs2["control-admission"]);
+    assert.deepEqual([again.status, again.reason, again.sideEffects], ["BLOCKED", "ROLE_ALREADY_ON_GITHUB", 0]);
+    await assert.rejects(consumeControlV2({ candidates: controlJobsFor([record, second], { repository: repo, headSha: head, name: "kooyumi-admission-verified" }, ci), consumerFor }),
+      { code: "TRUSTED_SETTLED_CONTROL_JOURNAL_REQUIRED" });
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
