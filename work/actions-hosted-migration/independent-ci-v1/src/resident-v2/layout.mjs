@@ -34,7 +34,8 @@ export const STATE_V2 = Object.freeze({
   // Quota phase 2, step 3c-1: one shadow record per stage-10 run (train-shadow-store.mjs; clued-control only).
   trainShadow: `${WIN_STATE_V2}\\train-shadow`,
 });
-export const NODE_EXE = 'C:\\Program Files\\nodejs\\node.exe';
+// The package's pinned node (install-resident.ps1 runtime\node.exe = record controllerNodeSha256), not the shared system node.
+export const NODE_EXE = `${WIN_RESIDENT}\\runtime\\node.exe`;
 export const ORIGINAL_BINARY = '"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"';
 
 // Virtual service account SID: S-1-5-80 + SHA-1 of the upper-case service name (UTF-16LE).
