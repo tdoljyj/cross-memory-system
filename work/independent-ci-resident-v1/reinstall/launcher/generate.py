@@ -273,6 +273,10 @@ if LINUX_EVIDENCE:   # r5c (review): Linux generation 1 was adopted with THIS pa
         assert (pk == [sha(_apm)] and _ap['ciSourceManifestSha256'] == pkg['ciSourceManifestSha256'] and _ap['linux'] == pkg['linux']
                 and sha(os.path.join(ADOPTED_PKG, 'record', 'source-manifest.json')) == sha(os.path.join(PKG, 'record', 'source-manifest.json'))
                 and _lin(ADOPTED_PKG) == _lin(PKG)), ('LINUX_ADOPTED_PACKAGE_NOT_THIS_LINUX_HALF', pk)
+        # review 3-3: the Linux role qualifications were derived under the installed record's Source and host acceptance; this record
+        # must name the same two
+        _aa = json.load(open(os.path.join(ADOPTED_PKG, 'record', 'acceptance.json'), encoding='utf-8'))
+        assert all(_aa.get(k) == acceptance.get(k) for k in ('sourceAcceptanceRef', 'hostQualificationRef')), 'LINUX_ADOPTED_PACKAGE_ACCEPTANCE_REFS_DIFFER'
     else:
         assert pk == [pkg_sha], ('LINUX_ADOPTED_ANOTHER_PACKAGE', pk, pkg_sha)
 if FACTS:
