@@ -178,8 +178,9 @@ python -I tools/first-install-config.py <node>.json first-install-facts.<node>.j
 **5. Windows：组装输入并生成两个 root 脚本。**
 ```
 python -I linux/assemble.py ...
-python -I linux/first-install.py <config> <commit> <package> <suffix> <in-dir> <模板 roles-v3 副本> <模板节点的 linux-version-facts>
+python -I linux/first-install.py <config> <commit> <package> <suffix> <in-dir> <模板 roles-v3 副本> <模板节点的 linux-version-facts> [<节点上的 in-dir 路径>]
 ```
+- 新节点是另一台机器时，把整个 in-dir（含 `images/`）和两个脚本拷到该节点，并把它在该节点 WSL 里看到的路径作为第 8 个参数（例如 `/mnt/c/...`）。字节由脚本里的 sha 核对，路径不影响校验。
 - 模板文件按模板节点 version facts 里的 sha 钉住。
 - 模板公钥必须等于模板 qualification 里的 `resultPublicKeySha256`。
 - 生成器自己钉住两个首装 root 工具（`sign-first-qualification.mjs`、`first-node-facts.py`）的 sha。

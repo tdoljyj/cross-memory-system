@@ -17,6 +17,7 @@ node's own Linux version facts (roles policySha256 / qualificationSha256, ciSour
 package's record signers.json (the reviewed package; its SHA-256 is the payloads' resultPublicKeySha256).
 
   python -I first-install.py <config.json> <commit40> <package-dir> <out-suffix> <in-dir-name> <template-roles-dir> <template-version-facts.json>
+      [<the in-dir's path on the node as its WSL sees it, when the in-dir is copied there; default: this machine's /mnt path>]
 """
 import datetime, hashlib, json, os, re, shlex, shutil, sys
 
@@ -158,7 +159,10 @@ files = (['tools/' + f for f in ('install-resident-linux.sh', 'verify-resident-l
 for f in files:
     assert b'\r' not in open(os.path.join(IN, *f.split('/')), 'rb').read(), ('CR', f)
 sums = ''.join('%s  %s\n' % (sha(os.path.join(IN, *f.split('/'))), f) for f in files)
-W = shlex.quote('/mnt/' + IN[0].lower() + '/' + IN[3:].replace('\\', '/'))
+# where the node's root shell finds the in-dir: this machine's path as WSL sees it, or (the in-dir copied to the node) the 8th argument
+NODE_IN = sys.argv[8] if len(sys.argv) > 8 else '/mnt/' + IN[0].lower() + '/' + IN[3:].replace('\\', '/')
+assert re.fullmatch(r'/[A-Za-z0-9._/-]+', NODE_IN) and '..' not in NODE_IN.split('/'), 'NODE_IN_DIR_SHAPE'
+W = shlex.quote(NODE_IN)
 BASE = '/root/clued-ci-first-install-' + COMMIT[:8]
 MODS = ['worker/qualification-v2.mjs', 'src/worker-v2.mjs', 'src/job-v2.mjs', 'src/proof.mjs', 'src/queue.mjs']
 CI = 'work/actions-hosted-migration/independent-ci-v1'
