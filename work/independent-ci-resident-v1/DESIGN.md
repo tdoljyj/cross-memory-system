@@ -3223,7 +3223,7 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 - 进入 root shell 和提权 PowerShell 的值都要过严格字形（shell 值经过 quote，PowerShell 只接受可打印 ASCII）。
 - 提取出的树每次使用前都与提交逐个 blob 核对。
 - 与 base 包不同的节点必须给出全部六项身份值。
-- 预演报告 24 小时内有效。
+- 预演报告 24 小时内有效，由 Linux 脚本生成（`prep.py`）时检查，此时节点还未变动。
 
 **新节点**：`config/node-profile.desk-w-591.json`（取自 Note `85717e8f`）。用 `build.ps1 -PackageOnly` 只出包；首装不使用这里的重装启动器和 Linux 脚本。
 

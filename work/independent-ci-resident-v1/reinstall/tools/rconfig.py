@@ -66,7 +66,7 @@ def load(path):
     need(re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?', cfg['node'] or ''), 'CONFIG_NODE_NAME')
     need(re.fullmatch(r'config/node-profile\.[a-z0-9-]+\.json', cfg['nodeProfile'] or ''), 'CONFIG_NODE_PROFILE_PATH')
     for k in ('workDir', 'repo', 'basePackage', 'nodeExe', 'policyInput', 'companionInput', 'upgradeTokenFile'):
-        need(isinstance(cfg[k], str) and WIN_PATH.match(cfg[k]), 'CONFIG_PATH_SHAPE', k)
+        need(isinstance(cfg[k], str) and WIN_PATH.match(cfg[k]) and '..' not in cfg[k].split('\\'), 'CONFIG_PATH_SHAPE', k)
     nr = cfg.get('nodeRecord') or {}
     need(isinstance(nr, dict) and set(nr) <= NODE_RECORD_KEYS, 'CONFIG_NODE_RECORD', sorted(set(nr) - NODE_RECORD_KEYS) if isinstance(nr, dict) else None)
     for k, v in nr.items():   # the public fingerprints the node reports; an example's REPLACE_ placeholder never passes

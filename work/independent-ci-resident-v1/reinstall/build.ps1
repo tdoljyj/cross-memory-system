@@ -31,6 +31,7 @@ if (-not (Test-Path -LiteralPath $R -PathType Container)) { throw 'WORK_DIR_MISS
 foreach ($d in @('record', 'build-inputs')) { if (-not (Test-Path -LiteralPath (Join-Path $R $d))) { New-Item -ItemType Directory (Join-Path $R $d) | Out-Null } }
 $c8 = $Commit.Substring(0, 8); $kind = $(if ($Final) { 'final' } else { 'DRAFT' }) + $Tag   # -Tag only distinguishes repeat runs
 $tree = Join-Path $R ('tree-' + $c8)
+$env:GIT_NO_REPLACE_OBJECTS = '1'   # the commit's own objects, as root's src.git sees them (review 2)
 if (-not (Test-Path -LiteralPath $tree)) {
   New-Item -ItemType Directory $tree | Out-Null
   $tar = Join-Path $R ('t-' + $c8 + '.tar')

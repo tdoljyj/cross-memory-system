@@ -328,17 +328,12 @@ quiet['spoolRecords'] = present
 if any(re.match(r'^(d{8}|e{8})-', str(acceptance.get(k, ''))) for k in ('sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'ownerPackageAcceptanceRef',
                                                                        'publisherQualificationRef', 'ownerDecisionRef', 'ownerReceiptRef', 'installationReceiptRef')):
     refusals.append('PLACEHOLDER_OWNER_REFS_DRAFT_ONLY')
-# README section 5: no FINAL without a PASS rehearsal of exactly this package and configuration, at most 24 hours old (review 1-8)
-def rehearsal_fresh(doc):
-    try:
-        at = datetime.datetime.strptime(doc.get('observedAt', ''), '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
-    except ValueError:
-        return False
-    return datetime.timedelta(0) <= datetime.datetime.now(datetime.timezone.utc) - at <= datetime.timedelta(hours=24)
+# README section 5: no FINAL without a PASS rehearsal of exactly this package and configuration. Its 24-hour bound (review 1-8) is checked
+# by prep.py, before the node changes; here, after W1 and Linux B, a node half reinstalled could never rehearse again (review 2).
 rehearsal_doc = json.load(open(REHEARSAL, encoding='utf-8')) if REHEARSAL else None
 if not (rehearsal_doc and rehearsal_doc.get('contract') == 'clued.independent-ci.reinstall-rehearsal/1' and rehearsal_doc.get('status') == 'REHEARSAL_PASS'
         and rehearsal_doc.get('findings') == [] and rehearsal_doc.get('packageManifestSha256') == pkg_sha and rehearsal_doc.get('commit') == COMMIT
-        and rehearsal_doc.get('configSha256') == CFG['_sha256'] and rehearsal_fresh(rehearsal_doc)):
+        and rehearsal_doc.get('configSha256') == CFG['_sha256']):
     refusals.append('FINAL_NEEDS_A_PASSING_REHEARSAL_OF_THIS_PACKAGE')
 if FINAL and refusals:
     print(json.dumps({'status': 'REFUSED', 'codes': refusals, 'quiet': quiet, 'dryRun': dry_file, 'runnerBefore': rb}, indent=1))

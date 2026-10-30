@@ -245,7 +245,8 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None):
              "g=subprocess.run(['/usr/bin/git','--git-dir=/opt/clued-independent-ci/source-first-formal-v1/.git','rev-parse','HEAD'],capture_output=True,text=True,env=env)\n"
              "q={r:os.path.isfile('/etc/clued-independent-ci/roles/'+r+'.qualification.json') for r in ('gitleaks','trivy','contract-placement')}\n"
              "print(json.dumps({'checkHostExit':p.returncode,'checkHost':p.stdout.strip()[-800:],'v1Head':g.stdout.strip() if g.returncode==0 else None,'v1Qualifications':q}))")
-    code, out, err = host.wsl_python(cfg['linux']['distribution'], ['-c', probe, to_wsl(os.path.join(HERE, 'linux', 'tools', 'check-host.py')), to_wsl(rd),
+    # the live installed role policies (the derivation keeps their host pins), not the Windows copy (review 2)
+    code, out, err = host.wsl_python(cfg['linux']['distribution'], ['-c', probe, to_wsl(os.path.join(HERE, 'linux', 'tools', 'check-host.py')), '/etc/clued-independent-ci/roles-v3',
                                      lh['toolchainNodeSha256'], lh['resultPublicKeySha256']], user='root')
     hp = last_json(out) or {}
     checks['linuxHost'] = {'exit': code, **hp, 'configured': lh, 'stderr': err[-300:]}

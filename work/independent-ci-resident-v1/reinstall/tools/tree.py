@@ -21,7 +21,8 @@ def blob_id(path):
 def verify(repo, commit, tree):
     if not re.fullmatch(r'[0-9a-f]{40}', commit or ''):
         raise TreeError('TREE_COMMIT_40HEX')
-    p = subprocess.run(['git', '-C', repo, 'ls-tree', '-r', '-z', '--full-tree', commit], capture_output=True)
+    p = subprocess.run(['git', '-C', repo, 'ls-tree', '-r', '-z', '--full-tree', commit], capture_output=True,
+                       env=dict(os.environ, GIT_NO_REPLACE_OBJECTS='1'))   # the objects themselves, as root's src.git sees them
     if p.returncode != 0:
         raise TreeError('TREE_COMMIT_NOT_IN_REPO', p.stderr.decode('utf-8', 'replace')[-200:])
     want = {}
