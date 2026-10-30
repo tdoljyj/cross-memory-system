@@ -73,7 +73,7 @@ function Get-AppKeyFingerprint([byte[]]$key) {
     $proc = [Diagnostics.Process]::Start($psi)
     try { $proc.StandardInput.BaseStream.Write($key, 0, $key.Length) } finally { $proc.StandardInput.Close() }
     $outTask = $proc.StandardOutput.ReadToEndAsync(); $errTask = $proc.StandardError.ReadToEndAsync()
-    if (-not $proc.WaitForExit(60000)) { try { $proc.Kill() } catch {}; return $null }
+    if (-not $proc.WaitForExit(60000)) { try { $proc.Kill() } catch {}; throw 'SECRET_FINGERPRINT_TIMEOUT' }
     $out = $outTask.Result; [void]$errTask.Result
     if ($proc.ExitCode -ne 0) { return $null }
     $r = $out | ConvertFrom-Json
@@ -85,7 +85,8 @@ function Get-AppKeyFingerprint([byte[]]$key) {
   }
 }
 function Read-KeyFile([string]$path) {   # install-resident.ps1 Read-SecretSource
-  $item = Get-Item -LiteralPath $path -Force
+  $full = [IO.Path]::GetFullPath($path); if ($full -cnotmatch '^[A-Za-z]:\\') { throw 'NEW_KEY_FILE_REFUSED' }   # a local drive path only
+  $item = Get-Item -LiteralPath $full -Force
   if ($item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { throw 'NEW_KEY_FILE_REFUSED' }
   $s = [IO.File]::Open($item.FullName, 'Open', 'Read', 'Read')
   try {
@@ -126,7 +127,10 @@ try {
   # The swap: old aside (kept), new into place; on failure the old one goes back.
   [IO.File]::Move($Target, $retired)
   try { [IO.File]::Move($staged, $Target) }
-  catch { [IO.File]::Move($retired, $Target); throw ('SWAP_FAILED_OLD_KEY_RESTORED; staged file left at ' + $staged) }
+  catch {
+    try { [IO.File]::Move($retired, $Target) } catch { throw ('SWAP_AND_RESTORE_FAILED_NO_KEY_IN_PLACE; rename ' + $retired + ' back to ' + $Target + ' (new key staged at ' + $staged + ')') }
+    throw ('SWAP_FAILED_OLD_KEY_RESTORED; staged file left at ' + $staged)
+  }
   $placed = [IO.File]::ReadAllBytes($Target)
   try { $placedFp = Get-AppKeyFingerprint $placed } finally { [Array]::Clear($placed, 0, $placed.Length) }
   if ($placedFp -cne $newFp) { throw ('PLACED_KEY_FINGERPRINT_MISMATCH; old key kept at ' + $retired) }
