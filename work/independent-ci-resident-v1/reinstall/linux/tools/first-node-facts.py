@@ -1,6 +1,6 @@
 #!/usr/bin/python3.12 -I
-"""First install of a node's Linux half (Z1, Owner Decision: DESK-W-591 Linux host qualification derived from TURING's reviewed
-roles-v3), root on Linux, NO private key. derive-roles-r7.py has already turned the template node's reviewed role policies v3 and
+"""First install of a node's Linux half (Z1; derived from a template node's reviewed roles-v3,
+README section 8c), root on Linux, NO private key. derive-roles-r7.py has already turned the template node's reviewed role policies v3 and
 signed payloads into this record's (sourceManifestSha256 and the two refs; every Source pin checked in the commit). This step puts
 in the facts that belong to THIS node and nothing else:
   policy and payload: keyId, runtimeIdentity (the node's result signer, as its record's signers.json names it)

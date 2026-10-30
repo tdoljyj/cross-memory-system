@@ -358,6 +358,8 @@ class Config(unittest.TestCase):
     def test_every_node_profile_in_the_tree_is_valid_for_its_config(self):
         root = os.path.dirname(RE)   # work/independent-ci-resident-v1
         for name in os.listdir(os.path.join(RE, 'config')):
+            if name == 'new-node.example.json':   # the generic example: a new node adds its own profile (README section 8c)
+                continue
             doc = json.load(open(os.path.join(RE, 'config', name), encoding='utf-8'))
             prof = json.load(open(os.path.join(root, *doc['nodeProfile'].split('/')), encoding='utf-8'))
             self.assertEqual(prof['nodeName'], doc['node'], name)

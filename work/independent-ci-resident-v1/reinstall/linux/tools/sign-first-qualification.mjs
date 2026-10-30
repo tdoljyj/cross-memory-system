@@ -1,5 +1,5 @@
-// First install of a node's Linux half (Z1, Owner Decision: DESK-W-591 Linux host qualification derived from TURING's reviewed
-// roles-v3). Root, Linux, the pinned toolchain node: sign the three runtime qualifications v2 with THIS node's new result key. It
+// First install of a node's Linux half (Z1; derived from a template node's reviewed roles-v3,
+// README section 8c). Root, Linux, the pinned toolchain node: sign the three runtime qualifications v2 with THIS node's new result key. It
 // reads the private key itself and never prints, copies or logs it. Same checks and the same signing bytes as the reviewed
 // sign-qualification-v2.mjs (whose canonicalJson, ROLES and FIXED it imports), except where that tool requires the node's own
 // installed v1 qualification, which a new node does not have. Instead each payload must be the TEMPLATE node's reviewed, signed
@@ -9,7 +9,7 @@
 // isolation facts and everything else are the template's.
 //
 //   /var/lib/clued-independent-ci/toolchain-build-legacy-v1/node sign-first-qualification.mjs --in DIR --out NEW_DIR
-//       --template DIR --template-public FILE --template-public-sha256 HEX
+//       --template DIR --template-public FILE --template-public-sha256 HEX --key-id ID --runtime-id ID
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
@@ -26,9 +26,11 @@ const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
 const sha256 = b => createHash('sha256').update(b).digest('hex');
 const spki = key => createPublicKey(key).export({ type: 'spki', format: 'der' });
+// the policy keys that belong to this node (first-node-facts.py) besides NODE_OR_RECORD
+export const POLICY_NODE = Object.freeze([...NODE_OR_RECORD, 'dockerExecutableSha256', 'gitExecutableSha256', 'nodeExecutableSha256']);
 const without = (o, keys) => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
 
-export function signFirst({ keyPem, pubPem, templateDir, templatePubPem, templatePubSha256, inDir, outDir, now = new Date(), fixed = FIXED }) {
+export function signFirst({ keyPem, pubPem, templateDir, templatePubPem, templatePubSha256, keyId, runtimeId, inDir, outDir, now = new Date(), fixed = FIXED }) {
   const priv = createPrivateKey(keyPem);
   check(priv.asymmetricKeyType === 'ed25519' && spki(priv).equals(spki(pubPem)), 'RESULT_KEY_NOT_THE_INSTALLED_PUBLIC_KEY');
   check(sha256(templatePubPem) === templatePubSha256 && createPublicKey(templatePubPem).asymmetricKeyType === 'ed25519', 'TEMPLATE_PUBLIC_KEY_NOT_THE_PINNED_ONE');
@@ -41,6 +43,7 @@ export function signFirst({ keyPem, pubPem, templateDir, templatePubPem, templat
     // sign-qualification-v2.mjs's policy and payload checks, unchanged
     check(policy.schema === 'independent-ci.linux-policy.v3' && policy.role === role && policy.formalEnabled === true && !('currentClaim' in policy) && !('claimId' in policy)
       && policy.signingKeyFile === fixed.key && policy.publicKeyFile === fixed.pub && policy.nodeExecutable === fixed.node, 'ROLE_POLICY_V3_REFUSED');
+    check(typeof keyId === 'string' && policy.keyId === keyId && policy.runtimeIdentity === runtimeId, 'POLICY_NOT_THIS_NODES_SIGNER');
     check(payload.schema === 'independent-ci.runtime-qualification.v2' && payload.fixture === false && payload.role === role && payload.qualifiedAt === null
       && payload.expiresAt === null && !('currentClaim' in payload) && payload.resultPublicKeySha256 === pubSha
       && payload.isolation === 'root-managed-single-job-container' && FACTS.every(k => payload[k] === true)
@@ -56,6 +59,11 @@ export function signFirst({ keyPem, pubPem, templateDir, templatePubPem, templat
     'TEMPLATE_QUALIFICATION_REFUSED');
     check(canonicalJson(without(t.payload, [...NODE_OR_RECORD, 'qualifiedAt'])) === canonicalJson(without(payload, [...NODE_OR_RECORD, 'qualifiedAt'])),
       'PAYLOAD_DIFFERS_FROM_THE_TEMPLATE_OUTSIDE_NODE_AND_RECORD_VALUES');
+    // the policy too (entryFile, limits, roots, container user are policy-only): the template's policy, bound to its signed payload,
+    // identical but for this record's and this node's values
+    const tp = JSON.parse(fs.readFileSync(path.join(templateDir, `${role}.json`), 'utf8'));
+    check(BIND.every(k => tp[k] === t.payload[k]) && canonicalJson(without(tp, POLICY_NODE)) === canonicalJson(without(policy, POLICY_NODE)),
+      'POLICY_DIFFERS_FROM_THE_TEMPLATE_OUTSIDE_NODE_AND_RECORD_VALUES');
     prepared.push({ role, policyBytes, payloadBytes, payload });
   }
   check(!fs.existsSync(outDir), 'OUTPUT_EXISTS_PRESERVE');
@@ -90,11 +98,12 @@ function main(argv) {
   check(process.execPath === FIXED.node, 'PINNED_TOOLCHAIN_NODE_REQUIRED');
   const o = {};
   for (let i = 0; i < argv.length; i += 2) o[argv[i]] = argv[i + 1];
-  check(argv.length === 10 && ['--in', '--out', '--template', '--template-public'].every(k => typeof o[k] === 'string' && path.isAbsolute(o[k]))
-    && /^[0-9a-f]{64}$/.test(o['--template-public-sha256'] ?? ''), 'USAGE: --in DIR --out NEW_DIR --template DIR --template-public FILE --template-public-sha256 HEX');
+  check(argv.length === 14 && ['--in', '--out', '--template', '--template-public'].every(k => typeof o[k] === 'string' && path.isAbsolute(o[k]))
+    && /^[0-9a-f]{64}$/.test(o['--template-public-sha256'] ?? '') && /^[A-Za-z0-9._-]{8,80}$/.test(o['--key-id'] ?? '') && /^[A-Za-z0-9._-]{8,80}$/.test(o['--runtime-id'] ?? ''),
+  'USAGE: --in DIR --out NEW_DIR --template DIR --template-public FILE --template-public-sha256 HEX --key-id ID --runtime-id ID');
   protectedKey(FIXED.key);
   return signFirst({ keyPem: fs.readFileSync(FIXED.key), pubPem: fs.readFileSync(FIXED.pub), templateDir: o['--template'], templatePubPem: fs.readFileSync(o['--template-public']),
-    templatePubSha256: o['--template-public-sha256'], inDir: o['--in'], outDir: o['--out'] });
+    templatePubSha256: o['--template-public-sha256'], keyId: o['--key-id'], runtimeId: o['--runtime-id'], inDir: o['--in'], outDir: o['--out'] });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

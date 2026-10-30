@@ -1,5 +1,5 @@
-"""First install of a node's Linux half (Z1, Owner Decision: DESK-W-591 Linux host qualification derived from TURING's reviewed roles-v3;
-README section 8c). Windows, non-elevated, no WSL: writes the two root scripts the Owner runs in the node's WSL distribution under
+"""First install of a node's Linux half (Z1; a new node's Linux host qualification is derived from a template node's reviewed
+roles-v3, README section 8c). Windows, non-elevated, no WSL: writes the two root scripts the Owner runs in the node's WSL distribution under
 `env -i`, and adds to the assembled input directory (linux/assemble.py) the first-install tools and the template.
 
   phase A (root, NO private key, writes only under $BASE): the node has no Linux CI yet (no Source v2, no roles, no resident, no
@@ -56,6 +56,7 @@ assert acc['node']['nodeName'] == CFG['node'] and src_manifest['sourceSha'] == C
 signers = json.load(open(os.path.join(PKG, 'record', 'signers.json'), encoding='utf-8'))['signers']
 assert [(s['keyId'], s['runtimeId'], s['publicKeyPem']) for s in signers] == [(SIGNER['keyId'], SIGNER['runtimeId'], SIGNER['publicKeyPem'])], 'PACKAGE_SIGNERS_NOT_THIS_NODES'
 REF, HREF, RECEIPT = acc['sourceAcceptanceRef'], acc['hostQualificationRef'], acc['installationReceiptRef']
+assert acc['ownerReceiptRef'] == RECEIPT, 'OWNER_RECEIPT_NOT_THE_INSTALLATION_RECEIPT'
 PLACEHOLDER = re.compile(r'^(d{8}|e{8})-')
 assert DRAFT or not any(PLACEHOLDER.match(x) for x in (REF, HREF, RECEIPT, acc['ownerDecisionRef'])), 'FINAL_SCRIPTS_NEED_THE_REAL_OWNER_REFS'
 for role in ROLES:   # derive-roles-r7.py takes the two refs from the record manifest's controllerRelay
@@ -71,7 +72,7 @@ for role in ROLES:
         {k: tf['roles'][role][k] for k in ('policySha256', 'qualificationSha256')}, ('TEMPLATE_ROLE_NOT_THE_FACTS', role)
 base_signers = json.load(open(os.path.join(CFG['basePackage'], 'record', 'signers.json'), encoding='utf-8'))['signers']
 base_pm = json.load(open(os.path.join(CFG['basePackage'], 'package-manifest.json'), encoding='utf-8'))
-assert sha(os.path.join(CFG['basePackage'], 'record', 'signers.json')) == {f['target']: f['sha256'] for f in base_pm['files']}['record\\signers.json'], 'BASE_SIGNERS_NOT_ITS_PACKAGE'
+assert sha(os.path.join(CFG['basePackage'], 'record', 'signers.json')) == {f['target']: f['sha256'] for f in base_pm['files']}.get('record\\signers.json'), 'BASE_SIGNERS_NOT_ITS_PACKAGE'
 assert len(base_signers) == 1, 'BASE_RECORD_HAS_NOT_ONE_SIGNER'
 TEMPLATE_PUB = base_signers[0]['publicKeyPem'].encode('ascii')
 TEMPLATE_PUB_SHA = shab(TEMPLATE_PUB)
@@ -79,10 +80,19 @@ for role in ROLES:
     tq = json.load(open(os.path.join(TEMPLATE, role + '.qualification.json'), encoding='utf-8'))
     assert tq['payload']['resultPublicKeySha256'] == TEMPLATE_PUB_SHA and tq['payload']['keyId'] == base_signers[0]['keyId'], ('TEMPLATE_KEY_NOT_THE_BASE_SIGNER', role)
 assert TEMPLATE_PUB_SHA != PUB_SHA, 'NODE_KEY_IS_THE_TEMPLATE_KEY'
+# the run roots readiness requires as root directories (loadQualifiedPolicyV2); a first install creates them in phase B
+ROOTS = ('/var/lib/clued-independent-ci/workspaces', '/var/lib/clued-independent-ci/runs')
+for role in ROLES:
+    tp = json.load(open(os.path.join(TEMPLATE, role + '.json'), encoding='utf-8'))
+    assert (tp['workspaceRoot'], tp['runsRoot']) == ROOTS, ('TEMPLATE_RUN_ROOTS', role)
 
 # ---- the assembled input (linux/assemble.py) + the first-install tools, the generated verify-source-v2.sh and the template ----
 SIGN_SHA = '9ee06a93b11353b49270c774ae988060994e7a4aaae606b4736b4597c3f20aff'   # the reviewed signer (= prep.py's), imported by the first-install signer
 VERIFY_TEMPLATE_SHA = '481b0d85c2023e3506f30c4874c6304d2513786684d5d9a965f38a43699ca992'   # = prep.py's
+# the two first-install root tools as reviewed (Z1 review round 1); a change needs a new review and new pins here
+SIGN_FIRST_SHA = 'cac02a6a08e60dccd713820dc3f39853d0700cd26b52dfac99572e63625ce79d'
+NODE_FACTS_SHA = 'f315be5aa89498405c5ff4e4d090c9ca08c172b877e59df8ac20b54f6dfe54e5'
+assert sha(os.path.join(TOOLS, 'sign-first-qualification.mjs')) == SIGN_FIRST_SHA and sha(os.path.join(TOOLS, 'first-node-facts.py')) == NODE_FACTS_SHA, 'FIRST_INSTALL_TOOLS_CHANGED'
 assert sha(os.path.join(TOOLS, 'sign-qualification-v2.mjs')) == SIGN_SHA and sha(os.path.join(TOOLS, 'verify-source-v2.template.sh')) == VERIFY_TEMPLATE_SHA, 'REVIEW_COPY_TOOLS_CHANGED'
 for src, name in (('check-host.py', 'check-host-r4.py'), ('verify-signed.mjs', 'verify-signed-r4.mjs'), ('derive-roles.py', 'derive-roles-r7.py')):
     assert sha(os.path.join(IN, 'tools', name)) == sha(os.path.join(TOOLS, src)), ('TOOL_NOT_THE_COMMITTED_ONE', name)
@@ -112,6 +122,7 @@ assert sha(os.path.join(IN, 'tools', 'clued-ci-install-source-v2')) == sha(os.pa
 for f in ('acceptance.json', 'installation.json', 'record-manifest.json', 'signers.json', 'source-manifest.json'):
     assert sha(os.path.join(IN, 'record', f)) == sha(os.path.join(PKG, 'record', f)), f
 LINUX_RES_MANIFEST = pkg['linux']['manifestSha256']
+assert LINUX_RES_MANIFEST == sha(os.path.join(PKG, 'linux', 'manifest.json')) == sha(os.path.join(IN, 'linux-res-pkg', 'manifest.json')), 'LINUX_MANIFEST_NOT_THE_PACKAGES'
 UPG_FILES = ['upgrade-v1/bin/clued-ci-upgrade-linux', 'upgrade-v1/bin/clued-ci-sign-qualification-v2.mjs', 'upgrade-v1/manifest.json']
 RES_FILES = ['bin/clued-ci-resident-linux', 'manifest.json', 'systemd/clued-ci-worker@.service', 'systemd/clued-ci-wsprep@.service', 'systemd/clued-ci-archive@.service']
 for f in UPG_FILES:
@@ -236,10 +247,27 @@ $CLEAN $PY -I "$STG/tools/first-node-facts.py" --in "$STG/roles-derived" --key-i
 cat "$STG/node-facts.stdout.json"
 $CLEAN $PY -I "$STG/tools/check-host-r4.py" "$STG/roles-in" "$NODE_SHA" "$PUB_SHA" > "$STG/host-A.stdout.json" || { cat "$STG/host-A.stdout.json"; refuse HOST_PINS_CHANGED; }
 cat "$STG/host-A.stdout.json"
+# the resident manifest pins this commit's source-v2 files, the toolchain node and exactly the staged resident files (= prep.py r7)
+$CLEAN $PY -I -c 'import json,sys,subprocess,hashlib
+m=json.load(open(sys.argv[1])); s="/opt/clued-independent-ci/source-v2/"; e={"PATH":"/usr/bin:/bin","GIT_NO_REPLACE_OBJECTS":"1","GIT_CONFIG_NOSYSTEM":"1","GIT_CONFIG_GLOBAL":"/dev/null"}; bad=[]
+own={"/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux":"bin/clued-ci-resident-linux","/etc/systemd/system/clued-ci-worker@.service":"systemd/clued-ci-worker@.service","/etc/systemd/system/clued-ci-wsprep@.service":"systemd/clued-ci-wsprep@.service","/etc/systemd/system/clued-ci-archive@.service":"systemd/clued-ci-archive@.service"}
+for f in m["files"]:
+  p=f["installedPath"]
+  if p.startswith(s):
+    b=subprocess.run(["git","--git-dir",sys.argv[2],"cat-file","blob",sys.argv[3]+":"+p[len(s):]],env=e,capture_output=True,check=True).stdout
+    bad+=[p] if hashlib.sha256(b).hexdigest()!=f["sha256"] else []
+  elif p==sys.argv[4]: bad+=[p] if f["sha256"]!=sys.argv[5] else []
+  elif p in own: bad+=[p] if hashlib.sha256(open(sys.argv[6]+"/"+own[p],"rb").read()).hexdigest()!=f["sha256"] else []
+  else: bad.append(p)
+print(json.dumps({"residentPinsNotTheNewSource":bad})); sys.exit(1 if bad else 0)' "$STG/linux-res-pkg/manifest.json" "$STG/src.git" "$COMMIT" "$NODE" "$NODE_SHA" "$STG/linux-res-pkg" > "$STG/resident-pins.A.stdout.json" || { cat "$STG/resident-pins.A.stdout.json"; refuse RESIDENT_PINS_NOT_THE_NEW_SOURCE; }
+# the run roots: absent (phase B creates them) or root directories nobody else can write
+for d in @@ROOTS@@; do
+  [ ! -e "$d" ] || { [ -d "$d" ] && [ ! -L "$d" ] && [ "$(stat -c %u "$d")" = 0 ] && [ $(( 0$(stat -c %a "$d") & 022 )) = 0 ]; } || refuse "RUN_ROOT_NOT_ROOT_PROTECTED:$d"
+done
 # the resident install plan, exactly as generated on Windows
 bash --noprofile --norc "$STG/tools/install-resident-linux.sh" --plan "$STG/linux-res-pkg" > "$STG/install-plan.A.stdout.txt" || { cat "$STG/install-plan.A.stdout.txt"; refuse INSTALL_PLAN_REFUSED; }
 [ "$(printf '%s' "$(head -n -1 "$STG/install-plan.A.stdout.txt")" | sha256sum | cut -d' ' -f1)" = "$INSTALL_PLAN" ] || { cat "$STG/install-plan.A.stdout.txt"; refuse INSTALL_PLAN_NOT_AS_GENERATED; }
-(cd "$STG" && sha256sum roles-in/* tools/* record/* template/* linux-pkg/upgrade-v1/manifest.json linux-pkg/upgrade-v1/bin/* linux-res-pkg/manifest.json linux-res-pkg/bin/* linux-res-pkg/systemd/* install-plan.A.stdout.txt > phaseA.sha256)
+(cd "$STG" && sha256sum roles-in/* tools/* record/* template/* linux-pkg/upgrade-v1/manifest.json linux-pkg/upgrade-v1/bin/* linux-res-pkg/manifest.json linux-res-pkg/bin/* linux-res-pkg/systemd/* install-plan.A.stdout.txt resident-pins.A.stdout.json > phaseA.sha256)
 echo "{\"status\":\"PHASE_A_DONE_NOTHING_SIGNED_NOTHING_INSTALLED\",\"phaseAManifestSha256\":\"$(sha256sum "$STG/phaseA.sha256" | cut -d' ' -f1)\"}"
 """
 
@@ -251,26 +279,38 @@ B = "#!/bin/bash\n" + r"""# First install of this node's Linux half, phase B (ro
 (cd "$STG" && sha256sum --quiet -c phaseA.sha256) || refuse STAGED_BYTES_CHANGED_SINCE_PHASE_A
 src_git_clean
 [ "$(sha256sum "$STG/tools/sign-qualification-v2.mjs" | cut -d' ' -f1)" = "$SIGN_SHA" ] || refuse SIGN_TOOL_CHANGED
-T="$STG/b-$(date -u +%Y%m%dT%H%M%SZ)"; install -d -m 0700 "$T"
+T=$(mktemp -d "$STG/b-$(date -u +%Y%m%dT%H%M%SZ)-XXXX")
 if [ ! -e /var/lib/clued-independent-ci/resident/source-v2-install-receipt.json ]; then
   host_ready
   $CLEAN $PY -I "$STG/tools/check-host-r4.py" "$STG/roles-in" "$NODE_SHA" "$PUB_SHA" > "$T/host-B0.stdout.json" || { cat "$T/host-B0.stdout.json"; refuse HOST_PINS_CHANGED; }
   # B1 [PRIVATE KEY]: sign the three qualifications v2 with this node's key, each checked against the template node's signed one
+  # signs into this run's directory and moves the result into place, so a failed run leaves nothing half-done in the way
   if [ ! -e "$STG/roles-signed" ]; then
-    $CLEAN "$NODE" "$STG/tools/sign-first-qualification.mjs" --in "$STG/roles-in" --out "$STG/roles-signed" --template "$STG/template" --template-public "$STG/template/public.pem" --template-public-sha256 "$TEMPLATE_PUB_SHA" > "$STG/sign.stdout.json" || { cat "$STG/sign.stdout.json"; refuse SIGNING_FAILED; }
+    $CLEAN "$NODE" "$STG/tools/sign-first-qualification.mjs" --in "$STG/roles-in" --out "$T/roles-signed" --template "$STG/template" --template-public "$STG/template/public.pem" --template-public-sha256 "$TEMPLATE_PUB_SHA" --key-id "$KEY_ID" --runtime-id "$RUNTIME_ID" > "$T/sign.stdout.json" || { cat "$T/sign.stdout.json"; refuse SIGNING_FAILED; }
+    grep -q FIRST_QUALIFICATIONS_V2_SIGNED "$T/sign.stdout.json" || refuse SIGNING_FAILED
+    cp -f "$T/sign.stdout.json" "$STG/sign.stdout.json" && mv -T "$T/roles-signed" "$STG/roles-signed"
   fi
-  grep -q FIRST_QUALIFICATIONS_V2_SIGNED "$STG/sign.stdout.json" || refuse SIGNING_FAILED
+  grep -q FIRST_QUALIFICATIONS_V2_SIGNED "$STG/sign.stdout.json" || refuse SIGNED_OUTPUT_WITHOUT_ITS_REPORT_SEE_RECOVERY
   # B2 (public key only): the imported modules straight from the commit, checked against the record manifest pins before any import
-  [ -e "$STG/check" ] || { install -d -m 0700 "$STG/check" "$STG/check/worker" "$STG/check/src"; for rel in @@MODS@@; do G cat-file blob "$COMMIT:@@CI@@/$rel" > "$STG/check/$rel" || refuse "MODULE_EXTRACT_FAILED:$rel"; done; }
+  [ -e "$STG/check" ] || { install -d -m 0700 "$T/check" "$T/check/worker" "$T/check/src"; for rel in @@MODS@@; do G cat-file blob "$COMMIT:@@CI@@/$rel" > "$T/check/$rel" || refuse "MODULE_EXTRACT_FAILED:$rel"; done; mv -T "$T/check" "$STG/check"; }
   $CLEAN "$NODE" "$STG/tools/verify-signed-r4.mjs" "$STG/check" "$STG/roles-signed" "$STG/roles-in" /etc/clued-independent-ci/verify-result-public.pem "$STG/record/source-manifest.json" > "$T/verify-signed.stdout.json" || { cat "$T/verify-signed.stdout.json"; refuse SIGNED_SET_REFUSED; }
   grep -q SIGNED_QUALIFICATIONS_V2_VERIFIED "$T/verify-signed.stdout.json" || refuse SIGNED_SET_REFUSED
   # B3-B5: the Linux Source v2 package, its plan (every target absent, this commit and manifest, the toolchain node), apply
-  [ -e "$STG/pkg" ] || { $CLEAN $PY -I "$STG/tools/clued-ci-install-source-v2" package --record "$STG/record" --source-root "$STG/src.git" --roles "$STG/roles-signed" --out "$STG/pkg" > "$STG/package.stdout.json" || { cat "$STG/package.stdout.json"; refuse PACKAGE_FAILED; }; }
-  grep -q LINUX_SOURCE_V2_PACKAGE_WRITTEN "$STG/package.stdout.json" || refuse PACKAGE_FAILED
+  if [ ! -e "$STG/pkg" ]; then
+    $CLEAN $PY -I "$STG/tools/clued-ci-install-source-v2" package --record "$STG/record" --source-root "$STG/src.git" --roles "$STG/roles-signed" --out "$STG/pkg" > "$T/package.stdout.json" || { cat "$T/package.stdout.json"; refuse PACKAGE_FAILED_SEE_RECOVERY; }
+    cp -f "$T/package.stdout.json" "$STG/package.stdout.json"
+  fi
+  grep -q LINUX_SOURCE_V2_PACKAGE_WRITTEN "$STG/package.stdout.json" || refuse PACKAGE_PARTIAL_SEE_RECOVERY
+  # the run roots readiness requires (loadQualifiedPolicyV2): root directories, created here when absent
+  for d in @@ROOTS@@; do
+    [ -e "$d" ] || install -d -o root -g root -m 0755 "$d"
+    { [ -d "$d" ] && [ ! -L "$d" ] && [ "$(stat -c %u "$d")" = 0 ] && [ $(( 0$(stat -c %a "$d") & 022 )) = 0 ]; } || refuse "RUN_ROOT_NOT_ROOT_PROTECTED:$d"
+  done
   $CLEAN $PY -I "$STG/tools/clued-ci-install-source-v2" --plan "$STG/pkg" > "$T/source-plan.stdout.json" || { cat "$T/source-plan.stdout.json"; refuse SOURCE_PLAN_REFUSED; }
   PLAN=$($CLEAN $PY -I -c 'import json,sys; d=json.load(open(sys.argv[1])); p=d["plan"]; h=p["host"]; ok=d["status"]=="DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN" and p["sourceCommit"]==sys.argv[2] and p["ciSourceManifestSha256"]==sys.argv[3] and all(h["targetsAbsent"].values()) and h["receiptAbsent"] and h["roleLockAbsent"] and h["gitPresent"] and h["nodeSha256"]==sys.argv[4]; print(d["planSha256"] if ok else "")' "$T/source-plan.stdout.json" "$COMMIT" "$NEW_MANIFEST" "$NODE_SHA")
   [ -n "$PLAN" ] || refuse SOURCE_PLAN_NOT_AS_EXPECTED
-  $CLEAN $PY -I "$STG/tools/clued-ci-install-source-v2" --apply "$STG/pkg" "$PLAN" > "$STG/source-apply.stdout.json" || { cat "$STG/source-apply.stdout.json"; refuse SOURCE_APPLY_NOT_CONFIRMED_SEE_RECOVERY; }
+  $CLEAN $PY -I "$STG/tools/clued-ci-install-source-v2" --apply "$STG/pkg" "$PLAN" > "$T/source-apply.stdout.json" || { cat "$T/source-apply.stdout.json"; refuse SOURCE_APPLY_NOT_CONFIRMED_SEE_RECOVERY; }
+  cp -f "$T/source-apply.stdout.json" "$STG/source-apply.stdout.json"
 fi
 grep -q INSTALLED_READINESS_CONFIRMED_NOT_EXECUTED "$STG/source-apply.stdout.json" || refuse SOURCE_APPLY_NOT_CONFIRMED_SEE_RECOVERY
 # B6: verify the Source v2 install (read-only; no Source v1 on this node)
@@ -279,11 +319,15 @@ cat "$T/verify-source.stdout.json"
 grep -q LINUX_SOURCE_V2_VERIFIED "$T/verify-source.stdout.json" || refuse SOURCE_V2_VERIFY_FAILED_SEE_RECOVERY
 h=$(git -C /opt/clued-independent-ci/source-v2 -c safe.directory=/opt/clued-independent-ci/source-v2 rev-parse HEAD) || refuse INSTALLED_SOURCE_UNREADABLE
 [ "$h" = "$COMMIT" ] || refuse INSTALLED_SOURCE_NOT_THIS_COMMIT
-# B7: the Linux resident half with exactly the plan generated on Windows (after a WSL restart for systemd, the same command continues)
+# B7: the Linux resident half with exactly the plan generated on Windows. When the installer asks for a restart, the Owner restarts
+# ONLY this distribution from Windows (wsl -t @@DISTRO@@, never wsl --shutdown) and runs this phase B command again: it continues.
 if [ -e /opt/clued-independent-ci/resident-v1 ] || [ -e /var/lib/clued-independent-ci/resident/install-plan.json ]; then
   bash --noprofile --norc "$STG/tools/install-resident-linux.sh" --continue-after-boot "$INSTALL_PLAN" > "$T/install.stdout.json" || { cat "$T/install.stdout.json"; refuse RESIDENT_INSTALL_FAILED_SEE_RECOVERY; }
 else
   bash --noprofile --norc "$STG/tools/install-resident-linux.sh" --apply "$STG/linux-res-pkg" "$INSTALL_PLAN" > "$T/install.stdout.json" || { cat "$T/install.stdout.json"; refuse RESIDENT_INSTALL_FAILED_SEE_RECOVERY; }
+fi
+if grep -q INSTALLED_NEEDS_WSL_RESTART "$T/install.stdout.json"; then   # its own text says wsl --shutdown: never; this distribution only
+  echo '{"status":"RESTART_ONLY_THIS_DISTRIBUTION_THEN_RUN_B_AGAIN","windows":"wsl -t @@DISTRO@@","never":"wsl --shutdown"}'; exit 2
 fi
 grep -q '"status":"RESIDENT_LINUX_INSTALLED"' "$T/install.stdout.json" || { cat "$T/install.stdout.json"; refuse RESIDENT_INSTALL_FAILED_SEE_RECOVERY; }
 [ "$(sha256sum /opt/clued-independent-ci/resident-v1/manifest.json | cut -d' ' -f1)" = "$LINUX_RES_MANIFEST" ] || refuse LINUX_RESIDENT_MANIFEST_NOT_THIS_PACKAGE
@@ -313,9 +357,9 @@ echo "{\"status\":\"LINUX_FIRST_INSTALL_DONE\",\"node\":\"@@NODE_NAME@@\",\"sour
 values = {'DRAFT': str(int(DRAFT)), 'W': W, 'BASE': BASE, 'COMMIT': COMMIT, 'NEW': NEW, 'REF': REF, 'HREF': HREF, 'RECEIPT': RECEIPT, 'PKG_SHA': PKG_SHA,
           'LINUX_RES_MANIFEST': LINUX_RES_MANIFEST, 'UPG_PLAN': UPG_PLAN, 'INSTALL_PLAN': INSTALL_PLAN, 'KEY_ID': SIGNER['keyId'], 'RUNTIME_ID': SIGNER['runtimeId'],
           'TEMPLATE_PUB_SHA': TEMPLATE_PUB_SHA, 'NODE_SHA': NODE_SHA, 'PUB_SHA': PUB_SHA, 'SIGN_SHA': SIGN_SHA, 'C8': COMMIT[:8], 'NODE_NAME': CFG['node'],
-          'SUFFIX': SUFFIX, 'FILES': ' '.join(files), 'SUMS': sums, 'MODS': ' '.join(MODS), 'CI': CI}
+          'ROOTS': ' '.join(ROOTS), 'SUFFIX': SUFFIX, 'DISTRO': CFG['linux']['distribution'], 'FILES': ' '.join(files), 'SUMS': sums, 'MODS': ' '.join(MODS), 'CI': CI}
 for k, v in values.items():   # every value is hex, a validated name, a shlex-quoted path, or a list of fixed relative paths
-    assert k in ('W', 'SUMS', 'FILES', 'MODS') or re.fullmatch(r'[A-Za-z0-9._/-]*', v), ('VALUE_SHAPE', k)
+    assert k in ('W', 'SUMS', 'FILES', 'MODS', 'ROOTS') or re.fullmatch(r'[A-Za-z0-9._/-]*', v), ('VALUE_SHAPE', k)
 def render(text):
     for k, v in values.items():
         text = text.replace('@@' + k + '@@', v)
@@ -329,4 +373,4 @@ for name, text in (('first-install-linux-A.' + SUFFIX + '.sh', A), ('first-insta
     out[name] = sha(p)
 print(json.dumps({'scripts': out, 'pinnedFiles': len(files), 'W': W, 'base': BASE, 'node': CFG['node'], 'packageManifestSha256': PKG_SHA,
                   'ciSourceManifestSha256': NEW, 'keyId': SIGNER['keyId'], 'runtimeId': SIGNER['runtimeId'], 'resultPublicKeySha256': PUB_SHA,
-                  'templatePublicKeySha256': TEMPLATE_PUB_SHA, 'installPlanSha256': INSTALL_PLAN, 'upgradePlanSha256': UPG_PLAN, 'draft': DRAFT}, indent=1))
+                  'templatePublicKeySha256': TEMPLATE_PUB_SHA, 'restartOnlyThisDistribution': 'wsl -t ' + CFG['linux']['distribution'], 'installPlanSha256': INSTALL_PLAN, 'upgradePlanSha256': UPG_PLAN, 'draft': DRAFT}, indent=1))
