@@ -144,7 +144,21 @@ r7 那次三回被拒，都能被预演提前抓到，`test/test_rehearse.py` �
 - 节点档案：提交树里有就用树里的；没有（例如 a0e15a91 早于 DESK 档案）就用本工具链检出里同一路径的副本。两种情况都由该提交自己的 `prepare-record.mjs` 校验。
 - `linux.installedManifest` 在新节点上只用作外部钉值的路径和顺序模板。toolchain node 一项取 `linux.host.toolchainNodeSha256`，为 `null` 时沿用副本的值；`source-v2` 钉值总是取新提交的文件。
 - 首装不走这里的启动器、Linux 脚本和预演：配置里 Linux 事实为 `null` 时，它们都拒绝（`NODE_HAS_NO_INSTALLED_LINUX_CI`）。首装按《DESK-W-591 主备安装操作说明》进行。
-- record 的 `signers` 沿用 base 节点的结果签名者。它只在发布签名结果时用来验签；安装、verify 和 STANDBY 都不用它。一个节点在有自己的签名者之前不能接班（DESK-W-591：Z1 之前，Decision `d339ddb2`）。
+- record 的 `signers`：配置没有 `signer` 时沿用 base 节点的结果签名者。它只在发布签名结果时用来验签；安装、verify 和 STANDBY 都不用它。一个节点在有自己的签名者之前不能接班（DESK-W-591：Z1 之前，Decision `d339ddb2`）。配置写了 `signer`（本节点结果钥的 keyId、runtimeId、Ed25519 公钥 PEM，只有公钥）时，record 只列这一位签名者，其 `qualificationRef` 为 `hostQualificationRef`。
+
+## 8c. Linux 首装（Z1；例如 DESK-W-591）
+
+Owner 决定：首装节点的 Linux 主机资格从模板节点（TURING）已审、已签的 roles-v3 派生，`hostQualificationRef` 是这条 Decision。
+
+- **前提（现场，root）**：toolchain node 已在 `/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node`；本节点在 WSL 里由 root 生成自己的 Ed25519 结果钥 `/etc/clued-independent-ci/verify-result-key.pem`（0600），公钥 `verify-result-public.pem`。只把公钥 PEM 和 sha256 交回，私钥不打印、不离开 WSL。
+- **配置**：`linux.installedRoles` 与 `linux.host.v1SourceHead` 为 `null`；`toolchainNodeSha256`、`resultPublicKeySha256` 填现场值；`signer.publicKeyPem` 的 sha256 必须等于 `resultPublicKeySha256`（`rconfig.need_first_install_linux`）。用这份配置以 `-Final` 重建包。
+- **生成**：先 `linux/assemble.py`，再
+  ```
+  python -I linux/first-install.py <config> <commit> <package> <suffix> <in-dir> <模板 roles-v3 副本> <模板节点的 linux-version-facts>
+  ```
+  模板文件按模板节点 version facts 里的 sha 钉住；模板公钥取 base 包 record 的 `signers.json`，并要求等于模板 qualification 里的 `resultPublicKeySha256`。生成两个 root 脚本：
+  - **A**（无私钥，只写 `$BASE`）：确认这是首装（没有 Source v1/v2、roles、resident、升级工具）；toolchain node、公钥、docker、systemd、cgroup v2 就位；暂存并核对每个钉住的字节；`derive-roles-r7.py` 以模板为已装侧派生本 record 的值；`first-node-facts.py` 只填本节点的 keyId、runtimeIdentity、结果公钥 sha 和 docker/git/node 钉值；`check-host-r4.py`；resident 安装计划。
+  - **B**（读本节点私钥签名，不打印）：`sign-first-qualification.mjs` 签名，要求每份 payload 与模板节点同角色的已签 qualification 相同，只允许本节点和本 record 的值以及派生重钉的 Source 钉值不同，并拒绝与模板相同的钥；接着 `verify-signed-r4.mjs`，`clued-ci-install-source-v2` package/plan/apply，`verify-source-v2.sh`（检查没有 Source v1），安装 resident、升级工具，采用第 1 代，写 version facts，最后 `verify-resident-linux`。每一步做过的只核对，重跑 B 即续跑。
 
 ## 8b. 只换 record 的重装（例如更换节点的 App 私钥）
 

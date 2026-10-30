@@ -49,7 +49,7 @@ V1_HEAD = CFG['linux']['host']['v1SourceHead']
 SIGN_SHA = '9ee06a93b11353b49270c774ae988060994e7a4aaae606b4736b4597c3f20aff'   # reviewed 10-21, used 10-21/10-22/10-23
 IN = os.path.join(R, 'linux', sys.argv[7])
 REVIEW_TOOLS = os.path.join(HERE, 'tools')   # the reviewed signer and verify-source-v2 template, committed
-VERIFY_TEMPLATE_SHA = '05314df488cbeee96a3cf97c56e17e1a72de5db3e5b7c10b9752330d758c82ae'
+VERIFY_TEMPLATE_SHA = '481b0d85c2023e3506f30c4874c6304d2513786684d5d9a965f38a43699ca992'
 
 sha = lambda p: hashlib.sha256(open(p, 'rb').read()).hexdigest()
 pkg = json.load(open(os.path.join(PKG, 'package-manifest.json'), encoding='utf-8'))
