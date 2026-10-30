@@ -79,10 +79,13 @@ def load(path):
     li = cfg['linux']
     need(isinstance(li, dict) and set(li) == LINUX_KEYS, 'CONFIG_LINUX')
     lh = li['host']
-    need(isinstance(lh, dict) and set(lh) == set(LINUX_HOST_SHAPES) and all(isinstance(lh[k], str) and re.fullmatch(v, lh[k]) for k, v in LINUX_HOST_SHAPES.items()),
-         'CONFIG_LINUX_HOST')
+    # A node without an installed Linux CI yet (a first install, README section 8) has no Source v1, roles or result key: those values are
+    # null, never invented. The reinstall tools that need them (prep.py, rehearse.py) refuse such a configuration (need_installed_linux).
+    need(isinstance(lh, dict) and set(lh) == set(LINUX_HOST_SHAPES) and all(lh[k] is None or isinstance(lh[k], str) and re.fullmatch(v, lh[k])
+                                                                         for k, v in LINUX_HOST_SHAPES.items()), 'CONFIG_LINUX_HOST')
     need(re.fullmatch(r'[A-Za-z0-9._-]{1,64}', li['distribution'] or ''), 'CONFIG_LINUX_DISTRIBUTION')
-    need(all(isinstance(li[k], str) and WIN_PATH.match(li[k]) for k in ('installedManifest', 'installedRoles')), 'CONFIG_PATH_SHAPE', 'linux')
+    need(isinstance(li['installedManifest'], str) and WIN_PATH.match(li['installedManifest'])
+         and (li['installedRoles'] is None or isinstance(li['installedRoles'], str) and WIN_PATH.match(li['installedRoles'])), 'CONFIG_PATH_SHAPE', 'linux')
     st = cfg.get('secretTargetsExist', [True, True])
     need(isinstance(st, list) and len(st) == 2 and all(isinstance(x, bool) for x in st), 'CONFIG_SECRET_TARGETS_EXIST')
     cfg['secretTargetsExist'] = st
@@ -91,13 +94,23 @@ def load(path):
     return cfg
 
 
+def need_installed_linux(cfg):
+    """The reinstall-only tools need the node's installed Linux CI facts; a first-install configuration (nulls) is refused."""
+    li = cfg['linux']
+    need(li['installedRoles'] is not None and all(v is not None for v in li['host'].values()), 'NODE_HAS_NO_INSTALLED_LINUX_CI')
+
+
 def canonical(v):
     return json.dumps(v, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
 
 
 def node_profile(cfg, tree):
-    """The node profile the configuration names, read from the commit's tree (the package records exactly that file's canonical bytes)."""
+    """The node profile the configuration names, read from the commit's tree (the package records exactly that file's canonical bytes).
+    A commit older than the node's profile (a first install on the Source the other nodes run, README section 8) does not carry it; then
+    the profile is this toolchain checkout's copy at the same path. The commit's own prepare-record.mjs validates it either way."""
     p = os.path.join(tree, 'work', 'independent-ci-resident-v1', *cfg['nodeProfile'].split('/'))
+    if not os.path.exists(p):
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', *cfg['nodeProfile'].split('/'))
     with open(p, 'rb') as f:
         prof = json.loads(f.read().decode('utf-8'))
     need(prof.get('contract') == 'clued.independent-ci.node-profile/1' and prof.get('nodeName') == cfg['node'], 'NODE_PROFILE_NOT_THIS_NODE', prof.get('nodeName'))

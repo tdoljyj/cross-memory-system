@@ -116,6 +116,7 @@ def to_wsl(p):
 
 
 def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None):
+    rconfig.need_installed_linux(cfg)   # a rehearsal is against an installed node; a first install has nothing to rehearse
     findings, checks = [], {}
 
     def find(finding, **detail):
