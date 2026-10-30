@@ -188,6 +188,30 @@ class AlertAndStateTests(unittest.TestCase):
         self.assertTrue(comment.startswith("@owner 新告警："))
         self.assertIn("已恢复：", comment)
 
+    def test_failed_batches_and_merges_become_events(self) -> None:
+        pulls = [{"number": 12, "title": "Fix | it"}]
+        combined = [(12, {"sha": "abcdef1234567890", "statuses": [
+            {"context": "resident-queue/turing (info only)", "state": "failure", "description": "失败：gitleaks"},
+            {"context": "gitleaks", "state": "failure", "description": "not a resident row"}]}),
+                    (13, {"sha": "1111111111111111", "statuses": [
+            {"context": "resident-queue/turing (info only)", "state": "failure", "description": "落后 main 3 个提交"}]})]
+        events = panel.batch_failures(pulls, combined)
+        self.assertEqual(list(events), ["failed:12:abcdef123456:turing"])
+        self.assertIn("Fix \\| it", events["failed:12:abcdef123456:turing"])
+
+        class Closed:
+            def get(self, path: str, params: dict | None = None):
+                return [{"number": 20, "title": "new", "merged_at": at(1)},
+                        {"number": 19, "title": "old", "merged_at": at(60)},
+                        {"number": 18, "title": "closed unmerged", "merged_at": None}]
+
+        self.assertEqual(panel.recent_merges(Closed(), None), {})  # first run: no history replay
+        merged = panel.recent_merges(Closed(), NOW - timedelta(minutes=10))
+        self.assertEqual(list(merged), ["merged:20"])
+        comment = panel.alert_comment({}, {}, "owner", merged)
+        self.assertTrue(comment.startswith("@owner 动态："))
+        self.assertIn("PR #20", comment)
+
     def test_untrusted_text_is_inert(self) -> None:
         self.assertEqual(panel.cell("a|b `c` @owner <x>\nnext"), "a\\|b 'c' ＠owner &lt;x&gt; next")
 

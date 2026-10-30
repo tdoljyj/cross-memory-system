@@ -432,10 +432,40 @@ def resident_latest(combined: list[tuple[int, dict]]) -> dict[str, dict]:
     return latest
 
 
-def collect_residents(client: GitHub, limit: int = RESIDENT_PULLS) -> dict[str, dict]:
+def collect_residents(client: GitHub, limit: int = RESIDENT_PULLS) -> tuple[dict[str, dict], dict[str, str]]:
+    """The resident state per node, and the failed batches on the open PRs' current heads."""
     pulls = client.get("/pulls", {"state": "open", "sort": "updated", "direction": "desc", "per_page": limit}) or []
     combined = [(pull["number"], client.get(f"/commits/{pull['head']['sha']}/status") or {}) for pull in pulls[:limit]]
-    return resident_latest(combined)
+    return resident_latest(combined), batch_failures(pulls[:limit], combined)
+
+
+def batch_failures(pulls: list[dict], combined: list[tuple[int, dict]]) -> dict[str, str]:
+    """One event per failed resident batch: key PR, head and node, so a new head fails anew (Decision b30b1b79)."""
+    titles = {pull["number"]: pull.get("title") for pull in pulls}
+    events = {}
+    for number, status in combined:
+        for row in status.get("statuses") or []:
+            match = RESIDENT_CONTEXT.match(str(row.get("context", "")))
+            # "落后 main" is a per-PR hint written for stale branches, not a batch result.
+            if match and row.get("state") == "failure" and not str(row.get("description", "")).startswith("落后 main"):
+                key = f"failed:{number}:{str(status.get('sha', ''))[:12]}:{match.group(1)}"
+                events[key] = (f"PR #{number}（{cell(titles.get(number))}）在 {match.group(1)} 上检查失败："
+                               f"{cell(row.get('description'))}")
+    return events
+
+
+def recent_merges(client: GitHub, since: datetime | None, limit: int = RESIDENT_PULLS) -> dict[str, str]:
+    """PRs merged into main after `since` (the previous run); none on the first run, so history is not replayed."""
+    if since is None:
+        return {}
+    pulls = client.get("/pulls", {"state": "closed", "base": "main", "sort": "updated", "direction": "desc",
+                                  "per_page": limit}) or []
+    events = {}
+    for pull in pulls:
+        merged = parse_time(pull.get("merged_at"))
+        if merged is not None and merged > since:
+            events[f"merged:{pull['number']}"] = f"PR #{pull['number']}（{cell(pull.get('title'))}）已合入 main"
+    return events
 
 
 def alerts_for(pool: dict[str, dict], residents: dict[str, dict]) -> dict[str, str]:
@@ -568,11 +598,16 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
             metrics = {"as_of": iso(now), "day": summarize_batches(batches, now, 1),
                        "week": summarize_batches(batches, now, 7)}
             state["metrics"] = metrics
+    events: dict[str, str] = {}
     if client.low():
         errors.append("residents: 额度不足，沿用上一轮常驻状态")
         residents = None
     else:
-        residents = attempt("residents", lambda: collect_residents(client), None)
+        collected = attempt("residents", lambda: collect_residents(client), None)
+        residents = collected[0] if collected else None
+        events.update(collected[1] if collected else {})
+        events.update(attempt("merges", lambda: recent_merges(client, parse_time(state.get("events_at"))), {}))
+        state["events_at"] = iso(now)
     if residents is None:  # keep the last known resident state (and its HALT alert) rather than clearing it
         residents = state.get("residents") or {}
     state["residents"] = residents
@@ -585,14 +620,19 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
         "others": OTHERS,
         "metrics": metrics,
         "alerts": alerts_for(pool, residents),
+        "events": events,
         "errors": errors,
     }
 
 
-def alert_comment(new: dict[str, str], resolved: dict[str, str], owner: str | None) -> str | None:
-    if not new and not resolved:
+def alert_comment(new: dict[str, str], resolved: dict[str, str], owner: str | None,
+                  events: dict[str, str] | None = None) -> str | None:
+    if not new and not resolved and not events:
         return None
     lines = []
+    if events:
+        lines.append(("@" + owner + " " if owner and not new else "") + "动态：")
+        lines += [f"- {text}" for text in events.values()]  # titles and descriptions already escaped by cell()
     if new:
         lines.append(("@" + owner + " " if owner else "") + "新告警：")
         lines += [f"- {text}" for text in new.values()]  # alerts_for already escaped the untrusted parts
@@ -616,6 +656,7 @@ def main() -> int:
     issue = find_issue(client)
     state = read_state(issue.get("body") if issue else None)
     previous = state.get("alerts") or {}
+    first_events = "events_at" not in state  # the first run records what is there and announces nothing
     report = build(client, now, state)
     state["alerts"] = report["alerts"]
     body = render(report, state)
@@ -625,7 +666,14 @@ def main() -> int:
         return 0
     new = {k: v for k, v in report["alerts"].items() if k not in previous}
     resolved = {k: v for k, v in previous.items() if k not in report["alerts"]}
-    comment = alert_comment(new, resolved, os.environ.get("GITHUB_REPOSITORY_OWNER"))
+    # Events are announced once: the keys already announced stay in the state (the newest 200).
+    announced = state.get("announced") or []
+    events = {k: v for k, v in report["events"].items() if k not in announced}
+    state["announced"] = (announced + list(events))[-200:]
+    if first_events:
+        events = {}
+    body = render(report, state)
+    comment = alert_comment(new, resolved, os.environ.get("GITHUB_REPOSITORY_OWNER"), events)
     if issue is None:
         # Created without alert state, so the alerts are announced by the comment below.
         issue = client.send("POST", "/issues", {"title": ISSUE_TITLE, "body": render(report, {**state, "alerts": {}})})
