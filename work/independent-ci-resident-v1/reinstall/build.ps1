@@ -1,6 +1,6 @@
 # Build one reinstall package for one node and commit, and generate its launcher (README.md section 3). NON-elevated, read-only on the
 # repository and the host; writes only new files under the configuration's workDir. Run from PowerShell, never from Git Bash.
-#   powershell -NoProfile -File build.ps1 -Config <reinstall-config.json> -Commit <40hex> [-Tag t] [-CiPrincipalQualificationRef <uuid>]
+#   powershell -NoProfile -File build.ps1 -Config <reinstall-config.json> -Commit <40hex> [-Tag t] [-PackageOnly] [-CiPrincipalQualificationRef <uuid>]
 #        [-Final -DecisionRef <uuid> -ReceiptRef <uuid> -AcceptedAt <ISO Z> -Rehearsal <rehearsal report> [-LinuxEvidence <file> -LinuxVersionFacts <file> [-LinuxAdoptedPackage <dir>]]]
 # Owner acceptance: ONE decision names every acceptance reference (sourceAcceptanceRef, hostQualificationRef, ownerAuthorizationRef,
 # ownerPackageAcceptanceRef, publisherQualificationRef, ownerDecisionRef) and its KooYomi receipt names installationReceiptRef and
@@ -79,7 +79,7 @@ function Write-New([string]$Path, [string]$Text) {   # create-only, like every o
 Write-New (Join-Path $R ('linux-shape.' + $cfg.node + '.' + $kind + '.' + $c8 + '.json')) ($shape | Out-String)
 Write-New (Join-Path $R ('build-package.' + $cfg.node + '.' + $kind + '.' + $c8 + '.stdout.json')) ($b | Out-String)
 $pkgSha = ($b | ConvertFrom-Json).packageManifestSha256
-if ($PackageOnly) { ([ordered]@{ status = 'PACKAGE_BUILT_NO_LAUNCHER'; node = $cfg.node; final = [bool]$Final; package = $pkg; packageManifestSha256 = $pkgSha } | ConvertTo-Json); return }
+if ($PackageOnly) { ([ordered]@{ status = 'PACKAGE_BUILT_NO_LAUNCHER'; node = $cfg.node; final = [bool]$Final; linuxToolchainNodePin = $(if ($NodePin.Count) { 'configured' } else { 'installed-manifest-copy' }); package = $pkg; packageManifestSha256 = $pkgSha } | ConvertTo-Json); return }
 # The generator rebuilds the package from these inputs into a new directory and requires the same manifest sha.
 $gen = @((Join-Path $Here 'launcher\generate.py'), $Config, '--commit', $Commit, '--package', $pkg, '--package-sha', $pkgSha, '--rebuild-record', $record, '--rebuild-policy', $pol, '--rebuild-companion', $comp, '--rebuild-source-files', $files, '--rebuild-upgrader-config', $upg, '--rebuild-linux-external-pins', $pins)
 if ($AcceptHaltSha256) { $gen += @('--accept-halt-sha256', $AcceptHaltSha256) }

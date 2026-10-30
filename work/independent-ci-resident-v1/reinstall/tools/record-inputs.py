@@ -74,6 +74,9 @@ base_values = {k: inst[k] for k in ('appKeyId', 'appPublicKeySha256Base64', 'ciP
 # review 1-5: another node than the base package's never inherits its identity values; all six come from the configuration
 if node['nodeName'] != acc['node']['nodeName'] and set(cfg['nodeRecord']) != set(base_values):
     sys.exit('NODE_RECORD_INCOMPLETE_FOR_ANOTHER_NODE %s' % sorted(set(base_values) - set(cfg['nodeRecord'])))
+# review 3-1: nor its connection's qualification (build.ps1 -CiPrincipalQualificationRef)
+if node['nodeName'] != acc['node']['nodeName'] and 'ciPrincipalQualificationRef' not in refs_override:
+    sys.exit('CI_PRINCIPAL_QUALIFICATION_REF_REQUIRED_FOR_ANOTHER_NODE')
 node_values = {**base_values, **cfg['nodeRecord']}
 inputs = {
     'contract': 'clued.independent-ci.resident-record-inputs/2', 'repository': inst['repository'], 'sourceCommit': COMMIT, 'scope': inst['scope'],
