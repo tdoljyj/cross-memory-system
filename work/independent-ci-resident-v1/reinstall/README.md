@@ -183,6 +183,13 @@ python -I linux/first-install.py <config> <commit> <package> <suffix> <in-dir> <
 - 模板文件按模板节点 version facts 里的 sha 钉住。
 - 模板公钥必须等于模板 qualification 里的 `resultPublicKeySha256`。
 - 生成器自己钉住两个首装 root 工具（`sign-first-qualification.mjs`、`first-node-facts.py`）的 sha。
+- **镜像。** worker 以 `--pull=never` 运行角色镜像，所以镜像必须事先在本节点的 docker 里。生成器的输出列出两类：
+  - `pullImages`：按 digest 钉住的仓库镜像，B 按 digest 拉取。
+  - `localImagesToLoad`：模板节点本地构建的镜像，只有镜像 id。需要在模板节点上以 root 导出到 in-dir 的 `images/<hex>.tar`：
+    ```
+    wsl -d <模板发行版> -u root -- docker save <hex> -o <in-dir 的 WSL 路径>/images/<hex>.tar
+    ```
+    B 用 `docker load` 载入后，核对镜像 id 等于 `sha256:<hex>`。
 
 **6. 现场（Owner，root）：先跑 A，审核其输出后再跑 B。**
 - **A**：不读私钥，只写 `$BASE`。
@@ -194,7 +201,8 @@ python -I linux/first-install.py <config> <commit> <package> <suffix> <in-dir> <
 - **B**：读本节点私钥签名，不打印。
   1. `sign-first-qualification.mjs`：每份 policy 和 payload 都必须与模板节点同角色的文件相同，只允许本节点值、本 record 值和派生重钉的 Source 钉值不同；keyId 和 runtimeId 必须等于 config 的值；与模板相同的钥被拒绝。
   2. 依次运行 `verify-signed-r4`，建立运行目录 `workspaces/` 和 `runs/`（root，0755），`clued-ci-install-source-v2` package/plan/apply，`verify-source-v2`（同时确认没有 Source v1）。
-  3. 装 resident 和升级工具，采用第 1 代，写 version facts，最后运行 `verify-resident-linux`。
+  3. 装 resident，准备角色镜像（见第 5 步），装升级工具，采用第 1 代，写 version facts，最后运行 `verify-resident-linux`。
+- **目录权限**：`/etc`、`/opt`、`/var/lib` 下的 `clued-independent-ci` 父目录按设计为 root:root 0700，与模板节点相同，脚本不改。
 - **续跑**：每一步做过的只核对，失败的一步可以重跑，重跑 B 即可续跑。
 - **重启**：如果需要重启，**只能**在 Windows 上运行 `wsl -t <D>`，然后再跑一次 B。绝不能用 `wsl --shutdown`，也不要动其他发行版。
 

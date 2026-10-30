@@ -82,9 +82,18 @@ for role in ROLES:
 assert TEMPLATE_PUB_SHA != PUB_SHA, 'NODE_KEY_IS_THE_TEMPLATE_KEY'
 # the run roots readiness requires as root directories (loadQualifiedPolicyV2); a first install creates them in phase B
 ROOTS = ('/var/lib/clued-independent-ci/workspaces', '/var/lib/clued-independent-ci/runs')
+# the role images: the worker runs them with --pull=never, so they must be in the node's docker before the first job. A registry
+# image pinned by digest is pulled by that digest; a local image id (built on the template node) is loaded from
+# <in-dir>/images/<hex>.tar (docker save on the template node); docker checks the id against the loaded content.
+PULL_IMAGES, LOCAL_IMAGES = [], []
 for role in ROLES:
     tp = json.load(open(os.path.join(TEMPLATE, role + '.json'), encoding='utf-8'))
     assert (tp['workspaceRoot'], tp['runsRoot']) == ROOTS, ('TEMPLATE_RUN_ROOTS', role)
+    if re.fullmatch(r'sha256:[0-9a-f]{64}', tp['image']):
+        LOCAL_IMAGES += [tp['image'][7:]] if tp['image'][7:] not in LOCAL_IMAGES else []
+    else:
+        assert re.fullmatch(r'[a-z0-9][a-z0-9./-]*(:[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}', tp['image']), ('IMAGE_REF_SHAPE', role)
+        PULL_IMAGES += [tp['image']] if tp['image'] not in PULL_IMAGES else []
 
 # ---- the assembled input (linux/assemble.py) + the first-install tools, the generated verify-source-v2.sh and the template ----
 SIGN_SHA = '9ee06a93b11353b49270c774ae988060994e7a4aaae606b4736b4597c3f20aff'   # the reviewed signer (= prep.py's), imported by the first-install signer
@@ -330,6 +339,18 @@ if grep -q INSTALLED_NEEDS_WSL_RESTART "$T/install.stdout.json"; then   # its ow
   echo '{"status":"RESTART_ONLY_THIS_DISTRIBUTION_THEN_RUN_B_AGAIN","windows":"wsl -t @@DISTRO@@","never":"wsl --shutdown"}'; exit 2
 fi
 grep -q '"status":"RESIDENT_LINUX_INSTALLED"' "$T/install.stdout.json" || { cat "$T/install.stdout.json"; refuse RESIDENT_INSTALL_FAILED_SEE_RECOVERY; }
+# B7b: the role images (the worker never pulls): registry images by digest, local images from the template node's docker save
+for ref in @@PULL_IMAGES@@; do
+  docker image inspect "$ref" >/dev/null 2>&1 || docker pull -q "$ref" >/dev/null || refuse "IMAGE_PULL_FAILED:$ref"
+  docker image inspect "$ref" >/dev/null 2>&1 || refuse "IMAGE_NOT_PRESENT:$ref"
+done
+for hex in @@LOCAL_IMAGES@@; do
+  if ! docker image inspect "sha256:$hex" >/dev/null 2>&1; then
+    [ -f "$W/images/$hex.tar" ] || refuse "IMAGE_NOT_LOADED_PUT_THE_TEMPLATE_DOCKER_SAVE_AT:images/$hex.tar"
+    docker load -q -i "$W/images/$hex.tar" >/dev/null || refuse "IMAGE_LOAD_FAILED:$hex"
+  fi
+  [ "$(docker image inspect --format '{{.Id}}' "sha256:$hex")" = "sha256:$hex" ] || refuse "IMAGE_NOT_PRESENT:$hex"
+done
 [ "$(sha256sum /opt/clued-independent-ci/resident-v1/manifest.json | cut -d' ' -f1)" = "$LINUX_RES_MANIFEST" ] || refuse LINUX_RESIDENT_MANIFEST_NOT_THIS_PACKAGE
 # B8: the frozen upgrade tool with exactly the plan generated on Windows; found installed, it must have been this plan
 if [ -e "$UPG" ]; then
@@ -357,9 +378,9 @@ echo "{\"status\":\"LINUX_FIRST_INSTALL_DONE\",\"node\":\"@@NODE_NAME@@\",\"sour
 values = {'DRAFT': str(int(DRAFT)), 'W': W, 'BASE': BASE, 'COMMIT': COMMIT, 'NEW': NEW, 'REF': REF, 'HREF': HREF, 'RECEIPT': RECEIPT, 'PKG_SHA': PKG_SHA,
           'LINUX_RES_MANIFEST': LINUX_RES_MANIFEST, 'UPG_PLAN': UPG_PLAN, 'INSTALL_PLAN': INSTALL_PLAN, 'KEY_ID': SIGNER['keyId'], 'RUNTIME_ID': SIGNER['runtimeId'],
           'TEMPLATE_PUB_SHA': TEMPLATE_PUB_SHA, 'NODE_SHA': NODE_SHA, 'PUB_SHA': PUB_SHA, 'SIGN_SHA': SIGN_SHA, 'C8': COMMIT[:8], 'NODE_NAME': CFG['node'],
-          'ROOTS': ' '.join(ROOTS), 'SUFFIX': SUFFIX, 'DISTRO': CFG['linux']['distribution'], 'FILES': ' '.join(files), 'SUMS': sums, 'MODS': ' '.join(MODS), 'CI': CI}
+          'ROOTS': ' '.join(ROOTS), 'PULL_IMAGES': ' '.join(PULL_IMAGES), 'LOCAL_IMAGES': ' '.join(LOCAL_IMAGES), 'SUFFIX': SUFFIX, 'DISTRO': CFG['linux']['distribution'], 'FILES': ' '.join(files), 'SUMS': sums, 'MODS': ' '.join(MODS), 'CI': CI}
 for k, v in values.items():   # every value is hex, a validated name, a shlex-quoted path, or a list of fixed relative paths
-    assert k in ('W', 'SUMS', 'FILES', 'MODS', 'ROOTS') or re.fullmatch(r'[A-Za-z0-9._/-]*', v), ('VALUE_SHAPE', k)
+    assert k in ('W', 'SUMS', 'FILES', 'MODS', 'ROOTS', 'PULL_IMAGES') or re.fullmatch(r'[A-Za-z0-9._/-]*', v), ('VALUE_SHAPE', k)
 def render(text):
     for k, v in values.items():
         text = text.replace('@@' + k + '@@', v)
@@ -373,4 +394,4 @@ for name, text in (('first-install-linux-A.' + SUFFIX + '.sh', A), ('first-insta
     out[name] = sha(p)
 print(json.dumps({'scripts': out, 'pinnedFiles': len(files), 'W': W, 'base': BASE, 'node': CFG['node'], 'packageManifestSha256': PKG_SHA,
                   'ciSourceManifestSha256': NEW, 'keyId': SIGNER['keyId'], 'runtimeId': SIGNER['runtimeId'], 'resultPublicKeySha256': PUB_SHA,
-                  'templatePublicKeySha256': TEMPLATE_PUB_SHA, 'restartOnlyThisDistribution': 'wsl -t ' + CFG['linux']['distribution'], 'installPlanSha256': INSTALL_PLAN, 'upgradePlanSha256': UPG_PLAN, 'draft': DRAFT}, indent=1))
+                  'templatePublicKeySha256': TEMPLATE_PUB_SHA, 'pullImages': PULL_IMAGES, 'localImagesToLoad': [W.strip("'") + '/images/' + h + '.tar' for h in LOCAL_IMAGES], 'restartOnlyThisDistribution': 'wsl -t ' + CFG['linux']['distribution'], 'installPlanSha256': INSTALL_PLAN, 'upgradePlanSha256': UPG_PLAN, 'draft': DRAFT}, indent=1))
