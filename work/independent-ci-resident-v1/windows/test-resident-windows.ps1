@@ -739,6 +739,9 @@ Yes (Test-ServiceLogonRight $viaGroup $ctl @{ 'S-1-5-21-9-8-7-1010' = @($ctl) })
 Yes (-not (Test-ServiceLogonRight $viaGroup $ctl @{ 'S-1-5-21-9-8-7-1010' = @('S-1-5-21-9-8-7-1000') })) 'logon-right-group-without-it'
 Yes (-not (Test-ServiceLogonRight "[Privilege Rights]`r`nSeNetworkLogonRight = *$ctl`r`n" $ctl @{})) 'logon-right-only-another-right'
 Yes (-not (Test-ServiceLogonRight "[Privilege Rights]`r`nSeServiceLogonRight = clued-control`r`n" $ctl @{})) 'logon-right-names-are-not-sids'
+Yes (-not (Test-ServiceLogonRight ($inf + "SeDenyServiceLogonRight = *$ctl`r`n") $ctl @{})) 'logon-right-denied-directly'
+Yes (-not (Test-ServiceLogonRight ($inf + "SeDenyServiceLogonRight = *S-1-5-21-9-8-7-1011`r`n") $ctl @{ 'S-1-5-21-9-8-7-1011' = @($ctl) })) 'logon-right-denied-through-a-group'
+Yes (Test-ServiceLogonRight ($inf + "SeDenyServiceLogonRight = *S-1-5-21-9-8-7-1000`r`n") $ctl @{}) 'logon-right-deny-for-another-account'
 $verifyText = [IO.File]::ReadAllText((Join-Path $here 'verify-resident.ps1'))
 Yes (-not $verifyText.Contains("'qfailure'") -and -not $verifyText.Contains('qsidtype')) 'verify-reads-no-translated-sc-text'
 Yes ($functions['install-resident.ps1:Read-ServiceLogonRight'] -and [IO.File]::ReadAllText((Join-Path $here 'install-resident.ps1')).Contains("throw 'CONTROLLER_SERVICE_LOGON_RIGHT_MISSING'")) 'install-refuses-without-the-right'

@@ -490,36 +490,44 @@ function Read-RunnerState {
 
 # The controller account runs the node's runner service (swapped and started by the broker for every stage): it needs the right to
 # log on as a service, granted directly or through a local group (DESK-W-591, 2026-10-30: SCM 7041, then the role probe HALTed with
-# ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED). $inf: `secedit /export /areas USER_RIGHTS`; $groupMembers: group SID -> member SIDs.
+# ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED). SeDenyServiceLogonRight overrides it (review 2). $inf: `secedit /export /areas USER_RIGHTS`;
+# $groupMembers: group SID -> member SIDs.
 function Test-ServiceLogonRight([string]$inf, [string]$sid, $groupMembers) {
-  foreach ($line in ($inf -split "`r?`n")) {
-    if ($line -notmatch '^\s*SeServiceLogonRight\s*=\s*(.*)$') { continue }
-    foreach ($entry in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() })) {
-      if ($entry -ceq ('*' + $sid)) { return $true }
-      if ($entry.StartsWith('*') -and $null -ne $groupMembers -and $groupMembers.ContainsKey($entry.Substring(1)) -and @($groupMembers[$entry.Substring(1)]) -ccontains $sid) { return $true }
+  $holds = {
+    param([string]$right)
+    foreach ($line in ($inf -split "`r?`n")) {
+      if ($line -notmatch ('^\s*' + $right + '\s*=\s*(.*)$')) { continue }
+      foreach ($entry in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() })) {
+        if ($entry -ceq ('*' + $sid)) { return $true }
+        if ($entry.StartsWith('*') -and $null -ne $groupMembers -and $groupMembers.ContainsKey($entry.Substring(1)) -and @($groupMembers[$entry.Substring(1)]) -ccontains $sid) { return $true }
+      }
     }
+    $false
   }
-  $false
+  (& $holds 'SeServiceLogonRight') -and -not (& $holds 'SeDenyServiceLogonRight')
 }
 # Elevated only (secedit needs it): the user-rights assignment and the members of every local group it names; $null when unreadable.
+# The export goes to a new directory that only SYSTEM and Administrators can touch (review 2: not one the Owner's medium-integrity
+# processes could swap or rewrite).
 function Read-ServiceLogonRight([string]$sid) {
-  $dir = Join-Path ([IO.Path]::GetTempPath()) ('clued-rights-' + [Guid]::NewGuid().ToString('N'))
-  [void][IO.Directory]::CreateDirectory($dir)
+  $dir = Join-Path 'C:\Windows\Temp' ('clued-rights-' + [Guid]::NewGuid().ToString('N'))
   try {
+    $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)')
+    [void][IO.Directory]::CreateDirectory($dir, $ds)
     $cfg = Join-Path $dir 'rights.inf'
     $null = & 'C:\Windows\System32\SecEdit.exe' /export /areas USER_RIGHTS /cfg $cfg /quiet
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $cfg -PathType Leaf)) { return $null }
     $inf = [IO.File]::ReadAllText($cfg)
     $groups = @{}
     foreach ($line in ($inf -split "`r?`n")) {
-      if ($line -notmatch '^\s*SeServiceLogonRight\s*=\s*(.*)$') { continue }
+      if ($line -notmatch '^\s*Se(?:Deny)?ServiceLogonRight\s*=\s*(.*)$') { continue }
       foreach ($e in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -cmatch '^\*S-1-5-32-\d+$|^\*S-1-5-21-[\d-]+$' })) {
         $members = try { @(Get-LocalGroupMember -SID $e.Substring(1) -ErrorAction Stop | ForEach-Object { $_.SID.Value }) } catch { @() }
         $groups[$e.Substring(1)] = $members
       }
     }
     Test-ServiceLogonRight $inf $sid $groups
-  } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+  } catch { $null } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 # Directory ACLs (owner BUILTIN\Administrators, protected DACL). Masks: 0x1200a9 read+execute,

@@ -5,7 +5,7 @@ KooYomi Task `79c32815`. Owner decisions: Decision `0d84ddbb`.
 
 > **Never delete an existing GitHub App private key** on the App's settings page. Every node has its own key (`appKeyId` and its fingerprint are pinned in that node's install record); deleting one makes that node's check publication fail at once with `github_http_401` (TURING, 2026-10-30, key 4918220). To add a node, generate a new key and leave the others alone. Replacing a node's own key is a record-only reinstall: [reinstall/README.md §8b](reinstall/README.md).
 >
-> **Before installing on a new node**, the controller account (`.\clued-control`, the node profile's `controllerSid`) must hold **Log on as a service** (`SeServiceLogonRight`); `install-resident.ps1 -Apply` refuses without it (`CONTROLLER_SERVICE_LOGON_RIGHT_MISSING`). See [DESIGN.md §30.8](DESIGN.md).
+> **Before installing on a new node**, the controller account (`.\clued-control`, the node profile's `controllerSid`) must hold **Log on as a service** (`SeServiceLogonRight`); `install-resident.ps1 -Apply` refuses without it (`CONTROLLER_SERVICE_LOGON_RIGHT_MISSING`, also when it is denied by `SeDenyServiceLogonRight`) or when the rights cannot be read (`USER_RIGHTS_UNREADABLE`), and the reinstall launcher refuses before the uninstall (`CONTROLLER_SERVICE_LOGON_RIGHT_NOT_CONFIRMED`). See [DESIGN.md §30.8](DESIGN.md).
 
 - Read first: [DESIGN.md](DESIGN.md) (Chinese).
 - Nothing here has been installed or run on a host.

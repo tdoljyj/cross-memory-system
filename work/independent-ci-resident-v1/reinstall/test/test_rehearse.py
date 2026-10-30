@@ -333,6 +333,18 @@ class Config(unittest.TestCase):
             rconfig.node_profile(c, os.path.join(self.fx.w, 'tree-' + COMMIT[:8]))
         self.assertEqual(e.exception.code, 'CONFIG_DISTRIBUTION_NOT_THE_PROFILES')
 
+    # Z1: another node's own result signer (public half only)
+    def test_signer_is_an_ed25519_public_key_only(self):
+        pem = '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA' + 'A' * 43 + '=\n-----END PUBLIC KEY-----\n'
+        good = {'keyId': 'desk-w-591-result-1', 'runtimeId': 'DESK-W-591-cluedresident-independent-ci-v1', 'publicKeyPem': pem}
+        self.assertEqual(self.load(dict(self.doc, signer=good))['signer'], good)
+        self.assertIsNone(self.load(self.doc)['signer'])
+        for bad in (dict(good, publicKeyPem='-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEI' + 'A' * 43 + '\n-----END PRIVATE KEY-----\n'),
+                    dict(good, publicKeyPem=pem.replace('MCowBQYDK2VwAyEA', 'MIIBIjANBgkqhkiG')),   # an RSA key is not the worker's
+                    dict(good, keyId='Desk W'), {k: v for k, v in good.items() if k != 'runtimeId'}):
+            with self.assertRaises(rconfig.ConfigError, msg=bad):
+                self.load(dict(self.doc, signer=bad))
+
     def test_shipped_configurations_load(self):
         for name in os.listdir(os.path.join(RE, 'config')):
             path = os.path.join(RE, 'config', name)

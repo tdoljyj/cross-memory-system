@@ -69,6 +69,12 @@ for s in signers['signers']:
         sys.exit('BASE_SIGNER_NOT_BOUND_TO_BASE_RECORD')
     s['sourceAcceptanceRef'] = refs['sourceAcceptanceRef']
     s['qualificationRef'] = refs['hostQualificationRef']
+# Another node signs its results with its own key (Z1): the configuration's signer replaces the base registry. Without one the base
+# node's signer stays: enough for a STANDBY that publishes nothing (Decision d339ddb2), never for a node that takes the role.
+if cfg['signer']:
+    sg = cfg['signer']
+    signers['signers'] = [{'domain': 'production', 'keyId': sg['keyId'], 'publicKeyPem': sg['publicKeyPem'], 'qualificationRef': refs['hostQualificationRef'],
+                           'runtimeId': sg['runtimeId'], 'sourceAcceptanceRef': refs['sourceAcceptanceRef']}]
 
 base_values = {k: inst[k] for k in ('appKeyId', 'appPublicKeySha256Base64', 'ciPrincipalBindingId', 'ciPrincipalRoleRef', 'ciTokenPinSha256', 'controllerNodeSha256')}
 # review 1-5: another node than the base package's never inherits its identity values; all six come from the configuration
@@ -91,4 +97,5 @@ with open(OUT, 'xb') as f:
     f.write(data)
 print(json.dumps({'inputs': OUT, 'sha256': sha(data), 'sourceCommit': COMMIT, 'draftReferences': draft, 'references': refs, 'owner': owner,
                   'node': node['nodeName'], 'nodeProfileSha256': node_sha, 'nodeRecordOverrides': sorted(cfg['nodeRecord']),
-                  'signerRegistrySha256': sha(canonical(signers).encode('utf8'))}, indent=1))
+                  'signerRegistrySha256': sha(canonical(signers).encode('utf8')), 'signerKeyIds': [s['keyId'] for s in signers['signers']],
+                  'signerFromConfiguration': bool(cfg['signer'])}, indent=1))
