@@ -348,13 +348,20 @@ for ref in @@PULL_IMAGES@@; do
   docker image inspect "$ref" >/dev/null 2>&1 || docker pull -q "$ref" >/dev/null || refuse "IMAGE_PULL_FAILED:$ref"
   docker image inspect "$ref" >/dev/null 2>&1 || refuse "IMAGE_NOT_PRESENT:$ref"
 done
-for hex in @@LOCAL_IMAGES@@; do
+# a local image's archive (pinned below when the generator saw it): images/<hex>.tar, or .tar.gz (gzip of the docker save)
+while read -r hex name want; do
+  [ -n "$hex" ] || continue
   if ! docker image inspect "sha256:$hex" >/dev/null 2>&1; then
-    [ -f "$W/images/$hex.tar" ] || refuse "IMAGE_NOT_LOADED_PUT_THE_TEMPLATE_DOCKER_SAVE_AT:images/$hex.tar"
-    docker load -q -i "$W/images/$hex.tar" >/dev/null || refuse "IMAGE_LOAD_FAILED:$hex"
+    [ "$name" != - ] && [ -f "$W/images/$name" ] || refuse "IMAGE_NOT_LOADED_PUT_THE_TEMPLATE_DOCKER_SAVE_AT:images/$hex.tar(.gz)"
+    [ "$(sha256sum "$W/images/$name" | cut -d' ' -f1)" = "$want" ] || refuse "IMAGE_ARCHIVE_NOT_THE_PINNED_ONE:$name"
+    case "$name" in
+      *.tar.gz) gzip -dc "$W/images/$name" | docker load -q >/dev/null || refuse "IMAGE_LOAD_FAILED:$hex" ;;
+      *) docker load -q -i "$W/images/$name" >/dev/null || refuse "IMAGE_LOAD_FAILED:$hex" ;;
+    esac
   fi
   [ "$(docker image inspect --format '{{.Id}}' "sha256:$hex")" = "sha256:$hex" ] || refuse "IMAGE_NOT_PRESENT:$hex"
-done
+done <<'IMAGES'
+@@LOCAL_IMAGES@@IMAGES
 [ "$(sha256sum /opt/clued-independent-ci/resident-v1/manifest.json | cut -d' ' -f1)" = "$LINUX_RES_MANIFEST" ] || refuse LINUX_RESIDENT_MANIFEST_NOT_THIS_PACKAGE
 # B8: the frozen upgrade tool with exactly the plan generated on Windows; found installed, it must have been this plan
 if [ -e "$UPG" ]; then
@@ -379,12 +386,19 @@ grep -q '"status":"LINUX_RESIDENT_VERIFIED"' "$T/verify-resident.stdout.json" ||
 echo "{\"status\":\"LINUX_FIRST_INSTALL_DONE\",\"node\":\"@@NODE_NAME@@\",\"sourceCommit\":\"$COMMIT\",\"ciSourceManifestSha256\":\"$NEW_MANIFEST\",\"packageManifestSha256\":\"$PKG_SHA\",\"versionFacts\":\"$VF\"}"
 """
 
+# each local image's archive as it is in the in-dir now (pinned), or '-' (B then refuses until the image is loaded)
+LOCAL_ARCHIVES, LOCAL_LINES = {}, ''
+for h in LOCAL_IMAGES:
+    found = [n for n in (h + '.tar', h + '.tar.gz') if os.path.isfile(os.path.join(IN, 'images', n))]
+    assert len(found) <= 1, ('IMAGE_ARCHIVE_AMBIGUOUS', h)
+    LOCAL_ARCHIVES[h] = {'archive': 'images/' + found[0], 'sha256': sha(os.path.join(IN, 'images', found[0]))} if found else None
+    LOCAL_LINES += '%s %s %s' % (h, found[0] if found else '-', LOCAL_ARCHIVES[h]['sha256'] if found else '-') + chr(10)
 values = {'DRAFT': str(int(DRAFT)), 'W': W, 'BASE': BASE, 'COMMIT': COMMIT, 'NEW': NEW, 'REF': REF, 'HREF': HREF, 'RECEIPT': RECEIPT, 'PKG_SHA': PKG_SHA,
           'LINUX_RES_MANIFEST': LINUX_RES_MANIFEST, 'UPG_PLAN': UPG_PLAN, 'INSTALL_PLAN': INSTALL_PLAN, 'KEY_ID': SIGNER['keyId'], 'RUNTIME_ID': SIGNER['runtimeId'],
           'TEMPLATE_PUB_SHA': TEMPLATE_PUB_SHA, 'NODE_SHA': NODE_SHA, 'PUB_SHA': PUB_SHA, 'SIGN_SHA': SIGN_SHA, 'C8': COMMIT[:8], 'NODE_NAME': CFG['node'],
-          'ROOTS': ' '.join(ROOTS), 'PULL_IMAGES': ' '.join(PULL_IMAGES), 'LOCAL_IMAGES': ' '.join(LOCAL_IMAGES), 'SUFFIX': SUFFIX, 'DISTRO': CFG['linux']['distribution'], 'FILES': ' '.join(files), 'SUMS': sums, 'MODS': ' '.join(MODS), 'CI': CI}
+          'ROOTS': ' '.join(ROOTS), 'PULL_IMAGES': ' '.join(PULL_IMAGES), 'LOCAL_IMAGES': LOCAL_LINES, 'SUFFIX': SUFFIX, 'DISTRO': CFG['linux']['distribution'], 'FILES': ' '.join(files), 'SUMS': sums, 'MODS': ' '.join(MODS), 'CI': CI}
 for k, v in values.items():   # every value is hex, a validated name, a shlex-quoted path, or a list of fixed relative paths
-    assert k in ('W', 'SUMS', 'FILES', 'MODS', 'ROOTS', 'PULL_IMAGES') or re.fullmatch(r'[A-Za-z0-9._/-]*', v), ('VALUE_SHAPE', k)
+    assert k in ('W', 'SUMS', 'FILES', 'MODS', 'ROOTS', 'PULL_IMAGES', 'LOCAL_IMAGES') or re.fullmatch(r'[A-Za-z0-9._/-]*', v), ('VALUE_SHAPE', k)
 def render(text):
     for k, v in values.items():
         text = text.replace('@@' + k + '@@', v)
@@ -398,4 +412,4 @@ for name, text in (('first-install-linux-A.' + SUFFIX + '.sh', A), ('first-insta
     out[name] = sha(p)
 print(json.dumps({'scripts': out, 'pinnedFiles': len(files), 'W': W, 'base': BASE, 'node': CFG['node'], 'packageManifestSha256': PKG_SHA,
                   'ciSourceManifestSha256': NEW, 'keyId': SIGNER['keyId'], 'runtimeId': SIGNER['runtimeId'], 'resultPublicKeySha256': PUB_SHA,
-                  'templatePublicKeySha256': TEMPLATE_PUB_SHA, 'pullImages': PULL_IMAGES, 'localImagesToLoad': [W.strip("'") + '/images/' + h + '.tar' for h in LOCAL_IMAGES], 'restartOnlyThisDistribution': 'wsl -t ' + CFG['linux']['distribution'], 'installPlanSha256': INSTALL_PLAN, 'upgradePlanSha256': UPG_PLAN, 'draft': DRAFT}, indent=1))
+                  'templatePublicKeySha256': TEMPLATE_PUB_SHA, 'pullImages': PULL_IMAGES, 'localImages': LOCAL_ARCHIVES, 'restartOnlyThisDistribution': 'wsl -t ' + CFG['linux']['distribution'], 'installPlanSha256': INSTALL_PLAN, 'upgradePlanSha256': UPG_PLAN, 'draft': DRAFT}, indent=1))

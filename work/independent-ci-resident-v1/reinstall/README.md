@@ -190,7 +190,7 @@ python -I linux/first-install.py <config> <commit> <package> <suffix> <in-dir> <
     ```
     wsl -d <模板发行版> -u root -- docker save <hex> -o <in-dir 的 WSL 路径>/images/<hex>.tar
     ```
-    B 用 `docker load` 载入后，核对镜像 id 等于 `sha256:<hex>`。
+    也可以放 gzip 压缩的 `images/<hex>.tar.gz`。生成器在生成时钉住压缩包的 sha256；B 先核这个 sha，再用 `docker load` 载入，最后核对镜像 id 等于 `sha256:<hex>`。
 
 **6. 现场（Owner，root）：先跑 A，审核其输出后再跑 B。**
 - **A**：不读私钥，只写 `$BASE`。
