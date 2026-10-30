@@ -42,7 +42,7 @@ def stamp(delta: timedelta) -> str:
     return value.strftime("%Y-%m-%dT%H:%M:%S.") + f"{value.microsecond:06d}"[:5] + "+00:00"
 
 
-def claim(status: str = "ACTIVE", claim_id: str = CLAIM_ID, expires: timedelta = timedelta(hours=1)) -> dict:
+def claim(status: str = "ACTIVE", claim_id: str = CLAIM_ID, expires: timedelta = timedelta(hours=2)) -> dict:
     return {"claim_id": claim_id, "task_id": TASK_ID, "context_key": "global", "fence": 1,
             "lease_version": 1, "status": status, "expires_at": stamp(expires),
             "write_set": ["scripts/hooks/clued_work_claim_guard.py"], "base_commit": "1b6ca6d8",
@@ -836,6 +836,25 @@ class PublishTrailerTest(unittest.TestCase):
         self.assertIn("has no `Clued-Work-Scope:` line, so stage 1 reads the scope as global", result.stderr)
         self.assertIn(f"\n{SCOPE_LINE}", result.stderr)
         self.assertNotIn("has no `Clued-Work-Claim:`", result.stderr)
+
+    def test_claim_without_merge_slot_blocks_before_the_push(self):
+        merge_ref = "merge:tdoljyj/cross-memory-system:main"
+        self.post(committed(project_claim(trigger_refs=["task:x"])))
+        self.commit(f"Fix the guard\n\n{CLAIM_LINE}\n{SCOPE_LINE}")
+        result = self.bash("git push origin HEAD")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(f"whose trigger_refs lack `{merge_ref}`", result.stderr)
+        self.assertIn("BEFORE pushing", result.stderr)
+        # In the queue, with a full lease: the same push passes.
+        self.post(committed(project_claim(trigger_refs=["task:x", merge_ref])))
+        self.assertEqual(self.bash("git push origin HEAD", session="queued").returncode, 0)
+
+    def test_short_lease_blocks_before_the_push(self):
+        self.post(committed(project_claim(expires_at=stamp(timedelta(minutes=30)))))
+        self.commit(f"Fix the guard\n\n{CLAIM_LINE}\n{SCOPE_LINE}")
+        result = self.bash("git push origin HEAD")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("less than 90 minutes from now", result.stderr)
 
     def test_wrong_claim_id_blocks(self):
         self.commit(f"Fix the guard\n\nClued-Work-Claim: {OTHER_ID}\n{SCOPE_LINE}")

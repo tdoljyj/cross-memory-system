@@ -56,7 +56,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "1.1.8"
+__version__ = "1.1.9"
 
 CLAIM_FILE = Path(".clued") / "work-claim.json"
 PUBLIC_CONFIG_SOURCE = Path("apps/clued-cloud/app/supabase-public-config.ts")
@@ -459,7 +459,7 @@ def record_claim(payload: dict) -> None:
     if claim.get("status") in LIVE_STATUSES:
         kept = {key: claim.get(key) for key in ("claim_id", "task_id", "context_key", "fence",
                                                  "lease_version", "status", "expires_at",
-                                                 "write_set", "base_commit")}
+                                                 "write_set", "base_commit", "trigger_refs")}
         claims[claim["claim_id"]] = {**kept, "session_id": payload.get("session_id")}
     else:
         claims.pop(claim["claim_id"], None)
@@ -902,7 +902,7 @@ def trailer_findings(where: str, label: str, text: str, claims: dict[str, dict],
     expected = claim.get("context_key")
     found = scoped.group(1) if scoped else "global"
     if not isinstance(expected, str) or not SCOPE_VALUE.fullmatch(expected) or found == expected:
-        return []
+        return queue_findings(claim_id, claim, label, now)
     if scoped is None:
         return [(f"trailer:{where}:missing-scope:{claim_id}",
                  f"{label} names claim {claim_id} but has no `Clued-Work-Scope:` line, so stage 1 reads the scope "
@@ -911,6 +911,32 @@ def trailer_findings(where: str, label: str, text: str, claims: dict[str, dict],
     return [(f"trailer:{where}:wrong-scope:{claim_id}",
              f"{label} has `Clued-Work-Scope: {found}`, but claim {claim_id} is in {expected}. "
              f"Change that line to:\nClued-Work-Scope: {expected}")]
+
+
+# Stage 8 publishes kooyumi-merge-slot only for the head of this merge queue
+# (independent-control-checks-v2/publisher.mjs queueHeadReady), and a renewal while a batch
+# runs changes the binding its publishers compare, voiding that batch (Decision b30b1b79,
+# 2026-10-30 #949). So the claim must already be in the queue, with lease enough for one batch.
+MERGE_REF = f"merge:{REPOSITORY}:main"
+BATCH_LEASE_MINUTES = 90
+
+
+def queue_findings(claim_id: str, claim: dict, label: str, now: datetime) -> list[tuple[str, str]]:
+    """(key, reason) when this live claim would stall at stage 8 or need a renewal mid-batch."""
+    findings: list[tuple[str, str]] = []
+    refs = claim.get("trigger_refs")
+    if isinstance(refs, list) and MERGE_REF not in refs:
+        findings.append((f"merge-slot:{claim_id}",
+                         f"{label} names claim {claim_id}, whose trigger_refs lack `{MERGE_REF}`, so stage 8 "
+                         "waits for a merge slot that never comes (RESIDENT_MERGE_QUEUE_NOT_JOINED). Renew it "
+                         f"with that ref added to trigger_refs BEFORE pushing; renewing during the batch voids it."))
+    expires = parse_time(claim.get("expires_at"))
+    if expires is not None and (expires - now).total_seconds() < BATCH_LEASE_MINUTES * 60:
+        findings.append((f"lease-short:{claim_id}:{claim.get('expires_at')}",
+                         f"{label} names claim {claim_id}, whose lease ends at {claim.get('expires_at')}, less "
+                         f"than {BATCH_LEASE_MINUTES} minutes from now: one batch can outlast it, and renewing "
+                         "while it runs voids the batch. Renew it with clued_work_renew BEFORE pushing."))
+    return findings
 
 
 def publish_findings(payload: dict, claims: dict[str, dict], now: datetime) -> list[tuple[str, str]]:
