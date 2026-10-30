@@ -146,22 +146,19 @@
 
 ### 现在到哪一步
 
-**现在只有 TURING 一个节点**，持有 `ci-admission` 的是它的连接。按 Task `bb13efb5` 2026-10-22 的只读核对，生产里只有这一条有效的 `ci-admission` 记录，还没有停车位。主备的大部分功能还没上线，下面标“待上线”的内容现在不能用。主备上线之前，TURING 长时间不可用时仍按上一节“灾备：Owner 临时切换规则集”处理。
+**2026-10-30 起有两个节点**：TURING 和公司的 DESK-W-591，都装了 Source v2 常驻执行器。下表只写 2026-10-30 实际用过、看到的；没用到的部分仍以各 Task 为准。
 
-| 部分 | 状态 | Task |
-| --- | --- | --- |
-| 一键移交、标角色要选用途、新角色 5 分钟后生效、停车位保护（C10） | 已合入（#909，`df5262fd`）；生产迁移和发布还没做完，**上线前不能用** | `bb13efb5` |
-| 节点档案：去掉写死的 TURING 身份（C1） | 待上线 | `410a9397` |
-| 角色探测（C2） | 待上线 | `4837f315` |
-| 节点模式：当班（ACTIVE）、待命（STANDBY），“没有角色”的新失败码（暂名 `NODE_ROLE_NOT_HELD`，以 C3 为准） | 待上线 | `17b703a0` |
-| 跨节点“已发布”以 GitHub 为准（C4） | 待上线 | `c2af8d17` |
-| PR 页面的节点状态、接班核对、双活停机（C5） | 待上线 | `ade5df89` |
-| 暂停接新（C6） | 待上线，正在做 | `6444f88a` |
-| 安装与校验支持每节点身份（C7） | 待上线 | `088ab175` |
-| 与合并列车的衔接（C9） | 待上线，并入额度第二期第 3c 步 | `c52d56cd` |
-| 公司节点 | 没装；正式资格没授予（§12 第 5 项） | — |
+| 部分 | 2026-10-30 实测 |
+| --- | --- |
+| 一键移交、用途、5 分钟后生效（C10） | 生产可用：TURING→DESK 15:26Z（回执 `f85731c5`），DESK→TURING 15:49Z（回执 `488169c7`），都按确认页写的时间生效 |
+| 节点档案、每节点安装与校验（C1、C7） | DESK 按自己的档案装好，`verify-resident` 45 项 43 项通过（另两项见下面“已知问题”） |
+| 角色探测、当班/待命（C2、C3） | DESK 探测到“没有角色”转待命（`ROLE_PROBE_NOT_HELD`）；TURING 交班后仍显示当班，下一次实时准入才会被挡 |
+| 停车位 | 还没有。`/bindings` 页顶会提示“还没有停车位”，一键移交不受影响 |
+| 其余（C4、C5、C6、C9） | 本次没用到，以各 Task 为准 |
 
-下面各小节里，节点自己探测角色、转当班或待命、在 PR 页面写状态、弹通知，都要 C2、C3、C5 上线后才有；在那之前也没有第二个节点可以切过去。
+已知问题（2026-10-30）：
+- DESK 的 `broker-failure-actions` 显示失败，是旧版 verify 读 `sc qfailure` 的中文输出造成的误报；main 上已改读注册表（`10b89790`），DESK 下次装包后再核。`upgrader-service` 失败是因为升级服务有意停着。
+- DESK 拿到角色后公司网络升级断网，还没有在 DESK 当班时跑完一个真实 PR。网络恢复后补做（见“演练”）。
 
 ### 几个名词
 
@@ -283,11 +280,30 @@
 - **不要轮换当班节点的连接。** 轮换会把角色立即搬到新连接上（C10 上线后带着生效时间搬，已生效的在新连接上立即生效），而新 token 还没装到机器上，当班节点会立即无法准入；如果把新 token 装到另一台节点上，旧节点在途的发布又可能和它重叠。要换，先切到另一个节点再处理。给待命节点换连接不影响角色，但同样要重装。
 - **App 私钥**：Owner 在 GitHub App 设置页为每个节点生成一把，直接在那台机器上下载，由安装脚本（UAC）放到只有 clued-control 能读的位置，然后彻底删除下载的副本（不要留在回收站）。私钥不在机器之间拷贝，不经过 Agent、聊天、BeamingFace、仓库或网盘。一个节点出事，只删它那把。
 
+### 连接要绑对项目
+
+节点的 CI 连接（无头令牌）必须建在 **clued 项目**（`project:0597aa60-9b98-4da6-a4ab-63d7705b632f`）下面。2026-10-30 DESK 的连接建时选成了 cross-memory-system（`c59e4de8`），角色探测一直报 `ROLE_PROBE_CONNECTION_UNAUTHORIZED`（服务端 401 / `42501`，`authorization_assert_entry_before_sources_v2` 拒绝），排查了一个多小时。
+
+- 症状：探测结果 `uncertain`、码 `ROLE_PROBE_CONNECTION_UNAUTHORIZED`，节点停在 `UNCERTAIN`，没有 HALT。换 token 或标角色都解决不了。
+- 建连接时：页面上选项目选 **clued**，不是名字像仓库的 cross-memory-system。
+- 装节点之前，Agent 用只读 SQL 核对（不读 token 和 hash 列）：
+
+  ```sql
+  select context_keys from public.clued_agent_bindings where id = '<连接 id>';
+  select resource_id, actions from clued_private.authorization_entries_v12 where binding_id = '<连接 id>';
+  ```
+
+  两处都应包含 `project:0597aa60-9b98-4da6-a4ab-63d7705b632f`，并且 actions 为 `{read}`；与 TURING 的连接（`aa4969fb`）形状一致。
+- 已经建错时：重建连接会换 token，包里的 `ciTokenPinSha256` 跟着变，要重新打包、重装。2026-10-30 的做法是 Owner 批准后只改这三行：`clued_agent_bindings.context_keys`、`authorization_contributions_v2`（该连接授权来源那一行）和 `authorization_entries_v12` 的 `resource_id`，动作仍只读（Decision `8db7ef5e`、`5cb5c23e`）。只改 `context_keys` 不够，授权条目不跟着变。
+
 ### 演练
 
 - **每月一次计划内切换**：切到待命节点，至少跑一个真实 PR，再按需切回。这同时证明待命节点能用、交换代理的载体服务还在。演练前后各记一条 Note。频率见下面第三条：主机实测之前要更密。
 - 演练时顺便核对两个连接的到期日。演练前可以由 Owner 重启一次 TURING 的 WSL（它有已知的 WSL 退化和内存碎片）。
 - **载体 runner 的注册 14 天会被移除。** 交换代理用的载体服务（TURING 上是 `clued-ci-home-win-02`）平时就是停的，而 GitHub 会移除离线超过 14 天的 runner 注册（Decision `0d3ab1a6`）。所以在主机实测（§10 P4）证明注册被移除后交换代理仍然能用之前，演练间隔要短于 14 天；证明之后，再按每月一次。
+
+- **2026-10-30 第一次演练（Z1）**：TURING→DESK 15:26Z 移交；DESK 15:31Z 生效后不久公司网络升级断网，当时没有节点当班；Owner 15:49Z 在 `/bindings` 移交回 TURING（相当于一次计划外切换，不碰任何机器），15:54Z 生效。还差：DESK 当班跑一个真实 PR，以及 DESK 联网后确认它探测到“没有角色”回到待命（Note `e34fb95e`、`e2e56148`）。
+- 移交前先看当班节点手上有没有批次（PR 页面 `resident-queue/<节点>`），有就等它合入或结束；PR 的认领要带合并位（`merge:tdoljyj/cross-memory-system:main`），否则批次会一直停在第 8 段前排队。
 
 ### 机器设置
 
