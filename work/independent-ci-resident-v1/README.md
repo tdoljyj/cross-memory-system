@@ -31,6 +31,8 @@ Phase 2, step 1 (Task `6451a55d`) is described in DESIGN.md §17. It covers the 
 
 Phase 2, step 2 (Task `6451a55d`) is described in DESIGN.md §18. It covers parking at points A and B, stage 8 as tries, the Owner's drain request before a reinstall, and policy `/5`.
 
+The full reinstall toolchain (package, elevated launcher, Linux phase A/B root scripts) and the read-only rehearsal against the installed node that every final needs live in `reinstall/` (README there; DESIGN.md §40, Decision `19baf5ec`).
+
 Phase 2, step 3a (Task `6451a55d`, Owner decision `0bb98194`) is described in DESIGN.md §19. Before writing a green, stage 8 now reads main's branch rules and GitHub's test merge of the PR. It records every merge-slot green in the green ledger (`state\v2\green-ledger`). A PR that GitHub has already merged as tested counts as success. The train stays off.
 
 Primary/standby C6 (Task `6444f88a`) is described in DESIGN.md §20. It adds the intake pause: any Owner session can hold new batches for at most two hours (`tools/rearm-tool.mjs request-intake-pause`), without touching a batch that runs or is parked. Each request names a holder, and a holder may lift only its own hold. status.json `/3` shows the holds.
