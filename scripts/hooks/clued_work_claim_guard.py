@@ -460,6 +460,8 @@ def record_claim(payload: dict) -> None:
         kept = {key: claim.get(key) for key in ("claim_id", "task_id", "context_key", "fence",
                                                  "lease_version", "status", "expires_at",
                                                  "write_set", "base_commit", "trigger_refs")}
+        if "trigger_refs" not in claim and isinstance(claims.get(claim["claim_id"]), dict):
+            kept["trigger_refs"] = claims[claim["claim_id"]].get("trigger_refs")  # a response without them
         claims[claim["claim_id"]] = {**kept, "session_id": payload.get("session_id")}
     else:
         claims.pop(claim["claim_id"], None)
@@ -929,7 +931,8 @@ def queue_findings(claim_id: str, claim: dict, label: str, now: datetime) -> lis
         findings.append((f"merge-slot:{claim_id}",
                          f"{label} names claim {claim_id}, whose trigger_refs lack `{MERGE_REF}`, so stage 8 "
                          "waits for a merge slot that never comes (RESIDENT_MERGE_QUEUE_NOT_JOINED). Renew it "
-                         f"with that ref added to trigger_refs BEFORE pushing; renewing during the batch voids it."))
+                         f"with that ref added to trigger_refs BEFORE pushing; renewing during the batch voids it. Work that "
+                         "will not merge into main (a draft, another base) can simply retry."))
     expires = parse_time(claim.get("expires_at"))
     if expires is not None and (expires - now).total_seconds() < BATCH_LEASE_MINUTES * 60:
         findings.append((f"lease-short:{claim_id}:{claim.get('expires_at')}",

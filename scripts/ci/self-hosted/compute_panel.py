@@ -606,8 +606,10 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
         collected = attempt("residents", lambda: collect_residents(client), None)
         residents = collected[0] if collected else None
         events.update(collected[1] if collected else {})
-        events.update(attempt("merges", lambda: recent_merges(client, parse_time(state.get("events_at"))), {}))
-        state["events_at"] = iso(now)
+        merges = attempt("merges", lambda: recent_merges(client, parse_time(state.get("events_at"))), None)
+        if merges is not None:  # a failed read keeps the window open, so its merges are announced next run
+            events.update(merges)
+            state["events_at"] = iso(now)
     if residents is None:  # keep the last known resident state (and its HALT alert) rather than clearing it
         residents = state.get("residents") or {}
     state["residents"] = residents

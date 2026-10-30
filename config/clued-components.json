@@ -475,7 +475,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "bd705a25d28060b1716cb849a4e773830e3b163909dc88c851d154ecb8fada66"
+      "content_sha256": "f7e43bfca0ae081a386e3cb74abf6390c4f840c3070f87d3ddee32fce824c75e"
     }
   ]
 }
