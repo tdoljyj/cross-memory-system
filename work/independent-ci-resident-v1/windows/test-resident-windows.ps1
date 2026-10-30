@@ -63,6 +63,9 @@ function Aces([string]$sddl) { @((New-Object Security.AccessControl.RawSecurityD
 # The generic helper (clued-control) must be able to open the resident root for READ_CONTROL, and nothing more.
 $rootCtrl = @(Aces $acl[''] | Where-Object { $_.SecurityIdentifier.Value -ceq $ControllerSid })
 Yes ($rootCtrl.Count -eq 1 -and $rootCtrl[0].AccessMask -eq 0x120080 -and [int]$rootCtrl[0].AceFlags -eq 0) 'root:controller-read-control-only'
+# It runs the package's node (FormalPublicBoundaryV2.Node = resident\runtime\node.exe): read+execute there, never write.
+$runtimeCtrl = @(Aces $acl['runtime'] | Where-Object { $_.SecurityIdentifier.Value -ceq $ControllerSid })
+Yes ($runtimeCtrl.Count -eq 1 -and $runtimeCtrl[0].AccessMask -eq 0x1200a9) 'runtime:controller-read-execute-only'
 foreach ($box in @('inbox', 'requests')) {
   $aces = Aces $acl[$box]
   $owner = @($aces | Where-Object { $_.SecurityIdentifier.Value -ceq $OwnerSid })

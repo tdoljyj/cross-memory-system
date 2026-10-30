@@ -63,7 +63,7 @@ public static class PureTestsV2 {
     var extra=new Dictionary<string,object>(plan);extra["currentClaim"]="x";Refuse(()=>FormalPublicBoundaryV2.PlanStage(extra),"plan-extra-field");}
    // 3. command line: fixed node, installed Source root, exact two arguments
    string nonce=new string('a',32),sha=new string('b',64),root=FormalPublicBoundaryV2.SourceBase+"\\"+new string('c',64);
-   Yes(FormalPublicBoundaryV2.CommandFor("control-checks",root,nonce,sha)=="\"C:\\Program Files\\nodejs\\node.exe\" \""+root+"\\work\\actions-hosted-migration\\independent-ci-v1\\src\\independent-control-checks-v2\\startup.mjs\" --run --stage "+nonce+" --config-sha256 "+sha,"command");
+   Yes(FormalPublicBoundaryV2.CommandFor("control-checks",root,nonce,sha)=="\"C:\\ProgramData\\CluedIndependentCI\\resident\\runtime\\node.exe\" \""+root+"\\work\\actions-hosted-migration\\independent-ci-v1\\src\\independent-control-checks-v2\\startup.mjs\" --run --stage "+nonce+" --config-sha256 "+sha,"command");
    Refuse(()=>FormalPublicBoundaryV2.CommandFor("control-checks",root,"x",sha),"command-nonce");Refuse(()=>FormalPublicBoundaryV2.RelativeEntryForRole("../x"),"entry-role");
    // 4. S3 ownership / writer model
    string stage=FormalPublicBoundaryV2.StageRoot+"\\"+nonce+"\\jobs.json",record=FormalPublicBoundaryV2.Record+"\\acceptance.json",state=FormalPublicBoundaryV2.Receipts+"\\x.json",incoming=FormalPublicBoundaryV2.Incoming+"\\result.json",outgoing=FormalPublicBoundaryV2.Outgoing+"\\issue.json";

@@ -27,7 +27,9 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
  public const string Root="C:\\ProgramData\\CluedIndependentCI",Resident=Root+"\\resident",Record=Resident+"\\record",StageRoot=Resident+"\\stage",SourceBase=Resident+"\\source";
  public const string StateV2=Root+"\\state\\v2",Receipts=StateV2+"\\receipts",Temp=StateV2+"\\temp";
  public const string Spool=Root+"\\formal-spool",Outgoing=Spool+"\\outgoing",Incoming=Spool+"\\incoming";
- public const string Node="C:\\Program Files\\nodejs\\node.exe";
+ // The package's own pinned node (install-resident.ps1 runtime\node.exe = record controllerNodeSha256), never the
+ // machine's shared C:\Program Files\nodejs: every node runs exactly the node its package pins.
+ public const string Node=Resident+"\\runtime\\node.exe";
  public static string Controller {get{return NodeProfileV2.Current.ControllerSid;}}
  public static string OwnerUser {get{return NodeProfileV2.Current.OwnerSid;}}
  public const string ResidentSid="S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629";
