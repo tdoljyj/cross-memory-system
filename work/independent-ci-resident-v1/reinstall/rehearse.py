@@ -261,7 +261,12 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None):
             find('LINUX_V1_QUALIFICATIONS_MISSING', present=hp.get('v1Qualifications'))
 
     # roles: the derivation phase A runs, on the copies, as a normal user in the node's WSL distribution
-    if skip_roles:
+    # A record-only reinstall (README section 8b): the package's CI Source and Linux half are the installed ones, Linux phases A/B do not
+    # run, so there is nothing to derive; the launcher generator then needs --linux-adopted-package.
+    same_linux = (pkg.get('ciSourceManifestSha256') == facts.get('ciSourceManifestSha256') and (pkg.get('linux') or {}).get('manifestSha256') == facts.get('manifestSha256'))
+    if same_linux:
+        checks['roles'] = {'notApplicable': 'SAME_SOURCE_AND_LINUX_HALF_NO_LINUX_PHASE'}
+    elif skip_roles:
         checks['roles'] = {'skipped': True}
         find('ROLE_DERIVATION_NOT_REHEARSED')
     else:

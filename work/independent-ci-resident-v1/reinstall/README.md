@@ -131,6 +131,19 @@ r7 那次三回被拒，都能被预演提前抓到，`test/test_rehearse.py` �
 - 首装不走这里的启动器和 Linux 脚本。它们只用于"已装节点上的整套重装"；首装按《DESK-W-591 主备安装操作说明》进行。
 - `linux.installedManifest` 在新节点上只用作外部钉值的路径模板：node 钉值要等于节点上钉住的 toolchain node，`source-v2` 钉值总是取新提交的文件。
 
+## 8b. 只换 record 的重装（例如更换节点的 App 私钥）
+
+适用条件：提交不变，只改 record 里的节点值（例如 `appKeyId`、`appPublicKeySha256Base64`）。这时包的 CI Source、Linux 半边和 `linux/**` 文件与现装逐字节相同，变化的只有 `record\installation.json`、`record\acceptance.json`、`record\record-manifest.json` 和 `nodeIdentitySha256`。
+
+- **不跑 Linux A/B。** Linux 第 1 代继续记着现装包的 sha，Windows 第 1 代记新包。两侧一致性检查（verify、companion）只比 generation、CI Source、Linux manifest 和 pins，不比包 sha。
+- **预演。** 包的 CI Source 和 Linux manifest 等于现装 facts 时，角色派生记为 `notApplicable`，不算 finding。
+- **生成启动器。** 用 `build.ps1 -Final ... -LinuxEvidence <上次 Linux B 的 evidence> -LinuxVersionFacts <facts> -LinuxAdoptedPackage <现装包目录>`。生成器要求 evidence 里的 `package:` 正是该目录的包，且两包的 CI Source、Linux manifest、`linux/**` 全部相同，否则拒绝（`LINUX_ADOPTED_PACKAGE_NOT_THIS_LINUX_HALF`）。
+- **换私钥。** 安装器从不覆盖已有的 `controller-checks-app.pem`，所以新私钥由 Owner 本人在提权 PowerShell 里用 `tools/place-app-key.ps1` 放入。脚本步骤如下，私钥内容不经过 Agent：
+  1. 用包内钉住的 `secret-fingerprint.mjs` 核对新私钥的指纹，必须等于 GitHub 显示的值；
+  2. 旧文件改名为 `.retired-<UTC>` 保留；
+  3. 按安装器的 ACL 新建文件，并回读核对；
+  4. 列出 `CluedControl` 下仍提到旧钥的文件名。
+
 ## 9. 历史
 
 - **r4–r5c2**：TURING 的 Source34 重装，以及 018da927 升级通道的首次安装。

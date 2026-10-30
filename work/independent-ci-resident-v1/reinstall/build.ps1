@@ -1,7 +1,7 @@
 # Build one reinstall package for one node and commit, and generate its launcher (README.md section 3). NON-elevated, read-only on the
 # repository and the host; writes only new files under the configuration's workDir. Run from PowerShell, never from Git Bash.
 #   powershell -NoProfile -File build.ps1 -Config <reinstall-config.json> -Commit <40hex> [-Tag t]
-#        [-Final -DecisionRef <uuid> -ReceiptRef <uuid> -AcceptedAt <ISO Z> -Rehearsal <rehearsal report> [-LinuxEvidence <file> -LinuxVersionFacts <file>]]
+#        [-Final -DecisionRef <uuid> -ReceiptRef <uuid> -AcceptedAt <ISO Z> -Rehearsal <rehearsal report> [-LinuxEvidence <file> -LinuxVersionFacts <file> [-LinuxAdoptedPackage <dir>]]]
 # Owner acceptance: ONE decision names every acceptance reference (sourceAcceptanceRef, hostQualificationRef, ownerAuthorizationRef,
 # ownerPackageAcceptanceRef, publisherQualificationRef, ownerDecisionRef) and its KooYomi receipt names installationReceiptRef and
 # ownerReceiptRef; ciPrincipalQualificationRef stays the base record's. Without -Final the references are obvious PLACEHOLDERS (DRAFT);
@@ -12,7 +12,7 @@ param([Parameter(Mandatory)][string]$Config,
       [ValidatePattern('^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$')][string]$ReceiptRef = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
       [ValidatePattern('^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,9})?Z$')][string]$AcceptedAt = '2026-10-28T00:00:00Z',
       [ValidatePattern('^([0-9a-f]{64})?$')][string]$AcceptHaltSha256 = '',
-      [string]$Rehearsal = '', [string]$LinuxEvidence = '', [string]$LinuxVersionFacts = '',
+      [string]$Rehearsal = '', [string]$LinuxEvidence = '', [string]$LinuxVersionFacts = '', [string]$LinuxAdoptedPackage = '',
       [switch]$PackageOnly)   # a package for another node (e.g. a first install): no launcher, which reads THIS host's installed resident
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -76,5 +76,6 @@ if ($PackageOnly) { if ($Final) { throw 'PACKAGE_ONLY_IS_NEVER_A_FINAL_LAUNCH' }
 $gen = @((Join-Path $Here 'launcher\generate.py'), $Config, '--commit', $Commit, '--package', $pkg, '--package-sha', $pkgSha, '--rebuild-record', $record, '--rebuild-policy', $pol, '--rebuild-source-files', $files, '--rebuild-upgrader-config', $upg, '--rebuild-linux-external-pins', $pins)
 if ($AcceptHaltSha256) { $gen += @('--accept-halt-sha256', $AcceptHaltSha256) }
 if ($LinuxVersionFacts) { $gen += @('--linux-version-facts', $LinuxVersionFacts) }
+if ($LinuxAdoptedPackage) { $gen += @('--linux-adopted-package', $LinuxAdoptedPackage) }   # record-only reinstall (README section 8b)
 if ($Final) { $gen += @('--final'); if ($LinuxEvidence) { $gen += @('--linux-evidence', $LinuxEvidence) }; if ($Rehearsal) { $gen += @('--rehearsal', $Rehearsal) } }
-& python -I @gen
+& python -I @gen; if ($LASTEXITCODE) { exit $LASTEXITCODE }   # a refused final is a failed build

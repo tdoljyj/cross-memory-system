@@ -250,6 +250,15 @@ class Rehearsal(unittest.TestCase):
                                                           'v1Head': '0' * 40, 'v1Qualifications': {'gitleaks': False}})))
         self.assertTrue({'LINUX_HOST_PINS_NOT_THE_CONFIGURED', 'LINUX_V1_SOURCE_HEAD_NOT_THE_CONFIGURED', 'LINUX_V1_QUALIFICATIONS_MISSING'} <= set(c), c)
 
+    # record-only reinstall (README 8b): same CI Source and Linux half as installed, so no Linux phase and nothing to derive
+    def test_record_only_package_needs_no_role_derivation(self):
+        pm = os.path.join(self.fx.pkg, 'package-manifest.json')
+        json.dump({'contract': 'clued.independent-ci.resident-package/4', 'ciSourceManifestSha256': self.fx.facts['ciSourceManifestSha256'],
+                   'linux': {'manifestSha256': self.fx.facts['manifestSha256']}}, open(pm, 'w'))
+        r = self.run_with(FakeHost(self.fx, derive={'status': 'REFUSED', 'code': 'MANIFESTS_NOT_OLD_AND_NEW'}))
+        self.assertEqual(r['status'], 'REHEARSAL_PASS', r['findings'])
+        self.assertEqual(r['checks']['roles'], {'notApplicable': 'SAME_SOURCE_AND_LINUX_HALF_NO_LINUX_PHASE'})
+
     # review 1-7: Test-UninstallPlan requires upgraderService = $true, whatever the service's presence
     def test_uninstall_plan_without_the_upgrader(self):
         h = FakeHost(self.fx, upgrader=False)

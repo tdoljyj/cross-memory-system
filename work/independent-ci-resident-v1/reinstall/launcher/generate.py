@@ -9,7 +9,7 @@ configuration (rehearse.py: the installed tools' real read-only dry runs and the
   python -I generate.py <config.json> --commit <40hex> --package <dir> --package-sha <64hex>
          --rebuild-record <dir> --rebuild-policy <file> --rebuild-source-files <file> --rebuild-upgrader-config <file>
          --rebuild-linux-external-pins <file> [--accept-halt-sha256 <64hex>] [--launch-dir <dir>]
-         [--final --linux-evidence <file> --linux-version-facts <file> --rehearsal <rehearsal report>]
+         [--final --linux-evidence <file> --linux-version-facts <file> --rehearsal <rehearsal report> [--linux-adopted-package <dir>]]
 
 What the launcher does, and why each step is there (Q1..Q5, r4.1 C1..C3, r5 S1..S3, r5c, r7): README.md section 4 and the comments in
 template.ps1.
@@ -39,6 +39,7 @@ LINUX_EVIDENCE = opt('--linux-evidence')
 TOKEN_FILE = CFG['upgradeTokenFile']   # path only: its content is never opened here
 REHEARSAL = opt('--rehearsal')
 FACTS = opt('--linux-version-facts')   # r5c
+ADOPTED_PKG = os.path.abspath(opt('--linux-adopted-package')) if opt('--linux-adopted-package') else None   # record-only reinstall
 R4 = CFG['workDir']
 OUTDIR = os.path.join(R4, 'launcher')
 GEN_UTC = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
@@ -262,7 +263,18 @@ if LINUX_EVIDENCE:
 facts_sha = None
 if LINUX_EVIDENCE:   # r5c (review): Linux generation 1 was adopted with THIS package (prep-linux-r5c phase B writes `package:` into the evidence)
     pk = re.findall(r'(?m)^package: ([0-9a-f]{64})$', text)
-    assert pk == [pkg_sha], ('LINUX_ADOPTED_ANOTHER_PACKAGE', pk, pkg_sha)
+    if ADOPTED_PKG and pk != [pkg_sha]:
+        # A record-only reinstall (README section 8b: e.g. a replaced App key): Linux keeps generation 1 of the installed package. That
+        # package must be the one the evidence names, and its Linux half byte-identical to this one's: the same CI Source manifest,
+        # the same Linux resident manifest and every linux/** file. Only the record (Windows side) differs.
+        _apm = os.path.join(ADOPTED_PKG, 'package-manifest.json')
+        _ap = json.load(open(_apm, encoding='utf-8'))
+        _lin = lambda root: {os.path.relpath(os.path.join(d, n), root).replace(BS, '/'): sha(os.path.join(d, n)) for d, _, fs in os.walk(os.path.join(root, 'linux')) for n in fs}
+        assert (pk == [sha(_apm)] and _ap['ciSourceManifestSha256'] == pkg['ciSourceManifestSha256'] and _ap['linux'] == pkg['linux']
+                and sha(os.path.join(ADOPTED_PKG, 'record', 'source-manifest.json')) == sha(os.path.join(PKG, 'record', 'source-manifest.json'))
+                and _lin(ADOPTED_PKG) == _lin(PKG)), ('LINUX_ADOPTED_PACKAGE_NOT_THIS_LINUX_HALF', pk)
+    else:
+        assert pk == [pkg_sha], ('LINUX_ADOPTED_ANOTHER_PACKAGE', pk, pkg_sha)
 if FACTS:
     FACTS = os.path.abspath(FACTS)
     assert re.fullmatch(r'[A-Za-z]:\\[^\s"\']+', FACTS), ('FACTS_PATH_SHAPE', FACTS)
@@ -429,7 +441,7 @@ print(json.dumps({'launcher': out, 'sha256': launcher_sha, 'bytes': len(data), '
                   'template': TEMPLATE, 'templateSha256': TEMPLATE_SHA, 'node': node['nodeName'], 'configSha256': CFG['_sha256'], 'rehearsal': REHEARSAL,
                   'packageManifestSha256': pkg_sha, 'residentManifestSha256': pkg['residentManifestSha256'], 'ciSourceManifestSha256': pkg['ciSourceManifestSha256'],
                   'planSha256': dry['planSha256'], 'dryRun': dry_file, 'runnerBeforeUsable': runner_usable, 'runnerBefore': rb,
-                  'linuxLiveSourceManifest': linux_live, 'linuxEvidenceSha256': linux_evidence_sha,
+                  'linuxLiveSourceManifest': linux_live, 'linuxAdoptedPackage': ADOPTED_PKG, 'linuxEvidenceSha256': linux_evidence_sha,
                   'oldRoot': {'installedResident': installed_resident, 'receiptSha256': sha(live_receipt), 'uninstallSha256': u_sha, 'newestTerminalKey': newest_key, **quiet},
                   'finalWouldRefuse': refusals, 'launchDir': LAUNCH_DIR, 'pauseRequestDacl': pause_dacl,
                   'pauseWaitSeconds': PAUSE_WAIT_SECONDS, 'firstTrainWaitSeconds': FIRST_TRAIN_WAIT_SECONDS, 'runnerQuietWaitSeconds': RUNNER_QUIET_WAIT_SECONDS,
