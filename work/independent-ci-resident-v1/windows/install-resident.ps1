@@ -488,6 +488,40 @@ function Read-RunnerState {
     stoppedPid0 = ($q -match 'STATE\s*:\s*1\s' -and $q -match 'PID\s*:\s*0\b'); manual = ($qc -match 'START_TYPE\s*:\s*3\s'); sddl = (Get-DaclPart (& $Sc sdshow $RunnerService | Out-String)) }
 }
 
+# The controller account runs the node's runner service (swapped and started by the broker for every stage): it needs the right to
+# log on as a service, granted directly or through a local group (DESK-W-591, 2026-10-30: SCM 7041, then the role probe HALTed with
+# ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED). $inf: `secedit /export /areas USER_RIGHTS`; $groupMembers: group SID -> member SIDs.
+function Test-ServiceLogonRight([string]$inf, [string]$sid, $groupMembers) {
+  foreach ($line in ($inf -split "`r?`n")) {
+    if ($line -notmatch '^\s*SeServiceLogonRight\s*=\s*(.*)$') { continue }
+    foreach ($entry in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() })) {
+      if ($entry -ceq ('*' + $sid)) { return $true }
+      if ($entry.StartsWith('*') -and $null -ne $groupMembers -and $groupMembers.ContainsKey($entry.Substring(1)) -and @($groupMembers[$entry.Substring(1)]) -ccontains $sid) { return $true }
+    }
+  }
+  $false
+}
+# Elevated only (secedit needs it): the user-rights assignment and the members of every local group it names; $null when unreadable.
+function Read-ServiceLogonRight([string]$sid) {
+  $dir = Join-Path ([IO.Path]::GetTempPath()) ('clued-rights-' + [Guid]::NewGuid().ToString('N'))
+  [void][IO.Directory]::CreateDirectory($dir)
+  try {
+    $cfg = Join-Path $dir 'rights.inf'
+    $null = & 'C:\Windows\System32\SecEdit.exe' /export /areas USER_RIGHTS /cfg $cfg /quiet
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $cfg -PathType Leaf)) { return $null }
+    $inf = [IO.File]::ReadAllText($cfg)
+    $groups = @{}
+    foreach ($line in ($inf -split "`r?`n")) {
+      if ($line -notmatch '^\s*SeServiceLogonRight\s*=\s*(.*)$') { continue }
+      foreach ($e in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -cmatch '^\*S-1-5-32-\d+$|^\*S-1-5-21-[\d-]+$' })) {
+        $members = try { @(Get-LocalGroupMember -SID $e.Substring(1) -ErrorAction Stop | ForEach-Object { $_.SID.Value }) } catch { @() }
+        $groups[$e.Substring(1)] = $members
+      }
+    }
+    Test-ServiceLogonRight $inf $sid $groups
+  } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
 # Directory ACLs (owner BUILTIN\Administrators, protected DACL). Masks: 0x1200a9 read+execute,
 # 0x1301bf modify, 0x1000a2 add-file+traverse (drop box), FA full. To be validated on a test host.
 function Get-AclPlan([string]$res) {
@@ -827,7 +861,10 @@ if (-not $Apply) {
   # Get-CarryForwardPlan returns its list as ONE pipeline object (,$sources): assigned first, then walked with foreach.
   $preview = try { $all = Get-CarryForwardPlan $CarryParent; $p = @(); foreach ($s in $all) { $p += ,([ordered]@{ name = $s.name; files = @($s.files).Count }) }; ,$p } catch { $_.Exception.Message }
   Clear-SecretBytes
-  [ordered]@{ status = 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN'; planSha256 = $planSha; plan = $plan; carryForwardPreview = $preview } | ConvertTo-Json -Depth 10; exit 0
+  # Not part of the plan either: the controller account's right to log on as a service (needs the elevated token to read).
+  $logon = if ($elevated) { $l = Read-ServiceLogonRight $ControllerSid; if ($null -eq $l) { 'unreadable' } else { [bool]$l } } else { 'unreadable-not-elevated' }
+  [ordered]@{ status = 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN'; planSha256 = $planSha; plan = $plan; carryForwardPreview = $preview
+    preflight = [ordered]@{ controllerServiceLogonRight = $logon } } | ConvertTo-Json -Depth 10; exit 0
 }
 
 if (-not $elevated) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED' }
@@ -839,6 +876,11 @@ if ($plan.rootExists -or $plan.servicesExist) { throw 'FRESH_INSTALL_REQUIRED_UP
 if ($plan.upgrader.token.targetExists) { throw 'UPGRADE_TOKEN_TARGET_EXISTS_NOT_OVERWRITTEN' }
 $r = $plan.runnerBefore
 if (-not ($r.originalBinary -and $r.stoppedPid0 -and $r.manual -and $r.accountIsController)) { throw 'RUNNER_SERVICE_NOT_ORIGINAL_STOPPED_MANUAL_CONTROLLER' }
+# The runner service runs as the controller account for every stage; without the right to log on as a service SCM refuses to start
+# it (event 7041) and the first role probe HALTs. Refused here, before anything is written (DESIGN.md section 30.8).
+$logon = Read-ServiceLogonRight $ControllerSid
+if ($null -eq $logon) { Clear-SecretBytes; throw 'USER_RIGHTS_UNREADABLE' }
+if (-not $logon) { Clear-SecretBytes; throw 'CONTROLLER_SERVICE_LOGON_RIGHT_MISSING' }
 # Before anything is written: every earlier state to carry, every file shape, no link anywhere.
 $carry = Get-CarryForwardPlan $CarryParent
 
