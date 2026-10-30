@@ -157,6 +157,138 @@
         }
       }
     },
+    "clued-compute-panel.yml": {
+      "jobs": {
+        "admission-gate": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "probe-company-linux-01": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "probe-company-linux-02": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "probe-company-linux-03": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "probe-company-linux-04": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "probe-company-win-01": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "probe-home-win-01": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "panel": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
     "clued-cloud-node22-install.yml": {
       "jobs": {
         "admission-gate": {
