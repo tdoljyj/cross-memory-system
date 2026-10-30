@@ -39,7 +39,7 @@ if (-not (Test-Path -LiteralPath $tree)) {
   Remove-Item -LiteralPath $tar
 }
 # review 1-4: root runs files from this tree; an existing tree-<c8> is reused only when it is exactly the commit (Git blob ids, no extra file)
-& python -I (Join-Path $Here 'tools	ree.py') $Repo $Commit $tree; if ($LASTEXITCODE) { throw 'TREE_NOT_THE_COMMIT' }
+& python -I (Join-Path $Here 'tools\tree.py') $Repo $Commit $tree; if ($LASTEXITCODE) { throw 'TREE_NOT_THE_COMMIT' }
 $closure = Join-Path $tree 'work\actions-hosted-migration\independent-ci-v1\src\resident-v2\source-closure.json'
 $inputs = Join-Path $R ('record\inputs.' + $cfg.node + '.' + $kind + '.' + $c8 + '.json')
 & python -I (Join-Path $Here 'tools\record-inputs.py') $Config $tree $Commit $inputs @RefArgs; if ($LASTEXITCODE) { throw 'RECORD_INPUTS_FAILED' }
