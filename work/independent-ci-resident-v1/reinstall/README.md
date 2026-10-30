@@ -127,9 +127,24 @@ r7 那次三回被拒，都能被预演提前抓到，`test/test_rehearse.py` �
 ## 8. 新节点（例如 DESK-W-591 第 5 步）
 
 - 节点档案 `config/node-profile.desk-w-591.json`：取自 Note `85717e8f`，已通过 `validateNodeProfile`。
-- 配置：把 `config/desk-w-591.example.json` 复制为 `desk-w-591.json`，填入现场回传的六项指纹和 `linux.host` 三项，再运行 `build.ps1 -PackageOnly`。
-- 首装不走这里的启动器和 Linux 脚本。它们只用于"已装节点上的整套重装"；首装按《DESK-W-591 主备安装操作说明》进行。
-- `linux.installedManifest` 在新节点上只用作外部钉值的路径模板：node 钉值要等于节点上钉住的 toolchain node，`source-v2` 钉值总是取新提交的文件。
+- 配置：把 `config/desk-w-591.example.json` 复制为 `desk-w-591.json`，填入以下各项：
+  - 六项节点值。其中 `controllerNodeSha256` 就是包里 Windows `runtime\node.exe`（nodeExe）的 sha256，各节点相同；`ciPrincipalRoleRef` 是 Owner 认可该连接**可以**持有 ci-admission 的 Decision。
+  - `linux.host`：首装节点还没有已装的 Linux CI，三项都填 `null`，`installedRoles` 也填 `null`，不要编造值。知道该节点 toolchain node 的 sha 后，填 `toolchainNodeSha256`。
+  - 然后运行：
+    ```
+    build.ps1 -Config ... -Commit <40hex> -PackageOnly [-Final -DecisionRef ... -ReceiptRef ... -AcceptedAt ...] -CiPrincipalQualificationRef <uuid>
+    ```
+- 带 `-Final` 时，包里写真实 ref；不带时是 DRAFT，ref 为占位值。`-CiPrincipalQualificationRef` 写这个节点自己连接的资格。不给时沿用 base 的值，那只适用于同一个连接。
+- 节点输入：`tools/node-inputs.py` 从配置的 policy/companion 输入生成本节点的版本，替换以下几项，其余一字不改：
+  - `node`、`nodeProfileSha256`；
+  - policy 的 `companion.userSid`（= ownerSid）；
+  - 两处 distribution（= wslDistribution）。
+
+  base 节点的任何值如果还留在别的字段里，就拒绝（`NODE_INPUT_KEEPS_THE_BASE_NODE`）。同一节点时输出与原输入内容相同：用 TURING 配置和 r7 的 ref 重建 a0e15a91，仍得到 9d774173。
+- 节点档案：提交树里有就用树里的；没有（例如 a0e15a91 早于 DESK 档案）就用本工具链检出里同一路径的副本。两种情况都由该提交自己的 `prepare-record.mjs` 校验。
+- `linux.installedManifest` 在新节点上只用作外部钉值的路径和顺序模板。toolchain node 一项取 `linux.host.toolchainNodeSha256`，为 `null` 时沿用副本的值；`source-v2` 钉值总是取新提交的文件。
+- 首装不走这里的启动器、Linux 脚本和预演：配置里 Linux 事实为 `null` 时，它们都拒绝（`NODE_HAS_NO_INSTALLED_LINUX_CI`）。首装按《DESK-W-591 主备安装操作说明》进行。
+- record 的 `signers` 沿用 base 节点的结果签名者。它只在发布签名结果时用来验签；安装、verify 和 STANDBY 都不用它。一个节点在有自己的签名者之前不能接班（DESK-W-591：Z1 之前，Decision `d339ddb2`）。
 
 ## 8b. 只换 record 的重装（例如更换节点的 App 私钥）
 

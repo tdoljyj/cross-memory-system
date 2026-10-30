@@ -23,6 +23,7 @@ def _load(name, path):
     return mod
 rconfig = _load('rconfig', os.path.join(HERE, '..', 'tools', 'rconfig.py'))
 CFG = rconfig.load(sys.argv[1])
+rconfig.need_installed_linux(CFG)   # the Linux reinstall kit is for a node whose Linux CI is installed
 R = CFG['workDir']
 COMMIT, NEW, REF, PKG, SUFFIX = sys.argv[2:7]
 assert re.fullmatch(r'[0-9a-f]{40}', COMMIT) and re.fullmatch(r'[0-9a-f]{64}', NEW) and re.fullmatch(r'[a-z0-9-]{1,20}', SUFFIX)

@@ -7,7 +7,7 @@ A FINAL launcher needs, besides the Linux evidence and version facts of phase B,
 configuration (rehearse.py: the installed tools' real read-only dry runs and the pin / role derivations against the new commit).
 
   python -I generate.py <config.json> --commit <40hex> --package <dir> --package-sha <64hex>
-         --rebuild-record <dir> --rebuild-policy <file> --rebuild-source-files <file> --rebuild-upgrader-config <file>
+         --rebuild-record <dir> --rebuild-policy <file> [--rebuild-companion <file>] --rebuild-source-files <file> --rebuild-upgrader-config <file>
          --rebuild-linux-external-pins <file> [--accept-halt-sha256 <64hex>] [--launch-dir <dir>]
          [--final --linux-evidence <file> --linux-version-facts <file> --rehearsal <rehearsal report> [--linux-adopted-package <dir>]]
 
@@ -24,6 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location('rconfig', os.path.join(HERE, '..', 'tools', 'rconfig.py'))
 rconfig = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(rconfig)
 CFG = rconfig.load(sys.argv[1])
+rconfig.need_installed_linux(CFG)   # the reinstall launcher is for a node whose CI is installed
 A = sys.argv[2:]
 def opt(name, default=None):
     return A[A.index(name) + 1] if name in A else default
@@ -162,7 +163,7 @@ upgrader_service_present = subprocess.run([BS.join(['C:', 'Windows', 'System32',
 for f in pkg['files']:
     assert sha(os.path.join(PKG, *f['path'].split('/'))) == f['sha256'], ('PACKAGE_FILE_NOT_ITS_MANIFEST', f['path'])
 REB = {k: opt('--rebuild-' + k) for k in ('record', 'policy', 'source-files', 'upgrader-config', 'linux-external-pins')}
-REB['companion'] = CFG['companionInput']
+REB['companion'] = opt('--rebuild-companion') or CFG['companionInput']   # build.ps1 passes the node's derived companion input
 assert all(REB.values()), 'REBUILD_INPUTS_REQUIRED'
 rebuild_dir = os.path.join(R4, 'rebuild-' + COMMIT[:8] + '-' + GEN_UTC)
 rb_out = subprocess.run(['node', 'tools/build-package.mjs', '--out', rebuild_dir, '--policy', REB['policy'], '--companion', REB['companion'],
