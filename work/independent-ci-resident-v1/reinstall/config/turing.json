@@ -1,0 +1,28 @@
+{
+  "contract": "clued.independent-ci.reinstall-config/1",
+  "node": "turing",
+  "nodeProfile": "config/node-profile.turing.json",
+  "workDir": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\r8-work",
+  "repo": "C:\\Users\\17531\\AppData\\Local\\Temp\\b3res",
+  "basePackage": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\r4-work\\package-r7-finalf4-a0e15a91",
+  "nodeRecord": {},
+  "nodeExe": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\package\\s34-resident-package-r1\\runtime\\node.exe",
+  "policyInput": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\r4-work\\build-inputs\\policy.r4.input.json",
+  "companionInput": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\r4-work\\build-inputs\\companion.r41.input.json",
+  "upgradeTokenFile": "C:\\Users\\17531\\clued-secrets\\resident-upgrade.token",
+  "runner": {
+    "binary": "\"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe\"",
+    "sddl": "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)"
+  },
+  "launcher": {
+    "pauseReason": "reinstall-hold-after-install",
+    "rearmReason": "reinstall-rearm-after-verify",
+    "w1PauseReason": "reinstall-w1-before-linux-switch"
+  },
+  "linux": {
+    "distribution": "Ubuntu-24.04",
+    "installedManifest": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\r8-work\\installed\\resident-v1-manifest.json",
+    "installedRoles": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\r8-work\\installed\\roles-v3"
+  },
+  "secretTargetsExist": [true, true]
+}

@@ -3199,3 +3199,24 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 - 304 只在 gh 退出码为 1 时采用（gh 对 304 退出 1，对 200 退出 0），超时、拒绝或其他退出码都不算。
 - REST 的 PR 对象比 GraphQL 大（带完整的 head/base repo），50 个约 1 MB 量级，仍在 Runner 的 4 MiB 输出上限内；不变的分钟只有响应头。
 - **测试**：`test/poller-conditional.test.mjs`（节奏常量；连续两轮 304、If-None-Match 的 argv 逐字、PR 被编辑后 200 只提一次；main 移动；两条读各四种拒绝与退出码不为 1 的 304；200 不带 ETag 时丢掉旧 ETag；坏 ETag 不回填；compare 失败与提示观察的 5 分钟节流；路由字面值；`parseIncluded` 的 CRLF/LF 与拒绝）；`test/gh-rest-stub.mjs` 供其余 poller 测试按 REST 形状作答。
+
+## 40. 整套重装工具链收进仓库，以及对已装现场的全量只读预演（Decision `19baf5ec`，Task `a3701d3d`）
+
+位置：`reinstall/`，详见 `reinstall/README.md`。
+
+**原状**：整套重装（打包、提权启动器、Linux 第 A/B 步 root 脚本）原先在仓库外的 `s34-reinstall\r4-work` 里，每一版都从上一版打补丁派生。r7 打第 3 批时连续三次被拒，原因都是照搬了上一版的假设：Linux 常驻 manifest 沿用了已装的外部钉值；角色派生不允许 Source 钉值变化；启动器只认卸载计划 /2。
+
+**现在**：
+- 所有工具都按一份构建配置生成（`clued.independent-ci.reinstall-config/1`：节点档案、提交、Owner 的 Decision 和回执、base 包、节点公开指纹、已装状态副本）。节点相关的值不再写在代码里。
+- 启动器模板就是 r7 f4 实际跑过的文本，sha 钉住，不再打补丁；主机名改为钉值 `$NodeHostname`。
+- Linux 脚本期望的"已装状态"取自节点自己的 Linux version facts 和第 1 代记录。
+- 角色派生与冻结工具的 `derive_role` 一样，重钉 5 个 Source 文件。
+- 一致性核对：用新工具链以 a0e15a91 和 r7 的 ref 重新打包，得到 9d774173，与 TURING 现装的包逐字节相同；Linux 脚本与 r7 final2 相比，只多出 `OLD_GENERATION` 和名称上的改动。
+
+**预演**（`reinstall/rehearse.py`，非提权、只读）：直接运行已装的卸载 dry-run 和 verify，读取 status、升级状态、第 1 代记录和 Linux version facts，核对 root 复制的已装副本，检查包的外部钉值，在节点的 WSL 里以普通用户运行角色派生。任何不一致都记为 finding。
+
+预演必须对同一个包、同一提交、同一配置得出 `REHEARSAL_PASS`，否则 final 启动器（`launcher/generate.py`）和 final 版 Linux 脚本（`linux/prep.py`）都拒绝生成。上面三次被拒各有回归测试（`reinstall/test/test_rehearse.py`）。
+
+**新节点**：`config/node-profile.desk-w-591.json`（取自 Note `85717e8f`）。用 `build.ps1 -PackageOnly` 只出包；首装不使用这里的重装启动器和 Linux 脚本。
+
+**不在本节**：节点身份冻结全部接受 ref（Note `45e0ed29`）；升级器调用 csc 时没有 TEMP。这两项随下一次整套重装一起做。
