@@ -1,10 +1,12 @@
 # Build one reinstall package for one node and commit, and generate its launcher (README.md section 3). NON-elevated, read-only on the
 # repository and the host; writes only new files under the configuration's workDir. Run from PowerShell, never from Git Bash.
-#   powershell -NoProfile -File build.ps1 -Config <reinstall-config.json> -Commit <40hex> [-Tag t] [-PackageOnly] [-CiPrincipalQualificationRef <uuid>]
+#   powershell -NoProfile -File build.ps1 -Config <reinstall-config.json> -Commit <40hex> [-Tag t] [-PackageOnly] [-CiPrincipalQualificationRef <uuid>] [-HostQualificationRef <uuid>]
 #        [-Final -DecisionRef <uuid> -ReceiptRef <uuid> -AcceptedAt <ISO Z> -Rehearsal <rehearsal report> [-LinuxEvidence <file> -LinuxVersionFacts <file> [-LinuxAdoptedPackage <dir>]]]
 # Owner acceptance: ONE decision names every acceptance reference (sourceAcceptanceRef, hostQualificationRef, ownerAuthorizationRef,
 # ownerPackageAcceptanceRef, publisherQualificationRef, ownerDecisionRef) and its KooYomi receipt names installationReceiptRef and
-# ownerReceiptRef; ciPrincipalQualificationRef is -CiPrincipalQualificationRef, else the base record's (the same connection only). Without
+# ownerReceiptRef; ciPrincipalQualificationRef is -CiPrincipalQualificationRef, else the base record's (the same connection only);
+# hostQualificationRef is -HostQualificationRef when the Owner decided the node's Linux host qualification separately (a first install,
+# README section 8c), else the decision. Without
 # -Final the references are obvious PLACEHOLDERS (DRAFT); -Final refuses them, and the launcher generator refuses a final without a PASS
 # rehearsal of exactly this package (rehearse.py). -PackageOnly builds the package only (another node, e.g. a first install, README
 # section 8); with -Final it carries the real references.
@@ -16,6 +18,7 @@ param([Parameter(Mandatory)][string]$Config,
       [ValidatePattern('^([0-9a-f]{64})?$')][string]$AcceptHaltSha256 = '',
       [string]$Rehearsal = '', [string]$LinuxEvidence = '', [string]$LinuxVersionFacts = '', [string]$LinuxAdoptedPackage = '',
       [ValidatePattern('^([a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12})?$')][string]$CiPrincipalQualificationRef = '',
+      [ValidatePattern('^([a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12})?$')][string]$HostQualificationRef = '',
       [switch]$PackageOnly)   # a package for another node (e.g. a first install): no launcher, which reads THIS host's installed resident
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -23,7 +26,10 @@ $Here = Split-Path -Parent $PSCommandPath
 $Placeholders = @('dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee')
 if ($Final -and ($Placeholders -contains $DecisionRef -or $Placeholders -contains $ReceiptRef -or $AcceptedAt -ceq '2026-10-28T00:00:00Z')) { throw 'FINAL_NEEDS_THE_REAL_OWNER_DECISION_AND_RECEIPT' }
 $RefArgs = @()
-foreach ($k in @('sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'ownerPackageAcceptanceRef', 'publisherQualificationRef')) { $RefArgs += @('--ref', ($k + '=' + $DecisionRef)) }
+foreach ($k in @('sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'ownerPackageAcceptanceRef', 'publisherQualificationRef')) {
+  $v = $(if ($k -eq 'hostQualificationRef' -and $HostQualificationRef) { $HostQualificationRef } else { $DecisionRef })
+  $RefArgs += @('--ref', ($k + '=' + $v))
+}
 $RefArgs += @('--ref', ('installationReceiptRef=' + $ReceiptRef), '--owner-decision-ref', $DecisionRef, '--owner-receipt-ref', $ReceiptRef, '--accepted-at', $AcceptedAt)
 if ($CiPrincipalQualificationRef) { $RefArgs += @('--ref', ('ciPrincipalQualificationRef=' + $CiPrincipalQualificationRef)) }   # another node's connection
 # The configuration, validated by the same loader the Python tools use (no secret-shaped key or value).

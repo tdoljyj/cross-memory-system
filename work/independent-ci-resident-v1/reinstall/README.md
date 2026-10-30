@@ -144,20 +144,68 @@ r7 那次三回被拒，都能被预演提前抓到，`test/test_rehearse.py` �
 - 节点档案：提交树里有就用树里的；没有（例如 a0e15a91 早于 DESK 档案）就用本工具链检出里同一路径的副本。两种情况都由该提交自己的 `prepare-record.mjs` 校验。
 - `linux.installedManifest` 在新节点上只用作外部钉值的路径和顺序模板。toolchain node 一项取 `linux.host.toolchainNodeSha256`，为 `null` 时沿用副本的值；`source-v2` 钉值总是取新提交的文件。
 - 首装不走这里的启动器、Linux 脚本和预演：配置里 Linux 事实为 `null` 时，它们都拒绝（`NODE_HAS_NO_INSTALLED_LINUX_CI`）。首装按《DESK-W-591 主备安装操作说明》进行。
-- record 的 `signers` 沿用 base 节点的结果签名者。它只在发布签名结果时用来验签；安装、verify 和 STANDBY 都不用它。一个节点在有自己的签名者之前不能接班（DESK-W-591：Z1 之前，Decision `d339ddb2`）。
+- record 的 `signers`：配置没有 `signer` 时沿用 base 节点的结果签名者。它只在发布签名结果时用来验签；安装、verify 和 STANDBY 都不用它。一个节点在有自己的签名者之前不能接班（DESK-W-591：Z1 之前，Decision `d339ddb2`）。配置写了 `signer`（本节点结果钥的 keyId、runtimeId、Ed25519 公钥 PEM，只有公钥）时，record 只列这一位签名者，其 `qualificationRef` 为 `hostQualificationRef`（第 8c 节）。
 
-## 8b. 只换 record 的重装（例如更换节点的 App 私钥）
+## 8c. 新节点的 Linux 首装（Z1，各节点通用）
 
-适用条件：提交不变，只改 record 里的节点值（例如 `appKeyId`、`appPublicKeySha256Base64`）。这时包的 CI Source、Linux 半边和 `linux/**` 文件与现装逐字节相同，变化的只有 `record\installation.json`、`record\acceptance.json`、`record\record-manifest.json` 和 `nodeIdentitySha256`。
+新节点 = **填一份 config + 现场跑三条命令 + Windows 上跑四条命令**。不改代码，不新增审核，不跑 CI。代码里没有任何节点值：keyId、runtimeId、公钥、docker/git/node 的 sha、发行版、各个 ref，全部来自 config 和现场回传的事实文件。主机资格从一个模板节点已审、已签的 roles-v3 派生（Owner 决定：`hostQualificationRef` 指向这条 Decision）。
 
-- **不跑 Linux A/B。** Linux 第 1 代继续记着现装包的 sha，Windows 第 1 代记新包。两侧一致性检查（verify、companion）只比 generation、CI Source、Linux manifest 和 pins，不比包 sha。
-- **预演。** 包的 CI Source 和 Linux manifest 等于现装 facts 时，角色派生记为 `notApplicable`，不算 finding。
-- **生成启动器。** 用 `build.ps1 -Final ... -LinuxEvidence <上次 Linux B 的 evidence> -LinuxVersionFacts <facts> -LinuxAdoptedPackage <现装包目录>`。生成器要求 evidence 里的 `package:` 正是该目录的包，且两包的 CI Source、Linux manifest、`linux/**` 全部相同，否则拒绝（`LINUX_ADOPTED_PACKAGE_NOT_THIS_LINUX_HALF`）。
-- **换私钥。** 安装器从不覆盖已有的 `controller-checks-app.pem`，所以新私钥由 Owner 本人在提权 PowerShell 里用 `tools/place-app-key.ps1` 放入。脚本步骤如下，私钥内容不经过 Agent：
-  1. 用包内钉住的 `secret-fingerprint.mjs` 核对新私钥的指纹，必须等于 GitHub 显示的值；
-  2. 旧文件改名为 `.retired-<UTC>` 保留；
-  3. 按安装器的 ACL 新建文件，并回读核对；
-  4. 列出 `CluedControl` 下仍提到旧钥的文件名。
+**1. 填 config。** 把 `config/new-node.example.json` 复制为 `<node>.json`，填入：
+- `node`、`nodeProfile`（节点档案）和 `nodeRecord` 六项（见第 8 节）。
+- `linux.distribution`：该节点 CI 用的 WSL 发行版名。
+- `signer.keyId`、`signer.runtimeId`。约定写法：keyId 为 `<node>-first-run-<yyyymmdd>`，runtimeId 为 `<NODE>-cluedresident-independent-ci-v1`。
+- `basePackage`：模板节点已审的包。模板公钥就从这个包的 record `signers.json` 取。
+- `linux.host` 和 `signer.publicKeyPem` 先不填，由第 3 步写入。
+
+**2. 现场（Owner，在该节点 WSL 里以 root 运行）。** `<D>` 为发行版名。
+```
+wsl -d <D> -u root -- /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc linux/tools/make-result-key.sh
+wsl -d <D> -u root -- /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C /usr/bin/python3.12 -I linux/tools/first-install-facts.py > first-install-facts.<node>.json
+```
+- 第一条只建一次结果钥：已有就拒绝，不覆盖。它只输出公钥 PEM 和 sha256，私钥不打印、不离开 WSL。
+- 第二条只读，不读私钥。它输出事实文件，内容包括：toolchain node、公钥、docker/git 的 sha 和保护状态；systemd、cgroup v2、docker 的状态；已有的 Linux CI 路径（首装必须为空）。
+- 请把事实文件交回 Windows。
+- 前提：toolchain node 必须已在 `/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node`（与模板节点相同的 sha）；systemd 必须是 PID 1；docker.service 必须在运行。
+
+**3. Windows：生成构建配置。**
+```
+python -I tools/first-install-config.py <node>.json first-install-facts.<node>.json <node>.first-install.json
+```
+它把事实写进 `linux.host` 和 `signer.publicKeyPem`。事实不是一台可以首装的主机时拒绝。
+
+**4. Windows：构建包。** 用 `<node>.first-install.json` 和 Owner 的 ref 运行 `build.ps1 ... -Final`（见第 8 节）。配置里有 `signer`，所以 record 里只列本节点这一位签名者。
+
+**5. Windows：组装输入并生成两个 root 脚本。**
+```
+python -I linux/assemble.py ...
+python -I linux/first-install.py <config> <commit> <package> <suffix> <in-dir> <模板 roles-v3 副本> <模板节点的 linux-version-facts> [<节点上的 in-dir 路径>]
+```
+- 新节点是另一台机器时，把整个 in-dir（含 `images/`）和两个脚本拷到该节点，并把它在该节点 WSL 里看到的路径作为第 8 个参数（例如 `/mnt/c/...`）。字节由脚本里的 sha 核对，路径不影响校验。
+- 模板文件按模板节点 version facts 里的 sha 钉住。
+- 模板公钥必须等于模板 qualification 里的 `resultPublicKeySha256`。
+- 生成器自己钉住两个首装 root 工具（`sign-first-qualification.mjs`、`first-node-facts.py`）的 sha。
+- **镜像。** worker 以 `--pull=never` 运行角色镜像，所以镜像必须事先在本节点的 docker 里。生成器的输出列出两类：
+  - `pullImages`：按 digest 钉住的仓库镜像，B 按 digest 拉取。
+  - `localImagesToLoad`：模板节点本地构建的镜像，只有镜像 id。需要在模板节点上以 root 导出到 in-dir 的 `images/<hex>.tar`：
+    ```
+    wsl -d <模板发行版> -u root -- docker save <hex> -o <in-dir 的 WSL 路径>/images/<hex>.tar
+    ```
+    也可以放 gzip 压缩的 `images/<hex>.tar.gz`。生成器在生成时钉住压缩包的 sha256；B 先核这个 sha，再用 `docker load` 载入，最后核对镜像 id 等于 `sha256:<hex>`。
+
+**6. 现场（Owner，root）：先跑 A，审核其输出后再跑 B。**
+- **A**：不读私钥，只写 `$BASE`。
+  1. 确认这是首装：没有 Source v1/v2、roles、resident、升级工具。
+  2. 暂存并核对每个钉住的字节。
+  3. `derive-roles-r7.py` 把模板当作已装侧，派生本 record 的值。
+  4. `first-node-facts.py` 只填本节点的 keyId、runtimeIdentity、结果公钥 sha 和 docker/git/node 钉值。docker/git 的 sha 取现场值，**Owner 要在 A 的输出里核对它们**。
+  5. 检查主机钉值，检查 resident 清单钉的是本提交的文件，检查运行目录，检查 resident 安装计划。
+- **B**：读本节点私钥签名，不打印。
+  1. `sign-first-qualification.mjs`：每份 policy 和 payload 都必须与模板节点同角色的文件相同，只允许本节点值、本 record 值和派生重钉的 Source 钉值不同；keyId 和 runtimeId 必须等于 config 的值；与模板相同的钥被拒绝。
+  2. 依次运行 `verify-signed-r4`，建立运行目录 `workspaces/` 和 `runs/`（root，0755），`clued-ci-install-source-v2` package/plan/apply，`verify-source-v2`（同时确认没有 Source v1）。
+  3. 装 resident，准备角色镜像（见第 5 步），装升级工具，采用第 1 代，写 version facts，最后运行 `verify-resident-linux`。
+- **目录权限**：`/etc`、`/opt`、`/var/lib` 下的 `clued-independent-ci` 父目录按设计为 root:root 0700，与模板节点相同，脚本不改。
+- **续跑**：每一步做过的只核对，失败的一步可以重跑，重跑 B 即可续跑。
+- **重启**：如果需要重启，**只能**在 Windows 上运行 `wsl -t <D>`，然后再跑一次 B。绝不能用 `wsl --shutdown`，也不要动其他发行版。
 
 ## 9. 历史
 

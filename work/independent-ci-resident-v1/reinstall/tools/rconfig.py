@@ -109,6 +109,15 @@ def need_installed_linux(cfg):
     need(li['installedRoles'] is not None and all(v is not None for v in li['host'].values()), 'NODE_HAS_NO_INSTALLED_LINUX_CI')
 
 
+def need_first_install_linux(cfg):
+    """linux/first-install.py: a node without a Linux CI yet (no installed roles, no Source v1), whose toolchain node and new result key
+    are known (linux.host), signing with its own signer (the public half of that key, same SHA-256)."""
+    li, sg = cfg['linux'], cfg['signer']
+    need(li['installedRoles'] is None and li['host']['v1SourceHead'] is None, 'NODE_HAS_AN_INSTALLED_LINUX_CI')
+    need(li['host']['toolchainNodeSha256'] is not None and li['host']['resultPublicKeySha256'] is not None, 'FIRST_INSTALL_NEEDS_THE_NODES_HOST_FACTS')
+    need(sg is not None and hashlib.sha256(sg['publicKeyPem'].encode('ascii')).hexdigest() == li['host']['resultPublicKeySha256'], 'FIRST_INSTALL_SIGNER_NOT_THE_NODES_RESULT_KEY')
+
+
 def canonical(v):
     return json.dumps(v, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
 
