@@ -149,6 +149,7 @@ r7 那次三回被拒，都能被预演提前抓到，`test/test_rehearse.py` �
 ## 8c. 新节点的 Linux 首装（Z1，各节点通用）
 
 装之前先核对这个节点的 CI 连接建在 clued 项目下（`docs/maintenance/independent-ci.md`“连接要绑对项目”）。建错项目时角色探测一直报 `ROLE_PROBE_CONNECTION_UNAUTHORIZED`，换 token 或标角色都没用。
+
 新节点 = **填一份 config + 现场跑三条命令 + Windows 上跑四条命令**。不改代码，不新增审核，不跑 CI。代码里没有任何节点值：keyId、runtimeId、公钥、docker/git/node 的 sha、发行版、各个 ref，全部来自 config 和现场回传的事实文件。主机资格从一个模板节点已审、已签的 roles-v3 派生（Owner 决定：`hostQualificationRef` 指向这条 Decision）。
 
 **1. 填 config。** 把 `config/new-node.example.json` 复制为 `<node>.json`，填入：
