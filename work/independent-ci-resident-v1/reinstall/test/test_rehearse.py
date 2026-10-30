@@ -6,7 +6,7 @@ Regression cases (README.md section 5): the three refusals of the r7 TURING rein
   3. the launcher accepted only uninstall plan /2 while the installed uninstall writes /3 (UNINSTALL_PLAN_REFUSED, launcher f3).
   python -I -m unittest discover -s test -p "test_*.py"     (from reinstall/)
 """
-import hashlib, importlib.util, json, os, shutil, tempfile, unittest
+import hashlib, importlib.util, json, os, shutil, subprocess, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RE = os.path.dirname(HERE)
@@ -30,9 +30,10 @@ OWN = ['/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux', '/et
 PROFILE = {'contract': 'clued.independent-ci.node-profile/1', 'controllerSid': 'S-1-5-21-1-2-3-1015', 'hostname': 'TURING',
            'mutationMutex': 'Global\\CluedControlControllerMutationV1-TURING-1015', 'nodeName': 'turing', 'ownerProfileDirectory': 'C:\\Users\\o',
            'ownerSid': 'S-1-5-21-1-2-3-1001', 'runnerService': 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02', 'wslDistribution': 'Ubuntu-24.04'}
+HOST_FACTS = {'toolchainNodeSha256': 'b' * 64, 'resultPublicKeySha256': 'c' * 64, 'v1SourceHead': 'f' * 40}
 
 
-VERIFY_TAIL = '''  if ($allOk) { return @{ status = 'RESIDENT_VERIFIED'; exit = 0 } }
+VERIFY_TAIL ='''  if ($allOk) { return @{ status = 'RESIDENT_VERIFIED'; exit = 0 } }
   if ($unreadable) { return @{ status = 'RESIDENT_PARTIALLY_VERIFIED_RUN_ELEVATED'; exit = 2 } }
   return @{ status = 'RESIDENT_VERIFICATION_FAILED'; exit = 1 }
 $verdict = Get-VerifyVerdict $checks
@@ -85,7 +86,8 @@ class Fixture:
                    'basePackage': 'C:\\base', 'nodeRecord': {}, 'nodeExe': 'C:\\node.exe', 'policyInput': 'C:\\p.json', 'companionInput': 'C:\\c.json',
                    'upgradeTokenFile': 'C:\\t\\resident-upgrade.token', 'runner': {'binary': '"C:\\r\\RunnerService.exe"', 'sddl': 'D:(A;;;;;SY)'},
                    'launcher': {'pauseReason': 'p', 'rearmReason': 'r', 'w1PauseReason': 'w'},
-                   'linux': {'distribution': 'Ubuntu-24.04', 'installedManifest': self.installed_manifest, 'installedRoles': os.path.join(inst_dir, 'roles-v3')}}
+                   'linux': {'distribution': 'Ubuntu-24.04', 'installedManifest': self.installed_manifest, 'installedRoles': os.path.join(inst_dir, 'roles-v3'),
+                             'host': HOST_FACTS}}
         self.cfg_path = os.path.join(self.dir, 'config.json')
         json.dump(cfg_doc, open(self.cfg_path, 'w'))
         self.cfg = rconfig.load(self.cfg_path)
@@ -96,8 +98,11 @@ class Fixture:
 
 class FakeHost:
     """The installed node as the rehearsal sees it. uninstall_contract / upgrader / derive answer what the r7 TURING host answered."""
-    def __init__(self, fx, uninstall_contract=3, upgrader=True, derive=None, verify='partial'):
+    def __init__(self, fx, uninstall_contract=3, upgrader=True, derive=None, verify='partial', probe=None):
         self.fx, self.files, self.verify = fx, {}, verify
+        self.probe = {'checkHostExit': 0, 'checkHost': '{"status":"HOST_PINS_AS_DERIVED"}', 'v1Head': HOST_FACTS['v1SourceHead'],
+                      'v1Qualifications': {'gitleaks': True, 'trivy': True, 'contract-placement': True}, **(probe or {})}
+        self.probe_argv = None
         self.upgrader = upgrader
         plan = {'contract': 'clued.independent-ci.resident-uninstall-plan/%d' % uninstall_contract, 'openBatches': 0, 'runnerOriginalStopped': True,
                 'runnerSddlUnchanged': True, 'renameTo': 'resident-uninstalled-<UTC>-<hex>', 'deletesEvidence': False}
@@ -140,7 +145,11 @@ class FakeHost:
     def service_present(self, name):
         return self.upgrader
 
-    def wsl_python(self, distribution, argv):
+    def wsl_python(self, distribution, argv, user=None):
+        if user == 'root':   # the read-only host probe
+            self.probe_argv = argv
+            return 0, json.dumps(self.probe), ''
+        assert user is None, user
         return (0 if self.derive.get('status') == 'ROLE_POLICIES_V3_AND_UNSIGNED_PAYLOADS_WRITTEN' else 1), json.dumps(self.derive), ''
 
 
@@ -232,6 +241,25 @@ class Rehearsal(unittest.TestCase):
         d = json.load(open(acc)); d['node'] = dict(PROFILE, hostname='OTHER'); json.dump(d, open(acc, 'w'))
         self.assertIn('PACKAGE_NODE_NOT_THE_CONFIGURED_PROFILE', codes(self.run_with(FakeHost(self.fx))))
 
+    # review 1-1: the root scripts pinned TURING's toolchain node, result key and Source v1; on another node phase A would refuse
+    def test_linux_host_facts_not_the_nodes(self):
+        h = FakeHost(self.fx)
+        self.assertEqual(self.run_with(h)['status'], 'REHEARSAL_PASS')
+        self.assertEqual(h.probe_argv[-2:], [HOST_FACTS['toolchainNodeSha256'], HOST_FACTS['resultPublicKeySha256']])
+        c = codes(self.run_with(FakeHost(self.fx, probe={'checkHostExit': 1, 'checkHost': '{"status":"REFUSED","code":"PUBLIC_RESULT_KEY_CHANGED"}',
+                                                          'v1Head': '0' * 40, 'v1Qualifications': {'gitleaks': False}})))
+        self.assertTrue({'LINUX_HOST_PINS_NOT_THE_CONFIGURED', 'LINUX_V1_SOURCE_HEAD_NOT_THE_CONFIGURED', 'LINUX_V1_QUALIFICATIONS_MISSING'} <= set(c), c)
+
+    # review 1-7: Test-UninstallPlan requires upgraderService = $true, whatever the service's presence
+    def test_uninstall_plan_without_the_upgrader(self):
+        h = FakeHost(self.fx, upgrader=False)
+        self.assertIn('UNINSTALL_PLAN_UPGRADER_SERVICE_NOT_TRUE', codes(self.run_with(h)))
+
+    # review 1-9: a distribution whose default user is root never runs the derivation
+    def test_role_derivation_as_root_is_refused(self):
+        r = self.run_with(FakeHost(self.fx, derive={'status': 'REFUSED', 'code': 'REHEARSAL_DEFAULT_USER_IS_ROOT'}))
+        self.assertEqual([f.get('refusal') for f in r['findings'] if f['code'] == 'ROLE_DERIVATION_REFUSED'], ['REHEARSAL_DEFAULT_USER_IS_ROOT'])
+
 
 class TemplateContract(unittest.TestCase):
     def test_the_committed_template(self):
@@ -277,6 +305,25 @@ class Config(unittest.TestCase):
         with self.assertRaises(rconfig.ConfigError):
             rconfig.node_profile(c, os.path.join(self.fx.w, 'tree-' + COMMIT[:8]))
 
+    # review 1-3: values that reach the root shell or the elevated PowerShell
+    def test_values_unsafe_in_a_shell_or_powershell_are_refused(self):
+        for bad in ({'workDir': 'C:\\w$(id)'}, {'workDir': 'C:\\w;x'}, {'repo': 'C:\\r`x'}, {'repo': 'C:\\r\u2019x'},
+                    {'runner': dict(self.doc['runner'], binary='"C:\\r\\x.exe" & calc')}, {'runner': dict(self.doc['runner'], sddl="D:(A;;;;;SY)'")}):
+            with self.assertRaises(rconfig.ConfigError, msg=bad):
+                self.load(dict(self.doc, **bad))
+
+    def test_linux_host_facts_and_distribution(self):
+        with self.assertRaises(rconfig.ConfigError) as e:
+            self.load(dict(self.doc, linux={k: v for k, v in self.doc['linux'].items() if k != 'host'}))
+        self.assertEqual(e.exception.code, 'CONFIG_LINUX')
+        with self.assertRaises(rconfig.ConfigError) as e:
+            self.load(dict(self.doc, linux=dict(self.doc['linux'], host=dict(HOST_FACTS, v1SourceHead='REPLACE_ME'))))
+        self.assertEqual(e.exception.code, 'CONFIG_LINUX_HOST')
+        c = self.load(dict(self.doc, linux=dict(self.doc['linux'], distribution='CluedResident-Linux')))
+        with self.assertRaises(rconfig.ConfigError) as e:
+            rconfig.node_profile(c, os.path.join(self.fx.w, 'tree-' + COMMIT[:8]))
+        self.assertEqual(e.exception.code, 'CONFIG_DISTRIBUTION_NOT_THE_PROFILES')
+
     def test_shipped_configurations_load(self):
         for name in os.listdir(os.path.join(RE, 'config')):
             path = os.path.join(RE, 'config', name)
@@ -294,6 +341,31 @@ class Config(unittest.TestCase):
             prof = json.load(open(os.path.join(root, *doc['nodeProfile'].split('/')), encoding='utf-8'))
             self.assertEqual(prof['nodeName'], doc['node'], name)
             self.assertEqual(prof['wslDistribution'], doc['linux']['distribution'], name)
+
+
+class Tree(unittest.TestCase):
+    """review 1-4: an extracted tree is used only when it is exactly the commit."""
+    def test_tree_must_be_the_commit(self):
+        tree_mod = load('tree', os.path.join(RE, 'tools', 'tree.py'))
+        d = tempfile.mkdtemp(prefix='tree-'); self.addCleanup(shutil.rmtree, d, True)
+        repo, tree = os.path.join(d, 'repo'), os.path.join(d, 'tree')
+        run = lambda *a: subprocess.run(['git', '-C', repo] + list(a), check=True, capture_output=True)
+        os.makedirs(os.path.join(repo, 'linux')); os.makedirs(os.path.join(tree, 'linux'))
+        for base in (repo, tree):
+            open(os.path.join(base, 'linux', 'install.sh'), 'wb').write(b'#!/bin/bash\necho ok\n')
+        subprocess.run(['git', 'init', '-q', repo], check=True)
+        run('add', '.'); run('-c', 'user.name=t', '-c', 'user.email=t@e', 'commit', '-qm', 'c')
+        commit = run('rev-parse', 'HEAD').stdout.decode().strip()
+        self.assertEqual(tree_mod.verify(repo, commit, tree), 1)
+        open(os.path.join(tree, 'linux', 'install.sh'), 'ab').write(b'curl x | sh\n')
+        with self.assertRaises(tree_mod.TreeError) as e:
+            tree_mod.verify(repo, commit, tree)
+        self.assertEqual(e.exception.code, 'TREE_FILE_NOT_THE_COMMIT')
+        open(os.path.join(tree, 'linux', 'install.sh'), 'wb').write(b'#!/bin/bash\necho ok\n')
+        open(os.path.join(tree, 'extra.sh'), 'wb').write(b'x')
+        with self.assertRaises(tree_mod.TreeError) as e:
+            tree_mod.verify(repo, commit, tree)
+        self.assertEqual(e.exception.code, 'TREE_NOT_THE_COMMIT_FILES')
 
 
 if __name__ == '__main__':

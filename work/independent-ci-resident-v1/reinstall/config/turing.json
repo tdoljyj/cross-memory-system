@@ -22,7 +22,12 @@
   "linux": {
     "distribution": "Ubuntu-24.04",
     "installedManifest": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\r8-work\\installed\\resident-v1-manifest.json",
-    "installedRoles": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\r8-work\\installed\\roles-v3"
+    "installedRoles": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\r8-work\\installed\\roles-v3",
+    "host": {
+      "toolchainNodeSha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12",
+      "resultPublicKeySha256": "a8bc91a25b167b2d722184b518d4771a30e28bd47dcc9efaa9e1806a5bc615c1",
+      "v1SourceHead": "f4707f34cb7e9a9bbcb6d075e0464effcb346d5d"
+    }
   },
   "secretTargetsExist": [true, true]
 }

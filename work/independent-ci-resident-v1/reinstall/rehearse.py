@@ -77,10 +77,11 @@ class Host:
     def service_present(self, name):
         return subprocess.run([SC, 'query', name], capture_output=True).returncode != 1060
 
-    def wsl_python(self, distribution, argv):
-        """python3 -I in the node's WSL distribution as the default (non-root) user, clean environment."""
-        p = subprocess.run(['wsl.exe', '-d', distribution, '--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'LANG=C', 'LC_ALL=C',
-                            '/usr/bin/python3', '-I'] + list(argv), capture_output=True, timeout=600)
+    def wsl_python(self, distribution, argv, user=None):
+        """python3 -I in the node's WSL distribution, clean environment: as the default user (the role derivation, which refuses root
+        itself), or as root for the read-only host probe (user='root')."""
+        p = subprocess.run(['wsl.exe', '-d', distribution] + (['-u', user] if user else []) + ['--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin',
+                            'LANG=C', 'LC_ALL=C', 'GIT_OPTIONAL_LOCKS=0', '/usr/bin/python3', '-I'] + list(argv), capture_output=True, timeout=600)
         return p.returncode, p.stdout.decode('utf-8', 'replace'), p.stderr.decode('utf-8', 'replace')
 
 
@@ -156,6 +157,8 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None):
             find('INSTALLED_UPGRADE_OP_RECORDED', state=plan['upgradeOpState'])
         if 'upgraderService' in plan and plan['upgraderService'] is not upgrader_present:
             find('UNINSTALL_PLAN_UPGRADER_NOT_THE_SERVICE', plan=plan['upgraderService'], service=upgrader_present)
+        if 'upgraderService' in plan and plan['upgraderService'] is not True:   # review 1-7: Test-UninstallPlan requires $true
+            find('UNINSTALL_PLAN_UPGRADER_SERVICE_NOT_TRUE', plan=plan['upgraderService'])
         for k, v in (('openBatches', 0), ('runnerOriginalStopped', True), ('runnerSddlUnchanged', True), ('deletesEvidence', False)):
             if k in plan and plan[k] != v:
                 find('UNINSTALL_PLAN_' + re.sub(r'(?<!^)(?=[A-Z])', '_', k).upper(), value=plan[k])
@@ -232,6 +235,30 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None):
         code = 'LINUX_EXTERNAL_PINS_NOT_THE_NEW_SOURCE' if 'NOT_THE_NEW_SOURCE' in p.stderr else 'LINUX_MANIFEST_NOT_THE_INSTALLED_SHAPE'
         find(code, detail=p.stderr.strip().splitlines()[-1:] if p.stderr.strip() else None)
 
+    # linuxHost (review 1-1): the host facts the root scripts pin are this node's. As root and read-only: the committed check-host.py
+    # (what phase A, B0 and B4 run) on the installed role policies with the configured pins, the Source v1 HEAD that verify-source-v2
+    # requires, and the v1 qualifications the signer reads. Nothing is written; git takes no optional locks.
+    lh = cfg['linux']['host']
+    probe = ("import json,os,subprocess,sys\n"
+             "env={'PATH':'/usr/bin:/bin','LANG':'C','LC_ALL':'C','GIT_OPTIONAL_LOCKS':'0','GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_GLOBAL':'/dev/null'}\n"
+             "p=subprocess.run(['/usr/bin/python3','-I']+sys.argv[1:5],capture_output=True,text=True,env=env)\n"
+             "g=subprocess.run(['/usr/bin/git','--git-dir=/opt/clued-independent-ci/source-first-formal-v1/.git','rev-parse','HEAD'],capture_output=True,text=True,env=env)\n"
+             "q={r:os.path.isfile('/etc/clued-independent-ci/roles/'+r+'.qualification.json') for r in ('gitleaks','trivy','contract-placement')}\n"
+             "print(json.dumps({'checkHostExit':p.returncode,'checkHost':p.stdout.strip()[-800:],'v1Head':g.stdout.strip() if g.returncode==0 else None,'v1Qualifications':q}))")
+    code, out, err = host.wsl_python(cfg['linux']['distribution'], ['-c', probe, to_wsl(os.path.join(HERE, 'linux', 'tools', 'check-host.py')), to_wsl(rd),
+                                     lh['toolchainNodeSha256'], lh['resultPublicKeySha256']], user='root')
+    hp = last_json(out) or {}
+    checks['linuxHost'] = {'exit': code, **hp, 'configured': lh, 'stderr': err[-300:]}
+    if code != 0 or not hp:
+        find('LINUX_HOST_PROBE_FAILED', exit=code)
+    else:
+        if hp.get('checkHostExit') != 0:
+            find('LINUX_HOST_PINS_NOT_THE_CONFIGURED', refusal=(last_json(hp.get('checkHost') or '') or {}).get('code'))
+        if hp.get('v1Head') != lh['v1SourceHead']:
+            find('LINUX_V1_SOURCE_HEAD_NOT_THE_CONFIGURED', installed=hp.get('v1Head'), configured=lh['v1SourceHead'])
+        if not all((hp.get('v1Qualifications') or {}).values()) or not hp.get('v1Qualifications'):
+            find('LINUX_V1_QUALIFICATIONS_MISSING', present=hp.get('v1Qualifications'))
+
     # roles: the derivation phase A runs, on the copies, as a normal user in the node's WSL distribution
     if skip_roles:
         checks['roles'] = {'skipped': True}
@@ -245,7 +272,10 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None):
             subprocess.run(['git', 'init', '-q', '--bare', '--initial-branch=accepted', bare], check=True)
             subprocess.run(['git', '-C', bare, 'fetch', '-q', '--no-tags', cfg['repo'], commit + ':refs/heads/accepted'], check=True)
         out_dir = '/tmp/clued-rehearsal-roles-' + datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + os.urandom(4).hex()
-        runner = ("import os,runpy,sys,shutil; os.geteuid=lambda:0; t=sys.argv[1]; sys.argv=sys.argv[1:]\n"
+        # review 1-9: the derivation runs as a normal user; a distribution whose default user is root is refused here, not used
+        runner = ("import os,runpy,sys,shutil\n"
+                  "if os.getuid() == 0: print('{\"status\":\"REFUSED\",\"code\":\"REHEARSAL_DEFAULT_USER_IS_ROOT\"}'); sys.exit(3)\n"
+                  "os.geteuid=lambda:0; t=sys.argv[1]; sys.argv=sys.argv[1:]\n"
                   "try: runpy.run_path(t, run_name='__main__')\nfinally: shutil.rmtree(sys.argv[sys.argv.index('--out')+1], ignore_errors=True)")
         code, out, err = host.wsl_python(cfg['linux']['distribution'], ['-c', runner, to_wsl(os.path.join(HERE, 'linux', 'tools', 'derive-roles.py')),
             '--installed', to_wsl(rd), '--old-manifest-file', to_wsl(os.path.join(rd, 'formal-source-manifest-v2.json')), '--new-manifest-file', to_wsl(record_manifest),

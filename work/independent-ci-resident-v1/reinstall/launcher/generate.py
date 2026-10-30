@@ -16,6 +16,8 @@ template.ps1.
 """
 import datetime, hashlib, json, os, re, subprocess, sys
 
+if sys.flags.optimize:   # the gates below are asserts
+    sys.exit('RUN_WITHOUT_PYTHON_-O')
 import importlib.util
 BS = chr(92)
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -29,6 +31,10 @@ FINAL = '--final' in A
 COMMIT = opt('--commit'); PKG = os.path.abspath(opt('--package') or ''); PKG_SHA = opt('--package-sha')
 assert COMMIT and re.fullmatch(r'[0-9a-f]{40}', COMMIT), 'COMMIT_40HEX_REQUIRED'
 assert PKG_SHA and re.fullmatch(r'[0-9a-f]{64}', PKG_SHA), 'PACKAGE_SHA_REQUIRED'
+# review 1-4: the rebuild and the pins read the extracted tree; it must be exactly the commit
+_tspec = importlib.util.spec_from_file_location('tree', os.path.join(HERE, '..', 'tools', 'tree.py'))
+_tree = importlib.util.module_from_spec(_tspec); _tspec.loader.exec_module(_tree)
+_tree.verify(CFG['repo'], COMMIT, os.path.join(CFG['workDir'], 'tree-' + COMMIT[:8]))
 LINUX_EVIDENCE = opt('--linux-evidence')
 TOKEN_FILE = CFG['upgradeTokenFile']   # path only: its content is never opened here
 REHEARSAL = opt('--rehearsal')
@@ -64,7 +70,9 @@ def sha(path):
 
 
 def q(s):
-    assert "'" not in s and '\n' not in s, s
+    # review 1-3: printable ASCII only (PowerShell also ends a '...' string at U+2018..U+201B), and no ASCII quote
+    if not re.fullmatch(r"[\x20-\x26\x28-\x7e]*", s):
+        sys.exit('VALUE_NOT_SAFE_IN_A_POWERSHELL_STRING %r' % s)
     return "'" + s + "'"
 
 
@@ -290,6 +298,8 @@ ledger = os.path.join(LIVE_ROOT, 'state', 'ledger')
 entries = sorted(os.listdir(ledger))
 open_entries = [e for e in entries if not os.path.exists(os.path.join(ledger, e, '90-terminal.json'))]
 terminal = [e for e in entries if e not in open_entries]
+if not terminal:   # the launcher pins a kept terminal ledger entry
+    sys.exit('NO_TERMINAL_LEDGER_ENTRY')
 newest_key = max(terminal, key=lambda e: os.path.getmtime(os.path.join(ledger, e, '90-terminal.json')))
 if halt_accepted:   # r4.1 C3: the kept ledger must hold the HALTed batch, terminal
     newest_key = halt_doc['facts']['key']
@@ -318,11 +328,17 @@ quiet['spoolRecords'] = present
 if any(re.match(r'^(d{8}|e{8})-', str(acceptance.get(k, ''))) for k in ('sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'ownerPackageAcceptanceRef',
                                                                        'publisherQualificationRef', 'ownerDecisionRef', 'ownerReceiptRef', 'installationReceiptRef')):
     refusals.append('PLACEHOLDER_OWNER_REFS_DRAFT_ONLY')
-# README section 5: no FINAL without a PASS rehearsal of exactly this package and configuration
+# README section 5: no FINAL without a PASS rehearsal of exactly this package and configuration, at most 24 hours old (review 1-8)
+def rehearsal_fresh(doc):
+    try:
+        at = datetime.datetime.strptime(doc.get('observedAt', ''), '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
+    except ValueError:
+        return False
+    return datetime.timedelta(0) <= datetime.datetime.now(datetime.timezone.utc) - at <= datetime.timedelta(hours=24)
 rehearsal_doc = json.load(open(REHEARSAL, encoding='utf-8')) if REHEARSAL else None
 if not (rehearsal_doc and rehearsal_doc.get('contract') == 'clued.independent-ci.reinstall-rehearsal/1' and rehearsal_doc.get('status') == 'REHEARSAL_PASS'
         and rehearsal_doc.get('findings') == [] and rehearsal_doc.get('packageManifestSha256') == pkg_sha and rehearsal_doc.get('commit') == COMMIT
-        and rehearsal_doc.get('configSha256') == CFG['_sha256']):
+        and rehearsal_doc.get('configSha256') == CFG['_sha256'] and rehearsal_fresh(rehearsal_doc)):
     refusals.append('FINAL_NEEDS_A_PASSING_REHEARSAL_OF_THIS_PACKAGE')
 if FINAL and refusals:
     print(json.dumps({'status': 'REFUSED', 'codes': refusals, 'quiet': quiet, 'dryRun': dry_file, 'runnerBefore': rb}, indent=1))
@@ -407,7 +423,7 @@ out = os.path.join(OUTDIR, 'run-reinstall.' + node['nodeName'] + '.' + COMMIT[:8
 write_new(out, data)
 launcher_sha = hashlib.sha256(data).hexdigest()
 # The elevated command: hash-checked bytes, run from memory, with -RunApprovedInstall (same form as r3).
-cmd = ("$env:PSModulePath='C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules'; $b=[IO.File]::ReadAllBytes('" + out + "'); "
+cmd = ("$env:PSModulePath='C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules'; $b=[IO.File]::ReadAllBytes(" + q(out) + "); "
        "$h=-join ([Security.Cryptography.SHA256]::Create().ComputeHash($b) | ForEach-Object { $_.ToString('x2') }); "
        "if ($h -cne '" + launcher_sha + "') { throw ('LAUNCHER_CHANGED ' + $h) }; & ([scriptblock]::Create([Text.Encoding]::UTF8.GetString($b))) -RunApprovedInstall\n")
 cmd_path = os.path.join(OUTDIR, 'elevated-command.' + node['nodeName'] + '.' + COMMIT[:8] + '.' + kind + '.' + GEN_UTC + '.txt')

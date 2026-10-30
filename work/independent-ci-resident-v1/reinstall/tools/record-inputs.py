@@ -71,6 +71,9 @@ for s in signers['signers']:
     s['qualificationRef'] = refs['hostQualificationRef']
 
 base_values = {k: inst[k] for k in ('appKeyId', 'appPublicKeySha256Base64', 'ciPrincipalBindingId', 'ciPrincipalRoleRef', 'ciTokenPinSha256', 'controllerNodeSha256')}
+# review 1-5: another node than the base package's never inherits its identity values; all six come from the configuration
+if node['nodeName'] != acc['node']['nodeName'] and set(cfg['nodeRecord']) != set(base_values):
+    sys.exit('NODE_RECORD_INCOMPLETE_FOR_ANOTHER_NODE %s' % sorted(set(base_values) - set(cfg['nodeRecord'])))
 node_values = {**base_values, **cfg['nodeRecord']}
 inputs = {
     'contract': 'clued.independent-ci.resident-record-inputs/2', 'repository': inst['repository'], 'sourceCommit': COMMIT, 'scope': inst['scope'],

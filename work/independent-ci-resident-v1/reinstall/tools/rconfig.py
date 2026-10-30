@@ -17,7 +17,14 @@ _UUID = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
 NODE_RECORD_SHAPES = {'appPublicKeySha256Base64': r'[A-Za-z0-9+/]{43}=', 'ciPrincipalBindingId': _UUID, 'ciPrincipalRoleRef': _UUID,
                       'ciTokenPinSha256': r'[0-9a-f]{64}', 'controllerNodeSha256': r'[0-9a-f]{64}'}
 PUBLIC_KEYS = {'upgradeTokenFile', 'secretTargetsExist', 'ciTokenPinSha256'}   # names of a path, two booleans and a public pin
-WIN_PATH = re.compile(r'^[A-Za-z]:\\[^"\'\r\n]+$')
+# review 1-3: paths reach the root shell and the elevated PowerShell; ASCII letters, digits, blank, '.', '_', '-' and '\' only
+WIN_PATH = re.compile(r'^[A-Za-z]:\\[A-Za-z0-9 ._\\-]+$')
+RUNNER_BINARY = re.compile(r'^"[A-Za-z]:\\[A-Za-z0-9 ._\\-]+\.exe"$')
+SDDL = re.compile(r'^D:[A-Z0-9();:-]+$')
+LINUX_KEYS = {'distribution', 'installedManifest', 'installedRoles', 'host'}
+# review 1-1: the node's own Linux host facts the root tools pin (were TURING constants): the toolchain node, the verify-result public
+# key and the HEAD of the installed Source v1 checkout (the signer reads that v1's qualifications)
+LINUX_HOST_SHAPES = {'toolchainNodeSha256': r'[0-9a-f]{64}', 'resultPublicKeySha256': r'[0-9a-f]{64}', 'v1SourceHead': r'[0-9a-f]{40}'}
 REASON = re.compile(r'^[a-z0-9-]{1,200}$')
 # A configuration names files; it never holds one. These shapes are what a private key, a GitHub or Supabase secret or a token looks like.
 SECRET_KEY = re.compile(r'(?i)(password|passwd|secret|private|token(?!File)|credential|apikey)')
@@ -66,11 +73,14 @@ def load(path):
         need(isinstance(v, int) and not isinstance(v, bool) and v > 0 if k == 'appKeyId' else isinstance(v, str) and re.fullmatch(NODE_RECORD_SHAPES[k], v),
              'CONFIG_NODE_RECORD_VALUE', k)
     r = cfg['runner']
-    need(isinstance(r, dict) and set(r) == {'binary', 'sddl'} and r['binary'].startswith('"') and r['sddl'].startswith('D:'), 'CONFIG_RUNNER')
+    need(isinstance(r, dict) and set(r) == {'binary', 'sddl'} and RUNNER_BINARY.match(r['binary'] or '') and SDDL.match(r['sddl'] or ''), 'CONFIG_RUNNER')
     la = cfg['launcher']
     need(isinstance(la, dict) and set(la) == {'pauseReason', 'rearmReason', 'w1PauseReason'} and all(REASON.match(v or '') for v in la.values()), 'CONFIG_LAUNCHER')
     li = cfg['linux']
-    need(isinstance(li, dict) and set(li) == {'distribution', 'installedManifest', 'installedRoles'}, 'CONFIG_LINUX')
+    need(isinstance(li, dict) and set(li) == LINUX_KEYS, 'CONFIG_LINUX')
+    lh = li['host']
+    need(isinstance(lh, dict) and set(lh) == set(LINUX_HOST_SHAPES) and all(isinstance(lh[k], str) and re.fullmatch(v, lh[k]) for k, v in LINUX_HOST_SHAPES.items()),
+         'CONFIG_LINUX_HOST')
     need(re.fullmatch(r'[A-Za-z0-9._-]{1,64}', li['distribution'] or ''), 'CONFIG_LINUX_DISTRIBUTION')
     need(all(isinstance(li[k], str) and WIN_PATH.match(li[k]) for k in ('installedManifest', 'installedRoles')), 'CONFIG_PATH_SHAPE', 'linux')
     st = cfg.get('secretTargetsExist', [True, True])
@@ -91,4 +101,5 @@ def node_profile(cfg, tree):
     with open(p, 'rb') as f:
         prof = json.loads(f.read().decode('utf-8'))
     need(prof.get('contract') == 'clued.independent-ci.node-profile/1' and prof.get('nodeName') == cfg['node'], 'NODE_PROFILE_NOT_THIS_NODE', prof.get('nodeName'))
+    need(prof.get('wslDistribution') == cfg['linux']['distribution'], 'CONFIG_DISTRIBUTION_NOT_THE_PROFILES', prof.get('wslDistribution'))   # review 1-10
     return prof, hashlib.sha256(canonical(prof).encode('utf-8')).hexdigest()

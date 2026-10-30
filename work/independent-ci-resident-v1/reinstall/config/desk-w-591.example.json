@@ -9,7 +9,9 @@
     "appKeyId": "REPLACE_WITH_THE_NODE_APP_KEY_ID_AS_A_NUMBER",
     "appPublicKeySha256Base64": "REPLACE_WITH_THE_NODE_APP_PUBLIC_KEY_FINGERPRINT",
     "ciPrincipalBindingId": "REPLACE_WITH_THE_NODE_CI_ADMISSION_BINDING_ID",
-    "ciTokenPinSha256": "REPLACE_WITH_THE_NODE_CI_ADMISSION_TOKEN_PIN"
+    "ciPrincipalRoleRef": "REPLACE_WITH_THE_NODE_CI_PRINCIPAL_ROLE_REF",
+    "ciTokenPinSha256": "REPLACE_WITH_THE_NODE_CI_ADMISSION_TOKEN_PIN",
+    "controllerNodeSha256": "REPLACE_WITH_THE_NODE_CONTROLLER_NODE_SHA256"
   },
   "nodeExe": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\package\\s34-resident-package-r1\\runtime\\node.exe",
   "policyInput": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\r4-work\\build-inputs\\policy.r4.input.json",
@@ -26,8 +28,13 @@
   },
   "linux": {
     "distribution": "CluedResident-Linux",
-    "installedManifest": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\r8-work\\installed\\resident-v1-manifest.json",
-    "installedRoles": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\r8-work\\installed\\roles-v3"
+    "installedManifest": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\desk-w-591-work\\installed\\resident-v1-manifest.json",
+    "installedRoles": "C:\\Users\\17531\\AppData\\Local\\Temp\\s34-reinstall\\desk-w-591-work\\installed\\roles-v3",
+    "host": {
+      "toolchainNodeSha256": "REPLACE_WITH_THE_NODE_TOOLCHAIN_NODE_SHA256",
+      "resultPublicKeySha256": "REPLACE_WITH_THE_NODE_VERIFY_RESULT_PUBLIC_KEY_SHA256",
+      "v1SourceHead": "REPLACE_WITH_THE_NODE_SOURCE_V1_HEAD"
+    }
   },
   "secretTargetsExist": [true, true]
 }

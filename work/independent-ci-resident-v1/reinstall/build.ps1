@@ -38,6 +38,8 @@ if (-not (Test-Path -LiteralPath $tree)) {
   & "$env:SystemRoot\System32\tar.exe" -xf $tar -C $tree; if ($LASTEXITCODE) { throw 'TAR_FAILED' }   # Windows tar: Git's tar cannot take a C:\ path
   Remove-Item -LiteralPath $tar
 }
+# review 1-4: root runs files from this tree; an existing tree-<c8> is reused only when it is exactly the commit (Git blob ids, no extra file)
+& python -I (Join-Path $Here 'tools	ree.py') $Repo $Commit $tree; if ($LASTEXITCODE) { throw 'TREE_NOT_THE_COMMIT' }
 $closure = Join-Path $tree 'work\actions-hosted-migration\independent-ci-v1\src\resident-v2\source-closure.json'
 $inputs = Join-Path $R ('record\inputs.' + $cfg.node + '.' + $kind + '.' + $c8 + '.json')
 & python -I (Join-Path $Here 'tools\record-inputs.py') $Config $tree $Commit $inputs @RefArgs; if ($LASTEXITCODE) { throw 'RECORD_INPUTS_FAILED' }
@@ -61,8 +63,12 @@ Push-Location (Join-Path $tree 'work\independent-ci-resident-v1')
 try { $b = & node tools/build-package.mjs --out $pkg --policy $pol --companion $cfg.companionInput --node $cfg.nodeExe --record $record --source-root $tree --source-files $files --fresh-install --upgrader-config $upg --linux-external-pins $pins; if ($LASTEXITCODE) { throw 'BUILD_PACKAGE_FAILED' } } finally { Pop-Location }
 $shape = & python -I (Join-Path $Here 'tools\linux-pins.py') check (Join-Path $pkg 'linux\manifest.json') $cfg.linux.installedManifest $tree
 if ($LASTEXITCODE) { throw 'LINUX_MANIFEST_NOT_THE_INSTALLED_SHAPE' }
-[IO.File]::WriteAllText((Join-Path $R ('linux-shape.' + $cfg.node + '.' + $kind + '.' + $c8 + '.json')), ($shape | Out-String))
-[IO.File]::WriteAllText((Join-Path $R ('build-package.' + $cfg.node + '.' + $kind + '.' + $c8 + '.stdout.json')), ($b | Out-String))
+function Write-New([string]$Path, [string]$Text) {   # create-only, like every other output of the toolchain
+  $f = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)
+  try { $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($Text); $f.Write($bytes, 0, $bytes.Length) } finally { $f.Dispose() }
+}
+Write-New (Join-Path $R ('linux-shape.' + $cfg.node + '.' + $kind + '.' + $c8 + '.json')) ($shape | Out-String)
+Write-New (Join-Path $R ('build-package.' + $cfg.node + '.' + $kind + '.' + $c8 + '.stdout.json')) ($b | Out-String)
 $pkgSha = ($b | ConvertFrom-Json).packageManifestSha256
 if ($PackageOnly) { if ($Final) { throw 'PACKAGE_ONLY_IS_NEVER_A_FINAL_LAUNCH' }; ([ordered]@{ status = 'PACKAGE_BUILT_NO_LAUNCHER'; node = $cfg.node; package = $pkg; packageManifestSha256 = $pkgSha } | ConvertTo-Json); return }
 # The generator rebuilds the package from these inputs into a new directory and requires the same manifest sha.

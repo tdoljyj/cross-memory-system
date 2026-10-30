@@ -1,18 +1,17 @@
 #!/usr/bin/python3.12 -I
 """r4, root on Linux, read-only, NO key (review M-2; the 10-23 HOST_PINS_CHANGED_SINCE_PHASE1 gate): before anything of the
 installed Source34 is touched, every host binary the derived role policies pin (docker, node, git) must hash to its pin, be a
-root-owned regular file not writable by group/other, the pinned node must be the toolchain node bc17c508..., the docker
-socket must be a root socket without other-access, and the public result key must be the known one (a8bc91a2...).
+root-owned regular file not writable by group/other, the pinned node must be the node's toolchain node, the docker
+socket must be a root socket without other-access, and the public result key must be the node's known one. The two pins are the
+node's own (reinstall config linux.host, review 1-1), passed by the generated scripts.
 Exit 0 and HOST_PINS_AS_DERIVED, else REFUSED with the differing values.
-  python3.12 -I check-host-r4.py <roles-in dir>
+  python3.12 -I check-host-r4.py <roles-in dir> <toolchain node sha256> <verify-result public key sha256>
 """
-import hashlib, json, os, stat, sys
+import hashlib, json, os, re, stat, sys
 
-ROLES_IN = sys.argv[1]
+ROLES_IN, NODE_SHA, PUB_SHA = sys.argv[1:4]
 NODE = '/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node'
-NODE_SHA = 'bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12'
 PUB = '/etc/clued-independent-ci/verify-result-public.pem'
-PUB_SHA = 'a8bc91a25b167b2d722184b518d4771a30e28bd47dcc9efaa9e1806a5bc615c1'
 
 
 def refuse(code, **d):
@@ -28,6 +27,8 @@ def pinned_file(p):
         return hashlib.sha256(f.read()).hexdigest()
 
 
+if not (re.fullmatch(r'[0-9a-f]{64}', NODE_SHA) and re.fullmatch(r'[0-9a-f]{64}', PUB_SHA)):
+    refuse('HOST_PIN_ARGUMENTS')
 if os.geteuid() != 0:
     refuse('ROOT_REQUIRED')
 seen = {}

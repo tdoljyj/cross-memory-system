@@ -11,16 +11,25 @@ History (r4 .. r7 on TURING, with the reviews that shaped each check): README.md
   python -I prep.py <config.json> <commit40> <new-manifest> <decision-uuid> <package-dir> <out-suffix> <in-dir-name>
                     <installed-version-facts.json> <installed-generation.json> [<rehearsal report> (required unless out-suffix draft*)]
 """
-import hashlib, json, os, re, sys
+import datetime, hashlib, json, os, re, shlex, sys
 
+if sys.flags.optimize:   # the gates below are asserts
+    sys.exit('RUN_WITHOUT_PYTHON_-O')
 import importlib.util
 HERE = os.path.dirname(os.path.abspath(__file__))
-_spec = importlib.util.spec_from_file_location('rconfig', os.path.join(HERE, '..', 'tools', 'rconfig.py'))
-rconfig = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(rconfig)
+def _load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    return mod
+rconfig = _load('rconfig', os.path.join(HERE, '..', 'tools', 'rconfig.py'))
 CFG = rconfig.load(sys.argv[1])
 R = CFG['workDir']
 COMMIT, NEW, REF, PKG, SUFFIX = sys.argv[2:7]
 assert re.fullmatch(r'[0-9a-f]{40}', COMMIT) and re.fullmatch(r'[0-9a-f]{64}', NEW) and re.fullmatch(r'[a-z0-9-]{1,20}', SUFFIX)
+assert re.fullmatch(r'[A-Za-z0-9._-]{1,64}', sys.argv[7]) and sys.argv[7] not in ('.', '..'), 'IN_DIR_NAME_SHAPE'
+DRAFT = SUFFIX.startswith('draft')
+# review 1-4: root runs the tree's Linux scripts; the tree must be exactly the commit
+_load('tree', os.path.join(HERE, '..', 'tools', 'tree.py')).verify(CFG['repo'], COMMIT, os.path.join(R, 'tree-' + COMMIT[:8]))
 # The installed Linux state, from the node's own files (copies): the Linux version facts and the generation record.
 _facts = json.load(open(sys.argv[8], encoding='utf-8'))
 _gen = json.load(open(sys.argv[9], encoding='utf-8'))
@@ -32,15 +41,14 @@ OLD_LINUX_RES_MANIFEST = _facts['manifestSha256']
 OLD_GENERATION = _facts['generation']
 OLD_PKG_SHA = _gen['packageManifestSha256']
 assert re.fullmatch(r'[0-9a-f]{40}', OLD_COMMIT) and all(re.fullmatch(r'[0-9a-f]{64}', x) for x in (OLD_MANIFEST, OLD_LINUX_RES_MANIFEST, OLD_PKG_SHA)) and type(OLD_GENERATION) is int and OLD_GENERATION >= 1
-NODE_SHA = 'bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12'
+# review 1-1: the node's own host facts (configuration linux.host), not TURING's
+NODE_SHA = CFG['linux']['host']['toolchainNodeSha256']
+PUB_SHA = CFG['linux']['host']['resultPublicKeySha256']
+V1_HEAD = CFG['linux']['host']['v1SourceHead']
 SIGN_SHA = '9ee06a93b11353b49270c774ae988060994e7a4aaae606b4736b4597c3f20aff'   # reviewed 10-21, used 10-21/10-22/10-23
-# earlier root stagings: <tools dir> <its reviewed verify-source-v2.sh sha> (10-23 stage-root:32, 10-22 stage-root, 10-21 note)
-PREV = [('/root/clued-ci-quota-p2-64ba331d/stg/tools', '6fc0b13456226117c30f7138a6e86f65f2201390f65bd437a50a18071cf0799c'),
-        ('/root/clued-ci-quota-p1-20261022/stg/tools', '19dd86e74a0cfffbdb6832a112d829149cd0a37256d7bd81901df83c757e28ac'),
-        ('/root/clued-source-v2-5417a04c/tools', '848d3d55bf10712a12f2fbddc9578ee24361dabaa3c5635e0d439b9b8c742829')]
 IN = os.path.join(R, 'linux', sys.argv[7])
 REVIEW_TOOLS = os.path.join(HERE, 'tools')   # the reviewed signer and verify-source-v2 template, committed
-VERIFY_TEMPLATE_SHA = '60c078e083478a2e' # prefix, checked below
+VERIFY_TEMPLATE_SHA = '05314df488cbeee96a3cf97c56e17e1a72de5db3e5b7c10b9752330d758c82ae'
 
 sha = lambda p: hashlib.sha256(open(p, 'rb').read()).hexdigest()
 pkg = json.load(open(os.path.join(PKG, 'package-manifest.json'), encoding='utf-8'))
@@ -54,26 +62,36 @@ assert acc['ownerReceiptRef'] == RECEIPT
 PLACEHOLDER = re.compile(r'^(d{8}|e{8})-')
 DRAFT_REFS = bool(PLACEHOLDER.match(REF) or PLACEHOLDER.match(RECEIPT) or PLACEHOLDER.match(acc['ownerDecisionRef']))
 # review r5-1: placeholder refs may only ever produce scripts named *.draft*; the scripts themselves refuse them too (below)
-assert not (DRAFT_REFS and not SUFFIX.startswith('draft')), 'FINAL_SCRIPTS_NEED_THE_REAL_OWNER_REFS'
-# README section 5: final scripts only after a PASS rehearsal of exactly this package, commit and configuration (10th argument)
-if not SUFFIX.startswith('draft'):
+assert not (DRAFT_REFS and not DRAFT), 'FINAL_SCRIPTS_NEED_THE_REAL_OWNER_REFS'
+# README section 5: final scripts only after a PASS rehearsal of exactly this package, commit and configuration (10th argument), at
+# most 24 hours old (review 1-8). Draft scripts refuse to run at all (DRAFT=1 below, review 1-2), whatever their refs.
+if not DRAFT:
     _r = json.load(open(sys.argv[10], encoding='utf-8')) if len(sys.argv) > 10 else {}
+    try:
+        _age = datetime.datetime.now(datetime.timezone.utc) - datetime.datetime.strptime(_r.get('observedAt', ''), '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
+    except ValueError:
+        _age = None
     assert (_r.get('contract') == 'clued.independent-ci.reinstall-rehearsal/1' and _r.get('status') == 'REHEARSAL_PASS' and _r.get('findings') == []
             and _r.get('packageManifestSha256') == sha(os.path.join(PKG, 'package-manifest.json')) and _r.get('commit') == COMMIT
             and _r.get('configSha256') == CFG['_sha256']), 'FINAL_SCRIPTS_NEED_A_PASSING_REHEARSAL_OF_THIS_PACKAGE'
+    assert _age is not None and datetime.timedelta(0) <= _age <= datetime.timedelta(hours=24), 'REHEARSAL_OLDER_THAN_24_HOURS'
 assert sha(os.path.join(IN, 'tools', 'clued-ci-install-source-v2')) == sha(os.path.join(PKG, 'linux', 'bin', 'clued-ci-install-source-v2'))
 import re as _re
 sign_src = os.path.join(REVIEW_TOOLS, 'sign-qualification-v2.mjs'); vt_src = os.path.join(REVIEW_TOOLS, 'verify-source-v2.template.sh')
-assert sha(sign_src) == SIGN_SHA and sha(vt_src).startswith(VERIFY_TEMPLATE_SHA), 'REVIEW_COPY_TOOLS_CHANGED'
+assert sha(sign_src) == SIGN_SHA and sha(vt_src) == VERIFY_TEMPLATE_SHA, 'REVIEW_COPY_TOOLS_CHANGED'
 vt = open(vt_src, 'rb').read().decode('utf-8')
 v2, n1 = _re.subn(r'(?m)^COMMIT=[0-9a-f]{40}$', 'COMMIT=' + COMMIT, vt); v2, n2 = _re.subn(r'(?m)^MANIFEST_SHA=[0-9a-f]{64}$', 'MANIFEST_SHA=' + NEW, v2)
-assert n1 == 1 and n2 == 1
+v2, n3 = _re.subn(r'(?m)^V1_HEAD=[0-9a-f]{40}$', 'V1_HEAD=' + V1_HEAD, v2)
+assert n1 == 1 and n2 == 1 and n3 == 1
 for name, data in (('sign-qualification-v2.mjs', open(sign_src, 'rb').read()), ('verify-source-v2.sh', v2.encode('utf-8'))):
     p = os.path.join(IN, 'tools', name)
     if os.path.exists(p):
         assert open(p, 'rb').read() == data, ('INPUT_DIFFERS', name)
     else:
         open(p, 'xb').write(data)
+# the root-side tools assemble.py copied are the committed ones (an older copy would still carry another node's pins)
+for src, name in (('check-host.py', 'check-host-r4.py'), ('verify-signed.mjs', 'verify-signed-r4.mjs'), ('derive-roles.py', 'derive-roles-r7.py')):
+    assert sha(os.path.join(IN, 'tools', name)) == sha(os.path.join(REVIEW_TOOLS, src)), ('TOOL_NOT_THE_COMMITTED_ONE', name)
 # r5c: the package's upgrade tool files, the tree's install-resident-linux.sh and verify-resident-linux.sh, the package hash
 PKG_SHA = sha(os.path.join(PKG, 'package-manifest.json'))
 LINUX_RES_MANIFEST = pkg['linux']['manifestSha256']
@@ -109,7 +127,7 @@ files = ['tools/install-resident-linux.sh', 'tools/uninstall-resident-linux.sh']
 for f in files:
     assert b'\r' not in open(os.path.join(IN, *f.split('/')), 'rb').read(), ('CR', f)
 sums = ''.join(f'{sha(os.path.join(IN, *f.split("/")))}  {f}\n' for f in files)
-W = '/mnt/c/' + IN[3:].replace('\\', '/')
+W = shlex.quote('/mnt/' + IN[0].lower() + '/' + IN[3:].replace('\\', '/'))   # review 1-3: quoted; the path shape is checked by rconfig
 BASE = '/root/clued-ci-reinstall-' + COMMIT[:8]
 CI = 'work/actions-hosted-migration/independent-ci-v1'
 COMMON = f"""set -euo pipefail
@@ -122,6 +140,9 @@ for v in BASH_ENV ENV NODE_OPTIONS NODE_PATH NODE_EXTRA_CA_CERTS LD_PRELOAD LD_L
 done
 export PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_OPTIONAL_LOCKS=0 GIT_NO_REPLACE_OBJECTS=1 GIT_TERMINAL_PROMPT=0
 umask 077
+# review 1-2: scripts generated without a passing rehearsal (out-suffix draft*) are for reading only and never run
+DRAFT={int(DRAFT)}
+[ "$DRAFT" = 0 ] || refuse DRAFT_SCRIPTS_ARE_FOR_REVIEW_ONLY
 W={W}
 BASE={BASE}
 STG=$BASE/stg
@@ -146,6 +167,7 @@ BACKUP_PATHS='/var/lib/clued-independent-ci/resident /opt/clued-independent-ci/r
 UPG=/opt/clued-independent-ci/upgrade-v1
 NODE=/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node
 NODE_SHA={NODE_SHA}
+PUB_SHA={PUB_SHA}
 SIGN_SHA={SIGN_SHA}
 PY=/usr/bin/python3.12
 CLEAN="/usr/bin/env -i PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C GIT_NO_REPLACE_OBJECTS=1"
@@ -289,7 +311,7 @@ echo "{{\\"status\\":\\"ROOT_STAGING_VERIFIED\\",\\"staging\\":\\"$STG\\",\\"sou
 $CLEAN $PY -I "$STG/tools/derive-roles-r7.py" --installed /etc/clued-independent-ci/roles-v3 --old-manifest-file /etc/clued-independent-ci/formal-source-manifest-v2.json --new-manifest-file "$STG/record/source-manifest.json" --src "$STG/src.git" --commit "$COMMIT" --source-acceptance-ref "$NEW_REF" --host-acceptance-ref "$NEW_REF" --out "$STG/roles-in" > "$STG/derive.stdout.json" || {{ cat "$STG/derive.stdout.json"; refuse DERIVE_FAILED; }}
 cat "$STG/derive.stdout.json"
 # M-2: the host binaries the derived policies pin, the toolchain node, the docker socket and the public key, as on 10-23
-$CLEAN $PY -I "$STG/tools/check-host-r4.py" "$STG/roles-in" > "$STG/host-A.stdout.json" || {{ cat "$STG/host-A.stdout.json"; refuse HOST_PINS_CHANGED; }}
+$CLEAN $PY -I "$STG/tools/check-host-r4.py" "$STG/roles-in" "$NODE_SHA" "$PUB_SHA" > "$STG/host-A.stdout.json" || {{ cat "$STG/host-A.stdout.json"; refuse HOST_PINS_CHANGED; }}
 cat "$STG/host-A.stdout.json"
 # r7 (review BLOCKER-1): the new resident manifest pins the NEW commit's source-v2 files (phase B installs that Source before the
 # resident, whose continue-after-boot checks every pin), the toolchain node and exactly the staged resident files
@@ -355,7 +377,7 @@ bash --noprofile --norc "$STG/tools/install-resident-linux.sh" --plan "$STG/linu
 bash --noprofile --norc "$STG/tools/install-resident-linux.sh" --plan-upgrade-v1 "$STG/linux-pkg" > "$B0T/upgrade-plan.stdout.txt" || {{ cat "$B0T/upgrade-plan.stdout.txt"; refuse UPGRADE_PLAN_REFUSED; }}
 [ "$(printf '%s' "$(plan_after_uninstall "$B0T/upgrade-plan.stdout.txt")" | sha256sum | cut -d' ' -f1)" = "$UPG_PLAN" ] || {{ cat "$B0T/upgrade-plan.stdout.txt"; refuse UPGRADE_PLAN_NOT_AS_GENERATED; }}
 quiet_and_installed
-$CLEAN $PY -I "$STG/tools/check-host-r4.py" "$STG/roles-in" > "$STG/host-B0.stdout.json" || {{ cat "$STG/host-B0.stdout.json"; refuse HOST_PINS_CHANGED; }}
+$CLEAN $PY -I "$STG/tools/check-host-r4.py" "$STG/roles-in" "$NODE_SHA" "$PUB_SHA" > "$STG/host-B0.stdout.json" || {{ cat "$STG/host-B0.stdout.json"; refuse HOST_PINS_CHANGED; }}
 # B1 [PRIVATE KEY]: sign the three qualifications v2 (the tool reads the key itself, adds only qualifiedAt, verifies, writes create-only)
 $CLEAN "$NODE" "$STG/tools/sign-qualification-v2.mjs" --in "$STG/roles-in" --out "$STG/roles-signed" > "$STG/sign.stdout.json" || {{ cat "$STG/sign.stdout.json"; refuse SIGNING_FAILED; }}
 grep -q QUALIFICATIONS_V2_SIGNED "$STG/sign.stdout.json" || refuse SIGNING_FAILED
@@ -371,7 +393,7 @@ grep -q LINUX_SOURCE_V2_PACKAGE_WRITTEN "$STG/package.stdout.json" || refuse PAC
 # B4 (L1): quiet, host pins and every path checked BEFORE the first rename (minor 5); then move the Source34 Linux Source v2 aside,
 # never delete (10-23: *.superseded-<old8>-<tag>-<UTC>)
 quiet_and_installed
-$CLEAN $PY -I "$STG/tools/check-host-r4.py" "$STG/roles-in" > "$STG/host-B4.stdout.json" || {{ cat "$STG/host-B4.stdout.json"; refuse HOST_PINS_CHANGED; }}
+$CLEAN $PY -I "$STG/tools/check-host-r4.py" "$STG/roles-in" "$NODE_SHA" "$PUB_SHA" > "$STG/host-B4.stdout.json" || {{ cat "$STG/host-B4.stdout.json"; refuse HOST_PINS_CHANGED; }}
 S=superseded-${{OLD_COMMIT:0:8}}-r5c2-$(date -u +%Y%m%dT%H%M%SZ)
 P4="/opt/clued-independent-ci/source-v2 /etc/clued-independent-ci/formal-source-manifest-v2.json /etc/clued-independent-ci/roles-v3 /var/lib/clued-independent-ci/resident/source-v2-install-receipt.json"
 for p in $P4; do [ -e "$p" ] || refuse "MOVE_ASIDE_SOURCE_MISSING:$p"; [ ! -e "$p.$S" ] || refuse "MOVE_ASIDE_TARGET_EXISTS:$p.$S"; done

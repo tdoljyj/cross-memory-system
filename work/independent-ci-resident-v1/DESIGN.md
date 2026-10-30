@@ -3217,6 +3217,14 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 
 预演必须对同一个包、同一提交、同一配置得出 `REHEARSAL_PASS`，否则 final 启动器（`launcher/generate.py`）和 final 版 Linux 脚本（`linux/prep.py`）都拒绝生成。上面三次被拒各有回归测试（`reinstall/test/test_rehearse.py`）。
 
+独立审核后补上的几处：
+- root 脚本钉住的 toolchain node、结果公钥和 v1 HEAD 原是 TURING 的常量，现在取自配置 `linux.host`；预演用 root 只读运行 `check-host.py` 并核对 v1，提前抓住另一节点上第 A 步会出现的拒绝。
+- `draft*` 版 Linux 脚本本身拒绝运行。
+- 进入 root shell 和提权 PowerShell 的值都要过严格字形（shell 值经过 quote，PowerShell 只接受可打印 ASCII）。
+- 提取出的树每次使用前都与提交逐个 blob 核对。
+- 与 base 包不同的节点必须给出全部六项身份值。
+- 预演报告 24 小时内有效。
+
 **新节点**：`config/node-profile.desk-w-591.json`（取自 Note `85717e8f`）。用 `build.ps1 -PackageOnly` 只出包；首装不使用这里的重装启动器和 Linux 脚本。
 
 **不在本节**：节点身份冻结全部接受 ref（Note `45e0ed29`）；升级器调用 csc 时没有 TEMP。这两项随下一次整套重装一起做。
