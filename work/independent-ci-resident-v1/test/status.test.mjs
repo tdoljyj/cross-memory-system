@@ -16,11 +16,36 @@ test('C2 status carries observations without promoting held to ACTIVE or alterin
   assert.equal(parsed.node.mode, 'STANDBY'); assert.equal(parsed.node.probe.result, 'held');
 });
 
+test('C3 status /6: node carries name, source, mode and probe; setNode keeps the probe; /5 is read, others are refused', () => {
+  assert.equal(STATUS_CONTRACT, 'clued.independent-ci.resident-status/7');
+  const b = new StatusBoard({ clock: () => Date.parse('2026-10-29T00:00:00Z') });
+  const probe = { at: '2026-10-29T00:00:00.000Z', result: 'not-held', failures: 0, failingSince: null };
+  assert.equal(b.setNode('fixture-node', 'ab'.repeat(32), 'UNCERTAIN'), true);
+  assert.deepEqual(b.content.node, { name: 'fixture-node', source: 'abababababab', mode: 'UNCERTAIN', probe: null });
+  b.setRoleProbe('fixture-node', probe);
+  assert.equal(b.setNode('fixture-node', 'ab'.repeat(32), 'STANDBY'), true);
+  assert.deepEqual(b.content.node, { name: 'fixture-node', source: 'abababababab', mode: 'STANDBY', probe }, 'the probe stays through a mode change');
+  assert.equal(b.setNode('fixture-node', 'ab'.repeat(32), 'STANDBY'), false, 'nothing changed');
+  assert.equal(b.setNode('Bad Name', 'ab'.repeat(32), 'ACTIVE'), false);
+  assert.equal(b.setNode('fixture-node', 'ab'.repeat(32), 'LEADER'), false);
+  assert.equal(b.setNode('fixture-node', 'not-a-sha', 'ACTIVE'), true);
+  assert.equal(b.content.node.source, null, 'a source that is no sha-256 is not shown');
+  b.setNode('fixture-node', 'ab'.repeat(32), 'STANDBY');
+  const parsed = parseStatus(Buffer.from(JSON.stringify(b.snapshot())));
+  assert.deepEqual([parsed.node.name, parsed.node.source, parsed.node.mode, parsed.node.probe.result], ['fixture-node', 'abababababab', 'STANDBY', 'not-held']);
+  const { versions, ...v6 } = b.snapshot();
+  const old = { ...v6, contract: 'clued.independent-ci.resident-status/5' };
+  assert.equal(parseStatus(Buffer.from(JSON.stringify(old))).node.mode, 'STANDBY', 'the file of the executor that ran before the install');
+  for (const contract of ['clued.independent-ci.resident-status/4', 'clued.independent-ci.resident-status/8', 'x']) {
+    assert.throws(() => parseStatus(Buffer.from(JSON.stringify({ ...b.snapshot(), contract }))), { code: 'STATUS_REFUSED' }, contract);
+  }
+});
+
 test('status board: fixed shape, state since only moves on a change, outcomes newest first per head, bounded', () => {
   let now = Date.parse('2026-10-22T08:00:00Z');
   const b = new StatusBoard({ clock: () => now, pid: 7 });
   const s0 = b.snapshot();
-  assert.deepEqual(Object.keys(s0).sort(), ['backfill', 'breaker', 'changedAt', 'contract', 'current', 'executor', 'halt', 'intakePause', 'limits', 'node', 'notices', 'paused', 'pending', 'pid', 'queue', 'recent', 'train', 'writtenAt']);
+  assert.deepEqual(Object.keys(s0).sort(), ['backfill', 'breaker', 'changedAt', 'contract', 'current', 'executor', 'halt', 'intakePause', 'limits', 'node', 'notices', 'paused', 'pending', 'pid', 'queue', 'recent', 'train', 'versions', 'writtenAt']);
   assert.equal(s0.contract, STATUS_CONTRACT);
   now += 1000;
   assert.equal(b.setState('IDLE'), true);

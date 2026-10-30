@@ -6,6 +6,11 @@
     { "path": "C:\\ProgramData\\CluedIndependentCI\\formal-spool\\outgoing", "aces": ["(A;;0x1200e1;;;{RES})", "(A;OIIO;0x120089;;;{RES})"] },
     { "path": "C:\\ProgramData\\CluedIndependentCI\\formal-spool\\incoming", "aces": ["(A;;0x1200e1;;;{RES})", "(A;OIIO;0x120089;;;{RES})"] }
   ],
+  "addControllerRead": [
+    { "path": "C:\\ProgramData\\CluedIndependentCI\\resident\\broker", "aces": ["(A;;0x1200a9;;;{CTRL})"] },
+    { "path": "C:\\ProgramData\\CluedIndependentCI\\resident\\broker\\requests", "aces": ["(A;;0x1200a9;;;{CTRL})", "(A;OINPIO;0x120089;;;{CTRL})"] },
+    { "path": "C:\\ProgramData\\CluedIndependentCI\\resident\\broker\\responses", "aces": ["(A;;0x1200a9;;;{CTRL})", "(A;OINPIO;0x120089;;;{CTRL})"] }
+  ],
   "create": [
     { "path": "C:\\ProgramData\\CluedIndependentCI\\state\\v2", "sddl": "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;{CTRL})" },
     { "path": "C:\\ProgramData\\CluedIndependentCI\\state\\v2\\effects-scan", "sddl": "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;{CTRL})" },

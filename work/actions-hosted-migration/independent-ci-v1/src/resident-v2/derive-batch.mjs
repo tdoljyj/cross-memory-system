@@ -39,14 +39,21 @@ const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 
+// Step 3c-2 (design v0.5 §5.2): a train front batch's subject also names the tested commit S (`testSha`, GitHub's test
+// merge of [T, H], read live by stage 10), never equal to the head; every other subject has no such field and tests the
+// head (S = H). The field joins the batch key only when present, so every existing key stays what it was.
+const SUBJECT_KEYS = 'attempt|baseSha|createdAt|headSha|pr|repo|sourceManifestSha256';
+const SUBJECT_KEYS_FRONT = 'attempt|baseSha|createdAt|headSha|pr|repo|sourceManifestSha256|testSha';
 export function validateSubject(s, now = Date.now()) {
-  check(plain(s) && Object.keys(s).sort().join('|') === 'attempt|baseSha|createdAt|headSha|pr|repo|sourceManifestSha256', 'RESIDENT_SUBJECT_FIELDS_REQUIRED');
+  check(plain(s) && [SUBJECT_KEYS, SUBJECT_KEYS_FRONT].includes(Object.keys(s).sort().join('|')), 'RESIDENT_SUBJECT_FIELDS_REQUIRED');
   check(s.repo === REPO && Number.isSafeInteger(s.pr) && s.pr > 0 && SHA.test(s.headSha) && SHA.test(s.baseSha) && HEX64.test(s.sourceManifestSha256)
     && Number.isSafeInteger(s.attempt) && s.attempt >= 1 && s.attempt <= MAX_ATTEMPT_V2 && ISO.test(s.createdAt)
-    && Date.parse(s.createdAt) <= now + 300_000, 'RESIDENT_SUBJECT_REFUSED');
+    && Date.parse(s.createdAt) <= now + 300_000 && (!Object.hasOwn(s, 'testSha') || (SHA.test(s.testSha) && s.testSha !== s.headSha)), 'RESIDENT_SUBJECT_REFUSED');
   return s;
 }
-export const residentBatchKey = s => digest({ contract: BATCH_KEY_CONTRACT, repo: s.repo, pr: s.pr, headSha: s.headSha, baseSha: s.baseSha, sourceManifestSha256: s.sourceManifestSha256, attempt: s.attempt });
+export const subjectTestSha = s => (Object.hasOwn(s, 'testSha') ? s.testSha : s.headSha);
+export const residentBatchKey = s => digest({ contract: BATCH_KEY_CONTRACT, repo: s.repo, pr: s.pr, headSha: s.headSha, baseSha: s.baseSha, sourceManifestSha256: s.sourceManifestSha256, attempt: s.attempt,
+  ...(Object.hasOwn(s, 'testSha') ? { testSha: s.testSha } : {}) });
 
 // Pure derivation: (record docs, subject, key, id) -> file map. Tested byte-for-byte for determinism.
 export function deriveBatch({ recordDocs, subject, batchKey, batchId, now = Date.now() }) {
@@ -59,8 +66,8 @@ export function deriveBatch({ recordDocs, subject, batchKey, batchId, now = Date
   // .gitleaks.toml (hash-pinned here), never from the PR head (b29 lesson).
   const sourceCommit = record.manifest.sourceSha;
   const gitleaksTomlSha256 = record.pins.get('.gitleaks.toml');
-  // Job contract /3: the tested commit S is the head (S = H) until step 3c's train front batch brings another one.
-  const jobs = batchJobsV2({ repo: subject.repo, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: subject.headSha, sourceManifestSha256: ci, createdAt: subject.createdAt, attempt: subject.attempt });
+  // Job contract /3: the tested commit S is the head (S = H), or a train front batch's own S (step 3c-2, subjectTestSha).
+  const jobs = batchJobsV2({ repo: subject.repo, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: subjectTestSha(subject), sourceManifestSha256: ci, createdAt: subject.createdAt, attempt: subject.attempt });
   const out = {};
   const rows = [];
   for (const s of FORMAL_STAGES_V2) {
@@ -109,6 +116,9 @@ export function deriveRelayStage({ recordDocs, batchJson, roles, batchKey, batch
   const record = validateRecordV2(recordDocs, { now, required: [...Object.values(ENTRY_V2), '.gitleaks.toml'] });
   const ci = record.config.sourceManifestSha256;
   check(batch.ciSourceManifestSha256 === ci, 'RESIDENT_BATCH_RECORD_REFUSED');
+  // The hosted relay tests the head on GitHub's runners: a train front batch (S != H) never relays (design v0.5 §5.2,
+  // step 3c-2; relay-entry-v2.mjs#relaySubject refuses it too).
+  check(!Object.hasOwn(subject, 'testSha'), 'RESIDENT_RELAY_TEST_COMMIT_REFUSED');
   const jobs = batchJobsV2({ repo: subject.repo, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: subject.headSha, sourceManifestSha256: ci, createdAt: subject.createdAt, attempt: subject.attempt });
   check(plain(batch.jobs) && Object.keys(batch.jobs).length === Object.keys(jobs).length && Object.entries(jobs).every(([r, j]) => batch.jobs[r] === j.id), 'RESIDENT_BATCH_RECORD_REFUSED');
   const { files, row } = stagePackage({ record, s: RELAY_STAGE_V2, stageJobs: roles.map(r => jobs[r]), batchKey, batchId });

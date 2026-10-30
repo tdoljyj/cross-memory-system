@@ -35,6 +35,7 @@
 //     ROLE_ALREADY_ON_GITHUB: nothing posted, nothing revoked. publishPair reads both checks back before either is
 //     published (and before the green-ledger intent), so this node never leaves the pair half published because the
 //     other half is already on GitHub; a half with an unsettled journal entry skips that and keeps its reconciliation.
+import { prepareNativePublication, nativePublicationNoPostProof } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { digest } from '../proof.mjs';
 import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, CONTROL_ROLES_V2, MAX_ATTEMPT_V2, sameBatchV2 } from '../job-v2.mjs';
 import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from '../full-admission-v2.mjs';
@@ -104,6 +105,7 @@ export function factsValid(job, packet, facts, domain, now, batchClaim, { requir
 }
 function binding(job, packet, facts, authority) {
   return digest({ subject: subjectOfV2(job), claim: claimGeneration(facts.observedClaim), pathsSha256: digest(packet.paths), scope: facts.scope, executionPolicy: facts.executionPolicy,
+    ...(facts.publicationRequired ? { guarded: facts.guarded, publicationRequired: true, headAuthorizationId: facts.headAuthorizationId } : {}),
     mode: facts.mode, mergeSlot: facts.mergeSlot, mergeQueueHead: facts.mergeQueueHead, executionHandoverPending: facts.executionHandoverPending, ownerReview: facts.ownerReview,
     workflowGateFindings: facts.workflowGateFindings, claimExpiresAt: facts.claimExpiresAt, authority, definition: definitionFor(job) });
 }
@@ -112,6 +114,7 @@ function binding(job, packet, facts, authority) {
 // live before/after binding above still includes every one of them.
 function sourceBinding(job, packet, facts, authority) {
   return digest({ subject: subjectOfV2(job), claim: claimGeneration(facts.observedClaim), pathsSha256: digest(packet.paths), scope: facts.scope, executionPolicy: facts.executionPolicy,
+    ...(facts.publicationRequired ? { publicationRequired: true, headAuthorizationId: facts.headAuthorizationId } : {}),
     guarded: facts.guarded, mode: facts.mode, ownerReview: facts.ownerReview, workflowGateFindings: facts.workflowGateFindings, authority, definition: definitionFor(job),
     slot: job.role === 'control-merge-slot' ? { state: facts.mergeSlot.state, ref: facts.mergeSlot.ref, tip: facts.mergeSlot.tip, queueHead: facts.mergeQueueHead } : null });
 }
@@ -121,24 +124,25 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
   const domain = production ? 'production' : 'fixture';
   // The green ledger is required where a green is written (publishPair), not here: the merge-gate consumer only reads (review M1).
   check(TRAIN_MODES.includes(trainMode) && (greenLedger === null || typeof greenLedger?.append === 'function'), 'CONTROL_PUBLISHER_CONFIGURATION_REFUSED');
-  // Phase 2, step 3a: the live branch rules of main and GitHub's test merge of the PR (train-rules.mjs). Without the train
-  // the tested tree is the head's own (S = H). Any read that fails is a not-ready answer, never a stage failure: these
-  // facts change by themselves and the resident tries again.
+  // Phase 2, step 3a: the live branch rules of main and GitHub's test merge of the PR (train-rules.mjs). The tested tree is
+  // the tree of the job's tested commit S: the head's own when S = H, GitHub's test merge of [T, H] for a train front
+  // batch (step 3c-2, DESIGN §21.3). Any read that fails is a not-ready answer, never a stage failure: these facts change
+  // by themselves and the resident tries again.
   async function trainFacts(job) {
     let rules;
     try { const reply = await github.readBranchRules('main'); check(reply?.complete === true, RULESET_UNREADABLE); rules = rulesetFacts(reply.rules, APP_ID); }
     catch { return { reason: RULESET_UNREADABLE }; }
     const ruleset = rulesetDecision(rules, trainMode);
     if (ruleset) return { reason: ruleset, ruleset: rules };
-    let pull, head, mergeCommit = null;
+    let pull, tested, mergeCommit = null;
     try {
       pull = await github.readPullRequest(job.pr);
-      head = await github.readGitCommit(job.headSha);
+      tested = await github.readGitCommit(job.testSha);
       if (SHA.test(pull?.merge_commit_sha ?? '')) mergeCommit = await github.readGitCommit(pull.merge_commit_sha);
     } catch { return { reason: TRAIN_TEST_MERGE_NOT_READY, ruleset: rules }; }
-    if (!SHA.test(head?.tree ?? '')) return { reason: TRAIN_TEST_MERGE_NOT_READY, ruleset: rules };
-    const reason = testMergeDecision({ pull, mergeCommit, job, testTree: head.tree });
-    return { reason, ruleset: rules, testTree: head.tree, testMergeSha: reason ? null : pull.merge_commit_sha };
+    if (!SHA.test(tested?.tree ?? '') || tested.sha !== job.testSha) return { reason: TRAIN_TEST_MERGE_NOT_READY, ruleset: rules };
+    const reason = testMergeDecision({ pull, mergeCommit, job, testTree: tested.tree });
+    return { reason, ruleset: rules, testTree: tested.tree, testMergeSha: reason ? null : pull.merge_commit_sha };
   }
   // After the write: GitHub's own answer for the PR now. 'merged' when it merged exactly [T, H] with the tested tree;
   // 'mismatch' when it merged any other way (squash, rebase, other parents or tree: review M3), or when the PR is open and
@@ -165,7 +169,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
   async function boundary(job) {
     const { packet, facts } = await observe(job); factsValid(job, packet, facts, domain, clock(), batchClaim);
     record('native_check_boundary', { jobId: job.id, nativeObservationSha256: facts.observationSha256, packetSha256: digest(packet) });
-    return { facts, bindingSha256: binding(job, packet, facts, authority), sourceBindingSha256: sourceBinding(job, packet, facts, authority) };
+    return { facts, packet, bindingSha256: binding(job, packet, facts, authority), sourceBindingSha256: sourceBinding(job, packet, facts, authority) };
   }
   async function inventory(job, externalId) {
     const list = await github.readChecks(job.headSha);
@@ -235,9 +239,11 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       if (intent.existing) return { status: 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects, productionAuthorized: false };
       await journal.transition(key, 'intent', 'authorized', { nativeObservationSha256: before.facts.observationSha256 }); phase = 'authorized';
       assertLive(); check(fresh(before.facts, clock()), 'NATIVE_OBSERVATION_EXPIRED_BEFORE_WRITE');
+      const payload = { name: definitionFor(job).name, head_sha: job.headSha, status: 'completed', conclusion: 'success', external_id: externalId,
+        output: { title: 'Complete Native control and exact subject verified', summary: `Independent Native control check for ${REPO}#${job.pr} (attempt ${job.attempt}); observation sha256 ${before.facts.observationSha256}. ${before.facts.publicationRequired ? 'This observation is not scanner execution or qualification. The protected publisher attaches its Native Receipt.' : 'This is not a scanner execution, Native publication ticket, Receipt or qualification.'}` } };
+      const nativeHandle = await prepareNativePublication(github, { facts: before.facts, packet: before.packet, payload });
       await journal.transition(key, 'authorized', 'sent', { externalId, nativeObservationSha256: before.facts.observationSha256 }); phase = 'sent'; sent = true; sideEffects++;
-      const posted = await github.createCheck({ name: definitionFor(job).name, head_sha: job.headSha, status: 'completed', conclusion: 'success', external_id: externalId,
-        output: { title: 'Complete Native control and exact subject verified', summary: `Independent Native control check for ${REPO}#${job.pr} (attempt ${job.attempt}); observation sha256 ${before.facts.observationSha256}. This is not a scanner execution, Native publication ticket, Receipt or qualification.` } });
+      const posted = await github.createCheck(payload, nativeHandle);
       check(identity(posted, job, externalId) && posted.status === 'completed' && posted.conclusion === 'success', 'NATIVE_CHECK_IDENTITY_UNCONFIRMED'); known = posted;
       if (train) await ledger('posted', job, train, key, externalId, known.id);
       const after = await boundary(job); check(after.bindingSha256 === before.bindingSha256, 'NATIVE_AUTHORIZATION_BINDING_CHANGED');
@@ -251,6 +257,10 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       if (train) await ledger(written?.state === 'merged' ? 'merged' : 'settled', job, train, key, externalId, known.id, written?.state === 'merged' ? written.mergeSha : null);
       return { status: 'SETTLED', effectKey: key, checkRunId: known.id, sideEffects, productionAuthorized: production, ...(written?.state === 'merged' ? { settledMerged: true } : {}) };
     } catch (e) {
+      if (sent && !known && sideEffects === 1 && nativePublicationNoPostProof(e)?.notSent === true) {
+        await transition(key, phase, 'revoked', { reason: 'native_publication_not_sent', notSent: true, externalId });
+        return { status: 'BLOCKED', effectKey: key, reason: 'native_publication_not_sent', sideEffects: 0, productionAuthorized: false };
+      }
       if (sent && !known) { try { const m = await inventory(job, externalId); if (m.length === 1) known = m[0]; } catch { /* read-only discovery cannot prove a missing POST */ } }
       // Step 3a, rule 7: the after-write boundary refuses a PR that is no longer open. When GitHub merged it with exactly
       // [T, H] and the tested tree, the green did what it was for: SETTLED_MERGED, never revoked.

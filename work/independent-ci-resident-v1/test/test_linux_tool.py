@@ -174,5 +174,139 @@ class Archive(unittest.TestCase):
             tool.plan_archive(self.root, '../../x', 'x', [JOB], 'a' * 12)
 
 
+class Retention(unittest.TestCase):
+    """DESIGN S35: the same rule as src/retention.mjs (shared cases), the keep list, a pass, and success-archive slimming."""
+    CASES = json.loads((HERE / 'fixtures' / 'retention-cases.json').read_text(encoding='utf-8'))
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_plan_matches_every_shared_case(self):
+        for c in self.CASES['cases']:
+            entries = [{'name': e[0], 'mtimeMs': e[1], 'bytes': e[2], 'complete': True, 'isDir': True, 'links': 0, **(e[3] if len(e) > 3 else {})} for e in c['entries']]
+            p = tool.plan_retention(entries, set(c.get('keep', [])), c.get('rule', self.CASES['rule']))
+            self.assertEqual([d['name'] for d in p['deletes']], c['deletes'], c['name'])
+            self.assertEqual({'success': p['classes']['success']['refused'], 'failure': p['classes']['failure']['refused']}, c['refused'], c['name'])
+            self.assertEqual(p['deferred'], c['deferred'], c['name'])
+            self.assertEqual(p['protected']['directories'], c['protected'], c['name'])
+
+    def test_keep_list_is_exact_and_fails_closed(self):
+        owner = self.root / 'owner'
+        owner.mkdir()
+        f = owner / 'retention-keep.json'
+        # a missing file refuses (review M2); only the Owner's file, even with an empty list, allows deletion
+        self.assertEqual(tool.read_keep_list(str(f), 'linux'), {'ok': False, 'code': 'RETENTION_KEEP_LIST_MISSING'})
+        self.assertEqual(tool.read_keep_list(str(self.root / 'nowhere' / 'k.json'), 'linux')['code'], 'RETENTION_KEEP_LIST_MISSING')
+        f.write_text(json.dumps({'contract': tool.KEEP_CONTRACT, 'keep': []}))
+        self.assertEqual(tool.read_keep_list(str(f), 'linux'), {'ok': True, 'names': set()})
+        f.unlink()
+        f.write_text(json.dumps({'contract': tool.KEEP_CONTRACT, 'keep': [{'name': 'failed-a-1', 'spool': 'linux', 'ref': 'Task 4aedda54'},
+                                                                          {'name': 'archive-b', 'spool': 'windows', 'ref': 'owner'}, {'name': 'failed-c', 'spool': 'any', 'ref': 'Bug x'}]}))
+        self.assertEqual(tool.read_keep_list(str(f), 'linux')['names'], {'failed-a-1', 'failed-c'})
+        f.write_text(json.dumps({'contract': tool.KEEP_CONTRACT, 'keep': [{'name': '../etc', 'spool': 'linux', 'ref': 'x'}]}))
+        self.assertEqual(tool.read_keep_list(str(f), 'linux'), {'ok': False, 'code': 'RETENTION_KEEP_LIST_INVALID'})
+
+    def _spool(self, dirs):
+        spool = self.root / 'formal-spool'
+        (spool / 'incoming').mkdir(parents=True)
+        for i, (name, size) in enumerate(dirs):
+            (spool / name / 'sub').mkdir(parents=True)
+            (spool / name / 'sub' / 'f.bin').write_bytes(b'x' * size)
+            os.utime(spool / name, ns=(1_700_000_000_000_000_000 + i * 60_000_000_000,) * 2)
+        return spool
+
+    def test_a_pass_deletes_oldest_over_budget_and_keeps_protected_newest_and_everything_else(self):
+        spool = self._spool([('failed-a-1', 800), ('failed-a-2', 800), ('failed-a-3', 300), ('failed-a-4', 300), ('archive-b-1', 600), ('archive-b-2', 600), ('completed-b-3', 10)])
+        rule = {'classBudgetBytes': 1000, 'minKeepPerClass': 2, 'maxDeletesPerPass': 16}
+        r = tool.prune_spool(str(spool), {'ok': True, 'names': {'failed-a-1'}}, rule)
+        self.assertEqual((r['refused'], r['stopped']), (None, None))
+        self.assertEqual([d['name'] for d in r['deleted']], ['failed-a-2', 'archive-b-1'])
+        self.assertEqual(sorted(os.listdir(spool)), ['archive-b-2', 'completed-b-3', 'failed-a-1', 'failed-a-3', 'failed-a-4', 'incoming'])
+        pub = tool.public_prune(r)
+        self.assertEqual(sorted(pub['protected']), ['bytes', 'complete', 'directories'])
+        self.assertEqual(tool.prune_spool(str(spool), {'ok': False, 'code': 'RETENTION_KEEP_LIST_INVALID'}, rule)['refused'], 'RETENTION_KEEP_LIST_INVALID')
+
+    @unittest.skipUnless(hasattr(os, 'symlink') and os.name != 'nt', 'symbolic links (POSIX)')
+    def test_a_link_in_a_class_refuses_that_class_and_is_never_followed(self):
+        spool = self._spool([('failed-a-1', 800), ('failed-a-2', 800), ('failed-a-3', 800)])
+        outside = self.root / 'outside'
+        outside.mkdir()
+        (outside / 'precious').write_text('keep')
+        os.symlink(outside, spool / 'failed-a-1' / 'sub' / 'escape')
+        r = tool.prune_spool(str(spool), {'ok': True, 'names': set()}, {'classBudgetBytes': 1000, 'minKeepPerClass': 1, 'maxDeletesPerPass': 16})
+        self.assertEqual((r['classes']['failure']['refused'], r['deleted']), ('RETENTION_LINK_REFUSED', []))
+        with self.assertRaises(tool.Refused):
+            tool.remove_tree(str(spool / 'failed-a-1'))
+        self.assertEqual((outside / 'precious').read_text(), 'keep')
+
+    def test_a_directory_that_changed_after_planning_stops_the_pass(self):
+        spool = self._spool([('failed-a-1', 800), ('failed-a-2', 800), ('failed-a-3', 800)])
+
+        def remove(path):
+            (spool / 'failed-a-2' / 'sub' / 'late.bin').write_bytes(b'y')  # grows while the pass runs
+            tool.remove_tree(path)
+        r = tool.prune_spool(str(spool), {'ok': True, 'names': set()}, {'classBudgetBytes': 1000, 'minKeepPerClass': 1, 'maxDeletesPerPass': 16}, remove=remove)
+        self.assertEqual([d['name'] for d in r['deleted']], ['failed-a-1'])
+        self.assertEqual(r['stopped'], {'name': 'failed-a-2', 'code': 'RETENTION_CHANGED_SINCE_PLAN', 'partial': False})
+        self.assertTrue((spool / 'failed-a-2').is_dir())
+
+    def _batch_scene(self, with_git=True):
+        r = self.root
+        for sub in ('incoming', 'outgoing'):
+            (r / 'formal-spool' / sub).mkdir(parents=True, exist_ok=True)
+        for job in (JOB, 'd' * 64):
+            cand = r / 'workspaces' / job / 'candidate'
+            (cand / 'src').mkdir(parents=True)
+            (cand / 'src' / 'big.txt').write_bytes(b'z' * 4096)
+            if with_git:
+                (cand / '.git').mkdir()
+                (cand / '.git' / 'HEAD').write_text('a' * 40 + '\n')
+        run = r / 'runs' / f'placement-{JOB}'
+        (run / 'candidate').mkdir(parents=True)
+        (run / 'candidate' / 'f.txt').write_text('c')
+        (run / 'job.json').write_text('{}')
+        return r
+
+    def test_success_close_keeps_commit_and_manifest_instead_of_candidate_trees(self):
+        r = self._batch_scene()
+        manifest_before = tool.candidate_manifest(str(r / 'workspaces' / JOB / 'candidate'))
+        plan = tool.plan_archive(str(r), BATCH, 'success-close', [JOB, 'd' * 64], 'a' * 12)
+        self.assertTrue(plan['slimCandidates'])
+        result = tool.apply_archive(str(r), plan)
+        target = r / plan['target']
+        self.assertEqual(result['verified'], True)
+        self.assertEqual(result['slimKept'], [])
+        self.assertEqual(sorted(s['path'] for s in result['slimmed']), sorted([f'workspace-{JOB}/candidate', f'workspace-{"d" * 64}/candidate', f'run-placement-{JOB}/candidate']))
+        self.assertEqual(result['deleted'], 3)
+        self.assertFalse((target / f'workspace-{JOB}' / 'candidate').exists())
+        slim = json.loads((target / f'workspace-{JOB}' / 'candidate.slim.json').read_text())
+        self.assertEqual((slim['commitSha'], slim['manifestSha256'], slim['restoreFrom']), ('a' * 40, manifest_before['manifestSha256'], 'git'))
+        # the placement run takes its job's workspace commit; the rest of the run stays
+        run_slim = json.loads((target / f'run-placement-{JOB}' / 'candidate.slim.json').read_text())
+        self.assertEqual(run_slim['commitSha'], 'a' * 40)
+        self.assertTrue((target / f'run-placement-{JOB}' / 'job.json').exists())
+
+    def test_failure_archives_stay_complete_and_an_unknown_commit_keeps_the_tree(self):
+        r = self._batch_scene()
+        plan = tool.plan_archive(str(r), BATCH, 'formal-bridge-stage-deadline', [JOB, 'd' * 64], 'b' * 12)
+        self.assertFalse(plan['slimCandidates'] or plan['deletesAnything'])
+        result = tool.apply_archive(str(r), plan)
+        self.assertEqual((result['deleted'], result['slimmed']), (0, []))
+        self.assertTrue((r / plan['target'] / f'workspace-{JOB}' / 'candidate' / 'src' / 'big.txt').exists())
+        other = tempfile.TemporaryDirectory()
+        self.addCleanup(other.cleanup)
+        self.root = pathlib.Path(other.name)
+        r2 = self._batch_scene(with_git=False)
+        plan2 = tool.plan_archive(str(r2), BATCH, 'success-close', [JOB, 'd' * 64], 'c' * 12)
+        result2 = tool.apply_archive(str(r2), plan2)
+        self.assertEqual(result2['slimmed'], [])
+        self.assertEqual(sorted(k['code'] for k in result2['slimKept']), ['SLIM_COMMIT_UNKNOWN'] * 3)
+        self.assertTrue((r2 / plan2['target'] / f'workspace-{JOB}' / 'candidate' / 'src' / 'big.txt').exists())
+
+
 if __name__ == '__main__':
     unittest.main()

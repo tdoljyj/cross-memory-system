@@ -8,6 +8,7 @@ import { hash } from './prepare-record.mjs';
 import { HEX64, OUTCOME_CONTRACT, RELAY_STAGE_NUMBER, TRAIN_STAGE_NUMBER } from './layout.mjs';
 import { validateTrainFacts } from '../independent-control-checks-v2/train-facts.mjs';
 import { roleProbeFact } from './role-probe-run.mjs';
+import { validateRevocationFacts } from './revocation-run.mjs';
 import { RELAY_HALT_CODES, relayPlanEnding, validateRelayPlanRows } from '../hosted-relay-v1/relay-plan.mjs';
 import { sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2 } from '../admission-facts-v2.mjs';
 import { HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB, ROLE_ALREADY_ON_GITHUB_REASON } from '../published-on-github-v2.mjs';
@@ -19,7 +20,10 @@ export const SUCCESS_STATE = 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFI
 // ---- catalogue (mirrored, and cross-checked by a test, in independent-ci-resident-v1/src/classify.mjs) ----
 // Stage 1 only: Native said no. Nothing was published, nothing executed.
 export const NOT_ADMITTED_CODES = Object.freeze(['NATIVE_NOT_ADMITTED', 'OWNER_REVIEW_REQUIRED', 'PROTECTED_CHANGE_NOT_UP_TO_DATE', 'PATHS_OUTSIDE_WRITE_SET',
-  'CLAIM_NOT_CURRENT', 'TASK_CI_HEAD_CAP_REACHED', 'CLAIM_HEAD_CAP_REACHED', 'CI_BUDGET_EXHAUSTED', 'WORKFLOW_CHANGE_NOT_AUTHORIZED', 'PR_NOT_OPEN_OR_CHANGED']);
+  'CLAIM_NOT_CURRENT', 'TASK_CI_HEAD_CAP_REACHED', 'CLAIM_HEAD_CAP_REACHED', 'CI_BUDGET_EXHAUSTED', 'WORKFLOW_CHANGE_NOT_AUTHORIZED', 'PR_NOT_OPEN_OR_CHANGED',
+  // Primary/standby C3 (resident DESIGN §29): the server says this node holds no ci-admission role (admission_binding_required).
+  // Nothing is decided about the PR; the resident goes to STANDBY and releases the reservation.
+  'NODE_ROLE_NOT_HELD']);
 // Clean transient: an outside, passing condition (network, GitHub 5xx, a push between bundle and
 // scan, a precondition not yet met). Eligible for the one automatic attempt 2 when nothing was
 // published (Owner decision 1b5d3687; the resident decides eligibility, see attempts.mjs).
@@ -62,7 +66,8 @@ const DIAG = Object.freeze({ owner_review_required: 'OWNER_REVIEW_REQUIRED', own
   claim_trailer_missing: 'CLAIM_NOT_CURRENT', claim_not_found: 'CLAIM_NOT_CURRENT', claim_not_current: 'CLAIM_NOT_CURRENT', fence_superseded: 'CLAIM_NOT_CURRENT',
   claim_bound_to_other_pr: 'CLAIM_NOT_CURRENT', work_claim_execution_epoch_stale: 'CLAIM_NOT_CURRENT', task_ci_head_cap_reached: 'TASK_CI_HEAD_CAP_REACHED',
   claim_head_cap_reached: 'CLAIM_HEAD_CAP_REACHED', ci_budget_exhausted: 'CI_BUDGET_EXHAUSTED', head_budget_exhausted: 'CI_BUDGET_EXHAUSTED',
-  workflow_change_not_authorized: 'WORKFLOW_CHANGE_NOT_AUTHORIZED', workflow_runs_unavailable: 'NATIVE_ADMISSION_UNAVAILABLE' });
+  workflow_change_not_authorized: 'WORKFLOW_CHANGE_NOT_AUTHORIZED', workflow_runs_unavailable: 'NATIVE_ADMISSION_UNAVAILABLE',
+  admission_binding_required: 'NODE_ROLE_NOT_HELD' });
 // Explicit transport facts only (PR-A review MINOR 5): the publishers' defaults for an uncoded exception
 // (publication_operation_unconfirmed, *_OPERATION_UNCONFIRMED; before PR-A publication_observation_unconfirmed
 // and NATIVE_CHECK_UNCONFIRMED) are never transient, so they can never select the automatic attempt 2.
@@ -75,15 +80,21 @@ const TRANSPORT_REASONS = new Set(['full_admission_unavailable', 'full_admission
 export const githubTransientReason = r => r === 'github_transport_unconfirmed' || /^github_http_(?:429|5[0-9]{2})$/.test(r ?? '');
 const BRIDGE_TIMEOUTS = new Set(['BRIDGE_RESULT_DEADLINE', 'FORMAL_BRIDGE_STAGE_DEADLINE', 'ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED',
   'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED', 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED', 'BRIDGE_CALLBACK_DEADLINE']);
+// Refusals of the scanner issuer (bridge v4 windows-issuer.mjs, Task 576231fa): its changed-paths read refused by the
+// port itself or answered 403 by GitHub, or a remote refs collection that failed for any reason other than a transient
+// one (REMOTE_REFS_UNAVAILABLE, above). Clean and final for the attempt: never transient, never safe to re-run.
+export const ISSUER_REFUSAL_REASONS = Object.freeze(['full_admission_paths_refused', 'full_admission_github_forbidden', 'REMOTE_REFS_REFUSED']);
 const CONFIG_REASONS = new Set(['full_admission_not_configured', 'full_admission_subject_invalid', 'full_admission_source_changed', 'full_admission_clock_invalid',
   'full_admission_principal_unknown', 'full_admission_incomplete']);
 
 // Native diagnostic -> the one not-admitted code (first match in a fixed priority order). A head that is not up to
 // date with main can never pass whatever else Native says, so that code comes first (independent review of the quota
-// redesign phase 1, MINOR 1: with owner_review_required it must not become a waiting code).
+// redesign phase 1, MINOR 1: with owner_review_required it must not become a waiting code). One thing comes before even that
+// (primary/standby C3): admission_binding_required, "this node holds no ci-admission role". A node that is not on duty says
+// nothing about the PR, so no other reason may turn that answer into a burned or PR-specific one.
 export function notAdmittedCode(diagnostic) {
   const codes = Array.isArray(diagnostic?.reasonCodes) ? [...diagnostic.reasonCodes, ...(diagnostic.nativeReasonCodes ?? [])] : [];
-  for (const c of ['protected_change_not_up_to_date', 'owner_review_required', 'owner_grant_required', 'owner_grant_missing', 'owner_grant_revoked', 'owner_grant_expired',
+  for (const c of ['admission_binding_required', 'protected_change_not_up_to_date', 'owner_review_required', 'owner_grant_required', 'owner_grant_missing', 'owner_grant_revoked', 'owner_grant_expired',
     'path_outside_write_set', 'paths_outside_write_set', 'claim_trailer_missing', 'claim_not_found', 'claim_not_current', 'fence_superseded', 'claim_bound_to_other_pr',
     'work_claim_execution_epoch_stale', 'task_ci_head_cap_reached', 'claim_head_cap_reached', 'ci_budget_exhausted', 'head_budget_exhausted',
     'workflow_change_not_authorized', 'workflow_runs_unavailable', 'owner_review_unavailable']) if (codes.includes(c)) return DIAG[c];
@@ -117,6 +128,7 @@ export function outcomeFailureCode(outcome, stageNumber) {
   if (BRIDGE_TIMEOUTS.has(r)) return 'BRIDGE_TRANSPORT_TIMEOUT';
   if (TRANSPORT_REASONS.has(r)) return r.startsWith('full_admission_') || r === 'NATIVE_ADMISSION_UNAVAILABLE' ? 'NATIVE_ADMISSION_UNAVAILABLE' : 'GITHUB_TRANSIENT_UNAVAILABLE';
   if (githubTransientReason(r)) return 'GITHUB_TRANSIENT_UNAVAILABLE';
+  if (ISSUER_REFUSAL_REASONS.includes(r)) return 'STAGE_CHILD_REFUSED';
   if (CONFIG_REASONS.has(r)) return 'ADMISSION_CONFIGURATION_REFUSED';
   if (r === 'full_admission_rejected') return stageNumber === 1 ? notAdmittedCode(outcome.diagnostic) : 'BATCH_CLAIM_CHANGED';
   if (r === 'full_admission_claim_missing' || r === 'full_admission_native_changed') return stageNumber === 1 ? 'CLAIM_NOT_CURRENT' : 'BATCH_CLAIM_CHANGED';
@@ -218,6 +230,19 @@ export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha
   const trainFacts = plan.stage === TRAIN_STAGE_NUMBER && boundOutcome ? trainFactsOrNull(outcome.train) : null;
   if (plan.stage === TRAIN_STAGE_NUMBER) fact.train = trainFacts;
   if (n.ok) {
+    if (plan.stage === 12) {
+      let revocation = null;
+      try { revocation = validateRevocationFacts(boundOutcome?.revocation); } catch { /* unconfirmed */ }
+      const pending = boundOutcome?.status === 'PENDING';
+      if (!boundOutcome || boundOutcome.entryRole !== 'revocation-maintenance' || !revocation
+        || !['REVOCATION_MAINTENANCE','PENDING'].includes(boundOutcome.status)
+        || revocation.complete === pending || !Array.isArray(boundOutcome.jobIds) || boundOutcome.jobIds.length !== 1
+        || !Array.isArray(expectedJobIds) || expectedJobIds.length !== 1 || boundOutcome.jobIds[0] !== expectedJobIds[0]) return done('STAGE_OUTCOME_MISSING');
+      // Negative effects are real effects. Neither their count nor pending work
+      // may be disguised as a zero-effect role probe or shadow observation.
+      return { ...fact, state: pending ? 'REVOCATION_MAINTENANCE_PENDING_ORIGINAL_STOPPED_NO_QUALIFICATION' : SUCCESS_STATE,
+        revocation, maintenancePending: pending };
+    }
     // Stage 11: only a zero-effect bound outcome from this exact role/job can assert a role observation.
     // A generic pre-input refusal (null stage/role/jobs) remains unconfirmed and cannot become held.
     if (plan.stage === 11) {

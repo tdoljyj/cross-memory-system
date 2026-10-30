@@ -21,7 +21,7 @@ import { HEAD, BASE, tempDir, fixtureRecord, signResult } from './resident-v2-fi
 const REPO = 'tdoljyj/cross-memory-system';
 const iso = ms => new Date(ms).toISOString();
 const REFS = ['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef'];
-const jobsFor = () => batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt: 1 });
+const jobsFor = () => batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt: 1 });
 const claim = () => ({ claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000) });
 
 const timeout = () => new DOMException('The operation was aborted due to timeout', 'TimeoutError');

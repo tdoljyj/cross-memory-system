@@ -8,7 +8,8 @@
 //   node rearm-tool.mjs request-intake-resume --root <root> --reason <text> [--holder owner]
 //     (primary/standby C6, DESIGN §20: start no new batch for at most two hours; nothing running or parked is touched.
 //     Any Owner session may write these, unelevated: they go to the user-writable requests\ directory, like a pause.)
-// inspect writes nothing and needs no elevation (state is Owner-readable). The request modes write
+// inspect writes nothing and needs no elevation (state is Owner-readable); it also shows the in-place upgrade channel (DESIGN §34:
+// upgrade\current.json, upgrade\status.json, the Linux version facts), which upgrade\ lets the Owner read. The request modes write
 // exactly one small create-only JSON file into the admin-only owner\ directory and nothing else:
 // no archive, no ledger write, no rename. The service then carries the request out with its own
 // limited rights (quiescence on both hosts, rename-only archive, HALT compare-and-swap), so no file
@@ -16,17 +17,40 @@
 // in where they go (requests\, see above), never in what they may do: they only hold new batches.
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { HEX64, check } from '../src/canonical.mjs';
+import { HEX64, check, parseBoundedJson } from '../src/canonical.mjs';
 import { Ledger } from '../src/ledger.mjs';
 import { ReceiptChain } from '../src/receipts.mjs';
 import { Inbox } from '../src/inbox.mjs';
 import { ABORT_CONTRACT, DRAIN_CONTRACT, REARM_CONTRACT, RESUME_CONTRACT, validateAbortRequest } from '../src/executor.mjs';
-import { nonce, writeNew } from '../src/store.mjs';
+import { nonce, readBounded, writeNew } from '../src/store.mjs';
+import { readVersionInputs, versionsView } from '../src/status.mjs';
+import { validatePolicy } from '../src/policy.mjs';
 import { intakePauseRequest, intakeResumeRequest, readIntakePause } from '../src/intake-pause.mjs';
 
 const SID = /^S-1-5-21-\d+-\d+-\d+-\d+$/;
 
-export async function inspect({ ledger, receipts, intake = null }) {
+// The in-place upgrade channel as inspect shows it (DESIGN §34), read-only and leniently (a file that cannot be read is null):
+// the generation upgrade\current.json names, the upgrader's op (state, phase, code, the Owner's confirm page while it waits for
+// the grant), its recent endings and the generations it keeps, the Linux side's version facts, and whether both sides agree.
+export async function inspectUpgrade(root, policy = null, clock = Date.now) {
+  const { current, facts, status } = await readVersionInputs(root);
+  const view = policy ? versionsView({ current, facts, status }, { policy, now: clock() }) : null;
+  const op = status?.op && typeof status.op === 'object' ? status.op : null;
+  return {
+    generation: Number.isSafeInteger(current?.generation) ? current.generation : null,
+    packageManifestSha256: typeof current?.packageManifestSha256 === 'string' ? current.packageManifestSha256 : null,
+    linux: facts ? { generation: facts.generation ?? null, manifestSha256: facts.manifestSha256 ?? null, ciSourceManifestSha256: facts.ciSourceManifestSha256 ?? null,
+      pinsOk: facts.pinsOk === true, observedAt: facts.observedAt ?? null } : null,
+    consistent: view ? view.consistent : null,
+    op: op ? { opId: op.opId ?? null, state: op.state ?? null, phase: op.phase ?? null, phaseSince: op.phaseSince ?? null, code: op.code ?? null,
+      fromGeneration: op.fromGeneration ?? null, toGeneration: op.toGeneration ?? null, confirmUrl: view?.upgrade?.confirmUrl ?? null, pausedBy: op.pausedBy ?? null } : null,
+    recent: Array.isArray(status?.recent) ? status.recent.slice(0, 10) : [],
+    generations: Array.isArray(status?.generations) ? status.generations.slice(0, 20) : [],
+    statusWrittenAt: status?.writtenAt ?? null,
+  };
+}
+
+export async function inspect({ ledger, receipts, intake = null, upgrade = null }) {
   const halt = await ledger.halted();
   const paused = await ledger.paused();
   const head = await receipts.verify();
@@ -49,6 +73,8 @@ export async function inspect({ ledger, receipts, intake = null }) {
     // validate, which the service turns into a two-hour hold of holder `unreadable`).
     intakePause: intake,
     openBatches: open.length, abortTargets, haltedBatch: HEX64.test(key ?? '') ? await ledger.state(key) : null, receiptsHead: head,
+    // The in-place upgrade channel (inspectUpgrade; null when the caller read nothing of it).
+    upgrade,
   };
 }
 
@@ -97,7 +123,11 @@ if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`) {
     const state = path.join(values.root, 'state');
     if (positionals[0] === 'inspect') {
       const ledger = new Ledger(state, Date.now);
-      console.log(JSON.stringify(await inspect({ ledger, receipts: new ReceiptChain(path.join(state, 'receipts'), Date.now), intake: await readIntakePause(state) }), null, 2));
+      // The installed policy names what the Windows side runs; without it the upgrade view still shows the files, but no agreement.
+      let policy = null;
+      try { policy = validatePolicy(parseBoundedJson(await readBounded(path.join(values.root, 'config', 'policy.json'), 65536, 'POLICY_UNREADABLE'), 65536, 'POLICY_UNREADABLE')); } catch { policy = null; }
+      console.log(JSON.stringify(await inspect({ ledger, receipts: new ReceiptChain(path.join(state, 'receipts'), Date.now), intake: await readIntakePause(state),
+        upgrade: await inspectUpgrade(values.root, policy) }), null, 2));
     } else if (positionals[0] === 'request-rearm') {
       const file = await writeOwnerRequest(path.join(values.root, 'owner'), rearmRequest({ expectedHaltSha256: values['expected-halt-sha256'], reason: values.reason, by: values.by }));
       console.log(JSON.stringify({ status: 'REARM_REQUESTED_SERVICE_WILL_VERIFY_AND_ARCHIVE', file }));

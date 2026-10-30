@@ -14,6 +14,9 @@
   recorded (it was never modified), then rename the whole resident directory to
   resident-uninstalled-<UTC>-<hex>. Ledger, receipts, archives, inbox history, owner requests and
   install records all stay, byte for byte. The Linux half is linux/uninstall-resident-linux.sh.
+  The upgrade channel (018da927): CluedCIUpgrader is stopped first (its host ends the upgrader at a step boundary, at most 60 s) and
+  deleted with the other two; an upgrade that is RUNNING or ROLLING_BACK (upgrade\status.json) refuses the uninstall. Its journal,
+  generations, archive and token stay inside the renamed directory.
 #>
 [CmdletBinding()]
 param([switch]$Apply, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPlanSha256)
@@ -29,6 +32,17 @@ $Sc = 'C:\Windows\System32\sc.exe'
 $Runner = [string](([IO.File]::ReadAllText((Join-Path $Root 'record\acceptance.json'), (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json).node.runnerService)
 if ($Runner -cnotmatch '^actions\.runner\.tdoljyj-cross-memory-system\.clued-ci-[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?\z') { throw 'INSTALLED_NODE_PROFILE_REFUSED' }
 function Sha256Text([string]$t) { $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash([Text.Encoding]::UTF8.GetBytes($t)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() } }
+# The upgrade op the upgrader reports (upgrade\status.json, A5): only RUNNING and ROLLING_BACK have side effects in flight.
+function Get-UpgradeOpState {
+  $f = Join-Path $Root 'upgrade\status.json'
+  if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $null }
+  try {
+    $s = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json
+    $op = if (@($s.PSObject.Properties.Name) -ccontains 'op') { $s.op } else { $null }
+    if ($null -eq $op) { return $null }
+    if (@($op.PSObject.Properties.Name) -ccontains 'state') { return [string]$op.state } else { return 'unreadable' }
+  } catch { return 'unreadable' }
+}
 function ExecutorAlive {
   $h = Join-Path $Root 'state\executor.lock\holder.json'
   if (-not (Test-Path -LiteralPath $h)) { return $false }
@@ -43,8 +57,10 @@ function Get-DaclPart([string]$sd) { $t = ([string]$sd).Trim(); $i = $t.IndexOf(
 $installed = Get-Content -LiteralPath (Join-Path $Root 'install\install-receipt.json') -Raw | ConvertFrom-Json
 $qc = & $Sc qc $Runner | Out-String
 $plan = [ordered]@{
-  contract = 'clued.independent-ci.resident-uninstall-plan/2'
+  contract = 'clued.independent-ci.resident-uninstall-plan/3'   # /3 (018da927): the upgrader
   openBatches = $open.Count
+  upgraderService = [bool](Get-Service -Name 'CluedCIUpgrader' -ErrorAction SilentlyContinue)
+  upgradeOpState = (Get-UpgradeOpState)
   executorAlive = (ExecutorAlive)
   runnerOriginalStopped = ($qc -match 'C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe') -and ((& $Sc queryex $Runner | Out-String) -match 'STATE\s*:\s*1\s')
   runnerSddlUnchanged = ((Get-DaclPart (& $Sc sdshow $Runner | Out-String)) -ceq $installed.runnerSddlUnchanged)
@@ -60,6 +76,15 @@ if ($ExpectedPlanSha256 -cne $sha) { throw 'PLAN_CHANGED_SINCE_REVIEW' }
 if ($plan.openBatches -ne 0) { throw 'UNINSTALL_REQUIRES_NO_OPEN_BATCH_REARM_FIRST' }
 if (-not $plan.runnerOriginalStopped) { throw 'RUNNER_SERVICE_NOT_ORIGINAL_STOPPED' }
 if (-not $plan.runnerSddlUnchanged) { throw 'RUNNER_SDDL_CHANGED_OWNER_LOOK' }
+if (@('RUNNING', 'ROLLING_BACK', 'unreadable') -ccontains $plan.upgradeOpState) { throw 'UNINSTALL_REQUIRES_NO_RUNNING_UPGRADE' }
+
+# The upgrader first, so nothing starts an upgrade step while the services go: its host asks it to stop at a step boundary and ends its
+# job after 60 s (UpgraderServiceHost.cs); every step is journaled and is never repeated blindly.
+if ($plan.upgraderService) {
+  & $Sc stop CluedCIUpgrader | Out-Null
+  $deadline = (Get-Date).AddSeconds(120)
+  while ((& $Sc queryex CluedCIUpgrader | Out-String) -notmatch 'STATE\s*:\s*1\s') { if ((Get-Date) -gt $deadline) { throw 'UPGRADER_STILL_RUNNING_NOTHING_REMOVED' }; Start-Sleep -Seconds 2 }
+}
 
 & $Sc stop CluedCIResident | Out-Null   # the host writes STOP-REQUESTED; the executor exits between batches
 $deadline = (Get-Date).AddMinutes(10)
@@ -67,13 +92,14 @@ while (ExecutorAlive) { if ((Get-Date) -gt $deadline) { throw 'EXECUTOR_STILL_RU
 & $Sc stop CluedCISwapBroker | Out-Null
 & $Sc delete CluedCIResident | Out-Null
 & $Sc delete CluedCISwapBroker | Out-Null
+if ($plan.upgraderService) { & $Sc delete CluedCIUpgrader | Out-Null }
 Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -Confirm:$false
 # The companion runs as conhost --headless -> node (install-resident.ps1 Get-CompanionAction); ending or
 # unregistering its task ends conhost, not node. With both services stopped only the companion can still run
 # the installed node copy, so every such process is stopped before the resident directory is renamed. The companion's
 # job hosts (bin\CluedCompanionJobHost.exe, DESIGN §24) end with node's job, but asynchronously: they are waited for too.
 Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\CimCmdlets\CimCmdlets.psd1'
-$installed = @((Join-Path $Root 'runtime\node.exe'), (Join-Path $Root 'bin\CluedCompanionJobHost.exe'))
+$installed = @((Join-Path $Root 'runtime\node.exe'), (Join-Path $Root 'bin\CluedCompanionJobHost.exe'), (Join-Path $Root 'upgrader\runtime\node.exe'))
 $until = (Get-Date).AddSeconds(30)
 do {
   $left = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='node.exe' OR Name='CluedCompanionJobHost.exe'" | Where-Object { $p = [string]$_.ExecutablePath; @($installed | Where-Object { [string]::Equals($p, $_, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0 })
@@ -89,5 +115,5 @@ $hex = -join ((1..6) | ForEach-Object { '{0:x2}' -f (Get-Random -Maximum 256) })
 $target = 'C:\ProgramData\CluedIndependentCI\resident-uninstalled-' + $stamp + '-' + $hex
 [IO.Directory]::Move($Root, $target)
 $r = Join-Path $target 'install\uninstall-receipt.json'
-$f = [IO.File]::Open($r, 'CreateNew', 'Write', 'None'); try { $b = (New-Object Text.UTF8Encoding($false)).GetBytes(([ordered]@{ contract = 'clued.independent-ci.resident-uninstall-receipt/2'; planSha256 = $sha; keptAt = $target; at = [DateTimeOffset]::UtcNow.ToString('o') } | ConvertTo-Json)); $f.Write($b, 0, $b.Length) } finally { $f.Dispose() }
+$f = [IO.File]::Open($r, 'CreateNew', 'Write', 'None'); try { $b = (New-Object Text.UTF8Encoding($false)).GetBytes(([ordered]@{ contract = 'clued.independent-ci.resident-uninstall-receipt/3'; planSha256 = $sha; keptAt = $target; at = [DateTimeOffset]::UtcNow.ToString('o') } | ConvertTo-Json)); $f.Write($b, 0, $b.Length) } finally { $f.Dispose() }
 [ordered]@{ status = 'RESIDENT_UNINSTALLED_EVIDENCE_KEPT'; keptAt = $target } | ConvertTo-Json

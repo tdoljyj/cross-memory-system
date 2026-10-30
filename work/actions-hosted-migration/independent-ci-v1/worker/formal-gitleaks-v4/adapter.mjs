@@ -10,7 +10,7 @@ import {fileURLToPath} from 'node:url';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {validateJobV2 as validateJob,subjectOfV2 as subjectOf} from '../../src/job-v2.mjs';
 import {canonical,digest} from '../../src/proof.mjs';
-import {validateFormalAdmissionV2} from '../../src/admission-facts-v2.mjs';
+import {validateFormalAdmissionV2,remoteRefsReferenceTime} from '../../src/admission-facts-v2.mjs';
 import {loadQualifiedPolicyV2 as loadQualifiedPolicy,protectedPath,qualificationDeadline} from '../qualification-v2.mjs';
 import {IMAGE,SCAN_ARGS,SOURCE_PINS,WORKFLOW_PATH,REVIEWED_COMMITS,REVIEWED_HISTORY_PROOF,acceptedWorkflowSha256,prepareRequiredHistory,refsInStore,reviewedSelfTestPlan,runReviewedSelfTest,requiredScannerPlan,validateRemoteSnapshot} from './required-history/prepare.mjs';
 import {observeUnsignedContainer} from '../verify-once/verify-worker.mjs';
@@ -113,18 +113,23 @@ export function createFormalGitleaksAdapter({admissionPort,remoteRefsPort}={}){
       const before=deepFreeze(structuredClone(validateAdmission(job,await admissionPort(job))));
       // A-strict: every later admission of this run must name the same claim generation (renewal = same).
       const generation=before.batchClaimBound,again=async()=>validateAdmission(job,await admissionPort(job),Date.now(),{batchClaim:generation});
-      const remote=deepFreeze(structuredClone(await remoteRefsPort(job)));validateRemoteSnapshot(remote,job);
+      // The refs snapshot is fresh at the issuance of the bridge response that carried it, while that response is valid
+      // (protocol.mjs validateResponse, Task 576231fa), else at this moment. One reference time for all three checks of the
+      // same snapshot: the two before the run directory and prepareRequiredHistory's after it, so one that passes here can
+      // never fail there (UNCERTAIN) only because time went by.
+      const given=await remoteRefsPort(job),refsAt=remoteRefsReferenceTime(given,Date.now());
+      const remote=deepFreeze(structuredClone(given));validateRemoteSnapshot(remote,job,refsAt);
       const deadline=Math.min(Date.parse(before.claimExpiresAt),qualificationDeadline(qualification.payload));
       check(deadline>Date.now()&&!signal?.aborted,'CURRENT_AUTHORITY_EXPIRED');
       const cache=path.join(config.workspaceRoot,job.id,'.git');await protectedObjectTree(cache);
       // Clean, before the run directory: a push since the bundle is REMOTE_REFS_CHANGED_SINCE_BUNDLE.
-      await refsInStore({job,remoteSnapshot:remote,gitDirectory:cache,gitExecutable:config.gitExecutable,expectedGitSha256:config.gitExecutableSha256});
+      await refsInStore({job,remoteSnapshot:remote,gitDirectory:cache,gitExecutable:config.gitExecutable,expectedGitSha256:config.gitExecutableSha256,now:refsAt});
       run=path.join(config.runsRoot,'gitleaks-'+job.id);await fsp.mkdir(run,{mode:0o700});runCreated=true;mayHaveStarted=true;
       const nonce=randomBytes(32).toString('hex');
       await durableNew(path.join(run,'intent.json'),{contract:'clued.independent-ci.formal-gitleaks-intent/2',subject:subjectOf(job),nonce,admissionSha256:before.observationSha256,automaticRetryAllowed:false});
       const prepared=await prepareRequiredHistory({job,sourceManifestBytes,expectedSourceManifestSha256:config.sourceManifestSha256,
         trustedSourceDirectory:config.trustedSourceDirectory,gitDirectory:cache,remoteSnapshot:remote,outputDirectory:path.join(run,'history'),
-        gitExecutable:config.gitExecutable,expectedGitSha256:config.gitExecutableSha256});
+        gitExecutable:config.gitExecutable,expectedGitSha256:config.gitExecutableSha256,now:refsAt});
       // The inherited fixed self-test has a 20 minute hard ceiling. Do not start
       // it under authority that cannot cover that existing worst-case bound.
       check(deadline-Date.now()>1200000&&!signal?.aborted,'AUTHORITY_WINDOW_TOO_SHORT_FOR_FIXED_SELF_TEST');

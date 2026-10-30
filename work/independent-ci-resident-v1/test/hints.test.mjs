@@ -9,7 +9,8 @@ import { Mailbox, HINT_FILE } from '../src/mailbox.mjs';
 import { HostedHints, hintRecord, hintRole, sourceHintObserver } from '../src/hosted-hints.mjs';
 import { parseHint, HINT_MAX_BYTES } from '../src/hosted-wait.mjs';
 import { createGhReadPort } from '../src/gh-read-port.mjs';
-import { Poller, HINT_WINDOW_MS } from '../src/poller.mjs';
+import { Poller, HINT_OBSERVE_EVERY_MS, HINT_WINDOW_MS } from '../src/poller.mjs';
+import { restPolls } from './gh-rest-stub.mjs';
 import { mailboxCompanion } from '../src/service-ports.mjs';
 import { validateHintConfig } from '../src/companion.mjs';
 import { WindowsEngine } from '../src/engine-windows.mjs';
@@ -89,10 +90,14 @@ test('poller: hint mode observes each proposed head for a bounded window, a fail
   const run = async argv => argv.some(a => a.includes('/compare/')) ? { code: 0, stdout: JSON.stringify({ behind_by: 0, base: BASE }) }
     : argv.includes('api') ? { code: 0, stdout: BASE + '\n' } : { code: 0, stdout: JSON.stringify(pulls) };
   const hints = { async observe(s) { observed.push(s); if (observed.length === 1) throw new Error('boom'); } };
-  const p = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run, writeTrigger: async v => triggers.push(v), clock: () => now, hints });
+  const p = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run: restPolls(run, { main: () => BASE, pulls: () => pulls }), writeTrigger: async v => triggers.push(v), clock: () => now, hints });
   assert.equal(await p.pass(), 1);
+  now += 60_000;
   assert.equal(await p.pass(), 0, 'the trigger is proposed once');
-  assert.equal(observed.length, 2, 'observed on every pass inside the window, also after an error');
+  assert.equal(observed.length, 1, 'the 60-second poll observes a head at most every HINT_OBSERVE_EVERY_MS');
+  now += HINT_OBSERVE_EVERY_MS;
+  await p.pass();
+  assert.equal(observed.length, 2, 'observed again inside the window, also after an error');
   now += HINT_WINDOW_MS + 1;
   await p.pass();
   assert.equal(observed.length, 2, 'not after the window');

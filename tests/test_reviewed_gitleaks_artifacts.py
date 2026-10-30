@@ -8,6 +8,7 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -64,7 +65,7 @@ class ReviewedArtifactDigestTests(unittest.TestCase):
     def test_exact_record_count_and_artifact_reason(self):
         records = reviewed.parse_records(self.config)
         exact = [r for r in records if ':' + reviewed.REVIEW_DOCUMENT_PATH + ':' in r['fingerprint']]
-        self.assertEqual(len(records), 729)
+        self.assertEqual(len(records), 730)
         legacy_digest = hashlib.sha256(json.dumps(records[:484], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         self.assertEqual(legacy_digest, 'b10a7c8542f886ccce1daec04057ad5a5873ef9d75eae1643ccc879289b39172')
         prior_digest = hashlib.sha256(json.dumps(records[:491], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
@@ -150,7 +151,7 @@ class FinalEvidenceArtifactDigestTests(unittest.TestCase):
     def test_changed_registry_count_is_rejected(self):
         row = next(line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)
                    and reviewed.FINAL_EVIDENCE_COMMIT in line)
-        for changed in [self.config.replace('# clued-reviewed-count: 729', '# clued-reviewed-count: 728'),
+        for changed in [self.config.replace('# clued-reviewed-count: 730', '# clued-reviewed-count: 729'),
                         self.config.replace(row + '\n', '', 1), self.config + row + '\n']:
             with self.subTest():
                 with self.assertRaisesRegex(ValueError, 'Reviewed finding count changed'):
@@ -426,19 +427,19 @@ class SchedulingExactFixtureTests(unittest.TestCase):
 
     def test_only_three_exact_additions_preserve_every_legacy_record_byte(self):
         records = reviewed.parse_records(self.config)
-        self.assertEqual(len(records), 729)
+        self.assertEqual(len(records), 730)
         self.assertEqual(self.rows()[:726], self.rows(self.old_config))
         self.assertEqual(hashlib.sha256(('\n'.join(self.rows()[:726]) + '\n').encode()).hexdigest(),
                          reviewed.LEGACY_RECORD_LINES_SHA256)
         self.assertEqual(reviewed.tomllib.loads(self.config), reviewed.BASE_CONFIG)
         self.assertEqual(reviewed.tomllib.loads(self.config), reviewed.tomllib.loads(self.old_config))
-        self.assertEqual({r['fingerprint'] for r in records[726:]}, set(reviewed.SCHEDULING_FINDINGS))
+        self.assertEqual({r['fingerprint'] for r in records[726:729]}, set(reviewed.SCHEDULING_FINDINGS))
         self.assertEqual(sum(':private-key:' in r['fingerprint'] for r in records), 1)
         self.assertTrue(all(re.fullmatch(r'[a-f0-9]{40}:[^:]+:[^:]+:[1-9][0-9]*', r['fingerprint'])
                             for r in records))
 
     def test_commit_path_rule_line_and_classification_are_not_transferable(self):
-        for row in self.rows()[726:]:
+        for row in self.rows()[726:729]:
             value = json.loads(row[len(reviewed.PREFIX):])
             commit, path, rule, line = value['fingerprint'].split(':')
             mutations = [dict(value, fingerprint=':'.join(['0' * 40, path, rule, line])),
@@ -459,7 +460,7 @@ class SchedulingExactFixtureTests(unittest.TestCase):
                    self.config.replace(rows[0] + '\n', '', 1),
                    self.config.replace(rows[0], fourth, 1),
                    self.config.replace(rows[0], rows[0].replace(':', ': ', 1), 1),
-                   self.config.replace('# clued-reviewed-count: 729', '# clued-reviewed-count: 730') + fourth + '\n']
+                   self.config.replace('# clued-reviewed-count: 730', '# clued-reviewed-count: 731') + fourth + '\n']
         for changed in changes:
             with self.subTest(), self.assertRaises(ValueError):
                 reviewed.parse_records(changed)
@@ -523,6 +524,215 @@ class SchedulingExactFixtureTests(unittest.TestCase):
         self.assertNotIn('-----BEGIN ', text)
         self.assertNotIn('"Secret"', text)
         self.assertNotIn('"Match"', text)
+
+
+class RoleProbeExactTokenTests(unittest.TestCase):
+    FINGERPRINT = next(iter(reviewed.ROLE_PROBE_FINDINGS))
+
+    @classmethod
+    def setUpClass(cls):
+        cls.config = (ROOT / '.gitleaks.toml').read_text(encoding='utf-8')
+        cls.old_config = reviewed.run(['git', 'cat-file', 'blob',
+                                      '91288d285ab679ac731be5b03c8ae5f6dbf2d777:.gitleaks.toml'], cwd=ROOT).decode()
+        cls.blob = reviewed.run(['git', 'cat-file', 'blob',
+                                 f'{reviewed.ROLE_PROBE_COMMIT}:{reviewed.ROLE_PROBE_PATH}'], cwd=ROOT).decode()
+
+    def rows(self, text=None):
+        return [line for line in (self.config if text is None else text).splitlines()
+                if line.startswith(reviewed.PREFIX)]
+
+    def test_only_one_exact_addition_preserves_every_prior_record_byte(self):
+        records = reviewed.parse_records(self.config)
+        self.assertEqual(len(records), 730)
+        self.assertEqual(self.rows()[:729], self.rows(self.old_config))
+        self.assertEqual(hashlib.sha256(('\n'.join(self.rows()[:729]) + '\n').encode()).hexdigest(),
+                         reviewed.PRIOR_RECORD_LINES_SHA256)
+        self.assertEqual(reviewed.tomllib.loads(self.config), reviewed.tomllib.loads(self.old_config))
+        self.assertEqual([r['fingerprint'] for r in records[729:]], [self.FINGERPRINT])
+        self.assertEqual(records[729]['kinds'], ['SYNTHETIC_ROLE_PROBE_TOKEN'])
+
+    def test_commit_path_rule_line_and_classification_are_not_transferable(self):
+        row = self.rows()[729]
+        value = json.loads(row[len(reviewed.PREFIX):])
+        commit, path, rule, line = value['fingerprint'].split(':')
+        mutations = [dict(value, fingerprint=':'.join(['0' * 40, path, rule, line])),
+                     dict(value, fingerprint=':'.join([commit, 'work/independent-ci-resident-v1/test/other.test.mjs', rule, line])),
+                     dict(value, fingerprint=':'.join([commit, path, rule, '74'])),
+                     dict(value, fingerprint=':'.join([commit, path, 'private-key', line])),
+                     dict(value, kinds=['SYNTHETIC_TEST_TOKEN']), dict(value, kinds=['ARTIFACT_DIGEST'])]
+        for changed in mutations:
+            replacement = reviewed.PREFIX + json.dumps(changed, separators=(',', ':'))
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                reviewed.parse_records(self.config.replace(row, replacement, 1))
+        borrowed = self.rows()[0].replace('"kinds":["', '"kinds":["SYNTHETIC_ROLE_PROBE_TOKEN","', 1)
+        with self.assertRaisesRegex(ValueError, 'Role-probe token exception identity changed'):
+            reviewed.parse_records(self.config.replace(self.rows()[0], borrowed, 1))
+
+    def test_deleted_duplicate_or_extra_record_is_rejected(self):
+        row = self.rows()[729]
+        second = row.replace(':generic-api-key:73', ':generic-api-key:74')
+        for changed in [self.config.replace(row + '\n', '', 1).replace('count: 730', 'count: 729'),
+                        self.config.replace(row, self.rows()[728], 1),
+                        self.config.replace('count: 730', 'count: 731') + second + '\n']:
+            with self.subTest(), self.assertRaises(ValueError):
+                reviewed.parse_records(changed)
+
+    def test_actual_immutable_blob_span_and_use_proof(self):
+        reviewed.verify_role_probe_token(ROOT, self.FINGERPRINT, self.blob)
+
+    def test_wrong_blob_bytes_git_binding_or_identity_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'immutable blob changed'):
+            reviewed.verify_role_probe_token(ROOT, self.FINGERPRINT, self.blob + '\n')
+        real_run = reviewed.run
+        def route(args, *, cwd=None):
+            if args[:2] == ['git', 'rev-parse']:
+                return b'0' * 40 + b'\n'
+            return real_run(args, cwd=cwd)
+        with patch.object(reviewed, 'run', side_effect=route), self.assertRaisesRegex(ValueError, 'immutable blob changed'):
+            reviewed.verify_role_probe_token(ROOT, self.FINGERPRINT, self.blob)
+        for changed in [self.FINGERPRINT.replace(reviewed.ROLE_PROBE_COMMIT, '0' * 40),
+                        self.FINGERPRINT.replace(':73', ':74')]:
+            with self.subTest(fingerprint=changed), self.assertRaisesRegex(ValueError, 'Unreviewed role-probe token'):
+                reviewed.verify_role_probe_token(ROOT, changed, self.blob)
+
+    def test_use_checks_reject_a_changed_span_or_extra_use(self):
+        pin = dict(reviewed.ROLE_PROBE_BLOB)
+        def repinned(text):
+            data = text.encode()
+            return {'blob': hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest(),
+                    'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data)}
+        def route_for(text):
+            real_run = reviewed.run
+            def route(args, *, cwd=None):
+                if args[:2] == ['git', 'rev-parse']:
+                    return repinned(text)['blob'].encode() + b'\n'
+                return real_run(args, cwd=cwd)
+            return route
+        lines = self.blob.splitlines(keepends=True)
+        extra_use = lines[:81] + ['  console.log(token);\n'] + lines[81:]
+        sent = lines[:76] + [lines[76].replace('native.push(v);', 'native.push(v, token);')] + lines[77:]
+        self.assertNotEqual(''.join(sent), self.blob)
+        for text, reason in [(''.join(extra_use), 'test boundary changed|use changed'), (''.join(sent), 'use changed')]:
+            with self.subTest(reason=reason), patch.dict(reviewed.ROLE_PROBE_BLOB, repinned(text)), \
+                    patch.object(reviewed, 'run', side_effect=route_for(text)), self.assertRaisesRegex(ValueError, reason):
+                reviewed.verify_role_probe_token(ROOT, self.FINGERPRINT, text)
+        self.assertEqual(reviewed.ROLE_PROBE_BLOB, pin)
+
+    def test_candidate_evidence_contains_metadata_only_and_no_acceptance(self):
+        path = ROOT / 'development/contracts/context-authorization/evidence/pr937-gitleaks-role-probe-20261029.json'
+        text = path.read_text(encoding='utf-8')
+        document = json.loads(text)
+        self.assertEqual(document['schema'], 'clued.reviewed-gitleaks-exact-fixtures-candidate/1')
+        self.assertEqual(document['status'], 'CANDIDATE_NOT_ACCEPTED')
+        self.assertFalse(document['source_runtime_accepted'])
+        self.assertEqual(document['legacy_record_lines_sha256'], reviewed.LEGACY_RECORD_LINES_SHA256)
+        self.assertEqual(document['prior_record_lines_sha256'], reviewed.PRIOR_RECORD_LINES_SHA256)
+        self.assertEqual([item['fingerprint'] for item in document['findings']], [self.FINGERPRINT])
+        finding = document['findings'][0]
+        self.assertEqual((finding['blob_id'], finding['blob_sha256'], finding['blob_bytes']),
+                         (reviewed.ROLE_PROBE_BLOB['blob'], reviewed.ROLE_PROBE_BLOB['sha256'], reviewed.ROLE_PROBE_BLOB['bytes']))
+        spec = reviewed.ROLE_PROBE_FINDINGS[self.FINGERPRINT]
+        self.assertEqual((finding['span_bytes_lf'], finding['span_sha256_lf']), (spec['span_bytes'], spec['span_sha256']))
+        self.assertIsNone(re.search(r'clued_bnd_fixture[0-9]', text))
+        self.assertNotIn('"Secret"', text)
+        self.assertNotIn('"Match"', text)
+
+
+class RoleProbeSelfTestRegressionTests(unittest.TestCase):
+    """Drive the helper's real Git setup; only the detector is a wire-level mock.
+
+    The one reviewed fingerprint must grant no suppression to a new commit, another
+    path or another (Git-added) line; each of the three detections is required.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.blob = reviewed.run(['git', 'cat-file', 'blob',
+                                 f'{reviewed.ROLE_PROBE_COMMIT}:{reviewed.ROLE_PROBE_PATH}'], cwd=ROOT).decode()
+
+    def run_self_test(self, suppress=None):
+        actual_run = reviewed.subprocess.run
+        scans = []
+        docker = 'controlled-detector-wire-mock'
+
+        def result(args, code, findings):
+            return subprocess.CompletedProcess(args, code, json.dumps(findings).encode(), b'')
+
+        def finding(path, rule, line=1):
+            return {'File': path, 'RuleID': rule, 'StartLine': line,
+                    'Fingerprint': '0' * 40 + ':' + path + ':' + rule + ':' + str(line)}
+
+        def route(args, **options):
+            if args[0] != docker:
+                return actual_run(args, **options)
+            index = len(scans)
+            mount = next(value for value in args if str(value).endswith('target=/test,readonly'))
+            repo = Path(mount.split('source=', 1)[1].split(',target=', 1)[0])
+            scans.append(repo)
+            if index == suppress:
+                return result(args, 0, [])
+            rules = ['sourcegraph-access-token', 'generic-api-key']
+            scheduling = [(reviewed.SCHEDULING_TEST_PATH, 'private-key'),
+                          (reviewed.SCHEDULING_TEST_PATH, 'generic-api-key'),
+                          (reviewed.SCHEDULING_README_PATH, 'generic-api-key')]
+            if index == 0:
+                return result(args, 1, [finding('probe.txt', rule) for rule in rules])
+            if index == 1:
+                return result(args, 0, [])
+            if index == 2:
+                return result(args, 1, [finding(path, rule) for path in ['probe.txt', 'other-path.txt'] for rule in rules])
+            if index in [3, 4]:
+                prefix = '' if index == 3 else 'other-path/'
+                return result(args, 1, [finding(prefix + path, rule) for path, rule in scheduling])
+            if index in [5, 6]:
+                prefix = '' if index == 5 else 'other-path/'
+                self.assertEqual((repo / prefix / reviewed.ROLE_PROBE_PATH).read_bytes(), self.blob.encode())
+                return result(args, 1, [finding(prefix + reviewed.ROLE_PROBE_PATH, 'generic-api-key', 73)])
+            if index == 7:
+                previous = actual_run(['git', 'cat-file', '-e', 'HEAD^:' + reviewed.ROLE_PROBE_PATH],
+                                      cwd=repo, capture_output=True, check=False)
+                self.assertNotEqual(previous.returncode, 0, 'The shifted token must follow an absent parent blob')
+                diff = actual_run(['git', 'diff', '--no-ext-diff', '--unified=0', 'HEAD^', 'HEAD', '--',
+                                   reviewed.ROLE_PROBE_PATH], cwd=repo, capture_output=True, check=True).stdout
+                added, number = {}, None
+                for line in diff.splitlines():
+                    if line.startswith(b'@@'):
+                        number = int(re.search(rb'\+(\d+)', line).group(1))
+                    elif number is not None and line.startswith(b'+'):
+                        added[number] = line[1:]
+                        number += 1
+                    elif number is not None and line.startswith(b' '):
+                        number += 1
+                self.assertEqual(added.get(74), self.blob.splitlines()[72].encode(),
+                                 'The shifted token must be an actual Git-added line at 74')
+                return result(args, 1, [finding(reviewed.ROLE_PROBE_PATH, 'generic-api-key', 74)])
+            if index == 8:
+                return result(args, 1, [finding('controlled-valid-private.pem', 'private-key')])
+            self.fail('Unexpected extra detector call')
+
+        with tempfile.TemporaryDirectory(prefix='clued-role-probe-self-test-') as temporary:
+            fake_root = Path(temporary) / 'helper-temp'
+            with patch.object(reviewed.shutil, 'which', return_value=docker), \
+                    patch.object(reviewed.tempfile, 'mkdtemp', side_effect=lambda **kwargs: str(fake_root.mkdir() or fake_root)), \
+                    patch.object(reviewed.subprocess, 'run', side_effect=route), \
+                    patch.object(reviewed, '_self_test_handover_acceptance', return_value={}):
+                try:
+                    return reviewed.self_test(ROOT / '.gitleaks.toml', ''), scans
+                finally:
+                    shutil.rmtree(fake_root, ignore_errors=True)
+
+    def test_new_commit_other_path_and_added_line_are_all_detected(self):
+        report, scans = self.run_self_test()
+        self.assertEqual(len(scans), 9)
+        for key in ['role_probe_new_commit_detection', 'role_probe_different_path_detection',
+                    'role_probe_different_line_detection']:
+            self.assertIs(report[key], True, key)
+
+    def test_each_suppressed_role_probe_regression_fails_the_self_test(self):
+        for index, reason in [(5, 'suppressed in a new commit'), (6, 'suppressed at another path'),
+                              (7, 'suppressed at another line')]:
+            with self.subTest(scan=index), self.assertRaisesRegex(ValueError, 'Role-probe marker was ' + reason):
+                self.run_self_test(suppress=index)
 
 
 if __name__ == '__main__':

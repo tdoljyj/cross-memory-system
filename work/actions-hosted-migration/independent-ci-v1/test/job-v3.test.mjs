@@ -1,5 +1,5 @@
 // Job contract /3 (resident quota redesign phase 2, step 3b; design v0.5 §5.7): the identity names the tested commit S
-// next to the head H and the base T. Outside the train (and in every batch until step 3c wires it) S = H.
+// next to the head H and the base T. Outside the train's front batch S = H; every caller names S (step 3c-2).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -22,10 +22,12 @@ test('job /3: the contract and the identity name the tested commit, right after 
   assert.equal(jobIdV2(job), expected);
 });
 
-test('job /3: S defaults to H, and another S is another job', () => {
-  const head = makeJobV2({ ...base, role: 'trivy' });
+test('job /3: S has no default, and another S is another job', () => {
+  // step 3c-2 (review of 3b m1): a call site that forgets S is refused, never silently S = H
+  assert.throws(() => makeJobV2({ ...base, role: 'trivy' }), e => e.code === 'invalid_job_v2');
+  assert.throws(() => batchJobsV2(base), e => e.code === 'invalid_job_v2');
+  const head = makeJobV2({ ...base, testSha: H, role: 'trivy' });
   assert.equal(head.testSha, H);
-  assert.deepEqual(head, makeJobV2({ ...base, testSha: H, role: 'trivy' }));
   const merged = makeJobV2({ ...base, testSha: S, role: 'trivy' });
   assert.notEqual(merged.id, head.id);
   assert.notDeepEqual(subjectOfV2(merged), subjectOfV2(head));
@@ -33,12 +35,12 @@ test('job /3: S defaults to H, and another S is another job', () => {
   const jobs = batchJobsV2({ ...base, testSha: S });
   assert.ok(Object.values(jobs).every(j => j.testSha === S));
   assert.ok(sameBatchV2(jobs.trivy, jobs.gitleaks));
-  assert.ok(!sameBatchV2(jobs.trivy, batchJobsV2(base).gitleaks));
-  assert.ok(Object.values(batchJobsV2(base)).every(j => j.testSha === H));
+  assert.ok(!sameBatchV2(jobs.trivy, batchJobsV2({ ...base, testSha: H }).gitleaks));
+  assert.ok(Object.values(batchJobsV2({ ...base, testSha: H })).every(j => j.testSha === H));
 });
 
 test('job /3: a /2 job, a job without S, or with a malformed S is refused', () => {
-  const job = makeJobV2({ ...base, role: 'contract-placement' });
+  const job = makeJobV2({ ...base, testSha: H, role: 'contract-placement' });
   const { testSha, ...withoutS } = job;
   for (const bad of [withoutS, { ...withoutS, contract: 'clued.independent-ci.job/2' }, { ...job, testSha: 'X'.repeat(40) }, { ...job, testSha: S }, { ...job, testSha: null }])
     assert.throws(() => validateJobV2(bad), e => e.code === 'invalid_job_v2');
@@ -66,9 +68,12 @@ test('job /3: the placement container builds and checks the tested commit S, aga
   assert.ok(!Object.values(byId).flat().includes(H), 'the head is never what the container checks');
 });
 
-test('job /3: the bundle builder accepts descriptor /3 only and refuses S != H until step 3c', () => {
+test('job /3: the bundle builder accepts descriptor /3 only; since step 3c-2 it carries S != H as refs/clued-test/<S>', () => {
   const text = fs.readFileSync(new URL('../src/resident-v2/build-bundle.ps1', import.meta.url), 'utf8');
   assert.ok(text.includes("$d.contract -cne 'clued.independent-ci.resident-batch-descriptor/3'"));
   assert.ok(!text.includes('resident-batch-descriptor/2'));
-  assert.ok(text.includes("if($d.testSha -cne $d.headSha){throw 'TEST_COMMIT_NOT_HEAD'}"));
+  assert.ok(!text.includes('TEST_COMMIT_NOT_HEAD'));
+  assert.ok(text.includes("$TestPrefix='refs/clued-test/'"));
+  assert.ok(text.includes("'--glob=refs/clued-test/*'"));
+  assert.ok(text.includes("throw 'TEST_COMMIT_PARENTS_REQUIRED'"));
 });

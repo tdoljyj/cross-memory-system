@@ -4,9 +4,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { COMPARE_TIMEOUT_MS, MAX_COMPARES_PER_PASS, Poller, SLOW_COMPARE_SKIP_MS, upToDate } from '../src/poller.mjs';
+import { COMPARE_RETRY_MS, COMPARE_TIMEOUT_MS, MAX_COMPARES_PER_PASS, Poller, SLOW_COMPARE_SKIP_MS, upToDate } from '../src/poller.mjs';
 import { ADVISORY_TIMEOUT_MS, LocalStore, PASS_BUDGET_MS, POST_RETRY_MS, PR_STATUS_CONTEXT, PrStatusReporter, contextFree, contextShapeSafe, describe, events, toastArgv, validateStatusConfig } from '../src/pr-status.mjs';
 import { lane } from '../src/companion-main.mjs';
+import { restPolls } from './gh-rest-stub.mjs';
 
 test('C2 role notices are fixed local notifications without a PR status or retry instruction', () => {
   const now = Date.parse('2026-10-25T00:00:00Z');
@@ -52,16 +53,21 @@ test('the poller proposes only up-to-date heads (the nine stale-base burns of 20
       return head in behind ? { code: 0, stdout: JSON.stringify({ behind_by: behind[head], base: MAIN }) } : { code: 1, stdout: '' };
     }
     if (argv.includes('api')) return { code: 0, stdout: `${MAIN}\n` };
-    assert.ok(argv.join(' ').includes('baseRefOid'), 'the PR list asks for the base');
     return { code: 0, stdout: JSON.stringify(pulls) };
   };
-  const p = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run, writeTrigger: async v => written.push(v), clock: () => 0 });
+  let clock = 0;
+  const p = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run: restPolls(run, { main: () => MAIN, pulls: () => pulls }), writeTrigger: async v => written.push(v), clock: () => clock });
   assert.equal(await p.pass(), 1);
   assert.deepEqual(written.map(w => [w.pr, w.baseSha]), [[1, MAIN]]);
   assert.deepEqual(p.lastPass.pulls.map(x => [x.pr, x.eligible, x.hint, x.behindBy]), [[1, true, null, 0], [2, false, 'merge-main', 5], [3, false, 'push-any-commit', 0], [4, false, 'compare-unavailable', null]]);
-  const compares = calls.filter(a => a.some(x => x.includes('/compare/'))).length;
+  const comparesNow = () => calls.filter(a => a.some(x => x.includes('/compare/'))).length;
+  const compares = comparesNow();
+  clock += 60_000;
   await p.pass();
-  assert.equal(calls.filter(a => a.some(x => x.includes('/compare/'))).length - compares, 1, 'answered compares are cached; only the unavailable one is asked again');
+  assert.equal(comparesNow() - compares, 0, 'answered compares are cached; the unavailable one waits COMPARE_RETRY_MS (60-second poll)');
+  clock += COMPARE_RETRY_MS;
+  await p.pass();
+  assert.equal(comparesNow() - compares, 1, 'then only the unavailable one is asked again');
 });
 
 test('the advisory work is bounded: short calls, at most MAX_COMPARES_PER_PASS compares and a pass budget for the reporter', async t => {
@@ -73,7 +79,7 @@ test('the advisory work is bounded: short calls, at most MAX_COMPARES_PER_PASS c
     if (argv.includes('api')) return { code: 0, stdout: `${MAIN}\n` };
     return { code: 0, stdout: JSON.stringify(pulls) };
   };
-  const p = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run, writeTrigger: async () => {}, clock: () => 0 });
+  const p = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run: restPolls(run, { main: () => MAIN, pulls: () => pulls }), writeTrigger: async () => {}, clock: () => 0 });
   assert.equal(await p.pass(), MAX_COMPARES_PER_PASS);
   assert.deepEqual([timeouts.length, [...new Set(timeouts)]], [MAX_COMPARES_PER_PASS, [COMPARE_TIMEOUT_MS]]);
   assert.equal(p.lastPass.pulls.filter(x => x.hint === 'compare-unavailable').length, 5);
@@ -145,7 +151,7 @@ test('a stalled advisory call ends the pass: nothing it could not do is recorded
     return { code: 0, stdout: JSON.stringify(pulls) };
   };
   let clock = 0;
-  const p = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run: prun, writeTrigger: async () => {}, clock: () => clock });
+  const p = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run: restPolls(prun, { main: () => MAIN, pulls: () => pulls }), writeTrigger: async () => {}, clock: () => clock });
   slowHead = pulls[0].headRefOid;
   assert.equal(await p.pass(), 0, 'the first compare hangs: nothing compared after it this pass');
   assert.equal(p.compareBudget, MAX_COMPARES_PER_PASS, 'the budget is not used by a stalled call');

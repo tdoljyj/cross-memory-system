@@ -140,9 +140,13 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     if (!route.startsWith('/') || route.includes('..')) fail('invalid_github_route');
     return request(`${root}${route}`, method, await credential(options?.until ?? null), body, options);
   }
+  // base.sha: the batch base T for every job that tests the head (v1 jobs have no testSha); a v2 train front batch
+  // (S != H) accepts what GitHub reads (job-v2.mjs#prBaseAcceptedV2, inlined: the v1 one-shot closure never loads
+  // job-v2.mjs), and both reads of one call must agree.
   function exactPr(pr, job) {
+    const front = typeof job.testSha === 'string' && /^[0-9a-f]{40}$/.test(job.testSha) && job.testSha !== job.headSha;
     return pr?.number === job.pr && pr.state === 'open' && pr.head?.sha === job.headSha
-      && pr.base?.sha === job.baseSha && pr.base?.ref === 'main'
+      && /^[0-9a-f]{40}$/.test(pr.base?.sha ?? '') && (front || pr.base.sha === job.baseSha) && pr.base?.ref === 'main'
       && pr.head?.repo?.full_name === repository && pr.base?.repo?.full_name === repository
       && Number.isSafeInteger(pr.changed_files) && pr.changed_files > 0 && pr.changed_files <= 3000;
   }
@@ -207,6 +211,24 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
         proofRef: `independent-observation:sha256:${createHash('sha256').update(JSON.stringify(proof)).digest('hex')}` };
     },
     async readPullRequest(number) { if (!positive(number)) fail('invalid_pr'); return scoped(`/pulls/${number}`); },
+    async readPullRequestCommits(number) {
+      if(!positive(number))fail('invalid_pr');
+      const before=await scoped(`/pulls/${number}`),commits=[],seen=new Set();
+      if(before?.number!==number||!positive(before.commits)||before.commits>5000||!sha.test(before.head?.sha??''))fail('pr_history_unconfirmed');
+      for(let page=1;page<=maxPages;page++){
+        const rows=await scoped(`/pulls/${number}/commits?per_page=100&page=${page}`);
+        if(!Array.isArray(rows)||rows.length>100)fail('pr_history_unconfirmed');
+        for(const row of rows){if(!sha.test(row?.sha??'')||seen.has(row.sha))fail('pr_history_unconfirmed');seen.add(row.sha);commits.push({sha:row.sha});}
+        if(commits.length>before.commits)fail('pr_history_changed');
+        if(commits.length===before.commits){
+          const after=await scoped(`/pulls/${number}`);
+          if(after?.number!==number||after.head?.sha!==before.head.sha||after.commits!==before.commits)fail('pr_history_changed');
+          return {complete:true,commits};
+        }
+        if(rows.length<100)fail('pr_history_incomplete');
+      }
+      fail('pr_history_page_limit');
+    },
     async readChangedPaths(job) {
       if (job?.repo !== repository || !positive(job.pr) || !sha.test(job.headSha) || !sha.test(job.baseSha)) fail('invalid_pr_subject');
       const before = await scoped(`/pulls/${job.pr}`);
@@ -229,7 +251,7 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
       }
       if (!complete) fail('pr_files_page_limit');
       const after = await scoped(`/pulls/${job.pr}`);
-      if (!exactPr(after, job) || after.changed_files !== before.changed_files) fail('pr_subject_changed');
+      if (!exactPr(after, job) || after.changed_files !== before.changed_files || after.base.sha !== before.base.sha) fail('pr_subject_changed');
       return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: [...paths].sort() };
     },
     async readChecks(headSha) { return inventory(headSha); },

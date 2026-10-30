@@ -67,6 +67,16 @@ const ours = (extra = {}) => ({ ...publication, id: 600, app: { id: APP_ID }, ..
 const prKey = `GET /repos/${REPO}/pulls/7`, filesKey = `GET /repos/${REPO}/pulls/7/files`;
 const postKey = `POST /repos/${REPO}/check-runs`, listKey = `GET /repos/${REPO}/commits/${HEAD}/check-runs`;
 const patchKey = `PATCH /repos/${REPO}/check-runs/600`, runKey = `GET /repos/${REPO}/check-runs/600`;
+test('revocation reads the complete current PR commit history and refuses truncation or drift',async()=>{
+ const historyKey=`GET /repos/${REPO}/pulls/7/commits`,pull={...pr,commits:2};
+ const f=github({faults:{[prKey]:[reply(pull),reply(pull)],[historyKey]:[reply([{sha:BASE},{sha:HEAD}])]}});
+ assert.deepEqual(await f.port().readPullRequestCommits(7),{complete:true,commits:[{sha:BASE},{sha:HEAD}]});
+ const short=github({faults:{[prKey]:[reply(pull)],[historyKey]:[reply([{sha:HEAD}])]}});
+ await assert.rejects(()=>short.port().readPullRequestCommits(7),/pr_history_incomplete/);
+ const changed=github({faults:{[prKey]:[reply(pull),reply({...pull,head:{...pull.head,sha:'f'.repeat(40)}})],
+  [historyKey]:[reply([{sha:BASE},{sha:HEAD}])]}});
+ await assert.rejects(()=>changed.port().readPullRequestCommits(7),/pr_history_changed/);
+});
 
 test('a read that hits a transport failure is repeated and succeeds', async () => {
   const fake = github({ faults: { [prKey]: [reset] } });
@@ -384,4 +394,21 @@ test('relay read arguments are validated before any request', async () => {
     [port => port.readBranchHead('../main'), 'invalid_branch'], [port => port.readCheckRunAnnotations(0, 1), 'invalid_annotation_request'],
     [port => port.readCheckRunAnnotations(1, -1), 'invalid_annotation_request']]) await assert.rejects(call(fake.port), { code }, code);
   assert.equal(fake.calls.length, 0);
+});
+
+// Step 3c-2a (design v0.5 §5.7): the PR's base.sha is compared with T only for a job that tests the head. A train front
+// batch (testSha != headSha) takes whatever base.sha GitHub reports, the same on both reads; a v1 job (no testSha) and a
+// job whose S is the head stay exact.
+test('readChangedPaths: base.sha is a fact for a train front batch only, and both reads must agree', async () => {
+  const MOVED = '9'.repeat(40), S = '4'.repeat(40);
+  const moved = sha => reply({ ...pr, base: { ...pr.base, sha } });
+  const front = { ...job, testSha: S };
+  const ok = await github({ faults: { [prKey]: [moved(MOVED), moved(MOVED)] } }).port().readChangedPaths(front);
+  assert.deepEqual([ok.baseSha, ok.paths], [BASE, ['a.txt']], 'the packet still names the batch base T');
+  await assert.rejects(github({ faults: { [prKey]: [moved(MOVED), moved('8'.repeat(40))] } }).port().readChangedPaths(front), { code: 'pr_subject_changed' });
+  await assert.rejects(github({ faults: { [prKey]: [moved('X'.repeat(40))] } }).port().readChangedPaths(front), { code: 'pr_subject_changed' });
+  for (const exact of [job, { ...job, testSha: HEAD }, { ...job, testSha: null }]) {
+    await assert.rejects(github({ faults: { [prKey]: [moved(MOVED)] } }).port().readChangedPaths(exact), { code: 'pr_subject_changed' });
+    assert.deepEqual((await github().port().readChangedPaths(exact)).paths, ['a.txt']);
+  }
 });

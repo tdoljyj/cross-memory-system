@@ -16,7 +16,7 @@ test('build-bundle: every git call aborts a transfer below 1000 bytes/s for 60 s
 });
 
 test('build-bundle: one retry of the network steps, in a second fresh store, only in the first 10 minutes', () => {
-  assert.ok(text.includes("$NetworkSteps=@('fetch','ls-remote','fetch-reviewed');$RetryWithinSeconds=600"));
+  assert.ok(text.includes("$NetworkSteps=@('fetch','ls-remote','fetch-reviewed','fetch-test');$RetryWithinSeconds=600"));
   assert.ok(text.includes("$FetchDir2=Join-Path $Root 'fetch-2.git'"));
   assert.ok(text.includes('try{return Build-Store $FetchDir}'));
   assert.ok(text.includes('return Build-Store $FetchDir2'));
@@ -29,7 +29,18 @@ test('build-bundle: one retry of the network steps, in a second fresh store, onl
 
 test('build-bundle: the main block reads no variable that only Build-Store sets (StrictMode would fail a written bundle)', () => {
   const main = text.slice(text.search(/^try\{/m));
-  for (const name of ['fetchStartedAt', 'fetchCompletedAt', 'lsRemoteCompletedAt', 'reviewedFetchStartedAt', 'reviewedFetchCompletedAt', 'branchesAtHead', 'local', 'all', 'toml']) {
+  for (const name of ['fetchStartedAt', 'fetchCompletedAt', 'lsRemoteCompletedAt', 'reviewedFetchStartedAt', 'reviewedFetchCompletedAt', 'branchesAtHead', 'local', 'all', 'toml', 'final']) {
     assert.doesNotMatch(main, new RegExp(`\\$${name}\\b`), name);
   }
+});
+
+// Step 3c-2 (design v0.5 §5.2): a train front batch's S is fetched by SHA inside Build-Store (so the retry covers it),
+// checked for parents [T, H], bundled under refs/clued-test/<S> and counted in the receipt that ws-prep binds.
+test('build-bundle: S != H is fetched, checked and bundled; the S = H guard is gone', () => {
+  assert.ok(!text.includes('TEST_COMMIT_NOT_HEAD'));
+  const store = text.slice(text.indexOf('function Build-Store'), text.indexOf('function Retry-Allowed'));
+  assert.ok(store.includes("$null=Invoke-Git 'fetch-test'"));
+  assert.ok(store.includes("throw 'TEST_COMMIT_PARENTS_REQUIRED'"));
+  assert.ok(text.includes("'--glob=refs/reviewed/*','--glob=refs/clued-test/*'"));
+  for (const field of ['testSha=$Test', 'testRefCount=$header.test.Count', 'testRefListSha256=(Ref-List-Sha $header.test)']) assert.ok(text.includes(field), field);
 });

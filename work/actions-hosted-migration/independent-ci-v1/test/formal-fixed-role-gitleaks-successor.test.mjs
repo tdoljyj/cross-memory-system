@@ -44,33 +44,34 @@ print(json.dumps(report))
 const report = () => structuredClone(helperReport);
 function execution() {
   const now = Date.now();
-  const job = batchJobsV2({ repo: 'tdoljyj/cross-memory-system', pr: 920, headSha: 'a'.repeat(40), baseSha: 'b'.repeat(40),
+  const job = batchJobsV2({ repo: 'tdoljyj/cross-memory-system', pr: 920, headSha: 'a'.repeat(40), baseSha: 'b'.repeat(40), testSha: 'a'.repeat(40),
     sourceManifestSha256: 'c'.repeat(64), createdAt: iso(now - 60000), attempt: 1 }).gitleaks;
   const observation = { contract: 'clued.independent-ci.formal-scanner-observation/2', domain: 'production-observation', fixture: false,
     formalEligible: false, qualificationIssued: false, checksWritten: false, subject: subjectOfV2(job), sourceManifestSha256: job.sourceManifestSha256,
-    profile: 'required-gitleaks-history/1', sourceSha: 'd'.repeat(40), requiredHistoricalExceptions: 729, reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, startedAt: iso(now - 5000),
+    profile: 'required-gitleaks-history/1', sourceSha: 'd'.repeat(40), requiredHistoricalExceptions: 730, reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, startedAt: iso(now - 5000),
     finishedAt: iso(now - 1000), exitCode: 0, conclusion: 'success', logs: { stdout: { sha256: 'e'.repeat(64) }, stderr: { sha256: 'f'.repeat(64) } },
     cleanup: { complete: true, wholeContainerTreeStopped: true, containerRemoved: true, observedAt: iso(now - 500) } };
   return { job, observation, issue: { job, expiresAt: iso(now + 60000) }, now };
 }
 
-test('Source v4 has exactly 729 findings/101 commits; the legacy Source remains 726/100', () => {
-  assert.deepEqual(REVIEWED_COMMITS, { findings: 729, commits: 101, sha256: '37fcdae7442b1235f75f2325c13e508a0189443a24e62627bf338fa8285488bf' });
+test('Source v4 has exactly 730 findings/102 commits; the legacy Source remains 726/100', () => {
+  assert.deepEqual(REVIEWED_COMMITS, { findings: 730, commits: 102, sha256: 'f889be5ef30f8409db61b1130810b5088ca278d04886b10cf98a3a2558609192' });
   assert.deepEqual(LEGACY_COMMITS, { findings: 726, commits: 100, sha256: 'fcb2cc04ee35e01fbfc4bfc3dc9b0bb0ba78a6c4083ab5e17433c549450d59bb' });
 });
 
 test('the actual self-test must retain every old guard and prove new marker and valid-PEM detection', async () => {
   assert.equal(report().regression.synthetic_test_repository, '/controlled-helper-return/repo');
   assert.doesNotThrow(() => validateSelfTestReport(report()));
-  for (const edit of [r => r.exact_historical_fingerprints = 726, r => r.exact_historical_fingerprints = 730,
-    r => r.global_fingerprints = 1, r => r.default_rules_unchanged = false, r => r.commits = 100,
+  for (const edit of [r => r.exact_historical_fingerprints = 729, r => r.exact_historical_fingerprints = 731,
+    r => r.global_fingerprints = 1, r => r.default_rules_unchanged = false, r => r.commits = 101,
     r => r.files_at_commits = 170, r => r.verified_git_objects = 131, r => r.ignore_sha256 = 'a'.repeat(64), r => r.extra = true,
     r => r.regression.extra = true, r => delete r.regression.synthetic_test_repository,
     r => r.regression.synthetic_test_repository = false, r => r.regression.synthetic_test_repository = 'relative/repo']) {
     const value = report(); edit(value); assert.throws(() => validateSelfTestReport(value), { code: 'UNCHANGED_REVIEW_SELF_TEST_REQUIRED' });
   }
   for (const key of ['baseline_detection', 'exact_history_only', 'new_commit_detection', 'different_path_detection',
-    'scheduling_marker_new_commit_detection', 'scheduling_marker_different_path_detection', 'valid_private_key_detection']) {
+    'scheduling_marker_new_commit_detection', 'scheduling_marker_different_path_detection', 'valid_private_key_detection',
+    'role_probe_new_commit_detection', 'role_probe_different_path_detection', 'role_probe_different_line_detection']) {
     for (const value of [false, undefined]) {
       const changed = report(); changed.regression[key] = value;
       assert.throws(() => validateSelfTestReport(changed), { code: 'UNCHANGED_REVIEW_SELF_TEST_REQUIRED' }, key);
@@ -84,11 +85,11 @@ test('the actual self-test must retain every old guard and prove new marker and 
     { code: 'ACTUAL_TRUSTED_SELF_TEST_OBSERVATION_REQUIRED' });
 });
 
-test('policy and result bridge agree on 729 and reject both legacy/mismatched counts and incomplete cleanup', () => {
+test('policy and result bridge agree on 730 and reject both legacy/mismatched counts and incomplete cleanup', () => {
   const { job, observation, issue, now } = execution();
   assert.equal(validateCleanupObservation(job, observation), observation);
   assert.equal(observationFacts(issue, observation, now).exitCode, 0);
-  for (const count of [726, 728, 730, undefined]) {
+  for (const count of [726, 729, 731, undefined]) {
     const changed = { ...observation, requiredHistoricalExceptions: count };
     assert.throws(() => validateCleanupObservation(job, changed), { code: 'ACTUAL_ROLE_CLEANUP_UNCONFIRMED' });
     assert.throws(() => observationFacts(issue, changed, now), { code: 'ACTUAL_HISTORY_CLEANUP_REQUIRED' });

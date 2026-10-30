@@ -1,0 +1,526 @@
+{
+  "contract": "clued.independent-ci.node-identity-cases/1",
+  "note": "Shared cases for the three node identity derivations: src/node-identity.mjs#nodeIdentityOf, and Get-NodeIdentity in install-resident.ps1 and verify-resident.ps1 (test/node-identity.test.mjs, windows/test-resident-windows.ps1). Every value is a fake fixture value derived from a label; the TURING node uses the TURING node profile (config/node-profile.turing.json) with fake fingerprints and ids, the company node a fixture profile. A case edits a copy of the named node: installation and accepted take set (dotted paths allowed) and remove; pin replaces the acceptance bytes hash passed in.",
+  "nodes": {
+    "turing": {
+      "installation": {
+        "contract": "clued.independent-ci.one-shot/2",
+        "enabled": true,
+        "scope": "global",
+        "appId": 5368905,
+        "appKeyId": 1000001,
+        "appPublicKeySha256Base64": "Zr7bHG6rT4UmA0MLu1WqEgJTZHc4NQUIuEVQDK6i+Jg=",
+        "ciPrincipalBindingId": "30d49a1f-2496-4d89-8172-7f3e113322b1",
+        "ciPrincipalQualificationRef": "d0f78b02-8818-4a92-809d-1ded9b9f6266",
+        "ciPrincipalRoleRef": "62746451-3fed-44c9-8759-b896213267ee",
+        "ciTokenPinSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "acceptanceSha256": "6abece06d2e7218814cd50e1c607678faf3bdf686cab775f3b1d26eadfc630d3"
+      },
+      "accepted": {
+        "contract": "clued.independent-ci.accepted-installation/2",
+        "domain": "production",
+        "accepted": true,
+        "hostname": "TURING",
+        "node": {
+          "contract": "clued.independent-ci.node-profile/1",
+          "controllerSid": "S-1-5-21-1173730660-3877291096-655431861-1015",
+          "hostname": "TURING",
+          "mutationMutex": "Global\\CluedControlControllerMutationV1-TURING-1015",
+          "nodeName": "turing",
+          "ownerProfileDirectory": "C:\\Users\\17531",
+          "ownerSid": "S-1-5-21-1173730660-3877291096-655431861-1001",
+          "runnerService": "actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02",
+          "wslDistribution": "Ubuntu-24.04"
+        },
+        "controllerAccount": "clued-control",
+        "sourceAcceptanceRef": "4e9e4f51-7526-4bd7-8d35-016e5b8b5a3c",
+        "hostQualificationRef": "3a19b92b-719b-45ba-8ee1-440d81cfcb12",
+        "ownerAuthorizationRef": "2d174a6a-ea42-4e35-834d-43726cc00e14",
+        "publisherQualificationRef": "27096bfe-ef12-4eea-827f-3b585c02b6bb",
+        "ciPrincipalQualificationRef": "d0f78b02-8818-4a92-809d-1ded9b9f6266",
+        "ownerPackageAcceptanceRef": "64a795a2-53d0-4b15-881e-12d7c90de770",
+        "installationReceiptRef": "23a67a31-63ab-481b-8d42-b51fb95c4d5a",
+        "ciPrincipalBindingId": "30d49a1f-2496-4d89-8172-7f3e113322b1",
+        "ciTokenPinSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "appPublicKeySha256Base64": "Zr7bHG6rT4UmA0MLu1WqEgJTZHc4NQUIuEVQDK6i+Jg=",
+        "ownerDecisionRef": "e5792aef-9692-428a-8fe5-c04a7eac8016",
+        "ownerReceiptRef": "adda9933-a05a-4fae-8ddf-228032309821",
+        "validUntil": null
+      },
+      "acceptancePin": "6abece06d2e7218814cd50e1c607678faf3bdf686cab775f3b1d26eadfc630d3",
+      "identity": {
+        "contract": "clued.independent-ci.node-identity/1",
+        "nodeName": "turing",
+        "appKeyId": 1000001,
+        "appPublicKeySha256Base64": "Zr7bHG6rT4UmA0MLu1WqEgJTZHc4NQUIuEVQDK6i+Jg=",
+        "ciTokenPinSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ciPrincipalBindingId": "30d49a1f-2496-4d89-8172-7f3e113322b1",
+        "ciPrincipalRoleRef": "62746451-3fed-44c9-8759-b896213267ee",
+        "sourceAcceptanceRef": "4e9e4f51-7526-4bd7-8d35-016e5b8b5a3c",
+        "hostQualificationRef": "3a19b92b-719b-45ba-8ee1-440d81cfcb12",
+        "ownerAuthorizationRef": "2d174a6a-ea42-4e35-834d-43726cc00e14",
+        "publisherQualificationRef": "27096bfe-ef12-4eea-827f-3b585c02b6bb",
+        "ciPrincipalQualificationRef": "d0f78b02-8818-4a92-809d-1ded9b9f6266",
+        "ownerPackageAcceptanceRef": "64a795a2-53d0-4b15-881e-12d7c90de770",
+        "installationReceiptRef": "23a67a31-63ab-481b-8d42-b51fb95c4d5a",
+        "ownerDecisionRef": "e5792aef-9692-428a-8fe5-c04a7eac8016",
+        "ownerReceiptRef": "adda9933-a05a-4fae-8ddf-228032309821"
+      },
+      "identitySha256": "da88034123c03594f9b789679a9b7049f7e2b6ca5001e1eae7a1f62f9d81e9f2"
+    },
+    "company": {
+      "installation": {
+        "contract": "clued.independent-ci.one-shot/2",
+        "enabled": true,
+        "scope": "global",
+        "appId": 5368905,
+        "appKeyId": 1000002,
+        "appPublicKeySha256Base64": "QqkPltNHo63tgnlKiBbjHih8MKAHe1rXq9lQ1G9SWeQ=",
+        "ciPrincipalBindingId": "adbcf84d-3674-494f-8288-c96bed0ca80b",
+        "ciPrincipalQualificationRef": "8ffaa271-be93-4759-8bec-3f84aa51b025",
+        "ciPrincipalRoleRef": "de2d604b-8fa2-4e12-8605-0a513c8191ca",
+        "ciTokenPinSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "acceptanceSha256": "07af2530bd599749e3d53c6c5debd571ba18de5db8a3a9616b72e5afc5c89c18"
+      },
+      "accepted": {
+        "contract": "clued.independent-ci.accepted-installation/2",
+        "domain": "production",
+        "accepted": true,
+        "hostname": "COMPANY-PC",
+        "node": {
+          "contract": "clued.independent-ci.node-profile/1",
+          "nodeName": "company",
+          "hostname": "COMPANY-PC",
+          "ownerSid": "S-1-5-21-111111111-222222222-333333333-1001",
+          "ownerProfileDirectory": "C:\\Users\\fixture-owner",
+          "controllerSid": "S-1-5-21-111111111-222222222-333333333-1015",
+          "runnerService": "actions.runner.tdoljyj-cross-memory-system.clued-ci-company-win-02",
+          "mutationMutex": "Global\\CluedControlControllerMutationV1-COMPANY-PC-1015",
+          "wslDistribution": "Ubuntu-24.04"
+        },
+        "controllerAccount": "clued-control",
+        "sourceAcceptanceRef": "77f2b72f-aefa-426e-8a92-81ec41d3bb0d",
+        "hostQualificationRef": "c5d535e3-bc00-4c83-829d-97e41f218db9",
+        "ownerAuthorizationRef": "12d6df60-bafe-49da-8119-d047bd64e6f3",
+        "publisherQualificationRef": "3bdfaf47-eb3a-4cb2-87cd-066fedd0a9a3",
+        "ciPrincipalQualificationRef": "8ffaa271-be93-4759-8bec-3f84aa51b025",
+        "ownerPackageAcceptanceRef": "9c585c0e-d828-4762-811f-10b7a1defd4a",
+        "installationReceiptRef": "534835cd-987e-447b-879d-2d28f8f5919b",
+        "ciPrincipalBindingId": "adbcf84d-3674-494f-8288-c96bed0ca80b",
+        "ciTokenPinSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "appPublicKeySha256Base64": "QqkPltNHo63tgnlKiBbjHih8MKAHe1rXq9lQ1G9SWeQ=",
+        "ownerDecisionRef": "d0812d21-f29c-4aef-8c0a-bcc450e6589c",
+        "ownerReceiptRef": "035fd78d-e086-4c4e-8f78-fab682e0ec03",
+        "validUntil": null
+      },
+      "acceptancePin": "07af2530bd599749e3d53c6c5debd571ba18de5db8a3a9616b72e5afc5c89c18",
+      "identity": {
+        "contract": "clued.independent-ci.node-identity/1",
+        "nodeName": "company",
+        "appKeyId": 1000002,
+        "appPublicKeySha256Base64": "QqkPltNHo63tgnlKiBbjHih8MKAHe1rXq9lQ1G9SWeQ=",
+        "ciTokenPinSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "ciPrincipalBindingId": "adbcf84d-3674-494f-8288-c96bed0ca80b",
+        "ciPrincipalRoleRef": "de2d604b-8fa2-4e12-8605-0a513c8191ca",
+        "sourceAcceptanceRef": "77f2b72f-aefa-426e-8a92-81ec41d3bb0d",
+        "hostQualificationRef": "c5d535e3-bc00-4c83-829d-97e41f218db9",
+        "ownerAuthorizationRef": "12d6df60-bafe-49da-8119-d047bd64e6f3",
+        "publisherQualificationRef": "3bdfaf47-eb3a-4cb2-87cd-066fedd0a9a3",
+        "ciPrincipalQualificationRef": "8ffaa271-be93-4759-8bec-3f84aa51b025",
+        "ownerPackageAcceptanceRef": "9c585c0e-d828-4762-811f-10b7a1defd4a",
+        "installationReceiptRef": "534835cd-987e-447b-879d-2d28f8f5919b",
+        "ownerDecisionRef": "d0812d21-f29c-4aef-8c0a-bcc450e6589c",
+        "ownerReceiptRef": "035fd78d-e086-4c4e-8f78-fab682e0ec03"
+      },
+      "identitySha256": "603e163f23dc3fcbaae47c86d4781adc2bec8fa4e0cd1759f4373f0b59fdef86"
+    }
+  },
+  "refused": [
+    {
+      "name": "installation without appKeyId",
+      "node": "turing",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "remove": [
+          "appKeyId"
+        ]
+      }
+    },
+    {
+      "name": "appKeyId 0",
+      "node": "turing",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "set": {
+          "appKeyId": 0
+        }
+      }
+    },
+    {
+      "name": "appKeyId negative",
+      "node": "turing",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "set": {
+          "appKeyId": -5
+        }
+      }
+    },
+    {
+      "name": "appKeyId as a string",
+      "node": "turing",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "set": {
+          "appKeyId": "1000001"
+        }
+      }
+    },
+    {
+      "name": "appKeyId fractional",
+      "node": "turing",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "set": {
+          "appKeyId": 1.5
+        }
+      }
+    },
+    {
+      "name": "appKeyId beyond the safe integers",
+      "node": "turing",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "set": {
+          "appKeyId": 9007199254740992
+        }
+      }
+    },
+    {
+      "name": "installation without appKeyId",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "remove": [
+          "appKeyId"
+        ]
+      }
+    },
+    {
+      "name": "appKeyId 0",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "set": {
+          "appKeyId": 0
+        }
+      }
+    },
+    {
+      "name": "appKeyId negative",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "set": {
+          "appKeyId": -5
+        }
+      }
+    },
+    {
+      "name": "appKeyId as a string",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "set": {
+          "appKeyId": "1000001"
+        }
+      }
+    },
+    {
+      "name": "appKeyId fractional",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "set": {
+          "appKeyId": 1.5
+        }
+      }
+    },
+    {
+      "name": "appKeyId beyond the safe integers",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "set": {
+          "appKeyId": 9007199254740992
+        }
+      }
+    },
+    {
+      "name": "public-key fingerprint too short",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "set": {
+          "appPublicKeySha256Base64": "IKfbsuOH5sPQL6IhGcJIbsPkQzVgiXqL4BfzD1n6Jf="
+        }
+      }
+    },
+    {
+      "name": "public-key fingerprint without padding",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "set": {
+          "appPublicKeySha256Base64": "IKfbsuOH5sPQL6IhGcJIbsPkQzVgiXqL4BfzD1n6JfsA"
+        }
+      }
+    },
+    {
+      "name": "token pin in upper case",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "set": {
+          "ciTokenPinSha256": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+        }
+      }
+    },
+    {
+      "name": "token pin of 63 digits",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "set": {
+          "ciTokenPinSha256": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      }
+    },
+    {
+      "name": "connection id not a UUID",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "set": {
+          "ciPrincipalBindingId": "not-a-uuid"
+        }
+      }
+    },
+    {
+      "name": "may-hold decision missing",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "remove": [
+          "ciPrincipalRoleRef"
+        ]
+      }
+    },
+    {
+      "name": "may-hold decision null",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "set": {
+          "ciPrincipalRoleRef": null
+        }
+      }
+    },
+    {
+      "name": "may-hold decision not a UUID",
+      "node": "turing",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "set": {
+          "ciPrincipalRoleRef": "role-ref"
+        }
+      }
+    },
+    {
+      "name": "installation without acceptanceSha256",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "remove": [
+          "acceptanceSha256"
+        ]
+      }
+    },
+    {
+      "name": "installation acceptanceSha256 malformed",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "installation": {
+        "set": {
+          "acceptanceSha256": "abc"
+        }
+      }
+    },
+    {
+      "name": "acceptance without a formal ref",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "accepted": {
+        "remove": [
+          "publisherQualificationRef"
+        ]
+      }
+    },
+    {
+      "name": "acceptance ref of the placeholder shape",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "accepted": {
+        "set": {
+          "hostQualificationRef": "00000000-0000-4000-8000-000000000000"
+        }
+      }
+    },
+    {
+      "name": "acceptance ref null",
+      "node": "turing",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "accepted": {
+        "set": {
+          "installationReceiptRef": null
+        }
+      }
+    },
+    {
+      "name": "Owner decision not a UUID",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "accepted": {
+        "set": {
+          "ownerDecisionRef": "x"
+        }
+      }
+    },
+    {
+      "name": "Owner receipt missing",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "accepted": {
+        "remove": [
+          "ownerReceiptRef"
+        ]
+      }
+    },
+    {
+      "name": "acceptance without node",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "accepted": {
+        "remove": [
+          "node"
+        ]
+      }
+    },
+    {
+      "name": "node name with an underscore",
+      "node": "company",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "accepted": {
+        "set": {
+          "node.nodeName": "bad_name"
+        }
+      }
+    },
+    {
+      "name": "node name in upper case",
+      "node": "turing",
+      "code": "NODE_IDENTITY_FIELDS_REQUIRED",
+      "accepted": {
+        "set": {
+          "node.nodeName": "TURING"
+        }
+      }
+    },
+    {
+      "name": "acceptance bytes do not match the pin the installation holds",
+      "node": "company",
+      "code": "NODE_IDENTITY_ACCEPTANCE_PIN_MISMATCH",
+      "pin": "b4d906eb74cf309e5390246b2fd317fe3b76ea817a4ae96bb1959584ea5a3939"
+    },
+    {
+      "name": "installation pins other acceptance bytes",
+      "node": "turing",
+      "code": "NODE_IDENTITY_ACCEPTANCE_PIN_MISMATCH",
+      "installation": {
+        "set": {
+          "acceptanceSha256": "b4d906eb74cf309e5390246b2fd317fe3b76ea817a4ae96bb1959584ea5a3939"
+        }
+      }
+    },
+    {
+      "name": "token pin differs between the files",
+      "node": "company",
+      "code": "NODE_IDENTITY_RECORDS_DISAGREE",
+      "accepted": {
+        "set": {
+          "ciTokenPinSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      }
+    },
+    {
+      "name": "token pin missing from the acceptance",
+      "node": "company",
+      "code": "NODE_IDENTITY_RECORDS_DISAGREE",
+      "accepted": {
+        "remove": [
+          "ciTokenPinSha256"
+        ]
+      }
+    },
+    {
+      "name": "key fingerprint differs between the files",
+      "node": "company",
+      "code": "NODE_IDENTITY_RECORDS_DISAGREE",
+      "accepted": {
+        "set": {
+          "appPublicKeySha256Base64": "IKfbsuOH5sPQL6IhGcJIbsPkQzVgiXqL4BfzD1n6Jfs="
+        }
+      }
+    },
+    {
+      "name": "key fingerprint differs the other way",
+      "node": "turing",
+      "code": "NODE_IDENTITY_RECORDS_DISAGREE",
+      "installation": {
+        "set": {
+          "appPublicKeySha256Base64": "IKfbsuOH5sPQL6IhGcJIbsPkQzVgiXqL4BfzD1n6Jfs="
+        }
+      }
+    },
+    {
+      "name": "connection id differs between the files",
+      "node": "company",
+      "code": "NODE_IDENTITY_RECORDS_DISAGREE",
+      "accepted": {
+        "set": {
+          "ciPrincipalBindingId": "d6047ae7-dc09-465c-8846-fdd5ced8238c"
+        }
+      }
+    },
+    {
+      "name": "principal qualification differs between the files",
+      "node": "company",
+      "code": "NODE_IDENTITY_RECORDS_DISAGREE",
+      "installation": {
+        "set": {
+          "ciPrincipalQualificationRef": "d6047ae7-dc09-465c-8846-fdd5ced8238c"
+        }
+      }
+    },
+    {
+      "name": "principal qualification missing from the installation",
+      "node": "turing",
+      "code": "NODE_IDENTITY_RECORDS_DISAGREE",
+      "installation": {
+        "remove": [
+          "ciPrincipalQualificationRef"
+        ]
+      }
+    }
+  ]
+}

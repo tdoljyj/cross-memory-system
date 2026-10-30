@@ -153,18 +153,6 @@ LEGACY_HOSTED_DEBT = {
             "database-gate-untrusted-hosted": "43e37eafc1de5b3fb8213484a85210a72941105bbeebf7679fd64d49623f8c8c"
         }
     },
-    "clued-handover-disposable-idle.yml": {
-        "control_sha256": "545191670af2267b6812173cbcb8fdb934860e46dedb192d1c05464b0b25f5a6",
-        "jobs": {
-            "disposable-idle": "f1e887913fead7b1a04ad67c419bd6118ce4a0454778b6c454c05373c6da0b03"
-        }
-    },
-    "clued-handover-external-qualification.yml": {
-        "control_sha256": "6d47cf51322c3948a02ece0168db778893ec27e763a5bd2b27dfa06fb964b5da",
-        "jobs": {
-            "qualify": "206ffbd3e581d256ac6ec8a51615666836459725df4b96969a3523ad855a37b7"
-        }
-    },
     "clued-information-flow-prod-e2e.yml": {
         "control_sha256": "96fc9ec774d4036aa6b6f193ee8fd018bdf21cea202abb19bbb1fe5aed824ffc",
         "jobs": {
@@ -360,7 +348,7 @@ OWNER_DECISION_HOSTED_JOBS = {
         "control_sha256": "f775a27a4bf06fcff10caf74239c90bd6191fb58e59fcfb67f7141430a35e64b",
         "jobs": {
             "admission-gate": "52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2",
-            "gitleaks-trusted-self-hosted": "00f570724819f6a0846b38896237ccbbe29a86a533a68f9a4d6e011f83aa2308"
+            "gitleaks-trusted-self-hosted": "c48d4ffca54c3399b04225baa90ce9489c12221e59f4e25ac1b8e8b69f142140"
         }
     },
     "trivy.yml": {

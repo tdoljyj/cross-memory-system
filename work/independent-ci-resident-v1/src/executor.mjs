@@ -80,6 +80,13 @@
 // queue (no row, no attempt 2); triggers are still read, and a batch in flight or at a parking point goes on. It is
 // neither PAUSE (which also stops the parked batches) nor the drain (which ends them); all three may be in force at once.
 //
+// The node mode (primary/standby C3; Task 17b703a0; DESIGN §29): ACTIVE, STANDBY or UNCERTAIN (this.roleProbeMode). A start and an
+// Owner re-arm begin UNCERTAIN with a role probe due at once; the probe (stage 11, DESIGN C2) says held -> ACTIVE, not-held ->
+// STANDBY, uncertain -> the mode stays. Stage 1's NODE_ROLE_NOT_HELD goes to STANDBY too. While the mode is not ACTIVE the
+// schedule starts nothing (no row, no attempt 2, no waiting-retry; DEFERRED NODE_STANDBY / NODE_ROLE_UNCERTAIN, a quiet
+// result so the probe still runs): triggers are still read, and a batch in flight or at a parking point goes on, its live
+// admission deciding. A failure that may mean the role is gone makes the next probe due at once (roleProbe.urgent).
+//
 // Stage 10, the merge train in shadow mode (quota redesign phase 2, step 3c-1; design v0.5 §5.5, §4.7; Owner decision
 // 2eea28a1; train.mjs, DESIGN §22.3): with train.enabled 'shadow', a tick that ran nothing (the queue idle or only
 // deferred, never under an intake pause, PAUSE or HALT) runs one read-only train maintenance when it is due. It writes
@@ -88,9 +95,15 @@
 // cleanup, a reported side effect, a failure that is not allow-listed as clean. Stage 10 has no ledger entry: its
 // 'train-run-intent' receipt stands for one, so an intent that no 'train-run' receipt closed (a crash or a stop in the
 // middle) HALTs as TRAIN_STAGE_INTERRUPTED at the next start, and a receipt chain that cannot be read holds every batch.
+//
+// The in-place upgrade channel (Task 018da927, DESIGN §34): the upgrader's resume (UPGRADE_RESUME_CONTRACT, owner\ only, a CAS on
+// PAUSED.json, receipt 'upgrade-resumed'); every tick the versions of both sides (status /7) and the version-skew intake hold
+// while they disagree (consistent === false only; lifted when they agree again; an unknown answer changes nothing).
 import path from 'node:path';
-import { Ledger, MAX_TRIES, batchKey, headKey } from './ledger.mjs';
-import { ABORTABLE_IN_FLIGHT, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, proofComplete } from './classify.mjs';
+import { randomBytes } from 'node:crypto';
+import { Ledger, MAX_TRIES, QUOTA_TIER_EVALUATION, batchKey, headKey } from './ledger.mjs';
+import { ABORTABLE_IN_FLIGHT, BRIDGE_ABANDONED_UNPUBLISHED, NOT_ADMITTED_CODES, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, failureRow,
+  proofComplete, scannerAbandonEligible } from './classify.mjs';
 import { parseTrigger } from './trigger.mjs';
 import { POSITIONS, breakerGate, breakerOf, breakerRecord, breakerView, positionOf } from './breaker.mjs';
 import { batchBudgetMs } from './policy.mjs';
@@ -99,18 +112,35 @@ import { decide, parseHint, HEAVY_ROLES, RELAY_ROLES } from './hosted-wait.mjs';
 import { relayPlanFromRows } from './classify.mjs';
 import { RELAY_STAGE, ROLE_STAGES } from './policy.mjs';
 import { RELAY_RECEIPTS } from './receipts.mjs';
-import { CODE, HEX64, ResidentError, check, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
-import { INTAKE_PAUSE_CONTRACT, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
+import { CODE, HEX64, ResidentError, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
+import { UPGRADE_RESUME_CONTRACT, validateUpgradeResume } from './upgrade-mailbox.mjs';
+import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
 import { trainDue, trainSummary } from './train.mjs';
 import { RoleProbe, validateRoleProbeFact } from './role-probe.mjs';
+import { NODE_MODES } from './status.mjs';
+import { RevocationMaintenanceBook,validateRevocationFacts,validateRevocationQualification,
+  REVOCATION_RUN_MS,REVOCATION_HELPER_MARGIN_MS,REVOCATION_RUN_ID } from './revocation-maintenance.mjs';
 
 export const PAUSE_CONTRACT = 'clued.independent-ci.resident-pause/1';
 export const REARM_CONTRACT = 'clued.independent-ci.resident-owner-rearm/1';
 export const DRAIN_CONTRACT = 'clued.independent-ci.resident-owner-drain-parked/1';
 export const RESUME_CONTRACT = 'clued.independent-ci.resident-owner-resume/1';
 export const ABORT_CONTRACT = 'clued.independent-ci.resident-owner-abort/1';
+// In-place upgrade channel (Task 018da927, DESIGN §34; frozen observation surface A11): the upgrader (CluedCIUpgrader, LocalSystem)
+// lifts the PAUSE it set for an upgrade through the admin-only owner\ directory, by the exact PAUSED.json bytes it saw. Taken from
+// owner\ only (never from the user-writable requests\, where its contract is no pause and is rejected); its receipt is
+// 'upgrade-resumed'. Later resident versions must keep accepting it.
+export { UPGRADE_RESUME_CONTRACT };
+export const UPGRADE_RESUMED_BY = 'CluedCIUpgrader';
+// The executor's own intake hold while the two sides run different versions (A10): holder version-skew, two hours, renewed when
+// less than 90 minutes are left, lifted when the versions agree again. An unknown answer (null) neither adds nor lifts it.
+export const VERSION_SKEW_HOLDER = 'version-skew';
+export const VERSION_SKEW_RENEW_BELOW_MS = 90 * 60_000;
+export const UPGRADE_VERSION_SKEW = 'UPGRADE_VERSION_SKEW';
+// The precheck's global deferral while the sides disagree (before any reservation; nothing burned, nothing counted).
+export const VERSION_SKEW = 'VERSION_SKEW';
 export const OWNER_ABORT_ARCHIVE_REASON = 'owner-aborted';
 // Poll of the owner directory while a scanner-issuer stage runs, and the bounded re-check of quiescence after an abort.
 export const ABORT_POLL_MS = 5_000;
@@ -121,10 +151,30 @@ const OWNER_SCAN_MAX = 32;
 const DAY = 86_400_000;
 const codeOf = error => (error instanceof ResidentError && CODE.test(error.code)) ? error.code : 'RESIDENT_EXECUTOR_EXCEPTION';
 const validCode = code => (typeof code === 'string' && CODE.test(code)) ? code : 'FAILURE_CODE_INVALID';
+// DESIGN §33 (the first HALT of 2026-10-29 said only UNEXECUTED_CLOSE_UNCONFIRMED): the Windows archive's own code when it did not
+// verify (engine-windows.mjs archiveWindows, closeBatch, archiveFailure answer `archiveCode`), a fixed code or nothing. An archive
+// check that fails carries it on the refusal as `windowsArchiveCode`; the HALT facts, the FAILED_UNKNOWN terminal facts and the
+// batch-terminal receipt then name it, so the next HALT says why the archive did not verify. Codes only, never text or paths.
+const archiveCodeOf = answer => (answer && answer.verified !== true && typeof answer.archiveCode === 'string' && CODE.test(answer.archiveCode)) ? answer.archiveCode : null;
+function archiveCheck(ok, code, windows) {
+  if (ok) return;
+  const error = new ResidentError(code);
+  const archive = archiveCodeOf(windows);
+  if (archive) error.windowsArchiveCode = archive;
+  throw error;
+}
+const archiveFacts = error => (typeof error?.windowsArchiveCode === 'string' && CODE.test(error.windowsArchiveCode)) ? { windowsArchiveCode: error.windowsArchiveCode } : {};
 const TRAIN_RUN_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/;
 // The schedule results that ran nothing, after which stage 10 may run (an intake pause holds it as well).
 const TRAIN_QUIET_STATES = Object.freeze(['IDLE', 'DEFERRED']);
 const TRAIN_HELD_REASONS = Object.freeze(['INTAKE_PAUSED', 'INTAKE_PAUSE_UNCONFIRMED']);
+// Primary/standby C3 (DESIGN §29): why the schedule starts nothing while the node mode is not ACTIVE. These results are quiet (the
+// role probe and stage 10 may run) and, like an intake pause, leave a batch resting at parking point A as the tick's result.
+export const NODE_DEFERRALS = Object.freeze({ STANDBY: 'NODE_STANDBY', UNCERTAIN: 'NODE_ROLE_UNCERTAIN' });
+// Endings after stage 1 that may mean the node lost its role (a live admission or a publisher refused): the next quiet tick
+// probes at once. The Source maps a refused live admission after stage 1 to BATCH_CLAIM_CHANGED and a refused publisher to
+// PUBLICATION_BLOCKED; the not-admitted codes are listed because PR_NOT_OPEN_OR_CHANGED can come at any stage.
+export const ROLE_LOST_SUSPECT_CODES = Object.freeze([...NOT_ADMITTED_CODES, 'PUBLICATION_BLOCKED', 'BATCH_CLAIM_CHANGED']);
 // The generic helper's own fixed margin after a stage's cap (FormalPublicBoundaryV2.cs), whatever limits.stageMarginMs says.
 const TRAIN_HELPER_MARGIN_MS = 180_000;
 // Stage 10 never touches Linux: its proof is the Windows half only.
@@ -145,12 +195,34 @@ export function validateAbortRequest(v) {
 const adopted = a => ({ requestSha256: a.requestSha256, by: a.by, reason: a.reason });
 
 // A step failure travels as a value, so the failure path runs exactly once, outside the step loop. result: the stage
-// result it came from (its bound outcome and the broker's no-launch fact decide a release, classify.mjs#decideFailure).
+// result it came from (its bound outcome and the broker's no-launch fact decide a release, classify.mjs#decideFailure; the
+// bridge facts of a scanner-issuer stage decide an abandonment, DESIGN §27).
 class StepFailure {
   constructor(stageNumber, code, proof, phase, relayedRoles = 0, result = null) {
-    Object.assign(this, { stageNumber, code: validCode(code), proof: proof ?? {}, phase, relayedRoles, outcome: result?.outcome ?? null, brokerNoLaunch: result?.brokerNoLaunch === true });
+    Object.assign(this, { stageNumber, code: validCode(code), proof: proof ?? {}, phase, relayedRoles, outcome: result?.outcome ?? null, brokerNoLaunch: result?.brokerNoLaunch === true,
+      bridge: bridgeFacts(result?.bridge) });
   }
 }
+
+// The bridge facts of a scanner-issuer stage (engine-windows.mjs#invoke, DESIGN §26) as the executor keeps them: codes, one
+// broker request id and one flag, each re-checked; anything else is null (no facts, so never an abandonment).
+const UUID_RE = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+function bridgeFacts(b) {
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return null;
+  const code = v => (v === null ? null : typeof v === 'string' && CODE.test(v) ? v : undefined);
+  const f = { pumpCode: code(b.pumpCode ?? null), stopRequestId: b.stopRequestId === null || b.stopRequestId === undefined ? null : (UUID_RE.test(b.stopRequestId) ? b.stopRequestId : undefined),
+    stopCode: code(b.stopCode ?? null), stageCode: code(b.stageCode ?? null), pumpQuiet: b.pumpQuiet === true };
+  return Object.values(f).includes(undefined) ? null : f;
+}
+// The pre-stage memory gate's facts (engine-windows.mjs#memoryGate, DESIGN §32) as the stage-terminal receipt records them: counts,
+// the ring order and the outcome only, each re-checked (anything else is null).
+const nonNegative = v => (Number.isSafeInteger(v) && v >= 0 ? v : null);
+function memoryGateFacts(g) {
+  if (!g || typeof g !== 'object' || Array.isArray(g)) return null;
+  return { checks: nonNegative(g.checks), order: nonNegative(g.order), blocks: nonNegative(g.blocks), waitedMs: nonNegative(g.waitedMs), ready: [true, false].includes(g.ready) ? g.ready : null, refused: g.refused === true };
+}
+// Scanner abandonment (DESIGN §27): the fixed archive reason segment and the terminal basis.
+export const SCANNER_ABANDON_ARCHIVE_REASON = 'scanner-abandoned';
 
 // The stages before which the executor records the head as "may have published" (executed-heads.mjs): every stage that
 // can publish a role or control check.
@@ -186,6 +258,13 @@ export const STAGE8_NOT_READY_CODES = Object.freeze(['RESIDENT_BASE_MOVED', 'RES
 // [T, H] is not what was tested.
 export const STAGE8_OWNER_NOTICE_CODES = Object.freeze(['STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_TREE_DIFFERS']);
 export const PARK_RETRY_MS = Object.freeze([10 * 60_000, 20 * 60_000, 40 * 60_000, 80 * 60_000, 120 * 60_000]);
+// DESIGN §28 (design r3 4a, PR #930): a stage-8 try that ended BLOCKED with zero side effects on a transient admission or GitHub
+// failure parks the batch at B again instead of burning a head whose stages 1-7 passed. Fixed here, not in the policy (no
+// policy contract change): at most STAGE8_TRANSIENT_MAX_TRIES such parks, after 1, 3 and 10 minutes; the next one ends the batch
+// through fail() as before. They count towards park.stage8MaxTries, park.maxMs and park.stage8RetriesPer24h like any try.
+export const STAGE8_TRANSIENT_PARK_CODES = Object.freeze(['NATIVE_ADMISSION_UNAVAILABLE', 'GITHUB_TRANSIENT_UNAVAILABLE']);
+export const STAGE8_TRANSIENT_MAX_TRIES = 3;
+export const STAGE8_TRANSIENT_RETRY_MS = Object.freeze([60_000, 3 * 60_000, 10 * 60_000]);
 // A parked batch whose claim was first in the queue at its last try is tried again this soon; a nudge (a trigger that
 // says main moved or the PR changed) makes a try due at most this often.
 export const PARK_HEAD_RETRY_MS = 60_000;
@@ -203,6 +282,13 @@ export const INTAKE_REQUEST_TRIES = 3;
 // The oldest bundle a batch takes into the workspace preparation (which accepts at most 2 hours), measured from the
 // reservation, which comes before the bundle (design v0.5 §4.3 item 3).
 export const BUNDLE_MAX_AGE_AT_WORKSPACE_MS = 100 * 60_000;
+// Task 4012c1b9 (DESIGN §37): a batch whose workspace comes this long after its reservation (it waited at parking point A)
+// first gets its second and last bundle (build-bundle.ps1 -Rebundle): fresh refs for stage 2's refs gate, and a bundle the
+// workspace preparation accepts. The refs must still be the batch's (REMOTE_REFS_CHANGED_SINCE_BUNDLE, a clean transient
+// ending); any other refusal ends it as before (PARKED_BUNDLE_TOO_OLD). A batch that never waited is not touched.
+export const REBUNDLE_AFTER_MS = 30 * 60_000;
+// The status row reason of a batch that rests at parking point A (the hosted wait).
+export const PARKED_A_REASON = 'PARKED_A';
 const dayKey = ms => new Date(ms).toISOString().slice(0, 10);
 
 // The stage-terminal receipt's summary of a stage outcome: codes and flags only.
@@ -224,6 +310,8 @@ export class ResidentExecutor {
   //   sleep (optional): the wait between abort polls and quiescence re-checks.
   //   status (optional): status.mjs#StatusBoard (a view; nothing the executor decides ever reads it).
   //   intakePause (optional): intake-pause.mjs#IntakePause; opened from the ledger's state directory when not given.
+  //   versions (optional): async () -> { view, notices } (status.mjs#readVersionState; DESIGN §34): status /7 `versions`, the
+  //     upgrade notices and the version-skew hold. Without it the executor shows no versions and holds nothing for them.
   constructor(ports) {
     //   queue: queue.mjs#RunQueue (the run queue and the breaker's state; a view the ledger always overrules).
     for (const k of EXECUTOR_PORTS) check(ports[k], 'EXECUTOR_PORT_MISSING', k);
@@ -232,8 +320,50 @@ export class ResidentExecutor {
     this.status ??= NO_STATUS;
     this.ownerReadFailures = new Map();
     this.intakeRequestFailures = new Map();
+    this.deferralReceipts = new Set(); // `${reason}:${day}` of the global deferrals already receipted (deferral())
     this.roleProbe = new RoleProbe();
     this.roleProbeNotices = [];
+    this.revocationBook = new RevocationMaintenanceBook();
+    // C3: every start begins UNCERTAIN (behaves like STANDBY) with the probe due at once; nothing is taken from before the start.
+    this.roleProbeMode = 'UNCERTAIN';
+    this.roleProbe.markUrgent();
+    this.reportNode();
+  }
+
+  // ---- the node mode (primary/standby C3; DESIGN §29) ----
+
+  // The mode only exists for an engine that can probe the role (the real Windows engine does). Without it the executor is the
+  // single node it always was: no gate, no status node, no mode changes.
+  probing() { return typeof this.engine.runRoleProbe === 'function'; }
+
+  // An unknown value is UNCERTAIN: fail safe.
+  nodeMode() { return NODE_MODES.includes(this.roleProbeMode) ? this.roleProbeMode : 'UNCERTAIN'; }
+
+  reportNode() {
+    if (this.probing()) this.report(s => s.setNode?.(this.policy.node.nodeName, this.policy.ciSourceManifestSha256, this.nodeMode()));
+  }
+
+  // The mode is in force before its receipt is written (the receipt is the record, not a condition).
+  async setNodeMode(to, why) {
+    const from = this.nodeMode();
+    if (!this.probing() || from === to) return false;
+    this.roleProbeMode = to;
+    this.reportNode();
+    try { await this.receipt('node-mode', { from, to, why }); } catch { /* see above */ }
+    return true;
+  }
+
+  // The same beginning as a start (an Owner re-arm cleared a HALT): UNCERTAIN, probe due at once.
+  async nodeRestart(why) {
+    this.roleProbe.markUrgent();
+    await this.setNodeMode('UNCERTAIN', why);
+  }
+
+  // null while this node may start batches; otherwise the deferral the schedule returns.
+  nodeGate() {
+    if (!this.probing()) return null;
+    const mode = this.nodeMode();
+    return mode === 'ACTIVE' ? null : { state: 'DEFERRED', reason: mode === 'STANDBY' ? NODE_DEFERRALS.STANDBY : NODE_DEFERRALS.UNCERTAIN };
   }
 
   receipt(type, body) { return this.receipts.append(type, body); }
@@ -319,6 +449,11 @@ export class ResidentExecutor {
           check(HEX64.test(v.pausedSha256) && SID.test(v.by) && NONCE.test(v.nonce) && !Number.isNaN(Date.parse(v.requestedAt)), 'OWNER_REQUEST_REFUSED');
           await this.ledger.resume(v.pausedSha256, v.by);
           outcome = { kind: 'resume' };
+        } else if (v.contract === UPGRADE_RESUME_CONTRACT) {
+          // The upgrader's resume (DESIGN §34): the same compare-and-swap on the PAUSED.json bytes, its own receipt.
+          validateUpgradeResume(v);
+          await this.ledger.resume(v.pausedSha256, UPGRADE_RESUMED_BY);
+          outcome = { kind: 'upgrade-resume', pausedSha256: v.pausedSha256, opId: v.opId, generation: v.generation };
         } else if (v.contract === REARM_CONTRACT) {
           exactKeys(v, ['contract', 'haltSha256', 'reason', 'by', 'requestedAt', 'nonce'], 'OWNER_REQUEST_REFUSED');
           check(HEX64.test(v.haltSha256) && SID.test(v.by) && NONCE.test(v.nonce) && !Number.isNaN(Date.parse(v.requestedAt))
@@ -336,6 +471,7 @@ export class ResidentExecutor {
         }
         // A concluded abort has its terminal record and batch receipts; a failed summary receipt is no refusal of it.
         if (outcome.kind === 'abort') { try { await this.receipt('owner-request', { requestSha256, ...outcome }); } catch { /* see above */ } }
+        else if (outcome.kind === 'upgrade-resume') { const { kind, ...facts } = outcome; await this.receipt('upgrade-resumed', { requestSha256, ...facts }); }
         else await this.receipt('owner-request', { requestSha256, ...outcome });
       } catch (error) {
         // An abort whose acceptance names this very request in 80-owner-abort but was not concluded cleanly is no
@@ -348,7 +484,7 @@ export class ResidentExecutor {
           accepted = s?.abort?.requestSha256 === requestSha256
             && !(s.state === 'TERMINAL' && s.outcome === 'FAILED_CLEAN' && s.terminal?.facts?.failureCode === OWNER_ABORTED);
         } catch { accepted = false; }
-        await this.receipt(accepted ? 'owner-abort-unconfirmed' : 'owner-request-refused', { requestSha256, failureCode: codeOf(error) });
+        await this.receipt(accepted ? 'owner-abort-unconfirmed' : 'owner-request-refused', { requestSha256, failureCode: codeOf(error), ...archiveFacts(error) });
       }
       await this.owner.remember(entry.name, requestSha256);
     }
@@ -373,7 +509,7 @@ export class ResidentExecutor {
     for (const q of await this.ledger.quarantinedUnarchived()) {
       const batch = { key: q.key, batchId: q.batchId };
       const w = await this.engine.archiveFailure(batch, 'rearm-quarantine');
-      check(w && w.verified === true, 'REARM_WINDOWS_ARCHIVE_UNCONFIRMED');
+      archiveCheck(w && w.verified === true, 'REARM_WINDOWS_ARCHIVE_UNCONFIRMED', w);
       const l = await this.companion.archiveLinux(batch, 'rearm-quarantine');
       check(l && l.verified === true, 'REARM_LINUX_ARCHIVE_UNCONFIRMED');
       await this.ledger.markQuarantineArchived(q.marker, { windows: w.directory, linux: l.directory, haltSha256 });
@@ -382,7 +518,7 @@ export class ResidentExecutor {
     for (const entry of await this.ledger.unknownUnarchived()) {
       const batch = { key: entry.key, batchId: entry.started?.facts?.batchId ?? entry.terminal?.facts?.batchId ?? null };
       const w = await this.engine.archiveFailure(batch, code);
-      check(w && w.verified === true, 'REARM_WINDOWS_ARCHIVE_UNCONFIRMED');
+      archiveCheck(w && w.verified === true, 'REARM_WINDOWS_ARCHIVE_UNCONFIRMED', w);
       let l = null;
       if (batch.batchId) {
         l = await this.companion.archiveLinux(batch, code);
@@ -392,6 +528,8 @@ export class ResidentExecutor {
       archived.push(entry.key);
     }
     const kept = await this.ledger.clearHalt(haltSha256, { by, reason, archived });
+    // C3: a HALT may have been the end of anything; the role is asked again before this node takes a trigger.
+    await this.nodeRestart('rearm');
     return { haltSha256, archived, haltKeptAs: path.basename(kept) };
   }
 
@@ -432,7 +570,7 @@ export class ResidentExecutor {
         }
         let r;
         try {
-          r = await this.unknown(e.key, codeOf(error), 'owner-drain-unconfirmed', batch, { safePoint, stage: null, requestSha256 });
+          r = await this.unknown(e.key, codeOf(error), 'owner-drain-unconfirmed', batch, { safePoint, stage: null, requestSha256, ...archiveFacts(error) });
         } catch (inner) {
           // After an earlier entry ended, a failure here is no refusal of the request: the drain stops and says what it
           // ended and which entry is unconfirmed (still open, or ended without its summary). This tick stops HALTed either
@@ -482,7 +620,7 @@ export class ResidentExecutor {
     } catch (error) {
       // Nothing accepted: a plain refusal. Accepted half-way (80-owner-abort written): UNKNOWN, HALT now (review M1).
       if (!(await this.ledger.state(v.batchKey)).abort) throw error;
-      const r = await this.unknown(v.batchKey, codeOf(error), 'owner-abort-unconfirmed', Ledger.parkedAt(s) ? s.parked.batch : s.wait.batch, { safePoint: Ledger.parkedAt(s) ? 'parked' : 'waiting', stage: null, requestSha256 });
+      const r = await this.unknown(v.batchKey, codeOf(error), 'owner-abort-unconfirmed', Ledger.parkedAt(s) ? s.parked.batch : s.wait.batch, { safePoint: Ledger.parkedAt(s) ? 'parked' : 'waiting', stage: null, requestSha256, ...archiveFacts(error) });
       return { key: v.batchKey, outcome: r.state, failureCode: r.failureCode };
     }
     const parkedB = Ledger.parkedAt(s);
@@ -541,7 +679,7 @@ export class ResidentExecutor {
     try {
       request = await this.acceptAbort(key, found, safePoint, null);
     } catch (error) {
-      return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch, { safePoint, stage: null, requestSha256: found.requestSha256 });
+      return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch, { safePoint, stage: null, requestSha256: found.requestSha256, ...archiveFacts(error) });
     }
     return this.concludeAbort(key, batch, { safePoint, request });
   }
@@ -568,6 +706,8 @@ export class ResidentExecutor {
     if (watch.state.stop?.broker === true && !watch.state.stopReceipt) {
       try { await this.receipt('owner-abort-stop-requested', { key, stage: number, requestId: watch.state.stop.requestId }); } catch { /* the broker's receipt and the terminal facts remain */ }
     }
+    // What the pump observer saw (DESIGN §26), when the poll did not record it while the stage ran.
+    try { await this.bridgeReceipts(key, number, bridgeFacts(result?.bridge), watch.state); } catch { /* the stage-terminal receipt carries the same facts */ }
     let abort = watch.state.accepted;
     let unconfirmed = false;
     if (!abort) {
@@ -614,10 +754,25 @@ export class ResidentExecutor {
             await this.receipt('owner-abort-stop-requested', { key, stage: number, requestId: state.stop.requestId });
             state.stopReceipt = true;
           }
+          await this.bridgeReceipts(key, number, this.engine.bridgeState?.(batch, number) ?? null, state);
         } catch { /* a failed poll never ends the stage; the next poll tries again */ }
       }
     })();
     return { state, stop: async () => { stopped = true; wake(); await running; } };
+  }
+
+  // DESIGN §26: the pump observer's findings, each recorded once: the pump was lost (signal A or D), and the bridge stop was
+  // written next to the in-flight swap. Records only; the stage's own ending decides.
+  async bridgeReceipts(key, stage, b, state) {
+    if (!b) return;
+    if (b.pumpCode && !state.bridgePumpLost) {
+      await this.receipt('bridge-pump-lost', { key, stage, failureCode: b.pumpCode });
+      state.bridgePumpLost = true;
+    }
+    if (b.stopRequestId && !state.bridgeStop) {
+      await this.receipt('bridge-stop-requested', { key, stage, requestId: b.stopRequestId, failureCode: b.pumpCode ?? null });
+      state.bridgeStop = true;
+    }
   }
 
   // Quiescence after an abort: the same fresh two-host proof as any failure, re-checked for a bounded time (the Linux
@@ -639,21 +794,34 @@ export class ResidentExecutor {
     const context = { safePoint, stage, stopCode: typeof stopCode === 'string' && CODE.test(stopCode) ? stopCode : null, requestSha256: request?.requestSha256 ?? null };
     try {
       if (result && !abortStageEndingClean(result, { stopSent: stopCode === 'STOP_SENT' })) return await this.unknown(key, validCode(result.code ?? 'OWNER_ABORT_STAGE_UNCONFIRMED'), 'owner-abort-stage-not-stopped-cleanly', batch, context);
-      const proof = await this.abortQuiescence(batch, result?.proof ?? {});
-      if (!proofComplete(proof)) return await this.unknown(key, 'OWNER_ABORT_QUIESCENCE_UNPROVEN', 'owner-abort-quiescence-unproven', batch, context);
-      await this.ledger.burnHead(key, { failureCode: OWNER_ABORTED });
-      const windows = await this.engine.archiveFailure(batch, OWNER_ABORT_ARCHIVE_REASON);
-      const linux = await this.companion.archiveLinux(batch, OWNER_ABORT_ARCHIVE_REASON);
-      check(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED');
-      await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: OWNER_ABORTED, basis: 'owner-abort-quiescence-proven', safePoint, stage,
-        stageCode: result && result.ok !== true ? validCode(result.code) : null, stopCode: typeof stopCode === 'string' && CODE.test(stopCode) ? stopCode : null,
-        batchId: batch?.batchId ?? null, windows: windows.directory, linux: linux.directory, requestSha256: request.requestSha256 });
-      await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: OWNER_ABORTED, safePoint });
+      const closed = await this.provenCleanEnd(key, batch, { stageProof: result?.proof ?? {}, reason: OWNER_ABORT_ARCHIVE_REASON, failureCode: OWNER_ABORTED, burn: true,
+        facts: (windows, linux) => ({ failureCode: OWNER_ABORTED, basis: 'owner-abort-quiescence-proven', safePoint, stage,
+          stageCode: result && result.ok !== true ? validCode(result.code) : null, stopCode: typeof stopCode === 'string' && CODE.test(stopCode) ? stopCode : null,
+          batchId: batch?.batchId ?? null, windows, linux, requestSha256: request.requestSha256 }),
+        receipt: { safePoint } });
+      if (!closed) return await this.unknown(key, 'OWNER_ABORT_QUIESCENCE_UNPROVEN', 'owner-abort-quiescence-unproven', batch, context);
       try { this.reportOutcome((await this.ledger.state(key)).reserved?.subject, 'FAILED_CLEAN', { code: OWNER_ABORTED, key }); } catch { /* advisory */ }
       return { state: 'FAILED_CLEAN', key, failureCode: OWNER_ABORTED, safePoint, settle: { kind: 'burned', code: OWNER_ABORTED, klass: 'abort', breaker: 'neutral', pos: null } };
     } catch (error) {
-      return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch, context);
+      return this.unknown(key, codeOf(error), 'owner-abort-unconfirmed', batch, { ...context, ...archiveFacts(error) });
     }
+  }
+
+  // The proven clean end the Owner abort and the scanner abandonment share (DESIGN §6.5, §27): quiescence on both hosts within
+  // the abort's bounded re-check, the head burned (unless the caller already did), a rename-only archive on both hosts with a
+  // fixed reason, then the FAILED_CLEAN terminal record and its batch-terminal receipt. null: quiescence unproven, nothing
+  // written (the caller HALTs with its own code). An archive or record that cannot be confirmed throws (the caller HALTs).
+  // A crash anywhere in it leaves STARTED without a terminal: the next tick's recovery HALTs.
+  async provenCleanEnd(key, batch, { stageProof, reason, failureCode, burn, facts, receipt }) {
+    const proof = await this.abortQuiescence(batch, stageProof);
+    if (!proofComplete(proof)) return null;
+    if (burn) await this.ledger.burnHead(key, { failureCode });
+    const windows = await this.engine.archiveFailure(batch, reason);
+    const linux = await this.companion.archiveLinux(batch, reason);
+    archiveCheck(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED', windows);
+    await this.ledger.terminal(key, 'FAILED_CLEAN', facts(windows.directory, linux.directory));
+    await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode, ...receipt });
+    return { windows: windows.directory, linux: linux.directory };
   }
 
   // Pause requests may come from the user session: stopping is always allowed, resuming is not.
@@ -795,8 +963,57 @@ export class ResidentExecutor {
         s.update({ halt: halt ? { code: CODE.test(halt.value?.code ?? '') ? halt.value.code : 'HALT_RECORD_UNREADABLE', at: halt.value?.at ?? null } : null, paused: !!paused, ...intake, train: { enabled: this.policy.train.enabled, last: this.trainLast ?? null } });
         if (!['WAITING'].includes(result?.state)) s.setCurrent(null);
       });
+      if (typeof this.versions === 'function') this.report(s => s.setVersions?.(this.versionState?.view ?? null));
       this.reportQueue();
+      this.reportNode();
     } catch { /* advisory */ }
+  }
+
+  // ---- the versions of both sides and the version-skew hold (in-place upgrade channel, Task 018da927, DESIGN §34) ----
+
+  // Once a tick, right after the Owner's requests: the versions port (service-main.mjs: status.mjs#readVersionState over
+  // upgrade\current.json, upgrade\mailbox\responses\version-facts.json and upgrade\status.json) gives { view, notices } for the
+  // status board, and the view's consistent decides the hold. Without the port (a test, an engine of its own) nothing changes.
+  async versionsRefresh() {
+    if (typeof this.versions !== 'function') return null;
+    let state = null;
+    try { state = await this.versions(); } catch { state = null; }
+    this.versionState = state && typeof state === 'object' ? { view: state.view ?? null, notices: Array.isArray(state.notices) ? state.notices : [] } : null;
+    try { await this.versionSkewHold(this.versionState?.view?.consistent ?? null); } catch { /* the next tick tries again; the engine's gate still holds */ }
+    return this.versionState;
+  }
+
+  // The precheck's gate (DESIGN §34.5): true only when a fresh read says the sides disagree; a read that fails is unknown.
+  async versionSkewNow() {
+    if (typeof this.versions !== 'function') return false;
+    try { return (await this.versions())?.view?.consistent === false; } catch { return false; }
+  }
+
+  // consistent false: hold new batches (holder version-skew, two hours, renewed below 90 minutes left); true: lift that hold;
+  // null (unknown: no current.json, facts older than 15 minutes, unreadable): leave it as it is. The hold is the executor's own
+  // word in the intake pause (intake-pause.mjs#apply), so PAUSE, HALT and the other holders are untouched and the Owner may
+  // still lift it by hand (it then comes back on the next tick while the versions still disagree). Returns the receipt kind written.
+  async versionSkewHold(consistent) {
+    if (consistent !== true && consistent !== false) return null;
+    try { await this.intakeRefresh(); } catch { return null; }
+    const p = this.intakePause, now = this.clock();
+    const hold = p.active(now).find(h => h.holder === VERSION_SKEW_HOLDER) ?? null;
+    const word = { holder: VERSION_SKEW_HOLDER, requestedAt: new Date(now).toISOString(), nonce: randomBytes(8).toString('hex') };
+    let request;
+    if (consistent === false) {
+      if (hold && Date.parse(hold.until) - now >= VERSION_SKEW_RENEW_BELOW_MS) return null;
+      request = { contract: INTAKE_PAUSE_CONTRACT, ...word, minutes: INTAKE_PAUSE_MAX_MINUTES, reason: UPGRADE_VERSION_SKEW };
+    } else {
+      if (!hold) return null;
+      request = { contract: INTAKE_RESUME_CONTRACT, ...word, reason: 'VERSIONS_CONSISTENT' };
+    }
+    const requestSha256 = digest(request);
+    const next = p.apply(request, requestSha256, now);
+    try { await p.save(next.data); } catch (error) { await this.intakeTrouble(error, 'write'); return null; }
+    this.intakeTroubleSince = null;
+    const { kind, ...facts } = next.result;
+    try { await this.receipt(kind, { requestSha256, ...facts, reason: request.reason }); } catch { /* the hold took effect */ }
+    return kind;
   }
 
   // Resident quota redesign v0.6 §9 phase 1, items 6 and 7: on the first start of an install, before any batch, every
@@ -837,6 +1054,8 @@ export class ResidentExecutor {
     }
     this.recoveredThisTick = recovered;
     await this.takeOwnerRequests();
+    // DESIGN §34: the versions of both sides, and the version-skew hold, before anything is scheduled.
+    await this.versionsRefresh();
     // The run queue follows the ledger for any row a crash or an earlier tick left marked running (a view: also while
     // halted, so the status shows what the ledger says).
     try { await this.reconcileQueue(); } catch { /* the next tick */ }
@@ -851,6 +1070,16 @@ export class ResidentExecutor {
     // so one found while halted is closed at once and the Owner's re-arm clears a single HALT (review of 3c-1, round 2).
     const train = recovered ? await this.trainRecover() : null;
     const probe = recovered ? await this.roleProbeRecover() : null;
+    const revocationRecovery = recovered ? await this.revocationMaintenanceRecover() : null;
+    if (revocationRecovery) return revocationRecovery;
+    // Qualified safety maintenance may revoke old work while CI is halted or
+    // paused. It neither clears that latch nor starts a PR/batch, and its
+    // pre-broker engine guards still require the actual helper/SCM to be idle.
+    if (recovered) {
+      const originalHalt=await this.ledger.halted();
+      const maintenance=await this.revocationMaintenance({halted:!!originalHalt});
+      if(maintenance)return originalHalt?{...maintenance,state:'HALTED',failureCode:originalHalt.value?.code??null}:maintenance;
+    }
     // Even if the HALT itself could not be written, an unconfirmed recovery never runs a candidate,
     // and neither does a ledger with an unarchived failed-unknown or quarantined scene (N1).
     if (!recovered || await this.ledger.halted()) return train?.state === 'HALTED' ? train : { state: 'HALTED' };
@@ -878,9 +1107,10 @@ export class ResidentExecutor {
     const r = await this.schedule();
     // A batch resting at parking point A stays the tick's result (and the status's current batch) while only the intake
     // pause holds the new ones (independent review of C6, minor 3).
-    const result = waiting && (r.state === 'IDLE' || ['INTAKE_PAUSED', 'INTAKE_PAUSE_UNCONFIRMED'].includes(r.reason)) ? waiting : r;
-    // Stage 10 only after a schedule that ran nothing (a batch resting at a parking point runs nothing either).
-    if (!waiting && TRAIN_QUIET_STATES.includes(r.state) && !TRAIN_HELD_REASONS.includes(r.reason)) {
+    const result = waiting && (r.state === 'IDLE' || [...TRAIN_HELD_REASONS, ...Object.values(NODE_DEFERRALS)].includes(r.reason)) ? waiting : r;
+    // Stage 10 only after a schedule that ran nothing (a batch resting at a parking point runs nothing either). The role probe
+    // also while a batch rests at A, when it may be run at a parking point (probeAtParking, DESIGN §29.2 item 5).
+    if ((!waiting || this.probeAtParking()) && TRAIN_QUIET_STATES.includes(r.state) && !TRAIN_HELD_REASONS.includes(r.reason)) {
       const probeResult = await this.roleProbeMaintenance();
       if (probeResult) return probeResult;
     }
@@ -911,19 +1141,28 @@ export class ResidentExecutor {
     return null;
   }
 
+  // Whether the role probe may run while batches rest at a parking point (A or B). Nothing of such a batch runs: no process, no
+  // broker request, Linux empty; ticks are serial, so the probe's swap cannot meet a stage of this executor. C2 still kept the
+  // periodic probe of an ACTIVE node away from every open batch (a parked one may rest for a day); but a node that is not ACTIVE
+  // must be able to leave UNCERTAIN, and an urgent probe (the role may be gone) must not wait for the parked batches to end:
+  // after a restart or a re-arm the batches parked before it would otherwise keep the node UNCERTAIN for park.maxMs.
+  probeAtParking() { return this.probing() && (this.nodeMode() !== 'ACTIVE' || this.roleProbe.urgent === true); }
+
   async roleProbeMaintenance() {
     if (typeof this.engine.runRoleProbe !== 'function' || this.roleProbeRunning) return null;
-    // Existing single-node execution is not changed to a primary/standby mode by C2. C3 owns the
-    // explicit roleProbeMode input and all mode transitions; status (advisory) is never an input.
-    const mode = this.roleProbeMode ?? 'ACTIVE', now = this.clock();
-    const idle = !(await this.ledger.halted()) && !(await this.ledger.paused()) && (await this.ledger.open()).length === 0;
-    if (!this.roleProbe.due({ now, mode, idle })) return null;
+    // C3 owns the mode and all its transitions (DESIGN §29); status (advisory) is never an input. UNCERTAIN has STANDBY's
+    // 15-minute interval, and `urgent` (a start, a re-arm, a failure that may mean the role is gone) is due at once.
+    const mode = this.nodeMode(), now = this.clock();
+    // Idle: no HALT, no PAUSE and no batch open; entries at a parking point do not count when probeAtParking() says so.
+    const open = await this.ledger.open();
+    const idle = !(await this.ledger.halted()) && !(await this.ledger.paused()) && (this.probeAtParking() ? open.every(e => Ledger.resumable(e)) : open.length === 0);
+    if (!this.roleProbe.due({ now, mode: mode === 'ACTIVE' ? 'ACTIVE' : 'STANDBY', idle })) return null;
     if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < now + 240_000) return null;
     const drift = await this.driftCode();
     if (drift) { await this.haltWith(drift, { phase: 'role-probe' }); return { state: 'HALTED', failureCode: drift }; }
     this.roleProbeRunning = true;
     try {
-      const intent = await this.receipt('role-probe-intent', { mode });
+      const intent = await this.receipt('role-probe-intent', { mode, urgent: this.roleProbe.urgent === true });
       let r;
       try { r = await this.engine.runRoleProbe(); } catch { r = null; }
       // Only the engine's pre-broker busy guard is a deferral, not a role fact. BROKER_BUSY after a
@@ -940,10 +1179,95 @@ export class ResidentExecutor {
         this.roleProbeNotices.push(...observation.notices);
         this.roleProbeNotices = this.roleProbeNotices.slice(-10);
         this.report(s => s.setRoleProbe?.(this.policy.node.nodeName, observation.probe));
+        // not-held is the safe direction and takes effect first; held only after the result is recorded. uncertain changes nothing.
+        if (fact.result === 'not-held') await this.setNodeMode('STANDBY', 'probe-not-held');
       }
       await this.receipt('role-probe-result', { intentSeq: intent.seq, deferred, ok: !!fact, fact, state: this.roleProbe.snapshot() });
+      if (fact?.result === 'held') await this.setNodeMode('ACTIVE', 'probe-held');
       return !deferred && !fact ? { state: 'HALTED', failureCode: 'ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED' } : null;
     } finally { this.roleProbeRunning = false; }
+  }
+
+  async revocationMaintenanceRecover() {
+    if(typeof this.engine.runRevocationMaintenance!=='function')return null;
+    if(this.revocationRecovered)return this.revocationBook.blocked?{state:'HALTED',failureCode:'REVOCATION_MAINTENANCE_INTERRUPTED'}:null;
+    try{
+      const rows=await this.receipts.latest(['revocation-maintenance-intent','revocation-maintenance-result'],2),last=rows.at(-1);
+      if(last?.type==='revocation-maintenance-intent'){
+        this.revocationBook.blocked=true;
+        await this.haltWith('REVOCATION_MAINTENANCE_INTERRUPTED',{intentSeq:last.seq});
+        // Leave the actual intent open. No new helper is dispatched until a
+        // separately authorized recovery proves and closes the old execution.
+        return {state:'HALTED',failureCode:'REVOCATION_MAINTENANCE_INTERRUPTED'};
+      }
+      if(last){
+        const intent=rows[0]?.value?.body,result=last.value?.body;
+        check(rows.length===2&&rows[0].type==='revocation-maintenance-intent'&&result?.intentSeq===rows[0].seq
+          &&HEX64.test(intent?.runKey??'')&&REVOCATION_RUN_ID.test(intent?.runId??'')&&intent.runId.startsWith(intent.runKey.slice(0,16))
+          &&result.runId===intent.runId,'REVOCATION_BOOK_REFUSED');
+        this.revocationBook.restore(result.state);
+        check(this.revocationBook.lastRunId===intent.runId,'REVOCATION_BOOK_REFUSED');
+      }
+      this.revocationRecovered=true;
+      if(this.revocationBook.blocked){
+        await this.haltWith('REVOCATION_MAINTENANCE_INTERRUPTED',{});
+        return {state:'HALTED',failureCode:'REVOCATION_MAINTENANCE_INTERRUPTED'};
+      }
+      return null;
+    }catch{
+      this.revocationBook.blocked=true;
+      await this.haltWith('REVOCATION_MAINTENANCE_RECEIPTS_UNCONFIRMED',{});
+      return {state:'HALTED',failureCode:'REVOCATION_MAINTENANCE_RECEIPTS_UNCONFIRMED'};
+    }
+  }
+
+  async revocationMaintenance({halted}) {
+    if(!this.revocationRecovered||this.revocationBook.blocked||typeof this.engine.runRevocationMaintenance!=='function'
+      ||typeof this.engine.revocationMaintenanceQualification!=='function'||!this.revocationBook.due(this.clock()))return null;
+    const now=this.clock();let qualification;
+    try{
+      qualification=validateRevocationQualification(await this.engine.revocationMaintenanceQualification(),{
+        sourceManifestSha256:this.policy.ciSourceManifestSha256,now});
+    }catch{return null;} // No exact Source qualification: retain the existing CI/HALT behavior.
+    if(halted&&!qualification.allowWhileHalted)return null;
+    if(this.policy.validUntil!==null&&Date.parse(this.policy.validUntil)<=now+REVOCATION_RUN_MS+REVOCATION_HELPER_MARGIN_MS)return null;
+    const drift=await this.driftCode();
+    if(drift){await this.haltWith(drift,{phase:'revocation-maintenance'});return {state:'HALTED',failureCode:drift};}
+    const runKey=randomBytes(32).toString('hex'),runId=`${runKey.slice(0,16)}-${randomBytes(6).toString('hex')}`;
+    let intent;
+    try{intent=await this.receipt('revocation-maintenance-intent',{runKey,runId,qualificationRef:qualification.qualificationRef,
+      sourceManifestSha256:qualification.sourceManifestSha256,halted});}
+    catch{
+      this.revocationBook.blocked=true;this.revocationRecovered=false;
+      await this.haltWith('REVOCATION_MAINTENANCE_RECEIPTS_UNCONFIRMED',{});
+      return {state:'HALTED',failureCode:'REVOCATION_MAINTENANCE_RECEIPTS_UNCONFIRMED'};
+    }
+    let result;
+    try{result=await this.engine.runRevocationMaintenance({runKey,runId});}catch{result=null;}
+    const deferred=result?.deferred===true&&['REVOCATION_MAINTENANCE_BUSY','REVOCATION_MAINTENANCE_NOT_QUALIFIED'].includes(result.code);
+    const proven=result?.proof?.windowsTreeZero===true&&result.proof.serviceOriginalStopped===true;
+    let facts=null;
+    if(!deferred&&result?.ok===true&&proven&&result.runId===runId){
+      try{
+        facts=validateRevocationFacts(result.revocation);
+        check(result.maintenancePending===!facts.complete&&result.outcome?.status===(facts.complete?'REVOCATION_MAINTENANCE':'PENDING')
+          &&Number.isSafeInteger(result.outcome.sideEffects)&&result.outcome.sideEffects>=0&&typeof result.outcome.mayHavePublished==='boolean',
+        'REVOCATION_FACTS_REFUSED');
+      }catch{facts=null;}
+    }
+    const blocked=!deferred&&!facts;
+    if(blocked)await this.haltWith('REVOCATION_MAINTENANCE_CLEANUP_OR_FACT_UNCONFIRMED',{intentSeq:intent.seq,failureCode:validCode(result?.code)});
+    const state=this.revocationBook.observe({now:this.clock(),runId,pending:facts?.complete===false,deferred,blocked});
+    try{await this.receipt('revocation-maintenance-result',{intentSeq:intent.seq,runId,deferred,ok:!!facts,
+      failureCode:blocked?'REVOCATION_MAINTENANCE_CLEANUP_OR_FACT_UNCONFIRMED':null,facts,state});}
+    catch{
+      this.revocationBook.blocked=true;this.revocationRecovered=false;
+      await this.haltWith('REVOCATION_MAINTENANCE_RECEIPTS_UNCONFIRMED',{intentSeq:intent.seq});
+      return {state:'HALTED',failureCode:'REVOCATION_MAINTENANCE_RECEIPTS_UNCONFIRMED'};
+    }
+    if(blocked)return {state:'HALTED',failureCode:'REVOCATION_MAINTENANCE_CLEANUP_OR_FACT_UNCONFIRMED'};
+    return {state:deferred||facts?.complete===false?'DEFERRED':'IDLE',reason:deferred?result.code:
+      facts.complete?'REVOCATION_MAINTENANCE_COMPLETED':'REVOCATION_MAINTENANCE_PENDING',maintenancePending:facts?.complete===false};
   }
 
   // ---- stage 10: train maintenance (phase 2, step 3c-1; DESIGN §22.3) ----
@@ -1027,13 +1351,16 @@ export class ResidentExecutor {
   static lastTry(entry) { return entry.tries?.length ? entry.tries[entry.tries.length - 1].ended : null; }
 
   // A parked batch counts towards park.maxParked when it waits at A, or when its claim was in the merge queue's first two
-  // places at its last try (design v0.5 §4.7, review M4); the others are bounded by park.maxParkedOutsideTop2.
+  // places at its last try (design v0.5 §4.7, review M4); the others are bounded by park.maxParkedOutsideTop2. A batch parked by
+  // a transient stage-8 ending (DESIGN §28) has no true place (null): it counts by its assumed place (independent review r3,
+  // NIT 2), so it never pushes other batches over the outside bound.
   async parkedCounts(entries = null) {
     const all = entries ?? await this.ledger.parkedEntries();
     let inside = 0, outside = 0;
     for (const e of all) {
       if (Ledger.waitingAt(e)) { inside += 1; continue; }
-      const p = ResidentExecutor.lastTry(e)?.position;
+      const last = ResidentExecutor.lastTry(e);
+      const p = Number.isSafeInteger(last?.position) ? last.position : (last?.transient === true ? last.assumedPosition : null);
       if (Number.isSafeInteger(p) && p <= 2) inside += 1; else outside += 1;
     }
     return { inside, outside };
@@ -1051,6 +1378,9 @@ export class ResidentExecutor {
   // still-waiting result when one only waits }.
   async resumeParked() {
     const entries = await this.ledger.parkedEntries();
+    // Every batch resting at parking point A, for the status page (Task 4012c1b9, review N4 of step 2): several may wait at
+    // once, each shown on its own row as PARKED_A, not only the one in `current`.
+    this.parkedA = new Set(entries.filter(x => Ledger.waitingAt(x)).map(x => `${x.reserved?.subject?.pr}:${x.reserved?.subject?.headSha}`));
     // Whether new batches wait for the parking places: shown on the status of every tick, not only one that deferred
     // (re-review of step 2, m8).
     const counts = await this.parkedCounts(entries);
@@ -1094,7 +1424,7 @@ export class ResidentExecutor {
     try {
       outcome = await this.supersededAfterStart(key, subject, batch, 'parked', POSITIONS[8], 8);
     } catch (error) {
-      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch);
+      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch, archiveFacts(error));
     }
     return outcome ? this.afterBatch(subject, entry.reserved.origin ?? 'queued', outcome) : null;
   }
@@ -1110,7 +1440,7 @@ export class ResidentExecutor {
       outcome = drift ? await this.unknown(key, drift, 'resume-start-checks', batch)
         : await this.fail(key, batch, Object.assign(new StepFailure(8, code, {}, 'stage', entry.plan?.relayed?.length ?? 0), { windowsOnly: true }));
     } catch (error) {
-      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch);
+      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch, archiveFacts(error));
     }
     return this.afterBatch(subject, entry.reserved.origin ?? 'queued', outcome);
   }
@@ -1134,7 +1464,7 @@ export class ResidentExecutor {
       }
       if (outcome instanceof StepFailure) outcome = await this.fail(key, batch, outcome);
     } catch (error) {
-      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch);
+      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch, archiveFacts(error));
     }
     return this.afterBatch(subject, origin, outcome);
   }
@@ -1196,6 +1526,21 @@ export class ResidentExecutor {
       return { state: 'PARKED', key, reason: control.code, until: nextAt, position, tries: n,
         settle: { kind: 'parked', code: control.code, klass: 'queue', breaker: 'neutral', pos: POSITIONS[8], linux: false, nextAt, position } };
     }
+    // DESIGN §28: a transient zero-effect ending parks again, at most STAGE8_TRANSIENT_MAX_TRIES times (the next one burns as
+    // before). The try records its true place (null when the outcome named none), so it counts towards stage8MaxTries and never
+    // as a try at the queue's head; assumedPosition (the last try's place, else 1: the Source reaches this boundary only once the
+    // claim was judged at the head) only exempts it from the outside bound and is what the status shows. Its own back-off.
+    const transientParks = before.filter(t => t.ended.transient === true).length;
+    if (zero && STAGE8_TRANSIENT_PARK_CODES.includes(control.code) && !final && transientParks < STAGE8_TRANSIENT_MAX_TRIES) {
+      const last = before.length ? before[before.length - 1].ended : null;
+      const assumedPosition = Number.isSafeInteger(position) ? position : Number.isSafeInteger(last?.position) ? last.position
+        : Number.isSafeInteger(last?.assumedPosition) ? last.assumedPosition : 1;
+      const nextAt = now + STAGE8_TRANSIENT_RETRY_MS[transientParks];
+      await this.ledger.endTry(key, n, { code: control.code, nextAt: new Date(nextAt).toISOString(), position, entered: queueFact?.entered ?? null, transient: true, assumedPosition });
+      await this.receipt('stage8-transient-parked', { key, try: n, failureCode: control.code, nextAt: new Date(nextAt).toISOString(), position, assumedPosition, park: transientParks + 1 });
+      return { state: 'PARKED', key, reason: control.code, until: nextAt, position: assumedPosition, tries: n,
+        settle: { kind: 'parked', code: control.code, klass: 'transient', breaker: 'neutral', pos: POSITIONS[8], linux: false, nextAt, position: assumedPosition } };
+    }
     return windowsOnly(new StepFailure(8, control.code, control.proof, 'stage', relayed, control));
   }
 
@@ -1210,8 +1555,10 @@ export class ResidentExecutor {
     this.report(s => {
       const b = breakerOf(this.queue.breaker);
       s.update({ queue: { generation: this.queue.generation, live: this.queue.live().length, depth: this.policy.limits.queueDepth, parkingFull: this.parkingFull === true }, breaker: breakerView(b),
-        notices: [...this.roleProbeNotices, ...this.queue.notices].slice(0, 50) });
-      s.setPending(this.queue.view(this.clock(), { etaBatchMs: ETA_BATCH_MS }));
+        notices: [...(this.versionState?.notices ?? []), ...this.roleProbeNotices, ...this.queue.notices].slice(0, 50) });
+      const parkedA = this.parkedA ?? new Set();
+      s.setPending(this.queue.view(this.clock(), { etaBatchMs: ETA_BATCH_MS })
+        .map(r => r.state === 'RUNNING' && parkedA.has(`${r.pr}:${r.headSha}`) ? { ...r, reason: PARKED_A_REASON } : r));
     });
   }
 
@@ -1320,6 +1667,10 @@ export class ResidentExecutor {
     const rows = this.queue.candidates(now);
     this.reportQueue();
     if (attempts.length === 0 && rows.length === 0) { await this.persistQueue(); return { state: 'IDLE' }; }
+    // The node gate (C3, DESIGN §29): no new batch of any kind unless this node is ACTIVE, and before the intake pause, so a node
+    // that is not ACTIVE shows why and still runs the role probe. Triggers were read already; a batch in flight went on.
+    const notActive = this.nodeGate();
+    if (notActive) { await this.persistQueue(); return notActive; }
     // The intake pause (C6, DESIGN §20): no new batch of any kind while a hold is in force. The batches in flight and at a
     // parking point were already resumed by tickInner; nothing of theirs waits for this gate.
     const held = await this.intakeGate();
@@ -1387,6 +1738,9 @@ export class ResidentExecutor {
     if (await this.executedHeads.published(subject)
       && !(attempt1Key && await this.executedHeads.onlyRelayRecordOf(subject, attempt1Key, RELAY_STAGE) && await this.relayedNothing(attempt1Key))) return { ignore: 'HEAD_ALREADY_PUBLISHED_NO_RETRY' };
     if ((await this.ledger.state(key)).state !== 'ABSENT') return { ignore: 'CONTENT_ALREADY_EXECUTED_NO_RETRY' };
+    // DESIGN §34.5: while the two sides run different versions (consistent false, read now) nothing is reserved: a global
+    // deferral, the PR pays nothing for the node's skew. Unknown (null) or no versions port: as before.
+    if (await this.versionSkewNow()) return { defer: VERSION_SKEW };
     // The 10-minute cool-down of the batch key after a release it applies to (classify.mjs#UNEXECUTED_REASON_RULES).
     const recent = (await this.ledger.unexecutedRecords(key, now - DAY)).filter(r => UNEXECUTED_REASON_RULES[r.reason]?.cooldown !== false);
     if (recent.length > 0 && now - Math.max(...recent.map(r => r.at)) < l.unexecutedCooldownMs) return { defer: 'UNEXECUTED_COOLDOWN', perRow: true, until: Math.max(...recent.map(r => r.at)) + l.unexecutedCooldownMs };
@@ -1430,9 +1784,18 @@ export class ResidentExecutor {
   }
 
   // A precheck's deferral: the row's own one is shown on it and the pass goes on; a global one ends the pass.
-  deferral(pre, key, pr) {
+  async deferral(pre, key, pr) {
     if (pre.notice) this.queue.notice(pre.notice);
     if (pre.perRow) { this.queue.defer(pr, pre.defer, this.clock(), { dropPoke: pre.dropPoke === true, until: pre.until ?? null }); return { state: 'DEFERRED', key, reason: pre.defer, next: true }; }
+    // A global deferral (a full daily budget, the companion not ready) holds the whole queue; one receipt per reason and
+    // UTC day says so (Task 12ada80e, from c0ff5167: the executor standing still was visible nowhere but the status page).
+    const day = `${pre.defer}:${dayKey(this.clock())}`;
+    if (!this.deferralReceipts.has(day)) {
+      this.deferralReceipts.add(day);
+      const u = this.tickUsage;
+      try { await this.receipt('batch-deferred', { key, failureCode: pre.defer, usage: u ? { started: u.started, evaluations: u.evaluations, lowRiskBurns: u.lowRiskBurns } : null }); }
+      catch { this.deferralReceipts.delete(day); }
+    }
     return { state: 'DEFERRED', key, reason: pre.defer };
   }
 
@@ -1537,7 +1900,7 @@ export class ResidentExecutor {
       if (outcome instanceof StepFailure) outcome = await this.fail(key, batch, outcome);
     } catch (error) {
       // An exception in the executor itself (or a port) is never classified as clean.
-      outcome = await this.unknown(key, codeOf(error), 'executor-exception');
+      outcome = await this.unknown(key, codeOf(error), 'executor-exception', null, archiveFacts(error));
     }
     return this.afterBatch(subject, origin, outcome);
   }
@@ -1584,7 +1947,7 @@ export class ResidentExecutor {
       this.queue.breaker = b;
       // This release counts towards the head's cap unless it is a wait, a supersession, or an environment fault while
       // the breaker is not closed (ledger.mjs#usage counts the same way; the tick's usage is from before this batch).
-      const counted = s?.kind === 'released' && s.klass !== 'waiting' && s.reason !== 'SUPERSEDED' && !(environment && s.breakerState !== 'closed');
+      const counted = s?.kind === 'released' && s.klass !== 'waiting' && s.klass !== 'node-role' && s.reason !== 'SUPERSEDED' && !(environment && s.breakerState !== 'closed');
       const releases24h = (this.tickUsage?.releasesByHead.get(subject.headSha) ?? 0) + (counted ? 1 : 0);
       const ciRetryAfter = typeof s?.ciRetryAfter === 'string' && Number.isFinite(Date.parse(s.ciRetryAfter)) ? Date.parse(s.ciRetryAfter) : null;
       const settled = this.queue.settle(subject.pr, subject.headSha, s ? { kind: s.kind, code: s.code ?? null, klass: s.klass ?? null, reason: s.reason ?? null, ciRetryAfter,
@@ -1708,17 +2071,19 @@ export class ResidentExecutor {
       // Every resume re-runs the start-of-batch checks; any drift fails closed (UNKNOWN, HALT).
       const startCode = await this.batchStartChecks(subject);
       if (startCode) return this.afterBatch(subject, entry.reserved.origin ?? 'queued', await this.unknown(key, startCode, 'resume-start-checks', batch));
-      outcome = await this.continueBatch(key, subject, batch, t0);
+      outcome = await this.continueBatch(key, subject, batch, t0, { resumed: true });
       if (outcome instanceof StepFailure) outcome = await this.fail(key, batch, outcome);
     } catch (error) {
-      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch);
+      outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch, archiveFacts(error));
     }
     return this.afterBatch(subject, entry.reserved.origin ?? 'queued', outcome);
   }
 
   // Everything after 15-relay-wait: one wait evaluation, then (unless still waiting) 20-plan-intent,
   // stage R, 25-plan, the local roles, stage 8 and the close.
-  async continueBatch(key, subject, batch, t0) {
+  //   resumed: this call resumes a batch that rested at parking point A in an earlier tick (resumeWaiting), never the
+  //   batch's own first pass (DESIGN §37: only a batch that waited is re-bundled; independent review M1).
+  async continueBatch(key, subject, batch, t0, { resumed = false } = {}) {
     let aborted = await this.abortIfRequested(key, batch, 'before-relay-plan');
     if (aborted) return aborted;
     if ((aborted = await this.supersededAfterStart(key, subject, batch, 'before-relay-plan', POSITIONS[1]))) return aborted;
@@ -1732,11 +2097,21 @@ export class ResidentExecutor {
     if (localRoles.length > 0) {
       if ((aborted = await this.abortIfRequested(key, batch, 'before-workspace'))) return aborted;
       if ((aborted = await this.supersededAfterStart(key, subject, batch, 'before-workspace', plan.candidates.length > 0 ? POSITIONS[RELAY_STAGE] : POSITIONS[1]))) return aborted;
-      // A batch resumed from parking point A after other batches ran may hold a bundle too old for the workspace: it ends
-      // here, nothing of it on Linux. The design's re-bundle needs a second bundle generation in the companion and comes
-      // with the relay (off until the Owner's November test; DESIGN §18.2).
+      // A batch resumed from parking point A gets its second bundle before the workspace (Task 4012c1b9, DESIGN §37). When
+      // that is refused, it ends here, nothing of it on Linux: refs no longer the batch's as the clean transient
+      // REMOTE_REFS_CHANGED_SINCE_BUNDLE, anything else as before (PARKED_BUNDLE_TOO_OLD). A batch that never waited, or a
+      // companion without the re-bundle port, keeps the old rule: a bundle older than 100 minutes ends the batch here.
       const reservedAt = Date.parse((await this.ledger.state(key)).reserved?.reservedAt ?? '');
-      if (Number.isFinite(reservedAt) && this.clock() - reservedAt > BUNDLE_MAX_AGE_AT_WORKSPACE_MS) return new StepFailure(0, 'PARKED_BUNDLE_TOO_OLD', {}, 'workspace', relayed);
+      const rebundle = resumed && typeof this.companion.rebuildBundle === 'function' && Number.isFinite(reservedAt) && this.clock() - reservedAt > REBUNDLE_AFTER_MS;
+      if (!rebundle) {
+        if (Number.isFinite(reservedAt) && this.clock() - reservedAt > BUNDLE_MAX_AGE_AT_WORKSPACE_MS) return new StepFailure(0, 'PARKED_BUNDLE_TOO_OLD', {}, 'workspace', relayed);
+      } else {
+        this.atStage(0, 'rebundle');
+        const rb = await this.companion.rebuildBundle(batch);
+        const code = rb?.ok === true ? null : (rb?.code === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'PARKED_BUNDLE_TOO_OLD');
+        await this.receipt('batch-rebundled', { key, failureCode: code, ageMinutes: Math.floor((this.clock() - reservedAt) / 60_000), companionJobTree: rb?.jobTree ?? null });
+        if (code) return new StepFailure(0, code, {}, 'workspace', relayed);
+      }
       this.atStage(0, 'workspace');
       const prep = await this.companion.prepareWorkspaces(batch);
       if (!prep || prep.ok !== true) return new StepFailure(0, prep?.code ?? 'WORKSPACE_PREPARATION_UNCONFIRMED', {}, 'workspace', relayed);
@@ -1749,7 +2124,8 @@ export class ResidentExecutor {
         this.atStage(number, 'stage');
         const execution = number === ROLE_STAGES[role][0];
         const { result: r, abort, stopCode, unconfirmed } = await this.runStageWatched(key, batch, number, { betweenRoles: execution && index > 0, firstLinux: execution && index === 0 });
-        await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r) });
+        await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r),
+          ...(r.bridge ? { bridge: bridgeFacts(r.bridge) } : {}), ...(r.memoryGate ? { memoryGate: memoryGateFacts(r.memoryGate) } : {}) });
         if (unconfirmed) return this.unknown(key, 'OWNER_ABORT_UNCONFIRMED', 'owner-abort-unconfirmed', batch, { safePoint: `in-stage-${number}`, stage: number });
         if (abort) return this.concludeAbort(key, batch, { safePoint: `in-stage-${number}`, stage: number, result: r, request: abort, stopCode });
         if (r.ok !== true) return new StepFailure(number, r.code, r.proof, 'stage', relayed, r);
@@ -1760,7 +2136,7 @@ export class ResidentExecutor {
     // Phase 2, step 2: the close archive on both hosts ends the Linux exclusive zone; then the batch rests at parking
     // point B and stage 8 runs as tries (the first one right away). Stage 8 touches only Windows.
     const closed = await this.engine.closeBatch(batch, { linux: localRoles.length > 0 });
-    check(closed && closed.verified === true, 'SUCCESS_PATH_ARCHIVE_UNCONFIRMED');
+    archiveCheck(closed && closed.verified === true, 'SUCCESS_PATH_ARCHIVE_UNCONFIRMED', closed);
     await this.ledger.park(key, { batch, closed: closed.archived ?? null, local: localRoles });
     await this.receipt('batch-parked', { key, local: localRoles, relayed: plan.relayed.map(r => r.role) });
     // Everything up to stage 7 passed (Linux too when a role ran locally): the breaker learns it now. A view: a failure
@@ -1874,44 +2250,113 @@ export class ResidentExecutor {
       const { klass, basis, row, release } = decideFailure({ code: failure.code, stage: failure.stageNumber, phase: failure.phase, outcome: failure.outcome,
         brokerNoLaunch: failure.brokerNoLaunch, proof, started });
       const facts = ResidentExecutor.failureFacts(failure, row);
+      // C3 (DESIGN §29): stage 1 said this node holds no role (NODE_ROLE_NOT_HELD, or the older Source's NATIVE_NOT_ADMITTED with
+      // admission_binding_required): STANDBY, whatever else the ending is. A later live refusal may mean the same: probe at once.
+      if (row?.class === 'node-role') await this.setNodeMode('STANDBY', 'role-not-held');
+      else if (failure.stageNumber !== 1 && ROLE_LOST_SUSPECT_CODES.includes(failure.code)) this.roleProbe.markUrgent();
       const settle = { code: failure.code, klass: row?.class ?? 'unknown', breaker: row?.breaker ?? 'counts', breakerState, pos, ciRetryAfter: facts.ciRetryAfter, outcomeReason: facts.reason,
         ...(typeof failure.windowsOnly === 'boolean' ? { windowsOnly: failure.windowsOnly } : {}) };
       if (!started && release) {
         await this.closeOrThrow(batch);
         await this.ledger.releaseUnexecuted(key, release, { failureCode: failure.code, basis, ...facts, breakerState });
         await this.receipt('batch-unexecuted', { key, failureCode: failure.code, release, class: facts.class });
+        // C3 (DESIGN §29.10): attempt 2 is consumed before its reservation; a node-role release decided nothing about the PR, so the
+        // same attempt 2 is given back (its key is the same: never an attempt 3). A failure here only loses attempt 2 (the safe side).
+        if (row?.class === 'node-role' && this.current?.key === key && this.current.attempt === 2) await this.reopenAttempt2(key);
         this.reportOutcome(await subjectOf() ?? this.current, release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', { code: failure.code, row, key });
         return { state: release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', key, failureCode: failure.code, release, settle: { ...settle, kind: 'released', reason: release } };
       }
-      // Every other failure burns the head, also before 10-started (stage 1 may have published).
-      await this.ledger.burnHead(key, { failureCode: failure.code });
+      // Every other failure burns the head, also before 10-started (stage 1 may have published). Risk tier (Task 12ada80e,
+      // DESIGN §36): a stage-1 ending that proves it published nothing (clean on both hosts, bound outcome with zero side
+      // effects and mayHavePublished false) still burns the head, but uses the evaluation budget, not the execution one.
+      const lowRisk = !started && failure.stageNumber === 1 && klass === 'CLEAN' && failure.outcome?.sideEffects === 0 && failure.outcome?.mayHavePublished === false;
+      await this.ledger.burnHead(key, { failureCode: failure.code, ...(lowRisk ? { quotaTier: QUOTA_TIER_EVALUATION } : {}) });
+      // DESIGN §27: a scanner-issuer stage that would HALT is closed clean when its abandonment can be proven.
+      if (klass !== 'CLEAN' && await this.scannerAbandonable(key, failure)) return await this.abandonScannerStage(key, batch, failure, settle);
       if (klass === 'CLEAN') {
         const reason = archiveReason(failure.code);
         const windows = await this.engine.archiveFailure(batch, reason);
         const linux = await this.companion.archiveLinux(batch, reason);
-        check(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED');
+        archiveCheck(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED', windows);
         await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: failure.code, basis, stage: failure.stageNumber, batchId: batch?.batchId ?? null, windows: windows.directory, linux: linux.directory, ...facts });
         await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: failure.code, class: facts.class });
         const subject = (await this.ledger.state(key)).reserved?.subject;
         this.reportOutcome(subject, 'FAILED_CLEAN', { code: failure.code, row, key });
-        const decision = attempt2Decision({ policy: this.policy, subject, outcome: 'FAILED_CLEAN', failure });
-        if (decision.eligible) {
-          const key2 = await this.ledger.scheduleAttempt2(key, attempt2Subject(subject), { failureCode: failure.code, stage: failure.stageNumber },
-            this.clock() + this.policy.automaticAttempt2.delayMs);
-          try {
-            await this.receipt('attempt2-scheduled', { key, attempt2: key2, failureCode: failure.code, stage: failure.stageNumber });
-          } catch (error) {
-            // An intent without its receipt is cancelled before the HALT, so no re-arm can ever run it (MINOR 7).
-            await this.ledger.closeAttempt2(key, { failureCode: 'ATTEMPT2_RECEIPT_UNCONFIRMED' });
-            throw error;
-          }
-          return { state: 'FAILED_CLEAN', key, failureCode: failure.code, attempt2: key2, settle: { ...settle, kind: 'burned' } };
-        }
-        return { state: 'FAILED_CLEAN', key, failureCode: failure.code, settle: { ...settle, kind: 'burned' } };
+        const key2 = await this.attempt2IfEligible(key, subject, failure);
+        return { state: 'FAILED_CLEAN', key, failureCode: failure.code, ...(key2 ? { attempt2: key2 } : {}), settle: { ...settle, kind: 'burned' } };
       }
       return { ...(await this.unknown(key, failure.code, basis, batch, { stage: failure.stageNumber, ...facts })), settle: { ...settle, kind: 'burned', klass: 'unknown' } };
     } catch (error) {
-      return this.unknown(key, codeOf(error), 'failure-handling-unconfirmed', batch);
+      return this.unknown(key, codeOf(error), 'failure-handling-unconfirmed', batch, archiveFacts(error));
+    }
+  }
+
+  // The attempt-2 intent of this attempt-2 batch (key2), given back after a node-role release. Never throws.
+  async reopenAttempt2(key2) {
+    try {
+      const c = this.current;
+      const key1 = batchKey({ repo: this.policy.repo, pr: c.pr, headSha: c.headSha, baseSha: c.baseSha, sourceManifestSha256: this.policy.sourceManifestSha256, attempt: 1 });
+      await this.ledger.reopenAttempt2(key1, { key2, failureCode: 'NODE_ROLE_NOT_HELD' });
+      await this.receipt('attempt2-reopened', { key: key2, attempt1: key1 });
+    } catch { /* attempt 2 stays spent */ }
+  }
+
+  // The one automatic attempt 2 after a FAILED_CLEAN (attempts.mjs): its intent and receipt, or null when not eligible.
+  async attempt2IfEligible(key, subject, failure) {
+    const decision = attempt2Decision({ policy: this.policy, subject, outcome: 'FAILED_CLEAN', failure });
+    if (!decision.eligible) return null;
+    const key2 = await this.ledger.scheduleAttempt2(key, attempt2Subject(subject), { failureCode: failure.code, stage: failure.stageNumber },
+      this.clock() + this.policy.automaticAttempt2.delayMs);
+    try {
+      await this.receipt('attempt2-scheduled', { key, attempt2: key2, failureCode: failure.code, stage: failure.stageNumber });
+    } catch (error) {
+      // An intent without its receipt is cancelled before the HALT, so no re-arm can ever run it (MINOR 7).
+      await this.ledger.closeAttempt2(key, { failureCode: 'ATTEMPT2_RECEIPT_UNCONFIRMED' });
+      throw error;
+    }
+    return key2;
+  }
+
+  // ---- the scanner abandonment (DESIGN §27; design r3 part three, Task d2974298) ----
+
+  // Eligibility: the pure rule (classify.mjs#scannerAbandonEligible: stage 2, 4 or 6, the pump code first, an allow-listed
+  // ending, the Windows half of the stage's own proof, a quiet pump), then the executor's own: no HALT latched (read through the
+  // ledger exactly as the tick start reads it; the abandonment itself never writes or clears HALT.json), no drift of the
+  // installed bytes, and an entry that is STARTED and on no abort path. Any doubt is "no": the failure HALTs as before.
+  async scannerAbandonable(key, failure) {
+    try {
+      if (!scannerAbandonEligible({ stage: failure.stageNumber, phase: failure.phase, code: failure.code, bridge: failure.bridge, proof: failure.proof }).eligible) return false;
+      if (await this.ledger.halted()) return false;
+      if (await this.driftCode()) return false;
+      const s = await this.ledger.state(key);
+      return s.state === 'STARTED' && !s.abort && !s.selfAbort;
+    } catch { return false; }
+  }
+
+  // The abandonment (DESIGN §27, the Owner abort's path): quiescence on both hosts (at most ABORT_QUIESCENCE_ATTEMPTS looks
+  // within ABORT_QUIESCENCE_WAIT_MS), the rename-only archive with the fixed reason scanner-abandoned, and FAILED_CLEAN
+  // BRIDGE_ABANDONED_UNPUBLISHED with the numeric stage (executed-heads.mjs#mayHavePublished: stage 2 = not published). The head
+  // was burned by fail() already. Unproven quiescence: UNKNOWN with the original code, HALT; an unconfirmed archive or record:
+  // UNKNOWN, HALT. Then the failure table's row (breaker counts) and, at stage 2 only, the one attempt 2 (Owner decision eaa7d5e4).
+  async abandonScannerStage(key, batch, failure, settle) {
+    const b = failure.bridge;
+    const row = failureRow({ code: BRIDGE_ABANDONED_UNPUBLISHED, stage: failure.stageNumber });
+    const context = { stage: failure.stageNumber, originalCode: failure.code, pumpCode: b.pumpCode, stopCode: b.stopCode };
+    try {
+      check(row && row.disposition === 'burn', 'FAILURE_TABLE_ROW_MISSING');
+      const facts = (windows, linux) => ({ failureCode: BRIDGE_ABANDONED_UNPUBLISHED, basis: 'scanner-abandon-quiescence-proven', originalCode: failure.code,
+        outcomeReason: failure.outcome?.reason ?? null, pumpCode: b.pumpCode, stopCode: b.stopCode, stageCode: b.stageCode, stage: failure.stageNumber,
+        batchId: batch?.batchId ?? null, windows, linux, class: row.class, retry: row.retry, breaker: row.breaker });
+      const closed = await this.provenCleanEnd(key, batch, { stageProof: failure.proof, reason: SCANNER_ABANDON_ARCHIVE_REASON, failureCode: BRIDGE_ABANDONED_UNPUBLISHED,
+        burn: false, facts, receipt: { class: row.class, originalCode: failure.code } });
+      if (!closed) return { ...(await this.unknown(key, failure.code, 'scanner-abandon-quiescence-unproven', batch, context)), settle: { ...settle, kind: 'burned', klass: 'unknown' } };
+      const subject = (await this.ledger.state(key)).reserved?.subject;
+      this.reportOutcome(subject, 'FAILED_CLEAN', { code: BRIDGE_ABANDONED_UNPUBLISHED, row, key });
+      const end = { ...settle, code: BRIDGE_ABANDONED_UNPUBLISHED, klass: row.class, breaker: row.breaker, kind: 'burned' };
+      const key2 = await this.attempt2IfEligible(key, subject, { ...failure, code: BRIDGE_ABANDONED_UNPUBLISHED });
+      return { state: 'FAILED_CLEAN', key, failureCode: BRIDGE_ABANDONED_UNPUBLISHED, originalCode: failure.code, ...(key2 ? { attempt2: key2 } : {}), settle: end };
+    } catch (error) {
+      return { ...(await this.unknown(key, codeOf(error), 'scanner-abandon-unconfirmed', batch, { ...context, ...archiveFacts(error) })), settle: { ...settle, kind: 'burned', klass: 'unknown' } };
     }
   }
 
@@ -1975,7 +2420,7 @@ export class ResidentExecutor {
       await this.ledger.burnHead(key, { failureCode: SUPERSEDED_AT_SAFE_POINT });
       const windows = await this.engine.archiveFailure(batch, SUPERSEDED_ARCHIVE_REASON);
       const linux = await this.companion.archiveLinux(batch, SUPERSEDED_ARCHIVE_REASON);
-      check(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED');
+      archiveCheck(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED', windows);
       // stage: the last stage that ran (executed-heads.mjs#mayHavePublished): 1 before the workspace (nothing after stage 1
       // published, unless stage R relayed a role, which its plan says); 8 at parking point B (stages 3, 5 and 7 published).
       await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: SUPERSEDED_AT_SAFE_POINT, basis: 'superseded-live-read', safePoint, stage, batchId: batch?.batchId ?? null,
@@ -1986,26 +2431,29 @@ export class ResidentExecutor {
       return { state: 'FAILED_CLEAN', key, failureCode: SUPERSEDED_AT_SAFE_POINT, safePoint,
         settle: { kind: 'burned', code: SUPERSEDED_AT_SAFE_POINT, klass: 'clean-final', breaker: 'neutral', pos, ...(stage === 8 ? { windowsOnly: true } : {}) } };
     } catch (error) {
-      return this.unknown(key, codeOf(error), 'superseded-end-unconfirmed', batch, context);
+      return this.unknown(key, codeOf(error), 'superseded-end-unconfirmed', batch, { ...context, ...archiveFacts(error) });
     }
   }
 
   // opts.linux false: the batch never reached Linux (released before stage 1), so only Windows is archived.
   async closeOrThrow(batch, opts = null) {
     const closed = await this.engine.closeBatch(batch, opts);
-    check(closed && closed.verified === true, 'UNEXECUTED_CLOSE_UNCONFIRMED');
+    archiveCheck(closed && closed.verified === true, 'UNEXECUTED_CLOSE_UNCONFIRMED', closed);
   }
 
   // extra: further facts of the terminal record (an Owner abort's safe point, stage and stop code).
+  // DESIGN §33: extra.windowsArchiveCode (the Windows archive's own refusal, archiveFacts) is written to the HALT facts, the terminal
+  // record (it rides in extra) and the batch-terminal receipt: only when it is a fixed code.
   async unknown(key, failureCode, basis, batch = null, extra = {}) {
-    await this.haltWith(failureCode, { key, basis }); // HALT first: no crash point leaves a closed unknown without it (N1)
+    const archive = archiveFacts(extra);
+    await this.haltWith(failureCode, { key, basis, ...archive }); // HALT first: no crash point leaves a closed unknown without it (N1)
     const s = await this.ledger.state(key);
     if (['RESERVED', 'STARTED', 'INCOMPLETE'].includes(s.state)) {
       await this.ledger.burnHead(key, { failureCode });
       await this.ledger.terminal(key, 'FAILED_UNKNOWN', { ...extra, failureCode, basis, batchId: batch?.batchId ?? s.started?.facts?.batchId ?? null });
     }
-    await this.receipt('batch-terminal', { key, outcome: 'FAILED_UNKNOWN', failureCode });
-    await this.haltWith(failureCode, { key, basis });
+    await this.receipt('batch-terminal', { key, outcome: 'FAILED_UNKNOWN', failureCode, ...archive });
+    await this.haltWith(failureCode, { key, basis, ...archive });
     this.reportOutcome(s.reserved?.subject ?? this.current, 'FAILED_UNKNOWN', { code: failureCode, key });
     return { state: 'HALTED', key, failureCode };
   }

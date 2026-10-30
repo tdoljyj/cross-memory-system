@@ -34,7 +34,8 @@ export const STATE_V2 = Object.freeze({
   // Quota phase 2, step 3c-1: one shadow record per stage-10 run (train-shadow-store.mjs; clued-control only).
   trainShadow: `${WIN_STATE_V2}\\train-shadow`,
 });
-export const NODE_EXE = 'C:\\Program Files\\nodejs\\node.exe';
+// The package's pinned node (install-resident.ps1 runtime\node.exe = record controllerNodeSha256), not the shared system node.
+export const NODE_EXE = `${WIN_RESIDENT}\\runtime\\node.exe`;
 export const ORIGINAL_BINARY = '"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"';
 
 // Virtual service account SID: S-1-5-80 + SHA-1 of the upper-case service name (UTF-16LE).
@@ -72,6 +73,7 @@ export const ENTRY_V2 = Object.freeze({
   // Stage 10 (quota phase 2, step 3c-1): train maintenance, read-only in shadow mode.
   'train-maintenance': `${P}src/independent-control-checks-v2/train-maintenance.mjs`,
   'role-probe': `${P}src/resident-v2/role-probe-entry.mjs`,
+  'revocation-maintenance': `${P}src/resident-v2/revocation-entry.mjs`,
 });
 // Kind 'formal': the fixed eight stages, all derived with the batch. Kind 'hosted-relay': stage R, number 9,
 // derived only after the hosted wait (derive-batch.mjs --relay-roles) for the relay candidates the resident
@@ -94,6 +96,8 @@ const ROWS = [
   { number: 10, kind: 'train', name: 'train-maintenance', entryRole: 'train-maintenance', jobRoles: ['train-run'], runMilliseconds: 300_000, linuxWorker: false },
   // C2 is outside PR batches and quotas. Existing stages 1–10 retain their exact caps.
   { number: 11, kind: 'role-probe', name: 'role-probe', entryRole: 'role-probe', jobRoles: ['role-probe-run'], runMilliseconds: 60_000, linuxWorker: false },
+  // Independent negative-effect maintenance, outside PR batches and scanner quotas.
+  { number: 12, kind: 'revocation-maintenance', name: 'revocation-maintenance', entryRole: 'revocation-maintenance', jobRoles: ['revocation-maintenance-run'], runMilliseconds: 300_000, linuxWorker: false },
 ];
 export const STAGES_V2 = Object.freeze(ROWS.map(s => Object.freeze({ variableJobRoles: false, ...s, jobRoles: Object.freeze([...s.jobRoles]) })));
 export const FORMAL_STAGES_V2 = Object.freeze(STAGES_V2.filter(s => s.kind === 'formal'));
@@ -102,6 +106,7 @@ export const RELAY_STAGE_V2 = STAGES_V2.find(s => s.number === RELAY_STAGE_NUMBE
 export const TRAIN_STAGE_NUMBER = 10;
 export const TRAIN_STAGE_V2 = STAGES_V2.find(s => s.number === TRAIN_STAGE_NUMBER);
 export const ROLE_PROBE_STAGE_NUMBER = 11;
+export const REVOCATION_STAGE_NUMBER = 12;
 // The job roles of one stage package: exactly the row's roles, or (stage R) a non-empty subset in row order.
 export function stageJobRolesValid(row, roles) {
   if (!row || !Array.isArray(roles)) return false;

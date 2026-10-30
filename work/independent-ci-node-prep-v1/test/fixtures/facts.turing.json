@@ -1,0 +1,108 @@
+{
+    "comment":  "TURING as recorded read-only on 2026-10-29 (directory SDDLs from an elevated read; account and services from a normal read). runnerRoot is set to registered to exercise the all-present path; the real elevated dry run reported RUNNER_ROOT_UNEXPECTED (files changed below runner\\ after running), see README.",
+    "hostname":  "TURING",
+    "currentUserSid":  "S-1-5-21-1173730660-3877291096-655431861-1001",
+    "userProfile":  "C:\\Users\\17531",
+    "elevated":  true,
+    "account":  {
+                    "sid":  "S-1-5-21-1173730660-3877291096-655431861-1015",
+                    "enabled":  true,
+                    "description":  "Dedicated trusted-main CI control",
+                    "fullName":  "",
+                    "passwordNeverExpires":  true,
+                    "userMayChangePassword":  false,
+                    "groups":  [
+
+                               ],
+                    "neverLoggedOn":  false
+                },
+    "services":  [
+                     {
+                         "name":  "actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-01",
+                         "binary":  "\"C:\\clued-ci\\runner-home-win-01\\bin\\RunnerService.exe\"",
+                         "account":  ".\\clued-runner",
+                         "startMode":  "Auto",
+                         "state":  "Running",
+                         "displayName":  "GitHub Actions Runner (tdoljyj-cross-memory-system.clued-ci-home-win-01)"
+                     },
+                     {
+                         "name":  "actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02",
+                         "binary":  "\"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe\"",
+                         "account":  ".\\clued-control",
+                         "startMode":  "Manual",
+                         "state":  "Stopped",
+                         "displayName":  "Clued dedicated trusted-main controller"
+                     }
+                 ],
+    "paths":  {
+                  "C:\\ProgramData":  {
+                                          "exists":  true,
+                                          "kind":  "directory",
+                                          "sddl":  "O:SYG:SYD:PAI(A;OICIIO;GA;;;CO)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)(A;CI;DCLCRPCR;;;BU)"
+                                      },
+                  "C:\\ProgramData\\CluedControl":  {
+                                                        "exists":  true,
+                                                        "kind":  "directory",
+                                                        "sddl":  "O:BAG:S-1-5-21-1173730660-3877291096-655431861-513D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;S-1-5-21-1173730660-3877291096-655431861-1015)"
+                                                    },
+                  "C:\\ProgramData\\CluedControl\\trusted":  {
+                                                                 "exists":  true,
+                                                                 "kind":  "directory",
+                                                                 "sddl":  "O:BAG:S-1-5-21-1173730660-3877291096-655431861-513D:AI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;0x1200a9;;;S-1-5-21-1173730660-3877291096-655431861-1015)"
+                                                             },
+                  "C:\\ProgramData\\CluedControl\\temp":  {
+                                                              "exists":  true,
+                                                              "kind":  "directory",
+                                                              "sddl":  "O:BAG:S-1-5-21-1173730660-3877291096-655431861-513D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-21-1173730660-3877291096-655431861-1015)"
+                                                          },
+                  "C:\\ProgramData\\CluedControl\\runner":  {
+                                                                "exists":  true,
+                                                                "kind":  "directory",
+                                                                "sddl":  "O:BAG:S-1-5-21-1173730660-3877291096-655431861-513D:AI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;0x1200a9;;;S-1-5-21-1173730660-3877291096-655431861-1015)"
+                                                            },
+                  "C:\\ProgramData\\CluedControl\\runner\\_diag":  {
+                                                                       "exists":  true,
+                                                                       "kind":  "directory",
+                                                                       "sddl":  "O:BAG:S-1-5-21-1173730660-3877291096-655431861-513D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-21-1173730660-3877291096-655431861-1015)"
+                                                                   },
+                  "C:\\ProgramData\\CluedControl\\runner\\_work":  {
+                                                                       "exists":  true,
+                                                                       "kind":  "directory",
+                                                                       "sddl":  "O:BAG:S-1-5-21-1173730660-3877291096-655431861-513D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-21-1173730660-3877291096-655431861-1015)"
+                                                                   },
+                  "C:\\ProgramData\\CluedIndependentCI":  {
+                                                              "exists":  true,
+                                                              "kind":  "directory",
+                                                              "sddl":  "O:BAG:S-1-5-21-1173730660-3877291096-655431861-513D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x120080;;;S-1-5-21-1173730660-3877291096-655431861-1001)(A;OICI;0x1200a9;;;S-1-5-21-1173730660-3877291096-655431861-1015)(A;;0x120080;;;S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629)"
+                                                          },
+                  "C:\\ProgramData\\CluedIndependentCI\\formal-spool":  {
+                                                                            "exists":  true,
+                                                                            "kind":  "directory",
+                                                                            "sddl":  "O:BAG:S-1-5-21-1173730660-3877291096-655431861-513D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x120080;;;S-1-5-21-1173730660-3877291096-655431861-1001)(A;OICI;0x1200a9;;;S-1-5-21-1173730660-3877291096-655431861-1015)(A;;0x1200a5;;;S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629)"
+                                                                        },
+                  "C:\\ProgramData\\CluedIndependentCI\\formal-spool\\outgoing":  {
+                                                                                      "exists":  true,
+                                                                                      "kind":  "directory",
+                                                                                      "sddl":  "O:BAG:S-1-5-21-1173730660-3877291096-655431861-513D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;S-1-5-21-1173730660-3877291096-655431861-1001)(A;OICI;0x1301bf;;;S-1-5-21-1173730660-3877291096-655431861-1015)(A;;0x1200e1;;;S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629)(A;OIIO;FR;;;S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629)"
+                                                                                  },
+                  "C:\\ProgramData\\CluedIndependentCI\\formal-spool\\incoming":  {
+                                                                                      "exists":  true,
+                                                                                      "kind":  "directory",
+                                                                                      "sddl":  "O:BAG:S-1-5-21-1173730660-3877291096-655431861-513D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-21-1173730660-3877291096-655431861-1001)(A;OICI;0x1200a9;;;S-1-5-21-1173730660-3877291096-655431861-1015)(A;;0x1200e1;;;S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629)(A;OIIO;FR;;;S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629)"
+                                                                                  },
+                  "C:\\ProgramData\\CluedIndependentCI\\state":  {
+                                                                     "exists":  true,
+                                                                     "kind":  "directory",
+                                                                     "sddl":  "O:BAG:S-1-5-21-1173730660-3877291096-655431861-513D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICIIO;0x1301bf;;;S-1-5-21-1173730660-3877291096-655431861-1015)(A;;0x1200a9;;;S-1-5-21-1173730660-3877291096-655431861-1015)"
+                                                                 },
+                  "C:\\ProgramData\\CluedIndependentCI\\state\\temp":  {
+                                                                           "exists":  true,
+                                                                           "kind":  "directory",
+                                                                           "sddl":  "O:BAG:S-1-5-21-1173730660-3877291096-655431861-513D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-21-1173730660-3877291096-655431861-1015)"
+                                                                       }
+              },
+    "runnerRoot":  "registered",
+    "packageCopySha256":  "1150692afa94e71f872017e254ea55b6eece1eece3fe7e3a6d4c93d0a1b85cfc",
+    "packageCopyKind":  "file",
+    "serviceFile":  "actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02"
+}

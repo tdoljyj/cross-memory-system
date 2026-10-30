@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { ResidentExecutor, PARK_HEAD_RETRY_MS, PARK_HEAD_STREAK_MS, STAGE8_NOT_READY_CODES } from '../src/executor.mjs';
+import { ResidentExecutor, PARK_HEAD_RETRY_MS, PARK_HEAD_STREAK_MS, STAGE8_NOT_READY_CODES, STAGE8_TRANSIENT_MAX_TRIES, STAGE8_TRANSIENT_PARK_CODES, STAGE8_TRANSIENT_RETRY_MS } from '../src/executor.mjs';
 import { STAGE8_NOT_READY_REASONS, STAGE8_FINAL_REASONS } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/publisher.mjs';
 import { outcomeFailureCode } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
 import { validatePolicy } from '../src/policy.mjs';
@@ -621,4 +621,123 @@ test('step 3a: the PR page and the notifications say why stage 8 writes no green
     { key: `stage8:TRAIN_TEST_MERGE_TREE_DIFFERS:7:${H(7)}`, kind: 'stage8-rules', pr: 7, headSha: H(7), code: 'TRAIN_TEST_MERGE_TREE_DIFFERS' }] })), now });
   assert.deepEqual(told.map(e => e.title), ['main 的 strict 已关，第 8 段停发合并位', 'PR #7 的试合并与测过的树不同']);
   assert.match(told[1].body, new RegExp(H(7).slice(0, 8)));
+});
+
+// ---- DESIGN §28 (design r3 4a, PR #930): a transient zero-effect stage-8 ending parks again, 3 times at most ----
+// PR #930 (2026-10-28, batch 5bc215cb attempt 2): stages 1-7 passed, the first stage-8 try ended 35 s later BLOCKED
+// full_admission_unavailable with zero side effects and no merge-queue facts; it was burned. Now it parks a minute.
+const unavailable = (code = 'NATIVE_ADMISSION_UNAVAILABLE', o = {}) => ({ ok: false, code, proof: WINDOWS_CLEAN, brokerNoLaunch: false,
+  outcome: { status: 'BLOCKED', reason: 'full_admission_unavailable', sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: null, safeToRerun: false, ...o } });
+
+test('4a: zero-effect NATIVE_ADMISSION_UNAVAILABLE parks at B after 1, 3 and 10 minutes; the 4th one burns the head as before', async t => {
+  assert.deepEqual([...STAGE8_TRANSIENT_PARK_CODES], ['NATIVE_ADMISSION_UNAVAILABLE', 'GITHUB_TRANSIENT_UNAVAILABLE']);
+  assert.deepEqual([STAGE8_TRANSIENT_MAX_TRIES, ...STAGE8_TRANSIENT_RETRY_MS], [3, MIN, 3 * MIN, 10 * MIN]);
+  const f = await executorFixture(t, { engine: stage8Engine([unavailable(), unavailable('GITHUB_TRANSIENT_UNAVAILABLE'), unavailable(), unavailable()], KEY) });
+  await f.drop(triggerBytes());
+  const gaps = [];
+  let r = await f.exec.tick();
+  for (const gap of STAGE8_TRANSIENT_RETRY_MS) {
+    assert.equal(r.state, 'PARKED');
+    gaps.push(r.until - f.clock());
+    f.advance(gap - 1);
+    assert.equal((await f.exec.tick()).state, 'IDLE', 'not before its own back-off');
+    f.advance(1);
+    r = await f.exec.tick();
+  }
+  assert.deepEqual(gaps, [MIN, 3 * MIN, 10 * MIN]);
+  assert.deepEqual([r.state, r.failureCode, r.attempt2], ['FAILED_CLEAN', 'NATIVE_ADMISSION_UNAVAILABLE', undefined], 'the fourth: fail() as before, the head burned');
+  const s = await f.ledger.state(KEY);
+  assert.deepEqual(s.tries.map(x => [x.ended?.transient ?? false, x.ended?.position ?? null, x.ended?.assumedPosition ?? null]),
+    [[true, null, 1], [true, null, 1], [true, null, 1], [false, null, null]], 'the true place (null) is recorded; the assumed one beside it');
+  assert.equal((await receiptTypes(f)).filter(x => x === 'stage8-transient-parked').length, 3);
+  assert.equal(f.queue.breaker?.state ?? 'closed', 'closed');
+  assert.equal(await f.ledger.halted(), null);
+});
+
+test('4a: the #930 replay: unavailable once, parked a minute, then COMPLETED on the same batch', async t => {
+  const engine = stage8Engine([unavailable()], KEY);
+  const f = await executorFixture(t, { engine, status: new StatusBoard({ clock: () => Date.parse('2026-10-20T12:00:00Z') }) });
+  await f.drop(triggerBytes());
+  const parked = await f.exec.tick();
+  assert.deepEqual([parked.state, parked.reason, parked.position, parked.until - f.clock()], ['PARKED', 'NATIVE_ADMISSION_UNAVAILABLE', 1, MIN]);
+  assert.deepEqual([f.queue.row(884).state, f.queue.row(884).parked.position], ['PARKED', 1], 'the status shows the assumed place');
+  f.advance(MIN);
+  const done = await f.exec.tick();
+  assert.deepEqual([done.state, done.tries], ['COMPLETED', 2]);
+  assert.deepEqual(stagesRun(engine), [1, 2, 3, 4, 5, 6, 7, 8, 8], 'stages 1-7 ran once; no new head');
+});
+
+test('4a: a null place keeps the last try place (or 1), is never PARKED_OVER_CAPACITY, and counts by its assumed place (review r3 NIT 2)', async t => {
+  // its last try was third in the queue: that place is assumed
+  const third = notReady('RESIDENT_QUEUE_HEAD_NOT_REACHED', { entered: true, state: 'waiting', position: 3 });
+  const f = await executorFixture(t, { engine: stage8Engine([third, unavailable()], KEY) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).position, 3);
+  f.advance(10 * MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.position], ['PARKED', 3]);
+  const last = ResidentExecutor.lastTry(await f.ledger.state(KEY));
+  assert.deepEqual([last.position, last.assumedPosition], [null, 3]);
+  // with no room outside the queue's first two places at all, a transient park is exempt: never PARKED_OVER_CAPACITY
+  const g = await executorFixture(t, { engine: stage8Engine([unavailable()], KEY), policy: rawPolicy({ park: { ...rawPolicy().park, maxParkedOutsideTop2: 0 } }) });
+  await g.drop(triggerBytes());
+  assert.deepEqual([(await g.exec.tick()).state], ['PARKED']);
+  // and it counts as inside (assumed place 1): another batch not ready outside the first places is not pushed over the bound
+  const e = stage8Engine([unavailable()], KEY);
+  const base = e.runStage;
+  e.runStage = async (b, s, o) => (s.number === 8 && b.key !== KEY ? (e.calls.push(['stage', 8]), notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')) : base(b, s, o));
+  const h = await executorFixture(t, { engine: e, policy: rawPolicy({ park: { ...rawPolicy().park, maxParkedOutsideTop2: 1 } }) });
+  await h.drop(triggerBytes());
+  assert.equal((await h.exec.tick()).state, 'PARKED');
+  assert.deepEqual(await h.exec.parkedCounts(), { inside: 1, outside: 0 });
+  await h.drop(triggerBytes({ pr: 900, headSha: H(4) }));
+  const other = await h.exec.tick();
+  assert.deepEqual([other.state, other.reason], ['PARKED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED'], 'parked, not PARKED_OVER_CAPACITY');
+});
+
+test('4a: side effects, a possible publication or UNCERTAIN never park; the try cap and park.maxMs still end it first', async t => {
+  for (const o of [{ sideEffects: 1 }, { mayHavePublished: true }]) {
+    const f = await executorFixture(t, { engine: stage8Engine([unavailable('NATIVE_ADMISSION_UNAVAILABLE', o)], KEY) });
+    await f.drop(triggerBytes());
+    const r = await f.exec.tick();
+    assert.notEqual(r.state, 'PARKED', JSON.stringify(o));
+  }
+  const u = await executorFixture(t, { engine: stage8Engine([{ ok: false, code: 'PUBLICATION_UNCERTAIN', proof: WINDOWS_CLEAN, outcome: { status: 'UNCERTAIN', reason: 'full_admission_unavailable', sideEffects: 1, mayHavePublished: true, diagnostic: null, scheduling: null, safeToRerun: false } }], KEY) });
+  await u.drop(triggerBytes());
+  assert.equal((await u.exec.tick()).state, 'HALTED');
+  // the Windows half missing: no park
+  const w = await executorFixture(t, { engine: stage8Engine([{ ...unavailable(), proof: { windowsTreeZero: false, serviceOriginalStopped: true } }], KEY) });
+  await w.drop(triggerBytes());
+  assert.notEqual((await w.exec.tick()).state, 'PARKED');
+  // park.stage8MaxTries reached first
+  const cap = await executorFixture(t, { engine: stage8Engine([unavailable(), unavailable()], KEY), policy: rawPolicy({ park: { ...rawPolicy().park, stage8MaxTries: 2 } }) });
+  await cap.drop(triggerBytes());
+  assert.equal((await cap.exec.tick()).state, 'PARKED');
+  cap.advance(MIN);
+  assert.deepEqual([(await cap.exec.tick()).failureCode], ['NATIVE_ADMISSION_UNAVAILABLE']);
+  // park.maxMs reached first: the batch ends without another try
+  const old = await executorFixture(t, { engine: stage8Engine([unavailable(), unavailable()], KEY), policy: rawPolicy({ park: { ...rawPolicy().park, maxMs: 60 * MIN } }) });
+  await old.drop(triggerBytes());
+  assert.equal((await old.exec.tick()).state, 'PARKED');
+  old.advance(60 * MIN);
+  const end = await old.exec.tick();
+  assert.deepEqual([end.state, end.failureCode], ['FAILED_CLEAN', 'NATIVE_ADMISSION_UNAVAILABLE']);
+  assert.equal(stagesRun(old.engine).filter(n => n === 8).length, 1);
+});
+
+test('4a: the next try finds an unsettled journal entry (RECONCILIATION_REQUIRED): HALT; a changed claim: BATCH_CLAIM_CHANGED', async t => {
+  const f = await executorFixture(t, { engine: stage8Engine([unavailable(), { ok: false, code: 'RECONCILIATION_REQUIRED', proof: WINDOWS_CLEAN,
+    outcome: { status: 'RECONCILIATION_REQUIRED', reason: 'journal_unsettled', sideEffects: 0, mayHavePublished: true, diagnostic: null, scheduling: null, safeToRerun: false } }], KEY) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  f.advance(MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, (await f.ledger.halted()).value.code], ['HALTED', 'RECONCILIATION_REQUIRED']);
+  const g = await executorFixture(t, { engine: stage8Engine([unavailable(), { ok: false, code: 'BATCH_CLAIM_CHANGED', proof: WINDOWS_CLEAN,
+    outcome: { status: 'BLOCKED', reason: 'batch_claim_changed', sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: null, safeToRerun: false } }], KEY) });
+  await g.drop(triggerBytes());
+  assert.equal((await g.exec.tick()).state, 'PARKED');
+  g.advance(MIN);
+  const c = await g.exec.tick();
+  assert.deepEqual([c.state, c.failureCode, c.attempt2], ['FAILED_CLEAN', 'BATCH_CLAIM_CHANGED', undefined]);
 });
