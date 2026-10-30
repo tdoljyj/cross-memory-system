@@ -711,6 +711,41 @@ foreach ($case in @(
   Yes ($v.status -ceq $case[1] -and $v.exit -eq $case[2]) ('verify-verdict:' + $case[3])
 }
 
+# 4z. Language-independent service facts (DESK-W-591, 2026-10-30: sc qfailure printed 重新启动) and the controller's right to log on
+#     as a service (SCM 7041, then ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED).
+foreach ($name in @('ConvertFrom-FailureActions', 'Test-BrokerFailureActions', 'Test-ServiceLogonRight')) {
+  Yes ($functions.ContainsKey('verify-resident.ps1:' + $name)) ('verify-present:' + $name); . ([scriptblock]::Create($functions['verify-resident.ps1:' + $name]))
+}
+foreach ($name in @('Test-ServiceLogonRight', 'Read-ServiceLogonRight')) {   # install and verify carry the same text
+  Yes ($functions.ContainsKey('install-resident.ps1:' + $name) -and $functions['install-resident.ps1:' + $name] -ceq $functions['verify-resident.ps1:' + $name]) ('same-copy:' + $name)
+}
+$hex = { param([string]$s) [byte[]]@($s -split ' ' | ForEach-Object { [Convert]::ToByte($_, 16) }) }
+# the SCM's value on TURING after `sc failure CluedCISwapBroker reset= 86400 actions= restart/60000/restart/300000//300000`
+$installed = [byte[]](& $hex '80 51 01 00 00 00 00 00 00 00 00 00 03 00 00 00 14 00 00 00 01 00 00 00 60 ea 00 00 01 00 00 00 e0 93 04 00 00 00 00 00 e0 93 04 00')
+Yes ((ConvertFrom-FailureActions $installed).actions -ceq '1/60000,1/300000,0/300000') 'failure-actions-parsed'
+Yes (Test-BrokerFailureActions $installed 1) 'failure-actions-as-installed'
+Yes (-not (Test-BrokerFailureActions $installed 0)) 'failure-actions-need-the-non-crash-flag'
+Yes (-not (Test-BrokerFailureActions $installed $null)) 'failure-actions-flag-missing'
+$shorter = [byte[]]$installed.Clone(); $shorter[24] = 0x30   # first delay 0xea30 = 59952 ms
+Yes (-not (Test-BrokerFailureActions $shorter 1)) 'failure-actions-other-delay'
+Yes (-not (Test-BrokerFailureActions ([byte[]]$installed[0..35]) 1)) 'failure-actions-truncated'
+Yes (-not (Test-BrokerFailureActions $null 1)) 'failure-actions-absent'
+$ctl = 'S-1-5-21-9-8-7-1007'
+$inf = "[Unicode]`r`nUnicode=yes`r`n[Privilege Rights]`r`nSeNetworkLogonRight = *S-1-1-0,*S-1-5-32-544`r`nSeServiceLogonRight = *S-1-5-80-0,*$ctl`r`n"
+Yes (Test-ServiceLogonRight $inf $ctl @{}) 'logon-right-direct'
+Yes (-not (Test-ServiceLogonRight $inf 'S-1-5-21-9-8-7-1000' @{})) 'logon-right-other-account'
+$viaGroup = "[Privilege Rights]`r`nSeServiceLogonRight = *S-1-5-80-0,*S-1-5-21-9-8-7-1010`r`n"
+Yes (Test-ServiceLogonRight $viaGroup $ctl @{ 'S-1-5-21-9-8-7-1010' = @($ctl) }) 'logon-right-through-a-local-group'
+Yes (-not (Test-ServiceLogonRight $viaGroup $ctl @{ 'S-1-5-21-9-8-7-1010' = @('S-1-5-21-9-8-7-1000') })) 'logon-right-group-without-it'
+Yes (-not (Test-ServiceLogonRight "[Privilege Rights]`r`nSeNetworkLogonRight = *$ctl`r`n" $ctl @{})) 'logon-right-only-another-right'
+Yes (-not (Test-ServiceLogonRight "[Privilege Rights]`r`nSeServiceLogonRight = clued-control`r`n" $ctl @{})) 'logon-right-names-are-not-sids'
+Yes (-not (Test-ServiceLogonRight ($inf + "SeDenyServiceLogonRight = *$ctl`r`n") $ctl @{})) 'logon-right-denied-directly'
+Yes (-not (Test-ServiceLogonRight ($inf + "SeDenyServiceLogonRight = *S-1-5-21-9-8-7-1011`r`n") $ctl @{ 'S-1-5-21-9-8-7-1011' = @($ctl) })) 'logon-right-denied-through-a-group'
+Yes (Test-ServiceLogonRight ($inf + "SeDenyServiceLogonRight = *S-1-5-21-9-8-7-1000`r`n") $ctl @{}) 'logon-right-deny-for-another-account'
+$verifyText = [IO.File]::ReadAllText((Join-Path $here 'verify-resident.ps1'))
+Yes (-not $verifyText.Contains("'qfailure'") -and -not $verifyText.Contains('qsidtype')) 'verify-reads-no-translated-sc-text'
+Yes ($functions['install-resident.ps1:Read-ServiceLogonRight'] -and [IO.File]::ReadAllText((Join-Path $here 'install-resident.ps1')).Contains("throw 'CONTROLLER_SERVICE_LOGON_RIGHT_MISSING'")) 'install-refuses-without-the-right'
+
 # 5. C#: the broker's bounded read and both token checks (compiled into the scratch directory).
 $fw = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\'; $csc = Join-Path $fw 'csc.exe'
 $v2 = [IO.Path]::GetFullPath((Join-Path $here '..\..\actions-hosted-migration\independent-ci-v1\src\resident-v2\windows'))

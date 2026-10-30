@@ -48,7 +48,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = '5e0a500c760ce695e3e3a141f428653434df0a75598ca222fec1b5641bccf44a'   # the r7 f4 TURING launcher text (6d32f2ba) with the host name as a pin ($NodeHostname)
+TEMPLATE_SHA = '350eec6cb01f659f6e7a416901db40278cf25e0e9b771bdd6d2b547a0f791e97'   # the r7 f4 TURING launcher text (6d32f2ba) with the host name as a pin ($NodeHostname) and the logon-right refusal before the uninstall (2026-10-30)
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])

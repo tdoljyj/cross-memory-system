@@ -2633,6 +2633,11 @@ Task `088ab175`；设计 v0.4 §7.1–§7.4、§9 C7、§10 P3。
 - `app-key-directories`、`ci-admission-token-directories`（复核 MINOR-2）：放文件的目录（`CluedControl\trusted`、`CluedIndependentCI\secrets`）和一路到盘符根的每一级上级，逐级按运行时同一条规则（`Test-SecretAclChain`）：属主都是管理方（SYSTEM、Administrators、TrustedInstaller）；放文件的目录自身及其下，除管理方和 controller 外没有人有读数据权；没有非管理方持有替换权（删除、改权限、取得所有权、删子项），在「保护根」（放文件目录的上一级）及其下还不得有写权；链接一律拒绝。只对 `Allow`、非仅继承的条目判断（与运行时相同）。结果：`absent`、`link-refused`、`owner-refused`、`writable-ancestor`、`secret-reader`，读不了记 `unreadable`。这样新节点预建的、继承了 Users 读取的 `trusted\`，不会过了 verify 却在运行时因 `SECRET_READER_REFUSED` 失败。
 - **不读内容**：指纹在安装时核对过，运行时每次入口启动又核对（不符以 `ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED` 失败关闭）。
 - 没提供参数、文件还没放的安装：这两项为 false（`absent`），整体结论是未通过。这是「节点还不能干活」的如实报告，不是安装错误。
+- `controller-service-logon-right`（2026-10-30 起）：档案里的 `controllerSid` 有「以服务身份登录」权限，可以是直接授予，也可以经本机组获得。要提权才能读（`secedit /export /areas USER_RIGHTS`）；不提权时记为 `unreadable`。见 §30.8。
+- 与系统语言无关（2026-10-30，DESK-W-591 上 `sc qfailure` 输出的是「重新启动」而不是 RESTART，误报失败）：
+  - `broker-failure-actions` 改为读 SCM 自己的注册表值 `FailureActions`（`SERVICE_FAILURE_ACTIONS`），与安装器设的值逐项比对：复位 86400 s，动作依次为重启 60000 ms、重启 300000 ms、无 300000 ms；另要求 `FailureActionsOnNonCrashFailures = 1`。
+  - `resident-sid-type` 改为读 `ServiceSidType = 1`（UNRESTRICTED）。
+  - 其余仍读 sc.exe 文本的检查只依赖不随语言变化的字段名和数字（`START_TYPE`、`STATE`、`PID`、`SERVICE_START_NAME`、`BINARY_PATH_NAME`、`Se*Privilege` 名、SDDL）。
 
 ### 30.7 STANDBY 安装（公司节点，设计 §7.2、§10 P3）
 
@@ -2645,6 +2650,13 @@ Task `088ab175`；设计 v0.4 §7.1–§7.4、§9 C7、§10 P3。
 
 - **WSL 主机调优**（Task `f995d832`：P1 sysctl 和 P1b 内存保护）：`linux/host-tuning/README.md`。在公司节点的 Linux root 步骤旁做，不属于 Windows 安装脚本。
 - 新节点的基础目录是前提，本安装不建：`C:\ProgramData\CluedControl`（controller 安装，含载体 runner 的原二进制）和 `C:\ProgramData\CluedIndependentCI\{formal-spool,state}`（`migrate-acl.ps1` 要求已存在）。这些由设计 §10 P2 的节点准备步骤负责，C8 手册要写明。
+- **controller 账户必须有「以服务身份登录」**（`SeServiceLogonRight`，本地安全策略「用户权限分配」）。载体 runner 服务以 `.\clued-control`（档案的 `controllerSid`）运行，交换代理每一段都要启动它；没有这项权限，SCM 拒绝启动（事件 7041），第一次角色探测就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`）。DESK-W-591 在 2026-10-30 就是这样停下的。
+  - 节点准备时直接授予该账户（例如 `secpol.msc` →「本地策略」→「用户权限分配」→「作为服务登录」）。
+  - `install-resident.ps1 -Apply` 在写任何东西之前只读核对：缺这项权限拒绝（`CONTROLLER_SERVICE_LOGON_RIGHT_MISSING`），读不到用户权限也拒绝（`USER_RIGHTS_UNREADABLE`）。
+  - 干跑把结果报在计划之外的 `preflight.controllerServiceLogonRight`，不改计划和计划哈希；不提权时这一项为 `unreadable-not-elevated`。
+  - `verify-resident.ps1` 也核对这一项（§30.6）。
+- **不要删除任何已有的 GitHub App 私钥。** 每个节点各有自己的一把（`appKeyId` 和指纹钉在该节点的安装记录里）；删掉哪一把，那个节点的检查发布立即 `github_http_401`。TURING 的 4918220 在 2026-10-30 就是这样被删的。新节点只新增一把；要更换某个节点自己的私钥，走只改记录的重装（`reinstall/README.md` §8b）。
+- **已知限制：Linux 半边没装时，`executor.rearm` 没有合法路径。** 节点只装了 Windows STANDBY、没有 Linux 半边时，执行器一旦 HALT（例如上一条的角色探测），复位所需的 Linux 一侧事实（version facts、两侧一致）不存在，无法合法 rearm。按 Owner Decision `e5b42e52`，DESK-W-591 保持 HALTED，直到 Z1 装好 Linux 半边和它自己的结果签名钥。这里只记录，不改代码。
 
 ### 30.9 测试
 

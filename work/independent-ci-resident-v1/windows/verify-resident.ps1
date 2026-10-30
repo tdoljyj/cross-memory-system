@@ -432,10 +432,79 @@ while (-not (Test-Path -LiteralPath $marker -PathType Leaf) -and [DateTime]::Utc
 $markerDetail = if (Test-Path -LiteralPath $marker -PathType Leaf) { try { $m = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json; 'published ' + $m.published + ', unreadable ' + $m.unreadable } catch { 'marker unreadable' } } else { $null }
 Record 'executed-heads-backfilled' (Test-Path -LiteralPath $marker -PathType Leaf) $markerDetail
 
+# Service facts that sc.exe prints in the system language (DESK-W-591, 2026-10-30: `sc qfailure` printed 重新启动, not RESTART) are
+# read from the SCM's own registry values and compared exactly with what install-resident.ps1 sets. sc.exe's field labels and the
+# numbers (START_TYPE, STATE, PID, SERVICE_START_NAME, BINARY_PATH_NAME, Se*Privilege names, SDDL) are not translated.
+$ServicesKey = 'HKLM:\SYSTEM\CurrentControlSet\Services\'
+function Get-ServiceValue([string]$name, [string]$value) {
+  # the property is taken from the item, never through a pipeline (which would unroll a REG_BINARY into object[])
+  $item = try { Get-ItemProperty -LiteralPath ($ServicesKey + $name) -Name $value -ErrorAction Stop } catch { $null }
+  if ($null -eq $item) { return $null }
+  $v = $item.$value
+  if ($v -is [byte[]]) { ,$v } else { $v }
+}
+# SERVICE_FAILURE_ACTIONS as the SCM stores it (value FailureActions, REG_BINARY): reset period (s), two string placeholders, the
+# action count, an array placeholder, then one (type, delay ms) pair per action; type 1 = SC_ACTION_RESTART, 0 = SC_ACTION_NONE.
+function ConvertFrom-FailureActions($b) {
+  if ($b -isnot [byte[]] -or $b.Length -lt 20) { return $null }
+  $n = [BitConverter]::ToUInt32($b, 12)
+  if ($n -gt 16 -or $b.Length -ne 20 + 8 * $n) { return $null }
+  $actions = @(for ($i = 0; $i -lt $n; $i++) { [string][BitConverter]::ToUInt32($b, 20 + 8 * $i) + '/' + [BitConverter]::ToUInt32($b, 24 + 8 * $i) })
+  [ordered]@{ reset = [BitConverter]::ToUInt32($b, 0); actions = ($actions -join ',') }
+}
+# install-resident.ps1: sc failure CluedCISwapBroker reset= 86400 actions= restart/60000/restart/300000//300000, failureflag 1.
+function Test-BrokerFailureActions($bytes, $nonCrash) {
+  $f = ConvertFrom-FailureActions $bytes
+  ($null -ne $f) -and $f.reset -eq 86400 -and $f.actions -ceq '1/60000,1/300000,0/300000' -and $nonCrash -is [int] -and $nonCrash -eq 1
+}
+# The controller account runs the node's runner service (swapped and started by the broker for every stage): it needs the right to
+# log on as a service, granted directly or through a local group (DESK-W-591, 2026-10-30: SCM 7041, then the role probe HALTed with
+# ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED). SeDenyServiceLogonRight overrides it (review 2). $inf: `secedit /export /areas USER_RIGHTS`;
+# $groupMembers: group SID -> member SIDs.
+function Test-ServiceLogonRight([string]$inf, [string]$sid, $groupMembers) {
+  $holds = {
+    param([string]$right)
+    foreach ($line in ($inf -split "`r?`n")) {
+      if ($line -notmatch ('^\s*' + $right + '\s*=\s*(.*)$')) { continue }
+      foreach ($entry in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() })) {
+        if ($entry -ceq ('*' + $sid)) { return $true }
+        if ($entry.StartsWith('*') -and $null -ne $groupMembers -and $groupMembers.ContainsKey($entry.Substring(1)) -and @($groupMembers[$entry.Substring(1)]) -ccontains $sid) { return $true }
+      }
+    }
+    $false
+  }
+  (& $holds 'SeServiceLogonRight') -and -not (& $holds 'SeDenyServiceLogonRight')
+}
+# Elevated only (secedit needs it): the user-rights assignment and the members of every local group it names; $null when unreadable.
+# The export goes to a new directory that only SYSTEM and Administrators can touch (review 2: not one the Owner's medium-integrity
+# processes could swap or rewrite).
+function Read-ServiceLogonRight([string]$sid) {
+  $dir = Join-Path 'C:\Windows\Temp' ('clued-rights-' + [Guid]::NewGuid().ToString('N'))
+  try {
+    $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)')
+    [void][IO.Directory]::CreateDirectory($dir, $ds)
+    $cfg = Join-Path $dir 'rights.inf'
+    $null = & 'C:\Windows\System32\SecEdit.exe' /export /areas USER_RIGHTS /cfg $cfg /quiet
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $cfg -PathType Leaf)) { return $null }
+    $inf = [IO.File]::ReadAllText($cfg)
+    $groups = @{}
+    foreach ($line in ($inf -split "`r?`n")) {
+      if ($line -notmatch '^\s*Se(?:Deny)?ServiceLogonRight\s*=\s*(.*)$') { continue }
+      foreach ($e in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -cmatch '^\*S-1-5-32-\d+$|^\*S-1-5-21-[\d-]+$' })) {
+        $members = try { @(Get-LocalGroupMember -SID $e.Substring(1) -ErrorAction Stop | ForEach-Object { $_.SID.Value }) } catch { @() }
+        $groups[$e.Substring(1)] = $members
+      }
+    }
+    Test-ServiceLogonRight $inf $sid $groups
+  } catch { $null } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
 $qc = & $Sc qc CluedCIResident | Out-String
 Record 'resident-account' ($qc -match 'SERVICE_START_NAME\s*:\s*NT SERVICE\\CluedCIResident')
 Record 'resident-start-type' ($qc -match 'START_TYPE\s*:\s*2\s')
-Record 'resident-sid-type' ((& $Sc qsidtype CluedCIResident | Out-String) -match 'SERVICE_SID_TYPE\s*:\s*UNRESTRICTED')
+Record 'resident-sid-type' ((Get-ServiceValue 'CluedCIResident' 'ServiceSidType') -eq 1)   # SERVICE_SID_TYPE_UNRESTRICTED
+$logonRight = if (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { Read-ServiceLogonRight $Node.controllerSid } else { $null }
+Record 'controller-service-logon-right' $(if ($null -eq $logonRight) { 'unreadable' } else { [bool]$logonRight }) 'SeServiceLogonRight of the node profile''s controllerSid'
 Record 'resident-host-pin' ((Sha256File (Join-Path $Root 'bin\ResidentServiceHost.exe')) -ceq $receipt.ResidentServiceHostSha256)
 $bq = & $Sc qc CluedCISwapBroker | Out-String
 Record 'broker-account' ($bq -match 'SERVICE_START_NAME\s*:\s*LocalSystem')
@@ -475,7 +544,7 @@ foreach ($pair in @(@('CluedCIResident', 'resident', $ResidentPrivileges), @('Cl
 }
 Record 'broker-binary-path-and-config-pin' (Test-BrokerBinaryPath $bq $Root $receipt.brokerConfigSha256 $NodeProfileSha256)
 Record 'broker-config-hash' ((Sha256File (Join-Path $Root 'config\broker.json')) -ceq $receipt.brokerConfigSha256)
-Record 'broker-failure-actions' ((Get-ScText @('qfailure', 'CluedCISwapBroker', '8192')) -match 'RESTART')
+Record 'broker-failure-actions' (Test-BrokerFailureActions (Get-ServiceValue 'CluedCISwapBroker' 'FailureActions') (Get-ServiceValue 'CluedCISwapBroker' 'FailureActionsOnNonCrashFailures'))
 foreach ($pair in @(@('state\service-token.json', $ResidentPrivileges, 'resident'), @('broker\token.json', $BrokerPrivileges, 'broker'))) {
   $f = Join-Path $Root $pair[0]
   Record ($pair[2] + '-effective-token-privileges') $(if (Test-Path -LiteralPath $f) { Test-TokenRecord (Get-Content -LiteralPath $f -Raw) $pair[1] } else { 'unreadable' })

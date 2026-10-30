@@ -11,7 +11,12 @@ import hashlib, json, os, re
 
 CONTRACT = 'clued.independent-ci.reinstall-config/1'
 KEYS = {'contract', 'node', 'nodeProfile', 'workDir', 'repo', 'basePackage', 'nodeRecord', 'nodeExe', 'policyInput', 'companionInput',
-        'upgradeTokenFile', 'runner', 'launcher', 'linux', 'secretTargetsExist'}
+        'upgradeTokenFile', 'runner', 'launcher', 'linux', 'secretTargetsExist', 'signer'}
+# The node's own result signer for the record's signers.json (another node than the base package's; README section 8): the Ed25519
+# public key its Linux worker signs with (the root-made key's public half, never the private one), its keyId, and the runtimeId its
+# role policies name (verifyResultV2 requires payload.runtimeId === signer.runtimeId).
+SIGNER_SHAPES = {'keyId': r'[a-z0-9][a-z0-9-]{6,78}[a-z0-9]', 'runtimeId': r'[A-Za-z0-9][A-Za-z0-9._-]{6,78}[A-Za-z0-9]',
+                 'publicKeyPem': r'-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA[A-Za-z0-9+/]{43}=\n-----END PUBLIC KEY-----\n'}
 NODE_RECORD_KEYS = {'appKeyId', 'appPublicKeySha256Base64', 'ciPrincipalBindingId', 'ciPrincipalRoleRef', 'ciTokenPinSha256', 'controllerNodeSha256'}
 _UUID = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
 NODE_RECORD_SHAPES = {'appPublicKeySha256Base64': r'[A-Za-z0-9+/]{43}=', 'ciPrincipalBindingId': _UUID, 'ciPrincipalRoleRef': _UUID,
@@ -86,6 +91,10 @@ def load(path):
     need(re.fullmatch(r'[A-Za-z0-9._-]{1,64}', li['distribution'] or ''), 'CONFIG_LINUX_DISTRIBUTION')
     need(isinstance(li['installedManifest'], str) and WIN_PATH.match(li['installedManifest'])
          and (li['installedRoles'] is None or isinstance(li['installedRoles'], str) and WIN_PATH.match(li['installedRoles'])), 'CONFIG_PATH_SHAPE', 'linux')
+    sg = cfg.get('signer')
+    need(sg is None or isinstance(sg, dict) and set(sg) == set(SIGNER_SHAPES)
+         and all(isinstance(sg[k], str) and re.fullmatch(v, sg[k]) for k, v in SIGNER_SHAPES.items()), 'CONFIG_SIGNER')
+    cfg['signer'] = sg
     st = cfg.get('secretTargetsExist', [True, True])
     need(isinstance(st, list) and len(st) == 2 and all(isinstance(x, bool) for x in st), 'CONFIG_SECRET_TARGETS_EXIST')
     cfg['secretTargetsExist'] = st

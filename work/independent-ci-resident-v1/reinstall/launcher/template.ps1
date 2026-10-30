@@ -642,6 +642,10 @@ function Step-UninstallPreflight {
   $report['planFieldsBeforeUninstall'] = $s1; if ($s1.Count) { $codes.Add('PLAN_FIELDS_WOULD_DIFFER_AFTER_UNINSTALL') }
   $sec = Test-SecretsAsVerify; $report['secretsAsVerify'] = $sec; foreach ($q in @($sec.codes)) { $codes.Add($q) }   # r5 review m1
   if ($c.exit -ne 0 -or (Get-Key $cv 'status') -cne 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN' -or $null -eq $preview -or $preview -is [string]) { $codes.Add('CARRY_FORWARD_PREVIEW_REFUSED') }
+  # 2026-10-30: an installer that checks the controller's right to log on as a service refuses -Apply without it; refused here, before
+  # the uninstall, so the node is never left uninstalled. An older installer has no preflight and no such refusal.
+  $pf = Get-Key $cv 'preflight'; $logonOk = Get-Key $pf 'controllerServiceLogonRight'; $report['controllerServiceLogonRight'] = $logonOk
+  if ($null -ne $pf -and -not ($logonOk -is [bool] -and $logonOk)) { $codes.Add('CONTROLLER_SERVICE_LOGON_RIGHT_NOT_CONFIRMED') }
   $quiet = Test-OldRootQuiet; $report['oldRootQuiet'] = $quiet; foreach ($q in @($quiet.codes)) { $codes.Add($q) }   # r4 Q1
   $carryNow = Test-CurrentRootCarryShape; $report['currentRootCarryShape'] = $carryNow; foreach ($q in @($carryNow.codes)) { $codes.Add($q) }   # review m1
   if ($null -ne $preview -and $preview -isnot [string] -and @($preview).Count + 1 -gt 256) { $codes.Add('CARRY_FORWARD_TOO_MANY_STATES_AFTER_UNINSTALL') }
