@@ -22,8 +22,8 @@ export const BLOCKED_CONTRACT='clued.independent-ci.protected-job-blocked/1';
 // One callback round (challenge -> relay -> Windows admission + refs -> relay -> response). 30 s was too tight
 // on TURING: measured 34 s and about 47 s round trips, the Windows step alone up to about 30 s (PR #889 stage 2,
 // 2026-10-21, Owner decision dd7378d2). Every round still re-runs the admission and the refs check. The relay alone
-// sometimes takes 25-45 s (PR #915 stage 4, 2026-10-23), so a response's admission is fresh at its issuance and the
-// response only has to arrive inside this window (Owner decision 6f1fb753, validateResponse).
+// sometimes takes 25-45 s (PR #915 stage 4, 2026-10-23), so a response's admission and refs snapshot are fresh at its
+// issuance and the response only has to arrive inside this window (Owner decision 6f1fb753, validateResponse).
 export const CALLBACK_WINDOW_MS=120000;
 const REPO='tdoljyj/cross-memory-system',HASH=/^[a-f0-9]{64}$/,SHA=/^[a-f0-9]{40}$/;
 const UUID=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -120,7 +120,10 @@ export function validateResponse(issue,challenge,response,now=Date.now()){
     check(sameClaimGeneration(response.admission.batchClaimBound,issueGeneration(issue)),'BRIDGE_RESPONSE_CLAIM_GENERATION_CHANGED');
     check(time(response.admission.observedAt)<=at&&end<=time(response.admission.claimExpiresAt),'BRIDGE_RESPONSE_ADMISSION_TIME_REQUIRED');
   }else{
-    check(response.admission===null,'BRIDGE_RESPONSE_ADMISSION_NULL_REQUIRED');refsValid(issue.job,response.remoteRefs,now);
+    // The refs snapshot likewise (Task 576231fa, as Owner Decision 6f1fb753 for the admission): its 30 s
+    // (validateRemoteSnapshot) are measured at the response's issuedAt, the moment the Windows issuer wrote it right after
+    // one complete collection, never at the arrival; the response itself must still arrive inside its window (above).
+    check(response.admission===null,'BRIDGE_RESPONSE_ADMISSION_NULL_REQUIRED');refsValid(issue.job,response.remoteRefs,at);
     check(time(response.remoteRefs.observedAt)<=at,'BRIDGE_RESPONSE_REFS_TIME_REQUIRED');
   }
   raw(response);return response;

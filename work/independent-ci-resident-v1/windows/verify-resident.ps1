@@ -369,6 +369,16 @@ function Read-ReviewedPublicJson([string]$file, [string]$expected, [ValidateRang
   }finally{$stream.Dispose()}
 }
 function Record([string]$name, $ok, $detail = $null) { $script:checks[$name] = [ordered]@{ ok = $ok; detail = $detail } }
+# The verdict (Task 018da927 b). Only a check whose ok is the STRING 'unreadable' asks for an elevated run: with -eq, a
+# boolean on the left converts 'unreadable' to $true, so every passing check counted as unreadable and any failure was
+# reported as RESIDENT_PARTIALLY_VERIFIED_RUN_ELEVATED (exit 2) instead of RESIDENT_VERIFICATION_FAILED (exit 1).
+function Get-VerifyVerdict($checks) {
+  $allOk = -not ($checks.Values | Where-Object { $_.ok -ne $true })
+  $unreadable = [bool]($checks.Values | Where-Object { $_.ok -is [string] -and $_.ok -ceq 'unreadable' })
+  if ($allOk) { return @{ status = 'RESIDENT_VERIFIED'; exit = 0 } }
+  if ($unreadable) { return @{ status = 'RESIDENT_PARTIALLY_VERIFIED_RUN_ELEVATED'; exit = 2 } }
+  return @{ status = 'RESIDENT_VERIFICATION_FAILED'; exit = 1 }
+}
 
 $receiptFile = Join-Path $Root 'install\install-receipt.json'
 $receipt = Read-ReviewedPublicJson $receiptFile $ExpectedInstallReceiptSha256
@@ -547,7 +557,6 @@ if ($receipt.contract -ceq 'clued.independent-ci.resident-install-receipt/6') {
   Record 'two-sides-consistent' $tc.ok $tc.detail
 }
 
-$allOk = -not ($checks.Values | Where-Object { $_.ok -ne $true })
-$unreadable = [bool]($checks.Values | Where-Object { $_.ok -eq 'unreadable' })
-[ordered]@{ status = if ($allOk) { 'RESIDENT_VERIFIED' } elseif ($unreadable) { 'RESIDENT_PARTIALLY_VERIFIED_RUN_ELEVATED' } else { 'RESIDENT_VERIFICATION_FAILED' }; checks = $checks } | ConvertTo-Json -Depth 6
-exit $(if ($allOk) { 0 } elseif ($unreadable) { 2 } else { 1 })
+$verdict = Get-VerifyVerdict $checks
+[ordered]@{ status = $verdict.status; checks = $checks } | ConvertTo-Json -Depth 6
+exit $verdict.exit

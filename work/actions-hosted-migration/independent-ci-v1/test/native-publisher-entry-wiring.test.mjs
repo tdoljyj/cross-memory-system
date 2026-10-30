@@ -37,7 +37,7 @@ function entryFacade({ports,jobs,journal,record,nonce}) {
 // service ports. They are local integration checks, not runtime qualification.
 async function fixture(t, active = true) {
   const time = Date.now(), iso = ms => new Date(ms).toISOString();
-  const jobs = batchJobsV2(subject({ createdAt: iso(time - 60000) }));
+  const jobs = batchJobsV2(subject({ testSha: subject().headSha, createdAt: iso(time - 60000) }));
   const claim = { claimId: randomUUID(), fence: 4, epoch: 3, expiresAt: iso(time + 3600000) };
   const checks = [], calls = [], tickets = new Map();
   let next = 101, current = true;
@@ -138,7 +138,7 @@ test('legacy entry wiring still publishes without creating a Native publication'
 });
 
 test('the real read-only controller request carries the complete admitted packet paths',async t=>{
- const {docs}=fixtureRecord(),record=validateRecordV2(docs,{now:Date.now()}),job=batchJobsV2(subject()).gitleaks;
+ const {docs}=fixtureRecord(),record=validateRecordV2(docs,{now:Date.now()}),job=batchJobsV2(subject({testSha:subject().headSha})).gitleaks;
  const identity=makeIndependentPublicationIdentity({job,claim:{claim_id:randomUUID(),fence:4,execution_epoch:3},controller_id:randomUUID()});
  const paths=['scripts/ci/a.mjs','work/a.mjs'],requests=[],original=globalThis.fetch;
  t.after(()=>{globalThis.fetch=original;});
@@ -158,7 +158,7 @@ test('the real read-only controller request carries the complete admitted packet
 test('active hosted relay reaches the actual entry adapter without replacing its attested external identity',async t=>{
  const w=createWorld({now:Date.now()});w.allHosted();
  const journal=await EffectJournal.open(path.join(await tempDir(t),'effects')),s=w.subject();
- const jobs=['gitleaks','trivy'].map(role=>makeJobV2({repo:s.repo,pr:s.pr,headSha:s.headSha,baseSha:s.baseSha,sourceManifestSha256:s.sourceManifestSha256,
+ const jobs=['gitleaks','trivy'].map(role=>makeJobV2({repo:s.repo,pr:s.pr,headSha:s.headSha,baseSha:s.baseSha,testSha:s.headSha,sourceManifestSha256:s.sourceManifestSha256,
   role,createdAt:new Date(w.state.now-1200000).toISOString(),attempt:1}));
  const claim={claimId:s.claimId,fence:s.fence,epoch:s.epoch,expiresAt:new Date(w.state.now+3600000).toISOString()};
  const calls=[],tickets=new Map(),native={async current(){return true;},async command(input){calls.push(input);

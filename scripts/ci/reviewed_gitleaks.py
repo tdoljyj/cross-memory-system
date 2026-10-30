@@ -742,6 +742,37 @@ def self_test(config, production_ignore):
     if code != 1 or not {("other-path/" + path, rule) for path, rule in required} <= {
             (finding["File"], finding["RuleID"]) for finding in different_path}:
         raise ValueError("Scheduling marker or prose was suppressed at a different path")
+    # Copy the exact historical role-probe blob as data. A new commit, path or line
+    # must still be detected; the one old fingerprint grants none of these uses.
+    role_blob = run(["git", "cat-file", "blob", f"{ROLE_PROBE_COMMIT}:{ROLE_PROBE_PATH}"], cwd=config.parent)
+    if hashlib.sha256(role_blob).hexdigest() != ROLE_PROBE_BLOB["sha256"]:
+        raise ValueError("Role-probe detector fixture blob changed")
+    role_target = test_repo / ROLE_PROBE_PATH
+    role_target.parent.mkdir(parents=True, exist_ok=True)
+    role_target.write_bytes(role_blob)
+    commit()
+    code, role_new_commit = scan()
+    if code != 1 or not any(f["File"] == ROLE_PROBE_PATH and f["RuleID"] == "generic-api-key"
+                            and f["StartLine"] == 73 for f in role_new_commit):
+        raise ValueError("Role-probe marker was suppressed in a new commit")
+    other_role_path = "other-path/" + ROLE_PROBE_PATH
+    other_role_target = test_repo / other_role_path
+    other_role_target.parent.mkdir(parents=True, exist_ok=True)
+    other_role_target.write_bytes(role_blob)
+    commit()
+    code, role_different_path = scan()
+    if code != 1 or not any(f["File"] == other_role_path and f["RuleID"] == "generic-api-key"
+                            for f in role_different_path):
+        raise ValueError("Role-probe marker was suppressed at another path")
+    # Delete and commit first, so the shifted token is a real Git-added line, not shifted context.
+    role_target.unlink()
+    commit()
+    role_target.write_bytes(b"\n" + role_blob)
+    commit()
+    code, role_different_line = scan()
+    if code != 1 or not any(f["File"] == ROLE_PROBE_PATH and f["RuleID"] == "generic-api-key"
+                            and f["StartLine"] == 74 for f in role_different_line):
+        raise ValueError("Role-probe marker was suppressed at another line")
     (test_repo / "controlled-valid-private.pem").write_bytes(synthetic_valid_private_pem())
     commit()
     code, valid_private = scan()
@@ -752,6 +783,9 @@ def self_test(config, production_ignore):
             "new_commit_detection": True, "different_path_detection": True,
             "scheduling_marker_new_commit_detection": True,
             "scheduling_marker_different_path_detection": True,
+            "role_probe_new_commit_detection": True,
+            "role_probe_different_path_detection": True,
+            "role_probe_different_line_detection": True,
             "valid_private_key_detection": True,
             "synthetic_test_repository": str(test_repo),
             "handover_acceptance_artifact_proof": _self_test_handover_acceptance(root)}

@@ -13,19 +13,31 @@
 // recorded the claim; it is kept in the record as a fact but is not compared, so a later batch of the
 // same content and attempt (derived at another time) reads the same record instead of failing with
 // BATCH_CLAIM_RECORD_INVALID. The claim generation is still compared (BATCH_CLAIM_CHANGED).
+//
+// Step 3c-2 (design v0.5 §5.2): a train front batch tests S != H. Its record names S under contract /2 (`testSha`
+// after `baseSha`), so the control consumer can re-derive the exact jobs; a batch that tests the head keeps contract
+// /1 byte for byte, and a /1 record always means S = H.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { canonical, digest } from './proof.mjs';
-import { batchRefV2, claimGeneration, sameClaimGeneration, validateJobV2, validateObservedClaim } from './job-v2.mjs';
+import { batchRefV2, claimGeneration, isTrainFrontJobV2, sameClaimGeneration, validateJobV2, validateObservedClaim } from './job-v2.mjs';
 
 export const BATCH_CLAIM_CONTRACT = 'clued.independent-ci.batch-claim/1';
+export const BATCH_CLAIM_CONTRACT_FRONT = 'clued.independent-ci.batch-claim/2';
 const FIELDS = ['contract', 'batchRef', 'repo', 'pr', 'headSha', 'baseSha', 'sourceManifestSha256', 'attempt', 'createdAt', 'claim', 'observedAt', 'integrity'];
+const FIELDS_FRONT = [...FIELDS.slice(0, 6), 'testSha', ...FIELDS.slice(6)];
 const HASH = /^[a-f0-9]{64}$/;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 const SUBJECT = ['repo', 'pr', 'headSha', 'baseSha', 'sourceManifestSha256', 'attempt', 'createdAt'];
+const SUBJECT_FRONT = ['repo', 'pr', 'headSha', 'baseSha', 'testSha', 'sourceManifestSha256', 'attempt', 'createdAt'];
 // Compared on every read; createdAt is recorded (SUBJECT) but never part of the identity.
-const IDENTITY = SUBJECT.filter(k => k !== 'createdAt');
+const identityOf = subject => subject.filter(k => k !== 'createdAt');
+const shapeFor = job => isTrainFrontJobV2(job)
+  ? { contract: BATCH_CLAIM_CONTRACT_FRONT, fields: FIELDS_FRONT, subject: SUBJECT_FRONT }
+  : { contract: BATCH_CLAIM_CONTRACT, fields: FIELDS, subject: SUBJECT };
+// The tested commit a record names: its own field under /2, the head under /1.
+export const recordTestShaV2 = record => (record?.contract === BATCH_CLAIM_CONTRACT_FRONT ? record.testSha : record?.headSha);
 
 async function directoryOk(directory) {
   if (!path.isAbsolute(directory)) fail('BATCH_CLAIM_DIRECTORY_INVALID');
@@ -36,15 +48,17 @@ async function directoryOk(directory) {
 const fileFor = (directory, ref) => { if (!HASH.test(ref)) fail('BATCH_CLAIM_REF_INVALID'); return path.join(directory, `${ref}.json`); };
 
 function body(job, claim, observedAt) {
-  const v = { contract: BATCH_CLAIM_CONTRACT, batchRef: batchRefV2(job), ...Object.fromEntries(SUBJECT.map(k => [k, job[k]])),
+  const shape = shapeFor(job);
+  const v = { contract: shape.contract, batchRef: batchRefV2(job), ...Object.fromEntries(shape.subject.map(k => [k, job[k]])),
     claim: claimGeneration(claim), observedAt };
   return { ...v, integrity: digest(v) };
 }
 
 export function validateBatchClaimRecord(record, job) {
   validateJobV2(job);
-  if (!plain(record) || Object.keys(record).length !== FIELDS.length || !FIELDS.every(k => Object.hasOwn(record, k))
-    || record.contract !== BATCH_CLAIM_CONTRACT || record.batchRef !== batchRefV2(job) || !IDENTITY.every(k => record[k] === job[k])
+  const shape = shapeFor(job);
+  if (!plain(record) || Object.keys(record).length !== shape.fields.length || !shape.fields.every(k => Object.hasOwn(record, k))
+    || record.contract !== shape.contract || record.batchRef !== batchRefV2(job) || !identityOf(shape.subject).every(k => record[k] === job[k])
     || typeof record.createdAt !== 'string' || !Number.isFinite(Date.parse(record.createdAt))
     || !plain(record.claim) || Object.keys(record.claim).sort().join('|') !== 'claimId|epoch|fence'
     || typeof record.observedAt !== 'string' || !Number.isFinite(Date.parse(record.observedAt))) fail('BATCH_CLAIM_RECORD_INVALID');

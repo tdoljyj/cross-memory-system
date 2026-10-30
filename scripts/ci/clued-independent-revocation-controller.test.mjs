@@ -9,7 +9,7 @@ const scope='project:0597aa60-9b98-4da6-a4ab-63d7705b632f',repository='tdoljyj/c
 const record={config:{scope,repository,sourceManifestSha256:'d'.repeat(64)}};
 const page=(revocations=[],publications=[])=>({status:'ok',revocations,publications,next_outbox_cursor:null,next_publication_cursor:null});
 function physicalFixture(item){
- const job=makeJobV2({repo:repository,pr:937,headSha:head,baseSha:'b'.repeat(40),sourceManifestSha256:record.config.sourceManifestSha256,
+ const job=makeJobV2({repo:repository,pr:937,headSha:head,baseSha:'b'.repeat(40),testSha:head,sourceManifestSha256:record.config.sourceManifestSha256,
   role:'gitleaks',attempt:1,createdAt:new Date().toISOString()});
  const identity=makeIndependentPublicationIdentity({job,claim:{claim_id:item.claim_id,fence:1,execution_epoch:3},controller_id:randomUUID()});
  const nonce='a'.repeat(32),sid='S-1-5-21-1-2-3-1015',requestId=randomUUID(),bytes=v=>Buffer.from(canonical(v));

@@ -226,7 +226,7 @@ Agent 在这台机器上用的就是 Owner 的 GitHub 身份（resident constrai
 ## 5. 一批的流程
 
 ```
-companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ inbox 里的触发记录
+companion 轮询（每 60 秒，条件请求，§39；用 Owner 的 gh 登录）或 Agent ──▶ inbox 里的触发记录
 执行器 tick（空闲每 15 秒一次）：
   崩溃恢复（每 tick 都做，HALT 时也做）：未终结的条目（包括“目录已建、记录没写”的） → FAILED_UNKNOWN、烧掉 head、HALT
       例外（v0.7）：只在等托管信号的批次（有 15-relay-wait、没有 20-plan-intent）什么都没在运行，不关，由 tick 继续
@@ -2994,6 +2994,7 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 - `upgrader`：`{manifestSha256, files}`，升级代理冻结副本 `upgrader\<manifestSha256>\` 的清单（`clued.independent-ci.resident-upgrader-manifest/1`）。副本保持本仓库的相对布局，使 `upgrader/src/*.mjs` 里的 `../../src/…` 导入能解析：`upgrader\src\*`、它们按相对导入（传递闭包）用到的 `src\*`（只这些，导入跑出 `src/` 或 `upgrader/src/` 就拒）、`windows\upgrade-apply.ps1`。**总是**计算，所以升级包名出构建它的升级代理，升级代理遇到不同的就 `UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL`；被冻结的常驻模块（`canonical`、`store`、`inbox`、`intake-pause`、`upgrade-mailbox` 等）一改，就需要全量重装。
 - `upgrader\` 下的安装目标只在 `--fresh-install` 时写进 `files`（升级包里出现就是 `CHANNEL_CHANGE_NEEDS_REINSTALL`）：副本、`upgrader\bin\UpgraderServiceHost.cs`、`upgrader\runtime\node.exe`（同一个 node.exe）、`upgrader\config\upgrader.json`（`--upgrader-config`，合同 `clued.independent-ci.resident-upgrader-config/1`，`nodeProfileSha256` 必须是本包的）。不加 `--fresh-install` 时所有目标仍落在 `/3` 的白名单里。
 - 升级代理入口因此是 `upgrader\<manifestSha256>\upgrader\src\upgrader-main.mjs`（相对导入决定，见上）。
+- 升级代理运行 `upgrade-apply.ps1` 时，环境变量只有 `upgrader/src/windows-port.mjs#APPLY_ENV` 这两项：`SystemRoot` 和固定的 `PATHEXT=.COM;.EXE;.BAT;.CMD`，不继承别的变量。少了 `PATHEXT`，Windows PowerShell 5.1 会不执行任何原生 .exe（不报错、没有输出、`$LASTEXITCODE` 为空），于是 csc、sc.exe 等每个动作都失败。原地升级 op `8c5efb1a` 就是因此被拒的（Note `ee73b1a0`）。回归测试 `upgrader/test/units.test.mjs`（windows port (live)）在 Windows 上用真实的 `WindowsPort` 和 powershell.exe 按全路径跑一次 `cmd.exe`。`upgrade-apply.ps1` 调用每个程序都用全路径，所以不需要 PATH。环境里也没有 TEMP，csc 的临时文件会落在 `GetTempPath()` 的回退目录 `C:\Windows\`（LocalSystem 可写）。这一点还没在真机上验证，第一次真实的 Compile 就是验证。不改成 `C:\Windows\Temp`，因为普通用户能在那个目录里创建文件。升级代理是冻结副本，这项修复只能随整套重装生效（Decision `0b8cab03`）。
 
 ### 34.9 Owner 工具
 
@@ -3010,3 +3011,191 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 - 常驻服务不运行升级代理、不写 `upgrade\` 下任何文件；它只读三份文件，只在自己的 intake 状态里加或解 `version-skew` 这一个 holder。
 - 版本信息只用于显示、hold、预检的全局延后和第一个 Linux 段前的兜底闸，从不让任何东西更早开始；未知永远当作“不动”。
 - companion 仍只运行固定 argv；新增的只是一个冻结路径的 root 工具和六种逐字校验的参数形状。
+
+## 35. 归档保留与瘦身、trivy 缓存回收、C: 余量提醒、无心跳不量 Linux（Task `4aedda54`；Task `018da927` 子项 b、c）
+
+### 35.1 归档保留规则（`src/retention.mjs`，Linux 侧 `clued-ci-resident-linux archive-prune`，同一规则）
+
+- 分两类，各自独立计算：**成功类** `archive-*`、`completed-*`；**失败类** `failed-*`（失败、HALT、Owner 中止的归档都以 `failed-` 开头）。名字必须匹配 `^(archive|completed|failed)-[0-9A-Za-z-]{1,90}$`，其他名字（`incoming`、`outgoing`、未知名字）永远不进计划。
+- 每类保留最新（目录修改时间，同时按名字）的 20 GiB，且无论多大都至少保留最新 10 个；超出部分从最旧的删。每轮最多删 16 个（其余记为 `deferred`，下一轮再删）。数值是常量（Owner 给定），**不进 policy**：policy 合同不变。
+- 50 GB 总提醒（`archive-retention-reminder`）照旧。
+- Windows spool（`C:\ProgramData\CluedIndependentCI\formal-spool`）由服务自己执行；Linux spool（`/var/lib/clued-independent-ci/formal-spool`）由 root 工具执行，经邮箱新请求 `archive-prune`（响应合同 `/4` 多一个 `prune` 字段，形状由 `mailbox.mjs#validatePrune` 精确校验）。两边的计划函数用同一份案例 `test/fixtures/retention-cases.json` 约束。
+
+### 35.2 例外：Owner 的保留清单
+
+常驻侧没有可靠办法查询 KooYomi 里哪些 Task、Bug、Evidence 还没关闭、引用了哪个归档，所以改用**显式保留清单**：`C:\ProgramData\CluedIndependentCI\resident\owner\retention-keep.json`（`owner\` 只有提权的 Owner 能写，服务只读；名字不是 Owner 请求的名字形状，`OwnerInbox` 不会读它）。合同 `clued.independent-ci.archive-retention-keep/1`：`{ contract, keep: [{ name, spool: windows|linux|any, ref }] }`，`ref` 写引用它的 Task/Bug/Evidence id 或 `owner`，只记录不解释；最多 2000 条、256 KB。Linux 工具经 `/mnt/c/...` 读同一个文件。被列出的归档不删，单独计量（回执 `protected`：目录数、字节数、是否量全；Windows 回执另列名字，最多 64 个）。Owner 关闭相关 Task 后自己从清单里删掉那一行。
+
+**清单不存在时一个都不删**（`RETENTION_KEEP_LIST_MISSING`，独立复核 M2）：未知的清单从不当作空清单。安装或重装之后，由 Owner 写下这个文件（可以是 `{"contract":"clued.independent-ci.archive-retention-keep/1","keep":[]}`）才开始删除，这一步就是对删除的显式授权；之前回执每天一条说明原因。Linux 工具只把 `FileNotFoundError` 当作“不存在”，其他读错误一律是读不到（复核 m3）。
+
+### 35.3 安全措施（任何一条不满足都不删，写回执说明）
+
+- **只在批次之间、且无未关闭批次**时执行：服务循环的 `betweenBatches`（IDLE/DEFERRED/PAUSED/WAITING）里，`idle` 再查：没有子进程在跑、没有 HALT、账本里没有非终止条目（运行中、等待、停车 A/B 都算）、没有未归档的现场。Linux 侧另要 root 自己证明静止（`quiescence`），且必须有新鲜的 companion 心跳。
+- 先算计划再执行；每个要删的目录在删之前重新清点，字节数或条目数变了（`RETENTION_CHANGED_SINCE_PLAN`）、出现链接就停。
+- 只删 spool 根下、名字匹配三种已知模式的目录；spool 根本身必须是真目录且真实路径未被重定向（`RETENTION_SPOOL_REDIRECTED`）。
+- fail-closed：某类里任何一个目录大小读不到（`RETENTION_SIZE_UNREADABLE`）或含符号链接/联接点/特殊文件（`RETENTION_LINK_REFUSED`），该类本轮一个都不删；保留清单读不到或不合合同（`RETENTION_KEEP_LIST_UNREADABLE`/`_INVALID`），整个 spool 不删；删除自己写（深度优先，遇到链接就停，从不跟进），权限错误记 `RETENTION_PERMISSION_REFUSED` 并停止本轮。
+- Windows 上服务账户对 spool 根只有“新建子目录”，但对它自己建的归档目录有修改权（含 DELETE），所以能删它自己的归档；Owner 早年手工建的 `completed-*` 等会以 `RETENTION_PERMISSION_REFUSED` 停下，留给 Owner。
+
+### 35.4 回执
+
+- `archive-retention-prune`：`{ spool, rule, refused, classes: { success|failure: { directories, bytes, deleteDirectories, deleteBytes, refused } }, protected, deferred, deleted: [{ name, class, bytes }], deletedBytes, stopped: { name, code, partial } | null, deletesAnything }`。有删除的每轮都写；被拒或中途停的同一原因每天最多一条。Linux 工具另在 `/var/lib/clued-independent-ci/resident/retention/` 写一份本地持久回执（含保护名单全文）。
+- `disk-space-reminder`：C: 可用空间低于 30 GiB 时每天最多一条 `{ drive: 'C:', freeBytes, thresholdBytes, action: 'owner-free-disk-space', blocksAnything: false }`；读不到就不提醒，从不阻断。
+
+### 35.5 成功归档瘦身（`clued-ci-resident-linux`）
+
+- 归档合同 `resident-linux-archive/3`：`success-close` 的计划带 `slimCandidates: true`。所有移动都核实之后，归档里的 `workspace-<作业 id>/candidate` 和 `run-<名字>/candidate` 各写一份 `candidate.slim.json`（合同 `resident-linux-archive-slim/1`：提交 SHA、整树清单哈希、文件数、字节数、`restoreFrom: git`），再删掉那棵树（三份候选树约 660 MB，单个成功归档约 850 MB → 约 190 MB）。提交 SHA 取候选检出的分离 HEAD；`run-placement-<作业 id>` 的候选没有 `.git` 时取同一作业工作区的提交。
+- 提交 SHA 未知（`SLIM_COMMIT_UNKNOWN`）、含特殊文件、含链接而 rmtree 不能防符号链接攻击、删除失败的，树原样保留并在 `slimKept` 里报告；瘦身失败不影响归档本身的 `verified`。
+- 失败归档、角色间归档保持完整。Windows 侧归档（`archive-windows-spool.ps1`、`src/archive.mjs`）只搬协议记录，本来就没有候选树，不改。
+
+### 35.6 trivy 缓存回收（`worker/formal-trivy-v3/cache.mjs`）
+
+现装的是角色策略 v3 → `formal-trivy-v4/adapter.mjs`，它没有自己的 cache.mjs，用的就是 v3 的，所以只改这一个文件（`formal-trivy-v2/cache.mjs` 只属于已退役的 v2 策略，没改）。`promote()` 在指针改名、父目录 fsync、读回确认之后调用 `reclaimCache`：删掉该种类（db 或 checks）在 `staging/` 下的全部副本（准备锁在手，没有别的准备在用），以及 `generations/` 下除当前和上一代之外的该种类各代；只碰名字形状正确的目录，另一种类不动，链接只删链接本身。回收失败只记录在返回值 `reclaimed` 里，不让提升失败，下次提升再试。
+
+### 35.7 无心跳不量 Linux（Task `018da927` 子项 c）
+
+`RetentionWatch` 先问 `companionReady`（心跳年龄不超过 `policy.companion.heartbeatMaxAgeMs`，与执行器开批用同一标准）。没有心跳时不发 `archive-usage`、也不发 `archive-prune`，Linux 部分记为 `skipped: COMPANION_HEARTBEAT_ABSENT`；以前这一步要等满 3 分钟超时，期间主循环不动。
+
+### 35.8 verify-resident.ps1 的结论（Task `018da927` 子项 b）
+
+结论抽成 `Get-VerifyVerdict`，“需要提权再跑”只认值是字符串且恰为 `'unreadable'` 的检查（`-is [string] -and -ceq`）。原来 `-eq` 左边是 `$true` 时会把字符串转成布尔，任何通过的检查都算“读不到”，所以任何失败都报 `RESIDENT_PARTIALLY_VERIFIED_RUN_ELEVATED`。
+
+### 35.9 测试
+
+- `test/retention.test.mjs`（新）：共享案例；保留清单；Windows 一轮（删最旧、保护、最新 N 个、其他名字不动）；联接点、清单坏、spool 被重定向都不删；无心跳不调测量、主循环一轮立即返回；只在 idle 时删、回执频率；C: 提醒；`archive-prune` 经邮箱的形状；service-main 接线。
+- `test/verify-verdict.test.mjs`（新）与 `windows/test-resident-windows.ps1` 新增 4g（7 项）：失败原因不是 unreadable 时不报 RUN_ELEVATED。
+- `test/test_linux_tool.py` 新增 `Retention`（共享案例、清单、一轮、链接、计划后变化、成功瘦身、失败归档完整与提交未知时保留）。
+- `independent-ci-v1/test/formal-trivy-cache-reclaim.test.mjs`（新）：保留当前与上一代、首次提升、另一种类与其他形状不动、链接不跟进、失败只报告、越界拒绝、回收在读回之后。
+
+### 35.10 生效与不变量
+
+需要常驻层 Windows 与 Linux 重装（companion 与服务一起，响应合同 `/4`），trivy 回收需要 Source 重装。删除只发生在上面的条件下；没有新的发布路径，不碰 GitHub、凭据或网络。
+
+## 36. 按风险分档计每日额度（Task `12ada80e`，来自 c0ff5167；Decision `ca70ea31`）
+
+### 36.1 为什么
+
+第 1 段被干净拒绝、证明没有任何发布的批次（例如 2026-10-21 那 8 个旧 PR 的 `STAGE_CHILD_REFUSED`）照样烧号，也照样写一条 `ledger-heads` 记录，于是 `usage()` 把它算成一次执行，占掉 48 批的执行额度；同一个条目又在批次账本里算一次评估。Owner 决定（`ca70ea31`）第 3 批只做按风险分档的机制，数值保持临时的 48/96，等算力面板有实际数据再调。
+
+### 36.2 两档
+
+- **评估档（低风险）**：同时满足以下几条的第 1 段结局——10-started 之前；对照表判为 CLEAN（两端清理证明齐全）；绑定的阶段结果 `sideEffects` 为 0 且 `mayHavePublished` 为 false。照样烧号（这个 head 永不再跑），但烧号记录的 `burnedBy` 带 `quotaTier: 'evaluation'`；`usage()` 不把它计入执行（`started`），另计 `lowRiskBurns`，它的批次条目照常计一次评估；它仍计入本 PR 每天的批次上限 `startedByPr`（复核 m4：一个 PR 不能用第 1 段被拒的提交耗尽全局评估额度）。
+- **执行档**：其余一切——10-started 的记录、其他烧号、没有 `quotaTier` 的旧记录、读不出的记录。与以前相同。
+- 另外，从未 10-started 却以 FAILED_CLEAN / FAILED_UNKNOWN 结束（即烧号）的批次条目，不论对照表类别（环境、暂时类也一样）都计一次评估：它在执行档里不再出现时必须在别处被计数。执行档的烧号仍同时计执行与评估，与以前一样严格。
+
+### 36.3 看得见的推迟
+
+全局推迟（今日执行额度已满、评估额度已满、companion 没就绪）每个原因每个 UTC 日写一条 `batch-deferred` 回执，带当时的 `started`、`evaluations`、`lowRiskBurns`。之前只有状态页能看出执行器为什么不动。
+
+### 36.4 不变的
+
+上限值（48/96，policy `/7` 不变）、烧号与已执行记录、第 1 段释放的前提（只认 `safeToRerun` 或 broker 没启动）。
+
+### 36.5 测试
+
+`test/risk-tier.test.mjs`：低风险烧号只计评估且 head 不再跑；可能发布、有副作用、没有绑定结果、第 3 段失败、Linux 一侧不干净都仍是执行档；低风险烧号不占执行额度，额度满时回执每天只写一次。`test/executor.test.mjs` 的 `usage()` 形状随 `lowRiskBurns` 更新。
+
+## 37. 停靠点 A 重打 bundle（Task `4012c1b9`）
+
+### 37.1 为什么
+
+停在 A（等托管结果）的批次恢复时可能已过很久：第 1 代 bundle 的 refs 过期，第 2 段的 refs 闸门几乎必然失败；超过 100 分钟则以 `PARKED_BUNDLE_TOO_OLD` 结束（§18.2）。托管转发打开之前要补上。现在转发仍关着（Decision `b0087f98` 第 4 项：实测推到第 3 批装好之后），所以本节在今天的批次上不会触发。
+
+### 37.2 做法
+
+- 执行器：只对从停靠点 A 恢复的批次（`resumeWaiting` 进来的，复核 M1），在工作区准备之前、距预留超过 `REBUNDLE_AFTER_MS`（30 分钟）时，向 companion 发邮箱请求 `rebuild-bundle`，写一条 `batch-rebundled` 回执。
+  - 成功：照常准备工作区，ws-prep 用第 2 代。
+  - companion 答 `REMOTE_REFS_CHANGED_SINCE_BUNDLE`（main 已不是 T，或没有任何分支还指着 H）：第 0 段干净的暂时性结局，对照表照旧（attempt 2 可跟进）。
+  - 其他拒绝或没有答复：照旧 `PARKED_BUNDLE_TOO_OLD`。没有等过的批次（例如打包和第 1 段本身就慢）和没有该端口的旧 companion 都照旧按 100 分钟判断，行为与以前完全相同。
+- `build-bundle.ps1 -Rebundle`：只在第 1 代完整（回执可读、同一批次与描述符、没有 `generation` 字段）时运行，写到 `bundles\<batchId>\gen-2\`（必须不存在：最多两代），检查与第 1 代相同；另要求有分支仍指着 H（`REMOTE_HEAD_MOVED`）。回执多 `generation: 2`、`previousBundleSha256`、`previousRefListSha256`。`-CheckRefs` 与 `-Rebundle` 互斥（`ONE_MODE_REQUIRED`）。
+- `-CheckRefs` 与 `prepare-workspaces.py` 用最新的完整一代：`gen-2\` 存在就必须有回执，且回执绑定第 1 代的精确 bundle；`gen-2\` 没有回执一律拒绝（`BUNDLE_GENERATION_INCOMPLETE`），绝不退回第 1 代。
+- force-push 掉了 head 的情形在取 head 对象时就失败（git 步骤），按“其他拒绝”处理。
+
+### 37.3 状态页（第 2 步复核 N4）
+
+几个批次可以同时停在 A。状态的 `pending` 里，每个停在 A 的批次所在的行原因写 `PARKED_A`，不只靠 `current` 显示一个。
+
+### 37.4 测试
+
+`test/rebundle.test.mjs`（执行器：等过之后重打一次再准备工作区；超过 100 分钟也能继续；refs 变了干净结束、Linux 上什么都没做；其他拒绝照旧；没等过的批次不重打；两个停在 A 的批次都显示；companion 的固定命令与结论映射）；`test-build-bundle.ps1` 加 10 条（第 2 代、`-CheckRefs` 读第 2 代、不能第 3 代、互斥、没有第 1 代、第 2 代不完整、head 被推进），共 80 条；`test_prepare_workspaces_v2.py` 加 `bundle_generation`。
+
+### 37.5 安装
+
+`build-bundle.ps1`、`prepare-workspaces.py` 属 Source v2，邮箱新请求属常驻层：必须一起装（同一次两侧重装）。
+
+## 38. 额度第二期·第 3c-2a 步：车头批次测 GitHub 试合并提交 S（S ≠ H 全链路，Task `6451a55d`）
+
+3c-2 分两步。3c-2a 只把 S ≠ H 从头到尾接通（§21.3 所列各项）；开车要的部分（第 8 段单绿、撤销与清扫、车头批次调度、优先级与期限、C9）在 3c-2b。3c-2a 装上后没有任何地方会产生 S ≠ H 的批次：subject 里的 `testSha` 只由 3c-2b 的车头调度写入，触发文件不接受这个字段。
+
+### 38.1 S 怎么走
+
+- **subject 与 batch key**：车头批次的 subject 多一个 `testSha`（S，必须是 40 位十六进制且不等于 head）；其他 subject 没有这个字段。batch key 只在字段存在时把 `testSha` 加进摘要，所以今天所有的 key 不变。常驻层 `ledger.mjs#batchKey` 和 Source v2 `derive-batch.mjs#residentBatchKey` 是同一个公式，测试核对两边相等。head key（每个 head 只执行一次，不变量 I2）不含 S。
+- **推导**：`engine-windows.mjs#derive` 把 subject 的 `testSha` 一并传给 `derive-batch.mjs`；推导结果里的 S 必须等于 subject 的 S（没有就等于 head），描述符 `/3` 写推导出的 S。
+- **作业 `/3`**：`makeJobV2` 去掉 S 的默认值，每个调用点都显式传 S（复核 m1）。`isTrainFrontJobV2` = S 与 H 都是合法 SHA 且 S ≠ H。
+- **批次认领记录**：S = H 的批次照旧写合同 `/1`，逐字节不变；S ≠ H 写 `/2`，在 `baseSha` 后多一个 `testSha`。`/1` 永远表示 S = H。控制消费者从记录本身取 S（`recordTestShaV2`），按记录的 T 和 S 重推作业。
+- **第 8 段**：`trainFacts` 读的是 `job.testSha` 的树，S = H 时就是 head 的树，和今天一样。
+
+### 38.2 base.sha 只在 S ≠ H 时放宽（设计 §5.7）
+
+列车模式下 H 不必含 main 尖端，GitHub 的 `base.sha` 也只在推送时更新。所以只有车头批次不再要求 PR 的 `base.sha` 等于批次 base T，只要求它是合法 SHA；S = H 的批次（以及没有 S 的 v1 作业）照旧要求相等。涉及：
+
+- `full-admission-v2.mjs#samePr`：第一次读到的 `base.sha` 记为本次准入的 PR base；第二次读 GitHub、评估结果和 Native 的 `base_sha` 都必须与它相同，否则 `full_admission_subject_changed` / `full_admission_native_changed`。准入事实里的 `baseSha` 仍是作业的 T。
+- `staged-check-publisher-v2.mjs` 写前核对、`github.mjs#exactPr`（同一次调用前后两次读到的 `base.sha` 必须相同）、`protected-controller-ports-v2/refs.mjs#samePr`。`github.mjs` 也被 v1 一次性发布者加载，所以判断写在本文件里，不引入 `job-v2.mjs`（v1 的加载闭包不变）。
+- 不改的：两个发布者对 packet `baseSha` 的检查（packet 由 `readChangedPaths` 按作业的 T 生成，本来就相等）；`refs.mjs` 里 main 必须等于 T；控制发布者的合并位 `tip` 等于 T（属 3c-2b）。
+
+### 38.3 打包与 ws-prep
+
+- `build-bundle.ps1`：去掉 `TEST_COMMIT_NOT_HEAD`。S ≠ H 时，在 `Build-Store` 里取完已审核提交之后按 SHA 取 S，放在 `refs/clued-test/<S>`（只能这一个名字、最多一个），核对它是提交、父提交恰好是 [T, H]，再读一次全部引用。这一步的 git 标签 `fetch-test` 算网络步骤，和其他网络步骤一样可在新库里整体重试一次。bundle 加 `--glob=refs/clued-test/*`，头部和 `list-heads` 都核对这个引用；回执多 `testSha`、`testRefPrefix`、`testRefCount`（S = H 时为 0）、`testRefListSha256`。GitHub 重算试合并后旧的 S 可能取不到：这一步失败，属于批次开始前的失败（BUNDLE_UNAVAILABLE，不计释放上限）；回第 10 段重读 S 由 3c-2b 的调度负责。
+- `prepare-workspaces.py`：去掉 `TEST_COMMIT_NOT_HEAD`。回执必须带上面四个字段，`testRefCount` 必须等于应有的个数；bundle 头部的测试引用必须正好是应有的那一个（S = H 时为空）。普通克隆不映射 `refs/clued-test/`，所以两个候选在克隆后再单独取这个引用；镜像库核对引用集合包含它，并核对 S 是提交、父提交恰好是 [T, H]。
+
+### 38.4 中继不带车头批次
+
+托管中继在 GitHub 的 runner 上测 head，它的 subject 里没有 S。车头批次（S ≠ H）一律不走中继：`derive-batch.mjs#deriveRelayStage` 拒绝带 `testSha` 的 subject（`RESIDENT_RELAY_TEST_COMMIT_REFUSED`），`relay-entry-v2.mjs#relaySubject` 也拒绝 S ≠ H 的作业（`RELAY_TEST_COMMIT_REFUSED`）。这与 §21.3 的原计划（中继也带 S、E8 核 S 的树）不同：车头批次只在本地跑，需要中继时由 3c-2b 的调度让它等或回第 10 段。
+
+### 38.5 为什么装上是安全的
+
+- 没有任何地方产生 S ≠ H 的 subject，所有放宽都只在 S ≠ H 时生效。S = H 的批次：作业 id、批次认领记录 `/1`、batch key、各处 base 核对都和今天一样。
+- bundle 回执多了四个字段，ws-prep 要求它们。所以 `build-bundle.ps1` 和 `prepare-workspaces.py` 必须一起装（同一个 Source），不能只装一个。
+
+### 38.6 测试
+
+- Source v2：`s-not-h.test.mjs`（S ≠ H 的判定和 base 放宽；批次认领 `/2` 与 `/1` 不变；控制消费者按记录的 S 重推、不按传入的 base 匹配；subject 与 batch key；推导出的作业都测 S；中继两处拒绝；`refs.mjs` 放宽 base 但 main 仍须等于 T），`resident-v2-admission.test.mjs`（准入：S ≠ H 时三处读到的 base 一致就准入，不一致就拒；S = H 仍要求等于 T），`resident-v2-publishers.test.mjs`（第 8 段按 S 的树发绿；S 取不到不发绿；扫描发布者 S ≠ H 时不比 base），`test_prepare_workspaces_v2.py`（真实 git：试合并 S 放进 `refs/clued-test/<S>`，解析、父提交核对、候选取引用；回执字段），`job-v3.test.mjs`（S 没有默认值）。
+- 常驻层：`s-not-h-resident.test.mjs`（`ledger.mjs` 与 `derive-batch.mjs` 的 batch key 有无 S 都相等），`engine-v2.test.mjs`（S 随 subject 传给推导，描述符写 S，推导报别的 S 就拒）。
+- `build-bundle.ps1`：`test-build-bundle.ps1` 加 S ≠ H 一例（本地仓库里造一个 [T, H] 的合并提交作 S）。
+
+### 38.7 独立审核（规则 01d4ba7d）
+
+第 1 轮：ACCEPT-WITH-FIXES（1 BLOCKER、1 MAJOR、3 MINOR、7 NIT）。S = H 的作业 id、认领记录 `/1`、batch key、描述符和 bundle 字节（空的 `--glob=refs/clued-test/*` 不改 bundle）逐一核对不变；三种语言的引用前缀、引用列表哈希、父提交顺序一致。处理：
+
+- B1：受保护的 `scripts/ci/clued-work-admission.test.mjs` 有两处调用没传 S。已补；同一个测试的控制对部分原本就因 3a（第 8 段读规则集和试合并）和 C4（已在 GitHub 上的角色不再发布）在 main 上失败，一并跟上。本 PR 因此属于受保护层。
+- M1：`job-v3.test.mjs` 钉的 `TEST_COMMIT_NOT_HEAD` 文本、`test-build-bundle.ps1` 缺 `$TestPrefix`，随 bundle 部分一起改，并补 S ≠ H 的用例（见 38.6）。
+- m2：补了 `github.mjs#exactPr` 的三种情形、bundle 头里第二个测试引用；n1（每个候选都核 S 的父提交）、n4（S 进歧义键和第 2 次尝试的主体核对）、n6 已改。
+
+### 38.8 留给 3c-2b 的（开车之前必须做，Task `a3701d3d`）
+
+- **车头批次不走中继**（审核 m1）：执行器 `relayPlan` 对带 `testSha` 的 subject 一律留在本地，在写 `20-plan-intent` 之前决定；现在要到第 R 段推导才拒绝，批次会白白失败。
+- **S ≠ H 只在列车开着时被接受**（审核 m3）：今天 base 的放宽只看作业本身。第 1 段和第 8 段的发布者在 `train.enabled` 不是 `on` 时拒绝 S ≠ H 的作业。
+- **读到的 base 一致**（n2）：`refs.mjs` 和 staged 发布者也要求各自前后两次读到的 `base.sha` 相同。
+- **把读到的 PR base 记进准入事实**（n3，设计 §5.7 “只记为读到的事实”）：今天只在 `evaluationSha256` 里。
+- **S 被 GitHub 重算掉**（n7）：第 8 段按 SHA 读 S，GitHub 重新生成试合并后可能读不到，批次会一直“没就绪”。调度遇到这种情况回第 10 段重读 S、开新批次；或者 ws-prep 把 S 的树带给第 8 段，按（父提交、树）比较。
+- **回执合同仍是 `/1`**（n5）：新 ws-prep 要求回执的四个测试字段，所以 `build-bundle.ps1` 和 `prepare-workspaces.py` 必须同一次装上（重装清单写明）。
+- **还缺的 S ≠ H 测试**（§21.3 的测试一条）：桥签发、HEAD = S ≠ H 的 worker 工作区、placement 密封候选的 HEAD 和打包内容（S、H、T）、C# 同批核对（`PureTestsV2.cs` 现在在 #927 手里）。
+
+### 38.9 并入第 3 批（2026-10-29）
+
+- 3c-2a 的三个本地提交（基于 main `f0a401d4`）普通合并进第 3 批集成分支（基于 SourceB `43883c31`），无冲突；随后应用了原先等 #928 的 bundle 补丁（审核 M1）。
+- 合并带出两处跟进：SourceB 新加的 Native 发布测试仍依赖 `makeJobV2` 的 S 默认值，已显式传 S；`test-build-bundle.ps1` 的“父提交顺序反了”用例原先用 merge 造 W，因 c1 是 c2 的祖先只会快进，W 就是 head，用例从未真正生效，改用 `commit-tree` 造 [H, T]。
+- 38.8 各项仍属 3c-2b，未在第 3 批实现。
+
+
+## 39. 新 PR 每 60 秒发现一次，条件请求（Decision `1b99e7e4`，Task `a3701d3d` 第 3 批）
+
+- **为什么**：companion 的 poller 原来 5 分钟看一次 open PR，新 head 最多晚 5 分钟才进队。改为 60 秒；不做 webhook。
+- **做法**（`src/poller.mjs`、`src/companion-main.mjs`）：
+  - `POLL_EVERY_MS` 从 5 分钟改为 60 秒；ruleset 兜底（§22.3）单独计时，仍是 5 分钟（`BACKSTOP_EVERY_MS`），不随轮询变密。PR 页状态与通知仍每分钟一次（`REPORT_EVERY_MS`）。
+  - 每轮两次读都改为 REST 条件请求：`repos/<repo>/git/ref/heads/main` 与 `repos/<repo>/pulls?state=open&base=main&per_page=50`（原来的 `gh pr list` 走 GraphQL，不能带 ETag）。第一次不带条件；之后带上一次 200 的 `If-None-Match: <ETag>`。没变时 GitHub 回 304：按 GitHub 的条件请求规则，带授权的 304 不计入 REST 主额度；本轮沿用上次的结果，不会重复提出已提过的 head。
+  - `gh api --include` 在 304 时退出码为 1，但仍打印状态行和响应头，所以只看状态行。只认 200 与"有缓存时的 304"；其余（无应答、别的状态、body 形状不对、304 却没有缓存）照旧是 `POLLER_PULLS_UNAVAILABLE` / `POLLER_MAIN_TIP_UNAVAILABLE`，本轮作废、下一分钟再来。
+  - ETag 要回填进 argv，所以只保留 GitHub 的形状（`ETAG`：可带 `W/`，引号内 1–128 个 `[0-9A-Za-z_-]`）；其他形状一律不保存，下一次不带条件。
+  - REST 的字段映射回原来的形状（`number`、`head.sha`→`headRefOid`、`base.sha`→`baseRefOid`、`draft`→`isDraft`、`body`、`updated_at`→`updatedAt`），后面的过滤（草稿、claim trailer、与 main 同步、compare 缓存与预算）不变。`lastPass.reads` 记本轮 200 与 304 各几次。
+- **额度**：没变时每分钟 2 次 304（一天约 2880 次，按 GitHub 的规则不计额度；本机实测过一次 304，剩余额度同时少 1，同一账号另有调用，未能单独确认）。原来按 5 分钟一轮的两类调用不随轮次变密：GitHub 没答上的 compare 对同一 (main, head) 隔 `COMPARE_RETRY_MS`（5 分钟）才再问；提示模式下同一 head 的观察（每次几次读）隔 `HINT_OBSERVE_EVERY_MS`（5 分钟）一次。答上的 compare 照旧缓存。
+- 304 只在 gh 退出码为 1 时采用（gh 对 304 退出 1，对 200 退出 0），超时、拒绝或其他退出码都不算。
+- REST 的 PR 对象比 GraphQL 大（带完整的 head/base repo），50 个约 1 MB 量级，仍在 Runner 的 4 MiB 输出上限内；不变的分钟只有响应头。
+- **测试**：`test/poller-conditional.test.mjs`（节奏常量；连续两轮 304、If-None-Match 的 argv 逐字、PR 被编辑后 200 只提一次；main 移动；两条读各四种拒绝与退出码不为 1 的 304；200 不带 ETag 时丢掉旧 ETag；坏 ETag 不回填；compare 失败与提示观察的 5 分钟节流；路由字面值；`parseIncluded` 的 CRLF/LF 与拒绝）；`test/gh-rest-stub.mjs` 供其余 poller 测试按 REST 形状作答。

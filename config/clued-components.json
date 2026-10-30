@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "description": "Typed App536 Native publication and negative-only stage12 revocation, protected physical-stop observations, full legacy drain and exact Source/CI-principal qualification; installation and activation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -475,7 +475,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "f11d17d4c958d118ce3e71f8b48cc228f25c56d7612ff0c3c92f2b54dc22b884"
+      "content_sha256": "f7e43bfca0ae081a386e3cb74abf6390c4f840c3070f87d3ddee32fce824c75e"
     }
   ]
 }

@@ -22,7 +22,7 @@ import { createWorld } from './fixtures/hosted-relay/world.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system', APP = 5368905, OTHER_APP = 15368;
 const iso = ms => new Date(ms).toISOString();
-const jobsFor = (attempt = 1) => batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt });
+const jobsFor = (attempt = 1) => batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt });
 const claim = () => ({ claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000) });
 const run = (id, name, { app = APP, head = HEAD, conclusion = 'success' } = {}) => ({ id, name, head_sha: head, status: 'completed', conclusion, app: { id: app }, external_id: `independent-ci:${name}` });
 

@@ -348,7 +348,7 @@ OWNER_DECISION_HOSTED_JOBS = {
         "control_sha256": "f775a27a4bf06fcff10caf74239c90bd6191fb58e59fcfb67f7141430a35e64b",
         "jobs": {
             "admission-gate": "52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2",
-            "gitleaks-trusted-self-hosted": "73266788659db96b1a29fd3fb8dcf22ce72fd05df2a29b484d8fc326e1ace619"
+            "gitleaks-trusted-self-hosted": "c48d4ffca54c3399b04225baa90ce9489c12221e59f4e25ac1b8e8b69f142140"
         }
     },
     "trivy.yml": {

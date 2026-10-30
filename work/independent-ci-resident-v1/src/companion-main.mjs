@@ -23,9 +23,11 @@ import { LocalStore, PrStatusReporter, validateStatusConfig } from './pr-status.
 import { companionBackstop } from './ruleset-backstop.mjs';
 
 // The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
-// phase 1, item 7); the poller still proposes every five minutes.
+// phase 1, item 7). The poller looks for new PR heads once a minute too (Decision 1b99e7e4; it was five minutes): its two
+// reads are conditional (poller.mjs), so an unchanged minute costs two 304s. The ruleset backstop stays at five minutes.
 export const REPORT_EVERY_MS = 60_000;
-export const POLL_EVERY_MS = 5 * 60_000;
+export const POLL_EVERY_MS = 60_000;
+export const BACKSTOP_EVERY_MS = 5 * 60_000;
 // The upgrade mailbox lane looks for requests this often (the upgrader polls its answers once a second; the shortest deadline is 60 s).
 export const UPGRADE_LANE_EVERY_MS = 5_000;
 
@@ -175,7 +177,7 @@ export async function main(args = process.argv.slice(2)) {
       return UpgradeMailbox.open(dir, Date.now);
     } });
   keepalive(companionArgv(cfg).keepalive());
-  let lastPoll = 0, lastReport = 0;
+  let lastPoll = 0, lastReport = 0, lastBackstop = 0;
   // Only now, with a usable job host and every part of the companion set up: a companion whose job host cannot start a
   // child, or whose set-up failed, sends no heartbeat, so the service starts no batch (DESIGN §24; design r3 review MINOR 1;
   // r3 implementation review MAJOR 2). The beat stops with the lanes; the entry below exits outright, so no timer keeps a
@@ -193,8 +195,11 @@ export async function main(args = process.argv.slice(2)) {
           let generation = null;
           try { generation = (await readStatus(values.root)).queue?.generation ?? null; } catch { generation = null; }
           try { await poller.pass({ generation }); } catch { /* next pass */ }
-          // The ruleset backstop (phase 2 step 3c-1, DESIGN §22.3): main's rules on every poll.
-          try { await companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), store }); } catch { /* next poll */ }
+        }
+        // The ruleset backstop (phase 2 step 3c-1, DESIGN §22.3): main's rules every five minutes, as before the 60-second poll.
+        if (Date.now() - lastBackstop > BACKSTOP_EVERY_MS) {
+          lastBackstop = Date.now();
+          try { await companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), store }); } catch { /* next time */ }
         }
         if (Date.now() - lastReport > REPORT_EVERY_MS) {
           lastReport = Date.now();

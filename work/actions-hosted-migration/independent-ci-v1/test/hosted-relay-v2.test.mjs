@@ -203,7 +203,7 @@ test('relay entry: the installed registry must be the held, accepted bytes; the 
     assert.deepEqual(Object.keys(registry.roles).sort(), ['gitleaks', 'trivy']);
   }
   assert.throws(() => installedRegistry({ sourceHashes: new Map([[p, 'f'.repeat(64)]]) }), { code: 'RELAY_REGISTRY_NOT_ACCEPTED' });
-  const job = makeJobV2({ repo: REPO, pr: 7, headSha: H, baseSha: B, role: 'gitleaks', sourceManifestSha256: MANIFEST, createdAt: new Date(NOW).toISOString(), attempt: 2 });
+  const job = makeJobV2({ repo: REPO, pr: 7, headSha: H, baseSha: B, testSha: H, role: 'gitleaks', sourceManifestSha256: MANIFEST, createdAt: new Date(NOW).toISOString(), attempt: 2 });
   assert.deepEqual(relaySubject([job], { claimId: CLAIM, fence: 3, epoch: 1 }), { repo: REPO, pr: 7, headSha: H, baseSha: B, claimId: CLAIM, fence: 3, epoch: 1, sourceManifestSha256: MANIFEST });
 });
 
@@ -240,7 +240,7 @@ function v2World({ claimFence = 3, wrapGithub = g => g } = {}) {
   // The installed trivy role pins the same checks bundle the hosted job uses (stage R compares them).
   const localInputPins = installedInputPins({ roles: { trivy: { formalTrivy: { checksPin: { digest: w.registry.roles.trivy.checksDigest } } } } });
   const stage = journal => { const v = w.verifier(); return createHostedRelayStage({ registry: w.registry, verifier: v, publisher: publisher(journal, v), localInputPins }); };
-  const localJob = (role, attempt = 1) => makeJobV2({ repo: REPO, pr: 7, headSha: H, baseSha: B, role, sourceManifestSha256: MANIFEST, createdAt: iso(w.state.now - 20 * 60_000), attempt });
+  const localJob = (role, attempt = 1) => makeJobV2({ repo: REPO, pr: 7, headSha: H, baseSha: B, testSha: H, role, sourceManifestSha256: MANIFEST, createdAt: iso(w.state.now - 20 * 60_000), attempt });
   const signed = job => {
     const payload = { contract: RESULT_CONTRACT_V2, domain: 'fixture', runtimeId: 'fixture-runtime', subject: subjectOfV2(job), startedAt: iso(w.state.now - 300_000), finishedAt: iso(w.state.now - 60_000),
       conclusion: 'success', exitCode: 0, stdoutSha256: 'd'.repeat(64), stderrSha256: 'e'.repeat(64), artifactsSha256: 'f'.repeat(64) };

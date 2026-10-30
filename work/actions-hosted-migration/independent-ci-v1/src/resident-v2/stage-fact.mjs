@@ -80,6 +80,10 @@ const TRANSPORT_REASONS = new Set(['full_admission_unavailable', 'full_admission
 export const githubTransientReason = r => r === 'github_transport_unconfirmed' || /^github_http_(?:429|5[0-9]{2})$/.test(r ?? '');
 const BRIDGE_TIMEOUTS = new Set(['BRIDGE_RESULT_DEADLINE', 'FORMAL_BRIDGE_STAGE_DEADLINE', 'ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED',
   'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED', 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED', 'BRIDGE_CALLBACK_DEADLINE']);
+// Refusals of the scanner issuer (bridge v4 windows-issuer.mjs, Task 576231fa): its changed-paths read refused by the
+// port itself or answered 403 by GitHub, or a remote refs collection that failed for any reason other than a transient
+// one (REMOTE_REFS_UNAVAILABLE, above). Clean and final for the attempt: never transient, never safe to re-run.
+export const ISSUER_REFUSAL_REASONS = Object.freeze(['full_admission_paths_refused', 'full_admission_github_forbidden', 'REMOTE_REFS_REFUSED']);
 const CONFIG_REASONS = new Set(['full_admission_not_configured', 'full_admission_subject_invalid', 'full_admission_source_changed', 'full_admission_clock_invalid',
   'full_admission_principal_unknown', 'full_admission_incomplete']);
 
@@ -124,6 +128,7 @@ export function outcomeFailureCode(outcome, stageNumber) {
   if (BRIDGE_TIMEOUTS.has(r)) return 'BRIDGE_TRANSPORT_TIMEOUT';
   if (TRANSPORT_REASONS.has(r)) return r.startsWith('full_admission_') || r === 'NATIVE_ADMISSION_UNAVAILABLE' ? 'NATIVE_ADMISSION_UNAVAILABLE' : 'GITHUB_TRANSIENT_UNAVAILABLE';
   if (githubTransientReason(r)) return 'GITHUB_TRANSIENT_UNAVAILABLE';
+  if (ISSUER_REFUSAL_REASONS.includes(r)) return 'STAGE_CHILD_REFUSED';
   if (CONFIG_REASONS.has(r)) return 'ADMISSION_CONFIGURATION_REFUSED';
   if (r === 'full_admission_rejected') return stageNumber === 1 ? notAdmittedCode(outcome.diagnostic) : 'BATCH_CLAIM_CHANGED';
   if (r === 'full_admission_claim_missing' || r === 'full_admission_native_changed') return stageNumber === 1 ? 'CLAIM_NOT_CURRENT' : 'BATCH_CLAIM_CHANGED';

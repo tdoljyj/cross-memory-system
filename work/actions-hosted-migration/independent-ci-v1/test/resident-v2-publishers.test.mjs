@@ -17,7 +17,7 @@ import { HEAD, BASE, tempDir, fixtureRecord, signResult } from './resident-v2-fi
 
 const REPO = 'tdoljyj/cross-memory-system';
 const iso = ms => new Date(ms).toISOString();
-const jobsFor = (attempt = 1) => batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt });
+const jobsFor = (attempt = 1, testSha = HEAD) => batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt });
 const claim = (o = {}) => ({ claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000), ...o });
 
 // A complete admitted v2 observation for `job` under `observed` (shape of full-admission-v2 facts).
@@ -51,7 +51,7 @@ function fakeGithub(o = {}) {
       if (state.pull.state !== 'open') throw Object.assign(new Error('pr_subject_changed'), { code: 'pr_subject_changed' });
       return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: ['a.txt'] };
     },
-    async readPullRequest(n) { return { number: n, ...structuredClone(state.pull), head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: BASE, ref: 'main', repo: { full_name: REPO } } }; },
+    async readPullRequest(n) { return { number: n, ...structuredClone(state.pull), head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: state.prBase ?? BASE, ref: 'main', repo: { full_name: REPO } } }; },
     async readBranchRules(branch) { if (state.rulesError) throw Object.assign(new Error(state.rulesError), { code: state.rulesError }); return { complete: true, branch, rules: structuredClone(state.rules) }; },
     async readGitCommit(sha) { if (!state.commits[sha]) throw Object.assign(new Error('github_http_404'), { code: 'github_http_404' }); return structuredClone(state.commits[sha]); },
     async readChecks(head) { return { complete: true, checks: checks.filter(c => c.head_sha === head).map(c => structuredClone(c)) }; },
@@ -324,8 +324,8 @@ test('control pair v2 (phase 2, step 2, review M3, m6): an answer no wait can ch
 });
 
 // ---- phase 2, step 3a (design v0.5 §5.3 rules 3, 5, 7; §5.4 item 4) ----
-const pairRun = async (t, { github = fakeGithub(), greenLedger = memoryLedger(), window = STAGE8_CHECK_MS } = {}) => {
-  const jobs = jobsFor(), c = claim();
+const pairRun = async (t, { github = fakeGithub(), greenLedger = memoryLedger(), window = STAGE8_CHECK_MS, testSha = HEAD } = {}) => {
+  const jobs = jobsFor(1, testSha), c = claim();
   const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
   let time = Date.now(), calls = 0;
   const admission = fakeAdmission((job, packet, opts) => { calls++; return admitted(job, c, packet, { mergeQueueHead: true, batchClaim: opts.batchClaim, observedAt: time, slotUntil: time + 600_000 }); });
@@ -456,4 +456,53 @@ test('control pair v2 (step 3a): an open PR whose test merge definitely changed 
   const computing = fakeGithub();
   computing.state.onCreate = c => { if (c.name === 'kooyumi-merge-slot') { computing.state.pull = { ...computing.state.pull, mergeable: null }; computing.state.commits[TEST_MERGE] = { sha: TEST_MERGE, tree: TREE, parents: ['9'.repeat(40), HEAD] }; } };
   assert.equal((await pairRun(t, { github: computing })).r.status, 'SETTLED');
+});
+
+// Step 3c-2a (design v0.5 §5.2, §5.7; DESIGN §21.3): a train front batch tests GitHub's test merge S of [T, H]. Stage 8
+// compares the test merge with S's own tree (not H's), and the PR's base.sha (which GitHub moves only on a push) is
+// read as a fact, never compared with T; a batch that tests the head keeps both checks exactly as before.
+test('control pair v2 (step 3c-2a): a train front batch is green on the tree of S, whatever base.sha GitHub reports', async t => {
+  const S_TREE = '5'.repeat(40);
+  const front = () => {
+    const g = fakeGithub({ prBase: '9'.repeat(40) });
+    g.state.commits[TEST_MERGE] = { sha: TEST_MERGE, tree: S_TREE, parents: [BASE, HEAD] };
+    return g;
+  };
+  const ok = await pairRun(t, { github: front(), testSha: TEST_MERGE });
+  assert.equal(ok.r.status, 'SETTLED', JSON.stringify(ok.r));
+  assert.ok(ok.jobs['control-merge-slot'].testSha === TEST_MERGE && ok.jobs['control-merge-slot'].headSha === HEAD);
+  assert.ok(ok.greenLedger.records.length > 0 && ok.greenLedger.records.every(r => r.testTree === S_TREE));
+  // the same GitHub for a batch that tests the head: H's tree is not the test merge's, so nothing is written
+  const head = await pairRun(t, { github: front() });
+  assert.deepEqual([head.r.status, head.r.reason, head.github.checks.length], ['BLOCKED', 'TRAIN_TEST_MERGE_TREE_DIFFERS', 0]);
+  // S that GitHub cannot read (an old test merge after a regeneration): not ready, never a green
+  const gone = front(); delete gone.state.commits[TEST_MERGE];
+  gone.state.pull = { ...gone.state.pull, merge_commit_sha: '6'.repeat(40) };
+  gone.state.commits['6'.repeat(40)] = { sha: '6'.repeat(40), tree: S_TREE, parents: [BASE, HEAD] };
+  const g = await pairRun(t, { github: gone, testSha: TEST_MERGE });
+  assert.deepEqual([g.r.reason, g.github.checks.length], ['TRAIN_TEST_MERGE_NOT_READY', 0]);
+});
+
+test('scanner publisher v2 (step 3c-2a): the PR base.sha is a fact for a train front batch and still T for every other batch', async t => {
+  const { signer, docs } = fixtureRecord();
+  const record = validateRecordV2(docs, { now: Date.now() });
+  const refs = Object.fromEntries(['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef'].map(k => [k, record.accepted[k]]));
+  const signers = new Map([...record.signers].map(([k, s]) => [k, { ...s, domain: 'fixture' }]));
+  const run = async (job, github) => {
+    const c = claim();
+    const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+    const authority = { fixture: true, async observe(j) { return { ...subjectOfV2(j), ...refs, ciPrincipalBindingId: record.config.ciPrincipalBindingId, sourceAccepted: true, hostQualified: true,
+      publisherQualified: true, ciPrincipalQualified: true, observedAt: iso(Date.now()), claimExpiresAt: c.expiresAt, claim: claimGeneration(c) }; } };
+    const admission = fakeAdmission((j, packet, opts) => admitted(j, c, packet, { batchClaim: opts.batchClaim }));
+    const pub = createStagedCheckPublisherV2({ nativeAdmission: admission, authority, github, journal, signers, configuredChecks: record.config.checks,
+      readChangedPaths: j => github.readChangedPaths(j), protectedDeployment: { enabled: true, domain: 'fixture', repository: REPO, ciPrincipalBindingId: record.config.ciPrincipalBindingId, ...refs },
+      batchClaim: claimGeneration(c), domain: 'fixture' });
+    return pub.publish({ job, envelope: signResult(job, signer, { finishedAt: Date.now() - 1000, startedAt: Date.now() - 5000, domain: 'fixture' }) });
+  };
+  const moved = () => fakeGithub({ prBase: '9'.repeat(40) });
+  const front = await run(jobsFor(1, TEST_MERGE).trivy, moved());
+  assert.equal(front.status, 'SETTLED', JSON.stringify(front));
+  const head = await run(jobsFor().trivy, moved());
+  assert.notEqual(head.status, 'SETTLED');
+  assert.equal((await run(jobsFor().trivy, fakeGithub())).status, 'SETTLED');
 });

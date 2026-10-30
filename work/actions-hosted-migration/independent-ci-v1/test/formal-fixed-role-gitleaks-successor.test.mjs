@@ -44,7 +44,7 @@ print(json.dumps(report))
 const report = () => structuredClone(helperReport);
 function execution() {
   const now = Date.now();
-  const job = batchJobsV2({ repo: 'tdoljyj/cross-memory-system', pr: 920, headSha: 'a'.repeat(40), baseSha: 'b'.repeat(40),
+  const job = batchJobsV2({ repo: 'tdoljyj/cross-memory-system', pr: 920, headSha: 'a'.repeat(40), baseSha: 'b'.repeat(40), testSha: 'a'.repeat(40),
     sourceManifestSha256: 'c'.repeat(64), createdAt: iso(now - 60000), attempt: 1 }).gitleaks;
   const observation = { contract: 'clued.independent-ci.formal-scanner-observation/2', domain: 'production-observation', fixture: false,
     formalEligible: false, qualificationIssued: false, checksWritten: false, subject: subjectOfV2(job), sourceManifestSha256: job.sourceManifestSha256,
@@ -70,7 +70,8 @@ test('the actual self-test must retain every old guard and prove new marker and 
     const value = report(); edit(value); assert.throws(() => validateSelfTestReport(value), { code: 'UNCHANGED_REVIEW_SELF_TEST_REQUIRED' });
   }
   for (const key of ['baseline_detection', 'exact_history_only', 'new_commit_detection', 'different_path_detection',
-    'scheduling_marker_new_commit_detection', 'scheduling_marker_different_path_detection', 'valid_private_key_detection']) {
+    'scheduling_marker_new_commit_detection', 'scheduling_marker_different_path_detection', 'valid_private_key_detection',
+    'role_probe_new_commit_detection', 'role_probe_different_path_detection', 'role_probe_different_line_detection']) {
     for (const value of [false, undefined]) {
       const changed = report(); changed.regression[key] = value;
       assert.throws(() => validateSelfTestReport(changed), { code: 'UNCHANGED_REVIEW_SELF_TEST_REQUIRED' }, key);

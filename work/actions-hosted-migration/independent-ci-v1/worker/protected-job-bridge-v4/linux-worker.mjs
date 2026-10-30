@@ -16,7 +16,7 @@ import {createFormalContractPlacementAdapter} from '../formal-contract-placement
 import {openFixedRoleSession,takeActualRoleSession} from '../formal-fixed-role-policy-v3/policy.mjs';
 import {readFixedIssueJob} from './issue-job.mjs';
 import {canonical} from '../../src/proof.mjs';
-import {noteBridgeResponseTimes} from '../../src/admission-facts-v2.mjs';
+import {noteBridgeResponseTimes,noteBridgeRefsTimes} from '../../src/admission-facts-v2.mjs';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 const fail=code=>{throw Object.assign(new Error(code),{code});},check=(v,c)=>{if(!v)fail(c);};
@@ -29,8 +29,9 @@ export function cleanBlockedReason(reason){
 }
 export const isCleanBlocked=r=>r?.status==='BLOCKED'&&r.sideEffectsMayHaveStarted===false&&r.snapshotRetained!==true&&!r.observation;
 // What a validated callback response gives the adapter. An admission keeps its response's issuance and expiry, so the
-// adapter's own re-check measures freshness from the issuance while that response is valid (Owner Decision 6f1fb753).
-export const callbackValue=(action,response)=>action==='admission'?noteBridgeResponseTimes(response.admission,response):response.remoteRefs;
+// adapter's own re-check measures freshness from the issuance while that response is valid (Owner Decision 6f1fb753);
+// a refs snapshot keeps them too (remoteRefsReferenceTime, Task 576231fa).
+export const callbackValue=(action,response)=>action==='admission'?noteBridgeResponseTimes(response.admission,response):noteBridgeRefsTimes(response.remoteRefs,response);
 export async function executeProtectedIssuedJob(options={}){
   let locked=false,executionMayHaveStarted=false;
   try{

@@ -14,11 +14,12 @@ import { TRUSTED_WORKFLOW_PATHS, activeGitleaksWorkflowSha256s } from '../../tru
 export const IMAGE = 'ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f';
 export const SCAN_ARGS = Object.freeze(['git', '/repo', '--config', '/repo/.gitleaks.toml', '--gitleaks-ignore-path', '/reviewed.ignore', '--redact', '--exit-code', '1']);
 export const SOURCE_PINS = Object.freeze({
-  'scripts/ci/reviewed_gitleaks.py': '8ed25b9e24b32fbba27f2f6f1cc156d7b1ae88e4c2237414d13678e699b42676',
+  'scripts/ci/reviewed_gitleaks.py': '9b1755f9001560aab95bb893f8c2cdc36f1826e3f83d2cae3ccf15ff27b4a476',
   '.gitleaks.toml': '8aae8a204add7e201ff141a9035c0400b300b08c691ff483f09d24383b53b5ba',
 });
 // This active Source pins the 730-record reviewed set (729 + the 16f981cc role-probe fixture, PR #937); the
-// hosted workflow successor row is still the 729-record freeze (re-freezing it is a follow-up). The legacy
+// hosted gitleaks.yml checks the same config/helper/commit-set/ignore digests, and its successor row is
+// re-frozen from the real commit that carries those workflow bytes (repin-trusted-workflows.mjs). The legacy
 // main/PR-B set remains separate for v3/H5. A pending freeze has an empty active set,
 // never a fallback to a legacy 726 workflow. Helper and config stay single exact pins.
 export const WORKFLOW_PATH = TRUSTED_WORKFLOW_PATHS.gitleaks;
@@ -164,8 +165,11 @@ export async function refsInStore({ job, remoteSnapshot, gitDirectory, gitExecut
   return Object.freeze({ tips: tips.length, refs: refs.length });
 }
 
+// `now`: the time the remote snapshot's freshness is measured at. The adapter passes the same reference time it used
+// before its run directory (a bridge v4 response's issuedAt while that response is valid, else its own now; Task
+// 576231fa), so a snapshot accepted there is never refused here, past the point where a failure is UNCERTAIN.
 export async function prepareRequiredHistory({ job, sourceManifestBytes, expectedSourceManifestSha256,
-  trustedSourceDirectory, gitDirectory, remoteSnapshot, outputDirectory, gitExecutable, expectedGitSha256 }) {
+  trustedSourceDirectory, gitDirectory, remoteSnapshot, outputDirectory, gitExecutable, expectedGitSha256, now = Date.now() }) {
   validateJob(job); check(job.repo === 'tdoljyj/cross-memory-system' && job.role === 'gitleaks', 'FIXED_REQUIRED_ROLE_REQUIRED');
   check(createHashForBytes().update(sourceManifestBytes).digest('hex') === expectedSourceManifestSha256 && job.sourceManifestSha256 === expectedSourceManifestSha256, 'SOURCE_MANIFEST_CHANGED');
   const manifest = JSON.parse(sourceManifestBytes), role = manifest.roles?.gitleaks;
@@ -181,7 +185,7 @@ export async function prepareRequiredHistory({ job, sourceManifestBytes, expecte
   await noLinks(path.dirname(outputDirectory));
   check(![source, cache].some(root => path.resolve(outputDirectory) === root || path.resolve(outputDirectory).startsWith(root + path.sep)
     || root.startsWith(path.resolve(outputDirectory) + path.sep)), 'INPUT_OUTPUT_OVERLAP');
-  const refs = validateRemoteSnapshot(remoteSnapshot, job);
+  const refs = validateRemoteSnapshot(remoteSnapshot, job, now);
   check(refs.find(ref => ref.name === 'refs/heads/main')?.objectSha === job.baseSha, 'REMOTE_MAIN_BASE_CHANGED');
   for (const [filename, hash] of Object.entries(SOURCE_PINS)) {
     const declared = role.sourceFiles.filter(pin => pin.path === filename);
@@ -279,13 +283,14 @@ export function validateSelfTestReport(selfTestReport) {
     && selfTestReport.commits === REVIEWED_HISTORY_PROOF.commits && selfTestReport.files_at_commits === REVIEWED_HISTORY_PROOF.files_at_commits
     && selfTestReport.verified_git_objects === REVIEWED_HISTORY_PROOF.verified_git_objects
     && selfTestReport.global_fingerprints === 0 && selfTestReport.ignore_sha256 === REVIEWED_HISTORY_PROOF.reviewed_ignore_sha256
-    && Object.keys(selfTestReport.regression ?? {}).sort().join('|') === 'baseline_detection|different_path_detection|exact_history_only|handover_acceptance_artifact_proof|new_commit_detection|scheduling_marker_different_path_detection|scheduling_marker_new_commit_detection|synthetic_test_repository|valid_private_key_detection'
+    && Object.keys(selfTestReport.regression ?? {}).sort().join('|') === 'baseline_detection|different_path_detection|exact_history_only|handover_acceptance_artifact_proof|new_commit_detection|role_probe_different_line_detection|role_probe_different_path_detection|role_probe_new_commit_detection|scheduling_marker_different_path_detection|scheduling_marker_new_commit_detection|synthetic_test_repository|valid_private_key_detection'
     && typeof selfTestReport.regression.synthetic_test_repository === 'string' && selfTestReport.regression.synthetic_test_repository.length <= 4096
     && !/[\x00-\x1f\x7f]/.test(selfTestReport.regression.synthetic_test_repository)
     && path.posix.isAbsolute(selfTestReport.regression.synthetic_test_repository) && path.posix.basename(selfTestReport.regression.synthetic_test_repository) === 'repo'
     && selfTestReport.regression?.baseline_detection === true && selfTestReport.regression.exact_history_only === true
     && selfTestReport.regression.new_commit_detection === true && selfTestReport.regression.different_path_detection === true
-    && ['scheduling_marker_new_commit_detection', 'scheduling_marker_different_path_detection', 'valid_private_key_detection']
+    && ['scheduling_marker_new_commit_detection', 'scheduling_marker_different_path_detection', 'valid_private_key_detection',
+      'role_probe_new_commit_detection', 'role_probe_different_path_detection', 'role_probe_different_line_detection']
       .every(key => selfTestReport.regression[key] === true)
     && Object.keys(selfTestReport.regression.handover_acceptance_artifact_proof ?? {}).sort().join('|') === 'actual_git_artifact_passes|forged_digest_rejected|valid_nonancestor_rejected|wrong_line_rejected|wrong_path_rejected'
     && ['actual_git_artifact_passes', 'forged_digest_rejected', 'valid_nonancestor_rejected', 'wrong_line_rejected', 'wrong_path_rejected']

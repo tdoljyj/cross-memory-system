@@ -19,7 +19,7 @@ import { WindowsEngine } from './engine-windows.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
 import { stopRequestCheck } from './stop-request.mjs';
 import { readBounded } from './store.mjs';
-import { RetentionWatch, measureWindows } from './retention.mjs';
+import { KEEP_FILE, RetentionWatch, diskFreeBytes, measureWindows, pruneSpool, readKeepList } from './retention.mjs';
 import { ExecutedHeads } from './executed-heads.mjs';
 import { STATUS_FILE, StatusBoard, StatusFile, readVersionState, readVersionInputs, startStatusTimer } from './status.mjs';
 import { RunQueue } from './queue.mjs';
@@ -104,9 +104,23 @@ export async function main(argv = process.argv.slice(2)) {
       residentRoot: path.join(root, 'resident', policy.residentManifestSha256), residentManifest: path.join(root, 'config', 'resident-installed-manifest.json'),
     }),
   });
+  const spool = path.join(path.dirname(root), 'formal-spool');
   const retention = new RetentionWatch({ policy, receipts, clock,
-    measureWindows: () => measureWindows({ spool: path.join(path.dirname(root), 'formal-spool'), work: path.join(root, 'work'), bundles: path.join(root, 'bundles') }),
-    measureLinux: () => companion.archiveUsage() });
+    measureWindows: () => measureWindows({ spool, work: path.join(root, 'work'), bundles: path.join(root, 'bundles') }),
+    measureLinux: () => companion.archiveUsage(),
+    // Task 018da927 (c): nothing is asked of the companion without a fresh heartbeat (the same age the executor requires).
+    companionReady: async () => { const beat = await companion.heartbeat(); return !!beat && typeof beat.at === 'number' && clock() - beat.at <= policy.companion.heartbeatMaxAgeMs; },
+    // DESIGN §35: archives are deleted only with no open batch (running, waiting or parked), no HALT, no unarchived scene and no child running.
+    idle: async () => {
+      if (runner.busy) return { ok: false, reason: 'CHILD_RUNNING' };
+      if (await ledger.halted()) return { ok: false, reason: 'HALTED' };
+      if ((await ledger.open()).length > 0) return { ok: false, reason: 'BATCH_OPEN' };
+      if ((await ledger.unarchivedScenes()) > 0) return { ok: false, reason: 'SCENE_UNARCHIVED' };
+      return { ok: true };
+    },
+    pruneWindows: async () => pruneSpool({ spool, keep: await readKeepList(path.join(root, 'owner', KEEP_FILE), 'windows') }),
+    pruneLinux: () => companion.archivePrune(),
+    diskFree: () => diskFreeBytes('C:\\') });
   await recordServiceStart({ receipts, root, policySha256: values['policy-sha256'], pid: process.pid });
   const stopFile = path.join(state, 'STOP-REQUESTED');
   return serviceLoop({ exec, lock, sleep, once: values.once === true,
@@ -144,7 +158,8 @@ export async function serviceLoop({ exec, lock, sleep, once = false, stopRequest
       try { await onLoopException(error); } catch { /* keep exiting */ }
       return 3;
     }
-    // Between batches only (a tick runs at most one batch step): the 50 GB archive reminder, at most hourly.
+    // Between batches only (a tick runs at most one batch step): archive retention, the 50 GB and the C: reminders, at most hourly
+    // (DESIGN §7.3, §35). Without a companion heartbeat nothing is asked of the companion, so this never waits for its timeout.
     if (['IDLE', 'DEFERRED', 'PAUSED', 'WAITING'].includes(result.state)) { try { await betweenBatches(); } catch { /* a reminder is advisory */ } }
     if (once) return 0;
     await sleep(RESTING_STATES.includes(result.state) ? 15_000 : 2_000);

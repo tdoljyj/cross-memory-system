@@ -101,7 +101,7 @@
 // while they disagree (consistent === false only; lifted when they agree again; an unknown answer changes nothing).
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { Ledger, MAX_TRIES, batchKey, headKey } from './ledger.mjs';
+import { Ledger, MAX_TRIES, QUOTA_TIER_EVALUATION, batchKey, headKey } from './ledger.mjs';
 import { ABORTABLE_IN_FLIGHT, BRIDGE_ABANDONED_UNPUBLISHED, NOT_ADMITTED_CODES, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, failureRow,
   proofComplete, scannerAbandonEligible } from './classify.mjs';
 import { parseTrigger } from './trigger.mjs';
@@ -282,6 +282,13 @@ export const INTAKE_REQUEST_TRIES = 3;
 // The oldest bundle a batch takes into the workspace preparation (which accepts at most 2 hours), measured from the
 // reservation, which comes before the bundle (design v0.5 §4.3 item 3).
 export const BUNDLE_MAX_AGE_AT_WORKSPACE_MS = 100 * 60_000;
+// Task 4012c1b9 (DESIGN §37): a batch whose workspace comes this long after its reservation (it waited at parking point A)
+// first gets its second and last bundle (build-bundle.ps1 -Rebundle): fresh refs for stage 2's refs gate, and a bundle the
+// workspace preparation accepts. The refs must still be the batch's (REMOTE_REFS_CHANGED_SINCE_BUNDLE, a clean transient
+// ending); any other refusal ends it as before (PARKED_BUNDLE_TOO_OLD). A batch that never waited is not touched.
+export const REBUNDLE_AFTER_MS = 30 * 60_000;
+// The status row reason of a batch that rests at parking point A (the hosted wait).
+export const PARKED_A_REASON = 'PARKED_A';
 const dayKey = ms => new Date(ms).toISOString().slice(0, 10);
 
 // The stage-terminal receipt's summary of a stage outcome: codes and flags only.
@@ -313,6 +320,7 @@ export class ResidentExecutor {
     this.status ??= NO_STATUS;
     this.ownerReadFailures = new Map();
     this.intakeRequestFailures = new Map();
+    this.deferralReceipts = new Set(); // `${reason}:${day}` of the global deferrals already receipted (deferral())
     this.roleProbe = new RoleProbe();
     this.roleProbeNotices = [];
     this.revocationBook = new RevocationMaintenanceBook();
@@ -1370,6 +1378,9 @@ export class ResidentExecutor {
   // still-waiting result when one only waits }.
   async resumeParked() {
     const entries = await this.ledger.parkedEntries();
+    // Every batch resting at parking point A, for the status page (Task 4012c1b9, review N4 of step 2): several may wait at
+    // once, each shown on its own row as PARKED_A, not only the one in `current`.
+    this.parkedA = new Set(entries.filter(x => Ledger.waitingAt(x)).map(x => `${x.reserved?.subject?.pr}:${x.reserved?.subject?.headSha}`));
     // Whether new batches wait for the parking places: shown on the status of every tick, not only one that deferred
     // (re-review of step 2, m8).
     const counts = await this.parkedCounts(entries);
@@ -1545,7 +1556,9 @@ export class ResidentExecutor {
       const b = breakerOf(this.queue.breaker);
       s.update({ queue: { generation: this.queue.generation, live: this.queue.live().length, depth: this.policy.limits.queueDepth, parkingFull: this.parkingFull === true }, breaker: breakerView(b),
         notices: [...(this.versionState?.notices ?? []), ...this.roleProbeNotices, ...this.queue.notices].slice(0, 50) });
-      s.setPending(this.queue.view(this.clock(), { etaBatchMs: ETA_BATCH_MS }));
+      const parkedA = this.parkedA ?? new Set();
+      s.setPending(this.queue.view(this.clock(), { etaBatchMs: ETA_BATCH_MS })
+        .map(r => r.state === 'RUNNING' && parkedA.has(`${r.pr}:${r.headSha}`) ? { ...r, reason: PARKED_A_REASON } : r));
     });
   }
 
@@ -1771,9 +1784,18 @@ export class ResidentExecutor {
   }
 
   // A precheck's deferral: the row's own one is shown on it and the pass goes on; a global one ends the pass.
-  deferral(pre, key, pr) {
+  async deferral(pre, key, pr) {
     if (pre.notice) this.queue.notice(pre.notice);
     if (pre.perRow) { this.queue.defer(pr, pre.defer, this.clock(), { dropPoke: pre.dropPoke === true, until: pre.until ?? null }); return { state: 'DEFERRED', key, reason: pre.defer, next: true }; }
+    // A global deferral (a full daily budget, the companion not ready) holds the whole queue; one receipt per reason and
+    // UTC day says so (Task 12ada80e, from c0ff5167: the executor standing still was visible nowhere but the status page).
+    const day = `${pre.defer}:${dayKey(this.clock())}`;
+    if (!this.deferralReceipts.has(day)) {
+      this.deferralReceipts.add(day);
+      const u = this.tickUsage;
+      try { await this.receipt('batch-deferred', { key, failureCode: pre.defer, usage: u ? { started: u.started, evaluations: u.evaluations, lowRiskBurns: u.lowRiskBurns } : null }); }
+      catch { this.deferralReceipts.delete(day); }
+    }
     return { state: 'DEFERRED', key, reason: pre.defer };
   }
 
@@ -2049,7 +2071,7 @@ export class ResidentExecutor {
       // Every resume re-runs the start-of-batch checks; any drift fails closed (UNKNOWN, HALT).
       const startCode = await this.batchStartChecks(subject);
       if (startCode) return this.afterBatch(subject, entry.reserved.origin ?? 'queued', await this.unknown(key, startCode, 'resume-start-checks', batch));
-      outcome = await this.continueBatch(key, subject, batch, t0);
+      outcome = await this.continueBatch(key, subject, batch, t0, { resumed: true });
       if (outcome instanceof StepFailure) outcome = await this.fail(key, batch, outcome);
     } catch (error) {
       outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch, archiveFacts(error));
@@ -2059,7 +2081,9 @@ export class ResidentExecutor {
 
   // Everything after 15-relay-wait: one wait evaluation, then (unless still waiting) 20-plan-intent,
   // stage R, 25-plan, the local roles, stage 8 and the close.
-  async continueBatch(key, subject, batch, t0) {
+  //   resumed: this call resumes a batch that rested at parking point A in an earlier tick (resumeWaiting), never the
+  //   batch's own first pass (DESIGN §37: only a batch that waited is re-bundled; independent review M1).
+  async continueBatch(key, subject, batch, t0, { resumed = false } = {}) {
     let aborted = await this.abortIfRequested(key, batch, 'before-relay-plan');
     if (aborted) return aborted;
     if ((aborted = await this.supersededAfterStart(key, subject, batch, 'before-relay-plan', POSITIONS[1]))) return aborted;
@@ -2073,11 +2097,21 @@ export class ResidentExecutor {
     if (localRoles.length > 0) {
       if ((aborted = await this.abortIfRequested(key, batch, 'before-workspace'))) return aborted;
       if ((aborted = await this.supersededAfterStart(key, subject, batch, 'before-workspace', plan.candidates.length > 0 ? POSITIONS[RELAY_STAGE] : POSITIONS[1]))) return aborted;
-      // A batch resumed from parking point A after other batches ran may hold a bundle too old for the workspace: it ends
-      // here, nothing of it on Linux. The design's re-bundle needs a second bundle generation in the companion and comes
-      // with the relay (off until the Owner's November test; DESIGN §18.2).
+      // A batch resumed from parking point A gets its second bundle before the workspace (Task 4012c1b9, DESIGN §37). When
+      // that is refused, it ends here, nothing of it on Linux: refs no longer the batch's as the clean transient
+      // REMOTE_REFS_CHANGED_SINCE_BUNDLE, anything else as before (PARKED_BUNDLE_TOO_OLD). A batch that never waited, or a
+      // companion without the re-bundle port, keeps the old rule: a bundle older than 100 minutes ends the batch here.
       const reservedAt = Date.parse((await this.ledger.state(key)).reserved?.reservedAt ?? '');
-      if (Number.isFinite(reservedAt) && this.clock() - reservedAt > BUNDLE_MAX_AGE_AT_WORKSPACE_MS) return new StepFailure(0, 'PARKED_BUNDLE_TOO_OLD', {}, 'workspace', relayed);
+      const rebundle = resumed && typeof this.companion.rebuildBundle === 'function' && Number.isFinite(reservedAt) && this.clock() - reservedAt > REBUNDLE_AFTER_MS;
+      if (!rebundle) {
+        if (Number.isFinite(reservedAt) && this.clock() - reservedAt > BUNDLE_MAX_AGE_AT_WORKSPACE_MS) return new StepFailure(0, 'PARKED_BUNDLE_TOO_OLD', {}, 'workspace', relayed);
+      } else {
+        this.atStage(0, 'rebundle');
+        const rb = await this.companion.rebuildBundle(batch);
+        const code = rb?.ok === true ? null : (rb?.code === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'PARKED_BUNDLE_TOO_OLD');
+        await this.receipt('batch-rebundled', { key, failureCode: code, ageMinutes: Math.floor((this.clock() - reservedAt) / 60_000), companionJobTree: rb?.jobTree ?? null });
+        if (code) return new StepFailure(0, code, {}, 'workspace', relayed);
+      }
       this.atStage(0, 'workspace');
       const prep = await this.companion.prepareWorkspaces(batch);
       if (!prep || prep.ok !== true) return new StepFailure(0, prep?.code ?? 'WORKSPACE_PREPARATION_UNCONFIRMED', {}, 'workspace', relayed);
@@ -2232,8 +2266,11 @@ export class ResidentExecutor {
         this.reportOutcome(await subjectOf() ?? this.current, release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', { code: failure.code, row, key });
         return { state: release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', key, failureCode: failure.code, release, settle: { ...settle, kind: 'released', reason: release } };
       }
-      // Every other failure burns the head, also before 10-started (stage 1 may have published).
-      await this.ledger.burnHead(key, { failureCode: failure.code });
+      // Every other failure burns the head, also before 10-started (stage 1 may have published). Risk tier (Task 12ada80e,
+      // DESIGN §36): a stage-1 ending that proves it published nothing (clean on both hosts, bound outcome with zero side
+      // effects and mayHavePublished false) still burns the head, but uses the evaluation budget, not the execution one.
+      const lowRisk = !started && failure.stageNumber === 1 && klass === 'CLEAN' && failure.outcome?.sideEffects === 0 && failure.outcome?.mayHavePublished === false;
+      await this.ledger.burnHead(key, { failureCode: failure.code, ...(lowRisk ? { quotaTier: QUOTA_TIER_EVALUATION } : {}) });
       // DESIGN §27: a scanner-issuer stage that would HALT is closed clean when its abandonment can be proven.
       if (klass !== 'CLEAN' && await this.scannerAbandonable(key, failure)) return await this.abandonScannerStage(key, batch, failure, settle);
       if (klass === 'CLEAN') {

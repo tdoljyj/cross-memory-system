@@ -280,7 +280,7 @@ test('responses /2: jobTree is null, zero or unconfirmed, nothing else', async t
   const b = await box.send('archive-usage', { batchId: BATCH }, 60_000);
   await box.respond(b, { ok: true, usage: { bytes: 1, directories: 1 } });
   assert.equal((await box.poll(b)).jobTree, null);
-  assert.ok(RESPONSE_CONTRACT.endsWith('/3')); // /3: memory (DESIGN §32) next to jobTree
+  assert.ok(RESPONSE_CONTRACT.endsWith('/4')); // /3: memory (DESIGN §32) next to jobTree; /4: prune (DESIGN §35)
 });
 
 test('the service port passes the bundle answer\'s job tree on', async t => {

@@ -1,0 +1,54 @@
+{
+  "contract": "clued.independent-ci.retention-cases/1",
+  "comment": "DESIGN §35. One rule, two implementations: src/retention.mjs#planRetention and clued-ci-resident-linux#plan_retention are both held to these cases (test/retention.test.mjs, test/test_linux_tool.py). Entries default to isDir true, links 0, complete true. rule: classBudgetBytes 100, minKeepPerClass 2, maxDeletesPerPass 16 unless a case says otherwise.",
+  "rule": { "classBudgetBytes": 100, "minKeepPerClass": 2, "maxDeletesPerPass": 16 },
+  "cases": [
+    {
+      "name": "under budget deletes nothing",
+      "entries": [["archive-aaaaaaaaaaaa-success-close-000000000001", 1, 40], ["archive-aaaaaaaaaaaa-success-close-000000000002", 2, 50], ["failed-aaaaaaaaaaaa-x-000000000003", 3, 100]],
+      "deletes": [], "refused": { "success": null, "failure": null }, "deferred": 0, "protected": 0
+    },
+    {
+      "name": "over budget deletes oldest first until within budget",
+      "entries": [["archive-a-1", 1, 60], ["archive-a-2", 2, 60], ["completed-a-3", 3, 30], ["archive-a-4", 4, 30], ["failed-b-1", 1, 10]],
+      "deletes": ["archive-a-1", "archive-a-2"], "refused": { "success": null, "failure": null }, "deferred": 0, "protected": 0
+    },
+    {
+      "name": "the newest two of a class stay even above budget",
+      "entries": [["failed-a-1", 1, 500], ["failed-a-2", 2, 500], ["failed-a-3", 3, 500], ["archive-x-1", 1, 1]],
+      "deletes": ["failed-a-1"], "refused": { "success": null, "failure": null }, "deferred": 0, "protected": 0
+    },
+    {
+      "name": "kept archives are counted apart and never deleted",
+      "entries": [["failed-a-1", 1, 500], ["failed-a-2", 2, 60], ["failed-a-3", 3, 60], ["failed-a-4", 4, 10]],
+      "keep": ["failed-a-1"],
+      "deletes": ["failed-a-2"], "refused": { "success": null, "failure": null }, "deferred": 0, "protected": 1
+    },
+    {
+      "name": "a link anywhere in a class refuses that class only",
+      "entries": [["failed-a-1", 1, 500], ["failed-a-2", 2, 500], ["failed-a-3", 3, 500, { "links": 1 }], ["archive-a-1", 1, 500], ["archive-a-2", 2, 1], ["archive-a-3", 3, 1]],
+      "deletes": ["archive-a-1"], "refused": { "success": null, "failure": "RETENTION_LINK_REFUSED" }, "deferred": 0, "protected": 0
+    },
+    {
+      "name": "a junction or file in the spool root with an archive name refuses its class",
+      "entries": [["archive-a-1", 1, 500], ["archive-a-2", 2, 500], ["archive-a-3", 3, null, { "isDir": false, "links": 1, "complete": false }]],
+      "deletes": [], "refused": { "success": "RETENTION_LINK_REFUSED", "failure": null }, "deferred": 0, "protected": 0
+    },
+    {
+      "name": "an unreadable size refuses its class",
+      "entries": [["failed-a-1", 1, 500], ["failed-a-2", 2, 500], ["failed-a-3", 3, null, { "complete": false }]],
+      "deletes": [], "refused": { "success": null, "failure": "RETENTION_SIZE_UNREADABLE" }, "deferred": 0, "protected": 0
+    },
+    {
+      "name": "names of other shapes are never considered",
+      "entries": [["incoming", 1, 900], ["outgoing", 1, 900], ["archive_bad", 1, 900], ["failed-", 1, 900], ["Archive-a-1", 1, 900], ["archive-a-1", 2, 1]],
+      "deletes": [], "refused": { "success": null, "failure": null }, "deferred": 0, "protected": 0
+    },
+    {
+      "name": "ties in time are broken by name and the pass is capped",
+      "rule": { "classBudgetBytes": 0, "minKeepPerClass": 1, "maxDeletesPerPass": 2 },
+      "entries": [["failed-c", 5, 1], ["failed-a", 5, 1], ["failed-b", 5, 1], ["failed-d", 6, 1]],
+      "deletes": ["failed-a", "failed-b"], "refused": { "success": null, "failure": null }, "deferred": 1, "protected": 0
+    }
+  ]
+}

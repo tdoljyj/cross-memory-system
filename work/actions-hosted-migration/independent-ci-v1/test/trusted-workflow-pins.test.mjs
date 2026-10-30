@@ -174,7 +174,7 @@ test('required trivy plans (v2, v3): the source check accepts both reviewed triv
     claimId: '11111111-1111-1111-1111-111111111111', fence: 1, epoch: 1, role: 'trivy', sourceManifestSha256: manifest,
     createdAt: new Date().toISOString(), attempt: 1 };
   v1.id = jobId(v1);
-  const v2 = makeJobV2({ repo: REPO, pr: 884, headSha: 'a'.repeat(40), baseSha: 'b'.repeat(40), role: 'trivy', sourceManifestSha256: manifest,
+  const v2 = makeJobV2({ repo: REPO, pr: 884, headSha: 'a'.repeat(40), baseSha: 'b'.repeat(40), testSha: 'a'.repeat(40), role: 'trivy', sourceManifestSha256: manifest,
     createdAt: new Date().toISOString(), attempt: 2 });
   for (const [plans, job] of [[trivyPlansV2.requiredTrivyPlans, v1], [trivyPlansV3.requiredTrivyPlans, v2]]) {
     // An accepted pin passes the source check and stops at the next (missing mounts) check.
@@ -238,7 +238,7 @@ test('gitleaks v4 prepare: only the 729 successor passes; legacy, swapped or tam
     const bytes = Buffer.from(JSON.stringify({ schema: 'independent-ci.sources.v2', repo: REPO, sourceSha: 'c'.repeat(40),
       roles: { gitleaks: { containerCommand: { image: gitleaksV4.IMAGE, scanner: 'gitleaks', executable: '/usr/bin/gitleaks', cwd: '/input', args: [...gitleaksV4.SCAN_ARGS] },
         sourceFiles: [...Object.entries(gitleaksV4.SOURCE_PINS).map(([file, sha]) => ({ path: file, sha256: sha })), ...pins.map(sha => ({ path: GITLEAKS, sha256: sha }))] } } }));
-    const job = makeJobV2({ repo: REPO, pr: 884, headSha: head, baseSha: base, role: 'gitleaks', sourceManifestSha256: sha256(bytes), createdAt: new Date().toISOString(), attempt: 1 });
+    const job = makeJobV2({ repo: REPO, pr: 884, headSha: head, baseSha: base, testSha: head, role: 'gitleaks', sourceManifestSha256: sha256(bytes), createdAt: new Date().toISOString(), attempt: 1 });
     const snapshot = { contract: 'clued.independent-ci.remote-heads-tags/1', repository: REPO, complete: true, observedAt: new Date().toISOString(), refs: [{ name: 'refs/heads/main', objectSha: base }] };
     try {
       await gitleaksV4.prepareRequiredHistory({ job, sourceManifestBytes: bytes, expectedSourceManifestSha256: sha256(bytes), trustedSourceDirectory: source,

@@ -18,7 +18,7 @@ import {fixtureRecord,tempDir,subject} from '../../work/actions-hosted-migration
 const bytes=value=>Buffer.from(canonical(value));
 async function fixture(t){
  const {docs}=fixtureRecord(),record=validateRecordV2(docs,{now:Date.now()}),nonce='a'.repeat(32);
- const job=makeJobV2({...subject(),sourceManifestSha256:record.config.sourceManifestSha256,role:'gitleaks'});
+ const job=makeJobV2({...subject(),testSha:subject().headSha,sourceManifestSha256:record.config.sourceManifestSha256,role:'gitleaks'});
  const identity=makeIndependentPublicationIdentity({job,claim:{claim_id:randomUUID(),fence:4,execution_epoch:3},
   controller_id:independentControllerId({invocationNonce:nonce,jobId:job.id,nodeId:record.accepted.node.hostname})});
  const jobs=[job],plan={contract:PLAN_CONTRACT_V2,enabled:true,stage:3,entryRole:'check-publisher',batchKey:'b'.repeat(64),batchId:'b'.repeat(16)+'-'+'c'.repeat(12),

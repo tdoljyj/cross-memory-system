@@ -10,7 +10,7 @@
 //   - every Linux unit it starts re-checks its own preconditions as root;
 //   - its answers to the service only steer classification, and a false "clean" can at worst make
 //     the next batch fail at its own root preflight (DoS), never run something unsafe.
-import { BATCH_ID } from './mailbox.mjs';
+import { BATCH_ID, validatePrune } from './mailbox.mjs';
 import { HEX64, check, exactKeys, fail } from './canonical.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
 import { TOOL_NOT_RUN, UPGRADE_TIMEOUT_MS, UPGRADE_TOOL_PATH, VERSION_FACTS_REFRESH_MS, responseFromTool, upgradeMailboxRequest, upgradeToolArgs, validateVersionFacts } from './upgrade-mailbox.mjs';
@@ -176,6 +176,8 @@ export function relayLogEntry({ at, mode, seq, attempt, ms, runner, receipt, kla
 // Source, <root>\source\<ciSourceManifestSha256>\. A path key is a Source script unless it is named here as not one, so a new path
 // key is held to the Source directory by default. A config whose script paths name another (older) Source directory runs
 // nothing: the stage-0 bundle then reports BUNDLE_UNAVAILABLE and the relay cannot start.
+// build-bundle.ps1's refusals that mean the batch's refs moved on since its first bundle (DESIGN §37).
+export const REBUNDLE_REFS_CHANGED = Object.freeze(['REMOTE_MAIN_BASE_CHANGED', 'REMOTE_HEAD_MOVED']);
 export const COMPANION_PATH_KEYS = Object.freeze(['wslExe', 'powershellExe', 'relayScript', 'bundleScript', 'windowsSpool']);
 export const NON_SOURCE_PATH_KEYS = Object.freeze(['wslExe', 'powershellExe', 'windowsSpool']);
 export const SOURCE_SCRIPT_KEYS = Object.freeze(COMPANION_PATH_KEYS.filter(k => !NON_SOURCE_PATH_KEYS.includes(k)));
@@ -251,6 +253,8 @@ export function argv(cfg) {
     unitFacts: (template, instance) => wsl('/usr/bin/systemctl', 'show', '--property=ActiveState,InvocationID,ExecMainStartTimestampMonotonic', unit(template, instance)),
     linuxTool: (sub, id) => { check(['quiescence'].includes(sub) && BATCH_ID.test(id), 'COMPANION_TOOL_ARGS_INVALID'); return wsl(cfg.linuxTool, sub, '--batch', id); },
     archiveUsage: () => wsl(cfg.linuxTool, 'archive-usage'),
+    // DESIGN §35: one retention pass of the Linux spool (the root tool plans, re-checks and deletes; nothing variable here).
+    archivePrune: () => wsl(cfg.linuxTool, 'archive-prune'),
     linuxOutgoing: () => wsl('/usr/bin/ls', '-1', '-A', '--', LINUX_OUTGOING),
     linuxIncoming: () => wsl('/usr/bin/ls', '-1', '-A', '--', LINUX_INCOMING),
     linuxRelayProcs: () => wsl('/usr/bin/pgrep', '-f', '-a', RELAY_RECORD_PROCESS),
@@ -263,6 +267,7 @@ export function argv(cfg) {
     },
     bundle: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.bundleScript, '-BatchId', id]; },
     checkRefs: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.bundleScript, '-BatchId', id, '-CheckRefs']; },
+    rebundle: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.bundleScript, '-BatchId', id, '-Rebundle']; },
     keepalive: () => [cfg.wslExe, '--distribution', cfg.distribution, '--exec', '/bin/sleep', 'infinity'],
     // DESIGN §34: the frozen upgrade tool, as root, with the fixed path and arguments that pass upgradeToolArgvOk only.
     upgradeTool: args => { check(upgradeToolArgvOk(args), 'COMPANION_UPGRADE_TOOL_ARGS_INVALID'); return wsl(UPGRADE_TOOL_PATH, ...args); },
@@ -323,6 +328,14 @@ export class Companion {
         const v = r.code === 0 ? json(r.stdout) : null;
         return { ok: v?.status === 'BUNDLE_WRITTEN', code: v?.status === 'BUNDLE_WRITTEN' ? null : 'BUNDLE_UNAVAILABLE' };
       }
+      // DESIGN §37: the second generation. Refs no longer the batch's (main moved, or no branch still at the head) is the clean
+      // transient REMOTE_REFS_CHANGED_SINCE_BUNDLE; anything else (including no answer) only says the bundle could not be renewed.
+      case 'rebuild-bundle': {
+        const r = await this.run(this.a.rebundle(request.batchId), { timeoutMs: 30 * 60_000 });
+        const v = r.code === 0 || r.code === 2 ? json(r.stdout) : null;
+        if (r.code === 0 && v?.status === 'BUNDLE_WRITTEN' && v.generation === 2) return { ok: true, code: null };
+        return { ok: false, code: REBUNDLE_REFS_CHANGED.includes(v?.reason) ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'BUNDLE_UNAVAILABLE' };
+      }
       case 'prepare-workspaces': {
         const r = await this.run(this.a.startWait('clued-ci-wsprep', request.batchId), { timeoutMs: 20 * 60_000 });
         const proof = await this.quiescence(request.batchId);
@@ -349,6 +362,18 @@ export class Companion {
         const v = r.code === 0 ? json(r.stdout) : null;
         const ok = v?.contract === 'clued.independent-ci.linux-archive-usage/1' && Number.isSafeInteger(v.bytes) && v.bytes >= 0 && Number.isSafeInteger(v.directories) && v.directories >= 0;
         return ok ? { ok: true, usage: { bytes: v.bytes, directories: v.directories } } : { ok: false, code: 'LINUX_ARCHIVE_USAGE_UNCONFIRMED' };
+      }
+      // DESIGN §35: the root tool's facts of one retention pass, carried as they are (exact shape) with the usage after it. A
+      // refused pass (exit 1 with the tool's own facts) is carried too: the service records why nothing was deleted.
+      case 'archive-prune': {
+        const r = await this.run(this.a.archivePrune(), { timeoutMs: 9 * 60_000 });
+        const v = 'tree' in r ? null : json(r.stdout);
+        let prune = null;
+        try { prune = v?.contract === 'clued.independent-ci.linux-archive-prune/1' ? validatePrune(v.prune) : null; } catch { prune = null; }
+        const usage = v?.usage && Number.isSafeInteger(v.usage.bytes) && v.usage.bytes >= 0 && Number.isSafeInteger(v.usage.directories) && v.usage.directories >= 0
+          ? { bytes: v.usage.bytes, directories: v.usage.directories } : null;
+        if (!prune) return { ok: false, code: 'LINUX_ARCHIVE_PRUNE_UNCONFIRMED' };
+        return r.code === 0 && prune.refused === null && prune.stopped === null ? { ok: true, prune, usage } : { ok: false, code: prune.refused ?? prune.stopped?.code ?? 'LINUX_ARCHIVE_PRUNE_UNCONFIRMED', prune, usage };
       }
       // Verbatim root-tool facts; the companion never synthesises a proof value itself.
       case 'linux-quiescence': return { ok: true, proof: await this.quiescence(request.batchId) };
@@ -630,7 +655,7 @@ export class Companion {
       this.trees = [];
       try { answer = await this.handle(request); } catch { answer = { ok: false, code: 'COMPANION_HANDLER_UNCONFIRMED' }; }
       await this.mailbox.respond(request, { ok: answer.ok === true, code: answer.ok ? null : (answer.code ?? 'COMPANION_HANDLER_UNCONFIRMED'), proof: answer.proof ?? null, directory: answer.directory ?? null, verified: answer.verified ?? null, usage: answer.usage ?? null, pull: answer.pull ?? null,
-        jobTree: jobTreeOf(this.trees), memory: answer.memory ?? null });
+        jobTree: jobTreeOf(this.trees), memory: answer.memory ?? null, prune: answer.prune ?? null });
     }
   }
 }

@@ -7,13 +7,14 @@
 //
 // v2 has no installed per-batch job file: the batch is found from the batch-claim records stage 1 wrote
 // (create-only, controller-owned), and the control jobs are re-derived from their content (job ids, contract
-// /3, exclude createdAt and the claim; until step 3c every batch tests S = H, which makeJobV2 defaults to). Only clued-control on Windows ever reaches the installed path; any
+// /3, exclude createdAt and the claim). The tested commit S comes from the record itself (batch-claim-v2.mjs: /1 is
+// S = H, /2 names a train front batch's S). Only clued-control on Windows ever reaches the installed path; any
 // other caller is refused before a single file is opened.
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { batchJobsV2, CONTROL_ROLES_V2, makeJobV2 } from '../job-v2.mjs';
-import { validateBatchClaimRecord } from '../batch-claim-v2.mjs';
+import { recordTestShaV2, validateBatchClaimRecord } from '../batch-claim-v2.mjs';
 import { CONTROL_CHECKS_V2, REPO, createProductionControlPublisherV2, takeActualControlConsumptionV2 } from './publisher.mjs';
 
 export const CONSUMER_PROVIDER_V2 = 'independent-control-checks-v2';
@@ -25,20 +26,23 @@ const exact = (v, keys) => v && Object.getPrototypeOf(v) === Object.prototype &&
 const roleForName = name => Object.entries(CONTROL_CHECKS_V2).find(([, d]) => d.name === name)?.[0] ?? null;
 
 // Batch-claim records -> the control job for `name` of every batch that matches the selector (head, and pr
-// and base when given). Pure over the parsed records; a record that does not validate is skipped.
+// and base when given). Pure over the parsed records; a record that does not validate is skipped. A train front
+// batch (S != H) is never matched on the selector's base: the protected gate passes the PR's base.sha, which GitHub
+// moves only on a push, while the record names the batch base T (design v0.5 §5.7, DESIGN §21.3).
 export function controlJobsFor(records, { repository, pr = null, headSha, baseSha = null, name }, ciSourceManifestSha256) {
   const role = roleForName(name);
   check(repository === REPO && SHA.test(headSha ?? '') && role && HASH.test(ciSourceManifestSha256 ?? '')
     && (pr === null || (Number.isSafeInteger(pr) && pr > 0)) && (baseSha === null || SHA.test(baseSha)), 'CONTROL_CONSUMER_SUBJECT_REQUIRED');
   const out = [];
   for (const r of records) {
-    if (r?.repo !== repository || r.headSha !== headSha || (pr !== null && r.pr !== pr) || (baseSha !== null && r.baseSha !== baseSha) || r.sourceManifestSha256 !== ciSourceManifestSha256) continue;
+    const testSha = recordTestShaV2(r), front = typeof testSha === 'string' && testSha !== r?.headSha;
+    if (r?.repo !== repository || r.headSha !== headSha || (pr !== null && r.pr !== pr) || (baseSha !== null && !front && r.baseSha !== baseSha) || r.sourceManifestSha256 !== ciSourceManifestSha256) continue;
     let admission;
     try {
-      admission = makeJobV2({ repo: r.repo, pr: r.pr, headSha: r.headSha, baseSha: r.baseSha, role: 'work-admission', sourceManifestSha256: r.sourceManifestSha256, createdAt: r.createdAt, attempt: r.attempt });
+      admission = makeJobV2({ repo: r.repo, pr: r.pr, headSha: r.headSha, baseSha: r.baseSha, testSha, role: 'work-admission', sourceManifestSha256: r.sourceManifestSha256, createdAt: r.createdAt, attempt: r.attempt });
       validateBatchClaimRecord(r, admission);
     } catch { continue; }
-    const jobs = batchJobsV2({ repo: r.repo, pr: r.pr, headSha: r.headSha, baseSha: r.baseSha, sourceManifestSha256: r.sourceManifestSha256, createdAt: r.createdAt, attempt: r.attempt });
+    const jobs = batchJobsV2({ repo: r.repo, pr: r.pr, headSha: r.headSha, baseSha: r.baseSha, testSha, sourceManifestSha256: r.sourceManifestSha256, createdAt: r.createdAt, attempt: r.attempt });
     out.push({ job: jobs[role], claim: Object.freeze({ ...r.claim }), selector: { repository, pr: r.pr, headSha, baseSha: r.baseSha, name } });
   }
   // Newest attempt first: attempt 2 only exists after attempt 1 failed before stage 8 (attempts.mjs).
@@ -56,7 +60,8 @@ export async function consumeControlV2({ candidates, consumerFor }) {
   }
   const usable = proofs.filter(p => p.proof?.contract === 'clued.independent-ci.control-consumption/2');
   if (usable.length === 0) fail(refusals.includes('TRUSTED_SETTLED_CONTROL_JOURNAL_REQUIRED') || refusals.length === 0 ? 'TRUSTED_SETTLED_CONTROL_JOURNAL_REQUIRED' : refusals[0]);
-  const subjects = new Set(usable.map(p => `${p.c.selector.pr}:${p.c.selector.baseSha}`));
+  // Step 3c-2: the tested commit is part of the subject; a head batch and a front batch of one head never merge into one.
+  const subjects = new Set(usable.map(p => `${p.c.selector.pr}:${p.c.selector.baseSha}:${p.c.job.testSha}`));
   check(subjects.size === 1, 'CONTROL_HEAD_AMBIGUOUS');
   return usable[0];
 }

@@ -21,9 +21,10 @@ attempt 2 never collides with attempt 1's workspaces; the trusted Source is comp
 installed Source commit, NOT with the PR head (b29 only worked because they were the same commit);
 refusal codes report the caller's line; nothing is patched into this file per batch.
 Quota phase 2 step 3b: job contract /3 and descriptor /3 name the tested commit S (testSha) next to the head
-and the base; the trivy and placement candidates are checked out at S. Until step 3c's train front batch
-brings S from stage 10 (with the bundle holding S and a parents check here), S must be the head itself
-(TEST_COMMIT_NOT_HEAD), so every workspace is exactly what it was under /2.
+and the base; the trivy and placement candidates are checked out at S. Step 3c-2: S != H only for a train
+front batch, where S is GitHub's test merge of [T, H] read live by stage 10. The bundle then carries S under
+refs/clued-test/<S> (the receipt counts it), the candidates fetch that ref, and the mirror store checks that S's
+parents are exactly [T, H]. Everywhere else S = H and every workspace is exactly what it was under /2.
 """
 import hashlib
 import json
@@ -54,6 +55,7 @@ BATCH_ID = re.compile(r'^[0-9a-f]{16}-[0-9a-f]{12}$')
 HEX64 = re.compile(r'^[0-9a-f]{64}$')
 HEX40 = re.compile(r'^[0-9a-f]{40}$')
 MAX_BUNDLE = 2 << 30
+TEST_REF_PREFIX = 'refs/clued-test/'
 BUNDLE_MAX_AGE_S = 7200
 CLOCK_SKEW_S = 300
 GIT_ENV = {'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent', 'LANG': 'C', 'LC_ALL': 'C', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null',
@@ -89,8 +91,8 @@ def validate_descriptor(d, batch_id):
     need(isinstance(d, dict) and d.get('contract') == DESCRIPTOR_CONTRACT and d.get('batchId') == batch_id, 'DESCRIPTOR_REFUSED')
     need(d.get('repo') == REPO and isinstance(d.get('pr'), int) and not isinstance(d.get('pr'), bool) and d['pr'] > 0, 'DESCRIPTOR_REFUSED')
     need(all(isinstance(d.get(k), str) and HEX40.fullmatch(d[k]) for k in ('headSha', 'baseSha', 'testSha', 'sourceCommit')), 'DESCRIPTOR_REFUSED')
-    # Step 3b: S = H. Step 3c lifts this for the train's front batch, together with S in the bundle and its parents check.
-    need(d['testSha'] == d['headSha'], 'TEST_COMMIT_NOT_HEAD')
+    # Step 3c-2: S != H only for a train front batch (GitHub's test merge of [T, H]); the bundle then carries S under
+    # refs/clued-test/<S> and prepare() checks its parents. S = H everywhere else, exactly as before.
     need(all(isinstance(d.get(k), str) and HEX64.fullmatch(d[k]) for k in ('batchKey', 'ciSourceManifestSha256', 'gitleaksTomlSha256')), 'DESCRIPTOR_REFUSED')
     need(d.get('attempt') in (1, 2) and d['batchKey'][:16] == batch_id[:16], 'DESCRIPTOR_REFUSED')
     ids = d.get('linuxJobIds')
@@ -116,7 +118,7 @@ def parse_bundle_header(data):
     need(all(b == 10 or 32 <= b <= 126 for b in head), 'ASCII_BUNDLE_HEADER_REQUIRED')
     lines = head.decode('ascii').split('\n')
     need(lines[0] == '# v2 git bundle', 'V2_SHA1_BUNDLE_REQUIRED')
-    formal, reviewed = {}, {}
+    formal, reviewed, test = {}, {}, {}
     for line in lines[1:]:
         need(not line.startswith('-') and not line.startswith('@'), 'BUNDLE_PREREQUISITE_OR_CAPABILITY_REFUSED')
         sha, sep, name = line.partition(' ')
@@ -124,11 +126,25 @@ def parse_bundle_header(data):
         if name.startswith('refs/reviewed/'):
             need(name == 'refs/reviewed/' + sha and name not in reviewed, 'EXACT_REVIEWED_REF_REQUIRED')
             reviewed[name] = sha
+        elif name.startswith(TEST_REF_PREFIX):
+            # Step 3c-2: the tested commit S of a train front batch (at most one, named by its own SHA).
+            need(name == TEST_REF_PREFIX + sha and not test, 'EXACT_TEST_REF_REQUIRED')
+            test[name] = sha
         else:
             need(formal_ref_name_ok(name) and name not in formal, 'REMOTE_REF_NAME_FAILS_FORMAL_VALIDATION')
             formal[name] = sha
     need(1 <= len(formal) <= 10000, 'REF_COUNT_BOUND')
-    return formal, reviewed
+    return formal, reviewed, test
+
+
+def expected_test_refs(d):
+    """The test ref the bundle must carry: none when S = H, exactly refs/clued-test/<S> for a train front batch."""
+    return {} if d['testSha'] == d['headSha'] else {TEST_REF_PREFIX + d['testSha']: d['testSha']}
+
+
+def test_parents_ok(rev_list_parents_line, d):
+    """`git rev-list --parents -n 1 S` must be exactly 'S T H': GitHub's test merge of the batch base and the head."""
+    return rev_list_parents_line.split() == [d['testSha'], d['baseSha'], d['headSha']]
 
 
 def ref_list_sha(refs):
@@ -146,10 +162,37 @@ def validate_receipt(r, d, descriptor_sha, now):
     need(r.get('batchId') == d['batchId'] and r.get('descriptorSha256') == descriptor_sha and r.get('headSha') == d['headSha'] and r.get('mainSha') == d['baseSha']
          and r.get('sourceCommit') == d['sourceCommit'] and r.get('gitleaksTomlSha256') == d['gitleaksTomlSha256'] and r.get('prerequisites') == 0
          and r.get('bundleVersion') == 2 and r.get('headPresent') is True and r.get('basePresent') is True, 'BUNDLE_RECEIPT_REFUSED')
-    need(all(isinstance(r.get(k), str) and HEX64.fullmatch(r[k]) for k in ('bundleSha256', 'refListSha256', 'reviewedRefListSha256')), 'BUNDLE_RECEIPT_REFUSED')
+    need(all(isinstance(r.get(k), str) and HEX64.fullmatch(r[k]) for k in ('bundleSha256', 'refListSha256', 'reviewedRefListSha256', 'testRefListSha256')), 'BUNDLE_RECEIPT_REFUSED')
+    need(r.get('testSha') == d['testSha'] and r.get('testRefCount') == len(expected_test_refs(d)), 'BUNDLE_RECEIPT_REFUSED')
     age = now - iso_seconds(r.get('lsRemoteCompletedAt'))
     need(-CLOCK_SKEW_S <= age <= BUNDLE_MAX_AGE_S, 'FRESH_BUNDLE_REQUIRED')
     return r
+
+
+def bundle_generation(base, d, descriptor_sha, now):
+    """Task 4012c1b9 (DESIGN §37): the newest complete bundle generation of the batch and its validated receipt. gen-2/ (the
+    second bundle of a batch resumed from parking point A) when it exists: then its receipt must exist, name generation 2
+    and the first generation's exact bundle, and the first one must be this batch's too. A gen-2/ without its receipt is
+    refused, never skipped. Otherwise the first generation, whose receipt never names a generation."""
+    gen2 = f'{base}/gen-2'
+    try:
+        gen2_stat = os.lstat(gen2)
+    except FileNotFoundError:
+        gen2_stat = None
+    # Only a gen-2 that does not exist means the first generation; any other error of the lstat refuses (review m3).
+    except OSError:
+        raise Refused('BUNDLE_GENERATION_INCOMPLETE')
+    if gen2_stat is None:
+        r = validate_receipt(json.loads(read_public(f'{base}/all-refs.receipt.json', 1 << 20)), d, descriptor_sha, now)
+        need('generation' not in r, 'BUNDLE_RECEIPT_REFUSED')
+        return base, r
+    need(stat.S_ISDIR(gen2_stat.st_mode) and os.path.isfile(f'{gen2}/all-refs.receipt.json'), 'BUNDLE_GENERATION_INCOMPLETE')
+    r = validate_receipt(json.loads(read_public(f'{gen2}/all-refs.receipt.json', 1 << 20)), d, descriptor_sha, now)
+    first = json.loads(read_public(f'{base}/all-refs.receipt.json', 1 << 20))
+    need(isinstance(first, dict) and first.get('contract') == r['contract'] and first.get('batchId') == d['batchId'] and first.get('descriptorSha256') == descriptor_sha
+         and 'generation' not in first and isinstance(first.get('bundleSha256'), str) and HEX64.fullmatch(first['bundleSha256']), 'BUNDLE_RECEIPT_REFUSED')
+    need(r.get('generation') == 2 and r.get('previousBundleSha256') == first['bundleSha256'] and r.get('previousRefListSha256') == first.get('refListSha256'), 'BUNDLE_RECEIPT_REFUSED')
+    return gen2, r
 
 
 def tree_modes_regular(ls_tree_z):
@@ -284,9 +327,7 @@ def prepare(batch_id):
     need(not os.path.lexists(prep) and not any(os.path.lexists(t) for t in targets.values()), 'FIXED_TARGET_ALREADY_EXISTS')
     live_preconditions(list(jobs.values()))
     # Bundle: the receipt binds batch, descriptor, head, base, Source commit and freshness.
-    src = f'{WINDOWS}/bundles/{batch_id}'
-    receipt_raw = read_public(f'{src}/all-refs.receipt.json', 1 << 20)
-    receipt = validate_receipt(json.loads(receipt_raw), d, descriptor_sha, time.time())
+    src, receipt = bundle_generation(f'{WINDOWS}/bundles/{batch_id}', d, descriptor_sha, time.time())
     created = []
     new_dir(prep)
     created.append(prep)
@@ -316,9 +357,11 @@ def prepare(batch_id):
     need(sha256_file(sealed) == receipt['bundleSha256'], 'BUNDLE_SEAL_CHANGED')
     with open(sealed, 'rb') as f:
         header = f.read(8 << 20)
-    formal, reviewed = parse_bundle_header(header)
+    formal, reviewed, test = parse_bundle_header(header)
     need(formal.get('refs/heads/main') == d['baseSha'], 'REMOTE_MAIN_BASE_CHANGED')
-    need(ref_list_sha(formal) == receipt['refListSha256'] and ref_list_sha(reviewed) == receipt['reviewedRefListSha256'], 'BUNDLE_REFS_DIFFER_FROM_RECEIPT')
+    need(ref_list_sha(formal) == receipt['refListSha256'] and ref_list_sha(reviewed) == receipt['reviewedRefListSha256']
+         and ref_list_sha(test) == receipt['testRefListSha256'], 'BUNDLE_REFS_DIFFER_FROM_RECEIPT')
+    need(test == expected_test_refs(d), 'EXACT_TEST_REF_REQUIRED')
     # Workspaces: mirror store for gitleaks, detached candidates for trivy and placement.
     for role, target in targets.items():
         new_dir(target)
@@ -327,9 +370,13 @@ def prepare(batch_id):
             git(['clone', '--mirror', '--no-local', '--no-hardlinks', '--template=', '--', sealed, f'{target}/.git'])
         else:
             git(['clone', '--no-local', '--no-hardlinks', '--no-checkout', '--template=', '--', sealed, f'{target}/candidate'])
+            # A train front batch's S is reachable only from its test ref, which a plain clone does not map: give it that
+            # ref, so the candidate holds S by name and not as an unreferenced object a gc may drop.
+            for name in test:
+                git(['-C', f'{target}/candidate', 'fetch', '--quiet', '--no-tags', '--', sealed, f'+{name}:{name}'])
             # Review MINOR-7: the head tree's modes are validated from the object store BEFORE anything is
             # materialised (only 100644/100755 blobs: no symlink, submodule or other entry is ever written).
-            # The candidate is the tested commit S (job contract /3; S = H until step 3c).
+            # The candidate is the tested commit S (job contract /3): the head, or a train front batch's test merge.
             tree_modes_regular(git(['-C', f'{target}/candidate', 'ls-tree', '-r', '-z', '--full-tree', d['testSha']]))
             git(['-C', f'{target}/candidate', 'checkout', '--quiet', '--detach', '--no-recurse-submodules', d['testSha']])
     facts = {}
@@ -344,13 +391,20 @@ def prepare(batch_id):
             for line in git(['--git-dir', gd, 'for-each-ref', '--format=%(objectname) %(refname)']).splitlines():
                 sha, _, name = line.partition(' ')
                 refs[name] = sha
-            need(refs == {**formal, **reviewed}, 'STORE_REFS_DIFFER_FROM_BUNDLE')
+            need(refs == {**formal, **reviewed, **test}, 'STORE_REFS_DIFFER_FROM_BUNDLE')
             for c in (d['headSha'], d['baseSha']):
                 need(git(['--git-dir', gd, 'cat-file', '-t', c]).strip() == 'commit', 'HEAD_BASE_COMMIT_MISSING')
+            if test:
+                # S must be GitHub's merge of exactly [T, H] (design v0.5 §5.2): checked on the object itself.
+                need(git(['--git-dir', gd, 'cat-file', '-t', d['testSha']]).strip() == 'commit', 'TEST_COMMIT_MISSING')
+                need(test_parents_ok(git(['--git-dir', gd, 'rev-list', '--parents', '-n', '1', d['testSha']]).strip(), d), 'TEST_COMMIT_PARENTS_REQUIRED')
             git(['--git-dir', gd, 'rev-list', '--objects', '--quiet', '--all'], timeout=600)  # full closure of every sealed tip
         else:
             cand = f'{target}/candidate'
             need(git(['-C', cand, 'rev-parse', '--verify', 'HEAD^{commit}']).strip() == d['testSha'], 'CANDIDATE_HEAD_CHANGED')
+            if test:
+                # The same parents check as the mirror store's, on this candidate's own copy of S (review n1).
+                need(test_parents_ok(git(['-C', cand, 'rev-list', '--parents', '-n', '1', d['testSha']]).strip(), d), 'TEST_COMMIT_PARENTS_REQUIRED')
             need(git(['-C', cand, 'status', '--porcelain=v1', '--untracked-files=all']).strip() == '', 'CANDIDATE_NOT_CLEAN')
             for c in (d['headSha'], d['baseSha']):
                 need(git(['-C', cand, 'cat-file', '-t', c]).strip() == 'commit', 'HEAD_BASE_COMMIT_MISSING')

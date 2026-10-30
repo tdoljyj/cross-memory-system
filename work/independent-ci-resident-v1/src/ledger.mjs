@@ -63,6 +63,11 @@ export const OUTCOMES = Object.freeze(['COMPLETED', 'FAILED_CLEAN', 'FAILED_UNKN
 export const UNEXECUTED_REASONS = Object.freeze(['NOT_ADMITTED', 'BUNDLE_UNAVAILABLE', 'BROKER_NOT_LAUNCHED', 'SUPERSEDED']);
 // Releases that never count as an evaluation nor towards a head's release cap (nothing about the PR was decided).
 export const UNCOUNTED_RELEASES = Object.freeze(['BUNDLE_UNAVAILABLE', 'BROKER_NOT_LAUNCHED', 'SUPERSEDED']);
+// Risk tiers of the daily budgets (Task 12ada80e, DESIGN §36): a head burned by a stage-1 ending that proved it published
+// nothing (clean on both hosts, zero side effects, mayHavePublished false) carries quotaTier 'evaluation' in its burn
+// facts. usage() counts it once, as the evaluation its batch entry already is, not as an execution. Every other head
+// record (10-started, any other burn, an older record without the field, one that cannot be read) is an execution.
+export const QUOTA_TIER_EVALUATION = 'evaluation';
 export const RESERVATION_ORIGINS = Object.freeze(['queued', 'backoff-retry', 'waiting-retry', 'new-trigger', 'restored', 'lifted', 'attempt2']);
 // The records of an open entry, oldest first; the newest one present is what an Owner abort names by digest.
 export const OPEN_RECORDS = Object.freeze(['00-reserved.json', '10-started.json', '15-relay-wait.json', '20-plan-intent.json', '25-plan.json', '70-parked.json']);
@@ -73,16 +78,20 @@ const TRY = /^7(?:(1)-try|(2)-tried)-(\d{2})\.json$/;
 const tryName = (begun, n) => `${begun ? '71-try' : '72-tried'}-${String(n).padStart(2, '0')}.json`;
 export const SELF_ABORT_RECORD = '81-self-abort.json';
 
-function subjectCheck({ repo, pr, headSha, baseSha, sourceManifestSha256, attempt }) {
+// Step 3c-2: a train front batch's subject also names its tested commit S (never the head); every other subject has no
+// `testSha` and its key stays what it always was (Source v2 derive-batch.mjs#residentBatchKey computes the same).
+function subjectCheck({ repo, pr, headSha, baseSha, sourceManifestSha256, attempt, ...rest }) {
   check(REPO.test(repo) && Number.isSafeInteger(pr) && pr > 0, 'BATCH_KEY_SUBJECT_INVALID');
   check(HEX40.test(headSha) && HEX40.test(baseSha), 'BATCH_KEY_COMMIT_INVALID');
+  check(!Object.hasOwn(rest, 'testSha') || (HEX40.test(rest.testSha) && rest.testSha !== headSha), 'BATCH_KEY_COMMIT_INVALID');
   check(HEX64.test(sourceManifestSha256), 'BATCH_KEY_SOURCE_INVALID');
   check(Number.isSafeInteger(attempt) && attempt >= 1 && attempt <= 9, 'BATCH_KEY_ATTEMPT_INVALID');
 }
 
 export function batchKey(s) {
   subjectCheck(s);
-  return digest({ contract: BATCH_KEY_CONTRACT, repo: s.repo, pr: s.pr, headSha: s.headSha, baseSha: s.baseSha, sourceManifestSha256: s.sourceManifestSha256, attempt: s.attempt });
+  return digest({ contract: BATCH_KEY_CONTRACT, repo: s.repo, pr: s.pr, headSha: s.headSha, baseSha: s.baseSha, sourceManifestSha256: s.sourceManifestSha256, attempt: s.attempt,
+    ...(Object.hasOwn(s, 'testSha') ? { testSha: s.testSha } : {}) });
 }
 
 export function headKey(s) {
@@ -462,7 +471,7 @@ export class Ledger {
   // The run queue's daily budgets for the window since sinceMs, from the ledger alone (one pass; see the header).
   // A record that cannot be read counts as one more execution or evaluation (never a wedge, never a free pass).
   async usage(sinceMs) {
-    const u = { started: 0, startedByPr: new Map(), evaluations: 0, waitingRetries: 0, reevaluations: new Map(), releasesByHead: new Map(), stage8Retries: 0 };
+    const u = { started: 0, lowRiskBurns: 0, startedByPr: new Map(), evaluations: 0, waitingRetries: 0, reevaluations: new Map(), releasesByHead: new Map(), stage8Retries: 0 };
     const bump = (map, k) => map.set(k, (map.get(k) ?? 0) + 1);
     // A file or entry last written before the window (with an hour's margin) cannot hold a record of it: its recorded
     // times are older still. Only a prefilter: every record it lets through is decided by its own recorded time.
@@ -471,18 +480,26 @@ export class Ledger {
       if (await before(path.join(this.heads, name))) continue;
       try {
         const v = (await readJson(path.join(this.heads, name))).value;
-        if (Date.parse(v.startedAt) >= sinceMs) { u.started += 1; if (Number.isSafeInteger(v.subject?.pr)) bump(u.startedByPr, v.subject.pr); }
+        if (Date.parse(v.startedAt) >= sinceMs) {
+          // A low-risk burn still counts against its PR's own daily cap (independent review m4): one PR cannot spend the
+          // whole evaluation budget on commits that stage 1 refuses.
+          if (Number.isSafeInteger(v.subject?.pr)) bump(u.startedByPr, v.subject.pr);
+          if (v.burnedBy?.quotaTier === QUOTA_TIER_EVALUATION) { u.lowRiskBurns += 1; continue; }
+          u.started += 1;
+        }
       } catch (error) { if (!contentError(error)) throw error; u.started += 1; }
     }
     // One reservation: its origin, whether it executed, and how it ended (a release reason and the failure-table facts).
-    const count = ({ reserved, started, reason, facts }) => {
+    const count = ({ reserved, started, reason, facts, burned = false }) => {
       const origin = RESERVATION_ORIGINS.includes(reserved.origin) ? reserved.origin : 'queued';
       const s = reserved.subject ?? {};
       if (origin === 'waiting-retry') u.waitingRetries += 1;
       const nodeRole = facts?.class === 'node-role';
       if (origin === 'new-trigger' && !nodeRole) bump(u.reevaluations, `${s.pr}:${s.headSha}`);
       const environment = ['environment', 'transient'].includes(facts?.class);
-      if (!started && origin !== 'waiting-retry' && !UNCOUNTED_RELEASES.includes(reason) && !environment && !nodeRole) u.evaluations += 1;
+      // A burned entry that never started (a low-risk tier burn among them) is an evaluation whatever its class: it no
+      // longer counts as an execution, so it must count somewhere (DESIGN §36).
+      if (!started && origin !== 'waiting-retry' && !UNCOUNTED_RELEASES.includes(reason) && (burned || (!environment && !nodeRole))) u.evaluations += 1;
       if (reason && reason !== 'SUPERSEDED' && facts?.class !== 'waiting' && !nodeRole && !(environment && facts?.breakerState && facts.breakerState !== 'closed') && HEX40.test(s.headSha ?? '')) bump(u.releasesByHead, s.headSha);
     };
     const read = async file => (await exists(file)) ? (await readJson(file)).value : null;
@@ -498,7 +515,8 @@ export class Ledger {
         const reserved = await read(path.join(dir, '00-reserved.json'));
         if (!reserved || !(Date.parse(reserved.reservedAt) >= sinceMs)) continue;
         const terminal = await read(path.join(dir, '90-terminal.json'));
-        count({ reserved, started: await exists(path.join(dir, '10-started.json')), reason: null, facts: terminal?.facts ?? null });
+        count({ reserved, started: await exists(path.join(dir, '10-started.json')), reason: null, facts: terminal?.facts ?? null,
+          burned: ['FAILED_CLEAN', 'FAILED_UNKNOWN'].includes(terminal?.outcome) });
       } catch (error) { if (!contentError(error)) throw error; u.evaluations += 1; }
     }
     for (const name of await fs.readdir(this.unexecuted)) {
@@ -520,7 +538,9 @@ export class Ledger {
     const s = await this.state(key1);
     check(s.state === 'TERMINAL' && s.outcome === 'FAILED_CLEAN' && s.reserved?.subject?.attempt === 1, 'ATTEMPT2_REQUIRES_CLEAN_ATTEMPT1_TERMINAL');
     const first = s.reserved.subject;
-    check(subject2.attempt === 2 && ['repo', 'pr', 'headSha', 'baseSha', 'sourceManifestSha256'].every(k => subject2[k] === first[k]), 'ATTEMPT2_SUBJECT_CHANGED');
+    // Step 3c-2: a train front batch's attempt 2 tests the same S (and a head batch's never gains one).
+    check(subject2.attempt === 2 && ['repo', 'pr', 'headSha', 'baseSha', 'sourceManifestSha256'].every(k => subject2[k] === first[k])
+      && Object.hasOwn(subject2, 'testSha') === Object.hasOwn(first, 'testSha') && subject2.testSha === first.testSha, 'ATTEMPT2_SUBJECT_CHANGED');
     const key2 = batchKey(subject2);
     await writeNew(path.join(this.attempts2, `${key1}.json`), { contract: 'clued.independent-ci.resident-attempt2/1', key1, key2, subject: subject2,
       notBefore: new Date(notBeforeMs).toISOString(), facts, at: isoNow(this.clock), automaticRetryAllowed: false });

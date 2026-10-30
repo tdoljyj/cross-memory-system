@@ -18,7 +18,10 @@ export const REQUEST_CONTRACT = 'clued.independent-ci.resident-companion-request
 // /3 (DESIGN §32, Task 25851665): also `memory`, the facts of a memory-ready answer ({ order, blocks }: the hv_sock ring order and the
 // free blocks of at least that order over all zones), null in every other answer. Same practice as /2: the companion and the
 // service come from one package and are installed together.
-export const RESPONSE_CONTRACT = 'clued.independent-ci.resident-companion-response/3';
+// /4 (DESIGN §35, Task 4aedda54): also `prune`, the facts of an archive-prune answer (the Linux spool's retention pass: what
+// was deleted, what each class keeps, what the Owner's keep list protects, and why a pass stopped or was refused), null in
+// every other answer. Same practice: one package, installed together.
+export const RESPONSE_CONTRACT = 'clued.independent-ci.resident-companion-response/4';
 export const JOB_TREES = Object.freeze(['zero', 'unconfirmed']);
 export const HEARTBEAT_CONTRACT = 'clued.independent-ci.resident-companion-heartbeat/1';
 // Owner abort (DESIGN §6.5): the service asks the companion to stop working on ONE pending request (today only the
@@ -36,7 +39,14 @@ export const PUMP_MARK_CONTRACT = 'clued.independent-ci.resident-companion-pump-
 export const BATCH_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/;
 const REASON = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const ARCHIVE_DIR = /^(failed|archive)-[0-9a-z-]{1,120}$/;
-export const KINDS = Object.freeze(['build-bundle', 'prepare-workspaces', 'relay-stage', 'archive-linux', 'linux-quiescence', 'check-refs', 'archive-usage', 'pr-head', 'memory-ready']);
+// The retention pass's archive names (retention.mjs#ARCHIVE_NAME).
+const PRUNE_NAME = /^(archive|completed|failed)-[0-9A-Za-z-]{1,90}$/;
+export const KINDS = Object.freeze(['build-bundle', 'prepare-workspaces', 'relay-stage', 'archive-linux', 'linux-quiescence', 'check-refs', 'archive-usage', 'pr-head', 'memory-ready',
+  'archive-prune', 'rebuild-bundle']);
+// rebuild-bundle (Task 4012c1b9, DESIGN §37): the batch's second and last bundle (build-bundle.ps1 -Rebundle), asked only for a
+// batch resumed from parking point A, right before its workspace. Its answer can only let the batch go on or end it cleanly.
+// archive-prune (DESIGN §35): one retention pass of the Linux spool by the root tool, asked only between batches with no open
+// batch and a fresh heartbeat. Its answer is a record for the receipt; it never admits or publishes anything.
 // memory-ready (DESIGN §32): one read of the VM's hv_sock memory facts before a scanner stage. Its answer can only delay or
 // refuse that stage cleanly; it never admits or publishes anything.
 // pr-head (resident quota redesign phase 2, step 1: design v0.5 §4.2): one live read of a PR (state and head) over the
@@ -63,6 +73,8 @@ const REQUEST_FIELDS = {
   'archive-usage': ['batchId'],
   'pr-head': ['batchId', 'pr'],
   'memory-ready': ['batchId'],
+  'archive-prune': ['batchId'],
+  'rebuild-bundle': ['batchId'],
 };
 
 export function validateRequest(v) {
@@ -78,8 +90,32 @@ export function validateRequest(v) {
 }
 
 const PROOF_KEYS = ['linuxUnitsInactive', 'containersZero'];
+const count = n => Number.isSafeInteger(n) && n >= 0;
+const codeOrNull = c => c === null || (typeof c === 'string' && CODE.test(c));
+// The exact shape of an archive-prune answer's facts (clued-ci-resident-linux archive-prune), at most 16 deletions per pass.
+export function validatePrune(p) {
+  const code = 'MAILBOX_RESPONSE_PRUNE_REFUSED';
+  exactKeys(p, ['rule', 'refused', 'classes', 'protected', 'deferred', 'deleted', 'deletedBytes', 'stopped'], code);
+  exactKeys(p.rule, ['classBudgetBytes', 'minKeepPerClass', 'maxDeletesPerPass'], code);
+  check(Object.values(p.rule).every(count) && codeOrNull(p.refused) && count(p.deferred) && count(p.deletedBytes), code);
+  check(Array.isArray(p.deleted) && p.deleted.length <= 16, code);
+  for (const d of p.deleted) { exactKeys(d, ['name', 'class', 'bytes'], code); check(PRUNE_NAME.test(d.name) && ['success', 'failure'].includes(d.class) && count(d.bytes), code); }
+  check(p.deletedBytes === p.deleted.reduce((a, d) => a + d.bytes, 0), code);
+  if (p.classes !== null) {
+    exactKeys(p.classes, ['success', 'failure'], code);
+    for (const c of Object.values(p.classes)) {
+      exactKeys(c, ['directories', 'bytes', 'deleteDirectories', 'deleteBytes', 'refused'], code);
+      check(count(c.directories) && count(c.bytes) && count(c.deleteDirectories) && count(c.deleteBytes) && codeOrNull(c.refused), code);
+    }
+  }
+  check(p.protected === null || (exactKeys(p.protected, ['directories', 'bytes', 'complete'], code), count(p.protected.directories) && count(p.protected.bytes) && typeof p.protected.complete === 'boolean'), code);
+  check(p.stopped === null || (exactKeys(p.stopped, ['name', 'code', 'partial'], code), PRUNE_NAME.test(p.stopped.name) && CODE.test(p.stopped.code) && typeof p.stopped.partial === 'boolean'), code);
+  check(p.refused === null || (p.classes === null && p.deleted.length === 0), code);
+  return p;
+}
+
 export function validateResponse(v, request) {
-  exactKeys(v, ['contract', 'requestId', 'kind', 'ok', 'code', 'proof', 'directory', 'verified', 'usage', 'pull', 'jobTree', 'memory', 'observedAt'], 'MAILBOX_RESPONSE_KEYS_REFUSED');
+  exactKeys(v, ['contract', 'requestId', 'kind', 'ok', 'code', 'proof', 'directory', 'verified', 'usage', 'pull', 'jobTree', 'memory', 'prune', 'observedAt'], 'MAILBOX_RESPONSE_KEYS_REFUSED');
   check(v.contract === RESPONSE_CONTRACT && v.requestId === request.requestId && v.kind === request.kind, 'MAILBOX_RESPONSE_IDENTITY_REFUSED');
   check(typeof v.ok === 'boolean' && (v.code === null || (typeof v.code === 'string' && CODE.test(v.code))), 'MAILBOX_RESPONSE_STATUS_REFUSED');
   check(v.proof === null || (exactKeys(v.proof, PROOF_KEYS, 'MAILBOX_RESPONSE_PROOF_REFUSED'), PROOF_KEYS.every(k => typeof v.proof[k] === 'boolean')), 'MAILBOX_RESPONSE_PROOF_REFUSED');
@@ -91,6 +127,7 @@ export function validateResponse(v, request) {
   check(v.jobTree === null || JOB_TREES.includes(v.jobTree), 'MAILBOX_RESPONSE_JOB_TREE_REFUSED');
   check(v.memory === null || (request.kind === 'memory-ready' && (exactKeys(v.memory, ['order', 'blocks'], 'MAILBOX_RESPONSE_MEMORY_REFUSED'),
     Number.isSafeInteger(v.memory.order) && v.memory.order >= 0 && v.memory.order <= 10 && Number.isSafeInteger(v.memory.blocks) && v.memory.blocks >= 0)), 'MAILBOX_RESPONSE_MEMORY_REFUSED');
+  check(v.prune === null || (request.kind === 'archive-prune' && validatePrune(v.prune)), 'MAILBOX_RESPONSE_PRUNE_REFUSED');
   return v;
 }
 
@@ -220,7 +257,7 @@ export class Mailbox {
   }
 
   async respond(request, fields) {
-    const response = validateResponse({ contract: RESPONSE_CONTRACT, requestId: request.requestId, kind: request.kind, ok: false, code: null, proof: null, directory: null, verified: null, usage: null, pull: null, jobTree: null, memory: null, observedAt: isoNow(this.clock), ...fields }, request);
+    const response = validateResponse({ contract: RESPONSE_CONTRACT, requestId: request.requestId, kind: request.kind, ok: false, code: null, proof: null, directory: null, verified: null, usage: null, pull: null, jobTree: null, memory: null, prune: null, observedAt: isoNow(this.clock), ...fields }, request);
     await writeNewAtomic(path.join(this.responses, `${request.requestId}.json`), response);
     return response;
   }

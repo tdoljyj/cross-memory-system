@@ -121,6 +121,20 @@ export function admissionReferenceTime(facts, now) {
   const t = plain(facts) ? bridgeResponseTimes.get(facts) : undefined;
   return t && Number.isSafeInteger(now) && t.issuedAt <= now && now < t.expiresAt ? t.issuedAt : now;
 }
+// The same for the refs snapshot of a bridge v4 remote-refs response (Task 576231fa; protocol.mjs validateResponse
+// measures its 30 s at the response's issuedAt). The Linux worker notes the issuance and expiry of exactly the snapshot
+// object it hands the gitleaks adapter; while that response is valid, a check of the snapshot's freshness
+// (validateRemoteSnapshot) measures from the issuance when it asks remoteRefsReferenceTime. Any other object keeps `now`.
+const bridgeRefsTimes = new WeakMap();
+export function noteBridgeRefsTimes(refs, response) {
+  const issuedAt = at(response?.issuedAt), expiresAt = at(response?.expiresAt);
+  if (plain(refs) && Number.isSafeInteger(issuedAt) && Number.isSafeInteger(expiresAt) && issuedAt < expiresAt) bridgeRefsTimes.set(refs, { issuedAt, expiresAt });
+  return refs;
+}
+export function remoteRefsReferenceTime(refs, now) {
+  const t = plain(refs) ? bridgeRefsTimes.get(refs) : undefined;
+  return t && Number.isSafeInteger(now) && t.issuedAt <= now && now < t.expiresAt ? t.issuedAt : now;
+}
 
 // The one admission check of the Linux scanner adapters and the bridge v4 protocol (replaces the three
 // per-adapter v1 validateAdmission copies). A scanner stage's admission is always made under the batch

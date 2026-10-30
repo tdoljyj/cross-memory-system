@@ -15,7 +15,7 @@ const A = 'a'.repeat(40), B = 'b'.repeat(40), C = 'c'.repeat(40), D = 'd'.repeat
 const bytes = value => Buffer.from(canonical(value));
 function physicalExecution(claimId, headSha = A) {
   const nonce = 'a'.repeat(32), sid = 'S-1-5-21-1-2-3-1015';
-  const job = makeJobV2({ repo, pr: 937, headSha, baseSha: B, role: 'gitleaks', sourceManifestSha256: 'e'.repeat(64),
+  const job = makeJobV2({ repo, pr: 937, headSha, baseSha: B, testSha: headSha, role: 'gitleaks', sourceManifestSha256: 'e'.repeat(64),
     createdAt: '2026-10-29T05:00:00Z', attempt: 1 });
   const identity = makeIndependentPublicationIdentity({ job, claim: { claim_id: claimId, fence: 4, execution_epoch: 2 }, controller_id: randomUUID() });
   const plan = { contract: PLAN_CONTRACT_V2, enabled: true, stage: 3, entryRole: 'check-publisher',

@@ -24,7 +24,7 @@ async function world(t, options = {}) {
   const record = validateRecordV2(docs, { now: t0 });
   const accepted = Object.fromEntries(REFS.map(k => [k, record.accepted[k]]));
   const claim = { claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(t0 + 3_600_000) };
-  const jobs = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(t0 - (options.createdAgeMs ?? 60_000)), attempt: 1 });
+  const jobs = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(t0 - (options.createdAgeMs ?? 60_000)), attempt: 1 });
   const fixtureRoot = await tempDir(t), dir = path.join(fixtureRoot, 'effects'), auditDir = path.join(fixtureRoot, 'audit');
   fs.mkdirSync(auditDir);
   const rawJournal = await EffectJournal.open(dir);
