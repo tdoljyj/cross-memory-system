@@ -262,13 +262,19 @@ begin
     where id=(p_input->>'artifact_id')::uuid and user_id=u and profile_id=p.id for update;
   select * into t from clued_private.storage_access_digest_recovery_v1 where artifact_id=a.id for update;
   select co.id into cid from clued_private.storage_connections_v1 co
-    where co.profile_id=p.id and co.owner_id=u and co.revoked_at is null order by co.id limit 1;
+    where co.profile_id=p.id and co.owner_id=u and co.revoked_at is null and co.state='active'
+      and co.profile_version=p.version
+      and not exists(select 1 from clued_private.storage_root_denies_v2 d where d.owner_id=u and d.provider=co.provider
+        and d.provider_subject=co.provider_subject and d.root_folder_id=p.root_folder_id and d.lineage_id is null and d.denied)
+    order by co.id limit 1;
   if a.id is null or a.state<>'active' or a.target_kind<>'directory' or a.access_digest_missing_at is null
     or a.provider_access_digest is not null or a.provider_sharing_digest is not null or p.state<>'active' or cid is null
     or t.artifact_id is null or t.reason not in ('access_differs','version_changed')
     or not clued_private.storage_access_digest_needs_owner_v1(t)
     or t.updated_at<=clock_timestamp()-interval '24 hours'
-    or t.observed_access is distinct from p_input->>'observed_access' then
+    or t.observed_access is distinct from p_input->>'observed_access'
+    -- The row is still the one that observation settled (no other path changed it since).
+    or a.receipt_id is distinct from t.last_receipt_id then
     raise exception 'storage_access_digest_accept_denied' using errcode='42501'; end if;
   req:=jsonb_build_object('idempotency_key','storage-access-digest-accept:'||a.id::text||':'||a.version::text,
     'artifact_id',a.id,'path',a.path,'provider_file_id',a.provider_file_id,'reason',t.reason,
@@ -279,6 +285,12 @@ begin
       version=version+1,updated_at=now(),receipt_id=r.id
     where id=a.id returning * into a;
   delete from clued_private.storage_access_digest_recovery_v1 where artifact_id=a.id;
+  -- Directories below that had no baseline are checked again at once, now
+  -- that this one has (not a registry change: no version bump).
+  update clued_private.resource_center_artifacts_v1 x set access_digest_attempted_at=null
+    from clued_private.storage_access_digest_recovery_v1 t2
+    where t2.artifact_id=x.id and t2.reason='version_changed' and x.user_id=u and x.profile_id=p.id
+      and x.state='active' and x.access_digest_missing_at is not null and starts_with(x.path,a.path||'/');
   refs:=jsonb_build_array(jsonb_build_object('kind','system','role','primary','id',cid));
   ev:=clued_private.m1_append_event_row(u,null,r.id,r.canonical_version,'extension:storage:access_digest_owner_accepted',refs,
     'project:'||p.project_id::text,null,req-'idempotency_key',req->>'idempotency_key',r.request_sha256,

@@ -359,13 +359,15 @@ export default function StorageConnections() {
   // directory's current sharing in one step; the server binds it to exactly
   // the observation shown here.
   const acceptSharing = async (d: AttentionDirectory) => {
-    if (!d.observed_access || busy) return;
+    if (!d.observed_access || operation.current) return;
+    operation.current = true; setBusy(true);
     let accepted = false;
     try {
       await accountRequest({ action: "digest_accept", artifact_id: d.artifact_id, observed_access: d.observed_access });
       accepted = true;
     } catch { /* reported below */ }
-    setSharingNote(accepted ? `已确认“${d.path || "根目录"}”的当前共享设置，Agent 可以继续向它写入。`
+    finally { operation.current = false; }
+    setSharingNote(accepted ? `已确认“${d.path || "根目录"}”的当前共享设置；它下面的目录会随后自动核对。`
       : `“${d.path || "根目录"}”的共享设置刚刚又有变化或暂时无法确认，系统会重新核对后再请你确认。`);
     void refresh();
   };

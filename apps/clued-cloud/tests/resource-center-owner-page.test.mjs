@@ -660,12 +660,13 @@ test("storage step 3: directories without an access digest are recovered in the 
   assert.match(a.text(),/另有 20 个未列出/);assert.match(a.text(),/后台正在自动核对 1 个目录/);
   assert.equal(/运行目录检查|访问权限摘要/.test(a.text()),false);
   // Where the program cannot decide, the Owner confirms in one step, bound to the observation shown.
-  const confirm=a.button("确认当前共享设置");confirm.props.onClick();await a.settle();
+  const confirm=a.button("确认当前共享设置");confirm.props.onClick();confirm.props.onClick();await a.settle();
+  assert.equal(a.featureCalls().filter(c=>c.url==="/v1/storage/owner"&&JSON.parse(c.init.body).action==="digest_accept").length,1,"never sent twice");
   assert.deepEqual(JSON.parse(a.request("/v1/storage/owner","digest_accept").init.body),
     {action:"digest_accept",artifact_id:"20000000-0000-4000-8000-000000000001",observed_access:"a".repeat(64)});
   a.respond(a.pending("/v1/storage/owner","digest_accept"),{status:"committed"});await a.settle();
   a.respond(a.pending("/v1/storage/lifecycle","list"),{connections:[{...active}],worker_execution_enabled:false});await a.settle();
-  assert.match(a.text(),/已确认“资料\/对外分享”的当前共享设置/);
+  assert.match(a.text(),/已确认“资料\/对外分享”的当前共享设置；它下面的目录会随后自动核对/);
   for(const missing of [{count:0,directories:[]},undefined]){
     const g=fixture();await g.settle();g.respond(g.pending("/v1/storage/lifecycle","list"),{connections:[{...active,access_digest_missing:missing}],worker_execution_enabled:false});await g.settle();
     assert.equal(/自动核对|暂不写入/.test(g.text()),false);assert.match(g.text(),/Clued_资料中心/);

@@ -673,7 +673,20 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       await admin.query("update clued_private.storage_access_digest_recovery_v1 set updated_at=now()-interval '25 hours' where artifact_id=$1", [stuck.id]);
       await assert.rejects(confirm(stuck, wider), /accept_denied/);
       await admin.query("update clued_private.storage_access_digest_recovery_v1 set updated_at=now() where artifact_id=$1", [stuck.id]);
+      // An observation another path has since superseded is not confirmable (review r3).
+      const saved = (await admin.query("select last_receipt_id from clued_private.storage_access_digest_recovery_v1 where artifact_id=$1", [stuck.id])).rows[0].last_receipt_id;
+      await admin.query("update clued_private.storage_access_digest_recovery_v1 set last_receipt_id=$2 where artifact_id=$1", [stuck.id, ok.receipt_id]);
+      await assert.rejects(confirm(stuck, wider), /accept_denied/);
+      await admin.query("update clued_private.storage_access_digest_recovery_v1 set last_receipt_id=$2 where artifact_id=$1", [stuck.id, saved]);
+      // A directory below with no baseline is checked again at once after the confirmation.
+      const below = await artifactById((await register({ action: "artifact_register", profile_id: target.profile,
+        path: `${target.root}/${TRACK}/no-baseline/below`, provider_file_id: `st-below-${randomUUID()}`, provider_file_version: "1",
+        target_kind: "directory", governance_class: "ordinary", delete_authority: false })).target_refs.find(ref => ref.role === "primary").id);
+      await load(below.id);
+      await commit(below, { observed_version: "2", access_digest: wider });
+      assert.equal((await due()).includes(below.id), false);
       const confirmed = await confirm(stuck, wider);
+      assert.equal((await due()).includes(below.id), true);
       assert.equal(confirmed.status, "committed");
       stuck = await artifactById(stuck.id);
       assert.equal(stuck.provider_access_digest, wider); assert.equal(stuck.access_digest_missing_at, null);
