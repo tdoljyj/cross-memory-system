@@ -1,9 +1,9 @@
 {
   "contract": "clued.production-migration-ledger.v1",
   "database_project": "clued-prod",
-  "exported_at": "2026-10-23T04:42:01.096Z",
-  "history_through": "20261023035740",
-  "row_count": 287,
+  "exported_at": "2026-10-31T18:11:47.221Z",
+  "history_through": "20261031164748",
+  "row_count": 297,
   "rows": [
     {
       "version": "20260823154017",
@@ -2300,6 +2300,86 @@
       "statements_length": 43626,
       "source": "migrations/20261023010000_ci_admission_handover_v1.sql",
       "transform": "identical"
+    },
+    {
+      "version": "20261029092126",
+      "name": "work_claim_independent_publication_v1",
+      "statements_md5": "8ab56ab2bf4004fc30028f766bd1fb6d",
+      "statements_length": 28799,
+      "source": "migrations/20261029050000_work_claim_independent_publication_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261029143401",
+      "name": "resident_upgrade_door_v1",
+      "statements_md5": "8d3dfa20e9403f2b15b7cf831f934de3",
+      "statements_length": 20844,
+      "source": "migrations/20261030010000_resident_upgrade_door_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261031142628",
+      "name": "ci_scheduling_stage1_v1",
+      "statements_md5": "82440797cccc4c8e8502de0c65c158b4",
+      "statements_length": 137928,
+      "source": "migrations/20261023092957_ci_scheduling_stage1_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261031142636",
+      "name": "storage_access_digest_recovery_v1",
+      "statements_md5": "da22bea10de0f21d1aa6768331dab7ac",
+      "statements_length": 22390,
+      "source": "migrations/20261031050000_storage_access_digest_recovery_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261031142642",
+      "name": "merge_train_queue_v1",
+      "statements_md5": "c08a68c3fd8dd6456a3b72a40af23eb7",
+      "statements_length": 70872,
+      "source": "migrations/20261031060000_merge_train_queue_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261031142648",
+      "name": "priority_custom_v1",
+      "statements_md5": "d363c33e264edee8fbf97393201c83ae",
+      "statements_length": 38964,
+      "source": "migrations/20261031070000_priority_custom_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261031142657",
+      "name": "storage_drive_alignment_v1",
+      "statements_md5": "f7de00ba8b2f8563f194e12984f8aa01",
+      "statements_length": 4557,
+      "source": "migrations/20261031080000_storage_drive_alignment_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261031142703",
+      "name": "ci_heartbeat_scope_v1",
+      "statements_md5": "6256be79e34c6ab4368e29d18ea030fd",
+      "statements_length": 17757,
+      "source": "migrations/20261031085000_ci_heartbeat_scope_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261031142710",
+      "name": "merge_train_failover_v1",
+      "statements_md5": "fe936991b818f9d674d2d147be5e69c0",
+      "statements_length": 108629,
+      "source": "migrations/20261031090000_merge_train_failover_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261031164748",
+      "name": "ci_node_registration_binding_expiry_v1",
+      "statements_md5": "052284d66eb21ab0bb177ef8f3e71c64",
+      "statements_length": 4107,
+      "source": "migrations/20261031170000_ci_node_registration_binding_expiry_v1.sql",
+      "transform": "strip_final_newline"
     }
   ],
   "repository_only": [
