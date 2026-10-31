@@ -20,6 +20,11 @@
 //
 // No Linux measurement and no Linux prune without a fresh companion heartbeat (Task 018da927 c): the request would wait
 // for its whole timeout (archive-usage: 3 minutes) and the service loop with it.
+//
+// The merge train's state (step 3c-2b, DESIGN §41.7) is not pruned here: state\v2\train-shadow, train-sweep, green-ledger\closed
+// and the month segments of state\v2\receipts are clued-control's (the service may only read state\v2\receipts), so stage 10
+// prunes and segments them itself (Source v2 resident-v2/state-retention.mjs; its pass records in state\v2\receipts\retention\).
+// The resident's own receipt chain is never deleted: it is closed by month (receipts.mjs), which keeps its start bounded.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CODE, check, fail } from './canonical.mjs';

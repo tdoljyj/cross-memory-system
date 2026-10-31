@@ -20,6 +20,7 @@
 //   - before a check's first publication, and only when this node's own records know nothing of it (no effect key, no
 //     K(head, role)): a check of the same name of this App ends that publication cleanly with ROLE_ALREADY_ON_GITHUB
 //     (nothing published for it, nothing revoked, no HALT). What this node knows keeps its existing path.
+// For a train front batch both count only the checks of that front batch's own jobs (ofJobIds), never a non-front run of H.
 // Pure apart from the one port read.
 export const PUBLISHER_APP_ID = 5368905;
 export const HEAD_PUBLISHED_ON_GITHUB = 'HEAD_PUBLISHED_ON_GITHUB';
@@ -49,9 +50,17 @@ export async function readPublishedChecks(github, headSha, appId = PUBLISHER_APP
   return list.checks.filter(c => c.app.id === appId);
 }
 
-// Which of `names` this App already published on the head: sorted, each once.
-export async function publishedNames(github, headSha, names, appId = PUBLISHER_APP_ID) {
-  if (!Array.isArray(names) || names.length === 0 || names.some(n => typeof n !== 'string' || !n)) fail('published_checks_unconfirmed');
+// Merge train (DESIGN §41.4): a train front batch (S != H) is its own identity (H, S), apart from any non-front run of H.
+// Its checks on H are told apart by their external ids (the scanner's, the work admission's and the control pair's all
+// carry the job id, job-v2.mjs: `<prefix>:v2:<job id>:a<attempt>`, the admission ones then the claim). jobIds: the front
+// subject's job ids (job-v2.mjs#frontJobIdsV2); a check counts only when its external id names one of them.
+const JOB_EXTERNAL_ID = /^independent-ci:(?:staged|native-work-admission|control:[a-z-]{1,40}):v2:([a-f0-9]{64}):a[1-9](?::|$)/;
+export const ofJobIds = (c, jobIds) => typeof c?.external_id === 'string' && jobIds.has(JOB_EXTERNAL_ID.exec(c.external_id)?.[1]);
+
+// Which of `names` this App already published on the head: sorted, each once. jobIds (a train front batch only): only
+// the checks of those jobs count.
+export async function publishedNames(github, headSha, names, appId = PUBLISHER_APP_ID, jobIds = null) {
+  if (!Array.isArray(names) || names.length === 0 || names.some(n => typeof n !== 'string' || !n) || !(jobIds === null || jobIds instanceof Set)) fail('published_checks_unconfirmed');
   const checks = await readPublishedChecks(github, headSha, appId);
-  return [...new Set(checks.map(c => c.name).filter(n => names.includes(n)))].sort();
+  return [...new Set(checks.filter(c => jobIds === null || ofJobIds(c, jobIds)).map(c => c.name).filter(n => names.includes(n)))].sort();
 }

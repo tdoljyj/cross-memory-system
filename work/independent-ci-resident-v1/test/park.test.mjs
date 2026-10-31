@@ -572,7 +572,7 @@ test('step 3a: the stage-8 code lists of the publisher, the stage fact and the e
 });
 
 test('step 3a: the new not-ready answers park the batch and are tried again; the rules ones tell the Owner once a day', async t => {
-  for (const code of ['RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE']) {
+  for (const code of ['RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE', 'TRAIN_MODE_UNREADABLE']) {
     const f = await executorFixture(t, { engine: stage8Engine([notReady(code), notReady(code)], KEY) });
     await f.drop(triggerBytes());
     const first = await f.exec.tick();
@@ -614,6 +614,7 @@ test('step 3a: the PR page and the notifications say why stage 8 writes no green
   assert.match(parkedAs('TRAIN_TEST_MERGE_NOT_READY').description, /^已测通：等 GitHub 算好试合并/);
   assert.match(parkedAs('MERGE_METHODS_NOT_MERGE_ONLY').description, /合并方式不只有 merge/);
   assert.match(parkedAs('GREEN_LEDGER_UNAVAILABLE').description, /绿色台账/);
+  assert.match(parkedAs('TRAIN_MODE_UNREADABLE').description, /^已测通：读不到本机的列车模式/);
   const ended = prPage({ pull, status: board(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'FAILED_CLEAN', code: 'TRAIN_TEST_MERGE_TREE_DIFFERS', klass: 'clean-final', retry: 'new-commit' })), now });
   assert.deepEqual([ended.state, /请推新提交/.test(ended.description)], ['failure', true]);
   const told = notificationEvents({ status: board(b => b.update({ notices: [

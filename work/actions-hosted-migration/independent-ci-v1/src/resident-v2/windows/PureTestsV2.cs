@@ -76,7 +76,8 @@ public static class PureTestsV2 {
    var now=DateTimeOffset.UtcNow;Yes(FormalPublicBoundaryV2.BoundedDeadline(8,now,null)==now.AddMilliseconds(2700000),"window-null");
    Refuse(()=>FormalPublicBoundaryV2.BoundedDeadline(2,now,now.AddMinutes(30)),"window-near");Yes(FormalPublicBoundaryV2.BoundedDeadline(1,now,now.AddDays(30))==now.AddMinutes(15),"window-far");
    Refuse(()=>FormalPublicBoundaryV2.BoundedDeadline(13,now,null),"window-stage");Yes(FormalPublicBoundaryV2.BoundedDeadline(12,now,null)==now.AddMilliseconds(300000),"window-revocation");Yes(FormalPublicBoundaryV2.BoundedDeadline(11,now,null)==now.AddMilliseconds(60000),"window-probe");Yes(FormalPublicBoundaryV2.BoundedDeadline(10,now,null)==now.AddMilliseconds(300000),"window-stage-10");Yes(FormalPublicBoundaryV2.BoundedDeadline(9,now,null)==now.AddMilliseconds(900000),"window-stage-r");
-   // 5a. stage 10 (quota phase 2 step 3c-1): entry train-maintenance, exactly one train run (contract /1, shadow, of the plan's run id)
+   // 5a. stage 10 (quota phase 2 step 3c-1, 3c-2b): entry train-maintenance, exactly one train run (contract /2 of the plan's run id;
+   // the shared table test/fixtures/train-run-cases.json: the same accepted ids and refusals as train-run.mjs)
    Yes(FormalPublicBoundaryV2.RelativeEntryForRole("train-maintenance").EndsWith("src/independent-control-checks-v2/train-maintenance.mjs"),"train-entry");
    Yes(FormalPublicBoundaryV2.StageRole.Length==12&&FormalPublicBoundaryV2.StageMilliseconds[9]==300000&&FormalPublicBoundaryV2.SelectedJobRoles(10,new object[]{new Dictionary<string,object>{{"role","train-run"}}})[0]=="train-run","train-row");
    Yes(FormalPublicBoundaryV2.RelativeEntryForRole("role-probe").EndsWith("src/resident-v2/role-probe-entry.mjs")&&FormalPublicBoundaryV2.SelectedJobRoles(11,new object[]{new Dictionary<string,object>()})[0]=="role-probe-run","probe-entry-row");
@@ -87,10 +88,15 @@ public static class PureTestsV2 {
    Refuse(()=>FormalPublicBoundaryV2.ValidateJobV2(probe,"role-probe-run",new string('c',64)),"probe-no-formal-job");
    foreach(object o in (object[])fixture["trainRuns"]){var run=(Dictionary<string,object>)o;string trId=(string)run["runId"],tm=(string)run["sourceManifestSha256"];
     Yes(FormalPublicBoundaryV2.TrainRunId(run)==(string)run["id"],"train-run-id");FormalPublicBoundaryV2.ValidateTrainRun(run,tm,trId);
-    var on=new Dictionary<string,object>(run);on["mode"]="on";Refuse(()=>FormalPublicBoundaryV2.ValidateTrainRun(on,tm,trId),"train-run-on");
+    var on=new Dictionary<string,object>(run);on["mode"]="on";Refuse(()=>FormalPublicBoundaryV2.ValidateTrainRun(on,tm,trId),"train-run-on-without-since");
     var other=new Dictionary<string,object>(run);Refuse(()=>FormalPublicBoundaryV2.ValidateTrainRun(other,tm,new string('0',16)+"-"+new string('1',12)),"train-run-other-plan");
     var moved=new Dictionary<string,object>(run);moved["repo"]="other/repo";Refuse(()=>FormalPublicBoundaryV2.ValidateTrainRun(moved,tm,trId),"train-run-repo");
     var asJob=new Dictionary<string,object>(run);Refuse(()=>FormalPublicBoundaryV2.ValidateJobV2(asJob,"train-run",tm),"train-run-is-no-job");}
+   var trainCases=fixture["trainRunCases"] as object[];Yes(trainCases!=null&&trainCases.Length>=30,"shared-train-run-cases-present");
+   foreach(object o in trainCases){var row=(Dictionary<string,object>)o;var tj=(Dictionary<string,object>)row["job"];string tn=(string)row["name"];
+    string trId=tj.ContainsKey("runId")?tj["runId"] as string:null,tm=tj.ContainsKey("sourceManifestSha256")?tj["sourceManifestSha256"] as string:null;
+    if((bool)row["accepted"]){FormalPublicBoundaryV2.ValidateTrainRun(tj,tm,trId);Yes(FormalPublicBoundaryV2.TrainRunId(tj)==(string)tj["id"],"train-run-shared-id:"+tn);}
+    else Refuse(()=>FormalPublicBoundaryV2.ValidateTrainRun(tj,tm,trId),"train-run-shared-refusal:"+tn);}
    // 5b. stage R: entry relay-publisher, a non-empty ordered subset of gitleaks/trivy, nothing else
    Yes(FormalPublicBoundaryV2.RelativeEntryForRole("relay-publisher").EndsWith("src/hosted-relay-v1/relay-entry-v2.mjs"),"relay-entry");
    Func<string[],object[]> js=rs=>{var o=new object[rs.Length];for(int i=0;i<rs.Length;i++)o[i]=new Dictionary<string,object>{{"role",rs[i]}};return o;};

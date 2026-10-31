@@ -82,6 +82,17 @@ foreach ($a in @($broker | Where-Object { $_.SecurityIdentifier.Value -ceq $res 
   if (([int]$a.AceFlags -band [int][Security.AccessControl.AceFlags]::InheritOnly) -ne 0) { Yes (($a.AccessMask -band $fileWrite) -eq 0) 'broker-requests:resident-files-read-only' }
 }
 Yes (@($broker | Where-Object { $_.SecurityIdentifier.Value -ceq 'S-1-3-4' }).Count -eq 1) 'broker-requests:owner-rights'
+# DESIGN.md section 41.7: clued-control reads the Owner's train-shadow review mark in owner\train-review only, never owner\ itself.
+$keys = @($acl.Keys)
+Yes ($keys.IndexOf('owner') -ge 0 -and $keys.IndexOf('owner') -lt $keys.IndexOf('owner\train-review')) 'train-review:planned-after-owner'
+Yes (@(Aces $acl['owner'] | Where-Object { $_.SecurityIdentifier.Value -ceq $ControllerSid }).Count -eq 0) 'owner:no-controller-ace'
+$review = Aces $acl['owner\train-review']
+$by = @{}; foreach ($a in $review) { $by[$a.SecurityIdentifier.Value] = $a }
+Yes ($review.Count -eq 5 -and $by['S-1-5-18'].AccessMask -eq 0x1F01FF -and $by['S-1-5-32-544'].AccessMask -eq 0x1F01FF) 'train-review:five-aces-system-admins-full'
+Yes ($by[$ControllerSid].AccessMask -eq 0x1200a9 -and $by[$res].AccessMask -eq 0x1200a9 -and $by[$OwnerSid].AccessMask -eq 0x1301bf) 'train-review:controller-and-resident-read-owner-modify'
+Yes (@($review | Where-Object { [int]$_.AceFlags -ne 3 -or [string]$_.AceQualifier -cne 'AccessAllowed' }).Count -eq 0) 'train-review:inherited-allow-only'
+$retentionText = Get-Content -LiteralPath (Join-Path (Split-Path -Parent (Split-Path -Parent $here)) 'actions-hosted-migration\independent-ci-v1\src\resident-v2\state-retention.mjs') -Raw
+Yes ($retentionText.Contains("TRAIN_REVIEW_DIRECTORY = 'train-review'") -and $retentionText.Contains('\\owner\\${TRAIN_REVIEW_DIRECTORY}\\${TRAIN_REVIEW_NAME}')) 'train-review:stage-10-reads-this-folder'
 
 # 4. verify-resident.ps1 checks.
 foreach ($name in @('Get-DaclPart', 'ConvertFrom-ScPrivs', 'Test-ExactPrivileges', 'Test-TokenRecord', 'Test-BrokerBinaryPath', 'Test-ScSddl', 'Read-ReviewedPublicJson')) {
@@ -216,6 +227,44 @@ Yes ($installText -match '(?m)^\$SecretTargets = \[ordered\]@\{[^\r\n]+\}') 'pre
 Yes ($verifyText.Contains($targetsLine)) 'verify-has-the-same-secret-targets'
 Yes ($targetsLine.Contains("'C:\ProgramData\CluedControl\trusted\controller-checks-app.pem'") -and $targetsLine.Contains("'C:\ProgramData\CluedIndependentCI\secrets\ci-admission.token'")) 'secret-targets-are-the-runtime-paths'
 Yes ($NodeIdentityKeys.Count -eq 16 -and $NodeIdentityRefs.Count -eq 7) 'identity-keys'
+
+# 4c-2. The node heartbeat token (merge train step 3c-2b, DESIGN.md section 41.6a): its own folder, SYSTEM and Administrators full
+#       control, the Owner read-only, nobody else; placed only when -HeartbeatTokenFile is given; never the ci-admission or upgrade token.
+foreach ($name in @('install-resident.ps1:Get-HeartbeatDirectorySddl', 'install-resident.ps1:Get-HeartbeatFileSddl', 'install-resident.ps1:Get-HeartbeatTokenPlan')) { Yes ($functions.ContainsKey($name)) ('present:' + $name) }
+foreach ($name in @('install-resident.ps1:Get-HeartbeatDirectorySddl', 'install-resident.ps1:Get-HeartbeatFileSddl')) { . ([scriptblock]::Create($functions[$name])) }
+$hbOwner = 'S-1-5-21-1-2-3-1001'
+foreach ($case in @(@((Get-HeartbeatDirectorySddl $hbOwner), 0x1200a9, 'directory'), @((Get-HeartbeatFileSddl $hbOwner), 0x120089, 'file'))) {
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor($case[0])
+  $aces = @($raw.DiscretionaryAcl)
+  $by = @{}; foreach ($a in $aces) { $by[$a.SecurityIdentifier.Value] = $a.AccessMask }
+  Yes (($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0 -and $aces.Count -eq 3) ('heartbeat-acl-protected-three-aces:' + $case[2])
+  Yes ($by['S-1-5-18'] -eq 0x1F01FF -and $by['S-1-5-32-544'] -eq 0x1F01FF) ('heartbeat-acl-system-admins-full:' + $case[2])
+  Yes ($by[$hbOwner] -eq $case[1] -and ($by[$hbOwner] -band 0xD0156) -eq 0) ('heartbeat-acl-owner-read-only:' + $case[2])
+}
+Yes ($installText.Contains('[string]$HeartbeatTokenFile') -and $installText.Contains("`$HeartbeatTokenDirectory = 'C:\ProgramData\CluedIndependentCI\resident\secrets\heartbeat'")) 'heartbeat-parameter-and-folder'
+Yes ($installText.Contains("`$HeartbeatTokenTarget = `$HeartbeatTokenDirectory + '\ci-node-heartbeat.token'")) 'heartbeat-target-is-the-companion-path'
+$hbPlan = $functions['install-resident.ps1:Get-HeartbeatTokenPlan']
+Yes ($hbPlan.Contains("throw 'HEARTBEAT_TOKEN_IS_THE_CI_ADMISSION_TOKEN'") -and $hbPlan.Contains("throw 'HEARTBEAT_TOKEN_IS_THE_UPGRADE_TOKEN'") -and $hbPlan.Contains("throw 'HEARTBEAT_TOKEN_TARGET_EXISTS_NOT_OVERWRITTEN'")) 'heartbeat-plan-refusals'
+Yes ($installText.IndexOf('upgrader = (Get-UpgraderPlan $pkg)') -lt $installText.IndexOf('heartbeatToken = (Get-HeartbeatTokenPlan)')) 'heartbeat-planned-after-the-upgrade-token'
+Yes ($installText.Contains('if ($ht.supplied) {') -and $installText.Contains('New-DirectoryWithAcl $ht.directory $ht.directorySddl') -and $installText.Contains("Write-NewSecret `$ht.target `$script:SecretBytes['heartbeatToken'] `$ht.sddl")) 'heartbeat-placed-only-when-supplied'
+$companionHeartbeat = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $here) 'src\companion-heartbeat.mjs') -Raw
+Yes ($companionHeartbeat.Contains("HEARTBEAT_TOKEN_DIR = path.join('secrets', 'heartbeat')") -and $companionHeartbeat.Contains("HEARTBEAT_TOKEN_FILE = 'ci-node-heartbeat.token'")) 'heartbeat-companion-reads-the-same-file'
+# Review R3 MINOR 8: an existing heartbeat folder is used only with exactly its ACL (install), and verify-resident.ps1 checks the folder
+# and the token file against the same SDDL.
+foreach ($name in @('install-resident.ps1:Test-HeartbeatDirectoryAcl', 'verify-resident.ps1:Test-HeartbeatTokenAcl', 'verify-resident.ps1:Get-DaclPart')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }
+Yes ($hbPlan.Contains("Test-HeartbeatDirectoryAcl `$HeartbeatTokenDirectory `$entry.directorySddl)) { throw 'HEARTBEAT_TOKEN_DIRECTORY_ACL_MISMATCH' }") -and $hbPlan.IndexOf('Test-HeartbeatDirectoryAcl') -lt $hbPlan.IndexOf('if ($HeartbeatTokenFile) {')) 'heartbeat-existing-folder-acl-checked-supplied-or-not'
+$hbVerify = $functions['verify-resident.ps1:Test-HeartbeatTokenAcl']
+$hbSid = 'S-1-5-21-1-2-3-1001'
+Yes ($hbVerify.Contains("'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;' + `$ownerSid + ')'") -and ('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;' + $hbSid + ')') -ceq (Get-HeartbeatDirectorySddl $hbSid)) 'heartbeat-verify-directory-sddl-is-the-install-one'
+Yes ($hbVerify.Contains("'O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x120089;;;' + `$ownerSid + ')'") -and ('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x120089;;;' + $hbSid + ')') -ceq (Get-HeartbeatFileSddl $hbSid)) 'heartbeat-verify-file-sddl-is-the-install-one'
+$hbRoot = Join-Path $Scratch 'hb-root'
+$r = Test-HeartbeatTokenAcl $hbRoot $hbSid
+Yes ($r.ok -eq $true -and $r.detail -ceq 'NOT_INSTALLED') 'heartbeat-verify-not-installed-is-ok'
+$hbDir = Join-Path $hbRoot 'secrets\heartbeat'; [void][IO.Directory]::CreateDirectory($hbDir)   # an ordinary folder: the user's own ACL
+$r = Test-HeartbeatTokenAcl $hbRoot $hbSid
+Yes ($r.ok -eq $false -and $r.detail -ceq 'DIRECTORY_ACL') 'heartbeat-verify-wrong-folder-acl-fails'
+Yes (-not (Test-HeartbeatDirectoryAcl $hbDir (Get-HeartbeatDirectorySddl $hbSid))) 'heartbeat-install-wrong-folder-acl-refused'
+Yes ($installText.Contains("Record 'heartbeat-token-acl'") -eq $false -and (Get-Content -LiteralPath (Join-Path $here 'verify-resident.ps1') -Raw).Contains("Record 'heartbeat-token-acl' `$hbAcl.ok `$hbAcl.detail")) 'heartbeat-verify-records-the-check'
 
 # The shared cases: this PowerShell derivation is held to the JavaScript one (test/node-identity.test.mjs reads the same file).
 $idCasesText = [IO.File]::ReadAllText((Join-Path $here '..\test\fixtures\node-identity-cases.json'), (New-Object Text.UTF8Encoding($false, $true)))

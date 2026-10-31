@@ -5,7 +5,7 @@
 // 00-reserved -> 10-started -> 90-terminal.
 //
 // Execution is burned per HEAD, not per key: 10-started also creates heads/<headKey>.json, where
-// headKey covers only (repo, head, Source, attempt). A head that started once is never started again,
+// headKey covers only (repo, head, Source, attempt; and S for a train front batch). A head that started once is never started again,
 // whatever base, PR number or claim a later trigger names. Attempt 2 exists only as the one automatic
 // attempt of attempts.mjs (Owner decision 1b5d3687), recorded create-only in ledger-attempt2/ (at most
 // one per attempt-1 key, and only after that key ended FAILED_CLEAN); there is no attempt 3. A reservation that ended before 10-started ran no scanner and published no success (the
@@ -94,9 +94,12 @@ export function batchKey(s) {
     ...(Object.hasOwn(s, 'testSha') ? { testSha: s.testSha } : {}) });
 }
 
+// Merge train (DESIGN §41.4): a front batch is its own identity (H, S), apart from any non-front run of H, so its head key
+// names S too; every subject without S keeps the key it always had.
 export function headKey(s) {
   subjectCheck(s);
-  return digest({ contract: HEAD_KEY_CONTRACT, repo: s.repo, headSha: s.headSha, sourceManifestSha256: s.sourceManifestSha256, attempt: s.attempt });
+  return digest({ contract: HEAD_KEY_CONTRACT, repo: s.repo, headSha: s.headSha, sourceManifestSha256: s.sourceManifestSha256, attempt: s.attempt,
+    ...(Object.hasOwn(s, 'testSha') ? { testSha: s.testSha } : {}) });
 }
 
 const stamp = clock => isoNow(clock).replace(/[:.]/g, '');

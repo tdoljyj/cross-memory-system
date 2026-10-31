@@ -29,6 +29,11 @@ export const NOT_ADMITTED_CODES = Object.freeze(['NATIVE_NOT_ADMITTED', 'OWNER_R
 // published (Owner decision 1b5d3687; the resident decides eligibility, see attempts.mjs).
 export const TRANSIENT_CODES = Object.freeze(['NATIVE_ADMISSION_UNAVAILABLE', 'GITHUB_TRANSIENT_UNAVAILABLE', 'BRIDGE_TRANSPORT_TIMEOUT',
   'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'ARCHIVE_PRECONDITION_NOT_MET']);
+export const TRAIN_CODES = Object.freeze(['TRAIN_FRONT_JOB_WITHOUT_TRAIN', 'TRAIN_SINGLE_GREEN_NOT_PROVEN', 'TRAIN_TEST_COMMIT_GONE', 'TRAIN_REVOKE_UNCONFIRMED',
+  'TRAIN_SWEEP_INCOMPLETE', 'TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_FRONT_BUDGET_SHORT', 'TRAIN_FRONT_ATTEMPTS_USED',
+  'RELAY_TRAIN_FRONT_LOCAL',
+  // Stages 1 and 8: a train front job whose stage directory's train-mode.json exists but is unusable (review R1 m4).
+  'TRAIN_MODE_UNREADABLE']);
 // Clean, but final for this head and attempt (never retried automatically).
 export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_INPUT_RESULT_MISSING', 'BROKER_RUNNER_NOT_ORIGINAL_STOPPED', 'BROKER_REQUEST_EXPIRED',
   'BROKER_REQUEST_REFUSED', 'STAGE_HELPER_PREFLIGHT_REFUSED', 'STAGE_CHILD_REFUSED', 'STAGE_CHILD_TIMEOUT', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 'BATCH_CLAIM_CHANGED',
@@ -45,10 +50,14 @@ export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_
   // stage 1 found a role or control check before Native was asked, or a role this node knew nothing of was already
   // there before its first publication (stage R: an ON_GITHUB plan row). Nothing was published for that role (an earlier
   // stage of the batch may have published its own); a new commit is needed.
-  HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB]);
+  HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB,
+  // Merge train (DESIGN §41.2–41.4): clean endings with zero side effects. Stages 1 and 8 refuse a train front job while the
+  // train is not on; stage 8 writes no green the sweep proof does not cover, and ends a front batch whose S GitHub dropped;
+  // the stage-10 decisions; the relay's reason for keeping a front batch local (not a failure).
+  ...TRAIN_CODES]);
 // The stage-8 answers that travel as their own code (publisher.mjs STAGE8_NOT_READY_REASONS and STAGE8_FINAL_REASONS).
 const STAGE8_OWN_CODES = new Set(['RESIDENT_QUEUE_HEAD_NOT_REACHED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_BASE_MOVED', 'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN',
-  'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE', 'TRAIN_TEST_MERGE_TREE_DIFFERS']);
+  'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE', 'TRAIN_TEST_MERGE_TREE_DIFFERS', 'TRAIN_SINGLE_GREEN_NOT_PROVEN', 'TRAIN_TEST_COMMIT_GONE']);
 // Never clean: something may still run, or a publication may exist unsettled, or an identity conflicts.
 export const UNKNOWN_CODES = Object.freeze(['BROKER_RESPONSE_UNCONFIRMED', 'STAGE_HELPER_NOT_STOPPED_IN_TIME', 'STAGE_ORIGINAL_NOT_RESTORED',
   'BROKER_CONFIGURATION_CONFLICT', 'NATIVE_RECEIPT_UNCONFIRMED', 'STAGE_CHILD_TREE_UNCONFIRMED', 'STAGE_OUTCOME_MISSING', 'PUBLICATION_UNCERTAIN',
@@ -124,6 +133,7 @@ export function outcomeFailureCode(outcome, stageNumber) {
   if (r === ROLE_ALREADY_ON_GITHUB_REASON || r === ROLE_ALREADY_ON_GITHUB) return ROLE_ALREADY_ON_GITHUB;
   if (r === 'RESIDENT_QUEUE_HEAD_NOT_REACHED' || r === 'RESIDENT_MERGE_QUEUE_NOT_JOINED' || r === 'RESIDENT_BASE_MOVED') return r;
   if (stageNumber === 8 && STAGE8_OWN_CODES.has(r)) return r;
+  if ((r === 'TRAIN_FRONT_JOB_WITHOUT_TRAIN' || r === 'TRAIN_MODE_UNREADABLE') && (stageNumber === 1 || stageNumber === 8)) return r;
   if (r === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE') return 'REMOTE_REFS_CHANGED_SINCE_BUNDLE';
   if (BRIDGE_TIMEOUTS.has(r)) return 'BRIDGE_TRANSPORT_TIMEOUT';
   if (TRANSPORT_REASONS.has(r)) return r.startsWith('full_admission_') || r === 'NATIVE_ADMISSION_UNAVAILABLE' ? 'NATIVE_ADMISSION_UNAVAILABLE' : 'GITHUB_TRANSIENT_UNAVAILABLE';
@@ -184,7 +194,9 @@ export const BROKER_NO_LAUNCH_CODES = Object.freeze(['BROKER_RUNNER_NOT_ORIGINAL
 const trainFactsOrNull = f => { try { return validateTrainFacts(f); } catch { return null; } };
 
 // The one stage fact the resident engine parses (engine-windows.mjs#parseStageFact keeps v1 names).
-export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha256, broker, receipt, receiptBytes, outcome, outcomeBytes, controllerSid, preflightCode = null, expectedJobIds = null }) {
+// trainJobMode (stage 10): the mode of the sealed train-run job (jobs.json, invoke-stage.mjs); the facts' own mode must be it.
+export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha256, broker, receipt, receiptBytes, outcome, outcomeBytes, controllerSid, preflightCode = null, expectedJobIds = null,
+  trainJobMode = null }) {
   const fact = { contract: STAGE_FACT_CONTRACT, stage, nonce, manifest_sha256: workManifestSha256, state: 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED',
     failure_code: null, scm_start_call_issued: false, original_binary_restored: false, complete_original_readback: false, configuration_conflict_detected: false,
     tree_cleanup_confirmed: false, tree_active_processes: null, root_exit_confirmed: false, native_receipt_sha256: null, outcome: null, relay: null, train: null, broker_no_launch: false };
@@ -255,7 +267,12 @@ export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha
       return { ...fact, state: SUCCESS_STATE, roleProbe: probe };
     }
     if (plan.stage === TRAIN_STAGE_NUMBER) {
-      if (!boundOutcome || boundOutcome.status !== 'TRAIN_FACTS' || boundOutcome.sideEffects !== 0 || boundOutcome.mayHavePublished !== false || !trainFacts) return done('STAGE_OUTCOME_MISSING');
+      // Shadow writes nothing. In on and revoke-only mode (§41.3, §41.4) revocations, touch, adopt, return, keepalive and the
+      // watermark are side effects of a normal ending, and the outcome says it may have published exactly when there were any.
+      // The mode judged is the sealed job's, never only the facts' own (review R1 m8, R2 minor 6).
+      const effects = trainFacts && trainFacts.mode !== 'shadow' ? boundOutcome?.mayHavePublished === boundOutcome?.sideEffects > 0
+        : boundOutcome?.sideEffects === 0 && boundOutcome.mayHavePublished === false;
+      if (!boundOutcome || boundOutcome.status !== 'TRAIN_FACTS' || !effects || !trainFacts || trainFacts.mode !== trainJobMode) return done('STAGE_OUTCOME_MISSING');
       return { ...fact, state: SUCCESS_STATE };
     }
     if (plan.stage === RELAY_STAGE_NUMBER) {

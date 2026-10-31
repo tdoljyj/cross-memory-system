@@ -195,3 +195,22 @@ test('the status view: positions among the rows that may run now, an estimated s
   assert.equal(v[2].nextAt - now(), 10 * MIN);
   assert.equal(v[2].reason, 'OWNER_REVIEW_REQUIRED');
 });
+
+test('step 3c-2b: a train front commit carries S and its attempt, goes first, supersedes a waiting commit, never a running batch; it survives a reload', async t => {
+  const { q, dir, now } = await fresh(t);
+  q.offer(trig(7, 1), now(), OPTS);
+  q.offer(trig(8, 2), now(), OPTS);
+  const S = '9'.repeat(40);
+  assert.deepEqual(q.offerFront({ pr: 8, headSha: H(3), baseSha: B, testSha: S, attempt: 1 }, now(), OPTS).action, 'front');
+  const c = q.candidates(now());
+  assert.deepEqual(c.map(x => [x.pr, x.testSha ?? null, x.frontAttempt ?? null]), [[8, S, 1], [7, null, null]], 'the front first');
+  assert.deepEqual(q.row(8).superseded.map(s => s.headSha), [H(2)]);
+  q.begin(8, H(3), KEY, 'queued', now());
+  assert.equal(q.row(8).running.testSha, S);
+  assert.equal(q.offerFront({ pr: 8, headSha: H(3), baseSha: B, testSha: S, attempt: 2 }, now(), OPTS).action, 'busy');
+  for (const bad of [{ testSha: H(3) }, { attempt: 3 }, { testSha: 'x' }]) assert.throws(() => q.offerFront({ pr: 8, headSha: H(3), baseSha: B, testSha: S, attempt: 1, ...bad }, now(), OPTS), { code: 'QUEUE_FRONT_INVALID' });
+  await q.save();
+  const again = await RunQueue.open(dir, now);
+  assert.equal(again.row(8).running.testSha, S);
+  assert.throws(() => validateQueue({ ...again.data, rows: [{ ...again.data.rows.find(r => r.pr === 8), current: { ...again.row(8).current, frontAttempt: 5 } }] }), { code: 'QUEUE_FILE_INVALID' });
+});
