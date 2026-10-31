@@ -26,7 +26,11 @@ type Issued = { token: string; binding_id: string; expires_at: string; replaced:
 const object = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
 const strings = (value: unknown) => Array.isArray(value) ? value.map(String) : [];
 const ROLES: Record<string, string> = { "ci-admission": "CI 准入", "release-door": "发布门口" };
-const SCOPE_LABELS: Record<string, string> = { 'context:read': '读取内容', 'context:write': '新增和修改内容', 'audit:read': '读取审计回执' };
+const SCOPE_LABELS: Record<string, string> = { 'context:read': '读取内容', 'context:write': '新增和修改内容', 'audit:read': '读取审计回执',
+  'ci:heartbeat': '仅发送常驻节点心跳（不能读取任何资料）' };
+// A heartbeat token (Task f2e9a8c6) carries only ci:heartbeat: it reads nothing and
+// no other interface accepts it. It is issued in its own two steps and never rotated.
+const heartbeatOnly = (row: Row) => row.scopes !== null && row.scopes.length === 1 && row.scopes[0] === 'ci:heartbeat';
 // Where each role's token lives on GitHub (PermissionSimplification §3.5). A
 // rotation moves the role at once, but the stored secret does not follow.
 const ROLE_SECRETS: Record<string, string> = {
@@ -139,6 +143,9 @@ export default function HeadlessBindings() {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [heartbeatLabel, setHeartbeatLabel] = useState("");
+  const [heartbeatDays, setHeartbeatDays] = useState(90);
+  const [heartbeatPending, setHeartbeatPending] = useState<Pending | null>(null);
   const current = useRef<Session | null>(null);
   const epoch = useRef(0);
 
@@ -153,6 +160,7 @@ export default function HeadlessBindings() {
       ++epoch.current;
       setList(null); setEligible([]); setChosen({}); setReplaces(null); setPending(null); setIssued(null);
       setLabel(""); setError(""); setNotice(""); setWorking(false);
+      setHeartbeatLabel(""); setHeartbeatPending(null);
     });
     return () => { disposed = true; ++lifetime.current; data.subscription.unsubscribe(); };
   }, []);
@@ -248,6 +256,44 @@ export default function HeadlessBindings() {
     } finally { if (epoch.current === generation) setWorking(false); }
   }
 
+  // A heartbeat token: the same two Native steps, with no permission to choose.
+  async function previewHeartbeat() {
+    if (!current.current || working) return;
+    const generation = epoch.current;
+    setWorking(true); setError(""); setNotice(""); setIssued(null);
+    try {
+      const value = await rpc("clued_headless_heartbeat_binding_confirmation_issue_v1", { label: heartbeatLabel.trim(), days: heartbeatDays });
+      if (epoch.current !== generation) return;
+      if (value.status !== "issued" || typeof value.confirmation_token !== "string" || typeof value.view_digest !== "string"
+        || !object(value.confirmation_view)) throw new RequestFailure("服务返回了无法识别的确认内容。");
+      setHeartbeatPending({ confirmation_token: value.confirmation_token, view_digest: value.view_digest, view: value.confirmation_view });
+    } catch (problem) {
+      if (epoch.current === generation) setError(failure(problem, "暂时无法生成预览。"));
+    } finally { if (epoch.current === generation) setWorking(false); }
+  }
+
+  async function confirmHeartbeat() {
+    const target = heartbeatPending;
+    if (!target || working) return;
+    const generation = epoch.current;
+    setWorking(true); setError("");
+    try {
+      const value = await rpc("clued_headless_heartbeat_binding_issue_v1",
+        { confirmation_token: target.confirmation_token, view_digest: target.view_digest });
+      if (epoch.current !== generation) return;
+      setHeartbeatPending(null);
+      if (value.status === "committed" && typeof value.token === "string" && typeof value.binding_id === "string") {
+        setIssued({ token: value.token, binding_id: value.binding_id, expires_at: String(value.expires_at), replaced: null });
+        setCopied(false); setHeartbeatLabel("");
+      } else {
+        setNotice("这次确认已经处理过。令牌只在签发时显示一次；如果没有保存，请撤销它并重新签发。");
+      }
+      await load();
+    } catch (problem) {
+      if (epoch.current === generation) { setHeartbeatPending(null); setError(failure(problem, "签发结果未确认，请刷新后查看，不要重复提交。")); }
+    } finally { if (epoch.current === generation) setWorking(false); }
+  }
+
   // Headless tokens are revoked through their v12 authorization; legacy ones
   // have none, so Clued revokes them through clued_headless_binding_revoke_v1.
   async function revoke(row: Row) {
@@ -318,6 +364,32 @@ export default function HeadlessBindings() {
       </div>
     </section>}
   </div>;
+  const heartbeatView = heartbeatPending?.view;
+  const heartbeatForm = <div aria-label="心跳令牌表单">
+    <h3 style={{ fontSize: 17, margin: "22px 0 8px" }}>常驻节点心跳令牌</h3>
+    <p className="oauth-copy">权限：{SCOPE_LABELS['ci:heartbeat']}。只给常驻节点的心跳程序用；任何读取、写入、审计接口都不接受它。签发后在「CI 准入自动接班」页把它挂到对应节点。</p>
+    <fieldset disabled={working || pending !== null || heartbeatPending !== null} style={{ border: "none", padding: 0, margin: 0, minWidth: 0 }}>
+      <label className="oauth-form" style={{ display: "block" }}>名称（例如 TURING 心跳）
+        <input value={heartbeatLabel} maxLength={80} onChange={event => setHeartbeatLabel(event.target.value)} /></label>
+      <label style={{ display: "block", margin: "12px 0" }}>有效期
+        <select value={heartbeatDays} onChange={event => setHeartbeatDays(Number(event.target.value))}>
+          {DAYS.map(d => <option key={d} value={d}>{`${d} 天`}</option>)}
+        </select></label>
+      <button className="primary-button" type="button" onClick={() => void previewHeartbeat()} disabled={!heartbeatLabel.trim()}>预览心跳令牌</button>
+    </fieldset>
+    {heartbeatPending && heartbeatView && <section aria-label="确认签发心跳令牌" className="oauth-note" style={{ marginTop: 16 }}>
+      <strong>请确认要签发的心跳令牌</strong>
+      <dl className="oauth-details">
+        <div><dt>名称</dt><dd>{String(heartbeatView.label)}</dd></div>
+        <div><dt>有效期</dt><dd>{`签发后 ${String(heartbeatView.days)} 天`}</dd></div>
+        <div><dt>权限</dt><dd>{strings(heartbeatView.scopes).map(scope => SCOPE_LABELS[scope] ?? `未识别范围：${scope}`).join("、")}</dd></div>
+      </dl>
+      <div className="oauth-actions">
+        <button className="oauth-secondary" type="button" disabled={working} onClick={() => setHeartbeatPending(null)}>取消</button>
+        <button className="primary-button" type="button" disabled={working} onClick={() => void confirmHeartbeat()}>{working ? "正在签发…" : "确认签发心跳令牌"}</button>
+      </div>
+    </section>}
+  </div>;
   return (
     <section aria-label="无头令牌" style={{ borderTop: "1px solid var(--line)", marginTop: 28, paddingTop: 20 }}>
       <h2 style={{ fontSize: 20, margin: "0 0 8px" }}>无头令牌（CI、runner、脚本）</h2>
@@ -349,22 +421,24 @@ export default function HeadlessBindings() {
 
       {list === null ? <p role="status">{working ? "正在读取无头令牌…" : "无头令牌尚未读取。"}</p> : <>
         {!replaces && form}
+        {!replaces && heartbeatForm}
         {list.length === 0 && <p className="oauth-copy">还没有无头令牌。</p>}
         {list.map(row => <article key={row.binding_id} style={{ border: "1px solid var(--line)", borderRadius: 12, padding: 14, marginTop: 12 }}>
           <strong style={{ overflowWrap: "anywhere" }}>{row.agent_name}</strong>
           <dl className="oauth-details">
-            <div><dt>类型</dt><dd>{row.kind === "legacy" ? "旧方式创建" : "无头令牌"}</dd></div>
+            <div><dt>类型</dt><dd>{row.kind === "legacy" ? "旧方式创建" : heartbeatOnly(row) ? "常驻节点心跳令牌" : "无头令牌"}</dd></div>
             <div><dt>状态</dt><dd>{row.active === false ? '已失效' : row.expires_at && Date.parse(row.expires_at) <= Date.now() ? '已过期' : row.active === true ? '当前有效' : '尚未确认'}</dd></div>
             <div><dt>有效期至</dt><dd>{row.replaced_by ? `已被替换，${when(row.expires_at)} 失效` : when(row.expires_at)}</dd></div>
             {row.kind === 'legacy' && <><div><dt>客户端操作范围</dt><dd>{row.scopes === null ? '未提供，尚未确认' : row.scopes.length ? row.scopes.map(scope => SCOPE_LABELS[scope] ?? `未识别范围：${scope}`).join('、') : '未声明可用操作'}</dd></div>
               {!row.grants && <div><dt>具体资源范围</dt><dd>授权明细未提供，不能推断为全部上下文；需要核对实际资格和资源授权。</dd></div>}</>}
             {row.roles.length > 0 && <div><dt>专用角色</dt><dd>{row.roles.map(r => ROLES[r] ?? r).join("、")}</dd></div>}
             {secretsFor(row.roles).length > 0 && <div><dt>令牌存放在</dt><dd>{secretsFor(row.roles).join("；")}</dd></div>}
-            {row.grants && <div><dt>权限</dt><dd>{authorizationDisplayOrder(row.grants).map(grant => `${resourceName(grant)}：${grant.actions.map(a => ACTIONS[a] ?? a).join("、")}`).join("；")}</dd></div>}
+            {heartbeatOnly(row) && <div><dt>权限</dt><dd>{SCOPE_LABELS['ci:heartbeat']}</dd></div>}
+            {row.grants && !heartbeatOnly(row) && <div><dt>权限</dt><dd>{authorizationDisplayOrder(row.grants).map(grant => `${resourceName(grant)}：${grant.actions.map(a => ACTIONS[a] ?? a).join("、")}`).join("；")}</dd></div>}
             <div><dt>连接编号</dt><dd>{row.binding_id}</dd></div>
           </dl>
           <div className="oauth-actions">
-            {!row.replaced_by && replaces?.binding_id !== row.binding_id && <button className="oauth-secondary" type="button"
+            {!row.replaced_by && !heartbeatOnly(row) && replaces?.binding_id !== row.binding_id && <button className="oauth-secondary" type="button"
               disabled={working || pending !== null || unavailable(row)} onClick={() => rotate(row)}>轮换为新令牌</button>}
             <button className="oauth-secondary" style={{ color: "#ffc5c5" }} type="button"
               disabled={working || pending !== null} onClick={() => void revoke(row)}>撤销</button>
