@@ -266,7 +266,10 @@ jobs:
       # Windows runners carry cap-python312 as `python`; -X utf8 because -I ignores PYTHONIOENCODING.
       - name: Self-test the panel (no network, Windows)
         if: runner.os == 'Windows'
-        run: python -I -X utf8 tests/test_compute_panel.py
+        run: |
+          python --version
+          if ($LASTEXITCODE -ne 0) { throw 'compute-panel: python (cap-python312) is not on PATH on this Windows runner' }
+          python -I -X utf8 tests/test_compute_panel.py
       - name: Rebuild the panel issue (Windows)
         if: runner.os == 'Windows'
         env:
