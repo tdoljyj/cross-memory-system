@@ -72,12 +72,6 @@ function relativeSegments(path, root) {
   return path.slice(root.length + 1).split("/").filter(Boolean);
 }
 
-function directorySegments(path, root, targetKind) {
-  const segments = relativeSegments(path, root);
-  if (targetKind === "directory") return segments;
-  return segments.slice(0, -1);
-}
-
 export function evaluateResourceCenterMutation(input) {
   const profile = input?.profile ?? {};
   const operation = input?.operation;
@@ -157,13 +151,14 @@ export function evaluateResourceCenterMutation(input) {
     }
   }
 
-  // Status semantics are forbidden at the mutation destination. The source is
-  // intentionally not blocked so an admitted move/rename can remediate an
-  // already-illegal status folder by moving material back into a legal topic;
-  // adopting an item there (P7) writes nothing and is what makes that possible.
-  if (destination && isWithin(destination, managedRoot)) {
-    const forbidden = directorySegments(destination, managedRoot, targetKind)
-      .find((segment) => statusNames.has(foldName(segment)));
+  // No status-semantic directory hierarchy grows: a directory may not be
+  // created, moved or renamed to, or under, a status-named folder. A file
+  // written into a status-named folder that already exists is allowed (Owner
+  // Decision f382c494: the rules stay, ordinary writes are not refused). The
+  // source is never blocked, so material can be moved back into a legal topic;
+  // adopting an item there (P7) writes nothing.
+  if (destination && isWithin(destination, managedRoot) && targetKind === "directory") {
+    const forbidden = relativeSegments(destination, managedRoot).find((segment) => statusNames.has(foldName(segment)));
     if (forbidden) {
       return deny("STATUS_SEMANTIC_DIRECTORY_FORBIDDEN", { directory: forbidden });
     }
