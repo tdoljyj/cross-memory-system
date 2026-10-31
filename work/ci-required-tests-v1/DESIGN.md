@@ -13,7 +13,7 @@
    - `ci-suites`：常驻层 Node/Python 测试、离线演练、Source v2 测试、组件版本检查、runner 费用策略检查、准入自测、选择脚本自测；
    - `migration-verify`：迁移在**生产 schema** 上验证，并检出漂移。
 2. 生产 schema 漂移检查不需要任何生产凭据：生产的 schema 只读快照（不含数据、不含秘密）提交在仓库里，PR 作业只读这个文件。它对今晚的真实 bug 有效：在最近 158 个迁移文件上只命中一处，正是 `20261023092957_ci_scheduling_stage1_v1` 里的 `b.expires_at`（§4.5）。
-3. **前置条件（独立审核 B1）**：准入的门禁守卫只接受 `GATE_JOB_SHA256` 里登记过的 `admission-gate` 字节。新 gate（自建 runner 加独立 CI 准入来源）要先登记，摘要 `cba210b1db348367ba2332a6be5712aff39840531dbba393f075365f1dc2ba44`，而且常驻节点执行准入用的是**安装时钉住的** `clued-work-admission.mjs`（`one-shot.mjs` 核对 `evaluatorSha256`）。所以顺序是：登记 PR 合入 → 常驻节点 Source 升级到含这个摘要的版本 → 本 PR 才能被准入（§7、§8）。
+3. **前置条件（独立审核 B1）**：准入的门禁守卫只接受 `GATE_JOB_SHA256` 里登记过的 `admission-gate` 字节。新 gate（自建 runner 加独立 CI 准入来源）要先登记，摘要 `9c582144f424d1bc9ef7d3b048d3b7771c7b639ef5544bc04a8a80515c52b2f2`，而且常驻节点执行准入用的是**安装时钉住的** `clued-work-admission.mjs`（`one-shot.mjs` 核对 `evaluatorSha256`）。所以顺序是：登记 PR 合入 → 常驻节点 Source 升级到含这个摘要的版本 → 本 PR 才能被准入（§7、§8）。
 4. 常驻层（`work/independent-ci-resident-v1/`、Source v2）的代码在本 PR 里**没有改动**。六项现有必需检查照旧由 App `5368905` 发布；三项新检查由 GitHub Actions（App `15368`）在自建 runner 上产出。
 5. main 上本来就红的测试按**测试名**列进 `scripts/ci/ci-known-failures.json`，照样运行；列表外的失败让检查失败，列表内的测试变绿时给出提示，修好一条删一条。
 6. 首次对照发现了生产里的真实漂移（§4.6），已作为已审例外记入快照，交给 Task `16b795e6` 处理。
@@ -34,7 +34,7 @@
 
 ### 3.1 结构
 
-1. `admission-gate`（每次推送只有一个）：在 trusted base 上运行 `clued-work-admission.mjs --mode gate`，`CLUED_ADMISSION_GATE_SOURCE=independent-ci-native-work-admission`，等这个 head 上 App `5368905` 的 `kooyumi-work-admission`，最多 10 分钟。字节与 `contract-placement.yml` 已登记的 gate（`3f48159e…`）只差 `runs-on` 一行。
+1. `admission-gate`（每次推送只有一个）：在 trusted base 上运行 `clued-work-admission.mjs --mode gate`，`CLUED_ADMISSION_GATE_SOURCE=independent-ci-native-work-admission`，等这个 head 上 App `5368905` 的 `kooyumi-work-admission`，最多 10 分钟。字节与 `contract-placement.yml` 已登记的 gate（`3f48159e…`）只差 `runs-on` 一行（摘要 `9c582144…`）。
 2. 三个检查 job 各自 checkout **trusted base** 到 `trusted/`、候选到 `candidate/`。选择、命令行和已知失败清单都来自 `trusted/scripts/ci/`；候选只是被测代码。
 3. `node trusted/scripts/ci/ci-required-selection.mjs --check <检查名>` 用 API 列出 PR 改动文件，决定跑哪些套件；`--run <套件> --root candidate` 依次执行。
 
@@ -141,7 +141,7 @@
 
 ## 7. 两个 PR 与顺序
 
-1. **门禁登记 PR**（单独开）：在 `scripts/ci/clued-work-admission.mjs` 的 `GATE_JOB_SHA256` 里登记新 gate 的确切摘要 `cba210b1…`，并在 `clued-work-admission.test.mjs` 里断言它是“`contract-placement.yml` 的 gate 只把 `runs-on` 换成自建 Linux 池”。只改这两个文件。
+1. **门禁登记 PR**（单独开）：在 `scripts/ci/clued-work-admission.mjs` 的 `GATE_JOB_SHA256` 里登记新 gate 的确切摘要 `9c582144…`，并在 `clued-work-admission.test.mjs` 里断言它是“`contract-placement.yml` 的 gate 只把 `runs-on` 换成自建 Linux 池”。只改这两个文件。
 2. 常驻节点的 Source 升级到含这次登记的 `clued-work-admission.mjs`（常驻准入用的是安装时钉住的副本）。
 3. **PR #971**（本 PR）：新工作流、选择脚本、已知失败清单、漂移检查、`coverage.json` 一条。在 2 完成之前，它的 `kooyumi-work-admission` 会以 `admission_gate_changed` 拒绝。#967 先合（已在 `be3ea75b` 修好账本）。
 
