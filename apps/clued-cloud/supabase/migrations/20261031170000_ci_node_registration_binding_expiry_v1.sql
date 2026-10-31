@@ -1,14 +1,3 @@
--- clued_ci_node_registration_v1 read b.expires_at from a public.clued_agent_bindings
--- row (Task bae1899f). The column exists in the repository's migration chain but
--- not in production, so every /ci-nodes registration failed there with
--- `record "b" has no field "expires_at"` (TURING, 2026-10-31T16:41Z), shown on the
--- page only as 请求被拒绝. Read it the way clued_private.binding_live_v1 already
--- does, through to_jsonb(b), so both schemas work: a binding without the column
--- (or with null) registers with connection_expires_at null.
---
--- Only that one expression changes; signature, security, grants and every check
--- are as in 20261023092957_ci_scheduling_stage1_v1.sql.
-
 create or replace function public.clued_ci_node_registration_v1(p_input jsonb) returns jsonb
 language plpgsql volatile security definer set search_path='' as $$
 declare u uuid; p uuid; b public.clued_agent_bindings; n clued_private.ci_nodes_v1; d text; r uuid; sid text;
