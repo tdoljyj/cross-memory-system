@@ -3,6 +3,7 @@
 // facts it receives without loading the Windows-only evaluator (scripts/ci/clued-work-admission.mjs).
 // No I/O. full-admission-v2.mjs re-exports everything here unchanged.
 import { digest } from './proof.mjs';
+import { freshStamp } from './clock-skew.mjs';
 import { sameClaimGeneration } from './job-v2.mjs';
 import { mergeQueueEntryV2, MERGE_QUEUE_STATES } from './independent-control-checks-v2/queue-facts.mjs';
 
@@ -99,7 +100,7 @@ export function admittedFactsMatchJobV2(facts, job, now, { batchClaim = null } =
     || facts.sourceManifestSha256 !== job.sourceManifestSha256
     || facts.executionHandoverPending !== false || !plain(facts.observedClaim) || facts.observedClaim.claimId !== facts.claimId
     || facts.observedClaim.fence !== facts.fence || facts.observedClaim.epoch !== facts.epoch || facts.observedClaim.expiresAt !== facts.claimExpiresAt
-    || !Number.isSafeInteger(now) || !(at(facts.observedAt) <= now) || now - at(facts.observedAt) > 30_000 || !(at(facts.claimExpiresAt) > now)) return false;
+    || !freshStamp(at(facts.observedAt), now) || !(at(facts.claimExpiresAt) > now)) return false;
   if (batchClaim && !sameClaimGeneration(facts.observedClaim, batchClaim)) return false;
   const { observationSha256, ...body } = facts;
   return sha.test(observationSha256 ?? '') && digest(body) === observationSha256;

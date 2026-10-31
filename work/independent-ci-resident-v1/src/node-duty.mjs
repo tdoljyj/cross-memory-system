@@ -14,19 +14,22 @@
 //   - anything else is a result text (已完成, 失败, 未准入, ...) and never counts as on duty.
 // The duty statuses are written again every DUTY_REFRESH_MS even when unchanged, so "written within DUTY_WINDOW_MS"
 // means "still alive" to the other node. A STANDBY node writes nothing under its queue context except 已交班; it may
-// write one reminder per (PR, commit, reason) under STANDBY_CONTEXT when the node on duty does not pick a PR up (§5.3).
+// write one reminder per (PR, commit, reason) under its own standbyContext(<node>) when the node on duty does not pick a PR
+// up (§5.3).
 // What another node wrote counts by its LATEST status on a commit, whatever that says: a result after 当班 is no duty.
 //
 // The node's name and mode come from status.json `node` (C1/C3 fill it; `source` is for the people who read it). Absent (null): one node, ACTIVE, named by
-// the companion's configuration (default DEFAULT_NODE), and no take-over check: the behaviour of a single node.
+// the companion's configuration (its pinned node profile), and no take-over check: the behaviour of a single node. No name at all
+// fails closed: the pass writes nothing (Task 9cac75be A3: there is no default node; any number of nodes, never two).
 //
 // Take-over check (§5.2): every time the node's role probe confirms the role (status.json node.probe), the companion
 // reads the open PR heads' statuses, at most TAKEOVER_READS_PER_PASS a pass. Another node's 当班 or 双活停机 written
 // within DUTY_WINDOW_MS, by the Owner's own account and in the exact template, locks this node: it holds the
 // executor's intake pause (C6, holder `dual-active`, renewed while locked, so it never runs out under a lock) and
 // writes 双活停机 on its own queued commits. The lock is released only (review N1) when this node's probe finds it no
-// longer holds the role (STANDBY: it writes 已交班), when the other node wrote 已交班 on a commit where it was seen on
-// duty, or when the Owner resets it (an intake resume of holder `dual-active`, tools/rearm-tool.mjs, seen twice a minute
+// longer holds the role (STANDBY: it writes 已交班), when EVERY node seen on duty has handed over (已交班 on a commit where it
+// was seen) or aged out (none of those commits shows it on duty within DUTY_WINDOW_MS; Task 9cac75be A1: any number of
+// nodes), or when the Owner resets it (an intake resume of holder `dual-active`, tools/rearm-tool.mjs, seen twice a minute
 // apart, never while the executor cannot read its intake state). Two locked nodes never release each other.
 import { CODE, HEX40 } from './canonical.mjs';
 import { intakePauseRequest, intakeResumeRequest } from './intake-pause.mjs';
@@ -36,10 +39,14 @@ const MIN = 60_000;
 export const NODE_NAME = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 // status.json `node.source` (contract /6, C3): the first 12 hex digits of the installed CI Source's ciSourceManifestSha256.
 export const NODE_SOURCE = /^[0-9a-f]{12}$/;
-export const DEFAULT_NODE = 'turing';
 export const LEGACY_CONTEXT = 'resident-queue (info only)';
-export const STANDBY_CONTEXT = 'resident-standby (info only)';
+// The shared standby context of before Task 9cac75be A2 (never written again; each node now writes its own).
+export const LEGACY_STANDBY_CONTEXT = 'resident-standby (info only)';
 export const nodeContext = name => `resident-queue/${name} (info only)`;
+export const standbyContext = name => `resident-standby/${name} (info only)`;
+// A lock keeps at most this many nodes seen on duty, and this many commits per node.
+export const LOCK_NODES_MAX = 16;
+export const LOCK_HEADS_MAX = 20;
 const NODE_CONTEXT = /^resident-queue\/([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?) \(info only\)$/;
 // Another node's duty status counts for this long after it was written; a node rewrites its own well inside it.
 export const DUTY_WINDOW_MS = 30 * MIN;
@@ -78,11 +85,15 @@ const hhmm = ms => new Date(ms).toISOString().slice(11, 16) + 'Z';
 const iso = ms => new Date(ms).toISOString();
 const clip = s => (s.length <= 140 ? s : `${s.slice(0, 139)}…`);
 
-// status.json `node` (parsed by status.mjs) and the companion's own name -> { name, mode, probe, known }.
-export function nodeOf(status, fallbackName = DEFAULT_NODE) {
+// status.json `node` (parsed by status.mjs) and the companion's own name -> { name, mode, probe, known }, or null when
+// neither names a node (fail closed: never a default name).
+export function nodeOf(status, fallbackName = null) {
   const n = status?.node;
-  if (!n) return { name: fallbackName, mode: 'ACTIVE', probe: null, known: false };
-  return { name: NODE_NAME.test(n.name ?? '') ? n.name : fallbackName, mode: MODES.includes(n.mode) ? n.mode : 'UNCERTAIN', probe: n.probe ?? null, known: true };
+  const fallback = NODE_NAME.test(fallbackName ?? '') ? fallbackName : null;
+  const name = n && NODE_NAME.test(n.name ?? '') ? n.name : fallback;
+  if (!name) return null;
+  if (!n) return { name, mode: 'ACTIVE', probe: null, known: false };
+  return { name, mode: MODES.includes(n.mode) ? n.mode : 'UNCERTAIN', probe: n.probe ?? null, known: true };
 }
 
 // The stall code when this node is not on duty now (null: on duty). The commit condition is the caller's.
@@ -112,8 +123,9 @@ export function stalledText(code, status) {
   const text = STALL_TEXT[code] ? STALL_TEXT[code](status ?? {}) : '执行器已停机，等 Owner 复位';
   return { state: (STALL_TEXT[code] && !STALL_ERROR.has(code)) ? 'pending' : 'error', description: `${WORD.STALLED}（${code}）：${text}`, kind: 'stalled' };
 }
+// other: one node's name, or the names of every node seen on duty.
 export const dualText = other => ({ state: 'error', kind: 'dual',
-  description: `${WORD.DUAL}：另一节点 ${other} 也在当班，本节点已停止取新触发；请在 KooYomi 收回其中一个的 ci-admission` });
+  description: clip(`${WORD.DUAL}：另一节点 ${[other].flat().join('、')} 也在当班，本节点已停止取新触发；请在 KooYomi 收回其中一个的 ci-admission`) });
 // 已交班 over a duty text; over a result written since, the result stays readable after the word (review NIT 2, M3).
 export function handedText(last = null) {
   if (last && last.kind === 'result' && typeof last.description === 'string') return { state: last.state, kind: 'handed', description: clip(`${WORD.HANDED}：${last.description}`) };
@@ -163,8 +175,11 @@ export function othersOnHead(list, ownName, ownerLogin) {
 
 // Another node on duty on this head now (its latest status is 当班 or 双活停机 and was written within DUTY_WINDOW_MS).
 export function onDutyElsewhere(others, now) {
-  for (const d of others.values()) if ((d.word === WORD.ON || d.word === WORD.DUAL) && now - d.at <= DUTY_WINDOW_MS) return d;
-  return null;
+  return allOnDutyElsewhere(others, now)[0] ?? null;
+}
+// Every other node on duty on this head now (review R3 M4: with three or more nodes two others may be on duty on one head).
+export function allOnDutyElsewhere(others, now) {
+  return [...others.values()].filter(d => (d.word === WORD.ON || d.word === WORD.DUAL) && now - d.at <= DUTY_WINDOW_MS);
 }
 
 // §5.3, for a STANDBY node: why a head should be picked up and is not, or null. firstSeenAt: when this companion first saw
@@ -207,8 +222,9 @@ export const loginArgv = ghExe => [ghExe, 'api', '--method', 'GET', 'user', '--j
 
 // The duty memory, kept by the reporter in its LocalStore (the Owner's profile). Lost memory only means one more check.
 //   mode: the last definite mode seen (ACTIVE or STANDBY); probeAt: the probe whose take-over check ran; lock: null or
-//   { since, reason, other, heads, holdAt (last hold request written), holdUntil (the hold's end as status.json last
-//   showed it), releaseReadAt, resetSeenAt }; handover: { head: since } heads owed an 已交班; seen: { 'pr:head': first
+//   { since, reason, other (the first node seen), others: [{ node, heads, cleared }] (every node seen on duty, the commits
+//   it was seen on, whether it handed over or aged out), heads (all of them), holdAt (last hold request written), holdUntil
+//   (the hold's end as status.json last showed it), releaseReadAt, resetSeenAt }; handover: { head: since } heads owed an 已交班; seen: { 'pr:head': first
 //   seen open }; reminded: { key: at }; toasts: { key: { title, body, at } } notifications still to show.
 export const freshMemory = () => ({ mode: null, probeAt: null, lock: null, handover: {}, seen: {}, reminded: {}, toasts: {} });
 const KEPT_MS = 86_400_000;
@@ -225,12 +241,31 @@ export function validMemory(raw, now) {
   for (const k of ['handover', 'seen', 'reminded', 'toasts']) m[k] = bag(raw[k]);
   if (raw.lock && typeof raw.lock === 'object') {
     const l = raw.lock;
-    m.lock = { since: num(l.since) ?? now, reason: LOCK_REASONS.includes(l.reason) ? l.reason : 'dual-active', other: NODE_NAME.test(l.other ?? '') ? l.other : 'unknown',
-      heads: Array.isArray(l.heads) ? l.heads.filter(h => HEX40.test(h ?? '')).slice(0, 20) : [], holdAt: num(l.holdAt), holdUntil: num(l.holdUntil),
+    const other = NODE_NAME.test(l.other ?? '') ? l.other : 'unknown';
+    const heads = Array.isArray(l.heads) ? l.heads.filter(h => HEX40.test(h ?? '')).slice(0, LOCK_HEADS_MAX) : [];
+    // A lock of before A1 names one node: it stands for every head. A node entry that does not fit stays as 'unknown' (never
+    // released by a partner: fail safe).
+    const others = Array.isArray(l.others) && l.others.length > 0
+      ? l.others.slice(0, LOCK_NODES_MAX).map(o => ({ node: NODE_NAME.test(o?.node ?? '') ? o.node : 'unknown',
+        heads: Array.isArray(o?.heads) ? o.heads.filter(h => HEX40.test(h ?? '')).slice(0, LOCK_HEADS_MAX) : [], cleared: o?.cleared === true }))
+      : [{ node: other, heads, cleared: false }];
+    m.lock = { since: num(l.since) ?? now, reason: LOCK_REASONS.includes(l.reason) ? l.reason : 'dual-active', other, others, heads, holdAt: num(l.holdAt), holdUntil: num(l.holdUntil),
       releaseReadAt: num(l.releaseReadAt), resetSeenAt: num(l.resetSeenAt) };
   }
   return m;
 }
+
+// The nodes a take-over check found on duty ([{ node, headSha }]) as a lock's `others`, first seen first.
+export function lockOthers(found) {
+  const by = new Map();
+  for (const f of found) {
+    if (!by.has(f.node)) { if (by.size >= LOCK_NODES_MAX) continue; by.set(f.node, { node: f.node, heads: [], cleared: false }); }
+    const o = by.get(f.node);
+    if (!o.heads.includes(f.headSha) && o.heads.length < LOCK_HEADS_MAX) o.heads.push(f.headSha);
+  }
+  return [...by.values()];
+}
+const pending = lock => lock.others.filter(o => !o.cleared).map(o => o.node);
 export function pruneMemory(m, now) {
   for (const b of [m.seen, m.reminded]) for (const [k, v] of Object.entries(b)) if (!(now - Date.parse(v) < KEPT_MS)) delete b[k];
   for (const [k, v] of Object.entries(m.toasts)) if (!(now - Date.parse(v?.at) < KEPT_MS)) delete m.toasts[k];
@@ -282,6 +317,8 @@ export class NodeDuty {
   async prepare({ status, pulls, now, posted = {} }) {
     const m = this.memory;
     const node = this.node = nodeOf(status, this.fallbackName);
+    // No node name anywhere: the pass writes nothing (pr-status.mjs#pass: a duty that cannot be worked out).
+    if (!node) throw new Error('NODE_NAME_REQUIRED');
     const own = nodeContext(node.name);
     const events = [];
     // Role changes count between definite modes only: an UNCERTAIN in between changes nothing (review m3).
@@ -316,12 +353,15 @@ export class NodeDuty {
       this.check = null;
       if (found.length > 0 && this.writeRequest) {
         const reason = wasActive ? 'dual-active' : 'takeover-refused';
-        m.lock = { since: now, reason, other: found[0].node, heads: [...new Set(found.map(f => f.headSha))].slice(0, 20), holdAt: null, holdUntil: null, releaseReadAt: now, resetSeenAt: null };
+        const others = lockOthers(found);
+        m.lock = { since: now, reason, other: others[0].node, others, heads: [...new Set(found.map(f => f.headSha))].slice(0, LOCK_HEADS_MAX), holdAt: null, holdUntil: null,
+          releaseReadAt: now, resetSeenAt: null };
+        const names = others.map(o => o.node).join('、');
         // Review M3: under a lock the next probe does not take over; the texts say what releases it.
-        const release = `${found[0].node} 收回角色后会写“已交班”，本节点随即自动解除；本节点被收回则转为待命。也可以用 rearm-tool request-intake-resume --holder dual-active 复位。`;
+        const release = `${names} 都收回角色、写“已交班”（或 30 分钟不再当班）后，本节点自动解除；本节点被收回则转为待命。也可以用 rearm-tool request-intake-resume --holder dual-active 复位。`;
         events.push(reason === 'dual-active'
-          ? { key: `dual:${now}`, title: '两个节点同时当班：本节点双活停机', body: `另一节点 ${found[0].node} 也在当班，本节点已停止取新触发。请在 KooYomi 收回其中一个的 ci-admission。${release}` }
-          : { key: `takeover-refused:${now}`, title: '另一节点还在当班：本节点不接班', body: `本节点已持有 ci-admission，但 ${found[0].node} 30 分钟内还在当班，本节点已停止取新触发。请在 KooYomi 收回其中一个的 ci-admission。${release}` });
+          ? { key: `dual:${now}`, title: '多个节点同时当班：本节点双活停机', body: `另一节点 ${names} 也在当班，本节点已停止取新触发。请在 KooYomi 只留一个节点的 ci-admission。${release}` }
+          : { key: `takeover-refused:${now}`, title: '另一节点还在当班：本节点不接班', body: `本节点已持有 ci-admission，但 ${names} 30 分钟内还在当班，本节点已停止取新触发。请在 KooYomi 只留一个节点的 ci-admission。${release}` });
       }
     }
     if (m.lock) await this.keepHold(status, now);
@@ -347,16 +387,16 @@ export class NodeDuty {
         continue;
       }
       c.fails = 0;
-      const d = onDutyElsewhere(others, now);
-      if (d) c.found.push({ node: d.node, headSha: c.heads[c.idx] });
+      for (const d of allOnDutyElsewhere(others, now)) c.found.push({ node: d.node, headSha: c.heads[c.idx] });
       c.idx += 1;
     }
     return true;
   }
 
-  // The three releases of a lock (review N1): this node's probe found it no longer holds the role; the other node wrote
-  // 已交班 on a head where it was seen on duty; the Owner reset it (the dual-active hold gone before its end, after the
-  // executor read our last request, while it can read its intake state, seen twice RESET_CONFIRM_MS apart: review M2).
+  // The three releases of a lock (review N1): this node's probe found it no longer holds the role; every node seen on duty
+  // is cleared, each by an 已交班 on a head where it was seen, or by none of those heads showing it on duty within
+  // DUTY_WINDOW_MS any more (aged out; Task 9cac75be A1); the Owner reset it (the dual-active hold gone before its end, after
+  // the executor read our last request, while it can read its intake state, seen twice RESET_CONFIRM_MS apart: review M2).
   async release({ status, node, now, events }) {
     const lock = this.memory.lock;
     if (node.known && node.mode === 'STANDBY') return this.unlock('role-lost', now, events);
@@ -371,12 +411,27 @@ export class NodeDuty {
     if (now - (lock.releaseReadAt ?? 0) < RELEASE_READ_MS) return;
     // Set before the reads: a head that cannot be read is tried again in RELEASE_READ_MS, not every pass (review M4).
     lock.releaseReadAt = now;
-    for (const head of lock.heads) {
-      if (!this.inBudget()) return;
-      const others = await this.others(head);
-      if (others === null) return;
-      if (others.get(lock.other)?.word === WORD.HANDED) return this.unlock('partner-handed-over', now, events);
+    const reads = new Map();
+    // Every node is read again each time, a cleared one too: a node that aged out and then writes 当班 again on a head it was
+    // seen on (its role back, or a late refresh) holds the lock again; the age-out bound is DUTY_WINDOW_MS, the window every
+    // duty status counts for (onDutyElsewhere, unclaimedReason's 'stale').
+    for (const o of lock.others) {
+      let handed = false, seenOnDuty = false;
+      for (const head of o.heads) {
+        if (!this.inBudget()) return;
+        if (!reads.has(head)) {
+          const others = await this.others(head);
+          if (others === null) return;
+          reads.set(head, others);
+        }
+        const d = reads.get(head).get(o.node);
+        if (d?.word === WORD.HANDED) { handed = true; break; }
+        if (d && (d.word === WORD.ON || d.word === WORD.DUAL) && now - d.at <= DUTY_WINDOW_MS) seenOnDuty = true;
+      }
+      // A node with no head to look at (a lock kept from a shape that did not fit) is never cleared by a partner read.
+      o.cleared = handed || (!seenOnDuty && o.heads.length > 0);
     }
+    if (pending(lock).length === 0) return this.unlock('partner-handed-over', now, events);
   }
 
   async unlock(why, now, events) {
@@ -384,7 +439,7 @@ export class NodeDuty {
     // The Owner's own resume already lifted the hold; otherwise this node lifts its own (never another holder's).
     if (why !== 'owner-reset') await this.writeRequest(intakeResumeRequest({ holder: HOLDER_DUAL, reason: `dual-active lock released: ${why}` }, this.clock));
     this.memory.lock = null;
-    const text = { 'role-lost': '本节点已不持有 ci-admission', 'partner-handed-over': `${lock.other} 已交班`, 'owner-reset': 'Owner 已复位' }[why];
+    const text = { 'role-lost': '本节点已不持有 ci-admission', 'partner-handed-over': `${lock.others.map(o => o.node).join('、')} 已交班或不再当班`, 'owner-reset': 'Owner 已复位' }[why];
     events.push({ key: `unlock:${lock.since}`, title: '双活停机已解除', body: `${text}，本节点恢复取新触发。` });
   }
 
@@ -399,7 +454,7 @@ export class NodeDuty {
     if (held && Number.isFinite(held.until) && held.until - now > HOLD_RENEW_BELOW_MS) return;
     const every = status && now - status.writtenAt <= this.staleMs ? HOLD_WRITE_MS : HOLD_STALE_WRITE_MS;
     if (lock.holdAt !== null && now - lock.holdAt < every) return;
-    await this.writeRequest(intakePauseRequest({ holder: HOLDER_DUAL, minutes: HOLD_MINUTES, reason: `dual-active lock: another node (${lock.other}) on duty` }, this.clock));
+    await this.writeRequest(intakePauseRequest({ holder: HOLDER_DUAL, minutes: HOLD_MINUTES, reason: `dual-active lock: another node (${pending(lock).join(', ') || lock.other}) on duty`.slice(0, 200) }, this.clock));
     lock.holdAt = now;
   }
 
@@ -412,7 +467,7 @@ export class NodeDuty {
     if (!pull.eligible) return base ? { ...base, kind: 'hint' } : null;
     if (!status) return null;
     if (ownLive(status, pull)) {
-      if (this.memory.lock) return dualText(this.memory.lock.other);
+      if (this.memory.lock) return dualText(pending(this.memory.lock).length ? pending(this.memory.lock) : this.memory.lock.other);
       const code = stallCode(status, node, now, this.staleMs);
       if (code) return stalledText(code, status);
       return base ? { state: base.state, description: `${WORD.ON}：${base.description}`, kind: 'duty', ...(base.weak ? { weak: true } : {}) } : null;
@@ -426,7 +481,7 @@ export class NodeDuty {
   //   - 已交班 on every head owed one (prepare), until it is written;
   //   - after the companion started: an open head whose 当班 or 双活停机 of the last DUTY_WINDOW_MS was not described again
   //     gets 停摆（NODE_RESTARTED） (NIT 4); the reporter ends the restart once those are written (m4);
-  //   - STANDBY, §5.3: one reminder per (PR, head, reason) under STANDBY_CONTEXT.
+  //   - STANDBY, §5.3: one reminder per (PR, head, reason) under its own standbyContext(<node>).
   async extra({ posted, described, pulls, now }) {
     const node = this.node, own = nodeContext(node.name), out = [], m = this.memory;
     for (const headSha of Object.keys(m.handover)) {
@@ -465,7 +520,7 @@ export class NodeDuty {
       if (!u) continue;
       const key = `standby:${p.pr}:${p.headSha}:${u.reason}`;
       if (m.reminded[key]) continue;
-      out.push({ headSha: p.headSha, context: STANDBY_CONTEXT, want: standbyText(u, node.name, now), remind: { key, pr: p.pr } });
+      out.push({ headSha: p.headSha, context: standbyContext(node.name), want: standbyText(u, node.name, now), remind: { key, pr: p.pr } });
     }
     if (this.readAt.size > 256) for (const k of [...this.readAt.keys()].slice(0, this.readAt.size - 256)) this.readAt.delete(k);
     return out;

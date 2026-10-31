@@ -39,7 +39,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
  // ordered subset of its job roles (the relay candidates; contract-placement is never relayed).
  public const int RelayStage=9;
  // Stage 10 (quota phase 2 step 3c-1, DESIGN §22.1): train maintenance, outside every batch. Its one job is a train run
- // (train-run.mjs: contract clued.independent-ci.train-run/1), never a job of contract /3.
+ // (train-run.mjs: contract clued.independent-ci.train-run/2, mode shadow, on or revoke-only), never a job of contract /3.
  public const int TrainStage=10;
  public const int RoleProbeStage=11;
  public const int RevocationStage=12;
@@ -154,16 +154,31 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   var identity=new List<object>{"clued.independent-ci.job/3",At(job,"repo"),At(job,"pr"),At(job,"headSha"),At(job,"baseSha"),At(job,"testSha"),At(job,"sourceManifestSha256"),At(job,"role"),At(job,"attempt")};
   byte[] raw=new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(identity));using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(raw)).Replace("-","").ToLowerInvariant();
  }
- // Train run /1: id = sha256(JSON(["clued.independent-ci.train-run/1",repo,runId,mode,sourceManifestSha256])); step 3c-1 knows mode shadow only.
+ // Train run /2 (step 3c-2b, DESIGN §41.7; train-run.mjs is the same table, test/fixtures/train-run-cases.json runs on both):
+ // id = sha256(JSON(["clued.independent-ci.train-run/2",repo,runId,mode,sourceManifestSha256,slotHardCapMinutes,frontBatchBudgetMs,
+ // sweepFreshMs,fullSweepMaxMs,onSince,frontPr,frontHeadSha,frontTestSha,frontAttempt,frontCode,revokeHeadRequestId])).
+ static readonly string[] TrainRunFields={"contract","id","repo","runId","mode","sourceManifestSha256","createdAt","slotHardCapMinutes","frontBatchBudgetMs","sweepFreshMs","fullSweepMaxMs","onSince","frontPr","frontHeadSha","frontTestSha","frontAttempt","frontCode","revokeHeadRequestId"};
+ static readonly string[] TrainRunFront={"frontPr","frontHeadSha","frontTestSha","frontAttempt","frontCode"};
  public static string TrainRunId(Dictionary<string,object> job){
-  var identity=new List<object>{"clued.independent-ci.train-run/1",At(job,"repo"),At(job,"runId"),At(job,"mode"),At(job,"sourceManifestSha256")};
+  var identity=new List<object>{"clued.independent-ci.train-run/2"};foreach(string f in TrainRunFields)if(f!="contract"&&f!="id"&&f!="createdAt")identity.Add(At(job,f));
   byte[] raw=new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(identity));using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(raw)).Replace("-","").ToLowerInvariant();
  }
+ static void Within(Dictionary<string,object> m,string k,long lo,long hi){long v=Int(m,k);if(v<lo||v>hi)Deny("TRAIN_RUN_PARAMS_REQUIRED");}
+ // Exactly what toISOString writes; lower-case UUID; an upper-case code: the JS patterns of train-run.mjs.
+ public static bool IsoMs(object v){var s=v as string;DateTime t;return s!=null&&s.Length==24&&DateTime.TryParseExact(s,"yyyy-MM-dd'T'HH:mm:ss.fff'Z'",CultureInfo.InvariantCulture,DateTimeStyles.AdjustToUniversal|DateTimeStyles.AssumeUniversal,out t);}
+ public static bool LowerUuid(object v){var s=v as string;if(s==null||s.Length!=36)return false;for(int i=0;i<36;i++){char c=s[i];if(i==8||i==13||i==18||i==23){if(c!='-')return false;}else if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')))return false;}return true;}
+ public static bool UpperCode(object v){var s=v as string;if(s==null||s.Length<2||s.Length>80||s[0]<'A'||s[0]>'Z')return false;foreach(char c in s)if(!((c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='_'))return false;return true;}
  public static Dictionary<string,object> ValidateTrainRun(Dictionary<string,object> job,string sourceManifest,string batchId){
-  Fields(job,new[]{"contract","id","repo","runId","mode","sourceManifestSha256","createdAt"});Exact(job,"contract","clued.independent-ci.train-run/1");Exact(job,"repo","tdoljyj/cross-memory-system");
-  Exact(job,"mode","shadow");Sha(job,"id");string run=Text(job,"runId");
+  Fields(job,TrainRunFields);Exact(job,"contract","clued.independent-ci.train-run/2");Exact(job,"repo","tdoljyj/cross-memory-system");
+  string mode=Text(job,"mode");if(mode!="shadow"&&mode!="on"&&mode!="revoke-only")Deny("FIXED_PUBLIC_IDENTITY_REFUSED");Sha(job,"id");string run=Text(job,"runId");
   if(run!=batchId||run.Length!=29||run[16]!='-'||!LowerHex(run.Substring(0,16))||!LowerHex(run.Substring(17))||Sha(job,"sourceManifestSha256")!=sourceManifest)Deny("FIXED_TRAIN_RUN_REQUIRED");
   DateTimeOffset created;if(!DateTimeOffset.TryParse(Text(job,"createdAt"),CultureInfo.InvariantCulture,DateTimeStyles.None,out created)||created>DateTimeOffset.UtcNow.AddMinutes(5))Deny("FIXED_FORMAL_JOB_TIME_REQUIRED");
+  Within(job,"slotHardCapMinutes",60,180);Within(job,"frontBatchBudgetMs",60000,10800000);Within(job,"sweepFreshMs",60000,3600000);Within(job,"fullSweepMaxMs",600000,86400000);
+  // onSince: null in shadow, set in on, either in revoke-only. frontOutcome: all null, or all set in on only. revokeHeadRequestId: null in shadow.
+  object since=At(job,"onSince");if(!(since==null||IsoMs(since))||(mode=="shadow"&&since!=null)||(mode=="on"&&since==null))Deny("TRAIN_RUN_PARAMS_REQUIRED");
+  bool none=true;foreach(string f in TrainRunFront)if(At(job,f)!=null)none=false;
+  if(!none){if(mode!="on"||!Commit(At(job,"frontHeadSha") as string)||!Commit(At(job,"frontTestSha") as string)||!UpperCode(At(job,"frontCode")))Deny("TRAIN_RUN_PARAMS_REQUIRED");Within(job,"frontPr",1,9007199254740991);Within(job,"frontAttempt",1,2);}
+  object request=At(job,"revokeHeadRequestId");if(!(request==null||(mode!="shadow"&&LowerUuid(request))))Deny("TRAIN_RUN_PARAMS_REQUIRED");
   if(TrainRunId(job)!=Text(job,"id"))Deny("DETERMINISTIC_JOB_ID_REQUIRED");return job;
  }
  // C2 probe /1: no PR/head/claim/attempt fields. The complete current node profile is independently pinned by plan /3.

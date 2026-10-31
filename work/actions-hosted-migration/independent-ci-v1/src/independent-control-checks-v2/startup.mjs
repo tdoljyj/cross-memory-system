@@ -8,6 +8,7 @@ import { runEntry, controllerPrincipal, controllerPorts, publicationControllerGi
 import { STATE_V2, stageByNumber } from '../resident-v2/layout.mjs';
 import { STAGE8_CHECK_MS, createProductionControlPublisherV2, queueWindow } from './publisher.mjs';
 import { GreenLedger } from './green-ledger.mjs';
+import { readStageTrainModeFact, trainPortsV2 } from './train-mode.mjs';
 
 export async function main(argv = process.argv.slice(2), output = process.stdout) {
   const startedAt = Date.now();
@@ -20,12 +21,16 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const { admission } = ports;
     const journal = await EffectJournal.open(STATE_V2.effectsControl);
     const github = publicationControllerGithub({ ports, jobs: inputs.jobs, journal, args, record: inputs.record, plan: inputs.plan });
-    // Phase 2, step 3a: the green ledger (migrate-acl.ps1 creates the directory, clued-control only); the train stays off.
+    // Phase 2, step 3a: the green ledger (migrate-acl.ps1 creates the directory, clued-control only).
     // A ledger that cannot be opened never burns the head: publishPair then answers GREEN_LEDGER_UNAVAILABLE and the
     // batch parks (review M2).
     let greenLedger = null;
     try { greenLedger = await GreenLedger.open(STATE_V2.greenLedger); } catch { /* parked by publishPair */ }
-    const publisher = createProductionControlPublisherV2({ github, journal, admission, assertLive: live, record: log, authority: authorityOf(inputs.record.accepted), batchClaim, greenLedger });
+    // §41.2: the installed train.enabled, written by the resident into this stage directory (train-mode.mjs; default off).
+    const { trainMode, unreadable: trainModeUnreadable } = await readStageTrainModeFact(inputs.dir);
+    const train = await trainPortsV2({ trainMode, record: inputs.record, fetchImpl: ports.fetchImpl, nativeToken, github: ports.github });
+    const publisher = createProductionControlPublisherV2({ github, journal, admission, assertLive: live, record: log, authority: authorityOf(inputs.record.accepted), batchClaim, greenLedger,
+      trainMode, trainModeUnreadable, ...train });
     // The claim lease bound is read from the first live observation inside the wait; the outer bound is
     // the stage cap and the install's validUntil. Phase 2, step 2: one run only checks (STAGE8_CHECK_MS); the
     // resident parks the batch and runs this stage again on its own back-off.

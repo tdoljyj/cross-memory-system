@@ -9,7 +9,7 @@ import { createMergeSlotNative, parseHolders, HOLDERS_RPC } from '../src/indepen
 import { decideShadow, frontPullFacts, trainFacts, validateTrainFacts, wouldRevoke, WOULD_DO } from '../src/independent-control-checks-v2/train-facts.mjs';
 import { readTrainFacts } from '../src/independent-control-checks-v2/train-maintenance.mjs';
 import { TrainShadowStore } from '../src/independent-control-checks-v2/train-shadow-store.mjs';
-import { makeTrainRun, trainRunKey } from '../src/resident-v2/train-run.mjs';
+import { TRAIN_RUN_SHADOW_DEFAULTS, makeTrainRun, trainRunKey } from '../src/resident-v2/train-run.mjs';
 import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import { tempDir } from './resident-v2-fixtures.mjs';
 
@@ -21,7 +21,8 @@ const holderRow = (o = {}) => ({ claim_id: CLAIM, bound_pr: `${REPO}#910`, progr
 const SIX = ['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified', 'kooyumi-merge-slot'];
 const rules = (strict = true) => [{ type: 'pull_request', parameters: { allowed_merge_methods: ['merge', 'squash', 'rebase'] } },
   { type: 'required_status_checks', parameters: { strict_required_status_checks_policy: strict, required_status_checks: SIX.map(context => ({ context, integration_id: APP })) } }];
-const job = makeTrainRun({ repo: REPO, runId: `${trainRunKey({ repo: REPO, seed: 'b'.repeat(64) }).slice(0, 16)}-0123456789ab`, mode: 'shadow', sourceManifestSha256: 'e'.repeat(64), createdAt: '2026-10-23T05:00:00.000Z' });
+const job = makeTrainRun({ repo: REPO, runId: `${trainRunKey({ repo: REPO, seed: 'b'.repeat(64) }).slice(0, 16)}-0123456789ab`, mode: 'shadow', sourceManifestSha256: 'e'.repeat(64), createdAt: '2026-10-23T05:00:00.000Z',
+  ...TRAIN_RUN_SHADOW_DEFAULTS });
 
 test('holders: the live holder, and "not on duty" is never "queue empty"', () => {
   const r = parseHolders(200, { status: 'ok', repository: REPO, holders: [holderRow()] }, REPO);
@@ -96,19 +97,29 @@ function fakeGithub(o = {}) {
     async readCompare(base, head) { this.reads.push(`compare:${head.slice(0, 1)}`); return state.compare[head] ?? { baseSha: base, headSha: head, status: 'ahead', aheadBy: 1, behindBy: 0 }; },
     async readGitCommit(sha) { this.reads.push(`commit:${sha.slice(0, 1)}`); return structuredClone(state.commits[sha]); },
     async readChecks(head) { this.reads.push(`checks:${head.slice(0, 1)}`); return { complete: true, checks: state.checks }; },
+    async readOwnChecksByName(head, name) { this.reads.push(`own:${head.slice(0, 1)}`); return { complete: true, checks: state.checks.filter(c => c.head_sha === head && c.name === name) }; },
+    async readPullsPage(o) { this.reads.push(`pulls:${o.sort}`); return { complete: true, page: o.page, pulls: [], last: true }; },
     // writes must never be called in shadow mode
     async createCheck() { throw new Error('write in shadow mode'); }, async revokeCheck() { throw new Error('write in shadow mode'); } };
 }
 const native = reply => ({ async holders() { return reply; } });
 const ledgerOf = entries => ({ async list() { return { entries, refused: [] }; } });
+const noPublications = { async heads() { return { complete: true, heads: [] }; } };
 
-test('the shadow run reads only and says what it would do', async () => {
-  const github = fakeGithub({ compare: { [OLD]: { status: 'diverged', aheadBy: 1, behindBy: 1 } } });
+test('the shadow run reads only and says what it would do', async t => {
+  const { TrainSweepStore } = await import('../src/independent-control-checks-v2/train-sweep-store.mjs');
+  const sweepStore = await TrainSweepStore.open(path.join(await tempDir(t), 'sweep'));
+  const old = { id: 5, app: { id: APP }, name: 'kooyumi-merge-slot', head_sha: OLD, status: 'completed', conclusion: 'success', output: { summary: 'x' } };
+  const github = fakeGithub({ compare: { [OLD]: { status: 'diverged', aheadBy: 1, behindBy: 1 } }, checks: [old] });
   const ledger = ledgerOf([{ entry: { headSha: OLD, checkRunId: 5, phase: 'settled', pr: 900 } }]);
-  const f = await readTrainFacts({ job, github, native: native({ onDuty: true, holders: [parseHolders(200, { status: 'ok', repository: REPO, holders: [holderRow()] }, REPO).holders[0]] }), ledger, clock: () => Date.parse('2026-10-23T05:01:00Z') });
-  assert.deepEqual([f.wouldDo, f.mainSha, f.rules.strict, f.front.pr, f.front.headSha, f.front.testMergeSha, f.front.testMergeParentsOk, f.wouldRevokeCount], ['OPEN_FRONT_BATCH', T, true, 910, H, S, true, 1]);
-  assert.deepEqual(f.wouldRevoke, [{ headSha: OLD, checkRunId: 5, pr: 900, phase: 'settled' }]);
-  assert.deepEqual(github.reads, ['branch:main', 'rules', 'pull:910', 'compare:2', 'commit:3', 'checks:2', 'compare:9'], 'reads only, in this order');
+  const f = await readTrainFacts({ job, github, native: native({ onDuty: true, holders: [parseHolders(200, { status: 'ok', repository: REPO, holders: [holderRow()] }, REPO).holders[0]] }), ledger,
+    sweepStore, publications: noPublications, clock: () => Date.parse('2026-10-23T05:01:00Z') });
+  assert.deepEqual([f.wouldDo, f.decision, f.mainSha, f.rules.strict, f.front.pr, f.front.headSha, f.front.testMergeSha, f.front.testMergeParentsOk, f.wouldRevokeCount],
+    ['OPEN_FRONT_BATCH', 'OPEN_FRONT_BATCH', T, true, 910, H, S, true, 1]);
+  assert.deepEqual(f.wouldRevoke, [{ headSha: OLD, checkRunId: 5, reason: 'NOT_FRONT_HEAD', own: true }]);
+  assert.deepEqual(github.reads, ['branch:main', 'rules', 'pull:910', 'compare:2', 'commit:3', 'checks:2', 'own:9', 'compare:9', 'own:2', 'pulls:updated', 'pulls:created'], 'reads only, in this order');
+  assert.deepEqual([f.sweep.kind, f.sweep.complete, f.sweep.revoked, f.sweep.proofWritten, f.sweep.fullSweep.state, f.openFrontBatch, f.actions.keptAlive], ['full-segment', true, 0, false, 'complete', null, 0]);
+  assert.equal(await sweepStore.latestProof(), null, 'shadow writes no proof');
   // not on duty: nothing else is read
   const idle = fakeGithub();
   const off = await readTrainFacts({ job, github: idle, native: native({ onDuty: false, holders: [] }), ledger, clock: () => 0 });
@@ -128,7 +139,17 @@ test('shadow records are create-only and validated; the stage-10 outcome carries
   assert.match(name, /^\d{13}-[0-9a-f]{16}-[0-9a-f]{12}\.json$/);
   assert.deepEqual(JSON.parse(await fs.readFile(path.join(dir, name), 'utf8')), { runId: job.runId, facts: f });
   await assert.rejects(store.append(job.runId, f), e => e.code === 'EEXIST');
-  await assert.rejects(store.append(job.runId, { ...f, mode: 'on' }), e => e.code === 'invalid_train_facts');
+  await assert.rejects(store.append(job.runId, { ...f, mode: 'off' }), e => e.code === 'invalid_train_facts');
+  // facts /2: shadow acts on nothing; a front batch exists only in on and only as OPEN_FRONT_BATCH
+  assert.equal(f.contract, 'clued.independent-ci.train-facts/2');
+  const batch = { pr: 910, headSha: H, baseSha: T, testSha: S, testTree: TREE, claimId: CLAIM, since: '2026-10-23T05:00:00.000Z', attempt: 1 };
+  for (const bad of [{ ...f, decision: 'TRAIN_REVOKE_UNCONFIRMED' }, { ...f, actions: { ...f.actions, keptAlive: 1 } }, { ...f, sweep: { ...f.sweep, revoked: 1 } },
+    { ...f, openFrontBatch: batch }, { ...f, mode: 'on', decision: 'OPEN_FRONT_BATCH' }, { ...f, mode: 'revoke-only', decision: 'REVOKE_ONLY_DONE', actions: { ...f.actions, touchedRunning: true } },
+    { ...f, mode: 'on', requestPause: 'TRAIN_LANDED_TREE_MISMATCH' }, { ...f, decision: 'SOMETHING' }, { ...f, nodes: [{ node: 'x' }] }])
+    assert.throws(() => validateTrainFacts(bad), e => e.code === 'invalid_train_facts');
+  assert.equal(validateTrainFacts({ ...f, mode: 'on', decision: 'OPEN_FRONT_BATCH', openFrontBatch: batch }).openFrontBatch.testSha, S);
+  assert.equal(validateTrainFacts({ ...f, mode: 'on', decision: 'TRAIN_LANDED_TREE_MISMATCH', requestPause: 'TRAIN_LANDED_TREE_MISMATCH' }).requestPause, 'TRAIN_LANDED_TREE_MISMATCH');
+  assert.equal(validateTrainFacts({ ...f, mode: 'revoke-only', decision: 'REVOKE_ONLY_DONE', sweep: { ...f.sweep, revoked: 3 } }).sweep.revoked, 3);
   assert.throws(() => validateTrainFacts({ ...f, wouldDo: 'REVOKE_EVERYTHING' }), e => e.code === 'invalid_train_facts');
   const receipts = path.join(await tempDir(t), 'receipts');
   const plan = { stage: 10, entryRole: 'train-maintenance' };

@@ -26,12 +26,17 @@
 // null, upgrade: null | { opId, state, phase, since, code, confirmUrl } } (readVersions below), and five notice kinds (version-skew and
 // the upgrade's own four). The reader accepts /5 and /6 (no `versions`: read as null) and /7, so a companion installed or switched before its
 // executor restarted still reads the old file, and the old companion of a rolled-back generation reads /6 as it always did.
+// Step 3c-2b (DESIGN §41.7, §41.3, §41.6; still /7: only `train` grows): `train` may carry `sweep` (train.mjs#trainSweepView: the
+// newest sweep and when this node last completed a full sweep since it became eligible for on-mode duty), `revokeHead` (the
+// Owner's revoke-head request and its result), `onSince` and `notOnDuty` (on, but this node is not ACTIVE). Each key is written
+// only when it has a value, so a reader before 3c-2b and the train shapes of today stay as they were. A notice kind `train-owner`
+// carries stage 10's decisions the Owner must hear of (a PAUSE for a landed tree that differs, another node's Source).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CODE, HEX40, HEX64, canonicalJson, check, exactKeys, parseBoundedJson } from './canonical.mjs';
 import { readBounded } from './store.mjs';
 import { HOLDER, INTAKE_HOLDS_MAX } from './intake-pause.mjs';
-import { parseTrainLast } from './train.mjs';
+import { parseRevokeHead, parseTrainLast, parseTrainSweep } from './train.mjs';
 import { NODE_NAME, NODE_SOURCE } from './node-duty.mjs';
 import { GENERATION_CURRENT_CONTRACT, LINUX_VERSION_FACTS_CONTRACT, UPGRADE_OP_STATES, UPGRADE_STATUS_CONTRACT, VERSION_FACTS_FILE,
   consistent as versionsConsistent } from './upgrade-mailbox.mjs';
@@ -55,7 +60,9 @@ export const NOTICE_KINDS = Object.freeze(['new-trigger', 'stopped', 'waiting-bu
   'stage8-rules', 'role-probe-uncertain', 'role-probe-connection',
   // Status /7 (DESIGN §34): the two sides run different versions; the upgrade waits for the Owner's page approval, is deferred,
   // was rolled back (the node stays paused), or its rollback failed (the Owner must act).
-  'version-skew', 'upgrade-grant-pending', 'upgrade-deferred', 'upgrade-rolled-back', 'upgrade-rollback-failed']);
+  'version-skew', 'upgrade-grant-pending', 'upgrade-deferred', 'upgrade-rolled-back', 'upgrade-rollback-failed',
+  // Step 3c-2b: stage 10's decisions for the Owner (code: the decision).
+  'train-owner']);
 export const BREAKER_STATES = Object.freeze(['closed', 'open', 'half-open']);
 export const NODE_MODES = Object.freeze(['ACTIVE', 'STANDBY', 'UNCERTAIN']);
 export const PROBE_RESULTS = Object.freeze(['held', 'not-held', 'uncertain']);
@@ -212,10 +219,22 @@ export function parseStatus(bytes) {
     breaker: v.breaker && BREAKER_STATES.includes(v.breaker.state) ? { state: v.breaker.state, nextTrialAt: ms(v.breaker.nextTrialAt), openedAt: ms(v.breaker.openedAt) } : null,
     notices: Array.isArray(v.notices) ? v.notices.filter(n => n && NOTICE_KINDS.includes(n.kind) && typeof n.key === 'string' && /^[A-Za-z0-9:_-]{1,160}$/.test(n.key)).slice(0, NOTICES_MAX)
       .map(n => ({ key: n.key, kind: n.kind, pr: Number.isSafeInteger(n.pr) ? n.pr : null, headSha: head(n.headSha) ? n.headSha : null, code: codeOrNull(n.code), at: ms(n.at), until: ms(n.until) })) : [],
-    train: { enabled: ['off', 'shadow', 'on'].includes(v.train?.enabled) ? v.train.enabled : null, last: parseTrainLast(v.train?.last) },
+    train: trainOf(v.train),
     // /7 only; /6 has none. Read with the same rules as written (parseVersions), so what does not fit is null, never a refusal.
     versions: v.contract === STATUS_CONTRACT ? parseVersions(v.versions) : null,
   };
+}
+
+// `train` as the reader returns it: the mode and the newest summary always; sweep, revokeHead, onSince and notOnDuty only
+// when the snapshot has a value for them.
+function trainOf(t) {
+  const out = { enabled: ['off', 'shadow', 'on'].includes(t?.enabled) ? t.enabled : null, last: parseTrainLast(t?.last) };
+  const sweep = parseTrainSweep(t?.sweep), revokeHead = parseRevokeHead(t?.revokeHead), onSince = ms(t?.onSince);
+  if (sweep) out.sweep = sweep;
+  if (revokeHead) out.revokeHead = revokeHead;
+  if (onSince) out.onSince = onSince;
+  if (t?.notOnDuty === true) out.notOnDuty = true;
+  return out;
 }
 
 // ---- status /7 `versions` (in-place upgrade channel, Task 018da927, DESIGN §34) ----

@@ -20,7 +20,7 @@ try{
  foreach($file in @($requestFile,$responseFile,$unrelatedFile)){[IO.File]::WriteAllText($file,'{"public":true}')}
  $brokerBefore=@{};foreach($d in 'resident\broker','resident\broker\requests','resident\broker\responses'){$brokerBefore[$d]=(Get-Acl -LiteralPath (Join-Path $root $d)).Sddl}
  $before=(Get-Acl -LiteralPath (Join-Path $root 'formal-spool\outgoing')).Sddl
- $plan=Run @();Yes ($plan.status -ceq 'SOURCE_V2_ACL_PLAN_ONLY_NOTHING_WRITTEN' -and @($plan.steps).Count -eq 17) ('plan-only:'+ $plan.code)
+ $plan=Run @();Yes ($plan.status -ceq 'SOURCE_V2_ACL_PLAN_ONLY_NOTHING_WRITTEN' -and @($plan.steps).Count -eq 18) ('plan-only:'+ $plan.code)
  Yes ((Get-Acl -LiteralPath (Join-Path $root 'formal-spool\outgoing')).Sddl -ceq $before -and -not (Test-Path (Join-Path $root 'state\v2'))) 'plan-wrote-nothing'
  foreach($d in $brokerBefore.Keys){Yes ((Get-Acl -LiteralPath (Join-Path $root $d)).Sddl -ceq $brokerBefore[$d]) ('broker-plan-wrote-nothing:'+ $d)}
  $v=Run @('-Apply');Yes ($v.status -ceq 'SOURCE_V2_ACL_MIGRATED') ('apply:'+$v.code)
@@ -47,9 +47,16 @@ try{
  Yes ((& $sids $unrelatedFile) -cnotcontains $ctrl) 'broker-root-read-does-not-inherit-to-unrelated-file'
  Yes ((& $sids $nestedFile) -cnotcontains $ctrl) 'controller-public-read-does-not-propagate-to-nested-files'
  Yes ((& $sids (Join-Path $root 'state\v2\receipts')) -ccontains $res -and (& $sids (Join-Path $root 'state\v2\batch-claims')) -cnotcontains $res) 'state-v2-created'
+ # stage 10's outcome month segments, their seals and its retention pass records (step 3c-2b, state-retention.mjs) inherit the
+ # receipts ACL: clued-control modify (with DELETE, for link + unlink and pruning), the resident read, nothing more for it
+ $masks={param($p,$sid)@((New-Object Security.AccessControl.RawSecurityDescriptor((Get-Acl -LiteralPath $p).Sddl)).DiscretionaryAcl|Where-Object{$_.SecurityIdentifier.Value -ceq $sid}|ForEach-Object{'0x{0:x}' -f $_.AccessMask})}
+ foreach($d in 'state\v2\receipts\2026-10','state\v2\receipts\index','state\v2\receipts\retention'){
+  $p=Join-Path $root $d;[void][IO.Directory]::CreateDirectory($p);$f=Join-Path $p 'outcome-0.json';[IO.File]::WriteAllText($f,'{}')
+  foreach($x in @($p,$f)){Yes ((((& $masks $x $res)|Sort-Object -Unique) -join ';') -ceq '0x1200a9' -and (((& $masks $x $ctrl)|Sort-Object -Unique) -join ';') -ceq '0x1301bf') ($d+'-inherits-receipts-acl')}
+ }
  Yes ((& $sids (Join-Path $root 'state\relay\jwks')) -ccontains $ctrl -and (& $sids (Join-Path $root 'state\relay\jwks')) -cnotcontains $res) 'relay-jwks-created'
  # stage 8's green ledger (step 3a) and stage 10's shadow records (step 3c-1): clued-control only
- foreach($d in 'state\v2\green-ledger','state\v2\train-shadow'){Yes ((& $sids (Join-Path $root $d)) -ccontains $ctrl -and (& $sids (Join-Path $root $d)) -cnotcontains $res) ($d+'-created')}
+ foreach($d in 'state\v2\green-ledger','state\v2\train-shadow','state\v2\train-sweep'){Yes ((& $sids (Join-Path $root $d)) -ccontains $ctrl -and (& $sids (Join-Path $root $d)) -cnotcontains $res) ($d+'-created')}
  $again=Run @('-Apply');Yes ($again.status -ceq 'SOURCE_V2_ACL_MIGRATED' -and @($again.steps|Where-Object{-not $_.skipped}).Count -eq 0) 'idempotent'
  # A controller write ACE on the new public-read boundary is refused during
  # planning, before any target is rewritten. It is never normalized away.
