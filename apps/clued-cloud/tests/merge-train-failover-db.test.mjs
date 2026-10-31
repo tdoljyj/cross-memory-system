@@ -246,6 +246,22 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       // Every public RPC that makes the Native owner check is VOLATILE (PostgREST read-only transactions).
       assert.deepEqual((await admin.query(`select p.proname from pg_proc p where p.pronamespace='public'::regnamespace
         and p.provolatile<>'v' and p.prosrc like '%authorization_owner_v12%'`)).rows, []);
+      // The role checks keep every earlier patch (resident-upgrade, 20261030010000) and gain only the
+      // heartbeat-connection check; the patch helper is gone.
+      const body = async (sig) => (await admin.query('select prosrc from pg_proc where oid=$1::regprocedure', [sig])).rows[0].prosrc;
+      const change = await body('clued_private.binding_role_change_check_v1(clued_agent_bindings,text,boolean,jsonb)');
+      for (const piece of ["if p_role='resident-upgrade' then", 'binding_role_exclusive', 'binding_role_scope_invalid',
+        'binding_role_node_name_invalid', 'binding_role_node_taken', "x.role='resident-upgrade'",
+        'binding_role_resident_holder_exists', 'binding_role_parking_protected', 'binding_role_heartbeat_connection']) {
+        assert.ok(change.includes(piece), 'binding_role_change_check_v1 keeps ' + piece);
+      }
+      assert.equal(change.split('binding_role_exclusive').length - 1, 2);
+      const handoverCheck = await body('clued_private.binding_role_handover_check_v1(clued_agent_bindings,clued_agent_bindings)');
+      for (const piece of ["r.role in ('ci-admission','resident-upgrade')", 'binding_role_handover_target_holds_role',
+        'binding_role_resident_held_v1', 'binding_role_parking_protected', 'binding_role_heartbeat_connection']) {
+        assert.ok(handoverCheck.includes(piece), 'binding_role_handover_check_v1 keeps ' + piece);
+      }
+      assert.equal((await admin.query(`select to_regprocedure('clued_private.ci_failover_role_patch_v1(text,text,text)') r`)).rows[0].r, null);
       // The CI door is 2a's body plus the two node actions; the role check is the only role read.
       const door = (await admin.query(`select prosrc from pg_proc where oid='clued_private.work_claim_ci_command_v1(text,jsonb)'::regprocedure`)).rows[0].prosrc;
       assert.equal(door.split('effective_at<=clock_timestamp()').length - 1, 1);

@@ -247,63 +247,43 @@ language sql immutable set search_path='' as $$
 $$;
 
 -- ---------------------------------------------------------------------------
--- The role checks of 20261023010000, plus: a heartbeat connection linked to a
--- node is never marked for nor handed ci-admission.
+-- The role checks, as they stand (20261023010000 with the resident-upgrade
+-- patches of 20261030010000; md5-checked above), plus one check each: a
+-- heartbeat connection linked to a node is never marked for nor handed
+-- ci-admission. Anchored patches of the current definitions: each fails
+-- unless its anchor occurs exactly once, and nothing else in the body changes.
 
-create or replace function clued_private.binding_role_change_check_v1(p_binding public.clued_agent_bindings,p_role text,
-  p_enabled boolean,p_purpose jsonb) returns text
-language plpgsql stable security definer set search_path='' as $$
-declare r clued_private.binding_roles_v1%rowtype;
+create function clued_private.ci_failover_role_patch_v1(p_signature text,p_anchor text,p_replacement text)
+returns void language plpgsql set search_path='' as $$
+declare target regprocedure:=to_regprocedure(p_signature); body text;
 begin
-  select * into r from clued_private.binding_roles_v1 x
-    where x.binding_id=p_binding.id and x.role=p_role and x.revoked_at is null;
-  if p_enabled=found then raise exception 'binding_role_unchanged' using errcode='22023'; end if;
-  if not p_enabled then
-    if p_purpose is not null then raise exception 'binding_role_purpose_invalid' using errcode='22023'; end if;
-    if r.purpose='parking' and not exists(select 1 from clued_private.binding_roles_v1 x
-        where x.user_id=p_binding.user_id and x.role=p_role and x.revoked_at is null
-          and x.purpose='parking' and x.id<>r.id) then
-      raise exception 'binding_role_parking_protected' using errcode='22023'; end if;
-    return r.purpose;
+  if target is null then raise exception 'merge_train_failover_patch_absent: %',p_signature; end if;
+  body:=pg_get_functiondef(target);
+  if (length(body)-length(replace(body,p_anchor,'')))<>length(p_anchor) then
+    raise exception 'merge_train_failover_patch_anchor_mismatch: %',p_signature;
   end if;
-  if p_role<>'ci-admission' then
-    if p_purpose is not null then raise exception 'binding_role_purpose_invalid' using errcode='22023'; end if;
-    return 'unspecified';
-  end if;
-  if exists(select 1 from clued_private.ci_node_heartbeat_link_v1 k where k.heartbeat_binding_id=p_binding.id
-      and k.revoked_at is null) then
-    raise exception 'binding_role_heartbeat_connection' using errcode='22023'; end if;
-  if p_purpose is null then raise exception 'binding_role_purpose_required' using errcode='22023'; end if;
-  if jsonb_typeof(p_purpose) is distinct from 'string'
-      or p_purpose#>>'{}' not in ('resident-node','parking','other') then
-    raise exception 'binding_role_purpose_invalid' using errcode='22023'; end if;
-  if p_purpose#>>'{}'='resident-node'
-      and clued_private.binding_role_resident_held_v1(p_binding.user_id,array[p_binding.id]) then
-    raise exception 'binding_role_resident_holder_exists' using errcode='22023'; end if;
-  return p_purpose#>>'{}';
+  execute replace(body,p_anchor,p_replacement);
 end $$;
 
-create or replace function clued_private.binding_role_handover_check_v1(p_from public.clued_agent_bindings,
-  p_to public.clued_agent_bindings) returns void
-language plpgsql stable security definer set search_path='' as $$
-declare v_purpose text;
-begin
-  select r.purpose into v_purpose from clued_private.binding_roles_v1 r
-    where r.binding_id=p_from.id and r.role='ci-admission' and r.revoked_at is null;
-  if not found then raise exception 'binding_role_handover_source_invalid' using errcode='22023'; end if;
-  if v_purpose='parking' then raise exception 'binding_role_parking_protected' using errcode='22023'; end if;
-  if p_to.id=p_from.id or not clued_private.binding_live_v1(p_to) then
-    raise exception 'binding_role_handover_target_invalid' using errcode='22023'; end if;
-  if not ('context:read'=any(p_to.scopes)) then raise exception 'binding_role_scope_missing' using errcode='22023'; end if;
+-- Marking: reached only when ci-admission is being marked.
+select clued_private.ci_failover_role_patch_v1(
+  'clued_private.binding_role_change_check_v1(public.clued_agent_bindings,text,boolean,jsonb)',
+$a$  if p_purpose is null then raise exception 'binding_role_purpose_required' using errcode='22023'; end if;$a$,
+$r$  if exists(select 1 from clued_private.ci_node_heartbeat_link_v1 k where k.heartbeat_binding_id=p_binding.id
+      and k.revoked_at is null) then
+    raise exception 'binding_role_heartbeat_connection' using errcode='22023'; end if;
+  if p_purpose is null then raise exception 'binding_role_purpose_required' using errcode='22023'; end if;$r$);
+
+-- Handover (one-click and watchdog): never to a linked heartbeat connection.
+select clued_private.ci_failover_role_patch_v1(
+  'clued_private.binding_role_handover_check_v1(public.clued_agent_bindings,public.clued_agent_bindings)',
+$a$  if not ('context:read'=any(p_to.scopes)) then raise exception 'binding_role_scope_missing' using errcode='22023'; end if;$a$,
+$r$  if not ('context:read'=any(p_to.scopes)) then raise exception 'binding_role_scope_missing' using errcode='22023'; end if;
   if exists(select 1 from clued_private.ci_node_heartbeat_link_v1 k where k.heartbeat_binding_id=p_to.id
       and k.revoked_at is null) then
-    raise exception 'binding_role_heartbeat_connection' using errcode='22023'; end if;
-  if exists(select 1 from clued_private.binding_roles_v1 r
-      where r.binding_id=p_to.id and r.role='ci-admission' and r.revoked_at is null) then
-    raise exception 'binding_role_handover_target_holds_role' using errcode='22023'; end if;
-  if clued_private.binding_role_resident_held_v1(p_from.user_id,array[p_from.id,p_to.id]) then
-    raise exception 'binding_role_resident_holder_exists' using errcode='22023'; end if;
-end $$;
+    raise exception 'binding_role_heartbeat_connection' using errcode='22023'; end if;$r$);
+
+drop function clued_private.ci_failover_role_patch_v1(text,text,text);
 
 -- ---------------------------------------------------------------------------
 -- Handover core, shared by the one-click handover and the watchdog.
