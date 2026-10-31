@@ -30,10 +30,12 @@ jobs:
   # pull_request_target run of clued-work-admission.yml on this head and reads
   # its result, always enforced (Merge Admission step 6 retired the advisory
   # switch CLUED_WORK_ADMISSION_ENFORCE); non-PR events are admitted.
-  # Self-hosted Linux pool, pinned Node (Decision f86179b3).
+  # Self-hosted pool, pinned Node (Decision f86179b3). Any runner of the pool, Linux or Windows, at any site: the
+  # four Linux runners are all at the company site, and the panel must still
+  # run (and alert) when that site is offline (2026-10-30, Decision b30b1b79).
   admission-gate:
     name: admission-gate
-    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    runs-on: [self-hosted, X64, clued, pool-general, trust-internal]
     timeout-minutes: 10
     permissions:
       actions: read
@@ -232,7 +234,8 @@ jobs:
     name: compute-panel
     needs: admission-gate
     if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
-    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    # Any runner of the pool, Linux or Windows, at any site, like the gate: the panel stays alive while one is up.
+    runs-on: [self-hosted, X64, clued, pool-general, trust-internal]
     timeout-minutes: 10
     permissions:
       actions: read
@@ -253,8 +256,19 @@ jobs:
         uses: ./.github/actions/ci-temporary-storage
       # -I: the runner is shared, so ignore user site-packages and PYTHON* settings.
       - name: Self-test the panel (no network)
+        if: runner.os == 'Linux'
         run: python3 -I tests/test_compute_panel.py
       - name: Rebuild the panel issue
+        if: runner.os == 'Linux'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 -I scripts/ci/self-hosted/compute_panel.py
+      # Windows runners carry cap-python312 as `python`; -X utf8 because -I ignores PYTHONIOENCODING.
+      - name: Self-test the panel (no network, Windows)
+        if: runner.os == 'Windows'
+        run: python -I -X utf8 tests/test_compute_panel.py
+      - name: Rebuild the panel issue (Windows)
+        if: runner.os == 'Windows'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -I -X utf8 scripts/ci/self-hosted/compute_panel.py
