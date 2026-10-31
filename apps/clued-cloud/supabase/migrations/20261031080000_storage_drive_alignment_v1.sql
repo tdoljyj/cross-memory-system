@@ -22,7 +22,7 @@ begin
   select p.managed_root,p.cloud_runtime->'allowed_root_children' into root,tracks from public.clued_agent_bindings b
     join clued_private.authorizations_v12 a on a.binding_id=b.id and a.owner_id=b.user_id and a.revoked_at is null
       and a.expires_at>now()
-    join clued_private.storage_client_request_links_v2 l on l.request_id=a.request_id
+    join lateral clued_private.storage_client_request_link_v3(a.request_id) l on true
     join clued_private.storage_connections_v1 c on c.owner_id=b.user_id and c.id=p_connection
     join clued_private.resource_center_profiles_v1 p on p.id=c.profile_id and p.user_id=b.user_id
     where b.token_hash=p_hash and b.revoked_at is null;

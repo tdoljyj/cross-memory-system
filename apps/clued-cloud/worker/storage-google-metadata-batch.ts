@@ -237,6 +237,10 @@ export function createStorageGoogleMetadataBatch(config: {
           const state = current[index];
           if (skipOversized === true) {
             if (state.files!.length + value.files.length > 10000) { state.files = null; return; }
+            // The whole call still keeps a memory bound: past it the caller
+            // requeues the chunk (DRIVE_READ_BUDGET) instead of failing.
+            count += value.files.length;
+            if (count > 20000) throw new Error("DRIVE_READ_BUDGET");
           } else {
             count += value.files.length;
             if (count > 10000) throw new Error("DRIVE_ENUMERATION_LIMIT");
