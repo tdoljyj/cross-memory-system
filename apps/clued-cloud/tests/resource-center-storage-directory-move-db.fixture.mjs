@@ -634,11 +634,36 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       assert.deepEqual(seen, { connection_id: target.connection, count: 1, directories: [{ path: `${TRACK}/shared-out`, reason: "access_differs" }] });
       await assert.rejects(attention({ action: "list", extra: 1 }), /attention_denied/);
       await assert.rejects(attention(undefined, caller), /permission denied/);
-      // Retries are bounded: after 12 attempts it is neither due nor loadable.
-      await admin.query("update clued_private.storage_access_digest_recovery_v1 set attempts=12 where artifact_id=$1", [shared.id]);
-      await later(shared.id);
+      // Never given up (review M1): after many attempts it is still tried, at
+      // most every 16 hours, so restoring the sharing recovers it by itself.
+      await admin.query("update clued_private.storage_access_digest_recovery_v1 set attempts=40 where artifact_id=$1", [shared.id]);
+      await admin.query("update clued_private.resource_center_artifacts_v1 set access_digest_attempted_at=now()-interval '15 hours' where id=$1", [shared.id]);
       assert.equal((await due()).includes(shared.id), false);
-      await assert.rejects(load(shared.id), /backfill_denied/);
+      await later(shared.id); assert.equal((await due()).includes(shared.id), true);
+      shared = await artifactById(shared.id); await load(shared.id);
+      assert.equal((await commit(shared, { observed_version: "2", access_digest: access, parent })).outcome, "recorded_inherited");
+      assert.equal(await side(shared.id), undefined);
+      assert.equal((await attention()).connections.some(c => c.connection_id === target.connection), false);
+      // Gone or unreadable is shown only after 12 attempts; no baseline yet is never shown.
+      const gone = await child("gone-later"), stuck = await child("no-baseline");
+      for (const row of [gone, stuck]) await load(row.id);
+      await commit(gone, { found: false, observed_version: null, access_digest: null });
+      await commit(stuck, { observed_version: "2", access_digest: wider });
+      assert.equal((await attention()).connections.some(c => c.connection_id === target.connection), false);
+      await admin.query("update clued_private.storage_access_digest_recovery_v1 set attempts=12 where artifact_id=any($1)", [[gone.id, stuck.id]]);
+      assert.deepEqual((await attention()).connections.find(c => c.connection_id === target.connection).directories,
+        [{ path: `${TRACK}/gone-later`, reason: "not_found" }]);
+      // Review M2: a folder only its owner can reach needs no parent, so the
+      // root (which has none) recovers too; owner_only needs a digest.
+      let root = await artifact(target, target.root);
+      await admin.query("update clued_private.resource_center_artifacts_v1 set access_digest_missing_at=now() where id=$1", [root.id]);
+      root = await artifactById(root.id);
+      assert.equal((await load(root.id)).parent, null);
+      await assert.rejects(commit(root, { observed_version: "99", access_digest: null, owner_only: true }), /backfill_denied/);
+      await assert.rejects(commit(root, { observed_version: "99", access_digest: access, owner_only: false }), /backfill_denied/);
+      assert.equal((await commit(root, { observed_version: "99", access_digest: access, owner_only: true })).outcome, "recorded_private");
+      root = await artifactById(root.id);
+      assert.equal(root.provider_access_digest, access); assert.equal(root.access_digest_missing_at, null);
       // A mark from before this fix (no attempts yet) is retried at once.
       const legacy = await child("legacy");
       await admin.query("update clued_private.resource_center_artifacts_v1 set access_digest_missing_at=now() where id=$1", [legacy.id]);

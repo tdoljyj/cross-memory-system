@@ -11,13 +11,15 @@
  *
  * Bug 38bb5ddf (Decision 24422a98): as in Drive, a folder's permissions are
  * inherited from its parent and its version moves whenever anything inside it
- * changes. When the version moved, this run also reads the registered parent
- * the database names; the database records the folder's digest when it equals
- * the parent's current access digest and the parent itself is unchanged. A
- * 404, no usable permission list, no parent baseline or a real difference from
- * the parent marks the directory missing with that reason, and the database
- * tries it again with backoff; only a real sharing difference, or a folder
- * still gone after every attempt, is shown to the Owner. A transient or
+ * changes. When the version moved, a folder only its owner can reach is
+ * recorded as is (nothing is narrower; this also covers the root); otherwise
+ * this run reads the registered parent the database names, and the database
+ * records the folder's digest when it equals the parent's current access
+ * digest and the parent itself is unchanged. A 404, no usable permission
+ * list, no parent baseline or a real difference from the parent marks the
+ * directory missing with that reason, and the database keeps trying it with
+ * backoff; only a real sharing difference, or a folder still gone or
+ * unreadable after many attempts, is shown to the Owner. A transient or
  * credential failure commits nothing and the directory waits behind the
  * others. Read only: no Drive write. Enabled renewal uses current Native
  * artifact authorization before refreshing an expiring credential.
@@ -165,7 +167,7 @@ export async function runStorageAccessDigestBackfillScheduled(env: StorageAccess
       // transient or credential failure commits nothing; the directory comes
       // back after the others.
       let found: boolean, observedVersion: string | null = null, digest: string | null = null;
-      let parentObservation: Data | undefined;
+      let parentObservation: Data | undefined, ownerOnly = false;
       try {
         const read = await metadata.getVersionedAccess(String(d.provider_file_id), { signal: AbortSignal.timeout(15000) });
         if (read?.id !== d.provider_file_id || typeof read.version !== "string" || !VERSION.test(read.version)) { skipped++; continue; }
@@ -173,13 +175,15 @@ export async function runStorageAccessDigestBackfillScheduled(env: StorageAccess
         observedVersion = read.version;
         const computed = googleDriveAccessDigest(read);
         digest = typeof computed === "string" ? computed : null;
+        ownerOnly = digest !== null && Array.isArray(read.permissions) && read.permissions.length === 1 &&
+          read.permissions[0]?.type === "user" && read.permissions[0]?.role === "owner" && read.permissions[0]?.deleted !== true;
       } catch {
         if (lastStatus !== 404) { skipped++; continue; }
         found = false;
       }
       // The version moved: compare with the parent the registry protects. A
       // parent Drive no longer shows commits without it (no baseline yet).
-      if (found && digest && observedVersion !== d.registered_version && parent) {
+      if (found && digest && observedVersion !== d.registered_version && parent && !ownerOnly) {
         try {
           const read = await metadata.getVersionedAccess(parent.provider_file_id, { signal: AbortSignal.timeout(15000) });
           if (read?.id !== parent.provider_file_id) { skipped++; continue; }
@@ -195,9 +199,10 @@ export async function runStorageAccessDigestBackfillScheduled(env: StorageAccess
       }
       const committed = await rpc({ ...reference, action: "commit", row_version: d.row_version,
         registered_version: d.registered_version, found, observed_version: observedVersion, access_digest: digest,
-        ...(parentObservation ? { parent: parentObservation } : {}) });
+        ...(parentObservation ? { parent: parentObservation } : {}),
+        ...(ownerOnly && observedVersion !== d.registered_version ? { owner_only: true } : {}) });
       if (committed.status !== "committed" || committed.artifact_id !== reference.artifact_id) { skipped++; continue; }
-      if (committed.outcome === "recorded" || committed.outcome === "recorded_inherited") recorded++; else missing++;
+      if (String(committed.outcome).startsWith("recorded")) recorded++; else missing++;
     } catch { skipped++; }
   }
   return { status: "ok", recorded, missing, skipped };

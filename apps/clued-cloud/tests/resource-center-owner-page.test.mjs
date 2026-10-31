@@ -642,6 +642,8 @@ test("storage step 3: directories without an access digest are recovered in the 
   const f=fixture();await f.settle();
   f.respond(f.pending("/v1/storage/lifecycle","list"),{connections:[{...active,access_digest_missing:{count:21,directories:[{path:"",since:"2026-10-08T00:00:00Z"},
     {path:"资料/旧目录",since:"2026-10-08T00:00:00Z"}]}}],worker_execution_enabled:false});await f.settle();
+  assert.match(f.text(),/后台正在自动核对 21 个目录的共享设置。/);assert.equal(f.text().includes("无需操作"),false,"unknown until the separate read answers");
+  f.respond(f.pending("/v1/storage/owner","digest_attention"),{contract:"clued.storage-access-digest-attention/1",connections:[]});await f.settle();
   assert.match(f.text(),/后台正在自动核对 21 个目录的共享设置，无需操作/);
   assert.equal(/运行目录检查|目录需检查|访问权限摘要/.test(f.text()),false);
   assert.equal(f.text().includes("暂不写入"),false);
@@ -666,7 +668,7 @@ test("storage step 3: directories without an access digest are recovered in the 
     const bad=fixture();await bad.settle();bad.respond(bad.pending("/v1/storage/lifecycle","list"),{connections:[{...active,
       access_digest_missing:{count:1,directories:[{path:"x",since:"2026-10-08T00:00:00Z"}]}}],worker_execution_enabled:false});
     await bad.settle();bad.respond(bad.pending("/v1/storage/owner","digest_attention"),answer,status);await bad.settle();
-    assert.match(bad.text(),/Clued_资料中心/);assert.equal(/暂不写入|private/.test(bad.text()),false);
+    assert.match(bad.text(),/Clued_资料中心/);assert.equal(/暂不写入|private|无需操作/.test(bad.text()),false);
   }
   // A malformed field is not a connection.
   const h=fixture();await h.settle();h.respond(h.pending("/v1/storage/lifecycle","list"),{connections:[{...active,access_digest_missing:{count:"x",directories:[]}}],worker_execution_enabled:false});await h.settle();

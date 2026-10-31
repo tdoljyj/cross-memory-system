@@ -33,7 +33,7 @@ function isDigestAttention(value: unknown): value is DigestAttention {
 const attentionReason: Record<DigestAttention["directories"][number]["reason"], string> = {
   access_differs: "共享设置与上级目录不同（单独分享给了别人或改了权限）",
   not_found: "在 Google Drive 中已找不到（可能已删除或移出资料根）",
-  unreadable: "Google Drive 一直无法读出它的共享设置",
+  unreadable: "多次核对都没能从 Google Drive 读出它的共享设置",
 };
 const actionName: Record<string, string> = {
   inspect: "查看任务状态", create_file: "新建文件", create_topic: "新建主题目录", modify: "改名、移动文件",
@@ -376,11 +376,14 @@ export default function StorageConnections() {
         if (epoch !== revision.current || answer.contract !== "clued.storage-access-digest-attention/1"
           || !Array.isArray(answer.connections)) return;
         const found = new Map<string, DigestAttention>();
-        for (const item of answer.connections as unknown[]) if (isObject(item) && typeof item.connection_id === "string") {
-          const value = { count: item.count, directories: item.directories };
-          if (isDigestAttention(value)) found.set(item.connection_id, value);
+        for (const item of answer.connections as unknown[]) {
+          const value = isObject(item) ? { count: item.count, directories: item.directories } : null;
+          // One malformed entry leaves the whole answer unknown.
+          if (!isObject(item) || typeof item.connection_id !== "string" || !isDigestAttention(value)) return;
+          found.set(item.connection_id, value);
         }
-        setConnections(current => current.map(c => found.has(c.id) ? { ...c, access_digest_attention: found.get(c.id) } : c));
+        // A connection the answer leaves out has none.
+        setConnections(current => current.map(c => ({ ...c, access_digest_attention: found.get(c.id) ?? { count: 0, directories: [] } })));
       }).catch(() => undefined);
       const loaded = await Promise.all((result.connections as Connection[])
         .filter(c => c.state === "active" && c.auth_mode === "account_policy")
@@ -999,11 +1002,11 @@ export default function StorageConnections() {
           <p className="my-2">账号授权上限：{c.policy_active && c.actions.length ? c.actions.map(action => actionName[action]).join("、") : "无当前可用授权"}。实际启用情况见下方权限设置；执行还须通过当前目录、客户端和单次任务准入。</p>
           <p className="my-2">后台续签：{c.refresh_enabled ? "开启" : "关闭"}。</p>
           {c.access_digest_missing && c.access_digest_missing.count > (c.access_digest_attention?.count ?? 0) &&
-            <p className="my-2">后台正在自动核对 {c.access_digest_missing.count - (c.access_digest_attention?.count ?? 0)} 个目录的共享设置，无需操作。</p>}
+            <p className="my-2">后台正在自动核对 {c.access_digest_missing.count - (c.access_digest_attention?.count ?? 0)} 个目录的共享设置{c.access_digest_attention ? "，无需操作" : ""}。</p>}
         </details>
         {c.access_digest_attention && c.access_digest_attention.count > 0 && <div role="status" className="my-3 text-sm">
           <p className="font-semibold">有 {c.access_digest_attention.count} 个目录暂不写入</p>
-          <p className="my-1">为防止资料被意外共享，Agent 暂不向以下目录新建或修改文件，其他目录不受影响：</p>
+          <p className="my-1">为防止资料被意外共享，Agent 暂不向以下目录新建或修改文件：</p>
           <ul className="list-disc pl-6">{c.access_digest_attention.directories.map(d =>
             <li key={d.path}>{d.path || "（根目录）"}：{attentionReason[d.reason]}</li>)}</ul>
           {c.access_digest_attention.count > c.access_digest_attention.directories.length &&

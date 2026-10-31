@@ -181,10 +181,13 @@ export async function createStorageGoogleProbe(config: {
       const findings = await scan();
       checkTime(); signal.throwIfAborted();
       if (findings.length) throw new ProbeFailure(stage, "UNAUTHORIZED_WORKSPACE_MUTATION");
+      // Folders outside the root left undescended at the depth or entry
+      // bound (Decision 24422a98) are counted, not hidden behind "clean".
+      const unscanned = (findings as { partial?: readonly unknown[] }).partial?.length ?? 0;
       const boundaryObservation = { contract: "clued.storage-boundary-observation/1", status: "clean",
         observed_at_ms: checkTime(), policy_version: RESOURCE_CENTER_POLICY_VERSION,
         scanner_contract: "clued.google-drive-boundary/1", digest_format: "sorted-json/1",
-        descriptor_sha256: digest(d), scan_config_sha256: digest(scanConfig) };
+        descriptor_sha256: digest(d), scan_config_sha256: digest(scanConfig), unscanned_branches: unscanned };
       stage = "receipt";
       const result = await config.rpc({ action: "complete", attempt_id: prepared.attempt_id, observation });
       if (result.status !== "metadata_observed" || result.attempt_id !== prepared.attempt_id ||
