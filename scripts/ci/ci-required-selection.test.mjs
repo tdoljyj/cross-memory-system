@@ -357,12 +357,17 @@ test('report files are matched by real path when the checkout sits behind a link
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('regenerated entries keep listed reasons and leave new failures without one', () => {
+test('regenerated entries keep the reason of the same failure only; --keep keeps listed entries too', () => {
   const report = readReport([
     { type: 'fail', file: 'x.test.mjs', path: ['old'], fingerprint: '2'.repeat(16) },
     { type: 'fail', file: 'x.test.mjs', path: ['new'], fingerprint: '3'.repeat(16) },
     { type: 'summary', counts: {}, success: false },
   ].map((event) => JSON.stringify(event)).join('\n'), '');
   const entries = knownEntriesFromReport(report, [{ file: 'x.test.mjs', path: ['old'], fingerprint: '1'.repeat(16), reason: 'kept' }]);
-  assert.deepEqual(entries.map((entry) => [entry.path[0], entry.fingerprint[0], entry.reason]), [['new', '3', ''], ['old', '2', 'kept']]);
+  assert.deepEqual(entries.map((entry) => [entry.path[0], entry.fingerprint[0], entry.reason]), [['new', '3', ''], ['old', '2', '']],
+    'a changed fingerprint drops the old reason');
+  const same = knownEntriesFromReport(report, [{ file: 'x.test.mjs', path: ['old'], fingerprint: '2'.repeat(16), reason: 'kept' }]);
+  assert.equal(same.find((entry) => entry.path[0] === 'old').reason, 'kept');
+  const kept = knownEntriesFromReport(report, [{ file: 'x.test.mjs', path: ['future'], fingerprint: '4'.repeat(16), reason: 'coming change' }], { keep: true });
+  assert.deepEqual(kept.map((entry) => entry.path[0]), ['future', 'new', 'old']);
 });

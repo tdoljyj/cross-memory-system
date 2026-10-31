@@ -1,9 +1,9 @@
-# 测试、构建与迁移验证成为必需检查 · 设计说明 v4
+# 测试、构建与迁移验证成为必需检查 · 设计说明 v5
 
 - 日期：2026-11-01（UTC）
 - KooYomi：项目 0597aa60；Task `2a5fdb66`（本工作），拆出的漂移检查 Task `16b795e6`；认领 `1b3d6e2f`。
 - 依据：Owner 目标 Decision `afec9be8`（全部算力可调度、完整 CI/CD），顺序 Decision `02e4374a`（本项第 3 项）；费用规则 Decision `9eb313f8`（新作业只用自建算力，[Runbook §2.4](../../docs/maintenance/runner-configuration-and-operations.md#24-现有与未来任务的费用原则迁移与防回流)）；不稳定测试隔离 Task `679a0c2b`；配置改动先独立审核 `01d4ba7d`。
-- 修订：v1 经独立审核 FAIL（1 BLOCKER、3 MAJOR），v2 逐项修正；v2 第二轮 FAIL（3 MAJOR），v3 再修；v3 第三轮 FAIL（1 MAJOR），v4 再修，见 §10。
+- 修订：v1 经独立审核 FAIL（1 BLOCKER、3 MAJOR），v2 逐项修正；v2 第二轮 FAIL（3 MAJOR），v3 再修；v3 第三轮 FAIL（1 MAJOR），v4 再修；第四轮 PASS，v5 收掉其中的 MINOR，见 §10。
 - 状态：代码与测试在 PR #971；前置的门禁登记在单独的 PR（§7）。三项新检查还**不是**必需检查，加进规则集要 Owner 操作（§8）。
 
 ## 0. 结论
@@ -63,6 +63,7 @@
 - 测试结束后的异步错误（未捕获异常、未处理的 rejection）Node 只发一条诊断，报告器把它记成 `<async activity after the test ended> > 测试名` 的失败；todo 测试的失败不记（Node 不因它判失败）。文件路径两边都取真实路径再比较，runner 目录在链接后面也能对上（独立审核第三轮）。
 - 指纹去掉路径、行列号、十六进制摘要、时长、时间戳和五位以上的长数字，小数字保留：断言里的 `23 !== 22` 变成 `24 !== 22` 就是新失败。同一份代码在 TURING 上连跑两次，90 条指纹完全一致。
 - 清单和报告器都在 trusted base 上读取，候选改不了；改它们会让所有套件都跑。重新生成：`node scripts/ci/ci-required-selection.mjs --write-known <套件>`，已有条目的原因按文件和测试路径保留，新条目没有原因，清单读取时会被拒，必须有人写上原因。
+- 有些已知失败的指纹里带着仓库范围的数量或清单（例如登记过的 gated 工作流个数）。正常改动了这些数量的 PR 会让已知失败换指纹，而清单从 trusted base 读，同一个 PR 里改不了：先开一个 PR，用 `--write-known <套件> --keep` 把将来的那条失败连同原因加进清单，合入后再合真正的改动。重新生成时，只有指纹相同的条目保留原因；指纹变了要重新写原因。
 - 残余：已有已知失败的测试文件，如果在测试全部结束后以非零码退出（`process.exit(3)` 之类），Node 不发任何失败事件，这个退出码被已知失败“解释”掉。这是 Node 测试运行器的限制，清单里的条目都来自这几个文件：`apps/clued-cloud/tests/ci-proof-profiles.test.mjs`、`production-publisher-source.test.mjs`、`ci-temporary-storage.test.mjs`、`integration-runtime-gate-evidence.test.mjs`、`resource-center-daily-install.test.mjs`、`resource-center-storage-read-pdf-bounds.test.mjs`，以及 `scripts/ci/clued-work-admission.test.mjs`、`clued-merge-slot-ci.test.mjs`。修好这些文件、删掉条目，残余就消失。
 - 首次在自建 Linux runner 上运行时，Windows 才有的失败（`pdf-bounds` 62 条等）会提示“now passes”，Linux 才有的失败会报新失败。在 Owner 把检查加进规则集之前，先在 Linux 上跑一次，用 `--write-known` 重新生成清单。
 
@@ -214,3 +215,12 @@
 | NIT | 清单无法复现生成 | 新增 `--write-known` |
 | NIT | 并发注释不准确 | 改写 |
 | NIT | 文件级失败指纹相同、测试自身 stdout 产生的注解 | 接受 |
+
+第四轮（v4，2026-11-01）**PASS**：0 BLOCKER、0 MAJOR；第三轮各项已修好，2 MINOR、2 NIT。处理：
+
+| 编号 | 问题 | 处理 |
+| --- | --- | --- |
+| MINOR-A | 不分进程运行（`--test-isolation=none`）时诊断不带文件名，异步错误被忽略 | 不带文件的这类诊断记在 `<run>` 下，永远对不上已知条目 |
+| MINOR-B | 指纹带仓库范围的数量，改了数量的 PR 无法在同一 PR 更新清单 | `--write-known --keep` 与两步做法写进 §3.4 |
+| NIT-1 | 重新生成时指纹变了还沿用旧原因 | 只在指纹相同时沿用 |
+| NIT-2 | 测试中途 `process.exit(0)` 让整个文件算通过 | Node 的行为，接受；已知条目会提示“no longer runs” |

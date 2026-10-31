@@ -19,8 +19,9 @@
 //     Writes suites=<json> and run_<suite>=true|false to GITHUB_OUTPUT.
 //   node scripts/ci/ci-required-selection.mjs --run <suite> [--root <checkout>]
 //     runs one suite's commands (SUITE_COMMANDS) in the checkout at --root.
-//   node scripts/ci/ci-required-selection.mjs --write-known <suite> [--root <checkout>]
-//     regenerates that suite's ci-known-failures.json entries from a real run.
+//   node scripts/ci/ci-required-selection.mjs --write-known <suite> [--keep] [--root <checkout>]
+//     regenerates that suite's ci-known-failures.json entries from a real run
+//     (--keep also keeps the entries already listed).
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -356,12 +357,16 @@ const ROOT = path.resolve(HERE, '..', '..');
 // the reason of an entry already listed for the same file and path. A new
 // entry gets no reason, so readKnownFailures refuses the list until a person
 // writes one.
-export function knownEntriesFromReport(report, previous = []) {
-  const reasons = new Map(previous.map((entry) => [`${entry.file} :: ${entry.path.join(' > ')}`, entry.reason]));
-  const entries = new Map();
+// A reason carries over only to the same failure (same fingerprint): a known
+// test now failing for another reason needs its reason written again. With
+// keep, the previous entries stay as well, so a pull request can list the
+// failure a coming change will produce (a count or list a test pins) before
+// that change lands; the known-failure list is read from the trusted base.
+export function knownEntriesFromReport(report, previous = [], { keep = false } = {}) {
+  const reasons = new Map(previous.map((entry) => [knownKey(entry), entry.reason]));
+  const entries = new Map(keep ? previous.map((entry) => [knownKey(entry), entry]) : []);
   for (const event of report.events.filter((candidate) => candidate.type === 'fail')) {
-    const entry = { file: event.file, path: event.path, fingerprint: event.fingerprint,
-      reason: reasons.get(`${event.file} :: ${event.path.join(' > ')}`) ?? '' };
+    const entry = { file: event.file, path: event.path, fingerprint: event.fingerprint, reason: reasons.get(knownKey(event)) ?? '' };
     entries.set(knownKey(entry), entry);
   }
   return [...entries.values()].sort((a, b) => knownKey(a).localeCompare(knownKey(b)));
@@ -369,7 +374,7 @@ export function knownEntriesFromReport(report, previous = []) {
 
 // --write-known <suite>: run that suite's known-failure command in the checkout
 // and rewrite its entries in ci-known-failures.json from the run.
-function writeKnown(id, root, env) {
+function writeKnown(id, root, env, keep = false) {
   const command = SUITE_COMMANDS[id]?.find((candidate) => candidate.known);
   if (!command) throw new Error(`suite ${id} has no known-failure command`);
   const cwd = path.join(root, command.cwd);
@@ -383,7 +388,7 @@ function writeKnown(id, root, env) {
   rmSync(dir, { recursive: true, force: true });
   if (!report.summary) throw new Error('the run did not finish; nothing written');
   const data = JSON.parse(readFileSync(KNOWN_FAILURES_PATH, 'utf8'));
-  data[command.known] = knownEntriesFromReport(report, data[command.known] ?? []);
+  data[command.known] = knownEntriesFromReport(report, data[command.known] ?? [], { keep });
   writeFileSync(KNOWN_FAILURES_PATH, `${JSON.stringify(data, null, 2)}\n`);
   const unexplained = data[command.known].filter((entry) => !entry.reason).length;
   console.log(`${command.known}: ${data[command.known].length} entries written${unexplained ? `, ${unexplained} need a reason` : ''}`);
@@ -394,7 +399,7 @@ async function main(argv, env = process.env) {
   const writeIndex = argv.indexOf('--write-known');
   if (writeIndex >= 0) {
     const rootIndex = argv.indexOf('--root');
-    return writeKnown(argv[writeIndex + 1], rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT, env);
+    return writeKnown(argv[writeIndex + 1], rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT, env, argv.includes('--keep'));
   }
   const runIndex = argv.indexOf('--run');
   if (runIndex >= 0) {

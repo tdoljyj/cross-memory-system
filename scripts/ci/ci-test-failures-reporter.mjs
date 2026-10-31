@@ -61,10 +61,12 @@ export default async function* reporter(source) {
       if (error?.failureType === 'subtestsFailed' || (data.todo !== undefined && data.todo !== false)) continue;
       yield `${JSON.stringify({ type: 'fail', file: data.file ?? null, path: pathOf(data), failure_type: error?.failureType ?? null,
         fingerprint: failureFingerprint(error) })}\n`;
-    } else if (event.type === 'test:diagnostic' && data.file && ASYNC_AFTER_END.test(String(data.message ?? ''))) {
+    } else if (event.type === 'test:diagnostic' && ASYNC_AFTER_END.test(String(data.message ?? ''))) {
+      // Without process isolation the diagnostic names no file; it is still a
+      // failure, recorded under <run> so it never matches a known entry.
       const message = String(data.message);
       const test = /Test "([^"]*)"/.exec(message)?.[1] ?? '<file>';
-      yield `${JSON.stringify({ type: 'fail', file: data.file, path: ['<async activity after the test ended>', test],
+      yield `${JSON.stringify({ type: 'fail', file: data.file ?? null, path: [data.file ? '<async activity after the test ended>' : '<run>', test],
         failure_type: 'asyncActivityAfterTest', fingerprint: failureFingerprint({ failureType: 'asyncActivityAfterTest', message }) })}\n`;
     } else if (event.type === 'test:pass') {
       yield `${JSON.stringify({ type: 'pass', file: data.file ?? null, path: pathOf(data) })}\n`;
