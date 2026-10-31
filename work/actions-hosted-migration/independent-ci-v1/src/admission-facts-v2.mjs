@@ -7,6 +7,9 @@ import { sameClaimGeneration } from './job-v2.mjs';
 import { mergeQueueEntryV2, MERGE_QUEUE_STATES } from './independent-control-checks-v2/queue-facts.mjs';
 
 export const FULL_ADMISSION_CONTRACT_V2 = 'clued.independent-ci.full-admission/2';
+// /2 retains its frozen staged+unguarded meaning. Active facts use a separate
+// contract so an old bridge or publisher cannot silently accept new authority.
+export const FULL_ADMISSION_CONTRACT_V3 = 'clued.independent-ci.full-admission/3';
 export const ADMISSION_ENGINE = 'scripts/ci/clued-work-admission.mjs#evaluate';
 const sha = /^[a-f0-9]{64}$/;
 const plain = value => value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype;
@@ -26,7 +29,8 @@ export const REASON_PREFIXES = Object.freeze({ 'changed_files_truncated:': 'chan
   'owner_review_unavailable:': 'owner_review_unavailable', 'workflow runs unavailable:': 'workflow_runs_unavailable' });
 export const DIAGNOSTIC_CODES = Object.freeze([...new Set([...REASON_CODES, ...Object.values(REASON_PREFIXES), 'unknown_reason'])]);
 const REASON_SET = new Set(REASON_CODES), DIAGNOSTIC_SET = new Set(DIAGNOSTIC_CODES);
-export const DIAGNOSTIC_PHASES = Object.freeze(['mode', 'principal', 'observer', 'pull_request', 'claim_reference', 'evaluate', 'post_evaluate', 'post_pull_request', 'native']);
+export const DIAGNOSTIC_PHASES = Object.freeze(['mode', 'principal', 'observer', 'pull_request', 'claim_reference', 'evaluate', 'post_evaluate', 'post_pull_request', 'native', 'changed_paths']);
+const ISSUER_TRANSIENT_ADMISSIONS = new Set(['full_admission_observation_expired', 'full_admission_unavailable']);
 export const verdict = value => ['ADMITTED', 'REJECTED', 'ERROR', 'PR_NOT_OPEN', 'NOT_APPLICABLE'].includes(value) ? value : 'UNKNOWN';
 export const ownerKind = value => ['granted', 'pending', 'transient', 'rpc_unavailable', 'refused'].includes(value) ? value : 'UNKNOWN';
 export const reasonCodes = values => [...new Set((Array.isArray(values) ? values.slice(0, 64) : []).map(value => {
@@ -62,6 +66,11 @@ export function sanitizeAdmissionDiagnosticV2(d) {
   for (const field of ['reasonCodes', 'nativeReasonCodes']) diagnostic[field] = [...new Set((Array.isArray(d[field]) ? d[field].slice(0, 64) : []).map(value => DIAGNOSTIC_SET.has(value) ? value : 'unknown_reason'))].sort();
   for (const field of ['workflowGateFindingsPresent', 'modeFresh', 'recorderFresh']) if (typeof d[field] === 'boolean') diagnostic[field] = d[field];
   if (DIAGNOSTIC_PHASES.includes(d.phase)) diagnostic.phase = d.phase;
+  // Issuer retry context is diagnostic only: one round has at most four evaluations.
+  if (ISSUER_TRANSIENT_ADMISSIONS.has(d.transientAdmission)) {
+    diagnostic.transientAdmission = d.transientAdmission;
+    if (Number.isSafeInteger(d.evaluations) && d.evaluations >= 1 && d.evaluations <= 4) diagnostic.evaluations = d.evaluations;
+  }
   if (Object.hasOwn(d, 'ciRetryAfter') || Object.hasOwn(d, 'mergeQueue')) Object.assign(diagnostic, sanitizeSchedulingV2({ ciRetryAfter: d.ciRetryAfter, mergeQueue: d.mergeQueue }));
   return diagnostic;
 }
@@ -71,11 +80,23 @@ export const ADMISSION_FIELDS_V2 = Object.freeze(['contract', 'status', 'admitte
   'prRef', 'headSha', 'baseSha', 'jobId', 'role', 'attempt', 'claimId', 'fence', 'epoch', 'observedClaim', 'batchClaimBound', 'sourceManifestSha256',
   'executionPolicy', 'guarded', 'executionHandoverPending', 'mergeQueueHead', 'mode', 'mergeSlot', 'ownerReview', 'workflowGateFindings', 'observedAt',
   'claimExpiresAt', 'modeProofRef', 'observationRef', 'packetSha256', 'evaluationSha256', 'observationSha256']);
+export const ADMISSION_FIELDS_V3 = Object.freeze([...ADMISSION_FIELDS_V2, 'publicationRequired', 'headAuthorizationId']);
+const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+export function supportedNativeExecution(policy, guarded) {
+  return policy === 'staged' && guarded === false || policy === 'active' && typeof guarded === 'boolean';
+}
+function executionFactsValid(facts) {
+  if (facts.contract === FULL_ADMISSION_CONTRACT_V2) return facts.executionPolicy === 'staged' && facts.guarded === false;
+  return facts.contract === FULL_ADMISSION_CONTRACT_V3 && facts.executionPolicy === 'active' && typeof facts.guarded === 'boolean'
+    && facts.publicationRequired === true && (facts.guarded ? typeof facts.headAuthorizationId === 'string' && uuid.test(facts.headAuthorizationId) : facts.headAuthorizationId === null);
+}
+const fieldsFor = facts => facts?.contract === FULL_ADMISSION_CONTRACT_V3 ? ADMISSION_FIELDS_V3 : ADMISSION_FIELDS_V2;
 export function admittedFactsMatchJobV2(facts, job, now, { batchClaim = null } = {}) {
-  if (!plain(facts) || facts.contract !== FULL_ADMISSION_CONTRACT_V2 || facts.status !== 'ADMITTED' || facts.admitted !== true || facts.completeAdmission !== true
+  if (!plain(facts) || !executionFactsValid(facts) || Object.keys(facts).sort().join('|') !== [...fieldsFor(facts)].sort().join('|')
+    || facts.status !== 'ADMITTED' || facts.admitted !== true || facts.completeAdmission !== true
     || facts.evaluator !== ADMISSION_ENGINE || facts.repository !== job.repo || facts.prRef !== `${job.repo}#${job.pr}` || facts.headSha !== job.headSha
     || facts.baseSha !== job.baseSha || facts.jobId !== job.id || facts.role !== job.role || facts.attempt !== job.attempt
-    || facts.sourceManifestSha256 !== job.sourceManifestSha256 || facts.executionPolicy !== 'staged' || facts.guarded !== false
+    || facts.sourceManifestSha256 !== job.sourceManifestSha256
     || facts.executionHandoverPending !== false || !plain(facts.observedClaim) || facts.observedClaim.claimId !== facts.claimId
     || facts.observedClaim.fence !== facts.fence || facts.observedClaim.epoch !== facts.epoch || facts.observedClaim.expiresAt !== facts.claimExpiresAt
     || !Number.isSafeInteger(now) || !(at(facts.observedAt) <= now) || now - at(facts.observedAt) > 30_000 || !(at(facts.claimExpiresAt) > now)) return false;
@@ -84,15 +105,46 @@ export function admittedFactsMatchJobV2(facts, job, now, { batchClaim = null } =
   return sha.test(observationSha256 ?? '') && digest(body) === observationSha256;
 }
 
+// Owner Decision 6f1fb753 (Task 576231fa): the admission inside a bridge v4 callback response is fresh when the
+// Windows issuer issued that response, like the issue's own admission (protocol.mjs validateResponse); the response
+// then only has to arrive inside its own window. A relay call that took 30 s (PR #915 stage 4, 2026-10-23) refused
+// a response the issuer had answered in 10 s. The Linux worker notes the issuance and expiry of exactly the facts
+// object it hands an adapter; while that response is valid, and never past the claim, the 30 s bound below is measured
+// from its issuance. Facts that did not come out of a validated response (every Windows caller) keep `now`.
+const bridgeResponseTimes = new WeakMap();
+export function noteBridgeResponseTimes(facts, response) {
+  const issuedAt = at(response?.issuedAt), expiresAt = Math.min(at(response?.expiresAt), at(facts?.claimExpiresAt));
+  if (plain(facts) && Number.isSafeInteger(issuedAt) && Number.isSafeInteger(expiresAt) && issuedAt < expiresAt) bridgeResponseTimes.set(facts, { issuedAt, expiresAt });
+  return facts;
+}
+export function admissionReferenceTime(facts, now) {
+  const t = plain(facts) ? bridgeResponseTimes.get(facts) : undefined;
+  return t && Number.isSafeInteger(now) && t.issuedAt <= now && now < t.expiresAt ? t.issuedAt : now;
+}
+// The same for the refs snapshot of a bridge v4 remote-refs response (Task 576231fa; protocol.mjs validateResponse
+// measures its 30 s at the response's issuedAt). The Linux worker notes the issuance and expiry of exactly the snapshot
+// object it hands the gitleaks adapter; while that response is valid, a check of the snapshot's freshness
+// (validateRemoteSnapshot) measures from the issuance when it asks remoteRefsReferenceTime. Any other object keeps `now`.
+const bridgeRefsTimes = new WeakMap();
+export function noteBridgeRefsTimes(refs, response) {
+  const issuedAt = at(response?.issuedAt), expiresAt = at(response?.expiresAt);
+  if (plain(refs) && Number.isSafeInteger(issuedAt) && Number.isSafeInteger(expiresAt) && issuedAt < expiresAt) bridgeRefsTimes.set(refs, { issuedAt, expiresAt });
+  return refs;
+}
+export function remoteRefsReferenceTime(refs, now) {
+  const t = plain(refs) ? bridgeRefsTimes.get(refs) : undefined;
+  return t && Number.isSafeInteger(now) && t.issuedAt <= now && now < t.expiresAt ? t.issuedAt : now;
+}
+
 // The one admission check of the Linux scanner adapters and the bridge v4 protocol (replaces the three
 // per-adapter v1 validateAdmission copies). A scanner stage's admission is always made under the batch
 // claim recorded by stage 1, so batchClaimBound is required and must name the observed claim; a caller
 // that already holds the run's generation passes it as batchClaim (renewal = same generation).
 export function validateFormalAdmissionV2(job, a, now = Date.now(), { batchClaim = null } = {}) {
   const generation = v => plain(v) && Object.keys(v).sort().join('|') === 'claimId|epoch|fence';
-  if (!plain(a) || Object.keys(a).sort().join('|') !== [...ADMISSION_FIELDS_V2].sort().join('|') || a.domain !== 'production'
+  if (!plain(a) || Object.keys(a).sort().join('|') !== [...fieldsFor(a)].sort().join('|') || a.domain !== 'production'
     || !generation(a.batchClaimBound) || !sameClaimGeneration(a.observedClaim, a.batchClaimBound)
-    || !admittedFactsMatchJobV2(a, job, now, { batchClaim })) {
+    || !admittedFactsMatchJobV2(a, job, admissionReferenceTime(a, now), { batchClaim })) {
     throw Object.assign(new Error('FRESH_COMPLETE_NATIVE_ADMISSION_REQUIRED'), { code: 'FRESH_COMPLETE_NATIVE_ADMISSION_REQUIRED' });
   }
   return a;

@@ -10,6 +10,15 @@
 //   - the Owner acceptance window is the install's: `validUntil` null = until Source change or
 //     uninstall (Owner decision 1b5d3687), otherwise a review deadline; no 24 h cap, no claim cap;
 //   - the record pins the controller node and the six check mappings exactly as v1 did.
+// Inputs /2 (resident active/standby design v0.4 §9 C1): the input `node` (node profile /1, validateNodeProfile
+// below) replaces `hostname`; acceptance.json carries it whole as `node`, next to the unchanged `hostname`
+// (= node.hostname). It is the host identity the Source used to carry as TURING constants. The acceptance contract
+// stays /2: a reader that does not use `node` yet (the generic helper's FormalPublicBoundaryV2.cs) is unaffected,
+// and every JS reader (record.mjs) refuses a record without a valid one.
+// ciPrincipalRoleRef (primary/standby C7, design v0.4 section 7.2, resident DESIGN.md section 30) changes meaning, not shape: it is the
+// Owner decision that this ci-admission connection MAY hold the role (a qualification), no longer the ground for "it holds the role
+// now". A node is installed as STANDBY on a connection the service has not marked, and every hand-over changes who holds the role;
+// whether this connection holds it now is only ever the role probe's answer. Validation is unchanged: a UUID.
 // Pure WORK: no host path is read or written except --source-root (a checkout) and the new --out.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,9 +26,10 @@ import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { canonical } from '../proof.mjs';
 import { REPO } from './layout.mjs';
+import { revocationQualification } from './revocation-run.mjs';
 
-export const RECORD_INPUTS_CONTRACT = 'clued.independent-ci.resident-record-inputs/1';
-export const RECORD_MANIFEST_CONTRACT = 'clued.independent-ci.resident-record/1';
+export const RECORD_INPUTS_CONTRACT = 'clued.independent-ci.resident-record-inputs/2';
+export const RECORD_MANIFEST_CONTRACT = 'clued.independent-ci.resident-record/2';
 export const INSTALLATION_CONTRACT_V2 = 'clued.independent-ci.one-shot/2';
 export const ACCEPTANCE_CONTRACT_V2 = 'clued.independent-ci.accepted-installation/2';
 export const SOURCES_SCHEMA_V2 = 'independent-ci.sources.v2';
@@ -38,6 +48,38 @@ const exact = (v, keys) => plain(v) && Object.keys(v).sort().join('|') === [...k
 export const hash = v => createHash('sha256').update(typeof v === 'string' || Buffer.isBuffer(v) ? v : canonical(v)).digest('hex');
 const relative = p => typeof p === 'string' && !p.startsWith('/') && !/[\\:\x00-\x1f]/.test(p) && p.split('/').every(x => x && x !== '.' && x !== '..');
 const noSecrets = v => { if (plain(v)) { check(!Object.keys(v).some(k => /private.?key|token$|password|secret|ciTokenSha256/i.test(k)), 'PRIVATE_OR_LEGACY_INPUT_REFUSED'); Object.values(v).forEach(noSecrets); } else if (Array.isArray(v)) v.forEach(noSecrets); };
+
+// Node profile /1: the one host identity an install is pinned to (design §9 C1), carried whole as the record's
+// acceptance.json `node`; nodeProfileSha256 = hash(profile) (SHA-256 of its canonical JSON). The elevated
+// installers (install/verify/uninstall-resident.ps1), the controller read lease (hold-record.ps1, held-record.mjs)
+// and the v2 entries' secret reads (entry-runtime.mjs) take the host identity from it. TURING's profile is
+// independent-ci-resident-v1/config/node-profile.turing.json: exactly the values the Source carried before.
+// Every rule is a shape rule except mutationMutex, which must be the v1 name derived from the host and the
+// controller account's RID (TURING: Global\CluedControlControllerMutationV1-TURING-1015, the name the v1 elevated tool
+// control-install-delta-v2/invoker/FixedScm.cs shares with the broker so the two exclude each other; a new node has no v1
+// tool, so there the derived name only has to be one fixed name per host). install-resident.ps1#Assert-NodeProfile is
+// the PowerShell twin; test/fixtures/node-profile-cases.json holds both to the same answers and refusal codes.
+//   nodeName              lower-case node label (resident-queue/<nodeName> on the PR page, design §5.2)
+//   hostname              NetBIOS computer name, upper-case (COMPUTERNAME, Environment.MachineName)
+//   ownerSid              the Owner's account (companion, relay, incoming spool writer)
+//   ownerProfileDirectory the Owner's profile directory (USERPROFILE of the WSL relay call)
+//   controllerSid         .\clued-control (the generic helper, the v2 entries, the outgoing spool writer)
+//   runnerService         the carrier runner service the broker swaps (never routed a workflow)
+//   wslDistribution       the Owner's WSL distribution that holds the Linux half
+export const NODE_PROFILE_CONTRACT = 'clued.independent-ci.node-profile/1';
+export const NODE_PROFILE_KEYS = Object.freeze(['contract', 'nodeName', 'hostname', 'ownerSid', 'ownerProfileDirectory', 'controllerSid', 'runnerService', 'mutationMutex', 'wslDistribution']);
+const USER_SID = /^S-1-5-21-\d{1,10}-\d{1,10}-\d{1,10}-(\d{1,10})$/;
+export function validateNodeProfile(n) {
+  check(exact(n, NODE_PROFILE_KEYS) && NODE_PROFILE_KEYS.every(k => typeof n[k] === 'string') && n.contract === NODE_PROFILE_CONTRACT, 'NODE_PROFILE_FIELDS_REQUIRED');
+  const owner = USER_SID.exec(n.ownerSid), controller = USER_SID.exec(n.controllerSid);
+  check(/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(n.nodeName) && /^[A-Z0-9](?:[A-Z0-9-]{0,13}[A-Z0-9])?$/.test(n.hostname)
+    && owner && controller && n.ownerSid !== n.controllerSid && Number(controller[1]) >= 1000
+    && /^C:\\Users\\[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/.test(n.ownerProfileDirectory)
+    && /^actions\.runner\.tdoljyj-cross-memory-system\.clued-ci-[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/.test(n.runnerService)
+    && n.mutationMutex === `Global\\CluedControlControllerMutationV1-${n.hostname}-${controller[1]}`
+    && /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/.test(n.wslDistribution), 'NODE_PROFILE_INVALID');
+  return n;
+}
 
 function read(p, max = 16 * 1024 * 1024) {
   const st = fs.lstatSync(p);
@@ -68,12 +110,13 @@ function validateRoles(roles) {
 
 export function validateRecordInputs(v, now = Date.now()) {
   noSecrets(v);
-  check(exact(v, ['contract', 'repository', 'sourceCommit', 'scope', 'hostname', 'controllerAccount', 'appId', 'installationId', 'repositoryId', 'appKeyId',
+  check(exact(v, ['contract', 'repository', 'sourceCommit', 'scope', 'node', 'controllerAccount', 'appId', 'installationId', 'repositoryId', 'appKeyId',
     'ciPrincipalBindingId', 'ciPrincipalRoleRef', 'ciTokenPinSha256', 'appPublicKeySha256Base64', 'supabaseUrl', 'publishableKey', 'controllerNodeSha256',
-    'references', 'owner', 'formalRoles', 'signers']), 'EXACT_RECORD_INPUT_FIELDS_REQUIRED');
+    'references', 'owner', 'formalRoles', 'signers', ...(Object.hasOwn(v,'revocationMaintenanceQualification')?['revocationMaintenanceQualification']:[])]), 'EXACT_RECORD_INPUT_FIELDS_REQUIRED');
   check(v.contract === RECORD_INPUTS_CONTRACT && v.repository === REPO && SHA.test(v.sourceCommit)
     && (v.scope === 'global' || /^project:[a-f0-9-]{36}$/.test(v.scope)), 'ACTUAL_REPOSITORY_SOURCE_SCOPE_REQUIRED');
-  check(/^[A-Za-z0-9-]+$/.test(v.hostname) && v.controllerAccount === 'clued-control' && [v.appId, v.installationId, v.repositoryId, v.appKeyId].every(n => Number.isSafeInteger(n) && n > 0)
+  validateNodeProfile(v.node);
+  check(v.controllerAccount === 'clued-control' && [v.appId, v.installationId, v.repositoryId, v.appKeyId].every(n => Number.isSafeInteger(n) && n > 0)
     && UUID.test(v.ciPrincipalBindingId) && UUID.test(v.ciPrincipalRoleRef) && HASH.test(v.ciTokenPinSha256) && /^[A-Za-z0-9+/]{43}=$/.test(v.appPublicKeySha256Base64)
     && /^https:\/\/[a-z0-9]+\.supabase\.co$/.test(v.supabaseUrl) && /^sb_publishable_[A-Za-z0-9_-]+$/.test(v.publishableKey) && HASH.test(v.controllerNodeSha256), 'EXISTING_PUBLIC_IDENTITY_REQUIRED');
   check(exact(v.references, REFS) && REFS.every(k => UUID.test(v.references[k] ?? '') && !/^0{8}-/.test(v.references[k])), 'GENUINE_FORMAL_REFERENCES_REQUIRED');
@@ -83,6 +126,11 @@ export function validateRecordInputs(v, now = Date.now()) {
     && (o.validUntil === null || (ISO.test(o.validUntil) && Date.parse(o.validUntil) > now && Date.parse(o.validUntil) > Date.parse(o.acceptedAt))), 'SOURCE_ACCEPTANCE_WINDOW_REQUIRED');
   validateRoles(v.formalRoles);
   check(plain(v.signers) && Array.isArray(v.signers.signers) && v.signers.signers.length > 0, 'ACTUAL_EXISTING_PUBLIC_SIGNER_FILE_REQUIRED');
+  if(Object.hasOwn(v,'revocationMaintenanceQualification')){
+    const q=v.revocationMaintenanceQualification;
+    check(revocationQualification({accepted:{revocationMaintenanceQualification:q},config:{sourceManifestSha256:q?.sourceManifestSha256}}, {now})
+      && HASH.test(q.sourceManifestSha256), 'GENUINE_REVOCATION_QUALIFICATION_REFERENCE_REQUIRED');
+  }
   return v;
 }
 
@@ -108,18 +156,24 @@ export function assembleRecord(inputs, sourceFiles) {
     evaluatorSha256: pin('scripts/ci/clued-work-admission.mjs'), policySha256: pin('config/merge-admission-policy.json'),
     controllerNodeSha256: inputs.controllerNodeSha256, acceptanceSha256: null, sourceManifestSha256: hash(manifestText), checks: CHECKS_V2 };
   const signersText = canonical(inputs.signers);
-  const accepted = { contract: ACCEPTANCE_CONTRACT_V2, domain: 'production', accepted: true, repository: inputs.repository, hostname: inputs.hostname,
-    platform: 'win32', arch: 'x64', controllerAccount: inputs.controllerAccount, workerCannotReadController: true, ...inputs.references,
+  const accepted = { contract: ACCEPTANCE_CONTRACT_V2, domain: 'production', accepted: true, repository: inputs.repository, hostname: inputs.node.hostname,
+    node: inputs.node, platform: 'win32', arch: 'x64', controllerAccount: inputs.controllerAccount, workerCannotReadController: true, ...inputs.references,
     ciPrincipalBindingId: inputs.ciPrincipalBindingId, ciTokenPinSha256: inputs.ciTokenPinSha256, appPublicKeySha256Base64: inputs.appPublicKeySha256Base64,
     sourceFiles: pins, signerRegistrySha256: hash(inputs.signers), ownerDecisionRef: inputs.owner.ownerDecisionRef, ownerReceiptRef: inputs.owner.ownerReceiptRef,
     acceptedAt: inputs.owner.acceptedAt, validUntil: inputs.owner.validUntil, claimBound: false, configSha256: hash({ ...config, acceptanceSha256: null }) };
+  // An existing accepted qualification may be bound into a new record. This
+  // tool validates and preserves that reference; it never issues qualification.
+  if(Object.hasOwn(inputs,'revocationMaintenanceQualification')){
+    check(inputs.revocationMaintenanceQualification.sourceManifestSha256===config.sourceManifestSha256,'REVOCATION_QUALIFICATION_SOURCE_CHANGED');
+    accepted.revocationMaintenanceQualification=structuredClone(inputs.revocationMaintenanceQualification);
+  }
   const acceptanceText = canonical(accepted);
   config.acceptanceSha256 = hash(acceptanceText);
   const installationText = canonical(config);
   const files = { 'installation.json': installationText, 'acceptance.json': acceptanceText, 'source-manifest.json': manifestText, 'signers.json': signersText };
   const recordManifest = { contract: RECORD_MANIFEST_CONTRACT, files: Object.fromEntries(Object.entries(files).map(([n, t]) => [n, { bytes: Buffer.byteLength(t), sha256: hash(t) }])),
     sourceManifestSha256: config.sourceManifestSha256, acceptanceSha256: config.acceptanceSha256, installationSha256: hash(installationText),
-    runtimeConfigPinSha256: accepted.configSha256, controllerNodeSha256: inputs.controllerNodeSha256, validUntil: accepted.validUntil, claimBound: false };
+    runtimeConfigPinSha256: accepted.configSha256, controllerNodeSha256: inputs.controllerNodeSha256, nodeProfileSha256: hash(inputs.node), validUntil: accepted.validUntil, claimBound: false };
   return { files, recordManifest };
 }
 

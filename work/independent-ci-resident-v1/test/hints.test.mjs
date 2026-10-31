@@ -9,12 +9,13 @@ import { Mailbox, HINT_FILE } from '../src/mailbox.mjs';
 import { HostedHints, hintRecord, hintRole, sourceHintObserver } from '../src/hosted-hints.mjs';
 import { parseHint, HINT_MAX_BYTES } from '../src/hosted-wait.mjs';
 import { createGhReadPort } from '../src/gh-read-port.mjs';
-import { Poller, HINT_WINDOW_MS } from '../src/poller.mjs';
+import { Poller, HINT_OBSERVE_EVERY_MS, HINT_WINDOW_MS } from '../src/poller.mjs';
+import { restPolls } from './gh-rest-stub.mjs';
 import { mailboxCompanion } from '../src/service-ports.mjs';
 import { validateHintConfig } from '../src/companion.mjs';
 import { WindowsEngine } from '../src/engine-windows.mjs';
 import { validatePolicy } from '../src/policy.mjs';
-import { tempRoot, rawPolicy, HEAD, BASE, SOURCE } from './helpers.mjs';
+import { TEST_NODE, TEST_NODE_SHA, tempRoot, rawPolicy, HEAD, BASE, SOURCE } from './helpers.mjs';
 import { createWorld, H, B, PR, REPO } from '../../actions-hosted-migration/independent-ci-v1/test/fixtures/hosted-relay/world.mjs';
 import { createHostedRelayObserver } from '../../actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/observe.mjs';
 import { hostedHint } from '../../actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/stage.mjs';
@@ -89,10 +90,14 @@ test('poller: hint mode observes each proposed head for a bounded window, a fail
   const run = async argv => argv.some(a => a.includes('/compare/')) ? { code: 0, stdout: JSON.stringify({ behind_by: 0, base: BASE }) }
     : argv.includes('api') ? { code: 0, stdout: BASE + '\n' } : { code: 0, stdout: JSON.stringify(pulls) };
   const hints = { async observe(s) { observed.push(s); if (observed.length === 1) throw new Error('boom'); } };
-  const p = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run, writeTrigger: async v => triggers.push(v), clock: () => now, hints });
+  const p = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run: restPolls(run, { main: () => BASE, pulls: () => pulls }), writeTrigger: async v => triggers.push(v), clock: () => now, hints });
   assert.equal(await p.pass(), 1);
+  now += 60_000;
   assert.equal(await p.pass(), 0, 'the trigger is proposed once');
-  assert.equal(observed.length, 2, 'observed on every pass inside the window, also after an error');
+  assert.equal(observed.length, 1, 'the 60-second poll observes a head at most every HINT_OBSERVE_EVERY_MS');
+  now += HINT_OBSERVE_EVERY_MS;
+  await p.pass();
+  assert.equal(observed.length, 2, 'observed again inside the window, also after an error');
   now += HINT_WINDOW_MS + 1;
   await p.pass();
   assert.equal(observed.length, 2, 'not after the window');
@@ -142,7 +147,7 @@ test('engine: stage R is derived for exactly the candidates and run as stage 9 w
     throw new Error('unexpected ' + argv.join(' '));
   };
   const companionMailbox = { async send(kind, fields) { sent.push(kind); return { kind, fields }; }, async await() { return { ok: true, code: null, verified: true }; } };
-  const engine = new WindowsEngine({ run, busy: () => false, companionMailbox, sleep: async () => {}, clock: () => T0,
+  const engine = new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run, busy: () => false, companionMailbox, sleep: async () => {}, clock: () => T0,
     paths: { sourceRoot, workRoot: path.join(root, 'work'), outboxRoot: path.join(root, 'outbox'), nodeExe: 'C:\\node.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', scExe: 'C:\\Windows\\System32\\sc.exe' } });
   const batch = { batchId: 'b', key: 'a1'.repeat(32), dir: path.join(root, 'work', 'b'), stages: [1, 2, 3, 4, 5, 6, 7, 8].map(n => ({ number: n, jobId: String(n).repeat(64).slice(0, 64), workManifestSha256: 'f'.repeat(64) })) };
   const r = await engine.runRelayStage(batch, ['trivy']);

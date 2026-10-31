@@ -24,8 +24,9 @@ test('the stage fact\'s outcome reaches the executor whole: diagnostic codes, ci
     scheduling: { ciRetryAfter: '2026-10-22T12:00:00.000Z', mergeQueue: { entered: true, state: 'waiting', position: 3 } } };
   const f = parseStageFact(JSON.stringify(refusedFact(outcome)), M);
   assert.deepEqual([f.ok, f.code, f.brokerNoLaunch], [false, 'TASK_CI_HEAD_CAP_REACHED', false]);
+  // the fixed owner-review kind survives the resident's second filter (3bf77462: bounded issuer diagnostics)
   assert.deepEqual(f.outcome, { status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, mayHavePublished: false, safeToRerun: true,
-    diagnostic: { verdict: 'REJECTED', nativeVerdict: 'REJECTED', reasonCodes: ['task_ci_head_cap_reached'], nativeReasonCodes: ['task_ci_head_cap_reached'], ciRetryAfter: '2026-10-22T12:00:00.000Z',
+    diagnostic: { verdict: 'REJECTED', nativeVerdict: 'REJECTED', ownerReviewKind: 'UNKNOWN', reasonCodes: ['task_ci_head_cap_reached'], nativeReasonCodes: ['task_ci_head_cap_reached'], ciRetryAfter: '2026-10-22T12:00:00.000Z',
       mergeQueue: { entered: false, state: null, position: null } },
     scheduling: { ciRetryAfter: '2026-10-22T12:00:00.000Z', mergeQueue: { entered: true, state: 'waiting', position: 3 } } });
   // re-validated to fixed shapes: nothing malformed passes, and a flag never survives side effects

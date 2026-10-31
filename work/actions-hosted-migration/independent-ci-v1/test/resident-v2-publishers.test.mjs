@@ -6,9 +6,10 @@ import { digest } from '../src/proof.mjs';
 import { batchJobsV2, claimGeneration, scanEffectKeyV2, subjectOfV2 } from '../src/job-v2.mjs';
 import { EffectJournal } from '../src/effect-journal.mjs';
 import { recordBatchClaim, readBatchClaim } from '../src/batch-claim-v2.mjs';
-import { createFixtureWorkAdmissionPublisherV2 } from '../src/formal-work-admission-check-v2/publisher.mjs';
+import { createFixtureWorkAdmissionPublisherV2, notOnDuty, refusalSafeToRerun } from '../src/formal-work-admission-check-v2/publisher.mjs';
 import { createFixtureControlPublisherV2, createProductionControlPublisherV2, queueWindow, QUEUE_POLL_MS, QUEUE_WAIT_FINAL_REASONS, STAGE8_CHECK_MS } from '../src/independent-control-checks-v2/publisher.mjs';
-import { outcomeFailureCode } from '../src/resident-v2/stage-fact.mjs';
+import { outcomeFailureCode, outcomeFacts } from '../src/resident-v2/stage-fact.mjs';
+import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { protectedFactsFromVerify } from '../runtime/one-shot-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
@@ -16,7 +17,7 @@ import { HEAD, BASE, tempDir, fixtureRecord, signResult } from './resident-v2-fi
 
 const REPO = 'tdoljyj/cross-memory-system';
 const iso = ms => new Date(ms).toISOString();
-const jobsFor = (attempt = 1) => batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt });
+const jobsFor = (attempt = 1, testSha = HEAD) => batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt });
 const claim = (o = {}) => ({ claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000), ...o });
 
 // A complete admitted v2 observation for `job` under `observed` (shape of full-admission-v2 facts).
@@ -50,7 +51,7 @@ function fakeGithub(o = {}) {
       if (state.pull.state !== 'open') throw Object.assign(new Error('pr_subject_changed'), { code: 'pr_subject_changed' });
       return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: ['a.txt'] };
     },
-    async readPullRequest(n) { return { number: n, ...structuredClone(state.pull), head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: BASE, ref: 'main', repo: { full_name: REPO } } }; },
+    async readPullRequest(n) { return { number: n, ...structuredClone(state.pull), head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: state.prBase ?? BASE, ref: 'main', repo: { full_name: REPO } } }; },
     async readBranchRules(branch) { if (state.rulesError) throw Object.assign(new Error(state.rulesError), { code: state.rulesError }); return { complete: true, branch, rules: structuredClone(state.rules) }; },
     async readGitCommit(sha) { if (!state.commits[sha]) throw Object.assign(new Error('github_http_404'), { code: 'github_http_404' }); return structuredClone(state.commits[sha]); },
     async readChecks(head) { return { complete: true, checks: checks.filter(c => c.head_sha === head).map(c => structuredClone(c)) }; },
@@ -212,6 +213,26 @@ test('work admission v2: safeToRerun only for a first-admission boundary refusal
   assert.equal((await run({ answer: () => ({ ...blocked('full_admission_rejected'), diagnostic: { reasonCodes: ['changed_files_truncated'] } }) })).safeToRerun, false);
   // not up to date with main: also deterministic, even together with a waiting reason
   assert.equal((await run({ answer: () => ({ ...blocked('full_admission_rejected'), diagnostic: { reasonCodes: ['owner_review_required', 'protected_change_not_up_to_date'] } }) })).safeToRerun, false);
+  // Primary/standby C3: a node that holds no ci-admission role (Native's admission_binding_required) decides nothing about the
+  // PR, so a deterministic reason that comes with it never makes the refusal unsafe to re-run: nothing was written (first
+  // evaluation, no batch claim, sideEffects 0), and the stage names it NODE_ROLE_NOT_HELD
+  for (const reasonCodes of [['admission_binding_required'], ['admission_binding_required', 'protected_change_not_up_to_date'], ['changed_files_truncated', 'admission_binding_required'],
+    ['policy_file_removed', 'admission_binding_required', 'owner_review_required']]) {
+    const x = await run({ answer: () => ({ ...blocked('full_admission_rejected'), diagnostic: { reasonCodes } }) });
+    assert.deepEqual([x.status, x.reason, x.sideEffects, x.safeToRerun], ['BLOCKED', 'full_admission_rejected', 0, true], reasonCodes.join());
+    // through the entry's real outcome record and the stage fact's view of it
+    const written = await writeOutcome({ receiptsRoot: await tempDir(t, 'clued-no-role-'), nonce: randomUUID().replace(/-/g, ''), plan: { stage: 1, entryRole: 'work-admission' }, jobIds: [], result: x });
+    const facts = outcomeFacts(written);
+    assert.deepEqual([facts.safeToRerun, facts.sideEffects, facts.mayHavePublished, facts.diagnostic.reasonCodes.includes('admission_binding_required')], [true, 0, false, true], reasonCodes.join());
+    assert.equal(outcomeFailureCode(written, 1), 'NODE_ROLE_NOT_HELD', reasonCodes.join());
+    assert.equal(outcomeFailureCode(written, 3), 'BATCH_CLAIM_CHANGED', 'after stage 1 it keeps its old code');
+  }
+  // only the rejection of the first evaluation says it; no other reason, and not past the boundary or with a claim recorded
+  assert.deepEqual([notOnDuty('full_admission_rejected', { reasonCodes: ['admission_binding_required'] }), notOnDuty('full_admission_rejected', { nativeReasonCodes: ['admission_binding_required'] }),
+    notOnDuty('pr_subject_changed', { reasonCodes: ['admission_binding_required'] }), notOnDuty('full_admission_rejected', { reasonCodes: ['binding_not_authorized'] }), notOnDuty('full_admission_rejected', null)], [true, true, false, false, false]);
+  const d = { reasonCodes: ['admission_binding_required', 'protected_change_not_up_to_date'] };
+  assert.deepEqual([refusalSafeToRerun({ step: 'boundary', claimed: null, reason: 'full_admission_rejected', diagnostic: d }), refusalSafeToRerun({ step: 'admitted', claimed: null, reason: 'full_admission_rejected', diagnostic: d }),
+    refusalSafeToRerun({ step: 'boundary', claimed: c, reason: 'full_admission_rejected', diagnostic: d }), refusalSafeToRerun({ step: 'boundary', claimed: null, reason: 'pr_subject_changed', diagnostic: d })], [true, false, false, false]);
   for (const code of ['pr_files_page_limit', 'pr_subject_changed', 'invalid_pr_files']) {
     const github = { ...fakeGithub(), async readChangedPaths() { throw Object.assign(new Error(code), { code }); } };
     const x = await run({ answer: () => rejected, github });
@@ -303,8 +324,8 @@ test('control pair v2 (phase 2, step 2, review M3, m6): an answer no wait can ch
 });
 
 // ---- phase 2, step 3a (design v0.5 §5.3 rules 3, 5, 7; §5.4 item 4) ----
-const pairRun = async (t, { github = fakeGithub(), greenLedger = memoryLedger(), window = STAGE8_CHECK_MS } = {}) => {
-  const jobs = jobsFor(), c = claim();
+const pairRun = async (t, { github = fakeGithub(), greenLedger = memoryLedger(), window = STAGE8_CHECK_MS, testSha = HEAD } = {}) => {
+  const jobs = jobsFor(1, testSha), c = claim();
   const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
   let time = Date.now(), calls = 0;
   const admission = fakeAdmission((job, packet, opts) => { calls++; return admitted(job, c, packet, { mergeQueueHead: true, batchClaim: opts.batchClaim, observedAt: time, slotUntil: time + 600_000 }); });
@@ -435,4 +456,53 @@ test('control pair v2 (step 3a): an open PR whose test merge definitely changed 
   const computing = fakeGithub();
   computing.state.onCreate = c => { if (c.name === 'kooyumi-merge-slot') { computing.state.pull = { ...computing.state.pull, mergeable: null }; computing.state.commits[TEST_MERGE] = { sha: TEST_MERGE, tree: TREE, parents: ['9'.repeat(40), HEAD] }; } };
   assert.equal((await pairRun(t, { github: computing })).r.status, 'SETTLED');
+});
+
+// Step 3c-2a (design v0.5 §5.2, §5.7; DESIGN §21.3): a train front batch tests GitHub's test merge S of [T, H]. Stage 8
+// compares the test merge with S's own tree (not H's), and the PR's base.sha (which GitHub moves only on a push) is
+// read as a fact, never compared with T; a batch that tests the head keeps both checks exactly as before.
+test('control pair v2 (step 3c-2a): a train front batch is green on the tree of S, whatever base.sha GitHub reports', async t => {
+  const S_TREE = '5'.repeat(40);
+  const front = () => {
+    const g = fakeGithub({ prBase: '9'.repeat(40) });
+    g.state.commits[TEST_MERGE] = { sha: TEST_MERGE, tree: S_TREE, parents: [BASE, HEAD] };
+    return g;
+  };
+  const ok = await pairRun(t, { github: front(), testSha: TEST_MERGE });
+  assert.equal(ok.r.status, 'SETTLED', JSON.stringify(ok.r));
+  assert.ok(ok.jobs['control-merge-slot'].testSha === TEST_MERGE && ok.jobs['control-merge-slot'].headSha === HEAD);
+  assert.ok(ok.greenLedger.records.length > 0 && ok.greenLedger.records.every(r => r.testTree === S_TREE));
+  // the same GitHub for a batch that tests the head: H's tree is not the test merge's, so nothing is written
+  const head = await pairRun(t, { github: front() });
+  assert.deepEqual([head.r.status, head.r.reason, head.github.checks.length], ['BLOCKED', 'TRAIN_TEST_MERGE_TREE_DIFFERS', 0]);
+  // S that GitHub cannot read (an old test merge after a regeneration): not ready, never a green
+  const gone = front(); delete gone.state.commits[TEST_MERGE];
+  gone.state.pull = { ...gone.state.pull, merge_commit_sha: '6'.repeat(40) };
+  gone.state.commits['6'.repeat(40)] = { sha: '6'.repeat(40), tree: S_TREE, parents: [BASE, HEAD] };
+  const g = await pairRun(t, { github: gone, testSha: TEST_MERGE });
+  assert.deepEqual([g.r.reason, g.github.checks.length], ['TRAIN_TEST_MERGE_NOT_READY', 0]);
+});
+
+test('scanner publisher v2 (step 3c-2a): the PR base.sha is a fact for a train front batch and still T for every other batch', async t => {
+  const { signer, docs } = fixtureRecord();
+  const record = validateRecordV2(docs, { now: Date.now() });
+  const refs = Object.fromEntries(['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef'].map(k => [k, record.accepted[k]]));
+  const signers = new Map([...record.signers].map(([k, s]) => [k, { ...s, domain: 'fixture' }]));
+  const run = async (job, github) => {
+    const c = claim();
+    const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+    const authority = { fixture: true, async observe(j) { return { ...subjectOfV2(j), ...refs, ciPrincipalBindingId: record.config.ciPrincipalBindingId, sourceAccepted: true, hostQualified: true,
+      publisherQualified: true, ciPrincipalQualified: true, observedAt: iso(Date.now()), claimExpiresAt: c.expiresAt, claim: claimGeneration(c) }; } };
+    const admission = fakeAdmission((j, packet, opts) => admitted(j, c, packet, { batchClaim: opts.batchClaim }));
+    const pub = createStagedCheckPublisherV2({ nativeAdmission: admission, authority, github, journal, signers, configuredChecks: record.config.checks,
+      readChangedPaths: j => github.readChangedPaths(j), protectedDeployment: { enabled: true, domain: 'fixture', repository: REPO, ciPrincipalBindingId: record.config.ciPrincipalBindingId, ...refs },
+      batchClaim: claimGeneration(c), domain: 'fixture' });
+    return pub.publish({ job, envelope: signResult(job, signer, { finishedAt: Date.now() - 1000, startedAt: Date.now() - 5000, domain: 'fixture' }) });
+  };
+  const moved = () => fakeGithub({ prBase: '9'.repeat(40) });
+  const front = await run(jobsFor(1, TEST_MERGE).trivy, moved());
+  assert.equal(front.status, 'SETTLED', JSON.stringify(front));
+  const head = await run(jobsFor().trivy, moved());
+  assert.notEqual(head.status, 'SETTLED');
+  assert.equal((await run(jobsFor().trivy, fakeGithub())).status, 'SETTLED');
 });

@@ -12,21 +12,23 @@ const REPO = 'tdoljyj/cross-memory-system';
 const SCOPE = `project:${randomUUID()}`;
 const iso = ms => new Date(ms).toISOString();
 
-function world({ trailer, claimId = randomUUID(), fence = 3, epoch = 1, nativeOverrides = {}, claimOverrides = {}, commitTrailer = null, outcomeOverrides = {} } = {}) {
-  const job = makeJobV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt: 1, role: 'control-merge-slot' });
+// testSha: the tested commit S (a train front batch when S != H); prBase: the base.sha GitHub and Native report.
+function world({ trailer, claimId = randomUUID(), fence = 3, epoch = 1, nativeOverrides = {}, claimOverrides = {}, commitTrailer = null, outcomeOverrides = {}, testSha = HEAD, prBase = BASE, prBaseAfter = prBase } = {}) {
+  const job = makeJobV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt: 1, role: 'control-merge-slot' });
   const prRef = `${REPO}#888`;
   const body = trailer === undefined ? `Fix\n\nClued-Work-Claim: ${claimId}\nClued-Work-Scope: ${SCOPE}\n` : trailer;
-  const pr = { number: 888, state: 'open', body, head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: BASE, ref: 'main', repo: { full_name: REPO } } };
+  const pr = { number: 888, state: 'open', body, head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: prBase, ref: 'main', repo: { full_name: REPO } } };
+  let prReads = 0;
   const state = { claimId, fence, epoch, expiresAt: iso(Date.now() + 3600_000) };
   const native = () => ({ status: 'ok', verdict: 'ADMITTED', execution_authorized: true, execution_policy: 'staged', current_fence: state.fence, execution_epoch: state.epoch,
-    bound_pr: prRef, pr_ref: prRef, head_sha: HEAD, base_sha: BASE, verified_at: iso(Date.now()), paths_outside_write_set: [],
+    bound_pr: prRef, pr_ref: prRef, head_sha: HEAD, base_sha: prBase, verified_at: iso(Date.now()), paths_outside_write_set: [],
     claim: { claim_id: state.claimId, fence: state.fence, execution_epoch: state.epoch, context_key: SCOPE, status: 'ACTIVE', bound_pr: prRef, expires_at: state.expiresAt,
       lease_key_required: false, execution_handover_pending: false, merge_slot_until: iso(Date.now() + 600_000),
       merge_queue: [{ ref: `merge:${REPO}:main`, state: 'head', position: 1, ahead: [], head: { claim_id: state.claimId, bound_pr: prRef, since: iso(Date.now() - 1000), until: iso(Date.now() + 600_000) } }],
       ...claimOverrides }, ...nativeOverrides });
   const fetchImpl = async url => {
     const u = new URL(url);
-    if (u.pathname.endsWith('/pulls/888')) return { ok: true, status: 200, json: async () => structuredClone(pr) };
+    if (u.pathname.endsWith('/pulls/888')) { const p = structuredClone(pr); if (++prReads > 1) p.base.sha = prBaseAfter; return { ok: true, status: 200, json: async () => p }; }
     if (u.pathname.endsWith(`/commits/${HEAD}`)) return { ok: true, status: 200, json: async () => ({ commit: { message: commitTrailer ?? 'no trailer' } }) };
     return { ok: false, status: 404, json: async () => ({}) };
   };
@@ -38,7 +40,7 @@ function world({ trailer, claimId = randomUUID(), fence = 3, epoch = 1, nativeOv
     evaluateImpl: async ({ observation_recorder }) => {
       const n = native();
       observation_recorder.record('claim_verification', { result: { payload: n } });
-      return { admitted: true, verdict: 'ADMITTED', head_sha: HEAD, base_sha: BASE, pr_ref: prRef, claim_id: n.claim.claim_id, scope: SCOPE, changed_paths: ['a.txt'],
+      return { admitted: true, verdict: 'ADMITTED', head_sha: HEAD, base_sha: prBase, pr_ref: prRef, claim_id: n.claim.claim_id, scope: SCOPE, changed_paths: ['a.txt'],
         admission_mode: { state: 'normal', layer: 'code', policy_version: 1 }, merge_slot: { state: 'held', ref: `merge:${REPO}:main`, tip: BASE, until: iso(Date.now() + 600_000) },
         owner_review: null, workflow_gate_findings: [], ...outcomeOverrides };
     } };
@@ -93,7 +95,7 @@ test('full admission v2: missing trailer, commit trailer fallback, guarded claim
 });
 
 test('queue facts v2: head only for the observed claim generation', () => {
-  const job = makeJobV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now()), attempt: 1, role: 'control-merge-slot' });
+  const job = makeJobV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now()), attempt: 1, role: 'control-merge-slot' });
   const now = Date.now(), id = randomUUID();
   const claim = { claim_id: id, fence: 2, execution_epoch: 1, execution_handover_pending: false, lease_key_required: false, merge_slot_until: iso(now + 1000),
     merge_queue: [{ ref: `merge:${REPO}:main`, state: 'head', position: 1, ahead: [], head: { claim_id: id, bound_pr: `${REPO}#888`, since: iso(now - 1), until: iso(now + 1000) } }] };
@@ -133,4 +135,22 @@ test('full admission v2: scheduling facts are told on admission and carried in a
   assert.deepEqual([d.ciRetryAfter, d.mergeQueue, d.reasonCodes], [null, null, ['merge_slot_required']]);
   assert.deepEqual(fullAdmissionFailureV2({ ...blocked, diagnostic: { ...blocked.diagnostic, mergeQueue: { entered: true, state: 'lapsed', position: 9 } } }).admissionDiagnostic.mergeQueue,
     { entered: false, state: 'lapsed', position: 9 }, 'a lapsed entry is not in the queue whatever it says');
+});
+
+// Step 3c-2a (design v0.5 §5.7, DESIGN §21.3): for a train front batch (S != H) the PR's base.sha is only a fact, which
+// every read of one admission (GitHub twice, the evaluator, Native) must report alike; T stays the job's own base.
+test('full admission v2 (step 3c-2a): a train front batch is admitted on whatever base.sha GitHub reports, read alike throughout', async () => {
+  const S = '4'.repeat(40), moved = '9'.repeat(40);
+  const front = world({ testSha: S, prBase: moved });
+  const facts = await front.port.evaluatePr(front.job, front.packet);
+  assert.equal(facts.status, 'ADMITTED', JSON.stringify(facts));
+  assert.deepEqual([facts.headSha, facts.baseSha, facts.jobId], [HEAD, BASE, front.job.id]);
+  // base.sha moving between the two GitHub reads, or Native reading another one: the subject changed
+  const between = world({ testSha: S, prBase: moved, prBaseAfter: '8'.repeat(40) });
+  assert.equal((await between.port.evaluatePr(between.job, between.packet)).reason, 'full_admission_subject_changed');
+  const native = world({ testSha: S, prBase: moved, nativeOverrides: { base_sha: '8'.repeat(40) } });
+  assert.equal((await native.port.evaluatePr(native.job, native.packet)).reason, 'full_admission_native_changed');
+  // a batch that tests the head still needs base.sha = T
+  const head = world({ prBase: moved });
+  assert.equal((await head.port.evaluatePr(head.job, head.packet)).reason, 'full_admission_subject_changed');
 });

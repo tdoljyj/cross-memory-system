@@ -12,9 +12,28 @@
 - 现场生效：不需要重启 WSL，也不需要 Windows UAC。
 - 公司节点（Windows + WSL）安装时同样执行一次。
 
+## 公司节点安装清单（Task `f995d832`；主备 C7：Task `088ab175`）
+
+将下表纳入 C7 的公司节点安装记录，逐项保留原输出。这里定义检查项，不代表公司节点已安装、已调优或已取得正式资格。目标取当次获准的公司节点及其档案，不能沿用早期方案里的 `DESK-W-591` 或照抄 TURING 的发行版名。实际安装、Source 接受、节点资格、密钥/连接与角色移交，仍走各自的现行授权；本清单不授予这些权限。
+
+| 项目 | 检查与保留的证据 | 停止条件 |
+|---|---|---|
+| 目标与版本 | 节点名、主机、档案的 `wslDistribution`、实际内核版本、systemd 与 `python3.12` 可用性；本工具及配置的精确提交和下表五文件哈希 | 目标、版本或文件身份不明；公司节点不能借用 TURING 的结果 |
+| 只读计划 | 分别保留 `plan`、`guard-plan` 原输出及两个 `planSha256`；P1 sysctl 和 P1b 守护分别核对适用批准 | 无批准、计划改变、`bootOverrides` 非空；不得从“加入清单”推导 apply 授权 |
+| 操作窗口 | 协调双方 Windows/WSL 批次、接新状态和其他共用资源，记录实际静止证据与回退位置 | Linux `CI_UNIT_ACTIVE` 仅为瞬时检查，不能单独证明整机排空；不在跑批中安装或回退 |
+| P1 sysctl | 按下节步骤执行并保存 `saved` 原路径；另开 `wsl.exe`，保留 `verify` 的完整结果 | 不能只看退出码或 `HOST_TUNING_VERIFIED`：还要求 `ringEffective: true`；`null` 是未验证，`false` 按原保存文件回退 |
+| P1b 守护 | 按“内存守护”步骤核五文件、`guard-apply` 与 `guard-verify`；保留原 `saved`、`GUARD_VERIFIED`、首遍单元结果和该遍 journal | 文件漂移、未运行、上一遍失败/timeout 或 `GUARD_FIRST_RUN_FAILED`；按原保存文件回退，不放宽单元隔离 |
+| 内核与隔离兼容 | `PrivateNetwork=yes` 保持不变；必须核实**该单元内**首遍能读取 `net.core.rmem_default` / `wmem_default` 并成功。保留该遍含 `order` 的守护 JSON，与 P1 `verify.ringOrderForNewChannels` 对照 | 非初始网络命名空间的键可见性随内核而异；外层 root 能读取不等于单元内可读。缺键、`FAILED`、timeout 或阶数不符，均不算通过 |
+| C7 主备边界 | C7 按自身验收确认公司新节点以 STANDBY 安装、不取新触发、不发布；本表只记录其原回执引用 | P1/P1b 成功不证明 C3 模式、C7 安装、公司资格或实际主备切换已完成 |
+| 重启与自然观察 | 下次已获准的 WSL 重启后回读 `verify` 与 `guard-verify`；按“判定”累计自然发生的 Linux 段和原始故障统计 | 未满 60 段或尚未重启时保持相应项未验证，不为填满清单额外跑 CI、重启或生成扫描样本 |
+
+P1b 的内核兼容核对不可省略：已知内核上的成功不外推到公司节点。本工具的 `guard-apply` 首次安装会运行原 service 的首遍，`guard-verify` 核对原单元上一遍成功；两者与首遍 journal 一起使用，不能用在外层 shell 直接运行守护脚本代替 `PrivateNetwork=yes` 下的结果。`GUARD_ALREADY_APPLIED` 只复用已有文件与单元状态，不证明本轮重新运行；应保留原执行证据及其内核/配置身份。清单记录缺失时保留未知，不自动改 `PrivateNetwork`、权限、内核或服务配置。
+
+安装记录分开写 P1、P1b、C7 安装与后续观察的实际结果、UTC 时间、操作者、目标、批准引用、计划摘要、退出码及回退保存文件。只记指纹和原回执位置，不复制 App 私钥、token 或其他秘密。Task `f995d832` 的文档交付与机器设置验收分别收口；C7 与 C8（Task `d70fccc8`）继续引用本节，不另建公司安装 Task。
+
 ## 步骤
 
-在 Owner 会话里用 `wsl -d Ubuntu-24.04 -u root` 运行，时间窗口由协调会话排。
+在 Owner 会话里用 `wsl -d <发行版> -u root` 运行，发行版取该节点档案的 `wslDistribution`（TURING 是 `Ubuntu-24.04`）。时间窗口由协调会话排。
 
 | 文件 | sha256 |
 |---|---|

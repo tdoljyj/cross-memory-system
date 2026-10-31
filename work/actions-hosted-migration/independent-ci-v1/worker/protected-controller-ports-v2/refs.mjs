@@ -2,17 +2,27 @@
 // Read-only complete refs observation. No git fetch, token export, mutating
 // GraphQL, partial-page success or caller-supplied repository/query.
 import {canonical,digest} from '../../src/proof.mjs';
-import {validateJobV2 as validateJob} from '../../src/job-v2.mjs';
+import {validateJobV2 as validateJob,prBaseAcceptedV2} from '../../src/job-v2.mjs';
 import {validateRemoteSnapshot} from '../formal-gitleaks-v4/required-history/prepare.mjs';
 const REPO='tdoljyj/cross-memory-system',SHA=/^[a-f0-9]{40}$/;
 const fail=code=>{throw Object.assign(new Error(code),{code});};
 const check=(v,c)=>{if(!v)fail(c);};
 export const REFS_QUERY='query CluedCompleteRefs($prefix:String!,$after:String){repository(owner:"tdoljyj",name:"cross-memory-system"){databaseId nameWithOwner refs(refPrefix:$prefix,first:100,after:$after){totalCount edges{cursor node{name prefix target{oid __typename}}} pageInfo{hasNextPage endCursor}}}}';
-const samePr=(p,j)=>p?.number===j.pr&&p.state==='open'&&p.head?.sha===j.headSha&&p.base?.sha===j.baseSha&&p.base?.ref==='main'&&p.head.repo?.full_name===REPO&&p.base.repo?.full_name===REPO;
+// base.sha: the batch base for a batch that tests the head; a train front batch (S != H) records GitHub's (job-v2.mjs).
+const samePr=(p,j)=>p?.number===j.pr&&p.state==='open'&&p.head?.sha===j.headSha&&prBaseAcceptedV2(j,p.base?.sha)&&p.base?.ref==='main'&&p.head.repo?.full_name===REPO&&p.base.repo?.full_name===REPO;
+// Failure codes that may pass on their own (Task 576231fa): GitHub answered 5xx or 429 (REFS_HTTP_<status>, or the PR
+// read's github_http_<status>), or no complete answer arrived (a request or a page body cut off: the transport codes),
+// or the 30 s observation window ran out on a slow GitHub. The caller may collect again, in full; nothing of a failed
+// collection is kept. Every other code is a refusal: 403 (permission, secondary rate limit; ambiguous, as in
+// stage-fact.mjs) and any other status, a page that is not the expected shape, a bound, the page limit, an abort.
+export const refsTransient=code=>['REFS_TRANSPORT_UNCONFIRMED','REFS_WINDOW_EXPIRED','github_transport_unconfirmed'].includes(code)
+  ||/^(?:REFS_HTTP|github_http)_(?:429|5[0-9]{2})$/.test(code??'');
 async function boundedJson(response){
-  check(response?.ok===true&&response.body?.getReader,'REFS_HTTP_UNCONFIRMED');
+  if(response?.ok!==true)fail(Number.isSafeInteger(response?.status)&&response.status>=100&&response.status<=599?`REFS_HTTP_${response.status}`:'REFS_HTTP_UNCONFIRMED');
+  check(response.body?.getReader,'REFS_HTTP_UNCONFIRMED');
   const reader=response.body.getReader(),parts=[];let bytes=0;
-  try{for(;;){const v=await reader.read();if(v.done)break;bytes+=v.value.length;check(bytes<=2097152,'REFS_PAGE_BYTES_BOUND');parts.push(Buffer.from(v.value));}}
+  try{for(;;){let v;try{v=await reader.read();}catch{fail('REFS_TRANSPORT_UNCONFIRMED');}
+    if(v.done)break;bytes+=v.value.length;check(bytes<=2097152,'REFS_PAGE_BYTES_BOUND');parts.push(Buffer.from(v.value));}}
   finally{reader.releaseLock();}
   const raw=Buffer.concat(parts),text=raw.toString('utf8');check(Buffer.from(text).equals(raw),'REFS_UTF8_REQUIRED');
   try{return JSON.parse(text);}catch{fail('REFS_JSON_REQUIRED');}
@@ -22,7 +32,7 @@ async function boundedJson(response){
 export async function collectCompleteRemoteRefs({job,token,readPullRequest,fetchImpl,clock=Date.now,signal}={}){
   validateJob(job);check(job.repo===REPO&&typeof token==='string'&&token&&typeof readPullRequest==='function'&&typeof fetchImpl==='function','REFS_PROTECTED_TRANSPORT_REQUIRED');
   const started=clock();check(Number.isSafeInteger(started),'REFS_CLOCK_UNKNOWN');
-  const guard=()=>{check(!signal?.aborted&&Number.isSafeInteger(clock())&&clock()>=started&&clock()-started<=30000,'REFS_WINDOW_EXPIRED');};
+  const guard=()=>{check(!signal?.aborted,'REFS_ABORTED');check(Number.isSafeInteger(clock())&&clock()>=started&&clock()-started<=30000,'REFS_WINDOW_EXPIRED');};
   guard();check(samePr(await readPullRequest(job.pr),job),'REFS_PR_SUBJECT_CHANGED');
   async function pass(){
     const all=[];
@@ -31,8 +41,12 @@ export async function collectCompleteRemoteRefs({job,token,readPullRequest,fetch
       for(let page=0;page<100;page++){
         guard();const remaining=Math.max(1,30000-(clock()-started));
         const timeout=AbortSignal.timeout(Math.min(10000,remaining));
-        const response=await fetchImpl('https://api.github.com/graphql',{method:'POST',redirect:'error',signal:signal?AbortSignal.any([signal,timeout]):timeout,
-          headers:{accept:'application/vnd.github+json',authorization:`Bearer ${token}`,'content-type':'application/json','x-github-api-version':'2022-11-28','user-agent':'clued-independent-ci'},body:JSON.stringify({query:REFS_QUERY,variables:{prefix,after}})});
+        // A request that got no answer (fetch failed on the network, or the per-page timeout) is a transport failure. The
+        // caller's abort is not, and a refusal of the caller's own fetchImpl (a lost lease, for example) keeps its code.
+        let response;
+        try{response=await fetchImpl('https://api.github.com/graphql',{method:'POST',redirect:'error',signal:signal?AbortSignal.any([signal,timeout]):timeout,
+          headers:{accept:'application/vnd.github+json',authorization:`Bearer ${token}`,'content-type':'application/json','x-github-api-version':'2022-11-28','user-agent':'clued-independent-ci'},body:JSON.stringify({query:REFS_QUERY,variables:{prefix,after}})});}
+        catch(e){if(signal?.aborted)fail('REFS_ABORTED');if(e instanceof TypeError&&e.message==='fetch failed'||timeout.aborted)fail('REFS_TRANSPORT_UNCONFIRMED');throw e;}
         const body=await boundedJson(response);guard();
         check(body&&(!Object.hasOwn(body,'errors')||Array.isArray(body.errors)&&body.errors.length===0),'REFS_GRAPHQL_ERRORS');
         const repo=body.data?.repository,c=repo?.refs;

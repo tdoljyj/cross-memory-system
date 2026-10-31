@@ -16,7 +16,7 @@ import { makeBrokerRequest, validateBrokerRequest, validateBrokerResponse, BROKE
 import { FORMAL_STAGES_V2, RESIDENT_SID, serviceSid } from '../src/resident-v2/layout.mjs';
 import { NOW, HEAD, BASE, iso, hex, tempDir, fixtureRecord, writeRecordDir, subject, signResult, recordInputs, sourceFiles } from './resident-v2-fixtures.mjs';
 
-const base = (o = {}) => ({ repo: 'tdoljyj/cross-memory-system', pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(NOW), attempt: 1, ...o });
+const base = (o = {}) => ({ repo: 'tdoljyj/cross-memory-system', pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(NOW), attempt: 1, ...o });
 
 test('job v2: identity is content + attempt, never a claim, and is domain-separated from v1', () => {
   const j = makeJobV2({ ...base(), role: 'gitleaks' });
@@ -28,7 +28,7 @@ test('job v2: identity is content + attempt, never a claim, and is domain-separa
   assert.throws(() => makeJobV2({ ...base({ attempt: MAX_ATTEMPT_V2 + 1 }), role: 'gitleaks' }), { code: 'invalid_job_v2' });
   // createdAt is not identity; head/base/pr/source/role are
   assert.equal(makeJobV2({ ...base({ createdAt: iso(NOW + 5) }), role: 'gitleaks' }).id, j.id);
-  for (const k of ['pr', 'headSha', 'baseSha', 'sourceManifestSha256']) assert.notEqual(makeJobV2({ ...base({ [k]: k === 'pr' ? 889 : 'f'.repeat(k === 'sourceManifestSha256' ? 64 : 40) }), role: 'gitleaks' }).id, j.id);
+  for (const k of ['pr', 'headSha', 'baseSha', 'testSha', 'sourceManifestSha256']) assert.notEqual(makeJobV2({ ...base({ [k]: k === 'pr' ? 889 : 'f'.repeat(k === 'sourceManifestSha256' ? 64 : 40) }), role: 'gitleaks' }).id, j.id);
   // a v1-shaped id over the same content never equals the v2 id
   assert.notEqual(jobIdV1({ repo: j.repo, pr: j.pr, headSha: j.headSha, baseSha: j.baseSha, claimId: randomUUID(), fence: 1, epoch: 1, sourceManifestSha256: j.sourceManifestSha256, role: j.role }), j.id);
   assert.throws(() => validateJobV2({ ...j, claimId: randomUUID() }), { code: 'invalid_job_v2' });

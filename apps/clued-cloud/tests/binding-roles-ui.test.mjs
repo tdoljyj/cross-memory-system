@@ -259,3 +259,21 @@ test('a revoked or expired Binding that still holds a role is shown as 已失效
   f.nodes('button', oldCard)[0].props.onClick();
   assert.deepEqual(plain(f.calls[1].args.p_input), { binding_id: 'b-old', role: 'ci-admission', enabled: false });
 });
+
+test('each single-holder role has its own button label (resident-upgrade is not shown as 发布门口)', async t => {
+  const f = fixture(PAGE); t.after(() => f.unmount());
+  f.emit('INITIAL_SESSION', session('owner'));
+  f.calls[0].resolve({ data: { status: 'ok', roles: [...ROLES,
+    { role: 'resident-upgrade', title: '常驻节点升级门口（消费本节点的原地升级授权）', required_scope: 'context:read', marked: true },
+    { role: 'future-role', title: '以后的用途', required_scope: 'context:read', marked: false }], bindings: [
+    { binding_id: 'b-node', agent_name: 'turing', vendor: 'Headless', scopes: ['context:read'], roles: ['resident-upgrade'], role_details: [], live: true },
+    { binding_id: 'b-free', agent_name: 'spare', vendor: 'Headless', scopes: ['context:read'], roles: [], role_details: [], live: true },
+  ] }, error: null });
+  await f.settle();
+  assert.deepEqual(buttons(f, card(f, 'turing')),
+    ['设为 CI 准入：常驻节点', '设为 CI 准入：停车位', '设为 CI 准入：其他', '设为：发布门口', '取消：常驻节点升级门口', '设为：以后的用途']);
+  assert.deepEqual(buttons(f, card(f, 'spare')),
+    ['设为 CI 准入：常驻节点', '设为 CI 准入：停车位', '设为 CI 准入：其他', '设为：发布门口', '设为：常驻节点升级门口', '设为：以后的用途']);
+  f.button('取消：常驻节点升级门口').props.onClick();
+  assert.deepEqual(plain(f.calls[1].args.p_input), { binding_id: 'b-node', role: 'resident-upgrade', enabled: false });
+});

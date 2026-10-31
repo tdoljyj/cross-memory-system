@@ -9,9 +9,9 @@ import { HEX64, STAGES_V2, stageJobRolesValid } from './layout.mjs';
 
 export const STAGE_CONTRACT = 'clued.independent-ci.resident-stage/2';
 export const WORK_CONTRACT = 'clued.independent-ci.resident-stage-work/2';
-export const PLAN_CONTRACT_V2 = 'clued.independent-ci.fixed-formal-windows-entry/2';
+export const PLAN_CONTRACT_V2 = 'clued.independent-ci.fixed-formal-windows-entry/3';
 export const STAGE_FILES = Object.freeze(['stage.json', 'formal-service-entry.json', 'jobs.json']);
-export const PLAN_FIELDS_V2 = Object.freeze(['contract', 'enabled', 'stage', 'entryRole', 'batchKey', 'batchId', 'ownerPackageAcceptanceRef', 'nodeSha256',
+export const PLAN_FIELDS_V2 = Object.freeze(['contract', 'enabled', 'stage', 'entryRole', 'batchKey', 'batchId', 'ownerPackageAcceptanceRef', 'nodeSha256', 'nodeProfileSha256',
   'entrySha256', 'acceptanceSha256', 'sourceManifestSha256', 'installationSha256', 'runtimeConfigPinSha256', 'jobSha256']);
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
@@ -25,7 +25,7 @@ export function validatePlanV2(plan) {
   const row = STAGES_V2.find(s => s.number === plan.stage);
   check(row && row.entryRole === plan.entryRole && HEX64.test(plan.batchKey) && /^[0-9a-f]{16}-[0-9a-f]{12}$/.test(plan.batchId)
     && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(plan.ownerPackageAcceptanceRef)
-    && ['nodeSha256', 'entrySha256', 'acceptanceSha256', 'sourceManifestSha256', 'installationSha256', 'runtimeConfigPinSha256', 'jobSha256'].every(k => HEX64.test(plan[k])), 'EXACT_FORMAL_PLAN_V2_REQUIRED');
+    && ['nodeSha256', 'nodeProfileSha256', 'entrySha256', 'acceptanceSha256', 'sourceManifestSha256', 'installationSha256', 'runtimeConfigPinSha256', 'jobSha256'].every(k => HEX64.test(plan[k])), 'EXACT_FORMAL_PLAN_V2_REQUIRED');
   return row;
 }
 

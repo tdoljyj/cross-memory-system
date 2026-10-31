@@ -76,7 +76,8 @@ async function fixture(options={}) {
       return {id:result.id,shared:false,permissionIds:["owner-"+result.id],permissions:[{id:"owner-"+result.id,type:"user",role:"owner"}]};
     if(result.id===options.unauthorized)result.isAppAuthorized=false;
     options.changeMetadata?.(result);
-    if(options.boundaryDrift && calls.length>=9 && result.id==='root')result.version='2';
+    // Identity drift (a rename) fails the scan; a version that moves does not (Decision 24422a98).
+    if(options.boundaryDrift && calls.length>=9 && result.id==='root')result.name='renamed';
     return result;
     };
     assert.equal(u.href,"https://www.googleapis.com/batch/drive/v3");
@@ -105,6 +106,7 @@ test("server directory observation uses pinned secret, fixed GET-only batches an
   assert.deepEqual(directory,{status:"metadata_observed",attempt_id:f.attempt,receipt_id:f.receipt,execution_permitted:false});
   assert.equal(boundary.contract,'clued.storage-boundary-observation/1');assert.equal(boundary.status,'clean');
   assert.match(boundary.descriptor_sha256,/^[a-f0-9]{64}$/);assert.match(boundary.scan_config_sha256,/^[a-f0-9]{64}$/);
+  assert.equal(boundary.unscanned_branches,0);
   assert.equal(f.rpcs[1].observation.boundary_observation,undefined);
   // One more batch reads each registered directory's sharing state.
   assert.equal(f.rpcs.length,2); assert.equal(f.calls.length,10);

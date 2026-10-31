@@ -3,7 +3,7 @@
 // inside a batch, the sticky batch claim), never a claim pinned in the job. This never admits execution.
 export function isCurrentMergeQueueHeadV2(claim, observed, job, now) {
   if (!claim || !observed || claim.claim_id !== observed.claimId || claim.fence !== observed.fence || claim.execution_epoch !== observed.epoch
-    || claim.execution_handover_pending !== false || claim.lease_key_required !== false || !Number.isSafeInteger(now) || !Array.isArray(claim.merge_queue)) return false;
+    || claim.execution_handover_pending !== false || typeof claim.lease_key_required !== 'boolean' || !Number.isSafeInteger(now) || !Array.isArray(claim.merge_queue)) return false;
   const entries = claim.merge_queue.filter(q => q?.ref === `merge:${job.repo}:main`);
   if (entries.length !== 1) return false;
   const q = entries[0];

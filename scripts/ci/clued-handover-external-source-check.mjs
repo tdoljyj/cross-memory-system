@@ -1,6 +1,6 @@
 // Planned scripts/ci/ source entry. Pure local validation: no secret, PG or network.
 import assert from 'node:assert/strict';
-export const COMPONENT_VERSION = "1.0.1";
+export const COMPONENT_VERSION = "1.0.3";
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -29,6 +29,7 @@ export const REQUIRED_FILES=Object.freeze([
   '.github/workflows/clued-handover-disposable-idle.yml',
   '.github/workflows/clued-work-admission.yml',
   '.github/workflows/clued-work-admission-dispatch.yml',
+  '.github/workflows/clued-native617-admission-dispatch.yml',
   'config/clued-handover-external-profile.json',
   'config/clued-handover-external-catalog.json',
   'scripts/ci/clued-handover-external-source-pins.json',
@@ -95,28 +96,50 @@ export function acceptedGateSourcePins(verified){
     assert.match(hash,/^[0-9a-f]{64}$/,'ACCEPTED_GATE_SOURCE_HASH_MISSING:'+file);return [file,hash];}));
 }
 const git=(root,args)=>execFileSync('git',args,{cwd:root,maxBuffer:32*1024*1024});
+// Successor candidate coverage only. The old acceptance and reference pins
+// retain their historical subject; extending this set does not accept it.
+export const RUNTIME_SOURCE_ROOTS=Object.freeze([
+  'work/actions-hosted-migration/independent-ci-v1/',
+  'work/independent-ci-resident-v1/'
+]);
 function include(file){
-  return EXECUTION_FLOOR.includes(file)||REQUIRED_FILES.includes(file)||file.startsWith('scripts/')||
+  return EXECUTION_FLOOR.includes(file)||REQUIRED_FILES.includes(file)||RUNTIME_SOURCE_ROOTS.some(prefix=>file.startsWith(prefix))||file.startsWith('scripts/')||
     file.startsWith('apps/clued-cloud/supabase/migrations/')||
     file.startsWith('.github/actions/ci-temporary-storage/')||
     file.endsWith('/.npmrc')||file==='.npmrc'||file==='.gitattributes'||file==='.gitmodules'||
     file==='package.json'||file==='package-lock.json'||
     (file.startsWith('config/')&&file.endsWith('.json')&&file!=='config/clued-handover-external-acceptance.json');
 }
+
 export function executionPaths(root,commit){
-  const files=git(root,['ls-tree','-r','--name-only',commit]).toString('utf8').trim().split('\n').filter(include).sort();
+  const files=git(root,['ls-tree','-rz','--name-only',commit]).toString('utf8').split('\0').filter(include).sort();
   for(const required of new Set([...REQUIRED_FILES,...EXECUTION_FLOOR]))assert.ok(files.includes(required),'EXECUTABLE_MISSING:'+required);
+  for(const prefix of RUNTIME_SOURCE_ROOTS)assert.ok(files.some(file=>file.startsWith(prefix)),'RUNTIME_SOURCE_ROOT_MISSING:'+prefix);
   return files;
+}
+function sourceBlobs(root,commit,paths){
+  assert.ok(paths.every(file=>!/[\x00-\x1f]/.test(file)),'EXECUTABLE_PATH_UNSAFE');
+  const data=execFileSync('git',['cat-file','--batch'],{cwd:root,input:paths.map(file=>`${commit}:${file}\n`).join(''),maxBuffer:128*1024*1024});
+  let offset=0;const blobs=new Map();
+  for(const file of paths){
+    const end=data.indexOf(10,offset),header=end>=0?data.subarray(offset,end).toString('ascii'):'';
+    const match=/^[0-9a-f]{40} blob ([0-9]+)$/.exec(header);assert.ok(match,'EXECUTABLE_BLOB_MISSING:'+file);
+    const size=Number(match[1]),start=end+1,body=data.subarray(start,start+size);
+    assert.ok(body.length===size&&data[start+size]===10,'EXECUTABLE_BLOB_TRUNCATED:'+file);
+    blobs.set(file,body);offset=start+size+1;
+  }
+  assert.equal(offset,data.length,'EXECUTABLE_BLOB_BATCH_TRAILING');return blobs;
 }
 export function candidateCheck(root){
   const paths=executionPaths(root,'HEAD');
+  const blobs=sourceBlobs(root,'HEAD',paths);
   const profile=JSON.parse(fs.readFileSync(path.join(root,'config/clued-handover-external-profile.json'),'utf8'));
   assert.equal(profile.fixture_mode,'continuous','RECOVERY_UNSUPPORTED');
   assertEarlyFixtureLocators(profile);assertFixtureSelectionPolicy(profile,{unqualified:profile.qualified===false});
   for(const file of paths){
     assert.ok(!fs.lstatSync(path.join(root,file)).isSymbolicLink(),'SYMLINK_EXECUTABLE:'+file);
     const actual=fs.readFileSync(path.join(root,file));
-    const stored=git(root,['show','HEAD:'+file]);
+    const stored=blobs.get(file);
     assert.ok(actual.equals(stored),'DIRTY_EXECUTABLE:'+file);
   }
   return {status:'CANDIDATE_SOURCE_ONLY',accepted:false,external_effects_started:false,
@@ -150,11 +173,12 @@ export function acceptedSourceCheck(root,env=process.env){
   const current=executionPaths(root,head);
   assert.deepEqual(current,subject,'EXECUTABLE_SET_CHANGED');
   assert.deepEqual(Object.keys(accepted.files).sort(),subject,'ACCEPTANCE_EXECUTABLE_SET_INCOMPLETE');
+  const blobs=sourceBlobs(root,accepted.source_commit,subject);
   for(const file of subject){
     assert.ok(!fs.lstatSync(path.join(root,file)).isSymbolicLink(),'SYMLINK_EXECUTABLE:'+file);
     assert.match(accepted.files[file],/^[0-9a-f]{64}$/);
     const actual=fs.readFileSync(path.join(root,file));
-    const approved=git(root,['show',accepted.source_commit+':'+file]);
+    const approved=blobs.get(file);
     assert.equal(sha(approved),accepted.files[file],'ACCEPTED_SUBJECT_BYTES_MISMATCH:'+file);
     assert.ok(actual.equals(approved),'EXECUTABLE_BYTES_CHANGED:'+file);
   }

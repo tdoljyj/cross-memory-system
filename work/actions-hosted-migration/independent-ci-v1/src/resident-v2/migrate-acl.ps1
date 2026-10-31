@@ -12,7 +12,10 @@ What it does (acl-model.json, next to this script):
     signed scanner result; it removes, re-orders by hand or re-owns nothing;
   - CREATES the Source v2 controller state directories state\v2\* with their final protected DACLs
     (clued-control modify; the resident may only read state\v2\receipts);
-  - never touches secrets\, state\effects, CluedControl or any file.
+  - APPENDS a separate read-only controller ACE on resident\broker and first-level file-only read ACEs
+    on its requests/responses directories. Existing broker writers, owners and all other ACEs remain;
+    this grants no controller write/delete/ownership/DACL right and does not inherit from broker root;
+  - never touches secrets\, state\effects or CluedControl, and never reads or changes file contents.
 Compare-and-swap: each target's security descriptor is re-read immediately before it is changed and
 must equal the one the plan was computed from; the result is read back. Idempotent: a target that
 already carries exactly the planned ACEs (or a created directory with the planned DACL) is skipped.
@@ -56,6 +59,25 @@ try{
   if($resident.Count -and (@($resident|Sort-Object) -join ';') -cne (@($want|Sort-Object) -join ';')){throw 'ACL_TARGET_HAS_OTHER_RESIDENT_ACES'}
   $plan+=[ordered]@{kind='add';path=$p;before=$before;aces=@($a.aces|ForEach-Object{Sub $_});skip=($resident.Count -gt 0)}
  }
+ # A separate principal and fixed path allowlist keeps the original resident
+ # add rules exact. File-only inheritance grants public broker records read
+ # access with NoPropagateInherit, never unrelated root files or nested subtrees.
+ $readPaths=@(($Real+'\resident\broker'),($Real+'\resident\broker\requests'),($Real+'\resident\broker\responses'))
+ if(@($model.addControllerRead).Count -ne 3 -or $ControllerSid -ceq $OwnerSid){throw 'ACL_CONTROLLER_READ_MODEL_REFUSED'}
+ $seenRead=@{}
+ foreach($a in $model.addControllerRead){
+  if($readPaths -cnotcontains $a.path -or $seenRead.ContainsKey($a.path)){throw 'ACL_CONTROLLER_READ_MODEL_REFUSED'};$seenRead[$a.path]=$true
+  $expected=if($a.path -ceq $readPaths[0]){@('(A;;0x1200a9;;;{CTRL})')}else{@('(A;;0x1200a9;;;{CTRL})','(A;OINPIO;0x120089;;;{CTRL})')}
+  if((@($a.aces|Sort-Object) -join ';') -cne (@($expected|Sort-Object) -join ';')){throw 'ACL_CONTROLLER_READ_MODEL_REFUSED'}
+  $p=Map $a.path;if(-not [IO.Directory]::Exists($p)){throw 'ACL_TARGET_MISSING'}
+  if(((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'ACL_TARGET_REPARSE_REFUSED'}
+  $before=Sddl $p;$raw=New-Object Security.AccessControl.RawSecurityDescriptor($before)
+  if(($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -eq 0 -and -not $OfflineFixtureRoot){throw 'ACL_TARGET_NOT_PROTECTED'}
+  $have=Aces $before;$want=@($a.aces|ForEach-Object{Wanted (Sub $_)})
+  $controller=@($have|Where-Object{$_.StartsWith($ControllerSid+'|')})
+  if($controller.Count -and (@($controller|Sort-Object) -join ';') -cne (@($want|Sort-Object) -join ';')){throw 'ACL_TARGET_HAS_OTHER_CONTROLLER_ACES'}
+  $plan+=[ordered]@{kind='add-controller-read';path=$p;before=$before;aces=@($a.aces|ForEach-Object{Sub $_});skip=($controller.Count -gt 0)}
+ }
  foreach($c in $model.create){
   $p=Map $c.path;$sddl=Sub $c.sddl;$compare=if($OfflineFixtureRoot){$sddl+'(A;OICI;FA;;;'+[Security.Principal.WindowsIdentity]::GetCurrent().User.Value+')'}else{$sddl}
   if([IO.Directory]::Exists($p)){$now=Sddl $p;$same=(@(Aces $now|Sort-Object) -join ';') -ceq (@(Aces $compare|Sort-Object) -join ';');if(-not $same){throw 'ACL_CREATE_TARGET_EXISTS_DIFFERENT'};$plan+=[ordered]@{kind='create';path=$p;sddl=$sddl;skip=$true}}
@@ -65,7 +87,7 @@ try{
  foreach($s in $plan){
   $step=[ordered]@{kind=$s.kind;path=$s.path;skipped=$s.skip;after=$null}
   if($Apply -and -not $s.skip){
-   if($s.kind -ceq 'add'){
+   if($s.kind -ceq 'add' -or $s.kind -ceq 'add-controller-read'){
     if((Sddl $s.path) -cne $s.before){throw 'ACL_CHANGED_SINCE_PLAN'}
     # Only the DACL is written (no owner, group or SACL section), so no privilege beyond WRITE_DAC is used.
     $text=$s.before;foreach($ace in $s.aces){$text+=$ace}

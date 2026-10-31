@@ -20,7 +20,7 @@ using Microsoft.Win32.SafeHandles;
 // No installer, dispatcher loop, credential API, network probe, worker launcher, output capture or
 // desktop API. The job object still drains the whole tree before any receipt claims cleanup.
 public static class CluedWindowsFormalEntryV2 {
- public const string ServiceName="actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02";
+ public static string ServiceName {get{return NodeProfileV2.Current.RunnerService;}}
  [UnmanagedFunctionPointer(CallingConvention.Winapi)] delegate void MainDelegate(uint argc,IntPtr argv);
  [UnmanagedFunctionPointer(CallingConvention.Winapi)] delegate uint HandlerDelegate(uint control,uint type,IntPtr data,IntPtr context);
  [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] struct Table {public string Name;public MainDelegate Main;}
@@ -58,8 +58,8 @@ public static class CluedWindowsFormalEntryV2 {
  static void Report(uint state,uint failure){lock(Gate){status.Type=16;status.State=state;status.Accept=state==4?1u:0u;status.Exit=failure==0?0u:1066u;status.Specific=failure;status.Check=(state==2||state==3)?++checkpoint:0;status.Hint=state==2?120000u:state==3?10000u:0u;if(!SetServiceStatus(statusHandle,ref status))Fail("SCM_STATUS_UNCONFIRMED");}}
  static void Check(){lock(Gate){if(cancelled)Fail("STOP_REQUESTED");}if(status.State==2)Report(2,0);}
  static uint Control(uint control,uint type,IntPtr data,IntPtr context){if(control==1){lock(Gate){if(status.State==1)return 0;cancelled=true;try{Report(3,0);}catch{}if(jobHandle!=IntPtr.Zero)TerminateJobObject(jobHandle,92);}return 0;}if(control==4)return 0;return 120;}
- static void AssertIdentity(IntPtr token,bool own){using(var i=token==IntPtr.Zero?WindowsIdentity.GetCurrent():new WindowsIdentity(token)){bool service=false;foreach(var g in i.Groups){if(g.Value=="S-1-5-32-544")Fail("ADMIN_GROUP_REFUSED");if(g.Value=="S-1-5-6")service=true;}if(i.User.Value!=FormalPublicBoundaryV2.Controller||!service||Environment.MachineName!="TURING")Fail("FIXED_SERVICE_IDENTITY_REQUIRED");}if(own&&Process.GetCurrentProcess().SessionId!=0)Fail("SCM_SESSION_ZERO_REQUIRED");}
- public static string ChildEnvironment(){var t=FormalPublicBoundaryV2.Temp;var rows=new[]{"HOME="+t,"CLUED_EXECUTION_PROVIDER=independent-ci-resident-v2","PATH=C:\\Windows\\System32;C:\\Windows;C:\\Program Files\\nodejs","SystemRoot=C:\\Windows","TEMP="+t,"TMP="+t,"USERPROFILE="+t,"WINDIR=C:\\Windows"};Array.Sort(rows,StringComparer.OrdinalIgnoreCase);return String.Join("\0",rows)+"\0\0";}
+ static void AssertIdentity(IntPtr token,bool own){using(var i=token==IntPtr.Zero?WindowsIdentity.GetCurrent():new WindowsIdentity(token)){bool service=false;foreach(var g in i.Groups){if(g.Value=="S-1-5-32-544")Fail("ADMIN_GROUP_REFUSED");if(g.Value=="S-1-5-6")service=true;}if(i.User.Value!=FormalPublicBoundaryV2.Controller||!service||Environment.MachineName!=NodeProfileV2.Current.Hostname)Fail("FIXED_SERVICE_IDENTITY_REQUIRED");}if(own&&Process.GetCurrentProcess().SessionId!=0)Fail("SCM_SESSION_ZERO_REQUIRED");}
+ public static string ChildEnvironment(){var t=FormalPublicBoundaryV2.Temp;var rows=new[]{"HOME="+t,"CLUED_EXECUTION_PROVIDER=independent-ci-resident-v2","PATH=C:\\Windows\\System32;C:\\Windows;"+FormalPublicBoundaryV2.Resident+"\\runtime","SystemRoot=C:\\Windows","TEMP="+t,"TMP="+t,"USERPROFILE="+t,"WINDIR=C:\\Windows"};Array.Sort(rows,StringComparer.OrdinalIgnoreCase);return String.Join("\0",rows)+"\0\0";}
  static IntPtr NullHandle(uint access){var security=new SecurityAttributes{Size=(uint)Marshal.SizeOf(typeof(SecurityAttributes)),Inherit=true};var h=CreateFileW("NUL",access,3,ref security,3,0,IntPtr.Zero);if(h==new IntPtr(-1))Fail("NUL_HANDLE_UNCONFIRMED");return h;}
  static void Child(FormalPublicBoundaryV2 boundary,out uint pid,out bool timeout,out bool exitKnown,out uint actualExit,out bool cleanupConfirmed,out string cleanupFailure,out uint activeProcesses){
   IntPtr job=IntPtr.Zero,environment=IntPtr.Zero,token=IntPtr.Zero,input=IntPtr.Zero,output=IntPtr.Zero,attributes=IntPtr.Zero,handles=IntPtr.Zero;bool initialized=false,assigned=false;Exception primary=null;ProcessInfo p=new ProcessInfo();pid=0;timeout=false;exitKnown=false;actualExit=uint.MaxValue;cleanupConfirmed=false;cleanupFailure=null;activeProcesses=uint.MaxValue;
@@ -119,7 +119,12 @@ public static class CluedWindowsFormalEntryV2 {
    boundary.Dispose();try{Report(1,scmFailure);}catch{}
   }
  }
- public static int Main(string[] args){if(args.Length!=0)return 94;return StartServiceCtrlDispatcherW(new[]{new Table{Name=ServiceName,Main=ServiceMain},new Table()})?0:95;}
+ public static int Main(string[] args){
+  NodeProfileLeaseV2 bootstrap=null;
+  try{var pins=NodeProfileV2.HelperBootstrapPins(args);bootstrap=NodeProfileV2.LoadAccepted(NodeProfileV2.FixedResidentRoot,pins[0],pins[1]);
+   return StartServiceCtrlDispatcherW(new[]{new Table{Name=ServiceName,Main=ServiceMain},new Table()})?0:95;
+  }catch{return 94;}finally{if(bootstrap!=null)bootstrap.Dispose();}
+ }
 }
 
 // Narrow native cleanup primitive (unchanged from v1 FormalSession0.cs).

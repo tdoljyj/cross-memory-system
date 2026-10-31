@@ -4,9 +4,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { WindowsEngine, DESCRIPTOR_CONTRACT, parseStageFact } from '../src/engine-windows.mjs';
+import { WindowsEngine, DESCRIPTOR_CONTRACT, parseStageFact, parseStageOutcome } from '../src/engine-windows.mjs';
+import { canonicalJson, sha256 } from '../src/canonical.mjs';
 import { validatePolicy } from '../src/policy.mjs';
-import { tempRoot, rawPolicy, HEAD, BASE, SOURCE } from './helpers.mjs';
+import { TEST_NODE, TEST_NODE_SHA, tempRoot, rawPolicy, HEAD, BASE, SOURCE } from './helpers.mjs';
 
 const V2 = ['work', 'actions-hosted-migration', 'independent-ci-v1', 'src', 'resident-v2'];
 const KEY = 'a1'.repeat(32);
@@ -27,10 +28,15 @@ async function engineFixture(t, { answers = {}, stdout = {}, testSha = null } = 
   const run = async argv => {
     runs.push(argv);
     if (argv[0].endsWith('sc.exe')) return { code: 0, stdout: argv[1] === 'qc' ? SC_QC : SC_Q };
+    if (argv[1].endsWith('derive-batch.mjs') && argv.includes('--train-run')) {
+      const at = k => argv[argv.indexOf(k) + 1];
+      return { code: 0, stdout: JSON.stringify({ status: 'RESIDENT_TRAIN_RUN_DERIVED', runKey: at('--train-key'), runId: at('--train-run'), mode: at('--mode'),
+        stage: { number: 10, jobId: '7'.repeat(64), workManifestSha256: 'f'.repeat(64), directory: 'stage-10', runMilliseconds: 300000, linuxWorker: false } }) };
+    }
     if (argv[1].endsWith('derive-batch.mjs')) {
       const id = argv[argv.indexOf('--batch-id') + 1];
       return { code: 0, stdout: JSON.stringify({ status: 'RESIDENT_BATCH_DERIVED', batchKey: KEY, batchId: id, packageSha256: 'c'.repeat(64), ciSourceManifestSha256: 'e'.repeat(64),
-        sourceCommit: 'd'.repeat(40), gitleaksTomlSha256: '9'.repeat(64), testSha: testSha ?? JSON.parse(argv[argv.indexOf('--subject-json') + 1]).headSha, stages: rows }) };
+        sourceCommit: 'd'.repeat(40), gitleaksTomlSha256: '9'.repeat(64), testSha: testSha ?? (s => s.testSha ?? s.headSha)(JSON.parse(argv[argv.indexOf('--subject-json') + 1])), stages: rows }) };
     }
     if (argv[1].endsWith('invoke-stage.mjs')) return { code: 0, stdout: JSON.stringify(stdout[argv[argv.indexOf('--stage') + 1]] ?? fact()) };
     throw new Error('unexpected argv ' + argv.join(' '));
@@ -39,13 +45,30 @@ async function engineFixture(t, { answers = {}, stdout = {}, testSha = null } = 
     async send(kind, fields) { sent.push([kind, fields]); return { kind, fields }; },
     async await(req) { return Object.hasOwn(answers, req.kind) ? answers[req.kind] : { ok: true, code: null }; },
   };
-  const engine = new WindowsEngine({ run, busy: () => false, companionMailbox, sleep: async () => {}, clock: () => Date.parse('2026-10-21T08:00:00Z'),
+  const engine = new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run, busy: () => false, companionMailbox, sleep: async () => {}, clock: () => Date.parse('2026-10-21T08:00:00Z'),
     paths: { sourceRoot, workRoot: path.join(root, 'work'), outboxRoot: path.join(root, 'outbox'), nodeExe: 'C:\\resident\\runtime\\node.exe',
       powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', scExe: 'C:\\Windows\\System32\\sc.exe' } });
   return { root, engine, runs, sent };
 }
 const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 2 };
 const stages = validatePolicy(rawPolicy()).stages;
+
+test('issuer diagnostics: resident second filter retains only allowed issuer context and never grants a retry', () => {
+  const diagnostic = { verdict: 'REJECTED', nativeVerdict: 'ERROR', ownerReviewKind: 'refused', reasonCodes: ['owner_grant_required'],
+    nativeReasonCodes: ['path_outside_write_set'], phase: 'changed_paths', transientAdmission: 'full_admission_unavailable', evaluations: 4,
+    workflowGateFindingsPresent: true, modeFresh: false, recorderFresh: true, rawBody: 'sensitive-details-must-not-survive' };
+  const input = { status: 'UNCERTAIN', reason: 'full_admission_rejected', sideEffects: 1, mayHavePublished: true, safeToRerun: true, diagnostic };
+  const r = parseStageOutcome(input);
+  for (const key of ['ownerReviewKind', 'phase', 'transientAdmission', 'evaluations', 'workflowGateFindingsPresent', 'modeFresh', 'recorderFresh'])
+    assert.deepEqual(r.diagnostic[key], diagnostic[key], key);
+  assert.equal(Object.hasOwn(r.diagnostic, 'rawBody'), false);
+  assert.equal(r.safeToRerun, false);
+  for (const evaluations of [0, -1, 5, 1.5, '4', Infinity])
+    assert.equal(Object.hasOwn(parseStageOutcome({ ...input, diagnostic: { ...diagnostic, evaluations } }).diagnostic, 'evaluations'), false);
+  const forged = parseStageOutcome({ ...input, diagnostic: { transientAdmission: 'full_admission_rejected', evaluations: 4,
+    ownerReviewKind: 'private_kind', phase: 'private_phase' } });
+  for (const key of ['transientAdmission', 'evaluations', 'ownerReviewKind', 'phase']) assert.equal(Object.hasOwn(forged.diagnostic, key), false);
+});
 
 test('derive passes the v2 subject (with createdAt) and writes the public descriptor /3', async t => {
   const f = await engineFixture(t);
@@ -56,14 +79,30 @@ test('derive passes the v2 subject (with createdAt) and writes the public descri
   assert.deepEqual(Object.keys(sent).sort(), ['attempt', 'baseSha', 'createdAt', 'headSha', 'pr', 'repo', 'sourceManifestSha256']);
   const d = JSON.parse(await fs.readFile(path.join(f.root, 'outbox', batch.batchId, 'descriptor.json'), 'utf8'));
   assert.equal(d.contract, DESCRIPTOR_CONTRACT);
-  // quota phase 2 step 3b: the descriptor names the tested commit, the head itself until step 3c
+  // quota phase 2 step 3b: the descriptor names the tested commit, the head itself for a subject without S
   assert.equal(DESCRIPTOR_CONTRACT, 'clued.independent-ci.resident-batch-descriptor/3');
   assert.deepEqual([d.headSha, d.testSha], [subject.headSha, subject.headSha]);
   assert.deepEqual([d.attempt, d.ciSourceManifestSha256, d.sourceCommit, d.gitleaksTomlSha256, d.linuxJobIds.length], [2, 'e'.repeat(64), 'd'.repeat(40), '9'.repeat(64), 3]);
   assert.equal(d.createdAt, sent.createdAt);
-  // the descriptor's S is the derivation's; a derivation that names another S is refused until step 3c
+  // the descriptor's S is the derivation's; a derivation that names another S than the subject's is refused
   const other = await engineFixture(t, { testSha: '4'.repeat(40) });
   await assert.rejects(other.engine.derive(subject, KEY), e => e.code === 'RESIDENT_DERIVATION_REFUSED');
+});
+
+test('derive (step 3c-2a): a train front batch sends its S with the subject and its descriptor names that S', async t => {
+  const S = '4'.repeat(40), front = { ...subject, testSha: S };
+  const f = await engineFixture(t);
+  const batch = await f.engine.derive(front, KEY);
+  const sent = JSON.parse(f.runs[0][f.runs[0].indexOf('--subject-json') + 1]);
+  assert.deepEqual(Object.keys(sent).sort(), ['attempt', 'baseSha', 'createdAt', 'headSha', 'pr', 'repo', 'sourceManifestSha256', 'testSha']);
+  assert.equal(sent.testSha, S);
+  const d = JSON.parse(await fs.readFile(path.join(f.root, 'outbox', batch.batchId, 'descriptor.json'), 'utf8'));
+  assert.deepEqual([d.headSha, d.baseSha, d.testSha], [HEAD, BASE, S]);
+  // a derivation that reports the head (or any other commit) for a front subject is refused
+  for (const testSha of [HEAD, '5'.repeat(40)]) {
+    const g = await engineFixture(t, { testSha });
+    await assert.rejects(g.engine.derive(front, KEY), e => e.code === 'RESIDENT_DERIVATION_REFUSED');
+  }
 });
 
 test('stages run through node invoke-stage.mjs with fixed argv; the v2 fact is parsed', async t => {
@@ -91,5 +130,51 @@ test('stage 2 first proves no push since the bundle; a moved ref ends the stage 
   const h = await engineFixture(t);
   const r3 = await h.engine.runStage(await h.engine.derive(subject, KEY), stages[1]);
   assert.equal(r3.ok, true);
-  assert.deepEqual(h.sent.map(([k]) => k), ['check-refs', 'relay-stage']);
+  // DESIGN §32: the memory gate reads once right before the stage (a default answer carries no reading: the stage runs as before)
+  assert.deepEqual(h.sent.map(([k]) => k), ['check-refs', 'memory-ready', 'relay-stage']);
+});
+
+test('stage 10 (quota phase 2 step 3c-1): a train run derived into work\train and run as stage 10; the fact carries the train facts', async t => {
+  const train = { contract: 'clued.independent-ci.train-facts/1', mode: 'shadow', at: '2026-10-21T08:00:00.000Z', wouldDo: 'NO_FRONT', front: null };
+  const f = await engineFixture(t, { stdout: { 10: fact({ stage: 10, outcome: { status: 'TRAIN_FACTS', reason: null, sideEffects: 0, mayHavePublished: false }, train }) } });
+  const r = await f.engine.runTrainStage('shadow');
+  assert.deepEqual([r.ok, r.train, r.outcome.status], [true, train, 'TRAIN_FACTS']);
+  const derive = f.runs.find(a => a.includes('--train-run'));
+  const key = derive[derive.indexOf('--train-key') + 1], runId = derive[derive.indexOf('--train-run') + 1];
+  assert.match(key, /^[0-9a-f]{64}$/);
+  assert.equal(runId.slice(0, 16), key.slice(0, 16));
+  assert.equal(r.runId, runId);
+  assert.equal(derive[derive.indexOf('--out') + 1], path.join(f.root, 'work', 'train', runId));
+  const invoke = f.runs.find(a => a[1].endsWith('invoke-stage.mjs'));
+  assert.deepEqual([invoke[invoke.indexOf('--stage') + 1], invoke[invoke.indexOf('--batch-key') + 1]], ['10', key]);
+  assert.equal(f.sent.length, 0, 'no companion request: Windows only, no relay pump');
+  await assert.rejects(f.engine.runTrainStage('on'), e => e.code === 'RESIDENT_TRAIN_MODE_INVALID');
+});
+
+test('WindowsEngine requires the pinned full node before any process port and queries only its runner service', async () => {
+  let effects = 0;
+  const run = async a => { effects++; assert.equal(a[2], TEST_NODE.runnerService); return { code: 0, stdout: a[1] === 'qc' ? SC_QC : SC_Q }; };
+  assert.throws(() => new WindowsEngine({ run }), { code: 'NODE_PROFILE_PIN_CHANGED' });
+  assert.throws(() => new WindowsEngine({ run, node: { ...TEST_NODE, hostname: 'OTHER' }, nodeProfileSha256: TEST_NODE_SHA }));
+  assert.equal(effects, 0);
+  const e = new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run, paths: { scExe: 'C:\\Windows\\System32\\sc.exe' } });
+  assert.equal(await e.scReadback(), true); assert.equal(effects, 2);
+});
+test('C2 engine refuses busy/live runner before invoking broker and uses no companion', async t => {
+  const f = await engineFixture(t); f.engine.busy = () => true;
+  assert.equal((await f.engine.runRoleProbe()).deferred, true); assert.equal(f.runs.length, 0); assert.equal(f.sent.length, 0);
+  f.engine.busy = () => false; f.engine.scReadback = async () => false;
+  assert.equal((await f.engine.runRoleProbe()).deferred, true); assert.equal(f.runs.length, 0);
+});
+test('C2 engine intent manifest is independently computed; full cleanup/outcome is retained', async t => {
+  const f = await engineFixture(t); let invoked = 0;
+  f.engine.scReadback = async () => true;
+  f.engine.run = async a => {
+    invoked++; assert.equal(a[2], '--role-probe');
+    const runKey = a[3], runId = a[5], nodeProfileSha256 = a[7];
+    const manifest = sha256(Buffer.from(canonicalJson({ contract: 'clued.independent-ci.role-probe-intent/1', runKey, runId, nodeProfileSha256 })));
+    return { code: 0, stdout: JSON.stringify(fact({ stage: 11, manifest_sha256: manifest, roleProbe: { result: 'held', code: 'ROLE_PROBE_HELD' },
+      outcome: { status: 'BLOCKED', reason: 'ROLE_PROBE_HELD', sideEffects: 0, mayHavePublished: false } })) };
+  };
+  const r = await f.engine.runRoleProbe(); assert.equal(r.ok, true); assert.equal(r.roleProbe.result, 'held'); assert.equal(invoked, 1); assert.equal(f.sent.length, 0);
 });

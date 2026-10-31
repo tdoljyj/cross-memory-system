@@ -16,19 +16,55 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { CODE, HEX64, check, fail, parseBoundedJson, sha256 } from './canonical.mjs';
+import { CODE, HEX64, check, fail, parseBoundedJson, sha256, canonicalJson } from './canonical.mjs';
 import { exists, readBounded, writeNew, ensureDir } from './store.mjs';
-import { ABORTABLE_IN_FLIGHT } from './classify.mjs';
+import { ABORTABLE_IN_FLIGHT, LINUX_MEMORY_NOT_READY } from './classify.mjs';
+import { pinnedNodeProfile, validateNodeProfile } from './node-profile.mjs';
+import { validateRoleProbeFact } from './role-probe.mjs';
+import { RELAY_TIMEOUT_MS } from './companion.mjs';
+import { REVOCATION_STAGE, REVOCATION_RUN_MS, REVOCATION_PENDING_STATE, REVOCATION_RUN_ID,
+  validateRevocationFacts,validateRevocationQualification } from './revocation-maintenance.mjs';
 
-export const RUNNER_SERVICE = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02';
 export const ORIGINAL_BINARY = '"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"';
-// /3 (quota phase 2 step 3b): also names the tested commit S (testSha); S = H until step 3c's train front batch.
+// /3 (quota phase 2 step 3b): also names the tested commit S (testSha); S = H except for a train front batch, whose
+// subject names its own S (step 3c-2).
 export const DESCRIPTOR_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/3';
 // The codes the companion's bridge pump can end with (companion.mjs#pump); a stage's companion answer is taken
 // only from this list, and none of them is an attempt-2 transient code.
 export const PUMP_CODES = Object.freeze(['ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED', 'LINUX_WORKER_START_UNCONFIRMED', 'FORMAL_BRIDGE_STAGE_DEADLINE',
-  'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED', 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED', 'FORMAL_WORKER_TERMINAL_UNCONFIRMED', 'RELAY_REFUSED_NO_RETRY',
-  'COMPANION_PUMP_UNCONFIRMED', 'COMPANION_REQUEST_EXPIRED', 'COMPANION_HANDLER_UNCONFIRMED', 'COMPANION_PUMP_CANCELLED']);
+  'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED', 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED', 'FORMAL_WORKER_TERMINAL_UNCONFIRMED', 'RELAY_REFUSED_NO_RETRY', 'RELAY_PARTIAL_RECORD_PRESERVED',
+  'COMPANION_PUMP_UNCONFIRMED', 'COMPANION_REQUEST_EXPIRED', 'COMPANION_HANDLER_UNCONFIRMED', 'COMPANION_PUMP_CANCELLED',
+  // DESIGN §26: the worker ran and ended with no record left (signal B), never started (signal C), and the engine's own code
+  // for a companion whose heartbeat stopped while the stage ran (signal D).
+  'LINUX_WORKER_ENDED_WITHOUT_RECORD', 'LINUX_WORKER_NOT_STARTED', 'COMPANION_HEARTBEAT_LOST']);
+// The pump answers after which it relays nothing more for its stage (DESIGN §26 signal A). Not FORMAL_WORKER_TERMINAL_UNCONFIRMED
+// (the result or blocked record was moved already) and not COMPANION_PUMP_CANCELLED (only a cancel ends a pump so).
+export const PUMP_DEAD_CODES = Object.freeze(['RELAY_REFUSED_NO_RETRY', 'RELAY_PARTIAL_RECORD_PRESERVED', 'ISSUE_TRANSFER_UNCONFIRMED', 'LINUX_WORKER_START_UNCONFIRMED',
+  'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED', 'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED', 'LINUX_WORKER_ENDED_WITHOUT_RECORD', 'LINUX_WORKER_NOT_STARTED',
+  'COMPANION_PUMP_UNCONFIRMED', 'COMPANION_HANDLER_UNCONFIRMED', 'COMPANION_REQUEST_EXPIRED']);
+// A dead pump, or a lost heartbeat, leaves the issuer this long to take a record the pump moved just before; then the stage is
+// asked to stop through its own stop path (bridgeStop). The observer looks every BRIDGE_POLL_MS.
+export const BRIDGE_STOP_GRACE_MS = 60_000;
+export const BRIDGE_POLL_MS = 5_000;
+// Signal D: no heartbeat for this long while the stage runs (the companion's timer beats every 10 s).
+export const PUMP_HEARTBEAT_STALE_MS = 120_000;
+// Pump quiet (c18eac1d generalised): after a stage that ended without success, the cancelled pump's answer is awaited this long.
+export const PUMP_QUIET_MS = RELAY_TIMEOUT_MS + 60_000;
+// The stage code of a scanner-issuer stage the bridge stop ended (STOP_SENT, its Windows tree drained).
+export const BRIDGE_STAGE_STOPPED_PUMP_LOST = 'BRIDGE_STAGE_STOPPED_PUMP_LOST';
+// The pre-stage memory gate (DESIGN §32, Task 25851665), right before a scanner stage (2, 4, 6) is invoked, so before its issue
+// exists: the companion's memory-ready facts (one wsl.exe per check). Ready: at least MEMORY_GATE_MIN_BLOCKS free blocks of the
+// hv_sock ring order, memguard's own LOW_BLOCKS (linux/host-tuning/clued-wsl-memguard): six channels for each wsl.exe, and about
+// ten wsl.exe calls a stage cannot do without in its first minutes. A low reading waits for memguard (it runs every 60 s and
+// compacts below the same number; its back-off and cache drop are 5 minutes), looking again every MEMORY_GATE_POLL_MS, for at
+// most MEMORY_GATE_WAIT_MS / MEMORY_GATE_CHECKS; still low then: LINUX_MEMORY_NOT_READY, the stage never invoked. A reading
+// that cannot be had proves nothing: without an earlier low reading the stage runs at once, as before the gate.
+export const MEMORY_GATE_MIN_BLOCKS = 64;
+export const MEMORY_GATE_POLL_MS = 60_000;
+export const MEMORY_GATE_WAIT_MS = 6 * 60_000;
+export const MEMORY_GATE_CHECKS = 7;
+export const MEMORY_READ_TIMEOUT_MS = 60_000;
+const memoryFacts = m => m && typeof m === 'object' && Number.isSafeInteger(m.order) && m.order >= 0 && m.order <= 10 && Number.isSafeInteger(m.blocks) && m.blocks >= 0 ? m : null;
 // The broker request the Source v2 invoker writes (resident-v2/broker-protocol.mjs) and the stop request the
 // resident may write next to it for an Owner abort (windows/SwapBroker.cs, StopRequest).
 export const BROKER_REQUEST_CONTRACT = 'clued.independent-ci.swap-broker-request/2';
@@ -66,6 +102,10 @@ export const STAGE_FACT_CONTRACT = 'clued.independent-ci.resident-stage-fact/2';
 // here to a fixed shape: anything that does not fit is dropped (null), never guessed, so a malformed outcome can only
 // lose a release, never gain one. Only diagnostics and scheduling: no free text crosses into the ledger or status.
 const ENUM = /^[A-Za-z_]{1,40}$/, DCODE = /^[a-z][a-z0-9_]{0,63}$/, ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
+// Mirror the Source diagnostic allow-list; these fields never authorize admission, retry or cleanup.
+const ADMISSION_PHASES = new Set(['mode', 'principal', 'observer', 'pull_request', 'claim_reference', 'evaluate', 'post_evaluate', 'post_pull_request', 'native', 'changed_paths']);
+const ISSUER_TRANSIENT_ADMISSIONS = new Set(['full_admission_observation_expired', 'full_admission_unavailable']);
+const OWNER_REVIEW_KINDS = new Set(['granted', 'pending', 'transient', 'rpc_unavailable', 'refused', 'UNKNOWN']);
 export const QUEUE_STATES = Object.freeze(['head', 'waiting', 'lapsed', 'out', 'none']);   // the Source's MERGE_QUEUE_STATES
 const isoOrNull = v => typeof v === 'string' && ISO.test(v) && Number.isFinite(Date.parse(v)) ? v : null;
 function queueEntry(v) {
@@ -80,10 +120,20 @@ export function parseStageOutcome(o) {
     || !Number.isSafeInteger(o.sideEffects) || o.sideEffects < 0 || typeof o.mayHavePublished !== 'boolean') return null;
   const d = o.diagnostic && typeof o.diagnostic === 'object' && !Array.isArray(o.diagnostic) ? o.diagnostic : null;
   const s = o.scheduling && typeof o.scheduling === 'object' && !Array.isArray(o.scheduling) ? o.scheduling : null;
+  const diagnostic = d ? { verdict: ENUM.test(d.verdict ?? '') ? d.verdict : 'UNKNOWN', nativeVerdict: ENUM.test(d.nativeVerdict ?? '') ? d.nativeVerdict : 'UNKNOWN',
+    reasonCodes: codeList(d.reasonCodes), nativeReasonCodes: codeList(d.nativeReasonCodes), ciRetryAfter: isoOrNull(d.ciRetryAfter), mergeQueue: queueEntry(d.mergeQueue) } : null;
+  if (diagnostic) {
+    if (OWNER_REVIEW_KINDS.has(d.ownerReviewKind)) diagnostic.ownerReviewKind = d.ownerReviewKind;
+    if (ADMISSION_PHASES.has(d.phase)) diagnostic.phase = d.phase;
+    for (const field of ['workflowGateFindingsPresent', 'modeFresh', 'recorderFresh']) if (typeof d[field] === 'boolean') diagnostic[field] = d[field];
+    if (ISSUER_TRANSIENT_ADMISSIONS.has(d.transientAdmission)) {
+      diagnostic.transientAdmission = d.transientAdmission;
+      if (Number.isSafeInteger(d.evaluations) && d.evaluations >= 1 && d.evaluations <= 4) diagnostic.evaluations = d.evaluations;
+    }
+  }
   return {
     status: o.status, reason: o.reason, sideEffects: o.sideEffects, mayHavePublished: o.mayHavePublished,
-    diagnostic: d ? { verdict: ENUM.test(d.verdict ?? '') ? d.verdict : 'UNKNOWN', nativeVerdict: ENUM.test(d.nativeVerdict ?? '') ? d.nativeVerdict : 'UNKNOWN',
-      reasonCodes: codeList(d.reasonCodes), nativeReasonCodes: codeList(d.nativeReasonCodes), ciRetryAfter: isoOrNull(d.ciRetryAfter), mergeQueue: queueEntry(d.mergeQueue) } : null,
+    diagnostic,
     scheduling: s ? { ciRetryAfter: isoOrNull(s.ciRetryAfter), mergeQueue: queueEntry(s.mergeQueue) } : null,
     // the flag holds only on a clean BLOCKED with zero side effects that may not have published
     safeToRerun: o.safeToRerun === true && o.status === 'BLOCKED' && o.sideEffects === 0 && o.mayHavePublished === false,
@@ -95,16 +145,34 @@ export function parseStageFact(text, expectedManifestSha256) {
   if (f.contract !== undefined && f.contract !== STAGE_FACT_CONTRACT) return { ok: false, code: 'STAGE_TERMINAL_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: false }, nativeReceiptSha256: null, outcome: null, brokerNoLaunch: false };
   const restored = f.original_binary_restored === true && f.complete_original_readback === true;
   const treeZero = f.tree_cleanup_confirmed === true && f.tree_active_processes === 0 && f.root_exit_confirmed === true;
-  const ok = f.state === 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' && restored && treeZero
+  const outcome = parseStageOutcome(f.outcome);
+  let revocation = null, maintenancePending = false;
+  if (f.stage === REVOCATION_STAGE && f.contract === STAGE_FACT_CONTRACT) {
+    try {
+      const facts = validateRevocationFacts(f.revocation);
+      check(f.maintenancePending === !facts.complete && f.failure_code === null && outcome !== null
+        && outcome.status === (facts.complete ? 'REVOCATION_MAINTENANCE' : 'PENDING')
+        && f.state === (facts.complete ? 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' : REVOCATION_PENDING_STATE)
+        && HEX64.test(f.native_receipt_sha256 ?? ''),'REVOCATION_FACTS_REFUSED');
+      revocation = facts;maintenancePending = !facts.complete;
+    } catch { /* an unbound maintenance result is never a successful stage */ }
+  }
+  const terminalState = f.state === 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION'
+    || f.stage === REVOCATION_STAGE && f.state === REVOCATION_PENDING_STATE;
+  const ok = terminalState && (f.stage !== REVOCATION_STAGE || revocation !== null) && restored && treeZero
     && f.manifest_sha256 === expectedManifestSha256 && f.scm_start_call_issued === true && f.configuration_conflict_detected === false;
   const code = ok ? null : (typeof f.failure_code === 'string' && CODE.test(f.failure_code) ? f.failure_code : (typeof f.state === 'string' && CODE.test(f.state) ? f.state : 'STAGE_TERMINAL_UNCONFIRMED'));
   // Stage R only: the relay rows as the Source wrote them; the executor validates them (classify.mjs).
   const relay = Array.isArray(f.relay) ? f.relay : null;
+  // Stage 10 only: the train facts as the Source wrote them; the executor keeps only what train.mjs#trainSummary reads.
+  const train = f.train && typeof f.train === 'object' && !Array.isArray(f.train) ? f.train : null;
   // The broker refused before any start and re-read the original (stage-fact.mjs BROKER_NO_LAUNCH_CODES): one of the
   // two ways a stage-1 failure may be released (classify.mjs#decideFailure); only with the fact's own readback.
   const brokerNoLaunch = !ok && f.broker_no_launch === true && f.scm_start_call_issued === false && restored && treeZero && f.configuration_conflict_detected === false;
-  return { ok, code, proof: { windowsTreeZero: treeZero, serviceOriginalStopped: restored }, nativeReceiptSha256: HEX64.test(f.native_receipt_sha256 ?? '') ? f.native_receipt_sha256 : null, relay,
-    outcome: parseStageOutcome(f.outcome), brokerNoLaunch };
+  let roleProbe = null;
+  if (f.stage === 11 && ok) { try { roleProbe = validateRoleProbeFact(f.roleProbe); } catch { /* no fact */ } }
+  return { ok, code, proof: { windowsTreeZero: treeZero, serviceOriginalStopped: restored }, nativeReceiptSha256: HEX64.test(f.native_receipt_sha256 ?? '') ? f.native_receipt_sha256 : null, relay, train, roleProbe,
+    ...(f.stage === REVOCATION_STAGE ? { revocation,maintenancePending } : {}),outcome, brokerNoLaunch };
 }
 
 // Independent SCM readback (sc.exe qc / queryex), so "original and stopped" never rests on the
@@ -120,12 +188,29 @@ export function parseScQueryex(text) {
   const pid = /PID\s*:\s*(\d+)/.exec(text)?.[1] ?? null;
   return { state: state === null ? null : Number(state), pid: pid === null ? null : Number(pid) };
 }
-export const originalStopped = (qc, q) => qc.binary === ORIGINAL_BINARY && qc.startType === 3 && /^(\.|TURING)\\clued-control$/i.test(qc.account ?? '') && q.state === 1 && q.pid === 0;
+export const originalStopped = (qc, q, node) => {
+  validateNodeProfile(node);
+  const account = String(qc.account ?? '').toLowerCase();
+  return qc.binary === ORIGINAL_BINARY && qc.startType === 3 && ['.\\clued-control', `${node.hostname.toLowerCase()}\\clued-control`].includes(account) && q.state === 1 && q.pid === 0;
+};
+
+// The code of a Windows archive that did not verify (DESIGN §33): the tool's own `code` when it is a fixed code (CODE), else the
+// runner's refusal, a timeout, or WINDOWS_ARCHIVE_UNCONFIRMED. Never the tool's free text, its stderr, or a path.
+export function windowsArchiveCode(r, v) {
+  if (typeof v?.code === 'string' && CODE.test(v.code)) return v.code;
+  if (typeof r?.refused === 'string' && CODE.test(r.refused)) return r.refused;
+  if (r?.timedOut === true) return 'WINDOWS_ARCHIVE_TIMED_OUT';
+  return 'WINDOWS_ARCHIVE_UNCONFIRMED';
+}
 
 export class WindowsEngine {
   // ports: { run (Runner.run), busy() (Runner.busy), companionMailbox, sleep, clock,
   //          paths: { sourceRoot, workRoot, outboxRoot, nodeExe, powershellExe, scExe } }
-  constructor(ports) { Object.assign(this, ports); }
+  constructor({ node, nodeProfileSha256, ...ports }) {
+    this.node = pinnedNodeProfile(node, nodeProfileSha256);
+    this.nodeProfileSha256 = nodeProfileSha256;
+    Object.assign(this, ports);
+  }
 
   v2(name) { return path.join(this.paths.sourceRoot, ...V2, name); }
 
@@ -156,25 +241,10 @@ export class WindowsEngine {
   async requestStop(batch, number) {
     check(ABORTABLE_IN_FLIGHT.includes(number) && batch && typeof batch.batchId === 'string', 'OWNER_ABORT_STOP_TARGET_INVALID');
     this.abortRequested = { batchId: batch.batchId, stage: number };
+    this.gateWake?.();
     const mine = s => s && s.batchId === batch.batchId && s.stage === number;
-    const out = { broker: false, requestId: mine(this.abortStop) ? this.abortStop.requestId : null, stopCode: null, pump: false, done: false };
-    if (!out.requestId) {
-      try {
-        const swap = await findInflightSwap(this.paths.brokerRoot, number, await this.stagePlanSha256(batch, number));
-        if (swap) {
-          try {
-            await writeNew(path.join(this.paths.brokerRoot, 'requests', `${swap.requestId}.stop`), { contract: BROKER_STOP_CONTRACT, ...swap });
-          } catch (error) {
-            if (error.code !== 'CREATE_ONLY_TARGET_EXISTS') throw error;
-          }
-          // Remembered: once the broker answers the swap it is no longer "in flight", but its stop receipt stays readable.
-          this.abortStop = { batchId: batch.batchId, stage: number, requestId: swap.requestId };
-          out.requestId = swap.requestId;
-        }
-      } catch { /* not found or not written yet: the next poll tries again */ }
-    }
-    out.broker = out.requestId !== null;
-    if (out.requestId) out.stopCode = await this.stopOutcome(out.requestId);
+    const stop = await this.stageStop(batch, number);
+    const out = { broker: stop.requestId !== null, requestId: stop.requestId, stopCode: stop.stopCode, pump: false, done: false };
     const pump = this.inflight;
     const pumpInFlight = mine(pump);
     if (pumpInFlight && (out.stopCode === 'STOP_SENT' || pump.windowsEnded === true)) {
@@ -184,6 +254,94 @@ export class WindowsEngine {
     // broker has settled the stop request. Until then the executor asks again on its next poll.
     out.done = pumpInFlight ? out.pump : out.stopCode !== null;
     return out;
+  }
+
+  // The stop path of a running scanner-issuer stage, shared by the Owner abort (requestStop) and the bridge stop (bridgeStop,
+  // DESIGN §26): the one in-flight swap of this batch's stage gets its broker stop request (create-only: one already there is
+  // the same stop, so an abort and a bridge stop together leave one file), which is remembered, and the broker's receipt is read.
+  // Nothing else: no pump cancel, no ledger record, no process ended here. { requestId, stopCode }, both null until found.
+  async stageStop(batch, number) {
+    check(ABORTABLE_IN_FLIGHT.includes(number) && batch && typeof batch.batchId === 'string', 'OWNER_ABORT_STOP_TARGET_INVALID');
+    const mine = s => s && s.batchId === batch.batchId && s.stage === number;
+    let requestId = mine(this.stageStopFor) ? this.stageStopFor.requestId : null;
+    if (!requestId) {
+      try {
+        const swap = await findInflightSwap(this.paths.brokerRoot, number, await this.stagePlanSha256(batch, number));
+        if (swap) {
+          try {
+            await writeNew(path.join(this.paths.brokerRoot, 'requests', `${swap.requestId}.stop`), { contract: BROKER_STOP_CONTRACT, ...swap });
+          } catch (error) {
+            if (error.code !== 'CREATE_ONLY_TARGET_EXISTS') throw error;
+          }
+          // Remembered: once the broker answers the swap it is no longer "in flight", but its stop receipt stays readable.
+          this.stageStopFor = { batchId: batch.batchId, stage: number, requestId: swap.requestId };
+          requestId = swap.requestId;
+        }
+      } catch { /* not found or not written yet: the next poll tries again */ }
+    }
+    return { requestId, stopCode: requestId ? await this.stopOutcome(requestId) : null };
+  }
+
+  // DESIGN §26: the pump of a running scanner-issuer stage is dead (signal A) or its companion's heartbeat stopped (signal D),
+  // and the stage still runs after the grace: it is asked to stop through its own stop path. Never 80-owner-abort, never the
+  // abort flag (a stage asked so is still invoked as usual), never a kill. Idempotent, like requestStop.
+  async bridgeStop(batch, number) {
+    return this.stageStop(batch, number);
+  }
+
+  // What the pump observer of this batch's running stage has seen (DESIGN §26), for the executor's receipts; null otherwise.
+  bridgeState(batch, number) {
+    const b = this.bridge;
+    if (!b || b.batchId !== batch?.batchId || b.stage !== number) return null;
+    return { pumpCode: b.state.pumpCode, stopRequestId: b.state.stop?.requestId ?? null, stopCode: b.state.stop?.stopCode ?? null };
+  }
+
+  // The pump observer (DESIGN §26), while a scanner-issuer stage runs: the stage's relay-stage answer and the companion's
+  // heartbeat, every BRIDGE_POLL_MS.
+  //   A: the pump answered with a PUMP_DEAD_CODES code (an answer outside PUMP_CODES counts as COMPANION_PUMP_UNCONFIRMED);
+  //   D: no answer, and no heartbeat newer than PUMP_HEARTBEAT_STALE_MS (counted from the stage's start at the earliest): first
+  //      the pump's cancel (heartbeat-lost) is written, so a companion restarted by its scheduled task answers
+  //      COMPANION_PUMP_CANCELLED instead of running a second pump; only once it is written is D taken.
+  // BRIDGE_STOP_GRACE_MS after A or D, with the stage still running, bridgeStop() on every poll until the broker's receipt is
+  // read. Only mailbox and broker files: the service runner is busy with the stage, and nothing here runs a process.
+  observePump(batch, number, relay) {
+    const mb = this.companionMailbox;
+    const state = { answer: null, pumpCode: null, lostAt: null, stop: null };
+    if (!ABORTABLE_IN_FLIGHT.includes(number) || typeof mb?.poll !== 'function' || typeof mb.heartbeat !== 'function') return { state, stop: async () => {} };
+    this.bridge = { batchId: batch.batchId, stage: number, state };
+    let stopped = false, wake;
+    const stopSignal = new Promise(resolve => { wake = resolve; });
+    let beatAt = this.clock();
+    const running = (async () => {
+      let request;
+      try { request = await relay; } catch { return; }
+      while (!stopped) {
+        try {
+          if (state.answer === null) state.answer = (await mb.poll(request)) ?? null;
+          if (state.lostAt === null) {
+            const a = state.answer;
+            if (a && a.ok !== true) {
+              const code = PUMP_CODES.includes(a.code) ? a.code : 'COMPANION_PUMP_UNCONFIRMED';
+              if (PUMP_DEAD_CODES.includes(code)) Object.assign(state, { pumpCode: code, lostAt: this.clock() });
+            } else if (!a) {
+              let hb = null;
+              try { hb = await mb.heartbeat(); } catch { hb = null; }
+              if (Number.isSafeInteger(hb?.at) && hb.at > beatAt) beatAt = hb.at;
+              if (this.clock() - beatAt > PUMP_HEARTBEAT_STALE_MS && typeof mb.cancel === 'function') {
+                await mb.cancel(request, 'heartbeat-lost');
+                Object.assign(state, { pumpCode: 'COMPANION_HEARTBEAT_LOST', lostAt: this.clock() });
+              }
+            }
+          }
+          if (state.lostAt !== null && this.clock() - state.lostAt >= BRIDGE_STOP_GRACE_MS && !(state.stop?.requestId && state.stop.stopCode)) {
+            state.stop = await this.bridgeStop(batch, number);
+          }
+        } catch { /* a failed look is no signal; the next poll looks again */ }
+        await Promise.race([this.sleep(BRIDGE_POLL_MS), stopSignal]);
+        await new Promise(resolve => setImmediate(resolve)); // never a busy loop, whatever the sleep port does
+      }
+    })();
+    return { state, stop: async () => { stopped = true; wake(); await running; } };
   }
 
   // The broker's create-only receipt of one stop request (SwapBroker.cs TryOwnerStop): its code, or null when there is
@@ -201,25 +359,26 @@ export class WindowsEngine {
   async requireV2(name) { const p = this.v2(name); try { await fs.access(p); } catch { fail('SOURCE_V2_REQUIRED'); } return p; }
 
   async scReadback() {
-    const qc = parseScQc((await this.run([this.paths.scExe, 'qc', RUNNER_SERVICE], { timeoutMs: 15_000 })).stdout);
-    const q = parseScQueryex((await this.run([this.paths.scExe, 'queryex', RUNNER_SERVICE], { timeoutMs: 15_000 })).stdout);
-    return originalStopped(qc, q);
+    const qc = parseScQc((await this.run([this.paths.scExe, 'qc', this.node.runnerService], { timeoutMs: 15_000 })).stdout);
+    const q = parseScQueryex((await this.run([this.paths.scExe, 'queryex', this.node.runnerService], { timeoutMs: 15_000 })).stdout);
+    return originalStopped(qc, q, this.node);
   }
 
   async derive(subject, key) {
     const entry = await this.requireV2('derive-batch.mjs');
     const batchId = `${key.slice(0, 16)}-${randomBytes(6).toString('hex')}`;
     const out = path.join(this.paths.workRoot, batchId);
-    // The jobs' createdAt (job contract v2) is the derivation time; it is not part of any id or key.
+    // The jobs' createdAt (job contract v2) is the derivation time; it is not part of any id or key. A train front
+    // batch's subject also names its tested commit S (step 3c-2), which joins the batch key on both sides.
     const v2 = { repo: subject.repo, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, sourceManifestSha256: subject.sourceManifestSha256,
-      attempt: subject.attempt, createdAt: new Date(this.clock()).toISOString() };
+      attempt: subject.attempt, createdAt: new Date(this.clock()).toISOString(), ...(Object.hasOwn(subject, 'testSha') ? { testSha: subject.testSha } : {}) };
     const r = await this.run([this.paths.nodeExe, entry, '--subject-json', JSON.stringify(v2), '--batch-key', key, '--batch-id', batchId, '--out', out], { timeoutMs: 10 * 60_000 });
     check(r.code === 0, 'RESIDENT_DERIVATION_REFUSED');
     const v = parseBoundedJson(Buffer.from(r.stdout, 'utf8'), 1024 * 1024, 'RESIDENT_DERIVATION_REFUSED');
     check(v.status === 'RESIDENT_BATCH_DERIVED' && v.batchKey === key && v.batchId === batchId && HEX64.test(v.packageSha256) && HEX64.test(v.ciSourceManifestSha256 ?? '')
       && /^[0-9a-f]{40}$/.test(v.sourceCommit ?? '') && HEX64.test(v.gitleaksTomlSha256 ?? '') && Array.isArray(v.stages) && v.stages.length === 8
-      // the tested commit S comes from the derivation alone; until step 3c it is the head itself
-      && v.testSha === subject.headSha, 'RESIDENT_DERIVATION_REFUSED');
+      // the tested commit S: the head itself, or the train front batch's own S, as the derivation reports it
+      && v.testSha === (Object.hasOwn(subject, 'testSha') ? subject.testSha : subject.headSha), 'RESIDENT_DERIVATION_REFUSED');
     const linuxJobIds = v.stages.filter(s => [2, 4, 6].includes(s.number)).map(s => s.jobId);
     check(linuxJobIds.length === 3 && linuxJobIds.every(j => HEX64.test(j)), 'RESIDENT_DERIVATION_REFUSED');
     // Public descriptor (/3) for the companion's bundle and ws-prep, and (through /mnt/c, read-only) the
@@ -234,11 +393,16 @@ export class WindowsEngine {
 
   // Windows half of a protocol archive through the Source v2 handle-based tool (never Node path
   // renames on the Owner-writable spool, see archive.mjs header).
+  // The answer carries `archiveCode` (DESIGN §33): null when the archive verified; otherwise the tool's own refusal code (it prints its
+  // verdict with that code also when it exits 2), or the engine's own fixed code when the tool said none (windowsArchiveCode).
   async archiveWindows(batch, reason) {
     const tool = await this.requireV2('archive-windows-spool.ps1');
-    const r = await this.run([this.paths.powershellExe, '-NoProfile', '-NonInteractive', '-File', tool, '-BatchKey', batch.key, '-Reason', reason], { timeoutMs: 120_000 });
-    const v = r.code === 0 ? parseBoundedJson(Buffer.from(r.stdout, 'utf8'), 65536, 'WINDOWS_ARCHIVE_UNCONFIRMED') : null;
-    return { verified: v?.verified === true, directory: typeof v?.directory === 'string' ? v.directory : null, moved: v?.moved ?? null };
+    const r = await this.run([this.paths.powershellExe, '-NoProfile', '-NonInteractive', '-File', tool, '-BatchKey', batch.key, '-Reason', reason, '-ExpectedNodeProfileSha256', this.nodeProfileSha256], { timeoutMs: 120_000 });
+    let v = null;
+    if (r.code === 0) v = parseBoundedJson(Buffer.from(r.stdout, 'utf8'), 65536, 'WINDOWS_ARCHIVE_UNCONFIRMED');
+    else if (r.code !== null) { try { v = parseBoundedJson(Buffer.from(r.stdout ?? '', 'utf8'), 65536, 'WINDOWS_ARCHIVE_UNCONFIRMED'); } catch { v = null; } }
+    const verified = r.code === 0 && v?.verified === true;
+    return { verified, directory: typeof v?.directory === 'string' ? v.directory : null, moved: v?.moved ?? null, archiveCode: verified ? null : windowsArchiveCode(r, v) };
   }
 
   async archiveLinux(batch, reason) {
@@ -264,6 +428,73 @@ export class WindowsEngine {
     return this.invoke(batch, { number: 9, runMilliseconds: row.runMilliseconds, linuxWorker: false }, row);
   }
 
+  // Stage 10 (quota phase 2 step 3c-1, DESIGN §22.1): one train run outside any batch. Its package is derived into a
+  // new work\train\<runId> directory (create-only), then it runs like any Windows-only stage. The run key and id are
+  // fresh random values (the derivation checks their shape); the fact carries the train facts.
+  async runTrainStage(mode) {
+    check(mode === 'shadow', 'RESIDENT_TRAIN_MODE_INVALID');
+    const entry = await this.requireV2('derive-batch.mjs');
+    const key = randomBytes(32).toString('hex');
+    const runId = `${key.slice(0, 16)}-${randomBytes(6).toString('hex')}`;
+    const root = path.join(this.paths.workRoot, 'train');
+    await ensureDir(root);
+    const out = path.join(root, runId);
+    const d = await this.run([this.paths.nodeExe, entry, '--train-run', runId, '--train-key', key, '--mode', mode, '--out', out], { timeoutMs: 5 * 60_000 });
+    let row = null;
+    if (d.code === 0) {
+      const v = parseBoundedJson(Buffer.from(d.stdout, 'utf8'), 65536, 'RESIDENT_DERIVATION_REFUSED');
+      if (v.status === 'RESIDENT_TRAIN_RUN_DERIVED' && v.runKey === key && v.runId === runId && v.mode === mode && v.stage?.number === 10
+        && HEX64.test(v.stage.workManifestSha256 ?? '') && HEX64.test(v.stage.jobId ?? '') && Number.isSafeInteger(v.stage.runMilliseconds)) row = v.stage;
+    }
+    // Nothing was requested from the broker yet: a refused derivation is a clean stage-10 refusal.
+    if (!row) return { ok: false, code: 'TRAIN_STAGE_REFUSED', proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() }, train: null, runId };
+    return { ...(await this.invoke({ batchId: runId, key, dir: out }, { number: 10, runMilliseconds: row.runMilliseconds, linuxWorker: false }, row)), runId };
+  }
+
+  // C2 never derives a PR/batch, starts Linux or contacts the companion. The installed invoker creates
+  // one stage-11 plan and asks the same serialized broker; independent SCM readback remains mandatory.
+  async runRoleProbe() {
+    const entry = await this.requireV2('invoke-stage.mjs');
+    const runKey = randomBytes(32).toString('hex'), runId = `${runKey.slice(0, 16)}-${randomBytes(6).toString('hex')}`;
+    const manifest = sha256(Buffer.from(canonicalJson({ contract: 'clued.independent-ci.role-probe-intent/1', runKey, runId, nodeProfileSha256: this.nodeProfileSha256 })));
+    if (this.busy?.() === true || this.inflight) return { ok: false, code: 'ROLE_PROBE_BUSY', deferred: true, proof: null, roleProbe: null };
+    // A live original runner is not ours to stop: do not even request a swap.
+    if (!(await this.scReadback())) return { ok: false, code: 'ROLE_PROBE_BUSY', deferred: true, proof: null, roleProbe: null };
+    const r = await this.run([this.paths.nodeExe, entry, '--role-probe', runKey, '--probe-id', runId, '--node-profile-sha256', this.nodeProfileSha256], { timeoutMs: 420_000 });
+    if (r.timedOut || r.code === null) return { ok: false, code: 'STAGE_INVOKER_TERMINAL_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: false }, roleProbe: null };
+    const fact = parseStageFact(r.stdout, manifest), stopped = await this.scReadback();
+    return { ...fact, proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && stopped }, runId };
+  }
+
+  // Read-only, token-free qualification lookup through this installed Source's
+  // existing protected record reader. A missing block or old Source defers.
+  async revocationMaintenanceQualification() {
+    try {
+      const entry=await this.requireV2('invoke-stage.mjs');
+      const r=await this.run([this.paths.nodeExe,entry,'--revocation-maintenance-qualification','--node-profile-sha256',this.nodeProfileSha256],{timeoutMs:15_000});
+      if(r.code!==0||r.timedOut)return null;
+      const reply=parseBoundedJson(Buffer.from(r.stdout,'utf8'),16384,'REVOCATION_QUALIFICATION_REFUSED');
+      if(reply.qualified!==true||!HEX64.test(reply.sourceManifestSha256??''))return null;
+      return validateRevocationQualification(reply.qualification,{sourceManifestSha256:reply.sourceManifestSha256,now:this.clock()});
+    }catch{return null;}
+  }
+
+  // Intent key/id belong to the executor's durable receipt, not to a PR or a
+  // batch. A busy helper or live runner is never stopped by this method.
+  async runRevocationMaintenance({runKey,runId}) {
+    check(HEX64.test(runKey??'')&&REVOCATION_RUN_ID.test(runId??'')&&runId.startsWith(runKey.slice(0,16)),'REVOCATION_RUN_REFUSED');
+    if(this.busy?.()===true||this.inflight)return {ok:false,code:'REVOCATION_MAINTENANCE_BUSY',deferred:true,proof:null};
+    if(!(await this.revocationMaintenanceQualification()))return {ok:false,code:'REVOCATION_MAINTENANCE_NOT_QUALIFIED',deferred:true,proof:null};
+    if(!(await this.scReadback()))return {ok:false,code:'REVOCATION_MAINTENANCE_BUSY',deferred:true,proof:null};
+    const entry=await this.requireV2('invoke-stage.mjs');
+    const manifest=sha256(Buffer.from(canonicalJson({contract:'clued.independent-ci.revocation-maintenance-intent/1',runKey,runId,nodeProfileSha256:this.nodeProfileSha256})));
+    const r=await this.run([this.paths.nodeExe,entry,'--revocation-maintenance','--run-key',runKey,'--run-id',runId,
+      '--node-profile-sha256',this.nodeProfileSha256],{timeoutMs:REVOCATION_RUN_MS+360_000});
+    if(r.timedOut||r.code===null)return {ok:false,code:'STAGE_INVOKER_TERMINAL_UNCONFIRMED',proof:{windowsTreeZero:false,serviceOriginalStopped:false},runId};
+    const fact=parseStageFact(r.stdout,manifest),stopped=await this.scReadback();
+    return {...fact,ok:fact.ok&&stopped,proof:{...fact.proof,serviceOriginalStopped:fact.proof.serviceOriginalStopped&&stopped},runId};
+  }
+
   // opts.betweenRoles: archive the previous local Linux role's protocol records first (stages 4 and 6
   //   only, the protocol-only Linux scopes); opts.firstLinux: the "no push since the bundle" gate before
   //   the first local scanner stage. Without opts the fixed v0.6 order applies (4/6 archive, 2 gate).
@@ -282,6 +513,15 @@ export class WindowsEngine {
       const l = await this.archiveLinux(batch, reason);
       if (w.verified !== true || l.verified !== true) return { ok: false, code: 'BETWEEN_ROLES_ARCHIVE_UNCONFIRMED', proof: {} };
     }
+    // DESIGN §34 (in-place upgrade channel): the first Linux stage runs only while the two sides do not disagree on their versions.
+    // versions (optional port) -> status.mjs view; consistent false is UPGRADE_VERSION_SKEW, a clean refusal before anything of the
+    // stage ran (Windows proof only; the failure path adds Linux quiescence). Unknown (null) or no port: the stage runs as before
+    // (the executor's version-skew hold already keeps new batches from starting while they disagree).
+    if (firstLinux && typeof this.versions === 'function') {
+      let consistent = null;
+      try { consistent = (await this.versions())?.consistent ?? null; } catch { consistent = null; }
+      if (consistent === false) return { ok: false, code: 'UPGRADE_VERSION_SKEW', proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() } };
+    }
     // Lesson b29: no push between the bundle and the first scanner stage. A moved ref is a clean,
     // transient refusal before anything ran (eligible for the automatic attempt 2).
     if (firstLinux) {
@@ -296,17 +536,68 @@ export class WindowsEngine {
     return this.invoke(batch, stage, row);
   }
 
+  // The pre-stage memory gate (DESIGN §32). { checks, order, blocks, low, ready, waitedMs, refused }: ready true (a reading at or
+  // above the threshold), false (refused: a low reading and none ready within the bound, or an Owner abort while waiting) or null
+  // (no reading could be had and none was low: the stage runs as before). Never more than MEMORY_GATE_CHECKS reads, never longer
+  // than MEMORY_GATE_WAIT_MS plus one read; a read that fails is only "no reading", never a refusal or a HALT by itself.
+  async memoryGate(batch, number) {
+    const started = this.clock();
+    const gate = { checks: 0, order: null, blocks: null, low: false, ready: null, waitedMs: 0, refused: false };
+    const end = ready => Object.assign(gate, { ready, refused: ready === false, waitedMs: this.clock() - started });
+    for (;;) {
+      gate.checks += 1;
+      let answer = null;
+      try { answer = await this.companionMailbox.await(await this.companionMailbox.send('memory-ready', { batchId: batch.batchId }, MEMORY_READ_TIMEOUT_MS), this.sleep); } catch { answer = null; }
+      const m = answer?.ok === true ? memoryFacts(answer.memory) : null;
+      if (m) Object.assign(gate, { order: m.order, blocks: m.blocks });
+      if (m && m.blocks >= MEMORY_GATE_MIN_BLOCKS) return end(true);
+      if (m) gate.low = true;
+      if (!gate.low) return end(null);
+      if (gate.checks >= MEMORY_GATE_CHECKS || this.clock() - started >= MEMORY_GATE_WAIT_MS || this.stopRequested(batch, number)) return end(false);
+      await this.gateSleep(MEMORY_GATE_POLL_MS);
+      // An Owner abort asked while the gate slept is seen at once, before another wsl.exe read (review n1 of the C3 fixes).
+      if (this.stopRequested(batch, number)) return end(false);
+    }
+  }
+
+  // The gate's sleep between two reads: it ends early when an Owner abort is asked (requestStop wakes it), so an abort is not seen
+  // up to MEMORY_GATE_POLL_MS late. The timer itself is left to run out.
+  async gateSleep(ms) {
+    let wake;
+    const woken = new Promise(resolve => { wake = resolve; });
+    this.gateWake = wake;
+    try { await Promise.race([this.sleep(ms), woken]); } finally { if (this.gateWake === wake) this.gateWake = null; }
+  }
+
   async invoke(batch, stage, row) {
     const invoke = await this.requireV2('invoke-stage.mjs');
     // Owner abort: a stage asked to stop before it was invoked is never invoked (nothing ran, the runner is untouched).
     if (this.stopRequested(batch, stage.number)) return { ok: false, code: 'OWNER_ABORT_REQUESTED', proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() } };
+    if (!stage.linuxWorker) return this.invokeStage(batch, stage, row, invoke);
+    // DESIGN §32: a scanner stage is invoked only on a memory reading that is not low (or on none at all); its facts travel with
+    // the result. Refused: nothing of the stage ran, no issue exists, no pump was asked for.
+    const memoryGate = await this.memoryGate(batch, stage.number);
+    if (this.stopRequested(batch, stage.number)) return { ok: false, code: 'OWNER_ABORT_REQUESTED', proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() }, memoryGate };
+    if (memoryGate.refused) return { ok: false, code: LINUX_MEMORY_NOT_READY, proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() }, memoryGate };
+    return { ...(await this.invokeStage(batch, stage, row, invoke)), memoryGate };
+  }
+
+  async invokeStage(batch, stage, row, invoke) {
     const relay = stage.linuxWorker
       ? this.companionMailbox.send('relay-stage', { batchId: batch.batchId, stage: stage.number, jobId: row.jobId }, stage.runMilliseconds + 120_000)
       : null;
     this.inflight = relay ? { batchId: batch.batchId, stage: stage.number, request: relay } : null;
+    // DESIGN §26: while a scanner-issuer stage runs, its pump and the companion's heartbeat are watched (and the stage is
+    // stopped through its own stop path when the pump is lost), next to the stage, never blocking it.
+    const observer = relay ? this.observePump(batch, stage.number, relay) : null;
     try {
-      const r = await this.run([this.paths.nodeExe, invoke, '--batch-dir', batch.dir, '--stage', String(stage.number), '--work-manifest-sha256', row.workManifestSha256,
-        '--batch-key', batch.key], { timeoutMs: stage.runMilliseconds + 360_000 });
+      let r;
+      try {
+        r = await this.run([this.paths.nodeExe, invoke, '--batch-dir', batch.dir, '--stage', String(stage.number), '--work-manifest-sha256', row.workManifestSha256,
+          '--batch-key', batch.key], { timeoutMs: stage.runMilliseconds + 360_000 });
+      } finally {
+        await observer?.stop();
+      }
       if (r.timedOut || r.code === null) return { ok: false, code: 'STAGE_INVOKER_TERMINAL_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: false } };
       // The invoke-stage child has returned with a stage fact: the broker answered (whatever its code), the invoker refused
       // the stage before asking the broker, or it gave up waiting for the answer (past the broker's and the pump's own
@@ -315,20 +606,59 @@ export class WindowsEngine {
       if (this.inflight) this.inflight.windowsEnded = true;
       const fact = parseStageFact(r.stdout, row.workManifestSha256);
       const scOk = await this.scReadback();
+      const proof = { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk };
+      let bridge = null;
       if (relay) {
-        const answer = await this.companionMailbox.await(await relay, this.sleep);
+        const request = await relay;
+        const seen = observer.state;
+        // An Owner abort of this stage wins over everything the bridge did: its own path cancels the pump and decides.
+        const ownerAbort = this.stopRequested(batch, stage.number);
+        const heartbeatLost = seen.pumpCode === 'COMPANION_HEARTBEAT_LOST';
+        let answer = seen.answer;
+        if (!answer) {
+          if (heartbeatLost) {
+            // The companion is taken for dead (its pump is cancelled already): one look, no wait.
+            try { answer = (await this.companionMailbox.poll(request)) ?? null; } catch { answer = null; }
+          } else if (fact.ok || ownerAbort) {
+            answer = await this.companionMailbox.await(request, this.sleep);
+          } else {
+            // Pump quiet (DESIGN §26, c18eac1d generalised): the stage ended without success while its pump still runs. The
+            // pump is cancelled (stage-ended) and its answer awaited at most PUMP_QUIET_MS: one relay call it may be inside,
+            // plus the job host's margin. No answer by then: the pump is not quiet, and nothing is decided on it.
+            try { await this.companionMailbox.cancel?.(request, 'stage-ended'); } catch { /* the bounded wait still runs */ }
+            const deadline = Date.parse(request.deadline);
+            const until = Math.min(Number.isFinite(deadline) ? deadline : Infinity, this.clock() + PUMP_QUIET_MS);
+            answer = await this.companionMailbox.await({ ...request, deadline: new Date(until).toISOString() }, this.sleep);
+          }
+        }
+        const stopRequestId = seen.stop?.requestId ?? null;
+        let stopCode = seen.stop?.stopCode ?? null;
+        if (stopRequestId) stopCode = (await this.stopOutcome(stopRequestId)) ?? stopCode;
+        const answerCode = answer && answer.ok !== true ? (PUMP_CODES.includes(answer.code) ? answer.code : 'COMPANION_PUMP_UNCONFIRMED') : null;
+        // The bridge facts the executor records with the stage (stage-terminal) and decides an abandonment on (DESIGN §27).
+        bridge = { pumpCode: seen.pumpCode ?? answerCode, stopRequestId, stopCode, stageCode: fact.ok ? null : (fact.code ?? 'STAGE_TERMINAL_UNCONFIRMED'), pumpQuiet: !!answer };
         // The Windows stage succeeded but the companion did not confirm the pump: take only an allow-listed pump
         // code (none of them transient), never a free-form one (PR-A review MINOR 6). That ending is the pump's, not
         // the entry's: no outcome travels with it.
-        if (fact.ok && answer?.ok !== true) return { ok: false, code: PUMP_CODES.includes(answer?.code) ? answer.code : 'COMPANION_PUMP_UNCONFIRMED', proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk }, outcome: null, brokerNoLaunch: false };
+        if (fact.ok && answer?.ok !== true) return { ok: false, code: heartbeatLost ? 'COMPANION_HEARTBEAT_LOST' : (answerCode ?? 'COMPANION_PUMP_UNCONFIRMED'), proof, outcome: null, brokerNoLaunch: false, bridge };
+        // The bridge stop ended the stage: the broker sent the stop (its receipt says STOP_SENT) and the helper's tree is
+        // drained (stage-fact.mjs tree facts), and the issuer bound no outcome (a stopped stage reads STAGE_OUTCOME_MISSING).
+        // A bound outcome keeps its own code whatever the stop did (r3 review MAJOR 1): a never-clean outcome code must not
+        // become an abandonable ending, and a clean one must not be put through the quiescence proof.
+        if (!fact.ok && !ownerAbort && stopRequestId && stopCode === 'STOP_SENT' && fact.proof.windowsTreeZero === true
+          && fact.code === 'STAGE_OUTCOME_MISSING' && fact.outcome == null) {
+          return { ok: false, code: BRIDGE_STAGE_STOPPED_PUMP_LOST, proof, factsSha256: fact.nativeReceiptSha256, outcome: null, brokerNoLaunch: false, bridge };
+        }
       }
       const ok = fact.ok && scOk;
       // The stage outcome (diagnostic, scheduling facts, safeToRerun) travels to the executor (v0.6 §9 phase 1). The
       // broker's no-launch fact counts only with this engine's own sc.exe readback of the original, stopped runner.
-      return { ok, code: ok ? null : (fact.code ?? 'SCM_READBACK_NOT_ORIGINAL'), proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && scOk }, factsSha256: fact.nativeReceiptSha256,
-        relay: stage.number === 9 ? fact.relay : null, outcome: fact.outcome, brokerNoLaunch: fact.brokerNoLaunch === true && scOk };
+      return { ok, code: ok ? null : (fact.code ?? 'SCM_READBACK_NOT_ORIGINAL'), proof, factsSha256: fact.nativeReceiptSha256,
+        relay: stage.number === 9 ? fact.relay : null, train: stage.number === 10 ? fact.train : null, outcome: fact.outcome, brokerNoLaunch: fact.brokerNoLaunch === true && scOk,
+        ...(bridge ? { bridge } : {}) };
     } finally {
       this.inflight = null;
+      this.bridge = null;
     }
   }
 
@@ -344,7 +674,7 @@ export class WindowsEngine {
   async closeBatch(batch, opts = null) {
     const w = await this.archiveWindows(batch, 'success-close');
     const l = opts?.linux === false ? { verified: true } : await this.archiveLinux(batch, 'success-close');
-    return { verified: w.verified === true && l.verified === true, archived: w.moved };
+    return { verified: w.verified === true && l.verified === true, archived: w.moved, archiveCode: w.verified === true ? null : (w.archiveCode ?? null) };
   }
 
   async archiveFailure(batch, reason) {

@@ -1,0 +1,260 @@
+# Compute panel (Task 679a0c2b, Owner Decision 183ee67c): every five minutes
+# each general-pool runner answers a route probe (its name, free disk and
+# available memory), and one Linux runner rebuilds the panel issue from those
+# probes, the in-progress jobs of every workflow and the resident executors'
+# info-only PR statuses. It uses only this workflow's GITHUB_TOKEN; no secret
+# reaches the pool. See scripts/ci/self-hosted/compute_panel.py and
+# docs/maintenance/compute-panel.md. clued-ci-health and clued-ci-usage-report
+# stay on hosted runners: the pool cannot watch its own complete loss.
+name: clued-compute-panel
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  # A run by hand: GitHub may delay or skip */5 schedules (none ran in the first hour after #935).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new run cancels the previous one, so an offline runner holds at most one
+# queued probe. Probes that already finished keep their result.
+concurrency:
+  group: clued-compute-panel
+  cancel-in-progress: true
+
+jobs:
+  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when
+  # Clued admits this pull request. The gate does not call Clued and gets no
+  # Clued token (this job runs PR code): it waits for the trusted
+  # pull_request_target run of clued-work-admission.yml on this head and reads
+  # its result, always enforced (Merge Admission step 6 retired the advisory
+  # switch CLUED_WORK_ADMISSION_ENFORCE); non-PR events are admitted.
+  # Self-hosted Linux pool, pinned Node (Decision f86179b3).
+  admission-gate:
+    name: admission-gate
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+    outputs:
+      admitted: ${{ steps.gate.outputs.admitted }}
+      enforced: ${{ steps.gate.outputs.enforced }}
+      verdict: ${{ steps.gate.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      - id: gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-work-admission.mjs --mode gate
+
+  # One probe per runner, each on its own literal route. The job name is what
+  # compute_panel.py reads; it prints one COMPUTE_PANEL_PROBE line.
+  probe-company-linux-01:
+    name: compute-probe / clued-ci-company-linux-01
+    needs: admission-gate
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, runner-company-linux-01]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/ci-temporary-storage
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      - name: Probe the runner
+        shell: bash
+        env:
+          EXPECTED_RUNNER_NAME: clued-ci-company-linux-01
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_NAME" != "$EXPECTED_RUNNER_NAME" ]]; then
+            echo "Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME" >&2
+            exit 1
+          fi
+          disk=$(df -Pk "$GITHUB_WORKSPACE" | awk 'NR==2 {printf "%.1f", $4/1048576}')
+          memory=$(awk '/^MemAvailable:/ {printf "%.1f", $2/1048576}' /proc/meminfo)
+          printf 'COMPUTE_PANEL_PROBE {"runner":"%s","os":"Linux","disk_free_gb":%s,"mem_available_gb":%s}\n' \
+            "$RUNNER_NAME" "$disk" "$memory"
+
+  probe-company-linux-02:
+    name: compute-probe / clued-ci-company-linux-02
+    needs: admission-gate
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, runner-company-linux-02]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/ci-temporary-storage
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      - name: Probe the runner
+        shell: bash
+        env:
+          EXPECTED_RUNNER_NAME: clued-ci-company-linux-02
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_NAME" != "$EXPECTED_RUNNER_NAME" ]]; then
+            echo "Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME" >&2
+            exit 1
+          fi
+          disk=$(df -Pk "$GITHUB_WORKSPACE" | awk 'NR==2 {printf "%.1f", $4/1048576}')
+          memory=$(awk '/^MemAvailable:/ {printf "%.1f", $2/1048576}' /proc/meminfo)
+          printf 'COMPUTE_PANEL_PROBE {"runner":"%s","os":"Linux","disk_free_gb":%s,"mem_available_gb":%s}\n' \
+            "$RUNNER_NAME" "$disk" "$memory"
+
+  probe-company-linux-03:
+    name: compute-probe / clued-ci-company-linux-03
+    needs: admission-gate
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, runner-company-linux-03]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/ci-temporary-storage
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      - name: Probe the runner
+        shell: bash
+        env:
+          EXPECTED_RUNNER_NAME: clued-ci-company-linux-03
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_NAME" != "$EXPECTED_RUNNER_NAME" ]]; then
+            echo "Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME" >&2
+            exit 1
+          fi
+          disk=$(df -Pk "$GITHUB_WORKSPACE" | awk 'NR==2 {printf "%.1f", $4/1048576}')
+          memory=$(awk '/^MemAvailable:/ {printf "%.1f", $2/1048576}' /proc/meminfo)
+          printf 'COMPUTE_PANEL_PROBE {"runner":"%s","os":"Linux","disk_free_gb":%s,"mem_available_gb":%s}\n' \
+            "$RUNNER_NAME" "$disk" "$memory"
+
+  probe-company-linux-04:
+    name: compute-probe / clued-ci-company-linux-04
+    needs: admission-gate
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, runner-company-linux-04]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/ci-temporary-storage
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      - name: Probe the runner
+        shell: bash
+        env:
+          EXPECTED_RUNNER_NAME: clued-ci-company-linux-04
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_NAME" != "$EXPECTED_RUNNER_NAME" ]]; then
+            echo "Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME" >&2
+            exit 1
+          fi
+          disk=$(df -Pk "$GITHUB_WORKSPACE" | awk 'NR==2 {printf "%.1f", $4/1048576}')
+          memory=$(awk '/^MemAvailable:/ {printf "%.1f", $2/1048576}' /proc/meminfo)
+          printf 'COMPUTE_PANEL_PROBE {"runner":"%s","os":"Linux","disk_free_gb":%s,"mem_available_gb":%s}\n' \
+            "$RUNNER_NAME" "$disk" "$memory"
+
+  # The two general Windows runners are told apart by their site label.
+  probe-company-win-01:
+    name: compute-probe / clued-ci-company-win-01
+    needs: admission-gate
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312, site-company]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/ci-temporary-storage
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      - name: Probe the runner
+        shell: powershell
+        env:
+          EXPECTED_RUNNER_NAME: clued-ci-company-win-01
+        run: |
+          if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER_NAME) {
+            throw "Expected $env:EXPECTED_RUNNER_NAME but routed to $env:RUNNER_NAME"
+          }
+          $drive = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name
+          $disk = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)
+          $memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)
+          $line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress
+          Write-Output "COMPUTE_PANEL_PROBE $line"
+
+  probe-home-win-01:
+    name: compute-probe / clued-ci-home-win-01
+    needs: admission-gate
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312, site-home]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/ci-temporary-storage
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      - name: Probe the runner
+        shell: powershell
+        env:
+          EXPECTED_RUNNER_NAME: clued-ci-home-win-01
+        run: |
+          if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER_NAME) {
+            throw "Expected $env:EXPECTED_RUNNER_NAME but routed to $env:RUNNER_NAME"
+          }
+          $drive = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name
+          $disk = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)
+          $memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)
+          $line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress
+          Write-Output "COMPUTE_PANEL_PROBE $line"
+
+  panel:
+    name: compute-panel
+    needs: admission-gate
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            .github/actions/ci-temporary-storage/
+            scripts/ci/self-hosted/compute_panel.py
+            tests/test_compute_panel.py
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      # -I: the runner is shared, so ignore user site-packages and PYTHON* settings.
+      - name: Self-test the panel (no network)
+        run: python3 -I tests/test_compute_panel.py
+      - name: Rebuild the panel issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -I scripts/ci/self-hosted/compute_panel.py

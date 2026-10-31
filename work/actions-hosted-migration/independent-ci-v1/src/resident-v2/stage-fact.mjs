@@ -5,9 +5,13 @@
 // Pure.
 import { canonical } from '../proof.mjs';
 import { hash } from './prepare-record.mjs';
-import { HEX64, OUTCOME_CONTRACT, RELAY_STAGE_NUMBER } from './layout.mjs';
-import { RELAY_HALT_CODES, validateRelayPlanRows } from '../hosted-relay-v1/relay-plan.mjs';
+import { HEX64, OUTCOME_CONTRACT, RELAY_STAGE_NUMBER, TRAIN_STAGE_NUMBER } from './layout.mjs';
+import { validateTrainFacts } from '../independent-control-checks-v2/train-facts.mjs';
+import { roleProbeFact } from './role-probe-run.mjs';
+import { validateRevocationFacts } from './revocation-run.mjs';
+import { RELAY_HALT_CODES, relayPlanEnding, validateRelayPlanRows } from '../hosted-relay-v1/relay-plan.mjs';
 import { sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2 } from '../admission-facts-v2.mjs';
+import { HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB, ROLE_ALREADY_ON_GITHUB_REASON } from '../published-on-github-v2.mjs';
 
 export const STAGE_FACT_CONTRACT = 'clued.independent-ci.resident-stage-fact/2';
 export const NATIVE_RECEIPT_CONTRACT_V2 = 'clued.independent-ci.windows-formal-entry-receipt/2';
@@ -16,7 +20,10 @@ export const SUCCESS_STATE = 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFI
 // ---- catalogue (mirrored, and cross-checked by a test, in independent-ci-resident-v1/src/classify.mjs) ----
 // Stage 1 only: Native said no. Nothing was published, nothing executed.
 export const NOT_ADMITTED_CODES = Object.freeze(['NATIVE_NOT_ADMITTED', 'OWNER_REVIEW_REQUIRED', 'PROTECTED_CHANGE_NOT_UP_TO_DATE', 'PATHS_OUTSIDE_WRITE_SET',
-  'CLAIM_NOT_CURRENT', 'TASK_CI_HEAD_CAP_REACHED', 'CLAIM_HEAD_CAP_REACHED', 'CI_BUDGET_EXHAUSTED', 'WORKFLOW_CHANGE_NOT_AUTHORIZED', 'PR_NOT_OPEN_OR_CHANGED']);
+  'CLAIM_NOT_CURRENT', 'TASK_CI_HEAD_CAP_REACHED', 'CLAIM_HEAD_CAP_REACHED', 'CI_BUDGET_EXHAUSTED', 'WORKFLOW_CHANGE_NOT_AUTHORIZED', 'PR_NOT_OPEN_OR_CHANGED',
+  // Primary/standby C3 (resident DESIGN §29): the server says this node holds no ci-admission role (admission_binding_required).
+  // Nothing is decided about the PR; the resident goes to STANDBY and releases the reservation.
+  'NODE_ROLE_NOT_HELD']);
 // Clean transient: an outside, passing condition (network, GitHub 5xx, a push between bundle and
 // scan, a precondition not yet met). Eligible for the one automatic attempt 2 when nothing was
 // published (Owner decision 1b5d3687; the resident decides eligibility, see attempts.mjs).
@@ -33,7 +40,12 @@ export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_
   // Phase 2, step 3a (train-rules.mjs, green-ledger.mjs): main's live branch rules, GitHub's test merge, the green ledger;
   // all before any journal write. The last one is final for the head (STAGE8_FINAL_REASONS).
   'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE',
-  'TRAIN_TEST_MERGE_TREE_DIFFERS']);
+  'TRAIN_TEST_MERGE_TREE_DIFFERS',
+  // App 5368905 already published on this head (primary/standby design v0.4 §6.2, C4; published-on-github-v2.mjs):
+  // stage 1 found a role or control check before Native was asked, or a role this node knew nothing of was already
+  // there before its first publication (stage R: an ON_GITHUB plan row). Nothing was published for that role (an earlier
+  // stage of the batch may have published its own); a new commit is needed.
+  HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB]);
 // The stage-8 answers that travel as their own code (publisher.mjs STAGE8_NOT_READY_REASONS and STAGE8_FINAL_REASONS).
 const STAGE8_OWN_CODES = new Set(['RESIDENT_QUEUE_HEAD_NOT_REACHED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_BASE_MOVED', 'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN',
   'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE', 'TRAIN_TEST_MERGE_TREE_DIFFERS']);
@@ -54,7 +66,8 @@ const DIAG = Object.freeze({ owner_review_required: 'OWNER_REVIEW_REQUIRED', own
   claim_trailer_missing: 'CLAIM_NOT_CURRENT', claim_not_found: 'CLAIM_NOT_CURRENT', claim_not_current: 'CLAIM_NOT_CURRENT', fence_superseded: 'CLAIM_NOT_CURRENT',
   claim_bound_to_other_pr: 'CLAIM_NOT_CURRENT', work_claim_execution_epoch_stale: 'CLAIM_NOT_CURRENT', task_ci_head_cap_reached: 'TASK_CI_HEAD_CAP_REACHED',
   claim_head_cap_reached: 'CLAIM_HEAD_CAP_REACHED', ci_budget_exhausted: 'CI_BUDGET_EXHAUSTED', head_budget_exhausted: 'CI_BUDGET_EXHAUSTED',
-  workflow_change_not_authorized: 'WORKFLOW_CHANGE_NOT_AUTHORIZED', workflow_runs_unavailable: 'NATIVE_ADMISSION_UNAVAILABLE' });
+  workflow_change_not_authorized: 'WORKFLOW_CHANGE_NOT_AUTHORIZED', workflow_runs_unavailable: 'NATIVE_ADMISSION_UNAVAILABLE',
+  admission_binding_required: 'NODE_ROLE_NOT_HELD' });
 // Explicit transport facts only (PR-A review MINOR 5): the publishers' defaults for an uncoded exception
 // (publication_operation_unconfirmed, *_OPERATION_UNCONFIRMED; before PR-A publication_observation_unconfirmed
 // and NATIVE_CHECK_UNCONFIRMED) are never transient, so they can never select the automatic attempt 2.
@@ -67,15 +80,21 @@ const TRANSPORT_REASONS = new Set(['full_admission_unavailable', 'full_admission
 export const githubTransientReason = r => r === 'github_transport_unconfirmed' || /^github_http_(?:429|5[0-9]{2})$/.test(r ?? '');
 const BRIDGE_TIMEOUTS = new Set(['BRIDGE_RESULT_DEADLINE', 'FORMAL_BRIDGE_STAGE_DEADLINE', 'ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED',
   'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED', 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED', 'BRIDGE_CALLBACK_DEADLINE']);
+// Refusals of the scanner issuer (bridge v4 windows-issuer.mjs, Task 576231fa): its changed-paths read refused by the
+// port itself or answered 403 by GitHub, or a remote refs collection that failed for any reason other than a transient
+// one (REMOTE_REFS_UNAVAILABLE, above). Clean and final for the attempt: never transient, never safe to re-run.
+export const ISSUER_REFUSAL_REASONS = Object.freeze(['full_admission_paths_refused', 'full_admission_github_forbidden', 'REMOTE_REFS_REFUSED']);
 const CONFIG_REASONS = new Set(['full_admission_not_configured', 'full_admission_subject_invalid', 'full_admission_source_changed', 'full_admission_clock_invalid',
   'full_admission_principal_unknown', 'full_admission_incomplete']);
 
 // Native diagnostic -> the one not-admitted code (first match in a fixed priority order). A head that is not up to
 // date with main can never pass whatever else Native says, so that code comes first (independent review of the quota
-// redesign phase 1, MINOR 1: with owner_review_required it must not become a waiting code).
+// redesign phase 1, MINOR 1: with owner_review_required it must not become a waiting code). One thing comes before even that
+// (primary/standby C3): admission_binding_required, "this node holds no ci-admission role". A node that is not on duty says
+// nothing about the PR, so no other reason may turn that answer into a burned or PR-specific one.
 export function notAdmittedCode(diagnostic) {
   const codes = Array.isArray(diagnostic?.reasonCodes) ? [...diagnostic.reasonCodes, ...(diagnostic.nativeReasonCodes ?? [])] : [];
-  for (const c of ['protected_change_not_up_to_date', 'owner_review_required', 'owner_grant_required', 'owner_grant_missing', 'owner_grant_revoked', 'owner_grant_expired',
+  for (const c of ['admission_binding_required', 'protected_change_not_up_to_date', 'owner_review_required', 'owner_grant_required', 'owner_grant_missing', 'owner_grant_revoked', 'owner_grant_expired',
     'path_outside_write_set', 'paths_outside_write_set', 'claim_trailer_missing', 'claim_not_found', 'claim_not_current', 'fence_superseded', 'claim_bound_to_other_pr',
     'work_claim_execution_epoch_stale', 'task_ci_head_cap_reached', 'claim_head_cap_reached', 'ci_budget_exhausted', 'head_budget_exhausted',
     'workflow_change_not_authorized', 'workflow_runs_unavailable', 'owner_review_unavailable']) if (codes.includes(c)) return DIAG[c];
@@ -92,16 +111,24 @@ export function outcomeFailureCode(outcome, stageNumber) {
   if (outcome.status !== 'BLOCKED') return 'PUBLICATION_UNCERTAIN';
   if (outcome.sideEffects !== 0 || outcome.mayHavePublished !== false) return 'PUBLICATION_UNCERTAIN';
   const r = outcome.reason;
+  // Only the bounded, explicit Native read exhaustion is transient. The status/effect guards above exclude
+  // any sent or uncertain publication; refusal and unconfirmed replies keep their existing final semantics.
+  if (r === 'native_claim_observation_unavailable') return 'NATIVE_ADMISSION_UNAVAILABLE';
   if (r === 'evidence_identity_conflict' || r === 'EVIDENCE_IDENTITY_CONFLICT') return 'EVIDENCE_IDENTITY_CONFLICT';
   // K(head, role) is held by the other path: a role on this head was (or may have been) published by it. Never
   // clean, on any stage (DESIGN §6.3; PR-A review MINOR 4).
   if (r === 'role_already_published_on_head' || r === 'ROLE_ALREADY_PUBLISHED_ON_HEAD') return 'ROLE_ALREADY_PUBLISHED_ON_HEAD';
+  // On GitHub but unknown to this node (C4): clean, final, only on this clean BLOCKED with zero side effects (stage 1's
+  // read-back is the only one that ends a head as HEAD_PUBLISHED_ON_GITHUB).
+  if (r === HEAD_PUBLISHED_ON_GITHUB && stageNumber === 1) return HEAD_PUBLISHED_ON_GITHUB;
+  if (r === ROLE_ALREADY_ON_GITHUB_REASON || r === ROLE_ALREADY_ON_GITHUB) return ROLE_ALREADY_ON_GITHUB;
   if (r === 'RESIDENT_QUEUE_HEAD_NOT_REACHED' || r === 'RESIDENT_MERGE_QUEUE_NOT_JOINED' || r === 'RESIDENT_BASE_MOVED') return r;
   if (stageNumber === 8 && STAGE8_OWN_CODES.has(r)) return r;
   if (r === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE') return 'REMOTE_REFS_CHANGED_SINCE_BUNDLE';
   if (BRIDGE_TIMEOUTS.has(r)) return 'BRIDGE_TRANSPORT_TIMEOUT';
   if (TRANSPORT_REASONS.has(r)) return r.startsWith('full_admission_') || r === 'NATIVE_ADMISSION_UNAVAILABLE' ? 'NATIVE_ADMISSION_UNAVAILABLE' : 'GITHUB_TRANSIENT_UNAVAILABLE';
   if (githubTransientReason(r)) return 'GITHUB_TRANSIENT_UNAVAILABLE';
+  if (ISSUER_REFUSAL_REASONS.includes(r)) return 'STAGE_CHILD_REFUSED';
   if (CONFIG_REASONS.has(r)) return 'ADMISSION_CONFIGURATION_REFUSED';
   if (r === 'full_admission_rejected') return stageNumber === 1 ? notAdmittedCode(outcome.diagnostic) : 'BATCH_CLAIM_CHANGED';
   if (r === 'full_admission_claim_missing' || r === 'full_admission_native_changed') return stageNumber === 1 ? 'CLAIM_NOT_CURRENT' : 'BATCH_CLAIM_CHANGED';
@@ -154,12 +181,13 @@ export function outcomeFacts(o) {
 // restored): the second way a stage may be released (v0.6 §9 phase 1, item 2). BROKER_BUSY and BROKER_UNCONFIRMED
 // never qualify (an unexpected concurrent controller, or no confirmed reading).
 export const BROKER_NO_LAUNCH_CODES = Object.freeze(['BROKER_RUNNER_NOT_ORIGINAL_STOPPED', 'BROKER_REQUEST_EXPIRED', 'BROKER_REQUEST_REFUSED']);
+const trainFactsOrNull = f => { try { return validateTrainFacts(f); } catch { return null; } };
 
 // The one stage fact the resident engine parses (engine-windows.mjs#parseStageFact keeps v1 names).
-export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha256, broker, receipt, receiptBytes, outcome, outcomeBytes, controllerSid, preflightCode = null }) {
+export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha256, broker, receipt, receiptBytes, outcome, outcomeBytes, controllerSid, preflightCode = null, expectedJobIds = null }) {
   const fact = { contract: STAGE_FACT_CONTRACT, stage, nonce, manifest_sha256: workManifestSha256, state: 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED',
     failure_code: null, scm_start_call_issued: false, original_binary_restored: false, complete_original_readback: false, configuration_conflict_detected: false,
-    tree_cleanup_confirmed: false, tree_active_processes: null, root_exit_confirmed: false, native_receipt_sha256: null, outcome: null, relay: null, broker_no_launch: false };
+    tree_cleanup_confirmed: false, tree_active_processes: null, root_exit_confirmed: false, native_receipt_sha256: null, outcome: null, relay: null, train: null, broker_no_launch: false };
   const done = code => ({ ...fact, failure_code: code });
   if (preflightCode) {
     // Nothing was requested from the broker: no service change, no child; the original is untouched.
@@ -195,10 +223,46 @@ export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha
   // and on a HALT alike; rows that do not validate never pass as a completed relay stage.
   const relayRows = plan.stage === RELAY_STAGE_NUMBER && boundOutcome ? validateRelayPlanRows(outcome.relay) : null;
   if (plan.stage === RELAY_STAGE_NUMBER) fact.relay = relayRows;
+  // Stage 10 (quota phase 2 step 3c-1, DESIGN §22.1): the train facts travel with the fact, validated again; a run is a
+  // success only as TRAIN_FACTS with zero side effects and facts that validate. Anything else is the existing
+  // STAGE_OUTCOME_MISSING; the executor decides from the proof and the bound outcome whether that ending is clean
+  // (executor.mjs#trainMaintenance).
+  const trainFacts = plan.stage === TRAIN_STAGE_NUMBER && boundOutcome ? trainFactsOrNull(outcome.train) : null;
+  if (plan.stage === TRAIN_STAGE_NUMBER) fact.train = trainFacts;
   if (n.ok) {
+    if (plan.stage === 12) {
+      let revocation = null;
+      try { revocation = validateRevocationFacts(boundOutcome?.revocation); } catch { /* unconfirmed */ }
+      const pending = boundOutcome?.status === 'PENDING';
+      if (!boundOutcome || boundOutcome.entryRole !== 'revocation-maintenance' || !revocation
+        || !['REVOCATION_MAINTENANCE','PENDING'].includes(boundOutcome.status)
+        || revocation.complete === pending || !Array.isArray(boundOutcome.jobIds) || boundOutcome.jobIds.length !== 1
+        || !Array.isArray(expectedJobIds) || expectedJobIds.length !== 1 || boundOutcome.jobIds[0] !== expectedJobIds[0]) return done('STAGE_OUTCOME_MISSING');
+      // Negative effects are real effects. Neither their count nor pending work
+      // may be disguised as a zero-effect role probe or shadow observation.
+      return { ...fact, state: pending ? 'REVOCATION_MAINTENANCE_PENDING_ORIGINAL_STOPPED_NO_QUALIFICATION' : SUCCESS_STATE,
+        revocation, maintenancePending: pending };
+    }
+    // Stage 11: only a zero-effect bound outcome from this exact role/job can assert a role observation.
+    // A generic pre-input refusal (null stage/role/jobs) remains unconfirmed and cannot become held.
+    if (plan.stage === 11) {
+      const probe = boundOutcome && boundOutcome.stage === 11 && boundOutcome.entryRole === 'role-probe'
+        && Array.isArray(boundOutcome.jobIds) && boundOutcome.jobIds.length === 1 && HEX64.test(boundOutcome.jobIds[0] ?? '')
+        && Array.isArray(expectedJobIds) && expectedJobIds.length === 1 && boundOutcome.jobIds[0] === expectedJobIds[0]
+        && boundOutcome.status === 'BLOCKED' && boundOutcome.sideEffects === 0 && boundOutcome.mayHavePublished === false
+        ? roleProbeFact(boundOutcome.reason) : null;
+      if (!probe) return done('STAGE_OUTCOME_MISSING');
+      return { ...fact, state: SUCCESS_STATE, roleProbe: probe };
+    }
+    if (plan.stage === TRAIN_STAGE_NUMBER) {
+      if (!boundOutcome || boundOutcome.status !== 'TRAIN_FACTS' || boundOutcome.sideEffects !== 0 || boundOutcome.mayHavePublished !== false || !trainFacts) return done('STAGE_OUTCOME_MISSING');
+      return { ...fact, state: SUCCESS_STATE };
+    }
     if (plan.stage === RELAY_STAGE_NUMBER) {
       if (!boundOutcome || boundOutcome.status !== 'RELAY_COMPLETE') return done('STAGE_OUTCOME_MISSING');
-      if (!relayRows || !relayRows.every(r => ['RELAYED', 'LOCAL_REQUIRED'].includes(r.outcome))) return done('RELAY_PLAN_UNCONFIRMED');
+      // A complete plan (every row RELAYED or LOCAL_REQUIRED) with no reason, or one ending ON_GITHUB (C4) with exactly that reason.
+      const ending = relayRows ? relayPlanEnding(relayRows) : null;
+      if (!ending || boundOutcome.reason !== (ending === 'ON_GITHUB' ? ROLE_ALREADY_ON_GITHUB : null)) return done('RELAY_PLAN_UNCONFIRMED');
       return { ...fact, state: 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' };
     }
     if (!boundOutcome || !['SETTLED', 'ISSUED_RESULT_RECEIVED'].includes(boundOutcome.status)) return done('STAGE_OUTCOME_MISSING');

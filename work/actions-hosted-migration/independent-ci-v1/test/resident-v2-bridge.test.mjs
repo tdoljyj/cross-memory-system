@@ -18,12 +18,12 @@ import { CALLBACK_WINDOW_MS, makeIssue, makeChallenge, makeResponse, makeBlocked
 import { createFixtureMailbox } from '../worker/protected-job-bridge-v4/mailbox.mjs';
 import { runIssuer, issuerEvaluate, blockedReason, refsFailureReason, ISSUER_SUCCESS } from '../worker/protected-job-bridge-v4/windows-issuer.mjs';
 import { resultPayload, observationFacts, verifySignedBridgeResult, RESULT_WRAPPER_CONTRACT_V2 } from '../worker/protected-job-bridge-v4/signed-result.mjs';
-import { cleanBlockedReason, isCleanBlocked } from '../worker/protected-job-bridge-v4/linux-worker.mjs';
+import { callbackValue, cleanBlockedReason, isCleanBlocked } from '../worker/protected-job-bridge-v4/linux-worker.mjs';
 import { cacheRefusal } from '../worker/formal-trivy-v4/adapter.mjs';
 import { bridgeManifest, BRIDGE_MANIFEST_CONTRACT } from '../worker/protected-job-bridge-v4/bridge-manifest.mjs';
 import { validatePolicyShape, validateQualificationPayload, qualificationDeadline, LINUX_NODE_V2 } from '../worker/qualification-v2.mjs';
 import { validateSelectedFacts, requiredSourcePaths, FIXED_ROLE_POLICIES } from '../worker/formal-fixed-role-policy-v3/policy.mjs';
-import { IMAGE as GITLEAKS_IMAGE, SCAN_ARGS } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
+import { IMAGE as GITLEAKS_IMAGE, SCAN_ARGS, REVIEWED_HISTORY_PROOF } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
 import { validateEntryJob } from '../worker/formal-contract-placement-v2/container-entry.mjs';
 import { HEAD, BASE, tempDir, fixtureRecord, admittedFacts, hex } from './resident-v2-fixtures.mjs';
 import { PLACEMENT as PLACEMENT_WORKFLOW, acceptedSha256s } from './fixtures/trusted-workflows.mjs';
@@ -38,7 +38,7 @@ const refsSnapshot = (now = Date.now()) => ({ contract: 'clued.independent-ci.re
 function setup({ attempt = 1 } = {}) {
   const fx = fixtureRecord({}, { paths: REQUIRED_SOURCE_PATHS });
   const record = validateRecordV2(fx.docs, { now: Date.now() });
-  const jobs = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: record.config.sourceManifestSha256, createdAt: iso(Date.now() - 60_000), attempt });
+  const jobs = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: record.config.sourceManifestSha256, createdAt: iso(Date.now() - 60_000), attempt });
   return { ...fx, record, jobs };
 }
 const facts = (job, c, batch = c) => admittedFacts(job, c, PACKET, { batchClaim: batch });
@@ -57,6 +57,26 @@ function signedWrapper(issue, observation, signer) {
   const envelope = { contract: ENVELOPE_CONTRACT_V2, keyId: 'fixture-key', payload, signature: sign(null, Buffer.from(canonical(payload)), signer.privateKey).toString('base64url') };
   return { contract: RESULT_WRAPPER_CONTRACT_V2, domain: 'production', issueSha256: bridgeDigest(issue), envelope, observation };
 }
+
+test('gitleaks signed result v4 binds the exact 730/102/173/130 proof and rejects legacy or altered proof', () => {
+  const { jobs, signer, record } = setup(), job = jobs.gitleaks, c = claim(), now = Date.now();
+  const issue = makeIssue(job, facts(job, c), refsSnapshot(), { sourceAcceptanceRef: record.accepted.sourceAcceptanceRef,
+    hostQualificationRef: record.accepted.hostQualificationRef, expiresAt: iso(now + 600000) });
+  const observation = { contract: 'clued.independent-ci.formal-scanner-observation/2', domain: 'production-observation', fixture: false,
+    profile: 'required-gitleaks-history/1', subject: Object.fromEntries(['id', 'repo', 'pr', 'headSha', 'baseSha', 'role', 'sourceManifestSha256', 'attempt'].map(k => [k, job[k]])),
+    sourceManifestSha256: job.sourceManifestSha256, sourceSha: 'c'.repeat(40), requiredHistoricalExceptions: 730,
+    reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, startedAt: iso(now - 5000), finishedAt: iso(now - 1000), exitCode: 0, conclusion: 'success',
+    logs: { stdout: { sha256: hex(32) }, stderr: { sha256: hex(32) } },
+    cleanup: { complete: true, wholeContainerTreeStopped: true, containerRemoved: true, observedAt: iso(now - 500) },
+    formalEligible: false, checksWritten: false, qualificationIssued: false };
+  const wrapper = signedWrapper(issue, observation, signer);
+  assert.equal(verifySignedBridgeResult({ issue, wrapper, signers: record.signers }).payload.conclusion, 'success');
+  for (const changed of [{ ...observation, requiredHistoricalExceptions: 726 }, { ...observation, requiredHistoricalExceptions: 729 }, { ...observation, reviewedHistoryProof: undefined },
+    ...Object.keys(REVIEWED_HISTORY_PROOF).map(key => ({ ...observation, reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF, [key]: null } }))]) {
+    assert.throws(() => verifySignedBridgeResult({ issue, wrapper: { ...wrapper, observation: changed }, signers: record.signers }),
+      { code: 'ACTUAL_HISTORY_CLEANUP_REQUIRED' });
+  }
+});
 
 test('v2 admission check: the claim comes from the facts, the batch generation is required and sticky; renewal is the same generation', () => {
   const { jobs } = setup(), job = jobs.trivy, c = claim();
@@ -94,6 +114,51 @@ test('protocol v4: issue -> challenge -> response round trip; a moved claim gene
   const short = claim({ expiresAt: iso(Date.now() + 60_000) });
   assert.ok(Date.parse(makeIssue(job, facts(job, short), refsSnapshot(), ctx).expiresAt) <= Date.parse(short.expiresAt));
   void accepted;
+});
+
+// Owner Decision 6f1fb753 (Task 576231fa): PR #915 stage 4 (2026-10-23) lost a response the issuer had written 10 s
+// after the challenge, because the relay call took about 30 s and the Linux side measured the admission's 30 s from
+// the arrival. Like the issue's, a response's admission is now fresh at its issuance; the response only has to arrive
+// inside its own window, and the claim must outlive the arrival.
+test('protocol v4: a callback response is fresh at its issuance and only has to arrive inside its window', () => {
+  const { jobs } = setup(), job = jobs.trivy, c = claim(), generation = { batchClaim: claimGeneration(c) };
+  const ctx = () => ({ sourceAcceptanceRef: randomUUID(), hostQualificationRef: randomUUID(), expiresAt: iso(Date.now() + 600_000) });
+  const issue = makeIssue(job, facts(job, c), null, ctx()), gl = jobs.gitleaks, gissue = makeIssue(gl, facts(gl, c), refsSnapshot(), ctx());
+  const t = Date.now(), ch = makeChallenge(issue, 'admission', 1, { now: t });
+  const answer = admittedFacts(job, c, PACKET, { batchClaim: c, observedAt: t + 10_000 });
+  const response = makeResponse(issue, ch, answer, null, { now: t + 10_500 });
+  const arrived = t + 10_500 + 35_000; // the relay call took 35 s
+  assert.ok(validateResponse(issue, ch, decode(encode(response)), arrived));
+  // The adapter re-checks the facts the worker hands it from the issuance while the response is valid ...
+  const given = callbackValue('admission', decode(encode(response)));
+  assert.ok(validateFormalAdmissionV2(job, given, arrived, generation));
+  assert.throws(() => validateFormalAdmissionV2(job, given, Date.parse(response.expiresAt), generation), { code: 'FRESH_COMPLETE_NATIVE_ADMISSION_REQUIRED' });
+  // ... and the same facts outside a validated response keep the 30 s from now.
+  assert.throws(() => validateFormalAdmissionV2(job, decode(encode(response)).admission, arrived, generation), { code: 'FRESH_COMPLETE_NATIVE_ADMISSION_REQUIRED' });
+  // Stale already at issuance: never issued, and a forged late issuedAt does not pass either.
+  const stale = admittedFacts(job, c, PACKET, { batchClaim: c, observedAt: t });
+  assert.throws(() => makeResponse(issue, ch, stale, null, { now: t + 31_000 }), { code: 'BRIDGE_FORMAL_ADMISSION_SHAPE_REQUIRED' });
+  assert.throws(() => validateResponse(issue, ch, { ...decode(encode(makeResponse(issue, ch, stale, null, { now: t + 1_000 }))), issuedAt: iso(t + 31_000) }, t + 32_000), { code: 'BRIDGE_FORMAL_ADMISSION_SHAPE_REQUIRED' });
+  // Arrival after the round's deadline is still refused.
+  assert.throws(() => validateResponse(issue, ch, decode(encode(response)), Date.parse(ch.deadline)), { code: 'BRIDGE_CHALLENGE_EXPIRED' });
+  // A claim that ends before the arrival: the response never outlives it.
+  const short = { ...c, expiresAt: iso(t + 20_000) };
+  const r2 = makeResponse(issue, ch, admittedFacts(job, short, PACKET, { batchClaim: c, observedAt: t + 10_000 }), null, { now: t + 10_500 });
+  assert.ok(Date.parse(r2.expiresAt) <= t + 20_000);
+  assert.ok(validateResponse(issue, ch, decode(encode(r2)), t + 19_000));
+  assert.throws(() => validateResponse(issue, ch, decode(encode(r2)), t + 25_000), { code: 'BRIDGE_RESPONSE_EXPIRED' });
+  // A response window past the claim is never issued, and a forged one is refused on arrival.
+  const shortFacts = admittedFacts(job, short, PACKET, { batchClaim: c, observedAt: t + 10_000 });
+  assert.throws(() => makeResponse(issue, ch, shortFacts, null, { now: t + 10_500, expiresAt: iso(t + 60_000) }), { code: 'BRIDGE_RESPONSE_ADMISSION_TIME_REQUIRED' });
+  const stretched = { ...decode(encode(r2)), expiresAt: iso(t + 60_000) };
+  assert.throws(() => validateResponse(issue, ch, stretched, t + 25_000), { code: 'BRIDGE_RESPONSE_ADMISSION_TIME_REQUIRED' });
+  // Noted facts never get the issuance time past their claim, whatever the response window says.
+  assert.throws(() => validateFormalAdmissionV2(job, callbackValue('admission', stretched), t + 25_000, generation), { code: 'FRESH_COMPLETE_NATIVE_ADMISSION_REQUIRED' });
+  // remote-refs responses likewise (Task 576231fa): the refs snapshot is fresh at the response's issuance, not its arrival
+  // (test/issuer-refs-transient.test.mjs has the details).
+  const refsCh = makeChallenge(gissue, 'remote-refs', 1, { now: t }), refsResponse = makeResponse(gissue, refsCh, null, refsSnapshot(t + 10_000), { now: t + 10_500 });
+  assert.ok(validateResponse(gissue, refsCh, decode(encode(refsResponse)), t + 10_500 + 15_000));
+  assert.ok(validateResponse(gissue, refsCh, decode(encode(refsResponse)), arrived));
 });
 
 test('signed result v4: the wrapper binds the issue, the v2 subject and the observation; any change is refused', () => {
@@ -138,7 +203,7 @@ test('placement (Source v2): policy v3 and the v4 signed result accept both revi
     const manifestBytes = Buffer.from(canonical({ schema: 'independent-ci.sources.v2', repo: REPO, sourceSha: 'c'.repeat(40), roles: { 'contract-placement': {
       formalContractPlacement: { profile: 'required-contract-placement/1', workflowSha256, esbuildVersion: '0.28.1', tools },
       sourceFiles: requiredSourcePaths('contract-placement').map(p => ({ path: p, sha256: hex(32) })) } } }));
-    const placement = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: sha(manifestBytes), createdAt: iso(Date.now() - 1000), attempt: 1 })['contract-placement'];
+    const placement = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: sha(manifestBytes), createdAt: iso(Date.now() - 1000), attempt: 1 })['contract-placement'];
     const config = { schema: 'independent-ci.linux-policy.v3', role: 'contract-placement', formalEnabled: true, sourceManifestSha256: sha(manifestBytes), nodeExecutable: LINUX_NODE_V2,
       dockerRootDirectory: '/var/lib/docker', containerUser: '65532:65532', executionMode: 'node-entry', image, containerNodeExecutable: tools.node.path, containerNodeSha256: tools.node.sha256, ...refs };
     const qualification = { payload: { schema: 'independent-ci.runtime-qualification.v2', fixture: false, image, sourceManifestSha256: sha(manifestBytes), ...refs, qualifiedAt: iso(Date.now() - 1000), expiresAt: null } };
@@ -168,6 +233,32 @@ function issuerFixture(t, { evaluate, job = 'trivy' } = {}) {
   const context = createWindowsContext({ inputs: { jobs: [j], record: s.record }, policyText: '{}', sourceRoot: 'C:\\fixture', live: () => { if (!live) throw Object.assign(new Error('HELD_RECORD_LEASE_LOST'), { code: 'HELD_RECORD_LEASE_LOST' }); } });
   return { ...s, c, job: j, context, evaluate: evaluate ?? (async () => facts(j, c)), stop: () => { live = false; } };
 }
+
+const rejectedIssuerFacts = () => ({ contract: 'clued.independent-ci.full-admission/2', status: 'BLOCKED', admitted: false,
+  reason: 'full_admission_rejected', diagnostic: { verdict: 'REJECTED', nativeVerdict: 'REJECTED', ownerReviewKind: 'refused',
+    reasonCodes: ['owner_grant_required', 'sensitive-details-must-not-survive'], nativeReasonCodes: ['path_outside_write_set'],
+    phase: 'native', workflowGateFindingsPresent: true, rawBody: 'sensitive-details-must-not-survive' } });
+const expectedIssuerDiagnostic = () => ({ verdict: 'REJECTED', nativeVerdict: 'REJECTED', ownerReviewKind: 'refused',
+  reasonCodes: ['owner_grant_required', 'unknown_reason'], nativeReasonCodes: ['path_outside_write_set'], phase: 'native', workflowGateFindingsPresent: true });
+
+test('issuer diagnostics: complete rejection before issue retains its sanitized Native reason', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+  const f = issuerFixture(t); let writes = 0;
+  const r = await runIssuer({ context: f.context, evaluate: async () => rejectedIssuerFacts(), collect: async () => null,
+    box: { async lock() {}, async write() { writes++; } }, stageDeadline: Date.now() + 60_000 });
+  assert.deepEqual([r.status, r.reason, r.sideEffects, writes], ['BLOCKED', 'full_admission_rejected', 0, 0]);
+  assert.deepEqual(r.admissionDiagnostic, expectedIssuerDiagnostic());
+});
+
+test('issuer diagnostics: complete callback rejection keeps UNCERTAIN and the exact sanitized rejection context', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+  const f = issuerFixture(t); let n = 0, issue; const writes = [];
+  const box = { async lock() {}, async write(name, bytes) { writes.push(name); if (name === 'issue') issue = decode(bytes); },
+    async read(name) { if (name === 'challenge-01') return encode(makeChallenge(issue, 'admission', 1));
+      throw Object.assign(new Error('not present'), { code: 'ENOENT' }); } };
+  const r = await runIssuer({ context: f.context, evaluate: async () => ++n === 1 ? facts(f.job, f.c) : rejectedIssuerFacts(),
+    collect: async () => null, box, stageDeadline: Date.now() + 60_000 });
+  assert.deepEqual([r.status, r.reason, r.sideEffects, n, writes], ['UNCERTAIN', 'full_admission_rejected', 1, 2, ['issue']]);
+  assert.deepEqual(r.admissionDiagnostic, expectedIssuerDiagnostic());
+});
 
 test('issuer: one admission callback, then the signed result -> ISSUED_RESULT_RECEIVED; the protocol is driven for real', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
   const f = issuerFixture(t), root = await spool(t), box = await createFixtureMailbox(root, 'windows');
@@ -392,13 +483,18 @@ test('issuer: the first admission retries an unavailable evaluation while a call
   await assert.rejects(fs.lstat(path.join(rootC, 'outgoing', 'issue.json')), { code: 'ENOENT' });
 });
 
-test('issuer evaluate: a failed changed-paths read is unavailable (retried), a PR that moved is the subject change; otherwise the complete admission runs', async () => {
+test('issuer evaluate: a failed changed-paths read is unavailable (retried), a PR that moved is the subject change, a refusal is its own reason; otherwise the complete admission runs', async () => {
   const job = { id: 'job' }, batchClaim = { claimId: 'c' }, packet = { complete: true, paths: ['a.txt'] }, calls = [];
   const admission = { evaluatePr: async (...args) => { calls.push(args); return { status: 'ADMITTED', marker: 1 }; } };
   const throwing = code => ({ readChangedPaths: async () => { throw code === undefined ? undefined : Object.assign(new Error(code), { code }); } });
-  for (const code of ['github_transport_unconfirmed', 'github_http_502', 'pr_files_changed', 'invalid_pr_files', undefined]) {
+  for (const code of ['github_transport_unconfirmed', 'github_http_502', 'github_http_429', undefined]) {
     assert.deepEqual(await issuerEvaluate({ github: throwing(code), admission, job, batchClaim })(),
       { status: 'BLOCKED', reason: 'full_admission_unavailable', diagnostic: { phase: 'changed_paths' } }, String(code));
+  }
+  // the port's own refusal and GitHub's 403 are no longer unavailable (DESIGN §7.8 review, MINOR; Task 576231fa)
+  for (const [code, reason] of [['pr_files_changed', 'full_admission_paths_refused'], ['invalid_pr_files', 'full_admission_paths_refused'], ['github_http_403', 'full_admission_github_forbidden']]) {
+    assert.deepEqual(await issuerEvaluate({ github: throwing(code), admission, job, batchClaim })(),
+      { status: 'BLOCKED', reason, diagnostic: { phase: 'changed_paths' } }, code);
   }
   assert.deepEqual(await issuerEvaluate({ github: throwing('pr_subject_changed'), admission, job, batchClaim })(),
     { status: 'BLOCKED', reason: 'full_admission_subject_changed', diagnostic: { phase: 'changed_paths' } });
@@ -534,7 +630,8 @@ test('issuer: no result before the stage window ends is UNCERTAIN (the Linux sid
   assert.deepEqual([r.status, r.reason, r.sideEffects], ['UNCERTAIN', 'BRIDGE_RESULT_DEADLINE', 1]);
   assert.equal(refsFailureReason('REFS_SNAPSHOT_CHANGED'), 'REMOTE_REFS_CHANGED_SINCE_BUNDLE');
   assert.equal(refsFailureReason('REFS_PR_SUBJECT_CHANGED'), 'full_admission_subject_changed');
-  assert.equal(refsFailureReason('REFS_HTTP_UNCONFIRMED'), 'REMOTE_REFS_UNAVAILABLE');
+  assert.equal(refsFailureReason('REFS_HTTP_UNCONFIRMED'), 'REMOTE_REFS_REFUSED');
+  assert.equal(refsFailureReason('REFS_HTTP_503'), 'REMOTE_REFS_UNAVAILABLE');
   // gitleaks: a refs observation that saw a push fails before anything is issued
   const g = issuerFixture(t, { job: 'gitleaks' }), root2 = await spool(t);
   const r2 = await runIssuer({ context: g.context, evaluate: g.evaluate, collect: async () => { throw Object.assign(new Error('REFS_SNAPSHOT_CHANGED'), { code: 'REFS_SNAPSHOT_CHANGED' }); }, box: await createFixtureMailbox(root2, 'windows'), stageDeadline: Date.now() + 5_000 });
@@ -584,7 +681,7 @@ test('qualification v2 and role policy v3 (S6, S10): no claim anywhere, the pinn
   const manifestBytes = Buffer.from(canonical({ schema: 'independent-ci.sources.v2', repo: REPO, sourceSha: 'c'.repeat(40), roles: { gitleaks: {
     containerCommand: { image: GITLEAKS_IMAGE, scanner: 'gitleaks', executable: '/usr/bin/gitleaks', args: [...SCAN_ARGS], cwd: '/input' },
     hostTools: { python: { path: '/usr/bin/python3.12', sha256: hex(32) } }, sourceFiles: pins } } }));
-  const job = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: sha(manifestBytes), createdAt: iso(Date.now() - 1000), attempt: 2 }).gitleaks;
+  const job = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: sha(manifestBytes), createdAt: iso(Date.now() - 1000), attempt: 2 }).gitleaks;
   const refs = { runtimeIdentity: 'turing-linux', sourceAcceptanceRef: randomUUID(), hostAcceptanceRef: randomUUID() };
   const config = { schema: 'independent-ci.linux-policy.v3', role: 'gitleaks', formalEnabled: true, sourceManifestSha256: sha(manifestBytes), nodeExecutable: LINUX_NODE_V2,
     dockerRootDirectory: '/var/lib/docker', containerUser: '65532:65532', memoryBytes: 2147483648, cpus: 2, pids: 128, executionMode: 'scanner', image: GITLEAKS_IMAGE, ...refs };
@@ -654,7 +751,7 @@ test('refsInStore: every fresh ref tip, head and base must already be in the wor
   await fs.writeFile(path.join(dir, 'b.txt'), 'b'); git('add', 'b.txt'); git('commit', '-q', '-m', 'head');
   const head = git('rev-parse', 'HEAD');
   const gitSha = sha(await fs.readFile(GIT));
-  const job = batchJobsV2({ repo: REPO, pr: 888, headSha: head, baseSha: base, sourceManifestSha256: 'e'.repeat(64), createdAt: iso(Date.now() - 1000), attempt: 1 }).gitleaks;
+  const job = batchJobsV2({ repo: REPO, pr: 888, headSha: head, baseSha: base, testSha: head, sourceManifestSha256: 'e'.repeat(64), createdAt: iso(Date.now() - 1000), attempt: 1 }).gitleaks;
   const snapshot = extra => ({ contract: 'clued.independent-ci.remote-heads-tags/1', repository: REPO, complete: true, observedAt: iso(Date.now()), refs: [{ name: 'refs/heads/main', objectSha: base }, { name: 'refs/heads/pr', objectSha: head }, ...extra] });
   const store = path.join(dir, '.git');
   assert.deepEqual(await refsInStore({ job, remoteSnapshot: snapshot([]), gitDirectory: store, gitExecutable: GIT, expectedGitSha256: gitSha }), { tips: 2, refs: 2 });

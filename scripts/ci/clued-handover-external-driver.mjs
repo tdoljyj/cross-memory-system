@@ -1,7 +1,7 @@
 // Candidate integration destination: scripts/ci/clued-handover-external-driver.mjs.
 // No production Binding/Supabase/Worker transport exists in this driver.
 import assert from 'node:assert/strict';
-export const COMPONENT_VERSION = "1.0.2";
+export const COMPONENT_VERSION = "1.0.3";
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';

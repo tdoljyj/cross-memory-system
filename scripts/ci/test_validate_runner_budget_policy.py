@@ -447,5 +447,29 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
             self.assertEqual(json.loads(output.getvalue())["status"], "FAIL")
 
 
+class Native617MigrationTests(unittest.TestCase):
+    def test_three_primary_routes_leave_no_hosted_debt_permit(self):
+        workflows = {
+            "clued-native617-admission-dispatch.yml": "admit",
+            "clued-handover-external-qualification.yml": "qualify",
+            "clued-handover-disposable-idle.yml": "disposable-idle",
+        }
+        for filename, primary in workflows.items():
+            self.assertNotIn(filename, policy.LEGACY_HOSTED_DEBT)
+            text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
+            report = policy.evaluate_workflows({filename: text}, baseline={}, owner_hosted={})
+            self.assertEqual(report["status"], "PASS", report)
+            self.assertIn("handover-native-", text)
+            self.assertIn("node scripts/ci/clued-handover-native-entry.mjs --check", text)
+            # Restoring the original hosted primary is prohibited after migration.
+            route = ("[self-hosted, Linux, X64, clued, trust-internal, "
+                     + ("handover-native-control-once" if primary == "admit"
+                        else "handover-native-task617-once") + "]")
+            restored = text.replace("runs-on: " + route, "runs-on: ubuntu-24.04")
+            self.assertNotEqual(restored, text)
+            self.assertEqual(policy.evaluate_workflows({filename: restored}, baseline={},
+                                                      owner_hosted={})["status"], "FAIL")
+
+
 if __name__ == "__main__":
     unittest.main()

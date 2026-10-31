@@ -15,9 +15,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { EffectJournal } from '../effect-journal.mjs';
 import { readBatchClaim } from '../batch-claim-v2.mjs';
-import { createStagedCheckPublisherV2 } from '../staged-check-publisher-v2.mjs';
-import { protectedAuthority } from '../../runtime/one-shot-v2.mjs';
-import { runEntry, controllerPrincipal, controllerPorts, observationLog } from '../resident-v2/entry-runtime.mjs';
+import { isTrainFrontJobV2 } from '../job-v2.mjs';
+import { createRecoverableCheckPublisherV2, createPublicationRecoveryAuditWriter } from '../../runtime/one-shot-v2.mjs';
+import { runEntry, controllerPrincipal, controllerPorts, publicationControllerGithub, observationLog } from '../resident-v2/entry-runtime.mjs';
 import { STATE_V2, STATE_RELAY_JWKS } from '../resident-v2/layout.mjs';
 import { validateRegistry, OCI_DIGEST, RELAY_AUDIENCE } from './registry.mjs';
 import { createGitHubOidcVerifier, createJwksFileCache, createJwksPort } from './oidc.mjs';
@@ -46,8 +46,12 @@ export function installedInputPins(manifest) {
 }
 
 // The relay stage subject: the batch content of the candidate jobs plus the sticky batch claim generation
-// stage 1 recorded (the relay publication must observe that same generation again, A-strict).
+// stage 1 recorded (the relay publication must observe that same generation again, A-strict). The relay tests the
+// head on GitHub's runners and its subject has no tested commit: a train front batch (S != H, step 3c-2) is refused
+// here as well as in its stage R derivation (derive-batch.mjs), never relayed under the head's ids.
 export function relaySubject(jobs, batchClaim) {
+  if (!Array.isArray(jobs) || jobs.length === 0) fail('RELAY_SUBJECT_JOBS_REQUIRED');
+  if (jobs.some(isTrainFrontJobV2)) fail('RELAY_TEST_COMMIT_REFUSED');
   const j = jobs[0];
   return { repo: j.repo, pr: j.pr, headSha: j.headSha, baseSha: j.baseSha, claimId: batchClaim.claimId, fence: batchClaim.fence, epoch: batchClaim.epoch,
     sourceManifestSha256: j.sourceManifestSha256 };
@@ -55,23 +59,28 @@ export function relaySubject(jobs, batchClaim) {
 
 export async function main(argv = process.argv.slice(2), output = process.stdout) {
   return runEntry({ argv, entryRole: 'relay-publisher', moduleUrl: import.meta.url, output, successStatuses: ['RELAY_COMPLETE'],
-    body: async ({ inputs, held, live, sourceRoot }) => {
+    body: async ({ args, inputs, held, live, sourceRoot }) => {
       const jobs = inputs.jobs, { config, accepted } = inputs.record;
       const registry = installedRegistry(held);
       const batchClaim = await readBatchClaim(STATE_V2.batchClaims, jobs[0]);
       const { appKey, nativeToken } = await controllerPrincipal(inputs.record);
       const log = observationLog(STATE_V2.effectsScan, jobs[0].id);
-      const { github, admission, fetchImpl } = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
+      const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
+      const { admission, fetchImpl } = ports;
+      const journal = await EffectJournal.open(STATE_V2.effectsScan);
+      const github = publicationControllerGithub({ ports, jobs, journal, args, record: inputs.record, plan: inputs.plan });
       const oidc = createGitHubOidcVerifier({ audience: RELAY_AUDIENCE, jwksPort: createJwksPort({ fetchImpl }), cache: createJwksFileCache(STATE_RELAY_JWKS) });
       const verifier = createHostedRelayVerifier({ registry, observer: createHostedRelayObserver({ github, registry }), oidc });
       // K(head, role) and the relay's own effect keys live in the local v2 scanner publisher's journal, so the two
       // paths exclude each other for one role on one head across batches, bases and attempts (K has neither the
       // base nor the attempt since PR-A review MAJOR 2; the v1 one-shot never takes K).
-      const journal = await EffectJournal.open(STATE_V2.effectsScan);
-      const publisher = createStagedCheckPublisherV2({ nativeAdmission: admission, authority: protectedAuthority({ config, accepted, github, fetchImpl, nativeToken, live, log }),
+      const recoveryContext = { nonce: args.nonce, stage: inputs.plan.stage, entryRole: inputs.plan.entryRole, batchKey: inputs.plan.batchKey,
+        configSha256: args.configSha256, sourceManifestSha256: inputs.plan.sourceManifestSha256, acceptanceSha256: inputs.plan.acceptanceSha256, entrySha256: inputs.plan.entrySha256 };
+      const publisher = createRecoverableCheckPublisherV2({ recoveryContext, auditWriter: createPublicationRecoveryAuditWriter({ context: recoveryContext }), authorityOptions: { config, accepted, github, fetchImpl, nativeToken },
+        readCurrentBatchClaim: j => readBatchClaim(STATE_V2.batchClaims, j), live, log, publisherOptions: { nativeAdmission: admission,
         github, journal, signers: inputs.record.signers, configuredChecks: config.checks, readChangedPaths: subject => github.readChangedPaths(subject), batchClaim,
         protectedDeployment: { enabled: true, domain: 'production', repository: config.repository, ciPrincipalBindingId: config.ciPrincipalBindingId, ...Object.fromEntries(REFS.map(r => [r, accepted[r]])) },
-        domain: 'production', hostedVerifier: verifier });
+        domain: 'production', hostedVerifier: verifier } });
       const stage = createHostedRelayStage({ registry, verifier, publisher, localInputPins: installedInputPins(inputs.record.manifest) });
       const result = await stage.run({ subject: relaySubject(jobs, batchClaim), attempt: jobs[0].attempt, roles: jobs.map(j => j.role) });
       log('hosted_relay_stage_result', { jobId: jobs[0].id, resultSha256: result.resultSha256, status: result.status, code: result.code });

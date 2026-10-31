@@ -1,5 +1,6 @@
 """Materialize reviewed, commit-specific findings; never suppress a global rule."""
 import argparse
+import ast
 import base64
 import hashlib
 import json
@@ -13,7 +14,47 @@ import tomllib
 
 PREFIX = "# clued-reviewed-finding: "
 COUNT_PREFIX = "# clued-reviewed-count: "
-EXPECTED_COUNT = 726
+LEGACY_COUNT = 726
+LEGACY_RECORD_LINES_SHA256 = "5ec9aef1a5af7f356152ba7dfc18e197a968cf3ac70ffd2b2aa7000a4801d35c"
+SCHEDULING_END = 729
+PRIOR_RECORD_LINES_SHA256 = "3117636bb9809e0aa2f953340172e48ba171b010949112dbe79e5879309a45cd"
+EXPECTED_COUNT = 730
+SCHEDULING_COMMIT = "fd10191533a5f2139b224a90a096880039d62034"
+SCHEDULING_TEST_PATH = "apps/clued-cloud/tests/ci-scheduling-stage1-ui.test.mjs"
+SCHEDULING_README_PATH = "work/ci-scheduling-stage1-20261023/README.md"
+SCHEDULING_BLOBS = {
+    SCHEDULING_TEST_PATH: {"blob": "4081d1af33666e2194c7ffa8f3d0cccc176ca164",
+                           "sha256": "e0e4215310cba92eb27747a36ed001d5b46a154b46f56ef068145cc97f0a0aa5", "bytes": 23019},
+    SCHEDULING_README_PATH: {"blob": "98c9fbf54b67318274a14d1bcc96b1940add7f42",
+                             "sha256": "714b03bf2d60e00ff5519c2e6f4dd20f109421e98e232bb3ad061c095355446f", "bytes": 8936},
+}
+# Candidate classifications are not accepted Source/runtime policy. Each is usable only
+# by the exact three fingerprints below, with immutable blob, span and usage proof.
+SCHEDULING_FINDINGS = {
+    f"{SCHEDULING_COMMIT}:{SCHEDULING_TEST_PATH}:private-key:283": {
+        "kind": "SYNTHETIC_PEM_MARKER", "end_line": 315, "span_bytes": 2432,
+        "span_sha256": "2b8df28e8b3d44a0f220735283a7ea8a7eac9da1fb02c9bc69c20b5f129a9063"},
+    f"{SCHEDULING_COMMIT}:{SCHEDULING_TEST_PATH}:generic-api-key:315": {
+        "kind": "SYNTHETIC_REJECTION_MARKER", "end_line": 315, "span_bytes": 126,
+        "span_sha256": "1d852efee7dee22146fb7488cab1584667f7833cb38ab65b160dbebc069e875f"},
+    f"{SCHEDULING_COMMIT}:{SCHEDULING_README_PATH}:generic-api-key:78": {
+        "kind": "PUBLIC_DOCUMENT_PROSE", "end_line": 78, "span_bytes": 79,
+        "span_sha256": "1d5a4bd8cfccf414fb99d0bc2fb1e809472ce6e10f336f956db4082f78e64b92"},
+}
+SCHEDULING_KINDS = {spec["kind"] for spec in SCHEDULING_FINDINGS.values()}
+# Batch-2 (#937) candidate: one synthetic token literal in the C2 role-probe test,
+# usable only by this exact fingerprint with immutable blob, span and usage proof.
+ROLE_PROBE_COMMIT = "16f981cca5bdcae27e5eb08768013b36deafe44a"
+ROLE_PROBE_PATH = "work/independent-ci-resident-v1/test/role-probe.test.mjs"
+ROLE_PROBE_BLOB = {"blob": "cf3254de92881aa76a03dbd8714217c6cfd23abb",
+                   "sha256": "4c27c0a152006f0b7dd57b856155c221577967720fa05bc3211fd277fa8c296e", "bytes": 7681}
+ROLE_PROBE_FINDINGS = {
+    f"{ROLE_PROBE_COMMIT}:{ROLE_PROBE_PATH}:generic-api-key:73": {
+        "kind": "SYNTHETIC_ROLE_PROBE_TOKEN", "end_line": 73, "span_bytes": 89,
+        "span_sha256": "38515feffdf8a479abaf951cbd038bd01b06c13397ade3fa3654c76afd879aa6",
+        "test_start_line": 72, "test_end_line": 82},
+}
+ROLE_PROBE_KINDS = {spec["kind"] for spec in ROLE_PROBE_FINDINGS.values()}
 REVIEW_DOCUMENT_PATH = "development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json"
 REVIEW_DOCUMENT_COMMIT = "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904"
 REVIEW_DOCUMENT_SHA256 = "d223d30902ead65ac193a2166cc081a2a2b326d71af3e8a898994427e72e1d21"
@@ -111,6 +152,8 @@ KINDS = {
     # (reviewed 2026-10-20).
     "OAUTH_CLIENT_ID",
 }
+KINDS |= SCHEDULING_KINDS
+KINDS |= ROLE_PROBE_KINDS
 BASE_CONFIG = {
     "title": "Clued Gitleaks configuration",
     "extend": {"useDefault": True},
@@ -153,10 +196,18 @@ def parse_records(text):
                 or any(c in path for c in "\\*?[]\r\n")
                 or not re.fullmatch(r"[1-9][0-9]*", line)):
             raise ValueError("Non-exact finding location")
-        if rule not in {"generic-api-key", "sourcegraph-access-token"}:
+        fixture = SCHEDULING_FINDINGS.get(record["fingerprint"])
+        if rule not in {"generic-api-key", "sourcegraph-access-token"} and fixture is None:
             raise ValueError("Unreviewed rule")
         if not record["kinds"] or set(record["kinds"]) - KINDS:
             raise ValueError("Unreviewed reason")
+        if (fixture is not None and record["kinds"] != [fixture["kind"]]
+                or set(record["kinds"]) & SCHEDULING_KINDS and fixture is None):
+            raise ValueError("Scheduling fixture exception identity changed")
+        token_fixture = ROLE_PROBE_FINDINGS.get(record["fingerprint"])
+        if (token_fixture is not None and record["kinds"] != [token_fixture["kind"]]
+                or set(record["kinds"]) & ROLE_PROBE_KINDS and token_fixture is None):
+            raise ValueError("Role-probe token exception identity changed")
         if rule == "sourcegraph-access-token" and record["kinds"] != ["GIT_OBJECT_METADATA"]:
             raise ValueError("Object rule requires object proof")
         if path == REVIEW_DOCUMENT_PATH and (
@@ -213,6 +264,16 @@ def parse_records(text):
                     if record["fingerprint"].split(":")[1] in EXACT_PATH_FINDINGS}
     if actual_exact != expected_exact:
         raise ValueError("Exact path exception set changed")
+    if {record["fingerprint"] for record in records[LEGACY_COUNT:SCHEDULING_END]} != set(SCHEDULING_FINDINGS):
+        raise ValueError("Scheduling fixture exception set changed")
+    if {record["fingerprint"] for record in records[SCHEDULING_END:]} != set(ROLE_PROBE_FINDINGS):
+        raise ValueError("Role-probe token exception set changed")
+    legacy_lines = [line for line in text.splitlines() if line.startswith(PREFIX)][:LEGACY_COUNT]
+    if hashlib.sha256(("\n".join(legacy_lines) + "\n").encode()).hexdigest() != LEGACY_RECORD_LINES_SHA256:
+        raise ValueError("Legacy reviewed finding bytes changed")
+    prior_lines = [line for line in text.splitlines() if line.startswith(PREFIX)][:SCHEDULING_END]
+    if hashlib.sha256(("\n".join(prior_lines) + "\n").encode()).hexdigest() != PRIOR_RECORD_LINES_SHA256:
+        raise ValueError("Prior reviewed finding bytes changed")
     return records
 
 
@@ -394,6 +455,108 @@ def verify_handover_acceptance_digest(repo, commit, path, text, line_number):
         raise ValueError("Handover acceptance digest differs from immutable artifact")
 
 
+def verify_scheduling_fixture(repo, fingerprint, text):
+    """Prove only the three pinned non-credential uses; never infer safety from a rule or path."""
+    spec = SCHEDULING_FINDINGS.get(fingerprint)
+    if spec is None:
+        raise ValueError("Unreviewed scheduling fixture identity")
+    commit, path, rule, line = fingerprint.split(":")
+    pin = SCHEDULING_BLOBS[path]
+    blob = text.encode("utf-8")
+    object_id = hashlib.sha1(b"blob " + str(len(blob)).encode() + b"\0" + blob).hexdigest()
+    if (len(blob) != pin["bytes"] or object_id != pin["blob"]
+            or hashlib.sha256(blob).hexdigest() != pin["sha256"]
+            or run(["git", "rev-parse", f"{commit}:{path}"], cwd=repo).decode().strip() != pin["blob"]):
+        raise ValueError("Scheduling fixture immutable blob changed")
+    lines = text.splitlines(keepends=True)
+    first = int(line) - 1
+    span = "".join(lines[first:spec["end_line"]]).encode()
+    if len(span) != spec["span_bytes"] or hashlib.sha256(span).hexdigest() != spec["span_sha256"]:
+        raise ValueError("Scheduling fixture exact span changed")
+    source = lines[first].rstrip("\r\n")
+    literals = list(re.finditer(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"", source))
+    values = [ast.literal_eval(match.group()) for match in literals]
+    if spec["kind"] == "SYNTHETIC_PEM_MARKER":
+        if (rule != "private-key" or not re.search(r"\bdiagnostic\b", source)
+                or not re.search(r"\bmessage\s*:", source) or len(values) != 1
+                or len(literals[0].group()) - 2 != 68 or len(values[0]) != 66
+                or values[0].count("\n") != 2):
+            raise ValueError("Scheduling diagnostic marker use changed")
+        parts = values[0].splitlines()
+        if (len(parts) != 3 or len(parts[1]) != 12
+                or not re.fullmatch(r"-{5}BEGIN [A-Z ]*PRIVATE KEY-{5}", parts[0])
+                or parts[2] != parts[0].replace("BEGIN ", "END ", 1)):
+            raise ValueError("Scheduling diagnostic marker shape changed")
+        try:
+            base64.b64decode(parts[1], validate=True)
+        except ValueError:
+            pass  # Invalid Base64 cannot encode ASN.1/PKCS private-key material.
+        else:
+            raise ValueError("Scheduling marker unexpectedly contains valid Base64")
+    elif spec["kind"] == "SYNTHETIC_REJECTION_MARKER":
+        if (rule != "generic-api-key" or not re.search(r"for\s*\(\s*const\s+\w+\s+of\s*\[", source)
+                or [len(value) for value in values] != [30, 24, 14, 14]
+                or not re.fullmatch(r"-+BEGIN [A-Z ]+KEY-+", values[0])
+                or not values[1].startswith("Bearer ")
+                or not re.fullmatch(r"[A-Za-z0-9_-]{17}", values[1][7:])
+                or not all(re.fullmatch(r"[A-Za-z0-9_-]{14}", value) for value in values[2:])):
+            raise ValueError("Scheduling rejection markers use changed")
+    elif spec["kind"] == "PUBLIC_DOCUMENT_PROSE":
+        if (rule != "generic-api-key" or not source.isascii() or any(char.isdigit() for char in source)
+                or max(map(len, re.findall(r"[A-Za-z]+", source)), default=0) != 11 or len(source) != 78):
+            raise ValueError("Scheduling public prose use changed")
+    else:
+        raise ValueError("Unreviewed scheduling fixture classification")
+
+
+ROLE_PROBE_STRING = re.compile(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|`(?:\\.|[^`\\])*`")
+ROLE_PROBE_IDENTIFIER = re.compile(r"(?<![\w$.])token(?![\w$])")
+
+
+def verify_role_probe_token(repo, fingerprint, text):
+    """Prove only the pinned test-local literal: digested and returned by in-test fakes, never a credential."""
+    spec = ROLE_PROBE_FINDINGS.get(fingerprint)
+    if spec is None:
+        raise ValueError("Unreviewed role-probe token identity")
+    commit, path, rule, line = fingerprint.split(":")
+    blob = text.encode("utf-8")
+    object_id = hashlib.sha1(b"blob " + str(len(blob)).encode() + b"\0" + blob).hexdigest()
+    if (len(blob) != ROLE_PROBE_BLOB["bytes"] or object_id != ROLE_PROBE_BLOB["blob"]
+            or hashlib.sha256(blob).hexdigest() != ROLE_PROBE_BLOB["sha256"]
+            or run(["git", "rev-parse", f"{commit}:{path}"], cwd=repo).decode().strip() != ROLE_PROBE_BLOB["blob"]):
+        raise ValueError("Role-probe token immutable blob changed")
+    lines = text.splitlines(keepends=True)
+    first = int(line) - 1
+    span = "".join(lines[first:spec["end_line"]]).encode()
+    if len(span) != spec["span_bytes"] or hashlib.sha256(span).hexdigest() != spec["span_sha256"]:
+        raise ValueError("Role-probe token exact span changed")
+    declaration = re.fullmatch(r"  const token = ('[A-Za-z0-9_]+'), reads = \[\], protectedCalls = \[\], native = \[\];",
+                               lines[first].rstrip("\r\n"))
+    if (rule != "generic-api-key" or declaration is None or not path.startswith("work/")
+            or "/test/" not in path or not path.endswith(".test.mjs")):
+        raise ValueError("Role-probe token declaration changed")
+    value = ast.literal_eval(declaration.group(1))
+    if not re.fullmatch(r"clued_bnd_fixture[0-9]{6}", value) or text.count(value) != 1:
+        raise ValueError("Role-probe token value changed")
+    # Every use of the local `token` (strings removed) is inside the one enclosing test:
+    # one digest input and two in-test fake tokenReader return values. Nothing else.
+    start, end = spec["test_start_line"] - 1, spec["test_end_line"]
+    if not lines[start].startswith("test('controller entry reads exactly native token ") or lines[end - 1] != "});\n":
+        raise ValueError("Role-probe token test boundary changed")
+    uses = []
+    for number, source in enumerate(lines, 1):
+        code = ROLE_PROBE_STRING.sub('""', source)
+        uses += [(number, code[max(0, match.start() - 3):match.end() + 1]) for match in ROLE_PROBE_IDENTIFIER.finditer(code)]
+    block = "".join(lines[start:end])
+    if (uses != [(73, "st token "), (74, " + token)"), (76, "rn token;"), (81, "=> token,")]
+            or "tokenReader: async (file, options) => { reads.push({ file, options }); return token; }" not in block
+            or "fetchImpl: async (...v) => { native.push(v); return new Response(" not in block
+            or "tokenReader: async () => token, fetchImpl: async () => { assert.fail('no request'); }" not in block
+            or set(re.findall(r"https?://[^'\"/ ]+", block)) != {"https://fixture.supabase.co"}
+            or "process.env" in text):
+        raise ValueError("Role-probe token use changed")
+
+
 def verify_history(repo, records):
     commits = _ensure_reviewed_commits(repo, records)
     blobs = {}
@@ -405,6 +568,10 @@ def verify_history(repo, records):
         text = blobs[key]
         if int(line) > len(text.splitlines()):
             raise ValueError("Reviewed location no longer resolves")
+        if record["fingerprint"] in SCHEDULING_FINDINGS:
+            verify_scheduling_fixture(repo, record["fingerprint"], text)
+        if record["fingerprint"] in ROLE_PROBE_FINDINGS:
+            verify_role_probe_token(repo, record["fingerprint"], text)
         if path == REVIEW_DOCUMENT_PATH:
             verify_auth_review_digest(repo, text, int(line))
         if path in FINAL_EVIDENCE_DOCUMENTS:
@@ -488,6 +655,14 @@ def _self_test_handover_acceptance(root):
             "valid_nonancestor_rejected": True, "wrong_line_rejected": True, "wrong_path_rejected": True}
 
 
+def synthetic_valid_private_pem():
+    """A public deterministic Ed25519 PKCS#8 fixture, generated only at runtime and never used for access."""
+    seed = hashlib.sha256(b"public controlled gitleaks detector regression fixture").digest()
+    der = bytes.fromhex("302e020100300506032b657004220420") + seed
+    return ("-----BEGIN " + "PRIVATE KEY-----\n" + base64.b64encode(der).decode()
+            + "\n-----END " + "PRIVATE KEY-----\n").encode()
+
+
 def self_test(config, production_ignore):
     docker = shutil.which("docker")
     if not docker:
@@ -541,8 +716,77 @@ def self_test(config, production_ignore):
     code, fresh = scan()
     if code != 1 or len(fresh) != 4 or {f["File"] for f in fresh} != {"probe.txt", "other-path.txt"}:
         raise ValueError("New commits or different paths were incorrectly suppressed")
+    # Reuse only the immutable, reviewed non-credential test/document blobs inside
+    # this throwaway repository. No original match text enters the report.
+    fixture_blobs = {}
+    for path, pin in SCHEDULING_BLOBS.items():
+        blob = run(["git", "cat-file", "blob", f"{SCHEDULING_COMMIT}:{path}"], cwd=config.parent)
+        if hashlib.sha256(blob).hexdigest() != pin["sha256"]:
+            raise ValueError("Scheduling detector fixture blob changed")
+        fixture_blobs[path] = blob
+        target = test_repo / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(blob)
+    commit()
+    code, new_commit = scan()
+    required = {(SCHEDULING_TEST_PATH, "private-key"), (SCHEDULING_TEST_PATH, "generic-api-key"),
+                (SCHEDULING_README_PATH, "generic-api-key")}
+    if code != 1 or not required <= {(finding["File"], finding["RuleID"]) for finding in new_commit}:
+        raise ValueError("Scheduling marker or prose was suppressed in a new commit")
+    for path, blob in fixture_blobs.items():
+        target = test_repo / "other-path" / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(blob)
+    commit()
+    code, different_path = scan()
+    if code != 1 or not {("other-path/" + path, rule) for path, rule in required} <= {
+            (finding["File"], finding["RuleID"]) for finding in different_path}:
+        raise ValueError("Scheduling marker or prose was suppressed at a different path")
+    # Copy the exact historical role-probe blob as data. A new commit, path or line
+    # must still be detected; the one old fingerprint grants none of these uses.
+    role_blob = run(["git", "cat-file", "blob", f"{ROLE_PROBE_COMMIT}:{ROLE_PROBE_PATH}"], cwd=config.parent)
+    if hashlib.sha256(role_blob).hexdigest() != ROLE_PROBE_BLOB["sha256"]:
+        raise ValueError("Role-probe detector fixture blob changed")
+    role_target = test_repo / ROLE_PROBE_PATH
+    role_target.parent.mkdir(parents=True, exist_ok=True)
+    role_target.write_bytes(role_blob)
+    commit()
+    code, role_new_commit = scan()
+    if code != 1 or not any(f["File"] == ROLE_PROBE_PATH and f["RuleID"] == "generic-api-key"
+                            and f["StartLine"] == 73 for f in role_new_commit):
+        raise ValueError("Role-probe marker was suppressed in a new commit")
+    other_role_path = "other-path/" + ROLE_PROBE_PATH
+    other_role_target = test_repo / other_role_path
+    other_role_target.parent.mkdir(parents=True, exist_ok=True)
+    other_role_target.write_bytes(role_blob)
+    commit()
+    code, role_different_path = scan()
+    if code != 1 or not any(f["File"] == other_role_path and f["RuleID"] == "generic-api-key"
+                            for f in role_different_path):
+        raise ValueError("Role-probe marker was suppressed at another path")
+    # Delete and commit first, so the shifted token is a real Git-added line, not shifted context.
+    role_target.unlink()
+    commit()
+    role_target.write_bytes(b"\n" + role_blob)
+    commit()
+    code, role_different_line = scan()
+    if code != 1 or not any(f["File"] == ROLE_PROBE_PATH and f["RuleID"] == "generic-api-key"
+                            and f["StartLine"] == 74 for f in role_different_line):
+        raise ValueError("Role-probe marker was suppressed at another line")
+    (test_repo / "controlled-valid-private.pem").write_bytes(synthetic_valid_private_pem())
+    commit()
+    code, valid_private = scan()
+    if code != 1 or not any(finding["File"] == "controlled-valid-private.pem"
+                            and finding["RuleID"] == "private-key" for finding in valid_private):
+        raise ValueError("A valid controlled PKCS8 private fixture was incorrectly suppressed")
     return {"baseline_detection": True, "exact_history_only": True,
             "new_commit_detection": True, "different_path_detection": True,
+            "scheduling_marker_new_commit_detection": True,
+            "scheduling_marker_different_path_detection": True,
+            "role_probe_new_commit_detection": True,
+            "role_probe_different_path_detection": True,
+            "role_probe_different_line_detection": True,
+            "valid_private_key_detection": True,
             "synthetic_test_repository": str(test_repo),
             "handover_acceptance_artifact_proof": _self_test_handover_acceptance(root)}
 

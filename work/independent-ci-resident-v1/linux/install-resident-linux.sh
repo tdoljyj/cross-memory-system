@@ -1,11 +1,21 @@
 #!/bin/bash
 # One-time Owner install of the Linux half of the resident executor (DRAFT, not yet reviewed).
-# Run as root inside Ubuntu-24.04 (wsl -d Ubuntu-24.04 -u root -- bash <this> ...).
+# Run as root inside the node's WSL distribution, its node profile's wslDistribution (TURING: Ubuntu-24.04):
+#   wsl -d <wslDistribution> -u root -- bash <this> ...
 #
 #   install-resident-linux.sh --plan PACKAGE_DIR                         read-only: plan + sha256
 #   install-resident-linux.sh --apply PACKAGE_DIR PLAN_SHA256            install exactly that plan
 #   install-resident-linux.sh --continue-after-boot PLAN_SHA256          finish after the WSL restart
+#   install-resident-linux.sh --plan-upgrade-v1 PACKAGE_DIR              read-only: plan + sha256 of the upgrade tool install
+#   install-resident-linux.sh --apply-upgrade-v1 PACKAGE_DIR PLAN_SHA256 install the frozen upgrade tool (task 018da927)
+#   install-resident-linux.sh --adopt-generation 1 PACKAGE_MANIFEST_SHA256  record what is live as generation 1 (moves nothing)
 #
+# Upgrade channel (task 018da927, spec B3; part of a full reinstall only, never changed by an in-place upgrade):
+#   /opt/clued-independent-ci/upgrade-v1/{bin/clued-ci-upgrade-linux, bin/clued-ci-sign-qualification-v2.mjs, manifest.json}
+#     root: directories 0755, the tool 0755, the signer and manifest.json 0644, from PACKAGE_DIR/upgrade-v1/... (the package's linux/ directory), create-only; manifest.json
+#     (clued.independent-ci.linux-upgrade-tool-manifest/1) pins both bin files at their installed paths.
+#   --adopt-generation 1 runs the installed tool's `adopt`: it writes /var/lib/clued-independent-ci/resident/upgrade/{g1.json,
+#     current.json} (identities of what is live now) and moves nothing.
 # Changes (all create-only; nothing existing is deleted or rewritten except /etc/wsl.conf, whose
 # original bytes are first copied to /etc/wsl.conf.before-resident-<UTC> and which is then replaced
 # atomically by rename):
@@ -37,6 +47,10 @@ STATE=/var/lib/clued-independent-ci
 UNITS="clued-ci-worker@.service clued-ci-wsprep@.service clued-ci-archive@.service"
 FILES="bin/clued-ci-resident-linux manifest.json systemd/clued-ci-worker@.service systemd/clued-ci-wsprep@.service systemd/clued-ci-archive@.service"
 SAVED=$STATE/resident/install-plan.json
+UPG=/opt/clued-independent-ci/upgrade-v1
+UPG_FILES="upgrade-v1/bin/clued-ci-upgrade-linux upgrade-v1/bin/clued-ci-sign-qualification-v2.mjs upgrade-v1/manifest.json"
+UPG_SAVED=$STATE/resident/upgrade-v1-install-plan.json
+UPG_CURRENT=$STATE/resident/upgrade/current.json
 SELF_SHA256=$(sha256sum "${BASH_SOURCE[0]}" | cut -d' ' -f1)
 refuse() { echo "{\"status\":\"REFUSED\",\"code\":\"$1\"}"; exit 1; }
 
@@ -53,6 +67,35 @@ package_files_ok() {
   for f in $FILES; do
     [ -f "$1/$f" ] && [ ! -L "$1/$f" ] && [ "$(stat -c %h "$1/$f")" = 1 ] || return 1
   done
+}
+
+# Same rule for an explicit list of files (the upgrade tool install).
+listed_files_ok() {
+  local f d=$1; shift
+  for f in "$@"; do
+    [ -f "$d/$f" ] && [ ! -L "$d/$f" ] && [ "$(stat -c %h "$d/$f")" = 1 ] || return 1
+  done
+}
+
+# The upgrade-v1 manifest pins exactly the two bin files at their installed paths; $1 = the directory holding upgrade-v1/
+# (the staged copy before the install, / after it).
+upgrade_manifest_ok() {
+  python3.12 -I -c 'import json,hashlib,sys
+base=sys.argv[1].rstrip("/"); m=json.load(open(base+"/upgrade-v1/manifest.json" if base else "/opt/clued-independent-ci/upgrade-v1/manifest.json"))
+want={"/opt/clued-independent-ci/upgrade-v1/bin/clued-ci-upgrade-linux","/opt/clued-independent-ci/upgrade-v1/bin/clued-ci-sign-qualification-v2.mjs"}
+fs=m.get("files")
+ok=m.get("contract")=="clued.independent-ci.linux-upgrade-tool-manifest/1" and isinstance(fs,list) and sorted(f.get("installedPath") for f in fs)==sorted(want)
+src=lambda p: p if base=="" else base+"/upgrade-v1/bin/"+p.rsplit("/",1)[1]
+sys.exit(0 if ok and all(hashlib.sha256(open(src(f["installedPath"]),"rb").read()).hexdigest()==f["sha256"] for f in fs) else 1)' "$1"
+}
+
+plan_upgrade_text() {
+  local pkg=$1
+  echo "install-script.sha256=$SELF_SHA256"
+  (cd "$pkg" && sha256sum $UPG_FILES)
+  echo "resident.exists=$([ -e "$OPT" ] && echo yes || echo no)"
+  echo "upgrade-v1.exists=$([ -e "$UPG" ] && echo yes || echo no)"
+  echo "generation.current.exists=$([ -e "$UPG_CURRENT" ] && echo yes || echo no)"
 }
 
 plan_text() {
@@ -73,6 +116,17 @@ stage_copy() {
   st=$(mktemp -d "$STATE/resident-staging.XXXXXXXXXX")
   chown root:root "$st"; chmod 0700 "$st"
   for f in $FILES; do
+    install -D -o root -g root -m 0600 "$pkg/$f" "$st/$f"
+  done
+  echo "$st"
+}
+
+# A NEW root-owned 0700 directory holding exactly the upgrade tool files, copied once.
+stage_copy_upgrade() {
+  local pkg=$1 st f
+  st=$(mktemp -d "$STATE/upgrade-v1-staging.XXXXXXXXXX")
+  chown root:root "$st"; chmod 0700 "$st"
+  for f in $UPG_FILES; do
     install -D -o root -g root -m 0600 "$pkg/$f" "$st/$f"
   done
   echo "$st"
@@ -134,6 +188,36 @@ main() {
       ;;
     --continue-after-boot)
       continue_after_boot "${2:?}"
+      ;;
+    --plan-upgrade-v1)
+      pkg=${2:?}; listed_files_ok "$pkg" $UPG_FILES || refuse PACKAGE_FILE_SHAPE_REFUSED
+      t=$(plan_upgrade_text "$pkg"); printf '%s\n' "$t"
+      echo "{\"status\":\"DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN\",\"planSha256\":\"$(plan_sha "$t")\"}"
+      ;;
+    --apply-upgrade-v1)
+      pkg=${2:?}; want=${3:?}
+      [ -d "$OPT" ] || refuse RESIDENT_LINUX_NOT_INSTALLED
+      [ ! -e "$UPG" ] || refuse UPGRADE_TOOL_EXISTS_FULL_REINSTALL_ONLY
+      listed_files_ok "$pkg" $UPG_FILES || refuse PACKAGE_FILE_SHAPE_REFUSED
+      st=$(stage_copy_upgrade "$pkg")
+      # The plan is computed from the staged copy; nothing is read from PACKAGE_DIR after this point.
+      t=$(plan_upgrade_text "$st"); sha=$(plan_sha "$t")
+      [ "$want" = "$sha" ] || refuse PLAN_CHANGED_SINCE_REVIEW
+      upgrade_manifest_ok "$st" || refuse UPGRADE_TOOL_MANIFEST_REFUSED
+      printf '{"planSha256":"%s","manifestSha256":"%s","installScriptSha256":"%s","staging":"%s"}\n' "$sha" "$(sha256sum "$st/upgrade-v1/manifest.json" | cut -d' ' -f1)" "$SELF_SHA256" "$st" > "$UPG_SAVED"   # noclobber: create-only
+      install -d -o root -g root -m 0755 "$UPG" "$UPG/bin"
+      install -o root -g root -m 0755 "$st/upgrade-v1/bin/clued-ci-upgrade-linux" "$UPG/bin/clued-ci-upgrade-linux"
+      install -o root -g root -m 0644 "$st/upgrade-v1/bin/clued-ci-sign-qualification-v2.mjs" "$UPG/bin/clued-ci-sign-qualification-v2.mjs"
+      install -o root -g root -m 0644 "$st/upgrade-v1/manifest.json" "$UPG/manifest.json"
+      upgrade_manifest_ok "" || refuse UPGRADE_TOOL_PIN_CHANGED
+      echo "{\"status\":\"UPGRADE_TOOL_INSTALLED\",\"planSha256\":\"$sha\",\"next\":\"--adopt-generation 1 <packageManifestSha256>\"}"
+      ;;
+    --adopt-generation)
+      [ "${2:-}" = 1 ] || refuse ADOPT_GENERATION_ONE_ONLY
+      [[ "${3:-}" =~ ^[0-9a-f]{64}$ ]] || refuse PACKAGE_MANIFEST_SHA256_REQUIRED
+      upgrade_manifest_ok "" || refuse UPGRADE_TOOL_PIN_CHANGED
+      # The frozen tool records the live identities as generation 1 (g1.json, current.json); nothing is moved.
+      python3.12 -I "$UPG/bin/clued-ci-upgrade-linux" adopt --generation 1 --package "$3"
       ;;
     *) refuse MODE_REQUIRED ;;
   esac

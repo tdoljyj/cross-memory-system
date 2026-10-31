@@ -1235,6 +1235,108 @@
               ]
             }
           }
+        ],
+        "d0fe73eeabc9c163d3216e57ca6a7633288262c5": [
+          {
+            "job_id": "gitleaks-trusted-self-hosted",
+            "definition_sha256": "ce19a253d56ca6b81ad83cb6d86045f30e679397e815f14a632fe8aada46dacc",
+            "definition": {
+              "needs": "admission-gate",
+              "timeout-minutes": 25,
+              "name": "${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'gitleaks-hosted-executor' || 'gitleaks-hosted-executor-skipped' }}",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "runs-on": "ubuntu-latest",
+              "permissions": {
+                "contents": "read",
+                "id-token": "write"
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false,
+                    "ref": "${{ github.event.pull_request.base.sha || github.sha }}"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Prepare the required history",
+                  "env": {
+                    "FETCH_TOKEN": "${{ github.token }}",
+                    "HEAD_SHA": "${{ github.event.pull_request.head.sha || github.sha }}",
+                    "BASE_SHA": "${{ github.event.pull_request.base.sha || '' }}"
+                  },
+                  "run": "set -eu\numask 022\nexport LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1\nscan=\"$RUNNER_TEMP/clued-gitleaks\"; repo=\"$scan/repo\"; control=\"$scan/control\"\nmkdir \"$scan\" \"$repo\" \"$control\"\necho \"167600934018e4761d80057321789a1c50486f35c32aa15eebc00ee53cf9aeec  .gitleaks.toml\" | sha256sum -c --quiet -\necho \"ce262ae31a44cfd486e9c8b56e6bc912e7259f18bf5b3b7bebcaf60f26206e4d  scripts/ci/reviewed_gitleaks.py\" | sha256sum -c --quiet -\nsed -n 's/^# clued-reviewed-finding: {\"fingerprint\":\"\\([0-9a-f]\\{40\\}\\):.*$/\\1/p' .gitleaks.toml | sort -u > \"$control/reviewed-commits\"\necho \"37fcdae7442b1235f75f2325c13e508a0189443a24e62627bf338fa8285488bf  $control/reviewed-commits\" | sha256sum -c --quiet -\ngit init --quiet --template= \"$repo\"\nauth=\"$(printf 'x-access-token:%s' \"$FETCH_TOKEN\" | base64 -w0)\"\nfetch() {\n  GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $auth\" \\\n    git -C \"$repo\" -c core.logAllRefUpdates=false -c core.hooksPath=/nonexistent-clued-hooks -c protocol.allow=never \\\n    -c protocol.https.allow=always fetch --quiet --no-tags --no-recurse-submodules --no-auto-gc --update-head-ok \\\n    \"https://github.com/$GITHUB_REPOSITORY\" \"$@\"\n}\nfetch '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'\nfetch \"$HEAD_SHA\" \"$GITHUB_SHA\" $(cat \"$control/reviewed-commits\")\nrm -f \"$repo/.git/FETCH_HEAD\"\ngit -C \"$repo\" -c core.logAllRefUpdates=false update-ref --no-deref HEAD \"$HEAD_SHA\"\ntest \"$(git -C \"$repo\" cat-file -t \"$HEAD_SHA\")\" = commit\n# The scanned head is the second parent of the merge commit this run belongs to.\ntest \"$GITHUB_EVENT_NAME\" != pull_request || test \"$(git -C \"$repo\" rev-parse --verify --quiet \"$GITHUB_SHA^2\")\" = \"$HEAD_SHA\"\ntest -z \"$BASE_SHA\" || test \"$(git -C \"$repo\" rev-parse --verify --quiet refs/heads/main)\" = \"$BASE_SHA\"\ntest \"$(git -C \"$repo\" cat-file --batch-check='%(objecttype)' < \"$control/reviewed-commits\" | sort -u)\" = commit\ntest -z \"$(git -C \"$repo\" for-each-ref --format='%(refname)' | grep -Ev '^refs/(heads|tags)/' || true)\"\nfor indirect in shallow info/grafts objects/info/alternates objects/info/http-alternates logs; do test ! -e \"$repo/.git/$indirect\"; done\ngit -C \"$repo\" fsck --full --strict --no-reflogs --no-progress\ninstall -m 0444 .gitleaks.toml \"$repo/.gitleaks.toml\"\nprintf '[safe]\\n\\tdirectory = /repo\\n\\tdirectory = /test\\n' > \"$control/git-safe.config\"\nchmod -R a+rX \"$repo\" && chmod 0444 \"$control/git-safe.config\"\n"
+                },
+                {
+                  "name": "Validate exact historical exceptions and detection regressions",
+                  "run": "python3 -I -B scripts/ci/reviewed_gitleaks.py \\\n  --config \"$RUNNER_TEMP/clued-gitleaks/repo/.gitleaks.toml\" \\\n  --output \"$RUNNER_TEMP/clued-gitleaks/control/reviewed.ignore\" \\\n  --self-test\n"
+                },
+                {
+                  "name": "Scan complete history with Gitleaks 8.30.1",
+                  "run": "set -eu\nscan=\"$RUNNER_TEMP/clued-gitleaks\"\nimage=ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f\necho \"abbbece0db8ff3e524736006e0bc8ecf078358b48fae91c8d0bc3046728b8f5a  $scan/control/reviewed.ignore\" | sha256sum -c --quiet -\nchmod 0444 \"$scan/control/reviewed.ignore\"\ndocker pull --quiet \"$image\" > /dev/null\ndocker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \\\n  --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \\\n  --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \\\n  --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=65532,gid=65532 \\\n  --mount \"type=bind,src=$scan/repo,dst=/repo,readonly,bind-propagation=rprivate\" \\\n  --mount \"type=bind,src=$scan/control/reviewed.ignore,dst=/reviewed.ignore,readonly,bind-propagation=rprivate\" \\\n  --mount \"type=bind,src=$scan/control/git-safe.config,dst=/etc/gitconfig,readonly,bind-propagation=rprivate\" \\\n  --workdir=/repo --entrypoint /usr/bin/gitleaks \"$image\" \\\n  git /repo --config /repo/.gitleaks.toml --gitleaks-ignore-path /reviewed.ignore --redact --exit-code 1\n"
+                },
+                {
+                  "name": "Emit relay identity",
+                  "run": "set -eu\njwt=\"$(curl -fsS --max-time 30 -H \"Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \\\n  \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1\" \\\n  | python3 -I -B -c 'import json,sys; print(json.load(sys.stdin)[\"value\"])')\"\necho \"::notice title=clued-hosted-relay-v1::$jwt\"\n"
+                }
+              ]
+            }
+          }
+        ],
+        "8d172bdfeda9b554d2c8c0e5868ccae6e1a3096d": [
+          {
+            "job_id": "gitleaks-trusted-self-hosted",
+            "definition_sha256": "6c30ca4a766e00abe10aa225ff8296d3903857d384e43ecbae5fd8c374281103",
+            "definition": {
+              "needs": "admission-gate",
+              "timeout-minutes": 25,
+              "name": "${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'gitleaks-hosted-executor' || 'gitleaks-hosted-executor-skipped' }}",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "runs-on": "ubuntu-latest",
+              "permissions": {
+                "contents": "read",
+                "id-token": "write"
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false,
+                    "ref": "${{ github.event.pull_request.base.sha || github.sha }}"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Prepare the required history",
+                  "env": {
+                    "FETCH_TOKEN": "${{ github.token }}",
+                    "HEAD_SHA": "${{ github.event.pull_request.head.sha || github.sha }}",
+                    "BASE_SHA": "${{ github.event.pull_request.base.sha || '' }}"
+                  },
+                  "run": "set -eu\numask 022\nexport LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1\nscan=\"$RUNNER_TEMP/clued-gitleaks\"; repo=\"$scan/repo\"; control=\"$scan/control\"\nmkdir \"$scan\" \"$repo\" \"$control\"\necho \"8aae8a204add7e201ff141a9035c0400b300b08c691ff483f09d24383b53b5ba  .gitleaks.toml\" | sha256sum -c --quiet -\necho \"9b1755f9001560aab95bb893f8c2cdc36f1826e3f83d2cae3ccf15ff27b4a476  scripts/ci/reviewed_gitleaks.py\" | sha256sum -c --quiet -\nsed -n 's/^# clued-reviewed-finding: {\"fingerprint\":\"\\([0-9a-f]\\{40\\}\\):.*$/\\1/p' .gitleaks.toml | sort -u > \"$control/reviewed-commits\"\necho \"f889be5ef30f8409db61b1130810b5088ca278d04886b10cf98a3a2558609192  $control/reviewed-commits\" | sha256sum -c --quiet -\ngit init --quiet --template= \"$repo\"\nauth=\"$(printf 'x-access-token:%s' \"$FETCH_TOKEN\" | base64 -w0)\"\nfetch() {\n  GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $auth\" \\\n    git -C \"$repo\" -c core.logAllRefUpdates=false -c core.hooksPath=/nonexistent-clued-hooks -c protocol.allow=never \\\n    -c protocol.https.allow=always fetch --quiet --no-tags --no-recurse-submodules --no-auto-gc --update-head-ok \\\n    \"https://github.com/$GITHUB_REPOSITORY\" \"$@\"\n}\nfetch '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'\nfetch \"$HEAD_SHA\" \"$GITHUB_SHA\" $(cat \"$control/reviewed-commits\")\nrm -f \"$repo/.git/FETCH_HEAD\"\ngit -C \"$repo\" -c core.logAllRefUpdates=false update-ref --no-deref HEAD \"$HEAD_SHA\"\ntest \"$(git -C \"$repo\" cat-file -t \"$HEAD_SHA\")\" = commit\n# The scanned head is the second parent of the merge commit this run belongs to.\ntest \"$GITHUB_EVENT_NAME\" != pull_request || test \"$(git -C \"$repo\" rev-parse --verify --quiet \"$GITHUB_SHA^2\")\" = \"$HEAD_SHA\"\ntest -z \"$BASE_SHA\" || test \"$(git -C \"$repo\" rev-parse --verify --quiet refs/heads/main)\" = \"$BASE_SHA\"\ntest \"$(git -C \"$repo\" cat-file --batch-check='%(objecttype)' < \"$control/reviewed-commits\" | sort -u)\" = commit\ntest -z \"$(git -C \"$repo\" for-each-ref --format='%(refname)' | grep -Ev '^refs/(heads|tags)/' || true)\"\nfor indirect in shallow info/grafts objects/info/alternates objects/info/http-alternates logs; do test ! -e \"$repo/.git/$indirect\"; done\ngit -C \"$repo\" fsck --full --strict --no-reflogs --no-progress\ninstall -m 0444 .gitleaks.toml \"$repo/.gitleaks.toml\"\nprintf '[safe]\\n\\tdirectory = /repo\\n\\tdirectory = /test\\n' > \"$control/git-safe.config\"\nchmod -R a+rX \"$repo\" && chmod 0444 \"$control/git-safe.config\"\n"
+                },
+                {
+                  "name": "Validate exact historical exceptions and detection regressions",
+                  "run": "python3 -I -B scripts/ci/reviewed_gitleaks.py \\\n  --config \"$RUNNER_TEMP/clued-gitleaks/repo/.gitleaks.toml\" \\\n  --output \"$RUNNER_TEMP/clued-gitleaks/control/reviewed.ignore\" \\\n  --self-test\n"
+                },
+                {
+                  "name": "Scan complete history with Gitleaks 8.30.1",
+                  "run": "set -eu\nscan=\"$RUNNER_TEMP/clued-gitleaks\"\nimage=ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f\necho \"e727e450499b2b63f247d54d6bcfe749ab21d68b3135ef11b56c7405f883aff7  $scan/control/reviewed.ignore\" | sha256sum -c --quiet -\nchmod 0444 \"$scan/control/reviewed.ignore\"\ndocker pull --quiet \"$image\" > /dev/null\ndocker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \\\n  --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \\\n  --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \\\n  --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=65532,gid=65532 \\\n  --mount \"type=bind,src=$scan/repo,dst=/repo,readonly,bind-propagation=rprivate\" \\\n  --mount \"type=bind,src=$scan/control/reviewed.ignore,dst=/reviewed.ignore,readonly,bind-propagation=rprivate\" \\\n  --mount \"type=bind,src=$scan/control/git-safe.config,dst=/etc/gitconfig,readonly,bind-propagation=rprivate\" \\\n  --workdir=/repo --entrypoint /usr/bin/gitleaks \"$image\" \\\n  git /repo --config /repo/.gitleaks.toml --gitleaks-ignore-path /reviewed.ignore --redact --exit-code 1\n"
+                },
+                {
+                  "name": "Emit relay identity",
+                  "run": "set -eu\njwt=\"$(curl -fsS --max-time 30 -H \"Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \\\n  \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1\" \\\n  | python3 -I -B -c 'import json,sys; print(json.load(sys.stdin)[\"value\"])')\"\necho \"::notice title=clued-hosted-relay-v1::$jwt\"\n"
+                }
+              ]
+            }
+          }
         ]
       }
     },
@@ -2880,5 +2982,238 @@
     }
   },
   "future_workflows": [],
-  "external2_future_workflows": []
+  "external2_future_workflows": [],
+  "native617_pending_sources": [
+    {
+      "file": ".github/workflows/clued-native617-admission-dispatch.yml",
+      "workflow_blob": "b3bac281913f30e0a30ad2adba28e1c9e822e5a5",
+      "roles": [
+        {
+          "job_id": "admit",
+          "definition_sha256": "9cfb9fb59855803c42ba4f554be031265e86425eadc1d2ecdbda74fb1e5c2467",
+          "definition": {
+            "name": "clued-native617-admission-dispatch",
+            "if": "needs.admission-gate.outputs.admitted == 'true' && (github.ref == 'refs/heads/main')",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "trust-internal",
+              "handover-native-control-once"
+            ],
+            "timeout-minutes": 5,
+            "environment": "clued-admission",
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "ref": "${{ github.event.repository.default_branch || 'main' }}",
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Refuse until independent Native E1 qualification",
+                "run": "node scripts/ci/clued-handover-native-entry.mjs --check"
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "22"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "name": "Verify the work claim with Clued",
+                "env": {
+                  "ADMIT_WORKFLOW": "${{ inputs.workflow }}",
+                  "ADMIT_REF": "${{ inputs.ref }}",
+                  "ADMIT_CLAIM_ID": "${{ inputs.claim_id }}",
+                  "ADMIT_SCOPE": "${{ inputs.scope }}",
+                  "CLUED_DEFAULT_BRANCH": "${{ github.event.repository.default_branch }}",
+                  "CLUED_CONTEXT_READ_TOKEN": "${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}",
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "run": "node scripts/ci/clued-work-admission.mjs --mode dispatch-admit"
+              },
+              {
+                "name": "Export the closed local natural R9 packet",
+                "if": "${{ always() }}",
+                "run": "node scripts/ci/merge-admission-source-producer.mjs --export admission"
+              },
+              {
+                "name": "Preserve natural R9 source observations",
+                "if": "${{ always() }}",
+                "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                "with": {
+                  "name": "clued-r9-natural-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
+                  "path": ".clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json",
+                  "if-no-files-found": "warn",
+                  "retention-days": 90
+                }
+              }
+            ],
+            "needs": "admission-gate"
+          }
+        }
+      ]
+    },
+    {
+      "file": ".github/workflows/clued-handover-external-qualification.yml",
+      "workflow_blob": "689a1c5fcdbefa5353715f55e39c0fc08a9f5230",
+      "roles": [
+        {
+          "job_id": "qualify",
+          "definition_sha256": "a77530f06f94f08370d3fe759d31042687f4f34430d60849f520a2b0526d2ef9",
+          "definition": {
+            "name": "clued-handover-external2",
+            "needs": "admission-gate",
+            "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'pull_request' &&\n  github.event.pull_request.head.repo.full_name == github.repository &&\n  github.actor_id == '52366662' && github.triggering_actor == github.repository_owner) ||\n (github.event_name == 'workflow_dispatch' &&\n  github.ref == format('refs/heads/{0}', github.event.repository.default_branch)))",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "trust-internal",
+              "handover-native-task617-once"
+            ],
+            "timeout-minutes": 25,
+            "environment": "${{ github.event_name == 'workflow_dispatch' && 'clued-admission' || 'clued-handover-source-only' }}",
+            "env": {
+              "QUALIFICATION_PHASE": "${{ inputs.phase }}",
+              "QUALIFICATION_IDLE_RUN_ID": "${{ inputs.idle_run_id }}",
+              "QUALIFICATION_OPERATOR_MODE": "${{ github.event_name == 'workflow_dispatch' && inputs.phase == 'register' && 'register-empty-disposable' || '' }}",
+              "QUALIFICATION_PUBLISHER_RUN_ID": "${{ inputs.publisher_run_id }}",
+              "CLUED_HANDOVER_ACCEPTANCE_SHA256": "${{ vars.CLUED_HANDOVER_ACCEPTANCE_SHA256 }}"
+            },
+            "permissions": {
+              "contents": "read",
+              "actions": "write",
+              "checks": "read",
+              "pull-requests": "read"
+            },
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "ref": "${{ github.event.pull_request.head.sha || github.event.repository.default_branch }}",
+                  "fetch-depth": 0,
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Refuse until independent Native E1 qualification",
+                "run": "node scripts/ci/clued-handover-native-entry.mjs --check"
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "name": "Verify declared Source path before dependencies",
+                "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelif [ \"$GITHUB_EVENT_NAME\" = workflow_dispatch ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --accepted-check\nelse\n  exit 1\nfi\n"
+              },
+              {
+                "name": "Prepare declared Source runtime",
+                "env": {
+                  "ONNXRUNTIME_NODE_INSTALL": "skip"
+                },
+                "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelse\n  npm ci --prefix apps/clued-cloud\nfi\n"
+              },
+              {
+                "name": "Revalidate exact Source after runtime preparation",
+                "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelse\n  node scripts/ci/clued-handover-external-source-check.mjs --accepted-check\nfi\n"
+              },
+              {
+                "name": "Execute declared source-only or actual External2 path",
+                "env": {
+                  "GITHUB_TOKEN": "${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && github.token || '' }}",
+                  "CLUED_ADMISSION_APP_ID": "${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && secrets.CLUED_ADMISSION_APP_ID || '' }}",
+                  "CLUED_ADMISSION_APP_PRIVATE_KEY": "${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && secrets.CLUED_ADMISSION_APP_KEY || '' }}",
+                  "QUALIFICATION_DISPOSABLE_PG_URL": "${{ github.event_name == 'workflow_dispatch' && secrets.CLUED_HANDOVER_DISPOSABLE_PG_URL || '' }}",
+                  "QUALIFICATION_TEST_CI_PROOF": "${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && secrets.CLUED_HANDOVER_TEST_CI_PROOF || '' }}"
+                },
+                "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelif [ \"$QUALIFICATION_PHASE\" = register ]; then\n  node scripts/ci/clued-handover-external-register.mjs\nelse\n  node scripts/ci/clued-handover-external-driver.mjs --execute\nfi\n"
+              },
+              {
+                "name": "Preserve secret-free actual qualification evidence",
+                "if": "${{ always() && github.event_name == 'workflow_dispatch' }}",
+                "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                "with": {
+                  "name": "clued-disposable-handover-${{ github.run_id }}-${{ github.run_attempt }}",
+                  "path": "${{ runner.temp }}/clued-handover-evidence/*.json",
+                  "if-no-files-found": "error",
+                  "retention-days": 30
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "file": ".github/workflows/clued-handover-disposable-idle.yml",
+      "workflow_blob": "97c39730ce75f2ea2427c9fa3845f9df32e998f8",
+      "roles": [
+        {
+          "job_id": "disposable-idle",
+          "definition_sha256": "d6dce50d38f3a75a290776243f8065ad69cbfd4fa68327f75a8ce3055965fd3d",
+          "definition": {
+            "name": "disposable-idle",
+            "needs": "admission-gate",
+            "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'pull_request' &&\n  github.event.pull_request.head.repo.full_name == github.repository &&\n  github.actor_id == '52366662' && github.triggering_actor == github.repository_owner) ||\n (github.event_name == 'workflow_dispatch' &&\n  startsWith(github.ref, 'refs/heads/clued-handover-disposable-')))",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "trust-internal",
+              "handover-native-task617-once"
+            ],
+            "timeout-minutes": 45,
+            "environment": "clued-handover-source-only",
+            "permissions": {
+              "contents": "read"
+            },
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "ref": "${{ github.event.pull_request.head.sha || github.ref }}",
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Refuse until independent Native E1 qualification",
+                "run": "node scripts/ci/clued-handover-native-entry.mjs --check"
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "name": "Bounded idle process to prove real provider cancellation",
+                "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelse\n  sleep 2400\nfi\n"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
 }

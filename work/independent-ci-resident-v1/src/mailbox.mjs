@@ -7,20 +7,48 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { CODE, HEX40, HEX64, UUID, canonicalJson, check, exactKeys, isoNow, parseBoundedJson } from './canonical.mjs';
-import { ensureDir, exists, readBounded, writeNew } from './store.mjs';
+import { TEMP_PREFIX, ensureDir, exists, nonce, readBounded, sweepTemp, writeNew, writeNewAtomic } from './store.mjs';
 
 export const REQUEST_CONTRACT = 'clued.independent-ci.resident-companion-request/1';
-export const RESPONSE_CONTRACT = 'clued.independent-ci.resident-companion-response/1';
+// /2 (DESIGN §24, Task 8e1f07d3): every answer also says what the companion's job host found about the children of this
+// request: jobTree null (each child ended on its own and its job was drained, or no child started at all), 'zero' (a child's
+// job had to be ended - it outlived the limit, or the host reported a failure after it started - and no process of it was
+// left) or 'unconfirmed' (the host could not show that, including a leftover not drained or no host report). A fact for the
+// record only; no proof of either host rests on the companion's own tree.
+// /3 (DESIGN §32, Task 25851665): also `memory`, the facts of a memory-ready answer ({ order, blocks }: the hv_sock ring order and the
+// free blocks of at least that order over all zones), null in every other answer. Same practice as /2: the companion and the
+// service come from one package and are installed together.
+// /4 (DESIGN §35, Task 4aedda54): also `prune`, the facts of an archive-prune answer (the Linux spool's retention pass: what
+// was deleted, what each class keeps, what the Owner's keep list protects, and why a pass stopped or was refused), null in
+// every other answer. Same practice: one package, installed together.
+export const RESPONSE_CONTRACT = 'clued.independent-ci.resident-companion-response/4';
+export const JOB_TREES = Object.freeze(['zero', 'unconfirmed']);
 export const HEARTBEAT_CONTRACT = 'clued.independent-ci.resident-companion-heartbeat/1';
 // Owner abort (DESIGN §6.5): the service asks the companion to stop working on ONE pending request (today only the
 // bridge pump of a stage being stopped). Create-only <requestId>.cancel.json next to the request; pending() never
 // lists it as a request. The companion only stops what it does for that request; it never stops or kills a unit.
+// DESIGN §26 adds two reasons, both written and read: stage-ended (the Windows stage ended without success while its pump
+// had not answered yet) and heartbeat-lost (the companion's heartbeat stopped while the stage ran). The companion treats
+// every reason the same way (COMPANION_PUMP_CANCELLED); only the ledger's 80-owner-abort makes an Owner abort.
 export const CANCEL_CONTRACT = 'clued.independent-ci.resident-companion-cancel/1';
-export const CANCEL_REASONS = Object.freeze(['owner-abort']);
+export const CANCEL_REASONS = Object.freeze(['owner-abort', 'stage-ended', 'heartbeat-lost']);
+// One pump per relay-stage request (DESIGN §26.5; r3 implementation review MINOR 1): the companion's first pump of a request
+// creates <requestId>.pump.json in responses/ (create-only). A companion restarted while that pump ran finds it and starts no
+// second one: no second issue transfer, no second worker start. pending() and the hint reads never list it.
+export const PUMP_MARK_CONTRACT = 'clued.independent-ci.resident-companion-pump-mark/1';
 export const BATCH_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/;
 const REASON = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const ARCHIVE_DIR = /^(failed|archive)-[0-9a-z-]{1,120}$/;
-export const KINDS = Object.freeze(['build-bundle', 'prepare-workspaces', 'relay-stage', 'archive-linux', 'linux-quiescence', 'check-refs', 'archive-usage', 'pr-head']);
+// The retention pass's archive names (retention.mjs#ARCHIVE_NAME).
+const PRUNE_NAME = /^(archive|completed|failed)-[0-9A-Za-z-]{1,90}$/;
+export const KINDS = Object.freeze(['build-bundle', 'prepare-workspaces', 'relay-stage', 'archive-linux', 'linux-quiescence', 'check-refs', 'archive-usage', 'pr-head', 'memory-ready',
+  'archive-prune', 'rebuild-bundle']);
+// rebuild-bundle (Task 4012c1b9, DESIGN §37): the batch's second and last bundle (build-bundle.ps1 -Rebundle), asked only for a
+// batch resumed from parking point A, right before its workspace. Its answer can only let the batch go on or end it cleanly.
+// archive-prune (DESIGN §35): one retention pass of the Linux spool by the root tool, asked only between batches with no open
+// batch and a fresh heartbeat. Its answer is a record for the receipt; it never admits or publishes anything.
+// memory-ready (DESIGN §32): one read of the VM's hv_sock memory facts before a scanner stage. Its answer can only delay or
+// refuse that stage cleanly; it never admits or publishes anything.
 // pr-head (resident quota redesign phase 2, step 1: design v0.5 §4.2): one live read of a PR (state and head) over the
 // Owner's own gh login, for the run queue's supersession and falsification checks. Its answer can only stop a batch or
 // re-queue a commit; it never admits anything (stage 1 does).
@@ -44,6 +72,9 @@ const REQUEST_FIELDS = {
   'check-refs': ['batchId'],
   'archive-usage': ['batchId'],
   'pr-head': ['batchId', 'pr'],
+  'memory-ready': ['batchId'],
+  'archive-prune': ['batchId'],
+  'rebuild-bundle': ['batchId'],
 };
 
 export function validateRequest(v) {
@@ -59,8 +90,32 @@ export function validateRequest(v) {
 }
 
 const PROOF_KEYS = ['linuxUnitsInactive', 'containersZero'];
+const count = n => Number.isSafeInteger(n) && n >= 0;
+const codeOrNull = c => c === null || (typeof c === 'string' && CODE.test(c));
+// The exact shape of an archive-prune answer's facts (clued-ci-resident-linux archive-prune), at most 16 deletions per pass.
+export function validatePrune(p) {
+  const code = 'MAILBOX_RESPONSE_PRUNE_REFUSED';
+  exactKeys(p, ['rule', 'refused', 'classes', 'protected', 'deferred', 'deleted', 'deletedBytes', 'stopped'], code);
+  exactKeys(p.rule, ['classBudgetBytes', 'minKeepPerClass', 'maxDeletesPerPass'], code);
+  check(Object.values(p.rule).every(count) && codeOrNull(p.refused) && count(p.deferred) && count(p.deletedBytes), code);
+  check(Array.isArray(p.deleted) && p.deleted.length <= 16, code);
+  for (const d of p.deleted) { exactKeys(d, ['name', 'class', 'bytes'], code); check(PRUNE_NAME.test(d.name) && ['success', 'failure'].includes(d.class) && count(d.bytes), code); }
+  check(p.deletedBytes === p.deleted.reduce((a, d) => a + d.bytes, 0), code);
+  if (p.classes !== null) {
+    exactKeys(p.classes, ['success', 'failure'], code);
+    for (const c of Object.values(p.classes)) {
+      exactKeys(c, ['directories', 'bytes', 'deleteDirectories', 'deleteBytes', 'refused'], code);
+      check(count(c.directories) && count(c.bytes) && count(c.deleteDirectories) && count(c.deleteBytes) && codeOrNull(c.refused), code);
+    }
+  }
+  check(p.protected === null || (exactKeys(p.protected, ['directories', 'bytes', 'complete'], code), count(p.protected.directories) && count(p.protected.bytes) && typeof p.protected.complete === 'boolean'), code);
+  check(p.stopped === null || (exactKeys(p.stopped, ['name', 'code', 'partial'], code), PRUNE_NAME.test(p.stopped.name) && CODE.test(p.stopped.code) && typeof p.stopped.partial === 'boolean'), code);
+  check(p.refused === null || (p.classes === null && p.deleted.length === 0), code);
+  return p;
+}
+
 export function validateResponse(v, request) {
-  exactKeys(v, ['contract', 'requestId', 'kind', 'ok', 'code', 'proof', 'directory', 'verified', 'usage', 'pull', 'observedAt'], 'MAILBOX_RESPONSE_KEYS_REFUSED');
+  exactKeys(v, ['contract', 'requestId', 'kind', 'ok', 'code', 'proof', 'directory', 'verified', 'usage', 'pull', 'jobTree', 'memory', 'prune', 'observedAt'], 'MAILBOX_RESPONSE_KEYS_REFUSED');
   check(v.contract === RESPONSE_CONTRACT && v.requestId === request.requestId && v.kind === request.kind, 'MAILBOX_RESPONSE_IDENTITY_REFUSED');
   check(typeof v.ok === 'boolean' && (v.code === null || (typeof v.code === 'string' && CODE.test(v.code))), 'MAILBOX_RESPONSE_STATUS_REFUSED');
   check(v.proof === null || (exactKeys(v.proof, PROOF_KEYS, 'MAILBOX_RESPONSE_PROOF_REFUSED'), PROOF_KEYS.every(k => typeof v.proof[k] === 'boolean')), 'MAILBOX_RESPONSE_PROOF_REFUSED');
@@ -69,8 +124,34 @@ export function validateResponse(v, request) {
   check(v.usage === null || (exactKeys(v.usage, ['bytes', 'directories'], 'MAILBOX_RESPONSE_USAGE_REFUSED'), Number.isSafeInteger(v.usage.bytes) && v.usage.bytes >= 0 && Number.isSafeInteger(v.usage.directories) && v.usage.directories >= 0), 'MAILBOX_RESPONSE_USAGE_REFUSED');
   check(v.pull === null || (request.kind === 'pr-head' && (exactKeys(v.pull, ['number', 'state', 'headSha'], 'MAILBOX_RESPONSE_PULL_REFUSED'),
     v.pull.number === request.pr && PULL_STATES.includes(v.pull.state) && HEX40.test(v.pull.headSha ?? ''))), 'MAILBOX_RESPONSE_PULL_REFUSED');
+  check(v.jobTree === null || JOB_TREES.includes(v.jobTree), 'MAILBOX_RESPONSE_JOB_TREE_REFUSED');
+  check(v.memory === null || (request.kind === 'memory-ready' && (exactKeys(v.memory, ['order', 'blocks'], 'MAILBOX_RESPONSE_MEMORY_REFUSED'),
+    Number.isSafeInteger(v.memory.order) && v.memory.order >= 0 && v.memory.order <= 10 && Number.isSafeInteger(v.memory.blocks) && v.memory.blocks >= 0)), 'MAILBOX_RESPONSE_MEMORY_REFUSED');
+  check(v.prune === null || (request.kind === 'archive-prune' && validatePrune(v.prune)), 'MAILBOX_RESPONSE_PRUNE_REFUSED');
   return v;
 }
+
+// The mailbox writers publish a file whole (store.mjs#writeNewAtomic: a temporary name, then one rename; DESIGN §31), so a reader
+// finds a file complete or not at all. Before that, writeNew created a mailbox file before it wrote it, so the other side could
+// find the file empty, growing, or holding only a prefix of its JSON (2026-10-23 10:45:42Z: a verified archive-linux answer
+// read so was refused and HALTed batch 523849a6). The readers keep treating such a file as not there yet - a writer of an
+// earlier version may still be running during a reinstall: null, and the next poll reads it again; one still unfinished at the
+// request's deadline is no answer. A finished file is refused, as before, for its type, links, identity, size and exact shape.
+const UNFINISHED = new Set(['empty', 'size-changed', 'utf8', 'json']);
+async function readFinishedBoth(file, maximum, code) {
+  try {
+    const bytes = await readBounded(file, maximum, code);
+    return { bytes, value: parseBoundedJson(bytes, maximum, code) };
+  } catch (error) {
+    if (error.code === code && UNFINISHED.has(error.detail)) return null;
+    throw error;
+  }
+}
+async function readFinished(file, maximum, code) {
+  return (await readFinishedBoth(file, maximum, code))?.value ?? null;
+}
+// How many of the newest hint files latestHint looks at when the newest is unfinished.
+export const HINT_LOOKBACK = 3;
 
 export class Mailbox {
   constructor(root, clock) {
@@ -85,6 +166,9 @@ export class Mailbox {
     const m = new Mailbox(root, clock);
     await ensureDir(m.requests);
     await ensureDir(m.responses);
+    // Temporary files of a write that a crash cut short (DESIGN §31): each side can delete only in the directory it writes.
+    await sweepTemp(m.requests);
+    await sweepTemp(m.responses);
     return m;
   }
 
@@ -92,14 +176,15 @@ export class Mailbox {
   async send(kind, fields, timeoutMs) {
     const now = this.clock();
     const request = validateRequest({ contract: REQUEST_CONTRACT, requestId: randomUUID(), kind, createdAt: new Date(now).toISOString(), deadline: new Date(now + timeoutMs).toISOString(), ...fields });
-    await writeNew(path.join(this.requests, `${request.requestId}.json`), request);
+    await writeNewAtomic(path.join(this.requests, `${request.requestId}.json`), request);
     return request;
   }
 
   async poll(request) {
     const file = path.join(this.responses, `${request.requestId}.json`);
     if (!(await exists(file))) return null;
-    return validateResponse(parseBoundedJson(await readBounded(file, 4096, 'MAILBOX_RESPONSE_REFUSED'), 4096, 'MAILBOX_RESPONSE_REFUSED'), request);
+    const value = await readFinished(file, 4096, 'MAILBOX_RESPONSE_REFUSED');
+    return value === null ? null : validateResponse(value, request);
   }
 
   async await(request, sleep, pollMs = 500) {
@@ -115,7 +200,7 @@ export class Mailbox {
   async cancel(request, reason) {
     check(UUID.test(request?.requestId ?? '') && KINDS.includes(request.kind) && CANCEL_REASONS.includes(reason), 'MAILBOX_CANCEL_REFUSED');
     try {
-      await writeNew(path.join(this.requests, `${request.requestId}.cancel.json`), { contract: CANCEL_CONTRACT, requestId: request.requestId, kind: request.kind, reason, at: isoNow(this.clock) });
+      await writeNewAtomic(path.join(this.requests, `${request.requestId}.cancel.json`), { contract: CANCEL_CONTRACT, requestId: request.requestId, kind: request.kind, reason, at: isoNow(this.clock) });
     } catch (error) {
       if (error.code !== 'CREATE_ONLY_TARGET_EXISTS') throw error;
     }
@@ -142,7 +227,20 @@ export class Mailbox {
     } catch { return null; }
   }
 
-  // Companion side.
+  // Companion side: true for the first pump of this request, false when one already began (its mark exists). A mark that
+  // cannot be written throws: no pump starts without one. The one mailbox file that stays with writeNew (DESIGN §31): the
+  // exclusive create IS the claim two companions would contend for, and nobody reads its bytes (only whether it exists).
+  async claimPump(request) {
+    try {
+      await writeNew(path.join(this.responses, `${request.requestId}.pump.json`), { contract: PUMP_MARK_CONTRACT, requestId: request.requestId, at: isoNow(this.clock) });
+      return true;
+    } catch (error) {
+      if (error.code === 'CREATE_ONLY_TARGET_EXISTS') return false;
+      throw error;
+    }
+  }
+
+  // Companion side. A request the service is still writing is left out (the next pass reads it again), never refused.
   async pending() {
     const out = [];
     for (const name of (await fs.readdir(this.requests)).sort()) {
@@ -150,7 +248,8 @@ export class Mailbox {
       const id = name.slice(0, 36);
       if (await exists(path.join(this.responses, name))) continue;
       try {
-        out.push(validateRequest(parseBoundedJson(await readBounded(path.join(this.requests, name), 2048, 'MAILBOX_REQUEST_REFUSED'), 2048, 'MAILBOX_REQUEST_REFUSED')));
+        const value = await readFinished(path.join(this.requests, name), 2048, 'MAILBOX_REQUEST_REFUSED');
+        if (value !== null) out.push(validateRequest(value));
       } catch { out.push({ requestId: id, refused: true }); }
     }
     // Oldest first by the service's own createdAt, not by the random request id.
@@ -158,8 +257,8 @@ export class Mailbox {
   }
 
   async respond(request, fields) {
-    const response = validateResponse({ contract: RESPONSE_CONTRACT, requestId: request.requestId, kind: request.kind, ok: false, code: null, proof: null, directory: null, verified: null, usage: null, pull: null, observedAt: isoNow(this.clock), ...fields }, request);
-    await writeNew(path.join(this.responses, `${request.requestId}.json`), response);
+    const response = validateResponse({ contract: RESPONSE_CONTRACT, requestId: request.requestId, kind: request.kind, ok: false, code: null, proof: null, directory: null, verified: null, usage: null, pull: null, jobTree: null, memory: null, prune: null, observedAt: isoNow(this.clock), ...fields }, request);
+    await writeNewAtomic(path.join(this.responses, `${request.requestId}.json`), response);
     return response;
   }
 
@@ -173,22 +272,43 @@ export class Mailbox {
     const next = (seqs.length ? Math.max(...seqs) : 0) + 1;
     check(next <= 999_999, 'HOSTED_HINT_SEQUENCE_EXHAUSTED');
     const file = path.join(this.responses, `${prefix}${String(next).padStart(6, '0')}.json`);
-    await writeNew(file, record);
+    await writeNewAtomic(file, record);
     return file;
   }
 
-  // Service side: the newest hint bytes for this PR head, or null. Bounded read; the caller parses.
+  // Service side: the newest COMPLETE hint's bytes for this PR head, or null. Bounded read; the caller parses. A hint file that
+  // is still being written (empty, or a prefix of its JSON: a companion of before DESIGN §31, which created the file before it
+  // wrote it) is not there yet: the previous complete hint stands, and the next call reads the new one. Looking at an older
+  // observation of the same head for a moment only delays the scheduling hint by one tick; a hint is never authority. A prefix
+  // of a JSON object is itself not JSON, so a newest file that is not JSON cannot be told from one still being written (or from
+  // garbage) and is skipped the same way: the older complete hint stands, where it used to reach parseHint and be recorded as
+  // hintRefused. A file that is oversize, a link or has a second name is still refused; complete JSON of the wrong shape is
+  // returned for parseHint to refuse (DESIGN §31.3; review of §31, NIT-1).
   async latestHint(pr, headSha) {
     check(Number.isSafeInteger(pr) && pr > 0 && HEX40.test(headSha ?? ''), 'HOSTED_HINT_SUBJECT_INVALID');
     const prefix = hintPrefix(pr, headSha);
     const names = (await fs.readdir(this.responses)).filter(n => n.startsWith(prefix) && HINT_FILE.test(n)).sort();
-    if (names.length === 0) return null;
-    return readBounded(path.join(this.responses, names[names.length - 1]), HINT_FILE_MAX_BYTES, 'HOSTED_HINT_REFUSED');
+    for (const name of names.slice(-HINT_LOOKBACK).reverse()) {
+      const read = await readFinishedBoth(path.join(this.responses, name), HINT_FILE_MAX_BYTES, 'HOSTED_HINT_REFUSED');
+      if (read !== null) return read.bytes;
+    }
+    return null;
   }
 
+  // One beat at a time (DESIGN §26: the companion's own timer and its step() both beat): a beat asked for while one is
+  // being written is that beat, so two never share the temporary file.
   async beat() {
-    const tmp = `${this.heartbeatFile}.${process.pid}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify({ contract: HEARTBEAT_CONTRACT, at: this.clock() }));
-    await fs.rename(tmp, this.heartbeatFile); // The heartbeat is a liveness hint, not evidence.
+    if (this.beating) return this.beating;
+    this.beating = (async () => {
+      const tmp = path.join(this.responses, `${TEMP_PREFIX}${nonce()}-heartbeat.json`); // swept like every other temporary name
+      try {
+        await fs.writeFile(tmp, JSON.stringify({ contract: HEARTBEAT_CONTRACT, at: this.clock() }));
+        await fs.rename(tmp, this.heartbeatFile); // The heartbeat is a liveness hint, not evidence.
+      } catch (error) {
+        await fs.unlink(tmp).catch(() => {});
+        throw error;
+      }
+    })();
+    try { await this.beating; } finally { this.beating = null; }
   }
 }

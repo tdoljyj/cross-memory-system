@@ -8,6 +8,10 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { canonical } from '../proof.mjs';
 import { validateJobV2, sameBatchV2, CONTROL_ROLES_V2 } from '../job-v2.mjs';
+import { validateTrainRun } from './train-run.mjs';
+import { validateRoleProbeRun } from './role-probe-run.mjs';
+import { validateRevocationRun, validateRevocationFacts } from './revocation-run.mjs';
+import { validateTrainFacts } from '../independent-control-checks-v2/train-facts.mjs';
 import { hash } from './prepare-record.mjs';
 import { validateRelayPlanRows } from '../hosted-relay-v1/relay-plan.mjs';
 import { sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2 } from '../admission-facts-v2.mjs';
@@ -35,6 +39,8 @@ async function readStageFile(dir, name, max) {
 }
 
 // entryRole: the role the calling entry implements. recordDocs: held record bytes (held-source v4).
+const trainFactsOrNull = f => { try { return validateTrainFacts(f); } catch { return null; } };
+
 export async function loadStageInputs({ nonce, configSha256, entryRole, recordDocs, stageRoot = WIN_STAGE, now = Date.now(), identity = null }) {
   const dir = path.join(stageRoot, nonce);
   const st = await fs.lstat(dir);
@@ -47,11 +53,32 @@ export async function loadStageInputs({ nonce, configSha256, entryRole, recordDo
   const record = validateRecordV2(recordDocs, { now, identity });
   check(plan.acceptanceSha256 === record.hashes.acceptanceSha256 && plan.sourceManifestSha256 === record.hashes.sourceManifestSha256
     && plan.installationSha256 === record.hashes.installationSha256 && plan.runtimeConfigPinSha256 === record.hashes.runtimeConfigPinSha256
-    && plan.nodeSha256 === record.config.controllerNodeSha256, 'INSTALLED_RECORD_BINDING_CHANGED');
+    && plan.nodeSha256 === record.config.controllerNodeSha256 && plan.nodeProfileSha256 === hash(record.accepted.node), 'INSTALLED_RECORD_BINDING_CHANGED');
   const jobsBytes = await readStageFile(dir, 'jobs.json', 65536);
   check(hash(jobsBytes) === plan.jobSha256, 'EXACT_SELECTED_JOB_PLAN_PIN_REQUIRED');
   const jobs = JSON.parse(jobsBytes.toString('utf8'));
   check(Array.isArray(jobs) && jobs.length > 0 && jobs.length <= row.jobRoles.length && jobsBytes.toString('utf8') === canonical(jobs), 'EXACT_STAGE_JOBS_REQUIRED');
+  if (row.kind === 'train') {
+    // Stage 10: exactly one train run of this installation (train-run.mjs), for the train-maintenance entry only.
+    check(entryRole === 'train-maintenance' && jobs.length === 1, 'EXACT_STAGE_JOBS_REQUIRED');
+    try { validateTrainRun(jobs[0]); } catch { fail('EXACT_STAGE_JOBS_REQUIRED'); }
+    check(jobs[0].repo === record.config.repository && jobs[0].sourceManifestSha256 === record.config.sourceManifestSha256 && jobs[0].runId === plan.batchId, 'EXACT_STAGE_JOBS_REQUIRED');
+    return Object.freeze({ nonce, dir, plan, row, jobs, resultEnvelope: null, record });
+  }
+  if (row.kind === 'role-probe') {
+    check(entryRole === 'role-probe' && jobs.length === 1, 'EXACT_STAGE_JOBS_REQUIRED');
+    try { validateRoleProbeRun(jobs[0]); } catch { fail('EXACT_STAGE_JOBS_REQUIRED'); }
+    check(jobs[0].repo === record.config.repository && jobs[0].sourceManifestSha256 === record.config.sourceManifestSha256
+      && jobs[0].nodeProfileSha256 === plan.nodeProfileSha256 && jobs[0].runId === plan.batchId, 'EXACT_STAGE_JOBS_REQUIRED');
+    return Object.freeze({ nonce, dir, plan, row, jobs, resultEnvelope: null, record });
+  }
+  if (row.kind === 'revocation-maintenance') {
+    check(entryRole === 'revocation-maintenance' && jobs.length === 1, 'EXACT_STAGE_JOBS_REQUIRED');
+    try { validateRevocationRun(jobs[0]); } catch { fail('EXACT_STAGE_JOBS_REQUIRED'); }
+    check(jobs[0].repo === record.config.repository && jobs[0].sourceManifestSha256 === record.config.sourceManifestSha256
+      && jobs[0].nodeProfileSha256 === plan.nodeProfileSha256 && jobs[0].runId === plan.batchId, 'EXACT_STAGE_JOBS_REQUIRED');
+    return Object.freeze({ nonce, dir, plan, row, jobs, resultEnvelope: null, record });
+  }
   jobs.forEach(validateJobV2);
   check(stageJobRolesValid(row, jobs.map(j => j.role)) && jobs.every(j => j.repo === record.config.repository && j.sourceManifestSha256 === record.config.sourceManifestSha256 && sameBatchV2(j, jobs[0]))
     && (entryRole !== 'control-checks' || jobs.map(j => j.role).join('|') === CONTROL_ROLES_V2.join('|')), 'EXACT_STAGE_JOBS_REQUIRED');
@@ -73,8 +100,9 @@ export async function writeOutcome({ receiptsRoot = STATE_V2.receipts, nonce, pl
   const status = typeof r.status === 'string' && /^[A-Z][A-Z_]{1,60}$/.test(r.status) ? r.status : 'UNCERTAIN';
   const outcome = { contract: OUTCOME_CONTRACT, nonce, stage: plan?.stage ?? null, entryRole: plan?.entryRole ?? null, jobIds: Array.isArray(jobIds) ? jobIds : [],
     status, reason: typeof r.reason === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(r.reason) ? r.reason : null, sideEffects,
-    // Anything but a clean BLOCKED with zero side effects may have published.
-    mayHavePublished: !(status === 'BLOCKED' && sideEffects === 0), diagnostic: sanitizeAdmissionDiagnosticV2(r.admissionDiagnostic),
+    // Anything but a clean BLOCKED with zero side effects may have published. Stage 10 facts with zero side effects
+    // (shadow mode writes nothing to GitHub or KooYomi) are the other clean ending.
+    mayHavePublished: !((status === 'BLOCKED' || (plan?.entryRole === 'train-maintenance' && status === 'TRAIN_FACTS')) && sideEffects === 0), diagnostic: sanitizeAdmissionDiagnosticV2(r.admissionDiagnostic),
     // Resident quota redesign v0.6 §9 phase 1: the entry's own "safe to re-run" flag (only ever on a clean BLOCKED with
     // zero side effects) and the scheduling facts Native reported (ci_retry_after, merge-queue entry). The resident
     // releases a stage only on this flag, never by inferring it from a reason code.
@@ -82,6 +110,10 @@ export async function writeOutcome({ receiptsRoot = STATE_V2.receipts, nonce, pl
     // Stage R only: the per-role relay plan rows (hosted-relay-v1/relay-plan.mjs); a row set that does not
     // validate is written as an empty list, which the resident reads as "plan unconfirmed" (UNKNOWN).
     relay: plan?.entryRole === 'relay-publisher' ? (validateRelayPlanRows(r.relay) ?? []) : null,
+    // Stage 10 only: the train facts (train-facts.mjs); facts that do not validate are written as null, and the stage fact
+    // is then no success (stage-fact.mjs: STAGE_OUTCOME_MISSING).
+    train: plan?.entryRole === 'train-maintenance' ? trainFactsOrNull(r.train) : null,
+    ...(plan?.entryRole === 'revocation-maintenance' ? { revocation: (() => { try { return validateRevocationFacts(r.revocation); } catch { return null; } })() } : {}),
     at: new Date(clock()).toISOString() };
   await fs.mkdir(receiptsRoot, { recursive: true });
   const h = await fs.open(path.join(receiptsRoot, `outcome-${nonce}.json`), 'wx', 0o600);

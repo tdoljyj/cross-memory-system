@@ -1,0 +1,15 @@
+{
+  "contract": "clued.independent-ci.node-prep-profile/1",
+  "nodeName": "turing",
+  "hostname": "TURING",
+  "ownerSid": "S-1-5-21-1173730660-3877291096-655431861-1001",
+  "ownerProfileDirectory": "C:\\Users\\17531",
+  "controllerSid": "S-1-5-21-1173730660-3877291096-655431861-1015",
+  "runnerService": "actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02",
+  "wslDistribution": "Ubuntu-24.04",
+  "runnerPackage": {
+    "version": "2.337.0",
+    "fileName": "actions-runner-win-x64-2.337.0.zip",
+    "sha256": "1150692afa94e71f872017e254ea55b6eece1eece3fe7e3a6d4c93d0a1b85cfc"
+  }
+}

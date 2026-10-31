@@ -23,12 +23,18 @@
 // Phase 2, step 1 (design v0.5 §4.10): the run queue's view says where a PR stands: its place and an estimated start, a
 // wait or a back-off and when it is tried again, a stop and what makes it run again; the breaker; and the executor's
 // notices (a new trigger, a stopped row, the waits' budget, the daily batch limit, the breaker) become notifications.
+// Primary/standby C5 (DESIGN §23, node-duty.mjs): the context is the node's own, resident-queue/<node> (info only), written
+// only on the commits the node queued or ran, its text starting with a fixed duty word (当班, 双活停机, 停摆, 已交班) or a
+// result; duty texts are written again every DUTY_REFRESH_MS; a STANDBY writes reminders under resident-standby only.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
 import { STATUS_STALE_MS } from './status.mjs';
+import { withTrainLine } from './train.mjs';
+import { DEFAULT_NODE, DUTY_REFRESH_MS, NODE_NAME, NodeDuty, REFRESH_MAX_POSTS, STANDBY_CONTEXT, TAKEOVER_TIME_TEXT, freshMemory, nodeContext, pruneMemory, validMemory } from './node-duty.mjs';
 
-export const PR_STATUS_CONTEXT = 'resident-queue (info only)';
+// The context of a single node named DEFAULT_NODE (every node writes its own, node-duty.mjs#nodeContext).
+export const PR_STATUS_CONTEXT = nodeContext(DEFAULT_NODE);
 export const MAX_POSTS_PER_PASS = 20;
 export const MAX_TOASTS_PER_PASS = 5;
 export const WAIT_NOTIFY_MS = 3_600_000;
@@ -127,6 +133,8 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       case 'FAILED_CLEAN':
         if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'failure', description: 'main 已移动：请合入最新 main 并推新提交' };
         if (recent.code === 'TRAIN_TEST_MERGE_TREE_DIFFERS') return { state: 'failure', description: '试合并与测过的树不同，未发合并位：请推新提交（已通知 Owner）' };
+        // Primary/standby C4: App 5368905 had already published on this head (another node or install).
+        if (recent.code === 'HEAD_PUBLISHED_ON_GITHUB' || recent.code === 'ROLE_ALREADY_ON_GITHUB') return { state: 'failure', description: '这个提交已有检查，请推新提交' };
         return recent.retry === 'attempt2'
         ? { state: 'pending', description: clip(`暂时失败（${code}），将自动第二次尝试`) }
         : { state: 'failure', description: clip(`失败（${code}）：此提交不再运行，请推新提交`) };
@@ -154,7 +162,7 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
 // Pure: the notification events now (a stable key each; the reporter shows each key once).
 export function events({ status, statusError = false, now, pulls = [], startedAt = now, staleMs = STATUS_STALE_MS, collision = false }) {
   const out = [];
-  if (collision) out.push({ key: 'context-collision', title: 'PR 页面状态名与必需检查重名', body: `“${PR_STATUS_CONTEXT}”出现在 main 的必需检查里，已停止写 PR 页面状态。请检查 main 的规则。` });
+  if (collision) out.push({ key: 'context-collision', title: 'PR 页面状态名与必需检查重名', body: `“${typeof collision === 'string' ? collision : PR_STATUS_CONTEXT}”出现在 main 的必需检查里，已停止写 PR 页面状态。请检查 main 的规则。` });
   if (!status) {
     if (statusError && now - startedAt > staleMs) out.push({ key: 'status-unreadable', title: '读不到常驻执行器状态', body: 'state\\status.json 读不到或格式不对，执行器可能没有运行。' });
     return out;
@@ -170,6 +178,8 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
   for (const n of status.notices ?? []) {
     const head = n.headSha ? n.headSha.slice(0, 8) : '';
     switch (n.kind) {
+      case 'role-probe-connection': out.push({ key: `notice:${n.key}`, title: '节点角色连接授权已失效', body: '只读探测收到连接授权拒绝，可能已撤销、过期或不再适用。角色状态不确定；请检查连接与角色安排。此通知不启动或重试 CI。' }); break;
+      case 'role-probe-uncertain': out.push({ key: `notice:${n.key}`, title: '节点角色连续三次无法确认', body: '三次连续只读探测未确认角色。请检查网络、连接与 parking holder；不会据此切换节点模式或重跑已有提交。' }); break;
       case 'new-trigger': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 收到新触发`, body: `提交 ${head} 等待中的重试已提前，冷却 10 分钟后重新评估。` }); break;
       case 'stopped': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${n.code ?? '?'}）。请修正后推新提交。` }); break;
       case 'stage8-budget': out.push({ key: `notice:${n.key}`, title: '今日第 8 段重试额度已用完', body: '停靠批次的第 8 段重试今天已用完，明天继续。' }); break;
@@ -180,6 +190,12 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
       case 'batch-limit': out.push({ key: `notice:${n.key}`, title: '今日执行批次额度已满', body: '常驻执行器今天的执行批次已满，排队的 PR 明天继续，不会丢弃。' }); break;
       case 'queue-full': out.push({ key: `notice:${n.key}`, title: '常驻执行器排队表已满', body: '活着的排队行已达上限，新的 PR 暂不排队；排队的 PR 跑完或停住后再提议。' }); break;
       case 'breaker-open': out.push({ key: `notice:${n.key}`, title: '常驻执行器熔断', body: `连续出现环境故障（${n.code ?? '?'}），暂停开新批次${n.until ? `，约 ${hhmm(n.until)} 试跑一批` : ''}。` }); break;
+      // Status /7 (in-place upgrade channel, DESIGN §34): the versions of both sides and the upgrader's op.
+      case 'version-skew': out.push({ key: `notice:${n.key}`, title: 'Windows 与 Linux 两侧版本不一致', body: `Windows 第 ${status.versions?.generation ?? '?'} 代，Linux 第 ${status.versions?.linux?.generation ?? '?'} 代（UPGRADE_VERSION_SKEW）。已暂停接新批次，两侧恢复一致后自动解除。` }); break;
+      case 'upgrade-grant-pending': out.push({ key: `notice:${n.key}`, title: '常驻升级等待 Owner 批准', body: `请在页面批准本次升级${status.versions?.upgrade?.confirmUrl ? `：${status.versions.upgrade.confirmUrl}` : '（批准地址见 upgrade\\status.json）'}。` }); break;
+      case 'upgrade-deferred': out.push({ key: `notice:${n.key}`, title: '常驻升级已延后', body: `原因：${n.code ?? '?'}。升级代理稍后自动再试，没有改动任何文件。` }); break;
+      case 'upgrade-rolled-back': out.push({ key: `notice:${n.key}`, title: '常驻升级已回滚，执行器保持暂停', body: `升级未通过验证（${n.code ?? '?'}），已回到上一代。执行器保持暂停，请检查后由 Owner 恢复。` }); break;
+      case 'upgrade-rollback-failed': out.push({ key: `notice:${n.key}`, title: '常驻升级回滚失败，需要 Owner 处理', body: `回滚没有完成（${n.code ?? '?'}）。执行器保持暂停；请用管理员权限按 upgrade-apply.ps1 -Recover 处理。` }); break;
       default: break;
     }
   }
@@ -204,16 +220,21 @@ export function toastArgv(powershellExe, title, body) {
 // The reporter's own memory (the Owner's profile, never the resident's state): the last write per head, and which
 // notification keys were shown. Lost memory only means one more write or one more toast.
 export class LocalStore {
-  constructor(file, clock) { this.file = file; this.clock = clock; this.data = { contract: STORE_CONTRACT, posted: {}, notified: {} }; }
+  constructor(file, clock) { this.file = file; this.clock = clock; this.data = { contract: STORE_CONTRACT, posted: {}, notified: {}, node: freshMemory() }; }
   static async open(file, clock = Date.now) {
     const s = new LocalStore(file, clock);
     try {
       const v = JSON.parse(await fs.readFile(file, 'utf8'));
-      if (v?.contract === STORE_CONTRACT && v.posted && typeof v.posted === 'object' && v.notified && typeof v.notified === 'object') s.data = { contract: STORE_CONTRACT, posted: v.posted, notified: v.notified };
+      if (v?.contract === STORE_CONTRACT && v.posted && typeof v.posted === 'object' && v.notified && typeof v.notified === 'object') {
+        // The node memory (C5) is optional: a store written before it starts with a fresh one (one more check, no lock);
+        // a lock that does not have the shape stays a lock (node-duty.mjs#validMemory).
+        s.data = { contract: STORE_CONTRACT, posted: v.posted, notified: v.notified, node: validMemory(v.node, clock()) };
+      }
     } catch { /* fresh memory */ }
     return s;
   }
   prune() {
+    pruneMemory(this.data.node, this.clock());
     const cut = this.clock() - KEEP_MS;
     for (const bag of [this.data.posted, this.data.notified]) {
       for (const [k, v] of Object.entries(bag)) if (!(Date.parse(v?.at) > cut)) delete bag[k];
@@ -231,19 +252,32 @@ export class LocalStore {
 }
 
 export class PrStatusReporter {
-  // ports: { repo, ghExe, powershellExe, run(argv,{timeoutMs}), clock, store (LocalStore), prStatus (bool), notifications (bool) }
+  // ports: { repo, ghExe, powershellExe, run(argv,{timeoutMs}), clock, store (LocalStore), prStatus (bool), notifications (bool),
+  //   node (this node's name while status.json names none; default DEFAULT_NODE), writeRequest(value) (one file into the
+  //   resident's requests\, for the dual-active hold; without it no lock is held) }
   constructor(ports) {
     Object.assign(this, ports);
-    check(contextShapeSafe(PR_STATUS_CONTEXT), 'PR_STATUS_CONTEXT_UNSAFE');
+    this.node ??= DEFAULT_NODE;
+    check(NODE_NAME.test(this.node) && contextShapeSafe(nodeContext(this.node)) && contextShapeSafe(STANDBY_CONTEXT), 'PR_STATUS_CONTEXT_UNSAFE');
     this.required = null; this.requiredAt = 0; this.collision = false; this.startedAt = this.clock(); this.failed = new Map();
+    this.store.data.node ??= freshMemory();
+    // Every read the duty makes goes through call(): a stalled call ends the pass like any other.
+    this.duty = new NodeDuty({ repo: this.repo, ghExe: this.ghExe, run: (a, o) => this.call(a, o), clock: this.clock, memory: this.store.data.node, fallbackName: this.node,
+      writeRequest: this.writeRequest ?? null, timeoutMs: ADVISORY_TIMEOUT_MS, inBudget: () => this.inBudget(), staleMs: STATUS_STALE_MS });
   }
+
+  async call(argv, o) {
+    const r = await this.run(argv, o);
+    if (stalledCall(r)) this.stalled = true;
+    return r;
+  }
+  inBudget() { return !this.stalled && this.clock() - this.passStartedAt < PASS_BUDGET_MS; }
 
   // main's required status checks (rulesets), read with the Owner's gh login; null when unknown.
   async requiredContexts() {
     if (this.required && this.clock() - this.requiredAt < REQUIRED_CACHE_MS) return this.required;
-    const r = await this.run([this.ghExe, 'api', '--method', 'GET', '--paginate', `repos/${this.repo}/rules/branches/main`,
+    const r = await this.call([this.ghExe, 'api', '--method', 'GET', '--paginate', `repos/${this.repo}/rules/branches/main`,
       '--jq', '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context'], { timeoutMs: ADVISORY_TIMEOUT_MS });
-    if (stalledCall(r)) this.stalled = true;
     if (r.code !== 0) return null;
     const list = String(r.stdout).split(/\r?\n/).map(s => s.trim()).filter(Boolean);
     if (list.length === 0) return null; // main always requires checks: an empty answer is no answer
@@ -251,61 +285,121 @@ export class PrStatusReporter {
     return list;
   }
 
-  async post(headSha, want) {
-    check(HEX40.test(headSha) && ['pending', 'success', 'failure', 'error'].includes(want.state) && typeof want.description === 'string', 'PR_STATUS_INVALID');
-    const r = await this.run([this.ghExe, 'api', '--method', 'POST', `repos/${this.repo}/statuses/${headSha}`, '-f', `state=${want.state}`, '-f', `context=${PR_STATUS_CONTEXT}`,
-      '-f', `description=${want.description}`], { timeoutMs: ADVISORY_TIMEOUT_MS });
+  async post(headSha, want, context) {
+    check(HEX40.test(headSha) && ['pending', 'success', 'failure', 'error'].includes(want.state) && typeof want.description === 'string' && contextShapeSafe(context), 'PR_STATUS_INVALID');
+    const r = await this.call([this.ghExe, 'api', '--method', 'POST', `repos/${this.repo}/statuses/${headSha}`, '-f', `state=${want.state}`, '-f', `context=${context}`,
+      '-f', `description=${clip(want.description)}`], { timeoutMs: ADVISORY_TIMEOUT_MS });
+    return r.code === 0;
+  }
+
+  // A toast that never started keeps its key for the next pass. Shown, refused or still running (timed out): the key is
+  // used up, so a toast is never shown twice or retried every minute.
+  async toast(e, now) {
+    const r = await this.run(toastArgv(this.powershellExe, e.title, e.body), { timeoutMs: ADVISORY_TIMEOUT_MS });
+    if (r?.refused === 'RUNNER_BUSY_WITH_UNFINISHED_CHILD') { this.stalled = true; return false; }
+    this.store.data.notified[e.key] = { at: new Date(now).toISOString() };
+    delete this.store.data.node.toasts[e.key];
+    this.dirty = true;
     if (stalledCall(r)) this.stalled = true;
     return r.code === 0;
   }
 
-  // One pass: the PR page status of every open PR head the poller looked at, then the notifications.
+  // Up to MAX_TOASTS_PER_PASS toasts of `list`, each key once; returns how many were shown.
+  async showAll(list, now, shown) {
+    if (this.notifications === false) return shown;
+    for (const e of list) {
+      if (shown >= MAX_TOASTS_PER_PASS || !this.inBudget()) break;
+      if (this.store.data.notified[e.key]) { delete this.store.data.node.toasts[e.key]; continue; }
+      if (await this.toast(e, now)) shown += 1;
+      if (this.stalled) break;
+    }
+    return shown;
+  }
+
+  // One pass: the status notifications (local, never behind a slow GitHub), the node's duty (the take-over check and the
+  // dual-active lock) and its notifications, then the PR page status of every open PR head the poller looked at, then
+  // the duty's own writes (已交班, a restart, the STANDBY reminders).
   async pass({ pulls = [], status = null, statusError = false }) {
     const now = this.clock();
-    const inBudget = () => this.clock() - now < PASS_BUDGET_MS;
-    let posted = 0, toasts = 0;
+    this.passStartedAt = now;
     this.stalled = false;
+    let posted = 0;
     for (const [head, at] of this.failed) if (now - at >= POST_RETRY_MS) this.failed.delete(head);
-    if (this.notifications !== false) {
-      for (const e of events({ status, statusError, now, pulls, startedAt: this.startedAt, collision: this.collision })) {
-        if (toasts >= MAX_TOASTS_PER_PASS || !inBudget()) break;
-        if (this.store.data.notified[e.key]) continue;
-        const r = await this.run(toastArgv(this.powershellExe, e.title, e.body), { timeoutMs: ADVISORY_TIMEOUT_MS });
-        // A toast that never started keeps its key for the next pass. Shown, refused or still running (timed out): the
-        // key is used up, so a toast is never shown twice or retried every minute.
-        if (r?.refused === 'RUNNER_BUSY_WITH_UNFINISHED_CHILD') { this.stalled = true; break; }
-        this.store.data.notified[e.key] = { at: new Date(now).toISOString() };
-        this.dirty = true;
-        if (r.code === 0) toasts += 1;
-        if (stalledCall(r)) { this.stalled = true; break; }
-      }
-    }
-    if (this.prStatus !== false && pulls.length > 0 && !this.stalled) {
+    const memoryBefore = canonicalJson(this.store.data.node);
+    let toasts = await this.showAll(events({ status, statusError, now, pulls, startedAt: this.startedAt, collision: this.collision }), now, 0);
+    // A pass whose duty could not be worked out writes nothing on the PR page (never under a fallback name: review m1).
+    let prep = null;
+    if (!this.stalled) { try { prep = await this.duty.prepare({ status, pulls, now, posted: this.store.data.posted }); } catch { prep = null; } }
+    if (prep) toasts = await this.showAll(prep.events, now, toasts);
+    if (prep && this.prStatus !== false && pulls.length > 0 && !this.stalled) {
+      const context = prep.context;
       const required = await this.requiredContexts();
-      if (!this.stalled) this.collision = Array.isArray(required) && !contextFree(PR_STATUS_CONTEXT, required);
+      // Both contexts this node may write are checked against main's rules; either one there stops every write.
+      if (!this.stalled) this.collision = (Array.isArray(required) ? [context, STANDBY_CONTEXT].find(c => !contextFree(c, required)) : undefined) ?? false;
       if (Array.isArray(required) && !this.collision && !this.stalled) {
+        const described = new Set();
+        const write = async (headSha, want, ctx, key) => {
+          if (posted >= MAX_POSTS_PER_PASS || !this.inBudget() || this.failed.has(key)) return false;
+          const ok = await this.post(headSha, want, ctx);
+          if (ok) posted += 1; else if (!this.stalled) this.failed.set(key, now);
+          return ok;
+        };
+        // What was written per head under this node's context: dutyAt is the last 当班 or 双活停机 (what an 已交班 is owed
+        // for); n counts the writes (GitHub keeps at most 1000 per context and commit).
+        const remember = (headSha, want) => {
+          const last = this.store.data.posted[headSha];
+          const mine = last?.context === context;
+          this.store.data.posted[headSha] = { state: want.state, description: clip(want.description), at: new Date(now).toISOString(), context, kind: want.kind ?? null,
+            dutyAt: ['duty', 'dual'].includes(want.kind) ? new Date(now).toISOString() : (mine ? last.dutyAt ?? null : null), n: (mine ? last.n ?? 0 : 0) + 1 };
+        };
         for (const pull of pulls) {
-          if (posted >= MAX_POSTS_PER_PASS || !inBudget()) break;
-          const want = describe({ pull, status, now });
-          if (!want || this.failed.has(pull.headSha)) continue;
+          if (posted >= MAX_POSTS_PER_PASS || !this.inBudget()) break;
+          const want = this.duty.want(pull, status, now, withTrainLine(describe({ pull, status, now }), status?.train?.last ?? null, pull, now, DESCRIPTION_MAX));
+          if (!want) continue;
+          described.add(pull.headSha);
           const last = this.store.data.posted[pull.headSha];
-          if (want.weak && last) continue;
-          if (last && last.state === want.state && last.description === want.description) continue;
-          const ok = await this.post(pull.headSha, want);
-          if (ok) { this.store.data.posted[pull.headSha] = { state: want.state, description: want.description, at: new Date(now).toISOString() }; posted += 1; }
-          else if (!this.stalled) this.failed.set(pull.headSha, now);
+          const mine = last && last.context === context;
+          const same = mine && last.state === want.state && last.description === clip(want.description);
+          // A weak text never replaces another text; the same weak duty text is still refreshed (re-review).
+          if (want.weak && mine && !same) continue;
+          // NIT 4: a duty text is written again every DUTY_REFRESH_MS even when unchanged ("still alive" for the other node),
+          // up to REFRESH_MAX_POSTS writes per head.
+          const due = same && ['duty', 'dual', 'stalled'].includes(want.kind) && now - Date.parse(last.at) >= DUTY_REFRESH_MS && (last.n ?? 0) < REFRESH_MAX_POSTS;
+          if (same && !due) continue;
+          if (await write(pull.headSha, want, context, pull.headSha)) remember(pull.headSha, want);
           if (this.stalled) break;
         }
+        let extra = [];
+        if (!this.stalled) { try { extra = await this.duty.extra({ posted: this.store.data.posted, described, pulls, now }); } catch { extra = []; } }
+        for (const x of extra) {
+          const ok = !this.stalled && await write(x.headSha, x.want, x.context, `${x.context}|${x.headSha}`);
+          if (!ok) continue;
+          if (x.restart) this.duty.restartOwed?.delete(x.headSha);
+          if (x.context === context) remember(x.headSha, x.want);
+          if (x.handover) delete this.store.data.node.handover[x.headSha];
+          if (!x.remind) continue;
+          // §5.3: written once and shown once per (PR, head, reason); a toast that cannot be shown now is owed (m6).
+          this.store.data.node.reminded[x.remind.key] = new Date(now).toISOString();
+          const toast = { key: x.remind.key, title: `PR #${x.remind.pr}：当班节点没接手`, body: `${x.want.description}。${TAKEOVER_TIME_TEXT}` };
+          if (this.notifications !== false && !this.store.data.notified[toast.key]) {
+            this.store.data.node.toasts[toast.key] = { title: toast.title, body: toast.body, at: new Date(now).toISOString() };
+            toasts = await this.showAll([toast], now, toasts);
+          }
+        }
+        if (this.duty.restartOwed?.size === 0) this.duty.restarted = false;
       }
     }
+    if (canonicalJson(this.store.data.node) !== memoryBefore) this.dirty = true;
     if (posted > 0 || toasts > 0 || this.dirty) { try { await this.store.save(); this.dirty = false; } catch { this.dirty = true; } }
-    return { posted, toasts, collision: this.collision, stalled: this.stalled };
+    return { posted, toasts, collision: this.collision !== false, stalled: this.stalled };
   }
 }
 
-// companion.json "status" (optional): { prStatus, notifications } (both on unless set false).
+// companion.json "status" (optional): { prStatus, notifications, node } (both on unless set false; node: this node's name
+// while status.json names none, default DEFAULT_NODE).
 export function validateStatusConfig(s) {
-  if (s === undefined || s === null) return Object.freeze({ prStatus: true, notifications: true });
-  check(typeof s === 'object' && Object.keys(s).every(k => ['prStatus', 'notifications'].includes(k)) && Object.values(s).every(v => typeof v === 'boolean'), 'COMPANION_STATUS_CONFIG_INVALID');
-  return Object.freeze({ prStatus: s.prStatus !== false, notifications: s.notifications !== false });
+  if (s === undefined || s === null) return Object.freeze({ prStatus: true, notifications: true, node: DEFAULT_NODE });
+  check(typeof s === 'object' && Object.keys(s).every(k => ['prStatus', 'notifications', 'node'].includes(k))
+    && ['prStatus', 'notifications'].every(k => s[k] === undefined || typeof s[k] === 'boolean') && (s.node === undefined || NODE_NAME.test(s.node)), 'COMPANION_STATUS_CONFIG_INVALID');
+  return Object.freeze({ prStatus: s.prStatus !== false, notifications: s.notifications !== false, node: s.node ?? DEFAULT_NODE });
 }

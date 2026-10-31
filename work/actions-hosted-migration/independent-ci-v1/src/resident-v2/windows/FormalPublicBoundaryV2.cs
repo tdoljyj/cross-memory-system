@@ -27,18 +27,25 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
  public const string Root="C:\\ProgramData\\CluedIndependentCI",Resident=Root+"\\resident",Record=Resident+"\\record",StageRoot=Resident+"\\stage",SourceBase=Resident+"\\source";
  public const string StateV2=Root+"\\state\\v2",Receipts=StateV2+"\\receipts",Temp=StateV2+"\\temp";
  public const string Spool=Root+"\\formal-spool",Outgoing=Spool+"\\outgoing",Incoming=Spool+"\\incoming";
- public const string Node="C:\\Program Files\\nodejs\\node.exe";
- public const string Controller="S-1-5-21-1173730660-3877291096-655431861-1015";
- public const string OwnerUser="S-1-5-21-1173730660-3877291096-655431861-1001";
+ // The package's own pinned node (install-resident.ps1 runtime\node.exe = record controllerNodeSha256), never the
+ // machine's shared C:\Program Files\nodejs: every node runs exactly the node its package pins.
+ public const string Node=Resident+"\\runtime\\node.exe";
+ public static string Controller {get{return NodeProfileV2.Current.ControllerSid;}}
+ public static string OwnerUser {get{return NodeProfileV2.Current.OwnerSid;}}
  public const string ResidentSid="S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629";
  static readonly string[] Management={"S-1-5-18","S-1-5-32-544","S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"};
  const string P="work/actions-hosted-migration/independent-ci-v1/";
  // Stage 9 is stage R, the hosted relay (free-minutes design S19/S22): entry relay-publisher, a non-empty
  // ordered subset of its job roles (the relay candidates; contract-placement is never relayed).
  public const int RelayStage=9;
- public static readonly string[] StageRole={"work-admission","scanner-issuer","check-publisher","scanner-issuer","check-publisher","scanner-issuer","check-publisher","control-checks","relay-publisher"};
- public static readonly uint[] StageMilliseconds={900000,2700000,900000,1800000,900000,600000,900000,2700000,900000};
- public static readonly string[][] StageJobRoles={new[]{"work-admission"},new[]{"gitleaks"},new[]{"gitleaks"},new[]{"trivy"},new[]{"trivy"},new[]{"contract-placement"},new[]{"contract-placement"},new[]{"control-admission","control-merge-slot"},new[]{"gitleaks","trivy"}};
+ // Stage 10 (quota phase 2 step 3c-1, DESIGN §22.1): train maintenance, outside every batch. Its one job is a train run
+ // (train-run.mjs: contract clued.independent-ci.train-run/1), never a job of contract /3.
+ public const int TrainStage=10;
+ public const int RoleProbeStage=11;
+ public const int RevocationStage=12;
+ public static readonly string[] StageRole={"work-admission","scanner-issuer","check-publisher","scanner-issuer","check-publisher","scanner-issuer","check-publisher","control-checks","relay-publisher","train-maintenance","role-probe","revocation-maintenance"};
+ public static readonly uint[] StageMilliseconds={900000,2700000,900000,1800000,900000,600000,900000,2700000,900000,300000,60000,300000};
+ public static readonly string[][] StageJobRoles={new[]{"work-admission"},new[]{"gitleaks"},new[]{"gitleaks"},new[]{"trivy"},new[]{"trivy"},new[]{"contract-placement"},new[]{"contract-placement"},new[]{"control-admission","control-merge-slot"},new[]{"gitleaks","trivy"},new[]{"train-run"},new[]{"role-probe-run"},new[]{"revocation-maintenance-run"}};
  // The job roles a stage package may carry: exactly the row's, or (stage R) a non-empty ordered subset.
  public static string[] SelectedJobRoles(int stage,object[] jobs){
   if(stage<1||stage>StageRole.Length||jobs==null)Deny("EXACT_STAGE_JOBS_REQUIRED");string[] row=StageJobRoles[stage-1];
@@ -53,12 +60,15 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   if(role=="check-publisher")return P+"runtime/one-shot-v2.mjs";
   if(role=="control-checks")return P+"src/independent-control-checks-v2/startup.mjs";
   if(role=="relay-publisher")return P+"src/hosted-relay-v1/relay-entry-v2.mjs";
+  if(role=="train-maintenance")return P+"src/independent-control-checks-v2/train-maintenance.mjs";
+  if(role=="role-probe")return P+"src/resident-v2/role-probe-entry.mjs";
+  if(role=="revocation-maintenance")return P+"src/resident-v2/revocation-entry.mjs";
   Deny("FIXED_FORMAL_ENTRY_ROLE_REQUIRED");return null;
  }
  // Every v2 entry imports these; a record that does not pin them is not a Source v2 record.
  static readonly string[] CoreSource={"scripts/ci/clued-work-admission.mjs","config/merge-admission-policy.json",P+"src/proof.mjs",P+"src/job-v2.mjs",P+"src/proof-v2.mjs",
   P+"src/full-admission-v2.mjs",P+"src/batch-claim-v2.mjs",P+"src/effect-journal.mjs",P+"src/github.mjs",P+"src/resident-v2/layout.mjs",P+"src/resident-v2/prepare-record.mjs",
-  P+"src/resident-v2/record.mjs",P+"src/resident-v2/stage-package.mjs",P+"src/resident-v2/stage-inputs.mjs",P+"src/independent-control-checks-v2/queue-facts.mjs"};
+  P+"src/resident-v2/record.mjs",P+"src/resident-v2/stage-package.mjs",P+"src/resident-v2/stage-inputs.mjs",P+"src/resident-v2/windows/NodeProfileV2.cs",P+"src/independent-control-checks-v2/queue-facts.mjs"};
  public string Nonce,ConfigHash,SelectedRole,EntryHash,AcceptanceHash,SourceManifestHash,SourceRoot;public int Stage;public DateTimeOffset RuntimeDeadlineUtc;DateTimeOffset acceptedExpiry;
  public string Command {get{return CommandFor(SelectedRole,SourceRoot,Nonce,ConfigHash);}}
  public static string CommandFor(string role,string sourceRoot,string nonce,string config){
@@ -131,18 +141,51 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   try{int n;while((n=f.Read(buffer,0,buffer.Length))>0){Check();total+=n;if(total>512L*1024*1024)Deny("SOURCE_BYTE_BOUND_EXCEEDED");sha.TransformBlock(buffer,0,n,null,0);if(copy!=null)copy.Write(buffer,0,n);}sha.TransformFinalBlock(new byte[0],0,0);string actual=BitConverter.ToString(sha.Hash).Replace("-","").ToLowerInvariant();if(expected!=null&&actual!=expected)Deny("EXACT_PUBLIC_BYTES_REFUSED");return copy==null?null:copy.ToArray();}finally{sha.Dispose();if(copy!=null)copy.Dispose();}
  }
  public static void NoLegacy(object v){var m=v as Dictionary<string,object>;if(m!=null)foreach(var p in m){if(p.Key=="ciTokenSha256"||p.Key=="currentClaim")Deny("REPLAYABLE_OR_CLAIM_BOUND_INPUT_REFUSED");NoLegacy(p.Value);}var a=v as object[];if(a!=null)foreach(var x in a)NoLegacy(x);}
- static readonly string[] PlanFields={"contract","enabled","stage","entryRole","batchKey","batchId","ownerPackageAcceptanceRef","nodeSha256","entrySha256","acceptanceSha256","sourceManifestSha256","installationSha256","runtimeConfigPinSha256","jobSha256"};
+ static readonly string[] PlanFields={"contract","enabled","stage","entryRole","batchKey","batchId","ownerPackageAcceptanceRef","nodeSha256","nodeProfileSha256","entrySha256","acceptanceSha256","sourceManifestSha256","installationSha256","runtimeConfigPinSha256","jobSha256"};
  public static int PlanStage(Dictionary<string,object> plan){
-  Fields(plan,PlanFields);Exact(plan,"contract","clued.independent-ci.fixed-formal-windows-entry/2");True(plan,"enabled");long stage=Int(plan,"stage");if(stage<1||stage>StageRole.Length)Deny("FIXED_FORMAL_STAGE_REQUIRED");
+  Fields(plan,PlanFields);Exact(plan,"contract","clued.independent-ci.fixed-formal-windows-entry/3");True(plan,"enabled");long stage=Int(plan,"stage");if(stage<1||stage>StageRole.Length)Deny("FIXED_FORMAL_STAGE_REQUIRED");
   if(Text(plan,"entryRole")!=StageRole[stage-1])Deny("FIXED_FORMAL_ENTRY_ROLE_REQUIRED");Ref(plan,"ownerPackageAcceptanceRef");Sha(plan,"batchKey");
   string id=Text(plan,"batchId");if(id.Length!=29||id[16]!='-'||!LowerHex(id.Substring(0,16))||!LowerHex(id.Substring(17)))Deny("FIXED_BATCH_ID_REQUIRED");
-  foreach(string f in new[]{"nodeSha256","entrySha256","acceptanceSha256","sourceManifestSha256","installationSha256","runtimeConfigPinSha256","jobSha256"})Sha(plan,f);return (int)stage;
+  foreach(string f in new[]{"nodeSha256","nodeProfileSha256","entrySha256","acceptanceSha256","sourceManifestSha256","installationSha256","runtimeConfigPinSha256","jobSha256"})Sha(plan,f);return (int)stage;
  }
  // Job contract /3 (quota phase 2 step 3b): id = sha256(JSON(["clued.independent-ci.job/3",repo,pr,headSha,baseSha,testSha,sourceManifestSha256,role,attempt])).
  // testSha is the tested commit S (S = H outside the train). The method keeps its V2 (Source v2) name.
  public static string JobIdV2(Dictionary<string,object> job){
   var identity=new List<object>{"clued.independent-ci.job/3",At(job,"repo"),At(job,"pr"),At(job,"headSha"),At(job,"baseSha"),At(job,"testSha"),At(job,"sourceManifestSha256"),At(job,"role"),At(job,"attempt")};
   byte[] raw=new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(identity));using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(raw)).Replace("-","").ToLowerInvariant();
+ }
+ // Train run /1: id = sha256(JSON(["clued.independent-ci.train-run/1",repo,runId,mode,sourceManifestSha256])); step 3c-1 knows mode shadow only.
+ public static string TrainRunId(Dictionary<string,object> job){
+  var identity=new List<object>{"clued.independent-ci.train-run/1",At(job,"repo"),At(job,"runId"),At(job,"mode"),At(job,"sourceManifestSha256")};
+  byte[] raw=new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(identity));using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(raw)).Replace("-","").ToLowerInvariant();
+ }
+ public static Dictionary<string,object> ValidateTrainRun(Dictionary<string,object> job,string sourceManifest,string batchId){
+  Fields(job,new[]{"contract","id","repo","runId","mode","sourceManifestSha256","createdAt"});Exact(job,"contract","clued.independent-ci.train-run/1");Exact(job,"repo","tdoljyj/cross-memory-system");
+  Exact(job,"mode","shadow");Sha(job,"id");string run=Text(job,"runId");
+  if(run!=batchId||run.Length!=29||run[16]!='-'||!LowerHex(run.Substring(0,16))||!LowerHex(run.Substring(17))||Sha(job,"sourceManifestSha256")!=sourceManifest)Deny("FIXED_TRAIN_RUN_REQUIRED");
+  DateTimeOffset created;if(!DateTimeOffset.TryParse(Text(job,"createdAt"),CultureInfo.InvariantCulture,DateTimeStyles.None,out created)||created>DateTimeOffset.UtcNow.AddMinutes(5))Deny("FIXED_FORMAL_JOB_TIME_REQUIRED");
+  if(TrainRunId(job)!=Text(job,"id"))Deny("DETERMINISTIC_JOB_ID_REQUIRED");return job;
+ }
+ // C2 probe /1: no PR/head/claim/attempt fields. The complete current node profile is independently pinned by plan /3.
+ public static string RoleProbeRunId(Dictionary<string,object> job){
+  var identity=new List<object>{"clued.independent-ci.role-probe-run/1",At(job,"repo"),At(job,"runId"),At(job,"sourceManifestSha256"),At(job,"nodeProfileSha256")};
+  byte[] raw=new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(identity));using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(raw)).Replace("-","").ToLowerInvariant();
+ }
+ public static Dictionary<string,object> ValidateRoleProbeRun(Dictionary<string,object> job,string sourceManifest,string batchId,string profileSha){
+  Fields(job,new[]{"contract","id","repo","runId","sourceManifestSha256","nodeProfileSha256","createdAt"});Exact(job,"contract","clued.independent-ci.role-probe-run/1");Exact(job,"repo","tdoljyj/cross-memory-system");Sha(job,"id");
+  string run=Text(job,"runId");if(run!=batchId||run.Length!=29||run[16]!='-'||!LowerHex(run.Substring(0,16))||!LowerHex(run.Substring(17))||Sha(job,"sourceManifestSha256")!=sourceManifest||Sha(job,"nodeProfileSha256")!=profileSha)Deny("FIXED_ROLE_PROBE_RUN_REQUIRED");
+  DateTimeOffset created;if(!DateTimeOffset.TryParse(Text(job,"createdAt"),CultureInfo.InvariantCulture,DateTimeStyles.None,out created)||created>DateTimeOffset.UtcNow.AddMinutes(5))Deny("FIXED_FORMAL_JOB_TIME_REQUIRED");
+  if(RoleProbeRunId(job)!=Text(job,"id"))Deny("DETERMINISTIC_JOB_ID_REQUIRED");return job;
+ }
+ public static string RevocationRunId(Dictionary<string,object> job){
+  var identity=new List<object>{"clued.independent-ci.revocation-maintenance-run/1",At(job,"repo"),At(job,"runId"),At(job,"sourceManifestSha256"),At(job,"nodeProfileSha256")};
+  byte[] raw=new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(identity));using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(raw)).Replace("-","").ToLowerInvariant();
+ }
+ public static Dictionary<string,object> ValidateRevocationRun(Dictionary<string,object> job,string sourceManifest,string batchId,string profileSha){
+  Fields(job,new[]{"contract","id","repo","runId","sourceManifestSha256","nodeProfileSha256","createdAt"});Exact(job,"contract","clued.independent-ci.revocation-maintenance-run/1");Exact(job,"repo","tdoljyj/cross-memory-system");Sha(job,"id");
+  string run=Text(job,"runId");if(run!=batchId||run.Length!=29||run[16]!='-'||!LowerHex(run.Substring(0,16))||!LowerHex(run.Substring(17))||Sha(job,"sourceManifestSha256")!=sourceManifest||Sha(job,"nodeProfileSha256")!=profileSha)Deny("FIXED_REVOCATION_RUN_REQUIRED");
+  DateTimeOffset created;if(!DateTimeOffset.TryParse(Text(job,"createdAt"),CultureInfo.InvariantCulture,DateTimeStyles.None,out created)||created>DateTimeOffset.UtcNow.AddMinutes(5))Deny("FIXED_FORMAL_JOB_TIME_REQUIRED");
+  if(RevocationRunId(job)!=Text(job,"id"))Deny("DETERMINISTIC_JOB_ID_REQUIRED");return job;
  }
  public static Dictionary<string,object> ValidateJobV2(Dictionary<string,object> job,string expectedRole,string sourceManifest){
   Fields(job,new[]{"contract","id","repo","pr","headSha","baseSha","testSha","role","sourceManifestSha256","createdAt","attempt"});Exact(job,"contract","clued.independent-ci.job/3");Exact(job,"repo","tdoljyj/cross-memory-system");
@@ -173,13 +216,15 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   string stageDir=StageRoot+"\\"+nonce;
   var plan=Parse(Read(stageDir+"\\formal-service-entry.json",ConfigHash,true));Stage=PlanStage(plan);SelectedRole=Text(plan,"entryRole");
   EntryHash=Sha(plan,"entrySha256");AcceptanceHash=Sha(plan,"acceptanceSha256");SourceManifestHash=Sha(plan,"sourceManifestSha256");string nodeHash=Sha(plan,"nodeSha256");
+  if(AcceptanceHash!=NodeProfileV2.AcceptanceSha256||Sha(plan,"nodeProfileSha256")!=NodeProfileV2.Current.Sha256)Deny("NODE_PROFILE_STAGE_BINDING_CHANGED");
   SourceRoot=SourceBase+"\\"+SourceManifestHash;
   var config=Parse(Read(Record+"\\installation.json",Sha(plan,"installationSha256"),true));NoLegacy(config);
   Exact(config,"contract","clued.independent-ci.one-shot/2");True(config,"enabled");Exact(config,"repository","tdoljyj/cross-memory-system");
   if(Int(config,"appId")!=5368905||Int(config,"installationId")!=172706661||Int(config,"repositoryId")!=1334673495)Deny("FIXED_APP_REPOSITORY_REQUIRED");
   if(Sha(config,"acceptanceSha256")!=AcceptanceHash||Sha(config,"sourceManifestSha256")!=SourceManifestHash||Sha(config,"controllerNodeSha256")!=nodeHash)Deny("INSTALLED_PUBLIC_BINDING_CHANGED");SixChecks(config);
   var accepted=Parse(Read(Record+"\\acceptance.json",AcceptanceHash,true));NoLegacy(accepted);Exact(accepted,"contract","clued.independent-ci.accepted-installation/2");Exact(accepted,"domain","production");
-  True(accepted,"accepted");True(accepted,"workerCannotReadController");Exact(accepted,"hostname","TURING");Exact(accepted,"platform","win32");Exact(accepted,"arch","x64");Exact(accepted,"controllerAccount","clued-control");
+  True(accepted,"accepted");True(accepted,"workerCannotReadController");Exact(accepted,"hostname",NodeProfileV2.Current.Hostname);Exact(accepted,"platform","win32");Exact(accepted,"arch","x64");Exact(accepted,"controllerAccount","clued-control");
+  if(NodeProfileV2.FromDictionary(At(accepted,"node")as Dictionary<string,object>).CanonicalJson!=NodeProfileV2.Current.CanonicalJson)Deny("NODE_PROFILE_ACCEPTANCE_CHANGED");
   if(!(At(accepted,"claimBound") is bool)||(bool)At(accepted,"claimBound"))Deny("CLAIM_FREE_ACCEPTANCE_REQUIRED");
   foreach(string key in new[]{"sourceAcceptanceRef","hostQualificationRef","ownerAuthorizationRef","publisherQualificationRef","ciPrincipalQualificationRef","ownerPackageAcceptanceRef","installationReceiptRef","ownerDecisionRef","ownerReceiptRef"})Ref(accepted,key);
   if(Text(accepted,"ownerPackageAcceptanceRef")!=Text(plan,"ownerPackageAcceptanceRef")||Text(accepted,"ciPrincipalBindingId")!=Text(config,"ciPrincipalBindingId")||Sha(accepted,"ciTokenPinSha256")!=Sha(config,"ciTokenPinSha256")||Sha(accepted,"configSha256")!=Sha(plan,"runtimeConfigPinSha256"))Deny("ACTUAL_ACCEPTED_PACKAGE_BINDING_REQUIRED");
@@ -191,7 +236,11 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   var manifest=Parse(Read(Record+"\\source-manifest.json",SourceManifestHash,true));Exact(manifest,"schema","independent-ci.sources.v2");Exact(manifest,"repo","tdoljyj/cross-memory-system");
   var jobsBytes=Read(stageDir+"\\jobs.json",Sha(plan,"jobSha256"),true);var jobs=new JavaScriptSerializer().DeserializeObject(new UTF8Encoding(false,true).GetString(jobsBytes)) as object[];
   string[] roles=SelectedJobRoles(Stage,jobs);
-  for(int i=0;i<roles.Length;i++){var j=jobs[i] as Dictionary<string,object>;if(j==null)Deny("EXACT_STAGE_JOBS_REQUIRED");ValidateJobV2(j,roles[i],SourceManifestHash);
+  for(int i=0;i<roles.Length;i++){var j=jobs[i] as Dictionary<string,object>;if(j==null)Deny("EXACT_STAGE_JOBS_REQUIRED");
+   if(Stage==TrainStage){ValidateTrainRun(j,SourceManifestHash,Text(plan,"batchId"));continue;}
+   if(Stage==RoleProbeStage){ValidateRoleProbeRun(j,SourceManifestHash,Text(plan,"batchId"),Sha(plan,"nodeProfileSha256"));continue;}
+   if(Stage==RevocationStage){ValidateRevocationRun(j,SourceManifestHash,Text(plan,"batchId"),Sha(plan,"nodeProfileSha256"));continue;}
+   ValidateJobV2(j,roles[i],SourceManifestHash);
    if(i>0)foreach(string k in new[]{"repo","pr","headSha","baseSha","testSha","sourceManifestSha256","createdAt","attempt"})if(!Object.Equals(At(j,k),At((Dictionary<string,object>)jobs[0],k)))Deny("EXACT_CONTROL_PAIR_SUBJECT_REQUIRED");}
   if(SelectedRole=="check-publisher")Read(stageDir+"\\result.json",null,false); // signed untrusted input; the entry verifies it
   RuntimeDeadlineUtc=BoundedDeadline(Stage,DateTimeOffset.UtcNow,validUntil);

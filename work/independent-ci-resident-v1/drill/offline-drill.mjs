@@ -6,6 +6,9 @@
 // retried on their own back-off), a supersession before stage 1, and the breaker opening and closing on a trial.
 // v1.1 (phase 2, step 2, DESIGN §18): parking at B (the close archive before stage 8, stage 8 as tries on their own
 // back-off while other PRs run), main moving ending a parked batch, and the Owner drain before a reinstall.
+// Policy /7 (C1b, node profiles): the policy names the accepted node profile and its hash; the drill's node is a fixture.
+// Design r3 (DESIGN §25-§28): relay-flap-under-load; incident-20261028-replay and its two variants (the real companion pump,
+// mailbox, Windows engine and executor on a virtual clock); the #930 replay (a transient stage-8 ending parks a minute).
 //   node drill/offline-drill.mjs            prints a step table and a JSON summary; exit 1 on any miss
 //
 // It drives the real executor, ledger, receipts, inboxes, protocol archive and Owner-request code
@@ -26,6 +29,12 @@ import { applyArchive, planArchive, protocolLeaves } from '../src/archive.mjs';
 import { abortRequest, drainRequest, inspect, rearmRequest, resumeRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
 import { ExecutedHeads, BACKFILL_MANIFEST_CONTRACT, CARRIED_FILE } from '../src/executed-heads.mjs';
 import { sha256 } from '../src/canonical.mjs';
+import { Companion } from '../src/companion.mjs';
+import { nodeProfileSha256 } from '../src/node-profile.mjs';
+import { Mailbox } from '../src/mailbox.mjs';
+import { WindowsEngine } from '../src/engine-windows.mjs';
+import { mailboxCompanion } from '../src/service-ports.mjs';
+import { startHeartbeat } from '../src/companion-main.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const SOURCE = '5'.repeat(64);
@@ -34,6 +43,10 @@ const BASE = '0'.repeat(40);
 const OWNER = 'S-1-5-21-1-2-3-1001';
 const head = n => `a${n.toString(16).padStart(39, '0')}`;
 const WINDOWS_CLEAN = { windowsTreeZero: true, serviceOriginalStopped: true };
+// The accepted node profile (policy /7) of a fixture node: its owner is the companion's user, its distribution the Linux one.
+const NODE = Object.freeze({ contract: 'clued.independent-ci.node-profile/1', nodeName: 'drill-node', hostname: 'TURING', ownerSid: OWNER,
+  ownerProfileDirectory: 'C:\\Users\\drill-owner', controllerSid: 'S-1-5-21-1-2-3-1015', runnerService: 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02',
+  mutationMutex: 'Global\\CluedControlControllerMutationV1-TURING-1015', wslDistribution: 'Ubuntu-24.04' });
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-resident-drill-'));
 const winSpool = path.join(root, 'windows-formal-spool');
@@ -44,7 +57,7 @@ await fs.writeFile(path.join(winSpool, 'outgoing', `${'e'.repeat(64)}.json`), '{
 let now = Date.parse('2026-10-21T00:00:00Z');
 const clock = () => now;
 const policyInput = {
-  contract: 'clued.independent-ci.resident-policy/5', repo: REPO, baseBranch: 'main', sourceManifestSha256: SOURCE, ciSourceManifestSha256: '9'.repeat(64), residentManifestSha256: RESIDENT,
+  contract: 'clued.independent-ci.resident-policy/7', node: NODE, nodeProfileSha256: nodeProfileSha256(NODE), repo: REPO, baseBranch: 'main', sourceManifestSha256: SOURCE, ciSourceManifestSha256: '9'.repeat(64), residentManifestSha256: RESIDENT,
   ownerAcceptance: { decisionRef: '0d84ddbb-ec1f-49c3-bbd0-953f72d53584', installReceiptRef: null }, validUntil: null,
   limits: { maxBatchesPer24h: 72, maxEvaluationsPer24h: 96, perPrBatchesPer24h: 6, waitingRetriesPer24h: 48, reevaluationsPerPrHeadPer24h: 6, releasesPerHeadPer24h: 2, queueDepth: 100,
     maxConcurrent: 1, inboxMaxFiles: 16, unexecutedCooldownMs: 600_000, stageMarginMs: 180_000 },
@@ -52,7 +65,8 @@ const policyInput = {
   stage8: { mode: 'park' },
   park: { maxParked: 4, maxParkedOutsideTop2: 8, maxMs: 86_400_000, stage8MaxTries: 12, stage8RetriesPer24h: 100 },
   companion: { userSid: OWNER, heartbeatMaxAgeMs: 60_000 },
-  stageRunMilliseconds: [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000],
+  stageRunMilliseconds: [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000, 900000, 300000],
+  train: { enabled: 'off', nonFrontRuns: true, maintenanceEveryMs: 600_000, maintenanceMaxPerDay: 200 },
   linux: { distribution: 'Ubuntu-24.04', workerUnit: 'clued-ci-worker@.service', wsprepUnit: 'clued-ci-wsprep@.service', archiveUnit: 'clued-ci-archive@.service' },
   automaticAttempt2: { enabled: true, delayMs: 600_000 }, retention: { reminderBytes: 50 * 1024 ** 3, checkEveryMs: 3_600_000 },
   // The shipped default: the relay is off (Owner decision); the relay month below runs a second instance with it on.
@@ -232,6 +246,17 @@ await step('step 3a: PR 934 finds strict off on main without the train: it parks
   await drop(trigger(934)); const p = await exec.tick(); const told = queue.notices.some(n => n.kind === 'stage8-rules' && n.code === 'STRICT_OFF_WITHOUT_TRAIN');
   now += 600_000; const r = await exec.tick(); return { ...r, parked: p.state, reason: p.reason, told };
 }, r => r.parked === 'PARKED' && r.reason === 'STRICT_OFF_WITHOUT_TRAIN' && r.told && r.state === 'COMPLETED' && queue.row(934).state === 'DONE');
+// Design r3 4a (DESIGN §28): the PR #930 replay. Attempt 1 fails cleanly at stage 2 (a push after the bundle) and gets its attempt
+// 2; attempt 2 passes stages 1-7 and its first stage-8 try ends BLOCKED full_admission_unavailable with zero side effects and no
+// merge-queue facts. Before: burned, a new commit and stages 1-7 again. Now: parked a minute, then the same batch completes.
+const unavailable = { ok: false, code: 'NATIVE_ADMISSION_UNAVAILABLE', proof: WINDOWS_CLEAN, brokerNoLaunch: false,
+  outcome: { status: 'BLOCKED', reason: 'full_admission_unavailable', sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: null, safeToRerun: false } };
+script.set('936:1', { 2: { ok: false, code: 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', proof: WINDOWS_CLEAN } });
+script.set('936:2', { 8: [unavailable] });
+await step('#930 replay (PR 936, attempt 2): stage 8 unavailable once with zero effects -> parked 1 minute, then COMPLETED on the same batch', async () => {
+  await drop(trigger(936)); const a1 = await exec.tick(); now += 600_000; const parked = await exec.tick(); const gap = parked.until - now; now += 60_000; const r = await exec.tick();
+  return { ...r, a1: a1.attempt2 ? 'attempt2' : a1.state, parked: parked.state, reason: parked.reason, gap };
+}, r => r.a1 === 'attempt2' && r.parked === 'PARKED' && r.reason === 'NATIVE_ADMISSION_UNAVAILABLE' && r.gap === 60_000 && r.state === 'COMPLETED' && r.tries === 2);
 script.set(933, { 8: [notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')] });
 await step('PR 933 parks; the Owner drain before a reinstall ends it OWNER_ABORTED and leaves nothing open', async () => {
   await drop(trigger(933)); const p = await exec.tick(); now += 1;
@@ -421,6 +446,295 @@ await step('reinstall (new Source, fresh state): the first tick backfills the ca
 await step('  PR 904 (halted at stage 6 before the reinstall) is never admitted either', async () => { await iDrop(trigger(904)); return iExec.tick(); }, r => r.reason === 'HEAD_ALREADY_PUBLISHED_NO_RETRY');
 script.delete(909); // its stage 2 no longer hangs
 await step('  PR 909 (aborted inside stage 2, nothing published) runs under the new Source', async () => { await iDrop(trigger(909)); return iExec.tick(); }, r => r.state === 'COMPLETED');
+
+// ---- step 3c-1: the merge train in shadow mode (stage 10, DESIGN §22.3), on a fresh install with train.enabled shadow ----
+const tRoot = path.join(root, 'train-shadow'), tState = path.join(tRoot, 'state');
+for (const d of ['inbox', 'requests', 'owner']) await fs.mkdir(path.join(tRoot, d), { recursive: true });
+let trainAnswer = null; // the next stage-10 answer; null = shadow facts with no merge-queue front
+const tEngine = { ...engine, current: null, subjects: new Map(), trainRuns: 0,
+  async runTrainStage(mode) {
+    this.trainRuns += 1;
+    now += 30_000;
+    const a = trainAnswer;
+    trainAnswer = null;
+    return a ?? { ok: true, runId: `${'7'.repeat(16)}-${String(this.trainRuns).padStart(12, '0')}`, proof: WINDOWS_CLEAN, train: { contract: 'clued.independent-ci.train-facts/1', mode,
+      at: new Date(now).toISOString(), onDuty: true, mainSha: BASE, rules: { strict: true, mergeOnly: true }, front: null, wouldDo: 'NO_FRONT', wouldRevoke: [], wouldRevokeCount: 0 } };
+  } };
+const tLedger = await Ledger.open(tState, clock);
+const tReceipts = await ReceiptChain.open(path.join(tState, 'receipts'), clock);
+const tExec = new ResidentExecutor({ policy: validatePolicy({ ...policyInput, train: { ...policyInput.train, enabled: 'shadow' } }), ledger: tLedger, receipts: tReceipts,
+  inbox: await Inbox.open(path.join(tRoot, 'inbox'), path.join(tState, 'inbox-archive')), requests: await Inbox.open(path.join(tRoot, 'requests'), path.join(tState, 'requests-archive')),
+  owner: await OwnerInbox.open(path.join(tRoot, 'owner'), path.join(tState, 'owner-seen')), engine: tEngine, companion, clock, sleep: () => new Promise(resolve => setImmediate(resolve)),
+  queue: await RunQueue.open(path.join(tState, 'queue'), clock),
+  executedHeads: await ExecutedHeads.open(tState, clock, { manifestFile: await emptyManifest(path.join(tRoot, 'install')), carriedRoot: path.join(tState, 'backfill') }),
+  sourceIntegrity: async () => ({ ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT }) });
+const tDrop = async value => { seq += 1; await fs.writeFile(path.join(tRoot, 'inbox', `${String(now + seq).padStart(13, '0')}-${String(seq).padStart(12, '0')}.json`), JSON.stringify(value)); };
+const trainTypes = async () => (await tReceipts.entries()).map(e => e.type).filter(t => t.startsWith('train-')).join(',');
+await step('train shadow (step 3c-1): an idle tick runs stage 10 once, leaving only its two receipts', async () => { const r = await tExec.tick(); return { ...r, runs: tEngine.trainRuns, types: await trainTypes() }; },
+  r => r.state === 'IDLE' && r.runs === 1 && r.types === 'train-run-intent,train-run');
+await step('  a PR batch comes first: that tick runs no stage 10, the next idle tick ten minutes later does', async () => {
+  await tDrop(trigger(940));
+  const a = await tExec.tick();
+  const between = tEngine.trainRuns;
+  now += 600_000;
+  const c = await tExec.tick();
+  return { state: a.state, between, after: tEngine.trainRuns, idle: c.state };
+}, r => r.state === 'COMPLETED' && r.between === 1 && r.after === 2 && r.idle === 'IDLE');
+await step('  a stage 10 whose cleanup is not proven HALTs like any stage', async () => {
+  now += 600_000;
+  trainAnswer = { ok: false, code: 'STAGE_CHILD_TREE_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: true } };
+  return tExec.tick();
+}, r => r.state === 'HALTED' && r.failureCode === 'TRAIN_STAGE_CLEANUP_UNCONFIRMED');
+
+// ---- relay-flap-under-load (design r3 part one, DESIGN §25) ----
+// The real companion pump over a scripted host. Under load, the first ReceiveChallenge of round 3 fails within 2 s (wsl.exe
+// exits non-zero with an empty stderr); the bounded retry moves it on the second try, and the stage ends with its result:
+// the pump answers ok, so the stage succeeds and nothing HALTs.
+{
+  const flapCfg = { wslExe: 'C:\\Windows\\System32\\wsl.exe', distribution: 'Ubuntu-24.04', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    relayScript: 'C:\\drill\\relay-public.ps1', bundleScript: 'C:\\drill\\build-bundle.ps1', windowsSpool: 'C:\\drill\\formal-spool', bridgeManifestSha256: '9'.repeat(64),
+    nodeProfileSha256: '8'.repeat(64), linuxTool: '/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux' };
+  const relayReceipt = fields => JSON.stringify({ contract: 'clued.independent-ci.formal-public-relay-receipt/2', status: 'BLOCKED', processId: 1, exitCode: 1, terminalConfirmed: true, failureCode: null, childError: null, ...fields });
+  const calls = [];
+  let responses = 0, flapped = false;
+  const run = async a => {
+    if (a.includes('-Mode')) {
+      const mode = a[a.indexOf('-Mode') + 1], seq = Number(a[a.indexOf('-Sequence') + 1]);
+      calls.push(`${mode}${seq || ''}`);
+      if (mode === 'ReceiveChallenge' && seq === 3 && !flapped) { flapped = true; now += 2000; return { code: 2, stdout: relayReceipt({ failureCode: 'PUBLIC_CHILD_EXIT_REFUSED_NO_RETRY' }), stderr: '' }; }
+      if (mode === 'SendResponse') responses = seq;
+      now += 5000;
+      return { code: 0, stdout: relayReceipt({ status: 'PUBLIC_RECORD_TRANSFERRED', exitCode: 0 }) };
+    }
+    if (a.includes('/var/lib/clued-independent-ci/formal-spool/outgoing')) return { code: 0, stdout: responses >= 3 ? 'result.ready.json\n' : `challenge-0${responses + 1}.ready.json\n` };
+    if (a.some(x => x.startsWith('--property=ActiveState'))) return { code: 0, stdout: 'ActiveState=inactive\nInvocationID=\nExecMainStartTimestampMonotonic=0\n' };
+    if (a.includes('quiescence')) return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true }) };
+    return { code: 0, stdout: '' };
+  };
+  const pump = new Companion({ cfg: flapCfg, mailbox: { cancelled: async () => false, claimPump: async () => true }, run, fileExists: async p => p.includes('\\outgoing\\'), sleep: async ms => { now += ms; }, clock });
+  await step('relay-flap-under-load: round 3 fails fast once, the bounded retry moves it, the stage gets its result and nothing HALTs', async () => {
+    const r = await pump.pump({ deadline: new Date(now + 45 * 60_000).toISOString(), jobId: 'e'.repeat(64), batchId: '0123456789abcdef-0123456789ab' });
+    return { state: r.ok ? 'PUMP_OK' : r.code, calls: calls.join(',') };
+  }, r => r.state === 'PUMP_OK' && r.calls === 'SendIssue,ReceiveChallenge1,SendResponse1,ReceiveChallenge2,SendResponse2,ReceiveChallenge3,ReceiveChallenge3,SendResponse3,ReceiveResult');
+}
+
+
+// ---- incident-20261028-replay (design r3 parts two and three, DESIGN §26, §27) ----
+// PR #929 stage 2 on 2026-10-28: rounds 1 and 2 go through; the ReceiveChallenge of round 3 hangs 90 s (wsl.exe under load) at
+// 10:39:42 and fails AMBIGUOUS past its round's budget, so the pump hands nothing over and answers RELAY_REFUSED_NO_RETRY; the
+// worker gives up 120 s after its challenge and exits with no record. Before: the issuer waited out its 45 minutes, then
+// PUBLICATION_UNCERTAIN and a HALT at 11:19. Now: the real companion pump, the real mailbox, the real Windows engine (its pump
+// observer and the bridge stop through the broker's stop path) and the real executor (the scanner abandonment), on a virtual
+// clock. Variants: the worker stays active (quiescence never proven: HALT within the 5-minute bound), and the companion dies
+// at the failure (its heartbeat stops: the stage is stopped and the batch HALTs at once, no abandonment).
+// The driver moves virtual time only when every task waits on it: no file request in flight (process.getActiveResourcesInfo)
+// and a few event-loop rounds with no new virtual timer.
+const fileIoInFlight = () => process.getActiveResourcesInfo().some(r => /^(FSReq|CloseReq|FileHandle)/.test(r));
+function virtualClock(start) {
+  const vt = { now: start, timers: [], seq: 0 };
+  vt.sleep = ms => new Promise(resolve => { vt.timers.push({ at: vt.now + Math.max(1, ms), seq: vt.seq++, resolve }); });
+  vt.run = async (promise, maxVirtualMs) => {
+    let done = false, value, error;
+    promise.then(v => { done = true; value = v; }, e => { done = true; error = e; });
+    const end = vt.now + maxVirtualMs;
+    while (!done) {
+      let quiet = 0, seen = vt.seq, spins = 0;
+      while (quiet < 4 && !done) {
+        await new Promise(r => setImmediate(r));
+        if (fileIoInFlight()) { quiet = 0; if (++spins % 2000 === 0) await new Promise(r => setTimeout(r, 1)); continue; }
+        if (vt.seq === seen) quiet += 1; else { quiet = 0; seen = vt.seq; }
+      }
+      if (done) break;
+      if (vt.timers.length === 0) throw new Error('VIRTUAL_DEADLOCK');
+      vt.timers.sort((a, b) => a.at - b.at || a.seq - b.seq);
+      const t = vt.timers.shift();
+      if (t.at > end) throw new Error('VIRTUAL_TIME_LIMIT');
+      vt.now = Math.max(vt.now, t.at);
+      t.resolve();
+    }
+    if (error) throw error;
+    return value;
+  };
+  return vt;
+}
+
+async function incidentReplay(variant) {
+  const vt = virtualClock(Date.parse('2026-10-28T10:30:00Z'));
+  const clock = () => vt.now;
+  const iRoot = path.join(root, `incident-${variant}`);
+  const at = () => new Date(vt.now).toISOString().slice(11, 19);
+  const log = { failedAt: null, answeredAt: null, stopAt: null, stageEndedAt: null, diedAt: null, quiescenceAsks: 0, archiveReasons: [], memoryReads: 0, gateStartedAt: null, gateEndedAt: null };
+  // ---- the companion's hosts: relay-public.ps1, systemctl, the Linux root tool, the bundle script, all scripted ----
+  const SPOOL = 'C:\\drill\\incident\\formal-spool';
+  const ccfg = { wslExe: 'C:\\Windows\\System32\\wsl.exe', distribution: 'Ubuntu-24.04', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    relayScript: 'C:\\drill\\relay-public.ps1', bundleScript: 'C:\\drill\\build-bundle.ps1', windowsSpool: SPOOL, bridgeManifestSha256: '9'.repeat(64),
+    nodeProfileSha256: '8'.repeat(64), linuxTool: '/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux' };
+  const receipt2 = fields => JSON.stringify({ contract: 'clued.independent-ci.formal-public-relay-receipt/2', status: 'BLOCKED', processId: 1, exitCode: 1, terminalConfirmed: true, failureCode: null, childError: null, ...fields });
+  const w = { issued: false, startedAt: null, ready: new Map(), received: new Map(), exitedAt: null, alive: true };
+  const workerActive = () => w.startedAt !== null && vt.now >= w.startedAt + 3000 && (variant === 'worker-active' || w.exitedAt === null || vt.now < w.exitedAt);
+  const never = () => new Promise(() => {});
+  const crun = async a => {
+    const s = a.join(' ');
+    if (a.includes('-Mode')) {
+      const mode = a[a.indexOf('-Mode') + 1], seq = Number(a[a.indexOf('-Sequence') + 1]);
+      if (mode === 'ReceiveChallenge' && seq === 3) {
+        if (variant === 'companion-dead') { log.diedAt = vt.now; w.alive = false; return never(); }
+        await vt.sleep(90_000);
+        log.failedAt = vt.now;
+        return { code: 2, stdout: receipt2({ failureCode: 'PUBLIC_TERMINAL_UNCONFIRMED_LOCKS_RETAINED' }), stderr: '' };
+      }
+      await vt.sleep(5000);
+      if (mode === 'ReceiveChallenge') {
+        if (!w.ready.has(seq)) return { code: 2, stdout: receipt2({ failureCode: 'PUBLIC_CHILD_REFUSED_NO_RETRY', childError: { reason: 'ENOENT', stage: 'RECORD' } }) };
+        w.received.set(seq, vt.now);
+      }
+      if (mode === 'SendResponse') w.ready.set(seq + 1, vt.now + 20_000);
+      return { code: 0, stdout: receipt2({ status: 'PUBLIC_RECORD_TRANSFERRED', exitCode: 0 }) };
+    }
+    if (s.includes('start --no-block')) { w.startedAt = vt.now; w.ready.set(1, vt.now + 10_000); return { code: 0, stdout: '' }; }
+    if (a.some(x => x.startsWith('--property=ActiveState'))) {
+      if (w.startedAt === null || vt.now < w.startedAt + 3000) return { code: 0, stdout: 'ActiveState=inactive\nInvocationID=\nExecMainStartTimestampMonotonic=0\n' };
+      return { code: 0, stdout: `ActiveState=${workerActive() ? 'active' : 'failed'}\nInvocationID=${'b'.repeat(32)}\nExecMainStartTimestampMonotonic=4242\n` };
+    }
+    if (a.includes('/var/lib/clued-independent-ci/formal-spool/outgoing')) {
+      // the worker's challenge records (they stay after it exits); round 3's challenge is never answered: it exits 120 s later
+      const names = [...w.ready].filter(([, t]) => vt.now >= t).map(([n]) => `challenge-0${n}.ready.json`);
+      if (w.ready.has(3) && vt.now >= w.ready.get(3) && w.exitedAt === null) w.exitedAt = w.ready.get(3) + 120_000;
+      return { code: 0, stdout: names.join('\n') };
+    }
+    if (a.includes('/var/lib/clued-independent-ci/formal-spool/incoming')) return { code: 0, stdout: '' };
+    if (s.includes('/usr/bin/pgrep')) return { code: 1, stdout: '' };
+    // DESIGN §32: the memory gate's read (rmem_default, wmem_default, /proc/buddyinfo); 'memory-low' keeps the VM without one free
+    // order-7 block (the 2026-10-22 13:22Z picture), every other run has plenty
+    if (a.includes('/proc/buddyinfo')) {
+      log.memoryReads += 1; log.gateStartedAt ??= vt.now; log.gateEndedAt = vt.now;
+      const zone = n => `Node 0, zone   Normal   1037    597    194     44     21     21      5 ${String(n).padStart(6)}      0      0      0
+`;
+      return { code: 0, stdout: `212992
+212992
+${zone(variant === 'memory-low' ? 0 : 900)}` };
+    }
+    if (a.includes('quiescence')) { log.quiescenceAsks += 1; return { code: 0, stdout: JSON.stringify({ linuxUnitsInactive: !workerActive(), containersZero: true }) }; }
+    if (a.includes('archive-status')) { const inst = a[a.indexOf('--instance') + 1]; log.archiveReasons.push(inst.split('_')[1]); return { code: 0, stdout: JSON.stringify({ verified: true, directory: `failed-${inst.slice(0, 16)}-${inst.split('_')[1]}-000000000000` }) }; }
+    if (a.includes('-CheckRefs')) return { code: 0, stdout: JSON.stringify({ status: 'REMOTE_REFS_UNCHANGED' }) };
+    if (a.includes('-BatchId')) return { code: 0, stdout: JSON.stringify({ status: 'BUNDLE_WRITTEN' }) };
+    return { code: 0, stdout: '' }; // systemctl start --wait (workspaces, archive)
+  };
+  const cExists = async p => {
+    if (p === `${SPOOL}\\outgoing\\issue.ready.json`) return w.issued;
+    const resp = /\\outgoing\\response-0(\d)\.ready\.json$/.exec(p);
+    if (resp) return w.received.has(Number(resp[1])) && vt.now >= w.received.get(Number(resp[1])) + 3000; // the issuer answers in 3 s
+    const inc = /\\incoming\\challenge-0(\d)(\.ready)?\.json$/.exec(p);
+    if (inc) return w.received.has(Number(inc[1]));
+    return false;
+  };
+  const mailbox = await Mailbox.open(path.join(iRoot, 'mailbox'), clock);
+  const companionProcess = new Companion({ cfg: ccfg, mailbox, run: crun, fileExists: cExists, sleep: vt.sleep, clock });
+  const alive = () => w.alive;
+  startHeartbeat(mailbox, { schedule: (fn, ms) => { (async () => { while (alive()) { await vt.sleep(ms); if (alive()) await fn(); } })(); } });
+  (async () => { while (alive()) { await companionProcess.step(); await vt.sleep(2000); } })();
+  // ---- the Windows engine (real) over a scripted runner: sc.exe and the stage-2 invoker; the broker answers its stop ----
+  const sourceRoot = path.join(iRoot, 'source');
+  await fs.mkdir(path.join(sourceRoot, 'work', 'actions-hosted-migration', 'independent-ci-v1', 'src', 'resident-v2'), { recursive: true });
+  for (const n of ['derive-batch.mjs', 'invoke-stage.mjs', 'archive-windows-spool.ps1']) await fs.writeFile(path.join(sourceRoot, 'work', 'actions-hosted-migration', 'independent-ci-v1', 'src', 'resident-v2', n), '// drill');
+  const brokerRoot = path.join(iRoot, 'broker');
+  for (const d of ['requests', 'responses']) await fs.mkdir(path.join(brokerRoot, d), { recursive: true });
+  const SWAP_ID = '0d0d0d0d-0000-4000-8000-000000000929';
+  const SC = { qc: 'BINARY_PATH_NAME   : "C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"\r\n        START_TYPE         : 3   DEMAND_START\r\n        SERVICE_START_NAME : .\\clued-control\r\n',
+    queryex: 'STATE              : 1  STOPPED\r\n        PID                : 0\r\n' };
+  const exists = async p => fs.access(p).then(() => true, () => false);
+  const wrun = async a => {
+    if (a[0].endsWith('sc.exe')) return { code: 0, stdout: SC[a[1]] };
+    const manifest = a[a.indexOf('--work-manifest-sha256') + 1];
+    // the issuer takes its swap and issues; then it waits for a result or a blocked record that never comes
+    await fs.writeFile(path.join(brokerRoot, 'requests', `${SWAP_ID}.json`), JSON.stringify({ contract: 'clued.independent-ci.swap-broker-request/2', stage: 2, nonce: 'a'.repeat(32), deadline: '2026-10-28T12:00:00Z', configSha256: 'c'.repeat(64) }));
+    await fs.writeFile(path.join(brokerRoot, 'responses', `${SWAP_ID}.taken`), Buffer.from([1]));
+    w.issued = true;
+    const deadline = vt.now + 45 * 60_000;
+    const fact = o => JSON.stringify({ contract: 'clued.independent-ci.resident-stage-fact/2', stage: 2, nonce: 'n'.repeat(32), manifest_sha256: manifest, state: 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED',
+      scm_start_call_issued: true, original_binary_restored: true, complete_original_readback: true, configuration_conflict_detected: false, tree_cleanup_confirmed: true, tree_active_processes: 0,
+      root_exit_confirmed: true, native_receipt_sha256: 'e'.repeat(64), ...o });
+    while (vt.now < deadline) {
+      if (await exists(path.join(brokerRoot, 'requests', `${SWAP_ID}.stop`))) {
+        // SwapBroker: one SERVICE_CONTROL_STOP; the helper drains its own job; the entry wrote no outcome
+        log.stopAt = vt.now;
+        await fs.writeFile(path.join(brokerRoot, 'responses', `${SWAP_ID}.stop.json`), JSON.stringify({ contract: 'clued.independent-ci.swap-broker-stop-receipt/1', requestId: SWAP_ID, code: 'STOP_SENT', at: new Date(vt.now).toISOString() }));
+        await fs.writeFile(path.join(brokerRoot, 'responses', `${SWAP_ID}.json`), '{}');
+        log.stageEndedAt = vt.now;
+        return { code: 41, stdout: fact({ failure_code: 'STAGE_OUTCOME_MISSING', outcome: null }) };
+      }
+      await vt.sleep(1000);
+    }
+    log.stageEndedAt = vt.now;
+    return { code: 41, stdout: fact({ failure_code: 'PUBLICATION_UNCERTAIN', outcome: { status: 'UNCERTAIN', reason: 'BRIDGE_RESULT_DEADLINE', sideEffects: 1, mayHavePublished: true } }) };
+  };
+  const wengine = new WindowsEngine({ node: NODE, nodeProfileSha256: nodeProfileSha256(NODE), run: wrun, busy: () => false, companionMailbox: mailbox, sleep: vt.sleep, clock,
+    paths: { sourceRoot, workRoot: path.join(iRoot, 'work'), outboxRoot: path.join(iRoot, 'outbox'), nodeExe: 'C:\\resident\\runtime\\node.exe',
+      powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', scExe: 'C:\\Windows\\System32\\sc.exe', brokerRoot } });
+  const wm = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.resident-stage-work/2', effectsAuthorized: false, files: {}, planSha256: 'c'.repeat(64) }));
+  const iEngine = {
+    async derive(subject, key) {
+      const dir = path.join(iRoot, 'work', key.slice(0, 16));
+      await fs.mkdir(path.join(dir, 'stage-02'), { recursive: true });
+      await fs.writeFile(path.join(dir, 'stage-02', 'work-manifest.json'), wm);
+      const stages = [1, 2, 3, 4, 5, 6, 7, 8].map(n => ({ number: n, jobId: `${n}`.repeat(64), workManifestSha256: n === 2 ? sha256(wm) : '7'.repeat(64) }));
+      return { batchId: `${key.slice(0, 16)}-${'0'.repeat(12)}`, key, dir, packageSha256: '7'.repeat(64), stages };
+    },
+    async runStage(batch, stage, opts) { return stage.number === 2 ? wengine.runStage(batch, stage, opts) : { ok: true, factsSha256: '8'.repeat(64) }; },
+    requestStop: (b, n) => wengine.requestStop(b, n), stopOutcome: id => wengine.stopOutcome(id), bridgeState: (b, n) => wengine.bridgeState(b, n),
+    async closeBatch() { return { verified: true, archived: 0 }; },
+    async archiveFailure(batch, reason) { log.archiveReasons.push(`windows:${reason}`); return { verified: true, directory: `failed-${batch.key.slice(0, 16)}-${reason}-000000000000` }; },
+    async windowsQuiescence() { return WINDOWS_CLEAN; },
+  };
+  // ---- the executor (real), its companion port over the real mailbox ----
+  const iState = path.join(iRoot, 'state');
+  const iLedger = await Ledger.open(iState, clock);
+  const iReceipts = await ReceiptChain.open(path.join(iState, 'receipts'), clock);
+  const iExec = new ResidentExecutor({ policy, ledger: iLedger, receipts: iReceipts, inbox: await Inbox.open(path.join(iRoot, 'inbox'), path.join(iState, 'inbox-archive')),
+    requests: await Inbox.open(path.join(iRoot, 'requests'), path.join(iState, 'requests-archive')), owner: await OwnerInbox.open(path.join(iRoot, 'owner'), path.join(iState, 'owner-seen')),
+    engine: iEngine, companion: mailboxCompanion(mailbox, vt.sleep), clock, sleep: vt.sleep, queue: await RunQueue.open(path.join(iState, 'queue'), clock),
+    executedHeads: await ExecutedHeads.open(iState, clock, { manifestFile: await emptyManifest(path.join(iRoot, 'install')), carriedRoot: path.join(iState, 'backfill') }),
+    sourceIntegrity: async () => ({ ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT }) });
+  await fs.writeFile(path.join(iRoot, 'inbox', `${String(vt.now).padStart(13, '0')}-000000000929.json`), JSON.stringify(trigger(929)));
+  await vt.run(vt.sleep(1000), 60_000); // the companion's first heartbeat
+  const r = await vt.run(iExec.tick(), 2 * 60 * 60_000);
+  w.alive = false;
+  const key = (await iLedger.open()).length === 0 ? (await fs.readdir(path.join(iState, 'ledger')))[0] : null;
+  const s = key ? await iLedger.state(key) : null;
+  const types = (await iReceipts.entries()).map(e => e.type);
+  const cancels = (await fs.readdir(path.join(iRoot, 'mailbox', 'requests'))).filter(n => n.endsWith('.cancel.json'));
+  const cancelReasons = await Promise.all(cancels.map(async n => JSON.parse(await fs.readFile(path.join(iRoot, 'mailbox', 'requests', n), 'utf8')).reason));
+  return { r, s, log, types, cancelReasons, halted: await iLedger.halted(), stopFiles: (await fs.readdir(path.join(brokerRoot, 'requests'))).filter(n => n.endsWith('.stop')).length,
+    pending: await iLedger.pendingAttempts2(), at: at(), issued: w.issued };
+}
+
+{
+  const inc = await incidentReplay('replay');
+  await step('incident-20261028-replay: relay fails at round 3, the pump answers, the stage is stopped: FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED, no HALT', async () => ({ state: inc.r.state, failureCode: inc.r.failureCode }),
+    r => r.state === 'FAILED_CLEAN' && r.failureCode === 'BRIDGE_ABANDONED_UNPUBLISHED' && inc.halted === null && inc.s?.terminal?.facts?.stage === 2
+      && inc.s.terminal.facts.originalCode === 'BRIDGE_STAGE_STOPPED_PUMP_LOST' && inc.s.terminal.facts.pumpCode === 'RELAY_REFUSED_NO_RETRY' && inc.s.terminal.facts.stopCode === 'STOP_SENT');
+  await step('  from the relay failure to the end of the stage within 5 minutes (one stop file, 60 s grace after the pump answered)', async () => ({ state: `${Math.round((inc.log.stageEndedAt - inc.log.failedAt) / 1000)} s` }),
+    () => inc.log.failedAt !== null && inc.log.stageEndedAt - inc.log.failedAt <= 5 * 60_000 && inc.stopFiles === 1);
+  await step('  receipts: bridge-pump-lost, bridge-stop-requested, the scene archived scanner-abandoned on both hosts, one attempt 2 (stage 2)', async () => ({ state: inc.types.filter(x => x.startsWith('bridge-') || x === 'attempt2-scheduled').join(',') }),
+    () => inc.types.includes('bridge-pump-lost') && inc.types.includes('bridge-stop-requested') && inc.types.includes('attempt2-scheduled')
+      && inc.log.archiveReasons.includes('windows:scanner-abandoned') && inc.log.archiveReasons.includes('scanner-abandoned') && inc.pending.length === 1);
+  const active = await incidentReplay('worker-active');
+  await step('incident variant: the worker stays active, quiescence is never proven: HALT within the 5-minute bound, original code kept', async () => ({ state: active.r.state, failureCode: active.r.failureCode }),
+    r => r.state === 'HALTED' && r.failureCode === 'BRIDGE_STAGE_STOPPED_PUMP_LOST' && active.s?.terminal?.facts?.basis === 'scanner-abandon-quiescence-unproven'
+      && active.halted?.value?.code === 'BRIDGE_STAGE_STOPPED_PUMP_LOST' && !active.log.archiveReasons.some(x => x.includes('scanner-abandoned')) && active.pending.length === 0);
+  const dead = await incidentReplay('companion-dead');
+  await step('incident variant: the companion dies at the failure: heartbeat lost, its pump cancelled, the stage stopped, a fast HALT (no abandonment)', async () => ({ state: dead.r.state, failureCode: dead.r.failureCode, reasons: dead.cancelReasons.join(',') }),
+    r => r.state === 'HALTED' && r.failureCode === 'BRIDGE_STAGE_STOPPED_PUMP_LOST' && dead.cancelReasons.includes('heartbeat-lost') && dead.stopFiles === 1
+      && dead.log.stopAt - dead.log.diedAt <= 3 * 60_000 + 30_000 && dead.log.stageEndedAt - dead.log.diedAt < 10 * 60_000
+      && !dead.log.archiveReasons.some(x => x.includes('scanner-abandoned')) && dead.halted?.value?.code === 'BRIDGE_STAGE_STOPPED_PUMP_LOST');
+  await step('  the memory gate read the VM once before stage 2 in each run above (plenty free: no wait)', async () => ({ state: [inc, active, dead].map(x => x.log.memoryReads).join(',') }),
+    () => [inc, active, dead].every(x => x.log.memoryReads === 1));
+  const low = await incidentReplay('memory-low');
+  await step('memory gate (DESIGN §32): no free order-7 block for 6 minutes -> stage 2 never invoked, FAILED_CLEAN LINUX_MEMORY_NOT_READY, no HALT, one attempt 2', async () => ({ state: low.r.state, failureCode: low.r.failureCode, reason: `${low.r.failureCode} after ${low.log.memoryReads} reads in ${Math.round((low.log.gateEndedAt - low.log.gateStartedAt) / 1000)} s` }),
+    r => r.state === 'FAILED_CLEAN' && r.failureCode === 'LINUX_MEMORY_NOT_READY' && low.halted === null && low.issued === false && low.log.memoryReads === 7
+      && low.log.gateEndedAt - low.log.gateStartedAt <= 6 * 60_000 + 30_000 && low.s?.terminal?.facts?.stage === 2 && low.pending.length === 1
+      && low.log.archiveReasons.includes('windows:linux-memory-not-ready') && low.log.archiveReasons.includes('linux-memory-not-ready'));
+}
 
 console.table(rows);
 const summary = { status: misses === 0 ? 'OFFLINE_DRILL_PASS' : 'OFFLINE_DRILL_FAIL', steps: rows.length, misses, receipts: head1 };

@@ -226,7 +226,7 @@ Agent 在这台机器上用的就是 Owner 的 GitHub 身份（resident constrai
 ## 5. 一批的流程
 
 ```
-companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ inbox 里的触发记录
+companion 轮询（每 60 秒，条件请求，§39；用 Owner 的 gh 登录）或 Agent ──▶ inbox 里的触发记录
 执行器 tick（空闲每 15 秒一次）：
   崩溃恢复（每 tick 都做，HALT 时也做）：未终结的条目（包括“目录已建、记录没写”的） → FAILED_UNKNOWN、烧掉 head、HALT
       例外（v0.7）：只在等托管信号的批次（有 15-relay-wait、没有 20-plan-intent）什么都没在运行，不关，由 tick 继续
@@ -291,7 +291,7 @@ companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ 
   - 其他请求照常执行，执行器停下：本次开机的、空的、残缺的、超长的、读不了的、格式不对的，都算。已死执行器的残留（SCM 停止之后、确认之前，执行器崩溃、被杀或自己出错退出）就是这样，由下一个执行器确认一次：`service-start`、`service-stop` 两条回执，改名进 `state\locks`，不删除。再下一次启动正常运行。
   - 还有两种情况没有覆盖。一是判断只朝一个方向：服务延迟启动，执行器第一次看时开机已有几分钟；上一次开机里，开机时长不超过（这次第一次看时的开机时长 + 60 秒）时写下的请求认不出来，照常执行，第一次启动以 0 退出，和修复前一样。二是残留还在时（从服务报 RUNNING 到执行器第一次看，几秒钟）来的 SCM 停止，会看到"文件已经在了"，什么都不写；执行器随后把残留改名，这次停止就丢了。宿主等 20 秒后报 STOPPED，执行器没有宿主，继续运行，SCM 再也停不了它；下一次启动会被单实例锁拒绝，Owner 能看到，手工建 `STOP-REQUESTED` 或结束进程。
 - **串行**：`maxConcurrent` 只能是 1；交换代理有自己的全局互斥量；Linux `formal-role.lock` 不变；Linux guard 要求同时只有一个 clued-ci unit 活动。
-- **companion**：有子进程超时未退时进入 busy，不接新请求，也不发心跳。
+- **companion**：每个子进程都建在作业宿主自己的作业对象里，超时后宿主终止并排空这个作业，companion 接着处理下一个请求（§24）。只有宿主本身还没结束时才 busy，这时不接新请求，也不发心跳。
 
 ### 6.3 失败分类（`src/classify.mjs`，白名单，Decision `0d84ddbb` 第 4 项）
 
@@ -394,7 +394,7 @@ v0.9 起，释放还是烧号由机器可读的失败对照表 `src/failure-tabl
   1. 执行器在 `broker\requests\` 里找**正在进行的那一次交换**：代理已领取（有 `.taken`）、还没回复、段号相同、`configSha256` 等于这一批次该段包的计划哈希（从批次钉住的 work manifest 读出）。恰好一个时，在旁边新建 `<id>.stop`，字段恰好是 `contract`、`requestId`、`nonce`、`stage`、`configSha256`。执行器记下这个请求 id，交换被回复之后照样能读停止回执；
   2. 代理在这次交换的等待循环里每秒看一次（§8.2 第 9 条），条件全部满足时向 runner 服务发 `SERVICE_CONTROL_STOP`，并把结果写进只新建的停止回执 `broker\responses\<id>.stop.json`（`STOP_SENT`、`HELPER_ALREADY_STOPPING` 或某个拒绝码）。这个控制实际只生效一次：万一因为超时又发了一次，助手也只是再置一次同一个标志、终止同一个作业对象，没有别的作用；
   3. 通用助手按它现有的停止路径处理（`STOP_REQUESTED`，服务退出码 92）：只终止并排空**它自己建的作业对象**，写原生回执，报告 STOPPED。代理照常换回原始二进制并回复。执行器和代理都不杀任何进程，也不碰来历不明的进程树；
-  4. 只有停止回执是 `STOP_SENT`，或者这一段在 Windows 侧的调用（invoke-stage 子进程）已经带着阶段事实返回之后，执行器才给 companion 写 `mailbox\requests\<泵请求 id>.cancel.json`。带着阶段事实返回有三种：代理已经回复，不论回复码是什么（助手已停，或助手根本没启动）；调用在找代理之前就拒绝了这一段；调用等不到代理的回复而放弃，那时代理和泵自己的截止时间都已过。这三种情况下发行方都不再等泵能带来的任何东西。泵在下一个等待步骤以 `COMPANION_PUMP_CANCELLED` 结束，不再做 blocked 转交：取消之后不再发起任何 relay 调用（每次调用之前都先查取消，正在进行的那一次最多 40 秒，先等它结束），blocked 转交的每一步之前也查；以失败结束时，不论停在哪一步，回复都是 `COMPANION_PUMP_CANCELLED`（取消时恰好已经正常走完的，照实回复成功）；读不出的取消文件按没有取消处理；它只停止搬运，从不停止或杀掉 Linux worker，取消若随 issue 转交一起到达，就不再启动 worker。在这之前，泵和它的 blocked 转交都和没有中止时完全一样，所以停止没送达时，这一段的结局不会比不中止更差；调用一返回，这一段也不会再为泵多等到截止时间；
+  4. 只有停止回执是 `STOP_SENT`，或者这一段在 Windows 侧的调用（invoke-stage 子进程）已经带着阶段事实返回之后，执行器才给 companion 写 `mailbox\requests\<泵请求 id>.cancel.json`。带着阶段事实返回有三种：代理已经回复，不论回复码是什么（助手已停，或助手根本没启动）；调用在找代理之前就拒绝了这一段；调用等不到代理的回复而放弃，那时代理和泵自己的截止时间都已过。这三种情况下发行方都不再等泵能带来的任何东西。泵在下一个等待步骤以 `COMPANION_PUMP_CANCELLED` 结束，不再做 blocked 转交：取消之后不再发起任何 relay 调用（每次调用之前都先查取消，正在进行的那一次最多一个回调窗口（120 秒，`RELAY_TIMEOUT_MS`，§7.9），先等它结束），blocked 转交的每一步之前也查；以失败结束时，不论停在哪一步，回复都是 `COMPANION_PUMP_CANCELLED`（取消时恰好已经正常走完的，照实回复成功）；读不出的取消文件按没有取消处理；它只停止搬运，从不停止或杀掉 Linux worker，取消若随 issue 转交一起到达，就不再启动 worker。在这之前，泵和它的 blocked 转交都和没有中止时完全一样，所以停止没送达时，这一段的结局不会比不中止更差；调用一返回，这一段也不会再为泵多等到截止时间；
   5. 还没调用的段（例如还在 refs 闸门上）直接不调用，以 `OWNER_ABORT_REQUESTED` 结束。
 - **结束**（P0、P1、P2 相同）：
   1. 运行中被停下的段，结局码必须在白名单里（`classify.mjs#OWNER_ABORT_STAGE_ENDINGS`），而且该段自己的 Windows 证明齐全（作业树为 0、原始二进制已还原）。白名单是：本来就干净的码；`OWNER_ABORT_REQUESTED`；`COMPANION_PUMP_CANCELLED`；入口被停下、来不及写结局时的 `STAGE_OUTCOME_MISSING`。最后一个只在停止回执是 `STOP_SENT` 时才算，其他情况下它照旧是未知；
@@ -708,6 +708,31 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
   9. 结果后的准入越过 issue 窗口时为 UNCERTAIN。
 - 四轮独立只读审核均为 PASS（0 BLOCKER、0 MAJOR）：`8b1f6f7b`、`105adffc`、`5410d563`，以及自举安装审核 `11af4710` 第 4、5 条修复后的 `18c0afc5`。审核记录在 PR #899 正文里。
 
+### 7.9 搬运变慢时的回调（Task `576231fa`，Owner 决定 `6f1fb753`）
+
+**根因**（2026-10-23，只读核实）：三次被记成“签发方卡住”的事故里，签发方其实都按时作答了。慢的是 companion 的一次搬运调用（relay-public.ps1）：平常 4–6 秒，偶尔 25–45 秒。
+
+- PR #915 第 4 段（批次 `a0a76a17`）：签发方 07:20:38Z 写出 response-04，SendResponse(4) 约 30 秒后才在 Linux 侧校验。这时响应里的准入已超过 30 秒新鲜期，Linux 拒收。companion 以 `RELAY_REFUSED_NO_RETRY` 停泵；worker 在本轮截止写 uncertain，因为扫描已经跑过。
+- PR #911 第 4 段（批次 `0d379e72`）：签发方 04:57:30Z 写出 issue，SendIssue 用了约 43 秒，超过 companion 原来固定的 40 秒，泵当作失败停下，worker 没有启动。
+- PR #908 第 1 次：response-02 同样没送到 Linux。那一轮在准备之前，所以 worker 写了 `blocked`，干净结束。
+- 泵停下以后，签发方等到 issue 过期，以 `BRIDGE_RESULT_DEADLINE` 结束（UNCERTAIN），常驻侧判 `PUBLICATION_UNCERTAIN` 并 HALT。
+- 证据：Windows 侧桥记录的时间（Owner 一次 UAC 的只读收集）、Linux 侧归档与 journal、companion 的 relay-stage 答复。搬运慢在哪一步没有记录可查。
+
+**改动**：
+
+- 回调 response 里的准入按签出时刻判新鲜，和 issue 一样（`CI/worker/protected-job-bridge-v4/protocol.mjs#validateResponse`）：签出时准入不超过 30 秒；response 只要在自己的窗口内到达（不晚于本轮 challenge 的截止，最多 120 秒）；claim 在到达时仍有效（response 的 `expiresAt` 不晚于 `claimExpiresAt`，且晚于到达时刻）。
+- Linux 适配器对每轮回调结果自己的复核（`validateFormalAdmissionV2`）也一样：worker 把每个 response 的签出时间和过期时间记在它交给适配器的那份准入事实上（`linux-worker.mjs#callbackValue`、`admission-facts-v2.mjs#noteBridgeResponseTimes`）。在这个 response 有效期内、且不晚于 claim 到期，30 秒从签出时刻算；过了这个时间，或者不是从回调来的事实，照旧从当前时刻算。适配器先校验端口交来的那个对象，再克隆；克隆出的对象不带登记。Windows 侧的调用方从不登记，行为不变。
+- 所以 Linux 侧用上一份准入时，它最多比 `observedAt` 晚约 150 秒（签出前 30 秒，加一个回调窗口），以前是 30 秒。
+- remote-refs 回调的 refs 快照仍按到达时刻判 30 秒，不在这次决定范围内。gitleaks 的 remote-refs 一轮走的是同样的搬运，变慢时仍会被拒（那一轮在准备之前，所以以干净的 `blocked` 结束，#908 就是这样）。
+- companion 每次搬运调用最多等一个回调窗口（`RELAY_TIMEOUT_MS` = 120 秒），不再固定 40 秒。（写本节时 Runner 从不杀子进程，提前放弃并不能腾出 Runner，只会让泵以没用的答复结束；§24 起，到这个时限由作业宿主连同进程树一起结束，§25 再按到达核对裁定。）Owner 中止时，正在进行的那次调用最多多等这么久。
+- relay-public.ps1 等 wsl 子进程的上限从 30 秒改为 90 秒。它的 `finally` 本来就会一直等到子进程结束，这个上限只决定一个慢了、但已经做完的子进程算不算成功。以前超过 30 秒就是 `UNCERTAIN_LOCKS_RETAINED_NO_RETRY`，companion 照样报 `RELAY_REFUSED_NO_RETRY`。
+- 生效要重装两侧：桥 v4 的文件按字节受理（relay-public.ps1 每次搬运前逐字节核对 manifest），companion 配置里的 `bridgeManifestSha256` 也随之更新。
+- 不变：每轮仍重新做完整准入；绑定 nonce、序号与批次 claim 代际；发布阶段（3、5、7、8）自己再做完整准入，已发布的检查不重复、不伪造。
+- 仍未处理（后续）：
+  - 泵在扫描执行段停下、companion 已给出 Linux 静止证明时，常驻侧要等签发方到期才 UNCERTAIN→HALT，应尽早停下签发方并干净结束。
+  - 搬运慢在哪一步仍不知道：relay 的输出（`status`、`failureCode`）没有留下来，下次出事故时无从查起。
+  - `windows-issuer.mjs` 里“迟到后再等两个窗口”的说明，假设的是一次 ReceiveBlocked 很快；搬运调用长到接近 120 秒时，这两个窗口可能不够用。
+
 ---
 
 ## 8. Windows：服务账户与权限边界
@@ -827,6 +852,13 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 
 1. 执行器在导出时写公开描述符 `outbox\<batchId>\descriptor.json`。
 2. companion 在第 1 段**之前**用 Owner 的 git 凭据运行 `build-bundle.ps1 -BatchId`，规则同今天：只用 https、关闭 hooks、refs 等于 ls-remote、main 等于 base、按 SHA 取已审查提交。
+   - **传输卡住**（Task `4d3aaa64`）：2026-10-23 PR #916 的批次，fetch 经本地代理拉到 47 MB 后连接卡死。git 没有低速限制，一直等到服务侧 35 分钟期限才以 `BUNDLE_UNAVAILABLE` 失败，同一时间网络正常。现在所有 git 调用都带 `http.lowSpeedLimit=1000`、`http.lowSpeedTime=60`：连续 60 秒低于 1000 字节/秒，git 自己中止。到 companion 的 30 分钟时限时，作业宿主还会连同作业一起结束它（§24）；低速限制让这件事早得多。
+   - **重来一次**：三个联网步骤（全部 heads 和 tags 的 fetch、ls-remote、按 SHA 取已审查提交）之一由 git 失败时，整个对象库重建一次（`Fetch-Store`）。第 2 次在新的 bare 库 `fetch-2.git`（只新建）里从头走每一步、每一项核对；第 1 次留下的东西（半截 pack、refs）原样留着，从不再读。限制：只重来一次；只在脚本开始后 10 分钟内失败才重来，第 2 次因此至少还有 20 分钟（整次建 bundle 平时 40–100 秒，见过最长 283 秒；companion 等 30 分钟）；脚本自己的拒绝（main 变了、refs 不等、对象库里缺提交等）和 git 没能启动都不重来；不读 stderr，所以会重复的联网失败（凭据、GitHub 上已没有的已审查提交）也会多花一次。回执和失败答复记 `storeAttempts`，以及第 1 次停在哪一段、哪一步（`firstAttempt`）。
+   - 代价：`--quiet` 时服务器准备 pack 的阶段没有进度输出，只有心跳包。这一段若超过 60 秒，也会被当成卡住。平常整个 fetch 只要 5–11 秒；真遇上了，就落到上面那一次重来。
+   - `-CheckRefs` 的 ls-remote 也带低速限制，但不重来：它失败就是 `REMOTE_REFS_UNAVAILABLE`，由常驻侧照旧分类。
+   - 慢但不停（一直略高于 1000 字节/秒）的传输：脚本本身没有总时限，到 companion 的时限由作业宿主连同进程树一起结束；邮箱通道不再停摆，第 0 段失败只关 Windows、不 HALT（§24，Task `8e1f07d3`）。
+   - 测试：`windows/test-build-bundle.ps1` 从脚本的语法树取出 `Invoke-Git`、`Build-Store`、`Fetch-Store`，对一个本地 file:// 远端和一个只接受连接、从不回应的回环端口跑真实 git（低速窗口在测试里改成 2 秒）：卡住后在新库里成功、已审查提交那一步卡住、不卡、两次都卡（没有第 3 次）、过了 10 分钟才卡（不重来）、脚本自己的拒绝（不重来）；另把脚本复制一份、只换常驻目录、远端和 git 路径，跑完整主块、`-CheckRefs` 和同一批次的第二次运行（只新建），共 50 例。`CI/test/resident-v2-build-bundle.test.mjs` 在任何主机上钉住这些固定值。
+   - 生效要重装（Source v2 文件）。
 3. 第 1 段准入之后写 `10-started`。
 4. companion 启动 `clued-ci-wsprep@<batchId>`，由 root：按内容重算作业 id、核对已安装 Source 和角色策略、密封 bundle（ls-remote 时间不超过 2 小时）、`fsck --full --strict`、只允许 100644 和 100755 的 blob、建 root:root 0700 工作区。MINOR-7：候选的 head 树先在对象库里核对模式（只许 100644、100755），**然后**才检出，检出带 `core.symlinks=false`、`core.protectNTFS`、`core.protectHFS`，所以 root 从不写出符号链接或子模块。（以非 root 身份检出没有采用：工作区必须是 root:root，换身份要加 chown 步骤，留作 P2 评估。）
 
@@ -886,7 +918,7 @@ v0.8 补充（2026-10-21，Owner 中止 §6.5，基于 main `8c2bfdcc`，推送�
   - 静止证明不成立时 HALT，之后照常复位；有界复查内静止也算数；停下的段结局不干净时 HALT；停止没送达、入口没写结局时 HALT；HALT 时中止不清 HALT；tick 开始时接受到一半失败，当场 HALT，不再启动别的批次；接受回执写失败时照样请求停止；中止中途重启以 `OWNER_ABORT_INTERRUPTED` 关闭并 HALT；
   - 引擎只把停止请求绑定在这一次交换上，还没调用的段不调用；先写代理停止，`STOP_SENT` 之后才取消泵，取消失败不挡代理停止；泵被取消时跳过 blocked 转交，取消随 issue 转交一起到达时不启动 worker。
   - 第二轮复审之后：接受到一半失败、以未知关闭也失败时，闸门照样不跑别的批次，回执记为 `owner-abort-unconfirmed` 而不是拒绝；已接受过的中止再请求被拒；tick 开始时 Source 漂移就拒绝；段运行中写出读不全的 `80-owner-abort` 时，段结束后 HALT，下一 tick 隔离，复位以 `rearm-quarantine` 归档；停止没送达时，这一段的调用一返回就取消泵，不再等泵的截止时间；段结束后补写“已请求停止”的回执；中止的未知结局带上安全点和请求摘要。
-  - bootstrap 安装源复审之后：relay 调用失败时取消已经写好，泵只等完那一次调用（最多 40 秒）就以 `COMPANION_PUMP_CANCELLED` 结束，不做 blocked 转交，也不再调 relay（ReceiveResult、ReceiveChallenge、ReceiveBlocked，超时和被拒各一）；blocked 转交途中收到取消，在下一个等待步骤结束；取消时已经写好的 response 不再转发。之后的复审又补了：列目录、或 relay 回答“没有”之后，不再发起下一次 relay 调用（没有列表时、主循环里、blocked 转交里各一）；失败的 SendIssue、blocked 转交自己被拒的 ReceiveBlocked 也回复 `COMPANION_PUMP_CANCELLED`；读不出取消文件时，泵和没有中止时完全一样。
+  - bootstrap 安装源复审之后：relay 调用失败时取消已经写好，泵只等完那一次调用（当时最多 40 秒，§7.9 起最多 120 秒）就以 `COMPANION_PUMP_CANCELLED` 结束，不做 blocked 转交，也不再调 relay（ReceiveResult、ReceiveChallenge、ReceiveBlocked，超时和被拒各一）；blocked 转交途中收到取消，在下一个等待步骤结束；取消时已经写好的 response 不再转发。之后的复审又补了：列目录、或 relay 回答“没有”之后，不再发起下一次 relay 调用（没有列表时、主循环里、blocked 转交里各一）；失败的 SendIssue、blocked 转交自己被拒的 ReceiveBlocked 也回复 `COMPANION_PUMP_CANCELLED`；读不出取消文件时，泵和没有中止时完全一样。
   - 推送前的最终核对之后：服务记下请求之前就死了、恢复关闭批次之后再读到这个请求，回执记为 `owner-abort-unconfirmed` 而不是拒绝；`FAILED_CLEAN` 已写、`batch-terminal` 回执写失败时不记成未确认；tick 开始时接受到一半失败，汇总回执是 `owner-request`（`HALTED`），不是拒绝。
 - 常驻层 Python **25/25**（在 Git Bash 里运行；在 PowerShell 里有 3 个 Linux 安装器用例因为解析到另一个 `/bin/bash` 而以 127 失败，与本次改动无关）；`node drill/offline-drill.mjs` **37/37**（新增 2 步：第 2 段卡住时 Owner 中止，之后这个 head 不再运行）。
 - `windows/test-resident-windows.ps1` **71 条**断言，其中 C# 纯逻辑 **28 条**（新增 18 条：停止请求只认这一次交换和扫描签发段，`StopRequest.Decide` 的每种状态）；`SwapBroker.cs` 编译通过。
@@ -1227,7 +1259,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 - 去重记录放在 Owner 自己的 `%LOCALAPPDATA%\CluedIndependentCI\`，不放在常驻目录。
 - `companion.json` 的 `status` 可以分别关掉这两项，默认都开。
 - **两条线**（`companion-main.mjs#lane`）：companion 自己的动作（邮箱：bundle、工作区、Linux 归档和静止证明、转发泵）和咨询性工作（poller、PR 页面状态、通知）各走一条线，各用自己的 Runner。
-  - Runner 从不杀子进程，所以一个卡住的 gh 只会占住它自己那条线；服务要的证明（例如 2 分钟期限的 `linux-quiescence`）照常应答，GitHub 再慢也不会让邮箱请求过期，进而导致不该有的 HALT（独立复核 M1）。
+  - 一个卡住的 gh 只会占住它自己那条线；服务要的证明（例如 2 分钟期限的 `linux-quiescence`）照常应答，GitHub 再慢也不会让邮箱请求过期，进而导致不该有的 HALT（独立复核 M1）。§24 起，两条线的子进程都由作业宿主在时限处连同它的作业一起结束，卡住的 gh 也只占到时限为止。
   - 咨询性的每次调用最多 15 秒，每轮 PR 页面加通知最多 60 秒，超时后这一轮不再发起新调用。
   - 调用超时或 Runner 仍忙时，这一轮就此结束；没做成的事不记为已做或失败：没弹出的通知下一轮再弹，没写成的 PR 状态不进 10 分钟的失败名单。
   - 通知先于 PR 页面：通知只在本机，不应排在慢的 GitHub 后面。
@@ -1817,6 +1849,694 @@ Owner Decision `0bb98194` 把设计 v0.5 的第 3 步拆成三个 PR，这是第
   - 已改：m1（推导结果的 `testSha` 加了跨层断言）、n1（outbox 路径与 `layout.mjs` 的 `LINUX_DESCRIPTORS` 相等）、n2 和 n5（写进 §21.4、§21.3）、n4（过时注释）。
   - n3（打包脚本只有源码断言；C# 同批核对没有测试）留到 3c，和 S ≠ H 的测试一起补。
 
+## 22. 额度第二期·第 3c-1 步：第 10 段（只读）与影子模式（v1.2，Task `6451a55d`，Decision `2eea28a1`）
+
+Owner Decision `2eea28a1` 把 3c 拆成两步。3c-1 只做影子模式（设计 v0.5 §6 第 4 步）要的部分。今晚装上后 `train.enabled=shadow`：第 10 段只读，不撤销、不写 KooYomi、不改发绿规则，第 8 段仍按关车规则走。开车所需（撤销、清扫、车头批次、S ≠ H、C9）在 3c-2。
+
+### 22.1 第 10 段怎么跑（设计 v0.5 没写打包方式，这里补）
+
+- 第 10 段是批次之外的一个正式段，照旧由通用助手以 clued-control 运行，经 SwapBroker 和 C# 边界，上限 5 分钟。
+- 一次运行叫一次“列车维护”（train run）。它的阶段包和批次的阶段包同一套格式（计划、作业列表、工作清单、密封），区别只在作业：
+  - 作业合同 `clued.independent-ci.train-run/1`，字段 `contract, id, repo, runId, mode, sourceManifestSha256, createdAt`；id = sha256(JSON([合同, repo, runId, mode, sourceManifestSha256]))。
+  - `runId` 是常驻层生成的 16+12 位十六进制（和批次 id 同形），`batchKey` 由它推出；`mode` 只能是 `shadow`（3c-2 才放开 `on`）。
+  - 作业角色 `train-run`，入口角色 `train-maintenance`，阶段号 10，种类 `train`，不属于任何批次的八段。
+- `derive-batch.mjs --train-run <runId> --train-key <key> --mode shadow --out <新目录>` 推出这个包，放在 `resident\work\train\<runId>`。常驻层 `engine-windows.mjs` 的 `runTrainStage` 照第 R 段的做法推导、调用、解析；run key 和 run id 是新的随机值，推导只核对形状。
+- C# 边界（`FormalPublicBoundaryV2.cs`）和 SwapBroker：阶段表加第 10 行（入口 train-maintenance、上限 5 分钟、作业角色 train-run）；第 10 段的作业按 train-run 合同校验（`ValidateTrainRun`：mode 只能是 shadow，run id 必须等于计划的 batchId，id 按公式重算），其他段不变。
+- 结果：入口写出 `status: 'TRAIN_FACTS'` 和 `train` 事实（`stage-inputs.mjs` 的 `writeOutcome` 像第 R 段的 `relay` 那样单独校验这一块）；`stage-fact.mjs` 认这个成功状态。
+
+### 22.2 第 10 段在影子模式下读什么、算什么（设计 §5.5 第 1、2、8 条）
+
+1. KooYomi `clued_work_merge_slot_holders_v1`（CI 身份）：车头的认领、PR、`merge_slot_until`、`taken_at`、CI 状态。它同时是当班探测：回答 `admission_binding_required` 就记“不当班”，其余照读。
+2. GitHub：main 尖端；车头 PR 的状态、head、草稿、`mergeable`、`merge_commit_sha` 与它的父提交和树；head 是否含 main 尖端（compare）；main 的规则（`strict`、合并方式、六项钉 5368905）。
+3. 绿色台账：列出全部记录，按 head 汇总最后阶段；对“成功且还没撤销”的，查它是否已在 main 里。
+4. 算出“如果开车会做什么”（设计 §5.2、§5.6）：没有车头；车头是别的 scope 的认领；车头不能跑（草稿、关闭）；车头需要作者先合 main（受保护且落后、冲突、`strict` 开着且落后）；车头已绿等合并；会开车头批次（T、S 与它的两个父提交）；以及会撤销哪些旧绿（台账里不在 main 里、又不是车头当前 head 的成功）。
+5. 每次运行写一条只新建的影子记录（`state\v2\train-shadow\`，`acl-model.json` 新增，只有 clued-control 能写），供第 4 步统计：车头变绿到合入的空档、第 2 位的等待、车头首次运行失败率、每个 PR 平均几个 head、GitHub 在 main 移动后多久重算试合并。统计离线从记录里算，不进执行器。
+6. 影子模式不做的：不撤销、不调用 touch/adopt/return、不改第 8 段、不开车头批次、不做 GitHub 全量枚举（GraphQL 强推事件留给 3c-2 的清扫）。
+
+### 22.3 常驻层
+
+- 策略 `/6` 新增 `train`（第 10 段上限钉在 300000，C# 边界和 SwapBroker 只允许 5 分钟）：`enabled`（`off`/`shadow`；`on` 在 3c-2 之前拒绝）、`nonFrontRuns`（只认 `true`，即今天的做法）、`maintenanceEveryMs`（默认 10 分钟）、`maintenanceMaxPerDay`（默认 200，设计 §4.7）。
+- 执行器（`executor.mjs#trainMaintenance`）：`enabled=shadow` 时，一次节拍里调度没有跑任何批次（结果是空闲或只有推迟，停靠中的批次不算在跑），且离上次第 10 段超过 `maintenanceEveryMs`，就跑一次。暂停接新（队列为空时也查，见 §22.7 M1）、PAUSE、HALT 时都不跑：执行器的 PAUSE 本来就只留读触发这一件事，3c-1 不改它的含义（设计 §4.3 说暂停只停发绿，那是为 3c-2 的清扫准备的，到时再定）。第 10 段也守开批次前的两条：安装授权在本段上限加余量（`limits.stageMarginMs`，不少于助手固定的 180 秒）内到期就不跑，Source 或常驻字节漂移就 HALT（`RESIDENT_SOURCE_DRIFT`）。运行期间状态显示 `RUNNING TRAIN_MAINTENANCE`。
+- 计数和中断：第 10 段没有账本条目，由回执链代替。运行前写 `train-run-intent`，结束写 `train-run`（runId、是否成功、失败码、会做什么、车头 PR、main、会撤几个）。每个进程启动后第一次节拍从回执链读最近的记录（`receipts.mjs#latest`）：取最近 24 小时的 intent 时刻计数，到 `maintenanceMaxPerDay` 就停到窗口滚动；如果最新的一条是没有 `train-run` 收尾的 intent（运行中途崩溃或被停），先 HALT `TRAIN_STAGE_INTERRUPTED`，再补一条收尾回执，所以只停一次；这一步放在 HALT 检查之前，已经停着时发现的中断也当场收尾，复位一次就够。回执链读不到时所有批次都等（排除不了没收尾的 intent），暂时性错误最多 30 分钟，之后 HALT `TRAIN_RECEIPTS_UNREADABLE`。
+- 失败：只有 Windows 证明齐全、结果里没有副作用，并且是白名单里的干净码（classify.mjs）、引擎自己在 broker 之前的拒绝（`TRAIN_STAGE_REFUSED`）或一个绑定的零副作用 BLOCKED 结果（也包括写完 TRAIN_FACTS 后撞上 5 分钟上限的）时，才算干净失败：只记 `train-run` 回执，不进熔断，下次照跑。清理没证实（Windows 进程树或 runner 原服务没确认）或调用抛异常 HALT `TRAIN_STAGE_CLEANUP_UNCONFIRMED`；有副作用、可能已发布或不是干净码（如 `BROKER_BUSY`）HALT `TRAIN_STAGE_OUTCOME_UNCONFIRMED`。
+- 阶段事实（`stage-fact.mjs`）：第 10 段只有 `TRAIN_FACTS`、零副作用、`mayHavePublished=false` 且事实通过 `validateTrainFacts` 才算成功，事实随阶段事实带回；其余都是现有的 `STAGE_OUTCOME_MISSING`，不新增失败码；这个结局干净与否由执行器按证明和绑定的结果判断（见下一条“失败”）。
+- 状态快照（合同 `/5`，即 C5 的 `/4` 加这一块）多一个 `train`：`enabled`（策略里的模式）和 `last`（最近一次成功运行的摘要，`train.mjs#trainSummary`）。PR 页面（`pr-status.mjs`）只在最近 30 分钟内的运行看到的车头正是这个 PR 的这个 head 时，把“列车影子（只记录，不执行）：……”接在执行器原来那句后面；失败、出错时不加。和 C5 的当班视图一起时，这行只出现在本节点当班或有结果的 head 上；备用节点、停滞和双活提示整句替换描述，这行随之不显示。
+- companion 规则集兜底（设计 §6 末，`ruleset-backstop.mjs#companionBackstop`，`companion-main.mjs` 每轮 poll 调一次）：用 Owner 的只读 gh 读 `rules/branches/main`；读到 `strict=false` 而状态快照里 `train.enabled` 不是 `on`（读不到也算不是），就往用户可写的 `requests\` 写一个暂停请求并弹紧急通知；读到六项不再全部钉 5368905 或没有 `required_status_checks`，只弹通知。每类每天一次，记在 companion 自己的存储里（`pr-status.mjs#LocalStore`，`backstop:` 键）。读不到规则什么都不做（第 8 段自己会以 `RULESET_UNREADABLE` 停靠）。
+
+### 22.4 为什么装上是安全的
+
+- 第 10 段只读：没有任何 GitHub 或 KooYomi 写，失败了也只是少一条影子记录。
+- 第 8 段的发绿规则不变（列车模式仍是 off；影子只读不发绿）。
+- 策略 `/6` 的 `train.enabled` 在测试里默认 `off`；策略样例写 `shadow`，今晚装的就是它。
+- 规则集兜底只会写暂停请求（只能停），不会多发绿。
+- 一处行为变化：开着 shadow 时，暂停接新的状态一直读不到，空队列也会在 30 分钟后 HALT `INTAKE_PAUSE_STATE_UNAVAILABLE`（第 10 段要过这道门）；关着列车时不会。
+
+### 22.5 留给 3c-2 的
+
+- 开车要做的部分：第 8 段的单绿规则（设计 §5.3 第 4 条）、检查说明（第 6 条）、`touch green`（第 8 条）；不依赖日志的撤销、增量与全量清扫（含 GraphQL 强推事件和失败关闭）、台账清理；车头批次调度（S 来自第 10 段）、请合 main、硬上限、touch、adopt、return；§21.3 所列的 S ≠ H 各项；C9（接手时清扫、撤别人的检查前核角色、撤自己的不要求角色）。
+- 保留：`retention.mjs` 只量 spool 归档、`work\` 和 `bundles\` 的字节，不管回执链、`state\v2\receipts`、`train-shadow`、broker 文件和 `resident\stage`。第 10 段每天约 280 条回执，现装节点约每天 590 条，回执链增长快约一半；每次启动读全部回执、每次追加列出整个目录。开车（3c-2）之前要定这些目录的保留办法。
+- **列车调度要支持优先级或截止时间**（Owner Decision `349f6e42`：常驻 CI 的排队协调改由合并列车承担，不另写协调机器人）。实际例子：主备 C5 改的是 3c 要用的文件，必须在某个时刻前合入，只按先来后到排的列车不知道这种期限。3c-2 设计时定来源（PR 标签、认领字段或 KooYomi Task 的截止时间）和规则（截止时间先于先来后到，且不能让车头之外的 PR 插队绕过“只有一个绿”）。
+
+### 22.6 测试
+
+- Source v2：`train-run.test.mjs`（作业合同、id 公式、阶段行、`--train-run` 推导与封包、invoke-stage 端到端：只有 TRAIN_FACTS + 零副作用 + 合格事实才算成功），`train-facts.test.mjs`（当班探测、车头事实、会做什么、会撤哪些旧绿），C# 纯测试第 10 段（入口、阶段表、`ValidateTrainRun` 拒 on、拒别的计划、拒别的 repo、train-run 不能当 /3 作业）。`source-closure.json` 重新生成，只多了五个新文件。
+- 常驻层：`train.test.mjs`（到期规则、摘要、状态副本、PR 页面行；执行器：空闲才跑、关车/PAUSE/每日上限不跑、失败只记回执、清理没证实或抛异常 HALT、漂移 HALT、中断的 intent 在下次启动 HALT 一次且计数跨重启），`ruleset-backstop.test.mjs`（规则读法、只暂停不恢复、每天一次、companion 接线），策略 /6 与各段上限的旧测试随之更新。
+- 离线演练多三步（第 52–54 步）：空闲时跑一次第 10 段只留两条回执；有 PR 时先跑批次，那一拍不跑第 10 段，十分钟后的空闲拍再跑；第 10 段清理没证实就 HALT。
+
+### 22.7 独立审核（规则 01d4ba7d）
+
+第 1 轮（预览树 fb97b65d：main c955068d + C4 #915 + 3c-1）：ACCEPT-WITH-FIXES，1 MAJOR、6 MINOR、5 NIT。确认成立的：第 10 段对 GitHub 和 KooYomi 没有写（只有安装令牌的签发是 POST，holders RPC 在迁移里是只读的），第 8 段不变，兜底只能暂停，两处 HALT 都在收尾回执之前，C# 边界和 SwapBroker 只认一个 train-run/1，阶段事实的成功条件，策略拒 `on`，批次预算不含第 10 段，closure 只多五个文件，状态与 PR 页面行对坏字节安全。
+
+- M1 队列为空时 `schedule()` 在暂停接新的门之前就回空闲，第 10 段照跑：`trainMaintenance` 自己先过一次暂停接新的门（读不到状态也算挡住）；测试补“空队列 + 暂停接新”。
+- m2 授权到期只看了本段上限，没加助手要求的 180 秒余量：改为上限加 `limits.stageMarginMs`；策略把第 10 段上限钉在 300000（C# 和 SwapBroker 都只允许 5 分钟）；测试补边界两侧。
+- m3 执行器没看第 10 段的结果：现在只有 Windows 证明齐全、结果里没有副作用、并且是白名单里的干净码（classify.mjs）、引擎自己在 broker 之前的拒绝或一个绑定的 BLOCKED 结果时才算干净失败；有副作用、可能已发布、`BROKER_BUSY` 之类一律 HALT（`TRAIN_STAGE_OUTCOME_UNCONFIRMED`）；测试逐类覆盖。
+- m4 回执链读不到时只挡第 10 段：现在挡所有批次（排除不了没收尾的 intent），暂时性错误最多 30 分钟（与回填同一上限），拒绝立刻，之后 HALT `TRAIN_RECEIPTS_UNREADABLE`；测试补。
+- m5 `test-migrate-acl.ps1` 的步数从 3a 起就过时（12）：改为 14，并核对 green-ledger 和 train-shadow 两个目录只有 clued-control 能写；离线跑通 14 条。
+- m6 测试缺口：补了暂停接新、授权余量、HALT 先于收尾回执（回执写失败时 HALT 仍在）、读不到回执链；`train-facts.test.mjs` 那条永远不会失败的只读断言换成按顺序核对每次读；新增接线测试：真的 GitHub 端口和 KooYomi 端口配一个只答读请求的 fetch，除令牌签发和 holders RPC 外全是 GET。SwapBroker 第 10 行没有单独的 broker 测试，由 C# 纯测试的阶段表断言和 `StageMilliseconds` 长度覆盖。
+- m7 运维上的取舍，不需要 Owner 另行决定：第 10 段运行中重启会 HALT 一次、要复位，这和任何一段运行中崩溃一样（复位前核对两台主机都静止）。每次运行留约 13 个小文件和 2 条回执：第 1 轮答复说由 `retention.mjs` 管，第 2 轮指出这不对（它只量 spool 归档、`work\`、`bundles\`），已更正，保留办法列入 §22.5，3c-2 之前定。
+- NIT：兜底改为先记“今天已处理”再弹通知，通知失败不再每轮写暂停请求；`receipts.mjs` 注释改指 `trainRecover`；第 10 段运行期间状态显示 `RUNNING TRAIN_MAINTENANCE`；窄窗口里崩溃可能 HALT 两次（`halt` 幂等，无害）；`trainRunKey` 只给测试和推导核对用，常驻层用自己的随机数。
+
+第 2 轮（预览树 b18f30bd）：ACCEPT-WITH-FIXES，2 MINOR、6 NIT，不挡今晚装。第 1 轮的 M1、m2、m3、m4、m5 已关；m6 部分关；m7 的复位理由成立。新的失败规则对追到的每种结局都对：GitHub 或 KooYomi 暂时读不到（绑定的 BLOCKED）、broker 启动前拒绝、助手预检拒绝、没有结果的子进程超时、引擎自己推导被拒，都保持干净；只有未知或没证实的结局 HALT。
+
+- m1 干净规则里走 classify 的那一支没有测试：补了 `BROKER_REQUEST_EXPIRED`、`BROKER_REQUEST_REFUSED`、`STAGE_HELPER_PREFLIGHT_REFUSED`、无结果的 `STAGE_CHILD_TIMEOUT`（都不 HALT），以及证明不齐的一例（HALT）。
+- m2 §22.7 m7 说第 10 段的文件由 `retention.mjs` 管，不对：已更正，保留办法列入 §22.5。
+- NIT：写完 TRAIN_FACTS 后撞上限的运行不再 HALT；授权余量不低于助手固定的 180 秒，策略里的 300000 也加了测试；SwapBroker 和 C# 边界的阶段表加了一致性测试（第 1 轮 m6.3 的理由不对，已补）；已经停着时发现的中断当场收尾，复位一次就够；过时的注释和本节文字已改；回执链暂读不到的那几分钟里，停在 A 点的批次暂时不显示在 PR 页面上，只在进程启动时遇到暂时性读错误才会发生，接受。
+- 补测：调度推迟（companion 没就绪）时第 10 段照跑、已停机启动时什么都不跑。
+
+第 3 轮（接合审核，预览树 3c9fe384 = 3c-1 + C5 #918 head 29deb110 + C4 #915 head 514b6e67）：ACCEPT-WITH-FIXES，1 MINOR、4 NIT，不挡推送。3c-1 的补丁在 C5、C4 的代码里位置正确，两边的东西没有丢也没有换序，运行时配合正常；状态 `/5` 里 C5 的 `node` 和 3c-1 的 `train` 并存；兜底从真实的 `/5` 状态读到 `shadow`；closure 在 C4 之上只多五个文件。
+
+- m1 companion 报告器里的列车影子行、执行器填 `status.train.last` 没有测试：两处都补了（报告器：车头 PR 有这一行，别的 PR 没有；执行器：一次运行后状态里有模式和摘要）。
+- NIT：停机时补写收尾回执失败不再让服务退出（HALT 已在，下次启动再补）；本节写明状态合同 `/5` 以及与当班视图一起时这行在哪些 head 上出现；附录 A 补了 3c-1 的文件；交班后 `已交班` 文字下可能留一行旧的影子说明，它本来就只记录，接受。
+
+### 22.8 Source31 CI 引导资格指针（Task `6451a55d`）
+
+本 PR 的普通 Source 引导继续按精确登记的工作流、Role 与 Source 组合核验。此次受查 Source 为 `31e757ac2d613c9e76d0b7e416d906fd9c7d48be`，Owner 接受依据为 Decision `ae3538a1-627d-49d4-b13a-bdf6d1223856` / Receipt `cf26ce6a-e6f7-4204-9195-9c3a55310e41`。
+
+2026-10-24 的双端标准安装与验证证据见 Canonical Note `7abd3c63-3bd7-42bf-8f36-670bf84552fb` 第 44 版：Linux readiness 原 SHA256 为 `eb11e62ab0494c2efa8bb6ebf505816ed12add61d0e81b52353f0233a86785d3`，Windows 正式完成回执原 SHA256 为 `598dd9f11122e38adebd03cf8cda7353d341c45fa4b51fd4a24c6f390baa3f76`。完整安装回执、独审与保留证据由该记录引用，仓库保留此短指针。
+
+本 PR 的交付范围仍为 3c-1 shadow；正式六项检查、受保护合并及其后 3c-2/C9 和第 4–7 步的当前状态由 Task `6451a55d` 跟踪，Source 安装证据不替代这些 Gate。
+
+## 23. 主备 C5：PR 页面节点状态、接班核对与双活停机（Task `ade5df89`）
+
+C5 的代码已由 PR #918 合入。本节说明 `src/node-duty.mjs`、`src/pr-status.mjs` 与 `src/status.mjs` 的行为：companion 在 Owner 登录会话里显示各节点的当班情况，提醒无人接手的 PR，并用 C6 的暂停接新请求锁住发现双活的本节点。PR 页面和本地状态都是提示；真正的发布互斥仍由服务端 ci-admission 角色与 C4 的 GitHub 写后核对承担。
+
+### 23.1 节点身份与状态快照
+
+- C5 在状态合同 `/4` 加入 `node`；当时的合同是 `/5`（§22 的 `train` 与 `node` 并存）；C3 起是 `clued.independent-ci.resident-status/6`，`node` 多一个 `source`，由执行器从启动时就写（§29.4）。`node` 包含 `name`、`mode`（`ACTIVE`、`STANDBY`、`UNCERTAIN`）及 `probe`（时间、`held` / `not-held` / `uncertain`、连续失败数与失败起点）。它是执行器写出的视图，不是角色授权。
+- `node=null` 保留单节点兼容行为：按 ACTIVE 显示，名字用 companion 的 `status.node`，默认 `turing`；没有已知节点的角色探测，就不做接班核对。节点名为 1–32 位小写字母、数字或中划线，首尾不能是中划线。
+- `status.json` 每 15 秒整份重写；超过 5 分钟未更新按停滞处理。companion 只读执行器状态，在 Owner 自己的 LocalStore 保存页面写入、提醒与双活锁；暂停和恢复通过 `requests\` 传递。
+
+### 23.2 每个节点写自己的页面状态
+
+节点使用 commit status `resident-queue/<node> (info only)`；备用提醒另用 `resident-standby (info only)`。旧名 `resident-queue (info only)` 不再写，也不作为别的节点当班的依据。读不到 main 的 required checks，或任一待写 context 与其重名时，本轮不写页面状态；正常读取结果缓存 30 分钟，比较时忽略大小写和首尾空白。
+
+| 文字开头 | 含义与写入范围 |
+|---|---|
+| `当班：` | 本节点自己的当前批次或排队中的这个 head，且状态新鲜、执行器不是 STOPPED / STARTING，没有 HALT、PAUSE、暂停接新或 open 熔断，角色模式也不是 UNCERTAIN。排队中的 QUEUED、PARKED、WAITING、BACKOFF 都算本节点接手的 head。 |
+| `停摆（CODE）：` | 自己接手的 head 不满足上述条件，显示固定原因码，如 STATUS_STALE、EXECUTOR_STOPPED、INTAKE_PAUSED、BREAKER_OPEN、NODE_ROLE_UNCERTAIN 或实际 HALT 码。 |
+| `双活停机：` | 本节点持有双活锁；自己的在跑或排队 head 提示停止取新触发，并请 Owner 在 KooYomi 收回其中一个节点的 ci-admission。 |
+| `已交班：` | 节点变成 STANDBY 后，对本地记得在最近 30 分钟写过当班或双活文字的 head 补写；若其后已有结果，保留结果文字。其余旧状态不成批改写。 |
+| 结果或提示文字 | 自己跑过、排过的 head 可显示结果；ACTIVE 一侧仍可写“落后 main”提示。它们都不算当班。STANDBY 不写新的排队、结果或落后 main 提示，只补交班和备用提醒。 |
+
+别的节点只认 Owner 当前 GitHub 账号、精确节点 context 和固定模板；同一 head 上每个节点以**最新一条**为准。最新结果、已交班或无法识别的文字不会让更早的“当班”复活。只有最新的“当班”或“双活停机”在 30 分钟窗口内才阻止接班。
+
+相同的当班、双活和停摆文字每 14 分钟可重写一次，保持存活时间；该 head/context 的本地累计写入数达到 900 后停止这种定时刷新，变化的文字仍可写。companion 重启后，对本地记得最近 30 分钟写过当班或双活、仍打开且本轮没有重新描述的 head，补 `停摆（NODE_RESTARTED）`，写成功才销账。
+
+### 23.3 备用提醒与接班时间
+
+STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写停摆至少 10 分钟且最新状态仍在 30 分钟窗口内；对方最新当班或双活文字已超过 30 分钟没刷新；或本 companion 看到这个 head 已至少 30 分钟、没有节点当班，且查明 App `5368905` 没有发布名为 `kooyumi-work-admission` 的 check-run。最后一项判断的是检查是否存在，不是它是否通过；读不到检查结果不当作没有检查。
+
+提醒写在备用 context，并发 Windows 通知，建议 Owner 移交 ci-admission；它不会自行移交。每个 `(PR, head, reason)` 在本地保留窗口内只提醒一次，相关记忆保留 24 小时。一个 head 的 statuses 成功读到后缓存 5 分钟；读取失败不更新缓存时间，可以在下一轮报告时再试（正常轮询约 1 分钟）。每轮最多尝试读 10 个 head，并受读取前的预算检查约束。
+
+时间口径与通知一致：移交后，对方空闲或停摆时，本节点下一次角色探测通常在 15 分钟内接班；对方仍在跑批时，要等它发现角色已失去并写“已交班”。这不是固定的最长接班时间。确定的 ACTIVE / STANDBY 转换及连续至少三次不确定的角色探测也有通知，UNCERTAIN 本身不算一次确定模式转换。
+
+### 23.4 接班核对及其边界
+
+每次新的 `held` 角色探测确认本节点 ACTIVE、且没有双活锁时，companion 对本轮看到的打开 PR heads 做接班核对。每轮最多读 10 个；未读完则后续轮继续。单个 head 读取失败后等 5 分钟再试，连续三次失败就跳过这个 head，让核对可以结束；Owner GitHub login 读不到时只等待，不计入这三次。
+
+发现另一节点的最新当班或双活文字仍在 30 分钟窗口内，就建立本地锁：原来已 ACTIVE 的记 `dual-active`，新接班的记 `takeover-refused`。两者都暂停本节点接新并通知 Owner。核对进行中本身不是执行器的准入闸门，锁在整轮核对结束并确认冲突后建立。
+
+每个 head 的 statuses 读取只取最新一页（`per_page=100`），没有全历史分页；核对还会受网络、报告器预算、本地记忆丢失和上述跳过规则影响。因此“没看到当班”只表示这次有界读取没发现，不能证明另一节点没有角色或没有工作，也不能替代服务端角色与发布核对。
+
+### 23.5 双活锁的维持与三种解除
+
+锁住时通过 C6 写 `holder=dual-active`、120 分钟的暂停接新。状态显示该持有者剩余不超过 90 分钟时续写；正常状态下两次写请求至少隔 5 分钟，状态停滞或读不到时至少隔 60 分钟。它只影响接新，当前及停靠批次仍按 C6 的原规则处理；Owner 自己的暂停持有者互不解除。
+
+锁只通过下面三种情况解除：
+
+1. 本节点成为已知的 STANDBY：释放自己的 `dual-active` 持有者，并补写交班。
+2. 对方在曾观察到它当班的某个 head 上，最新状态变为“已交班”：释放本节点的持有者。此类复查至少隔 5 分钟；两边都写“双活停机”不会互相解锁，单纯过了 30 分钟也不解锁。
+3. Owner 用 `rearm-tool request-intake-resume --holder dual-active` 复位：companion 需看到新鲜状态、快照的 `writtenAt` 严格晚于最近暂停请求的 `holdAt + 60_000`、原暂停结束时间仍未到、该持有者已消失，且没有 `unconfirmed` / `unreadable` 持有者；连续两次观察至少隔 1 分钟才确认。这是代码依据时间和持有者状态作出的推断，这项判定不核对请求 ID 或消费回执；独立定时器在长阶段运行时也会更新快照时间，时间条件本身不能证明执行器已读过请求。确认期间不续写暂停。暂停自然到期或状态读不清不算 Owner 复位。
+
+### 23.6 报告器边界
+
+报告器每轮最多写 20 条页面状态、显示 5 条通知；单个外部调用超时 15 秒，页面写失败后冷却 10 分钟。受 `inBudget()` 保护的通知、逐 head 扫描和页面写入路径会检查本轮已用时间是否小于 60 秒，已启动的调用可以越过这一时点；读取 required contexts 之前没有这项预算检查，需实际读取规则时即使前面的通知已耗尽预算，仍可能发起一次规则 GET。因此 60 秒不是所有调用的统一启动硬上限。它在 companion 独立的 advisory lane 运行；先显示本地通知，再做节点核对与页面写入。超时留下未结束子进程时本轮停止发起后续调用，下一轮等待原 Runner，不把尚未完成的动作记成成功。
+
+本节记录 C5 已合入代码的行为；主机安装、节点资格和真实移交仍按各自的授权与验证流程办理。
+
+## 24. companion 子进程超时：作业对象收尾，第 0 段不靠 companion 收尾（Task `8e1f07d3`）
+
+这是设计层面的改动：companion 的 Runner 不再沿用“从不杀子进程”。下面写清改的范围、理由和边界，已经过独立审核（§24.8）。服务自己的 Runner 不变。
+
+### 24.1 现象与链路
+
+- 2026-10-23，PR #916 的批次：companion 跑 `build-bundle` 到 30 分钟上限，答复 `BUNDLE_UNAVAILABLE`，可它起的进程树（powershell 加 4 个 git）还在（Note `d1c2eac3`）。
+- 链路（main `c955068d` 只读核实）：
+  1. `runner.mjs` 从不杀子进程，超时后 Runner 一直 busy，直到子进程自己结束；
+  2. `companion-main.mjs` 的 `lane` 在 busy 时什么请求都不取，整条邮箱通道停摆，心跳也停；
+  3. 执行器在第 0 段失败时调 `closeOrThrow`，`engine.closeBatch` 要向 companion 要 `archive-linux` 的结果。没人答，6 分钟后过期，报 `UNEXECUTED_CLOSE_UNCONFIRMED`，09:14Z HALT。
+- 恢复靠 Owner 结束遗留进程并 rearm（Decision `901a8968`）。一次 HALT 要 Owner 点一次 UAC。
+- Task `4d3aaa64`（`build-bundle.ps1` 低速超时 + 在新库里重做一次）写本节时仍未合入 main，现随集成 PR 合入（原 PR #928，§10.1）。即使有了它，下面几种情况仍会走到这条链路：慢而不断的传输、git 卡在 curl 之外（例如凭据助手弹窗）、companion 的其他子进程（wsl、relay、gh）超时。
+
+### 24.2 决定：companion 的每个子进程都建在它自己的作业对象里
+
+- **宿主** `windows/CompanionJobHost.cs`，安装时编译为 `bin\CluedCompanionJobHost.exe`（只有管理员能写，Owner 可读可执行）。调用方式：`<nonce> <时限毫秒> <绝对路径的程序> [参数...]`。
+  1. 新建一个作业对象，标志是 `KILL_ON_JOB_CLOSE | DIE_ON_UNHANDLED_EXCEPTION`（`0x2400`）。不许脱离：没有 `BREAKAWAY_OK`，也没有 `SILENT_BREAKAWAY_OK`。node 直接起子进程时，子进程所在的 libuv 作业标志是 `0x3c00`，即这两项再加两个脱离许可。所以崩溃的子进程仍然立即结束，不会在错误报告里挂到时限。
+  2. 子进程**直接建在这个作业里**：
+     - 用 `PROC_THREAD_ATTRIBUTE_JOB_LIST` 创建（Windows 10 1607 起可用；TURING 是 Windows 11），同时挂起（`CREATE_SUSPENDED | CREATE_NO_WINDOW`）；
+     - 宿主用 `IsProcessInJob` 核实它确在作业里，然后才恢复运行；
+     - 所以子进程从来不在这个作业之外，连运行前也不在，它起的一切进程也都在作业里；
+     - 内核不确认它在作业里时，就地结束这个还没运行过的子进程，不会恢复它（`CHILD_JOB_UNCONFIRMED`）。
+  3. 子进程只继承三个句柄：NUL 作 stdin，加上宿主自己的 stdout 和 stderr（用 `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` 限定）。
+     - companion 读到的输出和直接起子进程时一样；
+     - 环境变量和当前目录沿用宿主自己的，也就是 companion 原来给子进程的那一份；
+     - 参数按 libuv 的规则重新加引号，子进程拿到的参数逐字相同（测试覆盖空格、引号、结尾反斜杠和空串）。
+  4. 子进程自己结束，或者超过时限时：
+     - 宿主终止这个作业（`TerminateJobObject`），然后等到内核计的作业存活进程数为 0（`ActiveProcesses = 0`），并且子进程的退出码已知；
+     - 等待期间如果还有进程，每 500 毫秒再终止一次作业；
+     - 最多等 30 秒。
+  5. 报告是宿主在 stderr 上写的最后一行：`clued-job-host <nonce> {...}`，合同 `clued.independent-ci.companion-job-host-report/1`。
+     - 字段恰好是 `started`、`failure`、`childPid`、`timedOut`、`exitCode`、`leftover`（等待结束时作业里还活着的进程数）、`activeProcesses`、`totalProcesses`、`treeZero`；
+     - 退出码：子进程自己结束时取它的退出码，超时 121，没起子进程 120，其他 122。
+- **原则和 §6.5 的通用助手相同**：只终止并排空自己建的作业对象。作业外的进程一个都不看、不碰，也不按父进程号遍历进程树（父进程号可能被复用，这正是原规则要防的“来历不明的进程树”）。宿主一结束，作业随之关闭，内核结束作业里剩下的每个进程（`KILL_ON_JOB_CLOSE`），这仍然只涉及这一棵树。
+- **TURING 实测**：作业里实际有哪些进程（`JobObjectBasicProcessIdList`）。
+  - wsl：`System32\wsl.exe` → `Program Files\WSL\wsl.exe` → `wslhost.exe` → `conhost.exe`；
+  - git：`cmd\git.exe` → mingw `git.exe` → `git-remote-http(s).exe`；
+  - powershell、node 各带一个 `conhost.exe`。
+
+  这些进程都随这次调用自己结束。子进程退出后剩下的，只有一个正在退出的 conhost。没有哪个需要在调用之后继续存在，所以每次调用后都排空作业不会伤到 WSL 或 git。
+- **Linux 一侧**：结束 wsl.exe 时，它直接起的 Linux 进程也立即结束（审核实测：`sleep` 和 `sh -c 'exec sleep'` 都是）。只有 systemd unit 继续运行，Linux worker 从不受影响。Linux 的静止事实仍然只来自 root 工具。
+- **半路被结束的子进程，各自的后果**：
+  - `build-bundle.ps1`：每批一个只新建的 `bundles\<batchId>\`，残留不会再读；下一批用新的 batchId。
+  - `-CheckRefs`、gh：只读。
+  - `relay-public.ps1`：
+    - 它自己的规则是：wsl 子进程 90 秒没结束就报 `PUBLIC_TERMINAL_UNCONFIRMED_LOCKS_RETAINED`，然后不杀 wsl，一直持着父目录锁，直到 wsl 结束。宿主在 companion 的时限（`RELAY_TIMEOUT_MS`，120 秒）处覆盖这条规则：relay、它起的 wsl.exe 和 Linux 上的 `relay-record.mjs` 一起结束，写方和锁同时消失；
+    - 这个脚本自己有界的部分（Add-Type、哈希，加 5+90+5 秒）在 120 秒内做完。被覆盖的只是“wsl 一直不结束、就一直持锁”这一段，也就是卡死的情形；
+    - 两侧都是先写数据并落盘，最后才新建 ready 标记：Windows incoming 用 `CreateNew`，Linux incoming 由 `relay-record.mjs` 用 `wx` 加 fsync。半路结束，最多留下一份没有标记的数据，读方不会取它；同一条记录也不会再转一次（`EXISTING_RECORD_PRESERVED_NO_RETRY`）。泵原来把搬运超时当成 `RELAY_REFUSED_NO_RETRY`；§25 起，被结束的调用归 AMBIGUOUS，由到达核对裁定是否已到、能否再试。
+  - `systemctl start --wait`：unit 由 systemd 继续运行；其余 wsl 调用都是只读工具。
+- **Runner**（`src/runner.mjs`，只有 companion 给它 `jobHost`）：
+  - 起子进程时实际起的是宿主：`[宿主, nonce, 时限, ...argv]`。时限只收 1 秒到 1 小时。
+  - 结果按报告来：
+    - 自己结束并排空：返回它的退出码和输出，报告行从 stderr 里去掉；
+    - 自己结束、但剩下的进程没排空：仍返回它的退出码，另加 `tree: 'unconfirmed'`；
+    - 超时：`timedOut`，`tree` 是 `'zero'` 或 `'unconfirmed'`；
+    - 没有报告、nonce 不对、报告有失败码、退出码对不上：`JOB_HOST_UNCONFIRMED`，从不当成功。
+  - stderr 照常最多留 4 MiB；另有一份末尾 4 KB，专门用来找报告，所以子进程写了很多 stderr 也不影响。
+  - 宿主自己超过“时限 + 60 秒”还没结束时，Runner 结束这个宿主。宿主是它自己的直接子进程，句柄一直在它手里，不存在进程号复用。宿主一结束，它的作业就关闭。
+  - companion 的 Runner 只在宿主运行期间 busy。结束请求被系统拒绝时（`error` 事件，有 pid），仍然 busy，直到宿主真的结束；只有宿主根本没起来（没有 pid）时才立即空闲。
+  - 启动时，companion 经宿主跑一个固定的无害子进程（`cmd /d /c exit 0`）。没跑起来、退出码不是 0 或没排空，companion 就不启动（`COMPANION_JOB_HOST_UNAVAILABLE`），不发心跳，执行器不开批次；不会在心跳正常的情况下让每个请求都悄悄失败。
+- **服务自己的 Runner 不变**：从不杀子进程，超时后 busy。Windows 侧的证明（`windowsTreeZero`）依赖这一条。
+
+### 24.3 邮箱通道不再停摆
+
+- 子进程超时后，宿主在时限之后最多 30 秒排空作业，Runner 随即空闲，`lane` 接着处理下一个请求。`linux-quiescence` 等证明用 root 工具的新鲜事实回答；泵在 relay 超时之后，它的 blocked 转交也能真正发出去。
+- `lane` 仍会 busy 的情况只剩一种：宿主进程本身还活着，或者作业里有一个结束不了、又还握着输出管道的进程。这是原规则用在宿主上。这时心跳停，执行器不开新批次（`COMPANION_NOT_READY`）。
+- 两条 lane 都用宿主，所以 gh 卡住也不会让 PR 页面状态一直停着。
+- **答复 `/2`**：`clued.independent-ci.resident-companion-response/2` 多一个字段 `jobTree`：
+  - `null`：每个子进程都自己结束并已排空，或者根本没起子进程；
+  - `'zero'`：某个子进程的作业不得不由宿主结束（超过时限，或子进程起来之后宿主报了失败），并且作业里没有剩下的进程；
+  - `'unconfirmed'`：宿主没能证明这一点，包括剩下的进程没排空、宿主没给报告。
+
+  这只是记录，两端的证明都不依赖 companion 自己的进程树。companion 和服务来自同一个安装包，一起升级；重装前要先卸载，卸载会结束 companion 进程（`uninstall-resident.ps1`），邮箱里不会留着两种版本的答复。
+
+### 24.4 第 0 段失败不靠 companion 收尾
+
+- 第 1 段之前，这一批的东西都没到 Linux：
+  - 描述符和 bundle 都只在 Windows 上（`outbox\<batchId>\`、Owner 的投放目录 `resident\bundles\<batchId>\`）；
+  - 第 1 段不起 Linux worker（policy `linuxWorker: false`）；
+  - 工作区准备在第 1 段之后才做。
+
+  所以第 1 段之前释放的批次，收尾只归档 Windows：`closeOrThrow(batch, { linux: false })`。这包括 bundle 失败，也包括第 1 段之前被新提交取代。这个参数原来就有，第 R 段把所有重角色都转出去时用的就是它。
+- 释放不再等 companion 的任何答复。companion 忙着、刚结束或根本不在，都不会再把第 0 段失败变成 `UNEXECUTED_CLOSE_UNCONFIRMED` 和 HALT。Windows 归档用的是服务自己的 `archive-windows-spool.ps1`，不经过 companion。
+- `batch-unexecuted` 回执多记一项 `companionJobTree`，取自 bundle 答复的 `jobTree`。
+- 宿主自己还没结束时，companion 的 Runner 仍然 busy，不发心跳，下一批不会开始（既有闸门）。
+
+### 24.5 没有做的，以及理由
+
+- **`build-bundle.ps1` 自设总时限**：不需要。宿主在每个子进程的时限到点时结束它的整棵树，覆盖 bundle、`-CheckRefs`、工作区准备、relay、gh。卡住的传输按 Task `4d3aaa64`（§10.1）约 60 秒就会由低速超时先处理。脚本自设时限只能多报一个阶段名，却要改 Source v2、要重装 Source，所以没做。本改动不动 Source v2：安装记录和 `ciSourceManifestSha256` 都不变。
+- 第 1 段失败后的释放（`NOT_ADMITTED` 等），仍然两端归档，没有改。
+- 第 1 段之前的安全点上，Owner 中止仍要 companion 的静止证明和 `archive-linux`（`executor.mjs`，Owner 中止的结束步骤），没有改。有了宿主，companion 在这时也总能回答。
+- 崩溃恢复对未终结批次仍然 HALT（`EXECUTOR_RESTARTED_WITH_OPEN_BATCH`），没有改。
+- **残余**：
+  - `tree: 'unconfirmed'` 之后 companion 照常往下走。依据是作业已经终止并随宿主关闭，这是内核的保证，不是观察到的事实。
+  - `archive-linux` 在 companion 里最坏是 5 分钟加 30 秒，再加排空，可能超过服务的 6 分钟。超过时服务按没有答复处理，结局和原来一样。
+
+### 24.6 安装与生效
+
+- `install-resident.ps1` 的 `service-hosts` 步骤：
+  - 从已安装的常驻副本 `resident\<sha>\windows\CompanionJobHost.cs` 编译 `bin\CluedCompanionJobHost.exe`；
+  - 编译器与其他宿主相同，参数和通用助手一样（`/target:winexe /platform:x64`，只引用 `System.dll`）；两个服务宿主是 `/target:exe`；
+  - 回执记 `companionJobHostSha256`，安装计划多一项 `companionJobHost`；
+  - `verify-resident.ps1` 核对这个哈希；
+  - `windows/test-job-host.ps1` 用同一组参数编译，并逐字核对安装脚本的编译行、回执钉值和 verify 那一行。
+- companion 用固定路径 `<root>\bin\CluedCompanionJobHost.exe`，`companion.json` 不变。找不到宿主时 companion 不启动（`COMPANION_JOB_HOST_REQUIRED`），所以宿主和 companion 必须一起装。
+- 要重装 Windows 常驻包才生效。Source v2 和 Linux 都不用重装。
+- 安装后的核验：在 Owner 自己的非提权会话里跑一次 `windows/test-job-host.ps1 -Wsl`，这和 companion 的环境只差计划任务那一层作业。`test-job-host.ps1` 第 4 步把联机用例再跑一遍，这次 node 本身就跑在外层宿主的作业里（`IsProcessInJob` 为真，`CREATE_BREAKAWAY_FROM_JOB` 报错误 5），每个内层宿主都要在这层作业下面建子进程。
+- `verify-resident.ps1`：没有这项钉值或没有宿主 exe 的安装（§24 之前装的），这一项记 false，不会让整个 verify 抛异常中断。
+- `uninstall-resident.ps1`：改名常驻目录之前，除了已安装的 node，也等 companion 的作业宿主结束。宿主随 node 的作业关闭而结束，但这是异步的。
+
+### 24.7 测试
+
+- `test/job-host.test.mjs`：
+  - 报告只认最后一行、这个 nonce、恰好这些字段；
+  - 自己结束时退出码、输出原样，报告从 stderr 去掉；
+  - 超时并排空后 Runner 立刻空闲，下一个子进程马上开始；
+  - 排空没确认、没有报告、没起子进程（含建了没确认结束的）、退出码对不上、报告带失败码、nonce 不对，各自给出该有的 `tree` 和拒绝码；只有自己结束的子进程才会是 code 0；
+  - stderr 超过 4 MiB 仍能找到报告；
+  - 宿主超过时限加 60 秒时，Runner 只结束宿主，并且在宿主结束前保持 busy；结束被拒绝时同样保持 busy；宿主没起来时立即空闲；
+  - 时限越界、宿主路径不对，什么都不起；
+  - 服务的 Runner 照旧不杀、超时后 busy；
+  - `lane` 在一次超时之后继续回答；
+  - companion：超时的 bundle 答 `jobTree: 'zero'`，同一轮里 `linux-quiescence` 用 root 工具的事实回答；relay 超时后 blocked 转交只发一次；
+  - 答复 `/2` 的 `jobTree` 只收三种值；服务端口把它原样传给执行器；
+  - 执行器：第 0 段失败只关 Windows，不向 companion 要任何东西。即使 `archive-linux` 和静止证明都会失败，也照样干净释放、不 HALT，回执带 `companionJobTree`。第 1 段之前被取代同样只关 Windows。
+  - 启动探针：真跑了、排空了才算；没报告、没起子进程、没排空、退出码不是 0 都拒绝启动。
+- 联机用例（`CLUED_JOB_HOST_EXE` 指向编译好的宿主时运行）：
+  - 参数逐字到达，输出和退出码原样；
+  - 超时的子进程和孙进程都结束，Runner 随即能跑下一个；
+  - 子进程退出后留下的孙进程（包括 detached 的）也结束，作业外的进程照常运行；
+  - powershell 跑 git，连到一个只接受、不回应的本地端口卡住：到时限整棵树结束，那个 git 不在了；
+  - `-Wsl` 时还跑真实的 wsl（含超时的 `sleep 30`）、powershell 和 git。
+- `windows/test-job-host.ps1`：解析三个脚本；核对安装与校验脚本里的那几行；用安装时的参数编译宿主；参数不对时退出码 120 并写报告；原样转发；再带联机用例跑上面的 node 测试；skipped 数必须找到；联机用例嵌套在外层宿主里再跑一遍；核对卸载会等宿主。
+- 另做过一次探针：作业里的子进程读到的作业标志是 `0x2400`。
+
+### 24.8 独立审核
+
+第 1 轮（新上下文、只读，审 `b4377086`）：有条件 PASS，没有 BLOCKER。x64 结构体布局、句柄名单、失败路径（不会恢复不在作业里的子进程，不会误报成功）、引号还原、服务 Runner 不变、第 0 段 `linux:false`，都核对无误。修正如下：
+
+- MAJOR：安装与校验的改动必须和本改动进同一个 PR；“编译参数与其他宿主相同”不对，已改为与通用助手相同。
+- MINOR：
+  1. 作业标志补上 `DIE_ON_UNHANDLED_EXCEPTION`，否则崩溃会变成慢超时；
+  2. 原先挂起的子进程在 `CreateProcess` 和 `AssignProcessToJobObject` 之间不在任何作业里。宿主若恰在此时被结束，会留下握着管道的孤儿，lane 又会停摆。已改为 `PROC_THREAD_ATTRIBUTE_JOB_LIST` 直接建在作业里，再用 `IsProcessInJob` 核实；
+  3. Runner 在结束宿主被拒绝时不再清 busy；
+  4. 文档：§6.2、§16 和附录 A 里“companion 的 Runner 从不杀子进程”的说法一起改；`unconfirmed` 的来源写全；Task `4d3aaa64` 尚未合入；Linux 一侧和 relay 规则被覆盖的事实；Owner 中止仍要 companion；stderr 的 4 MiB 与 4 KB。
+- NIT：排空时重复终止作业；没起来的子进程没确认结束时保留 `tree`；为 stdout、stderr 新建的 NUL 句柄已关闭。
+
+第 2 轮（新上下文、只读，审 `d3c155b9`，与 main `f0a401d4` 比）：PASS，没有 BLOCKER 或 MAJOR。第 1 轮的修正都在代码里，并且正确。与 main 的合并（C1a/C1b 节点档案、3c-1、邮箱 torn-read 修正）解冲突正确；安装、计划、回执、verify 一致。审核另外实测：wsl 被结束后 Linux 一侧的进程（包括孙进程）都不在了；node 在外层宿主的作业里时，内层宿主照常工作。修正如下（在 `23f31976`）：
+
+- MINOR：verify 遇到 §24 之前的安装记 false，不抛异常；companion 启动时经宿主跑一次探针。
+- NIT：卸载等待宿主结束；jobTree 各个取值的条件写准；skipped 数必须找到；联机用例嵌套再跑一遍。
+- 没有改的：stderr 到 4 MiB 上限时可能留下半行报告，只影响外观。
+
+## 25. 中继稳健：逐次分类、有界重试、本地日志（Task `241de382`，设计 r3 第一部分）
+
+依据：常驻容错设计 r3（`DESIGN.r3.md`，sha256 `8d4627a2…3289`，三轮独立审核最终 PASS，KooYomi Note `178957cb`）第一部分；Owner Decision `7303ab04` 把它与 §24 放进同一个 PR、先装。只改常驻层（`src/companion.mjs`、`src/companion-main.mjs`、`src/engine-windows.mjs`、`src/failure-table.json`），不改 Source v2、`relay-public.ps1` 或 Linux 工具。
+
+### 25.1 为什么
+
+伴侣的 `relay()` 原来对“暂无记录”以外的任何失败都回 `RELAY_REFUSED_NO_RETRY`，泵随即放弃。Linux worker 等不到回调就自己退出，Windows 发行器等满段截止，以 `BRIDGE_RESULT_DEADLINE` 结束，常驻判 `PUBLICATION_UNCERTAIN` 并 HALT（10-21 #891，10-23 #911、#915、#918，10-28 #929、#928）。其中很多次只是一次 wsl.exe 或 VM 层的抖动，几秒内就失败了，再试一次就会成功。
+
+### 25.2 每次尝试的分类（`classifyRelayAttempt`，表里没有的一律 PERMANENT）
+
+| 类别 | 判定 | 处理 |
+|---|---|---|
+| OK | `code 0`，`PUBLIC_RECORD_TRANSFERRED`，`terminalConfirmed` | 返回 true |
+| NOT_YET | `childError.reason ENOENT`，`terminalConfirmed` | 返回 false（不变） |
+| NO_CHILD | runner `RUNNER_SPAWN_FAILED`；或 `JOB_HOST_UNCONFIRMED` 且没有 `tree` 键、没有超时；或回执 `PUBLIC_TRANSFER_UNCONFIRMED` 且 `processId`、`exitCode` 都是 null | 最多再试 1 次（可能是持久问题，如 spool 的 IO 或 ACL） |
+| CHILD_FAILED | `PUBLIC_CHILD_EXIT_REFUSED_NO_RETRY` 且 `childError` 为 null（wsl.exe 或 VM 层，或 OOM）；或 `PUBLIC_CHILD_REFUSED_NO_RETRY` 且 reason ∈ {EBUSY, EMFILE, ENFILE, EINTR, FORMAL_RELAY_STDIN_TIMEOUT}、stage ∈ {OPERATION, CONTEXT, STDIN, TRANSPORT, PACKET} | 先做 §25.3 的核对；Send* 还要先确认 Linux 上没有残留的 relay-record |
+| AMBIGUOUS | 作业宿主超时结束且 `tree zero`；`PUBLIC_TERMINAL_UNCONFIRMED_LOCKS_RETAINED`、`PUBLIC_OUTPUT_UNCONFIRMED_NO_RETRY`、`PUBLIC_STDIN_UNCERTAIN_NO_RETRY`；`childError.reason EEXIST` | §25.3：已到 → true；一半 → 永久失败；没到（Send* 还要求没有残留进程）→ 再试 |
+| EXISTING | Receive* 的 `EXISTING_RECORD_PRESERVED_NO_RETRY` | 只有完整的同名记录才算已到，其他一律永久失败 |
+| PERMANENT | 其余一切：身份、位置、清单类；`FORMAL_SPOOL_ACL_REFUSED`；`PUBLIC_PARENT_*`、`PUBLIC_INPUT_*`、`PUBLIC_READY_CHANGED`、`PUBLIC_RECORD_*`、`PUBLIC_IMPORT_UNCONFIRMED_NO_RETRY`；`childError` 的其他 reason，或 stage 为 BINDING、RECORD、COMPLETE；`tree unconfirmed`；runner 的其他拒绝；回执无法解析 | `RELAY_REFUSED_NO_RETRY`（码和失败表行都不变） |
+
+- OK 与 NOT_YET 按字段读取，和改动前一样；可能导致重试的类别（NO_CHILD 的回执形状、CHILD_FAILED、AMBIGUOUS、EXISTING）还要求回执的 `contract` 是 `clued.independent-ci.formal-public-relay-receipt/2`，因为它们的安全论证依赖 /2 的语义。
+- 作业宿主报 `tree unconfirmed` 时，即使回执写着已转移，也判 PERMANENT（设计 r3 §1.6：不在没证明结束的进程上叠新调用）。这比改动前严：改动前这种回执算成功。
+
+### 25.3 到达核对与残留进程检查
+
+一个记录名在一段里只用一次，两端都只新建、先写数据再写 ready，所以“到没到”直接看目标：
+
+- Receive*：Windows `formal-spool\incoming`（现有的 `fileExists` 端口）。数据与 ready 都在 = 已到；都不在 = 没到；其他 = 一半。
+- Send*：Linux `formal-spool/incoming`，新增固定 argv `ls -1 -A -- /var/lib/clued-independent-ci/formal-spool/incoming`。
+- 残留进程：新增固定 argv `pgrep -f -a protected-job-bridge-v4/relay-record.mjs`。退出码 1 = 没有；0 = 2 秒后再看一次，仍有就永久失败；其他退出码 = 永久失败。作业宿主结束了 Windows 一侧的 powershell 和 wsl.exe，但没有证明 Linux 一侧的 relay-record 也随之退出，所以每次 Send* 重试前都查。
+- 一半的记录：新码 `RELAY_PARTIAL_RECORD_PRESERVED`，加入 `PUMP_CODES` 和失败表（halt，`owner-rearm`，与 `RELAY_REFUSED_NO_RETRY` 同行为）。不删、不覆盖。
+- 核对本身失败（`ls`、`pgrep` 的非预期退出码，或子进程没有被证明结束）：不重试，按永久失败处理。两个新调用都走作业宿主，各 15 秒上限。
+
+### 25.4 次数、超时与预算
+
+每次尝试的超时仍是 `RELAY_TIMEOUT_MS`（120 秒），不缩短：在“数据已写、ready 未写”之间结束 relay-public 会留下一半的记录。所以只有失败得快的那一次后面才有时间重试。
+
+| 调用 | 最多尝试 | 间隔 | 下一次只在 |
+|---|---|---|---|
+| `SendIssue`、`ReceiveResult`、`ReceiveBlocked` | 3 | 3 s、8 s | 距段截止（请求的 `deadline`）还有 ≥ 150 s |
+| `ReceiveChallenge` | 2 | 3 s | `now ≤ firstSeen + 120 s − 60 s` |
+| `SendResponse` | 2 | 2 s | `now ≤ 挑战记录自己的 deadline − 15 s` |
+
+- 任何调用的重试都不会在段截止之后发起：那时服务已不再等这个答复。
+- `firstSeen`：泵第一次在 Linux outgoing 里列到这个挑战的时刻；记下后不再改，之后某次列表失败也照用。从没列到过（列表一直失败）时，用这次调用开始的时刻代替。估错只会让应答晚到（发行器有“迟到”处理），影响的是活性，不是安全。
+- `SendResponse` 的预算读 Windows incoming 里那条挑战记录的 `deadline` 字段（公开字节，只读这一个字段，只用来决定要不要再试）；读不到就不重试。
+- 每次尝试前都先做取消检查（Owner 中止优先）。泵里的 `ReceiveBlocked` 只有在永久失败后才记为“已拒绝”；只是重试用完时，失败后的“交出 blocked 记录”仍会再试一次。
+- 没有给预算的调用（例如测试或将来的新调用）不会重试。
+
+### 25.5 本地日志
+
+- 每次尝试一行：`{at, mode, seq, attempt, ms, runner:{code, timedOut, tree, refused}, receipt:{status, failureCode, exitCode, processIdPresent, terminalConfirmed, childError}, class, stderrTail}`。只记码与计数；码不合格式的字段记为 null。
+- `stderrTail`：powershell stderr 的尾部，最多 512 个字符，只留可打印 ASCII，`C:\Users\<名>` 换成 `%USERPROFILE%`，32 位以上的十六进制串换成 `<hex>`，40 位以上像 base64 的串换成 `<b64>`，连续空白折成一个。
+- 位置：Owner 自己的配置目录 `%LOCALAPPDATA%\CluedIndependentCI\companion-log\relay-YYYYMMDD.jsonl`（UTC 日期），与 PR 页面状态的本地记忆同处。
+  - 这与设计 r3 §1.5 写的 `resident\companion-log` 不同：伴侣不提权，常驻目录只由安装器和服务写；放在 Owner 目录下不必改安装脚本和 ACL。
+- 只追加；单个文件到 2 MB 时写一行 `LOG_TRUNCATED` 后当天不再写；每天第一次写时删除 14 天以前的文件。日志写失败一律忽略，从不影响判断。
+- 邮箱的应答合同不变，泵失败时的答复码不变；要查原因看这份日志。
+
+### 25.6 不变的
+
+- 不增加任何发布路径，不碰 GitHub，不用 App 凭据。
+- 不杀 Linux worker；Windows 一侧只由作业宿主结束伴侣自己起的子进程（§24）。
+- 失败表仍是白名单。新码不进 `classify.mjs` 里与 Source 镜像的数组。
+- 不需要 Source 或 Linux 工具重装；随 §24 一次常驻层 Windows 重装（Owner 一次 UAC，同一次 UAC 重签 policy 文件里的 `residentManifestSha256`）。
+
+### 25.7 测试与残余
+
+- `test/relay-retry.test.mjs`：分类表逐行（含“看起来相近但带 `tree` 键的 `JOB_HOST_UNCONFIRMED`”和 BINDING 段的 EBUSY 都是 PERMANENT）；三类预算的边界；Send* 的残留进程与到达核对（含核对本身失败）；一半的记录；EXISTING；NO_CHILD 只重试一次；取消优先；日志的字段、脱敏、2 MB 上限与 14 天清理；泵里 `ReceiveBlocked` 用完重试后仍能交出 blocked 记录。
+- `test/job-host.test.mjs`：“一次中继调用超过上限”改为超时真的耗掉 120 秒、Windows incoming 里没有记录，结果仍是 `RELAY_REFUSED_NO_RETRY`。
+- 离线演练新增 `relay-flap-under-load`：第 3 轮 `ReceiveChallenge` 第一次 2 秒内失败，第二次成功，泵答 ok，这一段成功，不 HALT。
+- 残余：
+  - 像 10-28 #929 那样 wsl.exe 卡满 90 秒的，这里救不了，交给设计 r3 第二、三部分。
+  - `pgrep` 不存在或误配了别的进程：检查失败或判“有残留”，都按不重试处理，与改动前相同。
+  - 伴侣的“已到达”判断只用来少跑一次中继；记录的真假仍由两端各自校验。
+
+## 26. 通道断了就快速结束：泵观察者、桥停止、信号 A–D（设计 r3 第二部分）
+
+依据：常驻容错设计 r3（`DESIGN.r3.md`，sha256 `8d4627a2…3289`）第二部分，以及最终复核 `REVIEW.r3.md` 的 MINOR 1。只改常驻层（`src/engine-windows.mjs`、`src/companion.mjs`、`src/companion-main.mjs`、`src/mailbox.mjs`、`src/executor.mjs`、`src/classify.mjs`、`src/failure-table.json`），不改 Source v2、`relay-public.ps1` 或 Linux 工具。设计稿引用的是 main `f0a401d4` 的行号，代码已因 #933、#934 移动，以下全部按名字定位。
+
+### 26.1 为什么
+
+10-28 #929：第 2 段第 3 轮中继失败后，泵在约 2.5 分钟内就答复了失败，worker 两分钟后无记录退出，可 Windows 发行器一直等到 45 分钟的段截止，最后 `PUBLICATION_UNCERTAIN` → HALT。引擎要等阶段子进程整个结束才读泵的答复；伴侣的心跳在泵运行期间又一直不更新。
+
+### 26.2 四个信号
+
+| 信号 | 谁发现 | 条件 | 泵代码 |
+|---|---|---|---|
+| A 泵死了 | 引擎的泵观察者 | 泵以 `ok:false` 答复，代码属于 `PUMP_DEAD_CODES`（`PUMP_CODES` 以外的码按 `COMPANION_PUMP_UNCONFIRMED` 算）。不含 `FORMAL_WORKER_TERMINAL_UNCONFIRMED`、`COMPANION_PUMP_CANCELLED` | 泵自己的码 |
+| B worker 跑过并结束，却没留记录 | 伴侣的泵 | 有“跑过”的证据，且 unit 现在是 `inactive`/`failed`，并且之后这次列表里既没有 blocked、result，也没有待搬的挑战 | `LINUX_WORKER_ENDED_WITHOUT_RECORD` |
+| C worker 一直没启动 | 伴侣的泵 | `start --no-block` 后 5 分钟，既无证据，也从没列到过任何记录 | `LINUX_WORKER_NOT_STARTED` |
+| D 伴侣挂了 | 引擎的泵观察者 | 泵没答复，心跳超过 `PUMP_HEARTBEAT_STALE_MS`（120 s）没更新（从本段开始算起） | `COMPANION_HEARTBEAT_LOST` |
+
+- **B 的证据**（处理设计审查 MAJOR 1）：新固定 argv `unitFacts` = `systemctl show --property=ActiveState,InvocationID,ExecMainStartTimestampMonotonic <unit>`，按 `KEY=VALUE` 逐行解析，替代原来只读 `ActiveState` 的 `activeState`（泵结束后的“worker 已终止”核对也改用它）。证据任一即可：看到过 `activating/active/deactivating`；`failed`；`InvocationID` 非空且启动时间 > 0；本段已搬过挑战。泵自己记住“跑过”（unit 结束后可能被回收）。启动后立即查一次，之后每 15 s 一次。单独的 `inactive` 永远不算结束。
+- **列表必须是结束之后取的**：先读 unit 事实、判定结束，再列 Linux outgoing；这时列表就是定论。列表失败（`null`）不算定论。列表里还有 blocked、result 或下一个挑战的，照常搬运。
+- **D 的心跳来自独立定时器**：`companion-main.mjs` 的 `startHeartbeat()` 每 10 s 调一次 `mailbox.beat()`，整个包在 try/catch 里，永远不抛进泵或 lane；`step()` 开头那次也包住了。**只在 `probeJobHost` 成功之后才启动**（复核 r3 MINOR 1：作业宿主不能用就没有心跳，执行器就不开批）。
+  - 代价（复核 r3 已接受）：心跳不再反映 mailbox lane 是否卡住，执行器 `heartbeatMaxAgeMs` 的开批前检查也看不出 lane 卡死；每个子进程都被作业宿主限时（§24），所以 lane 不会无限卡住。
+- **D 先写取消，再停**：观察者先给这个 `relay-stage` 请求写取消（原因 `heartbeat-lost`），写成功才认定 D；被计划任务重启的伴侣看到取消，泵一开始就回 `COMPANION_PUMP_CANCELLED`，不开第二个泵（`pump()` 开头新增一次取消检查）。
+
+### 26.3 泵观察者与桥停止（`engine-windows.mjs`）
+
+- `invoke()` 发出 `relay-stage` 后，`observePump()` 与阶段子进程并行运行，每 `BRIDGE_POLL_MS`（5 s）读一次泵的答复和心跳。它只读写邮箱和 broker 的文件，不起任何进程（服务的 Runner 正忙着跑阶段），只对第 2/4/6 段启用。
+- A 或 D 之后**宽限 `BRIDGE_STOP_GRACE_MS`（60 s）**，阶段仍在跑，就每轮调用 `bridgeStop()`，直到读到 broker 的回执。
+- `bridgeStop()` 与 Owner 中止的 `requestStop()` 共用新抽出的 `stageStop()`：找到本批本段唯一在途的 swap，只新建 `.stop`（已存在即同一个停止，所以两者交错只会有一个 stop 文件），记住它，读 broker 回执。`bridgeStop()` **不**写 `80-owner-abort`，**不**置中止标志，**不**取消泵。
+- 阶段结束后的结局：
+  - 被桥停下，broker 回执 `STOP_SENT`，阶段事实的 Windows 进程树为零，**并且发行器没有绑定 outcome**（阶段码 `STAGE_OUTCOME_MISSING`）：`BRIDGE_STAGE_STOPPED_PUMP_LOST`；
+  - 停止送达的同一刻发行器已绑定 outcome：保留 outcome 自己的码（实现审核 MAJOR 1）。“永不干净”的码不能借改写变成可收尾的结局，干净的码也不必再过静止证明；
+  - 发行器自己先结束了：它自己的码；
+  - 其他：阶段事实的原码。
+  - 这一段若有 Owner 中止（`requestStop` 已被调用），一律保留阶段自己的码，由中止路径决定（Owner 中止优先）。
+- **桥事实**随结果返回，写进 `stage-terminal` 回执：`bridge: { pumpCode, stopRequestId, stopCode, stageCode, pumpQuiet }`。
+- **泵安静**（推广 c18eac1d）：阶段没成功、泵还没答复时，写取消（原因 `stage-ended`），最多等 `PUMP_QUIET_MS` = `RELAY_TIMEOUT_MS + 60 s`。阶段成功时不取消，照旧等答复。D 已成立时不等（伴侣被视为已死），只看一眼。
+
+### 26.4 邮箱、执行器、失败表
+
+- `CANCEL_REASONS` = `owner-abort`、`stage-ended`、`heartbeat-lost`，写取消和读取消两侧都校验。伴侣对所有原因一样处理（停止中继，回 `COMPANION_PUMP_CANCELLED`）；只有账本里的 `80-owner-abort` 才走 Owner 中止。取消文件的合同 `/1` 不变。
+- `mailbox.beat()` 改为同一时刻只写一次（定时器和 `step()` 都会调用，不再共用同一个临时文件）。
+- **一个请求只开一个泵**（实现审核 MINOR 1）：伴侣开泵时先在 `responses\` 下只新建 `<requestId>.pump.json`（合同 `clued.independent-ci.resident-companion-pump-mark/1`）。伴侣在泵运行中（取消写下之前）重启，看到这个标记就回 `COMPANION_PUMP_UNCONFIRMED`，不再搬 issue、不再启动 worker；服务把它当泵死（信号 A）。标记写不出来也不开泵。`pending()` 和提示读取都不会把它当答复。
+- **心跳定时器的位置**（实现审核 MAJOR 2）：在伴侣全部初始化（作业宿主探针、提示配置、状态配置与节点名、本地存储、keepalive）完成之后、两条通道开跑之前才启动，通道结束时清掉。入口出错直接 `process.exit(4)`，不会留下一个只发心跳、不干活的伴侣。
+- 执行器在第 2/4/6 段的中止轮询里，从 `engine.bridgeState()` 读观察者看到的东西，各写一次回执 `bridge-pump-lost`、`bridge-stop-requested`；轮询没赶上的，阶段结束后按结果里的桥事实补写。
+- 新码：`LINUX_WORKER_ENDED_WITHOUT_RECORD`、`LINUX_WORKER_NOT_STARTED`、`COMPANION_HEARTBEAT_LOST`（加入 `PUMP_CODES`），`BRIDGE_STAGE_STOPPED_PUMP_LOST`（阶段码）。失败表四行都是 `unknown/halt/owner-rearm/counts`；不进 `classify.mjs` 里与 Source 镜像的四个数组（交叉测试强制）。烧头、熔断计入、日额度不变、不进 attempt 2。
+- `OWNER_ABORT_STAGE_ENDINGS` 加入 `BRIDGE_STAGE_STOPPED_PUMP_LOST`，与 `STAGE_OUTCOME_MISSING` 同样只在 `STOP_SENT` 时成立：Owner 中止若恰在桥停止结束阶段的同一刻被接受，不会因此变成 HALT；两台主机的静止证明照样要过。
+
+### 26.5 与设计稿的差异（都是更保守或必要的补充）
+
+1. **信号 C 多两个前提**：最近一次 unit 事实必须真的读到（读失败不算“没启动”）；Linux outgoing 曾经列到过任何记录就不再判 C。
+2. **B、C 不做 blocked 交接**：B 的定论列表里没有 blocked，C 的 worker 没跑过，交接只会白等 150 s。
+3. **桥事实多两个字段**：`stopRequestId`（回执要用）和 `pumpQuiet`（§27 第 5 条要用）。
+4. **D 只在取消写成功后成立**；D 成立后，阶段结束时不再等泵答复；阶段若在 D 之后成功，结局码是 `COMPANION_HEARTBEAT_LOST`。
+5. **回执由执行器写**：引擎没有回执端口（服务入口不在本次改动范围），所以 `bridge-pump-lost`、`bridge-stop-requested` 由执行器的轮询和阶段后的补写产生。
+6. **`OWNER_ABORT_STAGE_ENDINGS` 加入 `BRIDGE_STAGE_STOPPED_PUMP_LOST`**（26.4 末条），设计稿没写，为“Owner 中止优先”在竞态下也成立。这个码只在“`STOP_SENT` 且没有绑定 outcome”时出现（26.3），所以中止接受它的范围与 M2 规则（`STOP_SENT` 下的缺 outcome）相同，没有扩大。
+7. **泵标记**（26.4）：设计稿没有。没有它时，伴侣在 120 s 内重启会对同一请求再开一个泵（改动前就有的行为，不会发布，但可能 HALT）。
+8. **两处比以前更保守，会 HALT**（实现复审第 2 轮 NIT）：伴侣写下泵标记后崩溃并重启，回 `COMPANION_PUMP_UNCONFIRMED`，按信号 A 停掉阶段；原来的 worker 若还在扫描，5 分钟内拿不到静止证明就 HALT（以前第二个泵也许能救回这一段，现在换成“一个请求只有一个泵”）。`STOP_SENT` 下阶段码若是 `STAGE_CHILD_TIMEOUT` 这类没有 outcome 的非 `STAGE_OUTCOME_MISSING` 码，保留原码并 HALT，不再改写成可收尾的结局。
+
+### 26.6 测试
+
+- `test/bridge-observer.test.mjs`：unit 事实的解析与证据；`inactive` 无证据不结束（MAJOR 1）；`activating` 后 `inactive` 且列表空 → `LINUX_WORKER_ENDED_WITHOUT_RECORD`，不做交接；`failed` 结束；结束但列表里还有 result、blocked 照常搬；列表失败不算定论；只有 `InvocationID` 不算；5 分钟无证据 → `LINUX_WORKER_NOT_STARTED`，事实读失败或列到过记录不判；泵死 60 s 内不写 stop、之后写且只写一个；`FORMAL_WORKER_TERMINAL_UNCONFIRMED`、`ok:true`、`COMPANION_PUMP_CANCELLED` 从不停止；第 1、3、5、7、8、9、10 段从不观察、从不停止；心跳 120 s 不更新 → 先取消（`heartbeat-lost`）后停止、之后不等；慢而健康的中继（120 + 60 + 15 s）不触发 D；泵安静的取消与上限；没有 `STOP_SENT` 不改码；与 Owner 中止两种顺序交错都只有一个 stop 文件、中止优先；重启的伴侣看到取消不开第二个泵；重启的伴侣在取消之前看到泵标记也不开第二个泵，标记写不出来不开泵；三个取消原因两侧校验；心跳定时器、`beat()` 不重叠、`step()` 的 beat 失败不影响答复；定时器在探针和全部初始化之后启动、随通道结束清掉，入口出错直接退出；停止送达时已绑定 outcome（“永不干净”的码、干净的码、带 outcome 的缺 outcome 码）保留原码；Owner 中止在引擎读过中止状态之后、桥停止结束阶段时才被接受：只有“`STOP_SENT` 且缺 outcome”算干净的中止结局，已绑定的“永不干净”码照旧 HALT。
+- 已有的伴侣测试里，`ActiveState` 的模拟输出改成 `KEY=VALUE` 三行。
+- 离线演练 `incident-20261028-replay`（见 §27.6）：中继失败到阶段结束 217 s（不超过 5 分钟）。
+
+## 27. 自动收尾：证明没发布就干净结束（设计 r3 第三部分，Task `d2974298`；Owner Decision `eaa7d5e4`）
+
+依据：设计 r3 第三部分；Owner Decision `eaa7d5e4` 选了 O-2（第 2 段可以有一次自动 attempt 2），不做 4b、4c 和只读 GitHub 探针。只改常驻层，不需要 Source、不加第 11 段、不读 GitHub、不加 policy 开关。
+
+### 27.1 为什么能证明没发布
+
+第 2/4/6 段唯一运行的 Windows 进程是扫描发行器，它没有写 Check 的口；Linux worker 没有 GitHub 凭据；签名结果只能经同一批次的第 3/5/7 段变成检查，执行器进了 `fail()` 就不会再跑它们。所以“有没有发布”只依赖这些结构事实，加上伴侣伪造不了的 Windows 事实（broker 的 `STOP_SENT`、helper 原生回执的作业树为零、服务自己的 SCM 读回）。Linux 静止只决定能不能马上开下一批，与今天所有带 Linux 的 `FAILED_CLEAN`（包括 Owner 中止）同一信任等级。
+
+### 27.2 触发条件（全部满足才走；`classify.mjs#scannerAbandonEligible` 加执行器自己的检查）
+
+1. 第 2/4/6 段，phase 为 `stage`。
+2. **先看泵代码**：`bridge.pumpCode` 不属于 `PUMP_CODES_UNPROVABLE` = `COMPANION_HEARTBEAT_LOST`、`COMPANION_REQUEST_EXPIRED`、`COMPANION_HANDLER_UNCONFIRMED`，不论阶段码是什么（为 null 时不受限）。
+3. 失败码属于 `SCANNER_ABANDON_ENDINGS`：`PUBLICATION_UNCERTAIN`；`STAGE_OUTCOME_MISSING` 和 `BRIDGE_STAGE_STOPPED_PUMP_LOST`（仅当 `stopCode === 'STOP_SENT'`）；阶段成功但泵没确认时的 `RELAY_REFUSED_NO_RETRY`、`RELAY_PARTIAL_RECORD_PRESERVED`、`COMPANION_PUMP_UNCONFIRMED`、`FORMAL_WORKER_TERMINAL_UNCONFIRMED`、`LINUX_WORKER_ENDED_WITHOUT_RECORD`。这些码在失败表里全是 halt 行，所以它从不改动一个本来干净的判定。
+4. 阶段自己的证明 `windowsTreeZero && serviceOriginalStopped`。
+5. 泵已安静（`bridge.pumpQuiet`：答复过，或取消后答复了）。
+6. 当前没有 HALT、`driftCode()` 为空、账本条目是 `STARTED` 且不在中止或自我中止路径上。没有桥事实一律不走。
+
+### 27.3 流程（与 `ownerAbort` 共用 `provenCleanEnd()`）
+
+在 `fail()` 里，失败表判为 UNKNOWN、头已烧（`fail()` 前面已烧，这里不再烧）之后，满足 27.2 就改走 `abandonScannerStage()`：
+
+1. `abortQuiescence()`：最多 9 次、间隔 20 s、总共不超过 5 分钟。不完整 → `unknown(原码, 'scanner-abandon-quiescence-unproven')`，HALT，现场不动。
+2. 归档：Windows 与 Linux 都只改名，原因段固定 `scanner-abandoned`；未确认 → `FAILURE_ARCHIVE_UNCONFIRMED`，HALT。
+3. 终结记录 `FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED`，facts：`originalCode、outcomeReason、pumpCode、stopCode、stageCode、stage（数字）、basis: 'scanner-abandon-quiescence-proven'、batchId、windows、linux、class、retry、breaker`；回执 `batch-terminal`（`class: environment`）。
+4. 第 2 段：一次自动 attempt 2（O-2）。
+
+`ownerAbort` 与它共用 `provenCleanEnd()`（静止 → [烧头] → 归档 → 终结 → 回执），中止的行为不变（回归测试覆盖）。崩溃安全：终结记录写下之前任何一处崩溃，账本都是“STARTED 没有终结”，下一个 tick 的恢复照旧判 UNKNOWN 并 HALT，不需要意图文件。
+
+### 27.4 失败表、attempt 2、executed-heads、额度
+
+- 失败表两行：`BRIDGE_ABANDONED_UNPUBLISHED` 第 2 段 `environment/burn/attempt2/counts`，其他段 `environment/burn/new-commit/counts`。
+- attempt 2（Owner Decision `eaa7d5e4`，O-2）：常驻层白名单 `ATTEMPT2_RESIDENT_CODES = { BRIDGE_ABANDONED_UNPUBLISHED: [2] }`，`attempts.mjs#attempt2Decision` 据此放行，仍要求 attempt 1、`FAILED_CLEAN`、没有已转发的角色；`classify.mjs` 的失败表校验相应放宽：这个码只有在“恰好是名单所列段”的行上才可以写 `attempt2`。第 4/6 段永远不进 attempt 2，attempt 2 自己也不会再有 attempt 3。
+- executed-heads：第 2 段 → `mayHavePublished` 为 `published:false`（换 Source 后可重跑；同 Source 下账本已烧头）；第 4/6 段 → `true`（第 3 段已发布，执行器在第 3 段前已记录）。
+- 熔断计入；日额度不变；自动逻辑只决定写不写 HALT，从不写或清除 `HALT.json`。
+
+### 27.5 与设计稿的差异
+
+1. **白名单放在 `classify.mjs`**：设计稿说放在 `attempts.mjs`。`attempts.mjs` 引用 `classify.mjs`，而失败表在 `classify.mjs` 加载时就要用到这个名单，放在 `attempts.mjs` 会形成加载环。`attempts.mjs` 照样导出它，判定也在 `attempts.mjs`。
+2. **“当前没有 HALT”的检查**用 `ledger.halted()` 读取，与每个 tick 开头的读取完全相同。设计 §5 第 3 条说自动逻辑“从不读写或清除 `HALT.json`”，这里理解为不写、不清除；这次读取只会让它更保守（有 HALT 就不走，照旧 HALT）。
+3. **状态板**：`status.json` 的合同 `/5` 只放码，不放文字，所以没有改 `status.mjs`；最近结局里就是 `FAILED_CLEAN` + `BRIDGE_ABANDONED_UNPUBLISHED`（`class environment`，第 2 段 `retry attempt2`）。PR 页面的文字在 `pr-status.mjs`，不在本次改动范围；它现有的 `FAILED_CLEAN` 文字已带上这个码（第 2 段显示“将自动第二次尝试”）。如需专门的“已证明未发布，干净结束”一句，另开一个小改动。
+4. 回执多一个字段 `originalCode`，终结记录多 `stageCode`、`class/retry/breaker`，便于事后查。
+5. **烧头记录里的码**（实现审核 NIT 1）：`fail()` 在判断能否收尾之前就烧头，烧头记录（create-only）的 `failureCode` 是当时的原码；收尾成功时终结记录是 `BRIDGE_ABANDONED_UNPUBLISHED`，其中 `originalCode` 等于烧头记录的码，两处按它对应。收尾过程中抛异常时，HALT 用异常的码（与其他失败处理的“未确认”路径相同），原码留在 HALT 的 context 里。
+
+### 27.6 测试
+
+- `test/scanner-abandon.test.mjs`：资格矩阵（11 段 × 23 个码 × 3 种 stop 码 × Windows 一半 × 泵安静 × 6 种泵码），泵码优先；新码都不在 Source 镜像数组里；10-28 结局在第 2 段 → `FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED`、归档 `scanner-abandoned`、`mayHavePublished=false`、回执齐全、一次 attempt 2；attempt 2 跑一次，再收尾也没有 attempt 3；第 4/6 段不进 attempt 2、`mayHavePublished=true`；5 分钟内静止不成立 → HALT 且保留原码；归档失败 → HALT；已 HALT、字节漂移、泵不可证明、泵没安静、没有 `STOP_SENT` → 都 HALT，`clearHalt` 从未调用；在静止、Windows 静止、静止轮询的等待、两边归档、终结记录各处注入崩溃 → 下一个 tick 恢复时 HALT；Owner 中止回归与优先。
+- `test/failure-table.test.mjs`：交叉测试改为“attempt2 恰好属于临时码，或白名单码在其所列段上”；新码有覆盖所有段的行。
+- 离线演练，真实的伴侣泵、邮箱、Windows 引擎和执行器跑在虚拟时钟上：
+  - `incident-20261028-replay`：第 3 轮 `ReceiveChallenge` 卡 90 s 后失败，泵答 `RELAY_REFUSED_NO_RETRY`，60 s 宽限后桥停止，`FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED`，没有 HALT，排了一次 attempt 2；
+  - 变体：worker 一直 active → 静止证明在 5 分钟上限内不成立 → HALT，保留原码；
+  - 变体：伴侣在失败时挂了 → 心跳过期、写 `heartbeat-lost` 取消、桥停止、快速 HALT，不走收尾。
+
+## 28. 第 8 段零副作用临时失败不烧头（设计 r3 4a，PR #930）
+
+依据：设计 r3 §4.3（4a）；Owner Decision `eaa7d5e4`：3 次、间隔 1/3/10 分钟，写死在代码里（不升级 policy 合同）。另含复核 r3 NIT 2。
+
+### 28.1 规则（`executor.mjs#stage8Try`）
+
+- 与 `STAGE8_NOT_READY_CODES` 并列新增 `STAGE8_TRANSIENT_PARK_CODES` = `NATIVE_ADMISSION_UNAVAILABLE`、`GITHUB_TRANSIENT_UNAVAILABLE`。
+- 条件：现有的 `zero`（`BLOCKED`、`sideEffects 0`、`mayHavePublished false`、Windows 一半证明）、码在表里、不满足 `final`、此前临时停车少于 `STAGE8_TRANSIENT_MAX_TRIES`（3）次。
+- 满足就停在 B 点：间隔 `STAGE8_TRANSIENT_RETRY_MS` = 1、3、10 分钟；第 4 次走今天的 `fail()`（烧头，计入熔断），最坏情况与今天一样。
+- 每次停车：`kind 'parked'`、`klass 'transient'`、`breaker 'neutral'`；回执 `stage8-transient-parked`。照样计入 `stage8MaxTries`、`park.maxMs`、`stage8RetriesPer24h`，这些先到就按现有规则结束。
+- 安全性同设计：同一批次、同一个封装好的第 8 段包、每次新 nonce；某次失败若其实在 `journal.begin` 之后，下一次试读到没 settle 的条目回 `RECONCILIATION_REQUIRED`，HALT；认领代变了是 `BATCH_CLAIM_CHANGED`。
+
+### 28.2 队列位置（复核 r3 MINOR 3、NIT 2）
+
+- `72-tried` 记录的 `position` 写真实值（临时失败时为 null），所以这次试照常计入次数，也不会被当成队首试。
+- 另记 `transient: true` 和 `assumedPosition`：真实值有就用真实值，否则取上一次试的位置，再否则取上一次的 `assumedPosition`，都没有就填 1（按设计 §4.2，这个结局只会在判定已到队首之后出现）。它只用于两件事：豁免 `maxParkedOutsideTop2` 的容量检查；状态板显示（PARKED 结果和队列行的 `queuePosition`）。
+- `parkedCounts()`（NIT 2）：临时停车的批次按 `assumedPosition` 计数（通常 1，算在前两名之内），不会把别的未就绪批次挤成 `PARKED_OVER_CAPACITY`。
+- 代价照设计：一个临时停车批次的认领最多在合并队列队首占约 14 分钟（1 + 3 + 10 分钟加三次试各自的运行时间）。
+
+### 28.3 与设计稿的差异
+
+1. 回执用了新的类型名 `stage8-transient-parked`（与 `stage8-not-ready` 分开，便于数），并带 `assumedPosition` 和第几次停车。
+2. `assumedPosition` 的取值链多了一步“上一次的 `assumedPosition`”：连续两次临时失败时，第二次的上一次真实位置是 null。
+
+### 28.4 测试
+
+- `test/park.test.mjs`：`NATIVE_ADMISSION_UNAVAILABLE`/`GITHUB_TRANSIENT_UNAVAILABLE` 依次停 1、3、10 分钟，第 4 次烧头；#930 重放（停 1 分钟后同一批次 `COMPLETED`，1–7 段只跑一次）；位置为 null 时沿用上一次或按 1，`maxParkedOutsideTop2: 0` 也不会 `PARKED_OVER_CAPACITY`，计数按假定位置；`sideEffects>0`、`mayHavePublished`、`UNCERTAIN`、Windows 一半缺失 → 不停车；`stage8MaxTries`、`maxMs` 先到 → 按现有规则结束；下一次试 `RECONCILIATION_REQUIRED` → HALT；认领代变化 → `BATCH_CLAIM_CHANGED`。
+- 离线演练：#930 重放（PR 936：attempt 1 第 2 段 `REMOTE_REFS_CHANGED_SINCE_BUNDLE`，attempt 2 的第 8 段第 1 次 `unavailable`，停 1 分钟，第 2 次 `COMPLETED`）。
+
+### 28.5 §26–§28 共同的安装与不变量
+
+- 只需一次常驻层 Windows 重装（与 §24、§25 同一次即可；同一次 UAC 里重签 policy 文件的 `residentManifestSha256`），不碰 policy 合同、Source 或 Linux 工具。
+- 不增加发布路径；证明不了就 HALT；自动逻辑不写、不清除 `HALT.json`；不增加 GitHub 读写，不在新地方用 App 凭据；不杀未知进程（Linux worker 照旧不被结束，Windows 侧只用审过的 broker 停止通道）；executed-heads 只增不减；失败表仍是白名单。
+
+## 29. 主备 C3：节点模式与 NODE_ROLE_NOT_HELD（Task `17b703a0`）
+
+依据：《常驻执行器主备部署·设计说明 v0.4》§5.2、§8.2、§9 C3，以及 C3 方案草稿。C2（本文末节“C2”）已经有空闲时的角色探测，并留下一个输入口 `roleProbeMode`。C3 让执行器自己维护这个模式，并按它行动。代码：`src/executor.mjs`（`nodeMode()`、`setNodeMode()`、`nodeGate()`、`roleProbeMaintenance()`）、`src/role-probe.mjs`（`urgent`）、`src/classify.mjs`、`src/failure-table.json`、`src/ledger.mjs`、`src/status.mjs`；Source 一侧是 `resident-v2/stage-fact.mjs`。测试在 `test/node-mode.test.mjs` 等（§29.8）。
+
+### 29.1 为什么
+
+- 两个节点各有一个常驻执行器。同一时间只有持有 ci-admission 角色的节点能发布，这由服务端保证。
+- C2 之前，执行器不知道自己有没有这个角色。C2 能探测，但探测结果不改变任何行为。
+- 不当班的节点于是照样取触发、开批次，直到第 1 段才被拒。那个拒绝（`admission_binding_required`）被当成一般的未准入：占评估额度，占这个头的释放次数，和别的原因同时出现时甚至烧头。
+- C3 之后，节点自己知道模式。不当班就不开批次，也不为此消耗任何额度。
+
+### 29.2 规则
+
+1. **三种模式**：`ACTIVE`、`STANDBY`、`UNCERTAIN`（`this.roleProbeMode`）。
+   - 进程启动（包括重启）后是 `UNCERTAIN`，探测立即到期（`roleProbe.urgent`）。
+   - Owner 复位（re-arm 清除了 HALT）之后同样回到 `UNCERTAIN`，探测立即到期。
+   - `UNCERTAIN` 的行为等同 `STANDBY`。状态里写 `UNCERTAIN` 而不写 `STANDBY`，是为了 companion 在每次重启时不把“当班”改成“已交班”再改回来；C5 把它读成“停摆 NODE_ROLE_UNCERTAIN”，正好对应“刚启动，还没确认”。
+2. **探测结果怎样改模式**：
+   - held → `ACTIVE`；
+   - not-held → `STANDBY`；
+   - uncertain → 保持原模式。启动后还没有确定结果时，仍是 `UNCERTAIN`。连续三次不确定的通知是 C2 已有的。
+   - not-held 是安全方向，先生效再写回执。held 要等探测结果回执写成之后才生效。
+   - 每次模式转换写一条回执 `node-mode`（`from`、`to`、`why`）。回执写不出来不影响模式。
+3. **不是 ACTIVE 时调度什么也不开**：不取排队行，不开 attempt 2，不做 waiting-retry。
+   - `schedule()` 返回 `DEFERRED`，原因 `NODE_STANDBY` 或 `NODE_ROLE_UNCERTAIN`。
+   - 这个结果算“安静”，探测维护（和第 10 段）照常运行。
+   - 触发照常读进排队表，不丢。方案里的“不取新触发”，在这里的意思是不从队列取行去开批次，和暂停接新（§20）一致。
+   - 在途批次照常续跑：停在 A 的批次每个 tick 照常判断，停在 B 的照常尝试第 8 段，去留由实时准入决定。停在 A 的批次仍是 tick 的结果，状态里的 `current` 也不消失（和暂停接新一样）。
+4. **节点闸门排在暂停接新之前**，也排在“队列为空就是 IDLE”之后。所以不是 ACTIVE 的节点显示 `NODE_*` 的原因，探测不会被暂停接新挡住。空队列时仍是 `IDLE`。
+5. **探测间隔**：`UNCERTAIN` 用 `STANDBY` 的 15 分钟，空闲的 `ACTIVE` 用 30 分钟；`urgent` 时不等。任何一次探测结果（包括 uncertain）都清掉 `urgent`，所以不确定时不会每个 tick 探一次。
+   - 探测只在没有 HALT、没有暂停、没有批次正在跑某一段时进行。
+   - **停在 A、B 的批次不挡探测，当节点不是 `ACTIVE`，或这次探测是 `urgent` 时**（`probeAtParking()`；2026-10-29 复核 M1）。空闲 `ACTIVE` 节点的定期探测保持 C2 的做法：账本里有任何打开的批次就不探。
+   - 为什么可以：C2 要求账本里没有打开的条目，是因为探测要经交换代理切换一次 runner 服务，不能和正式的段抢。但 tick 是串行的，探测只在 tick 里运行，不会与本执行器自己的段重叠。停在 A、B 的批次没有进程，没有 broker 请求，Linux 是空的（§18.1）。不在停靠点的打开条目（崩溃现场）在每个 tick 开头已被恢复处理成 HALT，到不了探测这一步。
+   - 为什么要这样：重启或复位之后，停靠的批次（最长 `park.maxMs`，24 小时）否则会让节点一直是 `UNCERTAIN`，拿不到任何新触发；§29.9 说的“单节点行为和以前一样”也不成立（第 2 批的重装本身就是一次重启）。
+   - 定期探测仍不在停靠批次旁边运行，因为停靠可以很久，每 30 分钟切换一次 runner 会一直打断它。
+6. **立即探测**：第 1 段以外的批次以下面这些码结束时，标 `urgent`，下一个安静 tick 就探测。
+   - NOT_ADMITTED 家族的码（`PR_NOT_OPEN_OR_CHANGED` 在任何段都可能出现）；
+   - `PUBLICATION_BLOCKED`；
+   - `BATCH_CLAIM_CHANGED`（见 §29.7 第 5 条）。
+   - 第 1 段的未准入不标：那是对 PR 的回答。`NODE_ROLE_NOT_HELD` 直接转 `STANDBY`。
+7. **没有探测能力就没有模式**。只有引擎有 `runRoleProbe` 时（真实的 Windows 引擎有）模式才生效。没有的引擎（测试里的假引擎、离线演练）保持原来的单节点行为：没有闸门，状态里 `node` 为 `null`，不写 `node-mode` 回执。
+8. 已知的限制（C2 起就有，C3 没改）：空闲 `ACTIVE` 节点在暂停接新期间如果队列里有行，tick 的结果是 `INTAKE_PAUSED`，这个结果不算安静，探测不运行。下一次实时准入仍然会决定。
+
+### 29.3 NODE_ROLE_NOT_HELD
+
+- **Source**（`resident-v2/stage-fact.mjs`）：
+  - `NOT_ADMITTED_CODES` 末尾加 `NODE_ROLE_NOT_HELD`；
+  - `notAdmittedCode` 把 `admission_binding_required` 排在第一位，映射到这个码。节点不当班时对 PR 什么也没说，不能因为同时有别的原因（例如 `protected_change_not_up_to_date`）就烧头；
+  - `formal-work-admission-check-v2/publisher.mjs`（2026-10-29 复核 B1）：入口自己的“可重跑”标志 `safeToRerun` 原来在任何确定性 PR 码同在时都是 false，而常驻只认这个标志，所以 `NODE_ROLE_NOT_HELD` 与 `protected_change_not_up_to_date`（或 `changed_files_truncated`）同在时放不掉，头被烧。现在 `notOnDuty(reason, diagnostic)` 为真（原因是第一次评估的 `full_admission_rejected`，诊断里有 `admission_binding_required`）时，标志不再受 `deterministicPrFault` 影响（`refusalSafeToRerun()`）。
+  - 这条路径上什么也没发布：被拒的是边界里的第一次评估（`step === 'boundary'`），没有记批次认领，真正的 effect key 下什么也没写（只有一条 diagnostic-only 的日志，用新 key，状态 `not_sent`），`sideEffects` 为 0，所以 `mayHavePublished` 为 false。发布者“知道不当班”的唯一办法就是 Native 的这条拒绝原因。
+- **常驻侧**：
+  - `classify.mjs` 的 `NOT_ADMITTED_CODES` 同样加在末尾（和 Source 逐项相同，交叉测试强制）；
+  - 失败表：`NODE_ROLE_NOT_HELD` 第 1 段 `node-role / release-if-safe / new-trigger / neutral`；其他段和别的未准入码一样是 `clean-final`（第 1 段之后不会出现，但每个码在每一段都要有一行）；
+  - 新的类 `node-role` 加进 `FAILURE_CLASSES_V1`；
+  - `decideFailure` 对 `node-role` 行不再套“diagnostic 里有确定性 PR 码就改成烧”的覆盖。
+- **账**：
+  - `ledger.mjs#usage` 不把这种释放计入评估，也不计入这个头的释放次数，也不计入“新触发重评估”（`reevaluations`，每个提交每天 6 次；复核 m1）；
+  - 执行器 `afterBatch` 同样不把它计入释放上限，所以这一行不会因此变成 `STOPPED`。
+- **执行器**：失败表判为 `node-role`，节点就转 `STANDBY`。释放的条件不变（`release-if-safe`：要有阶段结果自己的 safeToRerun 或 broker 的未启动，要有 Windows 一半的证明）；没有这些时照旧烧，但节点仍然转 `STANDBY`，因为“不当班”这个事实不依赖那次释放。
+- **兼容旧 Source**：新常驻配没有这个码的 Source 时，`admission_binding_required` 仍以 `NATIVE_NOT_ADMITTED` 加原因码到达。失败表在 `NATIVE_NOT_ADMITTED` 的最前面加一行：第 1 段、`reasonCodesAny: [admission_binding_required]`，同样是 `node-role`，节点转 `STANDBY`。同分时前一行优先，所以它排在“确定性 PR 码”那一行前面。
+  - 头放不放，看旧 Source 自己的标志：只有这一个原因时标志是 true，放；与确定性原因同在时旧发布者的标志是 false，常驻只认这个标志，所以仍然烧头（和 C3 之前一样），节点照样转 `STANDBY`。这一点常驻一侧改不了，想要旧 Source 也不烧，只能装新 Source。（复核前的文字和测试说旧 Source 同在时也放，那是错的：真实的旧发布者写不出这样的事实。）
+- **安装**：Source 的改动要随下一个被接受的 Source 一起装（Owner 闸门，不在本 PR 内）。
+
+### 29.4 status.json 合同 `/6`
+
+- `node` 现在是 `{ name, source, mode, probe }`：
+  - `name`：`policy.node.nodeName`；
+  - `source`：已安装的 `ciSourceManifestSha256` 的前 12 位十六进制，**这是 C3 新增的唯一字段**；
+  - `mode`、`probe`（`at`、`result`、`failures`、`failingSince`）：C5 已有，C3 只是改由执行器维护。
+- 启动时就写（`UNCERTAIN`，`probe` 为 `null`），不再等第一次探测。
+- 读取一侧（`parseStatus`）**同时接受 `/5` 和 `/6`**，其他合同一律拒绝。
+  - 两个合同的顶层键相同，`/6` 只在 `node` 里多一个 `source`，读 `/5` 不会读错东西。
+  - 安装窗口里，新的 companion 可能先读到旧执行器写下的最后一份 `/5`。严格只认 `/6` 时它会通知“读不到状态”；同时认两个，它显示的是那份文件真实的内容（通常是 `STOPPED` 或已过期）。
+  - 反过来，旧的 companion 读不了 `/6`，只会通知“读不到状态”，和以前每次升级合同时一样（§20.4）。这一边我们改不了。
+  - 写的一侧只写 `/6`。
+- `node-duty.mjs` 不检查合同号（它拿到的是 `parseStatus` 的结果），读法不变；`nodeOf()` 的返回值不变。`NODE_SOURCE` 正则放在 `node-duty.mjs`，`status.mjs` 引用，两边用同一个定义。
+- 测试里 `parseStatus` → `nodeOf` → `stallCode` 对拍：启动时读成 `NODE_ROLE_UNCERTAIN`，探测 held 后是当班，not-held 后是 `STANDBY`。
+
+### 29.5 N3：排空与熔断字段
+
+- 不加新字段。熔断是 `status.breaker`（第二期 `/2`），暂停接新是 `status.intakePause`（C6 `/3`），C5 的 `node-duty.mjs` 判断“当班”时已经读这两项（`BREAKER_OPEN`、`INTAKE_PAUSED`）。
+- 补的只是测试（`test/node-mode.test.mjs` 的 N3 一项）：
+  - 熔断打开时执行器写出 `breaker`（状态、`openedAt`、`nextTrialAt`）；
+  - 暂停接新和暂停（PAUSE）同时生效时写出 `intakePause`；
+  - HALT 时两项仍在；
+  - 每一步 `parseStatus` 之后 `stallCode` 都给出对应的“不当班”原因。
+- **N3 以这些测试关闭**。
+
+### 29.6 N2：运行中的节点最晚什么时候发现角色没了
+
+| 情况 | 最晚发现 |
+|---|---|
+| 空闲的 ACTIVE | 30 分钟（空闲探测周期） |
+| 跑批 | 当前段剩余的时间，加一次探测（约 1 分钟） |
+
+- 实时准入只在段开始、签发、回调和第一次发布前发生。所以跑批的节点要等当前段结束才发现：扫描段最长 45 + 6 分钟，托管等待最长 60 分钟。
+- 之后下一次实时准入失败，批次干净结束，§29.2 第 6 条标 `urgent`，下一个安静 tick 探测，转 `STANDBY`。
+- 停在 B 的批次也不探测。它的下一次第 8 段尝试（退避最长 120 分钟）的实时准入失败后，批次结束，随后立即探测。
+- **对外口径**：空闲 ≤ 30 分钟；跑批 = 当前段剩余时间（≤ 60 分钟）+ 一次探测（约 1 分钟）。
+- **长段和等待托管期间不补探测**，理由：
+  - 探测要用交换代理，会和正式阶段抢；
+  - 这段时间里旧节点即使还在跑，也发不出新检查：下一次实时准入就被挡（设计 v0.4 §6.5 的 150 秒例外除外）；
+  - 安全仍由服务端的角色加 5 分钟的等待保证，不靠这个探测。
+
+### 29.7 与方案和设计的差异（给 C8 的设计文字修正）
+
+1. **设计 §5.2 “最长约 45 分钟”要改**成 §29.6 的口径：空闲 ≤ 30 分钟，跑批 = 当前段剩余时间（≤ 60 分钟）+ 一次探测。
+2. **排队行回到 QUEUED**（方案原文）实现为 `BACKOFF`。排队表的释放一律进 `BACKOFF` 并回到队尾（10、20、40 分钟），要得到 `QUEUED` 需要改 `queue.mjs`，不在本 Task 认领的文件里。差别很小：节点不是 ACTIVE 时，到期的行也只是被闸门挡住；回到 ACTIVE 后到期的行马上就能跑。这类释放不计释放次数，所以不会因它 `STOPPED`。如需改成 `QUEUED`，另开一个小改动。
+3. **“不取新触发”**实现为不开新批次，触发仍读进排队表（§29.2 第 3 条）。理由：收件箱有界（每 tick 读 16 个），不读会让最旧的 16 个一直挡在前面；读进队列后，同一 PR 的新提交会取代旧的，重新当班时队列是新的。代价：重新当班的节点可能把对方已经跑完的提交再评估一遍，第 1 段的 GitHub 回读（C4，`HEAD_PUBLISHED_ON_GITHUB`）会干净地结束它们。
+4. **UNCERTAIN 用 STANDBY 的 15 分钟间隔**，不是 C2 末节说的“没有 C3 输入时用 ACTIVE 的 30 分钟”。那句话在 C3 之后过时：节点现在总是从 `UNCERTAIN` 开始。
+5. **立即探测的码多了 `BATCH_CLAIM_CHANGED`**。Source 把第 1 段之后被拒的实时准入（`full_admission_rejected`）映射为 `BATCH_CLAIM_CHANGED`（`outcomeFailureCode`），只列方案里的两类会漏掉最可能的那一种。猜错的代价是多一次只读探测。
+6. **`parseStatus` 同时接受 `/5` 和 `/6`**（§29.4），方案只说 `/5 → /6`。
+7. **失败表在 `NATIVE_NOT_ADMITTED` 前面多一行**，并且 `node-role` 行不受“确定性 PR 码改成烧”的覆盖（§29.3）。
+8. **回执**：新增 `node-mode`；`role-probe-intent` 的 body 多一个 `urgent`。两者都不影响 C2 的恢复逻辑（它只读 `role-probe-intent` 和 `role-probe-result` 的 `intentSeq`、`state`）。
+9. 第 10 段（合并列车维护）在 `STANDBY` 时仍可运行：它向服务端问自己是否当班，不当班就记 `NOT_ON_DUTY`，不需要模式再拦一次。
+
+### 29.8 测试
+
+- `test/node-mode.test.mjs`（26 项）：
+  - 启动、重启、复位都从 `UNCERTAIN` 开始，探测立即运行，held 之前不取触发；
+  - not-held → `STANDBY`，15 分钟间隔，后来 held 回到 `ACTIVE`；
+  - uncertain 保持原模式（启动时仍是 `UNCERTAIN`，`ACTIVE`、`STANDBY` 各一）；
+  - 没有探测能力的引擎保持单节点行为；
+  - 第 1 段 `NODE_ROLE_NOT_HELD`（含与 `protected_change_not_up_to_date`、`changed_files_truncated` 同在，标志用真实发布者的 `refusalSafeToRerun` 算）和旧 Source 的写法：`STANDBY`、释放、不计评估和释放、连续三次也不 `STOPPED`、排队行进入 `BACKOFF`；没有 safeToRerun 时照旧烧但仍转 `STANDBY`；旧 Source 与确定性原因同在时（标志 false）烧头、仍转 `STANDBY`；
+  - 第 1 段以外的 `PUBLICATION_BLOCKED`、`BATCH_CLAIM_CHANGED`、`PR_NOT_OPEN_OR_CHANGED` 之后下一个安静 tick 立即探测；第 1 段的未准入和无关的干净结束不触发；有批次停在 B 时：定期探测（`ACTIVE`、不 urgent）不运行，urgent 的探测运行；
+  - `STANDBY` 时：停在 B 的批次照常尝试第 8 段并完成，停在 A 的批次续跑到完成且 `current` 不消失，新 PR 和到期的重试不开；到期的 attempt 2 和 waiting-retry 不开，回到 `ACTIVE` 后各自运行；
+  - 状态 `/6`：`node` 的字段、`parseStatus` 与 `node-duty` 对拍、`/5` 仍可读、其他合同拒绝、不合格的 `source` 当作没有；
+  - M1：重启、复位之后有批次停在 B 或 A，节点仍在下一个安静 tick 探测并离开 `UNCERTAIN`；
+  - m1：node-role 释放不计新触发重评估；m2：node-role 释放的 attempt 2 退回同一个 attempt 2（同一个 key，没有 attempt 3），别的释放仍花掉它，账本的规则；
+  - N3：熔断、暂停接新写出，暂停和 HALT 时仍在。
+- `test/failure-table.test.mjs`：`NODE_ROLE_NOT_HELD` 与旧 Source 写法的失败表行和 `decideFailure`，事实经真实的 `refusalSafeToRerun`、`writeOutcome`、`outcomeFacts`；交叉测试（`attempts.test.mjs` 与本文件）要求两个 `NOT_ADMITTED_CODES` 逐项相同。
+- `test/role-probe.test.mjs`：`urgent`。`test/status.test.mjs`：`setNode` 与 `/6`。
+- 原有两项因 C3 改了：C2 的“探测不在批次中运行”要先把节点设成 `ACTIVE`（启动时是 `UNCERTAIN`）；失败表的“确定性 PR 码”一项按类找行。
+- Source：`test/resident-v2-stage.test.mjs` 里 `notAdmittedCode` 的优先级与 `NODE_ROLE_NOT_HELD`；`test/resident-v2-publishers.test.mjs` 里发布者在 `admission_binding_required` 与各确定性原因同在时 `safeToRerun` 为 true，经 `writeOutcome`、`outcomeFacts` 到 `outcomeFailureCode`。
+- 离线演练不用改（它的引擎没有探测能力）。
+
+### 29.9 安装与不变量
+
+- 需要先接受新的 Source（它的 `stage-fact.mjs` 变了），再做一次常驻层 Windows 重装，同一次 UAC 里重签 policy 里的 `residentManifestSha256` 和 `ciSourceManifestSha256`。policy 合同不变（`/7`）。
+- 重装后每个节点从 `UNCERTAIN` 开始，第一个安静 tick 探测。探测用的是 Source 的第 11 段（C2）；按 C2 的实现，探测拿不到有效事实就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`），所以装的 Source 必须带第 11 段。
+- 单节点、没有做过 parking 的部署：服务端对所有 Binding 开放，探测得到 held，节点变 `ACTIVE`，行为和以前一样，只多了启动时的一次探测。重启时有批次停在 A、B 也一样：探测不等它们结束（§29.2 第 5 条）。
+- 不增加发布路径，不增加 GitHub 读写，不碰 App 凭据；模式只会让执行器少做事，从不让它多做事。
+
+### 29.10 node-role 释放与 attempt 2（复核 m2）
+
+- attempt 2 在预定之前就被消费（`consumed` 记录是 create-only，先于预定，PR-A 复核 MAJOR 1）。所以 attempt 2 的第 1 段若遇到 `NODE_ROLE_NOT_HELD`，原先它就白白花掉了：节点之后回到 `ACTIVE`，也不再有 attempt 2。
+- **选择：退回同一个 attempt 2**，因为这种释放对 PR 什么也没说，而且改动很小：
+  - 账本：`consumed.json` 之后的再次消费写 `consumed-2.json`、`consumed-3.json`…；新的 `reopenAttempt2` 写 `reopened-1.json`…（create-only）。意图“待办”当且仅当没有 `closed` 记录、且消费次数等于退回次数。`consumeAttempt2` 在已消费未退回时拒绝（`ATTEMPT2_NOT_PENDING`），`reopenAttempt2` 在没有未退回的消费或已关闭时拒绝（`ATTEMPT2_NOT_REOPENABLE`）；
+  - 执行器：只有失败表判为 `node-role`、已经释放、而且这一批是 attempt 2 时，才调用（`reopenAttempt2`），并写回执 `attempt2-reopened`。别的释放（例如 `PATHS_OUTSIDE_WRITE_SET`）照旧花掉 attempt 2；
+  - key 不变（attempt 2 的批次 key 和头 key 本来就含 attempt 编号），所以永远不会有 attempt 3：attempt 2 自己的结局不排新的 attempt；
+  - 释放后仍适用 10 分钟的冷却（`NOT_ADMITTED` 释放记录），并且 `STANDBY` 时 attempt 2 不开。
+- 释放写成之后、退回之前崩溃，attempt 2 就丢了：和今天所有 attempt 2 的崩溃窗口一样，偏向安全的一边。退回失败（吞掉异常）同样只是保持“已花掉”。
+- 测试：`test/node-mode.test.mjs` 的 m2。
+
+### 29.11 2026-10-29 独立复核的修正一览
+
+| 项 | 修正 |
+|---|---|
+| B1 | Source 发布者：不当班时标志不受确定性原因影响（§29.3）；真实路径的测试；撤回“旧 Source 同在时也放”的说法 |
+| M1 | 节点不是 `ACTIVE` 或探测 urgent 时，停靠批次不挡探测（§29.2 第 5 条） |
+| m1 | node-role 释放不计新触发重评估（§29.3） |
+| m2 | 退回同一个 attempt 2（§29.10） |
+| n1 | 内存闸的睡眠被 Owner 中止叫醒（§32.2） |
+
 ## 附录 A：草稿文件
 
 | 文件 | 作用 |
@@ -1829,7 +2549,7 @@ Owner Decision `0bb98194` 把设计 v0.5 的第 3 步拆成三个 PR，这是第
 | `src/policy.mjs` | 安装策略 |
 | `src/executor.mjs` | 常驻状态机 |
 | `src/archive.mjs` | 协议记录白名单归档（参考实现与离线实现） |
-| `src/mailbox.mjs`、`companion.mjs`、`poller.mjs`、`runner.mjs` | companion 协议、泵、轮询、不杀进程的运行器 |
+| `src/mailbox.mjs`、`companion.mjs`、`poller.mjs`、`runner.mjs` | companion 协议、泵、轮询、运行器（服务的不杀子进程；companion 的经作业宿主，§24） |
 | `src/service-ports.mjs`、`engine-windows.mjs`、`service-main.mjs`、`companion-main.mjs`、`instance-lock.mjs`、`stop-request.mjs` | 真实端口与入口（引擎依赖 Source v2，缺了就 `SOURCE_V2_REQUIRED`） |
 | `windows/install-resident.ps1`、`verify-resident.ps1`、`uninstall-resident.ps1`、`rearm-resident.ps1` | 安装、校验、卸载、复位与恢复请求 |
 | `windows/ResidentServiceHost.cs`、`SwapBroker.cs` | 两个服务宿主（`HostPureTests.cs`：宿主停止处理的离线测试） |
@@ -1845,3 +2565,880 @@ Owner Decision `0bb98194` 把设计 v0.5 的第 3 步拆成三个 PR，这是第
 | `src/failure-table.json`、`src/executed-heads.mjs`、`src/status.mjs`、`src/pr-status.mjs`、`windows/test-install-carry.ps1` | v0.9：失败对照表、与 Source 无关的已执行记录与回填、状态快照、PR 页面状态与通知、安装带入旧账本的离线测试（§16） |
 | `CI/src/independent-control-checks-v2/train-rules.mjs`、`green-ledger.mjs` | v1.2：第 8 段的 main 规则与试合并核对、绿色台账（§19） |
 | `CI/src/job-v2.mjs`（合同 /3）、`CI/test/job-v3.test.mjs` | v1.2：作业身份加测试提交 S，描述符 /3，工作区检出 S（§21） |
+| `src/train.mjs`、`src/ruleset-backstop.mjs` | v1.2：第 10 段的到期规则、状态摘要与 PR 页面行；companion 规则集兜底（§22） |
+| `CI/src/resident-v2/train-run.mjs`、`CI/src/independent-control-checks-v2/train-*.mjs`、`merge-slot-native.mjs` | v1.2：第 10 段的作业合同、入口、事实、影子记录与合并位只读读取（§22） |
+| `windows/CompanionJobHost.cs`、`windows/test-job-host.ps1`、`test/job-host.test.mjs` | companion 的作业宿主（安装时编译为 `bin\CluedCompanionJobHost.exe`）与它的离线、联机测试（§24） |
+| `test/relay-retry.test.mjs` | 中继逐次分类、到达核对、有界重试与本地日志（§25） |
+| `test/node-mode.test.mjs` | 主备 C3：节点模式、NODE_ROLE_NOT_HELD、立即探测、status `/6`、N3（§29） |
+| `test/bridge-observer.test.mjs`、`test/scanner-abandon.test.mjs` | 泵观察者、桥停止、信号 A–D、心跳定时器（§26）；自动收尾与第 2 段的 attempt 2（§27）；第 8 段临时停车见 `test/park.test.mjs`（§28） |
+
+## C2：主备角色的独立只读探测（代码候选，未做 P4 现场验收）
+
+- stage 11 `role-probe` 经过当前 record/2、完整 node-profile、固定 Source、原 SwapBroker 与同一个 generic helper。新增 60 秒子进程上限；原 stages 1–10、各自 deadline、互斥与清理语义不变。只在 ledger 无任何 open batch（包括 hosted wait/parked；C3 起，节点不是 ACTIVE 或探测 urgent 时停靠的批次不算，§29.2 第 5 条）、非 HALT/PAUSE、安装与 Source 未漂移时调用；本地 tick 串行，runner 非 original-stopped 时不提交 broker 请求，原全局互斥仍非等待取得，不抢占其他 controller。
+- 新 `role-probe-run/1` 只含 repository、随机 runId、Source/node-profile pin 与时间，不含 PR/head/claim/attempt。plan/3 的 `batchKey/batchId` 仅复用现有技术相关键；不会 reserve/markStarted/burn/evaluate/写 CI 批次，也不创建 Linux 工作区或调用 companion。stage fact 的 manifest pin 是 resident 与 invoker 独立计算的 `role-probe-intent/1` 原 canonical bytes 的 SHA。
+- controller entry 只打开固定 `ci-admission.token`，验证原 token fingerprint 与完整 profile 的 controller SID；不打开 App key，只调用 `clued_work_merge_slot_holders_v1`，10 秒请求界限、64 KiB 回复界限、拒重定向。`status:ok` 无 reason 为 held，`admission_binding_required` 为 not-held，其他为 uncertain。服务端的 `binding_not_authorized` / `authorization_revoked_or_expired` 不足以区分具体撤销、过期或权限不适用，因此仅输出 `ROLE_PROBE_CONNECTION_UNAUTHORIZED`，不伪造细分原因。
+- **parking holder 是解释 held 的硬前提。** 没有任何有效角色条目时，服务也可向所有 Binding 开放；holders RPC 无法证明已 parking。部署/启用主备前必须另有 Owner 的实际 parking 证据，本代码不能用 empty holders 或 held 代替。C2 不变更节点模式、不授 CI 执行权限；C3 负责启动状态、角色与失败后的模式转换。C2 的明确 mode 输入决定 STANDBY 15 分钟、ACTIVE idle 30 分钟。（C3 之后：节点启动是 UNCERTAIN，用 STANDBY 的 15 分钟间隔，启动、复位和疑似失去角色时立即探测；见 §29。）
+- 三态事实只有在同 nonce、plan/config、Source、完整 Native 回执、原始 outcome SHA、精确 jobId 与 Windows tree-zero/original-stopped 全部相符后有效。连接失效通知一次，连续三次 uncertain 通知一次，确认 held/not-held 后重置；本地 receipt 保留次数与间隔，重启不能重置不确定记录。中断、缺清理或错误绑定沿原 UNKNOWN/HALT 保留现场，不放通任何旧 head/retry。
+- C2 receipt 不进入批次 failure-table 的 release/burn/attempt2 规则。没有新 secret、App、Node 身份泛化；旧 /1 TURING 六生产入口保留原字节，当前 stage 11 只在完整 record/2 Source 中可达。离线纯测试不代替实际 P4 的双节点服务影响、日约 96 次切换、parking、撤销与过期验收。
+
+## 30. 主备 C7：节点身份与 STANDBY 安装
+
+Task `088ab175`；设计 v0.4 §7.1–§7.4、§9 C7、§10 P3。
+
+### 30.1 范围；合入不等于安装
+
+- 本节是代码、离线测试和文档。**合入它不会安装或重装任何机器**，不会生成、读取、复制或删除任何真实的私钥或 token，不改连接，不改规则集。
+- 安装、公司节点的正式资格（设计 §12 第 5 项）、公司节点的新 App 私钥和新连接，都是 Owner 的动作，各自另行授权。UAC 只有 Owner 本人能点。
+- 离线测试证明不了的：UAC 下真实创建文件时的属主与 ACL 读回、在 Program Files 之外运行包里的 `node.exe`、真实公司机器。这些留给 P3 的现场核对（`verify-resident.ps1`）。
+
+### 30.2 节点身份 `nodeIdentity`
+
+- 安装计划和回执都带一份节点身份：节点名；这个节点的 App 私钥编号和公钥指纹（`appKeyId`、`appPublicKeySha256Base64`）；ci-admission 连接 id 和 token 指纹（`ciPrincipalBindingId`、`ciTokenPinSha256`）；`ciPrincipalRoleRef`；七项正式资格引用（`resident-v2/prepare-record.mjs` 的 `REFS`）；Owner 的接受 Decision 与回执（`ownerDecisionRef`、`ownerReceiptRef`）。共 16 个字段，**只有公开的编号和指纹**，没有私钥或 token。
+- 来源：包里的 `record\installation.json` 和 `record\acceptance.json`。两份文件都按包清单的哈希核对字节，从同一份字节解析；`installation.json` 的 `acceptanceSha256` 必须等于 acceptance 字节的哈希。两份文件里重复出现的四项（连接 id、token 指纹、公钥指纹、`ciPrincipalQualificationRef`）必须一致。
+- 失败码：`NODE_IDENTITY_FIELDS_REQUIRED`（缺字段或形状不对）、`NODE_IDENTITY_ACCEPTANCE_PIN_MISMATCH`、`NODE_IDENTITY_RECORDS_DISAGREE`。
+- 三处实现，由同一份用例文件 `test/fixtures/node-identity-cases.json` 约束（两个节点：TURING 的节点档案加假指纹、一个公司夹具；39 个拒绝用例）：JS `src/node-identity.mjs`，`install-resident.ps1` 和 `verify-resident.ps1` 里的 `Get-NodeIdentity`（两份文字相同，测试逐字比较）。
+- `tools/build-package.mjs` 打包时独立导出一次，把 `nodeIdentitySha256` 写进包清单（合同仍是 `resident-package/3`，多一个必填字段）；安装脚本从同一批字节再导出一次，不一致就 `PACKAGE_NODE_IDENTITY_CHANGED`。Owner 审的包清单哈希因此覆盖了「这个包装的是哪个节点」。
+
+### 30.3 `ciPrincipalRoleRef` 的含义
+
+- 形状不变，仍是 UUID。含义改为：Owner 认可**这个连接可以持有** ci-admission 的那条 Decision（资格，设计 §7.2）。它不再是「此刻持有」的依据：公司节点以 STANDBY 装好时还没有角色，每次切换后也会过时。
+- 此刻是否持有，**只**以角色探测（C2/C3）的答案为准。`prepare-record.mjs` 的注释已改写；节点身份里的这一项只是资格引用，没有任何字段表示「持有」。
+- `control-install-delta-v2/prepare-payload.mjs` 是已退役的 v1 绑定器，没有改：它的字节被同目录 `manifest.json` 钉住，`.gitleaks.toml` 里还有按它的行号记的复核指纹。它里面的 `ciPrincipalRoleRef` 是写死的 TURING 值，按上面的含义读即可。
+
+### 30.4 版本
+
+- 安装计划 `resident-install-plan/5` → `/6`，回执 `resident-install-receipt/4` → `/5`。原因：新字段 `nodeIdentity`、`nodeIdentitySha256`、`installationSha256`、`roleAssumption` 和 `secrets`。C1 带来的 `node` 保留。
+- `verify-resident.ps1` 只认 `/5`；旧回执得到 `INSTALLED_NODE_PROFILE_REFUSED`，和 C1 一样要重装一次才能过。这次重装与 §24–§28 的 Windows 重装是同一次。
+
+### 30.5 App 私钥与 ci-admission token 的放置（设计 §7.1、§7.2）
+
+- 两个可选参数：`-AppPrivateKeyFile`、`-CiAdmissionTokenFile`。Owner 在那台机器上下载私钥、建连接拿到 token；它们**不经过 Agent、聊天、KooYomi、仓库或网盘**。计划和回执只记指纹。
+- 目标（运行时读取的路径，测试逐字比较）：`C:\ProgramData\CluedControl\trusted\controller-checks-app.pem`，`C:\ProgramData\CluedIndependentCI\secrets\ci-admission.token`。属主 Administrators，保护的 DACL：SYSTEM、Administrators 完全控制，`.\clued-control` 只读。文件创建时就带最终描述符，之后读回核对。
+- 流程（全部在写任何东西之前，干跑与 `-Apply` 都做）：
+  1. 来源文件只读一次进内存：普通文件、不是链接、大小有界（私钥 ≤ 16 KiB，token ≤ 4 KiB）、读的过程中没有变化。
+  2. 指纹由包里钉住的 `runtime\node.exe` 运行包里的 `tools\secret-fingerprint.mjs` 计算，但**不在包目录里运行**（复核 MINOR-1，见 30.10）。两个文件各读一次、按包清单核对哈希，把**同一批字节**写进本脚本自己新建的目录再从那里运行；node 用清空的固定环境运行；秘密走 stdin，不进命令行，工具只打印指纹。
+  3. 指纹必须等于安装记录的钉值；公式就是运行时每次启动用的那两个（`entry-runtime.mjs#controllerPrincipal`），测试里对拍。不符：`APP_KEY_FINGERPRINT_MISMATCH`、`CI_TOKEN_FINGERPRINT_MISMATCH`；工具拒绝（不是 RSA 私钥、不是 token）：`APP_KEY_UNREADABLE`、`CI_TOKEN_UNREADABLE`；来源文件不合格：`*_SOURCE_REFUSED`。
+  4. 目标已存在：`*_TARGET_EXISTS_NOT_OVERWRITTEN`，**从不覆盖**。目标目录是链接：`*_TARGET_DIRECTORY_REFUSED`。
+- 因为要建那个 Owner 属主的目录，只要提供了私钥或 token 文件，**干跑也要提权的令牌**（`ELEVATED_OWNER_TOKEN_REQUIRED_FOR_SECRETS`）；没提供文件的干跑不变，不需要。
+- 放置本身是 `-Apply` 的一步 `node-secrets`（在公司的计划任务之后、runner 未变核对之前）：放的正是被计算过指纹的那些字节，`CreateNew`。没有提供参数就什么都不放。内存里的字节在放置后清零，放置后读回比对用的那份副本比对完立刻清零（`Test-BytesEqualClear`，复核 NIT-2），任何一次拒绝也先清零已读入的字节。
+- 目录：`CluedControl\trusted` 属于 controller 安装，**必须已存在**（`*_TARGET_DIRECTORY_MISSING`）；`CluedIndependentCI\secrets` 不存在且提供了 token 时由本安装创建一次（创建即带 ACL）。
+- 这个脚本不删任何东西：Owner 下载的那份私钥或 token 副本，装完后由 Owner 自己删（脚本输出里有一句提醒）。
+- 卸载不碰这两个文件（它们不在 `resident\` 里）。重装时目标已存在，不传参数即可；传了会被拒绝。
+
+### 30.6 `verify-resident.ps1` 核对什么
+
+- `node-identity`：回执里的节点身份等于从**已安装**记录（`record\installation.json`、`acceptance.json`，两者都由回执钉哈希）重新导出的那份；两份记录文件互相一致；回执的 `roleAssumption` 是 `NONE`。
+- `node-secrets-receipt`：回执说放了的，指纹等于记录的钉值；说没放的，没有指纹。
+- `app-key-file`、`ci-admission-token-file`：文件存在、不是链接、属主是管理员、读者只有 SYSTEM、Administrators 和档案里的 `controllerSid`、controller 能读且没有写权。规则取自运行时自己的 `runtime/verify-install-acl.ps1`。
+- `app-key-directories`、`ci-admission-token-directories`（复核 MINOR-2）：放文件的目录（`CluedControl\trusted`、`CluedIndependentCI\secrets`）和一路到盘符根的每一级上级，逐级按运行时同一条规则（`Test-SecretAclChain`）：属主都是管理方（SYSTEM、Administrators、TrustedInstaller）；放文件的目录自身及其下，除管理方和 controller 外没有人有读数据权；没有非管理方持有替换权（删除、改权限、取得所有权、删子项），在「保护根」（放文件目录的上一级）及其下还不得有写权；链接一律拒绝。只对 `Allow`、非仅继承的条目判断（与运行时相同）。结果：`absent`、`link-refused`、`owner-refused`、`writable-ancestor`、`secret-reader`，读不了记 `unreadable`。这样新节点预建的、继承了 Users 读取的 `trusted\`，不会过了 verify 却在运行时因 `SECRET_READER_REFUSED` 失败。
+- **不读内容**：指纹在安装时核对过，运行时每次入口启动又核对（不符以 `ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED` 失败关闭）。
+- 没提供参数、文件还没放的安装：这两项为 false（`absent`），整体结论是未通过。这是「节点还不能干活」的如实报告，不是安装错误。
+- `controller-service-logon-right`（2026-10-30 起）：档案里的 `controllerSid` 有「以服务身份登录」权限，可以是直接授予，也可以经本机组获得。要提权才能读（`secedit /export /areas USER_RIGHTS`）；不提权时记为 `unreadable`。见 §30.8。
+- 与系统语言无关（2026-10-30，DESK-W-591 上 `sc qfailure` 输出的是「重新启动」而不是 RESTART，误报失败）：
+  - `broker-failure-actions` 改为读 SCM 自己的注册表值 `FailureActions`（`SERVICE_FAILURE_ACTIONS`），与安装器设的值逐项比对：复位 86400 s，动作依次为重启 60000 ms、重启 300000 ms、无 300000 ms；另要求 `FailureActionsOnNonCrashFailures = 1`。
+  - `resident-sid-type` 改为读 `ServiceSidType = 1`（UNRESTRICTED）。
+  - 其余仍读 sc.exe 文本的检查只依赖不随语言变化的字段名和数字（`START_TYPE`、`STATE`、`PID`、`SERVICE_START_NAME`、`BINARY_PATH_NAME`、`Se*Privilege` 名、SDDL）。
+
+### 30.7 STANDBY 安装（公司节点，设计 §7.2、§10 P3）
+
+- 新连接**不标** ci-admission。安装不假定任何角色：计划与回执里 `roleAssumption = 'NONE'`，`verify-resident.ps1` 拒绝别的值；包里没有 trigger、账本、请求或状态文件；配置里没有角色或模式字段。
+- 安装之后，角色探测读 `ci-admission.token`，发一次只读 RPC，服务答 `admission_binding_required`，即「没有」；没有任何 GitHub 请求，没有发布。App 私钥这时不会被读（探测入口只开 token）。服务端一旦把角色标给这个连接，**同一份安装**就探测为「有」：角色在服务端，不在安装里。
+- 执行器启动后先按 UNCERTAIN 等于 STANDBY 处理（不取触发、不开批次）由 C3 实现（§29）。本节只保证安装侧不预设角色、不留下会触发发布的东西。
+- 切换时才标角色（设计 §5.4），是 Owner 在 KooYomi 的动作。
+
+### 30.8 公司节点安装清单里的其他项
+
+- **WSL 主机调优**（Task `f995d832`：P1 sysctl 和 P1b 内存保护）：`linux/host-tuning/README.md`。在公司节点的 Linux root 步骤旁做，不属于 Windows 安装脚本。
+- 新节点的基础目录是前提，本安装不建：`C:\ProgramData\CluedControl`（controller 安装，含载体 runner 的原二进制）和 `C:\ProgramData\CluedIndependentCI\{formal-spool,state}`（`migrate-acl.ps1` 要求已存在）。这些由设计 §10 P2 的节点准备步骤负责，C8 手册要写明。
+- **controller 账户必须有「以服务身份登录」**（`SeServiceLogonRight`，本地安全策略「用户权限分配」）。载体 runner 服务以 `.\clued-control`（档案的 `controllerSid`）运行，交换代理每一段都要启动它；没有这项权限，SCM 拒绝启动（事件 7041），第一次角色探测就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`）。DESK-W-591 在 2026-10-30 就是这样停下的。
+  - 节点准备时直接授予该账户（例如 `secpol.msc` →「本地策略」→「用户权限分配」→「作为服务登录」）。
+  - `install-resident.ps1 -Apply` 在写任何东西之前只读核对：缺这项权限拒绝（`CONTROLLER_SERVICE_LOGON_RIGHT_MISSING`），读不到用户权限也拒绝（`USER_RIGHTS_UNREADABLE`）。
+  - 干跑把结果报在计划之外的 `preflight.controllerServiceLogonRight`，不改计划和计划哈希；不提权时这一项为 `unreadable-not-elevated`。
+  - `verify-resident.ps1` 也核对这一项（§30.6）。
+- **不要删除任何已有的 GitHub App 私钥。** 每个节点各有自己的一把（`appKeyId` 和指纹钉在该节点的安装记录里）；删掉哪一把，那个节点的检查发布立即 `github_http_401`。TURING 的 4918220 在 2026-10-30 就是这样被删的。新节点只新增一把；要更换某个节点自己的私钥，走只改记录的重装（`reinstall/README.md` §8b）。
+- **已知限制：Linux 半边没装时，`executor.rearm` 没有合法路径。** 节点只装了 Windows STANDBY、没有 Linux 半边时，执行器一旦 HALT（例如上一条的角色探测），复位所需的 Linux 一侧事实（version facts、两侧一致）不存在，无法合法 rearm。按 Owner Decision `e5b42e52`，DESK-W-591 保持 HALTED，直到 Z1 装好 Linux 半边和它自己的结果签名钥。这里只记录，不改代码。
+
+### 30.9 测试
+
+| 文件 | 内容 |
+|---|---|
+| `test/node-identity.test.mjs` | 两个节点（TURING 档案、公司夹具）各自导出身份并核对哈希；39 个拒绝用例（字段、acceptance 钉值、两份文件不一致）；身份里没有私钥、token 或角色字段；真实 `assembleRecord` 导出的两份记录 |
+| `test/secret-fingerprint.test.mjs` | 指纹公式与运行时对拍；非私钥、非 token、空、超长一律只打印一个码；进程方式：秘密走 stdin，输出里没有秘密 |
+| `test/standby-install.test.mjs` | 公司包的身份钉在清单里；STANDBY 安装不带状态、不带角色、安装脚本没有网络调用；角色探测答「没有」且只发一次只读 RPC，没有 GitHub 请求；密钥与 token 路径与运行时一致 |
+| `windows/test-resident-windows.ps1` §4d、§4e | 同一份用例跑 PowerShell 两份实现；包侧；回执核对；密钥文件描述符规则；用真实 node 和本仓库的工具、一个临时 RSA 私钥和一个编造的 token 做指纹核对和创建即带 ACL 的放置（断言 148 → 294）。复核修正后 §4d-2 和 §4e 另加：上级目录链的规则（16 个拒绝、4 个放行、活链三种）、读回副本清零、新建目录的值与行为、包目录里的 DLL 不被加载、提权要求（共 +47，370 → 417） |
+
+- 离线、只用临时目录和夹具；那把 RSA 私钥由测试在内存或临时目录里生成，是一次性夹具，不是任何真实密钥。
+
+### 30.10 独立复核的修正（2 个 MINOR、1 个 NIT；C7 本身 0 BLOCKER、0 MAJOR）
+
+- **MINOR-1，不在包目录里运行 node.exe。** 以前指纹计算直接运行 `$PackageRoot\runtime\node.exe`。包目录通常非管理员可写，而 node.exe 会先从自己所在目录加载 WINMM、IPHLPAPI、USERENV、dbghelp 这类不在 KnownDLLs 里的 DLL；非提权进程可以往 `runtime\` 放一个 DLL，让它以管理员身份被加载，还能从 stdin 读到秘密。包清单的哈希只管清单里列的文件，管不到多出来的文件。
+  - 做法（取复核建议的“拷贝”一种）：`Get-SecretFingerprint` 把 node.exe 和工具各读一次、按清单核对哈希，把同一批字节写进 `New-SecretWorkDirectory` 新建的目录，从那里运行，结束后删除该目录。目录在 `C:\Windows\Temp` 下，名字随机（`clued-secret-check-<32 位十六进制>`），属主 Administrators，DACL 受保护，只有 SYSTEM 和 Administrators（`O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)`，写在脚本顶部的 `$SecretWorkSddl`）。非管理员在 `C:\Windows\Temp` 里没有删除或改名他人对象的权利，也进不去这个目录，名字又猜不到。创建后读回 DACL（和属主）核对，不符 `SECRET_WORK_DIRECTORY_ACL_MISMATCH`，已存在 `SECRET_WORK_DIRECTORY_EXISTS`。进程的 DLL 搜索顺序是新目录、System32；工作目录是 System32，环境清空。
+  - 取代了原来的“包文件保持打开”（`Open-PackageFileHeld` 已删除）：现在运行的文件在管理方独占的目录里，不再需要靠打开句柄防改。
+  - 计划多一个字段 `secretsFingerprintDirectory`（只有提供了私钥或 token 文件时才有：父目录、SDDL、事后删除），计划合同仍是 `/7`（`/7` 还没有装到任何机器上）。脚本说明里“从不删除”的例外多了这一个：只删自己刚建的这个目录。
+  - 测试里有对照：往一个 node.exe 旁边放 `WINMM.dll` 等四个假 DLL，从那里运行的 node 确实起不来；同样四个文件放在**包**的 `runtime\` 里（清单管不到它们），指纹仍然算对。
+- **MINOR-2，verify 检查放文件的目录和上级。** 见 30.6 的两个新检查。规则取自 `runtime/verify-install-acl.ps1` 的 `-ReadFile` 分支，不比它严也不比它松；`C:\`、`C:\ProgramData` 这类系统上级只受“替换权”一条约束（它们本来允许 Users 在里面建东西）。没有要求 controller 对每一级有 READ_CONTROL（运行时需要，但那要算组成员的有效权限，这里不做）。
+- **NIT-2，读回副本清零。** `Write-NewSecret` 不再自己留一份读回的字节；比对和清零都在 `Test-BytesEqualClear` 里。
+
+## 31. 信箱原子写与少开 wsl.exe
+
+Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.exe，来自 WSL order-7 缓解设计 Task `7c2e4386` / Decision `941f9146` §2 D2）。只改常驻层（`src/store.mjs`、`mailbox.mjs`、`inbox.mjs`、`companion.mjs`、`companion-main.mjs`、`ruleset-backstop.mjs`），不改 Source、安装脚本、Linux 工具、policy 合同。两件事互相独立，放在一起只是因为都动 companion 与信箱。
+
+### 31.1 信箱：为什么（Task `32d10618`）
+
+两个症状，同一个根因：`writeNew` 先 `open(wx)` 建文件、再写、再 `sync`，读的一方可以在中间打开它，读到空文件或半截 JSON。
+
+1. `Mailbox.latestHint` 直接读最新的托管提示文件。读到空文件抛 `HOSTED_HINT_REFUSED`，服务端口接住后回 null（“没有提示”）；读到半截 JSON，`parseHint` 拒绝。两种结局都让这一轮按没有提示处理（计划意图里记 `hintRefused`；等待窗口已到时，这个 head 就按“全部本地”排程），白等或白跑一次。
+2. companion 的 `writeTrigger` 是 `fs.writeFile(..., { flag: 'wx' })`，同样先建后写。执行器恰在空档读 inbox 时，把触发当成 `INBOX_ENTRY_SHAPE_REFUSED` 归档到 `rejected`，触发就丢了；轮询器的 `sent` 记忆让它在 PR 更新或 main 变化前不再重发。
+
+两者都不会 HALT。10-23 的 `archive-linux` 应答被拒（Task `67ae9ccb`）是同一个根因，当时只修了请求和应答的读者。
+
+### 31.2 写侧：先写临时名，再整体换名（`store.mjs#writeNewAtomic`）
+
+- 字节先写进同目录的 `.tmp-<12 位十六进制>-<目标名>` 并 `sync`，再用一次 `rename` 给它目标名；目标要么不存在，要么完整。写失败或换名失败，临时文件被删。
+- **仍然 create-only。** Windows 的 `fs.rename` 会覆盖已有目标；硬链接（`link` + `unlink`）倒是拒绝已有目标，却让文件有一刻两个名字，`readBounded` 的 `nlink === 1` 身份检查会把它当成被改过的文件拒绝，读者就会 HALT。所以换名前后各看一次目标，已有就拒绝（`CREATE_ONLY_TARGET_EXISTS`，与 `writeNew` 同码）。两次检查之间仍有一个窗口：同一个名字有第二个写者时，后到者会覆盖先到者。下面这些名字都只有一个写者：请求号是 UUID，一个请求只有一个应答，提示序号来自 companion 的同一条顾问通道，取消文件重复写只是同义写。**会被两个写者争的名字不用这个原语**：泵标记 `<requestId>.pump.json` 的独占创建本身就是认领，没有人读它的内容，仍用 `writeNew`。单写者的前提：companion 的计划任务设为 `MultipleInstances = 2`（IgnoreNew，`install-resident.ps1` 的 `companion-task`），同一时刻只有一个 companion 进程；服务端有实例锁（`instance-lock.mjs`）。评审（NIT-3）提过另一种做法：先独占创建一个空占位文件，再把临时文件换名覆盖它，这样是严格的 create-only。没有采用：目标名会有一刻是空文件，正是这一节要消除的空档（读者与测试都得改成容忍空文件）；占位之后崩溃，这个名字会被一个空文件永远占着（应答槽或请求槽卡死）。所以保留单写者前提，由上面的名单和计划任务的 IgnoreNew 承担。
+- 换名遇到 `EPERM`/`EBUSY`/`EACCES`（杀毒或索引器短暂占着新文件）重试，间隔 20、50、100、250、500 ms，之后抛出。以前这些路径没有换名，所以这是新增的失败面；失败的 `respond` 会让 `step()` 抛出、下一轮重新处理同一个请求，重试把这种情况压到最低。
+- 临时名不会被任何读者当成记录：`pending()` 只认 `^[0-9a-f-]{36}\.json$`，`poll`/`cancelled` 按确切名读，提示列表要求 `hosted-hint-…` 前缀与序号。`Mailbox.open` 顺手清掉超过 1 小时的 `.tmp-` 残留（崩溃留下的），目录写不了就留着。`beat()` 的临时名也改用这个形状，换名失败时删除。
+- 只用在写者有换名权利的目录：`mailbox\requests`（服务写）和 `mailbox\responses`（companion 写，心跳早就这样换名）。
+
+用到它的：`Mailbox.send`、`cancel`、`respond`、`writeHint`。
+
+### 31.3 读侧
+
+- **`latestHint`**：取最新的至多 3 个提示文件，从新到旧，返回第一个**完整**的（`readBounded` 之后 JSON 能解析）。最新的是空文件或半截时（安装期间旧版 companion 还在跑），上一个完整的提示就是当前值，下次再读就读到新的；只有一个且没写完则回 null（“还没有提示”）。完整的 JSON 但形状不对的照旧交给 `parseHint` 拒绝；超长、链接、身份不符照旧抛出。内容根本不是 JSON 的最新文件分不清是“没写完”（JSON 的前缀本身也不是 JSON）还是写坏了，按没写完处理，用上一个完整的提示；以前这种文件会到 `parseHint` 被拒并记 `hintRefused`，现在静默跳过（评审 NIT-1），提示只是排程线索，所以接受。读到上一个观察而不是最新的，最多让排程晚一个 tick；提示从来不是授权，第 R 段自己会再验证。
+- **inbox 与 requests 不能原子发布。** 这两个目录对 Owner 是只能新建：目录 ACE 只有 `0x1000a2`（新建文件、遍历），文件上的继承 ACE 和 OWNER RIGHTS 只给读（`install-resident.ps1` 的 `Get-AclPlan`，§8.3 末尾的“只能新建”一条，`test-resident-windows.ps1` 的 `owner-folder-add-file-only`、`owner-files-read-only`）。companion 在 inbox 里没有 DELETE，也没有 DELETE_CHILD，所以既不能写临时名再改名，也不能覆盖。改这条 ACL 会撤销 MINOR-9 的性质（触发和请求建好后不能再被改写），也属于安装脚本，本次不动。
+- 所以由读者等：`Inbox.read` 遇到空文件（`empty`）或读取中尺寸变了（`size-changed`）时，**不列出、不拒绝、留在原处**，下一轮再读；从第一次遇到它的那一轮算起满 `INBOX_UNFINISHED_GRACE_MS`（30 s，读者自己的时钟，`Inbox.open(dir, archive, clock)` 可注入）仍没写完，才像以前一样列为 `INBOX_ENTRY_SHAPE_REFUSED`（执行器归档到 `rejected`，写者在建与写之间崩溃就是这样收场）。`requests\`（暂停请求）走同一个读者，所以紧急暂停请求也不会因空档被丢。
+- 只等 `empty` 与 `size-changed`，**不**因为 JSON 不完整而等：触发与请求最多 1 KB，由 `writeNew` 一次 `write` 写出，空档里只会是“空”；而完整但不是 JSON 的文件（`{not json`）今天立即被拒，已有测试依赖这一点，把它们当成“还没写完”会让垃圾文件多占 30 s。
+- 偏离验收第 2 条的前半句：“写触发的任何时刻，inbox 里都没有空的或不完整的触发文件”在 inbox 里做不到（见上），做到的是后半句：读者在这个空档里从不拒绝一个有效的触发。`companion-main` 的 `writeTrigger`、`writeRequest` 与 `ruleset-backstop` 的 `writePauseRequest` 现在都走同一个 `Inbox.drop`（`writeNew`，名字 `Inbox.fileName`），触发多了结尾换行与 `sync`，其余不变。
+
+### 31.4 检查过的写路径
+
+| 路径 | 结论 |
+|---|---|
+| `Mailbox.send`（服务 → `mailbox\requests`） | 改为 `writeNewAtomic` |
+| `Mailbox.cancel`（服务 → `mailbox\requests`） | 改为 `writeNewAtomic`；已存在仍是同一个取消 |
+| `Mailbox.respond`（companion → `mailbox\responses`） | 改为 `writeNewAtomic`；第二个应答被拒，第一个保留 |
+| `Mailbox.writeHint`（companion → `mailbox\responses`） | 改为 `writeNewAtomic` |
+| `Mailbox.claimPump` | **保留 `writeNew`**：独占创建就是认领，无人读内容 |
+| `Mailbox.beat` | 原本就是临时名 + `rename`；临时名改成共享形状（会被清理），失败时删除 |
+| 读者 `pending`、`poll`、`cancelled`、`heartbeat`、`latestHint` | `pending`/`poll` 本来就把未写完的文件当“还没有”（Task `67ae9ccb`），保留给旧版写者；`latestHint` 见 31.3；`cancelled`/`heartbeat` 读不到就当没有 |
+| `companion-main` 的 `writeTrigger`（→ `inbox`） | 改走 `Inbox.drop`；读者等（31.3） |
+| `companion-main` 的 `writeRequest`（→ `requests`，主备的双活保持请求，经 `node-duty.mjs` 的端口） | 同上 |
+| `ruleset-backstop.writePauseRequest`（→ `requests`） | 改走 `Inbox.drop` |
+| `companion-main` 的 `createRelayLog`（追加到 Owner 配置目录的 jsonl） | 不是信箱，常驻没有读者；追加写，最后一行可能不完整，不影响判断 |
+| `pr-status.mjs` 的 `LocalStore.save`（Owner 配置目录） | 本来就是临时名 + `rename`，只有 companion 自己读 |
+| `tools/rearm-tool.mjs` 写 `requests\`、`owner\` | 不在本次范围（`tools/`）；它写的 `requests\` 由 31.3 的读者保护，`owner\` 是只有提权 Owner 能建文件的目录 |
+| `broker\requests`（引擎 → 交换代理） | 不在本次范围（读者是 `SwapBroker.cs`）；常驻对它也只有新建权利，没有换名权利 |
+
+`test/mailbox-atomic.test.mjs` 末条用源码检查守住：`mailbox.mjs` 只剩一处 `writeNew(`（泵标记），`companion-main.mjs` 没有 `flag: 'wx'`。
+
+### 31.5 少开 wsl.exe（Task `463e8148`）
+
+**问题。** 泵每一段 Linux 阶段里，约每秒用一个新的 `wsl.exe` 列一次 `outgoing`，设计 r3 又加了每 15 s 一次的 `unitFacts`。每个 `wsl.exe` 要开六条 hv_sock 通道，每条占一块 order-7（宿主调优 P1 之后是 order-5）的连续内存，碎片化时这就是 wsl.exe 卡住的原因（10-28）。一个跑满 45 分钟的段就是两千多次启动。
+
+**没有采用常驻列表通道。** 一个长驻的 `wsl.exe` 子进程要和现有约束共处，而这几条都过不去：companion 的 `Runner` 一次只跑一个子进程，且 `run()` 只在子进程结束时返回，没有流式输出；作业宿主不转发 stdin，并且在上限（最长 1 小时）到时结束整个 job；而“等目录变化再打印”的 Linux 程序，在固定 argv、不用 shell 的前提下，基础镜像里没有（`inotifywait` 不在其中）。要做就得给 root 工具加一个子命令、重装 Linux 侧、再给作业宿主加流式读取，三件都在本次范围之外（Task `463e8148` 只改 Windows 常驻层）。
+
+**采用的：按安静时间退避的列表间隔。**
+
+- 间隔 = `clamp(安静时间 / 2, 1 s, 15 s)`（`listingDelayMs`）。“安静时间”从最近一次事件算起：阶段开始、列表内容变了、中继搬过一条记录（`eventAt`）。事件之后每秒列一次，安静下来逐渐拉长到 15 s。
+- 上限 15 s = `WORKER_FACTS_EVERY_MS`：安静时一轮同时做列表与 `unitFacts`，各 15 s 一次。每次睡眠还被截到下一次读 `unitFacts` 之前，所以信号 B、C 的读取节奏不变（仍是启动后立即一次、之后每 15 s 一次）；B 的“结束后取的下一次列表是定论”顺序不变，C 的 5 分钟不变。
+- 列表失败（`names === null`）仍是 100 ms 后重试并用中继本身探测，没有变。
+- 交接 blocked 记录（`handOverBlocked`）原来每秒列一次，最长 150 s：改为同一公式，上限 5 s（`HANDOVER_LISTING_CAP_MS`），窗口不变。
+- 泵结束后等 worker unit 消失的循环原来每 0.5 s 读一次 `unitFacts`，最长 30 s：改为 0.5、1、2 s 然后每 2 s，同样的 30 s 上限，最多约 17 次。
+- 测试可以传端口 `listingDelay`，`() => 1000` 就是改动前的节奏；生产不传。
+- 一次一个子进程、作业宿主限时、固定 argv 三条约束原样保留：没有新的子进程种类，没有新的 argv。
+
+**每个回合增加的最坏延迟，以及为什么仍在预算之内。**
+
+| 项目 | 以前 | 现在 | 预算与理由 |
+|---|---|---|---|
+| 挑战从产生到被发现 | ≤ 约 1 s + 一次列表（0.3 s） | 刚有事件后 ≤ 约 1–2 s；安静时 ≤ 15 s + 一次列表。测试里实测 0.1–14.6 s | 回调窗口 `CALLBACK_WINDOW_MS` = 120 s。中继一次通常 4–6 s、观察到过 25–45 s。最坏再加 15 s = 窗口的 12.5%；“收挑战 45 s + 签发器评估约 10 s + 回送 45 s”的双长尾加 15 s 是 115 s，仍在 120 s 内 |
+| ReceiveChallenge 的重试预算（§25.4） | `firstSeen + 120 s − 60 s`，`firstSeen` 是第一次列到的时刻 | `firstSeen` 取**下界**：挑战一定还不存在的最晚时刻。依次是：没列到它的最近一次成功列表的开始时刻；一轮回调之后，那一轮 `SendResponse` 开始的时刻（worker 拿到响应 k 之后才会产生挑战 k+1，两个回调可以紧挨着）；都没有时，要求启动 worker 的时刻。列表失败时沿用这个下界，不把失败列表的时刻当作看到它的时刻，也不记入 `firstSeen` | 下界永远不晚于创建时刻，所以重试窗口 `下界 + 60 s` 不晚于“创建时刻 + 60 s”，§25.4 留给签发器评估与回送的 60 s 储备不被吃掉，列表失败时也一样。窗口会早于创建时刻结束多少，取决于下界早出多少：安静时 ≤ 一个列表间隔；紧挨着的回调加慢中继时，是上一次 `SendResponse` 的时长（慢到 40 s 时窗口在挑战产生后还开约 20 s，第一次尝试快速失败的重试仍在窗口内）。这部分不是“与列表间隔无关”，间隔大时窗口更短，但永远不会在挑战出现之前就已关上 |
+| SendResponse 的重试预算 | 挑战记录自己的 `deadline − 15 s` | 不变 | 读的是挑战记录里的字段，与列表无关 |
+| result / blocked 的发现 | ≤ 约 1 s | ≤ 15 s | result 不赶时间；blocked 交接只是让签发器以 BLOCKED 而不是 UNCERTAIN 结束，不论早晚 |
+| 信号 B | 结束后 ≤ 15 s 内发现 | 同样（读取节奏不变） | `test/wsl-starts.test.mjs` 检查读取间隔不超过 15 s 加一轮 |
+| 信号 C | 启动后 5 分钟（306 s） | 5 分钟（301 s） | 仍在第一次满 5 分钟的读取上触发 |
+| Owner 取消 / 泵安静 | 泵 ≤ 约 1 s 后看到取消 | 睡眠中 ≤ 15 s 后看到 | 服务等泵安静最多 `PUMP_QUIET_MS` = 180 s；取消后泵再做一次 30 s 的静止检查，合计远小于它 |
+| 心跳 | 独立定时器 | 不变 | 与泵节奏无关 |
+
+**wsl.exe 启动次数**（`test/wsl-starts.test.mjs`：虚拟时钟，假宿主，每次 wsl.exe 调用 0.25 s，每次中继调用 5 s；只数 companion 直接起的 `wsl.exe`。每次中继调用另外由 powershell 起至少一个 `wsl.exe`，两种节奏下典型段都是 8 次，不变）：
+
+| 场景 | 列表 | `unitFacts` | 启动与静止 | 合计 以前 → 现在 | 倍数 |
+|---|---|---|---|---|---|
+| 典型段（247 s，三轮回调） | 165 → 35 | 17 → 17 | 2 → 2 | 184 → 54 | 3.4 |
+| 20 分钟的段 | 932 → 100 | 81 → 82 | 2 → 2 | 1015 → 184 | 5.5 |
+| 近 45 分钟的段（段上限） | 2065 → 196 | 175 → 178 | 2 → 2 | 2242 → 376 | 6.0 |
+| 5 分钟里 worker 一直没起（信号 C） | — | — | — | 263 → 49 | 5.4 |
+| 交接 blocked，记录 100 s 后出现 | 约 100 → 24 | — | — | — | 4 |
+
+**目标没有达到：** Task `463e8148` 要的是约两个数量级，这里只有列表本身 4.7–10.5 倍、整段 3.4–6 倍。两个约束把轮询式方案卡在这里：每个 `unitFacts` 读取都是一次 `wsl.exe`，信号 B、C 的节奏要求保留，所以每 15 s 一次的下限还在（占现在总数的三成到五成）；挑战的发现延迟不能拉过窗口的一成多一点，所以列表间隔也不能超过 15 s。再往下要靠推送式的通道（上文没有采用的那一条：Linux 侧“目录有变化就返回”，把整个阶段的列表降到约一两次启动），需要 Owner 另行决定是否排这一步。
+
+### 31.6 测试
+
+- `test/mailbox-atomic.test.mjs`（15 条，含评审 NIT-1：最新文件不是 JSON 时用上一个完整的提示）：`writeNewAtomic` 的 create-only、目标在写的途中出现、失败清理、瞬时 `EPERM` 重试；send、respond、cancel、writeHint 在“建/写/刷盘/换名前/换名后”每一步，目录里没有空的或不完整的目标文件，`pending`、`poll`、`cancelled`、`latestHint` 此刻都不抛错、不拒绝，且在换名前看不到新记录；第二个应答与第二个取消的语义；临时名不被当成请求、应答、提示、取消，旧的被清理、新的和别的名字不动；心跳；半写的提示（0、1、一半、差两字节）时 `latestHint` 返回旧的完整值，写完后返回新的，经执行器的 `hint()` 也不是 `refused`；只有一个且未写完回 null；完整但形状不对、超长照旧；`Inbox.drop` 过程中读者不列空文件、不拒绝，写完后读到并能被 `parseTrigger` 解析；超过宽限期的空文件照旧被拒；执行器里空触发不被归档、写完后批次运行、从未写完的 30 s 后被拒；空的暂停请求不丢，写完后 `PAUSED`；源码检查。
+- `test/wsl-starts.test.mjs`（10 条）：步调公式；上表各场景的前后启动数；挑战发现延迟不超过上限加一次列表；ReceiveChallenge 的预算锚点从不晚于挑战产生时刻；信号 B 的读取间隔与结束后的发现时间；信号 C 的 5 分钟；终止等待的退避；交接 blocked 的间隔。
+- `test/relay-anchor.test.mjs`（5 条，评审 MAJOR-1、MAJOR-2）：紧挨着的两个回调加 40 s 的 `SendResponse`（新、旧两种列表节奏）：挑战 2 的锚点等于那次 `SendResponse` 的开始、不晚于创建、重试窗口在挑战出现时仍开着，第一次快速失败后确实重试并完成；锚点从启动、上一次成功列表、上一次响应取最晚者；列表失败（15 s 超时）时锚点仍是失败之前最后一次成功的列表，同样能重试；一次列表都没有时锚点是启动 worker 的时刻。五条在修改前的代码上都失败。
+- 离线演练不用改：`incident-20261028-replay` 与 `relay-flap-under-load` 的假宿主不依赖列表节奏，61 步仍全过。
+
+### 31.7 偏离、残余与安装
+
+- 偏离：验收第 2 条前半句（31.3）；约两个数量级的目标没有达到（31.5）。
+- 残余：写者在建与写之间崩溃的空触发，30 s 后仍被归档到 `rejected`，和以前一样，poller 在 PR 更新前不会重发；读者只等 `empty`/`size-changed`，更长的触发若被拆成多次写才可能露出前缀，现在的写法做不到；`writeNewAtomic` 在同一个名字上有第二个写者时后到者覆盖先到者（31.2 的名单里没有这样的名字）。
+- 未能在真机验证：`mailbox\requests` 上服务账户的 `rename`（ACL 的 `0x1301bf` 含 DELETE，心跳在 `mailbox\responses` 已证明 companion 一侧可行）；杀毒对新文件的短暂占用只有重试这一层保护，没有真机数据；wsl.exe 启动数只在虚拟时钟的假宿主里数过，没有在真机上数。
+- 混合版本：新服务配旧 companion，`latestHint` 与 `pending`/`poll` 仍容忍未写完的文件；旧服务配新 companion，邮箱文件一律完整，inbox 的空档与以前相同（旧读者仍会拒绝，写者没变）。
+- 安装：只需一次常驻层 Windows 重装（与 §24–§28 同一次即可），不碰 policy、Source、Linux 工具与安装脚本。
+
+## 32. 段前内存闸与“main 已移动”干净结束
+
+依据：第 2 批（Owner Decision `afd23e7e`）。A 是 Task `25851665`（WSL order-7 缓解设计 Task `7c2e4386`，Decision `941f9146` §2 B2）；B 是 Task `ea32aaf9` 的修法 1（Owner Decision `d8e3dea4`）。只改常驻层：`src/companion.mjs`、`src/mailbox.mjs`、`src/engine-windows.mjs`、`src/classify.mjs`、`src/failure-table.json`、`src/executor.mjs`（只多记一项回执字段）。不改 Source v2、Linux 工具或 `companion-main.mjs`。
+
+### 32.1 A 为什么
+
+- Windows 到 WSL 的每条 hv_sock 通道，都要一块空闲的环形缓冲块，阶数由 socket 默认值决定：默认是 order 7，装了 P1 是 order 5。每个 wsl.exe 开六条通道。
+- 所有 zone 都没有这么大的空闲块时，wsl.exe 卡住或失败。扫描段里这会让中继失败，段以 UNCERTAIN 结束，烧掉 head（10-22、10-28）。
+- `linux/host-tuning/clued-wsl-memguard` 每 60 s 算一次同样的数（`ring_order`、`blocks_at_least`），低于 `LOW_BLOCKS`（64）就整理内存。但它只管修，不管段开不开始。
+
+### 32.2 A 的做法：调用扫描段之前读一次，低就等，等不到就干净拒绝
+
+1. **读数**（伴侣）：新请求种类 `memory-ready`（字段只有 `batchId`），固定 argv，一次 wsl.exe：`/usr/bin/cat -- /proc/sys/net/core/rmem_default /proc/sys/net/core/wmem_default /proc/buddyinfo`，以 root 运行，经作业宿主，15 s 上限。
+   - `parseMemoryFacts` 与 memguard 的算法逐项相同：每个方向夹在 6 到 64 页，合成一次分配求阶数；各 zone 中不小于这个阶数的空闲块相加；超过 order 10 的列不计。
+   - 答复只给事实 `memory: { order, blocks }`，阈值由服务判断。读不到（退出码不为 0、超时、作业树、文本不合格式）答 `LINUX_MEMORY_UNREADABLE`。
+   - 答复合同升到 `/3`，多一个字段 `memory`，只有 `memory-ready` 的答复里可以不为 null。做法与 §24.3 的 `/2`（`jobTree`）相同：伴侣和服务来自同一个安装包，一起升级。新请求种类不升请求合同，与 `pr-head` 的先例相同。
+2. **闸门**（引擎 `memoryGate()`）：只对第 2/4/6 段，在 Owner 中止检查之后、发 `relay-stage` 与调用 `invoke-stage.mjs` 之前。这时这一段的 issue 还不存在，泵也还没开。
+   - 读数 ≥ `MEMORY_GATE_MIN_BLOCKS`（64）：照常调用这一段。正常情况下只多一次 wsl.exe，不等。
+   - 读数低：每 60 s（memguard 的周期）再读一次，最多 7 次读数（`MEMORY_GATE_CHECKS`），约 6 分钟（`MEMORY_GATE_WAIT_MS`，再加最后一次读的时间）。期间一旦够数，就在同一批里照常调用这一段。
+   - 到上限仍然低：段不调用，返回 `LINUX_MEMORY_NOT_READY`。Windows 一半的证明是“什么都没起”加服务自己的 SCM 读回。
+   - 等待中 Owner 中止被接受：停止等待，返回 `OWNER_ABORT_REQUESTED`，走中止路径。60 秒的睡眠由 `requestStop` 立刻叫醒（`gateSleep`），醒来先看中止、再读，所以中止不会最多晚 60 秒才被看到，也不会多读一次 wsl.exe（2026-10-29 复核 n1）。
+   - 每次检查最多一次 wsl.exe；每次读最多等 60 s 答复。
+3. **记录**：闸门的事实（次数、阶数、块数、等了多久、结果）随段结果返回，执行器写进这一段 `stage-terminal` 回执的 `memoryGate`。
+4. **失败表**：新码 `LINUX_MEMORY_NOT_READY` 只进 `failure-table.json` 和常驻侧名单（`RESIDENT_CLEAN`、`ATTEMPT2_RESIDENT_CODES`），不进与 Source 镜像的四个数组。
+   - 第 2 段：`environment / burn / attempt2 / counts`；
+   - 其他段：`environment / burn / new-commit / counts`。
+
+### 32.3 各段的结局与“不烧头”的确切含义
+
+- 第 1 段之后，`markStarted` 已经记下 attempt 1 的 head 键。所以闸门拒绝不会再多烧什么；这里“不烧头”指这个提交还能再跑。
+- **第 2 段**：`FAILED_CLEAN LINUX_MEMORY_NOT_READY`，归档原因 `linux-memory-not-ready`，不 HALT。
+  - executed-heads 按第 2 段记为未发布，换 Source 也能重跑；
+  - 同一 Source 下由一次自动 attempt 2 重跑这个提交（它自己的 head 键，`automaticAttempt2.delayMs` 之后）；
+  - 例外与 §27 相同：attempt 2 自己再被拒绝，不会有 attempt 3；第 R 段已转发过角色时，不进 attempt 2；
+  - 这一条把 attempt 2 名单扩到一个新的常驻码。依据是 Decision `1b5d3687` 的规则（发布之前、干净的临时失败），做法与 Owner Decision `eaa7d5e4` 对 `BRIDGE_ABANDONED_UNPUBLISHED` 的处理相同。
+- **第 4、6 段**：第 3 段已经发布，这个 head 不可能“不烧”。闸门在这里做两件事：
+  - 先在原地等 memguard。多数情况下这一段随后照常运行，批次完成；
+  - 等不到时以 `FAILED_CLEAN LINUX_MEMORY_NOT_READY` 结束（`new-commit`，计入熔断），而不是开段后多半落成 UNCERTAIN 再 HALT。PR 要推新提交才会再跑，与第 3 段之后的任何干净失败相同。
+- 拒绝之后照常要两台主机的完整清理证明（`proofFor`），归档也照常经伴侣（`archive-linux`）。证明不完整仍然 HALT，与每个干净码相同。
+
+### 32.4 阈值：64
+
+- 一个扫描段开头几分钟里离不开的 wsl.exe 调用：SendIssue 的中继、启动 worker、头两轮回调（admission 与 remote-refs）的 ReceiveChallenge 和 SendResponse、unit 事实的读取、首次列表，约 10 次。每次六条通道。最坏情况下，用过的块来不及在 memguard 下一遍（≤ 60 s）之前合并回来，需要约 60 块。
+- 64 正好是 memguard 的 `LOW_BLOCKS`：低于它，memguard 已经在整理。闸门和守护用同一个数，闸门等的正是守护在修的时候；memguard 每 10 分钟的状态行也就直接说明闸门多常会等。
+- 健康时的块数是几百到几千（`test/test_host_tuning.py` 的 HIGH 样本，order 7 时 2356 块），故障时是 0（10-22 13:22Z）。64 只在接近悬崖时才挡。
+
+### 32.5 读不到时：照常运行，不拒绝、不 HALT
+
+- 闸门只凭证据拒绝：至少一次合格的低读数，并且之后没有一次够数的读数。
+- 第一次就读不到（伴侣不答、答复不合格式、伴侣报 `LINUX_MEMORY_UNREADABLE`、邮箱抛错）：这一段立即照常调用，和没有闸门时完全一样，回执里 `ready` 为 null。
+- 理由：读不到什么也证明不了。把它当成拒绝，任何伴侣故障或格式问题都会让每个扫描段被拒，批次永远过不了第 2 段；当成照常运行，最坏就是今天的行为，§25–§27 照常兜底。
+- 已经有过低读数之后又读不到：不算“够了”，继续在上限内等，到上限按低处理。这时读不到更可能是内存更紧了。
+- 所以读数失败从不无限阻塞（次数和时间都有上限），也从不自己造成 HALT。
+- 残余：内存已经耗尽到连闸门自己的 wsl.exe 都起不来时，闸门读不到，只能照常运行，结果与今天相同。闸门管的是块数在 [6, 64) 之间、“快到悬崖”的状态。
+
+### 32.6 B：“main 已移动 / 主体已变”在第一次发布之前
+
+逐个核对了能在第一次发布（第 3 段；第 R 段转发过角色则更早）之前结束批次、意思是“main 移动或主体变了”的码。结论：它们都已是干净结束；唯一会 HALT 的那一种（10-22 #887 的结局）已由设计 r3 第三部分（§27）覆盖。本节没有为 B 改代码。
+
+| 在哪里 | 到常驻时的码 | 失败表 / 处理 | 结果 |
+|---|---|---|---|
+| bundle：`build-bundle.ps1` 发现 main 不再是 base（`REMOTE_MAIN_BASE_CHANGED`） | `BUNDLE_UNAVAILABLE` | `release`（第 1 段之前） | `NOT_EXECUTED`，头不烧 |
+| 工作区：`prepare-workspaces.py` 的 `REMOTE_MAIN_BASE_CHANGED`（核对的是 bundle 头与描述符，不是实时的 main） | `WORKSPACE_PREPARATION_REFUSED` | `environment / burn` | `FAILED_CLEAN` |
+| 第 2 段之前的 refs 闸门 | `REMOTE_REFS_CHANGED_SINCE_BUNDLE` | `transient / attempt2` | `FAILED_CLEAN`，attempt 2 |
+| 第 1 段：PR 变了、main 越过了 head、文件两次读不一致 | `PR_NOT_OPEN_OR_CHANGED`、`PROTECTED_CHANGE_NOT_UP_TO_DATE`、`STAGE_CHILD_REFUSED`（`pr_subject_changed` 等） | `deterministic-pr / burn` | `FAILED_CLEAN` |
+| 第 1 段发布之后的复核被拒 | `PUBLICATION_REVOKED` | `clean-final` | `FAILED_CLEAN` |
+| 第 2 段签发之前：refs 或准入发现主体变了 | `PR_NOT_OPEN_OR_CHANGED`（`full_admission_subject_changed`）、`BATCH_CLAIM_CHANGED`（`full_admission_rejected` 等） | `deterministic-pr` / `clean-final` | `FAILED_CLEAN` |
+| 第 2 段：worker 的干净 blocked 记录 | `REMOTE_REFS_CHANGED_SINCE_BUNDLE`（透传）或 `STAGE_CHILD_REFUSED` | `transient` / `clean-final` | `FAILED_CLEAN` |
+| 第 2 段签发之后：回调轮的准入或 refs 读取发现 main 移动（`REFS_MAIN_BASE_CHANGED` 变成 `full_admission_subject_changed`），发行器以 UNCERTAIN 结束（10-22 #887） | `PUBLICATION_UNCERTAIN` | `halt` 行 | **§27 覆盖**：泵被取消（`stage-ended`）后答复、两台主机静止，得 `FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED`，第 2 段 attempt 2；证明不了才 HALT |
+| 第 2 段：worker 在 main 移动后没留记录就退出 | 信号 B、桥停止、`BRIDGE_STAGE_STOPPED_PUMP_LOST` | `halt` 行 | **§27 覆盖**，同上 |
+
+- **Owner 要的说明**：10-22 #887 的 HALT 就是表里倒数第二行。设计 r3 第三部分把它收成 `FAILED_CLEAN`。这部分已在本分支（`146d8adf`）上，随第 2 批一起装上才生效。
+- 第一次发布之后，同样的码照旧：发布段（3/5/7）的 `PUBLICATION_UNCERTAIN` 仍然 HALT；干净码仍是 `FAILED_CLEAN`（`new-commit`）；第 4/6 段的 UNCERTAIN 由 §27 照旧收尾（`new-commit`）。
+- 没有改 Source，也没有码需要只在常驻侧改分类。
+- 残余，供 Owner 决定（Owner Decision `d8e3dea4` 的修法 1 范围之外）：§27 收尾的码对“main 已移动”并不贴切。`BRIDGE_ABANDONED_UNPUBLISHED` 计入熔断，并在第 2 段排一次 attempt 2；同一 base 的 attempt 2 会在 bundle 处遇到 `REMOTE_MAIN_BASE_CHANGED`，以 `BUNDLE_UNAVAILABLE` 释放（也计入熔断）。结果仍然干净、不 HALT，只是多跑一次 bundle、熔断多计两次。如要改成不计熔断、不排 attempt 2，可按结局里的 `outcomeReason`（`full_admission_subject_changed`）再做一个小改动。
+
+### 32.7 与任务说明的差异
+
+1. 闸门放在引擎的 `invoke()` 里，紧挨着调用扫描段，而不是在第 4/6 段的“角色间归档”之前。好处是离 issue 最近，Owner 中止已检查过；代价是角色间归档（两次 wsl.exe）不受闸门保护。块数在 [6, 64) 时这两次调用通常仍能成功。
+2. 时间上限是“约 6 分钟，再加最后一次读”：最后一次读在第 6 次等待之后开始。离线演练实测 7 次读、366 s。
+3. B 没有改代码（见 32.6），只加了钉住现状的测试。这些测试在 `146d8adf` 上就能通过，因为 §27 已在其中；10-22 那一行在没有 §27 的 main 上会 HALT。
+
+### 32.8 测试与演练
+
+- `test/memory-gate.test.mjs`（13 项）：
+  - A：阶数与块数用 memguard 的 buddyinfo 样本（order 7、order 5、夹紧、超过 order 10 的列、各种不合格式）；伴侣只起一次固定 argv 的 wsl.exe，答复 `/3` 带 `memory`，读不到答 `LINUX_MEMORY_UNREADABLE`；`memory` 只在 `memory-ready` 的答复里出现，只收 `{ order, blocks }`；
+  - A：够数时第 2/4/6 段照常运行（一次读，然后泵与调用），第 1/3/5/7/8 段从不读；低两次后够数，等两分钟后同一批照常运行；一直低，得 `LINUX_MEMORY_NOT_READY`，没有调用、没有泵、7 次读，时间也有上限；读不到，立即照常运行；先低后读不到，继续等到上限再拒绝；等待中 Owner 中止，得 `OWNER_ABORT_REQUESTED`，睡醒后不再多读；一个永远睡不醒的睡眠也会被 `requestStop` 叫醒；
+  - A（执行器）：第 2 段拒绝，`FAILED_CLEAN`、不 HALT、未发布、attempt 2 排上并能完成，回执带 `memoryGate`；第 4/6 段，`FAILED_CLEAN`、没有 attempt 2、记为已发布；Linux 证明不完整仍 HALT；新码每一段都有行，不在 Source 镜像数组里；
+  - B：上表每个第一次发布之前的码，`FAILED_CLEAN`、不 HALT、未发布；bundle 得 `NOT_EXECUTED`；第一次发布之后照旧。
+- 改了的已有测试：`engine-v2`（发送顺序多一个 `memory-ready`）、`job-host`（合同 `/3`）、`failure-table`（常驻码名单）、`scanner-abandon`（attempt 2 名单）、`bridge-observer` 与 `abort-ports`（假邮箱对 `memory-ready` 不给读数）。
+- 离线演练：
+  - 三个事故重放里，闸门在第 2 段之前各读一次、不等；
+  - 新增 `memory-low`：VM 一直没有 order 7 的空闲块，第 2 段从未调用，`FAILED_CLEAN LINUX_MEMORY_NOT_READY`，不 HALT，两边归档 `linux-memory-not-ready`，排上一次 attempt 2。
+
+### 32.9 安装与不变量
+
+- 随第 2 批的一次常驻层 Windows 重装生效（同一次 UAC 里重签 policy 的 `residentManifestSha256`）。不改 policy 合同、Source 或 Linux 工具。
+- 闸门不依赖 memguard 是否已装：没装时照样能读，只是低读数等不来整理，到上限就干净拒绝。
+- 不增加发布路径，不碰 GitHub，不用 App 凭据；伴侣只多一个只读的固定 argv。闸门只会让执行器晚开或不开一个扫描段，从不让它多做事；证明不了照旧 HALT；自动逻辑不写、不清除 `HALT.json`。
+
+## 33. r4 首次 HALT 的三项修复
+
+依据：2026-10-29 刚重装的 TURING 常驻在 PR #935 那一批上第一次 HALT（`UNEXECUTED_CLOSE_UNCONFIRMED`）。协调会话只读诊断出三件事；本节是对应的三项修复（第 2 批，代码、离线测试和本节，不装、不推）。
+
+### 33.1 现象与根因
+
+1. 已装的 `config\companion.json` 里 `bundleScript`、`relayScript` 指向 `source\0146f406…`（旧 Source），而机器上只装了 `source\03a75f76…`。第 0 段因此报 `BUNDLE_UNAVAILABLE`。`tools/build-package.mjs` 只替换占位符；`validateCompanionConfig` 和 `verify-resident.ps1` 都不看这两条路径。
+2. 关闭一个没执行的批次要跑 `archive-windows-spool.ps1`（Source resident-v2），它以服务账户 `NT SERVICE\CluedCIResident` 运行，调用 `NodeProfileV2.LoadProtectedProfile`。后者对档案文件的**每一级上级目录**用 `CreateFileW` 以 `0x20080`（READ_CONTROL | FILE_READ_ATTRIBUTES）打开（`NodeProfileV2.cs:124`、`:138-139`）。`C:\ProgramData\CluedIndependentCI` 当时给 SYSTEM F、Administrators F、Owner `0x120080`（只此目录）、clued-control RX，**没有**服务账户；而 `...\resident` 和 `...\resident\record` 是给了的。归档拒绝，`closeBatch` 返回 `verified=false`。
+3. 归档脚本自己的拒绝码没有带进回执和终止记录，只留下 `UNEXECUTED_CLOSE_UNCONFIRMED`，诊断因此很慢。
+
+### 33.2 (a) companion 的 Source 脚本路径必须在已装的 Source 里
+
+- `src/companion.mjs`：
+  - `COMPANION_PATH_KEYS`（五个带路径的键）、`NON_SOURCE_PATH_KEYS`（`wslExe`、`powershellExe`、`windowsSpool`）、`SOURCE_SCRIPT_KEYS`（其余：`relayScript`、`bundleScript`）。**带路径的键默认就是 Source 脚本**：以后新增一个路径键，不点名为“非 Source”就要受同一条规则约束。这是“其他任何 Source 脚本路径”的做法（现在配置的键集合固定，所以目前只有这两条）。
+  - `sourceDirectory(root, ciSourceManifestSha256)` 给出 `<root>\source\<hash>\`；`assertSourceScripts(c, { root, ciSourceManifestSha256 })` 要求每条 Source 脚本路径以它开头（不分大小写，同 Windows），其余部分是普通名字链：段只含 `[A-Za-z0-9_.@-]`，不为空，不为 `.` 或 `..`；因此没有正斜杠、冒号（数据流）和空格。
+  - 拒绝码固定：`COMPANION_SCRIPT_NOT_IN_SOURCE`，`detail` 只放键名（`relayScript` 或 `bundleScript`），不放路径和哈希；另有 `COMPANION_SOURCE_HASH_INVALID`、`COMPANION_SOURCE_ROOT_INVALID`。
+  - `validateCompanionConfig(c, source = null)`：给了 `source`（`{ root, ciSourceManifestSha256 }`）才查路径，不给则与以前完全一样，所以其余套件里用任意路径的夹具配置不受影响。已有检查的次序和码不变。
+- `tools/build-package.mjs`：占位符 `<sourceManifestSha256>` 改用 `replaceAll`；替换后用**这个包自己的** `ciSourceManifestSha256`（`record\source-manifest.json` 的哈希，也是 `source\<hash>\` 目录名）和固定安装根 `RESIDENT_INSTALL_ROOT` 调 `validateCompanionConfig`。输入文件里手写了别的 Source 的哈希（这次事故的样子），构建就以 `COMPANION_SCRIPT_NOT_IN_SOURCE` 失败，不会产出包。写了这个包自己哈希的字面路径同样可以。
+- `src/companion-main.mjs`：启动时读已装的 `record\source-manifest.json` 算哈希，用 `{ root: --root, ciSourceManifestSha256 }` 校验配置。配置指向别的 Source，伴侣不启动（`config\companion.json` 本来就由任务命令行里的 `--config-sha256` 钉住；这一步补的是它与已装 Source 的对应关系）。这一步在心跳之前，所以失败的伴侣不发心跳。
+- `windows/verify-resident.ps1`：新检查 `companion-source-scripts`（`Test-CompanionSourceScripts`）：两条脚本路径在 `<root>\source\<record\source-manifest.json 的哈希>\` 下、名字链合规、而且文件存在（是文件，不是目录）。detail 只有固定码加键名：`COMPANION_SCRIPT_NOT_IN_SOURCE:<key>`、`COMPANION_SCRIPT_MISSING:<key>`、`COMPANION_SOURCE_HASH_INVALID`、`COMPANION_CONFIG_UNREADABLE`。
+- 两边对同一份案例负责：`test/fixtures/companion-source-cases.json`（4 个接受、19 个拒绝，含事故里的两种、占位符未替换、`..`、空段、斜杠、数据流、兄弟目录、别的根）。JavaScript 侧在 `test/r4-first-halt.test.mjs`，PowerShell 侧在 `windows/test-resident-windows.ps1` 的 4f。
+
+### 33.3 (b) CI 根目录给服务账户一条 READ_CONTROL
+
+- 授予的东西与 Owner 在那里已有的一条完全一样：`(A;;0x120080;;;S-1-5-80-…)`，即 `NT SERVICE\CluedCIResident`（SID 与计划里 `...\resident` 用的是同一个字符串，`Get-ServiceSid`），**只此目录、不继承、无数据权、无写权、无删除、无改权限**。没有授予任何更宽的东西。
+- 做法放在安装计划里，不放在 Source 的 `acl-model.json`：`Get-AclPlan` 只能“新建带最终 ACL 的目录”，而这个目录早已存在（v1 一次性安装建的）；`acl-model.json` 的追加要到安装中途（服务建好之后）才跑，目录不合格时安装已经做了一半。放在安装计划里，演练（不带 `-Apply`）就能看到并拒绝。
+  - 安装计划 `resident-install-plan/6` → `/7`：新字段 `parentAcl`：`{ path, sid, ace, mask, inheritance, present, before }`。`before` 是那个目录现在的 DACL；计划哈希因此钉住“我看到的是这样”。
+  - `Get-ParentAclState`：目录必须存在、是真目录（不是链接）、DACL 受保护；服务 SID 在上面没有 ACE，或恰好有这一条（`present`，例如 Owner 已用 icacls 手工加过）。别的任何服务 SID 的 ACE（更宽、带写、带继承、拒绝）都是 `PARENT_ACL_HAS_OTHER_RESIDENT_ACES`。其他码：`PARENT_ACL_TARGET_MISSING`、`PARENT_ACL_TARGET_REFUSED`、`PARENT_ACL_UNREADABLE`（读不了那个目录的 DACL：Owner 自己那条 READ_CONTROL 不在）、`PARENT_ACL_NOT_PROTECTED`。
+  - 新步骤 `parent-acl`，在 `directories` 之后、`package-copy` 之前：`Add-ParentAce` 重新读 DACL，与计划的 `before` 不同则 `PARENT_ACL_CHANGED_SINCE_PLAN`（什么都不写）；否则只写 DACL 一节（不写所有者、组、SACL），在原 SDDL 末尾追加这一条；读回要求：服务 SID 恰好这一条、原有每条 ACE 都在、总数多一。`present` 时什么都不写（幂等）。口径（第 2 轮复审 NIT）：写回的是 .NET 规范化后的整条 DACL（同一 SID 的可合并 ACE 会合并、按 SID 重排、带 AI 标志），“原有 ACE 都在”按规范化后的视图比较，即有效访问权限不变，与 `migrate-acl.ps1` 的做法相同；不保证磁盘上的字节顺序不变。回执多一个 `parentAcl: { path, sid, ace, wrote }`（回执合同不变，仍是 `/5`，字段只增不减）。
+  - 这是安装脚本唯一对**已有**目录追加的 ACE；脚本头部“不覆盖、不删除、不改 ACL”的说明已写明这个例外。
+- `verify-resident.ps1`：新检查 `ci-root-resident-read-control`（`Test-ParentAclRule`）：读 `C:\ProgramData\CluedIndependentCI` 的**现场** ACL，服务 SID 恰有一条允许 ACE，掩码 `0x120080`，标志为 0（不继承）。多了、少了、更宽、带继承、是拒绝，都不过。读的是现场而不是回执，所以手工加的也算。读不到记 `unreadable`（与其他需要提权的检查相同）。`Get-ServiceSid` 在安装与 verify 里逐字相同（测试钉住）。
+- **`formal-spool-acl.ps1`（桥 v4）**：它也调 `LoadProtectedProfile`，但它不以服务账户运行：`-RelayReadOutgoing` 要求当前 SID 是 Owner，`-AllowControllerWrite` 要求是 clued-control，否则以 `FIXED_PUBLIC_SPOOL_REQUIRED` 退出。所以这条服务 ACE 不是为它加的，也不影响它：Owner 的上级目录访问靠 Owner 自己那条（§8.3 的前提），clued-control 靠它的 RX。反过来，它沿路检查上级目录的“可写祖先”时，服务这条 `0x120080` 不含任何写、删除、改权限的位，不会触发 `WRITABLE_ANCESTOR_REFUSED`。`LoadProtectedProfile` 的另外两个调用者：`relay-public.ps1`（Owner 的伴侣）和 `archive-windows-spool.ps1`（服务账户，本次事故）；SwapBroker 用 `ReadBrokerConfig`，以 LocalSystem 运行，SYSTEM 在那里是 F。
+- `NodeProfilePublicFileV2.ValidateBootstrapAcl` 不会因这一条拒绝：它只拒非管理方持有的写、删除、改权限、改所有者位（受保护树里还拒绝 `Write`），`0x120080` 都不含。
+
+### 33.4 (c) 归档自己的码带进回执和终止记录
+
+- `src/engine-windows.mjs`：
+  - `windowsArchiveCode(r, v)`：脚本打印的 `code`（符合 `CODE`）→ 否则 Runner 的 `refused` 码 → 否则超时给 `WINDOWS_ARCHIVE_TIMED_OUT` → 否则 `WINDOWS_ARCHIVE_UNCONFIRMED`。不符合 `CODE` 的字符串（自由文本、路径、系统消息）一律丢弃，用后面的固定码。
+  - `archiveWindows` 现在也解析脚本**非零退出时**的标准输出（脚本失败时打印 JSON 判决，退出码 2；以前只在退出 0 时解析，失败的码就丢了）。返回 `{ verified, directory, moved, archiveCode }`，`verified` 时 `archiveCode` 为 `null`。退出 0 但输出不是判决，仍然抛 `WINDOWS_ARCHIVE_UNCONFIRMED`（没改）。`verified` 仍要求退出 0。
+  - `closeBatch` 返回 `{ verified, archived, archiveCode }`（Windows 一半没过才有码；Windows 过了而 Linux 没过，码为 `null`：它不说 Linux 的事）；`archiveFailure` 返回 `archiveWindows` 的结果。
+- `src/executor.mjs`：
+  - 归档检查改用 `archiveCheck(ok, code, windows)`：失败时抛的 `ResidentError` 带 `windowsArchiveCode`（只有在 `windows.verified !== true` 且码符合 `CODE` 时）。涉及 `REARM_WINDOWS_ARCHIVE_UNCONFIRMED`（两处）、`FAILURE_ARCHIVE_UNCONFIRMED`（三处）、`SUCCESS_PATH_ARCHIVE_UNCONFIRMED`、`UNEXECUTED_CLOSE_UNCONFIRMED`。
+  - 所有把这类错误交给 `unknown()` 的 `catch` 都把 `archiveFacts(error)` 并进 `extra`；`unknown()` 把 `windowsArchiveCode` 写进 **HALT 的 facts**（两次 `haltWith`）、**`FAILED_UNKNOWN` 终止记录的 facts**（本来就展开 `extra`）和 **`batch-terminal` 回执**；`halt` 回执跟着 HALT 的 facts 带上它。重新武装时归档被拒，`owner-request-refused` 回执带上它。
+  - 没有归档码、或码不符合 `CODE`：所有记录与以前逐字节相同（测试断言键不存在）。
+- 这次事故重放后，HALT 记录会是：`code: UNEXECUTED_CLOSE_UNCONFIRMED`，`facts: { key, basis: 'failure-handling-unconfirmed', windowsArchiveCode: 'PROFILE_HANDLE_OPEN_REFUSED' }`（`PROFILE_HANDLE_OPEN_REFUSED` 是 `NodeProfileV2` 的 `Deny` 码，由脚本的 catch 取出）。
+- 不做的事：不改 Source 的归档脚本，不加自由文本，不把 Linux 的码也塞进来（Linux 一半的码本来在伴侣答复里，不在本次范围）。
+
+### 33.5 与任务说明的差异
+
+1. 任务说明写“安装 ACL 计划（`Get-AclPlan`）加这一条”。`Get-AclPlan` 的键都是 `$Root`（`...\resident`）之下**新建**的目录，父目录放不进去；所以新增 `parentAcl`（计划字段）和 `parent-acl`（步骤），不改 `Get-AclPlan` 本身。计划合同 `/6` → `/7`；回执合同不动。
+2. 没有 JS 镜像：计划只有 PowerShell 一份。JS 侧的文本级测试只钉住形状（掩码、没有继承位、步骤顺序、唯一的 `SetAccessControl`）；行为在 `test-resident-windows.ps1` 里对草稿目录实测。
+3. 没有改 `work/actions-hosted-migration/independent-ci-v1` 下任何文件（任务说明允许改，但没有需要）。
+
+### 33.6 测试与演练
+
+- `test/r4-first-halt.test.mjs`（新，14 项）：共享案例（JS 侧）；拒绝不泄路径；键分类；`validateCompanionConfig` 带与不带 Source；伴侣启动的文本钉住；包构建（占位符、字面的本包哈希、两种旧 Source、别的根）；安装/verify 的文本级事实；`windowsArchiveCode`；`archiveWindows`/`closeBatch`/`archiveFailure` 的码（含退出 2、垃圾输出、自由文本码、超时、Runner 拒绝）；执行器四条路径（没执行的关闭、失败归档、成功路径、重新武装）和“没有码则记录不变”。
+- `windows/test-resident-windows.ps1` 新增 4f（76 项，294 → 370）：verify 的 Source 脚本检查对同一份案例（含文件缺失、目录不是脚本、坏哈希、另一个 Source），以及 verify 主流程里的那几行原样对草稿安装根跑一遍（旧 Source 的配置哪怕文件存在也不过；配置不是回执钉的那份；脚本缺失）；`Get-ServiceSid` 与已知 SID 一致、安装与 verify 逐字相同；`parent-acl` 在草稿目录（受保护 DACL，像真的那样）上：计划状态、追加、恰好 `0x120080`/无继承/无数据与写权、与 Owner 那条相同、原有 ACE 全留、仍受保护、所有者不变、verify 接受；幂等；手工加的算已有；更宽、带写、带继承、读数据、拒绝五种都被计划和 verify 拒绝；不受保护、缺失、文件、链接被拒；计划后变了被拒且什么都没写。
+- 其余：`node --test`、离线演练、`test-install-carry.ps1`、PowerShell 离线测试全部通过，数量见任务报告。
+
+### 33.7 生效与不变量
+
+- 都要随第 2 批的一次常驻层 Windows 重装才在这台机器上生效。重装时 `parent-acl` 会把那条 ACE 加上；如果 Owner 事先已手工加了完全相同的一条（`icacls C:\ProgramData\CluedIndependentCI /grant "NT SERVICE\CluedCIResident:(Rc,S,RA)"` 得到的就是 `0x120080`、不继承），计划里 `present = true`，步骤什么都不写。本次没有对机器做任何事，这条命令也没有运行。
+- 新主机的前提不变：CI 根目录要先有 Owner 自己的 `0x120080`（§8.3）；安装不替 Owner 加这一条。
+- 没有新的发布路径，不碰 GitHub、凭据或网络；不读写 `HALT.json`；服务账户只多一条只读的、只此目录的 `0x120080`。
+
+## 34. 原地升级通道：常驻层接线
+
+依据：KooYomi Task `018da927`（Owner 决定 `dda41297`、`3ce5200c`）的实现规格 §B4。本节只讲常驻层（`CluedCIResident`、companion、打包与 Owner 工具）为升级通道做的接线；升级代理 `CluedCIUpgrader`（`upgrader/`）、Windows 执行面（`windows/upgrade-apply.ps1` 等）和 Linux 升级工具（`linux/bin/clued-ci-upgrade-linux`）各有其规格，这里只写常驻层与它们之间的接口。代码与离线测试，不装、不推。
+
+### 34.1 常驻层给升级代理留的观察面（规格 A11，冻结）
+
+以后的常驻版本必须保留：`state\PAUSED.json` 的原字节与 `source.requestSha256`；ledger 里没有 `90-terminal.json` 的条目数；`state\status.json` 的 `executor.state`、`current`、`writtenAt`；回执文件名，以及 `service-start`、`train-run-intent`、`train-run` 三种回执的 body；`requests\` 里暂停与 intake 的合同；`owner\` 里的 `clued.independent-ci.resident-upgrade-resume/1`。
+
+### 34.2 升级代理的恢复请求（`src/executor.mjs`）
+
+- 合同 `clued.independent-ci.resident-upgrade-resume/1`：`{pausedSha256, opId, generation, requestedAt, nonce}`，校验用 `src/upgrade-mailbox.mjs#validateUpgradeResume`（与升级代理写请求用同一个函数）。
+- **只从 `owner\` 读**（只有管理员和 SYSTEM 能在里面建文件，升级代理以 LocalSystem 运行）。同样的字节放进用户可写的 `requests\`，那里只认暂停与 intake 合同，按“格式不对”拒收，不会恢复。
+- 和 Owner 的恢复一样按 `pausedSha256` 做比较交换（`Ledger.resume`）：`PAUSED.json` 变过就 `PAUSE_CHANGED_SINCE_REVIEW`，回执 `owner-request-refused`，仍然暂停。成功时 `PAUSED.json` 照旧改名进 `halts\`，旁边的 `.resume.json` 记 `by: "CluedCIUpgrader"`；回执是 `upgrade-resumed`：`{requestSha256, pausedSha256, opId, generation}`（不再另写 `owner-request`）。同一份字节再来是 `owner-request-duplicate`。
+
+### 34.3 每个 tick 的两侧版本（status `/7`）
+
+- `src/status.mjs`：status 合同升到 `/7`，顶层多一个 `versions`：`{generation, windows:{packageManifestSha256, residentManifestSha256, ciSourceManifestSha256, policySha256}, linux:null|{observedAt, generation, ciSourceManifestSha256, manifestSha256, pinsOk}, consistent:true|false|null, upgrade:null|{opId, state, phase, since, code, confirmUrl}}`。读者接受 `/5`、`/6`（没有 `versions`，读作 null）和 `/7`；`/7` 缺 `versions`、`/6` 多 `versions` 都拒。写入和读回都过 `parseVersions`：不合形状的字段显示为 null，从不信任（`confirmUrl` 只收 https、无引号空格、有长度上限）。
+- 来源（`readVersionState`，每个 tick 现读，宽松：缺失、写了一半、形状不对都当“未知”，从不报错、从不 HALT）：`upgrade\current.json`（代数与包）、`upgrade\mailbox\responses\version-facts.json`（companion 写的 Linux 事实）、`upgrade\status.json`（升级代理的状态）。`windows` 一项取自执行器自己的 policy 和命令行上的 policy 哈希，不取自文件。`consistent` 就是 `upgrade-mailbox.mjs#consistent(current, facts, now)`：两侧代数、CI Source、Linux 清单相同且 pins 成立为 true；事实超过 15 分钟、没有 `current.json`、没记 Linux 一半为 null。
+- 新的 notice 种类：`version-skew`（键带两侧代数）、`upgrade-grant-pending`（键带 opId）、`upgrade-deferred`（opId 加码）、`upgrade-rolled-back`、`upgrade-rollback-failed`（当前 op 或 `recent` 里的结局，每个 op 一次）。companion 把它们转成 Windows 通知（`src/pr-status.mjs`）；等批准的通知里给出确认页地址。
+- `service-main.mjs` 把同一个读取函数作为执行器的 `versions` 端口，引擎用它的 `view`。没有端口（测试、别的引擎）时执行器什么都不显示，也不加任何 hold。
+
+### 34.4 版本不一致的 intake hold
+
+- 只在 `consistent === false` 时加：holder `version-skew`，120 分钟，剩余不足 90 分钟时续期（与 `dual-active` 相同的规则，规格 A10）。它就是 intake pause 里执行器自己的一句话（`IntakePause.apply`，回执 `intake-paused`，`reason: UPGRADE_VERSION_SKEW`），所以 PAUSE、HALT 和其他 holder 都不受影响；Owner 可以手动解除，版本仍不一致时下一个 tick 会再加上。
+- `consistent === true` 时解除（`intake-resumed`，`reason: VERSIONS_CONSISTENT`）；`null`（未知）既不加也不解，已有的 hold 到点自己结束。
+- 放在 tick 里 Owner 请求之后、排程之前，所以版本不一致时不开新批次；正在跑或停靠的批次不受影响（这是 intake pause 的本义）。
+
+### 34.5 版本闸：预留之前的全局延后，第一个 Linux 段之前的兜底
+
+节点自己的版本偏差不应由 PR 付代价，所以主闸放在**预留之前**，引擎里的闸只兜竞态。
+
+- **主闸**：`src/executor.mjs#precheck`（只读、无密钥、无网络的预检）在决定预留之前现读一次版本（`versionSkewNow`）；`consistent === false` 就返回全局延后 `VERSION_SKEW`：本轮排程到此结束，不预留、不写 ledger、不烧号、不计入任何每日额度或放行上限，行仍在排队表里，版本一致后照常运行。`null`、端口出错或没有端口：照旧。它与 34.4 的 hold 互补：hold 在 tick 开头按那一刻的读数加上（之后读到偏差的同一个 tick 里 hold 还没有写，或者 hold 写不进 intake 状态），预检的现读把这个窗口也关上；attempt 2 走同一个预检。
+- **兜底**：`src/engine-windows.mjs#runStage` 在第一个 Linux 段（`firstLinux`，第 2、4 或 6 段）之前再现读一次；`consistent === false` 就不调用该段，返回 `UPGRADE_VERSION_SKEW`（Windows 一半的证明：树为零、原始服务已停；失败路径照常补 Linux 静默）。`null`、`true`、端口出错或没有端口：照旧往下走（refs 闸等）。只有第一个 Linux 段会问。只有“批次已预留并开始后、第一个 Linux 段之前”才变成不一致的竞态会走到这里。
+- `src/failure-table.json` 为兜底码加两行：`stages [2,4,6]` 与 `any`，`class environment`、`disposition burn`、`retry new-commit`、`breaker neutral`。第 2 段以后的干净结束只能烧掉：失败表自己的校验（`classify.mjs#validateFailureTable`）只允许第 0、1 段出现 release（10-started 之后不存在放行），所以规格原写的 `release-if-safe` 加 `new-trigger` 会让模块加载失败，烧掉的提交 `new-trigger` 也不会再跑。`test/failure-table.test.mjs` 的 `RESIDENT_CODES` 已加入该码。
+
+### 34.6 service-start 的代数与 `resident-upgraded` 回执（`src/service-main.mjs`）
+
+- `service-start` 的 body 是 `{policySha256, pid, generation}`，`generation` 取自 `upgrade\current.json`，读不到为 null。
+- 上一条 `service-start` 有代数、这一次也有、两者不同，就紧接着追加 `resident-upgraded`：`{fromGeneration, toGeneration, opId, packageManifestSha256, policySha256}`（opId 与包取自同一份 `current.json`）。回滚也是代数变化（`toGeneration < fromGeneration`）。任何一边未知都不写，所以首次安装（g1）、通道之前的老回执、读不到的 `current.json` 都不会被说成升级。
+
+### 34.7 companion 的升级邮箱 lane（`src/companion.mjs`、`src/companion-main.mjs`）
+
+- 第三个 lane，自己的 Runner（20 分钟的 Linux stage 不会挡住常驻邮箱和咨询工作），每 5 秒看一次 `upgrade\mailbox\requests\`。目录不存在（通道之前的安装）时 lane 每次重试打开，companion 其余部分照旧；companion 从不建这些目录。
+- 每个请求按 `upgrade-mailbox.mjs#upgradeToolArgs` 生成参数，再由 `argv(cfg).upgradeTool` 以固定前缀（`wsl.exe --distribution … --user root --exec /usr/bin/env -i …`）和固定路径 `/opt/clued-independent-ci/upgrade-v1/bin/clued-ci-upgrade-linux` 运行。参数先过 `upgradeToolArgvOk`：每个元素是 `[a-z0-9-]` 的单个记号，拼起来必须完全匹配六种之一（`version-facts`；`stage --op --package --generation --linux-manifest`；`switch --op --from --to --linux-manifest`；`rollback --op --from --to`；`verify --op --generation`；`retain --op --keep --generation`，即 `linux-upgrade-retain {keep, generation}`，keep 只收 2..10，形状与 B3 工具和 `upgradeToolArgs` 一致），否则 `COMPANION_UPGRADE_TOOL_ARGS_INVALID`，什么都不运行。
+- 工具的一行 JSON 按 `responseFromTool` 原样写回 `responses\<requestId>.json`（`/1` 冻结，以后的 companion 都要原样应答）；超时或起不来的子进程是 exit -1/null，永不算成功。**截止时间已过的请求不运行**（升级代理可能已当作“没有应答”继续了），应答 `UPGRADE_MAILBOX_REQUEST_EXPIRED`。读不了的请求文件不动，由升级代理自己超时。
+- Linux 事实每 5 分钟整文件替换写一次 `responses\version-facts.json`；每次 switch、rollback 之后（不论结果）立刻再写；被请求的 `linux-version-facts` 应答也顺带写入。读失败 60 秒后再试。
+
+### 34.8 包 `/4`（`tools/build-package.mjs`）
+
+- 合同 `clued.independent-ci.resident-package/4`，在 `/3` 上加：`nodeProfileSha256`、`windowsLayout`（`clued.independent-ci.resident-layout/1`）、`stateCompat`（`--state-compat`，默认 `{schema:1, readableBySchemas:[1]}`，用 `validateStateCompat` 校验）、`acceptance:{decisionRef}`（等于 policy 的 `ownerAcceptance.decisionRef`，必须是 UUID）。
+- `linux`：`manifestSha256`（`linux/manifest.json` 的哈希，仍是 `/2`）；`sourceV2`（`--source-v2` 给出 `{commit, bundle, rolesDerivedSha256}`；bundle 复制到 `linux/source-v2/source.bundle`，单独点名，不列入 `files`；三个 role 的派生哈希是输入，由 Linux 升级工具的 stage 重新派生核对）；`files` 列出 `linux/` 下其余每个文件及其字节数。冻结的升级工具和签名器复制到 `linux/upgrade-v1/bin/`，并生成 `linux/upgrade-v1/manifest.json`（`clued.independent-ci.linux-upgrade-tool-manifest/1`，按安装路径钉住两个文件），供 `install-resident-linux.sh --apply-upgrade-v1` 使用。
+- `upgrader`：`{manifestSha256, files}`，升级代理冻结副本 `upgrader\<manifestSha256>\` 的清单（`clued.independent-ci.resident-upgrader-manifest/1`）。副本保持本仓库的相对布局，使 `upgrader/src/*.mjs` 里的 `../../src/…` 导入能解析：`upgrader\src\*`、它们按相对导入（传递闭包）用到的 `src\*`（只这些，导入跑出 `src/` 或 `upgrader/src/` 就拒）、`windows\upgrade-apply.ps1`。**总是**计算，所以升级包名出构建它的升级代理，升级代理遇到不同的就 `UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL`；被冻结的常驻模块（`canonical`、`store`、`inbox`、`intake-pause`、`upgrade-mailbox` 等）一改，就需要全量重装。
+- `upgrader\` 下的安装目标只在 `--fresh-install` 时写进 `files`（升级包里出现就是 `CHANNEL_CHANGE_NEEDS_REINSTALL`）：副本、`upgrader\bin\UpgraderServiceHost.cs`、`upgrader\runtime\node.exe`（同一个 node.exe）、`upgrader\config\upgrader.json`（`--upgrader-config`，合同 `clued.independent-ci.resident-upgrader-config/1`，`nodeProfileSha256` 必须是本包的）。不加 `--fresh-install` 时所有目标仍落在 `/3` 的白名单里。
+- 升级代理入口因此是 `upgrader\<manifestSha256>\upgrader\src\upgrader-main.mjs`（相对导入决定，见上）。
+- 升级代理运行 `upgrade-apply.ps1` 时，环境变量只有 `upgrader/src/windows-port.mjs#APPLY_ENV` 这两项：`SystemRoot` 和固定的 `PATHEXT=.COM;.EXE;.BAT;.CMD`，不继承别的变量。少了 `PATHEXT`，Windows PowerShell 5.1 会不执行任何原生 .exe（不报错、没有输出、`$LASTEXITCODE` 为空），于是 csc、sc.exe 等每个动作都失败。原地升级 op `8c5efb1a` 就是因此被拒的（Note `ee73b1a0`）。回归测试 `upgrader/test/units.test.mjs`（windows port (live)）在 Windows 上用真实的 `WindowsPort` 和 powershell.exe 按全路径跑一次 `cmd.exe`。`upgrade-apply.ps1` 调用每个程序都用全路径，所以不需要 PATH。环境里也没有 TEMP，csc 的临时文件会落在 `GetTempPath()` 的回退目录 `C:\Windows\`（LocalSystem 可写）。这一点还没在真机上验证，第一次真实的 Compile 就是验证。不改成 `C:\Windows\Temp`，因为普通用户能在那个目录里创建文件。升级代理是冻结副本，这项修复只能随整套重装生效（Decision `0b8cab03`）。
+
+### 34.9 Owner 工具
+
+`tools/rearm-tool.mjs inspect` 多一项 `upgrade`：当前代数与包、升级代理的 op（状态、阶段、码、等批准时的确认页、`pausedBy`）、最近的结局、保留的各代、Linux 事实，以及两侧是否一致（读已装的 `config\policy.json`；读不到就只显示文件、不判断一致）。只读，不需要提权。
+
+### 34.10 测试
+
+- `test/upgrade-wiring.test.mjs`：status `/7` 的读写与 `/5`、`/6` 兼容、形状复核；`consistent` 的真、假（代数、Source、清单、pins）与未知（过期、缺文件、写了一半）；五种 notice 与通知文字；skew hold 的加、不续、续期、null 不动、一致后解除，没有端口或端口出错时不动；预检的 `VERSION_SKEW` 全局延后（不预留、不烧号、偏差消失后同一提交照常运行）；upgrade-resume 只认 `owner\`、比较交换、拒绝与重复、`by`；`service-start` 的代数与 `resident-upgraded`（升级与回滚，未知不写），回执链仍然完整；引擎闸（2、4、6 段、未知照旧、只问第一个 Linux 段）；失败表行；companion 的 argv 校验（六种形状接受、二十种拒绝）与 lane 的每个 kind、工具码透传、switch/rollback 后立即刷新、过期不运行、超时与非 JSON 不算成功、失败重试间隔、目录缺失；inspect。
+- `test/package.test.mjs`：`/4` 的各键、规范字节、Linux 段（含 bundle 与升级工具清单）、升级代理副本与闭包（不含未导入的模块、同一树两次构建哈希相同）、`--fresh-install` 的目标和安装白名单、各类输入拒绝；并用升级代理的 `validatePackageManifest` 复核。
+- `test/status.test.mjs`、`test/node-mode.test.mjs` 改为 `/7`；`test/failure-table.test.mjs` 加码。
+
+### 34.11 不变量
+
+- 常驻服务不运行升级代理、不写 `upgrade\` 下任何文件；它只读三份文件，只在自己的 intake 状态里加或解 `version-skew` 这一个 holder。
+- 版本信息只用于显示、hold、预检的全局延后和第一个 Linux 段前的兜底闸，从不让任何东西更早开始；未知永远当作“不动”。
+- companion 仍只运行固定 argv；新增的只是一个冻结路径的 root 工具和六种逐字校验的参数形状。
+
+## 35. 归档保留与瘦身、trivy 缓存回收、C: 余量提醒、无心跳不量 Linux（Task `4aedda54`；Task `018da927` 子项 b、c）
+
+### 35.1 归档保留规则（`src/retention.mjs`，Linux 侧 `clued-ci-resident-linux archive-prune`，同一规则）
+
+- 分两类，各自独立计算：**成功类** `archive-*`、`completed-*`；**失败类** `failed-*`（失败、HALT、Owner 中止的归档都以 `failed-` 开头）。名字必须匹配 `^(archive|completed|failed)-[0-9A-Za-z-]{1,90}$`，其他名字（`incoming`、`outgoing`、未知名字）永远不进计划。
+- 每类保留最新（目录修改时间，同时按名字）的 20 GiB，且无论多大都至少保留最新 10 个；超出部分从最旧的删。每轮最多删 16 个（其余记为 `deferred`，下一轮再删）。数值是常量（Owner 给定），**不进 policy**：policy 合同不变。
+- 50 GB 总提醒（`archive-retention-reminder`）照旧。
+- Windows spool（`C:\ProgramData\CluedIndependentCI\formal-spool`）由服务自己执行；Linux spool（`/var/lib/clued-independent-ci/formal-spool`）由 root 工具执行，经邮箱新请求 `archive-prune`（响应合同 `/4` 多一个 `prune` 字段，形状由 `mailbox.mjs#validatePrune` 精确校验）。两边的计划函数用同一份案例 `test/fixtures/retention-cases.json` 约束。
+
+### 35.2 例外：Owner 的保留清单
+
+常驻侧没有可靠办法查询 KooYomi 里哪些 Task、Bug、Evidence 还没关闭、引用了哪个归档，所以改用**显式保留清单**：`C:\ProgramData\CluedIndependentCI\resident\owner\retention-keep.json`（`owner\` 只有提权的 Owner 能写，服务只读；名字不是 Owner 请求的名字形状，`OwnerInbox` 不会读它）。合同 `clued.independent-ci.archive-retention-keep/1`：`{ contract, keep: [{ name, spool: windows|linux|any, ref }] }`，`ref` 写引用它的 Task/Bug/Evidence id 或 `owner`，只记录不解释；最多 2000 条、256 KB。Linux 工具经 `/mnt/c/...` 读同一个文件。被列出的归档不删，单独计量（回执 `protected`：目录数、字节数、是否量全；Windows 回执另列名字，最多 64 个）。Owner 关闭相关 Task 后自己从清单里删掉那一行。
+
+**清单不存在时一个都不删**（`RETENTION_KEEP_LIST_MISSING`，独立复核 M2）：未知的清单从不当作空清单。安装或重装之后，由 Owner 写下这个文件（可以是 `{"contract":"clued.independent-ci.archive-retention-keep/1","keep":[]}`）才开始删除，这一步就是对删除的显式授权；之前回执每天一条说明原因。Linux 工具只把 `FileNotFoundError` 当作“不存在”，其他读错误一律是读不到（复核 m3）。
+
+### 35.3 安全措施（任何一条不满足都不删，写回执说明）
+
+- **只在批次之间、且无未关闭批次**时执行：服务循环的 `betweenBatches`（IDLE/DEFERRED/PAUSED/WAITING）里，`idle` 再查：没有子进程在跑、没有 HALT、账本里没有非终止条目（运行中、等待、停车 A/B 都算）、没有未归档的现场。Linux 侧另要 root 自己证明静止（`quiescence`），且必须有新鲜的 companion 心跳。
+- 先算计划再执行；每个要删的目录在删之前重新清点，字节数或条目数变了（`RETENTION_CHANGED_SINCE_PLAN`）、出现链接就停。
+- 只删 spool 根下、名字匹配三种已知模式的目录；spool 根本身必须是真目录且真实路径未被重定向（`RETENTION_SPOOL_REDIRECTED`）。
+- fail-closed：某类里任何一个目录大小读不到（`RETENTION_SIZE_UNREADABLE`）或含符号链接/联接点/特殊文件（`RETENTION_LINK_REFUSED`），该类本轮一个都不删；保留清单读不到或不合合同（`RETENTION_KEEP_LIST_UNREADABLE`/`_INVALID`），整个 spool 不删；删除自己写（深度优先，遇到链接就停，从不跟进），权限错误记 `RETENTION_PERMISSION_REFUSED` 并停止本轮。
+- Windows 上服务账户对 spool 根只有“新建子目录”，但对它自己建的归档目录有修改权（含 DELETE），所以能删它自己的归档；Owner 早年手工建的 `completed-*` 等会以 `RETENTION_PERMISSION_REFUSED` 停下，留给 Owner。
+
+### 35.4 回执
+
+- `archive-retention-prune`：`{ spool, rule, refused, classes: { success|failure: { directories, bytes, deleteDirectories, deleteBytes, refused } }, protected, deferred, deleted: [{ name, class, bytes }], deletedBytes, stopped: { name, code, partial } | null, deletesAnything }`。有删除的每轮都写；被拒或中途停的同一原因每天最多一条。Linux 工具另在 `/var/lib/clued-independent-ci/resident/retention/` 写一份本地持久回执（含保护名单全文）。
+- `disk-space-reminder`：C: 可用空间低于 30 GiB 时每天最多一条 `{ drive: 'C:', freeBytes, thresholdBytes, action: 'owner-free-disk-space', blocksAnything: false }`；读不到就不提醒，从不阻断。
+
+### 35.5 成功归档瘦身（`clued-ci-resident-linux`）
+
+- 归档合同 `resident-linux-archive/3`：`success-close` 的计划带 `slimCandidates: true`。所有移动都核实之后，归档里的 `workspace-<作业 id>/candidate` 和 `run-<名字>/candidate` 各写一份 `candidate.slim.json`（合同 `resident-linux-archive-slim/1`：提交 SHA、整树清单哈希、文件数、字节数、`restoreFrom: git`），再删掉那棵树（三份候选树约 660 MB，单个成功归档约 850 MB → 约 190 MB）。提交 SHA 取候选检出的分离 HEAD；`run-placement-<作业 id>` 的候选没有 `.git` 时取同一作业工作区的提交。
+- 提交 SHA 未知（`SLIM_COMMIT_UNKNOWN`）、含特殊文件、含链接而 rmtree 不能防符号链接攻击、删除失败的，树原样保留并在 `slimKept` 里报告；瘦身失败不影响归档本身的 `verified`。
+- 失败归档、角色间归档保持完整。Windows 侧归档（`archive-windows-spool.ps1`、`src/archive.mjs`）只搬协议记录，本来就没有候选树，不改。
+
+### 35.6 trivy 缓存回收（`worker/formal-trivy-v3/cache.mjs`）
+
+现装的是角色策略 v3 → `formal-trivy-v4/adapter.mjs`，它没有自己的 cache.mjs，用的就是 v3 的，所以只改这一个文件（`formal-trivy-v2/cache.mjs` 只属于已退役的 v2 策略，没改）。`promote()` 在指针改名、父目录 fsync、读回确认之后调用 `reclaimCache`：删掉该种类（db 或 checks）在 `staging/` 下的全部副本（准备锁在手，没有别的准备在用），以及 `generations/` 下除当前和上一代之外的该种类各代；只碰名字形状正确的目录，另一种类不动，链接只删链接本身。回收失败只记录在返回值 `reclaimed` 里，不让提升失败，下次提升再试。
+
+### 35.7 无心跳不量 Linux（Task `018da927` 子项 c）
+
+`RetentionWatch` 先问 `companionReady`（心跳年龄不超过 `policy.companion.heartbeatMaxAgeMs`，与执行器开批用同一标准）。没有心跳时不发 `archive-usage`、也不发 `archive-prune`，Linux 部分记为 `skipped: COMPANION_HEARTBEAT_ABSENT`；以前这一步要等满 3 分钟超时，期间主循环不动。
+
+### 35.8 verify-resident.ps1 的结论（Task `018da927` 子项 b）
+
+结论抽成 `Get-VerifyVerdict`，“需要提权再跑”只认值是字符串且恰为 `'unreadable'` 的检查（`-is [string] -and -ceq`）。原来 `-eq` 左边是 `$true` 时会把字符串转成布尔，任何通过的检查都算“读不到”，所以任何失败都报 `RESIDENT_PARTIALLY_VERIFIED_RUN_ELEVATED`。
+
+### 35.9 测试
+
+- `test/retention.test.mjs`（新）：共享案例；保留清单；Windows 一轮（删最旧、保护、最新 N 个、其他名字不动）；联接点、清单坏、spool 被重定向都不删；无心跳不调测量、主循环一轮立即返回；只在 idle 时删、回执频率；C: 提醒；`archive-prune` 经邮箱的形状；service-main 接线。
+- `test/verify-verdict.test.mjs`（新）与 `windows/test-resident-windows.ps1` 新增 4g（7 项）：失败原因不是 unreadable 时不报 RUN_ELEVATED。
+- `test/test_linux_tool.py` 新增 `Retention`（共享案例、清单、一轮、链接、计划后变化、成功瘦身、失败归档完整与提交未知时保留）。
+- `independent-ci-v1/test/formal-trivy-cache-reclaim.test.mjs`（新）：保留当前与上一代、首次提升、另一种类与其他形状不动、链接不跟进、失败只报告、越界拒绝、回收在读回之后。
+
+### 35.10 生效与不变量
+
+需要常驻层 Windows 与 Linux 重装（companion 与服务一起，响应合同 `/4`），trivy 回收需要 Source 重装。删除只发生在上面的条件下；没有新的发布路径，不碰 GitHub、凭据或网络。
+
+## 36. 按风险分档计每日额度（Task `12ada80e`，来自 c0ff5167；Decision `ca70ea31`）
+
+### 36.1 为什么
+
+第 1 段被干净拒绝、证明没有任何发布的批次（例如 2026-10-21 那 8 个旧 PR 的 `STAGE_CHILD_REFUSED`）照样烧号，也照样写一条 `ledger-heads` 记录，于是 `usage()` 把它算成一次执行，占掉 48 批的执行额度；同一个条目又在批次账本里算一次评估。Owner 决定（`ca70ea31`）第 3 批只做按风险分档的机制，数值保持临时的 48/96，等算力面板有实际数据再调。
+
+### 36.2 两档
+
+- **评估档（低风险）**：同时满足以下几条的第 1 段结局——10-started 之前；对照表判为 CLEAN（两端清理证明齐全）；绑定的阶段结果 `sideEffects` 为 0 且 `mayHavePublished` 为 false。照样烧号（这个 head 永不再跑），但烧号记录的 `burnedBy` 带 `quotaTier: 'evaluation'`；`usage()` 不把它计入执行（`started`），另计 `lowRiskBurns`，它的批次条目照常计一次评估；它仍计入本 PR 每天的批次上限 `startedByPr`（复核 m4：一个 PR 不能用第 1 段被拒的提交耗尽全局评估额度）。
+- **执行档**：其余一切——10-started 的记录、其他烧号、没有 `quotaTier` 的旧记录、读不出的记录。与以前相同。
+- 另外，从未 10-started 却以 FAILED_CLEAN / FAILED_UNKNOWN 结束（即烧号）的批次条目，不论对照表类别（环境、暂时类也一样）都计一次评估：它在执行档里不再出现时必须在别处被计数。执行档的烧号仍同时计执行与评估，与以前一样严格。
+
+### 36.3 看得见的推迟
+
+全局推迟（今日执行额度已满、评估额度已满、companion 没就绪）每个原因每个 UTC 日写一条 `batch-deferred` 回执，带当时的 `started`、`evaluations`、`lowRiskBurns`。之前只有状态页能看出执行器为什么不动。
+
+### 36.4 不变的
+
+上限值（48/96，policy `/7` 不变）、烧号与已执行记录、第 1 段释放的前提（只认 `safeToRerun` 或 broker 没启动）。
+
+### 36.5 测试
+
+`test/risk-tier.test.mjs`：低风险烧号只计评估且 head 不再跑；可能发布、有副作用、没有绑定结果、第 3 段失败、Linux 一侧不干净都仍是执行档；低风险烧号不占执行额度，额度满时回执每天只写一次。`test/executor.test.mjs` 的 `usage()` 形状随 `lowRiskBurns` 更新。
+
+## 37. 停靠点 A 重打 bundle（Task `4012c1b9`）
+
+### 37.1 为什么
+
+停在 A（等托管结果）的批次恢复时可能已过很久：第 1 代 bundle 的 refs 过期，第 2 段的 refs 闸门几乎必然失败；超过 100 分钟则以 `PARKED_BUNDLE_TOO_OLD` 结束（§18.2）。托管转发打开之前要补上。现在转发仍关着（Decision `b0087f98` 第 4 项：实测推到第 3 批装好之后），所以本节在今天的批次上不会触发。
+
+### 37.2 做法
+
+- 执行器：只对从停靠点 A 恢复的批次（`resumeWaiting` 进来的，复核 M1），在工作区准备之前、距预留超过 `REBUNDLE_AFTER_MS`（30 分钟）时，向 companion 发邮箱请求 `rebuild-bundle`，写一条 `batch-rebundled` 回执。
+  - 成功：照常准备工作区，ws-prep 用第 2 代。
+  - companion 答 `REMOTE_REFS_CHANGED_SINCE_BUNDLE`（main 已不是 T，或没有任何分支还指着 H）：第 0 段干净的暂时性结局，对照表照旧（attempt 2 可跟进）。
+  - 其他拒绝或没有答复：照旧 `PARKED_BUNDLE_TOO_OLD`。没有等过的批次（例如打包和第 1 段本身就慢）和没有该端口的旧 companion 都照旧按 100 分钟判断，行为与以前完全相同。
+- `build-bundle.ps1 -Rebundle`：只在第 1 代完整（回执可读、同一批次与描述符、没有 `generation` 字段）时运行，写到 `bundles\<batchId>\gen-2\`（必须不存在：最多两代），检查与第 1 代相同；另要求有分支仍指着 H（`REMOTE_HEAD_MOVED`）。回执多 `generation: 2`、`previousBundleSha256`、`previousRefListSha256`。`-CheckRefs` 与 `-Rebundle` 互斥（`ONE_MODE_REQUIRED`）。
+- `-CheckRefs` 与 `prepare-workspaces.py` 用最新的完整一代：`gen-2\` 存在就必须有回执，且回执绑定第 1 代的精确 bundle；`gen-2\` 没有回执一律拒绝（`BUNDLE_GENERATION_INCOMPLETE`），绝不退回第 1 代。
+- force-push 掉了 head 的情形在取 head 对象时就失败（git 步骤），按“其他拒绝”处理。
+
+### 37.3 状态页（第 2 步复核 N4）
+
+几个批次可以同时停在 A。状态的 `pending` 里，每个停在 A 的批次所在的行原因写 `PARKED_A`，不只靠 `current` 显示一个。
+
+### 37.4 测试
+
+`test/rebundle.test.mjs`（执行器：等过之后重打一次再准备工作区；超过 100 分钟也能继续；refs 变了干净结束、Linux 上什么都没做；其他拒绝照旧；没等过的批次不重打；两个停在 A 的批次都显示；companion 的固定命令与结论映射）；`test-build-bundle.ps1` 加 10 条（第 2 代、`-CheckRefs` 读第 2 代、不能第 3 代、互斥、没有第 1 代、第 2 代不完整、head 被推进），共 80 条；`test_prepare_workspaces_v2.py` 加 `bundle_generation`。
+
+### 37.5 安装
+
+`build-bundle.ps1`、`prepare-workspaces.py` 属 Source v2，邮箱新请求属常驻层：必须一起装（同一次两侧重装）。
+
+## 38. 额度第二期·第 3c-2a 步：车头批次测 GitHub 试合并提交 S（S ≠ H 全链路，Task `6451a55d`）
+
+3c-2 分两步。3c-2a 只把 S ≠ H 从头到尾接通（§21.3 所列各项）；开车要的部分（第 8 段单绿、撤销与清扫、车头批次调度、优先级与期限、C9）在 3c-2b。3c-2a 装上后没有任何地方会产生 S ≠ H 的批次：subject 里的 `testSha` 只由 3c-2b 的车头调度写入，触发文件不接受这个字段。
+
+### 38.1 S 怎么走
+
+- **subject 与 batch key**：车头批次的 subject 多一个 `testSha`（S，必须是 40 位十六进制且不等于 head）；其他 subject 没有这个字段。batch key 只在字段存在时把 `testSha` 加进摘要，所以今天所有的 key 不变。常驻层 `ledger.mjs#batchKey` 和 Source v2 `derive-batch.mjs#residentBatchKey` 是同一个公式，测试核对两边相等。head key（每个 head 只执行一次，不变量 I2）不含 S。
+- **推导**：`engine-windows.mjs#derive` 把 subject 的 `testSha` 一并传给 `derive-batch.mjs`；推导结果里的 S 必须等于 subject 的 S（没有就等于 head），描述符 `/3` 写推导出的 S。
+- **作业 `/3`**：`makeJobV2` 去掉 S 的默认值，每个调用点都显式传 S（复核 m1）。`isTrainFrontJobV2` = S 与 H 都是合法 SHA 且 S ≠ H。
+- **批次认领记录**：S = H 的批次照旧写合同 `/1`，逐字节不变；S ≠ H 写 `/2`，在 `baseSha` 后多一个 `testSha`。`/1` 永远表示 S = H。控制消费者从记录本身取 S（`recordTestShaV2`），按记录的 T 和 S 重推作业。
+- **第 8 段**：`trainFacts` 读的是 `job.testSha` 的树，S = H 时就是 head 的树，和今天一样。
+
+### 38.2 base.sha 只在 S ≠ H 时放宽（设计 §5.7）
+
+列车模式下 H 不必含 main 尖端，GitHub 的 `base.sha` 也只在推送时更新。所以只有车头批次不再要求 PR 的 `base.sha` 等于批次 base T，只要求它是合法 SHA；S = H 的批次（以及没有 S 的 v1 作业）照旧要求相等。涉及：
+
+- `full-admission-v2.mjs#samePr`：第一次读到的 `base.sha` 记为本次准入的 PR base；第二次读 GitHub、评估结果和 Native 的 `base_sha` 都必须与它相同，否则 `full_admission_subject_changed` / `full_admission_native_changed`。准入事实里的 `baseSha` 仍是作业的 T。
+- `staged-check-publisher-v2.mjs` 写前核对、`github.mjs#exactPr`（同一次调用前后两次读到的 `base.sha` 必须相同）、`protected-controller-ports-v2/refs.mjs#samePr`。`github.mjs` 也被 v1 一次性发布者加载，所以判断写在本文件里，不引入 `job-v2.mjs`（v1 的加载闭包不变）。
+- 不改的：两个发布者对 packet `baseSha` 的检查（packet 由 `readChangedPaths` 按作业的 T 生成，本来就相等）；`refs.mjs` 里 main 必须等于 T；控制发布者的合并位 `tip` 等于 T（属 3c-2b）。
+
+### 38.3 打包与 ws-prep
+
+- `build-bundle.ps1`：去掉 `TEST_COMMIT_NOT_HEAD`。S ≠ H 时，在 `Build-Store` 里取完已审核提交之后按 SHA 取 S，放在 `refs/clued-test/<S>`（只能这一个名字、最多一个），核对它是提交、父提交恰好是 [T, H]，再读一次全部引用。这一步的 git 标签 `fetch-test` 算网络步骤，和其他网络步骤一样可在新库里整体重试一次。bundle 加 `--glob=refs/clued-test/*`，头部和 `list-heads` 都核对这个引用；回执多 `testSha`、`testRefPrefix`、`testRefCount`（S = H 时为 0）、`testRefListSha256`。GitHub 重算试合并后旧的 S 可能取不到：这一步失败，属于批次开始前的失败（BUNDLE_UNAVAILABLE，不计释放上限）；回第 10 段重读 S 由 3c-2b 的调度负责。
+- `prepare-workspaces.py`：去掉 `TEST_COMMIT_NOT_HEAD`。回执必须带上面四个字段，`testRefCount` 必须等于应有的个数；bundle 头部的测试引用必须正好是应有的那一个（S = H 时为空）。普通克隆不映射 `refs/clued-test/`，所以两个候选在克隆后再单独取这个引用；镜像库核对引用集合包含它，并核对 S 是提交、父提交恰好是 [T, H]。
+
+### 38.4 中继不带车头批次
+
+托管中继在 GitHub 的 runner 上测 head，它的 subject 里没有 S。车头批次（S ≠ H）一律不走中继：`derive-batch.mjs#deriveRelayStage` 拒绝带 `testSha` 的 subject（`RESIDENT_RELAY_TEST_COMMIT_REFUSED`），`relay-entry-v2.mjs#relaySubject` 也拒绝 S ≠ H 的作业（`RELAY_TEST_COMMIT_REFUSED`）。这与 §21.3 的原计划（中继也带 S、E8 核 S 的树）不同：车头批次只在本地跑，需要中继时由 3c-2b 的调度让它等或回第 10 段。
+
+### 38.5 为什么装上是安全的
+
+- 没有任何地方产生 S ≠ H 的 subject，所有放宽都只在 S ≠ H 时生效。S = H 的批次：作业 id、批次认领记录 `/1`、batch key、各处 base 核对都和今天一样。
+- bundle 回执多了四个字段，ws-prep 要求它们。所以 `build-bundle.ps1` 和 `prepare-workspaces.py` 必须一起装（同一个 Source），不能只装一个。
+
+### 38.6 测试
+
+- Source v2：`s-not-h.test.mjs`（S ≠ H 的判定和 base 放宽；批次认领 `/2` 与 `/1` 不变；控制消费者按记录的 S 重推、不按传入的 base 匹配；subject 与 batch key；推导出的作业都测 S；中继两处拒绝；`refs.mjs` 放宽 base 但 main 仍须等于 T），`resident-v2-admission.test.mjs`（准入：S ≠ H 时三处读到的 base 一致就准入，不一致就拒；S = H 仍要求等于 T），`resident-v2-publishers.test.mjs`（第 8 段按 S 的树发绿；S 取不到不发绿；扫描发布者 S ≠ H 时不比 base），`test_prepare_workspaces_v2.py`（真实 git：试合并 S 放进 `refs/clued-test/<S>`，解析、父提交核对、候选取引用；回执字段），`job-v3.test.mjs`（S 没有默认值）。
+- 常驻层：`s-not-h-resident.test.mjs`（`ledger.mjs` 与 `derive-batch.mjs` 的 batch key 有无 S 都相等），`engine-v2.test.mjs`（S 随 subject 传给推导，描述符写 S，推导报别的 S 就拒）。
+- `build-bundle.ps1`：`test-build-bundle.ps1` 加 S ≠ H 一例（本地仓库里造一个 [T, H] 的合并提交作 S）。
+
+### 38.7 独立审核（规则 01d4ba7d）
+
+第 1 轮：ACCEPT-WITH-FIXES（1 BLOCKER、1 MAJOR、3 MINOR、7 NIT）。S = H 的作业 id、认领记录 `/1`、batch key、描述符和 bundle 字节（空的 `--glob=refs/clued-test/*` 不改 bundle）逐一核对不变；三种语言的引用前缀、引用列表哈希、父提交顺序一致。处理：
+
+- B1：受保护的 `scripts/ci/clued-work-admission.test.mjs` 有两处调用没传 S。已补；同一个测试的控制对部分原本就因 3a（第 8 段读规则集和试合并）和 C4（已在 GitHub 上的角色不再发布）在 main 上失败，一并跟上。本 PR 因此属于受保护层。
+- M1：`job-v3.test.mjs` 钉的 `TEST_COMMIT_NOT_HEAD` 文本、`test-build-bundle.ps1` 缺 `$TestPrefix`，随 bundle 部分一起改，并补 S ≠ H 的用例（见 38.6）。
+- m2：补了 `github.mjs#exactPr` 的三种情形、bundle 头里第二个测试引用；n1（每个候选都核 S 的父提交）、n4（S 进歧义键和第 2 次尝试的主体核对）、n6 已改。
+
+### 38.8 留给 3c-2b 的（开车之前必须做，Task `a3701d3d`）
+
+- **车头批次不走中继**（审核 m1）：执行器 `relayPlan` 对带 `testSha` 的 subject 一律留在本地，在写 `20-plan-intent` 之前决定；现在要到第 R 段推导才拒绝，批次会白白失败。
+- **S ≠ H 只在列车开着时被接受**（审核 m3）：今天 base 的放宽只看作业本身。第 1 段和第 8 段的发布者在 `train.enabled` 不是 `on` 时拒绝 S ≠ H 的作业。
+- **读到的 base 一致**（n2）：`refs.mjs` 和 staged 发布者也要求各自前后两次读到的 `base.sha` 相同。
+- **把读到的 PR base 记进准入事实**（n3，设计 §5.7 “只记为读到的事实”）：今天只在 `evaluationSha256` 里。
+- **S 被 GitHub 重算掉**（n7）：第 8 段按 SHA 读 S，GitHub 重新生成试合并后可能读不到，批次会一直“没就绪”。调度遇到这种情况回第 10 段重读 S、开新批次；或者 ws-prep 把 S 的树带给第 8 段，按（父提交、树）比较。
+- **回执合同仍是 `/1`**（n5）：新 ws-prep 要求回执的四个测试字段，所以 `build-bundle.ps1` 和 `prepare-workspaces.py` 必须同一次装上（重装清单写明）。
+- **还缺的 S ≠ H 测试**（§21.3 的测试一条）：桥签发、HEAD = S ≠ H 的 worker 工作区、placement 密封候选的 HEAD 和打包内容（S、H、T）、C# 同批核对（`PureTestsV2.cs` 现在在 #927 手里）。
+
+### 38.9 并入第 3 批（2026-10-29）
+
+- 3c-2a 的三个本地提交（基于 main `f0a401d4`）普通合并进第 3 批集成分支（基于 SourceB `43883c31`），无冲突；随后应用了原先等 #928 的 bundle 补丁（审核 M1）。
+- 合并带出两处跟进：SourceB 新加的 Native 发布测试仍依赖 `makeJobV2` 的 S 默认值，已显式传 S；`test-build-bundle.ps1` 的“父提交顺序反了”用例原先用 merge 造 W，因 c1 是 c2 的祖先只会快进，W 就是 head，用例从未真正生效，改用 `commit-tree` 造 [H, T]。
+- 38.8 各项仍属 3c-2b，未在第 3 批实现。
+
+
+## 39. 新 PR 每 60 秒发现一次，条件请求（Decision `1b99e7e4`，Task `a3701d3d` 第 3 批）
+
+- **为什么**：companion 的 poller 原来 5 分钟看一次 open PR，新 head 最多晚 5 分钟才进队。改为 60 秒；不做 webhook。
+- **做法**（`src/poller.mjs`、`src/companion-main.mjs`）：
+  - `POLL_EVERY_MS` 从 5 分钟改为 60 秒；ruleset 兜底（§22.3）单独计时，仍是 5 分钟（`BACKSTOP_EVERY_MS`），不随轮询变密。PR 页状态与通知仍每分钟一次（`REPORT_EVERY_MS`）。
+  - 每轮两次读都改为 REST 条件请求：`repos/<repo>/git/ref/heads/main` 与 `repos/<repo>/pulls?state=open&base=main&per_page=50`（原来的 `gh pr list` 走 GraphQL，不能带 ETag）。第一次不带条件；之后带上一次 200 的 `If-None-Match: <ETag>`。没变时 GitHub 回 304：按 GitHub 的条件请求规则，带授权的 304 不计入 REST 主额度；本轮沿用上次的结果，不会重复提出已提过的 head。
+  - `gh api --include` 在 304 时退出码为 1，但仍打印状态行和响应头，所以只看状态行。只认 200 与"有缓存时的 304"；其余（无应答、别的状态、body 形状不对、304 却没有缓存）照旧是 `POLLER_PULLS_UNAVAILABLE` / `POLLER_MAIN_TIP_UNAVAILABLE`，本轮作废、下一分钟再来。
+  - ETag 要回填进 argv，所以只保留 GitHub 的形状（`ETAG`：可带 `W/`，引号内 1–128 个 `[0-9A-Za-z_-]`）；其他形状一律不保存，下一次不带条件。
+  - REST 的字段映射回原来的形状（`number`、`head.sha`→`headRefOid`、`base.sha`→`baseRefOid`、`draft`→`isDraft`、`body`、`updated_at`→`updatedAt`），后面的过滤（草稿、claim trailer、与 main 同步、compare 缓存与预算）不变。`lastPass.reads` 记本轮 200 与 304 各几次。
+- **额度**：没变时每分钟 2 次 304（一天约 2880 次，按 GitHub 的规则不计额度；本机实测过一次 304，剩余额度同时少 1，同一账号另有调用，未能单独确认）。原来按 5 分钟一轮的两类调用不随轮次变密：GitHub 没答上的 compare 对同一 (main, head) 隔 `COMPARE_RETRY_MS`（5 分钟）才再问；提示模式下同一 head 的观察（每次几次读）隔 `HINT_OBSERVE_EVERY_MS`（5 分钟）一次。答上的 compare 照旧缓存。
+- 304 只在 gh 退出码为 1 时采用（gh 对 304 退出 1，对 200 退出 0），超时、拒绝或其他退出码都不算。
+- REST 的 PR 对象比 GraphQL 大（带完整的 head/base repo），50 个约 1 MB 量级，仍在 Runner 的 4 MiB 输出上限内；不变的分钟只有响应头。
+- **测试**：`test/poller-conditional.test.mjs`（节奏常量；连续两轮 304、If-None-Match 的 argv 逐字、PR 被编辑后 200 只提一次；main 移动；两条读各四种拒绝与退出码不为 1 的 304；200 不带 ETag 时丢掉旧 ETag；坏 ETag 不回填；compare 失败与提示观察的 5 分钟节流；路由字面值；`parseIncluded` 的 CRLF/LF 与拒绝）；`test/gh-rest-stub.mjs` 供其余 poller 测试按 REST 形状作答。
+
+## 40. 整套重装工具链收进仓库，以及对已装现场的全量只读预演（Decision `19baf5ec`，Task `a3701d3d`）
+
+位置：`reinstall/`，详见 `reinstall/README.md`。
+
+**原状**：整套重装（打包、提权启动器、Linux 第 A/B 步 root 脚本）原先在仓库外的 `s34-reinstall\r4-work` 里，每一版都从上一版打补丁派生。r7 打第 3 批时连续三次被拒，原因都是照搬了上一版的假设：Linux 常驻 manifest 沿用了已装的外部钉值；角色派生不允许 Source 钉值变化；启动器只认卸载计划 /2。
+
+**现在**：
+- 所有工具都按一份构建配置生成（`clued.independent-ci.reinstall-config/1`：节点档案、提交、Owner 的 Decision 和回执、base 包、节点公开指纹、已装状态副本）。节点相关的值不再写在代码里。
+- 启动器模板就是 r7 f4 实际跑过的文本，sha 钉住，不再打补丁；主机名改为钉值 `$NodeHostname`。
+- Linux 脚本期望的"已装状态"取自节点自己的 Linux version facts 和第 1 代记录。
+- 角色派生与冻结工具的 `derive_role` 一样，重钉 5 个 Source 文件。
+- 一致性核对：用新工具链以 a0e15a91 和 r7 的 ref 重新打包，得到 9d774173，与 TURING 现装的包逐字节相同；Linux 脚本与 r7 final2 相比，只多出 `OLD_GENERATION` 和名称上的改动。
+
+**预演**（`reinstall/rehearse.py`，非提权、只读）：直接运行已装的卸载 dry-run 和 verify，读取 status、升级状态、第 1 代记录和 Linux version facts，核对 root 复制的已装副本，检查包的外部钉值，在节点的 WSL 里以普通用户运行角色派生。任何不一致都记为 finding。
+
+预演必须对同一个包、同一提交、同一配置得出 `REHEARSAL_PASS`，否则 final 启动器（`launcher/generate.py`）和 final 版 Linux 脚本（`linux/prep.py`）都拒绝生成。上面三次被拒各有回归测试（`reinstall/test/test_rehearse.py`）。
+
+独立审核后补上的几处：
+- root 脚本钉住的 toolchain node、结果公钥和 v1 HEAD 原是 TURING 的常量，现在取自配置 `linux.host`；预演用 root 只读运行 `check-host.py` 并核对 v1，提前抓住另一节点上第 A 步会出现的拒绝。
+- `draft*` 版 Linux 脚本本身拒绝运行。
+- 进入 root shell 和提权 PowerShell 的值都要过严格字形（shell 值经过 quote，PowerShell 只接受可打印 ASCII）。
+- 提取出的树每次使用前都与提交逐个 blob 核对。
+- 与 base 包不同的节点必须给出全部六项身份值。
+- 预演报告 24 小时内有效，由 Linux 脚本生成（`prep.py`）时检查，此时节点还未变动。
+
+**新节点**：`config/node-profile.desk-w-591.json`（取自 Note `85717e8f`）。用 `build.ps1 -PackageOnly` 只出包；首装不使用这里的重装启动器和 Linux 脚本。
+
+**不在本节**：节点身份冻结全部接受 ref（Note `45e0ed29`）；升级器调用 csc 时没有 TEMP。这两项随下一次整套重装一起做。
+
+## 41. 合并列车开车（第 3c-2b 步）：单绿、撤绿与清扫、车头调度、优先级、多节点当班与守队程序（Task `a3701d3d`，Decisions `263f9701`、`3dcb583b`）
+
+Owner 2026-10-31 的决定：`263f9701` 现在做 3c-2b，批量测试与二分（Task `7f205c71`）排在它之后；`3dcb583b`（取代 `a5ea4be3`）定了排位用 Task 优先级；`86008583` 的守队程序和 `b30b1b79` 第 3 项的常驻层改动随同一轮安装（全部常驻节点）上线。本节只是设计。下文的“现状”都对照 main `35c41fd6`。本节的 Source B 指 `work/actions-hosted-migration/independent-ci-v1/src/`（Source v2），Source A 指 `scripts/ci/` 里的 Native 端口、撤销控制器和 `clued-work-admission.test.mjs`。
+
+Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 → migrate），之后在 `/bindings` 上把要参与自动接班的常驻节点（今天是 TURING 与 DESK-W-591）的连接标为“可自动接班的常驻节点”并排好次序，并为每个节点建一个只能发心跳的连接，下载令牌，随该节点的 UAC 安装用 `-HeartbeatTokenFile` 装上（41.6a）；② 两个 protected-change Grant：Source A、守队程序；③ 每个常驻节点安装的 UAC（各加 Linux root），之后再一次 UAC 把策略改成 on；④ 开车前复核一次影子数据；⑤ 接受 MergeAdmission v0.2（含 41.1 列出的改动）；⑥ 接受合同草稿并给发布 Grant；⑦ 在规则集里关 `strict`、合并方式只留 merge；⑧ 打开排位开关；⑨ 定 `nonFrontRuns`（UAC）；⑩ 影子复核之后打开自动接班总开关（41.6a）。
+
+### 41.1 范围与顺序
+
+受保护的路径以 `scripts/ci/merge-admission-policy.mjs:49-72` 为准：`.github/**`、`scripts/ci/**` 在内；迁移目录和 `work/**`（含 C# 边界与 SwapBroker）不在；合同的 `.md` 属文档层。
+
+| 步 | 内容 | 重装 | 受保护 | Owner |
+|---|---|---|---|---|
+| 1 设计 | 本节，独立审核（规则 01d4ba7d） | 否 | 否 | 无 |
+| 2 服务端 | 一次迁移：记下车头与按优先级排位（41.5）、排队认领保活（41.4）、节点心跳函数与记录、holders 回答的 `nodes`、清扫水位（41.6、41.6a）、ci-admission 自动接班的资格标记、次序、总开关（默认关）与看门狗（41.6a）；`/bindings` 页面加资格、次序、总开关、心跳连接，都走两步确认 | 否 | 否 | 授权迁移；标记资格；建心跳连接 |
+| 3 Source A | Native 写端口（touch、adopt、return、保活、清扫水位，CI 身份），`clued-work-admission.test.mjs` 跟上 | 随第 8 步 | 是 | protected-change Grant |
+| 4 Source B | 第 8 段单绿、第 10 段 on 与只撤模式、清扫、两处 `binding` 改动；train-run `/2`（`frontOutcome`）；C# 边界接受 on 与 train-run `/2` | 随第 8 步，两侧 | 否 | 无 |
+| 5 常驻层 | 策略 `/8`、车头调度、`relayPlan`、C9、两种请求文件、保留；companion 的心跳与自动接班的 @Owner 评论（41.6a）；安装参数 `-HeartbeatTokenFile` 与 `secrets\heartbeat\`；HALT、PAUSE、暂停接新在 latch 的同一 tick 写进状态 | 随第 8 步，Windows | 否 | 无 |
+| 6 文档 | 下面列的 v0.2 与合同草稿改动；GitConnectorWriteContract、`docs/maintenance/independent-ci.md` | 否 | 否（文档层） | 接受 v0.2；接受草稿、发布 Grant |
+| 7 守队程序与算力面板 | 41.8；算力面板认自动接班评论的标记、不重复 @（`scripts/ci/self-hosted/compute_panel.py`，41.6a） | 否 | 是（`.github/**`、`scripts/ci/**`） | protected-change Grant |
+| 8 安装 | 一轮安装覆盖全部常驻节点（今天是 TURING 与 desk-w-591；同一个包，§40 工具链，含 #949），策略 `/8` 但 `train.enabled=shadow`；这一轮里还没装上的节点保持 STANDBY，不标自动接班资格 | 是：每个节点各 UAC 加 Linux root | 否 | UAC |
+| 9 影子与改 on | 影子清扫演练、Owner 复核，然后改策略为 on | 只改策略（UAC） | 否 | 复核；UAC |
+| 10 清扫 | 41.9 第 5 条 | 否 | 否 | 无 |
+| 11 关 strict | 关 `strict`、只留 merge，打开排位开关，定 `nonFrontRuns` | 否 | 否 | Owner |
+
+- 第 2–6 步合入后今天的行为不变：`/7` 策略照旧拒 `on`（`policy.mjs:131`），新代码只在 `train.enabled=on` 时走；保活只由 on 模式的第 10 段调用；迁移记下的车头就是今天算出的车头，排位开关默认 `fifo`（41.5）。
+- 第 7 步不同：守队程序一合入就在非列车模式下开始合并、更新队首的分支，这是 `86008583` 要的新行为（41.8）。
+- **MergeAdmission v0.2 要改的**：§2.2 表里“KooYomi 合并队列（FIFO，队首持位）”改为车头之后按 Task 优先级（`3dcb583b`）；§4.1 第 5 步改为先以 shadow 安装、再改 on（41.9）；§4.3 第 2 步写明用“撤车头”请求（41.3）；§5 加两条：保活让排队认领最多活到 24 小时硬截止，Agent 改自己 Task 的优先级就能往前排（41.10）。
+- **合同草稿要改的**：第 46、50 行 “join again at the back” 改为按优先级重新排位；第 47、51 行写清 auto-merge 与守队程序的分工（51 行说执行器从不合并，守队程序会合车头）；“renew about once an hour” 和 “Train version 1 needs no server change” 因保活和服务端改动不再成立；“Not changed” 一节里的 FIFO；Agent 能不能改自己 Task 的优先级。
+
+### 41.2 单绿
+
+- **现状**：第 8 段只给队首发绿（`publisher.mjs:89-92` `queueHeadReady`：持位、`merge:<repo>:main`、`tip` 等于 T、`until` 未过、是队首），写前读规则集和试合并（`publisher.mjs:131-146`），规则集按 `trainMode` 判（`train-rules.mjs:58-62`）。生产的发布者不传 `trainMode`（`startup.mjs:28`），所以一直是 `off`（`train-rules.mjs:13`）。检查说明只有一句“Complete Native control and exact subject verified”和观察哈希（`publisher.mjs:243`），没有车头、main@T、S（§19.7 N5）。没有任何地方调用 touch（`merge-slot-native.mjs:6`）。S ≠ H 的放宽只看作业本身（`job-v2.mjs:66-70`）。
+- **清扫证明绑定车头**：第 10 段（on）开车头批次之前，同一次运行里先做增量清扫并确认（41.3），再写清扫证明，证明绑定（PR、H、车头认领、它成为车头的时刻 `since`、main 尖端 T）。只有确认完的运行才给出 `OPEN_FRONT_BATCH`。
+- **`trainHeadReady`**：列车开着时，在 `queueHeadReady` 之外再要求（设计 §5.3 第 1、4 条）：
+  - 作业是车头批次，S 等于第 10 段给这个 head 定的 S；
+  - 同一次运行里 holders 正好一个、位置 1、`bound_pr` 是这个 PR；
+  - `state\v2\train-sweep\` 里最新的证明的（PR、H、认领、T）等于这个作业的（T 即作业的 base），写于这个认领成为车头之后，不早于 `train.sweepFreshMs`（15 分钟），结论是“除车头当前 head 外没有未撤的绿”；
+  - 本节点在改 on 之后（或接班之后）以 on 模式完成过一次全量清扫，其中的撤销全部两次读回确认；影子模式的清扫不算。接班时也可以用 41.6 的水位加增量代替。这与 41.7 兜底读的 `sweep` 是同一份记录；
+  - 台账里没有未确认的撤销；
+  - 写之前现读一次 `pulls?state=all&sort=updated&direction=desc`：证明之后有车头以外的 PR 更新过（新推送、重新打开、改 base），就不发绿。
+  - 任一条不满足：零副作用 `TRAIN_SINGLE_GREEN_NOT_PROVEN`，批次停在 B，等下一次第 10 段。
+- `startup.mjs:28` 把已装策略的 `train.enabled` 作为 `trainMode` 传给发布者；只有 `on` 时 `rulesetDecision` 才接受 `strict=false` 加只有 merge。
+- **检查说明**（设计 §5.3 第 6 条）：summary 写 `front PR #<n>, head <H>, main@<T>, tested <S> (tree <树>)`，S = H 时写 `tested head`。这是给第 10 段、审核和 Owner 在 GitHub 上直接读出 T 与 S 用的；撤销不依赖它：`revokeCheck` 读回比较的是这次撤销自己写的标题和说明（`github.mjs:350-358`）。
+- **touch green**：第 8 段（`independent-control-checks-v2/startup.mjs:17` 已持有节点的 CI Binding 令牌）settled 之后、同一次运行内，先读 holders 确认这个认领仍是位置 1，再调 `clued_work_merge_slot_touch_v1`（`ci_state: green`，`hard_cap_minutes` 取策略）。服务端对同一 head 只认第一次 green，给 30 分钟合并（迁移 `20261010112852`:145，`20261009010000`:69），仍受硬上限和租约约束。touch 失败不撤绿、不改结局，只记日志和回执。
+- **列车关着时拒绝 S ≠ H**（§38.8 m3）：第 1 段（`formal-work-admission-check-v2/publisher.mjs`）和第 8 段在 `trainMode` 不是 `on` 时，对 `isTrainFrontJobV2` 的作业零副作用拒绝 `TRAIN_FRONT_JOB_WITHOUT_TRAIN`（干净终止，进 `stage-fact.mjs` 与 `classify.mjs` 的码表）。§38.8 的 n2（`refs.mjs` 和 staged 发布者前后两次读到的 `base.sha` 相同）、n3（读到的 PR base 写进准入事实）在同一个 PR 里做。
+- **验收**：on 加 `strict` 关加只有 merge 时发绿；off、shadow 下 `strict` 关仍是 `STRICT_OFF_WITHOUT_TRAIN`；以下各自零副作用不发绿：两个 holder，证明属于别的 PR、别的 H、别的 T 或上一任车头，证明早于成为车头的时刻或过期，证明之后别的 PR 有更新，改 on 之后没有以 on 模式完成全量清扫（只有影子清扫也算没有），台账有未确认撤销；说明逐字；touch green 只在 settled 后调一次，失败不撤；S ≠ H 作业在 off、shadow 下第 1、8 段都拒；三份码表一致。
+
+### 41.3 撤绿与清扫
+
+- **现状**：
+  - 按 id 撤销已有：`github.mjs:350-358` 的 `revokeCheck` 把检查改成 failure，读回一次，核对 id、App，以及结论和说明等于这次撤销写的；第 8 段的补偿撤销用它（`publisher.mjs:200`）。
+  - 台账只记录（`green-ledger.mjs:14` 五个阶段）。影子只算“会撤哪些”（`train-facts.mjs:56-65`），每次最多比 30 个 head（`train-maintenance.mjs:23`），也不撤车头自己的绿。
+  - PAUSE 时第 10 段不跑：tick 在 `executor.mjs:1096-1097` 就返回 PAUSED，第 10 段在其后（`:1117`）。
+  - 第 12 段 `revocation-maintenance` 排在 HALT、PAUSE 检查之前（`executor.mjs:1075-1081`），有单独接受的资格（`revocation-run.mjs:29-38`，记录里的 `revocationMaintenanceQualification`）、intent/result 回执和退避（`revocation-maintenance.mjs:12`、`:37-58`）。它撤的是 KooYomi 发布流水要求撤的：按 Native 的 `revocations_list` 列出独立发布（`scripts/ci/clued-independent-revocation-controller.mjs` 的 `readIndependentRevocationBatch`），核对控制器已停后逐条对账（`scripts/ci/clued-independent-revoker.mjs:73-104`）。它不读绿色台账，不看合并队列和 main，读回只有一次。
+- **撤一条**：只按 check run id。先 GET 这一条，核对 App 5368905、名字 `kooyumi-merge-slot`、head、结论 success（已是 failure 就记为已撤）；改成 failure，说明写原因；读回一次；30 秒后再读回一次，仍是 failure 才算确认，台账记 `revoked`（detail 带两次读回的时刻）。任何一步读不到或不符：这次撤销未确认，第 10 段结局 `TRAIN_REVOKE_UNCONFIRMED`，证明写“未确认”，第 8 段因此不发新绿，下一次第 10 段再来（MergeAdmission v0.2 R-c）。
+- **撤谁**：
+  - 不在 main、又不是车头当前 head 的绿；
+  - 车头自己的绿，当 main 在列车之外移动了（main 尖端不等于这条绿的 T，台账的 `baseSha`；v0.2 R-b 第 3 条）。车头不出队，下一次第 10 段按新的 main 重开车头批次，计入这个 head 的两次上限（41.4），用完要推新提交；
+  - Owner 的“撤车头”请求（v0.2 §4.3 第 2 步）：`requests\` 新合同 `clued.independent-ci.resident-revoke-head-request/1`，与 PAUSE 请求写在同一处；下一次第 10 段或只撤运行撤掉车头当前 head 的绿并两次读回确认，结果写进状态；超过 1 小时的请求拒绝。
+- **增量清扫**（每次第 10 段）：
+  - 本节点台账里最后阶段是 posted、settled 或 merged 的 head；
+  - KooYomi 独立发布流水里 `kooyumi-merge-slot` 的发布（`work_claim_publications_v1` 有 `head_sha` 与 `check_run_id`，迁移 `20261011131755`；身份里有检查名，迁移 `20261029050000`）：每个常驻节点发的都在里面，所以它是撤销的来源，不只是对照。别的节点的台账没有直接通道，由流水代替：本节点的台账加上流水，就覆盖了所有节点的台账（41.10）；
+  - 自上次清扫以来 GitHub 上更新过的 PR（`pulls?state=all&sort=updated&direction=desc`，翻到上次清扫的时刻为止）：当前 head、PR 的全部提交（普通推送换下的旧 head 在里面）、强推前后的提交（GraphQL `HeadRefForcePushedEvent`），重新打开或改了 base 的 PR 同样处理。
+  - 对这些提交列出 App 5368905 的 `kooyumi-merge-slot` 成功，按上面“撤谁”处理；在 main 里的（判法同 `train-maintenance.mjs:59`）不撤。去掉 30 个的截断：列不完就是清扫不完整。
+- **全量清扫**：所有 PR（open 与 closed，全部分页）的当前 head、全部提交、强推前后的提交，加上本节点台账和整条发布流水，逐个列 App 5368905 的 `kooyumi-merge-slot`，按“撤谁”处理。REST 的 `pulls/{n}/commits` 最多返回 250 个提交：超过的 PR 算不完整，整轮作废并通知 Owner（GraphQL 是否同样限 250：未核实）。一次第 10 段 5 分钟放不下，所以分段：游标存在 `state\v2\train-sweep\`（clued-control，只新建，写法同台账）；一轮从开始到完成不得超过 `train.fullSweepMaxMs`（暂定 6 小时，第 9 步的影子演练实测后定），超了作废重来；完成时写证明（开始与完成时刻、main 尖端、车头、读过的 PR 与提交数、撤了几个、是否全部确认）。
+- **读不到就失败关闭**：任何一页不完整（分页没到底、`complete` 不是 true、GraphQL 报错、限额、流水读不全）整轮作废，不写“干净”的证明；状态和 PR 页面显示“清扫未完成”。
+- **台账清理**（§19.7 N2）：一个作用键最后阶段是两次读回确认的 `revoked`，或 `merged` 且 head 已在 main，超过 14 天就整组移到 `green-ledger\closed\<yyyy-mm>\`（同一 ACL）；列出只看顶层。台账只是来源之一，清理错了由流水和 GitHub 枚举兜住。
+- **只撤模式**：train-run 的 mode 加 `revoke-only`。PAUSE 时执行器在 `executor.mjs:1096-1097` 返回 PAUSED 之前跑它（v0.2 §4.3），节奏同第 10 段。它管“撤谁”的三种（旧绿、main 在列车外移动后的车头绿、撤车头请求），做增量清扫、写证明；不开批次，不 touch、adopt、return，不保活。HALT 时不跑（41.10）。
+- **第 12 段能不能复用**：调度外壳可以照搬（排在 HALT、PAUSE 检查之前，intent/result 回执，退避，只在空闲时）。撤销本身不复用：它的来源只有 KooYomi 流水里待撤的条目，资格要另行接受，读回只有一次，管不到强推、main 移动和台账。现装节点上第 12 段的资格是否已接受、是否在跑：未核实（41.10）。
+- **验收**：一次撤销在 GET、改写、第一次读回、30 秒后读回各失败一例（不记 `revoked`，证明未确认，第 8 段不发绿）；增量清扫找到强推前的旧绿、普通推送换下的旧 head 的绿、只在别的节点发过的绿（来自流水，三个以上节点时每个节点各一例）、重新打开和改了 base 的 PR；main 在列车外移动时撤车头的绿；撤车头请求在 PAUSE 下生效、过期拒绝；超过 250 个提交的 PR 让全量作废；缺一页作废，超时重来；HALT 下不跑；清理只移确认过的组。
+
+### 41.4 车头调度
+
+- **现状**：只有影子判断：`decideShadow`（`train-facts.mjs:42-52`）给出 `OPEN_FRONT_BATCH`、`FRONT_NEEDS_MAIN_MERGE` 等，执行器只记进状态（`train.mjs:27-32`）；`runTrainStage` 只接受 shadow（`engine-windows.mjs:435`）；第 10 段只在调度没跑批次的拍子里跑，批次进行中不跑（`executor.mjs:1110-1117`）。中继在推导时才拒绝带 S 的 subject（`derive-batch.mjs:121`、`relay-entry-v2.mjs:54`），而 `relayPlan` 在那之前已写 `20-plan-intent`（`executor.mjs:2159-2165`）。第 8 段按 SHA 读 S（`publisher.mjs:140`、`:143`）。持有节点 CI Binding 令牌（`controllerPrincipal`，`resident-v2/entry-runtime.mjs:45-54`）的只有第 1、8、R、10、12 段的入口（第 11 段的探测另有自己的读取）；第 3、5、7 段的发布者没有。KooYomi 的队列在读取时按入队时间算（迁移 `20261009080000`:90），车头的各个时钟都不超过认领租约（同文件 `:60-69`）；touch、adopt、return 只认 ci-admission 角色的 Binding，都在 CI 签名白名单里（迁移 `20261010161848`:96-104）；常驻层的 Native 端口只有 holders（`merge-slot-native.mjs:9`）。认领租约 2 小时、硬截止 24 小时、续期 12 次（`20261009010000`:57-59），`expires_at <= hard_deadline_at` 是表约束（`20261001060000`:46）。
+- **S 的来源**：只取 on 模式第 10 段的 `OPEN_FRONT_BATCH` 事实（T = main 尖端，H，S = 试合并，父提交 [T, H] 与它的树），而且是清扫确认之后的（41.2）。执行器据此往排队表写一行带 `testSha` 的 subject，这是唯一的产生者；触发文件仍不接受 `testSha`。受保护层的车头 H 必须含 T，否则是 `FRONT_NEEDS_MAIN_MERGE`，不开批次（MergeAdmission v0.2 §2.4）。
+- **中继**：`relayPlan` 在写 `20-plan-intent` 之前，把带 `testSha` 的 subject 的全部角色留在本地（原因 `RELAY_TRAIN_FRONT_LOCAL`，§38.8 m1）。
+- **S 被 GitHub 重算掉**（§38.8 n7）：GitHub 重新生成试合并后，旧 S 可能取不到。bundle 时取不到是 `BUNDLE_UNAVAILABLE`（§38.3，批次开始前，不计释放上限）；第 8 段按 SHA 读 S 时取不到（404），新码 `TRAIN_TEST_COMMIT_GONE`，与父提交已不是 [T, H] 一样：这一批干净结束，下一次第 10 段重读 S、开新批次，算这个 head 的第二次车头批次；第二次还不行就结束，要推新提交。读取的暂时性错误仍按 `TRAIN_TEST_MERGE_NOT_READY` 停靠。
+- **硬上限**：报 running 之前，位子按续期时钟到 `greatest(merge_slot_at, since) + 2700 秒`（`20261009080000`:60-69 的 `until_from`），所以一个已等了 40 分钟的车头，批次第 1 段还没跑完位子就会过期。因此开车头批次的那一次第 10 段（它持有令牌）在清扫确认之后，先按“假如现在报 running”算剩余：`least(now + 90 分钟, since + slotHardCapMinutes, 保活后的 expires_at) − now`，`since` 是这个认领成为车头的时刻。剩余至少是 `train.frontBatchBudgetMs` 加一次第 8 段尝试（90 秒加助手余量）时，才报 `touch running`、再读一次 holders 确认 `until` 已按 running 时钟后移，然后给出 `OPEN_FRONT_BATCH`；不够就不报、不开，PR 页面请持有者让位子过期后重新入队（合同草稿 Change 3）。每个 head 最多两次车头批次（含 attempt 2 和上面两种重开）；车头批次计入每日额度（§36）。
+- **谁调用、用哪个令牌**：都由通用助手以 clued-control 运行 Source B 的入口，用节点自己的 CI Binding 令牌（`controllerPrincipal`）；每次调用之前，同一次运行里先读 holders，要求不是 `admission_binding_required`，并且（保活以外）这个认领是位置 1、`bound_pr` 是这个 PR：
+  - `touch running`：两次。第一次在开车头批次的那一次第 10 段（上一条“硬上限”）；第二次在车头批次的第 1 段（`formal-work-admission-check-v2/startup.mjs:14`），它的检查 settled 之后，刷新 running 时钟；`hard_cap_minutes` 都取 `train.slotHardCapMinutes`（60–180）。第 2–7 段没有令牌，不再刷新：批次从第 1 段起超过 90 分钟时（第 2–7 段上限合计 130 分钟，`layout.mjs:83-88`），位子在第 8 段之前过期，这一批以没就绪结束、不发绿。实际批次约 20 分钟（v0.2 §5），接受这个残余。
+  - `touch green`：第 8 段 settled 之后（41.2）。
+  - `touch failed`：第 3、5、7 段没有令牌，所以由批次结束后的第一次第 10 段报，但依据是执行器自己的账本，不是 GitHub 上的检查：train-run 作业（合同升 `/2`，C# 边界同步）带上 `frontOutcome`（PR、H、S、attempt、终局码）。执行器只在这一批是车头批次、账本说它已最终失败（不会再有 attempt 2）、失败属于 PR 本身（失败表 `deterministic-pr`，不是基础设施）时才填。第 10 段再核 holders 里这个认领仍是位置 1、PR 当前 head 仍是 H，才报 failed；服务端退位并发 CI 失败通知（迁移 `20261010112852` 的 failed 分支）。在此之前位子按 running 时钟占着，最多多占一个 `maintenanceEveryMs`。
+  - adopt：第 10 段看到车头 PR 已合入、合并提交恰好 [T, H]、树等于 S 的树，调 `clued_work_claim_adopt_v1`（`pr_ref`、`merge_sha`）。树不同：`TRAIN_LANDED_TREE_MISMATCH`，写 PAUSE 请求、通知 Owner、不 adopt（v0.2 §3.3 第 2 条）。
+  - return：第 10 段看到车头 PR 关闭未合入，调 `clued_work_merge_slot_return_v1`。车头换了 head 不 return：新 head 原位当车头，旧绿撤销。
+  - 保活：第 10 段每次运行一次（下一条）。
+  - 只有 ACTIVE 节点（41.6）。写端口加进 `merge-slot-native.mjs`（Source B）和 Native 端口（Source A）。
+- **服务端（一次迁移）**：
+  - adopt_v1、return_v1、touch_v1 不改（`20261006120000`:189、:223，`20261010112852`:79）。
+  - **排队认领保活**：新函数 `clued_work_merge_queue_keepalive_v1(p_token_hash, {scope, repository, pr_refs})`，只认 ci-admission 角色的 Binding（同 touch），加进 CI 签名白名单。`pr_refs` 是调用方刚从 GitHub 读到、仍打开的 PR，最多 50 个。函数在 `work_claim_lock` 下先调 `work_claim_expire_due`：过期是惰性的（`20261001060000`:157-165），而队列把过了 `expires_at` 的 ACTIVE 认领照样算在内（`20261009080000`:74-76），所以不先过期就会把已过期的租约续活。然后只对这个 scope、这个仓库 merge ref 的队列里（41.5 记下的车头和算出的等候者）、`expires_at > now`、`bound_pr` 在列表里的认领：`expires_at := greatest(expires_at, least(now + lease_seconds, hard_deadline_at))`。不改 `lease_version`、续期次数、`progress_refs`、fence、`merge_slot_at` 和 CI 时钟；不碰已过期、已出队、不在队列里的认领；永远不超过 24 小时硬截止（表约束也挡着）。每个认领每小时最多一条回执 `WORK_CLAIM_QUEUE_KEPT_ALIVE`。到了硬截止的认领照旧过期出队；PR 页面提前 2 小时提醒持有者重新认领（按优先级重新排位）。盲区：别的 scope（例如 global）里的排队认领不在常驻层运行的 scope 里，holders 看不到，也不被保活（v0.2 §5 末条的同一盲区）。
+  - **记下车头、按优先级排位**：41.5。
+  - **节点 Source 记录**：41.6。
+- **验收**：S 只来自清扫确认之后的第 10 段；带 S 的 subject 在 `20-plan-intent` 之前就留在本地；S 取不到时干净结束、重读、算第二次；开批次的第 10 段先报 running，剩余时间按 running 时钟、硬上限和租约算，不够不开（等了 40 分钟的车头也不会在第 1 段过期）；running 在开批次的第 10 段和第 1 段、green 在第 8 段、failed 在批次后的第 10 段，各自先核 holders；failed 只按 `frontOutcome` 报，非车头批次的失败、还会有 attempt 2 的失败、基础设施失败都不报；树不同就停车、不 adopt；return 只在关闭未合入时；STANDBY 和不当班的运行不写 KooYomi。§38.8 列的 S ≠ H 测试补齐：桥签发、HEAD = S ≠ H 的 worker 工作区、placement 密封候选的 HEAD 与打包内容（S、H、T）、C# 同批核对（`PureTestsV2.cs`）。迁移的 DB 测试：保活先过期再续、不复活已过期的租约、不动续期次数和 fence、不过硬截止、只认 ci-admission、不在队列里的认领不动、回执限频。
+
+### 41.5 优先级（Decision `3dcb583b`，取代 `a5ea4be3`）
+
+- **来源**：PR 的工作认领所指 KooYomi Task（认领的 `task_id`）的记录优先级 `public.clued_memories.priority`：`smallint`，默认 0，取值 0–100（迁移 `20260824014005`:11、:64）；Task 列表的索引按 `priority desc` 排（同文件 :95-98），所以数值大为高。2026-10-31 生产里在用的 Task 取值为 0、5、40。Task 没有截止日期字段（同日只读核对：表列与 `type_fields` 都没有），`a5ea4be3` 选的“截止日期”因此作废，Owner 改选优先级。
+- **只排车头后面**：车头不受影响，任何 PR 都不能排到车头前面，所以绕不过“只有一个绿”（§22.5）。
+- **次序**：优先级高的在前；同一优先级按入队时间，再按 claim_id。等候者的次序每次读取时按 Task 当时的优先级算。
+- **车头在交接时定下**：今天的队列在读取时按入队时间算（`20261009080000`:90-91）；`work_claim_merge_queue_v1` 只记最后一个离开的条目（`head_left_at`、`left_queued_at`、`left_claim_id`，同文件 :35-42），出队靠与它比较入队次序，当前车头没有记下。迁移给这张表加两列（当前车头 claim、`since`），给认领加出队时刻。每次读队列的调用（认领视图、holders、touch、verify、保活）先在 `work_claim_lock` 下检查记下的车头是否已离开（释放、过期、去掉 merge ref、位子过期）；离开了就在同一次写里按当时的次序选出下一个车头并记下，离开者记出队时刻；新车头的位子按 `since` 算已经过期的，同样记出队、再选下一个。之后的读取只读记下的车头，不再重选。改优先级、切换 `fifo`/`priority` 都不改变当前车头，只影响下一次交接。
+- **迁移时**：把迁移那一刻按今天规则算出的车头原样记下；开关为 `fifo` 时，下一个车头按入队时间选，结果与今天逐条相同。
+- **开关**：每个 merge ref 一个，默认 `fifo`，Owner 在新合同发布、关 `strict` 的同一天打开（41.9）。开关放在哪、谁能改：41.10。
+- **谁能改优先级**：Agent 能改自己 Task 的优先级，就能把自己往前排（41.10）。
+- **验收**：车头永不被换（改优先级、切开关之后都一样）；交接时一次写定下一个车头，之后的读取不变；优先级高的先成车头；同优先级按入队，再按 claim_id；连续几个位子过期时逐个记出队；开关为 `fifo` 时现有队列 DB 测试原样通过。
+
+### 41.6 多节点当班与备用（C9）
+
+- **现状**：节点模式 ACTIVE、STANDBY、UNCERTAIN，不是 ACTIVE 就不开批次（`executor.mjs:366`、`:173`）；但 DEFERRED 是“安静”的结果，第 10 段照跑（`executor.mjs:169-170`、`:1117`）。没有角色时 holders 答 `admission_binding_required`，影子记 `NOT_ON_DUTY`（`merge-slot-native.mjs:5`、`train-maintenance.mjs:31-32`）。§34.4 的版本不一致只比一个节点的 Windows 与 Linux 两侧。PR 页面状态不带 Source（`pr-status.mjs`），`status.mjs:20` 的 `source` 是本机 `status.json` 里的，别的节点读不到：今天没有比较各节点 Source 的数据。
+- **只有 ACTIVE 跑 on**：on 模式和只撤模式的第 10 段只在 ACTIVE 上跑；STANDBY、UNCERTAIN 不跑，状态写 `NOT_ON_DUTY`。影子模式照旧每个节点都跑、只读。
+- **接班先清扫**：STANDBY → ACTIVE 之后、第一次发布（任何一段）之前，先完成接班清扫。服务端按节点记“全量清扫水位”：一个节点以 on 模式完成全量清扫、撤销全部确认时，第 10 段报一次（完成时刻、GitHub `updated` 游标、main 尖端），只认 ci-admission。接班节点从 holders 回答里读到最近一条水位：有，就从水位起做增量清扫，加上整条发布流水和本节点台账，一般一次第 10 段就能完成；没有水位才做全量清扫（最长 `fullSweepMaxMs`）。接班清扫期间调度推迟 `TRAIN_TAKEOVER_SWEEP_PENDING`，不发绿，但只撤和保活照跑，排队的认领不会因此过期。
+- **撤别人的先核角色**：要撤的检查不在本节点台账里（别的节点发的，例如来自流水），同一运行内先读一次 holders；答 `admission_binding_required` 就不撤，本轮结论“不当班”。本节点台账里的（自己发的）撤销不要求角色：撤销只会更严（R-c）。
+- **全部常驻节点同一个 Source**：开车的安装用同一个包，覆盖全部常驻节点（41.9）。数据来源放在服务端：41.6a 的心跳带节点名和 `ciSourceManifestSha256`，服务端按节点记下；holders 的回答加一个 `nodes` 字段，列出每个有资格的连接与最近 24 小时发过心跳的节点的名字、Source、自报状态、最近心跳时刻，以及看门狗最近一次运行的时刻。接班的节点（自动或 Owner 手动移交都一样）有了角色后，在第一次 on 运行时从这个回答里读其余每个节点的 Source：24 小时内有心跳的节点里只要有一个不同，就不跑 on 模式的第 10 段并通知 Owner；没有记录（第一次开车）照常。
+- **验收**：STANDBY 不跑 on；接班清扫完成之前不发布，有水位走增量、没有水位走全量，期间只撤和保活照跑；撤别人的要角色、撤自己的不要；手动和自动接班时 Source 不同都不接 on，没有记录照常。
+
+### 41.6a ci-admission 自动接班（Decision `199cf3de`，取代 `06cd3dd4`、`231a5dd9`）
+
+- **现状**：交接只有 Owner 的一键移交：Native 两步 `clued_binding_role_handover_confirmation_issue_v1`、`clued_binding_role_handover_v1`（迁移 `20261023010000`:370、:419），第 2 步要求同一 Native 会话的一次性确认；检查在 `binding_role_handover_check_v1`（:332-349：来源持有且不是停车位，目标有效、有 `context:read`、还没有 ci-admission，交接后不会有第二个常驻节点持有者）；交接在 advisory 锁 `clued-binding-role:<owner>:ci-admission` 下做（:457）；新记录 5 分钟后生效（`binding_role_activation_delay_v1`，:55）。服务端今天不记任何节点的活动，节点现有的 KooYomi 调用也都当不了心跳：
+  - 常驻服务按服务 SID 封了出站（§8，`CluedCIResident-BlockOutbound`）；
+  - 第 11 段探测在 ACTIVE 上 30 分钟一次（`role-probe.mjs:7`），要求没有 HALT、没有 PAUSE、没有未结束的批次（`executor.mjs:1158`），暂停接新时被挡（`:1112`），字节漂移时先 HALT 返回（`:1161-1162`），代理忙时推迟（`:1170`）；
+  - 第 10 段在列车关着时不跑（`executor.mjs:1316`、`train.mjs:18`），间隔可设到 60 分钟（`policy.mjs:132`）；
+  - 批次的独占区里不插任何段（§18.1）。
+- **触发只有一种：失联**（Decision `199cf3de`）。HALT 不再触发接班。
+- **专用心跳**：
+  - 谁发：companion（Owner 登录会话里的计划任务，§8.4，本来就能出网），每 10 分钟一次，与列车模式、PAUSE、HALT、批次进行与否都无关。它不经代理、不跑任何段，没有 GitHub 副作用。companion 本来就要在线，节点才能干活（打 bundle、轮询，§3 的表），所以它的心跳就是“这个节点还能工作”。
+  - 用什么：每个节点一个只能发心跳的连接（新 scope，只能调心跳函数，读不了 context，也做不了别的），由 Owner 在 `/bindings` 上建，挂到该节点的 CI 连接名下（两步确认）。服务端把令牌绑定到这个节点，载荷里的节点名一律不用。
+  - 令牌放哪：今天的 secrets 目录不给 Owner 读（`install-resident.ps1` 的 `Get-AclPlan`），安装脚本和 `companion.json` 也没有心跳令牌的位置。新增安装参数 `-HeartbeatTokenFile`：Owner 从 `/bindings` 下载令牌，随 UAC 安装放进新目录 `secrets\heartbeat\`（SYSTEM 与 Administrators 完全控制，Owner 只读），companion 从那里读。选这个、不选 SYSTEM 代发：companion 本来就在 Owner 会话里，代发要再加一个提权组件和一条通道。代价是 Owner 会话里跑的 Agent 也读得到令牌。可以接受，因为它只能发心跳：拿到它的人既不能读 context，也不能碰 CI、GitHub 或认领。残余风险：他能伪造自报 `HALTED` 或 `PAUSED`，让这个节点永不被自动交出；或者连续 30 分钟伪报“服务没在运行”，促成一次交接。后者只会交给 Owner 标过资格、心跳健康的某个其他节点，受 6 小时冷却和“不自动交回”约束，并且有回执和 @Owner。
+  - 令牌出问题不当失联处理：companion 连续 3 次心跳失败，或令牌过期、被拒，就发 Windows 通知请 Owner 换令牌。服务端照常按失联判断（它分不出来），所以 Owner 要在 30 分钟内处理，或先关总开关。
+  - 调什么：新函数 `clued_ci_node_heartbeat_v1`。时刻由服务端写，节点改不了。另记自报：`ciSourceManifestSha256`（取自状态快照的 `versions.windows.ciSourceManifestSha256`，即执行器实际在跑的 Source，不取 companion 自己的配置）；模式（`ACTIVE`、`STANDBY`、`UNCERTAIN`）；最近一次探测结果；`HALTED`（任何码；`haltCode` 与时刻取自 `status.halt`，它只有 `{code, at}`，出事批次的 PR 与 head 取自 `status.current`，都供 Owner 看）；`PAUSED`；`INTAKE_PAUSED`（带 `until`，服务端截到 `now + 200 分钟`）；服务是否在运行（companion 查 SCM）；状态快照的年龄。只认每个节点最新的一条自报。
+  - 状态及时：执行器在 HALT、PAUSE、暂停接新 latch 的同一 tick 把它写进状态快照；companion 看到状态变了就立即补发一次心跳，不等 10 分钟。
+  - 报不出状态的情况：服务停了、服务进程不在了（快照很旧）、字节漂移检出到 HALT 写下之间、快照读不出。这些情况下心跳照发，状态写 `UNKNOWN`，并带“服务是否在运行”和快照年龄；服务端只按下面“失联”的第二种情形判断它们，不因单独一次 `UNKNOWN` 交接。代理忙只影响探测，不影响心跳。
+  - 快照的新旧：服务进程里已有的 `startStatusTimer`（`status.mjs:162`，`service-main.mjs:96`）每 15 秒重写一次快照，不靠 tick，所以长段里快照照样是新的。快照新只能证明服务进程活着，不能证明执行器没卡住；卡在一段里的执行器由那一段自己的上限和 HALT 处理，不算失联。
+  - holders 不改：入参不变（`20261010112852`:169 拒绝多余入参），不写任何记录；第 11 段探测仍是 `role-probe-entry.mjs:1` 说的只读入口，结果仍要求 `sideEffects === 0`（`executor.mjs:1173`），照今天的规则跑，不挪位置。holders 的回答在角色检查之后加 `nodes`、清扫水位和看门狗时刻，只有持有者读得到。
+- **资格**：Owner 在 `/bindings` 上把连接标为“可自动接班的常驻节点”，并给出次序（新的每连接字段，例如 `resident_failover_rank`，空表示不可自动接班）。设置、取消和改次序与 `clued_binding_role_set_v1` 一样走两步一次性确认（`20261023010000`:248 起，确认核对在 :270-282），回执记谁、何时、次序。今天标两个：aa4969fb（TURING）与 44dc0846（DESK-W-591）；以后加节点时由 Owner 一并标；取消标记就退出。没标的连接永远不会被自动选中。
+- **总开关**：每个账户一个“自动接班”开关，默认关，改它同样走两步确认。第 2 步迁移时各节点还跑旧包、不发心跳，所以要等第 9 步影子复核之后、每个标了资格的节点都装上新包并正常发心跳，Owner 才打开（41.9）。关着时看门狗照算、照告警，不交接。
+- **看门狗**：`pg_cron` 每分钟跑一次 `clued_private.ci_admission_failover_tick_v1()`，作业名 `clued-ci-admission-failover`，写法同 `20261004120000`:366 的 `cron.schedule`。交接要同时满足：
+  - 总开关开着，常驻节点持有者 X 是有资格的连接；
+  - X 失联，两种情形都算：
+    - 最近一次心跳早于 30 分钟前（3 个间隔）。Owner 注销也落在这里：companion 随之停下（§8.4，AtLogOn），而节点没有 companion 干不了活（打 bundle、轮询），所以算失联；
+    - 心跳还在来，但连续 30 分钟每一条都报“服务没在运行”或“快照超过 30 分钟”（机器开着、服务进程不在了）；中间只要有一条报服务在运行且快照新鲜，计时就重来；
+  - X 在被标资格之后、并且在总开关打开之后，至少发过一次心跳。从没发过心跳的持有者（旧包、刚标资格、心跳连接还没建）不算失联，只告警；
+  - 接收端当时在工作：X 沉默的这 30 分钟里，Y 至少有 2 次心跳到达服务端。否则可能是服务端或网络中断了 30 分钟以上，恢复后 Y 的心跳先到；这种情况只告警，不交接。第二种失联不受这一条限制（X 自己的心跳在来）；
+  - X 最近一条**读得出的**自报不是 `HALTED`（任何码）、`PAUSED`，也不是未到期的 `INTAKE_PAUSED`：`UNKNOWN` 不算读得出，往前找最近一条读得出的。这样的持有者永不被自动交出，两种失联都一样。暂停是 Owner 或兜底的决定：树不同时的自动 PAUSE（41.4）、companion 兜底的暂停（41.7）、回退第 1 步（41.9）；
+  - 冷却：目标 Y 不能是 6 小时内（冷却时间）把角色交出去的节点，自动交出和 Owner 手动交出都算，交出时刻取该节点最近一条已结束的持有记录的结束时间。冷却只排除这一个节点，其余健康的已标资格节点照常可选。被自动交出的节点另有“不自动交回”（见下）排除，所以冷却实际管的是 Owner 手动交接之后的 6 小时；
+  - 存在目标 Y：有资格、不是持有者、20 分钟内有心跳、自报模式是 `STANDBY` 且最近一次探测结果为 `not-held`、自报状态不是 `HALTED`、`PAUSED`、`INTAKE_PAUSED`、`UNKNOWN`、Source 与 X 最近记下的相同，并与其余 24 小时内有心跳的常驻节点都相同（这里的常驻节点指所有发心跳的常驻节点，不只是标了资格的；全部常驻节点同一个 Source，与 41.6 开车条件一致；没有记录的节点不比）。按 Owner 的次序取第一个这样的 Y。这就是“目标节点在线”的核对。
+- **交接**：与一键移交同一条服务端路径：把 `clued_binding_role_handover_v1` 的核心拆成一个私有函数，一键移交和看门狗都调它。核心函数显式接收 owner（`pg_cron` 里没有 `authorization_owner_v12()`），取同一把 advisory 锁（`20261023010000`:457），同样过 `binding_role_handover_check_v1`；X 的记录当场结束，Y 得到用途 `resident-node`、5 分钟后生效的记录；停车位和别的持有者不动；任何时候至多一个常驻节点持有者。
+- **审计与通知**：每次自动交接写回执 `CI_ADMISSION_AUTO_HANDOVER`，主体记“服务端看门狗”（不是 Native 会话），带 X、Y 和所有标了资格的节点的最近心跳与自报；同时写一条 KooYomi Note。算力面板只有 GitHub 令牌（`scripts/ci/self-hosted/compute_panel.py` 文件头），读不到 KooYomi；Y 可能没有打开的 PR，Y 的执行器在新记录生效前的 5 分钟里也没有角色。所以由 Y 的 companion 直接转达：心跳的回答带上这次自动交接，companion 用 Owner 的 gh 登录在算力面板的 Issue 里发一条带标记的评论（`<!-- clued-auto-handover:<回执 id> -->`，每个回执只发一次），评论里 @Owner；算力面板认这个标记，把它列进自己的动态，不重复 @。
+- **看门狗自己活着**：每次 tick 记下时刻，心跳的回答带上它；companion 读到超过 5 分钟没有 tick，就在 PR 页面状态里写“自动接班看门狗未运行”，并发 Windows 通知。
+- **不自动交回**：被自动交出的 X 不再被自动选中，直到 Owner 做过一次涉及 X 的手动交接（交给 X，或从 X 交出）；这只解除 X 自己，不解除别的节点。Owner 随时可以用一键移交改回。
+- **没有可用目标**：不交接，只告警：回执 `CI_ADMISSION_FAILOVER_NO_TARGET` 与 KooYomi Note，每小时最多一次，`/bindings` 页面显示。例：A 自动交给 B 后 B 又失联，而 A 是其余唯一健康的已标资格节点；A 被“不自动交回”排除，于是落到这一条，B 继续持有，等 Owner 处理。三个以上节点也一样：A→B→C 之后候选用完就停在这里，不会来回抖。
+- **旧节点上跑着的批次**：X 的记录结束后，它下一次实时准入（第 1 段或第 8 段的 Native 准入）被拒，按 §29 转 STANDBY，批次干净结束；X 已发布、还没合入的绿由 Y 的接班清扫撤掉（41.6：水位加增量，加整条流水）。交接后的 5 分钟里没有持有者，第 8 段不会发新绿。
+- **验收**（DB 测试）：
+  - 选择：没标资格的连接永远不被选中；按 Owner 的次序选；第一个不健康（心跳过期、不是 STANDBY、探测不是 not-held、HALTED、PAUSED、UNKNOWN、Source 不同）时选下一个；没有可用目标时不交接、只告警且限频；总开关关着时不交接。
+  - 触发：29 分钟没心跳不触发、30 分钟触发；X 沉默期间 Y 只有 0 或 1 次心跳（服务端或网络中断）时只告警不交接，2 次才交接；X 在标资格之后或总开关打开之后从没发过心跳时只告警；心跳照来但连续报“服务没在运行”或“快照超过 30 分钟”，29 分钟不触发、30 分钟触发，中间夹一条正常心跳就重新计时；单独一次 `UNKNOWN` 不触发；自报 HALTED（任何码）、PAUSED 或未到期 INTAKE_PAUSED 的持有者，两种失联都永不被交出；最新一条是 `UNKNOWN` 时按之前最近一条读得出的自报判断（之前是 HALTED 或 PAUSED 就不交出，是 ACTIVE 就照常判断）；`INTAKE_PAUSED` 的 `until` 被截到 200 分钟；只认最新自报；冷却期内不选 6 小时内交出过角色的节点，但照常交给其余健康节点（三节点用例：Owner 手动把 A 交给 B，6 小时内 B 失联，交给 C，不交回 A）；被自动交出的连接不被自动选回，Owner 做过涉及它的手动交接后恢复，且只恢复它自己；候选用完时（A→B，B 失联，只剩被排除的 A）只告警不交接。
+  - 交接与权限：交接后至多一个常驻节点持有者，停车位不动，新记录 5 分钟后生效；核心函数在 cron 下拿到显式 owner 和同一把锁；回执主体是看门狗；资格、次序、开关、心跳连接都要两步确认；心跳连接调不了心跳以外的任何函数；心跳记到令牌所绑的节点上，载荷里的节点名不起作用；节点改不了心跳时刻；holders 入参不变、不写记录。
+  - 常驻层：心跳在 HALT、PAUSE、暂停接新、批次进行中、列车关着时照发；状态变化时立即补发；服务停了时心跳照发、状态 `UNKNOWN`、报服务没在运行；一个 45 分钟的长段里快照照样每 15 秒刷新，不被当成服务进程不在；Owner 注销后心跳停止；自报的 Source 取自 `versions.windows`，改 companion 配置不影响它；HALT 时 PR 与 head 取自 `current`；连续 3 次心跳失败或令牌过期时发 Windows 通知；`-HeartbeatTokenFile` 装进的目录 Owner 只读、别的普通用户读不到；Y 的 companion 在算力面板 Issue 发带标记的 @Owner 评论，每个回执只一次，面板不重复 @；看门狗超过 5 分钟没 tick 时告警；X 在下一次准入被拒后转 STANDBY。
+
+### 41.7 策略 `on` 与保留
+
+- **现状**：策略合同 `/7`（`policy.mjs:46`），`train.enabled` 只有 off、shadow，`on` 拒 `POLICY_TRAIN_ON_NOT_SUPPORTED`（`policy.mjs:66`、`:131`）；train-run 只接受 shadow（`train-run.mjs:16`、`FormalPublicBoundaryV2.cs:164`）；train facts 和常驻层摘要只认 shadow（`train-facts.mjs:85`、`train.mjs:28`、`:49`）；兜底只看“不在列车模式”（`ruleset-backstop.mjs:36`）。
+- **合同 `/8`**：`train.enabled` 加 `on`；新字段 `slotHardCapMinutes`（60–180）、`frontBatchBudgetMs`、`sweepFreshMs`（默认 900000，即 15 分钟）、`fullSweepMaxMs`。`nonFrontRuns` 在 `/8` 起接受 `false`，但开车时仍写 `true`，关 `strict` 时由 Owner 改（v0.2 §2.2）。train-run 的 mode 加 `on`、`revoke-only`，影子模式下第 10 段也跑清扫但只记录不撤（41.9 第 2 条）；C# `ValidateTrainRun` 同步改；SwapBroker 第 10 行不变（仍 5 分钟）。train facts 升 `/2`，带清扫、证明与做了什么。
+- **状态与兜底**：状态快照的 `train` 加 `sweep`（最近一次全量清扫完成的时刻、是否在这次开车或接班之后、结论）。companion 兜底：`strict=false` 而（不是 on，或 on 但全量清扫还没完成），就写暂停请求、紧急通知，文字加“清扫没完成”（v0.2 §4.1 末段）。
+- **保留**（§22.5）：回执链和 `state\v2\receipts` 按月分段，启动只读当前段和索引；`train-shadow` 在开车前复核之前一条不删，之后留 90 天；`train-sweep` 的证明留 90 天；`green-ledger\closed\` 留 1 年。都进 `retention.mjs` 的规则和回执，安全措施同 §35.3。回执分段是本步改动面最大的一项，做法以审核为准。
+- **验收**：`/7` 策略照旧拒 on；`/8` 各字段的边界；C# 与 JS 同表；影子模式的清扫不写 GitHub；兜底在三种组合下的动作；复核之前影子记录一条不删。
+
+### 41.8 守队程序，以及随车的常驻层改动
+
+- **守队程序（Decision `86008583`）**：main `35c41fd6` 的 `.github/workflows/` 里还没有它。它在 `.github/**` 下，要 protected-change Grant。
+  - 每次运行先读 `rules/branches/main`。读不到、没有 `required_status_checks`（应急停用）或 `CLUED_MERGE_ADMISSION_STATE` 是 `frozen`：什么都不做，两种模式都一样。
+  - 非列车模式（`strict` 开）：定时工作流，用现有的 clued-admission App；打开的 PR 当前 head 上六项必需检查加项目 CI 都绿，就钉住 head 合入；队首的分支落后时更新它的分支。
+  - 列车模式（`strict` 关）：不再更新任何分支；只合车头：当前 head 带 App 5368905 的 `kooyumi-merge-slot` 成功、六项加项目 CI 全绿的那个 PR，钉住 head，`merge_method` 只用 merge。符合条件的 PR 多于一个（违反 R-b）就什么都不合、通知 Owner。只测车头时项目 CI 是否都会在车头上跑：未核实。
+  - 验收：两种模式各自的合并与更新分支；`strict` 关时绝不更新分支、绝不 squash 或 rebase；两个候选时不合；规则集停用、读不到或 `frozen` 时两种模式都不动。
+- **每次发布的 binding（Decision `b30b1b79` 第 3 项）**：第 8 段 `publisher.mjs:106-112` 和第 1 段 `formal-work-admission-check-v2/publisher.mjs:84-87` 的 binding 都含整个 `mergeSlot`（含 `until`）和 `claimExpiresAt`。持有者在批次中途续期、保活或 touch 改了位子时钟，写前写后两次 binding 就不同，批次作废；`scripts/hooks/clued_work_claim_guard.py:918-921` 因此要求推送之前先入队、续够租约。两处都改为与 `sourceBinding`（`publisher.mjs:115-119`）一样只比 `state`、`ref`、`tip`、`queueHead`，去掉 `claimExpiresAt`。新鲜度仍要求租约没过（第 8 段 `publisher.mjs:86`，第 1 段同文件 :83）。之后钩子里 90 分钟租约的要求可以放宽（文档跟进）。
+- **“立即探测”请求**：`requests\` 新合同 `clued.independent-ci.resident-probe-request/1`，只调 `roleProbe.markUrgent()`（`role-probe.mjs:28`），不直接改模式；超过 1 小时的请求拒绝；读后改名归档。
+- 这几项与打包 Node 的改动 #949（main 上已合入，`a5345586`）同一轮安装（全部常驻节点）。#949 截至 2026-10-31 还没有装在任何节点（今天的 TURING 与 DESK 都还跑旧包）。
+- **验收**：第 1、8 段各有一例批次中途续期、保活或 touch 不再作废发布；`tip` 或 `queueHead` 变了照旧作废；请求只置 urgent；过期请求拒绝。
+
+### 41.9 开车步骤与回退
+
+1. **合同**：Owner 接受 MergeAdmission v0.2（Decision，含 41.1 列出的改动）；合同草稿按 41.1 改完、独立审核，Owner 接受并给发布 Grant，KooYomi 发新版本。迁移已应用，排位开关仍是 `fifo`。
+2. **以 shadow 安装全部常驻节点**：一轮安装，同一个包（§40 工具链，预演 `REHEARSAL_PASS`），含 Source A、B、常驻层和 #949；策略 `/8`，`train.enabled=shadow`；这一轮里没装上的节点保持 STANDBY、不标自动接班资格，装上后再标。§38.8 n5：bundle 回执合同升 `/2`（带四个测试字段），新 ws-prep 只认 `/2`，`build-bundle.ps1` 与 `prepare-workspaces.py` 装错一个就以合同不符明确拒绝；重装清单写明两者同装。影子模式下第 10 段照跑增量和全量清扫但不撤：记下会撤的每一条，实测一轮全量清扫的调用数和时长（用来定 `fullSweepMaxMs`）。
+3. **影子复核**：从 `train-run` 回执和 `train-shadow` 记录离线算出会撤几个、车头首次运行失败率、全量清扫时长，以及 §22.2 第 5 条的其余各项，交 Owner 复核一次；`nonFrontRuns` 的选择也用这份数据（v0.2 §2.2）。同时核对每个常驻节点的心跳在 holders 回答的 `nodes` 里正常、看门狗在走；Owner 这时才打开自动接班总开关（41.6a）。
+4. **改 on**：Owner 一次 UAC 把策略改成 `train.enabled=on`、`nonFrontRuns=true`。选在没有 PR 等合并的时候：之后的清扫会撤掉说明里没有 main@T 的旧绿。
+5. **清扫**：ACTIVE 节点以 on 模式做一次全量清扫（设计第 5 步），撤销全部两次读回确认，完成时写服务端水位（41.6）；再在列车模式下做一次，确认除车头外没有绿（第 6 步）。影子模式的清扫不算。STANDBY 不清扫，接班时按水位做增量（41.6）。清扫失败就停在这一步。
+6. **Owner**：在规则集里同一次保存关 `strict`、合并方式只留 merge；打开排位开关；`nonFrontRuns` 改成自己选的值（UAC）。
+7. **头 10 次合入**：第 10 段每次核对落地的树等于 S 的树并写回执，汇总报给 Owner；不符就 `TRAIN_LANDED_TREE_MISMATCH` 停车。
+
+**回退**（v0.2 §4.2）：Owner 写暂停请求 → 只撤模式的第 10 段确认没有别的绿（需要时加撤车头请求）→ `strict` 开回 → `train.enabled=off`（UAC），排位开关回 `fifo`（当前车头不变）。守队程序读到 `strict` 开就回到非列车模式，不用另改。任何一步失败就停在原地，不关 `strict`。
+
+**验收**：离线演练加几步：shadow 安装后清扫只记录不撤；改 on 后清扫完成之前不发绿；清扫失败停在第 5 步；`strict` 关后一个车头合入、adopt、下一个车头开批次；main 在列车外移动时车头的绿被撤；回退之后列车停，第 8 段在 `strict` 开时照旧发绿。
+
+### 41.10 待审问题
+
+1. 第 12 段在现装节点上的资格是否已接受、是否在跑（未核实）；只撤模式要不要像第 12 段的 `allowWhileHalted` 那样在 HALT 下也跑。
+2. 保活的形式：本节选“常驻层报告打开的 PR，服务端延长”。另一种是服务端按“在队列里、绑了 PR、没被 adopt 或 return”自己延长，不需要调用方，但 PR 关了而没人调 return 时会一直占位到硬截止。
+3. 排位是否只认 Owner 设的优先级：Agent 能改自己 Task 的优先级，就能往前排；合同草稿要写明 Agent 能不能改。
+4. 排位开关放在哪（服务端表还是 Owner 的 Native 设置）、谁能改。
+5. 别的节点的台账没有直接通道，本节用 KooYomi 流水代替；要不要把台账也同步到服务端。读流水用第 12 段已用的 `revocations_list` 通道还是新的只读函数（`revocations_list` 是否列出已对账的发布：未核实）。
+6. 全量清扫的量：PR 已到 #951，由第 9 步的影子演练实测；超过 250 个提交的 PR 怎么枚举（GraphQL 的上限未核实）。
+7. 回执链分段的做法，以及现装节点已有回执怎么迁过去。
+8. 车头全绿时由 Agent 的 auto-merge 还是守队程序合入：两者都是钉 head 的 merge，重复无害；合同草稿是否还保留 Agent 开 auto-merge 这一步，与草稿一起定。
+9. `binding_role_admits_v1` 也放行用途为“其他”的 ci-admission 连接（WorkClaimAdmission §4.4 的 C10 一条），它们也能调 touch、adopt、return 和保活；要不要限定为 `resident-node`。
+10. 自动接班：冷却 6 小时是否合适；告警与 @Owner 经 Y 的 PR 页面转达，Y 不在线时 Owner 只能从 KooYomi 和 `/bindings` 看到。

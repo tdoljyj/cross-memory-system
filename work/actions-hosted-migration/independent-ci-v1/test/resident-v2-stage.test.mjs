@@ -6,16 +6,43 @@ import { randomUUID } from 'node:crypto';
 import { canonical } from '../src/proof.mjs';
 import { hash } from '../src/resident-v2/prepare-record.mjs';
 import { deriveBatch, residentBatchKey, writeBatch } from '../src/resident-v2/derive-batch.mjs';
-import { invokeStage, readSpoolResult, RESULT_WRAPPER_CONTRACT_V2 } from '../src/resident-v2/invoke-stage.mjs';
+import { invokeStage, invokeRoleProbe, readSpoolResult, RESULT_WRAPPER_CONTRACT_V2 } from '../src/resident-v2/invoke-stage.mjs';
 import { loadStageInputs, parseEntryArgs, writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
-import { buildStageFact, outcomeFailureCode, validateOutcome, notAdmittedCode, ALL_STAGE_CODES, TRANSIENT_CODES, NATIVE_RECEIPT_CONTRACT_V2 } from '../src/resident-v2/stage-fact.mjs';
+import { buildStageFact, outcomeFailureCode, validateOutcome, notAdmittedCode, ALL_STAGE_CODES, NOT_ADMITTED_CODES, TRANSIENT_CODES, NATIVE_RECEIPT_CONTRACT_V2 } from '../src/resident-v2/stage-fact.mjs';
 import { BROKER_RESPONSE_CONTRACT, validateBrokerRequest } from '../src/resident-v2/broker-protocol.mjs';
-import { OUTCOME_CONTRACT, ENTRY_V2 } from '../src/resident-v2/layout.mjs';
+import { OUTCOME_CONTRACT, ENTRY_V2, stageByNumber } from '../src/resident-v2/layout.mjs';
 import { sourceRootOfModule } from '../src/resident-v2/held-record.mjs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { NOW, hex, tempDir, fixtureRecord, subject, signResult } from './resident-v2-fixtures.mjs';
 
 const CONTROLLER = 'S-1-5-21-1-2-3-1015';
+
+test('C2 stage11 real invoker + stage reader + bound Native outcome yields only a role observation', async t => {
+  const f = await fixture(t), key = 'a'.repeat(64), runId = `${key.slice(0, 16)}-${'b'.repeat(12)}`;
+  let time = NOW;
+  const broker = fakeBroker(f, { outcome: { status: 'BLOCKED', reason: 'ROLE_PROBE_HELD', sideEffects: 0 } });
+  const fact = await invokeRoleProbe({ runKey: key, runId, nodeProfileSha256: hash(f.rec.inputs.node), ...f.roots, recordDocs: f.rec.docs,
+    clock: () => time, sleep: async ms => { time += ms; await broker(); } });
+  assert.equal(fact.state, 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION');
+  assert.deepEqual(fact.roleProbe, { result: 'held', code: 'ROLE_PROBE_HELD' });
+  const inputs = await loadStageInputs({ nonce: fact.nonce, configSha256: JSON.parse(await fs.readFile(path.join(f.root, 'broker', 'requests', (await fs.readdir(path.join(f.root, 'broker', 'requests')))[0]), 'utf8')).configSha256,
+    entryRole: 'role-probe', recordDocs: f.rec.docs, stageRoot: f.roots.stageRoot, now: NOW });
+  assert.equal(inputs.plan.stage, 11); assert.equal(inputs.jobs.length, 1);
+  for (const field of ['pr', 'headSha', 'baseSha', 'attempt', 'claim']) assert.equal(Object.hasOwn(inputs.jobs[0], field), false);
+});
+test('C2 generic pre-input refusal, wrong job, bad rawSHA and failed cleanup cannot assert held', async t => {
+  for (const opts of [
+    { outcome: { status: 'BLOCKED', reason: 'ROLE_PROBE_HELD', sideEffects: 0, stage: null, entryRole: null, jobIds: [] } },
+    { outcome: { status: 'BLOCKED', reason: 'ROLE_PROBE_HELD', sideEffects: 0, jobIds: ['0'.repeat(64)] } },
+    { outcome: { status: 'BLOCKED', reason: 'ROLE_PROBE_HELD', sideEffects: 0 }, receipt: { outcome_sha256: '0'.repeat(64) } },
+    { outcome: { status: 'BLOCKED', reason: 'ROLE_PROBE_HELD', sideEffects: 0 }, receipt: { tree_cleanup_confirmed: false } },
+  ]) {
+    const f = await fixture(t), key = 'a'.repeat(64); let time = NOW;
+    const fact = await invokeRoleProbe({ runKey: key, runId: `${key.slice(0, 16)}-${'b'.repeat(12)}`, nodeProfileSha256: hash(f.rec.inputs.node), ...f.roots, recordDocs: f.rec.docs,
+      clock: () => time, sleep: async ms => { time += ms; await fakeBroker(f, opts)(); } });
+    assert.notEqual(fact.state, 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION'); assert.equal(fact.roleProbe, undefined);
+  }
+});
 
 async function fixture(t) {
   const root = await tempDir(t);
@@ -42,12 +69,12 @@ function fakeBroker(f, { response = {}, receipt = {}, outcome = { status: 'SETTL
       if (f.handled.has(n)) continue;
       f.handled.add(n);
       const req = JSON.parse(await fs.readFile(path.join(dir, n), 'utf8'));
-      validateBrokerRequest(req, Date.parse(req.deadline) - 600_000);
+      validateBrokerRequest(req, Date.parse(req.deadline) - stageByNumber(req.stage).runMilliseconds - 135_000);
       const plan = JSON.parse(await fs.readFile(path.join(f.roots.stageRoot, req.nonce, 'formal-service-entry.json'), 'utf8'));
       let outcomeBytes = null;
       if (outcome) {
         const o = { contract: OUTCOME_CONTRACT, nonce: req.nonce, stage: 'stage' in outcome ? outcome.stage : plan.stage, entryRole: 'entryRole' in outcome ? outcome.entryRole : plan.entryRole,
-          jobIds: outcome.jobIds ?? [], status: outcome.status, reason: outcome.reason,
+          jobIds: outcome.jobIds ?? (plan.stage === 11 ? JSON.parse(await fs.readFile(path.join(f.roots.stageRoot, req.nonce, 'jobs.json'), 'utf8')).map(j => j.id) : []), status: outcome.status, reason: outcome.reason,
           sideEffects: outcome.sideEffects, mayHavePublished: !(outcome.status === 'BLOCKED' && outcome.sideEffects === 0), diagnostic: outcome.diagnostic ?? null, at: new Date(NOW).toISOString() };
         outcomeBytes = Buffer.from(canonical(o) + '\n');
         await fs.writeFile(path.join(f.roots.receiptsRoot, `outcome-${req.nonce}.json`), outcomeBytes, { flag: 'wx' });
@@ -72,7 +99,7 @@ function fakeBroker(f, { response = {}, receipt = {}, outcome = { status: 'SETTL
 
 const run = (f, stage, broker, extra = {}) => {
   let time = NOW;
-  return invokeStage({ batchDir: f.batchDir, stage, workManifestSha256: f.d.result.stages[stage - 1].workManifestSha256, batchKey: f.key, ...f.roots, controllerSid: CONTROLLER,
+  return invokeStage({ batchDir: f.batchDir, stage, workManifestSha256: f.d.result.stages[stage - 1].workManifestSha256, batchKey: f.key, ...f.roots, recordDocs: f.rec.docs,
     clock: () => time, sleep: async ms => { time += ms; await broker(); }, ...extra });
 };
 
@@ -206,6 +233,25 @@ test('stage-fact catalogue: every mapped code is catalogued; transient codes are
   assert.equal(notAdmittedCode({ reasonCodes: ['owner_review_required', 'protected_change_not_up_to_date'] }), 'PROTECTED_CHANGE_NOT_UP_TO_DATE');
   assert.equal(notAdmittedCode({}), 'NATIVE_NOT_ADMITTED');
   assert.ok(TRANSIENT_CODES.every(c => ALL_STAGE_CODES.includes(c)));
+  // Primary/standby C3: "this node holds no ci-admission role" is a not-admitted code, and it dominates every other reason,
+  // protected_change_not_up_to_date included: a node that is not on duty decides nothing about the PR.
+  assert.ok(NOT_ADMITTED_CODES.includes('NODE_ROLE_NOT_HELD') && ALL_STAGE_CODES.includes('NODE_ROLE_NOT_HELD'));
+  assert.equal(notAdmittedCode({ reasonCodes: ['admission_binding_required'] }), 'NODE_ROLE_NOT_HELD');
+  assert.equal(notAdmittedCode({ reasonCodes: ['owner_review_required', 'admission_binding_required'] }), 'NODE_ROLE_NOT_HELD');
+  assert.equal(notAdmittedCode({ reasonCodes: ['protected_change_not_up_to_date'], nativeReasonCodes: ['admission_binding_required'] }), 'NODE_ROLE_NOT_HELD');
+  assert.equal(notAdmittedCode({ reasonCodes: ['binding_not_authorized'] }), 'NATIVE_NOT_ADMITTED', 'only the role reason is the role code');
+  const noRole = { status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, mayHavePublished: false, diagnostic: { reasonCodes: ['admission_binding_required'], nativeReasonCodes: [] } };
+  assert.equal(outcomeFailureCode(noRole, 1), 'NODE_ROLE_NOT_HELD');
+  assert.equal(outcomeFailureCode(noRole, 3), 'BATCH_CLAIM_CHANGED', 'after stage 1 the same answer keeps its old code');
   assert.equal(buildStageFact({ stage: 1, nonce: hex(16), workManifestSha256: hex(32), preflightCode: 'STAGE_PACKAGE_REFUSED' }).tree_active_processes, 0);
   void plan; void randomUUID;
+});
+
+test('invoker rejects a cross-profile sealed plan before creating stage inputs or a broker request', async t => {
+  const f = await fixture(t);
+  const other = fixtureRecord({ node: { ...f.rec.inputs.node, nodeName: 'other-node', hostname: 'OTHER-NODE', mutationMutex: 'Global\\CluedControlControllerMutationV1-OTHER-NODE-1015' } });
+  const fact = await run(f, 1, fakeBroker(f), { recordDocs: other.docs });
+  assert.equal(fact.failure_code, 'STAGE_PACKAGE_REFUSED');
+  assert.deepEqual(await fs.readdir(f.roots.stageRoot), []);
+  assert.deepEqual(await fs.readdir(path.join(f.roots.brokerRoot, 'requests')), []);
 });
