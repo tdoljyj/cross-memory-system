@@ -151,16 +151,16 @@ export function evaluateResourceCenterMutation(input) {
     }
   }
 
-  // No new status-semantic directory: creating one, or moving or renaming a
-  // directory to such a name, is refused. A file written into a status-named
-  // folder that already exists is allowed (Owner Decision f382c494: the rules
-  // stay, ordinary writes are not refused). The source is never blocked, so
-  // material can be moved back into a legal topic; adopting an item there (P7)
-  // writes nothing.
+  // No status-semantic directory hierarchy grows: a directory may not be
+  // created, moved or renamed to, or under, a status-named folder. A file
+  // written into a status-named folder that already exists is allowed (Owner
+  // Decision f382c494: the rules stay, ordinary writes are not refused). The
+  // source is never blocked, so material can be moved back into a legal topic;
+  // adopting an item there (P7) writes nothing.
   if (destination && isWithin(destination, managedRoot) && targetKind === "directory") {
-    const name = relativeSegments(destination, managedRoot).at(-1);
-    if (name !== undefined && statusNames.has(foldName(name))) {
-      return deny("STATUS_SEMANTIC_DIRECTORY_FORBIDDEN", { directory: name });
+    const forbidden = relativeSegments(destination, managedRoot).find((segment) => statusNames.has(foldName(segment)));
+    if (forbidden) {
+      return deny("STATUS_SEMANTIC_DIRECTORY_FORBIDDEN", { directory: forbidden });
     }
   }
 

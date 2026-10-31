@@ -14,19 +14,27 @@
 create function clued_private.storage_route_destination_v1(p_hash text,p_connection uuid,p_path text)
 returns text language plpgsql stable security definer set search_path='' as $$
 declare full_path text:=clued_private.storage_connection_path_v1(p_hash,p_connection,p_path);
-  root text; tracks jsonb; rel text; first text;
+  root text; tracks jsonb; rel text; first text; placed text;
 begin
-  select p.managed_root,p.cloud_runtime->'allowed_root_children' into root,tracks
-    from clued_private.storage_connections_v1 c
-    join clued_private.resource_center_profiles_v1 p on p.id=c.profile_id and p.user_id=c.owner_id
-    where c.id=p_connection;
+  -- The root only for a live storage client Binding, exactly as
+  -- storage_connection_path_v1 resolves it, so placement never answers for a
+  -- token that path resolution would not (it cannot confirm a guessed root).
+  select p.managed_root,p.cloud_runtime->'allowed_root_children' into root,tracks from public.clued_agent_bindings b
+    join clued_private.authorizations_v12 a on a.binding_id=b.id and a.owner_id=b.user_id and a.revoked_at is null
+      and a.expires_at>now()
+    join clued_private.storage_client_request_links_v2 l on l.request_id=a.request_id
+    join clued_private.storage_connections_v1 c on c.owner_id=b.user_id and c.id=p_connection
+    join clued_private.resource_center_profiles_v1 p on p.id=c.profile_id and p.user_id=b.user_id
+    where b.token_hash=p_hash and b.revoked_at is null;
   -- Only a path the connection path resolution placed under this root.
   if root is null or jsonb_typeof(tracks) is distinct from 'array' or not (tracks ? '90_待归类')
     or left(full_path,char_length(root)+1) is distinct from root||'/' then return full_path; end if;
   rel:=substr(full_path,char_length(root)+2);
   first:=split_part(rel,'/',1);
   if strpos(rel,'/')>0 and (tracks ? first or first='00_从这里开始') then return full_path; end if;
-  return root||'/90_待归类/'||regexp_replace(rel,'^.*/','');
+  placed:=root||'/90_待归类/'||regexp_replace(rel,'^.*/','');
+  if length(placed)>1000 then raise exception 'storage_path_invalid' using errcode='22023'; end if;
+  return placed;
 end $$;
 revoke all on function clued_private.storage_route_destination_v1(text,uuid,text) from public,anon,authenticated,service_role;
 

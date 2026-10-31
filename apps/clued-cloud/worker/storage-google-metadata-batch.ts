@@ -210,13 +210,17 @@ export function createStorageGoogleMetadataBatch(config: {
     /** Direct children of each folder. With fullText (StorageNormalUse §5.2)
      * only children whose indexed content matches; the caller intersects the
      * result with its own scoped child list. `\` and `'` are escaped. */
-    async listFolders(folderIds: string[], { signal, fullText }: { signal?: AbortSignal; fullText?: string } = {}) {
+    async listFolders(folderIds: string[], { signal, fullText, skipOversized }: { signal?: AbortSignal; fullText?: string;
+      /** Search (Decision 24422a98): a folder with more than 10000 children is
+       * left out (null in its place) instead of failing the whole call; the
+       * bound then counts each folder on its own. */
+      skipOversized?: boolean } = {}) {
       ids(folderIds);
       if (fullText !== undefined && (typeof fullText !== "string" || !fullText.length || fullText.length > 200 ||
         /[\u0000-\u001f\u007f]/.test(fullText))) invalid();
       const textClause = fullText === undefined ? ""
         : ` and fullText contains '${fullText.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
-      const states = folderIds.map(id => ({ id, token: "", seen: new Set<string>(), files: [] as unknown[] }));
+      const states = folderIds.map(id => ({ id, token: "", seen: new Set<string>(), files: [] as unknown[] | null }));
       let active = [...states], count = 0;
       for (let page = 0; page < 100 && active.length; page++) {
         const next: typeof active = [];
@@ -230,9 +234,14 @@ export function createStorageGoogleMetadataBatch(config: {
         }), signal);
         values.forEach((value, index) => {
           if (!object(value) || !Array.isArray(value.files) || value.incompleteSearch === true) throw new Error("DRIVE_LIST_INVALID");
-          count += value.files.length;
-          if (count > 10000) throw new Error("DRIVE_ENUMERATION_LIMIT");
-          const state = current[index]; state.files.push(...value.files);
+          const state = current[index];
+          if (skipOversized === true) {
+            if (state.files!.length + value.files.length > 10000) { state.files = null; return; }
+          } else {
+            count += value.files.length;
+            if (count > 10000) throw new Error("DRIVE_ENUMERATION_LIMIT");
+          }
+          state.files!.push(...value.files);
           if (value.nextPageToken !== undefined && value.nextPageToken !== "") {
             if (typeof value.nextPageToken !== "string" || value.nextPageToken.length > 4096 || state.seen.has(value.nextPageToken)) throw new Error("DRIVE_PAGINATION_INVALID");
             state.seen.add(value.nextPageToken); state.token = value.nextPageToken; next.push(state);

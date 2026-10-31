@@ -457,22 +457,14 @@ export async function createStorageReadAgent(config: {
       const oversized = new Set<string>();
       const listChildren = async (folders: string[], fullText?: string, search = false): Promise<unknown[][] | null> => {
         lastTransient = null;
-        try { return await drive.listFolders(folders, fullText === undefined ? {} : { fullText }); }
+        try {
+          // Search skips a folder too large to list whole, by itself, and says so.
+          const lists = await drive.listFolders(folders, { ...(fullText === undefined ? {} : { fullText }), ...(search ? { skipOversized: true } : {}) });
+          return lists.map((list, index) => { if (list === null) { oversized.add(folders[index]); return []; } return list; });
+        }
         catch (error) {
           if (error instanceof Error && error.message === "DRIVE_READ_BUDGET") return null;
           if (search && error instanceof Error && isDriveTransient(error.message)) { lastTransient = error; return null; }
-        // Search lists a chunk of folders per round; past the per-call bound it
-        // lists them one by one and skips only a folder too large on its own.
-        if (search && error instanceof Error && error.message === "DRIVE_ENUMERATION_LIMIT" && folders.length > 1) {
-          const lists: unknown[][] = [];
-          for (const folder of folders) {
-            const one = await listChildren([folder], fullText, true);
-            if (one === null) return null;
-            lists.push(one[0]);
-          }
-          return lists;
-        }
-        if (search && error instanceof Error && error.message === "DRIVE_ENUMERATION_LIMIT") { oversized.add(folders[0]); return [[]]; }
           driveTransient(error, "fatal");
           return fail("storage_read_unavailable");
         }
@@ -827,7 +819,7 @@ export async function createStorageReadAgent(config: {
             next_cursor: page.nextPageToken === null ? null : await seal(bind, { page_token: page.nextPageToken }) };
         };
         if (state.page_token !== undefined) return await drivePage(state.page_token as string);
-        let whole: unknown[][];
+        let whole: (unknown[] | null)[];
         try { whole = await drive.listFolders([folder]); }
         catch (error) {
           if (error instanceof Error && error.message === "DRIVE_ENUMERATION_LIMIT" && Number(state.offset) === 0) return await drivePage();
@@ -835,7 +827,7 @@ export async function createStorageReadAgent(config: {
           driveTransient(error, "fatal");
           return fail("storage_read_unavailable");
         }
-        const [list] = await scopedChildren(whole);
+        const [list] = await scopedChildren(whole as unknown[][]);
         const items = list.map(raw => item(raw, rootId)).sort(byName);
         const offset = Number(state.offset);
         if (!Number.isSafeInteger(offset) || offset < 0 || offset > items.length) fail("cursor_invalid");

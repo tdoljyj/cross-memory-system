@@ -1285,3 +1285,26 @@ test("a folder with more than 10000 children is listed page by page in Drive's o
   const small = await browse({ operation: "list", folder_id: "trackFolder00001" }, { drive });
   assert.equal(small.isError, false); assert.equal(small.value.order, undefined);
 });
+
+// Review r1 MAJOR: an oversized folder first in a full chunk is skipped by itself
+// within the subrequest budget; every page answers and the search finishes.
+test("an oversized folder first in a chunk of 40 is skipped within the budget, page after page", async () => {
+  const drive = tree();
+  drive.add("aaHugeFolder0001", "aa huge", ["trackFolder00001"], FOLDER);
+  for (let i = 0; i < 10050; i++) drive.add(`hugeF${String(i).padStart(11, "0")}`, `x ${i}.txt`, ["aaHugeFolder0001"]);
+  for (let i = 0; i < 40; i++) {
+    drive.add(`small${String(i).padStart(11, "0")}`, `small ${String(i).padStart(2, "0")}`, ["trackFolder00001"], FOLDER);
+    drive.add(`note${String(i).padStart(12, "0")}`, `plan ${i}.md`, [`small${String(i).padStart(11, "0")}`], "text/markdown");
+  }
+  let cursor, pages = 0, found = 0, limited = false;
+  do {
+    const page = await browse({ operation: "search", name_contains: "plan", ...(cursor ? { cursor } : {}) }, { drive });
+    assert.equal(page.isError, false, JSON.stringify(page.value));
+    assert.ok(page.h.googleRequests <= 50, String(page.h.googleRequests));
+    found += page.value.items.length; limited ||= page.value.limit_reached === true;
+    cursor = page.value.next_cursor; pages++;
+  } while (cursor && pages < 10);
+  assert.equal(cursor, null, "the search finishes");
+  assert.equal(limited, true, "and says it skipped the oversized folder");
+  assert.ok(found >= 42, String(found));
+});

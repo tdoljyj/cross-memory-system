@@ -860,9 +860,9 @@ test("a file written into an existing status-named folder is allowed; a new stat
     const result = check({ operation, artifact_role: "clued_resource", target_kind: "file", destination_path: base + "历史/note.md" });
     assert.equal(result.status, "allow", operation);
   }
-  // A topic created inside an existing status folder writes into it, and is allowed.
+  // A directory is never created under a status folder: that would grow the status hierarchy.
   assert.equal(check({ operation: "create", artifact_role: "clued_resource", target_kind: "directory", directory_semantics: "topic",
-    destination_path: base + "历史/新主题" }).status, "allow");
+    destination_path: base + "历史/新主题" }).error_code, "STATUS_SEMANTIC_DIRECTORY_FORBIDDEN");
   // Creating, renaming or moving a directory to a status name is still refused.
   for (const operation of ["create", "rename"]) {
     const result = check({ operation, artifact_role: "clued_resource", target_kind: "directory", directory_semantics: "topic",

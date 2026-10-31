@@ -371,6 +371,12 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
         assert.equal(await placed({ operation: "rename", target_kind: "file", source_path: relative, destination_path: "stray.md" }), `${target.root}/stray.md`);
         assert.equal(await placed(file("00_从这里开始/x.md")), `${target.root}/00_从这里开始/x.md`);
         await assert.rejects(placed(file("/elsewhere/x.md")), /storage_path_outside_root/, "a path outside the root is still refused");
+        // Review r1: only a live storage client Binding gets a placement, and a placed path over 1000 characters is refused.
+        await admin.query("update public.clued_agent_bindings set revoked_at=now() where id=$1", [client.id]);
+        assert.equal(await placed(file("stray.md")), "stray.md", "a revoked Binding resolves no root and places nothing");
+        await admin.query("update public.clued_agent_bindings set revoked_at=null where id=$1", [client.id]);
+        const longName = "n".repeat(1000 - target.root.length - 1 - 3) + ".md";
+        await assert.rejects(placed(file(longName)), /storage_path_invalid/);
       } finally {
         await admin.query("update clued_private.resource_center_profiles_v1 set cloud_runtime=$2::jsonb where id=$1", [profileOf, JSON.stringify(runtime)]);
       }

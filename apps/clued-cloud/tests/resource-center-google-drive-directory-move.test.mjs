@@ -134,10 +134,10 @@ test("the mutation policy admits a directory move without directory semantics bu
   const base = { profile: p, ...moveMutation, artifact_role: "clued_resource" };
   assert.equal(evaluateResourceCenterMutation(base).status, "allow");
   assert.equal(evaluateResourceCenterMutation({ ...base, operation: "rename" }).error_code, "DIRECTORY_SEMANTICS_REQUIRED");
-  // Decision f382c494: no directory may be moved or renamed to a status name; one
-  // moved into a status-named folder that already exists is allowed.
+  // Decision f382c494 allows only files into an existing status folder; a directory
+  // is never moved to or under a status name.
   assert.equal(evaluateResourceCenterMutation({ ...base, destination_path: TRACK + "/历史" }).error_code, "STATUS_SEMANTIC_DIRECTORY_FORBIDDEN");
-  assert.equal(evaluateResourceCenterMutation({ ...base, destination_path: TRACK + "/历史/folder" }).status, "allow");
+  assert.equal(evaluateResourceCenterMutation({ ...base, destination_path: TRACK + "/历史/folder" }).error_code, "STATUS_SEMANTIC_DIRECTORY_FORBIDDEN");
   assert.equal(evaluateResourceCenterMutation({ ...base, destination_path: ROOT + "/30_other/folder" }).error_code, "RESOURCE_CENTER_ROOT_CHILD_FORBIDDEN");
 });
 
