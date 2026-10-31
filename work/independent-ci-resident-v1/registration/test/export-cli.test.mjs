@@ -180,6 +180,18 @@ test('Windows facts from the PowerShell side are validated before use', () => {
     /FACTS_INVALID|PUBLIC_KEY_INVALID/);
 });
 
+test('no foreach variable in the PowerShell script reuses a parameter name (variables are case-insensitive)', () => {
+  // TURING H0, 2026-10-31: `foreach ($role in $KeyNames.Keys)` wrote into the typed [string[]]$Role parameter, so $Magic[$role]
+  // returned an array (init-keys refused with PUBLIC_KEY_INVALID) and export would have declared the key name as the node's role.
+  const text = fs.readFileSync(SCRIPT_PS, 'utf8');
+  const block = text.slice(text.indexOf('param('), text.indexOf('\n)\n') + 2);
+  const params = new Set([...block.matchAll(/\$([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|,|\r?\n|$)/g)].map(m => m[1].toLowerCase()));
+  assert.ok(params.has('role') && params.has('node') && params.has('out'), 'the parameter names were read');
+  const loops = [...text.matchAll(/foreach\s*\(\s*\$([A-Za-z_][A-Za-z0-9_]*)\s+in\b/gi)].map(m => m[1]);
+  assert.ok(loops.length > 0);
+  assert.deepEqual(loops.filter(name => params.has(name.toLowerCase())), []);
+});
+
 test('Windows: the EccPublicBlob conversion yields keys Node verifies (ephemeral CNG keys, no key store touched)',
   { skip: process.platform !== 'win32' && 'needs Windows CNG' }, () => {
     // -File hands "scan,publish" over as one string; the script splits it.
