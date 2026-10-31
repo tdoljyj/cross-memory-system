@@ -28,6 +28,11 @@ const MESSAGES: Record<string, string> = {
   resident_failover_binding_invalid: "名单里有连接已撤销、已过期或不属于当前账号，请刷新页面。",
   resident_failover_scope_missing: "名单里有连接缺少 context:read 权限，不能当常驻节点。",
   resident_failover_purpose_invalid: "停车位和“其他”用途的连接不是常驻节点，不能自动接班。",
+  resident_failover_heartbeat_holds_role: "这个连接持有 CI 准入（包括停车位和“其他”用途），不能当心跳连接。",
+  resident_failover_heartbeat_is_node: "这个连接是某个节点的 CI 连接，不能再当心跳连接。",
+  resident_failover_heartbeat_linked: "这个心跳连接已经挂在另一个节点上，请先解除。",
+  resident_failover_heartbeat_not_linked: "这个连接现在没有挂靠，请刷新页面。",
+  resident_failover_node_invalid: "这个节点的 CI 连接已失效或还没有登记节点，请刷新页面。",
   confirmation_token_expired: "确认已超过 5 分钟有效期，请重新点一次。",
   confirmation_token_revoked: "确认已被更新的操作取代，请按页面当前内容操作。",
   confirmation_token_reused: "这个确认已经用过了，请刷新页面。",
@@ -154,6 +159,9 @@ export default function ResidentFailoverPage() {
   }
   const askMembers = (list: string[]) => issue({ change: "members", members: list });
   const askSwitch = (enabled: boolean) => issue({ change: "switch", enabled });
+  const askLink = (heartbeat: string, node: string) =>
+    issue({ change: "heartbeat_link", heartbeat_binding_id: heartbeat, node_binding_id: node });
+  const askUnlink = (heartbeat: string) => issue({ change: "heartbeat_unlink", heartbeat_binding_id: heartbeat });
   const move = (index: number, by: number) => {
     const list = ids(members);
     const other = index + by;
@@ -177,12 +185,26 @@ export default function ResidentFailoverPage() {
       if (target.view.change === "switch") setNotice(result.enabled === true
         ? "已打开自动接班总开关。持有者失联 30 分钟后，看门狗会按次序把 CI 准入交给第一个健康的节点。"
         : "已关闭自动接班总开关。看门狗照常检查和提醒，但不会交接。");
+      else if (target.view.change === "heartbeat_link") setNotice("已挂靠：" + label(object(target.view.heartbeat) ? target.view.heartbeat : null)
+        + " 发的心跳记到节点 " + label(object(target.view.node) ? target.view.node : null) + "。")
+      else if (target.view.change === "heartbeat_unlink") setNotice("已解除：" + label(object(target.view.heartbeat) ? target.view.heartbeat : null)
+        + " 发的心跳不再被接受。")
       else setNotice("已保存可自动接班的节点和次序。");
     } catch (failure) {
       failed = true;
       if (epoch.current === generation) { setPending(null); setError(failure instanceof RequestFailure ? failure.message : "结果未知，请刷新页面核对。"); }
     } finally { if (epoch.current === generation) setWorking(false); }
     if (epoch.current === generation) await load(!failed);
+  }
+
+  // A connection id is a public identifier; copying it needs no confirmation.
+  async function copy(bindingId: string) {
+    setError(""); setNotice("");
+    try {
+      if (typeof navigator === "undefined" || !navigator.clipboard) throw new Error("clipboard");
+      await navigator.clipboard.writeText(bindingId);
+      setNotice("已复制连接编号 " + bindingId + "。");
+    } catch { setError("浏览器没有允许复制，请手动选中编号复制。"); }
   }
 
   const view = pending?.view ?? null;
@@ -194,6 +216,8 @@ export default function ResidentFailoverPage() {
   const nodes = objects(data?.nodes);
   const watchdog = object(data?.watchdog) ? data.watchdog : null;
   const alerts = objects(data?.alerts);
+  const allBindings = objects(data?.bindings);
+  const nodeBindings = allBindings.filter(b => b.is_node === true);
   const find = (id: unknown) => [...members, ...nodes, ...objects(data?.connections)].find(b => String(b.binding_id) === String(id)) ?? null;
   const nameOf = (id: unknown) => {
     const found = [...members, ...nodes, ...objects(data?.connections)].find(b => String(b.binding_id) === String(id));
@@ -202,7 +226,8 @@ export default function ResidentFailoverPage() {
   const busy = working || !!pending;
   const describeAlert = (alert: Json) => {
     if (alert.receipt_kind === "CI_ADMISSION_AUTO_HANDOVER") return "已自动把 CI 准入从 " + nameOf(alert.from_binding_id) + " 移交给 "
-      + nameOf(alert.to_binding_id) + "（" + (alert.trigger === "service_not_running" ? "服务连续 30 分钟没在运行" : "失联 30 分钟")
+      + nameOf(alert.to_binding_id) + "（" + (alert.trigger === "service_not_running" ? "服务连续 30 分钟没在运行"
+        : alert.trigger === "connection_unavailable" ? "它的 CI 连接已失效" : "失联 30 分钟")
       + "），" + clock(alert.effective_at) + " 起生效。";
     if (alert.receipt_kind === "CI_ADMISSION_FAILOVER_NO_TARGET") return "当前持有者 " + nameOf(alert.holder)
       + " 失联，但没有可以接班的节点，没有交接，请你处理。";
@@ -221,6 +246,13 @@ export default function ResidentFailoverPage() {
         {view.change === "switch" ? <dl>
           <dt>总开关</dt><dd>{view.enabled ? "打开：持有者失联时自动交接" : "关闭：只提醒，不交接"}</dd>
           <dt>可自动接班的节点</dt><dd>{listView(view.members)}</dd>
+        </dl> : view.change === "heartbeat_link" ? <dl>
+          <dt>心跳连接</dt><dd>{label(object(view.heartbeat) ? view.heartbeat : null)}：以后只能发心跳，不能做 CI 准入</dd>
+          <dt>记到节点</dt><dd>{label(object(view.node) ? view.node : null)}</dd>
+          {object(view.replaces) && <><dt>替换</dt><dd>{label(view.replaces)}（它发的心跳不再被接受）</dd></>}
+        </dl> : view.change === "heartbeat_unlink" ? <dl>
+          <dt>解除心跳连接</dt><dd>{label(object(view.heartbeat) ? view.heartbeat : null)}（它发的心跳不再被接受）</dd>
+          <dt>原来记到节点</dt><dd>{label(object(view.node) ? view.node : null)}</dd>
         </dl> : <dl>
           <dt>改之前</dt><dd>{listView(view.members_before)}</dd>
           <dt>改之后</dt><dd>{listView(view.members)}</dd>
@@ -277,6 +309,24 @@ export default function ResidentFailoverPage() {
               </>}
             </dl></div>;
           })}
+        </section>
+        <section aria-label="连接编号"><h2>连接编号</h2>
+          <p className="context-muted">装心跳连接时，把这个编号填给安装脚本的 -HeartbeatBindingId。</p>
+          {allBindings.length === 0 ? <p className="context-muted">目前没有有效的连接。</p>
+            : <ul>{allBindings.map(binding => {
+              const id = String(binding.binding_id);
+              const link = object(binding.heartbeat_for) ? binding.heartbeat_for : null;
+              // A connection can carry heartbeats when it is not a node, holds no CI admission and can read.
+              const canLink = !link && binding.is_node !== true && !binding.purpose
+                && Array.isArray(binding.scopes) && binding.scopes.includes("context:read");
+              return <li key={id}>{label(binding)}：<code style={{ fontFamily: "monospace" }}>{id}</code>{" "}
+                <button type="button" onClick={() => void copy(id)}>复制</button>
+                {link ? "（心跳连接，挂靠到节点 " + String(link.node_agent_name ?? link.node_binding_id ?? "") + "）" : ""}
+                {binding.is_node === true ? "（节点的 CI 连接）" : ""}
+                {link && <button type="button" disabled={busy} onClick={() => void askUnlink(id)}>解除心跳挂靠…</button>}
+                {canLink && nodeBindings.map(node => <button key={String(node.binding_id)} type="button" disabled={busy}
+                  onClick={() => void askLink(id, String(node.binding_id))}>{"挂为 " + String(node.agent_name ?? "") + " 的心跳连接…"}</button>)}</li>;
+            })}</ul>}
         </section>
         <section aria-label="提醒"><h2>最近的提醒与自动交接</h2>
           {alerts.length === 0 ? <p className="context-muted">最近 7 天没有提醒。</p>

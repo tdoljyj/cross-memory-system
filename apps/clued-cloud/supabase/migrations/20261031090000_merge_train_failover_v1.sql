@@ -59,9 +59,9 @@
 -- 5. CI8 is unchanged: no new anon or Worker RPC. The resident reads and
 --    writes through the CI command door (clued_work_verify_v1 ->
 --    work_claim_ci_command_v1): before the role check and the claim lock,
---    ci_node_heartbeat (every resident node, holder or not) and
---    ci_node_heartbeat_link / _unlink (item 9), and the refusal of every other
---    action from a linked heartbeat connection; after the role check,
+--    ci_node_heartbeat (every resident node, holder or not, and linked
+--    heartbeat connections, item 9) and the refusal of every other action from
+--    a linked heartbeat connection; after the role check,
 --    ci_nodes_status and train_sweep_watermark for the role holder.
 --    work_claim_ci_command_v1 is 2a's definition (20261031060000) plus these
 --    branches.
@@ -83,20 +83,24 @@
 --    replaces a newer one). The holder reads the latest per repository in
 --    ci_nodes_status, so a node that takes over sweeps from it.
 -- 9. Heartbeat connections (§41.6a "专用心跳"): the installer never uses a
---    node's CI token for heartbeats. A node's CI connection (a live stage-1
---    node row) links a separate connection of the same account with the CI
---    command door action ci_node_heartbeat_link (unlink:
---    ci_node_heartbeat_unlink; linking another one replaces the node's
---    previous link; each change leaves a receipt). The linked connection must
---    be live, hold no ci-admission row and not be a node's CI connection
---    itself; it can be linked to one node at a time. A heartbeat from it is
---    recorded on the node it is linked to (the node's own CI connection still
---    works); it may call no other CI command door action
---    (heartbeat_connection_only). The watchdog, ci_nodes_status and the page
---    keep identifying a node by its CI connection; the liveness row also
---    records which connection sent the latest heartbeat. The door still
---    resolves every caller with context:read: a connection that can only send
---    heartbeats (a new scope) is later work.
+--    node's CI token for heartbeats. The Owner links a separate connection of
+--    the same account to a node's CI connection on /bindings/failover, in the
+--    same two Native steps as the other settings (change heartbeat_link or
+--    heartbeat_unlink; each leaves a receipt). The linked connection must be
+--    live, have context:read (the CI command door resolves every caller with
+--    it), hold no ci-admission row and not be a node's CI connection; it is
+--    linked to one node at a time, and linking another one to a node replaces
+--    that node's previous link. A heartbeat from it is recorded on its node
+--    while the node's CI connection is live (the node's own CI connection
+--    still works); it may call no other CI command door action
+--    (heartbeat_connection_only), and it can be neither marked for nor handed
+--    ci-admission (binding_role_change_check_v1 and
+--    binding_role_handover_check_v1 refuse it, under the role lock that the
+--    link change also takes). The watchdog, ci_nodes_status and the page keep
+--    identifying a node by its CI connection; a holder whose CI connection is
+--    no longer live counts as lost. A connection that can only send
+--    heartbeats (a scope without context:read) is later work: it needs the
+--    connection scope list, issuance and consent outside this migration.
 --
 -- The production publisher runs this file and its ledger row in one
 -- transaction, so CREATE INDEX CONCURRENTLY is unavailable. Ordinary index
@@ -110,7 +114,9 @@ declare expected record;
 begin
   for expected in select * from (values
     ('clued_private.work_claim_ci_command_v1(text,jsonb)', '2106926771f3e1bbc5009725bde02c24'),
-    ('public.clued_binding_role_handover_v1(jsonb)', '8aa49c237bb433aef8fba854c75596da')
+    ('public.clued_binding_role_handover_v1(jsonb)', '8aa49c237bb433aef8fba854c75596da'),
+    ('clued_private.binding_role_handover_check_v1(public.clued_agent_bindings,public.clued_agent_bindings)', 'b785f17c22c2cd36cc89fb17d42836aa'),
+    ('clued_private.binding_role_change_check_v1(public.clued_agent_bindings,text,boolean,jsonb)', 'b4cdabfa3f97e33dbbd8dce204d1695c')
   ) inputs(signature, body_md5)
   loop
     if not exists(select 1 from pg_catalog.pg_proc p where p.oid=pg_catalog.to_regprocedure(expected.signature)
@@ -236,6 +242,65 @@ language sql immutable set search_path='' as $$
     'intake_pause_cap_minutes',200,'alert_every_minutes',60,'watchdog_stale_minutes',5,'activation_delay_minutes',
     (extract(epoch from clued_private.binding_role_activation_delay_v1())/60)::integer)
 $$;
+
+-- ---------------------------------------------------------------------------
+-- The role checks of 20261023010000, plus: a heartbeat connection linked to a
+-- node is never marked for nor handed ci-admission.
+
+create or replace function clued_private.binding_role_change_check_v1(p_binding public.clued_agent_bindings,p_role text,
+  p_enabled boolean,p_purpose jsonb) returns text
+language plpgsql stable security definer set search_path='' as $$
+declare r clued_private.binding_roles_v1%rowtype;
+begin
+  select * into r from clued_private.binding_roles_v1 x
+    where x.binding_id=p_binding.id and x.role=p_role and x.revoked_at is null;
+  if p_enabled=found then raise exception 'binding_role_unchanged' using errcode='22023'; end if;
+  if not p_enabled then
+    if p_purpose is not null then raise exception 'binding_role_purpose_invalid' using errcode='22023'; end if;
+    if r.purpose='parking' and not exists(select 1 from clued_private.binding_roles_v1 x
+        where x.user_id=p_binding.user_id and x.role=p_role and x.revoked_at is null
+          and x.purpose='parking' and x.id<>r.id) then
+      raise exception 'binding_role_parking_protected' using errcode='22023'; end if;
+    return r.purpose;
+  end if;
+  if p_role<>'ci-admission' then
+    if p_purpose is not null then raise exception 'binding_role_purpose_invalid' using errcode='22023'; end if;
+    return 'unspecified';
+  end if;
+  if exists(select 1 from clued_private.ci_node_heartbeat_link_v1 k where k.heartbeat_binding_id=p_binding.id
+      and k.revoked_at is null) then
+    raise exception 'binding_role_heartbeat_connection' using errcode='22023'; end if;
+  if p_purpose is null then raise exception 'binding_role_purpose_required' using errcode='22023'; end if;
+  if jsonb_typeof(p_purpose) is distinct from 'string'
+      or p_purpose#>>'{}' not in ('resident-node','parking','other') then
+    raise exception 'binding_role_purpose_invalid' using errcode='22023'; end if;
+  if p_purpose#>>'{}'='resident-node'
+      and clued_private.binding_role_resident_held_v1(p_binding.user_id,array[p_binding.id]) then
+    raise exception 'binding_role_resident_holder_exists' using errcode='22023'; end if;
+  return p_purpose#>>'{}';
+end $$;
+
+create or replace function clued_private.binding_role_handover_check_v1(p_from public.clued_agent_bindings,
+  p_to public.clued_agent_bindings) returns void
+language plpgsql stable security definer set search_path='' as $$
+declare v_purpose text;
+begin
+  select r.purpose into v_purpose from clued_private.binding_roles_v1 r
+    where r.binding_id=p_from.id and r.role='ci-admission' and r.revoked_at is null;
+  if not found then raise exception 'binding_role_handover_source_invalid' using errcode='22023'; end if;
+  if v_purpose='parking' then raise exception 'binding_role_parking_protected' using errcode='22023'; end if;
+  if p_to.id=p_from.id or not clued_private.binding_live_v1(p_to) then
+    raise exception 'binding_role_handover_target_invalid' using errcode='22023'; end if;
+  if not ('context:read'=any(p_to.scopes)) then raise exception 'binding_role_scope_missing' using errcode='22023'; end if;
+  if exists(select 1 from clued_private.ci_node_heartbeat_link_v1 k where k.heartbeat_binding_id=p_to.id
+      and k.revoked_at is null) then
+    raise exception 'binding_role_heartbeat_connection' using errcode='22023'; end if;
+  if exists(select 1 from clued_private.binding_roles_v1 r
+      where r.binding_id=p_to.id and r.role='ci-admission' and r.revoked_at is null) then
+    raise exception 'binding_role_handover_target_holds_role' using errcode='22023'; end if;
+  if clued_private.binding_role_resident_held_v1(p_from.user_id,array[p_from.id,p_to.id]) then
+    raise exception 'binding_role_resident_holder_exists' using errcode='22023'; end if;
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- Handover core, shared by the one-click handover and the watchdog.
@@ -419,7 +484,8 @@ $$;
 -- intake_paused_until exactly with INTAKE_PAUSED; node_name is accepted and
 -- ignored. Any other field (a time, a node id) is refused. The caller is a
 -- node's CI connection (its own node) or a heartbeat connection linked to one
--- (that node); anyone else gets ci_node_not_registered.
+-- (that node, while the node's CI connection is live); anyone else gets
+-- ci_node_not_registered.
 create function clued_private.ci_node_heartbeat_v1(b public.clued_agent_bindings,p_input jsonb)
 returns jsonb language plpgsql volatile security definer set search_path='' as $$
 declare v_now timestamptz:=pg_catalog.clock_timestamp(); v_state text:=p_input->>'state';
@@ -465,7 +531,9 @@ begin
     v_node_binding:=b.id;
   else
     select k.node_binding_id into v_node_binding from clued_private.ci_node_heartbeat_link_v1 k
-      where k.user_id=b.user_id and k.heartbeat_binding_id=b.id and k.revoked_at is null;
+      join public.clued_agent_bindings nb on nb.id=k.node_binding_id and nb.user_id=k.user_id
+      where k.user_id=b.user_id and k.heartbeat_binding_id=b.id and k.revoked_at is null
+        and clued_private.binding_live_v1(nb);
   end if;
   if v_node_binding is null then
     return jsonb_build_object('status','rejected','error_code','ci_node_not_registered'); end if;
@@ -497,69 +565,6 @@ begin
     'node_binding_id',v_node_binding,'via_link',v_node_binding<>b.id,
     'intake_paused_until',v_until,'watchdog',clued_private.ci_failover_watchdog_view_v1(),
     'auto_handovers',clued_private.ci_failover_received_v1(b.user_id,v_node_binding));
-end $$;
-
--- Linking a heartbeat connection (CI command door actions
--- ci_node_heartbeat_link and ci_node_heartbeat_unlink, before the role check).
--- Input {action, scope, heartbeat_binding_id}; for unlink the id is optional
--- (when given it must be the node's current link). Only a node's CI
--- connection (a live stage-1 node row) calls it. Linking another connection
--- replaces the node's previous link; linking the same one again is a replay.
-create function clued_private.ci_node_heartbeat_link_v1(b public.clued_agent_bindings,p_input jsonb)
-returns jsonb language plpgsql volatile security definer set search_path='' as $$
-declare v_op text:=p_input->>'action'; v_now timestamptz:=clock_timestamp(); h public.clued_agent_bindings%rowtype;
-  k clued_private.ci_node_heartbeat_link_v1%rowtype; v_receipt uuid; v_target uuid;
-begin
-  if p_input-array['action','scope','heartbeat_binding_id']<>'{}'::jsonb
-      or (v_op='ci_node_heartbeat_link' and not (p_input ? 'heartbeat_binding_id'))
-      or (p_input ? 'heartbeat_binding_id' and (jsonb_typeof(p_input->'heartbeat_binding_id') is distinct from 'string'
-        or p_input->>'heartbeat_binding_id' !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')) then
-    raise exception 'work_claim_ci_command_invalid' using errcode='22023'; end if;
-  if not exists(select 1 from clued_private.ci_nodes_v1 n where n.user_id=b.user_id and n.binding_id=b.id
-      and n.state not in ('retired','revoked')) then
-    return jsonb_build_object('status','rejected','error_code','ci_node_not_registered'); end if;
-  v_target:=(p_input->>'heartbeat_binding_id')::uuid;
-  perform pg_advisory_xact_lock(hashtextextended('ci-heartbeat-link:'||b.user_id::text,0));
-  select * into k from clued_private.ci_node_heartbeat_link_v1 x
-    where x.node_binding_id=b.id and x.revoked_at is null for update;
-  if v_op='ci_node_heartbeat_unlink' then
-    if k.link_id is null or (v_target is not null and k.heartbeat_binding_id<>v_target) then
-      return jsonb_build_object('status','rejected','error_code','ci_heartbeat_link_not_found'); end if;
-    insert into public.clued_audit_receipts(user_id,binding_id,context_key,operation,object_type,object_id,version,metadata)
-    values(b.user_id,b.id,'global','ci_node_heartbeat_link','ci_node_heartbeat_link',k.link_id::text,1,
-      jsonb_build_object('receipt_kind','CI_NODE_HEARTBEAT_UNLINKED','node_binding_id',b.id,
-        'heartbeat_binding_id',k.heartbeat_binding_id))
-    returning id into v_receipt;
-    update clued_private.ci_node_heartbeat_link_v1 set revoked_at=v_now,revoked_receipt_id=v_receipt where link_id=k.link_id;
-    return jsonb_build_object('status','ok','unlinked',true,'heartbeat_binding_id',k.heartbeat_binding_id,'receipt_id',v_receipt);
-  end if;
-  if k.heartbeat_binding_id=v_target then
-    return jsonb_build_object('status','ok','linked',true,'replayed',true,'heartbeat_binding_id',v_target,
-      'receipt_id',k.linked_receipt_id);
-  end if;
-  select * into h from public.clued_agent_bindings x where x.id=v_target and x.user_id=b.user_id for share;
-  if not found or h.id=b.id or not clued_private.binding_live_v1(h) or not ('context:read'=any(h.scopes)) then
-    return jsonb_build_object('status','rejected','error_code','ci_heartbeat_link_target_invalid'); end if;
-  if exists(select 1 from jsonb_array_elements(clued_private.binding_role_holders_v1(b.user_id,'ci-admission','{}'::uuid[])) r
-      where r->>'binding_id'=h.id::text) then
-    return jsonb_build_object('status','rejected','error_code','ci_heartbeat_link_target_holds_role'); end if;
-  if exists(select 1 from clued_private.ci_nodes_v1 n where n.user_id=b.user_id and n.binding_id=h.id
-      and n.state not in ('retired','revoked')) then
-    return jsonb_build_object('status','rejected','error_code','ci_heartbeat_link_target_is_node'); end if;
-  if exists(select 1 from clued_private.ci_node_heartbeat_link_v1 x where x.heartbeat_binding_id=h.id and x.revoked_at is null) then
-    return jsonb_build_object('status','rejected','error_code','ci_heartbeat_link_target_linked'); end if;
-  insert into public.clued_audit_receipts(user_id,binding_id,context_key,operation,object_type,object_id,version,metadata)
-  values(b.user_id,b.id,'global','ci_node_heartbeat_link','ci_node_heartbeat_link',h.id::text,1,
-    jsonb_build_object('receipt_kind','CI_NODE_HEARTBEAT_LINKED','node_binding_id',b.id,'heartbeat_binding_id',h.id,
-      'replaced_heartbeat_binding_id',k.heartbeat_binding_id))
-  returning id into v_receipt;
-  if k.link_id is not null then
-    update clued_private.ci_node_heartbeat_link_v1 set revoked_at=v_now,revoked_receipt_id=v_receipt where link_id=k.link_id;
-  end if;
-  insert into clued_private.ci_node_heartbeat_link_v1(user_id,heartbeat_binding_id,node_binding_id,linked_at,linked_receipt_id)
-  values(b.user_id,h.id,b.id,v_now,v_receipt);
-  return jsonb_build_object('status','ok','linked',true,'replayed',false,'heartbeat_binding_id',h.id,
-    'replaced_heartbeat_binding_id',k.heartbeat_binding_id,'receipt_id',v_receipt);
 end $$;
 
 -- The latest full-sweep watermark per repository, whoever reported it.
@@ -663,9 +668,6 @@ begin
   if exists(select 1 from clued_private.ci_node_heartbeat_link_v1 k where k.user_id=b.user_id
       and k.heartbeat_binding_id=b.id and k.revoked_at is null) then
     return jsonb_build_object('status','rejected','error_code','heartbeat_connection_only'); end if;
-  if op in ('ci_node_heartbeat_link','ci_node_heartbeat_unlink') then
-    return clued_private.ci_node_heartbeat_link_v1(b,p_input);
-  end if;
   -- A role label supplied in a payload or a read-only Agent connection is
   -- never a CI principal. This is the existing Owner-designated CI Binding.
   if not exists(select 1 from clued_private.binding_roles_v1 r where r.user_id=b.user_id
@@ -1037,6 +1039,7 @@ create function clued_private.ci_admission_failover_owner_v1(p_owner uuid) retur
 language plpgsql volatile security definer set search_path='' as $$
 declare s clued_private.ci_failover_settings_v1%rowtype; v_now timestamptz; v_holders uuid[]; v_holder uuid;
   mx clued_private.ci_failover_members_v1%rowtype; xn clued_private.ci_node_liveness_v1%rowtype; v_anchor timestamptz;
+  v_holder_live boolean;
   v_silent boolean; v_stuck boolean; v_candidates jsonb; v_target jsonb; v_trigger text; v_meta jsonb;
   v_done jsonb; v_error text; v_alert uuid; v_note jsonb; v_why text;
 begin
@@ -1051,6 +1054,8 @@ begin
     return jsonb_build_object('outcome','no_single_resident_holder','holders',to_jsonb(coalesce(v_holders,'{}'::uuid[])));
   end if;
   v_holder:=v_holders[1];
+  v_holder_live:=coalesce((select clued_private.binding_live_v1(x) from public.clued_agent_bindings x
+    where x.id=v_holder and x.user_id=p_owner),false);
   select * into mx from clued_private.ci_failover_members_v1 x where x.user_id=p_owner and x.binding_id=v_holder;
   if not found then return jsonb_build_object('outcome','holder_not_marked','holder',v_holder); end if;
   xn:=clued_private.ci_failover_node_v1(p_owner,v_holder);
@@ -1064,13 +1069,16 @@ begin
     end if;
     return jsonb_build_object('outcome','holder_not_heard_yet','holder',v_holder);
   end if;
-  v_silent:=xn.last_heartbeat_at<=v_now-interval '30 minutes';
+  -- A holder whose CI connection is no longer live is lost at once: it cannot work.
+  v_silent:=xn.last_heartbeat_at<=v_now-interval '30 minutes' or not v_holder_live;
   v_stuck:=not v_silent and xn.unhealthy_since is not null and xn.unhealthy_since<=v_now-interval '30 minutes';
   if not v_silent and not v_stuck then
     return jsonb_build_object('outcome','holder_alive','holder',v_holder);
   end if;
-  v_trigger:=case when v_silent then 'silence' else 'service_not_running' end;
-  v_why:=case when v_silent then '失联 30 分钟' else '连续 30 分钟报服务没在运行或状态快照过旧' end;
+  v_trigger:=case when not v_holder_live then 'connection_unavailable' when v_silent then 'silence'
+    else 'service_not_running' end;
+  v_why:=case when not v_holder_live then '的 CI 连接已失效' when v_silent then '失联 30 分钟'
+    else '连续 30 分钟报服务没在运行或状态快照过旧' end;
   -- A HALTED, PAUSED or unexpired INTAKE_PAUSED holder is never handed out:
   -- its latest readable report decides (UNKNOWN looks back to it).
   if xn.readable_state in ('HALTED','PAUSED')
@@ -1191,13 +1199,24 @@ language sql stable security definer set search_path='' as $$
   from clued_private.ci_failover_members_v1 m where m.user_id=p_owner
 $$;
 
+-- A connection as a heartbeat-link view shows it.
+create function clued_private.ci_failover_binding_view_v1(p_owner uuid,p_binding uuid) returns jsonb
+language sql stable security definer set search_path='' as $$
+  select jsonb_build_object('binding_id',b.id,'agent_name',b.agent_name,'vendor',b.vendor,'scopes',to_jsonb(b.scopes),
+    'live',clued_private.binding_live_v1(b))
+  from public.clued_agent_bindings b where b.id=p_binding and b.user_id=p_owner
+$$;
+
 -- The rules of a change, for both steps. p_choices: {change: members,
--- members: [binding ids in order], base_version} or {change: switch,
--- enabled, base_version}. Returns the view the Owner confirms.
+-- members: [binding ids in order], base_version}, {change: switch, enabled,
+-- base_version}, {change: heartbeat_link, heartbeat_binding_id,
+-- node_binding_id, base_version} or {change: heartbeat_unlink,
+-- heartbeat_binding_id, base_version}. Returns the view the Owner confirms.
 create function clued_private.ci_failover_change_view_v1(p_owner uuid,p_choices jsonb) returns jsonb
 language plpgsql stable security definer set search_path='' as $$
 declare v_setting jsonb:=clued_private.ci_failover_setting_view_v1(p_owner); v_ids uuid[]; v_current uuid[];
-  b public.clued_agent_bindings%rowtype; v_id uuid; v_holders jsonb;
+  b public.clued_agent_bindings%rowtype; v_id uuid; v_holders jsonb; v_hb uuid; v_node uuid;
+  k clued_private.ci_node_heartbeat_link_v1%rowtype;
 begin
   if jsonb_typeof(p_choices->'base_version') is distinct from 'number'
       or (p_choices->>'base_version') !~ '^[0-9]{1,18}$' then
@@ -1212,6 +1231,49 @@ begin
       raise exception 'resident_failover_unchanged' using errcode='22023'; end if;
     return jsonb_build_object('kind','resident_failover','change','switch','setting',v_setting,
       'enabled',(p_choices->>'enabled')::boolean,'members',clued_private.ci_failover_list_view_v1(p_owner,v_current),
+      'rules',clued_private.ci_failover_rules_v1());
+  end if;
+  if p_choices->>'change' in ('heartbeat_link','heartbeat_unlink') then
+    if jsonb_typeof(p_choices->'heartbeat_binding_id') is distinct from 'string'
+        or p_choices->>'heartbeat_binding_id' !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        or (p_choices->>'change'='heartbeat_link' and (jsonb_typeof(p_choices->'node_binding_id') is distinct from 'string'
+          or p_choices->>'node_binding_id' !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          or p_choices->>'node_binding_id'=p_choices->>'heartbeat_binding_id')) then
+      raise exception 'resident_failover_input_invalid' using errcode='22023'; end if;
+    v_hb:=(p_choices->>'heartbeat_binding_id')::uuid;
+    select * into k from clued_private.ci_node_heartbeat_link_v1 x where x.user_id=p_owner
+      and x.heartbeat_binding_id=v_hb and x.revoked_at is null;
+    if p_choices->>'change'='heartbeat_unlink' then
+      if k.link_id is null then raise exception 'resident_failover_heartbeat_not_linked' using errcode='22023'; end if;
+      return jsonb_build_object('kind','resident_failover','change','heartbeat_unlink','setting',v_setting,
+        'heartbeat',clued_private.ci_failover_binding_view_v1(p_owner,v_hb),
+        'node',clued_private.ci_failover_binding_view_v1(p_owner,k.node_binding_id),
+        'rules',clued_private.ci_failover_rules_v1());
+    end if;
+    v_node:=(p_choices->>'node_binding_id')::uuid;
+    select * into b from public.clued_agent_bindings x where x.id=v_hb and x.user_id=p_owner;
+    if not found or not clued_private.binding_live_v1(b) then
+      raise exception 'resident_failover_binding_invalid' using errcode='22023'; end if;
+    if not ('context:read'=any(b.scopes)) then
+      raise exception 'resident_failover_scope_missing' using errcode='22023'; end if;
+    if exists(select 1 from jsonb_array_elements(clued_private.binding_role_holders_v1(p_owner,'ci-admission','{}'::uuid[])) h
+        where h->>'binding_id'=v_hb::text) then
+      raise exception 'resident_failover_heartbeat_holds_role' using errcode='22023'; end if;
+    if exists(select 1 from clued_private.ci_nodes_v1 n where n.user_id=p_owner and n.binding_id=v_hb
+        and n.state not in ('retired','revoked')) then
+      raise exception 'resident_failover_heartbeat_is_node' using errcode='22023'; end if;
+    if k.node_binding_id=v_node then raise exception 'resident_failover_unchanged' using errcode='22023'; end if;
+    if k.link_id is not null then raise exception 'resident_failover_heartbeat_linked' using errcode='22023'; end if;
+    select * into b from public.clued_agent_bindings x where x.id=v_node and x.user_id=p_owner;
+    if not found or not clued_private.binding_live_v1(b) or not exists(select 1 from clued_private.ci_nodes_v1 n
+        where n.user_id=p_owner and n.binding_id=v_node and n.state not in ('retired','revoked')) then
+      raise exception 'resident_failover_node_invalid' using errcode='22023'; end if;
+    return jsonb_build_object('kind','resident_failover','change','heartbeat_link','setting',v_setting,
+      'heartbeat',clued_private.ci_failover_binding_view_v1(p_owner,v_hb),
+      'node',clued_private.ci_failover_binding_view_v1(p_owner,v_node),
+      'replaces',(select clued_private.ci_failover_binding_view_v1(p_owner,x.heartbeat_binding_id)
+        from clued_private.ci_node_heartbeat_link_v1 x where x.user_id=p_owner and x.node_binding_id=v_node
+          and x.revoked_at is null),
       'rules',clued_private.ci_failover_rules_v1());
   end if;
   if p_choices->>'change' is distinct from 'members' or jsonb_typeof(p_choices->'members') is distinct from 'array'
@@ -1246,7 +1308,10 @@ end $$;
 -- clued_resident_failover_v1: {} -> the switch, the marked connections in
 -- order, the connections that can be marked, every node's last heartbeat and
 -- self-report, the holder, the watchdog's last tick and recent alerts and
--- automatic handovers. VOLATILE although it only reads (the owner check).
+-- automatic handovers, and every live connection's id (binding_id, a public
+-- identifier: the installer takes a heartbeat connection's by
+-- -HeartbeatBindingId) with the node its heartbeats are linked to, if any.
+-- VOLATILE although it only reads (the owner check).
 create function public.clued_resident_failover_v1(p_input jsonb) returns jsonb
 language plpgsql volatile security definer set search_path='' as $$
 declare v_owner uuid:=clued_private.authorization_owner_v12(); v_holders jsonb;
@@ -1265,6 +1330,17 @@ begin
       order by b.created_at desc,b.id)
       from public.clued_agent_bindings b where b.user_id=v_owner and clued_private.binding_live_v1(b)
         and 'context:read'=any(b.scopes)),'[]'::jsonb),
+    'bindings',coalesce((select jsonb_agg(jsonb_build_object('binding_id',b.id,'agent_name',b.agent_name,
+        'vendor',b.vendor,'scopes',to_jsonb(b.scopes),'created_at',b.created_at,
+        'is_node',exists(select 1 from clued_private.ci_nodes_v1 n where n.user_id=v_owner and n.binding_id=b.id
+          and n.state not in ('retired','revoked')),
+        'purpose',(select h->'purpose' from jsonb_array_elements(v_holders) h where h->>'binding_id'=b.id::text limit 1),
+        'heartbeat_for',(select jsonb_build_object('node_binding_id',k.node_binding_id,'node_agent_name',n.agent_name,
+            'linked_at',k.linked_at)
+          from clued_private.ci_node_heartbeat_link_v1 k join public.clued_agent_bindings n on n.id=k.node_binding_id
+          where k.user_id=v_owner and k.heartbeat_binding_id=b.id and k.revoked_at is null))
+      order by b.created_at desc,b.id)
+      from public.clued_agent_bindings b where b.user_id=v_owner and clued_private.binding_live_v1(b)),'[]'::jsonb),
     'nodes',clued_private.ci_failover_nodes_v1(v_owner),
     'watchdog',clued_private.ci_failover_watchdog_view_v1(),
     'alerts',coalesce((select jsonb_agg(jsonb_build_object('receipt_id',r.id,'created_at',r.created_at,
@@ -1292,9 +1368,12 @@ begin
   end if;
   begin
     if jsonb_typeof(p_input) is distinct from 'object'
-        or exists(select 1 from jsonb_object_keys(p_input) k where k not in ('change','members','enabled','base_version'))
-        or (p_input->>'change'='switch' and p_input ? 'members')
-        or (p_input->>'change'='members' and p_input ? 'enabled') then
+        or p_input->>'change' is null
+        or p_input->>'change' not in ('members','switch','heartbeat_link','heartbeat_unlink')
+        or exists(select 1 from jsonb_object_keys(p_input) k where k not in ('change','base_version')
+          and k<>all(case p_input->>'change' when 'members' then array['members'] when 'switch' then array['enabled']
+            when 'heartbeat_link' then array['heartbeat_binding_id','node_binding_id']
+            else array['heartbeat_binding_id'] end)) then
       raise exception 'resident_failover_input_invalid' using errcode='22023'; end if;
     v_choices:=p_input;
     v_view:=clued_private.ci_failover_change_view_v1(v_owner,v_choices);
@@ -1318,8 +1397,9 @@ begin
   end;
 end $$;
 
--- Step 2: consume the token, re-check under the role lock (the watchdog takes
--- it too), re-render the view, then change the list or the switch.
+-- Step 2: consume the token, re-check under the role lock (the watchdog, the
+-- role marks and the handovers take it too), re-render the view, then change
+-- the list, the switch or a heartbeat link.
 create function public.clued_resident_failover_set_v1(p_input jsonb)
 returns jsonb language plpgsql volatile security definer set search_path='' as $$
 declare v_owner uuid:=clued_private.authorization_owner_v12(); v_token clued_private.native_confirmation_tokens%rowtype;
@@ -1359,13 +1439,16 @@ begin
     v_now:=clock_timestamp();
     v_setting:=clued_private.ci_failover_setting_view_v1(v_owner);
     v_version:=(v_setting->>'version')::bigint+1;
-    v_kind:=case when c->>'change'='members' then 'RESIDENT_FAILOVER_MEMBERS_SET'
-      when (c->>'enabled')::boolean then 'RESIDENT_FAILOVER_ENABLED' else 'RESIDENT_FAILOVER_DISABLED' end;
+    v_kind:=case c->>'change' when 'members' then 'RESIDENT_FAILOVER_MEMBERS_SET'
+      when 'heartbeat_link' then 'CI_NODE_HEARTBEAT_LINKED' when 'heartbeat_unlink' then 'CI_NODE_HEARTBEAT_UNLINKED'
+      else case when (c->>'enabled')::boolean then 'RESIDENT_FAILOVER_ENABLED' else 'RESIDENT_FAILOVER_DISABLED' end end;
     insert into public.clued_audit_receipts(user_id,binding_id,context_key,operation,object_type,object_id,version,metadata)
     values(v_owner,null,'global','resident_failover_set','resident_failover',v_owner::text,v_version,
       jsonb_build_object('receipt_kind',v_kind,'change',c->>'change','base_version',(c->>'base_version')::bigint,
         'enabled',case when c->>'change'='switch' then (c->>'enabled')::boolean else (v_setting->>'enabled')::boolean end,
-        'members',v_view->'members','members_before',v_view->'members_before','token_id',v_token.id,'view_digest',v_token.view_digest,
+        'members',v_view->'members','members_before',v_view->'members_before',
+        'heartbeat',v_view->'heartbeat','node',v_view->'node','replaces',v_view->'replaces',
+        'token_id',v_token.id,'view_digest',v_token.view_digest,
         'session_id',v_token.session_id,'principal','native_account_session'))
     returning id into v_receipt;
     if c->>'change'='members' then
@@ -1377,6 +1460,16 @@ begin
         insert into clued_private.ci_failover_members_v1(user_id,binding_id,rank,marked_at,receipt_id)
         values(v_owner,v_ids[i],i,coalesce((v_marked->>v_ids[i]::text)::timestamptz,v_now),v_receipt);
       end loop;
+    elsif c->>'change'='heartbeat_link' then
+      -- The node's previous link, if any, ends here.
+      update clued_private.ci_node_heartbeat_link_v1 set revoked_at=v_now,revoked_receipt_id=v_receipt
+        where user_id=v_owner and node_binding_id=(c->>'node_binding_id')::uuid and revoked_at is null;
+      insert into clued_private.ci_node_heartbeat_link_v1(user_id,heartbeat_binding_id,node_binding_id,linked_at,linked_receipt_id)
+      values(v_owner,(c->>'heartbeat_binding_id')::uuid,(c->>'node_binding_id')::uuid,v_now,v_receipt);
+    elsif c->>'change'='heartbeat_unlink' then
+      update clued_private.ci_node_heartbeat_link_v1 set revoked_at=v_now,revoked_receipt_id=v_receipt
+        where user_id=v_owner and heartbeat_binding_id=(c->>'heartbeat_binding_id')::uuid and revoked_at is null;
+      if not found then raise exception 'resident_failover_heartbeat_not_linked' using errcode='22023'; end if;
     end if;
     insert into clued_private.ci_failover_settings_v1(user_id,enabled,enabled_at,version,updated_at,receipt_id)
     values(v_owner,
@@ -1430,7 +1523,6 @@ revoke all on function
   clued_private.ci_failover_received_v1(uuid,uuid),
   clued_private.ci_failover_nodes_v1(uuid),
   clued_private.ci_node_heartbeat_v1(public.clued_agent_bindings,jsonb),
-  clued_private.ci_node_heartbeat_link_v1(public.clued_agent_bindings,jsonb),
   clued_private.ci_failover_nodes_status_v1(public.clued_agent_bindings,jsonb),
   clued_private.ci_failover_exclusion_v1(uuid,uuid,timestamptz),
   clued_private.ci_failover_candidates_v1(uuid,uuid,text,timestamptz,timestamptz),
@@ -1442,6 +1534,7 @@ revoke all on function
   clued_private.ci_admission_failover_owner_v1(uuid),
   clued_private.ci_admission_failover_tick_v1(),
   clued_private.ci_failover_setting_view_v1(uuid),
+  clued_private.ci_failover_binding_view_v1(uuid,uuid),
   clued_private.ci_failover_list_view_v1(uuid,uuid[]),
   clued_private.ci_failover_member_ids_v1(uuid),
   clued_private.ci_failover_change_view_v1(uuid,jsonb),

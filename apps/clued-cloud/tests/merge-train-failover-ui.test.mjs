@@ -12,8 +12,9 @@ const compile = path => ts.transpileModule(readFileSync(new URL(path, import.met
 }).outputText;
 const PAGE = compile('../app/bindings/failover/page.tsx');
 
-function fixture(compiled) {
-  const hooks = [], effects = [], calls = [], fetches = [];
+function fixture(compiled, { clipboard = true } = {}) {
+  const hooks = [], effects = [], calls = [], fetches = [], copied = [];
+  const navigator = clipboard ? { clipboard: { writeText(value) { copied.push(value); return Promise.resolve(); } } } : {};
   let cursor = 0, authCallback, root;
   const equal = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
   const React = {
@@ -34,7 +35,7 @@ function fixture(compiled) {
     if (name.endsWith('.css')) return {};
     if (name === 'next/link') return { __esModule: true, default: 'a' };
     throw Error(name);
-  }, Error, Date, Number, String, Math, Array, Object,
+  }, Error, Date, Number, String, Math, Array, Object, navigator,
   fetch(url) { fetches.push(url); return new Promise(() => {}); } });
   function render() { cursor = 0; root = exports.default({}); while (effects.length) effects.shift()(); return root; }
   function nodes(type, from = root) { const out = []; (function visit(n) { if (Array.isArray(n)) return n.forEach(visit);
@@ -45,7 +46,7 @@ function fixture(compiled) {
   function emit(e, s) { authCallback(e, s); render(); }
   function button(t) { const n = nodes('button').find(n => text(n) === t); assert.ok(n, t); return n; }
   render();
-  return { calls, fetches, render, nodes, text, settle, emit, button, unmount: () => hooks.forEach(h => h?.cleanup?.()) };
+  return { calls, fetches, copied, render, nodes, text, settle, emit, button, unmount: () => hooks.forEach(h => h?.cleanup?.()) };
 }
 
 const session = id => ({ user: { id, email: id + '@example.test' }, access_token: 'fixture-' + id });
@@ -136,6 +137,91 @@ test('a halted node shows its halt code, time, pull request and head', async () 
   await open(g);
   assert.ok(!g.text().includes('停机详情'));
   assert.ok(!g.text().includes('挂靠'));
+});
+
+const HB_ID = '6f1c2d3e-4b5a-4c6d-8e7f-901234567890';
+const NEW_ID = '7a2b3c4d-5e6f-4a1b-9c2d-3e4f5a6b7c8d';
+const BINDINGS = [
+  { binding_id: 'b-turing', agent_name: 'turing', vendor: 'Headless', scopes: ['context:read'], is_node: true, purpose: 'resident-node', heartbeat_for: null },
+  { binding_id: 'b-desk', agent_name: 'desk-w-591', vendor: 'Headless', scopes: ['context:read'], is_node: true, purpose: null, heartbeat_for: null },
+  { binding_id: HB_ID, agent_name: 'turing-heartbeat', vendor: 'Headless', scopes: ['context:read'], is_node: false, purpose: null,
+    heartbeat_for: { node_binding_id: 'b-turing', node_agent_name: 'turing', linked_at: '2026-10-31T07:00:00Z' } },
+  { binding_id: NEW_ID, agent_name: 'desk-heartbeat', vendor: 'Headless', scopes: ['context:read'], is_node: false, purpose: null, heartbeat_for: null },
+  { binding_id: 'b-park', agent_name: 'park', vendor: 'Headless', scopes: ['context:read'], is_node: false, purpose: 'parking', heartbeat_for: null },
+  { binding_id: 'b-writer', agent_name: 'writer', vendor: 'Claude', scopes: ['context:write'], is_node: false, purpose: null, heartbeat_for: null },
+];
+
+test('connection ids: every live connection with its id, a copy button and its heartbeat link', async () => {
+  const f = fixture(PAGE);
+  await open(f, DATA({ bindings: BINDINGS }));
+  const shown = f.text();
+  assert.ok(shown.includes('装心跳连接时，把这个编号填给安装脚本的 -HeartbeatBindingId。'));
+  const codes = f.nodes('code');
+  assert.deepEqual(codes.map(n => f.text(n)), ['b-turing', 'b-desk', HB_ID, NEW_ID, 'b-park', 'b-writer']);
+  assert.equal(codes[2].props.style.fontFamily, 'monospace');
+  assert.ok(shown.includes('turing-heartbeat（Headless）：' + HB_ID + ' 复制（心跳连接，挂靠到节点 turing）'));
+  assert.ok(shown.includes('turing（Headless）：b-turing 复制（节点的 CI 连接）'));
+  const copies = f.nodes('button').filter(n => f.text(n) === '复制');
+  assert.equal(copies.length, 6);
+  await copies[2].props.onClick(); await f.settle();
+  assert.deepEqual(f.copied, [HB_ID]);
+  assert.ok(f.text().includes('已复制连接编号 ' + HB_ID + '。'));
+  assert.equal(f.calls.length, 1, 'copying makes no call');
+  // Only a plain readable connection is offered as a heartbeat connection, once per node; a linked one can be released.
+  const linkButtons = f.nodes('button').filter(n => f.text(n).startsWith('挂为 ')).map(n => f.text(n));
+  assert.deepEqual(linkButtons, ['挂为 turing 的心跳连接…', '挂为 desk-w-591 的心跳连接…']);
+  assert.equal(f.nodes('button').filter(n => f.text(n) === '解除心跳挂靠…').length, 1);
+  // Without clipboard access the Owner is told to copy by hand.
+  const g = fixture(PAGE, { clipboard: false });
+  await open(g, DATA({ bindings: BINDINGS }));
+  await g.nodes('button').filter(n => g.text(n) === '复制')[0].props.onClick(); await g.settle();
+  assert.ok(g.text().includes('浏览器没有允许复制，请手动选中编号复制。'));
+  // No live connection: said plainly.
+  const h = fixture(PAGE);
+  await open(h);
+  assert.ok(h.text().includes('目前没有有效的连接。'));
+});
+
+test('linking a heartbeat connection and releasing it: two steps each, exactly the confirmed view', async () => {
+  const f = fixture(PAGE);
+  await open(f, DATA({ bindings: BINDINGS }));
+  f.button('挂为 desk-w-591 的心跳连接…').props.onClick(); f.render();
+  assert.deepEqual(plain([f.calls[1].name, f.calls[1].args]), ['clued_resident_failover_confirmation_issue_v1',
+    { p_input: { change: 'heartbeat_link', heartbeat_binding_id: NEW_ID, node_binding_id: 'b-desk', base_version: 3 } }]);
+  const hb = { binding_id: NEW_ID, agent_name: 'desk-heartbeat', vendor: 'Headless' };
+  const desk = { binding_id: 'b-desk', agent_name: 'desk-w-591', vendor: 'Headless' };
+  f.calls[1].resolve({ data: { status: 'issued', confirmation_token: 'clued_rfo_l', view_digest: 'a'.repeat(64),
+    confirmation_view: { change: 'heartbeat_link', heartbeat: hb, node: desk, replaces: null } }, error: null });
+  await f.settle();
+  assert.ok(f.text().includes('心跳连接desk-heartbeat（Headless）：以后只能发心跳，不能做 CI 准入'));
+  assert.ok(f.text().includes('记到节点desk-w-591（Headless）'));
+  assert.ok(!f.text().includes('替换'));
+  f.button('确认').props.onClick(); f.render();
+  assert.deepEqual(plain([f.calls[2].name, f.calls[2].args]), ['clued_resident_failover_set_v1',
+    { p_input: { confirmation_token: 'clued_rfo_l', view_digest: 'a'.repeat(64) } }]);
+  f.calls[2].resolve({ data: { status: 'committed', change: 'heartbeat_link', version: 4 }, error: null }); await f.settle();
+  assert.ok(f.text().includes('已挂靠：desk-heartbeat（Headless） 发的心跳记到节点 desk-w-591（Headless）。'));
+  assert.equal(f.calls[3].name, 'clued_resident_failover_v1', 'the page is read again');
+  f.calls[3].resolve({ data: DATA({ bindings: BINDINGS }), error: null }); await f.settle();
+  // Release, refused by the server this time.
+  f.button('解除心跳挂靠…').props.onClick(); f.render();
+  assert.deepEqual(plain(f.calls[4].args.p_input), { change: 'heartbeat_unlink', heartbeat_binding_id: HB_ID, base_version: 3 });
+  f.calls[4].resolve({ data: { status: 'issued', confirmation_token: 'clued_rfo_u', view_digest: 'b'.repeat(64),
+    confirmation_view: { change: 'heartbeat_unlink', heartbeat: { agent_name: 'turing-heartbeat', vendor: 'Headless' },
+      node: { agent_name: 'turing', vendor: 'Headless' } } }, error: null });
+  await f.settle();
+  assert.ok(f.text().includes('解除心跳连接turing-heartbeat（Headless）（它发的心跳不再被接受）'));
+  f.button('确认').props.onClick(); f.render();
+  f.calls[5].resolve({ data: { status: 'rejected', error_code: 'resident_failover_heartbeat_not_linked' }, error: null }); await f.settle();
+  assert.ok(f.text().includes('这个连接现在没有挂靠，请刷新页面。'));
+  // A replacing link says what it replaces.
+  f.calls[6].resolve({ data: DATA({ bindings: BINDINGS }), error: null }); await f.settle();
+  f.button('挂为 turing 的心跳连接…').props.onClick(); f.render();
+  f.calls[7].resolve({ data: { status: 'issued', confirmation_token: 'clued_rfo_r', view_digest: 'c'.repeat(64),
+    confirmation_view: { change: 'heartbeat_link', heartbeat: hb, node: { agent_name: 'turing', vendor: 'Headless' },
+      replaces: { agent_name: 'turing-heartbeat', vendor: 'Headless' } } }, error: null });
+  await f.settle();
+  assert.ok(f.text().includes('替换turing-heartbeat（Headless）（它发的心跳不再被接受）'));
 });
 
 test('the switch: two steps, exactly the confirmed view, then the page reloads', async () => {
