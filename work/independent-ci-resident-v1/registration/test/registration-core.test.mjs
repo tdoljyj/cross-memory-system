@@ -4,9 +4,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { generateKeyPairSync } from 'node:crypto';
 import {
-  CAPABILITIES, ENVIRONMENT_KINDS, PROFILE_KEYS, REGISTRATION_KEYS, buildRegistration, canonicalDigest, canonicalJson, jwkFromPublicPem,
+  CAPABILITIES, ENVIRONMENT_KINDS, PROFILE_KEYS, REGISTRATION_KEYS, buildRegistration, canonicalDigest, canonicalJson, databaseRefuses, jwkFromPublicPem,
   keyFingerprint, publicDocument, publicJwk, sourceFromManifest, validProfile, validateFacts, validateRegistration,
 } from '../registration-core.mjs';
 
@@ -99,6 +100,33 @@ test('refusals: private key fields, same key twice, off-curve points, missing So
   assert.throws(() => validateRegistration({ ...registration, secret: 'x' }), /REGISTRATION_INVALID/);
   assert.throws(() => validateRegistration(registration, ['11111111-1111-1111-1111-111111111111']), /not listed/);
   assert.ok(validProfile(registration.profile));
+});
+
+test('canonical JSON and fingerprints are byte-identical to the stage-1 Worker candidate', async t => {
+  // Transpiled with the app's own TypeScript (apps/clued-cloud/node_modules); skipped where the app's dependencies are not installed.
+  const app = path.resolve(here, '../../../../apps/clued-cloud');
+  let ts;
+  try { ts = createRequire(path.join(app, 'package.json'))('typescript'); }
+  catch { t.skip('apps/clued-cloud dependencies are not installed (npm ci there to run this check)'); return; }
+  const source = fs.readFileSync(path.join(app, 'worker/ci-scheduling-v1.ts'), 'utf8');
+  const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const worker = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
+  const samples = [{ b: [1, true, null], a: 'x', c: { z: 1, y: 'é', '': [] } }, { slot_count: 3, capabilities: ['linux', 'scan'], schema: 'clued.ci-node-profile/1' },
+    'string', -42, [[], {}], { 'Z': 1, 'a': 2, 'é': 3, '\u{1F600}': 4 }];
+  for (const sample of samples) assert.equal(canonicalJson(sample), worker.ciCanonicalJson(sample));
+  const jwk = newKey().publicJwk;
+  assert.equal(keyFingerprint(jwk), await worker.ciIdentityFingerprint(jwk));
+});
+
+test('documents the registration RPC would refuse are caught here, including inside key coordinates', () => {
+  assert.equal(databaseRefuses('xxghp_yy'), true, 'no word boundary, unlike the page');
+  assert.equal(databaseRefuses('GHO_'), true, 'case-insensitive');
+  assert.equal(databaseRefuses('github_pat'), false);
+  // Find a real key pair whose coordinate contains such text (about one in 6,500): it must be refused as unregistrable.
+  let refused = null;
+  for (let i = 0; i < 200000 && !refused; i++) { const key = newKey().publicJwk; if (databaseRefuses(key)) refused = key; }
+  assert.ok(refused, 'a refused key was found');
+  assert.throws(() => buildRegistration(facts({ identity_public_jwk: refused }), options()), /KEY_UNREGISTRABLE/);
 });
 
 test('the installed source manifest gives the Source commit and its own hash', () => {

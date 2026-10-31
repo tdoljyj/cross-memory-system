@@ -5,22 +5,25 @@
 //                     writes the /ci-nodes registration document and its public qualification report. Creates nothing but those
 //                     two output files (never overwriting one); a missing key is KEY_MISSING and nothing is written.
 //   init-keys         Linux only, and only with --confirm-create-keys: creates the identity (ECDSA P-256) and encryption
-//                     (ECDH P-256) key pairs in --key-dir. Refuses (KEY_EXISTS) when any of the four files is already there, before
-//                     creating anything. Run it only in an install wave the Owner approved: it is a key operation.
+//                     (ECDH P-256) key pairs in --key-dir. Refuses (KEY_EXISTS) when the directory exists and is not empty, before
+//                     creating anything; builds all four files in a staging directory and moves them in only when complete, so
+//                     a failure leaves no partial key set. Run it only in an install wave the Owner approved: it is a key operation.
 //
 // Linux keys: <key-dir>/identity.key.pem and encryption.key.pem (PKCS#8, mode 0600, the directory 0700) with identity.pub.pem and
-// encryption.pub.pem (SPKI, 0644) written beside them at creation. export reads only the two .pub.pem files (it checks that the
-// private files exist without opening them); the key origin is "software". Windows keys live in CNG and are read by
-// export-node-registration.ps1, which passes the observed public facts here with --facts <file>.
+// encryption.pub.pem (SPKI, 0644) written beside them at creation. export reads only the two .pub.pem files, and only when they are
+// regular files no one else may write (it checks the private files with lstat, never opens them); the key origin is "software".
+// Windows keys live in CNG and are read by export-node-registration.ps1, which passes the observed public facts here with
+// --facts <file> (accepted on Windows only).
 //
-// No network access, no private key ever printed, written elsewhere or put in the output. Errors print one CODE: detail line and exit 2.
+// No network access (Docker is asked through its local default context only), no private key ever printed, written elsewhere or
+// put in the output. Errors print one CODE: detail line and exit 2.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { generateKeyPairSync } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { RegistrationError, buildRegistration, check, jwkFromPublicPem, keyFingerprint, sourceFromManifest, validateFacts }
+import { RegistrationError, buildRegistration, check, databaseRefuses, jwkFromPublicPem, keyFingerprint, sourceFromManifest, validateFacts }
   from './registration-core.mjs';
 
 export const LINUX_KEY_DIR = '/etc/clued-ci-node/keys';
@@ -67,55 +70,105 @@ function readOnlyFile(file, code) {
   try { return fs.readFileSync(file); } catch (error) { throw new RegistrationError(code, `${file}: ${error.code ?? error.message}`); }
 }
 
-// Public keys of a Linux node. Only the .pub.pem files are opened; the private files are checked for presence with lstat.
+const posix = () => process.platform !== 'win32';
+const lstatOrNull = file => { try { return fs.lstatSync(file); } catch { return null; } };
+
+// Public keys of a Linux node. Only the .pub.pem files are opened, and only when each is a regular file (not a link that could lead
+// to the private file) that no one else may write (a swapped public key would be registered). The private files are checked with
+// lstat only.
 export function readLinuxPublicKeys(keyDir) {
+  const dir = lstatOrNull(keyDir);
+  check(dir, 'KEY_MISSING', `${keyDir} does not exist (run init-keys only in an approved install wave)`);
+  check(dir.isDirectory() && !dir.isSymbolicLink(), 'KEY_PERMISSIONS', `${keyDir} is not a directory`);
+  if (posix()) check((dir.mode & 0o022) === 0, 'KEY_PERMISSIONS', `${keyDir} is writable by group or others`);
   const out = {};
   for (const [role, [privateName, publicName]] of Object.entries(KEY_FILES)) {
     const privatePath = path.join(keyDir, privateName);
     const publicPath = path.join(keyDir, publicName);
-    check(fs.existsSync(publicPath), 'KEY_MISSING', `${publicPath} (run init-keys only in an approved install wave)`);
-    let privateStat;
-    try { privateStat = fs.lstatSync(privatePath); } catch { throw new RegistrationError('KEY_MISSING', `${privatePath} is missing; the public file alone is not a node key`); }
+    const publicStat = lstatOrNull(publicPath);
+    check(publicStat, 'KEY_MISSING', `${publicPath} (run init-keys only in an approved install wave)`);
+    check(publicStat.isFile(), 'KEY_PERMISSIONS', `${publicPath} is not a regular file`);
+    if (posix()) check((publicStat.mode & 0o022) === 0, 'KEY_PERMISSIONS', `${publicPath} is writable by group or others`);
+    const privateStat = lstatOrNull(privatePath);
+    check(privateStat, 'KEY_MISSING', `${privatePath} is missing; the public file alone is not a node key`);
     check(privateStat.isFile(), 'KEY_MISSING', `${privatePath} is not a regular file`);
-    if (process.platform !== 'win32') check((privateStat.mode & 0o077) === 0, 'KEY_PERMISSIONS', `${privatePath} is readable by group or others`);
+    if (posix()) check((privateStat.mode & 0o077) === 0, 'KEY_PERMISSIONS', `${privatePath} is readable by group or others`);
     out[role] = jwkFromPublicPem(readOnlyFile(publicPath, 'KEY_MISSING').toString('utf8'));
   }
   check(keyFingerprint(out.identity) !== keyFingerprint(out.encryption), 'KEY_INVALID', 'identity and encryption are the same key');
   return out;
 }
 
-export function initLinuxKeys(keyDir, { confirm } = {}) {
-  check(confirm === true, 'CONFIRMATION_REQUIRED', 'init-keys creates node keys; pass --confirm-create-keys, and only in an install wave the Owner approved');
-  const files = Object.values(KEY_FILES).flat().map(name => path.join(keyDir, name));
-  const present = files.filter(file => fs.existsSync(file));
-  check(present.length === 0, 'KEY_EXISTS', `${present.join(', ')} already exist; init-keys never replaces a key`);
-  fs.mkdirSync(keyDir, { recursive: true, mode: 0o700 });
-  if (process.platform !== 'win32') {
-    const stat = fs.lstatSync(keyDir);
-    check(stat.isDirectory() && !stat.isSymbolicLink() && (stat.mode & 0o077) === 0, 'KEY_PERMISSIONS', `${keyDir} must be a 0700 directory`);
-  }
-  const result = {};
-  for (const [role, [privateName, publicName]] of Object.entries(KEY_FILES)) {
-    const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
-    // 'wx': never replaces a file that appeared meanwhile.
-    fs.writeFileSync(path.join(keyDir, privateName), privateKey.export({ type: 'pkcs8', format: 'pem' }), { flag: 'wx', mode: 0o600 });
-    const publicPem = publicKey.export({ type: 'spki', format: 'pem' });
-    fs.writeFileSync(path.join(keyDir, publicName), publicPem, { flag: 'wx', mode: 0o644 });
+// A P-256 pair whose public coordinates the registration RPC accepts (databaseRefuses; at most a few tries are ever needed).
+function registrablePair() {
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const pair = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const publicPem = pair.publicKey.export({ type: 'spki', format: 'pem' });
     const jwk = jwkFromPublicPem(publicPem);
-    result[role] = { public_jwk: jwk, fingerprint: keyFingerprint(jwk), origin: 'software' };
+    if (!databaseRefuses(jwk)) return { privatePem: pair.privateKey.export({ type: 'pkcs8', format: 'pem' }), publicPem, jwk };
   }
-  return result;
+  throw new RegistrationError('KEY_CREATE_FAILED', 'no registrable key pair after 16 tries');
 }
 
-function run(file, args) {
-  try { return execFileSync(file, args, { encoding: 'utf8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim(); }
+// All four files are written into a fresh 0700 staging directory beside keyDir and moved into place only when complete: a missing
+// keyDir is created by one rename; an existing empty keyDir receives each file by link (which fails on an existing name, so
+// nothing is replaced). Any failure removes exactly what this run created. hooks.beforePublish exists for the tests.
+export function initLinuxKeys(keyDir, { confirm, hooks = {} } = {}) {
+  check(confirm === true, 'CONFIRMATION_REQUIRED', 'init-keys creates node keys; pass --confirm-create-keys, and only in an install wave the Owner approved');
+  const target = path.resolve(keyDir);
+  const existing = lstatOrNull(target);
+  if (existing) {
+    check(existing.isDirectory() && !existing.isSymbolicLink(), 'KEY_PERMISSIONS', `${target} is not a directory`);
+    const present = fs.readdirSync(target);
+    check(present.length === 0, 'KEY_EXISTS', `${target} is not empty (${present.join(', ')}); init-keys never replaces a key`);
+    if (posix()) check((existing.mode & 0o077) === 0, 'KEY_PERMISSIONS', `${target} must be a 0700 directory`);
+  } else fs.mkdirSync(path.dirname(target), { recursive: true });
+  const staging = fs.mkdtempSync(path.join(path.dirname(target), `.${path.basename(target)}.init-`));
+  const linked = [];
+  try {
+    if (posix()) fs.chmodSync(staging, 0o700);
+    const result = {};
+    for (const [role, [privateName, publicName]] of Object.entries(KEY_FILES)) {
+      const pair = registrablePair();
+      fs.writeFileSync(path.join(staging, privateName), pair.privatePem, { flag: 'wx', mode: 0o600 });
+      fs.writeFileSync(path.join(staging, publicName), pair.publicPem, { flag: 'wx', mode: 0o644 });
+      result[role] = { public_jwk: pair.jwk, fingerprint: keyFingerprint(pair.jwk), origin: 'software' };
+    }
+    check(result.identity.fingerprint !== result.encryption.fingerprint, 'KEY_CREATE_FAILED', 'two equal keys');
+    hooks.beforePublish?.(target);
+    if (!existing) {
+      try { fs.renameSync(staging, target); }
+      catch (error) { throw new RegistrationError(error.code === 'EEXIST' || error.code === 'ENOTEMPTY' ? 'KEY_EXISTS' : 'KEY_CREATE_FAILED', `${target}: ${error.code ?? error.message}`); }
+      return result;
+    }
+    for (const name of Object.values(KEY_FILES).flat()) {
+      try { fs.linkSync(path.join(staging, name), path.join(target, name)); linked.push(path.join(target, name)); }
+      catch (error) { throw new RegistrationError(error.code === 'EEXIST' ? 'KEY_EXISTS' : 'KEY_CREATE_FAILED', `${path.join(target, name)}: ${error.code ?? error.message}`); }
+    }
+    return result;
+  } catch (error) {
+    for (const file of linked) fs.rmSync(file, { force: true });
+    throw error instanceof RegistrationError ? error : new RegistrationError('KEY_CREATE_FAILED', error.message);
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+function run(file, args, env = process.env) {
+  try { return execFileSync(file, args, { encoding: 'utf8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, env }).trim(); }
   catch { return null; }
+}
+// Only the local daemon is asked: DOCKER_HOST is dropped and the context forced to "default", so a remote context is never contacted.
+function localDockerEnv() {
+  const env = { ...process.env, DOCKER_CONTEXT: 'default' };
+  delete env.DOCKER_HOST;
+  return env;
 }
 
 export function observeLinux(keyDir) {
   const keys = readLinuxPublicKeys(keyDir);
   const release = run('uname', ['-sr']) ?? `${os.type()} ${os.release()}`;
-  const docker = run('docker', ['version', '--format', '{{.Server.Version}}']);
+  const docker = run('docker', ['version', '--format', '{{.Server.Version}}'], localDockerEnv());
   return validateFacts({
     os: 'linux', os_version: release.slice(0, 200), hostname: os.hostname().slice(0, 100), memory_mb: Math.floor(os.totalmem() / 1048576),
     docker_server_version: docker && /^[0-9A-Za-z.+_-]{1,64}$/.test(docker) ? docker : null, hyperv_enabled: null, windows_sandbox_enabled: null,
@@ -140,6 +193,8 @@ export function exportRegistration(options, { platform = process.platform, now }
   check(options['slot-count'] !== undefined, 'USAGE', '--slot-count is required');
   let facts;
   if (options.facts) {
+    // The facts file is the Windows script's hand-over; on Linux the tool observes the host itself.
+    check(platform === 'win32', 'USAGE', '--facts is only for export-node-registration.ps1 on Windows');
     let parsed;
     try { parsed = JSON.parse(readOnlyFile(options.facts, 'FACTS_INVALID').toString('utf8')); }
     catch (error) { if (error instanceof RegistrationError) throw error; throw new RegistrationError('FACTS_INVALID', 'not JSON'); }
@@ -157,11 +212,17 @@ export function exportRegistration(options, { platform = process.platform, now }
   });
 }
 
-// Both files are written with 'wx' after both documents are complete, so a refusal leaves nothing behind.
+// Both files are written with 'wx' after both documents are complete; when the second write fails the first is removed, so a
+// refusal leaves nothing behind.
 export function writeOutputs(result, out, reportOut) {
+  check(path.resolve(out) !== path.resolve(reportOut), 'USAGE', '--out and --report-out must be different files');
   for (const file of [out, reportOut]) check(!fs.existsSync(file), 'OUTPUT_EXISTS', `${file} already exists; choose another --out/--report-out`);
-  fs.writeFileSync(reportOut, JSON.stringify(result.report, null, 2) + '\n', { flag: 'wx' });
-  fs.writeFileSync(out, JSON.stringify(result.registration, null, 2) + '\n', { flag: 'wx' });
+  const write = (file, value) => {
+    try { fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n', { flag: 'wx' }); }
+    catch (error) { throw new RegistrationError(error.code === 'EEXIST' ? 'OUTPUT_EXISTS' : 'OUTPUT_FAILED', `${file}: ${error.code ?? error.message}`); }
+  };
+  write(reportOut, result.report);
+  try { write(out, result.registration); } catch (error) { fs.rmSync(reportOut, { force: true }); throw error; }
 }
 
 export function main(argv, io = { stdout: process.stdout, stderr: process.stderr }) {

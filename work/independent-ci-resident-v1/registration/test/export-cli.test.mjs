@@ -8,7 +8,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createPublicKey, verify } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { exportRegistration, initLinuxKeys, main, parseArgs, readLinuxPublicKeys } from '../export-node-registration.mjs';
+import { exportRegistration, initLinuxKeys, main, parseArgs, readLinuxPublicKeys, writeOutputs } from '../export-node-registration.mjs';
 import { validateRegistration } from '../registration-core.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -65,6 +65,55 @@ test('init-keys needs explicit confirmation and never replaces an existing key',
   assert.throws(() => initLinuxKeys(keyDir, { confirm: true }), /KEY_EXISTS/);
   assert.deepEqual(listing(keyDir), ['identity.key.pem', 'identity.pub.pem']);
   assert.equal(fs.readFileSync(path.join(keyDir, 'identity.key.pem'), 'utf8'), before['identity.key.pem']);
+});
+
+test('init-keys leaves no partial key set when publishing fails', () => {
+  // An existing empty directory: one of our names appears just before publishing; only that intruder remains afterwards.
+  const dir = scratch();
+  const keyDir = path.join(dir, 'keys');
+  fs.mkdirSync(keyDir, { mode: 0o700 });
+  assert.throws(() => initLinuxKeys(keyDir, { confirm: true, hooks: { beforePublish: target => fs.writeFileSync(path.join(target, 'encryption.pub.pem'), 'x') } }),
+    /KEY_EXISTS/);
+  assert.deepEqual(listing(keyDir), ['encryption.pub.pem']);
+  assert.deepEqual(listing(dir), ['keys'], 'the staging directory is removed');
+  // A missing directory that appears just before the rename: nothing of ours is left anywhere.
+  const dir2 = scratch();
+  const keyDir2 = path.join(dir2, 'keys');
+  assert.throws(() => initLinuxKeys(keyDir2, { confirm: true, hooks: { beforePublish: target => { fs.mkdirSync(target); fs.writeFileSync(path.join(target, 'other'), 'x'); } } }),
+    /KEY_EXISTS|KEY_CREATE_FAILED/);
+  assert.deepEqual(listing(keyDir2), ['other']);
+  assert.deepEqual(listing(dir2), ['keys']);
+  // A directory with anything in it is refused before any key is generated.
+  assert.throws(() => initLinuxKeys(keyDir2, { confirm: true }), /KEY_EXISTS/);
+});
+
+test('public files must be regular files no one else can write (POSIX)', { skip: process.platform === 'win32' && 'POSIX modes and symlinks' }, () => {
+  const dir = scratch();
+  const keyDir = path.join(dir, 'keys');
+  initLinuxKeys(keyDir, { confirm: true });
+  const pub = path.join(keyDir, 'identity.pub.pem');
+  const saved = fs.readFileSync(pub);
+  fs.rmSync(pub);
+  fs.symlinkSync(path.join(keyDir, 'identity.key.pem'), pub);
+  assert.throws(() => readLinuxPublicKeys(keyDir), /KEY_PERMISSIONS/, 'a link to the private file is never followed');
+  fs.rmSync(pub);
+  fs.writeFileSync(pub, saved, { mode: 0o666 });
+  fs.chmodSync(pub, 0o666);
+  assert.throws(() => readLinuxPublicKeys(keyDir), /KEY_PERMISSIONS/);
+  fs.chmodSync(pub, 0o644);
+  fs.chmodSync(path.join(keyDir, 'identity.key.pem'), 0o644);
+  assert.throws(() => readLinuxPublicKeys(keyDir), /KEY_PERMISSIONS/);
+  fs.chmodSync(path.join(keyDir, 'identity.key.pem'), 0o600);
+  readLinuxPublicKeys(keyDir);
+});
+
+test('--facts is refused on Linux and the two outputs must be different files', () => {
+  const dir = scratch();
+  fs.writeFileSync(path.join(dir, 'facts.json'), '{}');
+  assert.throws(() => exportRegistration({ 'binding-id': BINDING, 'slot-count': '1', facts: path.join(dir, 'facts.json'), 'source-commit': 'a'.repeat(40) },
+    { platform: 'linux' }), /USAGE/);
+  assert.throws(() => writeOutputs({ registration: {}, report: {} }, path.join(dir, 'same.json'), path.join(dir, 'same.json')), /USAGE/);
+  assert.equal(fs.existsSync(path.join(dir, 'same.json')), false);
 });
 
 test('export reads only the public files and produces a page-valid document; outputs are never overwritten', () => {
@@ -133,9 +182,14 @@ test('Windows facts from the PowerShell side are validated before use', () => {
 
 test('Windows: the EccPublicBlob conversion yields keys Node verifies (ephemeral CNG keys, no key store touched)',
   { skip: process.platform !== 'win32' && 'needs Windows CNG' }, () => {
-    const raw = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', SCRIPT_PS, '-SelfTest'],
-      { encoding: 'utf8', timeout: 60000 });
+    // -File hands "scan,publish" over as one string; the script splits it.
+    const raw = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', SCRIPT_PS, '-SelfTest',
+      '-Role', 'scan,publish', '-EnvironmentKind', 'E1-Windows'], { encoding: 'utf8', timeout: 60000 });
     const result = JSON.parse(raw.trim());
+    assert.deepEqual(result.roles, ['scan', 'publish']);
+    assert.deepEqual(result.environment_kinds, ['E1-Windows']);
+    assert.deepEqual(result.exclusions, []);
+    assert.deepEqual(result.database_refuses, [true, true, false], 'the script applies the same RPC filter as the core');
     for (const key of ['identity_public_jwk', 'encryption_public_jwk']) assert.deepEqual(Object.keys(result[key]).sort(), ['crv', 'kty', 'x', 'y']);
     const publicKey = createPublicKey({ key: result.identity_public_jwk, format: 'jwk' });
     assert.ok(verify('sha256', Buffer.from(result.message, 'base64'), { key: publicKey, dsaEncoding: 'ieee-p1363' },

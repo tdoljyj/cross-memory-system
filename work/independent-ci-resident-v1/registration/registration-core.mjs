@@ -86,11 +86,16 @@ export function canonicalJson(value) {
 export const sha256Hex = text => createHash('sha256').update(text, 'utf8').digest('hex');
 export const canonicalDigest = value => sha256Hex(canonicalJson(value));
 
-// Same refusals as page.tsx#sensitiveText and the migration's registration filter.
+// page.tsx#sensitiveText.
 export function sensitiveText(value) {
   return /-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----/i.test(value) || /\bBearer\s+[A-Za-z0-9._~+/=-]+/i.test(value)
     || /\b(?:ghp_|gho_|github_pat_)[A-Za-z0-9_]+/i.test(value) || /\bpostgres(?:ql)?:\/\/[^\s/:@]+:[^\s/@]+@/i.test(value);
 }
+// The registration RPC's own filter (migration 20261023092957, clued_ci_node_registration_v1: p_input::text ~* ...). It has no word
+// boundary and is case-insensitive, so it also matches inside base64url key coordinates (about one key pair in 6,500 contains, say,
+// "gHo_"). Such a document would be refused as CI_REGISTRATION_INVALID: init-keys regenerates those keys, export refuses them.
+const DATABASE_REFUSED = /(-----BEGIN[^-]*PRIVATE KEY-----|Bearer\s|ghp_|gho_|github_pat_|postgres(ql)?:\/\/[^/@:]+:[^/@]+@)/i;
+export const databaseRefuses = value => DATABASE_REFUSED.test(typeof value === 'string' ? value : JSON.stringify(value));
 const PRIVATE_FIELD = /^(d|p|q|dp|dq|qi|oth|k|private_key|password|secret|access_token|refresh_token|lease_key|confirmation_token)$/i;
 // page.tsx#publicDocument.
 export function publicDocument(value, depth = 0) {
@@ -151,6 +156,9 @@ export function validateRegistration(value, bindingIds) {
   const identity = publicJwk(value.identity_public_jwk);
   const encryption = publicJwk(value.encryption_public_jwk);
   check(identity.x !== encryption.x || identity.y !== encryption.y, 'REGISTRATION_INVALID', 'identity and encryption keys are the same key');
+  check(!databaseRefuses(identity) && !databaseRefuses(encryption), 'KEY_UNREGISTRABLE',
+    'a public key coordinate contains text the registration RPC refuses; these keys cannot be registered, create new ones in an approved install wave');
+  check(!databaseRefuses(value), 'REGISTRATION_INVALID', 'the document contains text the registration RPC refuses');
   check(Buffer.byteLength(JSON.stringify(value), 'utf8') <= MAX_BYTES, 'REGISTRATION_INVALID', 'larger than 64 KiB');
   return value;
 }

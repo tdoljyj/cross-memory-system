@@ -1,18 +1,23 @@
 # Node registration export for Windows nodes (Task c9673047). Windows PowerShell 5.1 or PowerShell 7, run elevated.
 #
 #   -Mode export (default)  read-only. Opens the node's two persisted CNG machine keys, exports ONLY their public part
-#                           (EccPublicBlob), observes the host (OS, memory, Hyper-V, Windows Sandbox, TPM, Docker) and hands these
-#                           public facts to export-node-registration.mjs, which writes the /ci-nodes registration document and its
-#                           qualification report. A missing key is KEY_MISSING; nothing is created.
+#                           (EccPublicBlob), observes the host (OS, memory, Hyper-V, Windows Sandbox, TPM, local Docker) and hands
+#                           these public facts to export-node-registration.mjs, which writes the /ci-nodes registration document and
+#                           its qualification report. A missing key is KEY_MISSING; nothing is created.
 #   -Mode init-keys         only with -ConfirmCreateKeys: creates the identity key (ECDSA P-256, signing) and the encryption key
 #                           (ECDH P-256, key agreement) as non-exportable machine keys, in the TPM (Microsoft Platform Crypto
-#                           Provider) when one is usable, else in the Microsoft Software Key Storage Provider (-KeyProvider auto);
-#                           -KeyProvider tpm refuses instead of falling back. Refuses (KEY_EXISTS) when either key already exists in
-#                           either provider. It is a key operation: run it only in an install wave the Owner approved.
-#   -SelfTest               creates two EPHEMERAL (never persisted) keys and prints their public JWKs plus one signature, so the
-#                           tests can check the blob conversion against Node's verifier. Touches no key store.
+#                           Provider) when one is usable, else in the Microsoft Software Key Storage Provider (-KeyProvider auto,
+#                           with a warning that carries the TPM error); -KeyProvider tpm refuses instead of falling back. Refuses
+#                           (KEY_EXISTS) when either key already exists in either provider. A key whose public coordinates the
+#                           registration RPC would refuse is deleted and created again; any failure deletes the keys this run
+#                           created, so the node is never left with one key. It is a key operation: run it only in an install wave
+#                           the Owner approved.
+#   -SelfTest               creates two EPHEMERAL (never persisted) keys and prints their public JWKs, one signature and the parsed
+#                           list parameters, so the tests can check the blob conversion and the argument handling. Touches no key
+#                           store.
 #
-# The private keys never leave CNG: the script never asks for a private export (the keys are created with ExportPolicy None).
+# The private keys never leave CNG: the script never asks for a private export (software keys are created with ExportPolicy None;
+# TPM keys cannot be exported at all). Every refusal prints one CODE: detail line and exits 2.
 param(
   [ValidateSet('export', 'init-keys')] [string]$Mode = 'export',
   [switch]$ConfirmCreateKeys,
@@ -37,14 +42,23 @@ param(
 )
 Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
+
+function Fail([string]$Code, [string]$Detail) { [Console]::Error.WriteLine("${Code}: $Detail"); exit 2 }
+trap { Fail 'INTERNAL' $_.Exception.Message }
 Add-Type -AssemblyName System.Core
 
 $KeyNames = [ordered]@{ identity = 'Clued-CI-Node-Identity-v1'; encryption = 'Clued-CI-Node-Encryption-v1' }
 $TpmProviderName = 'Microsoft Platform Crypto Provider'
 # BCRYPT_ECCKEY_BLOB magics (bcrypt.h): ECDSA public P-256 'ECS1', ECDH public P-256 'ECK1'.
 $Magic = @{ identity = [uint32]0x31534345; encryption = [uint32]0x314B4345 }
+# The registration RPC's own filter (registration-core.mjs#databaseRefuses): no word boundary, case-insensitive.
+$DatabaseRefused = '(-----BEGIN[^-]*PRIVATE KEY-----|Bearer\s|ghp_|gho_|github_pat_|postgres(ql)?://[^/@:]+:[^/@]+@)'
 
-function Fail([string]$Code, [string]$Detail) { [Console]::Error.WriteLine("${Code}: $Detail"); exit 2 }
+# powershell -File passes "-Role scan,publish" as ONE string; accept comma lists (and repeated elements from -Command).
+function Split-List([string[]]$Values) { , @($Values | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+$EnvironmentKind = Split-List $EnvironmentKind
+$Role = Split-List $Role
+$Exclusion = Split-List $Exclusion
 
 function ConvertTo-Base64Url([byte[]]$Bytes) { [Convert]::ToBase64String($Bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_') }
 
@@ -57,10 +71,11 @@ function ConvertFrom-EccPublicBlob([byte[]]$Blob, [uint32]$ExpectedMagic) {
   [Array]::Copy($Blob, 8, $x, 0, 32); [Array]::Copy($Blob, 40, $y, 0, 32)
   [ordered]@{ kty = 'EC'; crv = 'P-256'; x = (ConvertTo-Base64Url $x); y = (ConvertTo-Base64Url $y) }
 }
+function Test-Registrable($Jwk) { -not ("$($Jwk.x) $($Jwk.y)" -match $DatabaseRefused) }
 
 function Get-Providers {
   $list = @()
-  try { $tpm = New-Object System.Security.Cryptography.CngProvider $TpmProviderName; $list += , @($tpm, 'tpm') } catch { }
+  $list += , @((New-Object System.Security.Cryptography.CngProvider $TpmProviderName), 'tpm')
   $list += , @([System.Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider, 'software')
   $list
 }
@@ -84,24 +99,32 @@ function Test-Elevated {
   $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-function Invoke-Quiet([string]$File, [string[]]$Arguments) {
+# The local Docker daemon only: DOCKER_HOST is dropped and the context forced to "default", so no remote endpoint is contacted.
+function Get-LocalDockerVersion {
   try {
-    $info = New-Object System.Diagnostics.ProcessStartInfo $File
-    $info.Arguments = ($Arguments | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }) -join ' '
+    $info = New-Object System.Diagnostics.ProcessStartInfo 'docker'
+    $info.Arguments = 'version --format "{{.Server.Version}}"'
     $info.UseShellExecute = $false; $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true; $info.CreateNoWindow = $true
+    $info.EnvironmentVariables.Remove('DOCKER_HOST'); $info.EnvironmentVariables['DOCKER_CONTEXT'] = 'default'
     $process = [System.Diagnostics.Process]::Start($info)
-    $text = $process.StandardOutput.ReadToEndAsync()
+    $stdout = $process.StandardOutput.ReadToEndAsync(); $stderr = $process.StandardError.ReadToEndAsync()
     if (-not $process.WaitForExit(15000)) { try { $process.Kill() } catch { }; return $null }
+    $null = $stderr.Result
     if ($process.ExitCode -ne 0) { return $null }
-    $text.Result.Trim()
-  } catch { $null }
+    $text = $stdout.Result.Trim()
+    if ($text -match '^[0-9A-Za-z.+_-]{1,64}$') { return $text }
+    return $null
+  } catch { return $null }
 }
 
-function Get-FeatureEnabled([string]$FeatureName) {
+# An optional feature is enabled when any of its names (client and Server SKUs differ) has InstallState 1; null when unreadable.
+function Get-FeatureEnabled([string[]]$FeatureNames) {
   try {
-    $feature = Get-CimInstance -ClassName Win32_OptionalFeature -Filter "Name='$FeatureName'" -ErrorAction Stop
-    if ($null -eq $feature) { return $false }
-    return ([int]$feature.InstallState -eq 1)
+    foreach ($featureName in $FeatureNames) {
+      $feature = Get-CimInstance -ClassName Win32_OptionalFeature -Filter "Name='$featureName'" -ErrorAction Stop
+      if ($null -ne $feature -and [int]$feature.InstallState -eq 1) { return $true }
+    }
+    return $false
   } catch { return $null }
 }
 
@@ -112,13 +135,14 @@ if ($SelfTest) {
   $message = [Text.Encoding]::UTF8.GetBytes('clued-ci-node-registration self-test')
   $ecdsa = New-Object System.Security.Cryptography.ECDsaCng $signing
   $ecdsa.HashAlgorithm = [System.Security.Cryptography.CngAlgorithm]::Sha256
-  $result = [ordered]@{
+  [ordered]@{
     identity_public_jwk = (ConvertFrom-EccPublicBlob ($signing.Export([System.Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob)) $Magic.identity)
     encryption_public_jwk = (ConvertFrom-EccPublicBlob ($agreement.Export([System.Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob)) $Magic.encryption)
     message = [Convert]::ToBase64String($message)
     signature_p1363 = [Convert]::ToBase64String($ecdsa.SignData($message))
-  }
-  $result | ConvertTo-Json -Compress
+    roles = @($Role); environment_kinds = @($EnvironmentKind); exclusions = @($Exclusion)
+    database_refuses = @('xxghp_yy', 'GHO_', 'plain') | ForEach-Object { -not (Test-Registrable @{ x = $_; y = '' }) }
+  } | ConvertTo-Json -Compress -Depth 4
   exit 0
 }
 
@@ -131,24 +155,42 @@ if ($Mode -eq 'init-keys') {
     if ($null -ne $found) { Fail 'KEY_EXISTS' "$($KeyNames[$role]) already exists ($($found.origin)); init-keys never replaces a key" }
   }
   $providers = @(Get-Providers | Where-Object { $KeyProvider -eq 'auto' -or $_[1] -eq $KeyProvider })
-  if ($providers.Count -eq 0) { Fail 'TPM_UNAVAILABLE' "$TpmProviderName is not usable on this machine" }
+  $createdKeys = @()
   $created = [ordered]@{}
-  foreach ($role in $KeyNames.Keys) {
-    $algorithm = if ($role -eq 'identity') { [System.Security.Cryptography.CngAlgorithm]::ECDsaP256 } else { [System.Security.Cryptography.CngAlgorithm]::ECDiffieHellmanP256 }
-    $usage = if ($role -eq 'identity') { [System.Security.Cryptography.CngKeyUsages]::Signing } else { [System.Security.Cryptography.CngKeyUsages]::KeyAgreement }
-    $key = $null; $origin = $null; $errors = @()
-    foreach ($entry in $providers) {
-      $parameters = New-Object System.Security.Cryptography.CngKeyCreationParameters
-      $parameters.Provider = $entry[0]
-      $parameters.KeyCreationOptions = [System.Security.Cryptography.CngKeyCreationOptions]::MachineKey
-      $parameters.ExportPolicy = [System.Security.Cryptography.CngExportPolicies]::None
-      $parameters.KeyUsage = $usage
-      try { $key = [System.Security.Cryptography.CngKey]::Create($algorithm, $KeyNames[$role], $parameters); $origin = $entry[1]; break }
-      catch { $errors += "$($entry[1]): $($_.Exception.Message)" }
+  try {
+    foreach ($role in $KeyNames.Keys) {
+      $algorithm = if ($role -eq 'identity') { [System.Security.Cryptography.CngAlgorithm]::ECDsaP256 } else { [System.Security.Cryptography.CngAlgorithm]::ECDiffieHellmanP256 }
+      $usage = if ($role -eq 'identity') { [System.Security.Cryptography.CngKeyUsages]::Signing } else { [System.Security.Cryptography.CngKeyUsages]::KeyAgreement }
+      $key = $null; $origin = $null; $jwk = $null; $errors = @()
+      foreach ($entry in $providers) {
+        for ($attempt = 0; $attempt -lt 16 -and $null -eq $jwk; $attempt++) {
+          $parameters = New-Object System.Security.Cryptography.CngKeyCreationParameters
+          $parameters.Provider = $entry[0]
+          $parameters.KeyCreationOptions = [System.Security.Cryptography.CngKeyCreationOptions]::MachineKey
+          # A TPM key is non-exportable by construction; the platform provider may refuse an export-policy property.
+          if ($entry[1] -ne 'tpm') { $parameters.ExportPolicy = [System.Security.Cryptography.CngExportPolicies]::None }
+          $parameters.KeyUsage = $usage
+          try { $key = [System.Security.Cryptography.CngKey]::Create($algorithm, $KeyNames[$role], $parameters) }
+          catch { $errors += "$($entry[1]): $($_.Exception.Message)"; break }
+          $candidate = ConvertFrom-EccPublicBlob ($key.Export([System.Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob)) $Magic[$role]
+          if (Test-Registrable $candidate) { $jwk = $candidate; $origin = $entry[1] }
+          else { $key.Delete(); $key = $null }
+        }
+        if ($null -ne $jwk) { break }
+      }
+      if ($null -eq $jwk) { throw "KEY_CREATE_FAILED: $($KeyNames[$role]): $($errors -join '; ')" }
+      $createdKeys += $key
+      if ($origin -eq 'software' -and $KeyProvider -eq 'auto' -and $errors.Count -gt 0) {
+        [Console]::Error.WriteLine("WARNING: $($KeyNames[$role]) was created in software because the TPM refused: $($errors -join '; ')")
+      }
+      $created[$role] = [ordered]@{ name = $KeyNames[$role]; origin = $origin; public_jwk = $jwk }
     }
-    if ($null -eq $key) { Fail 'KEY_CREATE_FAILED' "$($KeyNames[$role]): $($errors -join '; ')" }
-    $jwk = ConvertFrom-EccPublicBlob ($key.Export([System.Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob)) $Magic[$role]
-    $created[$role] = [ordered]@{ name = $KeyNames[$role]; origin = $origin; public_jwk = $jwk }
+  } catch {
+    # Never leave the node with one key: delete exactly what this run created.
+    foreach ($createdKey in $createdKeys) { try { $createdKey.Delete() } catch { } }
+    $message = $_.Exception.Message
+    if ($message -match '^(KEY_CREATE_FAILED|PUBLIC_KEY_INVALID): ') { Fail $Matches[1] ($message -replace '^[A-Z_]+: ', '') }
+    Fail 'KEY_CREATE_FAILED' $message
   }
   [ordered]@{ status = 'created'; keys = $created } | ConvertTo-Json -Depth 5
   exit 0
@@ -171,16 +213,14 @@ try {
   $state = Get-CimInstance -Namespace 'root/cimv2/Security/MicrosoftTpm' -ClassName Win32_Tpm -ErrorAction Stop
   $tpm = ($null -ne $state -and [bool]$state.IsEnabled_InitialValue -and [bool]$state.IsActivated_InitialValue)
 } catch { $tpm = $null }
-$docker = Invoke-Quiet 'docker' @('version', '--format', '{{.Server.Version}}')
-if ($null -ne $docker -and $docker -notmatch '^[0-9A-Za-z.+_-]{1,64}$') { $docker = $null }
 $facts = [ordered]@{
   os = 'windows'
   os_version = ("$($osInfo.Caption) $($osInfo.Version)").Trim()
   hostname = $env:COMPUTERNAME
   memory_mb = [int64][math]::Floor([double]$system.TotalPhysicalMemory / 1048576)
-  docker_server_version = $docker
-  hyperv_enabled = (Get-FeatureEnabled 'Microsoft-Hyper-V-All')
-  windows_sandbox_enabled = (Get-FeatureEnabled 'Containers-DisposableClientVM')
+  docker_server_version = (Get-LocalDockerVersion)
+  hyperv_enabled = (Get-FeatureEnabled @('Microsoft-Hyper-V-All', 'Microsoft-Hyper-V'))
+  windows_sandbox_enabled = (Get-FeatureEnabled @('Containers-DisposableClientVM'))
   tpm_present = $tpm
   identity_public_jwk = $keys.identity.jwk
   encryption_public_jwk = $keys.encryption.jwk
@@ -190,26 +230,30 @@ $facts = [ordered]@{
 $factsJson = $facts | ConvertTo-Json -Depth 5 -Compress
 if ($FactsOnly) { $factsJson; exit 0 }
 
-if ([string]::IsNullOrEmpty($BindingId)) { Fail 'USAGE' '-BindingId is required (the connection id shown on /ci-nodes)' }
+if ([string]::IsNullOrEmpty($BindingId)) { Fail 'USAGE' '-BindingId is required (the connection id of the node''s BeamingFace connection)' }
 if ($SlotCount -lt 1) { Fail 'USAGE' '-SlotCount is required (1..64)' }
 $nodeCommand = Get-Command $Node -ErrorAction SilentlyContinue
 if ($null -eq $nodeCommand) { Fail 'NODE_MISSING' "Node.js not found as '$Node'; pass -Node <path to node.exe>" }
+$arguments = @((Join-Path $PSScriptRoot 'export-node-registration.mjs'), 'export', '--binding-id', $BindingId, '--slot-count', [string]$SlotCount, '--out', $Out)
+if ($ReportOut) { $arguments += @('--report-out', $ReportOut) }
+if ($Name) { $arguments += @('--name', $Name) }
+if ($SiteId) { $arguments += @('--site-id', $SiteId) }
+foreach ($item in $EnvironmentKind) { $arguments += @('--environment-kind', $item) }
+foreach ($item in $Role) { $arguments += @('--role', $item) }
+foreach ($item in $Exclusion) { $arguments += @('--exclusion', $item) }
+if ($MemoryLimitMb -ge 0) { $arguments += @('--memory-limit-mb', [string]$MemoryLimitMb) }
+if ($PublisherRequested) { $arguments += '--publisher-requested' }
+if ($ScanSigningRequested) { $arguments += '--scan-signing-requested' }
+if ($SourceCommit) { $arguments += @('--source-commit', $SourceCommit) } else { $arguments += @('--source-manifest', $SourceManifest) }
+# Windows PowerShell 5.1 drops embedded double quotes and mangles a trailing backslash when it builds node's command line.
+foreach ($argument in $arguments) {
+  if ($argument -match '"' -or $argument -match '\\$') { Fail 'USAGE' "a value may not contain a double quote or end with a backslash: $argument" }
+}
+$code = 2
 $factsFile = Join-Path ([IO.Path]::GetTempPath()) ("clued-node-facts-" + [guid]::NewGuid().ToString('N') + '.json')
 [IO.File]::WriteAllText($factsFile, $factsJson, (New-Object System.Text.UTF8Encoding $false))
 try {
-  $arguments = @((Join-Path $PSScriptRoot 'export-node-registration.mjs'), 'export', '--facts', $factsFile, '--binding-id', $BindingId,
-    '--slot-count', [string]$SlotCount, '--out', $Out)
-  if ($ReportOut) { $arguments += @('--report-out', $ReportOut) }
-  if ($Name) { $arguments += @('--name', $Name) }
-  if ($SiteId) { $arguments += @('--site-id', $SiteId) }
-  foreach ($item in $EnvironmentKind) { $arguments += @('--environment-kind', $item) }
-  foreach ($item in $Role) { $arguments += @('--role', $item) }
-  foreach ($item in $Exclusion) { $arguments += @('--exclusion', $item) }
-  if ($MemoryLimitMb -ge 0) { $arguments += @('--memory-limit-mb', [string]$MemoryLimitMb) }
-  if ($PublisherRequested) { $arguments += '--publisher-requested' }
-  if ($ScanSigningRequested) { $arguments += '--scan-signing-requested' }
-  if ($SourceCommit) { $arguments += @('--source-commit', $SourceCommit) } else { $arguments += @('--source-manifest', $SourceManifest) }
-  & $nodeCommand.Source @arguments
+  & $nodeCommand.Source @arguments --facts $factsFile
   $code = $LASTEXITCODE
 } finally {
   Remove-Item -LiteralPath $factsFile -Force -ErrorAction SilentlyContinue
