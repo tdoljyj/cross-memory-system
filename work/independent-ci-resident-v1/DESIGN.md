@@ -3245,7 +3245,7 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 
 Owner 2026-10-31 的决定：`263f9701` 现在做 3c-2b，批量测试与二分（Task `7f205c71`）排在它之后；`3dcb583b`（取代 `a5ea4be3`）定了排位用 Task 优先级；`86008583` 的守队程序和 `b30b1b79` 第 3 项的常驻层改动随同一次两节点安装上线。本节只是设计。下文的“现状”都对照 main `35c41fd6`。本节的 Source B 指 `work/actions-hosted-migration/independent-ci-v1/src/`（Source v2），Source A 指 `scripts/ci/` 里的 Native 端口、撤销控制器和 `clued-work-admission.test.mjs`。
 
-Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 → migrate），之后在 `/bindings` 上把 TURING 与 DESK-W-591 的连接标为“可自动接班的常驻节点”并排好次序（41.6a）；② 两个 protected-change Grant：Source A、守队程序；③ 两节点安装的 UAC（各加 Linux root），之后再一次 UAC 把策略改成 on；④ 开车前复核一次影子数据；⑤ 接受 MergeAdmission v0.2（含 41.1 列出的改动）；⑥ 接受合同草稿并给发布 Grant；⑦ 在规则集里关 `strict`、合并方式只留 merge；⑧ 打开排位开关；⑨ 定 `nonFrontRuns`（UAC）。
+Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 → migrate），之后在 `/bindings` 上把 TURING 与 DESK-W-591 的连接标为“可自动接班的常驻节点”并排好次序（41.6a）；② 两个 protected-change Grant：Source A、守队程序；③ 两节点安装的 UAC（各加 Linux root），之后再一次 UAC 把策略改成 on；④ 开车前复核一次影子数据；⑤ 接受 MergeAdmission v0.2（含 41.1 列出的改动）；⑥ 接受合同草稿并给发布 Grant；⑦ 在规则集里关 `strict`、合并方式只留 merge；⑧ 打开排位开关；⑨ 定 `nonFrontRuns`（UAC）；⑩ 影子复核之后打开自动接班总开关（41.6a）。
 
 ### 41.1 范围与顺序
 
@@ -3254,10 +3254,10 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 | 步 | 内容 | 重装 | 受保护 | Owner |
 |---|---|---|---|---|
 | 1 设计 | 本节，独立审核（规则 01d4ba7d） | 否 | 否 | 无 |
-| 2 服务端 | 一次迁移：记下车头与按优先级排位（41.5）、排队认领保活（41.4）、CI 连接活动记录（41.6、41.6a）、ci-admission 自动接班的资格标记、次序与看门狗（41.6a）；`/bindings` 页面加资格开关与次序 | 否 | 否 | 授权迁移；标记资格 |
-| 3 Source A | Native 写端口（touch、adopt、return、保活、Source 记录，CI 身份），`clued-work-admission.test.mjs` 跟上 | 随第 8 步 | 是 | protected-change Grant |
-| 4 Source B | 第 8 段单绿、第 10 段 on 与只撤模式、清扫、两处 `binding` 改动、C# 边界接受 on | 随第 8 步，两侧 | 否 | 无 |
-| 5 常驻层 | 策略 `/8`、车头调度、`relayPlan`、C9、两种请求文件、保留 | 随第 8 步，Windows | 否 | 无 |
+| 2 服务端 | 一次迁移：记下车头与按优先级排位（41.5）、排队认领保活（41.4）、CI 连接活动记录与 holders 回答的 `nodes`、清扫水位（41.6、41.6a）、ci-admission 自动接班的资格标记、次序、总开关（默认关）与看门狗（41.6a）；`/bindings` 页面加资格、次序、总开关和清除推迟，都走两步确认 | 否 | 否 | 授权迁移；标记资格 |
+| 3 Source A | Native 写端口（touch、adopt、return、保活、清扫水位，CI 身份），`clued-work-admission.test.mjs` 跟上 | 随第 8 步 | 是 | protected-change Grant |
+| 4 Source B | 第 8 段单绿、第 10 段 on 与只撤模式、清扫、两处 `binding` 改动；train-run `/2`（`frontOutcome`）；探测作业与 holders 调用的自报字段，第 1 段的 `IN_BATCH` 自报；C# 边界接受 on 与这些新字段 | 随第 8 步，两侧 | 否 | 无 |
+| 5 常驻层 | 策略 `/8`、车头调度、`relayPlan`、C9、两种请求文件、保留；探测排到 HALT 与 PAUSE 检查之前，并把模式、HALT、暂停状态交给探测作业 | 随第 8 步，Windows | 否 | 无 |
 | 6 文档 | 下面列的 v0.2 与合同草稿改动；GitConnectorWriteContract、`docs/maintenance/independent-ci.md` | 否 | 否（文档层） | 接受 v0.2；接受草稿、发布 Grant |
 | 7 守队程序 | 41.8 | 否 | 是（`.github/**`） | protected-change Grant |
 | 8 安装 | 一次两节点安装（TURING 与 desk-w-591，同一个包，§40 工具链，含 #949），策略 `/8` 但 `train.enabled=shadow` | 是：两节点各 UAC 加 Linux root | 否 | UAC |
@@ -3277,7 +3277,8 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 - **`trainHeadReady`**：列车开着时，在 `queueHeadReady` 之外再要求（设计 §5.3 第 1、4 条）：
   - 作业是车头批次，S 等于第 10 段给这个 head 定的 S；
   - 同一次运行里 holders 正好一个、位置 1、`bound_pr` 是这个 PR；
-  - `state\v2\train-sweep\` 里最新的证明的（PR、H、认领）等于这个作业的，写于这个认领成为车头之后，不早于 `train.sweepFreshMs`（15 分钟），结论是“除车头当前 head 外没有未撤的绿”，且本节点自安装或接班以来做过一次完整的全量清扫（41.6）；
+  - `state\v2\train-sweep\` 里最新的证明的（PR、H、认领、T）等于这个作业的（T 即作业的 base），写于这个认领成为车头之后，不早于 `train.sweepFreshMs`（15 分钟），结论是“除车头当前 head 外没有未撤的绿”；
+  - 本节点在改 on 之后（或接班之后）以 on 模式完成过一次全量清扫，其中的撤销全部两次读回确认；影子模式的清扫不算。接班时也可以用 41.6 的水位加增量代替。这与 41.7 兜底读的 `sweep` 是同一份记录；
   - 台账里没有未确认的撤销；
   - 写之前现读一次 `pulls?state=all&sort=updated&direction=desc`：证明之后有车头以外的 PR 更新过（新推送、重新打开、改 base），就不发绿。
   - 任一条不满足：零副作用 `TRAIN_SINGLE_GREEN_NOT_PROVEN`，批次停在 B，等下一次第 10 段。
@@ -3285,7 +3286,7 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 - **检查说明**（设计 §5.3 第 6 条）：summary 写 `front PR #<n>, head <H>, main@<T>, tested <S> (tree <树>)`，S = H 时写 `tested head`。这是给第 10 段、审核和 Owner 在 GitHub 上直接读出 T 与 S 用的；撤销不依赖它：`revokeCheck` 读回比较的是这次撤销自己写的标题和说明（`github.mjs:350-358`）。
 - **touch green**：第 8 段（`independent-control-checks-v2/startup.mjs:17` 已持有节点的 CI Binding 令牌）settled 之后、同一次运行内，先读 holders 确认这个认领仍是位置 1，再调 `clued_work_merge_slot_touch_v1`（`ci_state: green`，`hard_cap_minutes` 取策略）。服务端对同一 head 只认第一次 green，给 30 分钟合并（迁移 `20261010112852`:145，`20261009010000`:69），仍受硬上限和租约约束。touch 失败不撤绿、不改结局，只记日志和回执。
 - **列车关着时拒绝 S ≠ H**（§38.8 m3）：第 1 段（`formal-work-admission-check-v2/publisher.mjs`）和第 8 段在 `trainMode` 不是 `on` 时，对 `isTrainFrontJobV2` 的作业零副作用拒绝 `TRAIN_FRONT_JOB_WITHOUT_TRAIN`（干净终止，进 `stage-fact.mjs` 与 `classify.mjs` 的码表）。§38.8 的 n2（`refs.mjs` 和 staged 发布者前后两次读到的 `base.sha` 相同）、n3（读到的 PR base 写进准入事实）在同一个 PR 里做。
-- **验收**：on 加 `strict` 关加只有 merge 时发绿；off、shadow 下 `strict` 关仍是 `STRICT_OFF_WITHOUT_TRAIN`；以下各自零副作用不发绿：两个 holder，证明属于别的 PR、别的 H 或上一任车头，证明早于成为车头的时刻或过期，证明之后别的 PR 有更新，没做过全量清扫，台账有未确认撤销；说明逐字；touch green 只在 settled 后调一次，失败不撤；S ≠ H 作业在 off、shadow 下第 1、8 段都拒；三份码表一致。
+- **验收**：on 加 `strict` 关加只有 merge 时发绿；off、shadow 下 `strict` 关仍是 `STRICT_OFF_WITHOUT_TRAIN`；以下各自零副作用不发绿：两个 holder，证明属于别的 PR、别的 H、别的 T 或上一任车头，证明早于成为车头的时刻或过期，证明之后别的 PR 有更新，改 on 之后没有以 on 模式完成全量清扫（只有影子清扫也算没有），台账有未确认撤销；说明逐字；touch green 只在 settled 后调一次，失败不撤；S ≠ H 作业在 off、shadow 下第 1、8 段都拒；三份码表一致。
 
 ### 41.3 撤绿与清扫
 
@@ -3317,11 +3318,11 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 - **S 的来源**：只取 on 模式第 10 段的 `OPEN_FRONT_BATCH` 事实（T = main 尖端，H，S = 试合并，父提交 [T, H] 与它的树），而且是清扫确认之后的（41.2）。执行器据此往排队表写一行带 `testSha` 的 subject，这是唯一的产生者；触发文件仍不接受 `testSha`。受保护层的车头 H 必须含 T，否则是 `FRONT_NEEDS_MAIN_MERGE`，不开批次（MergeAdmission v0.2 §2.4）。
 - **中继**：`relayPlan` 在写 `20-plan-intent` 之前，把带 `testSha` 的 subject 的全部角色留在本地（原因 `RELAY_TRAIN_FRONT_LOCAL`，§38.8 m1）。
 - **S 被 GitHub 重算掉**（§38.8 n7）：GitHub 重新生成试合并后，旧 S 可能取不到。bundle 时取不到是 `BUNDLE_UNAVAILABLE`（§38.3，批次开始前，不计释放上限）；第 8 段按 SHA 读 S 时取不到（404），新码 `TRAIN_TEST_COMMIT_GONE`，与父提交已不是 [T, H] 一样：这一批干净结束，下一次第 10 段重读 S、开新批次，算这个 head 的第二次车头批次；第二次还不行就结束，要推新提交。读取的暂时性错误仍按 `TRAIN_TEST_MERGE_NOT_READY` 停靠。
-- **硬上限**：位子剩余 = `least(since + slotHardCapMinutes, expires_at) − now`，`since` 是这个认领成为车头的时刻，`expires_at` 取同一次运行里保活之后的值；不按 45 分钟的续期时钟算（批次开始后 touch running 把位子改按 running 时钟走）。开车头批次之前要求剩余至少是 `train.frontBatchBudgetMs` 加一次第 8 段尝试（90 秒加助手余量），否则不开，PR 页面请持有者让位子过期后重新入队（合同草稿 Change 3）。每个 head 最多两次车头批次（含 attempt 2 和上面两种重开）；车头批次计入每日额度（§36）。
+- **硬上限**：报 running 之前，位子按续期时钟到 `greatest(merge_slot_at, since) + 2700 秒`（`20261009080000`:60-69 的 `until_from`），所以一个已等了 40 分钟的车头，批次第 1 段还没跑完位子就会过期。因此开车头批次的那一次第 10 段（它持有令牌）在清扫确认之后、给出 `OPEN_FRONT_BATCH` 之前自己报一次 `touch running`，位子从这时起按 90 分钟的 running 时钟走；然后按 `least(running 时钟的 until, since + slotHardCapMinutes, 保活后的 expires_at) − now` 算剩余，`since` 是这个认领成为车头的时刻。剩余至少是 `train.frontBatchBudgetMs` 加一次第 8 段尝试（90 秒加助手余量）才开，否则不开，PR 页面请持有者让位子过期后重新入队（合同草稿 Change 3）。每个 head 最多两次车头批次（含 attempt 2 和上面两种重开）；车头批次计入每日额度（§36）。
 - **谁调用、用哪个令牌**：都由通用助手以 clued-control 运行 Source B 的入口，用节点自己的 CI Binding 令牌（`controllerPrincipal`）；每次调用之前，同一次运行里先读 holders，要求不是 `admission_binding_required`，并且（保活以外）这个认领是位置 1、`bound_pr` 是这个 PR：
-  - `touch running`：车头批次的第 1 段（`formal-work-admission-check-v2/startup.mjs:14`），它的检查 settled 之后；`hard_cap_minutes` 取 `train.slotHardCapMinutes`（60–180）。
+  - `touch running`：两次。第一次在开车头批次的那一次第 10 段（上一条“硬上限”）；第二次在车头批次的第 1 段（`formal-work-admission-check-v2/startup.mjs:14`），它的检查 settled 之后，刷新 running 时钟；`hard_cap_minutes` 都取 `train.slotHardCapMinutes`（60–180）。第 2–7 段没有令牌，不再刷新：批次从第 1 段起超过 90 分钟时（第 2–7 段上限合计 130 分钟，`layout.mjs:83-88`），位子在第 8 段之前过期，这一批以没就绪结束、不发绿。实际批次约 20 分钟（v0.2 §5），接受这个残余。
   - `touch green`：第 8 段 settled 之后（41.2）。
-  - `touch failed`：第 3、5、7 段没有令牌，所以由批次结束后的第一次第 10 段报：车头当前 head 上 App 5368905 的 `gitleaks`、`trivy`、`contract-placement` 有一项是最终的 failure，就报 failed，服务端退位并发 CI 失败通知（迁移 `20261010112852` 的 failed 分支）。在此之前位子按 running 时钟占着，最多多占一个 `maintenanceEveryMs`。
+  - `touch failed`：第 3、5、7 段没有令牌，所以由批次结束后的第一次第 10 段报，但依据是执行器自己的账本，不是 GitHub 上的检查：train-run 作业（合同升 `/2`，C# 边界同步）带上 `frontOutcome`（PR、H、S、attempt、终局码）。执行器只在这一批是车头批次、账本说它已最终失败（不会再有 attempt 2）、失败属于 PR 本身（失败表 `deterministic-pr`，不是基础设施）时才填。第 10 段再核 holders 里这个认领仍是位置 1、PR 当前 head 仍是 H，才报 failed；服务端退位并发 CI 失败通知（迁移 `20261010112852` 的 failed 分支）。在此之前位子按 running 时钟占着，最多多占一个 `maintenanceEveryMs`。
   - adopt：第 10 段看到车头 PR 已合入、合并提交恰好 [T, H]、树等于 S 的树，调 `clued_work_claim_adopt_v1`（`pr_ref`、`merge_sha`）。树不同：`TRAIN_LANDED_TREE_MISMATCH`，写 PAUSE 请求、通知 Owner、不 adopt（v0.2 §3.3 第 2 条）。
   - return：第 10 段看到车头 PR 关闭未合入，调 `clued_work_merge_slot_return_v1`。车头换了 head 不 return：新 head 原位当车头，旧绿撤销。
   - 保活：第 10 段每次运行一次（下一条）。
@@ -3331,14 +3332,14 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
   - **排队认领保活**：新函数 `clued_work_merge_queue_keepalive_v1(p_token_hash, {scope, repository, pr_refs})`，只认 ci-admission 角色的 Binding（同 touch），加进 CI 签名白名单。`pr_refs` 是调用方刚从 GitHub 读到、仍打开的 PR，最多 50 个。函数在 `work_claim_lock` 下先调 `work_claim_expire_due`：过期是惰性的（`20261001060000`:157-165），而队列把过了 `expires_at` 的 ACTIVE 认领照样算在内（`20261009080000`:74-76），所以不先过期就会把已过期的租约续活。然后只对这个 scope、这个仓库 merge ref 的队列里（41.5 记下的车头和算出的等候者）、`expires_at > now`、`bound_pr` 在列表里的认领：`expires_at := greatest(expires_at, least(now + lease_seconds, hard_deadline_at))`。不改 `lease_version`、续期次数、`progress_refs`、fence、`merge_slot_at` 和 CI 时钟；不碰已过期、已出队、不在队列里的认领；永远不超过 24 小时硬截止（表约束也挡着）。每个认领每小时最多一条回执 `WORK_CLAIM_QUEUE_KEPT_ALIVE`。到了硬截止的认领照旧过期出队；PR 页面提前 2 小时提醒持有者重新认领（按优先级重新排位）。盲区：别的 scope（例如 global）里的排队认领不在常驻层运行的 scope 里，holders 看不到，也不被保活（v0.2 §5 末条的同一盲区）。
   - **记下车头、按优先级排位**：41.5。
   - **节点 Source 记录**：41.6。
-- **验收**：S 只来自清扫确认之后的第 10 段；带 S 的 subject 在 `20-plan-intent` 之前就留在本地；S 取不到时干净结束、重读、算第二次；剩余时间按硬上限和租约算，不够不开；touch running 在第 1 段、green 在第 8 段、failed 在批次后的第 10 段，各一次且各自先核 holders；树不同就停车、不 adopt；return 只在关闭未合入时；STANDBY 和不当班的运行不写 KooYomi。§38.8 列的 S ≠ H 测试补齐：桥签发、HEAD = S ≠ H 的 worker 工作区、placement 密封候选的 HEAD 与打包内容（S、H、T）、C# 同批核对（`PureTestsV2.cs`）。迁移的 DB 测试：保活先过期再续、不复活已过期的租约、不动续期次数和 fence、不过硬截止、只认 ci-admission、不在队列里的认领不动、回执限频。
+- **验收**：S 只来自清扫确认之后的第 10 段；带 S 的 subject 在 `20-plan-intent` 之前就留在本地；S 取不到时干净结束、重读、算第二次；开批次的第 10 段先报 running，剩余时间按 running 时钟、硬上限和租约算，不够不开（等了 40 分钟的车头也不会在第 1 段过期）；running 在开批次的第 10 段和第 1 段、green 在第 8 段、failed 在批次后的第 10 段，各自先核 holders；failed 只按 `frontOutcome` 报，非车头批次的失败、还会有 attempt 2 的失败、基础设施失败都不报；树不同就停车、不 adopt；return 只在关闭未合入时；STANDBY 和不当班的运行不写 KooYomi。§38.8 列的 S ≠ H 测试补齐：桥签发、HEAD = S ≠ H 的 worker 工作区、placement 密封候选的 HEAD 与打包内容（S、H、T）、C# 同批核对（`PureTestsV2.cs`）。迁移的 DB 测试：保活先过期再续、不复活已过期的租约、不动续期次数和 fence、不过硬截止、只认 ci-admission、不在队列里的认领不动、回执限频。
 
 ### 41.5 优先级（Decision `3dcb583b`，取代 `a5ea4be3`）
 
 - **来源**：PR 的工作认领所指 KooYomi Task（认领的 `task_id`）的记录优先级 `public.clued_memories.priority`：`smallint`，默认 0，取值 0–100（迁移 `20260824014005`:11、:64）；Task 列表的索引按 `priority desc` 排（同文件 :95-98），所以数值大为高。2026-10-31 生产里在用的 Task 取值为 0、5、40。Task 没有截止日期字段（同日只读核对：表列与 `type_fields` 都没有），`a5ea4be3` 选的“截止日期”因此作废，Owner 改选优先级。
 - **只排车头后面**：车头不受影响，任何 PR 都不能排到车头前面，所以绕不过“只有一个绿”（§22.5）。
 - **次序**：优先级高的在前；同一优先级按入队时间，再按 claim_id。等候者的次序每次读取时按 Task 当时的优先级算。
-- **车头在交接时定下**：今天的队列在读取时按入队时间算，出队也靠入队时间比较（`20261009080000`:90-91），没有任何东西被记下。迁移改为：每次读队列的调用（认领视图、holders、touch、verify、保活）先在 `work_claim_lock` 下检查记下的车头是否已离开（释放、过期、去掉 merge ref、位子过期）；离开了就在同一次写里按当时的次序选出下一个车头，记进 `work_claim_merge_queue_v1`（车头 claim、`since`），离开者记出队时刻；新车头的位子按 `since` 算已经过期的，同样记出队、再选下一个。之后的读取只读记下的车头，不再重选。改优先级、切换 `fifo`/`priority` 都不改变当前车头，只影响下一次交接。
+- **车头在交接时定下**：今天的队列在读取时按入队时间算（`20261009080000`:90-91）；`work_claim_merge_queue_v1` 只记最后一个离开的条目（`head_left_at`、`left_queued_at`、`left_claim_id`，同文件 :35-42），出队靠与它比较入队次序，当前车头没有记下。迁移给这张表加两列（当前车头 claim、`since`），给认领加出队时刻。每次读队列的调用（认领视图、holders、touch、verify、保活）先在 `work_claim_lock` 下检查记下的车头是否已离开（释放、过期、去掉 merge ref、位子过期）；离开了就在同一次写里按当时的次序选出下一个车头并记下，离开者记出队时刻；新车头的位子按 `since` 算已经过期的，同样记出队、再选下一个。之后的读取只读记下的车头，不再重选。改优先级、切换 `fifo`/`priority` 都不改变当前车头，只影响下一次交接。
 - **迁移时**：把迁移那一刻按今天规则算出的车头原样记下；开关为 `fifo` 时，下一个车头按入队时间选，结果与今天逐条相同。
 - **开关**：每个 merge ref 一个，默认 `fifo`，Owner 在新合同发布、关 `strict` 的同一天打开（41.9）。开关放在哪、谁能改：41.10。
 - **谁能改优先级**：Agent 能改自己 Task 的优先级，就能把自己往前排（41.10）。
@@ -3348,26 +3349,31 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 
 - **现状**：节点模式 ACTIVE、STANDBY、UNCERTAIN，不是 ACTIVE 就不开批次（`executor.mjs:366`、`:173`）；但 DEFERRED 是“安静”的结果，第 10 段照跑（`executor.mjs:169-170`、`:1117`）。没有角色时 holders 答 `admission_binding_required`，影子记 `NOT_ON_DUTY`（`merge-slot-native.mjs:5`、`train-maintenance.mjs:31-32`）。§34.4 的版本不一致只比一个节点的 Windows 与 Linux 两侧。PR 页面状态不带 Source（`pr-status.mjs`），`status.mjs:20` 的 `source` 是本机 `status.json` 里的，别的节点读不到：今天没有比较两个节点 Source 的数据。
 - **只有 ACTIVE 跑 on**：on 模式和只撤模式的第 10 段只在 ACTIVE 上跑；STANDBY、UNCERTAIN 不跑，状态写 `NOT_ON_DUTY`。影子模式照旧两边都跑、只读。
-- **接班先清扫**：STANDBY → ACTIVE 之后、第一次发布（任何一段）之前，先完成一次全量清扫（41.3）。没完成时调度推迟 `TRAIN_TAKEOVER_SWEEP_PENDING`，只撤模式照跑。
+- **接班先清扫**：STANDBY → ACTIVE 之后、第一次发布（任何一段）之前，先完成接班清扫。服务端按节点记“全量清扫水位”：一个节点以 on 模式完成全量清扫、撤销全部确认时，第 10 段报一次（完成时刻、GitHub `updated` 游标、main 尖端），只认 ci-admission。接班节点从 holders 回答里读到最近一条水位：有，就从水位起做增量清扫，加上整条发布流水和本节点台账，一般一次第 10 段就能完成；没有水位才做全量清扫（最长 `fullSweepMaxMs`）。接班清扫期间调度推迟 `TRAIN_TAKEOVER_SWEEP_PENDING`，不发绿，但只撤和保活照跑，排队的认领不会因此过期。
 - **撤别人的先核角色**：要撤的检查不在本节点台账里（别的节点发的，例如来自流水），同一运行内先读一次 holders；答 `admission_binding_required` 就不撤，本轮结论“不当班”。本节点台账里的（自己发的）撤销不要求角色：撤销只会更严（R-c）。
-- **两节点同一个 Source**：开车的安装用同一个包（41.9）。数据来源放在服务端，用 41.6a 的 CI 连接活动记录：两个节点的每次 holders 调用都带节点名和 `ciSourceManifestSha256`，服务端按 Binding 记下。接班的节点在第一次 on 运行时读最近一条由别的 Binding 记下的 Source，24 小时内且不同，就不跑 on 模式的第 10 段并通知 Owner；没有记录（第一次开车）照常。
-- **验收**：STANDBY 不跑 on；接班后清扫完成之前不发布；撤别人的要角色、撤自己的不要；接班时 Source 不同不接 on，没有记录照常。
+- **两节点同一个 Source**：开车的安装用同一个包（41.9）。数据来源放在服务端，用 41.6a 的 CI 连接活动记录：节点每次调 holders 都带节点名和 `ciSourceManifestSha256`，服务端按 Binding 记下；holders 的回答加一个 `nodes` 字段，列出每个有资格的连接和最近 24 小时调用过的 CI 连接的节点名、Source、自报状态、最近活动时刻，以及看门狗最近一次运行的时刻（41.6a）。接班的节点（自动或 Owner 手动移交都一样）在第一次 on 运行时从这个回答里读别的连接的 Source，24 小时内且不同，就不跑 on 模式的第 10 段并通知 Owner；没有记录（第一次开车）照常。
+- **验收**：STANDBY 不跑 on；接班清扫完成之前不发布，有水位走增量、没有水位走全量，期间只撤和保活照跑；撤别人的要角色、撤自己的不要；手动和自动接班时 Source 不同都不接 on，没有记录照常。
 
 ### 41.6a ci-admission 自动接班（Decision `06cd3dd4`，取代 `231a5dd9`）
 
-- **现状**：交接只有 Owner 的一键移交：Native 两步 `clued_binding_role_handover_confirmation_issue_v1`、`clued_binding_role_handover_v1`（迁移 `20261023010000`:370、:419），第 2 步要求同一 Native 会话的一次性确认（同文件 :419 起的函数体）；检查在 `binding_role_handover_check_v1`（:332-349：来源持有且不是停车位，目标有效、有 `context:read`、还没有 ci-admission，交接后不会有第二个常驻节点持有者）；新记录 5 分钟后生效（`binding_role_activation_delay_v1`，:55）。两个节点的 CI 令牌对 KooYomi 都只读，服务端今天不记任何节点的活动。
-- **资格**：Owner 在 `/bindings` 上把连接标为“可自动接班的常驻节点”，并给出次序（新的每连接字段，例如 `resident_failover_rank`，空表示不可自动接班）。只能由 Owner 的 Native 会话设置和取消（同 `/bindings` 现有的 Native 函数），回执记谁、何时、次序。今天标两个：aa4969fb（TURING）与 44dc0846（DESK-W-591）；以后加节点时由 Owner 一并标；取消标记就退出。没标的连接永远不会被自动选中。
-- **活动记录（服务端可信的心跳）**：迁移加一张表，按 Binding 记最近一次 CI 调用：时刻、哪个函数、结果（`held`、`not-held`）、节点名、`ciSourceManifestSha256`、节点自报的状态（`ACTIVE`、`STANDBY`、`UNCERTAIN`、`HALTED` 与 `haltedSince`）。在服务端函数里写，节点改不了时刻：holders（第 10 段与第 11 段的探测都调它，`merge-slot-native.mjs:9`，`resident-v2/role-probe-entry.mjs:18`）加三个可选入参（节点名、Source、状态），touch、verify 等 CI 调用只更新时刻。探测间隔 STANDBY 15 分钟、ACTIVE 30 分钟（`role-probe.mjs:7`），空闲时第 10 段每 10 分钟一次。HALT 时今天的 tick 在探测之前就返回，所以要让第 11 段的只读探测在 HALT 下也跑，带上 `HALTED` 与 `haltedSince`（41.10）。
-- **触发**（看门狗，`pg_cron` 每分钟跑一次 `clued_private.ci_admission_failover_tick_v1()`，作业名 `clued-ci-admission-failover`，写法同 `20261004120000`:366 的 `cron.schedule`）：常驻节点持有者 X 是有资格的连接，并且
-  - X 最近一次活动早于 30 分钟前，或 X 自报 `HALTED` 已超过 10 分钟；
-  - 距上一次交接（自动或手动）超过冷却时间，建议 6 小时；
-  - 存在目标 Y：有资格的、不是持有者、最近一次 holders 结果为 `not-held` 且在 20 分钟内（STANDBY 探测 15 分钟一次加余量）、自报状态不是 `HALTED`、自报 Source 与 X 最近记下的相同（X 没有记录时不比）。按 Owner 的次序取第一个这样的 Y。这就是“目标节点在线”的核对：它刚刚调用过服务端。
-- **交接**：与一键移交同一条服务端路径：把 `clued_binding_role_handover_v1` 的核心拆成一个私有函数，一键移交和看门狗都调它；同样过 `binding_role_handover_check_v1`；X 的记录当场结束，Y 得到用途 `resident-node`、5 分钟后生效的记录；停车位和别的持有者不动；任何时候至多一个常驻节点持有者。
-- **审计与通知**：每次自动交接写回执 `CI_ADMISSION_AUTO_HANDOVER`，主体记“服务端看门狗”（不是 Native 会话），带触发原因（无活动或 HALT）、X、Y、两边的最近活动；同时写一条 KooYomi Note。算力面板只有 GitHub 令牌（`scripts/ci/self-hosted/compute_panel.py` 文件头），读不到 KooYomi，所以由 Y 转达：Y 的探测回答里带上这次自动交接（holders 回答加一个字段），Y 在 24 小时内的 `resident-queue/<节点>` 描述写“自动接班”，算力面板据此在它的 Issue 里 @Owner（面板已读这些状态，`docs/maintenance/compute-panel.md:16`）。
+- **现状**：交接只有 Owner 的一键移交：Native 两步 `clued_binding_role_handover_confirmation_issue_v1`、`clued_binding_role_handover_v1`（迁移 `20261023010000`:370、:419），第 2 步要求同一 Native 会话的一次性确认；检查在 `binding_role_handover_check_v1`（:332-349：来源持有且不是停车位，目标有效、有 `context:read`、还没有 ci-admission，交接后不会有第二个常驻节点持有者）；交接在 advisory 锁 `clued-binding-role:<owner>:ci-admission` 下做（:457）；新记录 5 分钟后生效（`binding_role_activation_delay_v1`，:55）。两个节点的 CI 令牌对 KooYomi 都只读，服务端今天不记任何节点的活动。今天 HALT、PAUSE 时 tick 在探测之前就返回（`executor.mjs:1097`；暂停接新时调度结果被挡，`:1113`），探测（`:1114`）和第 10 段（`:1117`）都不跑。
+- **资格**：Owner 在 `/bindings` 上把连接标为“可自动接班的常驻节点”，并给出次序（新的每连接字段，例如 `resident_failover_rank`，空表示不可自动接班）。设置、取消和改次序与 `clued_binding_role_set_v1` 一样走两步一次性确认（`20261023010000`:248 起，确认核对在 :270-282），回执记谁、何时、次序。今天标两个：aa4969fb（TURING）与 44dc0846（DESK-W-591）；以后加节点时由 Owner 一并标；取消标记就退出。没标的连接永远不会被自动选中。
+- **总开关**：每个账户一个“自动接班”开关，默认关，改它同样走两步确认。第 2 步迁移时两个节点还跑旧包、不自报状态，所以要等第 9 步影子复核之后、两个节点都装上新包并正常自报，Owner 才打开（41.9）。关着时看门狗照算、照告警，不交接。
+- **活动记录（服务端可信的心跳）**：迁移加一张表，按 Binding 记最近一次 CI 调用。算作活动的调用：CI 签名白名单里的全部函数（`20261010161848`:96-104）加本节新增的保活和水位；时刻在服务端函数里写，节点改不了。holders 另带可选的自报入参，服务端照记：节点名、`ciSourceManifestSha256`、模式（`ACTIVE`、`STANDBY`、`UNCERTAIN`），以及 `HALTED`（`haltCode`、`haltedSince`、引发它的批次的 PR 与 head）、`PAUSED`、`INTAKE_PAUSED`（带 `until`）、`IN_BATCH`（带 `until`）。谁报：第 11 段的探测和第 10 段每次都报（`merge-slot-native.mjs:9`，`resident-v2/role-probe-entry.mjs:18`）；每个批次的第 1 段在准入之前多调一次 holders，报 `IN_BATCH`，`until` = 现在 + 第 1–8 段上限之和（第 2–7 段合计 130 分钟，`layout.mjs:83-88`）。探测作业的新字段进 role-probe 的作业合同和 C# 边界（41.1 第 4、5 步）。
+- **探测排在暂停与 HALT 之前**：第 11 段的只读探测移到 HALT 与 PAUSE 检查之前（与第 12 段同一位置，`executor.mjs:1075-1081`），按原来的间隔照跑（STANDBY 15 分钟、ACTIVE 30 分钟，`role-probe.mjs:7`）并带上状态。它不开批次，除节点模式外什么都不改。
+- **触发**（看门狗，`pg_cron` 每分钟跑一次 `clued_private.ci_admission_failover_tick_v1()`，作业名 `clued-ci-admission-failover`，写法同 `20261004120000`:366 的 `cron.schedule`）：总开关开着，常驻节点持有者 X 是有资格的连接，并且
+  - X 沉默：`now > max(X 最近活动 + 30 分钟, X 自报的 IN_BATCH until + 10 分钟)`；或 X 自报 `HALTED` 超过 10 分钟、且 `haltCode` 在“本机环境”白名单里。白名单在迁移里固定，取失败表 `class: environment` 的码（“this host or its services”，`src/failure-table.json`）。完整性与安全类的 HALT 永不触发，要 Owner 看：字节漂移（`RESIDENT_SOURCE_DRIFT`）、各种 `*_UNCONFIRMED`、FAILED_UNKNOWN、`TRAIN_LANDED_TREE_MISMATCH`、撤销未确认等；
+  - X 最近的自报不是 `PAUSED`，也不是未到期的 `INTAKE_PAUSED`：暂停着的持有者永不被交出，哪怕之后沉默。暂停是 Owner 或兜底的决定：树不同时的自动 PAUSE（41.4）、companion 兜底的暂停（41.7）、回退第 1 步（41.9）；
+  - 距上一次交接（自动或手动）超过冷却时间，6 小时；
+  - 存在目标 Y：有资格的、不是持有者、最近一次 holders 结果为 `not-held` 且在 20 分钟内（STANDBY 探测 15 分钟一次加余量）、自报状态不是 `HALTED`、`PAUSED`、`INTAKE_PAUSED`、自报 Source 与 X 最近记下的相同（X 没有记录时不比）。按 Owner 的次序取第一个这样的 Y。这就是“目标节点在线”的核对：它刚刚调用过服务端。
+- **交接**：与一键移交同一条服务端路径：把 `clued_binding_role_handover_v1` 的核心拆成一个私有函数，一键移交和看门狗都调它。核心函数显式接收 owner（`pg_cron` 里没有 `authorization_owner_v12()`），取同一把 advisory 锁（`20261023010000`:457），同样过 `binding_role_handover_check_v1`；X 的记录当场结束，Y 得到用途 `resident-node`、5 分钟后生效的记录；停车位和别的持有者不动；任何时候至多一个常驻节点持有者。
+- **HALT 的 PR 交接时带走**：X 自报 HALTED 时带着引发它的批次的 PR 与 head；自动交接把它们记进回执，holders 回答带给 Y；Y 对这个 PR 的这个 head 推迟（`HANDOVER_HELD_HEAD`），直到 Owner 在 `/bindings` 上清除（两步确认）。
+- **审计与通知**：每次自动交接写回执 `CI_ADMISSION_AUTO_HANDOVER`，主体记“服务端看门狗”（不是 Native 会话），带触发原因（沉默或 HALT 及其码）、X、Y、两边的最近活动；同时写一条 KooYomi Note。算力面板只有 GitHub 令牌（`scripts/ci/self-hosted/compute_panel.py` 文件头），读不到 KooYomi，所以由 Y 转达：holders 回答带上这次自动交接，Y 在 24 小时内的 `resident-queue/<节点>` 描述写“自动接班”，算力面板据此在它的 Issue 里 @Owner（面板已读这些状态，`docs/maintenance/compute-panel.md:16`）。
+- **看门狗自己活着**：每次 tick 记下时刻，holders 回答带上它（`nodes` 字段旁）；节点读到超过 5 分钟没有 tick，就在 PR 页面状态里写“自动接班看门狗未运行”。
 - **不自动交回**：被自动交出的 X 不再被自动选中，直到 Owner 手动交接一次；Owner 随时可以用一键移交改回。
 - **没有可用目标**：不交接，只告警：回执 `CI_ADMISSION_FAILOVER_NO_TARGET` 与 KooYomi Note，每小时最多一次，`/bindings` 页面显示。
-- **旧节点上跑着的批次**：X 的记录结束后，它下一次实时准入（第 1 段或第 8 段的 Native 准入）被拒，按 §29 转 STANDBY，批次干净结束；X 已发布、还没合入的绿由 Y 接班后、第一次发布之前的全量清扫撤掉（41.6）。交接后的 5 分钟里没有持有者，第 8 段不会发新绿。
-- **验收**（DB 测试）：没标资格的连接永远不被选中；按 Owner 的次序选；第一个不健康（结果过期、HALTED、Source 不同）时选下一个；没有可用目标时不交接、只告警且限频；30 分钟无活动和 HALT 超过 10 分钟各触发一次，29 分钟、9 分钟不触发；冷却期内不触发；被自动交出的连接不被自动选回，Owner 手动交接后恢复；交接后至多一个常驻节点持有者，停车位不动，新记录 5 分钟后生效；回执主体是看门狗；只有 Owner 的 Native 会话能改资格与次序；节点改不了活动时刻。常驻层测试：探测在 HALT 下照跑并带状态；Y 的 PR 页面写“自动接班”；X 在下一次准入被拒后转 STANDBY。
+- **旧节点上跑着的批次**：X 的记录结束后，它下一次实时准入（第 1 段或第 8 段的 Native 准入）被拒，按 §29 转 STANDBY，批次干净结束；X 已发布、还没合入的绿由 Y 的接班清扫撤掉（41.6：水位加增量，加整条流水）。交接后的 5 分钟里没有持有者，第 8 段不会发新绿。
+- **验收**（DB 测试）：没标资格的连接永远不被选中；按 Owner 的次序选；第一个不健康（结果过期、HALTED、PAUSED、Source 不同）时选下一个；没有可用目标时不交接、只告警且限频；总开关关着时不交接；沉默按 `max(30 分钟, IN_BATCH until + 10 分钟)` 判，29 分钟和批次进行中不触发；环境类 HALT 超过 10 分钟触发、9 分钟不触发，完整性类 HALT 永不触发；PAUSED 或未到期的 INTAKE_PAUSED 的持有者永不被交出；冷却期内不触发；被自动交出的连接不被自动选回，Owner 手动交接后恢复；交接后至多一个常驻节点持有者，停车位不动，新记录 5 分钟后生效；核心函数在 cron 下拿到显式 owner 和同一把锁；回执主体是看门狗；资格、次序、开关、清除推迟都要两步确认；节点改不了活动时刻。常驻层测试：探测在 HALT、PAUSE、暂停接新下照跑并带状态；第 1 段报 `IN_BATCH`；Y 推迟带走的 PR 与 head；Y 的 PR 页面写“自动接班”；看门狗超过 5 分钟没 tick 时 PR 页面告警；X 在下一次准入被拒后转 STANDBY。
 
 ### 41.7 策略 `on` 与保留
 
@@ -3393,9 +3399,9 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 
 1. **合同**：Owner 接受 MergeAdmission v0.2（Decision，含 41.1 列出的改动）；合同草稿按 41.1 改完、独立审核，Owner 接受并给发布 Grant，KooYomi 发新版本。迁移已应用，排位开关仍是 `fifo`。
 2. **以 shadow 安装两节点**：同一个包（§40 工具链，预演 `REHEARSAL_PASS`），含 Source A、B、常驻层和 #949；策略 `/8`，`train.enabled=shadow`。§38.8 n5：bundle 回执合同升 `/2`（带四个测试字段），新 ws-prep 只认 `/2`，`build-bundle.ps1` 与 `prepare-workspaces.py` 装错一个就以合同不符明确拒绝；重装清单写明两者同装。影子模式下第 10 段照跑增量和全量清扫但不撤：记下会撤的每一条，实测一轮全量清扫的调用数和时长（用来定 `fullSweepMaxMs`）。
-3. **影子复核**：从 `train-run` 回执和 `train-shadow` 记录离线算出会撤几个、车头首次运行失败率、全量清扫时长，以及 §22.2 第 5 条的其余各项，交 Owner 复核一次；`nonFrontRuns` 的选择也用这份数据（v0.2 §2.2）。
+3. **影子复核**：从 `train-run` 回执和 `train-shadow` 记录离线算出会撤几个、车头首次运行失败率、全量清扫时长，以及 §22.2 第 5 条的其余各项，交 Owner 复核一次；`nonFrontRuns` 的选择也用这份数据（v0.2 §2.2）。同时核对两个节点在 holders 回答的 `nodes` 里自报正常、看门狗在走；Owner 这时才打开自动接班总开关（41.6a）。
 4. **改 on**：Owner 一次 UAC 把策略改成 `train.enabled=on`、`nonFrontRuns=true`。选在没有 PR 等合并的时候：之后的清扫会撤掉说明里没有 main@T 的旧绿。
-5. **清扫**：ACTIVE 节点做一次全量清扫（设计第 5 步）；再在列车模式下做一次，确认除车头外没有绿（第 6 步）。STANDBY 不清扫，接班时再做（41.6）。清扫失败就停在这一步。
+5. **清扫**：ACTIVE 节点以 on 模式做一次全量清扫（设计第 5 步），撤销全部两次读回确认，完成时写服务端水位（41.6）；再在列车模式下做一次，确认除车头外没有绿（第 6 步）。影子模式的清扫不算。STANDBY 不清扫，接班时按水位做增量（41.6）。清扫失败就停在这一步。
 6. **Owner**：在规则集里同一次保存关 `strict`、合并方式只留 merge；打开排位开关；`nonFrontRuns` 改成自己选的值（UAC）。
 7. **头 10 次合入**：第 10 段每次核对落地的树等于 S 的树并写回执，汇总报给 Owner；不符就 `TRAIN_LANDED_TREE_MISMATCH` 停车。
 
@@ -3414,4 +3420,4 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 7. 回执链分段的做法，以及现装节点已有回执怎么迁过去。
 8. 车头全绿时由 Agent 的 auto-merge 还是守队程序合入：两者都是钉 head 的 merge，重复无害；合同草稿是否还保留 Agent 开 auto-merge 这一步，与草稿一起定。
 9. `binding_role_admits_v1` 也放行用途为“其他”的 ci-admission 连接（WorkClaimAdmission §4.4 的 C10 一条），它们也能调 touch、adopt、return 和保活；要不要限定为 `resident-node`。
-10. 自动接班：让第 11 段的只读探测在 HALT 下也跑，是否可以（今天 HALT 时 tick 在它之前返回）；30 分钟无活动的阈值对一个长批次是否太紧（批次中间只有第 1、8 段调 KooYomi，批次约 20 分钟，v0.2 §5）；冷却 6 小时是否合适；告警与 @Owner 经 Y 的 PR 页面转达，Y 不在线时 Owner 只能从 KooYomi 和 `/bindings` 看到。
+10. 自动接班：冷却 6 小时是否合适；“本机环境”HALT 白名单取失败表 `class: environment` 是否太宽或太窄；告警与 @Owner 经 Y 的 PR 页面转达，Y 不在线时 Owner 只能从 KooYomi 和 `/bindings` 看到。
