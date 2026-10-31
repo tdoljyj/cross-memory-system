@@ -150,17 +150,17 @@ if (-not (Test-Elevated)) { Fail 'ELEVATION_REQUIRED' 'machine keys and the TPM 
 
 if ($Mode -eq 'init-keys') {
   if (-not $ConfirmCreateKeys) { Fail 'CONFIRMATION_REQUIRED' 'init-keys creates node keys; pass -ConfirmCreateKeys, and only in an install wave the Owner approved' }
-  foreach ($role in $KeyNames.Keys) {
-    $found = Find-MachineKey $KeyNames[$role]
-    if ($null -ne $found) { Fail 'KEY_EXISTS' "$($KeyNames[$role]) already exists ($($found.origin)); init-keys never replaces a key" }
+  foreach ($keyRole in $KeyNames.Keys) {
+    $found = Find-MachineKey $KeyNames[$keyRole]
+    if ($null -ne $found) { Fail 'KEY_EXISTS' "$($KeyNames[$keyRole]) already exists ($($found.origin)); init-keys never replaces a key" }
   }
   $providers = @(Get-Providers | Where-Object { $KeyProvider -eq 'auto' -or $_[1] -eq $KeyProvider })
   $createdKeys = @()
   $created = [ordered]@{}
   try {
-    foreach ($role in $KeyNames.Keys) {
-      $algorithm = if ($role -eq 'identity') { [System.Security.Cryptography.CngAlgorithm]::ECDsaP256 } else { [System.Security.Cryptography.CngAlgorithm]::ECDiffieHellmanP256 }
-      $usage = if ($role -eq 'identity') { [System.Security.Cryptography.CngKeyUsages]::Signing } else { [System.Security.Cryptography.CngKeyUsages]::KeyAgreement }
+    foreach ($keyRole in $KeyNames.Keys) {
+      $algorithm = if ($keyRole -eq 'identity') { [System.Security.Cryptography.CngAlgorithm]::ECDsaP256 } else { [System.Security.Cryptography.CngAlgorithm]::ECDiffieHellmanP256 }
+      $usage = if ($keyRole -eq 'identity') { [System.Security.Cryptography.CngKeyUsages]::Signing } else { [System.Security.Cryptography.CngKeyUsages]::KeyAgreement }
       $key = $null; $origin = $null; $jwk = $null; $errors = @()
       foreach ($entry in $providers) {
         for ($attempt = 0; $attempt -lt 16 -and $null -eq $jwk; $attempt++) {
@@ -170,27 +170,27 @@ if ($Mode -eq 'init-keys') {
           # A TPM key is non-exportable by construction; the platform provider may refuse an export-policy property.
           if ($entry[1] -ne 'tpm') { $parameters.ExportPolicy = [System.Security.Cryptography.CngExportPolicies]::None }
           $parameters.KeyUsage = $usage
-          try { $key = [System.Security.Cryptography.CngKey]::Create($algorithm, $KeyNames[$role], $parameters) }
+          try { $key = [System.Security.Cryptography.CngKey]::Create($algorithm, $KeyNames[$keyRole], $parameters) }
           catch {
             # NTE_EXISTS (0x8009000F): the name exists in this provider after all (a concurrent run, or a key Find-MachineKey could
             # not see). Stop rather than create a second key of the same name in the other provider.
-            if ($_.Exception.HResult -eq -2146893809 -or $_.Exception.Message -match 'already exists') { throw "KEY_EXISTS: $($KeyNames[$role]) ($($entry[1]))" }
+            if ($_.Exception.HResult -eq -2146893809 -or $_.Exception.Message -match 'already exists') { throw "KEY_EXISTS: $($KeyNames[$keyRole]) ($($entry[1]))" }
             $errors += "$($entry[1]): $($_.Exception.Message)"; break
           }
           # From here the new key is ours to delete: an export or conversion failure must not leave it behind.
-          try { $candidate = ConvertFrom-EccPublicBlob ($key.Export([System.Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob)) $Magic[$role] }
-          catch { try { $key.Delete() } catch { }; throw "PUBLIC_KEY_INVALID: $($KeyNames[$role]) ($($entry[1])): $($_.Exception.Message)" }
+          try { $candidate = ConvertFrom-EccPublicBlob ($key.Export([System.Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob)) $Magic[$keyRole] }
+          catch { try { $key.Delete() } catch { }; throw "PUBLIC_KEY_INVALID: $($KeyNames[$keyRole]) ($($entry[1])): $($_.Exception.Message)" }
           if (Test-Registrable $candidate) { $jwk = $candidate; $origin = $entry[1] }
           else { $key.Delete(); $key = $null }
         }
         if ($null -ne $jwk) { break }
       }
-      if ($null -eq $jwk) { throw "KEY_CREATE_FAILED: $($KeyNames[$role]): $($errors -join '; ')" }
+      if ($null -eq $jwk) { throw "KEY_CREATE_FAILED: $($KeyNames[$keyRole]): $($errors -join '; ')" }
       $createdKeys += $key
       if ($origin -eq 'software' -and $KeyProvider -eq 'auto' -and $errors.Count -gt 0) {
-        [Console]::Error.WriteLine("WARNING: $($KeyNames[$role]) was created in software because the TPM refused: $($errors -join '; ')")
+        [Console]::Error.WriteLine("WARNING: $($KeyNames[$keyRole]) was created in software because the TPM refused: $($errors -join '; ')")
       }
-      $created[$role] = [ordered]@{ name = $KeyNames[$role]; origin = $origin; public_jwk = $jwk }
+      $created[$keyRole] = [ordered]@{ name = $KeyNames[$keyRole]; origin = $origin; public_jwk = $jwk }
     }
   } catch {
     # Never leave the node with one key: delete exactly what this run created.
@@ -205,12 +205,12 @@ if ($Mode -eq 'init-keys') {
 
 # export: read-only.
 $keys = @{}
-foreach ($role in $KeyNames.Keys) {
-  $found = Find-MachineKey $KeyNames[$role]
-  if ($null -eq $found) { Fail 'KEY_MISSING' "$($KeyNames[$role]) does not exist (run -Mode init-keys only in an approved install wave)" }
-  try { $jwk = ConvertFrom-EccPublicBlob ($found.key.Export([System.Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob)) $Magic[$role] }
-  catch { Fail 'PUBLIC_KEY_INVALID' "$($KeyNames[$role]): $($_.Exception.Message)" }
-  $keys[$role] = @{ jwk = $jwk; origin = $found.origin }
+foreach ($keyRole in $KeyNames.Keys) {
+  $found = Find-MachineKey $KeyNames[$keyRole]
+  if ($null -eq $found) { Fail 'KEY_MISSING' "$($KeyNames[$keyRole]) does not exist (run -Mode init-keys only in an approved install wave)" }
+  try { $jwk = ConvertFrom-EccPublicBlob ($found.key.Export([System.Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob)) $Magic[$keyRole] }
+  catch { Fail 'PUBLIC_KEY_INVALID' "$($KeyNames[$keyRole]): $($_.Exception.Message)" }
+  $keys[$keyRole] = @{ jwk = $jwk; origin = $found.origin }
 }
 
 $system = Get-CimInstance -ClassName Win32_ComputerSystem
