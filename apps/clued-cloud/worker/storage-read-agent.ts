@@ -384,9 +384,10 @@ export async function createStorageReadAgent(config: {
         if (++used > SUBREQUEST_BUDGET) throw new Error("DRIVE_READ_BUDGET");
         return base(url, init);
       };
-      // §5.3: one bounded retry of a transient batch, counted in `used`.
+      // §5.3: bounded retries of a transient batch with exponential backoff
+      // (Decision 24422a98), each counted in `used`.
       const drive = createStorageGoogleMetadataBatch({ access_token: String(token.access_token), fetch: budgeted, signal: AbortSignal.timeout(25000),
-        transient_retry: true });
+        transient_retries: 2 });
 
       // Parent-chain root scope (§5.2): every chain of every object must reach
       // the root by provider ID within MAX_DEPTH; otherwise out of scope. A

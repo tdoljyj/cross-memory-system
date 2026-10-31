@@ -357,11 +357,12 @@ test("a transient Drive failure that survives the retry after round 1 ends searc
   assert.equal(partial.isError, false);
   assert.equal(partial.value.complete, false); assert.ok(partial.value.next_cursor);
   assert.deepEqual(names(partial.value), ["Readme.md"]);
-  assert.equal(partial.h.googleRequests, 3, "round 1, then the failed round 2 and its one retry");
+  assert.equal(partial.h.googleRequests, 4, "round 1, then the failed round 2 and its two backed-off retries (Decision 24422a98)");
   const fin = partial.h.calls.at(-1).p_input;
   assert.equal(fin.action, "finalize"); assert.equal(fin.complete, false);
   fixedWarnings(warnings);
-  assert.deepEqual(warnings.map(w => [w.code, w.outcome]), [["DRIVE_BATCH_HTTP_500", "retried"], ["DRIVE_BATCH_HTTP_500", "absorbed"]]);
+  assert.deepEqual(warnings.map(w => [w.code, w.outcome]), [["DRIVE_BATCH_HTTP_500", "retried"], ["DRIVE_BATCH_HTTP_500", "retried"],
+    ["DRIVE_BATCH_HTTP_500", "absorbed"]]);
   // The requeued folder is searched on the next page once Drive recovers.
   const resumed = await browse({ operation: "search", mime_type: "text/markdown", cursor: partial.value.next_cursor }, { drive });
   assert.equal(resumed.isError, false); assert.equal(resumed.value.complete, true);
@@ -371,9 +372,9 @@ test("a transient Drive failure that survives the retry after round 1 ends searc
     const { result: failed, warnings: logged } = await withWarnings(() => browse(args,
       { drive, batchFault: () => new Response("unavailable", { status: 503 }) }));
     assert.equal(failed.value.error, "storage_read_unavailable", args.operation);
-    assert.equal(failed.h.googleRequests, 2, "one retry only");
+    assert.equal(failed.h.googleRequests, 3, "two backed-off retries only");
     fixedWarnings(logged);
-    assert.deepEqual(logged.map(w => w.outcome), ["retried", "fatal"]);
+    assert.deepEqual(logged.map(w => w.outcome), ["retried", "retried", "fatal"]);
   }
 });
 

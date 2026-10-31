@@ -26,7 +26,15 @@ function status(code: number): void {
   // Only closed codes, never provider text, IDs or response headers.
   throw new Error(`DRIVE_BATCH_HTTP_${[401, 403, 404, 429].includes(code) ? code : code >= 500 ? 500 : 400}`);
 }
-/** Transient batch failures: retried once by batch(); search may absorb them after that. */
+const RATE_LIMIT_REASONS = new Set(["rateLimitExceeded", "userRateLimitExceeded"]);
+function rateLimited(payload: string): boolean {
+  try {
+    const value: unknown = JSON.parse(payload);
+    const errors = (value as { error?: { errors?: unknown } })?.error?.errors;
+    return Array.isArray(errors) && errors.some(item => RATE_LIMIT_REASONS.has(String((item as { reason?: unknown })?.reason)));
+  } catch { return false; }
+}
+/** Transient batch failures: retried by batch(); search may absorb them after that. */
 export function isDriveTransient(code: unknown): boolean {
   return code === "DRIVE_BATCH_TIMEOUT" || code === "DRIVE_BATCH_HTTP_429" || code === "DRIVE_BATCH_HTTP_500";
 }
@@ -76,7 +84,11 @@ function parse(raw: string, contentType: string | null, expected: string[]): unk
     const http = part.slice(headerEnd + 4), statusEnd = http.indexOf("\r\n"), httpHeaderEnd = http.indexOf("\r\n\r\n");
     const line = /^HTTP\/1\.[01] ([0-9]{3})(?: [^\r\n]*)?$/.exec(http.slice(0, statusEnd));
     if (!line || statusEnd < 0 || httpHeaderEnd <= statusEnd) invalid();
-    status(Number(line[1]));
+    const code = Number(line[1]);
+    // As Drive documents, a 403 whose reason is a rate limit is a 429: back off
+    // and retry (Decision 24422a98). Any other 403 stays final.
+    if (code === 403 && rateLimited(http.slice(httpHeaderEnd + 4))) status(429);
+    status(code);
     const inner = headers(http.slice(statusEnd + 2, httpHeaderEnd));
     if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(inner.get("content-type") ?? "") ||
       inner.has("content-encoding") || inner.has("transfer-encoding")) invalid();
@@ -97,16 +109,23 @@ export function createStorageGoogleMetadataBatch(config: {
   /** Storage reads only (StorageNormalUse §5.2): retry a transient batch once.
    * Off by default: the qualification probe never turns a diagnosis into a retry. */
   transient_retry?: boolean;
+  /** Retries with exponential backoff instead of one (1..3; Decision 24422a98:
+   * Drive asks clients to back off and retry rate limits and 5xx). Implies
+   * transient_retry. */
+  transient_retries?: number;
   /** Per-attempt batch timeout (default 10 s). Injectable for tests. */
   batch_timeout_ms?: number;
-  /** Delay before the single transient retry (default 250-750 ms jitter). Injectable for tests. */
-  retry_delay_ms?: () => number;
+  /** Delay before a transient retry, given the retry number from 0 (default
+   * 250-750 ms jitter, doubling per retry). Injectable for tests. */
+  retry_delay_ms?: (retry: number) => number;
 }) {
   if (typeof config.access_token !== "string" || config.access_token.length < 16 || /[\r\n]/.test(config.access_token) ||
     !(config.signal instanceof AbortSignal)) invalid();
   const timeoutMs = config.batch_timeout_ms ?? 10000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10000) invalid();
-  const retryDelay = config.retry_delay_ms ?? (() => 250 + Math.floor(Math.random() * 501));
+  const retryDelay = config.retry_delay_ms ?? ((retry: number) => (250 + Math.floor(Math.random() * 501)) * 2 ** retry);
+  const retries = config.transient_retries ?? (config.transient_retry === true ? 1 : 0);
+  if (!Number.isSafeInteger(retries) || retries < 0 || retries > 3) invalid();
   const fetcher = createStorageFetch(config.fetch);
   // One adapter belongs to one probe: count actual decompressed bytes across
   // all pages AND before/after phases, not only each individual HTTP envelope.
@@ -123,21 +142,20 @@ export function createStorageGoogleMetadataBatch(config: {
   async function batch(paths: string[], parentSignal?: AbortSignal): Promise<unknown[]> {
     if (!paths.length || paths.length > maxParts || paths.some(path => path.length > 8000 ||
       !/^\/drive\/v3\/files(?:\/[A-Za-z0-9_-]+)?\?[^\r\n ]+$/.test(path))) invalid();
-    try { return await attempt(paths, parentSignal); }
+    for (let retry = 0; ; retry++) try { return await attempt(paths, parentSignal); }
     catch (error) {
       const code = error instanceof Error ? error.message : "";
-      if (config.transient_retry !== true || !isDriveTransient(code) || config.signal.aborted || parentSignal?.aborted) throw error;
+      if (retry >= retries || !isDriveTransient(code) || config.signal.aborted || parentSignal?.aborted) throw error;
       // Fixed labels only: no IDs, paths or provider text.
       console.warn({ event: "storage_read_drive_transient", code, outcome: "retried" });
       const deadline = parentSignal ? AbortSignal.any([config.signal, parentSignal]) : config.signal;
       await new Promise<void>(resolve => {
         const done = () => { clearTimeout(timer); deadline.removeEventListener("abort", done); resolve(); };
-        const timer = setTimeout(done, Math.max(0, Math.min(1000, retryDelay())));
+        const timer = setTimeout(done, Math.max(0, Math.min(8000, retryDelay(retry))));
         deadline.addEventListener("abort", done, { once: true });
       });
       if (config.signal.aborted) throw new Error("DRIVE_QUALIFICATION_OBSERVATION_EXPIRED");
       if (parentSignal?.aborted) throw error;
-      return await attempt(paths, parentSignal);
     }
   }
   async function attempt(paths: string[], parentSignal?: AbortSignal): Promise<unknown[]> {

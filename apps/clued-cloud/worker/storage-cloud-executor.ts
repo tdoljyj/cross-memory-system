@@ -211,7 +211,9 @@ export async function createStorageCloudWorker(config: {
         // The boundary scan reads a whole folder level per request, so one run
         // stays within the Worker's per-invocation subrequest budget.
         metadata_batch: ({ access_token }: { access_token: string }) =>
-          createStorageGoogleMetadataBatch({ access_token, fetch: attemptFetch, signal: AbortSignal.any([AbortSignal.timeout(60000),retryAbort.signal]) }),
+          // Metadata reads back off and retry rate limits and 5xx (Decision 24422a98).
+          createStorageGoogleMetadataBatch({ access_token, fetch: attemptFetch, transient_retries: 3,
+            signal: AbortSignal.any([AbortSignal.timeout(60000),retryAbort.signal]) }),
         verified_result_mode: config.account_policy_v2 === true,
         ...(config.account_policy_v2 === true ? { semantic_recovery_client_id: config.client_id } : {}),
         ...(config.load_staged_content ? { load_staged_content: (input: Data) => attemptBounded(() => config.load_staged_content!(input)) } : {}),
