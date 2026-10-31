@@ -70,3 +70,19 @@ test('as a process: the secret comes on stdin, only the fingerprint comes out, n
   }
   assert.ok(body && !(await run('app-key', pem.slice(0, 200))).stderr.includes(body.slice(0, 30)));
 });
+
+// Task 293a092a: the heartbeat connection's token (clued_hbt_) has its own kind; neither kind accepts the other's prefix.
+test('heartbeat-token: only clued_hbt_ tokens, under their own domain; a CI token is never one', async () => {
+  const { HEARTBEAT_TOKEN_DOMAIN, fingerprintHeartbeatToken } = await import('../tools/secret-fingerprint.mjs');
+  const hbt = 'clued_hbt_' + 'HeartbeatFixtureValue0123456789';
+  assert.equal(fingerprintHeartbeatToken(hbt + '\r\n'), createHash('sha256').update(HEARTBEAT_TOKEN_DOMAIN + hbt).digest('hex'));
+  assert.notEqual(HEARTBEAT_TOKEN_DOMAIN, CI_TOKEN_DOMAIN);
+  assert.throws(() => fingerprintHeartbeatToken(token), { code: 'SECRET_FINGERPRINT_REFUSED' });
+  assert.throws(() => fingerprintCiToken(hbt), { code: 'SECRET_FINGERPRINT_REFUSED' });
+  const out = await run('heartbeat-token', hbt + '\n');
+  assert.equal(out.code, 0); assert.equal(out.stderr, '');
+  assert.deepEqual(JSON.parse(out.stdout), { kind: 'heartbeat-token', fingerprint: fingerprintHeartbeatToken(hbt) });
+  assert.doesNotMatch(out.stdout, /clued_hbt_/);
+  const refused = await run('heartbeat-token', token);
+  assert.deepEqual([refused.code, refused.stdout, refused.stderr], [2, '', 'SECRET_FINGERPRINT_REFUSED\n']);
+});

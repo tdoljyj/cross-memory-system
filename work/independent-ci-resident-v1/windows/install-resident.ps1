@@ -789,9 +789,11 @@ function Get-HeartbeatTokenPlan {
     if ((Test-Path -LiteralPath $HeartbeatTokenDirectory) -and (((Get-Item -LiteralPath $HeartbeatTokenDirectory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { throw 'HEARTBEAT_TOKEN_TARGET_DIRECTORY_REFUSED' }
     $bytes = Read-SecretSource $HeartbeatTokenFile 4096 'HEARTBEAT_TOKEN'
     try {
-      $fp = Get-SecretFingerprint 'ci-token' $bytes
+      # A heartbeat token is a clued_hbt_ token (its own kind); the CI connection's own token is named before anything else.
+      $ciFp = Get-SecretFingerprint 'ci-token' $bytes
+      if ($null -ne $ciFp -and $ciFp -ceq $Identity.ciTokenPinSha256) { throw 'HEARTBEAT_TOKEN_IS_THE_CI_ADMISSION_TOKEN' }
+      $fp = Get-SecretFingerprint 'heartbeat-token' $bytes
       if ($null -eq $fp) { throw 'HEARTBEAT_TOKEN_UNREADABLE' }
-      if ($fp -ceq $Identity.ciTokenPinSha256) { throw 'HEARTBEAT_TOKEN_IS_THE_CI_ADMISSION_TOKEN' }
       if ($script:SecretBytes.ContainsKey('upgradeToken') -and (Sha256Bytes $bytes) -ceq (Sha256Bytes $script:SecretBytes['upgradeToken'])) { throw 'HEARTBEAT_TOKEN_IS_THE_UPGRADE_TOKEN' }
     } catch { [Array]::Clear($bytes, 0, $bytes.Length); Clear-SecretBytes; throw }
     $entry.fingerprint = $fp; $entry.verified = $true

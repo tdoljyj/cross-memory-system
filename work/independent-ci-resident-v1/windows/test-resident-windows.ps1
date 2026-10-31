@@ -645,9 +645,10 @@ if (Test-Path -LiteralPath $probeNode) {
   [void][IO.Directory]::Delete($link)
 
   # The heartbeat token with and without its connection id (step 2b review): fingerprinted like the ci-admission token, the id recorded
-  # lower case, nothing secret in the plan or the next step.
-  $hbTokenText = 'clued_bnd_' + 'HeartbeatFixtureValue0123456789'; $hbTokenFile = Join-Path $Scratch 'secrets-fs\heartbeat-token.txt'; [IO.File]::WriteAllText($hbTokenFile, $hbTokenText + "`r`n")
-  $hbPin = Sha256Text ("clued.independent-ci.ci-binding-pin/1`0" + $hbTokenText)
+  # lower case, nothing secret in the plan or the next step. A heartbeat token is a clued_hbt_ token with its own fingerprint kind.
+  $hbTokenText = 'clued_hbt_' + 'HeartbeatFixtureValue0123456789'; $hbTokenFile = Join-Path $Scratch 'secrets-fs\heartbeat-token.txt'; [IO.File]::WriteAllText($hbTokenFile, $hbTokenText + "`r`n")
+  $hbPin = Sha256Text ("clued.independent-ci.heartbeat-token-pin/1`0" + $hbTokenText)
+  Yes ((Get-SecretFingerprint 'heartbeat-token' $enc.GetBytes($hbTokenText)) -ceq $hbPin -and $null -eq (Get-SecretFingerprint 'heartbeat-token' $enc.GetBytes('clued_bnd_' + 'HeartbeatFixtureValue0123456789')) -and $null -eq (Get-SecretFingerprint 'ci-token' $enc.GetBytes($hbTokenText))) 'fingerprint:heartbeat-token-kind-accepts-only-clued_hbt_'
   $savedOwnerSid = $OwnerSid; $OwnerSid = $hbOwner; $HeartbeatTokenDirectory = Join-Path $Scratch 'hb-plan-4e\secrets\heartbeat'; $HeartbeatTokenTarget = $HeartbeatTokenDirectory + '\ci-node-heartbeat.token'
   $script:SecretBytes = @{}; $HeartbeatTokenFile = $hbTokenFile
   foreach ($case in @(@($hbId.ToUpperInvariant(), $hbId, 'with-id'), @('', $null, 'without-id'))) {
@@ -655,11 +656,14 @@ if (Test-Path -LiteralPath $probeNode) {
     $hp = Get-HeartbeatTokenPlan
     Yes ($hp.supplied -and $hp.verified -and $hp.fingerprint -ceq $hbPin -and $hp.bindingId -ceq $case[1] -and $script:SecretBytes.ContainsKey('heartbeatToken')) ('heartbeat-binding-id:token-file-' + $case[2])
     $hpJson = $hp | ConvertTo-Json -Depth 4; $hpStep = Get-HeartbeatNextStep 'turing' $hp.bindingId
-    Yes (-not $hpJson.Contains($hbTokenText) -and -not $hpJson.Contains('clued_bnd_') -and -not $hpStep.Contains('clued_bnd_') -and -not $hpStep.Contains($hbPin)) ('heartbeat-binding-id:no-secret-in-plan-or-step-' + $case[2])
+    Yes (-not $hpJson.Contains($hbTokenText) -and -not $hpJson.Contains('clued_hbt_') -and -not $hpStep.Contains('clued_hbt_') -and -not $hpStep.Contains($hbPin)) ('heartbeat-binding-id:no-secret-in-plan-or-step-' + $case[2])
     Clear-SecretBytes
   }
   $HeartbeatTokenFile = $tokenFile; $HeartbeatBindingId = $hbId
   Yes (Test-Refused { Get-HeartbeatTokenPlan } 'HEARTBEAT_TOKEN_IS_THE_CI_ADMISSION_TOKEN') 'heartbeat-binding-id:the-ci-token-is-still-refused'
+  $otherBnd = Join-Path $Scratch 'secrets-fs\other-bnd.txt'; [IO.File]::WriteAllText($otherBnd, 'clued_bnd_' + 'SomeOtherConnection0123456789')
+  $HeartbeatTokenFile = $otherBnd; $HeartbeatBindingId = ''
+  Yes (Test-Refused { Get-HeartbeatTokenPlan } 'HEARTBEAT_TOKEN_UNREADABLE') 'heartbeat-token:a-clued_bnd_-token-is-not-a-heartbeat-token'
   $HeartbeatTokenFile = ''; $HeartbeatBindingId = ''; $OwnerSid = $savedOwnerSid; $script:SecretBytes = @{}
 
   # Placement: create-only, the exact bytes, the final security descriptor (here: this account stands in for .\clued-control).

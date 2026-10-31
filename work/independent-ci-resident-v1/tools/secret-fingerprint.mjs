@@ -1,6 +1,9 @@
 // Fingerprint of a controller secret, computed WITHOUT printing or keeping the secret (DESIGN.md section 30).
 //   node secret-fingerprint.mjs app-key    < PEM on stdin    -> {"kind":"app-key","fingerprint":"<base64>"}
 //   node secret-fingerprint.mjs ci-token   < token on stdin  -> {"kind":"ci-token","fingerprint":"<hex>"}
+//   node secret-fingerprint.mjs heartbeat-token < token on stdin -> {"kind":"heartbeat-token","fingerprint":"<hex>"}
+// The heartbeat token (DESIGN §41.6a) is a separate connection's token, issued with the prefix clued_hbt_; a CI connection
+// token (clued_bnd_) is never a heartbeat token, so each kind accepts only its own prefix.
 // install-resident.ps1 runs it with the package's pinned runtime\node.exe, from the package copy it has just hash-checked
 // (held open, so it cannot change), and feeds the secret on stdin: the secret never reaches a command line, a file this
 // tool writes or its output. The result is compared with the pin of the install record; a mismatch refuses the install
@@ -14,7 +17,9 @@ import { pathToFileURL } from 'node:url';
 
 export const CI_TOKEN_DOMAIN = 'clued.independent-ci.ci-binding-pin/1\0';
 const MAX_BYTES = 64 * 1024;
+export const HEARTBEAT_TOKEN_DOMAIN = 'clued.independent-ci.heartbeat-token-pin/1\0';
 const TOKEN = /^clued_bnd_[A-Za-z0-9_-]{8,480}$/;
+const HEARTBEAT_TOKEN = /^clued_hbt_[A-Za-z0-9_-]{8,480}$/;
 const refuse = () => { throw Object.assign(new Error('SECRET_FINGERPRINT_REFUSED'), { code: 'SECRET_FINGERPRINT_REFUSED' }); };
 
 // The base64 SHA-256 of the SPKI DER of the key's public half: the record's appPublicKeySha256Base64.
@@ -34,14 +39,21 @@ export function fingerprintCiToken(text) {
   return createHash('sha256').update(CI_TOKEN_DOMAIN + token).digest('hex');
 }
 
+// The heartbeat token's fingerprint (the install plan and receipt keep it; the runtime never needs it): trimmed, its own domain.
+export function fingerprintHeartbeatToken(text) {
+  const token = String(text).trim();
+  if (!HEARTBEAT_TOKEN.test(token)) refuse();
+  return createHash('sha256').update(HEARTBEAT_TOKEN_DOMAIN + token).digest('hex');
+}
+
 export async function main(argv = process.argv.slice(2), input = process.stdin, output = process.stdout) {
   try {
-    if (argv.length !== 1 || !['app-key', 'ci-token'].includes(argv[0])) refuse();
+    if (argv.length !== 1 || !['app-key', 'ci-token', 'heartbeat-token'].includes(argv[0])) refuse();
     const chunks = []; let size = 0;
     for await (const chunk of input) { size += chunk.length; if (size > MAX_BYTES) refuse(); chunks.push(chunk); }
     if (size === 0) refuse();
     const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks));   // a BOM stays, as in the runtime's utf8 read
-    const fingerprint = argv[0] === 'app-key' ? fingerprintAppKey(text) : fingerprintCiToken(text);
+    const fingerprint = argv[0] === 'app-key' ? fingerprintAppKey(text) : argv[0] === 'ci-token' ? fingerprintCiToken(text) : fingerprintHeartbeatToken(text);
     output.write(JSON.stringify({ kind: argv[0], fingerprint }) + '\n');
     return 0;
   } catch { process.stderr.write('SECRET_FINGERPRINT_REFUSED\n'); return 2; }
