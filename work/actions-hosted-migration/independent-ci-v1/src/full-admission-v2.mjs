@@ -13,9 +13,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { digest } from './proof.mjs';
+import { freshStamp, serverAnswerCurrent } from './clock-skew.mjs';
 import { validateJobV2, claimGeneration, sameClaimGeneration, prBaseAcceptedV2 } from './job-v2.mjs';
 import { isCurrentMergeQueueHeadV2 } from './independent-control-checks-v2/queue-facts.mjs';
-import { evaluate, githubJson, parseClaimReference } from '../../../../scripts/ci/clued-work-admission.mjs';
+import { evaluate, githubJson, parseClaimReference, VERIFY_RPC } from '../../../../scripts/ci/clued-work-admission.mjs';
 
 import { FULL_ADMISSION_CONTRACT_V2, FULL_ADMISSION_CONTRACT_V3, supportedNativeExecution, ownerKind, reasonCodes, sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2, schedulingFactsV2, verdict } from './admission-facts-v2.mjs';
 const REPO = 'tdoljyj/cross-memory-system';
@@ -26,7 +27,7 @@ const sha = /^[a-f0-9]{64}$/;
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const plain = value => value && Object.getPrototypeOf(value) === Object.prototype;
 const at = value => typeof value === 'string' ? Date.parse(value) : NaN;
-const fresh = (value, now) => Number.isFinite(at(value)) && at(value) <= now && now - at(value) <= 30_000;
+const fresh = (value, now) => freshStamp(at(value), now);
 const FAILURE_REASONS = new Set(['not_configured', 'subject_invalid', 'source_changed', 'clock_invalid', 'mode_unknown',
   'principal_unknown', 'observer_unknown', 'subject_changed', 'claim_changed', 'claim_missing', 'observation_expired', 'rejected',
   'native_unsupported', 'native_changed', 'incomplete', 'unavailable'].map(value => `full_admission_${value}`));
@@ -66,7 +67,7 @@ const batchClaimValid = c => c === null || c === undefined || (plain(c) && uuid.
 // (optional) receives the scheduling facts (schedulingFactsV2) of every evaluation that reached Native,
 // admitted or not; it is told, never asked, and nothing it does can change the admission.
 export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, modeProvider, recorderProvider,
-  fetchImpl = globalThis.fetch, clock = Date.now, fixtureHooks = null } = {}) {
+  fetchImpl = globalThis.fetch, clock = Date.now, monotonic = () => performance.now(), fixtureHooks = null } = {}) {
   const config = plain(protectedConfig) ? structuredClone(protectedConfig) : null;
   const configured = config && ['production', 'fixture'].includes(config.domain) && config.repository === REPO
     && config.finiteFirstRun !== true && config.observationOnly !== true
@@ -131,12 +132,16 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
         if (!reference) reference = parseClaimReference((await githubJson(fetchImpl, env, `/repos/${REPO}/commits/${job.headSha}`))?.commit?.message);
         if (!reference || !uuid.test(reference.claim_id ?? '')) return blocked('full_admission_claim_missing');
         if (reference.scope !== config.scope || (batchClaim && reference.claim_id !== batchClaim.claimId)) return blocked('full_admission_claim_changed');
-        let native = null;
+        // The age of Native's answer is measured on this host's monotonic clock from the send of its verify call
+        // (Decision 1100a0ed); without a seen send, from the start of the evaluation, which is earlier.
+        let native = null, nativeSentMono = null, verifySentMono = null;
+        const evaluateStartMono = monotonic();
+        const timedFetch = (url, opts) => { if (String(url).endsWith(`/rest/v1/rpc/${VERIFY_RPC}`)) verifySentMono = monotonic(); return fetchImpl(url, opts); };
         const recorder = { newId: () => baseRecorder.newId(), record(kind, data) {
           baseRecorder.record(kind, data);
-          if (kind === 'claim_verification') native = structuredClone(data.result?.payload);
+          if (kind === 'claim_verification') { native = structuredClone(data.result?.payload); nativeSentMono = verifySentMono ?? evaluateStartMono; }
         } };
-        phase = 'evaluate'; const outcome = await evaluateImpl({ env, event: { pull_request: pr }, eventName: 'pull_request', fetchImpl,
+        phase = 'evaluate'; const outcome = await evaluateImpl({ env, event: { pull_request: pr }, eventName: 'pull_request', fetchImpl: timedFetch,
           workspace: config.workspace, withSummary: false, readPolicyFile: () => config.policyText,
           observation_recorder: recorder, observation_entry: 'independent_pr' });
         phase = 'post_evaluate'; tell(outcome, native); const finished = clock(), prRef = `${REPO}#${job.pr}`;
@@ -157,8 +162,9 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
         if (claim.claim_id !== reference.claim_id || native.current_fence !== claim.fence || native.execution_epoch !== claim.execution_epoch
           || !Number.isSafeInteger(claim.fence) || claim.fence < 1 || !Number.isSafeInteger(claim.execution_epoch) || claim.execution_epoch < 1
           || claim.context_key !== config.scope || claim.status !== 'ACTIVE' || claim.bound_pr !== prRef || native.bound_pr !== prRef
-          || native.pr_ref !== prRef || native.head_sha !== job.headSha || native.base_sha !== prBase || !fresh(native.verified_at, finished)
-          || !(at(claim.expires_at) > finished) || !Array.isArray(native.paths_outside_write_set)
+          || native.pr_ref !== prRef || native.head_sha !== job.headSha || native.base_sha !== prBase
+          || serverAnswerCurrent({ verifiedAt: native.verified_at, expiresAt: claim.expires_at, sentMono: nativeSentMono ?? evaluateStartMono, nowMono: monotonic() }).length
+          || !Array.isArray(native.paths_outside_write_set)
           || native.paths_outside_write_set.length) return blocked('full_admission_native_changed');
         const observedClaim = { claimId: claim.claim_id, fence: claim.fence, epoch: claim.execution_epoch, expiresAt: claim.expires_at };
         // Batch stickiness: one claim generation per batch (a renewal keeps the generation).

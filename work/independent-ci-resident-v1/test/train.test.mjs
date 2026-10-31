@@ -241,7 +241,7 @@ test('the companion reporter puts the shadow line on the front PR only, after th
     front: { claimId: 'c', pr: 910, headSha: H }, wouldDo: 'FRONT_GREEN_WAIT_MERGE', wouldRevoke: [], wouldRevokeCount: 0 };
   board.update({ train: { enabled: 'shadow', last: trainSummary(facts) } });
   const status = parseStatus(Buffer.from(JSON.stringify(board.snapshot())));
-  const reporter = new PrStatusReporter({ repo: 'tdoljyj/cross-memory-system', ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => NOW + MIN,
+  const reporter = new PrStatusReporter({ node: 'turing', repo: 'tdoljyj/cross-memory-system', ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => NOW + MIN,
     store: await LocalStore.open(path.join(root, 'store.json'), () => NOW + MIN) });
   const pulls = [{ pr: 910, headSha: H, eligible: true, hint: null, behindBy: 0 }, { pr: 911, headSha: other, eligible: true, hint: null, behindBy: 0 }];
   await reporter.pass({ pulls, status });

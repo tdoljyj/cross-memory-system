@@ -121,12 +121,17 @@ test('protected refs observation: the PR base.sha is a fact for a front batch, a
     const bytes = Buffer.from(JSON.stringify(body));
     return { ok: true, body: { getReader: () => { let done = false; return { read: async () => (done ? { done: true } : (done = true, { done: false, value: bytes })), releaseLock() {} }; } } };
   };
-  const run = (job, prBase, mainSha = BASE) => collectCompleteRemoteRefs({ job, token: 'gh-fixture',
-    readPullRequest: async n => ({ number: n, state: 'open', head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: prBase, ref: 'main', repo: { full_name: REPO } } }),
-    fetchImpl: async (_url, init) => page(JSON.parse(init.body).variables.prefix, mainSha) });
+  // prBase: one base.sha for every read, or a list read in turn (the first and the second read of the PR)
+  const run = (job, prBase, mainSha = BASE) => { let reads = 0; return collectCompleteRemoteRefs({ job, token: 'gh-fixture',
+    readPullRequest: async n => ({ number: n, state: 'open', head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: Array.isArray(prBase) ? prBase[reads++] : prBase, ref: 'main', repo: { full_name: REPO } } }),
+    fetchImpl: async (_url, init) => page(JSON.parse(init.body).variables.prefix, mainSha) }); };
   const head = makeJobV2({ ...base({ createdAt: iso(Date.now()) }), role: 'gitleaks' }), front = makeJobV2({ ...base({ testSha: S, createdAt: iso(Date.now()) }), role: 'gitleaks' });
   assert.equal((await run(front, MOVED)).refs[0].objectSha, BASE);
   assert.equal((await run(head, BASE)).complete, true);
   await assert.rejects(run(head, MOVED), { code: 'REFS_PR_SUBJECT_CHANGED' });
   await assert.rejects(run(front, MOVED, MOVED), { code: 'REFS_MAIN_BASE_CHANGED' });
+  // §38.8 n2: the base.sha GitHub reports for a front batch must be the same commit before and after the refs passes
+  assert.equal((await run(front, [MOVED, MOVED])).complete, true);
+  await assert.rejects(run(front, [MOVED, '8'.repeat(40)]), { code: 'REFS_PR_SUBJECT_CHANGED' });
+  await assert.rejects(run(front, [BASE, MOVED]), { code: 'REFS_PR_SUBJECT_CHANGED' });
 });

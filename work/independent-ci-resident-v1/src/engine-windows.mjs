@@ -24,6 +24,14 @@ import { validateRoleProbeFact } from './role-probe.mjs';
 import { RELAY_TIMEOUT_MS } from './companion.mjs';
 import { REVOCATION_STAGE, REVOCATION_RUN_MS, REVOCATION_PENDING_STATE, REVOCATION_RUN_ID,
   validateRevocationFacts,validateRevocationQualification } from './revocation-maintenance.mjs';
+import { RUN_MODES, TRAIN_RUN_INPUT_FIELDS, validateTrainRunInput } from './train.mjs';
+
+// The installed train mode stages 1 and 8 read (INTERFACES §6: 'off', 'shadow' or 'on'; 'off' for anything else). The one
+// place the resident names it: service-main.mjs gives it to the engine (port trainMode), which passes it to the invoker as
+// --train-mode for those two stages only; the invoker writes it create-only as train-mode.json into the stage directory
+// (Source v2 invoke-stage.mjs#prepareStageDirectory, train-mode.mjs#stageTrainModeText). No file is 'off'.
+export function installedTrainMode(policy) { return ['off', 'shadow', 'on'].includes(policy?.train?.enabled) ? policy.train.enabled : 'off'; }
+export const TRAIN_MODE_STAGES = Object.freeze([1, 8]);
 
 export const ORIGINAL_BINARY = '"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"';
 // /3 (quota phase 2 step 3b): also names the tested commit S (testSha); S = H except for a train front batch, whose
@@ -205,14 +213,19 @@ export function windowsArchiveCode(r, v) {
 
 export class WindowsEngine {
   // ports: { run (Runner.run), busy() (Runner.busy), companionMailbox, sleep, clock,
-  //          paths: { sourceRoot, workRoot, outboxRoot, nodeExe, powershellExe, scExe } }
+  //          paths: { sourceRoot, workRoot, outboxRoot, nodeExe, powershellExe, scExe },
+  //          trainMode (installedTrainMode(policy); absent: stages 1 and 8 get no train-mode.json, i.e. 'off') }
   constructor({ node, nodeProfileSha256, ...ports }) {
     this.node = pinnedNodeProfile(node, nodeProfileSha256);
     this.nodeProfileSha256 = nodeProfileSha256;
     Object.assign(this, ports);
+    check(this.trainMode === undefined || ['off', 'shadow', 'on'].includes(this.trainMode), 'RESIDENT_TRAIN_MODE_INVALID');
   }
 
   v2(name) { return path.join(this.paths.sourceRoot, ...V2, name); }
+
+  // The invoker's --train-mode for stages 1 and 8 (DESIGN §41.2); nothing for any other stage.
+  trainModeArgs(number) { return this.trainMode !== undefined && TRAIN_MODE_STAGES.includes(number) ? ['--train-mode', this.trainMode] : []; }
 
   // The config pin the invoker sends the broker for this stage: the plan hash recorded in the stage package's work
   // manifest, read only after the manifest's own bytes matched the pin derived with the batch.
@@ -431,15 +444,24 @@ export class WindowsEngine {
   // Stage 10 (quota phase 2 step 3c-1, DESIGN §22.1): one train run outside any batch. Its package is derived into a
   // new work\train\<runId> directory (create-only), then it runs like any Windows-only stage. The run key and id are
   // fresh random values (the derivation checks their shape); the fact carries the train facts.
-  async runTrainStage(mode) {
-    check(mode === 'shadow', 'RESIDENT_TRAIN_MODE_INVALID');
+  // Step 3c-2b (train-run job /2, INTERFACES §2): input is the resident's part of the job (train.mjs#trainRunInput: mode, the
+  // installed train settings, onSince, frontOutcome, revokeHeadRequestId); everything but the mode goes as one JSON object in
+  // --train-params (Source v2 train-run.mjs#TRAIN_RUN_PARAMS, in that order); the derivation adds the record's repo and Source,
+  // the run id and createdAt (makeTrainRun). Modes on and revoke-only need it; a call without it is a shadow run of step
+  // 3c-1's argv (which a /2 derivation refuses: the executor always passes it).
+  async runTrainStage(mode, input = null) {
+    let job = null;
+    if (input !== null) { try { job = validateTrainRunInput(input); } catch { job = null; } }
+    check(input === null ? mode === 'shadow' : job !== null && job.mode === mode && RUN_MODES.includes(mode), 'RESIDENT_TRAIN_MODE_INVALID');
+    const params = job ? Object.fromEntries(TRAIN_RUN_INPUT_FIELDS.filter(k => k !== 'mode').map(k => [k, job[k]])) : null;
     const entry = await this.requireV2('derive-batch.mjs');
     const key = randomBytes(32).toString('hex');
     const runId = `${key.slice(0, 16)}-${randomBytes(6).toString('hex')}`;
     const root = path.join(this.paths.workRoot, 'train');
     await ensureDir(root);
     const out = path.join(root, runId);
-    const d = await this.run([this.paths.nodeExe, entry, '--train-run', runId, '--train-key', key, '--mode', mode, '--out', out], { timeoutMs: 5 * 60_000 });
+    const d = await this.run([this.paths.nodeExe, entry, '--train-run', runId, '--train-key', key, '--mode', mode, ...(params ? ['--train-params', JSON.stringify(params)] : []), '--out', out],
+      { timeoutMs: 5 * 60_000 });
     let row = null;
     if (d.code === 0) {
       const v = parseBoundedJson(Buffer.from(d.stdout, 'utf8'), 65536, 'RESIDENT_DERIVATION_REFUSED');
@@ -594,7 +616,7 @@ export class WindowsEngine {
       let r;
       try {
         r = await this.run([this.paths.nodeExe, invoke, '--batch-dir', batch.dir, '--stage', String(stage.number), '--work-manifest-sha256', row.workManifestSha256,
-          '--batch-key', batch.key], { timeoutMs: stage.runMilliseconds + 360_000 });
+          '--batch-key', batch.key, ...this.trainModeArgs(stage.number)], { timeoutMs: stage.runMilliseconds + 360_000 });
       } finally {
         await observer?.stop();
       }

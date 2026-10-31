@@ -28,7 +28,8 @@
 // is role_already_published_on_head). A read-back that is not complete refuses (fail closed).
 import { prepareNativePublication, nativePublicationNoPostProof } from '../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { canonical, digest } from './proof.mjs';
-import { validateJobV2, subjectOfV2, scanEffectKeyV2, scanExternalIdV2, sameClaimGeneration, claimGeneration, makeJobV2, prBaseAcceptedV2 } from './job-v2.mjs';
+import { freshStamp } from './clock-skew.mjs';
+import { validateJobV2, subjectOfV2, scanEffectKeyV2, scanExternalIdV2, sameClaimGeneration, claimGeneration, makeJobV2, prBaseAcceptedV2, isTrainFrontJobV2, frontJobIdsV2 } from './job-v2.mjs';
 import { verifyResultV2 } from './proof-v2.mjs';
 import { admittedFactsMatchJobV2 } from './full-admission-v2.mjs';
 import { claimRolePublication, readRolePublication, rolePublicationKey } from './effect-journal.mjs';
@@ -43,8 +44,7 @@ const ref = value => typeof value === 'string' && value.length > 0 && value.leng
 const stop = (code, drift = false) => { throw Object.assign(new Error(code), { code, drift }); };
 // An uncoded exception is never a transport fact (PR-A review MINOR 5): it is not a transient code.
 const reason = error => /^[a-z][a-z0-9_]{0,80}$/.test(error?.code ?? '') ? error.code : 'publication_operation_unconfirmed';
-const fresh = (observedAt, expiresAt, now) => Number.isSafeInteger(now) && Number.isFinite(Date.parse(observedAt))
-  && Date.parse(observedAt) <= now && now - Date.parse(observedAt) <= 30_000 && Date.parse(expiresAt) > now;
+const fresh = (observedAt, expiresAt, now) => freshStamp(Date.parse(observedAt), now) && Date.parse(expiresAt) > now;
 const requiredRefs = ['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef'];
 const SUBJECT_KEYS = ['baseSha', 'claimId', 'epoch', 'fence', 'headSha', 'pr', 'repo', 'sourceManifestSha256'];
 
@@ -85,10 +85,11 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     return actual;
   }
   // C4: true only when this journal holds nothing for the role on the head (no K record, whatever it holds) and GitHub
-  // holds a check of this App by that name. The caller has already found no own effect key.
+  // holds a check of this App by that name. The caller has already found no own effect key. A train front batch: only the
+  // checks of its own front subject's jobs (§41.4).
   async function onGithubOnly(mutex, job, definition) {
     if (await journal.read(rolePublicationKey(mutex))) return false;
-    return (await publishedNames(github, job.headSha, [definition.name], definition.appId)).length > 0;
+    return (await publishedNames(github, job.headSha, [definition.name], definition.appId, frontJobIdsV2(job))).length > 0;
   }
   async function discoverKnown(definition, job, externalId) {
     const list = await github.readChecks(job.headSha);
@@ -159,7 +160,9 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     } else {
       try { validateHostedEnvelope(proof.envelope); } catch { stop('hosted_attestation_invalid'); }
     }
-    return { verified, native, packet, bindingSha256: digest({ subject: subjectOfV2(job), claim: claimGeneration(native.observedClaim), executionPolicy: native.executionPolicy,
+    // §38.8 n2: the PR base.sha read here is bound too, so the before and after reads of one publication must agree on it
+    // (for a batch that tests the head it is T anyway; a train front batch reads it as a fact).
+    return { verified, native, packet, bindingSha256: digest({ subject: subjectOfV2(job), claim: claimGeneration(native.observedClaim), executionPolicy: native.executionPolicy, prBaseSha: pr.base.sha,
       ...(native.publicationRequired ? { guarded: native.guarded, publicationRequired: true, headAuthorizationId: native.headAuthorizationId } : {}),
       mode: native.mode, mergeSlot: native.mergeSlot, ownerReview: native.ownerReview, refs: Object.fromEntries(requiredRefs.map(k => [k, facts[k]])),
       ciPrincipalBindingId: facts.ciPrincipalBindingId, signer: verified.signer, appId: definition.appId, name: definition.name }) };
@@ -219,7 +222,8 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         if (job.repo !== deployment.repository) stop('repository_not_configured');
         definition = definitionFor(job);
         key = scanEffectKeyV2(job, definition);
-        mutex = { repo: job.repo, headSha: job.headSha, role: job.role, checkName: definition.name, appId: definition.appId };
+        // §41.4: a train front batch holds its own K(head, S, role), apart from the non-front run of H (never relayed).
+        mutex = { repo: job.repo, headSha: job.headSha, role: job.role, checkName: definition.name, appId: definition.appId, ...(isTrainFrontJobV2(job) ? { testSha: job.testSha } : {}) };
         externalId = scanExternalIdV2(job);
         previous = await journal.read(key);
         if (previous && previous.state !== 'settled') return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };

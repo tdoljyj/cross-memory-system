@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { APP_ID, BACKSTOP_KINDS, PAUSE_CONTRACT, REQUIRED_CHECK_NAMES, backstopDecision, backstopPass, backstopText, rulesFacts, writePauseRequest } from '../src/ruleset-backstop.mjs';
+import { APP_ID, BACKSTOP_KINDS, PAUSE_CONTRACT, REQUIRED_CHECK_NAMES, SWEEP_GRACE_MS, backstopDecision, backstopPass, backstopText, dutyOf, rulesFacts, writePauseRequest } from '../src/ruleset-backstop.mjs';
 import { PAUSE_CONTRACT as EXECUTOR_PAUSE } from '../src/executor.mjs';
 import { Inbox } from '../src/inbox.mjs';
 import { REQUIRED_CHECK_NAMES as SOURCE_CHECKS } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-rules.mjs';
@@ -23,7 +23,21 @@ test('the backstop names the same checks, App and pause contract as Source v2 an
 test('strict off without the train pauses and notifies; an unpinned or disabled ruleset only notifies; unreadable does nothing', () => {
   assert.deepEqual(backstopDecision({ facts: rulesFacts(rules()), trainMode: 'shadow' }), { pause: false, notify: null });
   for (const mode of ['off', 'shadow', null]) assert.deepEqual(backstopDecision({ facts: rulesFacts(rules({ strict: false })), trainMode: mode }), { pause: true, notify: 'STRICT_OFF_WITHOUT_TRAIN' }, String(mode));
-  assert.deepEqual(backstopDecision({ facts: rulesFacts(rules({ strict: false })), trainMode: 'on' }), { pause: false, notify: null });
+  // step 3c-2b (DESIGN §41.7): on is enough only with a full sweep completed since this node became eligible
+  assert.deepEqual(backstopDecision({ facts: rulesFacts(rules({ strict: false })), trainMode: 'on', sweep: { fullSinceOn: true } }), { pause: false, notify: null });
+  const now = Date.parse('2026-11-02T00:00:00Z'), old = { onDuty: true, onSince: now - SWEEP_GRACE_MS };
+  for (const sweep of [undefined, null, { fullSinceOn: false }])
+    assert.deepEqual(backstopDecision({ facts: rulesFacts(rules({ strict: false })), trainMode: 'on', sweep, duty: old, now }), { pause: true, notify: 'STRICT_OFF_SWEEP_INCOMPLETE' }, JSON.stringify(sweep));
+  assert.match(backstopText('STRICT_OFF_SWEEP_INCOMPLETE'), /清扫没完成/);
+  // review R3 M1: a node not on duty (STANDBY never sweeps; UNCERTAIN after a start) is never paused nor told; a new or unknown
+  // eligibility (a take-over, a restart) only notifies
+  for (const status of [{ node: { mode: 'STANDBY' }, train: {} }, { node: { mode: 'UNCERTAIN' }, train: {} }, { node: { mode: 'ACTIVE' }, train: { notOnDuty: true } }])
+    assert.deepEqual(backstopDecision({ facts: rulesFacts(rules({ strict: false })), trainMode: 'on', sweep: null, duty: dutyOf(status), now }), { pause: false, notify: null }, JSON.stringify(status));
+  for (const duty of [{ onDuty: true, onSince: now - SWEEP_GRACE_MS + 1 }, { onDuty: true, onSince: null }, dutyOf({ node: null, train: { onSince: now - 60_000 } })])
+    assert.deepEqual(backstopDecision({ facts: rulesFacts(rules({ strict: false })), trainMode: 'on', sweep: null, duty, now }), { pause: false, notify: 'STRICT_OFF_SWEEP_PENDING' }, JSON.stringify(duty));
+  assert.deepEqual(dutyOf({ node: { mode: 'ACTIVE' }, train: { onSince: 5 } }), { onDuty: true, onSince: 5 });
+  assert.deepEqual(backstopDecision({ facts: rulesFacts(rules({ strict: false })), trainMode: 'on', sweep: { fullSinceOn: true }, duty: old, now }), { pause: false, notify: null });
+  assert.deepEqual(backstopDecision({ facts: rulesFacts(rules()), trainMode: 'on', sweep: null }), { pause: false, notify: null }, 'strict on: nothing');
   for (const r of [rules({ pinned: 5164952 }), rules({ names: REQUIRED_CHECK_NAMES.slice(1) }), [{ type: 'deletion' }]])
     assert.deepEqual(backstopDecision({ facts: rulesFacts(r), trainMode: 'off' }), { pause: false, notify: 'RULESET_NOT_PINNED' });
   for (const bad of [null, {}, 'x', [1]]) assert.deepEqual(backstopDecision({ facts: rulesFacts(bad), trainMode: 'off' }), { pause: false, notify: null });

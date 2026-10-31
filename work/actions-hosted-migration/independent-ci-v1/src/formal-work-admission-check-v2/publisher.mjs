@@ -27,12 +27,24 @@
 // published by another node or install: a node taking over after the active one ran stage 1 would otherwise post a second
 // check of the same identity and HALT on the read-back. A batch that already recorded its claim is this node's own and
 // keeps its path. A read that is not complete refuses (fail closed).
+//
+// Merge train (DESIGN §41.2, §41.4, §41.8; trainMode = the installed policy's train.enabled, train-mode.mjs):
+//   - a train front job (S != H) while the train is not on: TRAIN_FRONT_JOB_WITHOUT_TRAIN before anything is read or written;
+//   - with the train on, after this check settled for a front job: the second touch running of the front batch (§41.4), only
+//     while the holders read in this run show this batch claim as the one front holder of this PR, with the sweep proof's
+//     slotHardCapMinutes; it never changes the ending, what happened is logged and returned;
+//   - the binding binds the merge slot by state, ref and tip only, never its until or the claim lease (Decision b30b1b79
+//     item 3): a renewal, keepalive or touch between the two observations no longer voids the publication;
+//   - a front job's HEAD_PUBLISHED_ON_GITHUB counts only the role checks of its own front subject's jobs (external ids carry the
+//     job id, which covers S; job-v2.mjs#frontJobIdsV2): the non-front run H normally has first does not refuse it (§41.4).
 import { prepareNativePublication, nativePublicationNoPostProof } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { randomUUID } from 'node:crypto';
 import { digest } from '../proof.mjs';
-import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, MAX_ATTEMPT_V2 } from '../job-v2.mjs';
+import { freshStamp } from '../clock-skew.mjs';
+import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, MAX_ATTEMPT_V2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
+import { TRAIN_MODES, TRAIN_MODE_DEFAULT, trainFrontRefused, trainFrontRefusal } from '../independent-control-checks-v2/train-rules.mjs';
 import { fullAdmissionFailureV2, admittedFactsMatchJobV2 } from '../full-admission-v2.mjs';
-import { HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, readPublishedChecks } from '../published-on-github-v2.mjs';
+import { HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, ofJobIds, readPublishedChecks } from '../published-on-github-v2.mjs';
 
 export const ROLE = 'work-admission', CHECK_NAME = 'kooyumi-work-admission', APP_ID = 5368905, REPO = 'tdoljyj/cross-memory-system';
 const DEFINITION = Object.freeze({ name: CHECK_NAME, appId: APP_ID });
@@ -80,16 +92,36 @@ export function factsValid(job, packet, facts, domain, now, batchClaim) {
   check(typeof facts.modeProofRef === 'string' && facts.modeProofRef.length > 0 && typeof facts.observationRef === 'string' && facts.observationRef.length > 0 && HASH.test(facts.evaluationSha256 ?? ''), 'FRESH_NATIVE_OBSERVATION_REQUIRED');
   return facts;
 }
-const fresh = (f, now) => Number.isSafeInteger(now) && Date.parse(f.observedAt) <= now && now - Date.parse(f.observedAt) <= 30000 && Date.parse(f.claimExpiresAt) > now;
+const fresh = (f, now) => freshStamp(Date.parse(f.observedAt), now) && Date.parse(f.claimExpiresAt) > now;
 function binding(job, packet, facts, authority) {
   return digest({ subject: subjectOfV2(job), claim: claimGeneration(facts.observedClaim), pathsSha256: digest(packet.paths), scope: facts.scope, executionPolicy: facts.executionPolicy,
     ...(facts.publicationRequired ? { guarded: facts.guarded, publicationRequired: true, headAuthorizationId: facts.headAuthorizationId } : {}),
-    mode: facts.mode, mergeSlot: facts.mergeSlot, ownerReview: facts.ownerReview, workflowGateFindings: facts.workflowGateFindings, claimExpiresAt: facts.claimExpiresAt, authority, definition: DEFINITION });
+    mode: facts.mode, mergeSlot: { state: facts.mergeSlot.state, ref: facts.mergeSlot.ref, tip: facts.mergeSlot.tip }, ownerReview: facts.ownerReview,
+    workflowGateFindings: facts.workflowGateFindings, authority, definition: DEFINITION });
 }
 
 // batchClaims: { read(job) -> generation | null (missing), record(job, observedClaim, observedAt) }.
-function engine({ github, journal, admission, assertLive, record, authority, batchClaims, clock = Date.now }, production) {
+// Train on only: slotNative (merge-slot-native.mjs: holders, touch) and sweepStore (train-sweep-store.mjs: latestProof).
+// trainModeUnreadable: train-mode.json was there but unusable (train-mode.mjs#readStageTrainModeFact): a front job parks.
+function engine({ github, journal, admission, assertLive, record, authority, batchClaims, trainMode = TRAIN_MODE_DEFAULT, trainModeUnreadable = false, slotNative = null, sweepStore = null,
+  clock = Date.now }, production) {
   const domain = production ? 'production' : 'fixture';
+  check(TRAIN_MODES.includes(trainMode), 'WORK_ADMISSION_PUBLISHER_CONFIGURATION_REFUSED');
+  // §41.4 touch running, second of the two: the holders and the proof read now; any failing read or unmet condition skips it.
+  async function touchRunning(job) {
+    let out;
+    try {
+      const claimed = await batchClaims.read(job), h = await slotNative.holders(), proof = await sweepStore.latestProof();
+      const one = h?.onDuty === true && h.holders.length === 1 ? h.holders[0] : null;
+      out = claimed && one?.claimId === claimed.claimId && one.pr === job.pr && one.boundPr === `${job.repo}#${job.pr}` && proof?.pr === job.pr && proof.headSha === job.headSha
+        && proof.claimId === claimed.claimId && Number.isSafeInteger(proof.slotHardCapMinutes)
+        ? await slotNative.touch({ pr: job.pr, headSha: job.headSha, ciState: 'running', hardCapMinutes: proof.slotHardCapMinutes })
+        : { onDuty: h?.onDuty ?? null, touched: false, code: h?.onDuty === false ? 'NODE_ROLE_NOT_HELD' : 'TRAIN_TOUCH_NOT_FRONT' };
+    } catch (e) { out = { onDuty: null, touched: false, code: safe(e) }; }
+    const result = { ciState: 'running', onDuty: out.onDuty, touched: out.touched === true, until: out.until ?? null, code: out.code ?? (out.onDuty === false ? 'NODE_ROLE_NOT_HELD' : null) };
+    try { record('native_train_touch', { jobId: job.id, ...result }); } catch { /* best-effort */ }
+    return result;
+  }
   // The admission boundary in two steps, so a refusal can be told apart from a failure after the facts were admitted.
   async function evaluate(job, batchClaim, scheduling = null) {
     assertLive(); const packet = await github.readChangedPaths(job), facts = await admission.evaluatePr(job, packet, { batchClaim, ...(scheduling ? { scheduling } : {}) }); assertLive();
@@ -133,7 +165,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       return { status: 'UNCERTAIN', effectKey: key, checkRunId: known.id, sideEffects, productionAuthorized: false, reason: 'NEGATIVE_COMPENSATION_UNCONFIRMED' };
     }
   }
-  return Object.freeze({ fixture: !production, async publish(input) {
+  async function publishOnce(input) {
     let job, key = null, externalId = null, previous = null, before, claimed = null, scheduling = null;
     // 'boundary' while the first evaluation runs; a refusal there with no batch claim recorded is safe to re-run.
     let step = 'start';
@@ -150,8 +182,11 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         step = 'published-on-github';
         assertLive();
         const sameJob = `${PREFIX}:v2:${job.id}:a${job.attempt}:`;
+        // §41.4: a train front batch is its own identity (H, S): only the role checks of its own jobs count, never a non-front run of H.
+        const front = frontJobIdsV2(job);
         const published = [...new Set((await readPublishedChecks(github, job.headSha, APP_ID))
-          .filter(c => PUBLISHED_ROLE_CHECK_NAMES.includes(c.name) || (c.name === CHECK_NAME && typeof c.external_id === 'string' && c.external_id.startsWith(sameJob)))
+          .filter(c => (PUBLISHED_ROLE_CHECK_NAMES.includes(c.name) && (front === null || ofJobIds(c, front)))
+            || (c.name === CHECK_NAME && typeof c.external_id === 'string' && c.external_id.startsWith(sameJob)))
           .map(c => c.name))].sort();
         if (published.length) throw Object.assign(new Error(HEAD_PUBLISHED_ON_GITHUB), { code: HEAD_PUBLISHED_ON_GITHUB, publishedChecks: published });
       }
@@ -213,6 +248,14 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       await transition(key, phase, sent ? 'uncertain' : 'not_sent', { reason: safe(e), externalId });
       return { status: sent ? 'UNCERTAIN' : 'BLOCKED', effectKey: key, reason: safe(e), sideEffects, productionAuthorized: false };
     }
+  }
+  return Object.freeze({ fixture: !production, async publish(input) {
+    let front = false;
+    try { front = isTrainFrontJobV2(fixedJob(input)); } catch { /* publishOnce refuses it */ }
+    if (front && trainFrontRefused(input, trainMode))
+      return { status: 'BLOCKED', reason: trainFrontRefusal(trainModeUnreadable), sideEffects: 0, productionAuthorized: false, safeToRerun: false, scheduling: null };
+    const result = await publishOnce(input);
+    return front && trainMode === 'on' && result.status === 'SETTLED' ? { ...result, trainTouch: await touchRunning(input) } : result;
   } });
 }
 export function createFixtureWorkAdmissionPublisherV2(dependencies) { return engine(dependencies, false); }
