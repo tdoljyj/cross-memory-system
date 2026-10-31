@@ -768,7 +768,8 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
         ['fact', { native_type_fields: [] }, /^invalid_native_type_fields$/],
         ['task', {}, /^execution_bucket_required$/],
         ['task', { native_type_fields: { execution_bucket: 'soon' } }, /^native_type_field_invalid:execution_bucket$/],
-        ['task', { native_type_fields: { execution_bucket: 'later', priority: 101 } }, /^native_type_field_invalid:priority$/],
+        // 20261031070000: the Owner's custom priority is set on /priority, not here.
+        ['task', { native_type_fields: { execution_bucket: 'later', priority: 70 } }, /^native_type_field_not_allowed:priority$/],
         ['status', { native_type_fields: { state_kind: 'status' } }, /^native_type_field_invalid:state_kind$/],
         ['decision', { native_type_fields: { rationale: '' } }, /^native_type_field_invalid:rationale$/],
         ['fact', { authority: null }, /^authority_required$/],
@@ -791,12 +792,12 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
       }
       // Explicit Native choices are carried into the digest-bound view.
       const chosen = await issue({ tier: 'information', candidate_id: views.task.id, base_version: 1, authority: 'inferred',
-        confidence: 0.4, confidence_reason: 'Owner judgement', native_type_fields: { execution_bucket: 'next', priority: 70,
+        confidence: 0.4, confidence_reason: 'Owner judgement', native_type_fields: { execution_bucket: 'next',
           criticality: 'HIGH', owner_track: 'PRODUCT_EXPERIENCE', current_frontier_blocking: true, intake_kind: 'TASK' } });
       assert.equal(chosen.status, 'issued', JSON.stringify(chosen));
       assert.deepEqual([chosen.confirmation_view.authority, chosen.confirmation_view.confidence,
         chosen.confirmation_view.confidence_reason], ['inferred', 0.4, 'Owner judgement']);
-      assert.equal(chosen.confirmation_view.mutation.type_fields.priority, 70);
+      assert.equal(chosen.confirmation_view.mutation.type_fields.criticality, 'HIGH');
       assert.notEqual(chosen.view_digest, views.task.issued.view_digest, 'every choice is inside the digest');
       assert.equal((await tokenRow(views.task.issued.token_id)).revoked_at instanceof Date, true,
         'issuing revokes the previous live token');
