@@ -90,6 +90,10 @@ the key directory and moved in only when complete. `export` opens only the two `
 (not links) that group and others cannot write and the directory is not writable by them either; it checks that the private files
 exist and are not readable by group or others, without opening them.
 
+If a run is interrupted hard (power loss, `kill -9`), a hidden staging directory `.<key dir name>.init-*` holding private keys may be
+left beside the key directory, or (only while moving files into an existing empty directory) a partial set inside it; remove both
+before running `init-keys` again. A normal failure already removes what it created.
+
 Create the keys (approved install wave only):
 
 ```sh

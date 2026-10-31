@@ -171,8 +171,15 @@ if ($Mode -eq 'init-keys') {
           if ($entry[1] -ne 'tpm') { $parameters.ExportPolicy = [System.Security.Cryptography.CngExportPolicies]::None }
           $parameters.KeyUsage = $usage
           try { $key = [System.Security.Cryptography.CngKey]::Create($algorithm, $KeyNames[$role], $parameters) }
-          catch { $errors += "$($entry[1]): $($_.Exception.Message)"; break }
-          $candidate = ConvertFrom-EccPublicBlob ($key.Export([System.Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob)) $Magic[$role]
+          catch {
+            # NTE_EXISTS (0x8009000F): the name exists in this provider after all (a concurrent run, or a key Find-MachineKey could
+            # not see). Stop rather than create a second key of the same name in the other provider.
+            if ($_.Exception.HResult -eq -2146893809 -or $_.Exception.Message -match 'already exists') { throw "KEY_EXISTS: $($KeyNames[$role]) ($($entry[1]))" }
+            $errors += "$($entry[1]): $($_.Exception.Message)"; break
+          }
+          # From here the new key is ours to delete: an export or conversion failure must not leave it behind.
+          try { $candidate = ConvertFrom-EccPublicBlob ($key.Export([System.Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob)) $Magic[$role] }
+          catch { try { $key.Delete() } catch { }; throw "PUBLIC_KEY_INVALID: $($KeyNames[$role]) ($($entry[1])): $($_.Exception.Message)" }
           if (Test-Registrable $candidate) { $jwk = $candidate; $origin = $entry[1] }
           else { $key.Delete(); $key = $null }
         }
@@ -189,7 +196,7 @@ if ($Mode -eq 'init-keys') {
     # Never leave the node with one key: delete exactly what this run created.
     foreach ($createdKey in $createdKeys) { try { $createdKey.Delete() } catch { } }
     $message = $_.Exception.Message
-    if ($message -match '^(KEY_CREATE_FAILED|PUBLIC_KEY_INVALID): ') { Fail $Matches[1] ($message -replace '^[A-Z_]+: ', '') }
+    if ($message -match '^(KEY_CREATE_FAILED|PUBLIC_KEY_INVALID|KEY_EXISTS): ') { Fail $Matches[1] ($message -replace '^[A-Z_]+: ', '') }
     Fail 'KEY_CREATE_FAILED' $message
   }
   [ordered]@{ status = 'created'; keys = $created } | ConvertTo-Json -Depth 5
