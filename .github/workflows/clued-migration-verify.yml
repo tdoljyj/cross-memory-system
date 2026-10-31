@@ -1,0 +1,136 @@
+name: clued-migration-verify
+
+# Required check migration-verify (Task 2a5fdb66; work/ci-required-tests-v1/DESIGN.md):
+# on the self-hosted Linux pool, with no production credential and no network
+# access to production, replays production's recorded migration history from
+# the committed schema-only snapshot (apps/clued-cloud/supabase/production-schema),
+# proves the replay's catalog equals production's, applies every pending
+# migration on top the way release migrate mode does, applies the whole
+# repository chain from an empty database, and fails a pending migration that
+# reads a column only the repository chain has.
+#
+# Selection, trust and naming work as in clued-ci-suites.yml: the trusted base
+# decides whether the production-schema suite runs and what it runs; the job
+# carries the required name only when it runs.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  admission-gate:
+    name: admission-gate
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+    outputs:
+      admitted: ${{ steps.gate.outputs.admitted }}
+      enforced: ${{ steps.gate.outputs.enforced }}
+      verdict: ${{ steps.gate.outputs.verdict }}
+      automation_self_hosted: ${{ steps.gate.outputs.automation_self_hosted }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      - id: gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CLUED_ADMISSION_GATE_SOURCE: independent-ci-native-work-admission
+          CLUED_ADMISSION_GATE_WAIT_SECONDS: "600"
+        run: node scripts/ci/clued-work-admission.mjs --mode gate
+
+  migration-verify:
+    name: >-
+      ${{ needs.admission-gate.outputs.admitted == 'true' &&
+          ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
+          && 'migration-verify' || 'migration-verify-skipped' }}
+    needs: admission-gate
+    if: >-
+      needs.admission-gate.outputs.admitted == 'true' &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out the trusted base (selection and commands)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: trusted
+      - name: Check out the candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          path: candidate
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./trusted/.github/actions/ci-temporary-storage
+      - name: Select suites
+        id: select
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          selector=trusted/scripts/ci/ci-required-selection.mjs
+          if [ ! -f "$selector" ]; then
+            echo "::warning title=migration-verify bootstrap::the base has no selection; the candidate's own copy decides"
+            selector=candidate/scripts/ci/ci-required-selection.mjs
+          fi
+          echo "selector=$selector" >> "$GITHUB_OUTPUT"
+          node "$selector" --check migration-verify
+      # The runner's persistent ~/.npm serves the lockfile (no Actions cache).
+      # Install scripts stay off except the embedded PostgreSQL binary
+      # package's own, which links its bundled libraries.
+      - name: Install from lockfile
+        if: steps.select.outputs.run_production_schema == 'true'
+        working-directory: candidate/apps/clued-cloud
+        env:
+          npm_config_logs_dir: ${{ runner.temp }}/clued-npm-debug-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline --fetch-retries=2 --fetch-timeout=30000
+          npm rebuild @embedded-postgres/linux-x64
+      - name: Verify migrations on the production schema
+        if: steps.select.outputs.run_production_schema == 'true'
+        env:
+          SELECTOR: ${{ steps.select.outputs.selector }}
+        run: |
+          status=0
+          node "$SELECTOR" --run production-schema --root candidate || status=$?
+          if [ -f "$RUNNER_TEMP/production-schema-report.json" ]; then
+            node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
+              const lines=["### migration-verify: "+r.status,"",...r.errors.map(e=>"- error: `"+e+"`"),
+                "- pending migrations: "+((r.pending||[]).join(", ")||"none"),
+                "- repository-only columns and functions (tests see them, production does not): "+((r.repository_only||[]).length)];
+              require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n")+"\n");' "$RUNNER_TEMP/production-schema-report.json"
+          fi
+          exit $status
+      - name: Not affected
+        if: steps.select.outputs.run_production_schema != 'true'
+        run: echo "No migration, ledger, snapshot or drift-check file changed; nothing to verify." >> "$GITHUB_STEP_SUMMARY"
