@@ -357,14 +357,14 @@ printf '%s\\n' "$OLDF" > "$STG/old-version-facts.json"
 RV="$W/../review-A-{SUFFIX}"
 [ ! -e "$RV" ] || refuse REVIEW_COPY_EXISTS
 install -d -m 0755 "$RV" "$RV/roles-in" "$RV/tools"
-install -m 0644 "$STG"/roles-in/* "$RV/roles-in/"; install -m 0644 "$STG/tools/verify-source-v2.sh" "$STG/tools/sign-qualification-v2.mjs" "$RV/tools/"
+install -m 0644 "$STG"/roles-in/* "$RV/roles-in/"; install -m 0644 "$STG/tools/verify-source-v2.sh" "$STG/tools/{SIGNER}" "$RV/tools/"
 install -m 0644 "$STG/derive.stdout.json" "$STG/host-A.stdout.json" "$STG/upgrade-plan.stdout.txt" "$STG/install-plan.A.stdout.txt" "$STG/uninstall-plan.A.stdout.txt" "$STG/resident-pins.A.stdout.json" "$STG/old-version-facts.json" "$STG/phaseA.sha256" "$RV/"
 echo "{{\\"status\\":\\"PHASE_A_DONE_NOTHING_SIGNED_NOTHING_INSTALLED\\",\\"phaseAManifestSha256\\":\\"$(sha256sum "$STG/phaseA.sha256" | cut -d' ' -f1)\\"}}"
 """
 MODS = ['worker/qualification-v2.mjs', 'src/worker-v2.mjs', 'src/job-v2.mjs', 'src/proof.mjs', 'src/queue.mjs']
 B = "#!/bin/bash\n" + f"""# r7 Linux phase B (root; after the Source switch: backup, uninstall and reinstall of the Linux resident half, the upgrade tool,
 # generation 1, the version facts and verify, each step fatal, nothing rolled back (reinstall-linux-B-resume.sh continues after a failure); STEP B1 READS THE PRIVATE KEY /etc/clued-independent-ci/verify-result-key.pem through the
-# reviewed sign-qualification-v2.mjs; nothing prints it). = run-linux-p2.py from the signing on, Source values changed.
+# reviewed {SIGNER}; nothing prints it). = run-linux-p2.py from the signing on, Source values changed.
 #   /usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc /root/reinstall-linux-B-switch.sh <phaseAManifestSha256 as reviewed>
 """ + COMMON + f"""WANT_A="${{1:?phase A manifest sha256 required}}"
 # B0: everything phase A staged is still as reviewed (minor 3): the manifest, every listed byte, the bare repo, the sign tool

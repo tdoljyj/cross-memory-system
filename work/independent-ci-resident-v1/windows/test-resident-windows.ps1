@@ -289,7 +289,8 @@ $neither = Get-HeartbeatTokenPlan
 Yes ($neither.supplied -eq $false -and $null -eq $neither.bindingId -and @($neither.Keys) -ccontains 'bindingId') 'heartbeat-binding-id:neither-is-fine'
 Yes ($installText.Contains('bindingId = $(if ($did) { $ht.bindingId } else { $null }) }') -and $installText.Contains('heartbeatBindingId = $receipt.heartbeatToken.bindingId') -and
   $installText.Contains('heartbeatNextStep = $(if ($receipt.heartbeatToken.placed) { Get-HeartbeatNextStep $Identity.nodeName $receipt.heartbeatToken.bindingId } else { $null })')) 'heartbeat-binding-id:receipt-and-result-carry-it'
-Yes ($installText.Contains("[ValidatePattern('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`$')][string]`$HeartbeatBindingId")) 'heartbeat-binding-id:parameter-is-a-uuid'
+Yes ($installText.Contains("[ValidatePattern('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z')][string]`$HeartbeatBindingId")) 'heartbeat-binding-id:parameter-is-a-uuid'
+Yes (-not ("0a1b2c3d-0000-4000-8000-0000000000aa`n" -match '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z')) 'heartbeat-binding-id:trailing-newline-refused'
 foreach ($word in @('Invoke-WebRequest', 'Invoke-RestMethod', 'Net.WebClient', 'Net.Http', 'HttpWebRequest', 'clued_work_verify_v1', 'ci_node_heartbeat', 'supabase')) { Yes (-not $hbInstallCode.Contains($word)) ('install-makes-no-network-call:' + $word) }
 # verify reports the receipt's id (no network)
 $rcpt = { param($hb) if ($null -eq $hb) { [pscustomobject]@{ contract = 'x' } } else { ([ordered]@{ heartbeatToken = $hb } | ConvertTo-Json -Depth 4) | ConvertFrom-Json } }

@@ -75,7 +75,7 @@ param(
   [string]$CiAdmissionTokenFile,     # optional: this node's ci-admission connection token (design 7.2)
   [string]$UpgradeTokenFile,         # optional: this node's resident-upgrade connection token (018da927; its own connection, Owner decision 3ce5200c)
   [string]$HeartbeatTokenFile,       # optional: this node's heartbeat-only connection token (DESIGN.md section 41.6a)
-  [ValidatePattern('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')][string]$HeartbeatBindingId   # optional, only with -HeartbeatTokenFile: informational
+  [ValidatePattern('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z')][string]$HeartbeatBindingId   # optional, only with -HeartbeatTokenFile: informational
 )
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'

@@ -195,16 +195,28 @@ test('the reply is read tolerantly; the wire call posts the CI command door with
 });
 
 // Task 293a092a: before merge-train step 2b the CI command door answers admission_binding_required (role checked before any
-// action) or 400 work_claim_ci_command_invalid (unknown action). That is no token refusal: its own notice, no failure count.
+// action). That is no token refusal: its own notice, no failure count. A 400 work_claim_ci_command_invalid is a real failed beat
+// (from 2b on it is the heartbeat refusing the payload; review W2 MAJOR 1); 401/403 and the revoked/expired codes stay refusals.
 test('a server without the heartbeat action is its own notice, never "token refused", and counts no failure', async () => {
   assert.equal(parseHeartbeatReply({ status: 'rejected', error_code: 'admission_binding_required' }).serverNotReady, true);
   assert.equal(parseHeartbeatReply({ status: 'rejected', error_code: 'admission_binding_required' }).tokenRefused, false);
   assert.equal(parseHeartbeatReply({ status: 'rejected', error_code: 'binding_not_authorized' }).tokenRefused, true);
   const reply = (status, body) => async () => ({ status, text: async () => JSON.stringify(body) });
   const tr = f => supabaseHeartbeatTransport({ supabaseUrl: 'https://abc123.supabase.co', publishableKey: 'sb_publishable_test', fetchImpl: f });
-  assert.equal((await tr(reply(400, { code: '22023', message: 'work_claim_ci_command_invalid' }))({ payload: {} }, { token: TOKEN })).serverNotReady, true);
-  assert.equal((await tr(reply(400, { code: '22023', message: 'other' }))({ payload: {} }, { token: TOKEN })).serverNotReady, false);
+  const invalid = await tr(reply(400, { code: '22023', message: 'work_claim_ci_command_invalid' }))({ payload: {} }, { token: TOKEN });
+  assert.deepEqual([invalid.ok, invalid.serverNotReady, invalid.tokenRefused], [false, false, false], 'a failed beat');
   assert.equal((await tr(reply(403, { code: '42501', message: 'binding_not_authorized' }))({ payload: {} }, { token: TOKEN })).tokenRefused, true);
+  assert.equal((await tr(reply(401, { code: '42501', message: 'authorization_revoked_or_expired' }))({ payload: {} }, { token: TOKEN })).tokenRefused, true);
+  assert.equal(parseHeartbeatReply({ status: 'rejected', error_code: 'authorization_revoked_or_expired' }).serverNotReady, false);
+  // 2b-shaped 400s count: the third one warns "发不出去"
+  const bad = beat({ replies: [{ ok: false, tokenRefused: false, notRegistered: false, serverNotReady: false, connectionOnly: false, autoHandovers: [], watchdogTickAt: null, watchdogStale: null }] });
+  for (let i = 0; i < 3; i += 1) { await bad.hb.step(); bad.advance(NODE_HEARTBEAT_EVERY_MS); }
+  assert.deepEqual(bad.notes.map(n => n.title), ['节点心跳发不出去']);
+  // a not-ready answer between real failures neither counts nor clears them
+  const notReady = parseHeartbeatReply({ status: 'rejected', error_code: 'admission_binding_required' });
+  const mix = beat({ replies: [invalid, notReady, invalid, notReady, invalid] });
+  for (let i = 0; i < 5; i += 1) { await mix.hb.step(); mix.advance(NODE_HEARTBEAT_EVERY_MS); }
+  assert.ok(mix.notes.some(n => n.title === '节点心跳发不出去'), 'three real failures warn even with not-ready answers between them');
   const t = beat({ replies: [parseHeartbeatReply({ status: 'rejected', error_code: 'admission_binding_required' })] });
   for (let i = 0; i < 4; i += 1) { assert.equal((await t.hb.step()).serverNotReady, true); t.advance(NODE_HEARTBEAT_EVERY_MS); }
   assert.deepEqual(t.notes.map(n => n.title), ['服务端还不收心跳'], 'one notice, no "发不出去" after three beats');
