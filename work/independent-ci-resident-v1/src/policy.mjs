@@ -39,11 +39,18 @@
 //     pushed head is tested), maintenanceEveryMs (stage 10 at most this often when idle; design: 10 min),
 //     maintenanceMaxPerDay (design §4.7: 200);
 //   - stageRunMilliseconds has a tenth entry, stage 10 (train maintenance, outside the batch).
+// Contract /8 (merge train on, step 3c-2b; DESIGN §41.7): train.enabled adds 'on'; train adds slotHardCapMinutes (60-180, the
+// touch's hard_cap_minutes), frontBatchBudgetMs (what a front batch needs left on its slot), sweepFreshMs (default 900000: the
+// newest sweep proof stage 8 accepts) and fullSweepMaxMs (a full sweep's longest run); nonFrontRuns may be false. /7 stays
+// accepted exactly as it was ('on' refused, POLICY_TRAIN_ON_NOT_SUPPORTED); its train run carries TRAIN_DEFAULTS.
 import { HEX64, REPO, UUID, check, exactKeys } from './canonical.mjs';
 import { RELAY_ROLES } from './hosted-wait.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
 
-export const POLICY_CONTRACT = 'clued.independent-ci.resident-policy/7';
+export const POLICY_CONTRACT_V7 = 'clued.independent-ci.resident-policy/7';
+export const POLICY_CONTRACT_V8 = 'clued.independent-ci.resident-policy/8';
+export const POLICY_CONTRACT = POLICY_CONTRACT_V7;
+export const POLICY_CONTRACTS = Object.freeze([POLICY_CONTRACT_V7, POLICY_CONTRACT_V8]);
 export const REMINDER_BYTES_DEFAULT = 50 * 1024 ** 3;
 
 // The fixed eight stages of the six-check batch (stages.json of the installed Source).
@@ -64,6 +71,11 @@ export const FIXED_STAGES = Object.freeze([
 export const RELAY_STAGE = 9;
 export const TRAIN_STAGE = 10;
 export const TRAIN_MODES = Object.freeze(['off', 'shadow']);
+export const TRAIN_MODES_V8 = Object.freeze(['off', 'shadow', 'on']);
+// The /8 train settings a /7 policy's train run carries (it never acts on them: /7 is off or shadow).
+// (Source v2 train-run.mjs TRAIN_RUN_SHADOW_DEFAULTS names the same numbers.)
+export const TRAIN_DEFAULTS = Object.freeze({ slotHardCapMinutes: 120, frontBatchBudgetMs: 3_600_000, sweepFreshMs: 900_000, fullSweepMaxMs: 21_600_000 });
+export const TRAIN_V8_KEYS = Object.freeze(['enabled', 'nonFrontRuns', 'maintenanceEveryMs', 'maintenanceMaxPerDay', ...Object.keys(TRAIN_DEFAULTS)]);
 // Local execution and publication stages of each heavy role (the dynamic part of a batch).
 export const ROLE_STAGES = Object.freeze({ gitleaks: Object.freeze([2, 3]), trivy: Object.freeze([4, 5]), 'contract-placement': Object.freeze([6, 7]) });
 
@@ -73,7 +85,7 @@ const int = (v, lo, hi) => Number.isSafeInteger(v) && v >= lo && v <= hi;
 
 export function validatePolicy(p) {
   exactKeys(p, ['contract', 'repo', 'baseBranch', 'sourceManifestSha256', 'ciSourceManifestSha256', 'residentManifestSha256', 'ownerAcceptance', 'validUntil', 'limits', 'breaker', 'stage8', 'park', 'train', 'companion', 'stageRunMilliseconds', 'linux', 'automaticAttempt2', 'retention', 'relay', 'node', 'nodeProfileSha256'], 'POLICY_KEYS_INVALID');
-  check(p.contract === POLICY_CONTRACT, 'POLICY_CONTRACT_INVALID');
+  check(POLICY_CONTRACTS.includes(p.contract), 'POLICY_CONTRACT_INVALID');
   const node = pinnedNodeProfile(p.node, p.nodeProfileSha256);
   check(REPO.test(p.repo), 'POLICY_REPO_INVALID');
   check(p.baseBranch === 'main', 'POLICY_BASE_BRANCH_FIXED_MAIN');
@@ -104,7 +116,7 @@ export function validatePolicy(p) {
   exactKeys(p.park, ['maxParked', 'maxParkedOutsideTop2', 'maxMs', 'stage8MaxTries', 'stage8RetriesPer24h'], 'POLICY_PARK_KEYS_INVALID');
   check(int(p.park.maxParked, 1, 8) && int(p.park.maxParkedOutsideTop2, 0, 16) && int(p.park.maxMs, 3_600_000, 86_400_000) && int(p.park.stage8MaxTries, 1, 24)
     && int(p.park.stage8RetriesPer24h, 0, 200), 'POLICY_PARK_INVALID');
-  validateTrain(p.train);
+  if (p.contract === POLICY_CONTRACT_V8) validateTrainV8(p.train); else validateTrain(p.train);
   exactKeys(p.companion, ['userSid', 'heartbeatMaxAgeMs'], 'POLICY_COMPANION_KEYS_INVALID');
   check(SID.test(p.companion.userSid) && p.companion.userSid === node.ownerSid, 'POLICY_COMPANION_SID_INVALID');
   check(int(p.companion.heartbeatMaxAgeMs, 5_000, 600_000), 'POLICY_HEARTBEAT_INVALID');
@@ -131,6 +143,22 @@ export function validateTrain(t) {
   check(t.enabled !== 'on', 'POLICY_TRAIN_ON_NOT_SUPPORTED');
   check(TRAIN_MODES.includes(t.enabled) && t.nonFrontRuns === true && int(t.maintenanceEveryMs, 60_000, 3_600_000) && int(t.maintenanceMaxPerDay, 0, 200), 'POLICY_TRAIN_INVALID');
   return t;
+}
+
+// train (contract /8, DESIGN §41.7): 'on' is accepted; the four new settings are bounded like the train-run job /2 bounds
+// them (INTERFACES §2), and a front batch's budget must fit inside the slot's hard cap.
+export function validateTrainV8(t) {
+  exactKeys(t, [...TRAIN_V8_KEYS], 'POLICY_TRAIN_KEYS_INVALID');
+  check(TRAIN_MODES_V8.includes(t.enabled) && typeof t.nonFrontRuns === 'boolean' && int(t.maintenanceEveryMs, 60_000, 3_600_000) && int(t.maintenanceMaxPerDay, 0, 200), 'POLICY_TRAIN_INVALID');
+  check(int(t.slotHardCapMinutes, 60, 180) && int(t.frontBatchBudgetMs, 60_000, 10_800_000) && int(t.sweepFreshMs, 60_000, 3_600_000) && int(t.fullSweepMaxMs, 600_000, 86_400_000)
+    && t.frontBatchBudgetMs < t.slotHardCapMinutes * 60_000, 'POLICY_TRAIN_INVALID');
+  return t;
+}
+
+// The train settings of an installed policy (/8 its own, /7 TRAIN_DEFAULTS): what the train-run job /2 carries.
+export function trainSettings(train) {
+  const own = k => (Object.hasOwn(train ?? {}, k) ? train[k] : TRAIN_DEFAULTS[k]);
+  return Object.freeze({ slotHardCapMinutes: own('slotHardCapMinutes'), frontBatchBudgetMs: own('frontBatchBudgetMs'), sweepFreshMs: own('sweepFreshMs'), fullSweepMaxMs: own('fullSweepMaxMs') });
 }
 
 // relay: { enabled, roles (a non-empty ordered subset of the registry's relayable roles), wait (§7.2) }.

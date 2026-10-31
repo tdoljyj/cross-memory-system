@@ -3,8 +3,12 @@
 // 20261010161848) returns the live merge-slot holder of the repository's queue in this scope. It needs the
 // ci-admission role, so it doubles as the on-duty probe: without the role Native answers
 // {status:'ok', holders:[], reason:'admission_binding_required'}, which means "not on duty", never "queue empty".
-// touch, adopt and return (step 3c-2) are writes and are not here.
+// Merge train (DESIGN §41.4, §41.6): the writes touch, adopt, return, keepalive and the sweep watermark, and the read
+// nodesStatus (ci_nodes_status: nodes, watchdog, watermarks), are Source A's port (scripts/ci/clued-merge-train-native.mjs),
+// offered here with the same config and token. The holders answer is unchanged by step 2b and parsed exactly as before:
+// nothing optional can make the role probe uncertain (review R1 MAJOR-1).
 import { digest } from '../proof.mjs';
+import { createMergeTrainNativeWriter } from '../../../../../scripts/ci/clued-merge-train-native.mjs';
 
 export const HOLDERS_RPC = 'clued_work_merge_slot_holders_v1';
 export const NOT_ON_DUTY = 'admission_binding_required';
@@ -58,9 +62,19 @@ export function parseHolders(status, body, repository) {
   return { onDuty: true, holders };
 }
 
-// The read port. config: the installed record's {supabaseUrl, publishableKey, scope, repository}.
+// The port. config: the installed record's {supabaseUrl, publishableKey, scope, repository}. Source A's port is built on
+// first use, so the role probe and holders never depend on it.
 export function createMergeSlotNative({ config, fetchImpl, nativeToken }) {
+  let writer = null;
+  const write = () => writer ??= createMergeTrainNativeWriter({ supabaseUrl: config.supabaseUrl, publishableKey: config.publishableKey, scope: config.scope,
+    repository: config.repository, fetchImpl, nativeToken });
   return Object.freeze({
+    touch: async input => write().touch(input),
+    adopt: async input => write().adopt(input),
+    returnSlot: async input => write().returnSlot(input),
+    keepalive: async input => write().keepalive(input),
+    reportSweepWatermark: async input => write().reportSweepWatermark(input),
+    nodesStatus: async () => write().nodesStatus(),
     async roleProbe() {
       let response, body;
       try {

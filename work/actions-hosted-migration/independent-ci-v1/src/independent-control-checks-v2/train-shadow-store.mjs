@@ -2,7 +2,8 @@
 // create-only file per stage-10 run under state\v2\train-shadow (clued-control only, acl-model.json). The step-4
 // statistics (front green to merge, the second place's wait, front first-run failures, heads per PR, how long GitHub
 // takes to recompute a test merge after main moved) are computed offline from these records, never by the executor.
-// Same write discipline as the green ledger: written whole under a temporary name, synced, hard-linked into place.
+// Step 3c-2b: the record of every mode (facts /2: shadow, on, revoke-only), including the shadow sweeps' would-revoke,
+// calls and time (DESIGN §41.9 item 2). Same write discipline as the green ledger: written whole under a temporary name, synced, hard-linked into place.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { canonical } from '../proof.mjs';

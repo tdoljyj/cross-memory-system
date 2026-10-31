@@ -5,7 +5,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { COMPARE_RETRY_MS, COMPARE_TIMEOUT_MS, MAX_COMPARES_PER_PASS, Poller, SLOW_COMPARE_SKIP_MS, upToDate } from '../src/poller.mjs';
-import { ADVISORY_TIMEOUT_MS, LocalStore, PASS_BUDGET_MS, POST_RETRY_MS, PR_STATUS_CONTEXT, PrStatusReporter, contextFree, contextShapeSafe, describe, events, toastArgv, validateStatusConfig } from '../src/pr-status.mjs';
+import { ADVISORY_TIMEOUT_MS, LocalStore, PASS_BUDGET_MS, POST_RETRY_MS, PrStatusReporter, contextFree, contextShapeSafe, describe, events, toastArgv, validateStatusConfig } from '../src/pr-status.mjs';
+import { nodeContext, standbyContext } from '../src/node-duty.mjs';
+// Task 9cac75be A3: no default node; these reporters are the node named turing (node: 'turing').
+const PR_STATUS_CONTEXT = nodeContext('turing');
 import { lane } from '../src/companion-main.mjs';
 import { restPolls } from './gh-rest-stub.mjs';
 
@@ -95,7 +98,7 @@ test('the advisory work is bounded: short calls, at most MAX_COMPARES_PER_PASS c
     return { code: postOk ? 0 : 1, stdout: '{}' };
   };
   const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-  const reporter = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run: run2, clock: () => now,
+  const reporter = new PrStatusReporter({ node: 'turing', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run: run2, clock: () => now,
     store: await LocalStore.open(path.join(root, 'store.json'), () => now) });
   const prs = [{ pr: 7, headSha: H(7), eligible: false, hint: 'merge-main', behindBy: 2 }, { pr: 9, headSha: H(9), eligible: false, hint: 'merge-main', behindBy: 3 }];
   const posts = () => calls.filter(([a]) => a.includes('POST')).length;
@@ -108,7 +111,7 @@ test('the advisory work is bounded: short calls, at most MAX_COMPARES_PER_PASS c
   assert.equal((await reporter.pass({ pulls: prs, status: null })).posted, 2, 'retried after POST_RETRY_MS');
   // budget: each call takes 40 s, so the second write never starts
   cost = 40_000; now += 31 * 60_000;
-  const slow = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run: run2, clock: () => now,
+  const slow = new PrStatusReporter({ node: 'turing', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run: run2, clock: () => now,
     store: await LocalStore.open(path.join(root, 'slow.json'), () => now), notifications: false });
   const before = posts();
   assert.equal((await slow.pass({ pulls: prs, status: null })).posted, 1);
@@ -129,7 +132,7 @@ test('a stalled advisory call ends the pass: nothing it could not do is recorded
     if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
     return { code: 0, stdout: '{}' };
   };
-  const reporter = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now) });
+  const reporter = new PrStatusReporter({ node: 'turing', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now) });
   const prs = [{ pr: 9, headSha: H(9), eligible: false, hint: 'merge-main', behindBy: 3 }];
   const halted = boardStatus(b => b.update({ halt: { code: 'X_Y', at: '2026-10-22T09:00:00Z' } }), now);
   const first = await reporter.pass({ pulls: prs, status: halted });
@@ -196,6 +199,11 @@ test('the PR page text per head: running stage, queue position, outcome, HALT, s
   assert.equal(describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'COMPLETED' })), now }).state, 'success');
   assert.equal(describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'FAILED_CLEAN', code: 'STAGE_CHILD_REFUSED', retry: 'new-commit' })), now }).state, 'failure');
   assert.equal(describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'FAILED_CLEAN', code: 'GITHUB_TRANSIENT_UNAVAILABLE', retry: 'attempt2' })), now }).state, 'pending');
+  // review R3 MINOR 10: S recomputed by GitHub needs no new commit (the next stage 10 opens the second front batch)
+  const gone = describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'FAILED_CLEAN', code: 'TRAIN_TEST_COMMIT_GONE', retry: 'new-commit' })), now });
+  assert.equal(gone.state, 'pending');
+  assert.match(gone.description, /不用推新提交/);
+  assert.match(describe({ pull: pull(), status: s(b => b.setPending([{ pr: 7, headSha: H(7), baseSha: MAIN, deferred: 'TRAIN_NON_FRONT_RUNS_OFF' }])), now }).description, /只跑车头批次/);
   assert.equal(describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'NOT_ADMITTED', code: 'OWNER_REVIEW_REQUIRED', klass: 'waiting' })), now }).state, 'pending');
   assert.equal(describe({ pull: pull(), status: s(b => b.outcome({ pr: 7, headSha: H(7), outcome: 'IGNORED', code: 'HEAD_ALREADY_PUBLISHED_NO_RETRY' })), now }), null, 'what was written stays');
   assert.equal(describe({ pull: pull(), status: s(b => b.update({ halt: { code: 'ROLE_ALREADY_PUBLISHED_ON_HEAD', at: '2026-10-22T08:00:00Z' } })), now }).state, 'error');
@@ -244,7 +252,7 @@ test('the reporter writes a status only when it changes, never over a required c
     if (argv.some(a => a.includes('/rules/branches/main'))) return required ? { code: 0, stdout: required.join('\n') + '\n' } : { code: 1, stdout: '' };
     return { code: 0, stdout: '{}' };
   };
-  const reporter = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now, store });
+  const reporter = new PrStatusReporter({ node: 'turing', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now, store });
   const pulls = [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }, { pr: 9, headSha: H(9), eligible: false, hint: 'merge-main', behindBy: 2 }];
   const status = boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 } }); b.outcome({ pr: 7, headSha: H(7), outcome: 'COMPLETED' }); }, now);
   const posts = () => calls.filter(a => a.includes('POST'));
@@ -257,7 +265,7 @@ test('the reporter writes a status only when it changes, never over a required c
   // a generic "proposed" never replaces what was written
   assert.equal((await reporter.pass({ pulls, status: boardStatus(b => b.update({ backfill: { complete: true, published: 0, unreadable: 0 } }), now) })).posted, 0);
   // the store survives a companion restart
-  const again = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
+  const again = new PrStatusReporter({ node: 'turing', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
     store: await LocalStore.open(path.join(root, 'store.json'), () => now) });
   assert.equal((await again.pass({ pulls, status })).posted, 0);
   // a collision with a required check: nothing is written, the Owner is told once
@@ -272,13 +280,52 @@ test('the reporter writes a status only when it changes, never over a required c
   assert.equal((await reporter.pass({ pulls, status: halted })).toasts, 0, 'each key once');
   // unknown rules: nothing is written
   required = null; now += 31 * 60_000;
-  const fresh = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
+  const fresh = new PrStatusReporter({ node: 'turing', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
     store: await LocalStore.open(path.join(root, 'other.json'), () => now), notifications: false });
   assert.equal((await fresh.pass({ pulls, status })).posted, 0);
-  assert.deepEqual(validateStatusConfig(undefined), { prStatus: true, notifications: true, node: 'turing' });
-  assert.deepEqual(validateStatusConfig({ notifications: false }), { prStatus: true, notifications: false, node: 'turing' });
+  // Task 9cac75be A3: no default node (the companion names its pinned node profile's)
+  assert.deepEqual(validateStatusConfig(undefined), { prStatus: true, notifications: true, node: null });
+  assert.deepEqual(validateStatusConfig({ notifications: false }), { prStatus: true, notifications: false, node: null });
+  assert.throws(() => new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now, store }),
+    { code: 'PR_STATUS_NODE_REQUIRED' });
   assert.throws(() => validateStatusConfig({ other: true }), { code: 'COMPANION_STATUS_CONFIG_INVALID' });
   assert.ok((await fs.readdir(root)).includes('store.json'));
+});
+
+test('§41.6a: while the heartbeat shows the failover watchdog stale, the PR page status says 自动接班看门狗未运行 (and the toast goes as before)', async t => {
+  const { CompanionHeartbeat, WATCHDOG_STALE_MS } = await import('../src/companion-heartbeat.mjs');
+  const { WATCHDOG_STALE_TEXT, withWatchdogLine } = await import('../src/pr-status.mjs');
+  const root = await tempRoot(t);
+  let now = Date.parse('2026-10-22T09:00:00Z'), tick = now - WATCHDOG_STALE_MS - 1;
+  const notes = [], calls = [];
+  const hb = new CompanionHeartbeat({ nodeName: 'turing', clock: () => now, readToken: async () => 'clued_hb_x', readStatus: async () => null, serviceRunning: async () => true,
+    transport: async () => ({ ok: true, tokenRefused: false, autoHandover: null, watchdogTickAt: tick }), notify: async (k, title) => { notes.push(title); },
+    memory: { get: async () => 0, set: async () => {} }, handover: {} });
+  const run = async argv => { calls.push(argv); return argv.some(a => a.includes('/rules/branches/main')) ? { code: 0, stdout: REQUIRED.join('\n') } : { code: 0, stdout: '{}' }; };
+  const reporter = new PrStatusReporter({ node: 'turing', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
+    store: await LocalStore.open(path.join(root, 's.json'), () => now), notifications: false });
+  reporter.watchdogStale = () => hb.watchdogStale === true; // as companion-main.mjs wires it
+  const pulls = [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }];
+  const status = boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 } }); b.outcome({ pr: 7, headSha: H(7), outcome: 'COMPLETED' }); }, now);
+  const described = () => calls.filter(a => a.includes('POST')).map(a => a.find(x => x.startsWith('description=')).slice('description='.length));
+  assert.equal(hb.watchdogStale, false, 'nothing known yet');
+  await reporter.pass({ pulls, status });
+  assert.ok(!described()[0].includes(WATCHDOG_STALE_TEXT));
+  await hb.step();
+  assert.deepEqual([hb.watchdogStale, notes], [true, ['自动接班看门狗未运行']]);
+  await reporter.pass({ pulls, status });
+  assert.ok(described()[1].endsWith(`；${WATCHDOG_STALE_TEXT}`), described()[1]);
+  // the watchdog ticks again: the next answer clears it and the text goes back
+  now += 11 * 60_000; tick = now - 60_000;
+  await hb.step();
+  assert.equal(hb.watchdogStale, false);
+  await reporter.pass({ pulls, status: boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 } }); b.outcome({ pr: 7, headSha: H(7), outcome: 'COMPLETED' }); }, now) });
+  assert.equal(described()[2], described()[0]);
+  // a long text keeps its start (the duty word) and the warning, within the 140 characters
+  const long = withWatchdogLine({ state: 'pending', description: `当班：${'x'.repeat(200)}` }, true);
+  assert.ok(long.description.length <= 140 && long.description.startsWith('当班：') && long.description.endsWith(WATCHDOG_STALE_TEXT));
+  assert.equal(withWatchdogLine(null, true), null);
+  assert.deepEqual(withWatchdogLine({ state: 'success', description: 'x' }, false), { state: 'success', description: 'x' });
 });
 
 test('phase 2: the PR page says where the run queue has the head: its place and estimated start, a wait, a back-off, a stop, the breaker', () => {
@@ -330,7 +377,7 @@ test('C5: the node writes its own context on its own commits; duty texts are wri
     return { code: 0, stdout: '{}' };
   };
   const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-  const reporter = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now),
+  const reporter = new PrStatusReporter({ node: 'turing', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now),
     notifications: false, writeRequest: async () => {} });
   const pulls = [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }, { pr: 8, headSha: H(8), eligible: true, hint: null, behindBy: 0 }];
   const board = (fn, at = now) => boardStatus(b => { b.setState('IDLE'); b.update({ backfill: { complete: true, published: 0, unreadable: 0 } }); b.setPending([{ pr: 7, headSha: H(7), baseSha: MAIN, position: 1 }]); fn(b); }, at);
@@ -370,7 +417,7 @@ test('C5: another node on duty locks this one: the dual-active hold goes into re
   };
   const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
   const store = await LocalStore.open(path.join(root, 's.json'), () => now);
-  const reporter = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store, writeRequest: async v => { requests.push(v); } });
+  const reporter = new PrStatusReporter({ node: 'turing', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store, writeRequest: async v => { requests.push(v); } });
   const pulls = [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }, { pr: 9, headSha: H(9), eligible: true, hint: null, behindBy: 0 }];
   const node = { name: 'turing', mode: 'ACTIVE', probe: { at: new Date(now - 30_000).toISOString(), result: 'held', failures: 0, failingSince: null } };
   const status = boardStatus(b => { b.setState('IDLE'); b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, node }); b.setPending([{ pr: 7, headSha: H(7), baseSha: MAIN, position: 1 }]); }, now);
@@ -380,16 +427,16 @@ test('C5: another node on duty locks this one: the dual-active hold goes into re
   assert.ok(r.toasts >= 1, 'the Owner is told');
   assert.match(calls.filter(a => a.includes('POST') && a.includes(`repos/${REPO}/statuses/${H(7)}`)).at(-1).find(a => a.startsWith('description=')), /^description=双活停机：另一节点 company-01 也在当班/);
   // the lock survives a companion restart (the reporter's own store)
-  const again = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now),
+  const again = new PrStatusReporter({ node: 'turing', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now),
     writeRequest: async v => { requests.push(v); } });
   assert.equal(again.store.data.node.lock.other, 'company-01');
   // either context among the required checks: nothing is written, the Owner is told which
-  required = [...REQUIRED, 'resident-standby (info only)'];
+  required = [...REQUIRED, standbyContext('turing')];
   now += 31 * 60_000;
   const before = calls.filter(a => a.includes('POST')).length;
   const c = await again.pass({ pulls, status: boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, node }); }, now) });
   assert.deepEqual([c.collision, calls.filter(a => a.includes('POST')).length - before], [true, 0]);
-  assert.equal(again.collision, 'resident-standby (info only)');
+  assert.equal(again.collision, 'resident-standby/turing (info only)');
   assert.deepEqual(validateStatusConfig({ node: 'company-01' }), { prStatus: true, notifications: true, node: 'company-01' });
   assert.throws(() => validateStatusConfig({ node: 'Company 01' }), { code: 'COMPANION_STATUS_CONFIG_INVALID' });
 });
@@ -406,7 +453,7 @@ test('C5 review: notifications before the duty reads; a pass whose duty fails wr
     return { code: 0, stdout: '{}' };
   };
   const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-  const reporter = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now), writeRequest: async () => {} });
+  const reporter = new PrStatusReporter({ node: 'turing', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now), writeRequest: async () => {} });
   const node = { name: 'turing', mode: 'ACTIVE', probe: { at: new Date(now - 30_000).toISOString(), result: 'held', failures: 0, failingSince: null } };
   const halted = boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, node, halt: { code: 'X_Y', at: '2026-10-23T05:59:00Z' } }); }, now);
   await reporter.pass({ pulls: [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }], status: halted });
@@ -420,7 +467,7 @@ test('C5 review: notifications before the duty reads; a pass whose duty fails wr
   await reporter.pass({ pulls: [{ pr: 9, headSha: H(9), eligible: false, hint: 'merge-main', behindBy: 2 }], status: halted });
   assert.equal(posts(), before);
   // m8: a duty text is refreshed at most REFRESH_MAX_POSTS times per head
-  const r2 = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 'r.json'), () => now), notifications: false });
+  const r2 = new PrStatusReporter({ node: 'turing', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 'r.json'), () => now), notifications: false });
   const queued = () => boardStatus(b => { b.setState('IDLE'); b.update({ backfill: { complete: true, published: 0, unreadable: 0 } }); b.setPending([{ pr: 7, headSha: H(7), baseSha: MAIN, position: 1 }]); }, now);
   const pulls = [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }];
   assert.equal((await r2.pass({ pulls, status: queued() })).posted, 1);
@@ -430,7 +477,7 @@ test('C5 review: notifications before the duty reads; a pass whose duty fails wr
   // m6: a reminder toast that could not be shown is owed and shown in a later pass
   const store = await LocalStore.open(path.join(root, 'm.json'), () => now);
   store.data.node.toasts['standby:7:x:unclaimed'] = { title: 'PR #7：当班节点没接手', body: 'b', at: new Date(now).toISOString() };
-  const r3 = new PrStatusReporter({ repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store });
+  const r3 = new PrStatusReporter({ node: 'turing', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store });
   assert.equal((await r3.pass({ pulls: [], status: queued() })).toasts, 1);
   assert.deepEqual(store.data.node.toasts, {});
   assert.ok(store.data.notified['standby:7:x:unclaimed']);

@@ -1,7 +1,7 @@
 // The executor's status on the PR page, and Windows notifications for the big events (resident quota redesign v0.6
 // + §9, phase 1, item 7; Owner Decision 38936534). Runs in the companion (the Owner's own session and gh login).
 //
-// PR page: ONE commit status per open PR's current head, context PR_STATUS_CONTEXT. It is information only:
+// PR page: ONE commit status per open PR's current head, under the node's own context (node-duty.mjs#nodeContext). It is information only:
 //   - a commit status, never a comment (a comment would move the PR's updated time and make the poller propose again);
 //   - a context that is never a required check: what decides is a live read of main's rules before any write (a
 //     context that appears among the required checks is never written, and the Owner is told once; without that read
@@ -25,16 +25,15 @@
 // notices (a new trigger, a stopped row, the waits' budget, the daily batch limit, the breaker) become notifications.
 // Primary/standby C5 (DESIGN §23, node-duty.mjs): the context is the node's own, resident-queue/<node> (info only), written
 // only on the commits the node queued or ran, its text starting with a fixed duty word (当班, 双活停机, 停摆, 已交班) or a
-// result; duty texts are written again every DUTY_REFRESH_MS; a STANDBY writes reminders under resident-standby only.
+// result; duty texts are written again every DUTY_REFRESH_MS; a STANDBY writes reminders under its own resident-standby/<node> only.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
 import { STATUS_STALE_MS } from './status.mjs';
 import { withTrainLine } from './train.mjs';
-import { DEFAULT_NODE, DUTY_REFRESH_MS, NODE_NAME, NodeDuty, REFRESH_MAX_POSTS, STANDBY_CONTEXT, TAKEOVER_TIME_TEXT, freshMemory, nodeContext, pruneMemory, validMemory } from './node-duty.mjs';
+import { DUTY_REFRESH_MS, NODE_NAME, NodeDuty, REFRESH_MAX_POSTS, TAKEOVER_TIME_TEXT, freshMemory, nodeContext, pruneMemory, standbyContext, validMemory } from './node-duty.mjs';
 
-// The context of a single node named DEFAULT_NODE (every node writes its own, node-duty.mjs#nodeContext).
-export const PR_STATUS_CONTEXT = nodeContext(DEFAULT_NODE);
+// Every node writes its own context (node-duty.mjs#nodeContext); there is no default node (Task 9cac75be A3).
 export const MAX_POSTS_PER_PASS = 20;
 export const MAX_TOASTS_PER_PASS = 5;
 export const WAIT_NOTIFY_MS = 3_600_000;
@@ -52,7 +51,7 @@ export const STAGE_NAMES = Object.freeze({ 0: '准备', 1: '准入', 2: 'gitleak
   7: 'contract-placement 发布', 8: '准入复核与合并位', 9: '托管转发' });
 const DEFERRED_TEXT = Object.freeze({ DAILY_BATCH_LIMIT: '今日执行批次额度已满，明天继续', DAILY_EVALUATION_LIMIT: '今日评估额度已满', UNEXECUTED_COOLDOWN: '冷却中（10 分钟）',
   COMPANION_NOT_READY: '等 companion 就绪', PR_DAILY_BATCH_LIMIT: '本 PR 今日批次已满', WAITING_BUDGET_EXHAUSTED: '今日等待重试额度已满，明天继续',
-  REEVALUATION_CAP: '本提交今日重新评估次数已满', BREAKER_OPEN: '执行器熔断中' });
+  REEVALUATION_CAP: '本提交今日重新评估次数已满', BREAKER_OPEN: '执行器熔断中', TRAIN_NON_FRONT_RUNS_OFF: '合并列车只跑车头批次，成为车头后再跑' });
 // Why a row waits (failure-table class waiting), in the words of the PR page.
 const WAIT_TEXT = Object.freeze({ OWNER_REVIEW_REQUIRED: '等 Owner 批准受保护改动', TASK_CI_HEAD_CAP_REACHED: 'Task 的 24 小时 CI 额度已满',
   WAITING_BUDGET_EXHAUSTED: '今日等待重试额度已满（明天继续）' });
@@ -60,7 +59,8 @@ const WAIT_TEXT = Object.freeze({ OWNER_REVIEW_REQUIRED: '等 Owner 批准受保
 const PARKED_TEXT = Object.freeze({ RULESET_UNREADABLE: '已测通：读不到 main 的规则，或必需检查不再钉在本执行器上',
   STRICT_OFF_WITHOUT_TRAIN: '已测通：main 的 strict 已关而列车未开，暂不发合并位（已通知 Owner）',
   MERGE_METHODS_NOT_MERGE_ONLY: '已测通：strict 已关，但合并方式不只有 merge，暂不发合并位（已通知 Owner）',
-  TRAIN_TEST_MERGE_NOT_READY: '已测通：等 GitHub 算好试合并', GREEN_LEDGER_UNAVAILABLE: '已测通：本机绿色台账暂时写不进' });
+  TRAIN_TEST_MERGE_NOT_READY: '已测通：等 GitHub 算好试合并', GREEN_LEDGER_UNAVAILABLE: '已测通：本机绿色台账暂时写不进',
+  TRAIN_SINGLE_GREEN_NOT_PROVEN: '已测通：等第 10 段证明只有车头一个绿', TRAIN_MODE_UNREADABLE: '已测通：读不到本机的列车模式' });
 // The Windows notification of each stage-8 rules notice (step 3a).
 const STAGE8_RULES_TEXT = Object.freeze({
   STRICT_OFF_WITHOUT_TRAIN: () => ({ title: 'main 的 strict 已关，第 8 段停发合并位', body: '列车没有开，常驻执行器不再发合并位。请把 main 规则集的 strict 改回开，或按上线顺序开车。' }),
@@ -69,6 +69,17 @@ const STAGE8_RULES_TEXT = Object.freeze({
 const LIVE = new Set(['QUEUED', 'PARKED', 'WAITING', 'BACKOFF']);
 const hhmm = ms => new Date(ms).toISOString().slice(11, 16) + 'Z';
 const clip = s => s.length <= DESCRIPTION_MAX ? s : `${s.slice(0, DESCRIPTION_MAX - 1)}…`;
+
+// DESIGN §41.6a: while the heartbeat's answer shows the failover watchdog has not ticked for more than 5 minutes
+// (companion-heartbeat.mjs#watchdogStale), every text this node writes for a PR head ends with this, never clipped away. At
+// the end, so the duty words that start a text (node-duty.mjs) stay where the other nodes read them.
+export const WATCHDOG_STALE_TEXT = '自动接班看门狗未运行';
+export function withWatchdogLine(want, stale, max = DESCRIPTION_MAX) {
+  if (!want || stale !== true || want.description.endsWith(WATCHDOG_STALE_TEXT)) return want;
+  const tail = `；${WATCHDOG_STALE_TEXT}`, room = max - tail.length;
+  const d = want.description.length <= room ? want.description : `${want.description.slice(0, room - 1)}…`;
+  return { ...want, description: `${d}${tail}` };
+}
 
 // The fixed shape of the context (a " (info only)" suffix); whether it is free is decided by contextFree.
 export function contextShapeSafe(context) { return typeof context === 'string' && / \(info only\)$/.test(context) && context.length <= 100; }
@@ -133,6 +144,9 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       case 'FAILED_CLEAN':
         if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'failure', description: 'main 已移动：请合入最新 main 并推新提交' };
         if (recent.code === 'TRAIN_TEST_MERGE_TREE_DIFFERS') return { state: 'failure', description: '试合并与测过的树不同，未发合并位：请推新提交（已通知 Owner）' };
+        // DESIGN §41.4 (review R3 MINOR 10): GitHub recomputed the test merge; the next stage 10 reads S again (the head's second
+        // front batch), no new commit is needed. Only after that one is a new commit asked for (TRAIN_FRONT_ATTEMPTS_USED).
+        if (recent.code === 'TRAIN_TEST_COMMIT_GONE') return { state: 'pending', description: 'GitHub 已重算试合并：下一次第 10 段重读后开第二次车头批次，不用推新提交' };
         // Primary/standby C4: App 5368905 had already published on this head (another node or install).
         if (recent.code === 'HEAD_PUBLISHED_ON_GITHUB' || recent.code === 'ROLE_ALREADY_ON_GITHUB') return { state: 'failure', description: '这个提交已有检查，请推新提交' };
         return recent.retry === 'attempt2'
@@ -162,7 +176,7 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
 // Pure: the notification events now (a stable key each; the reporter shows each key once).
 export function events({ status, statusError = false, now, pulls = [], startedAt = now, staleMs = STATUS_STALE_MS, collision = false }) {
   const out = [];
-  if (collision) out.push({ key: 'context-collision', title: 'PR 页面状态名与必需检查重名', body: `“${typeof collision === 'string' ? collision : PR_STATUS_CONTEXT}”出现在 main 的必需检查里，已停止写 PR 页面状态。请检查 main 的规则。` });
+  if (collision) out.push({ key: 'context-collision', title: 'PR 页面状态名与必需检查重名', body: `“${typeof collision === 'string' ? collision : '本节点的状态名'}”出现在 main 的必需检查里，已停止写 PR 页面状态。请检查 main 的规则。` });
   if (!status) {
     if (statusError && now - startedAt > staleMs) out.push({ key: 'status-unreadable', title: '读不到常驻执行器状态', body: 'state\\status.json 读不到或格式不对，执行器可能没有运行。' });
     return out;
@@ -196,11 +210,17 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
       case 'upgrade-deferred': out.push({ key: `notice:${n.key}`, title: '常驻升级已延后', body: `原因：${n.code ?? '?'}。升级代理稍后自动再试，没有改动任何文件。` }); break;
       case 'upgrade-rolled-back': out.push({ key: `notice:${n.key}`, title: '常驻升级已回滚，执行器保持暂停', body: `升级未通过验证（${n.code ?? '?'}），已回到上一代。执行器保持暂停，请检查后由 Owner 恢复。` }); break;
       case 'upgrade-rollback-failed': out.push({ key: `notice:${n.key}`, title: '常驻升级回滚失败，需要 Owner 处理', body: `回滚没有完成（${n.code ?? '?'}）。执行器保持暂停；请用管理员权限按 upgrade-apply.ps1 -Recover 处理。` }); break;
+      // Step 3c-2b (DESIGN §41.4, §41.6): stage 10's decisions for the Owner.
+      case 'train-owner': out.push({ key: `notice:${n.key}`, ...(TRAIN_OWNER_TEXT[n.code] ?? { title: '合并列车需要 Owner 处理', body: n.code ?? '?' }) }); break;
       default: break;
     }
   }
   return out;
 }
+const TRAIN_OWNER_TEXT = Object.freeze({
+  TRAIN_LANDED_TREE_MISMATCH: { title: '紧急：车头合入的树与测过的不同', body: '第 10 段发现落地的合并树不等于测过的 S 的树，已暂停常驻执行器、没有 adopt。请检查后由 Owner 恢复。' },
+  TRAIN_SOURCE_MISMATCH: { title: '常驻节点的 Source 不一致', body: '24 小时内有心跳的常驻节点里有一个跑着别的 Source，本节点不跑 on 模式的第 10 段。请让全部常驻节点装同一个包。' },
+});
 
 // The Windows toast: a fixed PowerShell script, the texts passed as Base64 (no quoting of the texts at all).
 export function toastArgv(powershellExe, title, body) {
@@ -253,12 +273,13 @@ export class LocalStore {
 
 export class PrStatusReporter {
   // ports: { repo, ghExe, powershellExe, run(argv,{timeoutMs}), clock, store (LocalStore), prStatus (bool), notifications (bool),
-  //   node (this node's name while status.json names none; default DEFAULT_NODE), writeRequest(value) (one file into the
-  //   resident's requests\, for the dual-active hold; without it no lock is held) }
+  //   node (this node's name, required: there is no default; status.json's own name wins when it names one), writeRequest(value)
+  //   (one file into the resident's requests\, for the dual-active hold; without it no lock is held), watchdogStale() (optional:
+  //   true while the failover watchdog is stale, §41.6a; companion-main.mjs sets it from the heartbeat) }
   constructor(ports) {
     Object.assign(this, ports);
-    this.node ??= DEFAULT_NODE;
-    check(NODE_NAME.test(this.node) && contextShapeSafe(nodeContext(this.node)) && contextShapeSafe(STANDBY_CONTEXT), 'PR_STATUS_CONTEXT_UNSAFE');
+    check(NODE_NAME.test(this.node ?? ''), 'PR_STATUS_NODE_REQUIRED');
+    check(contextShapeSafe(nodeContext(this.node)) && contextShapeSafe(standbyContext(this.node)), 'PR_STATUS_CONTEXT_UNSAFE');
     this.required = null; this.requiredAt = 0; this.collision = false; this.startedAt = this.clock(); this.failed = new Map();
     this.store.data.node ??= freshMemory();
     // Every read the duty makes goes through call(): a stalled call ends the pass like any other.
@@ -335,7 +356,7 @@ export class PrStatusReporter {
       const context = prep.context;
       const required = await this.requiredContexts();
       // Both contexts this node may write are checked against main's rules; either one there stops every write.
-      if (!this.stalled) this.collision = (Array.isArray(required) ? [context, STANDBY_CONTEXT].find(c => !contextFree(c, required)) : undefined) ?? false;
+      if (!this.stalled) this.collision = (Array.isArray(required) ? [context, standbyContext(prep.node.name)].find(c => !contextFree(c, required)) : undefined) ?? false;
       if (Array.isArray(required) && !this.collision && !this.stalled) {
         const described = new Set();
         const write = async (headSha, want, ctx, key) => {
@@ -354,7 +375,8 @@ export class PrStatusReporter {
         };
         for (const pull of pulls) {
           if (posted >= MAX_POSTS_PER_PASS || !this.inBudget()) break;
-          const want = this.duty.want(pull, status, now, withTrainLine(describe({ pull, status, now }), status?.train?.last ?? null, pull, now, DESCRIPTION_MAX));
+          const want = withWatchdogLine(this.duty.want(pull, status, now, withTrainLine(describe({ pull, status, now }), status?.train?.last ?? null, pull, now, DESCRIPTION_MAX)),
+            this.watchdogStale?.() === true);
           if (!want) continue;
           described.add(pull.headSha);
           const last = this.store.data.posted[pull.headSha];
@@ -395,11 +417,11 @@ export class PrStatusReporter {
   }
 }
 
-// companion.json "status" (optional): { prStatus, notifications, node } (both on unless set false; node: this node's name
-// while status.json names none, default DEFAULT_NODE).
+// companion.json "status" (optional): { prStatus, notifications, node } (both on unless set false; node: this node's name,
+// null when not given: the companion then names its pinned node profile's, and nothing else; never a default node).
 export function validateStatusConfig(s) {
-  if (s === undefined || s === null) return Object.freeze({ prStatus: true, notifications: true, node: DEFAULT_NODE });
+  if (s === undefined || s === null) return Object.freeze({ prStatus: true, notifications: true, node: null });
   check(typeof s === 'object' && Object.keys(s).every(k => ['prStatus', 'notifications', 'node'].includes(k))
     && ['prStatus', 'notifications'].every(k => s[k] === undefined || typeof s[k] === 'boolean') && (s.node === undefined || NODE_NAME.test(s.node)), 'COMPANION_STATUS_CONFIG_INVALID');
-  return Object.freeze({ prStatus: s.prStatus !== false, notifications: s.notifications !== false, node: s.node ?? DEFAULT_NODE });
+  return Object.freeze({ prStatus: s.prStatus !== false, notifications: s.notifications !== false, node: s.node ?? null });
 }
