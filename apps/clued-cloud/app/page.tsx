@@ -908,6 +908,7 @@ export default function Home() {
           <Link href="/contexts">{locale === "zh-CN" ? "上下文" : "Contexts"}</Link>
           <Link href="/grants">{locale === "zh-CN" ? "我的授权" : "Grants"}</Link>
           <Link href="/agent-messages">{locale === "zh-CN" ? "Agent 消息" : "Agent messages"}</Link>
+          <Link href="/merge-queue">{locale === "zh-CN" ? "合并排队" : "Merge queue"}</Link>
           <span className="byline">{t.byline}</span>
           <div className="language-switch" role="group" aria-label={t.languageLabel}>
             <button
