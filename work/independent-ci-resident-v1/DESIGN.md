@@ -2654,6 +2654,7 @@ Task `088ab175`；设计 v0.4 §7.1–§7.4、§9 C7、§10 P3。
   - 节点准备时直接授予该账户（例如 `secpol.msc` →「本地策略」→「用户权限分配」→「作为服务登录」）。
   - `install-resident.ps1 -Apply` 在写任何东西之前只读核对：缺这项权限拒绝（`CONTROLLER_SERVICE_LOGON_RIGHT_MISSING`），读不到用户权限也拒绝（`USER_RIGHTS_UNREADABLE`）。
   - 干跑把结果报在计划之外的 `preflight.controllerServiceLogonRight`，不改计划和计划哈希；不提权时这一项为 `unreadable-not-elevated`。
+  - 本机账户和组在 `secedit` 导出里写成名字，不是 `*SID`。TURING 在 2026-10-31 的实际一行是 `SeServiceLogonRight = clued-runner,clued-control,*S-1-5-80-0,*S-1-5-83-0`。核对时把名字用 `NTAccount.Translate` 解析成 SID 再比较，名字和 `*SID` 两种写法都认。解析不出来的名字：在授予一行里不算授予，在拒绝一行里按拒绝算（失败关闭）。此前的版本只认 `*SID`，TURING 上已有的授权因此被误判为缺失；当晚改用内置组 Replicator（`S-1-5-32-552`）绕行（Note `427b6c83`），这次修复装上以后可以撤掉。
   - `verify-resident.ps1` 也核对这一项（§30.6）。
 - **不要删除任何已有的 GitHub App 私钥。** 每个节点各有自己的一把（`appKeyId` 和指纹钉在该节点的安装记录里）；删掉哪一把，那个节点的检查发布立即 `github_http_401`。TURING 的 4918220 在 2026-10-30 就是这样被删的。新节点只新增一把；要更换某个节点自己的私钥，走只改记录的重装（`reinstall/README.md` §8b）。
 - **已知限制：Linux 半边没装时，`executor.rearm` 没有合法路径。** 节点只装了 Windows STANDBY、没有 Linux 半边时，执行器一旦 HALT（例如上一条的角色探测），复位所需的 Linux 一侧事实（version facts、两侧一致）不存在，无法合法 rearm。按 Owner Decision `e5b42e52`，DESK-W-591 保持 HALTED，直到 Z1 装好 Linux 半边和它自己的结果签名钥。这里只记录，不改代码。
