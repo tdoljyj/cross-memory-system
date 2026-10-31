@@ -1486,14 +1486,29 @@ const tools = [
   {
     name: "clued_mtpe_owner_pin",
     description:
-      "Set or cancel the Owner-selected current focus for one eligible Universal Intake Task using explicit user confirmation, exact Task-version CAS, Event, Receipt, and projection invalidation. There is one focus per user: a set must name the focus it replaces in expected_current_focus_id (null when no focus is expected) and is rejected with owner_pin_focus_conflict, which returns the current focus, when that is not the current focus. Use it only when the Owner chooses a new focus; parallel work is claimed with clued_work_claim, never pinned.",
+      "Set or cancel the Owner-selected current focus for one eligible Universal Intake Task using explicit user confirmation, exact Task-version CAS, Event, Receipt, and projection invalidation. There is one focus per user: a set must name the focus it replaces in expected_current_focus_id (null when no focus is expected) and is rejected with owner_pin_focus_conflict, which returns the current focus, when that is not the current focus. Use it only when the Owner chooses a new focus; parallel work is claimed with clued_work_claim, never pinned. " +
+      "Operation custom_priority_set sets the Owner's custom priority of one active record (priority 0-100, 0 clears it); record writes cannot set priority. " +
+      "Use it only when the Owner explicitly asks for that priority, never on your own judgement, and send the Owner's own words in owner_instruction. " +
+      "base_version is then the record's custom priority version, 0 when it has none; custom_priority_version_conflict returns the current value and version. " +
+      "The value adds 0.3 x priority to the automatic MTPE score and puts the record first in record lists; the Owner sees it came from you and can undo it.",
     inputSchema: {
       type: "object",
       required: ["operation", "record_id", "base_version", "idempotency_key", "user_confirmed"],
       properties: {
-        operation: { type: "string", enum: ["set", "cancel"] },
+        operation: { type: "string", enum: ["set", "cancel", "custom_priority_set"] },
         record_id: { type: "string", format: "uuid" },
-        base_version: { type: "integer", minimum: 1 },
+        base_version: {
+          type: "integer", minimum: 0,
+          description: "set and cancel: the Task's record version (1 or more). custom_priority_set: the record's custom priority version, 0 when it has none.",
+        },
+        priority: {
+          type: "integer", minimum: 0, maximum: 100,
+          description: "custom_priority_set only: the custom priority the Owner asked for; 0 clears it.",
+        },
+        owner_instruction: {
+          type: "string", minLength: 1, maxLength: 2000,
+          description: "custom_priority_set only, required: the Owner's own words asking for this priority.",
+        },
         expected_current_focus_id: {
           anyOf: [{ type: "string", format: "uuid" }, { type: "null" }],
           description: "Required on set: the record_id of the current Owner focus, or null when there is none. Read it from clued_mtpe_snapshot owner_selected_current_focus.",
