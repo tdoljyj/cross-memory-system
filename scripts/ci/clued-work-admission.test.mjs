@@ -1291,6 +1291,7 @@ test("gate guard: every gated workflow on this branch passes and uses a listed g
 
 const TEMPORARY_GATE_BOOTSTRAP = "      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n";
 const TEMPORARY_GATE_DIGEST = "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9";
+const ANY_RUNNER_GATE_DIGEST = "b000e5a2bc4b0ca76de4beb7dfc3001dca7a428dde79578e457057081e1109ce";
 const withoutTemporaryGateBootstrap = (text) => text.replace(TEMPORARY_GATE_BOOTSTRAP + "      - id: gate\n", "      - id: gate\n");
 
 test("gate guard: the exact PR-read version is registered before workflow rollout; other changes are refused", () => {
@@ -1298,7 +1299,15 @@ test("gate guard: the exact PR-read version is registered before workflow rollou
   const prReadDigest = "4136409cf9440c3e8755ed03014cd3c39f90a169f4f8a2ce3d83af2e4a0111cd";
   const noEnforceDigest = "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc";
   assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest, noEnforceDigest, TEMPORARY_GATE_DIGEST, SOURCE_PROOF_GATE_DIGEST,
-    HOSTED_SOURCE_PROOF_GATE_DIGEST], "only the six exact gate versions");
+    HOSTED_SOURCE_PROOF_GATE_DIGEST, ANY_RUNNER_GATE_DIGEST], "only the seven exact gate versions");
+  // Decision b30b1b79: the temporary-storage gate with `Linux` dropped from runs-on, nothing else, is accepted.
+  const panel = fs.readFileSync(new URL("../../.github/workflows/clued-compute-panel.yml", import.meta.url), "utf8");
+  const gateRunsOn = "    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n";
+  assert.ok(panel.includes(gateRunsOn), "the panel's gate is the Linux-only temporary-storage gate on this base");
+  const anyRunner = panel.replace(gateRunsOn, gateRunsOn.replace("Linux, ", ""));
+  assert.deepEqual(gateFindings(anyRunner, panel), [], "the any-runner gate is registered");
+  assert.deepEqual(gateFindings(panel.replace(gateRunsOn, gateRunsOn.replace("Linux, ", "Windows, ")), panel),
+    ["admission_gate_changed"], "another runs-on is not");
   // Merge Admission step 6 dropped this line from the gate; the two older
   // versions below still carry it.
   const token = "          GITHUB_TOKEN: ${{ github.token }}\n";
