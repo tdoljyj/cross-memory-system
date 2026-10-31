@@ -140,6 +140,7 @@ export default function OwnerGrantsPage() {
     <header><Link href="/">BeamingFace</Link> <Link href="/work-claims">谁在做哪个任务</Link> <Link href="/work-claims/race">多份模式</Link> <Link href="/bindings">专用 Binding</Link></header>
     <h1>我的授权</h1>
     <p><Link href="/independent-review">独立审核自动授权</Link>：默认打开，Agent 在已有授权范围内安排审核，无需逐次询问。</p>
+    <p><Link href="/priority">优先级</Link>：看每条任务的自动分，给你在意的任务加上你的优先级，或撤回 Agent 按你要求代设的值。</p>
     <p className="context-muted">你给 Agent 的授权都在这里。撤销立即生效。</p>
     {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 BeamingFace</Link> 后查看你的授权。</p> : <>
       <p className="context-muted">已登录 {session.user.email || session.user.id}</p>

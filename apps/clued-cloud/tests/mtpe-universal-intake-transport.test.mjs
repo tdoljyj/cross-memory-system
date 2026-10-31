@@ -44,6 +44,13 @@ test('MTPE inspection tools are read-only and route Binding/OAuth calls to the s
     [{ type: 'string', format: 'uuid' }, { type: 'null' }]);
   assert.match(ownerPin.description, /owner_pin_focus_conflict/);
   assert.match(ownerPin.description, /clued_work_claim/);
+  // The Owner's custom priority (20261031070000): on the Owner's request only, with the Owner's words.
+  assert.deepEqual(ownerPin.inputSchema.properties.operation.enum, ['set', 'cancel', 'custom_priority_set']);
+  assert.deepEqual([ownerPin.inputSchema.properties.priority.minimum, ownerPin.inputSchema.properties.priority.maximum], [0, 100]);
+  assert.equal(ownerPin.inputSchema.properties.owner_instruction.type, 'string');
+  assert.equal(ownerPin.inputSchema.properties.base_version.minimum, 0);
+  assert.match(ownerPin.description, /only when the Owner explicitly asks/);
+  assert.match(ownerPin.description, /owner_instruction/);
 
   const previousFetch = globalThis.fetch;
   const calls = [];

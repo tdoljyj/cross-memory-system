@@ -1417,10 +1417,12 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
         assert.deepEqual((await delegatedRead(input)).records, []);
         assert.equal((await delegatedRead({ ...input, include_history: true })).records[0].id, task);
         const otherProject = await f.project('Unauthorized project');
-        const hidden = await f.record(otherProject.scope, 'task', 'Private live task',
-          { execution_bucket: 'next', priority: 99 });
+        // Lists order by the Owner's custom priority, then most recent first
+        // (20261031070000): the later hidden Task would lead an unauthorized list.
         const allowed = await f.record(p.scope, 'task', 'Allowed live task',
-          { execution_bucket: 'next', priority: 1 });
+          { execution_bucket: 'next' });
+        const hidden = await f.record(otherProject.scope, 'task', 'Private live task',
+          { execution_bucket: 'next' });
         await admin.query('update public.clued_projects set merged_into_project_id=$1 where id=$2',
           [p.id, otherProject.id]);
         assert.equal((await f.rpc('clued_record_list', { ...input, limit: 1 })).records[0].id, hidden);
