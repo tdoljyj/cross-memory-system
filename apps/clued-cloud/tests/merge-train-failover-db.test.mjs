@@ -938,24 +938,25 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       assert.equal((await plainBeat('hbB2')).error_code, 'ci_node_not_registered');
       assert.equal((await s.door('hbB2', { action: 'ci_nodes_status' })).error_code, 'admission_binding_required');
       assert.equal(await err(issueUnlink('hbB2')), 'resident_failover_heartbeat_not_linked');
-      // MAJOR-1: the holder's CI connection is revoked. Its linked heartbeats are refused, and it is lost at once.
+      // The holder's CI connection is revoked: its linked heartbeats are refused; silence decides.
       await s.ago(5);
       committed(await s.apply(issued(await issueLink('hbB', 'b'))));
       await s.beat('hbB', HOLDER);
       await admin.query('update public.clued_agent_bindings set revoked_at=now() where id=$1', [s.ids.b]);
       assert.equal((await plainBeat('hbB')).error_code, 'ci_node_not_registered', 'no heartbeat for a node whose CI connection is gone');
-      // a was handed out automatically, so it is not chosen back.
       await s.beat('hbA'); await s.beat('hbA');
+      assert.equal((await s.tick()).outcome, 'holder_alive', 'a revoked connection alone switches nothing');
+      await s.ago(30); await s.beat('hbA'); await s.beat('hbA');
       o = await s.tick();
-      assert.equal(o.trigger, 'connection_unavailable');
-      assert.equal(o.outcome, 'no_target');
+      // a was handed out automatically, so it is not chosen back.
+      assert.deepEqual([o.outcome, o.trigger], ['no_target', 'silence']);
       assert.ok(reasons(o, 'a', s).includes('auto_handed_out'));
       page = await s.view();
       assert.ok(!page.bindings.some((x) => x.agent_name === 'b'), 'only live connections are listed');
       await s.close(); await other.close();
     });
 
-    await t.test('a holder whose CI connection is revoked is lost at once; its linked heartbeats are refused', async () => {
+    await t.test('a holder whose CI connection is revoked: heartbeats refused, handed over only after 30 minutes of silence', async () => {
       const s = await account('revoked', ['a', 'b'], { plain: ['hbA', 'hbB'] });
       const base = async () => (await s.view()).setting.version;
       const link = async (hb, node) => committed(await s.apply(issued(await s.native('clued_resident_failover_confirmation_issue_v1',
@@ -969,10 +970,20 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       await admin.query('update public.clued_agent_bindings set revoked_at=now() where id=$1', [s.ids.a]);
       assert.equal((await s.door('hbA', { action: 'ci_node_heartbeat', state: 'NORMAL', mode: 'ACTIVE', service_running: true })).error_code,
         'ci_node_not_registered');
-      // b's two heartbeats came after a's last one: hand over now, without waiting 30 minutes.
+      // Before 30 minutes of silence nothing happens, however many heartbeats b sends.
+      await s.beat('hbB'); await s.beat('hbB');
+      assert.equal((await s.tick()).outcome, 'holder_alive');
+      await s.ago(29); await s.beat('hbB'); await s.beat('hbB');
+      assert.equal((await s.tick()).outcome, 'holder_alive', '29 minutes');
+      assert.equal((await s.door('hbA', { action: 'ci_node_heartbeat', state: 'NORMAL', mode: 'ACTIVE', service_running: true })).error_code,
+        'ci_node_not_registered', 'still refused');
+      await s.ago(1);
       const o = await s.tick();
-      assert.deepEqual([o.outcome, target(o, s), o.trigger], ['handed_over', 'b', 'connection_unavailable']);
-      assert.ok((await s.notes()).some((n) => n.content.includes('的 CI 连接已失效')));
+      assert.deepEqual([o.outcome, target(o, s), o.trigger], ['handed_over', 'b', 'silence']);
+      const receipt = (await s.receipt_(o.receipt_id)).metadata;
+      assert.equal(receipt.holder_connection_live, false);
+      const note = (await s.notes()).find((n) => n.type_fields.receipt_id === o.receipt_id);
+      assert.ok(note.content.includes('失联 30 分钟（它的 CI 连接已失效）'), note.content);
       await s.close();
     });
 

@@ -97,8 +97,11 @@
 --    ci-admission (binding_role_change_check_v1 and
 --    binding_role_handover_check_v1 refuse it, under the role lock that the
 --    link change also takes). The watchdog, ci_nodes_status and the page keep
---    identifying a node by its CI connection; a holder whose CI connection is
---    no longer live counts as lost. A connection that can only send
+--    identifying a node by its CI connection. A holder whose CI connection is
+--    no longer live sends no heartbeat that counts (direct or linked), so it
+--    falls silent and the 30-minute rule decides as for any silence (Decision
+--    199cf3de: only loss of contact switches); the Note then states that the
+--    CI connection is no longer live. A connection that can only send
 --    heartbeats (a scope without context:read) is later work: it needs the
 --    connection scope list, issuance and consent outside this migration.
 --
@@ -1069,16 +1072,17 @@ begin
     end if;
     return jsonb_build_object('outcome','holder_not_heard_yet','holder',v_holder);
   end if;
-  -- A holder whose CI connection is no longer live is lost at once: it cannot work.
-  v_silent:=xn.last_heartbeat_at<=v_now-interval '30 minutes' or not v_holder_live;
+  -- Only loss of contact switches (Decision 199cf3de): a holder whose CI
+  -- connection is no longer live is not lost at once; its heartbeats are
+  -- refused, so it falls silent and the same 30 minutes apply.
+  v_silent:=xn.last_heartbeat_at<=v_now-interval '30 minutes';
   v_stuck:=not v_silent and xn.unhealthy_since is not null and xn.unhealthy_since<=v_now-interval '30 minutes';
   if not v_silent and not v_stuck then
     return jsonb_build_object('outcome','holder_alive','holder',v_holder);
   end if;
-  v_trigger:=case when not v_holder_live then 'connection_unavailable' when v_silent then 'silence'
-    else 'service_not_running' end;
-  v_why:=case when not v_holder_live then '的 CI 连接已失效' when v_silent then '失联 30 分钟'
-    else '连续 30 分钟报服务没在运行或状态快照过旧' end;
+  v_trigger:=case when v_silent then 'silence' else 'service_not_running' end;
+  v_why:=case when v_silent then '失联 30 分钟' else '连续 30 分钟报服务没在运行或状态快照过旧' end
+    ||case when not v_holder_live then '（它的 CI 连接已失效）' else '' end;
   -- A HALTED, PAUSED or unexpired INTAKE_PAUSED holder is never handed out:
   -- its latest readable report decides (UNKNOWN looks back to it).
   if xn.readable_state in ('HALTED','PAUSED')
@@ -1092,7 +1096,8 @@ begin
     case when v_silent then xn.last_heartbeat_at end,v_now);
   select c into v_target from jsonb_array_elements(v_candidates) c where (c->>'eligible')::boolean
     order by (c->>'rank')::integer limit 1;
-  v_meta:=jsonb_build_object('holder',v_holder,'trigger',v_trigger,'holder_last_heartbeat_at',xn.last_heartbeat_at,
+  v_meta:=jsonb_build_object('holder',v_holder,'trigger',v_trigger,'holder_connection_live',v_holder_live,
+    'holder_last_heartbeat_at',xn.last_heartbeat_at,
     'holder_unhealthy_since',xn.unhealthy_since,'candidates',v_candidates,'switch',coalesce(s.enabled,false));
   if v_target is null then
     -- Someone was fit but for the heartbeats during the silence: alert only.
@@ -1127,7 +1132,7 @@ begin
   begin
     v_done:=clued_private.binding_role_handover_core_v1(p_owner,v_holder,(v_target->>'binding_id')::uuid,null,
       jsonb_build_object('receipt_kind','CI_ADMISSION_AUTO_HANDOVER','principal','server_watchdog',
-        'trigger',v_trigger,'holder_last_heartbeat_at',xn.last_heartbeat_at,
+        'trigger',v_trigger,'holder_connection_live',v_holder_live,'holder_last_heartbeat_at',xn.last_heartbeat_at,
         'holder_unhealthy_since',xn.unhealthy_since,'candidates',v_candidates,
         'nodes',clued_private.ci_failover_nodes_v1(p_owner)));
   exception when others then

@@ -226,8 +226,7 @@ export default function ResidentFailoverPage() {
   const busy = working || !!pending;
   const describeAlert = (alert: Json) => {
     if (alert.receipt_kind === "CI_ADMISSION_AUTO_HANDOVER") return "已自动把 CI 准入从 " + nameOf(alert.from_binding_id) + " 移交给 "
-      + nameOf(alert.to_binding_id) + "（" + (alert.trigger === "service_not_running" ? "服务连续 30 分钟没在运行"
-        : alert.trigger === "connection_unavailable" ? "它的 CI 连接已失效" : "失联 30 分钟")
+      + nameOf(alert.to_binding_id) + "（" + (alert.trigger === "service_not_running" ? "服务连续 30 分钟没在运行" : "失联 30 分钟")
       + "），" + clock(alert.effective_at) + " 起生效。";
     if (alert.receipt_kind === "CI_ADMISSION_FAILOVER_NO_TARGET") return "当前持有者 " + nameOf(alert.holder)
       + " 失联，但没有可以接班的节点，没有交接，请你处理。";
