@@ -32,6 +32,7 @@ const MESSAGES: Record<string, string> = {
   resident_failover_heartbeat_is_node: "这个连接是某个节点的 CI 连接，不能再当心跳连接。",
   resident_failover_heartbeat_linked: "这个心跳连接已经挂在另一个节点上，请先解除。",
   resident_failover_heartbeat_not_linked: "这个连接现在没有挂靠，请刷新页面。",
+  resident_failover_heartbeat_scope_required: "只能挂靠在签发页签发、仍在有效期内的心跳令牌连接。",
   resident_failover_node_invalid: "这个节点的 CI 连接已失效或还没有登记节点，请刷新页面。",
   confirmation_token_expired: "确认已超过 5 分钟有效期，请重新点一次。",
   confirmation_token_revoked: "确认已被更新的操作取代，请按页面当前内容操作。",
