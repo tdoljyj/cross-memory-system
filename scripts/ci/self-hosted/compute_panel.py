@@ -74,7 +74,8 @@ POOL = [
 ]
 # Not in the general pool; listed so the panel shows every machine.
 OTHERS = [
-    {"name": "DESK-W-591", "status": "pending", "role": "常驻执行器待安装（Task b7d84de2）"},
+    {"name": "DESK-W-591", "status": "resident",
+     "role": "常驻执行器节点，与 TURING 主备对等（2026-10-30 装好），当班或待命见上面“常驻 desk-w-591”一行"},
     {"name": "clued-ci-home-linux-01", "status": "retired",
      "role": "已退役（Decision 183ee67c），GitHub 离线 14 天后自动移除注册"},
     {"name": "clued-ci-home-win-02", "status": "controller",
@@ -82,7 +83,7 @@ OTHERS = [
 ]
 STATUS_TEXT = {
     "online": "在线", "offline": "离线", "unknown": "未知", "pending": "待安装",
-    "retired": "已退役", "controller": "控制机",
+    "retired": "已退役", "controller": "控制机", "resident": "常驻节点",
 }
 
 
