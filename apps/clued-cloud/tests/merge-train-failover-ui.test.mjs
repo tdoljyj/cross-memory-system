@@ -121,6 +121,7 @@ test('a stale watchdog is pointed out', async () => {
 test('a halted node shows its halt code, time, pull request and head', async () => {
   const f = fixture(PAGE);
   await open(f, DATA({ nodes: [node('b-desk', 'desk-w-591', 2, { state: 'HALTED', readable_state: 'HALTED',
+    heartbeat_via_link: true, heartbeat_from_agent_name: 'desk-heartbeat',
     halt: { code: 'BYTE_DRIFT', at: '2026-10-31T07:00:00Z', pr: 'tdoljyj/cross-memory-system#958', head: 'a'.repeat(40) } })],
     alerts: [{ receipt_id: 'r9', created_at: '2026-10-31T07:00:00Z', receipt_kind: 'CI_ADMISSION_FAILOVER_NO_TARGET', holder: 'b-turing',
       candidates: [{ binding_id: 'b-desk', reasons: ['too_few_heartbeats'] }] }] }));
@@ -129,10 +130,12 @@ test('a halted node shows its halt code, time, pull request and head', async () 
   assert.ok(shown.includes('停机详情原因 BYTE_DRIFT，'));
   assert.ok(shown.includes('停机，出事的 PR tdoljyj/cross-memory-system#958，head aaaaaaaaaaaa'));
   assert.ok(shown.includes('desk-w-591：持有者失联期间心跳不到 2 次'));
-  // A node that is not halted shows no halt line.
+  assert.ok(shown.includes('（来自挂靠的心跳连接 desk-heartbeat）'));
+  // A node that is not halted shows no halt line; a heartbeat from the node's own connection says nothing more.
   const g = fixture(PAGE);
   await open(g);
   assert.ok(!g.text().includes('停机详情'));
+  assert.ok(!g.text().includes('挂靠'));
 });
 
 test('the switch: two steps, exactly the confirmed view, then the page reloads', async () => {

@@ -96,7 +96,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
     // stage-1 node rows and ci-admission rows. The tick decides every account
     // that has marked connections; close() unmarks them when a scenario ends.
     let accountCount = 0;
-    const account = async (label, nodeNames, { holder = nodeNames[0], extra = true, session = 'sess-' + label } = {}) => {
+    const account = async (label, nodeNames, { holder = nodeNames[0], extra = true, session = 'sess-' + label, plain = [] } = {}) => {
       const user = uuid();
       const claims = fresh(user, session);
       await admin.query(`insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())`,
@@ -126,6 +126,8 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
           values($1,$2,$3,$4,'{}'::jsonb,$5,$6,$7,$8,$9,$10,$11) returning node_id`,
         [user, project, ids[name], name.toUpperCase(), hash(), jwk(), jwk(), hash(), hash(), hash(), uuid()])).rows[0].node_id;
       }
+      // Connections without a node (heartbeat connections to be linked).
+      for (const name of plain) await bind(name, ['context:read']);
       if (extra) {
         await bind('env', ['context:read']);
         await bind('park', ['context:read']);
@@ -224,15 +226,16 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       }
       const privates = (await admin.query(`select p.oid::regprocedure::text sig from pg_proc p
         where p.pronamespace='clued_private'::regnamespace and (p.proname like 'ci_failover%' or p.proname like 'ci_admission_failover%'
-          or p.proname in ('ci_node_heartbeat_v1','binding_role_handover_core_v1','work_claim_ci_command_v1','ci_sweep_watermark_v1'))`)).rows.map((r) => r.sig);
-      assert.equal(privates.length, 23, privates.join(' '));
+          or p.proname in ('ci_node_heartbeat_v1','binding_role_handover_core_v1','work_claim_ci_command_v1','ci_sweep_watermark_v1',
+            'ci_node_heartbeat_link_v1'))`)).rows.map((r) => r.sig);
+      assert.equal(privates.length, 24, privates.join(' '));
       for (const sig of privates) {
         for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
           assert.equal(await can(role, sig), false, `${role} ${sig}`);
         }
       }
       for (const table of ['ci_failover_settings_v1', 'ci_failover_members_v1', 'ci_failover_watchdog_v1', 'ci_node_liveness_v1',
-        'ci_sweep_watermark_v1']) {
+        'ci_sweep_watermark_v1', 'ci_node_heartbeat_link_v1']) {
         assert.equal((await admin.query(`select relrowsecurity from pg_class where oid=('clued_private.'||$1)::regclass`, [table])).rows[0].relrowsecurity, true);
         await assert.rejects(() => anon.query(`select * from clued_private.${table}`), /permission denied/);
         await assert.rejects(() => human.query(`select * from clued_private.${table}`), /permission denied/);
@@ -847,6 +850,72 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       assert.equal((await admin.query(`select main_sha from clued_private.ci_sweep_watermark_v1 where user_id=$1 and repository='o/race'`,
         [s.user])).rows[0].main_sha, '1'.repeat(40), 'the newer watermark stays');
       await s.close();
+    });
+
+    await t.test('heartbeat connections: linked to a node\'s CI connection, heartbeats only, replace and unlink', async () => {
+      const s = await account('hblink', ['a', 'b', 'c'], { plain: ['hbA', 'hbB', 'hbB2'] });
+      const other = await account('hblink-other', ['z'], { extra: false, plain: ['zz'] });
+      const link = (node, hb, extra = {}) => s.door(node, { action: 'ci_node_heartbeat_link',
+        heartbeat_binding_id: s.ids[hb] ?? hb, ...extra });
+      const plainBeat = (who) => s.door(who, { action: 'ci_node_heartbeat', state: 'NORMAL', mode: 'STANDBY', service_running: true });
+      // Refusals.
+      assert.equal((await link('reader', 'hbB')).error_code, 'ci_node_not_registered', 'only a node\'s CI connection links');
+      assert.equal((await link('b', 'env')).error_code, 'ci_heartbeat_link_target_holds_role', 'an "other" holder');
+      assert.equal((await link('b', 'park')).error_code, 'ci_heartbeat_link_target_holds_role', 'a parking spot');
+      assert.equal((await link('b', 'a')).error_code, 'ci_heartbeat_link_target_holds_role', 'the resident-node holder');
+      assert.equal((await link('b', 'c')).error_code, 'ci_heartbeat_link_target_is_node', 'another node\'s CI connection');
+      assert.equal((await link('b', 'b')).error_code, 'ci_heartbeat_link_target_invalid', 'itself');
+      assert.equal((await link('b', other.ids.zz)).error_code, 'ci_heartbeat_link_target_invalid', 'another account');
+      assert.equal((await link('b', 'writer')).error_code, 'ci_heartbeat_link_target_invalid', 'without context:read');
+      await assert.rejects(() => link('b', 'hbB', { extra: 1 }), /work_claim_ci_command_invalid/);
+      assert.equal((await plainBeat('hbB')).error_code, 'ci_node_not_registered', 'not linked yet');
+      // Link, replay, one node per heartbeat connection.
+      const linked = await link('b', 'hbB');
+      assert.deepEqual([linked.status, linked.linked, linked.replayed], ['ok', true, false]);
+      const linkReceipt = (await s.receipt_(linked.receipt_id)).metadata;
+      assert.deepEqual([linkReceipt.receipt_kind, linkReceipt.node_binding_id, linkReceipt.heartbeat_binding_id],
+        ['CI_NODE_HEARTBEAT_LINKED', s.ids.b, s.ids.hbB]);
+      assert.deepEqual([(await link('b', 'hbB')).replayed, (await link('b', 'hbB')).receipt_id], [true, linked.receipt_id]);
+      assert.equal((await link('c', 'hbB')).error_code, 'ci_heartbeat_link_target_linked', 'one node per heartbeat connection');
+      assert.equal((await link('a', 'hbA')).status, 'ok', 'the holder\'s node links its own heartbeat connection');
+      // A heartbeat through the link is the node's.
+      const beat = await s.beat('hbB');
+      assert.deepEqual([beat.node_binding_id, beat.via_link, beat.node_ids], [s.ids.b, true, [s.nodes.b]]);
+      assert.equal((await s.node('b')).last_sender_binding_id, s.ids.hbB);
+      assert.equal(Number((await s.node('b')).heartbeat_sequence), 1);
+      // A heartbeat connection may call nothing else on the CI command door.
+      for (const action of ['ci_nodes_status', 'train_sweep_watermark', 'revocations_contexts', 'merge_queue_keepalive',
+        'publication_begin', 'ci_node_heartbeat_link', 'ci_node_heartbeat_unlink']) {
+        assert.deepEqual(await s.door('hbB', { action }), { status: 'rejected', error_code: 'heartbeat_connection_only' }, action);
+      }
+      const verify = await anon.query('select public.clued_work_verify_v1($1,$2) v', [s.tokens.hbB,
+        { scope: 'global', claim_id: uuid(), pr_ref: 'o/r#1', head_sha: 'a'.repeat(40) }]).then((r) => r.rows[0].v, (e) => ({ error: e.message }));
+      assert.notEqual(verify.verdict, 'ADMITTED', 'nor admit a claim');
+      // The watchdog sees nodes through their heartbeat connections.
+      await s.members(['a', 'b']);
+      await s.switch(true);
+      await s.beat('hbA', HOLDER);
+      const page = await s.view();
+      const shown = page.nodes.find((n) => n.binding_id === s.ids.a).node;
+      assert.deepEqual([shown.heartbeat_via_link, shown.heartbeat_from_agent_name], [true, 'hbA']);
+      await s.ago(30); await s.beat('hbB'); await s.beat('hbB');
+      const o = await s.tick();
+      assert.deepEqual([o.outcome, target(o, s)], ['handed_over', 'b']);
+      assert.deepEqual((await s.beat('hbB')).auto_handovers.map((h) => h.receipt_id), [o.receipt_id], 'relayed through the heartbeat connection');
+      // Linking another connection replaces the link; the old one is refused.
+      const replaced = await link('b', 'hbB2');
+      assert.equal(replaced.replaced_heartbeat_binding_id, s.ids.hbB);
+      assert.equal((await plainBeat('hbB')).error_code, 'ci_node_not_registered');
+      assert.equal((await s.beat('hbB2')).node_binding_id, s.ids.b);
+      // Unlink: refused afterwards; unlinking again finds nothing.
+      const unlinked = await s.door('b', { action: 'ci_node_heartbeat_unlink', heartbeat_binding_id: s.ids.hbB2 });
+      assert.deepEqual([unlinked.status, unlinked.unlinked], ['ok', true]);
+      assert.equal((await s.receipt_(unlinked.receipt_id)).metadata.receipt_kind, 'CI_NODE_HEARTBEAT_UNLINKED');
+      assert.equal((await plainBeat('hbB2')).error_code, 'ci_node_not_registered');
+      assert.equal((await s.door('b', { action: 'ci_node_heartbeat_unlink' })).error_code, 'ci_heartbeat_link_not_found');
+      // Unlinked, it is an ordinary connection again: the role check applies.
+      assert.equal((await s.door('hbB2', { action: 'ci_nodes_status' })).error_code, 'admission_binding_required');
+      await s.close(); await other.close();
     });
 
     await t.test('a Note that cannot be written leaves the handover in place', async () => {

@@ -58,10 +58,13 @@
 --    the role table.
 -- 5. CI8 is unchanged: no new anon or Worker RPC. The resident reads and
 --    writes through the CI command door (clued_work_verify_v1 ->
---    work_claim_ci_command_v1): ci_node_heartbeat for every resident node
---    (holder or not, before the role check and the claim lock) and
---    ci_nodes_status for the role holder. work_claim_ci_command_v1 is 2a's
---    definition (20261031060000) plus these two branches.
+--    work_claim_ci_command_v1): before the role check and the claim lock,
+--    ci_node_heartbeat (every resident node, holder or not) and
+--    ci_node_heartbeat_link / _unlink (item 9), and the refusal of every other
+--    action from a linked heartbeat connection; after the role check,
+--    ci_nodes_status and train_sweep_watermark for the role holder.
+--    work_claim_ci_command_v1 is 2a's definition (20261031060000) plus these
+--    branches.
 -- 6. Every function redefined whole here is first checked against the md5 of
 --    its expected predecessor body.
 -- 7. Owner notice (§41.6a "审计与通知"): an automatic handover, and a
@@ -79,6 +82,21 @@
 --    (CI command door action train_sweep_watermark; an older report never
 --    replaces a newer one). The holder reads the latest per repository in
 --    ci_nodes_status, so a node that takes over sweeps from it.
+-- 9. Heartbeat connections (§41.6a "专用心跳"): the installer never uses a
+--    node's CI token for heartbeats. A node's CI connection (a live stage-1
+--    node row) links a separate connection of the same account with the CI
+--    command door action ci_node_heartbeat_link (unlink:
+--    ci_node_heartbeat_unlink; linking another one replaces the node's
+--    previous link; each change leaves a receipt). The linked connection must
+--    be live, hold no ci-admission row and not be a node's CI connection
+--    itself; it can be linked to one node at a time. A heartbeat from it is
+--    recorded on the node it is linked to (the node's own CI connection still
+--    works); it may call no other CI command door action
+--    (heartbeat_connection_only). The watchdog, ci_nodes_status and the page
+--    keep identifying a node by its CI connection; the liveness row also
+--    records which connection sent the latest heartbeat. The door still
+--    resolves every caller with context:read: a connection that can only send
+--    heartbeats (a new scope) is later work.
 --
 -- The production publisher runs this file and its ledger row in one
 -- transaction, so CREATE INDEX CONCURRENTLY is unavailable. Ordinary index
@@ -111,6 +129,7 @@ create table clued_private.ci_node_liveness_v1 (
   node_id uuid primary key references clued_private.ci_nodes_v1(node_id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
   last_heartbeat_at timestamptz not null,
+  last_sender_binding_id uuid not null references public.clued_agent_bindings(id),
   heartbeat_previous_at timestamptz,
   heartbeat_sequence bigint not null check (heartbeat_sequence>=1),
   reported_mode text check (reported_mode in ('ACTIVE','STANDBY','UNCERTAIN')),
@@ -131,6 +150,25 @@ create table clued_private.ci_node_liveness_v1 (
   check ((readable_state is null)=(readable_at is null))
 );
 create index ci_node_liveness_owner_v1 on clued_private.ci_node_liveness_v1(user_id,last_heartbeat_at desc);
+
+-- A heartbeat connection linked to a node's CI connection. At most one live
+-- link per heartbeat connection and one per node connection.
+create table clued_private.ci_node_heartbeat_link_v1 (
+  link_id uuid primary key default extensions.gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  heartbeat_binding_id uuid not null references public.clued_agent_bindings(id),
+  node_binding_id uuid not null references public.clued_agent_bindings(id),
+  linked_at timestamptz not null,
+  linked_receipt_id uuid not null,
+  revoked_at timestamptz,
+  revoked_receipt_id uuid,
+  check (heartbeat_binding_id<>node_binding_id),
+  check ((revoked_at is null)=(revoked_receipt_id is null))
+);
+create unique index ci_node_heartbeat_link_sender_v1 on clued_private.ci_node_heartbeat_link_v1(heartbeat_binding_id)
+  where revoked_at is null;
+create unique index ci_node_heartbeat_link_node_v1 on clued_private.ci_node_heartbeat_link_v1(node_binding_id)
+  where revoked_at is null;
 
 -- The latest full-sweep watermark each connection reported per repository.
 create table clued_private.ci_sweep_watermark_v1 (
@@ -182,8 +220,10 @@ alter table clued_private.ci_failover_members_v1 enable row level security;
 alter table clued_private.ci_failover_watchdog_v1 enable row level security;
 alter table clued_private.ci_node_liveness_v1 enable row level security;
 alter table clued_private.ci_sweep_watermark_v1 enable row level security;
+alter table clued_private.ci_node_heartbeat_link_v1 enable row level security;
 revoke all on table clued_private.ci_failover_settings_v1,clued_private.ci_failover_members_v1,
-  clued_private.ci_failover_watchdog_v1,clued_private.ci_node_liveness_v1,clued_private.ci_sweep_watermark_v1
+  clued_private.ci_failover_watchdog_v1,clued_private.ci_node_liveness_v1,clued_private.ci_sweep_watermark_v1,
+  clued_private.ci_node_heartbeat_link_v1
   from public,anon,authenticated,service_role;
 
 -- ---------------------------------------------------------------------------
@@ -326,8 +366,10 @@ language sql stable security definer set search_path='' as $$
     'service_running',l.reported_service_running,'snapshot_age_seconds',l.reported_snapshot_age_seconds,
     'ci_source_manifest_sha256',l.reported_source_sha256,'readable_state',l.readable_state,
     'readable_intake_until',l.readable_intake_until,'readable_at',l.readable_at,
-    'unhealthy_since',l.unhealthy_since)
+    'unhealthy_since',l.unhealthy_since,'heartbeat_from_binding_id',l.last_sender_binding_id,
+    'heartbeat_from_agent_name',s.agent_name,'heartbeat_via_link',l.last_sender_binding_id is distinct from n.binding_id)
   from clued_private.ci_nodes_v1 n left join clued_private.ci_node_liveness_v1 l on l.node_id=n.node_id
+  left join public.clued_agent_bindings s on s.id=l.last_sender_binding_id
   where n.user_id=p_owner and n.binding_id=p_binding and n.state not in ('retired','revoked')
   order by l.last_heartbeat_at desc nulls last,n.created_at desc,n.node_id limit 1
 $$;
@@ -375,13 +417,15 @@ $$;
 -- node_name}: state NORMAL | HALTED | PAUSED | INTAKE_PAUSED | UNKNOWN; mode
 -- ACTIVE | STANDBY | UNCERTAIN (may be absent only with UNKNOWN);
 -- intake_paused_until exactly with INTAKE_PAUSED; node_name is accepted and
--- ignored. Any other field (a time, a node id) is refused.
+-- ignored. Any other field (a time, a node id) is refused. The caller is a
+-- node's CI connection (its own node) or a heartbeat connection linked to one
+-- (that node); anyone else gets ci_node_not_registered.
 create function clued_private.ci_node_heartbeat_v1(b public.clued_agent_bindings,p_input jsonb)
 returns jsonb language plpgsql volatile security definer set search_path='' as $$
 declare v_now timestamptz:=pg_catalog.clock_timestamp(); v_state text:=p_input->>'state';
   v_mode text:=p_input->>'mode'; v_probe text:=p_input->>'probe'; v_until timestamptz;
   v_source text:=p_input->>'ci_source_manifest_sha256'; v_running boolean; v_age integer;
-  v_halt jsonb; v_unhealthy boolean; v_healthy boolean; v_nodes uuid[];
+  v_halt jsonb; v_unhealthy boolean; v_healthy boolean; v_nodes uuid[]; v_node_binding uuid;
 begin
   if p_input-array['action','scope','state','mode','probe','intake_paused_until','halt',
         'ci_source_manifest_sha256','service_running','snapshot_age_seconds','node_name']<>'{}'::jsonb
@@ -416,16 +460,27 @@ begin
   v_halt:=case when v_state='HALTED' and jsonb_typeof(p_input->'halt')='object' then p_input->'halt' end;
   v_unhealthy:=not v_running or coalesce(v_age>1800,false);
   v_healthy:=v_running and coalesce(v_age<=1800,false);
+  if exists(select 1 from clued_private.ci_nodes_v1 n where n.user_id=b.user_id and n.binding_id=b.id
+      and n.state not in ('retired','revoked')) then
+    v_node_binding:=b.id;
+  else
+    select k.node_binding_id into v_node_binding from clued_private.ci_node_heartbeat_link_v1 k
+      where k.user_id=b.user_id and k.heartbeat_binding_id=b.id and k.revoked_at is null;
+  end if;
+  if v_node_binding is null then
+    return jsonb_build_object('status','rejected','error_code','ci_node_not_registered'); end if;
   with heard as (
-    insert into clued_private.ci_node_liveness_v1 as l(node_id,user_id,last_heartbeat_at,heartbeat_sequence,
-      reported_mode,reported_probe,reported_state,reported_intake_until,reported_halt,reported_service_running,
-      reported_snapshot_age_seconds,reported_source_sha256,readable_state,readable_intake_until,readable_at,unhealthy_since)
-    select n.node_id,n.user_id,v_now,1,v_mode,v_probe,v_state,v_until,v_halt,v_running,v_age,v_source,
+    insert into clued_private.ci_node_liveness_v1 as l(node_id,user_id,last_heartbeat_at,last_sender_binding_id,
+      heartbeat_sequence,reported_mode,reported_probe,reported_state,reported_intake_until,reported_halt,
+      reported_service_running,reported_snapshot_age_seconds,reported_source_sha256,readable_state,
+      readable_intake_until,readable_at,unhealthy_since)
+    select n.node_id,n.user_id,v_now,b.id,1,v_mode,v_probe,v_state,v_until,v_halt,v_running,v_age,v_source,
       case when v_state<>'UNKNOWN' then v_state end,case when v_state<>'UNKNOWN' then v_until end,
       case when v_state<>'UNKNOWN' then v_now end,case when v_unhealthy then v_now end
     from clued_private.ci_nodes_v1 n
-    where n.user_id=b.user_id and n.binding_id=b.id and n.state not in ('retired','revoked')
+    where n.user_id=b.user_id and n.binding_id=v_node_binding and n.state not in ('retired','revoked')
     on conflict (node_id) do update set heartbeat_previous_at=l.last_heartbeat_at,last_heartbeat_at=v_now,
+      last_sender_binding_id=b.id,
       heartbeat_sequence=l.heartbeat_sequence+1,reported_mode=v_mode,reported_probe=v_probe,reported_state=v_state,
       reported_intake_until=v_until,reported_halt=v_halt,reported_service_running=v_running,
       reported_snapshot_age_seconds=v_age,reported_source_sha256=coalesce(v_source,l.reported_source_sha256),
@@ -439,8 +494,72 @@ begin
   if v_nodes is null then
     return jsonb_build_object('status','rejected','error_code','ci_node_not_registered'); end if;
   return jsonb_build_object('status','ok','received_at',v_now,'node_ids',to_jsonb(v_nodes),
+    'node_binding_id',v_node_binding,'via_link',v_node_binding<>b.id,
     'intake_paused_until',v_until,'watchdog',clued_private.ci_failover_watchdog_view_v1(),
-    'auto_handovers',clued_private.ci_failover_received_v1(b.user_id,b.id));
+    'auto_handovers',clued_private.ci_failover_received_v1(b.user_id,v_node_binding));
+end $$;
+
+-- Linking a heartbeat connection (CI command door actions
+-- ci_node_heartbeat_link and ci_node_heartbeat_unlink, before the role check).
+-- Input {action, scope, heartbeat_binding_id}; for unlink the id is optional
+-- (when given it must be the node's current link). Only a node's CI
+-- connection (a live stage-1 node row) calls it. Linking another connection
+-- replaces the node's previous link; linking the same one again is a replay.
+create function clued_private.ci_node_heartbeat_link_v1(b public.clued_agent_bindings,p_input jsonb)
+returns jsonb language plpgsql volatile security definer set search_path='' as $$
+declare v_op text:=p_input->>'action'; v_now timestamptz:=clock_timestamp(); h public.clued_agent_bindings%rowtype;
+  k clued_private.ci_node_heartbeat_link_v1%rowtype; v_receipt uuid; v_target uuid;
+begin
+  if p_input-array['action','scope','heartbeat_binding_id']<>'{}'::jsonb
+      or (v_op='ci_node_heartbeat_link' and not (p_input ? 'heartbeat_binding_id'))
+      or (p_input ? 'heartbeat_binding_id' and (jsonb_typeof(p_input->'heartbeat_binding_id') is distinct from 'string'
+        or p_input->>'heartbeat_binding_id' !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')) then
+    raise exception 'work_claim_ci_command_invalid' using errcode='22023'; end if;
+  if not exists(select 1 from clued_private.ci_nodes_v1 n where n.user_id=b.user_id and n.binding_id=b.id
+      and n.state not in ('retired','revoked')) then
+    return jsonb_build_object('status','rejected','error_code','ci_node_not_registered'); end if;
+  v_target:=(p_input->>'heartbeat_binding_id')::uuid;
+  perform pg_advisory_xact_lock(hashtextextended('ci-heartbeat-link:'||b.user_id::text,0));
+  select * into k from clued_private.ci_node_heartbeat_link_v1 x
+    where x.node_binding_id=b.id and x.revoked_at is null for update;
+  if v_op='ci_node_heartbeat_unlink' then
+    if k.link_id is null or (v_target is not null and k.heartbeat_binding_id<>v_target) then
+      return jsonb_build_object('status','rejected','error_code','ci_heartbeat_link_not_found'); end if;
+    insert into public.clued_audit_receipts(user_id,binding_id,context_key,operation,object_type,object_id,version,metadata)
+    values(b.user_id,b.id,'global','ci_node_heartbeat_link','ci_node_heartbeat_link',k.link_id::text,1,
+      jsonb_build_object('receipt_kind','CI_NODE_HEARTBEAT_UNLINKED','node_binding_id',b.id,
+        'heartbeat_binding_id',k.heartbeat_binding_id))
+    returning id into v_receipt;
+    update clued_private.ci_node_heartbeat_link_v1 set revoked_at=v_now,revoked_receipt_id=v_receipt where link_id=k.link_id;
+    return jsonb_build_object('status','ok','unlinked',true,'heartbeat_binding_id',k.heartbeat_binding_id,'receipt_id',v_receipt);
+  end if;
+  if k.heartbeat_binding_id=v_target then
+    return jsonb_build_object('status','ok','linked',true,'replayed',true,'heartbeat_binding_id',v_target,
+      'receipt_id',k.linked_receipt_id);
+  end if;
+  select * into h from public.clued_agent_bindings x where x.id=v_target and x.user_id=b.user_id for share;
+  if not found or h.id=b.id or not clued_private.binding_live_v1(h) or not ('context:read'=any(h.scopes)) then
+    return jsonb_build_object('status','rejected','error_code','ci_heartbeat_link_target_invalid'); end if;
+  if exists(select 1 from jsonb_array_elements(clued_private.binding_role_holders_v1(b.user_id,'ci-admission','{}'::uuid[])) r
+      where r->>'binding_id'=h.id::text) then
+    return jsonb_build_object('status','rejected','error_code','ci_heartbeat_link_target_holds_role'); end if;
+  if exists(select 1 from clued_private.ci_nodes_v1 n where n.user_id=b.user_id and n.binding_id=h.id
+      and n.state not in ('retired','revoked')) then
+    return jsonb_build_object('status','rejected','error_code','ci_heartbeat_link_target_is_node'); end if;
+  if exists(select 1 from clued_private.ci_node_heartbeat_link_v1 x where x.heartbeat_binding_id=h.id and x.revoked_at is null) then
+    return jsonb_build_object('status','rejected','error_code','ci_heartbeat_link_target_linked'); end if;
+  insert into public.clued_audit_receipts(user_id,binding_id,context_key,operation,object_type,object_id,version,metadata)
+  values(b.user_id,b.id,'global','ci_node_heartbeat_link','ci_node_heartbeat_link',h.id::text,1,
+    jsonb_build_object('receipt_kind','CI_NODE_HEARTBEAT_LINKED','node_binding_id',b.id,'heartbeat_binding_id',h.id,
+      'replaced_heartbeat_binding_id',k.heartbeat_binding_id))
+  returning id into v_receipt;
+  if k.link_id is not null then
+    update clued_private.ci_node_heartbeat_link_v1 set revoked_at=v_now,revoked_receipt_id=v_receipt where link_id=k.link_id;
+  end if;
+  insert into clued_private.ci_node_heartbeat_link_v1(user_id,heartbeat_binding_id,node_binding_id,linked_at,linked_receipt_id)
+  values(b.user_id,h.id,b.id,v_now,v_receipt);
+  return jsonb_build_object('status','ok','linked',true,'replayed',false,'heartbeat_binding_id',h.id,
+    'replaced_heartbeat_binding_id',k.heartbeat_binding_id,'receipt_id',v_receipt);
 end $$;
 
 -- The latest full-sweep watermark per repository, whoever reported it.
@@ -520,7 +639,7 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
--- The CI command door: 2a's definition plus the three node actions.
+-- The CI command door: 2a's definition plus the node actions.
 
 CREATE OR REPLACE FUNCTION clued_private.work_claim_ci_command_v1(p_token_hash text, p_input jsonb)
  RETURNS jsonb
@@ -539,6 +658,13 @@ begin
   -- Every resident node, holder or not (§41.6a), before the role check and the lock.
   if op='ci_node_heartbeat' then
     return clued_private.ci_node_heartbeat_v1(b,p_input);
+  end if;
+  -- A heartbeat connection linked to a node sends heartbeats and nothing else.
+  if exists(select 1 from clued_private.ci_node_heartbeat_link_v1 k where k.user_id=b.user_id
+      and k.heartbeat_binding_id=b.id and k.revoked_at is null) then
+    return jsonb_build_object('status','rejected','error_code','heartbeat_connection_only'); end if;
+  if op in ('ci_node_heartbeat_link','ci_node_heartbeat_unlink') then
+    return clued_private.ci_node_heartbeat_link_v1(b,p_input);
   end if;
   -- A role label supplied in a payload or a read-only Agent connection is
   -- never a CI principal. This is the existing Owner-designated CI Binding.
@@ -1304,6 +1430,7 @@ revoke all on function
   clued_private.ci_failover_received_v1(uuid,uuid),
   clued_private.ci_failover_nodes_v1(uuid),
   clued_private.ci_node_heartbeat_v1(public.clued_agent_bindings,jsonb),
+  clued_private.ci_node_heartbeat_link_v1(public.clued_agent_bindings,jsonb),
   clued_private.ci_failover_nodes_status_v1(public.clued_agent_bindings,jsonb),
   clued_private.ci_failover_exclusion_v1(uuid,uuid,timestamptz),
   clued_private.ci_failover_candidates_v1(uuid,uuid,text,timestamptz,timestamptz),

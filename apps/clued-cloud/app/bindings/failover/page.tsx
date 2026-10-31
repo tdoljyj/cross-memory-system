@@ -263,7 +263,8 @@ export default function ResidentFailoverPage() {
               <dt>连接</dt><dd>{label(entry)}{entry.rank ? "，次序 " + String(entry.rank) : "，没有自动接班资格"}</dd>
               {!node ? <><dt>节点</dt><dd>这个连接还没有登记节点，发不了心跳。</dd></> : <>
                 <dt>节点</dt><dd>{String(node.name ?? "")}</dd>
-                <dt>最近心跳</dt><dd>{clock(node.last_heartbeat_at)}</dd>
+                <dt>最近心跳</dt><dd>{clock(node.last_heartbeat_at)}{node.heartbeat_via_link === true
+                  ? "（来自挂靠的心跳连接 " + String(node.heartbeat_from_agent_name ?? node.heartbeat_from_binding_id ?? "") + "）" : ""}</dd>
                 <dt>自报</dt><dd>{(MODES[String(node.mode)] ?? "模式未知") + "，" + (STATES[String(node.state)] ?? "状态未知")
                   + (node.state === "INTAKE_PAUSED" ? "（到 " + clock(node.intake_paused_until) + "）" : "")
                   + (node.state === "UNKNOWN" && node.readable_state ? "，之前最近一次：" + (STATES[String(node.readable_state)] ?? "") : "")}</dd>
