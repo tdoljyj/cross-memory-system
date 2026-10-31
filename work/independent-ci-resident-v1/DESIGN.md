@@ -3245,7 +3245,7 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 
 Owner 2026-10-31 的决定：`263f9701` 现在做 3c-2b，批量测试与二分（Task `7f205c71`）排在它之后；`3dcb583b`（取代 `a5ea4be3`）定了排位用 Task 优先级；`86008583` 的守队程序和 `b30b1b79` 第 3 项的常驻层改动随同一次两节点安装上线。本节只是设计。下文的“现状”都对照 main `35c41fd6`。本节的 Source B 指 `work/actions-hosted-migration/independent-ci-v1/src/`（Source v2），Source A 指 `scripts/ci/` 里的 Native 端口、撤销控制器和 `clued-work-admission.test.mjs`。
 
-Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 → migrate），之后在 `/bindings` 上把 TURING 与 DESK-W-591 的连接标为“可自动接班的常驻节点”并排好次序，并为每个节点建一个只能发心跳的连接、装进该节点的 companion（41.6a）；② 两个 protected-change Grant：Source A、守队程序；③ 两节点安装的 UAC（各加 Linux root），之后再一次 UAC 把策略改成 on；④ 开车前复核一次影子数据；⑤ 接受 MergeAdmission v0.2（含 41.1 列出的改动）；⑥ 接受合同草稿并给发布 Grant；⑦ 在规则集里关 `strict`、合并方式只留 merge；⑧ 打开排位开关；⑨ 定 `nonFrontRuns`（UAC）；⑩ 影子复核之后打开自动接班总开关（41.6a）。
+Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 → migrate），之后在 `/bindings` 上把 TURING 与 DESK-W-591 的连接标为“可自动接班的常驻节点”并排好次序，并为每个节点建一个只能发心跳的连接，下载令牌，随该节点的 UAC 安装用 `-HeartbeatTokenFile` 装上（41.6a）；② 两个 protected-change Grant：Source A、守队程序；③ 两节点安装的 UAC（各加 Linux root），之后再一次 UAC 把策略改成 on；④ 开车前复核一次影子数据；⑤ 接受 MergeAdmission v0.2（含 41.1 列出的改动）；⑥ 接受合同草稿并给发布 Grant；⑦ 在规则集里关 `strict`、合并方式只留 merge；⑧ 打开排位开关；⑨ 定 `nonFrontRuns`（UAC）；⑩ 影子复核之后打开自动接班总开关（41.6a）。
 
 ### 41.1 范围与顺序
 
@@ -3257,9 +3257,9 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 | 2 服务端 | 一次迁移：记下车头与按优先级排位（41.5）、排队认领保活（41.4）、节点心跳函数与记录、holders 回答的 `nodes`、清扫水位（41.6、41.6a）、ci-admission 自动接班的资格标记、次序、总开关（默认关）与看门狗（41.6a）；`/bindings` 页面加资格、次序、总开关、心跳连接，都走两步确认 | 否 | 否 | 授权迁移；标记资格；建心跳连接 |
 | 3 Source A | Native 写端口（touch、adopt、return、保活、清扫水位，CI 身份），`clued-work-admission.test.mjs` 跟上 | 随第 8 步 | 是 | protected-change Grant |
 | 4 Source B | 第 8 段单绿、第 10 段 on 与只撤模式、清扫、两处 `binding` 改动；train-run `/2`（`frontOutcome`）；C# 边界接受 on 与 train-run `/2` | 随第 8 步，两侧 | 否 | 无 |
-| 5 常驻层 | 策略 `/8`、车头调度、`relayPlan`、C9、两种请求文件、保留；companion 的心跳（41.6a）；HALT、PAUSE、暂停接新在 latch 的同一 tick 写进状态 | 随第 8 步，Windows | 否 | 无 |
+| 5 常驻层 | 策略 `/8`、车头调度、`relayPlan`、C9、两种请求文件、保留；companion 的心跳与自动接班的 @Owner 评论（41.6a）；安装参数 `-HeartbeatTokenFile` 与 `secrets\heartbeat\`；HALT、PAUSE、暂停接新在 latch 的同一 tick 写进状态 | 随第 8 步，Windows | 否 | 无 |
 | 6 文档 | 下面列的 v0.2 与合同草稿改动；GitConnectorWriteContract、`docs/maintenance/independent-ci.md` | 否 | 否（文档层） | 接受 v0.2；接受草稿、发布 Grant |
-| 7 守队程序 | 41.8 | 否 | 是（`.github/**`） | protected-change Grant |
+| 7 守队程序与算力面板 | 41.8；算力面板认自动接班评论的标记、不重复 @（`scripts/ci/self-hosted/compute_panel.py`，41.6a） | 否 | 是（`.github/**`、`scripts/ci/**`） | protected-change Grant |
 | 8 安装 | 一次两节点安装（TURING 与 desk-w-591，同一个包，§40 工具链，含 #949），策略 `/8` 但 `train.enabled=shadow` | 是：两节点各 UAC 加 Linux root | 否 | UAC |
 | 9 影子与改 on | 影子清扫演练、Owner 复核，然后改策略为 on | 只改策略（UAC） | 否 | 复核；UAC |
 | 10 清扫 | 41.9 第 5 条 | 否 | 否 | 无 |
@@ -3364,11 +3364,13 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 - **触发只有一种：失联**（Decision `199cf3de`）。HALT 不再触发接班。
 - **专用心跳**：
   - 谁发：companion（Owner 登录会话里的计划任务，§8.4，本来就能出网），每 10 分钟一次，与列车模式、PAUSE、HALT、批次进行与否都无关。它不经代理、不跑任何段，没有 GitHub 副作用。companion 本来就要在线，节点才能干活（打 bundle、轮询，§3 的表），所以它的心跳就是“这个节点还能工作”。
-  - 用什么：每个节点一个只能发心跳的连接（新 scope，只能调心跳函数，读不了 context，也做不了别的），由 Owner 在 `/bindings` 上建，挂到该节点的 CI 连接名下（两步确认）；令牌放在 companion 的存储里。
-  - 调什么：新函数 `clued_ci_node_heartbeat_v1`。时刻由服务端写，节点改不了。另记自报：节点名、`ciSourceManifestSha256`、模式（`ACTIVE`、`STANDBY`、`UNCERTAIN`）、最近一次探测结果、`HALTED`（任何码，带 `haltCode`、`haltedSince` 和引发它的批次的 PR 与 head，供 Owner 看）、`PAUSED`、`INTAKE_PAUSED`（带 `until`，服务端截到 `now + 200 分钟`）、服务是否在运行（companion 查 SCM）、状态快照的年龄。只认每个节点最新的一条自报。自报取自执行器的状态快照（`status.mjs`，companion 本来就读它）。
+  - 用什么：每个节点一个只能发心跳的连接（新 scope，只能调心跳函数，读不了 context，也做不了别的），由 Owner 在 `/bindings` 上建，挂到该节点的 CI 连接名下（两步确认）。服务端把令牌绑定到这个节点，载荷里的节点名一律不用。
+  - 令牌放哪：今天的 secrets 目录不给 Owner 读（`install-resident.ps1` 的 `Get-AclPlan`），安装脚本和 `companion.json` 也没有心跳令牌的位置。新增安装参数 `-HeartbeatTokenFile`：Owner 从 `/bindings` 下载令牌，随 UAC 安装放进新目录 `secrets\heartbeat\`（SYSTEM 与 Administrators 完全控制，Owner 只读），companion 从那里读。选这个、不选 SYSTEM 代发：companion 本来就在 Owner 会话里，代发要再加一个提权组件和一条通道。代价是 Owner 会话里跑的 Agent 也读得到令牌。可以接受，因为它只能发心跳：拿到它的人既不能读 context，也不能碰 CI、GitHub 或认领。残余风险：他能伪造自报 `HALTED` 或 `PAUSED`，让这个节点永不被自动交出；或者连续 30 分钟伪报“服务没在运行”，促成一次交接。后者只会交给 Owner 标过资格、心跳健康的另一个节点，受 6 小时冷却和“不自动交回”约束，并且有回执和 @Owner。
+  - 令牌出问题不当失联处理：companion 连续 3 次心跳失败，或令牌过期、被拒，就发 Windows 通知请 Owner 换令牌。服务端照常按失联判断（它分不出来），所以 Owner 要在 30 分钟内处理，或先关总开关。
+  - 调什么：新函数 `clued_ci_node_heartbeat_v1`。时刻由服务端写，节点改不了。另记自报：`ciSourceManifestSha256`（取自状态快照的 `versions.windows.ciSourceManifestSha256`，即执行器实际在跑的 Source，不取 companion 自己的配置）；模式（`ACTIVE`、`STANDBY`、`UNCERTAIN`）；最近一次探测结果；`HALTED`（任何码；`haltCode` 与时刻取自 `status.halt`，它只有 `{code, at}`，出事批次的 PR 与 head 取自 `status.current`，都供 Owner 看）；`PAUSED`；`INTAKE_PAUSED`（带 `until`，服务端截到 `now + 200 分钟`）；服务是否在运行（companion 查 SCM）；状态快照的年龄。只认每个节点最新的一条自报。
   - 状态及时：执行器在 HALT、PAUSE、暂停接新 latch 的同一 tick 把它写进状态快照；companion 看到状态变了就立即补发一次心跳，不等 10 分钟。
-  - 报不出状态的情况：服务停了、执行器卡住（快照很旧）、字节漂移检出到 HALT 写下之间、快照读不出。这些情况下心跳照发，状态写 `UNKNOWN`，并带“服务是否在运行”和快照年龄；服务端只按下面“失联”的第二种情形判断它们，不因单独一次 `UNKNOWN` 交接。代理忙只影响探测，不影响心跳。
-  - 快照在长段里也要新：执行器用服务进程里的定时器（不靠 tick，tick 在一段里会阻塞几十分钟）至少每 10 分钟刷新一次快照的时间戳，所以“快照超过 30 分钟”只在执行器真的停摆时出现。
+  - 报不出状态的情况：服务停了、服务进程不在了（快照很旧）、字节漂移检出到 HALT 写下之间、快照读不出。这些情况下心跳照发，状态写 `UNKNOWN`，并带“服务是否在运行”和快照年龄；服务端只按下面“失联”的第二种情形判断它们，不因单独一次 `UNKNOWN` 交接。代理忙只影响探测，不影响心跳。
+  - 快照的新旧：服务进程里已有的 `startStatusTimer`（`status.mjs:162`，`service-main.mjs:96`）每 15 秒重写一次快照，不靠 tick，所以长段里快照照样是新的。快照新只能证明服务进程活着，不能证明执行器没卡住；卡在一段里的执行器由那一段自己的上限和 HALT 处理，不算失联。
   - holders 不改：入参不变（`20261010112852`:169 拒绝多余入参），不写任何记录；第 11 段探测仍是 `role-probe-entry.mjs:1` 说的只读入口，结果仍要求 `sideEffects === 0`（`executor.mjs:1173`），照今天的规则跑，不挪位置。holders 的回答在角色检查之后加 `nodes`、清扫水位和看门狗时刻，只有持有者读得到。
 - **资格**：Owner 在 `/bindings` 上把连接标为“可自动接班的常驻节点”，并给出次序（新的每连接字段，例如 `resident_failover_rank`，空表示不可自动接班）。设置、取消和改次序与 `clued_binding_role_set_v1` 一样走两步一次性确认（`20261023010000`:248 起，确认核对在 :270-282），回执记谁、何时、次序。今天标两个：aa4969fb（TURING）与 44dc0846（DESK-W-591）；以后加节点时由 Owner 一并标；取消标记就退出。没标的连接永远不会被自动选中。
 - **总开关**：每个账户一个“自动接班”开关，默认关，改它同样走两步确认。第 2 步迁移时两个节点还跑旧包、不发心跳，所以要等第 9 步影子复核之后、两个节点都装上新包并正常发心跳，Owner 才打开（41.9）。关着时看门狗照算、照告警，不交接。
@@ -3376,21 +3378,23 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
   - 总开关开着，常驻节点持有者 X 是有资格的连接；
   - X 失联，两种情形都算：
     - 最近一次心跳早于 30 分钟前（3 个间隔）。Owner 注销也落在这里：companion 随之停下（§8.4，AtLogOn），而节点没有 companion 干不了活（打 bundle、轮询），所以算失联；
-    - 心跳还在来，但连续 30 分钟每一条都报“服务没在运行”或“快照超过 30 分钟”（机器开着、执行器死了）；中间只要有一条报服务在运行且快照新鲜，计时就重来；
+    - 心跳还在来，但连续 30 分钟每一条都报“服务没在运行”或“快照超过 30 分钟”（机器开着、服务进程不在了）；中间只要有一条报服务在运行且快照新鲜，计时就重来；
+  - X 在被标资格之后、并且在总开关打开之后，至少发过一次心跳。从没发过心跳的持有者（旧包、刚标资格、心跳连接还没建）不算失联，只告警；
+  - 接收端当时在工作：X 沉默的这 30 分钟里，Y 至少有 2 次心跳到达服务端。否则可能是服务端或网络中断了 30 分钟以上，恢复后 Y 的心跳先到；这种情况只告警，不交接。第二种失联不受这一条限制（X 自己的心跳在来）；
   - X 最近一条**读得出的**自报不是 `HALTED`（任何码）、`PAUSED`，也不是未到期的 `INTAKE_PAUSED`：`UNKNOWN` 不算读得出，往前找最近一条读得出的。这样的持有者永不被自动交出，两种失联都一样。暂停是 Owner 或兜底的决定：树不同时的自动 PAUSE（41.4）、companion 兜底的暂停（41.7）、回退第 1 步（41.9）；
   - 距上一次交接（自动或手动）超过冷却时间，6 小时；
   - 存在目标 Y：有资格、不是持有者、20 分钟内有心跳、自报模式是 `STANDBY` 且最近一次探测结果为 `not-held`、自报状态不是 `HALTED`、`PAUSED`、`INTAKE_PAUSED`、`UNKNOWN`、Source 与 X 最近记下的相同（X 没有记录时不比）。按 Owner 的次序取第一个这样的 Y。这就是“目标节点在线”的核对。
 - **交接**：与一键移交同一条服务端路径：把 `clued_binding_role_handover_v1` 的核心拆成一个私有函数，一键移交和看门狗都调它。核心函数显式接收 owner（`pg_cron` 里没有 `authorization_owner_v12()`），取同一把 advisory 锁（`20261023010000`:457），同样过 `binding_role_handover_check_v1`；X 的记录当场结束，Y 得到用途 `resident-node`、5 分钟后生效的记录；停车位和别的持有者不动；任何时候至多一个常驻节点持有者。
-- **审计与通知**：每次自动交接写回执 `CI_ADMISSION_AUTO_HANDOVER`，主体记“服务端看门狗”（不是 Native 会话），带 X、Y 和两边的最近心跳与自报；同时写一条 KooYomi Note。算力面板只有 GitHub 令牌（`scripts/ci/self-hosted/compute_panel.py` 文件头），读不到 KooYomi，所以由 Y 转达：心跳的回答带上这次自动交接，Y 在 24 小时内的 `resident-queue/<节点>` 描述写“自动接班”，算力面板据此在它的 Issue 里 @Owner（面板已读这些状态，`docs/maintenance/compute-panel.md:16`）。
+- **审计与通知**：每次自动交接写回执 `CI_ADMISSION_AUTO_HANDOVER`，主体记“服务端看门狗”（不是 Native 会话），带 X、Y 和两边的最近心跳与自报；同时写一条 KooYomi Note。算力面板只有 GitHub 令牌（`scripts/ci/self-hosted/compute_panel.py` 文件头），读不到 KooYomi；Y 可能没有打开的 PR，Y 的执行器在新记录生效前的 5 分钟里也没有角色。所以由 Y 的 companion 直接转达：心跳的回答带上这次自动交接，companion 用 Owner 的 gh 登录在算力面板的 Issue 里发一条带标记的评论（`<!-- clued-auto-handover:<回执 id> -->`，每个回执只发一次），评论里 @Owner；算力面板认这个标记，把它列进自己的动态，不重复 @。
 - **看门狗自己活着**：每次 tick 记下时刻，心跳的回答带上它；companion 读到超过 5 分钟没有 tick，就在 PR 页面状态里写“自动接班看门狗未运行”，并发 Windows 通知。
 - **不自动交回**：被自动交出的 X 不再被自动选中，直到 Owner 手动交接一次；Owner 随时可以用一键移交改回。
 - **没有可用目标**：不交接，只告警：回执 `CI_ADMISSION_FAILOVER_NO_TARGET` 与 KooYomi Note，每小时最多一次，`/bindings` 页面显示。
 - **旧节点上跑着的批次**：X 的记录结束后，它下一次实时准入（第 1 段或第 8 段的 Native 准入）被拒，按 §29 转 STANDBY，批次干净结束；X 已发布、还没合入的绿由 Y 的接班清扫撤掉（41.6：水位加增量，加整条流水）。交接后的 5 分钟里没有持有者，第 8 段不会发新绿。
 - **验收**（DB 测试）：
   - 选择：没标资格的连接永远不被选中；按 Owner 的次序选；第一个不健康（心跳过期、不是 STANDBY、探测不是 not-held、HALTED、PAUSED、UNKNOWN、Source 不同）时选下一个；没有可用目标时不交接、只告警且限频；总开关关着时不交接。
-  - 触发：29 分钟没心跳不触发、30 分钟触发；心跳照来但连续报“服务没在运行”或“快照超过 30 分钟”，29 分钟不触发、30 分钟触发，中间夹一条正常心跳就重新计时；单独一次 `UNKNOWN` 不触发；自报 HALTED（任何码）、PAUSED 或未到期 INTAKE_PAUSED 的持有者，两种失联都永不被交出；最新一条是 `UNKNOWN` 时按之前最近一条读得出的自报判断（之前是 HALTED 或 PAUSED 就不交出，是 ACTIVE 就照常判断）；`INTAKE_PAUSED` 的 `until` 被截到 200 分钟；只认最新自报；冷却期内不触发；被自动交出的连接不被自动选回，Owner 手动交接后恢复。
-  - 交接与权限：交接后至多一个常驻节点持有者，停车位不动，新记录 5 分钟后生效；核心函数在 cron 下拿到显式 owner 和同一把锁；回执主体是看门狗；资格、次序、开关、心跳连接都要两步确认；心跳连接调不了心跳以外的任何函数；节点改不了心跳时刻；holders 入参不变、不写记录。
-  - 常驻层：心跳在 HALT、PAUSE、暂停接新、批次进行中、列车关着时照发；状态变化时立即补发；服务停了时心跳照发、状态 `UNKNOWN`、报服务没在运行；一个 45 分钟的长段里快照时间戳仍每 10 分钟刷新，不被当成停摆；Owner 注销后心跳停止；Y 的 PR 页面写“自动接班”；看门狗超过 5 分钟没 tick 时告警；X 在下一次准入被拒后转 STANDBY。
+  - 触发：29 分钟没心跳不触发、30 分钟触发；X 沉默期间 Y 只有 0 或 1 次心跳（服务端或网络中断）时只告警不交接，2 次才交接；X 在标资格之后或总开关打开之后从没发过心跳时只告警；心跳照来但连续报“服务没在运行”或“快照超过 30 分钟”，29 分钟不触发、30 分钟触发，中间夹一条正常心跳就重新计时；单独一次 `UNKNOWN` 不触发；自报 HALTED（任何码）、PAUSED 或未到期 INTAKE_PAUSED 的持有者，两种失联都永不被交出；最新一条是 `UNKNOWN` 时按之前最近一条读得出的自报判断（之前是 HALTED 或 PAUSED 就不交出，是 ACTIVE 就照常判断）；`INTAKE_PAUSED` 的 `until` 被截到 200 分钟；只认最新自报；冷却期内不触发；被自动交出的连接不被自动选回，Owner 手动交接后恢复。
+  - 交接与权限：交接后至多一个常驻节点持有者，停车位不动，新记录 5 分钟后生效；核心函数在 cron 下拿到显式 owner 和同一把锁；回执主体是看门狗；资格、次序、开关、心跳连接都要两步确认；心跳连接调不了心跳以外的任何函数；心跳记到令牌所绑的节点上，载荷里的节点名不起作用；节点改不了心跳时刻；holders 入参不变、不写记录。
+  - 常驻层：心跳在 HALT、PAUSE、暂停接新、批次进行中、列车关着时照发；状态变化时立即补发；服务停了时心跳照发、状态 `UNKNOWN`、报服务没在运行；一个 45 分钟的长段里快照照样每 15 秒刷新，不被当成服务进程不在；Owner 注销后心跳停止；自报的 Source 取自 `versions.windows`，改 companion 配置不影响它；HALT 时 PR 与 head 取自 `current`；连续 3 次心跳失败或令牌过期时发 Windows 通知；`-HeartbeatTokenFile` 装进的目录 Owner 只读、别的普通用户读不到；Y 的 companion 在算力面板 Issue 发带标记的 @Owner 评论，每个回执只一次，面板不重复 @；看门狗超过 5 分钟没 tick 时告警；X 在下一次准入被拒后转 STANDBY。
 
 ### 41.7 策略 `on` 与保留
 
