@@ -14,8 +14,9 @@
   Node identity (resident active/standby design v0.4 section 9 C7, DESIGN.md section 30): the receipt's node identity (node name,
   App key id and fingerprint, token fingerprint, connection id, formal qualification refs) is re-derived from the installed record
   (record\installation.json and record\acceptance.json, both hash-pinned by the receipt, which must agree with each other) and
-  compared; the receipt assumes no role. The App key and the ci-admission token files are checked for existence and security
-  (owner an administrator principal, readable by SYSTEM, Administrators and the pinned controller only, no write for the
+  compared; the receipt assumes no role. The node heartbeat (DESIGN.md section 41.6a): secrets\heartbeat\ and its token file have the
+  install's ACL (heartbeat-token-acl), and heartbeat-binding reports the heartbeat connection id the receipt recorded (no network).
+  The App key and the ci-admission token files are checked for existence and security (owner an administrator principal, readable by SYSTEM, Administrators and the pinned controller only, no write for the
   controller); so are the folders that hold them (CluedControl\trusted, CluedIndependentCI\secrets) and every ancestor up to the drive
   root, by the runtime's own rule (runtime/verify-install-acl.ps1): administrator owners, no other reader of the secret folders, no
   non-administrator write or replace right on the way. Their content is never read here: the fingerprints were checked at install,
@@ -322,6 +323,18 @@ function Test-HeartbeatTokenAcl([string]$root, [string]$ownerSid) {
     [pscustomobject]@{ ok = $true; detail = 'OK' }
   } catch { [pscustomobject]@{ ok = 'unreadable'; detail = 'UNREADABLE' } }
 }
+# heartbeat-binding (merge train step 2b review): the heartbeat connection id the install recorded (-HeartbeatBindingId, informational;
+# the Owner links it on KooYomi's /bindings/failover). Reported only, from the receipt; nothing is read over the network. A receipt
+# without the field (an older install or an upgrade) or a token without an id is fine; an id that is not a UUID, or an id without a
+# placed token, is not.
+function Get-HeartbeatBindingState($receipt) {
+  $hb = Get-Field $receipt 'heartbeatToken'
+  if ($null -eq $hb) { return [pscustomobject]@{ ok = $true; detail = 'NOT_IN_RECEIPT' } }
+  $id = Get-Field $hb 'bindingId'; $placed = (Get-Field $hb 'placed') -eq $true
+  if ($null -eq $id) { return [pscustomobject]@{ ok = $true; detail = $(if ($placed) { 'TOKEN_WITHOUT_BINDING_ID' } else { 'NOT_INSTALLED' }) } }
+  if ($id -isnot [string] -or $id -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z' -or -not $placed) { return [pscustomobject]@{ ok = $false; detail = 'BINDING_ID_INVALID' } }
+  [pscustomobject]@{ ok = $true; detail = ('bindingId=' + $id) }
+}
 # generation-current: upgrade\current.json names the receipt being verified and its generation; generations\g<N>\generation.json holds the
 # receipt's command lines, which the SCM and the companion task hold now, and the hash of the generation's files where they are.
 function Test-GenerationCurrent([string]$root, $receipt, [string]$receiptSha) {
@@ -614,6 +627,8 @@ if ($ExpectPausedSha256) { Record 'paused-as-expected' ((Test-Path -LiteralPath 
 else { Record 'not-paused' (-not (Test-Path -LiteralPath $pausedFile)) }
 $hbAcl = Test-HeartbeatTokenAcl $Root ([string]$Node.ownerSid)
 Record 'heartbeat-token-acl' $hbAcl.ok $hbAcl.detail
+$hbBinding = Get-HeartbeatBindingState $receipt
+Record 'heartbeat-binding' $hbBinding.ok $hbBinding.detail
 $node = Join-Path $Root 'runtime\node.exe'
 $verifier = Join-Path $Root ('resident\' + $receipt.residentManifestSha256 + '\tools\verify-receipts.mjs')
 # node is started with a cleared, fixed environment (no NODE_OPTIONS or other user variables) so an

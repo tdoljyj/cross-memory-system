@@ -13,7 +13,7 @@ import { tempRoot } from './helpers.mjs';
 const MIN = 60_000;
 const NOW = Date.parse('2026-11-01T10:00:00Z');
 const SRC = 'c'.repeat(64), H = '4'.repeat(40), RECEIPT = '0a1b2c3d-0000-4000-8000-0000000000bb';
-const TOKEN = 'clued_bnd_FixtureHeartbeatToken0123456789';
+const TOKEN = 'clued_hbt_FixtureHeartbeatToken0123456789abcdefghijkl';
 const status = (o = {}) => ({ writtenAt: NOW - 10_000, executor: { state: 'IDLE' }, halt: null, paused: false, intakePause: null, current: null,
   node: { name: 'turing', mode: 'ACTIVE', probe: { at: NOW - 5 * MIN, result: 'held' } }, versions: { windows: { ciSourceManifestSha256: SRC } }, ...o });
 
@@ -156,15 +156,15 @@ test('the reply is read tolerantly; the wire call posts the CI command door with
     watchdog: { last_tick_at: '2026-11-01T09:59:00+00:00', stale: false },
     auto_handovers: [{ receipt_id: RECEIPT.toUpperCase(), from_binding_id: '0A1B2C3D-0000-4000-8000-0000000000AA', to_binding_id: '0a1b2c3d-0000-4000-8000-0000000000ee',
       effective_at: '2026-11-01T10:05:00+00:00', trigger: 'silent', created_at: '2026-11-01T10:00:00+00:00' }, { receipt_id: 'x' }, 'junk'] };
-  assert.deepEqual(parseHeartbeatReply(ok), { ok: true, tokenRefused: false, notRegistered: false, watchdogTickAt: Date.parse('2026-11-01T09:59:00Z'), watchdogStale: false,
-    autoHandovers: [{ receiptId: RECEIPT, from: '0a1b2c3d-0000-4000-8000-0000000000aa', to: '0a1b2c3d-0000-4000-8000-0000000000ee', at: '2026-11-01T10:05:00.000Z', trigger: 'silent' }] });
+  assert.deepEqual(parseHeartbeatReply(ok), { ok: true, tokenRefused: false, notRegistered: false, serverNotReady: false, connectionOnly: false, watchdogTickAt: Date.parse('2026-11-01T09:59:00Z'), watchdogStale: false,
+    nodeBindingId: null, viaLink: null, autoHandovers: [{ receiptId: RECEIPT, from: '0a1b2c3d-0000-4000-8000-0000000000aa', to: '0a1b2c3d-0000-4000-8000-0000000000ee', at: '2026-11-01T10:05:00.000Z', trigger: 'silent' }] });
   // missing or odd optional parts never fail the beat
   for (const v of [{ status: 'ok' }, { status: 'ok', watchdog: 'x', auto_handovers: {} }, { status: 'ok', watchdog: { last_tick_at: null, stale: 'yes' }, auto_handovers: null }]) {
     const r = parseHeartbeatReply(v);
     assert.deepEqual([r.ok, r.autoHandovers, r.watchdogTickAt, r.watchdogStale], [true, [], null, null]);
   }
   assert.equal(parseHeartbeatReply({ status: 'ok', watchdog: { last_tick_at: null, stale: true } }).watchdogStale, true);
-  assert.deepEqual(parseHeartbeatReply({ status: 'rejected', error_code: 'ci_node_not_registered' }), { ok: false, tokenRefused: false, notRegistered: true, autoHandovers: [], watchdogTickAt: null, watchdogStale: null });
+  assert.deepEqual(parseHeartbeatReply({ status: 'rejected', error_code: 'ci_node_not_registered' }), { ok: false, tokenRefused: false, notRegistered: true, serverNotReady: false, connectionOnly: false, autoHandovers: [], watchdogTickAt: null, watchdogStale: null });
   assert.equal(parseHeartbeatReply('ok').ok, false);
   const calls = [];
   const fetchImpl = async (url, init) => { calls.push({ url, init }); return { status: [200, 404, 403][calls.length - 1] ?? 400, text: async () => (calls.length === 1 ? JSON.stringify(ok) : '{"code":"PGRST202"}') }; };
@@ -192,4 +192,59 @@ test('the reply is read tolerantly; the wire call posts the CI command door with
     readJson: async () => ({ supabaseUrl: 'https://abc123.supabase.co', publishableKey: 'sb_publishable_x1', scope: 'project:0a1b2c3d-0000-4000-8000-0000000000bb' }) });
   assert.ok(hb instanceof CompanionHeartbeat);
   assert.equal(hb.scope, 'project:0a1b2c3d-0000-4000-8000-0000000000bb', 'the installed record\'s scope');
+});
+
+// Task 293a092a: before merge-train step 2b the CI command door answers admission_binding_required (role checked before any
+// action). That is no token refusal: its own notice, no failure count. A 400 work_claim_ci_command_invalid is a real failed beat
+// (from 2b on it is the heartbeat refusing the payload; review W2 MAJOR 1); 401/403 and the revoked/expired codes stay refusals.
+test('a server without the heartbeat action is its own notice, never "token refused", and counts no failure', async () => {
+  assert.equal(parseHeartbeatReply({ status: 'rejected', error_code: 'admission_binding_required' }).serverNotReady, true);
+  assert.equal(parseHeartbeatReply({ status: 'rejected', error_code: 'admission_binding_required' }).tokenRefused, false);
+  assert.equal(parseHeartbeatReply({ status: 'rejected', error_code: 'binding_not_authorized' }).tokenRefused, true);
+  const reply = (status, body) => async () => ({ status, text: async () => JSON.stringify(body) });
+  const tr = f => supabaseHeartbeatTransport({ supabaseUrl: 'https://abc123.supabase.co', publishableKey: 'sb_publishable_test', fetchImpl: f });
+  const invalid = await tr(reply(400, { code: '22023', message: 'work_claim_ci_command_invalid' }))({ payload: {} }, { token: TOKEN });
+  assert.deepEqual([invalid.ok, invalid.serverNotReady, invalid.tokenRefused], [false, false, false], 'a failed beat');
+  assert.equal((await tr(reply(403, { code: '42501', message: 'binding_not_authorized' }))({ payload: {} }, { token: TOKEN })).tokenRefused, true);
+  assert.equal((await tr(reply(401, { code: '42501', message: 'authorization_revoked_or_expired' }))({ payload: {} }, { token: TOKEN })).tokenRefused, true);
+  assert.equal(parseHeartbeatReply({ status: 'rejected', error_code: 'authorization_revoked_or_expired' }).serverNotReady, false);
+  // 2b-shaped 400s count: the third one warns "发不出去"
+  const bad = beat({ replies: [{ ok: false, tokenRefused: false, notRegistered: false, serverNotReady: false, connectionOnly: false, autoHandovers: [], watchdogTickAt: null, watchdogStale: null }] });
+  for (let i = 0; i < 3; i += 1) { await bad.hb.step(); bad.advance(NODE_HEARTBEAT_EVERY_MS); }
+  assert.deepEqual(bad.notes.map(n => n.title), ['节点心跳发不出去']);
+  // a not-ready answer between real failures neither counts nor clears them
+  const notReady = parseHeartbeatReply({ status: 'rejected', error_code: 'admission_binding_required' });
+  const mix = beat({ replies: [invalid, notReady, invalid, notReady, invalid] });
+  for (let i = 0; i < 5; i += 1) { await mix.hb.step(); mix.advance(NODE_HEARTBEAT_EVERY_MS); }
+  assert.ok(mix.notes.some(n => n.title === '节点心跳发不出去'), 'three real failures warn even with not-ready answers between them');
+  const t = beat({ replies: [parseHeartbeatReply({ status: 'rejected', error_code: 'admission_binding_required' })] });
+  for (let i = 0; i < 4; i += 1) { assert.equal((await t.hb.step()).serverNotReady, true); t.advance(NODE_HEARTBEAT_EVERY_MS); }
+  assert.deepEqual(t.notes.map(n => n.title), ['服务端还不收心跳'], 'one notice, no "发不出去" after three beats');
+  assert.equal(t.hb.failures, 0);
+  assert.ok(!t.notes[0].body.includes('重新安装'));
+});
+
+// Step 2b: the heartbeat answer names the node's CI connection it was recorded on (node_binding_id) and whether it came through the
+// linked heartbeat connection (via_link); both optional. heartbeat_connection_only (should not happen for ci_node_heartbeat) is a
+// misconfiguration notice: not "token refused", no failure count.
+test('node_binding_id and via_link are read tolerantly; heartbeat_connection_only is its own notice, never "token refused"', async () => {
+  const NODE = '0A1B2C3D-0000-4000-8000-0000000000AA';
+  const r = parseHeartbeatReply({ status: 'ok', node_binding_id: NODE, via_link: true });
+  assert.deepEqual([r.ok, r.nodeBindingId, r.viaLink], [true, NODE.toLowerCase(), true]);
+  assert.equal(parseHeartbeatReply({ status: 'ok', node_binding_id: NODE, via_link: false }).viaLink, false);
+  for (const v of [{ status: 'ok' }, { status: 'ok', node_binding_id: 'x', via_link: 'yes' }, { status: 'ok', node_binding_id: 7, via_link: null }]) {
+    const p = parseHeartbeatReply(v);
+    assert.deepEqual([p.ok, p.nodeBindingId, p.viaLink], [true, null, null], 'odd or missing: unknown, the beat still counts');
+  }
+  const only = parseHeartbeatReply({ status: 'rejected', error_code: 'heartbeat_connection_only' });
+  assert.deepEqual([only.ok, only.connectionOnly, only.tokenRefused, only.notRegistered, only.serverNotReady], [false, true, false, false, false]);
+  assert.equal(parseHeartbeatReply({ status: 'rejected', error_code: 'other' }).connectionOnly, false);
+  const t = beat({ replies: [only] });
+  for (let i = 0; i < 4; i += 1) { assert.equal((await t.hb.step()).connectionOnly, true); t.advance(NODE_HEARTBEAT_EVERY_MS); }
+  assert.deepEqual(t.notes.map(n => n.title), ['心跳连接配置有误'], 'one notice, no "发不出去" after three beats');
+  assert.equal(t.hb.failures, 0);
+  assert.ok(t.notes[0].body.includes('/bindings/failover') && !t.notes[0].body.includes('重新安装'));
+  const ok = beat({ replies: [parseHeartbeatReply({ status: 'ok', node_binding_id: NODE, via_link: true })] });
+  const sent = await ok.hb.step();
+  assert.deepEqual([sent.sent, sent.nodeBindingId, sent.viaLink, ok.hb.nodeBindingId, ok.hb.viaLink], [true, NODE.toLowerCase(), true, NODE.toLowerCase(), true]);
 });
