@@ -146,40 +146,49 @@ export function indexObjects(objects) {
   return new Map(objects.filter(meaningful).map((entry) => [objectKey(entry), JSON.stringify(entry[2])]));
 }
 
-// A known deviation names one fingerprint key ("<kind> <key>") or a key
-// prefix ending in "*" and says why production differs from its replay.
+// A known deviation names one exact fingerprint key ("<kind> <key>"; no
+// wildcards) and says why production differs from its replay.
 export function deviationMatcher(deviations = []) {
   const exact = new Set();
-  const prefixes = [];
   for (const entry of deviations) {
-    if (typeof entry?.key !== 'string' || typeof entry?.reason !== 'string' || entry.reason.trim() === '') {
-      throw new Error('known_deviation_invalid');
+    if (typeof entry?.key !== 'string' || !/^[a-z_]+ \S/.test(entry.key) || entry.key.includes('*') ||
+        typeof entry?.reason !== 'string' || entry.reason.trim() === '') {
+      throw new Error(`known_deviation_invalid:${entry?.key}`);
     }
-    if (entry.key.endsWith('*')) prefixes.push(entry.key.slice(0, -1));
-    else exact.add(entry.key);
+    exact.add(entry.key);
   }
-  return (key) => exact.has(key) || prefixes.some((prefix) => key.startsWith(prefix));
+  return Object.assign((key) => exact.has(key), { keys: exact });
 }
 
-// Differences between two fingerprints, as sorted key lists.
+// Differences between two fingerprints, as sorted key lists. A known
+// deviation that matches no actual difference is stale and reported, so the
+// list only ever names real, reviewed differences.
 export function compareFingerprints(expected, actual, ignored = () => false) {
   const want = indexObjects(expected);
   const have = indexObjects(actual);
-  const diff = { only_expected: [], only_actual: [], changed: [], ignored: 0 };
+  const diff = { only_expected: [], only_actual: [], changed: [], ignored: 0, stale_deviations: [] };
+  const used = new Set();
   for (const [key, value] of want) {
-    if (ignored(key)) { diff.ignored += 1; continue; }
+    const differs = !have.has(key) || have.get(key) !== value;
+    if (ignored(key)) { if (differs) { diff.ignored += 1; used.add(key); } continue; }
     if (!have.has(key)) diff.only_expected.push(key);
     else if (have.get(key) !== value) diff.changed.push({ key, expected: JSON.parse(value), actual: JSON.parse(have.get(key)) });
   }
   for (const key of have.keys()) {
-    if (ignored(key)) { if (!want.has(key)) diff.ignored += 1; continue; }
-    if (!want.has(key)) diff.only_actual.push(key);
+    if (want.has(key)) continue;
+    if (ignored(key)) { diff.ignored += 1; used.add(key); continue; }
+    diff.only_actual.push(key);
   }
+  diff.stale_deviations = [...(ignored.keys ?? [])].filter((key) => !used.has(key)).sort();
   diff.only_expected.sort();
   diff.only_actual.sort();
   diff.changed.sort((a, b) => a.key.localeCompare(b.key));
   return diff;
 }
+
+// A replay-skip row must be data only: no statement that creates, changes or
+// grants schema.
+export const SCHEMA_STATEMENT = /\b(?:create|alter|drop|grant|revoke|comment\s+on|security\s+label|reassign|truncate)\b/i;
 
 export const diffIsEmpty = (diff) => diff.only_expected.length === 0 && diff.only_actual.length === 0 && diff.changed.length === 0;
 
@@ -281,7 +290,13 @@ export async function runCheck({ repository, snapshot, catalogSql, log = () => {
   report.errors.push(...chain.errors);
   report.pending = chain.pending.map((step) => step.file);
   if (chain.errors.length > 0) return report;
-  const ignored = deviationMatcher(snapshot.known_deviations);
+  let ignored;
+  try {
+    ignored = deviationMatcher(snapshot.known_deviations);
+  } catch (error) {
+    report.errors.push(error.message);
+    return report;
+  }
 
   const prehistory = [];
   for (const file of snapshot.prehistory ?? []) {
@@ -300,7 +315,9 @@ export async function runCheck({ repository, snapshot, catalogSql, log = () => {
     } else skipped.set(entry.file, entry.reason);
   }
   for (const file of skipped.keys()) {
-    if (!chain.applied.some((step) => step.file === file)) report.errors.push(`snapshot_replay_skip_not_applied:${file}`);
+    const step = chain.applied.find((candidate) => candidate.file === file);
+    if (!step) report.errors.push(`snapshot_replay_skip_not_applied:${file}`);
+    else if (SCHEMA_STATEMENT.test(step.text.replace(/--[^\n]*/g, ' '))) report.errors.push(`snapshot_replay_skip_not_data_only:${file}`);
   }
   // A replay substitution replaces one exact text, found exactly once, in one
   // applied row, where the row cannot run on an empty database but its schema
@@ -341,6 +358,20 @@ export async function runCheck({ repository, snapshot, catalogSql, log = () => {
     const replay = (await readCatalog(client, catalogSql)).objects;
     report.drift = compareFingerprints(snapshot.objects, replay, ignored);
     if (!diffIsEmpty(report.drift)) report.errors.push('production_schema_drift');
+    for (const key of report.drift.stale_deviations) report.errors.push(`known_deviation_stale:${key}`);
+    // Ledger rows newer than the snapshot: production ran them after the
+    // snapshot was taken, so they come after the comparison.
+    report.ledger_ahead = chain.ahead.map((step) => step.file);
+    if (chain.ahead.length) log(`production chain: replaying ${chain.ahead.length} ledger rows newer than the snapshot`);
+    for (const step of chain.ahead) {
+      try {
+        await applyPlain(client, step);
+      } catch (error) {
+        report.errors.push(`production_chain_failed:${step.file}`);
+        report.production_failure = { file: step.file, message: error.message };
+        return null;
+      }
+    }
     log(`production chain: applying ${chain.pending.length} pending migrations in migrate mode`);
     for (const step of chain.pending) {
       try {
@@ -460,6 +491,7 @@ async function main(argv) {
 export function printSummary(report, write = (line) => console.log(line)) {
   write(`production-schema drift: ${report.status}`);
   if (report.snapshot) write(`snapshot: ${report.snapshot.applied} applied rows through ${report.snapshot.applied_through}, captured ${report.snapshot.captured_at}`);
+  if (report.ledger_ahead?.length) write(`ledger rows newer than the snapshot, replayed after the comparison (${report.ledger_ahead.length}): ${report.ledger_ahead.join(', ')}; refresh the snapshot`);
   if (report.pending) write(`pending migrations (${report.pending.length}): ${report.pending.join(', ') || 'none'}`);
   for (const error of report.errors) write(`error: ${error}`);
   const drift = report.drift;

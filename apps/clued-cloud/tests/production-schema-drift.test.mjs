@@ -7,7 +7,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { productionChain, catalogSqlPath, readSnapshot, SNAPSHOT_CONTRACT } from '../scripts/production-schema-chain.mjs';
 import {
-  buildSnapshot, compareFingerprints, deviationMatcher, diffIsEmpty, pendingReferenceFindings, relationAliases,
+  SCHEMA_STATEMENT, buildSnapshot, compareFingerprints, deviationMatcher, diffIsEmpty, pendingReferenceFindings, relationAliases,
   repositoryOnlyObjects, runCheck, serializeSnapshot,
 } from '../scripts/production-schema-drift.mjs';
 import { md5 } from '../scripts/migration-ledger.mjs';
@@ -23,11 +23,28 @@ test('fingerprints compare by key and value; known deviations are counted, not r
   assert.deepEqual(diff.only_actual, ['column public.a.z']);
   assert.deepEqual(diff.changed.map((change) => change.key), ['column public.a.x']);
   assert.equal(diffIsEmpty(diff), false);
-  const ignored = deviationMatcher([{ key: 'column public.a.y', reason: 'legacy' }, { key: 'column public.a.*', reason: 'all' }]);
+  const ignored = deviationMatcher(['column public.a.y', 'column public.a.x', 'column public.a.z']
+    .map((key) => ({ key, reason: 'legacy' })));
   const quiet = compareFingerprints(production, replay, ignored);
   assert.equal(diffIsEmpty(quiet), true);
   assert.equal(quiet.ignored, 3, 'the empty ACL row is no row at all');
+  assert.deepEqual(quiet.stale_deviations, []);
+});
+
+test('known deviations are exact keys with reasons, and one that matches no difference is stale', () => {
   assert.throws(() => deviationMatcher([{ key: 'column public.a.y', reason: ' ' }]), /known_deviation_invalid/);
+  assert.throws(() => deviationMatcher([{ key: 'column public.a.*', reason: 'all' }]), /known_deviation_invalid/);
+  assert.throws(() => deviationMatcher([{ key: '*', reason: 'everything' }]), /known_deviation_invalid/);
+  const same = [relation('public.a'), column('public.a.x')];
+  const diff = compareFingerprints(same, same, deviationMatcher([{ key: 'column public.a.x', reason: 'was different once' }]));
+  assert.deepEqual(diff.stale_deviations, ['column public.a.x']);
+  assert.equal(diff.ignored, 0);
+});
+
+test('a replay-skip row must hold no schema statement', () => {
+  assert.equal(SCHEMA_STATEMENT.test('do $$ begin update mtpe_m0.registry_entry set activation_id = act; end $$;'), false);
+  for (const text of ['create table t(x int);', 'ALTER TABLE t ADD c int', 'grant select on t to anon', 'drop function f()',
+    'comment on table t is \'x\'']) assert.equal(SCHEMA_STATEMENT.test(text), true, text);
 });
 
 test('an ACL that grants the compared roles nothing equals no ACL row', () => {
@@ -138,6 +155,19 @@ test('the production chain follows production order, runs LF text and leaves rep
     'migrations/20260901000000_one.sql', 'migrations/20260902000000_two.sql', 'migrations/20261102000000_applied_late.sql']);
   assert.equal(chain.applied[0].text, sql('one'), 'the file text runs, not the stored CRLF text');
   assert.deepEqual(chain.pending.map((step) => step.file), ['migrations/20261101000000_pending.sql']);
+});
+
+test('ledger rows newer than the snapshot are replayed after it, not lost and not pending (review M2)', () => {
+  const repo = repository();
+  // The ledger has row two; the snapshot was taken before it.
+  const chain = productionChain({ applied: [appliedRow('20260901120000', 'one', sql('one').replace(/\n/g, '\r\n'))], ...repo });
+  assert.deepEqual(chain.errors, []);
+  assert.deepEqual(chain.applied.map((step) => step.file), ['migrations/20260901000000_one.sql']);
+  assert.deepEqual(chain.ahead.map((step) => step.file), ['migrations/20260902000000_two.sql']);
+  assert.equal(chain.pending.some((step) => step.file === 'migrations/20260902000000_two.sql'), false);
+  // A ledger row older than the snapshot's newest row that the snapshot lacks is an error.
+  const gap = productionChain({ applied: [appliedRow('20260902120000', 'two', sql('two'))], ...repo });
+  assert.ok(gap.errors.includes('chain_snapshot_missing_ledger_row:20260901120000_one'), JSON.stringify(gap.errors));
 });
 
 test('a production row no repository text carries stops the check', () => {

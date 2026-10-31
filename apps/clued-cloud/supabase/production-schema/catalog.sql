@@ -15,6 +15,11 @@
 -- otherwise byte-identical to their LF files. Everything else is the server's
 -- own rendering. PostgreSQL 18 not-null constraints (contype 'n')
 -- are skipped: attnotnull carries the same fact on 17 and 18.
+-- Owners are compared for relations and functions (a SECURITY DEFINER
+-- function runs as its owner); grants are compared for the anon,
+-- authenticated, service_role and authenticator roles and PUBLIC only.
+-- Not compared: comments, statistics, storage parameters, extension objects
+-- and extension versions.
 set search_path = pg_catalog;
 with scope as (
   select n.oid, n.nspname
@@ -30,14 +35,14 @@ grantees as (
   select oid, rolname from pg_roles where rolname in ('anon', 'authenticated', 'service_role', 'authenticator')
 ),
 rel as (
-  select c.oid, s.nspname, c.relname, c.relkind, c.relrowsecurity, c.relforcerowsecurity, c.relacl
+  select c.oid, s.nspname, c.relname, c.relkind, c.relrowsecurity, c.relforcerowsecurity, c.relacl, c.relowner
   from pg_class c join scope s on s.oid = c.relnamespace
   where c.relkind in ('r', 'p', 'v', 'm', 'S', 'f')
     and not exists (select 1 from ext where ext.classid = 'pg_class'::regclass and ext.objid = c.oid)
 ),
 fn as (
   select p.oid, s.nspname, p.proname, p.prokind, p.prolang, p.prosrc, p.prosecdef, p.provolatile,
-         p.proisstrict, p.proconfig, p.proacl
+         p.proisstrict, p.proconfig, p.proacl, p.proowner, p.proleakproof, p.proparallel
   from pg_proc p join scope s on s.oid = p.pronamespace
   where not exists (select 1 from ext where ext.classid = 'pg_proc'::regclass and ext.objid = p.oid)
 ),
@@ -66,11 +71,24 @@ acl_rows as (
            where a.grantee = 0 or g.oid is not null
            group by coalesce(g.rolname, 'PUBLIC') order by 1))
   from pg_namespace n join scope s on s.oid = n.oid where n.nspacl is not null
+  union all
+  select 'acl', 'column:' || r.nspname || '.' || r.relname || '.' || a.attname,
+         to_jsonb(array(
+           select coalesce(g.rolname, 'PUBLIC') || ':' || string_agg(x.privilege_type, ',' order by x.privilege_type)
+           from aclexplode(a.attacl) x left join grantees g on g.oid = x.grantee
+           where x.grantee = 0 or g.oid is not null
+           group by coalesce(g.rolname, 'PUBLIC') order by 1))
+  from rel r join pg_attribute a on a.attrelid = r.oid
+  where a.attnum > 0 and not a.attisdropped and a.attacl is not null
 ),
 objects as (
   select 'relation' as kind, r.nspname || '.' || r.relname as key,
          jsonb_build_object('relkind', r.relkind, 'rls', r.relrowsecurity, 'force_rls', r.relforcerowsecurity,
-           'view_md5', case when r.relkind in ('v', 'm') then md5(pg_get_viewdef(r.oid)) end) as value
+           'owner', pg_get_userbyid(r.relowner),
+           'view_md5', case when r.relkind in ('v', 'm') then md5(pg_get_viewdef(r.oid)) end,
+           'sequence', (select jsonb_build_object('type', format_type(q.seqtypid, null), 'start', q.seqstart,
+                          'increment', q.seqincrement, 'max', q.seqmax, 'min', q.seqmin, 'cache', q.seqcache, 'cycle', q.seqcycle)
+                        from pg_sequence q where q.seqrelid = r.oid)) as value
   from rel r
   union all
   select 'column', r.nspname || '.' || r.relname || '.' || a.attname,
@@ -103,8 +121,9 @@ objects as (
   select 'function', f.nspname || '.' || f.proname || '(' || pg_get_function_identity_arguments(f.oid) || ')',
          jsonb_build_object('kind', f.prokind, 'language', (select lanname from pg_language where oid = f.prolang),
            'returns', case when f.prokind <> 'p' then pg_get_function_result(f.oid) end,
+           'arguments', pg_get_function_arguments(f.oid), 'owner', pg_get_userbyid(f.proowner),
            'body_md5', md5(regexp_replace(f.prosrc, E'\r+\n', E'\n', 'g')), 'security_definer', f.prosecdef, 'volatility', f.provolatile,
-           'strict', f.proisstrict, 'config', to_jsonb(f.proconfig))
+           'strict', f.proisstrict, 'leakproof', f.proleakproof, 'parallel', f.proparallel, 'config', to_jsonb(f.proconfig))
   from fn f
   union all
   select 'type', s.nspname || '.' || t.typname,

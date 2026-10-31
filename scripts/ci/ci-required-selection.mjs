@@ -2,12 +2,15 @@
 // design in work/ci-required-tests-v1/DESIGN.md).
 //
 // The required checks ci-suites, clued-cloud-tests and migration-verify
-// always report, so they can sit in the main ruleset; this file decides what
-// each one runs. The
-// workflows run it from the pull request's trusted base checkout, never from
-// the candidate, so a pull request cannot narrow its own selection or swap a
-// suite's commands. The candidate's own changes to the selection (this file,
-// the workflows) select every suite.
+// (.github/workflows/clued-required-tests.yml) always report, so they can sit
+// in the main ruleset; this file decides what each one runs. The workflow
+// runs it from the pull request's trusted base checkout, so a pull request
+// cannot narrow its own selection, swap a suite's command line or extend the
+// known-failure list (ci-known-failures.json, read next to this file). The
+// commands themselves run the candidate's code and tests: that code is
+// reviewed through the protected-path rules, not through this file. The
+// candidate's own changes to the selection (this file, the workflow) select
+// every suite.
 //
 //   node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify>
 //     reads GITHUB_EVENT_PATH and lists the pull request's files through the
@@ -17,28 +20,34 @@
 //   node scripts/ci/ci-required-selection.mjs --run <suite> [--root <checkout>]
 //     runs one suite's commands (SUITE_COMMANDS) in the checkout at --root.
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, readdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+// The resident layer imports Source v2, Source v2 imports scripts/ci and the
+// resident's node profile, and both read the gitleaks configuration; a change
+// to any of them runs both (ci-required-selection.test.mjs checks the imports).
+const RESIDENT_AND_SOURCE = ['work/independent-ci-resident-v1/**', 'work/actions-hosted-migration/independent-ci-v1/**',
+  'scripts/ci/**', 'config/merge-admission-policy.json', '.gitleaks.toml'];
+
 // suite id -> path patterns ("**" any depth, "*" within a segment).
 export const SUITES = {
   'ci-suites': {
-    'resident-node': ['work/independent-ci-resident-v1/**'],
-    'resident-python': ['work/independent-ci-resident-v1/**'],
-    'offline-drill': ['work/independent-ci-resident-v1/**', 'work/actions-hosted-migration/independent-ci-v1/**'],
-    'source-v2-node': ['work/actions-hosted-migration/independent-ci-v1/**'],
-    'source-v2-python': ['work/actions-hosted-migration/independent-ci-v1/**'],
+    'resident-node': RESIDENT_AND_SOURCE,
+    'resident-python': RESIDENT_AND_SOURCE,
+    'offline-drill': RESIDENT_AND_SOURCE,
+    'source-v2-node': RESIDENT_AND_SOURCE,
+    'source-v2-python': RESIDENT_AND_SOURCE,
     'components': ['scripts/clued_components.py', 'scripts/hooks/**', 'skills/**', 'integrations/**',
       'config/clued-components.json', 'tests/test_clued_components.py', 'tests/test_clued_version_check.py',
       'VERSION', '.claude/settings.json'],
     'runner-budget-policy': ['.github/workflows/**', 'scripts/ci/validate_runner_budget_policy.py',
       'scripts/ci/test_validate_runner_budget_policy.py'],
-    'admission-self-tests': ['scripts/ci/clued-work-admission*.mjs', 'scripts/ci/merge-admission-policy*.mjs',
-      'scripts/ci/clued-release-grant*.mjs', 'scripts/ci/clued-merge-slot-ci*.mjs', 'scripts/runner/**',
-      'config/merge-admission-policy.json'],
-    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs'],
+    'admission-self-tests': ['scripts/ci/**', 'scripts/runner/**', 'config/merge-admission-policy.json',
+      '.github/workflows/**'],
+    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs',
+      'scripts/ci/ci-known-failures.json'],
   },
   // The application suite reads files from across the repository (workflow,
   // contract and CI-script tests), so every change runs it, like the disabled
@@ -54,17 +63,20 @@ export const SUITES = {
   },
 };
 
-// Changing how selection or a required-check workflow works selects every suite
-// of every check.
-export const SELECT_ALL = ['scripts/ci/ci-required-selection.mjs', '.github/workflows/clued-ci-suites.yml', '.github/workflows/clued-cloud-tests.yml',
-  '.github/workflows/clued-migration-verify.yml', '.github/actions/**'];
+// Changing how selection or the required-check workflow works selects every
+// suite of every check.
+export const SELECT_ALL = ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-known-failures.json',
+  '.github/workflows/clued-required-tests.yml', '.github/actions/**'];
 
 export const FILE_LIMIT = 3000;
 
 // What each suite runs; cwd is relative to the checkout root. Source v2 tests
 // resolve paths from the root, so they run there. {tests:<dir>} expands to the
-// sorted *.test.mjs files directly in <dir> (relative to cwd), {base} to the
-// base commit (CI_BASE_SHA), {report} to a file under RUNNER_TEMP.
+// sorted *.test.mjs files directly in <dir> (relative to cwd), {unit-tests}
+// to the application's unit test files (scripts/select-tests.mjs), {base} to
+// the base commit (CI_BASE_SHA), {report} to a file under RUNNER_TEMP. A
+// command with `known` runs Node's test runner with a JUnit report and passes
+// only when every failing test is in ci-known-failures.json under that key.
 const PYTHON = process.platform === 'win32' ? 'python' : 'python3';
 const RESIDENT = 'work/independent-ci-resident-v1';
 const SOURCE_V2 = 'work/actions-hosted-migration/independent-ci-v1';
@@ -82,19 +94,17 @@ export const SUITE_COMMANDS = {
     { cwd: '.', argv: [PYTHON, 'scripts/ci/validate_runner_budget_policy.py'], quiet: true },
     { cwd: '.', argv: [PYTHON, '-m', 'unittest', 'scripts/ci/test_validate_runner_budget_policy.py'] },
   ],
-  'admission-self-tests': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/clued-work-admission.test.mjs',
-    'scripts/ci/merge-admission-policy.test.mjs', 'scripts/ci/merge-admission-policy-file.test.mjs',
-    'scripts/ci/clued-release-grant.test.mjs', 'scripts/runner/clued-runner-job-started.test.mjs',
-    'scripts/ci/clued-merge-slot-ci.test.mjs'] }],
+  'admission-self-tests': [{ cwd: '.', known: 'admission-self-tests', argv: ['node', '--test',
+    'scripts/ci/clued-work-admission.test.mjs', 'scripts/ci/merge-admission-policy.test.mjs',
+    'scripts/ci/merge-admission-policy-file.test.mjs', 'scripts/ci/clued-release-grant.test.mjs',
+    'scripts/runner/clued-runner-job-started.test.mjs', 'scripts/ci/clued-merge-slot-ci.test.mjs'] }],
   'selection': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-required-selection.test.mjs'] }],
   'clued-cloud': [
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'lint'] },
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'ledger:verify'] },
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'typecheck'] },
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'build'] },
-    { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{unit-tests}'] },
-    { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{unit-quarantine}'],
-      quarantine: 'unit test files that already fail on main (UNIT_QUARANTINE)' },
+    { cwd: 'apps/clued-cloud', known: 'clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{unit-tests}'] },
   ],
   'production-schema': [
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', 'tests/production-schema-drift.test.mjs'] },
@@ -102,28 +112,22 @@ export const SUITE_COMMANDS = {
   ],
 };
 
-// Suites that already fail on main run and report, but their failure does not
-// fail the required check (quarantine, Task 679a0c2b). Each entry names why;
-// remove it in the change that makes the suite pass.
-export const QUARANTINED = {
-  'admission-self-tests': '4 tests already fail on main 67893c2e: the workflow inventories in clued-merge-slot-ci.test.mjs '
-    + 'and clued-work-admission.test.mjs do not list clued-native617-admission-dispatch.yml and clued-compute-panel.yml, '
-    + 'and gate guard A1 rejects the gitleaks.yml pair.',
-};
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+export const KNOWN_FAILURES_PATH = path.join(HERE, 'ci-known-failures.json');
 
-// Application unit test files (as scripts/select-tests.mjs classifies them)
-// that already fail on main 67893c2e, observed on TURING (Windows) on
-// 2026-11-01: 86 of 2960 tests in these files. They run in their own
-// quarantined command, so the rest of the suite gates. The first self-hosted
-// Linux run shows which of them pass there; remove those entries.
-export const UNIT_QUARANTINE = {
-  'tests/ci-proof-profiles.test.mjs': 'registered workflow definitions and the request-budget fixture no longer match main',
-  'tests/production-publisher-source.test.mjs': 'imports merge-admission natural-frame and source-producer tests that fail on main',
-  'tests/ci-temporary-storage.test.mjs': 'clued-native617-admission-dispatch.yml and the handover qualification workflows lack reviewed temporary-data entries',
-  'tests/integration-runtime-gate-evidence.test.mjs': 'verdict and fail-closed fixtures differ from the evidence document',
-  'tests/resource-center-daily-install.test.mjs': 'fails on main',
-  'tests/resource-center-storage-read-pdf-bounds.test.mjs': 'child process URL scheme on Windows (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux',
-};
+// Tests that already fail on main, by suite and exact test name, each with
+// its reason (quarantine, Task 679a0c2b). They still run. A failing test not
+// on the list fails the suite; a listed test that passes is reported so its
+// entry can be removed in the change that fixes it.
+export function readKnownFailures(file = KNOWN_FAILURES_PATH) {
+  const data = JSON.parse(readFileSync(file, 'utf8'));
+  for (const [suite, tests] of Object.entries(data)) {
+    for (const [name, reason] of Object.entries(tests)) {
+      if (typeof reason !== 'string' || reason.trim() === '') throw new Error(`known failure without a reason: ${suite}: ${name}`);
+    }
+  }
+  return data;
+}
 
 export function unitTestFiles(cwd, spawn = spawnSync) {
   const result = spawn('node', ['scripts/select-tests.mjs', 'unit', '--list'], { cwd, encoding: 'utf8' });
@@ -155,7 +159,7 @@ export function selectSuites(check, files) {
   const ids = Object.keys(suites);
   if (files === null) return { suites: ids, reason: 'changed files unknown: every suite runs' };
   if (files.some((file) => matchesAny(file, SELECT_ALL))) {
-    return { suites: ids, reason: 'the selection or a required-check workflow changed: every suite runs' };
+    return { suites: ids, reason: 'the selection or the required-check workflow changed: every suite runs' };
   }
   const selected = ids.filter((id) => files.some((file) => matchesAny(file, suites[id])));
   return { suites: selected, reason: selected.length === 0 ? 'no file this check covers changed' : 'selected by changed paths' };
@@ -199,18 +203,21 @@ export function outputLines(check, selection) {
 
 export function expandArgv(argv, { cwd, base, report, listUnit = () => unitTestFiles(cwd) }) {
   return argv.flatMap((arg) => {
-    if (arg === '{unit-tests}') return listUnit().filter((file) => !UNIT_QUARANTINE[file]);
-    if (arg === '{unit-quarantine}') {
-      const files = new Set(listUnit());
-      return Object.keys(UNIT_QUARANTINE).filter((file) => files.has(file));
+    if (arg === '{unit-tests}') {
+      const files = listUnit();
+      // An empty list would make `node --test` run every file it finds.
+      if (files.length === 0) throw new Error('no unit test files');
+      return files;
     }
     const tests = /^\{tests:(.+)\}$/.exec(arg);
     if (tests) {
-      return readdirSync(path.join(cwd, tests[1])).filter((name) => name.endsWith('.test.mjs')).sort()
+      const files = readdirSync(path.join(cwd, tests[1])).filter((name) => name.endsWith('.test.mjs')).sort()
         .map((name) => `${tests[1]}/${name}`);
+      if (files.length === 0) throw new Error(`no test files in ${tests[1]}`);
+      return files;
     }
     if (arg === '{base}') {
-      if (!base) throw new Error('CI_BASE_SHA is required for this suite');
+      if (!base || /^0+$/.test(base)) throw new Error('CI_BASE_SHA is required for this suite');
       return [base];
     }
     if (arg === '{report}') return [report];
@@ -218,13 +225,58 @@ export function expandArgv(argv, { cwd, base, report, listUnit = () => unitTestF
   });
 }
 
-export function runSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log } = {}) {
+const decodeXml = (text) => {
+  let value = text;
+  for (let previous = null; previous !== value;) {
+    previous = value;
+    value = value.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code))).replace(/&amp;/g, '&');
+  }
+  return value;
+};
+
+// Test cases of a Node JUnit report: {name, failed}. Suites (a parent whose
+// child failed) are not cases; a file that crashes is reported as a failing
+// case named after the file, so it is never on a known-failure list.
+export function junitCases(xml) {
+  const cases = [];
+  // Attribute values may hold a raw ">" (Node escapes "<" only).
+  for (const match of xml.matchAll(/<testcase((?:\s+[\w:-]+="[^"]*")*)\s*(\/?)>/g)) {
+    const name = /\bname="([^"]*)"/.exec(match[1]);
+    if (!name) continue;
+    cases.push({ name: decodeXml(name[1]), failed: /\bfailure="/.test(match[1]) });
+  }
+  return cases;
+}
+
+// The verdict of a run with known failures: fail on any unexpected failure,
+// on a nonzero exit with no failing case to explain it, or on an empty report.
+export function knownFailureVerdict({ status, cases, known }) {
+  const failed = cases.filter((entry) => entry.failed).map((entry) => entry.name);
+  const unexpected = failed.filter((name) => !Object.hasOwn(known, name));
+  const expected = failed.filter((name) => Object.hasOwn(known, name));
+  const seen = new Set(cases.map((entry) => entry.name));
+  const fixed = Object.keys(known).filter((name) => seen.has(name) && !failed.includes(name));
+  const missing = Object.keys(known).filter((name) => !seen.has(name));
+  const ok = cases.length > 0 && unexpected.length === 0 && (status === 0 || failed.length > 0);
+  return { ok, unexpected, expected, fixed, missing };
+}
+
+export function runSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log,
+  known = null, readJunit = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '') } = {}) {
   const commands = SUITE_COMMANDS[id];
   if (!commands) throw new Error(`unknown suite: ${id}`);
   const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
   for (const command of commands) {
     const cwd = path.join(root, command.cwd);
-    const argv = expandArgv(command.argv, { cwd, base: env.CI_BASE_SHA, report });
+    let argv = expandArgv(command.argv, { cwd, base: env.CI_BASE_SHA, report });
+    let junitDir = null;
+    if (command.known) {
+      junitDir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-junit-`));
+      const index = argv.indexOf('--test');
+      argv = [...argv.slice(0, index + 1), '--test-reporter=spec', '--test-reporter-destination=stdout',
+        '--test-reporter=junit', `--test-reporter-destination=${path.join(junitDir, 'junit.xml')}`, ...argv.slice(index + 1)];
+    }
     log(`::group::${id}: (${command.cwd}) ${argv.join(' ')}`);
     const result = spawn(argv[0], argv.slice(1), { cwd, env, stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
     if (command.quiet && result.stdout) {
@@ -233,25 +285,34 @@ export function runSuite(id, { root, env = process.env, spawn = spawnSync, log =
       log(result.status === 0 ? `${text.split('\n').slice(0, 4).join('\n')}\n...` : text);
     }
     log('::endgroup::');
-    const failure = result.error ? `${argv[0]} did not start: ${result.error.message}`
-      : result.status !== 0 ? `${argv.join(' ')} exited ${result.status ?? result.signal}` : null;
-    if (failure) {
-      if (command.quarantine) {
-        log(`::warning title=${id} (quarantined)::${failure}. Quarantined: ${command.quarantine}`);
-        continue;
+    if (result.error) {
+      log(`${id}: ${argv[0]} did not start: ${result.error.message}`);
+      return 1;
+    }
+    if (command.known) {
+      const list = (known ?? readKnownFailures())[command.known] ?? {};
+      const xml = readJunit(path.join(junitDir, 'junit.xml'));
+      rmSync(junitDir, { recursive: true, force: true });
+      const verdict = knownFailureVerdict({ status: result.status, cases: junitCases(xml), known: list });
+      for (const name of verdict.expected) log(`::warning title=${id} known failure::${name} (${list[name]})`);
+      for (const name of verdict.fixed) log(`::warning title=${id} known failure now passes::${name}; remove it from ci-known-failures.json`);
+      for (const name of verdict.unexpected) log(`::error title=${id} new failure::${name}`);
+      if (!verdict.ok) {
+        log(`${id}: ${verdict.unexpected.length} failing test(s) not on the known-failure list` +
+          `${verdict.unexpected.length === 0 ? ` (exit ${result.status ?? result.signal}, ${xml ? 'no failing case in the report' : 'no report'})` : ''}`);
+        return result.status || 1;
       }
-      if (QUARANTINED[id]) {
-        log(`::warning title=${id} (quarantined)::${failure}. Quarantined: ${QUARANTINED[id]}`);
-        return 0;
-      }
-      log(`${id}: ${failure}`);
+      continue;
+    }
+    if (result.status !== 0) {
+      log(`${id}: ${argv.join(' ')} exited ${result.status ?? result.signal}`);
       return result.status || 1;
     }
   }
   return 0;
 }
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const ROOT = path.resolve(HERE, '..', '..');
 
 async function main(argv, env = process.env) {
   const runIndex = argv.indexOf('--run');

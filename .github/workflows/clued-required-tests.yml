@@ -1,0 +1,295 @@
+name: clued-required-tests
+
+# Required checks clued-cloud-tests, ci-suites and migration-verify (Task
+# 2a5fdb66; work/ci-required-tests-v1/DESIGN.md), on the self-hosted Linux
+# pool only (Owner Decision 9eb313f8: no GitHub-hosted execution).
+#
+# - clued-cloud-tests: lint, migration ledger, typecheck, build and unit tests
+#   of apps/clued-cloud on every change. It replaces clued-cloud-quality-gate.yml,
+#   which stays disabled: that file is a registered ordinary-CI Source and
+#   still carries a GitHub-hosted job.
+# - ci-suites: resident and Source v2 tests, offline drill, components, runner
+#   budget policy, admission self-tests and the selection's own tests, chosen
+#   from the changed paths.
+# - migration-verify: replays production's recorded migration history from the
+#   committed schema-only snapshot (apps/clued-cloud/supabase/production-schema),
+#   requires its catalog to equal production's, applies pending migrations the
+#   way release migrate mode does, and fails a pending migration that reads a
+#   column only the repository chain has. No production credential.
+#
+# Every check always reports, so each can be a required check under one name.
+# scripts/ci/ci-required-selection.mjs, from the trusted base checkout, decides
+# which suites run, holds their command lines and the known-failure list; the
+# candidate checkout is the code under test (reviewed through the protected
+# paths). A change to the selection or to this workflow runs every suite.
+#
+# A job carries its required name only when it runs: an untrusted actor, a
+# pull request the gate did not admit, or a failed gate gives <name>-skipped,
+# so the required check stays missing (fail closed) instead of a skipped job
+# counting as success. "Re-run failed jobs" re-runs a check job with the
+# gate's earlier outputs, so a flaky check can be retried without a new head;
+# "Re-run all jobs" goes through the gate's per-head re-run rule again.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Work Claim Admission v0.1 §4.6 L0b: admit on the independent CI's own App
+  # 5368905 kooyumi-work-admission check for this exact head, polled for at
+  # most 10 minutes (Owner Decision 22b0e0ed); base-branch code, no PR code,
+  # no Clued token. Its exact bytes are registered in GATE_JOB_SHA256
+  # (scripts/ci/clued-work-admission.mjs) before this workflow can be admitted.
+  admission-gate:
+    name: admission-gate
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+    outputs:
+      admitted: ${{ steps.gate.outputs.admitted }}
+      enforced: ${{ steps.gate.outputs.enforced }}
+      verdict: ${{ steps.gate.outputs.verdict }}
+      automation_self_hosted: ${{ steps.gate.outputs.automation_self_hosted }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      # Owner Decision 22b0e0ed: admit on the independent CI's own App 5368905 kooyumi-work-admission
+      # check for this exact head, polled for at most 10 minutes; never on another App's check.
+      - id: gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CLUED_ADMISSION_GATE_SOURCE: independent-ci-native-work-admission
+          CLUED_ADMISSION_GATE_WAIT_SECONDS: "600"
+        run: node scripts/ci/clued-work-admission.mjs --mode gate
+
+  clued-cloud-tests:
+    name: >-
+      ${{ needs.admission-gate.outputs.admitted == 'true' &&
+          ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
+          && 'clued-cloud-tests' || 'clued-cloud-tests-skipped' }}
+    needs: admission-gate
+    if: >-
+      needs.admission-gate.outputs.admitted == 'true' &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out the trusted base (selection and commands)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: trusted
+      - name: Check out the candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+          path: candidate
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./trusted/.github/actions/ci-temporary-storage
+      - name: Select suites
+        id: select
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          selector=trusted/scripts/ci/ci-required-selection.mjs
+          if [ ! -f "$selector" ]; then
+            # Only while the base predates the selection (the pull request that adds it).
+            echo "::warning title=clued-cloud-tests bootstrap::the base has no selection; the candidate's own copy decides"
+            selector=candidate/scripts/ci/ci-required-selection.mjs
+          fi
+          echo "selector=$selector" >> "$GITHUB_OUTPUT"
+          node "$selector" --check clued-cloud-tests
+      # The runner's persistent ~/.npm serves the lockfile (no Actions cache).
+      - name: Install from lockfile
+        if: steps.select.outputs.run_clued_cloud == 'true'
+        working-directory: candidate/apps/clued-cloud
+        env:
+          npm_config_logs_dir: ${{ runner.temp }}/clued-npm-debug-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline --fetch-retries=2 --fetch-timeout=30000
+      - name: Lint, ledger, typecheck, build and unit tests
+        if: steps.select.outputs.run_clued_cloud == 'true'
+        env:
+          SELECTOR: ${{ steps.select.outputs.selector }}
+        run: node "$SELECTOR" --run clued-cloud --root candidate
+
+  ci-suites:
+    name: >-
+      ${{ needs.admission-gate.outputs.admitted == 'true' &&
+          ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
+          && 'ci-suites' || 'ci-suites-skipped' }}
+    needs: admission-gate
+    if: >-
+      needs.admission-gate.outputs.admitted == 'true' &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out the trusted base (selection and commands)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: trusted
+      - name: Check out the candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          path: candidate
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./trusted/.github/actions/ci-temporary-storage
+      - name: Select suites
+        id: select
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          selector=trusted/scripts/ci/ci-required-selection.mjs
+          if [ ! -f "$selector" ]; then
+            echo "::warning title=ci-suites bootstrap::the base has no selection; the candidate's own copy decides"
+            selector=candidate/scripts/ci/ci-required-selection.mjs
+          fi
+          echo "selector=$selector" >> "$GITHUB_OUTPUT"
+          node "$selector" --check ci-suites
+      - name: Run the selected suites
+        env:
+          SELECTOR: ${{ steps.select.outputs.selector }}
+          SUITES: ${{ steps.select.outputs.suites }}
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          failed=""
+          for suite in $(node -e 'for (const s of JSON.parse(process.env.SUITES)) console.log(s)'); do
+            if node "$SELECTOR" --run "$suite" --root candidate; then
+              echo "- \`$suite\`: passed" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "- \`$suite\`: **failed**" >> "$GITHUB_STEP_SUMMARY"
+              failed="$failed $suite"
+            fi
+          done
+          if [ -n "$failed" ]; then
+            echo "::error title=ci-suites::failed:$failed"
+            exit 1
+          fi
+
+  migration-verify:
+    name: >-
+      ${{ needs.admission-gate.outputs.admitted == 'true' &&
+          ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
+          && 'migration-verify' || 'migration-verify-skipped' }}
+    needs: admission-gate
+    if: >-
+      needs.admission-gate.outputs.admitted == 'true' &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out the trusted base (selection and commands)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: trusted
+      - name: Check out the candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          path: candidate
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./trusted/.github/actions/ci-temporary-storage
+      - name: Select suites
+        id: select
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          selector=trusted/scripts/ci/ci-required-selection.mjs
+          if [ ! -f "$selector" ]; then
+            echo "::warning title=migration-verify bootstrap::the base has no selection; the candidate's own copy decides"
+            selector=candidate/scripts/ci/ci-required-selection.mjs
+          fi
+          echo "selector=$selector" >> "$GITHUB_OUTPUT"
+          node "$selector" --check migration-verify
+      # The runner's persistent ~/.npm serves the lockfile (no Actions cache).
+      # Install scripts stay off except the embedded PostgreSQL binary
+      # package's own, which links its bundled libraries.
+      - name: Install from lockfile
+        if: steps.select.outputs.run_production_schema == 'true'
+        working-directory: candidate/apps/clued-cloud
+        env:
+          npm_config_logs_dir: ${{ runner.temp }}/clued-npm-debug-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline --fetch-retries=2 --fetch-timeout=30000
+          timeout --signal=TERM --kill-after=15s 2m npm rebuild @embedded-postgres/linux-x64
+      - name: Verify migrations on the production schema
+        if: steps.select.outputs.run_production_schema == 'true'
+        env:
+          SELECTOR: ${{ steps.select.outputs.selector }}
+        run: |
+          status=0
+          node "$SELECTOR" --run production-schema --root candidate || status=$?
+          if [ -f "$RUNNER_TEMP/production-schema-report.json" ]; then
+            node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
+              const lines=["### migration-verify: "+r.status,"",...r.errors.map(e=>"- error: `"+e+"`"),
+                "- pending migrations: "+((r.pending||[]).join(", ")||"none"),
+                "- repository-only columns and functions (tests see them, production does not): "+((r.repository_only||[]).length)];
+              require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n")+"\n");' "$RUNNER_TEMP/production-schema-report.json"
+          fi
+          exit $status
+      - name: Not affected
+        if: steps.select.outputs.run_production_schema != 'true'
+        run: echo "No migration, ledger, snapshot or drift-check file changed; nothing to verify." >> "$GITHUB_STEP_SUMMARY"

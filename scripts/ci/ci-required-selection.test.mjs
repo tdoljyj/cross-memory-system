@@ -1,14 +1,25 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  FILE_LIMIT, QUARANTINED, SUITES, SUITE_COMMANDS, UNIT_QUARANTINE, changedFiles, expandArgv, globToRegExp, listPullRequestFiles, outputLines,
-  runSuite, selectSuites,
+  FILE_LIMIT, SELECT_ALL, SUITES, SUITE_COMMANDS, changedFiles, expandArgv, globToRegExp, junitCases,
+  knownFailureVerdict, listPullRequestFiles, outputLines, readKnownFailures, runSuite, selectSuites,
 } from './ci-required-selection.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const log = () => {};
+
+test('glob patterns match across and within segments', () => {
+  assert.ok(globToRegExp('work/independent-ci-resident-v1/**').test('work/independent-ci-resident-v1/src/executor.mjs'));
+  assert.ok(globToRegExp('apps/clued-cloud/scripts/production-schema-*.mjs').test('apps/clued-cloud/scripts/production-schema-drift.mjs'));
+  assert.ok(!globToRegExp('apps/clued-cloud/scripts/production-schema-*.mjs').test('apps/clued-cloud/scripts/x/production-schema-drift.mjs'));
+  assert.ok(!globToRegExp('scripts/hooks/**').test('scripts/hooksx/a.py'));
+  assert.ok(!globToRegExp('VERSION').test('VERSION.md'));
+  assert.ok(globToRegExp('**').test('docs/README.md'));
+});
 
 test('every selectable suite has commands, every command directory and named test file exists', () => {
   const ids = Object.values(SUITES).flatMap((suites) => Object.keys(suites));
@@ -17,78 +28,13 @@ test('every selectable suite has commands, every command directory and named tes
     for (const command of commands) {
       const cwd = path.join(ROOT, command.cwd);
       assert.ok(existsSync(cwd), `${id}: ${command.cwd}`);
-      const argv = expandArgv(command.argv, { cwd, base: 'abc', report: '/tmp/r.json' });
-      for (const arg of argv.filter((value) => /\.(?:mjs|py)$/.test(value) && !value.includes('*'))) {
+      const argv = expandArgv(command.argv, { cwd, base: 'abc', report: '/tmp/r.json', listUnit: () => ['tests/a.test.mjs'] });
+      for (const arg of argv.filter((value) => /\.(?:mjs|py)$/.test(value) && !value.includes('*') && value !== 'tests/a.test.mjs')) {
         assert.ok(existsSync(path.join(cwd, arg)), `${id}: ${arg}`);
       }
+      if (command.known) assert.ok(command.argv.includes('--test'), `${id}: a known-failure command runs node --test`);
     }
   }
-});
-
-test('{tests:dir} expands to that directory\'s test files, {base} needs a base commit', () => {
-  const argv = expandArgv(['node', '--test', '{tests:test}'], { cwd: path.join(ROOT, 'work/independent-ci-resident-v1') });
-  assert.ok(argv.length > 10);
-  assert.ok(argv.slice(2).every((arg) => /^test\/[^/]+\.test\.mjs$/.test(arg)));
-  assert.deepEqual(argv.slice(2), [...argv.slice(2)].sort());
-  assert.throws(() => expandArgv(['{base}'], { cwd: ROOT }), /CI_BASE_SHA is required/);
-  assert.deepEqual(expandArgv(['{base}', '{report}'], { cwd: ROOT, base: 'b', report: 'r' }), ['b', 'r']);
-});
-
-test('a suite stops at its first failing command and reports a command that did not start', () => {
-  const calls = [];
-  const spawn = (command, args, options) => {
-    calls.push([command, options.cwd]);
-    return { status: calls.length === 1 ? 0 : 3 };
-  };
-  const log = () => {};
-  assert.equal(runSuite('components', { root: ROOT, env: { CI_BASE_SHA: 'b' }, spawn, log }), 3);
-  assert.equal(calls.length, 2);
-  assert.equal(runSuite('selection', { root: ROOT, env: {}, spawn: () => ({ error: new Error('ENOENT') }), log }), 1);
-  assert.equal(runSuite('production-schema', { root: ROOT, env: {}, spawn: () => ({ status: 0 }), log }), 0);
-  assert.throws(() => runSuite('nope', { root: ROOT, spawn, log }), /unknown suite/);
-});
-
-test('quarantined unit files run apart from the gating unit files, and only files that exist', () => {
-  const listUnit = () => ['tests/a.test.mjs', 'tests/ci-proof-profiles.test.mjs', 'tests/z.test.mjs'];
-  assert.deepEqual(expandArgv(['{unit-tests}'], { cwd: ROOT, listUnit }), ['tests/a.test.mjs', 'tests/z.test.mjs']);
-  assert.deepEqual(expandArgv(['{unit-quarantine}'], { cwd: ROOT, listUnit }), ['tests/ci-proof-profiles.test.mjs']);
-  const actual = expandArgv(['{unit-tests}'], { cwd: path.join(ROOT, 'apps/clued-cloud') });
-  assert.ok(actual.includes('tests/production-schema-drift.test.mjs'));
-  for (const file of Object.keys(UNIT_QUARANTINE)) {
-    assert.ok(existsSync(path.join(ROOT, 'apps/clued-cloud', file)), file);
-    assert.equal(actual.includes(file), false, file);
-  }
-});
-
-test('a failing quarantined command warns and the suite goes on; the gating unit command still fails it', () => {
-  const lines = [];
-  const statuses = { '{unit-quarantine}': 1 };
-  const spawn = (command, args) => ({ status: args.includes('tests/ci-proof-profiles.test.mjs') ? statuses['{unit-quarantine}'] : 0 });
-  assert.equal(runSuite('clued-cloud', { root: ROOT, env: {}, spawn, log: (line) => lines.push(line) }), 0);
-  assert.ok(lines.some((line) => line.startsWith('::warning title=clued-cloud (quarantined)::')));
-  const failing = (command, args) => ({ status: args.includes('lint') ? 2 : 0 });
-  assert.equal(runSuite('clued-cloud', { root: ROOT, env: {}, spawn: failing, log: () => {} }), 2);
-});
-
-test('the application check runs for every change', () => {
-  assert.deepEqual(selectSuites('clued-cloud-tests', ['docs/README.md']).suites, ['clued-cloud']);
-  assert.deepEqual(selectSuites('clued-cloud-tests', []).suites, []);
-});
-
-test('a quarantined suite reports its failure as a warning and does not fail the check', () => {
-  const lines = [];
-  assert.ok(QUARANTINED['admission-self-tests'].length > 20);
-  assert.equal(runSuite('admission-self-tests', { root: ROOT, env: {}, spawn: () => ({ status: 1 }), log: (line) => lines.push(line) }), 0);
-  assert.ok(lines.some((line) => line.startsWith('::warning title=admission-self-tests (quarantined)::')));
-  for (const id of Object.keys(QUARANTINED)) assert.ok(SUITE_COMMANDS[id], id);
-});
-
-test('glob patterns match across and within segments', () => {
-  assert.ok(globToRegExp('work/independent-ci-resident-v1/**').test('work/independent-ci-resident-v1/src/executor.mjs'));
-  assert.ok(globToRegExp('apps/clued-cloud/scripts/production-schema-*.mjs').test('apps/clued-cloud/scripts/production-schema-drift.mjs'));
-  assert.ok(!globToRegExp('apps/clued-cloud/scripts/production-schema-*.mjs').test('apps/clued-cloud/scripts/x/production-schema-drift.mjs'));
-  assert.ok(!globToRegExp('scripts/hooks/**').test('scripts/hooksx/a.py'));
-  assert.ok(!globToRegExp('VERSION').test('VERSION.md'));
 });
 
 test('unknown changed files select every suite', () => {
@@ -97,29 +43,61 @@ test('unknown changed files select every suite', () => {
   }
 });
 
-test('a change to the selection or a required-check workflow selects every suite', () => {
-  for (const file of ['scripts/ci/ci-required-selection.mjs', '.github/workflows/clued-ci-suites.yml',
-    '.github/workflows/clued-migration-verify.yml', '.github/actions/ci-temporary-storage/action.yml']) {
+test('a change to the selection, the known failures or the required-check workflow selects every suite', () => {
+  for (const file of ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-known-failures.json',
+    '.github/workflows/clued-required-tests.yml', '.github/actions/ci-temporary-storage/action.yml']) {
+    assert.ok(SELECT_ALL.some((pattern) => globToRegExp(pattern).test(file)), file);
     assert.deepEqual(selectSuites('ci-suites', ['README.md', file]).suites, Object.keys(SUITES['ci-suites']), file);
     assert.deepEqual(selectSuites('migration-verify', [file]).suites, ['production-schema'], file);
   }
 });
 
-test('resident changes select the resident suites and the offline drill only', () => {
-  const { suites } = selectSuites('ci-suites', ['work/independent-ci-resident-v1/src/executor.mjs']);
-  assert.deepEqual(suites, ['resident-node', 'resident-python', 'offline-drill']);
+test('resident, Source v2 and CI-script changes run the resident and Source v2 suites', () => {
+  const both = ['resident-node', 'resident-python', 'offline-drill', 'source-v2-node', 'source-v2-python'];
+  for (const file of ['work/independent-ci-resident-v1/src/executor.mjs', 'work/actions-hosted-migration/independent-ci-v1/src/job-v2.mjs',
+    'scripts/ci/clued-independent-publication-port.mjs', '.gitleaks.toml']) {
+    const { suites } = selectSuites('ci-suites', [file]);
+    for (const id of both) assert.ok(suites.includes(id), `${file}: ${id}`);
+  }
+  assert.ok(selectSuites('ci-suites', ['scripts/ci/clued-work-admission.mjs']).suites.includes('admission-self-tests'));
 });
 
-test('Source v2 changes select the Source v2 suites and the offline drill', () => {
-  const { suites } = selectSuites('ci-suites', ['work/actions-hosted-migration/independent-ci-v1/src/job-v2.mjs']);
-  assert.deepEqual(suites, ['offline-drill', 'source-v2-node', 'source-v2-python']);
+// Review M3: a suite must run when a file its code imports changes.
+function outsideImports(dir) {
+  const out = new Set();
+  const walk = (folder) => {
+    for (const entry of readdirSync(folder, { withFileTypes: true })) {
+      const file = path.join(folder, entry.name);
+      if (entry.isDirectory()) { if (entry.name !== 'node_modules') walk(file); continue; }
+      if (!/\.(?:mjs|js|cjs)$/.test(entry.name)) continue;
+      for (const match of readFileSync(file, 'utf8').matchAll(/(?:from\s*|import\s*\(\s*|import\s+)['"](\.{1,2}\/[^'"]+)['"]/g)) {
+        const target = path.resolve(path.dirname(file), match[1]);
+        const relative = path.relative(ROOT, target).split(path.sep).join('/');
+        if (!relative.startsWith(`${dir}/`) && existsSync(target)) out.add(relative);
+      }
+    }
+  };
+  walk(path.join(ROOT, dir));
+  return [...out];
+}
+
+test('the resident and Source v2 suites cover every file their code imports from outside', () => {
+  for (const [dir, ids] of [['work/independent-ci-resident-v1', ['resident-node', 'offline-drill']],
+    ['work/actions-hosted-migration/independent-ci-v1', ['source-v2-node']]]) {
+    const imports = outsideImports(dir);
+    assert.ok(imports.length > 0, dir);
+    for (const file of imports) {
+      const { suites } = selectSuites('ci-suites', [file]);
+      for (const id of ids) assert.ok(suites.includes(id), `${dir} imports ${file}, which does not select ${id}`);
+    }
+  }
 });
 
-test('any workflow change runs the runner budget policy', () => {
-  assert.deepEqual(selectSuites('ci-suites', ['.github/workflows/trivy.yml']).suites, ['runner-budget-policy']);
+test('any workflow change runs the runner budget policy and the admission self-tests', () => {
+  assert.deepEqual(selectSuites('ci-suites', ['.github/workflows/trivy.yml']).suites, ['runner-budget-policy', 'admission-self-tests']);
 });
 
-test('a migration selects the production-schema check; ordinary documentation selects nothing', () => {
+test('a migration selects the production-schema check; ordinary documentation selects only the application check', () => {
   assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/supabase/migrations/20261101000000_x.sql']).suites,
     ['production-schema']);
   assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/supabase/ledger/production-history.json']).suites,
@@ -128,6 +106,8 @@ test('a migration selects the production-schema check; ordinary documentation se
   assert.deepEqual(docs.suites, []);
   assert.match(docs.reason, /no file this check covers changed/);
   assert.deepEqual(selectSuites('ci-suites', ['docs/README.md', 'apps/clued-cloud/worker/index.ts']).suites, []);
+  assert.deepEqual(selectSuites('clued-cloud-tests', ['docs/README.md']).suites, ['clued-cloud']);
+  assert.deepEqual(selectSuites('clued-cloud-tests', []).suites, []);
 });
 
 test('outputs name every suite of the check', () => {
@@ -164,4 +144,87 @@ test('changed files are unknown without a pull request, a token or a readable li
   assert.equal(await changedFiles({ event: { pull_request: { number: 1 } }, env: {} }), null);
   assert.equal(await changedFiles({ event: { pull_request: { number: 1 } }, env, fetchImpl: async () => { throw new Error('offline'); } }), null);
   assert.deepEqual(await changedFiles({ event: { pull_request: { number: 1 } }, env, fetchImpl: async () => page(['x']) }), ['x']);
+});
+
+test('expansions refuse empty test lists and a missing or all-zero base commit', () => {
+  const argv = expandArgv(['node', '--test', '{tests:test}'], { cwd: path.join(ROOT, 'work/independent-ci-resident-v1') });
+  assert.ok(argv.length > 10);
+  assert.ok(argv.slice(2).every((arg) => /^test\/[^/]+\.test\.mjs$/.test(arg)));
+  assert.deepEqual(argv.slice(2), [...argv.slice(2)].sort());
+  assert.throws(() => expandArgv(['{unit-tests}'], { cwd: ROOT, listUnit: () => [] }), /no unit test files/);
+  assert.throws(() => expandArgv(['{tests:docs}'], { cwd: ROOT }), /no test files/);
+  assert.throws(() => expandArgv(['{base}'], { cwd: ROOT }), /CI_BASE_SHA is required/);
+  assert.throws(() => expandArgv(['{base}'], { cwd: ROOT, base: '0'.repeat(40) }), /CI_BASE_SHA is required/);
+  assert.deepEqual(expandArgv(['{base}', '{report}'], { cwd: ROOT, base: 'b', report: 'r' }), ['b', 'r']);
+  const unit = expandArgv(['{unit-tests}'], { cwd: path.join(ROOT, 'apps/clued-cloud') });
+  assert.ok(unit.includes('tests/production-schema-drift.test.mjs'));
+});
+
+test('a suite stops at its first failing command and reports a command that did not start', () => {
+  const calls = [];
+  const spawn = (command, args, options) => {
+    calls.push([command, options.cwd]);
+    return { status: calls.length === 1 ? 0 : 3 };
+  };
+  assert.equal(runSuite('components', { root: ROOT, env: { CI_BASE_SHA: 'b' }, spawn, log }), 3);
+  assert.equal(calls.length, 2);
+  assert.equal(runSuite('selection', { root: ROOT, env: {}, spawn: () => ({ error: new Error('ENOENT') }), log }), 1);
+  assert.equal(runSuite('production-schema', { root: ROOT, env: {}, spawn: () => ({ status: 0 }), log }), 0);
+  assert.throws(() => runSuite('nope', { root: ROOT, spawn, log }), /unknown suite/);
+});
+
+const xml = (cases) => `<?xml version="1.0"?>\n<testsuites>\n${cases.map(([name, failed]) =>
+  `\t<testcase name="${name}" time="0.1" classname="test" file="x"${failed ? ' failure="boom">\n\t\t<failure message="boom"/>\n\t</testcase>' : '/>'}`).join('\n')}\n</testsuites>\n`;
+
+test('JUnit cases are read with their decoded names; a suite element is not a case', () => {
+  const cases = junitCases(`<testsuites><testsuite name="parent" failures="1"><testcase name="main&amp;apos;s &amp;quot;x&amp;quot; &lt;y>" failure="e"><failure/></testcase>
+    <testcase name="ok"/></testsuite></testsuites>`);
+  assert.deepEqual(cases, [{ name: 'main\'s "x" <y>', failed: true }, { name: 'ok', failed: false }]);
+});
+
+test('known failures: only listed tests may fail, a crash or an empty report fails, fixed ones are reported', () => {
+  const known = { 'old a': 'r', 'old b': 'r', 'gone': 'r' };
+  const pass = knownFailureVerdict({ status: 1, cases: junitCases(xml([['old a', true], ['old b', false], ['new', false]])), known });
+  assert.equal(pass.ok, true);
+  assert.deepEqual(pass.expected, ['old a']);
+  assert.deepEqual(pass.fixed, ['old b']);
+  assert.deepEqual(pass.missing, ['gone']);
+  const fail = knownFailureVerdict({ status: 1, cases: junitCases(xml([['old a', true], ['new', true]])), known });
+  assert.equal(fail.ok, false);
+  assert.deepEqual(fail.unexpected, ['new']);
+  assert.equal(knownFailureVerdict({ status: 1, cases: junitCases(xml([['old a', false]])), known }).ok, false,
+    'a nonzero exit no failing case explains (a crash outside a test) fails');
+  assert.equal(knownFailureVerdict({ status: 0, cases: [], known }).ok, false, 'a run that reported nothing fails');
+});
+
+test('a known-failure command adds the JUnit reporter, warns on known failures and fails on a new one', () => {
+  const known = { 'admission-self-tests': { 'old a': 'reason' } };
+  const lines = [];
+  let seen;
+  const spawn = (command, args) => { seen = args; return { status: 1 }; };
+  assert.equal(runSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: os.tmpdir() }, spawn, known,
+    readJunit: () => xml([['old a', true], ['b', false]]), log: (line) => lines.push(line) }), 0);
+  assert.ok(seen.includes('--test-reporter=junit'));
+  assert.ok(seen.some((arg) => arg.startsWith('--test-reporter-destination=') && arg.endsWith('junit.xml')));
+  assert.ok(lines.some((line) => line.startsWith('::warning title=admission-self-tests known failure::old a')));
+  assert.equal(runSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: os.tmpdir() }, spawn, known,
+    readJunit: () => xml([['old a', true], ['b', true]]), log }), 1);
+  assert.equal(runSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: os.tmpdir() }, spawn, known,
+    readJunit: () => '', log }), 1, 'no report fails');
+});
+
+test('the application suite gates lint, ledger, typecheck and build before the unit tests', () => {
+  const calls = [];
+  const spawn = (command, args) => { calls.push(args.join(' ')); return { status: args.includes('typecheck') ? 2 : 0 }; };
+  assert.equal(runSuite('clued-cloud', { root: ROOT, env: {}, spawn, log }), 2);
+  assert.deepEqual(calls, ['run lint', 'run ledger:verify', 'run typecheck']);
+});
+
+test('the committed known-failure list names a reason for every test', () => {
+  const data = readKnownFailures();
+  assert.deepEqual(Object.keys(data).sort(), ['admission-self-tests', 'clued-cloud']);
+  for (const id of Object.keys(data)) assert.ok(SUITE_COMMANDS[id].some((command) => command.known === id), id);
+  const file = path.join(os.tmpdir(), `known-${process.pid}.json`);
+  writeFileSync(file, JSON.stringify({ x: { t: ' ' } }));
+  assert.throws(() => readKnownFailures(file), /without a reason/);
 });
