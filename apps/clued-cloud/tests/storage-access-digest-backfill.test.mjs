@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
-import { googleDriveAccessDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
+import { googleDriveAccessDigest, googleDriveSharingDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
 
 // Storage step 2 (Task e2eb07d1): the scheduled access digest backfill.
 const dir = await mkdtemp(path.join(os.tmpdir(), "clued-access-digest-backfill-"));
@@ -22,6 +22,7 @@ const { createStorageCredentialVault } = await load("storage-credential-vault");
 const SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
 const CLIENT = "backfill.apps.googleusercontent.com";
 const PERMISSIONS = [{ id: "owner", type: "user", role: "owner" }];
+const SHARED = [...PERMISSIONS, { id: "team", type: "domain", role: "reader", domain: "example.test" }];
 const FLAGS = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_GOOGLE_V1: "true", CLUED_STORAGE_JOBS_V2: "true",
   CLUED_STORAGE_EXECUTOR_V1: "true", CLUED_STORAGE_CONNECTOR_ISSUER: "i".repeat(40), CLUED_STORAGE_GOOGLE_CLIENT_ID: CLIENT,
   SUPABASE_URL: "https://db.example.test", SUPABASE_PUBLISHABLE_KEY: "publishable" };
@@ -46,6 +47,13 @@ async function fixture({ drive = {}, token = {}, load = {}, directories, renewal
       if(renewal&&url.pathname.endsWith('/about'))return Response.json({user:{me:true,permissionId:'subject'}});
       if(renewal&&url.pathname.endsWith('/root'))return Response.json({id:'root',parents:['parent'],mimeType:'application/vnd.google-apps.folder',
         trashed:false,isAppAuthorized:true,capabilities:{canAddChildren:true}});
+      if (url.pathname.endsWith("/pfolder")) {
+        if (drive.parent?.status) return new Response("{}", { status: drive.parent.status });
+        const permissions = drive.parent?.permissions ?? SHARED;
+        return Response.json(/shared/.test(url.searchParams.get("fields"))
+          ? { id: "pfolder", shared: false, permissionIds: permissions.map(p => p.id) }
+          : { id: "pfolder", version: "40", permissions });
+      }
       if (drive.status) return new Response("{}", { status: drive.status });
       return Response.json({ id: "folder", version: "7", permissions: PERMISSIONS, ...drive.body });
     }
@@ -73,7 +81,10 @@ async function fixture({ drive = {}, token = {}, load = {}, directories, renewal
       credential_envelope: envelope, provider_file_id: "folder", registered_version: "7", row_version: 2,
       execution_permitted: false, ...load });
     if (input2.action === "commit") return Response.json({ status: "committed", artifact_id: artifact,
-      outcome: input2.found && input2.observed_version === "7" && input2.access_digest ? "recorded" : "missing", execution_permitted: false });
+      outcome: input2.found && input2.observed_version === "7" && input2.access_digest ? "recorded"
+        : input2.access_digest && input2.owner_only === true ? "recorded_private"
+        : input2.access_digest && input2.parent?.observed_access === input2.access_digest ? "recorded_inherited" : "missing:version_changed",
+      execution_permitted: false });
     throw new Error("unexpected rpc");
   };
   const env = { ...FLAGS, CLUED_STORAGE_VAULT_KEYS: JSON.stringify(vaultConfig),...(renewal?{
@@ -102,7 +113,7 @@ test("a directory at its registered version gets the digest from one Drive read"
 
 test("a changed version, a folder Drive no longer shows or no usable permission list commits as missing", async () => {
   for (const [drive, found, observed, digest] of [
-    [{ body: { version: "8" } }, true, "8", googleDriveAccessDigest({ permissions: PERMISSIONS })],
+    [{ body: { version: "8", permissions: SHARED } }, true, "8", googleDriveAccessDigest({ permissions: SHARED })],
     [{ status: 404 }, false, null, null],
     [{ body: { permissions: [] } }, true, "7", null],
   ]) {
@@ -160,4 +171,67 @@ test('renewal off preserves valid maintenance use; an expired token never exchan
   assert.deepEqual(await runStorageAccessDigestBackfillScheduled({...empty.env,CLUED_STORAGE_VAULT_KEYS:'invalid'},
     {fetch:empty.fetch}),{status:'ok',recorded:0,missing:0,skipped:0});
   assert.deepEqual(empty.calls.map(call=>call.action),['due']);
+});
+
+// Bug 38bb5ddf (Decision 24422a98): version drift alone is settled against the
+// registered parent, as Drive inherits permissions; a real difference is not.
+const PARENT = (mode = "access") => ({ artifact_id: randomUUID(), provider_file_id: "pfolder", row_version: 5, mode });
+test("a moved version is compared with the registered parent read in the same run", async () => {
+  for (const mode of ["access", "sharing"]) {
+    const parent = PARENT(mode);
+    const f = await fixture({ drive: { body: { version: "9", permissions: SHARED } }, load: { parent } });
+    assert.deepEqual(await runStorageAccessDigestBackfillScheduled(f.env, { fetch: f.fetch }), { status: "ok", recorded: 1, missing: 0, skipped: 0 });
+    const commit = f.calls.at(-1), access = googleDriveAccessDigest({ permissions: SHARED });
+    assert.deepEqual(commit.parent, { artifact_id: parent.artifact_id, row_version: 5,
+      observed_digest: mode === "access" ? access : googleDriveSharingDigest({ shared: false, permissionIds: ["owner", "team"] }), observed_access: access });
+    assert.equal("owner_only" in commit, false);
+    assert.equal(f.driveUrls.filter(u => u.pathname.endsWith("/pfolder")).length, mode === "access" ? 1 : 2);
+  }
+});
+test("a folder shared beyond its parent still commits as missing; the parent is read only when the version moved", async () => {
+  const wider = await fixture({ drive: { body: { version: "9", permissions: [...SHARED, { id: "anyone", type: "anyone", role: "reader" }] } },
+    load: { parent: PARENT() } });
+  assert.deepEqual(await runStorageAccessDigestBackfillScheduled(wider.env, { fetch: wider.fetch }), { status: "ok", recorded: 0, missing: 1, skipped: 0 });
+  assert.notEqual(wider.calls.at(-1).parent.observed_access, wider.calls.at(-1).access_digest);
+  const same = await fixture({ load: { parent: PARENT() } });
+  assert.deepEqual(await runStorageAccessDigestBackfillScheduled(same.env, { fetch: same.fetch }), { status: "ok", recorded: 1, missing: 0, skipped: 0 });
+  assert.equal(same.driveUrls.length, 1); assert.equal("parent" in same.calls.at(-1), false);
+  // No parent baseline: commits without one, and the database retries later.
+  const orphan = await fixture({ drive: { body: { version: "9", permissions: SHARED } }, load: { parent: null } });
+  assert.deepEqual(await runStorageAccessDigestBackfillScheduled(orphan.env, { fetch: orphan.fetch }), { status: "ok", recorded: 0, missing: 1, skipped: 0 });
+  assert.equal("parent" in orphan.calls.at(-1), false);
+});
+test("a parent read that fails transiently commits nothing; a malformed parent descriptor reads nothing", async () => {
+  const f = await fixture({ drive: { body: { version: "9", permissions: SHARED }, parent: { status: 503 } }, load: { parent: PARENT() } });
+  assert.deepEqual(await runStorageAccessDigestBackfillScheduled(f.env, { fetch: f.fetch }), { status: "ok", recorded: 0, missing: 0, skipped: 1 });
+  assert.deepEqual(f.calls.map(c => c.action), ["due", "load"]);
+  const gone = await fixture({ drive: { body: { version: "9", permissions: SHARED }, parent: { status: 404 } }, load: { parent: PARENT() } });
+  assert.deepEqual(await runStorageAccessDigestBackfillScheduled(gone.env, { fetch: gone.fetch }), { status: "ok", recorded: 0, missing: 1, skipped: 0 });
+  assert.equal("parent" in gone.calls.at(-1), false);
+  for (const parent of [{ ...PARENT(), extra: 1 }, { ...PARENT(), mode: "version" }, { ...PARENT(), provider_file_id: "bad id" }]) {
+    const bad = await fixture({ load: { parent } });
+    assert.deepEqual(await runStorageAccessDigestBackfillScheduled(bad.env, { fetch: bad.fetch }), { status: "ok", recorded: 0, missing: 0, skipped: 1 });
+    assert.equal(bad.driveUrls.length, 0);
+  }
+});
+
+// Review M2: a folder only its owner can reach is recorded without a parent,
+// which also covers the root; the parent is not read for it.
+test("a moved folder only its owner can reach is reported owner_only and needs no parent", async () => {
+  for (const parent of [null, PARENT()]) {
+    const f = await fixture({ drive: { body: { version: "9" } }, load: { parent } });
+    assert.deepEqual(await runStorageAccessDigestBackfillScheduled(f.env, { fetch: f.fetch }), { status: "ok", recorded: 1, missing: 0, skipped: 0 });
+    const commit = f.calls.at(-1);
+    assert.equal(commit.owner_only, true); assert.equal("parent" in commit, false);
+    assert.equal(f.driveUrls.length, 1);
+  }
+  // At the registered version the old rule applies and owner_only is not sent.
+  const same = await fixture();
+  await runStorageAccessDigestBackfillScheduled(same.env, { fetch: same.fetch });
+  assert.equal("owner_only" in same.calls.at(-1), false);
+  // An owner plus anyone else is not owner_only.
+  const two = await fixture({ drive: { body: { version: "9", permissions: [{ id: "owner", type: "user", role: "owner" },
+    { id: "other", type: "user", role: "owner" }] } }, load: { parent: null } });
+  await runStorageAccessDigestBackfillScheduled(two.env, { fetch: two.fetch });
+  assert.equal("owner_only" in two.calls.at(-1), false);
 });
