@@ -238,14 +238,17 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None):
 
     # linuxHost (review 1-1): the host facts the root scripts pin are this node's. As root and read-only: the committed check-host.py
     # (what phase A, B0 and B4 run) on the installed role policies with the configured pins, the Source v1 HEAD that verify-source-v2
-    # requires, and the v1 qualifications the signer reads. Nothing is written; git takes no optional locks.
+    # requires, and the v1 qualifications the signer reads (a node without Source v1: none of v1 there, the roles-v3 qualifications that
+    # sign-qualification-no-v1.mjs reads instead). Nothing is written; git takes no optional locks.
     lh = cfg['linux']['host']
     probe = ("import json,os,subprocess,sys\n"
              "env={'PATH':'/usr/bin:/bin','LANG':'C','LC_ALL':'C','GIT_OPTIONAL_LOCKS':'0','GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_GLOBAL':'/dev/null'}\n"
              "p=subprocess.run(['/usr/bin/python3','-I']+sys.argv[1:5],capture_output=True,text=True,env=env)\n"
              "g=subprocess.run(['/usr/bin/git','--git-dir=/opt/clued-independent-ci/source-first-formal-v1/.git','rev-parse','HEAD'],capture_output=True,text=True,env=env)\n"
              "q={r:os.path.isfile('/etc/clued-independent-ci/roles/'+r+'.qualification.json') for r in ('gitleaks','trivy','contract-placement')}\n"
-             "print(json.dumps({'checkHostExit':p.returncode,'checkHost':p.stdout.strip()[-800:],'v1Head':g.stdout.strip() if g.returncode==0 else None,'v1Qualifications':q}))")
+             "v1=[x for x in ('/opt/clued-independent-ci/source-first-formal-v1','/etc/clued-independent-ci/roles','/etc/clued-independent-ci/formal-source-manifest-v1.json') if os.path.lexists(x)]\n"
+             "q2={r:os.path.isfile('/etc/clued-independent-ci/roles-v3/'+r+'.qualification.json') for r in ('gitleaks','trivy','contract-placement')}\n"
+             "print(json.dumps({'checkHostExit':p.returncode,'checkHost':p.stdout.strip()[-800:],'v1Head':g.stdout.strip() if g.returncode==0 else None,'v1Qualifications':q,'v1Present':v1,'v2Qualifications':q2}))")
     # the live installed role policies (the derivation keeps their host pins), not the Windows copy (review 2)
     code, out, err = host.wsl_python(cfg['linux']['distribution'], ['-c', probe, to_wsl(os.path.join(HERE, 'linux', 'tools', 'check-host.py')), '/etc/clued-independent-ci/roles-v3',
                                      lh['toolchainNodeSha256'], lh['resultPublicKeySha256']], user='root')
@@ -258,8 +261,14 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None):
             find('LINUX_HOST_PINS_NOT_THE_CONFIGURED', refusal=(last_json(hp.get('checkHost') or '') or {}).get('code'))
         if hp.get('v1Head') != lh['v1SourceHead']:
             find('LINUX_V1_SOURCE_HEAD_NOT_THE_CONFIGURED', installed=hp.get('v1Head'), configured=lh['v1SourceHead'])
-        if not all((hp.get('v1Qualifications') or {}).values()) or not hp.get('v1Qualifications'):
-            find('LINUX_V1_QUALIFICATIONS_MISSING', present=hp.get('v1Qualifications'))
+        if lh['v1SourceHead'] is not None:   # the signer's lineage: the installed v1 qualifications
+            if not all((hp.get('v1Qualifications') or {}).values()) or not hp.get('v1Qualifications'):
+                find('LINUX_V1_QUALIFICATIONS_MISSING', present=hp.get('v1Qualifications'))
+        else:   # no Source v1 (README section 6): none of it may be there, and the lineage is the installed roles-v3 qualifications
+            if hp.get('v1Present') != []:
+                find('LINUX_NODE_HAS_A_SOURCE_V1_NOT_CONFIGURED', present=hp.get('v1Present'))
+            if not all((hp.get('v2Qualifications') or {}).values()) or not hp.get('v2Qualifications'):
+                find('LINUX_INSTALLED_V2_QUALIFICATIONS_MISSING', present=hp.get('v2Qualifications'))
 
     # roles: the derivation phase A runs, on the copies, as a normal user in the node's WSL distribution
     # A record-only reinstall (README section 8b): the package's CI Source and Linux half are the installed ones, Linux phases A/B do not

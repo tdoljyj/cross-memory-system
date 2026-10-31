@@ -11,7 +11,11 @@ import hashlib, json, os, re
 
 CONTRACT = 'clued.independent-ci.reinstall-config/1'
 KEYS = {'contract', 'node', 'nodeProfile', 'workDir', 'repo', 'basePackage', 'nodeRecord', 'nodeExe', 'policyInput', 'companionInput',
-        'upgradeTokenFile', 'runner', 'launcher', 'linux', 'secretTargetsExist', 'signer'}
+        'upgradeTokenFile', 'heartbeat', 'runner', 'launcher', 'linux', 'secretTargetsExist', 'signer'}
+# The node heartbeat (DESIGN section 41.6a), optional: the heartbeat-only connection's token file (path only, like upgradeTokenFile) and,
+# optionally and only with it, that connection's binding id (public, informational: the Owner links it on /bindings/failover). The
+# launcher passes -HeartbeatTokenFile, and -HeartbeatBindingId only when configured.
+HEARTBEAT_KEYS = {'tokenFile', 'bindingId'}
 # The node's own result signer for the record's signers.json (another node than the base package's; README section 8): the Ed25519
 # public key its Linux worker signs with (the root-made key's public half, never the private one), its keyId, and the runtimeId its
 # role policies name (verifyResultV2 requires payload.runtimeId === signer.runtimeId).
@@ -21,7 +25,7 @@ NODE_RECORD_KEYS = {'appKeyId', 'appPublicKeySha256Base64', 'ciPrincipalBindingI
 _UUID = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
 NODE_RECORD_SHAPES = {'appPublicKeySha256Base64': r'[A-Za-z0-9+/]{43}=', 'ciPrincipalBindingId': _UUID, 'ciPrincipalRoleRef': _UUID,
                       'ciTokenPinSha256': r'[0-9a-f]{64}', 'controllerNodeSha256': r'[0-9a-f]{64}'}
-PUBLIC_KEYS = {'upgradeTokenFile', 'secretTargetsExist', 'ciTokenPinSha256'}   # names of a path, two booleans and a public pin
+PUBLIC_KEYS = {'upgradeTokenFile', 'secretTargetsExist', 'ciTokenPinSha256', 'tokenFile'}   # names of paths, two booleans and a public pin
 # review 1-3: paths reach the root shell and the elevated PowerShell; ASCII letters, digits, blank, '.', '_', '-' and '\' only
 WIN_PATH = re.compile(r'^[A-Za-z]:\\[A-Za-z0-9 ._\\-]+$')
 RUNNER_BINARY = re.compile(r'^"[A-Za-z]:\\[A-Za-z0-9 ._\\-]+\.exe"$')
@@ -72,6 +76,11 @@ def load(path):
     need(re.fullmatch(r'config/node-profile\.[a-z0-9-]+\.json', cfg['nodeProfile'] or ''), 'CONFIG_NODE_PROFILE_PATH')
     for k in ('workDir', 'repo', 'basePackage', 'nodeExe', 'policyInput', 'companionInput', 'upgradeTokenFile'):
         need(isinstance(cfg[k], str) and WIN_PATH.match(cfg[k]) and '..' not in cfg[k].split('\\'), 'CONFIG_PATH_SHAPE', k)
+    hb = cfg.get('heartbeat')
+    need(hb is None or isinstance(hb, dict) and 'tokenFile' in hb and set(hb) <= HEARTBEAT_KEYS and isinstance(hb['tokenFile'], str) and WIN_PATH.match(hb['tokenFile'])
+         and '..' not in hb['tokenFile'].split('\\') and hb['tokenFile'].lower() != cfg['upgradeTokenFile'].lower()
+         and (hb.get('bindingId') is None or isinstance(hb['bindingId'], str) and re.fullmatch(_UUID, hb['bindingId'])), 'CONFIG_HEARTBEAT')
+    cfg['heartbeat'] = None if hb is None else {'tokenFile': hb['tokenFile'], 'bindingId': hb.get('bindingId')}
     nr = cfg.get('nodeRecord') or {}
     need(isinstance(nr, dict) and set(nr) <= NODE_RECORD_KEYS, 'CONFIG_NODE_RECORD', sorted(set(nr) - NODE_RECORD_KEYS) if isinstance(nr, dict) else None)
     for k, v in nr.items():   # the public fingerprints the node reports; an example's REPLACE_ placeholder never passes
@@ -104,9 +113,12 @@ def load(path):
 
 
 def need_installed_linux(cfg):
-    """The reinstall-only tools need the node's installed Linux CI facts; a first-install configuration (nulls) is refused."""
+    """The reinstall-only tools need the node's installed Linux CI facts; a first-install configuration (nulls) is refused.
+    v1SourceHead may be null: a node first installed without Source v1 (README section 8c). Its root scripts then require that no Source v1
+    is there and take the signing lineage from the node's installed, signed roles-v3 qualifications instead (README section 6)."""
     li = cfg['linux']
-    need(li['installedRoles'] is not None and all(v is not None for v in li['host'].values()), 'NODE_HAS_NO_INSTALLED_LINUX_CI')
+    need(li['installedRoles'] is not None and li['host']['toolchainNodeSha256'] is not None and li['host']['resultPublicKeySha256'] is not None,
+         'NODE_HAS_NO_INSTALLED_LINUX_CI')
 
 
 def need_first_install_linux(cfg):
