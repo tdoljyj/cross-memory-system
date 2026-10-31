@@ -48,7 +48,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = '350eec6cb01f659f6e7a416901db40278cf25e0e9b771bdd6d2b547a0f791e97'   # the r7 f4 TURING launcher text (6d32f2ba) with the host name as a pin ($NodeHostname) and the logon-right refusal before the uninstall (2026-10-30)
+TEMPLATE_SHA = '5ff3a1c1fe656e68576463f8a1b9ed41a343be14c1d989542f374bdfb22d84f6'   # the r7 f4 TURING launcher text (6d32f2ba) with the host name as a pin ($NodeHostname), the logon-right refusal before the uninstall (2026-10-30) and the optional node heartbeat token (350eec6c + DESIGN 41.6a, 2026-10-31)
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])
@@ -157,6 +157,19 @@ UCFG_WANT = {'contract': 'clued.independent-ci.resident-upgrader-config/1', 'nod
 assert ucfg == UCFG_WANT, ('UPGRADER_CONFIG_NOT_AS_GENERATED', ucfg)
 assert re.fullmatch(r'[A-Za-z]:\\[^\s"\']+', TOKEN_FILE), ('UPGRADE_TOKEN_FILE_PATH_SHAPE', TOKEN_FILE)   # Invoke-Child refuses blanks and quotes
 token_file_present = os.path.isfile(TOKEN_FILE)   # stat only: the token's content is never opened here
+# DESIGN section 41.6a: the optional node heartbeat token (path only, never opened here) and its optional binding id, passed to this
+# package's installer as -HeartbeatTokenFile [-HeartbeatBindingId]; the launcher's elevated with-token plan must add exactly that entry.
+HB = CFG['heartbeat']
+HB_TARGET = None; hb_file_present = None
+if HB:
+    _hd = re.findall(r"(?m)^\$HeartbeatTokenDirectory = '([^']+)'", installer)
+    assert len(_hd) == 1 and re.search(r"(?m)^\$HeartbeatTokenTarget = \$HeartbeatTokenDirectory \+ '\\ci-node-heartbeat\.token'$", installer) and '[string]$HeartbeatTokenFile' in installer, 'PACKAGE_INSTALLER_HAS_NO_HEARTBEAT_TOKEN'
+    HB_TARGET = _hd[0] + BS + 'ci-node-heartbeat.token'
+    assert HB_TARGET == LIVE_ROOT + BS + 'secrets' + BS + 'heartbeat' + BS + 'ci-node-heartbeat.token', HB_TARGET
+    assert re.fullmatch(r'[A-Za-z]:\\[^\s"\']+', HB['tokenFile']), ('HEARTBEAT_TOKEN_FILE_PATH_SHAPE', HB['tokenFile'])   # Invoke-Child refuses blanks and quotes
+    assert HB['bindingId'] is None or '$HeartbeatBindingId' in installer, 'PACKAGE_INSTALLER_HAS_NO_HEARTBEAT_BINDING_ID'
+    assert HB['bindingId'] is None or HB['bindingId'] != PKG_INST.get('ciPrincipalBindingId'), 'HEARTBEAT_BINDING_IS_THE_CI_BINDING'
+    hb_file_present = os.path.isfile(HB['tokenFile'])
 upgrader_service_present = subprocess.run([BS.join(['C:', 'Windows', 'System32', 'sc.exe']), 'query', 'CluedCIUpgrader'], capture_output=True).returncode != 1060
 # review m7: never trust --package-sha alone. Every package file must match its manifest, and the package is rebuilt here from the
 # named inputs (build-package.mjs of this commit's tree, into a NEW directory) and must give the same manifest sha.
@@ -248,6 +261,9 @@ pu = plan['upgrader']
 assert pu['service'] == 'CluedCIUpgrader' and pu['account'] == 'LocalSystem' and pu['manifestSha256'] == UPG_SECTION['manifestSha256'] and pu['configSha256'] == ucfg_entry[0]['sha256'], pu
 assert pu['token']['target'] == TOKEN_TARGET and pu['token']['supplied'] is False and pu['token']['targetExists'] is False and pu['token']['fingerprint'] is None, pu['token']
 assert plan['secretsFingerprintDirectory'] is None
+if HB:   # the reviewed plan's heartbeat entry: not supplied, nothing there yet, no fingerprint, no binding id
+    ph = plan.get('heartbeatToken') or {}
+    assert ph.get('target') == HB_TARGET and ph.get('supplied') is False and ph.get('targetExists') is False and ph.get('fingerprint') is None and ph.get('bindingId') is None, ph
 assert plan['generation']['number'] == 1 and plan['generation']['linux'] == {'generation': 1, 'manifestSha256': pkg['linux']['manifestSha256'], 'ciSourceManifestSha256': pkg['ciSourceManifestSha256']}, plan['generation']
 rb = plan['runnerBefore']
 runner_usable = bool(rb['originalBinary'] and rb['stoppedPid0'] and rb['manual'] and rb['accountIsController'] and rb['sddl'] == RUNNER['sddl'])
@@ -334,12 +350,14 @@ if paused_present and not halt_accepted and json.load(open(os.path.join(LIVE_ROO
 if not runner_usable: refusals.append('DRY_RUN_RUNNER_NOT_ORIGINAL_STOPPED')
 if not linux_live: refusals.append('FINAL_NEEDS_LINUX_EVIDENCE')
 if not token_file_present: refusals.append('UPGRADE_TOKEN_FILE_MISSING')
+if HB and not hb_file_present: refusals.append('HEARTBEAT_TOKEN_FILE_MISSING')
 if not facts_sha: refusals.append('FINAL_NEEDS_LINUX_VERSION_FACTS')
 # r7: CluedCIUpgrader is expected here (the r5c2 install); uninstall-resident.ps1 stops and deletes it, the after-uninstall check stays
 R5C_REPORT = {'packageContract': pkg['contract'], 'upgraderManifestSha256': UPG_SECTION['manifestSha256'], 'upgraderTargets': len(upg_targets), 'upgraderConfig': ucfg,
               'upgraderConfigSha256': ucfg_entry[0]['sha256'], 'tokenFile': TOKEN_FILE, 'tokenFilePresent': token_file_present, 'tokenTarget': TOKEN_TARGET,
               'linuxManifestSha256': pkg['linux']['manifestSha256'], 'linuxVersionFacts': FACTS, 'linuxVersionFactsSha256': facts_sha,
-              'upgraderServicePresent': upgrader_service_present, 'secretWorkParent': SECRET_WORK_PARENT, 'secretWorkSddl': SECRET_WORK_SDDL}
+              'upgraderServicePresent': upgrader_service_present, 'secretWorkParent': SECRET_WORK_PARENT, 'secretWorkSddl': SECRET_WORK_SDDL,
+              'heartbeat': HB and {'tokenFile': HB['tokenFile'], 'tokenFilePresent': hb_file_present, 'target': HB_TARGET, 'bindingId': HB['bindingId']}}
 if present: refusals.append('SPOOL_PROTOCOL_RECORDS_PRESENT')
 quiet['spoolRecords'] = present
 # review r5-1: a FINAL launcher never carries the dddddddd-/eeeeeeee- placeholder refs (regen-r4.ps1 -Final refuses them too)
@@ -421,6 +439,9 @@ lines = [
     '$UpgradeTokenTarget = ' + q(TOKEN_TARGET) + '   # install-resident.ps1 of this package',
     '$SecretWorkParent = ' + q(SECRET_WORK_PARENT) + '   # install-resident.ps1 of this package (the fingerprint directory the token adds to the plan)',
     '$SecretWorkSddl = ' + q(SECRET_WORK_SDDL),
+    '$HeartbeatTokenFile = ' + (q(HB['tokenFile']) if HB else '$null') + '   # DESIGN 41.6a: the node heartbeat token (path only; read by install-resident.ps1, never here)',
+    '$HeartbeatTokenTarget = ' + (q(HB_TARGET) if HB else '$null') + '   # install-resident.ps1 of this package',
+    '$HeartbeatBindingId = ' + (q(HB['bindingId']) if HB and HB['bindingId'] else '$null') + '   # informational, passed only when configured',
     '$LinuxVersionFactsSource = ' + (q(FACTS) if FACTS else '$null') + '   # r5c: Linux phase B version facts (verify -LinuxVersionFactsFile)',
     '$LinuxVersionFactsSha256 = ' + (q(facts_sha) if facts_sha else '$null'),
     '$UpgraderManifestSha256 = ' + q(UPG_SECTION['manifestSha256']),

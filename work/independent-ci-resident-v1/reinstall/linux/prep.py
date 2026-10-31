@@ -46,7 +46,13 @@ assert re.fullmatch(r'[0-9a-f]{40}', OLD_COMMIT) and all(re.fullmatch(r'[0-9a-f]
 NODE_SHA = CFG['linux']['host']['toolchainNodeSha256']
 PUB_SHA = CFG['linux']['host']['resultPublicKeySha256']
 V1_HEAD = CFG['linux']['host']['v1SourceHead']
+# A node without Source v1 (first installed by Z1, README section 8c; null v1SourceHead, never a host name): the scripts require that no
+# Source v1 is there (phase A, the signer, verify-source-v2's no-v1 check) and B1 signs with sign-qualification-no-v1.mjs, whose lineage is
+# the node's installed, signed roles-v3 qualifications. Everything else is the same; a node with Source v1 gets the same scripts as before.
+NO_V1 = V1_HEAD is None
 SIGN_SHA = '9ee06a93b11353b49270c774ae988060994e7a4aaae606b4736b4597c3f20aff'   # reviewed 10-21, used 10-21/10-22/10-23
+SIGN_NO_V1_SHA = '7763a598600ff4b94f0633d5824f8bf0e5697759d8c359b31025ee9916202435'   # sign-qualification-no-v1.mjs (imports SIGN_SHA's canonicalJson, ROLES, FIXED)
+SIGNER = 'sign-qualification-no-v1.mjs' if NO_V1 else 'sign-qualification-v2.mjs'
 IN = os.path.join(R, 'linux', sys.argv[7])
 REVIEW_TOOLS = os.path.join(HERE, 'tools')   # the reviewed signer and verify-source-v2 template, committed
 VERIFY_TEMPLATE_SHA = '481b0d85c2023e3506f30c4874c6304d2513786684d5d9a965f38a43699ca992'
@@ -82,9 +88,14 @@ sign_src = os.path.join(REVIEW_TOOLS, 'sign-qualification-v2.mjs'); vt_src = os.
 assert sha(sign_src) == SIGN_SHA and sha(vt_src) == VERIFY_TEMPLATE_SHA, 'REVIEW_COPY_TOOLS_CHANGED'
 vt = open(vt_src, 'rb').read().decode('utf-8')
 v2, n1 = _re.subn(r'(?m)^COMMIT=[0-9a-f]{40}$', 'COMMIT=' + COMMIT, vt); v2, n2 = _re.subn(r'(?m)^MANIFEST_SHA=[0-9a-f]{64}$', 'MANIFEST_SHA=' + NEW, v2)
-v2, n3 = _re.subn(r'(?m)^V1_HEAD=[0-9a-f]{40}$', 'V1_HEAD=' + V1_HEAD, v2)
+v2, n3 = _re.subn(r'(?m)^V1_HEAD=[0-9a-f]{40}$', 'V1_HEAD=' + (V1_HEAD or ''), v2)   # empty: the template then checks there is no v1
 assert n1 == 1 and n2 == 1 and n3 == 1
-for name, data in (('sign-qualification-v2.mjs', open(sign_src, 'rb').read()), ('verify-source-v2.sh', v2.encode('utf-8'))):
+extra = []
+if NO_V1:
+    nov1_src = os.path.join(REVIEW_TOOLS, SIGNER)
+    assert sha(nov1_src) == SIGN_NO_V1_SHA, 'REVIEW_COPY_TOOLS_CHANGED'
+    extra = [(SIGNER, open(nov1_src, 'rb').read())]
+for name, data in [('sign-qualification-v2.mjs', open(sign_src, 'rb').read()), ('verify-source-v2.sh', v2.encode('utf-8'))] + extra:
     p = os.path.join(IN, 'tools', name)
     if os.path.exists(p):
         assert open(p, 'rb').read() == data, ('INPUT_DIFFERS', name)
@@ -123,7 +134,7 @@ upg_text = '\n'.join(['install-script.sha256=' + sha(os.path.join(IN, 'tools', '
                      + ['resident.exists=yes', 'upgrade-v1.exists=no', 'generation.current.exists=no'])
 UPG_PLAN = hashlib.sha256(upg_text.encode('utf-8')).hexdigest()
 files = ['tools/install-resident-linux.sh', 'tools/uninstall-resident-linux.sh'] + ['linux-pkg/' + f for f in UPG_FILES] + ['linux-res-pkg/' + f for f in RES_FILES] + ['tools/clued-ci-install-source-v2', 'tools/verify-resident-linux.sh', 'tools/derive-roles-r7.py', 'tools/verify-signed-r4.mjs', 'tools/check-host-r4.py',
-         'tools/sign-qualification-v2.mjs', 'tools/verify-source-v2.sh'] + \
+         'tools/sign-qualification-v2.mjs', 'tools/verify-source-v2.sh'] + ['tools/' + n for n, _ in extra] + \
         ['record/' + f for f in ('acceptance.json', 'installation.json', 'record-manifest.json', 'signers.json', 'source-manifest.json')]
 for f in files:
     assert b'\r' not in open(os.path.join(IN, *f.split('/')), 'rb').read(), ('CR', f)
@@ -271,7 +282,9 @@ A = "#!/bin/bash\n" + f"""# r7 Linux phase A (root, NO private key, changes noth
 # replaces derive-linux-v2.mjs. Writes only under $BASE, then (after staging) a review copy of public data next to $W.
 #   /usr/bin/env -i R4_CLEAN_ENV=1 PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/bash --noprofile --norc /root/reinstall-linux-A-stage.sh
 """ + COMMON + f"""quiet_and_installed
-# The installed Linux half (from the node's version facts): its resident (OLD_LINUX_RES_MANIFEST), the frozen upgrade tool and its generation are EXPECTED;
+""" + ("""# no Source v1 on this node (configuration v1SourceHead null): the signer's lineage is the installed roles-v3; a node with a v1 is refused
+[ ! -e /opt/clued-independent-ci/source-first-formal-v1 ] && [ ! -e /etc/clued-independent-ci/roles ] && [ ! -e /etc/clued-independent-ci/formal-source-manifest-v1.json ] || refuse NODE_HAS_A_SOURCE_V1_CONFIGURE_ITS_HEAD
+""" if NO_V1 else "") + f"""# The installed Linux half (from the node's version facts): its resident (OLD_LINUX_RES_MANIFEST), the frozen upgrade tool and its generation are EXPECTED;
 # the installed tool's read-only version-facts must say exactly that (generation 1 of the old Source and resident, nothing staged)
 [ "$(sha256sum /opt/clued-independent-ci/resident-v1/manifest.json | cut -d' ' -f1)" = "$OLD_LINUX_RES_MANIFEST" ] || refuse LINUX_RESIDENT_MANIFEST_NOT_THE_INSTALLED_R5C2
 [ -e "$UPG/bin/clued-ci-upgrade-linux" ] && [ -e /var/lib/clued-independent-ci/resident/upgrade/current.json ] || refuse UPGRADE_CHANNEL_NOT_THE_R5C2_ONE
@@ -291,7 +304,7 @@ SECRET=$(find $BACKUP_PATHS \\( -name '*.pem' -o -name '*.key' -o -name '*.token
 install -d -o root -g root -m 0700 "$BASE" "$STG" "$STG/tools" "$STG/record" "$STG/linux-pkg" "$STG/linux-pkg/upgrade-v1" "$STG/linux-pkg/upgrade-v1/bin" "$STG/linux-res-pkg" "$STG/linux-res-pkg/bin" "$STG/linux-res-pkg/systemd"
 for f in {' '.join(UPG_FILES)}; do install -o root -g root -m 0400 "$W/linux-pkg/$f" "$STG/linux-pkg/$f"; done   # r5c
 for f in {' '.join(RES_FILES)}; do install -o root -g root -m 0400 "$W/linux-res-pkg/$f" "$STG/linux-res-pkg/$f"; done   # r7
-for f in install-resident-linux.sh uninstall-resident-linux.sh clued-ci-install-source-v2 verify-resident-linux.sh derive-roles-r7.py verify-signed-r4.mjs check-host-r4.py sign-qualification-v2.mjs verify-source-v2.sh; do install -o root -g root -m 0400 "$W/tools/$f" "$STG/tools/$f"; done
+for f in install-resident-linux.sh uninstall-resident-linux.sh clued-ci-install-source-v2 verify-resident-linux.sh derive-roles-r7.py verify-signed-r4.mjs check-host-r4.py sign-qualification-v2.mjs verify-source-v2.sh{''.join(' ' + n for n, _ in extra)}; do install -o root -g root -m 0400 "$W/tools/$f" "$STG/tools/$f"; done
 for f in acceptance.json installation.json record-manifest.json signers.json source-manifest.json; do install -o root -g root -m 0400 "$W/record/$f" "$STG/record/$f"; done
 cp -a --no-preserve=ownership "$W/src.git" "$STG/src.git"
 chown -R root:root "$STG/src.git"
@@ -380,7 +393,7 @@ bash --noprofile --norc "$STG/tools/install-resident-linux.sh" --plan-upgrade-v1
 quiet_and_installed
 $CLEAN $PY -I "$STG/tools/check-host-r4.py" "$STG/roles-in" "$NODE_SHA" "$PUB_SHA" > "$STG/host-B0.stdout.json" || {{ cat "$STG/host-B0.stdout.json"; refuse HOST_PINS_CHANGED; }}
 # B1 [PRIVATE KEY]: sign the three qualifications v2 (the tool reads the key itself, adds only qualifiedAt, verifies, writes create-only)
-$CLEAN "$NODE" "$STG/tools/sign-qualification-v2.mjs" --in "$STG/roles-in" --out "$STG/roles-signed" > "$STG/sign.stdout.json" || {{ cat "$STG/sign.stdout.json"; refuse SIGNING_FAILED; }}
+$CLEAN "$NODE" "$STG/tools/{SIGNER}" --in "$STG/roles-in" --out "$STG/roles-signed" > "$STG/sign.stdout.json" || {{ cat "$STG/sign.stdout.json"; refuse SIGNING_FAILED; }}
 grep -q QUALIFICATIONS_V2_SIGNED "$STG/sign.stdout.json" || refuse SIGNING_FAILED
 # B2 (public key only, B-2): the five imported modules come straight from the pinned commit (no archive, no replace objects) and are
 # checked against the record manifest pins inside verify-signed-r4.mjs before any import

@@ -15,10 +15,13 @@
 // service is stopped, the snapshot cannot be read or is older than SNAPSHOT_FRESH_MS), whether the service runs (SCM) and the
 // snapshot's age.
 //
-// The answer { status:'ok', received_at, node_ids, intake_paused_until, watchdog:{ last_tick_at, stale }, auto_handovers:[{ receipt_id,
-// from_binding_id, to_binding_id, effective_at, trigger, created_at }] } (parseHeartbeatReply, tolerant: a missing or unknown
-// optional part never makes a beat count as failed) or { status:'rejected', error_code:'ci_node_not_registered' } (its own
-// notice). The server lists only automatic take-overs TO this node's connection (the last 24 hours), by connection id, never by
+// The answer { status:'ok', received_at, node_ids, node_binding_id, via_link, intake_paused_until, watchdog:{ last_tick_at, stale },
+// auto_handovers:[{ receipt_id, from_binding_id, to_binding_id, effective_at, trigger, created_at }] } (parseHeartbeatReply, tolerant:
+// a missing or unknown optional part never makes a beat count as failed; node_binding_id is the node's CI connection the beat was
+// recorded on, via_link whether it came through the linked heartbeat connection) or { status:'rejected', error_code:
+// 'ci_node_not_registered' } (its own notice: the heartbeat connection is not linked to a node, which the Owner does on KooYomi's
+// /bindings/failover) or 'heartbeat_connection_only' (the server took the token for a heartbeat connection and refused the action:
+// should not happen for ci_node_heartbeat; a misconfiguration notice, never "token refused"). The server lists only automatic take-overs TO this node's connection (the last 24 hours), by connection id, never by
 // node name (so there is no name to compare: R3 MINOR 9 is moot on the real wire): the companion comments once per receipt on the
 // compute panel's issue with the Owner's gh login, @-mentioning the Owner, marked <!-- clued-auto-handover:<receipt id> --> (the
 // panel recognises the marker and does not mention the Owner again). The watchdog: stale (the server's own five minutes, or
@@ -99,14 +102,21 @@ export function heartbeatPayload({ nodeName, scope, status, statusError = false,
 // What a change means: anything but the snapshot's age (which moves every pass).
 const fingerprint = p => JSON.stringify({ ...p, snapshot_age_seconds: null });
 
-const FAILED = Object.freeze({ ok: false, tokenRefused: false, notRegistered: false, autoHandovers: Object.freeze([]), watchdogTickAt: null, watchdogStale: null });
+const FAILED = Object.freeze({ ok: false, tokenRefused: false, notRegistered: false, serverNotReady: false, connectionOnly: false, autoHandovers: Object.freeze([]), watchdogTickAt: null, watchdogStale: null });
+// A server without the heartbeat action (before merge-train step 2b): the CI command door checks the ci-admission role
+// before any action and answers admission_binding_required, or it does not know the action (400, 22023
+// work_claim_ci_command_invalid). Neither says anything about the token (Task 293a092a): its own notice, never "token refused".
+const NOT_READY = Object.freeze({ ...FAILED, serverNotReady: true });
 
-// The server's answer, tolerantly: { ok, tokenRefused, notRegistered, autoHandovers: [{ receiptId, from, to, at, trigger }],
-// watchdogTickAt (ms | null), watchdogStale (boolean | null: unknown) }. Never throws. ok is status 'ok' alone: a missing or odd
+// The server's answer, tolerantly: { ok, tokenRefused, notRegistered, serverNotReady, connectionOnly, autoHandovers: [{ receiptId, from,
+// to, at, trigger }], watchdogTickAt (ms | null), watchdogStale (boolean | null: unknown), and on ok nodeBindingId (uuid | null) and
+// viaLink (boolean | null): optional, never required }. Never throws. ok is status 'ok' alone: a missing or odd
 // watchdog or handover list only leaves that part unknown or empty; a handover entry that does not fit is skipped.
 export function parseHeartbeatReply(v) {
   if (!plain(v)) return FAILED;
-  if (v.status === 'rejected') return { ...FAILED, notRegistered: v.error_code === NOT_REGISTERED, tokenRefused: ['admission_binding_required', 'binding_not_authorized'].includes(v.error_code) };
+  if (v.status === 'rejected' && v.error_code === 'admission_binding_required') return NOT_READY;
+  if (v.status === 'rejected' && v.error_code === 'heartbeat_connection_only') return { ...FAILED, connectionOnly: true };
+  if (v.status === 'rejected') return { ...FAILED, notRegistered: v.error_code === NOT_REGISTERED, tokenRefused: v.error_code === 'binding_not_authorized' };
   if (v.status !== 'ok') return FAILED;
   const w = plain(v.watchdog) ? v.watchdog : null;
   const tick = Date.parse(w?.last_tick_at ?? '');
@@ -119,13 +129,15 @@ export function parseHeartbeatReply(v) {
     autoHandovers.push(Object.freeze({ receiptId: h.receipt_id.toLowerCase(), from: UUID.test(h.from_binding_id ?? '') ? h.from_binding_id.toLowerCase() : null,
       to: UUID.test(h.to_binding_id ?? '') ? h.to_binding_id.toLowerCase() : null, at, trigger: typeof h.trigger === 'string' && h.trigger.length <= 64 ? h.trigger : null }));
   }
-  return { ok: true, tokenRefused: false, notRegistered: false, autoHandovers: Object.freeze(autoHandovers), watchdogTickAt, watchdogStale };
+  return { ok: true, tokenRefused: false, notRegistered: false, serverNotReady: false, connectionOnly: false, autoHandovers: Object.freeze(autoHandovers), watchdogTickAt, watchdogStale,
+    nodeBindingId: UUID.test(v.node_binding_id ?? '') ? v.node_binding_id.toLowerCase() : null, viaLink: typeof v.via_link === 'boolean' ? v.via_link : null };
 }
 
 // The one wire call (the transport interface: send({ payload }, { token }) -> parseHeartbeatReply's shape). Same call shape as every
 // other node RPC (scripts/ci/clued-work-admission.mjs#cluedRpc): POST <supabaseUrl>/rest/v1/rpc/clued_work_verify_v1, apikey and
 // Bearer the publishable key, body { p_token_hash: sha256 hex of the token, p_input: payload }. 401/403 (binding_not_authorized,
-// authorization_revoked_or_expired): the token is refused. Anything else that is not a 200 (400 work_claim_ci_command_invalid, 404
+// authorization_revoked_or_expired): the token is refused. 400 work_claim_ci_command_invalid: a server without the action (NOT_READY).
+// Anything else that is not a 200 (404
 // before the migration, a timeout) is a failed beat. The token itself never leaves the process; no body is ever logged.
 export function supabaseHeartbeatTransport({ supabaseUrl, publishableKey, fetchImpl = globalThis.fetch, timeoutMs = HEARTBEAT_TIMEOUT_MS }) {
   if (!/^https:\/\/[a-z0-9]+\.supabase\.co$/.test(supabaseUrl ?? '') || !/^sb_publishable_[A-Za-z0-9_-]+$/.test(publishableKey ?? '')) throw new Error('HEARTBEAT_TRANSPORT_CONFIG_INVALID');
@@ -137,6 +149,7 @@ export function supabaseHeartbeatTransport({ supabaseUrl, publishableKey, fetchI
       const text = await r.text();
       if (Buffer.byteLength(text) > REPLY_MAX_BYTES) return FAILED;
       if (r.status === 401 || r.status === 403) return { ...FAILED, tokenRefused: true };
+      if (r.status === 400) { try { const b = JSON.parse(text); if (b?.code === '22023' && b?.message === 'work_claim_ci_command_invalid') return NOT_READY; } catch { /* a failed beat */ } }
       if (r.status !== 200) return FAILED;
       return parseHeartbeatReply(JSON.parse(text));
     } catch { return FAILED; }
@@ -175,6 +188,7 @@ export class CompanionHeartbeat {
   constructor(ports) {
     Object.assign(this, ports);
     this.lastSentAt = null; this.lastFingerprint = null; this.failures = 0; this.failingSince = null; this.watchdogStale = false; this.unregisteredSince = null;
+    this.connectionOnlySince = null; this.nodeBindingId = null; this.viaLink = null;
   }
 
   async step() {
@@ -195,10 +209,27 @@ export class CompanionHeartbeat {
       // The server knows no node for this token's connection: its own notice (the beat is no heartbeat at all for the watchdog).
       this.failures = 0; this.failingSince = null;
       this.unregisteredSince ??= now;
-      await this.say(`heartbeat-unregistered:${this.unregisteredSince}`, '节点心跳未登记', '服务端没有本节点的登记（ci_node_not_registered）：心跳不被记下，自动接班看不到本节点。请在 /bindings 核对本节点的 CI 连接与心跳令牌。');
+      await this.say(`heartbeat-unregistered:${this.unregisteredSince}`, '节点心跳未登记', '服务端没有本节点的登记（ci_node_not_registered）：心跳不被记下，自动接班看不到本节点。请 Owner 在 KooYomi 的 /bindings/failover 把心跳连接挂到本节点（两步确认），并核对本节点的 CI 连接。');
       return { sent: false, payload, notRegistered: true };
     }
     this.unregisteredSince = null;
+    if (r?.serverNotReady === true) {
+      // Not a failure of this node or its token: the server has no heartbeat yet. One notice per process; no failure count.
+      this.failures = 0; this.failingSince = null;
+      this.notReadySince ??= now;
+      await this.say(`heartbeat-server-not-ready:${this.notReadySince}`, '服务端还不收心跳', '服务端还没有节点心跳功能（合并列车第 2 步 b 未上线）：心跳暂不被记下，自动接班看不到本节点。令牌没有问题，不用换令牌或重装；服务端上线后自动恢复。');
+      return { sent: false, payload, serverNotReady: true };
+    }
+    this.notReadySince = null;
+    if (r?.connectionOnly === true) {
+      // heartbeat_connection_only: the server refused the heartbeat action itself to this heartbeat connection. Should not happen; a
+      // misconfiguration of the server or of the link, not of this token: its own notice, no failure count, never "token refused".
+      this.failures = 0; this.failingSince = null;
+      this.connectionOnlySince ??= now;
+      await this.say(`heartbeat-connection-only:${this.connectionOnlySince}`, '心跳连接配置有误', '服务端对本节点的心跳答 heartbeat_connection_only（心跳连接只能发心跳，却连心跳也被拒）：本不应发生，心跳不被记下。令牌本身没有被拒，不用换令牌；请 Owner 在 KooYomi 的 /bindings/failover 核对心跳连接与本节点的挂接，仍不行就告诉维护者。');
+      return { sent: false, payload, connectionOnly: true };
+    }
+    this.connectionOnlySince = null;
     if (!r?.ok) {
       this.failures += 1;
       this.failingSince ??= now;
@@ -210,6 +241,9 @@ export class CompanionHeartbeat {
       return { sent: false, payload, failures: this.failures };
     }
     this.failures = 0; this.failingSince = null; this.lastFingerprint = fingerprint(payload);
+    // Informational (node_binding_id, via_link): which node's CI connection the server recorded the beat on, and whether it came
+    // through the linked heartbeat connection. Never required; an answer without them leaves them null.
+    this.nodeBindingId = r.nodeBindingId ?? null; this.viaLink = r.viaLink ?? null;
     // Kept for the PR page status (pr-status.mjs#withWatchdogLine) until an answer says otherwise; a failed beat or an answer
     // without a readable watchdog keeps it.
     const stale = r.watchdogStale ?? (r.watchdogTickAt !== null ? now - r.watchdogTickAt > WATCHDOG_STALE_MS : null);
@@ -219,7 +253,7 @@ export class CompanionHeartbeat {
     }
     // The server lists only take-overs to this node's connection.
     for (const h of r.autoHandovers ?? []) await this.relayHandover(h);
-    return { sent: true, payload, watchdogStale: this.watchdogStale, autoHandovers: r.autoHandovers ?? [] };
+    return { sent: true, payload, watchdogStale: this.watchdogStale, autoHandovers: r.autoHandovers ?? [], nodeBindingId: this.nodeBindingId, viaLink: this.viaLink };
   }
 
   async say(key, title, body) {

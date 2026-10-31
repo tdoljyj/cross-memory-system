@@ -266,6 +266,47 @@ Yes ($r.ok -eq $false -and $r.detail -ceq 'DIRECTORY_ACL') 'heartbeat-verify-wro
 Yes (-not (Test-HeartbeatDirectoryAcl $hbDir (Get-HeartbeatDirectorySddl $hbSid))) 'heartbeat-install-wrong-folder-acl-refused'
 Yes ($installText.Contains("Record 'heartbeat-token-acl'") -eq $false -and (Get-Content -LiteralPath (Join-Path $here 'verify-resident.ps1') -Raw).Contains("Record 'heartbeat-token-acl' `$hbAcl.ok `$hbAcl.detail")) 'heartbeat-verify-records-the-check'
 
+# 4c-3. The heartbeat connection id (merge train step 2b review): -HeartbeatBindingId is informational, only with -HeartbeatTokenFile; the
+#       plan and the receipt record it, the result prints the Owner's next step (link it on /bindings/failover, two-step confirmation). The
+#       install makes no network call and uses no token for it.
+foreach ($name in @('install-resident.ps1:Get-HeartbeatNextStep', 'install-resident.ps1:Clear-SecretBytes', 'verify-resident.ps1:Get-HeartbeatBindingState', 'verify-resident.ps1:Get-Field')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }
+. ([scriptblock]::Create($hbPlan))
+$zh = { param([int[]]$c) -join @($c | ForEach-Object { [char]$_ }) }
+$hbId = '0a1b2c3d-0000-4000-8000-0000000000cc'
+$stepWith = Get-HeartbeatNextStep 'turing' $hbId; $stepWithout = Get-HeartbeatNextStep 'turing' $null
+# "qing Owner zai KooYomi de /bindings/failover ba xin-tiao lian-jie <id> gua-dao ben jie-dian <node> (liang-bu que-ren)"
+$wantWith = (& $zh 0x8bf7) + ' Owner ' + (& $zh 0x5728) + ' KooYomi ' + (& $zh 0x7684) + ' /bindings/failover ' + (& $zh 0x628a, 0x5fc3, 0x8df3, 0x8fde, 0x63a5) + ' ' + $hbId + ' ' + (& $zh 0x6302, 0x5230, 0x672c, 0x8282, 0x70b9) + ' turing' + (& $zh 0xff08, 0x4e24, 0x6b65, 0x786e, 0x8ba4, 0xff09)
+Yes ($stepWith -ceq $wantWith) 'heartbeat-next-step:with-the-connection-id'
+Yes ($stepWithout -ceq $wantWith.Replace(' ' + $hbId + ' ', '')) 'heartbeat-next-step:the-same-step-without-an-id'
+$hbInstallCode = @((Get-Content -LiteralPath (Join-Path $here 'install-resident.ps1')) | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+Yes ($installText -match "(?m)^\s+\`$t = \[regex\]::Unescape\('[\x20-\x7e]+'\)\s*$" -and $hbInstallCode -notmatch '[^\x00-\x7f]') 'heartbeat-next-step:kept-as-ascii-escapes-in-a-file-without-bom'
+$savedOwnerSid = $OwnerSid; $OwnerSid = $hbOwner; $HeartbeatTokenDirectory = Join-Path $Scratch 'hb-plan\secrets\heartbeat'; $HeartbeatTokenTarget = $HeartbeatTokenDirectory + '\ci-node-heartbeat.token'
+$script:SecretBytes = @{ upgradeToken = [byte[]](1..8) }
+$HeartbeatTokenFile = ''; $HeartbeatBindingId = $hbId
+Yes ((Test-Refused { Get-HeartbeatTokenPlan } 'HEARTBEAT_BINDING_ID_REQUIRES_HEARTBEAT_TOKEN_FILE') -and $script:SecretBytes.Count -eq 0) 'heartbeat-binding-id:refused-without-a-token-file-bytes-cleared'
+$HeartbeatBindingId = ''
+$neither = Get-HeartbeatTokenPlan
+Yes ($neither.supplied -eq $false -and $null -eq $neither.bindingId -and @($neither.Keys) -ccontains 'bindingId') 'heartbeat-binding-id:neither-is-fine'
+Yes ($installText.Contains('bindingId = $(if ($did) { $ht.bindingId } else { $null }) }') -and $installText.Contains('heartbeatBindingId = $receipt.heartbeatToken.bindingId') -and
+  $installText.Contains('heartbeatNextStep = $(if ($receipt.heartbeatToken.placed) { Get-HeartbeatNextStep $Identity.nodeName $receipt.heartbeatToken.bindingId } else { $null })')) 'heartbeat-binding-id:receipt-and-result-carry-it'
+Yes ($installText.Contains("[ValidatePattern('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`$')][string]`$HeartbeatBindingId")) 'heartbeat-binding-id:parameter-is-a-uuid'
+foreach ($word in @('Invoke-WebRequest', 'Invoke-RestMethod', 'Net.WebClient', 'Net.Http', 'HttpWebRequest', 'clued_work_verify_v1', 'ci_node_heartbeat', 'supabase')) { Yes (-not $hbInstallCode.Contains($word)) ('install-makes-no-network-call:' + $word) }
+# verify reports the receipt's id (no network)
+$rcpt = { param($hb) if ($null -eq $hb) { [pscustomobject]@{ contract = 'x' } } else { ([ordered]@{ heartbeatToken = $hb } | ConvertTo-Json -Depth 4) | ConvertFrom-Json } }
+foreach ($case in @(
+    @($null, $true, 'NOT_IN_RECEIPT', 'older-receipt'),
+    @([ordered]@{ placed = $false; bindingId = $null }, $true, 'NOT_INSTALLED', 'no-token'),
+    @([ordered]@{ placed = $true; bindingId = $null }, $true, 'TOKEN_WITHOUT_BINDING_ID', 'token-without-id'),
+    @([ordered]@{ placed = $true; bindingId = $hbId }, $true, ('bindingId=' + $hbId), 'token-with-id'),
+    @([ordered]@{ placed = $false; bindingId = $hbId }, $false, 'BINDING_ID_INVALID', 'id-without-token'),
+    @([ordered]@{ placed = $true; bindingId = 'not-a-uuid' }, $false, 'BINDING_ID_INVALID', 'id-not-a-uuid'),
+    @([ordered]@{ placed = $true; bindingId = $hbId.ToUpperInvariant() }, $false, 'BINDING_ID_INVALID', 'id-upper-case'))) {
+  $st = Get-HeartbeatBindingState (& $rcpt $case[0])
+  Yes ($st.ok -eq $case[1] -and $st.detail -ceq $case[2]) ('verify-heartbeat-binding:' + $case[3])
+}
+Yes ($verifyText.Contains("Record 'heartbeat-binding' `$hbBinding.ok `$hbBinding.detail")) 'verify-heartbeat-binding:recorded'
+$OwnerSid = $savedOwnerSid
+
 # The shared cases: this PowerShell derivation is held to the JavaScript one (test/node-identity.test.mjs reads the same file).
 $idCasesText = [IO.File]::ReadAllText((Join-Path $here '..\test\fixtures\node-identity-cases.json'), (New-Object Text.UTF8Encoding($false, $true)))
 $idCases = $idCasesText | ConvertFrom-Json
@@ -601,6 +642,24 @@ if (Test-Path -LiteralPath $probeNode) {
   Yes (Test-Refused { Get-SecretsPlan } 'CI_TOKEN_TARGET_EXISTS_NOT_OVERWRITTEN') 'secrets-plan:existing-token-never-overwritten'
   Remove-Item -LiteralPath (Join-Path $fakeProgramData 'CluedIndependentCI\secrets') -Recurse -Force
   [void][IO.Directory]::Delete($link)
+
+  # The heartbeat token with and without its connection id (step 2b review): fingerprinted like the ci-admission token, the id recorded
+  # lower case, nothing secret in the plan or the next step.
+  $hbTokenText = 'clued_bnd_' + 'HeartbeatFixtureValue0123456789'; $hbTokenFile = Join-Path $Scratch 'secrets-fs\heartbeat-token.txt'; [IO.File]::WriteAllText($hbTokenFile, $hbTokenText + "`r`n")
+  $hbPin = Sha256Text ("clued.independent-ci.ci-binding-pin/1`0" + $hbTokenText)
+  $savedOwnerSid = $OwnerSid; $OwnerSid = $hbOwner; $HeartbeatTokenDirectory = Join-Path $Scratch 'hb-plan-4e\secrets\heartbeat'; $HeartbeatTokenTarget = $HeartbeatTokenDirectory + '\ci-node-heartbeat.token'
+  $script:SecretBytes = @{}; $HeartbeatTokenFile = $hbTokenFile
+  foreach ($case in @(@($hbId.ToUpperInvariant(), $hbId, 'with-id'), @('', $null, 'without-id'))) {
+    $HeartbeatBindingId = $case[0]
+    $hp = Get-HeartbeatTokenPlan
+    Yes ($hp.supplied -and $hp.verified -and $hp.fingerprint -ceq $hbPin -and $hp.bindingId -ceq $case[1] -and $script:SecretBytes.ContainsKey('heartbeatToken')) ('heartbeat-binding-id:token-file-' + $case[2])
+    $hpJson = $hp | ConvertTo-Json -Depth 4; $hpStep = Get-HeartbeatNextStep 'turing' $hp.bindingId
+    Yes (-not $hpJson.Contains($hbTokenText) -and -not $hpJson.Contains('clued_bnd_') -and -not $hpStep.Contains('clued_bnd_') -and -not $hpStep.Contains($hbPin)) ('heartbeat-binding-id:no-secret-in-plan-or-step-' + $case[2])
+    Clear-SecretBytes
+  }
+  $HeartbeatTokenFile = $tokenFile; $HeartbeatBindingId = $hbId
+  Yes (Test-Refused { Get-HeartbeatTokenPlan } 'HEARTBEAT_TOKEN_IS_THE_CI_ADMISSION_TOKEN') 'heartbeat-binding-id:the-ci-token-is-still-refused'
+  $HeartbeatTokenFile = ''; $HeartbeatBindingId = ''; $OwnerSid = $savedOwnerSid; $script:SecretBytes = @{}
 
   # Placement: create-only, the exact bytes, the final security descriptor (here: this account stands in for .\clued-control).
   $placeSddl = 'D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;' + $me + ')'
