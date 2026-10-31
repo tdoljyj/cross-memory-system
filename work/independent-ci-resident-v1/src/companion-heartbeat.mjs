@@ -55,7 +55,8 @@ export const STATES = Object.freeze(['NORMAL', 'HALTED', 'PAUSED', 'INTAKE_PAUSE
 export const NOT_REGISTERED = 'ci_node_not_registered';
 const REPLY_MAX_BYTES = 64 * 1024;
 const HALT_MAX_BYTES = 2048;
-const TOKEN = /^[A-Za-z0-9_.-]{20,512}$/;
+// The heartbeat connection's token: clued_hbt_ and 43 base64url characters (32 random bytes, as the server issues it).
+const TOKEN = /^clued_hbt_[A-Za-z0-9_-]{43}$/;
 const HEX64 = /^[0-9a-f]{64}$/, HEX40 = /^[0-9a-f]{40}$/, CODE = /^[A-Z][A-Z0-9_]{1,79}$/;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const PROBE = /^[a-z][a-z-]{0,39}$/;

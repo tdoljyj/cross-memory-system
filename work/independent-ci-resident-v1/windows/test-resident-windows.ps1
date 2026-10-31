@@ -646,9 +646,9 @@ if (Test-Path -LiteralPath $probeNode) {
 
   # The heartbeat token with and without its connection id (step 2b review): fingerprinted like the ci-admission token, the id recorded
   # lower case, nothing secret in the plan or the next step. A heartbeat token is a clued_hbt_ token with its own fingerprint kind.
-  $hbTokenText = 'clued_hbt_' + 'HeartbeatFixtureValue0123456789'; $hbTokenFile = Join-Path $Scratch 'secrets-fs\heartbeat-token.txt'; [IO.File]::WriteAllText($hbTokenFile, $hbTokenText + "`r`n")
+  $hbTokenText = 'clued_hbt_' + 'HeartbeatFixtureValue0123456789abcdefghijkl'; $hbTokenFile = Join-Path $Scratch 'secrets-fs\heartbeat-token.txt'; [IO.File]::WriteAllText($hbTokenFile, $hbTokenText + "`r`n")
   $hbPin = Sha256Text ("clued.independent-ci.heartbeat-token-pin/1`0" + $hbTokenText)
-  Yes ((Get-SecretFingerprint 'heartbeat-token' $enc.GetBytes($hbTokenText)) -ceq $hbPin -and $null -eq (Get-SecretFingerprint 'heartbeat-token' $enc.GetBytes('clued_bnd_' + 'HeartbeatFixtureValue0123456789')) -and $null -eq (Get-SecretFingerprint 'ci-token' $enc.GetBytes($hbTokenText))) 'fingerprint:heartbeat-token-kind-accepts-only-clued_hbt_'
+  Yes ((Get-SecretFingerprint 'heartbeat-token' $enc.GetBytes($hbTokenText)) -ceq $hbPin -and $null -eq (Get-SecretFingerprint 'heartbeat-token' $enc.GetBytes('clued_bnd_' + 'HeartbeatFixtureValue0123456789abcdefghijkl')) -and $null -eq (Get-SecretFingerprint 'ci-token' $enc.GetBytes($hbTokenText))) 'fingerprint:heartbeat-token-kind-accepts-only-clued_hbt_'
   $savedOwnerSid = $OwnerSid; $OwnerSid = $hbOwner; $HeartbeatTokenDirectory = Join-Path $Scratch 'hb-plan-4e\secrets\heartbeat'; $HeartbeatTokenTarget = $HeartbeatTokenDirectory + '\ci-node-heartbeat.token'
   $script:SecretBytes = @{}; $HeartbeatTokenFile = $hbTokenFile
   foreach ($case in @(@($hbId.ToUpperInvariant(), $hbId, 'with-id'), @('', $null, 'without-id'))) {

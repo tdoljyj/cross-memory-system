@@ -13,7 +13,7 @@ import { tempRoot } from './helpers.mjs';
 const MIN = 60_000;
 const NOW = Date.parse('2026-11-01T10:00:00Z');
 const SRC = 'c'.repeat(64), H = '4'.repeat(40), RECEIPT = '0a1b2c3d-0000-4000-8000-0000000000bb';
-const TOKEN = 'clued_bnd_FixtureHeartbeatToken0123456789';
+const TOKEN = 'clued_hbt_FixtureHeartbeatToken0123456789abcdefghijkl';
 const status = (o = {}) => ({ writtenAt: NOW - 10_000, executor: { state: 'IDLE' }, halt: null, paused: false, intakePause: null, current: null,
   node: { name: 'turing', mode: 'ACTIVE', probe: { at: NOW - 5 * MIN, result: 'held' } }, versions: { windows: { ciSourceManifestSha256: SRC } }, ...o });
 

@@ -19,7 +19,7 @@ export const CI_TOKEN_DOMAIN = 'clued.independent-ci.ci-binding-pin/1\0';
 const MAX_BYTES = 64 * 1024;
 export const HEARTBEAT_TOKEN_DOMAIN = 'clued.independent-ci.heartbeat-token-pin/1\0';
 const TOKEN = /^clued_bnd_[A-Za-z0-9_-]{8,480}$/;
-const HEARTBEAT_TOKEN = /^clued_hbt_[A-Za-z0-9_-]{8,480}$/;
+const HEARTBEAT_TOKEN = /^clued_hbt_[A-Za-z0-9_-]{43}$/;   // 32 random bytes, base64url without padding (as issued)
 const refuse = () => { throw Object.assign(new Error('SECRET_FINGERPRINT_REFUSED'), { code: 'SECRET_FINGERPRINT_REFUSED' }); };
 
 // The base64 SHA-256 of the SPKI DER of the key's public half: the record's appPublicKeySha256Base64.
