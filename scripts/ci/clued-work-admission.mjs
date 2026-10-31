@@ -358,6 +358,11 @@ export const GATE_JOB_SHA256 = new Set([
   // 600-second bounded wait, a 15-minute job). Registered here (PR-A)
   // before the workflows change (PR-B).
   "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
+  // Owner Decision b30b1b79 (Task 52157cac): the d6d96a1e… gate on any runner of the self-hosted
+  // pool, Linux or Windows, at any site (runs-on without `Linux`), still self-hosted with the
+  // pinned Node of Decision f86179b3, so the compute panel keeps alerting while the company's
+  // Linux runners are offline. Registered here (PR-A) before clued-compute-panel.yml changes (PR-B).
+  "b000e5a2bc4b0ca76de4beb7dfc3001dca7a428dde79578e457057081e1109ce",
 ]);
 const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 export const PRODUCTION_PUBLISHER_WORKFLOW = ".github/workflows/clued-cloud-production-release.yml";
