@@ -187,7 +187,7 @@ export default function BindingRolesPage() {
   const othersLine = others.map(other => String(other.agent_name ?? "") + (other.live === false ? "（已失效）" : "")
     + (other.purpose_title ? "，" + String(other.purpose_title) : "")).join("、");
   return <main className="context-page owner-confirm">
-    <header><Link href="/">BeamingFace</Link> <Link href="/grants">我的授权</Link></header>
+    <header><Link href="/">BeamingFace</Link> <Link href="/grants">我的授权</Link> <Link href="/bindings/failover">CI 准入自动接班</Link></header>
     <h1>专用 Binding</h1>
     <p className="context-muted">把 GitHub 上 CI 准入用的 Binding、生产发布用的 Binding 标出来。标出之后，只有它们能做对应的事，其他 Agent 的 Binding 都不行。标出的 Binding 撤销或过期后，这件事谁都做不了，直到你在这里给新的 Binding 标上，或者取消它。从没标出过的用途，保持原来的行为。</p>
     <p className="context-muted">CI 准入另有三条规矩：标的时候要选用途（常驻节点、停车位或其他）；新标的 CI 准入要在你确认 {delay} 分钟后才生效，停车位永远不放行；常驻节点之间换班用“移交 CI 准入”，一次确认就收旧给新。</p>
