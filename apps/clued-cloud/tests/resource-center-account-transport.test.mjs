@@ -64,6 +64,22 @@ test("owner storage management is native-only and routes to its exact RPC",async
     assert.deepEqual(JSON.parse(calls[1].body),{p_input:{action:"connections"}});
   } finally {globalThis.fetch=original;}
 });
+// Bug 38bb5ddf: the directories that need the Owner are a separate fixed read.
+test("owner digest attention routes to its own RPC with a fixed input",async()=>{
+  const original=globalThis.fetch,calls=[];
+  globalThis.fetch=async(url,init)=>{
+    calls.push({url:String(url),headers:new Headers(init.headers),body:init.body});
+    if(String(url).endsWith("/auth/v1/user"))return Response.json({id:"fixture-owner"});
+    return Response.json({contract:"clued.storage-access-digest-attention/1",connections:[]});
+  };
+  try {
+    const result=await worker.fetch(ownerRequest({action:"digest_attention",connection_id:"ignored"}),env);
+    assert.equal(result.status,200);assert.deepEqual(await result.json(),{contract:"clued.storage-access-digest-attention/1",connections:[]});
+    assert.equal(calls[1].url,env.SUPABASE_URL+"/rest/v1/rpc/clued_storage_access_digest_attention_v1");
+    assert.equal(calls[1].headers.get("authorization"),"Bearer fixture-native-jwt");
+    assert.deepEqual(JSON.parse(calls[1].body),{p_input:{action:"list"}});
+  } finally {globalThis.fetch=original;}
+});
 test("owner storage management fails closed on database rejection",async()=>{
   const original=globalThis.fetch;
   globalThis.fetch=async url=>String(url).endsWith("/auth/v1/user")?Response.json({id:"fixture-owner"}):

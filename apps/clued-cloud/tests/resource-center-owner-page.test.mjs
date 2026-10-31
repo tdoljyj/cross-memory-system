@@ -634,16 +634,39 @@ test("hourly budgets: presets and custom within bounds, one native CAS mutation,
   f.respond(f.pending("/v1/storage/budget","set"),{error:"private"},403);await f.settle();
   assert.match(f.text(),/额度设置结果未确认/);assert.match(f.text(),/每小时额度：未读取/);assert.equal(f.featureCalls().length,8,"never resent");
 });
-test("storage step 3: directories still matched by Drive version are listed with a pointer to the directory check",async()=>{
+// Bug 38bb5ddf (Decision 24422a98): the page never asks the Owner to run a
+// directory check. Directories still being recovered are a one-line status;
+// only a real sharing difference or a folder Drive no longer shows is listed,
+// in business terms.
+test("storage step 3: directories without an access digest are recovered in the background, never sent to a directory check",async()=>{
   const f=fixture();await f.settle();
   f.respond(f.pending("/v1/storage/lifecycle","list"),{connections:[{...active,access_digest_missing:{count:21,directories:[{path:"",since:"2026-10-08T00:00:00Z"},
     {path:"资料/旧目录",since:"2026-10-08T00:00:00Z"}]}}],worker_execution_enabled:false});await f.settle();
-  assert.match(f.text(),/有 21 个目录还没有记录访问权限摘要/);
-  assert.match(f.text(),/（根目录）/);assert.match(f.text(),/资料\/旧目录/);assert.match(f.text(),/另有 19 个未列出/);
-  assert.match(f.text(),/运行目录检查/);
+  assert.match(f.text(),/后台正在自动核对 21 个目录的共享设置，无需操作/);
+  assert.equal(/运行目录检查|目录需检查|访问权限摘要/.test(f.text()),false);
+  assert.equal(f.text().includes("暂不写入"),false);
+  const a=fixture();await a.settle();
+  a.respond(a.pending("/v1/storage/lifecycle","list"),{connections:[{...active,
+    access_digest_missing:{count:23,directories:[{path:"资料/旧目录",since:"2026-10-08T00:00:00Z"}]}}],
+    worker_execution_enabled:false});await a.settle();
+  assert.equal(a.text().includes("暂不写入"),false,"shown only once the separate read answers");
+  a.respond(a.pending("/v1/storage/owner","digest_attention"),{contract:"clued.storage-access-digest-attention/1",connections:[{connection_id:active.id,
+    count:22,directories:[{path:"资料/对外分享",reason:"access_differs"},{path:"资料/已删除",reason:"not_found"}]}]});await a.settle();
+  assert.match(a.text(),/有 22 个目录暂不写入/);assert.match(a.text(),/为防止资料被意外共享/);
+  assert.match(a.text(),/资料\/对外分享：共享设置与上级目录不同/);assert.match(a.text(),/资料\/已删除：在 Google Drive 中已找不到/);
+  assert.match(a.text(),/另有 20 个未列出/);assert.match(a.text(),/后台正在自动核对 1 个目录/);
+  assert.equal(/运行目录检查|访问权限摘要/.test(a.text()),false);
   for(const missing of [{count:0,directories:[]},undefined]){
     const g=fixture();await g.settle();g.respond(g.pending("/v1/storage/lifecycle","list"),{connections:[{...active,access_digest_missing:missing}],worker_execution_enabled:false});await g.settle();
-    assert.equal(g.text().includes("访问权限摘要"),false);assert.match(g.text(),/Clued_资料中心/);
+    assert.equal(/自动核对|暂不写入/.test(g.text()),false);assert.match(g.text(),/Clued_资料中心/);
+  }
+  // A malformed or refused attention read only leaves the notice out.
+  for(const [answer,status] of [[{contract:"clued.storage-access-digest-attention/1",connections:[{connection_id:active.id,count:1,
+    directories:[{path:"x",reason:"other"}]}]},200],[{error:"private"},403]]){
+    const bad=fixture();await bad.settle();bad.respond(bad.pending("/v1/storage/lifecycle","list"),{connections:[{...active,
+      access_digest_missing:{count:1,directories:[{path:"x",since:"2026-10-08T00:00:00Z"}]}}],worker_execution_enabled:false});
+    await bad.settle();bad.respond(bad.pending("/v1/storage/owner","digest_attention"),answer,status);await bad.settle();
+    assert.match(bad.text(),/Clued_资料中心/);assert.equal(/暂不写入|private/.test(bad.text()),false);
   }
   // A malformed field is not a connection.
   const h=fixture();await h.settle();h.respond(h.pending("/v1/storage/lifecycle","list"),{connections:[{...active,access_digest_missing:{count:"x",directories:[]}}],worker_execution_enabled:false});await h.settle();

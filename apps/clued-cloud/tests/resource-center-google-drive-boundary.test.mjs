@@ -26,17 +26,62 @@ test(mode+': empty sibling namespace with exact root is clean; missing root is u
   const f=fixture({},mode);f.files.splice(2);assert.deepEqual(await f.scan(),[]);
   f.config.list_folder=async()=>[];await assert.rejects(f.scan(),/ROOT_NOT_LISTED/);
 });
-test(mode+': duplicate names, forged root ID, shortcuts and truncated depth fail closed',async()=>{
+test(mode+': duplicate names and a forged or moved root fail closed',async()=>{
   const duplicate=fixture({},mode);duplicate.files.push(item('spoof','Clued_资料中心','parent'));await assert.rejects(duplicate.scan(),/PATH_AMBIGUOUS|ROOT_CHANGED/);
-  const shortcut=fixture({},mode);shortcut.files.push(item('shortcut','link','parent','application/vnd.google-apps.shortcut'));await assert.rejects(shortcut.scan(),/SHORTCUT_UNQUALIFIED/);
-  const depth=fixture({boundary_scan_max_depth:1},mode);await assert.rejects(depth.scan(),/DEPTH_LIMIT/);
-  const entries=fixture({boundary_scan_max_entries:1},mode);await assert.rejects(entries.scan(),/ENTRY_LIMIT/);
   const alias=fixture({},mode);alias.files[1].parents=['other'];await assert.rejects(alias.scan(),/ROOT_CHANGED/);
+});
+// Decision 24422a98 (job 3f6c2a1e, DRIVE_BOUNDARY_DEPTH_LIMIT): unrelated deep
+// or large content outside the managed root no longer fails every write.
+test(mode+': an unrelated folder nested deeper than the limit is observed, not descended, and does not fail the scan',async()=>{
+  // The production case: CI-transfer/z1-desk/package/source/... nine levels deep.
+  const f=fixture({},mode);f.files.splice(2);
+  f.files.push(item('d0','CI-transfer','parent'));
+  for(let i=1;i<=10;i++)f.files.push(item('d'+i,'level'+i,'d'+(i-1)));
+  f.files.push(item('deepfile','setup.exe','d10','application/octet-stream'));
+  const result=await f.scan();
+  assert.deepEqual(result,[]);
+  assert.deepEqual(result.partial.map(p=>[p.path.split('/').length,p.reason]),[[11,'depth']]);
+  assert.equal(Object.keys(result).includes('partial'),false);
+  // A Clued-named island at the truncation point is still observed by its own name.
+  const named=fixture({},mode);named.files.splice(2);named.files.push(item('d0','CI-transfer','parent'));
+  for(let i=1;i<=7;i++)named.files.push(item('d'+i,'level'+i,'d'+(i-1)));
+  named.files.push(item('island','Clued-hidden','d7'));named.files.push(item('below','x','island'));
+  const found=await named.scan();
+  assert.deepEqual(found.map(r=>r.path),['/drive/CI-transfer/level1/level2/level3/level4/level5/level6/level7/Clued-hidden']);
+  assert.deepEqual(found.partial.map(p=>p.reason),['depth']);
+  // The depth limit stays a cost bound: the folder below it is never listed.
+  const listed=[];const original=named.config.list_folder;named.config.list_folder=async id=>{listed.push(id);return original(id);};
+  await named.scan();assert.equal(listed.includes('island'),false);
+});
+test(mode+': past the entry limit folders are observed but not descended; the parent namespace is always scanned first',async()=>{
+  const f=fixture({boundary_scan_max_entries:3},mode);f.files.splice(2);
+  f.files.push(item('big','big','parent'));
+  for(let i=0;i<5;i++)f.files.push(item('n'+i,'n'+i,'big'));
+  f.files.push(item('deep','Clued-deep','n4'));
+  f.files.push(item('drop','Clued_说明.md','parent','text/plain'));
+  const result=await f.scan();
+  // The sibling drop beside the root is found; the over-limit folders are reported as partial.
+  assert.deepEqual(result.map(r=>r.path),['/drive/Clued_说明.md']);
+  assert.ok(result.partial.length>0 && result.partial.every(p=>p.reason==='entries'));
+});
+test(mode+': a shortcut outside the root is an observed entry and is never followed',async()=>{
+  const f=fixture({},mode);f.files.splice(2);
+  f.files.push(item('link','link','parent','application/vnd.google-apps.shortcut'));
+  const listed=[];const original=f.config.list_folder;f.config.list_folder=async id=>{listed.push(id);return original(id);};
+  assert.deepEqual(await f.scan(),[]);assert.equal(listed.includes('link'),false);
+  // A Clued-named shortcut created by Clued outside the root is still an island.
+  const island=fixture({},mode);island.files.splice(2);
+  island.files.push(item('link','Clued_快捷方式','parent','application/vnd.google-apps.shortcut'));
+  assert.deepEqual((await island.scan()).map(r=>r.path),['/drive/Clued_快捷方式']);
 });
 test(mode+': folder identity drift and unqualified external allowlists cannot yield a clean scan',async()=>{
   const f=fixture({},mode);let reads=0;
-  const original=f.config.get_file;f.config.get_file=async id=>{const value=await original(id);if(id==='parent'&&++reads>1)value.version='2';return value;};
+  const original=f.config.get_file;f.config.get_file=async id=>{const value=await original(id);if(id==='parent'&&++reads>1)value.name='renamed';return value;};
   await assert.rejects(f.scan(),/BOUNDARY_CHANGED/);
+  // A version that moves during the scan (anything changed inside) is not a boundary change.
+  const busy=fixture({},mode);busy.files.splice(2);let n=0;const get=busy.config.get_file;
+  busy.config.get_file=async id=>{const value=await get(id);value.version=String(++n);return value;};
+  assert.deepEqual(await busy.scan(),[]);
   assert.throws(()=>createGoogleDriveBoundaryScanner(fixture({registered_external_roots:['/drive/work']},mode).config),/PROFILE_UNQUALIFIED/);
 });
 test(mode+': another registered root of the same owner (Decision b18eff80) is skipped only by its exact ID beside the managed root',async()=>{
@@ -152,19 +197,18 @@ test(mode+': Owner entries keep every structural failure',async()=>{
     [/PATH_AMBIGUOUS/,add=>{add(item('o-a','same','parent','text/plain'));add(item('o-b','same','parent','text/plain'));}],
     [/PATH_AMBIGUOUS/,add=>add(item('o-spoof','Clued_资料中心','parent'))],
     [/ROOT_CHANGED/,add=>add(item('o-spoof','Clued_资料中心','parent'),1)],
-    [/SHORTCUT_UNQUALIFIED/,add=>add(item('o-link','link','parent','application/vnd.google-apps.shortcut'))],
-    [/DEPTH_LIMIT/,add=>{add(item('o-d0','d0','parent'));for(let i=1;i<=9;i++)add(item('o-d'+i,'d'+i,'o-d'+(i-1)));}],
-    [/ENTRY_LIMIT/,add=>{for(let i=0;i<3;i++)add(item('o-n'+i,'n'+i+'.png','parent','image/png'));},{boundary_scan_max_entries:3}],
   ];
   for(const [expected,arrange,overrides] of cases){
     const {f,add}=ownerFixture(mode,{overrides});arrange(add);
     await assert.rejects(f.scan(),expected,String(expected));
   }
 });
-test(mode+': identity comparisons ignore only the listed isAppAuthorized field',async()=>{
+test(mode+': identity comparisons ignore only the listed isAppAuthorized field and the Drive version',async()=>{
   const {f,add}=ownerFixture(mode);add(item('o-folder','work','parent'));add(item('o-inner','a.txt','o-folder','text/plain'));
   assert.deepEqual(await f.scan(),[]);
   const get=f.config.get_file;f.config.get_file=async id=>{const v=await get(id);if(id==='o-folder')v.version='2';return v;};
+  assert.deepEqual(await f.scan(),[]);
+  f.config.get_file=async id=>{const v=await get(id);if(id==='o-folder')v.parents=['elsewhere'];return v;};
   await assert.rejects(f.scan(),/BOUNDARY_CHANGED/);
 });
 }

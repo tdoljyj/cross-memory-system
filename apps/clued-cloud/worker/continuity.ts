@@ -3820,8 +3820,12 @@ async function handleContinuityRequestInner(
       const { token } = await requireSupabaseUser(request, env);
       try {
         const input = await parseBody(request);
-        const result = await supabaseRequest(env, "/rest/v1/rpc/clued_storage_owner_manage_v2", {
-          method: "POST", userToken: token, body: JSON.stringify({ p_input: input }),
+        // Bug 38bb5ddf: directories that need the Owner are a separate read,
+        // so the source-pinned management functions stay unchanged.
+        const attention = input.action === "digest_attention";
+        const result = await supabaseRequest(env, attention ? "/rest/v1/rpc/clued_storage_access_digest_attention_v1"
+          : "/rest/v1/rpc/clued_storage_owner_manage_v2", {
+          method: "POST", userToken: token, body: JSON.stringify({ p_input: attention ? { action: "list" } : input }),
         }) as Record<string, unknown>;
         if (input.action === "connections" && Array.isArray(result.connections)) {
           // This flag reflects the Worker gate at the time of this read. Every

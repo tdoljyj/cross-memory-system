@@ -7,15 +7,23 @@
  * to five such directories under quiet, undenied roots. For each it loads the
  * connection's credential, reads the folder's version and permissions in one
  * Drive request, and commits the outcome. The database stores the digest only
- * when that version is the registered one and the row is unchanged; another
- * version, a 404 or no usable permission list marks the directory as missing a
- * digest, which leaves it matched by version as today. A transient or
- * credential failure commits nothing and the directory waits 30 minutes
- * behind the others. Read only: no Drive write. Enabled renewal uses current
- * Native artifact authorization before refreshing an expiring credential.
+ * when that version is the registered one and the row is unchanged.
+ *
+ * Bug 38bb5ddf (Decision 24422a98): as in Drive, a folder's permissions are
+ * inherited from its parent and its version moves whenever anything inside it
+ * changes. When the version moved, this run also reads the registered parent
+ * the database names; the database records the folder's digest when it equals
+ * the parent's current access digest and the parent itself is unchanged. A
+ * 404, no usable permission list, no parent baseline or a real difference from
+ * the parent marks the directory missing with that reason, and the database
+ * tries it again with backoff; only a real sharing difference, or a folder
+ * still gone after every attempt, is shown to the Owner. A transient or
+ * credential failure commits nothing and the directory waits behind the
+ * others. Read only: no Drive write. Enabled renewal uses current Native
+ * artifact authorization before refreshing an expiring credential.
  */
 import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
-import { googleDriveAccessDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
+import { googleDriveAccessDigest, googleDriveSharingDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
 import { resolveSupabasePublicConfig } from "../app/supabase-public-config";
 import { createStorageCredentialVault, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
@@ -43,10 +51,18 @@ export type StorageAccessDigestBackfillResult =
 
 type Data = Record<string, unknown>;
 type Reference = { connection_id: string; artifact_id: string };
+type Parent = { artifact_id: string; provider_file_id: string; row_version: number; mode: "access" | "sharing" };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROVIDER_ID = /^[A-Za-z0-9_-]{1,160}$/;
 const VERSION = /^[0-9]{1,40}$/;
 const object = (value: unknown): value is Data => !!value && typeof value === "object" && !Array.isArray(value);
+const parentOf = (value: unknown): Parent | null | undefined => {
+  if (value === null || value === undefined) return null;
+  if (!object(value) || Object.keys(value).sort().join(",") !== "artifact_id,mode,provider_file_id,row_version" ||
+      !UUID.test(String(value.artifact_id)) || !PROVIDER_ID.test(String(value.provider_file_id)) ||
+      !Number.isSafeInteger(value.row_version) || !["access", "sharing"].includes(String(value.mode))) return undefined;
+  return value as Parent;
+};
 
 async function sha256(value: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -119,6 +135,8 @@ export async function runStorageAccessDigestBackfillScheduled(env: StorageAccess
           d.oauth_client_id !== clientId || !PROVIDER_ID.test(String(d.provider_file_id)) ||
           !VERSION.test(String(d.registered_version)) || !Number.isSafeInteger(d.row_version) ||
           !Number.isSafeInteger(d.credential_version) || !object(d.credential_envelope)) { skipped++; continue; }
+      const parent = parentOf(d.parent);
+      if (parent === undefined) { skipped++; continue; }
       const token: unknown = JSON.parse(await vault.open(d.credential_envelope as StorageCredentialEnvelope, {
         owner_id: String(d.owner_id), connection_id: reference.connection_id, provider: "google-drive",
         provider_subject: String(d.provider_subject), oauth_client_id: clientId, credential_version: Number(d.credential_version),
@@ -147,6 +165,7 @@ export async function runStorageAccessDigestBackfillScheduled(env: StorageAccess
       // transient or credential failure commits nothing; the directory comes
       // back after the others.
       let found: boolean, observedVersion: string | null = null, digest: string | null = null;
+      let parentObservation: Data | undefined;
       try {
         const read = await metadata.getVersionedAccess(String(d.provider_file_id), { signal: AbortSignal.timeout(15000) });
         if (read?.id !== d.provider_file_id || typeof read.version !== "string" || !VERSION.test(read.version)) { skipped++; continue; }
@@ -158,10 +177,27 @@ export async function runStorageAccessDigestBackfillScheduled(env: StorageAccess
         if (lastStatus !== 404) { skipped++; continue; }
         found = false;
       }
+      // The version moved: compare with the parent the registry protects. A
+      // parent Drive no longer shows commits without it (no baseline yet).
+      if (found && digest && observedVersion !== d.registered_version && parent) {
+        try {
+          const read = await metadata.getVersionedAccess(parent.provider_file_id, { signal: AbortSignal.timeout(15000) });
+          if (read?.id !== parent.provider_file_id) { skipped++; continue; }
+          const access = googleDriveAccessDigest(read);
+          let matched: unknown = access;
+          if (parent.mode === "sharing") matched = googleDriveSharingDigest(
+            await metadata.getSharing(parent.provider_file_id, { signal: AbortSignal.timeout(15000) }));
+          parentObservation = { artifact_id: parent.artifact_id, row_version: parent.row_version,
+            observed_digest: typeof matched === "string" ? matched : null, observed_access: typeof access === "string" ? access : null };
+        } catch {
+          if (lastStatus !== 404) { skipped++; continue; }
+        }
+      }
       const committed = await rpc({ ...reference, action: "commit", row_version: d.row_version,
-        registered_version: d.registered_version, found, observed_version: observedVersion, access_digest: digest });
+        registered_version: d.registered_version, found, observed_version: observedVersion, access_digest: digest,
+        ...(parentObservation ? { parent: parentObservation } : {}) });
       if (committed.status !== "committed" || committed.artifact_id !== reference.artifact_id) { skipped++; continue; }
-      if (committed.outcome === "recorded") recorded++; else missing++;
+      if (committed.outcome === "recorded" || committed.outcome === "recorded_inherited") recorded++; else missing++;
     } catch { skipped++; }
   }
   return { status: "ok", recorded, missing, skipped };

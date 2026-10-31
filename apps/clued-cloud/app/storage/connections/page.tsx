@@ -16,12 +16,25 @@ type Connection = {
   pending_lifecycle?: { attempt_id: string; operation: "reconnect" | "delete"; state: string; execution_permitted: false };
   // Storage step 3: directories still matched by Drive version (older servers omit it).
   access_digest_missing?: DigestMissing;
+  // Bug 38bb5ddf: directories that need the Owner, from a separate read.
+  access_digest_attention?: DigestAttention;
 };
 type DigestMissing = { count: number; directories: { path: string; since: string }[] };
 function isDigestMissing(value: unknown): value is DigestMissing {
   return isObject(value) && Number.isSafeInteger(value.count) && Number(value.count) >= 0 && Array.isArray(value.directories)
     && value.directories.length <= 20 && value.directories.every(d => isObject(d) && typeof d.path === "string" && typeof d.since === "string");
 }
+type DigestAttention = { count: number; directories: { path: string; reason: "access_differs" | "not_found" | "unreadable" }[] };
+function isDigestAttention(value: unknown): value is DigestAttention {
+  return isObject(value) && Number.isSafeInteger(value.count) && Number(value.count) >= 0 && Array.isArray(value.directories)
+    && value.directories.length <= 20 && value.directories.every(d => isObject(d) && typeof d.path === "string"
+      && ["access_differs", "not_found", "unreadable"].includes(String(d.reason)));
+}
+const attentionReason: Record<DigestAttention["directories"][number]["reason"], string> = {
+  access_differs: "共享设置与上级目录不同（单独分享给了别人或改了权限）",
+  not_found: "在 Google Drive 中已找不到（可能已删除或移出资料根）",
+  unreadable: "Google Drive 一直无法读出它的共享设置",
+};
 const actionName: Record<string, string> = {
   inspect: "查看任务状态", create_file: "新建文件", create_topic: "新建主题目录", modify: "改名、移动文件",
   overwrite: "覆盖文件内容", destructive: "移入回收站、从回收站恢复", modify_subtree: "移动整个文件夹",
@@ -355,6 +368,20 @@ export default function StorageConnections() {
       setConnections(result.connections);
       setWorkerEnabled(result.worker_execution_enabled);
       setMessage(result.connections.length ? "" : "暂无存储连接；受治理目录登记请进入管理入口。");
+      // Bug 38bb5ddf: the directories that need the Owner, read separately and
+      // only when some directory still lacks its digest (every such directory
+      // is among them); an unanswered or refused read only leaves this notice out.
+      if ((result.connections as Connection[]).some(c => (c.access_digest_missing?.count ?? 0) > 0))
+        void accountRequest({ action: "digest_attention" }).then(answer => {
+        if (epoch !== revision.current || answer.contract !== "clued.storage-access-digest-attention/1"
+          || !Array.isArray(answer.connections)) return;
+        const found = new Map<string, DigestAttention>();
+        for (const item of answer.connections as unknown[]) if (isObject(item) && typeof item.connection_id === "string") {
+          const value = { count: item.count, directories: item.directories };
+          if (isDigestAttention(value)) found.set(item.connection_id, value);
+        }
+        setConnections(current => current.map(c => found.has(c.id) ? { ...c, access_digest_attention: found.get(c.id) } : c));
+      }).catch(() => undefined);
       const loaded = await Promise.all((result.connections as Connection[])
         .filter(c => c.state === "active" && c.auth_mode === "account_policy")
         .map(async c => {
@@ -962,7 +989,7 @@ export default function StorageConnections() {
           {master?.reconsent_required && <p className="my-2 text-sm">全开需要重新授权 Google 的完整云端硬盘权限；授权完成并核验前，保持当前权限状态。</p>}
         </div>}
         <details className="my-3 text-sm">
-          <summary className="cursor-pointer font-semibold">连接详情与执行诊断{c.access_digest_missing && c.access_digest_missing.count > 0 ? `（${c.access_digest_missing.count} 个目录需检查）` : ""}</summary>
+          <summary className="cursor-pointer font-semibold">连接详情与执行诊断</summary>
           <p className="my-2">连接执行条件：{available ? "已满足" : "当前未满足"}。Agent 的实际权限见总开关与下方设置。</p>
           {c.physical_location.status === "verified"
             ? <p className="my-2 break-all">Drive 位置：{c.physical_location.path}</p>
@@ -971,15 +998,18 @@ export default function StorageConnections() {
           <p className="break-all text-xs text-gray-500">文件夹标识：{c.root_folder_id}</p>
           <p className="my-2">账号授权上限：{c.policy_active && c.actions.length ? c.actions.map(action => actionName[action]).join("、") : "无当前可用授权"}。实际启用情况见下方权限设置；执行还须通过当前目录、客户端和单次任务准入。</p>
           <p className="my-2">后台续签：{c.refresh_enabled ? "开启" : "关闭"}。</p>
-          {c.access_digest_missing && c.access_digest_missing.count > 0 && <div role="status" className="my-2">
-            <p>有 {c.access_digest_missing.count} 个目录还没有记录访问权限摘要，仍按 Google Drive 版本核对：这些目录里出现其他变化时，其下进行中的文件操作会失败。
-              请到<Link href="/storage/admin">存储管理</Link>运行目录检查，为它们记录摘要。</p>
-            <ul className="list-disc pl-6">{c.access_digest_missing.directories.map(d =>
-              <li key={d.path}>{d.path || "（根目录）"}</li>)}</ul>
-            {c.access_digest_missing.count > c.access_digest_missing.directories.length &&
-              <p>另有 {c.access_digest_missing.count - c.access_digest_missing.directories.length} 个未列出。</p>}
-          </div>}
+          {c.access_digest_missing && c.access_digest_missing.count > (c.access_digest_attention?.count ?? 0) &&
+            <p className="my-2">后台正在自动核对 {c.access_digest_missing.count - (c.access_digest_attention?.count ?? 0)} 个目录的共享设置，无需操作。</p>}
         </details>
+        {c.access_digest_attention && c.access_digest_attention.count > 0 && <div role="status" className="my-3 text-sm">
+          <p className="font-semibold">有 {c.access_digest_attention.count} 个目录暂不写入</p>
+          <p className="my-1">为防止资料被意外共享，Agent 暂不向以下目录新建或修改文件，其他目录不受影响：</p>
+          <ul className="list-disc pl-6">{c.access_digest_attention.directories.map(d =>
+            <li key={d.path}>{d.path || "（根目录）"}：{attentionReason[d.reason]}</li>)}</ul>
+          {c.access_digest_attention.count > c.access_digest_attention.directories.length &&
+            <p>另有 {c.access_digest_attention.count - c.access_digest_attention.directories.length} 个未列出。</p>}
+          <p className="my-1">共享设置恢复为与上级目录一致、或目录重新出现在原位置后，会自动恢复写入。</p>
+        </div>}
         {c.state === "awaiting_provider" && <label className="my-2 block">
           <input type="checkbox" disabled={busy} checked={defaultRefresh} onChange={event => setDefaultRefresh(event.target.checked)} />
           首次连接后开启后台续签（默认选中，可取消）</label>}

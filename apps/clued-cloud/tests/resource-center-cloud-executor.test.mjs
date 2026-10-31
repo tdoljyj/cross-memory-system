@@ -469,13 +469,27 @@ for(const mode of ['single','batched'])for(const [profile,credential] of Object.
     assert.notEqual(a.result.status,'committed');assert.deepEqual(a.result,b.result);assert.deepEqual(a.logs,b.logs);
     assert.equal(owner.info().posts,0);assert.equal(own.info().posts,0);
   });
-  test(`${mode}/${profile}: Owner duplicates, shortcuts, root impersonation and limits keep their failures`,async()=>{
+  // Decision 24422a98 (job 3f6c2a1e): an Owner shortcut or an unrelated folder
+  // nested deeper than the scan limit outside the root no longer fails writes.
+  test(`${mode}/${profile}: an Owner shortcut or deep unrelated folder outside the root does not stop the write`,async()=>{
+    const plain=await quietRun(make());
+    for(const owner of [[ownerEntry('o-link','link','parent','application/vnd.google-apps.shortcut')],
+      [ownerEntry('o-d0','CI-transfer','parent'),...Array.from({length:9},(_,i)=>ownerEntry('o-d'+(i+1),'d'+(i+1),'o-d'+i))]]){
+      const f=make({owner});const {result}=await quietRun(f);
+      assert.equal(result.status,plain.result.status);assert.notEqual(result.status,'unavailable');
+    }
+    // More than 10000 unrelated entries beside the root: the scan stops descending
+    // instead of failing. Only the per-folder listing bound of the unbatched
+    // metadata transport (DRIVE_ENUMERATION_LIMIT) still refuses one folder that size.
+    const many=make({owner:Array.from({length:10001},(_,i)=>ownerEntry('o-n'+i,'n'+i+'.png','parent','image/png'))});
+    const {result,logs}=await quietRun(many);
+    if(mode==='batched') assert.equal(result.status,plain.result.status);
+    else { assert.equal(result.status,'unavailable');assert.match(logs[0].error_code,/^DRIVE_ENUMERATION_LIMIT$/); }
+  });
+  test(`${mode}/${profile}: Owner duplicates, root impersonation and limits keep their failures`,async()=>{
     const cases=[
       [/^DRIVE_BOUNDARY_PATH_AMBIGUOUS$/,[ownerEntry('o-a','same','parent','text/plain'),ownerEntry('o-b','same','parent','text/plain')]],
       [/^DRIVE_BOUNDARY_PATH_AMBIGUOUS$/,[ownerEntry('o-spoof','Clued_资料中心','parent')]],
-      [/^DRIVE_BOUNDARY_SHORTCUT_UNQUALIFIED$/,[ownerEntry('o-link','link','parent','application/vnd.google-apps.shortcut')]],
-      [/^DRIVE_BOUNDARY_DEPTH_LIMIT$/,[ownerEntry('o-d0','d0','parent'),...Array.from({length:9},(_,i)=>ownerEntry('o-d'+(i+1),'d'+(i+1),'o-d'+i))]],
-      [/^DRIVE_(BOUNDARY_ENTRY|ENUMERATION)_LIMIT$/,Array.from({length:10001},(_,i)=>ownerEntry('o-n'+i,'n'+i+'.png','parent','image/png'))],
     ];
     for(const [expected,owner] of cases){
       const f=make({owner});const {result,logs}=await quietRun(f);
