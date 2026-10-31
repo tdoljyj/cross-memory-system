@@ -83,27 +83,29 @@
 --    replaces a newer one). The holder reads the latest per repository in
 --    ci_nodes_status, so a node that takes over sweeps from it.
 -- 9. Heartbeat connections (§41.6a "专用心跳"): the installer never uses a
---    node's CI token for heartbeats. The Owner links a separate connection of
---    the same account to a node's CI connection on /bindings/failover, in the
---    same two Native steps as the other settings (change heartbeat_link or
---    heartbeat_unlink; each leaves a receipt). The linked connection must be
---    live, have context:read (the CI command door resolves every caller with
---    it), hold no ci-admission row and not be a node's CI connection; it is
---    linked to one node at a time, and linking another one to a node replaces
---    that node's previous link. A heartbeat from it is recorded on its node
---    while the node's CI connection is live (the node's own CI connection
---    still works); it may call no other CI command door action
---    (heartbeat_connection_only), and it can be neither marked for nor handed
---    ci-admission (binding_role_change_check_v1 and
---    binding_role_handover_check_v1 refuse it, under the role lock that the
---    link change also takes). The watchdog, ci_nodes_status and the page keep
---    identifying a node by its CI connection. A holder whose CI connection is
---    no longer live sends no heartbeat that counts (direct or linked), so it
---    falls silent and the 30-minute rule decides as for any silence (Decision
---    199cf3de: only loss of contact switches); the Note then states that the
---    CI connection is no longer live. A connection that can only send
---    heartbeats (a scope without context:read) is later work: it needs the
---    connection scope list, issuance and consent outside this migration.
+--    node's CI token for heartbeats. It uses a heartbeat-only connection, the
+--    ci:heartbeat scope of 20261031085000: issued by the Owner on the headless
+--    page, unreachable by every other interface, resolved only by
+--    clued_private.resolve_heartbeat_binding_v1. The Owner links one to a
+--    node's CI connection on /bindings/failover, in the same two Native steps
+--    as the other settings (change heartbeat_link or heartbeat_unlink; each
+--    leaves a receipt). The linked connection must carry only ci:heartbeat
+--    (clued_private.binding_has_only_heartbeat_scope_v1) and a current
+--    headless authorization; it is linked to one node at a time, and linking
+--    another one to a node replaces that node's previous link. The CI command
+--    door resolves a heartbeat connection first: its ci_node_heartbeat is
+--    recorded on the node it is linked to while the node's CI connection is
+--    live, and every other action is refused (heartbeat_connection_only). Any
+--    other caller is resolved as before (context:read), and a node's own CI
+--    connection still records its own heartbeats. A linked connection can be
+--    neither marked for nor handed ci-admission (binding_role_change_check_v1
+--    and binding_role_handover_check_v1 refuse it, under the role lock that
+--    the link change also takes). The watchdog, ci_nodes_status and the page
+--    keep identifying a node by its CI connection. A holder whose CI
+--    connection is no longer live sends no heartbeat that counts (direct or
+--    linked), so it falls silent and the 30-minute rule decides as for any
+--    silence (Decision 199cf3de: only loss of contact switches); the Note then
+--    states that the CI connection is no longer live.
 --
 -- The production publisher runs this file and its ledger row in one
 -- transaction, so CREATE INDEX CONCURRENTLY is unavailable. Ordinary index
@@ -626,6 +628,16 @@ begin
   return jsonb_build_object('status','ok','recorded',true,'repository',v_repo,'completed_at',v_done,'receipt_id',v_receipt);
 end $$;
 
+-- The heartbeat-only connection presenting this token, or null (any other
+-- token, or one whose connection or authorization is no longer current).
+create function clued_private.ci_failover_heartbeat_caller_v1(p_token_hash text) returns public.clued_agent_bindings
+language plpgsql volatile security definer set search_path='' as $$
+begin
+  return clued_private.resolve_heartbeat_binding_v1(p_token_hash);
+exception when sqlstate '42501' or sqlstate '28000' then
+  return null;
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- The CI command door: 2a's definition plus the node actions.
 
@@ -640,17 +652,22 @@ declare b public.clued_agent_bindings; c clued_private.work_claims_v1;
   op text:=p_input->>'action'; scope text:=coalesce(p_input->>'scope','global');
   epoch bigint; result jsonb; id uuid; verification_input jsonb; receipt uuid;
   contexts text[]:='{}'::text[]; context_row text; context_page text[]; outboxes uuid[]; publications uuid[];
+  hb public.clued_agent_bindings;
 begin
   perform clued_private.intake_payload_cap_v1(p_input);
+  -- A heartbeat-only connection (ci:heartbeat, 20261031085000) sends heartbeats and nothing else.
+  hb:=clued_private.ci_failover_heartbeat_caller_v1(p_token_hash);
+  if hb.id is not null then
+    if op='ci_node_heartbeat' then
+      return clued_private.ci_node_heartbeat_v1(hb,p_input);
+    end if;
+    return jsonb_build_object('status','rejected','error_code','heartbeat_connection_only');
+  end if;
   b:=clued_private.resolve_binding(p_token_hash,'context:read',scope);
   -- Every resident node, holder or not (§41.6a), before the role check and the lock.
   if op='ci_node_heartbeat' then
     return clued_private.ci_node_heartbeat_v1(b,p_input);
   end if;
-  -- A heartbeat connection linked to a node sends heartbeats and nothing else.
-  if exists(select 1 from clued_private.ci_node_heartbeat_link_v1 k where k.user_id=b.user_id
-      and k.heartbeat_binding_id=b.id and k.revoked_at is null) then
-    return jsonb_build_object('status','rejected','error_code','heartbeat_connection_only'); end if;
   -- A role label supplied in a payload or a read-only Agent connection is
   -- never a CI principal. This is the existing Owner-designated CI Binding.
   if not exists(select 1 from clued_private.binding_roles_v1 r where r.user_id=b.user_id
@@ -1239,8 +1256,11 @@ begin
     select * into b from public.clued_agent_bindings x where x.id=v_hb and x.user_id=p_owner;
     if not found or not clued_private.binding_live_v1(b) then
       raise exception 'resident_failover_binding_invalid' using errcode='22023'; end if;
-    if not ('context:read'=any(b.scopes)) then
-      raise exception 'resident_failover_scope_missing' using errcode='22023'; end if;
+    -- Only a heartbeat-only connection (ci:heartbeat) with a current headless authorization.
+    if not clued_private.binding_has_only_heartbeat_scope_v1(b) or not exists(select 1 from clued_private.authorizations_v12 a
+        where a.binding_id=b.id and a.owner_id=p_owner and a.issuance='headless' and a.revoked_at is null
+          and a.expires_at>clock_timestamp()) then
+      raise exception 'resident_failover_heartbeat_scope_required' using errcode='22023'; end if;
     if exists(select 1 from jsonb_array_elements(clued_private.binding_role_holders_v1(p_owner,'ci-admission','{}'::uuid[])) h
         where h->>'binding_id'=v_hb::text) then
       raise exception 'resident_failover_heartbeat_holds_role' using errcode='22023'; end if;
@@ -1520,6 +1540,7 @@ revoke all on function
   clued_private.ci_admission_failover_tick_v1(),
   clued_private.ci_failover_setting_view_v1(uuid),
   clued_private.ci_failover_binding_view_v1(uuid,uuid),
+  clued_private.ci_failover_heartbeat_caller_v1(text),
   clued_private.ci_failover_list_view_v1(uuid,uuid[]),
   clued_private.ci_failover_member_ids_v1(uuid),
   clued_private.ci_failover_change_view_v1(uuid,jsonb),

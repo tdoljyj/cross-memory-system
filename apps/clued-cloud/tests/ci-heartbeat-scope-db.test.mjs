@@ -11,13 +11,13 @@ import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import { setWorkerGatewayCaller, workerGatewayRpc, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
-// Heartbeat-only connections (migration 20261031100000, Task f2e9a8c6,
+// Heartbeat-only connections (migration 20261031085000, Task f2e9a8c6,
 // DESIGN.md §41.6a): the scope ci:heartbeat, alone; issued only by the Owner in
 // two Native steps on the headless page; stored under a salted verifier that no
 // existing lookup can match; resolved only by resolve_heartbeat_binding_v1.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const MIGRATION = '20261031100000_ci_heartbeat_scope_v1.sql';
+const MIGRATION = '20261031085000_ci_heartbeat_scope_v1.sql';
 const uuid = () => crypto.randomUUID();
 const hex = () => crypto.randomBytes(32).toString('hex');
 const sha256 = (value) => crypto.createHash('sha256').update(value, 'utf8').digest('hex');

@@ -315,9 +315,9 @@ export default function ResidentFailoverPage() {
             : <ul>{allBindings.map(binding => {
               const id = String(binding.binding_id);
               const link = object(binding.heartbeat_for) ? binding.heartbeat_for : null;
-              // A connection can carry heartbeats when it is not a node, holds no CI admission and can read.
+              // Only a heartbeat-only connection (issued as a heartbeat token on the headless page) can be linked.
               const canLink = !link && binding.is_node !== true && !binding.purpose
-                && Array.isArray(binding.scopes) && binding.scopes.includes("context:read");
+                && Array.isArray(binding.scopes) && binding.scopes.length === 1 && binding.scopes[0] === "ci:heartbeat";
               return <li key={id}>{label(binding)}：<code style={{ fontFamily: "monospace" }}>{id}</code>{" "}
                 <button type="button" onClick={() => void copy(id)}>复制</button>
                 {link ? "（心跳连接，挂靠到节点 " + String(link.node_agent_name ?? link.node_binding_id ?? "") + "）" : ""}

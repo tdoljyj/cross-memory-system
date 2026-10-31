@@ -1,4 +1,4 @@
-// Heartbeat-only tokens (migration 20261031100000, Task f2e9a8c6) on the
+// Heartbeat-only tokens (migration 20261031085000, Task f2e9a8c6) on the
 // headless section of /oauth/connections, and OAuth consent never offering the
 // scope; controlled hooks/auth/RPC, no browser or live API calls.
 import { readFileSync } from 'node:fs';
@@ -116,6 +116,8 @@ test('a heartbeat token is its own two-step issue with no permission to choose; 
   await f.settle();
   assert.ok(f.text().includes('clued_hbt_' + 'x'.repeat(43)));
   assert.ok(f.text().includes('令牌已签发，只显示这一次'));
+  assert.ok(f.text().includes('只用于常驻节点心跳程序（安装时填给 -HeartbeatTokenFile），不能用于其他接口。'));
+  assert.ok(!f.text().includes('用法：REST'), 'no generic REST or RPC usage for a heartbeat token');
   assert.equal(f.calls[3].name, 'clued_headless_binding_list_v1', 'the list is read again');
   // A refusal is shown in plain words.
   f.calls[3].resolve({ data: { status: 'ok', eligible: ELIGIBLE, bindings: ROWS }, error: null }); await f.settle();

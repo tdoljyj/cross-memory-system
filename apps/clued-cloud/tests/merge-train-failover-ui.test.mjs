@@ -144,9 +144,10 @@ const NEW_ID = '7a2b3c4d-5e6f-4a1b-9c2d-3e4f5a6b7c8d';
 const BINDINGS = [
   { binding_id: 'b-turing', agent_name: 'turing', vendor: 'Headless', scopes: ['context:read'], is_node: true, purpose: 'resident-node', heartbeat_for: null },
   { binding_id: 'b-desk', agent_name: 'desk-w-591', vendor: 'Headless', scopes: ['context:read'], is_node: true, purpose: null, heartbeat_for: null },
-  { binding_id: HB_ID, agent_name: 'turing-heartbeat', vendor: 'Headless', scopes: ['context:read'], is_node: false, purpose: null,
+  { binding_id: HB_ID, agent_name: 'turing-heartbeat', vendor: 'Headless', scopes: ['ci:heartbeat'], is_node: false, purpose: null,
     heartbeat_for: { node_binding_id: 'b-turing', node_agent_name: 'turing', linked_at: '2026-10-31T07:00:00Z' } },
-  { binding_id: NEW_ID, agent_name: 'desk-heartbeat', vendor: 'Headless', scopes: ['context:read'], is_node: false, purpose: null, heartbeat_for: null },
+  { binding_id: NEW_ID, agent_name: 'desk-heartbeat', vendor: 'Headless', scopes: ['ci:heartbeat'], is_node: false, purpose: null, heartbeat_for: null },
+  { binding_id: 'b-reader', agent_name: 'reader', vendor: 'Claude', scopes: ['context:read'], is_node: false, purpose: null, heartbeat_for: null },
   { binding_id: 'b-park', agent_name: 'park', vendor: 'Headless', scopes: ['context:read'], is_node: false, purpose: 'parking', heartbeat_for: null },
   { binding_id: 'b-writer', agent_name: 'writer', vendor: 'Claude', scopes: ['context:write'], is_node: false, purpose: null, heartbeat_for: null },
 ];
@@ -157,17 +158,17 @@ test('connection ids: every live connection with its id, a copy button and its h
   const shown = f.text();
   assert.ok(shown.includes('装心跳连接时，把这个编号填给安装脚本的 -HeartbeatBindingId。'));
   const codes = f.nodes('code');
-  assert.deepEqual(codes.map(n => f.text(n)), ['b-turing', 'b-desk', HB_ID, NEW_ID, 'b-park', 'b-writer']);
+  assert.deepEqual(codes.map(n => f.text(n)), ['b-turing', 'b-desk', HB_ID, NEW_ID, 'b-reader', 'b-park', 'b-writer']);
   assert.equal(codes[2].props.style.fontFamily, 'monospace');
   assert.ok(shown.includes('turing-heartbeat（Headless）：' + HB_ID + ' 复制（心跳连接，挂靠到节点 turing）'));
   assert.ok(shown.includes('turing（Headless）：b-turing 复制（节点的 CI 连接）'));
   const copies = f.nodes('button').filter(n => f.text(n) === '复制');
-  assert.equal(copies.length, 6);
+  assert.equal(copies.length, 7);
   await copies[2].props.onClick(); await f.settle();
   assert.deepEqual(f.copied, [HB_ID]);
   assert.ok(f.text().includes('已复制连接编号 ' + HB_ID + '。'));
   assert.equal(f.calls.length, 1, 'copying makes no call');
-  // Only a plain readable connection is offered as a heartbeat connection, once per node; a linked one can be released.
+  // Only a heartbeat-only connection (ci:heartbeat) is offered, once per node; an ordinary readable one is not; a linked one can be released.
   const linkButtons = f.nodes('button').filter(n => f.text(n).startsWith('挂为 ')).map(n => f.text(n));
   assert.deepEqual(linkButtons, ['挂为 turing 的心跳连接…', '挂为 desk-w-591 的心跳连接…']);
   assert.equal(f.nodes('button').filter(n => f.text(n) === '解除心跳挂靠…').length, 1);

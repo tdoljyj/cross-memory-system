@@ -21,7 +21,7 @@ type Row = { binding_id: string; agent_name: string; vendor: string; kind: strin
   created_at: string | null; version: number | null; grants: Grant[] | null; roles: string[]; replaced_by: string | null;
   scopes: string[] | null; active?: boolean; selection_format?: string; sources: Source[]; overrides: Override[] };
 type Pending = { confirmation_token: string; view_digest: string; view: Json };
-type Issued = { token: string; binding_id: string; expires_at: string; replaced: Json | null };
+type Issued = { token: string; binding_id: string; expires_at: string; replaced: Json | null; heartbeat?: boolean };
 
 const object = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
 const strings = (value: unknown) => Array.isArray(value) ? value.map(String) : [];
@@ -283,7 +283,7 @@ export default function HeadlessBindings() {
       if (epoch.current !== generation) return;
       setHeartbeatPending(null);
       if (value.status === "committed" && typeof value.token === "string" && typeof value.binding_id === "string") {
-        setIssued({ token: value.token, binding_id: value.binding_id, expires_at: String(value.expires_at), replaced: null });
+        setIssued({ token: value.token, binding_id: value.binding_id, expires_at: String(value.expires_at), replaced: null, heartbeat: true });
         setCopied(false); setHeartbeatLabel("");
       } else {
         setNotice("这次确认已经处理过。令牌只在签发时显示一次；如果没有保存，请撤销它并重新签发。");
@@ -400,7 +400,8 @@ export default function HeadlessBindings() {
 
       {issued && <div className="oauth-note" role="status" aria-label="新令牌">
         <strong>令牌已签发，只显示这一次</strong>
-        <p>现在把它存进客户端的密钥设置（例如 GitHub environment secret）。离开或刷新页面后无法再次查看。</p>
+        <p>{issued.heartbeat ? "现在把它保存成文件，安装常驻节点时交给安装脚本。离开或刷新页面后无法再次查看。"
+          : "现在把它存进客户端的密钥设置（例如 GitHub environment secret）。离开或刷新页面后无法再次查看。"}</p>
         {issued.replaced && secretsFor(strings(issued.replaced.roles_moved)).length > 0 && <p role="alert">
           <strong>请更新：</strong>{secretsFor(strings(issued.replaced.roles_moved)).join("；")}。
           旧令牌 {when(String(issued.replaced.expires_at))} 失效，在那之前不更新，用到它的流程会失败。</p>}
@@ -415,8 +416,9 @@ export default function HeadlessBindings() {
           {issued.replaced && <div><dt>旧令牌</dt><dd>{`将于 ${when(String(issued.replaced.expires_at))} 失效`}
             {strings(issued.replaced.roles_moved).length ? `；角色 ${strings(issued.replaced.roles_moved).map(r => ROLES[r] ?? r).join("、")} 已移到新令牌` : ""}</dd></div>}
         </dl>
-        <p className="oauth-copy">用法：REST 接口发 <code>{`Authorization: Bearer <令牌>`}</code> 到 <code>{`${origin}/v1/…`}</code>；
-          数据库 RPC 传令牌的 SHA-256 作为 <code>p_token_hash</code>。MCP 地址只接受 OAuth。</p>
+        {issued.heartbeat ? <p className="oauth-copy">只用于常驻节点心跳程序（安装时填给 <code>-HeartbeatTokenFile</code>），不能用于其他接口。</p>
+          : <p className="oauth-copy">用法：REST 接口发 <code>{`Authorization: Bearer <令牌>`}</code> 到 <code>{`${origin}/v1/…`}</code>；
+          数据库 RPC 传令牌的 SHA-256 作为 <code>p_token_hash</code>。MCP 地址只接受 OAuth。</p>}
       </div>}
 
       {list === null ? <p role="status">{working ? "正在读取无头令牌…" : "无头令牌尚未读取。"}</p> : <>

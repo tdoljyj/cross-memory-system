@@ -96,7 +96,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
     // stage-1 node rows and ci-admission rows. The tick decides every account
     // that has marked connections; close() unmarks them when a scenario ends.
     let accountCount = 0;
-    const account = async (label, nodeNames, { holder = nodeNames[0], extra = true, session = 'sess-' + label, plain = [] } = {}) => {
+    const account = async (label, nodeNames, { holder = nodeNames[0], extra = true, session = 'sess-' + label, plain = [], heartbeat = [] } = {}) => {
       const user = uuid();
       const claims = fresh(user, session);
       await admin.query(`insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())`,
@@ -128,6 +128,16 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       }
       // Connections without a node (heartbeat connections to be linked).
       for (const name of plain) await bind(name, ['context:read']);
+      // Heartbeat-only connections (ci:heartbeat, 20261031085000), as the headless page issues them:
+      // the salted verifier of the token's SHA-256 and a headless authorization. The token below is that SHA-256.
+      for (const name of heartbeat) {
+        tokens[name] = hash();
+        ids[name] = (await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
+          values($1,'Headless',$2,clued_private.ci_heartbeat_token_hash_v1($3),array['ci:heartbeat'],array['global']) returning id`,
+        [user, name, tokens[name]])).rows[0].id;
+        await admin.query(`insert into clued_private.authorizations_v12(binding_id,request_id,owner_id,client_id,client_name,resource,expires_at,issuance)
+          values($1,null,$2,'clued-headless',$3,'clued:ci-heartbeat',now()+interval '30 days','headless')`, [ids[name], user, name]);
+      }
       if (extra) {
         await bind('env', ['context:read']);
         await bind('park', ['context:read']);
@@ -227,7 +237,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       const privates = (await admin.query(`select p.oid::regprocedure::text sig from pg_proc p
         where p.pronamespace='clued_private'::regnamespace and (p.proname like 'ci_failover%' or p.proname like 'ci_admission_failover%'
           or p.proname in ('ci_node_heartbeat_v1','binding_role_handover_core_v1','work_claim_ci_command_v1','ci_sweep_watermark_v1'))`)).rows.map((r) => r.sig);
-      assert.equal(privates.length, 24, privates.join(' '));
+      assert.equal(privates.length, 25, privates.join(' '));
       for (const sig of privates) {
         for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
           assert.equal(await can(role, sig), false, `${role} ${sig}`);
@@ -868,8 +878,8 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
     });
 
     await t.test('heartbeat connections: the Owner links them in two steps; heartbeats only; a lost CI connection is lost', async () => {
-      const s = await account('hblink', ['a', 'b', 'c'], { plain: ['hbA', 'hbB', 'hbB2'] });
-      const other = await account('hblink-other', ['z'], { extra: false, plain: ['zz'] });
+      const s = await account('hblink', ['a', 'b', 'c'], { heartbeat: ['hbA', 'hbB', 'hbB2'] });
+      const other = await account('hblink-other', ['z'], { extra: false, heartbeat: ['zz'] });
       const base = async () => (await s.view()).setting.version;
       const issueLink = async (hb, node, c) => s.native('clued_resident_failover_confirmation_issue_v1', { change: 'heartbeat_link',
         heartbeat_binding_id: s.ids[hb] ?? hb, node_binding_id: s.ids[node] ?? node, base_version: await base() }, c);
@@ -879,19 +889,28 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       const plainBeat = (who) => s.door(who, { action: 'ci_node_heartbeat', state: 'NORMAL', mode: 'STANDBY', service_running: true });
       // Refusals at the first step (and again under the role lock at the second).
       const err = async (p) => (await p).error_code;
-      assert.equal(await err(issueLink('env', 'b')), 'resident_failover_heartbeat_holds_role', 'an "other" holder');
-      assert.equal(await err(issueLink('park', 'b')), 'resident_failover_heartbeat_holds_role', 'a parking spot');
-      assert.equal(await err(issueLink('a', 'b')), 'resident_failover_heartbeat_holds_role', 'the resident-node holder');
-      assert.equal(await err(issueLink('c', 'b')), 'resident_failover_heartbeat_is_node', 'another node\'s CI connection');
+      // Only a heartbeat-only connection can be linked: never an ordinary readable connection, a role holder or a node.
+      const scopeRequired = 'resident_failover_heartbeat_scope_required';
+      assert.equal(await err(issueLink('reader', 'b')), scopeRequired, 'an ordinary context:read connection');
+      assert.equal(await err(issueLink('writer', 'b')), scopeRequired, 'a context:write connection');
+      assert.equal(await err(issueLink('env', 'b')), scopeRequired, 'an "other" holder');
+      assert.equal(await err(issueLink('park', 'b')), scopeRequired, 'a parking spot');
+      assert.equal(await err(issueLink('a', 'b')), scopeRequired, 'the resident-node holder');
+      assert.equal(await err(issueLink('c', 'b')), scopeRequired, 'another node\'s CI connection');
       assert.equal(await err(issueLink('b', 'b')), 'resident_failover_input_invalid', 'itself');
       assert.equal(await err(issueLink(other.ids.zz, 'b')), 'resident_failover_binding_invalid', 'another account');
-      assert.equal(await err(issueLink('writer', 'b')), 'resident_failover_scope_missing', 'without context:read');
+      // A heartbeat connection whose authorization is revoked or expired is not linked either.
+      await admin.query("update clued_private.authorizations_v12 set expires_at=now()-interval '1 second' where binding_id=$1", [s.ids.hbB2]);
+      assert.equal(await err(issueLink('hbB2', 'c')), scopeRequired, 'an expired heartbeat connection');
+      await admin.query("update clued_private.authorizations_v12 set expires_at=now()+interval '30 days' where binding_id=$1", [s.ids.hbB2]);
       assert.equal(await err(issueLink('hbB', 'reader')), 'resident_failover_node_invalid', 'not a node');
       assert.equal(await err(issueUnlink('hbB')), 'resident_failover_heartbeat_not_linked');
       assert.equal((await s.native('clued_resident_failover_confirmation_issue_v1', { change: 'heartbeat_link',
         heartbeat_binding_id: s.ids.hbB, node_binding_id: s.ids.b, members: [], base_version: await base() })).error_code,
       'resident_failover_input_invalid');
       assert.equal((await plainBeat('hbB')).error_code, 'ci_node_not_registered', 'not linked yet');
+      assert.deepEqual(await s.door('hbB', { action: 'ci_nodes_status' }), { status: 'rejected', error_code: 'heartbeat_connection_only' },
+        'not linked, still heartbeats only');
       // The node's CI token cannot link anything: the door actions are gone.
       assert.equal((await s.door('b', { action: 'ci_node_heartbeat_link', heartbeat_binding_id: s.ids.hbB })).error_code,
         'admission_binding_required');
@@ -909,11 +928,12 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       assert.equal(await err(issueLink('hbB', 'b')), 'resident_failover_unchanged');
       assert.equal(await err(issueLink('hbB', 'c')), 'resident_failover_heartbeat_linked', 'one node per heartbeat connection');
       await link('hbA', 'a');
-      // A linked heartbeat connection can be neither marked for nor handed ci-admission.
+      // A heartbeat connection can be neither marked for nor handed ci-admission (it cannot read; the
+      // role checks also refuse any linked connection, see the surface test).
       assert.equal((await s.native('clued_binding_role_confirmation_issue_v1', { binding_id: s.ids.hbB, role: 'ci-admission',
-        enabled: true, purpose: 'resident-node' })).error_code, 'binding_role_heartbeat_connection');
+        enabled: true, purpose: 'resident-node' })).error_code, 'binding_role_scope_missing');
       assert.equal((await s.native('clued_binding_role_handover_confirmation_issue_v1', { from_binding_id: s.ids.a,
-        to_binding_id: s.ids.hbB })).error_code, 'binding_role_heartbeat_connection');
+        to_binding_id: s.ids.hbB })).error_code, 'binding_role_scope_missing');
       // A heartbeat through the link is the node's.
       const beat = await s.beat('hbB');
       assert.deepEqual([beat.node_binding_id, beat.via_link, beat.node_ids], [s.ids.b, true, [s.nodes.b]]);
@@ -948,11 +968,11 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       committed(await s.apply(replacing));
       assert.equal((await plainBeat('hbB')).error_code, 'ci_node_not_registered');
       assert.equal((await s.beat('hbB2')).node_binding_id, s.ids.b);
-      // Unlink: refused afterwards; it is an ordinary connection again.
+      // Unlink: its heartbeats are refused afterwards, and it still can do nothing else.
       const unlinked = committed(await s.apply(issued(await issueUnlink('hbB2'))));
       assert.equal((await s.receipt_(unlinked.receipt_id)).metadata.receipt_kind, 'CI_NODE_HEARTBEAT_UNLINKED');
       assert.equal((await plainBeat('hbB2')).error_code, 'ci_node_not_registered');
-      assert.equal((await s.door('hbB2', { action: 'ci_nodes_status' })).error_code, 'admission_binding_required');
+      assert.equal((await s.door('hbB2', { action: 'ci_nodes_status' })).error_code, 'heartbeat_connection_only');
       assert.equal(await err(issueUnlink('hbB2')), 'resident_failover_heartbeat_not_linked');
       // The holder's CI connection is revoked: its linked heartbeats are refused; silence decides.
       await s.ago(5);
@@ -973,7 +993,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
     });
 
     await t.test('a holder whose CI connection is revoked: heartbeats refused, handed over only after 30 minutes of silence', async () => {
-      const s = await account('revoked', ['a', 'b'], { plain: ['hbA', 'hbB'] });
+      const s = await account('revoked', ['a', 'b'], { heartbeat: ['hbA', 'hbB'] });
       const base = async () => (await s.view()).setting.version;
       const link = async (hb, node) => committed(await s.apply(issued(await s.native('clued_resident_failover_confirmation_issue_v1',
         { change: 'heartbeat_link', heartbeat_binding_id: s.ids[hb], node_binding_id: s.ids[node], base_version: await base() }))));
