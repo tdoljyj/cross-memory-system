@@ -52,16 +52,17 @@ const session = id => ({ user: { id, email: id + '@example.test' }, access_token
 const plain = value => JSON.parse(JSON.stringify(value));
 const custom = (priority, version, extra = {}) => ({ record_id: 'r', priority, version, source: null, owner_instruction: null,
   binding_id: null, agent_name: null, updated_at: null, receipt_id: null, undo_available: false, ...extra });
-const item = (id, title, total, points, value) => ({ record_id: id, title, record_type: 'task', scope: 'global', project_name: 'KooYomi',
-  execution_bucket: 'next', updated_at: '2026-10-31T06:00:00Z',
+const item = (id, title, total, points, value, extra = {}) => ({ record_id: id, title, record_type: 'task', lifecycle_status: 'active',
+  scope: 'global', project_name: 'KooYomi', execution_bucket: 'next', updated_at: '2026-10-31T06:00:00Z', legacy_priority: null, ...extra,
   automatic: { total, band: 'NORMAL', custom_points: points, candidate_status: 'ACTIVE_READY' }, custom: value });
 const overview = (records = [
   item('task-a', '合并列车排队', 76, 24, custom(80, 1, { source: 'agent_on_owner_request', agent_name: 'Claude Code',
     owner_instruction: '把合并列车排到最前', updated_at: '2026-10-31T06:10:00Z', undo_available: true })),
-  item('task-b', '算力面板', 52, 0, custom(0, 0)),
+  item('task-b', '算力面板', 52, 0, custom(0, 0), { legacy_priority: 45 }),
+  item('task-c', '旧的收尾任务', 40, 15, custom(50, 1, { source: 'owner_page' }), { lifecycle_status: 'completed' }),
 ], history = [{ id: 7, record_id: 'task-a', title: '合并列车排队', priority: 80, previous_priority: 0,
   source: 'agent_on_owner_request', owner_instruction: '把合并列车排到最前', agent_name: 'Claude Code', undo_of: null,
-  receipt_id: 'r7', created_at: '2026-10-31T06:10:00Z' }]) => ({ data: { status: 'ok', weight: 0.3, records, history }, error: null });
+  receipt_id: 'r7', created_at: '2026-10-31T06:10:00Z' }], total = 340) => ({ data: { status: 'ok', weight: 0.3, records, total_records: total, history }, error: null });
 
 async function open(f, initial = overview()) {
   f.emit('INITIAL_SESSION', session('owner'));
@@ -83,10 +84,13 @@ test('each value shows its source and the Owner’s words; the page explains it 
   assert.ok(page.includes('0.3 倍'));
   assert.ok(page.includes('Agent 自己不能填这个数'));
   assert.ok(page.includes('Claude Code 按你的要求代设'));
-  assert.ok(page.includes('你的原话：「把合并列车排到最前」'));
+  assert.ok(page.includes('Agent 记下的你的要求：「把合并列车排到最前」'));
+  assert.ok(page.includes('原来的数字：45（已停用）'));
+  assert.ok(page.includes('已结束'));
   assert.ok(page.includes('（含你加的 24）'));
   assert.ok(page.includes('不设'));
   assert.equal(f.buttons('撤回上一次修改').length, 1, 'undo only where there is a change to undo');
+  assert.ok(page.includes('只显示自动分最高的 3 条'));
   assert.ok(page.includes('不设 → 80'));
 });
 

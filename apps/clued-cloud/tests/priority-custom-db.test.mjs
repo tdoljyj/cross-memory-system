@@ -174,6 +174,7 @@ test('priority custom v1: Agent-written priority retired, one custom channel wit
     fields = (await row(agentTask)).type_fields;
     assert.deepEqual(fields, { execution_bucket: 'next', criticality: 'NORMAL', legacy_priority: 90 });
     assert.equal((await row(agentTask)).priority, 0);
+    assert.equal('notices' in replaced, false, 'echoing the stored legacy_priority is not a priority write');
 
     const superseded = await rpc('host', 'clued_decision_supersede', {
       source_decisions: [{ id: decision, base_version: 1 }], supersede_reason: 'priority fixture', idempotency_key: uuid(),
@@ -201,13 +202,20 @@ test('priority custom v1: Agent-written priority retired, one custom channel wit
     rejected(await ask('host', { owner_instruction: undefined }), 'invalid_custom_priority_request');
     rejected(await ask('host', { priority: 101 }), 'invalid_custom_priority_request');
     rejected(await ask('host', { user_confirmed: false }), 'invalid_custom_priority_request');
-    rejected(await ask('host', { reason: 'not a field of this operation' }), 'invalid_custom_priority_request');
+    rejected(await ask('host', { label: 'not a field of this tool' }), 'invalid_custom_priority_request');
+    rejected(await ask('host', { expected_current_focus_id: plainTask }), 'invalid_custom_priority_request');
     const conflict = rejected(await ask('host', { base_version: 3 }), 'custom_priority_version_conflict');
     assert.equal(conflict.supplemental.custom_priority.version, 0);
     const scoreBefore = (await projection(plainTask)).algorithm_priority;
     const setKey = uuid();
-    const set = await ask('host', { idempotency_key: setKey });
+    // The tool's other optional fields and a Host's _meta are accepted and unused.
+    const set = await ask('host', { idempotency_key: setKey, reason: 'Owner asked', expected_current_focus_id: null,
+      _meta: { progressToken: 1 } });
     assert.equal(set.status, 'committed', JSON.stringify(set));
+    const agentReceipt = (await admin.query('select metadata from public.clued_audit_receipts where id=$1', [set.receipt_id])).rows[0].metadata;
+    assert.deepEqual([agentReceipt.receipt_kind, agentReceipt.priority, agentReceipt.previous_priority, agentReceipt.base_version,
+      agentReceipt.custom_priority_version, agentReceipt.changed, agentReceipt.owner_instruction],
+      ['CUSTOM_PRIORITY_SET', 80, 0, 0, 1, true, '把 Plain task 提到最前面']);
     assert.equal(set.changed, true);
     assert.deepEqual([set.supplemental.custom_priority.priority, set.supplemental.custom_priority.version,
       set.supplemental.custom_priority.source, set.supplemental.custom_priority.owner_instruction,
@@ -221,7 +229,8 @@ test('priority custom v1: Agent-written priority retired, one custom channel wit
     assert.equal(set.event_ids.length, 1);
     assert.equal((await admin.query("select payload->>'canonical_event_type' t from public.clued_context_events where id=$1", [set.event_ids[0]])).rows[0].t,
       'extension:mtpe:custom_priority');
-    const again = await ask('host', { idempotency_key: setKey });
+    const again = await ask('host', { idempotency_key: setKey, reason: 'Owner asked', expected_current_focus_id: null,
+      _meta: { progressToken: 1 } });
     assert.equal(again.replayed, true);
     assert.equal(again.receipt_id, set.receipt_id);
     const same = await ask('host', { base_version: 1 });
@@ -235,11 +244,22 @@ test('priority custom v1: Agent-written priority retired, one custom channel wit
     assert.equal(listed[0], plainTask);
     assert.deepEqual(listed.slice(1), [agentTask, createdId, imported]);
 
-    // A closed record takes no custom priority.
+    // A closed record takes no new custom priority, but its value can always be cleared.
     const closed = await create('Closed task', { execution_bucket: 'next' });
+    assert.equal((await ask('host', { record_id: closed, priority: 40 })).status, 'committed');
     assert.equal((await mutate(record('close', { id: closed, base_version: 1, lifecycle_status: 'completed',
       mutation: { closure_summary: 'done' } }))).status, 'committed');
-    rejected(await ask('host', { record_id: closed }), 'custom_priority_record_not_active');
+    assert.equal((await row(closed)).priority, 40);
+    rejected(await ask('host', { record_id: closed, base_version: 1 }), 'custom_priority_record_not_active');
+    const cleared = await ask('host', { record_id: closed, base_version: 1, priority: 0 });
+    assert.deepEqual([cleared.status, cleared.changed, (await row(closed)).priority], ['committed', true, 0]);
+    assert.equal((await ask('host', { record_id: closed, base_version: 2, priority: 40 })).error_code, 'custom_priority_record_not_active');
+    // Closing moves a stored Agent-written priority too, whatever the field mode.
+    const closing = await create('Numbered task to close', { execution_bucket: 'next' });
+    await admin.query(`update public.clued_memories set type_fields=type_fields||'{"priority":33}' where id=$1`, [closing]);
+    assert.equal((await mutate(record('close', { id: closing, base_version: 1, lifecycle_status: 'completed',
+      field_mode: 'replace', mutation: { closure_summary: 'done' } }))).status, 'committed');
+    assert.deepEqual([(await row(closing)).type_fields.priority, (await row(closing)).type_fields.legacy_priority], [undefined, 33]);
 
     // --- The Owner on /priority. ---
     const page = server.getPgClient();
@@ -284,7 +304,9 @@ test('priority custom v1: Agent-written priority retired, one custom channel wit
     assert.deepEqual([entry.custom.priority, entry.custom.source, entry.automatic.custom_points, entry.automatic.total],
       [80, 'agent_on_owner_request', 24, scored.algorithm_priority]);
     assert.equal(overview.records.some((item) => item.record_id === closed), false);
-    assert.deepEqual(overview.history.map((item) => [item.record_id, item.priority, item.previous_priority, item.source, item.agent_name]),
+    assert.equal(overview.records.find((item) => item.record_id === agentTask).legacy_priority, 90);
+    assert.equal(overview.total_records, overview.records.length);
+    assert.deepEqual(overview.history.filter((item) => item.record_id === plainTask).map((item) => [item.record_id, item.priority, item.previous_priority, item.source, item.agent_name]),
       [[plainTask, 80, 0, 'agent_on_owner_request', 'host']]);
 
     assert.equal((await native('clued_priority_custom_set_v1', { record_id: plainTask, priority: 30, base_version: 0 })).error_code,

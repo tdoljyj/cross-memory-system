@@ -2056,9 +2056,10 @@ async function callRpc(
   }
   const supplied = typeof args === "object" && args ? args : {};
   // Hosts append reserved MCP annotations inside tool arguments. They are
-  // transport context, never work-claim intent, authority or receiving proof.
+  // transport context, never work-claim intent, authority or receiving proof
+  // (nor part of an Owner Pin or custom priority request).
   // Keep the business RPC's strict allowlist and every other argument intact.
-  const payload = name in workClaimRpcByTool && !Array.isArray(supplied)
+  const payload = (name in workClaimRpcByTool || name === "clued_mtpe_owner_pin") && !Array.isArray(supplied)
     ? Object.fromEntries(Object.entries(supplied).filter(([key]) => key !== "_meta"))
     : supplied;
   if (name === "clued_record_list") validateRecordListInput(payload);

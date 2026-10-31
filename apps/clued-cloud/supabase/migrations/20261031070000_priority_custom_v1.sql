@@ -10,11 +10,12 @@
 -- 1. Ordinary record writes no longer set it. clued_record_mutate,
 --    clued_user_record_mutate (record_mutation_core) and
 --    clued_decision_supersede drop type_fields.priority (and the history key
---    legacy_priority) from what they are sent and say so in the result
---    (notices: priority_not_writable). On the next update of a record that
---    still stores type_fields.priority, that value moves to
---    type_fields.legacy_priority; legacy_priority is kept as stored, also
---    under field_mode=replace.
+--    legacy_priority) from what they are sent; a sent priority is named in the
+--    result (notices: priority_not_writable). On the next write of a record
+--    that still stores type_fields.priority (update, close, restore,
+--    reclassify), that value moves to type_fields.legacy_priority;
+--    legacy_priority is kept as stored, also under field_mode=replace. The
+--    Native candidate confirmation no longer accepts a priority choice.
 -- 2. The column clued_memories.priority changes only through the custom
 --    priority channel below. The trigger of 20260922030001 is replaced: any
 --    other insert writes 0 and any other update keeps the stored value.
@@ -35,10 +36,13 @@
 --      Owner's words in owner_instruction (source agent_on_owner_request).
 --      It is an existing Worker RPC; no anonymous or gateway signature is
 --      added.
---    Every change leaves a receipt (agent: an M1 receipt and Event
+--    Every change leaves a receipt naming the new and previous value and
+--    the custom priority version (agent: an M1 receipt and Event
 --    extension:mtpe:custom_priority; page: CUSTOM_PRIORITY_SET /
 --    CUSTOM_PRIORITY_UNDONE) and a history row. The Owner undoes the latest
---    change of a record in one step, whoever made it. Setting the column
+--    change of a record in one step, whoever made it. A non-zero value needs
+--    an active record; 0 (clear) is always allowed, so a closed record never
+--    keeps a value nobody can remove. Setting the column
 --    does not bump the record's version or updated_at: priority is not record
 --    content, and other writers' CAS stays valid.
 -- 5. MTPE: the explicit term of mtpe_sync_record reads the custom priority,
@@ -53,8 +57,8 @@
 --   order by priority desc, updated_at desc: custom priority first, then most
 --   recent. No definition changes.
 -- * the projection-refresh pick of 20260923213000:296 no longer orders by
---   priority: 20260924130000 replaced projection_refresh_frontier_apply with
---   the MTPE snapshot selection, which orders by algorithm_priority and so
+--   priority: 20260924110000 (then 20260924130000) replaced
+--   projection_refresh_frontier_apply with the MTPE snapshot selection, which orders by algorithm_priority and so
 --   sees the custom priority through item 5.
 -- * mtpe_snapshot (system priority, frontier) and the merge train order by
 --   algorithm_priority: item 5.
@@ -175,7 +179,7 @@ create function clued_private.priority_ignored_notice_v1(p_input jsonb) returns 
 language sql immutable set search_path='' as $$
   select case when jsonb_typeof(p_input)='object' and exists(
       select 1 from (values (p_input#>'{mutation,type_fields}'),(p_input#>'{replacement,type_fields}')) t(fields)
-      where jsonb_typeof(t.fields)='object' and t.fields ?| array['priority','legacy_priority'])
+      where jsonb_typeof(t.fields)='object' and t.fields ? 'priority')
     then jsonb_build_object('notices',jsonb_build_array(jsonb_build_object('code','priority_not_writable',
       'message','type_fields.priority was ignored and not stored: record priority now holds only the Owner''s custom priority. '||
         'Do not set it yourself. Only when the Owner explicitly asks, call clued_mtpe_owner_pin with operation custom_priority_set '||
@@ -209,9 +213,7 @@ $a$        coalesce((v_type_fields->>'priority')::smallint,0),1,$a$,
 $r$        0,1,$r$);
 select clued_private.priority_custom_patch_v1('clued_private.record_mutation_core(uuid,uuid,jsonb,text)',
 $a$      v_sources:=case when p_input ? 'source_refs' then clued_private.m1_sorted_uuid_array(p_input->'source_refs') else v_record.source_refs end;$a$,
-$r$      if v_operation in ('update','reclassify_scope') then
-        v_type_fields:=clued_private.priority_legacy_carry_v1(v_record.type_fields,v_type_fields);
-      end if;
+$r$      v_type_fields:=clued_private.priority_legacy_carry_v1(v_record.type_fields,v_type_fields);
       v_sources:=case when p_input ? 'source_refs' then clued_private.m1_sorted_uuid_array(p_input->'source_refs') else v_record.source_refs end;$r$);
 select clued_private.priority_custom_patch_v1('clued_private.record_mutation_core(uuid,uuid,jsonb,text)',
 $a$      || jsonb_build_object('replayed',v_receipt.related_receipt_id is null);$a$,
@@ -230,6 +232,17 @@ $r$    v_type_fields:=clued_private.priority_strip_type_fields_v1(coalesce(v_rep
 select clued_private.priority_custom_patch_v1('clued_private.decision_supersede_core(uuid,uuid,jsonb,text)',
 $a$    return v_result||jsonb_build_object('replayed',false,'supplemental',jsonb_build_object('replacement',$a$,
 $r$    return v_result||clued_private.priority_ignored_notice_v1(p_input)||jsonb_build_object('replayed',false,'supplemental',jsonb_build_object('replacement',$r$);
+
+-- The Native candidate confirmation no longer offers a priority choice: it
+-- would be dropped at promotion. The Owner sets it on /priority instead.
+select clued_private.priority_custom_patch_v1('clued_private.candidate_record_body_v1(uuid,text,uuid,jsonb,uuid)',
+$a$    elsif v_key='priority' then
+      if v_type<>'task' then raise exception 'native_type_field_not_allowed:%',v_key using errcode='22023'; end if;
+      if jsonb_typeof(v_val)<>'number' or (v_val#>>'{}') !~ '^(0|[1-9][0-9]?|100)$' then
+        raise exception 'native_type_field_invalid:%',v_key using errcode='22023'; end if;$a$,
+$r$    elsif v_key='priority' then
+      -- 20261031070000: the Owner's custom priority is set on /priority.
+      raise exception 'native_type_field_not_allowed:%',v_key using errcode='22023';$r$);
 
 -- 5. The custom priority channel ----------------------------------------------
 
@@ -318,8 +331,12 @@ begin
   end if;
   v_refs:=jsonb_build_array(jsonb_build_object('role','primary','kind','record','id',r.id));
   begin
+    -- The tool also lists the Pin's reason and expected_current_focus_id, and
+    -- some Hosts add _meta: accepted and unused (a focus id must be null).
     if exists(select 1 from jsonb_object_keys(p_input) k where k not in ('operation','record_id','priority',
-        'base_version','owner_instruction','idempotency_key','user_confirmed','request_hash'))
+        'base_version','owner_instruction','idempotency_key','user_confirmed','request_hash',
+        'reason','expected_current_focus_id','_meta'))
+      or coalesce(p_input->'expected_current_focus_id','null'::jsonb)<>'null'::jsonb
       or jsonb_typeof(p_input->'priority') is distinct from 'number' or (p_input->>'priority') !~ '^(0|[1-9][0-9]?|100)$'
       or jsonb_typeof(p_input->'base_version') is distinct from 'number' or (p_input->>'base_version') !~ '^[0-9]{1,18}$'
       or jsonb_typeof(p_input->'owner_instruction') is distinct from 'string'
@@ -334,11 +351,19 @@ begin
     select * into r from public.clued_memories
       where id=v_record_id and user_id=b.user_id and record_schema_version=1 for update;
     if not found then raise exception 'record_not_found' using errcode='P0002'; end if;
-    if r.lifecycle_status<>'active' then raise exception 'custom_priority_record_not_active' using errcode='22023'; end if;
+    -- A closed record keeps no custom priority it cannot shed: 0 is always allowed.
+    if r.lifecycle_status<>'active' and v_priority<>0 then
+      raise exception 'custom_priority_record_not_active' using errcode='22023'; end if;
     v_current:=clued_private.custom_priority_view_v1(b.user_id,r.id);
     if (v_current->>'version')::bigint<>v_base then
       raise exception 'custom_priority_version_conflict' using errcode='40001';
     end if;
+    update public.clued_audit_receipts set metadata=jsonb_build_object('receipt_kind','CUSTOM_PRIORITY_SET',
+      'record_id',r.id,'priority',v_priority,'previous_priority',(v_current->>'priority')::integer,
+      'base_version',v_base,'changed',(v_current->>'priority')::integer<>v_priority,
+      'custom_priority_version',v_base+case when (v_current->>'priority')::integer<>v_priority then 1 else 0 end,
+      'source','agent_on_owner_request','owner_instruction',v_instruction,'principal','binding')
+    where id=receipt.id;
     if (v_current->>'priority')::integer<>v_priority then
       v_current:=clued_private.custom_priority_apply_v1(r,v_priority,'agent_on_owner_request',v_instruction,
         b.id,null,receipt.id,null);
@@ -404,7 +429,8 @@ begin
   select * into r from public.clued_memories where id=(p_input->>'record_id')::uuid and user_id=v_owner
     and record_schema_version=1 for update;
   if not found then raise exception 'custom_priority_record_not_found' using errcode='22023'; end if;
-  if r.lifecycle_status<>'active' then raise exception 'custom_priority_record_not_active' using errcode='22023'; end if;
+  if r.lifecycle_status<>'active' and v_priority<>0 then
+    raise exception 'custom_priority_record_not_active' using errcode='22023'; end if;
   v_current:=clued_private.custom_priority_view_v1(v_owner,r.id);
   if (v_current->>'version')::bigint<>(p_input->>'base_version')::bigint then
     return jsonb_build_object('status','rejected','error_code','custom_priority_version_conflict',
@@ -467,17 +493,26 @@ end $$;
 -- switch: PostgREST runs a STABLE RPC read-only and the owner check locks.
 create function public.clued_priority_overview_v1(p_input jsonb) returns jsonb
 language plpgsql volatile security definer set search_path='' as $$
-declare v_owner uuid:=clued_private.authorization_owner_v12(); v_records jsonb; v_history jsonb;
+declare v_owner uuid:=clued_private.authorization_owner_v12(); v_records jsonb; v_history jsonb; v_count bigint;
 begin
   if jsonb_typeof(p_input) is distinct from 'object' or exists(select 1 from jsonb_object_keys(p_input)) then
     raise exception 'custom_priority_input_invalid' using errcode='22023';
   end if;
+  -- Active Tasks, and every record (closed ones too, so it can be cleared)
+  -- that holds a custom priority.
+  select count(*) into v_count from public.clued_memories m
+    where m.user_id=v_owner and m.record_schema_version=1
+      and ((m.record_type='task' and m.lifecycle_status='active') or exists(select 1
+        from clued_private.record_custom_priority_v1 c where c.record_id=m.id and c.priority>0));
   select coalesce(jsonb_agg(row_data order by total desc nulls last,updated_at desc,record_id),'[]'::jsonb)
     into v_records from (
       select m.id as record_id,m.updated_at,p.algorithm_priority as total,
         jsonb_build_object('record_id',m.id,'title',m.title,'record_type',m.record_type,
+          'lifecycle_status',m.lifecycle_status,
           'scope',m.canonical_scope,'project_name',pr.name,'execution_bucket',m.type_fields->>'execution_bucket',
           'updated_at',m.updated_at,
+          'legacy_priority',(select l.column_priority from clued_private.record_priority_legacy_v1 l
+            where l.record_id=m.id and l.user_id=m.user_id),
           'automatic',case when p.record_id is null then null else jsonb_build_object(
             'total',p.algorithm_priority,'band',p.priority_band,
             'custom_points',coalesce((p.priority_inputs->>'explicit_priority_signal')::integer,0),
@@ -486,9 +521,9 @@ begin
       from public.clued_memories m
       left join clued_private.mtpe_intake_projection p on p.user_id=m.user_id and p.record_id=m.id
       left join public.clued_projects pr on pr.id=m.project_id and pr.user_id=m.user_id
-      where m.user_id=v_owner and m.record_schema_version=1 and m.lifecycle_status='active'
-        and (m.record_type='task' or exists(select 1 from clued_private.record_custom_priority_v1 c
-          where c.record_id=m.id and c.priority>0))
+      where m.user_id=v_owner and m.record_schema_version=1
+        and ((m.record_type='task' and m.lifecycle_status='active') or exists(select 1
+          from clued_private.record_custom_priority_v1 c where c.record_id=m.id and c.priority>0))
       order by p.algorithm_priority desc nulls last,m.updated_at desc,m.id limit 300) t;
   select coalesce(jsonb_agg(jsonb_build_object('id',h.id,'record_id',h.record_id,'title',m.title,
       'priority',h.priority,'previous_priority',h.previous_priority,'source',h.source,
@@ -498,7 +533,8 @@ begin
     into v_history from (select * from clued_private.record_custom_priority_history_v1 x
       where x.user_id=v_owner order by x.id desc limit 50) h
     join public.clued_memories m on m.id=h.record_id;
-  return jsonb_build_object('status','ok','weight',0.3,'records',v_records,'history',v_history);
+  return jsonb_build_object('status','ok','weight',0.3,'records',v_records,'total_records',v_count,
+    'history',v_history);
 end $$;
 
 revoke all on function clued_private.custom_priority_view_v1(uuid,uuid),
