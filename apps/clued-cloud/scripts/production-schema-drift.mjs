@@ -315,7 +315,8 @@ export async function runCheck({ repository, snapshot, catalogSql, log = () => {
     } else skipped.set(entry.file, entry.reason);
   }
   for (const file of skipped.keys()) {
-    const step = chain.applied.find((candidate) => candidate.file === file);
+    // Ledger rows newer than the snapshot (chain.ahead) use the same lists.
+    const step = [...chain.applied, ...chain.ahead].find((candidate) => candidate.file === file);
     if (!step) report.errors.push(`snapshot_replay_skip_not_applied:${file}`);
     else if (SCHEMA_STATEMENT.test(step.text.replace(/--[^\n]*/g, ' '))) report.errors.push(`snapshot_replay_skip_not_data_only:${file}`);
   }
@@ -330,17 +331,18 @@ export async function runCheck({ repository, snapshot, catalogSql, log = () => {
       report.errors.push('snapshot_replay_substitution_invalid');
     } else substitutions.set(entry.file, [...(substitutions.get(entry.file) ?? []), entry]);
   }
-  const replayed = [];
-  for (const step of chain.applied.filter((candidate) => !skipped.has(candidate.file))) {
+  const prepare = (steps) => steps.filter((candidate) => !skipped.has(candidate.file)).map((step) => {
     let text = step.text;
     for (const entry of substitutions.get(step.file) ?? []) {
       if (text.split(entry.find).length !== 2) report.errors.push(`snapshot_replay_substitution_not_unique:${step.file}`);
       else text = text.replace(entry.find, () => entry.replace);
     }
-    replayed.push({ ...step, text });
-  }
+    return { ...step, text };
+  });
+  const replayed = prepare(chain.applied);
+  const ahead = prepare(chain.ahead);
   for (const file of substitutions.keys()) {
-    if (!chain.applied.some((step) => step.file === file)) report.errors.push(`snapshot_replay_substitution_not_applied:${file}`);
+    if (![...chain.applied, ...chain.ahead].some((step) => step.file === file)) report.errors.push(`snapshot_replay_substitution_not_applied:${file}`);
   }
   if (report.errors.length > 0) return report;
 
@@ -362,8 +364,8 @@ export async function runCheck({ repository, snapshot, catalogSql, log = () => {
     // Ledger rows newer than the snapshot: production ran them after the
     // snapshot was taken, so they come after the comparison.
     report.ledger_ahead = chain.ahead.map((step) => step.file);
-    if (chain.ahead.length) log(`production chain: replaying ${chain.ahead.length} ledger rows newer than the snapshot`);
-    for (const step of chain.ahead) {
+    if (ahead.length) log(`production chain: replaying ${ahead.length} ledger rows newer than the snapshot`);
+    for (const step of ahead) {
       try {
         await applyPlain(client, step);
       } catch (error) {

@@ -1,9 +1,9 @@
-# 测试、构建与迁移验证成为必需检查 · 设计说明 v2
+# 测试、构建与迁移验证成为必需检查 · 设计说明 v3
 
 - 日期：2026-11-01（UTC）
 - KooYomi：项目 0597aa60；Task `2a5fdb66`（本工作），拆出的漂移检查 Task `16b795e6`；认领 `1b3d6e2f`。
 - 依据：Owner 目标 Decision `afec9be8`（全部算力可调度、完整 CI/CD），顺序 Decision `02e4374a`（本项第 3 项）；费用规则 Decision `9eb313f8`（新作业只用自建算力，[Runbook §2.4](../../docs/maintenance/runner-configuration-and-operations.md#24-现有与未来任务的费用原则迁移与防回流)）；不稳定测试隔离 Task `679a0c2b`；配置改动先独立审核 `01d4ba7d`。
-- 修订：v1 经独立审核 FAIL（1 BLOCKER、3 MAJOR），v2 逐项修正，见 §10。
+- 修订：v1 经独立审核 FAIL（1 BLOCKER、3 MAJOR），v2 逐项修正；v2 第二轮 FAIL（3 MAJOR），v3 再修，见 §10。
 - 状态：代码与测试在 PR #971；前置的门禁登记在单独的 PR（§7）。三项新检查还**不是**必需检查，加进规则集要 Owner 操作（§8）。
 
 ## 0. 结论
@@ -40,7 +40,7 @@
 
 ### 3.2 选择（`scripts/ci/ci-required-selection.mjs`）
 
-- 每项检查下有若干套件，按路径模式选中。常驻层与 Source v2 互相 import，而且 import `scripts/ci/*`、读 `.gitleaks.toml`，所以这几个目录任何一处改动，两边的套件都跑；测试会扫描两个目录对外的 import，确认每个都被模式覆盖（独立审核 M3）。
+- 每项检查下有若干套件，按路径模式选中。常驻层、Source v2、`scripts/ci`、`scripts/runner` 互相 import（准入自测经 `scripts/ci` 用到约 50 个 Source v2 文件，`clued-work-admission.mjs` 用到 `scripts/runner`），还读 `.gitleaks.toml`，所以这几处任何一处改动，常驻层、Source v2、离线演练和准入自测都跑。测试从每个 Node 套件运行的全部文件出发，算出**传递**的 import 闭包，确认闭包里每个文件都会选中这个套件（独立审核 M3，两轮）。
 - `clued-cloud-tests` 对任何改动都跑（应用测试会读工作流、合同、CI 脚本，路径排除不安全）。
 - 改了选择脚本、已知失败清单、本工作流或 `.github/actions/**`：所有套件都跑。
 - 拿不到改动列表（push、API 失败、列表到 GitHub 3000 文件上限）：所有套件都跑。
@@ -57,9 +57,10 @@
 
 ### 3.4 已知失败（Task `679a0c2b`）
 
-- `scripts/ci/ci-known-failures.json` 按套件、按**确切测试名**列出 main 上已经失败的测试，每条带原因：`clued-cloud` 86 条、`admission-self-tests` 4 条。
-- 带 `known` 的命令在 Node 测试运行器上加 JUnit 报告，按报告逐条判断：列表外的失败让套件失败（出 `::error`）；列表内的失败出 `::warning`；列表内的测试通过时出“now passes, remove it”。进程非零退出却没有任何失败用例（进程崩溃、导入错误）、或者报告为空，也算失败。
-- 清单在 trusted base 上读取，候选改不了它；改清单本身会让所有套件都跑。
+- `scripts/ci/ci-known-failures.json` 按套件列出 main 上已经失败的测试：`clued-cloud` 86 条、`admission-self-tests` 4 条。每条由三样确定：测试文件（相对仓库根）、完整的测试路径（外层 describe 和父测试在前）、失败指纹，外加原因。
+- 带 `known` 的命令用 trusted base 上的报告器 `scripts/ci/ci-test-failures-reporter.mjs` 跑 Node 测试运行器。报告器记下每一次 `test:fail`：普通测试、suite、hook（`hookFailed`）、在子测试之后抛错的父测试、加载失败的文件；只因子测试失败而失败的父测试（`subtestsFailed`）不单记，由子测试承担。指纹是失败类型、错误码和去掉路径、十六进制摘要、数字之后的失败消息的 sha256 前 16 位，所以同一个已知测试换了失败原因就是新失败（独立审核第二轮 MAJOR-2：`clued-merge-slot-ci.yml` 清单缺 `clued-required-tests` 这件事，如今就体现在那条已知失败的指纹和原因里）。
+- 判定：任何对不上已知条目的失败让套件失败（出 `::error`）；运行没有总结事件（没跑完）、退出码不是 0 或 1（信号、超时）、非零退出却没有失败、有失败却退出 0，也都失败。已知条目照常失败出 `::warning`；已知测试通过、或者已不存在时提示删除。
+- 清单和报告器都在 trusted base 上读取，候选改不了；改它们会让所有套件都跑。同一份代码在 TURING 上连跑两次，90 条指纹完全一致。
 - `resource-center-storage-read-pdf-bounds` 的 62 条是 Windows 才失败（子进程 URL），预计 Linux 能过；第一次自建 Linux 运行后按提示删掉。
 
 ## 4. 生产 schema 漂移检查（Task `16b795e6`）
@@ -106,7 +107,7 @@
 - 用 18:45Z 的快照，在 TURING 本机套上 #967 修好后的文件（`be3ea75b`，迁移文件与账本）完整跑通：生产链 1 个 prehistory 加 296 行重放（1 行纯数据跳过），指纹与生产一致（含属主、参数默认值、列授权、序列参数），没有过期的例外，没有待上线迁移，结果 PASS。
 - 重放还顺带确认了 `20261010161848_worker_gateway_closeout_v1` 里钉住的 G6 函数体 md5（只在按文件 LF 文本重放时才能通过；账本的 transform 记的是存储形态，不一定是执行形态）。
 - 引用规则对最近 158 个迁移只命中一处，就是 `20261023092957_ci_scheduling_stage1_v1` 的 `b.expires_at`；#967 修过的写法（`to_jsonb(b)->>'expires_at'`）不命中。
-- 单元测试：`apps/clued-cloud/tests/production-schema-drift.test.mjs`（14 项），选择、运行与已知失败：`scripts/ci/ci-required-selection.test.mjs`（18 项）。
+- 单元测试：`apps/clued-cloud/tests/production-schema-drift.test.mjs`（14 项），选择、运行、报告器与已知失败：`scripts/ci/ci-required-selection.test.mjs`（20 项）。
 
 ### 4.6 首次对照发现的生产漂移（交给 Task `16b795e6`）
 
@@ -182,3 +183,18 @@
 | m8 | 指纹漏项 | 加属主、参数默认值、leakproof/parallel、列授权、序列参数；重新抓取快照 |
 | m9 | 不带限定的列引用 | §4.3、§4.8 写明局限 |
 | NIT | 空展开、全零 base、rebuild 无超时 | 空展开与全零 base 报错；rebuild 加 `timeout` |
+
+第二轮（v2，2026-11-01）FAIL：B1、M2 已修好；3 MAJOR、4 MINOR、3 NIT。处理：
+
+| 编号 | 问题 | 处理 |
+| --- | --- | --- |
+| MAJOR-1 | 不是测试用例的失败（子测试之后父测试抛错、describe 的 after hook）被任意一条已知失败“解释”掉 | 换成 trusted base 上的报告器，记下每一次 `test:fail`，并要求总结事件和正常退出码（§3.4） |
+| MAJOR-2 | 按名字登记会掩盖已知测试的新失败原因（merge-slot 清单缺新工作流） | 条目带失败指纹；那条已知失败的原因已写明缺 `clued-required-tests` |
+| MAJOR-3 | 只查一跳 import，漏掉 `scripts/runner` 和准入自测用到的 Source v2 | 共用的路径模式加上 `scripts/runner/**`，准入自测加上常驻层和 Source v2；测试改为传递闭包（§3.2） |
+| MINOR 1 | 同名测试互相冒充 | 条目按文件、完整路径、指纹匹配 |
+| MINOR 2 | 已不存在的条目没有提示 | 出 `known failure no longer runs` |
+| MINOR 3 | 信号或残缺报告 | 要求总结事件；信号或 0/1 以外的退出码失败 |
+| MINOR 4 | 比快照新的账本行不经过 replay_skip / 替换 | 这些行与快照行用同一份清单 |
+| NIT | 反复解码 XML 名字 | 不再用 JUnit |
+| NIT | SCHEMA_STATEMENT 可被动态 SQL 绕过 | 接受：清单要审查 |
+| NIT | push 到 main 时 cancel-in-progress 会取消前一次 main 的运行 | 只在 PR 上取消 |

@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  FILE_LIMIT, SELECT_ALL, SUITES, SUITE_COMMANDS, changedFiles, expandArgv, globToRegExp, junitCases,
-  knownFailureVerdict, listPullRequestFiles, outputLines, readKnownFailures, runSuite, selectSuites,
+  FILE_LIMIT, REPORTER_PATH, SELECT_ALL, SUITES, SUITE_COMMANDS, changedFiles, expandArgv, globToRegExp, knownFailureVerdict, knownKey,
+  listPullRequestFiles, outputLines, readKnownFailures, readReport, runSuite, selectSuites,
 } from './ci-required-selection.mjs';
+import { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const log = () => {};
@@ -62,35 +64,61 @@ test('resident, Source v2 and CI-script changes run the resident and Source v2 s
   assert.ok(selectSuites('ci-suites', ['scripts/ci/clued-work-admission.mjs']).suites.includes('admission-self-tests'));
 });
 
-// Review M3: a suite must run when a file its code imports changes.
-function outsideImports(dir) {
-  const out = new Set();
+// Review M3 (rounds 1 and 2): a Node suite must run when any file its code
+// reaches through relative imports changes, transitively, from every file the
+// suite runs.
+function relativeImports(file) {
+  const out = [];
+  for (const match of readFileSync(file, 'utf8').matchAll(/(?:from\s*|import\s*\(\s*|import\s+)['"](\.{1,2}\/[^'"]+)['"]/g)) {
+    const target = path.resolve(path.dirname(file), match[1]);
+    if (existsSync(target) && /\.(?:mjs|js|cjs)$/.test(target)) out.push(target);
+  }
+  return out;
+}
+
+function closure(entries) {
+  const seen = new Set();
+  const stack = [...entries];
+  while (stack.length) {
+    const file = stack.pop();
+    if (seen.has(file)) continue;
+    seen.add(file);
+    stack.push(...relativeImports(file));
+  }
+  return [...seen].map((file) => path.relative(ROOT, file).split(path.sep).join('/'))
+    .filter((file) => !file.startsWith('..') && !file.includes('node_modules/'));
+}
+
+const filesUnder = (dir) => {
+  const out = [];
   const walk = (folder) => {
     for (const entry of readdirSync(folder, { withFileTypes: true })) {
       const file = path.join(folder, entry.name);
-      if (entry.isDirectory()) { if (entry.name !== 'node_modules') walk(file); continue; }
-      if (!/\.(?:mjs|js|cjs)$/.test(entry.name)) continue;
-      for (const match of readFileSync(file, 'utf8').matchAll(/(?:from\s*|import\s*\(\s*|import\s+)['"](\.{1,2}\/[^'"]+)['"]/g)) {
-        const target = path.resolve(path.dirname(file), match[1]);
-        const relative = path.relative(ROOT, target).split(path.sep).join('/');
-        if (!relative.startsWith(`${dir}/`) && existsSync(target)) out.add(relative);
-      }
+      if (entry.isDirectory()) { if (entry.name !== 'node_modules') walk(file); } else if (/\.(?:mjs|js|cjs)$/.test(entry.name)) out.push(file);
     }
   };
   walk(path.join(ROOT, dir));
-  return [...out];
-}
+  return out;
+};
 
-test('the resident and Source v2 suites cover every file their code imports from outside', () => {
-  for (const [dir, ids] of [['work/independent-ci-resident-v1', ['resident-node', 'offline-drill']],
-    ['work/actions-hosted-migration/independent-ci-v1', ['source-v2-node']]]) {
-    const imports = outsideImports(dir);
-    assert.ok(imports.length > 0, dir);
-    for (const file of imports) {
-      const { suites } = selectSuites('ci-suites', [file]);
-      for (const id of ids) assert.ok(suites.includes(id), `${dir} imports ${file}, which does not select ${id}`);
+test('every Node suite runs when any file its tests reach through imports changes, transitively', () => {
+  const entries = {
+    'resident-node': filesUnder('work/independent-ci-resident-v1'),
+    'offline-drill': filesUnder('work/independent-ci-resident-v1'),
+    'source-v2-node': filesUnder('work/actions-hosted-migration/independent-ci-v1'),
+    'admission-self-tests': SUITE_COMMANDS['admission-self-tests'][0].argv.filter((arg) => arg.endsWith('.mjs'))
+      .map((file) => path.join(ROOT, file)),
+  };
+  for (const [id, files] of Object.entries(entries)) {
+    const reached = closure(files);
+    assert.ok(reached.length > files.length, id);
+    for (const file of reached) {
+      assert.ok(selectSuites('ci-suites', [file]).suites.includes(id), `${id} reaches ${file}, which does not select it`);
     }
   }
+  // The examples the round-2 review found.
+  assert.ok(selectSuites('ci-suites', ['scripts/runner/clued-runner-job-started.mjs']).suites.includes('resident-node'));
+  assert.ok(selectSuites('ci-suites', ['work/actions-hosted-migration/independent-ci-v1/src/proof.mjs']).suites.includes('admission-self-tests'));
 });
 
 test('any workflow change runs the runner budget policy and the admission self-tests', () => {
@@ -173,44 +201,99 @@ test('a suite stops at its first failing command and reports a command that did 
   assert.throws(() => runSuite('nope', { root: ROOT, spawn, log }), /unknown suite/);
 });
 
-const xml = (cases) => `<?xml version="1.0"?>\n<testsuites>\n${cases.map(([name, failed]) =>
-  `\t<testcase name="${name}" time="0.1" classname="test" file="x"${failed ? ' failure="boom">\n\t\t<failure message="boom"/>\n\t</testcase>' : '/>'}`).join('\n')}\n</testsuites>\n`;
+// A real run through the reporter: the failure shapes round 2 found masked.
+// The fixture is its own test run, not part of this one (as run-tests.mjs does).
+const childEnv = () => { const env = { ...process.env }; delete env.NODE_TEST_CONTEXT; return env; };
+function runFixture(files) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'ci-reporter-'));
+  for (const [name, text] of Object.entries(files)) writeFileSync(path.join(dir, name), text);
+  const out = path.join(dir, 'failures.jsonl');
+  const result = spawnSync(process.execPath, ['--test', `--test-reporter=${pathToFileURL(REPORTER_PATH).href}`,
+    `--test-reporter-destination=${out}`, ...Object.keys(files)], { cwd: dir, encoding: 'utf8', env: childEnv() });
+  const report = readReport(existsSync(out) ? readFileSync(out, 'utf8') : '', dir);
+  rmSync(dir, { recursive: true, force: true });
+  return { status: result.status, report };
+}
 
-test('JUnit cases are read with their decoded names; a suite element is not a case', () => {
-  const cases = junitCases(`<testsuites><testsuite name="parent" failures="1"><testcase name="main&amp;apos;s &amp;quot;x&amp;quot; &lt;y>" failure="e"><failure/></testcase>
-    <testcase name="ok"/></testsuite></testsuites>`);
-  assert.deepEqual(cases, [{ name: 'main\'s "x" <y>', failed: true }, { name: 'ok', failed: false }]);
+const FIXTURE = {
+  'a.test.mjs': `import test, { describe, it, after } from 'node:test';
+test('known one', () => { throw new Error('old reason 12 at /tmp/x/y.mjs'); });
+test('parent', async (t) => { await t.test('child ok', () => {}); throw new Error('parent after subtests'); });
+describe('suite', () => { after(() => { throw new Error('hook'); }); it('inner ok', () => {}); });
+test('only child fails', async (t) => { await t.test('child', () => { throw new Error('child'); }); });
+`,
+  'b.test.mjs': `import test from 'node:test';
+test('known one', () => { throw new Error('old reason 12 at /tmp/x/y.mjs'); });
+`,
+};
+
+test('the reporter records every failure with its file, nesting path and fingerprint, and the run summary', () => {
+  const { status, report } = runFixture(FIXTURE);
+  assert.equal(status, 1);
+  assert.ok(report.summary, 'the run summary is recorded');
+  const fails = report.events.filter((event) => event.type === 'fail').map((event) => `${event.file} :: ${event.path.join(' > ')}`).sort();
+  assert.deepEqual(fails, ['a.test.mjs :: known one', 'a.test.mjs :: only child fails > child', 'a.test.mjs :: parent', 'a.test.mjs :: suite',
+    'b.test.mjs :: known one'], 'a parent throwing after its subtests and a failing hook are failures; a parent failing only through a subtest is not');
+  const hook = report.events.find((event) => event.type === 'fail' && event.path[0] === 'suite');
+  assert.equal(hook.failure_type, 'hookFailed');
+  const [a, b] = report.events.filter((event) => event.type === 'fail' && event.path[0] === 'known one');
+  assert.equal(a.fingerprint, b.fingerprint, 'paths and numbers do not change a fingerprint');
+  assert.ok(report.events.some((event) => event.type === 'pass' && event.path.join(' > ') === 'suite > inner ok'));
 });
 
-test('known failures: only listed tests may fail, a crash or an empty report fails, fixed ones are reported', () => {
-  const known = { 'old a': 'r', 'old b': 'r', 'gone': 'r' };
-  const pass = knownFailureVerdict({ status: 1, cases: junitCases(xml([['old a', true], ['old b', false], ['new', false]])), known });
-  assert.equal(pass.ok, true);
-  assert.deepEqual(pass.expected, ['old a']);
-  assert.deepEqual(pass.fixed, ['old b']);
-  assert.deepEqual(pass.missing, ['gone']);
-  const fail = knownFailureVerdict({ status: 1, cases: junitCases(xml([['old a', true], ['new', true]])), known });
-  assert.equal(fail.ok, false);
-  assert.deepEqual(fail.unexpected, ['new']);
-  assert.equal(knownFailureVerdict({ status: 1, cases: junitCases(xml([['old a', false]])), known }).ok, false,
-    'a nonzero exit no failing case explains (a crash outside a test) fails');
-  assert.equal(knownFailureVerdict({ status: 0, cases: [], known }).ok, false, 'a run that reported nothing fails');
+test('known failures match on file, path and fingerprint: new reasons, new tests, same names elsewhere and masked shapes fail', () => {
+  const { status, report } = runFixture(FIXTURE);
+  const known = report.events.filter((event) => event.type === 'fail').map((event) => ({ ...event, reason: 'fixture' }));
+  assert.equal(knownFailureVerdict({ status, report, known }).ok, true, 'every failure listed');
+  const withoutHook = known.filter((entry) => entry.path[0] !== 'suite');
+  const hook = knownFailureVerdict({ status, report, known: withoutHook });
+  assert.equal(hook.ok, false, 'an unlisted hook failure is new even while other known failures exist');
+  assert.deepEqual(hook.unexpected.map((entry) => entry.path.join(' > ')), ['suite']);
+  const otherFile = knownFailureVerdict({ status, report, known: known.filter((entry) => entry.file !== 'b.test.mjs') });
+  assert.deepEqual(otherFile.unexpected.map((entry) => entry.file), ['b.test.mjs'], 'the same name in another file is a new failure');
+  const newReason = known.map((entry) => (entry.path[0] === 'parent' ? { ...entry, fingerprint: '0'.repeat(16) } : entry));
+  assert.deepEqual(knownFailureVerdict({ status, report, known: newReason }).unexpected.map((entry) => entry.path[0]), ['parent'],
+    'a known test failing for another reason is a new failure');
 });
 
-test('a known-failure command adds the JUnit reporter, warns on known failures and fails on a new one', () => {
-  const known = { 'admission-self-tests': { 'old a': 'reason' } };
+test('a run is not trusted without its summary, after a signal, or with an exit no failure explains', () => {
+  const known = [{ file: 'x.test.mjs', path: ['old'], fingerprint: '1'.repeat(16), reason: 'r' }];
+  const fail = { type: 'fail', file: 'x.test.mjs', path: ['old'], fingerprint: '1'.repeat(16) };
+  const summary = { type: 'summary', counts: {}, success: false };
+  const verdict = (status, events) => knownFailureVerdict({ status, report: { events, summary: events.find((e) => e.type === 'summary') ?? null }, known });
+  assert.equal(verdict(1, [fail, summary]).ok, true);
+  assert.equal(verdict(1, [fail]).ok, false, 'no summary: the run did not finish');
+  assert.equal(verdict(129, [fail, summary]).ok, false, 'a signal or timeout');
+  assert.equal(verdict(1, [summary]).ok, false, 'a nonzero exit with no failure');
+  assert.equal(verdict(0, [fail, summary]).ok, false, 'failures with a zero exit');
+  const passed = verdict(0, [{ type: 'pass', file: 'x.test.mjs', path: ['old'] }, summary]);
+  assert.equal(passed.ok, true);
+  assert.deepEqual(passed.fixed.map((entry) => entry.path[0]), ['old']);
+  assert.deepEqual(verdict(0, [summary]).missing.map((entry) => entry.path[0]), ['old']);
+  assert.equal(readReport('{"type":"summary"}\nnot json\n', '').corrupt, true);
+});
+
+test('a known-failure command adds the trusted reporter, warns on known failures and fails on a new one', () => {
+  const entry = { file: 'scripts/ci/x.test.mjs', path: ['old a'], fingerprint: 'a'.repeat(16), reason: 'reason' };
+  const known = { 'admission-self-tests': [entry] };
   const lines = [];
   let seen;
   const spawn = (command, args) => { seen = args; return { status: 1 }; };
-  assert.equal(runSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: os.tmpdir() }, spawn, known,
-    readJunit: () => xml([['old a', true], ['b', false]]), log: (line) => lines.push(line) }), 0);
-  assert.ok(seen.includes('--test-reporter=junit'));
-  assert.ok(seen.some((arg) => arg.startsWith('--test-reporter-destination=') && arg.endsWith('junit.xml')));
-  assert.ok(lines.some((line) => line.startsWith('::warning title=admission-self-tests known failure::old a')));
-  assert.equal(runSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: os.tmpdir() }, spawn, known,
-    readJunit: () => xml([['old a', true], ['b', true]]), log }), 1);
-  assert.equal(runSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: os.tmpdir() }, spawn, known,
-    readJunit: () => '', log }), 1, 'no report fails');
+  const report = (events) => () => events.map((event) => JSON.stringify(event)).join('\n');
+  const abs = (file) => path.join(ROOT, file);
+  const summary = { type: 'summary', counts: {}, success: false };
+  const env = { RUNNER_TEMP: os.tmpdir() };
+  assert.equal(runSuite('admission-self-tests', { root: ROOT, env, spawn, known, log: (line) => lines.push(line),
+    readReportFile: report([{ type: 'fail', file: abs(entry.file), path: entry.path, fingerprint: entry.fingerprint }, summary]) }), 0);
+  assert.ok(seen.includes(`--test-reporter=${pathToFileURL(REPORTER_PATH).href}`));
+  assert.ok(seen.some((arg) => arg.startsWith('--test-reporter-destination=') && arg.endsWith('failures.jsonl')));
+  assert.ok(lines.some((line) => line.startsWith('::warning title=admission-self-tests known failure::scripts/ci/x.test.mjs :: old a')));
+  assert.equal(runSuite('admission-self-tests', { root: ROOT, env, spawn, known, log,
+    readReportFile: report([{ type: 'fail', file: abs(entry.file), path: entry.path, fingerprint: entry.fingerprint },
+      { type: 'fail', file: abs('scripts/ci/x.test.mjs'), path: ['b'], fingerprint: 'b'.repeat(16) }, summary]) }), 1);
+  assert.equal(runSuite('admission-self-tests', { root: ROOT, env, spawn, known, log, readReportFile: () => '' }), 1, 'no report fails');
+  assert.equal(runSuite('admission-self-tests', { root: ROOT, env, spawn: () => ({ status: null, signal: 'SIGKILL' }), known, log,
+    readReportFile: report([summary]) }), 128, 'a killed run fails');
 });
 
 test('the application suite gates lint, ledger, typecheck and build before the unit tests', () => {
@@ -220,11 +303,26 @@ test('the application suite gates lint, ledger, typecheck and build before the u
   assert.deepEqual(calls, ['run lint', 'run ledger:verify', 'run typecheck']);
 });
 
-test('the committed known-failure list names a reason for every test', () => {
+test('the committed known-failure list is well formed, one entry per failure, each with a reason', () => {
   const data = readKnownFailures();
   assert.deepEqual(Object.keys(data).sort(), ['admission-self-tests', 'clued-cloud']);
-  for (const id of Object.keys(data)) assert.ok(SUITE_COMMANDS[id].some((command) => command.known === id), id);
+  for (const [id, entries] of Object.entries(data)) {
+    assert.ok(SUITE_COMMANDS[id].some((command) => command.known === id), id);
+    assert.equal(new Set(entries.map(knownKey)).size, entries.length, `${id}: duplicate entries`);
+    for (const entry of entries) assert.ok(existsSync(path.join(ROOT, entry.file)), `${id}: ${entry.file}`);
+  }
   const file = path.join(os.tmpdir(), `known-${process.pid}.json`);
-  writeFileSync(file, JSON.stringify({ x: { t: ' ' } }));
+  writeFileSync(file, JSON.stringify({ x: [{ file: 'a', path: ['t'], fingerprint: '0'.repeat(16), reason: ' ' }] }));
   assert.throws(() => readKnownFailures(file), /without a reason/);
+  writeFileSync(file, JSON.stringify({ x: { t: 'old name-keyed form' } }));
+  assert.throws(() => readKnownFailures(file), /must be a list/);
+});
+
+test('the reporter normalizes paths, digests and numbers out of a fingerprint and keeps the message otherwise', () => {
+  assert.equal(normalizeFailure('expected 3 got 4 in C:\\Users\\x\\Temp\\run-1\\a.mjs and /tmp/clued-test-run-AB12/b.mjs sha 0123abcd4567'),
+    'expected <n> got <n> in <path> and <path> sha <hex>');
+  const a = failureFingerprint({ failureType: 'testCodeFailure', cause: new Error('x at /tmp/1/a') });
+  assert.equal(a, failureFingerprint({ failureType: 'testCodeFailure', cause: new Error('x at /home/runner/9/b') }));
+  assert.notEqual(a, failureFingerprint({ failureType: 'hookFailed', cause: new Error('x at /tmp/1/a') }));
+  assert.notEqual(a, failureFingerprint({ failureType: 'testCodeFailure', cause: new Error('y at /tmp/1/a') }));
 });

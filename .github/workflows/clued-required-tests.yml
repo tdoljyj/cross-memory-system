@@ -39,7 +39,8 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # A push to main never cancels an earlier main commit's run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # Work Claim Admission v0.1 §4.6 L0b: admit on the independent CI's own App

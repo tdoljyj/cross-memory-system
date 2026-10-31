@@ -25,11 +25,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-// The resident layer imports Source v2, Source v2 imports scripts/ci and the
-// resident's node profile, and both read the gitleaks configuration; a change
-// to any of them runs both (ci-required-selection.test.mjs checks the imports).
+// The resident layer imports Source v2, Source v2 imports scripts/ci (and
+// through it scripts/runner) and the resident's node profile, the admission
+// self-tests reach Source v2 through scripts/ci, and both read the gitleaks
+// configuration; a change to any of them runs all of these suites
+// (ci-required-selection.test.mjs checks the transitive imports of each).
 const RESIDENT_AND_SOURCE = ['work/independent-ci-resident-v1/**', 'work/actions-hosted-migration/independent-ci-v1/**',
-  'scripts/ci/**', 'config/merge-admission-policy.json', '.gitleaks.toml'];
+  'scripts/ci/**', 'scripts/runner/**', 'config/merge-admission-policy.json', '.gitleaks.toml'];
 
 // suite id -> path patterns ("**" any depth, "*" within a segment).
 export const SUITES = {
@@ -44,9 +46,8 @@ export const SUITES = {
       'VERSION', '.claude/settings.json'],
     'runner-budget-policy': ['.github/workflows/**', 'scripts/ci/validate_runner_budget_policy.py',
       'scripts/ci/test_validate_runner_budget_policy.py'],
-    'admission-self-tests': ['scripts/ci/**', 'scripts/runner/**', 'config/merge-admission-policy.json',
-      '.github/workflows/**'],
-    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs',
+    'admission-self-tests': [...RESIDENT_AND_SOURCE, '.github/workflows/**'],
+    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/ci-known-failures.json'],
   },
   // The application suite reads files from across the repository (workflow,
@@ -65,7 +66,7 @@ export const SUITES = {
 
 // Changing how selection or the required-check workflow works selects every
 // suite of every check.
-export const SELECT_ALL = ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-known-failures.json',
+export const SELECT_ALL = ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-test-failures-reporter.mjs',
   '.github/workflows/clued-required-tests.yml', '.github/actions/**'];
 
 export const FILE_LIMIT = 3000;
@@ -75,8 +76,9 @@ export const FILE_LIMIT = 3000;
 // sorted *.test.mjs files directly in <dir> (relative to cwd), {unit-tests}
 // to the application's unit test files (scripts/select-tests.mjs), {base} to
 // the base commit (CI_BASE_SHA), {report} to a file under RUNNER_TEMP. A
-// command with `known` runs Node's test runner with a JUnit report and passes
-// only when every failing test is in ci-known-failures.json under that key.
+// command with `known` runs Node's test runner with ci-test-failures-reporter.mjs
+// and passes only when every failure is an entry of ci-known-failures.json
+// under that key (knownFailureVerdict).
 const PYTHON = process.platform === 'win32' ? 'python' : 'python3';
 const RESIDENT = 'work/independent-ci-resident-v1';
 const SOURCE_V2 = 'work/actions-hosted-migration/independent-ci-v1';
@@ -114,16 +116,26 @@ export const SUITE_COMMANDS = {
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const KNOWN_FAILURES_PATH = path.join(HERE, 'ci-known-failures.json');
+export const REPORTER_PATH = path.join(HERE, 'ci-test-failures-reporter.mjs');
 
-// Tests that already fail on main, by suite and exact test name, each with
-// its reason (quarantine, Task 679a0c2b). They still run. A failing test not
-// on the list fails the suite; a listed test that passes is reported so its
-// entry can be removed in the change that fixes it.
+// Tests that already fail on main (quarantine, Task 679a0c2b), by suite: each
+// entry names the test file (relative to the checkout), the test's full path
+// of names (describe and parent tests first) and the fingerprint of why it
+// fails (ci-test-failures-reporter.mjs), with a reason. They still run. A
+// failure that matches no entry exactly fails the suite, so the same test
+// failing for a new reason is a new failure; a listed test that passes, or
+// no longer exists, is reported so its entry can be removed.
+export const knownKey = ({ file, path: names, fingerprint }) => `${file} :: ${names.join(' > ')} :: ${fingerprint}`;
+
 export function readKnownFailures(file = KNOWN_FAILURES_PATH) {
   const data = JSON.parse(readFileSync(file, 'utf8'));
-  for (const [suite, tests] of Object.entries(data)) {
-    for (const [name, reason] of Object.entries(tests)) {
-      if (typeof reason !== 'string' || reason.trim() === '') throw new Error(`known failure without a reason: ${suite}: ${name}`);
+  for (const [suite, entries] of Object.entries(data)) {
+    if (!Array.isArray(entries)) throw new Error(`known failures of ${suite} must be a list`);
+    for (const entry of entries) {
+      if (typeof entry?.file !== 'string' || !Array.isArray(entry.path) || entry.path.length === 0 ||
+          !/^[0-9a-f]{16}$/.test(entry.fingerprint ?? '') || typeof entry.reason !== 'string' || entry.reason.trim() === '') {
+        throw new Error(`known failure entry invalid or without a reason: ${suite}: ${JSON.stringify(entry)}`);
+      }
     }
   }
   return data;
@@ -225,57 +237,66 @@ export function expandArgv(argv, { cwd, base, report, listUnit = () => unitTestF
   });
 }
 
-const decodeXml = (text) => {
-  let value = text;
-  for (let previous = null; previous !== value;) {
-    previous = value;
-    value = value.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-      .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code))).replace(/&amp;/g, '&');
+// Reads the reporter's JSON lines (ci-test-failures-reporter.mjs). Files are
+// made relative to the checkout root with forward slashes, so entries match on
+// any runner.
+export function readReport(text, root) {
+  const events = [];
+  for (const line of String(text ?? '').split('\n')) {
+    if (!line.trim()) continue;
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      return { events, summary: null, corrupt: true };
+    }
+    if (typeof event.file === 'string' && root) {
+      event.file = path.relative(root, event.file).split(path.sep).join('/');
+    }
+    events.push(event);
   }
-  return value;
-};
-
-// Test cases of a Node JUnit report: {name, failed}. Suites (a parent whose
-// child failed) are not cases; a file that crashes is reported as a failing
-// case named after the file, so it is never on a known-failure list.
-export function junitCases(xml) {
-  const cases = [];
-  // Attribute values may hold a raw ">" (Node escapes "<" only).
-  for (const match of xml.matchAll(/<testcase((?:\s+[\w:-]+="[^"]*")*)\s*(\/?)>/g)) {
-    const name = /\bname="([^"]*)"/.exec(match[1]);
-    if (!name) continue;
-    cases.push({ name: decodeXml(name[1]), failed: /\bfailure="/.test(match[1]) });
-  }
-  return cases;
+  return { events, summary: events.find((event) => event.type === 'summary') ?? null, corrupt: false };
 }
 
-// The verdict of a run with known failures: fail on any unexpected failure,
-// on a nonzero exit with no failing case to explain it, or on an empty report.
-export function knownFailureVerdict({ status, cases, known }) {
-  const failed = cases.filter((entry) => entry.failed).map((entry) => entry.name);
-  const unexpected = failed.filter((name) => !Object.hasOwn(known, name));
-  const expected = failed.filter((name) => Object.hasOwn(known, name));
-  const seen = new Set(cases.map((entry) => entry.name));
-  const fixed = Object.keys(known).filter((name) => seen.has(name) && !failed.includes(name));
-  const missing = Object.keys(known).filter((name) => !seen.has(name));
-  const ok = cases.length > 0 && unexpected.length === 0 && (status === 0 || failed.length > 0);
-  return { ok, unexpected, expected, fixed, missing };
+// The verdict of a run with known failures. It fails on: any failure that is
+// not exactly a known entry; an exit other than 0 or 1 (a signal, a timeout,
+// a crash of the runner); a report without the run's summary (the runner did
+// not finish); or a nonzero exit with no failure in the report.
+export function knownFailureVerdict({ status, report, known }) {
+  const keys = new Map(known.map((entry) => [knownKey(entry), entry]));
+  const failures = report.events.filter((event) => event.type === 'fail');
+  const unexpected = failures.filter((event) => !keys.has(knownKey(event)));
+  const expected = failures.filter((event) => keys.has(knownKey(event)));
+  const where = (entry) => `${entry.file} :: ${entry.path.join(' > ')}`;
+  const failedAt = new Set(failures.map(where));
+  const passedAt = new Set(report.events.filter((event) => event.type === 'pass').map(where));
+  const fixed = known.filter((entry) => passedAt.has(where(entry)) && !failedAt.has(where(entry)));
+  const missing = known.filter((entry) => !passedAt.has(where(entry)) && !failedAt.has(where(entry)));
+  const problems = [];
+  if (report.corrupt) problems.push('the test report is not readable');
+  if (!report.summary) problems.push('the test run did not finish (no summary in the report)');
+  if (status !== 0 && status !== 1) problems.push(`the test runner exited ${status}`);
+  if (status === 1 && failures.length === 0) problems.push('the test runner failed without a failing test in the report');
+  if (status === 0 && failures.length > 0) problems.push('the report has failures but the runner exited 0');
+  return { ok: problems.length === 0 && unexpected.length === 0, problems, unexpected, expected, fixed, missing };
 }
 
 export function runSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log,
-  known = null, readJunit = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '') } = {}) {
+  known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '') } = {}) {
   const commands = SUITE_COMMANDS[id];
   if (!commands) throw new Error(`unknown suite: ${id}`);
   const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
   for (const command of commands) {
     const cwd = path.join(root, command.cwd);
     let argv = expandArgv(command.argv, { cwd, base: env.CI_BASE_SHA, report });
-    let junitDir = null;
+    let reportDir = null;
     if (command.known) {
-      junitDir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-junit-`));
+      reportDir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-tests-`));
       const index = argv.indexOf('--test');
+      // The reporter comes from this file's (trusted base) checkout.
       argv = [...argv.slice(0, index + 1), '--test-reporter=spec', '--test-reporter-destination=stdout',
-        '--test-reporter=junit', `--test-reporter-destination=${path.join(junitDir, 'junit.xml')}`, ...argv.slice(index + 1)];
+        `--test-reporter=${pathToFileURL(REPORTER_PATH).href}`, `--test-reporter-destination=${path.join(reportDir, 'failures.jsonl')}`,
+        ...argv.slice(index + 1)];
     }
     log(`::group::${id}: (${command.cwd}) ${argv.join(' ')}`);
     const result = spawn(argv[0], argv.slice(1), { cwd, env, stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
@@ -290,17 +311,22 @@ export function runSuite(id, { root, env = process.env, spawn = spawnSync, log =
       return 1;
     }
     if (command.known) {
-      const list = (known ?? readKnownFailures())[command.known] ?? {};
-      const xml = readJunit(path.join(junitDir, 'junit.xml'));
-      rmSync(junitDir, { recursive: true, force: true });
-      const verdict = knownFailureVerdict({ status: result.status, cases: junitCases(xml), known: list });
-      for (const name of verdict.expected) log(`::warning title=${id} known failure::${name} (${list[name]})`);
-      for (const name of verdict.fixed) log(`::warning title=${id} known failure now passes::${name}; remove it from ci-known-failures.json`);
-      for (const name of verdict.unexpected) log(`::error title=${id} new failure::${name}`);
+      const list = (known ?? readKnownFailures())[command.known] ?? [];
+      const text = readReportFile(path.join(reportDir, 'failures.jsonl'));
+      rmSync(reportDir, { recursive: true, force: true });
+      const status = result.signal ? 128 : result.status;
+      const verdict = knownFailureVerdict({ status, report: readReport(text, root), known: list });
+      const label = (entry) => `${entry.file} :: ${entry.path.join(' > ')}`;
+      for (const entry of verdict.expected) log(`::warning title=${id} known failure::${label(entry)}`);
+      for (const entry of verdict.fixed) log(`::warning title=${id} known failure now passes::${label(entry)}; remove it from ci-known-failures.json`);
+      for (const entry of verdict.missing) log(`::warning title=${id} known failure no longer runs::${label(entry)}; remove it from ci-known-failures.json`);
+      for (const entry of verdict.unexpected) {
+        log(`::error title=${id} new failure::${label(entry)} (${entry.failure_type ?? 'failure'}, fingerprint ${entry.fingerprint})`);
+      }
+      for (const problem of verdict.problems) log(`::error title=${id}::${problem}`);
       if (!verdict.ok) {
-        log(`${id}: ${verdict.unexpected.length} failing test(s) not on the known-failure list` +
-          `${verdict.unexpected.length === 0 ? ` (exit ${result.status ?? result.signal}, ${xml ? 'no failing case in the report' : 'no report'})` : ''}`);
-        return result.status || 1;
+        log(`${id}: ${verdict.unexpected.length} failure(s) not on the known-failure list${verdict.problems.length ? `; ${verdict.problems.join('; ')}` : ''}`);
+        return status || 1;
       }
       continue;
     }
