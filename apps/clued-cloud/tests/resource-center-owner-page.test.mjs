@@ -653,18 +653,26 @@ test("storage step 3: directories without an access digest are recovered in the 
     worker_execution_enabled:false});await a.settle();
   assert.equal(a.text().includes("暂不写入"),false,"shown only once the separate read answers");
   a.respond(a.pending("/v1/storage/owner","digest_attention"),{contract:"clued.storage-access-digest-attention/1",connections:[{connection_id:active.id,
-    count:22,directories:[{path:"资料/对外分享",reason:"access_differs"},{path:"资料/已删除",reason:"not_found"}]}]});await a.settle();
+    count:22,directories:[{artifact_id:"20000000-0000-4000-8000-000000000001",path:"资料/对外分享",reason:"access_differs",observed_access:"a".repeat(64)},
+      {artifact_id:"20000000-0000-4000-8000-000000000002",path:"资料/已删除",reason:"not_found",observed_access:null}]}]});await a.settle();
   assert.match(a.text(),/有 22 个目录暂不写入/);assert.match(a.text(),/为防止资料被意外共享/);
-  assert.match(a.text(),/资料\/对外分享：共享设置与上级目录不同/);assert.match(a.text(),/资料\/已删除：在 Google Drive 中已找不到/);
+  assert.match(a.text(),/资料\/对外分享：共享设置与上级目录不同/);assert.match(a.text(),/资料\/已删除：在 Google Drive 中找不到/);
   assert.match(a.text(),/另有 20 个未列出/);assert.match(a.text(),/后台正在自动核对 1 个目录/);
   assert.equal(/运行目录检查|访问权限摘要/.test(a.text()),false);
+  // Where the program cannot decide, the Owner confirms in one step, bound to the observation shown.
+  const confirm=a.button("确认当前共享设置");confirm.props.onClick();await a.settle();
+  assert.deepEqual(JSON.parse(a.request("/v1/storage/owner","digest_accept").init.body),
+    {action:"digest_accept",artifact_id:"20000000-0000-4000-8000-000000000001",observed_access:"a".repeat(64)});
+  a.respond(a.pending("/v1/storage/owner","digest_accept"),{status:"committed"});await a.settle();
+  a.respond(a.pending("/v1/storage/lifecycle","list"),{connections:[{...active}],worker_execution_enabled:false});await a.settle();
+  assert.match(a.text(),/已确认“资料\/对外分享”的当前共享设置/);
   for(const missing of [{count:0,directories:[]},undefined]){
     const g=fixture();await g.settle();g.respond(g.pending("/v1/storage/lifecycle","list"),{connections:[{...active,access_digest_missing:missing}],worker_execution_enabled:false});await g.settle();
     assert.equal(/自动核对|暂不写入/.test(g.text()),false);assert.match(g.text(),/Clued_资料中心/);
   }
   // A malformed or refused attention read only leaves the notice out.
   for(const [answer,status] of [[{contract:"clued.storage-access-digest-attention/1",connections:[{connection_id:active.id,count:1,
-    directories:[{path:"x",reason:"other"}]}]},200],[{error:"private"},403]]){
+    directories:[{artifact_id:"20000000-0000-4000-8000-000000000001",path:"x",reason:"other",observed_access:null}]}]},200],[{error:"private"},403]]){
     const bad=fixture();await bad.settle();bad.respond(bad.pending("/v1/storage/lifecycle","list"),{connections:[{...active,
       access_digest_missing:{count:1,directories:[{path:"x",since:"2026-10-08T00:00:00Z"}]}}],worker_execution_enabled:false});
     await bad.settle();bad.respond(bad.pending("/v1/storage/owner","digest_attention"),answer,status);await bad.settle();

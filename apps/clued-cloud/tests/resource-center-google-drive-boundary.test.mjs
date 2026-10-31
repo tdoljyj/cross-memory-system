@@ -63,6 +63,14 @@ test(mode+': past the entry limit folders are observed but not descended; the pa
   // The sibling drop beside the root is found; the over-limit folders are reported as partial.
   assert.deepEqual(result.map(r=>r.path),['/drive/Clued_说明.md']);
   assert.ok(result.partial.length>0 && result.partial.every(p=>p.reason==='entries'));
+  // Folders queued before the bound was passed are not listed either (review r2).
+  const queued=fixture({boundary_scan_max_entries:2},mode);queued.files.splice(2);
+  queued.files.push(item('q0','q0','parent'),item('q1','q1','parent'),item('q2','q2','parent'));
+  for(let i=0;i<3;i++)queued.files.push(item('c'+i,'c'+i,'q'+i));
+  const listed=[];const list=queued.config.list_folder;queued.config.list_folder=async id=>{listed.push(id);return list(id);};
+  const r=await queued.scan();assert.deepEqual(r,[]);
+  assert.deepEqual(listed.filter(id=>id.startsWith('q')),[]);
+  assert.deepEqual(r.partial.map(p=>p.path).sort(),['/drive/q0','/drive/q1','/drive/q2']);
 });
 test(mode+': a shortcut outside the root is an observed entry and is never followed',async()=>{
   const f=fixture({},mode);f.files.splice(2);

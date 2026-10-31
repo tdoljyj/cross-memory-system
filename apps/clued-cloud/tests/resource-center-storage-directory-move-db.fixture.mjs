@@ -631,7 +631,8 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       const attention = async (input = { action: "list" }, db = native) =>
         (await db.query("select public.clued_storage_access_digest_attention_v1($1::jsonb) value", [JSON.stringify(input)])).rows[0].value;
       const seen = (await attention()).connections.find(c => c.connection_id === target.connection);
-      assert.deepEqual(seen, { connection_id: target.connection, count: 1, directories: [{ path: `${TRACK}/shared-out`, reason: "access_differs" }] });
+      assert.deepEqual(seen, { connection_id: target.connection, count: 1, directories: [{ artifact_id: shared.id, path: `${TRACK}/shared-out`,
+        reason: "access_differs", observed_access: wider }] });
       await assert.rejects(attention({ action: "list", extra: 1 }), /attention_denied/);
       await assert.rejects(attention(undefined, caller), /permission denied/);
       // Never given up (review M1): after many attempts it is still tried, at
@@ -644,15 +645,42 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       assert.equal((await commit(shared, { observed_version: "2", access_digest: access, parent })).outcome, "recorded_inherited");
       assert.equal(await side(shared.id), undefined);
       assert.equal((await attention()).connections.some(c => c.connection_id === target.connection), false);
-      // Gone or unreadable is shown only after 12 attempts; no baseline yet is never shown.
-      const gone = await child("gone-later"), stuck = await child("no-baseline");
+      // Gone, unreadable or without a baseline is shown after 3 attempts for the same reason (review r2).
+      let gone = await child("gone-later"), stuck = await child("no-baseline");
       for (const row of [gone, stuck]) await load(row.id);
       await commit(gone, { found: false, observed_version: null, access_digest: null });
       await commit(stuck, { observed_version: "2", access_digest: wider });
       assert.equal((await attention()).connections.some(c => c.connection_id === target.connection), false);
-      await admin.query("update clued_private.storage_access_digest_recovery_v1 set attempts=12 where artifact_id=any($1)", [[gone.id, stuck.id]]);
-      assert.deepEqual((await attention()).connections.find(c => c.connection_id === target.connection).directories,
-        [{ path: `${TRACK}/gone-later`, reason: "not_found" }]);
+      await admin.query("update clued_private.storage_access_digest_recovery_v1 set attempts=2 where artifact_id=any($1)", [[gone.id, stuck.id]]);
+      // A different reason starts a new count.
+      stuck = await artifactById(stuck.id); await load(stuck.id);
+      await commit(stuck, { found: false, observed_version: null, access_digest: null });
+      assert.deepEqual(await side(stuck.id), { reason: "not_found", attempts: 1 });
+      stuck = await artifactById(stuck.id); await load(stuck.id);
+      await commit(stuck, { observed_version: "2", access_digest: wider });
+      await admin.query("update clued_private.storage_access_digest_recovery_v1 set attempts=3 where artifact_id=any($1)", [[gone.id, stuck.id]]);
+      assert.deepEqual((await attention()).connections.find(c => c.connection_id === target.connection).directories, [
+        { artifact_id: gone.id, path: `${TRACK}/gone-later`, reason: "not_found", observed_access: null },
+        { artifact_id: stuck.id, path: `${TRACK}/no-baseline`, reason: "no_baseline", observed_access: wider }]);
+      // Where the program cannot decide, the Owner confirms exactly the observed sharing.
+      const accept = async (input, db = native) =>
+        (await db.query("select public.clued_storage_access_digest_accept_v1($1::jsonb) value", [JSON.stringify(input)])).rows[0].value;
+      const confirm = (row, observed) => accept({ action: "accept", artifact_id: row.id, observed_access: observed });
+      await assert.rejects(confirm(stuck, access), /accept_denied/);
+      await assert.rejects(confirm(gone, wider), /accept_denied/);
+      await assert.rejects(accept({ action: "accept", artifact_id: stuck.id, observed_access: wider, extra: 1 }), /accept_denied/);
+      await assert.rejects(accept({ action: "accept", artifact_id: stuck.id, observed_access: wider }, caller), /permission denied/);
+      await admin.query("update clued_private.storage_access_digest_recovery_v1 set updated_at=now()-interval '25 hours' where artifact_id=$1", [stuck.id]);
+      await assert.rejects(confirm(stuck, wider), /accept_denied/);
+      await admin.query("update clued_private.storage_access_digest_recovery_v1 set updated_at=now() where artifact_id=$1", [stuck.id]);
+      const confirmed = await confirm(stuck, wider);
+      assert.equal(confirmed.status, "committed");
+      stuck = await artifactById(stuck.id);
+      assert.equal(stuck.provider_access_digest, wider); assert.equal(stuck.access_digest_missing_at, null);
+      assert.equal(await side(stuck.id), undefined);
+      const accepted = (await admin.query("select operation,status from public.clued_audit_receipts where id=$1", [confirmed.receipt_id])).rows[0];
+      assert.deepEqual(accepted, { operation: "storage_access_digest_owner_accept", status: "committed" });
+      await assert.rejects(confirm(stuck, wider), /accept_denied/);
       // Review M2: a folder only its owner can reach needs no parent, so the
       // root (which has none) recovers too; owner_only needs a digest.
       let root = await artifact(target, target.root);

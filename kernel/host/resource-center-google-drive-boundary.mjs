@@ -46,7 +46,8 @@ function identity(file, id) {
  *   first;
  * - a folder deeper than boundary_scan_max_depth, or reached after
  *   boundary_scan_max_entries entries, is still observed by its own name but
- *   not descended; the result lists it in its non-enumerable `partial`;
+ *   not descended, and once the bound is passed no further level is listed;
+ *   the result lists them in its non-enumerable `partial`;
  * - a shortcut is an ordinary observed entry and is never followed;
  * - a folder's Drive version is not compared, only its identity.
  */
@@ -103,6 +104,9 @@ export function createGoogleDriveBoundaryScanner({ trusted_profile: trustedProfi
     };
     for(const root of roots) enqueue(level,root.folder_id,root.path,0);
     while(level.length){
+      // Past the entry bound a whole queued level is left undescended, so an
+      // unrelated large Drive never makes the scan (and so every write) slow.
+      if(count>maxEntries){ for(const n of level) partial.push({path:n.path,reason:"entries"}); break; }
       const befores=await readFiles(level.map(n=>n.folderId));
       level.forEach((n,i)=>{
         const before=identity(befores[i],n.folderId);

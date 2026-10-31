@@ -36,11 +36,18 @@
 -- retried at once; a new streak starts from one.
 --
 -- clued_storage_access_digest_attention_v1 lists, for the signed-in Owner,
--- the directories that need them: a real sharing difference at once, a folder
--- Drive no longer shows or whose permissions cannot be read after 12
--- attempts. No baseline yet (version_changed) is the program's to settle and
--- is not shown. It is a separate read so the source-pinned Owner lifecycle
--- function and its access_digest_missing summary stay exactly as they are.
+-- the directories that need them: a real sharing difference at once; a
+-- folder Drive no longer shows, whose permissions cannot be read, or that has
+-- no baseline the program can compare with (a shared root registered before
+-- digests, and its subtree) after 3 attempts in a row for the same reason.
+-- It is a separate read so the source-pinned Owner lifecycle function and its
+-- access_digest_missing summary stay exactly as they are.
+--
+-- Where the program cannot decide, the Owner decides in business terms, as in
+-- Drive: clued_storage_access_digest_accept_v1 records the sharing the last
+-- attempt observed (within 24 hours) as the directory's baseline, CAS-bound
+-- to that exact observation, with its own Receipt. It never runs a check or
+-- asks the Owner to.
 --
 -- Each existing function is changed by an anchored patch with an exact hit
 -- count. Every new commit input is optional, so the old Worker keeps working
@@ -51,6 +58,7 @@ create table clued_private.storage_access_digest_recovery_v1(
   user_id uuid not null,
   reason text not null check (reason in ('version_changed','not_found','unreadable','access_differs')),
   attempts integer not null check (attempts between 1 and 1000),
+  observed_access text check (observed_access is null or observed_access ~ '^[0-9a-f]{64}$'),
   last_receipt_id uuid not null,
   updated_at timestamptz not null default now());
 alter table clued_private.storage_access_digest_recovery_v1 enable row level security;
@@ -165,10 +173,12 @@ begin
      $a$    where id=a.id returning * into a;$a$,
      $r$    where id=a.id returning * into a;
   if outcome like 'missing:%' then
-    insert into clued_private.storage_access_digest_recovery_v1 as t(artifact_id,user_id,reason,attempts,last_receipt_id)
-      values(a.id,u,substr(outcome,9),1,r.id)
-      on conflict (artifact_id) do update set reason=excluded.reason,attempts=least(t.attempts+1,1000),
-        last_receipt_id=excluded.last_receipt_id,updated_at=now();
+    insert into clued_private.storage_access_digest_recovery_v1 as t(artifact_id,user_id,reason,attempts,last_receipt_id,observed_access)
+      values(a.id,u,substr(outcome,9),1,r.id,
+        case when jsonb_typeof(p_input->'access_digest')='string' then p_input->>'access_digest' end)
+      on conflict (artifact_id) do update set reason=excluded.reason,
+        attempts=case when t.reason=excluded.reason then least(t.attempts+1,1000) else 1 end,
+        observed_access=excluded.observed_access,last_receipt_id=excluded.last_receipt_id,updated_at=now();
   else delete from clued_private.storage_access_digest_recovery_v1 where artifact_id=a.id; end if;$r$,1)
   ) v(sig,anchor,replacement,expected) loop
     -- Every edit of one function first, then one CREATE OR REPLACE.
@@ -185,9 +195,18 @@ begin
   execute body;
 end $migration$;
 
+-- Directories that need the Owner: a real sharing difference at once; gone,
+-- unreadable or without a baseline after 3 attempts for the same reason.
+create function clued_private.storage_access_digest_needs_owner_v1(t clued_private.storage_access_digest_recovery_v1) returns boolean
+language sql immutable set search_path='' as $$
+  select t.reason='access_differs' or t.attempts>=3
+$$;
+revoke all on function clued_private.storage_access_digest_needs_owner_v1(clued_private.storage_access_digest_recovery_v1)
+  from public,anon,authenticated,service_role;
+
 -- The signed-in Owner's directories that need them, per connection, in
--- business terms: a real sharing difference at once; a folder Drive no longer
--- shows or cannot read after 12 attempts. No baseline yet is not listed.
+-- business terms. can_accept: the last attempt observed a sharing state the
+-- Owner may confirm (a real difference, or no baseline to compare with).
 create function public.clued_storage_access_digest_attention_v1(p_input jsonb) returns jsonb
 language plpgsql security definer set search_path='' as $$
 declare u uuid:=clued_private.storage_owner_v1();
@@ -200,17 +219,72 @@ begin
         (select count(*) from clued_private.resource_center_artifacts_v1 x
           join clued_private.storage_access_digest_recovery_v1 t on t.artifact_id=x.id
           where x.profile_id=pr.id and x.user_id=u and x.state='active' and x.access_digest_missing_at is not null
-            and (t.reason='access_differs' or (t.reason in ('not_found','unreadable') and t.attempts>=12))) n,
-        coalesce((select jsonb_agg(jsonb_build_object('path',y.path,'reason',y.reason) order by y.path collate "C")
-          from (select substr(x.path,char_length(pr.managed_root)+2) path,
-              t.reason reason
+            and clued_private.storage_access_digest_needs_owner_v1(t)) n,
+        coalesce((select jsonb_agg(jsonb_build_object('artifact_id',y.id,'path',y.path,'reason',y.reason,
+            'observed_access',y.observed_access) order by y.path collate "C")
+          from (select x.id,substr(x.path,char_length(pr.managed_root)+2) path,
+              case when t.reason='version_changed' then 'no_baseline' else t.reason end reason,
+              case when t.reason in ('access_differs','version_changed') and t.updated_at>clock_timestamp()-interval '24 hours'
+                then t.observed_access end observed_access
             from clued_private.resource_center_artifacts_v1 x
             join clued_private.storage_access_digest_recovery_v1 t on t.artifact_id=x.id
             where x.profile_id=pr.id and x.user_id=u and x.state='active' and x.access_digest_missing_at is not null
-              and (t.reason='access_differs' or (t.reason in ('not_found','unreadable') and t.attempts>=12)) order by x.path collate "C" limit 20) y),'[]'::jsonb) dirs
+              and clued_private.storage_access_digest_needs_owner_v1(t) order by x.path collate "C" limit 20) y),'[]'::jsonb) dirs
       from clued_private.storage_connections_v1 co
       join clued_private.resource_center_profiles_v1 pr on pr.id=co.profile_id and pr.user_id=u
       where co.owner_id=u and co.revoked_at is null) q where q.n>0),'[]'::jsonb));
 end $$;
 revoke all on function public.clued_storage_access_digest_attention_v1(jsonb) from public,anon,authenticated,service_role;
 grant execute on function public.clued_storage_access_digest_attention_v1(jsonb) to authenticated;
+
+-- The Owner confirms the sharing the last attempt observed as the
+-- directory's baseline: exactly that observation (CAS), at most 24 hours old,
+-- under the root's lock and quiet rule, with its own Receipt.
+create function public.clued_storage_access_digest_accept_v1(p_input jsonb) returns jsonb
+language plpgsql security definer set search_path='' as $$
+declare u uuid:=clued_private.storage_owner_v1(); a clued_private.resource_center_artifacts_v1;
+  p clued_private.resource_center_profiles_v1; t clued_private.storage_access_digest_recovery_v1;
+  cid uuid; r public.clued_audit_receipts; req jsonb; refs jsonb; ev text;
+begin
+  if jsonb_typeof(p_input) is distinct from 'object'
+    or (p_input-array['action','artifact_id','observed_access'])<>'{}'::jsonb or p_input->>'action' is distinct from 'accept'
+    or coalesce(p_input->>'artifact_id','') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    or coalesce(p_input->>'observed_access','') !~ '^[0-9a-f]{64}$' then
+    raise exception 'storage_access_digest_accept_denied' using errcode='42501'; end if;
+  select pr.* into p from clued_private.resource_center_artifacts_v1 x
+    join clued_private.resource_center_profiles_v1 pr on pr.id=x.profile_id and pr.user_id=u
+    where x.id=(p_input->>'artifact_id')::uuid and x.user_id=u;
+  if p.id is null then raise exception 'storage_access_digest_accept_denied' using errcode='42501'; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(u::text||':'||p.root_folder_id,0));
+  perform clued_private.storage_root_quiet_v1(u,p.root_folder_id);
+  perform clued_private.authorization_account_v12(u);
+  select * into a from clued_private.resource_center_artifacts_v1
+    where id=(p_input->>'artifact_id')::uuid and user_id=u and profile_id=p.id for update;
+  select * into t from clued_private.storage_access_digest_recovery_v1 where artifact_id=a.id for update;
+  select co.id into cid from clued_private.storage_connections_v1 co
+    where co.profile_id=p.id and co.owner_id=u and co.revoked_at is null order by co.id limit 1;
+  if a.id is null or a.state<>'active' or a.target_kind<>'directory' or a.access_digest_missing_at is null
+    or a.provider_access_digest is not null or a.provider_sharing_digest is not null or p.state<>'active' or cid is null
+    or t.artifact_id is null or t.reason not in ('access_differs','version_changed')
+    or not clued_private.storage_access_digest_needs_owner_v1(t)
+    or t.updated_at<=clock_timestamp()-interval '24 hours'
+    or t.observed_access is distinct from p_input->>'observed_access' then
+    raise exception 'storage_access_digest_accept_denied' using errcode='42501'; end if;
+  req:=jsonb_build_object('idempotency_key','storage-access-digest-accept:'||a.id::text||':'||a.version::text,
+    'artifact_id',a.id,'path',a.path,'provider_file_id',a.provider_file_id,'reason',t.reason,
+    'observed_access',t.observed_access,'observation_receipt_id',t.last_receipt_id);
+  r:=clued_private.m1_begin_receipt(u,null,'storage_access_digest_owner_accept',req,clued_private.m1_sha256(req));
+  if r.status<>'pending' then raise exception 'storage_access_digest_accept_conflict' using errcode='40001'; end if;
+  update clued_private.resource_center_artifacts_v1 set provider_access_digest=t.observed_access,access_digest_missing_at=null,
+      version=version+1,updated_at=now(),receipt_id=r.id
+    where id=a.id returning * into a;
+  delete from clued_private.storage_access_digest_recovery_v1 where artifact_id=a.id;
+  refs:=jsonb_build_array(jsonb_build_object('kind','system','role','primary','id',cid));
+  ev:=clued_private.m1_append_event_row(u,null,r.id,r.canonical_version,'extension:storage:access_digest_owner_accepted',refs,
+    'project:'||p.project_id::text,null,req-'idempotency_key',req->>'idempotency_key',r.request_sha256,
+    'success','audit_only','{}'::uuid[],'[]'::jsonb,null);
+  perform clued_private.m1_finish_receipt(r.id,'committed',refs,'{}'::jsonb,'{}'::jsonb,array[ev],'{}'::uuid[],null);
+  return jsonb_build_object('status','committed','artifact_id',a.id,'receipt_id',r.id);
+end $$;
+revoke all on function public.clued_storage_access_digest_accept_v1(jsonb) from public,anon,authenticated,service_role;
+grant execute on function public.clued_storage_access_digest_accept_v1(jsonb) to authenticated;

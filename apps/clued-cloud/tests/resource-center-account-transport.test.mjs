@@ -78,6 +78,11 @@ test("owner digest attention routes to its own RPC with a fixed input",async()=>
     assert.equal(calls[1].url,env.SUPABASE_URL+"/rest/v1/rpc/clued_storage_access_digest_attention_v1");
     assert.equal(calls[1].headers.get("authorization"),"Bearer fixture-native-jwt");
     assert.deepEqual(JSON.parse(calls[1].body),{p_input:{action:"list"}});
+    // The Owner's confirmation passes exactly the directory and the observation it shows.
+    const accepted=await worker.fetch(ownerRequest({action:"digest_accept",artifact_id:"a",observed_access:"b",extra:"dropped"}),env);
+    assert.equal(accepted.status,200);
+    assert.equal(calls[3].url,env.SUPABASE_URL+"/rest/v1/rpc/clued_storage_access_digest_accept_v1");
+    assert.deepEqual(JSON.parse(calls[3].body),{p_input:{action:"accept",artifact_id:"a",observed_access:"b"}});
   } finally {globalThis.fetch=original;}
 });
 test("owner storage management fails closed on database rejection",async()=>{

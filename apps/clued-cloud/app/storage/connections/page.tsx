@@ -24,16 +24,22 @@ function isDigestMissing(value: unknown): value is DigestMissing {
   return isObject(value) && Number.isSafeInteger(value.count) && Number(value.count) >= 0 && Array.isArray(value.directories)
     && value.directories.length <= 20 && value.directories.every(d => isObject(d) && typeof d.path === "string" && typeof d.since === "string");
 }
-type DigestAttention = { count: number; directories: { path: string; reason: "access_differs" | "not_found" | "unreadable" }[] };
+type AttentionDirectory = { artifact_id: string; path: string; reason: "access_differs" | "not_found" | "unreadable" | "no_baseline";
+  observed_access: string | null };
+type DigestAttention = { count: number; directories: AttentionDirectory[] };
 function isDigestAttention(value: unknown): value is DigestAttention {
   return isObject(value) && Number.isSafeInteger(value.count) && Number(value.count) >= 0 && Array.isArray(value.directories)
-    && value.directories.length <= 20 && value.directories.every(d => isObject(d) && typeof d.path === "string"
-      && ["access_differs", "not_found", "unreadable"].includes(String(d.reason)));
+    && value.directories.length <= 20 && value.directories.length <= Number(value.count)
+    && value.directories.every(d => isObject(d) && typeof d.path === "string"
+      && typeof d.artifact_id === "string" && /^[0-9a-f-]{36}$/.test(d.artifact_id)
+      && (d.observed_access === null || (typeof d.observed_access === "string" && /^[0-9a-f]{64}$/.test(d.observed_access)))
+      && ["access_differs", "not_found", "unreadable", "no_baseline"].includes(String(d.reason)));
 }
-const attentionReason: Record<DigestAttention["directories"][number]["reason"], string> = {
+const attentionReason: Record<AttentionDirectory["reason"], string> = {
   access_differs: "共享设置与上级目录不同（单独分享给了别人或改了权限）",
-  not_found: "在 Google Drive 中已找不到（可能已删除或移出资料根）",
+  not_found: "在 Google Drive 中找不到（可能已删除或移出资料根；如已不需要，可以不处理）",
   unreadable: "多次核对都没能从 Google Drive 读出它的共享设置",
+  no_baseline: "分享给了其他人，程序没有它早先的共享记录可比，无法自动确认这是你设定的共享",
 };
 const actionName: Record<string, string> = {
   inspect: "查看任务状态", create_file: "新建文件", create_topic: "新建主题目录", modify: "改名、移动文件",
@@ -342,12 +348,27 @@ export default function StorageConnections() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [workerEnabled, setWorkerEnabled] = useState(false);
   const [message, setMessage] = useState("正在读取连接……");
+  const [sharingNote, setSharingNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [defaultRefresh, setDefaultRefresh] = useState(true);
   const [dialog, setDialog] = useState<LifecycleDialog | null>(null);
   const dialogElement = useRef<HTMLDivElement | null>(null);
   const revision = useRef(0), operation = useRef(false), ownerId = useRef<string | null>(null);
   useEffect(() => { if (dialog) dialogElement.current?.querySelector<HTMLButtonElement>("button")?.focus(); }, [dialog?.kind, dialog?.connection.id]);
+  // Bug 38bb5ddf: where the program cannot decide, the Owner confirms the
+  // directory's current sharing in one step; the server binds it to exactly
+  // the observation shown here.
+  const acceptSharing = async (d: AttentionDirectory) => {
+    if (!d.observed_access || busy) return;
+    let accepted = false;
+    try {
+      await accountRequest({ action: "digest_accept", artifact_id: d.artifact_id, observed_access: d.observed_access });
+      accepted = true;
+    } catch { /* reported below */ }
+    setSharingNote(accepted ? `已确认“${d.path || "根目录"}”的当前共享设置，Agent 可以继续向它写入。`
+      : `“${d.path || "根目录"}”的共享设置刚刚又有变化或暂时无法确认，系统会重新核对后再请你确认。`);
+    void refresh();
+  };
   const refresh = useCallback(async () => {
     const epoch = ++revision.current;
     setDialog(null);
@@ -968,6 +989,7 @@ export default function StorageConnections() {
     <h1 className="text-2xl font-semibold">存储连接</h1>
     <p className="my-4">Google Drive 的授权属于当前 BeamingFace 账号。这里显示已登记范围与实际执行状态。</p>
     <p role="status" className="my-4">{message}</p>
+    {sharingNote && <p role="status" className="my-4">{sharingNote}</p>}
     {connections.map(c => {
       const available = c.state === "active" && c.auth_mode === "account_policy" && c.policy_active
         && c.profile_current && c.database_execution_enabled && workerEnabled;
@@ -1008,10 +1030,11 @@ export default function StorageConnections() {
           <p className="font-semibold">有 {c.access_digest_attention.count} 个目录暂不写入</p>
           <p className="my-1">为防止资料被意外共享，Agent 暂不向以下目录新建或修改文件：</p>
           <ul className="list-disc pl-6">{c.access_digest_attention.directories.map(d =>
-            <li key={d.path}>{d.path || "（根目录）"}：{attentionReason[d.reason]}</li>)}</ul>
+            <li key={d.artifact_id}>{d.path || "（根目录）"}：{attentionReason[d.reason]}
+              {d.observed_access && <> <button disabled={busy} onClick={() => void acceptSharing(d)}>确认当前共享设置</button></>}</li>)}</ul>
           {c.access_digest_attention.count > c.access_digest_attention.directories.length &&
             <p>另有 {c.access_digest_attention.count - c.access_digest_attention.directories.length} 个未列出。</p>}
-          <p className="my-1">共享设置恢复为与上级目录一致、或目录重新出现在原位置后，会自动恢复写入。</p>
+          <p className="my-1">如果这是你有意的共享，点“确认当前共享设置”即可恢复写入；共享恢复为与上级目录一致、或目录重新出现在原位置后，也会自动恢复。</p>
         </div>}
         {c.state === "awaiting_provider" && <label className="my-2 block">
           <input type="checkbox" disabled={busy} checked={defaultRefresh} onChange={event => setDefaultRefresh(event.target.checked)} />
