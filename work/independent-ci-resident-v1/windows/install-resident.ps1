@@ -57,6 +57,10 @@
   resident-upgrade token): read once, fingerprinted like the ci-admission token, placed create-only at
   resident\secrets\heartbeat\ci-node-heartbeat.token in a folder made only then, SYSTEM and Administrators full control, the Owner
   read-only (the companion in the Owner's session reads it), nobody else. Without it nothing about the companion changes.
+  -HeartbeatBindingId (optional, a UUID, only together with -HeartbeatTokenFile) is that heartbeat connection's id (KooYomi page
+  /bindings/failover, its connection id section), for information only: the plan and the receipt record it and the result prints the
+  Owner's next step (heartbeatNextStep): link that connection to this node on /bindings/failover, two-step confirmation. The install
+  makes no network call for it and uses no token for it (merge train step 2b review).
 #>
 [CmdletBinding()]
 param(
@@ -70,7 +74,8 @@ param(
   [string]$AppPrivateKeyFile,        # optional: this node's App private key, downloaded by the Owner on this machine (design 7.1)
   [string]$CiAdmissionTokenFile,     # optional: this node's ci-admission connection token (design 7.2)
   [string]$UpgradeTokenFile,         # optional: this node's resident-upgrade connection token (018da927; its own connection, Owner decision 3ce5200c)
-  [string]$HeartbeatTokenFile        # optional: this node's heartbeat-only connection token (DESIGN.md section 41.6a)
+  [string]$HeartbeatTokenFile,       # optional: this node's heartbeat-only connection token (DESIGN.md section 41.6a)
+  [ValidatePattern('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z')][string]$HeartbeatBindingId   # optional, only with -HeartbeatTokenFile: informational
 )
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -770,9 +775,12 @@ function Get-UpgradeTokenPlan {
 }
 # The node heartbeat token (DESIGN.md section 41.6a): optional; read once, fingerprinted like the ci-admission token, and it must be
 # neither the ci-admission token nor the resident-upgrade token (each is its own connection). The bytes wait in $script:SecretBytes.
+# -HeartbeatBindingId only with -HeartbeatTokenFile (informational: recorded, never sent anywhere).
 function Get-HeartbeatTokenPlan {
+  if ($HeartbeatBindingId -and -not $HeartbeatTokenFile) { Clear-SecretBytes; throw 'HEARTBEAT_BINDING_ID_REQUIRES_HEARTBEAT_TOKEN_FILE' }
   $entry = [ordered]@{ target = $HeartbeatTokenTarget; supplied = [bool]$HeartbeatTokenFile; targetExists = (Test-Path -LiteralPath $HeartbeatTokenTarget)
-    directory = $HeartbeatTokenDirectory; directorySddl = (Get-HeartbeatDirectorySddl $OwnerSid); sddl = (Get-HeartbeatFileSddl $OwnerSid); fingerprint = $null; verified = $false }
+    directory = $HeartbeatTokenDirectory; directorySddl = (Get-HeartbeatDirectorySddl $OwnerSid); sddl = (Get-HeartbeatFileSddl $OwnerSid); fingerprint = $null; verified = $false
+    bindingId = $(if ($HeartbeatBindingId) { $HeartbeatBindingId.ToLowerInvariant() } else { $null }) }
   # An existing folder (supplied or not: the companion reads the token there) must have exactly its ACL.
   if ((Test-Path -LiteralPath $HeartbeatTokenDirectory) -and -not (Test-HeartbeatDirectoryAcl $HeartbeatTokenDirectory $entry.directorySddl)) { throw 'HEARTBEAT_TOKEN_DIRECTORY_ACL_MISMATCH' }
   if ($HeartbeatTokenFile) {
@@ -781,15 +789,25 @@ function Get-HeartbeatTokenPlan {
     if ((Test-Path -LiteralPath $HeartbeatTokenDirectory) -and (((Get-Item -LiteralPath $HeartbeatTokenDirectory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { throw 'HEARTBEAT_TOKEN_TARGET_DIRECTORY_REFUSED' }
     $bytes = Read-SecretSource $HeartbeatTokenFile 4096 'HEARTBEAT_TOKEN'
     try {
-      $fp = Get-SecretFingerprint 'ci-token' $bytes
+      # A heartbeat token is a clued_hbt_ token (its own kind); the CI connection's own token is named before anything else.
+      $ciFp = Get-SecretFingerprint 'ci-token' $bytes
+      if ($null -ne $ciFp -and $ciFp -ceq $Identity.ciTokenPinSha256) { throw 'HEARTBEAT_TOKEN_IS_THE_CI_ADMISSION_TOKEN' }
+      $fp = Get-SecretFingerprint 'heartbeat-token' $bytes
       if ($null -eq $fp) { throw 'HEARTBEAT_TOKEN_UNREADABLE' }
-      if ($fp -ceq $Identity.ciTokenPinSha256) { throw 'HEARTBEAT_TOKEN_IS_THE_CI_ADMISSION_TOKEN' }
       if ($script:SecretBytes.ContainsKey('upgradeToken') -and (Sha256Bytes $bytes) -ceq (Sha256Bytes $script:SecretBytes['upgradeToken'])) { throw 'HEARTBEAT_TOKEN_IS_THE_UPGRADE_TOKEN' }
     } catch { [Array]::Clear($bytes, 0, $bytes.Length); Clear-SecretBytes; throw }
     $entry.fingerprint = $fp; $entry.verified = $true
     $script:SecretBytes['heartbeatToken'] = $bytes
   }
   $entry
+}
+# The Owner's next step for the heartbeat connection (merge train step 2b review: the Owner links it on /bindings/failover, two-step
+# confirmation; the install never does): "please, Owner, on KooYomi's /bindings/failover link heartbeat connection <id> to this node
+# <node> (two-step confirmation)", in Chinese. Kept as \u escapes: this file has no BOM and Windows PowerShell 5.1 reads it in the
+# system code page.
+function Get-HeartbeatNextStep([string]$nodeName, [string]$bindingId) {
+  $t = [regex]::Unescape('\u8bf7 Owner \u5728 KooYomi \u7684 /bindings/failover \u628a\u5fc3\u8df3\u8fde\u63a5{id}\u6302\u5230\u672c\u8282\u70b9 {node}\uff08\u4e24\u6b65\u786e\u8ba4\uff09')
+  $t.Replace('{id}', $(if ($bindingId) { ' ' + $bindingId + ' ' } else { '' })).Replace('{node}', $nodeName)
 }
 # The package's upgrader section (A1) and files: one copy, under upgrader\<manifestSha256>\, with its host source, node, entry, the frozen
 # upgrade-apply.ps1 and its configuration; the configuration names this root, this Owner, this node profile and the token target.
@@ -1122,7 +1140,7 @@ Step 'node-secrets' {
       if (-not (Test-Path -LiteralPath $ht.directory)) { New-DirectoryWithAcl $ht.directory $ht.directorySddl }
       Write-NewSecret $ht.target $script:SecretBytes['heartbeatToken'] $ht.sddl; $did = $true
     }
-    $script:receipt.heartbeatToken = [ordered]@{ target = $ht.target; placed = $did; fingerprint = $(if ($did) { $ht.fingerprint } else { $null }) }
+    $script:receipt.heartbeatToken = [ordered]@{ target = $ht.target; placed = $did; fingerprint = $(if ($did) { $ht.fingerprint } else { $null }); bindingId = $(if ($did) { $ht.bindingId } else { $null }) }
   } finally { Clear-SecretBytes }
 }
 # 7. The runner service must be byte-for-byte what it was (this install never touches it).
@@ -1169,4 +1187,6 @@ $placedSecrets = @(@($receipt.secrets.Keys | Where-Object { $receipt.secrets[$_]
 [ordered]@{ status = 'RESIDENT_INSTALLED'; receipt = $out; receiptSha256 = $receiptSha256; started = $receipt.started; nodeName = $Identity.nodeName; nodeIdentitySha256 = $IdentitySha256
   generation = 1; afterReceipt = @('generation-1') + @(if ($StartAfterInstall) { 'upgrader-start' }); upgraderTokenPrivileges = $upgraderTokenPrivileges
   secretsPlaced = $placedSecrets
+  heartbeatBindingId = $receipt.heartbeatToken.bindingId
+  heartbeatNextStep = $(if ($receipt.heartbeatToken.placed) { Get-HeartbeatNextStep $Identity.nodeName $receipt.heartbeatToken.bindingId } else { $null })
   ownerNextStep = $(if ($placedSecrets.Count) { 'Delete the downloaded App key / token file(s) yourself: this install never deletes anything.' } else { $null }) } | ConvertTo-Json

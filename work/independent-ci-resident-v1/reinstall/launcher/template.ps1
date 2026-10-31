@@ -222,7 +222,9 @@ function Get-SpoolRemainder([string]$spool, $found) {
 function Test-LeftoversAsPinned($found) {
   ($found.Count -eq $Leftovers.Count) -and (@($Leftovers.Keys | Where-Object { -not $found.Contains($_) -or $found[$_] -cne $Leftovers[$_] }).Count -eq 0)
 }
-function Get-InstallArgs([switch]$Apply, [switch]$NoToken) {   # r5c: -UpgradeTokenFile unless -NoToken; -Apply with the with-token plan
+# DESIGN section 41.6a: with a configured heartbeat token also -HeartbeatTokenFile (and -HeartbeatBindingId when configured), except
+# -NoHeartbeat: the carry-forward preview before the uninstall, while the old root (and any heartbeat token in it) is still there.
+function Get-InstallArgs([switch]$Apply, [switch]$NoToken, [switch]$NoHeartbeat) {   # r5c: -UpgradeTokenFile unless -NoToken; -Apply with the with-token plan
   $a = @('-PackageRoot', $PackageRoot, '-ExpectedPackageManifestSha256', $PackageManifestSha256, '-OwnerSid', $OwnerSid, '-ControllerSid', $ControllerSid)
   if ($Apply) {
     if ([string]$R5c.applyPlanSha256 -cnotmatch '^[0-9a-f]{64}$') { Stop-Launch 'APPLY_PLAN_NOT_CONFIRMED' $null }
@@ -230,6 +232,9 @@ function Get-InstallArgs([switch]$Apply, [switch]$NoToken) {   # r5c: -UpgradeTo
   }
   $a += @('-StartAfterInstall')
   if (-not $NoToken) { $a += @('-UpgradeTokenFile', $UpgradeTokenFile) }
+  if (-not $NoToken -and -not $NoHeartbeat -and $HeartbeatTokenFile) {
+    $a += @('-HeartbeatTokenFile', $HeartbeatTokenFile); if ($HeartbeatBindingId) { $a += @('-HeartbeatBindingId', $HeartbeatBindingId) }
+  }
   $a
 }
 # install-resident.ps1 of 5417a04c reads every new directory's SDDL back and compares the STRING exactly with
@@ -557,7 +562,20 @@ function Get-PlanWithoutTokenFields([string]$stdout) {
   if ($null -eq $p -or $null -eq $u -or -not $u.ContainsKey('token') -or -not $p.ContainsKey('secretsFingerprintDirectory')) { throw 'PLAN_UNREADABLE' }
   $tok = Get-Key $u 'token'; $fd = Get-Key $p 'secretsFingerprintDirectory'
   [void]$p.Remove('secretsFingerprintDirectory'); [void]$u.Remove('token')
-  [ordered]@{ status = (Get-Key $v 'status'); planSha256 = (Get-Key $v 'planSha256'); rest = $Js.Serialize($p); token = $tok; fingerprintDirectory = $fd }
+  # DESIGN section 41.6a: with a configured heartbeat token, plan.heartbeatToken is taken out too (checked field by field below); without
+  # one it stays in the rest, which must then be equal as before
+  $hb = $null
+  if ($HeartbeatTokenFile) { if (-not $p.ContainsKey('heartbeatToken')) { throw 'PLAN_HAS_NO_HEARTBEAT_TOKEN' }; $hb = Get-Key $p 'heartbeatToken'; [void]$p.Remove('heartbeatToken') }
+  [ordered]@{ status = (Get-Key $v 'status'); planSha256 = (Get-Key $v 'planSha256'); rest = $Js.Serialize($p); token = $tok; fingerprintDirectory = $fd; heartbeat = $hb }
+}
+# The heartbeat entry the token adds: the pinned target, supplied, not there yet, the reviewed plan's folder and SDDLs, a 64-hex fingerprint,
+# verified, and exactly the configured binding id (none when none is configured); the reviewed plan's entry: not supplied, no fingerprint.
+function Test-HeartbeatPlan($a, $b) {
+  $ok = $true
+  foreach ($k in @('directory', 'directorySddl', 'sddl', 'target')) { if ([string](Get-Key $b $k) -cne [string](Get-Key $a $k)) { $ok = $false } }
+  $ok -and [string](Get-Key $b 'target') -ceq $HeartbeatTokenTarget -and (Get-Key $b 'supplied') -eq $true -and (Get-Key $b 'targetExists') -eq $false -and
+    ([string](Get-Key $b 'fingerprint') -cmatch '^[0-9a-f]{64}$') -and (Get-Key $b 'verified') -eq $true -and [string](Get-Key $b 'bindingId') -ceq [string]$HeartbeatBindingId -and
+    (Get-Key $a 'supplied') -eq $false -and $null -eq (Get-Key $a 'fingerprint') -and $null -eq (Get-Key $a 'bindingId')
 }
 function Test-TokenPlan([string]$noTokenStdout) {
   $r = [ordered]@{ exit = $null; status = $null; planSha256 = $null; token = $null; fingerprintDirectory = $null; restEqual = $false; codes = @() }
@@ -577,6 +595,7 @@ function Test-TokenPlan([string]$noTokenStdout) {
       $r.token.targetExists -ne $false -or [string]$r.token.sddl -cne [string](Get-Key $a.token 'sddl') -or -not $r.token.fingerprintShape -or $r.token.verified -ne $true -or
       $null -eq $bf -or [string](Get-Key $bf 'parent') -cne $SecretWorkParent -or [string](Get-Key $bf 'sddl') -cne $SecretWorkSddl -or
       (Get-Key $bf 'removedAfterwards') -ne $true) { $r.codes += 'TOKEN_PLAN_FIELDS_NOT_AS_EXPECTED' }
+    elseif ($HeartbeatTokenFile -and -not (Test-HeartbeatPlan $a.heartbeat $b.heartbeat)) { $r['heartbeatToken'] = $b.heartbeat; $r.codes += 'HEARTBEAT_TOKEN_PLAN_FIELDS_NOT_AS_EXPECTED' }
     else { $R5c.applyPlanSha256 = [string]$b.planSha256 }
   } catch { $r.codes += ('TOKEN_PLAN_CHECK_FAILED:' + $_.Exception.Message) }
   Write-Json 'upgrade-token-plan-report.json' $r
@@ -632,7 +651,7 @@ function Step-UninstallPreflight {
   # Quota phase 1 reinstall (tooling review MINOR-1): the NEW install's carry-forward preview, elevated, before anything
   # changes. An earlier state the carry-forward would refuse (a link, a file over 4 MB, more than 256 states) stops the
   # launch here, with r2 still installed, not after the uninstall. A refused preview is a string (the refusal).
-  $c = Invoke-Child 'install.dry-run.carry-preview' (Join-Path $Stage 'install-resident.ps1') (Get-InstallArgs)
+  $c = Invoke-Child 'install.dry-run.carry-preview' (Join-Path $Stage 'install-resident.ps1') (Get-InstallArgs -NoHeartbeat)
   # Read by direct indexing: an empty list returned through a function would unroll to $null.
   $cv = Parse-Json $c.stdout; $preview = $null; if ($cv -is [Collections.Generic.IDictionary[string, object]] -and $cv.ContainsKey('carryForwardPreview')) { $preview = $cv['carryForwardPreview'] }
   $report['carryForwardPreview'] = [ordered]@{ exit = $c.exit; status = (Get-Key $cv 'status'); preview = $preview; stderr = (Tail $c.stderr) }

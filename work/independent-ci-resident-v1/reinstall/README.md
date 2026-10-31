@@ -26,9 +26,10 @@
 | `nodeRecord` | 节点自己的公开指纹，会覆盖 base 的值：`appKeyId`（数字）、`appPublicKeySha256Base64`、`ciPrincipalBindingId`、`ciTokenPinSha256`、`ciPrincipalRoleRef`、`controllerNodeSha256`。与 base 包不同的节点必须六项都给，不继承 base 的值。示例里的 `REPLACE_` 占位值无法通过加载 |
 | `nodeExe`、`policyInput`、`companionInput` | 打包输入 |
 | `upgradeTokenFile` | resident-upgrade token 的路径（只用路径） |
+| `heartbeat`（可选） | 节点心跳令牌（DESIGN §41.6a）：`tokenFile` 是心跳连接令牌的路径（只用路径，不能与 `upgradeTokenFile` 相同）；`bindingId` 可选，是这条连接的 binding id（公开值，只作记录；Owner 在 `/bindings/failover` 上关联），只能和 `tokenFile` 一起给。不写这一项，启动器的行为与以前相同 |
 | `runner` | controller runner 服务的原始 binPath 和 DACL（服务名取自节点档案） |
 | `launcher` | 安装后暂停、rearm、W1 暂停各自使用的 reason |
-| `linux` | WSL 发行版（必须等于节点档案的 `wslDistribution`）；已装 Linux 常驻 manifest 的副本；已装 `roles-v3` 的副本（含 `formal-source-manifest-v2.json`），这两份副本由 root 复制出来；`host`：root 脚本钉住的节点自身事实，即 toolchain node 的 sha256、verify-result 公钥的 sha256、已装 Source v1 的 HEAD |
+| `linux` | WSL 发行版（必须等于节点档案的 `wslDistribution`）；已装 Linux 常驻 manifest 的副本；已装 `roles-v3` 的副本（含 `formal-source-manifest-v2.json`），这两份副本由 root 复制出来；`host`：root 脚本钉住的节点自身事实，即 toolchain node 的 sha256、verify-result 公钥的 sha256、已装 Source v1 的 HEAD（没有 Source v1 的节点，即 Z1 首装的节点，填 `null`，见第 6 节） |
 | `secretTargetsExist` | App 私钥和 ci-admission token 的目标位置是否已存在（启动器在提权后会核对） |
 
 路径只许 ASCII 字母、数字、空格和 `._-\`，runner 的 binPath 和 SDDL 各有严格形状：这些值会进 root shell 和提权 PowerShell。
@@ -66,6 +67,8 @@ powershell -NoProfile -File build.ps1 -Config config\desk-w-591.json -Commit ...
 - **数据来源**：启动器钉住的每一个值都来自文件，包括包、配置、包里 record 的节点档案（必须等于配置所指的档案），以及本机已装状态（只读）。
 - **final 的前提**：Linux 第 B 步产出的 evidence 和 version facts，加上一份对**同一个包、同一提交、同一配置**的 `REHEARSAL_PASS` 预演报告，缺一不可（`FINAL_NEEDS_A_PASSING_REHEARSAL_OF_THIS_PACKAGE`）。24 小时时限由 `prep.py` 在节点变动之前检查；这里不再查，因为 W1 和 Linux B 之后节点处于半重装状态，无法重新预演。
 - **步骤**：Q1–Q5、r4.1 C1–C3、r5 S1–S3、r5c 的升级通道、r7 的卸载计划 /3 和"经 SCM 停升级代理"。每一步都在模板注释里写了用途。
+- **心跳令牌**（2026-10-31，模板 sha `5ff3a1c1`）：配置了 `heartbeat` 时，带令牌的 dry run 和 `-Apply` 再加 `-HeartbeatTokenFile`，配置了 `bindingId` 时再加 `-HeartbeatBindingId`。审过的计划（非提权、不带令牌）不变，卸载之前的 carry-forward 预览也不带心跳令牌。提权比对时把 `plan.heartbeatToken` 也剥出来逐项核对：目标是本包安装器的 `secrets\heartbeat\ci-node-heartbeat.token`、supplied、目标不存在、目录和两个 SDDL 与审过的计划相同、64 位 hex 指纹、verified、`bindingId` 恰好是配置的值；不对就报 `HEARTBEAT_TOKEN_PLAN_FIELDS_NOT_AS_EXPECTED`。没配置时这一项留在其余字段里，必须与审过的相同，和以前一样。生成器核对包的安装器支持心跳令牌（不支持时报 `PACKAGE_INSTALLER_HAS_NO_HEARTBEAT_TOKEN`），final 缺令牌文件时报 `HEARTBEAT_TOKEN_FILE_MISSING`。`HeartbeatBindingId` 在计划里的位置按 `plan.heartbeatToken.bindingId` 核对。
+- **心跳令牌补装或换新（90 天到期）**：今天没有不重装的办法。`install-resident.ps1` 只做全新安装，目标已存在时拒绝（`HEARTBEAT_TOKEN_TARGET_EXISTS_NOT_OVERWRITTEN`）；升级通道不碰 `secrets`。所以补装或换新都要整套重装一次。要免重装，需要一个新的提权小工具（放在 `windows/`，要审核）：按安装器同样的规则核对目录和文件的 ACL，拒绝 CI 令牌和升级令牌，在同一目录里按文件 SDDL 写新内容再原子替换，写一份回执。服务端关联新连接（`/bindings/failover`）会替换旧的关联。这个工具这里没有做。
 
 ## 5. 对已装现场的全量只读预演：`rehearse.py`（预演不过不出 final）
 
@@ -83,7 +86,7 @@ python -I rehearse.py config\turing.json --commit <40hex> --package <包目录>
 | status | `state/status.json` 的 `writtenAt`、`executor`、`current`、`halt`；`upgrade/status.json` 里没有 op；`upgrade/current.json` 的合同 |
 | linux | Windows 侧的 Linux version facts（`upgrade/mailbox/responses/version-facts.json`）与第 1 代记录一致；配置里 root 复制的 Linux manifest 和 roles-v3 就是现装的（与 facts 里各项 sha 比对） |
 | pins | 包里 Linux 常驻 manifest 的外部钉值：形状与已装一致，`source-v2` 钉值等于新提交里的文件 |
-| linuxHost | 以 root 只读：对已装角色策略运行第 A、B0、B4 步会用的 `linux/tools/check-host.py`，钉值取配置的 `linux.host`；Source v1 的 HEAD 等于配置值；签名工具要读的 v1 qualification 都在（只查是否存在；签名和事实由第 B1 步签名工具核对，B1 在切换 Source 之前） |
+| linuxHost | 以 root 只读：对已装角色策略运行第 A、B0、B4 步会用的 `linux/tools/check-host.py`，钉值取配置的 `linux.host`；Source v1 的 HEAD 等于配置值；签名工具要读的 v1 qualification 都在（只查是否存在；签名和事实由第 B1 步签名工具核对，B1 在切换 Source 之前）。配置的 v1 HEAD 为 null 时：v1 的三处（`source-first-formal-v1`、`roles`、`formal-source-manifest-v1.json`）都不存在（否则 `LINUX_NODE_HAS_A_SOURCE_V1_NOT_CONFIGURED`），`roles-v3` 的三份 qualification 都在（否则 `LINUX_INSTALLED_V2_QUALIFICATIONS_MISSING`） |
 | roles | 以普通用户在节点的 WSL 发行版里，对副本运行第 A 步会用的 `linux/tools/derive-roles.py`。必须成功，被重钉的 Source 文件逐个列出。发行版默认用户是 root 时拒绝运行 |
 | node | 包里的节点档案就是配置所指的那份 |
 
@@ -110,6 +113,12 @@ r7 那次三回被拒，都能被预演提前抓到，`test/test_rehearse.py` �
   - 非 `draft*` 后缀（即 final）必须附上 24 小时内的 PASS 预演报告。`draft*` 脚本只供审阅，脚本自己一开头就拒绝运行（`DRAFT_SCRIPTS_ARE_FOR_REVIEW_ONLY`）。
   - `<in>` 里的 `check-host`、`verify-signed`、`derive-roles` 副本必须与 `linux/tools/` 中提交的版本相同。
   - toolchain node、结果公钥、v1 HEAD 取自配置的 `linux.host`，不再是 TURING 的常量。
+  - **没有 Source v1 的节点**（`v1SourceHead` 为 null，例如 Z1 首装的节点；按配置判断，从不按主机名）：
+    - 第 A 步在 `quiet_and_installed` 之后、建 `$BASE` 之前，要求 v1 的三处都不存在（`NODE_HAS_A_SOURCE_V1_CONFIGURE_ITS_HEAD`）。
+    - B1 改用 `linux/tools/sign-qualification-no-v1.mjs` 签名（sha 由 `prep.py` 钉住，和其他字节一起暂存、`sha256sum -c`、进 `phaseA.sha256`）。它和 `sign-qualification-v2.mjs` 做同样的检查，只把"已装的 v1 qualification"换成"节点已装的 roles-v3 qualification"：必须用节点公钥验签通过、是 v2、指名同一把钥，image、keyId、runtimeIdentity、隔离事实都相同；新 payload 和新 policy 与已装的相比，只许 derive-roles 改的 Source 值不同（manifest、两个 ref、五个 Source 钉值，payload 另加 qualifiedAt）。节点上有 v1 时它拒绝。
+    - `verify-source-v2.sh` 的 `V1_HEAD` 为空，于是检查 `no-v1`。
+    - 其余检查全部照旧：已装 Source v2 的 HEAD 和 manifest、已装常驻和升级通道、旧 version facts、check-host 的钉值、verify-signed、三份计划。
+  - 有 Source v1 的节点：生成的三个脚本与改动之前逐字节相同。
 - `tools/derive-roles.py`：与冻结工具 `clued-ci-upgrade-linux` 的 `derive_role` 一样，把 5 个 Source 钉值（entry、qualification、worker、proof、job）重钉为新提交的值，其余一律不许变。
 - 其余工具与 r7 审过的相同：`sign-qualification-v2.mjs`（9ee06a93）、`verify-source-v2.template.sh`（r7 的 60c078e0 加一处：v1 HEAD 改为变量 `V1_HEAD`，现 05314df4）、`check-host.py`（两项钉值改为参数）、`verify-signed.mjs`。
 
@@ -233,4 +242,6 @@ python -I -m unittest discover -s test -p "test_*.py"      # 在 reinstall/ 下�
 - 已装副本过期；
 - facts 与第 1 代记录不一致；
 - 包属于别的节点；
-- 配置的秘密拒绝、占位值、节点档案与配置对应。
+- 配置的秘密拒绝、占位值、节点档案与配置对应；
+- 启动器模板的心跳令牌参数和计划比对（`test_launcher_heartbeat.py`，在 Windows PowerShell 5.1 里跑模板自己的函数，子进程是假的）；
+- 没有 Source v1 的节点：签名工具、`prep.py` 生成的脚本、预演（`test_reinstall_no_v1.py`、`test_rehearse.py`）。
