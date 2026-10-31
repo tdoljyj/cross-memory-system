@@ -168,8 +168,15 @@ function harness(options = {}) {
         // Empty extra pages on one folder's full-text query, shared across calls.
         if (text !== undefined && parent === options.pagedTextParent && state.textPagesLeft > 0)
           return { id, status: 200, json: { files: [], nextPageToken: "page-" + state.textPagesLeft-- } };
-        return { id, status: 200, json: { files: [...drive.files.values()].filter(f => f.parents.includes(parent) && !f.trashed &&
-          (needle === undefined || (drive.contents.get(f.id) ?? "").includes(needle))) } };
+        const all = [...drive.files.values()].filter(f => f.parents.includes(parent) && !f.trashed &&
+          (needle === undefined || (drive.contents.get(f.id) ?? "").includes(needle)));
+        // Drive pages with pageSize and an opaque pageToken (here an offset).
+        if (request.searchParams.get("orderBy") === "folder,name") all.sort((a, b) =>
+          Number(b.mimeType === FOLDER) - Number(a.mimeType === FOLDER) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+        const token = request.searchParams.get("pageToken") ?? "";
+        const size = Number(request.searchParams.get("pageSize") ?? 1000), from = token.startsWith("off-") ? Number(token.slice(4)) : 0;
+        const files = all.slice(from, from + size);
+        return { id, status: 200, json: { files, ...(from + size < all.length ? { nextPageToken: "off-" + (from + size) } : {}) } };
       }
       const found = drive.files.get(request.pathname.split("/").at(-1));
       return found ? { id, status: 200, json: found } : { id, status: 404, json: { error: { code: 404 } } };
@@ -357,11 +364,12 @@ test("a transient Drive failure that survives the retry after round 1 ends searc
   assert.equal(partial.isError, false);
   assert.equal(partial.value.complete, false); assert.ok(partial.value.next_cursor);
   assert.deepEqual(names(partial.value), ["Readme.md"]);
-  assert.equal(partial.h.googleRequests, 3, "round 1, then the failed round 2 and its one retry");
+  assert.equal(partial.h.googleRequests, 4, "round 1, then the failed round 2 and its two backed-off retries (Decision 24422a98)");
   const fin = partial.h.calls.at(-1).p_input;
   assert.equal(fin.action, "finalize"); assert.equal(fin.complete, false);
   fixedWarnings(warnings);
-  assert.deepEqual(warnings.map(w => [w.code, w.outcome]), [["DRIVE_BATCH_HTTP_500", "retried"], ["DRIVE_BATCH_HTTP_500", "absorbed"]]);
+  assert.deepEqual(warnings.map(w => [w.code, w.outcome]), [["DRIVE_BATCH_HTTP_500", "retried"], ["DRIVE_BATCH_HTTP_500", "retried"],
+    ["DRIVE_BATCH_HTTP_500", "absorbed"]]);
   // The requeued folder is searched on the next page once Drive recovers.
   const resumed = await browse({ operation: "search", mime_type: "text/markdown", cursor: partial.value.next_cursor }, { drive });
   assert.equal(resumed.isError, false); assert.equal(resumed.value.complete, true);
@@ -371,9 +379,9 @@ test("a transient Drive failure that survives the retry after round 1 ends searc
     const { result: failed, warnings: logged } = await withWarnings(() => browse(args,
       { drive, batchFault: () => new Response("unavailable", { status: 503 }) }));
     assert.equal(failed.value.error, "storage_read_unavailable", args.operation);
-    assert.equal(failed.h.googleRequests, 2, "one retry only");
+    assert.equal(failed.h.googleRequests, 3, "two backed-off retries only");
     fixedWarnings(logged);
-    assert.deepEqual(logged.map(w => w.outcome), ["retried", "fatal"]);
+    assert.deepEqual(logged.map(w => w.outcome), ["retried", "retried", "fatal"]);
   }
 });
 
@@ -1250,4 +1258,53 @@ test("§4.5 tool description states PDF page ranges, the 20 MiB limit, no OCR an
     assert.ok(tool.description.includes(phrase), phrase);
   assert.equal(tool.description.includes("PDF text extraction is not available yet"), false);
   assert.deepEqual([tool.inputSchema.properties.page_start.minimum, tool.inputSchema.properties.page_count.minimum, tool.inputSchema.properties.page_count.maximum], [1, 1, 20]);
+});
+
+// Drive alignment item 10 (Decision 24422a98): a folder larger than one call
+// can list whole is paged with Drive's own page token instead of failing, and
+// a search skips only that folder (and says it is incomplete).
+test("a folder with more than 10000 children is listed page by page in Drive's order, and search skips only it", async () => {
+  const drive = tree();
+  drive.add("hugeFolder000001", "huge", ["trackFolder00001"], FOLDER);
+  for (let i = 0; i < 10050; i++) drive.add(`hugeFile${String(i).padStart(8, "0")}`, `item ${String(i).padStart(5, "0")}.txt`, ["hugeFolder000001"]);
+  const first = await browse({ operation: "list", folder_id: "hugeFolder000001" }, { drive });
+  assert.equal(first.isError, false, JSON.stringify(first.value));
+  assert.equal(first.value.order, "drive"); assert.equal(first.value.items.length, 200); assert.equal(first.value.complete, false);
+  assert.equal(first.value.items[0].name, "item 00000.txt");
+  assert.ok(first.h.batchPaths.some(p => /orderBy=folder%2Cname/.test(p) && /pageSize=200/.test(p)));
+  const second = await browse({ operation: "list", folder_id: "hugeFolder000001", cursor: first.value.next_cursor }, { drive });
+  assert.equal(second.isError, false); assert.equal(second.value.items[0].name, "item 00200.txt");
+  // The page token is sealed into the cursor; the sealed cursor cannot be forged.
+  assert.equal(JSON.stringify(first.value).includes("off-200"), false);
+  // Search over the track still answers; the huge folder makes it incomplete, never an error.
+  const found = await browse({ operation: "search", name_contains: "plan" }, { drive });
+  assert.equal(found.isError, false, JSON.stringify(found.value));
+  assert.ok(found.value.items.some(item => item.name === "Plan A.md"));
+  assert.equal(found.value.complete, false); assert.equal(found.value.limit_reached, true);
+  // An ordinary folder still lists whole, sorted by name, with an offset cursor.
+  const small = await browse({ operation: "list", folder_id: "trackFolder00001" }, { drive });
+  assert.equal(small.isError, false); assert.equal(small.value.order, undefined);
+});
+
+// Review r1 MAJOR: an oversized folder first in a full chunk is skipped by itself
+// within the subrequest budget; every page answers and the search finishes.
+test("an oversized folder first in a chunk of 40 is skipped within the budget, page after page", async () => {
+  const drive = tree();
+  drive.add("aaHugeFolder0001", "aa huge", ["trackFolder00001"], FOLDER);
+  for (let i = 0; i < 10050; i++) drive.add(`hugeF${String(i).padStart(11, "0")}`, `x ${i}.txt`, ["aaHugeFolder0001"]);
+  for (let i = 0; i < 40; i++) {
+    drive.add(`small${String(i).padStart(11, "0")}`, `small ${String(i).padStart(2, "0")}`, ["trackFolder00001"], FOLDER);
+    drive.add(`note${String(i).padStart(12, "0")}`, `plan ${i}.md`, [`small${String(i).padStart(11, "0")}`], "text/markdown");
+  }
+  let cursor, pages = 0, found = 0, limited = false;
+  do {
+    const page = await browse({ operation: "search", name_contains: "plan", ...(cursor ? { cursor } : {}) }, { drive });
+    assert.equal(page.isError, false, JSON.stringify(page.value));
+    assert.ok(page.h.googleRequests <= 50, String(page.h.googleRequests));
+    found += page.value.items.length; limited ||= page.value.limit_reached === true;
+    cursor = page.value.next_cursor; pages++;
+  } while (cursor && pages < 10);
+  assert.equal(cursor, null, "the search finishes");
+  assert.equal(limited, true, "and says it skipped the oversized folder");
+  assert.ok(found >= 42, String(found));
 });

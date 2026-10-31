@@ -850,3 +850,23 @@ test("official filesystem adapter fails closed when a provider cannot prove obje
   }), { code: "FILESYSTEM_OBJECT_IDENTITY_UNAVAILABLE" });
   assert.equal(writeCalls, 0);
 });
+
+// Owner Decision f382c494 (Task 2e8ed1da item 3): the layout rules stay, but
+// an ordinary write into a status-named folder that already exists is not
+// refused; only a new status-named directory is.
+test("a file written into an existing status-named folder is allowed; a new status-named directory is not", () => {
+  const base = "G:/我的云端硬盘/Clued_资料中心/20_P_产品与体验/品牌与视觉/";
+  for (const operation of ["create", "write"]) {
+    const result = check({ operation, artifact_role: "clued_resource", target_kind: "file", destination_path: base + "历史/note.md" });
+    assert.equal(result.status, "allow", operation);
+  }
+  // A directory is never created under a status folder: that would grow the status hierarchy.
+  assert.equal(check({ operation: "create", artifact_role: "clued_resource", target_kind: "directory", directory_semantics: "topic",
+    destination_path: base + "历史/新主题" }).error_code, "STATUS_SEMANTIC_DIRECTORY_FORBIDDEN");
+  // Creating, renaming or moving a directory to a status name is still refused.
+  for (const operation of ["create", "rename"]) {
+    const result = check({ operation, artifact_role: "clued_resource", target_kind: "directory", directory_semantics: "topic",
+      ...(operation === "rename" ? { source_path: base + "主题" } : {}), destination_path: base + "当前版本" });
+    assert.equal(result.error_code, "STATUS_SEMANTIC_DIRECTORY_FORBIDDEN", operation);
+  }
+});
