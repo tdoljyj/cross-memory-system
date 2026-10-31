@@ -19,8 +19,9 @@ import { Poller } from './poller.mjs';
 import { Inbox } from './inbox.mjs';
 import os from 'node:os';
 import { readStatus } from './status.mjs';
-import { LocalStore, PrStatusReporter, validateStatusConfig } from './pr-status.mjs';
+import { LocalStore, PrStatusReporter, toastArgv, validateStatusConfig } from './pr-status.mjs';
 import { companionBackstop } from './ruleset-backstop.mjs';
+import { CompanionHeartbeat, ghHandoverPort, readHeartbeatToken, scQueryArgv, serviceRunningFrom, supabaseHeartbeatTransport } from './companion-heartbeat.mjs';
 
 // The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
 // phase 1, item 7). The poller looks for new PR heads once a minute too (Decision 1b99e7e4; it was five minutes): its two
@@ -30,6 +31,27 @@ export const POLL_EVERY_MS = 60_000;
 export const BACKSTOP_EVERY_MS = 5 * 60_000;
 // The upgrade mailbox lane looks for requests this often (the upgrader polls its answers once a second; the shortest deadline is 60 s).
 export const UPGRADE_LANE_EVERY_MS = 5_000;
+// The node heartbeat's own lane (DESIGN §41.6a, companion-heartbeat.mjs) looks this often whether what it reports changed; it
+// sends every 10 minutes and at once on a change. Its own Runner: a slow GitHub or a long mailbox request never delays it.
+export const HEARTBEAT_LANE_EVERY_MS = 30_000;
+const SC_EXE = 'C:\\Windows\\System32\\sc.exe';
+
+// The node heartbeat, or null when no heartbeat token is installed (then nothing about the companion changes). The server's
+// address, publishable key and scope are the installed record's (record\installation.json), never a configuration of their own.
+export async function companionHeartbeat({ root, nodeName, ghExe, repo, powershellExe, run, store, clock = Date.now, readJson = async p => JSON.parse(await fs.readFile(p, 'utf8')) }) {
+  if (!(await readHeartbeatToken(root))) return null;
+  let transport, scope = null;
+  try {
+    const record = await readJson(path.join(root, 'record', 'installation.json'));
+    scope = record.scope;
+    transport = supabaseHeartbeatTransport({ supabaseUrl: record.supabaseUrl, publishableKey: record.publishableKey });
+  } catch { transport = async () => ({ ok: false, tokenRefused: false, notRegistered: false, autoHandovers: [], watchdogTickAt: null, watchdogStale: null }); }
+  return new CompanionHeartbeat({ nodeName, scope, transport, clock, readToken: () => readHeartbeatToken(root), readStatus: () => readStatus(root),
+    serviceRunning: async () => serviceRunningFrom(await run(scQueryArgv(SC_EXE), { timeoutMs: 15_000 })),
+    notify: async (key, title, body) => { await run(toastArgv(powershellExe, title, body), { timeoutMs: 15_000 }); },
+    memory: { get: key => Date.parse(store.data.notified[key]?.at) || 0, set: async (key, at) => { store.data.notified[key] = { at: new Date(at).toISOString() }; await store.save(); } },
+    handover: ghHandoverPort({ ghExe, repo, run }) });
+}
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -160,13 +182,14 @@ export async function main(args = process.argv.slice(2)) {
   // PR page status and Windows notifications (pr-status.mjs). Their memory lives in the Owner's own profile, never in the
   // resident's directories.
   const statusCfg = validateStatusConfig(raw.status);
-  check(statusCfg.node === cfg.node.nodeName, 'COMPANION_NODE_IDENTITY_CHANGED');
+  // The node's name is the pinned node profile's; a status.node that names another node refuses (never a default node).
+  check(statusCfg.node === cfg.node.nodeName || statusCfg.node === null, 'COMPANION_NODE_IDENTITY_CHANGED');
   const store = await LocalStore.open(path.join(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local'), 'CluedIndependentCI', 'companion-pr-status.json'));
   // The node's duty (primary/standby C5, node-duty.mjs): its name while status.json names none, and the one write it may
   // make into the resident, the dual-active hold (an intake pause request in the user-writable requests\, like a pause).
   const requestsDir = path.join(values.root, 'requests');
   const reporter = new PrStatusReporter({ repo: raw.repo, ghExe: raw.ghExe, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), clock: Date.now, store,
-    prStatus: statusCfg.prStatus, notifications: statusCfg.notifications, node: statusCfg.node,
+    prStatus: statusCfg.prStatus, notifications: statusCfg.notifications, node: cfg.node.nodeName,
     writeRequest: v => Inbox.drop(requestsDir, v) });
   // The upgrade mailbox lane (DESIGN §34): upgrade\mailbox\ is opened once it exists (an install before the channel has none; the
   // lane then tries again each pass and the companion runs as before). The companion never creates it.
@@ -176,6 +199,14 @@ export async function main(args = process.argv.slice(2)) {
       check(await exists(path.join(dir, 'requests')) && await exists(path.join(dir, 'responses')), 'UPGRADE_MAILBOX_ABSENT');
       return UpgradeMailbox.open(dir, Date.now);
     } });
+  // The node heartbeat (DESIGN §41.6a): only with a heartbeat token installed; its own lane and Runner.
+  // Its once-per-key memory is a store of its own (two lanes never write one file).
+  const heartbeatRunner = new Runner({ env: { ...process.env }, jobHost });
+  const heartbeatStore = await LocalStore.open(path.join(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local'), 'CluedIndependentCI', 'companion-heartbeat.json'));
+  const heartbeat = await companionHeartbeat({ root: values.root, nodeName: cfg.node.nodeName, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe,
+    run: (a, o) => heartbeatRunner.run(a, o), store: heartbeatStore });
+  // §41.6a: while the heartbeat's answer shows the failover watchdog stale, the PR page status says so too.
+  reporter.watchdogStale = () => heartbeat?.watchdogStale === true;
   keepalive(companionArgv(cfg).keepalive());
   let lastPoll = 0, lastReport = 0, lastBackstop = 0;
   // Only now, with a usable job host and every part of the companion set up: a companion whose job host cannot start a
@@ -188,6 +219,7 @@ export async function main(args = process.argv.slice(2)) {
       // the service times out and classifies a request the companion did not answer; never retried here
       lane({ runner, work: () => companion.step() }),
       lane({ runner: upgradeRunner, work: () => upgradeLane.step(), everyMs: UPGRADE_LANE_EVERY_MS }),
+      ...(heartbeat ? [lane({ runner: heartbeatRunner, work: () => heartbeat.step(), everyMs: HEARTBEAT_LANE_EVERY_MS })] : []),
       lane({ runner: advisory, work: async () => {
         if (Date.now() - lastPoll > POLL_EVERY_MS) {
           lastPoll = Date.now();

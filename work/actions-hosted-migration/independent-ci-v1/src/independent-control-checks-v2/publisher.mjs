@@ -35,12 +35,23 @@
 //     ROLE_ALREADY_ON_GITHUB: nothing posted, nothing revoked. publishPair reads both checks back before either is
 //     published (and before the green-ledger intent), so this node never leaves the pair half published because the
 //     other half is already on GitHub; a half with an unsettled journal entry skips that and keeps its reconciliation.
+//   - Merge train (DESIGN §41.2, §41.4; train-rules.mjs, train-mode.mjs). trainMode is the installed policy's train.enabled.
+//     Not on: a train front job (S != H) is refused at once (TRAIN_FRONT_JOB_WITHOUT_TRAIN), everything else is as before.
+//     On: the merge-slot green also needs trainHeadDecision (the sweep proof of stage 10, the holders, the green ledger and
+//     the PRs updated since the proof, read in this run; TRAIN_SINGLE_GREEN_NOT_PROVEN otherwise, not waited out); a front
+//     S GitHub no longer has, or that is not the test merge of [T, H], ends the batch (TRAIN_TEST_COMMIT_GONE); the summary
+//     names the front, T and S; after the pair settled, one touch green (the proof's slotHardCapMinutes) is only logged.
+//   - Every publication's binding (Decision b30b1b79 item 3, §41.8): the merge slot is bound by state, ref, tip and queue
+//     head only, like sourceBinding; neither its `until` nor the claim lease is, so a renewal, keepalive or touch in the
+//     middle of a batch no longer voids it. Freshness still needs the lease unexpired (fresh()).
 import { prepareNativePublication, nativePublicationNoPostProof } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { digest } from '../proof.mjs';
-import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, CONTROL_ROLES_V2, MAX_ATTEMPT_V2, sameBatchV2 } from '../job-v2.mjs';
+import { freshStamp } from '../clock-skew.mjs';
+import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, CONTROL_ROLES_V2, MAX_ATTEMPT_V2, sameBatchV2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
 import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from '../full-admission-v2.mjs';
 import { TRAIN_MODES, TRAIN_MODE_DEFAULT, RULESET_UNREADABLE, STRICT_OFF_WITHOUT_TRAIN, MERGE_METHODS_NOT_MERGE_ONLY, TRAIN_TEST_MERGE_NOT_READY,
-  TRAIN_TEST_MERGE_TREE_DIFFERS, rulesetFacts, rulesetDecision, testMergeDecision, mergedAsTested } from './train-rules.mjs';
+  TRAIN_TEST_MERGE_TREE_DIFFERS, TRAIN_FRONT_JOB_WITHOUT_TRAIN, TRAIN_SINGLE_GREEN_NOT_PROVEN, TRAIN_TEST_COMMIT_GONE, TRAIN_MODE_UNREADABLE, trainFrontRefused, trainFrontRefusal,
+  trainHeadDecision, rulesetFacts, rulesetDecision, testMergeDecision, mergedAsTested } from './train-rules.mjs';
 import { GREEN_LEDGER_UNAVAILABLE } from './green-ledger.mjs';
 import { ROLE_ALREADY_ON_GITHUB, publishedNames } from '../published-on-github-v2.mjs';
 
@@ -56,9 +67,13 @@ export const STAGE8_CHECK_MS = 90_000;
 // Why a stage-8 run was not ready (all BLOCKED, zero side effects, before any journal write).
 export const STAGE8_NOT_READY_REASONS = Object.freeze(['RESIDENT_BASE_MOVED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED',
   // Phase 2, step 3a: the live branch rules and test merge, and the green ledger (all before any journal write).
-  RULESET_UNREADABLE, STRICT_OFF_WITHOUT_TRAIN, MERGE_METHODS_NOT_MERGE_ONLY, TRAIN_TEST_MERGE_NOT_READY, GREEN_LEDGER_UNAVAILABLE]);
+  RULESET_UNREADABLE, STRICT_OFF_WITHOUT_TRAIN, MERGE_METHODS_NOT_MERGE_ONLY, TRAIN_TEST_MERGE_NOT_READY, GREEN_LEDGER_UNAVAILABLE,
+  // Merge train (§41.2): the batch waits for the next stage 10; a front job whose stage directory's train mode could not be
+  // read parks (review R1 m4).
+  TRAIN_SINGLE_GREEN_NOT_PROVEN, TRAIN_MODE_UNREADABLE]);
 // Final for this head (step 3a): GitHub's merge of exactly [T, H] is not the tree that was tested. Zero side effects.
-export const STAGE8_FINAL_REASONS = Object.freeze([TRAIN_TEST_MERGE_TREE_DIFFERS]);
+// Merge train: a front job without the train; a front S GitHub dropped (§41.4: stage 10 reads S again for a new batch).
+export const STAGE8_FINAL_REASONS = Object.freeze([TRAIN_TEST_MERGE_TREE_DIFFERS, TRAIN_FRONT_JOB_WITHOUT_TRAIN, TRAIN_TEST_COMMIT_GONE]);
 // Inside one run these are waited out (polled until the window ends); every other not-ready answer returns at once.
 const TRAIN_WAITED = Object.freeze([RULESET_UNREADABLE, TRAIN_TEST_MERGE_NOT_READY]);
 const SHA = /^[a-f0-9]{40}$/;
@@ -83,7 +98,7 @@ const exact = (v, keys) => plain(v) && Object.keys(v).sort().join('|') === [...k
 const fixedJob = job => { validateJobV2(job); check(job.repo === REPO && CONTROL_ROLES_V2.includes(job.role) && job.attempt >= 1 && job.attempt <= MAX_ATTEMPT_V2, 'FIXED_INDEPENDENT_CONTROL_JOB_REQUIRED'); return freeze(structuredClone(job)); };
 const prefixFor = job => `independent-ci:control:${job.role}`;
 function identity(c, job, externalId) { return Number.isSafeInteger(c?.id) && c.id > 0 && c.app?.id === APP_ID && c.name === definitionFor(job).name && c.head_sha === job.headSha && c.external_id === externalId; }
-const fresh = (f, now) => Number.isSafeInteger(now) && Date.parse(f.observedAt) <= now && now - Date.parse(f.observedAt) <= 30000 && Date.parse(f.claimExpiresAt) > now;
+const fresh = (f, now) => freshStamp(Date.parse(f.observedAt), now) && Date.parse(f.claimExpiresAt) > now;
 
 // The merge-queue facts that make the merge-slot check true (S8). Pure.
 export function queueHeadReady(job, facts, now) {
@@ -103,15 +118,16 @@ export function factsValid(job, packet, facts, domain, now, batchClaim, { requir
   if (requireQueueHead) check(queueHeadReady(job, facts, now), 'LIVE_ACTUAL_MERGE_SLOT_REQUIRED');
   return facts;
 }
+// §41.8: the slot by state, ref and tip (with mergeQueueHead beside it), never its until or the claim lease.
 function binding(job, packet, facts, authority) {
   return digest({ subject: subjectOfV2(job), claim: claimGeneration(facts.observedClaim), pathsSha256: digest(packet.paths), scope: facts.scope, executionPolicy: facts.executionPolicy,
     ...(facts.publicationRequired ? { guarded: facts.guarded, publicationRequired: true, headAuthorizationId: facts.headAuthorizationId } : {}),
-    mode: facts.mode, mergeSlot: facts.mergeSlot, mergeQueueHead: facts.mergeQueueHead, executionHandoverPending: facts.executionHandoverPending, ownerReview: facts.ownerReview,
-    workflowGateFindings: facts.workflowGateFindings, claimExpiresAt: facts.claimExpiresAt, authority, definition: definitionFor(job) });
+    mode: facts.mode, mergeSlot: { state: facts.mergeSlot.state, ref: facts.mergeSlot.ref, tip: facts.mergeSlot.tip }, mergeQueueHead: facts.mergeQueueHead,
+    executionHandoverPending: facts.executionHandoverPending, ownerReview: facts.ownerReview, workflowGateFindings: facts.workflowGateFindings, authority, definition: definitionFor(job) });
 }
 
-// The durable producer identity excludes the renewable lease and slot timestamps (v1 sourceBinding); the
-// live before/after binding above still includes every one of them.
+// The durable producer identity excludes the renewable lease and slot timestamps (v1 sourceBinding); since §41.8 the
+// live before/after binding above excludes them too.
 function sourceBinding(job, packet, facts, authority) {
   return digest({ subject: subjectOfV2(job), claim: claimGeneration(facts.observedClaim), pathsSha256: digest(packet.paths), scope: facts.scope, executionPolicy: facts.executionPolicy,
     ...(facts.publicationRequired ? { publicationRequired: true, headAuthorizationId: facts.headAuthorizationId } : {}),
@@ -119,11 +135,16 @@ function sourceBinding(job, packet, facts, authority) {
     slot: job.role === 'control-merge-slot' ? { state: facts.mergeSlot.state, ref: facts.mergeSlot.ref, tip: facts.mergeSlot.tip, queueHead: facts.mergeQueueHead } : null });
 }
 
-function engine({ github, journal, admission, assertLive, record, authority, batchClaim, greenLedger = null, trainMode = TRAIN_MODE_DEFAULT,
-  clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)) }, production) {
+// Merge train only (trainMode 'on'): slotNative (merge-slot-native.mjs: holders, touch), sweepStore (train-sweep-store.mjs:
+// latestProof, frontBatches, refused) and pullsUpdatedSince(cursorIso) -> {complete, pulls: [{number, updatedAt}]}
+// (github.mjs readPullsUpdatedSince). Any of them missing is "not proven", never a green.
+function engine({ github, journal, admission, assertLive, record, authority, batchClaim, greenLedger = null, trainMode = TRAIN_MODE_DEFAULT, trainModeUnreadable = false,
+  slotNative = null, sweepStore = null, pullsUpdatedSince = null, clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)) }, production) {
   const domain = production ? 'production' : 'fixture';
   // The green ledger is required where a green is written (publishPair), not here: the merge-gate consumer only reads (review M1).
   check(TRAIN_MODES.includes(trainMode) && (greenLedger === null || typeof greenLedger?.append === 'function'), 'CONTROL_PUBLISHER_CONFIGURATION_REFUSED');
+  const trainOn = trainMode === 'on';
+  const frontRefused = () => ({ status: 'BLOCKED', reason: trainFrontRefusal(trainModeUnreadable), sideEffects: 0, productionAuthorized: false });
   // Phase 2, step 3a: the live branch rules of main and GitHub's test merge of the PR (train-rules.mjs). The tested tree is
   // the tree of the job's tested commit S: the head's own when S = H, GitHub's test merge of [T, H] for a train front
   // batch (step 3c-2, DESIGN §21.3). Any read that fails is a not-ready answer, never a stage failure: these facts change
@@ -135,12 +156,19 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     const ruleset = rulesetDecision(rules, trainMode);
     if (ruleset) return { reason: ruleset, ruleset: rules };
     let pull, tested, mergeCommit = null;
+    // §41.4 (n7): with the train on, a front batch's S that GitHub answers 404 for is gone (a regenerated test merge): the
+    // batch ends cleanly and stage 10 reads S again. Any other failing read is still not ready.
+    const front = trainOn && isTrainFrontJobV2(job);
     try {
       pull = await github.readPullRequest(job.pr);
-      tested = await github.readGitCommit(job.testSha);
+      try { tested = await github.readGitCommit(job.testSha); }
+      catch (e) { if (front && e?.code === 'github_http_404') return { reason: TRAIN_TEST_COMMIT_GONE, ruleset: rules }; throw e; }
       if (SHA.test(pull?.merge_commit_sha ?? '')) mergeCommit = await github.readGitCommit(pull.merge_commit_sha);
     } catch { return { reason: TRAIN_TEST_MERGE_NOT_READY, ruleset: rules }; }
     if (!SHA.test(tested?.tree ?? '') || tested.sha !== job.testSha) return { reason: TRAIN_TEST_MERGE_NOT_READY, ruleset: rules };
+    // S itself is the test merge of exactly [T, H], or it is not this batch's S at all.
+    if (front && !(Array.isArray(tested.parents) && tested.parents.length === 2 && tested.parents[0] === job.baseSha && tested.parents[1] === job.headSha))
+      return { reason: TRAIN_TEST_COMMIT_GONE, ruleset: rules };
     const reason = testMergeDecision({ pull, mergeCommit, job, testTree: tested.tree });
     return { reason, ruleset: rules, testTree: tested.tree, testMergeSha: reason ? null : pull.merge_commit_sha };
   }
@@ -163,6 +191,30 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     if (!greenLedger || job.role !== 'control-merge-slot') return;
     try { await greenLedger.append({ phase, job, testTree: train.testTree, testMergeSha: train.testMergeSha ?? null, effectKey: key, externalId, checkRunId, detail }); }
     catch (e) { if (required) throw e; }
+  }
+  // §41.2 trainHeadReady (train on, merge-slot job): read in this run, after the queue head and the test merge held. A
+  // read that fails proves nothing (null), so it is TRAIN_SINGLE_GREEN_NOT_PROVEN like every unmet condition.
+  async function trainHead(job) {
+    const read = async f => { try { return await f(); } catch { return null; } };
+    const holders = await read(() => slotNative?.holders()), proof = await read(() => sweepStore?.latestProof());
+    const front = (await read(() => sweepStore?.frontBatches({ pr: job.pr, headSha: job.headSha })))?.[0] ?? null;
+    const storeRefused = Number.isSafeInteger(sweepStore?.refused) ? sweepStore.refused : 1;
+    const list = await read(() => greenLedger?.list?.());
+    const pulls = proof && typeof pullsUpdatedSince === 'function' ? await read(() => pullsUpdatedSince(proof.prUpdatedCursor)) : null;
+    return { reason: trainHeadDecision({ job, claimId: batchClaim?.claimId, holders, proof, storeRefused, front, ledger: list, pulls, now: clock() }), proof };
+  }
+  // §41.2 touch green: once, after the pair settled, and only while this claim is still the one front holder of this PR.
+  // It never changes the ending or revokes anything; what happened is logged (observation log) and returned.
+  async function touchGreen(job, proof) {
+    let out;
+    try {
+      const h = await slotNative.holders(), one = h?.onDuty === true && h.holders.length === 1 ? h.holders[0] : null;
+      out = one?.claimId === batchClaim?.claimId && one.pr === job.pr
+        ? await slotNative.touch({ pr: job.pr, headSha: job.headSha, ciState: 'green', hardCapMinutes: proof.slotHardCapMinutes }) : { onDuty: h?.onDuty ?? null, touched: false, code: 'TRAIN_TOUCH_NOT_FRONT' };
+    } catch (e) { out = { onDuty: null, touched: false, code: safe(e) }; }
+    const result = { ciState: 'green', onDuty: out.onDuty, touched: out.touched === true, code: out.code ?? (out.onDuty === false ? 'NODE_ROLE_NOT_HELD' : null) };
+    try { record('native_train_touch', { jobId: job.id, ...result }); } catch { /* best-effort */ }
+    return result;
   }
   // scheduling (optional): told the scheduling facts of each evaluation (full-admission-v2 option; never authority).
   async function observe(job, scheduling = null) { assertLive(); const packet = await github.readChangedPaths(job), facts = await admission.evaluatePr(job, packet, { batchClaim, ...(scheduling ? { scheduling } : {}) }); assertLive(); return { packet, facts }; }
@@ -212,18 +264,21 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
   }
   // C4: this App's check of the job's name is on GitHub although this journal has no entry for it under the batch claim.
   // It looks at this job's own entry only: a direct publishOne of one half does not see the other half's unsettled entry;
-  // publishPair, the stage-8 path, checks both halves' entries before it calls this.
+  // publishPair, the stage-8 path, checks both halves' entries before it calls this. A train front job counts only the checks
+  // of its own front subject's jobs (§41.4: the non-front run H normally has first is another identity).
   async function onGithubOnly(job) {
     if (await journal.read(admissionEffectKeyV2(ACTION, job, batchClaim, definitionFor(job)))) return false;
     assertLive();
-    return (await publishedNames(github, job.headSha, [definitionFor(job).name], APP_ID)).length > 0;
+    return (await publishedNames(github, job.headSha, [definitionFor(job).name], APP_ID, frontJobIdsV2(job))).length > 0;
   }
   // train: the facts trainFacts() read before the pair (publishPair); the merge-slot green is ledgered and checked
   // against GitHub's test merge after the write. Without them (a direct call) the check is written as before 3a.
   async function publishOne(input, { train = null } = {}) {
     let job, key, externalId, previous, before;
     try {
-      job = fixedJob(input); key = admissionEffectKeyV2(ACTION, job, batchClaim, definitionFor(job)); externalId = admissionExternalIdV2(prefixFor(job), job, batchClaim);
+      job = fixedJob(input);
+      if (trainFrontRefused(job, trainMode)) return frontRefused();
+      key = admissionEffectKeyV2(ACTION, job, batchClaim, definitionFor(job)); externalId = admissionExternalIdV2(prefixFor(job), job, batchClaim);
       previous = await journal.read(key);
       if (previous && previous.state !== 'settled') return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
       before = await boundary(job);
@@ -239,8 +294,11 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       if (intent.existing) return { status: 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects, productionAuthorized: false };
       await journal.transition(key, 'intent', 'authorized', { nativeObservationSha256: before.facts.observationSha256 }); phase = 'authorized';
       assertLive(); check(fresh(before.facts, clock()), 'NATIVE_OBSERVATION_EXPIRED_BEFORE_WRITE');
+      // §41.2 (design §5.3 rule 6): with the train on, the merge-slot green names the front, T and S for stage 10, review and the Owner.
+      const front = trainOn && job.role === 'control-merge-slot' && SHA.test(train?.testTree ?? '')
+        ? `front PR #${job.pr}, head ${job.headSha}, main@${job.baseSha}, tested ${job.testSha === job.headSha ? 'head' : job.testSha} (tree ${train.testTree}). ` : '';
       const payload = { name: definitionFor(job).name, head_sha: job.headSha, status: 'completed', conclusion: 'success', external_id: externalId,
-        output: { title: 'Complete Native control and exact subject verified', summary: `Independent Native control check for ${REPO}#${job.pr} (attempt ${job.attempt}); observation sha256 ${before.facts.observationSha256}. ${before.facts.publicationRequired ? 'This observation is not scanner execution or qualification. The protected publisher attaches its Native Receipt.' : 'This is not a scanner execution, Native publication ticket, Receipt or qualification.'}` } };
+        output: { title: 'Complete Native control and exact subject verified', summary: `${front}Independent Native control check for ${REPO}#${job.pr} (attempt ${job.attempt}); observation sha256 ${before.facts.observationSha256}. ${before.facts.publicationRequired ? 'This observation is not scanner execution or qualification. The protected publisher attaches its Native Receipt.' : 'This is not a scanner execution, Native publication ticket, Receipt or qualification.'}` } };
       const nativeHandle = await prepareNativePublication(github, { facts: before.facts, packet: before.packet, payload });
       await journal.transition(key, 'authorized', 'sent', { externalId, nativeObservationSha256: before.facts.observationSha256 }); phase = 'sent'; sent = true; sideEffects++;
       const posted = await github.createCheck(payload, nativeHandle);
@@ -308,6 +366,12 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       if (observed && queueHeadReady(slotJob, observed, clock())) {
         // Step 3a: the queue head may write only under live rules that still hold main, on a test merge of exactly [T, H].
         const train = await trainFacts(slotJob);
+        // §41.2: with the train on, only a green the single-green proof covers; not waited out (the next stage 10 decides).
+        if (!train.reason && trainOn) {
+          const proven = await trainHead(slotJob);
+          if (proven.reason) { record('native_train_not_ready', { jobId: slotJob.id, reason: proven.reason }); return { ready: false, reason: proven.reason, polls, scheduling }; }
+          train.proof = proven.proof;
+        }
         if (!train.reason) return { ready: true, polls, scheduling, train };
         record('native_train_not_ready', { jobId: slotJob.id, reason: train.reason });
         if (!TRAIN_WAITED.includes(train.reason)) return { ready: false, reason: train.reason, polls, scheduling };
@@ -359,6 +423,8 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       jobs.forEach(fixedJob);
       check(Number.isSafeInteger(waitUntil) && waitUntil > clock(), 'QUEUE_WINDOW_REQUIRED');
     } catch (e) { return { status: 'BLOCKED', reason: safe(e), sideEffects: 0, productionAuthorized: false }; }
+    // §41.2 (§38.8 m3): S != H only with the train on; nothing read, nothing written.
+    if (trainFrontRefused(jobs[1], trainMode)) return frontRefused();
     const head = await waitForQueueHead(jobs[1], waitUntil);
     record('native_queue_wait', { jobId: jobs[1].id, ready: head.ready, polls: head.polls });
     if (!head.ready) return { status: 'BLOCKED', reason: head.reason, sideEffects: 0, productionAuthorized: false, polls: head.polls, scheduling: head.scheduling };
@@ -384,7 +450,8 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       const r = await publishOne(job, { train: head.train }); sideEffects += r.sideEffects ?? 0; results.push({ role: job.role, ...r });
       if (r.status !== 'SETTLED') return { status: r.status === 'BLOCKED' && sideEffects > 0 ? 'UNCERTAIN' : r.status, reason: r.reason ?? 'CONTROL_PAIR_INCOMPLETE', results, sideEffects, productionAuthorized: false };
     }
-    return { status: 'SETTLED', results, sideEffects, productionAuthorized: production, qualificationIssued: false, nativeTicketIssued: false };
+    const touched = trainOn && head.train?.proof ? { trainTouch: await touchGreen(jobs[1], head.train.proof) } : {};
+    return { status: 'SETTLED', results, sideEffects, productionAuthorized: production, qualificationIssued: false, nativeTicketIssued: false, ...touched };
   } });
 }
 export function createFixtureControlPublisherV2(dependencies) { return engine(dependencies, false); }

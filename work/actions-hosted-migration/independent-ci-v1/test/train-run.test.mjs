@@ -1,28 +1,57 @@
-// Stage 10's job and stage row (resident quota redesign phase 2, step 3c-1; DESIGN §21.1).
+// Stage 10's job and stage row (resident quota redesign phase 2, step 3c-1; DESIGN §21.1; train-run /2: §41.4, §41.7).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
-import { TRAIN_RUN_CONTRACT, TRAIN_RUN_MODES, makeTrainRun, trainRunJobId, trainRunKey, validateTrainRun } from '../src/resident-v2/train-run.mjs';
+import { TRAIN_RUN_CONTRACT, TRAIN_RUN_FIELDS, TRAIN_RUN_MODES, TRAIN_RUN_SHADOW_DEFAULTS, makeTrainRun, trainRunJobId, trainRunKey, validateTrainRun } from '../src/resident-v2/train-run.mjs';
 import { ENTRY_V2, FORMAL_STAGES_V2, STAGES_V2, TRAIN_STAGE_NUMBER, TRAIN_STAGE_V2, STATE_V2 } from '../src/resident-v2/layout.mjs';
+import { trainRunCases } from './train-run-cases.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const seed = 'a'.repeat(64);
 const key = trainRunKey({ repo: REPO, seed });
-const run = (o = {}) => makeTrainRun({ repo: REPO, runId: `${key.slice(0, 16)}-0123456789ab`, mode: 'shadow', sourceManifestSha256: 'e'.repeat(64), createdAt: '2026-10-23T05:00:00.000Z', ...o });
+const run = (o = {}) => makeTrainRun({ repo: REPO, runId: `${key.slice(0, 16)}-0123456789ab`, mode: 'shadow', sourceManifestSha256: 'e'.repeat(64), createdAt: '2026-10-23T05:00:00.000Z',
+  ...TRAIN_RUN_SHADOW_DEFAULTS, ...o });
+const ON = { mode: 'on', onSince: '2026-10-23T04:00:00.000Z' };
 
-test('train run: contract, id over the identity, shadow only in step 3c-1', () => {
+test('train run /2: contract, fields in order, id over every field but contract, id and createdAt', () => {
   const job = run();
-  assert.equal(job.contract, TRAIN_RUN_CONTRACT);
-  assert.equal(job.id, createHash('sha256').update(JSON.stringify([TRAIN_RUN_CONTRACT, REPO, job.runId, 'shadow', 'e'.repeat(64)])).digest('hex'));
+  assert.equal(job.contract, 'clued.independent-ci.train-run/2');
+  assert.deepEqual(Object.keys(job), [...TRAIN_RUN_FIELDS]);
+  assert.deepEqual(TRAIN_RUN_FIELDS, ['contract', 'id', 'repo', 'runId', 'mode', 'sourceManifestSha256', 'createdAt', 'slotHardCapMinutes', 'frontBatchBudgetMs', 'sweepFreshMs',
+    'fullSweepMaxMs', 'onSince', 'frontPr', 'frontHeadSha', 'frontTestSha', 'frontAttempt', 'frontCode', 'revokeHeadRequestId']);
+  assert.equal(job.id, createHash('sha256').update(JSON.stringify([TRAIN_RUN_CONTRACT, REPO, job.runId, 'shadow', 'e'.repeat(64), 120, 3600000, 900000, 21600000,
+    null, null, null, null, null, null, null])).digest('hex'));
   assert.equal(trainRunJobId(job), job.id);
-  assert.deepEqual(TRAIN_RUN_MODES, ['shadow']);
+  assert.deepEqual(TRAIN_RUN_MODES, ['shadow', 'on', 'revoke-only']);
   // createdAt is not part of the id; every identity field is
   assert.equal(run({ createdAt: '2026-10-23T06:00:00.000Z' }).id, job.id);
-  assert.notEqual(run({ runId: `${key.slice(0, 16)}-ffffffffffff` }).id, job.id);
-  for (const bad of [{ ...job, mode: 'on' }, { ...job, id: '0'.repeat(64) }, { ...job, runId: 'x' }, { ...job, extra: 1 }, { ...job, repo: 'a' }, { ...job, contract: 'clued.independent-ci.job/3' }])
+  for (const o of [{ runId: `${key.slice(0, 16)}-ffffffffffff` }, { slotHardCapMinutes: 121 }, { sweepFreshMs: 900001 }, { ...ON }, { mode: 'revoke-only' }])
+    assert.notEqual(run(o).id, job.id, JSON.stringify(o));
+  for (const bad of [{ ...job, mode: 'off' }, { ...job, id: '0'.repeat(64) }, { ...job, runId: 'x' }, { ...job, extra: 1 }, { ...job, repo: 'a' }, { ...job, contract: 'clued.independent-ci.train-run/1' }])
     assert.throws(() => validateTrainRun(bad), e => e.code === 'invalid_train_run');
-  assert.throws(() => run({ mode: 'on' }), e => e.code === 'invalid_train_run');
+  assert.throws(() => run({ mode: 'on' }), e => e.code === 'invalid_train_run', 'on names onSince');
+  // makeTrainRun takes every param and nothing else
+  const { revokeHeadRequestId, ...partial } = TRAIN_RUN_SHADOW_DEFAULTS;
+  assert.throws(() => makeTrainRun({ repo: REPO, runId: job.runId, mode: 'shadow', sourceManifestSha256: 'e'.repeat(64), createdAt: job.createdAt, ...partial }), e => e.code === 'invalid_train_run');
+  assert.throws(() => run({ extra: 1 }), e => e.code === 'invalid_train_run');
+});
+
+test('train run /2: the shared table (test/fixtures/train-run-cases.json) as the C# boundary runs it', () => {
+  const rows = trainRunCases();
+  assert.ok(rows.filter(r => r.accepted).length >= 9 && rows.filter(r => !r.accepted).length >= 25);
+  for (const r of rows) {
+    if (r.accepted) assert.equal(validateTrainRun(r.job).id, trainRunJobId(r.job), r.name);
+    else assert.throws(() => validateTrainRun(r.job), e => e.code === 'invalid_train_run', r.name);
+  }
+  // PureTestsV2.cs runs the same rows through FormalPublicBoundaryV2.ValidateTrainRun (test-pure-v2.ps1 writes them)
+  const ps = (name) => new URL(`../src/resident-v2/windows/${name}`, import.meta.url);
+  return import('node:fs').then(({ default: fs }) => {
+    assert.match(fs.readFileSync(ps('test-pure-v2.ps1'), 'utf8'), /trainRunCases:trainRunCases\(\)/);
+    const cs = fs.readFileSync(ps('PureTestsV2.cs'), 'utf8');
+    assert.match(cs, /fixture\["trainRunCases"\]/);
+    assert.match(fs.readFileSync(ps('FormalPublicBoundaryV2.cs'), 'utf8'), /"clued\.independent-ci\.train-run\/2"/);
+  });
 });
 
 test('train run: the key comes from a fresh seed, never from content', () => {
@@ -39,6 +68,17 @@ test('stage 10: a train row outside the batch, with its own entry and state dire
   assert.ok(!FORMAL_STAGES_V2.some(s => s.number === 10), 'stage 10 is never one of the batch stages');
   assert.equal(ENTRY_V2['train-maintenance'], 'work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-maintenance.mjs');
   assert.match(STATE_V2.trainShadow, /\\state\\v2\\train-shadow$/);
+  assert.match(STATE_V2.trainSweep, /\\state\\v2\\train-sweep$/);
+});
+
+test('state\\v2\\train-sweep: created by migrate-acl.ps1 for clued-control only, like train-shadow', async () => {
+  const fs = (await import('node:fs')).default;
+  const model = JSON.parse(fs.readFileSync(new URL('../src/resident-v2/acl-model.json', import.meta.url), 'utf8'));
+  const row = p => model.create.find(c => c.path === `C:\\ProgramData\\CluedIndependentCI\\state\\v2\\${p}`);
+  assert.equal(STATE_V2.trainSweep, `C:\\ProgramData\\CluedIndependentCI\\state\\v2\\train-sweep`);
+  assert.ok(row('train-sweep'));
+  assert.equal(row('train-sweep').sddl, row('train-shadow').sddl);
+  assert.doesNotMatch(row('train-sweep').sddl, /\{RES\}/, 'the resident never reads the sweep records');
 });
 
 test('derive-batch --train-run: one sealed stage-10 package the stage reader accepts, from the installed record', async t => {
@@ -55,8 +95,16 @@ test('derive-batch --train-run: one sealed stage-10 package the stage reader acc
   const sealed = await readSealedStage(dir, 10, a.result.stage.workManifestSha256);
   const job = JSON.parse(sealed.files['jobs.json'].toString('utf8'))[0];
   assert.deepEqual([sealed.plan.batchKey, sealed.plan.batchId, sealed.stage.jobRoles, job.runId, job.mode, validateTrainRun(job).id], [runKey, runId, ['train-run'], runId, 'shadow', a.result.stage.jobId]);
-  for (const bad of [{ runKey: 'x' }, { runId: 'f'.repeat(16) + '-0123456789ab' }, { mode: 'on' }])
+  for (const bad of [{ runKey: 'x' }, { runId: 'f'.repeat(16) + '-0123456789ab' }, { mode: 'on' }, { params: { ...TRAIN_RUN_SHADOW_DEFAULTS, ...ON, slotHardCapMinutes: 59 }, mode: 'on' },
+    { params: 'x' }])
     assert.throws(() => deriveTrainRun({ recordDocs: rec.docs, runId, runKey, mode: 'shadow', now: NOW, ...bad }), { code: 'RESIDENT_TRAIN_RUN_REFUSED' });
+  // on and revoke-only always carry the params (the CLI requires --train-params in every mode)
+  const on = deriveTrainRun({ recordDocs: rec.docs, runId, runKey, mode: 'on', params: { ...TRAIN_RUN_SHADOW_DEFAULTS, ...ON, frontBatchBudgetMs: 1_800_000 }, now: NOW });
+  const onJob = JSON.parse(on.files['stage-10/jobs.json'])[0];
+  assert.deepEqual([onJob.mode, onJob.onSince, onJob.frontBatchBudgetMs, validateTrainRun(onJob).id], ['on', ON.onSince, 1_800_000, on.result.stage.jobId]);
+  const { main } = await import('../src/resident-v2/derive-batch.mjs');
+  assert.throws(() => main(['--train-run', runId, '--train-key', runKey, '--mode', 'shadow', '--out', path.join(dir, 'x')]), { code: 'RESIDENT_DERIVATION_ARGUMENTS_REFUSED' });
+  assert.throws(() => main(['--train-run', runId, '--train-key', runKey, '--mode', 'shadow', '--train-params', '{', '--out', path.join(dir, 'x')]), { code: 'RESIDENT_TRAIN_RUN_REFUSED' });
 });
 
 // invoke-stage for stage 10 end to end (DESIGN §22.1), with a fake broker and helper that write the outcome as
@@ -73,11 +121,13 @@ test('invoke-stage stage 10: train facts are a success fact carrying the facts; 
   const { trainFacts } = await import('../src/independent-control-checks-v2/train-facts.mjs');
   const CONTROLLER = 'S-1-5-21-1-2-3-1015';
   const facts = trainFacts({ mode: 'shadow', at: '2026-10-23T05:01:00.000Z', onDuty: true, holders: [], mainSha: '1'.repeat(40), rules: { strict: true, mergeOnly: false }, front: null, revoke: [], ledger: { records: 0, refused: 0 } });
-  const run = async result => {
+  // the sealed job's mode (review R1 m8 / R2 minor 6): the facts' own mode must be it
+  const run = async (result, mode = result.train?.mode ?? 'shadow') => {
     const root = await tempDir(t);
     const rec = fixtureRecord();
     const runKey = trainRunKey({ repo: REPO, seed: randomBytes(32).toString('hex') }), runId = `${runKey.slice(0, 16)}-0123456789ab`;
-    const d = deriveTrainRun({ recordDocs: rec.docs, runId, runKey, mode: 'shadow', now: NOW });
+    const d = mode === 'shadow' ? deriveTrainRun({ recordDocs: rec.docs, runId, runKey, mode: 'shadow', now: NOW })
+      : deriveTrainRun({ recordDocs: rec.docs, runId, runKey, mode, params: { ...TRAIN_RUN_SHADOW_DEFAULTS, onSince: ON.onSince }, now: NOW });
     await fsp.mkdir(path.join(root, 'work'));
     writeBatch(path.join(root, 'work', runId), d.files);
     for (const p of ['stage', 'broker/requests', 'broker/responses', 'receipts']) await fsp.mkdir(path.join(root, p), { recursive: true });
@@ -114,5 +164,23 @@ test('invoke-stage stage 10: train facts are a success fact carrying the facts; 
   const bad = await run({ status: 'TRAIN_FACTS', reason: null, sideEffects: 0, train: { ...facts, wouldDo: 'REVOKE_EVERYTHING' } });
   assert.deepEqual([bad.failure_code, bad.train], ['STAGE_OUTCOME_MISSING', null]);
   const effects = await run({ status: 'TRAIN_FACTS', reason: null, sideEffects: 1, train: facts });
-  assert.equal(effects.failure_code, 'STAGE_OUTCOME_MISSING', 'a train run with a side effect is no success');
+  assert.equal(effects.failure_code, 'STAGE_OUTCOME_MISSING', 'a shadow run with a side effect is no success');
+  // §41.3, §41.4: in on and revoke-only mode side effects are a normal ending, and the outcome may have published exactly then
+  // (stage-inputs.mjs#writeOutcome and stage-fact.mjs agree); without any it is the same clean ending as shadow
+  const revokeOnly = { ...facts, mode: 'revoke-only', decision: 'REVOKE_ONLY_DONE', sweep: { ...facts.sweep, revoked: 3 } };
+  const acted = await run({ status: 'TRAIN_FACTS', reason: null, sideEffects: 3, train: revokeOnly });
+  assert.deepEqual([acted.state, acted.failure_code, acted.outcome.sideEffects, acted.outcome.mayHavePublished, acted.train?.mode],
+    [ok.state, null, 3, true, 'revoke-only']);
+  const onPause = { ...facts, mode: 'on', decision: 'TRAIN_LANDED_TREE_MISMATCH', requestPause: 'TRAIN_LANDED_TREE_MISMATCH' };
+  const quiet = await run({ status: 'TRAIN_FACTS', reason: null, sideEffects: 0, train: onPause });
+  assert.deepEqual([quiet.state, quiet.failure_code, quiet.outcome.mayHavePublished, quiet.train?.requestPause], [ok.state, null, false, 'TRAIN_LANDED_TREE_MISMATCH']);
+  const onActed = await run({ status: 'TRAIN_FACTS', reason: null, sideEffects: 2, train: onPause });
+  assert.deepEqual([onActed.failure_code, onActed.outcome.mayHavePublished], [null, true]);
+  const uncertain = await run({ status: 'UNCERTAIN', reason: null, sideEffects: 2, train: revokeOnly });
+  assert.notEqual(uncertain.failure_code, null, 'only TRAIN_FACTS is the stage-10 success');
+  // facts whose mode is not the sealed job's: never a success (a shadow job reporting on-mode effects, and the reverse)
+  const forged = await run({ status: 'TRAIN_FACTS', reason: null, sideEffects: 2, train: onPause }, 'shadow');
+  assert.deepEqual([forged.failure_code, forged.state === ok.state], ['STAGE_OUTCOME_MISSING', false]);
+  const quietForged = await run({ status: 'TRAIN_FACTS', reason: null, sideEffects: 0, train: facts }, 'on');
+  assert.equal(quietForged.failure_code, 'STAGE_OUTCOME_MISSING');
 });

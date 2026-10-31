@@ -15,7 +15,7 @@ import { Mailbox } from './mailbox.mjs';
 import { ResidentExecutor } from './executor.mjs';
 import { Runner, serviceEnv } from './runner.mjs';
 import { installedIntegrity, mailboxCompanion } from './service-ports.mjs';
-import { WindowsEngine } from './engine-windows.mjs';
+import { WindowsEngine, installedTrainMode } from './engine-windows.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
 import { stopRequestCheck } from './stop-request.mjs';
 import { readBounded } from './store.mjs';
@@ -57,7 +57,8 @@ export async function main(argv = process.argv.slice(2)) {
   const state = path.join(root, 'state');
   const lock = await acquireInstanceLock(state, { alive: processAlive, clock });
   const ledger = await Ledger.open(state, clock);
-  const receipts = await ReceiptChain.open(path.join(state, 'receipts'), clock);
+  // DESIGN §41.7: the start closes the months before the current one (receipts.mjs); it then reads only the seals and this month.
+  const receipts = await ReceiptChain.open(path.join(state, 'receipts'), clock, { seal: true });
   const inbox = await Inbox.open(path.join(root, 'inbox'), path.join(state, 'inbox-archive'));
   const requests = await Inbox.open(path.join(root, 'requests'), path.join(state, 'requests-archive'));
   const owner = await OwnerInbox.open(path.join(root, 'owner'), path.join(state, 'owner-seen'));
@@ -75,6 +76,8 @@ export async function main(argv = process.argv.slice(2)) {
   const engine = new WindowsEngine({
     node: policy.node, nodeProfileSha256: policy.nodeProfileSha256, versions: async () => (await versions()).view,
     run: (a, o) => runner.run(a, o), busy: () => runner.busy, companionMailbox: mailbox, sleep, clock,
+    // DESIGN §41.2: stages 1 and 8 learn the installed train.enabled through the stage directory (train-mode.json).
+    trainMode: installedTrainMode(policy),
     paths: {
       sourceRoot,
       workRoot: path.join(root, 'work'),

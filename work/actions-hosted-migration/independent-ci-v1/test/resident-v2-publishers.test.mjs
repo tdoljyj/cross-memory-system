@@ -179,6 +179,39 @@ test('scanner publisher v2: content key across claims, settled once, evidence co
   assert.equal(conflict.reason, 'evidence_identity_conflict');
 });
 
+// §38.8 n2 (review R1 m7): the PR base.sha read before and after one staged publication is bound; a change between them
+// voids it (authorization_binding_changed), nothing is written.
+test('scanner publisher v2: a PR base.sha that moves between the two reads of one publication voids it', async t => {
+  const { signer, docs } = fixtureRecord();
+  const record = validateRecordV2(docs, { now: Date.now() });
+  // a train front batch (S != H): its base.sha is read as a fact, so only the binding catches a move (an S = H batch is
+  // already refused by the subject check, github_subject_changed)
+  const job = jobsFor(1, '9'.repeat(40)).trivy, c = claim(), github = fakeGithub();
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  const refs = Object.fromEntries(['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef'].map(k => [k, record.accepted[k]]));
+  const authority = { fixture: true, async observe(j) { return { ...subjectOfV2(j), ...refs, ciPrincipalBindingId: record.config.ciPrincipalBindingId, sourceAccepted: true, hostQualified: true,
+    publisherQualified: true, ciPrincipalQualified: true, observedAt: iso(Date.now()), claimExpiresAt: c.expiresAt, claim: claimGeneration(c) }; } };
+  const admission = fakeAdmission((j, packet, opts) => admitted(j, c, packet, { batchClaim: opts.batchClaim }));
+  const signers = new Map([...record.signers].map(([k, s]) => [k, { ...s, domain: 'fixture' }]));
+  const read = github.readPullRequest.bind(github);
+  let reads = 0, moveAt = Infinity;
+  github.readPullRequest = async n => { const p = await read(n); reads++; return reads >= moveAt ? { ...p, base: { ...p.base, sha: 'f'.repeat(40) } } : p; };
+  const make = () => createStagedCheckPublisherV2({ nativeAdmission: admission, authority, github, journal, signers, configuredChecks: record.config.checks,
+    readChangedPaths: j => github.readChangedPaths(j), protectedDeployment: { enabled: true, domain: 'fixture', repository: REPO, ciPrincipalBindingId: record.config.ciPrincipalBindingId, ...refs },
+    batchClaim: claimGeneration(c), domain: 'fixture' });
+  const envelope = signResult(job, signer, { finishedAt: Date.now() - 1000, startedAt: Date.now() - 5000, domain: 'fixture' });
+  // count the reads of one clean publication, then move base.sha at its last (the "after") read
+  const probe = await createStagedCheckPublisherV2({ nativeAdmission: admission, authority, github: fakeGithub(), journal: await EffectJournal.open(path.join(await tempDir(t), 'effects')), signers,
+    configuredChecks: record.config.checks, readChangedPaths: j => github.readChangedPaths(j), protectedDeployment: { enabled: true, domain: 'fixture', repository: REPO, ciPrincipalBindingId: record.config.ciPrincipalBindingId, ...refs },
+    batchClaim: claimGeneration(c), domain: 'fixture' }).publish({ job, envelope });
+  assert.equal(probe.status, 'SETTLED');
+  reads = 0; moveAt = 2;
+  const r = await make().publish({ job, envelope });
+  assert.notEqual(r.status, 'SETTLED');
+  assert.equal(r.reason, 'authorization_binding_changed', JSON.stringify(r));
+  assert.ok(github.checks.every(x => x.conclusion !== 'success'), 'no success stands');
+});
+
 test('one-shot v2: the protected observation must name exactly the batch claim generation', () => {
   const jobs = jobsFor(), c = claim(), now = Date.now();
   const config = { scope: 'project:x', ciPrincipalBindingId: randomUUID() };
@@ -461,26 +494,21 @@ test('control pair v2 (step 3a): an open PR whose test merge definitely changed 
 // Step 3c-2a (design v0.5 §5.2, §5.7; DESIGN §21.3): a train front batch tests GitHub's test merge S of [T, H]. Stage 8
 // compares the test merge with S's own tree (not H's), and the PR's base.sha (which GitHub moves only on a push) is
 // read as a fact, never compared with T; a batch that tests the head keeps both checks exactly as before.
-test('control pair v2 (step 3c-2a): a train front batch is green on the tree of S, whatever base.sha GitHub reports', async t => {
+// Step 3c-2b (DESIGN §41.2, §38.8 m3): such a batch is accepted only with the train on (train-single-green.test.mjs has the
+// green on S's tree, with the train on); with the train off it is refused before anything is read or written.
+test('control pair v2 (step 3c-2a): a train front batch needs the train; a batch that tests the head keeps its checks', async t => {
   const S_TREE = '5'.repeat(40);
   const front = () => {
     const g = fakeGithub({ prBase: '9'.repeat(40) });
     g.state.commits[TEST_MERGE] = { sha: TEST_MERGE, tree: S_TREE, parents: [BASE, HEAD] };
     return g;
   };
-  const ok = await pairRun(t, { github: front(), testSha: TEST_MERGE });
-  assert.equal(ok.r.status, 'SETTLED', JSON.stringify(ok.r));
-  assert.ok(ok.jobs['control-merge-slot'].testSha === TEST_MERGE && ok.jobs['control-merge-slot'].headSha === HEAD);
-  assert.ok(ok.greenLedger.records.length > 0 && ok.greenLedger.records.every(r => r.testTree === S_TREE));
+  const off = await pairRun(t, { github: front(), testSha: TEST_MERGE });
+  assert.deepEqual([off.r.status, off.r.reason, off.r.sideEffects, off.calls, off.github.checks.length, off.greenLedger.records.length], ['BLOCKED', 'TRAIN_FRONT_JOB_WITHOUT_TRAIN', 0, 0, 0, 0]);
+  assert.equal(stage8Code(off.r), 'TRAIN_FRONT_JOB_WITHOUT_TRAIN');
   // the same GitHub for a batch that tests the head: H's tree is not the test merge's, so nothing is written
   const head = await pairRun(t, { github: front() });
   assert.deepEqual([head.r.status, head.r.reason, head.github.checks.length], ['BLOCKED', 'TRAIN_TEST_MERGE_TREE_DIFFERS', 0]);
-  // S that GitHub cannot read (an old test merge after a regeneration): not ready, never a green
-  const gone = front(); delete gone.state.commits[TEST_MERGE];
-  gone.state.pull = { ...gone.state.pull, merge_commit_sha: '6'.repeat(40) };
-  gone.state.commits['6'.repeat(40)] = { sha: '6'.repeat(40), tree: S_TREE, parents: [BASE, HEAD] };
-  const g = await pairRun(t, { github: gone, testSha: TEST_MERGE });
-  assert.deepEqual([g.r.reason, g.github.checks.length], ['TRAIN_TEST_MERGE_NOT_READY', 0]);
 });
 
 test('scanner publisher v2 (step 3c-2a): the PR base.sha is a fact for a train front batch and still T for every other batch', async t => {

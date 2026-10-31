@@ -8,6 +8,12 @@
 //   node rearm-tool.mjs request-intake-resume --root <root> --reason <text> [--holder owner]
 //     (primary/standby C6, DESIGN §20: start no new batch for at most two hours; nothing running or parked is touched.
 //     Any Owner session may write these, unelevated: they go to the user-writable requests\ directory, like a pause.)
+//   node rearm-tool.mjs request-probe       --root <root> --reason <text>   ("立即探测", DESIGN §41.8: the probe only runs sooner)
+//   node rearm-tool.mjs request-revoke-head --root <root> --reason <text>   ("撤车头", §41.3: the next stage 10 revokes the front's green)
+//     (resident-requests.mjs; requests\ too, unelevated; a request older than an hour is refused by the service)
+//   node rearm-tool.mjs mark-train-shadow-reviewed --root <root> --ref <text>
+//     (§41.9 step 3, §41.7: the Owner reviewed the shadow data before the train goes on; from then on stage 10 keeps train-shadow
+//     90 days. One create-only mark in owner\train-review\, the folder the Owner may write and clued-control may read.)
 // inspect writes nothing and needs no elevation (state is Owner-readable); it also shows the in-place upgrade channel (DESIGN §34:
 // upgrade\current.json, upgrade\status.json, the Linux version facts), which upgrade\ lets the Owner read. The request modes write
 // exactly one small create-only JSON file into the admin-only owner\ directory and nothing else:
@@ -26,8 +32,29 @@ import { nonce, readBounded, writeNew } from '../src/store.mjs';
 import { readVersionInputs, versionsView } from '../src/status.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { intakePauseRequest, intakeResumeRequest, readIntakePause } from '../src/intake-pause.mjs';
+import { probeRequest, revokeHeadRequest } from '../src/resident-requests.mjs';
 
 const SID = /^S-1-5-21-\d+-\d+-\d+-\d+$/;
+// The review mark Source v2 stage 10 reads (state-retention.mjs TRAIN_REVIEW_*; a test keeps the two equal).
+export const TRAIN_REVIEW_CONTRACT = 'clued.independent-ci.train-shadow-reviewed/1';
+export const TRAIN_REVIEW_PATH = Object.freeze(['owner', 'train-review', 'train-shadow-reviewed.json']);
+
+// The two requests\ requests of the merge train (resident-requests.mjs), with the reason the Owner gives.
+export function residentRequest(kind, { reason }, clock = Date.now) {
+  check(typeof reason === 'string' && reason.length > 0 && reason.length <= 200, 'RESIDENT_REQUEST_REASON_REQUIRED');
+  return (kind === 'probe' ? probeRequest : revokeHeadRequest)({ reason }, clock);
+}
+
+// The Owner's train-shadow review mark, written once (create-only: a second review refuses, the first one stands).
+export function trainShadowReviewMark({ ref }, clock = Date.now) {
+  check(typeof ref === 'string' && ref.length >= 1 && ref.length <= 200, 'TRAIN_REVIEW_REF_REQUIRED');
+  return { contract: TRAIN_REVIEW_CONTRACT, reviewedAt: new Date(clock()).toISOString(), ref };
+}
+export async function writeTrainShadowReview(root, mark) {
+  const file = path.join(root, ...TRAIN_REVIEW_PATH);
+  await writeNew(file, mark);
+  return file;
+}
 
 // The in-place upgrade channel as inspect shows it (DESIGN §34), read-only and leniently (a file that cannot be read is null):
 // the generation upgrade\current.json names, the upgrader's op (state, phase, code, the Owner's confirm page while it waits for
@@ -117,7 +144,7 @@ export function resumeRequest({ expectedPausedSha256, by }, clock = Date.now) {
 if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`) {
   const { positionals, values } = parseArgs({ allowPositionals: true, options: {
     root: { type: 'string' }, 'expected-halt-sha256': { type: 'string' }, 'expected-paused-sha256': { type: 'string' }, reason: { type: 'string' }, by: { type: 'string' },
-    'batch-key': { type: 'string' }, 'expected-ledger-entry-sha256': { type: 'string' }, holder: { type: 'string' }, minutes: { type: 'string' } } });
+    'batch-key': { type: 'string' }, 'expected-ledger-entry-sha256': { type: 'string' }, holder: { type: 'string' }, minutes: { type: 'string' }, ref: { type: 'string' } } });
   try {
     check(typeof values.root === 'string' && path.isAbsolute(values.root), 'ROOT_REQUIRED');
     const state = path.join(values.root, 'state');
@@ -145,6 +172,13 @@ if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`) {
     } else if (positionals[0] === 'request-intake-resume') {
       const file = await writeOwnerRequest(path.join(values.root, 'requests'), intakeResumeRequest({ holder: values.holder ?? 'owner', reason: values.reason }));
       console.log(JSON.stringify({ status: 'INTAKE_RESUME_REQUESTED', file }));
+    } else if (positionals[0] === 'request-probe' || positionals[0] === 'request-revoke-head') {
+      const probe = positionals[0] === 'request-probe';
+      const file = await writeOwnerRequest(path.join(values.root, 'requests'), residentRequest(probe ? 'probe' : 'revoke-head', { reason: values.reason }));
+      console.log(JSON.stringify({ status: probe ? 'PROBE_REQUESTED' : 'REVOKE_HEAD_REQUESTED_NEXT_STAGE_10_WILL_REVOKE', file }));
+    } else if (positionals[0] === 'mark-train-shadow-reviewed') {
+      const file = await writeTrainShadowReview(values.root, trainShadowReviewMark({ ref: values.ref }));
+      console.log(JSON.stringify({ status: 'TRAIN_SHADOW_REVIEW_MARKED', file }));
     } else if (positionals[0] === 'request-abort') {
       const file = await writeOwnerRequest(path.join(values.root, 'owner'), abortRequest({ batchKey: values['batch-key'], expectedLedgerEntrySha256: values['expected-ledger-entry-sha256'], reason: values.reason, by: values.by }));
       console.log(JSON.stringify({ status: 'ABORT_REQUESTED_SERVICE_WILL_VERIFY', file }));

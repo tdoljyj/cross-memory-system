@@ -33,7 +33,8 @@ export async function collectCompleteRemoteRefs({job,token,readPullRequest,fetch
   validateJob(job);check(job.repo===REPO&&typeof token==='string'&&token&&typeof readPullRequest==='function'&&typeof fetchImpl==='function','REFS_PROTECTED_TRANSPORT_REQUIRED');
   const started=clock();check(Number.isSafeInteger(started),'REFS_CLOCK_UNKNOWN');
   const guard=()=>{check(!signal?.aborted,'REFS_ABORTED');check(Number.isSafeInteger(clock())&&clock()>=started&&clock()-started<=30000,'REFS_WINDOW_EXPIRED');};
-  guard();check(samePr(await readPullRequest(job.pr),job),'REFS_PR_SUBJECT_CHANGED');
+  // §38.8 n2: the PR's base.sha read before and after the refs passes must be the same commit (for S = H it is T anyway).
+  guard();const pr=await readPullRequest(job.pr);check(samePr(pr,job),'REFS_PR_SUBJECT_CHANGED');
   async function pass(){
     const all=[];
     for(const prefix of ['refs/heads/','refs/tags/']){
@@ -68,7 +69,7 @@ export async function collectCompleteRemoteRefs({job,token,readPullRequest,fetch
   }
   const first=await pass(),second=await pass();guard();
   check(canonical(first)===canonical(second),'REFS_SNAPSHOT_CHANGED');
-  check(samePr(await readPullRequest(job.pr),job),'REFS_PR_SUBJECT_CHANGED');guard();
+  const again=await readPullRequest(job.pr);check(samePr(again,job)&&again.base.sha===pr.base.sha,'REFS_PR_SUBJECT_CHANGED');guard();
   check(second.find(r=>r.name==='refs/heads/main')?.objectSha===job.baseSha,'REFS_MAIN_BASE_CHANGED');
   const facts={contract:'clued.independent-ci.remote-heads-tags/1',repository:REPO,complete:true,observedAt:new Date(clock()).toISOString(),refs:second};
   validateRemoteSnapshot(facts,job,clock());

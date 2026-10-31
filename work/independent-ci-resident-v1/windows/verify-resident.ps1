@@ -299,6 +299,29 @@ function Test-UpgraderPins([string]$root, $u, $qc) {
     return $true
   } catch { $script:upgraderPinDetail = 'unreadable'; return 'unreadable' }
 }
+# heartbeat-token-acl (DESIGN.md section 41.6a; review R3 MINOR 8): when secrets\heartbeat\ is there, it and the token file in it have
+# exactly install-resident.ps1's SDDL (Get-HeartbeatDirectorySddl, Get-HeartbeatFileSddl): no reparse point, owner Administrators,
+# protected, SYSTEM and Administrators full control, the Owner read-only, nobody else. Not installed: nothing to check.
+function Test-HeartbeatTokenAcl([string]$root, [string]$ownerSid) {
+  try {
+    $dir = Join-Path $root 'secrets\heartbeat'
+    if (-not (Test-Path -LiteralPath $dir)) { return [pscustomobject]@{ ok = $true; detail = 'NOT_INSTALLED' } }
+    $one = {
+      param([string]$path, [bool]$container, [string]$sddl)
+      $item = Get-Item -LiteralPath $path -Force
+      if ($item.PSIsContainer -ne $container -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { return $false }
+      $want = if ($container) { New-Object Security.AccessControl.DirectorySecurity } else { New-Object Security.AccessControl.FileSecurity }
+      $want.SetSecurityDescriptorSddlForm($sddl)
+      $back = Get-Acl -LiteralPath $path
+      ($back.GetOwner([Security.Principal.SecurityIdentifier]).Value -ceq 'S-1-5-32-544') -and ((Get-DaclPart $back.Sddl) -ceq (Get-DaclPart $want.GetSecurityDescriptorSddlForm('Access')))
+    }
+    if (-not (& $one $dir $true ('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;' + $ownerSid + ')'))) { return [pscustomobject]@{ ok = $false; detail = 'DIRECTORY_ACL' } }
+    $file = Join-Path $dir 'ci-node-heartbeat.token'
+    if (-not (Test-Path -LiteralPath $file)) { return [pscustomobject]@{ ok = $true; detail = 'NO_TOKEN' } }
+    if (-not (& $one $file $false ('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x120089;;;' + $ownerSid + ')'))) { return [pscustomobject]@{ ok = $false; detail = 'FILE_ACL' } }
+    [pscustomobject]@{ ok = $true; detail = 'OK' }
+  } catch { [pscustomobject]@{ ok = 'unreadable'; detail = 'UNREADABLE' } }
+}
 # generation-current: upgrade\current.json names the receipt being verified and its generation; generations\g<N>\generation.json holds the
 # receipt's command lines, which the SCM and the companion task hold now, and the hash of the generation's files where they are.
 function Test-GenerationCurrent([string]$root, $receipt, [string]$receiptSha) {
@@ -589,6 +612,8 @@ Record 'not-halted' (-not (Test-Path -LiteralPath (Join-Path $Root 'state\HALT.j
 $pausedFile = Join-Path $Root 'state\PAUSED.json'
 if ($ExpectPausedSha256) { Record 'paused-as-expected' ((Test-Path -LiteralPath $pausedFile -PathType Leaf) -and ((Sha256File $pausedFile) -ceq $ExpectPausedSha256)) }
 else { Record 'not-paused' (-not (Test-Path -LiteralPath $pausedFile)) }
+$hbAcl = Test-HeartbeatTokenAcl $Root ([string]$Node.ownerSid)
+Record 'heartbeat-token-acl' $hbAcl.ok $hbAcl.detail
 $node = Join-Path $Root 'runtime\node.exe'
 $verifier = Join-Path $Root ('resident\' + $receipt.residentManifestSha256 + '\tools\verify-receipts.mjs')
 # node is started with a cleared, fixed environment (no NODE_OPTIONS or other user variables) so an

@@ -99,6 +99,25 @@
 // The in-place upgrade channel (Task 018da927, DESIGN §34): the upgrader's resume (UPGRADE_RESUME_CONTRACT, owner\ only, a CAS on
 // PAUSED.json, receipt 'upgrade-resumed'); every tick the versions of both sides (status /7) and the version-skew intake hold
 // while they disagree (consistent === false only; lifted when they agree again; an unknown answer changes nothing).
+//
+// The merge train on (step 3c-2b, DESIGN §41; policy /8, train.mjs). With train.enabled 'shadow' (or a /7 policy) nothing below
+// changes what runs. With 'on':
+//   - stage 10 runs only on an ACTIVE node (STANDBY and UNCERTAIN: the status says NOT_ON_DUTY), in mode 'on'; under PAUSE (and
+//     an intake pause) in mode 'revoke-only', right before the tick returns PAUSED; never under HALT. Its train run (/2) carries
+//     the installed train settings, onSince (when this node became eligible: the change to on, or STANDBY -> ACTIVE,
+//     whichever is later, kept across restarts and UNCERTAIN spells by receipt 'train-duty'; a new one is due at once), the front
+//     outcome to report (frontOutcome: a front batch that finally failed for the PR itself, failure table deterministic-pr, no
+//     attempt 2; carried until stage 10 reports it) and an accepted revoke-head request; under an intake pause it runs revoke-only
+//     whatever the queue holds;
+//   - its facts /2 may report side effects: a normal ending; a requestPause latches PAUSE (and tells the Owner); a confirmed
+//     OPEN_FRONT_BATCH is the ONLY producer of a subject with S (queue.mjs#offerFront, at most FRONT_BATCHES_PER_HEAD per head);
+//     TRAIN_SOURCE_MISMATCH and TRAIN_SOURCE_UNREADABLE defer every new batch, and so does an eligible node until a run says its
+//     full sweep in on mode is complete since this onSince (the take-over sweep comes before any publication: parked batches wait
+//     too); a front batch's automatic attempt 2 is one of its head's two front batches; with nonFrontRuns false only the front
+//     subject runs; the front rows of a duty that ended (STANDBY, train not on) are dropped;
+//   - relayPlan keeps every role of a subject with S local (RELAY_TRAIN_FRONT_LOCAL) before writing 20-plan-intent;
+//   - HALT, PAUSE and the intake pause are written into the status board in the same tick they are latched.
+// requests\ also carries the "立即探测" and "撤车头" requests (resident-requests.mjs).
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { Ledger, MAX_TRIES, QUOTA_TIER_EVALUATION, batchKey, headKey } from './ledger.mjs';
@@ -109,15 +128,16 @@ import { POSITIONS, breakerGate, breakerOf, breakerRecord, breakerView, position
 import { batchBudgetMs } from './policy.mjs';
 import { attempt2Decision, attempt2Subject } from './attempts.mjs';
 import { decide, parseHint, HEAVY_ROLES, RELAY_ROLES } from './hosted-wait.mjs';
-import { relayPlanFromRows } from './classify.mjs';
-import { RELAY_STAGE, ROLE_STAGES } from './policy.mjs';
+import { RELAY_TRAIN_FRONT_LOCAL, relayPlanFromRows } from './classify.mjs';
+import { RELAY_STAGE, ROLE_STAGES, trainSettings } from './policy.mjs';
+import { PROBE_REQUEST_CONTRACT, RESIDENT_REQUEST_CONTRACTS, REQUEST_MAX_AGE_MS, validateResidentRequest } from './resident-requests.mjs';
 import { RELAY_RECEIPTS } from './receipts.mjs';
 import { CODE, HEX64, ResidentError, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 import { UPGRADE_RESUME_CONTRACT, validateUpgradeResume } from './upgrade-mailbox.mjs';
 import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
-import { trainDue, trainSummary } from './train.mjs';
+import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, trainDue, trainRunInput, trainRunMode, trainSummary, trainSweepView } from './train.mjs';
 import { RoleProbe, validateRoleProbeFact } from './role-probe.mjs';
 import { NODE_MODES } from './status.mjs';
 import { RevocationMaintenanceBook,validateRevocationFacts,validateRevocationQualification,
@@ -168,6 +188,10 @@ const TRAIN_RUN_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/;
 // The schedule results that ran nothing, after which stage 10 may run (an intake pause holds it as well).
 const TRAIN_QUIET_STATES = Object.freeze(['IDLE', 'DEFERRED']);
 const TRAIN_HELD_REASONS = Object.freeze(['INTAKE_PAUSED', 'INTAKE_PAUSE_UNCONFIRMED']);
+// The train on: the newest front-batch receipts read back at a start (per head, whatever their age; review R3 MINOR 11).
+const FRONT_RECOVER_RECEIPTS = 512;
+// The train on with nonFrontRuns false (policy /8, DESIGN §41.9 item 6): every row but the front's waits, shown with this reason.
+export const TRAIN_NON_FRONT_DEFERRED = 'TRAIN_NON_FRONT_RUNS_OFF';
 // Primary/standby C3 (DESIGN §29): why the schedule starts nothing while the node mode is not ACTIVE. These results are quiet (the
 // role probe and stage 10 may run) and, like an intake pause, leave a batch resting at parking point A as the tick's result.
 export const NODE_DEFERRALS = Object.freeze({ STANDBY: 'NODE_STANDBY', UNCERTAIN: 'NODE_ROLE_UNCERTAIN' });
@@ -253,7 +277,10 @@ export const QUEUE_SAVE_ALARM = 3;
 // Phase 2, step 2: stage 8 not ready, with zero side effects (Source v2 publisher STAGE8_NOT_READY_REASONS).
 export const STAGE8_NOT_READY_CODES = Object.freeze(['RESIDENT_BASE_MOVED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED',
   // Phase 2, step 3a: main's live branch rules, GitHub's test merge, the green ledger (all before any journal write).
-  'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE']);
+  'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE',
+  // Step 3c-2b (DESIGN §41.2): the single green is not proven; the batch rests at B until the next stage 10. The stage
+  // directory's train mode could not be read for a front job: it rests at B too.
+  'TRAIN_SINGLE_GREEN_NOT_PROVEN', 'TRAIN_MODE_UNREADABLE']);
 // Stage-8 answers the Owner must hear about (step 3a): main's rules do not hold it for a green, or GitHub's merge of exactly
 // [T, H] is not what was tested.
 export const STAGE8_OWNER_NOTICE_CODES = Object.freeze(['STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_TREE_DIFFERS']);
@@ -328,7 +355,112 @@ export class ResidentExecutor {
     this.roleProbeMode = 'UNCERTAIN';
     this.roleProbe.markUrgent();
     this.reportNode();
+    // The train on (DESIGN §41): when this node became eligible for on-mode duty (null: it is not), whether its take-over sweep is
+    // done, the newest sweep (status), the accepted revoke-head request, the front outcome owed to stage 10, the front batches
+    // per head ('pr:head' -> [{ testSha, attempt }]) and per batch key (front attempt).
+    this.trainOnSince = null;
+    this.trainTakeoverDone = false;
+    this.trainUrgent = false;
+    this.trainSweep = null;
+    this.revokeHead = null;
+    this.trainFrontOutcome = null;
+    this.frontBatches = new Map();
+    this.frontKeys = new Map();
+    // The duty kept across restarts (receipt 'train-duty', review R3 M2): the restored one until this node is eligible again, and
+    // the last one written.
+    this.trainDutyCandidate = null;
+    this.trainDutyKey = null;
+    this.trainEligibility();
   }
+
+  // ---- the train on: eligibility (DESIGN §41.6) ----
+
+  // Only an ACTIVE node (an engine that cannot probe is the single node it always was) with train.enabled 'on' is eligible. onSince
+  // is the change to on or the latest STANDBY -> ACTIVE (INTERFACES §2), whichever is later: a policy only changes with a
+  // reinstall, which restarts the service, and the duty is kept across a restart while the policy is the same and the node did
+  // not pass through STANDBY (review R3 M2, R2 M2: receipt 'train-duty', trainDutyRecover). UNCERTAIN (every start, a re-arm)
+  // holds the duty, it does not end it: only STANDBY (the role went to another node) or a policy that is not on does. Becoming
+  // eligible makes stage 10 due at once and holds new batches until its take-over sweep is done.
+  trainEligible() { return this.policy.train.enabled === 'on' && (!this.probing() || this.nodeMode() === 'ACTIVE'); }
+  trainEligibility() {
+    if (!this.trainEligible()) {
+      const on = this.policy.train.enabled === 'on';
+      if (!on || this.nodeMode() === 'STANDBY') {
+        this.trainOnSince = null; this.trainTakeoverDone = false; this.trainDutyCandidate = null;
+        if (this.trainSweep?.fullSinceOn === true) this.trainSweep = Object.freeze({ ...this.trainSweep, fullSinceOn: false });
+        // A front row (S) belongs to the duty that ended (or to an install whose train is not on any more): it never runs
+        // (review R3 MINOR 5).
+        this.dropFrontRows(on ? 'TRAIN_NOT_ON_DUTY' : 'TRAIN_NOT_ON');
+      }
+      return;
+    }
+    if (this.trainOnSince !== null) return;
+    this.trainUrgent = true;
+    const c = this.trainDutyCandidate;
+    this.trainDutyCandidate = null;
+    if (c) { this.trainOnSince = c.onSince; this.trainTakeoverDone = c.takeoverDone; if (c.sweep) this.trainSweep = c.sweep; return; }
+    this.trainOnSince = this.clock();
+    this.trainTakeoverDone = false;
+  }
+
+  // Whether the take-over sweep still holds this node (eligible, not done): new batches and parked ones wait (review R3 MINOR 6).
+  trainTakeoverPending() { return this.trainEligible() && !this.trainTakeoverDone; }
+
+  // The front rows (S) of the run queue that are not running are dropped (queue.mjs#dropFronts; a view, persisted with the queue).
+  dropFrontRows(code) { try { this.queue.dropFronts?.(code, this.clock()); } catch { /* a view */ } }
+
+  // The policy as the duty record names it (the same validated policy gives the same digest).
+  trainPolicyDigest() { return digest(this.policy); }
+
+  // The duty, written when it changes (policy on only: off and shadow write nothing new). Best effort: a duty that was not written
+  // is a new eligibility after the next restart (a fresh take-over sweep, the safe side).
+  async trainDutySave() {
+    if (this.policy.train.enabled !== 'on') return;
+    const onSince = this.trainOnSince === null ? null : new Date(this.trainOnSince).toISOString();
+    const sweep = this.trainSweep && this.trainSweep.onSince === onSince ? this.trainSweep : null;
+    const key = JSON.stringify([onSince, this.trainTakeoverDone, sweep?.fullCompletedAt ?? null, sweep?.fullSinceOn === true]);
+    if (key === this.trainDutyKey) return;
+    try {
+      await this.receipt('train-duty', { policyDigest: this.trainPolicyDigest(), onSince, takeoverDone: onSince !== null && this.trainTakeoverDone === true, sweep: onSince === null ? null : sweep });
+      this.trainDutyKey = key;
+    } catch { /* see above */ }
+  }
+
+  // Once per process (trainRecover, policy on): the newest 'train-duty' receipt, when it names this policy and an onSince, and no
+  // 'node-mode' receipt after it says STANDBY. Applied at once when this node is eligible already (an engine that cannot probe);
+  // otherwise kept for the next UNCERTAIN -> ACTIVE. Anything unreadable restores nothing (a new take-over: the safe side).
+  async trainDutyRecover() {
+    try {
+      const rows = await this.receipts.latest(['train-duty', 'node-mode'], 64);
+      const at = rows.findLastIndex(e => e.type === 'train-duty');
+      const b = at >= 0 ? rows[at].value.body : null;
+      const onSince = Date.parse(b?.onSince ?? '');
+      if (!b || b.policyDigest !== this.trainPolicyDigest() || !Number.isFinite(onSince) || rows.slice(at + 1).some(e => e.value.body?.to === 'STANDBY')) return;
+      // A node that ran no stage 10 for longer than a full sweep may have lost and regained the role meanwhile (another node
+      // held it, then the Owner handed it back): nothing is restored, a new take-over sweep runs (round-2 review MINOR 1).
+      const ran = (await this.receipts.latest(['train-run', 'train-run-intent'], 1)).map(e => Date.parse(e.value.at)).find(Number.isFinite);
+      if (!(this.clock() - ran <= this.policy.train.fullSweepMaxMs)) return;
+      const s = b.sweep;
+      const sweep = s && typeof s === 'object' && !Array.isArray(s) && s.onSince === b.onSince && typeof s.fullSinceOn === 'boolean' ? Object.freeze({ ...s }) : null;
+      const c = { onSince, takeoverDone: b.takeoverDone === true, sweep };
+      if (this.trainEligible() && this.trainOnSince !== null) { this.trainOnSince = c.onSince; this.trainTakeoverDone = c.takeoverDone; if (sweep) this.trainSweep = sweep; }
+      else this.trainDutyCandidate = c;
+      this.trainDutyKey = JSON.stringify([b.onSince, c.takeoverDone, sweep?.fullCompletedAt ?? null, sweep?.fullSinceOn === true]);
+    } catch { /* see above */ }
+  }
+
+  // null while new batches may start; otherwise the deferral stage 10 decided (DESIGN §41.6: no publication of any stage before
+  // the take-over sweep; none while another node runs another Source).
+  trainGate() {
+    if (!this.trainEligible()) return null;
+    const decision = this.trainLast?.mode === 'on' ? this.trainLast.decision : null;
+    if (!this.trainTakeoverDone) return { state: 'DEFERRED', reason: TRAIN_SCHEDULE_DEFERRALS.includes(decision) ? decision : 'TRAIN_TAKEOVER_SWEEP_PENDING' };
+    return TRAIN_SCHEDULE_DEFERRALS.includes(decision) ? { state: 'DEFERRED', reason: decision } : null;
+  }
+
+  // HALT, PAUSE and the intake pause go into the status board in the tick they are latched (DESIGN §41.6a: the companion's
+  // heartbeat reports them at once); the tick's own report (reportTick) then confirms them from the ledger.
+  reportLatch(patch) { this.report(s => s.update(patch)); }
 
   // ---- the node mode (primary/standby C3; DESIGN §29) ----
 
@@ -349,6 +481,8 @@ export class ResidentExecutor {
     if (!this.probing() || from === to) return false;
     this.roleProbeMode = to;
     this.reportNode();
+    this.trainEligibility();
+    await this.trainDutySave();
     try { await this.receipt('node-mode', { from, to, why }); } catch { /* see above */ }
     return true;
   }
@@ -375,7 +509,10 @@ export class ResidentExecutor {
   }
 
   async haltWith(code, facts) {
-    if (await this.ledger.halt(code, facts)) await this.receipt('halt', { failureCode: code, facts });
+    if (await this.ledger.halt(code, facts)) {
+      this.reportLatch({ halt: { code: CODE.test(code ?? '') ? code : 'HALT_RECORD_UNREADABLE', at: new Date(this.clock()).toISOString() } });
+      await this.receipt('halt', { failureCode: code, facts });
+    }
   }
 
   // Crash recovery runs at the start of every tick, halted or not. At that point this single-threaded
@@ -835,14 +972,21 @@ export class ResidentExecutor {
           const v = parseBoundedJson(entry.bytes, 1024, 'PAUSE_REQUEST_REFUSED');
           if ([INTAKE_PAUSE_CONTRACT, INTAKE_RESUME_CONTRACT].includes(v?.contract)) {
             disposition = await this.takeIntakeRequest(v, sha256(entry.bytes));
+          } else if (RESIDENT_REQUEST_CONTRACTS.includes(v?.contract)) {
+            disposition = await this.takeResidentRequest(v, sha256(entry.bytes), entry.name);
           } else {
             exactKeys(v, ['contract', 'reason'], 'PAUSE_REQUEST_REFUSED');
             const ok = v.contract === PAUSE_CONTRACT && typeof v.reason === 'string' && v.reason.length <= 200;
-            if (ok && await this.ledger.pause({ reason: v.reason, requestSha256: sha256(entry.bytes) })) await this.receipt('paused', { reason: v.reason, requestSha256: sha256(entry.bytes) });
+            if (ok && await this.ledger.pause({ reason: v.reason, requestSha256: sha256(entry.bytes) })) {
+              this.reportLatch({ paused: true });
+              await this.receipt('paused', { reason: v.reason, requestSha256: sha256(entry.bytes) });
+            }
             disposition = ok ? 'processed' : 'rejected';
           }
         } catch { disposition = 'rejected'; }
       }
+      // 'keep': an accepted revoke-head request stays in requests\ until stage 10 reports it done or it is an hour old.
+      if (disposition === 'keep') { this.intakeRequestFailures.delete(entry.name); continue; }
       // null: an intake request whose state could not be read or written stays and is read again next tick, at most
       // INTAKE_REQUEST_TRIES times; then it is refused with a receipt.
       if (disposition !== null) this.intakeRequestFailures.delete(entry.name);
@@ -856,6 +1000,66 @@ export class ResidentExecutor {
       }
       await this.requests.dispose(entry.name, disposition);
     }
+  }
+
+  // The "立即探测" and "撤车头" requests (resident-requests.mjs; DESIGN §41.8, §41.3): 'processed', 'rejected' or 'keep', each
+  // with its receipt. A probe request only marks the probe urgent and is archived by rename. A revoke-head request is accepted
+  // only while the train is on; it is then the next on or revoke-only run's revokeHeadRequestId until it is done or an hour old,
+  // and durable meanwhile: its file stays in requests\ ('keep'; the Owner's session can only add files there), read again every
+  // tick (no new receipt) and after a restart (accepted again), and is archived only when stage 10 reports it done (trainActed:
+  // 'revoke-head-done' first, so a restart in between never runs it twice), when it expired (refused as expired on the next read)
+  // or when a newer one replaces it.
+  async takeResidentRequest(v, requestSha256, name = null) {
+    let r;
+    try { r = validateResidentRequest(v, this.clock()); } catch (error) {
+      if (this.revokeHead && v?.requestId === this.revokeHead.requestId) { this.reportRevokeHead({ requestId: this.revokeHead.requestId, state: 'expired', code: null }); this.revokeHead = null; }
+      try { await this.receipt('resident-request-refused', { requestSha256, contract: v.contract, failureCode: codeOf(error) }); } catch { /* refused anyway */ }
+      return 'rejected';
+    }
+    if (r.contract === PROBE_REQUEST_CONTRACT) {
+      this.roleProbe.markUrgent();
+      try { await this.receipt('probe-requested', { requestSha256, requestId: r.requestId, reason: r.reason }); } catch { /* the probe is urgent anyway */ }
+      return 'processed';
+    }
+    if (this.policy.train.enabled !== 'on') {
+      try { await this.receipt('resident-request-refused', { requestSha256, contract: r.contract, requestId: r.requestId, failureCode: 'REVOKE_HEAD_TRAIN_NOT_ON' }); } catch { /* refused anyway */ }
+      this.reportRevokeHead({ requestId: r.requestId, state: 'refused', code: 'REVOKE_HEAD_TRAIN_NOT_ON' });
+      return 'rejected';
+    }
+    if (this.revokeHead?.requestId === r.requestId) { this.revokeHead.name = name; return 'keep'; }
+    if (await this.revokeHeadDone(r.requestId)) return 'processed';
+    // A newer request replaces the one in force (requests\ is read oldest first): the older file is archived.
+    if (this.revokeHead?.name && this.revokeHead.name !== name) {
+      try { await this.requests.dispose(this.revokeHead.name, 'processed'); } catch { /* read again next tick, superseded again */ }
+    }
+    this.revokeHead = { requestId: r.requestId, requestedAt: r.requestedAt, name };
+    this.trainUrgent = true;
+    this.reportRevokeHead({ requestId: r.requestId, state: 'accepted', code: null });
+    try { await this.receipt('revoke-head-requested', { requestSha256, requestId: r.requestId, reason: r.reason }); } catch { /* accepted: it is in force */ }
+    return name === null ? 'processed' : 'keep';
+  }
+
+  // Whether stage 10 already reported this revoke-head request done (receipt 'revoke-head-done'); unreadable: not done.
+  async revokeHeadDone(requestId) {
+    if (this.revokeHeadDoneIds?.has(requestId)) return true;
+    try { return (await this.receipts.latest(['revoke-head-done'], 16)).some(e => e.value.body?.requestId === requestId); } catch { return false; }
+  }
+
+  // The revoke-head request as the status board shows it (train.revokeHead).
+  reportRevokeHead({ requestId, state, code = null }) {
+    this.revokeHeadView = { requestId, state, at: new Date(this.clock()).toISOString(), code };
+    this.report(s => s.update({ train: this.trainStatus() }));
+  }
+
+  // The accepted revoke-head request still in force (an hour from its writing), or null; an expired one is shown as such.
+  revokeHeadInForce() {
+    if (!this.revokeHead) return null;
+    if (this.clock() - this.revokeHead.requestedAt > REQUEST_MAX_AGE_MS) {
+      this.reportRevokeHead({ requestId: this.revokeHead.requestId, state: 'expired', code: null });
+      this.revokeHead = null;
+      return null;
+    }
+    return this.revokeHead;
   }
 
   // ---- the intake pause (primary/standby C6; intake-pause.mjs, DESIGN §20) ----
@@ -923,6 +1127,7 @@ export class ResidentExecutor {
     }
     try { await this.intakePause.save(next.data); } catch (error) { await this.intakeTrouble(error, 'write'); return null; }
     this.intakeTroubleSince = null; // a good write ends any spell
+    try { this.reportLatch({ intakePause: this.intakePause.view(this.clock()) }); } catch { /* a view */ }
     const { kind, ...facts } = next.result;
     // Applied: a receipt that cannot be written does not make it a refusal (independent review of C6, minor 6).
     try { await this.receipt(kind, { requestSha256, ...facts, reason: v.reason }); } catch { /* the request took effect */ }
@@ -960,13 +1165,24 @@ export class ResidentExecutor {
       const state = ['IDLE', 'RUNNING', 'WAITING', 'PARKED', 'DEFERRED', 'HALTED', 'PAUSED', 'BACKFILL_PENDING', 'COMPLETED', 'FAILED_CLEAN', 'NOT_ADMITTED', 'NOT_EXECUTED', 'IGNORED'].includes(result?.state) ? result.state : 'IDLE';
       this.report(s => {
         s.setState(halt ? 'HALTED' : state, halt ? (halt.value?.code ?? null) : (result?.reason ?? result?.failureCode ?? null));
-        s.update({ halt: halt ? { code: CODE.test(halt.value?.code ?? '') ? halt.value.code : 'HALT_RECORD_UNREADABLE', at: halt.value?.at ?? null } : null, paused: !!paused, ...intake, train: { enabled: this.policy.train.enabled, last: this.trainLast ?? null } });
+        s.update({ halt: halt ? { code: CODE.test(halt.value?.code ?? '') ? halt.value.code : 'HALT_RECORD_UNREADABLE', at: halt.value?.at ?? null } : null, paused: !!paused, ...intake, train: this.trainStatus() });
         if (!['WAITING'].includes(result?.state)) s.setCurrent(null);
       });
       if (typeof this.versions === 'function') this.report(s => s.setVersions?.(this.versionState?.view ?? null));
       this.reportQueue();
       this.reportNode();
     } catch { /* advisory */ }
+  }
+
+  // The status board's `train` (status.mjs): the mode and the newest summary as in step 3c-1; the sweep, the revoke-head request,
+  // onSince and NOT_ON_DUTY only when they have a value.
+  trainStatus() {
+    const t = { enabled: this.policy.train.enabled, last: this.trainLast ?? null };
+    if (this.trainSweep) t.sweep = this.trainSweep;
+    if (this.revokeHeadView) t.revokeHead = this.revokeHeadView;
+    if (this.trainOnSince !== null) t.onSince = new Date(this.trainOnSince).toISOString();
+    if (this.policy.train.enabled === 'on' && !this.trainEligible()) t.notOnDuty = true;
+    return t;
   }
 
   // ---- the versions of both sides and the version-skew hold (in-place upgrade channel, Task 018da927, DESIGN §34) ----
@@ -1094,20 +1310,26 @@ export class ResidentExecutor {
     const backfill = await this.ensureBackfill();
     if (backfill) return backfill;
     await this.takePauseRequests();
-    if (await this.ledger.paused()) return { state: 'PAUSED' };
+    // DESIGN §41.3: under PAUSE while the train is on, stage 10 runs revoke-only (an ACTIVE node, its own cadence) before the tick
+    // returns PAUSED; a HALT it latches is the tick's result. Off and shadow: nothing runs, as before.
+    if (await this.ledger.paused()) {
+      const revoked = this.policy.train.enabled === 'on' ? await this.trainMaintenance({ paused: true }) : null;
+      return revoked?.state === 'HALTED' ? revoked : { state: 'PAUSED' };
+    }
     // Triggers go into the run queue first (phase 2, step 1); the queue then follows the ledger for any row a crash left
     // marked running.
     await this.intake();
     // Batches at a parking point go first (design v0.5 §4.3 step 3): each one waiting for hosted signals is evaluated
     // once (and continues to its end when it may), a parked one whose stage-8 try is due runs that try. They are
     // re-evaluated only here, after recovery, the Owner's requests, HALT and PAUSE. Then the queue.
-    const { acted, waiting } = await this.resumeParked();
+    // The train on: a parked batch waits for the take-over sweep too (no publication of any stage before it; review R3 MINOR 6).
+    const { acted, waiting } = await this.resumeParked({ hold: this.trainTakeoverPending() });
     if (acted) return acted;
     // Nothing else to do: the tick rests in the hosted wait (the status keeps showing it).
     const r = await this.schedule();
     // A batch resting at parking point A stays the tick's result (and the status's current batch) while only the intake
     // pause holds the new ones (independent review of C6, minor 3).
-    const result = waiting && (r.state === 'IDLE' || [...TRAIN_HELD_REASONS, ...Object.values(NODE_DEFERRALS)].includes(r.reason)) ? waiting : r;
+    const result = waiting && (r.state === 'IDLE' || [...TRAIN_HELD_REASONS, ...Object.values(NODE_DEFERRALS), ...TRAIN_SCHEDULE_DEFERRALS].includes(r.reason)) ? waiting : r;
     // Stage 10 only after a schedule that ran nothing (a batch resting at a parking point runs nothing either). The role probe
     // also while a batch rests at A, when it may be run at a parking point (probeAtParking, DESIGN §29.2 item 5).
     if ((!waiting || this.probeAtParking()) && TRAIN_QUIET_STATES.includes(r.state) && !TRAIN_HELD_REASONS.includes(r.reason)) {
@@ -1115,6 +1337,9 @@ export class ResidentExecutor {
       if (probeResult) return probeResult;
     }
     if (TRAIN_QUIET_STATES.includes(r.state) && !TRAIN_HELD_REASONS.includes(r.reason)) return (await this.trainMaintenance()) ?? result;
+    // The train on: under an intake pause stage 10 runs revoke-only whatever the queue holds (trainMaintenance reads the hold
+    // itself; review R3 MINOR 4). Off and shadow: held, as before.
+    if (this.policy.train.enabled === 'on' && TRAIN_HELD_REASONS.includes(r.reason)) return (await this.trainMaintenance()) ?? result;
     return result;
   }
 
@@ -1301,7 +1526,69 @@ export class ResidentExecutor {
       } catch { /* see above */ }
     }
     this.trainRuns = rows.filter(e => e.type === 'train-run-intent').map(e => Date.parse(e.value.at)).filter(Number.isFinite);
+    if (this.policy.train.enabled === 'on') { await this.trainFrontRecover(rows); await this.trainDutyRecover(); }
     return last?.type === 'train-run-intent' ? { state: 'HALTED', failureCode: 'TRAIN_STAGE_INTERRUPTED' } : null;
+  }
+
+  // Train on: the front batches per head, whatever their age (a head keeps its count for good: review R3 MINOR 11; the newest
+  // FRONT_RECOVER_RECEIPTS, so a restart never opens a third one for a head; stage 10 counts them itself too, train facts attempt),
+  // and a front outcome no on-mode run has cleared yet (receipt 'train-front-outcome' with no later ok 'train-run' naming its seq
+  // with frontOutcomeCleared: stage 10 reported it, or reporting it became moot; review R3 MINOR 3), at most a day old. Best
+  // effort: a chain that cannot be read here keeps what is in memory.
+  async trainFrontRecover(runs) {
+    try {
+      for (const e of await this.receipts.latest(['train-front-enqueued'], FRONT_RECOVER_RECEIPTS)) {
+        const b = e.value.body;
+        if (!Number.isSafeInteger(b?.pr) || typeof b.headSha !== 'string') continue;
+        const list = this.frontBatches.get(`${b.pr}:${b.headSha}`) ?? [];
+        if (!list.some(x => x.testSha === b.testSha && x.attempt === b.attempt)) list.push({ testSha: b.testSha, attempt: b.attempt });
+        this.frontBatches.set(`${b.pr}:${b.headSha}`, list);
+        if (HEX64.test(b.key ?? '')) this.frontKeys.set(b.key, b.attempt);
+      }
+      const [fo] = await this.receipts.latest(['train-front-outcome'], 1);
+      const cleared = runs.some(e => e.type === 'train-run' && e.value.body?.frontOutcomeSeq === fo?.seq && e.value.body?.ok === true && e.value.body?.frontOutcomeCleared !== false);
+      if (fo && !cleared && Date.parse(fo.value.at) > this.clock() - DAY) this.trainFrontOutcome = { ...fo.value.body.frontOutcome, seq: fo.seq, at: Date.parse(fo.value.at) };
+    } catch { /* see above */ }
+  }
+
+  // A front batch (subject with S) that ended FAILED_CLEAN for the PR itself (failure table deterministic-pr) with no attempt 2:
+  // owed to the next on-mode stage 10 as frontOutcome (DESIGN §41.4 "touch failed"), which reports failed on the slot.
+  async noteFrontOutcome(subject, key, code) {
+    const attempt = this.frontKeys.get(key) ?? null;
+    if (!Object.hasOwn(subject ?? {}, 'testSha') || ![1, 2].includes(attempt) || !CODE.test(code ?? '')) return;
+    const frontOutcome = { pr: subject.pr, headSha: subject.headSha, testSha: subject.testSha, attempt, code };
+    try {
+      const r = await this.receipt('train-front-outcome', { key, frontOutcome });
+      this.trainFrontOutcome = { ...frontOutcome, seq: r.seq, at: this.clock() };
+      this.trainUrgent = true;
+    } catch { /* not reported: the slot runs out by its running clock */ }
+  }
+
+  // A confirmed OPEN_FRONT_BATCH (mode on): the front subject with S into the run queue, the one producer of S. At most
+  // FRONT_BATCHES_PER_HEAD per head, never the same (S, attempt) twice.
+  async enqueueFront(front) {
+    const headKey = `${front.pr}:${front.headSha}`;
+    const list = this.frontBatches.get(headKey) ?? [];
+    if (list.some(x => x.testSha === front.testSha && x.attempt === front.attempt)) return null;
+    if (list.length >= FRONT_BATCHES_PER_HEAD) {
+      try { await this.receipt('train-front-refused', { pr: front.pr, headSha: front.headSha, testSha: front.testSha, attempt: front.attempt, failureCode: 'TRAIN_FRONT_ATTEMPTS_USED' }); } catch { /* refused anyway */ }
+      return null;
+    }
+    const offered = this.queue.offerFront({ pr: front.pr, headSha: front.headSha, baseSha: front.baseSha, testSha: front.testSha, attempt: front.attempt }, this.clock(),
+      { depth: this.policy.limits.queueDepth });
+    if (offered.action !== 'front') {
+      try { await this.receipt('train-front-refused', { pr: front.pr, headSha: front.headSha, testSha: front.testSha, attempt: front.attempt, failureCode: offered.code ?? 'TRAIN_FRONT_PR_BUSY' }); } catch { /* see above */ }
+      return null;
+    }
+    list.push({ testSha: front.testSha, attempt: front.attempt });
+    this.frontBatches.set(headKey, list);
+    const subject = { repo: this.policy.repo, pr: front.pr, headSha: front.headSha, baseSha: front.baseSha, sourceManifestSha256: this.policy.sourceManifestSha256, attempt: 1, testSha: front.testSha };
+    const key = batchKey(subject);
+    this.frontKeys.set(key, front.attempt);
+    await this.persistQueue();
+    await this.receipt('train-front-enqueued', { key, pr: front.pr, headSha: front.headSha, baseSha: front.baseSha, testSha: front.testSha, testTree: front.testTree,
+      attempt: front.attempt, claimId: front.claimId, since: front.since });
+    return key;
   }
 
   // One train run when it is due (train.mjs#trainDue): not under an intake pause (also with an empty queue, which ends
@@ -1311,38 +1598,121 @@ export class ResidentExecutor {
   // or null for any other ending. A failure is clean only with the Windows proof complete, no side effect in a bound
   // outcome, and either an allow-listed clean code (classify.mjs), the engine's own refusal before the broker, or a bound
   // outcome that says so: BLOCKED, or TRAIN_FACTS that ran into the cap after writing it (review m3; round 2, NIT 3).
-  async trainMaintenance() {
+  // The train on (DESIGN §41): the run mode is train.mjs#trainRunMode's (on, or revoke-only under PAUSE and an intake pause;
+  // only on an ACTIVE node); there a bound TRAIN_FACTS outcome with side effects and facts /2 that validate in that mode is a
+  // normal ending; any other ending with a side effect HALTs as before. paused: called from the PAUSE path of the tick.
+  async trainMaintenance({ paused = false } = {}) {
     const train = this.policy.train;
     if (!this.trainRuns || train.enabled === 'off') return null;
     const now = this.clock();
     this.trainRuns = this.trainRuns.filter(at => at > now - DAY);
-    if (!trainDue({ train, now, runs: this.trainRuns, busy: false })) return null;
-    const held = await this.intakeGate();
-    if (held) return held.state === 'HALTED' ? held : null;
+    const active = !this.probing() || this.nodeMode() === 'ACTIVE';
+    if (train.enabled === 'on' && !active) return null; // NOT_ON_DUTY (trainStatus)
+    const urgent = train.enabled === 'on' && this.trainUrgent === true;
+    if (!trainDue({ train, now, runs: this.trainRuns, busy: false, urgent })) return null;
+    let intakeHeld = false;
+    if (!paused) {
+      const held = await this.intakeGate();
+      if (held?.state === 'HALTED') return held;
+      intakeHeld = held !== null;
+    }
+    const { mode } = trainRunMode({ enabled: train.enabled, active, paused, intakeHeld });
+    if (!mode) return null;
     if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < now + this.policy.stageRunMilliseconds[TRAIN_STAGE - 1] + Math.max(this.policy.limits.stageMarginMs, TRAIN_HELPER_MARGIN_MS)) return null;
     const drift = await this.driftCode();
     if (drift) {
       await this.haltWith(drift, { phase: 'train-maintenance' });
       return { state: 'HALTED', failureCode: drift };
     }
-    const intent = await this.receipt('train-run-intent', { mode: train.enabled });
+    const acting = mode !== 'shadow';
+    const revokeHead = acting ? this.revokeHeadInForce() : null;
+    const frontOutcome = mode === 'on' ? this.trainFrontOutcome : null;
+    const input = trainRunInput({ mode, settings: trainSettings(train), onSince: this.trainOnSince, revokeHeadRequestId: revokeHead?.requestId ?? null,
+      frontOutcome: frontOutcome ? { pr: frontOutcome.pr, headSha: frontOutcome.headSha, testSha: frontOutcome.testSha, attempt: frontOutcome.attempt, code: frontOutcome.code } : null });
+    const intent = await this.receipt('train-run-intent', acting ? { mode: train.enabled, runMode: mode, input } : { mode: train.enabled });
     this.trainRuns.push(now);
+    this.trainUrgent = false;
     this.report(s => s.setState('RUNNING', 'TRAIN_MAINTENANCE'));
     let r;
-    try { r = await this.engine.runTrainStage(train.enabled); } catch (error) { r = { ok: false, code: codeOf(error), proof: null }; }
+    try { r = await this.engine.runTrainStage(mode, input); } catch (error) { r = { ok: false, code: codeOf(error), proof: null }; }
     const proven = r?.proof?.windowsTreeZero === true && r?.proof?.serviceOriginalStopped === true;
     const o = r?.outcome ?? null;
     const quiet = o === null || (o.sideEffects === 0 && o.mayHavePublished === false);
-    const summary = r?.ok === true && quiet ? trainSummary(r.train) : null;
+    // On and revoke-only: revocations, touch, adopt, return, keepalive and the watermark are this stage's own work.
+    const effects = acting && r?.ok === true && o?.status === 'TRAIN_FACTS' && Number.isSafeInteger(o.sideEffects) && o.sideEffects >= 0;
+    const facts = r?.ok === true && (quiet || effects) ? trainSummary(r.train) : null;
+    const summary = facts && facts.mode === mode ? facts : null;
     const failureCode = summary ? null : (r?.ok === true ? 'TRAIN_FACTS_UNCONFIRMED' : validCode(r?.code));
-    const clean = proven && quiet && (r?.ok === true || failureCode === 'TRAIN_STAGE_REFUSED' || (o !== null && ['BLOCKED', 'TRAIN_FACTS'].includes(o.status))
-      || classifyFailure(failureCode, { ...r.proof, ...TRAIN_LINUX_PROOF }, TRAIN_STAGE).klass === 'CLEAN');
+    const clean = proven && ((quiet && (r?.ok === true || failureCode === 'TRAIN_STAGE_REFUSED' || (o !== null && ['BLOCKED', 'TRAIN_FACTS'].includes(o.status))
+      || classifyFailure(failureCode, { ...r.proof, ...TRAIN_LINUX_PROOF }, TRAIN_STAGE).klass === 'CLEAN')) || (effects && summary !== null));
     const haltCode = !proven ? 'TRAIN_STAGE_CLEANUP_UNCONFIRMED' : 'TRAIN_STAGE_OUTCOME_UNCONFIRMED';
     if (!clean) await this.haltWith(haltCode, { phase: 'train-maintenance', intentSeq: intent.seq, failureCode, sideEffects: o?.sideEffects ?? null });
-    await this.receipt('train-run', { intentSeq: intent.seq, runId: TRAIN_RUN_ID.test(r?.runId ?? '') ? r.runId : null, mode: train.enabled, ok: summary !== null, failureCode,
-      wouldDo: summary?.wouldDo ?? null, frontPr: summary?.front?.pr ?? null, mainSha: summary?.mainSha ?? null, wouldRevokeCount: summary?.wouldRevokeCount ?? null });
-    if (summary) this.trainLast = summary;
+    const base = { intentSeq: intent.seq, runId: TRAIN_RUN_ID.test(r?.runId ?? '') ? r.runId : null, mode: train.enabled, ok: summary !== null, failureCode,
+      wouldDo: summary?.wouldDo ?? null, frontPr: summary?.front?.pr ?? null, mainSha: summary?.mainSha ?? null, wouldRevokeCount: summary?.wouldRevokeCount ?? null };
+    // The front outcome is cleared only when stage 10 reported failed, or reporting it became moot (the front is another PR or
+    // head, or none), or the slot ran out by itself (slotHardCapMinutes after it was noted); otherwise the next run carries it again
+    // (review R3 MINOR 3: a take-over sweep, a lost duty or a touch that failed reports nothing).
+    const frontCleared = frontOutcome && summary && clean ? (summary.actions?.failedReported === true || summary.front?.pr !== frontOutcome.pr
+      || summary.front?.headSha !== frontOutcome.headSha || !(now - (frontOutcome.at ?? now) < trainSettings(train).slotHardCapMinutes * 60_000)) : false;
+    await this.receipt('train-run', acting ? { ...base, runMode: mode, decision: summary?.decision ?? null, sideEffects: Number.isSafeInteger(o?.sideEffects) ? o.sideEffects : null,
+      requestPause: summary?.requestPause ?? null, frontOutcomeSeq: frontOutcome?.seq ?? null, ...(frontOutcome ? { frontOutcomeCleared: frontCleared } : {}),
+      revokeHeadRequestId: input.revokeHeadRequestId } : base);
+    if (summary) {
+      this.trainLast = summary;
+      this.trainSweep = trainSweepView({ summary, previous: this.trainSweep, onSince: this.trainOnSince === null ? null : new Date(this.trainOnSince).toISOString() });
+      if (acting && clean) await this.trainActed(summary, { mode, input, frontOutcome, frontCleared, revokeHead });
+    }
+    await this.trainDutySave();
     return clean ? null : { state: 'HALTED', failureCode: haltCode };
+  }
+
+  // What the executor does with an on or revoke-only run's facts /2 (DESIGN §41.3, §41.4, §41.6).
+  async trainActed(summary, { mode, input, frontOutcome, frontCleared, revokeHead }) {
+    if (frontCleared && this.trainFrontOutcome?.seq === frontOutcome.seq) this.trainFrontOutcome = null;
+    // The take-over is done only on a positive signal (review R3 M3): this node's full sweep in on mode is complete and began after
+    // this very onSince (facts /2 sweep.fullSweep: state complete, sinceOn), never from a decision that is merely no deferral.
+    const full = summary.sweep?.fullSweep;
+    const onSince = this.trainOnSince === null ? null : new Date(this.trainOnSince).toISOString();
+    if (!this.trainTakeoverDone && onSince !== null && input.onSince === onSince && full?.state === 'complete' && full.sinceOn === true) this.trainTakeoverDone = true;
+    const rh = summary.actions?.revokeHead;
+    if (revokeHead && rh?.requestId === revokeHead.requestId) {
+      this.reportRevokeHead({ requestId: rh.requestId, state: rh.done ? 'done' : 'not-done', code: rh.done ? null : summary.decision });
+      // Done: the receipt first, then the request's file is archived (a restart in between finds the receipt: never twice).
+      if (rh.done) {
+        (this.revokeHeadDoneIds ??= new Set()).add(rh.requestId);
+        let recorded = true;
+        try { await this.receipt('revoke-head-done', { requestId: rh.requestId, decision: summary.decision }); } catch { recorded = false; }
+        if (recorded && revokeHead.name) { try { await this.requests.dispose(revokeHead.name, 'processed'); } catch { /* archived when it expires */ } }
+        if (this.revokeHead?.requestId === rh.requestId) this.revokeHead = null;
+      }
+    }
+    if (TRAIN_OWNER_NOTICE_DECISIONS.includes(summary.decision)) {
+      this.queue.notice({ key: `train-owner:${summary.decision}:${summary.front?.pr ?? 'x'}:${dayKey(this.clock())}`, kind: 'train-owner', pr: summary.front?.pr ?? null,
+        headSha: summary.front?.headSha ?? null, code: summary.decision });
+      try { await this.persistQueue(); } catch { /* a view */ }
+    }
+    // A landed tree that is not the tested one (v0.2 §3.3 item 2): PAUSE, latched here; stage 10 never writes resident requests.
+    if (summary.requestPause) {
+      const source = { reason: `train-maintenance: ${summary.requestPause}`, requestSha256: sha256(Buffer.from(`train-run:${summary.at}:${summary.requestPause}`)) };
+      if (await this.ledger.pause(source)) {
+        this.reportLatch({ paused: true });
+        await this.receipt('paused', source);
+      }
+    }
+    if (mode === 'on' && summary.openFrontBatch) await this.enqueueFront(summary.openFrontBatch);
+    // TRAIN_FRONT_BATCH_RUNNING: this node's front batch still runs and stage 10 refreshed its sweep proof; nothing to enqueue,
+    // but a front batch of that head parked at B gets its next stage-8 try now (parkedDueAt), within the usual try budgets.
+    if (mode === 'on' && summary.decision === 'TRAIN_FRONT_BATCH_RUNNING' && summary.front?.pr) await this.nudgeFrontParked(summary.front);
+  }
+
+  async nudgeFrontParked(front) {
+    let entries;
+    try { entries = (await this.ledger.parkedEntries()).filter(e => Ledger.parkedAt(e)); } catch { return; }
+    this.parkNudges ??= new Map();
+    for (const e of entries) {
+      const s = e.reserved?.subject;
+      if (s && Object.hasOwn(s, 'testSha') && s.pr === front.pr && (!front.headSha || s.headSha === front.headSha)) this.parkNudges.set(e.key, this.clock());
+    }
   }
 
   // ---- parking (phase 2, step 2; DESIGN §18) ----
@@ -1376,7 +1746,8 @@ export class ResidentExecutor {
 
   // { acted: the result of a parked batch that moved on (it continued, ended, or ran a stage-8 try), waiting: the last
   // still-waiting result when one only waits }.
-  async resumeParked() {
+  // hold: evaluate nothing (the train on's take-over sweep is pending); the status still shows them.
+  async resumeParked({ hold = false } = {}) {
     const entries = await this.ledger.parkedEntries();
     // Every batch resting at parking point A, for the status page (Task 4012c1b9, review N4 of step 2): several may wait at
     // once, each shown on its own row as PARKED_A, not only the one in `current`.
@@ -1386,7 +1757,7 @@ export class ResidentExecutor {
     const counts = await this.parkedCounts(entries);
     const outsideMax = this.policy.park.maxParkedOutsideTop2;
     this.parkingFull = counts.inside >= this.policy.park.maxParked || (outsideMax > 0 && counts.outside >= outsideMax);
-    if (entries.length === 0) return { acted: null, waiting: null };
+    if (entries.length === 0 || hold) return { acted: null, waiting: null };
     let waiting = null;
     for (const e of entries.filter(x => Ledger.waitingAt(x))) {
       const r = await this.resumeWaiting(e);
@@ -1663,14 +2034,18 @@ export class ResidentExecutor {
     this.queue.compact(now);
     const b = breakerOf(this.queue.breaker);
     this.queue.breaker = b;
-    const attempts = (await this.ledger.pendingAttempts2()).filter(a => a.notBefore <= now);
-    const rows = this.queue.candidates(now);
+    let attempts = (await this.ledger.pendingAttempts2()).filter(a => a.notBefore <= now);
+    let rows = this.queue.candidates(now);
     this.reportQueue();
     if (attempts.length === 0 && rows.length === 0) { await this.persistQueue(); return { state: 'IDLE' }; }
     // The node gate (C3, DESIGN §29): no new batch of any kind unless this node is ACTIVE, and before the intake pause, so a node
     // that is not ACTIVE shows why and still runs the role probe. Triggers were read already; a batch in flight went on.
     const notActive = this.nodeGate();
     if (notActive) { await this.persistQueue(); return notActive; }
+    // The train on (DESIGN §41.6): no new batch before the take-over sweep, nor while stage 10 says another node runs another
+    // Source. A quiet result: stage 10 runs in this very tick.
+    const trainHeld = this.trainGate();
+    if (trainHeld) { await this.persistQueue(); return trainHeld; }
     // The intake pause (C6, DESIGN §20): no new batch of any kind while a hold is in force. The batches in flight and at a
     // parking point were already resumed by tickInner; nothing of theirs waits for this gate.
     const held = await this.intakeGate();
@@ -1696,6 +2071,16 @@ export class ResidentExecutor {
     if (gate.trial && entries.some(e => Ledger.waitingAt(e))) {
       await this.persistQueue();
       return { state: 'DEFERRED', reason: 'BREAKER_TRIAL_PENDING' };
+    }
+    // The train on with nonFrontRuns false (policy /8; review R3 M6): only the front subject (S, from on-mode stage 10) is
+    // scheduled; every other row waits, shown with TRAIN_NON_FRONT_RUNS_OFF, and so does an attempt 2 of a subject without S.
+    // nonFrontRuns true (and off, shadow): every row, as today.
+    if (this.policy.train.enabled === 'on' && this.policy.train.nonFrontRuns === false) {
+      const front = c => Object.hasOwn(c, 'testSha');
+      for (const c of rows.filter(c => !front(c))) this.queue.defer(c.pr, TRAIN_NON_FRONT_DEFERRED, now);
+      rows = rows.filter(front);
+      attempts = attempts.filter(a => front(a.subject));
+      if (attempts.length === 0 && rows.length === 0) { await this.persistQueue(); this.reportQueue(); return { state: 'DEFERRED', reason: TRAIN_NON_FRONT_DEFERRED }; }
     }
     let list = [...attempts.map(a => ({ pr: a.subject.pr, attempt2: a })), ...rows.map(c => ({ pr: c.pr, row: c }))];
     // A trial never picks the rows that just failed, unless nothing else is there (it never locks for good).
@@ -1801,7 +2186,10 @@ export class ResidentExecutor {
 
   // One queue row: its current commit as attempt 1.
   async runRow(c, usage) {
-    const subject = { repo: this.policy.repo, pr: c.pr, headSha: c.headSha, baseSha: c.baseSha, sourceManifestSha256: this.policy.sourceManifestSha256, attempt: 1 };
+    // A train front commit carries S (queue.mjs#offerFront, only from on-mode stage 10): its subject names it (step 3c-2b).
+    const subject = { repo: this.policy.repo, pr: c.pr, headSha: c.headSha, baseSha: c.baseSha, sourceManifestSha256: this.policy.sourceManifestSha256, attempt: 1,
+      ...(Object.hasOwn(c, 'testSha') ? { testSha: c.testSha } : {}) };
+    if (Object.hasOwn(c, 'testSha') && [1, 2].includes(c.frontAttempt)) this.frontKeys.set(batchKey(subject), c.frontAttempt);
     const key = batchKey(subject);
     const hk = headKey(subject);
     const pre = await this.precheck(key, hk, subject, { usage, origin: c.origin });
@@ -2158,8 +2546,12 @@ export class ResidentExecutor {
   // 25-plan. Returns the plan { relayed: [row], local: [{ role, reason, receipt }] } or a StepFailure.
   async relayPlan(key, subject, batch, t0) {
     const relay = this.policy.relay;
-    const seen = relay.enabled === true ? await this.hint(subject) : { hint: null, refused: false };
-    const decision = decide({ relay, t0, now: Math.max(this.clock(), t0), hint: seen.hint });
+    // A train front batch (a subject with S, §41.4, §38.8 m1) never relays: every role stays local, decided here, before
+    // 20-plan-intent (the derivation and the relay entry would only refuse it later).
+    const front = Object.hasOwn(subject, 'testSha');
+    const seen = relay.enabled === true && !front ? await this.hint(subject) : { hint: null, refused: false };
+    const decision = front ? { action: 'START', relayCandidates: [], local: [...HEAVY_ROLES], reasons: Object.fromEntries(HEAVY_ROLES.map(r => [r, RELAY_TRAIN_FRONT_LOCAL])),
+      reason: RELAY_TRAIN_FRONT_LOCAL } : decide({ relay, t0, now: Math.max(this.clock(), t0), hint: seen.hint });
     if (decision.action === 'WAIT') return { waiting: true, until: decision.until, reason: decision.reason };
     const candidates = decision.relayCandidates;
     await this.ledger.writePlanIntent(key, { candidates, local: decision.local, reasons: decision.reasons, reason: decision.reason, waitedMs: Math.max(0, this.clock() - t0),
@@ -2283,6 +2675,8 @@ export class ResidentExecutor {
         const subject = (await this.ledger.state(key)).reserved?.subject;
         this.reportOutcome(subject, 'FAILED_CLEAN', { code: failure.code, row, key });
         const key2 = await this.attempt2IfEligible(key, subject, failure);
+        // DESIGN §41.4 "touch failed": a front batch that finally failed for the PR itself is owed to the next on-mode stage 10.
+        if (!key2 && row?.class === 'deterministic-pr') await this.noteFrontOutcome(subject, key, failure.code);
         return { state: 'FAILED_CLEAN', key, failureCode: failure.code, ...(key2 ? { attempt2: key2 } : {}), settle: { ...settle, kind: 'burned' } };
       }
       return { ...(await this.unknown(key, failure.code, basis, batch, { stage: failure.stageNumber, ...facts })), settle: { ...settle, kind: 'burned', klass: 'unknown' } };
@@ -2302,9 +2696,18 @@ export class ResidentExecutor {
   }
 
   // The one automatic attempt 2 after a FAILED_CLEAN (attempts.mjs): its intent and receipt, or null when not eligible.
+  // A front batch (subject with S, DESIGN §41.4; review R3 M5): its attempt 2 is one of the head's FRONT_BATCHES_PER_HEAD front
+  // batches (none when they are used up: then it is not eligible), counted in frontBatches and frontKeys and receipted as a
+  // 'train-front-enqueued' (auto) so a restart counts it, and a final deterministic-pr failure of it is reported as touch failed.
   async attempt2IfEligible(key, subject, failure) {
     const decision = attempt2Decision({ policy: this.policy, subject, outcome: 'FAILED_CLEAN', failure });
     if (!decision.eligible) return null;
+    const front = Object.hasOwn(subject ?? {}, 'testSha');
+    const headKey = front ? `${subject.pr}:${subject.headSha}` : null;
+    const list = front ? (this.frontBatches.get(headKey) ?? []) : null;
+    // This very batch counts even when its own record was lost (its front attempt, at least 1).
+    const used = front ? Math.max(list.length, this.frontKeys.get(key) ?? 1) : 0;
+    if (front && used >= FRONT_BATCHES_PER_HEAD) return null;
     const key2 = await this.ledger.scheduleAttempt2(key, attempt2Subject(subject), { failureCode: failure.code, stage: failure.stageNumber },
       this.clock() + this.policy.automaticAttempt2.delayMs);
     try {
@@ -2313,6 +2716,16 @@ export class ResidentExecutor {
       // An intent without its receipt is cancelled before the HALT, so no re-arm can ever run it (MINOR 7).
       await this.ledger.closeAttempt2(key, { failureCode: 'ATTEMPT2_RECEIPT_UNCONFIRMED' });
       throw error;
+    }
+    if (front) {
+      const attempt = used + 1;
+      list.push({ testSha: subject.testSha, attempt, auto: true });
+      this.frontBatches.set(headKey, list);
+      this.frontKeys.set(key2, attempt);
+      try {
+        await this.receipt('train-front-enqueued', { key: key2, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: subject.testSha, testTree: null,
+          attempt, claimId: null, since: null, auto: true });
+      } catch { /* counted in memory; stage 10 counts the head's front batches itself */ }
     }
     return key2;
   }

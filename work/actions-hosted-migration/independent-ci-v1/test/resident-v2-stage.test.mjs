@@ -116,6 +116,26 @@ test('invoke-stage: sealed package -> fresh stage dir -> broker -> receipt + bou
   assert.deepEqual((await fs.readdir(path.join(f.roots.stageRoot, dirs[0]))).sort(), ['formal-service-entry.json', 'jobs.json']);
 });
 
+test('invoke-stage (DESIGN §41.2): stages 1 and 8 get the installed train mode as train-mode.json, create-only; no other stage, no mode: no file', async t => {
+  const { readStageTrainMode, stageTrainModeText, STAGE_TRAIN_MODE_FILE } = await import('../src/independent-control-checks-v2/train-mode.mjs');
+  const { main } = await import('../src/resident-v2/invoke-stage.mjs');
+  const f = await fixture(t);
+  const newest = async before => (await fs.readdir(f.roots.stageRoot)).filter(d => !before.includes(d));
+  for (const [stage, trainMode, expected] of [[1, 'on', 'on'], [1, 'shadow', 'shadow'], [1, 'off', 'off'], [1, null, null], [2, 'on', null]]) {
+    const before = await fs.readdir(f.roots.stageRoot);
+    const fact = await run(f, stage, fakeBroker(f), { trainMode });
+    assert.equal(fact.state, 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION', `${stage} ${trainMode}`);
+    const [dir] = await newest(before);
+    const files = (await fs.readdir(path.join(f.roots.stageRoot, dir))).sort();
+    if (expected === null) assert.deepEqual(files, ['formal-service-entry.json', 'jobs.json'], `${stage} ${trainMode}`);
+    else assert.equal(await fs.readFile(path.join(f.roots.stageRoot, dir, STAGE_TRAIN_MODE_FILE), 'utf8'), stageTrainModeText(expected));
+    assert.equal(await readStageTrainMode(path.join(f.roots.stageRoot, dir)), expected ?? 'off');
+  }
+  assert.equal((await run(f, 1, fakeBroker(f), { trainMode: 'ON' })).failure_code, 'STAGE_PACKAGE_REFUSED');
+  const out = { text: '', write(s) { this.text += s; } };
+  assert.equal(await main(['--batch-dir', f.batchDir, '--stage', '1', '--train-mode', 'on', '--train-mode', 'off'], out), 2, 'given twice: refused');
+});
+
 test('invoke-stage: a changed package, a missing broker answer, a running helper and a broken restore are never success', async t => {
   const f = await fixture(t);
   assert.equal((await invokeStage({ batchDir: f.batchDir, stage: 2, workManifestSha256: 'f'.repeat(64), batchKey: f.key, ...f.roots })).failure_code, 'STAGE_PACKAGE_REFUSED');

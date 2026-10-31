@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash, createPublicKey, randomUUID } from 'node:crypto';
 import { canonical, digest } from '../proof.mjs';
+import { serverAnswerCurrent } from '../clock-skew.mjs';
 import { createGitHubChecksPort } from '../github.mjs';
 import { createFullAdmissionPortV2 } from '../full-admission-v2.mjs';
 import { INSTALL_ROOT, APP_KEY_FILE, assertProtectedPaths, readProtected } from '../../runtime/protected-files.mjs';
@@ -54,7 +55,7 @@ export async function controllerPrincipal(record) {
   return { appKey, nativeToken };
 }
 
-export function controllerPorts({ record, appKey, nativeToken, policyText, sourceRoot, live, signal, log }) {
+export function controllerPorts({ record, appKey, nativeToken, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now() }) {
   const fetchImpl = (url, opts = {}) => { live(); return globalThis.fetch(url, { ...opts, signal: signal ? AbortSignal.any([signal, opts.signal ?? AbortSignal.timeout(30000)]) : (opts.signal ?? AbortSignal.timeout(30000)) }); };
   const github = createGitHubChecksPort({ repository: record.config.repository, repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId,
     installationId: FIXED_APP.installationId, includeModeRead: true, privateKeyProvider: async () => appKey, fetchImpl });
@@ -74,15 +75,21 @@ export function controllerPorts({ record, appKey, nativeToken, policyText, sourc
   }, async current(identity,mode) {
     live();if(mode?.scope!==record.config.scope||identity.job.repo!==record.config.repository
       ||!Array.isArray(mode.paths)||!mode.paths.length)return false;
+    const sentMono = monotonic();
     const reply = await cluedRpc(fetchImpl, env, sourceRoot, 'clued_work_verify_v1', { scope: mode.scope, claim_id: identity.claim.claim_id,
       head_sha: identity.job.headSha, base_sha: identity.job.baseSha, changed_paths: mode.paths });
-    const b=reply.body,c=b?.claim,now=Date.now();
-    return reply.status===200&&b?.status==='ok'&&b.verdict==='ADMITTED'&&b.execution_policy===mode.executionPolicy
-      &&c?.lease_key_required===mode.guarded&&c.execution_handover_pending===false&&c.status==='ACTIVE'
-      &&c.claim_id===identity.claim.claim_id&&c.fence===identity.claim.fence&&c.execution_epoch===identity.claim.execution_epoch
-      &&b.current_fence===c.fence&&b.execution_epoch===c.execution_epoch&&c.context_key===mode.scope
-      &&c.bound_pr===`${identity.job.repo}#${identity.job.pr}`&&Date.parse(c.expires_at)>now
-      &&Date.parse(b.verified_at)<=now&&now-Date.parse(b.verified_at)<=30000;
+    const b=reply.body,c=b?.claim,failed=[];
+    for (const [name, ok] of [['reply',reply.status===200&&b?.status==='ok'],['verdict',b?.verdict==='ADMITTED'],
+      ['execution_policy',b?.execution_policy===mode.executionPolicy],['lease_key_required',c?.lease_key_required===mode.guarded],
+      ['handover_pending',c?.execution_handover_pending===false],['claim_status',c?.status==='ACTIVE'],
+      ['claim_identity',c?.claim_id===identity.claim.claim_id&&c.fence===identity.claim.fence&&c.execution_epoch===identity.claim.execution_epoch],
+      ['current_fence',b?.current_fence===c?.fence&&b?.execution_epoch===c?.execution_epoch],['context_key',c?.context_key===mode.scope],
+      ['bound_pr',c?.bound_pr===`${identity.job.repo}#${identity.job.pr}`]]) if (!ok) failed.push(name);
+    // Decision 1100a0ed: no comparison of KooYomi's clock with this host's (clock-skew.mjs#serverAnswerCurrent).
+    failed.push(...serverAnswerCurrent({ verifiedAt: b?.verified_at, expiresAt: c?.expires_at, sentMono, nowMono: monotonic() }));
+    // The log keeps only a digest of its data, so each failed check's name is the record kind itself.
+    if (failed.length) { try { for (const name of failed) log?.(`native_current_refused_${name}`, { failed }); } catch { /* the refusal stands */ } }
+    return failed.length===0;
   }});
   return { github, admission, fetchImpl, native };
 }

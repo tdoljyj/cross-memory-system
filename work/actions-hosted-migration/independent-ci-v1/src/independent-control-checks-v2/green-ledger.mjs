@@ -57,11 +57,12 @@ export class GreenLedger {
     return { name, entry };
   }
   // Every complete record, oldest first. A file that is not exactly a ledger record is reported, never skipped silently:
-  // step 3c's sweep fails closed on it.
+  // step 3c's sweep fails closed on it. Only the top level: closed\ (green-ledger-closed.mjs) is never listed.
   async list() {
     const out = [], refused = [];
     for (const name of (await fs.readdir(this.directory)).sort()) {
       if (name.endsWith('.tmp')) continue;
+      if (name === 'closed') { const s = await fs.lstat(path.join(this.directory, name)); if (s.isDirectory() && !s.isSymbolicLink()) continue; }
       const parts = NAME.exec(name);
       if (!parts) { refused.push(name); continue; }
       try {

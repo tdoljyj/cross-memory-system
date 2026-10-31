@@ -17,7 +17,7 @@
 // No batch runs before the backfill wrote BACKFILL-COMPLETE.json (executor.mjs#tick). A head in this store is never
 // admitted again, under any Source (executor.mjs#precheck, HEAD_ALREADY_PUBLISHED_NO_RETRY); a new commit is needed.
 // Heads that ended before any publication stage (stage 1 or 2, the workspace, a bundle) stay out of it, so a new Source
-// may still run them, exactly as before.
+// may still run them, exactly as before. A train front batch (subject with S) is kept per (repo, head, S) (executedHeadKey).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, HEX64, REPO, ResidentError, check, digest, isoNow, parseBoundedJson, sha256 } from './canonical.mjs';
@@ -47,9 +47,14 @@ export const NOT_PUBLISHED_SAFE_POINTS = Object.freeze(['waiting', 'before-stage
 
 // 128 bits of the digest name the head's directory (and 64 bits of the batch key its record), so that every path,
 // also a carried copy under state\backfill\<n>\, stays well below the Windows path limit.
-export function executedHeadKey({ repo, headSha }) {
-  check(typeof repo === 'string' && REPO.test(repo) && typeof headSha === 'string' && HEX40.test(headSha), 'EXECUTED_HEAD_SUBJECT_INVALID');
-  return digest({ contract: EXECUTED_HEAD_KEY_CONTRACT, repo, headSha }).slice(0, 32);
+// Merge train (DESIGN §41.4): a train front batch (a subject with S) is its own identity (H, S): its records live under a key
+// that names S, so only that front batch's own publications make it "published", never a non-front run of H (nor the reverse).
+// Every subject without S keeps its key.
+const frontShaOk = s => !Object.hasOwn(s, 'testSha') || (typeof s.testSha === 'string' && HEX40.test(s.testSha) && s.testSha !== s.headSha);
+export function executedHeadKey(subject) {
+  const { repo, headSha } = subject ?? {};
+  check(typeof repo === 'string' && REPO.test(repo) && typeof headSha === 'string' && HEX40.test(headSha) && frontShaOk(subject), 'EXECUTED_HEAD_SUBJECT_INVALID');
+  return digest({ contract: EXECUTED_HEAD_KEY_CONTRACT, repo, headSha, ...(Object.hasOwn(subject, 'testSha') ? { testSha: subject.testSha } : {}) }).slice(0, 32);
 }
 
 // Pure: may the batch behind this burned head have published a role check? Conservative: anything not proven to have
@@ -72,7 +77,7 @@ export function mayHavePublished(head, entry) {
 }
 
 const contentError = error => error instanceof ResidentError || error instanceof SyntaxError;
-const subjectOf = v => (v && typeof v === 'object' && typeof v.repo === 'string' && REPO.test(v.repo) && typeof v.headSha === 'string' && HEX40.test(v.headSha)) ? v : null;
+const subjectOf = v => (v && typeof v === 'object' && typeof v.repo === 'string' && REPO.test(v.repo) && typeof v.headSha === 'string' && HEX40.test(v.headSha) && frontShaOk(v)) ? v : null;
 
 export class ExecutedHeads {
   // carried: { manifestFile: <root>\install\backfill-manifest.json, carriedRoot: <root>\state\backfill } (the service's).
@@ -119,7 +124,9 @@ export class ExecutedHeads {
     if (await exists(file)) return false;
     await writeNew(file, { contract: EXECUTED_HEAD_CONTRACT, repo: subject.repo, headSha: subject.headSha, pr: Number.isSafeInteger(subject.pr) ? subject.pr : null,
       sourceManifestSha256: HEX64.test(subject.sourceManifestSha256 ?? '') ? subject.sourceManifestSha256 : null,
-      attempt: Number.isSafeInteger(subject.attempt) ? subject.attempt : null, key, origin, basis, stage, at: isoNow(this.clock) });
+      attempt: Number.isSafeInteger(subject.attempt) ? subject.attempt : null, key, origin, basis, stage, at: isoNow(this.clock),
+      // A front batch's record names its S, so the backfill of a later install files it under the same (H, S) key.
+      ...(Object.hasOwn(subject, 'testSha') ? { testSha: subject.testSha } : {}) });
     return true;
   }
 
