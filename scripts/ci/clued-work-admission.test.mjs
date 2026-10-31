@@ -1292,6 +1292,7 @@ test("gate guard: every gated workflow on this branch passes and uses a listed g
 const TEMPORARY_GATE_BOOTSTRAP = "      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n";
 const TEMPORARY_GATE_DIGEST = "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9";
 const ANY_RUNNER_GATE_DIGEST = "b000e5a2bc4b0ca76de4beb7dfc3001dca7a428dde79578e457057081e1109ce";
+const SELF_HOSTED_INDEPENDENT_GATE_DIGEST = "9c582144f424d1bc9ef7d3b048d3b7771c7b639ef5544bc04a8a80515c52b2f2";
 const withoutTemporaryGateBootstrap = (text) => text.replace(TEMPORARY_GATE_BOOTSTRAP + "      - id: gate\n", "      - id: gate\n");
 
 test("gate guard: the exact PR-read version is registered before workflow rollout; other changes are refused", () => {
@@ -1299,7 +1300,23 @@ test("gate guard: the exact PR-read version is registered before workflow rollou
   const prReadDigest = "4136409cf9440c3e8755ed03014cd3c39f90a169f4f8a2ce3d83af2e4a0111cd";
   const noEnforceDigest = "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc";
   assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest, noEnforceDigest, TEMPORARY_GATE_DIGEST, SOURCE_PROOF_GATE_DIGEST,
-    HOSTED_SOURCE_PROOF_GATE_DIGEST, ANY_RUNNER_GATE_DIGEST], "only the seven exact gate versions");
+    HOSTED_SOURCE_PROOF_GATE_DIGEST, ANY_RUNNER_GATE_DIGEST, SELF_HOSTED_INDEPENDENT_GATE_DIGEST], "only the eight exact gate versions");
+  // Task 2a5fdb66: contract-placement's independent-admission gate with runs-on moved to the
+  // self-hosted Linux pool, nothing else, is accepted; any other runs-on or source is not.
+  const placement = fs.readFileSync(new URL("../../.github/workflows/contract-placement.yml", import.meta.url), "utf8");
+  const hostedGate = "    name: admission-gate\n    runs-on: ubuntu-latest\n";
+  assert.ok(placement.includes(hostedGate), "contract-placement's gate runs on ubuntu-latest on this base");
+  const selfHostedGate = hostedGate.replace("ubuntu-latest", "[self-hosted, Linux, X64, clued, pool-general, trust-internal]");
+  const selfHostedIndependent = placement.replace(hostedGate, selfHostedGate);
+  const gateOf = (text) => sha256Hex(workflowJobs(text).find((job) => job.name === "admission-gate").lines.join("\n"));
+  assert.equal(gateOf(selfHostedIndependent), SELF_HOSTED_INDEPENDENT_GATE_DIGEST);
+  assert.equal(gateOf(placement), HOSTED_SOURCE_PROOF_GATE_DIGEST);
+  assert.match(selfHostedIndependent, /CLUED_ADMISSION_GATE_SOURCE: independent-ci-native-work-admission\n/);
+  assert.deepEqual(gateFindings(selfHostedIndependent, null), [], "the self-hosted independent-admission gate is registered");
+  assert.deepEqual(gateFindings(placement.replace(hostedGate, selfHostedGate.replace("Linux, ", "Windows, ")), null),
+    ["admission_gate_changed"], "another self-hosted runs-on is not");
+  assert.deepEqual(gateFindings(selfHostedIndependent.replace('CLUED_ADMISSION_GATE_WAIT_SECONDS: "600"', 'CLUED_ADMISSION_GATE_WAIT_SECONDS: "60"'), null),
+    ["admission_gate_changed"], "another wait is not");
   // Decision b30b1b79: the temporary-storage gate with `Linux` dropped from runs-on, nothing else, is accepted.
   const panel = fs.readFileSync(new URL("../../.github/workflows/clued-compute-panel.yml", import.meta.url), "utf8");
   const gateRunsOn = "    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n";

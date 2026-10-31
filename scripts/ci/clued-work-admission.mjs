@@ -363,6 +363,12 @@ export const GATE_JOB_SHA256 = new Set([
   // pinned Node of Decision f86179b3, so the compute panel keeps alerting while the company's
   // Linux runners are offline. Registered here (PR-A) before clued-compute-panel.yml changes (PR-B).
   "b000e5a2bc4b0ca76de4beb7dfc3001dca7a428dde79578e457057081e1109ce",
+  // Task 2a5fdb66 (Owner Decision 9eb313f8: new execution self-hosted only): the
+  // 3f48159e… gate, admitting on the independent CI's own admission, with only
+  // runs-on moved from ubuntu-latest to the self-hosted Linux pool, for the
+  // required test checks of clued-required-tests.yml. Registered here (PR-A)
+  // before that workflow is added (PR-B, #971).
+  "9c582144f424d1bc9ef7d3b048d3b7771c7b639ef5544bc04a8a80515c52b2f2",
 ]);
 const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 export const PRODUCTION_PUBLISHER_WORKFLOW = ".github/workflows/clued-cloud-production-release.yml";
