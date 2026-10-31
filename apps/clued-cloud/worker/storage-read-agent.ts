@@ -453,12 +453,26 @@ export async function createStorageReadAgent(config: {
       // (list/stat/resolve fail closed). `lastTransient` tells the search loop
       // which, so a round-1 failure is still logged as fatal.
       let lastTransient: unknown = null;
+      // Folders a search skipped because they hold more than one call can list.
+      const oversized = new Set<string>();
       const listChildren = async (folders: string[], fullText?: string, search = false): Promise<unknown[][] | null> => {
         lastTransient = null;
         try { return await drive.listFolders(folders, fullText === undefined ? {} : { fullText }); }
         catch (error) {
           if (error instanceof Error && error.message === "DRIVE_READ_BUDGET") return null;
           if (search && error instanceof Error && isDriveTransient(error.message)) { lastTransient = error; return null; }
+        // Search lists a chunk of folders per round; past the per-call bound it
+        // lists them one by one and skips only a folder too large on its own.
+        if (search && error instanceof Error && error.message === "DRIVE_ENUMERATION_LIMIT" && folders.length > 1) {
+          const lists: unknown[][] = [];
+          for (const folder of folders) {
+            const one = await listChildren([folder], fullText, true);
+            if (one === null) return null;
+            lists.push(one[0]);
+          }
+          return lists;
+        }
+        if (search && error instanceof Error && error.message === "DRIVE_ENUMERATION_LIMIT") { oversized.add(folders[0]); return [[]]; }
           driveTransient(error, "fatal");
           return fail("storage_read_unavailable");
         }
@@ -796,10 +810,32 @@ export async function createStorageReadAgent(config: {
 
       if (input.operation === "list") {
         const folder = input.folder_id ?? rootId;
-        const state = input.cursor ? await open(input.cursor, bind) : { offset: 0 };
+        const state: Data = input.cursor ? await open(input.cursor, bind) : { offset: 0 };
         if (folder !== rootId && !(await inRoot([folder])).has(folder)) fail("not_found_in_scope");
         if (folder !== rootId && known.get(folder)?.mimeType !== FOLDER) fail("not_found_in_scope");
-        const [list] = await scopedChildren(await children([folder]));
+        // A folder too large to list whole is paged in Drive's own order with
+        // Drive's page token, as Drive does (Decision 24422a98).
+        const drivePage = async (pageToken?: string) => {
+          if (pageToken !== undefined && (typeof pageToken !== "string" || !pageToken || pageToken.length > 4096)) fail("cursor_invalid");
+          let page: { files: unknown[]; nextPageToken: string | null };
+          try { page = await drive.listFolderPage(folder, { pageToken, pageSize: PAGE }); }
+          catch (error) { driveTransient(error, "fatal"); return fail("storage_read_unavailable"); }
+          const [list] = await scopedChildren([page.files]);
+          const items = list.map(raw => item(raw, rootId));
+          count = items.length; complete = page.nextPageToken === null;
+          return { folder_id: folder, items, complete, provider_errors: [], order: "drive",
+            next_cursor: page.nextPageToken === null ? null : await seal(bind, { page_token: page.nextPageToken }) };
+        };
+        if (state.page_token !== undefined) return await drivePage(state.page_token as string);
+        let whole: unknown[][];
+        try { whole = await drive.listFolders([folder]); }
+        catch (error) {
+          if (error instanceof Error && error.message === "DRIVE_ENUMERATION_LIMIT" && Number(state.offset) === 0) return await drivePage();
+          if (error instanceof Error && error.message === "DRIVE_READ_BUDGET") return fail("storage_read_unavailable");
+          driveTransient(error, "fatal");
+          return fail("storage_read_unavailable");
+        }
+        const [list] = await scopedChildren(whole);
         const items = list.map(raw => item(raw, rootId)).sort(byName);
         const offset = Number(state.offset);
         if (!Number.isSafeInteger(offset) || offset < 0 || offset > items.length) fail("cursor_invalid");
@@ -870,6 +906,7 @@ export async function createStorageReadAgent(config: {
           }
         }
         matches.sort(byName);
+        if (oversized.size) lossy = true;
         count = matches.length; complete = !queue.length && !lossy;
         return { items: matches, complete, next_cursor: queue.length ? await seal(bind, { queue, lossy }) : null,
           ...(lossy ? { limit_reached: true } : {}), ...(input.text ? { text_index: "provider" } : {}) };

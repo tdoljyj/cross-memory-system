@@ -244,5 +244,21 @@ export function createStorageGoogleMetadataBatch(config: {
       if (active.length) throw new Error("DRIVE_PAGINATION_LIMIT");
       return states.map(state => state.files);
     },
+    /** One page of a folder's direct children in Drive's own order, for a
+     * folder too large to list whole (Decision 24422a98: Drive pages with
+     * pageToken and allows far more than 10000 children). */
+    async listFolderPage(folderId: string, { signal, pageToken, pageSize }: { signal?: AbortSignal; pageToken?: string; pageSize: number }) {
+      ids([folderId]);
+      if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 1000 ||
+        (pageToken !== undefined && (typeof pageToken !== "string" || !pageToken.length || pageToken.length > 4096 || /[\r\n]/.test(pageToken)))) invalid();
+      const params = new URLSearchParams({ q: `'${folderId}' in parents and trashed = false`, orderBy: "folder,name",
+        fields: `nextPageToken,incompleteSearch,files(${fields})`, pageSize: String(pageSize), supportsAllDrives: "true", includeItemsFromAllDrives: "true" });
+      if (pageToken) params.set("pageToken", pageToken);
+      const [value] = await batch(["/drive/v3/files?" + params], signal);
+      if (!object(value) || !Array.isArray(value.files) || value.files.length > pageSize || value.incompleteSearch === true) throw new Error("DRIVE_LIST_INVALID");
+      const next = value.nextPageToken;
+      if (next !== undefined && next !== "" && (typeof next !== "string" || next.length > 4096 || next === pageToken)) throw new Error("DRIVE_PAGINATION_INVALID");
+      return { files: value.files as unknown[], nextPageToken: typeof next === "string" && next ? next : null };
+    },
   });
 }
