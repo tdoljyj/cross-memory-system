@@ -7,7 +7,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { productionChain, catalogSqlPath, readSnapshot, SNAPSHOT_CONTRACT } from '../scripts/production-schema-chain.mjs';
 import {
-  SCHEMA_STATEMENT, buildSnapshot, compareFingerprints, deviationMatcher, diffIsEmpty, pendingReferenceFindings, relationAliases,
+  SCHEMA_STATEMENT, buildSnapshot, compareFingerprints, deviationMatcher, diffIsEmpty, pendingReferenceFindings, prepareReplay, relationAliases,
   repositoryOnlyObjects, runCheck, serializeSnapshot,
 } from '../scripts/production-schema-drift.mjs';
 import { md5 } from '../scripts/migration-ledger.mjs';
@@ -213,4 +213,18 @@ test('the committed snapshot is bound to the committed catalog query and every e
     for (const entry of snapshot[list]) assert.ok(typeof entry.reason === 'string' && entry.reason.trim().length > 20, `${list}: ${JSON.stringify(entry)}`);
   }
   assert.doesNotThrow(() => deviationMatcher(snapshot.known_deviations));
+});
+
+test('ledger rows newer than the snapshot go through the same replay-skip and substitution lists', () => {
+  const errors = [];
+  const skipped = new Map([['history-only/backfill.sql', 'data only']]);
+  const substitutions = new Map([['migrations/b.sql', [{ find: 'create extension pg_cron;', replace: 'select 1;' }]],
+    ['migrations/c.sql', [{ find: 'twice', replace: 'x' }]]]);
+  const ahead = [{ file: 'history-only/backfill.sql', text: 'update t set x = 1;' },
+    { file: 'migrations/b.sql', text: 'create extension pg_cron; create table b();' },
+    { file: 'migrations/c.sql', text: 'twice twice' }];
+  const prepared = prepareReplay(ahead, { skipped, substitutions, errors });
+  assert.deepEqual(prepared.map((step) => step.file), ['migrations/b.sql', 'migrations/c.sql']);
+  assert.equal(prepared[0].text, 'select 1; create table b();');
+  assert.deepEqual(errors, ['snapshot_replay_substitution_not_unique:migrations/c.sql']);
 });

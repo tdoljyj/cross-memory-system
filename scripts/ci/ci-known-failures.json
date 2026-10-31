@@ -5,7 +5,7 @@
       "path": [
         "the workflow is triggered by every CI workflow's completion, runs default-branch code and is hosted"
       ],
-      "fingerprint": "ff5ceb718e7f1d76",
+      "fingerprint": "54d50457d9dd1f08",
       "reason": "the workflow_run list in clued-merge-slot-ci.yml (disabled) does not name clued-native617-admission-dispatch.yml, clued-compute-panel.yml and clued-required-tests.yml; add them before it is re-enabled"
     },
     {
@@ -21,7 +21,7 @@
       "path": [
         "owner review: the workflows on main that hold an environment are exactly the release, storage, attestation, admission and handover qualification ones"
       ],
-      "fingerprint": "47da51ff59a2b308",
+      "fingerprint": "0068c69aa2a65a2c",
       "reason": "workflow inventories and gate guard A1 do not match main (clued-native617-admission-dispatch.yml, the gitleaks.yml pair)"
     },
     {
@@ -29,7 +29,7 @@
       "path": [
         "workflows: only base-branch jobs in the clued-admission environment get the Clued token"
       ],
-      "fingerprint": "03300e03670a1c2e",
+      "fingerprint": "f34f247d7e5b0b17",
       "reason": "workflow inventories and gate guard A1 do not match main (clued-native617-admission-dispatch.yml, the gitleaks.yml pair)"
     }
   ],
@@ -47,7 +47,7 @@
       "path": [
         "every repository workflow and job has a valid temporary-data lifecycle"
       ],
-      "fingerprint": "ef1a9afcdb3a2550",
+      "fingerprint": "f42faf753ec75ffd",
       "reason": "clued-native617-admission-dispatch.yml and the handover qualification workflows lack reviewed temporary-data entries"
     },
     {
@@ -63,7 +63,7 @@
       "path": [
         "fail closed: skipped tests, parent containers, uncovered parts, unknown IDs, retired drift, a crashed runner"
       ],
-      "fingerprint": "c85b4e190880e2f2",
+      "fingerprint": "0d0bf6d4e6ade604",
       "reason": "verdict and fail-closed fixtures differ from the evidence document"
     },
     {
@@ -71,7 +71,7 @@
       "path": [
         "verdict rules: PASS needs every owned ID PASS or RETIRED; FAIL wins; a missing ID is NOT_EVALUATED"
       ],
-      "fingerprint": "ebc1147457b4976b",
+      "fingerprint": "3868fa393b8ca547",
       "reason": "verdict and fail-closed fixtures differ from the evidence document"
     },
     {
@@ -79,7 +79,7 @@
       "path": [
         "actual Windows launcher forwards UTF-8 OS stdin and PowerShell pipeline only after activation"
       ],
-      "fingerprint": "fec055326325ebfb",
+      "fingerprint": "eae9ebe49eea2267",
       "reason": "fails on main"
     },
     {
@@ -87,7 +87,7 @@
       "path": [
         "a bundle whose pdf.js worker lacks the decode guard refuses every PDF (storage_read_unavailable)"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -95,7 +95,7 @@
       "path": [
         "a bundle whose pdf.js worker lacks the font-program patch marker refuses every PDF (storage_read_unavailable)"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -103,7 +103,7 @@
       "path": [
         "bounded under a 64 MB heap: 1 000 codespace ranges and a 200 KB string pass the scan limit"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -111,7 +111,7 @@
       "path": [
         "bounded under a 64 MB heap: 1 KB CIDFont with /W [-30000000 0 500]"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -119,7 +119,7 @@
       "path": [
         "bounded under a 64 MB heap: 1 KB CIDFont with /W [0 30000000 500]"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -127,7 +127,7 @@
       "path": [
         "bounded under a 64 MB heap: 1 KB Identity-V CIDFont with /W2 [0 30000000 -1000 500 880]"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -135,7 +135,7 @@
       "path": [
         "bounded under a 64 MB heap: 1 KB non-Adobe CIDFont without ToUnicode and /LastChar 30000000"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -143,7 +143,7 @@
       "path": [
         "bounded under a 64 MB heap: 1.4 KB ToUnicode with one <000000> <FFFFFF> bfrange (CMap range bomb)"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -151,7 +151,7 @@
       "path": [
         "bounded under a 64 MB heap: 1.4 KB ToUnicode with one 16 M-code cidrange"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -159,7 +159,7 @@
       "path": [
         "bounded under a 64 MB heap: 1.4 KB ToUnicode with one bfchar <00FFFFFF>"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -167,7 +167,7 @@
       "path": [
         "bounded under a 64 MB heap: 1.6 KB FontFile2 stream with /Filter /DCTDecode claiming a 30000 x 30000 image"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -175,7 +175,7 @@
       "path": [
         "bounded under a 64 MB heap: 1.6 KB ToUnicode stream with /Filter /DCTDecode claiming a 30000 x 30000 image"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -183,7 +183,7 @@
       "path": [
         "bounded under a 64 MB heap: 10 MB xref table of 500 000 entries passes the xref limit"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -191,7 +191,7 @@
       "path": [
         "bounded under a 64 MB heap: 100 Identity fonts without ToUnicode (65 KB) pass the glyph limit"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -199,7 +199,7 @@
       "path": [
         "bounded under a 64 MB heap: 100 MB operator bomb (about 100 KB file)"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -207,7 +207,7 @@
       "path": [
         "bounded under a 64 MB heap: 12 KB encoding CMap of 400 000 codespace ranges and a 200 KB string"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -215,7 +215,7 @@
       "path": [
         "bounded under a 64 MB heap: 20 dense kerned text pages extract whole"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -223,7 +223,7 @@
       "path": [
         "bounded under a 64 MB heap: 200 MB ToUnicode CMap bomb (native DecompressionStream)"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -231,7 +231,7 @@
       "path": [
         "bounded under a 64 MB heap: 200 references to one 1 MB stream"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -239,7 +239,7 @@
       "path": [
         "bounded under a 64 MB heap: 220 000 separately positioned text runs pass the text-item limit"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -247,7 +247,7 @@
       "path": [
         "bounded under a 64 MB heap: 3 CIDFonts with a 7 MiB CIDToGIDMap each"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -255,7 +255,7 @@
       "path": [
         "bounded under a 64 MB heap: 30 Identity fonts without ToUnicode stay inside the glyph limit"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -263,7 +263,7 @@
       "path": [
         "bounded under a 64 MB heap: 300 MB text bomb (about 1 MB file)"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -271,7 +271,7 @@
       "path": [
         "bounded under a 64 MB heap: 4 codespace ranges and a 200 KB string still read"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -279,7 +279,7 @@
       "path": [
         "bounded under a 64 MB heap: 40 CIDFonts whose /W and /W2 each span all 65 536 CIDs pass the glyph limit"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -287,7 +287,7 @@
       "path": [
         "bounded under a 64 MB heap: 562 B xref stream with /W [0 0 0] /Size 10 000 000"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -295,7 +295,7 @@
       "path": [
         "bounded under a 64 MB heap: 6 CIDFonts with /W [0 4000000 500] each"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -303,7 +303,7 @@
       "path": [
         "bounded under a 64 MB heap: 6 form XObjects of 7 MiB `q Q` each stop at the call's deadline"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -311,7 +311,7 @@
       "path": [
         "bounded under a 64 MB heap: 6 MB xref table of 300 000 entries still reads"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -319,7 +319,7 @@
       "path": [
         "bounded under a 64 MB heap: 60 000 x 33 extra numeric operands before `n` (nonProcessedArgs keeps only the last 33)"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -327,7 +327,7 @@
       "path": [
         "bounded under a 64 MB heap: 7 MB operator bomb inside the decode limits ends by the token limit or completes"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -335,7 +335,7 @@
       "path": [
         "bounded under a 64 MB heap: 7 MB single string"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -343,7 +343,7 @@
       "path": [
         "bounded under a 64 MB heap: 7 MB text bomb stops at the 256 KiB text limit"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -351,7 +351,7 @@
       "path": [
         "bounded under a 64 MB heap: 714 B object stream with /N 10 000 000"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -359,7 +359,7 @@
       "path": [
         "bounded under a 64 MB heap: 9 KB xref stream with /W [1 0 0] over 9 MB of Flate zeros"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -367,7 +367,7 @@
       "path": [
         "bounded under a 64 MB heap: a Catalog just under the object limit still fits"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -375,7 +375,7 @@
       "path": [
         "bounded under a 64 MB heap: a one-entry object stream still reads"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -383,7 +383,7 @@
       "path": [
         "bounded under a 64 MB heap: a sparse bfrange just under the CMap limit still fits"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -391,7 +391,7 @@
       "path": [
         "bounded under a 64 MB heap: A: 8 KB page, [ [<<>> x 250 000] x 8 ] TJ"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -399,7 +399,7 @@
       "path": [
         "bounded under a 64 MB heap: an object stream header of 200 000 entries passes the object limit"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -407,7 +407,7 @@
       "path": [
         "bounded under a 64 MB heap: an operand just under the object limit still fits"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -415,7 +415,7 @@
       "path": [
         "bounded under a 64 MB heap: B: 8 KB page, [ [[] x 250 000] x 16 ] TJ"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -423,7 +423,7 @@
       "path": [
         "bounded under a 64 MB heap: C: 4 MB uncompressed Catalog /Junk of 1 M empty dictionaries (xref path)"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -431,7 +431,7 @@
       "path": [
         "bounded under a 64 MB heap: eight predefined CJK fonts pass the CMap limit"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -439,7 +439,7 @@
       "path": [
         "bounded under a 64 MB heap: FontFile2 CIDFontType2 with the same program is never parsed"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -447,7 +447,7 @@
       "path": [
         "bounded under a 64 MB heap: FontFile2 TrueType with 65 535 glyphs of 26 points and 65 535 hmtx entries is never parsed"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -455,7 +455,7 @@
       "path": [
         "bounded under a 64 MB heap: FontFile3 CIDFontType0C with the same program is never parsed"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -463,7 +463,7 @@
       "path": [
         "bounded under a 64 MB heap: FontFile3 Type1C with 65 535 charstrings of 30 lines is never parsed"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -471,7 +471,7 @@
       "path": [
         "bounded under a 64 MB heap: four predefined CJK fonts (bundled CMaps) stay inside the CMap limit"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -479,7 +479,7 @@
       "path": [
         "bounded under a 64 MB heap: H2: 7.8 KB page, 26 operands of 70 000 <<>> each before one TJ"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -487,7 +487,7 @@
       "path": [
         "bounded under a 64 MB heap: I2: 7.9 KB page, ([<<>> x 70 000] n) x 26 (extra operands kept in nonProcessedArgs)"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -495,7 +495,7 @@
       "path": [
         "bounded under a 64 MB heap: I3: 3.4 KB page, ([<<>> x 70 000] n) x 10, then text"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -503,7 +503,7 @@
       "path": [
         "bounded under a 64 MB heap: K: 49 KB page drawing 6 form XObjects of 7.8 MiB ([<<>> x 70 000] n) lines each"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -511,7 +511,7 @@
       "path": [
         "bounded under a 64 MB heap: many small bfranges that together pass the CMap limit"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -519,7 +519,7 @@
       "path": [
         "bounded under a 64 MB heap: S: 8.5 KB page, [ (a x 200 000) x 40 ] TJ"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -527,7 +527,7 @@
       "path": [
         "bounded under a 64 MB heap: ToUnicode stream with /Filter /CCITTFaxDecode decodes nothing"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -535,7 +535,7 @@
       "path": [
         "bounded under a 64 MB heap: ToUnicode stream with /Filter /JBIG2Decode decodes nothing"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -543,7 +543,7 @@
       "path": [
         "bounded under a 64 MB heap: ToUnicode stream with /Filter /JPXDecode decodes nothing"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -551,7 +551,7 @@
       "path": [
         "bounded under a 64 MB heap: Type3 CharProc keeping 2 M `1 w` operators in its operator list"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -559,7 +559,7 @@
       "path": [
         "bounded under a 64 MB heap: Type3 CharProc keeping 26 d operands of 70 000 <<>> each in its operator list"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -567,7 +567,7 @@
       "path": [
         "bounded under a 64 MB heap: Type3 CharProc with one path of 1.4 M lineto"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -575,7 +575,7 @@
       "path": [
         "bounded under a 64 MB heap: xref stream whose /Size is longer than its data"
       ],
-      "fingerprint": "156571cfd7872563",
+      "fingerprint": "1e491fc761f2950a",
       "reason": "Windows only: child process URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME); expected to pass on Linux"
     },
     {
@@ -583,7 +583,7 @@
       "path": [
         "active22 is preserved while the predecessor fixture reconstructs exactly thirteen plus readonly seven"
       ],
-      "fingerprint": "478a31073d1e24df",
+      "fingerprint": "54164e09f028bb7c",
       "reason": "gated-proof runtime fixtures no longer match the registered Source on main"
     },
     {
@@ -591,7 +591,7 @@
       "path": [
         "all seven future consumers and five existing workflows fit the unchanged request budget with empty native membership"
       ],
-      "fingerprint": "478a31073d1e24df",
+      "fingerprint": "563161d698eff030",
       "reason": "gated-proof runtime fixtures no longer match the registered Source on main"
     },
     {
@@ -599,7 +599,7 @@
       "path": [
         "67 authenticated entries or actual tips share actual profile and role bytes once and seal below the unchanged limit with zero restore reads"
       ],
-      "fingerprint": "478a31073d1e24df",
+      "fingerprint": "54164e09f028bb7c",
       "reason": "merge-admission natural-frame fixtures no longer match main (run through tests/production-publisher-source.test.mjs)"
     },
     {
@@ -615,7 +615,7 @@
       "path": [
         "authenticated legacy inline snapshots are read once and normalized to configuration and tip references without changing entries or issuing HTTP"
       ],
-      "fingerprint": "478a31073d1e24df",
+      "fingerprint": "54164e09f028bb7c",
       "reason": "merge-admission natural-frame fixtures no longer match main (run through tests/production-publisher-source.test.mjs)"
     },
     {
@@ -639,7 +639,7 @@
       "path": [
         "unknown shared references mixed raw pairs and changed historical directory bytes cannot reuse authenticated snapshots or erase original entries"
       ],
-      "fingerprint": "478a31073d1e24df",
+      "fingerprint": "54164e09f028bb7c",
       "reason": "merge-admission natural-frame fixtures no longer match main (run through tests/production-publisher-source.test.mjs)"
     },
     {
@@ -655,7 +655,7 @@
       "path": [
         "v2 assembly binds old round witnesses and Native jobs to the historical 20-path snapshot while current remains 22"
       ],
-      "fingerprint": "478a31073d1e24df",
+      "fingerprint": "54164e09f028bb7c",
       "reason": "merge-admission natural-frame fixtures no longer match main (run through tests/production-publisher-source.test.mjs)"
     },
     {
@@ -663,7 +663,7 @@
       "path": [
         "v2 assembly retains full round and Native populations when historical snapshots or future-installation witnesses cannot qualify"
       ],
-      "fingerprint": "478a31073d1e24df",
+      "fingerprint": "54164e09f028bb7c",
       "reason": "merge-admission natural-frame fixtures no longer match main (run through tests/production-publisher-source.test.mjs)"
     },
     {
@@ -671,7 +671,7 @@
       "path": [
         "v2 intake proves every actual tip and reuses the current Source tree, allowing five historical tips in one reviewed configuration"
       ],
-      "fingerprint": "478a31073d1e24df",
+      "fingerprint": "54164e09f028bb7c",
       "reason": "merge-admission natural-frame fixtures no longer match main (run through tests/production-publisher-source.test.mjs)"
     },
     {
@@ -679,7 +679,7 @@
       "path": [
         "v2 intake rechecks cached snapshot ancestry when main moves without rereading immutable profiles roles or directory bytes"
       ],
-      "fingerprint": "478a31073d1e24df",
+      "fingerprint": "54164e09f028bb7c",
       "reason": "merge-admission natural-frame fixtures no longer match main (run through tests/production-publisher-source.test.mjs)"
     },
     {
@@ -687,7 +687,7 @@
       "path": [
         "v2 intake rejects unknown mixed or unbound historical bytes and unsafe cached claims while retaining original artifact entries and witnesses"
       ],
-      "fingerprint": "478a31073d1e24df",
+      "fingerprint": "54164e09f028bb7c",
       "reason": "merge-admission natural-frame fixtures no longer match main (run through tests/production-publisher-source.test.mjs)"
     },
     {
@@ -695,7 +695,7 @@
       "path": [
         "v2 intake stops snapshot reads at the existing shared budget and retains every already proved snapshot and original artifact population"
       ],
-      "fingerprint": "478a31073d1e24df",
+      "fingerprint": "54164e09f028bb7c",
       "reason": "merge-admission natural-frame fixtures no longer match main (run through tests/production-publisher-source.test.mjs)"
     },
     {

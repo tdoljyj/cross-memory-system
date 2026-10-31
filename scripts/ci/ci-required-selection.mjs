@@ -19,8 +19,10 @@
 //     Writes suites=<json> and run_<suite>=true|false to GITHUB_OUTPUT.
 //   node scripts/ci/ci-required-selection.mjs --run <suite> [--root <checkout>]
 //     runs one suite's commands (SUITE_COMMANDS) in the checkout at --root.
+//   node scripts/ci/ci-required-selection.mjs --write-known <suite> [--root <checkout>]
+//     regenerates that suite's ci-known-failures.json entries from a real run.
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -237,11 +239,21 @@ export function expandArgv(argv, { cwd, base, report, listUnit = () => unitTestF
   });
 }
 
+const real = (file) => {
+  try {
+    return realpathSync(file);
+  } catch {
+    return path.resolve(file);
+  }
+};
+
 // Reads the reporter's JSON lines (ci-test-failures-reporter.mjs). Files are
-// made relative to the checkout root with forward slashes, so entries match on
-// any runner.
+// made relative to the checkout root with forward slashes, both sides resolved
+// to real paths (Node reports a test file's real path; a runner directory may
+// sit behind a link), so entries match on any runner.
 export function readReport(text, root) {
   const events = [];
+  const base = root ? real(root) : null;
   for (const line of String(text ?? '').split('\n')) {
     if (!line.trim()) continue;
     let event;
@@ -250,8 +262,8 @@ export function readReport(text, root) {
     } catch {
       return { events, summary: null, corrupt: true };
     }
-    if (typeof event.file === 'string' && root) {
-      event.file = path.relative(root, event.file).split(path.sep).join('/');
+    if (typeof event.file === 'string' && base) {
+      event.file = path.relative(base, real(event.file)).split(path.sep).join('/');
     }
     events.push(event);
   }
@@ -340,7 +352,50 @@ export function runSuite(id, { root, env = process.env, spawn = spawnSync, log =
 
 const ROOT = path.resolve(HERE, '..', '..');
 
+// The known-failure entries of one run: every failure in the report, keeping
+// the reason of an entry already listed for the same file and path. A new
+// entry gets no reason, so readKnownFailures refuses the list until a person
+// writes one.
+export function knownEntriesFromReport(report, previous = []) {
+  const reasons = new Map(previous.map((entry) => [`${entry.file} :: ${entry.path.join(' > ')}`, entry.reason]));
+  const entries = new Map();
+  for (const event of report.events.filter((candidate) => candidate.type === 'fail')) {
+    const entry = { file: event.file, path: event.path, fingerprint: event.fingerprint,
+      reason: reasons.get(`${event.file} :: ${event.path.join(' > ')}`) ?? '' };
+    entries.set(knownKey(entry), entry);
+  }
+  return [...entries.values()].sort((a, b) => knownKey(a).localeCompare(knownKey(b)));
+}
+
+// --write-known <suite>: run that suite's known-failure command in the checkout
+// and rewrite its entries in ci-known-failures.json from the run.
+function writeKnown(id, root, env) {
+  const command = SUITE_COMMANDS[id]?.find((candidate) => candidate.known);
+  if (!command) throw new Error(`suite ${id} has no known-failure command`);
+  const cwd = path.join(root, command.cwd);
+  const argv = expandArgv(command.argv, { cwd, base: env.CI_BASE_SHA, report: '' });
+  const dir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-known-`));
+  const out = path.join(dir, 'failures.jsonl');
+  const index = argv.indexOf('--test');
+  spawnSync(argv[0], [...argv.slice(1, index + 1), `--test-reporter=${pathToFileURL(REPORTER_PATH).href}`,
+    `--test-reporter-destination=${out}`, ...argv.slice(index + 1)], { cwd, env, stdio: ['ignore', 'ignore', 'inherit'] });
+  const report = readReport(existsSync(out) ? readFileSync(out, 'utf8') : '', root);
+  rmSync(dir, { recursive: true, force: true });
+  if (!report.summary) throw new Error('the run did not finish; nothing written');
+  const data = JSON.parse(readFileSync(KNOWN_FAILURES_PATH, 'utf8'));
+  data[command.known] = knownEntriesFromReport(report, data[command.known] ?? []);
+  writeFileSync(KNOWN_FAILURES_PATH, `${JSON.stringify(data, null, 2)}\n`);
+  const unexplained = data[command.known].filter((entry) => !entry.reason).length;
+  console.log(`${command.known}: ${data[command.known].length} entries written${unexplained ? `, ${unexplained} need a reason` : ''}`);
+  return unexplained ? 1 : 0;
+}
+
 async function main(argv, env = process.env) {
+  const writeIndex = argv.indexOf('--write-known');
+  if (writeIndex >= 0) {
+    const rootIndex = argv.indexOf('--root');
+    return writeKnown(argv[writeIndex + 1], rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT, env);
+  }
   const runIndex = argv.indexOf('--run');
   if (runIndex >= 0) {
     const rootIndex = argv.indexOf('--root');

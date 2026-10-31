@@ -274,6 +274,20 @@ export function pendingReferenceFindings(pending, repositoryOnly, productionObje
   return findings;
 }
 
+// The steps as the replay runs them: data-only rows left out, substitutions
+// applied (each must find its text exactly once). Snapshot rows and ledger
+// rows newer than the snapshot go through the same lists.
+export function prepareReplay(steps, { skipped, substitutions, errors }) {
+  return steps.filter((candidate) => !skipped.has(candidate.file)).map((step) => {
+    let text = step.text;
+    for (const entry of substitutions.get(step.file) ?? []) {
+      if (text.split(entry.find).length !== 2) errors.push(`snapshot_replay_substitution_not_unique:${step.file}`);
+      else text = text.replace(entry.find, () => entry.replace);
+    }
+    return { ...step, text };
+  });
+}
+
 export async function runCheck({ repository, snapshot, catalogSql, log = () => {} }) {
   const report = { contract: 'clued.production-schema-drift-report.v1', status: 'FAIL', errors: [] };
   if (snapshot?.contract !== SNAPSHOT_CONTRACT || !Array.isArray(snapshot.objects) || !Array.isArray(snapshot.applied)) {
@@ -331,16 +345,8 @@ export async function runCheck({ repository, snapshot, catalogSql, log = () => {
       report.errors.push('snapshot_replay_substitution_invalid');
     } else substitutions.set(entry.file, [...(substitutions.get(entry.file) ?? []), entry]);
   }
-  const prepare = (steps) => steps.filter((candidate) => !skipped.has(candidate.file)).map((step) => {
-    let text = step.text;
-    for (const entry of substitutions.get(step.file) ?? []) {
-      if (text.split(entry.find).length !== 2) report.errors.push(`snapshot_replay_substitution_not_unique:${step.file}`);
-      else text = text.replace(entry.find, () => entry.replace);
-    }
-    return { ...step, text };
-  });
-  const replayed = prepare(chain.applied);
-  const ahead = prepare(chain.ahead);
+  const replayed = prepareReplay(chain.applied, { skipped, substitutions, errors: report.errors });
+  const ahead = prepareReplay(chain.ahead, { skipped, substitutions, errors: report.errors });
   for (const file of substitutions.keys()) {
     if (![...chain.applied, ...chain.ahead].some((step) => step.file === file)) report.errors.push(`snapshot_replay_substitution_not_applied:${file}`);
   }

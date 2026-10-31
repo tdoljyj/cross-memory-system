@@ -1,9 +1,9 @@
-# 测试、构建与迁移验证成为必需检查 · 设计说明 v3
+# 测试、构建与迁移验证成为必需检查 · 设计说明 v4
 
 - 日期：2026-11-01（UTC）
 - KooYomi：项目 0597aa60；Task `2a5fdb66`（本工作），拆出的漂移检查 Task `16b795e6`；认领 `1b3d6e2f`。
 - 依据：Owner 目标 Decision `afec9be8`（全部算力可调度、完整 CI/CD），顺序 Decision `02e4374a`（本项第 3 项）；费用规则 Decision `9eb313f8`（新作业只用自建算力，[Runbook §2.4](../../docs/maintenance/runner-configuration-and-operations.md#24-现有与未来任务的费用原则迁移与防回流)）；不稳定测试隔离 Task `679a0c2b`；配置改动先独立审核 `01d4ba7d`。
-- 修订：v1 经独立审核 FAIL（1 BLOCKER、3 MAJOR），v2 逐项修正；v2 第二轮 FAIL（3 MAJOR），v3 再修，见 §10。
+- 修订：v1 经独立审核 FAIL（1 BLOCKER、3 MAJOR），v2 逐项修正；v2 第二轮 FAIL（3 MAJOR），v3 再修；v3 第三轮 FAIL（1 MAJOR），v4 再修，见 §10。
 - 状态：代码与测试在 PR #971；前置的门禁登记在单独的 PR（§7）。三项新检查还**不是**必需检查，加进规则集要 Owner 操作（§8）。
 
 ## 0. 结论
@@ -60,8 +60,11 @@
 - `scripts/ci/ci-known-failures.json` 按套件列出 main 上已经失败的测试：`clued-cloud` 86 条、`admission-self-tests` 4 条。每条由三样确定：测试文件（相对仓库根）、完整的测试路径（外层 describe 和父测试在前）、失败指纹，外加原因。
 - 带 `known` 的命令用 trusted base 上的报告器 `scripts/ci/ci-test-failures-reporter.mjs` 跑 Node 测试运行器。报告器记下每一次 `test:fail`：普通测试、suite、hook（`hookFailed`）、在子测试之后抛错的父测试、加载失败的文件；只因子测试失败而失败的父测试（`subtestsFailed`）不单记，由子测试承担。指纹是失败类型、错误码和去掉路径、十六进制摘要、数字之后的失败消息的 sha256 前 16 位，所以同一个已知测试换了失败原因就是新失败（独立审核第二轮 MAJOR-2：`clued-merge-slot-ci.yml` 清单缺 `clued-required-tests` 这件事，如今就体现在那条已知失败的指纹和原因里）。
 - 判定：任何对不上已知条目的失败让套件失败（出 `::error`）；运行没有总结事件（没跑完）、退出码不是 0 或 1（信号、超时）、非零退出却没有失败、有失败却退出 0，也都失败。已知条目照常失败出 `::warning`；已知测试通过、或者已不存在时提示删除。
-- 清单和报告器都在 trusted base 上读取，候选改不了；改它们会让所有套件都跑。同一份代码在 TURING 上连跑两次，90 条指纹完全一致。
-- `resource-center-storage-read-pdf-bounds` 的 62 条是 Windows 才失败（子进程 URL），预计 Linux 能过；第一次自建 Linux 运行后按提示删掉。
+- 测试结束后的异步错误（未捕获异常、未处理的 rejection）Node 只发一条诊断，报告器把它记成 `<async activity after the test ended> > 测试名` 的失败；todo 测试的失败不记（Node 不因它判失败）。文件路径两边都取真实路径再比较，runner 目录在链接后面也能对上（独立审核第三轮）。
+- 指纹去掉路径、行列号、十六进制摘要、时长、时间戳和五位以上的长数字，小数字保留：断言里的 `23 !== 22` 变成 `24 !== 22` 就是新失败。同一份代码在 TURING 上连跑两次，90 条指纹完全一致。
+- 清单和报告器都在 trusted base 上读取，候选改不了；改它们会让所有套件都跑。重新生成：`node scripts/ci/ci-required-selection.mjs --write-known <套件>`，已有条目的原因按文件和测试路径保留，新条目没有原因，清单读取时会被拒，必须有人写上原因。
+- 残余：已有已知失败的测试文件，如果在测试全部结束后以非零码退出（`process.exit(3)` 之类），Node 不发任何失败事件，这个退出码被已知失败“解释”掉。这是 Node 测试运行器的限制，清单里的条目都来自这几个文件：`apps/clued-cloud/tests/ci-proof-profiles.test.mjs`、`production-publisher-source.test.mjs`、`ci-temporary-storage.test.mjs`、`integration-runtime-gate-evidence.test.mjs`、`resource-center-daily-install.test.mjs`、`resource-center-storage-read-pdf-bounds.test.mjs`，以及 `scripts/ci/clued-work-admission.test.mjs`、`clued-merge-slot-ci.test.mjs`。修好这些文件、删掉条目，残余就消失。
+- 首次在自建 Linux runner 上运行时，Windows 才有的失败（`pdf-bounds` 62 条等）会提示“now passes”，Linux 才有的失败会报新失败。在 Owner 把检查加进规则集之前，先在 Linux 上跑一次，用 `--write-known` 重新生成清单。
 
 ## 4. 生产 schema 漂移检查（Task `16b795e6`）
 
@@ -107,7 +110,7 @@
 - 用 18:45Z 的快照，在 TURING 本机套上 #967 修好后的文件（`be3ea75b`，迁移文件与账本）完整跑通：生产链 1 个 prehistory 加 296 行重放（1 行纯数据跳过），指纹与生产一致（含属主、参数默认值、列授权、序列参数），没有过期的例外，没有待上线迁移，结果 PASS。
 - 重放还顺带确认了 `20261010161848_worker_gateway_closeout_v1` 里钉住的 G6 函数体 md5（只在按文件 LF 文本重放时才能通过；账本的 transform 记的是存储形态，不一定是执行形态）。
 - 引用规则对最近 158 个迁移只命中一处，就是 `20261023092957_ci_scheduling_stage1_v1` 的 `b.expires_at`；#967 修过的写法（`to_jsonb(b)->>'expires_at'`）不命中。
-- 单元测试：`apps/clued-cloud/tests/production-schema-drift.test.mjs`（14 项），选择、运行、报告器与已知失败：`scripts/ci/ci-required-selection.test.mjs`（20 项）。
+- 单元测试：`apps/clued-cloud/tests/production-schema-drift.test.mjs`（15 项），选择、运行、报告器与已知失败：`scripts/ci/ci-required-selection.test.mjs`（23 项）。
 
 ### 4.6 首次对照发现的生产漂移（交给 Task `16b795e6`）
 
@@ -151,7 +154,7 @@
 1. 批准门禁登记 PR 的受保护改动（`repo.protected_change`）。
 2. 接受并安装（或原地升级）含这次登记的常驻 Source：常驻节点的准入评估器要换成新版本，这是 Source 变更，要 Owner 接受，安装时 UAC。
 3. 批准 PR #971 的受保护改动。
-4. 规则集 `24182890` 增加三项必需检查，integration 都钉 **GitHub Actions（App `15368`）**，不能留空：`clued-cloud-tests`、`ci-suites`、`migration-verify`。现有六项和 `strict` 等其他设置不变。建议在一个普通 PR 上看到三项都实际通过之后再加。
+4. 先让三项检查在一个普通 PR 上于自建 Linux runner 实际跑一次，用 `--write-known` 按 Linux 结果更新已知失败清单（Agent 做，开普通 PR）。然后，规则集 `24182890` 增加三项必需检查，integration 都钉 **GitHub Actions（App `15368`）**，不能留空：`clued-cloud-tests`、`ci-suites`、`migration-verify`。现有六项和 `strict` 等其他设置不变。建议在一个普通 PR 上看到三项都实际通过之后再加。
 5. **不需要**重新启用任何停用的工作流，也不改 App、Secret、环境或 runner。
 
 ## 9. 后续项（不在本 PR）
@@ -198,3 +201,16 @@
 | NIT | 反复解码 XML 名字 | 不再用 JUnit |
 | NIT | SCHEMA_STATEMENT 可被动态 SQL 绕过 | 接受：清单要审查 |
 | NIT | push 到 main 时 cancel-in-progress 会取消前一次 main 的运行 | 只在 PR 上取消 |
+
+第三轮（v3，2026-11-01）FAIL：第二轮的指纹和传递闭包已修好；1 MAJOR、4 MINOR、4 NIT。处理：
+
+| 编号 | 问题 | 处理 |
+| --- | --- | --- |
+| MAJOR | 同文件有已知失败时，测试结束后的异步错误（只发 diagnostic）被掩盖 | 报告器把这类诊断记成失败；非零的晚退出写为残余（§3.4） |
+| MINOR-1 | 所有数字都被抹掉，`23 !== 22` 与 `24 !== 22` 同指纹 | 只抹掉行列号、时长、时间戳、五位以上数字 |
+| MINOR-2 | runner 目录在链接后时全部条目对不上 | 两边都取真实路径 |
+| MINOR-3 | todo 测试失败会误报 | 不记 todo 失败 |
+| MINOR-4 | 比快照新的账本行的跳过与替换没有单测 | 抽成 `prepareReplay` 并测试 |
+| NIT | 清单无法复现生成 | 新增 `--write-known` |
+| NIT | 并发注释不准确 | 改写 |
+| NIT | 文件级失败指纹相同、测试自身 stdout 产生的注解 | 接受 |

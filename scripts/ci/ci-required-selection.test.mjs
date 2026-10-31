@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   FILE_LIMIT, REPORTER_PATH, SELECT_ALL, SUITES, SUITE_COMMANDS, changedFiles, expandArgv, globToRegExp, knownFailureVerdict, knownKey,
-  listPullRequestFiles, outputLines, readKnownFailures, readReport, runSuite, selectSuites,
+  knownEntriesFromReport, listPullRequestFiles, outputLines, readKnownFailures, readReport, runSuite, selectSuites,
 } from './ci-required-selection.mjs';
 import { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
 
@@ -221,6 +221,8 @@ test('known one', () => { throw new Error('old reason 12 at /tmp/x/y.mjs'); });
 test('parent', async (t) => { await t.test('child ok', () => {}); throw new Error('parent after subtests'); });
 describe('suite', () => { after(() => { throw new Error('hook'); }); it('inner ok', () => {}); });
 test('only child fails', async (t) => { await t.test('child', () => { throw new Error('child'); }); });
+test('late rejection', () => { setTimeout(() => Promise.reject(new Error('late boom')), 1); });
+test('todo fails', { todo: true }, () => { throw new Error('todo'); });
 `,
   'b.test.mjs': `import test from 'node:test';
 test('known one', () => { throw new Error('old reason 12 at /tmp/x/y.mjs'); });
@@ -232,8 +234,9 @@ test('the reporter records every failure with its file, nesting path and fingerp
   assert.equal(status, 1);
   assert.ok(report.summary, 'the run summary is recorded');
   const fails = report.events.filter((event) => event.type === 'fail').map((event) => `${event.file} :: ${event.path.join(' > ')}`).sort();
-  assert.deepEqual(fails, ['a.test.mjs :: known one', 'a.test.mjs :: only child fails > child', 'a.test.mjs :: parent', 'a.test.mjs :: suite',
-    'b.test.mjs :: known one'], 'a parent throwing after its subtests and a failing hook are failures; a parent failing only through a subtest is not');
+  assert.deepEqual(fails, ['a.test.mjs :: <async activity after the test ended> > late rejection', 'a.test.mjs :: known one',
+    'a.test.mjs :: only child fails > child', 'a.test.mjs :: parent', 'a.test.mjs :: suite', 'b.test.mjs :: known one'],
+    'a parent throwing after its subtests, a failing hook and an error after a test ended are failures; a parent failing only through a subtest and a todo test are not');
   const hook = report.events.find((event) => event.type === 'fail' && event.path[0] === 'suite');
   assert.equal(hook.failure_type, 'hookFailed');
   const [a, b] = report.events.filter((event) => event.type === 'fail' && event.path[0] === 'known one');
@@ -318,11 +321,48 @@ test('the committed known-failure list is well formed, one entry per failure, ea
   assert.throws(() => readKnownFailures(file), /must be a list/);
 });
 
-test('the reporter normalizes paths, digests and numbers out of a fingerprint and keeps the message otherwise', () => {
+test('the reporter normalizes paths, digests, positions, durations and long numbers, and keeps small numbers', () => {
   assert.equal(normalizeFailure('expected 3 got 4 in C:\\Users\\x\\Temp\\run-1\\a.mjs and /tmp/clued-test-run-AB12/b.mjs sha 0123abcd4567'),
-    'expected <n> got <n> in <path> and <path> sha <hex>');
+    'expected 3 got 4 in <path> and <path> sha <hex>');
+  assert.equal(normalizeFailure('at a.test.mjs:3:17 took 12.5ms at 2026-11-01T01:02:03.456Z port 54321'),
+    'at a.test.mjs:<line> took <ms> at <time> port <n>');
+  assert.notEqual(normalizeFailure('23 !== 22'), normalizeFailure('24 !== 22'), 'a different small value is a different failure');
   const a = failureFingerprint({ failureType: 'testCodeFailure', cause: new Error('x at /tmp/1/a') });
   assert.equal(a, failureFingerprint({ failureType: 'testCodeFailure', cause: new Error('x at /home/runner/9/b') }));
   assert.notEqual(a, failureFingerprint({ failureType: 'hookFailed', cause: new Error('x at /tmp/1/a') }));
   assert.notEqual(a, failureFingerprint({ failureType: 'testCodeFailure', cause: new Error('y at /tmp/1/a') }));
+});
+
+test('an error after a test ended is a new failure even when its file has a known failure (round 3)', () => {
+  const { status, report } = runFixture({ 'a.test.mjs': `import test from 'node:test';
+test('known', () => { throw new Error('old'); });
+test('late', () => { setTimeout(() => { throw new Error('late throw'); }, 1); });
+` });
+  const known = report.events.filter((event) => event.type === 'fail' && event.path[0] === 'known').map((event) => ({ ...event, reason: 'r' }));
+  assert.equal(known.length, 1);
+  const verdict = knownFailureVerdict({ status, report, known });
+  assert.equal(verdict.ok, false);
+  assert.deepEqual(verdict.unexpected.map((entry) => entry.path.join(' > ')), ['<async activity after the test ended> > late']);
+});
+
+test('report files are matched by real path when the checkout sits behind a link', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'ci-real-'));
+  const target = path.join(dir, 'real');
+  const link = path.join(dir, 'link');
+  mkdirSync(path.join(target, 'tests'), { recursive: true });
+  symlinkSync(target, link, 'junction');
+  const line = JSON.stringify({ type: 'fail', file: path.join(target, 'tests', 'a.test.mjs'), path: ['t'], fingerprint: 'f'.repeat(16) });
+  writeFileSync(path.join(target, 'tests', 'a.test.mjs'), '');
+  assert.equal(readReport(line, link).events[0].file, 'tests/a.test.mjs');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('regenerated entries keep listed reasons and leave new failures without one', () => {
+  const report = readReport([
+    { type: 'fail', file: 'x.test.mjs', path: ['old'], fingerprint: '2'.repeat(16) },
+    { type: 'fail', file: 'x.test.mjs', path: ['new'], fingerprint: '3'.repeat(16) },
+    { type: 'summary', counts: {}, success: false },
+  ].map((event) => JSON.stringify(event)).join('\n'), '');
+  const entries = knownEntriesFromReport(report, [{ file: 'x.test.mjs', path: ['old'], fingerprint: '1'.repeat(16), reason: 'kept' }]);
+  assert.deepEqual(entries.map((entry) => [entry.path[0], entry.fingerprint[0], entry.reason]), [['new', '3', ''], ['old', '2', 'kept']]);
 });
