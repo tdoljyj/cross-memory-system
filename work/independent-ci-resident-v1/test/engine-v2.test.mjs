@@ -18,7 +18,7 @@ const fact = (o = {}) => ({ contract: 'clued.independent-ci.resident-stage-fact/
 const SC_QC = 'BINARY_PATH_NAME   : "C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe"\r\n        START_TYPE         : 3   DEMAND_START\r\n        SERVICE_START_NAME : .\\clued-control\r\n';
 const SC_Q = 'STATE              : 1  STOPPED\r\n        PID                : 0\r\n';
 
-async function engineFixture(t, { answers = {}, stdout = {}, testSha = null } = {}) {
+async function engineFixture(t, { answers = {}, stdout = {}, testSha = null, trainMode = undefined } = {}) {
   const root = await tempRoot(t);
   const sourceRoot = path.join(root, 'source', 'e'.repeat(64));
   await fs.mkdir(path.join(sourceRoot, ...V2), { recursive: true });
@@ -46,6 +46,7 @@ async function engineFixture(t, { answers = {}, stdout = {}, testSha = null } = 
     async await(req) { return Object.hasOwn(answers, req.kind) ? answers[req.kind] : { ok: true, code: null }; },
   };
   const engine = new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run, busy: () => false, companionMailbox, sleep: async () => {}, clock: () => Date.parse('2026-10-21T08:00:00Z'),
+    ...(trainMode === undefined ? {} : { trainMode }),
     paths: { sourceRoot, workRoot: path.join(root, 'work'), outboxRoot: path.join(root, 'outbox'), nodeExe: 'C:\\resident\\runtime\\node.exe',
       powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', scExe: 'C:\\Windows\\System32\\sc.exe' } });
   return { root, engine, runs, sent };
@@ -117,6 +118,34 @@ test('stages run through node invoke-stage.mjs with fixed argv; the v2 fact is p
   assert.deepEqual([failed.ok, failed.code], [false, 'BATCH_CLAIM_CHANGED']);
 });
 
+test('the train mode channel (DESIGN §41.2): the installed policy reaches stage 8 (and 1) as train-mode.json; off, shadow and none read off, shadow, off', async t => {
+  const { installedTrainMode } = await import('../src/engine-windows.mjs');
+  const { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } = await import('../src/policy.mjs');
+  const { prepareStageDirectory } = await import('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/invoke-stage.mjs');
+  const { readStageTrainMode, stageTrainModeText, STAGE_TRAIN_MODE_FILE } = await import('../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-mode.mjs');
+  const v8 = enabled => validatePolicy(rawPolicy({ contract: POLICY_CONTRACT_V8, train: { enabled, nonFrontRuns: true, maintenanceEveryMs: 600000, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS } }));
+  const cases = [[v8('on'), 'on'], [v8('shadow'), 'shadow'], [v8('off'), 'off'], [validatePolicy(rawPolicy()), installedTrainMode(validatePolicy(rawPolicy()))], [null, 'off']];
+  for (const [i, [policy, expected]] of cases.entries()) {
+    const f = await engineFixture(t, policy ? { trainMode: installedTrainMode(policy) } : {});
+    const batch = await f.engine.derive(subject, KEY);
+    for (const stage of [stages[0], stages[1], stages[7]]) await f.engine.runStage(batch, stage);
+    const invoked = f.runs.filter(a => a[1]?.endsWith('invoke-stage.mjs'));
+    const modeOf = a => (a.includes('--train-mode') ? a[a.indexOf('--train-mode') + 1] : null);
+    assert.deepEqual(invoked.map(a => a[a.indexOf('--stage') + 1]), ['1', '2', '8']);
+    assert.equal(modeOf(invoked[1]), null, 'only stages 1 and 8 carry it');
+    // the invoker writes what it was given into the stage directory; the stage reads it there
+    for (const [n, argv] of [[1, invoked[0]], [8, invoked[2]]]) {
+      const dir = await prepareStageDirectory({ stageRoot: f.root, nonce: `${i}${n}`.padEnd(32, '0'), sealed: { files: { 'formal-service-entry.json': Buffer.from('{}'), 'jobs.json': Buffer.from('[]') } },
+        trainMode: modeOf(argv) });
+      assert.equal(await readStageTrainMode(dir), expected, `stage ${n}, ${expected}`);
+      const files = (await fs.readdir(dir)).sort();
+      if (policy) assert.equal(await fs.readFile(path.join(dir, STAGE_TRAIN_MODE_FILE), 'utf8'), stageTrainModeText(expected));
+      else assert.deepEqual(files, ['formal-service-entry.json', 'jobs.json'], 'no port: no file, read as off');
+    }
+  }
+  assert.throws(() => new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run: async () => ({}), trainMode: 'ON' }), { code: 'RESIDENT_TRAIN_MODE_INVALID' });
+});
+
 test('stage 2 first proves no push since the bundle; a moved ref ends the stage cleanly before anything runs', async t => {
   const f = await engineFixture(t, { answers: { 'check-refs': { ok: false, code: 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' } } });
   const batch = await f.engine.derive(subject, KEY);
@@ -149,6 +178,24 @@ test('stage 10 (quota phase 2 step 3c-1): a train run derived into work\train an
   assert.deepEqual([invoke[invoke.indexOf('--stage') + 1], invoke[invoke.indexOf('--batch-key') + 1]], ['10', key]);
   assert.equal(f.sent.length, 0, 'no companion request: Windows only, no relay pump');
   await assert.rejects(f.engine.runTrainStage('on'), e => e.code === 'RESIDENT_TRAIN_MODE_INVALID');
+});
+
+test('stage 10 (step 3c-2b): the train-run /2 params go as --train-params (the job\'s param order); a mode that does not match them is refused', async t => {
+  const { trainRunInput } = await import('../src/train.mjs');
+  const { TRAIN_DEFAULTS } = await import('../src/policy.mjs');
+  const { TRAIN_RUN_PARAMS } = await import('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/train-run.mjs');
+  const train = { contract: 'clued.independent-ci.train-facts/2', mode: 'on', at: '2026-10-21T08:00:00.000Z', wouldDo: 'NO_FRONT', front: null };
+  const f = await engineFixture(t, { stdout: { 10: fact({ stage: 10, outcome: { status: 'TRAIN_FACTS', reason: null, sideEffects: 2, mayHavePublished: true }, train }) } });
+  const input = trainRunInput({ mode: 'on', settings: TRAIN_DEFAULTS, onSince: Date.parse('2026-10-21T07:00:00Z'), revokeHeadRequestId: '0a1b2c3d-0000-4000-8000-0000000000aa' });
+  const r = await f.engine.runTrainStage('on', input);
+  assert.equal(r.ok, true);
+  const derive = f.runs.find(a => a.includes('--train-run'));
+  assert.equal(derive[derive.indexOf('--mode') + 1], 'on');
+  const params = JSON.parse(derive[derive.indexOf('--train-params') + 1]);
+  assert.deepEqual(Object.keys(params), [...TRAIN_RUN_PARAMS]);
+  assert.deepEqual([params.onSince, params.revokeHeadRequestId, params.frontPr], ['2026-10-21T07:00:00.000Z', '0a1b2c3d-0000-4000-8000-0000000000aa', null]);
+  await assert.rejects(f.engine.runTrainStage('shadow', input), e => e.code === 'RESIDENT_TRAIN_MODE_INVALID');
+  await assert.rejects(f.engine.runTrainStage('on', { ...input, onSince: null }), e => e.code === 'RESIDENT_TRAIN_MODE_INVALID');
 });
 
 test('WindowsEngine requires the pinned full node before any process port and queries only its runner service', async () => {

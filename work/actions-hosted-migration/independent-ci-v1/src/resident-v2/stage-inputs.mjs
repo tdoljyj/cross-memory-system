@@ -101,7 +101,9 @@ export async function writeOutcome({ receiptsRoot = STATE_V2.receipts, nonce, pl
   const outcome = { contract: OUTCOME_CONTRACT, nonce, stage: plan?.stage ?? null, entryRole: plan?.entryRole ?? null, jobIds: Array.isArray(jobIds) ? jobIds : [],
     status, reason: typeof r.reason === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(r.reason) ? r.reason : null, sideEffects,
     // Anything but a clean BLOCKED with zero side effects may have published. Stage 10 facts with zero side effects
-    // (shadow mode writes nothing to GitHub or KooYomi) are the other clean ending.
+    // (shadow mode writes nothing to GitHub or KooYomi) are the other clean ending; in on and revoke-only mode (DESIGN §41.3,
+    // §41.4) facts /2 with side effects are a normal ending that may have published (stage-fact.mjs accepts exactly
+    // mayHavePublished === sideEffects > 0 there, and shadow only with zero).
     mayHavePublished: !((status === 'BLOCKED' || (plan?.entryRole === 'train-maintenance' && status === 'TRAIN_FACTS')) && sideEffects === 0), diagnostic: sanitizeAdmissionDiagnosticV2(r.admissionDiagnostic),
     // Resident quota redesign v0.6 §9 phase 1: the entry's own "safe to re-run" flag (only ever on a clean BLOCKED with
     // zero side effects) and the scheduling facts Native reported (ci_retry_after, merge-queue entry). The resident

@@ -4,7 +4,8 @@
 //   2. write this invocation's public inputs into a NEW resident\stage\<nonce>\ directory (plan, jobs and,
 //      for a check-publisher stage, the signed scanner result copied from the spool after checking its
 //      ready marker and subject) — no Public file is ever replaced, so there are no .bak/.tmp names to
-//      collide across batches (lesson: rNN had to archive 8 helpers and 18 backups per batch);
+//      collide across batches (lesson: rNN had to archive 8 helpers and 18 backups per batch); for stages 1 and 8 also the
+//      installed train mode (train-mode.json, DESIGN §41.2; the C# boundary reads only the files it names, never lists the directory);
 //   3. ask CluedCISwapBroker (SYSTEM) to run the ONE installed generic helper once with
 //      (nonce, configSha256); the resident itself has no right on the runner service;
 //   4. read the helper's native receipt and the entry's outcome record (bound by hash) and print one
@@ -25,6 +26,8 @@ import { readRecordDocs } from './derive-batch.mjs';
 import { validateRecordV2 } from './record.mjs';
 import { makeBrokerRequest, validateBrokerResponse } from './broker-protocol.mjs';
 import { buildStageFact } from './stage-fact.mjs';
+import { TRAIN_MODES } from '../independent-control-checks-v2/train-rules.mjs';
+import { STAGE_TRAIN_MODE_FILE, TRAIN_MODE_STAGES, stageTrainModeText } from '../independent-control-checks-v2/train-mode.mjs';
 import { HEX64, NONCE32, STATE_V2, WIN_RESIDENT, WIN_RECORD, WIN_SPOOL, WIN_STAGE, ENTRY_V2 } from './layout.mjs';
 
 export const RESULT_WRAPPER_CONTRACT_V2 = 'clued.independent-ci.protected-job-result/2';
@@ -68,13 +71,16 @@ export async function readSpoolResult(spoolRoot, job) {
   return Buffer.from(canonical(wrapper.envelope));
 }
 
-export async function prepareStageDirectory({ stageRoot, nonce, sealed, resultBytes = null }) {
+// trainMode (stages 1 and 8 only, DESIGN §41.2): the installed train.enabled, written create-only as train-mode.json, exactly
+// train-mode.mjs#stageTrainModeText; none is written otherwise (the stage then reads 'off').
+export async function prepareStageDirectory({ stageRoot, nonce, sealed, resultBytes = null, trainMode = null }) {
   check(NONCE32.test(nonce), 'STAGE_NONCE_INVALID');
   const dir = path.join(stageRoot, nonce);
   await fs.mkdir(dir); // never recursive, never an existing directory
   await writeNew(path.join(dir, 'formal-service-entry.json'), sealed.files['formal-service-entry.json']);
   await writeNew(path.join(dir, 'jobs.json'), sealed.files['jobs.json']);
   if (resultBytes) await writeNew(path.join(dir, 'result.json'), resultBytes);
+  if (trainMode !== null) await writeNew(path.join(dir, STAGE_TRAIN_MODE_FILE), Buffer.from(stageTrainModeText(trainMode), 'utf8'));
   return dir;
 }
 
@@ -92,10 +98,10 @@ export async function askBroker({ brokerRoot, request, clock, sleep, waitUntil }
 
 export async function invokeStage({ batchDir, stage, workManifestSha256, batchKey, stageRoot = WIN_STAGE, brokerRoot = path.join(WIN_RESIDENT, 'broker'),
   spoolRoot = WIN_SPOOL, receiptsRoot = STATE_V2.receipts, recordDocs = null, clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)),
-  nonce = randomBytes(16).toString('hex') }) {
+  nonce = randomBytes(16).toString('hex'), trainMode = null }) {
   let sealed, controllerSid;
   try {
-    check(Number.isSafeInteger(stage) && HEX64.test(batchKey ?? ''), 'STAGE_PACKAGE_REFUSED');
+    check(Number.isSafeInteger(stage) && HEX64.test(batchKey ?? '') && (trainMode === null || TRAIN_MODES.includes(trainMode)), 'STAGE_PACKAGE_REFUSED');
     sealed = await readSealedStage(batchDir, stage, workManifestSha256);
     check(sealed.plan.batchKey === batchKey, 'STAGE_PACKAGE_REFUSED');
     const record = validateRecordV2(recordDocs ?? readRecordDocs(WIN_RECORD), { now: clock() });
@@ -109,15 +115,18 @@ export async function invokeStage({ batchDir, stage, workManifestSha256, batchKe
     try { resultBytes = await readSpoolResult(spoolRoot, JSON.parse(sealed.files['jobs.json'].toString('utf8'))[0]); }
     catch { return buildStageFact({ stage, nonce, workManifestSha256, preflightCode: 'STAGE_INPUT_RESULT_MISSING' }); }
   }
-  await prepareStageDirectory({ stageRoot, nonce, sealed, resultBytes });
+  await prepareStageDirectory({ stageRoot, nonce, sealed, resultBytes, trainMode: TRAIN_MODE_STAGES.includes(stage) ? trainMode : null });
   const request = makeBrokerRequest({ stage, nonce, configSha256: sealed.planSha256, now: clock() });
   // The broker answers after the helper stopped and the original binary was restored; a missing
   // answer after the deadline plus restore time is unknown, never success.
   const { response } = await askBroker({ brokerRoot, request, clock, sleep, waitUntil: Date.parse(request.deadline) + 180_000 });
   const receiptBytes = await readBounded(path.join(receiptsRoot, `windows-formal-entry-${nonce}.json`), 65536).catch(() => null);
   const outcomeBytes = await readBounded(path.join(receiptsRoot, `outcome-${nonce}.json`), 65536).catch(() => null);
+  // Stage 10: the sealed train-run job's mode, for the fact's mode check (stage-fact.mjs).
+  let trainJobMode = null;
+  if (sealed.row.entryRole === 'train-maintenance') { try { trainJobMode = JSON.parse(sealed.files['jobs.json'].toString('utf8'))[0]?.mode ?? null; } catch { trainJobMode = null; } }
   return buildStageFact({ stage, nonce, plan: sealed.plan, planSha256: sealed.planSha256, workManifestSha256, broker: response,
-    receipt: receiptBytes ? parse(receiptBytes) : null, receiptBytes, outcome: outcomeBytes ? parse(outcomeBytes) : null, outcomeBytes, controllerSid });
+    receipt: receiptBytes ? parse(receiptBytes) : null, receiptBytes, outcome: outcomeBytes ? parse(outcomeBytes) : null, outcomeBytes, controllerSid, trainJobMode });
 }
 
 // C2 builds only a public stage-11 package, never a batch ledger/workspace. The intent manifest is
@@ -208,14 +217,16 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     output.write(JSON.stringify(fact) + '\n');
     return fact.state === 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' ? 0 : 41;
   }
+  // --train-mode (optional; the resident passes it for stages 1 and 8, engine-windows.mjs#installedTrainMode): off|shadow|on.
   const args = {};
   for (let i = 0; i < argv.length; i += 2) {
-    if (!['--batch-dir', '--stage', '--work-manifest-sha256', '--batch-key'].includes(argv[i]) || typeof argv[i + 1] !== 'string' || Object.hasOwn(args, argv[i])) {
+    if (!['--batch-dir', '--stage', '--work-manifest-sha256', '--batch-key', '--train-mode'].includes(argv[i]) || typeof argv[i + 1] !== 'string' || Object.hasOwn(args, argv[i])) {
       output.write(JSON.stringify({ state: 'REFUSED', failure_code: 'STAGE_PACKAGE_REFUSED' }) + '\n'); return 2;
     }
     args[argv[i]] = argv[i + 1];
   }
-  const fact = await invokeStage({ batchDir: args['--batch-dir'], stage: Number(args['--stage']), workManifestSha256: args['--work-manifest-sha256'], batchKey: args['--batch-key'] });
+  const fact = await invokeStage({ batchDir: args['--batch-dir'], stage: Number(args['--stage']), workManifestSha256: args['--work-manifest-sha256'], batchKey: args['--batch-key'],
+    trainMode: args['--train-mode'] ?? null });
   output.write(JSON.stringify(fact) + '\n');
   return fact.state === 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' ? 0 : 41;
 }

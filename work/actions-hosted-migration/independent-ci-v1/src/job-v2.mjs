@@ -76,6 +76,15 @@ export function batchJobsV2(subject) {
 export const sameBatchV2 = (a, b) => ['repo', 'pr', 'headSha', 'baseSha', 'testSha', 'sourceManifestSha256', 'attempt', 'createdAt'].every(k => a?.[k] === b?.[k]);
 // The batch claim of every job is recorded under its batch's work-admission job id (batch-claim-v2.mjs).
 export const batchRefV2 = job => jobIdV2({ ...job, role: 'work-admission' });
+// Merge train (DESIGN §41.4): a front batch is its own identity (H, S), apart from any non-front run of H, and its checks
+// on H are told apart only by their external ids, which carry the job id (S is part of it). The ids of every job of this
+// front subject, each role and attempt; null for a job that tests the head (S = H: everything on H counts, as before).
+export function frontJobIdsV2(job) {
+  if (!isTrainFrontJobV2(job)) return null;
+  const ids = new Set();
+  for (let attempt = 1; attempt <= MAX_ATTEMPT_V2; attempt++) for (const role of ROLES_V2) ids.add(jobIdV2({ ...job, role, attempt }));
+  return ids;
+}
 
 // ---- observed work claim (A-strict: resolved live, never installed) ----
 export const OBSERVED_CLAIM_FIELDS = Object.freeze(['claimId', 'fence', 'epoch', 'expiresAt']);
