@@ -11,6 +11,8 @@ name: clued-compute-panel
 on:
   schedule:
     - cron: "*/5 * * * *"
+  # A run by hand: GitHub may delay or skip */5 schedules (none ran in the first hour after #935).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -62,7 +64,7 @@ jobs:
   probe-company-linux-01:
     name: compute-probe / clued-ci-company-linux-01
     needs: admission-gate
-    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule')
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, runner-company-linux-01]
     timeout-minutes: 5
     steps:
@@ -90,7 +92,7 @@ jobs:
   probe-company-linux-02:
     name: compute-probe / clued-ci-company-linux-02
     needs: admission-gate
-    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule')
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, runner-company-linux-02]
     timeout-minutes: 5
     steps:
@@ -118,7 +120,7 @@ jobs:
   probe-company-linux-03:
     name: compute-probe / clued-ci-company-linux-03
     needs: admission-gate
-    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule')
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, runner-company-linux-03]
     timeout-minutes: 5
     steps:
@@ -146,7 +148,7 @@ jobs:
   probe-company-linux-04:
     name: compute-probe / clued-ci-company-linux-04
     needs: admission-gate
-    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule')
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, runner-company-linux-04]
     timeout-minutes: 5
     steps:
@@ -175,7 +177,7 @@ jobs:
   probe-company-win-01:
     name: compute-probe / clued-ci-company-win-01
     needs: admission-gate
-    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule')
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312, site-company]
     timeout-minutes: 5
     steps:
@@ -202,7 +204,7 @@ jobs:
   probe-home-win-01:
     name: compute-probe / clued-ci-home-win-01
     needs: admission-gate
-    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule')
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312, site-home]
     timeout-minutes: 5
     steps:
@@ -229,7 +231,7 @@ jobs:
   panel:
     name: compute-panel
     needs: admission-gate
-    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule')
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
     timeout-minutes: 10
     permissions:
