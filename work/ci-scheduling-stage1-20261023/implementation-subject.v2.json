@@ -1,0 +1,105 @@
+{
+  "schema": "clued.ci-scheduling-stage1-implementation/1",
+  "revision": "v2",
+  "task_id": "98dbf336-6831-416e-8a94-b36236f72726",
+  "claim_id": "20bd5be1-9373-4bef-8ded-5687f535a831",
+  "base_commit": "c955068da0d06c75cc14f085f4a0a62a53269fd6",
+  "decisions": [
+    "da3dd87b-b2c4-4526-9503-dfcc69282416@1",
+    "b4cd00c5-32cd-4eec-a4fa-1c14416d4b98@1"
+  ],
+  "detailed_design_sha256": "cd2e7750d25c3c9ecaf65c069a98f0d05938b5984d201ed06e98a09ccbdf6286",
+  "status": "REVIEWED_LOCAL_PACKAGE_READY_FOR_NORMAL_SOURCE_DELIVERY",
+  "new_files_only": true,
+  "node_transport_active": false,
+  "pool_execution_active": false,
+  "production_applied": false,
+  "machine_installed": false,
+  "paid_fallback": false,
+  "stage2_readiness": "DESIGN_PREPARATION_ONLY",
+  "validation": {
+    "dedicated_tests": 64,
+    "passed": 64,
+    "failed": 0,
+    "skipped": 0,
+    "database_core": 23,
+    "database_effects": 11,
+    "native_page": 20,
+    "real_webcrypto": 10,
+    "full_typescript": "PASS",
+    "scoped_eslint": "PASS",
+    "migration_ledger_offline": "PASS_1_PENDING",
+    "local_postgresql": "18.4",
+    "production_postgresql_17_qualification": false
+  },
+  "independent_reviews": {
+    "design_v4": "PASS_0B_0M_0MINOR",
+    "native": "PASS_0B_0M_0MINOR",
+    "signature_candidate": "PASS_0B_0M_0MINOR",
+    "sql_core": "PASS_0B_0M_0MINOR",
+    "sql_effects": "PASS_0B_0M_0MINOR"
+  },
+  "merge_gate": "second-phase3c_and_primary_standby_C_series_merged_then_normal_CI_FIFO",
+  "files": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261023092957_ci_scheduling_stage1_v1.sql",
+      "sha256": "d07b76eb1924aed6ba1fd3c913f0665ea6239a1bac2b4aa9538b25c6e81f5d03",
+      "bytes": 137928
+    },
+    {
+      "path": "apps/clued-cloud/app/ci-nodes/page.tsx",
+      "sha256": "8be6579b4a830a9955e794077555094c279a6322b14cf62a3ae55cf3299b3f7b",
+      "bytes": 31197
+    },
+    {
+      "path": "apps/clued-cloud/app/ci-nodes/nodes.css",
+      "sha256": "52609d6ab652446f029e7b8507ae12347e502f8ba49e886308803b033f91a8b3",
+      "bytes": 1130
+    },
+    {
+      "path": "apps/clued-cloud/worker/ci-scheduling-v1.ts",
+      "sha256": "ad2d08ae33a843011df733524bbf6ad397b1897e1eb54372867f38c38d25ccd5",
+      "bytes": 13156
+    },
+    {
+      "path": "apps/clued-cloud/tests/ci-scheduling-stage1-db.test.mjs",
+      "sha256": "f3333d31bff1c6f4013e3d7c55c9fd59aa28387fc86d34152733c476d8ceae27",
+      "bytes": 29264
+    },
+    {
+      "path": "apps/clued-cloud/tests/ci-scheduling-stage1-effects-db.test.mjs",
+      "sha256": "235b9893ca4fd0be5344f3978824ced3f15671c4be29efec818240a10d1462ff",
+      "bytes": 19909
+    },
+    {
+      "path": "apps/clued-cloud/tests/ci-scheduling-stage1-fixture.mjs",
+      "sha256": "d647aa65599a9385ab8457cbfc135a19e4e4463605644f1689a51bfddfb0de9f",
+      "bytes": 11598
+    },
+    {
+      "path": "apps/clued-cloud/tests/ci-scheduling-stage1-ui.test.mjs",
+      "sha256": "e0e4215310cba92eb27747a36ed001d5b46a154b46f56ef068145cc97f0a0aa5",
+      "bytes": 23019
+    },
+    {
+      "path": "apps/clued-cloud/tests/ci-scheduling-stage1-worker.test.mjs",
+      "sha256": "ee06984a89c1518f44b0809212264139037771cc4c49cba42d41415ced44da51",
+      "bytes": 9622
+    },
+    {
+      "path": "work/ci-scheduling-stage1-20261023/README.md",
+      "sha256": "714b03bf2d60e00ff5519c2e6f4dd20f109421e98e232bb3ad061c095355446f",
+      "bytes": 8936
+    },
+    {
+      "path": "work/ci-scheduling-stage1-20261023/independent-review-summary.md",
+      "sha256": "0089cc93b4d1d0dece69a4f4aaa56fe56a20cd6408f305e85772260754e3f961",
+      "bytes": 2736
+    },
+    {
+      "path": "work/ci-scheduling-stage1-20261023/stage2-readiness.md",
+      "sha256": "1ab5379db11b3445674169130f470d942234feb4996fcdc09524f2ece285686d",
+      "bytes": 16637
+    }
+  ]
+}
