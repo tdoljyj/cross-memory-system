@@ -529,18 +529,18 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       assert.deepEqual(receipt, { operation: "storage_access_digest_backfill", status: "committed" });
       // Another version (or a failed read): marked missing, no digest.
       const missing = await commit(track, String(Number(track.provider_file_version) + 1), access);
-      assert.equal(missing.outcome, "missing");
+      assert.equal(missing.outcome, "missing:version_changed");
       const trackAfter = await artifactById(track.id);
       assert.equal(trackAfter.provider_access_digest, null); assert.notEqual(trackAfter.access_digest_missing_at, null);
       // A folder Drive no longer shows (404) is marked missing too.
       const gone = await artifactById((await register({ action: "artifact_register", profile_id: target.profile,
         path: `${target.root}/${TRACK}/gone`, provider_file_id: `st-gone-${randomUUID()}`, provider_file_version: "1",
         target_kind: "directory", governance_class: "ordinary", delete_authority: false })).target_refs.find(ref => ref.role === "primary").id);
-      assert.equal((await commit(gone, null, null)).outcome, "missing");
+      assert.equal((await commit(gone, null, null)).outcome, "missing:not_found");
       assert.notEqual((await artifactById(gone.id)).access_digest_missing_at, null);
-      // None is listed or loadable again.
+      // None is listed again before its backoff (bug 38bb5ddf: a missing mark is retried, not final).
       assert.deepEqual(await mine(), []);
-      await assert.rejects(backfill({ action: "load", connection_id: target.connection, artifact_id: track.id }), /backfill_denied/);
+      assert.equal((await backfill({ action: "load", connection_id: target.connection, artifact_id: track.id })).status, "read_only");
       // An Owner approved update writes a digest and clears the missing mark.
       await register({ action: "artifact_update", profile_id: target.profile, artifact_id: track.id, base_version: Number(trackAfter.version),
         path: trackAfter.path, provider_file_id: trackAfter.provider_file_id, provider_file_version: trackAfter.provider_file_version,
@@ -561,6 +561,154 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       assert.equal(shared.provider_sharing_digest, googleDriveSharingDigest(PRIVATE));
       assert.deepEqual(await mine(), []);
       await assert.rejects(backfill({ action: "load", connection_id: target.connection, artifact_id: shared.id }), /backfill_denied/);
+    });
+
+    // Bug 38bb5ddf (Decision 24422a98): the program, not the Owner, recovers a
+    // missing access digest. As in Drive, a folder that grants exactly what its
+    // unchanged registered parent grants is recorded; a real difference is not.
+    await t.test("bug 38bb5ddf: a missing directory is retried and recorded when it grants exactly its unchanged parent's access", async () => {
+      const { target } = await setup([]);
+      const envelope = { contract: "clued.storage-credential/1", key_id: "fixture", nonce: "x".repeat(16), ciphertext: "y".repeat(24) };
+      await admin.query("update clued_private.storage_connections_v1 set credential_envelope=$2 where id=$1", [target.connection, envelope]);
+      const backfill = async input => (await caller.query("select public.clued_storage_access_digest_backfill_v1($1,$2::jsonb) value",
+        [issuer, JSON.stringify(input)])).rows[0].value;
+      const load = id => backfill({ action: "load", connection_id: target.connection, artifact_id: id });
+      const commit = (row, extra) => backfill({ action: "commit", connection_id: target.connection, artifact_id: row.id,
+        row_version: Number(row.version), registered_version: row.provider_file_version, found: true, ...extra });
+      const access = googleDriveAccessDigest({ permissions: OWNER_ONLY });
+      const wider = googleDriveAccessDigest({ permissions: [...OWNER_ONLY, { id: "anyone", type: "anyone", role: "reader" }] });
+      const side = async id => (await admin.query("select reason,attempts from clued_private.storage_access_digest_recovery_v1 where artifact_id=$1", [id])).rows[0];
+      const due = async () => (await backfill({ action: "due" })).directories.filter(d => d.connection_id === target.connection).map(d => d.artifact_id);
+      const later = id => admin.query("update clued_private.resource_center_artifacts_v1 set access_digest_attempted_at=now()-interval '20 hours' where id=$1", [id]);
+      // The track gets its baseline the ordinary way.
+      let track = await artifact(target, `${target.root}/${TRACK}`);
+      await load(track.id);
+      assert.equal((await commit(track, { observed_version: track.provider_file_version, access_digest: access })).outcome, "recorded");
+      track = await artifactById(track.id);
+      const child = async name => artifactById((await register({ action: "artifact_register", profile_id: target.profile,
+        path: `${target.root}/${TRACK}/${name}`, provider_file_id: `st-${name}-${randomUUID()}`, provider_file_version: "1",
+        target_kind: "directory", governance_class: "ordinary", delete_authority: false })).target_refs.find(ref => ref.role === "primary").id);
+      // The 2026-10-08 case: a folder whose version moved (children were added).
+      let drift = await child("drift");
+      let loaded = await load(drift.id);
+      assert.deepEqual(loaded.parent, { artifact_id: track.id, provider_file_id: track.provider_file_id, row_version: Number(track.version), mode: "access" });
+      assert.equal((await commit(drift, { observed_version: "3", access_digest: access })).outcome, "missing:version_changed");
+      assert.deepEqual(await side(drift.id), { reason: "version_changed", attempts: 1 });
+      drift = await artifactById(drift.id); assert.notEqual(drift.access_digest_missing_at, null);
+      // Backoff, then it comes back by itself.
+      assert.equal((await due()).includes(drift.id), false);
+      await later(drift.id); assert.equal((await due()).includes(drift.id), true);
+      loaded = await load(drift.id);
+      const parent = { artifact_id: track.id, row_version: Number(track.version), observed_digest: access, observed_access: access };
+      // Malformed parent observations are refused.
+      for (const bad of [{ ...parent, extra: 1 }, { ...parent, observed_access: "x" }, { ...parent, row_version: "1" }])
+        await assert.rejects(commit(drift, { observed_version: "3", access_digest: access, parent: bad }), /backfill_denied/);
+      // A parent that changed since its baseline, or since load, is no baseline.
+      assert.equal((await commit(drift, { observed_version: "3", access_digest: access,
+        parent: { ...parent, observed_digest: wider, observed_access: wider } })).outcome, "missing:version_changed");
+      drift = await artifactById(drift.id);
+      assert.equal((await commit(drift, { observed_version: "3", access_digest: access,
+        parent: { ...parent, row_version: Number(track.version) + 1 } })).outcome, "missing:version_changed");
+      drift = await artifactById(drift.id);
+      assert.deepEqual(await side(drift.id), { reason: "version_changed", attempts: 3 });
+      // Same access as the unchanged parent: recorded, the mark and the attempts cleared.
+      const ok = await commit(drift, { observed_version: "3", access_digest: access, parent });
+      assert.equal(ok.outcome, "recorded_inherited");
+      drift = await artifactById(drift.id);
+      assert.equal(drift.provider_access_digest, access); assert.equal(drift.access_digest_missing_at, null);
+      assert.equal(drift.provider_file_version, "1"); assert.equal(await side(drift.id), undefined);
+      const receipt = (await admin.query("select operation,status from public.clued_audit_receipts where id=$1", [ok.receipt_id])).rows[0];
+      assert.deepEqual(receipt, { operation: "storage_access_digest_backfill", status: "committed" });
+      await assert.rejects(load(drift.id), /backfill_denied/);
+      // A real sharing difference is still blocked: never recorded, kept for the Owner.
+      let shared = await child("shared-out");
+      await load(shared.id);
+      assert.equal((await commit(shared, { observed_version: "2", access_digest: wider, parent })).outcome, "missing:access_differs");
+      shared = await artifactById(shared.id);
+      assert.equal(shared.provider_access_digest, null); assert.notEqual(shared.access_digest_missing_at, null);
+      assert.deepEqual(await side(shared.id), { reason: "access_differs", attempts: 1 });
+      // The signed-in Owner sees it, in business terms; the recovered folder is not listed.
+      const attention = async (input = { action: "list" }, db = native) =>
+        (await db.query("select public.clued_storage_access_digest_attention_v1($1::jsonb) value", [JSON.stringify(input)])).rows[0].value;
+      const seen = (await attention()).connections.find(c => c.connection_id === target.connection);
+      assert.deepEqual(seen, { connection_id: target.connection, count: 1, directories: [{ artifact_id: shared.id, path: `${TRACK}/shared-out`,
+        reason: "access_differs", observed_access: wider }] });
+      await assert.rejects(attention({ action: "list", extra: 1 }), /attention_denied/);
+      await assert.rejects(attention(undefined, caller), /permission denied/);
+      // Never given up (review M1): after many attempts it is still tried, at
+      // most every 16 hours, so restoring the sharing recovers it by itself.
+      await admin.query("update clued_private.storage_access_digest_recovery_v1 set attempts=40 where artifact_id=$1", [shared.id]);
+      await admin.query("update clued_private.resource_center_artifacts_v1 set access_digest_attempted_at=now()-interval '15 hours' where id=$1", [shared.id]);
+      assert.equal((await due()).includes(shared.id), false);
+      await later(shared.id); assert.equal((await due()).includes(shared.id), true);
+      shared = await artifactById(shared.id); await load(shared.id);
+      assert.equal((await commit(shared, { observed_version: "2", access_digest: access, parent })).outcome, "recorded_inherited");
+      assert.equal(await side(shared.id), undefined);
+      assert.equal((await attention()).connections.some(c => c.connection_id === target.connection), false);
+      // Gone, unreadable or without a baseline is shown after 3 attempts for the same reason (review r2).
+      let gone = await child("gone-later"), stuck = await child("no-baseline");
+      for (const row of [gone, stuck]) await load(row.id);
+      await commit(gone, { found: false, observed_version: null, access_digest: null });
+      await commit(stuck, { observed_version: "2", access_digest: wider });
+      assert.equal((await attention()).connections.some(c => c.connection_id === target.connection), false);
+      await admin.query("update clued_private.storage_access_digest_recovery_v1 set attempts=2 where artifact_id=any($1)", [[gone.id, stuck.id]]);
+      // A different reason starts a new count.
+      stuck = await artifactById(stuck.id); await load(stuck.id);
+      await commit(stuck, { found: false, observed_version: null, access_digest: null });
+      assert.deepEqual(await side(stuck.id), { reason: "not_found", attempts: 1 });
+      stuck = await artifactById(stuck.id); await load(stuck.id);
+      await commit(stuck, { observed_version: "2", access_digest: wider });
+      await admin.query("update clued_private.storage_access_digest_recovery_v1 set attempts=3 where artifact_id=any($1)", [[gone.id, stuck.id]]);
+      assert.deepEqual((await attention()).connections.find(c => c.connection_id === target.connection).directories, [
+        { artifact_id: gone.id, path: `${TRACK}/gone-later`, reason: "not_found", observed_access: null },
+        { artifact_id: stuck.id, path: `${TRACK}/no-baseline`, reason: "no_baseline", observed_access: wider }]);
+      // Where the program cannot decide, the Owner confirms exactly the observed sharing.
+      const accept = async (input, db = native) =>
+        (await db.query("select public.clued_storage_access_digest_accept_v1($1::jsonb) value", [JSON.stringify(input)])).rows[0].value;
+      const confirm = (row, observed) => accept({ action: "accept", artifact_id: row.id, observed_access: observed });
+      await assert.rejects(confirm(stuck, access), /accept_denied/);
+      await assert.rejects(confirm(gone, wider), /accept_denied/);
+      await assert.rejects(accept({ action: "accept", artifact_id: stuck.id, observed_access: wider, extra: 1 }), /accept_denied/);
+      await assert.rejects(accept({ action: "accept", artifact_id: stuck.id, observed_access: wider }, caller), /permission denied/);
+      await admin.query("update clued_private.storage_access_digest_recovery_v1 set updated_at=now()-interval '25 hours' where artifact_id=$1", [stuck.id]);
+      await assert.rejects(confirm(stuck, wider), /accept_denied/);
+      await admin.query("update clued_private.storage_access_digest_recovery_v1 set updated_at=now() where artifact_id=$1", [stuck.id]);
+      // An observation another path has since superseded is not confirmable (review r3).
+      const saved = (await admin.query("select last_receipt_id from clued_private.storage_access_digest_recovery_v1 where artifact_id=$1", [stuck.id])).rows[0].last_receipt_id;
+      await admin.query("update clued_private.storage_access_digest_recovery_v1 set last_receipt_id=$2 where artifact_id=$1", [stuck.id, ok.receipt_id]);
+      await assert.rejects(confirm(stuck, wider), /accept_denied/);
+      await admin.query("update clued_private.storage_access_digest_recovery_v1 set last_receipt_id=$2 where artifact_id=$1", [stuck.id, saved]);
+      // A directory below with no baseline is checked again at once after the confirmation.
+      const below = await artifactById((await register({ action: "artifact_register", profile_id: target.profile,
+        path: `${target.root}/${TRACK}/no-baseline/below`, provider_file_id: `st-below-${randomUUID()}`, provider_file_version: "1",
+        target_kind: "directory", governance_class: "ordinary", delete_authority: false })).target_refs.find(ref => ref.role === "primary").id);
+      await load(below.id);
+      await commit(below, { observed_version: "2", access_digest: wider });
+      assert.equal((await due()).includes(below.id), false);
+      const confirmed = await confirm(stuck, wider);
+      assert.equal((await due()).includes(below.id), true);
+      assert.equal(confirmed.status, "committed");
+      stuck = await artifactById(stuck.id);
+      assert.equal(stuck.provider_access_digest, wider); assert.equal(stuck.access_digest_missing_at, null);
+      assert.equal(await side(stuck.id), undefined);
+      const accepted = (await admin.query("select operation,status from public.clued_audit_receipts where id=$1", [confirmed.receipt_id])).rows[0];
+      assert.deepEqual(accepted, { operation: "storage_access_digest_owner_accept", status: "committed" });
+      await assert.rejects(confirm(stuck, wider), /accept_denied/);
+      // Review M2: a folder only its owner can reach needs no parent, so the
+      // root (which has none) recovers too; owner_only needs a digest.
+      let root = await artifact(target, target.root);
+      await admin.query("update clued_private.resource_center_artifacts_v1 set access_digest_missing_at=now() where id=$1", [root.id]);
+      root = await artifactById(root.id);
+      assert.equal((await load(root.id)).parent, null);
+      await assert.rejects(commit(root, { observed_version: "99", access_digest: null, owner_only: true }), /backfill_denied/);
+      await assert.rejects(commit(root, { observed_version: "99", access_digest: access, owner_only: false }), /backfill_denied/);
+      assert.equal((await commit(root, { observed_version: "99", access_digest: access, owner_only: true })).outcome, "recorded_private");
+      root = await artifactById(root.id);
+      assert.equal(root.provider_access_digest, access); assert.equal(root.access_digest_missing_at, null);
+      // A mark from before this fix (no attempts yet) is retried at once.
+      const legacy = await child("legacy");
+      await admin.query("update clued_private.resource_center_artifacts_v1 set access_digest_missing_at=now() where id=$1", [legacy.id]);
+      assert.equal((await due()).includes(legacy.id), true);
     });
 
     await t.test("fix d9d6db4c: a started move that never recorded its attempt is released once its admission expired", async () => {
