@@ -22,6 +22,7 @@
 // operation on an Owner-writable tree ever runs elevated (independent review X1). The intake requests are the exception
 // in where they go (requests\, see above), never in what they may do: they only hold new batches.
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { HEX64, check, parseBoundedJson } from '../src/canonical.mjs';
 import { Ledger } from '../src/ledger.mjs';
@@ -141,7 +142,7 @@ export function resumeRequest({ expectedPausedSha256, by }, clock = Date.now) {
   return { contract: RESUME_CONTRACT, pausedSha256: expectedPausedSha256, by, requestedAt: new Date(clock()).toISOString(), nonce: nonce(8) };
 }
 
-if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const { positionals, values } = parseArgs({ allowPositionals: true, options: {
     root: { type: 'string' }, 'expected-halt-sha256': { type: 'string' }, 'expected-paused-sha256': { type: 'string' }, reason: { type: 'string' }, by: { type: 'string' },
     'batch-key': { type: 'string' }, 'expected-ledger-entry-sha256': { type: 'string' }, holder: { type: 'string' }, minutes: { type: 'string' }, ref: { type: 'string' } } });
