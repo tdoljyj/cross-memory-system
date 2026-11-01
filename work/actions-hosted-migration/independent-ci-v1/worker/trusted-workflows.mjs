@@ -31,8 +31,12 @@ const ROWS = [
 // END TRUSTED WORKFLOW ROWS
 
 // BEGIN GITLEAKS SUCCESSOR (generated from a real workflow-freeze commit)
-const GITLEAKS_SUCCESSOR_ROW = {"path":".github/workflows/gitleaks.yml","sha256":"6f61572b6cd7550772925b8ad3b26e129cf010901f04122662ceeb00d01c7cd1","blob":"8d172bdfeda9b554d2c8c0e5868ccae6e1a3096d","commit":"a38e8fef9d102c0042b0ab5b8cc89ef19dd4f9c5"};
+const GITLEAKS_SUCCESSOR_ROW = {"path":".github/workflows/gitleaks.yml","sha256":"9d6c23d2ae4769d123f7ddcd3a25810878d36a85efc2403c07ecec5ecd17cdab","blob":"e6fafbb0a40ce37795f1e50bbda03cd33fbf40e0","commit":"2f7c02d1d49d6cee0ddaf82c54840a88280acb74"};
 // END GITLEAKS SUCCESSOR
+
+// BEGIN TRIVY SUCCESSOR (generated from a real workflow-freeze commit)
+const TRIVY_SUCCESSOR_ROW = {"path":".github/workflows/trivy.yml","sha256":"8ec20479b6a7bbf3cc3c2b085271c9a7ed4dc06a16ea9e39c05900428adfa0d2","blob":"50bd4ae3312ea3c5b1896a9ec81922b0b392343b","commit":"2f7c02d1d49d6cee0ddaf82c54840a88280acb74"};
+// END TRIVY SUCCESSOR
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const paths = new Set(Object.values(TRUSTED_WORKFLOW_PATHS)), table = {};
@@ -58,6 +62,15 @@ if (GITLEAKS_SUCCESSOR_ROW !== null && (Object.keys(GITLEAKS_SUCCESSOR_ROW).sort
 export const GITLEAKS_SUCCESSOR_WORKFLOW = GITLEAKS_SUCCESSOR_ROW === null ? null : Object.freeze(GITLEAKS_SUCCESSOR_ROW);
 const gitleaksSuccessorSet = Object.freeze(GITLEAKS_SUCCESSOR_WORKFLOW ? [GITLEAKS_SUCCESSOR_WORKFLOW.sha256] : []);
 export const activeGitleaksWorkflowSha256s = () => gitleaksSuccessorSet;
+
+// Source v2 uses the frozen hex-relay successor; the legacy v3/H5 set stays unchanged.
+if (TRIVY_SUCCESSOR_ROW !== null && (Object.keys(TRIVY_SUCCESSOR_ROW).sort().join('|') !== 'blob|commit|path|sha256'
+  || TRIVY_SUCCESSOR_ROW.path !== TRUSTED_WORKFLOW_PATHS.trivy || !/^[a-f0-9]{40}$/.test(TRIVY_SUCCESSOR_ROW.commit)
+  || !/^[a-f0-9]{40}$/.test(TRIVY_SUCCESSOR_ROW.blob) || !/^[a-f0-9]{64}$/.test(TRIVY_SUCCESSOR_ROW.sha256)
+  || Object.hasOwn(table, TRIVY_SUCCESSOR_ROW.sha256))) fail('TRUSTED_WORKFLOW_TABLE_INVALID');
+export const TRIVY_SUCCESSOR_WORKFLOW = TRIVY_SUCCESSOR_ROW === null ? null : Object.freeze(TRIVY_SUCCESSOR_ROW);
+const trivySuccessorSet = Object.freeze(TRIVY_SUCCESSOR_WORKFLOW ? [TRIVY_SUCCESSOR_WORKFLOW.sha256] : []);
+export const activeTrivyWorkflowSha256s = () => trivySuccessorSet;
 
 const sets = Object.freeze(Object.fromEntries([...paths].map(path =>
   [path, Object.freeze(ROWS.filter(row => row[0] === path).map(row => row[1]))])));

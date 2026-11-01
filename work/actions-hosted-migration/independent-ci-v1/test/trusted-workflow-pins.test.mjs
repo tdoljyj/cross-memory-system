@@ -36,6 +36,9 @@ import { requiredSourcePaths as policyV3Paths } from '../worker/formal-fixed-rol
 import { WORKFLOWS, VERSIONS, GITLEAKS, TRIVY, PLACEMENT, workflowBytes, sha256, gitBlob, acceptedSha256s, GITLEAKS_SUCCESSOR, successorWorkflowBytes } from './fixtures/trusted-workflows.mjs';
 import { TRUSTED_WORKFLOWS, TRUSTED_WORKFLOW_PATHS, trustedWorkflowSha256s, GITLEAKS_SUCCESSOR_WORKFLOW, activeGitleaksWorkflowSha256s } from '../worker/trusted-workflows.mjs';
 import { TABLE_FILE, FIXTURE_FILE, readVersions, fixtureText, tableText, readGitleaksSuccessor, successorTableText } from './fixtures/repin-trusted-workflows.mjs';
+import { TRIVY_SUCCESSOR, trivySuccessorWorkflowBytes } from './fixtures/trusted-workflows.mjs';
+import { TRIVY_SUCCESSOR_WORKFLOW, activeTrivyWorkflowSha256s } from '../worker/trusted-workflows.mjs';
+import { readTrivySuccessor, trivySuccessorTableText } from './fixtures/repin-trusted-workflows.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../../../..');
@@ -86,6 +89,18 @@ test('the active gitleaks successor is separate from the immutable 726 workflow 
   assert.deepEqual(readGitleaksSuccessor(ROOT, GITLEAKS_SUCCESSOR.commit), GITLEAKS_SUCCESSOR);
 });
 
+test('Source v2 trivy accepts only its frozen hex successor; legacy versions keep their original pins', () => {
+  const bytes = trivySuccessorWorkflowBytes(), entry = TRIVY_SUCCESSOR.files[TRIVY];
+  assert.equal(sha256(bytes), entry.sha256); assert.equal(gitBlob(bytes), entry.blob);
+  assert.deepEqual(TRIVY_SUCCESSOR_WORKFLOW, { path: TRIVY, sha256: entry.sha256, blob: entry.blob, commit: TRIVY_SUCCESSOR.commit });
+  assert.deepEqual(readTrivySuccessor(ROOT, TRIVY_SUCCESSOR.commit), TRIVY_SUCCESSOR);
+  assert.deepEqual([...activeTrivyWorkflowSha256s()], [entry.sha256]);
+  assert.deepEqual([...trivyPlansV3.WORKFLOW_SHA256S], [entry.sha256]);
+  assert.deepEqual([...trivyPlansV2.WORKFLOW_SHA256S], acceptedSha256s(TRIVY));
+  assert.equal(trivySuccessorTableText(fs.readFileSync(TABLE_FILE, 'utf8'), TRIVY_SUCCESSOR), fs.readFileSync(TABLE_FILE, 'utf8'));
+  assert.ok(Object.isFrozen(TRIVY_SUCCESSOR_WORKFLOW) && Object.isFrozen(activeTrivyWorkflowSha256s()));
+});
+
 const haveCommits = (() => {
   const r = spawnSync('git', ['-C', ROOT, 'cat-file', '--batch-check'], { input: VERSIONS.map(v => WORKFLOWS.versions[v].commit).join('\n') + '\n', windowsHide: true });
   return r.status === 0 && !String(r.stdout).includes('missing');
@@ -116,10 +131,10 @@ test('a malformed table refuses to load: duplicate, non-hex, unknown path, or a 
   }
 });
 
-test('every role, policy and signed-result check carries exactly both reviewed versions, frozen, and no single pin is left', () => {
+test('legacy roles and placement policies retain both reviewed generations', () => {
   const sets = [
     ['gitleaks v3', gitleaksV3.WORKFLOW_SHA256S, GITLEAKS],
-    ['required-trivy v2', trivyPlansV2.WORKFLOW_SHA256S, TRIVY], ['required-trivy v3', trivyPlansV3.WORKFLOW_SHA256S, TRIVY],
+    ['required-trivy v2', trivyPlansV2.WORKFLOW_SHA256S, TRIVY],
     ['placement v1', placementV1.WORKFLOW_SHA256S, PLACEMENT], ['placement v2', placementV2.WORKFLOW_SHA256S, PLACEMENT],
     ['policy v2', POLICY_V2_PLACEMENT, PLACEMENT], ['policy v3', POLICY_V3_PLACEMENT, PLACEMENT],
   ];
@@ -168,7 +183,7 @@ test('gitleaks acceptedWorkflowSha256 (v3, v4): one declared accepted pin, nothi
     assert.throws(() => gitleaksV4.acceptedWorkflowSha256(bad), { code: 'TRUSTED_REVIEW_SOURCE_PIN_REQUIRED' });
 });
 
-test('required trivy plans (v2, v3): the source check accepts both reviewed trivy.yml versions and nothing else', () => {
+test('required trivy plans: legacy and Source v2 enforce their separate frozen workflow generations', () => {
   const manifest = h(4);
   const v1 = { contract: JOB_CONTRACT, id: '', repo: REPO, pr: 884, headSha: 'a'.repeat(40), baseSha: 'b'.repeat(40),
     claimId: '11111111-1111-1111-1111-111111111111', fence: 1, epoch: 1, role: 'trivy', sourceManifestSha256: manifest,
@@ -176,12 +191,15 @@ test('required trivy plans (v2, v3): the source check accepts both reviewed triv
   v1.id = jobId(v1);
   const v2 = makeJobV2({ repo: REPO, pr: 884, headSha: 'a'.repeat(40), baseSha: 'b'.repeat(40), testSha: 'a'.repeat(40), role: 'trivy', sourceManifestSha256: manifest,
     createdAt: new Date().toISOString(), attempt: 2 });
-  for (const [plans, job] of [[trivyPlansV2.requiredTrivyPlans, v1], [trivyPlansV3.requiredTrivyPlans, v2]]) {
+  for (const [plans, job, accepted, rejected] of [
+    [trivyPlansV2.requiredTrivyPlans, v1, acceptedSha256s(TRIVY), activeTrivyWorkflowSha256s()],
+    [trivyPlansV3.requiredTrivyPlans, v2, activeTrivyWorkflowSha256s(), acceptedSha256s(TRIVY)],
+  ]) {
     // An accepted pin passes the source check and stops at the next (missing mounts) check.
-    for (const sha of acceptedSha256s(TRIVY)) {
+    for (const sha of accepted) {
       assert.throws(() => plans({ job, workflowSha256: sha, sourceManifestSha256: manifest }), { code: 'PR_CACHE_MOUNT_OVERLAP' });
     }
-    for (const sha of [h(9), undefined, acceptedSha256s(GITLEAKS)[0], acceptedSha256s(TRIVY)[0].toUpperCase()]) {
+    for (const sha of [h(9), undefined, acceptedSha256s(GITLEAKS)[0], accepted[0].toUpperCase(), ...rejected]) {
       assert.throws(() => plans({ job, workflowSha256: sha, sourceManifestSha256: manifest }), { code: 'FIXED_TRIVY_SOURCE_REQUIRED' });
     }
   }

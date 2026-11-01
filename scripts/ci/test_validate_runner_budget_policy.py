@@ -40,6 +40,13 @@ RELAY_STEP = """      - name: Emit relay identity
           echo "::notice title=clued-hosted-relay-v1::$jwt"
 """
 HOSTED_EXECUTOR_ROUTE = "    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      id-token: write\n    steps:"
+HEX_RELAY_STEP = RELAY_STEP.replace(
+    "        run: |\n",
+    "        # Hex, not the JWT text: GitHub masks JWT-shaped text in logs and annotations (Task 169fd456).\n        run: |\n",
+    1,
+).replace('jwt="$', 'tokenhex="$').replace(
+    'print(json.load(sys.stdin)["value"])', 'print(json.load(sys.stdin)["value"].encode("ascii").hex())'
+).replace('::$jwt', '::$tokenhex')
 
 
 def job(name="check", runner=SELF_HOSTED):
@@ -288,7 +295,8 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
                         self.assertTrue(expected[(file, job_id)] <= names, names)
                         fields = policy.job_fields(block)
                         self.assertEqual(fields["permissions"].split(), ["contents:", "read", "id-token:", "write"])
-                        self.assertTrue(block.endswith(RELAY_STEP), file)
+                        expected_step = RELAY_STEP if file == "contract-placement.yml" else HEX_RELAY_STEP
+                        self.assertTrue(block.endswith(expected_step), file)
                         self.assertEqual(block.count("id-token"), 1)
                         # A PR-provided module can never shadow the stdlib of a step that holds id-token.
                         self.assertIn("python3 -I -B ", block)
@@ -381,7 +389,8 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
             (gitleaks.replace("      id-token: write\n", "", 1), "Owner-decision hosted job changed"),
             (gitleaks.replace("audience=clued-hosted-relay-v1", "audience=sts.amazonaws.com"), "Owner-decision hosted job changed"),
             (gitleaks.replace("      - name: Emit relay identity\n", "      - name: Emit relay identity\n        if: always()\n"), "Owner-decision hosted job changed"),
-            (gitleaks.replace(RELAY_STEP, ""), "Owner-decision hosted job changed"),
+            (gitleaks.replace(HEX_RELAY_STEP, ""), "Owner-decision hosted job changed"),
+            (gitleaks.replace('.encode("ascii").hex()', ''), "Owner-decision hosted job changed"),
         ]:
             with self.subTest(reason=reason, changed=changed[-300:]):
                 self.assertNotEqual(changed, gitleaks)
