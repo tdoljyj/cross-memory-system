@@ -139,6 +139,63 @@ function keepalive(cmd) {
   start();
 }
 
+// ---- One companion per node (Task 42fe5ae4) ----
+// The executor's lock (instance-lock.mjs, frozen) with a companion's own liveness test: its holder counts as live only while its
+// pid is still this root's companion node. A companion ends without cleanup (a stop, a logoff, a crash) and Windows reuses pids,
+// so the executor's rule (any live pid) could refuse every later start until the reused pid's process ended. A process that
+// cannot be read keeps the frozen rule (a refused start, never two companions). A refusal is written next to the lock for the
+// Owner (companion-lock\refused.json); at most COMPANION_STALE_LOCKS_KEPT set-aside locks are kept.
+export const COMPANION_STALE_LOCKS_KEPT = 10;
+const POWERSHELL_EXE = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+
+// { executablePath, commandLine } of one pid; { executablePath: null, commandLine: null } when it is gone; null when unreadable.
+export function readWin32Process(pid, { run = execFileText } = {}) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return Promise.resolve(null);
+  return run(POWERSHELL_EXE, ['-NoProfile', '-NonInteractive', '-Command',
+    `Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=${pid}' | Select-Object ExecutablePath,CommandLine | ConvertTo-Json -Compress`])
+    .then(text => {
+      if (text === null) return null;
+      if (text.trim() === '') return { executablePath: null, commandLine: null };
+      try { const v = JSON.parse(text); return { executablePath: v?.ExecutablePath ?? null, commandLine: v?.CommandLine ?? null }; } catch { return null; }
+    });
+}
+function execFileText(file, args) {
+  return new Promise(resolve => {
+    let out = '';
+    let child;
+    try { child = spawn(file, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { resolve(null); return; }
+    const timer = setTimeout(() => { child.kill(); resolve(null); }, 15_000);
+    child.stdout.on('data', d => { if (out.length < 65536) out += d.toString('utf8'); });
+    child.on('error', () => { clearTimeout(timer); resolve(null); });
+    child.on('close', code => { clearTimeout(timer); resolve(code === 0 ? out : null); });
+  });
+}
+
+export async function companionProcessAlive(pid, root, { alive = processAlive, readProcess = readWin32Process } = {}) {
+  if (!(await alive(pid))) return false;
+  const p = await readProcess(pid);
+  if (p === null) return true;
+  const node = path.join(root, 'runtime', 'node.exe').toLowerCase();
+  return typeof p.executablePath === 'string' && p.executablePath.toLowerCase() === node
+    && typeof p.commandLine === 'string' && p.commandLine.includes('companion-main.mjs') && p.commandLine.includes('--root');
+}
+
+export async function acquireCompanionLock(dir, root, { alive = pid => companionProcessAlive(pid, root), clock = Date.now, acquire = acquireInstanceLock } = {}) {
+  let lock;
+  try {
+    lock = await acquire(dir, { alive, clock });
+  } catch (error) {
+    const code = typeof error?.code === 'string' ? error.code.replace(/^EXECUTOR_/, 'COMPANION_') : 'COMPANION_LOCK_REFUSED';
+    try { await fs.writeFile(path.join(dir, 'refused.json'), JSON.stringify({ code, holderPid: Number.isSafeInteger(error?.detail) ? error.detail : null, at: new Date(clock()).toISOString(), pid: process.pid })); } catch { /* the refusal stands */ }
+    throw Object.assign(new Error(code), { code });
+  }
+  try {
+    const stale = (await fs.readdir(path.join(dir, 'locks'))).filter(n => n.startsWith('stale-')).sort();
+    for (const name of stale.slice(0, Math.max(0, stale.length - COMPANION_STALE_LOCKS_KEPT))) await fs.rm(path.join(dir, 'locks', name), { recursive: true, force: true });
+  } catch { /* housekeeping only */ }
+  return lock;
+}
+
 export async function main(args = process.argv.slice(2)) {
   const { values } = parseArgs({ args, options: { root: { type: 'string' }, 'config-sha256': { type: 'string' } } });
   check(typeof values.root === 'string' && path.isAbsolute(values.root) && HEX64.test(values['config-sha256'] ?? ''), 'COMPANION_ARGS_REQUIRED');
@@ -151,10 +208,9 @@ export async function main(args = process.argv.slice(2)) {
   const cfg = validateCompanionConfig(raw.companion, { root: values.root, ciSourceManifestSha256 });
   check(os.hostname().toUpperCase() === cfg.node.hostname && process.env.USERPROFILE === cfg.node.ownerProfileDirectory, 'COMPANION_NODE_IDENTITY_CHANGED');
   // One companion per node (Task 42fe5ae4): op 8e3b3e1b's rollback started one more every minute and all of them served the
-  // same mailboxes. The executor's lock (instance-lock.mjs) in the Owner's own profile: a live holder that refreshed within ten
-  // minutes refuses this start, a dead one is set aside. Refreshed every minute while the lanes run.
-  const instanceLock = await acquireInstanceLock(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-lock'),
-    { alive: processAlive });
+  // same mailboxes. Refreshed every minute while the lanes run.
+  const instanceLock = await acquireCompanionLock(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-lock'),
+    values.root);
   // Every child of both lanes runs under the installed job host (DESIGN §24): a child that outlives its limit is ended with
   // exactly the job it was started in, and the lane goes on. Without the host the companion does not start.
   const jobHost = path.join(values.root, 'bin', JOB_HOST_EXE);
