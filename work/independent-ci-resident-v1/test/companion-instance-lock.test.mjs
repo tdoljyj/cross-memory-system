@@ -12,7 +12,10 @@ import { COMPANION_LOCK_TOUCH_MS, COMPANION_STALE_LOCKS_KEPT, acquireCompanionLo
 
 const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'companion-main.mjs');
 const ROOT = 'C:\\ProgramData\\CluedIndependentCI\\resident';
-const COMPANION = { executablePath: `${ROOT}\\runtime\\node.exe`,
+// Match the Windows-only consumer's path.join on either test host; a POSIX
+// test must not accidentally model a different executable and a dead holder.
+const NODE = path.join(ROOT, 'runtime', 'node.exe');
+const COMPANION = { executablePath: NODE,
   commandLine: `${ROOT}\\runtime\\node.exe ${ROOT}\\resident\\${'7'.repeat(64)}\\src\\companion-main.mjs --root ${ROOT} --config-sha256 ${'d'.repeat(64)}` };
 const tempDir = async t => { const d = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-companion-lock-')); t.after(() => fs.rm(d, { recursive: true, force: true })); return d; };
 // processes: pid -> what Win32_Process says (absent: the pid is gone); 'unreadable' -> null.
@@ -36,7 +39,7 @@ test('a live companion holder refuses a second companion, and the refusal is wri
 
 test('the holder pid reused by another process (or gone) is set aside: the new companion starts', async t => {
   for (const reused of [{ executablePath: 'C:\\Program Files\\Browser\\browser.exe', commandLine: 'browser.exe' },
-    { executablePath: `${ROOT}\\runtime\\node.exe`, commandLine: `${ROOT}\\runtime\\node.exe ${ROOT}\\resident\\x\\src\\service-main.mjs` },
+    { executablePath: NODE, commandLine: `${ROOT}\\runtime\\node.exe ${ROOT}\\resident\\x\\src\\service-main.mjs` },
     { executablePath: null, commandLine: null }, undefined]) {
     const dir = await tempDir(t);
     await lockWith(dir, { 201: COMPANION }, 201);
