@@ -854,7 +854,18 @@ $viaGroup = "[Privilege Rights]`r`nSeServiceLogonRight = *S-1-5-80-0,*S-1-5-21-9
 Yes (Test-ServiceLogonRight $viaGroup $ctl @{ 'S-1-5-21-9-8-7-1010' = @($ctl) }) 'logon-right-through-a-local-group'
 Yes (-not (Test-ServiceLogonRight $viaGroup $ctl @{ 'S-1-5-21-9-8-7-1010' = @('S-1-5-21-9-8-7-1000') })) 'logon-right-group-without-it'
 Yes (-not (Test-ServiceLogonRight "[Privilege Rights]`r`nSeNetworkLogonRight = *$ctl`r`n" $ctl @{})) 'logon-right-only-another-right'
-Yes (-not (Test-ServiceLogonRight "[Privilege Rights]`r`nSeServiceLogonRight = clued-control`r`n" $ctl @{})) 'logon-right-names-are-not-sids'
+Yes (-not (Test-ServiceLogonRight "[Privilege Rights]`r`nSeServiceLogonRight = clued-control`r`n" $ctl @{})) 'logon-right-name-without-a-resolution'
+# secedit writes local accounts by name (TURING, 2026-10-31); Read-ServiceLogonRight resolves each name to its SID
+$turing = "[Privilege Rights]`r`nSeServiceLogonRight = clued-runner,clued-control,*S-1-5-80-0,*S-1-5-83-0`r`n"
+$resolved = @{ 'clued-runner' = 'S-1-5-21-9-8-7-1008'; 'clued-control' = $ctl }
+Yes (Test-ServiceLogonRight $turing $ctl @{} $resolved) 'logon-right-by-name-as-turing-exports-it'
+Yes (Test-ServiceLogonRight "[Privilege Rights]`r`nSeServiceLogonRight = TURING\clued-control`r`n" $ctl @{} @{ 'TURING\clued-control' = $ctl }) 'logon-right-by-qualified-name'
+Yes (-not (Test-ServiceLogonRight $turing 'S-1-5-21-9-8-7-1000' @{} $resolved)) 'logon-right-by-name-other-account'
+Yes (-not (Test-ServiceLogonRight $turing $ctl @{} @{ 'clued-runner' = 'S-1-5-21-9-8-7-1008'; 'clued-control' = $null })) 'logon-right-unresolved-name-grants-nothing'
+Yes (Test-ServiceLogonRight "[Privilege Rights]`r`nSeServiceLogonRight = clued-ci-hosts`r`n" $ctl @{ 'S-1-5-21-9-8-7-1012' = @($ctl) } @{ 'clued-ci-hosts' = 'S-1-5-21-9-8-7-1012' }) 'logon-right-through-a-group-by-name'
+Yes (-not (Test-ServiceLogonRight ($turing + "SeDenyServiceLogonRight = clued-control`r`n") $ctl @{} $resolved)) 'logon-right-denied-by-name'
+Yes (-not (Test-ServiceLogonRight ($turing + "SeDenyServiceLogonRight = gone-account`r`n") $ctl @{} ($resolved + @{ 'gone-account' = $null }))) 'logon-right-unresolved-deny-fails-closed'
+Yes (Test-ServiceLogonRight ($turing + "SeDenyServiceLogonRight = clued-runner`r`n") $ctl @{} $resolved) 'logon-right-deny-by-name-for-another-account'
 Yes (-not (Test-ServiceLogonRight ($inf + "SeDenyServiceLogonRight = *$ctl`r`n") $ctl @{})) 'logon-right-denied-directly'
 Yes (-not (Test-ServiceLogonRight ($inf + "SeDenyServiceLogonRight = *S-1-5-21-9-8-7-1011`r`n") $ctl @{ 'S-1-5-21-9-8-7-1011' = @($ctl) })) 'logon-right-denied-through-a-group'
 Yes (Test-ServiceLogonRight ($inf + "SeDenyServiceLogonRight = *S-1-5-21-9-8-7-1000`r`n") $ctl @{}) 'logon-right-deny-for-another-account'
