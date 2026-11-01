@@ -1085,7 +1085,10 @@ const GATED_FILES = fs.readdirSync(path.join(ROOT, ".github", "workflows")).filt
 // earlier gate-template rollouts. Their actual gates remain covered by the
 // all-workflows and retired-switch attack checks below.
 const NEWLY_GATED_FILES = ["contract-placement.yml", "gitleaks.yml", "trivy.yml"];
-const LEGACY_TEMPLATE_FILES = GATED_FILES.filter((name) => !NEWLY_GATED_FILES.includes(name));
+// The required-test workflow was introduced with the independently registered
+// Linux gate, never with the historical permission/bootstrap templates.
+const INDEPENDENT_LINUX_GATE_FILES = ["clued-required-tests.yml"];
+const LEGACY_TEMPLATE_FILES = GATED_FILES.filter((name) => !NEWLY_GATED_FILES.includes(name) && !INDEPENDENT_LINUX_GATE_FILES.includes(name));
 const SOURCE_PROOF_GATE_DIGEST = "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb";
 // Owner Decisions 325717a6 and 22b0e0ed (PR-B): the Stage C gate on ubuntu-latest that admits on
 // the independent CI's own admission with a bounded wait (hostedGateOf below).
@@ -1391,7 +1394,9 @@ test("gate guard (Merge Admission step 6): every gated workflow's gate no longer
     const current = fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8");
     const gateJob = workflowJobs(current).find((job) => job.name === "admission-gate");
     assert.ok(!gateJob.lines.some((line) => /_ENFORCE\b/.test(line)), `${name}: the gate reads no retired switch`);
-    if (NEWLY_GATED_FILES.includes(name)) {
+    if (INDEPENDENT_LINUX_GATE_FILES.includes(name)) {
+      assert.equal(sha256Hex(gateJob.lines.join("\n")), SELF_HOSTED_INDEPENDENT_GATE_DIGEST, name);
+    } else if (NEWLY_GATED_FILES.includes(name)) {
       // Owner Decisions 325717a6 and 22b0e0ed (PR-B): the Stage C gate on ubuntu-latest that admits on
       // the independent CI's own admission; exactly runner, timeout and gate source differ.
       const text = gateJob.lines.join("\n");
