@@ -48,7 +48,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = '5ff3a1c1fe656e68576463f8a1b9ed41a343be14c1d989542f374bdfb22d84f6'   # the r7 f4 TURING launcher text (6d32f2ba) with the host name as a pin ($NodeHostname), the logon-right refusal before the uninstall (2026-10-30) and the optional node heartbeat token (350eec6c + DESIGN 41.6a, 2026-10-31)
+TEMPLATE_SHA = '404d8e358f3adcfbe4a585b3b3df071f187a74895cfe03f250aa99ea5efb1cb8'   # f019 host compatibility and exact terminal evidence; review with this source
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])
@@ -278,6 +278,8 @@ if LINUX_EVIDENCE:
     assert linux_live == pkg['ciSourceManifestSha256'], ('LIVE_LINUX_SOURCE_NOT_THIS_RECORD', linux_live)
 # r5c: the Linux version facts written by Linux phase B (after --apply-upgrade-v1 and --adopt-generation 1): verify's two-sides-consistent
 facts_sha = None
+adopted_proven = False
+adopted_pkg_sha = None
 if LINUX_EVIDENCE:   # r5c (review): Linux generation 1 was adopted with THIS package (prep-linux-r5c phase B writes `package:` into the evidence)
     pk = re.findall(r'(?m)^package: ([0-9a-f]{64})$', text)
     if ADOPTED_PKG and pk != [pkg_sha]:
@@ -285,15 +287,19 @@ if LINUX_EVIDENCE:   # r5c (review): Linux generation 1 was adopted with THIS pa
         # package must be the one the evidence names, and its Linux half byte-identical to this one's: the same CI Source manifest,
         # the same Linux resident manifest and every linux/** file. Only the record (Windows side) differs.
         _apm = os.path.join(ADOPTED_PKG, 'package-manifest.json')
-        _ap = json.load(open(_apm, encoding='utf-8'))
+        with open(_apm, encoding='utf-8') as _stream:
+            _ap = json.load(_stream)
         _lin = lambda root: {os.path.relpath(os.path.join(d, n), root).replace(BS, '/'): sha(os.path.join(d, n)) for d, _, fs in os.walk(os.path.join(root, 'linux')) for n in fs}
         assert (pk == [sha(_apm)] and _ap['ciSourceManifestSha256'] == pkg['ciSourceManifestSha256'] and _ap['linux'] == pkg['linux']
                 and sha(os.path.join(ADOPTED_PKG, 'record', 'source-manifest.json')) == sha(os.path.join(PKG, 'record', 'source-manifest.json'))
                 and _lin(ADOPTED_PKG) == _lin(PKG)), ('LINUX_ADOPTED_PACKAGE_NOT_THIS_LINUX_HALF', pk)
         # review 3-3: the Linux role qualifications were derived under the installed record's Source and host acceptance; this record
         # must name the same two
-        _aa = json.load(open(os.path.join(ADOPTED_PKG, 'record', 'acceptance.json'), encoding='utf-8'))
+        with open(os.path.join(ADOPTED_PKG, 'record', 'acceptance.json'), encoding='utf-8') as _stream:
+            _aa = json.load(_stream)
         assert all(_aa.get(k) == acceptance.get(k) for k in ('sourceAcceptanceRef', 'hostQualificationRef')), 'LINUX_ADOPTED_PACKAGE_ACCEPTANCE_REFS_DIFFER'
+        adopted_proven = True
+        adopted_pkg_sha = sha(_apm)
     else:
         assert pk == [pkg_sha], ('LINUX_ADOPTED_ANOTHER_PACKAGE', pk, pkg_sha)
 if FACTS:
@@ -332,12 +338,10 @@ ledger = os.path.join(LIVE_ROOT, 'state', 'ledger')
 entries = sorted(os.listdir(ledger))
 open_entries = [e for e in entries if not os.path.exists(os.path.join(ledger, e, '90-terminal.json'))]
 terminal = [e for e in entries if e not in open_entries]
-if not terminal:   # the launcher pins a kept terminal ledger entry
-    sys.exit('NO_TERMINAL_LEDGER_ENTRY')
-newest_key = max(terminal, key=lambda e: os.path.getmtime(os.path.join(ledger, e, '90-terminal.json')))
-if halt_accepted:   # r4.1 C3: the kept ledger must hold the HALTed batch, terminal
-    newest_key = halt_doc['facts']['key']
-    assert newest_key in terminal, ('HALTED_BATCH_NOT_TERMINAL', newest_key)
+_spec = importlib.util.spec_from_file_location('ledger_evidence', os.path.join(HERE, '..', 'tools', 'ledger-evidence.py'))
+_ledger_evidence = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(_ledger_evidence)
+terminal_evidence = _ledger_evidence.select_terminal(LIVE_ROOT, halt_doc['facts']['key'] if halt_accepted else None)
+newest_key = terminal_evidence['key']
 quiet = {'haltPresent': halt_present, 'paused': paused_present, 'current': current, 'executorState': status.get('executor', {}).get('state'),
          'openLedgerEntries': open_entries, 'statusWrittenAt': status.get('writtenAt')}
 refusals = []
@@ -367,9 +371,7 @@ if any(re.match(r'^(d{8}|e{8})-', str(acceptance.get(k, ''))) for k in ('sourceA
 # README section 5: no FINAL without a PASS rehearsal of exactly this package and configuration. Its 24-hour bound (review 1-8) is checked
 # by prep.py, before the node changes; here, after W1 and Linux B, a node half reinstalled could never rehearse again (review 2).
 rehearsal_doc = json.load(open(REHEARSAL, encoding='utf-8')) if REHEARSAL else None
-if not (rehearsal_doc and rehearsal_doc.get('contract') == 'clued.independent-ci.reinstall-rehearsal/1' and rehearsal_doc.get('status') == 'REHEARSAL_PASS'
-        and rehearsal_doc.get('findings') == [] and rehearsal_doc.get('packageManifestSha256') == pkg_sha and rehearsal_doc.get('commit') == COMMIT
-        and rehearsal_doc.get('configSha256') == CFG['_sha256']):
+if not _ledger_evidence.rehearsal_matches(rehearsal_doc, pkg_sha, COMMIT, CFG['_sha256'], adopted_pkg_sha if adopted_proven else None):
     refusals.append('FINAL_NEEDS_A_PASSING_REHEARSAL_OF_THIS_PACKAGE')
 if FINAL and refusals:
     print(json.dumps({'status': 'REFUSED', 'codes': refusals, 'quiet': quiet, 'dryRun': dry_file, 'runnerBefore': rb}, indent=1))
@@ -424,6 +426,9 @@ lines = [
     '$ParentAclPath = ' + q(PARENT) + '   # r4.1 C2',
     '$ParentSddlBefore = ' + q(parent_live) + '   # r5 S2: the CI root DACL at generation (read-only check; the installer appends the ACE if missing)',
     '$HaltedBatchKey = ' + q(newest_key) + '   # the HALTed batch (r4.1 C3) or the newest terminal ledger entry; must be in the kept ledger',
+    '$LedgerEvidenceRelativeDirectory = ' + q(terminal_evidence['relativeDirectory'].replace('/', BS)),
+    '$TerminalEvidenceSha256 = ' + q(terminal_evidence['terminalSha256']),
+    '$BackfillEvidenceManifestSha256 = ' + (q(terminal_evidence['backfillManifestSha256']) if terminal_evidence['backfillManifestSha256'] else '$null'),
     '$LaunchOutPin = ' + q(LAUNCH_DIR) + '   # F1: output directory of this generation',
     '$PauseRequestDacl = ' + q(pause_dacl) + '   # F2: the DACL a request in requests\\ inherits',
     '$LinuxLiveSourceManifestSha256 = ' + (q(linux_live) if linux_live else '$null') + '   # Q5b: formal-source-manifest-v2.json (evidence file below)',
@@ -468,7 +473,7 @@ print(json.dumps({'launcher': out, 'sha256': launcher_sha, 'bytes': len(data), '
                   'packageManifestSha256': pkg_sha, 'residentManifestSha256': pkg['residentManifestSha256'], 'ciSourceManifestSha256': pkg['ciSourceManifestSha256'],
                   'planSha256': dry['planSha256'], 'dryRun': dry_file, 'runnerBeforeUsable': runner_usable, 'runnerBefore': rb,
                   'linuxLiveSourceManifest': linux_live, 'linuxAdoptedPackage': ADOPTED_PKG, 'linuxEvidenceSha256': linux_evidence_sha,
-                  'oldRoot': {'installedResident': installed_resident, 'receiptSha256': sha(live_receipt), 'uninstallSha256': u_sha, 'newestTerminalKey': newest_key, **quiet},
+                  'oldRoot': {'installedResident': installed_resident, 'receiptSha256': sha(live_receipt), 'uninstallSha256': u_sha, 'newestTerminalKey': newest_key, 'terminalEvidence': terminal_evidence, **quiet},
                   'finalWouldRefuse': refusals, 'launchDir': LAUNCH_DIR, 'pauseRequestDacl': pause_dacl,
                   'pauseWaitSeconds': PAUSE_WAIT_SECONDS, 'firstTrainWaitSeconds': FIRST_TRAIN_WAIT_SECONDS, 'runnerQuietWaitSeconds': RUNNER_QUIET_WAIT_SECONDS,
                   'installedPausedSha256': paused_sha, 'haltAccepted': halt_accepted, 'haltSha256': halt_sha, 'parentSddlNow': parent_live, 'secretTargetsExist': SECRETS_EXIST,

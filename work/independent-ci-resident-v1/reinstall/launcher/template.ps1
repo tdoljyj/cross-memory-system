@@ -340,7 +340,26 @@ function Wait-Until([scriptblock]$cond, [int]$seconds) {
 }
 function Get-ScState([string]$name) {
   $t = (& $Sc queryex $name | Out-String)
-  [ordered]@{ name = $name; gone = [bool]($t -match 'FAILED 1060'); state = $(if ($t -match 'STATE\s*:\s*(\d+)') { [int]$Matches[1] } else { $null }); pid = $(if ($t -match 'PID\s*:\s*(\d+)') { [int]$Matches[1] } else { $null }); text = $t.Trim() }
+  $nativeExit = $LASTEXITCODE
+  [ordered]@{ name = $name; nativeExit = $nativeExit; gone = [bool]($nativeExit -eq 1060); state = $(if ($nativeExit -eq 0 -and $t -match 'STATE\s*:\s*(\d+)') { [int]$Matches[1] } else { $null }); pid = $(if ($nativeExit -eq 0 -and $t -match 'PID\s*:\s*(\d+)') { [int]$Matches[1] } else { $null }); text = $t.Trim() }
+}
+function Test-TerminalEvidence([string]$root) {
+  if ($LedgerEvidenceRelativeDirectory -cnotmatch '^state\\(?:ledger|backfill\\[1-9][0-9]*\\ledger)$' -or $HaltedBatchKey -cnotmatch '^[0-9a-f]{64}$' -or $TerminalEvidenceSha256 -cnotmatch '^[0-9a-f]{64}$') { return $false }
+  $relative = $LedgerEvidenceRelativeDirectory + '\' + $HaltedBatchKey + '\90-terminal.json'
+  $p = $root
+  foreach ($part in @('') + @($relative.Split('\'))) {
+    if ($part) { $p = Join-Path $p $part }
+    if (-not (Test-Path -LiteralPath $p) -or (([IO.File]::GetAttributes($p) -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { return $false }
+  }
+  if ((Get-FileSha $p) -cne $TerminalEvidenceSha256) { return $false }
+  if ($LedgerEvidenceRelativeDirectory -clike 'state\backfill\*') {
+    $install = Join-Path $root 'install'; $manifest = Join-Path $install 'backfill-manifest.json'
+    foreach ($q in @($install, $manifest)) {
+      if (-not (Test-Path -LiteralPath $q) -or (([IO.File]::GetAttributes($q) -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { return $false }
+    }
+    if ($BackfillEvidenceManifestSha256 -cnotmatch '^[0-9a-f]{64}$' -or (Get-FileSha $manifest) -cne $BackfillEvidenceManifestSha256) { return $false }
+  }
+  return $true
 }
 # Every process whose image is inside the resident root: the two service hosts, the resident's node, and the
 # companion (node.exe from resident\runtime\node.exe). A running image does not block the directory rename, but
@@ -712,6 +731,7 @@ function Step-Uninstall {
   if ($d.exit -ne 0 -or (Get-Key $dv 'status') -cne 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN' -or $sha -cnotmatch '^[0-9a-f]{64}$' -or -not (Test-UninstallPlan $dp) -or (Get-Key $dp 'executorAlive') -ne $false) { Stop-Launch 'UNINSTALL_PLAN_REFUSED' $report }
   $quiet = Test-OldRootQuiet; $report['oldRootQuietBeforeApply'] = $quiet   # r4 Q1
   if (@($quiet.codes).Count) { Write-Json 'uninstall-report.json' $report; Stop-Launch ([string]@($quiet.codes)[0]) $report }
+  if (-not (Test-TerminalEvidence $ResidentRoot)) { Stop-Launch 'TERMINAL_EVIDENCE_CHANGED_BEFORE_UNINSTALL' $report }
   $a = Invoke-Child 'uninstall' $InstalledUninstall @('-Apply', '-ExpectedPlanSha256', $sha)
   $av = Parse-Json $a.stdout; $kept = [string](Get-Key $av 'keptAt')
   $report['apply'] = [ordered]@{ exit = $a.exit; status = (Get-Key $av 'status'); keptAt = $kept; stdout = (Tail $a.stdout); stderr = (Tail $a.stderr) }
@@ -719,10 +739,11 @@ function Step-Uninstall {
     $report['after'] = [ordered]@{ residentRootExists = [IO.Directory]::Exists($ResidentRoot); services = @((Get-ScState 'CluedCIResident'), (Get-ScState 'CluedCISwapBroker')); processesUnderRoot = @(Get-ProcessesUnderRoot) }
     Stop-Launch 'UNINSTALL_NOT_COMPLETED' $report
   }
-  $ledger = Join-Path $kept 'state\ledger'
+  $ledger = Join-Path $kept $LedgerEvidenceRelativeDirectory
   $report['evidence'] = [ordered]@{ keptAt = $kept
     installReceiptSha256 = (Get-FileSha (Join-Path $kept 'install\install-receipt.json')); haltSha256 = (Get-FileSha (Join-Path $kept 'state\HALT.json'))
     ledgerEntries = @(if ([IO.Directory]::Exists($ledger)) { [IO.Directory]::GetDirectories($ledger) | ForEach-Object { [IO.Path]::GetFileName($_) } })
+    ledgerRelativeDirectory = $LedgerEvidenceRelativeDirectory; terminalEvidenceMatches = (Test-TerminalEvidence $kept)
     uninstallReceiptSha256 = (Get-FileSha (Join-Path $kept 'install\uninstall-receipt.json')) }
   if ($report['evidence'].uninstallReceiptSha256) { Write-New (Join-Path $Out 'uninstall-receipt.json') ([IO.File]::ReadAllBytes((Join-Path $kept 'install\uninstall-receipt.json'))) }
   $report['pausedKeptSha256'] = Get-FileSha (Join-Path $kept 'state\PAUSED.json')   # review m6
@@ -731,7 +752,7 @@ function Step-Uninstall {
   Write-Json 'uninstall-report.json' $report
   $e = $report['evidence']
   if ($InstalledPausedSha256 -and $report['pausedKeptSha256'] -cne $InstalledPausedSha256) { Stop-Launch 'UNINSTALL_PAUSE_EVIDENCE_UNCONFIRMED' $report }   # review m6
-  if (-not $report['deletedAndRenamed'] -or $e.installReceiptSha256 -cne $InstalledReceiptSha256 -or $e.haltSha256 -cne $InstalledHaltSha256 -or -not $e.uninstallReceiptSha256 -or @($e.ledgerEntries) -notcontains $HaltedBatchKey) { Stop-Launch 'UNINSTALL_EVIDENCE_OR_DELETION_UNCONFIRMED' $report }
+  if (-not $report['deletedAndRenamed'] -or $e.installReceiptSha256 -cne $InstalledReceiptSha256 -or $e.haltSha256 -cne $InstalledHaltSha256 -or -not $e.uninstallReceiptSha256 -or -not $e.terminalEvidenceMatches -or @($e.ledgerEntries) -notcontains $HaltedBatchKey) { Stop-Launch 'UNINSTALL_EVIDENCE_OR_DELETION_UNCONFIRMED' $report }
   $Done.Add('uninstall')
   [ordered]@{ keptAt = $kept; planSha256 = $sha; uninstallReceiptSha256 = $e.uninstallReceiptSha256; haltSha256 = $e.haltSha256 }
 }
