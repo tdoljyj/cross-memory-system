@@ -12,6 +12,7 @@ import { nodeOf, stallCode } from '../src/node-duty.mjs';
 import { batchKey, headKey } from '../src/ledger.mjs';
 import { intakePauseRequest } from '../src/intake-pause.mjs';
 import { rearmRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
+import { pauseRequestBytes } from '../upgrader/src/resident-ports.mjs';
 import { refusalSafeToRerun } from '../../actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/publisher.mjs';
 import { BASE, CI_SOURCE, HEAD, RELAY_ON, SAFE_REFUSAL, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, notAdmitted, rawPolicy, triggerBytes } from './helpers.mjs';
 
@@ -63,6 +64,45 @@ const perPr = (per, base = fakeEngine()) => {
 };
 const NO_ROLE = { ...SAFE_REFUSAL, diagnostic: { ...SAFE_REFUSAL.diagnostic, reasonCodes: ['admission_binding_required'] } };
 const WAIT = { ...SAFE_REFUSAL, diagnostic: { ...SAFE_REFUSAL.diagnostic, reasonCodes: ['merge_slot_required'] } };
+
+test('an exact upgrade pause permits a fresh read-only probe but keeps queued work and the pause intact', async t => {
+  const f = await nodeFx(t, { facts: [NOT_HELD] });
+  const bytes = pauseRequestBytes('5e1f0000-0000-4000-8000-000000000001', 50);
+  await f.drop(bytes, 'requests');
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PAUSED');
+  const pause = await f.ledger.paused();
+  assert.deepEqual(f.engine.probes, ['not-held']);
+  assert.equal(f.exec.roleProbe.last.at, f.clock());
+  assert.equal(f.exec.roleProbeMode, 'STANDBY');
+  assert.equal(derives(f), 0);
+  assert.equal(stagesRun(f.engine).length, 0);
+  assert.equal(await f.ledger.paused().then(p => p.sha256), pause.sha256);
+  assert.equal((await fs.readdir(path.join(f.root, 'inbox'))).length, 1, 'no intake under pause');
+  await f.exec.tick();
+  assert.equal(f.engine.probes.length, 1, 'the ordinary cadence still applies');
+});
+
+test('ordinary, forged and torn pauses, HALT, open work and an engine busy deferral do not turn the upgrade probe into work', async t => {
+  for (const kind of ['ordinary', 'forged', 'torn', 'halt', 'open', 'busy']) {
+    const f = await nodeFx(t);
+    const reason = 'resident-upgrade 5e1f0000-0000-4000-8000-000000000001 50';
+    const bytes = pauseRequestBytes('5e1f0000-0000-4000-8000-000000000001', 50);
+    await f.ledger.pause({ reason: kind === 'ordinary' ? 'owner pause' : reason,
+      requestSha256: kind === 'forged' ? '0'.repeat(64) : (await import('../src/canonical.mjs')).sha256(bytes) });
+    if (kind === 'torn') await fs.writeFile(path.join(f.root, 'state', 'PAUSED.json'), '{');
+    if (kind === 'halt') await f.ledger.halt('FIXTURE_HALT', {});
+    if (kind === 'open') f.ledger.open = async () => [{ key: 'still-open' }];
+    if (kind === 'busy') f.engine.runRoleProbe = async () => ({ deferred: true, code: 'ROLE_PROBE_BUSY' });
+    const result = kind === 'open' ? (await f.exec.roleProbeMaintenance({ upgradePaused: true })) ?? { state: 'PAUSED' }
+      : await f.exec.tick();
+    assert.equal(result.state, kind === 'halt' ? 'HALTED' : 'PAUSED', kind);
+    assert.equal(f.engine.probes.length, 0, kind);
+    assert.ok(await f.ledger.paused());
+    assert.equal(derives(f), 0, kind);
+    if (kind === 'busy') assert.equal(await f.ledger.halted(), null);
+  }
+});
 const notReady = code => ({ ok: false, code, proof: WINDOWS_CLEAN, brokerNoLaunch: false,
   outcome: { status: 'BLOCKED', reason: code, sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: { ciRetryAfter: null, mergeQueue: { entered: false, state: null, position: null } }, safeToRerun: false } });
 

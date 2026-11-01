@@ -495,6 +495,11 @@ process.stdout.write(JSON.stringify({ digest: digest(shas), slots: [...PACKAGE_S
   $nodeCheck = 'checked'
 }
 # 6. verify-resident.ps1: /5 and /6, the new checks and their rules.
+. (Use 'verify-resident.ps1' @('Get-VerifyInputFailure'))
+$vf = Get-VerifyInputFailure 'record-acceptance' 'INSTALL_RECEIPT_CHANGED'
+Yes ($vf.check -ceq 'record-acceptance' -and $vf.detail -ceq 'INSTALL_RECEIPT_CHANGED') 'verify-pinned-input-failure-is-json-check'
+$vf = Get-VerifyInputFailure 'owner-free-text' 'private-path-or-token-value'
+Yes ($vf.check -ceq 'verify-inputs' -and $vf.detail -ceq 'VERIFY_INPUT_UNREADABLE') 'verify-input-failure-never-exports-raw-exception'
 Yes ($verify.Contains("'clued.independent-ci.resident-install-receipt/5', 'clued.independent-ci.resident-install-receipt/6'") -and $verify.Contains('$ReceiptContracts -cnotcontains $receipt.contract')) 'verify-accepts-5-and-6'
 foreach ($name in @("Record 'paused-as-expected'", "Record 'not-paused'", "Record 'upgrader-service'", "Record 'upgrader-pin'", "Record 'generation-current'", "Record 'two-sides-consistent'", '[string]$LinuxVersionFactsFile', "[ValidatePattern('^[0-9a-f]{64}$')][string]`$ExpectPausedSha256")) { Yes ($verify.Contains($name)) ('verify-has:' + $name) }
 Yes ($verify.IndexOf("if (`$receipt.contract -ceq 'clued.independent-ci.resident-install-receipt/6') {") -lt $verify.IndexOf("Record 'upgrader-service'")) 'verify-upgrade-checks-only-for-6'

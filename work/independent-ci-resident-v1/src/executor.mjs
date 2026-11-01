@@ -132,7 +132,7 @@ import { RELAY_TRAIN_FRONT_LOCAL, relayPlanFromRows } from './classify.mjs';
 import { RELAY_STAGE, ROLE_STAGES, trainSettings } from './policy.mjs';
 import { PROBE_REQUEST_CONTRACT, RESIDENT_REQUEST_CONTRACTS, REQUEST_MAX_AGE_MS, validateResidentRequest } from './resident-requests.mjs';
 import { RELAY_RECEIPTS } from './receipts.mjs';
-import { CODE, HEX64, ResidentError, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
+import { CODE, HEX64, ResidentError, canonicalJson, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 import { UPGRADE_RESUME_CONTRACT, validateUpgradeResume } from './upgrade-mailbox.mjs';
 import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
@@ -1313,6 +1313,10 @@ export class ResidentExecutor {
     // DESIGN §41.3: under PAUSE while the train is on, stage 10 runs revoke-only (an ACTIVE node, its own cadence) before the tick
     // returns PAUSED; a HALT it latches is the tick's result. Off and shadow: nothing runs, as before.
     if (await this.ledger.paused()) {
+      // The upgrader keeps its pause until VERIFY has seen a post-start role observation. Run only that
+      // read-only maintenance under its exact pause; never intake, schedule or lift the pause here.
+      const probed = await this.roleProbeMaintenance({ upgradePaused: true });
+      if (probed?.state === 'HALTED') return probed;
       const revoked = this.policy.train.enabled === 'on' ? await this.trainMaintenance({ paused: true }) : null;
       return revoked?.state === 'HALTED' ? revoked : { state: 'PAUSED' };
     }
@@ -1373,14 +1377,20 @@ export class ResidentExecutor {
   // after a restart or a re-arm the batches parked before it would otherwise keep the node UNCERTAIN for park.maxMs.
   probeAtParking() { return this.probing() && (this.nodeMode() !== 'ACTIVE' || this.roleProbe.urgent === true); }
 
-  async roleProbeMaintenance() {
+  async roleProbeMaintenance({ upgradePaused = false } = {}) {
     if (typeof this.engine.runRoleProbe !== 'function' || this.roleProbeRunning) return null;
     // C3 owns the mode and all its transitions (DESIGN §29); status (advisory) is never an input. UNCERTAIN has STANDBY's
     // 15-minute interval, and `urgent` (a start, a re-arm, a failure that may mean the role is gone) is due at once.
     const mode = this.nodeMode(), now = this.clock();
-    // Idle: no HALT, no PAUSE and no batch open; entries at a parking point do not count when probeAtParking() says so.
+    // A paused upgrade is quiet only with no open batch at all. Match both the fixed request shape and
+    // its original bytes' digest; an ordinary/unknown/torn pause still prevents the probe.
     const open = await this.ledger.open();
-    const idle = !(await this.ledger.halted()) && !(await this.ledger.paused()) && (this.probeAtParking() ? open.every(e => Ledger.resumable(e)) : open.length === 0);
+    const pause = await this.ledger.paused(), source = pause?.value?.source;
+    const upgradePause = upgradePaused === true && typeof source?.reason === 'string'
+      && /^resident-upgrade [0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12} [1-9][0-9]{0,2}$/.test(source.reason)
+      && source.requestSha256 === sha256(Buffer.from(canonicalJson({ contract: PAUSE_CONTRACT, reason: source.reason }) + '\n'));
+    const idle = !(await this.ledger.halted()) && (pause ? upgradePause && open.length === 0
+      : (this.probeAtParking() ? open.every(e => Ledger.resumable(e)) : open.length === 0));
     if (!this.roleProbe.due({ now, mode: mode === 'ACTIVE' ? 'ACTIVE' : 'STANDBY', idle })) return null;
     if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < now + 240_000) return null;
     const drift = await this.driftCode();
