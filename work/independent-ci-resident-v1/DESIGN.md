@@ -3448,3 +3448,194 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 8. 车头全绿时由 Agent 的 auto-merge 还是守队程序合入：两者都是钉 head 的 merge，重复无害；合同草稿是否还保留 Agent 开 auto-merge 这一步，与草稿一起定。
 9. `binding_role_admits_v1` 也放行用途为“其他”的 ci-admission 连接（WorkClaimAdmission §4.4 的 C10 一条），它们也能调 touch、adopt、return 和保活；要不要限定为 `resident-node`。
 10. 自动接班：冷却 6 小时是否合适；告警与 @Owner 经 Y 的 PR 页面转达，Y 不在线时 Owner 只能从 KooYomi 和 `/bindings` 看到。
+
+## 42. 原地升级通道 v2：换 Source 不卸载重装、失败自动回滚、任意多个节点滚动升级（Task `018da927`；相关 `09052ffe`、`1abde401`、`6451a55d`）
+
+依据：Owner 两个首要目标“全部算力可调度”“完整的 CI/CD”（Decision `afec9be8`），排序 `02e4374a` 第 4 项；通道本体的决定 `dda41297`、`3b7a45ed`、`b1dd8a84`、`19baf5ec`；任意多个节点的常设规则 `d6eef30e`。本节不改 §34 以前的任何结论，只回答一个问题：**通道已经装在节点上了，为什么 2026-10-31 的 TURING 换 Source 仍然要整套卸载重装（约十二个 Owner 步骤：暂停、Linux A、Linux B（root）、UAC 启动器、rearm、登记）**，以及怎样把这些缺口补上。
+
+### 42.1 现状核查：通道能做什么、卡在哪里
+
+**已经有、并且装在 TURING 上的**（升级代理 `upgrader/`、`windows/upgrade-apply.ps1`、`UpgraderServiceHost.cs`、`request-upgrade.ps1`、Linux `clued-ci-upgrade-linux`、常驻层接线 §34）：
+
+- 一次升级的完整状态机（`upgrader/src/machine.mjs` 文件头）：ACCEPT（核包、白名单 plan）→ Grant（KooYomi 页面批准 `ci.resident_upgrade`，资源 `ci-resident:<node>/<包 sha>`）→ intake hold → 等批次自然结束 → 暂停并确认 → 两侧增量暂存 → 停服 → 两侧切换 → 启动 → verify → 恢复 → 保留 3 代。
+- verify、启动或切换失败自动回滚到上一代（`ROLLED_BACK_PAUSED`，节点保持暂停并通知，Decision `dda41297` 第 3 项）；回滚也失败才要 Owner（`ROLLBACK_FAILED`）。
+- 每一步只新建 journal 记录，断电、重启后从 journal 续跑；包只当数据读一次；签名 Source、包哈希、policy 的三个 manifest 钉值、SCM binPath 钉值全部保留（§34.8）。
+- 唯一一次真机使用（op `8c5efb1a`，第 3 批）因为调用 PowerShell 时缺 `PATHEXT` 在 stage-windows 被拒并干净撤回（Note `ee73b1a0`）；修复 `a0e15a91` 已随 r7 和 10-31 的整套重装装上。
+
+**卡住的地方**（逐条有出处；“轨”见 42.2）：
+
+| # | 缺口 | 出处 | 后果 | 处理 |
+|---|---|---|---|---|
+| a | **仓库里没有升级包的打包工具**。`reinstall/build.ps1` 只出 `--fresh-install` 包、按新 Decision 写全部 record ref；第 3 批那套“沿用 ref、打 bundle、派生角色、对现场跑 ACCEPT 预检”的 r6 脚本在仓库外，已不存在 | `reinstall/build.ps1`；笔记 `a3701d3d-r6-原地升级包` | 每次换 Source，现成能走的路只有整套重装 | 轨 1：`rollout/build-upgrade.ps1`、`rollout/precheck.mjs` |
+| b | **节点身份冻结了全部接受 ref**：`src/node-identity.mjs:16-19` 把 sourceAcceptanceRef、ownerPackageAcceptanceRef、installationReceiptRef、ownerDecisionRef 等算进 `nodeIdentitySha256`，而 `upgrader/src/plan.mjs:60` 要求新包的身份等于已装的 | Note `45e0ed29`；Decision `b1dd8a84`、`19baf5ec` 第 2 项 | 新的 Owner 接受写不进 record，只能写进 policy 的 `ownerAcceptance`、包的 `acceptance.decisionRef` 和 Grant | 轨 1：按 `b1dd8a84` 沿用已装 ref（工具自动做、自动核对）；轨 2：身份 `/2` 只含机器身份 |
+| c | **通道冻结范围太大**：升级包永远带上“构建它的升级代理”的清单（§34.8），代理代码 = `upgrader/src/*` + 它传递导入的 `src/canonical`、`store`、`inbox`、`intake-pause`、`upgrade-mailbox`、`instance-lock` + `windows/upgrade-apply.ps1`；Linux 升级工具和签名器同理 | `plan.mjs:56`；`clued-ci-upgrade-linux:725-728` | 只要这几个常驻模块有一字改动，整批改动都要整套重装（`UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL`），而且要到 ACCEPT 才知道 | 轨 1：预检提前报出并列出是哪几个文件（Windows 副本，以及 Linux 工具、签名器和工具清单）；轨 2：代理自更新（42.5.3） |
+| d | **一次升级 = 一个节点 × 一个包 × 一个 Grant**；移交 ci-admission 只有 Owner 在 `/bindings` 的一键移交（Native 两步确认，§41.6） | `upgrader/src/request.mjs:47-52`；`20261023010000`:370、:419 | N 个节点要 N 次页面批准，外加一次移交 | 轨 1：N 次批准 + 1 次移交，都不用 UAC；轨 2 + 服务端 PR-0b：一次 rollout Grant，自动计划内移交 |
+| e | **没有滚动编排**：没有任何东西阻止在当班节点上升级；顺序（先待命、后当班）只写在运行手册里 | `docs/maintenance/independent-ci.md`“升级顺序” | 一次误操作就停 CI | 轨 1：`rollout/rollout.mjs next` 只给出合规的下一步；轨 2：升级代理自己的当班闸 |
+| f | 升级代理调用 csc 时没有 TEMP，临时文件落在 `C:\Windows\` | §34.8 末段；Decision `19baf5ec` 第 2 项 | 未真机验证；第一次真实 Compile 才知道 | 轨 1：第 2 阶段烟测专门核对；轨 2：固定的管理员专用临时目录 |
+| g | **单向的状态变化**（例如 §41 的回执按月分段）：plan 要求新旧两版互相读得懂对方的 state| `upgrader/src/plan.mjs:73-76` | 这类包在 ACCEPT 被拒（`UPGRADE_STATE_COMPAT_REFUSED`），否则回滚后旧代读不懂新状态 | 规则：先扩后缩，拆成两次升级（42.4.4）；不放宽检查 |
+| h | 秘密（心跳令牌换新、补装）不在通道里 | `reinstall/README.md` 第 4 节 | 换令牌仍要整套重装 | 不在本节；另立 Task：提权小工具 |
+| i | 10-31 重装踩到的 SeServiceLogonRight 检查（PR #965）、登记工具（PR #966）、代数 adopt 都在**首装路径**上 | `install-resident.ps1`；`registration/` | — | 原地升级不碰账户、权限、服务、登记；代数 +1，不 adopt |
+| j | 整套重装把两侧都重新 adopt 为第 1 代，没有可以回退的上一代 | 安装波清单第 5 节 | 重装之后的第一次失败不能自动回滚 | 通道用起来之后自然消失：第 2 代起总有上一代 |
+
+结论：**通道本身在 TURING 上是可用的**（只要改动不碰 c 列的冻结文件、不需要新秘密、state 双向兼容）。今晚之所以整套重装，直接原因是 a（没有打包工具），其次是 b、c、d、e 没人收拾。
+
+### 42.2 两条轨
+
+- **轨 1（PR #970，已合入 `850e538f`；装上即用，不需要再装任何东西）**：`rollout/` 工具链，用**节点上已装的**升级代理。每个节点每次升级：Owner 在页面点一次批准；滚动升级再加一次 `/bindings` 移交；没有 UAC，没有 root 步骤。
+- **轨 2（代码另一个 PR，随下一次已经要做的整套重装装上；之后通道自己也能原地升级）**：身份 `/2`、升级代理的当班闸和 rollout Grant 客户端、代理自更新、固定 TEMP。配套服务端 PR-0b（clued-cloud 迁移，走 `migration.production`）：rollout Grant 资源与计划内移交。轨 2 装上之后：一次 rollout 只要 Owner 在页面点一次。
+
+两条轨的信任模型相同：只认 Owner 在 KooYomi 页面上对**精确哈希**的批准；包只当数据；签名 Source 和全部现有钉值保持强制；Agent 不能自开 Grant、不能替 Owner 点。
+
+### 42.3 轨 1：`rollout/` 工具链（非提权、只读主机、只在 workDir 下新建文件）
+
+#### 42.3.1 打包：`rollout/build-upgrade.ps1`
+
+```
+build-upgrade.ps1 -Config <reinstall-config.json> -Commit <40hex> -InstalledPackage <现装包目录> [-Final -DecisionRef <uuid> -ReceiptRef <uuid>] [-StateCompat <file>]
+```
+
+与 `reinstall/build.ps1` 共用同一份构建配置和 `reinstall/tools/` 下同一组工具（`tree.py`、`record-inputs.py`、`check-record.mjs`、`node-inputs.py`、`linux-pins.py`），区别只有这几处：
+
+1. **record 的接受 ref 沿用现装包**（Decision `b1dd8a84`）：`rollout/tools/upgrade-config.py` 把构建配置的 `basePackage` 换成现装包，`record-inputs.py` 不带任何 `--ref` 运行，于是 9 个 ref、`acceptedAt` 和 `validUntil` 都原样取自现装包的 record。新包的 `nodeIdentitySha256` 必须等于现装包的，否则 `UPGRADE_NODE_IDENTITY_WOULD_CHANGE`（例如换了 App 私钥或 CI 连接：那要整套重装）；节点档案同理（`UPGRADE_NODE_PROFILE_WOULD_CHANGE`）。
+   - 这样做的两个后果要知道：沿用的 `validUntil` 接近到期时，升级包也随之到期；新 Source 的角色 policy 和 qualification（Linux stage 用 `derive_role` 按 `controllerRelay.sourceAcceptanceRef` 派生）写的仍是**首装时**的 Source 接受 ref。新接受只在 policy、包的 `acceptance`、request、Grant 和 KooYomi 里。轨 2 的身份 `/2`（42.5.1）消除这两点。
+2. **Owner 对这次升级的接受**只写进 policy 的 `ownerAcceptance`（`-DecisionRef`、`-ReceiptRef`，由 `node-inputs.py`），再由 build-package 写进包的 `acceptance.decisionRef`，最后进 request 和 Grant。
+3. **现装包必须就是节点上正在跑的那一代**：它的 `package-manifest.json` 哈希等于节点 `upgrade\current.json` 的 `packageManifestSha256`（Owner 可读），record 的节点就是配置的节点，并且它是带升级代理的 `/4` 包；否则分别是 `INSTALLED_PACKAGE_IS_NOT_THE_CURRENT_GENERATION`、`INSTALLED_PACKAGE_IS_FOR_ANOTHER_NODE`、`INSTALLED_PACKAGE_NOT_AN_UPGRADER_PACKAGE`。
+4. **不带 `--fresh-install`**；带 `--source-v2`：
+   - bundle：新建的裸仓库只放 `refs/heads/accepted` 指向该提交，`git bundle create` 一次（重建时复用同一个文件），`git bundle verify`，`list-heads` 必须恰好是这一行；
+   - `rolesDerivedSha256`：`rollout/tools/roles-derived.py` 先确认提交树里的冻结 Linux 工具字节等于节点 version facts 的 `upgradeToolSha256`，再载入它，用**它自己的** `derive_role` 和 `canonical_bytes`，对配置里 root 复制的现装 `roles-v3` 副本（每个 policy 和 qualification 文件都按 version facts 核对哈希；facts 必须是 1 小时内的）和新提交的文件（`git ls-tree` 必须是普通文件、`cat-file` 不能为空，与 stage 的 `read_regular` 一致）计算。stage 会用同一段代码再算一次核对（`ROLES_DERIVED_MISMATCH`）；
+   - 外部钉值：`linux-pins.py pins`（source-v2 下取新提交的文件），构建后 `linux-pins.py check`。
+5. `stateCompat` 默认取现装包的值（经 Python 原样复制，避免 PowerShell 5.1 把单元素数组变成数字）；Source 改了 state 格式时由作者用 `-StateCompat` 显式给出，预检核对双向可读（42.4.4）。
+6. 同一份输入（同一个 bundle 文件）再构建一次，包 sha 必须相同。
+7. 最后自动跑一次预检（42.3.2），输出一行 JSON：包目录、包 sha、`grantResource`、预检结论；final 且预检通过时给出可以直接运行的 request 命令（用**已装**常驻目录里的 `request-upgrade.ps1`，路径带引号）。
+
+DRAFT（不带 `-Final`）时 policy 用占位 Decision，预检照跑；final 拒绝占位值。
+
+#### 42.3.2 预检：`rollout/precheck.mjs`（ACCEPT 的只读预演）
+
+```
+node rollout/precheck.mjs --root C:\ProgramData\CluedIndependentCI\resident --package <dir> --package-sha <hex> --acceptance <uuid> --installed-package <现装包目录>
+```
+
+- **用节点上真正会做决定的代码**，而且在信任它之前不执行包里的任何代码：
+  1. 已装回执 `install\install-receipt.json` 的 `upgrader.manifestSha256` 必须等于现装包的；新包声称的值不同，就是 `PRECHECK_REFUSED` / `UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL`，并与现装包的升级代理清单逐文件比较，列出变化（`changedFrozenFiles`）。作者据此把这些改动挪到轨 2 的自更新，或者接受整套重装。
+  2. 冻结的 Linux 升级工具、签名器和它们的清单（`clued-ci-upgrade-linux` 的 `UPGRADE_FILES`）逐个与现装包比较，不同就是同一个码（`detail: linux-upgrade-tool`），否则 Linux stage 会在 Owner 批准之后拒绝。
+  3. 包里升级代理副本的每个文件按清单核对哈希，再用**本检出自己的** `canonical.mjs` 算出副本清单的哈希，必须等于已装的。只有到这一步，包里的副本才逐字节就是节点上冻结的那份；预检这时才 import 它的 `readPackageOnce`、`buildPlan` 和 `Generations`，与 ACCEPT 走同一段代码。
+- 节点状态：`upgrade\current.json`、`install\install-receipt.json`、各槽的现值哈希和内容寻址目录。升级代理配置是管理员专用的，不读；它要的 `node`、`nodeProfileSha256`、`ownerSid` 从已装的 `config\policy.json` 取，两者由同一份节点档案写出（残余：两者若不一致，节点的答案可能不同）。
+- 非提权读不到的槽（例如 `helpers\controller-formal-generic-v2.exe`）列在 `unreadableSlots` 里，用占位哈希继续算下去；结论是 `PRECHECK_PASS_EXCEPT_UNREADABLE_SLOTS`。升级代理以 LocalSystem 运行，读得到。
+- 另外核对 version facts 的 `upgradeToolSha256` 等于包里的工具。只记 `warnings`、不拒绝的：进行中的 op、HALT、`versions.consistent` 为 false、Linux 有暂存代、pins 不成立、Linux 代数不是当前代、本节点当班（要先移交）。这些会变，ACCEPT 之后由状态机处理（延后或拒绝）。
+- 不写任何东西；输出 `clued.independent-ci.upgrade-precheck/1`。
+
+#### 42.3.3 滚动升级：`rollout/rollout.mjs`
+
+一次 rollout = 同一个 Owner 接受、同一个 Source（全部节点的 `ciSourceManifestSha256` 相同，只有节点档案和身份不同）、每个节点一个包。
+
+```
+node rollout/rollout.mjs plan    --out <rollout.json> --decision <uuid> --package <node>=<dir> [--package <node>=<dir> ...]
+node rollout/rollout.mjs observe --root <ROOT> --out <observation.json>                       # 在每个节点上、非提权
+node rollout/rollout.mjs next    --plan <rollout.json> --observation <file> [...] [--now <ISO>] [--allow-active-upgrade] [--handover-issued-at <ISO>]
+```
+
+- `plan`：用升级代理的 `readPackageOnce` 读每个包一次并核对：节点名唯一；包的节点（record 的 `node.nodeName`）就是 `<node>`；全部包的 `ciSourceManifestSha256`、`sourceManifestSha256` 相同，`acceptance.decisionRef` 等于 `--decision`。写出 `clued.independent-ci.rollout-plan/1`：`{contract, decisionRef, createdAt, ciSourceManifestSha256, sourceManifestSha256, nodes: [{node, packageManifestSha256, residentManifestSha256, grantResource}]}`（节点按名字排序），以及它的规范哈希 `rolloutSha256`。
+- `observe`：每个节点的 Agent 在本机非提权运行，记下本节点的 `state\status.json`（`node.name`、`node.mode`、`halt`、`paused`、`versions.consistent`、`writtenAt`）、`upgrade\current.json`（代数、包 sha）、`upgrade\status.json`（进行中的 op、最近的结局及其时刻）。只读，读不到的文件列在 `unreadable` 里，从不猜。输出 `clued.independent-ci.rollout-observation/1`，经共享笔记或 KooYomi 交给协调者。
+- `next`：**纯函数**，输入 plan、各节点最近的 observation 和时钟，按下面的顺序给出唯一的下一步：
+
+| 结果 | 条件 |
+|---|---|
+| `BLOCKED ROLLOUT_NODE_NOT_IN_PLAN` | 观察到 plan 以外的节点 |
+| `WAIT` | 缺某节点的 observation，或它不完整，或超过 15 分钟（`ROLLOUT_OBSERVATION_*`） |
+| `BLOCKED ROLLOUT_RESIDENT_NOT_WRITING_STATUS` | 常驻的 `status.json` 比 observation 早 15 分钟以上 |
+| `BLOCKED ROLLOUT_NODE_HALTED` | 有节点 HALT |
+| `BLOCKED ROLLOUT_NODE_ROLLED_BACK` / `ROLLOUT_NODE_UPGRADE_REFUSED` | 某节点最近的结局是 ROLLBACK_FAILED（不论何时）；或者它还没到目标包，而结局为 ROLLED_BACK_PAUSED，或 REFUSED、GRANT_REJECTED、GRANT_EXPIRED、STALE、CANCELLED，时刻不早于 plan 的 `createdAt`（更早的属于上一次 rollout，改好包重新 plan 即可；没有时刻的按本次算）。升级代理一直保留最后一个结局，所以 Owner 看过（ROLLBACK_FAILED 要先提权 `-Recover`）之后，协调者用 `--ack-op <opId>` 确认那一个 op，它就不再阻塞 |
+| `WAIT ROLLOUT_UPGRADE_IN_PROGRESS` | 有节点的升级 op 还在进行 |
+| `BLOCKED ROLLOUT_TWO_ACTIVE`、`WAIT ROLLOUT_NODE_UNCERTAIN` | 两个当班（移交请求后 15 分钟内是 `WAIT ROLLOUT_HANDOVER_PENDING`：角色移动时两边可能短暂都报 ACTIVE）；有节点处于 UNCERTAIN（移交生效前后常见） |
+| `DONE` | 每个节点都到了目标包、`consistent` 为 true、没有暂停，并且恰好一个当班节点在 plan 里（否则 `WAIT ROLLOUT_VERSIONS_NOT_CONSISTENT`、`BLOCKED ROLLOUT_NODE_PAUSED`、`BLOCKED ROLLOUT_NO_ACTIVE_NODE_IN_PLAN`） |
+| `UPGRADE <node>` | 还没到目标包、STANDBY、未暂停的节点里名字最小的一个（还没到目标包的待命节点都暂停着：`BLOCKED ROLLOUT_STANDBY_PAUSED`） |
+| `HANDOVER <from> → <to>` | 待命节点全部到了目标包，当班节点还没有；`<to>` 是已到目标包、`consistent`、未暂停的待命节点里名字最小的。协调者请 Owner 移交时记下时刻，用 `--handover-issued-at` 传入：之后 15 分钟内同一步是 `WAIT ROLLOUT_HANDOVER_PENDING`，不会再弹第二次 |
+| `BLOCKED ROLLOUT_NO_STANDBY` / `ROLLOUT_NO_HEALTHY_UPGRADED_STANDBY` | 根本没有待命节点；有待命节点，但没有一个已升级且健康 |
+
+- 当班节点从不出现在 `UPGRADE` 里。只有一个节点、没有待命节点时，`next --allow-active-upgrade` 才会给出 `UPGRADE <当班节点>`，并标 `ciPause: true`；这个开关只在 Owner 选了“接受暂停 CI”之后由协调者加上（弹窗）。
+- 一次只升一个：保证任何时刻至少有一个节点没在升级、可以接班；任意多个节点都按同一规则推进（`d6eef30e`）。
+- 执行 `UPGRADE <node>`：该节点的 Agent 在 Owner 会话里非提权运行 build-upgrade 输出的 request 命令；Owner 在 `upgrade\status.json` 的 `confirmUrl` 页面批准一次。执行 `HANDOVER`：Owner 在 `/bindings` 一键移交（5 分钟后生效）。两者都由协调者以弹窗请 Owner 授权，Agent 不替 Owner 点。
+
+#### 42.3.4 轨 1 的 Owner 动作
+
+| | 今天的整套重装（每节点） | 轨 1（每次 rollout） | 轨 2 + PR-0b（每次 rollout） |
+|---|---|---|---|
+| UAC | 2（启动器、rearm） | 0 | 0 |
+| Linux root | 2（A、B），出错再加 resume | 0 | 0 |
+| 页面批准 | 0 | 每节点 1 次 | 全部节点 1 次 |
+| 移交 | 当班节点 1 次 | 1 次 | 0（计划内移交由 rollout Grant 授权） |
+| 停 CI | 当班节点重装期间 35–65 分钟（不先移交时） | 0 | 0 |
+
+### 42.4 轨 1 的边界与规则
+
+1. **能走轨 1 的改动**：常驻层（`resident\<sha>\`）、CI Source（`source\<sha>\`、Linux `source-v2`、`resident-v1`、角色重钉）、policy、companion 配置、record 文件、由已装 Source 编译的服务宿主和 helper。
+2. **不能走轨 1、预检会提前报出的**：升级代理代码及其传递导入的 6 个常驻模块、`upgrade-apply.ps1`、Linux 升级工具和签名器、节点档案、节点身份（换钥、换连接）、目录布局、ACL、账户、SDDL、服务、秘密。
+3. **改冻结模块的作者规则**：能不改就不改；必须改时把改动单独成一批，等轨 2 的自更新，或并入下一次已计划的整套重装。不要和普通 Source 改动混在一起，否则整批都被拖进重装。
+4. **state 先扩后缩**：要改 state 格式时拆成两次升级。第 1 次（扩）：新代码能读新旧两种格式，仍只写旧格式，`stateCompat` 双向可读；第 2 次（缩）：开始写新格式，旧格式的读法保留到下一次。每一次都能自动回滚到上一代。§41 的回执按月分段这类一次到位的改动，只能整套重装。
+5. **Grant 资源仍是 `ci-resident:<node>/<包 sha>`**，一个 op 一次；同一包重复请求重放同一次使用；被拒或过期的要新 Grant。
+
+### 42.5 轨 2：随下一次整套重装装上的通道改动（代码另一个 PR；本 PR 只写设计）
+
+#### 42.5.1 节点身份 `/2`
+
+- `nodeIdentitySha256` 只覆盖机器身份：`nodeName`、`appKeyId`、`appPublicKeySha256Base64`、`ciTokenPinSha256`、`ciPrincipalBindingId`、`ciPrincipalRoleRef`、`hostQualificationRef`、`ciPrincipalQualificationRef`。
+- 每次接受都会变的 `sourceAcceptanceRef`、`ownerAuthorizationRef`、`publisherQualificationRef`、`ownerPackageAcceptanceRef`、`installationReceiptRef`、`ownerDecisionRef`、`ownerReceiptRef` 仍写在 record 里，随包更新，但不进身份。升级代理改为核对它们等于包的 `acceptance`；今天的 `acceptance` 只有 `{decisionRef}`，所以包合同要升一版，`acceptance` 加上回执 ref（`receiptRef`）。
+- 同时改 `install-resident.ps1:364`、`verify-resident.ps1:217` 的 PowerShell 规范化（`ConvertTo-NodeIdentityCanonical`）和 `build-package.mjs`；合同名换成 `/2`，读者只认装它的那一版。
+
+#### 42.5.2 当班闸与 rollout Grant（升级代理）
+
+- 请求 `/2` 可选 `rollout: {rolloutSha256}` 和 `admission: "standby-only" | "allow-active"`（默认 standby-only）。
+- 新的延后码 `UPGRADE_NODE_HOLDS_ADMISSION`（deferred）：hold 之前和每个排空周期开头读常驻 `state\status.json` 的 `node.mode`；不是 STANDBY 就延后（`allow-active` 除外）。`status.json` 是常驻自报的，所以只认 `writtenAt` 在 2 分钟内、`node.probe.at` 在 20 分钟内的读数，过期按“不是 STANDBY”处理；排空结束、停服（STOP）之前再读一次。滚动顺序因此由每个节点自己保证，不依赖协调者。
+- 有 `rollout` 时 Grant 资源是 `ci-rollout:<rolloutSha256>`；升级代理先核对 plan 里有本节点、本节点的包就是请求的包，再向门要这次使用。
+- 当班节点在 `NODE_HOLDS_ADMISSION` 延后、而 plan 里其余节点的心跳都报目标 Source（§41.6a 的 holders `nodes`）时，调用 PR-0b 的计划内移交，把角色交给已升级的待命节点；生效后自己变成 STANDBY，下一个周期继续升级。
+
+#### 42.5.3 升级代理自更新（“龙骨”）
+
+- 冻结的只剩一小块：`UpgraderServiceHost.cs` 和管理员专用的 `upgrader\keel.json`（`{active, previous, trial: null | {sha, opId, deadline}}`）。
+- 新的 op 种类“升级代理自身”：包只带升级代理副本（以及 Linux 升级工具，见下）；资源仍经同一个 Grant 门。正在跑的代理把新副本放到 `upgrader\<newSha>\`，写 `keel.trial`，经 SCM 重启自己；宿主按 keel 启动新副本。
+- 新副本在 10 分钟内必须在 journal 写下自检通过（重读 journal、读配置、对一个空 op 跑一遍 decide）；超时或崩溃三次，宿主把 keel 改回 `previous` 并重启，旧代理记 `ROLLED_BACK`。回滚永远由上一份已证明可用的代理执行。
+- Linux 升级工具同样分代：`/opt/clued-independent-ci/upgrade-tools/g<N>/`，由当前工具新增的 `stage-tool`、`switch-tool` 子命令装，companion 的固定 argv 指向 `upgrade-tools/current/` 下的固定文件名（不是链接；切换是改名）。签名器同理。
+- 这之后，c 列的冻结模块也能原地升级：先一次“升级代理自身”，再一次普通升级。
+
+#### 42.5.4 TEMP
+
+`APPLY_ENV` 加 `TEMP`、`TMP` = `ROOT\upgrader\tmp`（安装时建，管理员和 SYSTEM 专用），不再落到 `C:\Windows\`。
+
+#### 42.5.5 服务端 PR-0b（clued-cloud，另一个会话、另一个 PR，走 `migration.production`）
+
+- `ci.resident_upgrade` 接受第二种资源 `ci-rollout:<64hex>`：一个 Grant 可被**不同的** resident-upgrade 连接各消费一次（每个连接的 `agent_name` 就是节点名，PR-0 已要求）；同一连接同一 op 重放；Owner 页面显示 rollout 的哈希和节点名单。名单来自请求时第一个节点带上的 plan 公开内容，服务端必须**自己**按同一规范形式重算 `rolloutSha256` 并与资源比对，不一致就拒绝；否则页面上的名单就只是 Agent 说的。
+- 计划内移交 `ci_admission_rollout_handover_v1`：经 CI 门，只接受当班节点 resident-upgrade 连接的调用，要求同一 rollout Grant 有效；目标的心跳在 15 分钟内且报 rollout 的 Source；内部走一键移交同一个核心函数、同一把 advisory 锁、同一个检查（§41.6 第 3392 行的拆分），写回执 `CI_ADMISSION_ROLLOUT_HANDOVER`。
+- 在 PR-0b 生产应用之前，轨 2 的升级代理照旧用 `ci-resident:` 资源（每节点一次批准），移交照旧由 Owner 点。
+
+### 42.6 失败与回滚（两条轨相同）
+
+| 发生在 | 结局 | 节点状态 | rollout |
+|---|---|---|---|
+| ACCEPT、Grant 之前 | REFUSED / GRANT_REJECTED / GRANT_EXPIRED / CANCELLED | 不变，照常运行 | BLOCKED `ROLLOUT_NODE_UPGRADE_REFUSED`；改好包、重新 plan 后重来 |
+| 排空、暂停、HALT | DEFERRED，自动重试至 Grant 后 24 小时（之后 STALE） | 不变 | 进行中：WAIT；STALE：BLOCKED `ROLLOUT_NODE_UPGRADE_REFUSED` |
+| 暂存被拒 | REFUSED（暂存撤回） | 不变 | BLOCKED `ROLLOUT_NODE_UPGRADE_REFUSED` |
+| 停服之后的切换、启动、verify、两侧不一致 | **自动回滚到上一代**，ROLLED_BACK_PAUSED | 上一代，保持暂停并通知 | BLOCKED `ROLLOUT_NODE_ROLLED_BACK`；其余节点不动 |
+| 回滚也失败 | ROLLBACK_FAILED | 停止或暂停 | BLOCKED；Owner 提权 `upgrade-apply.ps1 -Recover`，看过后协调者 `--ack-op` |
+
+一个 rollout 中途停下时，已经升级的节点留在新代、没升级的留在旧代。影子模式下 Source 不同没关系；on 模式下第 10 段在 Source 不一致时不运行并通知（§41.9）。要整体退回，就对旧包再做一次 rollout（新的 Owner 接受、新的 Grant）。
+
+### 42.7 分阶段上线计划（安装和合入都由协调会话和 Owner 来做）
+
+| 阶段 | 做什么 | Owner | 通过标准 |
+|---|---|---|---|
+| 0 | 合入轨 1 PR（只有工具和设计，主机不变）：#970，已于 2026-11-01 合入（`850e538f`） | 合入 | CI 六项必需检查 |
+| 1 | 只读演练：在 TURING 上对一个只改文档的提交 N+1 跑 `build-upgrade.ps1` DRAFT 和预检。先确认从 10-31 安装的提交到 N+1 之间，升级代理副本和三个冻结 Linux 文件都没有变（预检的 `changedFrozenFiles` 为空）；变了就说明下一次只能走整套重装或轨 2（2026-10-31 核对：10-31 安装所用的 `eaca4eab` 到 main `86deb896`（含 #972、#965）之间，这些文件没有改动） | 无 | `PRECHECK_PASS_EXCEPT_UNREADABLE_SLOTS`；同一输入两次构建 sha 相同 |
+| 2 | 烟测：在**待命**节点上把 N+1 原地升级上去 | 接受（弹窗）、页面批准 1 次 | SUCCEEDED、第 2 代、`resident-upgraded` 回执、两侧一致；记下 csc 的 TEMP 是否正常（42.1 f） |
+| 3 | 回滚演练：同一待命节点，用一个从不合入的分支打包，故意让 verify 失败（例如常驻入口启动即退出） | 页面批准 1 次；回滚后恢复 1 次 | 自动 ROLLED_BACK_PAUSED、回到第 2 代、RESIDENT_VERIFIED、全程回执 |
+| 4 | 真实的 Source 改动按 `rollout.mjs` 两个节点滚动：待命节点 → 移交 → 原当班节点 | 接受、每节点批准 1 次、移交 1 次 | `next` = DONE；期间无 HALT、无批次丢失；两节点 Source 相同 |
+| 5 | 轨 2 PR 和 PR-0b：随下一次已计划的整套重装（两个节点）装上 | 按整套重装 | 之后一次 rollout 只点一次 |
+
+验收对照 Task `018da927`：1 由阶段 2（清点只哈希新包与几份清单，分钟级）；2 由阶段 2 的暂停确认与首轮训练后 verify（已在状态机里）；3 由阶段 3；4 由阶段 4；5 由 §34.4 的版本闸（已在）加阶段 4 观察；6 的 b593aa03 三项已在第 3 批落地（§35）；7 由各 PR 的独立审核。
+
+### 42.8 测试
+
+- `rollout/test/rollout.test.mjs`：`plan` 的各类拒绝；`next` 表格的每一行，两个、三个、一个节点（三个节点时一次只给一个 UPGRADE，待命按名字；HANDOVER 只给已升级、一致、未暂停的待命节点；回滚后 BLOCKED，而已到目标包的旧回滚不算；observation 过期或缺为 WAIT；只有一个节点时不带开关为 BLOCKED、带开关给出 `ciPause`）；`observe` 只读、读不到就列出。
+- `rollout/test/precheck.test.mjs`：包里带着本树**真实的**升级代理副本（`upgraderCopy`），所以做决定的就是被测代码：PASS（plan 与 ACCEPT 相同，节点根目录逐字节不变）、读不到的槽、冻结模块改动（列出 `src/store.mjs`）、副本被篡改（import 之前拒绝）、身份、state、接受、同包、Linux 工具变更。
+- `rollout/test/test_upgrade_tools.py`：`upgrade-config.py` 沿用现装包、包不是当前代、包是别的节点；`roles-derived.py` 的结果等于冻结 Linux 工具 stage 时 `derive_role` 的结果（用该工具自己的离线 fixtures），以及工具不同、角色副本过期、manifest 不是包的、新提交缺钉住文件。
+- 不改升级代理、常驻、Linux 工具、重装工具链的任何字节：diff 只在 `rollout/` 和本节。
