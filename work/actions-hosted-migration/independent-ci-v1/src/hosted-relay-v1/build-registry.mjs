@@ -184,6 +184,8 @@ export function scanWorkflow(bytes, { workflowPath, checkName, hostedCheckName, 
   insist(/^ {6}- name: Emit relay identity\s*$/.test(job.lines[steps.at(-1)]), code, `${workflowPath}:identity-step-last`);
   insist(!/^\s+if:/m.test(last), code, `${workflowPath}:identity-step-condition`);
   insist(last.includes(`audience=${RELAY_AUDIENCE}`) && last.includes(`::notice title=${RELAY_AUDIENCE}::`), code, `${workflowPath}:identity-step-content`);
+  // The token goes out as hex (oidc.mjs tokenFromAnnotation): GitHub masks JWT-shaped text (Task 169fd456).
+  insist(last.includes(`["value"].encode("ascii").hex()`), code, `${workflowPath}:identity-step-hex`);
   const before = job.lines.slice(0, steps.at(-1)).join('\n');
   insist(!before.includes('ACTIONS_ID_TOKEN_REQUEST') && !before.includes(RELAY_AUDIENCE), code, `${workflowPath}:token-before-last-step`);
   const result = { hostedJobId: job.id, hostedJobTimeoutMinutes: Number(timeout[0]), executed: executedScripts(job.lines, workflowPath),

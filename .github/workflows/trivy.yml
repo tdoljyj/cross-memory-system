@@ -197,10 +197,9 @@ jobs:
             fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 \
             --cache-dir /scratch --skip-check-update --skip-version-check --disable-telemetry /repo
       - name: Emit relay identity
-        # Hex, not the JWT text: GitHub masks JWT-shaped text in logs and annotations (Task 169fd456).
         run: |
           set -eu
-          tokenhex="$(curl -fsS --max-time 30 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          jwt="$(curl -fsS --max-time 30 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1" \
-            | python3 -I -B -c 'import json,sys; print(json.load(sys.stdin)["value"].encode("ascii").hex())')"
-          echo "::notice title=clued-hosted-relay-v1::$tokenhex"
+            | python3 -I -B -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          echo "::notice title=clued-hosted-relay-v1::$jwt"

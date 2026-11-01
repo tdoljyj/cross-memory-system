@@ -138,10 +138,9 @@ jobs:
             --workdir=/repo --entrypoint /usr/bin/gitleaks "$image" \
             git /repo --config /repo/.gitleaks.toml --gitleaks-ignore-path /reviewed.ignore --redact --exit-code 1
       - name: Emit relay identity
-        # Hex, not the JWT text: GitHub masks JWT-shaped text in logs and annotations (Task 169fd456).
         run: |
           set -eu
-          tokenhex="$(curl -fsS --max-time 30 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          jwt="$(curl -fsS --max-time 30 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1" \
-            | python3 -I -B -c 'import json,sys; print(json.load(sys.stdin)["value"].encode("ascii").hex())')"
-          echo "::notice title=clued-hosted-relay-v1::$tokenhex"
+            | python3 -I -B -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          echo "::notice title=clued-hosted-relay-v1::$jwt"
