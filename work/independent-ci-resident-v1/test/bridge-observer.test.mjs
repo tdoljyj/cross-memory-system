@@ -468,7 +468,7 @@ test('an Owner abort accepted after the engine read it, while a bridge stop ends
   assert.equal(abortStageEndingClean(r2, { stopSent: true }), false, 'a never-clean outcome stays a HALT under an abort');
 });
 
-test('an Owner abort and a bridge stop together: one stop file, and the Owner abort wins (the stage keeps its own code)', async t => {
+test('an Owner abort and a bridge stop together: one stop file, and the Owner abort wins (the stage keeps its own code)', { timeout: 10_000 }, async t => {
   const owned = [];
   const start = async () => {
     const world = await engineWith(t, { holdStop: true, script: (ms, mb) => { if (ms >= 1000) mb.answer = DEAD; } });
