@@ -63,6 +63,20 @@ powershell -NoProfile -File build.ps1 -Config config\desk-w-591.json -Commit ...
 
 ## 4. 启动器：`launcher/generate.py` + `launcher/template.ps1`
 
+### 完整 Source V2 输入
+
+`build.ps1 -SourceV2 <json>` 将已有 builder 的 `--source-v2` 输入同时传入首包和启动器的重建。JSON 使用原有合同：`commit`、`bundle`、`rolesDerivedSha256`。提交必须是已接受的运行 Source；辅助工具的提交不替换它。`linux/assemble.py` 将包内 bundle 一并复制，`linux/prep.py` 在 root 暂存时按固定路径复制并校验 bundle，派生后三个 role 的摘要必须等于包中值。
+
+主机环境未变时，用 `-HostQualificationRef <已接受的现行 Host 引用>`；Source 接受不能替代 Host 资格。Linux 脚本使用 record 中的独立 Host 引用。正式接受引用替换占位引用后，必须重算并交回最终 S 和包摘要，不能沿用 DRAFT 摘要。
+
+### 升级链的离线实际模块测试
+
+`test/real-upgrade-flow.test.mjs` 通过实际 Machine、Generations 文件原语、ResidentExecutor、ResidentPort、receipt chain 及 PowerShell 5.1 的 production reader/generation/version 谓词走正向和回滚。设置 `CLUED_UPGRADE_BEFORE_REPO` 指向精确、干净的 `019c1b77…` 修前检出，`CLUED_UPGRADE_REPORT_DIR` 指向全新报告目录，然后运行 `node --test <该测试文件>`。修后模块逐 blob 绑定已接受 `1cba7ba5…`。
+
+报告明确 SCM/task、Linux host/companion、Native role reply 和 Grant door 是隔离边界；它不是物理服务或完整生产 verifier 的验收，不能据此解除 Owner 要求的物理空升级 Gate。
+
+首次重装后的“同 Source 空升级”可先用原 `rollout/build-upgrade.ps1` 构建：原地包移除重装包主清单里22个只供首次安装的 upgrader 写入项，所有共同文件字节、C/S、策略、身份、冻结升级器和 bundle 保持相同，包摘要自然不同。须交付逐文件 diff，并在目标重装后的实际现场重新预检与取得精确 Grant。不要改功能、有效期或制造空提交来绕过 `UPGRADE_SAME_AS_CURRENT`。
+
 - **模板**：`template.ps1` 就是 r7 f4 在 TURING 上实际跑过的文本（6d32f2ba），把补丁历史合了进来，只多了一处：主机名改为参数 `$NodeHostname`。生成器钉住模板的 sha，不再打补丁；模板要改，就作为文本改动走审核。
 - **数据来源**：启动器钉住的每一个值都来自文件，包括包、配置、包里 record 的节点档案（必须等于配置所指的档案），以及本机已装状态（只读）。
 - **final 的前提**：Linux 第 B 步产出的 evidence 和 version facts，加上一份对**同一个包、同一提交、同一配置**的 `REHEARSAL_PASS` 预演报告，缺一不可（`FINAL_NEEDS_A_PASSING_REHEARSAL_OF_THIS_PACKAGE`）。24 小时时限由 `prep.py` 在节点变动之前检查；这里不再查，因为 W1 和 Linux B 之后节点处于半重装状态，无法重新预演。

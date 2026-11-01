@@ -89,7 +89,9 @@ def main(argv):
         try:
             new_policy, _ = tool.derive_role(role, json.loads(pol_bytes.decode('utf-8')), q['payload'], ci_sha, new_manifest, file_sha)
         except tool.Refused as e:
-            refuse(e.code, role=role, **e.detail)
+            detail = dict(e.detail)
+            detail.setdefault('role', role)
+            refuse(e.code, **detail)
         out[role] = hashlib.sha256(tool.canonical_bytes(new_policy)).hexdigest()
     print(json.dumps({'status': 'ROLES_DERIVED', 'rolesDerivedSha256': out, 'upgradeToolSha256': tool_sha}, sort_keys=True))
     return 0

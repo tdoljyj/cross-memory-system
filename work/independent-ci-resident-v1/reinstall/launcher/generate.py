@@ -179,9 +179,11 @@ REB = {k: opt('--rebuild-' + k) for k in ('record', 'policy', 'source-files', 'u
 REB['companion'] = opt('--rebuild-companion') or CFG['companionInput']   # build.ps1 passes the node's derived companion input
 assert all(REB.values()), 'REBUILD_INPUTS_REQUIRED'
 rebuild_dir = os.path.join(R4, 'rebuild-' + COMMIT[:8] + '-' + GEN_UTC)
+source_v2_input = opt('--rebuild-source-v2')
+source_v2_args = ['--source-v2', source_v2_input] if source_v2_input else []
 rb_out = subprocess.run(['node', 'tools/build-package.mjs', '--out', rebuild_dir, '--policy', REB['policy'], '--companion', REB['companion'],
                          '--node', CFG['nodeExe'], '--record', REB['record'], '--source-root', TREE,
-                         '--source-files', REB['source-files'], '--fresh-install', '--upgrader-config', REB['upgrader-config'], '--linux-external-pins', REB['linux-external-pins']], cwd=os.path.join(TREE, 'work', 'independent-ci-resident-v1'), capture_output=True, text=True)
+                         '--source-files', REB['source-files'], '--fresh-install', '--upgrader-config', REB['upgrader-config'], '--linux-external-pins', REB['linux-external-pins'], *source_v2_args], cwd=os.path.join(TREE, 'work', 'independent-ci-resident-v1'), capture_output=True, text=True)
 assert rb_out.returncode == 0, ('REBUILD_FAILED', rb_out.stderr[-600:])
 rebuilt = json.loads(rb_out.stdout)
 assert rebuilt['packageManifestSha256'] == pkg_sha == sha(os.path.join(rebuild_dir, 'package-manifest.json')), ('REBUILD_DIFFERS', rebuilt['packageManifestSha256'], pkg_sha)

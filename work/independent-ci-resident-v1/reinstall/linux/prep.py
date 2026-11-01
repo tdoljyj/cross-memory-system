@@ -63,7 +63,10 @@ assert pkg['ciSourceManifestSha256'] == NEW and sha(os.path.join(IN, 'record', '
 for f in ('acceptance.json', 'installation.json', 'record-manifest.json', 'signers.json', 'source-manifest.json'):
     assert sha(os.path.join(IN, 'record', f)) == sha(os.path.join(PKG, 'record', f)), f
 acc = json.load(open(os.path.join(IN, 'record', 'acceptance.json'), encoding='utf-8'))
-assert acc['sourceAcceptanceRef'] == REF and acc['hostQualificationRef'] == REF
+assert acc['sourceAcceptanceRef'] == REF
+HOST_REF = acc['hostQualificationRef']
+assert re.fullmatch(r'[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}', HOST_REF), 'HOST_QUALIFICATION_REF_REQUIRED'
+HOST_SHELL = '$NEW_REF' if HOST_REF == REF else shlex.quote(HOST_REF)
 RECEIPT = acc['installationReceiptRef']
 assert acc['ownerReceiptRef'] == RECEIPT
 PLACEHOLDER = re.compile(r'^(d{8}|e{8})-')
@@ -136,8 +139,27 @@ UPG_PLAN = hashlib.sha256(upg_text.encode('utf-8')).hexdigest()
 files = ['tools/install-resident-linux.sh', 'tools/uninstall-resident-linux.sh'] + ['linux-pkg/' + f for f in UPG_FILES] + ['linux-res-pkg/' + f for f in RES_FILES] + ['tools/clued-ci-install-source-v2', 'tools/verify-resident-linux.sh', 'tools/derive-roles-r7.py', 'tools/verify-signed-r4.mjs', 'tools/check-host-r4.py',
          'tools/sign-qualification-v2.mjs', 'tools/verify-source-v2.sh'] + ['tools/' + n for n, _ in extra] + \
         ['record/' + f for f in ('acceptance.json', 'installation.json', 'record-manifest.json', 'signers.json', 'source-manifest.json')]
+sv2 = pkg.get('linux', {}).get('sourceV2')
+role_checks = ''
+bundle_stage = ''
+if sv2 is not None:
+    assert sv2['commit'] == COMMIT and sv2['bundlePath'] == 'linux/source-v2/source.bundle', 'SOURCE_V2_NOT_THE_ACCEPTED_COMMIT'
+    assert set(sv2['rolesDerivedSha256']) == {'gitleaks', 'trivy', 'contract-placement'}, 'SOURCE_V2_ROLES_REQUIRED'
+    bundle_rel = 'linux-pkg/source-v2/source.bundle'
+    assert sha(os.path.join(IN, *bundle_rel.split('/'))) == sv2['bundleSha256'], 'SOURCE_V2_BUNDLE_CHANGED'
+    files += [bundle_rel]
+    bundle_stage = '''# begin source-v2 bundle staging (fixed paths only)
+install -d -o root -g root -m 0700 "$STG/linux-pkg/source-v2"
+install -o root -g root -m 0400 "$W/linux-pkg/source-v2/source.bundle" "$STG/linux-pkg/source-v2/source.bundle"
+# end source-v2 bundle staging'''
+    lines = []
+    for role, expected in sorted(sv2['rolesDerivedSha256'].items()):
+        assert re.fullmatch(r'[0-9a-f]{64}', expected), 'SOURCE_V2_ROLE_HASH_REQUIRED'
+        lines.append(f'[ "$(sha256sum "$STG/roles-in/{role}.json" | cut -d\' \' -f1)" = {expected} ] || refuse SOURCE_V2_DERIVED_ROLE_MISMATCH')
+    role_checks = '\n'.join(lines)
 for f in files:
-    assert b'\r' not in open(os.path.join(IN, *f.split('/')), 'rb').read(), ('CR', f)
+    if f != 'linux-pkg/source-v2/source.bundle':
+        assert b'\r' not in open(os.path.join(IN, *f.split('/')), 'rb').read(), ('CR', f)
 sums = ''.join(f'{sha(os.path.join(IN, *f.split("/")))}  {f}\n' for f in files)
 W = shlex.quote('/mnt/' + IN[0].lower() + '/' + IN[3:].replace('\\', '/'))   # review 1-3: quoted; the path shape is checked by rconfig
 BASE = '/root/clued-ci-reinstall-' + COMMIT[:8]
@@ -302,6 +324,7 @@ SECRET=$(find $BACKUP_PATHS \\( -name '*.pem' -o -name '*.key' -o -name '*.token
 [ -z "$SECRET" ] || refuse "BACKUP_WOULD_HOLD_A_SECRET:$SECRET"
 [ ! -e "$BASE" ] || refuse STAGING_EXISTS_PRESERVE
 install -d -o root -g root -m 0700 "$BASE" "$STG" "$STG/tools" "$STG/record" "$STG/linux-pkg" "$STG/linux-pkg/upgrade-v1" "$STG/linux-pkg/upgrade-v1/bin" "$STG/linux-res-pkg" "$STG/linux-res-pkg/bin" "$STG/linux-res-pkg/systemd"
+{bundle_stage}
 for f in {' '.join(UPG_FILES)}; do install -o root -g root -m 0400 "$W/linux-pkg/$f" "$STG/linux-pkg/$f"; done   # r5c
 for f in {' '.join(RES_FILES)}; do install -o root -g root -m 0400 "$W/linux-res-pkg/$f" "$STG/linux-res-pkg/$f"; done   # r7
 for f in install-resident-linux.sh uninstall-resident-linux.sh clued-ci-install-source-v2 verify-resident-linux.sh derive-roles-r7.py verify-signed-r4.mjs check-host-r4.py sign-qualification-v2.mjs verify-source-v2.sh{''.join(' ' + n for n, _ in extra)}; do install -o root -g root -m 0400 "$W/tools/$f" "$STG/tools/$f"; done
@@ -322,7 +345,8 @@ sha256sum --quiet -c - <<'EOF' || refuse STAGED_BYTES_NOT_THE_REVIEWED_ONES
 PREV=windows-review-copy; VT=generated-on-windows-pinned
 echo "{{\\"status\\":\\"ROOT_STAGING_VERIFIED\\",\\"staging\\":\\"$STG\\",\\"sourceCommit\\":\\"$COMMIT\\",\\"files\\":{len(files)},\\"signToolFrom\\":\\"$PREV\\",\\"verifyTemplateSha256\\":\\"$VT\\",\\"verifySourceV2Sha256\\":\\"$(sha256sum "$STG/tools/verify-source-v2.sh" | cut -d' ' -f1)\\"}}"
 # derive (no key): policies v3 + unsigned payloads from the installed Source34 ones; the three Source values change (B-1)
-$CLEAN $PY -I "$STG/tools/derive-roles-r7.py" --installed /etc/clued-independent-ci/roles-v3 --old-manifest-file /etc/clued-independent-ci/formal-source-manifest-v2.json --new-manifest-file "$STG/record/source-manifest.json" --src "$STG/src.git" --commit "$COMMIT" --source-acceptance-ref "$NEW_REF" --host-acceptance-ref "$NEW_REF" --out "$STG/roles-in" > "$STG/derive.stdout.json" || {{ cat "$STG/derive.stdout.json"; refuse DERIVE_FAILED; }}
+$CLEAN $PY -I "$STG/tools/derive-roles-r7.py" --installed /etc/clued-independent-ci/roles-v3 --old-manifest-file /etc/clued-independent-ci/formal-source-manifest-v2.json --new-manifest-file "$STG/record/source-manifest.json" --src "$STG/src.git" --commit "$COMMIT" --source-acceptance-ref "$NEW_REF" --host-acceptance-ref "{HOST_SHELL}" --out "$STG/roles-in" > "$STG/derive.stdout.json" || {{ cat "$STG/derive.stdout.json"; refuse DERIVE_FAILED; }}
+{role_checks}
 cat "$STG/derive.stdout.json"
 # M-2: the host binaries the derived policies pin, the toolchain node, the docker socket and the public key, as on 10-23
 $CLEAN $PY -I "$STG/tools/check-host-r4.py" "$STG/roles-in" "$NODE_SHA" "$PUB_SHA" > "$STG/host-A.stdout.json" || {{ cat "$STG/host-A.stdout.json"; refuse HOST_PINS_CHANGED; }}

@@ -163,6 +163,16 @@ class RolesDerived(unittest.TestCase):
         code, out, _ = self.derive(facts=stale)
         self.assertEqual([code, out['code'], out['file']], [1, 'INSTALLED_ROLES_COPY_NOT_CURRENT', 'qualification'])
 
+    def test_a_host_refusal_with_its_own_role_is_not_replaced_by_a_python_argument_error(self):
+        manifest = json.loads(self.new_manifest)
+        manifest['roles']['gitleaks']['controllerRelay']['hostQualificationRef'] = '99999999-9999-4999-8999-999999999999'
+        self.new_manifest = (json.dumps(manifest) + '\n').encode('utf-8')
+        with open(self.manifest_file, 'wb') as f:
+            f.write(self.new_manifest)
+        code, out, err = self.derive()
+        self.assertEqual([code, out['code'], out['role'], out['field']], [1, 'LINUX_HOST_FACTS_CHANGED', 'gitleaks', 'hostAcceptanceRef'])
+        self.assertNotIn('TypeError', err)
+
     def test_pinned_files_must_be_regular_and_not_empty(self):
         # the stage's read_regular refuses an empty file and a link in the checkout: so does the derivation
         fx.write(os.path.join(self.repo, *(fx.CI + 'src/proof.mjs').split('/')), b'')

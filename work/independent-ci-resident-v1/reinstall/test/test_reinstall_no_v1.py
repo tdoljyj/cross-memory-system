@@ -278,6 +278,75 @@ class PrepNoV1(unittest.TestCase):
         self.assertNotEqual(p.returncode, 0)
         self.assertIn('NODE_HAS_NO_INSTALLED_LINUX_CI', p.stderr)
 
+    def source_v2_inputs(self):
+        argv, w = build_prep(self.d, None)
+        bundle = b'fixture bundle\r\nwith binary bytes\x00'
+        for base, rel in ((argv[4], ('linux', 'source-v2', 'source.bundle')),
+                          (os.path.join(w, 'linux', 'in-t'), ('linux-pkg', 'source-v2', 'source.bundle'))):
+            os.makedirs(os.path.join(base, *rel[:-1]))
+            with open(os.path.join(base, *rel), 'wb') as f:
+                f.write(bundle)
+        manifest = rj(argv[4], 'package-manifest.json')
+        manifest['linux']['sourceV2'] = {'commit': argv[1], 'bundlePath': 'linux/source-v2/source.bundle',
+                                        'bundleSha256': sha(bundle), 'rolesDerivedSha256': {r: str(i + 1) * 64 for i, r in enumerate(ROLES)}}
+        with open(os.path.join(argv[4], 'package-manifest.json'), 'w', encoding='utf-8') as f:
+            json.dump(manifest, f)
+        return argv, w, manifest
+
+    def test_source_bundle_and_each_derived_role_are_pinned_before_source_switch(self):
+        argv, w, manifest = self.source_v2_inputs()
+        for base in (argv[4], os.path.join(w, 'linux', 'in-t')):
+            acceptance = rj(base, 'record', 'acceptance.json')
+            acceptance['hostQualificationRef'] = OLD_REF
+            with open(os.path.join(base, 'record', 'acceptance.json'), 'w', encoding='utf-8') as f:
+                json.dump(acceptance, f)
+        p = run_prep(argv)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        out = json.loads(p.stdout)
+        text = rd(w, 'linux', 'reinstall-linux-A-stage.draft-t.sh').decode('utf-8')
+        self.assertIn(manifest['linux']['sourceV2']['bundleSha256'] + '  linux-pkg/source-v2/source.bundle', text)
+        self.assertIn('--host-acceptance-ref "' + OLD_REF + '"', text)
+        for role, expected in manifest['linux']['sourceV2']['rolesDerivedSha256'].items():
+            self.assertIn('$STG/roles-in/' + role + '.json', text)
+            self.assertIn(expected + ' ] || refuse SOURCE_V2_DERIVED_ROLE_MISMATCH', text)
+        self.assertEqual(out['pinnedFiles'], 24)
+
+    def test_generated_bundle_staging_actually_copies_the_pinned_bytes(self):
+        bash = os.environ.get('CLUED_TEST_BASH') or shutil.which('bash')
+        if not bash or (os.name == 'nt' and 'git' not in bash.lower()):
+            self.skipTest('needs non-WSL Git Bash on Windows or ordinary POSIX bash')
+        argv, w, manifest = self.source_v2_inputs()
+        p = run_prep(argv)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        text = rd(w, 'linux', 'reinstall-linux-A-stage.draft-t.sh').decode('utf-8')
+        fragment = text[text.index('# begin source-v2 bundle staging'):text.index('# end source-v2 bundle staging')]
+        staged = os.path.join(self.d, 'actual-stage')
+        # The test is never root. On Windows chmod/ownership are not POSIX; exercise the generated paths and real file copy,
+        # explicitly leaving ownership/mode qualification to the root-script review and later Linux stage.
+        shim = '''install() { local dir=0; local args=(); while (( $# )); do case "$1" in -d) dir=1; shift;; -o|-g|-m) shift 2;; *) args+=("$1"); shift;; esac; done; if (( dir )); then command mkdir -p -- "${args[@]}"; else command cp -- "${args[@]}"; fi; }\n''' if os.name == 'nt' else '''install() { local args=(); while (( $# )); do case "$1" in -o|-g) shift 2;; *) args+=("$1"); shift;; esac; done; command install "${args[@]}"; }\n'''
+        quoted = lambda v: "'" + v.replace('\\', '/').replace("'", "'\\''") + "'"
+        script = 'set -euo pipefail\n' + shim + 'W=' + quoted(os.path.join(w, 'linux', 'in-t')) + '\nSTG=' + quoted(staged) + '\n' + fragment
+        run = subprocess.run([bash, '--noprofile', '--norc', '-c', script], capture_output=True, text=True, encoding='utf-8', errors='replace')
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(sha(rd(staged, 'linux-pkg', 'source-v2', 'source.bundle')), manifest['linux']['sourceV2']['bundleSha256'])
+
+    def test_a_changed_bundle_is_refused_before_any_root_script_is_generated(self):
+        argv, w, _ = self.source_v2_inputs()
+        with open(os.path.join(w, 'linux', 'in-t', 'linux-pkg', 'source-v2', 'source.bundle'), 'ab') as f:
+            f.write(b'changed')
+        p = run_prep(argv)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn('SOURCE_V2_BUNDLE_CHANGED', p.stderr)
+
+    def test_bundle_for_another_commit_is_refused(self):
+        argv, w, manifest = self.source_v2_inputs()
+        manifest['linux']['sourceV2']['commit'] = 'f' * 40
+        with open(os.path.join(argv[4], 'package-manifest.json'), 'w', encoding='utf-8') as f:
+            json.dump(manifest, f)
+        p = run_prep(argv)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn('SOURCE_V2_NOT_THE_ACCEPTED_COMMIT', p.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()
