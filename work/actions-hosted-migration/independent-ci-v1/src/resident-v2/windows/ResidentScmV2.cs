@@ -106,12 +106,17 @@ public static class ResidentScmV2 {
  static Status State(IntPtr h){Status s;uint n;if(!QueryServiceStatusEx(h,0,out s,(uint)Marshal.SizeOf(typeof(Status)),out n))Fail("SERVICE_STATUS_QUERY_FAILED");return s;}
  public static Status ReadStatus(){return State(HeldService(false));}
  public static Snapshot ReadSnapshot(){try{return ReadSnapshotCore(HeldService(false));}catch{conflict=true;throw;}}
- // Install-time, read-only: the stable digest the Owner's elevated install pins into broker.json. It opens
- // the runner service with query rights only (no mutex, no SYSTEM identity, no effect); the broker later
- // re-reads the same digest under its own session before every swap, so a wrong pin only refuses swaps.
+ // Install-time, read-only: the stable digest the Owner's elevated install, or the in-place upgrader (Task 018da927:
+ // upgrade-apply.ps1 Compile runs as LocalSystem), pins into broker.json. It opens the runner service with query
+ // rights only (no mutex, no effect); the broker later re-reads the same digest under its own session before every
+ // swap, so a wrong pin only refuses swaps. LocalSystem is admitted because it already holds every right the elevated
+ // Owner has here; refusing it made every in-place upgrade's Compile fail (op 4c256a7b, RUNNER_STABLE_DIGEST_UNCONFIRMED).
+ public static bool InstallTimeIdentityAllowed(string machine,string hostname,string user,bool administrator,string ownerSid){
+  return machine==hostname&&administrator&&(user=="S-1-5-18"||user==ownerSid);
+ }
  public static string InstallTimeStableDigest(){
   var node=NodeProfileV2.Current;
-  using(var identity=WindowsIdentity.GetCurrent()){if(Environment.MachineName!=node.Hostname||identity.User.Value!=node.OwnerSid||!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))Fail("FIXED_INSTALL_OWNER_REQUIRED");}
+  using(var identity=WindowsIdentity.GetCurrent()){if(!InstallTimeIdentityAllowed(machine:Environment.MachineName,hostname:node.Hostname,user:identity.User.Value,administrator:new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator),ownerSid:node.OwnerSid))Fail("FIXED_INSTALL_OWNER_REQUIRED");}
   IntPtr manager;IntPtr h=Service(1|4|0x20000u,out manager);
   try{return ReadSnapshotCore(h).StableDigest;}finally{CloseServiceHandle(h);CloseServiceHandle(manager);}
  }
