@@ -252,7 +252,8 @@ async function engineWith(t, { endsAt = null, ownEnding = null, beats = true, sc
   const batch = { batchId: BATCH, key: 'a1'.repeat(32), dir: batchDir, stages: rows };
   let now = T0;
   const clock = () => now;
-  const ev = { stopAt: null, cancels: [], answeredAt: null, released: false };
+  const ev = { stopAt: null, cancels: [], answeredAt: null, released: false, forceEnd: false };
+  t.signal.addEventListener('abort', () => { ev.forceEnd = true; ev.released = true; }, { once: true });
   const mb = {
     answer: null, beatAt: T0, sent: [],
     async send(kind, fields, timeoutMs) { mb.sent.push(kind); return { requestId: PUMP_REQ, kind, createdAt: new Date(now).toISOString(), deadline: new Date(now + timeoutMs).toISOString(), ...fields }; },
@@ -262,24 +263,29 @@ async function engineWith(t, { endsAt = null, ownEnding = null, beats = true, sc
     async heartbeat() { return mb.beatAt === null ? null : { at: mb.beatAt }; },
     async cancel(req, reason) { ev.cancels.push([reason, now - T0]); if (mb.onCancel) mb.onCancel(reason); return true; },
   };
-  const tick = () => { script(now - T0, mb, ev); if (beats && mb.beatAt !== null) mb.beatAt = now; };
+  const tick = async () => { await script(now - T0, mb, ev); if (beats && mb.beatAt !== null) mb.beatAt = now; };
   const exists = async p => fs.access(p).then(() => true, () => false);
   const stopFile = path.join(brokerRoot, 'requests', `${SWAP}.stop`);
   const sleep = async ms => {
     if (ev.stopAt === null && await exists(stopFile)) ev.stopAt = now - T0;
-    now += ms; tick(); await new Promise(r => setImmediate(r));
+    now += ms; await tick(); await new Promise(r => setImmediate(r));
   };
   const run = async argv => {
     if (argv[0].endsWith('sc.exe')) return { code: 0, stdout: argv[1] === 'qc' ? SC_QC : SC_Q };
     if (!argv[1]?.endsWith('invoke-stage.mjs')) throw new Error('unexpected argv ' + argv.join(' '));
     const manifest = argv[argv.indexOf('--work-manifest-sha256') + 1];
-    await fs.writeFile(path.join(brokerRoot, 'requests', `${SWAP}.json`), JSON.stringify({ contract: 'clued.independent-ci.swap-broker-request/2', stage: number, nonce: 'a'.repeat(32), deadline: '2026-10-28T12:00:00Z', configSha256: 'c'.repeat(64) }));
-    await fs.writeFile(path.join(brokerRoot, 'responses', `${SWAP}.taken`), Buffer.from([1]));
+    // Taking the swap is one virtual-time event too. Yielding to real disk I/O
+    // here let the observer advance its fake clock before the child had begun.
+    writeFileSync(path.join(brokerRoot, 'requests', `${SWAP}.json`), JSON.stringify({ contract: 'clued.independent-ci.swap-broker-request/2', stage: number, nonce: 'a'.repeat(32), deadline: '2026-10-28T12:00:00Z', configSha256: 'c'.repeat(64) }));
+    writeFileSync(path.join(brokerRoot, 'responses', `${SWAP}.taken`), Buffer.from([1]));
     for (;;) {
+      // Test disposal is independent of the observer under test. A failed
+      // assertion must not strand a held fake child in an infinite loop.
+      if (ev.forceEnd) { writeFileSync(path.join(brokerRoot, 'responses', `${SWAP}.json`), '{}'); return { code: 41, stdout: stageFact(manifest, {}) }; }
       if (ev.stopAt === null && !linuxWorker && await exists(stopFile)) ev.stopAt = now - T0;
       if (ev.stopAt !== null && (!holdStop || ev.released)) {
-        await fs.writeFile(path.join(brokerRoot, 'responses', `${SWAP}.stop.json`), JSON.stringify({ contract: 'clued.independent-ci.swap-broker-stop-receipt/1', requestId: SWAP, code: stopCode, at: new Date(now).toISOString() }));
-        await fs.writeFile(path.join(brokerRoot, 'responses', `${SWAP}.json`), '{}');
+        writeFileSync(path.join(brokerRoot, 'responses', `${SWAP}.stop.json`), JSON.stringify({ contract: 'clued.independent-ci.swap-broker-stop-receipt/1', requestId: SWAP, code: stopCode, at: new Date(now).toISOString() }));
+        writeFileSync(path.join(brokerRoot, 'responses', `${SWAP}.json`), '{}');
         ev.endedAt = now - T0;
         return { code: 41, stdout: stageFact(manifest, stopFact) };
       }
@@ -299,6 +305,22 @@ async function engineWith(t, { endsAt = null, ownEnding = null, beats = true, sc
   return { engine, batch, mb, ev, invoke, stopFiles, brokerRoot, now: () => now - T0 };
 }
 const DEAD = { ok: false, code: 'RELAY_REFUSED_NO_RETRY' };
+
+test('a held fake child can be disposed when the observer never advances its clock', { timeout: 5000 }, async t => {
+  const f = await engineWith(t, { holdStop: true });
+  f.engine.observePump = () => ({ state: { answer: null, pumpCode: null, lostAt: null, stop: null }, stop: async () => {} });
+  const running = f.invoke();
+  try {
+    const deadline = Date.now() + 2000;
+    const taken = path.join(f.brokerRoot, 'responses', `${SWAP}.taken`);
+    while (!(await fs.access(taken).then(() => true, () => false)) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 1));
+    await fs.access(taken);
+    assert.equal(f.now(), 0, 'no observer advanced virtual time');
+  } finally {
+    f.ev.forceEnd = true;
+    await running;
+  }
+});
 
 test('signal A: no stop within the 60 s grace after the pump died, then exactly one stop; the stage ends BRIDGE_STAGE_STOPPED_PUMP_LOST', async t => {
   const f = await engineWith(t, { script: (ms, mb, ev) => { if (ms >= 30_000 && !mb.answer) { mb.answer = DEAD; ev.answeredAt = ms; } } });
@@ -446,25 +468,58 @@ test('an Owner abort accepted after the engine read it, while a bridge stop ends
   assert.equal(abortStageEndingClean(r2, { stopSent: true }), false, 'a never-clean outcome stays a HALT under an abort');
 });
 
-test('an Owner abort and a bridge stop together: one stop file, and the Owner abort wins (the stage keeps its own code)', async t => {
-  const f = await engineWith(t, { holdStop: true, script: (ms, mb) => { if (ms >= 1000) mb.answer = DEAD; } });
-  const running = f.invoke();
-  // the bridge stop is written first; then the executor's abort poll asks to stop the same stage
-  for (let i = 0; i < 2000 && !f.engine.bridgeState(f.batch, 2)?.stopRequestId; i += 1) await new Promise(r => setImmediate(r));
-  assert.equal(f.engine.bridgeState(f.batch, 2).stopRequestId, SWAP);
-  const out = await f.engine.requestStop(f.batch, 2);
-  assert.deepEqual([out.broker, out.requestId], [true, SWAP], 'the abort binds the same stop request');
-  f.ev.released = true;
-  const r = await running;
-  assert.deepEqual(await f.stopFiles(), [`${SWAP}.stop`], 'one stop file');
-  assert.equal(r.code, 'STAGE_OUTCOME_MISSING', 'the abort path decides, with its own STOP_SENT rule');
-  assert.deepEqual([r.bridge.stopRequestId, r.bridge.stopCode], [SWAP, 'STOP_SENT'], 'the bridge facts stay on record');
-  // and the other order: an abort's stop first, the bridge's own later finds the same file
-  const g = await engineWith(t, { holdStop: true, script: (ms, mb) => { if (ms >= 1000) mb.answer = DEAD; } });
-  const second = g.invoke();
-  for (let i = 0; i < 2000 && g.ev.stopAt === null; i += 1) { if (g.now() > 10_000 && !g.engine.abortRequested) await g.engine.requestStop(g.batch, 2); await new Promise(r => setImmediate(r)); }
-  for (let i = 0; i < 2000 && !g.engine.bridgeState(g.batch, 2)?.stopRequestId; i += 1) await new Promise(r => setImmediate(r));
-  g.ev.released = true;
-  const r2 = await second;
-  assert.deepEqual([await g.stopFiles(), r2.code], [[`${SWAP}.stop`], 'STAGE_OUTCOME_MISSING']);
+test('an Owner abort and a bridge stop together: one stop file, and the Owner abort wins (the stage keeps its own code)', { timeout: 10_000 }, async t => {
+  const owned = [];
+  const start = async () => {
+    const world = await engineWith(t, { holdStop: true, script: (ms, mb) => { if (ms >= 1000) mb.answer = DEAD; } });
+    const pending = world.invoke(); owned.push({ world, pending });
+    return { world, pending };
+  };
+  // Waiting for real asynchronous disk I/O takes wall time, not a fixed
+  // count of setImmediate turns. Always release the fake child on failure.
+  const wait = async predicate => {
+    const deadline = Date.now() + 5000;
+    while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 1));
+    assert.ok(predicate(), 'the fixture reached the required stop boundary');
+  };
+  try {
+    const { world: f, pending: running } = await start();
+    // the bridge stop is written first; then the executor's abort poll asks to stop the same stage
+    await wait(() => f.engine.bridgeState(f.batch, 2)?.stopRequestId);
+    assert.equal(f.engine.bridgeState(f.batch, 2).stopRequestId, SWAP);
+    const out = await f.engine.requestStop(f.batch, 2);
+    assert.deepEqual([out.broker, out.requestId], [true, SWAP], 'the abort binds the same stop request');
+    f.ev.released = true;
+    const r = await running;
+    assert.deepEqual(await f.stopFiles(), [`${SWAP}.stop`], 'one stop file');
+    assert.equal(r.code, 'STAGE_OUTCOME_MISSING', 'the abort path decides, with its own STOP_SENT rule');
+    assert.deepEqual([r.bridge.stopRequestId, r.bridge.stopCode], [SWAP, 'STOP_SENT'], 'the bridge facts stay on record');
+    // and the other order: an abort's stop first, the bridge's own later finds the same file
+    const g = await engineWith(t, { holdStop: true, script: async (ms, mb, ev) => {
+      if (ms >= 1000) mb.answer = DEAD;
+      if (ms >= 10_000 && !ev.ownerStopStarted) {
+        ev.ownerStopStarted = true;
+        // This runs inside the sole fake clock's tick, before it can advance
+        // to the bridge grace. Complete the Owner stop before unfreezing it.
+        assert.equal(g.engine.bridgeState(g.batch, 2)?.stopRequestId, null);
+        assert.deepEqual(await g.stopFiles(), [], 'the Owner stop is genuinely first');
+        const owner = await g.engine.requestStop(g.batch, 2);
+        assert.deepEqual([owner.broker, owner.requestId], [true, SWAP]);
+        ev.ownerStopRecorded = true;
+      }
+    } });
+    const second = g.invoke(); owned.push({ world: g, pending: second });
+    await wait(() => g.ev.ownerStopRecorded);
+    await wait(() => g.ev.stopAt !== null);
+    await wait(() => g.engine.bridgeState(g.batch, 2)?.stopRequestId);
+    g.ev.released = true;
+    const r2 = await second;
+    assert.deepEqual([await g.stopFiles(), r2.code], [[`${SWAP}.stop`], 'STAGE_OUTCOME_MISSING']);
+  } finally {
+    for (const { world, pending } of owned) {
+      world.ev.released = true;
+      world.ev.forceEnd = true;
+      await pending;
+    }
+  }
 });
