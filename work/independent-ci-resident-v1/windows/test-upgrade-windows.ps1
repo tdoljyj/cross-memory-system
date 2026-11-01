@@ -109,6 +109,12 @@ Yes (-not (Test-CompanionCommandLine ('"C:\ProgramData\CluedIndependentCI\reside
 # Win32_Process.CommandLine showed it on 2026-11-01 (PID 29028, parent conhost 44520 running the task's quoted arguments).
 $real = 'C:\ProgramData\CluedIndependentCI\resident\runtime\node.exe C:\ProgramData\CluedIndependentCI\resident\resident\716587c3dfd689e6a6d517b2bbddef1c4033ec2d79f1689b7c5de96f8fdd1142\src\companion-main.mjs --root C:\ProgramData\CluedIndependentCI\resident --config-sha256 d9beb17b0b2dc35fd0695afc4ed5147716d12de9b33802dc94bffc4d08eace28'
 Yes (Test-CompanionCommandLine $real $ProdRoot) 'companion-real-conhost-child-command-line'
+# DESK's, as op 8e3b3e1b left them (2026-11-01: PID 18880 of generation 2's resident 7efe27e0, PID 44232 of generation 1's under
+# conhost 45072 running the task's quoted arguments).
+foreach ($desk in @('C:\ProgramData\CluedIndependentCI\resident\runtime\node.exe C:\ProgramData\CluedIndependentCI\resident\resident\7efe27e0eb63aafcf368737a6340a24e9afef3d78047e60920006e405c6de443\src\companion-main.mjs --root C:\ProgramData\CluedIndependentCI\resident --config-sha256 faee4f91cbb6b6cc6d40729f76afda82d42357e9dfd0ff626ee6a79ea25edd76',
+    'C:\ProgramData\CluedIndependentCI\resident\runtime\node.exe C:\ProgramData\CluedIndependentCI\resident\resident\716587c3dfd689e6a6d517b2bbddef1c4033ec2d79f1689b7c5de96f8fdd1142\src\companion-main.mjs --root C:\ProgramData\CluedIndependentCI\resident --config-sha256 b14a0fbe58bd503008a5de08c17a24a31dd899c5fc8fd3ca9f570a44efb69ba2')) {
+  Yes (Test-CompanionCommandLine $desk $ProdRoot) 'companion-real-desk-command-line'
+}
 Yes (Test-CompanionCommandLine ('"C:\ProgramData\CluedIndependentCI\resident\runtime\node.exe" ' + $ca.arguments.Substring($ca.arguments.IndexOf('" "') + 2).Replace('"', '')) $ProdRoot) 'companion-mixed-quoting'
 foreach ($bad in @($real.Replace('companion-main', 'service-main'), $real.Replace('--root C:\ProgramData\CluedIndependentCI\resident', '--root C:\ProgramData\CluedIndependentCI'),
     ($real + ' --extra'), ('x ' + $real), $real.Replace('runtime\node.exe', 'runtime\other.exe'), $real.Replace(' --config-sha256 ', ' --config-sha256 0'),
