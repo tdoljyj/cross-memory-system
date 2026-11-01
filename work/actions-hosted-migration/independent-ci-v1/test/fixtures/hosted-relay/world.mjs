@@ -121,6 +121,8 @@ export function createWorld({ now = Date.parse('2026-10-21T06:00:00Z') } = {}) {
     const input = `${Buffer.from(JSON.stringify(header)).toString('base64url')}.${Buffer.from(JSON.stringify(claims)).toString('base64url')}`;
     return `${input}.${createSign('RSA-SHA256').update(input).sign(key).toString('base64url')}`;
   }
+  // The identity annotation text the hosted job prints: the token as lowercase hex (oidc.mjs tokenFromAnnotation).
+  const hexToken = token => Buffer.from(token, 'latin1').toString('hex');
   function claimsFor(role, run, overrides = {}) {
     const workflowRef = `${REPO}/${registry.roles[role]?.workflowPath ?? `.github/workflows/${role}.yml`}@refs/pull/${PR}/merge`;
     const iat = Math.floor(Date.parse(run.completed_at) / 1000) - 20;
@@ -130,7 +132,8 @@ export function createWorld({ now = Date.parse('2026-10-21T06:00:00Z') } = {}) {
     const claims = Object.fromEntries(Object.entries(CLAIMS_TEMPLATE).filter(([name]) => !name.startsWith('_')).map(([name, value]) => [name, fill(value)]));
     return { ...claims, iat, nbf: iat - 5, exp: iat + 300, jti: sha1(`jti:${role}:${run.id}`), ...overrides };
   }
-  // One successful hosted run of a role's registered job with its identity annotation.
+  // One successful hosted run of a role's registered job with its identity annotation. `token` is the
+  // annotation's raw text; by default the hex of a freshly signed token.
   function addHostedRun(role, { status = 'completed', conclusion = 'success', claims = {}, token = null, annotations = null, runId = null,
     startedAt = iso(state.now - 15 * 60_000), completedAt = iso(state.now - 10 * 60_000), name = null, appId = 15368, headSha = H } = {}) {
     const id = state.nextId++, rid = runId ?? 39_000_000_000 + id;
@@ -140,7 +143,7 @@ export function createWorld({ now = Date.parse('2026-10-21T06:00:00Z') } = {}) {
       app: { id: appId }, output: { annotations_count: 0 } };
     let list = annotations;
     if (list === null) list = status === 'completed' && conclusion === 'success'
-      ? [{ annotation_level: 'notice', title: 'clued-hosted-relay-v1', message: token ?? signToken(claimsFor(role, run, claims)), path: '.github' }] : [];
+      ? [{ annotation_level: 'notice', title: 'clued-hosted-relay-v1', message: token ?? hexToken(signToken(claimsFor(role, run, claims))), path: '.github' }] : [];
     run.output.annotations_count = list.length;
     state.checkRuns.push(run); state.annotations.set(id, list);
     return run;
@@ -267,7 +270,7 @@ export function createWorld({ now = Date.parse('2026-10-21T06:00:00Z') } = {}) {
     const v = verifier();
     return { stage: createHostedRelayStage({ registry, verifier: v, publisher: publisher(journal, v), localInputPins }), verifier: v };
   }
-  return { registry, state, rebuild, github, nativeAdmission, authority, signers, signToken, claimsFor, addHostedRun, allHosted,
+  return { registry, state, rebuild, github, nativeAdmission, authority, signers, signToken, hexToken, claimsFor, addHostedRun, allHosted,
     oidc, observer, verifier, publisher, stage, subject, localJob, signedResult, rsa, kid, jwksPort };
 }
 

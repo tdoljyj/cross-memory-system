@@ -71,7 +71,6 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-          sparse-checkout: .github/actions/ci-temporary-storage
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
       - name: Probe the runner
@@ -99,7 +98,6 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-          sparse-checkout: .github/actions/ci-temporary-storage
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
       - name: Probe the runner
@@ -127,7 +125,6 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-          sparse-checkout: .github/actions/ci-temporary-storage
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
       - name: Probe the runner
@@ -155,7 +152,6 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-          sparse-checkout: .github/actions/ci-temporary-storage
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
       - name: Probe the runner
@@ -184,7 +180,6 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-          sparse-checkout: .github/actions/ci-temporary-storage
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
       - name: Probe the runner
@@ -211,7 +206,6 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-          sparse-checkout: .github/actions/ci-temporary-storage
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
       - name: Probe the runner
@@ -244,11 +238,6 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-          sparse-checkout-cone-mode: false
-          sparse-checkout: |
-            .github/actions/ci-temporary-storage/
-            scripts/ci/self-hosted/compute_panel.py
-            tests/test_compute_panel.py
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
       # -I: the runner is shared, so ignore user site-packages and PYTHON* settings.

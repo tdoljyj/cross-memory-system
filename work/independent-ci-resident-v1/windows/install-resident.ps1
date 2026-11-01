@@ -518,20 +518,24 @@ function Read-RunnerState {
 # The controller account runs the node's runner service (swapped and started by the broker for every stage): it needs the right to
 # log on as a service, granted directly or through a local group (DESK-W-591, 2026-10-30: SCM 7041, then the role probe HALTed with
 # ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED). SeDenyServiceLogonRight overrides it (review 2). $inf: `secedit /export /areas USER_RIGHTS`;
-# $groupMembers: group SID -> member SIDs.
-function Test-ServiceLogonRight([string]$inf, [string]$sid, $groupMembers) {
+# $groupMembers: group SID -> member SIDs. secedit writes a local account or group by name (TURING, 2026-10-31:
+# `SeServiceLogonRight = clued-runner,clued-control,*S-1-5-80-0,*S-1-5-83-0`); $nameSids: name -> SID, $null when it did not
+# resolve. An unresolved name never grants the right, and in the deny line it counts as a deny (fail closed).
+function Test-ServiceLogonRight([string]$inf, [string]$sid, $groupMembers, $nameSids) {
   $holds = {
-    param([string]$right)
+    param([string]$right, [bool]$unresolvedHolds)
     foreach ($line in ($inf -split "`r?`n")) {
       if ($line -notmatch ('^\s*' + $right + '\s*=\s*(.*)$')) { continue }
-      foreach ($entry in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() })) {
-        if ($entry -ceq ('*' + $sid)) { return $true }
-        if ($entry.StartsWith('*') -and $null -ne $groupMembers -and $groupMembers.ContainsKey($entry.Substring(1)) -and @($groupMembers[$entry.Substring(1)]) -ccontains $sid) { return $true }
+      foreach ($entry in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+        $entrySid = if ($entry.StartsWith('*')) { $entry.Substring(1) } elseif ($null -ne $nameSids -and $nameSids.ContainsKey($entry)) { $nameSids[$entry] } else { $null }
+        if ($null -eq $entrySid) { if ($unresolvedHolds) { return $true } else { continue } }
+        if ($entrySid -ceq $sid) { return $true }
+        if ($null -ne $groupMembers -and $groupMembers.ContainsKey($entrySid) -and @($groupMembers[$entrySid]) -ccontains $sid) { return $true }
       }
     }
     $false
   }
-  (& $holds 'SeServiceLogonRight') -and -not (& $holds 'SeDenyServiceLogonRight')
+  (& $holds 'SeServiceLogonRight' $false) -and -not (& $holds 'SeDenyServiceLogonRight' $true)
 }
 # Elevated only (secedit needs it): the user-rights assignment and the members of every local group it names; $null when unreadable.
 # The export goes to a new directory that only SYSTEM and Administrators can touch (review 2: not one the Owner's medium-integrity
@@ -545,15 +549,20 @@ function Read-ServiceLogonRight([string]$sid) {
     $null = & 'C:\Windows\System32\SecEdit.exe' /export /areas USER_RIGHTS /cfg $cfg /quiet
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $cfg -PathType Leaf)) { return $null }
     $inf = [IO.File]::ReadAllText($cfg)
-    $groups = @{}
+    $groups = @{}; $names = @{}
     foreach ($line in ($inf -split "`r?`n")) {
       if ($line -notmatch '^\s*Se(?:Deny)?ServiceLogonRight\s*=\s*(.*)$') { continue }
-      foreach ($e in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -cmatch '^\*S-1-5-32-\d+$|^\*S-1-5-21-[\d-]+$' })) {
-        $members = try { @(Get-LocalGroupMember -SID $e.Substring(1) -ErrorAction Stop | ForEach-Object { $_.SID.Value }) } catch { @() }
-        $groups[$e.Substring(1)] = $members
+      foreach ($e in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+        $s = if ($e.StartsWith('*')) { $e.Substring(1) } else {
+          $names[$e] = try { (New-Object Security.Principal.NTAccount($e)).Translate([Security.Principal.SecurityIdentifier]).Value } catch { $null }
+          $names[$e]
+        }
+        if ($s -cmatch '^S-1-5-32-\d+$|^S-1-5-21-[\d-]+$' -and -not $groups.ContainsKey($s)) {
+          $groups[$s] = try { @(Get-LocalGroupMember -SID $s -ErrorAction Stop | ForEach-Object { $_.SID.Value }) } catch { @() }
+        }
       }
     }
-    Test-ServiceLogonRight $inf $sid $groups
+    Test-ServiceLogonRight $inf $sid $groups $names
   } catch { $null } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
 }
 

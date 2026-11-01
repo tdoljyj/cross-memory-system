@@ -72,16 +72,15 @@ POOL = [
     {"name": "clued-ci-home-win-01", "os": "Windows", "site": "home",
      "can_run": ["Windows 作业", "Python 3.12", "Node 24"]},
 ]
-# Not in the general pool; listed so the panel shows every machine.
+# Current machines outside the general pool; retired machines stay in historical records.
 OTHERS = [
-    {"name": "DESK-W-591", "status": "pending", "role": "常驻执行器待安装（Task b7d84de2）"},
-    {"name": "clued-ci-home-linux-01", "status": "retired",
-     "role": "已退役（Decision 183ee67c），GitHub 离线 14 天后自动移除注册"},
+    {"name": "clued-ci-company-win-02", "status": "controller",
+     "role": "DESK 独立 CI 控制 runner，按阶段启停，不计入通用算力池"},
     {"name": "clued-ci-home-win-02", "status": "controller",
-     "role": "独立 CI 控制机，按阶段拉起，平时离线，不计入算力池"},
+     "role": "TURING 独立 CI 控制 runner，按阶段启停，不计入通用算力池"},
 ]
 STATUS_TEXT = {
-    "online": "在线", "offline": "离线", "unknown": "未知", "pending": "待安装",
+    "online": "在线", "offline": "离线", "unknown": "未知",
     "retired": "已退役", "controller": "控制机",
 }
 
@@ -506,11 +505,13 @@ def render(report: dict, state: dict) -> str:
         MARKER,
         f"## 算力面板　{beijing:%Y-%m-%d %H:%M} 北京时间",
         "",
-        f"通用池 {len(pool)} 台：在线 {len(online)}，忙 {sum(1 for n in online if n['busy'])}，"
+        f"通用 runner {len(pool)} 个：在线 {len(online)}，忙 {sum(1 for n in online if n['busy'])}，"
         f"空闲 {sum(1 for n in online if not n['busy'])}，离线 {sum(1 for n in pool.values() if n['status'] == 'offline')}，"
         f"未知 {sum(1 for n in pool.values() if n['status'] == 'unknown')}。告警 {len(report['alerts'])} 条。",
         "",
-        "| 机器 | 状态 | 忙/闲 | 当前作业 | 能接的活 | 磁盘空闲 | 可用内存 | 24 小时利用率 | 最近探测 |",
+        "以下按执行实例列出；同机实例共享磁盘与内存，资源数值不能累加。",
+        "",
+        "| 通用 runner | 状态 | 忙/闲 | 当前作业 | 能接的活 | 磁盘空闲 | 可用内存 | 24 小时利用率 | 最近探测 |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
     for name, node in pool.items():
@@ -527,7 +528,10 @@ def render(report: dict, state: dict) -> str:
             f"{util}%" if util is not None else "—",
             node["last_probe"] or "—",
         ))
-    lines += ["", "| 其他机器 | 状态 | 说明 |", "|---|---|---|"]
+    lines += ["", "控制器 company-win-02、home-win-02 均在正常使用，按阶段启停；"
+              "GitHub 显示离线或长期离线后自动移除注册，不代表控制器故障或退役。"
+              "实际状态以本机服务和阶段执行结果为准。", "",
+              "| 常驻与控制组件 | 状态或用途 | 说明 |", "|---|---|---|"]
     for name, row in report["residents"].items():
         activity = {"halted": "停机", "running": "运行中", "idle": "空闲（无运行中批次）"}[row["activity"]]
         lines.append(f"| 常驻 {name} | {activity} | 最近状态：{cell(row.get('description'))}（PR #{row.get('pr')}，{row.get('at')}） |")

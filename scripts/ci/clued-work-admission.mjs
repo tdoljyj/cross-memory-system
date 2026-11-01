@@ -363,6 +363,12 @@ export const GATE_JOB_SHA256 = new Set([
   // pinned Node of Decision f86179b3, so the compute panel keeps alerting while the company's
   // Linux runners are offline. Registered here (PR-A) before clued-compute-panel.yml changes (PR-B).
   "b000e5a2bc4b0ca76de4beb7dfc3001dca7a428dde79578e457057081e1109ce",
+  // Task 2a5fdb66 (Owner Decision 9eb313f8: new execution self-hosted only): the
+  // 3f48159e… gate, admitting on the independent CI's own admission, with only
+  // runs-on moved from ubuntu-latest to the self-hosted Linux pool, for the
+  // required test checks of clued-required-tests.yml. Registered here (PR-A)
+  // before that workflow is added (PR-B, #971).
+  "9c582144f424d1bc9ef7d3b048d3b7771c7b639ef5544bc04a8a80515c52b2f2",
 ]);
 const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 export const PRODUCTION_PUBLISHER_WORKFLOW = ".github/workflows/clued-cloud-production-release.yml";
@@ -504,6 +510,19 @@ const BOOTSTRAP_ORDINARY_SOURCES=Object.freeze([
     ]
   },
   {
+    "file": ".github/workflows/gitleaks.yml",
+    "predecessor_blob": "8d172bdfeda9b554d2c8c0e5868ccae6e1a3096d",
+    "candidate_blob": "e6fafbb0a40ce37795f1e50bbda03cd33fbf40e0",
+    "candidate_sha256": "9d6c23d2ae4769d123f7ddcd3a25810878d36a85efc2403c07ecec5ecd17cdab",
+    "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
+    "roles": [
+      {
+        "job_id": "gitleaks-trusted-self-hosted",
+        "definition_sha256": "339ea01c079430a47e66f1822cccdb281630117934158287dfbf1629c51e497f"
+      }
+    ]
+  },
+  {
     "file": ".github/workflows/trivy.yml",
     "predecessor_blob": "f7f8d075d1a0f314a7c5eb295e459599288d538c",
     "candidate_blob": "300ad19a59bf529ccebd45ae7fbb76189f806316",
@@ -513,6 +532,19 @@ const BOOTSTRAP_ORDINARY_SOURCES=Object.freeze([
       {
         "job_id": "trivy-trusted-self-hosted",
         "definition_sha256": "c7b119873990af82908377518126526da392fb7aa351c4b00841d30970062625"
+      }
+    ]
+  },
+  {
+    "file": ".github/workflows/trivy.yml",
+    "predecessor_blob": "300ad19a59bf529ccebd45ae7fbb76189f806316",
+    "candidate_blob": "50bd4ae3312ea3c5b1896a9ec81922b0b392343b",
+    "candidate_sha256": "8ec20479b6a7bbf3cc3c2b085271c9a7ed4dc06a16ea9e39c05900428adfa0d2",
+    "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
+    "roles": [
+      {
+        "job_id": "trivy-trusted-self-hosted",
+        "definition_sha256": "55d8a4d90ceb55f6abdd4ce583d0a0481987b28b9fbc7ba80372a455c48bdde8"
       }
     ]
   },
