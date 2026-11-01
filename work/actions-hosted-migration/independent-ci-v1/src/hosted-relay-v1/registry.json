@@ -45,10 +45,10 @@
           "sha256": "a17026cbf180e4c85ce8fa29e5ab9862f8b4e96073088d4bbe4b30d0061e7a9f"
         },
         {
-          "blob": "91156e013eac9cb25238a0bd824ad8a19a53de41",
+          "blob": "93a05029da641c1afb39076571bddabbe8467364",
           "mode": "100644",
           "path": ".github/actions/ci-temporary-storage/coverage.json",
-          "sha256": "4e2ff60dc81dfa89888a880f10b7658c7b44751d649a100ee33755fd8c096c90"
+          "sha256": "a2d6faf94f0b0540c37563a4ffd62502d27ff6121906d568db813cf582bb1e33"
         },
         {
           "blob": "dd162105b2800d31b9970d25575945a140a69d42",
@@ -63,10 +63,10 @@
           "sha256": "f6288615c4b6fe1e2cb8630405c8c618bd73fbe85d1b5336d331600730d9b1fd"
         },
         {
-          "blob": "8d172bdfeda9b554d2c8c0e5868ccae6e1a3096d",
+          "blob": "e6fafbb0a40ce37795f1e50bbda03cd33fbf40e0",
           "mode": "100644",
           "path": ".github/workflows/gitleaks.yml",
-          "sha256": "6f61572b6cd7550772925b8ad3b26e129cf010901f04122662ceeb00d01c7cd1"
+          "sha256": "9d6c23d2ae4769d123f7ddcd3a25810878d36a85efc2403c07ecec5ecd17cdab"
         },
         {
           "blob": "e71138cd63ddb0fd1c28069834c11ddf493d530f",
@@ -195,7 +195,7 @@
           "sha256": "aa20458a6ba4eab07db3d623a255cecfa367d3e82845ec2440a17302b5f9f32a"
         }
       ],
-      "closureSha256": "545a8cbaf1deb8dbb718f93b97974596c4084f96bdc41f6e831822a743a70f79",
+      "closureSha256": "a1b4ae986be2861c13d6993b163b1bb43be784a901c27dac84c04ba980869d1f",
       "forbiddenChangePrefixes": [
         "scripts/ci/"
       ],
@@ -204,9 +204,9 @@
       "hostedJobTimeoutMinutes": 25,
       "mustNotExist": [],
       "runsOn": "ubuntu-latest",
-      "workflowBlob": "8d172bdfeda9b554d2c8c0e5868ccae6e1a3096d",
+      "workflowBlob": "e6fafbb0a40ce37795f1e50bbda03cd33fbf40e0",
       "workflowPath": ".github/workflows/gitleaks.yml",
-      "workflowSha256": "6f61572b6cd7550772925b8ad3b26e129cf010901f04122662ceeb00d01c7cd1"
+      "workflowSha256": "9d6c23d2ae4769d123f7ddcd3a25810878d36a85efc2403c07ecec5ecd17cdab"
     },
     "trivy": {
       "checkName": "trivy",
@@ -231,10 +231,10 @@
           "sha256": "a17026cbf180e4c85ce8fa29e5ab9862f8b4e96073088d4bbe4b30d0061e7a9f"
         },
         {
-          "blob": "91156e013eac9cb25238a0bd824ad8a19a53de41",
+          "blob": "93a05029da641c1afb39076571bddabbe8467364",
           "mode": "100644",
           "path": ".github/actions/ci-temporary-storage/coverage.json",
-          "sha256": "4e2ff60dc81dfa89888a880f10b7658c7b44751d649a100ee33755fd8c096c90"
+          "sha256": "a2d6faf94f0b0540c37563a4ffd62502d27ff6121906d568db813cf582bb1e33"
         },
         {
           "blob": "dd162105b2800d31b9970d25575945a140a69d42",
@@ -249,10 +249,10 @@
           "sha256": "f6288615c4b6fe1e2cb8630405c8c618bd73fbe85d1b5336d331600730d9b1fd"
         },
         {
-          "blob": "300ad19a59bf529ccebd45ae7fbb76189f806316",
+          "blob": "50bd4ae3312ea3c5b1896a9ec81922b0b392343b",
           "mode": "100644",
           "path": ".github/workflows/trivy.yml",
-          "sha256": "94e9ac722e3a3e0c4f924ce3b27371803dc2a04b5e177a7b0bcffd2bdf28b810"
+          "sha256": "8ec20479b6a7bbf3cc3c2b085271c9a7ed4dc06a16ea9e39c05900428adfa0d2"
         },
         {
           "blob": "e76304383ad74fe0f79e2d04ad29e8ad1d11f470",
@@ -363,7 +363,7 @@
           "sha256": "aa20458a6ba4eab07db3d623a255cecfa367d3e82845ec2440a17302b5f9f32a"
         }
       ],
-      "closureSha256": "b21e871f35fa404842715159369ba20d2dfae0925f93b4b601b23f401f132f4d",
+      "closureSha256": "aa476b50ba04cf32900e40b727ae906a346f84e3724ebe49c83d351c61ee7c02",
       "forbiddenChangePrefixes": [],
       "hostedCheckName": "trivy-hosted-executor",
       "hostedJobId": "trivy-trusted-self-hosted",
@@ -375,13 +375,13 @@
         "trivy.yaml"
       ],
       "runsOn": "ubuntu-latest",
-      "workflowBlob": "300ad19a59bf529ccebd45ae7fbb76189f806316",
+      "workflowBlob": "50bd4ae3312ea3c5b1896a9ec81922b0b392343b",
       "workflowPath": ".github/workflows/trivy.yml",
-      "workflowSha256": "94e9ac722e3a3e0c4f924ce3b27371803dc2a04b5e177a7b0bcffd2bdf28b810"
+      "workflowSha256": "8ec20479b6a7bbf3cc3c2b085271c9a7ed4dc06a16ea9e39c05900428adfa0d2"
     }
   },
   "runnerEnvironment": "github-hosted",
-  "sourceCommit": "a38e8fef9d102c0042b0ab5b8cc89ef19dd4f9c5",
-  "sourceTree": "447df665d0ff2fb0ce0f3a29f74621e7d49c6b67",
+  "sourceCommit": "2f7c02d1d49d6cee0ddaf82c54840a88280acb74",
+  "sourceTree": "da9ef964d5e7e9e8b020587717c694e3d8441cd2",
   "specSha256": "4b360ec93f6a53a5b2024b9e38d5cc70dab555b28147f20b9965dc46dc9b6e70"
 }
