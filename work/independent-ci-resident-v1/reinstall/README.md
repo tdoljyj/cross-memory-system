@@ -72,6 +72,10 @@ powershell -NoProfile -File build.ps1 -Config config\desk-w-591.json -Commit ...
 
 ## 5. 对已装现场的全量只读预演：`rehearse.py`（预演不过不出 final）
 
+Windows 预演还通过 Restart Manager 只读检查已安装公开二进制（`bin`、`runtime`、`broker/bin`、`upgrader/runtime` 的 exe/dll）。发现外部占用进程时报告 `EXTERNAL_RESIDENT_BINARY_LOCK`；观察失败时也记 finding，不把未知当作无占用。预期服务、companion host 及其当前子进程仍以 PID 和进程启动时间复核。探针不停止或重启进程，不枚举秘密、账本或工作目录。
+
+此检查只覆盖已登记的公开二进制文件。Restart Manager 不接受目录资源，因此它不能证明不存在目录句柄或整个 resident 目录一定能改名；报告明确写出 `directoryHandlesCovered=false`，正式卸载仍须取得原有的精确改名与保留证据。
+
 ```
 python -I rehearse.py config\turing.json --commit <40hex> --package <包目录>
 ```
