@@ -252,7 +252,8 @@ async function engineWith(t, { endsAt = null, ownEnding = null, beats = true, sc
   const batch = { batchId: BATCH, key: 'a1'.repeat(32), dir: batchDir, stages: rows };
   let now = T0;
   const clock = () => now;
-  const ev = { stopAt: null, cancels: [], answeredAt: null, released: false };
+  const ev = { stopAt: null, cancels: [], answeredAt: null, released: false, forceEnd: false };
+  t.signal.addEventListener('abort', () => { ev.forceEnd = true; ev.released = true; }, { once: true });
   const mb = {
     answer: null, beatAt: T0, sent: [],
     async send(kind, fields, timeoutMs) { mb.sent.push(kind); return { requestId: PUMP_REQ, kind, createdAt: new Date(now).toISOString(), deadline: new Date(now + timeoutMs).toISOString(), ...fields }; },
@@ -262,12 +263,12 @@ async function engineWith(t, { endsAt = null, ownEnding = null, beats = true, sc
     async heartbeat() { return mb.beatAt === null ? null : { at: mb.beatAt }; },
     async cancel(req, reason) { ev.cancels.push([reason, now - T0]); if (mb.onCancel) mb.onCancel(reason); return true; },
   };
-  const tick = () => { script(now - T0, mb, ev); if (beats && mb.beatAt !== null) mb.beatAt = now; };
+  const tick = async () => { await script(now - T0, mb, ev); if (beats && mb.beatAt !== null) mb.beatAt = now; };
   const exists = async p => fs.access(p).then(() => true, () => false);
   const stopFile = path.join(brokerRoot, 'requests', `${SWAP}.stop`);
   const sleep = async ms => {
     if (ev.stopAt === null && await exists(stopFile)) ev.stopAt = now - T0;
-    now += ms; tick(); await new Promise(r => setImmediate(r));
+    now += ms; await tick(); await new Promise(r => setImmediate(r));
   };
   const run = async argv => {
     if (argv[0].endsWith('sc.exe')) return { code: 0, stdout: argv[1] === 'qc' ? SC_QC : SC_Q };
@@ -278,6 +279,9 @@ async function engineWith(t, { endsAt = null, ownEnding = null, beats = true, sc
     writeFileSync(path.join(brokerRoot, 'requests', `${SWAP}.json`), JSON.stringify({ contract: 'clued.independent-ci.swap-broker-request/2', stage: number, nonce: 'a'.repeat(32), deadline: '2026-10-28T12:00:00Z', configSha256: 'c'.repeat(64) }));
     writeFileSync(path.join(brokerRoot, 'responses', `${SWAP}.taken`), Buffer.from([1]));
     for (;;) {
+      // Test disposal is independent of the observer under test. A failed
+      // assertion must not strand a held fake child in an infinite loop.
+      if (ev.forceEnd) { writeFileSync(path.join(brokerRoot, 'responses', `${SWAP}.json`), '{}'); return { code: 41, stdout: stageFact(manifest, {}) }; }
       if (ev.stopAt === null && !linuxWorker && await exists(stopFile)) ev.stopAt = now - T0;
       if (ev.stopAt !== null && (!holdStop || ev.released)) {
         writeFileSync(path.join(brokerRoot, 'responses', `${SWAP}.stop.json`), JSON.stringify({ contract: 'clued.independent-ci.swap-broker-stop-receipt/1', requestId: SWAP, code: stopCode, at: new Date(now).toISOString() }));
@@ -301,6 +305,22 @@ async function engineWith(t, { endsAt = null, ownEnding = null, beats = true, sc
   return { engine, batch, mb, ev, invoke, stopFiles, brokerRoot, now: () => now - T0 };
 }
 const DEAD = { ok: false, code: 'RELAY_REFUSED_NO_RETRY' };
+
+test('a held fake child can be disposed when the observer never advances its clock', { timeout: 5000 }, async t => {
+  const f = await engineWith(t, { holdStop: true });
+  f.engine.observePump = () => ({ state: { answer: null, pumpCode: null, lostAt: null, stop: null }, stop: async () => {} });
+  const running = f.invoke();
+  try {
+    const deadline = Date.now() + 2000;
+    const taken = path.join(f.brokerRoot, 'responses', `${SWAP}.taken`);
+    while (!(await fs.access(taken).then(() => true, () => false)) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 1));
+    await fs.access(taken);
+    assert.equal(f.now(), 0, 'no observer advanced virtual time');
+  } finally {
+    f.ev.forceEnd = true;
+    await running;
+  }
+});
 
 test('signal A: no stop within the 60 s grace after the pump died, then exactly one stop; the stage ends BRIDGE_STAGE_STOPPED_PUMP_LOST', async t => {
   const f = await engineWith(t, { script: (ms, mb, ev) => { if (ms >= 30_000 && !mb.answer) { mb.answer = DEAD; ev.answeredAt = ms; } } });
@@ -475,9 +495,21 @@ test('an Owner abort and a bridge stop together: one stop file, and the Owner ab
     assert.equal(r.code, 'STAGE_OUTCOME_MISSING', 'the abort path decides, with its own STOP_SENT rule');
     assert.deepEqual([r.bridge.stopRequestId, r.bridge.stopCode], [SWAP, 'STOP_SENT'], 'the bridge facts stay on record');
     // and the other order: an abort's stop first, the bridge's own later finds the same file
-    const { world: g, pending: second } = await start();
-    await wait(() => g.now() > 10_000);
-    await g.engine.requestStop(g.batch, 2);
+    const g = await engineWith(t, { holdStop: true, script: async (ms, mb, ev) => {
+      if (ms >= 1000) mb.answer = DEAD;
+      if (ms >= 10_000 && !ev.ownerStopStarted) {
+        ev.ownerStopStarted = true;
+        // This runs inside the sole fake clock's tick, before it can advance
+        // to the bridge grace. Complete the Owner stop before unfreezing it.
+        assert.equal(g.engine.bridgeState(g.batch, 2)?.stopRequestId, null);
+        assert.deepEqual(await g.stopFiles(), [], 'the Owner stop is genuinely first');
+        const owner = await g.engine.requestStop(g.batch, 2);
+        assert.deepEqual([owner.broker, owner.requestId], [true, SWAP]);
+        ev.ownerStopRecorded = true;
+      }
+    } });
+    const second = g.invoke(); owned.push({ world: g, pending: second });
+    await wait(() => g.ev.ownerStopRecorded);
     await wait(() => g.ev.stopAt !== null);
     await wait(() => g.engine.bridgeState(g.batch, 2)?.stopRequestId);
     g.ev.released = true;
@@ -486,7 +518,7 @@ test('an Owner abort and a bridge stop together: one stop file, and the Owner ab
   } finally {
     for (const { world, pending } of owned) {
       world.ev.released = true;
-      if (world.ev.endedAt === undefined) await world.engine.requestStop(world.batch, 2);
+      world.ev.forceEnd = true;
       await pending;
     }
   }
