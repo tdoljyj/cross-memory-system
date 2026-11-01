@@ -379,21 +379,22 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
       return result(commits.length === pull.commits && seen.has(pull.head.sha), commits);
     },
     // The before/after commits of every force push of a pull's head (GraphQL HeadRefForcePushedEvent; REST has no
-    // equivalent). A commit GitHub no longer resolves is null. Errors, a changed total or the page bound: refused.
+    // equivalent). A commit GitHub no longer resolves is null. Errors, a changed matching count or the page bound: refused.
     async readForcePushes(number) {
       if (!positive(number)) fail('invalid_pr');
       const [owner, name] = repository.split('/'), events = [];
       const query = 'query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){'
-        + 'timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100,after:$after){totalCount pageInfo{hasNextPage endCursor}'
+        + 'timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100,after:$after){filteredCount pageInfo{hasNextPage endCursor}'
         + 'nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid}}}}}}}';
       const oid = c => (c === null || c === undefined ? null : sha.test(c.oid ?? '') ? c.oid : fail('force_push_events_unconfirmed'));
       let after = null, total = null;
       for (let page = 1; page <= maxPages; page++) {
         const body = await request('https://api.github.com/graphql', 'POST', await credential(), { query, variables: { owner, name, number, after } }, { repeatable: true });
         const items = body?.data?.repository?.pullRequest?.timelineItems;
-        if (body?.errors !== undefined || !items || !Number.isSafeInteger(items.totalCount) || !Array.isArray(items.nodes) || items.nodes.length > 100
-          || (total !== null && total !== items.totalCount) || typeof items.pageInfo?.hasNextPage !== 'boolean') fail('force_push_events_unconfirmed');
-        total = items.totalCount;
+        // filteredCount counts matching items remaining after this cursor; totalCount includes unrelated timeline items.
+        if (body?.errors !== undefined || !items || !Number.isSafeInteger(items.filteredCount) || items.filteredCount < 0 || !Array.isArray(items.nodes) || items.nodes.length > 100
+          || (total !== null && total !== events.length + items.filteredCount) || typeof items.pageInfo?.hasNextPage !== 'boolean') fail('force_push_events_unconfirmed');
+        total ??= items.filteredCount;
         for (const n of items.nodes) events.push({ before: oid(n?.beforeCommit), after: oid(n?.afterCommit) });
         if (!items.pageInfo.hasNextPage) {
           if (events.length !== total) fail('force_push_events_unconfirmed');
