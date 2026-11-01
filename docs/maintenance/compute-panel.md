@@ -7,7 +7,7 @@ Task `679a0c2b`，Owner 决定 `183ee67c`。
 仓库里标题为“算力面板（自动更新）”的 Issue，由 `github-actions[bot]` 维护，正文每 5 分钟原地更新：
 
 - 通用池 6 台（company-linux-01..04、company-win-01、home-win-01）：在线/离线/未知、忙/闲、当前作业、能接的活、磁盘空闲、可用内存、24 小时利用率、最近一次探测。
-- 其他机器：各常驻执行器（从 PR 上的 `resident-queue/<节点> (info only)` 状态自动发现）、home-linux-01（已退役）、home-win-02（控制机，不计入算力池）。
+- 其他机器：各常驻执行器（从 PR 上的 `resident-queue/<节点> (info only)` 状态自动发现）、home-win-02（控制机，不计入算力池）。已安装的 DESK 不再单列“待安装”行，已退役的 home-linux-01 不再显示；退役历史保留在原有记录中。
 - 常驻批次指标（1 天与 7 天）：批次数、通过、失败、失败率、排队时长中位数与 P90、批次时长中位数、重试次数、烧头次数。Task `7f205c71` 的触发指标取这里（Decision `d8e3dea4`）。
 - 正文末尾的“机器可读数据”是 `clued.compute-panel/v1` JSON，供脚本读取。
 

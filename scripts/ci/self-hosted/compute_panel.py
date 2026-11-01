@@ -72,10 +72,8 @@ POOL = [
     {"name": "clued-ci-home-win-01", "os": "Windows", "site": "home",
      "can_run": ["Windows 作业", "Python 3.12", "Node 24"]},
 ]
-# Not in the general pool; listed so the panel shows every machine.
+# Current machines outside the general pool; retired machines stay in historical records.
 OTHERS = [
-    {"name": "clued-ci-home-linux-01", "status": "retired",
-     "role": "已退役（Decision 183ee67c），GitHub 离线 14 天后自动移除注册"},
     {"name": "clued-ci-home-win-02", "status": "controller",
      "role": "独立 CI 控制机，按阶段拉起，平时离线，不计入算力池"},
 ]
