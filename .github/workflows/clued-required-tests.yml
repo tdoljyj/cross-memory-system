@@ -26,9 +26,9 @@ name: clued-required-tests
 # A job carries its required name only when it runs: an untrusted actor, a
 # pull request the gate did not admit, or a failed gate gives <name>-skipped,
 # so the required check stays missing (fail closed) instead of a skipped job
-# counting as success. "Re-run failed jobs" re-runs a check job with the
-# gate's earlier outputs, so a flaky check can be retried without a new head;
-# "Re-run all jobs" goes through the gate's per-head re-run rule again.
+# counting as success. Only "Re-run all jobs" on the current head may be
+# considered, through the gate's per-head rerun rules and Agent Contract A.7.
+# Never rerun failed or single jobs using the gate's earlier outputs.
 on:
   pull_request:
   push:

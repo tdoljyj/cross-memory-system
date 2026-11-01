@@ -52,7 +52,7 @@
 - job 只在 `admission-gate` 放行、且是 push 到 main 或同仓库 PR（作者是 Owner，或 gate 认可的受信自动化路线）时运行。
 - job 名把这些条件也算进去：不满足时名字是 `<检查名>-skipped`，必需检查根本不出现，PR 合不了（fail closed），条件跳过的 job 不会冒充成功。
 - 被测代码（候选的 package.json 脚本、`run-tests.mjs`、`select-tests.mjs`、测试本身）是候选里的；它们由受保护路径和审查把关，trusted base 只钉住“跑哪些、用什么命令行、哪些失败是已知的”。
-- 重跑：“Re-run all jobs”重新经过 gate 的每 head 重跑规则；“Re-run failed jobs”只重跑失败的检查 job，沿用 gate 之前的输出，用于偶发失败的重试。
+- 重跑：仅按当前 Agent Contract A.7，在当前 head 上考虑“Re-run all jobs”，重新经过 gate 的每 head 重跑规则；不得用“Re-run failed jobs”或单 job 重跑沿用旧 gate 输出。实际是否可重跑仍受 A.7 的次数和拒绝条件限制。
 - 任何工作流里同名的 job 都能满足必需检查（GitHub 按名字计数）；`.github/workflows/**` 是受保护路径，新增同名 job 要 Owner 的 `repo.protected_change` Grant。在门禁守卫里显式拒绝其他文件使用这三个名字，列为后续项（§9）。
 
 ### 3.4 已知失败（Task `679a0c2b`）
@@ -94,7 +94,7 @@
 1. **生产链**（`production-schema-chain.mjs`）：快照里的每一行按生产的 version 顺序，用生产实际跑过的文本（迁移文件或 `ledger/history-only/`，用账本自己的 `evaluateLedger` 绑定 md5）重放。找不到来源的行直接失败（`production_row_not_in_repository`、`chain_row_unresolved`）。
 2. 重放完的目录指纹必须**等于**快照（已审例外除外），否则 `production_schema_drift`；已审例外如果对不上任何实际差异，就是过期，报 `known_deviation_stale`。
 3. **比快照新的账本行**（发布过、账本记了、快照还没刷新）在比较之后按顺序重放，不会丢，也不会被当成待上线（独立审核 M2）。快照最新版本之前、快照里却没有的账本行报 `chain_snapshot_missing_ledger_row`。
-4. 每个待上线迁移按发布工作流 migrate 模式的方式应用：每个文件一个事务、一次 plpgsql `EXECUTE`，所以事务控制语句或结尾的 `SELECT ... INTO` 在这里同样失败。
+4. 每个待上线迁移复现发布工作流 migrate 模式的文件执行部分：每个文件一个事务、一次 plpgsql `EXECUTE`，所以事务控制语句或结尾的 `SELECT ... INTO` 在这里同样失败。生产环境的执行后激活检查不在这项离线重放的覆盖内（§4.8）。
 5. **仓库链**：另一个库按文件名顺序装全部文件（就是测试看到的样子），列出“只有仓库链有的列和函数”（今天 166 个）。
 6. 待上线迁移通过表名或绑定到该表的名字（`b public.clued_agent_bindings;` 声明的变量、FROM/JOIN 别名）读取这类列时失败（`pending_migration_uses_repository_only_schema`）。同一个名字在文件里也绑定到另一个生产里确有该列的表时，不算命中；注释不参与匹配。确实要这样写就在文件里写 `-- production-schema: allow <schema>.<table>.<column>`。不带限定的列名（`select expires_at from t`）不在规则内，这是启发式规则的已知局限（§4.8）。
 
@@ -129,6 +129,7 @@
 
 ### 4.8 局限
 
+- 离线重放不调用生产发布工作流在 `EXECUTE` 后执行的 `clued_private.storage_conflict_require_scheduler_v1()`，也不证明生产 scheduler 已就绪。`migration-verify` 通过只证明本节列出的 schema 重放与引用检查，不能代替发布时的激活依赖检查。
 - 引用规则是名字绑定的启发式，不是语义分析：不带限定的列名、动态 SQL、`to_jsonb` 等写法看不出来。更彻底的办法是让数据库测试也按生产链建库（夹具支持 `CLUED_TEST_MIGRATION_CHAIN=production`），列为 Task `16b795e6` 的待办。
 - 快照目录 `apps/clued-cloud/supabase/production-schema/**` 还不在受保护路径里（漂移脚本本身在 `scripts/` 下受保护）；放宽例外清单目前靠审查和上面的过期、精确键核对。加进受保护路径列为后续项。
 
