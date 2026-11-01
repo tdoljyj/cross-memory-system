@@ -29,6 +29,9 @@ test('a live companion holder refuses a second companion, and the refusal is wri
   await assert.rejects(lockWith(dir, { 101: COMPANION, 102: COMPANION }, 102), { code: 'COMPANION_ALREADY_RUNNING' });
   const refused = JSON.parse(await fs.readFile(path.join(dir, 'refused.json'), 'utf8'));
   assert.deepEqual([refused.code, refused.holderPid], ['COMPANION_ALREADY_RUNNING', 101]);
+  // Once the holder is gone, the next start succeeds and the stale refusal is removed.
+  await lockWith(dir, { 103: COMPANION }, 103);
+  await assert.rejects(fs.access(path.join(dir, 'refused.json')));
 });
 
 test('the holder pid reused by another process (or gone) is set aside: the new companion starts', async t => {

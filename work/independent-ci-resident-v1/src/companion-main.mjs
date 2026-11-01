@@ -164,7 +164,8 @@ function execFileText(file, args) {
     let out = '';
     let child;
     try { child = spawn(file, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { resolve(null); return; }
-    const timer = setTimeout(() => { child.kill(); resolve(null); }, 15_000);
+    // A cold PowerShell start on a busy node can take tens of seconds; unread means refused, so allow it a minute.
+    const timer = setTimeout(() => { child.kill(); resolve(null); }, 60_000);
     child.stdout.on('data', d => { if (out.length < 65536) out += d.toString('utf8'); });
     child.on('error', () => { clearTimeout(timer); resolve(null); });
     child.on('close', code => { clearTimeout(timer); resolve(code === 0 ? out : null); });
@@ -175,6 +176,8 @@ export async function companionProcessAlive(pid, root, { alive = processAlive, r
   if (!(await alive(pid))) return false;
   const p = await readProcess(pid);
   if (p === null) return true;
+  // An existing process whose path reads as null (protected, another user's) is not ours: a companion runs under the Owner's own
+  // unelevated token, which the Owner's next start can always read.
   const node = path.join(root, 'runtime', 'node.exe').toLowerCase();
   return typeof p.executablePath === 'string' && p.executablePath.toLowerCase() === node
     && typeof p.commandLine === 'string' && p.commandLine.includes('companion-main.mjs') && p.commandLine.includes('--root');
@@ -189,6 +192,7 @@ export async function acquireCompanionLock(dir, root, { alive = pid => companion
     try { await fs.writeFile(path.join(dir, 'refused.json'), JSON.stringify({ code, holderPid: Number.isSafeInteger(error?.detail) ? error.detail : null, at: new Date(clock()).toISOString(), pid: process.pid })); } catch { /* the refusal stands */ }
     throw Object.assign(new Error(code), { code });
   }
+  await fs.rm(path.join(dir, 'refused.json'), { force: true }).catch(() => {}); // an earlier refusal no longer holds
   try {
     const stale = (await fs.readdir(path.join(dir, 'locks'))).filter(n => n.startsWith('stale-')).sort();
     for (const name of stale.slice(0, Math.max(0, stale.length - COMPANION_STALE_LOCKS_KEPT))) await fs.rm(path.join(dir, 'locks', name), { recursive: true, force: true });
