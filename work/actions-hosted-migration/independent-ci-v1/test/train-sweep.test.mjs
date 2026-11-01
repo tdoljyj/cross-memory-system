@@ -695,9 +695,10 @@ test('github.mjs sweep reads: pulls updated since a cursor across pages, 250-com
     if (u.pathname === `${base}/pulls/6/commits`) return [{ sha: sha(60) }, { sha: sha(6) }];
     if (method === 'POST' && u.pathname === '/graphql') {
       if (body.variables.number === 7) return { errors: [{ message: 'rate limited' }] };
+      assert.match(body.query, /filteredCount/);
       return body.variables.after === null
-        ? { data: { repository: { pullRequest: { timelineItems: { totalCount: 2, pageInfo: { hasNextPage: true, endCursor: 'c1' }, nodes: [{ beforeCommit: { oid: sha(61) }, afterCommit: { oid: sha(62) } }] } } } } }
-        : { data: { repository: { pullRequest: { timelineItems: { totalCount: 2, pageInfo: { hasNextPage: false, endCursor: 'c2' }, nodes: [{ beforeCommit: null, afterCommit: { oid: sha(6) } }] } } } } };
+        ? { data: { repository: { pullRequest: { timelineItems: { totalCount: 20, filteredCount: 2, pageInfo: { hasNextPage: true, endCursor: 'c1' }, nodes: [{ beforeCommit: { oid: sha(61) }, afterCommit: { oid: sha(62) } }] } } } } }
+        : { data: { repository: { pullRequest: { timelineItems: { totalCount: 21, filteredCount: 1, pageInfo: { hasNextPage: false, endCursor: 'c2' }, nodes: [{ beforeCommit: null, afterCommit: { oid: sha(6) } }] } } } } };
     }
     if (u.pathname === `${base}/check-runs/12`) return { id: 12, app: { id: 77 }, name: SLOT, head_sha: sha(6), status: 'completed', conclusion: 'success', output: { title: 'a', summary: 'b' } };
     if (u.pathname === `${base}/commits/${sha(6)}/check-runs`) return { total_count: 1, check_runs: [{ id: 12, app: { id: 77 }, name: SLOT, head_sha: sha(6), status: 'completed', conclusion: 'success' }] };
@@ -715,6 +716,34 @@ test('github.mjs sweep reads: pulls updated since a cursor across pages, 250-com
   await assert.rejects(port.readPullsPage({ state: 'merged' }), e => e.code === 'invalid_pulls_request');
 });
 
+test('github.mjs force pushes: unrelated timeline items do not make an empty filtered history incomplete', async () => {
+  const { port } = await realPort(async (u, method, body) => {
+    if (u.pathname === '/graphql') {
+      assert.match(body.query, /filteredCount/);
+      return { data: { repository: { pullRequest: { timelineItems: { totalCount: 20, filteredCount: 0,
+        pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } };
+    }
+  });
+  assert.deepEqual(await port.readForcePushes(1), { complete: true, events: [] });
+});
+
+test('github.mjs force pushes: a terminal page missing a matching event is refused', async () => {
+  const { port } = await realPort(async u => {
+    if (u.pathname === '/graphql') return { data: { repository: { pullRequest: { timelineItems: { totalCount: 20, filteredCount: 2,
+      pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ beforeCommit: null, afterCommit: { oid: sha(6) } }] } } } } };
+  });
+  await assert.rejects(port.readForcePushes(1), e => e.code === 'force_push_events_unconfirmed');
+});
+
+test('github.mjs force pushes: a changed remaining matching count across pages is refused', async () => {
+  const { port } = await realPort(async (u, method, body) => {
+    if (u.pathname === '/graphql') return { data: { repository: { pullRequest: { timelineItems: { totalCount: 20,
+      filteredCount: 2, pageInfo: { hasNextPage: body.variables.after === null, endCursor: 'c1' },
+      nodes: [{ beforeCommit: null, afterCommit: { oid: sha(6) } }] } } } } };
+  });
+  await assert.rejects(port.readForcePushes(1), e => e.code === 'force_push_events_unconfirmed');
+});
+
 test('shadow over the real GitHub and KooYomi ports: every GitHub call a read (GraphQL is a read), the one KooYomi call the holders read', async t => {
   const { createMergeSlotNative, HOLDERS_RPC } = await import('../src/independent-control-checks-v2/merge-slot-native.mjs');
   const base = `/repos/${REPO}`, OLDH = sha(0x50001);
@@ -728,7 +757,7 @@ test('shadow over the real GitHub and KooYomi ports: every GitHub call a read (G
     if (u.pathname === `${base}/pulls/911/commits`) return [{ sha: OLDH }];
     if (u.pathname === `${base}/pulls/910/commits`) return [{ sha: H }];
     if (u.pathname === `${base}/pulls`) return u.searchParams.get('page') === '1' ? [pullRow(910, iso(NOW - 2000), H), pullRow(911, iso(NOW - 1000), OLDH)].slice(0, Number(u.searchParams.get('per_page'))) : [];
-    if (u.pathname === '/graphql') return { data: { repository: { pullRequest: { timelineItems: { totalCount: 0, pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } };
+    if (u.pathname === '/graphql') return { data: { repository: { pullRequest: { timelineItems: { totalCount: 20, filteredCount: 0, pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } };
     if (u.pathname === `${base}/compare/${T}...${H}`) return { status: 'ahead', ahead_by: 1, behind_by: 0, base_commit: { sha: T }, merge_base_commit: { sha: T } };
     if (u.pathname === `${base}/compare/${T}...${OLDH}`) return { status: 'diverged', ahead_by: 1, behind_by: 1, base_commit: { sha: T }, merge_base_commit: { sha: T } };
     if (u.pathname === `${base}/git/commits/${S}`) return { sha: S, tree: { sha: TREE }, parents: [{ sha: T }, { sha: H }] };
