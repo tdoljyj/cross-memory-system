@@ -121,6 +121,14 @@ public static class PureTestsV2 {
    Refuse(()=>ResidentScmV2.ValidateMutexSecurity(mu.GetSecurityDescriptorBinaryForm()),"mutex-owner-user-owner");
    m.AddAccessRule(new MutexAccessRule(new SecurityIdentifier(FormalPublicBoundaryV2.ResidentSid),MutexRights.Synchronize,AccessControlType.Allow));Refuse(()=>ResidentScmV2.ValidateMutexSecurity(m.GetSecurityDescriptorBinaryForm()),"mutex-extra");
    Yes(ResidentScmV2.EmptyFailurePolicy(0,false,false,false)&&!ResidentScmV2.EmptyFailurePolicy(1,false,false,false),"failure-policy");
+   string own="S-1-5-21-1-2-3-1001";
+   Yes(ResidentScmV2.InstallTimeIdentityAllowed("TURING","TURING",own,true,own),"install-digest-elevated-owner");
+   Yes(ResidentScmV2.InstallTimeIdentityAllowed("TURING","TURING","S-1-5-18",true,own),"install-digest-local-system");
+   Yes(!ResidentScmV2.InstallTimeIdentityAllowed("TURING","TURING",own,false,own),"install-digest-owner-not-elevated");
+   Yes(!ResidentScmV2.InstallTimeIdentityAllowed("TURING","TURING","S-1-5-21-1-2-3-1007",true,own),"install-digest-other-admin");
+   Yes(!ResidentScmV2.InstallTimeIdentityAllowed("OTHER","TURING","S-1-5-18",true,own),"install-digest-other-machine-system");
+   Yes(!ResidentScmV2.InstallTimeIdentityAllowed("OTHER","TURING",own,true,own),"install-digest-other-machine-owner");
+   Yes(!ResidentScmV2.InstallTimeIdentityAllowed("TURING","TURING","S-1-5-19",true,own),"install-digest-local-service");
    var svc=new RawSecurityDescriptor("O:SYG:SYD:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)");var sb=new byte[svc.BinaryLength];svc.GetBinaryForm(sb,0);ResidentScmV2.ValidateServiceSecurity(sb);n++;
    // MINOR-3: the live runner DACL (read-only, 2026-10-21) is accepted; any change-config/start for the Owner user, IU or SU is refused
    Func<string,byte[]> sdb=t=>{var r=new RawSecurityDescriptor(t);var b=new byte[r.BinaryLength];r.GetBinaryForm(b,0);return b;};
