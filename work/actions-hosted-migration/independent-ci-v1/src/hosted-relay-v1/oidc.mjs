@@ -48,7 +48,8 @@ export function decodeJwtUnverified(token) {
 // The hosted job prints the token's ASCII bytes as lowercase hex: GitHub masks JWT-shaped text in logs and
 // annotations, so a raw token arrives as "***" (Task 169fd456). The observer reads every identity annotation
 // through this one decoder. Anything but exact lowercase hex of printable ASCII, the masked text and a raw JWT
-// included, is null and refused downstream as E6_TOKEN_MALFORMED.
+// included, is null and refused downstream as E6_TOKEN_MALFORMED. Hex doubles the token (about 2.5 KB), far below the
+// annotation message limit; a truncated message has an odd length or a bad signature and fails closed.
 export function tokenFromAnnotation(message) {
   if (typeof message !== 'string' || message.length === 0 || message.length > 2 * MAX_TOKEN_LENGTH
     || message.length % 2 !== 0 || !/^[0-9a-f]+$/.test(message)) return null;
