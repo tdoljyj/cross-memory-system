@@ -4,7 +4,8 @@
 - KooYomi：项目 0597aa60；Task `2a5fdb66`（本工作），拆出的漂移检查 Task `16b795e6`；认领 `1b3d6e2f`。
 - 依据：Owner 目标 Decision `afec9be8`（全部算力可调度、完整 CI/CD），顺序 Decision `02e4374a`（本项第 3 项）；费用规则 Decision `9eb313f8`（新作业只用自建算力，[Runbook §2.4](../../docs/maintenance/runner-configuration-and-operations.md#24-现有与未来任务的费用原则迁移与防回流)）；不稳定测试隔离 Task `679a0c2b`；配置改动先独立审核 `01d4ba7d`。
 - 修订：v1 经独立审核 FAIL（1 BLOCKER、3 MAJOR），v2 逐项修正；v2 第二轮 FAIL（3 MAJOR），v3 再修；v3 第三轮 FAIL（1 MAJOR），v4 再修；第四轮 PASS，v5 收掉其中的 MINOR，见 §10。
-- 状态：代码与测试在 PR #971；前置的门禁登记在单独的 PR（§7）。三项新检查还**不是**必需检查，加进规则集要 Owner 操作（§8）。
+- 状态：基础代码已随 PR #971 合入；真实 Linux 资格验证与其修复继续在本 Task 跟踪。三项新检查还**不是**必需检查，加进规则集要 Owner 操作（§8）。
+- 应用测试会通过 `git show <历史提交>:<工作流>` 校验已登记快照，因此应用 candidate checkout 必须保留完整 Git 历史；trusted-base checkout 和 gate 的信任边界不变。跨平台 CLI 使用 Node 的文件 URL 转换，不假设 Windows 驱动器路径。新增独立 Linux gate 以其已登记摘要单独校验，不套用旧 bootstrap 模板，也不因此扩大允许的 gate 集合。
 
 ## 0. 结论
 
