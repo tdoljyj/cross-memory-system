@@ -112,11 +112,11 @@ public static class ResidentScmV2 {
  // swap, so a wrong pin only refuses swaps. LocalSystem is admitted because it already holds every right the elevated
  // Owner has here; refusing it made every in-place upgrade's Compile fail (op 4c256a7b, RUNNER_STABLE_DIGEST_UNCONFIRMED).
  public static bool InstallTimeIdentityAllowed(string machine,string hostname,string user,bool administrator,string ownerSid){
-  return machine==hostname&&(user=="S-1-5-18"||(user==ownerSid&&administrator));
+  return machine==hostname&&administrator&&(user=="S-1-5-18"||user==ownerSid);
  }
  public static string InstallTimeStableDigest(){
   var node=NodeProfileV2.Current;
-  using(var identity=WindowsIdentity.GetCurrent()){if(!InstallTimeIdentityAllowed(Environment.MachineName,node.Hostname,identity.User.Value,new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator),node.OwnerSid))Fail("FIXED_INSTALL_OWNER_REQUIRED");}
+  using(var identity=WindowsIdentity.GetCurrent()){if(!InstallTimeIdentityAllowed(machine:Environment.MachineName,hostname:node.Hostname,user:identity.User.Value,administrator:new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator),ownerSid:node.OwnerSid))Fail("FIXED_INSTALL_OWNER_REQUIRED");}
   IntPtr manager;IntPtr h=Service(1|4|0x20000u,out manager);
   try{return ReadSnapshotCore(h).StableDigest;}finally{CloseServiceHandle(h);CloseServiceHandle(manager);}
  }

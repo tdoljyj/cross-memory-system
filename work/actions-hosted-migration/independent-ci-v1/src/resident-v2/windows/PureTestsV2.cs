@@ -129,6 +129,7 @@ public static class PureTestsV2 {
    Yes(!ResidentScmV2.InstallTimeIdentityAllowed("OTHER","TURING","S-1-5-18",true,own),"install-digest-other-machine-system");
    Yes(!ResidentScmV2.InstallTimeIdentityAllowed("OTHER","TURING",own,true,own),"install-digest-other-machine-owner");
    Yes(!ResidentScmV2.InstallTimeIdentityAllowed("TURING","TURING","S-1-5-19",true,own),"install-digest-local-service");
+   Yes(!ResidentScmV2.InstallTimeIdentityAllowed("TURING","TURING","S-1-5-18",false,own),"install-digest-system-without-administrators");
    var svc=new RawSecurityDescriptor("O:SYG:SYD:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)");var sb=new byte[svc.BinaryLength];svc.GetBinaryForm(sb,0);ResidentScmV2.ValidateServiceSecurity(sb);n++;
    // MINOR-3: the live runner DACL (read-only, 2026-10-21) is accepted; any change-config/start for the Owner user, IU or SU is refused
    Func<string,byte[]> sdb=t=>{var r=new RawSecurityDescriptor(t);var b=new byte[r.BinaryLength];r.GetBinaryForm(b,0);return b;};
