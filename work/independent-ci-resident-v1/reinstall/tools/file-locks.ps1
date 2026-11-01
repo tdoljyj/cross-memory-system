@@ -73,6 +73,16 @@ function Test-ExpectedChildIdentity($parent, $child, $expected) {
   return ($expected.ContainsKey([uint32]$parent.pid) -and $expected[[uint32]$parent.pid] -eq $parent.startedFileTime -and
     $child.parentPid -eq $parent.pid -and $child.startedFileTime -ge $parent.startedFileTime)
 }
+function New-ProcessSnapshot($process) {
+  try {
+    $started = [Diagnostics.Process]::GetProcessById([int]$process.ProcessId).StartTime.ToUniversalTime().ToFileTimeUtc()
+    # WMI exposes microseconds, while RM/GetProcessById preserve FILETIME's
+    # 100 ns ticks. Correlate the WMI row before retaining the full identity.
+    if ($process.CreationDate.ToUniversalTime().ToFileTimeUtc() -ne ($started - ($started % 10))) { return $null }
+    return [pscustomobject]@{ pid = [uint32]$process.ProcessId; parentPid = [uint32]$process.ParentProcessId
+      startedFileTime = $started; executablePath = [string]$process.ExecutablePath }
+  } catch { return $null } # Missing creation identity never exempts a locker.
+}
 if ($LibraryOnly) { return }
 if ($Root -cne 'C:\ProgramData\CluedIndependentCI\resident') { throw 'RESIDENT_ROOT_NOT_THE_FIXED_TARGET' }
 $ancestors = @('C:\ProgramData', 'C:\ProgramData\CluedIndependentCI', $Root)
@@ -97,16 +107,8 @@ foreach ($relative in @('bin', 'runtime', 'broker\bin', 'upgrader\runtime')) {
 if ($files.Count -eq 0) { throw 'INSTALLED_PUBLIC_BINARIES_NOT_FOUND' }
 $processes = New-Object 'Collections.Generic.Dictionary[uint32,object]'
 foreach ($process in @(Get-CimInstance -ClassName Win32_Process)) {
-  try {
-    $started = [Diagnostics.Process]::GetProcessById([int]$process.ProcessId).StartTime.ToUniversalTime().ToFileTimeUtc()
-    # WMI exposes microseconds, while RM/GetProcessById preserve FILETIME's
-    # 100 ns ticks. Correlate the WMI row before retaining the full identity.
-    if ($process.CreationDate.ToUniversalTime().ToFileTimeUtc() -ne ($started - ($started % 10))) { continue }
-    $snapshot = [pscustomobject]@{ pid = [uint32]$process.ProcessId; parentPid = [uint32]$process.ParentProcessId
-      startedFileTime = $started; executablePath = [string]$process.ExecutablePath }
-    $processes[$snapshot.pid] = $snapshot
-  } catch { # Missing creation identity is never enough to exempt a locker.
-  }
+  $snapshot = New-ProcessSnapshot $process
+  if ($null -ne $snapshot) { $processes[$snapshot.pid] = $snapshot }
 }
 $expected = New-Object 'Collections.Generic.Dictionary[uint32,long]'
 foreach ($service in @(Get-CimInstance -ClassName Win32_Service | Where-Object { @('CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader') -ccontains $_.Name })) {

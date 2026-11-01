@@ -24,6 +24,11 @@ if ($item.Count -ne 1) { throw 'DISPOSABLE_HOLDER_NOT_OBSERVED' }
 $expected = New-Object 'Collections.Generic.Dictionary[uint32,long]'
 $externalBefore = -not (Test-ExpectedLocker $item[0] $expected)
 $expected[$Holder] = [CluedRehearsalLocks.Query]::Start($item[0])
+$cim = Get-CimInstance -ClassName Win32_Process -Filter ("ProcessId=" + $Holder)
+$snapshot = New-ProcessSnapshot $cim
+$liveSnapshotMatches = $null -ne $snapshot -and (Test-CurrentProcessSnapshot $snapshot) -and $snapshot.startedFileTime -eq $expected[$Holder]
+$staleRow = [pscustomobject]@{ ProcessId=$Holder; ParentProcessId=$cim.ParentProcessId; ExecutablePath=$cim.ExecutablePath; CreationDate=$cim.CreationDate.AddSeconds(-1) }
+$staleRowRefused = $null -eq (New-ProcessSnapshot $staleRow)
 $sameIdentityAccepted = Test-ExpectedLocker $item[0] $expected
 $expected[$Holder] = $expected[$Holder] -bxor 1
 $staleExpectedRefused = -not (Test-ExpectedLocker $item[0] $expected)
@@ -45,6 +50,7 @@ $directoryRefused = $false
 try { $null = [CluedRehearsalLocks.Query]::Files(@($Directory)) } catch { $directoryRefused = $true }
 [ordered]@{ externalObserved = $externalBefore; expectedIdentityAccepted = $sameIdentityAccepted; wrongIdentityRefused = $wrongIdentityRefused
   staleExpectedRefused = $staleExpectedRefused; childIdentityAccepted = $childIdentityAccepted
+  liveSnapshotMatches = $liveSnapshotMatches; staleRowRefused = $staleRowRefused
   reusedParentRefused = $reusedParentRefused; staleParentSnapshotRefused = $staleParentSnapshotRefused
   directoryRefused = $directoryRefused; infoSize = [Runtime.InteropServices.Marshal]::SizeOf([type][CluedRehearsalLocks.Info])
   identitySize = [Runtime.InteropServices.Marshal]::SizeOf([type][CluedRehearsalLocks.Identity])
@@ -78,6 +84,7 @@ class FileLocks(unittest.TestCase):
                 data = json.loads(result.stdout)
                 self.assertEqual(data, {'externalObserved': True, 'expectedIdentityAccepted': True, 'wrongIdentityRefused': True,
                                        'staleExpectedRefused': True, 'childIdentityAccepted': True,
+                                       'liveSnapshotMatches': True, 'staleRowRefused': True,
                                        'reusedParentRefused': True, 'staleParentSnapshotRefused': True,
                                        'directoryRefused': True, 'infoSize': 668, 'identitySize': 12, 'emptyCount': 0})
                 self.assertIsNone(child.poll(), 'observation must not stop the holder')
