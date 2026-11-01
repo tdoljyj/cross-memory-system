@@ -67,6 +67,22 @@ test('full admission v2: the claim comes live from the PR trailer, not from the 
   assert.equal(admittedFactsMatchJobV2({ ...facts, fence: 9 }, w.job, Date.now()), false);
 });
 
+test('full admission v2: real issuer facts retain the server answer for subsequent local consumers without crossing clocks', async () => {
+  for (const offset of [-3600_000, -180, 180, 3600_000]) {
+    let mono = 0;
+    const serverAt = Date.now() + offset, expiresAt = iso(serverAt + 60_000);
+    const w = world({ monotonic: () => mono, nativeOverrides: { verified_at: iso(serverAt) }, claimOverrides: { expires_at: expiresAt } });
+    const facts = await w.port.evaluatePr(w.job, w.packet);
+    assert.equal(facts.status, 'ADMITTED', JSON.stringify({ offset, facts }));
+    assert.equal(facts.claimExpiresAt, expiresAt, 'original server stamps remain unchanged for audit');
+    assert.equal(admittedFactsMatchJobV2(facts, w.job, Date.now()), true, `issuer facts at offset ${offset}`);
+    if (offset < -60_000) assert.equal(admittedFactsMatchJobV2(structuredClone(facts), w.job, Date.now()), false,
+      'serialized fields do not recreate the issuer-held proof');
+    mono = 30_000; assert.equal(admittedFactsMatchJobV2(facts, w.job, Date.now()), true);
+    mono++; assert.equal(admittedFactsMatchJobV2(facts, w.job, Date.now()), false, 'later validation cannot refresh the deadline');
+  }
+});
+
 test('full admission v2: batch stickiness allows a renewal, refuses another generation or claim', async () => {
   const w = world();
   const batchClaim = { claimId: w.claimId, fence: 3, epoch: 1 };

@@ -19,7 +19,7 @@ import { readBatchClaim } from '../src/batch-claim-v2.mjs';
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { runEntry, controllerPrincipal, controllerPorts, publicationControllerGithub, observationLog } from '../src/resident-v2/entry-runtime.mjs';
 import { supportedNativeExecution } from '../src/admission-facts-v2.mjs';
-import { serverAnswerCurrent } from '../src/clock-skew.mjs';
+import { serverAnswerCurrent, retainServerAnswerForFacts } from '../src/clock-skew.mjs';
 import { STATE_V2 } from '../src/resident-v2/layout.mjs';
 
 const REFS = ['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef'];
@@ -133,6 +133,7 @@ export function protectedAuthority({ config, accepted, github, fetchImpl, native
         if (monotonic() > deadline) {
           unavailable({ attempt, cause: 'budget', status: response.status });
         }
+        retainServerAnswerForFacts(facts, { verifiedAt: body.verified_at, expiresAt: body.claim.expires_at, sentMono }, monotonic);
         log('native_claim_observation', body);
         return facts;
       }

@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { digest } from '../src/proof.mjs';
 import { batchJobsV2, claimGeneration, scanEffectKeyV2 } from '../src/job-v2.mjs';
 import { EffectJournal } from '../src/effect-journal.mjs';
+import { retainServerAnswerForFacts } from '../src/clock-skew.mjs';
 import { outcomeFailureCode } from '../src/resident-v2/stage-fact.mjs';
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
@@ -312,11 +313,12 @@ test('the held record is checked again before every attempt', async () => {
 
 // The publisher with the real observation port: one transient verify failure costs a wait, never a head, and never a
 // second check; exhausted before the write, nothing is written and the effect key stays free.
-async function publisherWith(t, steps, { recover = false, clock = null, changeGithub = () => {}, readClaim = null, log = () => {} } = {}) {
+async function publisherWith(t, steps, { recover = false, clock = null, changeGithub = () => {}, readClaim = null, log = () => {}, serverOffset = 0 } = {}) {
   const now = () => clock ? clock.now : Date.now();
   const { signer, docs } = fixtureRecord();
   const record = validateRecordV2(docs, { now: Date.now() });
   const job = jobsFor().trivy, c = claim();
+  if (serverOffset) c.expiresAt = iso(now() + serverOffset + 60_000);
   const fixtureRoot = await tempDir(t), auditRoot = path.join(fixtureRoot, 'audit');
   await fs.mkdir(auditRoot);
   const journal = await EffectJournal.open(path.join(fixtureRoot, 'effects'));
@@ -337,7 +339,9 @@ async function publisherWith(t, steps, { recover = false, clock = null, changeGi
       mode: { state: 'normal', layer: 'code', policyVersion: 1 }, mergeSlot: { state: 'held', ref: `merge:${REPO}:main`, tip: j.baseSha, until: slotUntil },
       ownerReview: null, workflowGateFindings: [], observedAt: iso(now()), claimExpiresAt: observed.expiresAt, modeProofRef: 'mode', observationRef: 'obs',
       packetSha256: digest(packet), evaluationSha256: digest('evaluation') };
-    return { ...facts, observationSha256: digest(facts) };
+    const result = { ...facts, observationSha256: digest(facts) };
+    return serverOffset ? retainServerAnswerForFacts(result,
+      { verifiedAt: iso(now() + serverOffset), expiresAt: observed.expiresAt, sentMono: now() }, now) : result;
   } };
   changeGithub(github);
   const verify = scripted(steps(c, now), { clock });
@@ -367,6 +371,28 @@ test('publisher: a timeout on the first observation (before any write) is retrie
   assert.equal(checks[0].conclusion, 'success');
   assert.equal(calls.length, 3, 'two before the write, one after');
   assert.deepEqual(waits, [1000]);
+});
+
+test('publisher: issuer-held monotonic facts pass the complete before/write/after path despite server clock skew', async t => {
+  for (const serverOffset of [-3600_000, -180, 180, 3600_000]) {
+    const { result, checks, calls } = await publisherWith(t,
+      c => [() => reply(200, verifyBody(c, Date.now() + serverOffset))], { serverOffset });
+    assert.equal(result.status, 'SETTLED', JSON.stringify({ serverOffset, result }));
+    assert.equal(checks.length, 1); assert.equal(checks[0].conclusion, 'success');
+    assert.equal(calls.length, 2, 'one protected observation before and one after the sole write');
+  }
+});
+
+test('a late response with too little server lease stays refused, even after a transient attempt', async () => {
+  const jobs = jobsFor(), clock = { now: Date.now() }, c = claim();
+  const serverAt = clock.now + 3600_000; c.expiresAt = iso(serverAt + 5000);
+  const { fetchImpl, calls } = scripted([timeout(), () => ({ took: 31_000, then: reply(200, verifyBody(c, serverAt)) })], { clock });
+  const { auth, waits, logs } = authorityWith({ fetchImpl, clock });
+  await assert.rejects(auth.observe(jobs.trivy, claimGeneration(c)), { code: 'native_claim_observation_refused' });
+  assert.equal(calls.length, 2); assert.deepEqual(waits, [1000]);
+  assert.deepEqual(logs.slice(-2), [{ kind: 'native_claim_observation_refused_round_trip_age', data: {} },
+    { kind: 'native_claim_observation_refused_lease_remaining', data: {} }]);
+  assert.ok(!logs.some(row => row.kind === 'native_claim_observation_unavailable'));
 });
 
 test('publisher: a 5xx on the observation after the write is retried; the check is neither re-posted nor revoked', async t => {
