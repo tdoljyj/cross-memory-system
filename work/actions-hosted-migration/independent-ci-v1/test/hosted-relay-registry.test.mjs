@@ -145,6 +145,9 @@ test('the workflow scan refuses a commit whose hosted job could mint an identity
     ['no timeout', workflowWith('    timeout-minutes: 25\n', '')],
     ['tab', workflowWith('      - name: Scan complete history\n', '      - name: Scan complete history\t\n')],
     ['conditional identity step', workflowWith('      - name: Emit relay identity\n', '      - name: Emit relay identity\n        if: always()\n')],
+    // A raw JWT is masked to "***" by GitHub (Task 169fd456): the identity step must print hex.
+    ['raw token annotation', workflowWith('["value"].encode("ascii").hex()', '["value"]')],
+    ['hex only in a comment', workflowWith('["value"].encode("ascii").hex())\')"', '["value"])\')"  # ["value"].encode("ascii").hex()')],
     ['token minted earlier', workflowWith('      - name: Scan complete history\n', '      - name: Scan complete history\n        env:\n          T: $ACTIONS_ID_TOKEN_REQUEST_TOKEN\n')],
   ];
   for (const [label, files] of cases) refused(() => build(files), 'RELAY_REGISTRY_WORKFLOW_REFUSED', label);

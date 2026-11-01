@@ -152,3 +152,33 @@ test('ordinary gitleaks refuses invalid file/status/rename/base shapes', () => {
   }
   assert.equal(check(BEFORE, AFTER, { baseText: null }).passed, false);
 });
+
+// Task 169fd456: the hosted job prints its relay token as hex (GitHub masks JWT-shaped text). Both hex-identity
+// successors are registered before either workflow changes; each admits only its exact predecessor and self-pair.
+const HEX_SUCCESSORS = [
+  ['.github/workflows/gitleaks.yml', NEXT, 'e6fafbb0a40ce37795f1e50bbda03cd33fbf40e0',
+    '9d6c23d2ae4769d123f7ddcd3a25810878d36a85efc2403c07ecec5ecd17cdab', '339ea01c079430a47e66f1822cccdb281630117934158287dfbf1629c51e497f'],
+  ['.github/workflows/trivy.yml', '300ad19a59bf529ccebd45ae7fbb76189f806316', '50bd4ae3312ea3c5b1896a9ec81922b0b392343b',
+    '8ec20479b6a7bbf3cc3c2b085271c9a7ed4dc06a16ea9e39c05900428adfa0d2', '55d8a4d90ceb55f6abdd4ce583d0a0481987b28b9fbc7ba80372a455c48bdde8'],
+];
+test('the hex relay identity successors of gitleaks and trivy are registered (169fd456)', () => {
+  for (const [file, before, after, sha256, definition] of HEX_SUCCESSORS) {
+    const source = blob => [profiles.workflows[file], ...profiles.workflows[file].accepted_sources].find(value => value.workflow_blob === blob).source_yaml;
+    const hexCheck = (from, to, extra = {}) => registeredBootstrapOrdinarySuccessor({ file: { filename: file, status: 'modified' },
+      baseText: source(from), headText: source(to), profiles, roleSpecs, ...extra });
+    assert.equal(workflowBlob(source(after)), after);
+    assert.equal(sha256Hex(source(after)), sha256);
+    assert.ok(source(after).includes('["value"].encode("ascii").hex())'), file);
+    // Only the identity step differs from the predecessor.
+    const strip = text => text.replace(/      - name: Emit relay identity\n[\s\S]*$/, '');
+    assert.equal(strip(source(after)), strip(source(before)), file);
+    for (const from of [before, after]) {
+      const result = hexCheck(from, after);
+      assert.equal(result.passed, true, `${file} ${result.reason}`);
+      assert.equal(result.registeredBootstrapOrdinaryTransition, false);
+      assert.equal(result.roles[0].definition_sha256, definition);
+    }
+    assert.equal(hexCheck(after, before).passed, false, `${file} rollback`);
+    assert.equal(hexCheck(before, after, { headText: source(after).replace('.hex())', '.hex() )') }).passed, false, `${file} changed bytes`);
+  }
+});
