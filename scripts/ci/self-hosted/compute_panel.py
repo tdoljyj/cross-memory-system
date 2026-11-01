@@ -74,6 +74,8 @@ POOL = [
 ]
 # Current machines outside the general pool; retired machines stay in historical records.
 OTHERS = [
+    {"name": "clued-ci-company-win-02", "status": "controller",
+     "role": "DESK 独立 CI 控制 runner，按阶段启停，不计入通用算力池"},
     {"name": "clued-ci-home-win-02", "status": "controller",
      "role": "独立 CI 控制机，按阶段拉起，平时离线，不计入算力池"},
 ]
