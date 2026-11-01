@@ -45,6 +45,19 @@ export function decodeJwtUnverified(token) {
   return { header, claims, signingInput: `${parts[0]}.${parts[1]}`, signature };
 }
 
+// The hosted job prints the token's ASCII bytes as lowercase hex: GitHub masks JWT-shaped text in logs and
+// annotations, so a raw token arrives as "***" (Task 169fd456). The observer reads every identity annotation
+// through this one decoder. Anything but exact lowercase hex of printable ASCII, the masked text and a raw JWT
+// included, is null and refused downstream as E6_TOKEN_MALFORMED. Hex doubles the token (about 2.5 KB), far below the
+// annotation message limit; a truncated message has an odd length or a bad signature and fails closed.
+export function tokenFromAnnotation(message) {
+  if (typeof message !== 'string' || message.length === 0 || message.length > 2 * MAX_TOKEN_LENGTH
+    || message.length % 2 !== 0 || !/^[0-9a-f]+$/.test(message)) return null;
+  const bytes = Buffer.from(message, 'hex');
+  if (bytes.some(byte => byte < 0x21 || byte > 0x7e)) return null;
+  return bytes.toString('latin1');
+}
+
 function headerChecks(header) {
   if (Object.keys(header).some(key => !HEADER_KEYS.includes(key))) relayFail('OIDC_HEADER_REFUSED', 'parameter');
   if (header.alg !== 'RS256') relayFail('OIDC_ALG_REFUSED');
