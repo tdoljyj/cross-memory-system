@@ -77,7 +77,7 @@ OTHERS = [
     {"name": "clued-ci-company-win-02", "status": "controller",
      "role": "DESK 独立 CI 控制 runner，按阶段启停，不计入通用算力池"},
     {"name": "clued-ci-home-win-02", "status": "controller",
-     "role": "独立 CI 控制机，按阶段拉起，平时离线，不计入算力池"},
+     "role": "TURING 独立 CI 控制 runner，按阶段启停，不计入通用算力池"},
 ]
 STATUS_TEXT = {
     "online": "在线", "offline": "离线", "unknown": "未知",
@@ -528,7 +528,10 @@ def render(report: dict, state: dict) -> str:
             f"{util}%" if util is not None else "—",
             node["last_probe"] or "—",
         ))
-    lines += ["", "| 常驻与控制组件 | 状态或用途 | 说明 |", "|---|---|---|"]
+    lines += ["", "控制器 company-win-02、home-win-02 均在正常使用，按阶段启停；"
+              "GitHub 显示离线或长期离线后自动移除注册，不代表控制器故障或退役。"
+              "实际状态以本机服务和阶段执行结果为准。", "",
+              "| 常驻与控制组件 | 状态或用途 | 说明 |", "|---|---|---|"]
     for name, row in report["residents"].items():
         activity = {"halted": "停机", "running": "运行中", "idle": "空闲（无运行中批次）"}[row["activity"]]
         lines.append(f"| 常驻 {name} | {activity} | 最近状态：{cell(row.get('description'))}（PR #{row.get('pr')}，{row.get('at')}） |")
