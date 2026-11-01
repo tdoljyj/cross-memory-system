@@ -42,8 +42,8 @@ function scripted(steps, { clock = null } = {}) {
     calls.push({ url, opts });
     const step = steps[Math.min(calls.length, steps.length) - 1];
     const value = typeof step === 'function' ? await step(calls.length, opts) : step;
-    if (value?.took && clock) clock.now += value.took;
-    const result = value?.took ? value.then : value;
+    if (Number.isFinite(value?.took) && clock) clock.now += value.took;
+    const result = Number.isFinite(value?.took) ? value.then : value;
     if (result instanceof Error) throw result;
     return result;
   };
@@ -127,16 +127,40 @@ test('exhausted after four attempts: native_claim_observation_unavailable', asyn
     ['native_claim_observation_retry', 3], ['native_claim_observation_unavailable', 4]]);
 });
 
-test('a retried answer must be fresh at its own arrival', async () => {
+test('a retried answer is bounded by its own monotonic request age, not server/local wall-time subtraction', async () => {
   const jobs = jobsFor(), c = claim();
-  // attempt 1 times out at 10 s; attempt 2 arrives at 21 s, verified at the start: 21 s old is fresh, 31 s old is not
-  for (const [age, ok] of [[21000, true], [31000, false]]) {
-    const start = Date.now() - 60_000, clock = { now: start };
-    const { fetchImpl, calls } = scripted([() => ({ took: 10000, then: timeout() }), () => ({ took: 10000, then: reply(200, verifyBody(c, clock.now + 10000 - age)) })], { clock });
+  for (const [age, ok] of [[10000, true], [31000, false]]) {
+    const start = Date.now(), clock = { now: start }, serverAt = start + 3600_000;
+    c.expiresAt = iso(serverAt + 3600_000);
+    const { fetchImpl, calls } = scripted([() => ({ took: 10000, then: timeout() }), () => ({ took: age, then: reply(200, verifyBody(c, serverAt)) })], { clock });
     const { auth } = authorityWith({ fetchImpl, clock });
-    if (ok) assert.equal((await auth.observe(jobs.trivy, claimGeneration(c))).observedAt, iso(start + 21000 - age));
-    else await assert.rejects(auth.observe(jobs.trivy, claimGeneration(c)), { code: 'native_claim_observation_refused' });
+    if (ok) assert.equal((await auth.observe(jobs.trivy, claimGeneration(c))).observedAt, iso(serverAt));
+    else await assert.rejects(auth.observe(jobs.trivy, claimGeneration(c)), { code: 'native_claim_observation_unavailable' });
     assert.equal(calls.length, 2, String(age));
+  }
+});
+
+test('server/local skew does not reject a live answer; server lease lifetime and monotonic age still bind', async () => {
+  const jobs = jobsFor(), local = Date.now();
+  for (const offset of [-3600_000, -180, 180, 3600_000]) {
+    const clock = { now: local }, serverAt = local + offset;
+    const c = { ...claim(), expiresAt: iso(serverAt + 60_000) };
+    const { fetchImpl, calls } = scripted([() => ({ took: 50, then: reply(200, verifyBody(c, serverAt)) })], { clock });
+    const { auth } = authorityWith({ fetchImpl, clock });
+    assert.deepEqual((await auth.observe(jobs.trivy, claimGeneration(c))).claim, claimGeneration(c));
+    assert.equal(calls.length, 1);
+  }
+  for (const [remaining, elapsed, ok] of [[5000, 0, false], [5001, 0, true], [5001, 1, false], [-1, 0, false]]) {
+    const clock = { now: local }, serverAt = local + 3600_000;
+    const c = { ...claim(), expiresAt: iso(serverAt + remaining) };
+    const { fetchImpl, calls } = scripted([() => ({ took: elapsed, then: reply(200, verifyBody(c, serverAt)) })], { clock });
+    const { auth, waits, logs } = authorityWith({ fetchImpl, clock });
+    if (ok) await auth.observe(jobs.trivy, claimGeneration(c));
+    else {
+      await assert.rejects(auth.observe(jobs.trivy, claimGeneration(c)), { code: 'native_claim_observation_refused' });
+      assert.deepEqual(logs, [{ kind: 'native_claim_observation_refused_lease_remaining', data: {} }]);
+    }
+    assert.equal(calls.length, 1); assert.deepEqual(waits, []);
   }
 });
 
@@ -174,6 +198,17 @@ test('a fresh success delivered after the monotonic budget is refused even if th
   assert.equal(clock.now - start, 30001);
   assert.deepEqual(logs.map(l => l.kind), ['native_claim_observation_unavailable']);
   assert.deepEqual(logs[0].data, { attempt: 1, cause: 'budget', status: 200 });
+});
+
+test('a late semantic refusal never becomes retryable deadline exhaustion and logs only fixed check names', async () => {
+  const jobs = jobsFor(), c = claim(), clock = { now: Date.now() };
+  const { fetchImpl, calls } = scripted([() => ({ took: 31_000,
+    then: reply(200, { ...verifyBody(c, clock.now), verdict: 'NOT_ADMITTED', privateDetail: 'must not enter diagnostics' }) })], { clock });
+  const { auth, waits, logs } = authorityWith({ fetchImpl, clock });
+  await assert.rejects(auth.observe(jobs.trivy, claimGeneration(c)), { code: 'native_claim_observation_refused' });
+  assert.equal(calls.length, 1); assert.deepEqual(waits, []);
+  assert.deepEqual(logs, [{ kind: 'native_claim_observation_refused_verdict', data: {} },
+    { kind: 'native_claim_observation_refused_round_trip_age', data: {} }]);
 });
 
 test('a scheduled retry that wakes after the budget sends no further request', async () => {
@@ -232,14 +267,14 @@ test('every 5xx and 429 is transient; other 4xx are answers', async () => {
   }
 });
 
-test('a refusal never retries: wrong generation, 4xx, a stale answer', async () => {
+test('a refusal never retries: wrong generation, 4xx, an invalid server timestamp', async () => {
   const jobs = jobsFor(), c = claim();
   for (const [name, step] of [
     ['fence moved', () => reply(200, { ...verifyBody(c, Date.now()), current_fence: 4, claim: { ...verifyBody(c, Date.now()).claim, fence: 4 } })],
     ['not admitted', () => reply(200, { ...verifyBody(c, Date.now()), verdict: 'NOT_ADMITTED' })],
     ['401', () => reply(401, { message: 'invalid token' })],
     ['404', () => reply(404, { code: 'PGRST202' })],
-    ['stale verified_at', () => reply(200, verifyBody(c, Date.now() - 31000))]]) {
+    ['invalid verified_at', () => reply(200, { ...verifyBody(c, Date.now()), verified_at: 'not-a-time' })]]) {
     const { fetchImpl, calls } = scripted([step, () => reply(200, verifyBody(c, Date.now()))]);
     const { auth, waits } = authorityWith({ fetchImpl });
     await assert.rejects(auth.observe(jobs.trivy, claimGeneration(c)), { code: 'native_claim_observation_refused' }, name);
