@@ -21,6 +21,7 @@ import os from 'node:os';
 import { readStatus } from './status.mjs';
 import { LocalStore, PrStatusReporter, toastArgv, validateStatusConfig } from './pr-status.mjs';
 import { companionBackstop } from './ruleset-backstop.mjs';
+import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
 import { CompanionHeartbeat, ghHandoverPort, readHeartbeatToken, scQueryArgv, serviceRunningFrom, supabaseHeartbeatTransport } from './companion-heartbeat.mjs';
 
 // The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
@@ -34,6 +35,8 @@ export const UPGRADE_LANE_EVERY_MS = 5_000;
 // The node heartbeat's own lane (DESIGN §41.6a, companion-heartbeat.mjs) looks this often whether what it reports changed; it
 // sends every 10 minutes and at once on a change. Its own Runner: a slow GitHub or a long mailbox request never delays it.
 export const HEARTBEAT_LANE_EVERY_MS = 30_000;
+// The companion's instance lock is refreshed this often (instance-lock.mjs: a holder older than ten minutes is not fresh).
+export const COMPANION_LOCK_TOUCH_MS = 60_000;
 const SC_EXE = 'C:\\Windows\\System32\\sc.exe';
 
 // The node heartbeat, or null when no heartbeat token is installed (then nothing about the companion changes). The server's
@@ -147,6 +150,11 @@ export async function main(args = process.argv.slice(2)) {
   const ciSourceManifestSha256 = sha256(await fs.readFile(path.join(values.root, 'record', 'source-manifest.json')));
   const cfg = validateCompanionConfig(raw.companion, { root: values.root, ciSourceManifestSha256 });
   check(os.hostname().toUpperCase() === cfg.node.hostname && process.env.USERPROFILE === cfg.node.ownerProfileDirectory, 'COMPANION_NODE_IDENTITY_CHANGED');
+  // One companion per node (Task 42fe5ae4): op 8e3b3e1b's rollback started one more every minute and all of them served the
+  // same mailboxes. The executor's lock (instance-lock.mjs) in the Owner's own profile: a live holder that refreshed within ten
+  // minutes refuses this start, a dead one is set aside. Refreshed every minute while the lanes run.
+  const instanceLock = await acquireInstanceLock(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-lock'),
+    { alive: processAlive });
   // Every child of both lanes runs under the installed job host (DESIGN §24): a child that outlives its limit is ended with
   // exactly the job it was started in, and the lane goes on. Without the host the companion does not start.
   const jobHost = path.join(values.root, 'bin', JOB_HOST_EXE);
@@ -214,6 +222,7 @@ export async function main(args = process.argv.slice(2)) {
   // r3 implementation review MAJOR 2). The beat stops with the lanes; the entry below exits outright, so no timer keeps a
   // companion alive that answers nothing.
   const beating = startHeartbeat(mailbox);
+  const lockAlive = setInterval(() => { instanceLock.touch().catch(() => {}); }, COMPANION_LOCK_TOUCH_MS);
   try {
     await Promise.all([
       // the service times out and classifies a request the companion did not answer; never retried here
@@ -243,6 +252,7 @@ export async function main(args = process.argv.slice(2)) {
     ]);
   } finally {
     clearInterval(beating);
+    clearInterval(lockAlive);
   }
 }
 
