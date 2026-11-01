@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHmac, createSign, generateKeyPairSync } from 'node:crypto';
 import { GITHUB_OIDC_ISSUER, GITHUB_OIDC_JWKS_URL, createGitHubOidcVerifier, createJwksFileCache, createJwksPort,
-  decodeJwtUnverified, parseJwks } from '../src/hosted-relay-v1/oidc.mjs';
+  MAX_TOKEN_LENGTH, decodeJwtUnverified, parseJwks, tokenFromAnnotation } from '../src/hosted-relay-v1/oidc.mjs';
 
 const AUD = 'clued-hosted-relay-v1';
 const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -136,4 +136,14 @@ test('unverified decoding refuses malformed tokens', () => {
   assert.equal(decodeJwtUnverified(token).claims.aud, AUD);
   for (const bad of [token.split('.').slice(0, 2).join('.'), `${token}.x`, `${token.split('.')[0]}=.${token.split('.').slice(1).join('.')}`,
     `${b64(['array'])}.${b64(claims())}.AA`, 'a'.repeat(9000), 42]) assert.throws(() => decodeJwtUnverified(bad), refusal('OIDC_TOKEN_MALFORMED'));
+});
+
+test('the identity annotation carries the token as lowercase hex; anything else is no token', () => {
+  const token = sign(claims()), hex = Buffer.from(token, 'latin1').toString('hex');
+  assert.equal(tokenFromAnnotation(hex), token);
+  assert.equal(decodeJwtUnverified(tokenFromAnnotation(hex)).claims.aud, AUD);
+  // GitHub's masking of a raw JWT, the raw JWT itself, and every near miss of the encoding.
+  for (const bad of ['***', token, hex.toUpperCase(), hex.slice(1), `${hex}0`, `${hex} `, '', '00',
+    Buffer.from(`${token}\n`).toString('hex'), Buffer.from(`${token} x`).toString('hex'), 'ab'.repeat(MAX_TOKEN_LENGTH + 1), null, 42]) assert.equal(tokenFromAnnotation(bad), null, String(bad).slice(0, 20));
+  assert.equal(tokenFromAnnotation('41'.repeat(MAX_TOKEN_LENGTH)), 'A'.repeat(MAX_TOKEN_LENGTH));
 });

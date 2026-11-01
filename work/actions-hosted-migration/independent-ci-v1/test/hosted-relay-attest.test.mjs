@@ -7,6 +7,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { attestRole, isBillingRefusal, parseDetailsUrl, relayExternalId, validateHostedEnvelope } from '../src/hosted-relay-v1/attest.mjs';
 import { hostedHint } from '../src/hosted-relay-v1/stage.mjs';
 import { digest } from '../src/proof.mjs';
+import { tokenFromAnnotation } from '../src/hosted-relay-v1/oidc.mjs';
 import { B, H, M0, OTHER, PR, REPO, ROLES, SHAPES, createWorld } from './fixtures/hosted-relay/world.mjs';
 
 async function verdicts(w, roles = [...ROLES]) {
@@ -33,7 +34,7 @@ test('a verified successful hosted run of each registered job is ATTESTED_SUCCES
     assert.equal(e.checkRunId, runs[role].id); assert.equal(e.runId, String(runs[role].runId)); assert.equal(e.runAttempt, '1');
     assert.equal(e.workflowBlob, w.registry.roles[role].workflowBlob);
     assert.equal(e.closureSha256, w.registry.roles[role].closureSha256);
-    assert.ok(!JSON.stringify(e).includes(w.state.annotations.get(runs[role].id)[0].message.split('.')[2]), 'no token bytes');
+    assert.ok(!JSON.stringify(e).includes(tokenFromAnnotation(w.state.annotations.get(runs[role].id)[0].message).split('.')[2]), 'no token bytes');
     assert.equal(relayExternalId(e), `independent-ci:relay:${role}:${H.slice(0, 12)}:run${runs[role].runId}:a1`);
   }
 });
@@ -142,13 +143,17 @@ test('BILLING_REFUSED is a classification only: a changed billing text still fal
   assert.equal(isBillingRefusal({ level: SHAPES.billingRefusedAnnotation.annotation_level, message: SHAPES.billingRefusedAnnotation.message }), true);
 });
 
-test('E6: exactly one identity annotation holding a JWT', async () => {
-  const token = w => w.signToken(w.claimsFor('gitleaks', { completed_at: new Date(w.state.now - 600_000).toISOString(), runId: 1 }));
+test('E6: exactly one identity annotation holding a hex-encoded JWT', async () => {
+  const token = w => w.hexToken(w.signToken(w.claimsFor('gitleaks', { completed_at: new Date(w.state.now - 600_000).toISOString(), runId: 1 })));
   const cases = [
     [w => [], 'E6_TOKEN_MISSING'],
     [w => [{ annotation_level: 'notice', title: 'other-title', message: token(w), path: '.github' }], 'E6_TOKEN_MISSING'],
     [w => [1, 2].map(() => ({ annotation_level: 'notice', title: 'clued-hosted-relay-v1', message: token(w), path: '.github' })), 'E6_TOKEN_AMBIGUOUS'],
     [w => [{ annotation_level: 'notice', title: 'clued-hosted-relay-v1', message: 'not a token', path: '.github' }], 'E6_TOKEN_MALFORMED'],
+    // What GitHub leaves of a raw JWT, and a raw JWT itself (the workflow before Task 169fd456).
+    [w => [{ annotation_level: 'notice', title: 'clued-hosted-relay-v1', message: '***', path: '.github' }], 'E6_TOKEN_MALFORMED'],
+    [w => [{ annotation_level: 'notice', title: 'clued-hosted-relay-v1', message: tokenFromAnnotation(token(w)), path: '.github' }], 'E6_TOKEN_MALFORMED'],
+    [w => [{ annotation_level: 'notice', title: 'clued-hosted-relay-v1', message: token(w).toUpperCase(), path: '.github' }], 'E6_TOKEN_MALFORMED'],
   ];
   for (const [annotations, reason] of cases) {
     const w = createWorld(); w.addHostedRun('gitleaks', { annotations: annotations(w) });
@@ -187,12 +192,12 @@ test('E7: every signed claim must name this repository, PR, base, workflow, host
   }
   // A matching check_run_id claim is accepted.
   const w = createWorld(); w.addHostedRun('gitleaks');
-  w.state.annotations.get(run(w).id)[0].message = w.signToken(w.claimsFor('gitleaks', run(w), { check_run_id: String(run(w).id) }));
+  w.state.annotations.get(run(w).id)[0].message = w.hexToken(w.signToken(w.claimsFor('gitleaks', run(w), { check_run_id: String(run(w).id) })));
   assert.equal((await verdicts(w, ['gitleaks'])).gitleaks, 'ATTESTED_SUCCESS');
   // A token signed by anyone but GitHub's JWKS key.
   const forged = createWorld(); forged.addHostedRun('gitleaks');
   const other = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey;
-  forged.state.annotations.get(run(forged).id)[0].message = forged.signToken(forged.claimsFor('gitleaks', run(forged)), { key: other });
+  forged.state.annotations.get(run(forged).id)[0].message = forged.hexToken(forged.signToken(forged.claimsFor('gitleaks', run(forged)), { key: other }));
   assert.equal((await verdicts(forged, ['gitleaks'])).gitleaks, 'ATTESTATION_FAILED:E7_OIDC_SIGNATURE_INVALID');
 });
 
@@ -237,7 +242,7 @@ test('hint mode reuses the same rules without a signature and is advisory only',
   const w = createWorld(); w.addHostedRun('gitleaks');
   const run = w.state.checkRuns.at(-1);
   const other = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey;
-  w.state.annotations.get(run.id)[0].message = w.signToken(w.claimsFor('gitleaks', run), { key: other });
+  w.state.annotations.get(run.id)[0].message = w.hexToken(w.signToken(w.claimsFor('gitleaks', run), { key: other }));
   const facts = await w.observer().observe({ repo: REPO, pr: PR, headSha: H, baseSha: B, roles: ['gitleaks'] });
   const hint = hostedHint({ registry: w.registry, facts });
   assert.equal(hint.advisory, true);

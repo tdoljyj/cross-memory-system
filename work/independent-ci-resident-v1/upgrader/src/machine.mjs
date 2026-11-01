@@ -155,7 +155,13 @@ export function stateOf(step) {
 
 // ---- the acting part ----
 
-const failed = code => ({ ok: false, code });
+const failed = (code, detail = null) => (detail ? { ok: false, code, detail } : { ok: false, code });
+// Task 42fe5ae4: where a Windows step failed and what upgrade-apply.ps1 said (its code and the short `at` suffix it prints),
+// so a result says more than the step's own code (op 4c256a7b's Compile ended as an empty WINDOWS_STAGE_REFUSED). Only fixed
+// code shapes and the journal's value alphabet are kept; anything else is null.
+const APPLY_CODE = /^[A-Z][A-Z0-9_]{2,79}$/;
+export const applyFailure = (where, r = null) => ({ where, applyCode: typeof r?.code === 'string' && APPLY_CODE.test(r.code) ? r.code : null,
+  applyAt: typeof r?.at === 'string' && r.at.length > 0 ? r.at.replace(/[^A-Za-z0-9_.:-]/g, '.').slice(0, 80) : null });
 const okd = (detail = {}) => ({ ok: true, detail });
 const waitFor = (ms, view = {}) => ({ wait: ms, view });
 const iso = ms => new Date(ms).toISOString();
@@ -294,10 +300,10 @@ export class Machine {
 
   // A rollback step that needs the companion and does not get it: wait (ROLLING_BACK, node stopped or paused) up to
   // ROLLBACK_WAIT_MAX_MS from the step's intent, then end with the code that says why.
-  rollbackWait(intent) {
+  rollbackWait(intent, why = null) {
     const left = Date.parse(intent.at) + ROLLBACK_WAIT_MAX_MS - this.clock();
-    if (left <= 0) return failed(U.ROLLBACK_COMPANION_UNAVAILABLE);
-    return waitFor(Math.min(POLL.transient, left), { code: U.ROLLBACK_COMPANION_UNAVAILABLE });
+    if (left <= 0) return failed(U.ROLLBACK_COMPANION_UNAVAILABLE, why);
+    return waitFor(Math.min(POLL.transient, left), { code: U.ROLLBACK_COMPANION_UNAVAILABLE, ...(why ? { lastFailure: why } : {}) });
   }
 
   heartbeatFresh(hb, now, since = 0) { return hb !== null && hb >= since && now - hb <= HEARTBEAT_FRESH_MS && hb - now <= HEARTBEAT_FRESH_MS; }
@@ -540,11 +546,11 @@ const STEPS = {
   'stage-windows': {
     async run(m, j) {
       const plan = m.planOf(j);
-      const abort = async () => { await m.cleanup(j, { withdrawStaged: true }); return failed(U.WINDOWS_STAGE_REFUSED); };
+      const abort = async (where, r = null) => { await m.cleanup(j, { withdrawStaged: true }); return failed(U.WINDOWS_STAGE_REFUSED, applyFailure(where, r)); };
       if (await m.resident.halted()) { await m.cleanup(j, {}); return failed(U.RESIDENT_HALTED); }
       let pkg;
       try { pkg = await m.readPackage(plan.packageDirectory, plan.packageManifestSha256); } catch (error) {
-        if (error instanceof ResidentError) return abort();
+        if (error instanceof ResidentError) return abort('read-package', { code: error.code });
         throw error;
       }
       const dir = m.gens.staged(plan.packageManifestSha256);
@@ -553,15 +559,15 @@ const STEPS = {
         const file = path.join(dir, ...rel.split('/'));
         const have = await fileSha(file);
         if (have === sha256(bytes)) continue;
-        if (have !== null) return abort();
+        if (have !== null) return abort('staged-mismatch');
         await fs.mkdir(path.dirname(file), { recursive: true });
         await writeBytesNew(file, bytes);
       }
       const c = await m.windows.compile(m.applyArgs(j));
-      if (!c.ok) return abort();
+      if (!c.ok) return abort('compile', c);
       for (const slot of GENERATED_SLOTS) {
         const s = await fileSha(m.gens.stagedSource(plan, { kind: 'generated', target: slot }));
-        if (typeof s !== 'string' || s.length !== 64) return abort();
+        if (typeof s !== 'string' || s.length !== 64) return abort('generated-slot');
       }
       return okd({ files: files.length });
     },
@@ -594,7 +600,7 @@ const STEPS = {
     prepare: async m => ({ args: { stopSeq: await m.resident.receiptHead() } }),
     async run(m, j) {
       const r = await m.windows.stopServices(m.applyArgs(j));
-      return r.ok ? okd() : failed(U.SWITCH_FAILED);
+      return r.ok ? okd() : failed(U.SWITCH_FAILED, applyFailure('stop-services', r));
     },
   },
 
@@ -637,10 +643,12 @@ const STEPS = {
       await m.gens.snapshot(n, plan, files);
       await m.gens.place(n1, plan, s => newShas[s.target]);
       const a = m.applyArgs(j, { generation: n1 });
-      if (!(await m.windows.switchScm(a)).ok) return failed(U.SWITCH_FAILED);
-      if (!(await m.windows.registerCompanionTask(a)).ok) return failed(U.SWITCH_FAILED);
+      const sw = await m.windows.switchScm(a);
+      if (!sw.ok) return failed(U.SWITCH_FAILED, applyFailure('switch-scm', sw));
+      const task = await m.windows.registerCompanionTask(a);
+      if (!task.ok) return failed(U.SWITCH_FAILED, applyFailure('register-companion-task', task));
       const scm = await m.windows.readScm(m.applyArgs(j));
-      if (!scm.ok || typeof scm.resident?.binPath !== 'string' || typeof scm.broker?.binPath !== 'string' || typeof scm.companionTask?.arguments !== 'string') return failed(U.SWITCH_FAILED);
+      if (!scm.ok || typeof scm.resident?.binPath !== 'string' || typeof scm.broker?.binPath !== 'string' || typeof scm.companionTask?.arguments !== 'string') return failed(U.SWITCH_FAILED, applyFailure('read-scm', scm));
       await m.gens.writeOnce(m.gens.recordFile(n1), jsonBytes({ generation: n1, packageManifestSha256: plan.packageManifestSha256, residentBinPath: scm.resident.binPath,
         brokerBinPath: scm.broker.binPath, companionTaskArguments: scm.companionTask.arguments, filesSha256: digest(newShas) }));
       const receiptSlot = plan.slots.find(s => s.kind === 'receipt');
@@ -658,8 +666,10 @@ const STEPS = {
 
   start: {
     async run(m, j) {
-      if (!(await m.windows.startServices(m.applyArgs(j))).ok) return failed(U.START_FAILED);
-      if (!(await m.windows.restartCompanion(m.applyArgs(j))).ok) return failed(U.START_FAILED);
+      const s = await m.windows.startServices(m.applyArgs(j));
+      if (!s.ok) return failed(U.START_FAILED, applyFailure('start-services', s));
+      const c = await m.windows.restartCompanion(m.applyArgs(j));
+      if (!c.ok) return failed(U.START_FAILED, applyFailure('restart-companion', c));
       return okd();
     },
   },
@@ -706,7 +716,7 @@ const STEPS = {
 
   'rollback-stop': {
     prepare: async m => ({ args: { stopSeq: await m.resident.receiptHead() } }),
-    async run(m, j) { return (await m.windows.stopServices(m.applyArgs(j))).ok ? okd() : failed(U.ROLLBACK_FAILED); },
+    async run(m, j) { const r = await m.windows.stopServices(m.applyArgs(j)); return r.ok ? okd() : failed(U.ROLLBACK_FAILED, applyFailure('stop-services', r)); },
   },
 
   'rollback-switch-windows': {
@@ -720,15 +730,19 @@ const STEPS = {
     async run(m, j, intent) {
       const plan = m.planOf(j);
       // A re-run after a reboot during the wait finds the services started again (delayed-auto): stopped first (idempotent).
-      if (!(await m.windows.stopServices(m.applyArgs(j))).ok) return failed(U.ROLLBACK_FAILED);
+      const stop = await m.windows.stopServices(m.applyArgs(j));
+      if (!stop.ok) return failed(U.ROLLBACK_FAILED, applyFailure('stop-services', stop));
       await m.gens.restore(plan.fromGeneration, plan);
       await m.gens.restoreCurrent(plan.fromGeneration, plan.toGeneration, plan.current.fileSha256);
       const a = m.applyArgs(j, { generation: plan.fromGeneration });
-      if (!(await m.windows.switchScm(a)).ok) return failed(U.ROLLBACK_FAILED);
-      if (!(await m.windows.registerCompanionTask(a)).ok) return failed(U.ROLLBACK_FAILED);
+      const sw = await m.windows.switchScm(a);
+      if (!sw.ok) return failed(U.ROLLBACK_FAILED, applyFailure('switch-scm', sw));
+      const task = await m.windows.registerCompanionTask(a);
+      if (!task.ok) return failed(U.ROLLBACK_FAILED, applyFailure('register-companion-task', task));
       // The companion of N comes back before the Linux half is switched back (it carries that request). Not there (the Owner
-      // is not logged on): a bounded wait, the node stopped.
-      if (!(await m.windows.restartCompanion(m.applyArgs(j))).ok) return m.rollbackWait(intent);
+      // is not logged on): a bounded wait, the node stopped. The wait shows why (status.json op.lastFailure).
+      const c = await m.windows.restartCompanion(m.applyArgs(j));
+      if (!c.ok) return m.rollbackWait(intent, applyFailure('restart-companion', c));
       // The rolled-back generation's number is free again; its files stay in archive\.
       await m.gens.retire(plan.toGeneration, m.opId.slice(0, 8));
       return okd({ generation: plan.fromGeneration });
@@ -739,7 +753,8 @@ const STEPS = {
     async run(m, j, intent) {
       const plan = m.planOf(j);
       // The node stays stopped while the Linux half goes back, a reboot during the wait included.
-      if (!(await m.windows.stopServices(m.applyArgs(j))).ok) return failed(U.ROLLBACK_FAILED);
+      const stop = await m.windows.stopServices(m.applyArgs(j));
+      if (!stop.ok) return failed(U.ROLLBACK_FAILED, applyFailure('stop-services', stop));
       const r = await m.linux.rollback({ opId: m.opId, fromGeneration: plan.toGeneration, toGeneration: plan.fromGeneration }, intent.seq);
       if (r.ok) return okd();
       if (r.code === U.COMPANION_UNAVAILABLE) return m.rollbackWait(intent);
@@ -748,7 +763,7 @@ const STEPS = {
   },
 
   'rollback-start': {
-    async run(m, j) { return (await m.windows.startServices(m.applyArgs(j))).ok ? okd() : failed(U.ROLLBACK_FAILED); },
+    async run(m, j) { const r = await m.windows.startServices(m.applyArgs(j)); return r.ok ? okd() : failed(U.ROLLBACK_FAILED, applyFailure('start-services', r)); },
   },
 
   'rollback-verify': {

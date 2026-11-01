@@ -36,6 +36,13 @@ export const INBOX_PER_TICK = 8;
 export const MAX_NEW_OPS_PER_DAY = 48;
 const DAY = 86_400_000;
 const UUID_DIR = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+// status.json op.lastFailure (Task 42fe5ae4): { step, code, where, applyCode, applyAt } or null.
+export function lastFailureOf(view, steps) {
+  const pick = (step, code, d) => (d && typeof d.where === 'string' ? { step, code, where: d.where, applyCode: d.applyCode ?? null, applyAt: d.applyAt ?? null } : null);
+  if (view?.lastFailure) return pick(view.phase ?? null, view.code ?? null, view.lastFailure);
+  const failed = [...(steps ?? [])].reverse().find(s => s.result && s.result.ok === false);
+  return failed ? pick(failed.step, failed.result.code ?? null, failed.result.detail) : null;
+}
 
 export class Upgrader {
   constructor({ root, config, clock = Date.now, pid = process.pid, ports, generations = null, readPackage }) {
@@ -188,6 +195,9 @@ export class Upgrader {
         grantId: grantResult?.detail?.grantId ?? null },
       drain: { openBatches: view.drain?.openBatches ?? null, deadline: view.drain?.deadline ?? null, nextTryAt: view.nextTryAt ?? null },
       pausedBy: lastPause?.result.detail.pausedBy ?? view.pausedBy ?? null,
+      // Task 42fe5ae4: where the last Windows step failed and what upgrade-apply.ps1 said (machine.mjs applyFailure): the
+      // rollback wait's own, else the newest failed result's. A view; the journal holds the same detail.
+      lastFailure: lastFailureOf(view, j.steps),
     };
   }
 

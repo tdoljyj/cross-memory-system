@@ -10,7 +10,7 @@
 // already fails, billing annotations, the identity annotation, the merge
 // commit) record null plus an error code and let attest decide.
 import { FACTS_CONTRACT, isBillingRefusal } from './attest.mjs';
-import { decodeJwtUnverified } from './oidc.mjs';
+import { decodeJwtUnverified, tokenFromAnnotation } from './oidc.mjs';
 import { HOSTED_APP_ID, isValidatedRegistry, relayFail } from './registry.mjs';
 
 const SHA1 = /^[a-f0-9]{40}$/;
@@ -98,7 +98,7 @@ export function createHostedRelayObserver({ github, registry, clock = Date.now, 
           billing = { observed: true, refused: refusedRunIds.length > 0, refusedRunIds };
         } catch (error) { errors.push(`billing:${code(error)}`); }
       }
-      // E6/E8: the identity annotation of the newest successful run, and the
+      // E6/E8: the identity annotation of the newest successful run (decoded from hex), and the
       // merge commit its (still unverified) token names.
       const tokenAnnotations = {}, merge = {};
       const commits = new Map(), compares = new Map();
@@ -109,7 +109,7 @@ export function createHostedRelayObserver({ github, registry, clock = Date.now, 
         let matches;
         try {
           const read = await github.readCheckRunAnnotations(run.id, run.annotationsCount);
-          matches = read.annotations.filter(item => item.title === registry.annotationTitle).map(item => item.message);
+          matches = read.annotations.filter(item => item.title === registry.annotationTitle).map(item => tokenFromAnnotation(item.message));
           tokenAnnotations[role] = { checkRunId: run.id, complete: read.complete === true, matches };
         } catch (error) { errors.push(`annotations:${role}:${code(error)}`); continue; }
         if (matches.length !== 1) continue;
