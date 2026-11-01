@@ -50,11 +50,11 @@ export function readVersions(repo, revs) {
 }
 
 function readWorkflowSuccessor(repo, rev, file) {
-  if (typeof rev !== 'string' || !/^[A-Za-z0-9_./^~-]{1,200}$/.test(rev) || rev.startsWith('-')) fail('invalid gitleaks successor revision');
+  if (typeof rev !== 'string' || !/^[A-Za-z0-9_./^~-]{1,200}$/.test(rev) || rev.startsWith('-')) fail('invalid workflow successor revision');
   const commit = git(repo, ['rev-parse', '--verify', '--end-of-options', `${rev}^{commit}`]).toString('utf8').trim();
   const blob = git(repo, ['rev-parse', '--verify', '--end-of-options', `${commit}:${file}`]).toString('utf8').trim();
   const bytes = git(repo, ['cat-file', 'blob', blob]);
-  if (createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex') !== blob) fail('gitleaks successor blob mismatch');
+  if (createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex') !== blob) fail('workflow successor blob mismatch');
   const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   return { commit, files: { [file]: { blob, sha256: createHash('sha256').update(bytes).digest('hex'), lines: text.split('\n') } } };
 }
