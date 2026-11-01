@@ -75,7 +75,7 @@ powershell -NoProfile -File build.ps1 -Config config\desk-w-591.json -Commit ...
 
 报告明确 SCM/task、Linux host/companion、Native role reply 和 Grant door 是隔离边界；它不是物理服务或完整生产 verifier 的验收，不能据此解除 Owner 要求的物理空升级 Gate。
 
-首次重装后的“同 Source 空升级”可先用原 `rollout/build-upgrade.ps1` 构建：原地包移除重装包主清单里22个只供首次安装的 upgrader 写入项，所有共同文件字节、C/S、策略、身份、冻结升级器和 bundle 保持相同，包摘要自然不同。须交付逐文件 diff，并在目标重装后的实际现场重新预检与取得精确 Grant。不要改功能、有效期或制造空提交来绕过 `UPGRADE_SAME_AS_CURRENT`。
+首次重装后的“同 Source 空升级”可先用原 `rollout/build-upgrade.ps1` 构建：原地包移除本次重装包主清单里24个只供首次安装的 upgrader 写入项，所有共同文件字节、C/S、策略、身份、冻结升级器和 bundle 保持相同，包摘要自然不同。须按 `target` 逐项对比，不能按 `path` 去重漏掉复制到多个目标的文件；交付逐文件 diff，并在目标重装后的实际现场重新预检与取得精确 Grant。不要改功能、有效期或制造空提交来绕过 `UPGRADE_SAME_AS_CURRENT`。
 
 - **模板**：`template.ps1` 就是 r7 f4 在 TURING 上实际跑过的文本（6d32f2ba），把补丁历史合了进来，只多了一处：主机名改为参数 `$NodeHostname`。生成器钉住模板的 sha，不再打补丁；模板要改，就作为文本改动走审核。
 - **数据来源**：启动器钉住的每一个值都来自文件，包括包、配置、包里 record 的节点档案（必须等于配置所指的档案），以及本机已装状态（只读）。
