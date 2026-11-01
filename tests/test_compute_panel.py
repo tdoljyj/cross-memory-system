@@ -248,16 +248,20 @@ class AlertAndStateTests(unittest.TestCase):
         self.assertEqual(panel.read_state("no state here"), {})
         self.assertNotIn("--", panel.write_state(state)[4:-3])
 
-    def test_render_lists_every_machine(self) -> None:
+    def test_render_lists_current_machines_without_stale_rows(self) -> None:
         pool = {node["name"]: {**panel.classify_node(node["name"], [], {}, NOW), "can_run": node["can_run"],
                                 "health": {}, "flags": []} for node in panel.POOL}
         report = {"schema": panel.SCHEMA, "generated_at": panel.iso(NOW), "pool": pool,
-                  "utilization": {}, "residents": {}, "others": panel.OTHERS, "metrics": {}, "alerts": {}}
+                  "utilization": {}, "residents": {"desk-w-591": {"activity": "idle", "description": "当班，正常"}},
+                  "others": panel.OTHERS, "metrics": {}, "alerts": {}}
         body = panel.render(report, {})
         self.assertTrue(body.startswith(panel.MARKER))
+        self.assertIn("通用 runner 6 个", body)
         for name in [node["name"] for node in panel.POOL] + [other["name"] for other in panel.OTHERS]:
             self.assertIn(name, body)
-        self.assertIn("已退役", body)
+        self.assertNotIn("clued-ci-home-linux-01", body)
+        self.assertNotIn("待安装", body)
+        self.assertEqual(body.count("| 常驻 desk-w-591 |"), 1)
         self.assertIn("控制机", body)
 
 
