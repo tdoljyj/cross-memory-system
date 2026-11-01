@@ -82,6 +82,17 @@ foreach ($a in @($broker | Where-Object { $_.SecurityIdentifier.Value -ceq $res 
   if (([int]$a.AceFlags -band [int][Security.AccessControl.AceFlags]::InheritOnly) -ne 0) { Yes (($a.AccessMask -band $fileWrite) -eq 0) 'broker-requests:resident-files-read-only' }
 }
 Yes (@($broker | Where-Object { $_.SecurityIdentifier.Value -ceq 'S-1-3-4' }).Count -eq 1) 'broker-requests:owner-rights'
+# DESIGN.md section 41.7: clued-control reads the Owner's train-shadow review mark in owner\train-review only, never owner\ itself.
+$keys = @($acl.Keys)
+Yes ($keys.IndexOf('owner') -ge 0 -and $keys.IndexOf('owner') -lt $keys.IndexOf('owner\train-review')) 'train-review:planned-after-owner'
+Yes (@(Aces $acl['owner'] | Where-Object { $_.SecurityIdentifier.Value -ceq $ControllerSid }).Count -eq 0) 'owner:no-controller-ace'
+$review = Aces $acl['owner\train-review']
+$by = @{}; foreach ($a in $review) { $by[$a.SecurityIdentifier.Value] = $a }
+Yes ($review.Count -eq 5 -and $by['S-1-5-18'].AccessMask -eq 0x1F01FF -and $by['S-1-5-32-544'].AccessMask -eq 0x1F01FF) 'train-review:five-aces-system-admins-full'
+Yes ($by[$ControllerSid].AccessMask -eq 0x1200a9 -and $by[$res].AccessMask -eq 0x1200a9 -and $by[$OwnerSid].AccessMask -eq 0x1301bf) 'train-review:controller-and-resident-read-owner-modify'
+Yes (@($review | Where-Object { [int]$_.AceFlags -ne 3 -or [string]$_.AceQualifier -cne 'AccessAllowed' }).Count -eq 0) 'train-review:inherited-allow-only'
+$retentionText = Get-Content -LiteralPath (Join-Path (Split-Path -Parent (Split-Path -Parent $here)) 'actions-hosted-migration\independent-ci-v1\src\resident-v2\state-retention.mjs') -Raw
+Yes ($retentionText.Contains("TRAIN_REVIEW_DIRECTORY = 'train-review'") -and $retentionText.Contains('\\owner\\${TRAIN_REVIEW_DIRECTORY}\\${TRAIN_REVIEW_NAME}')) 'train-review:stage-10-reads-this-folder'
 
 # 4. verify-resident.ps1 checks.
 foreach ($name in @('Get-DaclPart', 'ConvertFrom-ScPrivs', 'Test-ExactPrivileges', 'Test-TokenRecord', 'Test-BrokerBinaryPath', 'Test-ScSddl', 'Read-ReviewedPublicJson')) {
@@ -216,6 +227,86 @@ Yes ($installText -match '(?m)^\$SecretTargets = \[ordered\]@\{[^\r\n]+\}') 'pre
 Yes ($verifyText.Contains($targetsLine)) 'verify-has-the-same-secret-targets'
 Yes ($targetsLine.Contains("'C:\ProgramData\CluedControl\trusted\controller-checks-app.pem'") -and $targetsLine.Contains("'C:\ProgramData\CluedIndependentCI\secrets\ci-admission.token'")) 'secret-targets-are-the-runtime-paths'
 Yes ($NodeIdentityKeys.Count -eq 16 -and $NodeIdentityRefs.Count -eq 7) 'identity-keys'
+
+# 4c-2. The node heartbeat token (merge train step 3c-2b, DESIGN.md section 41.6a): its own folder, SYSTEM and Administrators full
+#       control, the Owner read-only, nobody else; placed only when -HeartbeatTokenFile is given; never the ci-admission or upgrade token.
+foreach ($name in @('install-resident.ps1:Get-HeartbeatDirectorySddl', 'install-resident.ps1:Get-HeartbeatFileSddl', 'install-resident.ps1:Get-HeartbeatTokenPlan')) { Yes ($functions.ContainsKey($name)) ('present:' + $name) }
+foreach ($name in @('install-resident.ps1:Get-HeartbeatDirectorySddl', 'install-resident.ps1:Get-HeartbeatFileSddl')) { . ([scriptblock]::Create($functions[$name])) }
+$hbOwner = 'S-1-5-21-1-2-3-1001'
+foreach ($case in @(@((Get-HeartbeatDirectorySddl $hbOwner), 0x1200a9, 'directory'), @((Get-HeartbeatFileSddl $hbOwner), 0x120089, 'file'))) {
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor($case[0])
+  $aces = @($raw.DiscretionaryAcl)
+  $by = @{}; foreach ($a in $aces) { $by[$a.SecurityIdentifier.Value] = $a.AccessMask }
+  Yes (($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0 -and $aces.Count -eq 3) ('heartbeat-acl-protected-three-aces:' + $case[2])
+  Yes ($by['S-1-5-18'] -eq 0x1F01FF -and $by['S-1-5-32-544'] -eq 0x1F01FF) ('heartbeat-acl-system-admins-full:' + $case[2])
+  Yes ($by[$hbOwner] -eq $case[1] -and ($by[$hbOwner] -band 0xD0156) -eq 0) ('heartbeat-acl-owner-read-only:' + $case[2])
+}
+Yes ($installText.Contains('[string]$HeartbeatTokenFile') -and $installText.Contains("`$HeartbeatTokenDirectory = 'C:\ProgramData\CluedIndependentCI\resident\secrets\heartbeat'")) 'heartbeat-parameter-and-folder'
+Yes ($installText.Contains("`$HeartbeatTokenTarget = `$HeartbeatTokenDirectory + '\ci-node-heartbeat.token'")) 'heartbeat-target-is-the-companion-path'
+$hbPlan = $functions['install-resident.ps1:Get-HeartbeatTokenPlan']
+Yes ($hbPlan.Contains("throw 'HEARTBEAT_TOKEN_IS_THE_CI_ADMISSION_TOKEN'") -and $hbPlan.Contains("throw 'HEARTBEAT_TOKEN_IS_THE_UPGRADE_TOKEN'") -and $hbPlan.Contains("throw 'HEARTBEAT_TOKEN_TARGET_EXISTS_NOT_OVERWRITTEN'")) 'heartbeat-plan-refusals'
+Yes ($installText.IndexOf('upgrader = (Get-UpgraderPlan $pkg)') -lt $installText.IndexOf('heartbeatToken = (Get-HeartbeatTokenPlan)')) 'heartbeat-planned-after-the-upgrade-token'
+Yes ($installText.Contains('if ($ht.supplied) {') -and $installText.Contains('New-DirectoryWithAcl $ht.directory $ht.directorySddl') -and $installText.Contains("Write-NewSecret `$ht.target `$script:SecretBytes['heartbeatToken'] `$ht.sddl")) 'heartbeat-placed-only-when-supplied'
+$companionHeartbeat = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $here) 'src\companion-heartbeat.mjs') -Raw
+Yes ($companionHeartbeat.Contains("HEARTBEAT_TOKEN_DIR = path.join('secrets', 'heartbeat')") -and $companionHeartbeat.Contains("HEARTBEAT_TOKEN_FILE = 'ci-node-heartbeat.token'")) 'heartbeat-companion-reads-the-same-file'
+# Review R3 MINOR 8: an existing heartbeat folder is used only with exactly its ACL (install), and verify-resident.ps1 checks the folder
+# and the token file against the same SDDL.
+foreach ($name in @('install-resident.ps1:Test-HeartbeatDirectoryAcl', 'verify-resident.ps1:Test-HeartbeatTokenAcl', 'verify-resident.ps1:Get-DaclPart')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }
+Yes ($hbPlan.Contains("Test-HeartbeatDirectoryAcl `$HeartbeatTokenDirectory `$entry.directorySddl)) { throw 'HEARTBEAT_TOKEN_DIRECTORY_ACL_MISMATCH' }") -and $hbPlan.IndexOf('Test-HeartbeatDirectoryAcl') -lt $hbPlan.IndexOf('if ($HeartbeatTokenFile) {')) 'heartbeat-existing-folder-acl-checked-supplied-or-not'
+$hbVerify = $functions['verify-resident.ps1:Test-HeartbeatTokenAcl']
+$hbSid = 'S-1-5-21-1-2-3-1001'
+Yes ($hbVerify.Contains("'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;' + `$ownerSid + ')'") -and ('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;' + $hbSid + ')') -ceq (Get-HeartbeatDirectorySddl $hbSid)) 'heartbeat-verify-directory-sddl-is-the-install-one'
+Yes ($hbVerify.Contains("'O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x120089;;;' + `$ownerSid + ')'") -and ('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x120089;;;' + $hbSid + ')') -ceq (Get-HeartbeatFileSddl $hbSid)) 'heartbeat-verify-file-sddl-is-the-install-one'
+$hbRoot = Join-Path $Scratch 'hb-root'
+$r = Test-HeartbeatTokenAcl $hbRoot $hbSid
+Yes ($r.ok -eq $true -and $r.detail -ceq 'NOT_INSTALLED') 'heartbeat-verify-not-installed-is-ok'
+$hbDir = Join-Path $hbRoot 'secrets\heartbeat'; [void][IO.Directory]::CreateDirectory($hbDir)   # an ordinary folder: the user's own ACL
+$r = Test-HeartbeatTokenAcl $hbRoot $hbSid
+Yes ($r.ok -eq $false -and $r.detail -ceq 'DIRECTORY_ACL') 'heartbeat-verify-wrong-folder-acl-fails'
+Yes (-not (Test-HeartbeatDirectoryAcl $hbDir (Get-HeartbeatDirectorySddl $hbSid))) 'heartbeat-install-wrong-folder-acl-refused'
+Yes ($installText.Contains("Record 'heartbeat-token-acl'") -eq $false -and (Get-Content -LiteralPath (Join-Path $here 'verify-resident.ps1') -Raw).Contains("Record 'heartbeat-token-acl' `$hbAcl.ok `$hbAcl.detail")) 'heartbeat-verify-records-the-check'
+
+# 4c-3. The heartbeat connection id (merge train step 2b review): -HeartbeatBindingId is informational, only with -HeartbeatTokenFile; the
+#       plan and the receipt record it, the result prints the Owner's next step (link it on /bindings/failover, two-step confirmation). The
+#       install makes no network call and uses no token for it.
+foreach ($name in @('install-resident.ps1:Get-HeartbeatNextStep', 'install-resident.ps1:Clear-SecretBytes', 'verify-resident.ps1:Get-HeartbeatBindingState', 'verify-resident.ps1:Get-Field')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }
+. ([scriptblock]::Create($hbPlan))
+$zh = { param([int[]]$c) -join @($c | ForEach-Object { [char]$_ }) }
+$hbId = '0a1b2c3d-0000-4000-8000-0000000000cc'
+$stepWith = Get-HeartbeatNextStep 'turing' $hbId; $stepWithout = Get-HeartbeatNextStep 'turing' $null
+# "qing Owner zai KooYomi de /bindings/failover ba xin-tiao lian-jie <id> gua-dao ben jie-dian <node> (liang-bu que-ren)"
+$wantWith = (& $zh 0x8bf7) + ' Owner ' + (& $zh 0x5728) + ' KooYomi ' + (& $zh 0x7684) + ' /bindings/failover ' + (& $zh 0x628a, 0x5fc3, 0x8df3, 0x8fde, 0x63a5) + ' ' + $hbId + ' ' + (& $zh 0x6302, 0x5230, 0x672c, 0x8282, 0x70b9) + ' turing' + (& $zh 0xff08, 0x4e24, 0x6b65, 0x786e, 0x8ba4, 0xff09)
+Yes ($stepWith -ceq $wantWith) 'heartbeat-next-step:with-the-connection-id'
+Yes ($stepWithout -ceq $wantWith.Replace(' ' + $hbId + ' ', '')) 'heartbeat-next-step:the-same-step-without-an-id'
+$hbInstallCode = @((Get-Content -LiteralPath (Join-Path $here 'install-resident.ps1')) | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+Yes ($installText -match "(?m)^\s+\`$t = \[regex\]::Unescape\('[\x20-\x7e]+'\)\s*$" -and $hbInstallCode -notmatch '[^\x00-\x7f]') 'heartbeat-next-step:kept-as-ascii-escapes-in-a-file-without-bom'
+$savedOwnerSid = $OwnerSid; $OwnerSid = $hbOwner; $HeartbeatTokenDirectory = Join-Path $Scratch 'hb-plan\secrets\heartbeat'; $HeartbeatTokenTarget = $HeartbeatTokenDirectory + '\ci-node-heartbeat.token'
+$script:SecretBytes = @{ upgradeToken = [byte[]](1..8) }
+$HeartbeatTokenFile = ''; $HeartbeatBindingId = $hbId
+Yes ((Test-Refused { Get-HeartbeatTokenPlan } 'HEARTBEAT_BINDING_ID_REQUIRES_HEARTBEAT_TOKEN_FILE') -and $script:SecretBytes.Count -eq 0) 'heartbeat-binding-id:refused-without-a-token-file-bytes-cleared'
+$HeartbeatBindingId = ''
+$neither = Get-HeartbeatTokenPlan
+Yes ($neither.supplied -eq $false -and $null -eq $neither.bindingId -and @($neither.Keys) -ccontains 'bindingId') 'heartbeat-binding-id:neither-is-fine'
+Yes ($installText.Contains('bindingId = $(if ($did) { $ht.bindingId } else { $null }) }') -and $installText.Contains('heartbeatBindingId = $receipt.heartbeatToken.bindingId') -and
+  $installText.Contains('heartbeatNextStep = $(if ($receipt.heartbeatToken.placed) { Get-HeartbeatNextStep $Identity.nodeName $receipt.heartbeatToken.bindingId } else { $null })')) 'heartbeat-binding-id:receipt-and-result-carry-it'
+Yes ($installText.Contains("[ValidatePattern('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z')][string]`$HeartbeatBindingId")) 'heartbeat-binding-id:parameter-is-a-uuid'
+Yes (-not ("0a1b2c3d-0000-4000-8000-0000000000aa`n" -match '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z')) 'heartbeat-binding-id:trailing-newline-refused'
+foreach ($word in @('Invoke-WebRequest', 'Invoke-RestMethod', 'Net.WebClient', 'Net.Http', 'HttpWebRequest', 'clued_work_verify_v1', 'ci_node_heartbeat', 'supabase')) { Yes (-not $hbInstallCode.Contains($word)) ('install-makes-no-network-call:' + $word) }
+# verify reports the receipt's id (no network)
+$rcpt = { param($hb) if ($null -eq $hb) { [pscustomobject]@{ contract = 'x' } } else { ([ordered]@{ heartbeatToken = $hb } | ConvertTo-Json -Depth 4) | ConvertFrom-Json } }
+foreach ($case in @(
+    @($null, $true, 'NOT_IN_RECEIPT', 'older-receipt'),
+    @([ordered]@{ placed = $false; bindingId = $null }, $true, 'NOT_INSTALLED', 'no-token'),
+    @([ordered]@{ placed = $true; bindingId = $null }, $true, 'TOKEN_WITHOUT_BINDING_ID', 'token-without-id'),
+    @([ordered]@{ placed = $true; bindingId = $hbId }, $true, ('bindingId=' + $hbId), 'token-with-id'),
+    @([ordered]@{ placed = $false; bindingId = $hbId }, $false, 'BINDING_ID_INVALID', 'id-without-token'),
+    @([ordered]@{ placed = $true; bindingId = 'not-a-uuid' }, $false, 'BINDING_ID_INVALID', 'id-not-a-uuid'),
+    @([ordered]@{ placed = $true; bindingId = $hbId.ToUpperInvariant() }, $false, 'BINDING_ID_INVALID', 'id-upper-case'))) {
+  $st = Get-HeartbeatBindingState (& $rcpt $case[0])
+  Yes ($st.ok -eq $case[1] -and $st.detail -ceq $case[2]) ('verify-heartbeat-binding:' + $case[3])
+}
+Yes ($verifyText.Contains("Record 'heartbeat-binding' `$hbBinding.ok `$hbBinding.detail")) 'verify-heartbeat-binding:recorded'
+$OwnerSid = $savedOwnerSid
 
 # The shared cases: this PowerShell derivation is held to the JavaScript one (test/node-identity.test.mjs reads the same file).
 $idCasesText = [IO.File]::ReadAllText((Join-Path $here '..\test\fixtures\node-identity-cases.json'), (New-Object Text.UTF8Encoding($false, $true)))
@@ -553,6 +644,28 @@ if (Test-Path -LiteralPath $probeNode) {
   Remove-Item -LiteralPath (Join-Path $fakeProgramData 'CluedIndependentCI\secrets') -Recurse -Force
   [void][IO.Directory]::Delete($link)
 
+  # The heartbeat token with and without its connection id (step 2b review): fingerprinted like the ci-admission token, the id recorded
+  # lower case, nothing secret in the plan or the next step. A heartbeat token is a clued_hbt_ token with its own fingerprint kind.
+  $hbTokenText = 'clued_hbt_' + 'HeartbeatFixtureValue0123456789abcdefghijkl'; $hbTokenFile = Join-Path $Scratch 'secrets-fs\heartbeat-token.txt'; [IO.File]::WriteAllText($hbTokenFile, $hbTokenText + "`r`n")
+  $hbPin = Sha256Text ("clued.independent-ci.heartbeat-token-pin/1`0" + $hbTokenText)
+  Yes ((Get-SecretFingerprint 'heartbeat-token' $enc.GetBytes($hbTokenText)) -ceq $hbPin -and $null -eq (Get-SecretFingerprint 'heartbeat-token' $enc.GetBytes('clued_bnd_' + 'HeartbeatFixtureValue0123456789abcdefghijkl')) -and $null -eq (Get-SecretFingerprint 'ci-token' $enc.GetBytes($hbTokenText))) 'fingerprint:heartbeat-token-kind-accepts-only-clued_hbt_'
+  $savedOwnerSid = $OwnerSid; $OwnerSid = $hbOwner; $HeartbeatTokenDirectory = Join-Path $Scratch 'hb-plan-4e\secrets\heartbeat'; $HeartbeatTokenTarget = $HeartbeatTokenDirectory + '\ci-node-heartbeat.token'
+  $script:SecretBytes = @{}; $HeartbeatTokenFile = $hbTokenFile
+  foreach ($case in @(@($hbId.ToUpperInvariant(), $hbId, 'with-id'), @('', $null, 'without-id'))) {
+    $HeartbeatBindingId = $case[0]
+    $hp = Get-HeartbeatTokenPlan
+    Yes ($hp.supplied -and $hp.verified -and $hp.fingerprint -ceq $hbPin -and $hp.bindingId -ceq $case[1] -and $script:SecretBytes.ContainsKey('heartbeatToken')) ('heartbeat-binding-id:token-file-' + $case[2])
+    $hpJson = $hp | ConvertTo-Json -Depth 4; $hpStep = Get-HeartbeatNextStep 'turing' $hp.bindingId
+    Yes (-not $hpJson.Contains($hbTokenText) -and -not $hpJson.Contains('clued_hbt_') -and -not $hpStep.Contains('clued_hbt_') -and -not $hpStep.Contains($hbPin)) ('heartbeat-binding-id:no-secret-in-plan-or-step-' + $case[2])
+    Clear-SecretBytes
+  }
+  $HeartbeatTokenFile = $tokenFile; $HeartbeatBindingId = $hbId
+  Yes (Test-Refused { Get-HeartbeatTokenPlan } 'HEARTBEAT_TOKEN_IS_THE_CI_ADMISSION_TOKEN') 'heartbeat-binding-id:the-ci-token-is-still-refused'
+  $otherBnd = Join-Path $Scratch 'secrets-fs\other-bnd.txt'; [IO.File]::WriteAllText($otherBnd, 'clued_bnd_' + 'SomeOtherConnection0123456789')
+  $HeartbeatTokenFile = $otherBnd; $HeartbeatBindingId = ''
+  Yes (Test-Refused { Get-HeartbeatTokenPlan } 'HEARTBEAT_TOKEN_UNREADABLE') 'heartbeat-token:a-clued_bnd_-token-is-not-a-heartbeat-token'
+  $HeartbeatTokenFile = ''; $HeartbeatBindingId = ''; $OwnerSid = $savedOwnerSid; $script:SecretBytes = @{}
+
   # Placement: create-only, the exact bytes, the final security descriptor (here: this account stands in for .\clued-control).
   $placeSddl = 'D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;' + $me + ')'
   $placed = Join-Path $Scratch 'secrets-fs\placed.bin'
@@ -741,7 +854,18 @@ $viaGroup = "[Privilege Rights]`r`nSeServiceLogonRight = *S-1-5-80-0,*S-1-5-21-9
 Yes (Test-ServiceLogonRight $viaGroup $ctl @{ 'S-1-5-21-9-8-7-1010' = @($ctl) }) 'logon-right-through-a-local-group'
 Yes (-not (Test-ServiceLogonRight $viaGroup $ctl @{ 'S-1-5-21-9-8-7-1010' = @('S-1-5-21-9-8-7-1000') })) 'logon-right-group-without-it'
 Yes (-not (Test-ServiceLogonRight "[Privilege Rights]`r`nSeNetworkLogonRight = *$ctl`r`n" $ctl @{})) 'logon-right-only-another-right'
-Yes (-not (Test-ServiceLogonRight "[Privilege Rights]`r`nSeServiceLogonRight = clued-control`r`n" $ctl @{})) 'logon-right-names-are-not-sids'
+Yes (-not (Test-ServiceLogonRight "[Privilege Rights]`r`nSeServiceLogonRight = clued-control`r`n" $ctl @{})) 'logon-right-name-without-a-resolution'
+# secedit writes local accounts by name (TURING, 2026-10-31); Read-ServiceLogonRight resolves each name to its SID
+$turing = "[Privilege Rights]`r`nSeServiceLogonRight = clued-runner,clued-control,*S-1-5-80-0,*S-1-5-83-0`r`n"
+$resolved = @{ 'clued-runner' = 'S-1-5-21-9-8-7-1008'; 'clued-control' = $ctl }
+Yes (Test-ServiceLogonRight $turing $ctl @{} $resolved) 'logon-right-by-name-as-turing-exports-it'
+Yes (Test-ServiceLogonRight "[Privilege Rights]`r`nSeServiceLogonRight = TURING\clued-control`r`n" $ctl @{} @{ 'TURING\clued-control' = $ctl }) 'logon-right-by-qualified-name'
+Yes (-not (Test-ServiceLogonRight $turing 'S-1-5-21-9-8-7-1000' @{} $resolved)) 'logon-right-by-name-other-account'
+Yes (-not (Test-ServiceLogonRight $turing $ctl @{} @{ 'clued-runner' = 'S-1-5-21-9-8-7-1008'; 'clued-control' = $null })) 'logon-right-unresolved-name-grants-nothing'
+Yes (Test-ServiceLogonRight "[Privilege Rights]`r`nSeServiceLogonRight = clued-ci-hosts`r`n" $ctl @{ 'S-1-5-21-9-8-7-1012' = @($ctl) } @{ 'clued-ci-hosts' = 'S-1-5-21-9-8-7-1012' }) 'logon-right-through-a-group-by-name'
+Yes (-not (Test-ServiceLogonRight ($turing + "SeDenyServiceLogonRight = clued-control`r`n") $ctl @{} $resolved)) 'logon-right-denied-by-name'
+Yes (-not (Test-ServiceLogonRight ($turing + "SeDenyServiceLogonRight = gone-account`r`n") $ctl @{} ($resolved + @{ 'gone-account' = $null }))) 'logon-right-unresolved-deny-fails-closed'
+Yes (Test-ServiceLogonRight ($turing + "SeDenyServiceLogonRight = clued-runner`r`n") $ctl @{} $resolved) 'logon-right-deny-by-name-for-another-account'
 Yes (-not (Test-ServiceLogonRight ($inf + "SeDenyServiceLogonRight = *$ctl`r`n") $ctl @{})) 'logon-right-denied-directly'
 Yes (-not (Test-ServiceLogonRight ($inf + "SeDenyServiceLogonRight = *S-1-5-21-9-8-7-1011`r`n") $ctl @{ 'S-1-5-21-9-8-7-1011' = @($ctl) })) 'logon-right-denied-through-a-group'
 Yes (Test-ServiceLogonRight ($inf + "SeDenyServiceLogonRight = *S-1-5-21-9-8-7-1000`r`n") $ctl @{}) 'logon-right-deny-for-another-account'

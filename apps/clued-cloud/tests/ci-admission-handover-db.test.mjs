@@ -136,7 +136,7 @@ test('ci-admission handover (Z1): one transaction, delayed start, purposes, park
     const readers = (await admin.query(`select p.oid::regprocedure::text sig,p.prosrc from pg_proc p
       where p.prosrc like '%binding_roles_v1%' order by 1`)).rows;
     assert.deepEqual(readers.map((r) => r.sig).sort(), [
-      'clued_binding_role_handover_v1(jsonb)', 'clued_binding_role_set_v1(jsonb)',
+      'clued_binding_role_set_v1(jsonb)',
       'clued_binding_roles_list_v1(jsonb)', 'clued_headless_binding_confirmation_issue_v1(jsonb)', 'clued_headless_binding_issue_v1(jsonb)',
       'clued_headless_binding_list_v1(jsonb)', 'clued_headless_binding_revoke_v1(jsonb)', 'clued_owner_grant_admission_door_v1(text,jsonb)',
       'clued_private.binding_role_admits_v1(clued_agent_bindings,text)', 'clued_private.binding_role_change_check_v1(clued_agent_bindings,text,boolean,jsonb)',
@@ -149,7 +149,12 @@ test('ci-admission handover (Z1): one transaction, delayed start, purposes, park
       'clued_private.work_claim_independent_abort_v1(text,jsonb)', 'clued_private.work_claim_independent_begin_v1(text,jsonb)',
       'clued_private.work_claim_independent_drain_command_v1(text,jsonb)',
       'clued_private.work_claim_verify_before_execution_v1(text,jsonb)', 'clued_work_verify_v1(text,jsonb)',
-    ].sort(), 'a new reader of binding_roles_v1 must be reviewed for rows that have not started');
+      // 20261023092957 (unified scheduling stage 1) readers; both require effective_at<=clock_timestamp().
+      'clued_private.ci_claim_current_v1(uuid,clued_private.ci_jobs_v1,text,bigint,uuid)',
+      'clued_private.ci_publisher_current_v1(uuid,uuid,uuid,integer,text)',
+      // 20261031090000 (merge train 2b): the one-click handover now calls this core.
+      'clued_private.binding_role_handover_core_v1(uuid,uuid,uuid,text,jsonb)',
+    ].sort(),'a new reader of binding_roles_v1 must be reviewed for rows that have not started');
     const started = (sig) => readers.find((r) => r.sig === sig).prosrc.split('effective_at<=clock_timestamp()').length - 1;
     assert.equal(started('clued_owner_grant_admission_door_v1(text,jsonb)'), 1);
     assert.equal(started('clued_work_verify_v1(text,jsonb)'), 2);
@@ -157,6 +162,8 @@ test('ci-admission handover (Z1): one transaction, delayed start, purposes, park
     assert.equal(started('clued_private.work_claim_execution_current_v1(jsonb)'), 1);
     assert.equal(started('clued_private.work_claim_ci_command_v1(text,jsonb)'), 1);
     assert.equal(started('clued_private.binding_role_admits_v1(clued_agent_bindings,text)'), 1);
+    assert.equal(started('clued_private.ci_claim_current_v1(uuid,clued_private.ci_jobs_v1,text,bigint,uuid)'), 1);
+    assert.equal(started('clued_private.ci_publisher_current_v1(uuid,uuid,uuid,integer,text)'), 1);
     assert.match(readers.find((r) => r.sig === 'clued_headless_binding_issue_v1(jsonb)').prosrc,
       /greatest\(e\.effective_at,v_now\),e\.purpose/);
 

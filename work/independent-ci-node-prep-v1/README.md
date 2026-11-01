@@ -130,7 +130,7 @@ Linux 测试另覆盖：`/var/lib`、`/root` 下的 runner 注册文件，链接
 
 - TURING 上以提权跑过一次干跑（只读），结果 `RUNNER_ROOT_UNEXPECTED`：TURING 的 runner 目录在运行后有包外或改过的文件（根目录一层与包一致，差异在更深层；Owner 取消了第二次 UAC，具体文件名未取得）。对新节点没有影响；对已有 runner 目录，工具一律失败关闭。夹具里 TURING 的 `runnerRoot` 按 `registered` 处理，另有用例覆盖实测的拒绝。
 - 以下三项未验证，P3 首次启动 controller runner 时需要逐项核对：
-  - “作为服务登录”权限：TURING 的 secedit 导出里没有 clued-control 的显式授权行，服务照常登录（推断是靠默认授予 `NT SERVICE\ALL SERVICES`，未核实）。本工具同样不改本地安全策略。
+  - “作为服务登录”权限：TURING 上 clued-control 有显式授权。secedit 导出里本机账户写成名字（`SeServiceLogonRight = clued-runner,clued-control,*S-1-5-80-0,*S-1-5-83-0`，2026-10-31），不是 `*SID`；早先“没有显式授权行”的说法是只找 `*SID` 造成的误读。常驻安装器现在两种写法都认（resident DESIGN §30.8）。本工具同样不改本地安全策略。
   - runner 根目录对 controller 只读：运行时若要在根目录写文件，会起不来。
   - `.credentials_rsaparams` 的 DPAPI 范围：TURING 用的是同一模式（提权 configure，再手工建服务），且能运行，多半是机器范围。
 - 提权进程会继承 Owner 的 `HKCU\Environment`（例如 `COR_ENABLE_PROFILING`、`DOTNET_STARTUP_HOOKS`）。Owner 上下文里的代码可以预先写进这些变量，脚本层面防不住（审核 r1 指出，未实测）。现场说明用“执行后核对 GitHub 的 runner 列表”来发现令牌是否被冒用；也可以由 Owner 选择在输入令牌期间暂停跑 PR 代码的发行版。

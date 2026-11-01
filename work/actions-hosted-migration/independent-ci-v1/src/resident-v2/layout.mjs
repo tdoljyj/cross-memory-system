@@ -33,6 +33,9 @@ export const STATE_V2 = Object.freeze({
   greenLedger: `${WIN_STATE_V2}\\green-ledger`,
   // Quota phase 2, step 3c-1: one shadow record per stage-10 run (train-shadow-store.mjs; clued-control only).
   trainShadow: `${WIN_STATE_V2}\\train-shadow`,
+  // Step 3c-2b (DESIGN §41.3): stage 10's sweep proofs, full-sweep cursor and front-batch records (train-sweep-store.mjs;
+  // clued-control only, create-only files). Stage 8 reads the newest proof.
+  trainSweep: `${WIN_STATE_V2}\\train-sweep`,
 });
 // The package's pinned node (install-resident.ps1 runtime\node.exe = record controllerNodeSha256), not the shared system node.
 export const NODE_EXE = `${WIN_RESIDENT}\\runtime\\node.exe`;
@@ -117,7 +120,9 @@ export function stageJobRolesValid(row, roles) {
 export const STAGE_MARGIN_MS = 180_000;
 export const stageByNumber = n => STAGES_V2.find(s => s.number === n) ?? null;
 // Outcome records written by the v2 node entries (one per broker nonce, create-only), read by the
-// resident's stage invoker to turn a stage ending into a stable failure code (S11).
+// resident's stage invoker to turn a stage ending into a stable failure code (S11). Step 3c-2b (DESIGN §41.7): the path stays
+// flat (the open month segment; the generic helper hashes exactly this path); stage 10 later moves the outcomes of past months
+// into receipts\<yyyy-mm>\ under the same name (state-retention.mjs#closeOutcomeMonths).
 export const OUTCOME_CONTRACT = 'clued.independent-ci.entry-outcome/2';
 export const outcomeFile = nonce => `${STATE_V2.receipts}\\outcome-${nonce}.json`;
 export const nativeReceiptFile = nonce => `${STATE_V2.receipts}\\windows-formal-entry-${nonce}.json`;

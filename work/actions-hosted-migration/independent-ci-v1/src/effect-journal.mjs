@@ -93,11 +93,15 @@ export class EffectJournal {
 export const ROLE_PUBLICATION_CONTRACT = 'clued.independent-ci.role-publication/2';
 const ROLE_PATHS = ['local', 'relay'];
 
+// Merge train (DESIGN §41.4): a train front batch (S != H, never relayed) takes its own K(head, S, role) apart from the
+// non-front run of H; every K without testSha is the one it always was.
 export function rolePublicationKey({ repo, headSha, role, checkName, appId, ...rest }) {
-  if (Object.keys(rest).length !== 0 || typeof repo !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) || !/^[a-f0-9]{40}$/.test(headSha ?? '')
+  const front = Object.hasOwn(rest, 'testSha');
+  if (Object.keys(rest).length !== (front ? 1 : 0) || (front && (!/^[a-f0-9]{40}$/.test(rest.testSha ?? '') || rest.testSha === headSha))
+    || typeof repo !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) || !/^[a-f0-9]{40}$/.test(headSha ?? '')
     || typeof role !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(role) || typeof checkName !== 'string'
     || !checkName || checkName.length > 100 || !Number.isSafeInteger(appId) || appId < 1) fail('invalid_role_publication_subject');
-  return digest({ contract: ROLE_PUBLICATION_CONTRACT, repo, headSha, role, checkName, appId });
+  return digest({ contract: ROLE_PUBLICATION_CONTRACT, repo, headSha, role, checkName, appId, ...(front ? { testSha: rest.testSha } : {}) });
 }
 
 // holder: { path: 'local' | 'relay', effectKey, externalId }
@@ -106,7 +110,7 @@ export async function claimRolePublication(journal, subject, holder) {
   if (!holder || !ROLE_PATHS.includes(holder.path) || !KEY.test(holder.effectKey ?? '') || typeof holder.externalId !== 'string'
     || !holder.externalId.startsWith('independent-ci:') || holder.externalId.length > 200) fail('invalid_role_publication_holder');
   const record = { contract: ROLE_PUBLICATION_CONTRACT, repo: subject.repo, headSha: subject.headSha, role: subject.role,
-    checkName: subject.checkName, appId: subject.appId,
+    checkName: subject.checkName, appId: subject.appId, ...(Object.hasOwn(subject, 'testSha') ? { testSha: subject.testSha } : {}),
     holder: { path: holder.path, effectKey: holder.effectKey, externalId: holder.externalId } };
   let claimed;
   try { claimed = await journal.begin(key, record); }

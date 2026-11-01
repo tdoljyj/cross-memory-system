@@ -250,6 +250,25 @@ class Rehearsal(unittest.TestCase):
                                                           'v1Head': '0' * 40, 'v1Qualifications': {'gitleaks': False}})))
         self.assertTrue({'LINUX_HOST_PINS_NOT_THE_CONFIGURED', 'LINUX_V1_SOURCE_HEAD_NOT_THE_CONFIGURED', 'LINUX_V1_QUALIFICATIONS_MISSING'} <= set(c), c)
 
+    # a node without Source v1 (Z1 first install, README section 6): rehearses to PASS on its roles-v3 lineage; fails closed otherwise
+    def test_a_node_without_source_v1(self):
+        doc = json.load(open(self.fx.cfg_path))
+        doc['linux']['host'] = dict(HOST_FACTS, v1SourceHead=None)
+        p = os.path.join(self.fx.dir, 'no-v1.json'); json.dump(doc, open(p, 'w'))
+        cfg = rconfig.load(p)
+        z1 = {'v1Head': None, 'v1Qualifications': {r: False for r in ('gitleaks', 'trivy', 'contract-placement')}, 'v1Present': [],
+              'v2Qualifications': {r: True for r in ('gitleaks', 'trivy', 'contract-placement')}}
+        run = lambda probe: rehearse.rehearse(cfg, COMMIT, self.fx.pkg, FakeHost(self.fx, probe=dict(z1, **probe)))
+        r = run({})
+        self.assertEqual(r['status'], 'REHEARSAL_PASS', r['findings'])
+        self.assertEqual(codes(run({'v1Present': ['/etc/clued-independent-ci/roles']})), ['LINUX_NODE_HAS_A_SOURCE_V1_NOT_CONFIGURED'])
+        self.assertEqual(codes(run({'v1Head': 'f' * 40, 'v1Present': ['/opt/clued-independent-ci/source-first-formal-v1']})),
+                         ['LINUX_V1_SOURCE_HEAD_NOT_THE_CONFIGURED', 'LINUX_NODE_HAS_A_SOURCE_V1_NOT_CONFIGURED'])
+        self.assertEqual(codes(run({'v2Qualifications': {'gitleaks': True, 'trivy': False, 'contract-placement': True}})), ['LINUX_INSTALLED_V2_QUALIFICATIONS_MISSING'])
+        self.assertEqual(codes(run({'v2Qualifications': None})), ['LINUX_INSTALLED_V2_QUALIFICATIONS_MISSING'])   # an older probe answer: neither form
+        # a v1 node's configuration with a node that has no v1: the v1 lineage is missing, refused as before
+        self.assertTrue({'LINUX_V1_SOURCE_HEAD_NOT_THE_CONFIGURED', 'LINUX_V1_QUALIFICATIONS_MISSING'} <= set(codes(self.run_with(FakeHost(self.fx, probe=z1)))))
+
     # record-only reinstall (README 8b): same CI Source and Linux half as installed, so no Linux phase and nothing to derive
     def test_record_only_package_needs_no_role_derivation(self):
         pm = os.path.join(self.fx.pkg, 'package-manifest.json')
@@ -344,6 +363,18 @@ class Config(unittest.TestCase):
                     dict(good, keyId='Desk W'), {k: v for k, v in good.items() if k != 'runtimeId'}):
             with self.assertRaises(rconfig.ConfigError, msg=bad):
                 self.load(dict(self.doc, signer=bad))
+
+    # DESIGN 41.6a: the optional heartbeat token file (path only) and, only with it, its binding id
+    def test_heartbeat_token_file_and_binding_id(self):
+        bid = '3b0c8a7e-1111-4222-8333-444455556666'
+        self.assertIsNone(self.load(self.doc)['heartbeat'])
+        self.assertEqual(self.load(dict(self.doc, heartbeat={'tokenFile': 'C:\\t\\hb.token'}))['heartbeat'], {'tokenFile': 'C:\\t\\hb.token', 'bindingId': None})
+        self.assertEqual(self.load(dict(self.doc, heartbeat={'tokenFile': 'C:\\t\\hb.token', 'bindingId': bid}))['heartbeat']['bindingId'], bid)
+        for bad in ({'bindingId': bid}, {'tokenFile': 'C:\\t\\hb.token', 'bindingId': 'REPLACE_ME'}, {'tokenFile': 'C:\\t\\h$(x).token'},
+                    {'tokenFile': self.doc['upgradeTokenFile']}, {'tokenFile': 'C:\\t\\hb.token', 'token': 'x'}, 'C:\\t\\hb.token'):
+            with self.assertRaises(rconfig.ConfigError, msg=bad) as e:
+                self.load(dict(self.doc, heartbeat=bad))
+            self.assertIn(e.exception.code, ('CONFIG_HEARTBEAT', 'CONFIG_SECRET_SHAPED_KEY'))
 
     def test_shipped_configurations_load(self):
         for name in os.listdir(os.path.join(RE, 'config')):

@@ -64,13 +64,16 @@ const delayAt = (table, level) => table[Math.min(Math.max(level, 0), table.lengt
 const rebuiltBreaker = now => ({ state: 'half-open', failures: [], streak: 0, streakPos: 0, streakPrs: [], openedAt: now, level: 0, nextTrialAt: null,
   failingPos: POSITIONS.END, failingWindowsOnly: false, exclude: [], closedAt: null });
 const time = v => Number.isSafeInteger(v) && v > 0;
-const commitOf = c => ({ headSha: c.headSha, baseSha: c.baseSha, seq: c.seq, firstAt: c.firstAt ?? null });
+// A train front commit (step 3c-2b, DESIGN §41.4; offerFront) also names its tested commit S and its front attempt (1 or 2).
+const frontOf = c => (Object.hasOwn(c, 'testSha') ? { testSha: c.testSha, frontAttempt: c.frontAttempt } : {});
+const commitOf = c => ({ headSha: c.headSha, baseSha: c.baseSha, seq: c.seq, firstAt: c.firstAt ?? null, ...frontOf(c) });
 
 export function emptyQueue(clock, generation = nonce()) {
   return { contract: QUEUE_CONTRACT, generation, createdAt: clock(), nextSeq: 1, rows: [], breaker: null, notices: [] };
 }
 
-const commitOk = c => !!c && HEX40.test(c.headSha ?? '') && HEX40.test(c.baseSha ?? '') && Number.isSafeInteger(c.seq) && c.seq > 0;
+const commitOk = c => !!c && HEX40.test(c.headSha ?? '') && HEX40.test(c.baseSha ?? '') && Number.isSafeInteger(c.seq) && c.seq > 0
+  && (!Object.hasOwn(c, 'testSha') || (HEX40.test(c.testSha ?? '') && c.testSha !== c.headSha && [1, 2].includes(c.frontAttempt)));
 // The stored shape, checked on every load (a file that does not validate is unreadable: renamed aside, start over).
 export function validateQueue(q) {
   check(q && q.contract === QUEUE_CONTRACT && /^[0-9a-f]{12}$/.test(q.generation ?? '') && Number.isSafeInteger(q.nextSeq) && q.nextSeq > 0
@@ -202,22 +205,63 @@ export class RunQueue {
     return { action, seq: row.current.seq };
   }
 
+  // A train front batch (step 3c-2b, DESIGN §41.4): the executor's only producer of a subject with S is on-mode stage 10's
+  // openFrontBatch. The PR's current commit becomes H with S and the front attempt, queued before every other row. Never while
+  // the PR's batch runs or rests at a parking point (busy: stage 10 opens it again later); a commit that waits is superseded.
+  offerFront({ pr, headSha, baseSha, testSha, attempt }, now, { depth }) {
+    check(Number.isSafeInteger(pr) && pr > 0 && HEX40.test(headSha ?? '') && HEX40.test(baseSha ?? '') && HEX40.test(testSha ?? '') && testSha !== headSha && [1, 2].includes(attempt),
+      'QUEUE_FRONT_INVALID');
+    let row = this.row(pr);
+    if (row?.running) return { action: 'busy' };
+    if (!row) {
+      if (this.live().length >= depth) return { action: 'refused', code: 'QUEUE_DEPTH_EXCEEDED' };
+      row = { pr, current: null, running: null, superseded: [], seen: [], state: 'DONE', reason: null, since: now, nextAt: null, level: 0, levelKind: null,
+        order: 0, poke: null, prUpdatedAt: null, lastEvalAt: null, stopKind: null, stopClass: null, origin: null, deferred: null, deferUntil: null, updatedAt: now };
+      this.data.rows.push(row);
+      this.data.rows.sort((a, b) => a.pr - b.pr);
+    } else if (!LIVE_STATES.includes(row.state) && this.live().length >= depth) return { action: 'refused', code: 'QUEUE_DEPTH_EXCEEDED' };
+    if (row.current && row.current.headSha !== headSha && ['QUEUED', 'WAITING', 'BACKOFF'].includes(row.state)) {
+      row.superseded = [commitOf(row.current), ...row.superseded.filter(c => c.headSha !== row.current.headSha)].slice(0, SUPERSEDED_MAX);
+    }
+    row.seen = [headSha, ...row.seen.filter(h => h !== headSha)].slice(0, SEEN_MAX);
+    row.current = { headSha, baseSha, seq: this.seq(), firstAt: now, testSha, frontAttempt: attempt };
+    Object.assign(row, { order: row.current.seq, level: 0, levelKind: null, nextAt: null, poke: null, stopKind: null, stopClass: null, origin: 'queued', deferred: null, deferUntil: null });
+    this.setState(row, 'QUEUED', null, now);
+    return { action: 'front', seq: row.current.seq };
+  }
+
+  // A front commit (S) is offered by on-mode stage 10 of this node's duty only: when the duty ends (STANDBY, or a start with the
+  // train not on) every front commit that is not running is dropped, the row DONE with the reason (review R3 MINOR 5; a running
+  // or parked one goes on, its live admission deciding). Returns how many.
+  dropFronts(code, now) {
+    let n = 0;
+    for (const r of this.data.rows) {
+      if (r.running || !r.current || !Object.hasOwn(r.current, 'testSha') || !['QUEUED', 'WAITING', 'BACKOFF'].includes(r.state)) continue;
+      r.current = null;
+      Object.assign(r, { nextAt: null, poke: null, deferred: null, deferUntil: null });
+      this.setState(r, 'DONE', code, now);
+      n += 1;
+    }
+    return n;
+  }
+
   // The rows that may be tried now, in the order the executor tries them (design v0.5 §4.3 steps 5 and 6; v0.6 §7
-  // minor 4): due waits and poked rows first (by due time), then the rest first come, first served (by order; a
-  // released row went to the tail).
+  // minor 4): a train front batch first (step 3c-2b), due waits and poked rows next (by due time), then the rest first come,
+  // first served (by order; a released row went to the tail).
   candidates(now) {
     const first = [], rest = [];
     for (const r of this.data.rows) {
       if (!r.current || r.running || (time(r.deferUntil) && r.deferUntil > now)) continue;
       const poked = !!r.poke && r.poke.dueAt <= now;
-      if (r.state === 'WAITING' && time(r.nextAt) && r.nextAt <= now) first.push({ r, origin: 'waiting-retry', at: r.nextAt, poked });
+      if (r.state === 'QUEUED' && Object.hasOwn(r.current, 'testSha')) first.push({ r, origin: 'queued', at: 0, poked: false });
+      else if (r.state === 'WAITING' && time(r.nextAt) && r.nextAt <= now) first.push({ r, origin: 'waiting-retry', at: r.nextAt, poked });
       else if (poked && ['WAITING', 'BACKOFF'].includes(r.state)) first.push({ r, origin: 'new-trigger', at: r.poke.dueAt, poked: true });
       else if (r.state === 'BACKOFF' && time(r.nextAt) && r.nextAt <= now) rest.push({ r, origin: r.origin === 'lifted' ? 'lifted' : 'backoff-retry' });
       else if (r.state === 'QUEUED') rest.push({ r, origin: r.origin === 'restored' ? 'restored' : 'queued' });
     }
     first.sort((a, b) => a.at - b.at || a.r.pr - b.r.pr);
     rest.sort((a, b) => a.r.order - b.r.order);
-    return [...first, ...rest].map(({ r, origin, poked }) => ({ pr: r.pr, headSha: r.current.headSha, baseSha: r.current.baseSha, origin, poked: poked === true }));
+    return [...first, ...rest].map(({ r, origin, poked }) => ({ pr: r.pr, headSha: r.current.headSha, baseSha: r.current.baseSha, origin, poked: poked === true, ...frontOf(r.current) }));
   }
 
   // A candidate the executor did not start (a per-row defer: the cool-down, the PR's daily batches, the waiting budget,

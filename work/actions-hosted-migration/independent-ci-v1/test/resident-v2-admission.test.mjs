@@ -13,7 +13,7 @@ const SCOPE = `project:${randomUUID()}`;
 const iso = ms => new Date(ms).toISOString();
 
 // testSha: the tested commit S (a train front batch when S != H); prBase: the base.sha GitHub and Native report.
-function world({ trailer, claimId = randomUUID(), fence = 3, epoch = 1, nativeOverrides = {}, claimOverrides = {}, commitTrailer = null, outcomeOverrides = {}, testSha = HEAD, prBase = BASE, prBaseAfter = prBase } = {}) {
+function world({ trailer, claimId = randomUUID(), fence = 3, epoch = 1, nativeOverrides = {}, claimOverrides = {}, commitTrailer = null, outcomeOverrides = {}, testSha = HEAD, prBase = BASE, prBaseAfter = prBase, monotonic } = {}) {
   const job = makeJobV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt: 1, role: 'control-merge-slot' });
   const prRef = `${REPO}#888`;
   const body = trailer === undefined ? `Fix\n\nClued-Work-Claim: ${claimId}\nClued-Work-Scope: ${SCOPE}\n` : trailer;
@@ -48,7 +48,7 @@ function world({ trailer, claimId = randomUUID(), fence = 3, epoch = 1, nativeOv
     tokenProvider: async () => ({ githubToken: 'gh-fixture', ciAdmissionToken: ['clued', 'bnd', 'fixture123'].join('_'), ciPrincipalBindingId: config.ciPrincipalBindingId, ciPrincipalQualificationRef: config.ciPrincipalQualificationRef }),
     modeProvider: async () => ({ complete: true, repository: REPO, variable: 'CLUED_MERGE_ADMISSION_STATE', source: 'github-repository-variables', exists: false, observedAt: iso(Date.now()), proofRef: 'mode-proof' }),
     recorderProvider: async () => ({ kind: 'independent-controller', domain: 'fixture', observedAt: iso(Date.now()), observationRef: 'obs', recorder: { newId: randomUUID, record() {} } }),
-    fetchImpl, fixtureHooks: hooks });
+    fetchImpl, fixtureHooks: hooks, ...(monotonic ? { monotonic } : {}) });
   const packet = { complete: true, pr: 888, headSha: HEAD, baseSha: BASE, paths: ['a.txt'] };
   return { job, port, packet, state, claimId };
 }
@@ -153,4 +153,20 @@ test('full admission v2 (step 3c-2a): a train front batch is admitted on whateve
   // a batch that tests the head still needs base.sha = T
   const head = world({ prBase: moved });
   assert.equal((await head.port.evaluatePr(head.job, head.packet)).reason, 'full_admission_subject_changed');
+});
+
+// Decision 1100a0ed: Native's verified_at is never compared with this host's clock; its age is the monotonic time since
+// the evaluation began (no verify send is seen in the fixture), and its lease is expires_at against verified_at.
+test('full admission v2: KooYomi 10 s ahead or behind is admitted; an answer older than 30 s or a short lease is refused', async () => {
+  for (const shift of [-10_000, -2000, 2000, 10_000]) {
+    const w = world({ nativeOverrides: { verified_at: iso(Date.now() + shift) } });
+    w.state.expiresAt = iso(Date.now() + shift + 3600_000);
+    assert.equal((await w.port.evaluatePr(w.job, w.packet)).status, 'ADMITTED', `shift ${shift}`);
+  }
+  let mono = 0;
+  const slow = world({ monotonic: () => (mono += 31_000) });
+  assert.equal((await slow.port.evaluatePr(slow.job, slow.packet)).reason, 'full_admission_native_changed', 'over 30 s on the monotonic clock');
+  const short = world({ nativeOverrides: { verified_at: iso(Date.now()) } });
+  short.state.expiresAt = iso(Date.now() + 4000);
+  assert.equal((await short.port.evaluatePr(short.job, short.packet)).reason, 'full_admission_native_changed', 'lease shorter than age + 5 s');
 });

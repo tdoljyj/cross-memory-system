@@ -194,6 +194,22 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     }
     fail('checks_page_limit');
   }
+  // One page of pulls (state open|closed|all, sort created|updated, direction asc|desc), normalized; `last` when the page
+  // is not full (merge-train sweeps, DESIGN §41.3).
+  async function pullsPage({ state = 'all', sort = 'updated', direction = 'desc', page = 1, perPage = 100 } = {}) {
+    if (!['open', 'closed', 'all'].includes(state) || !['created', 'updated'].includes(sort) || !['asc', 'desc'].includes(direction)
+      || !positive(page) || page > 1000 || !positive(perPage) || perPage > 100) fail('invalid_pulls_request');
+    const rows = await scoped(`/pulls?state=${state}&sort=${sort}&direction=${direction}&per_page=${perPage}&page=${page}`);
+    if (!Array.isArray(rows) || rows.length > perPage) fail('invalid_pulls_reply');
+    const seen = new Set();
+    const pulls = rows.map(p => {
+      if (!positive(p?.number) || seen.has(p.number) || !['open', 'closed'].includes(p.state) || !Number.isFinite(Date.parse(p.updated_at ?? ''))
+        || !sha.test(p.head?.sha ?? '') || typeof p.base?.ref !== 'string' || !(p.merged_at === null || Number.isFinite(Date.parse(p.merged_at ?? '')))) fail('invalid_pulls_reply');
+      seen.add(p.number);
+      return { number: p.number, state: p.state, updatedAt: new Date(Date.parse(p.updated_at)).toISOString(), headSha: p.head.sha, baseRef: p.base.ref, merged: p.merged_at !== null };
+    });
+    return { complete: true, page, pulls, last: rows.length < perPage };
+  }
   return Object.freeze({
     // Protected controller use only: never hand this token to a job/worker/logger.
     async getInstallationToken() { return credential(); },
@@ -310,6 +326,83 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     async readCheckRunsByName(headSha, name) {
       if (typeof name !== 'string' || !name || name.length > 100 || /[\x00-\x1f]/.test(name)) fail('invalid_check_name');
       return inventory(headSha, null, name);
+    },
+    // Merge-train sweep reads (DESIGN §41.3; stage 10). Bounded, complete or refused. GET only, except the GraphQL
+    // query: a read sent as POST, repeated like a read.
+    // This App's runs of one name on a commit (app_id and check_name filtered by GitHub, every run checked again).
+    async readOwnChecksByName(headSha, name) {
+      if (typeof name !== 'string' || !name || name.length > 100 || /[\x00-\x1f]/.test(name)) fail('invalid_check_name');
+      return inventory(headSha, null, name, true);
+    },
+    // One check run by id, reduced to what a revocation verifies.
+    async readCheckRun(id) {
+      if (!positive(id)) fail('invalid_check_run');
+      const c = await scoped(`/check-runs/${id}`);
+      if (c?.id !== id || !positive(c.app?.id) || typeof c.name !== 'string' || !sha.test(c.head_sha ?? '') || typeof c.status !== 'string'
+        || !(c.conclusion === null || typeof c.conclusion === 'string')) fail('invalid_check_run_reply');
+      return { id, appId: c.app.id, name: c.name, headSha: c.head_sha, status: c.status, conclusion: c.conclusion,
+        title: typeof c.output?.title === 'string' ? c.output.title : null, summary: typeof c.output?.summary === 'string' ? c.output.summary : null };
+    },
+    async readPullsPage(options) { return pullsPage(options); },
+    // Every pull updated at or after `since` (ISO), newest first, paging until an older one or the last page. The pull
+    // bound reached first is incomplete, never guessed.
+    async readPullsUpdatedSince(since, { maxPulls = 1000 } = {}) {
+      if (!Number.isFinite(Date.parse(since ?? '')) || !positive(maxPulls) || maxPulls > 10_000) fail('invalid_pulls_request');
+      const out = [], seen = new Set(), floor = Date.parse(since);
+      const done = complete => ({ complete, pulls: out, newest: out[0]?.updatedAt ?? null });
+      for (let page = 1; page <= Math.ceil(maxPulls / 100); page++) {
+        const reply = await pullsPage({ state: 'all', sort: 'updated', direction: 'desc', page });
+        for (const p of reply.pulls) {
+          if (Date.parse(p.updatedAt) < floor) return done(true);
+          // Paging under updates can repeat a pull: the first (newest) copy counts.
+          if (!seen.has(p.number)) { seen.add(p.number); out.push(p); }
+        }
+        if (reply.last) return done(true);
+      }
+      return done(false);
+    },
+    // Every commit of a pull. GitHub's pulls/{n}/commits lists at most 250: a longer pull is reported incomplete
+    // (tooMany), never truncated; a listing that does not add up to the pull's count is incomplete too.
+    async readPullCommitsBounded(number) {
+      if (!positive(number)) fail('invalid_pr');
+      const pull = await scoped(`/pulls/${number}`);
+      if (pull?.number !== number || !Number.isSafeInteger(pull.commits) || pull.commits < 0 || !sha.test(pull.head?.sha ?? '')) fail('pr_history_unconfirmed');
+      const result = (complete, commits, tooMany = false) => ({ complete, tooMany, count: pull.commits, headSha: pull.head.sha, commits });
+      if (pull.commits > 250) return result(false, [], true);
+      const commits = [], seen = new Set();
+      for (let page = 1; page <= 3 && commits.length < pull.commits; page++) {
+        const rows = await scoped(`/pulls/${number}/commits?per_page=100&page=${page}`);
+        if (!Array.isArray(rows) || rows.length > 100) fail('pr_history_unconfirmed');
+        for (const row of rows) { if (!sha.test(row?.sha ?? '') || seen.has(row.sha)) fail('pr_history_unconfirmed'); seen.add(row.sha); commits.push(row.sha); }
+        if (rows.length < 100) break;
+      }
+      return result(commits.length === pull.commits && seen.has(pull.head.sha), commits);
+    },
+    // The before/after commits of every force push of a pull's head (GraphQL HeadRefForcePushedEvent; REST has no
+    // equivalent). A commit GitHub no longer resolves is null. Errors, a changed total or the page bound: refused.
+    async readForcePushes(number) {
+      if (!positive(number)) fail('invalid_pr');
+      const [owner, name] = repository.split('/'), events = [];
+      const query = 'query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){'
+        + 'timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100,after:$after){totalCount pageInfo{hasNextPage endCursor}'
+        + 'nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid}}}}}}}';
+      const oid = c => (c === null || c === undefined ? null : sha.test(c.oid ?? '') ? c.oid : fail('force_push_events_unconfirmed'));
+      let after = null, total = null;
+      for (let page = 1; page <= maxPages; page++) {
+        const body = await request('https://api.github.com/graphql', 'POST', await credential(), { query, variables: { owner, name, number, after } }, { repeatable: true });
+        const items = body?.data?.repository?.pullRequest?.timelineItems;
+        if (body?.errors !== undefined || !items || !Number.isSafeInteger(items.totalCount) || !Array.isArray(items.nodes) || items.nodes.length > 100
+          || (total !== null && total !== items.totalCount) || typeof items.pageInfo?.hasNextPage !== 'boolean') fail('force_push_events_unconfirmed');
+        total = items.totalCount;
+        for (const n of items.nodes) events.push({ before: oid(n?.beforeCommit), after: oid(n?.afterCommit) });
+        if (!items.pageInfo.hasNextPage) {
+          if (events.length !== total) fail('force_push_events_unconfirmed');
+          return { complete: true, events };
+        }
+        if (typeof items.pageInfo.endCursor !== 'string' || !items.pageInfo.endCursor) fail('force_push_events_unconfirmed');
+        after = items.pageInfo.endCursor;
+      }
+      fail('force_push_events_page_limit');
     },
     // Complete annotation list of one check run, checked against the
     // annotations_count the caller read from that check run.

@@ -2654,6 +2654,7 @@ Task `088ab175`；设计 v0.4 §7.1–§7.4、§9 C7、§10 P3。
   - 节点准备时直接授予该账户（例如 `secpol.msc` →「本地策略」→「用户权限分配」→「作为服务登录」）。
   - `install-resident.ps1 -Apply` 在写任何东西之前只读核对：缺这项权限拒绝（`CONTROLLER_SERVICE_LOGON_RIGHT_MISSING`），读不到用户权限也拒绝（`USER_RIGHTS_UNREADABLE`）。
   - 干跑把结果报在计划之外的 `preflight.controllerServiceLogonRight`，不改计划和计划哈希；不提权时这一项为 `unreadable-not-elevated`。
+  - 本机账户和组在 `secedit` 导出里写成名字，不是 `*SID`。TURING 在 2026-10-31 的实际一行是 `SeServiceLogonRight = clued-runner,clued-control,*S-1-5-80-0,*S-1-5-83-0`。核对时把名字用 `NTAccount.Translate` 解析成 SID 再比较，名字和 `*SID` 两种写法都认。解析不出来的名字：在授予一行里不算授予，在拒绝一行里按拒绝算（失败关闭）。此前的版本只认 `*SID`，TURING 上已有的授权因此被误判为缺失；当晚改用内置组 Replicator（`S-1-5-32-552`）绕行（Note `427b6c83`），这次修复装上以后可以撤掉。
   - `verify-resident.ps1` 也核对这一项（§30.6）。
 - **不要删除任何已有的 GitHub App 私钥。** 每个节点各有自己的一把（`appKeyId` 和指纹钉在该节点的安装记录里）；删掉哪一把，那个节点的检查发布立即 `github_http_401`。TURING 的 4918220 在 2026-10-30 就是这样被删的。新节点只新增一把；要更换某个节点自己的私钥，走只改记录的重装（`reinstall/README.md` §8b）。
 - **已知限制：Linux 半边没装时，`executor.rearm` 没有合法路径。** 节点只装了 Windows STANDBY、没有 Linux 半边时，执行器一旦 HALT（例如上一条的角色探测），复位所需的 Linux 一侧事实（version facts、两侧一致）不存在，无法合法 rearm。按 Owner Decision `e5b42e52`，DESK-W-591 保持 HALTED，直到 Z1 装好 Linux 半边和它自己的结果签名钥。这里只记录，不改代码。
@@ -3139,7 +3140,7 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 
 ### 38.1 S 怎么走
 
-- **subject 与 batch key**：车头批次的 subject 多一个 `testSha`（S，必须是 40 位十六进制且不等于 head）；其他 subject 没有这个字段。batch key 只在字段存在时把 `testSha` 加进摘要，所以今天所有的 key 不变。常驻层 `ledger.mjs#batchKey` 和 Source v2 `derive-batch.mjs#residentBatchKey` 是同一个公式，测试核对两边相等。head key（每个 head 只执行一次，不变量 I2）不含 S。
+- **subject 与 batch key**：车头批次的 subject 多一个 `testSha`（S，必须是 40 位十六进制且不等于 head）；其他 subject 没有这个字段。batch key 只在字段存在时把 `testSha` 加进摘要，所以今天所有的 key 不变。常驻层 `ledger.mjs#batchKey` 和 Source v2 `derive-batch.mjs#residentBatchKey` 是同一个公式，测试核对两边相等。head key（每个 head 只执行一次，不变量 I2）对 S = H 的 subject 不含 S；车头批次（S ≠ H）的 head key 按 (H, S) 算，所以一个 head 跑过普通批次后仍可跑车头批次（§41 第 3–5 步实现，Task `b42419de`）。
 - **推导**：`engine-windows.mjs#derive` 把 subject 的 `testSha` 一并传给 `derive-batch.mjs`；推导结果里的 S 必须等于 subject 的 S（没有就等于 head），描述符 `/3` 写推导出的 S。
 - **作业 `/3`**：`makeJobV2` 去掉 S 的默认值，每个调用点都显式传 S（复核 m1）。`isTrainFrontJobV2` = S 与 H 都是合法 SHA 且 S ≠ H。
 - **批次认领记录**：S = H 的批次照旧写合同 `/1`，逐字节不变；S ≠ H 写 `/2`，在 `baseSha` 后多一个 `testSha`。`/1` 永远表示 S = H。控制消费者从记录本身取 S（`recordTestShaV2`），按记录的 T 和 S 重推作业。
@@ -3238,6 +3239,11 @@ Task `32d10618`（信箱原子写）与 Task `463e8148`（companion 少开 wsl.e
 - 预演报告 24 小时内有效，由 Linux 脚本生成（`prep.py`）时检查，此时节点还未变动。
 
 **新节点**：`config/node-profile.desk-w-591.json`（取自 Note `85717e8f`）。用 `build.ps1 -PackageOnly` 只出包；首装不使用这里的重装启动器和 Linux 脚本。
+
+**§41 第 8 步补的两处**（2026-10-31，改了启动器模板和 root 脚本生成器，按 `reinstall/README.md` 第 1 节要重新做一次完整的独立审核）：
+- 心跳令牌（§41.6a）：配置可选 `heartbeat`（`tokenFile`，可另给 `bindingId`）。启动器只在配置了时给安装器传 `-HeartbeatTokenFile`（和 `-HeartbeatBindingId`），提权的带令牌计划必须恰好多出这一项。没配置的节点行为不变。模板 sha 换成 `5ff3a1c1`。
+- 没有 Source v1 的节点（Z1 首装）也能整套重装：`linux.host.v1SourceHead` 可为 null。此时 root 脚本要求节点上确实没有 v1，签名的来历改用节点自己已装、已签的 roles-v3 qualification（`linux/tools/sign-qualification-no-v1.mjs`），其余核对不变。有 v1 的节点生成的脚本逐字节不变。
+- 心跳令牌换新或补装：今天只能整套重装（安装器只做全新安装，升级通道不碰 `secrets`）。不重装的办法需要一个新的提权小工具，见 `reinstall/README.md` 第 4 节。
 
 **不在本节**：节点身份冻结全部接受 ref（Note `45e0ed29`）；升级器调用 csc 时没有 TEMP。这两项随下一次整套重装一起做。
 
@@ -3367,7 +3373,7 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
   - 用什么：每个节点一个只能发心跳的连接（新 scope，只能调心跳函数，读不了 context，也做不了别的），由 Owner 在 `/bindings` 上建，挂到该节点的 CI 连接名下（两步确认）。服务端把令牌绑定到这个节点，载荷里的节点名一律不用。
   - 令牌放哪：今天的 secrets 目录不给 Owner 读（`install-resident.ps1` 的 `Get-AclPlan`），安装脚本和 `companion.json` 也没有心跳令牌的位置。新增安装参数 `-HeartbeatTokenFile`：Owner 从 `/bindings` 下载令牌，随 UAC 安装放进新目录 `secrets\heartbeat\`（SYSTEM 与 Administrators 完全控制，Owner 只读），companion 从那里读。选这个、不选 SYSTEM 代发：companion 本来就在 Owner 会话里，代发要再加一个提权组件和一条通道。代价是 Owner 会话里跑的 Agent 也读得到令牌。可以接受，因为它只能发心跳：拿到它的人既不能读 context，也不能碰 CI、GitHub 或认领。残余风险：他能伪造自报 `HALTED` 或 `PAUSED`，让这个节点永不被自动交出；或者连续 30 分钟伪报“服务没在运行”，促成一次交接。后者只会交给 Owner 标过资格、心跳健康的某个其他节点，受 6 小时冷却和“不自动交回”约束，并且有回执和 @Owner。
   - 令牌出问题不当失联处理：companion 连续 3 次心跳失败，或令牌过期、被拒，就发 Windows 通知请 Owner 换令牌。服务端照常按失联判断（它分不出来），所以 Owner 要在 30 分钟内处理，或先关总开关。
-  - 调什么：新函数 `clued_ci_node_heartbeat_v1`。时刻由服务端写，节点改不了。另记自报：`ciSourceManifestSha256`（取自状态快照的 `versions.windows.ciSourceManifestSha256`，即执行器实际在跑的 Source，不取 companion 自己的配置）；模式（`ACTIVE`、`STANDBY`、`UNCERTAIN`）；最近一次探测结果；`HALTED`（任何码；`haltCode` 与时刻取自 `status.halt`，它只有 `{code, at}`，出事批次的 PR 与 head 取自 `status.current`，都供 Owner 看）；`PAUSED`；`INTAKE_PAUSED`（带 `until`，服务端截到 `now + 200 分钟`）；服务是否在运行（companion 查 SCM）；状态快照的年龄。只认每个节点最新的一条自报。
+  - 调什么：CI 门的动作 `ci_node_heartbeat`（经 `clued_work_verify_v1`，第 2 步 b 迁移 `20261031090000_merge_train_failover_v1.sql`；最初设想的单独函数 `clued_ci_node_heartbeat_v1` 未采用）。时刻由服务端写，节点改不了。另记自报：`ciSourceManifestSha256`（取自状态快照的 `versions.windows.ciSourceManifestSha256`，即执行器实际在跑的 Source，不取 companion 自己的配置）；模式（`ACTIVE`、`STANDBY`、`UNCERTAIN`）；最近一次探测结果；`HALTED`（任何码；`haltCode` 与时刻取自 `status.halt`，它只有 `{code, at}`，出事批次的 PR 与 head 取自 `status.current`，都供 Owner 看）；`PAUSED`；`INTAKE_PAUSED`（带 `until`，服务端截到 `now + 200 分钟`）；服务是否在运行（companion 查 SCM）；状态快照的年龄。只认每个节点最新的一条自报。
   - 状态及时：执行器在 HALT、PAUSE、暂停接新 latch 的同一 tick 把它写进状态快照；companion 看到状态变了就立即补发一次心跳，不等 10 分钟。
   - 报不出状态的情况：服务停了、服务进程不在了（快照很旧）、字节漂移检出到 HALT 写下之间、快照读不出。这些情况下心跳照发，状态写 `UNKNOWN`，并带“服务是否在运行”和快照年龄；服务端只按下面“失联”的第二种情形判断它们，不因单独一次 `UNKNOWN` 交接。代理忙只影响探测，不影响心跳。
   - 快照的新旧：服务进程里已有的 `startStatusTimer`（`status.mjs:162`，`service-main.mjs:96`）每 15 秒重写一次快照，不靠 tick，所以长段里快照照样是新的。快照新只能证明服务进程活着，不能证明执行器没卡住；卡在一段里的执行器由那一段自己的上限和 HALT 处理，不算失联。
@@ -3401,7 +3407,7 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 - **现状**：策略合同 `/7`（`policy.mjs:46`），`train.enabled` 只有 off、shadow，`on` 拒 `POLICY_TRAIN_ON_NOT_SUPPORTED`（`policy.mjs:66`、`:131`）；train-run 只接受 shadow（`train-run.mjs:16`、`FormalPublicBoundaryV2.cs:164`）；train facts 和常驻层摘要只认 shadow（`train-facts.mjs:85`、`train.mjs:28`、`:49`）；兜底只看“不在列车模式”（`ruleset-backstop.mjs:36`）。
 - **合同 `/8`**：`train.enabled` 加 `on`；新字段 `slotHardCapMinutes`（60–180）、`frontBatchBudgetMs`、`sweepFreshMs`（默认 900000，即 15 分钟）、`fullSweepMaxMs`。`nonFrontRuns` 在 `/8` 起接受 `false`，但开车时仍写 `true`，关 `strict` 时由 Owner 改（v0.2 §2.2）。train-run 的 mode 加 `on`、`revoke-only`，影子模式下第 10 段也跑清扫但只记录不撤（41.9 第 2 条）；C# `ValidateTrainRun` 同步改；SwapBroker 第 10 行不变（仍 5 分钟）。train facts 升 `/2`，带清扫、证明与做了什么。
 - **状态与兜底**：状态快照的 `train` 加 `sweep`（最近一次全量清扫完成的时刻、是否在这次开车或接班之后、结论）。companion 兜底：`strict=false` 而（不是 on，或 on 但全量清扫还没完成），就写暂停请求、紧急通知，文字加“清扫没完成”（v0.2 §4.1 末段）。
-- **保留**（§22.5）：回执链和 `state\v2\receipts` 按月分段，启动只读当前段和索引；`train-shadow` 在开车前复核之前一条不删，之后留 90 天；`train-sweep` 的证明留 90 天；`green-ledger\closed\` 留 1 年。都进 `retention.mjs` 的规则和回执，安全措施同 §35.3。回执分段是本步改动面最大的一项，做法以审核为准。
+- **保留**（§22.5）：回执链和 `state\v2\receipts` 按月分段，启动只读当前段和索引；`train-shadow` 在开车前复核之前一条不删，之后留 90 天；`train-sweep` 的证明留 90 天；`green-ledger\closed\` 留 1 年。安全措施同 §35.3。实现（Task `b42419de`）：常驻层回执链在 `receipts.mjs` 按月封存；`state\v2\` 下这几类由 clued-control 写，常驻服务删不了，所以清理和 `state\v2\receipts` 的月度归档放在 Source B 的 `resident-v2/state-retention.mjs`，由第 10 段每天最多跑一次；outcome 仍写在平铺目录（读者按平铺路径找），过了月份且超过 7 天才移进 `<yyyy-mm>\`。Owner 的复核标记放在 `resident\owner\train-review\`（clued-control 可读）。
 - **验收**：`/7` 策略照旧拒 on；`/8` 各字段的边界；C# 与 JS 同表；影子模式的清扫不写 GitHub；兜底在三种组合下的动作；复核之前影子记录一条不删。
 
 ### 41.8 守队程序，以及随车的常驻层改动

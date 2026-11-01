@@ -133,8 +133,10 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     const verifyAs = (who, c, input) => agent(who, 'clued_work_verify_v1', { scope: 'global', claim_id: c.claim_id, ...input });
     // A ci-admission mark takes a purpose and starts 5 minutes later (C10,
     // Task bb13efb5, tested in ci-admission-handover-db); here the CI Binding
-    // is the GitHub environment's ("other") and the 5 minutes are let pass.
-    const ciPurpose = (role, enabled) => role === 'ci-admission' && enabled ? { purpose: 'other' } : {};
+    // is a resident node's (merge-slot calls admit only that purpose since
+    // 20261031060000) and the 5 minutes are let pass. Production marks this
+    // Binding (aa4969fb, the GitHub environment admission token) resident-node.
+    const ciPurpose = (role, enabled) => role === 'ci-admission' && enabled ? { purpose: 'resident-node' } : {};
     const elapse = (binding) => admin.query(`update clued_private.binding_roles_v1 set granted_at=granted_at-interval '5 minutes',
       effective_at=effective_at-interval '5 minutes' where binding_id=$1 and revoked_at is null and purpose<>'parking'`, [binding]);
     const setRole = async (binding, role, enabled, claims) => {
@@ -245,6 +247,13 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     let adopted = await agent('codex', 'clued_work_claim_adopt_v1', { scope: 'global', pr_ref: 'o/r#11', merge_sha: sha(11) });
     assert.deepEqual([adopted.adopted, adopted.reason], [false, 'admission_binding_required']);
     assert.equal((await row(copyA.claim_id)).status, 'ACTIVE', 'the honest copy is untouched');
+    // The same Binding marked "other" (not a resident node) may not report a merge.
+    const ciRolePurpose = (purpose) => admin.query(`update clued_private.binding_roles_v1 set purpose=$2
+      where binding_id=$1 and role='ci-admission' and revoked_at is null`, [bindingIds.ci, purpose]);
+    await ciRolePurpose('other');
+    adopted = await agent('ci', 'clued_work_claim_adopt_v1', { scope: 'global', pr_ref: 'o/r#11', merge_sha: sha(11) });
+    assert.deepEqual([adopted.adopted, adopted.reason], [false, 'admission_binding_required']);
+    await ciRolePurpose('resident-node');
     adopted = await agent('ci', 'clued_work_claim_adopt_v1', { scope: 'global', pr_ref: 'o/r#11', merge_sha: sha(11) });
     assert.deepEqual([adopted.adopted, adopted.copy_index], [true, 2]);
     assert.equal((await row(copyA.claim_id)).outcome, 'not_adopted');

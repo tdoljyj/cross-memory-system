@@ -8,7 +8,11 @@
 //     T, so the test merge changes nothing); step 3b brings the train's own test commit S.
 // A commit is compared by its parents and tree, never by the test merge's SHA: GitHub may regenerate refs/pull/<n>/merge
 // with a new SHA for the same parents and tree (design review n-m5).
-// The step 3a code always runs with the train off (TRAIN_MODE_DEFAULT); step 3c brings the policy setting. Pure.
+// The installed policy's train.enabled reaches stages 1 and 8 through train-mode.mjs (default off).
+// Merge train (DESIGN §41.2): with the train on, a green also needs the single-green proof of stage 10 (trainHeadDecision).
+// Pure.
+import { isTrainFrontJobV2 } from '../job-v2.mjs';
+
 export const TRAIN_MODES = Object.freeze(['off', 'shadow', 'on']);
 export const TRAIN_MODE_DEFAULT = 'off';
 export const REQUIRED_CHECK_NAMES = Object.freeze(['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified', 'kooyumi-merge-slot']);
@@ -19,6 +23,17 @@ export const MERGE_METHODS_NOT_MERGE_ONLY = 'MERGE_METHODS_NOT_MERGE_ONLY';
 export const TRAIN_TEST_MERGE_NOT_READY = 'TRAIN_TEST_MERGE_NOT_READY';
 // Final for this head: GitHub's merge of exactly [T, H] is not the tree that was tested.
 export const TRAIN_TEST_MERGE_TREE_DIFFERS = 'TRAIN_TEST_MERGE_TREE_DIFFERS';
+// Merge train (§41.2, §41.4), all with zero side effects: a train front job (S != H) while the train is not on (stages 1
+// and 8); a green the sweep proof and the live facts do not cover (the batch waits for the next stage 10); and the front
+// batch's S that GitHub no longer has (404) or that is not the test merge of [T, H] (final: stage 10 opens a new batch).
+export const TRAIN_FRONT_JOB_WITHOUT_TRAIN = 'TRAIN_FRONT_JOB_WITHOUT_TRAIN';
+export const TRAIN_SINGLE_GREEN_NOT_PROVEN = 'TRAIN_SINGLE_GREEN_NOT_PROVEN';
+export const TRAIN_TEST_COMMIT_GONE = 'TRAIN_TEST_COMMIT_GONE';
+export const trainFrontRefused = (job, trainMode) => trainMode !== 'on' && isTrainFrontJobV2(job);
+// The same refusal when the stage directory's train-mode.json exists but cannot be read or is not exactly the record
+// (review R1 m4): the mode is unknown rather than off, so the front batch parks instead of using up one of its attempts.
+export const TRAIN_MODE_UNREADABLE = 'TRAIN_MODE_UNREADABLE';
+export const trainFrontRefusal = trainModeUnreadable => (trainModeUnreadable === true ? TRAIN_MODE_UNREADABLE : TRAIN_FRONT_JOB_WITHOUT_TRAIN);
 
 const SHA = /^[a-f0-9]{40}$/;
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
@@ -76,6 +91,40 @@ export function testMergeDecision({ pull, mergeCommit, job, testTree }) {
   // A test merge on other parents is GitHub not yet recomputed (main or the head moved a moment ago): wait.
   if (!sameParents(mergeCommit, job.baseSha, job.headSha)) return TRAIN_TEST_MERGE_NOT_READY;
   return mergeCommit.tree === testTree ? null : TRAIN_TEST_MERGE_TREE_DIFFERS;
+}
+
+// §41.2 trainHeadReady, read in the same run right before the green (null when it holds):
+//   job       the merge-slot job: a train front batch (S != H);
+//   claimId   the batch claim (its claim id);
+//   holders   merge-slot-native holders(): exactly one, on duty, this claim, bound to this PR, with its front time `takenAt`;
+//   proof     the newest sweep proof (train-sweep-store latestProof()): mode on, this PR, H, claim and T (= the job's base),
+//             written in this front tenure (its `since` is the holder's) and within proof.sweepFreshMs, clean, nothing
+//             unconfirmed, a full on-mode sweep since the train went on (or this node took over);
+//             The store read no torn or foreign file (a newer proof that cannot be read is never replaced by an older one);
+//             §41.2 "台账里没有未确认的撤销" is read here: stage 10 records an unconfirmed revocation only in its proof (clean
+//             false, unconfirmed > 0) and ledgers `revoked` only once both read-backs confirmed it, so the ledger cannot show one;
+//   front     the newest front batch stage 10 opened for this head (train-sweep-store frontBatches()): this claim, T and S;
+//   ledger    the green ledger's list(): complete (no refused file), and no green of any other subject recorded after the proof;
+//   pulls     the repository's PRs read now by updated time (github.mjs readPullsUpdatedSince: {complete, pulls: [{number,
+//             updatedAt}]}, back to the proof's cursor): no PR but the front updated after proof.prUpdatedCursor (a push, a
+//             reopen, a base change).
+export function trainHeadDecision({ job, claimId, holders, proof, storeRefused = 0, front, ledger, pulls, now }) {
+  const no = TRAIN_SINGLE_GREEN_NOT_PROVEN, at = v => (typeof v === 'string' ? Date.parse(v) : NaN);
+  if (!plain(job) || !isTrainFrontJobV2(job) || typeof claimId !== 'string' || !Number.isSafeInteger(now)) return no;
+  if (!plain(holders) || holders.onDuty !== true || !Array.isArray(holders.holders) || holders.holders.length !== 1) return no;
+  const h = holders.holders[0], since = at(h?.takenAt);
+  if (!plain(h) || h.claimId !== claimId || h.pr !== job.pr || h.boundPr !== `${job.repo}#${job.pr}` || !Number.isFinite(since)) return no;
+  if (!plain(proof) || proof.mode !== 'on' || proof.pr !== job.pr || proof.headSha !== job.headSha || proof.claimId !== claimId || proof.mainSha !== job.baseSha) return no;
+  const written = at(proof.writtenAt), cursor = at(proof.prUpdatedCursor);
+  if (at(proof.since) !== since || !(written >= since) || !(written <= now) || !Number.isSafeInteger(proof.sweepFreshMs) || !(written >= now - proof.sweepFreshMs)
+    || proof.clean !== true || proof.unconfirmed !== 0 || proof.fullSweepSinceOn !== true || !Number.isFinite(cursor) || storeRefused !== 0) return no;
+  if (!plain(front) || front.pr !== job.pr || front.headSha !== job.headSha || front.baseSha !== job.baseSha || front.testSha !== job.testSha || front.claimId !== claimId) return no;
+  if (!plain(ledger) || !Array.isArray(ledger.entries) || !Array.isArray(ledger.refused) || ledger.refused.length !== 0
+    || ledger.entries.some(r => !plain(r?.entry) || !Number.isFinite(at(r.entry.at)) || (at(r.entry.at) > written && r.entry.phase !== 'revoked'
+      && !(r.entry.pr === job.pr && r.entry.headSha === job.headSha && r.entry.baseSha === job.baseSha)))) return no;
+  if (!plain(pulls) || pulls.complete !== true || !Array.isArray(pulls.pulls)
+    || pulls.pulls.some(p => !plain(p) || !Number.isSafeInteger(p.number) || !Number.isFinite(at(p.updatedAt)) || (p.number !== job.pr && at(p.updatedAt) > cursor))) return no;
+  return null;
 }
 
 // Rule 7 of §5.3, after the write: the PR was merged (auto-merge merges within seconds of the green), and the merge

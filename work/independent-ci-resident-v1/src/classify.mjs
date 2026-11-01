@@ -19,6 +19,16 @@ export const NOT_ADMITTED_CODES = Object.freeze(['NATIVE_NOT_ADMITTED', 'OWNER_R
 // proved BLOCKED/zero effects/no possible publication. It does not widen attempts.mjs's stage 0/1/2 boundary.
 export const TRANSIENT_CODES = Object.freeze(['NATIVE_ADMISSION_UNAVAILABLE', 'GITHUB_TRANSIENT_UNAVAILABLE', 'BRIDGE_TRANSPORT_TIMEOUT',
   'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'ARCHIVE_PRECONDITION_NOT_MET']);
+// Why the roles of a train front batch (a subject with testSha) stay local: a relay reason, not a failure (§41.4, §38.8 m1);
+// listed with the codes so every table knows it.
+export const RELAY_TRAIN_FRONT_LOCAL = 'RELAY_TRAIN_FRONT_LOCAL';
+// The merge train's clean codes (INTERFACES §5, in that order; Source v2 stage-fact.mjs#TRAIN_CODES lists the same).
+export const TRAIN_CLEAN_CODES = Object.freeze(['TRAIN_FRONT_JOB_WITHOUT_TRAIN', 'TRAIN_SINGLE_GREEN_NOT_PROVEN', 'TRAIN_TEST_COMMIT_GONE', 'TRAIN_REVOKE_UNCONFIRMED',
+  'TRAIN_SWEEP_INCOMPLETE', 'TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_FRONT_BUDGET_SHORT', 'TRAIN_FRONT_ATTEMPTS_USED',
+  RELAY_TRAIN_FRONT_LOCAL,
+  // Stages 1 and 8: a train front job whose stage directory's train-mode.json exists but is unusable: never burned (stage 1
+  // releases the head, stage 8 parks it).
+  'TRAIN_MODE_UNREADABLE']);
 // Clean, but final for this head and attempt.
 export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_INPUT_RESULT_MISSING', 'BROKER_RUNNER_NOT_ORIGINAL_STOPPED', 'BROKER_REQUEST_EXPIRED',
   'BROKER_REQUEST_REFUSED', 'STAGE_HELPER_PREFLIGHT_REFUSED', 'STAGE_CHILD_REFUSED', 'STAGE_CHILD_TIMEOUT', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 'BATCH_CLAIM_CHANGED',
@@ -32,7 +42,10 @@ export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_
   'TRAIN_TEST_MERGE_TREE_DIFFERS',
   // App 5368905 already published on this head, found on GitHub (primary/standby design v0.4 §6.2, C4): at stage 1
   // before Native was asked, or before a role's first publication that this node knew nothing of. A new commit is needed.
-  'HEAD_PUBLISHED_ON_GITHUB', 'ROLE_ALREADY_ON_GITHUB']);
+  'HEAD_PUBLISHED_ON_GITHUB', 'ROLE_ALREADY_ON_GITHUB',
+  // Merge train on (DESIGN §41.2-41.4, step 3c-2b): zero side effects, a clean ending. Stages 1 and 8 refuse a front job while
+  // the train is not on; stage 8 finds the single green not proven or S gone; the rest are stage 10's decisions.
+  ...TRAIN_CLEAN_CODES]);
 // Never clean (listed for the cross-check and the reader; anything not allow-listed is UNKNOWN anyway).
 export const UNKNOWN_CODES = Object.freeze(['BROKER_RESPONSE_UNCONFIRMED', 'STAGE_HELPER_NOT_STOPPED_IN_TIME', 'STAGE_ORIGINAL_NOT_RESTORED',
   'BROKER_CONFIGURATION_CONFLICT', 'NATIVE_RECEIPT_UNCONFIRMED', 'STAGE_CHILD_TREE_UNCONFIRMED', 'STAGE_OUTCOME_MISSING', 'PUBLICATION_UNCERTAIN',
@@ -267,6 +280,10 @@ export function decideFailure({ code, stage, phase = 'stage', outcome = null, br
   // What the deterministic code makes of a release-if-safe row is what the ledger and the status record. Except a node that
   // holds no role (DESIGN §29): it decided nothing about the PR, so no reason beside it can burn the head.
   if (deterministic && row.disposition === 'release-if-safe' && row.class !== 'node-role') row = Object.freeze({ ...row, class: 'deterministic-pr', disposition: 'burn', retry: 'new-commit', breaker: 'neutral' });
+  // A stage-1 row of disposition release (today only TRAIN_MODE_UNREADABLE; BUNDLE_UNAVAILABLE is released before this, at the
+  // bundle): released on a bound BLOCKED outcome with zero side effects that published nothing, whatever its safeToRerun says.
+  if (started !== true && stage === 1 && row.disposition === 'release' && windows && outcome?.status === 'BLOCKED' && outcome.sideEffects === 0 && outcome.mayHavePublished === false)
+    return { klass: 'NOT_ADMITTED', basis: 'stage-1-zero-side-effects', row, release: 'NOT_ADMITTED' };
   if (started !== true && row.disposition === 'release-if-safe' && windows) {
     if (outcome?.safeToRerun === true) return { klass: 'NOT_ADMITTED', basis: 'stage-1-safe-to-rerun', row, release: 'NOT_ADMITTED' };
     if (brokerNoLaunch === true) return { klass: 'NOT_ADMITTED', basis: 'stage-1-broker-not-launched', row, release: 'BROKER_NOT_LAUNCHED' };

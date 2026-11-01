@@ -174,3 +174,25 @@ export default {async fetch(){try {const api=createStorageGoogleMetadataBatch({a
     redirect=true;assert.deepEqual(await(await runtime.dispatchFetch("http://localhost/")).json(),{denied:true});assert.equal(calls,2);}
   finally{await runtime.dispose();}
 });
+
+// Decision 24422a98: as Drive asks, rate limits and 5xx are backed off and
+// retried up to transient_retries times; a rate-limit 403 counts as a 429,
+// any other 403 stays final.
+test("transient_retries backs off with a growing delay; a rate-limit 403 part is retried, another 403 is not",async()=>{
+  const warn=console.warn;console.warn=()=>{};
+  try{
+    const ok=parts=>batchReply(parts.map(p=>({...p,value:{id:p.path.split("?")[0].split("/").at(-1)}})));
+    const delays=[];
+    const r=fixture((parts,init,n)=>n<=3?new Response("rate",{status:429}):ok(parts),{transient_retries:3,retry_delay_ms:retry=>{delays.push(retry);return 0;}});
+    assert.deepEqual((await r.api.getFiles(["a"])).map(v=>v.id),["a"]);assert.equal(r.calls.length,4);assert.deepEqual(delays,[0,1,2]);
+    const exhausted=fixture(()=>new Response("rate",{status:429}),{transient_retries:2,retry_delay_ms:()=>0});
+    await assert.rejects(exhausted.api.getFiles(["a"]),/DRIVE_BATCH_HTTP_429/);assert.equal(exhausted.calls.length,3);
+    const limited=fixture((parts,init,n)=>n===1?batchReply(parts.map(p=>({...p,status:403,value:{error:{code:403,errors:[{reason:"userRateLimitExceeded"}]}}}))):ok(parts),
+      {transient_retries:1,retry_delay_ms:()=>0});
+    assert.deepEqual((await limited.api.getFiles(["a"])).map(v=>v.id),["a"]);assert.equal(limited.calls.length,2);
+    const forbidden=fixture(parts=>batchReply(parts.map(p=>({...p,status:403,value:{error:{code:403,errors:[{reason:"insufficientFilePermissions"}]}}}))),
+      {transient_retries:3,retry_delay_ms:()=>0});
+    await assert.rejects(forbidden.api.getFiles(["a"]),/DRIVE_BATCH_HTTP_403/);assert.equal(forbidden.calls.length,1);
+    assert.throws(()=>createStorageGoogleMetadataBatch({access_token:"synthetic-batch-access",signal:AbortSignal.timeout(1000),transient_retries:4}),/DRIVE_BATCH_INVALID/);
+  }finally{console.warn=warn;}
+});

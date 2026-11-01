@@ -14,8 +14,9 @@
   Node identity (resident active/standby design v0.4 section 9 C7, DESIGN.md section 30): the receipt's node identity (node name,
   App key id and fingerprint, token fingerprint, connection id, formal qualification refs) is re-derived from the installed record
   (record\installation.json and record\acceptance.json, both hash-pinned by the receipt, which must agree with each other) and
-  compared; the receipt assumes no role. The App key and the ci-admission token files are checked for existence and security
-  (owner an administrator principal, readable by SYSTEM, Administrators and the pinned controller only, no write for the
+  compared; the receipt assumes no role. The node heartbeat (DESIGN.md section 41.6a): secrets\heartbeat\ and its token file have the
+  install's ACL (heartbeat-token-acl), and heartbeat-binding reports the heartbeat connection id the receipt recorded (no network).
+  The App key and the ci-admission token files are checked for existence and security (owner an administrator principal, readable by SYSTEM, Administrators and the pinned controller only, no write for the
   controller); so are the folders that hold them (CluedControl\trusted, CluedIndependentCI\secrets) and every ancestor up to the drive
   root, by the runtime's own rule (runtime/verify-install-acl.ps1): administrator owners, no other reader of the secret folders, no
   non-administrator write or replace right on the way. Their content is never read here: the fingerprints were checked at install,
@@ -299,6 +300,41 @@ function Test-UpgraderPins([string]$root, $u, $qc) {
     return $true
   } catch { $script:upgraderPinDetail = 'unreadable'; return 'unreadable' }
 }
+# heartbeat-token-acl (DESIGN.md section 41.6a; review R3 MINOR 8): when secrets\heartbeat\ is there, it and the token file in it have
+# exactly install-resident.ps1's SDDL (Get-HeartbeatDirectorySddl, Get-HeartbeatFileSddl): no reparse point, owner Administrators,
+# protected, SYSTEM and Administrators full control, the Owner read-only, nobody else. Not installed: nothing to check.
+function Test-HeartbeatTokenAcl([string]$root, [string]$ownerSid) {
+  try {
+    $dir = Join-Path $root 'secrets\heartbeat'
+    if (-not (Test-Path -LiteralPath $dir)) { return [pscustomobject]@{ ok = $true; detail = 'NOT_INSTALLED' } }
+    $one = {
+      param([string]$path, [bool]$container, [string]$sddl)
+      $item = Get-Item -LiteralPath $path -Force
+      if ($item.PSIsContainer -ne $container -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { return $false }
+      $want = if ($container) { New-Object Security.AccessControl.DirectorySecurity } else { New-Object Security.AccessControl.FileSecurity }
+      $want.SetSecurityDescriptorSddlForm($sddl)
+      $back = Get-Acl -LiteralPath $path
+      ($back.GetOwner([Security.Principal.SecurityIdentifier]).Value -ceq 'S-1-5-32-544') -and ((Get-DaclPart $back.Sddl) -ceq (Get-DaclPart $want.GetSecurityDescriptorSddlForm('Access')))
+    }
+    if (-not (& $one $dir $true ('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;' + $ownerSid + ')'))) { return [pscustomobject]@{ ok = $false; detail = 'DIRECTORY_ACL' } }
+    $file = Join-Path $dir 'ci-node-heartbeat.token'
+    if (-not (Test-Path -LiteralPath $file)) { return [pscustomobject]@{ ok = $true; detail = 'NO_TOKEN' } }
+    if (-not (& $one $file $false ('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x120089;;;' + $ownerSid + ')'))) { return [pscustomobject]@{ ok = $false; detail = 'FILE_ACL' } }
+    [pscustomobject]@{ ok = $true; detail = 'OK' }
+  } catch { [pscustomobject]@{ ok = 'unreadable'; detail = 'UNREADABLE' } }
+}
+# heartbeat-binding (merge train step 2b review): the heartbeat connection id the install recorded (-HeartbeatBindingId, informational;
+# the Owner links it on KooYomi's /bindings/failover). Reported only, from the receipt; nothing is read over the network. A receipt
+# without the field (an older install or an upgrade) or a token without an id is fine; an id that is not a UUID, or an id without a
+# placed token, is not.
+function Get-HeartbeatBindingState($receipt) {
+  $hb = Get-Field $receipt 'heartbeatToken'
+  if ($null -eq $hb) { return [pscustomobject]@{ ok = $true; detail = 'NOT_IN_RECEIPT' } }
+  $id = Get-Field $hb 'bindingId'; $placed = (Get-Field $hb 'placed') -eq $true
+  if ($null -eq $id) { return [pscustomobject]@{ ok = $true; detail = $(if ($placed) { 'TOKEN_WITHOUT_BINDING_ID' } else { 'NOT_INSTALLED' }) } }
+  if ($id -isnot [string] -or $id -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z' -or -not $placed) { return [pscustomobject]@{ ok = $false; detail = 'BINDING_ID_INVALID' } }
+  [pscustomobject]@{ ok = $true; detail = ('bindingId=' + $id) }
+}
 # generation-current: upgrade\current.json names the receipt being verified and its generation; generations\g<N>\generation.json holds the
 # receipt's command lines, which the SCM and the companion task hold now, and the hash of the generation's files where they are.
 function Test-GenerationCurrent([string]$root, $receipt, [string]$receiptSha) {
@@ -460,20 +496,24 @@ function Test-BrokerFailureActions($bytes, $nonCrash) {
 # The controller account runs the node's runner service (swapped and started by the broker for every stage): it needs the right to
 # log on as a service, granted directly or through a local group (DESK-W-591, 2026-10-30: SCM 7041, then the role probe HALTed with
 # ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED). SeDenyServiceLogonRight overrides it (review 2). $inf: `secedit /export /areas USER_RIGHTS`;
-# $groupMembers: group SID -> member SIDs.
-function Test-ServiceLogonRight([string]$inf, [string]$sid, $groupMembers) {
+# $groupMembers: group SID -> member SIDs. secedit writes a local account or group by name (TURING, 2026-10-31:
+# `SeServiceLogonRight = clued-runner,clued-control,*S-1-5-80-0,*S-1-5-83-0`); $nameSids: name -> SID, $null when it did not
+# resolve. An unresolved name never grants the right, and in the deny line it counts as a deny (fail closed).
+function Test-ServiceLogonRight([string]$inf, [string]$sid, $groupMembers, $nameSids) {
   $holds = {
-    param([string]$right)
+    param([string]$right, [bool]$unresolvedHolds)
     foreach ($line in ($inf -split "`r?`n")) {
       if ($line -notmatch ('^\s*' + $right + '\s*=\s*(.*)$')) { continue }
-      foreach ($entry in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() })) {
-        if ($entry -ceq ('*' + $sid)) { return $true }
-        if ($entry.StartsWith('*') -and $null -ne $groupMembers -and $groupMembers.ContainsKey($entry.Substring(1)) -and @($groupMembers[$entry.Substring(1)]) -ccontains $sid) { return $true }
+      foreach ($entry in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+        $entrySid = if ($entry.StartsWith('*')) { $entry.Substring(1) } elseif ($null -ne $nameSids -and $nameSids.ContainsKey($entry)) { $nameSids[$entry] } else { $null }
+        if ($null -eq $entrySid) { if ($unresolvedHolds) { return $true } else { continue } }
+        if ($entrySid -ceq $sid) { return $true }
+        if ($null -ne $groupMembers -and $groupMembers.ContainsKey($entrySid) -and @($groupMembers[$entrySid]) -ccontains $sid) { return $true }
       }
     }
     $false
   }
-  (& $holds 'SeServiceLogonRight') -and -not (& $holds 'SeDenyServiceLogonRight')
+  (& $holds 'SeServiceLogonRight' $false) -and -not (& $holds 'SeDenyServiceLogonRight' $true)
 }
 # Elevated only (secedit needs it): the user-rights assignment and the members of every local group it names; $null when unreadable.
 # The export goes to a new directory that only SYSTEM and Administrators can touch (review 2: not one the Owner's medium-integrity
@@ -487,15 +527,20 @@ function Read-ServiceLogonRight([string]$sid) {
     $null = & 'C:\Windows\System32\SecEdit.exe' /export /areas USER_RIGHTS /cfg $cfg /quiet
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $cfg -PathType Leaf)) { return $null }
     $inf = [IO.File]::ReadAllText($cfg)
-    $groups = @{}
+    $groups = @{}; $names = @{}
     foreach ($line in ($inf -split "`r?`n")) {
       if ($line -notmatch '^\s*Se(?:Deny)?ServiceLogonRight\s*=\s*(.*)$') { continue }
-      foreach ($e in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -cmatch '^\*S-1-5-32-\d+$|^\*S-1-5-21-[\d-]+$' })) {
-        $members = try { @(Get-LocalGroupMember -SID $e.Substring(1) -ErrorAction Stop | ForEach-Object { $_.SID.Value }) } catch { @() }
-        $groups[$e.Substring(1)] = $members
+      foreach ($e in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+        $s = if ($e.StartsWith('*')) { $e.Substring(1) } else {
+          $names[$e] = try { (New-Object Security.Principal.NTAccount($e)).Translate([Security.Principal.SecurityIdentifier]).Value } catch { $null }
+          $names[$e]
+        }
+        if ($s -cmatch '^S-1-5-32-\d+$|^S-1-5-21-[\d-]+$' -and -not $groups.ContainsKey($s)) {
+          $groups[$s] = try { @(Get-LocalGroupMember -SID $s -ErrorAction Stop | ForEach-Object { $_.SID.Value }) } catch { @() }
+        }
       }
     }
-    Test-ServiceLogonRight $inf $sid $groups
+    Test-ServiceLogonRight $inf $sid $groups $names
   } catch { $null } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
@@ -589,6 +634,10 @@ Record 'not-halted' (-not (Test-Path -LiteralPath (Join-Path $Root 'state\HALT.j
 $pausedFile = Join-Path $Root 'state\PAUSED.json'
 if ($ExpectPausedSha256) { Record 'paused-as-expected' ((Test-Path -LiteralPath $pausedFile -PathType Leaf) -and ((Sha256File $pausedFile) -ceq $ExpectPausedSha256)) }
 else { Record 'not-paused' (-not (Test-Path -LiteralPath $pausedFile)) }
+$hbAcl = Test-HeartbeatTokenAcl $Root ([string]$Node.ownerSid)
+Record 'heartbeat-token-acl' $hbAcl.ok $hbAcl.detail
+$hbBinding = Get-HeartbeatBindingState $receipt
+Record 'heartbeat-binding' $hbBinding.ok $hbBinding.detail
 $node = Join-Path $Root 'runtime\node.exe'
 $verifier = Join-Path $Root ('resident\' + $receipt.residentManifestSha256 + '\tools\verify-receipts.mjs')
 # node is started with a cleared, fixed environment (no NODE_OPTIONS or other user variables) so an

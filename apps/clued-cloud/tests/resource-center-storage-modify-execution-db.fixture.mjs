@@ -372,7 +372,7 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
       assert.equal((await artifact(target, created.path)).provider_file_version, created.provider_file_version, "the registry keeps the version Clued saw");
     });
 
-    await t.test("a stale source version, a name conflict or a status-directory destination is refused with zero provider updates", async () => {
+    await t.test("a stale source version or a name conflict is refused with zero provider updates; a status folder that exists takes a file", async () => {
       const { target, client, storage } = await setup();
       const first = await createFile(target, client, storage, "one.txt"), second = await createFile(target, client, storage, "two.txt");
       const status = await directoryIn(target, storage, "当前");
@@ -380,7 +380,6 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
       const cases = [
         modify("rename", first.path, `${target.root}/${TRACK}/renamed.txt`, String(Number(version) + 1)),
         modify("rename", first.path, second.path, version),
-        modify("move", first.path, `${status.path}/one.txt`, version),
       ];
       for (const mutation of cases) {
         const before = await counters(), job = await submitJob(target, client, mutation);
@@ -390,6 +389,11 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
         assert.equal((await counters()).intents, before.intents, "no durable reservation was made");
       }
       assert.equal((await artifact(target, first.path)).id, first.id);
+      // Owner Decision f382c494: the layout rules stay, but a file moved into a
+      // status-named folder that already exists is not refused.
+      const moved = await submitJob(target, client, modify("move", second.path, `${status.path}/two.txt`,
+        storage.files.get(second.provider_file_id).version));
+      assert.equal((await executor(target, storage).run(moved.reference)).status, "committed");
     });
 
     await t.test("without the modify level, or in another shape, submit is refused", async () => {

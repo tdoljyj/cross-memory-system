@@ -27,7 +27,7 @@ import { batchJobsV2, MAX_ATTEMPT_V2 } from '../job-v2.mjs';
 import { hash } from './prepare-record.mjs';
 import { validateRecordV2 } from './record.mjs';
 import { BATCH_ID, ENTRY_V2, FORMAL_STAGES_V2, HEX64, RECORD_FILES, RELAY_STAGE_V2, REPO, TRAIN_STAGE_V2, WIN_RECORD, stageJobRolesValid } from './layout.mjs';
-import { TRAIN_RUN_ROLE, makeTrainRun } from './train-run.mjs';
+import { TRAIN_RUN_ROLE, TRAIN_RUN_SHADOW_DEFAULTS, makeTrainRun } from './train-run.mjs';
 import { STAGE_CONTRACT, PLAN_CONTRACT_V2, stageDirectory, workManifest } from './stage-package.mjs';
 
 export const BATCH_CONTRACT = 'clued.independent-ci.resident-batch/2';
@@ -125,12 +125,14 @@ export function deriveRelayStage({ recordDocs, batchJson, roles, batchKey, batch
   return { files, result: { status: 'RESIDENT_RELAY_STAGE_DERIVED', batchKey, batchId, stage: row } };
 }
 
-// Stage 10: one train run. Pure; the same inputs always give the same bytes (createdAt is the derivation time).
-export function deriveTrainRun({ recordDocs, runId, runKey, mode, now = Date.now() }) {
+// Stage 10: one train run (contract /2). Pure; the same inputs always give the same bytes (createdAt is the derivation
+// time). params: the train-run /2 params (train-run.mjs#TRAIN_RUN_PARAMS); only a shadow run may leave them out.
+export function deriveTrainRun({ recordDocs, runId, runKey, mode, params = null, now = Date.now() }) {
   check(HEX64.test(runKey ?? '') && BATCH_ID.test(runId ?? '') && runId.startsWith(runKey.slice(0, 16)), 'RESIDENT_TRAIN_RUN_REFUSED');
+  check(params === null ? mode === 'shadow' : plain(params), 'RESIDENT_TRAIN_RUN_REFUSED');
   const record = validateRecordV2(recordDocs, { now, required: [ENTRY_V2['train-maintenance']] });
   let job;
-  try { job = makeTrainRun({ repo: record.config.repository, runId, mode, sourceManifestSha256: record.config.sourceManifestSha256, createdAt: new Date(now).toISOString() }); }
+  try { job = makeTrainRun({ ...(params ?? TRAIN_RUN_SHADOW_DEFAULTS), repo: record.config.repository, runId, mode, sourceManifestSha256: record.config.sourceManifestSha256, createdAt: new Date(now).toISOString() }); }
   catch { fail('RESIDENT_TRAIN_RUN_REFUSED'); }
   const { files, row } = stagePackage({ record, s: TRAIN_STAGE_V2, stageJobs: [job], batchKey: runKey, batchId: runId, jobRoles: [TRAIN_RUN_ROLE] });
   return { files, result: { status: 'RESIDENT_TRAIN_RUN_DERIVED', runKey, runId, mode, stage: row } };
@@ -171,18 +173,21 @@ export function writeBatch(outDir, files) {
 export function main(argv = process.argv.slice(2), { now = Date.now(), output = process.stdout } = {}) {
   const args = {};
   for (let i = 0; i < argv.length; i += 2) {
-    check(['--subject-json', '--batch-key', '--batch-id', '--out', '--record', '--relay-roles', '--batch-dir', '--train-run', '--train-key', '--mode'].includes(argv[i]) && typeof argv[i + 1] === 'string' && !Object.hasOwn(args, argv[i]), 'RESIDENT_DERIVATION_ARGUMENTS_REFUSED');
+    check(['--subject-json', '--batch-key', '--batch-id', '--out', '--record', '--relay-roles', '--batch-dir', '--train-run', '--train-key', '--mode', '--train-params'].includes(argv[i]) && typeof argv[i + 1] === 'string' && !Object.hasOwn(args, argv[i]), 'RESIDENT_DERIVATION_ARGUMENTS_REFUSED');
     args[argv[i]] = argv[i + 1];
   }
   if (Object.hasOwn(args, '--train-run')) {
-    check(args['--train-key'] && args['--mode'] && args['--out'] && !args['--subject-json'] && !args['--batch-dir'] && !args['--batch-key'] && !args['--batch-id'] && !args['--relay-roles'], 'RESIDENT_DERIVATION_ARGUMENTS_REFUSED');
-    const { files, result } = deriveTrainRun({ recordDocs: readRecordDocs(args['--record'] ?? WIN_RECORD), runId: args['--train-run'], runKey: args['--train-key'], mode: args['--mode'], now });
+    // --train-params: the train-run /2 params as one JSON object (always given by the resident, every mode).
+    check(args['--train-key'] && args['--mode'] && args['--train-params'] && args['--out'] && !args['--subject-json'] && !args['--batch-dir'] && !args['--batch-key'] && !args['--batch-id'] && !args['--relay-roles'], 'RESIDENT_DERIVATION_ARGUMENTS_REFUSED');
+    let params;
+    try { params = JSON.parse(args['--train-params']); } catch { fail('RESIDENT_TRAIN_RUN_REFUSED'); }
+    const { files, result } = deriveTrainRun({ recordDocs: readRecordDocs(args['--record'] ?? WIN_RECORD), runId: args['--train-run'], runKey: args['--train-key'], mode: args['--mode'], params, now });
     writeBatch(args['--out'], files);
     output.write(JSON.stringify(result) + '\n');
     return 0;
   }
   if (Object.hasOwn(args, '--relay-roles')) {
-    check(args['--batch-dir'] && args['--batch-key'] && args['--batch-id'] && !args['--subject-json'] && !args['--out'] && !args['--train-key'] && !args['--mode'], 'RESIDENT_DERIVATION_ARGUMENTS_REFUSED');
+    check(args['--batch-dir'] && args['--batch-key'] && args['--batch-id'] && !args['--subject-json'] && !args['--out'] && !args['--train-key'] && !args['--mode'] && !args['--train-params'], 'RESIDENT_DERIVATION_ARGUMENTS_REFUSED');
     check(/^[a-z-]{1,40}(,[a-z-]{1,40}){0,3}$/.test(args['--relay-roles']), 'RESIDENT_RELAY_ROLES_REFUSED');
     const batchJson = fs.readFileSync(path.join(args['--batch-dir'], 'batch.json'));
     const { files, result } = deriveRelayStage({ recordDocs: readRecordDocs(args['--record'] ?? WIN_RECORD), batchJson, roles: args['--relay-roles'].split(','),
@@ -191,7 +196,7 @@ export function main(argv = process.argv.slice(2), { now = Date.now(), output = 
     output.write(JSON.stringify(result) + '\n');
     return 0;
   }
-  check(args['--subject-json'] && args['--batch-key'] && args['--batch-id'] && args['--out'] && !args['--batch-dir'] && !args['--train-key'] && !args['--mode'], 'RESIDENT_DERIVATION_ARGUMENTS_REFUSED');
+  check(args['--subject-json'] && args['--batch-key'] && args['--batch-id'] && args['--out'] && !args['--batch-dir'] && !args['--train-key'] && !args['--mode'] && !args['--train-params'], 'RESIDENT_DERIVATION_ARGUMENTS_REFUSED');
   let subject;
   try { subject = JSON.parse(args['--subject-json']); } catch { fail('RESIDENT_SUBJECT_FIELDS_REQUIRED'); }
   const { files, result } = deriveBatch({ recordDocs: readRecordDocs(args['--record'] ?? WIN_RECORD), subject, batchKey: args['--batch-key'], batchId: args['--batch-id'], now });

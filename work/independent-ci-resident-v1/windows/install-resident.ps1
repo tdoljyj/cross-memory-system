@@ -51,6 +51,16 @@
   resident-upgrade connection token (never the ci-admission token): read once, fingerprinted like the ci-admission token, placed
   create-only at secrets\resident-upgrade.token readable by SYSTEM and Administrators only. Every later version comes through
   CluedCIUpgrader (windows\request-upgrade.ps1); a reinstall is needed only when the channel itself changes.
+
+  Node heartbeat (merge train step 3c-2b, DESIGN.md section 41.6a): -HeartbeatTokenFile (optional) is this node's heartbeat-only
+  connection token from /bindings (it can call the heartbeat function and nothing else; never the ci-admission or the
+  resident-upgrade token): read once, fingerprinted like the ci-admission token, placed create-only at
+  resident\secrets\heartbeat\ci-node-heartbeat.token in a folder made only then, SYSTEM and Administrators full control, the Owner
+  read-only (the companion in the Owner's session reads it), nobody else. Without it nothing about the companion changes.
+  -HeartbeatBindingId (optional, a UUID, only together with -HeartbeatTokenFile) is that heartbeat connection's id (KooYomi page
+  /bindings/failover, its connection id section), for information only: the plan and the receipt record it and the result prints the
+  Owner's next step (heartbeatNextStep): link that connection to this node on /bindings/failover, two-step confirmation. The install
+  makes no network call for it and uses no token for it (merge train step 2b review).
 #>
 [CmdletBinding()]
 param(
@@ -63,7 +73,9 @@ param(
   [switch]$StartAfterInstall,
   [string]$AppPrivateKeyFile,        # optional: this node's App private key, downloaded by the Owner on this machine (design 7.1)
   [string]$CiAdmissionTokenFile,     # optional: this node's ci-admission connection token (design 7.2)
-  [string]$UpgradeTokenFile          # optional: this node's resident-upgrade connection token (018da927; its own connection, Owner decision 3ce5200c)
+  [string]$UpgradeTokenFile,         # optional: this node's resident-upgrade connection token (018da927; its own connection, Owner decision 3ce5200c)
+  [string]$HeartbeatTokenFile,       # optional: this node's heartbeat-only connection token (DESIGN.md section 41.6a)
+  [ValidatePattern('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z')][string]$HeartbeatBindingId   # optional, only with -HeartbeatTokenFile: informational
 )
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -99,6 +111,21 @@ $UpgraderName = 'CluedCIUpgrader'
 $UpgraderPrivileges = @('SeChangeNotifyPrivilege')   # LocalSystem cut to SeChangeNotify; UpgraderServiceHost.cs refuses any other at start
 $UpgradeTokenTarget = 'C:\ProgramData\CluedIndependentCI\resident\secrets\resident-upgrade.token'
 $UpgradeTokenSddl = 'O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)'   # SYSTEM and Administrators only: the upgrader reads it, nobody else
+# The node heartbeat token (DESIGN.md section 41.6a): its own folder, SYSTEM and Administrators full control, the Owner read-only.
+$HeartbeatTokenDirectory = 'C:\ProgramData\CluedIndependentCI\resident\secrets\heartbeat'
+$HeartbeatTokenTarget = $HeartbeatTokenDirectory + '\ci-node-heartbeat.token'
+function Get-HeartbeatDirectorySddl([string]$owner) { 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;' + $owner + ')' }
+function Get-HeartbeatFileSddl([string]$owner) { 'O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x120089;;;' + $owner + ')' }
+# An existing heartbeat folder (an earlier install made it) is used only with exactly the folder SDDL above: a real folder (no reparse
+# point), owner Administrators, the protected DACL (review R3 MINOR 8; verify-resident.ps1 checks the same).
+function Test-HeartbeatDirectoryAcl([string]$path, [string]$sddl) {
+  $item = Get-Item -LiteralPath $path -Force
+  if (-not $item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { return $false }
+  $want = New-Object Security.AccessControl.DirectorySecurity
+  $want.SetSecurityDescriptorSddlForm($sddl)
+  $back = Get-Acl -LiteralPath $path
+  ($back.GetOwner([Security.Principal.SecurityIdentifier]).Value -ceq 'S-1-5-32-544') -and ((Get-DaclPart $back.Sddl) -ceq (Get-DaclPart $want.GetSecurityDescriptorSddlForm('Access')))
+}
 $WindowsLayout = 'clued.independent-ci.resident-layout/1'
 $ServiceSddl = 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)'
 
@@ -491,20 +518,24 @@ function Read-RunnerState {
 # The controller account runs the node's runner service (swapped and started by the broker for every stage): it needs the right to
 # log on as a service, granted directly or through a local group (DESK-W-591, 2026-10-30: SCM 7041, then the role probe HALTed with
 # ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED). SeDenyServiceLogonRight overrides it (review 2). $inf: `secedit /export /areas USER_RIGHTS`;
-# $groupMembers: group SID -> member SIDs.
-function Test-ServiceLogonRight([string]$inf, [string]$sid, $groupMembers) {
+# $groupMembers: group SID -> member SIDs. secedit writes a local account or group by name (TURING, 2026-10-31:
+# `SeServiceLogonRight = clued-runner,clued-control,*S-1-5-80-0,*S-1-5-83-0`); $nameSids: name -> SID, $null when it did not
+# resolve. An unresolved name never grants the right, and in the deny line it counts as a deny (fail closed).
+function Test-ServiceLogonRight([string]$inf, [string]$sid, $groupMembers, $nameSids) {
   $holds = {
-    param([string]$right)
+    param([string]$right, [bool]$unresolvedHolds)
     foreach ($line in ($inf -split "`r?`n")) {
       if ($line -notmatch ('^\s*' + $right + '\s*=\s*(.*)$')) { continue }
-      foreach ($entry in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() })) {
-        if ($entry -ceq ('*' + $sid)) { return $true }
-        if ($entry.StartsWith('*') -and $null -ne $groupMembers -and $groupMembers.ContainsKey($entry.Substring(1)) -and @($groupMembers[$entry.Substring(1)]) -ccontains $sid) { return $true }
+      foreach ($entry in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+        $entrySid = if ($entry.StartsWith('*')) { $entry.Substring(1) } elseif ($null -ne $nameSids -and $nameSids.ContainsKey($entry)) { $nameSids[$entry] } else { $null }
+        if ($null -eq $entrySid) { if ($unresolvedHolds) { return $true } else { continue } }
+        if ($entrySid -ceq $sid) { return $true }
+        if ($null -ne $groupMembers -and $groupMembers.ContainsKey($entrySid) -and @($groupMembers[$entrySid]) -ccontains $sid) { return $true }
       }
     }
     $false
   }
-  (& $holds 'SeServiceLogonRight') -and -not (& $holds 'SeDenyServiceLogonRight')
+  (& $holds 'SeServiceLogonRight' $false) -and -not (& $holds 'SeDenyServiceLogonRight' $true)
 }
 # Elevated only (secedit needs it): the user-rights assignment and the members of every local group it names; $null when unreadable.
 # The export goes to a new directory that only SYSTEM and Administrators can touch (review 2: not one the Owner's medium-integrity
@@ -518,15 +549,20 @@ function Read-ServiceLogonRight([string]$sid) {
     $null = & 'C:\Windows\System32\SecEdit.exe' /export /areas USER_RIGHTS /cfg $cfg /quiet
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $cfg -PathType Leaf)) { return $null }
     $inf = [IO.File]::ReadAllText($cfg)
-    $groups = @{}
+    $groups = @{}; $names = @{}
     foreach ($line in ($inf -split "`r?`n")) {
       if ($line -notmatch '^\s*Se(?:Deny)?ServiceLogonRight\s*=\s*(.*)$') { continue }
-      foreach ($e in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -cmatch '^\*S-1-5-32-\d+$|^\*S-1-5-21-[\d-]+$' })) {
-        $members = try { @(Get-LocalGroupMember -SID $e.Substring(1) -ErrorAction Stop | ForEach-Object { $_.SID.Value }) } catch { @() }
-        $groups[$e.Substring(1)] = $members
+      foreach ($e in @($Matches[1].Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+        $s = if ($e.StartsWith('*')) { $e.Substring(1) } else {
+          $names[$e] = try { (New-Object Security.Principal.NTAccount($e)).Translate([Security.Principal.SecurityIdentifier]).Value } catch { $null }
+          $names[$e]
+        }
+        if ($s -cmatch '^S-1-5-32-\d+$|^S-1-5-21-[\d-]+$' -and -not $groups.ContainsKey($s)) {
+          $groups[$s] = try { @(Get-LocalGroupMember -SID $s -ErrorAction Stop | ForEach-Object { $_.SID.Value }) } catch { @() }
+        }
       }
     }
-    Test-ServiceLogonRight $inf $sid $groups
+    Test-ServiceLogonRight $inf $sid $groups $names
   } catch { $null } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
@@ -543,6 +579,12 @@ function Get-AclPlan([string]$res) {
     'config'            = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"
     'install'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"                 # install records: only admins write
     'owner'             = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"                 # Owner requests: only the elevated Owner (BA) creates
+    # DESIGN.md section 41.7/41.9 step 3: the Owner's train-shadow review mark (rearm-tool mark-train-shadow-reviewed). Stage 10 prunes
+    # train-shadow only after it (Source v2 state-retention.mjs, as clued-control), so clued-control reads this folder, and only this one.
+    # Accepted residual (review R3 MINOR 7): unlike owner\, the unelevated Owner may write here, so any process of the Owner's session
+    # (an Agent too) could write the mark; the worst it does is start the 90-day pruning of train-shadow records early (none is older
+    # than 90 days at step 9), never a green, a revocation or a batch.
+    'owner\train-review' = "$base(A;OICI;$rx;;;$res)(A;OICI;$mod;;;$OwnerSid)(A;OICI;$rx;;;$ControllerSid)"
     'source'            = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)(A;OICI;$rx;;;$ControllerSid)"
     'helpers'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$ControllerSid)"           # the installed generic helper (broker config pin)
     'record'            = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$ControllerSid)(A;OICI;$rx;;;$OwnerSid)"   # claim-free install record: only admins write
@@ -740,6 +782,42 @@ function Get-UpgradeTokenPlan {
   }
   $entry
 }
+# The node heartbeat token (DESIGN.md section 41.6a): optional; read once, fingerprinted like the ci-admission token, and it must be
+# neither the ci-admission token nor the resident-upgrade token (each is its own connection). The bytes wait in $script:SecretBytes.
+# -HeartbeatBindingId only with -HeartbeatTokenFile (informational: recorded, never sent anywhere).
+function Get-HeartbeatTokenPlan {
+  if ($HeartbeatBindingId -and -not $HeartbeatTokenFile) { Clear-SecretBytes; throw 'HEARTBEAT_BINDING_ID_REQUIRES_HEARTBEAT_TOKEN_FILE' }
+  $entry = [ordered]@{ target = $HeartbeatTokenTarget; supplied = [bool]$HeartbeatTokenFile; targetExists = (Test-Path -LiteralPath $HeartbeatTokenTarget)
+    directory = $HeartbeatTokenDirectory; directorySddl = (Get-HeartbeatDirectorySddl $OwnerSid); sddl = (Get-HeartbeatFileSddl $OwnerSid); fingerprint = $null; verified = $false
+    bindingId = $(if ($HeartbeatBindingId) { $HeartbeatBindingId.ToLowerInvariant() } else { $null }) }
+  # An existing folder (supplied or not: the companion reads the token there) must have exactly its ACL.
+  if ((Test-Path -LiteralPath $HeartbeatTokenDirectory) -and -not (Test-HeartbeatDirectoryAcl $HeartbeatTokenDirectory $entry.directorySddl)) { throw 'HEARTBEAT_TOKEN_DIRECTORY_ACL_MISMATCH' }
+  if ($HeartbeatTokenFile) {
+    if (-not $elevated) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED_FOR_SECRETS' }
+    if ($entry.targetExists) { throw 'HEARTBEAT_TOKEN_TARGET_EXISTS_NOT_OVERWRITTEN' }
+    if ((Test-Path -LiteralPath $HeartbeatTokenDirectory) -and (((Get-Item -LiteralPath $HeartbeatTokenDirectory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { throw 'HEARTBEAT_TOKEN_TARGET_DIRECTORY_REFUSED' }
+    $bytes = Read-SecretSource $HeartbeatTokenFile 4096 'HEARTBEAT_TOKEN'
+    try {
+      # A heartbeat token is a clued_hbt_ token (its own kind); the CI connection's own token is named before anything else.
+      $ciFp = Get-SecretFingerprint 'ci-token' $bytes
+      if ($null -ne $ciFp -and $ciFp -ceq $Identity.ciTokenPinSha256) { throw 'HEARTBEAT_TOKEN_IS_THE_CI_ADMISSION_TOKEN' }
+      $fp = Get-SecretFingerprint 'heartbeat-token' $bytes
+      if ($null -eq $fp) { throw 'HEARTBEAT_TOKEN_UNREADABLE' }
+      if ($script:SecretBytes.ContainsKey('upgradeToken') -and (Sha256Bytes $bytes) -ceq (Sha256Bytes $script:SecretBytes['upgradeToken'])) { throw 'HEARTBEAT_TOKEN_IS_THE_UPGRADE_TOKEN' }
+    } catch { [Array]::Clear($bytes, 0, $bytes.Length); Clear-SecretBytes; throw }
+    $entry.fingerprint = $fp; $entry.verified = $true
+    $script:SecretBytes['heartbeatToken'] = $bytes
+  }
+  $entry
+}
+# The Owner's next step for the heartbeat connection (merge train step 2b review: the Owner links it on /bindings/failover, two-step
+# confirmation; the install never does): "please, Owner, on KooYomi's /bindings/failover link heartbeat connection <id> to this node
+# <node> (two-step confirmation)", in Chinese. Kept as \u escapes: this file has no BOM and Windows PowerShell 5.1 reads it in the
+# system code page.
+function Get-HeartbeatNextStep([string]$nodeName, [string]$bindingId) {
+  $t = [regex]::Unescape('\u8bf7 Owner \u5728 KooYomi \u7684 /bindings/failover \u628a\u5fc3\u8df3\u8fde\u63a5{id}\u6302\u5230\u672c\u8282\u70b9 {node}\uff08\u4e24\u6b65\u786e\u8ba4\uff09')
+  $t.Replace('{id}', $(if ($bindingId) { ' ' + $bindingId + ' ' } else { '' })).Replace('{node}', $nodeName)
+}
 # The package's upgrader section (A1) and files: one copy, under upgrader\<manifestSha256>\, with its host source, node, entry, the frozen
 # upgrade-apply.ps1 and its configuration; the configuration names this root, this Owner, this node profile and the token target.
 function Get-UpgraderPlan($pkg) {
@@ -801,7 +879,7 @@ function Build-Plan {
     roleAssumption = 'NONE'
     secrets = (Get-SecretsPlan)
     # Only when a key or token file is supplied: the fingerprint check runs the package's node.exe from a directory this script creates, admin-only, and removes it afterwards (DESIGN.md section 30.5).
-    secretsFingerprintDirectory = $(if ($AppPrivateKeyFile -or $CiAdmissionTokenFile -or $UpgradeTokenFile) { [ordered]@{ parent = $SecretWorkParent; sddl = $SecretWorkSddl; removedAfterwards = $true } } else { $null })
+    secretsFingerprintDirectory = $(if ($AppPrivateKeyFile -or $CiAdmissionTokenFile -or $UpgradeTokenFile -or $HeartbeatTokenFile) { [ordered]@{ parent = $SecretWorkParent; sddl = $SecretWorkSddl; removedAfterwards = $true } } else { $null })
     installScriptSha256 = (Sha256File $PSCommandPath)
     packageManifestSha256 = $ExpectedPackageManifestSha256
     sourceManifestSha256 = $pkg.sourceManifestSha256; residentManifestSha256 = $pkg.residentManifestSha256
@@ -829,6 +907,8 @@ function Build-Plan {
     # pins the receipt's hash) and moves nothing: it only writes generations\g1\generation.json and upgrade\current.json, create-only.
     windowsLayout = $WindowsLayout; stateCompat = $pkg.stateCompat; acceptanceDecisionRef = $pkg.acceptance.decisionRef
     upgrader = (Get-UpgraderPlan $pkg)
+    # DESIGN.md section 41.6a: the node heartbeat token (after the upgrader's, which it must not equal).
+    heartbeatToken = (Get-HeartbeatTokenPlan)
     generation = [ordered]@{ number = 1; record = 'generations\g1\generation.json'; current = 'upgrade\current.json'; movesFiles = $false; afterReceipt = $true
       files = 'config\*, record\*, bin\*, helpers\*, install\install-receipt.json (Get-GenerationFilesSha256)'
       linux = [ordered]@{ generation = 1; manifestSha256 = $pkg.linux.manifestSha256; ciSourceManifestSha256 = $pkg.ciSourceManifestSha256 } }
@@ -1063,6 +1143,13 @@ Step 'node-secrets' {
     if ($ut.supplied) { Write-NewSecret $ut.target $script:SecretBytes['upgradeToken'] $ut.sddl; $did = $true }
     $script:receipt.upgradeToken = [ordered]@{ target = $ut.target; placed = $did; fingerprint = $(if ($did) { $ut.fingerprint } else { $null }) }
     $script:receipt.upgrader.tokenFingerprint = $(if ($did) { $ut.fingerprint } else { $null })
+    # The node heartbeat token (DESIGN.md section 41.6a): its folder is made only now, only when the token was supplied.
+    $ht = $plan.heartbeatToken; $did = $false
+    if ($ht.supplied) {
+      if (-not (Test-Path -LiteralPath $ht.directory)) { New-DirectoryWithAcl $ht.directory $ht.directorySddl }
+      Write-NewSecret $ht.target $script:SecretBytes['heartbeatToken'] $ht.sddl; $did = $true
+    }
+    $script:receipt.heartbeatToken = [ordered]@{ target = $ht.target; placed = $did; fingerprint = $(if ($did) { $ht.fingerprint } else { $null }); bindingId = $(if ($did) { $ht.bindingId } else { $null }) }
   } finally { Clear-SecretBytes }
 }
 # 7. The runner service must be byte-for-byte what it was (this install never touches it).
@@ -1105,8 +1192,10 @@ if ($StartAfterInstall) {
   $upgraderTokenPrivileges = @((Get-Content -LiteralPath $file -Raw | ConvertFrom-Json).privileges)
   if (@($upgraderTokenPrivileges | Where-Object { $UpgraderPrivileges -cnotcontains $_ }).Count -gt 0) { throw ('EFFECTIVE_TOKEN_PRIVILEGES_NOT_MINIMAL:' + $plan.upgrader.tokenRecord) }
 }
-$placedSecrets = @(@($receipt.secrets.Keys | Where-Object { $receipt.secrets[$_].placed }) + @(if ($receipt.upgradeToken.placed) { 'upgradeToken' }))
+$placedSecrets = @(@($receipt.secrets.Keys | Where-Object { $receipt.secrets[$_].placed }) + @(if ($receipt.upgradeToken.placed) { 'upgradeToken' }) + @(if ($receipt.heartbeatToken.placed) { 'heartbeatToken' }))
 [ordered]@{ status = 'RESIDENT_INSTALLED'; receipt = $out; receiptSha256 = $receiptSha256; started = $receipt.started; nodeName = $Identity.nodeName; nodeIdentitySha256 = $IdentitySha256
   generation = 1; afterReceipt = @('generation-1') + @(if ($StartAfterInstall) { 'upgrader-start' }); upgraderTokenPrivileges = $upgraderTokenPrivileges
   secretsPlaced = $placedSecrets
+  heartbeatBindingId = $receipt.heartbeatToken.bindingId
+  heartbeatNextStep = $(if ($receipt.heartbeatToken.placed) { Get-HeartbeatNextStep $Identity.nodeName $receipt.heartbeatToken.bindingId } else { $null })
   ownerNextStep = $(if ($placedSecrets.Count) { 'Delete the downloaded App key / token file(s) yourself: this install never deletes anything.' } else { $null }) } | ConvertTo-Json
