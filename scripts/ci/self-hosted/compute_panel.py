@@ -505,11 +505,13 @@ def render(report: dict, state: dict) -> str:
         MARKER,
         f"## 算力面板　{beijing:%Y-%m-%d %H:%M} 北京时间",
         "",
-        f"通用池 {len(pool)} 台：在线 {len(online)}，忙 {sum(1 for n in online if n['busy'])}，"
+        f"通用 runner {len(pool)} 个：在线 {len(online)}，忙 {sum(1 for n in online if n['busy'])}，"
         f"空闲 {sum(1 for n in online if not n['busy'])}，离线 {sum(1 for n in pool.values() if n['status'] == 'offline')}，"
         f"未知 {sum(1 for n in pool.values() if n['status'] == 'unknown')}。告警 {len(report['alerts'])} 条。",
         "",
-        "| 机器 | 状态 | 忙/闲 | 当前作业 | 能接的活 | 磁盘空闲 | 可用内存 | 24 小时利用率 | 最近探测 |",
+        "以下按执行实例列出；同机实例共享磁盘与内存，资源数值不能累加。",
+        "",
+        "| 通用 runner | 状态 | 忙/闲 | 当前作业 | 能接的活 | 磁盘空闲 | 可用内存 | 24 小时利用率 | 最近探测 |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
     for name, node in pool.items():
@@ -526,7 +528,7 @@ def render(report: dict, state: dict) -> str:
             f"{util}%" if util is not None else "—",
             node["last_probe"] or "—",
         ))
-    lines += ["", "| 其他机器 | 状态 | 说明 |", "|---|---|---|"]
+    lines += ["", "| 常驻与控制组件 | 状态或用途 | 说明 |", "|---|---|---|"]
     for name, row in report["residents"].items():
         activity = {"halted": "停机", "running": "运行中", "idle": "空闲（无运行中批次）"}[row["activity"]]
         lines.append(f"| 常驻 {name} | {activity} | 最近状态：{cell(row.get('description'))}（PR #{row.get('pr')}，{row.get('at')}） |")

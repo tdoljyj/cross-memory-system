@@ -256,6 +256,7 @@ class AlertAndStateTests(unittest.TestCase):
                   "others": panel.OTHERS, "metrics": {}, "alerts": {}}
         body = panel.render(report, {})
         self.assertTrue(body.startswith(panel.MARKER))
+        self.assertIn("通用 runner 6 个", body)
         for name in [node["name"] for node in panel.POOL] + [other["name"] for other in panel.OTHERS]:
             self.assertIn(name, body)
         self.assertNotIn("clued-ci-home-linux-01", body)
