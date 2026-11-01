@@ -77,6 +77,12 @@ class Host:
     def service_present(self, name):
         return subprocess.run([SC, 'query', name], capture_output=True).returncode != 1060
 
+    def file_locks(self):
+        code, out, _ = self.powershell(os.path.join(HERE, 'tools', 'file-locks.ps1'), ['-Root', self.root])
+        if code != 0:
+            raise ValueError('RESTART_MANAGER_PROBE_FAILED:' + str(code))
+        return last_json(out)
+
     def wsl_python(self, distribution, argv, user=None):
         """python3 -I in the node's WSL distribution, clean environment: as the default user (the role derivation, which refuses root
         itself), or as root for the read-only host probe (user='root')."""
@@ -133,6 +139,21 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None):
     checks['node'] = {'configured': profile['nodeName'], 'package': pkg_node.get('nodeName')}
     if pkg_node != profile:
         find('PACKAGE_NODE_NOT_THE_CONFIGURED_PROFILE', package=pkg_node.get('nodeName'))
+
+    # This covers installed public binary files, not directories or protected
+    # secrets. A later rename still has its own exact completion evidence.
+    try:
+        locks = host.file_locks()
+        checks['fileLocks'] = locks
+        if (not isinstance(locks, dict) or locks.get('contract') != 'clued.independent-ci.rehearsal-file-locks/1'
+                or locks.get('status') != 'OBSERVED' or locks.get('coverage') != 'installed-public-binaries-only'
+                or type(locks.get('fileCount')) is not int or locks['fileCount'] < 1
+                or locks.get('secretsEnumerated') is not False or not isinstance(locks.get('external'), list)):
+            find('RESIDENT_FILE_LOCK_OBSERVATION_INVALID')
+        elif locks['external']:
+            find('EXTERNAL_RESIDENT_BINARY_LOCK', processes=locks['external'])
+    except Exception as error:
+        find('RESIDENT_FILE_LOCK_OBSERVATION_UNAVAILABLE', reason=str(error)[:400])
 
     # uninstall: the INSTALLED tool's real dry run against what the launcher template accepts
     receipt = host.read_json(host.path('install', 'install-receipt.json'))
