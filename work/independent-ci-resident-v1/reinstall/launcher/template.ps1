@@ -353,11 +353,17 @@ function Test-TerminalEvidence([string]$root) {
   }
   if ((Get-FileSha $p) -cne $TerminalEvidenceSha256) { return $false }
   if ($LedgerEvidenceRelativeDirectory -clike 'state\backfill\*') {
+    $live = Join-Path $root 'state\ledger'
+    if (-not [IO.Directory]::Exists($live) -or (([IO.File]::GetAttributes($live) -band [IO.FileAttributes]::ReparsePoint) -ne 0) -or [IO.Directory]::GetFileSystemEntries($live).Length -ne 0) { return $false }
     $install = Join-Path $root 'install'; $manifest = Join-Path $install 'backfill-manifest.json'
-    foreach ($q in @($install, $manifest)) {
+    $receipt = Join-Path $install 'install-receipt.json'
+    foreach ($q in @($install, $manifest, $receipt)) {
       if (-not (Test-Path -LiteralPath $q) -or (([IO.File]::GetAttributes($q) -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { return $false }
     }
     if ($BackfillEvidenceManifestSha256 -cnotmatch '^[0-9a-f]{64}$' -or (Get-FileSha $manifest) -cne $BackfillEvidenceManifestSha256) { return $false }
+    if ((Get-FileSha $receipt) -cne $InstalledReceiptSha256) { return $false }
+    $installed = [IO.File]::ReadAllText($receipt) | ConvertFrom-Json
+    if (-not $installed.PSObject.Properties['backfillManifestSha256'] -or $installed.backfillManifestSha256 -cne $BackfillEvidenceManifestSha256) { return $false }
   }
   return $true
 }
@@ -639,6 +645,8 @@ function Step-UninstallPreflight {
   $report = [ordered]@{}; $codes = New-Object Collections.Generic.List[string]
   $report['installedReceiptSha256'] = Get-FileSha (Join-Path $ResidentRoot 'install\install-receipt.json')
   if ($report['installedReceiptSha256'] -cne $InstalledReceiptSha256) { $codes.Add('INSTALLED_RECEIPT_NOT_AS_REVIEWED') }
+  $report['terminalEvidenceMatches'] = Test-TerminalEvidence $ResidentRoot
+  if (-not $report['terminalEvidenceMatches']) { $codes.Add('TERMINAL_EVIDENCE_CHANGED_BEFORE_QUIESCE') }
   $report['installedUninstallSha256'] = Get-FileSha $InstalledUninstall
   if ($report['installedUninstallSha256'] -cne $InstalledUninstallSha256) { $codes.Add('INSTALLED_UNINSTALL_NOT_AS_REVIEWED') }
   $report['haltSha256'] = Get-FileSha (Join-Path $ResidentRoot 'state\HALT.json')

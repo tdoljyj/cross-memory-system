@@ -41,6 +41,7 @@ $LedgerEvidenceRelativeDirectory = $c.relative
 $HaltedBatchKey = $c.key
 $TerminalEvidenceSha256 = $c.terminalSha
 $BackfillEvidenceManifestSha256 = $c.manifestSha
+$InstalledReceiptSha256 = $c.receiptSha
 [ordered]@{ accepted = (Test-TerminalEvidence $c.root) } | ConvertTo-Json -Compress
 '''
 
@@ -90,12 +91,18 @@ class LauncherServiceState(unittest.TestCase):
                 terminal = root / relative / key / '90-terminal.json'
                 terminal.parent.mkdir(parents=True)
                 terminal.write_bytes(b'{"outcome":"COMPLETED"}')
+                terminal_bytes = terminal.read_bytes()
+                (root / 'state/ledger').mkdir(parents=True, exist_ok=True)
                 manifest = root / 'install/backfill-manifest.json'
                 manifest.parent.mkdir()
                 manifest.write_bytes(b'{"pinned":"manifest"}')
+                manifest_bytes = manifest.read_bytes()
+                receipt = root / 'install/install-receipt.json'
+                receipt.write_text(json.dumps({'backfillManifestSha256': hashlib.sha256(manifest_bytes).hexdigest()}))
                 case = {'root': str(root), 'relative': relative.replace('/', '\\'), 'key': key,
                         'terminalSha': hashlib.sha256(terminal.read_bytes()).hexdigest(),
-                        'manifestSha': hashlib.sha256(manifest.read_bytes()).hexdigest()}
+                        'manifestSha': hashlib.sha256(manifest.read_bytes()).hexdigest(),
+                        'receiptSha': hashlib.sha256(receipt.read_bytes()).hexdigest()}
                 driver = root / 'driver.ps1'
                 driver.write_text(EVIDENCE_DRIVER, encoding='utf-8')
                 def run():
@@ -113,6 +120,19 @@ class LauncherServiceState(unittest.TestCase):
                 self.assertFalse(run())
                 case['relative'] = 'state\\..\\ledger'
                 self.assertFalse(run())
+                if 'backfill' in relative:
+                    case['relative'] = relative.replace('/', '\\')
+                    terminal.write_bytes(terminal_bytes)
+                    manifest.write_bytes(manifest_bytes)
+                    self.assertTrue(run())
+                    completed = root / 'state/ledger' / ('b' * 64)
+                    completed.mkdir()
+                    (completed / '90-terminal.json').write_bytes(b'{"outcome":"COMPLETED"}')
+                    self.assertFalse(run())
+                    (completed / '90-terminal.json').unlink()
+                    completed.rmdir()
+                    (root / 'state/ledger/unexpected-file').write_bytes(b'not empty')
+                    self.assertFalse(run())
 
 
 if __name__ == '__main__':

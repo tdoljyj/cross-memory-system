@@ -26,7 +26,7 @@ def plain(path, directory):
     return value
 
 
-def select_terminal(root, halted_key=None):
+def select_terminal(root, halted_key=None, expected_receipt_sha=None):
     root = Path(root).absolute()
     plain(root, True)
     plain(root / 'state', True)
@@ -46,6 +46,15 @@ def select_terminal(root, halted_key=None):
             manifest = root / 'install/backfill-manifest.json'
             plain(manifest, False)
             manifest_bytes = manifest.read_bytes()
+            receipt = root / 'install/install-receipt.json'
+            plain(receipt, False)
+            receipt_bytes = receipt.read_bytes()
+            if (not isinstance(expected_receipt_sha, str) or not re.fullmatch(r'[0-9a-f]{64}', expected_receipt_sha)
+                    or hashlib.sha256(receipt_bytes).hexdigest() != expected_receipt_sha):
+                raise ValueError('INSTALLED_RECEIPT_PIN_REQUIRED_OR_CHANGED')
+            installed = json.loads(receipt_bytes.decode('utf-8-sig'))
+            if installed.get('backfillManifestSha256') != hashlib.sha256(manifest_bytes).hexdigest():
+                raise ValueError('BACKFILL_MANIFEST_NOT_INSTALLED')
             doc = json.loads(manifest_bytes.decode('utf-8-sig'))
             if doc.get('contract') != 'clued.independent-ci.resident-backfill-manifest/1' or not isinstance(doc.get('sources'), list):
                 raise ValueError('BACKFILL_MANIFEST_INVALID')

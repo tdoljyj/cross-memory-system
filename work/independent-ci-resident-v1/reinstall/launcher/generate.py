@@ -48,7 +48,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = '404d8e358f3adcfbe4a585b3b3df071f187a74895cfe03f250aa99ea5efb1cb8'   # f019 host compatibility and exact terminal evidence; review with this source
+TEMPLATE_SHA = 'fc11af99e6d6969ff913da273192878d515e95ffd1b63164ba67a29d25027ba1'   # f019 receipt-bound terminal evidence and native SC exit codes
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])
@@ -320,7 +320,10 @@ present += ['outgoing/active.lock'] if os.path.exists(os.path.join(SPOOL, 'outgo
 
 # ---- installed (old) resident, read live ----
 live_receipt = os.path.join(LIVE_ROOT, 'install', 'install-receipt.json')
-installed_resident = json.load(open(live_receipt, encoding='utf-8-sig'))['residentManifestSha256']
+with open(live_receipt, 'rb') as _stream:
+    installed_receipt_bytes = _stream.read()
+installed_receipt_sha = hashlib.sha256(installed_receipt_bytes).hexdigest()
+installed_resident = json.loads(installed_receipt_bytes.decode('utf-8-sig'))['residentManifestSha256']
 u_sha = sha(os.path.join(LIVE_ROOT, 'resident', installed_resident, 'windows', 'uninstall-resident.ps1'))
 halt_present = os.path.exists(os.path.join(LIVE_ROOT, 'state', 'HALT.json'))
 ACCEPT_HALT = opt('--accept-halt-sha256')
@@ -340,7 +343,7 @@ open_entries = [e for e in entries if not os.path.exists(os.path.join(ledger, e,
 terminal = [e for e in entries if e not in open_entries]
 _spec = importlib.util.spec_from_file_location('ledger_evidence', os.path.join(HERE, '..', 'tools', 'ledger-evidence.py'))
 _ledger_evidence = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(_ledger_evidence)
-terminal_evidence = _ledger_evidence.select_terminal(LIVE_ROOT, halt_doc['facts']['key'] if halt_accepted else None)
+terminal_evidence = _ledger_evidence.select_terminal(LIVE_ROOT, halt_doc['facts']['key'] if halt_accepted else None, installed_receipt_sha)
 newest_key = terminal_evidence['key']
 quiet = {'haltPresent': halt_present, 'paused': paused_present, 'current': current, 'executorState': status.get('executor', {}).get('state'),
          'openLedgerEntries': open_entries, 'statusWrittenAt': status.get('writtenAt')}
@@ -420,7 +423,7 @@ lines = [
     '}',
     '$InstalledResidentManifestSha256 = ' + q(installed_resident) + '   # the installed (Source34) resident tree',
     '$InstalledUninstallSha256 = ' + q(u_sha),
-    '$InstalledReceiptSha256 = ' + q(sha(live_receipt)),
+    '$InstalledReceiptSha256 = ' + q(installed_receipt_sha),
     '$InstalledHaltSha256 = ' + (q(halt_sha) if halt_accepted else '$null') + '   # r4.1 C3: the accepted HALT.json of the installed resident (--accept-halt-sha256)',
     '$InstalledHaltCode = ' + (q(halt_doc['code']) if halt_accepted else '$null'),
     '$ParentAclPath = ' + q(PARENT) + '   # r4.1 C2',
@@ -473,7 +476,7 @@ print(json.dumps({'launcher': out, 'sha256': launcher_sha, 'bytes': len(data), '
                   'packageManifestSha256': pkg_sha, 'residentManifestSha256': pkg['residentManifestSha256'], 'ciSourceManifestSha256': pkg['ciSourceManifestSha256'],
                   'planSha256': dry['planSha256'], 'dryRun': dry_file, 'runnerBeforeUsable': runner_usable, 'runnerBefore': rb,
                   'linuxLiveSourceManifest': linux_live, 'linuxAdoptedPackage': ADOPTED_PKG, 'linuxEvidenceSha256': linux_evidence_sha,
-                  'oldRoot': {'installedResident': installed_resident, 'receiptSha256': sha(live_receipt), 'uninstallSha256': u_sha, 'newestTerminalKey': newest_key, 'terminalEvidence': terminal_evidence, **quiet},
+                  'oldRoot': {'installedResident': installed_resident, 'receiptSha256': installed_receipt_sha, 'uninstallSha256': u_sha, 'newestTerminalKey': newest_key, 'terminalEvidence': terminal_evidence, **quiet},
                   'finalWouldRefuse': refusals, 'launchDir': LAUNCH_DIR, 'pauseRequestDacl': pause_dacl,
                   'pauseWaitSeconds': PAUSE_WAIT_SECONDS, 'firstTrainWaitSeconds': FIRST_TRAIN_WAIT_SECONDS, 'runnerQuietWaitSeconds': RUNNER_QUIET_WAIT_SECONDS,
                   'installedPausedSha256': paused_sha, 'haltAccepted': halt_accepted, 'haltSha256': halt_sha, 'parentSddlNow': parent_live, 'secretTargetsExist': SECRETS_EXIST,

@@ -22,6 +22,7 @@ class LedgerEvidence(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / 'state/ledger').mkdir(parents=True)
         (self.root / 'install').mkdir()
+        self.receipt_sha = None
 
     def terminal(self, relative='state/ledger', key=KEY):
         directory = self.root / relative / key
@@ -37,12 +38,19 @@ class LedgerEvidence(unittest.TestCase):
             {'dir': '3', 'files': [{'path': 'ledger\\' + KEY + '\\90-terminal.json',
                                   'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data)}]}]}
         (self.root / 'install/backfill-manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
+        manifest_sha = hashlib.sha256((self.root / 'install/backfill-manifest.json').read_bytes()).hexdigest()
+        receipt = self.root / 'install/install-receipt.json'
+        receipt.write_text(json.dumps({'backfillManifestSha256': manifest_sha}), encoding='utf-8')
+        self.receipt_sha = hashlib.sha256(receipt.read_bytes()).hexdigest()
         return path
+
+    def select(self, key=None):
+        return EVIDENCE.select_terminal(self.root, key, self.receipt_sha)
 
     def test_live_terminal_remains_primary(self):
         self.backfill()
         path = self.terminal()
-        result = EVIDENCE.select_terminal(self.root)
+        result = self.select()
         self.assertEqual(result['relativeDirectory'], 'state/ledger')
         self.assertIsNone(result['backfillManifestSha256'])
         self.assertEqual(result['terminalSha256'], hashlib.sha256(path.read_bytes()).hexdigest())
@@ -50,7 +58,7 @@ class LedgerEvidence(unittest.TestCase):
     def test_empty_live_uses_only_existing_manifested_backfill_bytes(self):
         path = self.backfill()
         before = path.read_bytes()
-        result = EVIDENCE.select_terminal(self.root)
+        result = self.select()
         self.assertEqual(result['relativeDirectory'], 'state/backfill/3/ledger')
         self.assertEqual(result['key'], KEY)
         self.assertEqual(result['terminalSha256'], hashlib.sha256(before).hexdigest())
@@ -62,17 +70,17 @@ class LedgerEvidence(unittest.TestCase):
         self.backfill()
         (self.root / 'state/ledger' / ('b' * 64)).mkdir()
         with self.assertRaisesRegex(ValueError, 'LIVE_LEDGER_NOT_TERMINAL'):
-            EVIDENCE.select_terminal(self.root)
+            self.select()
 
     def test_missing_history_is_refused(self):
         with self.assertRaisesRegex(ValueError, 'NO_TERMINAL_LEDGER_ENTRY'):
-            EVIDENCE.select_terminal(self.root)
+            self.select()
 
     def test_changed_backfill_is_not_relabelled_as_valid_history(self):
         path = self.backfill()
         path.write_bytes(b'{"outcome":"FAILED_CLEAN"}')
         with self.assertRaisesRegex(ValueError, 'BACKFILL_TERMINAL_NOT_MANIFESTED'):
-            EVIDENCE.select_terminal(self.root)
+            self.select()
 
     def test_missing_or_duplicate_manifest_entry_is_refused(self):
         self.backfill()
@@ -80,24 +88,44 @@ class LedgerEvidence(unittest.TestCase):
         doc = json.loads(path.read_text())
         doc['sources'][0]['files'] *= 2
         path.write_text(json.dumps(doc))
+        receipt = self.root / 'install/install-receipt.json'
+        receipt.write_text(json.dumps({'backfillManifestSha256': hashlib.sha256(path.read_bytes()).hexdigest()}))
+        self.receipt_sha = hashlib.sha256(receipt.read_bytes()).hexdigest()
         with self.assertRaisesRegex(ValueError, 'BACKFILL_MANIFEST_DUPLICATE'):
-            EVIDENCE.select_terminal(self.root)
+            self.select()
         doc['sources'][0]['files'] = []
         path.write_text(json.dumps(doc))
+        receipt.write_text(json.dumps({'backfillManifestSha256': hashlib.sha256(path.read_bytes()).hexdigest()}))
+        self.receipt_sha = hashlib.sha256(receipt.read_bytes()).hexdigest()
         with self.assertRaisesRegex(ValueError, 'BACKFILL_TERMINAL_NOT_MANIFESTED'):
-            EVIDENCE.select_terminal(self.root)
+            self.select()
 
     def test_exact_halted_key_must_exist(self):
         self.backfill()
-        self.assertEqual(EVIDENCE.select_terminal(self.root, KEY)['key'], KEY)
+        self.assertEqual(self.select(KEY)['key'], KEY)
         with self.assertRaisesRegex(ValueError, 'NO_TERMINAL_LEDGER_ENTRY'):
-            EVIDENCE.select_terminal(self.root, 'b' * 64)
+            self.select('b' * 64)
 
     def test_hard_linked_terminal_is_refused(self):
         path = self.terminal()
         os.link(path, self.root / 'other.json')
         with self.assertRaisesRegex(ValueError, 'LEDGER_EVIDENCE_NOT_PLAIN'):
-            EVIDENCE.select_terminal(self.root)
+            self.select()
+
+    def test_terminal_and_manifest_changed_together_still_refuse(self):
+        terminal = self.backfill()
+        terminal.write_bytes(b'{"outcome":"FAILED_CLEAN"}')
+        manifest = self.root / 'install/backfill-manifest.json'
+        document = json.loads(manifest.read_text())
+        entry = document['sources'][0]['files'][0]
+        entry.update(sha256=hashlib.sha256(terminal.read_bytes()).hexdigest(), bytes=terminal.stat().st_size)
+        manifest.write_text(json.dumps(document))
+        with self.assertRaisesRegex(ValueError, 'BACKFILL_MANIFEST_NOT_INSTALLED'):
+            self.select()
+        receipt = self.root / 'install/install-receipt.json'
+        receipt.write_text(json.dumps({'backfillManifestSha256': hashlib.sha256(manifest.read_bytes()).hexdigest()}))
+        with self.assertRaisesRegex(ValueError, 'INSTALLED_RECEIPT_PIN_REQUIRED_OR_CHANGED'):
+            self.select()
 
 
 class AdoptedRehearsal(unittest.TestCase):
