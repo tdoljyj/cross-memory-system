@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { sha256 } from '../../src/canonical.mjs';
-import { decide } from '../src/machine.mjs';
+import { applyFailure, decide } from '../src/machine.mjs';
+import { lastFailureOf } from '../src/upgrader-main.mjs';
 import { U } from '../src/codes.mjs';
 import { RECEIPT_SLOT } from '../src/plan.mjs';
 import { T0, journalOnly, treeDigest } from './fixtures.mjs';
@@ -577,4 +578,40 @@ test('retry numbers used up end with UPGRADE_RETRIES_EXHAUSTED (not GRANT_STALE)
   const r = await runOp(env, op);
   assert.deepEqual([r.terminal.outcome, r.terminal.code], ['STALE', U.RETRIES_EXHAUSTED]);
   assert.equal((await loadJournal(env, op)).steps.filter(s => s.step === 'drain').length, 10);
+});
+
+test('Task 42fe5ae4: a failed Windows step records where it failed and upgrade-apply.ps1\'s own code; a rollback wait shows it in status', async t => {
+  // Compile: the step's code stays WINDOWS_STAGE_REFUSED, its detail names compile and the script's code.
+  const env = await makeEnv(t, { windowsOptions: { failCompile: true } });
+  const op = await openOp(env, 'n2');
+  await runOp(env, op);
+  const stage = (await loadJournal(env, op)).steps.find(s => s.step === 'stage-windows');
+  assert.equal(stage.result.code, U.WINDOWS_STAGE_REFUSED);
+  assert.deepEqual(stage.result.detail, { where: 'compile', applyCode: 'COMPILE_FAILED', applyAt: null });
+  // Start: START_FAILED with the failing action.
+  const env2 = await makeEnv(t, { windowsOptions: { failStart: g => g === 2 } });
+  const op2 = await openOp(env2, 'n2');
+  await runOp(env2, op2);
+  const start = (await loadJournal(env2, op2)).steps.find(s => s.step === 'start');
+  assert.deepEqual([start.result.code, start.result.detail], [U.START_FAILED, { where: 'start-services', applyCode: 'START_FAILED', applyAt: null }]);
+  // The companion restart failing during rollback-switch-windows (op 8e3b3e1b): the wait carries the restart's code, the
+  // status file shows it, and the final result keeps it.
+  const env3 = await makeEnv(t, { windowsOptions: { failVerify: g => g === 2, companionDown: () => env3.resident.receipts.length > 0 } });
+  const op3 = await openOp(env3, 'n2');
+  let seen = null;
+  const r3 = await runOp(env3, op3, { onMove: async m => { if (seen === null && m.view.code === U.ROLLBACK_COMPANION_UNAVAILABLE) seen = m.view.lastFailure; } });
+  assert.deepEqual(seen, { where: 'restart-companion', applyCode: 'COMPANION_TASK_NOT_RUNNING', applyAt: null });
+  assert.deepEqual([r3.terminal.outcome, r3.terminal.code], ['ROLLBACK_FAILED', U.ROLLBACK_COMPANION_UNAVAILABLE]);
+  const step = (await loadJournal(env3, op3)).steps.find(s => s.step === 'rollback-switch-windows');
+  assert.deepEqual(step.result.detail, { where: 'restart-companion', applyCode: 'COMPANION_TASK_NOT_RUNNING', applyAt: null });
+  assert.deepEqual(lastFailureOf({}, (await loadJournal(env3, op3)).steps),
+    { step: 'rollback-switch-windows', code: U.ROLLBACK_COMPANION_UNAVAILABLE, where: 'restart-companion', applyCode: 'COMPANION_TASK_NOT_RUNNING', applyAt: null });
+});
+
+test('Task 42fe5ae4: applyFailure keeps only a fixed code shape and the journal\'s value alphabet', () => {
+  assert.deepEqual(applyFailure('compile', { code: 'RUNNER_STABLE_DIGEST_UNCONFIRMED', at: 'bin\\SwapBroker.cs' }),
+    { where: 'compile', applyCode: 'RUNNER_STABLE_DIGEST_UNCONFIRMED', applyAt: 'bin.SwapBroker.cs' });
+  assert.deepEqual(applyFailure('stop-services', { code: 'not a code', at: '' }), { where: 'stop-services', applyCode: null, applyAt: null });
+  assert.deepEqual(applyFailure('read-package'), { where: 'read-package', applyCode: null, applyAt: null });
+  assert.equal(applyFailure('x', { code: 'A_B', at: 'y'.repeat(200) }).applyAt.length, 80);
 });

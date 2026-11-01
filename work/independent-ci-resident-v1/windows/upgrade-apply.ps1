@@ -218,10 +218,15 @@ function ConvertFrom-ScState([string]$text) {
   [ordered]@{ state = $(if ($names.ContainsKey($state)) { $names[$state] } else { 'unknown' }); processId = $procId }
 }
 function ConvertFrom-ScBinPath([string]$text) { if ($text -match 'BINARY_PATH_NAME\s*:\s*(.+)') { $Matches[1].Trim() } else { $null } }
-# A companion node process of the installed copy: its command line names the installed companion-main.mjs with --root <root>.
+# A companion node process of the installed copy: its command line names the installed node.exe, companion-main.mjs and
+# --root <root>, whole tokens from the start. conhost --headless starts node with the task's arguments quoted only where
+# needed, so on this root (no space) the real command line has no quotes (op 8e3b3e1b, Task 42fe5ae4: the quoted-only
+# form matched no companion, the restart never found its new process and the rollback started one more every minute).
+# Each path is accepted quoted or bare.
 function Test-CompanionCommandLine([string]$commandLine, [string]$root) {
   $e = [regex]::Escape($root)
-  [string]$commandLine -cmatch ('"' + $e + '\\resident\\[0-9a-f]{64}\\src\\companion-main\.mjs" --root "' + $e + '" --config-sha256 [0-9a-f]{64}\s*\z')
+  $node = $e + '\\runtime\\node\.exe'; $main = $e + '\\resident\\[0-9a-f]{64}\\src\\companion-main\.mjs'
+  [string]$commandLine -cmatch ('\A(?:"' + $node + '"|' + $node + ') (?:"' + $main + '"|' + $main + ') --root (?:"' + $e + '"|' + $e + ') --config-sha256 [0-9a-f]{64}\s*\z')
 }
 # One file, read once: a regular file (no directory, no link), 1..$maximum bytes, unchanged while read.
 function Read-SmallFile([string]$path, [int]$maximum, [string]$code) {
