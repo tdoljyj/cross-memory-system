@@ -56,11 +56,22 @@ namespace CluedRehearsalLocks {
 '@
 }
 function Test-ExpectedLocker($item, $expected) {
-  if (-not $expected.Contains([uint32]$item.Process.Pid)) { return $false }
+  $pidValue = [uint32]$item.Process.Pid
+  if (-not $expected.ContainsKey($pidValue) -or $expected[$pidValue] -ne [CluedRehearsalLocks.Query]::Start($item)) { return $false }
   try {
     $actual = [Diagnostics.Process]::GetProcessById([int]$item.Process.Pid)
     return ($actual.StartTime.ToUniversalTime().ToFileTimeUtc() -eq [CluedRehearsalLocks.Query]::Start($item))
   } catch { return $false }
+}
+function Test-CurrentProcessSnapshot($snapshot) {
+  try {
+    $actual = [Diagnostics.Process]::GetProcessById([int]$snapshot.pid)
+    return ($actual.StartTime.ToUniversalTime().ToFileTimeUtc() -eq $snapshot.startedFileTime)
+  } catch { return $false }
+}
+function Test-ExpectedChildIdentity($parent, $child, $expected) {
+  return ($expected.ContainsKey([uint32]$parent.pid) -and $expected[[uint32]$parent.pid] -eq $parent.startedFileTime -and
+    $child.parentPid -eq $parent.pid -and $child.startedFileTime -ge $parent.startedFileTime)
 }
 if ($LibraryOnly) { return }
 if ($Root -cne 'C:\ProgramData\CluedIndependentCI\resident') { throw 'RESIDENT_ROOT_NOT_THE_FIXED_TARGET' }
@@ -84,19 +95,36 @@ foreach ($relative in @('bin', 'runtime', 'broker\bin', 'upgrader\runtime')) {
   }
 }
 if ($files.Count -eq 0) { throw 'INSTALLED_PUBLIC_BINARIES_NOT_FOUND' }
-$processes = @(Get-CimInstance -ClassName Win32_Process)
-$expected = New-Object 'Collections.Generic.HashSet[uint32]'
+$processes = New-Object 'Collections.Generic.Dictionary[uint32,object]'
+foreach ($process in @(Get-CimInstance -ClassName Win32_Process)) {
+  try {
+    $started = [Diagnostics.Process]::GetProcessById([int]$process.ProcessId).StartTime.ToUniversalTime().ToFileTimeUtc()
+    # WMI exposes microseconds, while RM/GetProcessById preserve FILETIME's
+    # 100 ns ticks. Correlate the WMI row before retaining the full identity.
+    if ($process.CreationDate.ToUniversalTime().ToFileTimeUtc() -ne ($started - ($started % 10))) { continue }
+    $snapshot = [pscustomobject]@{ pid = [uint32]$process.ProcessId; parentPid = [uint32]$process.ParentProcessId
+      startedFileTime = $started; executablePath = [string]$process.ExecutablePath }
+    $processes[$snapshot.pid] = $snapshot
+  } catch { # Missing creation identity is never enough to exempt a locker.
+  }
+}
+$expected = New-Object 'Collections.Generic.Dictionary[uint32,long]'
 foreach ($service in @(Get-CimInstance -ClassName Win32_Service | Where-Object { @('CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader') -ccontains $_.Name })) {
-  if ($service.ProcessId) { [void]$expected.Add([uint32]$service.ProcessId) }
+  $pidValue = [uint32]$service.ProcessId
+  if ($processes.ContainsKey($pidValue) -and (Test-CurrentProcessSnapshot $processes[$pidValue])) { $expected[$pidValue] = $processes[$pidValue].startedFileTime }
 }
 $taskHost = Join-Path $Root 'bin\CluedCompanionJobHost.exe'
-foreach ($process in $processes) {
-  if ([string]::Equals([string]$process.ExecutablePath, $taskHost, [StringComparison]::OrdinalIgnoreCase)) { [void]$expected.Add([uint32]$process.ProcessId) }
+foreach ($process in $processes.Values) {
+  if ([string]::Equals($process.executablePath, $taskHost, [StringComparison]::OrdinalIgnoreCase) -and (Test-CurrentProcessSnapshot $process)) { $expected[$process.pid] = $process.startedFileTime }
 }
 do {
   $changed = $false
-  foreach ($process in $processes) {
-    if ($expected.Contains([uint32]$process.ParentProcessId) -and $expected.Add([uint32]$process.ProcessId)) { $changed = $true }
+  foreach ($process in $processes.Values) {
+    if ($expected.ContainsKey($process.pid) -or -not $processes.ContainsKey($process.parentPid)) { continue }
+    $parent = $processes[$process.parentPid]
+    if ((Test-ExpectedChildIdentity $parent $process $expected) -and (Test-CurrentProcessSnapshot $parent) -and (Test-CurrentProcessSnapshot $process)) {
+      $expected[$process.pid] = $process.startedFileTime; $changed = $true
+    }
   }
 } while ($changed)
 $observed = @([CluedRehearsalLocks.Query]::Files($files.ToArray()))

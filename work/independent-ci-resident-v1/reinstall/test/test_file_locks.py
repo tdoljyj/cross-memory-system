@@ -21,17 +21,31 @@ $ErrorActionPreference = 'Stop'
 $items = @([CluedRehearsalLocks.Query]::Files(@($File)))
 $item = @($items | Where-Object { $_.Process.Pid -eq $Holder })
 if ($item.Count -ne 1) { throw 'DISPOSABLE_HOLDER_NOT_OBSERVED' }
-$expected = New-Object 'Collections.Generic.HashSet[uint32]'
+$expected = New-Object 'Collections.Generic.Dictionary[uint32,long]'
 $externalBefore = -not (Test-ExpectedLocker $item[0] $expected)
-[void]$expected.Add($Holder)
+$expected[$Holder] = [CluedRehearsalLocks.Query]::Start($item[0])
 $sameIdentityAccepted = Test-ExpectedLocker $item[0] $expected
+$expected[$Holder] = $expected[$Holder] -bxor 1
+$staleExpectedRefused = -not (Test-ExpectedLocker $item[0] $expected)
+$expected[$Holder] = [CluedRehearsalLocks.Query]::Start($item[0])
 $changed = $item[0]; $identity = $changed.Process; $started = $identity.Started
 $started.dwLowDateTime = $started.dwLowDateTime -bxor 1
 $identity.Started = $started; $changed.Process = $identity
 $wrongIdentityRefused = -not (Test-ExpectedLocker $changed $expected)
+$parent = [pscustomobject]@{pid=[uint32]100; startedFileTime=[long]200}
+$child = [pscustomobject]@{pid=[uint32]101; parentPid=[uint32]100; startedFileTime=[long]300}
+$treeExpected = New-Object 'Collections.Generic.Dictionary[uint32,long]'
+$treeExpected[[uint32]100] = 200
+$childIdentityAccepted = Test-ExpectedChildIdentity $parent $child $treeExpected
+$child.startedFileTime = 150
+$reusedParentRefused = -not (Test-ExpectedChildIdentity $parent $child $treeExpected)
+$child.startedFileTime = 300; $treeExpected[[uint32]100] = 199
+$staleParentSnapshotRefused = -not (Test-ExpectedChildIdentity $parent $child $treeExpected)
 $directoryRefused = $false
 try { $null = [CluedRehearsalLocks.Query]::Files(@($Directory)) } catch { $directoryRefused = $true }
 [ordered]@{ externalObserved = $externalBefore; expectedIdentityAccepted = $sameIdentityAccepted; wrongIdentityRefused = $wrongIdentityRefused
+  staleExpectedRefused = $staleExpectedRefused; childIdentityAccepted = $childIdentityAccepted
+  reusedParentRefused = $reusedParentRefused; staleParentSnapshotRefused = $staleParentSnapshotRefused
   directoryRefused = $directoryRefused; infoSize = [Runtime.InteropServices.Marshal]::SizeOf([type][CluedRehearsalLocks.Info])
   identitySize = [Runtime.InteropServices.Marshal]::SizeOf([type][CluedRehearsalLocks.Identity])
   emptyCount = @([CluedRehearsalLocks.Query]::Files(@())).Count } | ConvertTo-Json -Compress
@@ -63,6 +77,8 @@ class FileLocks(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 data = json.loads(result.stdout)
                 self.assertEqual(data, {'externalObserved': True, 'expectedIdentityAccepted': True, 'wrongIdentityRefused': True,
+                                       'staleExpectedRefused': True, 'childIdentityAccepted': True,
+                                       'reusedParentRefused': True, 'staleParentSnapshotRefused': True,
                                        'directoryRefused': True, 'infoSize': 668, 'identitySize': 12, 'emptyCount': 0})
                 self.assertIsNone(child.poll(), 'observation must not stop the holder')
                 self.assertEqual(target.read_bytes(), original)
