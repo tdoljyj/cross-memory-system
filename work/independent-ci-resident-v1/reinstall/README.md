@@ -70,7 +70,24 @@ powershell -NoProfile -File build.ps1 -Config config\desk-w-591.json -Commit ...
 - **心跳令牌**（2026-10-31，模板 sha `5ff3a1c1`）：配置了 `heartbeat` 时，带令牌的 dry run 和 `-Apply` 再加 `-HeartbeatTokenFile`，配置了 `bindingId` 时再加 `-HeartbeatBindingId`。审过的计划（非提权、不带令牌）不变，卸载之前的 carry-forward 预览也不带心跳令牌。提权比对时把 `plan.heartbeatToken` 也剥出来逐项核对：目标是本包安装器的 `secrets\heartbeat\ci-node-heartbeat.token`、supplied、目标不存在、目录和两个 SDDL 与审过的计划相同、64 位 hex 指纹、verified、`bindingId` 恰好是配置的值；不对就报 `HEARTBEAT_TOKEN_PLAN_FIELDS_NOT_AS_EXPECTED`。没配置时这一项留在其余字段里，必须与审过的相同，和以前一样。生成器核对包的安装器支持心跳令牌（不支持时报 `PACKAGE_INSTALLER_HAS_NO_HEARTBEAT_TOKEN`），final 缺令牌文件时报 `HEARTBEAT_TOKEN_FILE_MISSING`。`HeartbeatBindingId` 在计划里的位置按 `plan.heartbeatToken.bindingId` 核对。
 - **心跳令牌补装或换新（90 天到期）**：今天没有不重装的办法。`install-resident.ps1` 只做全新安装，目标已存在时拒绝（`HEARTBEAT_TOKEN_TARGET_EXISTS_NOT_OVERWRITTEN`）；升级通道不碰 `secrets`。所以补装或换新都要整套重装一次。要免重装，需要一个新的提权小工具（放在 `windows/`，要审核）：按安装器同样的规则核对目录和文件的 ACL，拒绝 CI 令牌和升级令牌，在同一目录里按文件 SDDL 写新内容再原子替换，写一份回执。服务端关联新连接（`/bindings/failover`）会替换旧的关联。这个工具这里没有做。
 
+### 4.1 只完成先前卸载的目录改名
+
+`launcher/resume.py` 仅处理同一模板生成、已经审过的 final 启动器在 `UNINSTALL_NOT_COMPLETED` 停下，且旧 resident 根目录仍存在的半卸载。原启动器、原终结记录和原预检查都保留；已有成功卸载回执或根目录已经改名的情况会拒绝。
+
+```
+python -I launcher/resume.py --launcher <原启动器> --launcher-sha <原生成回执中已审的SHA256> \
+  --prior-dir <原launch目录> --launch-dir <原workDir下的新目录> --out <原workDir下的新ps1>
+```
+
+`--launcher-sha` 必须来自已核对的原生成回执，不能对来历不明的脚本现算摘要来替代原审批。生成器核对模板主体和只含字面量的 pins，绑定原 Source、包提交与失败步骤，钉住五份原公开报告，并生成新的脚本和摘要校验命令；它不执行、不提权，也不授予包或 Source 的接受权限。输出仍需完整独立复核和适用的 Owner 执行授权。
+
+新入口在实际改名前重新核对三服务都已删除、companion task 与旧防火墙规则已删除、runner 原样停止、无进程或批次、账本/暂停/HALT/安装回执/旧卸载器字节与原 pins 一致、无升级操作、spool 空及权限/秘密目标/携带状态预检查。只补同目录下的 rename 和原计划摘要的卸载回执，不重跑卸载、停止/删除服务或修改配置。随后继续原包的安装、verify、暂停、companion 与 rearm 流程；原流程的其余代码不变。
+
 ## 5. 对已装现场的全量只读预演：`rehearse.py`（预演不过不出 final）
+
+Windows 预演还通过 Restart Manager 只读检查已安装公开二进制（`bin`、`runtime`、`broker/bin`、`upgrader/runtime` 的 exe/dll）。发现外部占用进程时报告 `EXTERNAL_RESIDENT_BINARY_LOCK`；观察失败时也记 finding，不把未知当作无占用。预期服务、companion host 及其当前子进程仍以 PID 和进程启动时间复核。探针不停止或重启进程，不枚举秘密、账本或工作目录。
+
+此检查只覆盖已登记的公开二进制文件。Restart Manager 不接受目录资源，因此它不能证明不存在目录句柄或整个 resident 目录一定能改名；报告明确写出 `directoryHandlesCovered=false`，正式卸载仍须取得原有的精确改名与保留证据。
 
 ```
 python -I rehearse.py config\turing.json --commit <40hex> --package <包目录>
