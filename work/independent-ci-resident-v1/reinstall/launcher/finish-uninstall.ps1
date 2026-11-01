@@ -1,5 +1,18 @@
 # Source fragment for resume.py, injected into the unchanged reinstall launcher.
 # Defining these functions has no effects. Only the reviewed launcher calls them.
+function Assert-ResumeCurrentFactsAndRemovedConfig {
+  # Preserve the original pre-uninstall facts check before any rename/write.
+  if ($LinuxVersionFactsSha256 -and (Get-FileSha $LinuxVersionFactsSource) -cne $LinuxVersionFactsSha256) {
+    throw 'RESUME_LINUX_VERSION_FACTS_CHANGED_BEFORE_RENAME'
+  }
+  # Enumerate successfully, then select the exact old names. A missing named
+  # object is valid; provider, access and transport failures are not absence.
+  try { $tasks = @(Get-ScheduledTask -ErrorAction Stop) } catch { throw 'RESUME_TASK_QUERY_UNAVAILABLE' }
+  if (@($tasks | Where-Object { $_.TaskPath -eq '\Clued\' -and $_.TaskName -eq 'CluedCIResidentCompanion' }).Count) { throw 'RESUME_COMPANION_TASK_PRESENT' }
+  try { $rules = @(Get-NetFirewallRule -ErrorAction Stop) } catch { throw 'RESUME_FIREWALL_QUERY_UNAVAILABLE' }
+  if (@($rules | Where-Object { $_.Name -eq 'CluedCIResident-BlockOutbound' }).Count) { throw 'RESUME_OLD_FIREWALL_RULE_PRESENT' }
+}
+
 function Complete-PartialUninstallRename([string]$root, [string]$target, [string]$planSha, [string]$priorSha) {
   if ($planSha -cnotmatch '^[0-9a-f]{64}$' -or $priorSha -cnotmatch '^[0-9a-f]{64}$') { throw 'RESUME_RECEIPT_PINS_REQUIRED' }
   $root = [IO.Path]::GetFullPath($root); $target = [IO.Path]::GetFullPath($target)
@@ -74,9 +87,8 @@ function Step-FinishUninstall {
   Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\CimCmdlets\CimCmdlets.psd1'
   if (@(Get-CimInstance Win32_Service -Filter "Name='CluedCIResident' OR Name='CluedCISwapBroker' OR Name='CluedCIUpgrader'").Count) { Stop-Launch 'RESUME_CIM_SERVICES_NOT_ABSENT' $null }
   Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\ScheduledTasks\ScheduledTasks.psd1'
-  if (@(Get-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -ErrorAction SilentlyContinue).Count) { Stop-Launch 'RESUME_COMPANION_TASK_PRESENT' $null }
   Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\NetSecurity\NetSecurity.psd1'
-  if (@(Get-NetFirewallRule -Name 'CluedCIResident-BlockOutbound' -ErrorAction SilentlyContinue).Count) { Stop-Launch 'RESUME_OLD_FIREWALL_RULE_PRESENT' $null }
+  Assert-ResumeCurrentFactsAndRemovedConfig
   $found = Get-SpoolLeftovers $Spool; $remainder = Get-SpoolRemainder $Spool $found
   if ($found.Count -or $remainder.Count) { Stop-Launch 'RESUME_SPOOL_NOT_EMPTY' $null }
   # Retain the real original pre-uninstall proof for the unchanged post-rename

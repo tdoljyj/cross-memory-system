@@ -17,7 +17,8 @@ def validate_terminal(raw, expected_sha, source_sha, package_head):
     require(isinstance(raw, bytes) and 0 < len(raw) <= 16 * 1024 * 1024, 'PRIOR_TERMINAL_SIZE')
     require(re.fullmatch(r'[0-9a-f]{64}', expected_sha or '') is not None
             and hashlib.sha256(raw).hexdigest() == expected_sha, 'PRIOR_TERMINAL_CHANGED')
-    require(re.fullmatch(r'[0-9a-f]{64}', source_sha or '') is not None
+    # sourceSha names the Git COMMIT, not the 64-character manifest digest.
+    require(re.fullmatch(r'[0-9a-f]{40}', source_sha or '') is not None
             and re.fullmatch(r'[0-9a-f]{40}', package_head or '') is not None, 'RESUME_SUBJECT_INVALID')
     document = json.loads(raw.decode('utf-8-sig'))
     require(isinstance(document, dict)

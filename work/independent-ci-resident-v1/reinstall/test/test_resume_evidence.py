@@ -8,7 +8,7 @@ import unittest
 SPEC = importlib.util.spec_from_file_location('resume_evidence', Path(__file__).resolve().parents[1] / 'launcher/resume-evidence.py')
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
-SOURCE, HEAD = 'a' * 64, 'b' * 40
+SOURCE, HEAD = 'a' * 40, 'b' * 40
 
 
 def fixture():
@@ -41,11 +41,17 @@ class ResumeEvidence(unittest.TestCase):
             MODULE.validate_terminal(raw + b' ', hashlib.sha256(raw).hexdigest(), SOURCE, HEAD)
 
     def test_other_subject_or_terminal_code_refused(self):
-        for key, value in [('sourceSha', 'd' * 64), ('packageHead', 'e' * 40), ('code', 'LAUNCHER_EXCEPTION'), ('status', 'COMPLETED')]:
+        for key, value in [('sourceSha', 'd' * 40), ('packageHead', 'e' * 40), ('code', 'LAUNCHER_EXCEPTION'), ('status', 'COMPLETED')]:
             with self.subTest(key=key):
                 doc = fixture(); doc[key] = value
                 with self.assertRaisesRegex(ValueError, 'PRIOR_TERMINAL_NOT_THE_FAILED_UNINSTALL'):
                     validated(doc)
+
+    def test_manifest_digest_cannot_be_used_as_git_source_commit(self):
+        doc = fixture(); doc['sourceSha'] = 'a' * 64
+        raw = json.dumps(doc).encode()
+        with self.assertRaisesRegex(ValueError, 'RESUME_SUBJECT_INVALID'):
+            MODULE.validate_terminal(raw, hashlib.sha256(raw).hexdigest(), 'a' * 64, HEAD)
 
     def test_missing_reordered_or_later_steps_refused(self):
         done = fixture()['completed']

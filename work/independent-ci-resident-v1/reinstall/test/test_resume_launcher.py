@@ -31,7 +31,7 @@ class ResumeLauncher(unittest.TestCase):
         # never runs a generated launch or uses an installed package.
         names = set(re.findall(r"'\$(\w+) = ", (HERE / 'generate.py').read_text(encoding='utf-8'))) - {'Staged', 'Leftovers', 'R5c'}
         values = {name: "'fixture'" for name in names}
-        values.update(DraftOnly='$false', SourceSha="'" + 'a' * 64 + "'", PackageHead="'" + 'b' * 40 + "'",
+        values.update(DraftOnly='$false', SourceSha="'" + 'a' * 40 + "'", PackageHead="'" + 'b' * 40 + "'",
                       W=RESUME.q(str(self.root)), LaunchOutPin=RESUME.q(str(self.prior)),
                       InstalledReceiptSha256="'" + 'd' * 64 + "'", InstalledUninstallSha256="'" + 'e' * 64 + "'")
         self.block = '\n'.join('$' + name + ' = ' + value for name, value in sorted(values.items()))
@@ -59,7 +59,7 @@ class ResumeLauncher(unittest.TestCase):
         self.assertEqual(set(pins), set(RESUME.FILES))
         for name, digest in pins.items():
             self.assertEqual(digest, sha((self.prior / name).read_bytes()))
-        self.assertEqual(evidence['sourceSha'], 'a' * 64)
+        self.assertEqual(evidence['sourceSha'], 'a' * 40)
         self.assertEqual(evidence['packageHead'], 'b' * 40)
         # Every original generic function and the install/verify tail survives.
         generic = self.raw.decode().split('#region generic\n', 1)[1].split('#endregion generic', 1)[0]
@@ -130,6 +130,59 @@ class ResumeLauncher(unittest.TestCase):
 
 @unittest.skipUnless(PS.is_file(), 'Windows PowerShell 5.1 required')
 class RenameFixture(unittest.TestCase):
+    def test_query_errors_and_changed_facts_stop_before_rename(self):
+        with tempfile.TemporaryDirectory(prefix='clued-resume-guards-') as directory:
+            script = Path(directory) / 'guards.ps1'
+            script.write_text(r'''
+param([string]$Library)
+$ErrorActionPreference = 'Stop'
+. $Library
+function Get-FileSha([string]$Path) {
+  if ($script:Mode -eq 'facts-read-error') { throw 'FIXTURE_READ_UNAVAILABLE' }
+  if ($script:Mode -eq 'facts-changed') { return ('b' * 64) }
+  'a' * 64
+}
+function Get-ScheduledTask {
+  [CmdletBinding()]param()
+  $script:Queries++
+  if ($script:Mode -eq 'task-error') { Write-Error 'fixture provider denied'; return }
+  if ($script:Mode -eq 'task-present') { [pscustomobject]@{TaskPath='\Clued\';TaskName='CluedCIResidentCompanion'}; return }
+  [pscustomobject]@{TaskPath='\Other\';TaskName='Unrelated'}
+}
+function Get-NetFirewallRule {
+  [CmdletBinding()]param()
+  $script:Queries++
+  if ($script:Mode -eq 'firewall-error') { Write-Error 'fixture provider unavailable'; return }
+  if ($script:Mode -eq 'firewall-present') { [pscustomobject]@{Name='CluedCIResident-BlockOutbound'}; return }
+  [pscustomobject]@{Name='Unrelated'}
+}
+function Complete-PartialUninstallRename { $script:Renames++ }
+$LinuxVersionFactsSource='fixture-public-facts'; $LinuxVersionFactsSha256='a' * 64
+$results=@()
+foreach ($case in @('task-error','firewall-error','task-present','firewall-present','facts-changed','facts-read-error','clear')) {
+  $script:Mode=$case; $script:Queries=0; $script:Renames=0; $code=$null
+  try { Assert-ResumeCurrentFactsAndRemovedConfig; Complete-PartialUninstallRename } catch { $code=$_.Exception.Message }
+  if ($case -eq 'clear') {
+    if ($code -or $script:Renames -ne 1 -or $script:Queries -ne 2) { throw 'CLEAR_NOT_PROVEN' }
+  } else {
+    if (-not $code -or $script:Renames -ne 0) { throw 'REFUSAL_DID_NOT_PRECEDE_RENAME' }
+    if ($case -like 'facts-*' -and $script:Queries -ne 0) { throw 'FACTS_NOT_CHECKED_FIRST' }
+  }
+  $results += [ordered]@{case=$case;code=$code;renames=$script:Renames;queries=$script:Queries}
+}
+$results | ConvertTo-Json -Compress
+''', encoding='utf-8')
+            result = subprocess.run([str(PS), '-NoProfile', '-NonInteractive', '-File', str(script),
+                                     str(HERE / 'finish-uninstall.ps1')], capture_output=True,
+                                    text=True, encoding='utf-8', timeout=15)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            cases = {row['case']: row for row in json.loads(result.stdout)}
+            self.assertEqual(cases['task-error']['code'], 'RESUME_TASK_QUERY_UNAVAILABLE')
+            self.assertEqual(cases['firewall-error']['code'], 'RESUME_FIREWALL_QUERY_UNAVAILABLE')
+            self.assertEqual(cases['facts-changed']['code'], 'RESUME_LINUX_VERSION_FACTS_CHANGED_BEFORE_RENAME')
+            body = (HERE / 'finish-uninstall.ps1').read_text(encoding='utf-8').split('function Step-FinishUninstall {', 1)[1]
+            self.assertLess(body.index('Assert-ResumeCurrentFactsAndRemovedConfig'), body.index('$receipt = Complete-PartialUninstallRename'))
+
     def test_finish_only_renames_once_and_retains_all_existing_bytes(self):
         with tempfile.TemporaryDirectory(prefix='clued-finish-') as directory:
             parent = Path(directory); root = parent / 'resident'; (root / 'install').mkdir(parents=True)
