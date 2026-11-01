@@ -98,11 +98,14 @@ class Fixture:
 
 class FakeHost:
     """The installed node as the rehearsal sees it. uninstall_contract / upgrader / derive answer what the r7 TURING host answered."""
-    def __init__(self, fx, uninstall_contract=3, upgrader=True, derive=None, verify='partial', probe=None):
+    def __init__(self, fx, uninstall_contract=3, upgrader=True, derive=None, verify='partial', probe=None, file_locks=None):
         self.fx, self.files, self.verify = fx, {}, verify
         self.probe = {'checkHostExit': 0, 'checkHost': '{"status":"HOST_PINS_AS_DERIVED"}', 'v1Head': HOST_FACTS['v1SourceHead'],
                       'v1Qualifications': {'gitleaks': True, 'trivy': True, 'contract-placement': True}, **(probe or {})}
         self.probe_argv = None
+        self.locks = {'contract': 'clued.independent-ci.rehearsal-file-locks/1', 'status': 'OBSERVED',
+                      'coverage': 'installed-public-binaries-only', 'fileCount': 3, 'secretsEnumerated': False,
+                      'external': [], **(file_locks or {})}
         self.upgrader = upgrader
         plan = {'contract': 'clued.independent-ci.resident-uninstall-plan/%d' % uninstall_contract, 'openBatches': 0, 'runnerOriginalStopped': True,
                 'runnerSddlUnchanged': True, 'renameTo': 'resident-uninstalled-<UTC>-<hex>', 'deletesEvidence': False}
@@ -130,6 +133,9 @@ class FakeHost:
 
     def sha(self, p):
         return '7' * 64
+
+    def file_locks(self):
+        return self.locks
 
     def powershell(self, script, args):
         if script[-1] == 'uninstall-resident.ps1':
@@ -172,6 +178,18 @@ class Rehearsal(unittest.TestCase):
         self.assertEqual(r['status'], 'REHEARSAL_PASS', r['findings'])
         self.assertEqual(r['checks']['roles']['repinned'], {'gitleaks': {'entrySha256': {'old': 'o', 'new': 'n'}}})
         self.assertEqual(r['checks']['uninstall']['templateAcceptsContract'], '3')
+
+    def test_external_binary_lock_is_a_finding_without_stopping_anything(self):
+        locker = {'pid': 1234, 'application': 'external fixture', 'startedFileTime': 1}
+        report = self.run_with(FakeHost(self.fx, file_locks={'external': [locker]}))
+        self.assertEqual(report['status'], 'REHEARSAL_FAILED')
+        self.assertIn('EXTERNAL_RESIDENT_BINARY_LOCK', [row['code'] for row in report['findings']])
+        self.assertEqual(report['checks']['fileLocks']['external'], [locker])
+
+    def test_unavailable_file_lock_observation_is_not_a_clean_result(self):
+        report = self.run_with(FakeHost(self.fx, file_locks={'status': 'UNAVAILABLE'}))
+        self.assertEqual(report['status'], 'REHEARSAL_FAILED')
+        self.assertIn('RESIDENT_FILE_LOCK_OBSERVATION_INVALID', [row['code'] for row in report['findings']])
 
     # regression 3: the f3 launcher accepted /2 only
     def test_uninstall_contract_the_launcher_does_not_accept(self):
