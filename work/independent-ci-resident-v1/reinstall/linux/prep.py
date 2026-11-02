@@ -34,7 +34,7 @@ _load('tree', os.path.join(HERE, '..', 'tools', 'tree.py')).verify(CFG['repo'], 
 # The installed Linux state, from the node's own files (copies): the Linux version facts and the generation record.
 _facts = json.load(open(sys.argv[8], encoding='utf-8'))
 _gen = json.load(open(sys.argv[9], encoding='utf-8'))
-assert _facts.get('contract') == 'clued.independent-ci.linux-version-facts/1' and _facts.get('staged') is None and _facts.get('pinsOk') is True, 'INSTALLED_FACTS_NOT_A_SETTLED_GENERATION'
+assert _facts.get('contract') == 'clued.independent-ci.linux-version-facts/1' and 'staged' in _facts and _facts['staged'] is None and _facts.get('pinsOk') is True, 'INSTALLED_FACTS_NOT_A_SETTLED_GENERATION'
 assert _gen.get('contract') == 'clued.independent-ci.resident-generation/1' and _gen['linux'] == {'generation': _facts['generation'], 'manifestSha256': _facts['manifestSha256'], 'ciSourceManifestSha256': _facts['ciSourceManifestSha256']}, 'INSTALLED_FACTS_NOT_THE_GENERATION_RECORD'
 OLD_COMMIT = _facts['sourceCommit']
 OLD_MANIFEST = _facts['ciSourceManifestSha256']
@@ -63,11 +63,14 @@ assert pkg['ciSourceManifestSha256'] == NEW and sha(os.path.join(IN, 'record', '
 for f in ('acceptance.json', 'installation.json', 'record-manifest.json', 'signers.json', 'source-manifest.json'):
     assert sha(os.path.join(IN, 'record', f)) == sha(os.path.join(PKG, 'record', f)), f
 acc = json.load(open(os.path.join(IN, 'record', 'acceptance.json'), encoding='utf-8'))
-assert acc['sourceAcceptanceRef'] == REF and acc['hostQualificationRef'] == REF
+assert acc['sourceAcceptanceRef'] == REF
+HOST_REF = acc['hostQualificationRef']
+assert re.fullmatch(r'[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}', HOST_REF), 'HOST_QUALIFICATION_REF_REQUIRED'
+HOST_SHELL = '$NEW_REF' if HOST_REF == REF else shlex.quote(HOST_REF)
 RECEIPT = acc['installationReceiptRef']
 assert acc['ownerReceiptRef'] == RECEIPT
 PLACEHOLDER = re.compile(r'^(d{8}|e{8})-')
-DRAFT_REFS = bool(PLACEHOLDER.match(REF) or PLACEHOLDER.match(RECEIPT) or PLACEHOLDER.match(acc['ownerDecisionRef']))
+DRAFT_REFS = bool(PLACEHOLDER.match(REF) or PLACEHOLDER.match(HOST_REF) or PLACEHOLDER.match(RECEIPT) or PLACEHOLDER.match(acc['ownerDecisionRef']))
 # review r5-1: placeholder refs may only ever produce scripts named *.draft*; the scripts themselves refuse them too (below)
 assert not (DRAFT_REFS and not DRAFT), 'FINAL_SCRIPTS_NEED_THE_REAL_OWNER_REFS'
 # README section 5: final scripts only after a PASS rehearsal of exactly this package, commit and configuration (10th argument), at
@@ -95,6 +98,8 @@ if NO_V1:
     nov1_src = os.path.join(REVIEW_TOOLS, SIGNER)
     assert sha(nov1_src) == SIGN_NO_V1_SHA, 'REVIEW_COPY_TOOLS_CHANGED'
     extra = [(SIGNER, open(nov1_src, 'rb').read())]
+history_src = os.path.join(REVIEW_TOOLS, 'check-reinstall-history.py')
+extra += [('check-reinstall-history.py', open(history_src, 'rb').read())]
 for name, data in [('sign-qualification-v2.mjs', open(sign_src, 'rb').read()), ('verify-source-v2.sh', v2.encode('utf-8'))] + extra:
     p = os.path.join(IN, 'tools', name)
     if os.path.exists(p):
@@ -136,11 +141,32 @@ UPG_PLAN = hashlib.sha256(upg_text.encode('utf-8')).hexdigest()
 files = ['tools/install-resident-linux.sh', 'tools/uninstall-resident-linux.sh'] + ['linux-pkg/' + f for f in UPG_FILES] + ['linux-res-pkg/' + f for f in RES_FILES] + ['tools/clued-ci-install-source-v2', 'tools/verify-resident-linux.sh', 'tools/derive-roles-r7.py', 'tools/verify-signed-r4.mjs', 'tools/check-host-r4.py',
          'tools/sign-qualification-v2.mjs', 'tools/verify-source-v2.sh'] + ['tools/' + n for n, _ in extra] + \
         ['record/' + f for f in ('acceptance.json', 'installation.json', 'record-manifest.json', 'signers.json', 'source-manifest.json')]
+sv2 = pkg.get('linux', {}).get('sourceV2')
+role_checks = ''
+bundle_stage = ''
+phase_a_bundle = ''
+if sv2 is not None:
+    assert sv2['commit'] == COMMIT and sv2['bundlePath'] == 'linux/source-v2/source.bundle', 'SOURCE_V2_NOT_THE_ACCEPTED_COMMIT'
+    assert set(sv2['rolesDerivedSha256']) == {'gitleaks', 'trivy', 'contract-placement'}, 'SOURCE_V2_ROLES_REQUIRED'
+    bundle_rel = 'linux-pkg/source-v2/source.bundle'
+    assert sha(os.path.join(IN, *bundle_rel.split('/'))) == sv2['bundleSha256'], 'SOURCE_V2_BUNDLE_CHANGED'
+    files += [bundle_rel]
+    phase_a_bundle = ' ' + bundle_rel
+    bundle_stage = '''# begin source-v2 bundle staging (fixed paths only)
+install -d -o root -g root -m 0700 "$STG/linux-pkg/source-v2"
+install -o root -g root -m 0400 "$W/linux-pkg/source-v2/source.bundle" "$STG/linux-pkg/source-v2/source.bundle"
+# end source-v2 bundle staging'''
+    lines = []
+    for role, expected in sorted(sv2['rolesDerivedSha256'].items()):
+        assert re.fullmatch(r'[0-9a-f]{64}', expected), 'SOURCE_V2_ROLE_HASH_REQUIRED'
+        lines.append(f'[ "$(sha256sum "$STG/roles-in/{role}.json" | cut -d\' \' -f1)" = {expected} ] || refuse SOURCE_V2_DERIVED_ROLE_MISMATCH')
+    role_checks = '\n'.join(lines)
 for f in files:
-    assert b'\r' not in open(os.path.join(IN, *f.split('/')), 'rb').read(), ('CR', f)
+    if f != 'linux-pkg/source-v2/source.bundle':
+        assert b'\r' not in open(os.path.join(IN, *f.split('/')), 'rb').read(), ('CR', f)
 sums = ''.join(f'{sha(os.path.join(IN, *f.split("/")))}  {f}\n' for f in files)
 W = shlex.quote('/mnt/' + IN[0].lower() + '/' + IN[3:].replace('\\', '/'))   # review 1-3: quoted; the path shape is checked by rconfig
-BASE = '/root/clued-ci-reinstall-' + COMMIT[:8]
+BASE = '/root/clued-ci-reinstall-' + COMMIT[:8] + '-' + SUFFIX
 CI = 'work/actions-hosted-migration/independent-ci-v1'
 COMMON = f"""set -euo pipefail
 set -C   # create-only redirections: no evidence file is ever overwritten
@@ -161,9 +187,10 @@ STG=$BASE/stg
 COMMIT={COMMIT}
 NEW_MANIFEST={NEW}
 NEW_REF={REF}
+HOST_REF={HOST_REF}
 RECEIPT_REF={RECEIPT}
 # review r5-1: never sign or install with the dddddddd-/eeeeeeee- placeholders of a DRAFT
-case "$NEW_REF $RECEIPT_REF" in dddddddd-*|eeeeeeee-*|*" dddddddd-"*|*" eeeeeeee-"*) refuse PLACEHOLDER_OWNER_REFS_DRAFT_ONLY ;; esac
+case "$NEW_REF $RECEIPT_REF $HOST_REF" in dddddddd-*|eeeeeeee-*|*" dddddddd-"*|*" eeeeeeee-"*) refuse PLACEHOLDER_OWNER_REFS_DRAFT_ONLY ;; esac
 OLD_COMMIT={OLD_COMMIT}
 OLD_MANIFEST={OLD_MANIFEST}
 PKG_SHA={PKG_SHA}
@@ -232,6 +259,9 @@ reinstall_tail() {{
   fi
   grep -q RESIDENT_LINUX_UNINSTALLED_EVIDENCE_KEPT "$BASE/uninstall-apply.stdout.json" || {{ cat "$BASE/uninstall-apply.stdout.json"; refuse UNINSTALL_FAILED_SEE_RECOVERY; }}
   KEPT=$(grep -o '"kept":"[^"]*"' "$BASE/uninstall-apply.stdout.json" | cut -d'"' -f4) || refuse UNINSTALL_RESULT_UNREADABLE
+  # Old upgrade history must be the same complete trees which A captured,
+  # also when resuming after a later installation step failed.
+  $CLEAN $PY -I "$STG/tools/check-reinstall-history.py" verify-kept "$STG/upgrade-history.A.json" "$KEPT" || refuse KEPT_UPGRADE_HISTORY_NOT_VERIFIED
   # (3) the resident install with exactly the plan generated on Windows; when an earlier run saved that plan it is finished, not redone
   if [ -e /opt/clued-independent-ci/resident-v1 ] || [ -e /var/lib/clued-independent-ci/resident/install-plan.json ]; then
     bash --noprofile --norc "$STG/tools/install-resident-linux.sh" --continue-after-boot "$INSTALL_PLAN" > "$T/install.stdout.json" || {{ cat "$T/install.stdout.json"; refuse RESIDENT_INSTALL_FAILED_SEE_RECOVERY; }}
@@ -302,6 +332,7 @@ SECRET=$(find $BACKUP_PATHS \\( -name '*.pem' -o -name '*.key' -o -name '*.token
 [ -z "$SECRET" ] || refuse "BACKUP_WOULD_HOLD_A_SECRET:$SECRET"
 [ ! -e "$BASE" ] || refuse STAGING_EXISTS_PRESERVE
 install -d -o root -g root -m 0700 "$BASE" "$STG" "$STG/tools" "$STG/record" "$STG/linux-pkg" "$STG/linux-pkg/upgrade-v1" "$STG/linux-pkg/upgrade-v1/bin" "$STG/linux-res-pkg" "$STG/linux-res-pkg/bin" "$STG/linux-res-pkg/systemd"
+{bundle_stage}
 for f in {' '.join(UPG_FILES)}; do install -o root -g root -m 0400 "$W/linux-pkg/$f" "$STG/linux-pkg/$f"; done   # r5c
 for f in {' '.join(RES_FILES)}; do install -o root -g root -m 0400 "$W/linux-res-pkg/$f" "$STG/linux-res-pkg/$f"; done   # r7
 for f in install-resident-linux.sh uninstall-resident-linux.sh clued-ci-install-source-v2 verify-resident-linux.sh derive-roles-r7.py verify-signed-r4.mjs check-host-r4.py sign-qualification-v2.mjs verify-source-v2.sh{''.join(' ' + n for n, _ in extra)}; do install -o root -g root -m 0400 "$W/tools/$f" "$STG/tools/$f"; done
@@ -322,7 +353,8 @@ sha256sum --quiet -c - <<'EOF' || refuse STAGED_BYTES_NOT_THE_REVIEWED_ONES
 PREV=windows-review-copy; VT=generated-on-windows-pinned
 echo "{{\\"status\\":\\"ROOT_STAGING_VERIFIED\\",\\"staging\\":\\"$STG\\",\\"sourceCommit\\":\\"$COMMIT\\",\\"files\\":{len(files)},\\"signToolFrom\\":\\"$PREV\\",\\"verifyTemplateSha256\\":\\"$VT\\",\\"verifySourceV2Sha256\\":\\"$(sha256sum "$STG/tools/verify-source-v2.sh" | cut -d' ' -f1)\\"}}"
 # derive (no key): policies v3 + unsigned payloads from the installed Source34 ones; the three Source values change (B-1)
-$CLEAN $PY -I "$STG/tools/derive-roles-r7.py" --installed /etc/clued-independent-ci/roles-v3 --old-manifest-file /etc/clued-independent-ci/formal-source-manifest-v2.json --new-manifest-file "$STG/record/source-manifest.json" --src "$STG/src.git" --commit "$COMMIT" --source-acceptance-ref "$NEW_REF" --host-acceptance-ref "$NEW_REF" --out "$STG/roles-in" > "$STG/derive.stdout.json" || {{ cat "$STG/derive.stdout.json"; refuse DERIVE_FAILED; }}
+$CLEAN $PY -I "$STG/tools/derive-roles-r7.py" --installed /etc/clued-independent-ci/roles-v3 --old-manifest-file /etc/clued-independent-ci/formal-source-manifest-v2.json --new-manifest-file "$STG/record/source-manifest.json" --src "$STG/src.git" --commit "$COMMIT" --source-acceptance-ref "$NEW_REF" --host-acceptance-ref "{HOST_SHELL}" --out "$STG/roles-in" > "$STG/derive.stdout.json" || {{ cat "$STG/derive.stdout.json"; refuse DERIVE_FAILED; }}
+{role_checks}
 cat "$STG/derive.stdout.json"
 # M-2: the host binaries the derived policies pin, the toolchain node, the docker socket and the public key, as on 10-23
 $CLEAN $PY -I "$STG/tools/check-host-r4.py" "$STG/roles-in" "$NODE_SHA" "$PUB_SHA" > "$STG/host-A.stdout.json" || {{ cat "$STG/host-A.stdout.json"; refuse HOST_PINS_CHANGED; }}
@@ -344,21 +376,22 @@ print(json.dumps({{"residentPinsNotTheNewSource":bad}})); sys.exit(1 if bad else
 # r7: three read-only plans, pinned below. (1) the uninstall, live: phase B recomputes it and applies only the same sha.
 bash --noprofile --norc "$STG/tools/uninstall-resident-linux.sh" --plan > "$STG/uninstall-plan.A.stdout.txt" || {{ cat "$STG/uninstall-plan.A.stdout.txt"; refuse UNINSTALL_PLAN_REFUSED; }}
 grep -q '"status":"DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN"' "$STG/uninstall-plan.A.stdout.txt" || refuse UNINSTALL_PLAN_REFUSED
-for l in active= opt=yes upgrade-v1=yes generations= archive= staging=; do grep -qx "$l" "$STG/uninstall-plan.A.stdout.txt" || {{ cat "$STG/uninstall-plan.A.stdout.txt"; refuse "UNINSTALL_PLAN_NOT_THE_EXPECTED_HOST:$l"; }}; done
+for l in active= opt=yes upgrade-v1=yes staging=; do grep -qx "$l" "$STG/uninstall-plan.A.stdout.txt" || {{ cat "$STG/uninstall-plan.A.stdout.txt"; refuse "UNINSTALL_PLAN_NOT_THE_EXPECTED_HOST:$l"; }}; done
+printf '%s\\n' "$OLDF" > "$STG/old-version-facts.json"
+$CLEAN $PY -I "$STG/tools/check-reinstall-history.py" capture "$STG/uninstall-plan.A.stdout.txt" "$STG/old-version-facts.json" "$STG/upgrade-history.A.json" || refuse UPGRADE_HISTORY_NOT_SETTLED
 # (2) the resident install and (3) the upgrade-tool install, computed live on the staged copies with the lines that the uninstall
 # changes set as they will be then: they must be the plans generated on Windows (phase B applies exactly them)
 bash --noprofile --norc "$STG/tools/install-resident-linux.sh" --plan "$STG/linux-res-pkg" > "$STG/install-plan.A.stdout.txt" || {{ cat "$STG/install-plan.A.stdout.txt"; refuse INSTALL_PLAN_REFUSED; }}
 [ "$(printf '%s' "$(plan_after_uninstall "$STG/install-plan.A.stdout.txt")" | sha256sum | cut -d' ' -f1)" = "$INSTALL_PLAN" ] || {{ cat "$STG/install-plan.A.stdout.txt"; refuse INSTALL_PLAN_NOT_AS_GENERATED; }}
 bash --noprofile --norc "$STG/tools/install-resident-linux.sh" --plan-upgrade-v1 "$STG/linux-pkg" > "$STG/upgrade-plan.stdout.txt" || {{ cat "$STG/upgrade-plan.stdout.txt"; refuse UPGRADE_PLAN_REFUSED; }}
 [ "$(printf '%s' "$(plan_after_uninstall "$STG/upgrade-plan.stdout.txt")" | sha256sum | cut -d' ' -f1)" = "$UPG_PLAN" ] || {{ cat "$STG/upgrade-plan.stdout.txt"; refuse UPGRADE_PLAN_NOT_AS_GENERATED; }}
-printf '%s\\n' "$OLDF" > "$STG/old-version-facts.json"
-(cd "$STG" && sha256sum roles-in/* tools/* record/* linux-pkg/upgrade-v1/manifest.json linux-pkg/upgrade-v1/bin/* linux-res-pkg/manifest.json linux-res-pkg/bin/* linux-res-pkg/systemd/* upgrade-plan.stdout.txt install-plan.A.stdout.txt uninstall-plan.A.stdout.txt resident-pins.A.stdout.json old-version-facts.json src-head.txt > "$STG/phaseA.sha256")
+(cd "$STG" && sha256sum roles-in/* tools/* record/* linux-pkg/upgrade-v1/manifest.json linux-pkg/upgrade-v1/bin/*{phase_a_bundle} linux-res-pkg/manifest.json linux-res-pkg/bin/* linux-res-pkg/systemd/* upgrade-plan.stdout.txt install-plan.A.stdout.txt uninstall-plan.A.stdout.txt resident-pins.A.stdout.json old-version-facts.json upgrade-history.A.json src-head.txt > "$STG/phaseA.sha256")
 # review copy (public data only), written after staging (review minor 4)
 RV="$W/../review-A-{SUFFIX}"
 [ ! -e "$RV" ] || refuse REVIEW_COPY_EXISTS
 install -d -m 0755 "$RV" "$RV/roles-in" "$RV/tools"
-install -m 0644 "$STG"/roles-in/* "$RV/roles-in/"; install -m 0644 "$STG/tools/verify-source-v2.sh" "$STG/tools/{SIGNER}" "$RV/tools/"
-install -m 0644 "$STG/derive.stdout.json" "$STG/host-A.stdout.json" "$STG/upgrade-plan.stdout.txt" "$STG/install-plan.A.stdout.txt" "$STG/uninstall-plan.A.stdout.txt" "$STG/resident-pins.A.stdout.json" "$STG/old-version-facts.json" "$STG/phaseA.sha256" "$RV/"
+install -m 0644 "$STG"/roles-in/* "$RV/roles-in/"; install -m 0644 "$STG/tools/verify-source-v2.sh" "$STG/tools/{SIGNER}" "$STG/tools/check-reinstall-history.py" "$RV/tools/"
+install -m 0644 "$STG/derive.stdout.json" "$STG/host-A.stdout.json" "$STG/upgrade-plan.stdout.txt" "$STG/install-plan.A.stdout.txt" "$STG/uninstall-plan.A.stdout.txt" "$STG/resident-pins.A.stdout.json" "$STG/old-version-facts.json" "$STG/upgrade-history.A.json" "$STG/phaseA.sha256" "$RV/"
 echo "{{\\"status\\":\\"PHASE_A_DONE_NOTHING_SIGNED_NOTHING_INSTALLED\\",\\"phaseAManifestSha256\\":\\"$(sha256sum "$STG/phaseA.sha256" | cut -d' ' -f1)\\"}}"
 """
 MODS = ['worker/qualification-v2.mjs', 'src/worker-v2.mjs', 'src/job-v2.mjs', 'src/proof.mjs', 'src/queue.mjs']
@@ -370,6 +403,7 @@ B = "#!/bin/bash\n" + f"""# r7 Linux phase B (root; after the Source switch: bac
 # B0: everything phase A staged is still as reviewed (minor 3): the manifest, every listed byte, the bare repo, the sign tool
 [ "$(sha256sum "$STG/phaseA.sha256" | cut -d' ' -f1)" = "$WANT_A" ] || refuse PHASE_A_NOT_AS_REVIEWED
 (cd "$STG" && sha256sum --quiet -c phaseA.sha256) || refuse STAGED_BYTES_CHANGED_SINCE_PHASE_A
+$CLEAN $PY -I "$STG/tools/check-reinstall-history.py" verify-live "$STG/upgrade-history.A.json" || refuse UPGRADE_HISTORY_CHANGED_SINCE_PHASE_A
 src_git_clean
 [ "$(sha256sum "$STG/tools/sign-qualification-v2.mjs" | cut -d' ' -f1)" = "$SIGN_SHA" ] || refuse SIGN_TOOL_CHANGED
 [ ! -e "$STG/roles-signed" ] && [ ! -e "$STG/pkg" ] && [ ! -e "$STG/check" ] || refuse PHASE_B_OUTPUT_EXISTS_SEE_RECOVERY

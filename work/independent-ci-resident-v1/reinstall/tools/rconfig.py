@@ -91,7 +91,9 @@ def load(path):
     la = cfg['launcher']
     need(isinstance(la, dict) and set(la) == {'pauseReason', 'rearmReason', 'w1PauseReason'} and all(REASON.match(v or '') for v in la.values()), 'CONFIG_LAUNCHER')
     li = cfg['linux']
-    need(isinstance(li, dict) and set(li) == LINUX_KEYS, 'CONFIG_LINUX')
+    need(isinstance(li, dict) and set(li) in (LINUX_KEYS, LINUX_KEYS | {'rehearsalUser'}), 'CONFIG_LINUX')
+    ru = li.get('rehearsalUser')
+    need(ru is None or isinstance(ru, str) and re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', ru) and ru != 'root', 'CONFIG_LINUX_REHEARSAL_USER')
     lh = li['host']
     # A node without an installed Linux CI yet (a first install, README section 8) has no Source v1, roles or result key: those values are
     # null, never invented. The reinstall tools that need them (prep.py, rehearse.py) refuse such a configuration (need_installed_linux).

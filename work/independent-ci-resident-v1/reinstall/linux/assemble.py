@@ -23,6 +23,14 @@ for f in ('acceptance.json', 'installation.json', 'record-manifest.json', 'signe
 shutil.copyfile(os.path.join(PKG, 'linux', 'bin', 'clued-ci-install-source-v2'), os.path.join(IN, 'tools', 'clued-ci-install-source-v2'))
 for f in ('upgrade-v1/bin/clued-ci-upgrade-linux', 'upgrade-v1/bin/clued-ci-sign-qualification-v2.mjs', 'upgrade-v1/manifest.json'):
     shutil.copyfile(os.path.join(PKG, 'linux', *f.split('/')), os.path.join(IN, 'linux-pkg', *f.split('/')))
+manifest = json.load(open(os.path.join(PKG, 'package-manifest.json'), encoding='utf-8'))
+sv2 = manifest.get('linux', {}).get('sourceV2')
+if sv2 is not None:
+    assert sv2['commit'] == COMMIT and sv2['bundlePath'] == 'linux/source-v2/source.bundle', 'SOURCE_V2_NOT_THE_ACCEPTED_COMMIT'
+    bundle = os.path.join(PKG, 'linux', 'source-v2', 'source.bundle')
+    assert sha(bundle) == sv2['bundleSha256'], 'SOURCE_V2_BUNDLE_CHANGED'
+    os.makedirs(os.path.join(IN, 'linux-pkg', 'source-v2'))
+    shutil.copyfile(bundle, os.path.join(IN, 'linux-pkg', 'source-v2', 'source.bundle'))
 for f in ('install-resident-linux.sh', 'verify-resident-linux.sh', 'uninstall-resident-linux.sh'):   # r7: + uninstall
     shutil.copyfile(os.path.join(TREE_LINUX, f), os.path.join(IN, 'tools', f))
 # r7: the Linux resident half of the package, laid out as install-resident-linux.sh's FILES expect

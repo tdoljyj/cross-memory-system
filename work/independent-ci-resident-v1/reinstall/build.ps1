@@ -19,6 +19,7 @@ param([Parameter(Mandatory)][string]$Config,
       [string]$Rehearsal = '', [string]$LinuxEvidence = '', [string]$LinuxVersionFacts = '', [string]$LinuxAdoptedPackage = '',
       [ValidatePattern('^([a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12})?$')][string]$CiPrincipalQualificationRef = '',
       [ValidatePattern('^([a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12})?$')][string]$HostQualificationRef = '',
+      [string]$SourceV2 = '',
       [switch]$PackageOnly)   # a package for another node (e.g. a first install): no launcher, which reads THIS host's installed resident
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -74,8 +75,9 @@ $pins = Join-Path $R ('build-inputs\linux-external-pins.' + $cfg.node + '.' + $k
 # another node's own toolchain node (configuration linux.host.toolchainNodeSha256), when known, replaces the copy's value
 $NodePin = @(); if ($cfg.linux.host.toolchainNodeSha256) { $NodePin = @('--toolchain-node', $cfg.linux.host.toolchainNodeSha256) }
 & python -I (Join-Path $Here 'tools\linux-pins.py') pins $cfg.linux.installedManifest $pins $tree @NodePin; if ($LASTEXITCODE) { throw 'LINUX_PINS_INPUT_FAILED' }
+$sourceV2Args = @(); if ($SourceV2) { $sourceV2Args = @('--source-v2', $SourceV2) }
 Push-Location (Join-Path $tree 'work\independent-ci-resident-v1')
-try { $b = & node tools/build-package.mjs --out $pkg --policy $pol --companion $comp --node $cfg.nodeExe --record $record --source-root $tree --source-files $files --fresh-install --upgrader-config $upg --linux-external-pins $pins; if ($LASTEXITCODE) { throw 'BUILD_PACKAGE_FAILED' } } finally { Pop-Location }
+try { $b = & node tools/build-package.mjs --out $pkg --policy $pol --companion $comp --node $cfg.nodeExe --record $record --source-root $tree --source-files $files --fresh-install --upgrader-config $upg --linux-external-pins $pins @sourceV2Args; if ($LASTEXITCODE) { throw 'BUILD_PACKAGE_FAILED' } } finally { Pop-Location }
 $shape = & python -I (Join-Path $Here 'tools\linux-pins.py') check (Join-Path $pkg 'linux\manifest.json') $cfg.linux.installedManifest $tree @NodePin
 if ($LASTEXITCODE) { throw 'LINUX_MANIFEST_NOT_THE_INSTALLED_SHAPE' }
 function Write-New([string]$Path, [string]$Text) {   # create-only, like every other output of the toolchain
@@ -88,6 +90,7 @@ $pkgSha = ($b | ConvertFrom-Json).packageManifestSha256
 if ($PackageOnly) { ([ordered]@{ status = 'PACKAGE_BUILT_NO_LAUNCHER'; node = $cfg.node; final = [bool]$Final; linuxToolchainNodePin = $(if ($NodePin.Count) { 'configured' } else { 'installed-manifest-copy' }); package = $pkg; packageManifestSha256 = $pkgSha } | ConvertTo-Json); return }
 # The generator rebuilds the package from these inputs into a new directory and requires the same manifest sha.
 $gen = @((Join-Path $Here 'launcher\generate.py'), $Config, '--commit', $Commit, '--package', $pkg, '--package-sha', $pkgSha, '--rebuild-record', $record, '--rebuild-policy', $pol, '--rebuild-companion', $comp, '--rebuild-source-files', $files, '--rebuild-upgrader-config', $upg, '--rebuild-linux-external-pins', $pins)
+if ($SourceV2) { $gen += @('--rebuild-source-v2', $SourceV2) }
 if ($AcceptHaltSha256) { $gen += @('--accept-halt-sha256', $AcceptHaltSha256) }
 if ($LinuxVersionFacts) { $gen += @('--linux-version-facts', $LinuxVersionFacts) }
 if ($LinuxAdoptedPackage) { $gen += @('--linux-adopted-package', $LinuxAdoptedPackage) }   # record-only reinstall (README section 8b)
