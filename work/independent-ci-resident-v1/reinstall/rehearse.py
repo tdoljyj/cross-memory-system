@@ -148,7 +148,12 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None):
         if (not isinstance(locks, dict) or locks.get('contract') != 'clued.independent-ci.rehearsal-file-locks/1'
                 or locks.get('status') != 'OBSERVED' or locks.get('coverage') != 'installed-public-binaries-only'
                 or type(locks.get('fileCount')) is not int or locks['fileCount'] < 1
-                or locks.get('secretsEnumerated') is not False or not isinstance(locks.get('external'), list)):
+                or locks.get('secretsEnumerated') is not False or locks.get('directoryHandlesCovered') is not False
+                or not isinstance(locks.get('external'), list) or not isinstance(locks.get('lockers'), list)
+                or any(not isinstance(row, dict) or type(row.get('pid')) is not int or row['pid'] < 1
+                       or type(row.get('startedFileTime')) is not int or row['startedFileTime'] < 1
+                       or type(row.get('expected')) is not bool for row in locks['lockers'])
+                or locks['external'] != [row for row in locks['lockers'] if row['expected'] is False]):
             find('RESIDENT_FILE_LOCK_OBSERVATION_INVALID')
         elif locks['external']:
             find('EXTERNAL_RESIDENT_BINARY_LOCK', processes=locks['external'])

@@ -101,6 +101,10 @@ python -I launcher/resume.py --launcher <原启动器> --launcher-sha <原生成
 
 Windows 预演还通过 Restart Manager 只读检查已安装公开二进制（`bin`、`runtime`、`broker/bin`、`upgrader/runtime` 的 exe/dll）。发现外部占用进程时报告 `EXTERNAL_RESIDENT_BINARY_LOCK`；观察失败时也记 finding，不把未知当作无占用。预期服务、companion host 及其当前子进程仍以 PID 和进程启动时间复核。探针不停止或重启进程，不枚举秘密、账本或工作目录。
 
+服务身份绑定前后两次 SCM 服务名/PID 和进程创建时间，不要求普通用户能读 `ExecutablePath`。优先使用仅 `PROCESS_QUERY_LIMITED_INFORMATION` 的原生查询；加固 DACL 连此查询也拒绝时，用系统 CIM provider 的创建时间和即时重查，明确按微秒（10个 FILETIME tick）与 RM 对齐，报告 `identityPrecisionTicks`。缺创建时间、PID重用、进程已退出或重查失败仍不能豁免。companion 的根绑定固定注册任务的两次运行实例 GUID、EnginePID、状态和 action 路径，支持实际 conhost 形态；同名 conhost/JobHost 或仅凭相邻 PID 不构成身份。子进程仍须核父子创建时序及当前身份。
+
+只读 API 依据：[GetProcessTimes](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes)、[Win32_Process](https://learn.microsoft.com/windows/win32/cimwin32prov/win32-process)、[CIM_DATETIME](https://learn.microsoft.com/windows/win32/wmisdk/cim-datetime)、[IRunningTask.EnginePID](https://learn.microsoft.com/windows/win32/api/taskschd/nf-taskschd-irunningtask-get_enginepid)。
+
 此检查只覆盖已登记的公开二进制文件。Restart Manager 不接受目录资源，因此它不能证明不存在目录句柄或整个 resident 目录一定能改名；报告明确写出 `directoryHandlesCovered=false`，正式卸载仍须取得原有的精确改名与保留证据。
 
 ```

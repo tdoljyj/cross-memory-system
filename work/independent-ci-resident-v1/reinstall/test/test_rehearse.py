@@ -105,6 +105,7 @@ class FakeHost:
         self.probe_argv = None
         self.locks = {'contract': 'clued.independent-ci.rehearsal-file-locks/1', 'status': 'OBSERVED',
                       'coverage': 'installed-public-binaries-only', 'fileCount': 3, 'secretsEnumerated': False,
+                      'directoryHandlesCovered': False, 'lockers': (file_locks or {}).get('external', []),
                       'external': [], **(file_locks or {})}
         self.upgrader = upgrader
         plan = {'contract': 'clued.independent-ci.resident-uninstall-plan/%d' % uninstall_contract, 'openBatches': 0, 'runnerOriginalStopped': True,
@@ -180,7 +181,7 @@ class Rehearsal(unittest.TestCase):
         self.assertEqual(r['checks']['uninstall']['templateAcceptsContract'], '3')
 
     def test_external_binary_lock_is_a_finding_without_stopping_anything(self):
-        locker = {'pid': 1234, 'application': 'external fixture', 'startedFileTime': 1}
+        locker = {'pid': 1234, 'application': 'external fixture', 'startedFileTime': 1, 'expected': False}
         report = self.run_with(FakeHost(self.fx, file_locks={'external': [locker]}))
         self.assertEqual(report['status'], 'REHEARSAL_FAILED')
         self.assertIn('EXTERNAL_RESIDENT_BINARY_LOCK', [row['code'] for row in report['findings']])
@@ -190,6 +191,17 @@ class Rehearsal(unittest.TestCase):
         report = self.run_with(FakeHost(self.fx, file_locks={'status': 'UNAVAILABLE'}))
         self.assertEqual(report['status'], 'REHEARSAL_FAILED')
         self.assertIn('RESIDENT_FILE_LOCK_OBSERVATION_INVALID', [row['code'] for row in report['findings']])
+
+    def test_unknown_locker_cannot_disappear_from_external_list(self):
+        locker = {'pid': 1234, 'startedFileTime': 1, 'expected': False}
+        report = self.run_with(FakeHost(self.fx, file_locks={'lockers': [locker], 'external': []}))
+        self.assertEqual(report['status'], 'REHEARSAL_FAILED')
+        self.assertIn('RESIDENT_FILE_LOCK_OBSERVATION_INVALID', codes(report))
+
+    def test_missing_creation_identity_is_not_expected(self):
+        locker = {'pid': 1234, 'expected': True}
+        report = self.run_with(FakeHost(self.fx, file_locks={'lockers': [locker]}))
+        self.assertIn('RESIDENT_FILE_LOCK_OBSERVATION_INVALID', codes(report))
 
     # regression 3: the f3 launcher accepted /2 only
     def test_uninstall_contract_the_launcher_does_not_accept(self):
