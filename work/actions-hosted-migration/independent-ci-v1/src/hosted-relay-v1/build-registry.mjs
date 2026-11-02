@@ -17,7 +17,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { digest } from '../proof.mjs';
-import { OCI_DIGEST, REGISTRY_CONTRACT, REGISTRY_CONTRACT_V2, SPEC_CONTRACT_V2, SCAN_START_WORKFLOW_GATE, RELAY_AUDIENCE, REQUIRED_CHECK_NAMES, ROLE_INPUT_PINS, closureDigest, matchesForbiddenChangeGlob, relayFail,
+import { OCI_DIGEST, REGISTRY_CONTRACT, RELAY_AUDIENCE, REQUIRED_CHECK_NAMES, ROLE_INPUT_PINS, closureDigest, matchesForbiddenChangeGlob, relayFail,
   validateRegistry, validateSpec } from './registry.mjs';
 
 const SHA1 = /^[a-f0-9]{40}$/;
@@ -85,29 +85,6 @@ export function gitObjectReader(repoDir, { git = 'git' } = {}) {
 export const gitBlobSha1 = bytes => createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 
-// Reviewed /2 gate bytes. /1 never permits this early OIDC consumer or wider
-// permissions. Source qualification and Native activation are separate gates.
-const SCAN_START_STEP = [
-  '      - name: Acquire one-time scan permission',
-  '        env:',
-  '          GITHUB_TOKEN: ${{ github.token }}',
-  '          BASE_SHA: ${{ github.event.pull_request.base.sha }}',
-  '        run: |',
-  '          set -euC',
-  '          umask 077',
-  '          test "$GITHUB_EVENT_NAME" = pull_request',
-  '          test "${#BASE_SHA}" -eq 40',
-  '          case "$BASE_SHA" in *[!0-9a-f]*) exit 2 ;; esac',
-  "          curl -fsS --proto '=https' --max-time 30 \\",
-  '            -H "Authorization: Bearer $GITHUB_TOKEN" \\',
-  "            -H 'Accept: application/vnd.github.raw+json' \\",
-  "            -H 'X-GitHub-Api-Version: 2022-11-28' \\",
-  '            "https://api.github.com/repos/tdoljyj/cross-memory-system/contents/scripts/ci/clued-scan-start.mjs?ref=$BASE_SHA" \\',
-  '            > "$RUNNER_TEMP/clued-scan-start.mjs"',
-  '          echo "02eea1acaecc39ec179ac4201246509152dbf7bb7119687fb7cf640fb86146e1  $RUNNER_TEMP/clued-scan-start.mjs" | sha256sum -c --quiet -',
-  '          node "$RUNNER_TEMP/clued-scan-start.mjs" --run',
-].join('\n');
-
 // The check-run names a job can carry: a literal name, or the two literals of
 // `${{ (<condition>) && '<A>' || '<B>' }}`. The outer parentheses must enclose
 // the whole condition (quoted literals skipped), so `(c) && 'A'` is 'A' or a
@@ -135,10 +112,8 @@ export function possibleNames(raw) {
 // value is always A or B), a required check name among any job's possible
 // names, the hosted name on a second job, id-token on any other job, a missing,
 // conditional or non-final identity step, and a step allowed to fail.
-export function scanWorkflow(bytes, { workflowPath, checkName, hostedCheckName, runsOn }, { inputPin = null, scanStart = null } = {}) {
+export function scanWorkflow(bytes, { workflowPath, checkName, hostedCheckName, runsOn }, { inputPin = null } = {}) {
   const code = 'RELAY_REGISTRY_WORKFLOW_REFUSED';
-  if (scanStart !== null) insist(scanStart && Object.keys(scanStart).length === Object.keys(SCAN_START_WORKFLOW_GATE).length
-    && Object.keys(SCAN_START_WORKFLOW_GATE).every(k => scanStart[k] === SCAN_START_WORKFLOW_GATE[k]), code, `${workflowPath}:scan-start-spec`);
   let text;
   try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { relayFail(code, `${workflowPath}:utf8`); }
   insist(!/[\t\r]/.test(text) && !text.startsWith('\ufeff'), code, `${workflowPath}:whitespace`);
@@ -198,39 +173,13 @@ export function scanWorkflow(bytes, { workflowPath, checkName, hostedCheckName, 
     insist(flow, code, `${workflowPath}:permissions.flow`);
     permissions = flow[1].split(',').map(item => item.trim().replace(/\s*:\s*/, ': '));
   }
-  const expectedPermissions = scanStart === null ? 'contents: read|id-token: write'
-    : 'actions: read|checks: read|contents: read|id-token: write|pull-requests: read';
-  insist(permissions.slice().sort().join('|') === expectedPermissions, code, `${workflowPath}:permissions.exact`);
+  insist(permissions.slice().sort().join('|') === 'contents: read|id-token: write', code, `${workflowPath}:permissions.exact`);
   insist(job.lines.filter(line => /id-token\s*:/.test(line)).length === 1, code, `${workflowPath}:id-token.once`);
   // A step or job allowed to fail would let the identity step run after a failed scan.
   insist(!job.lines.some(line => /continue-on-error\s*:/.test(line)), code, `${workflowPath}:continue-on-error`);
   // The identity step is the last step and the only one that mints a token.
   const steps = job.lines.flatMap((line, index) => /^ {6}- /.test(line) ? [index] : []);
   insist(steps.length > 0, code, `${workflowPath}:steps`);
-  let gateStart = null, gateEnd = null;
-  if (scanStart !== null) {
-    const gates = steps.filter(index => job.lines[index] === `      - name: ${scanStart.stepName}`);
-    insist(gates.length === 1 && steps.indexOf(gates[0]) === 1, code, `${workflowPath}:scan-start-before-execution`);
-    gateStart = gates[0]; gateEnd = steps[2] ?? job.lines.length;
-    const gate = job.lines.slice(gateStart, gateEnd).filter(line => line.trim() !== '' && !/^ {6}#/.test(line)).join('\n');
-    insist(gate === SCAN_START_STEP, code, `${workflowPath}:scan-start-exact`);
-    // Only plain, explicitly reviewed step-property keys after the Native gate.
-    // Enumerating spellings of `if` is unsafe: YAML double-quoted escapes,
-    // tags, complex keys and mapping merges can spell the same semantic key.
-    // Deeper env/with values and run-script bodies are not step properties.
-    const stepProperties = new Set(['name','id','uses','run','env','with','shell','working-directory','timeout-minutes']);
-    insist(job.lines.slice(gateEnd).every(line => {
-      const indent = /^ */.exec(line)[0].length;
-      if (line.trim() === '' || indent >= 10) return true;
-      const key = /^ {6}- ([a-z][a-z-]*):(?:\s|$)/.exec(line) ?? /^ {8}([a-z][a-z-]*):(?:\s|$)/.exec(line);
-      return key !== null && stepProperties.has(key[1]);
-    }), code, `${workflowPath}:scan-start-success-chain`);
-    insist(job.lines[steps[0]] === '      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2',
-      code, `${workflowPath}:scan-start-checkout`);
-    const conditionAt = job.lines.findIndex(line => /^ {4}if: >-\s*$/.test(line));
-    insist(field(job, 'if').length === 1 && conditionAt >= 0
-      && /^ {6}github\.event_name == 'pull_request' && /.test(job.lines[conditionAt + 1] ?? ''), code, `${workflowPath}:scan-start-pr-only`);
-  }
   const last = job.lines.slice(steps.at(-1)).join('\n');
   insist(/^ {6}- name: Emit relay identity\s*$/.test(job.lines[steps.at(-1)]), code, `${workflowPath}:identity-step-last`);
   insist(!/^\s+if:/m.test(last), code, `${workflowPath}:identity-step-condition`);
@@ -239,12 +188,9 @@ export function scanWorkflow(bytes, { workflowPath, checkName, hostedCheckName, 
   // The exact printing line, not a mention of it elsewhere in the step.
   insist(job.lines.slice(steps.at(-1)).some(line => line.trim() === `| python3 -I -B -c 'import json,sys; print(json.load(sys.stdin)["value"].encode("ascii").hex())')"`),
     code, `${workflowPath}:identity-step-hex`);
-  const before = job.lines.slice(0, steps.at(-1)).filter((_line, index) => scanStart === null || index < gateStart || index >= gateEnd).join('\n');
-  insist(!before.includes('ACTIONS_ID_TOKEN_REQUEST') && !before.includes(RELAY_AUDIENCE)
-    && (scanStart === null || !before.includes(scanStart.audience) && !before.includes(scanStart.scriptPath)), code, `${workflowPath}:token-before-last-step`);
-  const executed = executedScripts(job.lines, workflowPath);
-  if (scanStart !== null) executed.push(scanStart.scriptPath);
-  const result = { hostedJobId: job.id, hostedJobTimeoutMinutes: Number(timeout[0]), executed: [...new Set(executed)].sort(),
+  const before = job.lines.slice(0, steps.at(-1)).join('\n');
+  insist(!before.includes('ACTIONS_ID_TOKEN_REQUEST') && !before.includes(RELAY_AUDIENCE), code, `${workflowPath}:token-before-last-step`);
+  const result = { hostedJobId: job.id, hostedJobTimeoutMinutes: Number(timeout[0]), executed: executedScripts(job.lines, workflowPath),
     localActions: localActions(job.lines, workflowPath) };
   if (inputPin) {
     // Exactly one `<ENV>: sha256:<hex>` in the hosted job, and the job really uses it (PR-A round-3 review).
@@ -348,12 +294,7 @@ export function buildRegistry({ spec, reader, commit: rev, domain = 'production'
     }
     const workflow = closure.find(item => item.path === entry.workflowPath);
     const inputPin = Object.hasOwn(ROLE_INPUT_PINS, role) ? ROLE_INPUT_PINS[role] : null;
-    const { executed, localActions: actions, ...job } = scanWorkflow(workflow.bytes, entry,
-      { inputPin, ...(checked.contract === SPEC_CONTRACT_V2 ? { scanStart: checked.scanStart } : {}) });
-    if (checked.contract === SPEC_CONTRACT_V2) {
-      insist(closure.find(item => item.path === checked.scanStart.scriptPath)?.sha256 === checked.scanStart.scriptSha256,
-        'RELAY_REGISTRY_SCAN_START_HELPER_CHANGED', checked.scanStart.scriptPath);
-    }
+    const { executed, localActions: actions, ...job } = scanWorkflow(workflow.bytes, entry, { inputPin });
     // Every executed repository script is pinned (closure) and its directory is a forbidden change prefix of
     // the role (or a global one, like .github/), so no PR that touches it or its neighbours is ever relayed.
     for (const script of executed) {
@@ -382,7 +323,7 @@ export function buildRegistry({ spec, reader, commit: rev, domain = 'production'
       closureSha256: closureDigest(pins, entry.mustNotExist, entry.forbiddenChangePrefixes) };
   }
   const { contract, roles: specRoles, ...rest } = checked;
-  const registry = { contract: checked.contract === SPEC_CONTRACT_V2 ? REGISTRY_CONTRACT_V2 : REGISTRY_CONTRACT, domain, generatedBy: GENERATED_BY, sourceCommit: commit, sourceTree: tree,
+  const registry = { contract: REGISTRY_CONTRACT, domain, generatedBy: GENERATED_BY, sourceCommit: commit, sourceTree: tree,
     specSha256: digest(checked), ...rest, roles };
   validateRegistry(registry, { domain });
   return registry;

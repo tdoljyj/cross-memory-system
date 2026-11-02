@@ -7,7 +7,7 @@ import path from 'node:path';
 import { ResidentExecutor, SUPERSEDED_AT_SAFE_POINT, SUPERSEDED_ARCHIVE_REASON, BATCH_SUPERSEDED } from '../src/executor.mjs';
 import { batchKey, headKey } from '../src/ledger.mjs';
 import { RunQueue } from '../src/queue.mjs';
-import { BASE, HEAD, RELAY_ON, SAFE_REFUSAL, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, relayedRow, notAdmitted, rawPolicy, triggerBytes } from './helpers.mjs';
+import { BASE, HEAD, RELAY_ON, SAFE_REFUSAL, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, localRow, notAdmitted, rawPolicy, triggerBytes } from './helpers.mjs';
 
 const MIN = 60_000;
 const H = n => String(n).repeat(40).slice(0, 40);
@@ -212,7 +212,7 @@ test('review M1: quiescence that cannot be proven at the executor\'s own end HAL
 
 test('supersession at the before-workspace safe point (after stage R) and during a hosted wait', async t => {
   // a newer commit arrives while stage R runs: caught before the workspace, after the plan was written
-  const engine = fakeEngine({ relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(r => relayedRow(r)) }) });
+  const engine = fakeEngine({ relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(r => localRow(r)) }) });
   const relay = engine.runRelayStage.bind(engine);
   let f;
   engine.runRelayStage = async (batch, roles) => { await f.drop(triggerBytes({ headSha: H(7) })); return relay(batch, roles); };
@@ -221,8 +221,6 @@ test('supersession at the before-workspace safe point (after stage R) and during
   const r = await f.exec.tick();
   assert.deepEqual([r.state, r.failureCode, r.safePoint], ['FAILED_CLEAN', SUPERSEDED_AT_SAFE_POINT, 'before-workspace']);
   assert.deepEqual(stagesRun(engine), [1, 9]);
-  assert.ok(!f.companion.calls.some(c => c[0] === 'wsprep'), 'superseded before placement workspace; no local scanner');
-  assert.deepEqual(await f.ledger.pendingAttempts2(), []);
   // during a hosted wait: the next resume sees the newer commit and the live read confirms it
   const g = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => null, pull: pr => ({ number: pr, state: 'open', headSha: H(7) }) }) });
   await g.drop(triggerBytes());

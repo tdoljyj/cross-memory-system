@@ -7,11 +7,10 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {createHash,randomBytes} from 'node:crypto';
+import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {validateJobV2 as validateJob,subjectOfV2 as subjectOf} from '../../src/job-v2.mjs';
 import {canonical,digest} from '../../src/proof.mjs';
 import {validateFormalAdmissionV2,remoteRefsReferenceTime} from '../../src/admission-facts-v2.mjs';
-import {requireFreshScanStartGrant} from '../../src/scan-start-v1/grant.mjs';
 import {loadQualifiedPolicyV2 as loadQualifiedPolicy,protectedPath,qualificationDeadline} from '../qualification-v2.mjs';
 import {IMAGE,SCAN_ARGS,SOURCE_PINS,WORKFLOW_PATH,REVIEWED_COMMITS,REVIEWED_HISTORY_PROOF,acceptedWorkflowSha256,prepareRequiredHistory,refsInStore,reviewedSelfTestPlan,runReviewedSelfTest,requiredScannerPlan,validateRemoteSnapshot} from './required-history/prepare.mjs';
 import {observeUnsignedContainer} from '../verify-once/verify-worker.mjs';
@@ -19,7 +18,6 @@ import {dockerInvoke} from '../formal-gitleaks-v3/docker-transport.mjs';
 
 const PREFIX='work/actions-hosted-migration/independent-ci-v1/';
 const SOURCE_FILES=[['worker/formal-gitleaks-v4/adapter.mjs',import.meta.url],
-  ['src/scan-start-v1/grant.mjs',new URL('../../src/scan-start-v1/grant.mjs',import.meta.url)],
   ['worker/formal-gitleaks-v3/docker-transport.mjs',new URL('../formal-gitleaks-v3/docker-transport.mjs',import.meta.url)],
   ['worker/formal-gitleaks-v4/required-history/prepare.mjs',new URL('./required-history/prepare.mjs',import.meta.url)],
   ['worker/formal-gitleaks-v4/required-history/selftest-shim.mjs',new URL('./required-history/selftest-shim.mjs',import.meta.url)],
@@ -100,12 +98,12 @@ export function takeActualObservation(observation,job){
 
 // Both ports must come from the installed accepted controller Source. A PR/job
 // may supply neither. No JSON "protected:true" flag is accepted as a port.
-export function createFormalGitleaksAdapter({admissionPort,remoteRefsPort,scanStartPort}={}){
+export function createFormalGitleaksAdapter({admissionPort,remoteRefsPort}={}){
   return Object.freeze({async execute(job,{signal}={}){
     let run=null,runCreated=false,mayHaveStarted=false;
     try{
       job=snapshotJob(job);
-      check(typeof admissionPort==='function'&&typeof remoteRefsPort==='function'&&typeof scanStartPort==='function','PROTECTED_CONTROLLER_PORTS_MISSING');
+      check(typeof admissionPort==='function'&&typeof remoteRefsPort==='function','PROTECTED_CONTROLLER_PORTS_MISSING');
       check(process.platform==='linux'&&process.getuid?.()===0,'FIXED_PROTECTED_LINUX_ROOT_REQUIRED');
       const {config,sourceManifestBytes,qualification}=await loadQualifiedPolicy('/etc/clued-independent-ci/roles-v3/gitleaks.json');
       check(config.executionMode==='scanner'&&config.image===IMAGE&&config.sourceManifestSha256===job.sourceManifestSha256,'QUALIFIED_JOB_CONTEXT_MISMATCH');
@@ -139,13 +137,10 @@ export function createFormalGitleaksAdapter({admissionPort,remoteRefsPort,scanSt
         git:{path:config.gitExecutable,sha256:config.gitExecutableSha256},docker:{path:config.dockerExecutable,sha256:config.dockerExecutableSha256},dockerRootDirectory:config.dockerRootDirectory}));
       const plan=validateHistoryPlan(await requiredScannerPlan(prepared,selfTest));
       await again();check(deadline>Date.now()&&!signal?.aborted,'AUTHORITY_EXPIRED_BEFORE_HISTORY');
-      const grantValue=await scanStartPort(job),grant=requireFreshScanStartGrant(job,grantValue);
-      await durableNew(path.join(run,'scan-start.json'),grant);
-      const request={nonce,executionId:grant.execution_id,deadline:new Date(Math.min(deadline,Date.now()+plan.limits.timeoutMs)).toISOString()};
+      const request={nonce,executionId:randomUUID(),deadline:new Date(Math.min(deadline,Date.now()+plan.limits.timeoutMs)).toISOString()};
       const c={imageDigest:NATIVE_IMAGE,dockerRootDirectory:config.dockerRootDirectory,limits:plan.limits};
       // /repo retains the independently packed full history. This never calls
       // generic Linux launcher's tree-only /input copy or fixture executor.
-      requireFreshScanStartGrant(job,grantValue);check(deadline>Date.now()&&!signal?.aborted,'AUTHORITY_EXPIRED_BEFORE_HISTORY');
       const actual=await observeUnsignedContainer(c,request,plan,dockerInvoke,{signal});
       const after=await again();check(deadline>Date.now(),'AUTHORITY_EXPIRED_AFTER_HISTORY');
       const summary=executionSummary(job,prepared,selfTest,plan,actual,request,config);

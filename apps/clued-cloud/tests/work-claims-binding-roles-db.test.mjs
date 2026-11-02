@@ -9,7 +9,7 @@ import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { enableManualOwnerApprovalFixture } from './manual-owner-approval-fixture.mjs';
-import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Binding roles (migration 20261003200000, Task 869d2db7, Owner Decision
 // 38ddb8cf): once the Owner marks a CI admission Binding, only it binds claims
@@ -303,9 +303,12 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     assert.deepEqual([v2.verdict, v2.bound_pr], ['ADMITTED', 'o/r#12'], 'no role marked any more: the earlier behaviour');
     assert.ok(!(await native('clued_binding_roles_list_v1', {})).bindings.some((b) => b.binding_id === bindingIds.ci),
       'a revoked Binding without a role is not listed');
-    // This full chain includes the explicit scan-start successor (Worker82/CI8).
-    // Historical Worker80 closeout replay is proved by its own phase tests;
-    // replaying that old admission manifest over its successor must refuse.
+    // The real formal migration is installed by the full chain and replays
+    // unchanged after the original business/concurrency/negative matrix.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
     await assertGatewayCloseoutBoundary(admin);
 
   } finally {

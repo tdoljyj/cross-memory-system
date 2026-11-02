@@ -632,6 +632,32 @@ const BOOTSTRAP_ORDINARY_SOURCES=Object.freeze([
         "definition_sha256": "f968f1e82055b40013ef4bb560b0b11bd7af6bc90b0817f821c59db273dc794a"
       }
     ]
+  },
+  {
+    "file": ".github/workflows/gitleaks.yml",
+    "predecessor_blob": "e6fafbb0a40ce37795f1e50bbda03cd33fbf40e0",
+    "candidate_blob": "ba4690650935961e7f4aa289a3aa0dc874b8b4fd",
+    "candidate_sha256": "d8daffb6f35d572ada3028f1b372bc9e728edb9d757a6442a702ae423645ff77",
+    "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
+    "roles": [
+      {
+        "job_id": "gitleaks-trusted-self-hosted",
+        "definition_sha256": "2325e6f3f3d459f1204a77a842d4726b13cad06e73c1312478a6b9df013882bd"
+      }
+    ]
+  },
+  {
+    "file": ".github/workflows/trivy.yml",
+    "predecessor_blob": "50bd4ae3312ea3c5b1896a9ec81922b0b392343b",
+    "candidate_blob": "9867c4c847a61aa33761e27b793e0928bc6cbfdc",
+    "candidate_sha256": "ef85f4ad53e75d2105c1892600b83b8b70b198dc1518ff856ba53fb6c4053ccb",
+    "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
+    "roles": [
+      {
+        "job_id": "trivy-trusted-self-hosted",
+        "definition_sha256": "7745a8c7286ffba75761d8ee00fbb099809318a9bdc6bf52760064d040cefa8f"
+      }
+    ]
   }
 ]);
 const bootstrapOrdinarySame=(a,b)=>roleDefinitionDigest(a)===roleDefinitionDigest(b);

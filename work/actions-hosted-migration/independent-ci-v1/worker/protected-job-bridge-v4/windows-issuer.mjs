@@ -23,8 +23,7 @@ import {STATE_V2,stageByNumber} from '../../src/resident-v2/layout.mjs';
 import {runEntry,controllerPrincipal,controllerPorts,observationLog} from '../../src/resident-v2/entry-runtime.mjs';
 import {createWindowsContext,takeAcceptedBridgeContext,assertWindowsContextLive,closeWindowsContext} from './boundary.mjs';
 import {openAcceptedMailbox,takeActualMailbox} from './mailbox.mjs';
-import {CALLBACK_WINDOW_MS,makeIssue,makeResponse,validateChallenge,validateBlocked,admissionValid,issueGeneration,encode,decode,digest} from './protocol.mjs';
-import {validateScanStartGrant} from '../../src/scan-start-v1/grant.mjs';
+import {CALLBACK_WINDOW_MS,makeIssue,makeResponse,validateChallenge,validateBlocked,encode,decode,digest} from './protocol.mjs';
 import {verifySignedBridgeResult} from './signed-result.mjs';
 export const ISSUER_SUCCESS='ISSUED_RESULT_RECEIVED';
 const STALE_ADMISSION='full_admission_observation_expired',UNAVAILABLE_ADMISSION='full_admission_unavailable';
@@ -91,7 +90,7 @@ export const issuerEvaluate=({github,admission,job,batchClaim})=>async()=>{
 
 // The issuer engine. Ports are injected so the offline tests drive the real protocol; production wires
 // them in main(). sideEffects counts "the Linux side may run": 0 until the issue is written.
-export async function runIssuer({context,evaluate,collect,scanStart,box,clock=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),stageDeadline,signal}){
+export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),stageDeadline,signal}){
   takeAcceptedBridgeContext(context);const job=context.job;let sideEffects=0,admissionDiagnostic=null;
   // Preserve only the shared sanitizer's refusal facts, plus bounded retry context when an admission round gave up.
   // A late round may end with a bridge reason instead, so this is context, not necessarily the final failure's cause.
@@ -148,7 +147,7 @@ export async function runIssuer({context,evaluate,collect,scanStart,box,clock=Da
     // attempt 2, 2026-10-21): two more windows at most, since the companion waits one window for a response from its
     // own ReceiveChallenge before it hands the record over. A worker that ends without it (a later round, after it
     // prepared: PR #894 stage 6 challenge-02) stays UNCERTAIN, so there only the retries above help.
-    let next=1,late=null,scanStartAttempted=false,scanStartGranted=false;
+    let next=1,late=null;
     const goLate=challenge=>{late=Date.parse(challenge.deadline);return false;};
     const serveNext=async()=>{
       check(next<=32,'FORMAL_CALLBACK_LIMIT');const seq=next,name='challenge-'+String(seq).padStart(2,'0');
@@ -167,25 +166,11 @@ export async function runIssuer({context,evaluate,collect,scanStart,box,clock=Da
       // Remote refs still unavailable after collectRefs' retries: late as well (the worker has prepared nothing before
       // its refs callback, so it ends with its clean blocked record). A refusal still fails.
       let fresh=null;
-      if(challenge.action==='remote-refs'){
+      if(challenge.action!=='admission'){
         try{fresh=await collectRefs({context,collect,until:Date.parse(challenge.deadline),clock,sleep});}catch(e){if(e?.code===REFS_UNAVAILABLE)return goLate(challenge);throw e;}
       }
-      let grant=null;
-      if(challenge.action==='scan-start'){
-        check(!scanStartAttempted&&typeof scanStart==='function','SCAN_START_PORT_OR_ONCE_REQUIRED');
-        admissionValid(job,current,clock(),issueGeneration(issue));
-        if(clock()>=Date.parse(challenge.deadline))return goLate(challenge);
-        // Durable issue.issueId is the execution identity. Set once BEFORE the
-        // effect: a lost reply/response can never reinvoke Native with a new id.
-        scanStartAttempted=true;
-        let nativeGrant;try{nativeGrant=await scanStart({job,facts:current,executionId:issue.issueId});}catch{fail('SCAN_START_NATIVE_UNCONFIRMED');}
-        grant=validateScanStartGrant(nativeGrant,{job,executionId:issue.issueId});
-        assertWindowsContextLive(context);check(clock()<Date.parse(challenge.deadline),'SCAN_START_DEADLINE');
-        scanStartGranted=true;
-      }
       const now=clock();if(now>=Date.parse(challenge.deadline))return goLate(challenge);
-      const response=challenge.action==='remote-refs'?makeResponse(issue,challenge,null,fresh,{now})
-        :makeResponse(issue,challenge,current,null,{now,scanStart:grant});
+      const response=challenge.action==='admission'?makeResponse(issue,challenge,current,null,{now}):makeResponse(issue,challenge,null,fresh,{now});
       assertWindowsContextLive(context);await box.write('response-'+String(seq).padStart(2,'0'),encode(response));next++;return true;
     };
     while(clock()<Date.parse(issue.expiresAt)&&!signal?.aborted){
@@ -193,14 +178,12 @@ export async function runIssuer({context,evaluate,collect,scanStart,box,clock=Da
       let raw=null;try{raw=await box.read('result');}catch(e){if(e.code!=='ENOENT')throw e;}
       if(raw){let wrapper;try{wrapper=JSON.parse(raw.toString('utf8'));}catch{fail('SIGNED_BRIDGE_RESULT_JSON_REQUIRED');}
         check(Buffer.from(canonical(wrapper)).equals(raw),'SIGNED_BRIDGE_RESULT_CANONICAL_REQUIRED');
-        check(scanStartGranted,'SCAN_START_GRANT_NOT_OBSERVED');
         verifySignedBridgeResult({issue,wrapper,signers:context.signers,now:clock()});await admitted(Date.parse(issue.expiresAt));
         // Retries keep only their waits inside the window; a last evaluation may still end past it.
         check(clock()<Date.parse(issue.expiresAt),'BRIDGE_RESULT_DEADLINE');
         return{status:ISSUER_SUCCESS,reason:null,sideEffects,issueSha256:digest(issue),resultSha256:proofDigest(wrapper)};}
       let blocked=null;try{blocked=await box.read('blocked');}catch(e){if(e.code!=='ENOENT')throw e;}
       if(blocked){const b=validateBlocked(issue,decode(blocked),clock());
-        check(!scanStartAttempted,'SCAN_START_TERMINAL_UNCONFIRMED');
         // The Linux side ended cleanly before any scanner touched the PR (trivy may have run cache-only
         // containers): nothing was published. A clean refusal is final, never retried automatically.
         return diagnosed({status:'BLOCKED',reason:blockedReason(b.reason),sideEffects:0,issueSha256:digest(issue)});}
@@ -221,12 +204,12 @@ export async function main(argv=process.argv.slice(2),output=process.stdout){
     const batchClaim=await readBatchClaim(STATE_V2.batchClaims,job);
     const {appKey,nativeToken}=await controllerPrincipal(inputs.record);
     const log=observationLog(STATE_V2.effectsScan,job.id);
-    const {github,admission,fetchImpl,scanStart}=controllerPorts({record:inputs.record,appKey,nativeToken,policyText:held.policyText,sourceRoot,live,log});
+    const {github,admission,fetchImpl}=controllerPorts({record:inputs.record,appKey,nativeToken,policyText:held.policyText,sourceRoot,live,log});
     const box=takeActualMailbox(await openAcceptedMailbox(context));
     const row=stageByNumber(inputs.plan.stage);
     // The helper's own child deadline is the stage cap; keep the stage margin for the outcome and exit.
     const stageDeadline=Math.min(Date.now()+row.runMilliseconds-120_000,Date.parse(held.expiresAt));
-    return runIssuer({context,box,stageDeadline,scanStart,
+    return runIssuer({context,box,stageDeadline,
       evaluate:issuerEvaluate({github,admission,job,batchClaim}),
       collect:async()=>{const v=await collectCompleteRemoteRefs({job,token:await github.getInstallationToken(),readPullRequest:n=>github.readPullRequest(n),fetchImpl});
         return Object.fromEntries(['contract','repository','complete','observedAt','refs'].map(k=>[k,v[k]]));}});

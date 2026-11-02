@@ -6,12 +6,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
-import {createHash,randomBytes} from 'node:crypto';
+import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {validateJobV2 as validateJob,subjectOfV2 as subjectOf} from '../../src/job-v2.mjs';
 import {canonical,digest} from '../../src/proof.mjs';
 import {validateFormalAdmissionV2} from '../../src/admission-facts-v2.mjs';
-import {requireFreshScanStartGrant} from '../../src/scan-start-v1/grant.mjs';
 import {prepareWorkerJob} from '../../src/worker-v2.mjs';
 import {loadQualifiedPolicyV2 as loadQualifiedPolicy,protectedPath,qualificationDeadline} from '../qualification-v2.mjs';
 import {observeUnsignedContainer} from '../verify-once/verify-worker.mjs';
@@ -26,7 +25,7 @@ export const POLICY_FILE='/etc/clued-independent-ci/roles-v3/contract-placement.
 export const WORKFLOW_SHA256S=trustedWorkflowSha256s(TRUSTED_WORKFLOW_PATHS['contract-placement']);
 const P='work/actions-hosted-migration/independent-ci-v1/';
 const DIR=P+'worker/formal-contract-placement-v2/';
-const CLOSURE=[DIR+'adapter.mjs',DIR+'container-entry.mjs',P+'src/job-v2.mjs',P+'src/admission-facts-v2.mjs',P+'src/scan-start-v1/grant.mjs',P+'src/proof.mjs',P+'src/worker-v2.mjs',P+'worker/qualification-v2.mjs',P+'worker/verify-once/verify-worker.mjs',P+'worker/trusted-workflows.mjs',P+'worker/formal-gitleaks-v2/docker-transport.mjs'];
+const CLOSURE=[DIR+'adapter.mjs',DIR+'container-entry.mjs',P+'src/job-v2.mjs',P+'src/admission-facts-v2.mjs',P+'src/proof.mjs',P+'src/worker-v2.mjs',P+'worker/qualification-v2.mjs',P+'worker/verify-once/verify-worker.mjs',P+'worker/trusted-workflows.mjs',P+'worker/formal-gitleaks-v2/docker-transport.mjs'];
 const HASH=/^[a-f0-9]{64}$/;const actual=new WeakSet();
 const check=(v,c)=>{if(!v)throw Object.assign(new Error(c),{code:c});};
 const freeze=v=>{if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v);}return v;};
@@ -80,10 +79,10 @@ export function placementPlan(config,accepted,snapshot,requestFile,entryFile){
   validateTools(accepted.tools);return freeze({profile:PROFILE,image:config.image,executable:config.containerNodeExecutable,cwd:'/scratch',args:['/control/contract-placement-entry.mjs'],mounts:[[snapshot,'/input'],[requestFile,'/request/job.json'],[entryFile,'/control/contract-placement-entry.mjs']],limits:LIMITS,network:'none',user:'65532:65532',rootfsReadOnly:true,credentialsMounted:false});
 }
 export function takeActualObservation(observation,job){validateRequiredJob(job);check(actual.has(observation)&&canonical(observation.subject)===canonical(subjectOf(job)),'ACTUAL_PROTECTED_PLACEMENT_OBSERVATION_REQUIRED');return observation;}
-export function createFormalContractPlacementAdapter({admissionPort,scanStartPort}={}){
+export function createFormalContractPlacementAdapter({admissionPort}={}){
   return Object.freeze({async execute(job,{signal}={}){let run=null,created=false,touched=false;
     try{
-      job=freeze(structuredClone(validateRequiredJob(job)));check(typeof admissionPort==='function'&&typeof scanStartPort==='function','PROTECTED_ADMISSION_PORT_REQUIRED');check(process.platform==='linux'&&process.getuid?.()===0,'FIXED_PROTECTED_LINUX_ROOT_REQUIRED');
+      job=freeze(structuredClone(validateRequiredJob(job)));check(typeof admissionPort==='function','PROTECTED_ADMISSION_PORT_REQUIRED');check(process.platform==='linux'&&process.getuid?.()===0,'FIXED_PROTECTED_LINUX_ROOT_REQUIRED');
       const{config,sourceManifestBytes,qualification}=await loadQualifiedPolicy(POLICY_FILE),manifest=JSON.parse(sourceManifestBytes);check(config.sourceManifestSha256===job.sourceManifestSha256,'QUALIFIED_JOB_CONTEXT_MISMATCH');
       const accepted=await sourceBoundary(config,manifest),candidate=path.join(config.workspaceRoot,job.id,'candidate');
       const before=freeze(structuredClone(validateAdmission(job,await admissionPort(job)))),generation=before.batchClaimBound,again=async()=>validateAdmission(job,await admissionPort(job),Date.now(),{batchClaim:generation});const expires=Math.min(Date.parse(before.claimExpiresAt),qualificationDeadline(qualification.payload),Date.now()+LIMITS.timeoutMs);check(expires>Date.now()&&!signal?.aborted,'CURRENT_AUTHORITY_EXPIRED');
@@ -93,9 +92,7 @@ export function createFormalContractPlacementAdapter({admissionPort,scanStartPor
       const sealedPrepared=await prepareWorkerJob({job,workspace:snapshot,trustedSourceDirectory:config.trustedSourceDirectory,sourceManifestBytes,expectedSourceManifestSha256:job.sourceManifestSha256,gitExecutable:config.gitExecutable});check(sealedPrepared.candidateTreeSha===prepared.candidateTreeSha,'SEALED_HEAD_TREE_CHANGED');
       const requestFile=path.join(run,'job.json'),entryFile=path.join(config.trustedSourceDirectory,DIR+'container-entry.mjs');await durableNew(requestFile,{contract:'clued.independent-ci.contract-placement-container/2',job,tools:accepted.tools});await fs.chmod(requestFile,0o444);
       const plan=placementPlan(config,accepted,snapshot,requestFile,entryFile);await again();check(expires>Date.now()&&!signal?.aborted,'AUTHORITY_EXPIRED_BEFORE_PLACEMENT');
-      const grantValue=await scanStartPort(job),grant=requireFreshScanStartGrant(job,grantValue);await durableNew(path.join(run,'scan-start.json'),grant);
-      const request={nonce:randomBytes(32).toString('hex'),executionId:grant.execution_id,deadline:new Date(expires).toISOString()};
-      requireFreshScanStartGrant(job,grantValue);check(expires>Date.now()&&!signal?.aborted,'AUTHORITY_EXPIRED_BEFORE_PLACEMENT');touched=true;
+      const request={nonce:randomBytes(32).toString('hex'),executionId:randomUUID(),deadline:new Date(expires).toISOString()};touched=true;
       const o=await observeUnsignedContainer({imageDigest:config.image,dockerRootDirectory:config.dockerRootDirectory,limits:LIMITS},request,plan,dockerInvoke,{signal});const after=await again();
       check(o.complete===true&&o.cleanupConfirmed===true&&o.reason===null&&o.state?.Running===false&&o.state.Status==='exited'&&Number.isInteger(o.state.ExitCode)&&o.attached?.code===o.state.ExitCode&&!o.attached.timedOut&&!o.attached.overflow&&!o.attached.error&&expires>Date.now(),'ACTUAL_PLACEMENT_EXIT_AND_CLEANUP_REQUIRED');
       check(o.isolation?.nonRoot===true&&o.isolation.network==='none'&&o.isolation.credentialsMounted===false&&o.isolation.controlPathsMounted===false,'ACTUAL_PLACEMENT_ISOLATION_REQUIRED');

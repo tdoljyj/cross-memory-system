@@ -27,7 +27,7 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const { trainMode, unreadable: trainModeUnreadable } = await readStageTrainModeFact(inputs.dir);
     const { slotNative = null, sweepStore = null } = await trainPortsV2({ trainMode, record: inputs.record, fetchImpl: ports.fetchImpl, nativeToken, github: ports.github });
     return createProductionWorkAdmissionPublisherV2({ github, journal, admission, assertLive: live, record: log, authority: authorityOf(inputs.record.accepted), batchClaims,
-      trainMode, trainModeUnreadable, slotNative, sweepStore, scanStartRegistrySha256: ports.scanStartRegistrySha256 }).publish(job);
+      trainMode, trainModeUnreadable, slotNative, sweepStore }).publish(job);
   } });
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) process.exitCode = await main();

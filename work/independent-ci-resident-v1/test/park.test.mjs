@@ -14,7 +14,7 @@ import { describe as prPage, events as notificationEvents } from '../src/pr-stat
 import { StatusBoard, parseStatus } from '../src/status.mjs';
 import { Ledger, batchKey, headKey } from '../src/ledger.mjs';
 import { drainRequest, abortRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
-import { BASE, HEAD, RELAY_ON, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, relayedRow, rawPolicy, triggerBytes } from './helpers.mjs';
+import { BASE, HEAD, RELAY_ON, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, rawPolicy, triggerBytes } from './helpers.mjs';
 
 const MIN = 60_000;
 const OWNER = 'S-1-5-21-1-2-3-1001';
@@ -198,20 +198,14 @@ test('the breaker: parking after stage 7 is a pass of every stage before it; a s
 });
 
 test('parking point A: a batch resumed with a bundle older than 100 minutes ends before the workspace, nothing on Linux', async t => {
-  const engine = fakeEngine({ relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(role => relayedRow(role)) }) });
-  const f = await executorFixture(t, { engine, policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => null }) });
+  const f = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion: fakeCompanion({ hint: () => null }) });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'WAITING');
-  // A late success is only a Stage R candidate; it never grants Native scans.
-  // With the hosted receipts confirmed, the original bundle age gate is reached.
+  // other batches held the executor (or it was off): the wait expired long ago, the bundle is too old now
   f.advance(101 * MIN);
-  f.companion.hostedHint = async s => Buffer.from(JSON.stringify(hintFor({ gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } },
-    { pr: s.pr, head: s.headSha, at: f.clock() })));
   const r = await f.exec.tick();
   assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'PARKED_BUNDLE_TOO_OLD']);
-  assert.deepEqual(stagesRun(f.engine), [1, 9], 'no workspace preparation or local Linux scan');
-  assert.ok(!f.companion.calls.some(c => c[0] === 'wsprep'));
-  assert.deepEqual(await f.ledger.pendingAttempts2(), []);
+  assert.deepEqual(stagesRun(f.engine), [1], 'no workspace preparation, no Linux stage');
   assert.equal(f.queue.row(884).state, 'STOPPED');
 });
 

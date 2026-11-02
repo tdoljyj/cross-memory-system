@@ -1,8 +1,7 @@
 // Hosted-execution wait and timeout state machine (free-minutes design §7.2, §7.3).
 // Pure: no I/O, no clock of its own. Hints come from the companion and are UNTRUSTED data used only
-// for scheduling only. Owner once-per-head rule 41ab823a supersedes the older
-// timeout/local-fallback design: a hint or deadline can never transfer a hosted
-// scan to Native. Only stage R's fresh protected attestation can publish.
+// for scheduling: a hint can make the batch relay less (more local work), never more. The only
+// verdict that publishes anything is the relay helper's own attestation in stage R.
 //
 // Relayable roles are exactly those of the installed relay registry (hosted-relay-v1/registry.mjs
 // RELAYABLE_ROLES: gitleaks, trivy). contract-placement is a heavy role that is never relayed (its hosted
@@ -14,14 +13,14 @@ export const HINT_MAX_BYTES = 2048;
 export const RELAY_ROLES = Object.freeze(['gitleaks', 'trivy']);
 export const HEAVY_ROLES = Object.freeze(['gitleaks', 'trivy', 'contract-placement']);
 export const HINT_STATES = Object.freeze(['ABSENT', 'PENDING_QUEUED', 'PENDING_RUNNING', 'SUCCESS', 'HOSTED_NOT_SUCCESS', 'BILLING_REFUSED', 'NOT_ELIGIBLE']);
-// Legacy receipt vocabulary remains readable. The enabled route below never
-// emits these historical failure/timeout reasons as Native scan authority.
+// Resident-side reasons for a role that never reaches stage R (scheduling only; stage R has its own
+// RELAY_NOT_ATTESTED_* reasons for the candidates it was asked about).
 export const SCHEDULING_REASONS = Object.freeze(['RELAY_DISABLED', 'RELAY_ROLE_NOT_RELAYABLE', 'RELAY_HINT_BILLING_REFUSED', 'RELAY_HINT_NOT_ELIGIBLE',
   'RELAY_HINT_HOSTED_NOT_SUCCESS', 'RELAY_WAIT_TIMED_OUT']);
+const TERMINAL = new Set(['SUCCESS', 'HOSTED_NOT_SUCCESS', 'NOT_ELIGIBLE']);
 const MINUTE = 60_000;
 
-// Deadlines change the reason for a hold, never the scan provider. Job timeout
-// values remain the registry's hosted job timeout-minutes (gitleaks/trivy 25).
+// Defaults from §7.2; job timeouts are the registry's hosted job timeout-minutes (gitleaks/trivy 25).
 export const DEFAULT_WAIT = Object.freeze({
   signalMs: 10 * MINUTE, queueMs: 15 * MINUTE, runSlackMs: 10 * MINUTE, totalMs: 60 * MINUTE, pollMs: MINUTE,
   jobTimeoutMs: Object.freeze({ gitleaks: 25 * MINUTE, trivy: 25 * MINUTE }),
@@ -76,30 +75,33 @@ export function decide({ relay, t0, now, hint }) {
   const enabledRoles = (relay.roles ?? RELAY_ROLES);
   check(Array.isArray(enabledRoles) && enabledRoles.every(r => RELAY_ROLES.includes(r)), 'RELAY_WAIT_POLICY_INVALID', 'roles');
   const w = waitConfig(relay);
-  const wait = reason => ({ action: 'WAIT', until: now + w.pollMs, reason });
-  if (enabledRoles.length !== RELAY_ROLES.length || new Set(enabledRoles).size !== RELAY_ROLES.length)
-    return wait('RELAY_HOSTED_ROLE_SET_INCOMPLETE');
-  const roles = Object.fromEntries(RELAY_ROLES.map(r => [r, normaliseRole(hint?.roles?.[r])]));
-  if (RELAY_ROLES.every(r => roles[r].state === 'SUCCESS'))
-    return start([...RELAY_ROLES], {}, 'RELAY_ALL_HOSTED_SUCCESS');
-  // Failure, billing, ineligibility and unknown/missing evidence establish no
-  // right to scan elsewhere. No provider-transfer mechanism is implemented here.
-  if (RELAY_ROLES.some(r => ['BILLING_REFUSED', 'NOT_ELIGIBLE', 'HOSTED_NOT_SUCCESS'].includes(roles[r].state)))
-    return wait('RELAY_PROVIDER_TRANSFER_REQUIRED');
+  const roles = hint?.roles ?? Object.fromEntries(RELAY_ROLES.map(r => [r, { state: 'ABSENT' }]));
+  if (RELAY_ROLES.some(r => roles[r].state === 'BILLING_REFUSED')) return allLocal('RELAY_BILLING_REFUSED', 'RELAY_HINT_BILLING_REFUSED');
+  const reasons = {};
+  for (const r of RELAY_ROLES) {
+    if (!enabledRoles.includes(r)) reasons[r] = 'RELAY_ROLE_NOT_RELAYABLE';
+    else if (roles[r].state === 'NOT_ELIGIBLE') reasons[r] = 'RELAY_HINT_NOT_ELIGIBLE';
+    else if (roles[r].state === 'HOSTED_NOT_SUCCESS') reasons[r] = 'RELAY_HINT_HOSTED_NOT_SUCCESS';
+  }
+  const candidates = enabledRoles.filter(r => !reasons[r]);
+  if (candidates.length === 0) return start([], reasons, 'RELAY_NO_ELIGIBLE_ROLE');
   const hardStop = t0 + w.totalMs;
   const deadlines = [];
-  let expired = now >= hardStop;
-  for (const role of RELAY_ROLES) {
+  for (const role of candidates) {
     const s = roles[role];
-    if (s.state === 'SUCCESS') continue;
+    if (TERMINAL.has(s.state)) continue;
     let until;
     if (s.state === 'ABSENT') until = t0 + w.signalMs;
     else if (s.state === 'PENDING_QUEUED') until = s.queuedAt + w.queueMs;
     else if (s.state === 'PENDING_RUNNING') until = s.startedAt + w.jobTimeoutMs[role] + w.runSlackMs;
     else fail('RELAY_WAIT_STATE_UNKNOWN', s.state);
     if (now < Math.min(until, hardStop)) deadlines.push(Math.min(until, hardStop));
-    else expired = true;
   }
-  return expired ? wait('RELAY_PROVIDER_TRANSFER_REQUIRED')
-    : { action: 'WAIT', until: Math.min(...deadlines), reason: 'RELAY_WAITING_FOR_HOSTED' };
+  if (deadlines.length > 0 && now < hardStop) return { action: 'WAIT', until: Math.min(...deadlines), reason: 'RELAY_WAITING_FOR_HOSTED' };
+  // Start now. Relay is attempted only for roles whose hint says SUCCESS; everything else runs locally.
+  // (Stage R still verifies each candidate independently and may send it back to LOCAL_REQUIRED.)
+  const relayCandidates = candidates.filter(r => roles[r].state === 'SUCCESS');
+  for (const r of candidates) if (!relayCandidates.includes(r)) reasons[r] = 'RELAY_WAIT_TIMED_OUT';
+  const reason = now >= hardStop ? 'RELAY_TOTAL_WAIT_REACHED' : (relayCandidates.length === RELAY_ROLES.length ? 'RELAY_ALL_HOSTED_SUCCESS' : 'RELAY_PARTIAL_OR_TIMED_OUT');
+  return start(relayCandidates, reasons, reason);
 }

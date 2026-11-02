@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
+import '../../../scripts/ci/clued-scan-start-prereg.test.mjs';
 import {
   registeredBootstrapOrdinarySuccessor,
   sha256Hex,

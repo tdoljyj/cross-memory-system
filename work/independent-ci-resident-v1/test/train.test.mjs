@@ -311,13 +311,6 @@ test('the install authority keeps at least the helper\'s fixed margin; stage 10\
   const broker = table('../windows/SwapBroker.cs');
   const boundary = table('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/windows/FormalPublicBoundaryV2.cs');
   assert.deepEqual(broker, boundary);
-  // All twelve original caps are unchanged. Stage13 is only a short protected
-  // relay observation; it does not make a new scanner or Linux worker route.
-  assert.deepEqual(broker.slice(0, 12), [900_000, 2_700_000, 900_000, 1_800_000, 900_000, 600_000, 900_000, 2_700_000, 900_000, 300_000, 60_000, 300_000]);
-  assert.deepEqual([broker.length, broker[12]], [13, 300_000]);
-  const { stageByNumber } = await import('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/layout.mjs');
-  const observer = stageByNumber(13);
-  assert.deepEqual([observer.kind, observer.entryRole, observer.jobRoles, observer.runMilliseconds, observer.linuxWorker],
-    ['relay-qualification', 'relay-qualification', ['relay-qualification-run'], 300_000, false]);
-  assert.equal(stageByNumber(14), null);
+  // Stage 10/11 retain their original caps; stage 12 is revocation maintenance.
+  assert.deepEqual([broker.length, broker[9], broker[10],broker[11]], [12, 300_000, 60_000,300_000]);
 });

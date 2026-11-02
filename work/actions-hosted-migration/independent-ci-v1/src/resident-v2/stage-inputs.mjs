@@ -11,7 +11,6 @@ import { validateJobV2, sameBatchV2, CONTROL_ROLES_V2 } from '../job-v2.mjs';
 import { validateTrainRun } from './train-run.mjs';
 import { validateRoleProbeRun } from './role-probe-run.mjs';
 import { validateRevocationRun, validateRevocationFacts } from './revocation-run.mjs';
-import { validateRelayQualificationRun, validateRelayQualificationObservation } from './relay-qualification-run.mjs';
 import { validateTrainFacts } from '../independent-control-checks-v2/train-facts.mjs';
 import { hash } from './prepare-record.mjs';
 import { validateRelayPlanRows } from '../hosted-relay-v1/relay-plan.mjs';
@@ -80,14 +79,6 @@ export async function loadStageInputs({ nonce, configSha256, entryRole, recordDo
       && jobs[0].nodeProfileSha256 === plan.nodeProfileSha256 && jobs[0].runId === plan.batchId, 'EXACT_STAGE_JOBS_REQUIRED');
     return Object.freeze({ nonce, dir, plan, row, jobs, resultEnvelope: null, record });
   }
-  if (row.kind === 'relay-qualification') {
-    check(entryRole === 'relay-qualification' && jobs.length === 1, 'EXACT_STAGE_JOBS_REQUIRED');
-    let job;
-    try { job = validateRelayQualificationRun(jobs[0]); } catch { fail('EXACT_STAGE_JOBS_REQUIRED'); }
-    check(job.repo === record.config.repository && job.sourceManifestSha256 === record.config.sourceManifestSha256
-      && job.nodeProfileSha256 === plan.nodeProfileSha256 && job.runId === plan.batchId, 'EXACT_STAGE_JOBS_REQUIRED');
-    return Object.freeze({ nonce, dir, plan, row, jobs: Object.freeze([job]), resultEnvelope: null, record });
-  }
   jobs.forEach(validateJobV2);
   check(stageJobRolesValid(row, jobs.map(j => j.role)) && jobs.every(j => j.repo === record.config.repository && j.sourceManifestSha256 === record.config.sourceManifestSha256 && sameBatchV2(j, jobs[0]))
     && (entryRole !== 'control-checks' || jobs.map(j => j.role).join('|') === CONTROL_ROLES_V2.join('|')), 'EXACT_STAGE_JOBS_REQUIRED');
@@ -102,28 +93,18 @@ export async function loadStageInputs({ nonce, configSha256, entryRole, recordDo
 
 // Create-only, fsynced. Written in the entry's finally block, so every ending that reaches it is
 // recorded; an ending that does not (a crash, a kill) is "outcome missing" = UNKNOWN for the resident.
-export async function writeOutcome({ receiptsRoot = STATE_V2.receipts, nonce, plan, jobIds, result, clock = Date.now, relayQualificationJob = null }) {
+export async function writeOutcome({ receiptsRoot = STATE_V2.receipts, nonce, plan, jobIds, result, clock = Date.now }) {
   check(NONCE32.test(nonce ?? ''), 'OUTCOME_NONCE_INVALID');
   const r = plain(result) ? result : {};
   const sideEffects = Number.isSafeInteger(r.sideEffects) && r.sideEffects >= 0 ? r.sideEffects : 1;
   const status = typeof r.status === 'string' && /^[A-Z][A-Z_]{1,60}$/.test(r.status) ? r.status : 'UNCERTAIN';
-  let observation = null;
-  if (plan?.stage === 13 && plan.entryRole === 'relay-qualification') {
-    try {
-      const job = validateRelayQualificationRun(relayQualificationJob);
-      if (Array.isArray(jobIds) && jobIds.length === 1 && jobIds[0] === job.id
-        && job.runId === plan.batchId && job.sourceManifestSha256 === plan.sourceManifestSha256
-        && job.nodeProfileSha256 === plan.nodeProfileSha256) observation = validateRelayQualificationObservation(r.observation, job);
-    } catch { /* No typed, exactly bound observation can be asserted. */ }
-  }
   const outcome = { contract: OUTCOME_CONTRACT, nonce, stage: plan?.stage ?? null, entryRole: plan?.entryRole ?? null, jobIds: Array.isArray(jobIds) ? jobIds : [],
     status, reason: typeof r.reason === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(r.reason) ? r.reason : null, sideEffects,
     // Anything but a clean BLOCKED with zero side effects may have published. Stage 10 facts with zero side effects
     // (shadow mode writes nothing to GitHub or KooYomi) are the other clean ending; in on and revoke-only mode (DESIGN §41.3,
     // §41.4) facts /2 with side effects are a normal ending that may have published (stage-fact.mjs accepts exactly
     // mayHavePublished === sideEffects > 0 there, and shadow only with zero).
-    mayHavePublished: !((status === 'BLOCKED' || (plan?.entryRole === 'train-maintenance' && status === 'TRAIN_FACTS')
-      || (plan?.stage === 13 && plan.entryRole === 'relay-qualification' && status === 'RELAY_QUALIFICATION_OBSERVATION' && observation !== null)) && sideEffects === 0), diagnostic: sanitizeAdmissionDiagnosticV2(r.admissionDiagnostic),
+    mayHavePublished: !((status === 'BLOCKED' || (plan?.entryRole === 'train-maintenance' && status === 'TRAIN_FACTS')) && sideEffects === 0), diagnostic: sanitizeAdmissionDiagnosticV2(r.admissionDiagnostic),
     // Resident quota redesign v0.6 §9 phase 1: the entry's own "safe to re-run" flag (only ever on a clean BLOCKED with
     // zero side effects) and the scheduling facts Native reported (ci_retry_after, merge-queue entry). The resident
     // releases a stage only on this flag, never by inferring it from a reason code.
@@ -135,7 +116,6 @@ export async function writeOutcome({ receiptsRoot = STATE_V2.receipts, nonce, pl
     // is then no success (stage-fact.mjs: STAGE_OUTCOME_MISSING).
     train: plan?.entryRole === 'train-maintenance' ? trainFactsOrNull(r.train) : null,
     ...(plan?.entryRole === 'revocation-maintenance' ? { revocation: (() => { try { return validateRevocationFacts(r.revocation); } catch { return null; } })() } : {}),
-    ...(plan?.stage === 13 && plan.entryRole === 'relay-qualification' ? { observation } : {}),
     at: new Date(clock()).toISOString() };
   await fs.mkdir(receiptsRoot, { recursive: true });
   const h = await fs.open(path.join(receiptsRoot, `outcome-${nonce}.json`), 'wx', 0o600);

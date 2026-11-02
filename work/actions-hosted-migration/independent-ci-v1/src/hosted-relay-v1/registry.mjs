@@ -6,12 +6,6 @@ import { digest } from '../proof.mjs';
 
 export const SPEC_CONTRACT = 'clued.independent-ci.hosted-relay-registry-spec/1';
 export const REGISTRY_CONTRACT = 'clued.independent-ci.hosted-relay-registry/1';
-export const SPEC_CONTRACT_V2 = 'clued.independent-ci.hosted-relay-registry-spec/2';
-export const REGISTRY_CONTRACT_V2 = 'clued.independent-ci.hosted-relay-registry/2';
-export const SCAN_START_WORKFLOW_GATE = Object.freeze({ contract: 'clued.ci-scan-start-workflow-gate/1',
-  stepName: 'Acquire one-time scan permission', scriptPath: 'scripts/ci/clued-scan-start.mjs',
-  scriptSha256: '02eea1acaecc39ec179ac4201246509152dbf7bb7119687fb7cf640fb86146e1',
-  endpoint: 'https://kooyumi.pixelgrav.com/v1/ci/scan-start', audience: 'clued-ci-scan-start-v1' });
 export const RELAY_ISSUER = 'https://token.actions.githubusercontent.com';
 export const RELAY_AUDIENCE = 'clued-hosted-relay-v1';
 export const HOSTED_APP_ID = 15368; // GitHub Actions
@@ -122,23 +116,9 @@ function names(roles, code) {
   }
 }
 
-function scanStartV2(value, code, registry = false) {
-  insist(exact(value.scanStart, Object.keys(SCAN_START_WORKFLOW_GATE))
-    && Object.keys(SCAN_START_WORKFLOW_GATE).every(k => value.scanStart[k] === SCAN_START_WORKFLOW_GATE[k]), code, 'scanStart');
-  insist(value.requireCheckRunIdClaim === true, code, 'requireCheckRunIdClaim.v2');
-  insist(Object.keys(value.roles).sort().join('|') === 'gitleaks|trivy', code, 'scanStart.roles');
-  for (const [role, entry] of Object.entries(value.roles)) {
-    insist(entry.forbiddenChangePrefixes.includes('scripts/ci/'), code, `${role}.scanStart.prefix`);
-    if (registry) insist(entry.closure.some(item => item.path === value.scanStart.scriptPath
-      && item.sha256 === value.scanStart.scriptSha256), code, `${role}.scanStart.closure`);
-    else insist(entry.closure.includes(value.scanStart.scriptPath), code, `${role}.scanStart.closure`);
-  }
-}
-
 export function validateSpec(spec) {
   const code = 'RELAY_REGISTRY_SPEC_INVALID';
-  const v2 = spec?.contract === SPEC_CONTRACT_V2;
-  insist(exact(spec, v2 ? [...SPEC_KEYS, 'scanStart'] : SPEC_KEYS) && (v2 || spec.contract === SPEC_CONTRACT), code, 'shape');
+  insist(exact(spec, SPEC_KEYS) && spec.contract === SPEC_CONTRACT, code, 'shape');
   common(spec, code);
   for (const [role, entry] of Object.entries(spec.roles)) {
     insist(exact(entry, SPEC_ROLE_KEYS), code, `${role}.shape`);
@@ -149,7 +129,6 @@ export function validateSpec(spec) {
     insist(rolePrefixesValid(entry.forbiddenChangePrefixes), code, `${role}.forbiddenChangePrefixes`);
   }
   names(spec.roles, code);
-  if (v2) scanStartV2(spec, code);
   return structuredClone(spec);
 }
 
@@ -159,8 +138,7 @@ const validated = new WeakMap();
 // attestation and publication binds to.
 export function validateRegistry(registry, { domain } = {}) {
   const code = 'RELAY_REGISTRY_INVALID';
-  const v2 = registry?.contract === REGISTRY_CONTRACT_V2;
-  insist(exact(registry, v2 ? [...REGISTRY_KEYS, 'scanStart'] : REGISTRY_KEYS) && (v2 || registry.contract === REGISTRY_CONTRACT), code, 'shape');
+  insist(exact(registry, REGISTRY_KEYS) && registry.contract === REGISTRY_CONTRACT, code, 'shape');
   insist(['production', 'fixture'].includes(registry.domain), code, 'domain');
   if (domain !== undefined) insist(registry.domain === domain, 'RELAY_REGISTRY_DOMAIN_MISMATCH', registry.domain);
   insist(registry.generatedBy === 'work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/build-registry.mjs', code, 'generatedBy');
@@ -186,7 +164,6 @@ export function validateRegistry(registry, { domain } = {}) {
     insist(entry.closureSha256 === closureDigest(entry.closure, entry.mustNotExist, entry.forbiddenChangePrefixes), code, `${role}.closureSha256`);
   }
   names(registry.roles, code);
-  if (v2) scanStartV2(registry, code, true);
   const frozen = deepFreeze(structuredClone(registry));
   validated.set(frozen, digest(frozen));
   return frozen;

@@ -21,57 +21,10 @@ import { cluedRpc } from '../../../../../scripts/ci/clued-work-admission.mjs';
 import { createIndependentPublicationPortsForJobs, independentControllerId } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { registerIndependentController } from '../../../../../scripts/ci/clued-independent-revoker.mjs';
 import { revocationQualification } from './revocation-run.mjs';
-import { ALL_STAGE_CODES } from './stage-fact.mjs';
-import { createIndependentScanStartPort } from '../scan-start-v1/native-port.mjs';
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
-// Public reasons are a vocabulary, never an arbitrary exception's printable
-// code/message. Preserve the lifecycle and transport distinctions the resident
-// uses, without invoking accessors, coercion or an exception's prototype.
-const PUBLIC_ENTRY_REASONS = new Set([...ALL_STAGE_CODES,
-  'ENTRY_OPERATION_UNCONFIRMED', 'FIXED_WINDOWS_ENTRY_REQUIRED', 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED',
-  'NATIVE_PUBLICATION_SCOPE_REFUSED', 'NATIVE_PUBLICATION_UNAVAILABLE', 'independent_revoker_qualification_required',
-  'OBSERVATION_KIND_REFUSED', 'OBSERVATION_LOG_BOUNDARY', 'OBSERVATION_LOG_UNCONFIRMED', 'HELD_SOURCE_PINS_CHANGED',
-  'ACTUAL_HELD_RECORD_LEASE_REQUIRED', 'ACTUAL_WINDOWS_HELD_RECORD_REQUIRED', 'ENTRY_OUTSIDE_HELD_SOURCE_REFUSED',
-  'HELD_POLICY_BYTES_CHANGED', 'HELD_RECORD_CONTROLLER_REFUSED', 'HELD_RECORD_DOCUMENTS_REFUSED',
-  'HELD_RECORD_DOCUMENT_BOUND', 'HELD_RECORD_EXTRA_OUTPUT_REFUSED', 'HELD_RECORD_JSON_REFUSED', 'HELD_RECORD_LEASE_LOST',
-  'HELD_RECORD_OUTPUT_BOUND', 'HELD_RECORD_PINS_REFUSED', 'HELD_RECORD_PROCESS_UNCONFIRMED', 'HELD_RECORD_REFUSED',
-  'EXACT_SELECTED_JOB_PLAN_PIN_REQUIRED', 'EXACT_STAGE_JOBS_REQUIRED', 'EXACT_STAGE_PLAN_REQUIRED',
-  'FIXED_FORMAL_ENTRY_ROLE_REQUIRED', 'FIXED_V2_ENTRY_ARGUMENTS_REQUIRED', 'INSTALLED_RECORD_BINDING_CHANGED',
-  'OUTCOME_NONCE_INVALID', 'STAGE_INPUT_BOUNDARY', 'STAGE_INPUT_CHANGED', 'STAGE_INPUT_DIRECTORY_REQUIRED', 'STAGE_INPUT_RESULT_REQUIRED',
-  'EXACT_FORMAL_PLAN_V2_REQUIRED', 'EXACT_REVIEWED_STAGE_MANIFEST_REQUIRED', 'EXACT_STAGE_CLOSURE_REQUIRED',
-  'EXACT_STAGE_WORK_PIN_REQUIRED', 'SEALED_STAGE_BINDING_REQUIRED', 'SEALED_STAGE_DIRECTORY_REQUIRED',
-  'SEALED_STAGE_FILE_BOUNDARY', 'SEALED_STAGE_FILE_CHANGED', 'SEALED_STAGE_PLAN_CHANGED', 'SEALED_STAGE_SOURCE_CHANGED',
-  'ACCEPTED_SOURCE_INCOMPLETE', 'ACCEPTED_SOURCE_MISSING', 'RECORD_ACCEPTANCE_INVALID', 'RECORD_ACCEPTANCE_REQUIRED',
-  'RECORD_BINDING_CHANGED', 'RECORD_CANONICAL_BYTES_REQUIRED', 'RECORD_CONTROLLER_CONFIG_REQUIRED', 'RECORD_DOCUMENTS_REQUIRED',
-  'RECORD_EVALUATOR_CHANGED', 'RECORD_HOST_IDENTITY_REQUIRED', 'RECORD_INSTALLATION_INVALID', 'RECORD_MANIFEST_INVALID',
-  'RECORD_NODE_PROFILE_REQUIRED', 'RECORD_SIGNERS_CHANGED', 'RECORD_SIGNERS_INVALID', 'RECORD_SIGNERS_REQUIRED',
-  'RECORD_SOURCE_MANIFEST_REQUIRED', 'SOURCE_PIN_INVALID', 'unsafe_installation_file', 'secret_file_boundary_unconfirmed',
-  'installation_file_replaced', 'installation_file_unreadable', 'installation_link_refused', 'installation_acl_unqualified',
-  'full_admission_unavailable', 'full_admission_mode_unknown', 'full_admission_observer_unknown', 'full_admission_observation_expired',
-  'full_admission_not_configured', 'full_admission_subject_invalid', 'full_admission_source_changed', 'full_admission_clock_invalid',
-  'full_admission_principal_unknown', 'full_admission_incomplete', 'full_admission_paths_refused', 'full_admission_github_forbidden',
-  'full_admission_rejected', 'full_admission_claim_missing', 'full_admission_native_changed', 'full_admission_claim_changed',
-  'full_admission_subject_changed', 'full_admission_native_unsupported', 'native_policy_changed', 'execution_proof_refused',
-  'evidence_identity_conflict', 'role_already_published_on_head', 'role_already_on_github', 'BATCH_CLAIM_MISSING',
-  'BRIDGE_RESULT_DEADLINE', 'FORMAL_BRIDGE_STAGE_DEADLINE', 'ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED',
-  'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED', 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED', 'BRIDGE_CALLBACK_DEADLINE',
-  'native_claim_observation_unavailable', 'github_transport_unconfirmed', 'github_transient_unavailable',
-  'COMPLETE_CHECK_INVENTORY_REQUIRED', 'REMOTE_REFS_UNAVAILABLE', 'REMOTE_REFS_REFUSED',
-  // A bounded HTTP status vocabulary preserves 429/5xx retry classification;
-  // no regexp accepts caller-controlled suffixes or arbitrary secret strings.
-  ...Array.from({ length: 500 }, (_, i) => `github_http_${i + 100}`),
-]);
-export function safeReason(error) {
-  try {
-    if (error === null || (typeof error !== 'object' && typeof error !== 'function')) return 'ENTRY_OPERATION_UNCONFIRMED';
-    const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
-    if (descriptor && Object.hasOwn(descriptor, 'value') && typeof descriptor.value === 'string'
-      && PUBLIC_ENTRY_REASONS.has(descriptor.value)) return descriptor.value;
-  } catch { /* A Proxy reflection trap's thrown value is never inspected. */ }
-  return 'ENTRY_OPERATION_UNCONFIRMED';
-}
+export const safeReason = e => (/^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(e?.code ?? '') ? e.code : 'ENTRY_OPERATION_UNCONFIRMED');
 // With the trailing separator, as before (callers join relative Source paths onto it).
 export const sourceRootOf = moduleUrl => sourceRootOfModule(moduleUrl) + path.sep;
 
@@ -113,7 +66,7 @@ export function controllerPorts({ record, appKey, nativeToken, policyText, sourc
   const env = { CLUED_CONTEXT_READ_TOKEN: nativeToken, CLUED_SUPABASE_URL: record.config.supabaseUrl,
     CLUED_SUPABASE_PUBLISHABLE_KEY: record.config.publishableKey };
   const commands = new Set(['publication_begin_independent','publication_finish','publication_abort_independent','publication_reconcile','revocations_list',
-    'independent_revocation_heads','independent_legacy_drain_finish','scan_start_independent']);
+    'independent_revocation_heads','independent_legacy_drain_finish']);
   const native = Object.freeze({ async command(input) {
     live(); check(commands.has(input?.action) && input.scope === record.config.scope, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
     const reply = await cluedRpc(fetchImpl, env, sourceRoot, 'clued_work_verify_v1', input);
@@ -138,13 +91,7 @@ export function controllerPorts({ record, appKey, nativeToken, policyText, sourc
     if (failed.length) { try { for (const name of failed) log?.(`native_current_refused_${name}`, { failed }); } catch { /* the refusal stands */ } }
     return failed.length===0;
   }});
-  // This URL is part of the computed held Source closure; a caller supplies
-  // neither the registry bytes nor their digest. Policy activation stays Native.
-  const registryBytes = fs.readFileSync(new URL('../hosted-relay-v1/registry.json', import.meta.url));
-  const scanStartRegistrySha256 = createHash('sha256').update(registryBytes).digest('hex');
-  const scanStart = createIndependentScanStartPort({ native, github, scope: record.config.scope, live,
-    registrySha256: scanStartRegistrySha256 });
-  return { github, admission, fetchImpl, native, scanStart, scanStartRegistrySha256 };
+  return { github, admission, fetchImpl, native };
 }
 
 // Root-held Source/record verification and the existing protected permanent
@@ -181,8 +128,7 @@ export async function runEntry({ argv, entryRole, moduleUrl, body, output = proc
     result = { status: result?.sideEffects ? 'UNCERTAIN' : 'BLOCKED', reason: safeReason(e), sideEffects: result?.sideEffects ?? 0 };
   } finally {
     if (args) {
-      try { await writeOutcome({ receiptsRoot: STATE_V2.receipts, nonce: args.nonce, plan: inputs?.plan ?? null, jobIds: inputs?.jobs?.map(j => j.id) ?? [],
-        relayQualificationJob: inputs?.plan?.stage === 13 ? inputs.jobs[0] : null, result }); } catch { /* outcome missing = UNKNOWN for the resident */ }
+      try { await writeOutcome({ receiptsRoot: STATE_V2.receipts, nonce: args.nonce, plan: inputs?.plan ?? null, jobIds: inputs?.jobs?.map(j => j.id) ?? [], result }); } catch { /* outcome missing = UNKNOWN for the resident */ }
     }
     if (lease) await lease.close();
   }

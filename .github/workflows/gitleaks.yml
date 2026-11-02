@@ -3,8 +3,7 @@ name: gitleaks
 # Owner Decisions 325717a6, 22b0e0ed and bc6fdad1: the scan runs on a GitHub-hosted runner with free
 # minutes under the $0 Actions budget cap as an executor only. Its job name is not a required check
 # name; App 5368905 publishes the required gitleaks check after it verifies this run's relay identity,
-# Native consumes a shared one-time permission before the scan. A failed or
-# unknown permission never starts another scanner automatically.
+# and otherwise runs its formal local role.
 on:
   pull_request:
   push:
@@ -55,15 +54,11 @@ jobs:
     needs: admission-gate
     timeout-minutes: 25
     name: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'gitleaks-hosted-executor' || 'gitleaks-hosted-executor-skipped' }}
-    # Native's execution grant is PR-bound; push must not run an ungated scan.
     if: >-
-      github.event_name == 'pull_request' && needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
+      needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read
-      checks: read
-      pull-requests: read
       id-token: write
     steps:
       # The trusted base only: the pinned .gitleaks.toml, the reviewed-finding helper and the
@@ -72,25 +67,6 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
-      # Trusted base only; a failed/unknown Native burn stops every subsequent scan step.
-      - name: Acquire one-time scan permission
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euC
-          umask 077
-          test "$GITHUB_EVENT_NAME" = pull_request
-          test "${#BASE_SHA}" -eq 40
-          case "$BASE_SHA" in *[!0-9a-f]*) exit 2 ;; esac
-          curl -fsS --proto '=https' --max-time 30 \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H 'Accept: application/vnd.github.raw+json' \
-            -H 'X-GitHub-Api-Version: 2022-11-28' \
-            "https://api.github.com/repos/tdoljyj/cross-memory-system/contents/scripts/ci/clued-scan-start.mjs?ref=$BASE_SHA" \
-            > "$RUNNER_TEMP/clued-scan-start.mjs"
-          echo "02eea1acaecc39ec179ac4201246509152dbf7bb7119687fb7cf640fb86146e1  $RUNNER_TEMP/clued-scan-start.mjs" | sha256sum -c --quiet -
-          node "$RUNNER_TEMP/clued-scan-start.mjs" --run
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
       # Exactly the input of the local formal role (worker/formal-gitleaks-v4/required-history/

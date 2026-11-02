@@ -75,17 +75,14 @@ test('minutes available: 1 -> R (gitleaks, trivy relayed) -> placement locally -
   assert.equal((await f.exec.tick()).reason, 'HEAD_ALREADY_EXECUTED_NO_RETRY');
 });
 
-test('billing-refused hint cannot transfer either hosted role to Native', async t => {
+test('minutes used up mid-month: a billing-refused hint starts at once, no stage R, all local, relay-billing-refused per relayable role', async t => {
   const engine = fakeEngine();
   const f = await executorFixture(t, { engine, policy: ON, companion: fakeCompanion({ hint: () => hintFor({ gitleaks: { state: 'BILLING_REFUSED' }, trivy: { state: 'ABSENT' } }) }) });
   await f.drop(triggerBytes());
-  const r = await f.exec.tick();
-  assert.equal(r.reason, 'RELAY_PROVIDER_TRANSFER_REQUIRED');
-  f.advance(120 * 60_000);
-  assert.equal((await f.exec.tick()).state, 'WAITING');
-  assert.deepEqual(stagesRun(engine), [1]);
-  assert.equal((await f.ledger.state(r.key)).planIntent, null);
-  assert.deepEqual(await receiptBodies(f, 'relay-billing-refused'), []);
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.deepEqual(stagesRun(engine), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.ok(!(await types(f)).includes('relay-waiting'), 'no wait');
+  assert.deepEqual((await receiptBodies(f, 'relay-billing-refused')).map(b => `${b.role}:${b.reason}`), ['gitleaks:RELAY_HINT_BILLING_REFUSED', 'trivy:RELAY_HINT_BILLING_REFUSED']);
 });
 
 test('bounded wait is non-blocking: each tick returns WAITING until the hosted jobs succeed, then the batch continues; no hint ends in the signal window', async t => {
@@ -106,7 +103,7 @@ test('bounded wait is non-blocking: each tick returns WAITING until the hosted j
   assert.deepEqual(stagesRun(engine), [1, 9, 6, 7, 8]);
   assert.equal((await f.ledger.state(r.key)).planIntent.waitedMs, 3 * 60_000, 'waited from the stored t0');
   assert.deepEqual((await receiptBodies(f, 'relay-waiting')).length, 1, 'one relay-waiting receipt, not one per tick');
-  // No hint ever: neither the signal deadline nor total timeout transfers scans.
+  // no hint ever: wait the 10-minute signal window from t0, then everything local
   const g = await executorFixture(t, { policy: ON, companion: fakeCompanion({ hint: () => null }) });
   await g.drop(triggerBytes());
   assert.equal((await g.exec.tick()).state, 'WAITING');
@@ -114,10 +111,10 @@ test('bounded wait is non-blocking: each tick returns WAITING until the hosted j
   assert.equal((await g.exec.tick()).state, 'WAITING');
   g.advance(1);
   const r2 = await g.exec.tick();
-  assert.equal(r2.state, 'WAITING');
-  assert.deepEqual(stagesRun(g.engine), [1]);
+  assert.equal(r2.state, 'COMPLETED');
+  assert.deepEqual(stagesRun(g.engine), [1, 2, 3, 4, 5, 6, 7, 8]);
   const s = await g.ledger.state(r2.key);
-  assert.deepEqual([s.planIntent, s.plan], [null, null]);
+  assert.deepEqual([s.planIntent.reason, s.plan.local.map(l => l.reason)], ['RELAY_PARTIAL_OR_TIMED_OUT', ['RELAY_WAIT_TIMED_OUT', 'RELAY_WAIT_TIMED_OUT', 'RELAY_ROLE_NOT_RELAYABLE']]);
 });
 
 // Coordinator review: the emergency stop is never delayed by a wait.
@@ -143,12 +140,11 @@ test('pause during the wait stops the batch before stage R and any local stage; 
   assert.equal((await f.exec.tick()).state, 'PAUSED');
   await writeOwnerRequest(path.join(f.root, 'owner'), resumeRequest({ expectedPausedSha256: (await f.ledger.paused()).sha256, by: OWNER }), f.clock);
   const r = await f.exec.tick();
-  assert.equal(r.state, 'WAITING');
-  assert.equal(r.reason, 'RELAY_PROVIDER_TRANSFER_REQUIRED');
-  // Ordinary resume and a passed total cap cannot make one hosted role local.
+  assert.equal(r.state, 'COMPLETED');
+  // t0 is the stored one: the total cap is long past, so it starts at once with what the hints say
   const s = await f.ledger.state(r.key);
-  assert.equal(s.planIntent, null);
-  assert.deepEqual(stagesRun(f.engine), [1]);
+  assert.deepEqual([s.planIntent.reason, s.planIntent.candidates], ['RELAY_TOTAL_WAIT_REACHED', ['trivy']]);
+  assert.deepEqual(stagesRun(f.engine), [1, 9, 2, 3, 6, 7, 8]);
 });
 
 test('Owner re-arm during the wait: a HALT latched while a batch waits blocks it; re-arm clears it and the wait continues', async t => {
@@ -179,12 +175,8 @@ test('restart during the wait: a new executor resumes the wait from the stored t
   assert.deepEqual(engine.calls.filter(c => c[0] === 'derive' || c[0] === 'stage'), [], 'nothing derived or run again');
   f.advance(6 * 60_000); // past the running job's timeout + slack from its start, relative to t0's batch
   const r = await again.tick();
-  assert.equal(r.state, 'WAITING');
-  assert.equal(r.reason, 'RELAY_PROVIDER_TRANSFER_REQUIRED');
-  assert.deepEqual(stagesRun(engine), []);
-  f.companion.hostedHint = async () => Buffer.from(JSON.stringify(hintFor(SUCCESS)));
-  assert.equal((await again.tick()).state, 'COMPLETED');
-  assert.deepEqual(stagesRun(engine), [9, 6, 7, 8]);
+  assert.equal(r.state, 'COMPLETED');
+  assert.deepEqual(stagesRun(engine), [9, 2, 3, 6, 7, 8]);
   assert.equal((await f.ledger.state(key)).wait.t0, t0);
   assert.equal((await f.ledger.state(key)).planIntent.waitedMs, f.clock() - t0);
 });
@@ -203,19 +195,16 @@ test('service loop: every iteration refreshes the lock and checks the stop reque
   assert.ok(await f.ledger.waiting(), 'still waiting after the stop; the next start resumes it');
 });
 
-test('partial StageR publication is retained, but LOCAL_REQUIRED causes HALT without any local scan', async t => {
+test('minutes run out within one head: trivy relayed, gitleaks falls back locally; between-roles archives only where needed', async t => {
   const engine = fakeEngine({ relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(r => r === 'trivy' ? relayedRow(r) : localRow(r, 'RELAY_NOT_ATTESTED_HOSTED_NOT_SUCCESS')) }) });
   const f = await executorFixture(t, { engine, policy: ON, companion: fakeCompanion({ hint: () => hintFor(SUCCESS) }) });
   await f.drop(triggerBytes());
   const r = await f.exec.tick();
-  assert.deepEqual([r.state, r.failureCode], ['HALTED', 'RELAY_PLAN_UNCONFIRMED']);
-  assert.deepEqual(stagesRun(engine), [1, 9]);
-  assert.deepEqual((await receiptBodies(f, 'relay-attested')).map(b => b.role), ['trivy']);
-  const state = await f.ledger.state(r.key);
-  assert.ok(state.planIntent); assert.equal(state.plan, null);
-  assert.ok(!f.companion.calls.some(c => c[0] === 'wsprep'));
-  await f.exec.tick();
-  assert.deepEqual(stagesRun(engine), [1, 9], 'HALT never repeats StageR');
+  assert.deepEqual([r.state, r.relayed, r.local], ['COMPLETED', ['trivy'], ['gitleaks', 'contract-placement']]);
+  assert.deepEqual(stagesRun(engine), [1, 9, 2, 3, 6, 7, 8]);
+  assert.deepEqual(engine.opts.filter(([n]) => [2, 6].includes(n)).map(([n, o]) => [n, o.firstLinux, o.betweenRoles]), [[2, true, false], [6, false, true]]);
+  assert.deepEqual((await receiptBodies(f, 'relay-local-fallback')).map(b => `${b.role}:${b.reason}:${b.source}`),
+    ['gitleaks:RELAY_NOT_ATTESTED_HOSTED_NOT_SUCCESS:stage-r', 'contract-placement:RELAY_ROLE_NOT_RELAYABLE:resident']);
 });
 
 test('RELAY_PUBLICATION_UNCERTAIN: HALT, head burned, no 25-plan, and never a local stage for any role afterwards', async t => {
@@ -223,8 +212,7 @@ test('RELAY_PUBLICATION_UNCERTAIN: HALT, head burned, no 25-plan, and never a lo
   const f = await executorFixture(t, { engine, policy: ON, companion: fakeCompanion({ hint: () => hintFor(SUCCESS) }) });
   await f.drop(triggerBytes());
   const r = await f.exec.tick();
-  assert.deepEqual([r.state, r.failureCode], ['HALTED', 'RELAY_PLAN_UNCONFIRMED']);
-  assert.ok((await receiptBodies(f, 'stage-terminal')).some(x => x.failureCode === 'RELAY_PUBLICATION_UNCERTAIN'), 'original Source refusal remains evidence');
+  assert.deepEqual([r.state, r.failureCode], ['HALTED', 'RELAY_PUBLICATION_UNCERTAIN']);
   assert.deepEqual(stagesRun(engine), [1, 9]);
   const s = await f.ledger.state(r.key);
   assert.deepEqual([s.outcome, !!s.planIntent, s.plan], ['FAILED_UNKNOWN', true, null]);
@@ -264,149 +252,64 @@ test('crash inside stage R (20-plan-intent without 25-plan): recovery closes it 
   assert.deepEqual(stagesRun(f.engine), [], 'nothing of it runs again');
 });
 
-test('a hosted run still pending past hard stop waits; later dual success goes through StageR, never Native', async t => {
+test('a hosted run that succeeds after the local path started is ignored (relay-late-ignored), the role still runs locally once', async t => {
   let late = false;
   const engine = fakeEngine();
+  const base = engine.runStage.bind(engine);
+  engine.runStage = async (batch, stage, opts) => { if (stage.number === 2) late = true; return base(batch, stage, opts); };
   const companion = fakeCompanion({ hint: (s, at) => hintFor(late ? SUCCESS : { gitleaks: { state: 'PENDING_RUNNING', startedAt: Date.parse('2026-10-20T12:00:00Z') - 40 * 60_000 }, trivy: { state: 'SUCCESS' } }) });
   const f = await executorFixture(t, { engine, policy: ON, companion });
   await f.drop(triggerBytes());
-  assert.equal((await f.exec.tick()).state, 'WAITING');
-  f.advance(60 * 60_000);
-  assert.equal((await f.exec.tick()).state, 'WAITING');
-  assert.deepEqual(stagesRun(engine), [1]);
-  late = true;
   const r = await f.exec.tick();
-  assert.deepEqual([r.state, r.relayed, r.local], ['COMPLETED', ['gitleaks', 'trivy'], ['contract-placement']]);
-  assert.deepEqual(stagesRun(engine), [1, 9, 6, 7, 8]);
-  assert.deepEqual(await receiptBodies(f, 'relay-late-ignored'), [], 'late observation is not a provider-transfer repair');
+  assert.deepEqual([r.state, r.relayed, r.local], ['COMPLETED', ['trivy'], ['gitleaks', 'contract-placement']]);
+  assert.deepEqual(stagesRun(engine), [1, 9, 2, 3, 6, 7, 8]);
+  assert.deepEqual((await receiptBodies(f, 'relay-late-ignored')).map(b => b.role), ['gitleaks']);
+  const ts = await types(f);
+  assert.ok(ts.lastIndexOf('stage-terminal') > ts.indexOf('relay-late-ignored'), 'recorded before stage 8 ends the batch');
 });
 
-test('StageR local rows/refusal never create attempt2; Native-only retry semantics remain unchanged', async t => {
+test('attempt 2 never follows a relay; with stage R relaying nothing, a stage-2 transient is still eligible', async t => {
   const fail2 = engine => { const base = engine.runStage.bind(engine); let n = 0; engine.runStage = async (b, st, o) => (st.number === 2 && ++n === 1 ? (engine.calls.push(['stage', 2]), { ok: false, code: 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', proof: WINDOWS_CLEAN }) : base(b, st, o)); return engine; };
   const relayedTrivy = fail2(fakeEngine({ relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(r => r === 'trivy' ? relayedRow(r) : localRow(r)) }) }));
   const f = await executorFixture(t, { engine: relayedTrivy, policy: ON, companion: fakeCompanion({ hint: () => hintFor(SUCCESS) }) });
   await f.drop(triggerBytes());
   const r = await f.exec.tick();
-  assert.deepEqual([r.state, r.failureCode, r.attempt2], ['HALTED', 'RELAY_PLAN_UNCONFIRMED', undefined]);
-  assert.deepEqual(stagesRun(relayedTrivy), [1, 9]);
+  assert.deepEqual([r.state, r.attempt2], ['FAILED_CLEAN', undefined]);
   assert.deepEqual(await f.ledger.pendingAttempts2(), []);
-  const nothingRelayed = fail2(fakeEngine());
-  const g = await executorFixture(t, { engine: nothingRelayed });
+  const nothingRelayed = fail2(fakeEngine({ relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(r => localRow(r)) }) }));
+  const g = await executorFixture(t, { engine: nothingRelayed, policy: ON, companion: fakeCompanion({ hint: () => hintFor(SUCCESS) }) });
   await g.drop(triggerBytes());
   const r2 = await g.exec.tick();
   assert.equal(r2.state, 'FAILED_CLEAN');
   assert.equal(r2.attempt2, batchKey(subject({ attempt: 2 })));
-  // Relay disabled retains the existing Native-only retry contract.
+  // and it runs: attempt 1's own "before stage R" executed-head record does not stop it (independent review of phase 1,
+  // MINOR 5), while a new trigger of the head is still refused
   g.advance(600_000);
   const again = await g.exec.tick();
   assert.deepEqual([again.state, again.key], ['COMPLETED', batchKey(subject({ attempt: 2 }))]);
   await g.drop(triggerBytes({ pr: 990 }));
   assert.ok(['HEAD_ALREADY_EXECUTED_NO_RETRY', 'HEAD_ALREADY_PUBLISHED_NO_RETRY'].includes((await g.exec.tick()).reason));
-  // A refused StageR can no longer authorize a local fallback or clean retry.
+  // a clean failure of stage R itself is final for the head
   const refused = fakeEngine({ relay: () => ({ ok: false, code: 'RELAY_STAGE_REFUSED', proof: WINDOWS_CLEAN }) });
   const h = await executorFixture(t, { engine: refused, policy: ON, companion: fakeCompanion({ hint: () => hintFor(SUCCESS) }) });
   await h.drop(triggerBytes());
   const r3 = await h.exec.tick();
-  assert.deepEqual([r3.state, r3.failureCode, r3.attempt2], ['HALTED', 'RELAY_PLAN_UNCONFIRMED', undefined]);
+  assert.deepEqual([r3.state, r3.failureCode, r3.attempt2], ['FAILED_CLEAN', 'RELAY_STAGE_REFUSED', undefined]);
 });
 
-test('malformed or foreign hints remain WAIT after timeouts and never grant Native authority', async t => {
+test('a malformed or foreign hint is "no hint": it can only make the batch wait or run locally', async t => {
   const f = await executorFixture(t, { policy: ON, companion: fakeCompanion({ hint: () => Buffer.from('{"contract":"x"}') }) });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'WAITING', 'no usable hint: the signal window');
-  f.advance(RELAY_ON.wait.totalMs * 2);
+  f.advance(RELAY_ON.wait.signalMs);
   const r = await f.exec.tick();
-  assert.equal(r.state, 'WAITING');
-  assert.deepEqual(stagesRun(f.engine), [1]);
-  assert.equal((await f.ledger.state(r.key)).planIntent, null);
+  assert.equal(r.state, 'COMPLETED');
+  assert.deepEqual(stagesRun(f.engine), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.equal((await f.ledger.state(r.key)).planIntent.hintRefused, true);
   const g = await executorFixture(t, { policy: ON, companion: fakeCompanion({ hint: () => hintFor(SUCCESS, { head: 'f'.repeat(40) }) }) });
   await g.drop(triggerBytes());
   assert.equal((await g.exec.tick()).state, 'WAITING');
-  g.advance(RELAY_ON.wait.totalMs * 2);
-  assert.equal((await g.exec.tick()).state, 'WAITING');
+  g.advance(RELAY_ON.wait.signalMs);
+  assert.equal((await g.exec.tick()).state, 'COMPLETED');
   assert.ok(!stagesRun(g.engine).includes(9), 'a hint for another head never makes a candidate');
-});
-
-test('failed hosted scan, NOT_ELIGIBLE and a configured role subset cannot enter any local role', async t => {
-  for (const state of ['HOSTED_NOT_SUCCESS', 'NOT_ELIGIBLE']) {
-    const f = await executorFixture(t, { policy: ON, companion: fakeCompanion({ hint: () => hintFor({ gitleaks: { state }, trivy: { state: 'SUCCESS' } }) }) });
-    await f.drop(triggerBytes());
-    assert.equal((await f.exec.tick()).reason, 'RELAY_PROVIDER_TRANSFER_REQUIRED');
-    f.advance(2 * RELAY_ON.wait.totalMs);
-    assert.equal((await f.exec.tick()).state, 'WAITING');
-    assert.deepEqual(stagesRun(f.engine), [1]);
-    assert.ok(!f.companion.calls.some(c => c[0] === 'wsprep'));
-  }
-  const f = await executorFixture(t, { policy: rawPolicy({ relay: { ...RELAY_ON, roles: ['gitleaks'] } }),
-    companion: fakeCompanion({ hint: () => hintFor(SUCCESS) }) });
-  await f.drop(triggerBytes());
-  assert.equal((await f.exec.tick()).reason, 'RELAY_HOSTED_ROLE_SET_INCOMPLETE');
-  assert.deepEqual(stagesRun(f.engine), [1]);
-});
-
-test('attestation refusal and every LOCAL_REQUIRED result preserve the intent and HALT without fallback', async t => {
-  for (const reason of ['RELAY_NOT_ATTESTED_ATTESTATION_FAILED', 'RELAY_NOT_ATTESTED_HOSTED_NOT_SUCCESS',
-    'RELAY_NOT_ATTESTED_BILLING_REFUSED', 'RELAY_NOT_ATTESTED_NOT_ELIGIBLE', 'RELAY_NOT_ATTESTED_OBSERVATION_UNCONFIRMED']) {
-    const engine = fakeEngine({ relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(r => localRow(r, reason)) }) });
-    const f = await executorFixture(t, { engine, policy: ON, companion: fakeCompanion({ hint: () => hintFor(SUCCESS) }) });
-    await f.drop(triggerBytes()); const r = await f.exec.tick();
-    assert.deepEqual([r.state, r.failureCode], ['HALTED', 'RELAY_PLAN_UNCONFIRMED']);
-    const s = await f.ledger.state(r.key);
-    assert.equal(s.outcome, 'FAILED_UNKNOWN'); assert.ok(s.planIntent); assert.equal(s.plan, null);
-    assert.deepEqual(stagesRun(engine), [1, 9]);
-    assert.deepEqual(await f.ledger.pendingAttempts2(), []);
-    assert.ok(!f.companion.calls.some(c => c[0] === 'wsprep'));
-  }
-});
-
-test('hosted-enabled train front cannot bypass the strict provider gate', async t => {
-  const f = await executorFixture(t, { policy: ON });
-  const plan = await f.exec.relayPlan('a'.repeat(64), subject({ testSha: '3'.repeat(40) }), {}, f.clock());
-  assert.equal(plan.waiting, true); assert.equal(plan.reason, 'RELAY_PROVIDER_TRANSFER_REQUIRED');
-  assert.deepEqual(stagesRun(f.engine), []);
-});
-
-test('failed StageR preserves confirmed publications before HALT and after failed SCM readback', async t => {
-  const halted = { role: 'trivy', outcome: 'HALT', reason: 'RELAY_PUBLICATION_UNCERTAIN', receipt: null,
-    checkRunId: null, externalId: null, attestationSha256: null, detail: null };
-  for (const rows of [[relayedRow('gitleaks'), halted], [relayedRow('gitleaks'), relayedRow('trivy')]]) {
-    const engine = fakeEngine({ relay: () => ({ ok: false, code: rows[1].outcome === 'HALT' ? 'RELAY_PUBLICATION_UNCERTAIN' : 'SCM_READBACK_NOT_ORIGINAL',
-      factsSha256: 'd'.repeat(64), proof: WINDOWS_CLEAN, relay: rows }) });
-    const f = await executorFixture(t, { engine, policy: ON, companion: fakeCompanion({ hint: () => hintFor(SUCCESS) }) });
-    await f.drop(triggerBytes()); const result = await f.exec.tick();
-    assert.deepEqual([result.state, result.failureCode], ['HALTED', 'RELAY_PLAN_UNCONFIRMED']);
-    assert.deepEqual((await receiptBodies(f, 'relay-attested')).map(x => x.role), rows.filter(x => x.outcome === 'RELAYED').map(x => x.role));
-    const state = await f.ledger.state(result.key);
-    assert.ok(state.planIntent); assert.equal(state.plan, null); assert.equal(state.outcome, 'FAILED_UNKNOWN');
-    assert.deepEqual(stagesRun(engine), [1, 9]);
-    assert.deepEqual(await f.ledger.pendingAttempts2(), []);
-    assert.ok(!f.companion.calls.some(c => c[0] === 'wsprep'));
-    await f.exec.tick();
-    assert.deepEqual(stagesRun(engine), [1, 9]);
-  }
-});
-
-test('failed StageR malformed/foreign/reordered packets cannot mint partial publication receipts', async t => {
-  const halt = { role: 'trivy', outcome: 'HALT', reason: 'RELAY_PUBLICATION_UNCERTAIN', receipt: null,
-    checkRunId: null, externalId: null, attestationSha256: null, detail: null };
-  const good = () => [relayedRow('gitleaks'), { ...halt }];
-  const invalid = [() => [relayedRow('gitleaks')], () => [relayedRow('trivy'), { ...halt, role: 'gitleaks' }],
-    () => [{ ...relayedRow('gitleaks'), rawToken: 'SECRET_NO_RECEIPT' }, halt],
-    () => [{ ...relayedRow('gitleaks'), externalId: relayedRow('gitleaks', 'f'.repeat(40)).externalId }, halt],
-    () => [relayedRow('gitleaks'), { ...halt, checkRunId: 1 }],
-    () => [relayedRow('gitleaks'), { ...halt, reason: 'SECRET_NOT_A_HALT_CODE' }],
-    () => [{ ...relayedRow('gitleaks'), detail: { token: 'SECRET_NO_RECEIPT' } }, halt],
-    () => [{ ...halt, role: 'gitleaks' }, relayedRow('trivy')],
-    () => [{ ...halt, role: 'gitleaks', outcome: 'NOT_PROCESSED', reason: null }, relayedRow('trivy')],
-    () => { const rows = good(); rows.extra = 'SECRET_NO_RECEIPT'; return rows; }];
-  for (const create of invalid) {
-    const engine = fakeEngine({ relay: () => ({ ok: false, code: 'RELAY_PUBLICATION_UNCERTAIN', proof: WINDOWS_CLEAN, relay: create() }) });
-    const f = await executorFixture(t, { engine, policy: ON, companion: fakeCompanion({ hint: () => hintFor(SUCCESS) }) });
-    await f.drop(triggerBytes()); const result = await f.exec.tick();
-    assert.equal(result.state, 'HALTED');
-    assert.deepEqual(await receiptBodies(f, 'relay-attested'), []);
-    assert.deepEqual(stagesRun(engine), [1, 9]);
-    assert.equal((await f.ledger.state(result.key)).plan, null);
-    assert.equal(JSON.stringify(await receiptBodies(f, 'stage-terminal')).includes('SECRET'), false);
-  }
 });

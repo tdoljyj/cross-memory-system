@@ -87,7 +87,6 @@ export function fakeEngine(script = {}) {
   const calls = [], opts = [];
   const engine = {
     calls,
-    async relayQualificationWindow() { return null; }, // explicit verified-absence fixture
     async derive(subject, key) { calls.push(['derive', key]); if (script.deriveThrows) throw new Error('boom'); return { batchId: `${key.slice(0, 16)}-${'0'.repeat(12)}`, key, packageSha256: 'c'.repeat(64) }; },
     opts,
     async runStage(batch, stage, o) { calls.push(['stage', stage.number]); opts.push([stage.number, o ?? null]); return script.stages?.[stage.number] ?? { ok: true, factsSha256: 'd'.repeat(64) }; },

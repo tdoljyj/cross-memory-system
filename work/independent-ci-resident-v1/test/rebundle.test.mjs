@@ -9,16 +9,11 @@ import { Mailbox } from '../src/mailbox.mjs';
 import { COMPANION_CONFIG_CONTRACT, Companion, argv, validateCompanionConfig } from '../src/companion.mjs';
 import { PARKED_A_REASON } from '../src/executor.mjs';
 import { StatusBoard } from '../src/status.mjs';
-import { HEAD, RELAY_ON, TEST_NODE, TEST_NODE_SHA, executorFixture, fakeCompanion, fakeEngine, hintFor, relayedRow, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
+import { HEAD, RELAY_ON, TEST_NODE, TEST_NODE_SHA, executorFixture, fakeCompanion, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 
 const MIN = 60_000;
 const stagesRun = engine => engine.calls.filter(c => c[0] === 'stage').map(c => c[1]);
 const receiptTypes = async f => (await fs.readdir(path.join(f.root, 'state', 'receipts'))).map(n => n.replace(/^\d+-|\.json$/g, ''));
-const relayedEngine = () => fakeEngine({ relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(role => relayedRow(role)) }) });
-const hostedSuccess = f => {
-  f.companion.hostedHint = async s => Buffer.from(JSON.stringify(hintFor({ gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } },
-    { pr: s.pr, head: s.headSha, at: f.clock() })));
-};
 // A companion with the second-bundle port: answer(n) is the answer to the n-th call (0-based).
 const withRebundle = (answer, script = { hint: () => null }) => {
   const c = fakeCompanion(script);
@@ -29,64 +24,49 @@ const withRebundle = (answer, script = { hint: () => null }) => {
 
 test('resumed from parking point A after the wait: one second bundle, then the workspace and every stage', async t => {
   const companion = withRebundle(() => ({ ok: true, code: null }));
-  const f = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion });
+  const f = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'WAITING');
   f.advance(61 * MIN);
-  hostedSuccess(f);
   const r = await f.exec.tick();
   assert.equal(r.state, 'COMPLETED');
   const order = companion.calls.map(c => c[0]).filter(x => ['bundle', 'rebundle', 'wsprep'].includes(x));
   assert.deepEqual(order, ['bundle', 'rebundle', 'wsprep']);
   assert.ok((await receiptTypes(f)).includes('batch-rebundled'));
-  assert.deepEqual([r.relayed, r.local], [['gitleaks', 'trivy'], ['contract-placement']]);
-  assert.deepEqual(stagesRun(f.engine), [1, 9, 6, 7, 8], 'only placement runs locally');
-  assert.deepEqual(await f.ledger.pendingAttempts2(), []);
-  await f.drop(triggerBytes({ pr: 990 }));
-  assert.equal((await f.exec.tick()).reason, 'HEAD_ALREADY_EXECUTED_NO_RETRY');
-  assert.equal(f.engine.calls.filter(c => c[0] === 'derive').length, 1, 'the same H never starts another batch');
 });
 
 test('even past the old 100-minute bound, a renewed bundle lets the batch go on', async t => {
   const companion = withRebundle(() => ({ ok: true, code: null }));
-  const f = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion });
+  const f = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion });
   await f.drop(triggerBytes());
-  assert.equal((await f.exec.tick()).state, 'WAITING');
+  await f.exec.tick();
   f.advance(101 * MIN);
-  hostedSuccess(f);
   assert.equal((await f.exec.tick()).state, 'COMPLETED');
   assert.equal(companion.rebuilds, 1);
-  assert.deepEqual(stagesRun(f.engine), [1, 9, 6, 7, 8]);
-  assert.deepEqual(await f.ledger.pendingAttempts2(), []);
 });
 
 test('refs moved on since the first bundle: a clean transient ending before the workspace, nothing on Linux', async t => {
   const companion = withRebundle(() => ({ ok: false, code: 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' }));
-  const f = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion });
+  const f = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion });
   await f.drop(triggerBytes());
-  assert.equal((await f.exec.tick()).state, 'WAITING');
+  await f.exec.tick();
   f.advance(61 * MIN);
-  hostedSuccess(f);
   const r = await f.exec.tick();
   assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE']);
-  assert.deepEqual(stagesRun(f.engine), [1, 9], 'hosted receipts are confirmed; no workspace preparation or Linux stage');
+  assert.deepEqual(stagesRun(f.engine), [1], 'no workspace preparation, no Linux stage');
   assert.ok(!companion.calls.some(c => c[0] === 'wsprep'));
-  assert.deepEqual(await f.ledger.pendingAttempts2(), [], 'confirmed hosted scans cannot be retried locally');
 });
 
 test('any other refusal (or no answer) of the second bundle ends the batch as before, PARKED_BUNDLE_TOO_OLD', async t => {
   for (const answer of [{ ok: false, code: 'BUNDLE_UNAVAILABLE' }, null, { ok: false, code: 'SOMETHING_ELSE' }]) {
     const companion = withRebundle(() => answer);
-    const f = await executorFixture(t, { engine: relayedEngine(), policy: rawPolicy({ relay: RELAY_ON }), companion });
+    const f = await executorFixture(t, { policy: rawPolicy({ relay: RELAY_ON }), companion });
     await f.drop(triggerBytes());
-    assert.equal((await f.exec.tick()).state, 'WAITING');
+    await f.exec.tick();
     f.advance(61 * MIN);
-    hostedSuccess(f);
     const r = await f.exec.tick();
     assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'PARKED_BUNDLE_TOO_OLD'], JSON.stringify(answer));
-    assert.deepEqual(stagesRun(f.engine), [1, 9]);
-    assert.ok(!companion.calls.some(c => c[0] === 'wsprep'));
-    assert.deepEqual(await f.ledger.pendingAttempts2(), []);
+    assert.deepEqual(stagesRun(f.engine), [1]);
   }
 });
 

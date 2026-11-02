@@ -1,0 +1,201 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
+import { test } from 'node:test';
+import {
+  gateConditionHolds, gateFindings, registeredBootstrapOrdinarySuccessor,
+  sha256Hex, workflowFindings, workflowJobs,
+} from './clued-work-admission.mjs';
+import {
+  compileRegisteredWorkflow, registeredWorkflowSource, roleDefinitionDigest,
+  rolesForSource, workflowBlob,
+} from './clued-workflow-profile.mjs';
+
+// These are future workflow bytes, not active workflows or an execution grant.
+// Copied byte-for-byte from Git 956078fcec98844ab9be05e857fe4f53b3372fc4.
+// CI uses these local fixtures; it need not fetch that future commit.
+const ROOT = new URL('../../', import.meta.url);
+const require = createRequire(new URL('apps/clued-cloud/package.json', ROOT));
+const yaml = require('yaml');
+const load = name => JSON.parse(fs.readFileSync(new URL(`scripts/ci/${name}`, ROOT), 'utf8'));
+const profiles = load('clued-gated-proof-profiles.json');
+const roleSpecs = load('clued-gated-proof-role-specs.json');
+const GATE_SHA = '3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9';
+const SOURCES = [
+  {
+    file: '.github/workflows/gitleaks.yml', job: 'gitleaks-trusted-self-hosted',
+    before: 'e6fafbb0a40ce37795f1e50bbda03cd33fbf40e0',
+    after: 'ba4690650935961e7f4aa289a3aa0dc874b8b4fd',
+    sha256: 'd8daffb6f35d572ada3028f1b372bc9e728edb9d757a6442a702ae423645ff77',
+    role: '2325e6f3f3d459f1204a77a842d4726b13cad06e73c1312478a6b9df013882bd',
+    skipped: '8d172bdfeda9b554d2c8c0e5868ccae6e1a3096d',
+    name: 'gitleaks-hosted-executor',
+  },
+  {
+    file: '.github/workflows/trivy.yml', job: 'trivy-trusted-self-hosted',
+    before: '50bd4ae3312ea3c5b1896a9ec81922b0b392343b',
+    after: '9867c4c847a61aa33761e27b793e0928bc6cbfdc',
+    sha256: 'ef85f4ad53e75d2105c1892600b83b8b70b198dc1518ff856ba53fb6c4053ccb',
+    role: '7745a8c7286ffba75761d8ee00fbb099809318a9bdc6bf52760064d040cefa8f',
+    skipped: '300ad19a59bf529ccebd45ae7fbb76189f806316',
+    name: 'trivy-hosted-executor',
+  },
+];
+function parseYaml(text) {
+  assert.equal(require('yaml/package.json').version, '2.9.0', 'the registration parser is lockfile-pinned');
+  const doc = yaml.parseDocument(text, { version: '1.2', uniqueKeys: true, strict: true, merge: false });
+  assert.deepEqual(doc.errors, []);
+  return doc.toJS({ maxAliasCount: 0 });
+}
+function source(file, blob) {
+  const result = registeredWorkflowSource(profiles, file, blob);
+  assert.equal(result.passed, true, result.reason);
+  return result.profile.source_yaml;
+}
+function fixture(row) {
+  return fs.readFileSync(new URL(`work/actions-hosted-migration/independent-ci-v1/test/fixtures/scan-start-prereg/${row.file.split('/').at(-1)}`, ROOT));
+}
+function check(row, baseText = source(row.file, row.before), headText = fixture(row).toString('utf8'), extra = {}) {
+  return registeredBootstrapOrdinarySuccessor({
+    file: { filename: row.file, status: 'modified' }, baseText, headText, profiles, roleSpecs, ...extra,
+  });
+}
+const HEAD = 'a'.repeat(40), BASE = 'b'.repeat(40);
+async function findings(row, headText, baseText = source(row.file, row.before), extraEnv = {}) {
+  const seen = [];
+  const fetchImpl = async (url, options) => {
+    const parsed = new URL(url);
+    assert.equal(parsed.origin, 'https://offline.invalid');
+    assert.equal(parsed.pathname, `/repos/tdoljyj/cross-memory-system/contents/${row.file}`);
+    assert.equal(options.method ?? 'GET', 'GET');
+    const ref = parsed.searchParams.get('ref');
+    assert.ok([HEAD, BASE].includes(ref)); seen.push(ref);
+    const text = ref === HEAD ? headText : baseText;
+    return new Response(JSON.stringify({ encoding: 'base64', content: Buffer.from(text).toString('base64') }), { status: 200 });
+  };
+  const result = await workflowFindings(fetchImpl, { ...extraEnv, GITHUB_API_URL: 'https://offline.invalid' },
+    'tdoljyj/cross-memory-system', [{ filename: row.file, status: 'modified' }], HEAD, BASE);
+  assert.deepEqual(seen, [HEAD, BASE], 'only the two fixed source reads; no Native or other request');
+  return result;
+}
+
+test('preregistration appends only two descriptors/profiles/FullRoles and leaves active workflow bytes unchanged', () => {
+  const profileBefore = structuredClone(profiles), rolesBefore = structuredClone(roleSpecs);
+  for (const row of SOURCES) {
+    const records = profileBefore.workflows[row.file].accepted_sources;
+    assert.equal(records.filter(x => x.workflow_blob === row.after).length, 1);
+    profileBefore.workflows[row.file].accepted_sources = records.filter(x => x.workflow_blob !== row.after);
+    assert.equal(Object.hasOwn(rolesBefore.workflows[row.file].sources, row.after), true);
+    delete rolesBefore.workflows[row.file].sources[row.after];
+    const active = fs.readFileSync(new URL(row.file, ROOT), 'utf8');
+    assert.equal(workflowBlob(active), row.before, 'code-only registration does not switch the live workflow');
+    assert.equal(active, source(row.file, row.before));
+  }
+  assert.equal(roleDefinitionDigest(profileBefore), 'fd63c6804f427cbe6c2e8ba4e18f8d53981006bdb2e1113a196ddd73fee7c9a7');
+  assert.equal(roleDefinitionDigest(rolesBefore), '4a86b392b2d094fd8f80d8bafc2bf0e4ab32357c4c1f21ac747556836c242352');
+  const admission = fs.readFileSync(new URL('./clued-work-admission.mjs', import.meta.url), 'utf8');
+  const anchor = 'const BOOTSTRAP_ORDINARY_SOURCES=Object.freeze(';
+  const start = admission.indexOf(anchor) + anchor.length, end = admission.indexOf(']);', start);
+  const descriptors = JSON.parse(admission.slice(start, end + 1));
+  assert.equal(descriptors.length, 15);
+  assert.equal(roleDefinitionDigest(descriptors.slice(0, 13)), 'fd91deb730baa43753ecd06acf169f030ea8be747de65613f3da8d774012b95b');
+  assert.deepEqual(descriptors.slice(13), SOURCES.map(row => ({
+    file: row.file, predecessor_blob: row.before, candidate_blob: row.after, candidate_sha256: row.sha256,
+    gate_sha256: GATE_SHA, roles: [{ job_id: row.job, definition_sha256: row.role }],
+  })));
+});
+
+test('the existing condition parser stays byte-identical and refuses PR-first, OR and always bypasses', () => {
+  assert.equal(sha256Hex(gateConditionHolds.toString().replaceAll('\r\n', '\n')),
+    'ef0108bde378363a14088d02756bc4eb001acb38973285daff78077f7c832a43');
+  const gate = "needs.admission-gate.outputs.admitted == 'true'";
+  assert.equal(gateConditionHolds(`${gate} && (github.event_name == 'pull_request' && (true))`), true);
+  for (const condition of [
+    `github.event_name == 'pull_request' && ${gate} && (true)`,
+    `${gate} || (true)`, `${gate} && (true) || always()`, `${gate} && ((true) || (false)) || (true)`,
+    'always()', null,
+  ]) assert.equal(gateConditionHolds(condition), false, String(condition));
+});
+
+for (const row of SOURCES) {
+  test(`${row.file}: exact LF Git bytes recompile with locked parser and full independent role`, () => {
+    const bytes = fixture(row), text = bytes.toString('utf8');
+    assert.ok(Buffer.from(text).equals(bytes)); assert.ok(!text.includes('\r'));
+    assert.equal(workflowBlob(text), row.after); assert.equal(sha256Hex(text), row.sha256);
+    const value = parseYaml(text), roles = rolesForSource(roleSpecs, row.file, row.after);
+    assert.deepEqual(roles, [{ job_id: row.job, definition_sha256: row.role, definition: value.jobs[row.job] }]);
+    assert.equal(roleDefinitionDigest(value.jobs[row.job]), row.role);
+    const compiled = compileRegisteredWorkflow(text, { primary_ids: [row.job], parseYaml, accepted_roles: roles });
+    assert.deepEqual(compiled, registeredWorkflowSource(profiles, row.file, row.after).profile);
+    assert.deepEqual(compiled.routes.map(x => [x.name, x.self_hosted]), [[row.name, false]]);
+    assert.equal(Object.keys(compiled.routes[0].required_steps)[0], 'Acquire one-time scan permission');
+    assert.equal(Object.keys(compiled.routes[0].required_steps).at(-1), 'Emit relay identity');
+    assert.equal(sha256Hex(workflowJobs(text).find(x => x.name === 'admission-gate').lines.join('\n')), GATE_SHA);
+    assert.deepEqual(gateFindings(text, text), []);
+  });
+
+  test(`${row.file}: exact predecessor and self-pair pass without execution/host qualification authority`, async () => {
+    const text = fixture(row).toString('utf8');
+    for (const base of [source(row.file, row.before), text]) {
+      const result = check(row, base, text);
+      assert.equal(result.passed, true, result.reason);
+      assert.equal(result.registeredBootstrapOrdinaryTransition, false);
+      assert.equal(result.execution_authority, false);
+      assert.equal(result.host_qualification, 'separate_required');
+      assert.deepEqual(await findings(row, text, base), { gate: [], owner: [] });
+    }
+  });
+
+  test(`${row.file}: skipped generation, rollback, unknown bytes, renamed/added identity stay refused`, () => {
+    const text = fixture(row).toString('utf8');
+    assert.equal(check(row, source(row.file, row.skipped)).passed, false);
+    assert.equal(check(row, text, source(row.file, row.before)).passed, false);
+    assert.equal(check(row, undefined, text + '# unknown source\n').passed, false);
+    assert.equal(check(row, undefined, text.replace('--mode gate', '--mode required')).passed, false);
+    for (const file of [
+      { filename: row.file, status: 'added' },
+      { filename: row.file, status: 'modified', previous_filename: '.github/workflows/unrelated.yml' },
+    ]) assert.equal(check(row, undefined, text, { file }).passed, false);
+  });
+
+  test(`${row.file}: missing/ambiguous profile or changed FullRole is never inherited`, () => {
+    const missing = structuredClone(profiles);
+    missing.workflows[row.file].accepted_sources = missing.workflows[row.file].accepted_sources.filter(x => x.workflow_blob !== row.after);
+    assert.equal(check(row, undefined, undefined, { profiles: missing }).passed, false);
+    const duplicate = structuredClone(profiles);
+    duplicate.workflows[row.file].accepted_sources.push(structuredClone(registeredWorkflowSource(profiles, row.file, row.after).profile));
+    assert.equal(check(row, undefined, undefined, { profiles: duplicate }).passed, false);
+    for (const edit of [
+      specs => { delete specs.workflows[row.file].sources[row.after]; },
+      specs => { specs.workflows[row.file].sources[row.after][0].definition.steps.push({ run: 'echo changed-role' }); },
+      specs => { const role = specs.workflows[row.file].sources[row.after][0]; role.definition.steps.push({ run: 'echo forged-role' }); role.definition_sha256 = roleDefinitionDigest(role.definition); },
+    ]) { const specs = structuredClone(roleSpecs); edit(specs); assert.equal(check(row, undefined, undefined, { roleSpecs: specs }).passed, false); }
+    assert.equal(check(row, undefined, undefined, { profiles: null }).passed, false);
+    assert.equal(check(row, undefined, undefined, { roleSpecs: null }).passed, false);
+  });
+
+  test(`${row.file}: caller catalogue cannot authorize a third source or change the fixed transition`, async () => {
+    const text = fixture(row).toString('utf8') + '# syntactically valid but not pre-registered\n';
+    const value = parseYaml(text), roles = [{ job_id: row.job, definition_sha256: roleDefinitionDigest(value.jobs[row.job]), definition: value.jobs[row.job] }];
+    const fake = compileRegisteredWorkflow(text, { primary_ids: [row.job], parseYaml, accepted_roles: roles });
+    const forgedProfiles = structuredClone(profiles), forgedRoles = structuredClone(roleSpecs);
+    forgedProfiles.workflows[row.file].accepted_sources.push(fake);
+    forgedRoles.workflows[row.file].sources[fake.workflow_blob] = roles;
+    assert.equal(registeredWorkflowSource(forgedProfiles, row.file, fake.workflow_blob).passed, true);
+    assert.equal(check(row, undefined, text, { profiles: forgedProfiles, roleSpecs: forgedRoles }).passed, false);
+    const result = await findings(row, text, undefined, { profiles: forgedProfiles, roleSpecs: forgedRoles });
+    assert.ok(result.gate.includes(`workflow_gate:${row.file}:bootstrap_ordinary_Source_not_registered`));
+  });
+
+  test(`${row.file}: the actual gate still rejects a missing admission dependency/condition`, () => {
+    const text = fixture(row).toString('utf8');
+    for (const [before, after] of [
+      ['    needs: admission-gate\n', ''],
+      ["needs.admission-gate.outputs.admitted == 'true' &&", 'always() &&'],
+    ]) {
+      const changed = text.replace(before, after);
+      assert.notEqual(changed, text); assert.ok(gateFindings(changed, text).length > 0);
+      assert.equal(check(row, undefined, changed).passed, false);
+    }
+  });
+}
