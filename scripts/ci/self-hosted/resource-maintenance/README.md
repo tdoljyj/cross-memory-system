@@ -1,4 +1,4 @@
-# Registered local cache maintenance 1.0.0
+# Registered local cache maintenance 1.0.1
 
 Task `0c51fb42-46bb-4900-8fa9-9be4f53a6d77`. One Python 3.12+ standard-library
 program, one policy (`config/ci-resource-maintenance.json`), arbitrary registered
@@ -122,6 +122,13 @@ own platform. The new `resource-maintenance` required-suite selection runs after
 trusted selector is merged. Its first PR still uses the existing immutable base
 selector, so local exact-source results are retained rather than letting a candidate
 replace its own trusted selector. Existing required checks remain enforced.
+
+Fixture roots use checked `/tmp` on Linux or the current account's profile on
+Windows, independent of a runner's inherited shared `TMPDIR`. An explicit
+`CLUED_CACHE_TEST_BASE` selects another absolute base with safe ancestry. Existing
+directory permissions are never changed to make a test pass. The first main run
+after #985 exposed the shared-job-TMPDIR setup refusal; this harness fix preserves
+the product boundary check and runs the same tests.
 
 Windows repetition uses the supported time-trigger pattern with an omitted
 duration ([Microsoft schema](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetitiontype-complextype));
