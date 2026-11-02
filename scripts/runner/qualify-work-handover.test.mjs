@@ -15,7 +15,7 @@ const execute=args=>spawnSync(process.execPath,[probe,...args,'--public-config',
   {encoding:'utf8',timeout:20000});
 
 test('exact-source simulation preserves six verdicts and never certifies live qualification',()=>{
-  const result=execute(['--candidate','--hook',path.join(directory,'clued-runner-job-started.mjs')]);
+  const result=execute(['--candidate','--hook',path.join(directory,'clued-runner-job-started.work-handover-current-epoch-proxy-dispatch-v1.mjs')]);
   assert.equal(result.status,0,result.stderr);
   const report=JSON.parse(result.stdout);
   assert.equal(report.boundary,'source_candidate');
@@ -24,6 +24,11 @@ test('exact-source simulation preserves six verdicts and never certifies live qu
   assert.ok(report.cases.every(x=>x.outcome==='pass'));
   for(const key of ['live_pr_qualified','live_dispatch_qualified','external_revocation_qualified','activation_authorized'])
     assert.equal(report[key],false);
+});
+test('Native successor candidate cannot inherit accepted Source authority from the distribution path',()=>{
+  const result=execute(['--candidate','--hook',path.join(directory,'clued-runner-job-started.mjs')]);
+  assert.notEqual(result.status,0);
+  assert.match(result.stderr,/not an accepted exact source/);
 });
 test('Windows current protection refuses writable principals, writable runner, non-admin owner or unavailable data',()=>{
   const safe={schema:'clued.windows-hook-protection/1',runner_is_administrator:false,
@@ -262,7 +267,7 @@ test('accepted Source identities and returned records are immutable and cannot c
 });
 test('actual accepted Git commit:path objects prove all old and new Source bytes and declared versions',()=>{
   for(const source of ACCEPTED_HOOK_SOURCES){
-    const primaryBytes=source.component_version===null?null:fs.readFileSync(path.join(directory,'clued-runner-job-started.mjs'));
+    const primaryBytes=source.component_version===null?null:fs.readFileSync(path.join(repository,source.source_path));
     const proof=verifyAcceptedHookSource(source.sha256,{primaryBytes});
     assert.equal(proof.source_git_object_verified,true);
     assert.equal(proof.source_commit,source.source_commit);

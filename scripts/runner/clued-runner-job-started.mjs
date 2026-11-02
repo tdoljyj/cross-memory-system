@@ -13,9 +13,10 @@
 //   - a pull request into main that changes no file under .github/workflows/.
 //     Its workflows are main's, so each keeps its admission-gate job, which
 //     waits for the Clued admission of the pull request.
-//   - a pull request into main that changes a workflow, once the admission
-//     run of this run's own event (clued-work-admission.yml, triggered by
-//     pull_request_target) has succeeded. That run checks the workflow change.
+//   - a pull request into main that changes a workflow, once the current
+//     admission producer has admitted this head and event. The active legacy
+//     workflow uses its pull_request_target run; explicit manual retirement
+//     selects the exact Native App/PR/head check and the current epoch guard.
 //     (Re-review 3, N-R1, and re-review 5, n1: an older success on the same
 //     head cannot stand in.) Task b979d5a2: the hook reads that run, not the
 //     clued-admission App's check, because a fine-grained token cannot read
@@ -86,8 +87,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const HOOK_VERSION = "work-handover-current-epoch-proxy-dispatch-v1";
-export const COMPONENT_VERSION = "1.0.0";
+export const HOOK_VERSION = "work-handover-native-admission-v1";
+export const COMPONENT_VERSION = "1.0.1";
 
 // Native fetch otherwise ignores the runner's established proxy settings.
 // Enable Node's own proxy support before any credential or network read,
@@ -157,12 +158,12 @@ export function appJwt(appId, privateKeyPem, nowSeconds) {
   return `${header}.${payload}.${base64url(signer.sign(privateKeyPem))}`;
 }
 
-async function readToken({ env, fetchImpl, readFile, now, repository }) {
+async function readToken({ env, fetchImpl, readFile, now, repository, checksRead = false }) {
   const appId = (env.CLUED_RUNNER_HOOK_APP_ID ?? "").trim();
   const keyFile = (env.CLUED_RUNNER_HOOK_APP_KEY_FILE ?? "").trim();
   if (appId || keyFile) {
     if (!/^[0-9]{1,20}$/.test(appId)) throw new Error("CLUED_RUNNER_HOOK_APP_ID is not set to an App id on this runner.");
-    if (Number(appId) === ADMISSION_APP_ID) {
+    if ([ADMISSION_APP_ID, INDEPENDENT_ADMISSION_APP_ID].includes(Number(appId))) {
       throw new Error(`App ${appId} is the clued-admission App; its key must not be on a runner. Configure the hook's read-only App.`);
     }
     if (!keyFile) throw new Error("CLUED_RUNNER_HOOK_APP_KEY_FILE is not set on this runner.");
@@ -172,7 +173,8 @@ async function readToken({ env, fetchImpl, readFile, now, repository }) {
     const installation = await github(fetchImpl, jwt, `/repos/${repository}/installation`);
     if (!installation || !/^[0-9]{1,20}$/.test(String(installation.id))) throw new Error(`App ${appId} has no installation on ${repository}.`);
     const minted = await github(fetchImpl, jwt, `/app/installations/${installation.id}/access_tokens`, { method: "POST", expect: 201,
-      body: { repositories: [repository.split("/")[1]], permissions: { actions: "read", contents: "read", pull_requests: "read" } } });
+      body: { repositories: [repository.split("/")[1]], permissions: { actions: "read", contents: "read", pull_requests: "read",
+        ...(checksRead ? { checks: "read" } : {}) } } });
     if (!minted || typeof minted.token !== "string" || !minted.token) throw new Error(`App ${appId} returned no installation token.`);
     return minted.token;
   }
@@ -238,6 +240,39 @@ async function workflowsDifferFromMain(fetchImpl, token, repository, base, sha) 
 // same workflow changes.
 export const SAME_EVENT_MS = 15_000;
 const ADMISSION_WORKFLOW = "clued-work-admission.yml";
+// Installed standalone: keep these producer bindings identical to the
+// independent gate in scripts/ci/clued-work-admission.mjs. A status/name alone
+// and the negative-only execution_current observation never admit a job.
+export const INDEPENDENT_ADMISSION_APP_ID = 5368905;
+export const INDEPENDENT_ADMISSION_CHECK = "kooyumi-work-admission";
+const NATIVE_ADMISSION_ID = /^independent-ci:native-work-admission:(?:[a-f0-9]{64}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9}:a[1-9][0-9]{0,9}|v2:[a-f0-9]{64}:a[12]:c[a-f0-9]{8}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9})$/;
+
+export async function nativeAdmissionCheck(fetchImpl, token, repository, headSha, prNumber, since, observedAt = Date.now()) {
+  const checks = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const body = await github(fetchImpl, token, `/repos/${repository}/commits/${headSha}/check-runs?check_name=${INDEPENDENT_ADMISSION_CHECK}&filter=all&per_page=100&page=${page}`);
+    if (!body || !Array.isArray(body.check_runs) || !Number.isSafeInteger(body.total_count)
+      || body.total_count < 0 || body.total_count > 1000) throw new Error("Native admission checks are incomplete or malformed.");
+    checks.push(...body.check_runs);
+    if (checks.length >= body.total_count) break;
+    if (page === 10 || body.check_runs.length === 0) throw new Error("Native admission checks are incomplete.");
+  }
+  const newest = checks.filter(check => check?.name === INDEPENDENT_ADMISSION_CHECK
+    && check.head_sha === headSha && Number(check.app?.id) === INDEPENDENT_ADMISSION_APP_ID)
+    .sort((a, b) => Number(b.id) - Number(a.id))[0] ?? null;
+  if (!newest || newest.status !== "completed") return { settled: false, check: newest, admitted: false };
+  const named = [...String(newest.output?.summary ?? "").matchAll(/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([0-9]{1,10})(?![0-9])/g)]
+    .filter(match => match[1].toLowerCase() === repository.toLowerCase()).map(match => Number(match[2]));
+  const started = Date.parse(newest.started_at);
+  const completed = Date.parse(newest.completed_at);
+  const bound = NATIVE_ADMISSION_ID.test(String(newest.external_id ?? ""))
+    && named.length > 0 && named.every(number => number === Number(prNumber))
+    && Number.isSafeInteger(newest.id) && newest.id > 0
+    && Number.isFinite(started) && Number.isFinite(completed) && completed >= started
+    && completed <= observedAt + SAME_EVENT_MS && Number.isFinite(since) && started >= since - SAME_EVENT_MS;
+  return { settled: true, check: newest, admitted: bound && newest.conclusion === "success" };
+}
+
 async function admissionRun(fetchImpl, token, repository, headSha, since) {
   const runs = (await github(fetchImpl, token,
     `/repos/${repository}/actions/workflows/${ADMISSION_WORKFLOW}/runs?head_sha=${headSha}&event=pull_request_target&per_page=100`))
@@ -521,6 +556,28 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
     }
     const since = Date.parse(run && run.created_at);
     if (!Number.isFinite(since)) throw new Error(`run ${runId} has no created_at.`);
+    // GitHub's workflow state is an Owner-controlled producer switch. Only
+    // explicit manual retirement selects Native. Unknown/404/403 fail closed;
+    // a failed Native check never falls back to legacy success.
+    const producer = await github(fetchImpl, token, `/repos/${repository}/actions/workflows/${ADMISSION_WORKFLOW}`);
+    if (producer?.path !== `.github/workflows/${ADMISSION_WORKFLOW}`
+      || !["active", "disabled_manually"].includes(producer.state)) throw new Error("Admission producer state is unavailable or unsupported.");
+    if (producer.state === "disabled_manually") {
+      const nativeToken = await readToken({ env, fetchImpl, readFile, now, repository, checksRead: true });
+      let native;
+      for (let waited = 0; ; waited += 10) {
+        native = await nativeAdmissionCheck(fetchImpl, nativeToken, repository, pr.head.sha, pr.number, since, now());
+        if (native.settled || waited >= limit) break;
+        await sleep(10_000);
+      }
+      const current = await github(fetchImpl, token, `/repos/${repository}/pulls/${pr.number}`);
+      const live = current?.state === "open" && current.base?.ref === defaultBranch
+        && current.base?.repo?.full_name?.toLowerCase() === repository.toLowerCase() && current.head?.sha === pr.head.sha;
+      result.allow = Boolean(native.admitted && live && runnerAttempt === 1);
+      result.reason = `pull request #${pr.number} changes ${[...new Set(changed)].join(", ")}; Native admission ${native.check?.id ?? "absent"}: `
+        + `${result.allow ? "succeeded" : "not admitted (binding, current head, conclusion, freshness or rerun)"}${rerun}`;
+      return result;
+    }
     let found = null;
     for (let waited = 0; ; waited += 10) {
       found = await admissionRun(fetchImpl, token, repository, pr.head.sha, since);

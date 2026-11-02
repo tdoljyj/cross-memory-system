@@ -18,6 +18,35 @@ Task `869d2db7`, Owner Decision `b0c53143`. Every self-hosted runner that serves
 
 ## What it allows
 
+### Native producer successor candidate (Task 169fd456 / PR #979 prerequisite)
+
+`work-handover-native-admission-v1` / component `1.0.1` fixes the stale
+producer dependency exposed by run `41390462699`: Native admission succeeded,
+but the installed hook waited for the manually disabled legacy workflow.
+This source is a candidate, not an accepted installed version. The existing
+accepted-source qualifier registry stays unchanged until exact Source
+acceptance and merged-source qualification. The old immutable source remains.
+
+For a workflow-changing PR, the hook reads GitHub's state of the exact
+`clued-work-admission.yml` workflow. `active` retains the legacy event-bound
+run rule below; only `disabled_manually` selects Native. Unknown state, API
+failure or missing permission refuses. Native reads all check pages and uses
+the newest `kooyumi-work-admission` check from App `5368905` on the exact
+head, binding its Native external id, repository/PR summary, timestamps and
+the still-open PR's current head/default branch. A newer refusal or pending
+check cannot be hidden by an older success. Native admits attempt 1 only;
+the current execution-epoch observation remains required afterwards.
+
+Only this Native branch requests `checks: read` in the hook's own read-only
+App installation token, scoped to this repository. Both admission publishing
+Apps (`5164952`, `5368905`) are forbidden as hook identities. No publishing
+key, job token, write permission or personal-token fallback repairs a failed
+App mint. The hook App's GitHub permission approval, exact successor Source
+acceptance, merged source and protected-machine deployment exception must be
+resolved before rollout. Keep wrappers, secrets, environment, services and
+protection settings unchanged; preserve the exact old public hook for rollback.
+Candidate tests and byte equality do not establish live PR/dispatch qualification.
+
 A job starts only when its run is one of the following:
 
 - **On `main`:** a push, a schedule, `workflow_run`, `pull_request_target`, or a manual dispatch. A `pull_request_target` run counts only for a pull request into `main` (re-review 7, m1): it runs on `main`'s ref whatever the pull request's base, and a workflow may check out that base, which is the Agent's to edit when it is another branch.
