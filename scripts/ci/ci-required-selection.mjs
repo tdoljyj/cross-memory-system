@@ -39,6 +39,8 @@ const RESIDENT_AND_SOURCE = ['work/independent-ci-resident-v1/**', 'work/actions
 // suite id -> path patterns ("**" any depth, "*" within a segment).
 export const SUITES = {
   'ci-suites': {
+    'resource-maintenance': ['scripts/ci/self-hosted/resource-maintenance/**', 'config/ci-resource-maintenance.json',
+      'scripts/ci/self-hosted/compute_panel.py', 'tests/test_compute_panel.py', '.github/workflows/clued-compute-panel.yml'],
     'resident-node': RESIDENT_AND_SOURCE,
     'resident-python': RESIDENT_AND_SOURCE,
     'offline-drill': RESIDENT_AND_SOURCE,
@@ -86,6 +88,10 @@ const PYTHON = process.platform === 'win32' ? 'python' : 'python3';
 const RESIDENT = 'work/independent-ci-resident-v1';
 const SOURCE_V2 = 'work/actions-hosted-migration/independent-ci-v1';
 export const SUITE_COMMANDS = {
+  'resource-maintenance': [
+    { cwd: '.', argv: [PYTHON, '-I', '-B', '-m', 'unittest', 'discover', '-s', 'scripts/ci/self-hosted/resource-maintenance', '-p', 'test_*.py'] },
+    { cwd: '.', argv: [PYTHON, '-I', '-B', 'tests/test_compute_panel.py'] },
+  ],
   'resident-node': [{ cwd: RESIDENT, argv: ['node', '--test', '{tests:test}'] }],
   'resident-python': [{ cwd: RESIDENT, argv: [PYTHON, '-I', '-B', '-m', 'unittest', 'discover', '-s', 'test', '-p', 'test_*.py'] }],
   'offline-drill': [{ cwd: RESIDENT, argv: ['node', 'drill/offline-drill.mjs'] }],

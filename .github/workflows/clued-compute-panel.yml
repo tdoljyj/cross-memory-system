@@ -87,6 +87,7 @@ jobs:
           memory=$(awk '/^MemAvailable:/ {printf "%.1f", $2/1048576}' /proc/meminfo)
           printf 'COMPUTE_PANEL_PROBE {"runner":"%s","os":"Linux","disk_free_gb":%s,"mem_available_gb":%s}\n' \
             "$RUNNER_NAME" "$disk" "$memory"
+          python3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py
 
   probe-company-linux-02:
     name: compute-probe / clued-ci-company-linux-02
@@ -114,6 +115,7 @@ jobs:
           memory=$(awk '/^MemAvailable:/ {printf "%.1f", $2/1048576}' /proc/meminfo)
           printf 'COMPUTE_PANEL_PROBE {"runner":"%s","os":"Linux","disk_free_gb":%s,"mem_available_gb":%s}\n' \
             "$RUNNER_NAME" "$disk" "$memory"
+          python3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py
 
   probe-company-linux-03:
     name: compute-probe / clued-ci-company-linux-03
@@ -141,6 +143,7 @@ jobs:
           memory=$(awk '/^MemAvailable:/ {printf "%.1f", $2/1048576}' /proc/meminfo)
           printf 'COMPUTE_PANEL_PROBE {"runner":"%s","os":"Linux","disk_free_gb":%s,"mem_available_gb":%s}\n' \
             "$RUNNER_NAME" "$disk" "$memory"
+          python3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py
 
   probe-company-linux-04:
     name: compute-probe / clued-ci-company-linux-04
@@ -168,6 +171,7 @@ jobs:
           memory=$(awk '/^MemAvailable:/ {printf "%.1f", $2/1048576}' /proc/meminfo)
           printf 'COMPUTE_PANEL_PROBE {"runner":"%s","os":"Linux","disk_free_gb":%s,"mem_available_gb":%s}\n' \
             "$RUNNER_NAME" "$disk" "$memory"
+          python3 -I -B scripts/ci/self-hosted/resource-maintenance/probe.py
 
   # The two general Windows runners are told apart by their site label.
   probe-company-win-01:
@@ -195,6 +199,8 @@ jobs:
           $memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)
           $line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress
           Write-Output "COMPUTE_PANEL_PROBE $line"
+          python -I -B scripts/ci/self-hosted/resource-maintenance/probe.py
+          if ($LASTEXITCODE -ne 0) { throw "Maintenance probe failed" }
 
   probe-home-win-01:
     name: compute-probe / clued-ci-home-win-01
@@ -221,6 +227,8 @@ jobs:
           $memory = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)
           $line = @{ runner = $env:RUNNER_NAME; os = 'Windows'; disk_free_gb = $disk; mem_available_gb = $memory } | ConvertTo-Json -Compress
           Write-Output "COMPUTE_PANEL_PROBE $line"
+          python -I -B scripts/ci/self-hosted/resource-maintenance/probe.py
+          if ($LASTEXITCODE -ne 0) { throw "Maintenance probe failed" }
 
   panel:
     name: compute-panel
