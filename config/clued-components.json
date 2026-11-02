@@ -480,7 +480,7 @@
     {
       "id": "script.resource-maintenance",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Registered node-local leased cache maintenance, scheduler definitions and bounded public probe.",
       "root": ".",
       "files": [
@@ -488,7 +488,7 @@
         "scripts/ci/self-hosted/resource-maintenance/README.md",
         "config/ci-resource-maintenance.json"
       ],
-      "content_sha256": "df5ea109436c6c2770a1932ba2c0abacf55a67de9e1683105f372f40eeb8707b",
+      "content_sha256": "cee184416d253fbdd42b47b6d21b1629c3703beacd4d918f75ae531926ae8a8a",
       "version_marker": {
         "file": "scripts/ci/self-hosted/resource-maintenance/maintenance.py",
         "pattern": "VERSION = \"{version}\""

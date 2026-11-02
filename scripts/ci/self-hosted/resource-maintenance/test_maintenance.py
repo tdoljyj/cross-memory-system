@@ -20,7 +20,14 @@ REGISTRY = REPO / "config" / "ci-resource-maintenance.json"
 
 class Fixture(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="managed-cache-unit-")
+        # A runner's ordinary job TMPDIR may have a replaceable shared ancestor.
+        # Test only freshly created private children of a checked base; do not
+        # relax the product's rejection to accommodate the runner workspace.
+        base = Path(os.environ.get("CLUED_CACHE_TEST_BASE") or (str(Path.home()) if os.name == "nt" else "/tmp"))
+        m.require(base.is_absolute(), "TEST_BASE_ABSOLUTE")
+        base = base.resolve()
+        m.checked_dir(base, owned=False)
+        self.temp = tempfile.TemporaryDirectory(prefix="managed-cache-unit-", dir=base)
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
         self.registry = json.loads(REGISTRY.read_text())
