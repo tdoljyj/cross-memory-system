@@ -6,6 +6,24 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// A self-hosted machine can run several jobs at once. Node otherwise starts
+// one test-file process per CPU in each job, starving workerd/IPC fixtures of
+// their existing deadlines. Bound the default without skipping files, changing
+// watchdogs, forcing exit, or overriding an explicit caller-selected limit.
+export const DEFAULT_TEST_FILE_CONCURRENCY = 2;
+export function boundedTestArgs(args) {
+  // Both this CLI and select-tests use the canonical `--test ...` form.
+  // Other invocations pass through: a later --test may be a script argument,
+  // or a value of an option such as --eval, not a Node test-runner flag.
+  if (args[0] !== "--test") return [...args];
+  const end = args.indexOf("--");
+  const options = end === -1 ? args : args.slice(0, end);
+  const explicit = options.some(arg => arg === "--test-concurrency" || arg.startsWith("--test-concurrency="));
+  return !explicit
+    ? [`--test-concurrency=${DEFAULT_TEST_FILE_CONCURRENCY}`, ...args]
+    : [...args];
+}
+
 export async function runNodeTests(args, { cwd = process.cwd(), env = process.env, stdio = "inherit" } = {}) {
   const parent = await realpath(os.tmpdir());
   const directory = await mkdtemp(path.join(parent, "clued-test-run-"));
@@ -37,7 +55,7 @@ export async function runNodeTests(args, { cwd = process.cwd(), env = process.en
     // A wrapper invoked from a regression test starts an independent suite,
     // not another file inside Node's existing internal test-worker context.
     delete childEnv.NODE_TEST_CONTEXT;
-    child = spawn(process.execPath, args, {
+    child = spawn(process.execPath, boundedTestArgs(args), {
       cwd, stdio, detached: grouped,
       env: childEnv,
     });

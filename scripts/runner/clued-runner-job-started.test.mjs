@@ -77,6 +77,8 @@ const files = (...names) => ({ body: { files: names.map((filename) => ({ filenam
 // The longest matching key answers: the run's URL is a prefix of its
 // attempts/{n}/jobs URL.
 function fakeFetch(script) {
+  script = { [`${API}/actions/workflows/clued-work-admission.yml`]: { body: {
+    path: ".github/workflows/clued-work-admission.yml", state: "active" } }, ...script };
   const calls = [];
   const fetchImpl = async (url, init) => {
     calls.push({ url: String(url), auth: init.headers.authorization, method: init.method ?? "GET", body: init.body });
@@ -103,6 +105,75 @@ const run = async (overrides, script, event = prEvent()) => {
     readFile: (p) => (p === "/token" ? "ghp_read\n" : event) });
   return { result, calls: fake.calls, sleeps };
 };
+
+const PRODUCER = `${API}/actions/workflows/clued-work-admission.yml`;
+const NATIVE = `${API}/commits/${HEAD}/check-runs?check_name=kooyumi-work-admission`;
+const nativeCheck = (overrides = {}) => ({ id: 80, name: "kooyumi-work-admission", app: { id: 5368905 }, head_sha: HEAD,
+  status: "completed", conclusion: "success", started_at: RUN_CREATED, completed_at: RUN_CREATED,
+  external_id: `independent-ci:native-work-admission:v2:${"c".repeat(64)}:a1:c1234abcd:f1:e1`,
+  output: { summary: "Native work admission o/r#9" }, ...overrides });
+const nativeScript = (...checks) => ({
+  [PRODUCER]: { body: { path: ".github/workflows/clued-work-admission.yml", state: "disabled_manually" } },
+  [COMPARE]: files(".github/workflows/gitleaks.yml"),
+  [NATIVE]: { body: { total_count: checks.length, check_runs: checks } },
+  [`${API}/pulls/9`]: { body: { state: "open", base: { ref: "main", repo: { full_name: "o/r" } }, head: { sha: HEAD } } },
+});
+
+test("Native hook: manually retired producer reads only the exact App/head/PR Native check; legacy success cannot stand in", async () => {
+  const { result, calls } = await run({}, nativeScript(nativeCheck()));
+  assert.equal(result.allow, true);
+  assert.match(result.reason, /Native admission 80: succeeded/);
+  assert.equal(calls.some(c => c.url.startsWith(ADMISSION_RUNS)), false);
+  assert.equal((await run({}, nativeScript())).result.allow, false);
+});
+
+test("Native hook: spoofed, stale, unbound and unsuccessful checks never admit; the newest producer judgement decides", async () => {
+  for (const change of [{ app: { id: 1 } }, { name: "other" }, { head_sha: SHA },
+    { external_id: "independent-ci:anything" }, { output: { summary: "o/r#90" } },
+    { output: { summary: "o/r#9 o/r#10" } }, { output: { summary: "other/repo#9" } },
+    { started_at: "2026-10-04T04:59:44Z" }, { started_at: "bad" }, { completed_at: "bad" },
+    { completed_at: "2026-10-04T04:59:59Z" }, { started_at: "2099-01-01T00:00:00Z", completed_at: "2099-01-01T00:00:00Z" },
+    { conclusion: "failure" }, { status: "in_progress", conclusion: null }]) {
+    assert.equal((await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, nativeScript(nativeCheck(change)))).result.allow, false, JSON.stringify(change));
+  }
+  assert.equal((await run({}, nativeScript(nativeCheck(), nativeCheck({ id: 81, conclusion: "failure" })))).result.allow, false);
+  assert.equal((await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, nativeScript(nativeCheck(), nativeCheck({ id: 81, status: "queued", conclusion: null })))).result.allow, false);
+  assert.equal((await run({}, nativeScript(nativeCheck(), nativeCheck({ id: 81, app: { id: 1 }, conclusion: "failure" })))).result.allow, true);
+});
+
+test("Native hook: a complete multi-page response is required and the newest producer check on any page decides", async () => {
+  const old = Array.from({ length: 100 }, (_, i) => nativeCheck({ id: i + 1, app: { id: 1 } }));
+  const page = checks => ({ body: { total_count: 101, check_runs: checks } });
+  const script = { ...nativeScript(), [`${NATIVE}&filter=all&per_page=100&page=1`]: page(old),
+    [`${NATIVE}&filter=all&per_page=100&page=2`]: page([nativeCheck({ id: 101 })]) };
+  assert.equal((await run({}, script)).result.allow, true);
+  assert.equal((await run({}, { ...script, [`${NATIVE}&filter=all&per_page=100&page=2`]: page([nativeCheck({ id: 101, conclusion: "failure" })]) })).result.allow, false);
+  await assert.rejects(run({}, { ...script, [`${NATIVE}&filter=all&per_page=100&page=2`]: page([]) }), /incomplete/);
+});
+
+test("Native hook: no fallback on unknown producer/Checks failure, incomplete pagination, closed or moved PR; no Native rerun allowance", async () => {
+  await assert.rejects(run({}, { ...nativeScript(nativeCheck()), [PRODUCER]: { body: { state: "disabled_inactivity" } } }), /producer state/);
+  await assert.rejects(run({}, { ...nativeScript(nativeCheck()), [NATIVE]: { status: 403, body: null } }), /returned 403/);
+  await assert.rejects(run({}, { ...nativeScript(nativeCheck()), [NATIVE]: { body: { total_count: 1001, check_runs: [] } } }), /incomplete/);
+  await assert.rejects(run({}, { ...nativeScript(nativeCheck()), [NATIVE]: { body: { total_count: 1, check_runs: [] } } }), /incomplete/);
+  for (const current of [{ state: "closed" }, { state: "open", base: { ref: "main", repo: { full_name: "o/r" } }, head: { sha: SHA } }])
+    assert.equal((await run({}, { ...nativeScript(nativeCheck()), [`${API}/pulls/9`]: { body: current } })).result.allow, false);
+  assert.equal((await run({ GITHUB_RUN_ATTEMPT: "2", GITHUB_JOB: "admission-gate" }, {
+    ...nativeScript(nativeCheck()), [RUN]: thisRun({ run_attempt: 2 }) })).result.allow, false);
+});
+
+test("Native hook: an admitted job still requires the independent current epoch observation", async () => {
+  const { url, key } = resolvePublicSupabaseConfig({}, path.resolve(import.meta.dirname, "../.."));
+  const rpc = `${url}/rest/v1/rpc/clued_work_verify_v1`;
+  const config = `${API}/contents/apps/clued-cloud/app/supabase-public-config.ts?ref=main`;
+  const fake = fakeFetch({ [RUN]: thisRun(), ...nativeScript(nativeCheck()),
+    [config]: { body: { type: "file", encoding: "base64", content: Buffer.from(`return { url: "${url}", key: "${key}" };`).toString("base64") } },
+    [rpc]: { body: { status: "ok", guard_required: true, epoch_current: false } } });
+  const result = await decideWithCurrentEpoch({ env: env(), fetchImpl: fake.fetchImpl,
+    sleep: async () => {}, readFile: p => p === "/token" ? "ghp_read" : prEvent() });
+  assert.equal(result.allow, false);
+  assert.match(result.reason, /epoch is stale/);
+});
 const COMPARE = `${API}/compare/main...`;
 const LIST = `${API}/contents/.github/workflows?ref=`;
 const listing = (entries) => ({ body: Object.entries(entries).map(([name, sha]) => ({ path: `.github/workflows/${name}`, type: "file", sha })) });
@@ -201,7 +272,7 @@ test("runner hook: a pull request into main runs when it changes no workflow, el
   const change = { [COMPARE]: files(".github/workflows/heavy.yml") };
   ({ result, calls } = await run({}, change));
   assert.deepEqual([result.allow, result.reason], [true, "pull request #9 changes .github/workflows/heavy.yml; admission run 1 succeeded"]);
-  assert.equal(calls[2].url, `${ADMISSION_RUNS}&per_page=100`);
+  assert.equal(calls[3].url, `${ADMISSION_RUNS}&per_page=100`);
   // Task b979d5a2: a fine-grained token cannot read the Checks API, so nothing reads it.
   assert.equal(calls.some((c) => /check-runs|check-suites/.test(c.url)), false);
   // Not a failed or cancelled run, not one on another head, not another event's.
@@ -215,7 +286,7 @@ test("runner hook: a pull request into main runs when it changes no workflow, el
   // A renamed workflow counts by its old name too; a truncated list counts as changed.
   ({ result, calls } = await run({}, { [COMPARE]: { body: { files: [{ filename: "x.yml", previous_filename: ".github/workflows/old.yml" }] } } }));
   assert.match(result.reason, /changes \.github\/workflows\/old\.yml; admission run 1/);
-  assert.equal(calls.length, 3, "the admission run was consulted");
+  assert.equal(calls.length, 4, "the producer state and admission run were consulted");
   const many = Array.from({ length: 300 }, (_, i) => `apps/f${i}.ts`);
   ({ result } = await run({}, { [COMPARE]: files(...many), [ADMISSION_RUNS]: admissionRuns() }));
   assert.equal(result.allow, false);
@@ -271,7 +342,7 @@ test("runner hook: exit codes, enforcement and failures", async () => {
     assert.match(lines.at(-1), /ALLOW push on main/);
   } finally { console.log = log; }
   // Each line names the hook's version, so the Owner can check every runner's copy.
-  assert.equal(HOOK_VERSION, "work-handover-current-epoch-proxy-dispatch-v1");
+  assert.equal(HOOK_VERSION, "work-handover-native-admission-v1");
   assert.ok(lines.length >= 5);
   const observations = lines.filter((line) => line.startsWith("clued-r9-pre-job: "));
   const diagnostics = lines.filter((line) => !line.startsWith("clued-r9-pre-job: "));
@@ -782,6 +853,18 @@ test("runner hook (Decision d8bc893c): with its read-only App configured, the ho
   const admission = await decideWith({ CLUED_RUNNER_HOOK_APP_ID: String(ADMISSION_APP_ID) }, {});
   assert.match(admission.error, /is the clued-admission App; its key must not be on a runner/);
   assert.equal(admission.calls.length, 0);
+  const nativeProducer = await decideWith({ CLUED_RUNNER_HOOK_APP_ID: "5368905" }, {});
+  assert.equal(nativeProducer.calls.length, 0, "the Native publisher's key must never be read on a runner");
+  assert.match(nativeProducer.error, /its key must not be on a runner/);
+  const mintTime = new Date(NOW * 1000).toISOString();
+  const native = await decideWith({}, { ...nativeScript(nativeCheck({ started_at: mintTime, completed_at: mintTime })),
+    [RUN]: thisRun({ created_at: mintTime }) });
+  assert.equal(native.result.allow, true);
+  const mints = native.calls.filter(c => c.url === MINT).map(c => JSON.parse(c.body));
+  assert.deepEqual(mints, [
+    { repositories: ["r"], permissions: { actions: "read", contents: "read", pull_requests: "read" } },
+    { repositories: ["r"], permissions: { actions: "read", contents: "read", pull_requests: "read", checks: "read" } },
+  ]);
   // A half-configured App fails; it never falls back to the token file.
   reads.length = 0;
   assert.match((await decideWith({ CLUED_RUNNER_HOOK_APP_KEY_FILE: "" }, {})).error, /CLUED_RUNNER_HOOK_APP_KEY_FILE is not set/);
@@ -793,9 +876,9 @@ test("runner hook (Decision d8bc893c): with its read-only App configured, the ho
 });
 
 // The numeric registry binds the immutable source, so the primary copy must match every raw byte.
-test("primary runner is the exact accepted immutable numeric successor source", () => {
-  assert.equal(COMPONENT_VERSION, "1.0.0");
+test("primary runner matches the exact immutable numeric successor candidate; equality is not deployment acceptance", () => {
+  assert.equal(COMPONENT_VERSION, "1.0.1");
   const primary = fs.readFileSync(new URL("./clued-runner-job-started.mjs", import.meta.url));
-  const source = fs.readFileSync(new URL("./clued-runner-job-started.work-handover-current-epoch-proxy-dispatch-v1.mjs", import.meta.url));
+  const source = fs.readFileSync(new URL("./clued-runner-job-started.work-handover-native-admission-v1.mjs", import.meta.url));
   assert.deepEqual(primary, source);
 });
