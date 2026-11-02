@@ -55,7 +55,7 @@ function fixture(options = {}) {
     must_not_exist: ['absent.yaml'], forbidden_change_prefixes: ['forbidden/'] };
   const policy = { status: 'ok', policy_id: UUID(3), repository_id: 42, repository: REPO, repository_owner_id: 7,
     scope: 'project:' + UUID(4), source_manifest_sha256: SHA('e'), registry_sha256: SHA('f'), roles: { [selectedRole]: pin },
-    activated_at: new Date(NOW - 1000).toISOString() };
+    activated_at: new Date(NOW - 1000).toISOString(), hosted_head_sha: H };
   const pr = { number: 88, state: 'open', draft: false, changed_files: 1, merge_commit_sha: T,
     head: { sha: H, ref: 'fixture-branch', repo: { id: 42, full_name: REPO } },
     base: { sha: B, ref: 'main', repo: { id: 42, full_name: REPO } } };
@@ -192,7 +192,7 @@ test('bad signatures, algorithm confusion, unknown/duplicate/private/weak keys a
 });
 
 test('closed inputs refuse caller role/claims/paths and long-lived credentials before any network', async () => {
-  for (const patch of [{ role: 'trivy' }, { verified_claims: {} }, { changed_paths: ['safe'] }, { user_id: UUID(8) }]) {
+  for (const patch of [{ role: 'trivy' }, { verified_claims: {} }, { changed_paths: ['safe'] }, { user_id: UUID(8) }, { hosted_head_sha: H }]) {
     const f = fixture(); await denied(f, f.request(await token(), patch)); assert.equal(f.calls.length, 0);
   }
   for (const value of ['', 'ghp_' + 'P'.repeat(40), 'clued_bnd_' + 'B'.repeat(64)]) {
@@ -431,4 +431,25 @@ test('cached blob verification still compares every closure SHA256 pin', async (
   f.treePacket.tree.push({ path: 'alias.yml', mode: original.mode, type: 'blob', sha: original.blob });
   await denied(f, f.request(await token()));
   assert.equal(f.calls.filter(call => call.url === API + '/git/blobs/' + original.blob).length, 1);
+});
+
+test('server-owned exact hosted H or explicit nullable policy is checked immediately after lookup', async () => {
+  for (const value of [H, null]) {
+    const f = fixture(); f.policy.hosted_head_sha = value;
+    const grant = await (await f.handle(f.request(await token()))).json();
+    assert.equal(grant.launch_allowed, true); assert.equal(f.begins.length, 1);
+  }
+  const f = fixture(); f.policy.hosted_head_sha = B;
+  const value = await denied(f, f.request(await token()));
+  assert.equal(value.error_code, 'SCAN_START_HOSTED_HEAD_REFUSED');
+  assert.deepEqual(f.calls.map(call => call.url), [JWKS, DB + '/rest/v1/rpc/clued_ci_scan_start_policy_v1']);
+});
+
+test('missing, malformed or extra policy head-pin fields refuse before GitHub proof reads and Native burn', async () => {
+  for (const value of [undefined, '', 'A'.repeat(40), 'a'.repeat(39), 'a'.repeat(41), 0, false, {}, [H]]) {
+    const f = fixture(); f.policy.hosted_head_sha = value;
+    await denied(f, f.request(await token())); assert.equal(f.calls.length, 2);
+  }
+  const f = fixture(); f.policy.hosted_head_override = null;
+  await denied(f, f.request(await token())); assert.equal(f.calls.length, 2);
 });

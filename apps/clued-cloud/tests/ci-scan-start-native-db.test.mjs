@@ -162,7 +162,7 @@ test('physical scan-start Native K: real transactions, exact existing authority 
       assert.equal((await json(gateway,'select public.clued_ci_scan_start_policy_v1($1) v',[{repository_id:repoId,repository}])).error_code,'ci_scan_start_policy_inactive');
       const d=input();await authorize(d.head_sha);assert.equal((await local(d)).launch_allowed,false);assert.equal(await count(),0);
       await admin.query('update clued_private.ci_scan_start_policies_v1 set activated_at=clock_timestamp() where policy_id=$1',[policyId]);
-      const p=await json(gateway,'select public.clued_ci_scan_start_policy_v1($1) v',[{repository_id:repoId,repository}]);assert.equal(p.status,'ok');assert.deepEqual(p.roles,roles);assert.equal('token_hash' in p,false);assert.equal(await count(),0);
+      const p=await json(gateway,'select public.clued_ci_scan_start_policy_v1($1) v',[{repository_id:repoId,repository}]);assert.equal(p.status,'ok');assert.deepEqual(p.roles,roles);assert.equal(p.hosted_head_sha,null);assert.equal('token_hash' in p,false);assert.equal(await count(),0);
     });
     await t.test('without the private exact head grant, no provider can burn a K',async()=>{
       const d=input();assert.equal((await local(d)).launch_allowed,false);assert.equal((await hosted(verified(d))).launch_allowed,false);assert.equal(await count(),0);
@@ -280,6 +280,31 @@ test('physical scan-start Native K: real transactions, exact existing authority 
       assert.equal(localGrant.head_sha,r.head_sha,'distinct roles on the same H have distinct physical keys');assert.equal(await count(),3);
       if(process.env.CLUED_SCAN_NATIVE_GRANT_OUT)await fs.writeFile(process.env.CLUED_SCAN_NATIVE_GRANT_OUT,
         JSON.stringify({kind:'synthetic-isolated-embedded-postgres-native-grant',production:false,migration,grant:r,local_grant:localGrant},null,2)+'\n',{flag:'wx'});
+    });
+    await t.test('exact-H server hosted policy cannot consume another head; Native other heads and permanent K remain intact',async()=>{
+      const target=input(),other=input(),before=await count();
+      await admin.query('update clued_private.ci_scan_start_policies_v1 set hosted_head_sha=$1 where policy_id=$2',[target.head_sha,policyId]);
+      const policy=await json(gateway,'select public.clued_ci_scan_start_policy_v1($1) v',[{repository_id:repoId,repository}]);
+      assert.equal(policy.hosted_head_sha,target.head_sha,'public lookup declares the same server-owned exact-H boundary');
+      for(const bad of ['A'.repeat(40),'a'.repeat(39),'a'.repeat(41),'', 'not-a-head'])
+        await assert.rejects(()=>admin.query('update clued_private.ci_scan_start_policies_v1 set hosted_head_sha=$1 where policy_id=$2',[bad,policyId]),
+          e=>e.code==='23514' && /ci_scan_start_hosted_head_v1/.test(e.message));
+      await authorize(target.head_sha);
+      const exact=await hosted(verified(target));assert.equal(exact.launch_allowed,true,JSON.stringify(exact));assert.equal(exact.provider,'github-actions');
+      assert.equal(await count(),before+1);
+      await authorize(other.head_sha);
+      assert.deepEqual(await hosted(verified(other)),{status:'rejected',error_code:'ci_scan_start_hosted_head_not_qualified',launch_allowed:false});
+      assert.equal(await count(),before+1,'out-of-window hosted request never burns K');
+      const native=await local(other);assert.equal(native.launch_allowed,true,JSON.stringify(native));assert.equal(native.provider,'independent-controller');
+      assert.equal(await count(),before+2,'same other H can still obtain its first fully admitted Native permission');
+      // Explicit isolated Owner-policy global mode. It changes no existing K.
+      await admin.query('update clued_private.ci_scan_start_policies_v1 set hosted_head_sha=null where policy_id=$1',[policyId]);
+      assert.equal((await json(gateway,'select public.clued_ci_scan_start_policy_v1($1) v',[{repository_id:repoId,repository}])).hosted_head_sha,null);
+      await authorize(target.head_sha);
+      const replay=await hosted(verified({...target,execution_id:uuid()}));assert.equal(replay.status,'consumed');assert.equal(replay.launch_allowed,false);
+      await authorize(other.head_sha);
+      assert.equal((await hosted(verified({...other,execution_id:uuid()}))).launch_allowed,false,'local-first K is still global across policy mode and provider');
+      assert.equal(await count(),before+2);
     });
     await t.test('scan policy follows only the current qualified consumer after real Native role handover; no caller Binding or manual policy edit',async()=>{
       const secondToken=digest(uuid()),second=await binding(secondToken,'second qualified CI',['context:read']);

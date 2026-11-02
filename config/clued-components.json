@@ -514,6 +514,8 @@
         "work/independent-ci-resident-v1/qualification/controller.test.mjs",
         "work/independent-ci-resident-v1/qualification/duplicate-execution.mjs",
         "work/independent-ci-resident-v1/qualification/duplicate-execution.test.mjs",
+        "work/independent-ci-resident-v1/qualification/scan-start-cutover-plan.mjs",
+        "work/independent-ci-resident-v1/qualification/scan-start-cutover-plan.test.mjs",
         "work/independent-ci-resident-v1/src/engine-windows.mjs",
         "work/independent-ci-resident-v1/src/executor.mjs",
         "work/independent-ci-resident-v1/src/hosted-wait.mjs",
@@ -535,7 +537,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "cef76c9bce45880f401e7723edded626ba2dfa34b2171df07f7c00617fabb067"
+      "content_sha256": "c15ca4aaac1db8b4d9872391588d7b09a4cbc93f67b924d1f6e2f4e2a97a8011"
     },
     {
       "id": "script.resource-maintenance",

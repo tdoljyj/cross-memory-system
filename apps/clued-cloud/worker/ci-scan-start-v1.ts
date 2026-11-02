@@ -166,7 +166,10 @@ export async function handleCiScanStartV1(request: Request, env: Env, options: O
       }, body: JSON.stringify(body) }, name === 'clued_ci_scan_start_policy_v1' ? 262144 : 65536));
     const policy = await rpc('clued_ci_scan_start_policy_v1', { p_input: { repository_id: repositoryId, repository } });
     require(policy.status === 'ok', 'SCAN_START_POLICY_INACTIVE');
-    exact(policy, ['status', 'policy_id', 'repository_id', 'repository', 'repository_owner_id', 'scope', 'source_manifest_sha256', 'registry_sha256', 'roles', 'activated_at']);
+    exact(policy, ['status', 'policy_id', 'repository_id', 'repository', 'repository_owner_id', 'scope', 'source_manifest_sha256', 'registry_sha256', 'roles', 'activated_at', 'hosted_head_sha']);
+    const hostedHead = policy.hosted_head_sha;
+    require(hostedHead === null || typeof hostedHead === 'string' && HEX40.test(hostedHead));
+    require(hostedHead === null || hostedHead === input.head_sha, 'SCAN_START_HOSTED_HEAD_REFUSED');
     text(policy.policy_id, UUID);
     require(policy.repository === repository && policy.repository_id === repositoryId && policy.repository_owner_id === ownerId
       && policy.source_manifest_sha256 === input.source_manifest_sha256 && policy.registry_sha256 === input.registry_sha256);

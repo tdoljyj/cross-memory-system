@@ -11,6 +11,9 @@ create table clued_private.ci_scan_start_policies_v1 (
   scope text not null check(scope='project:'||project_id::text),
   source_manifest_sha256 text not null check(source_manifest_sha256 ~ '^[0-9a-f]{64}$'),
   registry_sha256 text not null check(registry_sha256 ~ '^[0-9a-f]{64}$'),
+  -- Owner server policy: a qualification window is exact-H. NULL is the
+  -- separately accepted global mode, never an instruction to activate it.
+  hosted_head_sha text constraint ci_scan_start_hosted_head_v1 check(hosted_head_sha is null or hosted_head_sha ~ '^[0-9a-f]{40}$'),
   roles jsonb not null,
   activated_at timestamptz,
   disabled_at timestamptz,
@@ -143,7 +146,7 @@ declare p clued_private.ci_scan_start_policies_v1; begin
     return jsonb_build_object('status','rejected','error_code','ci_scan_start_policy_inactive'); end if;
   return jsonb_build_object('status','ok','policy_id',p.policy_id,'repository_id',p.repository_id,'repository',p.repository,
     'repository_owner_id',p.repository_owner_id,
-    'scope',p.scope,'source_manifest_sha256',p.source_manifest_sha256,'registry_sha256',p.registry_sha256,'roles',p.roles,
+    'scope',p.scope,'source_manifest_sha256',p.source_manifest_sha256,'registry_sha256',p.registry_sha256,'hosted_head_sha',p.hosted_head_sha,'roles',p.roles,
     'activated_at',p.activated_at);
 end $$;
 
@@ -223,6 +226,9 @@ begin
     or not exists(select 1 from clued_private.binding_roles_v1 where user_id=b.user_id and binding_id=b.id
       and role='ci-admission' and revoked_at is null and effective_at<=clock_timestamp()) then
     return jsonb_build_object('status','rejected','error_code','ci_scan_start_policy_not_current','launch_allowed',false); end if;
+  if provider_name='github-actions' and p.hosted_head_sha is not null
+    and p.hosted_head_sha is distinct from data->>'head_sha' then
+    return jsonb_build_object('status','rejected','error_code','ci_scan_start_hosted_head_not_qualified','launch_allowed',false); end if;
   -- The single existing qualified consumer is the execution principal truth.
   -- Pin it for this transaction; a role alone or a caller-supplied Binding
   -- never grants consumer qualification, nor does this door activate one.
