@@ -11,6 +11,13 @@ export const GITLEAKS = '.github/workflows/gitleaks.yml';
 export const TRIVY = '.github/workflows/trivy.yml';
 export const PLACEMENT = '.github/workflows/contract-placement.yml';
 export const GITLEAKS_SUCCESSOR = WORKFLOWS.successors?.gitleaks729 ?? null;
+export const TRIVY_SUCCESSOR = WORKFLOWS.successors?.trivy ?? null;
+export function trivySuccessorWorkflowBytes() {
+  const entry = TRIVY_SUCCESSOR?.files?.[TRIVY];
+  if (!entry || !Array.isArray(entry.lines) || !entry.lines.every(line => typeof line === 'string'))
+    throw new Error('trivy successor workflow has not been frozen');
+  return Buffer.from(entry.lines.join('\n'), 'utf8');
+}
 export function successorWorkflowBytes() {
   const entry = GITLEAKS_SUCCESSOR?.files?.[GITLEAKS];
   if (!entry || !Array.isArray(entry.lines) || !entry.lines.every(line => typeof line === 'string'))
