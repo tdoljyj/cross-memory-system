@@ -34,7 +34,7 @@ _load('tree', os.path.join(HERE, '..', 'tools', 'tree.py')).verify(CFG['repo'], 
 # The installed Linux state, from the node's own files (copies): the Linux version facts and the generation record.
 _facts = json.load(open(sys.argv[8], encoding='utf-8'))
 _gen = json.load(open(sys.argv[9], encoding='utf-8'))
-assert _facts.get('contract') == 'clued.independent-ci.linux-version-facts/1' and _facts.get('staged') is None and _facts.get('pinsOk') is True, 'INSTALLED_FACTS_NOT_A_SETTLED_GENERATION'
+assert _facts.get('contract') == 'clued.independent-ci.linux-version-facts/1' and 'staged' in _facts and _facts['staged'] is None and _facts.get('pinsOk') is True, 'INSTALLED_FACTS_NOT_A_SETTLED_GENERATION'
 assert _gen.get('contract') == 'clued.independent-ci.resident-generation/1' and _gen['linux'] == {'generation': _facts['generation'], 'manifestSha256': _facts['manifestSha256'], 'ciSourceManifestSha256': _facts['ciSourceManifestSha256']}, 'INSTALLED_FACTS_NOT_THE_GENERATION_RECORD'
 OLD_COMMIT = _facts['sourceCommit']
 OLD_MANIFEST = _facts['ciSourceManifestSha256']
@@ -387,8 +387,8 @@ bash --noprofile --norc "$STG/tools/install-resident-linux.sh" --plan-upgrade-v1
 RV="$W/../review-A-{SUFFIX}"
 [ ! -e "$RV" ] || refuse REVIEW_COPY_EXISTS
 install -d -m 0755 "$RV" "$RV/roles-in" "$RV/tools"
-install -m 0644 "$STG"/roles-in/* "$RV/roles-in/"; install -m 0644 "$STG/tools/verify-source-v2.sh" "$STG/tools/{SIGNER}" "$RV/tools/"
-install -m 0644 "$STG/derive.stdout.json" "$STG/host-A.stdout.json" "$STG/upgrade-plan.stdout.txt" "$STG/install-plan.A.stdout.txt" "$STG/uninstall-plan.A.stdout.txt" "$STG/resident-pins.A.stdout.json" "$STG/old-version-facts.json" "$STG/phaseA.sha256" "$RV/"
+install -m 0644 "$STG"/roles-in/* "$RV/roles-in/"; install -m 0644 "$STG/tools/verify-source-v2.sh" "$STG/tools/{SIGNER}" "$STG/tools/check-reinstall-history.py" "$RV/tools/"
+install -m 0644 "$STG/derive.stdout.json" "$STG/host-A.stdout.json" "$STG/upgrade-plan.stdout.txt" "$STG/install-plan.A.stdout.txt" "$STG/uninstall-plan.A.stdout.txt" "$STG/resident-pins.A.stdout.json" "$STG/old-version-facts.json" "$STG/upgrade-history.A.json" "$STG/phaseA.sha256" "$RV/"
 echo "{{\\"status\\":\\"PHASE_A_DONE_NOTHING_SIGNED_NOTHING_INSTALLED\\",\\"phaseAManifestSha256\\":\\"$(sha256sum "$STG/phaseA.sha256" | cut -d' ' -f1)\\"}}"
 """
 MODS = ['worker/qualification-v2.mjs', 'src/worker-v2.mjs', 'src/job-v2.mjs', 'src/proof.mjs', 'src/queue.mjs']

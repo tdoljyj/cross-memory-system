@@ -92,7 +92,7 @@ def capture(plan_text, facts, groups=GROUPS, windows=WINDOWS):
     fields = parse_plan(plan_text)
     need(facts.get('contract') == 'clued.independent-ci.linux-version-facts/1' and
          type(facts.get('generation')) is int and facts['generation'] > 0 and
-         facts.get('staged') is None and facts.get('pinsOk') is True, 'HISTORY_FACTS_NOT_SETTLED')
+         'staged' in facts and facts['staged'] is None and facts.get('pinsOk') is True, 'HISTORY_FACTS_NOT_SETTLED')
     state = groups['upgrade-state'][0]
     cur = read_json(os.path.join(state, 'current.json'))
     need(cur.get('contract') == 'clued.independent-ci.linux-upgrade-current/1' and type(cur.get('generation')) is int and

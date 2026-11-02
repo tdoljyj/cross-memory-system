@@ -76,6 +76,11 @@ class History(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'HISTORY_CURRENT_RECORD_MISMATCH'):
             self.capture()
 
+    def test_missing_staged_is_unknown_not_settled(self):
+        missing = {k: v for k, v in self.facts.items() if k != 'staged'}
+        with self.assertRaisesRegex(ValueError, 'HISTORY_FACTS_NOT_SETTLED'):
+            self.capture(missing)
+
     def test_active_unknown_or_stale_windows_operation_is_refused(self):
         for status in ({'op': {'id': 'active'}}, {'writtenAt': '2026-01-01T00:00:00Z'}, {}):
             self.doc(self.windows / 'status.json', status)

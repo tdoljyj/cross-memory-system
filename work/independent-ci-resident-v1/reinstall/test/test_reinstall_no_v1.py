@@ -255,6 +255,8 @@ class PrepNoV1(unittest.TestCase):
         b = rd(w, 'linux', 'reinstall-linux-B-switch.draft-w2.sh').decode()
         self.assertIn('check-reinstall-history.py capture', a.replace('"', ''))
         self.assertIn('upgrade-history.A.json src-head.txt', a)
+        self.assertIn('"$STG/tools/check-reinstall-history.py" "$RV/tools/"', a)
+        self.assertIn('"$STG/upgrade-history.A.json" "$STG/phaseA.sha256" "$RV/"', a)
         self.assertNotIn('upgrade-v1=yes generations= archive=', a)
         self.assertLess(b.index('verify-live'), b.index('# B1 [PRIVATE KEY]'))
         self.assertIn('verify-kept', b)
