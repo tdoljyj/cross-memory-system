@@ -1,7 +1,7 @@
 {
   "schema": "clued.ci-health-report/v1",
   "repository": "tdoljyj/cross-memory-system",
-  "observed_at": "2026-10-31T12:20:12.764481Z",
+  "observed_at": "2026-11-02T05:56:50.315659Z",
   "status": "ANOMALY",
   "notify_model": true,
   "fingerprint": "d360ff676f29633320a5caeb07c0f7a3abcb43703f367673a4f2ce2807a77936",
@@ -28,28 +28,28 @@
         },
         "jobs": [
           {
-            "job_id": "124120733804",
-            "run_id": 41072729692,
+            "job_id": "125062927715",
+            "run_id": 41378175413,
             "name": "runner-heartbeat / clued-ci-company-linux-01",
             "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-10-30T14:34:14Z",
-            "started_at": "2026-10-31T01:07:55Z",
-            "delay_seconds": 38021,
+            "created_at": "2026-11-02T02:31:19Z",
+            "started_at": "2026-11-02T02:54:54Z",
+            "delay_seconds": 1415,
             "kind": "started",
             "wait_cause": "unexplained",
-            "idle_seconds": 38021
+            "idle_seconds": 1415
           },
           {
-            "job_id": "124418046029",
-            "run_id": 41160916496,
+            "job_id": "125062927739",
+            "run_id": 41378175413,
             "name": "runner-heartbeat / clued-ci-company-linux-02",
             "runner_name": "clued-ci-company-linux-02",
-            "created_at": "2026-10-31T02:38:29Z",
-            "started_at": "2026-10-31T02:47:55Z",
-            "delay_seconds": 566,
+            "created_at": "2026-11-02T02:31:19Z",
+            "started_at": "2026-11-02T02:55:34Z",
+            "delay_seconds": 1455,
             "kind": "started",
             "wait_cause": "unexplained",
-            "idle_seconds": 566
+            "idle_seconds": 1455
           }
         ]
       }
@@ -75,7 +75,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-10-31T08:53:50Z",
+          "last_verified_at": "2026-11-02T02:31:19Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -93,7 +93,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-10-31T08:53:51Z",
+          "last_verified_at": "2026-11-02T02:31:19Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -146,7 +146,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-10-31T08:53:51Z",
+          "last_verified_at": "2026-11-02T02:31:19Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -163,7 +163,7 @@
             "site-home",
             "trust-internal"
           ],
-          "last_verified_at": "2026-10-31T08:53:51Z",
+          "last_verified_at": "2026-11-02T02:31:19Z",
           "slow_queued_probes": [],
           "state": "routable"
         }
@@ -177,28 +177,28 @@
       "slow_occurrences_by_pool": {
         "linux-docker-wsl2-v1": [
           {
-            "job_id": "124120733804",
-            "run_id": 41072729692,
+            "job_id": "125062927715",
+            "run_id": 41378175413,
             "name": "runner-heartbeat / clued-ci-company-linux-01",
             "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-10-30T14:34:14Z",
-            "started_at": "2026-10-31T01:07:55Z",
-            "delay_seconds": 38021,
+            "created_at": "2026-11-02T02:31:19Z",
+            "started_at": "2026-11-02T02:54:54Z",
+            "delay_seconds": 1415,
             "kind": "started",
             "wait_cause": "unexplained",
-            "idle_seconds": 38021
+            "idle_seconds": 1415
           },
           {
-            "job_id": "124418046029",
-            "run_id": 41160916496,
+            "job_id": "125062927739",
+            "run_id": 41378175413,
             "name": "runner-heartbeat / clued-ci-company-linux-02",
             "runner_name": "clued-ci-company-linux-02",
-            "created_at": "2026-10-31T02:38:29Z",
-            "started_at": "2026-10-31T02:47:55Z",
-            "delay_seconds": 566,
+            "created_at": "2026-11-02T02:31:19Z",
+            "started_at": "2026-11-02T02:55:34Z",
+            "delay_seconds": 1455,
             "kind": "started",
             "wait_cause": "unexplained",
-            "idle_seconds": 566
+            "idle_seconds": 1455
           }
         ]
       }
