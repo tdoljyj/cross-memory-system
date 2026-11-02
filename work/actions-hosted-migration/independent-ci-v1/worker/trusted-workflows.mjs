@@ -31,11 +31,11 @@ const ROWS = [
 // END TRUSTED WORKFLOW ROWS
 
 // BEGIN GITLEAKS SUCCESSOR (generated from a real workflow-freeze commit)
-const GITLEAKS_SUCCESSOR_ROW = {"path":".github/workflows/gitleaks.yml","sha256":"9d6c23d2ae4769d123f7ddcd3a25810878d36a85efc2403c07ecec5ecd17cdab","blob":"e6fafbb0a40ce37795f1e50bbda03cd33fbf40e0","commit":"2f7c02d1d49d6cee0ddaf82c54840a88280acb74"};
+const GITLEAKS_SUCCESSOR_ROW = {"path":".github/workflows/gitleaks.yml","sha256":"af884460dd61b352c0480d02bb76efbaa3b7d6babb265e2407d29366491fdcc2","blob":"beab197d7ba509b97bb2969bed88ef5a830c42b9","commit":"a8f6c028d304e336b7d8698575ada086a4ce0f41"};
 // END GITLEAKS SUCCESSOR
 
 // BEGIN TRIVY SUCCESSOR (generated from a real workflow-freeze commit)
-const TRIVY_SUCCESSOR_ROW = {"path":".github/workflows/trivy.yml","sha256":"8ec20479b6a7bbf3cc3c2b085271c9a7ed4dc06a16ea9e39c05900428adfa0d2","blob":"50bd4ae3312ea3c5b1896a9ec81922b0b392343b","commit":"2f7c02d1d49d6cee0ddaf82c54840a88280acb74"};
+const TRIVY_SUCCESSOR_ROW = {"path":".github/workflows/trivy.yml","sha256":"3e49ed0b8f454c6a5683d51a42bc1a70dba6b31464dba58c3d5befc1b3530ba4","blob":"1ac5cfc8d3c7ff192eb16c0112a6ace11f6f7e86","commit":"a8f6c028d304e336b7d8698575ada086a4ce0f41"};
 // END TRIVY SUCCESSOR
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };

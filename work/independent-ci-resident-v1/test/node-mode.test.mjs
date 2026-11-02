@@ -13,7 +13,7 @@ import { batchKey, headKey } from '../src/ledger.mjs';
 import { intakePauseRequest } from '../src/intake-pause.mjs';
 import { rearmRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
 import { refusalSafeToRerun } from '../../actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/publisher.mjs';
-import { BASE, CI_SOURCE, HEAD, RELAY_ON, SAFE_REFUSAL, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, notAdmitted, rawPolicy, triggerBytes } from './helpers.mjs';
+import { BASE, CI_SOURCE, HEAD, RELAY_ON, SAFE_REFUSAL, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, hintFor, relayedRow, notAdmitted, rawPolicy, triggerBytes } from './helpers.mjs';
 
 const MIN = 60_000;
 const T0 = Date.parse('2026-10-29T08:00:00Z');
@@ -450,8 +450,12 @@ test('STANDBY: a batch parked at B keeps trying stage 8, a batch waiting at A go
   assert.deepEqual(['QUEUED'], [f.queue.row(901).state]);
 
   // A: a batch waiting for hosted signals is resumed and finishes; the tick's result stays WAITING with the batch in the status.
-  // no usable hint: the signal window, then local
-  const g = await nodeFx(t, { policy: rawPolicy({ relay: RELAY_ON }), hint: () => Buffer.from('{"contract":"x"}'), facts: [HELD] });
+  // No usable hint keeps the batch waiting. Fresh success + attested Stage R
+  // lets this existing batch continue under STANDBY with only placement local.
+  let hostedDone = false;
+  const hostedEngine = fakeEngine({ relay: roles => ({ ok: true, factsSha256: 'd'.repeat(64), relay: roles.map(role => relayedRow(role)) }) });
+  const g = await nodeFx(t, { engine: hostedEngine, policy: rawPolicy({ relay: RELAY_ON }),
+    hint: (s, at) => hostedDone ? hintFor({ gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } }, { pr: s.pr, head: s.headSha, at }) : null, facts: [HELD] });
   await g.exec.tick();
   await g.drop(triggerBytes());
   assert.equal((await g.exec.tick()).state, 'WAITING');
@@ -462,8 +466,14 @@ test('STANDBY: a batch parked at B keeps trying stage 8, a batch waiting at A go
   assert.equal(waiting.state, 'WAITING', 'the batch at A stays the tick\'s result under STANDBY');
   assert.equal(g.board.content.current?.pr, 884, 'and the status\'s batch in flight');
   assert.equal(derives(g), 1);
+  assert.deepEqual(stagesRun(g.engine), [1], 'neither local scanner starts while hosted is pending');
+  hostedDone = true;
   g.advance(RELAY_ON.wait.signalMs);
-  assert.equal((await g.exec.tick()).state, 'COMPLETED', 'it continues to its end; live admission decides');
+  const completed = await g.exec.tick();
+  assert.equal(completed.state, 'COMPLETED', 'it continues to its end; live admission decides');
+  assert.deepEqual([completed.relayed, completed.local], [['gitleaks', 'trivy'], ['contract-placement']]);
+  assert.deepEqual(stagesRun(g.engine), [1, 9, 6, 7, 8]);
+  assert.deepEqual(await g.ledger.pendingAttempts2(), []);
   assert.equal(derives(g), 1, 'PR 900 never started');
   assert.deepEqual(pick(await g.exec.tick()), ['DEFERRED', 'NODE_STANDBY']);
 });

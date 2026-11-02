@@ -187,7 +187,17 @@ const COMMITTED = path.join(HERE, '../src/hosted-relay-v1/registry.json');
 // builder; the old PR-B commit itself is refused by the new builder.
 const pendingIsolationRebuild = raw => Object.values(raw?.roles ?? {}).some(r => !Object.hasOwn(r, 'forbiddenChangePrefixes'));
 test('the committed production registry validates and rebuilds byte-identically from its PR-B commit', async t => {
-  const bytes = fs.readFileSync(COMMITTED, 'utf8');
+  let bytes = fs.readFileSync(COMMITTED, 'utf8');
+  // /2 has its own exact-gate and frozen-commit regression. Keep this /1
+  // regression on the historical object preserved at that successor's freeze,
+  // rather than rebuilding /2 workflows with a legacy spec or changing it.
+  const current = JSON.parse(bytes);
+  if (current.contract === 'clued.independent-ci.hosted-relay-registry/2') {
+    const historical = spawnSync(GIT, ['-C', ROOT, 'show', `${current.sourceCommit}:work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/registry.json`], { windowsHide: true });
+    assert.equal(historical.status, 0, 'historical /1 registry must remain in the local freeze object');
+    bytes = String(historical.stdout);
+    assert.equal(JSON.parse(bytes).contract, 'clued.independent-ci.hosted-relay-registry/1');
+  }
   if (pendingIsolationRebuild(JSON.parse(bytes))) {
     refused(() => validateRegistry(JSON.parse(bytes), { domain: 'production' }), 'RELAY_REGISTRY_INVALID', 'a pre-isolation registry fails closed');
     const sourceCommit = JSON.parse(bytes).sourceCommit;

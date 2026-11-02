@@ -140,6 +140,8 @@ import { classifyFailure } from './classify.mjs';
 import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, trainDue, trainRunInput, trainRunMode, trainSummary, trainSweepView } from './train.mjs';
 import { RoleProbe, validateRoleProbeFact } from './role-probe.mjs';
 import { NODE_MODES } from './status.mjs';
+import { RelayQualificationHolds, RELAY_QUALIFICATION_HELD, qualificationWindowSnapshot, qualificationWindowMatches } from './relay-qualification-hold.mjs';
+import { RelayQualificationObservations } from './relay-qualification-observations.mjs';
 import { RevocationMaintenanceBook,validateRevocationFacts,validateRevocationQualification,
   REVOCATION_RUN_MS,REVOCATION_HELPER_MARGIN_MS,REVOCATION_RUN_ID } from './revocation-maintenance.mjs';
 
@@ -351,6 +353,9 @@ export class ResidentExecutor {
     this.roleProbe = new RoleProbe();
     this.roleProbeNotices = [];
     this.revocationBook = new RevocationMaintenanceBook();
+    this.qualificationHolds = new RelayQualificationHolds(this.ledger.root, this.clock);
+    this.qualificationObservations = new RelayQualificationObservations({ holds: this.qualificationHolds, engine: this.engine, clock: this.clock });
+    this.qualificationWindows = new Map();
     // C3: every start begins UNCERTAIN (behaves like STANDBY) with the probe due at once; nothing is taken from before the start.
     this.roleProbeMode = 'UNCERTAIN';
     this.roleProbe.markUrgent();
@@ -519,6 +524,16 @@ export class ResidentExecutor {
   // loop has no batch in flight, so any open entry was left by a crash or an aborted tick: its
   // processes may still exist, so it is UNKNOWN and HALT is latched (once).
   async recover() {
+    // A crash after creating the guard but before a Stage1 intent is a safe
+    // pre-execution hold, not permission to repeat admission. Intent presence
+    // keeps the original crash/UNKNOWN handling (Stage1 might have run).
+    for (const e of await this.ledger.open()) {
+      if (e.state !== 'RESERVED' || e.qualificationHold || e.abort || e.selfAbort) continue;
+      const held = await this.qualificationHolds.inspect(e.reserved.subject);
+      if (held.record?.key === e.key && /^[0-9a-f]{16}-[0-9a-f]{12}$/.test(held.record.batchId ?? '')
+        && !(await this.qualificationHolds.stage1Attempted(e.reserved.subject)))
+        await this.ledger.beginQualificationHold(e.key, { t0: Date.parse(e.reserved.reservedAt), batch: { batchId: held.record.batchId, key: e.key } });
+    }
     // A batch that only waits for hosted signals runs nothing: it is resumed by tick(), never a crash scene.
     const open = await this.ledger.crashed();
     // A stage R that began (20-plan-intent) without its 25-plan may have begun a relay key: UNKNOWN, HALT. An entry
@@ -1728,6 +1743,7 @@ export class ResidentExecutor {
     const all = entries ?? await this.ledger.parkedEntries();
     let inside = 0, outside = 0;
     for (const e of all) {
+      if (Ledger.qualificationHeldAt(e) || (Ledger.waitingAt(e) && (await this.qualificationHolds.inspect(e.reserved.subject)).held)) continue;
       if (Ledger.waitingAt(e)) { inside += 1; continue; }
       const last = ResidentExecutor.lastTry(e);
       const p = Number.isSafeInteger(last?.position) ? last.position : (last?.transient === true ? last.assumedPosition : null);
@@ -1758,7 +1774,8 @@ export class ResidentExecutor {
     const outsideMax = this.policy.park.maxParkedOutsideTop2;
     this.parkingFull = counts.inside >= this.policy.park.maxParked || (outsideMax > 0 && counts.outside >= outsideMax);
     if (entries.length === 0 || hold) return { acted: null, waiting: null };
-    let waiting = null;
+    let waiting = entries.some(e => Ledger.qualificationHeldAt(e))
+      ? this.qualificationWaiting(entries.find(e => Ledger.qualificationHeldAt(e)).key) : null;
     for (const e of entries.filter(x => Ledger.waitingAt(x))) {
       const r = await this.resumeWaiting(e);
       if (r?.state !== 'WAITING') return { acted: r, waiting: null };
@@ -2068,7 +2085,7 @@ export class ResidentExecutor {
       return { state: 'DEFERRED', reason: 'BREAKER_OPEN', until: gate.until };
     }
     // One trial at a time: while a batch rests at parking point A, a half-open breaker starts none (review m11).
-    if (gate.trial && entries.some(e => Ledger.waitingAt(e))) {
+    if (gate.trial && (await this.parkedCounts(entries.filter(e => Ledger.waitingAt(e)))).inside > 0) {
       await this.persistQueue();
       return { state: 'DEFERRED', reason: 'BREAKER_TRIAL_PENDING' };
     }
@@ -2115,6 +2132,17 @@ export class ResidentExecutor {
   async precheck(key, hk, subject, { attempt1Key = null, usage, origin = 'queued' } = {}) {
     const now = this.clock();
     const l = this.policy.limits;
+    if ((await this.qualificationHolds.inspect(subject)).held) return { defer: RELAY_QUALIFICATION_HELD, perRow: true };
+    let qualificationWindow = null;
+    try {
+      const q = await this.readQualificationWindow();
+      qualificationWindow = q;
+      if (q && q.subject.repo.toLowerCase() === subject.repo.toLowerCase() && q.subject.headSha === subject.headSha
+        && (!qualificationWindowMatches(q, subject, this.policy) || Date.parse(q.validUntil) <= now)) {
+        await this.qualificationHolds.arm(q, subject, { key });
+        return { defer: RELAY_QUALIFICATION_HELD, perRow: true };
+      }
+    } catch { return { defer: 'RELAY_QUALIFICATION_WINDOW_UNCONFIRMED' }; }
     if (await this.ledger.headBurned(hk)) return { ignore: 'HEAD_ALREADY_EXECUTED_NO_RETRY' };
     // A head that may have published a check under ANY Source or attempt (executed-heads.mjs) never runs again: a new
     // Source would otherwise run it as new and stop at ROLE_ALREADY_PUBLISHED_ON_HEAD (2026-10-22, Note 1550fef8). The
@@ -2145,6 +2173,7 @@ export class ResidentExecutor {
     if (startCode) return { halt: startCode };
     const beat = await this.companion.heartbeat();
     if (!beat || typeof beat.at !== 'number' || now - beat.at > this.policy.companion.heartbeatMaxAgeMs) return { defer: 'COMPANION_NOT_READY' };
+    this.qualificationWindows.set(key, qualificationWindow);
     return {};
   }
 
@@ -2290,6 +2319,7 @@ export class ResidentExecutor {
       // An exception in the executor itself (or a port) is never classified as clean.
       outcome = await this.unknown(key, codeOf(error), 'executor-exception', null, archiveFacts(error));
     }
+    this.qualificationWindows.delete(key);
     return this.afterBatch(subject, origin, outcome);
   }
 
@@ -2419,6 +2449,29 @@ export class ResidentExecutor {
     const superseded = await this.supersededBeforeStart(key, subject, batch);
     if (superseded) return superseded;
 
+    let guarded = false;
+    const oldGuard = await this.qualificationHolds.inspect(subject);
+    if (oldGuard.held) {
+      await this.ledger.beginQualificationHold(key, { t0, batch });
+      return this.qualificationWaiting(key);
+    }
+    const q = this.qualificationWindows.has(key) ? this.qualificationWindows.get(key) : await this.readQualificationWindow();
+    this.qualificationWindows.delete(key);
+    if (q && q.subject.repo.toLowerCase() === subject.repo.toLowerCase() && q.subject.headSha === subject.headSha) {
+      const armed = await this.qualificationHolds.arm(q, subject, { key, batchId: batch.batchId });
+      guarded = armed.created && qualificationWindowMatches(armed.window, subject, this.policy) && Date.parse(armed.window.validUntil) > this.clock();
+      if (!guarded) {
+        await this.ledger.beginQualificationHold(key, { t0, batch });
+        return this.qualificationWaiting(key);
+      }
+      if (Date.parse(armed.window.validUntil) <= this.clock()) {
+        await this.ledger.beginQualificationHold(key, { t0, batch });
+        return this.qualificationWaiting(key);
+      }
+      // From this durable intent onward an uncertain ending is never promoted
+      // to a pre-Stage1 hold, even if the window expires during an await.
+      await this.qualificationHolds.stage1Intent(subject, { key, batchId: batch.batchId });
+    }
     this.atStage(1, 'stage');
     const first = await this.engine.runStage(batch, this.stage(1), { betweenRoles: false, firstLinux: false });
     await this.receipt('stage-terminal', { key, stage: 1, ok: first.ok === true, failureCode: first.ok ? null : validCode(first.code), factsSha256: first.factsSha256 ?? null, outcome: outcomeSummary(first) });
@@ -2429,6 +2482,7 @@ export class ResidentExecutor {
       }
       return new StepFailure(1, first.code, first.proof, 'stage', 0, first);
     }
+    if (guarded) await this.qualificationHolds.recordStage1(subject, { key, batchId: batch.batchId, result: first });
 
     // Admitted and published: from here on this head is burned (also when every heavy role is relayed).
     await this.ledger.markStarted(key, { batchId: batch.batchId });
@@ -2446,6 +2500,15 @@ export class ResidentExecutor {
     const { key } = entry, { t0, batch } = entry.wait, subject = entry.reserved.subject;
     this.current = { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, attempt: subject.attempt, since: entry.reserved.reservedAt ?? null };
     this.atStage(null, 'relay-wait');
+    if ((await this.qualificationHolds.inspect(subject)).held) {
+      // Advisory hints only schedule the installed Source's protected read.
+      // The persistent head guard remains in force after either observation;
+      // no result here authorizes Stage R, scanners, publication or relay.
+      const observation = await this.qualificationObservations.tick({ subject,
+        hint: (await this.hint(subject)).hint, livePull: await this.livePull(subject.pr, batch) });
+      return { ...this.qualificationWaiting(key), qualificationObservation: {
+        state: observation.state, code: observation.code ?? null, phase: observation.phase ?? null, liveQualified: false } };
+    }
     let outcome;
     try {
       // An install authority that ends within one batch budget closes a batch at parking point A neutrally, as at B
@@ -2472,6 +2535,7 @@ export class ResidentExecutor {
   //   resumed: this call resumes a batch that rested at parking point A in an earlier tick (resumeWaiting), never the
   //   batch's own first pass (DESIGN §37: only a batch that waited is re-bundled; independent review M1).
   async continueBatch(key, subject, batch, t0, { resumed = false } = {}) {
+    if ((await this.qualificationHolds.inspect(subject)).held) return this.qualificationWaiting(key);
     let aborted = await this.abortIfRequested(key, batch, 'before-relay-plan');
     if (aborted) return aborted;
     if ((aborted = await this.supersededAfterStart(key, subject, batch, 'before-relay-plan', POSITIONS[1]))) return aborted;
@@ -2533,6 +2597,16 @@ export class ResidentExecutor {
     return this.stage8Try(key, subject, batch);
   }
 
+  qualificationWaiting(key) {
+    return { state: 'WAITING', key, until: this.clock() + this.policy.relay.wait.pollMs, reason: RELAY_QUALIFICATION_HELD };
+  }
+
+  async readQualificationWindow() {
+    check(typeof this.engine.relayQualificationWindow === 'function', 'RELAY_QUALIFICATION_WINDOW_UNCONFIRMED');
+    const raw = await this.engine.relayQualificationWindow();
+    return raw === null ? null : qualificationWindowSnapshot(raw);
+  }
+
   // The latest companion hint for this head, parsed; anything malformed is "no hint" (it can only make the
   // batch wait less or relay less, never more).
   async hint(subject) {
@@ -2546,6 +2620,10 @@ export class ResidentExecutor {
   // 25-plan. Returns the plan { relayed: [row], local: [{ role, reason, receipt }] } or a StepFailure.
   async relayPlan(key, subject, batch, t0) {
     const relay = this.policy.relay;
+    // Owner once-per-head rule 41ab823a overrides the historic fallback design.
+    // No trusted atomic provider transfer exists here, including for train S.
+    if (relay.enabled === true && Object.hasOwn(subject, 'testSha'))
+      return { waiting: true, until: this.clock() + relay.wait.pollMs, reason: 'RELAY_PROVIDER_TRANSFER_REQUIRED' };
     // A train front batch (a subject with S, §41.4, §38.8 m1) never relays: every role stays local, decided here, before
     // 20-plan-intent (the derivation and the relay entry would only refuse it later).
     const front = Object.hasOwn(subject, 'testSha');
@@ -2567,9 +2645,57 @@ export class ResidentExecutor {
       this.atStage(RELAY_STAGE, 'stage');
       const r = await this.engine.runRelayStage(batch, candidates);
       await this.receipt('stage-terminal', { key, stage: RELAY_STAGE, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r) });
-      if (r.ok !== true) return new StepFailure(RELAY_STAGE, r.code, r.proof, 'stage', 0, r);
+      if (r.ok !== true) {
+        // Failure can follow a confirmed publication (a later role HALTs, or
+        // the independent SCM readback fails). Retain only a closed, ordered
+        // packet's confirmed rows; this is evidence, never an execution plan.
+        const confirmed = (() => {
+          try {
+            if (!Array.isArray(r.relay)) return [];
+            const packet = Object.getOwnPropertyDescriptors(r.relay);
+            if (packet.length.value !== candidates.length || Reflect.ownKeys(packet).length !== candidates.length + 1) return [];
+            const fields = ['role', 'outcome', 'reason', 'receipt', 'checkRunId', 'externalId', 'attestationSha256', 'detail'];
+            const published = [], ids = new Set(); let stopped = false;
+            for (let i = 0; i < candidates.length; i++) {
+              const item = packet[i];
+              if (!item || !Object.hasOwn(item, 'value') || !item.enumerable
+                || !item.value || Object.getPrototypeOf(item.value) !== Object.prototype) return [];
+              const d = Object.getOwnPropertyDescriptors(item.value);
+              if (Reflect.ownKeys(d).length !== fields.length || !fields.every(k => d[k]
+                && Object.hasOwn(d[k], 'value') && d[k].enumerable
+                && (d[k].value === null || ['string', 'number'].includes(typeof d[k].value)))) return [];
+              const row = Object.fromEntries(fields.map(k => [k, d[k].value]));
+              if (row.role !== candidates[i] || !(row.detail === null
+                || typeof row.detail === 'string' && /^[A-Za-z0-9_:.-]{1,160}$/.test(row.detail))) return [];
+              const empty = row.reason === null && row.receipt === null && row.checkRunId === null
+                && row.externalId === null && row.attestationSha256 === null;
+              if (stopped) { if (row.outcome !== 'NOT_PROCESSED' || !empty) return []; continue; }
+              if (row.outcome === 'HALT') {
+                if (!['RELAY_PUBLICATION_UNCERTAIN', 'ROLE_ALREADY_PUBLISHED_ON_HEAD'].includes(row.reason)
+                  || row.receipt !== null || row.checkRunId !== null || row.externalId !== null || row.attestationSha256 !== null) return [];
+                stopped = true; continue;
+              }
+              const one = relayPlanFromRows([row], [candidates[i]]);
+              if (!one) return [];
+              if (one.relayed.length === 1) {
+                if (row.externalId.split(':')[3] !== subject.headSha.slice(0, 12) || ids.has(row.checkRunId)) return [];
+                ids.add(row.checkRunId); published.push(one.relayed[0]);
+              } else if (one.onGithub) stopped = true;
+            }
+            return published;
+          } catch { return []; } // no caller-owned error or partial invalid row is serialized
+        })();
+        for (const x of confirmed) await this.receipt(RELAY_RECEIPTS.attested, { key, role: x.role, checkRunId: x.checkRunId, externalId: x.externalId, attestationSha256: x.attestationSha256 });
+        return new StepFailure(RELAY_STAGE, 'RELAY_PLAN_UNCONFIRMED', r.proof, 'stage', confirmed.length, r);
+      }
       const rows = relayPlanFromRows(r.relay, candidates);
       if (!rows) return new StepFailure(RELAY_STAGE, 'RELAY_PLAN_UNCONFIRMED', r.proof, 'stage', 0);
+      if (rows.local.length > 0) {
+        // Preserve confirmed publications before holding any unresolved role.
+        // A LOCAL_REQUIRED row is not a scan-start/provider-transfer authority.
+        for (const x of rows.relayed) await this.receipt(RELAY_RECEIPTS.attested, { key, role: x.role, checkRunId: x.checkRunId, externalId: x.externalId, attestationSha256: x.attestationSha256 });
+        return new StepFailure(RELAY_STAGE, 'RELAY_PLAN_UNCONFIRMED', r.proof, 'stage', rows.relayed.length, r);
+      }
       // C4: a role already on GitHub that this node knew nothing of ends the batch cleanly: no 25-plan and no local stage
       // for any role (the head was recorded as executed before stage R). A role relayed before it keeps its receipt.
       if (rows.onGithub) {

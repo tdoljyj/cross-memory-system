@@ -14,7 +14,9 @@
     {
       "reference": "c32676f4-4528-408c-b5e6-88cb27fca13a@1",
       "referenceSource": "current Task169 and preparation-hold.json",
-      "status": "FULL_CURRENT_TEXT_NOT_YET_RESOLVED",
+      "status": "FULL_CURRENT_TEXT_READ_FROM_CANONICAL_UI_2026_11_02",
+      "observedReadReceipt": "bed195fd-3675-47e2-8410-f68e851c8044",
+      "originalDecisionReceipt": null,
       "missingReadNeverMeansNoConstraint": true,
       "liveQualificationAllowedUntilResolved": false
     }
@@ -70,7 +72,7 @@
     "privateKeyTokenOrBatchKeyMayReachAgent": false,
     "publicOutput": "strict allowlist of verified claims, presence flags, evidence locators and hashes",
     "completeAnnotationsRequired": true,
-    "checkRunId": "if actually present in L1, require it in a separately reviewed rebuilt registry and accepted Source",
+    "checkRunId": "after L1, requireCheckRunIdClaim must be true in a separately reviewed rebuilt registry and newly accepted Source; an absent claim does not waive the rule",
     "oldMerge": "real ref movement followed by actual read of old merge SHA; cached or never-moved observation is insufficient",
     "jwks": "fresh network observation from actual clued-control broker; cached successful verification is insufficient"
   },
@@ -96,7 +98,7 @@
     "recovery-never-repeats-stage-1-or-hosted-dispatch",
     "dispatch-uncertainty-never-retries-or-falls-back-local",
     "partial-oidc-or-annotation-set-never-passes",
-    "presence-of-check-run-id-makes-old-unbound-registry-insufficient",
+    "old-unbound-registry-is-insufficient-even-if-check-run-id-is-absent",
     "old-sha-without-real-ref-move-never-passes",
     "jwks-cache-hit-without-fresh-broker-network-never-passes",
     "missing-terminal-or-cleanup-remains-uncertain",

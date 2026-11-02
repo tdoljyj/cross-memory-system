@@ -336,6 +336,19 @@ LEGACY_HOSTED_DEBT = {
 # these bytes, is admitted, and an entry fails once its job leaves hosted
 # runners or is gone.
 OWNER_DECISION_HOSTED_SOURCE = "325717a6"
+# Explicit candidate successor for the two existing executor jobs only. No new
+# runner, trigger, timeout, billable store or job is added; push execution is
+# narrowed to PRs. Three read permissions let the fresh OIDC/Native start door
+# verify actual job/check/PR facts. Exact protected-head Grant is still required
+# before merging this Source; this table never activates hosted execution.
+HOSTED_SCAN_START_SUCCESSOR = {
+    "decision": "41ab823a",
+    "frozen_commit": "a8f6c028d304e336b7d8698575ada086a4ce0f41",
+    "previous_pins": {
+        "gitleaks.yml": ["f775a27a4bf06fcff10caf74239c90bd6191fb58e59fcfb67f7141430a35e64b", "c3f023b3f2c312fe54a57394dda161d3fa4ad1e6042f5cdcc758e129830a1d7c"],
+        "trivy.yml": ["57f4d26e932037446cc510595b1ba72b819b9b045a4310a589becd2b1686c6f9", "658cfd509399200a62f4493f4830abf1426b5457fd11a9788ec67c8991f2c71e"],
+    },
+}
 OWNER_DECISION_HOSTED_JOBS = {
     "contract-placement.yml": {
         "control_sha256": "9043db3a2c533c54ac60804a543c80ae79f062109d3322e60b58eb50b749542d",
@@ -345,17 +358,17 @@ OWNER_DECISION_HOSTED_JOBS = {
         }
     },
     "gitleaks.yml": {
-        "control_sha256": "f775a27a4bf06fcff10caf74239c90bd6191fb58e59fcfb67f7141430a35e64b",
+        "control_sha256": "f5b93595feb30ef1f9bf436fce82a08e07e0559ea706bc6af60f26c01483f301",
         "jobs": {
             "admission-gate": "52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2",
-            "gitleaks-trusted-self-hosted": "c3f023b3f2c312fe54a57394dda161d3fa4ad1e6042f5cdcc758e129830a1d7c"
+            "gitleaks-trusted-self-hosted": "475533fb5eaa3f6c93654ce1a53a8493689cab316a7e2492c387823814090aef"
         }
     },
     "trivy.yml": {
-        "control_sha256": "57f4d26e932037446cc510595b1ba72b819b9b045a4310a589becd2b1686c6f9",
+        "control_sha256": "7458d438680dcf24af04e6b0843c6e5efcde6dbdc404ca993df40a1c162704da",
         "jobs": {
             "admission-gate": "52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2",
-            "trivy-trusted-self-hosted": "658cfd509399200a62f4493f4830abf1426b5457fd11a9788ec67c8991f2c71e"
+            "trivy-trusted-self-hosted": "b24f61afe3124f44cb0b394834f962fdd90115fe422110b303efcb3abe5b63b6"
         }
     }
 }
