@@ -63,6 +63,18 @@ powershell -NoProfile -File build.ps1 -Config config\desk-w-591.json -Commit ...
 
 ## 4. 启动器：`launcher/generate.py` + `launcher/template.ps1`
 
+### 完整 Source V2 输入
+
+`build.ps1 -SourceV2 <json>` 将已有 builder 的 `--source-v2` 输入同时传入首包和启动器的重建。JSON 使用原有合同：`commit`、`bundle`、`rolesDerivedSha256`。提交必须是已接受的运行 Source；辅助工具的提交不替换它。`linux/assemble.py` 将包内 bundle 一并复制，`linux/prep.py` 在 root 暂存时按固定路径复制并校验 bundle，派生后三个 role 的摘要必须等于包中值。
+
+主机环境未变时，用 `-HostQualificationRef <已接受的现行 Host 引用>`；Source 接受不能替代 Host 资格。Linux 脚本使用 record 中的独立 Host 引用。正式接受引用替换占位引用后，必须重算并交回最终 S 和包摘要，不能沿用 DRAFT 摘要。
+
+### 升级链的历史离线 replay
+
+精确 BEFORE/AFTER 模块的隔离正向与回滚复放，见本文末尾“显式历史 replay”。该入口不属于普通 CI，不替代当前 Source 或物理空升级 Gate；不要沿用旧测试路径或仅设置 BEFORE 的旧命令。
+
+首次重装后的“同 Source 空升级”可先用原 `rollout/build-upgrade.ps1` 构建：原地包移除本次重装包主清单里24个只供首次安装的 upgrader 写入项，所有共同文件字节、C/S、策略、身份、冻结升级器和 bundle 保持相同，包摘要自然不同。须按 `target` 逐项对比，不能按 `path` 去重漏掉复制到多个目标的文件；交付逐文件 diff，并在目标重装后的实际现场重新预检与取得精确 Grant。不要改功能、有效期或制造空提交来绕过 `UPGRADE_SAME_AS_CURRENT`。
+
 - **模板**：`template.ps1` 就是 r7 f4 在 TURING 上实际跑过的文本（6d32f2ba），把补丁历史合了进来，只多了一处：主机名改为参数 `$NodeHostname`。生成器钉住模板的 sha，不再打补丁；模板要改，就作为文本改动走审核。
 - **数据来源**：启动器钉住的每一个值都来自文件，包括包、配置、包里 record 的节点档案（必须等于配置所指的档案），以及本机已装状态（只读）。
 - **final 的前提**：Linux 第 B 步产出的 evidence 和 version facts，加上一份对**同一个包、同一提交、同一配置**的 `REHEARSAL_PASS` 预演报告，缺一不可（`FINAL_NEEDS_A_PASSING_REHEARSAL_OF_THIS_PACKAGE`）。24 小时时限由 `prep.py` 在节点变动之前检查；这里不再查，因为 W1 和 Linux B 之后节点处于半重装状态，无法重新预演。
@@ -87,6 +99,10 @@ python -I launcher/resume.py --launcher <原启动器> --launcher-sha <原生成
 
 Windows 预演还通过 Restart Manager 只读检查已安装公开二进制（`bin`、`runtime`、`broker/bin`、`upgrader/runtime` 的 exe/dll）。发现外部占用进程时报告 `EXTERNAL_RESIDENT_BINARY_LOCK`；观察失败时也记 finding，不把未知当作无占用。预期服务、companion host 及其当前子进程仍以 PID 和进程启动时间复核。探针不停止或重启进程，不枚举秘密、账本或工作目录。
 
+服务身份绑定前后两次 SCM 服务名/PID 和进程创建时间，不要求普通用户能读 `ExecutablePath`。优先使用仅 `PROCESS_QUERY_LIMITED_INFORMATION` 的原生查询；加固 DACL 连此查询也拒绝时，用系统 CIM provider 的创建时间和即时重查，明确按微秒（10个 FILETIME tick）与 RM 对齐，报告 `identityPrecisionTicks`。缺创建时间、PID重用、进程已退出或重查失败仍不能豁免。companion 的根绑定固定注册任务的两次运行实例 GUID、EnginePID、状态和 action 路径，支持实际 conhost 形态；同名 conhost/JobHost 或仅凭相邻 PID 不构成身份。子进程仍须核父子创建时序及当前身份。
+
+只读 API 依据：[GetProcessTimes](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes)、[Win32_Process](https://learn.microsoft.com/windows/win32/cimwin32prov/win32-process)、[CIM_DATETIME](https://learn.microsoft.com/windows/win32/wmisdk/cim-datetime)、[IRunningTask.EnginePID](https://learn.microsoft.com/windows/win32/api/taskschd/nf-taskschd-irunningtask-get_enginepid)。
+
 此检查只覆盖已登记的公开二进制文件。Restart Manager 不接受目录资源，因此它不能证明不存在目录句柄或整个 resident 目录一定能改名；报告明确写出 `directoryHandlesCovered=false`，正式卸载仍须取得原有的精确改名与保留证据。
 
 ```
@@ -104,10 +120,12 @@ python -I rehearse.py config\turing.json --commit <40hex> --package <包目录>
 | linux | Windows 侧的 Linux version facts（`upgrade/mailbox/responses/version-facts.json`）与第 1 代记录一致；配置里 root 复制的 Linux manifest 和 roles-v3 就是现装的（与 facts 里各项 sha 比对） |
 | pins | 包里 Linux 常驻 manifest 的外部钉值：形状与已装一致，`source-v2` 钉值等于新提交里的文件 |
 | linuxHost | 以 root 只读：对已装角色策略运行第 A、B0、B4 步会用的 `linux/tools/check-host.py`，钉值取配置的 `linux.host`；Source v1 的 HEAD 等于配置值；签名工具要读的 v1 qualification 都在（只查是否存在；签名和事实由第 B1 步签名工具核对，B1 在切换 Source 之前）。配置的 v1 HEAD 为 null 时：v1 的三处（`source-first-formal-v1`、`roles`、`formal-source-manifest-v1.json`）都不存在（否则 `LINUX_NODE_HAS_A_SOURCE_V1_NOT_CONFIGURED`），`roles-v3` 的三份 qualification 都在（否则 `LINUX_INSTALLED_V2_QUALIFICATIONS_MISSING`） |
-| roles | 以普通用户在节点的 WSL 发行版里，对副本运行第 A 步会用的 `linux/tools/derive-roles.py`。必须成功，被重钉的 Source 文件逐个列出。发行版默认用户是 root 时拒绝运行 |
+| roles | 以普通用户在节点的 WSL 发行版里，对副本运行第 A 步会用的 `linux/tools/derive-roles.py`。必须成功，被重钉的 Source 文件逐个列出。默认使用发行版默认用户；可用 `linux.rehearsalUser` 显式指定已有普通用户（如 `nobody`），只影响本项，不修改发行版默认用户、账户或权限。真实 UID 或 EUID 为 0 时仍拒绝运行 |
 | node | 包里的节点档案就是配置所指的那份 |
 
 报告（`clued.independent-ci.reinstall-rehearsal/1`）只新建、不覆盖，写在 `workDir\rehearsal\`。
+
+`linux.rehearsalUser` 可省略或为 null；字符串只接受普通用户名形状，拒绝 `root`、数字 UID、空白、路径和选项。角色预演仅读取公开副本与已接受 Git 内容，在随机 `/tmp` 目录写入后清理；权限不足继续拒绝，不回退 root。报告的 `checks.roles.runAsUser` 记录所选用户，配置原字节仍绑定 `configSha256`；此配置不进入运行包或 Source 闭包。`linuxHost` 的既有 root 只读探针不变。
 
 r7 那次三回被拒，都能被预演提前抓到，`test/test_rehearse.py` 里有对应的回归测试：
 
@@ -125,7 +143,10 @@ r7 那次三回被拒，都能被预演提前抓到，`test/test_rehearse.py` �
   - 树里的 install、verify、uninstall-resident-linux.sh；
   - `linux/tools/` 下审过的辅助工具；
   - 一个裸仓库，HEAD 和唯一的 ref 都是 `refs/heads/accepted`。
-- `prep.py`：生成三个脚本 `reinstall-linux-{A-stage,B-switch,B-resume}.<suffix>.sh`，$BASE 是 `/root/clued-ci-reinstall-<c8>`。
+- `prep.py`：生成三个脚本 `reinstall-linux-{A-stage,B-switch,B-resume}.<suffix>.sh`。
+  - 当前 BASE 为 `/root/clued-ci-reinstall-<c8>-<suffix>`；重试换后缀和新入口，旧失败目录/日志原位保留，不为重跑移动或删除它们。
+  - 升级工具会保留隐藏的 `.tool.lock`，卸载计划的 `ls -1` 不显示它。历史检查只允许这一已知隐藏文件，并以只读打开、非阻塞独占锁确认空闲；占用、链接或未知隐藏文件仍拒绝。锁文件也纳入完整历史快照并随旧目录保留，不删除或重建。
+  - 已做过升级的节点可以保留 `generations/gN`、archive 和 upgrade-state：A 仍要求 staging 为空、facts 当前代一致/pinsOk/staged=null，并核对当前代记录及 Windows 公开升级状态（op=null、5分钟内）。新增只读历史检查器记录各保留目录的完整 lstat 元数据（含 inode/mode/size/mtime，不扫描历史 payload 内容）；B 在任何 Source 切换前核原现场未变，卸载后核证据目录中的完整树。当前已接受的卸载器以 `mv -n` 整体保留这些目录，不修改它、不改变运行 Source；跨文件系统复制或不完整保留会拒绝后续安装。
   - "已装状态"不再写死，取自节点自己的 version facts 和第 1 代记录（两份文件的副本）。
   - 非 `draft*` 后缀（即 final）必须附上 24 小时内的 PASS 预演报告。`draft*` 脚本只供审阅，脚本自己一开头就拒绝运行（`DRAFT_SCRIPTS_ARE_FOR_REVIEW_ONLY`）。
   - `<in>` 里的 `check-host`、`verify-signed`、`derive-roles` 副本必须与 `linux/tools/` 中提交的版本相同。
@@ -262,3 +283,11 @@ python -I -m unittest discover -s test -p "test_*.py"      # 在 reinstall/ 下�
 - 配置的秘密拒绝、占位值、节点档案与配置对应；
 - 启动器模板的心跳令牌参数和计划比对（`test_launcher_heartbeat.py`，在 Windows PowerShell 5.1 里跑模板自己的函数，子进程是假的）；
 - 没有 Source v1 的节点：签名工具、`prep.py` 生成的脚本、预演（`test_reinstall_no_v1.py`、`test_rehearse.py`）。
+
+### 显式历史 replay（不是当前 main 的验收）
+
+`qualification/real-upgrade-flow.mjs` 只复放固定 BEFORE `019c1b7719c2b400915d16293e6c4d6e34585efd` 与 AFTER `1cba7ba527dc4755560e05f956c3f888350d3249`，不由普通 `*.test.mjs` 自动发现。它从两个独立、精确且干净的 checkout 动态加载完整 runtime 依赖；不要为运行它把冻结 runtime 复制进当前工具分支。
+
+在 Windows PowerShell 5.1 所在机器上，显式设置 `CLUED_UPGRADE_REPLAY=1`、`CLUED_UPGRADE_BEFORE_REPO` 和 `CLUED_UPGRADE_AFTER_REPO` 为对应 checkout 后，运行 `node --test qualification/real-upgrade-flow.mjs`。缺少 opt-in、平台不符或 checkout 不匹配时直接拒绝，不用 skip 充当通过。可将 `CLUED_UPGRADE_REPORT_DIR` 指向预先建立的独立结果目录以保留公开回执。
+
+它只验证历史文件/状态模块及真实 PS5.1 读取器；SCM、任务、Linux、Grant 与 Native 角色仍为替身边界。成功不是当前 Source 接受、主线 portable CI、物理服务升级或自动回滚的通过证明。

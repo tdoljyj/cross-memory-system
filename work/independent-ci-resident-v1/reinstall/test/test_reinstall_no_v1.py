@@ -3,7 +3,7 @@
 fixture inputs, for a node with v1 (unchanged) and one without. Nothing runs as root, nothing touches WSL or the host.
   python -I -m unittest discover -s test -p "test_*.py"     (from reinstall/)
 """
-import hashlib, json, os, shutil, subprocess, sys, tempfile, unittest
+import datetime, hashlib, json, os, shlex, shutil, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RE = os.path.dirname(HERE)
@@ -238,8 +238,28 @@ class PrepNoV1(unittest.TestCase):
         self.assertNotIn('sign-qualification-no-v1', ''.join(t.values()))
         self.assertNotIn('NODE_HAS_A_SOURCE_V1', t['reinstall-linux-A-stage'])
         self.assertIn(b'\nV1_HEAD=' + b'f' * 40 + b'\n', rd(w, 'linux', 'in-t', 'tools', 'verify-source-v2.sh'))
-        self.assertEqual(out['pinnedFiles'], 22)
+        self.assertEqual(out['pinnedFiles'], 23)
         self.assertFalse(os.path.exists(os.path.join(w, 'linux', 'in-t', 'tools', 'sign-qualification-no-v1.mjs')))
+
+    def test_retry_suffix_uses_a_new_base_and_pins_history_before_switching(self):
+        argv, w = build_prep(self.d, 'f' * 40)
+        first = run_prep(argv)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        first_base = json.loads(first.stdout)['base']
+        argv[5] = 'draft-w2'
+        second = run_prep(argv)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertNotEqual(first_base, json.loads(second.stdout)['base'])
+        self.assertTrue(json.loads(second.stdout)['base'].endswith('-draft-w2'))
+        a = rd(w, 'linux', 'reinstall-linux-A-stage.draft-w2.sh').decode()
+        b = rd(w, 'linux', 'reinstall-linux-B-switch.draft-w2.sh').decode()
+        self.assertIn('check-reinstall-history.py capture', a.replace('"', ''))
+        self.assertIn('upgrade-history.A.json src-head.txt', a)
+        self.assertIn('"$STG/tools/check-reinstall-history.py" "$RV/tools/"', a)
+        self.assertIn('"$STG/upgrade-history.A.json" "$STG/phaseA.sha256" "$RV/"', a)
+        self.assertNotIn('upgrade-v1=yes generations= archive=', a)
+        self.assertLess(b.index('verify-live'), b.index('# B1 [PRIVATE KEY]'))
+        self.assertIn('verify-kept', b)
 
     def test_a_node_without_source_v1_signs_from_its_installed_roles(self):
         t, out, w = self.scripts(None)
@@ -250,11 +270,11 @@ class PrepNoV1(unittest.TestCase):
         self.assertLess(a.index('refuse NODE_HAS_A_SOURCE_V1_CONFIGURE_ITS_HEAD'), a.index('install -d -o root -g root -m 0700 "$BASE"'))
         nov1 = rd(RE, 'linux', 'tools', 'sign-qualification-no-v1.mjs')
         self.assertIn(sha(nov1) + '  tools/sign-qualification-no-v1.mjs\n', a)
-        self.assertRegex(a, r'check-host-r4\.py sign-qualification-v2\.mjs verify-source-v2\.sh sign-qualification-no-v1\.mjs; do install')
+        self.assertRegex(a, r'check-host-r4\.py sign-qualification-v2\.mjs verify-source-v2\.sh sign-qualification-no-v1\.mjs check-reinstall-history\.py; do install')
         self.assertEqual(rd(w, 'linux', 'in-t', 'tools', 'sign-qualification-no-v1.mjs'), nov1)
         # verify-source-v2 then checks there is no v1 (its V1_HEAD is empty)
         self.assertIn(b'\nV1_HEAD=\n', rd(w, 'linux', 'in-t', 'tools', 'verify-source-v2.sh'))
-        self.assertEqual(out['pinnedFiles'], 23)   # + the no-v1 signer
+        self.assertEqual(out['pinnedFiles'], 24)   # + history verifier and no-v1 signer
         # the same checks of the installed state as for a v1 node: Source v2 head and manifest, the resident, the upgrade channel
         for s in ('quiet_and_installed\n', 'refuse OLD_VERSION_FACTS_NOT_THE_INSTALLED_GENERATION', 'refuse HOST_PINS_CHANGED', 'refuse SIGNED_SET_REFUSED'):
             self.assertIn(s, a + b, s)
@@ -277,6 +297,148 @@ class PrepNoV1(unittest.TestCase):
         p = run_prep(argv)
         self.assertNotEqual(p.returncode, 0)
         self.assertIn('NODE_HAS_NO_INSTALLED_LINUX_CI', p.stderr)
+
+    def source_v2_inputs(self):
+        argv, w = build_prep(self.d, None)
+        bundle = b'fixture bundle\r\nwith binary bytes\x00'
+        for base, rel in ((argv[4], ('linux', 'source-v2', 'source.bundle')),
+                          (os.path.join(w, 'linux', 'in-t'), ('linux-pkg', 'source-v2', 'source.bundle'))):
+            os.makedirs(os.path.join(base, *rel[:-1]))
+            with open(os.path.join(base, *rel), 'wb') as f:
+                f.write(bundle)
+        manifest = rj(argv[4], 'package-manifest.json')
+        manifest['linux']['sourceV2'] = {'commit': argv[1], 'bundlePath': 'linux/source-v2/source.bundle',
+                                        'bundleSha256': sha(bundle), 'rolesDerivedSha256': {r: str(i + 1) * 64 for i, r in enumerate(ROLES)}}
+        with open(os.path.join(argv[4], 'package-manifest.json'), 'w', encoding='utf-8') as f:
+            json.dump(manifest, f)
+        return argv, w, manifest
+
+    def final_inputs(self, host_ref):
+        argv, w, manifest = self.source_v2_inputs()
+        for base in (argv[4], os.path.join(w, 'linux', 'in-t')):
+            acceptance = rj(base, 'record', 'acceptance.json')
+            acceptance.update(sourceAcceptanceRef=NEW_REF, hostQualificationRef=host_ref,
+                              installationReceiptRef='33333333-3333-4333-8333-333333333333',
+                              ownerReceiptRef='33333333-3333-4333-8333-333333333333',
+                              ownerDecisionRef='44444444-4444-4444-8444-444444444444')
+            with open(os.path.join(base, 'record', 'acceptance.json'), 'w', encoding='utf-8') as f:
+                json.dump(acceptance, f)
+        argv[3], argv[5] = NEW_REF, 'final-t'
+        report = os.path.join(self.d, 'public-fixture-rehearsal.json')
+        with open(report, 'w', encoding='utf-8') as f:
+            json.dump({'contract': 'clued.independent-ci.reinstall-rehearsal/1',
+                       'status': 'REHEARSAL_PASS', 'findings': [], 'commit': argv[1],
+                       'packageManifestSha256': sha(rd(argv[4], 'package-manifest.json')),
+                       'configSha256': sha(rd(argv[0])),
+                       'observedAt': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}, f)
+        argv.append(report)
+        return argv, w, manifest
+
+    def test_final_rejects_an_independent_placeholder_host_ref(self):
+        for placeholder in ('dddddddd-1111-4111-8111-111111111111', 'eeeeeeee-1111-4111-8111-111111111111'):
+            with self.subTest(host=placeholder):
+                # Each generator owns its own inputs/output paths.
+                with tempfile.TemporaryDirectory(dir=self.d) as case:
+                    original = self.d
+                    try:
+                        self.d = case
+                        argv, _, _ = self.final_inputs(placeholder)
+                        p = run_prep(argv)
+                    finally:
+                        self.d = original
+                self.assertNotEqual(p.returncode, 0)
+                self.assertIn('FINAL_SCRIPTS_NEED_THE_REAL_OWNER_REFS', p.stderr)
+
+    def test_final_accepts_an_independent_real_host_ref_and_keeps_the_runtime_gate(self):
+        argv, w, _ = self.final_inputs(OLD_REF)
+        p = run_prep(argv)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        for name in json.loads(p.stdout)['scripts']:
+            text = rd(w, 'linux', name).decode('utf-8')
+            self.assertIn('HOST_REF=' + OLD_REF, text)
+            self.assertIn('case "$NEW_REF $RECEIPT_REF $HOST_REF"', text)
+
+    def test_phase_a_manifest_rejects_a_bundle_changed_after_staging(self):
+        bash = os.environ.get('CLUED_TEST_BASH') or shutil.which('bash')
+        if not bash or (os.name == 'nt' and 'git' not in bash.lower()):
+            self.skipTest('needs non-WSL Git Bash on Windows or ordinary POSIX bash')
+        argv, w, _ = self.source_v2_inputs()
+        p = run_prep(argv)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        text = rd(w, 'linux', 'reinstall-linux-A-stage.draft-t.sh').decode('utf-8')
+        line = next(line for line in text.splitlines() if 'sha256sum roles-in/' in line and 'phaseA.sha256' in line)
+        args = shlex.split(line.split('sha256sum ', 1)[1].split(' > ', 1)[0])
+        self.assertIn('linux-pkg/source-v2/source.bundle', args)
+        stage = os.path.join(self.d, 'checksum-stage')
+        for arg in args:
+            file = os.path.join(stage, *arg.replace('*', 'fixture').split('/'))
+            os.makedirs(os.path.dirname(file), exist_ok=True)
+            with open(file, 'wb') as f:
+                f.write(b'public staged fixture')
+        env = dict(os.environ, STG=stage.replace('\\', '/'))
+        captured = subprocess.run([bash, '-c', line], env=env, capture_output=True, text=True)
+        self.assertEqual(captured.returncode, 0, captured.stderr)
+        verify = 'cd "$STG" && sha256sum -c phaseA.sha256'
+        self.assertEqual(subprocess.run([bash, '-c', verify], env=env, capture_output=True).returncode, 0)
+        with open(os.path.join(stage, 'linux-pkg', 'source-v2', 'source.bundle'), 'ab') as f:
+            f.write(b'changed after phase A')
+        checked = subprocess.run([bash, '-c', verify], env=env, capture_output=True, text=True)
+        self.assertNotEqual(checked.returncode, 0)
+        self.assertIn('linux-pkg/source-v2/source.bundle: FAILED', checked.stdout)
+
+    def test_source_bundle_and_each_derived_role_are_pinned_before_source_switch(self):
+        argv, w, manifest = self.source_v2_inputs()
+        for base in (argv[4], os.path.join(w, 'linux', 'in-t')):
+            acceptance = rj(base, 'record', 'acceptance.json')
+            acceptance['hostQualificationRef'] = OLD_REF
+            with open(os.path.join(base, 'record', 'acceptance.json'), 'w', encoding='utf-8') as f:
+                json.dump(acceptance, f)
+        p = run_prep(argv)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        out = json.loads(p.stdout)
+        text = rd(w, 'linux', 'reinstall-linux-A-stage.draft-t.sh').decode('utf-8')
+        self.assertIn(manifest['linux']['sourceV2']['bundleSha256'] + '  linux-pkg/source-v2/source.bundle', text)
+        self.assertIn('--host-acceptance-ref "' + OLD_REF + '"', text)
+        for role, expected in manifest['linux']['sourceV2']['rolesDerivedSha256'].items():
+            self.assertIn('$STG/roles-in/' + role + '.json', text)
+            self.assertIn(expected + ' ] || refuse SOURCE_V2_DERIVED_ROLE_MISMATCH', text)
+        self.assertEqual(out['pinnedFiles'], 25)
+
+    def test_generated_bundle_staging_actually_copies_the_pinned_bytes(self):
+        bash = os.environ.get('CLUED_TEST_BASH') or shutil.which('bash')
+        if not bash or (os.name == 'nt' and 'git' not in bash.lower()):
+            self.skipTest('needs non-WSL Git Bash on Windows or ordinary POSIX bash')
+        argv, w, manifest = self.source_v2_inputs()
+        p = run_prep(argv)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        text = rd(w, 'linux', 'reinstall-linux-A-stage.draft-t.sh').decode('utf-8')
+        fragment = text[text.index('# begin source-v2 bundle staging'):text.index('# end source-v2 bundle staging')]
+        staged = os.path.join(self.d, 'actual-stage')
+        # The test is never root. On Windows chmod/ownership are not POSIX; exercise the generated paths and real file copy,
+        # explicitly leaving ownership/mode qualification to the root-script review and later Linux stage.
+        shim = '''install() { local dir=0; local args=(); while (( $# )); do case "$1" in -d) dir=1; shift;; -o|-g|-m) shift 2;; *) args+=("$1"); shift;; esac; done; if (( dir )); then command mkdir -p -- "${args[@]}"; else command cp -- "${args[@]}"; fi; }\n''' if os.name == 'nt' else '''install() { local args=(); while (( $# )); do case "$1" in -o|-g) shift 2;; *) args+=("$1"); shift;; esac; done; command install "${args[@]}"; }\n'''
+        quoted = lambda v: "'" + v.replace('\\', '/').replace("'", "'\\''") + "'"
+        script = 'set -euo pipefail\n' + shim + 'W=' + quoted(os.path.join(w, 'linux', 'in-t')) + '\nSTG=' + quoted(staged) + '\n' + fragment
+        run = subprocess.run([bash, '--noprofile', '--norc', '-c', script], capture_output=True, text=True, encoding='utf-8', errors='replace')
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(sha(rd(staged, 'linux-pkg', 'source-v2', 'source.bundle')), manifest['linux']['sourceV2']['bundleSha256'])
+
+    def test_a_changed_bundle_is_refused_before_any_root_script_is_generated(self):
+        argv, w, _ = self.source_v2_inputs()
+        with open(os.path.join(w, 'linux', 'in-t', 'linux-pkg', 'source-v2', 'source.bundle'), 'ab') as f:
+            f.write(b'changed')
+        p = run_prep(argv)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn('SOURCE_V2_BUNDLE_CHANGED', p.stderr)
+
+    def test_bundle_for_another_commit_is_refused(self):
+        argv, w, manifest = self.source_v2_inputs()
+        manifest['linux']['sourceV2']['commit'] = 'f' * 40
+        with open(os.path.join(argv[4], 'package-manifest.json'), 'w', encoding='utf-8') as f:
+            json.dump(manifest, f)
+        p = run_prep(argv)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn('SOURCE_V2_NOT_THE_ACCEPTED_COMMIT', p.stderr)
 
 
 if __name__ == '__main__':
