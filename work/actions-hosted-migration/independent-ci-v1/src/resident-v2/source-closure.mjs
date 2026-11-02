@@ -21,7 +21,7 @@ export const WALK_ENTRIES = Object.freeze([...Object.values(ENTRY_V2),
 // Files the entries execute or read without importing them.
 export const FIXED_FILES = Object.freeze([
   '.gitleaks.toml', '.github/workflows/gitleaks.yml', '.github/workflows/trivy.yml', '.github/workflows/contract-placement.yml',
-  'config/merge-admission-policy.json', 'scripts/ci/reviewed_gitleaks.py',
+  'config/merge-admission-policy.json', 'scripts/ci/reviewed_gitleaks.py', 'scripts/ci/clued-scan-start.mjs',
   'scripts/ci/clued-control-workflow-sources.json', 'scripts/ci/clued-gated-proof-profiles.json', 'scripts/ci/clued-gated-proof-role-specs.json',
   'scripts/ci/clued-production-publisher-sources.json', 'scripts/ci/clued-publisher-qualification-sources.json',
   ...['runtime/verify-install-acl.ps1',

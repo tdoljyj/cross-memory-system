@@ -13,11 +13,12 @@ import {validateJobV2,subjectOfV2,SCANNER_ROLES_V2,sameClaimGeneration} from '..
 import {canonical} from '../../src/proof.mjs';
 import {validateFormalAdmissionV2} from '../../src/admission-facts-v2.mjs';
 import {validateRemoteSnapshot} from '../formal-gitleaks-v4/required-history/prepare.mjs';
+import {validateScanStartGrant} from '../../src/scan-start-v1/grant.mjs';
 
 export const MAX_BYTES=1048576;
 export const ISSUE_CONTRACT='clued.independent-ci.protected-job-issue/2';
 export const CHALLENGE_CONTRACT='clued.independent-ci.protected-job-challenge/2';
-export const RESPONSE_CONTRACT='clued.independent-ci.protected-job-response/2';
+export const RESPONSE_CONTRACT='clued.independent-ci.protected-job-response/3';
 export const BLOCKED_CONTRACT='clued.independent-ci.protected-job-blocked/1';
 // One callback round (challenge -> relay -> Windows admission + refs -> relay -> response). 30 s was too tight
 // on TURING: measured 34 s and about 47 s round trips, the Windows step alone up to about 30 s (PR #889 stage 2,
@@ -29,7 +30,7 @@ const REPO='tdoljyj/cross-memory-system',HASH=/^[a-f0-9]{64}$/,SHA=/^[a-f0-9]{40
 const UUID=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const ISSUE=['contract','domain','issueId','nonce','job','issuedAt','expiresAt','sourceAcceptanceRef','hostQualificationRef','admission','remoteRefs'];
 const CHALLENGE=['contract','domain','issueId','issueSha256','subject','sequence','nonce','action','createdAt','deadline'];
-const RESPONSE=['contract','domain','challengeSha256','issueSha256','sequence','nonce','issuedAt','expiresAt','admission','remoteRefs'];
+const RESPONSE=['contract','domain','challengeSha256','issueSha256','sequence','nonce','issuedAt','expiresAt','admission','remoteRefs','scanStart'];
 const BLOCKED=['contract','domain','issueSha256','reason','sideEffectsMayHaveStarted','observedAt'];
 const fail=code=>{throw Object.assign(new Error(code),{code});};
 const check=(ok,code)=>{if(!ok)fail(code);};
@@ -103,7 +104,7 @@ export function validateChallenge(issue,challenge,now=Date.now()){
   check(challenge.issueId===issue.issueId&&challenge.issueSha256===digest(issue)&&exact(challenge.subject,Object.keys(subjectOfV2(issue.job)))
     &&canonical(challenge.subject)===canonical(subjectOfV2(issue.job)),'BRIDGE_CHALLENGE_SUBJECT_CHANGED');
   check(Number.isSafeInteger(challenge.sequence)&&challenge.sequence>=1&&challenge.sequence<=32&&HASH.test(challenge.nonce??'')
-    &&['admission','remote-refs'].includes(challenge.action)&&(challenge.action!=='remote-refs'||issue.job.role==='gitleaks'),'BRIDGE_CHALLENGE_ACTION_REQUIRED');
+    &&['admission','remote-refs','scan-start'].includes(challenge.action)&&(challenge.action!=='remote-refs'||issue.job.role==='gitleaks'),'BRIDGE_CHALLENGE_ACTION_REQUIRED');
   const at=time(challenge.createdAt),end=time(challenge.deadline);
   check(at>=time(issue.issuedAt)&&at<=now&&end>now&&end>at&&end-at<=CALLBACK_WINDOW_MS&&end<=time(issue.expiresAt),'BRIDGE_CHALLENGE_EXPIRED');
   raw(challenge);return challenge;
@@ -113,7 +114,7 @@ export function validateResponse(issue,challenge,response,now=Date.now()){
   check(response.challengeSha256===digest(challenge)&&response.issueSha256===digest(issue)&&response.sequence===challenge.sequence&&response.nonce===challenge.nonce,'BRIDGE_RESPONSE_BINDING_CHANGED');
   const at=time(response.issuedAt),end=time(response.expiresAt);
   check(at>=time(challenge.createdAt)&&at<=now&&now-at<=CALLBACK_WINDOW_MS&&end>now&&end>at&&end-at<=CALLBACK_WINDOW_MS&&end<=time(challenge.deadline),'BRIDGE_RESPONSE_EXPIRED');
-  if(challenge.action==='admission'){
+  if(challenge.action==='admission'||challenge.action==='scan-start'){
     // Fresh when issued, like the issue's admission (Owner Decision 6f1fb753): the 30 s bound is measured at issuedAt,
     // and the response itself must still be inside its window (above). The claim outlives the arrival (end > now).
     check(response.remoteRefs===null,'BRIDGE_RESPONSE_REFS_NULL_REQUIRED');admissionValid(issue.job,response.admission,at,issueGeneration(issue));
@@ -126,6 +127,8 @@ export function validateResponse(issue,challenge,response,now=Date.now()){
     check(response.admission===null,'BRIDGE_RESPONSE_ADMISSION_NULL_REQUIRED');refsValid(issue.job,response.remoteRefs,at);
     check(time(response.remoteRefs.observedAt)<=at,'BRIDGE_RESPONSE_REFS_TIME_REQUIRED');
   }
+  if(challenge.action==='scan-start')validateScanStartGrant(response.scanStart,{job:issue.job,executionId:issue.issueId});
+  else check(response.scanStart===null,'BRIDGE_RESPONSE_SCAN_START_NULL_REQUIRED');
   raw(response);return response;
 }
 // A clean refusal before preparation, written by the Linux worker. Only the issue binding, a stable code
@@ -156,10 +159,10 @@ export function makeChallenge(issue,action,sequence,context={}){
   return frozen(validateChallenge(issue,challenge,now));
 }
 export function makeResponse(issue,challenge,facts,refs,context={}){
-  contextValid(context,['now','issuedAt','expiresAt']);const now=context.now??Date.now();validateChallenge(issue,challenge,now);
+  contextValid(context,['now','issuedAt','expiresAt','scanStart']);const now=context.now??Date.now();validateChallenge(issue,challenge,now);
   const response={contract:RESPONSE_CONTRACT,domain:'production',challengeSha256:digest(challenge),issueSha256:digest(issue),sequence:challenge.sequence,nonce:challenge.nonce,
     issuedAt:makeTime(context,'issuedAt',now),expiresAt:context.expiresAt??new Date(Math.min(now+CALLBACK_WINDOW_MS,time(challenge.deadline),facts?time(facts.claimExpiresAt):Infinity)).toISOString(),
-    admission:structuredClone(facts),remoteRefs:structuredClone(refs)};
+    admission:structuredClone(facts),remoteRefs:structuredClone(refs),scanStart:structuredClone(context.scanStart??null)};
   return frozen(validateResponse(issue,challenge,response,now));
 }
 export function makeBlocked(issue,reason,context={}){

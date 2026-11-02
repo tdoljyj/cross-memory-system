@@ -45,6 +45,7 @@ import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2
 import { TRAIN_MODES, TRAIN_MODE_DEFAULT, trainFrontRefused, trainFrontRefusal } from '../independent-control-checks-v2/train-rules.mjs';
 import { fullAdmissionFailureV2, admittedFactsMatchJobV2 } from '../full-admission-v2.mjs';
 import { HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, ofJobIds, readPublishedChecks } from '../published-on-github-v2.mjs';
+import { scanStartSubjectLine } from '../scan-start-v1/subject.mjs';
 
 export const ROLE = 'work-admission', CHECK_NAME = 'kooyumi-work-admission', APP_ID = 5368905, REPO = 'tdoljyj/cross-memory-system';
 const DEFINITION = Object.freeze({ name: CHECK_NAME, appId: APP_ID });
@@ -103,7 +104,7 @@ function binding(job, packet, facts, authority) {
 // batchClaims: { read(job) -> generation | null (missing), record(job, observedClaim, observedAt) }.
 // Train on only: slotNative (merge-slot-native.mjs: holders, touch) and sweepStore (train-sweep-store.mjs: latestProof).
 // trainModeUnreadable: train-mode.json was there but unusable (train-mode.mjs#readStageTrainModeFact): a front job parks.
-function engine({ github, journal, admission, assertLive, record, authority, batchClaims, trainMode = TRAIN_MODE_DEFAULT, trainModeUnreadable = false, slotNative = null, sweepStore = null,
+function engine({ github, journal, admission, assertLive, record, authority, batchClaims, trainMode = TRAIN_MODE_DEFAULT, trainModeUnreadable = false, slotNative = null, sweepStore = null, scanStartRegistrySha256 = null,
   clock = Date.now }, production) {
   const domain = production ? 'production' : 'fixture';
   check(TRAIN_MODES.includes(trainMode), 'WORK_ADMISSION_PUBLISHER_CONFIGURATION_REFUSED');
@@ -228,7 +229,8 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       await journal.transition(key, 'intent', 'authorized', { nativeObservationSha256: before.facts.observationSha256 }); phase = 'authorized';
       assertLive(); check(fresh(before.facts, clock()), 'NATIVE_OBSERVATION_EXPIRED_BEFORE_WRITE');
       const payload = { name: CHECK_NAME, head_sha: job.headSha, status: 'completed', conclusion: 'success', external_id: externalId,
-        output: { title: 'Work claim and complete Native admission verified', summary: `Independent Native control check for ${REPO}#${job.pr} (attempt ${job.attempt}); observation sha256 ${before.facts.observationSha256}. ${before.facts.publicationRequired ? 'This observation is not scanner execution or qualification. The protected publisher attaches its Native Receipt.' : 'This is not a scanner execution, Native publication ticket, Receipt or qualification.'}` } };
+        output: { title: 'Work claim and complete Native admission verified', summary: `Independent Native control check for ${REPO}#${job.pr} (attempt ${job.attempt}); observation sha256 ${before.facts.observationSha256}. ${before.facts.publicationRequired ? 'This observation is not scanner execution or qualification. The protected publisher attaches its Native Receipt.' : 'This is not a scanner execution, Native publication ticket, Receipt or qualification.'}`
+          + (production || scanStartRegistrySha256 !== null ? '\n' + scanStartSubjectLine(job, before.facts, scanStartRegistrySha256, clock()) : '') } };
       const nativeHandle = await prepareNativePublication(github, { facts: before.facts, packet: before.packet, payload });
       await journal.transition(key, 'authorized', 'sent', { externalId, nativeObservationSha256: before.facts.observationSha256 }); phase = 'sent'; sent = true; sideEffects++;
       const posted = await github.createCheck(payload, nativeHandle);

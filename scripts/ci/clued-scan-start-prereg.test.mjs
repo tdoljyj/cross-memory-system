@@ -11,7 +11,8 @@ import {
   rolesForSource, workflowBlob,
 } from './clued-workflow-profile.mjs';
 
-// These are future workflow bytes, not active workflows or an execution grant.
+// These exact preregistered workflow bytes are active only in this unaccepted integrated candidate.
+// Their registration and presence do not grant execution or qualify an installed Source.
 // Copied byte-for-byte from Git 956078fcec98844ab9be05e857fe4f53b3372fc4.
 // CI uses these local fixtures; it need not fetch that future commit.
 const ROOT = new URL('../../', import.meta.url);
@@ -79,7 +80,7 @@ async function findings(row, headText, baseText = source(row.file, row.before), 
   return result;
 }
 
-test('preregistration appends only two descriptors/profiles/FullRoles and leaves active workflow bytes unchanged', () => {
+test('the integrated candidate uses exactly the two preregistered workflow bytes and preserves the prior catalogue', () => {
   const profileBefore = structuredClone(profiles), rolesBefore = structuredClone(roleSpecs);
   for (const row of SOURCES) {
     const records = profileBefore.workflows[row.file].accepted_sources;
@@ -88,8 +89,10 @@ test('preregistration appends only two descriptors/profiles/FullRoles and leaves
     assert.equal(Object.hasOwn(rolesBefore.workflows[row.file].sources, row.after), true);
     delete rolesBefore.workflows[row.file].sources[row.after];
     const active = fs.readFileSync(new URL(row.file, ROOT), 'utf8');
-    assert.equal(workflowBlob(active), row.before, 'code-only registration does not switch the live workflow');
-    assert.equal(active, source(row.file, row.before));
+    assert.equal(workflowBlob(active), row.after, 'the candidate switches only to the exact preregistered Source');
+    assert.equal(sha256Hex(active), row.sha256);
+    assert.equal(active, source(row.file, row.after));
+    assert.equal(active, fixture(row).toString('utf8'));
   }
   assert.equal(roleDefinitionDigest(profileBefore), 'fd63c6804f427cbe6c2e8ba4e18f8d53981006bdb2e1113a196ddd73fee7c9a7');
   assert.equal(roleDefinitionDigest(rolesBefore), '4a86b392b2d094fd8f80d8bafc2bf0e4ab32357c4c1f21ac747556836c242352');
