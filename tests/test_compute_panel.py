@@ -265,5 +265,30 @@ class AlertAndStateTests(unittest.TestCase):
         self.assertIn("控制机", body)
 
 
+class MaintenanceTelemetryTests(unittest.TestCase):
+    def test_invalid_telemetry_never_becomes_healthy(self):
+        for value in ['{"status":"ok","removed_bytes":NaN}', '{"status":"ok","node_id":"<script>"}',
+                      '{"status":"unknown"}', '[]', '{"status":"ok","at":999999999999}',
+                      '{"status":"ok","removed_bytes":' + '9' * 400 + '}']:
+            self.assertEqual(panel.parse_maintenance("CACHE_MAINTENANCE_PROBE " + value, NOW)["status"], "invalid")
+
+    def test_not_registered_is_explicit_but_registered_failures_alert(self):
+        self.assertEqual(panel.parse_maintenance('CACHE_MAINTENANCE_PROBE {"status":"not-registered"}', NOW),
+                         {"status": "not-registered"})
+        self.assertNotIn("maintenance", panel.health_flags({"maintenance": {"status": "not-registered"}}))
+        row = {"status": "online", "health": {"maintenance": {"status": "partial"}}, "flags": ["maintenance"]}
+        self.assertIn("缓存维护异常", panel.alerts_for({NAME: row}, {})["maintenance:" + NAME])
+
+    def test_cached_report_ages_without_new_log_fetch(self):
+        class Client:
+            def low(self):
+                return True
+        old = {NAME: {"fetched_at": panel.iso(NOW), "maintenance": {"node_id": "desk-w-591", "status": "ok",
+            "at": NOW.timestamp() - 7200, "stale_after_seconds": 3600, "removed_bytes": 100}}}
+        health = panel.latest_health(Client(), [], old, NOW)
+        self.assertEqual(health[NAME]["maintenance"]["status"], "stale")
+        self.assertEqual(old[NAME]["maintenance"]["status"], "ok")
+
+
 if __name__ == "__main__":
     unittest.main()

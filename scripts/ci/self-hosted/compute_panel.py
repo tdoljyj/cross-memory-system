@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
 import os
 import re
 import statistics
@@ -37,6 +38,7 @@ SCHEMA = "clued.compute-panel/v1"
 WORKFLOW = "clued-compute-panel.yml"
 PROBE_PREFIX = "compute-probe / "
 PROBE_LINE = re.compile(r"COMPUTE_PANEL_PROBE (\{.*\})")
+MAINTENANCE_LINE = re.compile(r"CACHE_MAINTENANCE_PROBE ([^\r\n]{1,2048})")
 MARKER = "<!-- clued-compute-panel:v1 -->"
 STATE_RE = re.compile(r"<!-- clued-compute-panel-state:([A-Za-z0-9+/=]+) -->")
 ISSUE_TITLE = "算力面板（自动更新）"
@@ -184,6 +186,40 @@ def parse_probe(log: str) -> dict | None:
     return None
 
 
+def parse_maintenance(log: str, now: datetime) -> dict:
+    matches = MAINTENANCE_LINE.findall(log)
+    if not matches:
+        return {"status": "not-reported"}
+    try:
+        row = json.loads(matches[-1])
+        if not isinstance(row, dict) or row.get("status") not in {
+            "ok", "deferred", "partial", "capacity-low", "stale", "never-ran", "invalid", "not-registered"
+        }:
+            raise ValueError("maintenance schema")
+        result = {"status": row["status"]}
+        if row.get("node_id") is not None:
+            if not isinstance(row["node_id"], str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", row["node_id"]):
+                raise ValueError("node identity")
+            result["node_id"] = row["node_id"]
+        for key in ("at", "removed_bytes", "deferred_count", "stale_after_seconds"):
+            if key in row:
+                value = row[key]
+                if type(value) not in (int, float) or not 0 <= value <= (1 << 60) or not math.isfinite(value):
+                    raise ValueError("maintenance metric")
+                result[key] = value
+        if "stale_after_seconds" in result and not 60 <= result["stale_after_seconds"] <= 176700:
+            raise ValueError("stale budget")
+        if "at" in result and result["at"] > now.timestamp() + 300:
+            raise ValueError("future report")
+        if result["status"] in {"ok", "deferred", "partial", "capacity-low", "stale"} and not {
+            "node_id", "at", "removed_bytes", "stale_after_seconds"
+        }.issubset(result):
+            raise ValueError("incomplete report")
+        return result
+    except (ValueError, TypeError):
+        return {"status": "invalid"}
+
+
 def unpicked(job: dict, now: datetime) -> bool:
     """A probe nobody took although its run's gate passed at least UNPICKED_AFTER earlier.
 
@@ -282,14 +318,22 @@ def latest_health(client: GitHub, jobs: list[dict], cache: dict, now: datetime) 
         if client.low() or (fetched and now - fetched < HEALTH_EVERY):
             continue
         try:
-            values = parse_probe(client.job_log(job["id"])) or {}
+            log = client.job_log(job["id"])
+            values = parse_probe(log) or {}
         except (RuntimeError, OSError):
             continue
         cache[name] = {key: values[key] for key in ("disk_free_gb", "mem_available_gb")
                        if isinstance(values.get(key), (int, float))}
         cache[name]["fetched_at"] = iso(now)
-    return {name: {k: v for k, v in row.items() if k != "fetched_at"} for name, row in cache.items()
-            if name in {node["name"] for node in POOL}}
+        cache[name]["maintenance"] = parse_maintenance(log, now)
+    result = {name: {k: v for k, v in row.items() if k != "fetched_at"} for name, row in cache.items()
+              if name in {node["name"] for node in POOL}}
+    for row in result.values():
+        maintenance = dict(row.get("maintenance") or {"status": "not-reported"})
+        if maintenance.get("at") is not None and now.timestamp() - maintenance["at"] > maintenance.get("stale_after_seconds", 86400):
+            maintenance["status"] = "stale"
+        row["maintenance"] = maintenance
+    return result
 
 
 def health_flags(health: dict) -> list[str]:
@@ -300,6 +344,9 @@ def health_flags(health: dict) -> list[str]:
         flags.append("disk")
     if isinstance(memory, (int, float)) and memory < LOW_MEMORY_GB:
         flags.append("memory")
+    maintenance = health.get("maintenance") or {}
+    if maintenance.get("status") in {"deferred", "partial", "capacity-low", "stale", "never-ran", "invalid"}:
+        flags.append("maintenance")
     return flags
 
 
@@ -473,7 +520,8 @@ def alerts_for(pool: dict[str, dict], residents: dict[str, dict]) -> dict[str, s
         if node["status"] == "offline":
             alerts[f"offline:{name}"] = f"{name} 离线（最近一次探测成功：{node['last_probe'] or '无'}）"
         for flag in node.get("flags", []):
-            alerts[f"{flag}:{name}"] = f"{name} {'磁盘' if flag == 'disk' else '内存'}不足"
+            alerts[f"{flag}:{name}"] = (f"{name} 缓存维护异常：{node.get('health', {}).get('maintenance', {}).get('status', 'unknown')}"
+                if flag == "maintenance" else f"{name} {'磁盘' if flag == 'disk' else '内存'}不足")
     for node, row in residents.items():
         if row["halted"]:
             alerts[f"halt:{node}"] = f"常驻执行器 {node} 停机或未更新：{cell(row.get('description'))}（PR #{row.get('pr')}）"
@@ -528,6 +576,17 @@ def render(report: dict, state: dict) -> str:
             f"{util}%" if util is not None else "—",
             node["last_probe"] or "—",
         ))
+    lines += ["", "### 自动缓存维护", "", "同一节点的共享磁盘回收量只计一次；未登记不表示清理成功。",
+              "", "| 节点或探测实例 | 维护状态 | 最近回收 | 延后项 |", "|---|---|---|---|"]
+    maintenance_rows = {}
+    for name, node in pool.items():
+        row = node.get("health", {}).get("maintenance") or {"status": "not-reported"}
+        key = row.get("node_id") or name
+        old = maintenance_rows.get(key)
+        if old is None or row.get("at", 0) > old.get("at", 0):
+            maintenance_rows[key] = row
+    for name, row in maintenance_rows.items():
+        lines.append(f"| {cell(name)} | {cell(row['status'])} | {row.get('removed_bytes', '—')} bytes | {row.get('deferred_count', '—')} |")
     lines += ["", "控制器 company-win-02、home-win-02 均在正常使用，按阶段启停；"
               "GitHub 显示离线或长期离线后自动移除注册，不代表控制器故障或退役。"
               "实际状态以本机服务和阶段执行结果为准。", "",

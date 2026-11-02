@@ -125,6 +125,14 @@ test('any workflow change runs the runner budget policy and the admission self-t
   assert.deepEqual(selectSuites('ci-suites', ['.github/workflows/trivy.yml']).suites, ['runner-budget-policy', 'admission-self-tests']);
 });
 
+test('maintenance source, policy and panel changes select filesystem tests without weakening other suites', () => {
+  for (const file of ['scripts/ci/self-hosted/resource-maintenance/maintenance.py', 'config/ci-resource-maintenance.json',
+    'scripts/ci/self-hosted/compute_panel.py', 'tests/test_compute_panel.py', '.github/workflows/clued-compute-panel.yml']) {
+    assert.ok(selectSuites('ci-suites', [file]).suites.includes('resource-maintenance'), file);
+  }
+  assert.ok(SUITE_COMMANDS['resource-maintenance'].some(c => c.argv.includes('scripts/ci/self-hosted/resource-maintenance')));
+});
+
 test('a migration selects the production-schema check; ordinary documentation selects only the application check', () => {
   assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/supabase/migrations/20261101000000_x.sql']).suites,
     ['production-schema']);
