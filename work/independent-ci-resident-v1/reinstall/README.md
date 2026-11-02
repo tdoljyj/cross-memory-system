@@ -122,10 +122,12 @@ python -I rehearse.py config\turing.json --commit <40hex> --package <包目录>
 | linux | Windows 侧的 Linux version facts（`upgrade/mailbox/responses/version-facts.json`）与第 1 代记录一致；配置里 root 复制的 Linux manifest 和 roles-v3 就是现装的（与 facts 里各项 sha 比对） |
 | pins | 包里 Linux 常驻 manifest 的外部钉值：形状与已装一致，`source-v2` 钉值等于新提交里的文件 |
 | linuxHost | 以 root 只读：对已装角色策略运行第 A、B0、B4 步会用的 `linux/tools/check-host.py`，钉值取配置的 `linux.host`；Source v1 的 HEAD 等于配置值；签名工具要读的 v1 qualification 都在（只查是否存在；签名和事实由第 B1 步签名工具核对，B1 在切换 Source 之前）。配置的 v1 HEAD 为 null 时：v1 的三处（`source-first-formal-v1`、`roles`、`formal-source-manifest-v1.json`）都不存在（否则 `LINUX_NODE_HAS_A_SOURCE_V1_NOT_CONFIGURED`），`roles-v3` 的三份 qualification 都在（否则 `LINUX_INSTALLED_V2_QUALIFICATIONS_MISSING`） |
-| roles | 以普通用户在节点的 WSL 发行版里，对副本运行第 A 步会用的 `linux/tools/derive-roles.py`。必须成功，被重钉的 Source 文件逐个列出。发行版默认用户是 root 时拒绝运行 |
+| roles | 以普通用户在节点的 WSL 发行版里，对副本运行第 A 步会用的 `linux/tools/derive-roles.py`。必须成功，被重钉的 Source 文件逐个列出。默认使用发行版默认用户；可用 `linux.rehearsalUser` 显式指定已有普通用户（如 `nobody`），只影响本项，不修改发行版默认用户、账户或权限。真实 UID 或 EUID 为 0 时仍拒绝运行 |
 | node | 包里的节点档案就是配置所指的那份 |
 
 报告（`clued.independent-ci.reinstall-rehearsal/1`）只新建、不覆盖，写在 `workDir\rehearsal\`。
+
+`linux.rehearsalUser` 可省略或为 null；字符串只接受普通用户名形状，拒绝 `root`、数字 UID、空白、路径和选项。角色预演仅读取公开副本与已接受 Git 内容，在随机 `/tmp` 目录写入后清理；权限不足继续拒绝，不回退 root。报告的 `checks.roles.runAsUser` 记录所选用户，配置原字节仍绑定 `configSha256`；此配置不进入运行包或 Source 闭包。`linuxHost` 的既有 root 只读探针不变。
 
 r7 那次三回被拒，都能被预演提前抓到，`test/test_rehearse.py` 里有对应的回归测试：
 

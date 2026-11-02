@@ -156,7 +156,8 @@ class FakeHost:
         if user == 'root':   # the read-only host probe
             self.probe_argv = argv
             return 0, json.dumps(self.probe), ''
-        assert user is None, user
+        self.derive_user = user
+        self.derive_argv = argv
         return (0 if self.derive.get('status') == 'ROLE_POLICIES_V3_AND_UNSIGNED_PAYLOADS_WRITTEN' else 1), json.dumps(self.derive), ''
 
 
@@ -179,6 +180,33 @@ class Rehearsal(unittest.TestCase):
         self.assertEqual(r['status'], 'REHEARSAL_PASS', r['findings'])
         self.assertEqual(r['checks']['roles']['repinned'], {'gitleaks': {'entrySha256': {'old': 'o', 'new': 'n'}}})
         self.assertEqual(r['checks']['uninstall']['templateAcceptsContract'], '3')
+
+    def test_explicit_ordinary_user_does_not_change_the_root_host_probe(self):
+        self.fx.cfg['linux']['rehearsalUser'] = 'nobody'
+        host = FakeHost(self.fx)
+        report = self.run_with(host)
+        self.assertEqual(report['status'], 'REHEARSAL_PASS', report['findings'])
+        self.assertEqual(host.derive_user, 'nobody')
+        self.assertEqual(report['checks']['roles']['runAsUser'], 'nobody')
+        self.assertIn('/etc/clued-independent-ci/roles-v3', host.probe_argv)
+
+    def test_real_uid_root_refusal_remains_a_finding(self):
+        self.fx.cfg['linux']['rehearsalUser'] = 'uid_zero_alias'
+        host = FakeHost(self.fx, derive={'status': 'REFUSED', 'code': 'REHEARSAL_DEFAULT_USER_IS_ROOT'})
+        report = self.run_with(host)
+        self.assertEqual(report['status'], 'REHEARSAL_FAILED')
+        self.assertIn('ROLE_DERIVATION_REFUSED', codes(report))
+
+    def test_actual_runner_refuses_real_or_effective_root_before_simulation(self):
+        host = FakeHost(self.fx)
+        self.run_with(host)
+        runner = host.derive_argv[1]
+        for uid, euid in ((0, 1000), (1000, 0), (0, 0)):
+            with self.subTest(uid=uid, euid=euid):
+                prefix = 'import os; os.getuid=lambda:%d; os.geteuid=lambda:%d\n' % (uid, euid)
+                result = subprocess.run([__import__('sys').executable, '-I', '-c', prefix + runner], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 3, result.stderr)
+                self.assertEqual(json.loads(result.stdout)['code'], 'REHEARSAL_DEFAULT_USER_IS_ROOT')
 
     def test_external_binary_lock_is_a_finding_without_stopping_anything(self):
         locker = {'pid': 1234, 'application': 'external fixture', 'startedFileTime': 1, 'expected': False}
@@ -338,6 +366,18 @@ class Config(unittest.TestCase):
         p = os.path.join(self.fx.dir, 'c2.json')
         json.dump(doc, open(p, 'w'))
         return rconfig.load(p)
+
+    def test_optional_rehearsal_user_is_a_normal_username_and_bound_by_config_hash(self):
+        default = self.load(self.doc)
+        self.assertNotIn('rehearsalUser', default['linux'])
+        for user in ('nobody', 'ci_user-1', None):
+            configured = self.load(dict(self.doc, linux=dict(self.doc['linux'], rehearsalUser=user)))
+            self.assertEqual(configured['linux']['rehearsalUser'], user)
+            self.assertNotEqual(default['_sha256'], configured['_sha256'])
+        for user in ('root', '0', '', ' nobody', '-u', 'user name', '../nobody', 'x;id', 'x\n', 1000, False, []):
+            with self.subTest(user=user), self.assertRaises(rconfig.ConfigError) as error:
+                self.load(dict(self.doc, linux=dict(self.doc['linux'], rehearsalUser=user)))
+            self.assertEqual(error.exception.code, 'CONFIG_LINUX_REHEARSAL_USER')
 
     def test_secret_shaped_values_and_keys_are_refused(self):
         for bad in ({'nodeExe': 'C:\\x\\-----BEGIN RSA PRIVATE KEY-----'}, {'repo': 'C:\\ghp_' + 'A' * 36}):

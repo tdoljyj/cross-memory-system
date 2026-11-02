@@ -84,7 +84,7 @@ class Host:
         return last_json(out)
 
     def wsl_python(self, distribution, argv, user=None):
-        """python3 -I in the node's WSL distribution, clean environment: as the default user (the role derivation, which refuses root
+        """python3 -I in the node's WSL distribution, clean environment: as the configured/default user (role derivation refuses root
         itself), or as root for the read-only host probe (user='root')."""
         p = subprocess.run(['wsl.exe', '-d', distribution] + (['-u', user] if user else []) + ['--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin',
                             'LANG=C', 'LC_ALL=C', 'GIT_OPTIONAL_LOCKS=0', '/usr/bin/python3', '-I'] + list(argv), capture_output=True, timeout=600)
@@ -315,16 +315,18 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None):
             subprocess.run(['git', 'init', '-q', '--bare', '--initial-branch=accepted', bare], check=True)
             subprocess.run(['git', '-C', bare, 'fetch', '-q', '--no-tags', cfg['repo'], commit + ':refs/heads/accepted'], check=True)
         out_dir = '/tmp/clued-rehearsal-roles-' + datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + os.urandom(4).hex()
-        # review 1-9: the derivation runs as a normal user; a distribution whose default user is root is refused here, not used
+        # review 1-9: role derivation must really run as a normal user. An
+        # explicit existing rehearsalUser avoids changing a root-default distro.
+        role_user = cfg['linux'].get('rehearsalUser')
         runner = ("import os,runpy,sys,shutil\n"
-                  "if os.getuid() == 0: print('{\"status\":\"REFUSED\",\"code\":\"REHEARSAL_DEFAULT_USER_IS_ROOT\"}'); sys.exit(3)\n"
+                  "if os.getuid() == 0 or os.geteuid() == 0: print('{\"status\":\"REFUSED\",\"code\":\"REHEARSAL_DEFAULT_USER_IS_ROOT\"}'); sys.exit(3)\n"
                   "os.geteuid=lambda:0; t=sys.argv[1]; sys.argv=sys.argv[1:]\n"
                   "try: runpy.run_path(t, run_name='__main__')\nfinally: shutil.rmtree(sys.argv[sys.argv.index('--out')+1], ignore_errors=True)")
         code, out, err = host.wsl_python(cfg['linux']['distribution'], ['-c', runner, to_wsl(os.path.join(HERE, 'linux', 'tools', 'derive-roles.py')),
             '--installed', to_wsl(rd), '--old-manifest-file', to_wsl(os.path.join(rd, 'formal-source-manifest-v2.json')), '--new-manifest-file', to_wsl(record_manifest),
-            '--src', to_wsl(bare), '--commit', commit, '--source-acceptance-ref', acc['sourceAcceptanceRef'], '--host-acceptance-ref', acc['hostQualificationRef'], '--out', out_dir])
+            '--src', to_wsl(bare), '--commit', commit, '--source-acceptance-ref', acc['sourceAcceptanceRef'], '--host-acceptance-ref', acc['hostQualificationRef'], '--out', out_dir], user=role_user)
         r = last_json(out) or {}
-        checks['roles'] = {'exit': code, 'status': r.get('status'), 'code': r.get('code'), 'repinned': {k: v.get('repinned') for k, v in (r.get('roles') or {}).items()},
+        checks['roles'] = {'runAsUser': role_user or 'distribution-default', 'exit': code, 'status': r.get('status'), 'code': r.get('code'), 'repinned': {k: v.get('repinned') for k, v in (r.get('roles') or {}).items()},
                            'stderr': err[-400:]}
         if code != 0 or r.get('status') != 'ROLE_POLICIES_V3_AND_UNSIGNED_PAYLOADS_WRITTEN':
             find('ROLE_DERIVATION_REFUSED', refusal=r.get('code'), role=r.get('role'), key=r.get('key'))
