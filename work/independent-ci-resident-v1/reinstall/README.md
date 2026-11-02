@@ -145,6 +145,7 @@ r7 那次三回被拒，都能被预演提前抓到，`test/test_rehearse.py` �
   - 一个裸仓库，HEAD 和唯一的 ref 都是 `refs/heads/accepted`。
 - `prep.py`：生成三个脚本 `reinstall-linux-{A-stage,B-switch,B-resume}.<suffix>.sh`。
   - 当前 BASE 为 `/root/clued-ci-reinstall-<c8>-<suffix>`；重试换后缀和新入口，旧失败目录/日志原位保留，不为重跑移动或删除它们。
+  - 升级工具会保留隐藏的 `.tool.lock`，卸载计划的 `ls -1` 不显示它。历史检查只允许这一已知隐藏文件，并以只读打开、非阻塞独占锁确认空闲；占用、链接或未知隐藏文件仍拒绝。锁文件也纳入完整历史快照并随旧目录保留，不删除或重建。
   - 已做过升级的节点可以保留 `generations/gN`、archive 和 upgrade-state：A 仍要求 staging 为空、facts 当前代一致/pinsOk/staged=null，并核对当前代记录及 Windows 公开升级状态（op=null、5分钟内）。新增只读历史检查器记录各保留目录的完整 lstat 元数据（含 inode/mode/size/mtime，不扫描历史 payload 内容）；B 在任何 Source 切换前核原现场未变，卸载后核证据目录中的完整树。当前已接受的卸载器以 `mv -n` 整体保留这些目录，不修改它、不改变运行 Source；跨文件系统复制或不完整保留会拒绝后续安装。
   - "已装状态"不再写死，取自节点自己的 version facts 和第 1 代记录（两份文件的副本）。
   - 非 `draft*` 后缀（即 final）必须附上 24 小时内的 PASS 预演报告。`draft*` 脚本只供审阅，脚本自己一开头就拒绝运行（`DRAFT_SCRIPTS_ARE_FOR_REVIEW_ONLY`）。

@@ -5,6 +5,7 @@ the complete tree before/after its same-filesystem move. Public current-generati
 JSON and Windows operation status are the only file contents read. No mutation
 except create-only capture of the public metadata snapshot named by phase A.
 """
+import contextlib
 import datetime
 import hashlib
 import json
@@ -88,7 +89,38 @@ def windows_idle(windows, facts):
                             'ciSourceManifestSha256': facts['ciSourceManifestSha256']}, 'HISTORY_WINDOWS_GENERATION_MISMATCH')
 
 
+@contextlib.contextmanager
+def idle_tool_lock(state):
+    """The installed tool retains this hidden file; never create or unlink it."""
+    path = os.path.join(state, '.tool.lock')
+    if not os.path.lexists(path):
+        yield
+        return
+    before = os.lstat(path)
+    need(stat.S_ISREG(before.st_mode), 'HISTORY_TOOL_LOCK_NOT_REGULAR')
+    try:
+        import fcntl
+    except ImportError:
+        raise ValueError('HISTORY_TOOL_LOCK_PROBE_UNAVAILABLE')
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        opened = os.fstat(fd)
+        need((opened.st_dev, opened.st_ino) == (before.st_dev, before.st_ino), 'HISTORY_TOOL_LOCK_CHANGED')
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise ValueError('HISTORY_UPGRADE_TOOL_BUSY')
+        yield
+    finally:
+        os.close(fd)
+
+
 def capture(plan_text, facts, groups=GROUPS, windows=WINDOWS):
+    with idle_tool_lock(groups['upgrade-state'][0]):
+        return capture_locked(plan_text, facts, groups, windows)
+
+
+def capture_locked(plan_text, facts, groups, windows):
     fields = parse_plan(plan_text)
     need(facts.get('contract') == 'clued.independent-ci.linux-version-facts/1' and
          type(facts.get('generation')) is int and facts['generation'] > 0 and
@@ -111,6 +143,10 @@ def capture(plan_text, facts, groups=GROUPS, windows=WINDOWS):
     for key, field in (('generations', 'generations'), ('upgrade-state', 'upgrade-state')):
         p = groups[key][0]
         names = sorted(os.listdir(p)) if os.path.isdir(p) else []
+        # uninstall --plan uses ls -1 (no hidden entries). Only the protocol's
+        # retained lock is expected; its identity remains in the full snapshot.
+        if key == 'upgrade-state' and '.tool.lock' in names:
+            names.remove('.tool.lock')
         need(names == sorted(fields[field].split()), 'HISTORY_PLAN_NOT_LIVE')
     need(bool(os.path.lexists(groups['archive'][0])) == (fields['archive'] == 'yes'), 'HISTORY_ARCHIVE_NOT_LIVE')
     return {'contract': 'clued.independent-ci.reinstall-history/1', 'generation': facts['generation'], 'facts': facts,
@@ -119,6 +155,13 @@ def capture(plan_text, facts, groups=GROUPS, windows=WINDOWS):
 
 def verify(snapshot, kept=None, windows=WINDOWS):
     need(snapshot.get('contract') == 'clued.independent-ci.reinstall-history/1', 'HISTORY_SNAPSHOT_CONTRACT')
+    group = snapshot['groups']['upgrade-state']
+    state = os.path.join(kept, group['kept']) if kept else group['source']
+    with idle_tool_lock(state):
+        verify_locked(snapshot, kept, windows)
+
+
+def verify_locked(snapshot, kept, windows):
     if kept is None:
         windows_idle(windows, snapshot['facts'])
     for value in snapshot['groups'].values():

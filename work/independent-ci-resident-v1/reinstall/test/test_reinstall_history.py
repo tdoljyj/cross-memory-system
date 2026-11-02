@@ -81,6 +81,32 @@ class History(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'HISTORY_FACTS_NOT_SETTLED'):
             self.capture(missing)
 
+    @unittest.skipUnless(os.name == 'posix', 'real Linux flock boundary')
+    def test_persistent_tool_lock_is_preserved_but_held_lock_is_refused(self):
+        import fcntl
+        path = self.state / 'upgrade/.tool.lock'
+        self.write(path, b'')
+        snap = self.capture()
+        self.assertIn('.tool.lock', snap['groups']['upgrade-state']['entries'])
+        h.verify(snap, windows=str(self.windows))
+        with path.open('rb') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaisesRegex(ValueError, 'HISTORY_UPGRADE_TOOL_BUSY'):
+                self.capture()
+            with self.assertRaisesRegex(ValueError, 'HISTORY_UPGRADE_TOOL_BUSY'):
+                h.verify(snap, windows=str(self.windows))
+        h.verify(snap, windows=str(self.windows))
+
+    def test_unknown_hidden_history_is_not_ignored(self):
+        self.write(self.state / 'upgrade/.unexpected', b'unknown')
+        with self.assertRaisesRegex(ValueError, 'HISTORY_PLAN_NOT_LIVE'):
+            self.capture()
+
+    def test_tool_lock_directory_is_refused(self):
+        (self.state / 'upgrade/.tool.lock').mkdir()
+        with self.assertRaisesRegex(ValueError, 'HISTORY_TOOL_LOCK_NOT_REGULAR'):
+            self.capture()
+
     def test_active_unknown_or_stale_windows_operation_is_refused(self):
         for status in ({'op': {'id': 'active'}}, {'writtenAt': '2026-01-01T00:00:00Z'}, {}):
             self.doc(self.windows / 'status.json', status)
@@ -98,6 +124,8 @@ class History(unittest.TestCase):
         bash = os.environ.get('CLUED_TEST_BASH') or shutil.which('bash')
         if not bash or (os.name == 'nt' and 'git' not in bash.lower()):
             self.skipTest('needs non-WSL bash')
+        if os.name == 'posix':
+            self.write(self.state / 'upgrade/.tool.lock', b'')
         snap = self.capture()
         keep = self.root / 'kept'
         source = ROOT.parent / 'linux/uninstall-resident-linux.sh'
