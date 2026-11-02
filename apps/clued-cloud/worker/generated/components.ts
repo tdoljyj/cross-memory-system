@@ -29,6 +29,6 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.publisher-pr-qualification-source": "1.0.0",
   "script.native617-entry": "1.0.3",
   "script.independent-native-publication": "1.0.6",
-  "script.resource-maintenance": "1.0.0"
+  "script.resource-maintenance": "1.0.1"
 };
 export const MCP_SERVER_VERSION = "0.8.5";

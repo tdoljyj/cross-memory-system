@@ -29,7 +29,7 @@ from functools import lru_cache
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import security
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 ID = re.compile(r"[a-z0-9][a-z0-9-]{0,62}\Z")
 GEN = re.compile(r"[0-9a-f]{32}\Z")
 PROTECTED = {".git", ".env", "credentials", "receipt", "receipts", "ledger", "ledgers"}
