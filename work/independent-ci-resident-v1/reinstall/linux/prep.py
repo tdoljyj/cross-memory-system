@@ -98,6 +98,8 @@ if NO_V1:
     nov1_src = os.path.join(REVIEW_TOOLS, SIGNER)
     assert sha(nov1_src) == SIGN_NO_V1_SHA, 'REVIEW_COPY_TOOLS_CHANGED'
     extra = [(SIGNER, open(nov1_src, 'rb').read())]
+history_src = os.path.join(REVIEW_TOOLS, 'check-reinstall-history.py')
+extra += [('check-reinstall-history.py', open(history_src, 'rb').read())]
 for name, data in [('sign-qualification-v2.mjs', open(sign_src, 'rb').read()), ('verify-source-v2.sh', v2.encode('utf-8'))] + extra:
     p = os.path.join(IN, 'tools', name)
     if os.path.exists(p):
@@ -162,7 +164,7 @@ for f in files:
         assert b'\r' not in open(os.path.join(IN, *f.split('/')), 'rb').read(), ('CR', f)
 sums = ''.join(f'{sha(os.path.join(IN, *f.split("/")))}  {f}\n' for f in files)
 W = shlex.quote('/mnt/' + IN[0].lower() + '/' + IN[3:].replace('\\', '/'))   # review 1-3: quoted; the path shape is checked by rconfig
-BASE = '/root/clued-ci-reinstall-' + COMMIT[:8]
+BASE = '/root/clued-ci-reinstall-' + COMMIT[:8] + '-' + SUFFIX
 CI = 'work/actions-hosted-migration/independent-ci-v1'
 COMMON = f"""set -euo pipefail
 set -C   # create-only redirections: no evidence file is ever overwritten
@@ -254,6 +256,9 @@ reinstall_tail() {{
   fi
   grep -q RESIDENT_LINUX_UNINSTALLED_EVIDENCE_KEPT "$BASE/uninstall-apply.stdout.json" || {{ cat "$BASE/uninstall-apply.stdout.json"; refuse UNINSTALL_FAILED_SEE_RECOVERY; }}
   KEPT=$(grep -o '"kept":"[^"]*"' "$BASE/uninstall-apply.stdout.json" | cut -d'"' -f4) || refuse UNINSTALL_RESULT_UNREADABLE
+  # Old upgrade history must be the same complete trees which A captured,
+  # also when resuming after a later installation step failed.
+  $CLEAN $PY -I "$STG/tools/check-reinstall-history.py" verify-kept "$STG/upgrade-history.A.json" "$KEPT" || refuse KEPT_UPGRADE_HISTORY_NOT_VERIFIED
   # (3) the resident install with exactly the plan generated on Windows; when an earlier run saved that plan it is finished, not redone
   if [ -e /opt/clued-independent-ci/resident-v1 ] || [ -e /var/lib/clued-independent-ci/resident/install-plan.json ]; then
     bash --noprofile --norc "$STG/tools/install-resident-linux.sh" --continue-after-boot "$INSTALL_PLAN" > "$T/install.stdout.json" || {{ cat "$T/install.stdout.json"; refuse RESIDENT_INSTALL_FAILED_SEE_RECOVERY; }}
@@ -368,15 +373,16 @@ print(json.dumps({{"residentPinsNotTheNewSource":bad}})); sys.exit(1 if bad else
 # r7: three read-only plans, pinned below. (1) the uninstall, live: phase B recomputes it and applies only the same sha.
 bash --noprofile --norc "$STG/tools/uninstall-resident-linux.sh" --plan > "$STG/uninstall-plan.A.stdout.txt" || {{ cat "$STG/uninstall-plan.A.stdout.txt"; refuse UNINSTALL_PLAN_REFUSED; }}
 grep -q '"status":"DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN"' "$STG/uninstall-plan.A.stdout.txt" || refuse UNINSTALL_PLAN_REFUSED
-for l in active= opt=yes upgrade-v1=yes generations= archive= staging=; do grep -qx "$l" "$STG/uninstall-plan.A.stdout.txt" || {{ cat "$STG/uninstall-plan.A.stdout.txt"; refuse "UNINSTALL_PLAN_NOT_THE_EXPECTED_HOST:$l"; }}; done
+for l in active= opt=yes upgrade-v1=yes staging=; do grep -qx "$l" "$STG/uninstall-plan.A.stdout.txt" || {{ cat "$STG/uninstall-plan.A.stdout.txt"; refuse "UNINSTALL_PLAN_NOT_THE_EXPECTED_HOST:$l"; }}; done
+printf '%s\\n' "$OLDF" > "$STG/old-version-facts.json"
+$CLEAN $PY -I "$STG/tools/check-reinstall-history.py" capture "$STG/uninstall-plan.A.stdout.txt" "$STG/old-version-facts.json" "$STG/upgrade-history.A.json" || refuse UPGRADE_HISTORY_NOT_SETTLED
 # (2) the resident install and (3) the upgrade-tool install, computed live on the staged copies with the lines that the uninstall
 # changes set as they will be then: they must be the plans generated on Windows (phase B applies exactly them)
 bash --noprofile --norc "$STG/tools/install-resident-linux.sh" --plan "$STG/linux-res-pkg" > "$STG/install-plan.A.stdout.txt" || {{ cat "$STG/install-plan.A.stdout.txt"; refuse INSTALL_PLAN_REFUSED; }}
 [ "$(printf '%s' "$(plan_after_uninstall "$STG/install-plan.A.stdout.txt")" | sha256sum | cut -d' ' -f1)" = "$INSTALL_PLAN" ] || {{ cat "$STG/install-plan.A.stdout.txt"; refuse INSTALL_PLAN_NOT_AS_GENERATED; }}
 bash --noprofile --norc "$STG/tools/install-resident-linux.sh" --plan-upgrade-v1 "$STG/linux-pkg" > "$STG/upgrade-plan.stdout.txt" || {{ cat "$STG/upgrade-plan.stdout.txt"; refuse UPGRADE_PLAN_REFUSED; }}
 [ "$(printf '%s' "$(plan_after_uninstall "$STG/upgrade-plan.stdout.txt")" | sha256sum | cut -d' ' -f1)" = "$UPG_PLAN" ] || {{ cat "$STG/upgrade-plan.stdout.txt"; refuse UPGRADE_PLAN_NOT_AS_GENERATED; }}
-printf '%s\\n' "$OLDF" > "$STG/old-version-facts.json"
-(cd "$STG" && sha256sum roles-in/* tools/* record/* linux-pkg/upgrade-v1/manifest.json linux-pkg/upgrade-v1/bin/* linux-res-pkg/manifest.json linux-res-pkg/bin/* linux-res-pkg/systemd/* upgrade-plan.stdout.txt install-plan.A.stdout.txt uninstall-plan.A.stdout.txt resident-pins.A.stdout.json old-version-facts.json src-head.txt > "$STG/phaseA.sha256")
+(cd "$STG" && sha256sum roles-in/* tools/* record/* linux-pkg/upgrade-v1/manifest.json linux-pkg/upgrade-v1/bin/* linux-res-pkg/manifest.json linux-res-pkg/bin/* linux-res-pkg/systemd/* upgrade-plan.stdout.txt install-plan.A.stdout.txt uninstall-plan.A.stdout.txt resident-pins.A.stdout.json old-version-facts.json upgrade-history.A.json src-head.txt > "$STG/phaseA.sha256")
 # review copy (public data only), written after staging (review minor 4)
 RV="$W/../review-A-{SUFFIX}"
 [ ! -e "$RV" ] || refuse REVIEW_COPY_EXISTS
@@ -394,6 +400,7 @@ B = "#!/bin/bash\n" + f"""# r7 Linux phase B (root; after the Source switch: bac
 # B0: everything phase A staged is still as reviewed (minor 3): the manifest, every listed byte, the bare repo, the sign tool
 [ "$(sha256sum "$STG/phaseA.sha256" | cut -d' ' -f1)" = "$WANT_A" ] || refuse PHASE_A_NOT_AS_REVIEWED
 (cd "$STG" && sha256sum --quiet -c phaseA.sha256) || refuse STAGED_BYTES_CHANGED_SINCE_PHASE_A
+$CLEAN $PY -I "$STG/tools/check-reinstall-history.py" verify-live "$STG/upgrade-history.A.json" || refuse UPGRADE_HISTORY_CHANGED_SINCE_PHASE_A
 src_git_clean
 [ "$(sha256sum "$STG/tools/sign-qualification-v2.mjs" | cut -d' ' -f1)" = "$SIGN_SHA" ] || refuse SIGN_TOOL_CHANGED
 [ ! -e "$STG/roles-signed" ] && [ ! -e "$STG/pkg" ] && [ ! -e "$STG/check" ] || refuse PHASE_B_OUTPUT_EXISTS_SEE_RECOVERY
