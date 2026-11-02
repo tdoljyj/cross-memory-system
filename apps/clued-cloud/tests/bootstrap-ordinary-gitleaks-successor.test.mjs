@@ -14,6 +14,7 @@ const BEFORE = '95f4527be27d02889892d029b398ab1cf2e71429';
 const AFTER = 'd0fe73eeabc9c163d3216e57ca6a7633288262c5';
 // The refrozen hosted gitleaks workflow (730 entries, frozen commit a38e8fef).
 const NEXT = '8d172bdfeda9b554d2c8c0e5868ccae6e1a3096d';
+const HEX = 'e6fafbb0a40ce37795f1e50bbda03cd33fbf40e0';
 const HEAD = 'f88785c9f93bae4ad7e06e4f9be93d9471125a18';
 const BASE = 'f6ae29eda25c5ffa6131662e60251492e0878aa2';
 const ROOT = new URL('../../../', import.meta.url);
@@ -31,11 +32,12 @@ const check = (before = BEFORE, after = AFTER, extra = {}) => registeredBootstra
   file: { filename: FILE, status: 'modified' }, baseText: text(before), headText: text(after), profiles, roleSpecs, ...extra,
 });
 
-test('actual gitleaks successor bytes match the registered 730-entry Source', () => {
+test('actual gitleaks successor bytes match the registered frozen hex Source', () => {
   const actual = fs.readFileSync(new URL(FILE, ROOT), 'utf8');
-  assert.equal(actual, text(NEXT));
-  assert.equal(workflowBlob(actual), NEXT);
-  assert.equal(sha256Hex(actual), '6f61572b6cd7550772925b8ad3b26e129cf010901f04122662ceeb00d01c7cd1');
+  assert.equal(actual, text(HEX));
+  assert.equal(workflowBlob(actual), HEX);
+  assert.equal(sha256Hex(actual), '9d6c23d2ae4769d123f7ddcd3a25810878d36a85efc2403c07ecec5ecd17cdab');
+  assert.equal(workflowBlob(text(NEXT)), NEXT);
   // The 729-entry generation stays registered as its predecessor.
   assert.equal(workflowBlob(text(AFTER)), AFTER);
   assert.equal(sha256Hex(text(AFTER)), '46627f909229d06a6b5c35112f7619b28c6aa9f0a196a526b067e3a962d9da2b');

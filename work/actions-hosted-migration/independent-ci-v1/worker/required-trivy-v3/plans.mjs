@@ -9,14 +9,14 @@ import { createHash } from 'node:crypto';
 import { validateJobV2 as validateJob, subjectOfV2 as subjectOf } from '../../src/job-v2.mjs';
 import { canonical, digest } from '../../src/proof.mjs';
 import { noLinks } from '../required-gitleaks/prepare.mjs';
-import { TRUSTED_WORKFLOW_PATHS, trustedWorkflowSha256s } from '../trusted-workflows.mjs';
+import { activeTrivyWorkflowSha256s } from '../trusted-workflows.mjs';
 import { createArguments, inspectContainer } from '../verify-once/verify-worker.mjs';
 
 export const IMAGE = 'ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9';
 // .github/workflows/trivy.yml is pinned as an exact accepted set, never a pattern, taken from the one table
 // (worker/trusted-workflows.mjs). The adapter passes the one the installed Source manifest declares and its
 // trusted checkout holds.
-export const WORKFLOW_SHA256S = trustedWorkflowSha256s(TRUSTED_WORKFLOW_PATHS.trivy);
+export const WORKFLOW_SHA256S = activeTrivyWorkflowSha256s();
 export const CHECKS_REPOSITORY = 'ghcr.io/aquasecurity/trivy-checks:2';
 export const DB_REPOSITORIES = Object.freeze(['ghcr.io/aquasecurity/trivy-db:2', 'mirror.gcr.io/aquasec/trivy-db:2']);
 const HASH = /^[a-f0-9]{64}$/;
