@@ -76,6 +76,7 @@ jobs:
       - name: Probe the runner
         shell: bash
         env:
+          CLUED_CACHE_NODE_BINDING: /home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json
           EXPECTED_RUNNER_NAME: clued-ci-company-linux-01
         run: |
           set -euo pipefail
@@ -104,6 +105,7 @@ jobs:
       - name: Probe the runner
         shell: bash
         env:
+          CLUED_CACHE_NODE_BINDING: /home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json
           EXPECTED_RUNNER_NAME: clued-ci-company-linux-02
         run: |
           set -euo pipefail
@@ -132,6 +134,7 @@ jobs:
       - name: Probe the runner
         shell: bash
         env:
+          CLUED_CACHE_NODE_BINDING: /home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json
           EXPECTED_RUNNER_NAME: clued-ci-company-linux-03
         run: |
           set -euo pipefail
@@ -160,6 +163,7 @@ jobs:
       - name: Probe the runner
         shell: bash
         env:
+          CLUED_CACHE_NODE_BINDING: /home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json
           EXPECTED_RUNNER_NAME: clued-ci-company-linux-04
         run: |
           set -euo pipefail
