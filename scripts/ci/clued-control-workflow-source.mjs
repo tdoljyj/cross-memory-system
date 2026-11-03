@@ -3,7 +3,7 @@
 import {createHash} from 'node:crypto';
 import {roleDefinitionDigest,workflowBlob} from './clued-workflow-profile.mjs';
 
-export const COMPONENT_VERSION='1.0.3';
+export const COMPONENT_VERSION='1.0.4';
 export const CONTROL_WORKFLOW_SOURCE_PATH='scripts/ci/clued-control-workflow-sources.json';
 export const CONTROL_WORKFLOW_SOURCE_SCHEMA='clued.control-workflow-sources/1';
 export const CONTROL_WORKFLOW_SOURCE_COMMIT='080ff04a8109ee74c53f16b79123fd55430cb7be';
@@ -493,9 +493,10 @@ export function compileControlWorkflowSource(file,text,{parseYaml,accepted_roles
   const descriptor=Object.hasOwn(CONTROL_WORKFLOW_FILES,file)?CONTROL_WORKFLOW_FILES[file]:null;
   if(!descriptor||typeof text!=='string'||!text||Buffer.byteLength(text)>131072||typeof parseYaml!=='function'||
       /\r(?!\n)|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0085\u2028\u2029]/.test(text))bad('identity/source/parser');
-  if(!['legacy_predecessor','controller_successor','completion_observer_successor','dispatcher_choice_successor'].includes(source_kind)||
+  if(!['legacy_predecessor','controller_successor','completion_observer_successor','dispatcher_choice_successor','retired_consumer_observer_successor'].includes(source_kind)||
     source_kind==='completion_observer_successor'&&file!==SLOT_COMPLETION_OBSERVER_SOURCE.file||
-    source_kind==='dispatcher_choice_successor'&&file!==DISPATCHER_CHOICE_SOURCE.file)bad('source kind');
+    source_kind==='dispatcher_choice_successor'&&file!==DISPATCHER_CHOICE_SOURCE.file||
+    source_kind==='retired_consumer_observer_successor'&&file!==RETIRED_CONSUMER_OBSERVER_SOURCE.file)bad('source kind');
   const value=parseYaml(text);
   if(descriptor.family==='trusted_main_secret_controller')return compileMainSecretController(file,text,value,{parseYaml,accepted_roles,source_kind,predecessor,descriptor});
   if(!plain(value)||!plain(value.jobs)||Object.keys(value.jobs).length!==2||
@@ -556,6 +557,12 @@ function compileMainSecretController(file,text,value,{parseYaml,accepted_roles,s
       roleDefinitionDigest(value)!==pin.workflow_definition_sha256||!same(role_digests,pin.role_digests))
       bad('exact slot completion-observer Source/FullRole required');
   }
+  if(source_kind==='retired_consumer_observer_successor'){
+    const pin=RETIRED_CONSUMER_OBSERVER_SOURCE;
+    if(file!==pin.file||workflowBlob(text)!==pin.workflow_blob||hash(text)!==pin.source_sha256||
+      roleDefinitionDigest(value)!==pin.workflow_definition_sha256||!same(role_digests,pin.role_digests))
+      bad('exact retired-consumer observer Source/FullRole required');
+  }
   if(source_kind==='dispatcher_choice_successor'){
     const pin=DISPATCHER_CHOICE_SOURCE;
     if(file!==pin.file||workflowBlob(text)!==pin.workflow_blob||hash(text)!==pin.source_sha256||
@@ -587,14 +594,20 @@ function compileMainSecretController(file,text,value,{parseYaml,accepted_roles,s
     // The old Windows-route successor adds only budget. The distinct exact
     // observer Source keeps the predecessor route and every job byte while
     // adding exactly these two notification names, each once. Neither form
-    // may remove/reorder old signals or change any other trigger field.
+    // may reorder old signals or change any other trigger field. Retirement
+    // is a separate exact Source that removes only its one pinned old signal.
     if(file===SLOT_COMPLETION_OBSERVER_SOURCE.file){
       const previous=before.on?.workflow_run?.workflows,actual=after.on?.workflow_run?.workflows,
-        additions=source_kind==='completion_observer_successor'?['runner-budget-policy','clued-required-tests']:['runner-budget-policy'];
+        additions=['completion_observer_successor','retired_consumer_observer_successor'].includes(source_kind)?['runner-budget-policy','clued-required-tests']:['runner-budget-policy'];
+      const oldSignals=source_kind==='retired_consumer_observer_successor'?previous?.filter(name=>name!==RETIRED_CONSUMER_OBSERVER_SOURCE.removed_workflow):previous;
+      if(source_kind==='retired_consumer_observer_successor'){
+        if(!Array.isArray(previous)||previous.filter(name=>name===RETIRED_CONSUMER_OBSERVER_SOURCE.removed_workflow).length!==1||actual?.includes(RETIRED_CONSUMER_OBSERVER_SOURCE.removed_workflow))bad('only the retired consumer notification may be removed');
+        before.on.workflow_run.workflows=structuredClone(oldSignals);
+      }
       if(!Array.isArray(previous)||additions.some(name=>previous.includes(name))||!Array.isArray(actual)||
-        actual.length!==previous.length+additions.length||additions.some(name=>actual.filter(value=>value===name).length!==1)||
-        !same(actual.filter(name=>!additions.includes(name)),previous))bad('exact slot completion observer delta required');
-      after.on.workflow_run.workflows=structuredClone(previous);
+        actual.length!==oldSignals.length+additions.length||additions.some(name=>actual.filter(value=>value===name).length!==1)||
+        !same(actual.filter(name=>!additions.includes(name)),oldSignals))bad('exact slot completion observer delta required');
+      after.on.workflow_run.workflows=structuredClone(oldSignals);
     }
     // All remaining triggers, main checkout, permissions, secret references,
     // cancellation, timeouts, exact-head gates and commands stay frozen.
@@ -610,11 +623,12 @@ function compileMainSecretController(file,text,value,{parseYaml,accepted_roles,s
     }commands[id]=names;
   }
   return {registration_status:'registered',family:descriptor.family,source_kind,
-    operation:source_kind==='legacy_predecessor'?'predecessor':source_kind==='completion_observer_successor'?'extend_completion_observer':source_kind==='dispatcher_choice_successor'?'extend_dispatcher_choice':'migrate_hosted_controller',workflow_blob:workflowBlob(text),
+    operation:source_kind==='legacy_predecessor'?'predecessor':source_kind==='completion_observer_successor'?'extend_completion_observer':source_kind==='retired_consumer_observer_successor'?'retire_completed_consumer_signal':source_kind==='dispatcher_choice_successor'?'extend_dispatcher_choice':'migrate_hosted_controller',workflow_blob:workflowBlob(text),
     source_sha256:hash(text),source_yaml:text,workflow_definition:value,predecessor_blob,
     primary_ids:[...descriptor.migrating_jobs].sort(),role_digests,command_digests:commands,
     implementation_blobs:{...(source_kind==='legacy_predecessor'?descriptor.predecessor_implementation_blobs:
       source_kind==='completion_observer_successor'?SLOT_COMPLETION_OBSERVER_SOURCE.implementation_blobs:
+      source_kind==='retired_consumer_observer_successor'?RETIRED_CONSUMER_OBSERVER_SOURCE.implementation_blobs:
       source_kind==='dispatcher_choice_successor'?DISPATCHER_CHOICE_SOURCE.implementation_blobs:descriptor.implementation_blobs)},authority_boundary:{...mainSecretBoundary}};
 }
 
@@ -630,7 +644,7 @@ export function registeredControlWorkflowSource(registry,file,text,{repository='
         !same(Object.keys(registry.workflows).sort(),Object.keys(registry.roles).sort()))return unknown('control catalogue identity');
     const descriptor=CONTROL_WORKFLOW_FILES[file],root=registry.workflows[file],roles=registry.roles[file];
     if(!descriptor||!keys(root,['registration_status','sources'])||root.registration_status!=='registered'||
-        !Array.isArray(root.sources)||root.sources.length<1||root.sources.length>3||!plain(roles)||typeof text!=='string'||
+        !Array.isArray(root.sources)||root.sources.length<1||root.sources.length>(file===RETIRED_CONSUMER_OBSERVER_SOURCE.file?4:3)||!plain(roles)||typeof text!=='string'||
         root.sources.some(source=>!plain(source)||!sha.test(source.workflow_blob??''))||
         new Set(root.sources.map(source=>source.workflow_blob)).size!==root.sources.length||
         !same(Object.keys(roles).sort(),root.sources.map(source=>source.workflow_blob).sort()))return unknown('control catalogue bounds');
@@ -661,10 +675,57 @@ export function registeredControlWorkflowTransition(registry,file,headText,baseT
       typeof baseText!=='string'||headText===baseText)return unknown('exact modified controller identity required');
   const head=registeredControlWorkflowSource(registry,file,headText,{repository});
   const base=registeredControlWorkflowSource(registry,file,baseText,{repository});
-  if(!head.passed||!base.passed||!(head.profile.source_kind==='controller_successor'||
-        file===SLOT_COMPLETION_OBSERVER_SOURCE.file&&head.profile.source_kind==='completion_observer_successor'||
-        file===DISPATCHER_CHOICE_SOURCE.file&&head.profile.source_kind==='dispatcher_choice_successor')||
-      base.profile.source_kind!=='legacy_predecessor'||head.profile.predecessor_blob!==base.profile.workflow_blob)
-    return unknown('registered controller predecessor/successor absent');
+  if(!head.passed||!base.passed)return unknown('registered controller predecessor/successor absent');
+  const retirement=head.profile.source_kind==='retired_consumer_observer_successor'&&file===RETIRED_CONSUMER_OBSERVER_SOURCE.file&&
+    ((base.profile.source_kind==='completion_observer_successor'&&base.profile.workflow_blob===RETIRED_CONSUMER_OBSERVER_SOURCE.retired_from_blob)||
+     (base.profile.source_kind==='legacy_predecessor'&&base.profile.workflow_blob===RETIRED_CONSUMER_OBSERVER_SOURCE.legacy_from_blob));
+  const legacy=(head.profile.source_kind==='controller_successor'||
+    file===SLOT_COMPLETION_OBSERVER_SOURCE.file&&head.profile.source_kind==='completion_observer_successor'||
+    file===DISPATCHER_CHOICE_SOURCE.file&&head.profile.source_kind==='dispatcher_choice_successor')&&
+    base.profile.source_kind==='legacy_predecessor'&&head.profile.predecessor_blob===base.profile.workflow_blob;
+  if(!retirement&&!legacy)return unknown('registered controller predecessor/successor absent');
   return {...head,scope:'registered_control_transition_source_only'};
 }
+
+export const RETIRED_CONSUMER_OBSERVER_SOURCE=freeze({
+  "file": ".github/workflows/clued-merge-slot-ci.yml",
+  "removed_workflow": "Clued handover hook qualification / home-linux-01",
+  "retired_from_blob": "759fd82dc328fba0aa663e2c6c8c9aa516292294",
+  "legacy_from_blob": "662dbc3e846311379efa5f081b3cca518a881f74",
+  "workflow_blob": "b2178adc5af19d0eaea359616388edf7fb7d3446",
+  "source_sha256": "f8ae06eb8a2e1cbe6b0ff91514067f7c216f6551fdf8cf3a8c24e0715a53abfa",
+  "workflow_definition_sha256": "7afc41da478eda7b1373defcb0a4d746556cc8acccd91592db32d946773ff3c6",
+  "role_digests": {
+    "report": "becc90f293b687326328f684eae049bd17985ef259db9db6bf501f7ad027b63d"
+  },
+  "implementation_blobs": {
+    ".github/actions/ci-temporary-storage/action.yml": "72a78ada2553dc42a062dbccf310d1b23e65431f",
+    ".github/actions/ci-temporary-storage/check-workflows.mjs": "bd30bbb8527d86a9e3c2bd2aafe07e0eb1a342fc",
+    ".github/actions/ci-temporary-storage/coverage.json": "12f0ff5aca09df465aa0461d493485c3ed2c65b1",
+    ".github/actions/ci-temporary-storage/setup.mjs": "dd162105b2800d31b9970d25575945a140a69d42",
+    ".github/actions/ci-temporary-storage/setup.py": "4e3f82e061162f894e310f6e767bacf8c57a079b",
+    ".github/workflows/clued-standard-runner-actor-qualification.yml": "d752e91ae501313396163df277883d2d02fa100e",
+    "apps/clued-cloud/app/supabase-public-config.ts": "193fedd8e9d5ccaea873e2cc4d0efd894e93d6ae",
+    "config/clued-handover-native-entry-policy.json": "2a26987dfc41458a6db005f144dd07fd49ee8644",
+    "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea",
+    "scripts/ci/clued-gated-proof-profiles.json": "9e172bb857de1061bdbd61829eccf1481d3ebb56",
+    "scripts/ci/clued-gated-proof-role-specs.json": "663c625e360069bb861667b426653ddd9e14929c",
+    "scripts/ci/clued-gated-proof-runtime.mjs": "c7884078fee3afbf98681425982051a87df38ce9",
+    "scripts/ci/clued-handover-native-entry.mjs": "d6682bdece007f142bd53185d70427c7eb3e7f7c",
+    "scripts/ci/clued-merge-slot-ci.mjs": "b26a73bc6e05c4917d236a15e62b5ff01955f7b0",
+    "scripts/ci/clued-production-publisher-source.mjs": "0e3c2d4df3fb2f4ceb6ec8750028e2b046a1a0b6",
+    "scripts/ci/clued-production-publisher-sources.json": "df10a840de4d00961d9df55103e6c6849fba23fb",
+    "scripts/ci/clued-publisher-qualification-source.mjs": "f38859449e35eeeef492db8130f91c266c208d75",
+    "scripts/ci/clued-publisher-qualification-sources.json": "34bbd3c400af8565ed28545af2ba839c5f920d40",
+    "scripts/ci/clued-scan-start.mjs": "07042a02682d818f7e51a8d4e6105d7cc58c4b27",
+    "scripts/ci/clued-standard-runner-actor-source.mjs": "e8de9a37f939941fc5ce05627c08e2db57a298e6",
+    "scripts/ci/clued-standard-runner-actor-sources.json": "5112f5f0102fd7f9828fe96b0b07930f77dd0e6e",
+    "scripts/ci/clued-work-admission.mjs": "525b46a283117a735f5891340563be57b529625d",
+    "scripts/ci/clued-workflow-profile.mjs": "69622ceef577da9e4eb8dab25fed4bdc1cbb50f3",
+    "scripts/ci/merge-admission-measurement-history.mjs": "6799c148ee7baf51a5ba989de73fb8bffb054f6f",
+    "scripts/ci/merge-admission-policy.mjs": "a3f6830e0087474d3e36222d12975deb7830c4d3",
+    "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
+    "scripts/runner/clued-runner-job-started.mjs": "dd6dcaf875539c23a9e87726542de8179a81456a",
+    "scripts/runner/qualify-standard-runner-actor.mjs": "794861b9acf7659ef2bb946f2c1dff7ef33fbd10"
+  }
+});

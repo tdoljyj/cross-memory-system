@@ -1,3 +1,4 @@
+import {CONTROL_WORKFLOW_SOURCE_PATH,registeredControlWorkflowSource} from './clued-control-workflow-source.mjs';
 import {loadPublisherSourceHistoryFixture} from './production-publisher-source-history.fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -118,6 +119,28 @@ test('five original workflow blocks preserve exact accepted successors and added
     for(const [current,previous]of renamedLines){
       const lines=ordinary.split('\n');assert.equal(lines.filter(line=>line===current).length,1,name+': exact reviewed display-name change');
       ordinary=lines.map(line=>line===current?previous:line).join('\n');
+    }
+    // Current exact registered successors have bounded trigger-only deltas.
+    // Validate those complete Sources before comparing the older artifact
+    // insertion witness; arbitrary trigger/route changes cannot be normalized.
+    if(['clued-work-admission-dispatch.yml','clued-merge-slot-ci.yml'].includes(name)){
+      const catalogue=JSON.parse(fs.readFileSync(path.join(stage,CONTROL_WORKFLOW_SOURCE_PATH),'utf8'));
+      const exact=registeredControlWorkflowSource(catalogue,'.github/workflows/'+name,next);
+      assert.equal(exact.passed,true,name+': current exact registered Source');
+      const lines=name==='clued-work-admission-dispatch.yml'?[
+        '          - clued-standard-runner-actor-qualification.yml\n'
+      ]:['      - runner-budget-policy\n','      - clued-required-tests\n'];
+      for(const line of lines){assert.equal(ordinary.split(line).length-1,1);ordinary=ordinary.replace(line,'');}
+    }
+    // Retirement228 removes exactly one completed retired consumer. Restore
+    // only that line for this historical 59522b comparison; current Source
+    // and the absent live workflow are verified by the retirement regression.
+    if(name==='clued-merge-slot-ci.yml'){
+      const removed='      - Clued handover hook qualification / home-linux-01\n';
+      const anchor='      - Clued handover hook qualification / company-win-01\n';
+      assert.equal(ordinary.includes(removed),false);
+      assert.equal(ordinary.split(anchor).length-1,1);
+      ordinary=ordinary.replace(anchor,removed+anchor);
     }
     const additions=acceptedAdditions[name];
     if(additions){
