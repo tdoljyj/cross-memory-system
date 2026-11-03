@@ -18,6 +18,8 @@ const legacy = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../src/hosted-r
 const clone = v => structuredClone(v);
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const FREEZE = 'c8c146b4067a32a0ed3a1a6be04dda52a59dd4db', frozenReader = gitObjectReader(ROOT);
+const CURRENT_REGISTRY_SNAPSHOT = 'bf9ff565eb9df97674c59c70564dc5ff5d6e8397';
+const HISTORICAL_S190 = 'd86854407a1a69ec44cafd721438988e8a9af7e8';
 // Git blobs are the freeze boundary; a Windows checkout may have CRLF bytes.
 const workflows = Object.fromEntries(Object.entries(spec.roles).map(([role, entry]) =>
   [role, frozenReader.blob(frozenReader.entry(FREEZE, entry.workflowPath).sha).toString('utf8')]));
@@ -27,7 +29,7 @@ test('current /2 production registry rebuilds byte-identically from the actual r
   const bytes = fs.readFileSync(new URL('../src/hosted-relay-v1/registry.json', import.meta.url), 'utf8');
   const current = validateRegistry(JSON.parse(bytes), { domain: 'production' });
   assert.equal(current.contract, REGISTRY_CONTRACT_V2);
-  assert.equal(current.sourceCommit, FREEZE);
+  assert.equal(current.sourceCommit, CURRENT_REGISTRY_SNAPSHOT);
   assert.equal(current.requireCheckRunIdClaim, true);
   assert.deepEqual(current.scanStart, SCAN_START_WORKFLOW_GATE);
   const reader = gitObjectReader(ROOT);
@@ -43,6 +45,18 @@ test('current /2 production registry rebuilds byte-identically from the actual r
     assert.equal(helper.blob, reader.entry(current.sourceCommit, helper.path).sha);
   }
   assert.equal(Object.hasOwn(current, 'qualified'), false);
+});
+
+test('historical S190 /2 registry still rebuilds byte-identically from its original c8 freeze', () => {
+  const registryPath = 'work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/registry.json';
+  const oldEntry = frozenReader.entry(HISTORICAL_S190, registryPath);
+  assert.ok(oldEntry && oldEntry.type === 'blob');
+  const oldBytes = frozenReader.blob(oldEntry.sha).toString('utf8');
+  const historical = validateRegistry(JSON.parse(oldBytes), { domain: 'production' });
+  assert.equal(historical.sourceCommit, FREEZE);
+  assert.equal(historical.contract, REGISTRY_CONTRACT_V2);
+  assert.equal(serializeRegistry(buildRegistry({ spec, reader: frozenReader, commit: FREEZE, domain: 'production' })), oldBytes);
+  assert.equal(Object.hasOwn(historical, 'qualified'), false);
 });
 
 test('scan-start is an explicit /2 successor; legacy contracts/spec stay /1 with their original fields', () => {

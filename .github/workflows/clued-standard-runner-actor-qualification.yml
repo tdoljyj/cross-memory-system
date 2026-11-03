@@ -1,4 +1,4 @@
-name: Clued standard runner actor qualification
+name: Clued standard runner qualification and maintenance installation
 
 on:
   workflow_dispatch:
@@ -51,7 +51,7 @@ jobs:
     needs: admission-gate
     if: needs.admission-gate.outputs.admitted == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '52366662' && github.triggering_actor == github.repository_owner && inputs.node_id == 'desk-w-591-windows-runner-caches'
     runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-node24, cap-python312, site-company]
-    timeout-minutes: 8
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
@@ -74,7 +74,7 @@ jobs:
     needs: admission-gate
     if: needs.admission-gate.outputs.admitted == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '52366662' && github.triggering_actor == github.repository_owner && inputs.node_id == 'turing-windows-runner-caches'
     runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-node24, cap-python312, site-home]
-    timeout-minutes: 8
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write

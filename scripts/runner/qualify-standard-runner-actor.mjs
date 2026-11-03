@@ -1,3 +1,6 @@
+import {runMaintenanceStages215} from './standard-runner-actor181/maintenance-pipeline215.mjs';
+import {runStandardRunnerInstallation215} from './standard-runner-actor181/self-install/run_install215.mjs';
+import {resolveInstalledNativeStandardRunnerActorPort,safeProviderCode,refuse as providerRefuse,readiness as providerReadiness} from './standard-runner-actor181/installed-provider.mjs';
 // Offline Source successor candidate. No existing Source/Role grants this purpose.
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
@@ -12,10 +15,11 @@ export const PURPOSE='standard_runner_self_s4u_qualification_once';
 export const ROLE='standard-runner-actor-qualification';
 export const MAX_ROWS=128;
 export const SELF_CAPTURE_SHA='258f5437df03824066a1cf2bd8ef2f1a4cfb4c4b921d7aba904100e60cc1f1fd';
+export const NODE_RUNTIME_SOURCE_SHA='a4ee0b66382d693ce3fc0bc7cf0e007ed36b9902fda12f2bed6bbdadffe808bc';
 export const PHASES=Object.freeze(['source','native-current','own-primary-identity','observer-ready','self-register','self-run','proof-readback']);
 export const TOOL_PINS=Object.freeze({
  actor:'c82a699dbbf5bfd44939fcdc1c5a211ed66d3571a8baa522fb955ab1d3859616',
- runner_entry:'aae77e546853bbb3c87b9d21a4b96537779d4860f48ef09d256fc9982ab56bd8',
+ runner_entry:'19eb2653409aa505d894ab26d4a12444eda9260ae48640de951f34af1e0e79dc',
  observer_entry:'6d2ae34fc7bc390708120e1b3f653fa49c49ac1ae9f7a61f77ddf08daa27f079',
  observer_core:'017d894f54a7bef4fae447b7e3b04d0c0faa29011efafb5b1e603b185d2ff95c',
  observer_os:'c27f400015fcf0628ff42f46d777892437fd688158b1e6b25c616d60e8c9971a',
@@ -31,7 +35,7 @@ export const INITIAL_ROWS=Object.freeze([
 const HASH=/^[a-f0-9]{64}$/,SHA=/^[a-f0-9]{40}$/,UUID=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const matches=(value,pattern)=>typeof value==='string'&&pattern.test(value);
 const SID=/^S-1-5-21-(?:[0-9]+-){3}[0-9]+$/;
-const fail=code=>{throw Object.assign(new Error(code),{code});};
+const fail=code=>providerRefuse(code);
 const check=(v,code)=>{if(v!==true)fail(code);};
 const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v)&&[Object.prototype,null].includes(Object.getPrototypeOf(v));
 const exact=(v,keys,code)=>check(plain(v)&&JSON.stringify(Object.keys(v).sort())===JSON.stringify([...keys].sort()),code);
@@ -93,7 +97,7 @@ export function validateOwnRuntime(runtime,row){
  check(runtime.schema==='clued.standard-runner-own-primary-runtime/1'&&runtime.host===row.host&&runtime.sid===row.sid,'RUNTIME_HOST_SELF_SID');
  check(Number.isSafeInteger(runtime.process_id)&&runtime.process_id===process.pid&&typeof runtime.creation_file_time==='string'&&/^[1-9][0-9]{0,19}$/.test(runtime.creation_file_time),'RUNTIME_PROCESS_INSTANCE');
  check(runtime.elevated===false&&runtime.thread_impersonation===false&&runtime.enabled_or_deny_only_admin_sid===false&&runtime.primary_token_observed===true,'RUNTIME_STANDARD_PRIMARY_ONLY');
- check(runtime.node_major===24&&runtime.source_capture_sha256===SELF_CAPTURE_SHA,'RUNTIME_TOOL_SOURCE');
+ check(runtime.node_major===24&&runtime.source_capture_sha256===NODE_RUNTIME_SOURCE_SHA,'RUNTIME_TOOL_SOURCE');
  return copy(runtime);
 }
 export function captureTools(raw){
@@ -139,20 +143,17 @@ export async function runActorWithTrustedPorts({context,acceptedRows,ports,now=D
   check(outcome.schema==='clued.standard-runner-actor-native-proof/1'&&outcome.status==='INDEPENDENT_NATIVE_PROOF_VALIDATED'&&outcome.entry_exit_code===0&&outcome.native_exit_code===0&&outcome.child_exit_code===0&&matches(outcome.proof_sha256,HASH)&&matches(outcome.export_sha256,HASH),'NO_QUALIFICATION_FROM_REGISTRATION_OR_JOB_EXIT');
   await ports.reopenAndValidateExactProof({row,binding,outcome});
   return {schema:'clued.standard-runner-actor-source-result/1',status:'ACCOUNT_PROOF_OBSERVED_REQUIRES_FACTORY_RECONCILIATION',node_id:row.node_id,phase,actor_attempted:attempted,proof_sha256:outcome.proof_sha256,installation:false,automatic_retry:false};
- }catch(error){return {schema:'clued.standard-runner-actor-source-result/1',status:'UNKNOWN_OR_REFUSED_NO_RETRY',node_id:row.node_id,phase,actor_attempted:attempted,error_code:typeof error?.code==='string'&&/^[A-Z0-9_]{1,96}$/.test(error.code)?error.code:'DEPENDENCY_REFUSED_OR_UNKNOWN',installation:false,automatic_retry:false};}
+ }catch(error){return {schema:'clued.standard-runner-actor-source-result/1',status:'UNKNOWN_OR_REFUSED_NO_RETRY',node_id:row.node_id,phase,actor_attempted:attempted,error_code:safeProviderCode(error),installation:false,automatic_retry:false};}
 }
-export function resolveInstalledNativeStandardRunnerActorPort(){
- // d868 baseline job/3 accepts PR>0 and six frozen roles. Its scan_start port
- // consumes those same PR facts. non-pr-control-source grants no execution.
- // No currently supported Native action has this new purpose/Role/once key.
- fail('UNSUPPORTED_NATIVE_NON_PR_STANDARD_RUNNER_ACTOR_CONTRACT');
-}
+export {resolveInstalledNativeStandardRunnerActorPort};
+
 export async function main(args=process.argv.slice(2),env=process.env){
- if(args.length===0||JSON.stringify(args)==='["--plan"]')return {schema:'clued.standard-runner-actor-source-preview/1',status:'SOURCE_CANDIDATE_NATIVE_NON_PR_UNSUPPORTED',baseline:BASELINE,workflow:WORKFLOW,role:ROLE,initial_rows:INITIAL_ROWS,rows_bound:MAX_ROWS,execution_authority:false,ci_dispatched:false};
+ if(args.length===0||JSON.stringify(args)==='["--plan"]')return {schema:'clued.standard-runner-actor-source-preview/1',status:'SOURCE_CANDIDATE_PROVIDER_AUTHORITY_UNBOUND',provider_readiness:providerReadiness,baseline:BASELINE,workflow:WORKFLOW,role:ROLE,initial_rows:INITIAL_ROWS,rows_bound:MAX_ROWS,execution_authority:false,ci_dispatched:false};
  check(JSON.stringify(args)==='["--execute"]','ARGUMENTS_REFUSED');
- const context=readJobHints(env);const protectedPort=resolveInstalledNativeStandardRunnerActorPort();
- // Future shared integration must bind the registered Source/native contract;
- // the current resolver never returns and cannot be enabled by incoming data.
- return runActorWithTrustedPorts({context,acceptedRows:protectedPort.acceptedRows(),ports:protectedPort});
+ const context=readJobHints(env);const protectedPort=await resolveInstalledNativeStandardRunnerActorPort();
+ // Both stages are exact Source implementations. They require independently
+ // accepted qualification and installation Owner packets; no stage grants the other.
+ const qualification=await runActorWithTrustedPorts({context,acceptedRows:protectedPort.acceptedRows(),ports:protectedPort});
+ return runMaintenanceStages215(qualification,()=>runStandardRunnerInstallation215());
 }
-if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main().then(result=>console.log(JSON.stringify(result))).catch(error=>{console.error(JSON.stringify({schema:'clued.standard-runner-actor-source-refusal/1',status:'REFUSED',code:typeof error?.code==='string'?error.code:'INVALID_SOURCE_CONTEXT',execution_authority:false}));process.exitCode=2;});
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main().then(result=>{console.log(JSON.stringify(result));if(result.schema==='clued.standard-runner-maintenance-pipeline215/1'&&result.status!=='ACCOUNT_QUALIFIED_AND_MAINTENANCE_INSTALLED_AWAITING_LIFECYCLE')process.exitCode=2;}).catch(error=>{console.error(JSON.stringify({schema:'clued.standard-runner-actor-source-refusal/1',status:'REFUSED',code:safeProviderCode(error),execution_authority:false}));process.exitCode=2;});
