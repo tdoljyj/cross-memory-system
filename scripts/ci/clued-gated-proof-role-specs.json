@@ -3233,6 +3233,240 @@
           }
         ]
       }
+    },
+    ".github/workflows/clued-required-tests.yml": {
+      "sources": {
+        "8a22de3a97425d9f85bc9f605dbdbf748b8e0946": [
+          {
+            "job_id": "clued-cloud-tests",
+            "definition_sha256": "0bb545587b121538cecd3362d7ff87e5427dc1897190e125fd7f2be14b145910",
+            "definition": {
+              "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'clued-cloud-tests' || 'clued-cloud-tests-skipped' }}",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n  github.event.pull_request.head.repo.full_name == github.repository &&\n  (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal"
+              ],
+              "timeout-minutes": 30,
+              "permissions": {
+                "contents": "read",
+                "pull-requests": "read"
+              },
+              "steps": [
+                {
+                  "name": "Check out the trusted base (selection and commands)",
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false,
+                    "ref": "${{ github.event.pull_request.base.sha || github.sha }}",
+                    "path": "trusted"
+                  }
+                },
+                {
+                  "name": "Check out the candidate",
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false,
+                    "fetch-depth": 0,
+                    "path": "candidate"
+                  }
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./trusted/.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Select suites",
+                  "id": "select",
+                  "env": {
+                    "GITHUB_TOKEN": "${{ github.token }}"
+                  },
+                  "run": "selector=trusted/scripts/ci/ci-required-selection.mjs\nif [ ! -f \"$selector\" ]; then\n  # Only while the base predates the selection (the pull request that adds it).\n  echo \"::warning title=clued-cloud-tests bootstrap::the base has no selection; the candidate's own copy decides\"\n  selector=candidate/scripts/ci/ci-required-selection.mjs\nfi\necho \"selector=$selector\" >> \"$GITHUB_OUTPUT\"\nnode \"$selector\" --check clued-cloud-tests\n"
+                },
+                {
+                  "name": "Install from lockfile",
+                  "if": "steps.select.outputs.run_clued_cloud == 'true'",
+                  "working-directory": "candidate/apps/clued-cloud",
+                  "env": {
+                    "npm_config_logs_dir": "${{ runner.temp }}/clued-npm-debug-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}"
+                  },
+                  "run": "timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=2 --fetch-timeout=30000"
+                },
+                {
+                  "name": "Lint, ledger, typecheck, build and unit tests",
+                  "if": "steps.select.outputs.run_clued_cloud == 'true'",
+                  "env": {
+                    "SELECTOR": "${{ steps.select.outputs.selector }}"
+                  },
+                  "run": "node \"$SELECTOR\" --run clued-cloud --root candidate"
+                }
+              ]
+            }
+          },
+          {
+            "job_id": "ci-suites",
+            "definition_sha256": "c54352dbae19b3a104dc8a7063f04be7500d51d45a7e5b77329e709918e0b7fa",
+            "definition": {
+              "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'ci-suites' || 'ci-suites-skipped' }}",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n  github.event.pull_request.head.repo.full_name == github.repository &&\n  (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal"
+              ],
+              "timeout-minutes": 45,
+              "permissions": {
+                "contents": "read",
+                "pull-requests": "read"
+              },
+              "steps": [
+                {
+                  "name": "Check out the trusted base (selection and commands)",
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false,
+                    "ref": "${{ github.event.pull_request.base.sha || github.sha }}",
+                    "path": "trusted"
+                  }
+                },
+                {
+                  "name": "Check out the candidate",
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false,
+                    "fetch-depth": 0,
+                    "path": "candidate"
+                  }
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./trusted/.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Select suites",
+                  "id": "select",
+                  "env": {
+                    "GITHUB_TOKEN": "${{ github.token }}"
+                  },
+                  "run": "selector=trusted/scripts/ci/ci-required-selection.mjs\nif [ ! -f \"$selector\" ]; then\n  echo \"::warning title=ci-suites bootstrap::the base has no selection; the candidate's own copy decides\"\n  selector=candidate/scripts/ci/ci-required-selection.mjs\nfi\necho \"selector=$selector\" >> \"$GITHUB_OUTPUT\"\nnode \"$selector\" --check ci-suites\n"
+                },
+                {
+                  "name": "Run the selected suites",
+                  "env": {
+                    "SELECTOR": "${{ steps.select.outputs.selector }}",
+                    "SUITES": "${{ steps.select.outputs.suites }}",
+                    "CI_BASE_SHA": "${{ github.event.pull_request.base.sha || github.event.before }}",
+                    "PYTHONDONTWRITEBYTECODE": "1"
+                  },
+                  "run": "failed=\"\"\nfor suite in $(node -e 'for (const s of JSON.parse(process.env.SUITES)) console.log(s)'); do\n  if node \"$SELECTOR\" --run \"$suite\" --root candidate; then\n    echo \"- \\`$suite\\`: passed\" >> \"$GITHUB_STEP_SUMMARY\"\n  else\n    echo \"- \\`$suite\\`: **failed**\" >> \"$GITHUB_STEP_SUMMARY\"\n    failed=\"$failed $suite\"\n  fi\ndone\nif [ -n \"$failed\" ]; then\n  echo \"::error title=ci-suites::failed:$failed\"\n  exit 1\nfi\n"
+                }
+              ]
+            }
+          },
+          {
+            "job_id": "migration-verify",
+            "definition_sha256": "554f6a340a69a47c3d9f6fe0853ba16c4a62fceb0cc4b970d27d5994562890b1",
+            "definition": {
+              "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'migration-verify' || 'migration-verify-skipped' }}",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n  github.event.pull_request.head.repo.full_name == github.repository &&\n  (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal"
+              ],
+              "timeout-minutes": 30,
+              "permissions": {
+                "contents": "read",
+                "pull-requests": "read"
+              },
+              "steps": [
+                {
+                  "name": "Check out the trusted base (selection and commands)",
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false,
+                    "ref": "${{ github.event.pull_request.base.sha || github.sha }}",
+                    "path": "trusted"
+                  }
+                },
+                {
+                  "name": "Check out the candidate",
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false,
+                    "path": "candidate"
+                  }
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./trusted/.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Select suites",
+                  "id": "select",
+                  "env": {
+                    "GITHUB_TOKEN": "${{ github.token }}"
+                  },
+                  "run": "selector=trusted/scripts/ci/ci-required-selection.mjs\nif [ ! -f \"$selector\" ]; then\n  echo \"::warning title=migration-verify bootstrap::the base has no selection; the candidate's own copy decides\"\n  selector=candidate/scripts/ci/ci-required-selection.mjs\nfi\necho \"selector=$selector\" >> \"$GITHUB_OUTPUT\"\nnode \"$selector\" --check migration-verify\n"
+                },
+                {
+                  "name": "Install from lockfile",
+                  "if": "steps.select.outputs.run_production_schema == 'true'",
+                  "working-directory": "candidate/apps/clued-cloud",
+                  "env": {
+                    "npm_config_logs_dir": "${{ runner.temp }}/clued-npm-debug-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}"
+                  },
+                  "run": "timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=2 --fetch-timeout=30000\ntimeout --signal=TERM --kill-after=15s 2m npm rebuild @embedded-postgres/linux-x64\n"
+                },
+                {
+                  "name": "Verify migrations on the production schema",
+                  "if": "steps.select.outputs.run_production_schema == 'true'",
+                  "env": {
+                    "SELECTOR": "${{ steps.select.outputs.selector }}"
+                  },
+                  "run": "status=0\nnode \"$SELECTOR\" --run production-schema --root candidate || status=$?\nif [ -f \"$RUNNER_TEMP/production-schema-report.json\" ]; then\n  node -e 'const r=JSON.parse(require(\"fs\").readFileSync(process.argv[1],\"utf8\"));\n    const lines=[\"### migration-verify: \"+r.status,\"\",...r.errors.map(e=>\"- error: `\"+e+\"`\"),\n      \"- pending migrations: \"+((r.pending||[]).join(\", \")||\"none\"),\n      \"- repository-only columns and functions (tests see them, production does not): \"+((r.repository_only||[]).length)];\n    require(\"fs\").appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join(\"\\n\")+\"\\n\");' \"$RUNNER_TEMP/production-schema-report.json\"\nfi\nexit $status\n"
+                },
+                {
+                  "name": "Not affected",
+                  "if": "steps.select.outputs.run_production_schema != 'true'",
+                  "run": "echo \"No migration, ledger, snapshot or drift-check file changed; nothing to verify.\" >> \"$GITHUB_STEP_SUMMARY\""
+                }
+              ]
+            }
+          }
+        ]
+      }
     }
   },
   "future_workflows": [],

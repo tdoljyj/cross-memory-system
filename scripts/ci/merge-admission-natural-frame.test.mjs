@@ -8,6 +8,10 @@ import {createHash} from 'node:crypto';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {registerHooks} from 'node:module';
 import {loadSourceHistoryFixture} from './hosted-migration-source-history.fixture.mjs';
+import {loadHistoricalWorkflowProfiles69e} from './fixtures/workflow-profiles-69e30b6/fixture.mjs';
+import {parseWorkflowProfiles,registeredWorkflowSource,rolesForSource,roleDefinitionDigest} from './clued-workflow-profile.mjs';
+import {createCatalogueSourceReader} from './clued-source-only-workflow.mjs';
+import {qualifiedCI} from './clued-gated-proof.mjs';
 const here=path.dirname(fileURLToPath(import.meta.url)),repo=process.env.CLUED_PRODUCER_TEST_REPO_ROOT??path.resolve(here,'../..');
 registerHooks({resolve(s,c,next){if(s.startsWith('./')&&c.parentURL?.startsWith(pathToFileURL(here).href)){
   const own=path.join(here,s),real=path.join(repo,'scripts/ci',s);if(!fs.existsSync(own)&&fs.existsSync(real))return {url:pathToFileURL(real).href,shortCircuit:true};}return next(s,c);}});
@@ -21,15 +25,31 @@ const h=x=>createHash('sha256').update(x).digest('hex'),blob=x=>createHash('sha1
 const repository='tdoljyj/cross-memory-system',subject='891ea2e7a68e0a3201b64a8fd173f4d50a4c18dc',head='a'.repeat(40),base='b'.repeat(40),
   scope={project_id:'0597aa60-9b98-4da6-a4ab-63d7705b632f',queue_ref:'merge:'+repository+':main'},uid='10000000-0000-4000-8000-000000000001';
 const at=s=>'2026-10-11T06:00:'+String(s).padStart(2,'0')+'.000000Z',window={start:at(0),end:at(59)},closed=at(59);
-function fixture(){
+function fixture({executionSnapshot=null}={}){
   const paths={script:'scripts/ci/clued-work-admission.mjs',workflow:'.github/workflows/clued-work-admission.yml',reverify_workflow:'.github/workflows/clued-work-admission-reverify.yml',policy:'config/merge-admission-policy.json'},
     texts=Object.fromEntries(Object.entries(paths).map(([k,p])=>[k,fs.readFileSync(path.join(repo,p),'utf8')])),source={grammar:'clued.work-admission.evaluate-observation/1',source_checkout_sha:subject,default_branch:'main',app_id:5164952};
   for(const [k,p]of Object.entries(paths)){source[k+'_path']=p;source[k+'_blob']=blob(texts[k]);}
-  const profiles=fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'),'utf8'),roles=fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-role-specs.json'),'utf8'),
+  const profiles=executionSnapshot?.profilesRaw??fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'),'utf8'),
+    roles=executionSnapshot?.rolesRaw??fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-role-specs.json'),'utf8'),
+    registry=parseWorkflowProfiles(profiles),independent=JSON.parse(roles),
+    // Ordinary positive cases declare a registry-defined synthetic Source
+    // world. They retain today's real raw /3 catalogue and role bytes, while
+    // selecting only an exact already-registered blob and its independent
+    // roles. This is not a claim that today's working tree is qualified.
+    executionBlobs=Object.fromEntries(Object.keys(registry.workflows).map(file=>{
+      const sha=executionSnapshot?executionSnapshot.workflowDirectory.find(row=>row.path===file).sha:
+        registry.workflows[file].workflow_blob;
+      const picked=registeredWorkflowSource(registry,file,sha),assigned=rolesForSource(independent,file,sha);
+      assert.equal(picked.passed,true);assert.ok(Array.isArray(assigned));
+      assert.deepEqual(assigned.map(role=>role.job_id).sort(),[...picked.profile.primary_ids].sort());
+      for(const role of assigned)if(Object.hasOwn(role,'definition'))
+        assert.equal(roleDefinitionDigest(role.definition),role.definition_sha256);
+      return [file,sha];
+    })),
     expected={schema:'clued.merge-admission-four-source-expectations/1',repository,scope,admission_sources:[source],execution_source:{source_checkout_sha:subject,profiles_sha256:h(profiles),role_specs_sha256:h(roles)}},
     runtime={source_contract_raw:JSON.stringify({schema:'clued.merge-admission-r9-source-contract/1',repository,scope,window,four_expected_sources_raw:JSON.stringify(expected),clock:null}),
       forward_epoch:{epoch_id:uid},operation_coverage:{schema:'clued.r9-finite-recorded-operation-coverage/1',owner_receipt_id:uid,epoch_id:uid,repository,scope,mode:'explicit_recorded_origins_during_this_epoch',original_source_paths:['scripts/ci/clued-work-admission.mjs','scripts/ci/clued-merge-executor.mjs']},
-      proof_profiles_raw:profiles,role_specs_raw:roles,natural_selection:{default_branch:'main'},execution_workflow_blobs:Object.fromEntries(Object.keys(JSON.parse(profiles).workflows).map(p=>[p,blob(fs.readFileSync(path.join(repo,p),'utf8'))]))};
+      proof_profiles_raw:profiles,role_specs_raw:roles,natural_selection:{default_branch:'main'},execution_workflow_blobs:executionBlobs};
   return {runtime,native:{status:'COMPLETE',population_packets:[],population:{cohort_digest:'actual-synthetic-native-snapshot'}},attemptRows:[],
     natural:{status:'NATIVE_ORIGIN_BOUND',entries:[]},closedAt:closed,sourceBytes:{[subject]:{texts,...Object.fromEntries(['script','workflow','reverify_workflow','policy'].map(k=>[k+'_blob',source[k+'_blob']]))}}};
 }
@@ -37,6 +57,58 @@ test('actual assembly entry builds eight closed empty populations only from a co
   const f=fixture(),r=assembleNaturalFourSourceFrame(f);assert.equal(r.status,'FOUR_SOURCE_FRAME_DATA_CANDIDATE',JSON.stringify(r.gaps));
   assert.equal(Object.keys(JSON.parse(r.frame.packet_raw).populations).length,8);assert.equal(r.math.metrics.update_main_rounds.value,0);
   assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
+
+test('exact disabled External2 metadata closes the source directory but never supplies execution proof',()=>{
+  for(const [file,expectedBlob]of [
+    ['.github/workflows/clued-handover-disposable-idle.yml','97c39730ce75f2ea2427c9fa3845f9df32e998f8'],
+    ['.github/workflows/clued-handover-external-qualification.yml','689a1c5fcdbefa5353715f55e39c0fc08a9f5230']
+  ]){
+    const f=fixture(),actual=blob(fs.readFileSync(path.join(repo,file),'utf8')),
+      registry=parseWorkflowProfiles(f.runtime.proof_profiles_raw),roles=JSON.parse(f.runtime.role_specs_raw),
+      expected=JSON.parse(JSON.parse(f.runtime.source_contract_raw).four_expected_sources_raw);
+    assert.equal(actual,expectedBlob,'the real unaccepted Source bytes remain independently witnessed');
+    assert.equal(registeredWorkflowSource(registry,file,actual).passed,false);
+    assert.equal(rolesForSource(roles,file,actual),null);
+    assert.equal(h(f.runtime.proof_profiles_raw),expected.execution_source.profiles_sha256);
+    assert.equal(h(f.runtime.role_specs_raw),expected.execution_source.role_specs_sha256);
+    f.runtime.execution_workflow_blobs[file]=actual;
+    const before=JSON.stringify(f),r=assembleNaturalFourSourceFrame(f);
+    assert.equal(r.status,'FOUR_SOURCE_FRAME_DATA_CANDIDATE',JSON.stringify(r.gaps));
+    const packet=JSON.parse(r.frame.packet_raw);
+    assert.ok(packet.execution_sources.entries.some(source=>source.workflow_file===file&&source.workflow_blob===actual));
+    assert.equal(packet.rounds.length,0);assert.equal(r.math.metrics.wasted_final_rounds.denominator,0);
+    assert.equal(JSON.stringify(f),before);assert.equal(r.source_authenticated,false);
+    assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+  }
+});
+
+test('complete Native run and primary-job observations cannot turn disabled External metadata into execution proof',async()=>{
+  for(const file of ['.github/workflows/clued-handover-disposable-idle.yml','.github/workflows/clued-handover-external-qualification.yml']){
+    const f=fixture(),registry=parseWorkflowProfiles(f.runtime.proof_profiles_raw),roleSpecs=JSON.parse(f.runtime.role_specs_raw),
+      actual=blob(fs.readFileSync(path.join(repo,file))),source=createCatalogueSourceReader({registry,roleSpecs})({file,blob:actual});
+    assert.equal(source.source_identified,true);assert.equal(source.execution_eligible,false);
+    const run={id:9800,run_attempt:1,event:'pull_request',path:file,head_sha:head,status:'completed',conclusion:'success',pull_requests:[{number:727}]},
+      jobs=[{id:9801,run_id:run.id,run_attempt:1,name:'admission-gate',status:'completed',conclusion:'success',labels:['self-hosted'],steps:[]},
+        ...source.profile.routes.map((route,index)=>({id:9802+index,run_id:run.id,run_attempt:1,name:route.name,status:'completed',conclusion:'success',
+          labels:['self-hosted'],steps:Object.entries(route.required_steps).flatMap(([name,count])=>
+            Array.from({length:count},()=>({name,status:'completed',conclusion:'success'})))}))];
+    let jobReads=0;
+    const proof=await qualifiedCI({repository,head,prNumber:727,workflows:new Map([[file,actual]]),profiles:{workflows:{[file]:source.profile}},
+      // Even an erroneously positive caller authorization cannot override the
+      // actual disabled Source mode at the production execution qualifier.
+      authorizeSource:async()=>true,revalidateSources:async()=>true,read:async route=>{
+        if(route.includes('/jobs?')){jobReads++;return {total_count:jobs.length,jobs};}
+        if(route.includes('/actions/runs?'))return {total_count:1,workflow_runs:[run]};
+        if(route.endsWith('/actions/runs/'+run.id))return run;
+        throw Error('UNEXPECTED_PURE_NATIVE_READ');
+      }});
+    assert.equal(jobReads,1,'the real qualifier consumed the complete Native job fixture');
+    assert.equal(proof.passed,false);assert.equal(proof.code,'SOURCE_METADATA_ONLY_DISABLED');
+    assert.equal(proof.gate_only,false);assert.equal(proof.rerun,undefined);
+    assert.equal(registeredWorkflowSource(registry,file,actual).passed,false);
+    assert.equal(source.host_qualified,false);assert.equal(source.operator_accepted,false);
+  }
 });
 test('missing real finite-epoch selection or partial Native source cannot be converted to a hand-written complete zero',()=>{
   for(const change of [f=>f.runtime.operation_coverage=null,f=>f.native.status='PARTIAL',f=>f.natural.status='PARTIAL',f=>f.runtime.operation_coverage.epoch_id='10000000-0000-4000-8000-000000000002']){
@@ -417,7 +489,9 @@ test('zero to four previous versions preserve exact descriptors and no-map legac
 });
 
 test('same Natural Source snapshot still requires current runtime bytes even when a complete previous map is accepted for artifacts',()=>{
-  const profiles='{"workflows":{}}',roles='{"roles":[]}',workflow='.github/workflows/clued-work-admission.yml',runtimePath='scripts/ci/clued-gated-proof-runtime.mjs',wf='b'.repeat(40),
+  const profiles='{"schema":"clued.gated-proof-profiles/2","workflows":{}}',
+    roles='{"schema":"clued.gated-proof-role-specs/2","workflows":{}}',
+    workflow='.github/workflows/clued-work-admission.yml',runtimePath='scripts/ci/clued-gated-proof-runtime.mjs',wf='b'.repeat(40),
     admission=Object.fromEntries(['script','workflow','reverify_workflow','policy'].flatMap(k=>[[k+'_path','source/'+k],[k+'_blob','a'.repeat(40)]])),
     currentMap={[workflow]:wf,[runtimePath]:'c'.repeat(40)},oldMap={[workflow]:wf,[runtimePath]:'d'.repeat(40)},
     cfg={admission_source:admission,execution_source:{profiles_sha256:h(profiles),role_specs_sha256:h(roles)},natural_producers:[{
@@ -433,11 +507,12 @@ const {registeredWorkflowSource:registeredHistoryAssemblySource}=await import('.
 const {applicableCI:historyAssemblyApplicability}=await import('./clued-gated-proof.mjs');
 const historyAssemblyAddedWorkflows=['.github/workflows/clued-handover-external-qualification.yml','.github/workflows/clued-handover-disposable-idle.yml'];
 function historicalAssemblyFixture({oldSnapshot=null,currentTip=subject}={}){
-  const f=fixture(),oldTip=oldSnapshot?.source_checkout_sha??'f'.repeat(40),oldRegistry=JSON.parse(oldSnapshot?.proof_profiles_raw??f.runtime.proof_profiles_raw),oldRoles=JSON.parse(oldSnapshot?.role_specs_raw??f.runtime.role_specs_raw);
+  const frozen=loadHistoricalWorkflowProfiles69e(),f=fixture({executionSnapshot:frozen}),
+    oldTip=oldSnapshot?.source_checkout_sha??'f'.repeat(40),oldRegistry=parseWorkflowProfiles(oldSnapshot?.proof_profiles_raw??f.runtime.proof_profiles_raw),
+    oldRoles=JSON.parse(oldSnapshot?.role_specs_raw??f.runtime.role_specs_raw);
   assert.equal(Object.keys(oldRegistry.workflows).length,22);
   if(!oldSnapshot)for(const file of historyAssemblyAddedWorkflows){delete oldRegistry.workflows[file];delete oldRoles.workflows[file];}
-  const currentDirectory=fs.readdirSync(path.join(repo,'.github/workflows')).filter(name=>fs.statSync(path.join(repo,'.github/workflows',name)).isFile())
-      .map(name=>{const file='.github/workflows/'+name;return {path:file,sha:blob(fs.readFileSync(path.join(repo,file))),type:'blob',mode:'100644'};}),
+  const currentDirectory=structuredClone(frozen.workflowDirectory),
     oldDirectory=oldSnapshot?.workflow_directory??currentDirectory.filter(row=>!historyAssemblyAddedWorkflows.includes(row.path)),
     snapshot={source_checkout_sha:oldTip,proof_profiles_raw:oldSnapshot?.proof_profiles_raw??JSON.stringify(oldRegistry),role_specs_raw:oldSnapshot?.role_specs_raw??JSON.stringify(oldRoles),workflow_directory:oldDirectory,
       main_history:{base_commit:oldTip,head_commit:currentTip,merge_base_commit:oldTip,status:'ahead'}},
@@ -492,9 +567,10 @@ function historicalAssemblyRowsRemain(packet,prepared){
 }
 
 test('v2 actual 595 old22 replay preserves ac90 while current Source selects exact registered b8 FullRole; unknown and mixed pairs retain the full population',async()=>{
-  const oldTip='59522b4158322e833ef152472a924c5fb40e0b24',currentTip='a258436c364304d4a69de4fff64b825f7801d2c3',
+  const oldTip='59522b4158322e833ef152472a924c5fb40e0b24',currentTip='69e30b6bf1633e4637865b8c7f1ae0ff6cd746b8',
     sealed=loadSourceHistoryFixture(),
-    file='.github/workflows/clued-handover-external-qualification.yml',current=fixture(),currentRegistry=JSON.parse(current.runtime.proof_profiles_raw),
+    file='.github/workflows/clued-handover-external-qualification.yml',current=fixture({executionSnapshot:loadHistoricalWorkflowProfiles69e()}),
+    currentRegistry=parseWorkflowProfiles(current.runtime.proof_profiles_raw),
     currentRoles=JSON.parse(current.runtime.role_specs_raw),profilesRaw=sealed.historical_profiles,
     rolesRaw=sealed.historical_roles,oldRegistry=JSON.parse(profilesRaw),oldRoles=JSON.parse(rolesRaw),
     wrapper=oldRegistry.workflows[file],future=currentRegistry.workflows[file].accepted_sources;
@@ -518,7 +594,7 @@ test('v2 actual 595 old22 replay preserves ac90 while current Source selects exa
     reviewed=cfg.previous_execution_sources.find(s=>s.source_checkout_sha===oldTip);assert.ok(reviewed);
   assert.equal(h(profilesRaw),reviewed.profiles_sha256);assert.equal(h(rolesRaw),reviewed.role_specs_sha256);
   assert.equal(h(current.runtime.proof_profiles_raw),cfg.execution_source.profiles_sha256);assert.equal(h(current.runtime.role_specs_raw),cfg.execution_source.role_specs_sha256);
-  const actualBlob=blob(fs.readFileSync(path.join(repo,file))),selected=registeredHistoryAssemblySource(currentRegistry,file,actualBlob);
+  const actualBlob=current.runtime.execution_workflow_blobs[file],selected=registeredHistoryAssemblySource(currentRegistry,file,actualBlob);
   assert.equal(selected.passed,true);assert.equal(actualBlob,future[0].workflow_blob);assert.equal(selected.profile.workflow_blob,actualBlob);
   const {rolesForSource,roleDefinitionDigest}=await import('./clued-workflow-profile.mjs'),roles=rolesForSource(currentRoles,file,actualBlob);
   assert.equal(roles.length,1);assert.equal(roles[0].job_id,'qualify');assert.equal(roles[0].definition_sha256,'fab079be15c3b25abe44ff6bcc2af3ff86161db853b0017ae92cb3f5ececb074');
@@ -589,8 +665,17 @@ test('v2 assembly retains full round and Native populations when historical snap
   }
 });
 
-function executionIntakeFixture({tips=['f'.repeat(40)],includeCurrent=true}={}){
-  const history=historicalAssemblyFixture(),f=intakeVersionFixture(),current=history.f.runtime.natural_selection.current_execution_snapshot,
+function executionIntakeFixture({tips=['f'.repeat(40)],includeCurrent=true,currentDiskBytes=false}={}){
+  const history=historicalAssemblyFixture(),f=intakeVersionFixture();
+  // The 22/20 replay is immutable historical data. The separate capacity
+  // experiment uses today's actual disk bytes with an explicitly synthetic
+  // directory of their registered Source templates; it grants no qualification
+  // to the current checkout's potentially unregistered workflow files.
+  const actualProfiles=currentDiskBytes?fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'),'utf8'):null;
+  const current=currentDiskBytes?{proof_profiles_raw:actualProfiles,
+    role_specs_raw:fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-role-specs.json'),'utf8'),
+    workflow_directory:Object.entries(parseWorkflowProfiles(actualProfiles).workflows).map(([path,profile])=>
+      ({path,sha:profile.workflow_blob,type:'blob',mode:'100644'}))}:history.f.runtime.natural_selection.current_execution_snapshot,
     currentSnapshot={...current,source_checkout_sha:head,main_history:{base_commit:head,head_commit:head,merge_base_commit:head,status:'identical'}},
     snapshots=new Map(tips.map(tip=>[tip,{...structuredClone(history.snapshot),source_checkout_sha:tip,
       main_history:{base_commit:tip,head_commit:head,merge_base_commit:tip,status:'ahead'}}]));
@@ -686,7 +771,7 @@ test('v2 intake stops snapshot reads at the existing shared budget and retains e
 
 test('67 authenticated entries or actual tips share actual profile and role bytes once and seal below the unchanged limit with zero restore reads',async()=>{
   for(const differentTips of [false,true]){
-    const f=executionIntakeFixture({tips:[],includeCurrent:true}),key=h(f.currentSnapshot.proof_profiles_raw)+':'+h(f.currentSnapshot.role_specs_raw),
+    const f=executionIntakeFixture({tips:[],includeCurrent:true,currentDiskBytes:true}),key=h(f.currentSnapshot.proof_profiles_raw)+':'+h(f.currentSnapshot.role_specs_raw),
       cfg={proof_profiles_raw:f.currentSnapshot.proof_profiles_raw,role_specs_raw:f.currentSnapshot.role_specs_raw},entries=[],packets=[],snapshots={};
     assert.equal(Buffer.byteLength(cfg.proof_profiles_raw),fs.statSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json')).size);
     assert.equal(Buffer.byteLength(cfg.role_specs_raw),fs.statSync(path.join(repo,'scripts/ci/clued-gated-proof-role-specs.json')).size);

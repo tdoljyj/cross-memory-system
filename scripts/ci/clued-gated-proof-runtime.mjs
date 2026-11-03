@@ -1,9 +1,11 @@
 // Shared read-only bridge. Platform source metadata is independent of job
 // stdout; a candidate cannot assert which workflow file GitHub executed.
-import {workflowBlob,registeredWorkflowSource,rolesForSource,futureWorkflowCatalogue,acceptedFutureWorkflowSource,external2FutureWorkflowCatalogue,acceptedExternal2WorkflowSource,EXTERNAL2_FILES} from './clued-workflow-profile.mjs';
+import {workflowBlob,registeredWorkflowSource,rolesForSource,futureWorkflowCatalogue,acceptedFutureWorkflowSource,external2FutureWorkflowCatalogue,acceptedExternal2WorkflowSource,EXTERNAL2_FILES,parseWorkflowProfiles,decodeWorkflowProfiles} from './clued-workflow-profile.mjs';
+import {createCatalogueSourceReader} from './clued-source-only-workflow.mjs';
+import {readRequiredApplicability} from './clued-required-applicability.mjs';
 import {PUBLISHER_FILES,PUBLISHER_SOURCE_PATH,registeredPublisherTransition} from './clued-production-publisher-source.mjs';
 import {PUBLISHER_PR_QUALIFICATION_FILES,PUBLISHER_PR_QUALIFICATION_PATH,registeredPublisherPrQualificationTransition} from './clued-publisher-qualification-source.mjs';
-export const COMPONENT_VERSION = "1.0.2";
+export const COMPONENT_VERSION = "1.0.4";
 import {applicableCI,qualifiedCI,gateIdentityWitness,checkoutIdentityWitness,DOCUMENTATION_STEPS,QUALITY} from './clued-gated-proof.mjs';
 import {workflowIsGated,workflowFormFindings,gateFindings,workflowJobs,githubJson} from './clued-work-admission.mjs';
 import fs from 'node:fs';
@@ -75,7 +77,7 @@ export function loadProofSnapshot(workspace,tip,workflows) {
     if(bytes.length>trustedSourceByteLimit(file) || !Buffer.from(text,'utf8').equals(bytes))throw Error('trusted snapshot file exceeds bounds');
     files[file]=workflowBlob(text);texts[file]=text;
   }
-  return {tip,checkout,files,profiles:JSON.parse(texts[SNAPSHOT_FILES[0]]),roleSpecs:JSON.parse(texts[SNAPSHOT_FILES[1]]),publisherSources:JSON.parse(texts[PUBLISHER_SOURCE_PATH]),qualificationSources:JSON.parse(texts[PUBLISHER_PR_QUALIFICATION_PATH]),
+  return {tip,checkout,files,profiles:parseWorkflowProfiles(texts[SNAPSHOT_FILES[0]]),roleSpecs:JSON.parse(texts[SNAPSHOT_FILES[1]]),publisherSources:JSON.parse(texts[PUBLISHER_SOURCE_PATH]),qualificationSources:JSON.parse(texts[PUBLISHER_PR_QUALIFICATION_PATH]),
     workflows:new Map(workflows)};
 }
 
@@ -160,7 +162,7 @@ async function executionWithinBudget({read,graphRead,readLog,repository,prNumber
         const content=await read(`/repos/${repository}/contents/${file}?ref=${snapshot.tip}`);
         const text=decodedWorkflow(content,file,snapshot.files[file]);
         if(text===null)return false;
-        if(file===SNAPSHOT_FILES[0] && JSON.stringify(JSON.parse(text))!==JSON.stringify(snapshot.profiles))return false;
+        if(file===SNAPSHOT_FILES[0] && JSON.stringify(parseWorkflowProfiles(text))!==JSON.stringify(snapshot.profiles))return false;
         if(file===SNAPSHOT_FILES[1] && JSON.stringify(JSON.parse(text))!==JSON.stringify(snapshot.roleSpecs))return false;
       }
       return true;
@@ -180,7 +182,7 @@ async function executionWithinBudget({read,graphRead,readLog,repository,prNumber
     const sourceFor=async(file,run)=>workflowSourceOf({read:sourceRead,graphRead,repository,
       headRepository:diff.descriptor.head_repository,file,run,registry:catalog.source_registry,
       roleSpecs:catalog.source_roles,serverURL});
-    const proof=await qualifiedCI({read,repository,head,prNumber,workflows:catalog.workflows,profiles:catalog.profiles,
+    const proof=await qualifiedCI({read,repository,head,base:diff.descriptor.base,prNumber,workflows:catalog.workflows,profiles:catalog.profiles,
       authorizeSource:async({file,run})=>{
         const source=await sourceFor(file,run);
         if(!source.passed || source.workflow_blob!==catalog.workflows.get(file))return false;
@@ -190,6 +192,9 @@ async function executionWithinBudget({read,graphRead,readLog,repository,prNumber
         repository,head,prNumber,trustedGateBlob:snapshot.files['scripts/ci/clued-work-admission.mjs']})).passed===true,
       qualifyDocumentation:async({run,jobs})=>(await boundDocumentationAttempt({read:sourceRead,readLog,source:sources.get(run.id),run,jobs,
         repository,head,prNumber,trustedSources:Object.fromEntries(DOC_SOURCES.map(file=>[file,snapshot.files[file]]))})).passed===true,
+      qualifyRequiredApplicability:async({repository,prNumber,head,base,runId,runAttempt,requestKey})=>
+        readRequiredApplicability({read:sourceRead,readLog,repository,prNumber,head,base,runId,runAttempt,requestKey,
+          trustedGateBlob:snapshot.files['scripts/ci/clued-work-admission.mjs']}),
       revalidateSources:async({runs})=>{
         if(!await snapshotCurrent())return false;
         const finalDiff=await boundPullDiff({read,repository,prNumber,head});
@@ -417,6 +422,7 @@ export async function boundDocumentationAttempt({read,readLog,source,run,jobs,re
 // boundaries; they are not registered as tests merely because they changed.
 export async function boundWorkflowCatalog({read,repository,tip,head,defaultWorkflows,registry,roleSpecs,publisherRegistry,qualificationRegistry,diff}) {
   try {
+    registry=decodeWorkflowProfiles(registry);
     if(typeof read!=='function' || !REPO.test(repository??'') || !SHA.test(tip??'') || !SHA.test(head??'') ||
       !(defaultWorkflows instanceof Map) || !defaultWorkflows.size || diff?.passed!==true || diff.diffComplete!==true ||
       diff.descriptor?.repository!==repository || diff.descriptor.head!==head ||
@@ -441,11 +447,12 @@ export async function boundWorkflowCatalog({read,repository,tip,head,defaultWork
     const publisherTransitions=[],qualificationTransitions=[];
     const sources=new Map(),selected={schema:registry.schema,workflows:{}};
     const sourceRegistry={...registry,workflows:{...registry.workflows}},sourceRoles={...roleSpecs,workflows:{...roleSpecs.workflows}};
+    const readCatalogueSource=createCatalogueSourceReader({registry,roleSpecs});
     for(const [file,blob] of defaultWorkflows) {
       if(atDefault.get(file)!==blob)return unknown('trusted checkout/default catalogue differs');
-      const headBlob=atHead.get(file),source=registeredWorkflowSource(registry,file,headBlob);
-      if(!source.passed)return unknown('counted CI removed or unregistered at PR head');
-      const roles=rolesForSource(roleSpecs,file,headBlob);
+      const headBlob=atHead.get(file),source=readCatalogueSource({file,blob:headBlob});
+      if(!source.source_identified)return unknown('counted CI removed or unregistered at PR head');
+      const roles=source.roles;
       if(!roles || roles.length!==source.profile.primary_ids.length ||
         roles.some(role=>!source.profile.primary_ids.includes(role.job_id)))return unknown('counted source roles missing');
       sources.set(file,headBlob);selected.workflows[file]=source.profile;
@@ -761,7 +768,7 @@ async function observeSourceWithinBudget({env,event,eventName,workspace,workflow
     const file=String(run?.path??'').replace(/@.*$/,'');
     if(run?.id!==event.workflow_run.id || run.event!=='pull_request' || run.status!=='completed' || !workflows.has(file))
       return {state:'not_observed',reason:'not a completed counted PR workflow'};
-    const registry=JSON.parse(fs.readFileSync(path.join(workspace,'scripts/ci/clued-gated-proof-profiles.json'),'utf8'));
+    const registry=parseWorkflowProfiles(fs.readFileSync(path.join(workspace,'scripts/ci/clued-gated-proof-profiles.json')));
     const roleSpecs=JSON.parse(fs.readFileSync(path.join(workspace,'scripts/ci/clued-gated-proof-role-specs.json'),'utf8'));
     const source=await workflowSourceOf({read,graphRead,repository,headRepository:run.head_repository?.full_name,
       file,run,registry,roleSpecs,serverURL:env.GITHUB_SERVER_URL});

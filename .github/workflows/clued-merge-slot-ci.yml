@@ -36,6 +36,8 @@ on:
       - clued-cloud-node22-install
       - clued-cloud-quality
       - clued-components
+      - clued-required-tests
+      - runner-budget-policy
       - contract-placement
       - Clued connection authorization candidate
       - Clued G4 Database Gate

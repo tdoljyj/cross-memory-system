@@ -1,0 +1,1002 @@
+{
+  "schema": "clued.gated-proof-role-specs/2",
+  "audit_source": "d21f15888a8a0656e8f594c0ac619b6f4cda01f9",
+  "workflows": {
+    ".github/workflows/clued-cloud-node22-install.yml": {
+      "sources": {
+        "033aeb3af58a3913b53b7580abc3e3fe805dffed": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "6eeb3fdc96a9bb8d585021abcefd59f30ad1c95f2ea2c11413aacb310d3e9925"
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "dbebc120b727c1fb8692f5853318a728e8ea8a2d03f5f9ec37c367cde0556831"
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-cloud-quality-gate.yml": {
+      "sources": {
+        "f1b1c57f36abe4f0123d13cdda46f7d258c54af7": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "76e6222c9438a138abe59bead2eb0b6ec2cece86dee44b00497a7f0f711df335"
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "320c37faad0f913908820086992eab536abd93742c77a11c7b1972e1f26d39b4"
+          }
+        ],
+        "a811a0128db82fb23f78b51fefea73288a103223": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "79a8eaf031e185b29b1624374265c39e66e4eae00d1097db8aca42bbb7a28941"
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "320c37faad0f913908820086992eab536abd93742c77a11c7b1972e1f26d39b4"
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-components.yml": {
+      "sources": {
+        "c1d5649e420263e313ff5d52247b09d27920536f": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "35efc46f269251726f25ba95d86e8cf62de38d8b14a1e8ae5b4e875b0838c838"
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "6834cf80f5612e6dd1dd1516adbe75871c455cb1ff228558578c1acec065941d"
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-connection-authorization.yml": {
+      "sources": {
+        "47a92a1ab7ae119ffc19ab009ab234e1bdac5138": [
+          {
+            "job_id": "isolated-candidate-trusted-self-hosted",
+            "definition_sha256": "a4136deb30b3241f9487b622f1fcc713118c0295f3f14d8cdb857a67f712fd03"
+          },
+          {
+            "job_id": "isolated-candidate-untrusted-hosted",
+            "definition_sha256": "e0203dc254798cf57298dad21757857373626fbdb2b96fd9d7753829197a052a"
+          }
+        ],
+        "1eedcb3435610b3ebdfff4573218979b7e3d665d": [
+          {
+            "job_id": "isolated-candidate-trusted-self-hosted",
+            "definition_sha256": "a4136deb30b3241f9487b622f1fcc713118c0295f3f14d8cdb857a67f712fd03"
+          },
+          {
+            "job_id": "isolated-candidate-untrusted-hosted",
+            "definition_sha256": "e0203dc254798cf57298dad21757857373626fbdb2b96fd9d7753829197a052a"
+          }
+        ],
+        "46939bb50dd33184fe16511a5e0e21d01ab19414": [
+          {
+            "job_id": "isolated-candidate-trusted-self-hosted",
+            "definition_sha256": "f7b6f2b34c1a8e2e6768393d50376d7dbd1e7e91186e9d8140b2440f48c99f9a"
+          },
+          {
+            "job_id": "isolated-candidate-untrusted-hosted",
+            "definition_sha256": "57133a69ff75999c0d64f951a81d4245c7d94631c8c17dc22021f61c51638d92"
+          }
+        ],
+        "3d20ba406c8397cfa86bf29be6904bf9fb6ba287": [
+          {
+            "job_id": "isolated-candidate-trusted-self-hosted",
+            "definition_sha256": "f7b6f2b34c1a8e2e6768393d50376d7dbd1e7e91186e9d8140b2440f48c99f9a"
+          },
+          {
+            "job_id": "isolated-candidate-untrusted-hosted",
+            "definition_sha256": "57133a69ff75999c0d64f951a81d4245c7d94631c8c17dc22021f61c51638d92"
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-g4-database.yml": {
+      "sources": {
+        "b9c4a48fecc6bdf3b65359de25c5547fd17342b6": [
+          {
+            "job_id": "database-gate-trusted-self-hosted",
+            "definition_sha256": "419fa92df2abbf61c4a0e52bc0790eb4bcee29ac6f87aca2393334c3c84f4d89"
+          },
+          {
+            "job_id": "database-gate-untrusted-hosted",
+            "definition_sha256": "02b6711a85a6e27d14a6c5a1ca3187137a6f0d770637e33ac189ebf9ed06bad8"
+          }
+        ],
+        "e5a4e4dccc6924d0eb492bf4cebd303ea62d47e9": [
+          {
+            "job_id": "database-gate-trusted-self-hosted",
+            "definition_sha256": "26ff702764b918266b925430f8c748fe8c807b81dbabd74fb10d357db3be11f2"
+          },
+          {
+            "job_id": "database-gate-untrusted-hosted",
+            "definition_sha256": "e27b4973c288bef1b272d9b3d12160fb405deaa67ec660af4185a426330da818"
+          }
+        ],
+        "3600b05da1be32ea15ffaaa18aa4497d67414feb": [
+          {
+            "job_id": "database-gate-trusted-self-hosted",
+            "definition_sha256": "ffa28967725a3ed90d7643bf9097be1e1fd29f24041911471c9166c8ca33fc8e"
+          },
+          {
+            "job_id": "database-gate-untrusted-hosted",
+            "definition_sha256": "5e7cf82312a36a98310477815f9ae1c0d21c9d228e7d254b7e83f8fc4de1469a"
+          }
+        ],
+        "ef34d4a26cd5748e14b1f15d3fac5e8a9d6011e1": [
+          {
+            "job_id": "database-gate-trusted-self-hosted",
+            "definition_sha256": "776e51160d1f44fc130901772f0f1a9e70faf95aeb8ea659555d0a208b817cba"
+          },
+          {
+            "job_id": "database-gate-untrusted-hosted",
+            "definition_sha256": "0850eb10981390c730b6b0256b83bba54d572954764a560658f0366eb9158d11"
+          }
+        ],
+        "ec4d7a59985f903b8670b6b3f5971b4ebb1098f0": [
+          {
+            "job_id": "database-gate-trusted-self-hosted",
+            "definition_sha256": "e2b3bdab96a8118bba27ee859f143ed4bde45d4cae506c68f69e95bc4dfd0f24"
+          },
+          {
+            "job_id": "database-gate-untrusted-hosted",
+            "definition_sha256": "bdc4bea6284a195384ae2763f2930a1e1c5aa848da3176f397f3a3ab5391909c"
+          }
+        ],
+        "7b22b5360603b2a1985a564da319f77da4e2b23d": [
+          {
+            "job_id": "database-gate-trusted-self-hosted",
+            "definition_sha256": "7991b8d4f69d52c7b100711a6b16459e4425a6edc506b71f7a810bf7b5c0e788"
+          },
+          {
+            "job_id": "database-gate-untrusted-hosted",
+            "definition_sha256": "5165f33fbe7eff4878a7144a20c95f77a95c847b24f92ba65d887c7a75a9f8a1"
+          }
+        ],
+        "a09cfc44e506a9672e5221a7fa6737747ddcb787": [
+          {
+            "job_id": "database-gate-trusted-self-hosted",
+            "definition_sha256": "d7f7624fd0e3cb83689f564c856a8776749672e405ab6e1f468498d8390ecbd0"
+          },
+          {
+            "job_id": "database-gate-untrusted-hosted",
+            "definition_sha256": "6e407992a1bb7d813e6889eca118138c80af561e005a51b5c4259fe3686fc3ed"
+          }
+        ]
+      }
+    },
+    ".github/workflows/contract-placement.yml": {
+      "sources": {
+        "90c632e917de5c84a3d8fb49e634f624703139cd": [
+          {
+            "job_id": "contract-placement",
+            "definition_sha256": "7c78109f3c1d4448a33147ed28ef048ae6578fe96bc4abaf4ce0ecf032c05f98"
+          }
+        ]
+      }
+    },
+    ".github/workflows/design-refs.yml": {
+      "sources": {
+        "8ff267e0a83f068280a8e0317597a40c1fd95bce": [
+          {
+            "job_id": "design-refs-trusted-self-hosted",
+            "definition_sha256": "5ecc628ffdfd0ff03a02a25e3bf1895f15f73e6bbb806deec548109813c0524f"
+          },
+          {
+            "job_id": "design-refs-untrusted-hosted",
+            "definition_sha256": "7b6618632196ea0b9e89a001a8ff126b8248ffb7c6d03920546c0f002ebfcc09"
+          }
+        ]
+      }
+    },
+    ".github/workflows/gitleaks.yml": {
+      "sources": {
+        "cbe2f69ddabb49cd91cd26664a88d47859696fa5": [
+          {
+            "job_id": "gitleaks-trusted-self-hosted",
+            "definition_sha256": "37fd01c0faff9785a944600a5752985161b8ffd6639cce768b0447bcbd767534"
+          },
+          {
+            "job_id": "gitleaks-untrusted-hosted",
+            "definition_sha256": "2cd1646ce2ee525e6d4af7d396e06af0c006e982897124a3bcf1e1cc6d96cbcf"
+          }
+        ]
+      }
+    },
+    ".github/workflows/information-flow-e2e.yml": {
+      "sources": {
+        "ce3fbcbba78f31f9dce1ef52d8739ff9075f5f2d": [
+          {
+            "job_id": "e2e-trusted-self-hosted",
+            "definition_sha256": "421c62238f81771b43f13d3ead9d6b3471874410fc3f4ecea2bae3a8f919c007"
+          },
+          {
+            "job_id": "e2e-untrusted-hosted",
+            "definition_sha256": "c91a95c9d1e4b0bdef409c0e5e3836b1b8512569fc2be6fa2e730eba426927db"
+          }
+        ],
+        "18c48c7e20cc3ff6b9ff7aae953eb2d829a22f4f": [
+          {
+            "job_id": "e2e-trusted-self-hosted",
+            "definition_sha256": "20b7acbe7bd085c58b88b14de0fe20ff5bc666315c23dca12f86bd7738f040b6"
+          },
+          {
+            "job_id": "e2e-untrusted-hosted",
+            "definition_sha256": "9953c379eaf83bb1ca9d5b194c04b2f095b2ac8b3883ab7455cd39af0c02d8c2"
+          }
+        ],
+        "312e1ef4d963ccf5be13ee9db57b30cdaef6cf99": [
+          {
+            "job_id": "e2e-trusted-self-hosted",
+            "definition_sha256": "20b7acbe7bd085c58b88b14de0fe20ff5bc666315c23dca12f86bd7738f040b6"
+          },
+          {
+            "job_id": "e2e-untrusted-hosted",
+            "definition_sha256": "9953c379eaf83bb1ca9d5b194c04b2f095b2ac8b3883ab7455cd39af0c02d8c2"
+          }
+        ]
+      }
+    },
+    ".github/workflows/model-program-m2-scoped-consumer.yml": {
+      "sources": {
+        "bb50a418de6c064584a2e13431e2f39ac20cb955": [
+          {
+            "job_id": "trusted-windows",
+            "definition_sha256": "7f6c5f8d933ebfea52bc765c4867c2b1ad461c5a715c8da0046bf182158437a8"
+          },
+          {
+            "job_id": "untrusted-linux",
+            "definition_sha256": "64d577a93366bfde9622d48c8c4f59171181dd8770dc3be93c27a890afbae2e6"
+          }
+        ],
+        "fbae19b9afee314358c82a781d889e2041c7798e": [
+          {
+            "job_id": "trusted-windows",
+            "definition_sha256": "7f6c5f8d933ebfea52bc765c4867c2b1ad461c5a715c8da0046bf182158437a8"
+          },
+          {
+            "job_id": "untrusted-linux",
+            "definition_sha256": "64d577a93366bfde9622d48c8c4f59171181dd8770dc3be93c27a890afbae2e6"
+          }
+        ]
+      }
+    },
+    ".github/workflows/public-mcp-behavior.yml": {
+      "sources": {
+        "0ec7b02e3842c3a9635fed01cd8dbcf5731886d3": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "eeaebb95becdf8527eae226e8e3947737322a4241a121a805d2ef1ba578d3470"
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "8d82691a23b560f6b2f2577dadda0820f6fd58af9582d2633d661b88763b4f39"
+          }
+        ],
+        "3cb4a7bc0f87d9d4a1d6ec8eac08519b4ee01bfc": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "03a1960869920b29f1ea83500790a22fa46aa71325dac9eb4974d3c115a167fa"
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "930cd4c203021cd82e02628dbf3b274749a10cc837e5d8a18a1fc807b87942b6"
+          }
+        ],
+        "05aaf31c642cee6be608b4aa1f635f6f1f9df5ec": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "03a1960869920b29f1ea83500790a22fa46aa71325dac9eb4974d3c115a167fa"
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "f9b5c84406e3a2bd075186db67f2959b5aead109bc9c458cb8a39139e688d984"
+          }
+        ]
+      }
+    },
+    ".github/workflows/public-mcp-protocol.yml": {
+      "sources": {
+        "c62873ae4a666830d4ea399a06ee426a52bdfb7f": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "51ecdcc63e3ca08ebbb0d752f42c6c5b464a71012e89d0cbfa265131cb9a92cb"
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "3a6fa39122d2af8665d3167b3faf6714c56a60b5fe8b4a6121a6bd9e4a655245"
+          }
+        ],
+        "cdd4a4a1e55c3e59b933b8617fdd9c44310f2078": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "51ecdcc63e3ca08ebbb0d752f42c6c5b464a71012e89d0cbfa265131cb9a92cb"
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "3a6fa39122d2af8665d3167b3faf6714c56a60b5fe8b4a6121a6bd9e4a655245"
+          }
+        ]
+      }
+    },
+    ".github/workflows/trivy.yml": {
+      "sources": {
+        "024f88452142c2e01daec1e201caa64704f2c3bc": [
+          {
+            "job_id": "trivy-trusted-self-hosted",
+            "definition_sha256": "f32f0334e7bdab2313e5f06346d99f96eed51974a631d778cdf8d5197240ba46"
+          },
+          {
+            "job_id": "trivy-untrusted-hosted",
+            "definition_sha256": "f56385fee7bb60ae1f4b80615cb83a460eead28cd2ce58b2304a456e289cb3e0"
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-work-handover-qualification-company-linux-01.yml": {
+      "sources": {
+        "f1e02e5ebbfe582daf43e7b22a527914a4ab1218": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "2c3c34a3c702cd2347ac42440dac10aee31edd469aa4f45f3f04ab21199712f6",
+            "definition": {
+              "name": "handover-hook-company-linux-01",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal",
+                "cap-docker-linux",
+                "runtime-wsl2",
+                "runner-company-linux-01"
+              ],
+              "timeout-minutes": 8,
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Verify source candidate or protected installed code",
+                  "shell": "bash",
+                  "env": {
+                    "EXPECTED_RUNNER": "clued-ci-company-linux-01",
+                    "QUALIFICATION_EVENT": "${{ github.event_name }}"
+                  },
+                  "run": "set -euo pipefail\ntest \"$RUNNER_NAME\" = \"$EXPECTED_RUNNER\"\nprobe_args=(--public-config apps/clued-cloud/app/supabase-public-config.ts)\nif [[ \"$QUALIFICATION_EVENT\" == pull_request ]]; then probe_args+=(--candidate --hook scripts/runner/clued-runner-job-started.mjs); fi\nnode scripts/runner/qualify-work-handover.mjs \"${probe_args[@]}\" > handover-hook-qualification.json\ncat handover-hook-qualification.json\n"
+                },
+                {
+                  "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                  "with": {
+                    "name": "handover-hook-company-linux-01-${{ github.run_id }}",
+                    "path": "handover-hook-qualification.json",
+                    "if-no-files-found": "error",
+                    "retention-days": 90
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-work-handover-qualification-company-linux-02.yml": {
+      "sources": {
+        "c4aee6b6a1dd789072906dd39ffba2d6a99a3988": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "76196eeeafd9542ab208af9e0ebd27ca25e3b2fd20280df985632c3d783bfa67",
+            "definition": {
+              "name": "handover-hook-company-linux-02",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal",
+                "cap-docker-linux",
+                "runtime-wsl2",
+                "runner-company-linux-02"
+              ],
+              "timeout-minutes": 8,
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Verify source candidate or protected installed code",
+                  "shell": "bash",
+                  "env": {
+                    "EXPECTED_RUNNER": "clued-ci-company-linux-02",
+                    "QUALIFICATION_EVENT": "${{ github.event_name }}"
+                  },
+                  "run": "set -euo pipefail\ntest \"$RUNNER_NAME\" = \"$EXPECTED_RUNNER\"\nprobe_args=(--public-config apps/clued-cloud/app/supabase-public-config.ts)\nif [[ \"$QUALIFICATION_EVENT\" == pull_request ]]; then probe_args+=(--candidate --hook scripts/runner/clued-runner-job-started.mjs); fi\nnode scripts/runner/qualify-work-handover.mjs \"${probe_args[@]}\" > handover-hook-qualification.json\ncat handover-hook-qualification.json\n"
+                },
+                {
+                  "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                  "with": {
+                    "name": "handover-hook-company-linux-02-${{ github.run_id }}",
+                    "path": "handover-hook-qualification.json",
+                    "if-no-files-found": "error",
+                    "retention-days": 90
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-work-handover-qualification-company-linux-03.yml": {
+      "sources": {
+        "411f13aab6f5b1688ed4878a9a0802176e6b52de": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "561b6a72b00ce0ca6eb7f664a35e48067235ec0b8dd8b417e07b5db4425b87dd",
+            "definition": {
+              "name": "handover-hook-company-linux-03",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal",
+                "cap-docker-linux",
+                "runtime-wsl2",
+                "runner-company-linux-03"
+              ],
+              "timeout-minutes": 8,
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Verify source candidate or protected installed code",
+                  "shell": "bash",
+                  "env": {
+                    "EXPECTED_RUNNER": "clued-ci-company-linux-03",
+                    "QUALIFICATION_EVENT": "${{ github.event_name }}"
+                  },
+                  "run": "set -euo pipefail\ntest \"$RUNNER_NAME\" = \"$EXPECTED_RUNNER\"\nprobe_args=(--public-config apps/clued-cloud/app/supabase-public-config.ts)\nif [[ \"$QUALIFICATION_EVENT\" == pull_request ]]; then probe_args+=(--candidate --hook scripts/runner/clued-runner-job-started.mjs); fi\nnode scripts/runner/qualify-work-handover.mjs \"${probe_args[@]}\" > handover-hook-qualification.json\ncat handover-hook-qualification.json\n"
+                },
+                {
+                  "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                  "with": {
+                    "name": "handover-hook-company-linux-03-${{ github.run_id }}",
+                    "path": "handover-hook-qualification.json",
+                    "if-no-files-found": "error",
+                    "retention-days": 90
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-work-handover-qualification-company-linux-04.yml": {
+      "sources": {
+        "30f95c881e816cdbbe27aec150d30eae616744cc": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "e40d5b8f38a94b8db9b84bc4ba2e3c385d8b53889be68561461b066cec9182b1",
+            "definition": {
+              "name": "handover-hook-company-linux-04",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal",
+                "cap-docker-linux",
+                "runtime-wsl2",
+                "runner-company-linux-04"
+              ],
+              "timeout-minutes": 8,
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Verify source candidate or protected installed code",
+                  "shell": "bash",
+                  "env": {
+                    "EXPECTED_RUNNER": "clued-ci-company-linux-04",
+                    "QUALIFICATION_EVENT": "${{ github.event_name }}"
+                  },
+                  "run": "set -euo pipefail\ntest \"$RUNNER_NAME\" = \"$EXPECTED_RUNNER\"\nprobe_args=(--public-config apps/clued-cloud/app/supabase-public-config.ts)\nif [[ \"$QUALIFICATION_EVENT\" == pull_request ]]; then probe_args+=(--candidate --hook scripts/runner/clued-runner-job-started.mjs); fi\nnode scripts/runner/qualify-work-handover.mjs \"${probe_args[@]}\" > handover-hook-qualification.json\ncat handover-hook-qualification.json\n"
+                },
+                {
+                  "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                  "with": {
+                    "name": "handover-hook-company-linux-04-${{ github.run_id }}",
+                    "path": "handover-hook-qualification.json",
+                    "if-no-files-found": "error",
+                    "retention-days": 90
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-work-handover-qualification-home-linux-01.yml": {
+      "sources": {
+        "2ac1aba2a9fd236bcdedac39ac9a435248c8b02e": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "ec55c050878f235f0cce61c4f82756bd7ef269291369cad6c82a40d10a9b9edb",
+            "definition": {
+              "name": "handover-hook-home-linux-01",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))",
+              "runs-on": [
+                "self-hosted",
+                "Linux",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal",
+                "cap-docker-linux",
+                "runtime-wsl2",
+                "site-home"
+              ],
+              "timeout-minutes": 8,
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Verify source candidate or protected installed code",
+                  "shell": "bash",
+                  "env": {
+                    "EXPECTED_RUNNER": "clued-ci-home-linux-01",
+                    "QUALIFICATION_EVENT": "${{ github.event_name }}"
+                  },
+                  "run": "set -euo pipefail\ntest \"$RUNNER_NAME\" = \"$EXPECTED_RUNNER\"\nprobe_args=(--public-config apps/clued-cloud/app/supabase-public-config.ts)\nif [[ \"$QUALIFICATION_EVENT\" == pull_request ]]; then probe_args+=(--candidate --hook scripts/runner/clued-runner-job-started.mjs); fi\nnode scripts/runner/qualify-work-handover.mjs \"${probe_args[@]}\" > handover-hook-qualification.json\ncat handover-hook-qualification.json\n"
+                },
+                {
+                  "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                  "with": {
+                    "name": "handover-hook-home-linux-01-${{ github.run_id }}",
+                    "path": "handover-hook-qualification.json",
+                    "if-no-files-found": "error",
+                    "retention-days": 90
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-work-handover-qualification-company-win-01.yml": {
+      "sources": {
+        "6e9cf8df20614d82d878ad95c3787659ed3cfb4b": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "f1d041c7970e498dc863cde6ef5b0060c71e73cd44f9fdc3142439e64fb53c93",
+            "definition": {
+              "name": "handover-hook-company-win-01",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))",
+              "runs-on": [
+                "self-hosted",
+                "Windows",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal",
+                "cap-python312",
+                "cap-node24",
+                "site-company"
+              ],
+              "timeout-minutes": 8,
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Verify source candidate or protected installed code",
+                  "shell": "powershell",
+                  "env": {
+                    "EXPECTED_RUNNER": "clued-ci-company-win-01",
+                    "QUALIFICATION_EVENT": "${{ github.event_name }}"
+                  },
+                  "run": "$ErrorActionPreference = 'Stop'\nif ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER) { throw 'Runner route mismatch.' }\n$probeArgs=@('--public-config','apps/clued-cloud/app/supabase-public-config.ts')\nif ($env:QUALIFICATION_EVENT -eq 'pull_request') { $probeArgs+=@('--candidate','--hook','scripts/runner/clued-runner-job-started.mjs') }\n$report = & node scripts/runner/qualify-work-handover.mjs @probeArgs\nif ($LASTEXITCODE -ne 0) { throw 'Hook qualification failed.' }\nSet-Content -LiteralPath handover-hook-qualification.json -Value $report -Encoding UTF8\nWrite-Output $report\n"
+                },
+                {
+                  "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                  "with": {
+                    "name": "handover-hook-company-win-01-${{ github.run_id }}",
+                    "path": "handover-hook-qualification.json",
+                    "if-no-files-found": "error",
+                    "retention-days": 90
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-work-handover-qualification-home-win-01.yml": {
+      "sources": {
+        "0a6d9ec09e4d6a7e02aba6c40a96b3502a7b894c": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "db1af5846e54c9f7ce843ca0ad2a4b91018f5b3e92c331722a27490c61aed92f",
+            "definition": {
+              "name": "handover-hook-home-win-01",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))",
+              "runs-on": [
+                "self-hosted",
+                "Windows",
+                "X64",
+                "clued",
+                "pool-general",
+                "trust-internal",
+                "cap-python312",
+                "cap-node24",
+                "site-home"
+              ],
+              "timeout-minutes": 8,
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Verify source candidate or protected installed code",
+                  "shell": "powershell",
+                  "env": {
+                    "EXPECTED_RUNNER": "clued-ci-home-win-01",
+                    "QUALIFICATION_EVENT": "${{ github.event_name }}"
+                  },
+                  "run": "$ErrorActionPreference = 'Stop'\nif ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER) { throw 'Runner route mismatch.' }\n$probeArgs=@('--public-config','apps/clued-cloud/app/supabase-public-config.ts')\nif ($env:QUALIFICATION_EVENT -eq 'pull_request') { $probeArgs+=@('--candidate','--hook','scripts/runner/clued-runner-job-started.mjs') }\n$report = & node scripts/runner/qualify-work-handover.mjs @probeArgs\nif ($LASTEXITCODE -ne 0) { throw 'Hook qualification failed.' }\nSet-Content -LiteralPath handover-hook-qualification.json -Value $report -Encoding UTF8\nWrite-Output $report\n"
+                },
+                {
+                  "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                  "with": {
+                    "name": "handover-hook-home-win-01-${{ github.run_id }}",
+                    "path": "handover-hook-qualification.json",
+                    "if-no-files-found": "error",
+                    "retention-days": 90
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-handover-external-qualification.yml": {
+      "sources": {
+        "ac90bc2f7e34a94be3c50c4581ba49cc139b3980": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "d95fe3e0a197a5bf7b9448733eafaa32a80be20f47b47b9cf734e60cb8f6e24e",
+            "definition": {
+              "name": "clued-handover-external2",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'pull_request') ||\n (github.event_name == 'workflow_dispatch' &&\n  github.ref == format('refs/heads/{0}', github.event.repository.default_branch)))",
+              "runs-on": "ubuntu-24.04",
+              "timeout-minutes": 25,
+              "environment": "${{ github.event_name == 'workflow_dispatch' && 'clued-admission' || 'clued-handover-source-only' }}",
+              "env": {
+                "QUALIFICATION_PHASE": "${{ inputs.phase }}",
+                "QUALIFICATION_OPERATOR_MODE": "${{ github.event_name == 'workflow_dispatch' && inputs.phase == 'register' && 'register-empty-disposable' || '' }}",
+                "QUALIFICATION_PUBLISHER_RUN_ID": "${{ inputs.publisher_run_id }}",
+                "CLUED_HANDOVER_ACCEPTANCE_SHA256": "${{ vars.CLUED_HANDOVER_ACCEPTANCE_SHA256 }}"
+              },
+              "permissions": {
+                "contents": "read",
+                "actions": "write",
+                "checks": "read",
+                "pull-requests": "read"
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "ref": "${{ github.event.pull_request.head.sha || github.event.repository.default_branch }}",
+                    "fetch-depth": 0,
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Verify declared Source path before dependencies",
+                  "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelif [ \"$GITHUB_EVENT_NAME\" = workflow_dispatch ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --accepted-check\nelse\n  exit 1\nfi\n"
+                },
+                {
+                  "name": "Prepare declared Source runtime",
+                  "env": {
+                    "ONNXRUNTIME_NODE_INSTALL": "skip"
+                  },
+                  "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelse\n  npm ci --prefix apps/clued-cloud\nfi\n"
+                },
+                {
+                  "name": "Revalidate exact Source after runtime preparation",
+                  "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelse\n  node scripts/ci/clued-handover-external-source-check.mjs --accepted-check\nfi\n"
+                },
+                {
+                  "name": "Execute declared source-only or actual External2 path",
+                  "env": {
+                    "GITHUB_TOKEN": "${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && github.token || '' }}",
+                    "CLUED_ADMISSION_APP_ID": "${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && secrets.CLUED_ADMISSION_APP_ID || '' }}",
+                    "CLUED_ADMISSION_APP_PRIVATE_KEY": "${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && secrets.CLUED_ADMISSION_APP_KEY || '' }}",
+                    "QUALIFICATION_DISPOSABLE_PG_URL": "${{ github.event_name == 'workflow_dispatch' && secrets.CLUED_HANDOVER_DISPOSABLE_PG_URL || '' }}",
+                    "QUALIFICATION_TEST_CI_PROOF": "${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && secrets.CLUED_HANDOVER_TEST_CI_PROOF || '' }}"
+                  },
+                  "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelif [ \"$QUALIFICATION_PHASE\" = register ]; then\n  node scripts/ci/clued-handover-external-register.mjs\nelse\n  node scripts/ci/clued-handover-external-driver.mjs --execute\nfi\n"
+                },
+                {
+                  "name": "Preserve secret-free actual qualification evidence",
+                  "if": "${{ always() && github.event_name == 'workflow_dispatch' }}",
+                  "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                  "with": {
+                    "name": "clued-disposable-handover-${{ github.run_id }}-${{ github.run_attempt }}",
+                    "path": "${{ runner.temp }}/clued-handover-evidence/*.json",
+                    "if-no-files-found": "error",
+                    "retention-days": 30
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "b8fee41077d854e906244b9fa2d374f058dbd4a3": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "fab079be15c3b25abe44ff6bcc2af3ff86161db853b0017ae92cb3f5ececb074",
+            "definition": {
+              "name": "clued-handover-external2",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'pull_request') ||\n (github.event_name == 'workflow_dispatch' &&\n  github.ref == format('refs/heads/{0}', github.event.repository.default_branch)))",
+              "runs-on": "ubuntu-24.04",
+              "timeout-minutes": 25,
+              "environment": "${{ github.event_name == 'workflow_dispatch' && 'clued-admission' || 'clued-handover-source-only' }}",
+              "env": {
+                "QUALIFICATION_PHASE": "${{ inputs.phase }}",
+                "QUALIFICATION_IDLE_RUN_ID": "${{ inputs.idle_run_id }}",
+                "QUALIFICATION_OPERATOR_MODE": "${{ github.event_name == 'workflow_dispatch' && inputs.phase == 'register' && 'register-empty-disposable' || '' }}",
+                "QUALIFICATION_PUBLISHER_RUN_ID": "${{ inputs.publisher_run_id }}",
+                "CLUED_HANDOVER_ACCEPTANCE_SHA256": "${{ vars.CLUED_HANDOVER_ACCEPTANCE_SHA256 }}"
+              },
+              "permissions": {
+                "contents": "read",
+                "actions": "write",
+                "checks": "read",
+                "pull-requests": "read"
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "ref": "${{ github.event.pull_request.head.sha || github.event.repository.default_branch }}",
+                    "fetch-depth": 0,
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Verify declared Source path before dependencies",
+                  "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelif [ \"$GITHUB_EVENT_NAME\" = workflow_dispatch ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --accepted-check\nelse\n  exit 1\nfi\n"
+                },
+                {
+                  "name": "Prepare declared Source runtime",
+                  "env": {
+                    "ONNXRUNTIME_NODE_INSTALL": "skip"
+                  },
+                  "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelse\n  npm ci --prefix apps/clued-cloud\nfi\n"
+                },
+                {
+                  "name": "Revalidate exact Source after runtime preparation",
+                  "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelse\n  node scripts/ci/clued-handover-external-source-check.mjs --accepted-check\nfi\n"
+                },
+                {
+                  "name": "Execute declared source-only or actual External2 path",
+                  "env": {
+                    "GITHUB_TOKEN": "${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && github.token || '' }}",
+                    "CLUED_ADMISSION_APP_ID": "${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && secrets.CLUED_ADMISSION_APP_ID || '' }}",
+                    "CLUED_ADMISSION_APP_PRIVATE_KEY": "${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && secrets.CLUED_ADMISSION_APP_KEY || '' }}",
+                    "QUALIFICATION_DISPOSABLE_PG_URL": "${{ github.event_name == 'workflow_dispatch' && secrets.CLUED_HANDOVER_DISPOSABLE_PG_URL || '' }}",
+                    "QUALIFICATION_TEST_CI_PROOF": "${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && secrets.CLUED_HANDOVER_TEST_CI_PROOF || '' }}"
+                  },
+                  "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelif [ \"$QUALIFICATION_PHASE\" = register ]; then\n  node scripts/ci/clued-handover-external-register.mjs\nelse\n  node scripts/ci/clued-handover-external-driver.mjs --execute\nfi\n"
+                },
+                {
+                  "name": "Preserve secret-free actual qualification evidence",
+                  "if": "${{ always() && github.event_name == 'workflow_dispatch' }}",
+                  "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                  "with": {
+                    "name": "clued-disposable-handover-${{ github.run_id }}-${{ github.run_attempt }}",
+                    "path": "${{ runner.temp }}/clued-handover-evidence/*.json",
+                    "if-no-files-found": "error",
+                    "retention-days": 30
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-handover-disposable-idle.yml": {
+      "sources": {
+        "3c94569a38f27ba34ac53ff3bb207d9ccd674f35": [
+          {
+            "job_id": "disposable-idle",
+            "definition_sha256": "c26bfb67a0637206f3a26ad72bc9d9e45c039005e53602416df57871735d3647",
+            "definition": {
+              "name": "disposable-idle",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'pull_request') ||\n (github.event_name == 'workflow_dispatch' &&\n  startsWith(github.ref, 'refs/heads/clued-handover-disposable-')))",
+              "runs-on": "ubuntu-24.04",
+              "timeout-minutes": 45,
+              "environment": "clued-handover-source-only",
+              "permissions": {
+                "contents": "read"
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "ref": "${{ github.event.pull_request.head.sha || github.ref }}",
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Bounded idle process to prove real provider cancellation",
+                  "run": "if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n  node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\nelse\n  sleep 2400\nfi\n"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "future_workflows": [],
+  "external2_future_workflows": []
+}

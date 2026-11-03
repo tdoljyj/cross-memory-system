@@ -18,9 +18,11 @@ registerHooks({resolve(specifier,context,next){if(context.parentURL===moduleURL&
   return next(specifier,context);}});
 const {readMergeAdmissionFourSources:read,MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL:FOUR_SOURCE_CONTRACT,MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL_V2:FOUR_SOURCE_CONTRACT_V2,
   parseFourSourceRawData:parseRawFourSourceDataCandidate,updateOperationObservation:produceOperation,finalAdmissionObservation:produceAdmission,admissionDisplayNames}=await import(moduleURL);
-const {registeredWorkflowSource}=await import(pathToFileURL(path.join(repo,'scripts/ci/clued-workflow-profile.mjs')).href);
+const {registeredWorkflowSource,parseWorkflowProfiles}=await import(pathToFileURL(path.join(repo,'scripts/ci/clued-workflow-profile.mjs')).href);
+const {loadHistoricalWorkflowProfiles69e}=await import(pathToFileURL(path.join(repo,'scripts/ci/fixtures/workflow-profiles-69e30b6/fixture.mjs')).href);
 const {applicableCI}=await import(pathToFileURL(path.join(repo,'scripts/ci/clued-gated-proof.mjs')).href);
-// Actual Parent-assigned immutable 891 fixture bytes; no Git/API execution.
+// Deterministic reader checkout marker; fixture Sources below are explicit data,
+// not a claim that the current working tree was qualified at this commit.
 const fixture=process.env.CLUED_FOUR_SOURCE_TEST_COMMIT||'891ea2e7a68e0a3201b64a8fd173f4d50a4c18dc';
 const sourceText=relative=>readFileSync(path.join(repo,relative),'utf8');
 const sourceBlob=relative=>{const text=sourceText(relative);return createHash('sha1').update('blob '+Buffer.byteLength(text)+'\0').update(text).digest('hex');};
@@ -41,10 +43,23 @@ const expectations={schema:FOUR_SOURCE_CONTRACT.expectations_schema,repository:S
   admission_sources:[admissionDescriptor],execution_source:{source_checkout_sha:fixture,profiles_sha256:PROFILE_SOURCE_SHA256,role_specs_sha256:ROLE_SOURCE_SHA256}};
 const expectationsRaw=JSON.stringify(expectations);
 const sourcePackets=JSON.stringify([{source_checkout_sha:fixture,sources_raw:sources}]);
-const registryObject=JSON.parse(profiles);
-const executionEntries=Object.keys(registryObject.workflows).map(workflow_file=>({workflow_file,workflow_blob:sourceBlob(workflow_file)}));
+// Registry-defined synthetic execution world: this does not qualify working-tree workflows.
+const registryObject=parseWorkflowProfiles(profiles);
+const executionEntries=Object.entries(registryObject.workflows).map(([workflow_file,profile])=>{
+  const candidate=sourceBlob(workflow_file),actual=registeredWorkflowSource(registryObject,workflow_file,candidate);
+  // Keep an explicitly registered fixture Source where the working-tree Source
+  // is not yet registered. The separate counterexample below must still refuse it.
+  return {workflow_file,workflow_blob:actual.passed?candidate:profile.workflow_blob};
+});
 const selectedProfileObject={workflows:Object.fromEntries(executionEntries.map(x=>{const q=registeredWorkflowSource(registryObject,x.workflow_file,x.workflow_blob);
-  assert.equal(q.passed,true,'current fixture source must be actually registered');return [x.workflow_file,q.profile];}))};
+  assert.equal(q.passed,true,'registry-defined fixture Source must actually register');return [x.workflow_file,q.profile];}))};
+test('registry-defined synthetic execution fixtures do not qualify two unregistered current External Sources',()=>{
+  for(const file of ['.github/workflows/clued-handover-external-qualification.yml','.github/workflows/clued-handover-disposable-idle.yml']){
+    const actual=registeredWorkflowSource(registryObject,file,sourceBlob(file));
+    assert.equal(actual.passed,false,file);
+    assert.match(actual.reason,/exact source has no unique current registration/,file);
+  }
+});
 const head='a'.repeat(40),at=second=>'2026-10-11T06:00:'+String(second).padStart(2,'0')+'.000000Z';
 // F1's original, actually executed counterexample remains as a retained test.
 // The old reader accepted this missing target batch as a complete zero.
@@ -334,7 +349,7 @@ test('raw duplicate decoded keys and deep/oversized malformed structures refuse'
   const r=read('{"schema":1,"schema":2}');assert.equal(r.status,'NOT_QUALIFIED');boundaries(r);
 });
 
-const profileObject=JSON.parse(profiles),fullFiles=Object.entries(selectedProfileObject.workflows).filter(([,p])=>p.pull_request===null).map(([f])=>f).sort();
+const profileObject=parseWorkflowProfiles(profiles),fullFiles=Object.entries(selectedProfileObject.workflows).filter(([,p])=>p.pull_request===null).map(([f])=>f).sort();
 let nextRun=1000,nextJob=5000;
 function addRound(p,{rid=301,h=head,m=base,start=20,end=27,mergedAt=null,workflowFiles=fullFiles,profiles=selectedProfileObject,
   commit=EXECUTION_SOURCE_COMMIT,profileDigest=PROFILE_SOURCE_SHA256,roleDigest=ROLE_SOURCE_SHA256,changedFiles=['README.md']}={}){
@@ -344,51 +359,87 @@ function addRound(p,{rid=301,h=head,m=base,start=20,end=27,mergedAt=null,workflo
       round_id:uuid(rid),used_run_keys:[],operation_id:uuid(rid+500),expected_head_sha:h,response_merged_commit_sha:'e'.repeat(40),
       native_pr:{number:727,head_sha:h,state:'closed',merged:true,merged_at:time(mergedAt),merge_commit_sha:'e'.repeat(40)}}};
   for(const file of workflowFiles){
-    const profile=profiles.workflows[file],route=profile.routes.find(x=>x.self_hosted)??profile.routes[0],run=++nextRun,runKey=`${run}:1`;
+    const profile=profiles.workflows[file],routes=profile.execution_mode==='all_required_primaries'?profile.routes:
+      [profile.routes.find(x=>x.self_hosted)??profile.routes[0]],run=++nextRun,runKey=`${run}:1`;
     const a={run_id:String(run),attempt:1,pr_number:727,head_sha:h,kind:'ci',status:'completed',conclusion:'success',started_at:time(start+1),completed_at:time(end-1)};
     p.attempts.push(a);r.run_keys.push(runKey);const jobs=[];
     if(profile.gated)jobs.push({id:++nextJob,run_id:run,run_attempt:1,name:'admission-gate',status:'completed',conclusion:'success',labels:['self-hosted'],steps:[]});
-    const steps=Object.entries(route.required_steps).flatMap(([name,count])=>Array.from({length:count},()=>({name,status:'completed',conclusion:'success'})));
-    jobs.push({id:++nextJob,run_id:run,run_attempt:1,name:route.name,status:'completed',conclusion:'success',labels:route.self_hosted?['self-hosted']:['ubuntu-slim'],steps});
+    for(const route of routes){
+      const steps=Object.entries(route.required_steps).flatMap(([name,count])=>Array.from({length:count},()=>({name,status:'completed',conclusion:'success'})));
+      // Compound Full execution keeps all three primaries on this run/attempt;
+      // the migration no-op is present but skipped, never its Verify step.
+      if(profile.execution_mode==='all_required_primaries'&&route.job_id==='migration-verify')
+        steps.push({name:'Not affected',status:'completed',conclusion:'skipped'});
+      jobs.push({id:++nextJob,run_id:run,run_attempt:1,name:route.name,status:'completed',conclusion:'success',labels:route.self_hosted?['self-hosted']:['ubuntu-slim'],steps});
+    }
     const barrier={run_id:a.run_id,attempt:a.attempt,head_sha:a.head_sha,status:a.status,conclusion:a.conclusion};
     r.execution_packets.push({run_key:runKey,workflow_file:file,jobs,jobs_manifest:manifest(p,'native_jobs:'+runKey,jobs.map(x=>String(x.id))),before_attempt:copy(barrier),after_attempt:copy(barrier),
       source_descriptor:{workflow_blob:profile.workflow_blob,workflow_source_sha256:hash(profile.source_yaml),source_checkout_sha:commit,role:'primary_execution',role_source_sha256:roleDigest}});
   }
   if(r.merge_proof)r.merge_proof.used_run_keys=[...r.run_keys];p.rounds.push(r);seal(p);return r;
 }
+
+test('current Full fixture retains five original workflows plus required-tests with three same-attempt primary jobs',()=>{
+  assert.deepEqual(fullFiles,[
+    '.github/workflows/clued-cloud-quality-gate.yml','.github/workflows/clued-components.yml',
+    '.github/workflows/clued-required-tests.yml','.github/workflows/contract-placement.yml',
+    '.github/workflows/gitleaks.yml','.github/workflows/trivy.yml']);
+  const p=packet(),round=addRound(p),required=round.execution_packets.find(x=>x.workflow_file==='.github/workflows/clued-required-tests.yml');
+  assert.ok(required);assert.equal(round.execution_packets.length,6);assert.equal(p.attempts.length,6);
+  assert.deepEqual(required.jobs.map(job=>job.name),['admission-gate','clued-cloud-tests','ci-suites','migration-verify']);
+  assert.equal(new Set(required.jobs.map(job=>job.id)).size,4);
+  assert.ok(required.jobs.every(job=>job.run_id===required.jobs[0].run_id&&job.run_attempt===1));
+  const migration=required.jobs.find(job=>job.name==='migration-verify');
+  assert.equal(migration.steps.find(step=>step.name==='Not affected').conclusion,'skipped');
+  assert.equal(migration.steps.find(step=>step.name==='Verify migrations on the production schema').conclusion,'success');
+  assert.equal(call(p).metrics.wasted_final_rounds.non_successful_rounds,0);
+  for(const name of ['clued-cloud-tests','ci-suites','migration-verify']){
+    const bad=copy(p),x=bad.rounds[0].execution_packets.find(x=>x.workflow_file==='.github/workflows/clued-required-tests.yml');
+    x.jobs=x.jobs.filter(job=>job.name!==name);
+    assert.equal(call(seal(bad)).metrics.wasted_final_rounds.non_successful_rounds,1,'no primary can borrow another job success');
+  }
+});
 const addedHistoryWorkflowFiles=['.github/workflows/clued-handover-external-qualification.yml','.github/workflows/clued-handover-disposable-idle.yml'];
 function historicalRoundFixture({optionalGit=false,v2=false}={}){
-  // Default CI uses a reviewed synthetic 20-path catalog. Historical objects
-  // are read only for this explicitly selected, bounded offline observation.
+  // Reconstruct the frozen 22/20 historical worlds from exact reviewed 69e
+  // bytes, never by subtracting files from the mutable current catalogue.
+  const fixed=loadHistoricalWorkflowProfiles69e(),currentRegistry=parseWorkflowProfiles(fixed.profilesRaw),
+    currentEntries=Object.entries(currentRegistry.workflows).map(([workflow_file,p])=>({workflow_file,workflow_blob:p.workflow_blob})),
+    currentSelected={workflows:Object.fromEntries(currentEntries.map(e=>{const q=registeredWorkflowSource(currentRegistry,e.workflow_file,e.workflow_blob);
+      assert.equal(q.passed,true);return [e.workflow_file,q.profile];}))},
+    currentDescriptor={source_checkout_sha:fixed.commit,profiles_sha256:hash(fixed.profilesRaw),role_specs_sha256:hash(fixed.rolesRaw)};
   let commit='f'.repeat(40),oldProfilesRaw,oldRolesRaw;
   if(optionalGit&&Object.hasOwn(process.env,'CLUED_FOUR_SOURCE_HISTORY_COMMIT')){
     commit=process.env.CLUED_FOUR_SOURCE_HISTORY_COMMIT;assert.match(commit,/^[a-f0-9]{40}$/,'explicit history checkout must be exact SHA40');
     oldProfilesRaw=execFileSync('git',['show',commit+':scripts/ci/clued-gated-proof-profiles.json'],{cwd:repo,encoding:'utf8'});
     oldRolesRaw=execFileSync('git',['show',commit+':scripts/ci/clued-gated-proof-role-specs.json'],{cwd:repo,encoding:'utf8'});
   }else{
-    const oldRegistry=copy(registryObject),oldRoles=JSON.parse(roles);
+    const oldRegistry=copy(currentRegistry),oldRoles=JSON.parse(fixed.rolesRaw);
     for(const file of addedHistoryWorkflowFiles){delete oldRegistry.workflows[file];delete oldRoles.workflows[file];}
     oldProfilesRaw=JSON.stringify(oldRegistry);oldRolesRaw=JSON.stringify(oldRoles);
   }
-  const oldRegistry=JSON.parse(oldProfilesRaw),oldRoles=JSON.parse(oldRolesRaw);
-  assert.equal(Object.keys(registryObject.workflows).length,22);assert.equal(Object.keys(oldRegistry.workflows).length,20);assert.equal(Object.keys(oldRoles.workflows).length,20);
+  const oldRegistry=parseWorkflowProfiles(oldProfilesRaw),oldRoles=JSON.parse(oldRolesRaw);
+  assert.equal(Object.keys(currentRegistry.workflows).length,22);assert.equal(Object.keys(oldRegistry.workflows).length,20);assert.equal(Object.keys(oldRoles.workflows).length,20);
   for(const file of addedHistoryWorkflowFiles){assert.equal(Object.hasOwn(oldRegistry.workflows,file),false);assert.equal(Object.hasOwn(oldRoles.workflows,file),false);}
   const entries=Object.entries(oldRegistry.workflows).map(([workflow_file,p])=>({workflow_file,workflow_blob:p.workflow_blob})),
     selected={workflows:Object.fromEntries(entries.map(e=>{const q=registeredWorkflowSource(oldRegistry,e.workflow_file,e.workflow_blob);assert.equal(q.passed,true);return [e.workflow_file,q.profile];}))},
     changedFiles=['scripts/ci/clued-handover-external-driver.mjs'],select=(entries,profiles)=>applicableCI({workflows:new Map(entries.map(e=>[e.workflow_file,e.workflow_blob])),profiles,changedFiles,commits:1,diffComplete:true,sourceQualified:true}),
-    oldSelection=select(entries,selected),currentSelection=select(executionEntries,selectedProfileObject);
+    oldSelection=select(entries,selected),currentSelection=select(currentEntries,currentSelected);
   assert.equal(oldSelection.passed,true);assert.equal(currentSelection.passed,true);
   const workflowFiles=[...oldSelection.workflows.keys()].sort(),currentFiles=[...currentSelection.workflows.keys()].sort();
   assert.deepEqual(currentFiles.filter(file=>!workflowFiles.includes(file)),[...addedHistoryWorkflowFiles].sort());
   const descriptor={source_checkout_sha:commit,profiles_sha256:hash(oldProfilesRaw),role_specs_sha256:hash(oldRolesRaw)},
     snapshot={source_checkout_sha:commit,proof_profiles_raw:oldProfilesRaw,role_specs_raw:oldRolesRaw,execution_sources:{source_checkout_sha:commit,entries,manifest:null},
-      main_history:{base_commit:commit,head_commit:EXECUTION_SOURCE_COMMIT,merge_base_commit:commit,status:commit===EXECUTION_SOURCE_COMMIT?'identical':'ahead'}},p=packet();
-  let expected;
+      main_history:{base_commit:commit,head_commit:fixed.commit,merge_base_commit:commit,status:commit===fixed.commit?'identical':'ahead'}},p=packet();
+  p.proof_profiles_raw=fixed.profilesRaw;p.role_specs_raw=fixed.rolesRaw;
+  p.execution_sources={source_checkout_sha:fixed.commit,entries:copy(currentEntries),manifest:null};
+  let expected={...expectations,execution_source:currentDescriptor};
   if(v2){p.schema=FOUR_SOURCE_CONTRACT_V2.schema;p.previous_execution_snapshots=[snapshot];
-    expected={...expectations,schema:FOUR_SOURCE_CONTRACT_V2.expectations_schema,previous_execution_sources:[descriptor]};}
+    expected={...expected,schema:FOUR_SOURCE_CONTRACT_V2.expectations_schema,previous_execution_sources:[descriptor]};}
   else{p.proof_profiles_raw=oldProfilesRaw;p.role_specs_raw=oldRolesRaw;p.execution_sources=snapshot.execution_sources;expected={...expectations,execution_source:descriptor};}
   const round=addRound(p,{workflowFiles,profiles:selected,commit,m:commit,profileDigest:descriptor.profiles_sha256,roleDigest:descriptor.role_specs_sha256,changedFiles});
-  return {p,round,descriptor,snapshot,expected,selected,currentFiles,workflowFiles,changedFiles,read:q=>read(JSON.stringify(q),JSON.stringify(expected))};
+  return {p,round,descriptor,snapshot,expected,selected,currentFiles,workflowFiles,changedFiles,currentDescriptor,currentSelected,
+    read:q=>read(JSON.stringify(q),JSON.stringify(expected))};
 }
 
 test('historical replay preserves old workflow witnesses and Native populations; current catalog relabeling cannot invent the two later workflows',()=>{
@@ -414,7 +465,7 @@ test('v2 five actual historical tips share one reviewed configuration pair and p
   const f=historicalRoundFixture({v2:true});
   for(const [index,c]of ['1','2','3','4'].entries()){
     const tip=c.repeat(40),snapshot=copy(f.snapshot);snapshot.source_checkout_sha=tip;snapshot.execution_sources.source_checkout_sha=tip;
-    snapshot.main_history={base_commit:tip,head_commit:EXECUTION_SOURCE_COMMIT,merge_base_commit:tip,status:'ahead'};f.p.previous_execution_snapshots.push(snapshot);
+    snapshot.main_history={base_commit:tip,head_commit:f.currentDescriptor.source_checkout_sha,merge_base_commit:tip,status:'ahead'};f.p.previous_execution_snapshots.push(snapshot);
     addRound(f.p,{rid:302+index,start:31+index,end:40+index,workflowFiles:f.workflowFiles,profiles:f.selected,commit:tip,m:tip,
       profileDigest:f.descriptor.profiles_sha256,roleDigest:f.descriptor.role_specs_sha256,changedFiles:f.changedFiles});
   }
@@ -495,7 +546,8 @@ test('v2 history rejects unknown or mixed Source bytes, incomplete historical ma
 });
 
 test('v2 global run and job ownership rejects reuse across current and historical execution versions',()=>{
-  const f=historicalRoundFixture({v2:true}),current=addRound(f.p,{rid:302,start:30,end:40,m:EXECUTION_SOURCE_COMMIT,workflowFiles:f.currentFiles,changedFiles:f.changedFiles});
+  const f=historicalRoundFixture({v2:true}),current=addRound(f.p,{rid:302,start:30,end:40,m:f.currentDescriptor.source_checkout_sha,workflowFiles:f.currentFiles,profiles:f.currentSelected,changedFiles:f.changedFiles,
+    commit:f.currentDescriptor.source_checkout_sha,profileDigest:f.currentDescriptor.profiles_sha256,roleDigest:f.currentDescriptor.role_specs_sha256});
   assert.equal(f.read(f.p).candidate_ready,true,'two distinct exact Native populations are internally consistent');
   for(const kind of ['run','job']){
     const q=copy(f.p),old=q.rounds[0].execution_packets[0],r=q.rounds[1],x=r.execution_packets.find(x=>x.workflow_file===old.workflow_file);
@@ -506,7 +558,7 @@ test('v2 global run and job ownership rejects reuse across current and historica
     const rejected=f.read(seal(q));assert.equal(rejected.status,'NOT_QUALIFIED',kind);assert.equal(rejected.candidate_ready,false,kind);boundaries(rejected);
     assert.deepEqual(q.attempts,f.p.attempts,kind);assert.equal(q.rounds.length,2);assert.deepEqual(q.rounds[0].applicability.workflow_files,f.workflowFiles,kind);
   }
-  assert.equal(current.applicability.source_checkout_sha,EXECUTION_SOURCE_COMMIT);
+  assert.equal(current.applicability.source_checkout_sha,f.currentDescriptor.source_checkout_sha);
 });
 
 function wastedFixture(){
@@ -537,7 +589,7 @@ test('R1: legitimate unknown-to-known no-final progression remains valid, confli
   assert.equal(call(seal(p)).status,'NOT_QUALIFIED');
 });
 function cancelRoundMember(p,r){
-  assert.equal(r.execution_packets.length,5,'the fixed actual source fixture has all five applicable Full workflows');
+  assert.equal(r.execution_packets.length,6,'all five original Full workflows plus exact required-tests remain applicable');
   const x=r.execution_packets[1],a=p.attempts.find(a=>`${a.run_id}:${a.attempt}`===x.run_key);
   a.started_at=null;a.conclusion='cancelled';
   x.before_attempt.conclusion='cancelled';x.after_attempt.conclusion='cancelled';
@@ -550,7 +602,7 @@ test('R2: complete multi-workflow unsuccessful round preserves its never-started
   assert.equal(r.metrics.wasted_final_rounds.non_successful_rounds,1);assert.equal(r.metrics.wasted_final_rounds.value,null);
   assert.equal(r.metrics.wasted_final_rounds.confirmed_wasted,0);assert.equal(r.metrics.wasted_final_rounds.used_for_merge,0);
   assert.equal(r.metrics.cancellation_causes.denominator,1);assert.equal(r.metrics.cancellation_causes.value.UNKNOWN_CAUSE,1);
-  assert.equal(r.metrics.cancellation_causes.cause_coverage,0);assert.equal(p.attempts.length,5);boundaries(r);
+  assert.equal(r.metrics.cancellation_causes.cause_coverage,0);assert.equal(p.attempts.length,6);boundaries(r);
 });
 test('R2: every known round-member bound is checked even on unsuccessful or unknown aggregate paths',()=>{
   for(const end of [time(19),time(28)]){const p=packet(),round=addRound(p),a=cancelRoundMember(p,round);a.completed_at=end;
@@ -568,6 +620,17 @@ test('R2: actual merge uniqueness remains whole-closure before unsuccessful-roun
   addRound(p,{rid:702,start:30,end:37,mergedAt:50});assert.equal(call(seal(p)).status,'NOT_QUALIFIED');
 });
 
+function unfinishedContractPlacementFixture(){
+  // R3's retained counterexample specifically has one ungated execution job.
+  // Select that independently registered legacy Source explicitly rather than
+  // changing this timing premise when the working tree advances to a gated one.
+  const file='.github/workflows/contract-placement.yml',root=registryObject.workflows[file],
+    selected=registeredWorkflowSource(registryObject,file,root.workflow_blob),p=packet();
+  assert.equal(selected.passed,true);assert.equal(selected.profile.gated,false);
+  p.execution_sources.entries.find(entry=>entry.workflow_file===file).workflow_blob=root.workflow_blob;
+  const profileView={workflows:{...selectedProfileObject.workflows,[file]:selected.profile}},round=addRound(p,{profiles:profileView});
+  return {p,round};
+}
 function unfinishedContractPlacementMember(p,round){
   const x=round.execution_packets.find(x=>x.workflow_file==='.github/workflows/contract-placement.yml');
   assert.ok(x,'the real selected ungated contract-placement workflow is present');assert.equal(x.jobs.length,1);
@@ -579,16 +642,16 @@ function unfinishedContractPlacementMember(p,round){
   return seal(p);
 }
 test('R3: an unfinished member starting after the known round end is contradictory, never ready UNKNOWN',()=>{
-  const p=packet(),round=addRound(p);unfinishedContractPlacementMember(p,round);
+  const {p,round}=unfinishedContractPlacementFixture();unfinishedContractPlacementMember(p,round);
   assert.equal(round.completed_at,time(27));assert.equal(call(p).status,'NOT_QUALIFIED');
 });
 test('R3: a genuinely unknown round end retains the complete unfinished population and UNKNOWN classification',()=>{
-  const p=packet(),round=addRound(p);round.completed_at=null;unfinishedContractPlacementMember(p,round);
+  const {p,round}=unfinishedContractPlacementFixture();round.completed_at=null;unfinishedContractPlacementMember(p,round);
   const r=call(p);assert.equal(r.status,'FOUR_SOURCE_CALCULATION_CANDIDATE');assert.equal(r.candidate_ready,true);
   assert.equal(r.supplied_data_consistency,true);assert.equal(r.supplied_population_manifest_complete,true);
   assert.equal(r.metrics.wasted_final_rounds.value,null);assert.equal(r.metrics.wasted_final_rounds.unknown,1);
   assert.equal(r.metrics.wasted_final_rounds.denominator,1);assert.equal(r.metrics.wasted_final_rounds.confirmed_wasted,0);
-  assert.equal(r.metrics.wasted_final_rounds.used_for_merge,0);assert.equal(p.attempts.length,5);boundaries(r);
+  assert.equal(r.metrics.wasted_final_rounds.used_for_merge,0);assert.equal(p.attempts.length,6);boundaries(r);
 });
 
 test('F3: complete current source/profile/roles, supplied critical steps, explicit termination and supplied Native merge produce candidate classifications',()=>{
@@ -622,14 +685,14 @@ test('F3: source role pin, attempt barrier, skipped heavy step and mismatched me
   assert.equal(r.candidate_ready,true);assert.equal(r.metrics.wasted_final_rounds.confirmed_wasted,0);assert.equal(r.metrics.wasted_final_rounds.value,null);
 });
 
-test('the actual current Full profile keeps documentation classifier auxiliary while all heavy steps run',()=>{
+test('the registered Full fixture keeps documentation classifier auxiliary while all heavy steps run',()=>{
   const {p,original}=wastedFixture();original.execution_packets.find(x=>x.workflow_file.endsWith('quality-gate.yml')).jobs.at(-1).steps.find(x=>x.name==='Qualify ordinary documentation changes').conclusion='skipped';
   const r=call(p);assert.equal(r.candidate_ready,true);assert.equal(r.metrics.wasted_final_rounds.confirmed_wasted,1);
 });
 
-// S1–S4 successor controls were first run against exact 3ea8 reader bytes.
+// S1鈥揝4 successor controls were first run against exact 3ea8 reader bytes.
 // All five failed there; retain the counterexamples as regression controls.
-test('S1: real current source selection qualifies protocol paths and the accepted added critical step',()=>{
+test('S1: registry-defined source selection qualifies protocol paths and the accepted added critical step',()=>{
   const p=packet(),r=addRound(p),changed=['protocol/agent/example.json'];
   const sourceMap=new Map(executionEntries.map(x=>[x.workflow_file,x.workflow_blob]));
   const q=applicableCI({workflows:sourceMap,profiles:selectedProfileObject,changedFiles:changed,commits:1,diffComplete:true,sourceQualified:true});
