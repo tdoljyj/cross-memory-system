@@ -1,5 +1,5 @@
 // Exact hosted workflow bytes pinned by each installed Source generation.
-// ROWS is the immutable legacy PR-A x PR-B set; the active 730-finding gitleaks
+// ROWS is the immutable legacy PR-A x PR-B set; the active 732-finding candidate gitleaks
 // Source v4 uses the separate successor block, never that old 726 set.
 // Every role, role policy and signed-result check derives its accepted set from here, on the Source v2 path
 // (gitleaks v4, trivy v4 + required-trivy-v3, placement v2, policy v3, bridge v4) and on the H5 one-shot
@@ -31,7 +31,7 @@ const ROWS = [
 // END TRUSTED WORKFLOW ROWS
 
 // BEGIN GITLEAKS SUCCESSOR (generated from a real workflow-freeze commit)
-const GITLEAKS_SUCCESSOR_ROW = {"path":".github/workflows/gitleaks.yml","sha256":"d8daffb6f35d572ada3028f1b372bc9e728edb9d757a6442a702ae423645ff77","blob":"ba4690650935961e7f4aa289a3aa0dc874b8b4fd","commit":"956078fcec98844ab9be05e857fe4f53b3372fc4"};
+const GITLEAKS_SUCCESSOR_ROW = {"path":".github/workflows/gitleaks.yml","sha256":"116e6b201e30251b0f702ff4416dcfd015d2b311cbd2f000cdcd3e81e6d29966","blob":"6441fc32b084002de697415ea8343af07816c929","commit":"c8c146b4067a32a0ed3a1a6be04dda52a59dd4db"};
 // END GITLEAKS SUCCESSOR
 
 // BEGIN TRIVY SUCCESSOR (generated from a real workflow-freeze commit)
@@ -52,7 +52,7 @@ for (const path of paths) if (!ROWS.some(row => row[0] === path)) fail('TRUSTED_
 // Keyed by the sha256 of the bytes.
 export const TRUSTED_WORKFLOWS = Object.freeze(table);
 
-// The 730-finding Source v4 consumes only this independently frozen successor.
+// The 732-finding Source v4 candidate consumes only this independently frozen successor.
 // Legacy v3/H5 continues to use ROWS above and never inherits the new bytes.
 // null is a preparation state: the active successor has no accepted workflow.
 if (GITLEAKS_SUCCESSOR_ROW !== null && (Object.keys(GITLEAKS_SUCCESSOR_ROW).sort().join('|') !== 'blob|commit|path|sha256'

@@ -17,7 +17,7 @@ const spec = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../src/hosted-rel
 const legacy = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../src/hosted-relay-v1/registry.spec.json', import.meta.url)), 'utf8'));
 const clone = v => structuredClone(v);
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
-const FREEZE = '956078fcec98844ab9be05e857fe4f53b3372fc4', frozenReader = gitObjectReader(ROOT);
+const FREEZE = 'c8c146b4067a32a0ed3a1a6be04dda52a59dd4db', frozenReader = gitObjectReader(ROOT);
 // Git blobs are the freeze boundary; a Windows checkout may have CRLF bytes.
 const workflows = Object.fromEntries(Object.entries(spec.roles).map(([role, entry]) =>
   [role, frozenReader.blob(frozenReader.entry(FREEZE, entry.workflowPath).sha).toString('utf8')]));

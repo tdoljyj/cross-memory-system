@@ -659,6 +659,19 @@ const BOOTSTRAP_ORDINARY_SOURCES=Object.freeze([
         "definition_sha256": "7745a8c7286ffba75761d8ee00fbb099809318a9bdc6bf52760064d040cefa8f"
       }
     ]
+  },
+  {
+    "file": ".github/workflows/gitleaks.yml",
+    "predecessor_blob": "ba4690650935961e7f4aa289a3aa0dc874b8b4fd",
+    "candidate_blob": "6441fc32b084002de697415ea8343af07816c929",
+    "candidate_sha256": "116e6b201e30251b0f702ff4416dcfd015d2b311cbd2f000cdcd3e81e6d29966",
+    "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
+    "roles": [
+      {
+        "job_id": "gitleaks-trusted-self-hosted",
+        "definition_sha256": "9dd1c58aa9a60dce0a079158bd0ce3ac47b93626854c85672e9c217f5a623caf"
+      }
+    ]
   }
 ]);
 const bootstrapOrdinarySame=(a,b)=>roleDefinitionDigest(a)===roleDefinitionDigest(b);

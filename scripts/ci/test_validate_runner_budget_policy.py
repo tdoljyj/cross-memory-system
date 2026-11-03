@@ -275,6 +275,30 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
             self.assertFalse(routes[pair]["legacy_migration_debt"], pair)
         self.assertEqual(sum(row["owner_decision_hosted"] for row in routes.values()), 6)
 
+    def test_exact_732_and_observer_candidate_successors_keep_original_debt_and_fail_unknown(self):
+        self.assertEqual(sum(len(row["jobs"]) for row in policy.LEGACY_HOSTED_DEBT.values()), 42)
+        self.assertEqual(sum(len(row["jobs"]) for row in policy.OWNER_DECISION_HOSTED_JOBS.values()), 6)
+        self.assertEqual(policy.LEGACY_HOSTED_DEBT["clued-merge-slot-ci.yml"]["control_sha256"],
+                         "500da29fb3c1fbe9df2be795e84f92908249a8ee057bef709e17e5aa7c5e341f")
+        self.assertEqual(policy.OWNER_DECISION_HOSTED_JOBS["gitleaks.yml"]["jobs"]["gitleaks-trusted-self-hosted"],
+                         "b8dac89af1f63b0528c7b2209e071e4f88919f82fb33562591eaf6b50c0186ea")
+        self.assertEqual(set(policy.EXACT_SOURCE_CANDIDATE_SUCCESSORS), {"gitleaks.yml", "clued-merge-slot-ci.yml"})
+        for filename, successor in policy.EXACT_SOURCE_CANDIDATE_SUCCESSORS.items():
+            text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
+            debt = ({filename: policy.LEGACY_HOSTED_DEBT[filename]} if successor["kind"] == "legacy" else {})
+            owner = ({filename: policy.OWNER_DECISION_HOSTED_JOBS[filename]} if successor["kind"] == "owner" else {})
+            self.assert_pass(policy.evaluate_workflows({filename: text}, debt, owner))
+            # Full workflow identity and exact previous-map identity are both
+            # mandatory. A candidate hash is never a generic hosted permit.
+            changed = text.replace("    runs-on: ubuntu", "    timeout-minutes: 360\n    runs-on: ubuntu", 1)
+            self.assertNotEqual(changed, text)
+            self.assertEqual(policy.evaluate_workflows({filename: changed}, debt, owner)["status"], "FAIL")
+            changed = text.replace("jobs:\n", "jobs:\n  extra-paid-job:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo extra\n", 1)
+            self.assertEqual(policy.evaluate_workflows({filename: changed}, debt, owner)["status"], "FAIL")
+            altered_debt, altered_owner = copy.deepcopy(debt), copy.deepcopy(owner)
+            target = altered_debt if debt else altered_owner
+            target[filename]["control_sha256"] = "a" * 64
+            self.assertEqual(policy.evaluate_workflows({filename: text}, altered_debt, altered_owner)["status"], "FAIL")
     def test_hosted_executors_never_carry_a_required_check_name(self):
         # Owner Decision bc6fdad1: a same-name hosted check run counts as the
         # required check even though the ruleset pins App 5368905.

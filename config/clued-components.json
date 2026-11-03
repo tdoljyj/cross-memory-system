@@ -555,7 +555,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "9d405b64b74c3572c6cd44303a3d204f6c5bf30bc45030476a908fb6f026de75"
+      "content_sha256": "5c3f9a62649cc743214ca7b33f1fd6eec177114cf829bde38bd30910433477cd"
     },
     {
       "id": "script.resource-maintenance",
@@ -624,7 +624,7 @@
         "file": "scripts/ci/clued-control-workflow-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "71e51bda6e2debf07e3fa0bf8bdf99276007948c0eb613b871668dd5fbf00c3c"
+      "content_sha256": "3770b08a1f74e7beb8881a0398d1281f4efc549c9f208da6d336236eef625b58"
     },
     {
       "id": "script.required-applicability",

@@ -26,17 +26,26 @@ function sources(v,path=[],out=[]) {
   return out;
 }
 
-test('all original 67 sources and the exact compound draft roundtrip without losing bytes, roles or metadata',()=>{
+test('all original 67 sources, exact compound and 732 successor drafts roundtrip without losing bytes, roles or metadata',()=>{
   const semantic=read(),wire=encodeWorkflowProfiles(semantic),text=serializeWorkflowProfiles(semantic);
   const decoded=parseWorkflowProfiles(Buffer.from(text));
   assert.deepEqual(decoded,semantic);
   assert.equal(wire.schema,'clued.gated-proof-profiles/3');
   assert.equal(decoded.schema,'clued.gated-proof-profiles/2');
-  assert.equal(sources(decoded).length,68);
+  assert.equal(sources(decoded).length,69);
   const original=structuredClone(decoded);delete original.workflows[REQUIRED_TESTS_SOURCE.file];
+  const successor=original.workflows['.github/workflows/gitleaks.yml'].accepted_sources
+    .filter(source=>source.workflow_blob==='6441fc32b084002de697415ea8343af07816c929');
+  assert.equal(successor.length,1);
+  assert.equal(successor[0].source_sha256,'116e6b201e30251b0f702ff4416dcfd015d2b311cbd2f000cdcd3e81e6d29966');
+  original.workflows['.github/workflows/gitleaks.yml'].accepted_sources=original.workflows['.github/workflows/gitleaks.yml'].accepted_sources
+    .filter(source=>source.workflow_blob!=='6441fc32b084002de697415ea8343af07816c929');
   assert.equal(sources(original).length,67);
   assert.equal(roleDefinitionDigest(original),'1ab232292f79359f99c1de58eaf47076bb968593f5ffd46fd54aaafda086554c');
   const oldRoles=structuredClone(specs);delete oldRoles.workflows[REQUIRED_TESTS_SOURCE.file];
+  assert.equal(oldRoles.workflows['.github/workflows/gitleaks.yml'].sources['6441fc32b084002de697415ea8343af07816c929'][0]
+    .definition_sha256,'9dd1c58aa9a60dce0a079158bd0ce3ac47b93626854c85672e9c217f5a623caf');
+  delete oldRoles.workflows['.github/workflows/gitleaks.yml'].sources['6441fc32b084002de697415ea8343af07816c929'];
   assert.equal(roleDefinitionDigest(oldRoles),'04eb96fb6640801a7bd1e41eca7e746e61afb829da95e81a633445d1c6852d41');
   assert.ok(Buffer.byteLength(text)<=WORKFLOW_PROFILES_MAX_BYTES);
   assert.notEqual(hash(text),hash(JSON.stringify(semantic,null,2)+'\n'),'disk Source identity changes');

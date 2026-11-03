@@ -63,16 +63,16 @@
           "sha256": "f6288615c4b6fe1e2cb8630405c8c618bd73fbe85d1b5336d331600730d9b1fd"
         },
         {
-          "blob": "ba4690650935961e7f4aa289a3aa0dc874b8b4fd",
+          "blob": "6441fc32b084002de697415ea8343af07816c929",
           "mode": "100644",
           "path": ".github/workflows/gitleaks.yml",
-          "sha256": "d8daffb6f35d572ada3028f1b372bc9e728edb9d757a6442a702ae423645ff77"
+          "sha256": "116e6b201e30251b0f702ff4416dcfd015d2b311cbd2f000cdcd3e81e6d29966"
         },
         {
-          "blob": "e71138cd63ddb0fd1c28069834c11ddf493d530f",
+          "blob": "771d06e646024aa5384014a3f28bab50ccebaaba",
           "mode": "100644",
           "path": ".gitleaks.toml",
-          "sha256": "8aae8a204add7e201ff141a9035c0400b300b08c691ff483f09d24383b53b5ba"
+          "sha256": "f21a46cb2a0c2a61a63e0ebaf9115759cd244abcd99682c1d83da36d3b78061b"
         },
         {
           "blob": "5717f72c9317a0a2d935fde232bdebe9dd6be3a7",
@@ -183,10 +183,16 @@
           "sha256": "02eea1acaecc39ec179ac4201246509152dbf7bb7119687fb7cf640fb86146e1"
         },
         {
-          "blob": "50bf248631723d1358eeed796e86d0caaa72d2b9",
+          "blob": "917e02e6332e773384d4d1079a5fd32094f1f580",
           "mode": "100644",
           "path": "scripts/ci/reviewed_gitleaks.py",
-          "sha256": "9b1755f9001560aab95bb893f8c2cdc36f1826e3f83d2cae3ccf15ff27b4a476"
+          "sha256": "4441bbee3b022be40a0e6533ee6f56241621babc961b0389c25d4484a298d67f"
+        },
+        {
+          "blob": "5b4d32cb4c9fd8228fdae569d1f44c86af6c07b2",
+          "mode": "100644",
+          "path": "scripts/ci/reviewed_gitleaks_historical.py",
+          "sha256": "d395d46b18aa0dd642ecd5417d846750647152e1a97a20597b2bd295fd630870"
         },
         {
           "blob": "19421881d280bc351fc1992b1a6ec1f15a62e8fb",
@@ -201,7 +207,7 @@
           "sha256": "aa20458a6ba4eab07db3d623a255cecfa367d3e82845ec2440a17302b5f9f32a"
         }
       ],
-      "closureSha256": "823008b925a29d40ac4d67a6406d0082635fc1d1fa731ac33467935843d642cd",
+      "closureSha256": "ca20d50bdce10270a1b43020824729e6732daafd048c093ac1b9955037f2e597",
       "forbiddenChangePrefixes": [
         "scripts/ci/"
       ],
@@ -210,9 +216,9 @@
       "hostedJobTimeoutMinutes": 25,
       "mustNotExist": [],
       "runsOn": "ubuntu-latest",
-      "workflowBlob": "ba4690650935961e7f4aa289a3aa0dc874b8b4fd",
+      "workflowBlob": "6441fc32b084002de697415ea8343af07816c929",
       "workflowPath": ".github/workflows/gitleaks.yml",
-      "workflowSha256": "d8daffb6f35d572ada3028f1b372bc9e728edb9d757a6442a702ae423645ff77"
+      "workflowSha256": "116e6b201e30251b0f702ff4416dcfd015d2b311cbd2f000cdcd3e81e6d29966"
     },
     "trivy": {
       "checkName": "trivy",
@@ -403,7 +409,7 @@
     "scriptSha256": "02eea1acaecc39ec179ac4201246509152dbf7bb7119687fb7cf640fb86146e1",
     "stepName": "Acquire one-time scan permission"
   },
-  "sourceCommit": "956078fcec98844ab9be05e857fe4f53b3372fc4",
-  "sourceTree": "faa061c3cdb0b7c92d4e1df5efac19693a8ddf99",
-  "specSha256": "d803a85b38bd839d39b5699fb12f782c808ca6ad58c60dfba46b669a62e75f3e"
+  "sourceCommit": "c8c146b4067a32a0ed3a1a6be04dda52a59dd4db",
+  "sourceTree": "1a849aee8845024e1ce415d46df6c968b34abf44",
+  "specSha256": "f85440433df0f8aceba2f490d9e5c6485bc0bf1ed1fdb85efbc77e42fa4270e6"
 }

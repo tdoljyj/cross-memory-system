@@ -38,7 +38,8 @@
         ".gitleaks.toml",
         ".gitleaksignore",
         "scripts/ci/clued-scan-start.mjs",
-        "scripts/ci/reviewed_gitleaks.py"
+        "scripts/ci/reviewed_gitleaks.py",
+        "scripts/ci/reviewed_gitleaks_historical.py"
       ],
       "mustNotExist": [],
       "forbiddenChangePrefixes": [

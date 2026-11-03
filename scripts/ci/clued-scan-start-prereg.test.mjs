@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import './clued-scan-start-732-successor.test.mjs';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
@@ -22,6 +23,7 @@ const load = name => JSON.parse(fs.readFileSync(new URL(`scripts/ci/${name}`, RO
 const profiles = parseWorkflowProfiles(fs.readFileSync(new URL('scripts/ci/clued-gated-proof-profiles.json', ROOT)));
 const roleSpecs = load('clued-gated-proof-role-specs.json');
 const GATE_SHA = '3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9';
+const HISTORY_732=JSON.parse(fs.readFileSync(new URL('work/actions-hosted-migration/independent-ci-v1/test/fixtures/scan-start-prereg/gitleaks-732-source.json',ROOT),'utf8')).row;
 const SOURCES = [
   {
     file: '.github/workflows/gitleaks.yml', job: 'gitleaks-trusted-self-hosted',
@@ -82,6 +84,12 @@ async function findings(row, headText, baseText = source(row.file, row.before), 
 
 test('the integrated candidate uses exactly the two preregistered workflow bytes and preserves the prior catalogue', () => {
   const profileBefore = structuredClone(profiles), rolesBefore = structuredClone(roleSpecs);
+  const h=registeredWorkflowSource(profileBefore,HISTORY_732.file,HISTORY_732.candidate_blob);
+  assert.equal(h.passed,true);
+  assert.equal(h.profile.source_sha256,HISTORY_732.candidate_sha256);
+  assert.deepEqual(rolesBefore.workflows[HISTORY_732.file].sources[HISTORY_732.candidate_blob].map(({job_id,definition_sha256})=>({job_id,definition_sha256})),HISTORY_732.roles);
+  profileBefore.workflows[HISTORY_732.file].accepted_sources=profileBefore.workflows[HISTORY_732.file].accepted_sources.filter(x=>x.workflow_blob!==HISTORY_732.candidate_blob);
+  delete rolesBefore.workflows[HISTORY_732.file].sources[HISTORY_732.candidate_blob];
   for (const row of SOURCES) {
     const records = profileBefore.workflows[row.file].accepted_sources;
     assert.equal(records.filter(x => x.workflow_blob === row.after).length, 1);
@@ -89,10 +97,11 @@ test('the integrated candidate uses exactly the two preregistered workflow bytes
     assert.equal(Object.hasOwn(rolesBefore.workflows[row.file].sources, row.after), true);
     delete rolesBefore.workflows[row.file].sources[row.after];
     const active = fs.readFileSync(new URL(row.file, ROOT), 'utf8');
-    assert.equal(workflowBlob(active), row.after, 'the candidate switches only to the exact preregistered Source');
-    assert.equal(sha256Hex(active), row.sha256);
-    assert.equal(active, source(row.file, row.after));
-    assert.equal(active, fixture(row).toString('utf8'));
+    const current=row.file===HISTORY_732.file?{after:HISTORY_732.candidate_blob,sha256:HISTORY_732.candidate_sha256}:row;
+    assert.equal(workflowBlob(active), current.after, 'the candidate switches only to an exact preregistered Source');
+    assert.equal(sha256Hex(active), current.sha256);
+    assert.equal(active, source(row.file, current.after));
+    assert.equal(active,row.file===HISTORY_732.file?fs.readFileSync(new URL('work/actions-hosted-migration/independent-ci-v1/test/fixtures/scan-start-prereg/gitleaks-732.yml',ROOT),'utf8'):fixture(row).toString('utf8'));
   }
   // The separately frozen compound candidate is additive to this earlier
   // scan-start generation. Verify its exact identity before comparing the
@@ -109,12 +118,13 @@ test('the integrated candidate uses exactly the two preregistered workflow bytes
   const anchor = 'const BOOTSTRAP_ORDINARY_SOURCES=Object.freeze(';
   const start = admission.indexOf(anchor) + anchor.length, end = admission.indexOf(']);', start);
   const descriptors = JSON.parse(admission.slice(start, end + 1));
-  assert.equal(descriptors.length, 15);
+  assert.equal(descriptors.length, 16);
   assert.equal(roleDefinitionDigest(descriptors.slice(0, 13)), 'fd91deb730baa43753ecd06acf169f030ea8be747de65613f3da8d774012b95b');
-  assert.deepEqual(descriptors.slice(13), SOURCES.map(row => ({
+  assert.deepEqual(descriptors.slice(13,15), SOURCES.map(row => ({
     file: row.file, predecessor_blob: row.before, candidate_blob: row.after, candidate_sha256: row.sha256,
     gate_sha256: GATE_SHA, roles: [{ job_id: row.job, definition_sha256: row.role }],
   })));
+  assert.deepEqual(descriptors[15],HISTORY_732);
 });
 
 test('the existing condition parser stays byte-identical and refuses PR-first, OR and always bypasses', () => {
