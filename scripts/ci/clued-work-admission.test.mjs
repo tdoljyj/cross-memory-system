@@ -5,6 +5,7 @@ import {parseWorkflowProfiles,registeredWorkflowSource,rolesForSource,roleDefini
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import {ACTOR_WORKFLOW,registeredActorTransition as actorSourceTransition} from './clued-standard-runner-actor-source.mjs';
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -894,9 +895,15 @@ test("gate job digest: every gated workflow's gate job has checks: read; the for
   // Derived from the workflows on this branch, not a pinned count: a pinned count
   // broke main's self-test, and so every pull request, each time a gated
   // workflow was added (#552, #598). Admission itself refuses a removed or changed gate.
-  assert.deepEqual(gated.map(([file]) => file).sort(), [...GATED_FILES].sort());
+  assert.deepEqual(gated.map(([file]) => file).sort(), [...GATED_FILES,'clued-standard-runner-actor-qualification.yml'].sort());
   assert.ok(gated.length > 0);
   for (const [file, text] of gated) {
+    if(actorSourceTransition('.github/workflows/'+file,text).passed){
+      assert.deepEqual(gateFindings(text,text,{registeredActorTransition:true}),[],file);
+      const changed=text.replace('checks: read','checks: write');
+      assert.equal(actorSourceTransition('.github/workflows/'+file,changed).passed,false);
+      assert.ok(gateFindings(changed,text,{registeredActorTransition:true}).includes('admission_gate_changed'));continue;
+    }
     assert.deepEqual(gateFindings(text, text), [], file);
     const withoutChecks = text.replace("      actions: read\n      checks: read\n", "      actions: read\n");
     assert.notEqual(withoutChecks, text, file);
@@ -1083,7 +1090,8 @@ test("workflows: dispatch-gated workflows take admission_run_id; the admission w
 // --- Gate guard (Owner Decision 37e01bb1).
 
 const GATED_FILES = fs.readdirSync(path.join(ROOT, ".github", "workflows")).filter((name) => /\.ya?ml$/.test(name))
-  .filter((name) => workflowIsGated(fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8")));
+  .filter((name) => workflowIsGated(fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8")))
+  .filter(name=>!actorSourceTransition('.github/workflows/'+name,fs.readFileSync(path.join(ROOT,'.github','workflows',name),'utf8')).passed);
 // These three workflows acquired the registered source-proof gate after the
 // earlier gate-template rollouts. Their actual gates remain covered by the
 // all-workflows and retired-switch attack checks below.
@@ -3170,4 +3178,31 @@ test("independent gate: the Source v2 native-work-admission id admits; malformed
   // A well-formed v2 id from another App is never read.
   const { outcome } = await independentGate([nativeCheck({ external_id: V2, app: { id: 15368 } })], { envOverrides: { CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" } });
   assert.deepEqual([outcome.admitted, outcome.verdict], [false, "ADMISSION_PENDING"]);
+});
+
+
+test('dispatch closed verdict preserves real Native fields without inventing missing authority',async()=>{
+ const {closeNativeDispatchVerdict}=await import('./clued-work-admission.mjs');
+ const request={scope:'project:0597aa60-9b98-4da6-a4ab-63d7705b632f',claim_id:'11111111-1111-4111-8111-111111111111',head_sha:'a'.repeat(40),repository:'tdoljyj/cross-memory-system',target_branch:'main',workflow:'clued-standard-runner-actor-qualification.yml'};
+ const payload={verdict:'ADMITTED',execution_authorized:true,execution_epoch:7,execution_policy:'staged',head_authorization_id:null,claim:{task_id:'22222222-2222-4222-8222-222222222222',fence:8,status:'ACTIVE',expires_at:'2026-11-03T08:00:00.000Z'},secret:'must not project'};
+ const result=closeNativeDispatchVerdict(payload,request);assert.equal(result.complete,true);assert.deepEqual(result.subject,request);
+ assert.deepEqual(result.native,{verdict:'ADMITTED',execution_authorized:true,execution_epoch:7,execution_policy:'staged',head_authorization_id:null,task_id:payload.claim.task_id,fence:8,claim_status:'ACTIVE',expires_at:payload.claim.expires_at});
+ assert.equal(JSON.stringify(result).includes('must not project'),false);
+ for(const update of [p=>delete p.execution_epoch,p=>{p.execution_authorized='true';},p=>{p.claim.fence='8';},p=>delete p.claim,p=>{p.verdict='REJECTED';}]){
+  const changed=structuredClone(payload);update(changed);assert.equal(closeNativeDispatchVerdict(changed,request).complete,false);
+ }
+ const missing=closeNativeDispatchVerdict({verdict:'ADMITTED'},request);assert.equal(missing.native.fence,null);assert.equal(missing.native.execution_epoch,null);assert.equal(missing.complete,false);
+});
+
+
+test('typed manual actor retains exact full Source/FullRole gate while generic PR gate versions stay frozen',async()=>{
+ const text=fs.readFileSync(path.join(ROOT,ACTOR_WORKFLOW),'utf8');
+ assert.equal(workflowIsGated(text),true);
+ assert.equal(actorSourceTransition(ACTOR_WORKFLOW,text).passed,true);
+ assert.deepEqual(gateFindings(text,text,{registeredActorTransition:true}),[]);
+ assert.ok(gateFindings(text,text).length>0,'a caller without exact typed Source classification cannot silently use the PR template');
+ for(const changed of [text.replace('checks: read','checks: write'),text.replace("github.actor_id == '52366662'","true"),text.replace('--mode gate','--mode other')]){
+  assert.equal(actorSourceTransition(ACTOR_WORKFLOW,changed).passed,false);
+  assert.ok(gateFindings(changed,text,{registeredActorTransition:true}).length>0,'boolean alone cannot self-register changed Source');
+ }
 });

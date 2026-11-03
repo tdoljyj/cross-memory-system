@@ -1,0 +1,93 @@
+name: Clued standard runner actor qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      admission_run_id:
+        description: Exact existing dispatch admission for this Source/ref/claim
+        required: true
+        type: string
+      node_id:
+        description: Closed requested row selector; never execution authority
+        required: true
+        type: choice
+        options:
+          - desk-w-591-windows-runner-caches
+          - turing-windows-runner-caches
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clued-standard-runner-actor-once
+  cancel-in-progress: false
+
+jobs:
+  admission-gate:
+    name: admission-gate
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+    outputs:
+      admitted: ${{ steps.gate.outputs.admitted }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      - id: gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-work-admission.mjs --mode gate
+
+  qualify-company:
+    name: standard-runner-actor-company
+    needs: admission-gate
+    if: needs.admission-gate.outputs.admitted == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '52366662' && github.triggering_actor == github.repository_owner && inputs.node_id == 'desk-w-591-windows-runner-caches'
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-node24, cap-python312, site-company]
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      - name: Run the exact admitted standard-runner actor adapter
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & node scripts/runner/qualify-standard-runner-actor.mjs --execute
+          exit $LASTEXITCODE
+
+  qualify-home:
+    name: standard-runner-actor-home
+    needs: admission-gate
+    if: needs.admission-gate.outputs.admitted == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '52366662' && github.triggering_actor == github.repository_owner && inputs.node_id == 'turing-windows-runner-caches'
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-node24, cap-python312, site-home]
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      - name: Run the exact admitted standard-runner actor adapter
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & node scripts/runner/qualify-standard-runner-actor.mjs --execute
+          exit $LASTEXITCODE

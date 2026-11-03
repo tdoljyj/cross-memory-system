@@ -1,4 +1,5 @@
 import {registeredPublisherSource} from './clued-production-publisher-source.mjs';
+import {ACTOR_WORKFLOW,classifyActorSource,trustedActorCatalogue} from './clued-standard-runner-actor-source.mjs';
 import {NON_PR_CONTROL_FILES,NON_PR_CONTROL_SOURCE_PATH,parseNonPrControlCatalogue,classifyNonPrControlWorkflowSource} from './clued-non-pr-control-source.mjs';
 import {parseWorkflowProfiles,registeredWorkflowSource,rolesForSource,roleDefinitionDigest} from './clued-workflow-profile.mjs';
 import {CONTROL_WORKFLOW_SOURCE_PATH,CONTROL_WORKFLOW_FILES,MAIN_SECRET_CONTROLLER_ROUTE,SLOT_COMPLETION_OBSERVER_SOURCE,compileControlWorkflowSource,registeredControlWorkflowSource,registeredControlWorkflowTransition} from './clued-control-workflow-source.mjs';
@@ -306,6 +307,11 @@ test("PR CI enumeration retains registered ordinary Sources and excludes only ex
   const publisherCatalogue=JSON.parse(fs.readFileSync(path.join(ROOT,'scripts/ci/clued-production-publisher-sources.json'),'utf8'));
   const prGated=gated.filter(name=>{
     const file='.github/workflows/'+name;
+    if(file===ACTOR_WORKFLOW){
+      const selected=classifyActorSource(trustedActorCatalogue(),file,fs.readFileSync(path.join(ROOT,file),'utf8'));
+      assert.equal(selected.passed,true,'only a complete typed non-PR actor Source/FullRoles is excluded');
+      assert.equal(selected.execution_authority,false);return false;
+    }
     if(Object.hasOwn(NON_PR_CONTROL_FILES,file)){
       const r=parseNonPrControlCatalogue(fs.readFileSync(path.join(ROOT,NON_PR_CONTROL_SOURCE_PATH))),
         selected=classifyNonPrControlWorkflowSource(r,file,fs.readFileSync(path.join(ROOT,file),'utf8'));
@@ -996,4 +1002,16 @@ test("A2 v2: the slot reporter counts v2 checks: green, and a v2 final failure r
   assert.deepEqual([result.errors, result.reports[0].ci_state, result.reports[0].returned], [[], "failed", true]);
   assert.equal(await requiredBarrier(fakeFetch({ ...v2Green(), ...rulesRoute(INDEPENDENT_RULES), ...runsRoute(HEAD, []) }).fetchImpl,
     env(), REPO, HEAD, 5, { native_runs: [], default_branch: "main" }), true);
+});
+
+
+test('manual actor exclusion never admits an unknown/mutated Source or creates actor authority',()=>{
+ const r=trustedActorCatalogue(),text=r.source.source_yaml;
+ const read=p=>p.endsWith('clued-standard-runner-actor-sources.json')?Buffer.from(JSON.stringify(r)):Buffer.from(text);
+ assert.equal(ciWorkflows(ROOT,()=>['clued-standard-runner-actor-qualification.yml'],read).size,0);
+ for(const changed of [text+'\n',text.replace('--execute','--plan'),text.replace("github.actor_id == '52366662'","true")]){
+  assert.equal(ciWorkflows(ROOT,()=>['clued-standard-runner-actor-qualification.yml'],p=>p.endsWith('clued-standard-runner-actor-sources.json')?read(p):Buffer.from(changed)).size,1);
+ }
+ assert.equal(ciWorkflows(ROOT,()=>['unknown-manual-actor.yml'],read).size,1);
+ assert.equal(classifyActorSource(r,ACTOR_WORKFLOW,text).execution_authority,false);
 });

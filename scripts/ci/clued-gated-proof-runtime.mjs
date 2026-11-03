@@ -2,10 +2,11 @@
 // stdout; a candidate cannot assert which workflow file GitHub executed.
 import {workflowBlob,registeredWorkflowSource,rolesForSource,futureWorkflowCatalogue,acceptedFutureWorkflowSource,external2FutureWorkflowCatalogue,acceptedExternal2WorkflowSource,EXTERNAL2_FILES,parseWorkflowProfiles,decodeWorkflowProfiles} from './clued-workflow-profile.mjs';
 import {createCatalogueSourceReader} from './clued-source-only-workflow.mjs';
+import {ACTOR_WORKFLOW,registeredActorTransition} from './clued-standard-runner-actor-source.mjs';
 import {readRequiredApplicability} from './clued-required-applicability.mjs';
 import {PUBLISHER_FILES,PUBLISHER_SOURCE_PATH,registeredPublisherTransition} from './clued-production-publisher-source.mjs';
 import {PUBLISHER_PR_QUALIFICATION_FILES,PUBLISHER_PR_QUALIFICATION_PATH,registeredPublisherPrQualificationTransition} from './clued-publisher-qualification-source.mjs';
-export const COMPONENT_VERSION = "1.0.4";
+export const COMPONENT_VERSION = "1.0.5";
 import {applicableCI,qualifiedCI,gateIdentityWitness,checkoutIdentityWitness,DOCUMENTATION_STEPS,QUALITY} from './clued-gated-proof.mjs';
 import {workflowIsGated,workflowFormFindings,gateFindings,workflowJobs,githubJson} from './clued-work-admission.mjs';
 import fs from 'node:fs';
@@ -474,6 +475,12 @@ export async function boundWorkflowCatalog({read,repository,tip,head,defaultWork
           return unknown('future workflow bytes/form/FrozenGate differ');
         sources.set(file,blob);selected.workflows[file]=enrollment.profile;
         sourceRegistry.workflows[file]=enrollment.profile;sourceRoles.workflows[file]={sources:{[blob]:enrollment.roles}};
+        continue;
+      }
+      if(file===ACTOR_WORKFLOW){
+        const actor=registeredActorTransition(file,text);
+        if(!actor.passed||workflowFormFindings(text).length||!explicitNonPrWorkflow(text))return unknown('exact non-PR actor Source/FullRoles missing');
+        // Static source classification only; actor effects still need original dispatch/Owner/BA authority.
         continue;
       }
       if(Object.hasOwn(PUBLISHER_FILES,file)) {

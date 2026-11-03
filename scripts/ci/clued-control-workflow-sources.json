@@ -1664,6 +1664,172 @@
             "credentials": "existing_clued_admission_environment_and_native_job_token",
             "stored_secrets": true
           }
+        },
+        {
+          "registration_status": "registered",
+          "family": "trusted_main_secret_controller",
+          "source_kind": "dispatcher_choice_successor",
+          "operation": "extend_dispatcher_choice",
+          "workflow_blob": "6f9410a9b33d8055fcc5044c4f87c2612b4aca93",
+          "source_sha256": "6ed9642dd95e4d116011f9cece441666d48838406ca3932022a8a39ff124697b",
+          "source_yaml": "name: clued-work-admission-dispatch\nrun-name: admit ${{ inputs.workflow }} ${{ inputs.ref }} ${{ inputs.claim_id }}\n\n# Work Claim Admission v0.1 §4.6, hand dispatch (Owner Decision 75abfe80,\n# Task 29128827). Agents act through the Owner's account, so a heavy workflow\n# dispatched by hand must first have its claim verified here:\n#\n#   1. Dispatch this workflow on the default branch with the heavy workflow,\n#      the ref it will run on and the claim id. This run verifies the claim\n#      with Clued and is named \"admit <workflow> <ref> <claim_id>\".\n#   2. Dispatch the heavy workflow on that ref with admission_run_id = this\n#      run's id. Its admission-gate admits only when this run succeeded on the\n#      default branch within 30 minutes and names that workflow and ref.\n#\n# The Clued token comes from the `clued-admission` environment, whose\n# deployment branches are limited to main; the job also refuses any other ref.\n# Default-branch code only, hosted runner, no application dependency install.\n\non:\n  workflow_dispatch:\n    inputs:\n      workflow:\n        description: Heavy workflow that will be dispatched\n        required: true\n        type: choice\n        options:\n          - clued-connection-authorization.yml\n          - clued-g4-database.yml\n          - information-flow-e2e.yml\n          - clued-handover-external-qualification.yml\n          - clued-handover-disposable-idle.yml\n          - clued-standard-runner-actor-qualification.yml\n      ref:\n        description: Branch or tag the heavy workflow will run on\n        required: true\n        type: string\n      claim_id:\n        description: Live Clued work claim covering this run\n        required: true\n        type: string\n      scope:\n        description: Claim scope, global or project:<canonical_project_id>\n        required: false\n        default: global\n        type: string\n\npermissions:\n  contents: read\n\njobs:\n  admit:\n    name: clued-work-admission-dispatch\n    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)\n    runs-on: ubuntu-slim\n    timeout-minutes: 5\n    environment: clued-admission\n    steps:\n      # Re-review 4, m6: the default branch as it is now, so a re-run of an\n      # old run does not replay that run's older code with today's secrets.\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          ref: ${{ github.event.repository.default_branch || 'main' }}\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: \"22\"\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Verify the work claim with Clued\n        env:\n          ADMIT_WORKFLOW: ${{ inputs.workflow }}\n          ADMIT_REF: ${{ inputs.ref }}\n          ADMIT_CLAIM_ID: ${{ inputs.claim_id }}\n          ADMIT_SCOPE: ${{ inputs.scope }}\n          CLUED_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}\n          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode dispatch-admit\n      - name: Export the closed local natural R9 packet\n        if: ${{ always() }}\n        run: node scripts/ci/merge-admission-source-producer.mjs --export admission\n      - name: Preserve natural R9 source observations\n        if: ${{ always() }}\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: clued-r9-natural-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}\n          path: .clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json\n          if-no-files-found: warn\n          retention-days: 90\n",
+          "workflow_definition": {
+            "name": "clued-work-admission-dispatch",
+            "run-name": "admit ${{ inputs.workflow }} ${{ inputs.ref }} ${{ inputs.claim_id }}",
+            "on": {
+              "workflow_dispatch": {
+                "inputs": {
+                  "workflow": {
+                    "description": "Heavy workflow that will be dispatched",
+                    "required": true,
+                    "type": "choice",
+                    "options": [
+                      "clued-connection-authorization.yml",
+                      "clued-g4-database.yml",
+                      "information-flow-e2e.yml",
+                      "clued-handover-external-qualification.yml",
+                      "clued-handover-disposable-idle.yml",
+                      "clued-standard-runner-actor-qualification.yml"
+                    ]
+                  },
+                  "ref": {
+                    "description": "Branch or tag the heavy workflow will run on",
+                    "required": true,
+                    "type": "string"
+                  },
+                  "claim_id": {
+                    "description": "Live Clued work claim covering this run",
+                    "required": true,
+                    "type": "string"
+                  },
+                  "scope": {
+                    "description": "Claim scope, global or project:<canonical_project_id>",
+                    "required": false,
+                    "default": "global",
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "permissions": {
+              "contents": "read"
+            },
+            "jobs": {
+              "admit": {
+                "name": "clued-work-admission-dispatch",
+                "if": "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
+                "runs-on": "ubuntu-slim",
+                "timeout-minutes": 5,
+                "environment": "clued-admission",
+                "steps": [
+                  {
+                    "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                    "with": {
+                      "ref": "${{ github.event.repository.default_branch || 'main' }}",
+                      "persist-credentials": false
+                    }
+                  },
+                  {
+                    "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                    "with": {
+                      "node-version": "22"
+                    }
+                  },
+                  {
+                    "name": "Configure job temporary storage",
+                    "uses": "./.github/actions/ci-temporary-storage"
+                  },
+                  {
+                    "name": "Verify the work claim with Clued",
+                    "env": {
+                      "ADMIT_WORKFLOW": "${{ inputs.workflow }}",
+                      "ADMIT_REF": "${{ inputs.ref }}",
+                      "ADMIT_CLAIM_ID": "${{ inputs.claim_id }}",
+                      "ADMIT_SCOPE": "${{ inputs.scope }}",
+                      "CLUED_DEFAULT_BRANCH": "${{ github.event.repository.default_branch }}",
+                      "CLUED_CONTEXT_READ_TOKEN": "${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}",
+                      "GITHUB_TOKEN": "${{ github.token }}"
+                    },
+                    "run": "node scripts/ci/clued-work-admission.mjs --mode dispatch-admit"
+                  },
+                  {
+                    "name": "Export the closed local natural R9 packet",
+                    "if": "${{ always() }}",
+                    "run": "node scripts/ci/merge-admission-source-producer.mjs --export admission"
+                  },
+                  {
+                    "name": "Preserve natural R9 source observations",
+                    "if": "${{ always() }}",
+                    "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                    "with": {
+                      "name": "clued-r9-natural-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
+                      "path": ".clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json",
+                      "if-no-files-found": "warn",
+                      "retention-days": 90
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "predecessor_blob": "797efcd6218b04b347e0cd55d3352ac70cca2167",
+          "primary_ids": [
+            "admit"
+          ],
+          "role_digests": {
+            "admit": "f3ff23059cbc216ed45040028e2c8ad96cfd4a71ead978a57ac6f1dd66f0f74a"
+          },
+          "command_digests": {
+            "admit": {
+              "Verify the work claim with Clued": [
+                "9d3817c599524e76ca56c58e9837477b27e5755ddd1e451e1603aca645585b15"
+              ],
+              "Export the closed local natural R9 packet": [
+                "5a5555ad4daf34846cf1d314248b9c0fda6ccf18ead52ba101dcc4f026874547"
+              ]
+            }
+          },
+          "implementation_blobs": {
+            ".github/actions/ci-temporary-storage/action.yml": "72a78ada2553dc42a062dbccf310d1b23e65431f",
+            ".github/actions/ci-temporary-storage/check-workflows.mjs": "bd30bbb8527d86a9e3c2bd2aafe07e0eb1a342fc",
+            ".github/actions/ci-temporary-storage/coverage.json": "01e05e15b80fcf1f0431e71d8aa05d1584aa8d0d",
+            ".github/actions/ci-temporary-storage/setup.mjs": "dd162105b2800d31b9970d25575945a140a69d42",
+            ".github/actions/ci-temporary-storage/setup.py": "4e3f82e061162f894e310f6e767bacf8c57a079b",
+            ".github/workflows/clued-standard-runner-actor-qualification.yml": "e98885b93113da838473cccf39ace1fafdb212a6",
+            "apps/clued-cloud/app/supabase-public-config.ts": "193fedd8e9d5ccaea873e2cc4d0efd894e93d6ae",
+            "config/clued-handover-native-entry-policy.json": "2a26987dfc41458a6db005f144dd07fd49ee8644",
+            "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea",
+            "scripts/ci/clued-gated-proof-profiles.json": "ef4270fd72819d3f4cbab5ddb4484426e337f720",
+            "scripts/ci/clued-gated-proof-role-specs.json": "81f2a2bed2113dde22f260733234f954180ac0c6",
+            "scripts/ci/clued-gated-proof-runtime.mjs": "5e9740a80c8b02a9b42e3321b93eab224b8640bc",
+            "scripts/ci/clued-handover-native-entry.mjs": "d6682bdece007f142bd53185d70427c7eb3e7f7c",
+            "scripts/ci/clued-merge-slot-ci.mjs": "b26a73bc6e05c4917d236a15e62b5ff01955f7b0",
+            "scripts/ci/clued-production-publisher-source.mjs": "0e3c2d4df3fb2f4ceb6ec8750028e2b046a1a0b6",
+            "scripts/ci/clued-production-publisher-sources.json": "df10a840de4d00961d9df55103e6c6849fba23fb",
+            "scripts/ci/clued-publisher-qualification-source.mjs": "f38859449e35eeeef492db8130f91c266c208d75",
+            "scripts/ci/clued-publisher-qualification-sources.json": "34bbd3c400af8565ed28545af2ba839c5f920d40",
+            "scripts/ci/clued-scan-start.mjs": "07042a02682d818f7e51a8d4e6105d7cc58c4b27",
+            "scripts/ci/clued-standard-runner-actor-source.mjs": "011ac0b138553e60ac38e344a2ab38ccf177bf92",
+            "scripts/ci/clued-standard-runner-actor-sources.json": "3d9743629cd645e0e1f346f989b6e7ba00f18ccd",
+            "scripts/ci/clued-work-admission.mjs": "525b46a283117a735f5891340563be57b529625d",
+            "scripts/ci/clued-workflow-profile.mjs": "69622ceef577da9e4eb8dab25fed4bdc1cbb50f3",
+            "scripts/ci/merge-admission-measurement-history.mjs": "6799c148ee7baf51a5ba989de73fb8bffb054f6f",
+            "scripts/ci/merge-admission-policy.mjs": "a3f6830e0087474d3e36222d12975deb7830c4d3",
+            "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
+            "scripts/runner/clued-runner-job-started.mjs": "dd6dcaf875539c23a9e87726542de8179a81456a",
+            "scripts/runner/qualify-standard-runner-actor.mjs": "3049eb28315033de2d73ac99e428e389f5ec0382"
+          },
+          "authority_boundary": {
+            "proof_classification": "trusted_main_secret_controller_source_only",
+            "execution_authority": false,
+            "host_qualification": "separate_required",
+            "runner_hook_exception": false,
+            "dispatch_authority": false,
+            "production_authority": false,
+            "canonical_authority": false,
+            "credentials": "existing_clued_admission_environment_and_native_job_token",
+            "stored_secrets": true
+          }
         }
       ]
     },
@@ -3466,6 +3632,67 @@
               "X64",
               "clued-controller-windows-v1"
             ],
+            "timeout-minutes": 5,
+            "environment": "clued-admission",
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "ref": "${{ github.event.repository.default_branch || 'main' }}",
+                  "persist-credentials": false
+                }
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "22"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "name": "Verify the work claim with Clued",
+                "env": {
+                  "ADMIT_WORKFLOW": "${{ inputs.workflow }}",
+                  "ADMIT_REF": "${{ inputs.ref }}",
+                  "ADMIT_CLAIM_ID": "${{ inputs.claim_id }}",
+                  "ADMIT_SCOPE": "${{ inputs.scope }}",
+                  "CLUED_DEFAULT_BRANCH": "${{ github.event.repository.default_branch }}",
+                  "CLUED_CONTEXT_READ_TOKEN": "${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}",
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "run": "node scripts/ci/clued-work-admission.mjs --mode dispatch-admit"
+              },
+              {
+                "name": "Export the closed local natural R9 packet",
+                "if": "${{ always() }}",
+                "run": "node scripts/ci/merge-admission-source-producer.mjs --export admission"
+              },
+              {
+                "name": "Preserve natural R9 source observations",
+                "if": "${{ always() }}",
+                "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                "with": {
+                  "name": "clued-r9-natural-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
+                  "path": ".clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json",
+                  "if-no-files-found": "warn",
+                  "retention-days": 90
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "6f9410a9b33d8055fcc5044c4f87c2612b4aca93": [
+        {
+          "job_id": "admit",
+          "definition_sha256": "f3ff23059cbc216ed45040028e2c8ad96cfd4a71ead978a57ac6f1dd66f0f74a",
+          "definition": {
+            "name": "clued-work-admission-dispatch",
+            "if": "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
+            "runs-on": "ubuntu-slim",
             "timeout-minutes": 5,
             "environment": "clued-admission",
             "steps": [

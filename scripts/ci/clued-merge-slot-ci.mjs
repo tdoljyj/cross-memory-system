@@ -48,6 +48,7 @@
 import { createHash } from "node:crypto";
 import {isDeepStrictEqual} from "node:util";
 import fs from "node:fs";
+import {ACTOR_WORKFLOW,ACTOR_SOURCE_PATH,classifyActorSource} from './clued-standard-runner-actor-source.mjs';
 import {PUBLISHER_FILES,PUBLISHER_SOURCE_PATH,registeredPublisherSource} from "./clued-production-publisher-source.mjs";
 import {PUBLISHER_PR_QUALIFICATION_FILES,PUBLISHER_PR_QUALIFICATION_PATH,registeredPublisherPrQualificationSource} from "./clued-publisher-qualification-source.mjs";
 import {createNaturalRecorder} from "./merge-admission-source-producer.mjs";
@@ -234,6 +235,13 @@ export function ciWorkflows(workspace, readDir = fs.readdirSync, readFile = fs.r
   };
   for (const file of readDir(dir).filter((name) => /\.ya?ml$/.test(name)).sort()) {
     const {bytes,text}=bounded(path.join(dir,file),524288,'workflow Source'),workflowPath=`.github/workflows/${file}`;
+    if(workflowPath===ACTOR_WORKFLOW){
+      const raw=bounded(path.join(workspace,ACTOR_SOURCE_PATH),524288,'actor Source registry');
+      const actor=classifyActorSource(JSON.parse(raw.text),workflowPath,text);
+      if(actor.passed)continue;
+      // An unregistered/mutated manual Source remains counted, never inferred N/A.
+      out.set(workflowPath,gitBlobSha(bytes));continue;
+    }
     if(Object.hasOwn(NON_PR_CONTROL_FILES,workflowPath)){
       const raw=bounded(path.join(workspace,NON_PR_CONTROL_SOURCE_PATH),524288,'non-PR Source registry'),
         selected=classifyNonPrControlWorkflowSource(parseNonPrControlCatalogue(raw.bytes),workflowPath,text);
