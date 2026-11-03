@@ -122,8 +122,13 @@ export function validateResponse(v, request) {
   check(v.directory === null || (typeof v.directory === 'string' && ARCHIVE_DIR.test(v.directory)), 'MAILBOX_RESPONSE_DIRECTORY_REFUSED');
   check(v.verified === null || typeof v.verified === 'boolean', 'MAILBOX_RESPONSE_VERIFIED_REFUSED');
   check(v.usage === null || (exactKeys(v.usage, ['bytes', 'directories'], 'MAILBOX_RESPONSE_USAGE_REFUSED'), Number.isSafeInteger(v.usage.bytes) && v.usage.bytes >= 0 && Number.isSafeInteger(v.usage.directories) && v.usage.directories >= 0), 'MAILBOX_RESPONSE_USAGE_REFUSED');
-  check(v.pull === null || (request.kind === 'pr-head' && (exactKeys(v.pull, ['number', 'state', 'headSha'], 'MAILBOX_RESPONSE_PULL_REFUSED'),
-    v.pull.number === request.pr && PULL_STATES.includes(v.pull.state) && HEX40.test(v.pull.headSha ?? ''))), 'MAILBOX_RESPONSE_PULL_REFUSED');
+  // parsePull's merge-ref observation is advisory but must survive this boundary.
+  // Keep legacy three-field replies; the sole optional fourth field is a typed
+  // exact SHA, never an open-ended payload or authority to execute anything.
+  check(v.pull === null || (request.kind === 'pr-head' && (exactKeys(v.pull,
+    ['number', 'state', 'headSha', ...(v.pull && Object.hasOwn(v.pull, 'mergeSha') ? ['mergeSha'] : [])], 'MAILBOX_RESPONSE_PULL_REFUSED'),
+    v.pull.number === request.pr && PULL_STATES.includes(v.pull.state) && HEX40.test(v.pull.headSha ?? '') &&
+    (!Object.hasOwn(v.pull, 'mergeSha') || (typeof v.pull.mergeSha === 'string' && v.pull.mergeSha.length === 40 && HEX40.test(v.pull.mergeSha))))), 'MAILBOX_RESPONSE_PULL_REFUSED');
   check(v.jobTree === null || JOB_TREES.includes(v.jobTree), 'MAILBOX_RESPONSE_JOB_TREE_REFUSED');
   check(v.memory === null || (request.kind === 'memory-ready' && (exactKeys(v.memory, ['order', 'blocks'], 'MAILBOX_RESPONSE_MEMORY_REFUSED'),
     Number.isSafeInteger(v.memory.order) && v.memory.order >= 0 && v.memory.order <= 10 && Number.isSafeInteger(v.memory.blocks) && v.memory.blocks >= 0)), 'MAILBOX_RESPONSE_MEMORY_REFUSED');
