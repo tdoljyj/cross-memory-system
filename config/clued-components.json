@@ -203,7 +203,7 @@
     {
       "id": "script.gated-proof-runtime",
       "kind": "script",
-      "version": "1.0.2",
+      "version": "1.0.4",
       "description": "Bounded CI execution proof runtime and its actual quality unit regression entry.",
       "root": ".",
       "files": [
@@ -211,7 +211,7 @@
         "scripts/ci/clued-gated-proof-runtime.mjs",
         "scripts/ci/clued-reader-budget-cache.test.mjs"
       ],
-      "content_sha256": "cc752a42ef1bb139ea0c76da969c5dc646c7b0f73ed0b38e4fac910aa81227e4",
+      "content_sha256": "af5f2ed4081c9a26137d8101ffa87d9a742234b183b6fef34e3379fb8bddf0e8",
       "version_marker": {
         "file": "scripts/ci/clued-gated-proof-runtime.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -300,13 +300,13 @@
     {
       "id": "script.workflow-source-profile",
       "kind": "script",
-      "version": "1.0.3",
+      "version": "1.0.5",
       "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
       "root": "scripts/ci",
       "files": [
         "clued-workflow-profile.mjs"
       ],
-      "content_sha256": "83d88c6b7c9f06d36d1f3a4654d0e1ac2f4d647cb09d4050d850a34218f4b689",
+      "content_sha256": "8e31e84b74759a093db5bd2f65eee1c7eb9fe4bb71ed8710170888dec74bc591",
       "version_marker": {
         "file": "clued-workflow-profile.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -555,7 +555,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "d5b65dcb4f4aaf28da1f47223b8e8f905a4bb3ccf50e96f3e9c611d909ec6f8e"
+      "content_sha256": "9d405b64b74c3572c6cd44303a3d204f6c5bf30bc45030476a908fb6f026de75"
     },
     {
       "id": "script.resource-maintenance",
@@ -573,6 +573,74 @@
         "file": "scripts/ci/self-hosted/resource-maintenance/maintenance.py",
         "pattern": "VERSION = \"{version}\""
       }
+    },
+    {
+      "id": "script.non-pr-control-source",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Exact non-PR Source metadata classifier; candidate until separately accepted Source placement. No execution authority.",
+      "root": "scripts/ci",
+      "files": [
+        "clued-non-pr-control-source.mjs",
+        "clued-non-pr-control-source.test.mjs",
+        "clued-non-pr-control-sources.json"
+      ],
+      "version_marker": {
+        "file": "clued-non-pr-control-source.mjs",
+        "pattern": "export const COMPONENT_VERSION='{version}';"
+      },
+      "content_sha256": "2a72aa9b01a93d926767777739c5ad0a6f80951f5f113ade248e10660e98c82f"
+    },
+    {
+      "id": "script.source-only-workflow",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Bounded disabled-Source metadata identity and request-local immutable catalogue reader. Never grants execution or Host qualification.",
+      "root": "scripts/ci",
+      "files": [
+        "clued-source-only-workflow.mjs",
+        "clued-source-only-workflow.test.mjs"
+      ],
+      "version_marker": {
+        "file": "clued-source-only-workflow.mjs",
+        "pattern": "export const COMPONENT_VERSION='{version}';"
+      },
+      "content_sha256": "011faed4f08aaee5a8893466dd5ac5fdc615f9bd938f7b6b5078527b67d4b116"
+    },
+    {
+      "id": "script.control-workflow-source",
+      "kind": "script",
+      "version": "1.0.2",
+      "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
+      "root": ".",
+      "files": [
+        "scripts/ci/clued-control-workflow-source.mjs",
+        "scripts/ci/clued-control-workflow-sources.json",
+        "scripts/ci/clued-merge-slot-ci.mjs",
+        "scripts/ci/clued-merge-slot-ci.test.mjs",
+        ".github/workflows/clued-merge-slot-ci.yml"
+      ],
+      "version_marker": {
+        "file": "scripts/ci/clued-control-workflow-source.mjs",
+        "pattern": "export const COMPONENT_VERSION='{version}';"
+      },
+      "content_sha256": "71e51bda6e2debf07e3fa0bf8bdf99276007948c0eb613b871668dd5fbf00c3c"
+    },
+    {
+      "id": "script.required-applicability",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Request-bound independent complete diff and fixed trusted-base selector evidence; no serialized flag can mint live qualification.",
+      "root": "scripts/ci",
+      "files": [
+        "clued-required-applicability.mjs",
+        "clued-required-applicability.test.mjs"
+      ],
+      "version_marker": {
+        "file": "clued-required-applicability.mjs",
+        "pattern": "export const COMPONENT_VERSION='{version}';"
+      },
+      "content_sha256": "d7d607f2df1dbb10f9de15037f7cab2674b6501a19da1ddbb04dd459114941ce"
     }
   ]
 }

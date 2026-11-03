@@ -8,7 +8,7 @@ import {
 } from './clued-work-admission.mjs';
 import {
   compileRegisteredWorkflow, registeredWorkflowSource, roleDefinitionDigest,
-  rolesForSource, workflowBlob,
+  rolesForSource, workflowBlob, parseWorkflowProfiles, REQUIRED_TESTS_SOURCE,
 } from './clued-workflow-profile.mjs';
 
 // These exact preregistered workflow bytes are active only in this unaccepted integrated candidate.
@@ -19,7 +19,7 @@ const ROOT = new URL('../../', import.meta.url);
 const require = createRequire(new URL('apps/clued-cloud/package.json', ROOT));
 const yaml = require('yaml');
 const load = name => JSON.parse(fs.readFileSync(new URL(`scripts/ci/${name}`, ROOT), 'utf8'));
-const profiles = load('clued-gated-proof-profiles.json');
+const profiles = parseWorkflowProfiles(fs.readFileSync(new URL('scripts/ci/clued-gated-proof-profiles.json', ROOT)));
 const roleSpecs = load('clued-gated-proof-role-specs.json');
 const GATE_SHA = '3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9';
 const SOURCES = [
@@ -94,6 +94,15 @@ test('the integrated candidate uses exactly the two preregistered workflow bytes
     assert.equal(active, source(row.file, row.after));
     assert.equal(active, fixture(row).toString('utf8'));
   }
+  // The separately frozen compound candidate is additive to this earlier
+  // scan-start generation. Verify its exact identity before comparing the
+  // unchanged predecessor catalogue; disk /3 is decoded above, never repinned.
+  assert.equal(profileBefore.workflows[REQUIRED_TESTS_SOURCE.file].workflow_blob, REQUIRED_TESTS_SOURCE.workflow_blob);
+  assert.deepEqual(rolesBefore.workflows[REQUIRED_TESTS_SOURCE.file].sources[REQUIRED_TESTS_SOURCE.workflow_blob]
+    .map(role => [role.job_id, role.definition_sha256]), REQUIRED_TESTS_SOURCE.primary_ids
+    .map(id => [id, REQUIRED_TESTS_SOURCE.role_sha256[id]]));
+  delete profileBefore.workflows[REQUIRED_TESTS_SOURCE.file];
+  delete rolesBefore.workflows[REQUIRED_TESTS_SOURCE.file];
   assert.equal(roleDefinitionDigest(profileBefore), 'fd63c6804f427cbe6c2e8ba4e18f8d53981006bdb2e1113a196ddd73fee7c9a7');
   assert.equal(roleDefinitionDigest(rolesBefore), '4a86b392b2d094fd8f80d8bafc2bf0e4ab32357c4c1f21ac747556836c242352');
   const admission = fs.readFileSync(new URL('./clued-work-admission.mjs', import.meta.url), 'utf8');

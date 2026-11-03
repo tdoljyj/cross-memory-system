@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import {parseWorkflowProfiles,registeredWorkflowSource,rolesForSource,roleDefinitionDigest,workflowBlob} from "./clued-workflow-profile.mjs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -64,6 +65,8 @@ import {
   gateFindings,
   PRODUCTION_PUBLISHER_WORKFLOW,
   registeredPublisherGatedSuccessor,
+  registeredPlacementSuccessor,
+  registeredBootstrapOrdinarySuccessor,
   jobIsHosted,
   jobTimeout,
   rerunAttempt,
@@ -913,7 +916,7 @@ test("workflows: only base-branch jobs in the clued-admission environment get th
   }
   // Merge Admission step 3: clued-merge-slot-ci reports CI states with the same token; step 5:
   // clued-merge-executor reads the queue heads with it.
-  assert.deepEqual(holders.sort(), ["clued-merge-executor.yml", "clued-merge-slot-ci.yml", "clued-work-admission-dispatch.yml", "clued-work-admission-reverify.yml", "clued-work-admission.yml", "clued-work-claim-handover-revoke.yml"]);
+  assert.deepEqual(holders.sort(), ["clued-merge-executor.yml", "clued-merge-slot-ci.yml", "clued-native617-admission-dispatch.yml", "clued-work-admission-dispatch.yml", "clued-work-admission-reverify.yml", "clued-work-admission.yml", "clued-work-claim-handover-revoke.yml"]);
   const measurement = fs.readFileSync(path.join(dir, "clued-ci-usage-report.yml"), "utf8");
   assert.doesNotMatch(measurement, /^ {2}pull_request(?:_target)?:/m, "the measurement credential never enters a PR workflow");
   assert.match(measurement, /ref: \$\{\{ github\.event\.repository\.default_branch \|\| 'main' \}\}/);
@@ -1120,7 +1123,7 @@ const REQUIRED_CHECK_NAMES = ["gitleaks", "trivy", "kooyumi-work-admission", "ko
 // The ungated attack cases exercise the exact registered predecessor, not the
 // newly gated working-tree Trivy workflow.
 function historicalUngatedTrivy() {
-  const profiles = JSON.parse(fs.readFileSync(path.join(ROOT, "scripts/ci/clued-gated-proof-profiles.json"), "utf8"));
+  const profiles = parseWorkflowProfiles(fs.readFileSync(path.join(ROOT, "scripts/ci/clued-gated-proof-profiles.json"), "utf8"));
   const predecessor = profiles.workflows[".github/workflows/trivy.yml"];
   assert.equal(predecessor.gated, false);
   assert.equal(predecessor.source_sha256, "85df37f10587af183dfac642d3f289ae4973ba2623a1e3dceb6537967d0c1e95");
@@ -1202,7 +1205,7 @@ test("publisher transition: caller workspace or API profiles never select the tr
 // registrations. Both Sources come from the registry, so this holds before
 // and after PR-B lands.
 function hostedExecutorPair() {
-  const profiles = JSON.parse(fs.readFileSync(path.join(ROOT, "scripts/ci/clued-gated-proof-profiles.json"), "utf8"));
+  const profiles = parseWorkflowProfiles(fs.readFileSync(path.join(ROOT, "scripts/ci/clued-gated-proof-profiles.json"), "utf8"));
   const texts = {};
   for (const [file, [before, after]] of Object.entries(HOSTED_EXECUTOR_SOURCES)) {
     const record = profiles.workflows[file];
@@ -1222,8 +1225,20 @@ const hostedExecutorFindings = (texts, heads, extra = []) => workflowFindings(as
 test("gate guard (A1): the exact PR-B hosted executor Sources are registered successors of main's self-hosted ones", async () => {
   const texts = hostedExecutorPair();
   for (const [file, { base, head, profile }] of Object.entries(texts)) {
-    assert.ok([base, head].map(sha256Hex).includes(sha256Hex(fs.readFileSync(path.join(ROOT, file), "utf8"))),
-      `${file}: the working tree is one of the pair`);
+    const current=fs.readFileSync(path.join(ROOT,file),"utf8"),
+      profiles=parseWorkflowProfiles(fs.readFileSync(path.join(ROOT,"scripts/ci/clued-gated-proof-profiles.json"))),
+      specs=JSON.parse(fs.readFileSync(path.join(ROOT,"scripts/ci/clued-gated-proof-role-specs.json"))),
+      selected=registeredWorkflowSource(profiles,file,workflowBlob(current));
+    assert.equal(selected.passed,true,`${file}: the current ordinary Source must independently register exactly`);
+    assert.equal(selected.profile.source_yaml,current);
+    const currentRoles=rolesForSource(specs,file,workflowBlob(current));
+    assert.ok(currentRoles?.length>0,`${file}: independent current Source roles exist`);
+    for(const role of currentRoles)assert.equal(roleDefinitionDigest(role.definition),role.definition_sha256,file);
+    if(![base,head].includes(current)){
+      const row=profiles.workflows[file],predecessors=[row,...(row.accepted_sources??[])].filter(source=>source.source_yaml!==current&&
+        registeredBootstrapOrdinarySuccessor({file:{filename:file,status:'modified'},headText:current,baseText:source.source_yaml,profiles,roleSpecs:specs}).passed);
+      assert.equal(predecessors.length,1,`${file}: later ordinary Source has one exact registered predecessor`);
+    }
     assert.ok(workflowJobs(base).some((job) => job.name === "admission-gate" && !jobIsHosted(job)), file);
     assert.ok(workflowJobs(head).every((job) => jobIsHosted(job)), file);
     assert.equal(sha256Hex(workflowJobs(head).find((job) => job.name === "admission-gate").lines.join("\n")), HOSTED_SOURCE_PROOF_GATE_DIGEST, file);
@@ -1234,8 +1249,9 @@ test("gate guard (A1): the exact PR-B hosted executor Sources are registered suc
       assert.ok(!head.includes(`'${name}' ||`) && !head.includes(`|| '${name}' }}`), `${file}: ${name} in a dynamic name branch`);
     }
     // The relay identity step is registered as a required step after every scan.
-    const steps = Object.keys(profile.routes[0].required_steps);
-    assert.equal(steps.at(-1), "Emit relay identity", file);
+    assert.equal(profile.routes[0].required_steps["Emit relay identity"],1,file);
+    const executorRole=rolesForSource(specs,file,workflowBlob(head)).find(role=>role.job_id===profile.routes[0].job_id);
+    assert.equal(executorRole.definition.steps.at(-1).name,"Emit relay identity",file);
     assert.match(head, /^ {4}permissions:\n {6}contents: read\n {6}id-token: write\n {4}steps:$/m, file);
     assert.match(head, /audience=clued-hosted-relay-v1/, file);
   }
@@ -1244,6 +1260,27 @@ test("gate guard (A1): the exact PR-B hosted executor Sources are registered suc
   // The PR-B change set also carries the budget validator, docs and tests.
   assert.deepEqual((await hostedExecutorFindings(texts, heads, [{ filename: "scripts/ci/validate_runner_budget_policy.py", status: "modified" },
     { filename: "docs/maintenance/independent-ci.md", status: "added" }])).gate, []);
+});
+
+test("placement Source validation ignores object member order but preserves values and FullRole step order",()=>{
+  const file=".github/workflows/contract-placement.yml",{base,head}=hostedExecutorPair()[file],
+    profiles=parseWorkflowProfiles(fs.readFileSync(path.join(ROOT,"scripts/ci/clued-gated-proof-profiles.json"))),
+    roleSpecs=JSON.parse(fs.readFileSync(path.join(ROOT,"scripts/ci/clued-gated-proof-role-specs.json"))),
+    reverseMembers=value=>Array.isArray(value)?value.map(reverseMembers):value&&typeof value==='object'
+      ?Object.fromEntries(Object.entries(value).reverse().map(([key,entry])=>[key,reverseMembers(entry)])):value,
+    invoke=(p=profiles,r=roleSpecs)=>registeredPlacementSuccessor({file:{filename:file,status:'modified'},headText:head,baseText:base,profiles:p,roleSpecs:r}),
+    reordered=reverseMembers(profiles);
+  assert.notEqual(JSON.stringify(reordered),JSON.stringify(profiles),'the regression really changes member order');
+  assert.equal(invoke().passed,true,'the actual disk/3 semantic view is accepted');
+  assert.equal(invoke(reordered,reverseMembers(roleSpecs)).passed,true,'member order carries no Source or Role semantics');
+  const changedProfile=structuredClone(profiles),row=changedProfile.workflows[file],
+    source=[row,...row.accepted_sources].find(profile=>profile.workflow_blob===workflowBlob(head));
+  source.routes[0].required_steps["Emit relay identity"]++;
+  assert.equal(invoke(changedProfile).passed,false,'a changed required-step count is still rejected');
+  const changedRole=structuredClone(roleSpecs),role=rolesForSource(changedRole,file,workflowBlob(head))[0];
+  assert.ok(role.definition.steps.length>1);
+  role.definition.steps.reverse();role.definition_sha256=roleDefinitionDigest(role.definition);
+  assert.equal(invoke(profiles,changedRole).passed,false,'reordering execution steps cannot self-register even with its recomputed digest');
 });
 
 test("gate guard (A1): any other byte of a hosted executor Source is refused, and main's bytes stay valid", async () => {
@@ -2403,7 +2440,7 @@ test("owner review: the workflows on main that hold an environment are exactly t
   }
   // MergeAdmission §12.1 (Owner Decision 00b71629): the usage report reads the measurement App's key from clued-admission.
   assert.deepEqual(holders, ["clued-ci-usage-report.yml", "clued-cloud-production-release.yml", "clued-currentness-post-deploy-attestation.yml",
-    "clued-handover-disposable-idle.yml", "clued-handover-external-qualification.yml", "clued-integration-runtime-config.yml", "clued-merge-executor.yml", "clued-merge-slot-ci.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
+    "clued-handover-disposable-idle.yml", "clued-handover-external-qualification.yml", "clued-integration-runtime-config.yml", "clued-merge-executor.yml", "clued-merge-slot-ci.yml", "clued-native617-admission-dispatch.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
     "clued-work-admission-reverify.yml", "clued-work-admission.yml", "clued-work-claim-handover-revoke.yml"]);
 });
 

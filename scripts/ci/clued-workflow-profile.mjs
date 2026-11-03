@@ -1,11 +1,197 @@
 import {createHash} from 'node:crypto';
-export const COMPONENT_VERSION = "1.0.3";
+export const COMPONENT_VERSION = "1.0.5";
+
+// /3 changes only the on-disk representation. Each original LF-delimited YAML
+// line remains a separate plaintext JSON string on a separate physical line.
+// Consumers receive the original /2 semantic value; raw Source pins still bind
+// the actual disk bytes, never this decoded projection.
+export const WORKFLOW_PROFILES_SCHEMA_V2='clued.gated-proof-profiles/2';
+export const WORKFLOW_PROFILES_SCHEMA_V3='clued.gated-proof-profiles/3';
+export const WORKFLOW_PROFILES_MAX_BYTES=1048576;
+export const WORKFLOW_SOURCE_MAX_BYTES=524288;
+export const WORKFLOW_SOURCE_MAX_LINES=8192;
+export const WORKFLOW_SOURCE_MAX_LINE_BYTES=65536;
+const PROFILE_TOP_KEYS=new Set(['schema','audit_source','workflows','future_workflows',
+  'external2_future_workflows','native617_pending_sources']);
+const PROFILE_SOURCE_KEYS=new Set(['registration_status','workflow_blob','source_sha256','source_yaml_lines',
+  'primary_ids','pull_request','gated','routes','execution_mode']);
+const PENDING_SOURCE_KEYS=new Set(['file','purpose','registration_status','source_yaml_lines','workflow_blob',
+  'source_sha256','workflow_definition','source_acceptance','host_qualification']);
+const codecRefuse=()=>{throw Object.assign(new Error('WORKFLOW_PROFILES_CODEC_INVALID'),
+  {code:'WORKFLOW_PROFILES_CODEC_INVALID'});};
+const profileSourcePath=parts=>
+  (parts.length===2&&parts[0]==='workflows'&&/^\.github\/workflows\/[^/]+\.ya?ml$/.test(parts[1]))||
+  (parts.length===4&&parts[0]==='workflows'&&/^\.github\/workflows\/[^/]+\.ya?ml$/.test(parts[1])&&
+    parts[2]==='accepted_sources'&&Number.isSafeInteger(parts[3]))||
+  (parts.length===3&&['future_workflows','external2_future_workflows'].includes(parts[0])&&
+    Number.isSafeInteger(parts[1])&&parts[2]==='source_profile')||
+  (parts.length===2&&parts[0]==='native617_pending_sources'&&Number.isSafeInteger(parts[1]));
+function sourceLines(text) {
+  if(typeof text!=='string'||!text.isWellFormed()||Buffer.byteLength(text)>WORKFLOW_SOURCE_MAX_BYTES||
+    /[\r\u0000]/.test(text))codecRefuse();
+  const lines=text.split('\n');
+  if(lines.length>WORKFLOW_SOURCE_MAX_LINES||lines.some(line=>Buffer.byteLength(line)>WORKFLOW_SOURCE_MAX_LINE_BYTES))codecRefuse();
+  return lines;
+}
+function profileProjection(value,from,to) {
+  let nodes=0,sources=0;const seen=new Set();
+  function visit(v,parts=[]) {
+    if(++nodes>200000||parts.length>64)codecRefuse();
+    if(v===null||typeof v==='boolean')return v;
+    if(typeof v==='number'){if(!Number.isFinite(v))codecRefuse();return v;}
+    if(typeof v==='string'){if(!v.isWellFormed())codecRefuse();return v;}
+    if(typeof v!=='object'||seen.has(v))codecRefuse();
+    const proto=Object.getPrototypeOf(v),array=Array.isArray(v);
+    if(array?proto!==Array.prototype:proto!==Object.prototype&&proto!==null)codecRefuse();
+    seen.add(v);
+    const descriptors=Object.getOwnPropertyDescriptors(v),keys=Reflect.ownKeys(descriptors);
+    if(keys.some(key=>typeof key!=='string'||(key!=='length'&&(!Object.hasOwn(descriptors[key],'value')||
+      !descriptors[key].enumerable))))codecRefuse();
+    if(array) {
+      const length=descriptors.length.value;
+      if(!Number.isSafeInteger(length)||length>20000||keys.length!==length+1)codecRefuse();
+      const result=[];
+      for(let i=0;i<length;i++){
+        if(!Object.hasOwn(descriptors,String(i)))codecRefuse();
+        result.push(visit(descriptors[i].value,[...parts,i]));
+      }
+      seen.delete(v);return result;
+    }
+    if(Object.hasOwn(descriptors,'source_yaml')&&Object.hasOwn(descriptors,'source_yaml_lines'))codecRefuse();
+    const hasText=Object.hasOwn(descriptors,'source_yaml'),hasLines=Object.hasOwn(descriptors,'source_yaml_lines');
+    if((hasText||hasLines)&&!profileSourcePath(parts))codecRefuse();
+    if(from===WORKFLOW_PROFILES_SCHEMA_V3&&(hasText||(profileSourcePath(parts)&&!hasLines)))codecRefuse();
+    if(from===WORKFLOW_PROFILES_SCHEMA_V3&&profileSourcePath(parts)) {
+      const pending=parts[0]==='native617_pending_sources';
+      if(keys.some(key=>!(pending?PENDING_SOURCE_KEYS:PROFILE_SOURCE_KEYS).has(key)&&
+        !(parts.length===2&&parts[0]==='workflows'&&key==='accepted_sources')))codecRefuse();
+    }
+    if(from===WORKFLOW_PROFILES_SCHEMA_V2&&hasLines)codecRefuse();
+    const result={};
+    for(const key of keys) {
+      if(['__proto__','prototype','constructor'].includes(key))codecRefuse();
+      const raw=descriptors[key].value;
+      if(key==='source_yaml'||key==='source_yaml_lines') {
+        if(++sources>128)codecRefuse();let text;
+        if(key==='source_yaml')text=raw;
+        else {
+          const lines=visit(raw,[...parts,key]);
+          if(!Array.isArray(lines)||!lines.length||lines.length>WORKFLOW_SOURCE_MAX_LINES||
+            lines.some(line=>typeof line!=='string'||/[\r\n\u0000]/.test(line)||
+              Buffer.byteLength(line)>WORKFLOW_SOURCE_MAX_LINE_BYTES))codecRefuse();
+          text=lines.join('\n');
+        }
+        const lines=sourceLines(text);
+        result[to===WORKFLOW_PROFILES_SCHEMA_V3?'source_yaml_lines':'source_yaml']=
+          to===WORKFLOW_PROFILES_SCHEMA_V3?lines:text;
+      } else result[key]=visit(raw,[...parts,key]);
+    }
+    if(profileSourcePath(parts)&&Object.hasOwn(result,'execution_mode')) {
+      const semantic={...result};
+      if(Object.hasOwn(semantic,'source_yaml_lines')){
+        semantic.source_yaml=semantic.source_yaml_lines.join('\n');delete semantic.source_yaml_lines;
+      }
+      if(!profileSourcePath(parts)||parts[0]!=='workflows'||
+        !isExactAllRequiredPrimariesProfile(semantic,parts[1]))codecRefuse();
+    }
+    seen.delete(v);return result;
+  }
+  const result=visit(value);
+  result.schema=to;return result;
+}
+export function decodeWorkflowProfiles(value) {
+  try {
+    if(!value||typeof value!=='object'||Array.isArray(value))codecRefuse();
+    const descriptor=Object.getOwnPropertyDescriptor(value,'schema');
+    const schema=descriptor&&Object.hasOwn(descriptor,'value')?descriptor.value:null;
+    if(schema!==WORKFLOW_PROFILES_SCHEMA_V2&&schema!==WORKFLOW_PROFILES_SCHEMA_V3)codecRefuse();
+    if(schema===WORKFLOW_PROFILES_SCHEMA_V3&&Object.keys(value).some(key=>!PROFILE_TOP_KEYS.has(key)))codecRefuse();
+    const result=profileProjection(value,schema,WORKFLOW_PROFILES_SCHEMA_V2);
+    if(!result.workflows||typeof result.workflows!=='object'||Array.isArray(result.workflows)||
+      Buffer.byteLength(JSON.stringify(result))>WORKFLOW_PROFILES_MAX_BYTES)codecRefuse();
+    if(schema===WORKFLOW_PROFILES_SCHEMA_V3) {
+      if(Object.keys(result.workflows).length>128||Object.keys(result.workflows).some(file=>
+        !/^\.github\/workflows\/[A-Za-z0-9_.-]+\.ya?ml$/.test(file)))codecRefuse();
+      if(Object.hasOwn(result,'audit_source')&&!/^[0-9a-f]{40}$/.test(result.audit_source))codecRefuse();
+      for(const [key,max] of [['future_workflows',7],['external2_future_workflows',2],['native617_pending_sources',3]])
+        if(Object.hasOwn(result,key)&&(!Array.isArray(result[key])||result[key].length>max))codecRefuse();
+      for(const profile of Object.values(result.workflows))if(Object.hasOwn(profile,'accepted_sources')&&
+        (!Array.isArray(profile.accepted_sources)||profile.accepted_sources.length>128))codecRefuse();
+    }
+    // Original semantic references are needed by the Source3 wrapper identity
+    // check. /2 is validated on every call, never cached or trusted by a flag.
+    return schema===WORKFLOW_PROFILES_SCHEMA_V2?value:result;
+  } catch {codecRefuse();}
+}
+export function encodeWorkflowProfiles(value) {
+  try {
+    const semantic=decodeWorkflowProfiles(value);
+    const wire=profileProjection(semantic,WORKFLOW_PROFILES_SCHEMA_V2,WORKFLOW_PROFILES_SCHEMA_V3);
+    decodeWorkflowProfiles(wire);return wire;
+  } catch {codecRefuse();}
+}
+export function serializeWorkflowProfiles(value) {
+  try {
+    const wire=canonical(encodeWorkflowProfiles(value));
+    let source=false;
+    const text=JSON.stringify(wire,null,2).split('\n').map(line=>{
+      if(/^\s*"source_yaml_lines": \[$/.test(line)){source=true;return line;}
+      if(source&&/^\s*\]/.test(line)){source=false;return line;}
+      return source?line.trimStart():line;
+    }).join('\n')+'\n';
+    if(Buffer.byteLength(text)>WORKFLOW_PROFILES_MAX_BYTES)codecRefuse();
+    return text;
+  } catch {codecRefuse();}
+}
+export function parseWorkflowProfiles(raw) {
+  try {
+    if((typeof raw!=='string'&&!Buffer.isBuffer(raw))||Buffer.byteLength(raw)>WORKFLOW_PROFILES_MAX_BYTES)codecRefuse();
+    const text=Buffer.isBuffer(raw)?new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(raw):raw;
+    if(!text.isWellFormed())codecRefuse();
+    const wire=JSON.parse(text),semantic=decodeWorkflowProfiles(wire);
+    // /3 has a single transparent disk form: no extra Unicode escapes, compact
+    // single-line source arrays, or alternative whitespace can hide plaintext.
+    if(wire.schema===WORKFLOW_PROFILES_SCHEMA_V3&&text!==serializeWorkflowProfiles(semantic))codecRefuse();
+    return semantic;
+  } catch {codecRefuse();}
+}
 
 const digest=text=>createHash('sha256').update(text).digest('hex');
 const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?
   Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;
 export const roleDefinitionDigest=job=>digest(JSON.stringify(canonical(job)));
 export const workflowBlob=text=>createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex');
+// A draft Source successor, not an Owner acceptance or an execution grant.
+// The only compound primary family is bound to these exact existing Git bytes
+// and the three independently supplied complete roles. Other workflows retain
+// the historical hosted/self-hosted alternative-route model.
+export const ALL_REQUIRED_PRIMARIES_MODE='all_required_primaries';
+export const REQUIRED_TESTS_SOURCE=Object.freeze({
+  file:'.github/workflows/clued-required-tests.yml',
+  workflow_blob:'8a22de3a97425d9f85bc9f605dbdbf748b8e0946',
+  source_sha256:'54d712c97fbae78be4061365625725cfb1a0bf7a50244b2b935af942b611cd89',
+  workflow_definition_sha256:'2711f46c707ab128542792ffea4302275efcec22960e655012f968848a35edaa',
+  profile_sha256:'ef4d90596d62d223df7f34ca8f085c79f7bafecaff25833cb9215ec89f60ec1c',
+  primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify']),
+  role_sha256:Object.freeze({
+    'clued-cloud-tests':'0bb545587b121538cecd3362d7ff87e5427dc1897190e125fd7f2be14b145910',
+    'ci-suites':'c54352dbae19b3a104dc8a7063f04be7500d51d45a7e5b77329e709918e0b7fa',
+    'migration-verify':'554f6a340a69a47c3d9f6fe0853ba16c4a62fceb0cc4b970d27d5994562890b1',
+  }),
+});
+export function isExactAllRequiredPrimariesProfile(profile,file) {
+  try {
+    if(file!==REQUIRED_TESTS_SOURCE.file||!profile||typeof profile!=='object'||Array.isArray(profile))return false;
+    const {accepted_sources,...fields}=profile;
+    return exactKeys(fields,['registration_status','workflow_blob','source_sha256','source_yaml','primary_ids',
+      'pull_request','gated','routes','execution_mode'])&&
+      fields.execution_mode===ALL_REQUIRED_PRIMARIES_MODE&&fields.workflow_blob===REQUIRED_TESTS_SOURCE.workflow_blob&&
+      fields.source_sha256===REQUIRED_TESTS_SOURCE.source_sha256&&typeof fields.source_yaml==='string'&&
+      workflowBlob(fields.source_yaml)===REQUIRED_TESTS_SOURCE.workflow_blob&&
+      digest(fields.source_yaml)===REQUIRED_TESTS_SOURCE.source_sha256&&
+      roleDefinitionDigest(fields)===REQUIRED_TESTS_SOURCE.profile_sha256;
+  }catch{return false;}
+}
 export const FUTURE_WORKFLOW_PURPOSE='work_handover_consumer_qualification';
 const FUTURE_CONSUMERS=new Set(['company-linux-01','company-linux-02','company-linux-03','company-linux-04',
   'home-linux-01','company-win-01','home-win-01']);
@@ -24,6 +210,7 @@ export function futureWorkflowSubject(entry,roles) {
 export function futureWorkflowCatalogue(registry,specs) {
   const bad=reason=>({passed:false,state:'unknown',reason});
   try {
+    registry=decodeWorkflowProfiles(registry);
     if(registry?.schema!=='clued.gated-proof-profiles/2' || specs?.schema!=='clued.gated-proof-role-specs/2')
       return bad('future catalogue schema missing');
     const entries=registry.future_workflows??[],roleEntries=specs.future_workflows??[];
@@ -52,6 +239,7 @@ export function futureWorkflowCatalogue(registry,specs) {
 export function acceptedFutureWorkflowSource(registry,specs,file,blob,{repository}={}) {
   const bad=reason=>({passed:false,state:'unknown',reason});
   try {
+    registry=decodeWorkflowProfiles(registry);
     const catalogue=futureWorkflowCatalogue(registry,specs);
     if(!catalogue.passed)return catalogue;
     const entries=catalogue.entries.filter(entry=>entry.file===file && entry.source_profile.workflow_blob===blob);
@@ -140,6 +328,13 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml,accepted_r
     reject('source/parser/primary roles missing');
   if(/\r(?!\n)|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0085\u2028\u2029]/.test(text))reject('source character domain');
   const value=parseYaml(text);
+  const compound=workflowBlob(text)===REQUIRED_TESTS_SOURCE.workflow_blob&&digest(text)===REQUIRED_TESTS_SOURCE.source_sha256;
+  if(compound&&(!same(primary_ids,REQUIRED_TESTS_SOURCE.primary_ids)||
+    roleDefinitionDigest(value)!==REQUIRED_TESTS_SOURCE.workflow_definition_sha256||
+    accepted_roles.some(role=>!exactKeys(role,['job_id','definition_sha256','definition'])||
+      role.definition_sha256!==REQUIRED_TESTS_SOURCE.role_sha256[role.job_id]||
+      roleDefinitionDigest(role.definition)!==role.definition_sha256||!same(role.definition,value.jobs?.[role.job_id]))))
+    reject('exact compound Source and complete independent roles required');
   if(!value?.jobs || !value.on || !Object.hasOwn(value.on,'pull_request'))reject('PR jobs missing');
   const trigger=value.on.pull_request??null;
   if(trigger!==null && (typeof trigger!=='object' || Array.isArray(trigger) ||
@@ -179,15 +374,18 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml,accepted_r
     }
     if(!Object.keys(commands).length)reject('primary has no execution command');
     const docsSkipped=documentationSkippedSteps(value,id,job,name);
+    const requiredCommands=Object.entries(commands).filter(([step])=>
+      !(compound&&id==='migration-verify'&&step==='Not affected'));
     routes.push({job_id:id,name,self_hosted:Array.isArray(labels)&&labels.includes('self-hosted'),
-      required_steps:Object.fromEntries(Object.entries(commands).map(([name,values])=>[name,values.length])),
+      required_steps:Object.fromEntries(requiredCommands.map(([name,values])=>[name,values.length])),
       command_digests:Object.fromEntries(Object.entries(commands)),
       ...(docsSkipped.length?{documentation_skipped_steps:docsSkipped}:{})});
   }
-  if(routes.length>2 || new Set(routes.map(route=>route.self_hosted)).size!==routes.length)
+  if(!compound&&(routes.length>2 || new Set(routes.map(route=>route.self_hosted)).size!==routes.length))
     reject('unsupported multiple logical primaries or duplicate routes');
   return {registration_status:'registered',workflow_blob:workflowBlob(text),source_sha256:digest(text),
-    source_yaml:text,primary_ids:[...primary_ids],pull_request:trigger,gated:Object.hasOwn(value.jobs,'admission-gate'),routes};
+    source_yaml:text,primary_ids:[...primary_ids],pull_request:trigger,gated:Object.hasOwn(value.jobs,'admission-gate'),routes,
+    ...(compound?{execution_mode:ALL_REQUIRED_PRIMARIES_MODE}:{})};
 }
 
 // Map contains the complete, authenticated set of CI sources on this head.
@@ -196,6 +394,7 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml,accepted_r
 export function registeredWorkflowSource(registry,file,blob) {
   const unknown=reason=>({passed:false,state:'unknown',reason});
   try {
+    registry=decodeWorkflowProfiles(registry);
     if(registry?.schema!=='clued.gated-proof-profiles/2')return unknown('source registry schema missing');
     if(!/^\.github\/workflows\/[^/]+\.ya?ml$/.test(file) || !/^[a-f0-9]{40}$/.test(blob))
       return unknown('CI source identity invalid');
@@ -206,6 +405,8 @@ export function registeredWorkflowSource(registry,file,blob) {
     const matching=entries.filter(entry=>entry.registration_status==='registered' && entry.workflow_blob===blob);
     if(matching.length!==1)return unknown(`${file}: exact source has no unique current registration`);
     const entry=matching[0];
+    if((Object.hasOwn(entry,'execution_mode')||entry.workflow_blob===REQUIRED_TESTS_SOURCE.workflow_blob)&&
+      !isExactAllRequiredPrimariesProfile(entry,file))return unknown(`${file}: exact compound Source/profile invalid`);
     if(typeof entry.source_yaml!=='string' || workflowBlob(entry.source_yaml)!==blob ||
       digest(entry.source_yaml)!==entry.source_sha256 || !Array.isArray(entry.primary_ids) ||
       !entry.primary_ids.length || new Set(entry.primary_ids).size!==entry.primary_ids.length ||
@@ -224,6 +425,8 @@ export function registeredWorkflowSource(registry,file,blob) {
 }
 
 export function selectRegisteredProfiles(registry,sources,{sourceApproved,directoryComplete}={}) {
+  try {
+  registry=decodeWorkflowProfiles(registry);
   if(registry?.schema!=='clued.gated-proof-profiles/2' || !(sources instanceof Map) ||
     directoryComplete!==true || sourceApproved!==true || !sources.size)
     return {passed:false,state:'unknown',reason:'source approval/directory/registry missing'};
@@ -234,6 +437,7 @@ export function selectRegisteredProfiles(registry,sources,{sourceApproved,direct
     selected.workflows[file]=result.profile;
   }
   return {passed:true,state:'qualified',profiles:selected};
+  } catch {return {passed:false,state:'unknown',reason:'source approval/directory/registry missing'};}
 }
 
 // Fixed External2 successor only. This never widens readonly-seven purpose.
@@ -305,6 +509,7 @@ export function external2WorkflowSubject(entry,roles) {
 export function external2FutureWorkflowCatalogue(registry,specs) {
   const bad=reason=>({passed:false,state:'unknown',reason});
   try {
+    registry=decodeWorkflowProfiles(registry);
     if(registry?.schema!=='clued.gated-proof-profiles/2'||specs?.schema!=='clued.gated-proof-role-specs/2')
       return bad('External2 default registry schema missing');
     const entries=Object.hasOwn(registry,'external2_future_workflows')?registry.external2_future_workflows:[],
@@ -341,6 +546,7 @@ export function external2FutureWorkflowCatalogue(registry,specs) {
 export function acceptedExternal2WorkflowSource(registry,specs,file,blob,{repository}={}) {
   const bad=reason=>({passed:false,state:'unknown',reason});
   try {
+    registry=decodeWorkflowProfiles(registry);
     const catalogue=external2FutureWorkflowCatalogue(registry,specs);if(!catalogue.passed)return catalogue;
     const entry=catalogue.entries.find(entry=>entry.file===file&&entry.source_profile.workflow_blob===blob),fixed=EXTERNAL2_FILES[file];
     if(!entry||!fixed||repository!=='tdoljyj/cross-memory-system')return bad('External2 exact default Source missing or wrong repository');
@@ -377,6 +583,7 @@ const SOURCE3_WORKFLOW_DEFINITIONS = {".github/workflows/clued-handover-external
 export function verifyExternal2LateIdleSourceByteRelation({sourceBytes,programManifestBytes,requestBytes,registry,roleSpecs}) {
   const fail=reason=>({passed:false,state:'unknown',reason,authority:'none',actual_qualification:false});
   try {
+    registry=decodeWorkflowProfiles(registry);
     if(!(sourceBytes instanceof Map)||!Buffer.isBuffer(programManifestBytes)||!Buffer.isBuffer(requestBytes))return fail('Source3 raw byte inputs unavailable');
     if(digest(programManifestBytes)!==SOURCE3_EXPECTED.program_manifest_sha256||digest(requestBytes)!==SOURCE3_EXPECTED.source_role_request_sha256)return fail('Source3 complete program/request bytes differ');
     const expectedPaths=[...Object.keys(SOURCE3_EXPECTED.modules),...Object.keys(SOURCE3_EXPECTED.workflows).map(name=>'.github/workflows/'+name)].sort();
@@ -430,6 +637,7 @@ export function native617PendingWorkflowCatalogue(registry,specs){
   const bad=reason=>({passed:false,structurally_valid:false,state:'unknown',reason,
     authoritative:false,host_qualified:false,execution_permitted:false});
   try{
+    registry=decodeWorkflowProfiles(registry);
     if(registry?.schema!=='clued.gated-proof-profiles/2'||specs?.schema!=='clued.gated-proof-role-specs/2')
       return bad('native617 pending schema');
     const entries=registry.native617_pending_sources,roleEntries=specs.native617_pending_sources;

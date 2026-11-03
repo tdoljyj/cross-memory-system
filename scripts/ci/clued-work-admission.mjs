@@ -75,10 +75,11 @@
 import { createHash, createSign, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import {isDeepStrictEqual} from "node:util";
 import {CONTROL_WORKFLOW_FILES,registeredControlWorkflowTransition} from './clued-control-workflow-source.mjs';
 import {PUBLISHER_FILES,registeredPublisherTransition} from "./clued-production-publisher-source.mjs";
 import {PUBLISHER_PR_QUALIFICATION_FILES,registeredPublisherPrQualificationTransition} from "./clued-publisher-qualification-source.mjs";
-import {compileRegisteredWorkflow,registeredWorkflowSource,rolesForSource,roleDefinitionDigest,workflowBlob} from "./clued-workflow-profile.mjs";
+import {compileRegisteredWorkflow,registeredWorkflowSource,rolesForSource,roleDefinitionDigest,workflowBlob,parseWorkflowProfiles} from "./clued-workflow-profile.mjs";
 import {createNaturalRecorder,observeEvaluation} from "./merge-admission-source-producer.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -414,7 +415,7 @@ export function registeredPlacementSuccessor({file,headText,baseText,profiles,ro
     // parser or importing any candidate code.
     const compiled=compileRegisteredWorkflow(headText,{primary_ids:["contract-placement"],accepted_roles:roles,
       parseYaml:()=>({name:"contract-placement",on:{pull_request:null},jobs:{"admission-gate":{},"contract-placement":role.definition}})});
-    if(JSON.stringify(compiled)!==JSON.stringify(profile) ||
+    if(!isDeepStrictEqual(compiled,profile) ||
       sha256Hex(workflowJobs(headText).find(job=>job.name===GATE_JOB)?.lines.join("\n")??"")!==PLACEMENT_GATE_SHA256)
       return no("placement compiled Source/FrozenGate differs");
     return {passed:true,registeredPlacementTransition:before.profile.gated===false,profile,role};
@@ -427,7 +428,7 @@ function trustedPlacementCatalogues() {
     if(!info.isFile() || info.isSymbolicLink() || info.size>limit)throw Error("trusted placement catalogue unavailable");
     const bytes=fs.readFileSync(location),text=bytes.toString("utf8");
     if(bytes.length>limit || !Buffer.from(text,"utf8").equals(bytes))throw Error("trusted placement catalogue invalid");
-    return JSON.parse(text);
+    return name.endsWith("clued-gated-proof-profiles.json")?parseWorkflowProfiles(bytes):JSON.parse(text);
   };
   try{return {profiles:read("./clued-gated-proof-profiles.json",1048576),
     roleSpecs:read("./clued-gated-proof-role-specs.json",524288)};}
