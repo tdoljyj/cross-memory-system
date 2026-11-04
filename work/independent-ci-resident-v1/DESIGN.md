@@ -3810,13 +3810,13 @@ wsl.exe 一次调用在负载高时要 25–45 秒（§25、§26）。companion 
 
 - 采样 160 s：Linux 的 realtime 减 monotonic 在第 132 s 一次性 +444 ms（timesyncd 的步进阈值是 0.4 s）；Windows 没有步进，但在以约 −1.3 ms/s 的速率被 W32Time 微调（160 s 里 −204 ms）。
 - Linux 减 Windows 的偏差，10 次采样（往返 62–74 ms）：+277 … +434 ms，即 Linux **走在前面**约 0.3–0.4 s。
-- Linux journal：17:30（+08:00）以来 61 次 `systemd-resolved: Clock change detected`，多数相隔 32 s；`systemd-journald: Time jumped backwards` 在 18:29:47、18:31:25、18:36:45；10:36:47.09 → 10:36:44.42 是一次 −0.67 s 的回跳，与失败的调用几乎同时。
+- Linux journal：17:30（+08:00）以来 61 次 `systemd-resolved: Clock change detected`，多数相隔 32 s；`systemd-journald: Time jumped backwards` 在 18:29:47、18:31:25、18:36:45；10:36:45.09 → 10:36:44.42 是一次 −0.67 s 的回跳，与失败的调用几乎同时。
 - 原因：WSL 发行版里 `systemd-timesyncd` 在运行（`wsl.conf` 里 `systemd=true`），向 `ntp.ubuntu.com` 校时，轮询间隔卡在最小值 32 s；样本质量很差（延迟 388 ms，jitter 250–800 ms，频率修正 −110 ppm），偏差一过 0.4 s 就步进。出网从今天起限速约 2.5 Mbit/s，这些样本是在限速的链路上测的。Windows 侧 W32Time 的源是 `time.aws.com`，stratum 5，轮询 64 s，root delay 0.27 s，root dispersion 0.40 s，同样受这条链路影响。Windows 的 System 日志（Kernel-General 事件 1、Time-Service）在 17:00–19:00（+08:00）查不到时钟被设置的事件。
 - 结论：两边时钟不同步、Linux 每分钟步进一两次，每次 0.4–0.7 s，是实测事实；但在 `SendIssue` 路径上，签发到子进程检查之间至少隔着一次 relay（平时 ≥ 3 s，这次 ≥ 数秒到 50 s），远大于 0.7 s，所以单凭这个量级的偏差解释不了这次的 `BRIDGE_ISSUE_EXPIRED`。**这次拒收的真正原因未证实**；候选还有 WSL 在这 53 s 里卡住时子进程碰到的资源错误（EAGAIN、ENOMEM、ETIMEDOUT 都不在放行列表里）。因此本节的改动分三层：让下一次一眼看出原因，让跨主机时间比较有容差，让时钟类和卡顿类的拒绝可重试。
 
 ### 47.3 代码改动
 
-1. **容差**：`protected-job-bridge-v4/protocol.mjs` 的 `BRIDGE_CLOCK_SKEW_MS`（= `clock-skew.mjs` 的 `CLOCK_SKEW_MS` = 5 s，Decision `1100a0ed` 已经用于准入事实）。只放宽时钟差会把有效戳变成拒收的那个方向：“对方主机的戳不晚于本机现在 + 5 s”和“戳不早于引发它的戳 − 5 s”（issue、challenge、response、blocked）。所有上界不动：窗口结束 `expiresAt/deadline`、`now − at ≤ CALLBACK_WINDOW_MS`、`end − at ≤ CALLBACK_WINDOW_MS`，所以没有哪个包比以前多活一毫秒。取值依据：实测偏差 0.3–0.7 s，5 s 是它的 7 倍以上；同一主机内的戳互相比较仍然精确；5 s 小于最短的一跳 relay（约 3 s 到数秒）的量级，不会让“先后”检查失去意义，也与准入事实用的是同一个数，不引入第二个容差。
+1. **容差**：`protected-job-bridge-v4/protocol.mjs` 的 `BRIDGE_CLOCK_SKEW_MS`（= `clock-skew.mjs` 的 `CLOCK_SKEW_MS` = 5 s，Decision `1100a0ed` 已经用于准入事实）。只放宽时钟差会把有效戳变成拒收的那个方向：“对方主机的戳不晚于本机现在 + 5 s”和“戳不早于引发它的戳 − 5 s”（issue、challenge、response、blocked）。所有上界不动：窗口结束 `expiresAt/deadline`、`now − at ≤ CALLBACK_WINDOW_MS`、`end − at ≤ CALLBACK_WINDOW_MS`，所以没有哪个包比以前多活一毫秒。取值依据：实测偏差 0.3–2.0 s（47.6），5 s 是它的 2.5 倍以上，不是更多；同一主机内的戳互相比较仍然精确；5 s 小于最短的一跳 relay（约 3 s 到数秒）的量级，不会让“先后”检查失去意义，也与准入事实用的是同一个数，不引入第二个容差。
 2. **放行列表**：`relay-public.ps1#Safe-ChildError` 增加 `BRIDGE_ISSUE_EXPIRED`、`BRIDGE_CHALLENGE_EXPIRED`、`BRIDGE_RESPONSE_EXPIRED`、`BRIDGE_BLOCKED_TIME_INVALID`、`EAGAIN`、`ENOMEM`、`ETIMEDOUT`；子进程固定形状的拒绝里，代码格式合法但不在列表中的，报成 `FORMAL_RELAY_CODE_UNLISTED`（形状不变，不带任何新文字），不再丢成 null。
 3. **分类**：`companion.mjs#classifyRelayAttempt`：时间类代码（上面四个）在 `CONTEXT`、`BINDING` 阶段（子进程写之前）按 `CHILD_FAILED` 处理；`EAGAIN`、`ENOMEM`、`ETIMEDOUT` 与既有的瞬时 errno 一样只在 `OPERATION…PACKET` 阶段。`CHILD_FAILED` 的后续不变：Send* 先要求 Linux 没有残留的 relay-record 进程（`pgrep`），再看记录是否已到（到了就算成功、不重复导入；半截就保留并永久失败），次数与间隔是各调用原有的（SendIssue 3 次，3 s、8 s），预算不变。`FORMAL_RELAY_CODE_UNLISTED` 和其他 BRIDGE 拒绝（身份、绑定、claim）仍是 PERMANENT。
 4. 单调时钟：这条路径上的戳本来就必须跨主机比较（一台盖章、另一台检查），没有可替换成单调时钟或单一时钟源的地方；准入事实的新鲜度已经在 Decision `1100a0ed` 里改成本机单调时钟。
@@ -3833,3 +3833,30 @@ wsl.exe 一次调用在负载高时要 25–45 秒（§25、§26）。companion 
 - `test/resident-v2-bridge.test.mjs` 新增 3 个：协议在容差内接受、超出 1 ms 拒绝（issue、challenge、response、blocked，时钟往回跳与往前跳）；到期一侧不放宽、先后检查超出容差仍拒收；`Safe-ChildError`（Windows PowerShell 5.1 实跑）报时间类代码、把未列出的代码报成 `FORMAL_RELAY_CODE_UNLISTED`、形状不对的仍丢弃。
 - `test/relay-retry.test.mjs` 新增分类行与一个端到端：时间类拒绝后重试成功；记录已到就不重复导入、半截保留；一直拒绝则耗尽该调用的次数后以非永久的 `RELAY_REFUSED_NO_RETRY` 结束。
 - 安装：改了 Source v2 的 `protocol.mjs` 与 `relay-public.ps1`（新的 bridge manifest 与 CI Source 哈希），以及 companion 的 `companion.mjs`，随第 8 代一并装。
+
+### 47.6 假设检验：Windows 64 s 轮询 → 主机时间微调 → WSL 经 Hyper-V 时间同步跟着跳（只读实测，2026-11-04 19:0x +08:00）
+
+背景：任务 `1a6ce931`（Decisions `4bd3144f`、`1100a0ed`）把 Windows 的 W32Time 改成 `time.aws.com,0x9 ntp.aliyun.com,0xb`、轮询固定 64 s（`MinPollInterval=MaxPollInterval=6`，`SpecialPollInterval=64`），目的是让 Windows 与 AWS 上的 Supabase 对时。问：这会不会让 WSL 经 Hyper-V 时间同步每 30–60 s 跳一次？**不成立**，依据：
+
+1. **步进间隔是 32 s，不是 64 s。** 230 s 的探针里，Linux 的 realtime 相对 monotonic 在第 11、43、76、108、141、173、206 秒各跳一次，间隔 32/33 s；另一次 100 s 的采样跳在第 5、38、70 秒。这正是 `systemd-timesyncd` 的最小轮询间隔（`PollIntervalMin=32s`，一直卡在最小值）。journal 里 `Clock change detected` 也是 32 s 的倍数（10:25:27.96、10:25:59.84、10:26:31.84、10:27:36.8、10:28:08.7、10:28:40.8、10:29:12.7）。Windows 的轮询是 64 s，对不上。
+2. **每次步进与一次 NTP 应答同时发生。** 探针每 3 s 读 `timedatectl show-timesync` 的 `PacketCount`：每一次步进之后 1–3 s 内都看到计数加一。
+3. **步进离开主机时钟，不是靠近。** 探针同时读 `/dev/ptp_hyperv`（Hyper-V 给出的主机时间）：Linux 减主机在每次步进前约 −0.2 s，步进后约 +0.8～+1.0 s，两次步进之间以约 −33 ms/s 回落。如果是主机同步在起作用，这个差应当被拉向 0；它被推向 +1 s。
+4. **Windows 自己不步进。** Kernel-General 事件 1 与 Time-Service 在 17:00–19:00 查不到；`UtcNow − Stopwatch` 100 s 里只漂了 +107 ms（约 1 ms/s）。Hyper-V 的时间同步只在虚拟机启动或恢复时给 SYNC。
+5. 所以 Linux 是被 `timesyncd` 从 `ntp.ubuntu.com` 拖着走的。100 s 里 Linux 比 Windows 多走了 2.4 s（差从 −0.37 s 变成 +2.0 s），每次步进约 +1.1 s，方向总是向前。最合理的解释是限速链路的排队：出网被限到约 2.5 Mbit/s 且排队很深，NTP 请求在上行队列里多等了约 1–2 s，服务器盖章晚了，客户端算出的偏差整体偏正，`timesyncd` 就把时钟往前拨。`timedatectl` 显示该源的 delay 388 ms、jitter 250–800 ms，与之一致。这是推断，没有抓包验证。
+
+Windows 一侧也在受同一条链路的影响，但不是 WSL 乱跳的原因：`w32tm /query /status /verbose` 在 19:05 显示相位偏移 0.65 s、root dispersion 0.81 s（早些时候 0.40 s）、root delay 0.27 s；配置里 `PhaseCorrectRate=1`（默认 7，1 是最快）、`MaxAllowedPhaseOffset=1`（超过 1 s 才步进，否则按斜率修正）、`MinPoll=MaxPoll=6`。也就是说每 64 s 拿一个质量很差的样本，并用最快的速度去追它，所以 Windows 的时钟会以每秒几毫秒到几十毫秒的速率被拧来拧去（实测 −1.3 ms/s、+1 ms/s）。这让 Windows 对 AWS 的绝对准确度并不比 0.3–0.8 s 好，64 s 的积极轮询在这条链路上没有换来精度。
+
+### 47.7 让两者同时满足的方案（只写方案，未改任何系统设置；需要 Owner 批准）
+
+目标：Windows 对 Supabase 仍然准；WSL 对 Windows 不乱跳；两台主机的差在毫秒级。
+
+1. **WSL 跟着 Windows 主机，不再自己校时（决定性的一条）。** 停用并禁用发行版里的 `systemd-timesyncd`，装 `chrony`（Ubuntu 24.04 有 4.5-1ubuntu4.2），只用主机时钟做源：`refclock PHC /dev/ptp_hyperv poll 3 dpoll -2 offset 0`，不写 `pool`/`server`，`makestep 1.0 3`（只在启动的前 3 次允许步进），其余全部按斜率修正。这样 WSL 的时钟 = Windows 的时钟（毫秒级），Windows 慢慢修正时 WSL 平滑地跟，永远不会因为互联网上的坏样本自己跳。这也满足“WSL 内部只做单调调整”。
+2. **Windows 对 AWS 保持，但别追噪声。** 保留 `time.aws.com` 作为首选（Decision `1100a0ed` 的目的）；把 `PhaseCorrectRate` 从 1 改回 3–7，使每个样本的影响被摊开；`MaxPollInterval` 可放宽到 8–10（256–1024 s），64 s 不必保留，因为这条链路上每个样本的误差远大于 64 s 内的漂移；`MaxAllowedPhaseOffset` 保持 1 s。要在 Supabase 一侧仍有保证，已有的 5 s 容差（`clock-skew.mjs`）和“KooYomi 的戳不与本机时钟比较”（Decision `1100a0ed`）继续有效。
+3. **治本：别让 NTP 在限速队列里排队。** 对 UDP/123 做优先（或不进限速），或者让限速的设备用公平队列（fq_codel/CAKE）。排队深度消除后，Windows 与 Linux 的样本偏差都会回到几十毫秒。
+4. **验证**（实施后连续 1 小时）：Linux realtime 相对 monotonic 不应出现 > 100 ms 的跳变；Linux 减 Windows 的差保持在 50 ms 以内；`journalctl | grep -c "Clock change detected"` 接近 0；`w32tm /query /status` 的相位偏移和 root dispersion 下降。
+5. 采用 1 之后，`timesyncd` 的 32 s 步进消失，47.3 的容差只需应付 Windows 自身的缓慢修正。
+
+### 47.8 提交 5b3f02bf 在这个根因下是否足够
+
+不够，是缓解，不是修复。(1) 实测 Linux 与 Windows 的差在 100 s 内就走到 +2.0 s，而且只要上行排队还在，每 32 s 再加约 1.1 s；5 s 容差只有 2.5 倍余量，限速更紧或排队更深时会被超过，再放大容差等于放宽安全检查，不应该。(2) 时间类拒绝可重试只在时钟在两次尝试之间回到容差内时才有用；偏差持续时，重试 3 次后仍然失败，只是不再标成永久。(3) 这次 `SendIssue` 的拒收原因仍未证实（47.2），所以不能说时钟是它的原因；下一次同类失败会因为 `childError` 现在可见而被识别。要根治，必须做 47.7 的 1。
+

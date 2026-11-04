@@ -28,8 +28,8 @@ export const BLOCKED_CONTRACT='clued.independent-ci.protected-job-blocked/1';
 // issuance and the response only has to arrive inside this window (Owner decision 6f1fb753, validateResponse).
 export const CALLBACK_WINDOW_MS=120000;
 // Clock skew between the two hosts (Decision 1100a0ed; clock-skew.mjs CLOCK_SKEW_MS, 5 s). Windows stamps are read on
-// Linux and Linux stamps on Windows, each with its own clock; DESK's two clocks are not one: the WSL clock is stepped by
-// 0.4-0.7 s about once a minute and sat 0.28-0.43 s ahead of Windows (2026-11-04, DESIGN §47). The tolerance covers only the
+// Linux and Linux stamps on Windows, each with its own clock; DESK's two clocks are not one: systemd-timesyncd steps the WSL
+// clock by 0.4-1.1 s every 32 s, and it sat 0.3-2.0 s ahead of Windows (2026-11-04, DESIGN §47). 5 s is a margin of 2.5, not more. The tolerance covers only the
 // direction in which a skewed clock turns a valid stamp into a refusal: "not in this host's future" and "not before the
 // stamp that caused it". Every upper bound (a window's end, now - stamp <= CALLBACK_WINDOW_MS, expiresAt) is unchanged, so
 // no packet lives longer than before, and stamps made by one host are still compared exactly with each other.
