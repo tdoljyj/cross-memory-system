@@ -1686,6 +1686,8 @@ export class ResidentExecutor {
       this.trainLast = summary;
       this.trainSweep = trainSweepView({ summary, previous: this.trainSweep, onSince: this.trainOnSince === null ? null : new Date(this.trainOnSince).toISOString() });
       if (acting && clean) await this.trainActed(summary, { mode, input, frontOutcome, frontCleared, revokeHead });
+      // Any mode: stage 10 read the merge queue's head. A batch parked at B for that PR gets its next try without waiting out its back-off.
+      if (clean && summary.front?.pr) await this.hintParkedHead(summary.front);
     }
     await this.trainDutySave();
     return clean ? null : { state: 'HALTED', failureCode: haltCode };
@@ -1741,6 +1743,24 @@ export class ResidentExecutor {
   }
 
   // ---- parking (phase 2, step 2; DESIGN §18) ----
+
+  // Stage 10 (shadow or on) read the merge queue's head: front = { pr, headSha }. A batch parked at B for exactly that PR and head
+  // may be the claim that just became first, so its next stage-8 try is due now instead of after a back-off of up to two hours
+  // (Task 867250db). Only a hint: the try itself reads the queue, and counts as any try. Never twice within PARK_HEAD_RETRY_MS of
+  // the last try's end for one batch, so a front that stays put cannot make a tight loop.
+  async hintParkedHead(front) {
+    let entries;
+    try { entries = (await this.ledger.parkedEntries()).filter(e => Ledger.parkedAt(e)); } catch { return; }
+    const now = this.clock();
+    for (const e of entries) {
+      const s = e.reserved?.subject;
+      if (!s || s.pr !== front.pr || !front.headSha || s.headSha !== front.headSha) continue;
+      const lastEnd = Date.parse(ResidentExecutor.lastTry(e)?.at ?? '');
+      const due = Math.max(now, Number.isFinite(lastEnd) ? lastEnd + PARK_HEAD_RETRY_MS : now);
+      this.parkNudges ??= new Map();
+      this.parkNudges.set(e.key, Math.min(this.parkNudges.get(e.key) ?? due, due));
+    }
+  }
 
   // The newest stage-8 try of a parked entry (its 72 record), or null before the first one ended.
   static lastTry(entry) { return entry.tries?.length ? entry.tries[entry.tries.length - 1].ended : null; }
