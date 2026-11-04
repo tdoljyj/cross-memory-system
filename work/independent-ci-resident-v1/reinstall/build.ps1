@@ -41,6 +41,15 @@ $R = $cfg.workDir; $Repo = $cfg.repo
 if (-not (Test-Path -LiteralPath $R -PathType Container)) { throw 'WORK_DIR_MISSING' }
 foreach ($d in @('record', 'build-inputs')) { if (-not (Test-Path -LiteralPath (Join-Path $R $d))) { New-Item -ItemType Directory (Join-Path $R $d) | Out-Null } }
 $c8 = $Commit.Substring(0, 8); $kind = $(if ($Final) { 'final' } else { 'DRAFT' }) + $Tag   # -Tag only distinguishes repeat runs
+# What a FAILED earlier run of this same node/kind/commit left behind (every output below is create-only, so it would stop this run at the first
+# CreateNew) is renamed into <workDir>\failed-attempts\<UTC>\ (nothing is deleted). A COMPLETED run (build-complete.* exists) is never touched: use another -Tag.
+# The shared tree-<c8> is reused on purpose and is not listed.
+$st = $cfg.node + '.' + $kind + '.' + $c8; $pk = 'package-' + $cfg.node + '-' + $kind + '-' + $c8
+$aside = & python -I (Join-Path $Here 'tools\set-aside-leftovers.py') $R --pattern ('record/*.' + $st + '*') --pattern ('build-inputs/*.' + $st + '.*') `
+  --pattern ('linux-shape.' + $st + '.json') --pattern ('build-package.' + $st + '.stdout.json') --pattern $pk --done ('build-complete.' + $st + '.json')
+if ($LASTEXITCODE -eq 3) { throw 'ATTEMPT_ALREADY_COMPLETE_USE_ANOTHER_TAG' }
+if ($LASTEXITCODE) { $aside; throw 'SET_ASIDE_LEFTOVERS_REFUSED' }
+if (($aside | ConvertFrom-Json).count -gt 0) { Write-Warning ('Set aside leftovers of an earlier failed attempt of ' + $st + ' into failed-attempts') }
 $tree = Join-Path $R ('tree-' + $c8)
 $env:GIT_NO_REPLACE_OBJECTS = '1'   # the commit's own objects, as root's src.git sees them (review 2)
 if (-not (Test-Path -LiteralPath $tree)) {
@@ -87,7 +96,7 @@ function Write-New([string]$Path, [string]$Text) {   # create-only, like every o
 Write-New (Join-Path $R ('linux-shape.' + $cfg.node + '.' + $kind + '.' + $c8 + '.json')) ($shape | Out-String)
 Write-New (Join-Path $R ('build-package.' + $cfg.node + '.' + $kind + '.' + $c8 + '.stdout.json')) ($b | Out-String)
 $pkgSha = ($b | ConvertFrom-Json).packageManifestSha256
-if ($PackageOnly) { ([ordered]@{ status = 'PACKAGE_BUILT_NO_LAUNCHER'; node = $cfg.node; final = [bool]$Final; linuxToolchainNodePin = $(if ($NodePin.Count) { 'configured' } else { 'installed-manifest-copy' }); package = $pkg; packageManifestSha256 = $pkgSha } | ConvertTo-Json); return }
+if ($PackageOnly) { ([ordered]@{ status = 'PACKAGE_BUILT_NO_LAUNCHER'; node = $cfg.node; final = [bool]$Final; linuxToolchainNodePin = $(if ($NodePin.Count) { 'configured' } else { 'installed-manifest-copy' }); package = $pkg; packageManifestSha256 = $pkgSha } | ConvertTo-Json); Write-New (Join-Path $R ('build-complete.' + $st + '.json')) ('{"packageManifestSha256":"' + $pkgSha + '"}'); return }
 # The generator rebuilds the package from these inputs into a new directory and requires the same manifest sha.
 $gen = @((Join-Path $Here 'launcher\generate.py'), $Config, '--commit', $Commit, '--package', $pkg, '--package-sha', $pkgSha, '--rebuild-record', $record, '--rebuild-policy', $pol, '--rebuild-companion', $comp, '--rebuild-source-files', $files, '--rebuild-upgrader-config', $upg, '--rebuild-linux-external-pins', $pins)
 if ($SourceV2) { $gen += @('--rebuild-source-v2', $SourceV2) }
@@ -96,3 +105,4 @@ if ($LinuxVersionFacts) { $gen += @('--linux-version-facts', $LinuxVersionFacts)
 if ($LinuxAdoptedPackage) { $gen += @('--linux-adopted-package', $LinuxAdoptedPackage) }   # record-only reinstall (README section 8b)
 if ($Final) { $gen += @('--final'); if ($LinuxEvidence) { $gen += @('--linux-evidence', $LinuxEvidence) }; if ($Rehearsal) { $gen += @('--rehearsal', $Rehearsal) } }
 & python -I @gen; if ($LASTEXITCODE) { exit $LASTEXITCODE }   # a refused final is a failed build
+Write-New (Join-Path $R ('build-complete.' + $st + '.json')) ('{"packageManifestSha256":"' + $pkgSha + '"}')   # the attempt is complete: a later run of the same tag will not set it aside

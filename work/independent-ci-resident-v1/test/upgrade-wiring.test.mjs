@@ -16,7 +16,7 @@ import { decideFailure, failureRow } from '../src/classify.mjs';
 import { COMPANION_CONFIG_CONTRACT, UPGRADE_REQUEST_EXPIRED, UpgradeLane, VERSION_FACTS_RETRY_MS, argv, upgradeToolArgvOk, validateCompanionConfig } from '../src/companion.mjs';
 import { UPGRADE_TOOL_PATH, UpgradeMailbox, VERSION_FACTS_REFRESH_MS, upgradeResumeRequest } from '../src/upgrade-mailbox.mjs';
 import { events } from '../src/pr-status.mjs';
-import { inspectUpgrade } from '../tools/rearm-tool.mjs';
+import { failureView, inspectUpgrade } from '../tools/rearm-tool.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { BASE, CI_SOURCE, CLEAN_PROOF, HEAD, RESIDENT, TEST_NODE, TEST_NODE_SHA, executorFixture, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 import { headKey } from '../src/ledger.mjs';
@@ -453,4 +453,17 @@ test('inspect shows the generation, the op (with its confirm page), the Linux fa
     [2, PKG, true, 'WAITING_GRANT', `https://kooyomi.example/confirm/${OP}`, 2, 1]);
   const none = await inspectUpgrade(await tempRoot(t), null, () => T0);
   assert.deepEqual([none.generation, none.op, none.linux, none.consistent, none.recent], [null, null, null, null, []]);
+});
+
+// Task 42fe5ae4: inspect shows where the last Windows step failed and what upgrade-apply.ps1 said, in the fixed shapes only.
+test('inspect shows the last failure of the op (step, where, upgrade-apply code and short at); anything outside the fixed shapes is dropped', async t => {
+  const lastFailure = { step: 'stage-windows', code: 'WINDOWS_STAGE_REFUSED', where: 'compile', applyCode: 'RUNNER_STABLE_DIGEST_DRIFT', applyAt: 'old-0123456789ab-new-ba9876543210' };
+  const root = await upgradeRoot(t, { status: upgradeStatus(op('RUNNING', { lastFailure }), []) });
+  const u = await inspectUpgrade(root, policy, () => T0);
+  assert.deepEqual(u.op.lastFailure, { step: 'stage-windows', code: 'WINDOWS_STAGE_REFUSED', where: 'compile', applyCode: 'RUNNER_STABLE_DIGEST_DRIFT', applyAt: lastFailure.applyAt });
+  const quiet = await inspectUpgrade(await upgradeRoot(t, { status: upgradeStatus(op('RUNNING'), []) }), policy, () => T0);
+  assert.equal(quiet.op.lastFailure, null);
+  assert.deepEqual(failureView({ step: 'verify', code: 'VERIFY_FAILED', where: 'verify', applyCode: 'free text, C: secret path', applyAt: 'line573.UnauthorizedAccessException' }),
+    { step: 'verify', code: 'VERIFY_FAILED', where: 'verify', applyCode: null, applyAt: 'line573.UnauthorizedAccessException' });
+  for (const bad of [null, 'x', [], 7, {}, { step: 'A B', code: 'lower', where: 'x'.repeat(99), applyCode: 3, applyAt: 'a b' }]) assert.equal(failureView(bad), null);
 });

@@ -43,6 +43,17 @@ foreach ($d in @('record', 'build-inputs', 'upgrade')) { if (-not (Test-Path -Li
 $c8 = $Commit.Substring(0, 8); $kind = 'upgrade-' + $(if ($Final) { 'final' } else { 'DRAFT' }) + $Tag
 $stem = $cfg.node + '.' + $kind + '.' + $c8
 
+# 0. what a FAILED earlier run of this same stem left behind (its create-only outputs would stop this run at the first CreateNew) is
+#    renamed into <workDir>\failed-attempts\<UTC>\ (nothing is deleted); a COMPLETED run (its precheck file exists) is never touched:
+#    use another -Tag for a new attempt. The shared tree, bare repository and bundle are reused on purpose and not listed.
+$pk = 'package-' + $cfg.node + '-' + $kind + '-' + $c8
+$aside = & python -I (Join-Path $RI 'tools\set-aside-leftovers.py') $R --pattern ('record/*.' + $stem + '*') --pattern ('build-inputs/*.' + $stem + '.*') `
+  --pattern ('upgrade/linux-shape.' + $stem + '.json') --pattern $pk --pattern ($pk + '-rebuild') --done ('upgrade/precheck.' + $stem + '.*.json')
+if ($LASTEXITCODE -eq 3) { throw 'ATTEMPT_ALREADY_COMPLETE_USE_ANOTHER_TAG' }
+if ($LASTEXITCODE) { $aside; throw 'SET_ASIDE_LEFTOVERS_REFUSED' }
+$setAside = $aside | ConvertFrom-Json
+if ($setAside.count -gt 0) { Write-Warning ('Set aside ' + $setAside.count + ' leftover path(s) of an earlier failed attempt of ' + $stem + ' into failed-attempts\') }
+
 # 1. the node's current package, and the configuration that carries it (tools\upgrade-config.py)
 $ucfg = Join-Path $R ('build-inputs\upgrade-config.' + $stem + '.json')
 $u = & python -I (Join-Path $Here 'tools\upgrade-config.py') $Config $InstalledPackage $Root $ucfg; if ($LASTEXITCODE) { $u; throw 'UPGRADE_CONFIG_REFUSED' }

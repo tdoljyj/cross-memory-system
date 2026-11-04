@@ -57,6 +57,20 @@ export async function writeTrainShadowReview(root, mark) {
   return file;
 }
 
+// Task 42fe5ae4: where the last Windows step of the upgrade failed and what upgrade-apply.ps1 said (status.json op.lastFailure). Only the fixed
+// shapes the upgrader itself writes are shown (step/where: lower-case words; codes: UPPER_CASE; applyAt: the short id alphabet), else null.
+const FAILURE_WORD = /^[a-z][a-z0-9-]{0,40}$/;
+const FAILURE_CODE = /^[A-Z][A-Z0-9_]{2,79}$/;
+const FAILURE_AT = /^[A-Za-z0-9_.:-]{1,80}$/;
+export function failureView(f) {
+  if (f === null || typeof f !== 'object' || Array.isArray(f)) return null;
+  const word = v => (typeof v === 'string' && FAILURE_WORD.test(v) ? v : null);
+  const code = v => (typeof v === 'string' && FAILURE_CODE.test(v) ? v : null);
+  const at = v => (typeof v === 'string' && FAILURE_AT.test(v) ? v : null);
+  const view = { step: word(f.step), code: code(f.code), where: word(f.where), applyCode: code(f.applyCode), applyAt: at(f.applyAt) };
+  return Object.values(view).every(v => v === null) ? null : view;
+}
+
 // The in-place upgrade channel as inspect shows it (DESIGN §34), read-only and leniently (a file that cannot be read is null):
 // the generation upgrade\current.json names, the upgrader's op (state, phase, code, the Owner's confirm page while it waits for
 // the grant), its recent endings and the generations it keeps, the Linux side's version facts, and whether both sides agree.
@@ -71,7 +85,8 @@ export async function inspectUpgrade(root, policy = null, clock = Date.now) {
       pinsOk: facts.pinsOk === true, observedAt: facts.observedAt ?? null } : null,
     consistent: view ? view.consistent : null,
     op: op ? { opId: op.opId ?? null, state: op.state ?? null, phase: op.phase ?? null, phaseSince: op.phaseSince ?? null, code: op.code ?? null,
-      fromGeneration: op.fromGeneration ?? null, toGeneration: op.toGeneration ?? null, confirmUrl: view?.upgrade?.confirmUrl ?? null, pausedBy: op.pausedBy ?? null } : null,
+      fromGeneration: op.fromGeneration ?? null, toGeneration: op.toGeneration ?? null, confirmUrl: view?.upgrade?.confirmUrl ?? null, pausedBy: op.pausedBy ?? null,
+      lastFailure: failureView(op.lastFailure) } : null,
     recent: Array.isArray(status?.recent) ? status.recent.slice(0, 10) : [],
     generations: Array.isArray(status?.generations) ? status.generations.slice(0, 20) : [],
     statusWrittenAt: status?.writtenAt ?? null,
