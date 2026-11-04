@@ -8,7 +8,7 @@ function Refused-With([scriptblock]$f,[string]$code,[string]$what){$got=$null;tr
 $t=$null;$e=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($tool,[ref]$t,[ref]$e);if($e.Count){throw 'BUILD_BUNDLE_PARSE_FAILED'}
 $ReviewedPrefix='refs/reviewed/';$TestPrefix='refs/clued-test/'
 foreach($name in @('Utc','Hash-Bytes','Hash-Text','Absent','Quote-Arg','Invoke-Git','Assert-FormalRefName','New-RefMap','Split-Refs','Ref-Map','Same-Map','Ref-List-Sha','Reviewed-Map','Reviewed-Commits','Bundle-Header',
-  'Ref-Diff','Build-Store','Retry-Allowed','Race-Retry-Allowed','Fetch-Store',
+  'Ref-Diff','Build-Store','Retry-Allowed','Race-Retry-Allowed','Fetch-Store','Branch-Only-Hint',
   'Remove-Tree','Test-RealDir','Seed-Lock','Seed-Unlock','Seed-Shape-Problem','Seed-Discard','Seed-Meta-Read','Unix-Now','Seed-Wanted','Seed-Begin','Seed-Prime','Seed-Drop-Refs','Seed-Failure','Seed-Error-Text','Seed-Bytes','Seed-Update')){
  $f=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -ceq $name});if($f.Count -ne 1){throw ('FUNCTION_MISSING:'+$name)};. ([scriptblock]::Create($f[0].Extent.Text))
 }
@@ -39,6 +39,15 @@ $toml="# clued-reviewed-count: 2`n# clued-reviewed-finding: {`"fingerprint`":`"$
 $r=Reviewed-Commits $toml;Yes ($r.findings -eq 2 -and @($r.commits).Count -eq 2 -and $r.commits[0] -ceq $a -and $r.sha256 -ceq (Hash-Text "$a`n$b`n")) 'reviewed-commits'
 Refuse {Reviewed-Commits ($toml.Replace('count: 2','count: 3'))} 'reviewed-count-mismatch'
 Refuse {Reviewed-Commits ($toml+"# clued-reviewed-finding: {`"fingerprint`":`"$($b):x:rule:1`",`"kinds`":[`"K`"]}`n")} 'reviewed-duplicate'
+# The branch-only hint (Decision 98fec682): only at the reviewed-commit steps, only for the listed reasons, only when the set holds d94cd486.
+$d94='d94cd486e29a7362888fc32cd807ceb38890acb6'
+$h=Branch-Only-Hint 'fetch-reviewed-commits-by-sha' 'GIT_STEP_FAILED' @($a,$d94,$b)
+Yes ($h -cmatch 'd94cd486' -and $h -cmatch 'claude/gitleaks-midgen-reviewed-hold' -and $h -cmatch 'restore it' -and $h -cnotmatch 'https?:') 'branch-only-hint-names-the-branch'
+Yes ($null -ne (Branch-Only-Hint 'reviewed-store-readback' 'REVIEWED_COMMIT_NOT_IN_STORE' @($d94))) 'branch-only-hint-readback'
+Yes ($null -eq (Branch-Only-Hint 'fetch-reviewed-commits-by-sha' 'GIT_STEP_FAILED' @($a,$b))) 'no-hint-without-the-commit'
+Yes ($null -eq (Branch-Only-Hint 'fetch-all-heads-and-tags' 'GIT_STEP_FAILED' @($d94))) 'no-hint-at-another-stage'
+Yes ($null -eq (Branch-Only-Hint 'fetch-reviewed-commits-by-sha' 'REMOTE_MAIN_BASE_CHANGED' @($d94))) 'no-hint-for-another-reason'
+Yes ($null -eq (Branch-Only-Hint 'fetch-reviewed-commits-by-sha' 'GIT_STEP_FAILED' @())) 'no-hint-for-an-empty-set'
 # Stalled transfers (lesson #916): every git call carries the low-speed abort, and only an early network failure is retried.
 $i=[Array]::IndexOf($FixedCommon,'http.lowSpeedLimit=1000');Yes ($i -gt 0 -and $FixedCommon[$i-1] -ceq '-c') 'common-low-speed-limit'
 $i=[Array]::IndexOf($FixedCommon,'http.lowSpeedTime=300');Yes ($i -gt 0 -and $FixedCommon[$i-1] -ceq '-c') 'common-low-speed-time'

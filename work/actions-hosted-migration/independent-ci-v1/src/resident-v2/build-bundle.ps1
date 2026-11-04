@@ -83,7 +83,18 @@ $SeedMinFullFetchSeconds=90;$SeedMetaMaxAgeSeconds=86400;$SeedLockStaleSeconds=1
 $SeedConfigKeys=@('core.repositoryformatversion','core.filemode','core.bare','core.symlinks','core.ignorecase','core.logallrefupdates')
 $seedUse=$false;$seedAttempt=$false;$seedBusy=$false;$seedLockHeld=$false
 $seedReport=[ordered]@{enabled=$true;used=$false;reason=$null;discarded=$false;primeSeconds=$null;updated=$false;updateSkipped=$null;seedBytes=$null;error=$null}
-$stage='fixed-preflight';$created=@();$writesStarted=$false;$lastGit=$null;$attempts=1;$firstAttempt=$null;$failedAttempts=@();$refsDiffer=$null
+$stage='fixed-preflight';$created=@();$writesStarted=$false;$lastGit=$null;$attempts=1;$firstAttempt=$null;$failedAttempts=@();$refsDiffer=$null;$reviewedCommits=@()
+# Reviewed commits that GitHub serves only because a branch still carries them (Decision 98fec682). Git stderr is never read,
+# so the hint cannot say which commit is missing: it is given when the reviewed set contains such a commit and the step that
+# fetches or reads the reviewed commits failed. It names public facts only (a short commit id and a branch name).
+function Branch-Only-Hint([string]$Stage,[string]$Reason,$Commits){
+ $branchOnly=@{'d94cd486e29a7362888fc32cd807ceb38890acb6'='claude/gitleaks-midgen-reviewed-hold'}
+ if(@('fetch-reviewed-commits-by-sha','reviewed-store-readback') -cnotcontains $Stage){return $null}
+ if(@('GIT_STEP_FAILED','REVIEWED_COMMIT_NOT_IN_STORE','EXACT_REVIEWED_REF_SET_REQUIRED') -cnotcontains $Reason){return $null}
+ $hit=@(@($Commits)|Where-Object{$branchOnly.ContainsKey($_)})
+ if($hit.Count -eq 0){return $null}
+ return ('The reviewed set contains '+$hit[0].Substring(0,8)+' (and its parent 8ea4da40), which is reachable only from branch '+$branchOnly[$hit[0]]+' until PR #991 is merged: if that branch was deleted or rewritten, restore it.')
+}
 function Utc{return [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'",[Globalization.CultureInfo]::InvariantCulture)}
 function Hash-Bytes([byte[]]$Bytes){$a=[Security.Cryptography.SHA256]::Create();try{return ([BitConverter]::ToString($a.ComputeHash($Bytes))).Replace('-','').ToLowerInvariant()}finally{$a.Dispose()}}
 function Hash-File([string]$Path){$a=[Security.Cryptography.SHA256]::Create();$s=[IO.File]::Open($Path,'Open','Read','Read');try{return ([BitConverter]::ToString($a.ComputeHash($s))).Replace('-','').ToLowerInvariant()}finally{$s.Dispose();$a.Dispose()}}
@@ -411,7 +422,7 @@ function Build-Store([string]$Dir){
  # From the INSTALLED Source commit's .gitleaks.toml (pinned by the record), never from the PR head.
  $toml=Invoke-Git 'source-gitleaks-toml' ($Common+@($gd,'cat-file','blob',($desc.value.sourceCommit+':.gitleaks.toml')))
  if((Hash-Text $toml) -cne $desc.value.gitleaksTomlSha256){throw 'TRUSTED_REVIEW_SOURCE_CHANGED'}
- $reviewed=Reviewed-Commits $toml;$expectedReviewed=Reviewed-Map $reviewed.commits
+ $reviewed=Reviewed-Commits $toml;$expectedReviewed=Reviewed-Map $reviewed.commits;$script:reviewedCommits=@($reviewed.commits)
  $script:stage='fetch-reviewed-commits-by-sha';$reviewedFetchStartedAt=Utc
  $null=Invoke-Git 'fetch-reviewed' ($Common+@($gd,'fetch','--quiet','--no-tags','--no-write-fetch-head','--no-recurse-submodules',$Url)+@($reviewed.commits|ForEach-Object{'+'+$_+':'+$ReviewedPrefix+$_}))
  $reviewedFetchCompletedAt=Utc
@@ -545,6 +556,6 @@ try{
  exit 0
 }catch{
  $code=if($_.Exception.Message -cmatch '\A[A-Z][A-Z0-9_]{1,90}\z'){$_.Exception.Message}else{'FIXED_BUNDLE_BUILD_UNCONFIRMED'}
- [ordered]@{status=$(if($writesStarted){'PARTIAL_STATE_PRESERVED_NO_RETRY'}else{'REFUSED_BEFORE_WRITE'});stage=$stage;reason=$code;git=$lastGit;created=$created
+ [ordered]@{status=$(if($writesStarted){'PARTIAL_STATE_PRESERVED_NO_RETRY'}else{'REFUSED_BEFORE_WRITE'});stage=$stage;reason=$code;hint=(Branch-Only-Hint $stage $code $reviewedCommits);git=$lastGit;created=$created
   storeAttempts=$attempts;firstAttempt=$firstAttempt;failedAttempts=@($failedAttempts);seed=$seedReport;credentialsPrinted=$false;existingCheckoutTouched=$false;automaticRetryAllowed=$false}|ConvertTo-Json -Depth 5 -Compress;exit 2
 }

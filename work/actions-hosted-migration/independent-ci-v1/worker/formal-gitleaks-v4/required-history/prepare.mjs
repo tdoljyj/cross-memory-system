@@ -57,9 +57,10 @@ const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (value, code) => { if (!value) fail(code); };
 // Reviewed commits reachable only from a GitHub branch until it is merged (Decision 98fec682): the code stays stable, the message names the branch.
 const BRANCH_ONLY_REVIEWED = Object.freeze({ d94cd486e29a7362888fc32cd807ceb38890acb6: 'claude/gitleaks-midgen-reviewed-hold (PR #991)' });
-const notInStore = () => { throw Object.assign(new Error('REVIEWED_COMMIT_NOT_IN_STORE: a reviewed commit is missing; '
-  + Object.entries(BRANCH_ONLY_REVIEWED).map(([sha, branch]) => `${sha.slice(0, 8)} lives only on branch ${branch} until it is merged: do not delete it`).join('; ')),
-  { code: 'REVIEWED_COMMIT_NOT_IN_STORE' }); };
+// Pure: the message for a set of missing reviewed commits; the branch hint only for commits that are really in that set.
+export const notInStoreMessage = missing => ['REVIEWED_COMMIT_NOT_IN_STORE'].concat(Object.entries(BRANCH_ONLY_REVIEWED)
+  .filter(([sha]) => missing.includes(sha)).map(([sha, branch]) => `${sha.slice(0, 8)} lives only on branch ${branch} until it is merged: do not delete it`)).join(': ');
+const notInStore = missing => { throw Object.assign(new Error(notInStoreMessage(missing)), { code: 'REVIEWED_COMMIT_NOT_IN_STORE' }); };
 const plain = value => value && Object.getPrototypeOf(value) === Object.prototype;
 const relative = value => typeof value === 'string' && !/[\\:\x00-\x20\x7f]/.test(value) && !value.startsWith('/')
   && value.split('/').every(part => part && part !== '.' && part !== '..');
@@ -224,7 +225,15 @@ export async function prepareRequiredHistory({ job, sourceManifestBytes, expecte
   for (const sha of [job.headSha, job.baseSha]) check((await processGit(git, dotgit, ['cat-file', '-t', sha], { alternate, maxBytes: 4096 })).text.trim() === 'commit', 'HEAD_BASE_COMMIT_MISSING');
   const reviewedPresent = async withAlternate => (await processGit(git, dotgit, ['cat-file', '--batch-check=%(objectname) %(objecttype)'],
     { stdin: reviewedInput, alternate: withAlternate, maxBytes: 65536 })).text.trim() === reviewedTypes;
-  if (!await reviewedPresent(alternate)) notInStore();
+  if (!await reviewedPresent(alternate)) {
+    // Which commits are missing: ask once per commit (the pinned set is small); a failed probe counts as missing.
+    const missing = [];
+    for (const sha of reviewedCommits) {
+      const probe = await processGit(git, dotgit, ['cat-file', '-t', sha], { alternate, maxBytes: 4096 }).catch(() => null);
+      if (probe?.text.trim() !== 'commit') missing.push(sha);
+    }
+    notInStore(missing);
+  }
   for (const ref of refs) await processGit(git, dotgit, ['check-ref-format', ref.name], { alternate, maxBytes: 4096 });
   const revisions = tips.join('\n') + '\n';
   const objects = (await processGit(git, dotgit, ['rev-list', '--objects', '--no-object-names', '--stdin'], { stdin: revisions, alternate, maxBytes: 128 * 1024 * 1024 })).text.trim().split('\n').filter(Boolean).sort();
