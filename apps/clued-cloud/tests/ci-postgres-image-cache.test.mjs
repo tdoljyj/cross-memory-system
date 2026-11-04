@@ -13,8 +13,10 @@ const root=fileURLToPath(new URL('../../../',import.meta.url));
 const workflow='.github/workflows/clued-g4-database.yml';
 const registry=JSON.parse(fs.readFileSync(path.join(root,'scripts/ci/clued-gated-proof-profiles.json'),'utf8'));
 const record=registry.workflows[workflow];
+// The registry stores workflow bytes as source_yaml_lines (clued-workflow-profile-codec); older records carry source_yaml.
+const yamlOf=source=>source.source_yaml??source.source_yaml_lines.join('\n');
 const candidates=[record,...(record.accepted_sources??[])]
-  .filter(source=>source.source_yaml.includes('image_source=fallback-cache'));
+  .filter(source=>yamlOf(source).includes('image_source=fallback-cache'));
 const digest='sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929';
 const primary='postgres@'+digest;
 const fallback='public.ecr.aws/docker/library/postgres@'+digest;
@@ -95,7 +97,7 @@ test('PostgreSQL cache regression uses both actual registered G4 backup steps',(
   assert.equal(require('yaml/package.json').version,'2.9.0');
   assert.ok(candidates.length>0,'missing registered cache-fix candidate');
   for(const source of candidates) {
-    const parsed=YAML.parse(source.source_yaml);
+    const parsed=YAML.parse(yamlOf(source));
     const steps=Object.values(parsed.jobs).flatMap(job=>(job.steps??[])
       .filter(step=>step.name==='Verify actual PostgreSQL17 production backup coverage'));
     assert.equal(steps.length,2,source.workflow_blob);
@@ -117,7 +119,7 @@ const scenarios=[
 ];
 
 for(const source of candidates) {
-  const parsed=YAML.parse(source.source_yaml);
+  const parsed=YAML.parse(yamlOf(source));
   for(const [jobId,job] of Object.entries(parsed.jobs)) {
     const step=(job.steps??[]).find(item=>item.name==='Verify actual PostgreSQL17 production backup coverage');
     if(!step)continue;
