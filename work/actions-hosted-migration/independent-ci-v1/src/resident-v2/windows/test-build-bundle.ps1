@@ -8,11 +8,11 @@ function Refused-With([scriptblock]$f,[string]$code,[string]$what){$got=$null;tr
 $t=$null;$e=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($tool,[ref]$t,[ref]$e);if($e.Count){throw 'BUILD_BUNDLE_PARSE_FAILED'}
 $ReviewedPrefix='refs/reviewed/';$TestPrefix='refs/clued-test/'
 foreach($name in @('Utc','Hash-Bytes','Hash-Text','Absent','Quote-Arg','Invoke-Git','Assert-FormalRefName','New-RefMap','Split-Refs','Ref-Map','Same-Map','Ref-List-Sha','Reviewed-Map','Reviewed-Commits','Bundle-Header',
-  'Build-Store','Retry-Allowed','Fetch-Store')){
+  'Ref-Diff','Build-Store','Retry-Allowed','Race-Retry-Allowed','Fetch-Store')){
  $f=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -ceq $name});if($f.Count -ne 1){throw ('FUNCTION_MISSING:'+$name)};. ([scriptblock]::Create($f[0].Extent.Text))
 }
 # The fixed values exactly as the script assigns them.
-foreach($name in @('Common','NetworkSteps','RetryWithinSeconds')){
+foreach($name in @('Common','NetworkSteps','RetryWithinSeconds','MaxStoreAttempts')){
  $s=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -ceq ('$'+$name)});if($s.Count -ne 1){throw ('ASSIGNMENT_MISSING:'+$name)};. ([scriptblock]::Create($s[0].Extent.Text))
 }
 $FixedCommon=[string[]]$Common
@@ -41,7 +41,7 @@ Refuse {Reviewed-Commits ($toml+"# clued-reviewed-finding: {`"fingerprint`":`"$(
 # Stalled transfers (lesson #916): every git call carries the low-speed abort, and only an early network failure is retried.
 $i=[Array]::IndexOf($FixedCommon,'http.lowSpeedLimit=1000');Yes ($i -gt 0 -and $FixedCommon[$i-1] -ceq '-c') 'common-low-speed-limit'
 $i=[Array]::IndexOf($FixedCommon,'http.lowSpeedTime=60');Yes ($i -gt 0 -and $FixedCommon[$i-1] -ceq '-c') 'common-low-speed-time'
-Yes ((@($NetworkSteps)-join '|') -ceq 'fetch|ls-remote|fetch-reviewed|fetch-test' -and $RetryWithinSeconds -eq 600) 'retry-constants'
+Yes ((@($NetworkSteps)-join '|') -ceq 'fetch|ls-remote|fetch-reviewed|fetch-test' -and $RetryWithinSeconds -eq 600 -and $MaxStoreAttempts -eq 3) 'retry-constants'
 function Step([string]$l,[int]$x){return [ordered]@{label=$l;exitCode=$x;stderrChars=1}}
 foreach($l in @('fetch','ls-remote','fetch-reviewed','fetch-test')){Yes (Retry-Allowed 'GIT_STEP_FAILED' (Step $l 128) 61) ('retry-'+$l)}
 Yes (Retry-Allowed 'GIT_STEP_FAILED' (Step 'fetch' 128) 599.9) 'retry-just-in-time'
@@ -50,6 +50,17 @@ foreach($l in @('init-bare','cat-file','source-gitleaks-toml','reviewed-closure'
 foreach($r in @('REMOTE_MAIN_BASE_CHANGED','FETCHED_REFS_DIFFER_FROM_LS_REMOTE','GIT_START_UNCONFIRMED','FIXED_BUNDLE_BUILD_UNCONFIRMED')){Yes (-not (Retry-Allowed $r (Step 'fetch' 128) 61)) ('no-retry-'+$r)}
 Yes (-not (Retry-Allowed 'GIT_STEP_FAILED' $null 61)) 'no-retry-without-step'
 Yes (-not (Retry-Allowed 'GIT_STEP_FAILED' (Step 'fetch' 0) 61)) 'no-retry-exit-0'
+# Refs pushed between the fetch and the ls-remote: only that inconsistency (recorded by Build-Store), only in the window
+$d0=Ref-Diff (Ref-Map "$a`trefs/heads/main`n$b`trefs/tags/v1`n" "`t" $true) (Ref-Map "$a`trefs/heads/main`n$a`trefs/tags/v1`n$b`trefs/heads/new`n" "`t" $true)
+Yes ($d0.count -eq 2 -and (@($d0.refs)-join '|') -ceq 'refs/heads/new|refs/tags/v1') 'ref-diff-changed-and-added'
+Yes ((Ref-Diff (Ref-Map "$a`trefs/heads/main`n" "`t" $true) (New-RefMap)).count -eq 1) 'ref-diff-removed'
+$many=New-RefMap;foreach($x in 1..12){$many['refs/heads/b'+('{0:d2}' -f $x)]=$a};$d1=Ref-Diff $many (New-RefMap);Yes ($d1.count -eq 12 -and @($d1.refs).Count -eq 8 -and $d1.refs[0] -ceq 'refs/heads/b01') 'ref-diff-capped'
+Yes ((Ref-Diff $m $m).count -eq 0) 'ref-diff-equal'
+Yes (Race-Retry-Allowed 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' $d0 61) 'race-retry'
+Yes (Race-Retry-Allowed 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' $d0 599.9) 'race-retry-just-in-time'
+Yes (-not (Race-Retry-Allowed 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' $d0 600)) 'no-race-retry-too-late'
+Yes (-not (Race-Retry-Allowed 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' $null 61)) 'no-race-retry-unrecorded'
+foreach($r in @('REMOTE_MAIN_BASE_CHANGED','GIT_STEP_FAILED','EXACT_REVIEWED_REF_SET_REQUIRED','HEAD_BASE_SOURCE_COMMIT_MISSING')){Yes (-not (Race-Retry-Allowed $r $d0 61)) ('no-race-retry-'+$r)}
 # a real v2 bundle from a throwaway local repository
 $git=(Get-Command git -ErrorAction SilentlyContinue)
 if($git){
@@ -98,11 +109,21 @@ if($git){
     [IO.File]::WriteAllBytes((Join-Path $dir 'objects\pack\tmp_pack_planted'),[byte[]](1,2,3));[IO.File]::WriteAllText((Join-Path $dir 'refs\heads\zz-planted'),$c0+"`n")
     $GitArgs=@($GitArgs|ForEach-Object{if($_ -ceq $Url){$stallUrl}else{$_}})
    }
+   if($Label -ceq 'ls-remote' -and $script:races -gt 0){
+    # a push between the fetch and the ls-remote: GitHub answers with a branch the fetch did not see
+    $script:races--;return ((& $realGit $Label $GitArgs)+"`n$c0`trefs/heads/raced`n")
+   }
+   if($Label -ceq 'fetch-reviewed' -and $script:lateRaces -gt 0){
+    # the same push, after the first check: a branch appears in the store while the reviewed commits are fetched
+    $script:lateRaces--;$dir=@($GitArgs|Where-Object{$_.StartsWith('--git-dir=')})[0].Substring(10)
+    [IO.File]::WriteAllText((Join-Path $dir 'refs\heads\zz-late'),$c0+"`n")
+   }
    return (& $realGit $Label $GitArgs)
   }
   function New-Case([hashtable]$Stalls,$Elapsed){
+   $script:races=0;$script:lateRaces=0;$script:refsDiffer=$null;$script:FetchDir3=$null
    $script:Root=Join-Path $tmp ('bundles\'+[Guid]::NewGuid().ToString('N').Substring(0,8));[void][IO.Directory]::CreateDirectory($script:Root)
-   $script:FetchDir=Join-Path $script:Root 'fetch.git';$script:FetchDir2=Join-Path $script:Root 'fetch-2.git'
+   $script:FetchDir=Join-Path $script:Root 'fetch.git';$script:FetchDir2=Join-Path $script:Root 'fetch-2.git';$script:FetchDir3=Join-Path $script:Root 'fetch-3.git'
    $script:stalls=$Stalls;$script:calls=@();$script:created=@();$script:lastGit=$null;$script:stage='x';$script:attempts=1;$script:firstAttempt=$null
    $script:Head=$c2;$script:Base=$c1;$script:Test=$c2
    $script:Clock=if($null -eq $Elapsed){[Diagnostics.Stopwatch]::StartNew()}else{[pscustomobject]@{Elapsed=[TimeSpan]::FromSeconds($Elapsed)}}
@@ -156,6 +177,36 @@ if($git){
   # the S fetch stalls: the whole store is built again
   New-Case @{'fetch-test'=1} $null;$Test=$cS;$s=Fetch-Store
   Yes ($s.dir -ceq $FetchDir2 -and $attempts -eq 2 -and $firstAttempt.stage -ceq 'fetch-test-commit-by-sha' -and $s.expectedTest.Count -eq 1) 'front-retry'
+  # 6c. refs pushed between the fetch and the ls-remote: the first inconsistency gets a complete new attempt in a new store
+  New-Case @{} $null;$races=1;$s=Fetch-Store
+  Yes ($s.dir -ceq $FetchDir2 -and $attempts -eq 2 -and (Fetches) -eq 2 -and (@($calls|Where-Object{$_ -ceq 'ls-remote'}).Count) -eq 2 -and -not (Test-Path -LiteralPath $FetchDir3)) 'race-retry-fresh-store'
+  Yes ($firstAttempt.stage -ceq 'fetched-store-readback' -and $firstAttempt.refsDiffer.count -eq 1 -and (@($firstAttempt.refsDiffer.refs)-join '|') -ceq 'refs/heads/raced') 'race-first-attempt-recorded'
+  Yes ((Same-Map $s.remote $expected) -and $s.expectedReviewed.Count -eq 1 -and (Test-Path -LiteralPath (Join-Path $FetchDir 'HEAD')) -and (@($created)-join '|') -ceq ($FetchDir+'|'+$FetchDir2)) 'race-retry-store-checked'
+  # the third attempt is the last one
+  New-Case @{} $null;$races=2;$s=Fetch-Store
+  Yes ($s.dir -ceq $FetchDir3 -and $attempts -eq 3 -and (Fetches) -eq 3 -and $firstAttempt.refsDiffer.count -eq 1 -and (Same-Map $s.remote $expected) -and (@($created)-join '|') -ceq ($FetchDir+'|'+$FetchDir2+'|'+$FetchDir3)) 'race-retry-third-attempt'
+  # three inconsistent attempts: the original refusal, never a fourth
+  New-Case @{} $null;$races=3
+  Refused-With {Fetch-Store} 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' 'race-three-times-final'
+  Yes ($attempts -eq 3 -and (Fetches) -eq 3 -and (@($calls|Where-Object{$_ -ceq 'ls-remote'}).Count) -eq 3 -and $stage -ceq 'fetched-store-readback' -and $refsDiffer.count -eq 1) 'race-never-a-fourth-attempt'
+  # after the window: no new attempt
+  New-Case @{} 600;$races=1
+  Refused-With {Fetch-Store} 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' 'race-late-final'
+  Yes ($attempts -eq 1 -and $null -eq $firstAttempt -and -not (Test-Path -LiteralPath $FetchDir2)) 'race-late-not-retried'
+  # every other check is unchanged: after the race, the new attempt still refuses a main that is not the base
+  New-Case @{} $null;$races=1;$Base=$c2
+  Refused-With {Fetch-Store} 'REMOTE_MAIN_BASE_CHANGED' 'race-then-main-changed'
+  Yes ($attempts -eq 2 -and (Fetches) -eq 2 -and -not (Test-Path -LiteralPath $FetchDir3)) 'race-then-main-changed-final'
+  # the later FETCHED_REFS_DIFFER_FROM_LS_REMOTE check (a branch appearing while the reviewed commits are fetched) is not retried
+  New-Case @{} $null;$lateRaces=1
+  Refused-With {Fetch-Store} 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' 'late-refs-differ-final'
+  Yes ($attempts -eq 1 -and $null -eq $refsDiffer -and $null -eq $firstAttempt -and -not (Test-Path -LiteralPath $FetchDir2)) 'late-refs-differ-not-retried'
+  # network retries and race retries share the three attempts, with one network retry at most
+  New-Case @{fetch=1} $null;$races=1;$s=Fetch-Store
+  Yes ($s.dir -ceq $FetchDir3 -and $attempts -eq 3 -and $firstAttempt.git.label -ceq 'fetch' -and -not $firstAttempt.Contains('refsDiffer')) 'stall-then-race-then-success'
+  New-Case @{'fetch-reviewed'=2} $null;$races=1
+  Refused-With {Fetch-Store} 'GIT_STEP_FAILED' 'race-then-two-stalls-final'
+  Yes ($attempts -eq 3 -and (Fetches) -eq 3 -and $firstAttempt.refsDiffer.count -eq 1 -and $lastGit.label -ceq 'fetch-reviewed') 'race-then-one-network-retry-only'
   # 7. The whole script, main block included, as its own process, on a copy that changes only its fixed places: the
   #    resident directory, the remote (the file:// fixture, allowed for this copy only) and git's path. The answer and
   #    the receipt, then -CheckRefs, then a second run of the same batch (create-only). The script refuses elevation.

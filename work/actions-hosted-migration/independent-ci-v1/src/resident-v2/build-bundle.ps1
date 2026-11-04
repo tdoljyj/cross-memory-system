@@ -22,6 +22,11 @@ Stalled transfers (lesson #916, 2026-10-23: a fetch stalled at 47 MB and held th
 35-minute deadline): an HTTP transfer slower than 1000 bytes/s for 60 s is aborted, and a failed network step gets one
 more complete attempt in a second fresh bare repository (Fetch-Store), only while most of the companion's wait is left.
 
+Refs pushed between the fetch and the ls-remote (a push to any branch of the repository in that window made the fetched refs
+differ from ls-remote: FETCHED_REFS_DIFFER_FROM_LS_REMOTE, 2026-11-04 PR #990): that one inconsistency, found right after the
+full fetch, gets up to two more complete attempts, each in its own new bare repository, in the same time window. Nothing
+else changes: the later FETCHED_REFS_DIFFER_FROM_LS_REMOTE checks, main == base and every other refusal are final.
+
 Train front batch (quota phase 2 step 3c-2, design v0.5 §5.2): the descriptor's tested commit S is GitHub's test merge of
 [T, H] (S != H). Build-Store fetches it by SHA under refs/clued-test/<S> (no other name, at most one), checks that it is a
 commit whose parents are exactly [T, H], and the bundle carries that one ref; the receipt counts it (testRefCount 0 when
@@ -43,7 +48,7 @@ $Descriptor=Join-Path $Resident ('outbox\'+$BatchId+'\descriptor.json')
 $Root=Join-Path $Resident ('bundles\'+$BatchId)
 $Git='C:\Program Files\Git\cmd\git.exe'
 $Url='https://github.com/tdoljyj/cross-memory-system.git'
-$FetchDir=Join-Path $Root 'fetch.git';$FetchDir2=Join-Path $Root 'fetch-2.git';$Bundle=Join-Path $Root 'all-refs.bundle';$ReceiptPath=Join-Path $Root 'all-refs.receipt.json'
+$FetchDir=Join-Path $Root 'fetch.git';$FetchDir2=Join-Path $Root 'fetch-2.git';$FetchDir3=Join-Path $Root 'fetch-3.git';$Bundle=Join-Path $Root 'all-refs.bundle';$ReceiptPath=Join-Path $Root 'all-refs.receipt.json'
 $Gen2Name='gen-2';$Gen1Root=$Root;$Gen1Receipt=$ReceiptPath;$Gen2Root=Join-Path $Root $Gen2Name;$Gen2Receipt=Join-Path $Gen2Root 'all-refs.receipt.json'
 $ReviewedPrefix='refs/reviewed/';$TestPrefix='refs/clued-test/'
 $Common=@('-c','core.hooksPath=C:/nonexistent-clued-hooks','-c','core.fsmonitor=false','-c','gc.auto=0','-c','maintenance.auto=false',
@@ -53,9 +58,9 @@ $Common=@('-c','core.hooksPath=C:/nonexistent-clued-hooks','-c','core.fsmonitor=
 # (companion.mjs build-bundle). A retry starts only within the first 10 of them, so the second attempt has at least
 # 20 minutes, twice what the first one can have used. A transfer that stays just above the low-speed limit is still
 # not bounded: nothing here kills git.
-$NetworkSteps=@('fetch','ls-remote','fetch-reviewed','fetch-test');$RetryWithinSeconds=600
+$NetworkSteps=@('fetch','ls-remote','fetch-reviewed','fetch-test');$RetryWithinSeconds=600;$MaxStoreAttempts=3
 $Clock=[Diagnostics.Stopwatch]::StartNew()
-$stage='fixed-preflight';$created=@();$writesStarted=$false;$lastGit=$null;$attempts=1;$firstAttempt=$null
+$stage='fixed-preflight';$created=@();$writesStarted=$false;$lastGit=$null;$attempts=1;$firstAttempt=$null;$refsDiffer=$null
 function Utc{return [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'",[Globalization.CultureInfo]::InvariantCulture)}
 function Hash-Bytes([byte[]]$Bytes){$a=[Security.Cryptography.SHA256]::Create();try{return ([BitConverter]::ToString($a.ComputeHash($Bytes))).Replace('-','').ToLowerInvariant()}finally{$a.Dispose()}}
 function Hash-File([string]$Path){$a=[Security.Cryptography.SHA256]::Create();$s=[IO.File]::Open($Path,'Open','Read','Read');try{return ([BitConverter]::ToString($a.ComputeHash($s))).Replace('-','').ToLowerInvariant()}finally{$s.Dispose();$a.Dispose()}}
@@ -104,6 +109,14 @@ function Split-Refs([string]$Text,[string]$Separator,[bool]$SkipPeeled,[bool]$Al
 }
 function Ref-Map([string]$Text,[string]$Separator,[bool]$SkipPeeled){return ,((Split-Refs $Text $Separator $SkipPeeled $false).formal)}
 function Same-Map($A,$B){if($A.Count -ne $B.Count){return $false};foreach($k in $A.Keys){if(-not $B.ContainsKey($k) -or $B[$k] -cne $A[$k]){return $false}};return $true}
+# The refs on which two maps disagree (missing on one side, or another object), ordinal-sorted, with their number.
+function Ref-Diff($A,$B){
+ $names=New-Object 'Collections.Generic.List[string]'
+ foreach($k in $A.Keys){if(-not $B.ContainsKey($k) -or $B[$k] -cne $A[$k]){$names.Add($k)}}
+ foreach($k in $B.Keys){if(-not $A.ContainsKey($k)){$names.Add($k)}}
+ $s=[string[]]@($names);[Array]::Sort($s,[StringComparer]::Ordinal)
+ return [ordered]@{count=$s.Count;refs=@($s|Select-Object -First 8)}
+}
 function Ref-List-Sha($M){
  $names=[string[]]@($M.Keys);[Array]::Sort($names,[StringComparer]::Ordinal);$sb=New-Object Text.StringBuilder
  foreach($n in $names){$null=$sb.Append($M[$n]).Append(' ').Append($n).Append("`n")};return Hash-Text $sb.ToString()
@@ -169,7 +182,7 @@ function Current-Receipt{
 # and tags, ls-remote equality, main == base, then the reviewed commits fetched by SHA, each read back, then (train
 # front batch only) the tested commit S by SHA with its parents [T, H].
 function Build-Store([string]$Dir){
- $script:stage='fresh-bare-repository';Absent $Dir
+ $script:stage='fresh-bare-repository';$script:refsDiffer=$null;Absent $Dir
  $null=Invoke-Git 'init-bare' (@('-c','init.templateDir=','init','--bare','--quiet','--template=',$Dir));$script:created+=$Dir
  if(Test-Path -LiteralPath (Join-Path $Dir 'hooks')){if(@(Get-ChildItem -LiteralPath (Join-Path $Dir 'hooks') -Force -Recurse -File).Count -ne 0){throw 'TEMPLATE_HOOKS_REFUSED'}}
  $gd='--git-dir='+$Dir
@@ -183,7 +196,8 @@ function Build-Store([string]$Dir){
  if((Invoke-Git 'is-shallow' ($Common+@($gd,'rev-parse','--is-shallow-repository'))).Trim() -cne 'false'){throw 'COMPLETE_HISTORY_REQUIRED'}
  foreach($f in @('shallow','info\grafts','objects\info\alternates','objects\info\http-alternates')){Absent (Join-Path $Dir $f)}
  $local=Ref-Map (Invoke-Git 'for-each-ref' ($Common+@($gd,'for-each-ref','--format=%(objectname) %(refname)'))) ' ' $false
- if(-not (Same-Map $local $remote)){throw 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE'}
+ # The one inconsistency a push between the fetch and the ls-remote makes; Fetch-Store retries only this one.
+ if(-not (Same-Map $local $remote)){$script:refsDiffer=Ref-Diff $local $remote;throw 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE'}
  if(-not $local.ContainsKey('refs/heads/main') -or $local['refs/heads/main'] -cne $Base){throw 'REMOTE_MAIN_BASE_CHANGED'}
  foreach($s in @($Head,$Base,$desc.value.sourceCommit)){if((Invoke-Git 'cat-file' ($Common+@($gd,'cat-file','-t',$s))).Trim() -cne 'commit'){throw 'HEAD_BASE_SOURCE_COMMIT_MISSING'}}
  foreach($k in $local.Keys){$t=(Invoke-Git 'cat-file' ($Common+@($gd,'cat-file','-t',$local[$k]))).Trim()
@@ -228,16 +242,32 @@ function Build-Store([string]$Dir){
 function Retry-Allowed([string]$Reason,$Step,[double]$ElapsedSeconds){
  return ($Reason -ceq 'GIT_STEP_FAILED' -and $null -ne $Step -and $NetworkSteps -ccontains $Step.label -and $Step.exitCode -ne 0 -and $ElapsedSeconds -lt $RetryWithinSeconds)
 }
-# The store with at most one retry. The second attempt runs every step and check again in its own new bare repository;
-# whatever the first one left (a partial pack, refs) stays where it is and is never read again.
+# The refs moved between the fetch and the ls-remote: only the first FETCHED_REFS_DIFFER_FROM_LS_REMOTE of a store (Build-Store
+# sets $refsDiffer there and nowhere else), and only early enough, like a network step.
+function Race-Retry-Allowed([string]$Reason,$Differ,[double]$ElapsedSeconds){
+ return ($Reason -ceq 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' -and $null -ne $Differ -and $ElapsedSeconds -lt $RetryWithinSeconds)
+}
+# The store with at most $MaxStoreAttempts attempts, of which at most one is a retry of a failed network step. Every further
+# attempt runs every step and check again in its own new bare repository; whatever an earlier one left (a partial pack,
+# refs) stays where it is and is never read again. The receipt's storeAttempts counts the attempts, firstAttempt describes
+# the first one that was given up on (its refsDiffer: how many refs and which ones, at most 8, were not equal).
 function Fetch-Store{
- try{return Build-Store $FetchDir}
- catch{
-  if(-not (Retry-Allowed $_.Exception.Message $script:lastGit $Clock.Elapsed.TotalSeconds)){throw}
-  $script:firstAttempt=[ordered]@{stage=$script:stage;git=$script:lastGit;failedAfterSeconds=[int]$Clock.Elapsed.TotalSeconds}
+ $dirs=@($FetchDir,$FetchDir2,$FetchDir3);$networkRetried=$false
+ for($n=0;$n -lt $MaxStoreAttempts;$n++){
+  $script:attempts=$n+1
+  try{return Build-Store $dirs[$n]}
+  catch{
+   $reason=$_.Exception.Message;$elapsed=$Clock.Elapsed.TotalSeconds
+   $race=Race-Retry-Allowed $reason $script:refsDiffer $elapsed
+   $network=(-not $networkRetried) -and (Retry-Allowed $reason $script:lastGit $elapsed)
+   if($n -ge ($MaxStoreAttempts-1) -or -not ($race -or $network)){throw}
+   if($network){$networkRetried=$true}
+   if($null -eq $script:firstAttempt){
+    $script:firstAttempt=[ordered]@{stage=$script:stage;git=$script:lastGit;failedAfterSeconds=[int]$elapsed}
+    if($race){$script:firstAttempt['refsDiffer']=$script:refsDiffer}
+   }
+  }
  }
- $script:attempts=2
- return Build-Store $FetchDir2
 }
 try{
  $id=[Security.Principal.WindowsIdentity]::GetCurrent();$principal=New-Object Security.Principal.WindowsPrincipal($id)
@@ -259,7 +289,7 @@ try{
   if(-not (Test-Path -LiteralPath $Gen1Receipt -PathType Leaf)){throw 'REBUNDLE_REQUIRES_FIRST_GENERATION'}
   $previous=Read-BundleReceipt $Gen1Receipt $desc.sha256
   if($null -ne $previous.PSObject.Properties['generation']){throw 'REBUNDLE_REQUIRES_FIRST_GENERATION'}
-  $Root=$Gen2Root;$FetchDir=Join-Path $Root 'fetch.git';$FetchDir2=Join-Path $Root 'fetch-2.git';$Bundle=Join-Path $Root 'all-refs.bundle';$ReceiptPath=$Gen2Receipt
+  $Root=$Gen2Root;$FetchDir=Join-Path $Root 'fetch.git';$FetchDir2=Join-Path $Root 'fetch-2.git';$FetchDir3=Join-Path $Root 'fetch-3.git';$Bundle=Join-Path $Root 'all-refs.bundle';$ReceiptPath=$Gen2Receipt
  }
  $ri=Get-Item -LiteralPath (Split-Path -Parent $Root) -Force;if(-not $ri.PSIsContainer -or ($ri.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'FIXED_REAL_BUNDLE_ROOT_REQUIRED'}
  Absent $Root

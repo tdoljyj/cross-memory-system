@@ -16,13 +16,13 @@ test('build-bundle: every git call aborts a transfer below 1000 bytes/s for 60 s
 });
 
 test('build-bundle: one retry of the network steps, in a second fresh store, only in the first 10 minutes', () => {
-  assert.ok(text.includes("$NetworkSteps=@('fetch','ls-remote','fetch-reviewed','fetch-test');$RetryWithinSeconds=600"));
+  assert.ok(text.includes("$NetworkSteps=@('fetch','ls-remote','fetch-reviewed','fetch-test');$RetryWithinSeconds=600;$MaxStoreAttempts=3"));
   assert.ok(text.includes("$FetchDir2=Join-Path $Root 'fetch-2.git'"));
-  assert.ok(text.includes('try{return Build-Store $FetchDir}'));
-  assert.ok(text.includes('return Build-Store $FetchDir2'));
-  assert.ok(text.includes(" $script:stage='fresh-bare-repository';Absent $Dir\n") || text.includes(" $script:stage='fresh-bare-repository';Absent $Dir\r\n"));
+  assert.ok(text.includes('try{return Build-Store $dirs[$n]}'));
+  assert.ok(text.includes("$dirs=@($FetchDir,$FetchDir2,$FetchDir3);$networkRetried=$false"));
+  assert.ok(text.includes(" $script:stage='fresh-bare-repository';$script:refsDiffer=$null;Absent $Dir\n") || text.includes(" $script:stage='fresh-bare-repository';$script:refsDiffer=$null;Absent $Dir\r\n"));
   // The main block builds the store only through Fetch-Store, and still checks the bundle against it.
-  assert.equal(text.match(/Build-Store \$/g).length, 2);
+  assert.equal(text.match(/Build-Store \$/g).length, 1);
   assert.ok(text.includes(' $store=Fetch-Store\n') || text.includes(' $store=Fetch-Store\r\n'));
   assert.ok(text.includes("if(-not (Same-Map $header.formal $remote)){throw 'BUNDLE_REFS_DIFFER_FROM_LS_REMOTE'}"));
 });
@@ -32,6 +32,31 @@ test('build-bundle: the main block reads no variable that only Build-Store sets 
   for (const name of ['fetchStartedAt', 'fetchCompletedAt', 'lsRemoteCompletedAt', 'reviewedFetchStartedAt', 'reviewedFetchCompletedAt', 'branchesAtHead', 'local', 'all', 'toml', 'final']) {
     assert.doesNotMatch(main, new RegExp(`\\$${name}\\b`), name);
   }
+});
+
+// 2026-11-04 (PR #990): a push between the fetch and the ls-remote made the fetched refs differ from ls-remote. Only that
+// one check (right after the full fetch) may start a new attempt, at most two more, in the same first 10 minutes; the other
+// FETCHED_REFS_DIFFER_FROM_LS_REMOTE checks and every other refusal stay final. Behaviour: test-build-bundle.ps1.
+test('build-bundle: only the first refs-vs-ls-remote check can start a new attempt, at most 3 attempts in all', () => {
+  const store = text.slice(text.indexOf('function Build-Store'), text.indexOf('function Retry-Allowed'));
+  const racy = "if(-not (Same-Map $local $remote)){$script:refsDiffer=Ref-Diff $local $remote;throw 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE'}";
+  assert.equal(text.split('$script:refsDiffer=Ref-Diff').length - 1, 1);
+  assert.ok(store.includes(racy));
+  assert.ok(store.includes("$script:refsDiffer=$null;Absent $Dir"));
+  // the two later checks throw the same code without recording a difference
+  assert.equal(store.split("throw 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE'").length - 1, 3);
+  const retry = text.slice(text.indexOf('function Race-Retry-Allowed'), text.indexOf('try{\n $id='));
+  assert.ok(retry.includes("$Reason -ceq 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' -and $null -ne $Differ -and $ElapsedSeconds -lt $RetryWithinSeconds"));
+  assert.ok(retry.includes('$network=(-not $networkRetried) -and (Retry-Allowed $reason $script:lastGit $elapsed)'));
+  assert.ok(retry.includes('if($n -ge ($MaxStoreAttempts-1) -or -not ($race -or $network)){throw}'));
+  // the checks the retry must not touch
+  for (const code of ['REMOTE_MAIN_BASE_CHANGED', 'HEAD_BASE_SOURCE_COMMIT_MISSING', 'REMOTE_REF_TARGET_TYPE_UNSUPPORTED', 'TRUSTED_REVIEW_SOURCE_CHANGED', 'EXACT_REVIEWED_REF_SET_REQUIRED']) {
+    assert.ok(store.includes(`throw '${code}'`), code);
+    assert.ok(!retry.includes(code), code);
+  }
+  // no new contract field: the receipt keeps storeAttempts and firstAttempt
+  assert.ok(text.includes('storeAttempts=$attempts;firstAttempt=$firstAttempt'));
+  assert.ok(text.includes("'fetch-3.git'"));
 });
 
 // Step 3c-2 (design v0.5 §5.2): a train front batch's S is fetched by SHA inside Build-Store (so the retry covers it),
