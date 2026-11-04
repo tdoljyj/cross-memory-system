@@ -60,6 +60,31 @@ UTILIZATION_HOURS = 24
 LOW_DISK_GB = 20.0
 LOW_MEMORY_GB = 1.0
 
+# Duplicate-run alert (Task e435e658, rule 41ab823a: one commit's one check really runs once).
+DUP_LOOKBACK = timedelta(days=3)       # PRs updated, and runs started, within this window
+DUP_EVERY = timedelta(minutes=55)      # read about once an hour, like the batch metrics
+DUP_PULLS = 30                         # newest-updated PRs read per scan (open and closed)
+DUP_RESCAN = timedelta(hours=24)       # a PR merged this recently is read again: the resident may reschedule it
+DUP_PAGES = 5                          # check-run pages per head (100 each)
+DUP_ROWS = 10                          # rows in the panel table and the machine-readable data
+DUP_KEEP = 20                          # findings kept in the saved state (the issue body is limited to 65536 characters)
+DUP_RUNS_SHOWN = 4
+DUP_TITLE = 60
+# check-run conclusions that mean the check's work really ran; cancelled (a superseded copy), skipped,
+# neutral, stale, action_required and startup_failure never count.
+REAL_CONCLUSIONS = frozenset({"success", "failure", "timed_out"})
+RESIDENT_EXTERNAL = re.compile(r"^independent-ci:([a-z0-9-]{1,40}):")
+RESIDENT_ATTEMPT = re.compile(r":a(\d{1,3})(?::|$)")
+# The resident's own control checks ("not a scanner execution"): work-claim admission per attempt, and the
+# stage 8 rechecks (admission-verified, merge-slot) that are republished on every try. They are verified
+# again by design and never count as a run of the work.
+RESIDENT_CONTROL_KINDS = frozenset({"native-work-admission", "control"})
+RUN_URL = re.compile(r"/actions/runs/(\d+)")
+# A hosted/self-hosted workflow job that executes the check the resident also publishes (gitleaks,
+# trivy, contract-placement) is named "<check>-hosted-executor"; that is the same check as "<check>".
+HOSTED_SUFFIX = re.compile(r"(-hosted-executor| \(hosted\))$")
+GATE_JOB_NAMES = frozenset({GATE_JOB})
+
 POOL = [
     {"name": "clued-ci-company-linux-01", "os": "Linux", "site": "company",
      "can_run": ["Linux 作业", "Docker", "WSL2"]},
@@ -514,6 +539,149 @@ def recent_merges(client: GitHub, since: datetime | None, limit: int = RESIDENT_
     return events
 
 
+def real_run(check: dict, workflows: dict[int, dict]) -> dict | None:
+    """One check run as a candidate for "really ran", or None when it does not count.
+
+    Counts: a completed success/failure/timed_out run, or one still in progress that has started.
+    Never counts: skipped or cancelled copies, a queued run, the resident's control checks and stage 8
+    rechecks, and the admission gate of a workflow (a wait on Clued, not CI work).
+
+    The identity ("key") is what must run once per head: the resident's check name, and the same name for a
+    hosted executor job ("<check>-hosted-executor"); any other hosted job is told apart by its workflow, so
+    the many jobs named admission-gate in different workflows are different checks.
+    """
+    name = str(check.get("name") or "")
+    started = parse_time(check.get("started_at"))
+    status, conclusion = check.get("status"), check.get("conclusion")
+    if not name or started is None:
+        return None
+    if not (status == "in_progress" or (status == "completed" and conclusion in REAL_CONCLUSIONS)):
+        return None
+    external = str(check.get("external_id") or "")
+    resident = RESIDENT_EXTERNAL.match(external)
+    if resident:
+        kind = resident.group(1)
+        # A relay republishes a hosted run's result under the same name; it is not a second run.
+        if kind in RESIDENT_CONTROL_KINDS or "relay" in kind or name.startswith("kooyumi-"):
+            return None
+        attempt = RESIDENT_ATTEMPT.search(external)
+        return {"key": name, "label": name, "executor": "resident", "at": iso(started), "conclusion": conclusion or status,
+                "attempt": int(attempt.group(1)) if attempt else None, "run": None, "event": None}
+    match = RUN_URL.search(str(check.get("details_url") or ""))
+    run_id = int(match.group(1)) if match else None
+    workflow = workflows.get(run_id) or {}
+    if name in GATE_JOB_NAMES:
+        return None
+    base = HOSTED_SUFFIX.sub("", name)
+    where = workflow.get("path") or workflow.get("name") or "unknown-workflow"
+    key = base if base != name else f"{where}::{name}"
+    return {"key": key, "label": base if base != name else f"{name}（{str(where).rsplit('/', 1)[-1]}）",
+            "executor": "hosted" if run_id else str(check.get("app") or "other"), "at": iso(started),
+            "conclusion": conclusion or status, "attempt": workflow.get("attempt"), "run": run_id,
+            "event": workflow.get("event")}
+
+
+def duplicate_findings(head: str, pull: dict, checks: list[dict], workflows: dict[int, dict],
+                       now: datetime) -> list[dict]:
+    """The checks of one PR head that really ran twice or more (rule 41ab823a)."""
+    groups: dict[str, list[dict]] = {}
+    for check in checks:
+        run = real_run(check, workflows)
+        if run:
+            groups.setdefault(run["key"], []).append(run)
+    merged = parse_time(pull.get("merged_at"))
+    found = []
+    for key, runs in groups.items():
+        if len(runs) < 2:
+            continue
+        runs.sort(key=lambda run: run["at"])
+        executors = {run["executor"] for run in runs}
+        causes = []
+        if merged is not None and any(parse_time(run["at"]) > merged for run in runs):
+            causes.append("after-merge")       # a merged PR scheduled again
+        if len(executors) > 1:
+            causes.append("cross-executor")    # the hosted workflow and the resident both ran it
+        if not causes:
+            causes.append("same-executor")     # a rerun or a second trigger on the same executor
+        found.append({
+            "head": head[:12], "pr": pull.get("number"), "check": key, "label": runs[0]["label"],
+            "count": len(runs), "causes": causes, "first": runs[0]["at"], "last": runs[-1]["at"],
+            "runs": [{k: run[k] for k in ("executor", "at", "conclusion", "attempt", "run", "event")}
+                     for run in runs[:DUP_RUNS_SHOWN]],
+            "title": cell(pull.get("title"))[:DUP_TITLE],
+        })
+    return found
+
+
+def duplicate_event(finding: dict) -> tuple[str, str]:
+    """The event key (a new key whenever the count grows) and its one-line text."""
+    counts: dict[str, int] = {}
+    for run in finding["runs"]:
+        counts[run["executor"]] = counts.get(run["executor"], 0) + 1
+    names = {"resident": "常驻", "hosted": "托管"}
+    parts = "、".join(f"{names.get(who, cell(who))} {n} 次" for who, n in counts.items())
+    why = "；".join({"after-merge": "合并后又被调度", "cross-executor": "托管与常驻各跑一次",
+                     "same-executor": "同一执行方重复"}[cause] for cause in finding["causes"])
+    text = (f"重复执行：PR #{finding['pr']}（{finding['title']}）提交 {finding['head'][:8]} 的检查 {cell(finding['label'])} "
+            f"真跑了 {finding['count']} 次（{parts}；{why}；{finding['first']} 至 {finding['last']}）")
+    return f"dup:{finding['head']}:{finding['check']}:{finding['count']}", text
+
+
+def read_check_runs(client: GitHub, sha: str) -> list[dict]:
+    """Every check run on a commit, not only the latest per name (filter=all). Needs checks: read."""
+    checks: list[dict] = []
+    for page in range(1, DUP_PAGES + 1):
+        reply = client.get(f"/commits/{sha}/check-runs", {"filter": "all", "per_page": 100, "page": page}) or {}
+        rows = reply.get("check_runs") or []
+        checks.extend(rows)
+        if len(rows) < 100:
+            break
+    return checks
+
+
+def read_workflow_runs(client: GitHub, sha: str) -> dict[int, dict]:
+    """run id -> workflow path, event and attempt, to tell same-named jobs of different workflows apart."""
+    reply = client.get("/actions/runs", {"head_sha": sha, "per_page": 100}) or {}
+    return {run["id"]: {"path": run.get("path"), "name": run.get("name"), "event": run.get("event"),
+                        "attempt": run.get("run_attempt")} for run in reply.get("workflow_runs") or []}
+
+
+def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
+    """Duplicate runs on the heads of the PRs updated in the last DUP_LOOKBACK.
+
+    A closed PR whose last update is unchanged and that was not merged recently is not read again; its
+    earlier findings are kept. Raises RuntimeError when a read fails (the previous result then stays).
+    """
+    floor = now - DUP_LOOKBACK
+    pulls = client.get("/pulls", {"state": "all", "sort": "updated", "direction": "desc", "per_page": DUP_PULLS}) or []
+    old_found = previous.get("found") or []
+    settled_before = previous.get("settled") or {}
+    settled: dict[str, str] = {}
+    found: list[dict] = []
+    heads = 0
+    for pull in pulls:
+        if (parse_time(pull.get("updated_at")) or now) < floor:
+            continue
+        sha = str(pull["head"]["sha"])
+        merged = parse_time(pull.get("merged_at"))
+        closed = pull.get("state") == "closed"
+        if closed and settled_before.get(sha[:12]) == pull.get("updated_at"):
+            settled[sha[:12]] = pull["updated_at"]
+            found.extend(item for item in old_found if item["head"] == sha[:12])
+            continue
+        if client.low():
+            raise RuntimeError("额度不足，未读完")
+        heads += 1
+        findings = duplicate_findings(sha, pull, read_check_runs(client, sha), read_workflow_runs(client, sha), now)
+        found.extend(findings)
+        if closed and (merged is None or now - merged >= DUP_RESCAN):
+            settled[sha[:12]] = str(pull.get("updated_at"))
+    found = [item for item in found if (parse_time(item["last"]) or now) >= floor]
+    found.sort(key=lambda item: item["last"], reverse=True)
+    return {"as_of": iso(now), "window_days": DUP_LOOKBACK.days, "heads_read": heads, "total": len(found),
+            "found": found[:DUP_KEEP], "settled": settled}
+
+
 def alerts_for(pool: dict[str, dict], residents: dict[str, dict]) -> dict[str, str]:
     alerts = {}
     for name, node in pool.items():
@@ -612,6 +780,25 @@ def render(report: dict, state: dict) -> str:
                          f"{shown(m['failure_rate'])} | "
                          f"{shown(m['queue_wait_minutes_median'])}/{shown(m['queue_wait_minutes_p90'])} | "
                          f"{shown(m['batch_minutes_median'])} | {m['retries']} | {m['burned_heads']} |")
+    duplicates = report.get("duplicates") or {}
+    lines += ["", f"### 重复执行（规则 41ab823a：同一提交的同一检查只真跑一次；最近 {DUP_LOOKBACK.days} 天，"
+              f"{duplicates.get('as_of') or '尚未采集'}）", ""]
+    if not duplicates.get("as_of"):
+        lines.append("尚未采集（需要 checks: read；读取失败见页末说明）。")
+    elif not duplicates.get("found"):
+        lines.append(f"没有发现：读了 {duplicates.get('heads_read', 0)} 个提交，没有同一检查真跑两次及以上。"
+                     "取消、跳过、常驻的准入与第 8 段复查不算真跑。")
+    else:
+        lines += ["| PR | 提交 | 检查 | 真跑次数 | 构成 | 原因 | 最近一次 |", "|---|---|---|---|---|---|---|"]
+        why = {"after-merge": "合并后又被调度", "cross-executor": "托管与常驻各跑一次", "same-executor": "同一执行方重复"}
+        for item in duplicates["found"]:
+            who = {"resident": "常驻", "hosted": "托管"}
+            parts = "、".join(f"{who.get(r['executor'], cell(r['executor']))}{('#' + str(r['attempt'])) if r.get('attempt') else ''}"
+                              for r in item["runs"])
+            lines.append(f"| #{item['pr']} | {item['head'][:8]} | {cell(item['label'])} | {item['count']} | {parts} | "
+                         f"{'；'.join(why[c] for c in item['causes'])} | {item['last']} |")
+        if duplicates.get("total", 0) > len(duplicates["found"]):
+            lines.append(f"共 {duplicates['total']} 项，只列最近 {len(duplicates['found'])} 项。")
     if report["alerts"]:
         lines += ["", "### 当前告警", ""] + [f"- {text}" for text in report["alerts"].values()]
     lines += ["", "<details><summary>机器可读数据（clued.compute-panel/v1）</summary>", "", "```json",
@@ -661,7 +848,23 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
             metrics = {"as_of": iso(now), "day": summarize_batches(batches, now, 1),
                        "week": summarize_batches(batches, now, 7)}
             state["metrics"] = metrics
-    events: dict[str, str] = {}
+    duplicates = state.get("duplicates") or {}
+    if not client.low() and (not duplicates.get("as_of") or now - parse_time(duplicates["as_of"]) >= DUP_EVERY):
+        scanned = attempt("duplicate runs", lambda: scan_duplicates(client, now, duplicates), None)
+        if scanned is not None:
+            if not duplicates.get("as_of"):
+                # The first scan records what is already there and announces none of it.
+                state["announced"] = ((state.get("announced") or []) + [duplicate_event(item)[0] for item in scanned["found"]])[-200:]
+            state["duplicates"] = duplicates = scanned
+    events: dict[str, str] = dict(duplicate_event(item) for item in duplicates.get("found") or [])
+    fresh = [key for key in events if key not in (state.get("announced") or [])]
+    if len(fresh) > DUP_ROWS:
+        # A burst is announced as the first DUP_ROWS items and one line for the rest (the panel lists them all).
+        extra = fresh[DUP_ROWS:]
+        state["announced"] = ((state.get("announced") or []) + extra)[-200:]
+        for key in extra:
+            del events[key]
+        events[f"dup-more:{duplicates.get('as_of')}"] = f"重复执行：另有 {len(extra)} 项，见面板“重复执行”表"
     if client.low():
         errors.append("residents: 额度不足，沿用上一轮常驻状态")
         residents = None
@@ -684,6 +887,8 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
         "residents": residents,
         "others": OTHERS,
         "metrics": metrics,
+        "duplicates": {**{key: duplicates[key] for key in ("as_of", "window_days", "heads_read", "total") if key in duplicates},
+                       "found": (duplicates.get("found") or [])[:DUP_ROWS]},
         "alerts": alerts_for(pool, residents),
         "events": events,
         "errors": errors,
