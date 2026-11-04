@@ -172,6 +172,15 @@ export function relayLogEntry({ at, mode, seq, attempt, ms, runner, receipt, kla
     class: klass, stderrTail: stderrTail(r.stderr) };
 }
 
+// DESIGN §44: one log entry per read or action asked again after a timeout (fixed keys, codes and counts only), so that the next
+// HALT shows which probe had no answer, how often and for how long.
+export function retryLogEntry({ at, op, attempt, ms, runner }) {
+  const r = runner ?? {};
+  return { at: new Date(at).toISOString(), kind: 'retry', op, attempt, ms,
+    runner: { code: Number.isSafeInteger(r.code) ? r.code : null, timedOut: r.timedOut === true, tree: ['zero', 'unconfirmed'].includes(r.tree) ? r.tree : null,
+      refused: typeof r.refused === 'string' && /^[A-Z][A-Z0-9_]{1,79}$/.test(r.refused) ? r.refused : null } };
+}
+
 // DESIGN §33 (the 2026-10-29 first HALT): the path-valued keys of companion.json and which of them point into the installed CI
 // Source, <root>\source\<ciSourceManifestSha256>\. A path key is a Source script unless it is named here as not one, so a new path
 // key is held to the Source directory by default. A config whose script paths name another (older) Source directory runs
@@ -278,6 +287,17 @@ const json = text => { try { return JSON.parse(text); } catch { return null; } }
 
 // pr-head (phase 2, step 1): the PR's state and head over the Owner's own gh login, read-only, fixed argv.
 export const PR_HEAD_TIMEOUT_MS = 30_000;
+// DESIGN §44 (Tasks 576231fa, 4d3aaa64, 8e1f07d3, the remainder): a wsl.exe call that ran out of time (25-45 s on a loaded host,
+// DESIGN §25) says nothing about the thing it was asked, so a READ-ONLY probe, or an idempotent root-tool action, is asked again
+// a bounded number of times before "no answer" is turned into a failure that HALTs. Never for an action with an effect.
+export const READ_RETRIES = 2; // reads asked again after a read that timed out: three in all
+export const TERMINAL_NOANSWER_CAP_MS = 120_000; // FORMAL_WORKER_TERMINAL_UNCONFIRMED: the longest wait while the unit facts give no answer
+export const WSPREP_QUIET_WAIT_MS = 5 * 60_000; // after a timed-out workspace preparation: the longest wait for the Linux side to go quiet
+export const WSPREP_QUIET_POLL_MS = 20_000;
+export const CHECK_REFS_SECOND_TRY_MAX_MS = 3 * 60_000; // the refs gate: a second ls-remote only when the first ended within this long
+// A child that ran out of time and is gone (the job host drained its tree, or it was the plain runner's): the read has no answer.
+// A tree the host could not show gone ('unconfirmed') is never asked again on top of itself.
+export const timedOutGone = r => r?.timedOut === true && r.tree !== 'unconfirmed';
 export function readPullArgv(ghExe, repo, pr) {
   check(typeof ghExe === 'string' && /^[A-Z]:\\/.test(ghExe) && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? '') && Number.isSafeInteger(pr) && pr > 0 && pr < 1e9, 'COMPANION_PR_HEAD_ARGS_INVALID');
   return [ghExe, 'api', '--method', 'GET', `repos/${repo}/pulls/${pr}`, '--jq', '{number: .number, state: .state, merged: .merged, head: .head.sha, mergeSha: .merge_commit_sha}'];
@@ -318,8 +338,26 @@ export class Companion {
     };
   }
 
+  // A read-only probe: asked again (READ_RETRIES times) while it only ran out of time. An answer of any kind, a refusal, a launch
+  // failure or an unconfirmed tree ends it at once; the last result is returned.
+  async runRead(a, o, op = 'read') {
+    let r;
+    for (let i = 0; i <= READ_RETRIES; i += 1) {
+      const began = this.clock();
+      r = await this.run(a, o);
+      if (!timedOutGone(r)) return r;
+      await this.noteRetry(op, i + 1, this.clock() - began, r);
+    }
+    return r;
+  }
+
+  // The local log only; it never decides anything and a failing log changes nothing.
+  async noteRetry(op, attempt, ms, runner) {
+    try { await this.log?.(retryLogEntry({ at: this.clock() - ms, op, attempt, ms, runner })); } catch { /* the log never decides */ }
+  }
+
   async quiescence(batchId) {
-    const r = await this.run(this.a.linuxTool('quiescence', batchId), { timeoutMs: 30_000 });
+    const r = await this.runRead(this.a.linuxTool('quiescence', batchId), { timeoutMs: 30_000 }, 'quiescence');
     const v = r.code === 0 ? json(r.stdout) : null;
     return { linuxUnitsInactive: v?.linuxUnitsInactive === true, containersZero: v?.containersZero === true };
   }
@@ -341,13 +379,30 @@ export class Companion {
       }
       case 'prepare-workspaces': {
         const r = await this.run(this.a.startWait('clued-ci-wsprep', request.batchId), { timeoutMs: 20 * 60_000 });
-        const proof = await this.quiescence(request.batchId);
+        let proof = await this.quiescence(request.batchId);
         if (r.code === 0) return { ok: true, proof };
+        // §44: `start --wait` ended by its time limit leaves the unit to systemd, which may still be finishing it. Only reads
+        // follow (the root tool's quiescence, never a second start): quiet within the bound is the ordinary refusal (the head
+        // burns, both sides are archived); a unit still busy after it stays WORKSPACE_PREPARATION_UNCONFIRMED and HALTs.
+        if (timedOutGone(r) && !(proof.linuxUnitsInactive && proof.containersZero)) {
+          await this.noteRetry('wsprep-quiet-wait', 1, 20 * 60_000, r);
+          const until = Math.min(this.clock() + WSPREP_QUIET_WAIT_MS, Date.parse(request.deadline) - 60_000);
+          while (this.clock() < until && !(proof.linuxUnitsInactive && proof.containersZero)) {
+            await this.sleep(WSPREP_QUIET_POLL_MS);
+            proof = await this.quiescence(request.batchId);
+          }
+        }
         return { ok: false, code: proof.linuxUnitsInactive ? 'WORKSPACE_PREPARATION_REFUSED' : 'WORKSPACE_PREPARATION_UNCONFIRMED', proof };
       }
       case 'archive-linux': {
-        const r = await this.run(this.a.startWait('clued-ci-archive', `${request.batchId}_${request.reason}`), { timeoutMs: 5 * 60_000 });
-        const s = await this.run(this.a.archiveStatus(`${request.batchId}_${request.reason}`), { timeoutMs: 30_000 });
+        let r = await this.run(this.a.startWait('clued-ci-archive', `${request.batchId}_${request.reason}`), { timeoutMs: 5 * 60_000 });
+        // §44: the archive is a rename-only root action and one instance is idempotent (the tool answers a repeated instance with the
+        // earlier verified result and moves nothing, clued-ci-resident-linux#earlier_result): a `start --wait` that only ran out of
+        // time is asked once more, which joins a unit still running or replays the finished one. Verified still needs exit 0 and the
+        // tool's own receipt.
+        if (timedOutGone(r)) await this.noteRetry('archive-start-wait', 1, 5 * 60_000, r);
+        if (timedOutGone(r)) r = await this.run(this.a.startWait('clued-ci-archive', `${request.batchId}_${request.reason}`), { timeoutMs: 5 * 60_000 });
+        const s = await this.runRead(this.a.archiveStatus(`${request.batchId}_${request.reason}`), { timeoutMs: 30_000 }, 'archive-status');
         const v = s.code === 0 ? json(s.stdout) : null;
         const verified = r.code === 0 && v?.verified === true && typeof v.directory === 'string';
         return { ok: verified, code: verified ? null : 'LINUX_ARCHIVE_UNCONFIRMED', verified, directory: verified ? v.directory : null };
@@ -355,8 +410,18 @@ export class Companion {
       case 'relay-stage': return this.pump(request);
       // Source v2 S9 / lesson b29: before the first scanner stage, the refs must still be the bundle's.
       case 'check-refs': {
-        const r = await this.run(this.a.checkRefs(request.batchId), { timeoutMs: 5 * 60_000 });
-        const v = json(r.stdout);
+        // §44: the gate is one read-only ls-remote (networkWrite false). Only a definite answer (unchanged, or changed) ends it; a read
+        // that got none (git's low-speed limit, a refused proxy, a timeout) is asked once more, when the first did not take long. Two
+        // reads without an answer are REMOTE_REFS_UNAVAILABLE as before (the engine then burns the head: REFS_GATE_UNCONFIRMED).
+        let v = null, r = null;
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          const began = this.clock();
+          r = await this.run(this.a.checkRefs(request.batchId), { timeoutMs: 5 * 60_000 });
+          v = json(r.stdout);
+          if ((r.code === 0 && v?.status === 'REMOTE_REFS_UNCHANGED') || v?.status === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE') break;
+          if (r.tree === 'unconfirmed' || this.clock() - began > CHECK_REFS_SECOND_TRY_MAX_MS) break;
+          await this.noteRetry('check-refs', attempt, this.clock() - began, r);
+        }
         if (r.code === 0 && v?.status === 'REMOTE_REFS_UNCHANGED') return { ok: true, code: null };
         return { ok: false, code: v?.status === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'REMOTE_REFS_UNAVAILABLE' };
       }
@@ -546,7 +611,15 @@ export class Companion {
       check(await relay('SendIssue', 0, { deadline }), 'ISSUE_TRANSFER_UNCONFIRMED');
       await live(); // a cancel that came with the issue transfer starts no worker
       const startCalledAt = this.clock(); // no challenge can exist before the worker was asked to start
-      const start = await this.run(this.a.startNoBlock('clued-ci-worker', request.jobId), { timeoutMs: 30_000 });
+      let start = await this.run(this.a.startNoBlock('clued-ci-worker', request.jobId), { timeoutMs: 30_000 });
+      // §44: a start that only ran out of time is never repeated (a second start of an instance that already ran would run the
+      // worker again). Only the unit's own facts decide: evidence that this instance has run (the instance carries this job's id
+      // and only this pump starts it) makes the start a success; none leaves LINUX_WORKER_START_UNCONFIRMED as before.
+      if (start.code !== 0 && timedOutGone(start)) {
+        await this.noteRetry('worker-start', 1, 30_000, start);
+        const f = parseUnitFacts(await this.runRead(this.a.unitFacts('clued-ci-worker', request.jobId), { timeoutMs: RELAY_CHECK_TIMEOUT_MS }, 'worker-unit-facts'));
+        if (workerRanEvidence(f)) start = { code: 0 };
+      }
       check(start.code === 0, 'LINUX_WORKER_START_UNCONFIRMED');
       let sequence = 1, blockedRefused = false;
       // Signals B and C (DESIGN §26). The pump remembers that the worker ran (a unit reaped after its end reads empty), and
@@ -630,11 +703,13 @@ export class Companion {
         if (!blockedRefused && !['COMPANION_PUMP_CANCELLED', 'LINUX_WORKER_ENDED_WITHOUT_RECORD', 'LINUX_WORKER_NOT_STARTED'].includes(error?.code)) await this.handOverBlocked(deadline, live);
         throw error;
       }
-      const until = this.clock() + 30_000;
+      const until = this.clock() + 30_000, hardUntil = this.clock() + TERMINAL_NOANSWER_CAP_MS;
       for (let look = 0; ; look += 1) {
         const s = parseUnitFacts(await this.run(this.a.unitFacts('clued-ci-worker', request.jobId), { timeoutMs: 15_000 }));
         if (s && ['inactive', 'failed'].includes(s.activeState)) break;
-        check(this.clock() < until, 'FORMAL_WORKER_TERMINAL_UNCONFIRMED');
+        // §44: the 30 s are for a unit that was read and is still busy; while the reads themselves get no answer (a loaded wsl.exe
+        // takes 25-45 s, so two reads fit in 30 s) the wait goes on, but no longer than TERMINAL_NOANSWER_CAP_MS in all.
+        check(this.clock() < (s ? until : hardUntil), 'FORMAL_WORKER_TERMINAL_UNCONFIRMED');
         await live();
         await this.sleep(Math.min(2000, 500 * 2 ** look)); // 0.5, 1, 2 s, then every 2 s: at most about 17 reads in the 30 s, not 60
       }

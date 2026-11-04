@@ -3659,3 +3659,61 @@ node rollout/rollout.mjs next    --plan <rollout.json> --observation <file> [...
 - **开关**：`companion.json` 可选键 `panelDispatch: { enabled }`，缺省开；其余不可配置。`tools/build-package.mjs` 校验。
 - **测试**：`test/panel-dispatch.test.mjs`（17 个，假 GitHub）。
 - **不做**：不改 workflow 文件和 `compute_panel.py`；面板自身的"上次运行过久"告警是后续项。
+
+## 44. 超时之后不白白 HALT：只读探测与幂等动作的有界重问（Tasks `576231fa`、`4d3aaa64`、`8e1f07d3` 的余项）
+
+第 7 代的一项。只改常驻层（`src/companion.mjs`、`src/pr-status.mjs`），不改 Source、Linux 工具、policy 合同或失败表；失败码、烧头、熔断、日额度和 attempt 2 的规则一概不变。
+
+### 44.1 三个任务在第 6 代（`da854a2d`）里已经修到哪
+
+| Task | 缺陷 | 第 6 代里 | 本节之后的余项 |
+|---|---|---|---|
+| `8e1f07d3` | companion 子进程超时后不收尾，邮箱通道停摆，第 0 段失败要向 companion 要 Linux 答复而 HALT | §24：作业对象宿主；`fail()` 对第 0 段只关 Windows（`closeOrThrow(batch, { linux: false })`）。已在第 6 代内（`executor.mjs#fail`） | 无代码余项；§24.8 第 2 轮文字另议 |
+| `4d3aaa64` | `build-bundle` 的 git 拉取低速卡 35 分钟 | `build-bundle.ps1`：`http.lowSpeedLimit/Time`、网络步骤 600 秒内整库重做一次、`FETCHED_REFS_DIFFER_FROM_LS_REMOTE` 重试（#990） | `-CheckRefs`（第 2 段前的 refs 门）只问一次 `ls-remote`，没有答复就烧头（`REFS_GATE_UNCONFIRMED`） |
+| `576231fa` | 回调丢失：中继调用变慢，泵停，签发方等到期限而 UNCERTAIN→HALT；签发侧读 refs / 改动文件的暂时性错误 | §25 中继逐次分类与有界重试；§26 泵观察者与桥停止；§27 自动收尾（`BRIDGE_ABANDONED_UNPUBLISHED`）；`3e93f1f5` 签发侧 refs 有界重试、签发时刻新鲜度、改动文件拒绝分类 | 泵之外、companion 自己的**只读探测**与**幂等动作**仍是“一次超时＝没有答案＝HALT”（下节） |
+
+### 44.2 余下的触发条件（今天仍会发生）
+
+wsl.exe 一次调用在负载高时要 25–45 秒（§25、§26）。companion 里这几个调用的上限比它短或相当，所以一次**只是慢**的读就被当成“没有证明”：
+
+1. `quiescence`（30 秒）：读超时，证明是 false。`prepare-workspaces` 失败后读一次，超时＝`WORKSPACE_PREPARATION_UNCONFIRMED`；泵结束时的证明读超时＝阶段按“未静止”处理；两者都落在失败表的 halt 行或 `cleanup-proof-incomplete`。
+2. `archive-linux`：`systemctl start --wait` 5 分钟、`archive-status` 30 秒，任何一个超时＝`LINUX_ARCHIVE_UNCONFIRMED` → 执行器 `FAILURE_ARCHIVE_UNCONFIRMED`（干净失败变 HALT）。
+3. `prepare-workspaces` 的 `start --wait` 20 分钟到点：作业宿主结束的是 wsl.exe，**systemd 里的单元继续跑**。companion 只读一次静止，单元还在收尾就是 `UNCONFIRMED` HALT，尽管几十秒后它就静止了。
+4. `check-refs`：一次 `ls-remote`，没有答复（git 低速限制、代理拒绝）→ `REFS_GATE_UNCONFIRMED`，干净但头烧掉。
+5. 泵的 `start --no-block` 30 秒超时：任务已排进 systemd，单元已经在跑，仍按 `LINUX_WORKER_START_UNCONFIRMED` 停泵。
+6. 泵结束后等 worker 单元 `inactive/failed`：窗口 30 秒，单元读每次 15 秒超时，慢的主机上只够读两次，读不到就 `FORMAL_WORKER_TERMINAL_UNCONFIRMED`。
+
+第 6 代的 §25–§27 只处理了泵里的中继调用和扫描阶段的收尾，不覆盖以上六处。
+
+### 44.3 规则与修法
+
+总则：**能证明超时没有副作用的才重问**。重问的只有（a）只读探测，（b）工具自己保证幂等的动作；有副作用的动作（启动 worker、启动 wsprep）一次也不重复。“无法证明”的照旧 HALT。
+
+- **“没有答案”的定义**（`timedOutGone`）：子进程超时，且作业宿主已把它的树排空（`tree: 'zero'`），或是没有宿主的普通超时。树**没有被证明消失**（`tree: 'unconfirmed'`）、拒绝、启动失败、退出码非 0，都不是“没有答案”，不重问。
+- **`runRead`**：只读探测超时后最多再问 `READ_RETRIES` = 2 次（共 3 次）。用于：`quiescence`、`archive-status`、worker 启动超时之后的单元事实读。任何一次有答案（哪怕是“没静止”）立即结束。
+- **`archive-linux`**：`start --wait` 超时后**再启动一次同一个实例**。Linux 工具对同一实例是幂等的（`clued-ci-resident-linux#earlier_result`：重复的实例返回先前已核实的结果，什么也不移动）；单元仍在跑时 `start --wait` 加入等待。至多两次。`verified` 仍要求退出码 0 加工具自己的回执。
+- **`prepare-workspaces`**：超时后**不再启动**，只用 `quiescence`（只读，已带重问）每 20 秒问一次，最多 `WSPREP_QUIET_WAIT_MS` = 5 分钟，且不越过请求截止前 60 秒。静止了就是原来的 `WORKSPACE_PREPARATION_REFUSED`（头烧掉、两侧归档、计入熔断）；仍不静止就是原来的 `WORKSPACE_PREPARATION_UNCONFIRMED` 并 HALT。非超时的失败（退出码 1）不等，行为不变。
+- **`check-refs`**：只有明确的 `REMOTE_REFS_UNCHANGED`/`REMOTE_REFS_CHANGED_SINCE_BUNDLE` 结束这个门；没有答复时再问一次（第一次用时不超过 `CHECK_REFS_SECOND_TRY_MAX_MS` = 3 分钟，树未被证明消失不问）。两次都没有答复，仍是 `REMOTE_REFS_UNAVAILABLE` → `REFS_GATE_UNCONFIRMED`，头照样烧。这是同一次检查的读操作重试，不是第二次检查：`networkWrite` 为 false。
+- **泵的 `start --no-block`**：超时**不重启**（对已经跑过的实例再 start 会再跑一遍 worker）。改读单元事实（`runRead`）：有“跑过”的证据（`workerRanEvidence`：activating/active/deactivating、failed、或有 InvocationID 加启动时间）就当启动成功；没有证据，照旧 `LINUX_WORKER_START_UNCONFIRMED`。实例名带本作业的 job id，只有这个泵会启动它。
+- **泵结束后等单元结束**：读到单元仍在忙，仍是原来的 30 秒；读本身没有答案时，等待可延到 `TERMINAL_NOANSWER_CAP_MS` = 120 秒（总共），再不行才 `FORMAL_WORKER_TERMINAL_UNCONFIRMED`。
+
+### 44.4 证据与恢复提示
+
+- **证据**：每一次因超时而再问，都在 companion 本地日志（§25.5，同一个 `relay-YYYYMMDD.jsonl`）写一行固定键的 `{ kind: 'retry', op, attempt, ms, runner: { code, timedOut, tree, refused } }`（`retryLogEntry`），只有码和数字，没有路径和文字。HALT 之后可以对照看是哪个探测、几次没有答复、各用了多久。
+- **恢复提示**：PR 页面 / 通知的 HALT 文字（`pr-status.mjs#haltHint`）对超时型的码补一句固定的“复位前先只读核对什么”：归档类（`FAILURE_ARCHIVE_UNCONFIRMED`、`UNEXECUTED_CLOSE_UNCONFIRMED`、`BETWEEN_ROLES_ARCHIVE_UNCONFIRMED`、`LINUX_ARCHIVE_UNCONFIRMED`）、`WORKSPACE_PREPARATION_UNCONFIRMED`、worker 类（`FORMAL_WORKER_TERMINAL_UNCONFIRMED`、`LINUX_WORKER_START_UNCONFIRMED`、`LINUX_WORKER_NOT_STARTED`、`LINUX_WORKER_ENDED_WITHOUT_RECORD`）、子进程类（`STAGE_INVOKER_TERMINAL_UNCONFIRMED`、`STAGE_CHILD_TREE_UNCONFIRMED`，指向 Decision `901a8968` 的做法）、companion 类（`COMPANION_REQUEST_EXPIRED`、`COMPANION_HANDLER_UNCONFIRMED`、`COMPANION_HEARTBEAT_LOST`、`COMPANION_PUMP_UNCONFIRMED`）。其他码的文字不变。提示只说要读什么，不授权任何动作，复位仍是 Owner 的。
+
+### 44.5 没有放宽什么
+
+- 失败的 head 照旧烧：`check-refs` 两次都没有答复仍烧头；wsprep 超时后静止仍是 `REFUSED`（烧头、计入熔断），不是“重来”。
+- 同一提交的同一检查只真跑一次：没有任何动作被重复；`archive` 的第二次是工具定义的“重放先前结果”，wsprep 和 worker 一次也不重启。
+- 证明没有变弱：`archive` 的 `verified` 条件不变；`quiescence` 仍是 root 工具自己的回答；“树未证明消失”的超时从不重问；`FORMAL_WORKER_TERMINAL_UNCONFIRMED` 的上限只多出读不到答案的时间，读到“仍在忙”就仍是 30 秒。
+- 不碰 `HALT.json`，不读写 `C:\ProgramData`，不增加 GitHub 读写，不杀任何进程。
+
+### 44.6 仍然 HALT 的（有意）
+
+阶段子进程超时但树没有被证明排空（`STAGE_INVOKER_TERMINAL_UNCONFIRMED`、`STAGE_CHILD_TREE_UNCONFIRMED`）；Windows 服务没有读回原样（`SCM_READBACK_NOT_ORIGINAL`）；两次重问之后仍无答案的归档或静止；worker 单元一直在忙；`COMPANION_REQUEST_EXPIRED`/`COMPANION_HEARTBEAT_LOST`（companion 本身不可信，§27.2 第 2 条）。这些都靠提示里的只读核对加 Owner 复位。
+
+### 44.7 测试与安装
+
+- `test/halt-timeouts.test.mjs`（9 个）：`timedOutGone` 的边界；`quiescence` 重问与“未证明消失的树只问一次”；`archive-linux` 的两次启动上限、退出码非 0 不重问、状态读重问；`check-refs` 的定论、两次上限、长读不再问；`prepare-workspaces` 的静止等待（不重启、受截止约束、退出码 1 不等）；`start --no-block` 超时（有证据继续、无证据照旧、永不重启）；单元读无答案的 120 秒上限与“仍在忙”的 30 秒；日志行的键；HALT 提示。
+- 安装：常驻层 Windows 包的改动（companion 与 PR 页面），随第 7 代一并装；Source v2、Linux 工具、policy 合同不变。

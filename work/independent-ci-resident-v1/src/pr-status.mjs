@@ -173,6 +173,24 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
   return { state: 'pending', description: '已提议，等待执行器读取', weak: true };
 }
 
+// DESIGN §44: what to look at (read-only) before the Owner re-arms, for the HALT codes that a timeout of a companion, wsl.exe or a
+// child can end in. Fixed texts per code; any other code gets none. It names no action beyond reading and the Owner's own rearm.
+const HALT_HINT_TEXT = Object.freeze({
+  archive: '归档没有被确认（多半是 wsl.exe 或归档单元超时）。复位前先只读核对：该批次的 Windows 与 Linux 归档目录，以及 Linux 的 archive-status 回执；两侧都已改名归档再复位。',
+  workspace: '工作区准备超时后一直没静止。复位前先只读核对：systemctl list-units "clued-ci-*" 里没有仍在跑的 wsprep 单元、没有带批次 nonce 的容器。',
+  worker: 'Linux worker 单元的结局没有被确认。复位前先只读核对：该作业的 clued-ci-worker 单元已结束（inactive 或 failed）、没有遗留容器。',
+  children: '阶段子进程或其进程树没有被证明已结束。复位前先只读核对：没有遗留的 invoker、build-bundle、git 或 powershell 进程（Decision 901a8968 的做法），常驻服务已恢复为原来的 Stopped/Manual。',
+  companion: '伴侣（companion）没有按时回答。复位前先确认：伴侣计划任务在运行、心跳在更新；再看 mailbox 里该请求的答复。',
+});
+const HALT_HINT_CODES = Object.freeze({
+  FAILURE_ARCHIVE_UNCONFIRMED: 'archive', UNEXECUTED_CLOSE_UNCONFIRMED: 'archive', BETWEEN_ROLES_ARCHIVE_UNCONFIRMED: 'archive', LINUX_ARCHIVE_UNCONFIRMED: 'archive',
+  WORKSPACE_PREPARATION_UNCONFIRMED: 'workspace',
+  FORMAL_WORKER_TERMINAL_UNCONFIRMED: 'worker', LINUX_WORKER_START_UNCONFIRMED: 'worker', LINUX_WORKER_NOT_STARTED: 'worker', LINUX_WORKER_ENDED_WITHOUT_RECORD: 'worker',
+  STAGE_INVOKER_TERMINAL_UNCONFIRMED: 'children', STAGE_CHILD_TREE_UNCONFIRMED: 'children',
+  COMPANION_REQUEST_EXPIRED: 'companion', COMPANION_HANDLER_UNCONFIRMED: 'companion', COMPANION_HEARTBEAT_LOST: 'companion', COMPANION_PUMP_UNCONFIRMED: 'companion',
+});
+export const haltHint = code => (Object.hasOwn(HALT_HINT_CODES, code ?? '') ? HALT_HINT_TEXT[HALT_HINT_CODES[code]] : '');
+
 // Pure: the notification events now (a stable key each; the reporter shows each key once).
 export function events({ status, statusError = false, now, pulls = [], startedAt = now, staleMs = STATUS_STALE_MS, collision = false }) {
   const out = [];
@@ -182,7 +200,7 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
     return out;
   }
   if (now - status.writtenAt > staleMs) out.push({ key: `stale:${status.writtenAt}`, title: '常驻执行器可能已停止', body: `状态自 ${hhmm(status.writtenAt)} 起未更新（超过 ${Math.round(staleMs / 60_000)} 分钟）。` });
-  if (status.halt) out.push({ key: `halt:${status.halt.code}:${status.halt.at ?? ''}`, title: '常驻执行器已停机（HALT）', body: `原因：${status.halt.code}。需要 Owner 复位（rearm）后才会继续。` });
+  if (status.halt) out.push({ key: `halt:${status.halt.code}:${status.halt.at ?? ''}`, title: '常驻执行器已停机（HALT）', body: `原因：${status.halt.code}。需要 Owner 复位（rearm）后才会继续。${haltHint(status.halt.code)}` });
   for (const p of status.pending) {
     if (!LIVE.has(p.state ?? 'QUEUED') || !p.since || now - p.since <= WAIT_NOTIFY_MS) continue;
     const reason = p.deferred ?? p.state ?? 'QUEUED';
