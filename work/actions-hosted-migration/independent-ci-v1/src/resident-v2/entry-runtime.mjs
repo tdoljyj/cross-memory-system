@@ -108,7 +108,7 @@ export async function controllerPrincipal(record) {
 // RPCs (POST) are never repeated.
 export function controllerPorts({ record, appKey, nativeToken, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now(), baseFetch = globalThis.fetch, readRetry = {} }) {
   const singleFetch = (url, opts = {}) => { live(); return baseFetch(url, { ...opts, signal: signal ? AbortSignal.any([signal, opts.signal ?? AbortSignal.timeout(30000)]) : (opts.signal ?? AbortSignal.timeout(30000)) }); };
-  const fetchImpl = withReadRetry(singleFetch, { live, onRetry: r => { try { log('github_read_retry', r); } catch { /* best-effort */ } }, ...readRetry });
+  const fetchImpl = withReadRetry(singleFetch, { live, deadlineAt: () => live.deadlineAt ?? null, resetOn: (url, opts) => String(opts?.method ?? 'GET').toUpperCase() !== 'GET' && /\/check-runs(?:[/?]|$)/.test(String(url)), onRetry: r => { try { log('github_read_retry', r); } catch { /* best-effort */ } }, ...readRetry });
   const github = createGitHubChecksPort({ repository: record.config.repository, repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId,
     installationId: FIXED_APP.installationId, includeModeRead: true, privateKeyProvider: async () => appKey, fetchImpl });
   const admission = createFullAdmissionPortV2({ protectedConfig: { ...record.config, domain: 'production', workspace: sourceRoot, policyText }, fetchImpl,
@@ -181,6 +181,7 @@ export async function runEntry({ argv, entryRole, moduleUrl, body, output = proc
     inputs = await loadStageInputs({ ...args, entryRole, recordDocs: held.documents, identity: { platform: process.platform, arch: process.arch, hostname: os.hostname(), account: os.userInfo().username } });
     check(inputs.record.pins.size === held.sourceHashes.size && [...inputs.record.pins].every(([p, s]) => held.sourceHashes.get(p) === s), 'HELD_SOURCE_PINS_CHANGED');
     const live = () => { takeHeldRecord(lease); };
+    live.deadlineAt = Date.parse(held.expiresAt); // the lease's end: read retries never wait or run past it (read-retry.mjs)
     result = await body({ args, inputs, held, live, sourceRoot: sourceRootOf(moduleUrl) });
   } catch (e) {
     result = { status: result?.sideEffects ? 'UNCERTAIN' : 'BLOCKED', reason: safeReason(e), sideEffects: result?.sideEffects ?? 0 };

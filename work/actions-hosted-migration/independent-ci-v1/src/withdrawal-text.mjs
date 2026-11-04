@@ -4,7 +4,9 @@
 // verification was unavailable, never "authorization changed". The reason code stays the cause (github_http_502, ...).
 // full_admission_unavailable: the admission port could not finish its evaluation (any exception inside it, typically a GitHub or
 // Native read), so nothing was found to have changed either.
-const READ_UNAVAILABLE = /^(?:github_http_(?:429|5[0-9]{2})|github_transport_unconfirmed|full_admission_unavailable)$/;
+// Exactly the faults the bounded read retry (read-retry.mjs RETRYABLE_STATUSES) treats as passing: 500/502/503/504 and a network failure. A 429 (rate limit),
+// a 501 or any other 5xx is not one of them and keeps the ordinary wording; the entry's safeToRerun (staged-check-publisher-v2) uses the same set.
+const READ_UNAVAILABLE = /^(?:github_http_(?:500|502|503|504)|github_transport_unconfirmed|full_admission_unavailable)$/;
 export const verificationUnavailable = cause => READ_UNAVAILABLE.test(cause ?? '');
 // subject: 'Work admission' | 'Independent control' | 'Independent CI'
 export const withdrawalTitle = (subject, cause) => verificationUnavailable(cause) ? `${subject} check withdrawn: verification unavailable` : `${subject} authorization changed`;

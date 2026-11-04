@@ -122,6 +122,58 @@ test('read retry: the stage deadline (live) ends the wait; a repeat gets a fresh
   assert.throws(() => withReadRetry(() => {}, { budgetMs: -1 }), /read_retry_configuration_invalid/);
 });
 
+// Review of gen8, finding 4: attempt timeouts follow the stage's own deadline, and the reads before the first check write cannot use up the
+// retries of the verification after it.
+test('read retry: every attempt is cut to what is left of the stage deadline, and no wait runs past it', async () => {
+  let clock = 1_000_000; const end = clock + 5_500;
+  const h = harness([502], { deadlineAt: () => end, now: () => clock, sleep: async ms => { clock += ms; } });
+  const r = await h.fetch('https://api.github.com/x');
+  assert.equal(r.status, 502, 'after the 1 s and 2 s waits 2.5 s are left: the 4 s wait does not start, so the last answer comes back');
+  assert.equal(h.calls.length, 3);
+  // attempt timeouts: min(30 s, left). Left is 5.5 s, 4.5 s, 2.5 s; each attempt's signal fires by then and not at 30 s
+  for (const c of h.calls) assert.ok(c.signal instanceof AbortSignal, 'a signal bounded by the deadline');
+  const far = harness([502, 200], { deadlineAt: () => clock + 3_600_000, now: () => clock });
+  await far.fetch('https://api.github.com/x');
+  assert.equal(far.calls[0].signal, undefined, 'a far deadline leaves the first attempt as the caller made it');
+  const none = harness([502, 200], {});
+  await none.fetch('https://api.github.com/x');
+  assert.equal(none.calls[0].signal, undefined);
+  // the signal of an attempt with 40 ms left fires within a moment (not after 30 s)
+  const near = harness([200], { deadlineAt: () => clock + 40, now: () => clock });
+  await near.fetch('https://api.github.com/x');
+  await new Promise(r => setTimeout(r, 120));
+  assert.equal(near.calls[0].signal.aborted, true);
+});
+
+test('read retry: a check write starts a new budget, so the verification after it keeps its retries', async () => {
+  const h = harness([502], { resetOn: (url, opts) => opts?.method === 'POST' && /\/check-runs/.test(url) });
+  await h.fetch('https://api.github.com/repos/x/y/pulls/1'); // before the write: the whole 20 s budget is used up (1+2+4+8 = 15 s; 5 s left)
+  const before = h.sleeps.length;
+  await h.fetch('https://api.github.com/repos/x/y/pulls/1');
+  assert.ok(h.sleeps.length - before <= 3, 'without a write, only the 5 s that are left');
+  await h.fetch('https://api.github.com/repos/x/y/check-runs', { method: 'POST' });
+  const after = h.sleeps.length;
+  await h.fetch('https://api.github.com/repos/x/y/pulls/1');
+  assert.deepEqual(h.sleeps.slice(after, after + 4), [1000, 2000, 4000, 8000], 'a fresh budget after the check write');
+  // another request that is not a check write does not reset
+  const g = harness([502], { resetOn: (url, opts) => opts?.method === 'POST' && /\/check-runs/.test(url) });
+  await g.fetch('https://api.github.com/x'); await g.fetch('https://api.github.com/repos/x/y/pulls/1', { method: 'PATCH' }); const n = g.sleeps.length;
+  await g.fetch('https://api.github.com/y');
+  assert.ok(g.sleeps.length - n <= 3);
+});
+
+test('read retry: controllerPorts resets the budget on a write to /check-runs only and passes the stage deadline on', async () => {
+  const record = { config: { repository: REPO, scope: `project:${randomUUID()}`, supabaseUrl: 'https://example.invalid', publishableKey: 'sb_publishable_test' }, accepted: {}, ciTokenPinSha256: 'a'.repeat(64) };
+  const s = scripted([502, 502, 502, 502, 502, 200, 502, 502, 502, 502, 502, 200]); const sleeps = [];
+  const live = () => {}; live.deadlineAt = Date.now() + 3_600_000;
+  const ports = controllerPorts({ record, appKey: null, nativeToken: 'clued_bnd_testtoken', policyText: '{}', sourceRoot: process.cwd(), live, log() {}, baseFetch: s.fn, readRetry: { sleep: async ms => { sleeps.push(ms); } } });
+  await ports.fetchImpl('https://api.github.com/repos/x/y/pulls/1');
+  assert.deepEqual(sleeps, [1000, 2000, 4000, 8000]);
+  await ports.fetchImpl('https://api.github.com/repos/x/y/check-runs/9', { method: 'PATCH', body: '{}' }); // a withdrawal also ends the phase
+  await ports.fetchImpl('https://api.github.com/repos/x/y/pulls/1');
+  assert.deepEqual(sleeps.slice(4), [1000, 2000, 4000, 8000], 'a full budget after the check write');
+});
+
 // ---- 2. controllerPorts ---------------------------------------------------------------------------------------------
 test('controllerPorts: every GitHub read of the controller is retried; its writes and the Native RPC are not', async () => {
   const record = { config: { repository: REPO, scope: `project:${randomUUID()}`, supabaseUrl: 'https://example.invalid', publishableKey: 'sb_publishable_test' }, accepted: {}, ciTokenPinSha256: 'a'.repeat(64) };
@@ -275,7 +327,9 @@ test('scanner publisher v2: a 5xx after the write is withdrawn as "verification 
 });
 
 test('withdrawal text: only a GitHub read that could not be done is "verification unavailable"', () => {
-  for (const cause of ['github_http_500', 'github_http_502', 'github_http_503', 'github_http_504', 'github_http_429', 'github_transport_unconfirmed']) assert.equal(verificationUnavailable(cause), true, cause);
+  for (const cause of ['github_http_500', 'github_http_502', 'github_http_503', 'github_http_504', 'github_transport_unconfirmed', 'full_admission_unavailable']) assert.equal(verificationUnavailable(cause), true, cause);
+  // the set is exactly the read retry's: a 429 or a 501/505/599 is not a passing fault (review of gen8, finding 2)
+  for (const cause of ['github_http_429', 'github_http_501', 'github_http_505', 'github_http_599', 'full_admission_unknown']) assert.equal(verificationUnavailable(cause), false, cause);
   for (const cause of ['github_http_403', 'github_http_404', 'authorization_binding_changed', 'full_admission_not_proven', 'NATIVE_AUTHORIZATION_BINDING_CHANGED', 'lease_expired_after_write', '', null, undefined]) assert.equal(verificationUnavailable(cause), false, String(cause));
   assert.equal(withdrawalTitle('Work admission', 'github_http_502'), 'Work admission check withdrawn: verification unavailable');
   assert.equal(withdrawalTitle('Work admission', 'x'), 'Work admission authorization changed');
