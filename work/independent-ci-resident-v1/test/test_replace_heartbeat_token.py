@@ -45,7 +45,7 @@ def slurp(path):
 
 
 def ps(args, **kw):
-    return subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass'] + args, capture_output=True, text=True, timeout=180, **kw)
+    return subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass'] + args, capture_output=True, text=True, errors='replace', timeout=180, **kw)
 
 
 def token():
@@ -350,7 +350,7 @@ class ReplaceHeartbeatToken(unittest.TestCase):
         elsewhere = os.path.join(self.base, 'elsewhere')
         os.makedirs(elsewhere)
         link = self.hb_dir
-        r = subprocess.run(['cmd.exe', '/c', 'mklink', '/J', link, elsewhere], capture_output=True, text=True)
+        r = subprocess.run(['cmd.exe', '/c', 'mklink', '/J', link, elsewhere], capture_output=True, text=True, errors='replace')
         if r.returncode != 0:
             self.skipTest('a directory junction cannot be created here: ' + r.stdout + r.stderr)
         before = tree(elsewhere)
@@ -361,14 +361,14 @@ class ReplaceHeartbeatToken(unittest.TestCase):
         subprocess.run(['cmd.exe', '/c', 'rmdir', link], capture_output=True)
         # a linked secrets folder
         shutil.rmtree(os.path.join(self.root, 'secrets'))
-        r = subprocess.run(['cmd.exe', '/c', 'mklink', '/J', os.path.join(self.root, 'secrets'), elsewhere], capture_output=True, text=True)
+        r = subprocess.run(['cmd.exe', '/c', 'mklink', '/J', os.path.join(self.root, 'secrets'), elsewhere], capture_output=True, text=True, errors='replace')
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(self.dry(tf)['error'], 'LINK_REFUSED:secrets')
         subprocess.run(['cmd.exe', '/c', 'rmdir', os.path.join(self.root, 'secrets')], capture_output=True)
         os.makedirs(os.path.join(self.root, 'secrets'))
         # a source that is a link is refused too (a file symlink needs a privilege: skipped when not creatable)
         srcdir = os.path.join(self.base, 'srcjunction')
-        r = subprocess.run(['cmd.exe', '/c', 'mklink', '/J', srcdir, self.src_dir], capture_output=True, text=True)
+        r = subprocess.run(['cmd.exe', '/c', 'mklink', '/J', srcdir, self.src_dir], capture_output=True, text=True, errors='replace')
         if r.returncode == 0:
             d = self.dry(os.path.join(srcdir, 'new.token'))   # a path through a junction is a normal file under it: accepted shape-wise
             self.assertNotEqual(d['error'], 'LINK_REFUSED')
