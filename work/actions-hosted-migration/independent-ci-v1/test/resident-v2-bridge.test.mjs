@@ -14,7 +14,7 @@ import { validateFormalAdmissionV2 } from '../src/admission-facts-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
 import { runWorkerJob } from '../src/worker-v2.mjs';
 import { REQUIRED_SOURCE_PATHS, createWindowsContext } from '../worker/protected-job-bridge-v4/boundary.mjs';
-import { CALLBACK_WINDOW_MS, makeIssue, makeChallenge, makeResponse, makeBlocked, validateChallenge, validateResponse, validateBlocked, encode, decode, digest as bridgeDigest } from '../worker/protected-job-bridge-v4/protocol.mjs';
+import { CALLBACK_WINDOW_MS, BRIDGE_CLOCK_SKEW_MS, validateIssue, makeIssue, makeChallenge, makeResponse, makeBlocked, validateChallenge, validateResponse, validateBlocked, encode, decode, digest as bridgeDigest } from '../worker/protected-job-bridge-v4/protocol.mjs';
 import { createFixtureMailbox } from '../worker/protected-job-bridge-v4/mailbox.mjs';
 import { runIssuer as runActualIssuer, issuerEvaluate, blockedReason, refsFailureReason, ISSUER_SUCCESS } from '../worker/protected-job-bridge-v4/windows-issuer.mjs';
 import { resultPayload, observationFacts, verifySignedBridgeResult, RESULT_WRAPPER_CONTRACT_V2 } from '../worker/protected-job-bridge-v4/signed-result.mjs';
@@ -595,7 +595,7 @@ test('issuer: an expired challenge that was never valid (created before the issu
     const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
     const challenge = makeChallenge(issue, 'scan-start', 1, { deadline: new Date(Date.now() + 300).toISOString() });
     await new Promise(r => setTimeout(r, 600));
-    await put(root, 'challenge-01', encode({ ...challenge, createdAt: new Date(Date.parse(issue.issuedAt) - 1000).toISOString() }));
+    await put(root, 'challenge-01', encode({ ...challenge, createdAt: new Date(Date.parse(issue.issuedAt) - BRIDGE_CLOCK_SKEW_MS - 1000).toISOString() }));
   })();
   const r = await runIssuer({ context: f.context, evaluate, collect: async () => null, box, stageDeadline: Date.now() + 5_000 });
   await linux;
@@ -762,7 +762,8 @@ test('bridge v4 bundle manifest covers exactly the runtime files and changes wit
 });
 
 // ---- refsInStore (lesson b28): a push between the bundle and the scan is a clean, retryable refusal ----
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import fsSync from 'node:fs';
 import { refsInStore } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
 const GIT = [String.raw`C:\Program Files\Git\mingw64\libexec\git-core\git.exe`, '/usr/bin/git']
@@ -783,4 +784,80 @@ test('refsInStore: every fresh ref tip, head and base must already be in the wor
   assert.deepEqual(await refsInStore({ job, remoteSnapshot: snapshot([]), gitDirectory: store, gitExecutable: GIT, expectedGitSha256: gitSha }), { tips: 2, refs: 2 });
   await assert.rejects(refsInStore({ job, remoteSnapshot: snapshot([{ name: 'refs/heads/pushed-later', objectSha: '1'.repeat(40) }]), gitDirectory: store, gitExecutable: GIT, expectedGitSha256: gitSha }), { code: 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' });
   await assert.rejects(refsInStore({ job, remoteSnapshot: { ...snapshot([]), refs: [{ name: 'refs/heads/main', objectSha: head }] }, gitDirectory: store, gitExecutable: GIT, expectedGitSha256: gitSha }), { code: 'REMOTE_MAIN_BASE_CHANGED' });
+});
+
+// 2026-11-04 (DESIGN §47): Windows stamps are read on Linux and Linux stamps on Windows, and DESK's two clocks differ (the WSL clock is
+// stepped by 0.4-0.7 s about once a minute). A stamp up to BRIDGE_CLOCK_SKEW_MS in the checking host's future, or that many ms
+// before the stamp that caused it, is accepted; every upper bound is exactly what it was.
+test('protocol v4 clock: the checking host clock stepped back or forward by up to the skew still accepts the packets', () => {
+  assert.equal(BRIDGE_CLOCK_SKEW_MS, 5000);
+  const { jobs } = setup(), job = jobs.trivy, c = claim(), t = Date.now();
+  const ctx = { sourceAcceptanceRef: randomUUID(), hostQualificationRef: randomUUID(), expiresAt: iso(t + 600_000) };
+  const issue = makeIssue(job, facts(job, c), null, { ...ctx, now: t });   // stamped by Windows at t
+  const ch = makeChallenge(issue, 'admission', 1, { now: t + 3000 });       // stamped by Linux 3 s later, by Linux's clock
+  const answer = makeResponse(issue, ch, facts(job, c), null, { now: t + 6000 }); // stamped by Windows at t + 6 s
+  const ANSWER = decode(encode(answer));
+  for (const step of [-BRIDGE_CLOCK_SKEW_MS, -700, -1, 0, 700, BRIDGE_CLOCK_SKEW_MS]) {
+    // the packet arrives 1 s after it was stamped, and the checking host's clock reads the real moment shifted by `step`
+    assert.ok(validateIssue(issue, t + 1000 + step), `issue ${step}`);
+    assert.ok(validateChallenge(issue, ch, t + 3000 + 1000 + step), `challenge ${step}`);
+    assert.ok(validateResponse(issue, ch, ANSWER, t + 6000 + 1000 + step), `response ${step}`);
+  }
+  // a stamp from the other host that lies in this host's future by exactly the skew is fine, one ms more is not
+  assert.ok(validateIssue(issue, t - BRIDGE_CLOCK_SKEW_MS));
+  assert.throws(() => validateIssue(issue, t - BRIDGE_CLOCK_SKEW_MS - 1), { code: 'BRIDGE_ISSUE_EXPIRED' });
+  assert.ok(validateChallenge(issue, ch, t + 3000 - BRIDGE_CLOCK_SKEW_MS));
+  assert.throws(() => validateChallenge(issue, ch, t + 3000 - BRIDGE_CLOCK_SKEW_MS - 1), { code: 'BRIDGE_CHALLENGE_EXPIRED' });
+  assert.ok(validateResponse(issue, ch, ANSWER, t + 6000 - BRIDGE_CLOCK_SKEW_MS));
+  assert.throws(() => validateResponse(issue, ch, ANSWER, t + 6000 - BRIDGE_CLOCK_SKEW_MS - 1), { code: 'BRIDGE_RESPONSE_EXPIRED' });
+  const blocked = makeBlocked(issue, 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', { now: t + 2000 });
+  assert.ok(validateBlocked(issue, blocked, t + 2000 - BRIDGE_CLOCK_SKEW_MS));
+  assert.throws(() => validateBlocked(issue, blocked, t + 2000 - BRIDGE_CLOCK_SKEW_MS - 1), { code: 'BRIDGE_BLOCKED_TIME_INVALID' });
+});
+
+test('protocol v4 clock: the skew buys nothing at the expiry side, and a stamp before its cause by more than the skew is still refused', () => {
+  const { jobs } = setup(), job = jobs.trivy, c = claim(), t = Date.now();
+  const ctx = { sourceAcceptanceRef: randomUUID(), hostQualificationRef: randomUUID(), expiresAt: iso(t + 600_000) };
+  const issue = makeIssue(job, facts(job, c), null, { ...ctx, now: t });
+  // expiry: unchanged, on whichever clock
+  assert.ok(validateIssue(issue, Date.parse(issue.expiresAt) - 1));
+  for (const now of [Date.parse(issue.expiresAt), Date.parse(issue.expiresAt) + 1]) assert.throws(() => validateIssue(issue, now), { code: 'BRIDGE_ISSUE_EXPIRED' });
+  const ch = makeChallenge(issue, 'admission', 1, { now: t + 3000 });
+  assert.throws(() => validateChallenge(issue, ch, Date.parse(ch.deadline)), { code: 'BRIDGE_CHALLENGE_EXPIRED' });
+  const answer = decode(encode(makeResponse(issue, ch, facts(job, c), null, { now: t + 6000 })));
+  assert.ok(validateResponse(issue, ch, answer, Date.parse(ch.deadline) - 1));
+  assert.throws(() => validateResponse(issue, ch, answer, Date.parse(ch.deadline)), { code: 'BRIDGE_CHALLENGE_EXPIRED' });
+  assert.throws(() => validateResponse(issue, ch, { ...answer, expiresAt: iso(Date.parse(answer.issuedAt) + CALLBACK_WINDOW_MS + 1) }, t + 7000), { code: 'BRIDGE_RESPONSE_EXPIRED' });
+  // causality: a challenge stamped before its issue by more than the skew, a response before its challenge, a blocked before its issue
+  const early = { ...decode(encode(ch)), createdAt: iso(Date.parse(issue.issuedAt) - BRIDGE_CLOCK_SKEW_MS - 1) };
+  assert.throws(() => validateChallenge(issue, early, t + 3000), { code: 'BRIDGE_CHALLENGE_EXPIRED' });
+  const earlyAnswer = { ...answer, issuedAt: iso(Date.parse(ch.createdAt) - BRIDGE_CLOCK_SKEW_MS - 1) };
+  assert.throws(() => validateResponse(issue, ch, earlyAnswer, t + 6000), { code: 'BRIDGE_RESPONSE_EXPIRED' });
+  const blocked = { ...decode(encode(makeBlocked(issue, 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', { now: t + 2000 }))), observedAt: iso(Date.parse(issue.issuedAt) - BRIDGE_CLOCK_SKEW_MS - 1) };
+  assert.throws(() => validateBlocked(issue, blocked, t + 2000), { code: 'BRIDGE_BLOCKED_TIME_INVALID' });
+});
+
+// relay-public.ps1's Safe-ChildError (the one place that reads the Linux child's stderr): a refusal is reported with its code, one
+// that the list does not name as FORMAL_RELAY_CODE_UNLISTED (it was dropped before, and 2026-11-04's refusal could not be identified),
+// and anything that is not exactly the child's refusal shape is still dropped.
+test('relay-public.ps1: Safe-ChildError names the time refusals and reports an unlisted code as such, never free text', { skip: process.platform !== 'win32' && 'Windows PowerShell' }, () => {
+  const script = new URL('../worker/protected-job-bridge-v4/relay-public.ps1', import.meta.url);
+  const shape = (reason, stage = 'CONTEXT', extra = {}) => JSON.stringify({ status: 'BLOCKED', reason, stage, taskStarted: false, qualificationIssued: false, ...extra });
+  const cases = [
+    shape('BRIDGE_ISSUE_EXPIRED'), shape('BRIDGE_RESPONSE_EXPIRED', 'BINDING'), shape('BRIDGE_BLOCKED_TIME_INVALID'), shape('ENOMEM'), shape('EBUSY', 'STDIN'),
+    shape('SOME_NEW_CHECK_REFUSED'), shape('lower case and text'), shape('X'.repeat(81)), shape('BRIDGE_ISSUE_EXPIRED', 'ELSEWHERE'),
+    shape('BRIDGE_ISSUE_EXPIRED', 'CONTEXT', { extra: 1 }), shape('BRIDGE_ISSUE_EXPIRED', 'CONTEXT', { taskStarted: true }), 'not json', '', 'x'.repeat(4097),
+  ];
+  const ps = `
+$ErrorActionPreference='Stop'; $tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($env:RELAY_PS1,[ref]$tokens,[ref]$errors); if($errors.Count){throw 'PARSE'}
+$f=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Safe-ChildError'},$true)
+. ([scriptblock]::Create($f.Extent.Text))
+$in=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:RELAY_CASES))|ConvertFrom-Json
+$out=@(); foreach($c in @($in)){ $r=Safe-ChildError ([string]$c); $out+=,$(if($null -eq $r){$null}else{$r.reason+'|'+$r.stage}) }
+ConvertTo-Json -Compress -InputObject $out`;
+  const got = JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
+    env: { ...process.env, RELAY_PS1: fileURLToPath(script), RELAY_CASES: Buffer.from(JSON.stringify(cases)).toString('base64') }, encoding: 'utf8' }));
+  assert.deepEqual(got, ['BRIDGE_ISSUE_EXPIRED|CONTEXT', 'BRIDGE_RESPONSE_EXPIRED|BINDING', 'BRIDGE_BLOCKED_TIME_INVALID|CONTEXT', 'ENOMEM|CONTEXT', 'EBUSY|STDIN',
+    'FORMAL_RELAY_CODE_UNLISTED|CONTEXT', null, null, null, null, null, null, null, null]);
 });

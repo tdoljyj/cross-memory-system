@@ -63,8 +63,17 @@ export const HANDOVER_LISTING_CAP_MS = 5000;
 export const listingDelayMs = (quietMs, capMs = LISTING_CAP_MS) => Math.min(capMs, Math.max(LISTING_MIN_MS, Math.floor(quietMs / LISTING_QUIET_DIVISOR)));
 const WORKER_RUNNING_STATES = new Set(['activating', 'active', 'deactivating']);
 const RELAY_RECEIPT_CONTRACT ='clued.independent-ci.formal-public-relay-receipt/2';
-const CHILD_TRANSIENT_REASONS = new Set(['EBUSY', 'EMFILE', 'ENFILE', 'EINTR', 'FORMAL_RELAY_STDIN_TIMEOUT']);
+// EAGAIN, ENOMEM and ETIMEDOUT: what the Linux child meets when the WSL VM stalls (a relay call that took 53 s on 2026-11-04
+// instead of the usual 3 s, DESIGN §47). They are retried only before the child could have written (the stages below).
+const CHILD_TRANSIENT_REASONS = new Set(['EBUSY', 'EMFILE', 'ENFILE', 'EINTR', 'EAGAIN', 'ENOMEM', 'ETIMEDOUT', 'FORMAL_RELAY_STDIN_TIMEOUT']);
 const CHILD_TRANSIENT_STAGES = new Set(['OPERATION', 'CONTEXT', 'STDIN', 'TRANSPORT', 'PACKET']);
+// A refusal by the bridge protocol's time checks (protocol.mjs validateIssue / validateChallenge / validateResponse /
+// validateBlocked), made before the child writes anything: CONTEXT (the issue, read again) or BINDING (the packet against the
+// issue and challenge). The two hosts' clocks differ and are stepped (DESIGN §47), so this is a retryable environment failure,
+// not a permanent refusal; `arrived` below still settles whether anything reached the target, and the attempts and their
+// budgets are the same as for any child failure.
+const CHILD_CLOCK_REASONS = new Set(['BRIDGE_ISSUE_EXPIRED', 'BRIDGE_CHALLENGE_EXPIRED', 'BRIDGE_RESPONSE_EXPIRED', 'BRIDGE_BLOCKED_TIME_INVALID']);
+const CHILD_CLOCK_STAGES = new Set(['CONTEXT', 'BINDING']);
 const AMBIGUOUS_FAILURES = new Set(['PUBLIC_TERMINAL_UNCONFIRMED_LOCKS_RETAINED', 'PUBLIC_OUTPUT_UNCONFIRMED_NO_RETRY', 'PUBLIC_STDIN_UNCERTAIN_NO_RETRY']);
 const plainObject = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -97,7 +106,8 @@ export function classifyRelayAttempt(runner, receipt) {
   if (v.contract !== RELAY_RECEIPT_CONTRACT) return 'PERMANENT';
   if (v.failureCode === 'PUBLIC_TRANSFER_UNCONFIRMED' && v.processId === null && v.exitCode === null) return 'NO_CHILD';
   if (v.terminalConfirmed === true && v.failureCode === 'PUBLIC_CHILD_EXIT_REFUSED_NO_RETRY' && v.childError === null) return 'CHILD_FAILED';
-  if (v.terminalConfirmed === true && v.failureCode === 'PUBLIC_CHILD_REFUSED_NO_RETRY' && ce && CHILD_TRANSIENT_REASONS.has(ce.reason) && CHILD_TRANSIENT_STAGES.has(ce.stage)) return 'CHILD_FAILED';
+  if (v.terminalConfirmed === true && v.failureCode === 'PUBLIC_CHILD_REFUSED_NO_RETRY' && ce && ((CHILD_TRANSIENT_REASONS.has(ce.reason) && CHILD_TRANSIENT_STAGES.has(ce.stage))
+    || (CHILD_CLOCK_REASONS.has(ce.reason) && CHILD_CLOCK_STAGES.has(ce.stage)))) return 'CHILD_FAILED';
   if (AMBIGUOUS_FAILURES.has(v.failureCode) || ce?.reason === 'EEXIST') return 'AMBIGUOUS';
   // A Receive* that found the record already in Windows incoming: settled by the arrival check alone.
   if (v.failureCode === 'EXISTING_RECORD_PRESERVED_NO_RETRY') return 'EXISTING';

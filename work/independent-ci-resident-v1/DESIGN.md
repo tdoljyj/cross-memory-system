@@ -3797,3 +3797,39 @@ wsl.exe 一次调用在负载高时要 25–45 秒（§25、§26）。companion 
 ### 46.4 一个测试的偶发失败也一并修掉
 
 `issuer-refs-transient.test.mjs` 的 “a slow refs collection” 在负载下偶发失败：测试把 `Date.now` 加偏移 35 秒来模拟慢收集，而测试自己的 `waitFor`（等 Linux 侧文件）也用被偏移的 `Date.now` 当期限，Linux 侧文件晚几毫秒写出时等待立即到期。`waitFor` 改用模块加载时取下的真实时钟。生产代码没有改。
+
+## 47. 两台主机的时钟：跨主机时间比较有明确容差，时钟误差不再是永久失败（2026-11-04，PR #992 批次 `9c995a5f`，Decision `4f5f35d3`）
+
+### 47.1 现象与已证实的部分
+
+- 2026-11-04T10:36:44.357Z（日志里的 `at` 是调用**开始**时间；调用持续 53.3 s，约 10:37:38 结束），companion relay 的 `SendIssue`（seq 0）失败：runner code 2，receipt `PUBLIC_CHILD_REFUSED_NO_RETRY`，`exitCode` 2，`childError` 为 null，分类 PERMANENT；随后 `BRIDGE_ABANDONED_UNPUBLISHED`，自动安排 attempt 2。这是 1275 次 relay 调用（10-31 至 11-04）里唯一一次非 OK；其余 1274 次里，中位数 3.4 s，p99 13 s，最慢一次 46 s（成功）；`SendIssue` 共 85 次，次慢一次 29 s（成功）。慢本身不是失败的原因，慢的调用大多成功。
+- 拒收的是哪个进程、哪一行：Windows 侧 `relay-public.ps1` 读到 Linux 子进程（`wsl.exe … node relay-record.mjs --import-issue`）的 stderr 非空，即抛 `PUBLIC_CHILD_REFUSED_NO_RETRY`；退出码 2 与 `relay-record.mjs#main` 的 catch 一致，说明子进程跑到了并抛出一个带代码的拒绝。**子进程具体抛的是哪个代码，现存证据里没有**：`Safe-ChildError` 只放行 28 个代码，列表之外的一律丢成 `childError: null`，日志的 `stderrTail` 记的是 runner 自己的 stderr（空）。所以不能说这次就是时钟。
+- `--import-issue` 路径里读 Linux 时钟（`Date.now()`）的比较只有：`protocol.mjs#validateIssue`（`issuedAt <= now`、`expiresAt > now`，issuedAt 由 Windows 盖章）、`policy.mjs#validateSelectedFacts` 与 `qualification-v2.mjs`（`qualifiedAt <= now`；当前资格的 qualifiedAt 是 09:38:05Z，无 expiresAt）。没有别的。
+
+### 47.2 对时钟本身的测量（只读）
+
+- 采样 160 s：Linux 的 realtime 减 monotonic 在第 132 s 一次性 +444 ms（timesyncd 的步进阈值是 0.4 s）；Windows 没有步进，但在以约 −1.3 ms/s 的速率被 W32Time 微调（160 s 里 −204 ms）。
+- Linux 减 Windows 的偏差，10 次采样（往返 62–74 ms）：+277 … +434 ms，即 Linux **走在前面**约 0.3–0.4 s。
+- Linux journal：17:30（+08:00）以来 61 次 `systemd-resolved: Clock change detected`，多数相隔 32 s；`systemd-journald: Time jumped backwards` 在 18:29:47、18:31:25、18:36:45；10:36:47.09 → 10:36:44.42 是一次 −0.67 s 的回跳，与失败的调用几乎同时。
+- 原因：WSL 发行版里 `systemd-timesyncd` 在运行（`wsl.conf` 里 `systemd=true`），向 `ntp.ubuntu.com` 校时，轮询间隔卡在最小值 32 s；样本质量很差（延迟 388 ms，jitter 250–800 ms，频率修正 −110 ppm），偏差一过 0.4 s 就步进。出网从今天起限速约 2.5 Mbit/s，这些样本是在限速的链路上测的。Windows 侧 W32Time 的源是 `time.aws.com`，stratum 5，轮询 64 s，root delay 0.27 s，root dispersion 0.40 s，同样受这条链路影响。Windows 的 System 日志（Kernel-General 事件 1、Time-Service）在 17:00–19:00（+08:00）查不到时钟被设置的事件。
+- 结论：两边时钟不同步、Linux 每分钟步进一两次，每次 0.4–0.7 s，是实测事实；但在 `SendIssue` 路径上，签发到子进程检查之间至少隔着一次 relay（平时 ≥ 3 s，这次 ≥ 数秒到 50 s），远大于 0.7 s，所以单凭这个量级的偏差解释不了这次的 `BRIDGE_ISSUE_EXPIRED`。**这次拒收的真正原因未证实**；候选还有 WSL 在这 53 s 里卡住时子进程碰到的资源错误（EAGAIN、ENOMEM、ETIMEDOUT 都不在放行列表里）。因此本节的改动分三层：让下一次一眼看出原因，让跨主机时间比较有容差，让时钟类和卡顿类的拒绝可重试。
+
+### 47.3 代码改动
+
+1. **容差**：`protected-job-bridge-v4/protocol.mjs` 的 `BRIDGE_CLOCK_SKEW_MS`（= `clock-skew.mjs` 的 `CLOCK_SKEW_MS` = 5 s，Decision `1100a0ed` 已经用于准入事实）。只放宽时钟差会把有效戳变成拒收的那个方向：“对方主机的戳不晚于本机现在 + 5 s”和“戳不早于引发它的戳 − 5 s”（issue、challenge、response、blocked）。所有上界不动：窗口结束 `expiresAt/deadline`、`now − at ≤ CALLBACK_WINDOW_MS`、`end − at ≤ CALLBACK_WINDOW_MS`，所以没有哪个包比以前多活一毫秒。取值依据：实测偏差 0.3–0.7 s，5 s 是它的 7 倍以上；同一主机内的戳互相比较仍然精确；5 s 小于最短的一跳 relay（约 3 s 到数秒）的量级，不会让“先后”检查失去意义，也与准入事实用的是同一个数，不引入第二个容差。
+2. **放行列表**：`relay-public.ps1#Safe-ChildError` 增加 `BRIDGE_ISSUE_EXPIRED`、`BRIDGE_CHALLENGE_EXPIRED`、`BRIDGE_RESPONSE_EXPIRED`、`BRIDGE_BLOCKED_TIME_INVALID`、`EAGAIN`、`ENOMEM`、`ETIMEDOUT`；子进程固定形状的拒绝里，代码格式合法但不在列表中的，报成 `FORMAL_RELAY_CODE_UNLISTED`（形状不变，不带任何新文字），不再丢成 null。
+3. **分类**：`companion.mjs#classifyRelayAttempt`：时间类代码（上面四个）在 `CONTEXT`、`BINDING` 阶段（子进程写之前）按 `CHILD_FAILED` 处理；`EAGAIN`、`ENOMEM`、`ETIMEDOUT` 与既有的瞬时 errno 一样只在 `OPERATION…PACKET` 阶段。`CHILD_FAILED` 的后续不变：Send* 先要求 Linux 没有残留的 relay-record 进程（`pgrep`），再看记录是否已到（到了就算成功、不重复导入；半截就保留并永久失败），次数与间隔是各调用原有的（SendIssue 3 次，3 s、8 s），预算不变。`FORMAL_RELAY_CODE_UNLISTED` 和其他 BRIDGE 拒绝（身份、绑定、claim）仍是 PERMANENT。
+4. 单调时钟：这条路径上的戳本来就必须跨主机比较（一台盖章、另一台检查），没有可替换成单调时钟或单一时钟源的地方；准入事实的新鲜度已经在 Decision `1100a0ed` 里改成本机单调时钟。
+
+### 47.4 让时钟稳定的方案（只写方案，未改任何系统设置）
+
+- **Linux（主因）**：不要让 WSL 发行版自己从互联网校时。停用并禁用 `systemd-timesyncd`，改用 Hyper-V 提供的主机时间：内核已有 `/dev/ptp_hyperv`（`clock_name` 为 `hyperv`），装 `chrony`（Ubuntu 24.04 有 4.5）并配置 `refclock PHC /dev/ptp_hyperv poll 3 dpoll -2 offset 0`，去掉 `pool`/`server`，`makestep 1.0 3`。这样 Linux 时钟跟 Windows 主机走，两边只差毫秒级，且不依赖被限速的出网。
+- **Windows**：W32Time 目前从 `time.aws.com` 取时，root dispersion 0.40 s，持续微调。限速期间可把 `MaxPollInterval` 调高、给出 2 个以上的源，或换成延迟更低的源；这是次要的，Linux 一旦跟主机走，影响只剩 Windows 自己的绝对准确度（本系统不依赖它与 UTC 的绝对差，除了与 GitHub 的比较，已有 5 s 容差）。相关任务 `1a6ce931`。
+- **验证**：改完之后用同样的采样（realtime 减 monotonic 的跳变，Linux 减 Windows 的偏差）连续看 1 小时：不应再有大于 100 ms 的步进，偏差应在 50 ms 以内；`journalctl | grep "Clock change detected"` 的频率应降到接近 0。
+- 这些要改系统设置，需要 Owner 决定；本次没有动。
+
+### 47.5 测试与安装
+
+- `test/resident-v2-bridge.test.mjs` 新增 3 个：协议在容差内接受、超出 1 ms 拒绝（issue、challenge、response、blocked，时钟往回跳与往前跳）；到期一侧不放宽、先后检查超出容差仍拒收；`Safe-ChildError`（Windows PowerShell 5.1 实跑）报时间类代码、把未列出的代码报成 `FORMAL_RELAY_CODE_UNLISTED`、形状不对的仍丢弃。
+- `test/relay-retry.test.mjs` 新增分类行与一个端到端：时间类拒绝后重试成功；记录已到就不重复导入、半截保留；一直拒绝则耗尽该调用的次数后以非永久的 `RELAY_REFUSED_NO_RETRY` 结束。
+- 安装：改了 Source v2 的 `protocol.mjs` 与 `relay-public.ps1`（新的 bridge manifest 与 CI Source 哈希），以及 companion 的 `companion.mjs`，随第 8 代一并装。
