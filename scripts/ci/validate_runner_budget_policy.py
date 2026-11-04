@@ -198,7 +198,7 @@ LEGACY_HOSTED_DEBT = {
         }
     },
     "clued-work-admission-dispatch.yml": {
-        "control_sha256": "ebb3e31056796a46bdfddabb880da1173bdb5128b9e88dded3ee4792b7491745",
+        "control_sha256": "98f3b847549d76ff13d9d0db3ddad80dffb14f8a307b66f7ee06b87788780850",
         "jobs": {
             "admit": "fc0a420fe04b4df0e0fdf17101b5b0ef07e0d439f5fbed0500bf6fca73590388"
         }
