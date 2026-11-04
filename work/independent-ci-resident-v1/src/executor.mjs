@@ -128,7 +128,7 @@ import { POSITIONS, breakerGate, breakerOf, breakerRecord, breakerView, position
 import { batchBudgetMs } from './policy.mjs';
 import { attempt2Decision, attempt2Subject } from './attempts.mjs';
 import { decide, parseHint, HEAVY_ROLES, RELAY_ROLES } from './hosted-wait.mjs';
-import { RELAY_TRAIN_FRONT_LOCAL, relayPlanFromRows } from './classify.mjs';
+import { RELAY_TRAIN_FRONT_LOCAL, relayPlanFromRows, STAGE1_TRANSIENT_RELEASE_CODES } from './classify.mjs';
 import { RELAY_STAGE, ROLE_STAGES, trainSettings } from './policy.mjs';
 import { PROBE_REQUEST_CONTRACT, RESIDENT_REQUEST_CONTRACTS, REQUEST_MAX_AGE_MS, validateResidentRequest } from './resident-requests.mjs';
 import { RELAY_RECEIPTS } from './receipts.mjs';
@@ -2829,7 +2829,9 @@ export class ResidentExecutor {
         await this.receipt('batch-unexecuted', { key, failureCode: failure.code, release, class: facts.class });
         // C3 (DESIGN §29.10): attempt 2 is consumed before its reservation; a node-role release decided nothing about the PR, so the
         // same attempt 2 is given back (its key is the same: never an attempt 3). A failure here only loses attempt 2 (the safe side).
-        if (row?.class === 'node-role' && this.current?.key === key && this.current.attempt === 2) await this.reopenAttempt2(key);
+        // The stage-1 release of a passing GitHub / Native fault (nothing written, DESIGN 49) gives it back the same way: the fault says
+        // nothing about the PR, and attempt 2 is the head's only automatic second chance.
+        if ((row?.class === 'node-role' || STAGE1_TRANSIENT_RELEASE_CODES.includes(failure.code)) && this.current?.key === key && this.current.attempt === 2) await this.reopenAttempt2(key, failure.code);
         this.reportOutcome(await subjectOf() ?? this.current, release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', { code: failure.code, row, key });
         return { state: release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', key, failureCode: failure.code, release, settle: { ...settle, kind: 'released', reason: release } };
       }
@@ -2861,11 +2863,11 @@ export class ResidentExecutor {
   }
 
   // The attempt-2 intent of this attempt-2 batch (key2), given back after a node-role release. Never throws.
-  async reopenAttempt2(key2) {
+  async reopenAttempt2(key2, failureCode = 'NODE_ROLE_NOT_HELD') {
     try {
       const c = this.current;
       const key1 = batchKey({ repo: this.policy.repo, pr: c.pr, headSha: c.headSha, baseSha: c.baseSha, sourceManifestSha256: this.policy.sourceManifestSha256, attempt: 1 });
-      await this.ledger.reopenAttempt2(key1, { key2, failureCode: 'NODE_ROLE_NOT_HELD' });
+      await this.ledger.reopenAttempt2(key1, { key2, failureCode });
       await this.receipt('attempt2-reopened', { key: key2, attempt1: key1 });
     } catch { /* attempt 2 stays spent */ }
   }

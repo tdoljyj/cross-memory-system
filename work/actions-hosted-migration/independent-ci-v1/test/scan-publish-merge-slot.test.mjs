@@ -197,3 +197,27 @@ test('control pair v2 (stage 8) is as strict as before: the slot or the queue he
   const r = await pub.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: time + 10 * QUEUE_POLL_MS });
   assert.equal(r.status, 'SETTLED', JSON.stringify(r));
 });
+
+// The reason Native's admission was not proven used to be dropped (receipts said only full_admission_not_proven, 11-04, PR #992
+// head 580f5dd8). It now reaches the withdrawal's journal record and the outcome's diagnostic, and the wording follows it.
+test('scanner publisher v2: why Native did not prove the admission after the write is kept (journal, outcome diagnostic) and worded honestly', async t => {
+  const rejected = { ...blocked('full_admission_rejected'), diagnostic: { reasonCodes: ['merge_slot_required'], nativeReasonCodes: ['claim_not_current'], verdict: 'REJECTED' } };
+  const a = await scanPublication(t, 'gitleaks', (j, c, packet, opts, n) => n === 1 ? admitted(j, c, packet, { batchClaim: opts.batchClaim }) : rejected);
+  assert.deepEqual([a.result.status, a.result.reason, a.result.sideEffects], ['REVOKED', 'full_admission_not_proven', 2]);
+  assert.deepEqual(a.result.admissionDiagnostic.reasonCodes, ['merge_slot_required']);
+  assert.deepEqual(a.result.admissionDiagnostic.nativeReasonCodes, ['claim_not_current']);
+  const rec = await a.journal.read(a.result.effectKey);
+  assert.equal(rec.state, 'revoked');
+  assert.equal(rec.details.admissionReason, 'full_admission_rejected');
+  assert.deepEqual(rec.details.admissionDiagnostic.reasonCodes, ['merge_slot_required']);
+  assert.equal(a.github.checks[0].output.title, 'Independent CI authorization changed', 'a rejection is a real change of the authorization');
+  // the port could not finish its evaluation: nothing was found to have changed
+  const u = await scanPublication(t, 'trivy', (j, c, packet, opts, n) => n === 1 ? admitted(j, c, packet, { batchClaim: opts.batchClaim }) : blocked('full_admission_unavailable'));
+  assert.deepEqual([u.result.status, u.result.reason], ['REVOKED', 'full_admission_not_proven']);
+  assert.equal((await u.journal.read(u.result.effectKey)).details.admissionReason, 'full_admission_unavailable');
+  assert.match(u.github.checks[0].output.title, /withdrawn: verification unavailable/);
+  // before the write the diagnostic rides on the clean BLOCKED
+  const early = await scanPublication(t, 'contract-placement', () => rejected);
+  assert.deepEqual([early.result.status, early.result.reason, early.result.sideEffects], ['BLOCKED', 'full_admission_not_proven', 0]);
+  assert.deepEqual(early.result.admissionDiagnostic.reasonCodes, ['merge_slot_required']);
+});

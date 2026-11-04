@@ -208,6 +208,10 @@ export const DISPOSITIONS = Object.freeze(['release', 'release-if-safe', 'burn',
 export const RETRY_RULES = Object.freeze(['new-trigger', 'attempt2', 'new-commit', 'owner-rearm']);
 const ROW_KEYS = ['code', 'stages', 'phase', 'reasons', 'reasonCodesAny', 'reasonCodesWithin', 'class', 'disposition', 'retry', 'breaker', 'note'];
 const LOWER = /^[a-z][a-z0-9_]{0,63}$/, REASON = /^[A-Za-z][A-Za-z0-9_]{0,79}$/;
+// Stage 1 of these two transient codes is released (not burned into attempt 2) when the entry proves it wrote nothing: DESIGN 49.
+export const STAGE1_TRANSIENT_RELEASE_CODES = Object.freeze(['GITHUB_TRANSIENT_UNAVAILABLE', 'NATIVE_ADMISSION_UNAVAILABLE']);
+const stage1TransientRelease = r => STAGE1_TRANSIENT_RELEASE_CODES.includes(r.code) && Array.isArray(r.stages) && r.stages.length === 1 && r.stages[0] === 1
+  && r.disposition === 'release-if-safe' && r.retry === 'new-trigger';
 export function validateFailureTable(t) {
   check(t && t.contract === FAILURE_TABLE_CONTRACT && Array.isArray(t.rows) && t.rows.length > 0, 'FAILURE_TABLE_INVALID');
   for (const r of t.rows) {
@@ -225,7 +229,8 @@ export function validateFailureTable(t) {
       && (!r.disposition.startsWith('release') || (Array.isArray(r.stages) && r.stages.every(s => s <= 1)))
       // the one automatic attempt 2 only follows a transient code, and every transient code may select it; besides, a resident
       // code of ATTEMPT2_RESIDENT_CODES may, on a row of exactly its listed stages (Owner decision eaa7d5e4)
-      && (TRANSIENT.has(r.code) ? r.retry === 'attempt2' : (r.retry !== 'attempt2' || residentAttempt2(r.code, r.stages))), 'FAILURE_TABLE_INVALID', r?.code);
+      // (one exception: the stage-1 release of GITHUB_TRANSIENT_UNAVAILABLE and NATIVE_ADMISSION_UNAVAILABLE, which write nothing: STAGE1_TRANSIENT_RELEASE)
+      && (TRANSIENT.has(r.code) ? (r.retry === 'attempt2' || stage1TransientRelease(r)) : (r.retry !== 'attempt2' || residentAttempt2(r.code, r.stages))), 'FAILURE_TABLE_INVALID', r?.code);
   }
   return t;
 }

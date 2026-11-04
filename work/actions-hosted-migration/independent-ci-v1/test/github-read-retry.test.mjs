@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { digest } from '../src/proof.mjs';
 import { batchJobsV2, claimGeneration, subjectOfV2 } from '../src/job-v2.mjs';
 import { EffectJournal } from '../src/effect-journal.mjs';
-import { createFixtureWorkAdmissionPublisherV2 } from '../src/formal-work-admission-check-v2/publisher.mjs';
+import { createFixtureWorkAdmissionPublisherV2, refusalSafeToRerun } from '../src/formal-work-admission-check-v2/publisher.mjs';
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { recordBatchClaim, readBatchClaim } from '../src/batch-claim-v2.mjs';
 import { withReadRetry, READ_RETRY_DELAYS_MS, READ_RETRY_BUDGET_MS } from '../src/read-retry.mjs';
@@ -181,7 +181,15 @@ test('work admission v2: a 5xx that outlives the read retry BEFORE any write is 
     const r = await pub.publish(job);
     assert.deepEqual([r.status, r.reason, r.sideEffects, github.checks.length], ['BLOCKED', code, 0, 0], code);
     assert.equal(outcomeFailureCode({ ...r, mayHavePublished: false }, 1), 'GITHUB_TRANSIENT_UNAVAILABLE', code);
+    // nothing was recorded or written, so the entry says it is safe to re-run: the resident releases the head (failure-table.json, DESIGN 49)
+    assert.equal(r.safeToRerun, true, code);
   }
+  // ... in the first step (the read-back of what GitHub already holds) as well as in the evaluation's boundary; never beside a recorded claim
+  assert.equal(refusalSafeToRerun({ step: 'published-on-github', claimed: null, reason: 'github_http_502', diagnostic: null }), true);
+  assert.equal(refusalSafeToRerun({ step: 'published-on-github', claimed: null, reason: 'HEAD_PUBLISHED_ON_GITHUB', diagnostic: null }), false);
+  assert.equal(refusalSafeToRerun({ step: 'published-on-github', claimed: null, reason: 'github_http_403', diagnostic: null }), false);
+  assert.equal(refusalSafeToRerun({ step: 'admitted', claimed: null, reason: 'github_http_502', diagnostic: null }), false);
+  assert.equal(refusalSafeToRerun({ step: 'boundary', claimed: { claimId: 'x' }, reason: 'github_http_502', diagnostic: null }), false);
 });
 
 test('work admission v2: a 5xx AFTER the write withdraws the check as "verification unavailable", never as "authorization changed"', async t => {

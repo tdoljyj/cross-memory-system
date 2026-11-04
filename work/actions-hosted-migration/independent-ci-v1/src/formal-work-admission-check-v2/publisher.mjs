@@ -46,7 +46,7 @@ import { TRAIN_MODES, TRAIN_MODE_DEFAULT, trainFrontRefused, trainFrontRefusal }
 import { fullAdmissionFailureV2, admittedFactsMatchJobV2 } from '../full-admission-v2.mjs';
 import { HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, ofJobIds, readPublishedChecks } from '../published-on-github-v2.mjs';
 import { scanStartSubjectLine } from '../scan-start-v1/subject.mjs';
-import { withdrawalTitle, withdrawalNote } from '../withdrawal-text.mjs';
+import { withdrawalTitle, withdrawalNote, verificationUnavailable } from '../withdrawal-text.mjs';
 
 export const ROLE = 'work-admission', CHECK_NAME = 'kooyumi-work-admission', APP_ID = 5368905, REPO = 'tdoljyj/cross-memory-system';
 const DEFINITION = Object.freeze({ name: CHECK_NAME, appId: APP_ID });
@@ -77,7 +77,10 @@ export function notOnDuty(reason, diagnostic) {
 }
 // The entry's own "safe to re-run" flag of a refusal (the resident releases a stage-1 failure only on it): inside the first
 // evaluation's boundary (step), with no batch claim recorded, and either a node that is not on duty or not a deterministic PR fault.
-export const refusalSafeToRerun = ({ step, claimed, reason, diagnostic }) => step === 'boundary' && claimed === null && (notOnDuty(reason, diagnostic) || !deterministicPrFault(reason, diagnostic));
+// A GitHub read that outlived the bounded read retry (read-retry.mjs) before anything was recorded or written (the published-on-github
+// read-back, the first step) is as safe to re-run as the first evaluation's boundary: nothing exists to reconcile (DESIGN 49).
+export const refusalSafeToRerun = ({ step, claimed, reason, diagnostic }) => claimed === null
+  && ((step === 'boundary' && (notOnDuty(reason, diagnostic) || !deterministicPrFault(reason, diagnostic))) || (step === 'published-on-github' && verificationUnavailable(reason)));
 const freeze = v => { if (v && typeof v === 'object') { Object.values(v).forEach(freeze); Object.freeze(v); } return v; };
 const fixedJob = job => { validateJobV2(job); check(job.repo === REPO && job.role === ROLE && job.attempt >= 1 && job.attempt <= MAX_ATTEMPT_V2, 'FIXED_WORK_ADMISSION_JOB_REQUIRED'); return freeze(structuredClone(job)); };
 function identity(c, job, externalId) { return Number.isSafeInteger(c?.id) && c.id > 0 && c.app?.id === APP_ID && c.name === CHECK_NAME && c.head_sha === job.headSha && c.external_id === externalId; }

@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import { FAILURE_TABLE, failureRow, decideFailure, validateFailureTable, UNEXECUTED_REASON_RULES, NOT_ADMITTED_CODES, TRANSIENT_CODES, CLEAN_FINAL_CODES, UNKNOWN_CODES, DETERMINISTIC_REASON_CODES } from '../src/classify.mjs';
+import { FAILURE_TABLE, failureRow, decideFailure, validateFailureTable, UNEXECUTED_REASON_RULES, NOT_ADMITTED_CODES, TRANSIENT_CODES, CLEAN_FINAL_CODES, UNKNOWN_CODES, DETERMINISTIC_REASON_CODES, STAGE1_TRANSIENT_RELEASE_CODES } from '../src/classify.mjs';
 import { UNEXECUTED_REASONS } from '../src/ledger.mjs';
 import { PUMP_CODES } from '../src/engine-windows.mjs';
 import * as source from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
@@ -76,7 +76,9 @@ test('the table agrees with the Source catalogue: unknown halts, the rest never 
   for (const code of UNKNOWN_CODES) for (const r of rowsOf(code)) assert.deepEqual([r.class, r.disposition, r.retry], ['unknown', 'halt', 'owner-rearm'], code);
   for (const code of [...NOT_ADMITTED_CODES, ...TRANSIENT_CODES, ...CLEAN_FINAL_CODES]) for (const r of rowsOf(code)) assert.notEqual(r.disposition, 'halt', code);
   // besides, a resident code of ATTEMPT2_RESIDENT_CODES on a row of exactly its stages (Owner decision eaa7d5e4, DESIGN §27)
-  for (const r of FAILURE_TABLE.rows) assert.equal(r.retry === 'attempt2', TRANSIENT_CODES.includes(r.code) || (Object.hasOwn(ATTEMPT2_RESIDENT_CODES, r.code)
+  // (DESIGN 49: except the stage-1 rows of GITHUB_TRANSIENT_UNAVAILABLE and NATIVE_ADMISSION_UNAVAILABLE, which release on the entry's own safeToRerun)
+  const stage1Release = r => STAGE1_TRANSIENT_RELEASE_CODES.includes(r.code) && JSON.stringify(r.stages) === '[1]' && r.disposition === 'release-if-safe' && r.retry === 'new-trigger';
+  for (const r of FAILURE_TABLE.rows) assert.equal(r.retry === 'attempt2', (TRANSIENT_CODES.includes(r.code) && !stage1Release(r)) || (Object.hasOwn(ATTEMPT2_RESIDENT_CODES, r.code)
     && Array.isArray(r.stages) && r.stages.every(s => ATTEMPT2_RESIDENT_CODES[r.code].includes(s))), r.code);
   // releases only before 10-started: stage 1, or the bundle before it
   for (const r of FAILURE_TABLE.rows.filter(x => x.disposition.startsWith('release'))) assert.ok(Array.isArray(r.stages) && r.stages.every(s => s <= 1), r.code);
@@ -141,7 +143,11 @@ test('the most specific row wins: waiting only when every reason is a wait; an u
   const unmapped = row('STAGE_CHILD_REFUSED', 1, { reason: 'BATCH_CLAIM_RECORD_INVALID' });
   assert.deepEqual([unmapped.class, unmapped.disposition, unmapped.breaker], ['unmapped-stage-1', 'burn', 'counts']);
   assert.equal(row('STAGE_CHILD_REFUSED', 2, { reason: 'pr_files_page_limit' }).class, 'clean-final', 'the reason rows are stage 1 only');
-  assert.equal(row('GITHUB_TRANSIENT_UNAVAILABLE', 1).retry, 'attempt2');
+  // DESIGN 49 (Owner decision 4f5f35d3): stage 1 releases a passing GitHub / Native fault on the entry's own safeToRerun; the other stages keep attempt 2
+  for (const code of ['GITHUB_TRANSIENT_UNAVAILABLE', 'NATIVE_ADMISSION_UNAVAILABLE']) {
+    assert.deepEqual([row(code, 1).class, row(code, 1).disposition, row(code, 1).retry], ['environment', 'release-if-safe', 'new-trigger'], code);
+    for (const stage of [0, 2, 3, 5, 7, 8]) assert.equal(row(code, stage).retry, 'attempt2', `${code}@${stage}`);
+  }
   assert.equal(row('BUNDLE_UNAVAILABLE', 0, { phase: 'bundle' }).disposition, 'release');
   assert.equal(row('BUNDLE_UNAVAILABLE', 0, { phase: 'stage' }), null);
 });
@@ -160,8 +166,16 @@ test('a release needs the outcome\'s own safeToRerun or the broker\'s no-launch,
   assert.deepEqual([b.release, b.row.class], ['BROKER_NOT_LAUNCHED', 'environment']);
   assert.equal(decideFailure({ code: 'BROKER_REQUEST_EXPIRED', stage: 3, brokerNoLaunch: true, proof: CLEAN_PROOF, started: false }).release, null, 'stage 1 only');
   assert.equal(decideFailure({ code: 'BROKER_BUSY', stage: 1, brokerNoLaunch: true, proof: CLEAN_PROOF, started: false }).klass, 'UNKNOWN');
-  // a safe-to-re-run flag never releases a code whose row only burns (a transient at stage 1 keeps the attempt-2 path)
-  assert.equal(decideFailure({ code: 'GITHUB_TRANSIENT_UNAVAILABLE', stage: 1, outcome: { ...safe, reason: 'github_http_503' }, proof: CLEAN_PROOF, started: false }).release, null);
+  // a safe-to-re-run flag never releases a code whose row only burns (a transient after stage 1 keeps the attempt-2 path)
+  assert.equal(decideFailure({ code: 'GITHUB_TRANSIENT_UNAVAILABLE', stage: 3, outcome: { ...safe, reason: 'github_http_503' }, proof: CLEAN_PROOF, started: false }).release, null);
+  // ... but at stage 1 (DESIGN 49) a passing GitHub / Native fault with the flag is released, not burned into attempt 2; without the flag it still burns (attempt 2)
+  for (const code of ['GITHUB_TRANSIENT_UNAVAILABLE', 'NATIVE_ADMISSION_UNAVAILABLE']) {
+    const o = { ...safe, reason: 'github_http_503', diagnostic: null };
+    assert.deepEqual([decideFailure({ code, stage: 1, outcome: o, proof: WINDOWS_CLEAN, started: false }).release, decideFailure({ code, stage: 1, outcome: o, proof: WINDOWS_CLEAN, started: false }).klass], ['NOT_ADMITTED', 'NOT_ADMITTED'], code);
+    const unflagged = decideFailure({ code, stage: 1, outcome: { ...o, safeToRerun: false }, proof: CLEAN_PROOF, started: false });
+    assert.deepEqual([unflagged.release, unflagged.klass], [null, 'CLEAN'], code);
+    assert.equal(decideFailure({ code, stage: 1, outcome: o, proof: WINDOWS_CLEAN, started: true }).release, null, 'after 10-started nothing is released');
+  }
 });
 
 test('NODE_ROLE_NOT_HELD (C3, DESIGN §29): a stage-1 node-role row released on the entry\'s own flag, also beside a deterministic PR reason; the older Source\'s reason form is the same answer', async t => {

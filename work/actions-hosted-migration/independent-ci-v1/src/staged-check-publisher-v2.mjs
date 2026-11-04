@@ -31,7 +31,7 @@ import { canonical, digest } from './proof.mjs';
 import { freshStamp, retainedServerAnswerCurrent } from './clock-skew.mjs';
 import { validateJobV2, SCANNER_ROLES_V2, subjectOfV2, scanEffectKeyV2, scanExternalIdV2, sameClaimGeneration, claimGeneration, makeJobV2, prBaseAcceptedV2, isTrainFrontJobV2, frontJobIdsV2 } from './job-v2.mjs';
 import { verifyResultV2 } from './proof-v2.mjs';
-import { admittedFactsMatchJobV2 } from './full-admission-v2.mjs';
+import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from './full-admission-v2.mjs';
 import { claimRolePublication, readRolePublication, rolePublicationKey } from './effect-journal.mjs';
 import { relayExternalId, validateHostedEnvelope } from './hosted-relay-v1/attest.mjs';
 import { ROLE_ALREADY_ON_GITHUB_REASON, publishedNames } from './published-on-github-v2.mjs';
@@ -42,7 +42,14 @@ const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const plain = value => value && Object.getPrototypeOf(value) === Object.prototype;
 const ref = value => typeof value === 'string' && value.length > 0 && value.length <= 1000 && !/[\x00-\x1f]/.test(value);
-const stop = (code, drift = false) => { throw Object.assign(new Error(code), { code, drift }); };
+const stop = (code, drift = false, extra = {}) => { throw Object.assign(new Error(code), { code, drift, ...extra }); };
+// Why Native's complete admission was not proven (full-admission-v2.mjs blocked(): rejected / native_changed / claim_changed /
+// unavailable ...) used to be dropped here: the receipts only said full_admission_not_proven (11-04, PR #992, head 580f5dd8).
+// admissionReason is the port's own code; admissionDiagnostic is its sanitized diagnostic (fixed enums only, no remote text).
+// Both are carried to the withdrawal's journal record, and the diagnostic to the outcome the resident reads.
+const ADMISSION_REASON = /^full_admission_[a-z_]{1,60}$/;
+const admissionOf = error => ({ ...(ADMISSION_REASON.test(error?.admissionReason ?? '') ? { admissionReason: error.admissionReason } : {}),
+  ...(error?.admissionDiagnostic ? { admissionDiagnostic: error.admissionDiagnostic } : {}) });
 // An uncoded exception is never a transport fact (PR-A review MINOR 5): it is not a transient code.
 const reason = error => /^[a-z][a-z0-9_]{0,80}$/.test(error?.code ?? '') ? error.code : 'publication_operation_unconfirmed';
 const fresh = (facts, now) => retainedServerAnswerCurrent(facts)
@@ -162,7 +169,10 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
       || packet.paths.some(p => typeof p !== 'string' || !p || p.length > 4096 || /[\x00-\x1f\\:]/.test(p) || p.startsWith('/') || p.split('/').some(part => !part || part === '.' || part === '..')))
       stop('native_path_observation_unconfirmed');
     const native = await nativeAdmission.evaluatePr(job, packet, { batchClaim });
-    if (!['clued.independent-ci.full-admission/2', 'clued.independent-ci.full-admission/3'].includes(native?.contract) || native.status !== 'ADMITTED' || native.domain !== domain) stop('full_admission_not_proven');
+    if (!['clued.independent-ci.full-admission/2', 'clued.independent-ci.full-admission/3'].includes(native?.contract) || native.status !== 'ADMITTED' || native.domain !== domain) {
+      const failure = fullAdmissionFailureV2(native);
+      stop('full_admission_not_proven', false, { ...(failure ? { admissionReason: failure.reason } : {}), ...(failure?.admissionDiagnostic ? { admissionDiagnostic: failure.admissionDiagnostic } : {}) });
+    }
     if (!admittedFactsMatchJobV2(native, job, clock(), { batchClaim })) stop('native_identity_changed', true);
     if (native.packetSha256 !== digest(packet) || !HASH.test(native.evaluationSha256 ?? '') || !ref(native.modeProofRef) || !ref(native.observationRef)) stop('full_admission_observation_unconfirmed');
     if (!plain(native.mode) || !ref(native.mode.state) || !ref(native.mode.layer)
@@ -197,14 +207,16 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
       await readback({ id: settled.details.checkRunId }, definition, job, externalId, 'success');
     } catch (error) {
       const known = { id: settled.details.checkRunId, app: { id: definition.appId }, head_sha: job.headSha, name: definition.name, external_id: externalId };
-      return revoke({ key, phase: 'settled', known, definition, job, externalId, cause: reason(error), sideEffects: 0 });
+      return revoke({ key, phase: 'settled', known, definition, job, externalId, cause: reason(error), sideEffects: 0, ...admissionOf(error) });
     }
     return { status: 'SETTLED', mode: 'hosted-relay', effectKey: key, checkRunId: settled.details.checkRunId, externalId, sideEffects: 0, productionAuthorized: domain === 'production' };
   }
   async function transition(key, phase, next, details) {
     try { return await journal.transition(key, phase, next, details); } catch { return null; }
   }
-  async function revoke({ key, phase, known, definition, job, externalId, cause, sideEffects }) {
+  async function revoke({ key, phase, known, definition, job, externalId, cause, sideEffects, admissionReason, admissionDiagnostic }) {
+    // full_admission_not_proven hides the port's own reason; wording follows that reason when it is known.
+    const whyWithdrawn = cause === 'full_admission_not_proven' && admissionReason ? admissionReason : cause;
     const revocationKey = digest({ action: 'staged-independent-check-revoke/2', effectKey: key, checkRunId: known.id });
     let revocationPhase = 'intent', revocationLogged = false;
     try {
@@ -218,14 +230,14 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     try {
       sideEffects++;
       const patched = await github.revokeCheck(known.id, { status: 'completed', conclusion: 'failure',
-        output: { title: withdrawalTitle('Independent CI', cause), summary: `Staged Native observation; reconcile ${key}${withdrawalNote(cause)}` } });
+        output: { title: withdrawalTitle('Independent CI', whyWithdrawn), summary: `Staged Native observation; reconcile ${key}${withdrawalNote(whyWithdrawn)}` } });
       if (!identity(patched, definition, job, externalId) || patched.status !== 'completed' || patched.conclusion !== 'failure') stop('revocation_unconfirmed');
       await readback(known, definition, job, externalId, 'failure');
       if (revocationLogged) await journal.transition(revocationKey, 'sent', 'settled', { checkRunId: known.id, conclusion: 'failure' });
       const current = await journal.read(key);
       if (!['sent', 'uncertain', 'settled'].includes(current?.state)) stop('revocation_state_unconfirmed');
-      await journal.transition(key, current.state, 'revoked', { checkRunId: known.id, externalId, reason: cause });
-      return { status: 'REVOKED', effectKey: key, checkRunId: known.id, reason: cause, sideEffects, productionAuthorized: false };
+      await journal.transition(key, current.state, 'revoked', { checkRunId: known.id, externalId, reason: cause, ...(admissionReason ? { admissionReason } : {}), ...(admissionDiagnostic ? { admissionDiagnostic } : {}) });
+      return { status: 'REVOKED', effectKey: key, checkRunId: known.id, reason: cause, ...(admissionDiagnostic ? { admissionDiagnostic } : {}), sideEffects, productionAuthorized: false };
     } catch {
       if (revocationPhase === 'sent') await transition(revocationKey, 'sent', 'uncertain', { reason: 'revocation_unconfirmed', checkRunId: known.id });
       if (phase === 'sent') await transition(key, 'sent', 'uncertain', { reason: 'revocation_unconfirmed', checkRunId: known.id, externalId });
@@ -258,9 +270,9 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
       } catch (error) {
         if (previous?.state === 'settled' && positive(previous.details?.checkRunId)) {
           const known = { id: previous.details.checkRunId, app: { id: definition.appId }, head_sha: job.headSha, name: definition.name, external_id: externalId };
-          return revoke({ key, phase: 'settled', known, definition, job, externalId, cause: reason(error), sideEffects: 0 });
+          return revoke({ key, phase: 'settled', known, definition, job, externalId, cause: reason(error), sideEffects: 0, ...admissionOf(error) });
         }
-        return { status: previous ? 'UNCERTAIN' : 'BLOCKED', ...(key ? { effectKey: key } : {}), reason: reason(error), sideEffects: 0, productionAuthorized: false };
+        return { status: previous ? 'UNCERTAIN' : 'BLOCKED', ...(key ? { effectKey: key } : {}), reason: reason(error), ...(admissionOf(error).admissionDiagnostic ? { admissionDiagnostic: admissionOf(error).admissionDiagnostic } : {}), ...(admissionOf(error).admissionDiagnostic ? { admissionDiagnostic: admissionOf(error).admissionDiagnostic } : {}), sideEffects: 0, productionAuthorized: false };
       }
       let phase = 'intent', sent = false, known = null, sideEffects = 0;
       try {
@@ -303,7 +315,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
           try { known = await discoverKnown(definition, job, externalId); }
           catch { /* UNCERTAIN records local uncertainty; it cannot revoke a remote success. */ }
         }
-        if (sent && known) return revoke({ key, phase, known, definition, job, externalId, cause: reason(error), sideEffects });
+        if (sent && known) return revoke({ key, phase, known, definition, job, externalId, cause: reason(error), sideEffects, ...admissionOf(error) });
         await transition(key, phase, sent ? 'uncertain' : 'not_sent', { reason: reason(error), ...(known ? { checkRunId: known.id, externalId } : {}) });
         return { status: sent ? 'UNCERTAIN' : 'BLOCKED', effectKey: key, reason: reason(error), sideEffects, productionAuthorized: false };
       }
@@ -355,7 +367,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         before = await boundary(job, { kind: 'hosted', envelope, fresh: true }, definition);
         if (await onGithubOnly(mutex, job, definition)) return result({ status: 'BLOCKED', effectKey: key, reason: ROLE_ALREADY_ON_GITHUB_REASON, sideEffects: 0 }, mutexKey, false);
       } catch (error) {
-        return result({ status: 'BLOCKED', ...(key ? { effectKey: key } : {}), reason: reason(error), sideEffects: 0 }, mutexKey, false);
+        return result({ status: 'BLOCKED', ...(key ? { effectKey: key } : {}), reason: reason(error), ...(admissionOf(error).admissionDiagnostic ? { admissionDiagnostic: admissionOf(error).admissionDiagnostic } : {}), sideEffects: 0 }, mutexKey, false);
       }
       let phase = 'intent', sent = false, known = null, sideEffects = 0, held = false;
       try {
@@ -409,7 +421,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
           try { known = await discoverKnown(definition, job, externalId); }
           catch { /* UNCERTAIN: the relay cannot prove what GitHub holds. */ }
         }
-        if (sent && known) return { ...(await revoke({ key, phase, known, definition, job, externalId, cause: reason(error), sideEffects })), roleMutex: { key: mutexKey, held } };
+        if (sent && known) return { ...(await revoke({ key, phase, known, definition, job, externalId, cause: reason(error), sideEffects, ...admissionOf(error) })), roleMutex: { key: mutexKey, held } };
         await transition(key, phase, sent ? 'uncertain' : 'not_sent', { reason: reason(error), ...(known ? { checkRunId: known.id, externalId } : {}) });
         return result({ status: sent ? 'UNCERTAIN' : 'BLOCKED', effectKey: key, reason: reason(error), sideEffects }, mutexKey, held);
       }

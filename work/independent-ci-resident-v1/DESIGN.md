@@ -3872,7 +3872,9 @@ Windows 一侧也在受同一条链路的影响，但不是 WSL 乱跳的原因�
 
 **没有把撤回改成可重试（BACKOFF）。** 见任务回执：写后漂移时 GitHub 上已有一个 failure 检查（`sideEffects` ≥ 1），不可撤回，K(head, role) 与效果键也禁止重发，必须烧；写前漂移本来就是 `BLOCKED`、`sideEffects` 0、没有任何外部痕迹，而其原因（subject、认领、资格变化）是确定性的，等也不会变好；跨阶段重试需要保存签名结果、新增等待类和 Source/C# 边界改动，不在本次范围。
 
-测试：`test/scan-publish-merge-slot.test.mjs`（加入队列、退出队列、过期、仅 until 变化、不再需要等 7 种槽变化 × 3 个扫描角色都 `SETTLED`；其余每个绑定字段变化仍撤销；第 8 段的槽或队首变化仍撤销）。
+**查实 #992 head 580f5dd8 第 3 段的 `full_admission_not_proven`（回执 `00001217-stage-terminal.json`，批次 key `d118b857…`）。** 能读到的证据：第 1 段 09:47:31Z SETTLED，`mergeQueue` 为 head、位置 1；第 2 段 09:52:39Z 收到结果；第 3 段 09:53:41Z `REVOKED`，`sideEffects` 2（创建加撤销），`reason` 为 `full_admission_not_proven`，**`reasonCodes` 为空**——扫描发布者把 `evaluatePr` 的失败原因压平成了这一个码，诊断被丢掉了（第 1 段发布者没有这个毛病）。Source 自己的观察日志和 journal（`state2effects-scan`）在普通用户读不到的目录里，所以**真实原因没法从回执确定**。从代码能排除的：仓库里的 Native 服务端 verify 和本地 evaluator 都不把合并槽状态放进 verdict，所以“槽过期”本身不会让准入变成未证明（本节的绑定放宽修的是另一个、可以确定的缺陷：槽状态翻转触发 `authorization_binding_changed`，即 #992 的第二次撤回）。同日更可疑的线索是 GitHub 本身不稳：09:37:11Z 的 train-run 就是 `GITHUB_TRANSIENT_UNAVAILABLE`，而评估器内部的任何 GitHub 读取错误（`githubJson` 不重试）都被 `evaluatePr` 吞成 `full_admission_unavailable`，在发布者里又被压平成 `full_admission_not_proven`——这与 #992 第三例（502）是同一条路径。已做的补救：①§49 的有界读重试覆盖评估器的 GitHub 读取；②扫描发布者现在把 `evaluatePr` 的原因（`admissionReason`）和脱敏诊断（`admissionDiagnostic`）写进撤销的 journal 记录和阶段结果，下一次回执里就有诊断码；③`full_admission_unavailable` 造成的撤回标题写“verification unavailable”。**是不是又一个缺陷：是**——“诊断被压平”本身是缺陷（已修）；至于是否还有别的原因（认领租约在 09:53 前后到期？），要等下一次带诊断的回执，或让 Owner 读 `state2effects-scan` 的 journal 与 `observations.jsonl`。
+
+测试：`test/scan-publish-merge-slot.test.mjs`（加入队列、退出队列、过期、仅 until 变化、不再需要等 7 种槽变化 × 3 个扫描角色都 `SETTLED`；其余每个绑定字段变化仍撤销；第 8 段的槽或队首变化仍撤销；撤销诊断保留）。
 
 ## 49. GitHub 暂时错误（5xx、网络）不再烧头：只读请求有界指数退避；写后无法核对时的收尾与措辞（第 8 代；11-04 PR #992 head df85e68d）
 
@@ -3880,7 +3882,30 @@ Windows 一侧也在受同一条链路的影响，但不是 WSL 乱跳的原因�
 
 **改动。**
 1. `src/read-retry.mjs#withReadRetry`，由 `controllerPorts` 包在控制器的 fetch 外面（所以发布者的 GitHub 端口和评估器的读取一起受益）：只对 GET，在 500/502/503/504 或网络错误（`TypeError: fetch failed`，cause 为网络码）时重试，延迟 1、2、4、8 秒，同一个包装（即同一段进程）的总等待不超过 20 秒，每次重试前调用 `live()`（段的期限或停止请求会结束等待）；重试用新的 30 秒超时。POST/PATCH 与所有 Native RPC（POST）原样透传，**从不重试**；501、4xx（含 403、429）、重定向、不是网络错误的拒绝都原样返回。用尽后返回最后一次的答复或错误，下游看到的仍是 `github_http_5xx` / `github_transport_unconfirmed`，分类不变。每次重试向观察日志写一条 `github_read_retry`。20 秒是被扫描发布者的 60 秒观察预算（`PUBLICATION_OBSERVE_BUDGET_MS`）约束出来的：重试不能把写前阶段拖过 `guardNewPublication`。
-2. 写前用尽：发布者本来就返回 `BLOCKED`、`sideEffects` 0、没有任何外部痕迹；`outcomeFailureCode` 映射为 `GITHUB_TRANSIENT_UNAVAILABLE`（transient / burn / attempt2，第 0–2 段），**失败表没有改**：把第 1 段的这一行改成 release-if-safe（即不烧 attempt、10/20/40 分钟退避重来）是策略变化，`failure-table.test.mjs` 现在明确钉着相反的结论，留给 Owner 决定。
+2. 写前用尽：发布者本来就返回 `BLOCKED`、`sideEffects` 0、没有任何外部痕迹，`outcomeFailureCode` 映射为 `GITHUB_TRANSIENT_UNAVAILABLE`（评估器内部吞掉的 GitHub 错误是 `full_admission_unavailable` → `NATIVE_ADMISSION_UNAVAILABLE`）。**失败表改了**（Owner 决定 `4f5f35d3`，主会话代答）：这两个码在**第 1 段**、入口自己的 `safeToRerun` 为真（没有记批次认领、没有写任何东西）时是 `environment / release-if-safe / new-trigger`——放回队列、按 10/20/40 分钟退避重来、**不烧 head**，也**不花掉 attempt 2**（attempt 2 批次被放掉时，把同一个 attempt 2 还回去，同 node-role 的办法，`reopenAttempt2(key, failureCode)`）。旧结论“第 1 段的暂时错误走 attempt 2”不再成立的理由：attempt 2 是 head 唯一的自动二次机会，而这类故障对 PR 什么也没说；入口已经证明什么都没写，释放正是铁律允许的“证明没有副作用”的情形。入口不带标志（例如已记批次认领）时仍烧头并走 attempt 2。`refusalSafeToRerun` 同时覆盖第 1 段第一步（读 GitHub 上已有的检查）里用尽的 GitHub 暂时错误。**第 3、5、7、8 段不能同样处理：** 释放只在 10-started 之前（失败表校验和 `decideFailure` 都这样规定），而第 2 段的扫描已经真跑过，放回去重跑等于同一提交同一检查跑两次；第 8 段本来就有自己的停靠重试（`STAGE8_TRANSIENT_PARK_CODES`）。第 3、5、7 段要做到“写前用尽也不烧”，必须保留已签名的结果并只重发发布，见 §50。
 3. 写后用尽（检查已在 GitHub 上，`sideEffects` ≥ 1）：仍然撤销（一个无法核对的 success 不能留着；失败检查已在 head 上，head 必须烧），但标题改为 “… check withdrawn: verification unavailable”，摘要写明“GitHub 读不到，未观察到授权变化”；原因码仍是 `github_http_502`。真实的授权漂移仍写 “authorization changed”（`src/withdrawal-text.mjs`，第 1、8 段和扫描发布者三个 v2 发布者共用）。撤销自己的身份读取或 PATCH 也失败时，结果是 `UNCERTAIN`（`NEGATIVE_COMPENSATION_*`，`PUBLICATION_UNCERTAIN`，HALT 等 Owner 对账），不猜、不盲写。
 
-测试：`test/github-read-retry.test.mjs`（13 例）。
+测试：`test/github-read-retry.test.mjs`（13 例）；`test/failure-table.test.mjs`、`test/node-mode.test.mjs`（第 1 段释放、还回 attempt 2）。
+
+## 50. 写后失败怎么不烧 head：设计（只设计，未实现；需要独立审核和 Owner 批准）（Decision `4f5f35d3`；承接 §49）
+
+**问题。** 检查已写到 head 上之后（`sideEffects` ≥ 1），GitHub 读不到、核对没做完，现行做法是撤回（我们自己的 PATCH，结论 `failure`；GitHub 没有 “withdrawn” 这个结论值，可用的是 success/failure/neutral/cancelled/skipped/timed_out/action_required），head 烧掉。问题是：因“verification unavailable” 撤回的检查，能不能在同一个 head 上安全重发？
+
+**不变量（任何方案都必须保持）。** ① 同一提交的同一检查只真跑一次：重发只能用同一份已签名结果（证据摘要 `evidenceSha256` 相同），绝不重跑扫描；② K(head, role) 与效果键的语义：一个角色在一个 head 上同时只有一个“活的”发布者，已结算/已撤销的记录不被覆盖；③ 授权必须重新证明：重发前走一次完整的新 `before` 边界；④ 不放宽任何与安全相关的绑定；⑤ 生产库只读，Native 状态只经现有端口。
+
+**方案 A：撤回之后在同一 head 上重发。** 要点与阻碍：
+1. 日志：增加终态 `withdrawn`（区别于 `revoked`），只在 (a) 原因属于“读不到”集合（`verificationUnavailable`），(b) 撤回 PATCH 已读回确认为非 success，(c) 本次没有其他外部写入 时记录；`revoked` 仍是真漂移的不可逆终态。重发只允许一次，且仅第 3、5、7 段。
+2. 外部 id 与检查身份：`identity()` 以 (app, head, name, external_id) 唯一识别一个检查；同一 external_id 会让 `discoverKnown`/读回遇到两个匹配（`check_discovery_unconfirmed`）。重发需要新的 external_id 代次后缀，旧检查（failure）留在 head 上。
+3. **服务端阻碍（需要迁移和 Owner 批准）：** `work_claim_independent_identity_valid_v1`（迁移 `20261029050000`）把 `effect_key`、`publication_key` 固定为 job id 的函数（`native-independent-publication/1`）。同一 job 的第二次发布在 Native 看来是同一个发布身份，会撞幂等键（`work_claim_publication_idempotency_conflict`），而撤销已经走 Native 的撤销发件箱（`independent_revocation_heads`）。所以在 active 策略下，重发需要 Native 先支持“同一 job 的发布代次”，这是服务端合同变化；在 staged 策略（没有 Native 票据，今天的现状）下没有这一条，但 active 一旦打开就会撞上。
+4. **GitHub 语义（必须先实验证实，不能假设）：** 必需检查是按（名称，App）取最新一次 check run，还是任何一次 failure 都挡住合并？我没有证据，不能在设计里当成事实。
+5. 证据保留：已签名结果在批次被判 FAILED_CLEAN 时随工作目录归档（`failed-<批次>-publication-revoked-*`）；重发需要它仍可读且摘要不变。
+6. 常驻层：第 3、5、7 段目前没有“停靠”：失败即 FAILED_CLEAN。要重发就要给发布段加停靠（类似第 8 段的 `queue.park`、`STAGE8_TRANSIENT_PARK_CODES`），重新起这一段的 broker 运行，并保证期间 Linux worker 状态不被清理。
+7. 与托管转发（stage R）的 K 互斥：本地路径重发时，K 必须仍由本地持有，转发不能插进来。
+
+结论：A 动 Source（发布者、日志、重发入口）、常驻层（停靠、归档保留）、Native（active 策略下的发布代次）三处，每处都是安全边界，必须独立审核，Native 部分还要 Owner 批准迁移；GitHub 对 failure + 之后 success 的合并语义也要先实验。**不建议现在做。**
+
+**方案 B：缩短写后风险窗口（写前先确认 GitHub 可达）。** 在 `before` 边界通过、`authorized` 记账之后、`createCheck` 之前，做一次与写后核对同样的只读探测（PR、检查清单，各一次，走 §49 的有界重试）。探测失败就在写前以 `BLOCKED`、`sideEffects` 0 结束（第 1 段按 §49 被释放，不烧）；通过则写后核对撞上故障的概率显著下降（故障多是成片的）。代价：多两次只读请求、延后写入几百毫秒；不改任何安全绑定，也不改合同。**局限：** 它只是把一部分“写后撤回”换成“写前失败”，第 3、5、7 段的写前失败今天仍是烧头（见 §49 第 2 点），所以 B 对第 3、5、7 段单独不够，必须和 C 一起。
+
+**方案 C：第 3、5、7 段的写前停靠（不写任何东西时重发布）。** 写前失败（`sideEffects` 0，没有 K、没有效果键、没有 GitHub 痕迹）时，不判 FAILED_CLEAN，而是把这一批停靠，保留已签名结果，按 10/20/40 分钟退避只重跑**发布段**。它不需要 A 的任何服务端或 K 变化（什么都没写过），同一份结果只发布一次（`proveNoEffects` 已有的“journal 无记录 + 角色互斥无记录 + 远端清单无匹配”三重否定证明可以直接复用，见 `runtime/one-shot-v2.mjs`）。要审核的点：停靠期间的工作目录与 Linux worker 状态保留、签名结果的有效期（`verifyResultV2` 的时间窗）、每日额度与断路器计数、与 attempt 2 的关系（停靠中的批次不再触发 attempt 2）。
+
+**建议顺序：** §49（已做）→ B + C（一起，一次独立审核；它们让绝大多数“GitHub 抖动”在不写任何东西的情况下被吸收）→ 仍剩下的写后故障继续撤回并烧头（现状，措辞已诚实）→ 只有当实测证明 B+C 之后仍有可观的写后撤回，再考虑 A（含 Native 迁移）。**需要独立审核的部分：** B+C 的所有 Source 与常驻层改动、A 的全部。**需要 Owner 批准的部分：** C 对第 3、5、7 段“停靠而不是烧头”的策略变化；A 的 Native 迁移与 GitHub 合并语义实验。
