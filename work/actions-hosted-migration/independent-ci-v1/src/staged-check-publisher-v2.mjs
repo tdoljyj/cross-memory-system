@@ -29,7 +29,7 @@
 import { prepareNativePublication, nativePublicationNoPostProof } from '../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { canonical, digest } from './proof.mjs';
 import { freshStamp, retainedServerAnswerCurrent } from './clock-skew.mjs';
-import { validateJobV2, subjectOfV2, scanEffectKeyV2, scanExternalIdV2, sameClaimGeneration, claimGeneration, makeJobV2, prBaseAcceptedV2, isTrainFrontJobV2, frontJobIdsV2 } from './job-v2.mjs';
+import { validateJobV2, SCANNER_ROLES_V2, subjectOfV2, scanEffectKeyV2, scanExternalIdV2, sameClaimGeneration, claimGeneration, makeJobV2, prBaseAcceptedV2, isTrainFrontJobV2, frontJobIdsV2 } from './job-v2.mjs';
 import { verifyResultV2 } from './proof-v2.mjs';
 import { admittedFactsMatchJobV2 } from './full-admission-v2.mjs';
 import { claimRolePublication, readRolePublication, rolePublicationKey } from './effect-journal.mjs';
@@ -48,6 +48,25 @@ const fresh = (facts, now) => retainedServerAnswerCurrent(facts)
   ?? (freshStamp(Date.parse(facts.observedAt), now) && Date.parse(facts.claimExpiresAt) > now);
 const requiredRefs = ['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef'];
 const SUBJECT_KEYS = ['baseSha', 'claimId', 'epoch', 'fence', 'headSha', 'pr', 'repo', 'sourceManifestSha256'];
+
+// What of Native's merge-slot observation a publication's authorization binding includes (the before/after comparison
+// of one publication, authorization_binding_changed).
+//   - A scanner role (gitleaks, trivy, contract-placement; stages 3, 5, 7): its result is a scan of the head's content and
+//     grants nothing about merging. Whether the claim is in the merge queue, at its head, or has lapsed out of it is
+//     stage 8's business (control-merge-slot, LIVE_ACTUAL_MERGE_SLOT_REQUIRED) and the merge slot's own check. Joining,
+//     leaving or lapsing during a publication must not revoke a scan, so the slot's state, its until and its observed
+//     state are not bound. What the observation says about WHICH slot and WHICH main tip it was read against stays
+//     bound (ref, tip): a main that moves under the publication still voids it, as before. Everything else bound by
+//     boundary() (subject, claim generation, execution policy, PR base, mode, Owner review, refs, principal, signer,
+//     definition) is untouched; the slot's shape is still required (full_admission_incomplete) and the claim lease
+//     and the Native admission itself are still judged as ever.
+//   - Any other role routed through this publisher keeps the whole slot in its binding (fail closed).
+// Same rule as §41.8 for stage 8 (slot by state, ref and tip, never its until), taken one step further because a scan
+// does not depend on the slot at all. Exported for tests.
+export function slotBindingFor(job, mergeSlot) {
+  if (!SCANNER_ROLES_V2.includes(job?.role)) return mergeSlot;
+  return { ref: mergeSlot?.ref ?? null, tip: mergeSlot?.tip ?? null };
+}
 
 // batchClaim: the sticky claim generation recorded by stage 1 for this batch (batch-claim-v2.mjs).
 // hostedVerifier: the installed hosted relay verifier (hosted-relay-v1/stage.mjs), for publishHosted only.
@@ -165,7 +184,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     // (for a batch that tests the head it is T anyway; a train front batch reads it as a fact).
     return { verified, native, packet, bindingSha256: digest({ subject: subjectOfV2(job), claim: claimGeneration(native.observedClaim), executionPolicy: native.executionPolicy, prBaseSha: pr.base.sha,
       ...(native.publicationRequired ? { guarded: native.guarded, publicationRequired: true, headAuthorizationId: native.headAuthorizationId } : {}),
-      mode: native.mode, mergeSlot: native.mergeSlot, ownerReview: native.ownerReview, refs: Object.fromEntries(requiredRefs.map(k => [k, facts[k]])),
+      mode: native.mode, mergeSlot: slotBindingFor(job, native.mergeSlot), ownerReview: native.ownerReview, refs: Object.fromEntries(requiredRefs.map(k => [k, facts[k]])),
       ciPrincipalBindingId: facts.ciPrincipalBindingId, signer: verified.signer, appId: definition.appId, name: definition.name }) };
   }
   // A settled relay publication, checked again before it is reported settled: the current hosted envelope's

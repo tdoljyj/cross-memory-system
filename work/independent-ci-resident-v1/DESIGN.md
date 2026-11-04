@@ -3860,3 +3860,16 @@ Windows 一侧也在受同一条链路的影响，但不是 WSL 乱跳的原因�
 
 不够，是缓解，不是修复。(1) 实测 Linux 与 Windows 的差在 100 s 内就走到 +2.0 s，而且只要上行排队还在，每 32 s 再加约 1.1 s；5 s 容差只有 2.5 倍余量，限速更紧或排队更深时会被超过，再放大容差等于放宽安全检查，不应该。(2) 时间类拒绝可重试只在时钟在两次尝试之间回到容差内时才有用；偏差持续时，重试 3 次后仍然失败，只是不再标成永久。(3) 这次 `SendIssue` 的拒收原因仍未证实（47.2），所以不能说时钟是它的原因；下一次同类失败会因为 `childError` 现在可见而被识别。要根治，必须做 47.7 的 1。
 
+## 48. 扫描发布（第 3、5、7 段）的授权绑定不再含合并槽状态（第 8 代；11-04 PR #992 的两次撤回）
+
+**缺陷。** `staged-check-publisher-v2.mjs#boundary` 的 `bindingSha256` 含整个 `native.mergeSlot`（`state`、`until`、`observed`……）。写检查前后各算一次，不同就 `stop('authorization_binding_changed', true)`，已发的检查被撤成 failure（`REVOKED`，`sideEffects` = 2：一次创建、一次撤销补丁），`PUBLICATION_REVOKED` 是 `clean-final / burn / new-commit`，整个 head 烧掉。认领在发布的几秒内加入或退出合并队列、续期或 touch 挪动了位子时钟、位子到期变 `missing`，都会让前后两次不同。扫描结果和合并槽没有关系：第 8 段（`control-merge-slot`）和 `kooyumi-merge-slot` 检查才需要它。
+
+**当初为什么放进去。** `git log -S`：`da843484`（10-19，“integrate reviewed independent checks”）把 v1 发布者的绑定做成“Native 这次观察到的全部授权事实”的快照；设计文档里没有任何一处把合并槽当作扫描发布的安全前提（扫描发布者没有 CI Binding 令牌，不读 holders，§41.5）。§41.8 已经对第 8 段和第 1 段做了同类改动（只比 `state`、`ref`、`tip`，不比 `until`、`claimExpiresAt`），理由相同；扫描发布者当时漏了。防“用过期合并授权发布”的是别处：Native 完整准入（认领 ACTIVE、租约未过、围栏、纪元、`admittedFactsMatchJobV2`）和 `fresh(...)` 租约检查，以及第 8 段自己的 `LIVE_ACTUAL_MERGE_SLOT_REQUIRED`；一个扫描检查绿不等于可以合并。
+
+**改动。** 扫描角色（`SCANNER_ROLES_V2`：gitleaks、trivy、contract-placement）的绑定里，合并槽只留 `{ref, tip}`（哪个槽、读的是 main 的哪个 tip），去掉 `state`、`until`、`observed`（`slotBindingFor`）。main 移动仍然作废。其余一律不动：subject、认领代次、执行策略、PR base、模式、Owner 审核、refs、CI 主体、签名者、检查定义、guarded 的 head 授权；槽的形状仍必须完整（`full_admission_incomplete`）；租约过期、Native 不再准入（`full_admission_not_proven`）照旧撤销。其他角色走到这个发布者时仍绑整个槽（fail closed）；第 8 段不变。
+
+**租约和合并槽过期的关系（残余）。** 槽“从不晚于认领租约”（`20261009080000`:60-69）：租约过期时槽也同时过期。如果某次“槽过期”其实是租约到期，发布仍会被拒——这是对的（`protected_lease_expired` / `lease_expired_*` / 准入失败），本改动不碰。
+
+**没有把撤回改成可重试（BACKOFF）。** 见任务回执：写后漂移时 GitHub 上已有一个 failure 检查（`sideEffects` ≥ 1），不可撤回，K(head, role) 与效果键也禁止重发，必须烧；写前漂移本来就是 `BLOCKED`、`sideEffects` 0、没有任何外部痕迹，而其原因（subject、认领、资格变化）是确定性的，等也不会变好；跨阶段重试需要保存签名结果、新增等待类和 Source/C# 边界改动，不在本次范围。
+
+测试：`test/scan-publish-merge-slot.test.mjs`（加入队列、退出队列、过期、仅 until 变化、不再需要等 7 种槽变化 × 3 个扫描角色都 `SETTLED`；其余每个绑定字段变化仍撤销；第 8 段的槽或队首变化仍撤销）。
