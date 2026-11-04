@@ -108,7 +108,8 @@ export const SUITE_COMMANDS = {
   'admission-self-tests': [{ cwd: '.', known: 'admission-self-tests', argv: ['node', '--test',
     'scripts/ci/clued-work-admission.test.mjs', 'scripts/ci/merge-admission-policy.test.mjs',
     'scripts/ci/merge-admission-policy-file.test.mjs', 'scripts/ci/clued-release-grant.test.mjs',
-    'scripts/runner/clued-runner-job-started.test.mjs', 'scripts/ci/clued-merge-slot-ci.test.mjs'] }],
+    'scripts/runner/clued-runner-job-started.test.mjs', 'scripts/ci/clued-merge-slot-ci.test.mjs',
+    'scripts/ci/pr-repush-preflight.test.mjs'] }],
   'selection': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-required-selection.test.mjs'] }],
   'clued-cloud': [
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'lint'] },

@@ -18,6 +18,14 @@ Every change reaches `main` through a merged pull request, whatever its size or 
 
 Claim the active Task with `clued_work_claim` before editing files, running an install, build or test, starting CI or opening a pull request ([agent contract](./protocol/agent/agent-contract.md) §1.7). Put `Clued-Work-Claim: <claim_id>` in the pull request body and as a trailer of the head commit, and add `Clued-Work-Scope: project:<id>` when the Task is not Global. Start from [.github/pull_request_template.md](./.github/pull_request_template.md). Keep the claim live until the pull request merges.
 
+If the claim lapsed and you claimed the Task again, both trailers still name the old claim, and the resident refuses the next head with `CLAIM_NOT_CURRENT`. Before every push under a claim the pull request did not carry before, check it with the live claim id (read-only `clued_work_verify` first). Run the script from a checkout of `main` (the parser it uses is that checkout's, and admission uses main's); `--head` is the full SHA of the branch head you are about to push, which only has to be in the same repository's object store:
+
+```bash
+node scripts/ci/pr-repush-preflight.mjs --repo <owner>/<name> --pr <n> --head $(git -C <branch checkout> rev-parse HEAD) --claim <claim_id> [--scope project:<id>]
+```
+
+`--scope` defaults to `global`, as a missing `Clued-Work-Scope` line does. Exit 0 means the body has a lower-case `Clued-Work-Claim` line admission can read naming that claim, its scope matches, and the head commit's trailers, if it has any, match too; exit 1 prints each fix; exit 2 means nothing was checked. Make the body edit before the push: editing it while the resident runs a batch of that head refuses the batch (`full_admission_claim_changed`). After amending the head commit, check again with the new SHA.
+
 The `kooyumi-work-admission` check judges each pull request by its layer and the Owner's state ([MergeAdmission v0.1](./development/contracts/execution-admission/MergeAdmission.v0.1.md) §3–§5; the table is [config/merge-admission-policy.json](./config/merge-admission-policy.json)). The `kooyumi-admission-verified` title shows both: `<VERDICT> [<state> · <layer> · reruns <n>]`.
 
 - **Layer**, the strictest of the pull request's paths: `protected` (next section); `docs`: `docs/**`, `development/contracts/**/*.md`, `development/authority-index/**/*.md`, root `*.md`, and `skills/**/*.md`; `code`: everything else.
