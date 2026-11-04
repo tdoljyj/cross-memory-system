@@ -81,7 +81,7 @@ $SeedNs='refs/clued-seed/';$SeedMetaContract='clued.independent-ci.bundle-seed-m
 # Used only while the last full (unseeded) fetch took at least this long; after a day it is measured again with one unseeded fetch.
 $SeedMinFullFetchSeconds=90;$SeedMetaMaxAgeSeconds=86400;$SeedLockStaleSeconds=1800;$SeedMaxPacks=12;$SeedMaxBytes=1073741824
 $SeedConfigKeys=@('core.repositoryformatversion','core.filemode','core.bare','core.symlinks','core.ignorecase','core.logallrefupdates')
-$seedUse=$false;$seedAttempt=$false;$seedBusy=$false
+$seedUse=$false;$seedAttempt=$false;$seedBusy=$false;$seedLockHeld=$false
 $seedReport=[ordered]@{enabled=$true;used=$false;reason=$null;discarded=$false;primeSeconds=$null;updated=$false;updateSkipped=$null;seedBytes=$null;error=$null}
 $stage='fixed-preflight';$created=@();$writesStarted=$false;$lastGit=$null;$attempts=1;$firstAttempt=$null;$failedAttempts=@();$refsDiffer=$null
 function Utc{return [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'",[Globalization.CultureInfo]::InvariantCulture)}
@@ -216,16 +216,23 @@ function Remove-Tree([string]$P){
 function Test-RealDir([string]$P){if(-not (Test-Path -LiteralPath $P -PathType Container)){return $false};return (((Get-Item -LiteralPath $P -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0)}
 # One writer at a time, never waited for: a lock held by someone else (or younger than half an hour) means "no seed this time".
 function Seed-Lock{
+ $f=$null
  try{$f=[IO.File]::Open($SeedLock,'CreateNew','Write','None')}
  catch [IO.IOException]{
-  $age=((Get-Date).ToUniversalTime()-(Get-Item -LiteralPath $SeedLock -Force).LastWriteTimeUtc).TotalSeconds
-  if($age -lt $SeedLockStaleSeconds){return $false}
-  Remove-Item -LiteralPath $SeedLock -Force;$f=[IO.File]::Open($SeedLock,'CreateNew','Write','None')
+  # The take-over of a stale lock is as best-effort as the rest: whatever goes wrong in it (the lock vanished, is held open, could not be
+  # removed, or someone else created it in between) means "busy", never an exception out of here.
+  try{
+   $age=((Get-Date).ToUniversalTime()-(Get-Item -LiteralPath $SeedLock -Force).LastWriteTimeUtc).TotalSeconds
+   if($age -lt $SeedLockStaleSeconds){return $false}
+   Remove-Item -LiteralPath $SeedLock -Force
+   $f=[IO.File]::Open($SeedLock,'CreateNew','Write','None')
+  }catch{return $false}
  }
  try{$b=(New-Object Text.UTF8Encoding($false)).GetBytes((Utc)+' pid='+$PID);$f.Write($b,0,$b.Length)}finally{$f.Dispose()}
+ $script:seedLockHeld=$true
  return $true
 }
-function Seed-Unlock{Remove-Item -LiteralPath $SeedLock -Force -ErrorAction SilentlyContinue}
+function Seed-Unlock{$script:seedLockHeld=$false;Remove-Item -LiteralPath $SeedLock -Force -ErrorAction SilentlyContinue}
 # $null when the seed has exactly the shape this script gives it: a real directory tree, no alternates, shallow file, grafts, gitfile
 # redirection, hooks, and a config of the plain bare-repository keys only (a seed's own config is read by git when it serves a fetch).
 function Seed-Shape-Problem{
@@ -247,16 +254,26 @@ function Seed-Shape-Problem{
  if($kept -lt 1){return 'SEED_CONFIG_REFUSED'}
  return $null
 }
+# Removes the seed. Only with the seed lock: a lock held by someone else (a build that is priming from or updating the seed right now) means
+# the seed is left alone ("discarded" stays false, the answer's error says why); this run does not use it either way.
 function Seed-Discard([string]$Why){
- $script:seedReport.discarded=$true;$script:seedReport.reason=$Why;$script:seedUse=$false
+ $script:seedUse=$false;$script:seedReport.reason=$Why
+ $took=$false
  try{
-  if(Test-Path -LiteralPath $SeedDir){
-   if(Test-RealDir $SeedDir){Remove-Tree $SeedDir}
-   elseif(Test-Path -LiteralPath $SeedDir -PathType Container){[IO.Directory]::Delete($SeedDir)}
-   else{[IO.File]::Delete($SeedDir)}
+  if(-not $script:seedLockHeld){
+   try{$took=Seed-Lock}catch{$took=$false}
+   if(-not $took){$script:seedReport.error='SEED_DISCARD_SKIPPED_LOCK_HELD_BY_ANOTHER';return}
   }
- }catch{try{[IO.Directory]::Move($SeedDir,(Join-Path $SeedRoot ('dead-'+[Guid]::NewGuid().ToString('N').Substring(0,8))))}catch{}}
- Remove-Item -LiteralPath $SeedMeta -Force -ErrorAction SilentlyContinue
+  $script:seedReport.discarded=$true
+  try{
+   if(Test-Path -LiteralPath $SeedDir){
+    if(Test-RealDir $SeedDir){Remove-Tree $SeedDir}
+    elseif(Test-Path -LiteralPath $SeedDir -PathType Container){[IO.Directory]::Delete($SeedDir)}
+    else{[IO.File]::Delete($SeedDir)}
+   }
+  }catch{try{[IO.Directory]::Move($SeedDir,(Join-Path $SeedRoot ('dead-'+[Guid]::NewGuid().ToString('N').Substring(0,8))))}catch{}}
+  Remove-Item -LiteralPath $SeedMeta -Force -ErrorAction SilentlyContinue
+ }finally{if($took){Seed-Unlock}}
 }
 # Advisory facts about the last unseeded fetch; unreadable or odd is "no measurement", never an error.
 function Seed-Meta-Read{

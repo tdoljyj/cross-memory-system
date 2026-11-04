@@ -13,7 +13,7 @@ foreach($name in @('Utc','Hash-Bytes','Hash-Text','Absent','Quote-Arg','Invoke-G
  $f=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -ceq $name});if($f.Count -ne 1){throw ('FUNCTION_MISSING:'+$name)};. ([scriptblock]::Create($f[0].Extent.Text))
 }
 # The fixed values exactly as the script assigns them.
-foreach($name in @('Common','NetworkSteps','RetryWithinSeconds','MaxStoreAttempts','SeedNs','SeedMetaContract','SeedMinFullFetchSeconds','SeedConfigKeys','seedUse','seedAttempt','seedBusy','seedReport')){
+foreach($name in @('Common','NetworkSteps','RetryWithinSeconds','MaxStoreAttempts','SeedNs','SeedMetaContract','SeedMinFullFetchSeconds','SeedConfigKeys','seedUse','seedAttempt','seedBusy','seedLockHeld','seedReport')){
  $s=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -ceq ('$'+$name)});if($s.Count -ne 1){throw ('ASSIGNMENT_MISSING:'+$name)};. ([scriptblock]::Create($s[0].Extent.Text))
 }
 $FixedCommon=[string[]]$Common
@@ -127,7 +127,7 @@ if($git){
    $script:FetchDir=Join-Path $script:Root 'fetch.git';$script:FetchDir2=Join-Path $script:Root 'fetch-2.git';$script:FetchDir3=Join-Path $script:Root 'fetch-3.git'
    $script:stalls=$Stalls;$script:calls=@();$script:created=@();$script:lastGit=$null;$script:stage='x';$script:attempts=1;$script:firstAttempt=$null;$script:failedAttempts=@()
    $script:Head=$c2;$script:Base=$c1;$script:Test=$c2
-   $script:seedUse=$false;$script:seedAttempt=$false;$script:seedBusy=$false;$script:seedReport=[ordered]@{enabled=$true;used=$false;reason=$null;discarded=$false;primeSeconds=$null;updated=$false;updateSkipped=$null;seedBytes=$null;error=$null}
+   $script:seedUse=$false;$script:seedAttempt=$false;$script:seedBusy=$false;$script:seedLockHeld=$false;$script:seedReport=[ordered]@{enabled=$true;used=$false;reason=$null;discarded=$false;primeSeconds=$null;updated=$false;updateSkipped=$null;seedBytes=$null;error=$null}
    $script:Clock=if($null -eq $Elapsed){[Diagnostics.Stopwatch]::StartNew()}else{[pscustomobject]@{Elapsed=[TimeSpan]::FromSeconds($Elapsed)}}
   }
   function Fetches{return @($script:calls|Where-Object{$_ -ceq 'fetch'}).Count}
@@ -220,7 +220,7 @@ if($git){
    $st=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -ceq ('$'+$name)});if($st.Count -ne 1){throw ('ASSIGNMENT_MISSING:'+$name)};$consts[$name]=$st[0].Right.Extent.Text}
   $SeedMetaMaxAgeSeconds=86400
   function Reset-Seed{
-   $script:seedUse=$false;$script:seedAttempt=$false;$script:seedBusy=$false
+   $script:seedUse=$false;$script:seedAttempt=$false;$script:seedBusy=$false;$script:seedLockHeld=$false
    $script:seedReport=[ordered]@{enabled=$true;used=$false;reason=$null;discarded=$false;primeSeconds=$null;updated=$false;updateSkipped=$null;seedBytes=$null;error=$null}
    if(Test-Path -LiteralPath $SeedRoot){Remove-Tree $SeedRoot}
   }
@@ -317,6 +317,17 @@ if($git){
   [IO.File]::WriteAllText($SeedLock,'old');(Get-Item -LiteralPath $SeedLock).LastWriteTimeUtc=[DateTime]::UtcNow.AddSeconds(-($SeedLockStaleSeconds+60))
   Yes ((Seed-Lock) -and (Test-Path -LiteralPath $SeedLock)) 'stale-lock-taken-over';Seed-Unlock;Yes (-not (Test-Path -LiteralPath $SeedLock)) 'lock-released'
   [IO.File]::WriteAllText($SeedLock,'young');Yes (-not (Seed-Lock)) 'young-lock-respected';Remove-Item -LiteralPath $SeedLock -Force
+  # review of gen8, finding 3: a stale lock that cannot be taken over (here: held open by someone) is "busy", not an exception; and a discard
+  # needs the lock: a seed whose lock another build holds is left alone, one nobody holds is removed (and the lock is released again)
+  [IO.File]::WriteAllText($SeedLock,'old');(Get-Item -LiteralPath $SeedLock).LastWriteTimeUtc=[DateTime]::UtcNow.AddSeconds(-($SeedLockStaleSeconds+60))
+  $hold=[IO.File]::Open($SeedLock,'Open','Read','None')
+  try{$got=$null;$threw=$false;try{$got=Seed-Lock}catch{$threw=$true};Yes ((-not $threw) -and ($got -eq $false) -and -not $seedLockHeld) 'stale-lock-not-removable-is-busy'}finally{$hold.Dispose()}
+  Remove-Item -LiteralPath $SeedLock -Force
+  Reset-Seed;New-Case @{} $null;$st=Fetch-Store;Seed-Update $st
+  [IO.File]::WriteAllText($SeedLock,'young');$seedReport.discarded=$false
+  Seed-Discard 'SEED_TEST';Yes ((Test-Path -LiteralPath $SeedDir) -and -not $seedReport.discarded -and $seedReport.error -ceq 'SEED_DISCARD_SKIPPED_LOCK_HELD_BY_ANOTHER' -and (Test-Path -LiteralPath $SeedLock) -and -not $seedUse) 'discard-needs-the-lock'
+  Remove-Item -LiteralPath $SeedLock -Force
+  Seed-Discard 'SEED_TEST';Yes ($seedReport.discarded -and -not (Test-Path -LiteralPath $SeedDir) -and -not (Test-Path -LiteralPath $SeedLock) -and -not $seedLockHeld) 'discard-takes-and-releases-the-lock'
 
   # S6. the retry rules with a seed. A stalled GitHub fetch of a seeded attempt: the retry is unseeded, the seed stays.
   Reset-Seed;New-Case @{} $null;$st=Fetch-Store;Seed-Update $st;Slow-Meta
