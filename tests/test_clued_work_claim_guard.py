@@ -256,6 +256,59 @@ class WorkClaimGuardTest(unittest.TestCase):
         ("Write-Host @'\ngit push\nnpm ci\n'@", None),
         ("git commit -m @'\nnote: git push\n'@", None),
         ("'unterminated; git push", "publish"),  # unparsed, so scanned as written, as Bash is
+        # PR #990 review: the command often sits behind an assignment, a cast or an Out-Null.
+        ("$out = git push 2>&1", "publish"),
+        ("$url = gh pr create --fill", "publish"),
+        ("$null = git push", "publish"),
+        ("$x=git push", "publish"),
+        ("$a += git push", "publish"),
+        ("${x} = git push", "publish"),
+        ("$script:x = git push", "publish"),
+        ("$env:O = git push", "publish"),
+        ("[string]$o = git push origin work", "publish"),
+        ("[string[]]$o = git.exe push 2>&1 | Out-String", "publish"),
+        ("$a = $b = git push", "publish"),
+        ("cd x; $o = git push", "publish"),
+        ("$o = & git push", "publish"),
+        ("$o = & 'C:\\Program Files\\Git\\cmd\\git.exe' push", "publish"),
+        ("$o = $(git push)", "publish"),
+        ("$o = (git push 2>&1)", "publish"),
+        ("[void](git push)", "publish"),
+        ("[void](gh pr create --fill)", "publish"),
+        ("git push | Out-Null", "publish"),
+        ("(git push) | Out-Null", "publish"),
+        ("git push *> $null", "publish"),
+        ("$o = npm.cmd test 2>&1", "spend"),
+        ("[void](npm ci)", "spend"),
+        (r"git --work-tree=C:\x push", "publish"),
+        (r"git --git-dir=C:\x\.git push", "publish"),
+        (r"git -C C:\x --no-pager push", "publish"),
+        (r'& "$env:ProgramFiles\Git\cmd\git.exe" push', "publish"),
+        (r"& $env:ProgramFiles\Git\cmd\git.exe push", "publish"),
+        (r"C:\Git\cmd\git.exe push", "publish"),
+        (r".\git.exe push", "publish"),
+        ("Start-Process git -ArgumentList 'push','origin','work' -Wait -NoNewWindow", "publish"),
+        ("Start-Process -FilePath git -ArgumentList 'push -u origin work'", "publish"),
+        ("Start-Process -FilePath git.exe -ArgumentList push -NoNewWindow", "publish"),
+        ("start git -ArgumentList push", "publish"),
+        ("saps gh -Args 'pr create --fill'", "publish"),
+        ("Start-Process gh -ArgumentList @('pr','create','--fill')", "publish"),
+        ("Start-Process git -Arg push -WorkingDirectory C:\\x", "publish"),
+        ("$x = 'git push'", None),
+        ("$x = \"git push\"", None),
+        ("$x = Get-Date", None),
+        ("$x = git status", None),
+        ("$p = 'a'; git status", None),
+        ("$env:PATH = \"C:\\x;\" + $env:PATH", None),
+        ("$o = git log --oneline -n 3", None),
+        ("'git push' | Out-File a.txt", None),
+        ('"git push" | clip', None),
+        ("'git push'", None),
+        ("switch ($x) { 'git push' { 1 } }", None),
+        ("Start-Process notepad", None),
+        ("Start-Process git -ArgumentList 'status'", None),
+        ("Start-Process git -ArgumentList $args", None),
+        ("Start-Process -FilePath 'C:\\Program Files\\App\\app.exe' -ArgumentList 'push'", None),
     )
 
     def test_powershell_commands_are_guarded_like_bash(self):
@@ -323,7 +376,23 @@ class WorkClaimGuardTest(unittest.TestCase):
                 ("echo ${env:ProgramFiles(x86)} @{a='b;c'}", "echo ${env:ProgramFiles(x86)} (a='b;c')"),
                 ("echo $(git push)", "echo $(git push)"),
                 ("echo “curly; git push”", 'echo "curly; git push"'),
-                ("echo ‘curly; git push’", "echo 'curly; git push'")):
+                ("echo ‘curly; git push’", "echo 'curly; git push'"),
+                # An assignment, a cast and a path are not the command: what runs is read.
+                ("$out = git push 2>&1", "git push 2>&1"),
+                ("$x=git push", "git push"),
+                ("[string]$o = git push origin work", "git push origin work"),
+                ("[string[]]$o += git.exe push", "git push"),
+                ("$a = $b = git push", "git push"),
+                ("cd x; ${y} = gh pr create --fill", "cd x; gh pr create --fill"),
+                ("$x = 'git push'", "'git push'"),
+                ("'git push' | Out-File a.txt", "'git push' | out-file a.txt"),
+                (r"git --work-tree=C:\x push", r"git --work-tree='C:\x' push"),
+                (r"git -C C:\x push", r"git -C 'C:\x' push"),
+                (r'& "$env:ProgramFiles\Git\cmd\git.exe" push', "& git push"),
+                ("Start-Process git -ArgumentList 'push','origin' -Wait", "git push origin"),
+                ("Start-Process -FilePath git.exe -ArgumentList 'push -u origin work'", "git push -u origin work"),
+                ("saps gh -Args @('pr','create')", "gh pr create"),
+                ("Start-Process git -ArgumentList $args", "Start-Process git -ArgumentList $args")):
             with self.subTest(command=command):
                 self.assertEqual(GUARD.powershell_command(command), expected)
         # What does not parse is scanned as written, as a Bash line is.
@@ -335,9 +404,11 @@ class WorkClaimGuardTest(unittest.TestCase):
     def test_powershell_classification_time_is_linear(self):
         unit = " ; ".join(("git commit -m 'a''b' -m \"c`\"d $(e 'f')\"", "Write-Host @'\nx | y ; z\n'@",
                            "if ($a) { & 'C:\\Program Files\\Git\\cmd\\git.exe' status } else { gh pr view 1 }",
-                           "foreach ($i in @{a='b'; c=(1,2)}) { Write-Output \"$i\" } # a ' comment"))
+                           "foreach ($i in @{a='b'; c=(1,2)}) { Write-Output \"$i\" } # a ' comment",
+                           "[string[]]$o = $a.b[0] += git push", "Start-Process git -ArgumentList 'push','x' -Wait"))
         command = (unit + "\n") * (5000 // (len(unit) + 1))
-        for text in (command, "'" + command, "(" * 5000, "<#" * 2500):
+        for text in (command, "'" + command, "(" * 5000, "<#" * 2500, "[" * 5000 + "$x = git push",
+                     "$x = " * 1000 + "git push", "[a[" * 2000 + "]$x ="):
             with self.subTest(text=text[:12]):
                 started = time.perf_counter()
                 powershell_kind(text)
@@ -978,7 +1049,12 @@ class PublishTrailerTest(unittest.TestCase):
         git = r"& 'C:\Program Files\Git\cmd\git.exe'"
         for n, command in enumerate(("git push -u origin work", "& git push origin work", "git.exe push origin HEAD",
                                      f"{git} -C '{self.project}' push origin work", f"cd '{self.project}'; git push",
-                                     "git status; git push; Write-Host done")):
+                                     "git status; git push; Write-Host done",
+                                     # PR #990 review: behind an assignment or a cast, or through Start-Process.
+                                     "$out = git push -u origin work 2>&1", "[string]$o = & git push origin work",
+                                     "$null = git push origin HEAD; $?", "$o = git.exe push origin work | Out-String",
+                                     "Start-Process git -ArgumentList 'push','origin','work' -Wait -NoNewWindow",
+                                     "Start-Process -FilePath git -ArgumentList 'push origin HEAD'")):
             with self.subTest(command=command):
                 result = self.powershell(command, session=f"ps-missing-{n}")
                 self.assertEqual(result.returncode, 2, result.stderr)
@@ -987,7 +1063,10 @@ class PublishTrailerTest(unittest.TestCase):
         self.commit(f"Fix the guard\n\n{CLAIM_LINE}\n{SCOPE_LINE}\n")
         for n, command in enumerate(("git push -u origin work", "& git push origin work", "GIT.EXE push origin HEAD",
                                      f"{git} -C '{self.project}' push origin work", f"cd '{self.project}'; git push",
-                                     "git push origin work 2>&1 | Out-Host")):
+                                     "git push origin work 2>&1 | Out-Host", "$out = git push -u origin work 2>&1",
+                                     "[string]$o = & git push origin work", "$null = git push origin HEAD; $?",
+                                     "Start-Process git -ArgumentList 'push','origin','work' -Wait -NoNewWindow",
+                                     "[void](git push origin work)")):
             with self.subTest(command=command):
                 result = self.powershell(command, session=f"ps-ok-{n}")
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -1015,7 +1094,9 @@ class PublishTrailerTest(unittest.TestCase):
         only_claim = f"@'\nSummary\n\n{CLAIM_LINE}\n'@"
         for n, command in enumerate((f"gh pr create --title x --body {only_claim}",
                                      f"& gh.exe pr edit 5 --body {only_claim}",
-                                     f"gh pr create --title x `\n  --body {only_claim}")):
+                                     f"gh pr create --title x `\n  --body {only_claim}",
+                                     f"$url = gh pr create --title x --body {only_claim}",
+                                     f"[string]$u = & gh pr create --fill --title x --body {only_claim} 2>&1")):
             with self.subTest(command=command):
                 result = self.powershell(command, session=f"ps-body-{n}")
                 self.assertEqual(result.returncode, 2, result.stderr)

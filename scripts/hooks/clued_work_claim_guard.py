@@ -465,7 +465,11 @@ def ps_scan(text: str, i: int, closer: str) -> tuple[str, int]:
                 end += 1
             run = text[i:end]
             if "\\" in run:  # a Windows path: one literal word, not an escape
-                run = run.replace("\\", "\\\\") if i == dollar else "'" + run + "'"
+                if i == dollar:
+                    run = run.replace("\\", "\\\\")
+                else:  # --work-tree=C:\x keeps its option name bare, so `git --work-tree=... push` still reads
+                    option, equals, path = run.partition("=") if run.startswith("-") and "=" in run else ("", "", run)
+                    run = option + equals + "'" + path + "'"
             out.append(run)
             i = end
     if closer:
@@ -473,37 +477,133 @@ def ps_scan(text: str, i: int, closer: str) -> tuple[str, int]:
     return "".join(out), i
 
 
+# `$out = git push`, `[string]$out += gh pr create`, `$env:X = ...`: a variable and an assignment
+# operator in front of the command. The command after it is what runs.
+ASSIGNMENT_PREFIX = re.compile(r"(?:\[(?:[^\[\]]|\[[^\[\]]*\])*\]\s*)*\$(?:[\w:]+|\{[^}]*\})(?:\.\w+|\[[^\[\]]*\])*\s*"
+                               r"(?:[-+*/%]|\?\?)?=[ \t]*")
+START_PROCESS = {"start-process", "saps", "start"}
+# Start-Process parameters (lower case): those that take the next word, and the switches.
+START_PROCESS_VALUES = ("-workingdirectory", "-redirectstandardoutput", "-redirectstandarderror",
+                        "-redirectstandardinput", "-verb", "-windowstyle", "-credential", "-environment")
+START_PROCESS_SWITCHES = ("-wait", "-nonewwindow", "-passthru", "-usenewenvironment", "-loaduserprofile")
+
+
+def strip_assignments(text: str) -> str:
+    """text without the `$variable =` that begins a statement, so the command it assigns is read."""
+    for _ in range(4):  # $a = $b = git push
+        segments = shell_segments(text)
+        if segments is None:
+            return text
+        cuts = []
+        for words, separator in segments:
+            if words and text[words[0][0]] in "$[":
+                found = ASSIGNMENT_PREFIX.match(text, words[0][0])
+                # `$o = & git push`: the call operator after the = is what follows
+                if found and (found.end() < words[-1][1] or (separator == "&" and found.end() >= words[-1][1])):
+                    cuts.append(found.span())
+        if not cuts:
+            return text
+        for start, end in reversed(cuts):
+            text = text[:start] + text[end:]
+    return text
+
+
+def command_name(text: str, word: tuple, after_call: bool) -> str | None:
+    """The program a command word names: its file name without directory or .exe, in lower case.
+
+    None for a word that is not a plain program name: a string with spaces that is not called with & is
+    a string expression (`'git push' | Out-File a.txt`), and a name built from a call or a quote is unknown.
+    """
+    start, end, plain, quotes = word
+    raw = text[start:end]
+    if len(quotes) == 1 and quotes[0] == [start, end - 1] and raw[0] in "'\"":
+        name = raw[1:-1]
+        if raw[0] == '"':
+            name = name.replace("\\\\", "\\")
+            if re.search(r"[\"`]|\$[({]", name):
+                return None
+        if not after_call and (raw[0] == '"' or re.search(r"\s", name) or not re.search(r"[\\/]", name)):
+            return None  # a string; only a '...' path without spaces is a bare word that ps_scan quoted
+    elif not quotes:
+        name = raw.replace("\\\\", "\\")
+        if re.search(r"[`'\"(){}]|\$\(", name):
+            return None
+    else:
+        return None
+    base = re.split(r"[\\/]", name)[-1].lower()
+    if base.endswith(EXECUTABLE_SUFFIXES):
+        base = base[:-4]
+    return base if base and "$" not in base else None
+
+
+def start_process_command(text: str, words: list[tuple]) -> str | None:
+    """`git ARGS` for `Start-Process git -ArgumentList ARGS ...` (or gh), else None.
+
+    ARGS may be one string ('push -u origin work'), a bare word, or an array ('push','origin').
+    """
+    program = arguments = None
+    i = 1
+    while i < len(words):
+        raw = text[words[i][0]:words[i][1]].lower()
+        if raw.startswith("-") and words[i][2]:  # a parameter may be abbreviated: -arg, -ArgumentList
+            if raw == "-args" or (len(raw) > 3 and "-argumentlist".startswith(raw)):
+                arguments = words[i + 1] if i + 1 < len(words) else None
+                i += 1
+            elif len(raw) > 1 and "-filepath".startswith(raw):
+                program = words[i + 1] if i + 1 < len(words) else None
+                i += 1
+            elif len(raw) > 2 and any(option.startswith(raw) for option in START_PROCESS_VALUES):
+                i += 1  # its value is not the program
+            elif not (len(raw) > 2 and any(option.startswith(raw) for option in START_PROCESS_SWITCHES)):
+                return None
+        elif program is None:
+            program = words[i]
+        else:
+            return None
+        i += 1
+    name = command_name(text, program, False) if program else None
+    if name not in ("git", "gh") or arguments is None:
+        return None
+    start, end, plain, quotes = arguments
+    raw = text[start:end]
+    if len(quotes) == 1 and quotes[0] == [start, end - 1] and raw[0] in "'\"":
+        value = raw[1:-1]
+    elif plain:
+        value = raw
+    elif re.search(r"[$`\\]", raw):
+        return None
+    elif raw.startswith("(") and raw.endswith(")"):  # @('push','origin')
+        value = re.sub(r"(['\"])([\w.:/@%+=-]*)\1", r"\2", raw[1:-1].replace(",", " "))
+    elif "," in raw:  # 'push','origin'
+        value = re.sub(r"(['\"])([\w.:/@%+=-]*)\1", r"\2", raw.replace(",", " "))
+    else:
+        return None
+    return f"{name} {value}"
+
+
 def normalize_commands(text: str) -> str:
     """text with each command word as the POSIX readers expect it: bare, lower case, no directory or .exe.
 
-    `& 'C:\\Program Files\\Git\\cmd\\git.exe' push` and `GIT.exe push` both become `git push`.
+    `& 'C:\\Program Files\\Git\\cmd\\git.exe' push` and `GIT.exe push` both become `git push`, and
+    `$out = git push`, which a POSIX shell reads as an assignment word, becomes `git push`.
     """
+    text = strip_assignments(text)
     segments = shell_segments(text)
     if segments is None:
         return text
     edits = []
-    for words, _ in segments:
+    for index, (words, _) in enumerate(segments):
         if not words:
             continue
-        start, end, plain, quotes = words[0]
-        raw = text[start:end]
-        if plain:
-            name = raw
-        elif len(quotes) == 1 and quotes[0] == [start, end - 1] and raw[0] in "'\"":
-            name = raw[1:-1]
-            if raw[0] == '"':
-                name = name.replace("\\\\", "\\")
-                if re.search(r"[$\"]", name):
-                    continue
-        else:
-            continue
-        base = name.replace("\\", "/").rsplit("/", 1)[-1].lower()
-        if base.endswith(EXECUTABLE_SUFFIXES):
-            base = base[:-4]
-        if base and base != raw:
-            edits.append((start, end, base))
-    for start, end, base in reversed(edits):
-        text = text[:start] + base + text[end:]
+        name = command_name(text, words[0], index > 0 and segments[index - 1][1] == "&")  # & is the call operator
+        if name in START_PROCESS:
+            replacement = start_process_command(text, words)
+            if replacement is not None:
+                edits.append((words[0][0], words[-1][1], replacement))
+        elif name is not None and name != text[words[0][0]:words[0][1]]:
+            edits.append((words[0][0], words[0][1], name))
+    for start, end, replacement in reversed(edits):
+        text = text[:start] + replacement + text[end:]
     return text
 
 
