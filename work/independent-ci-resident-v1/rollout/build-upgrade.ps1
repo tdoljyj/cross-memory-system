@@ -57,7 +57,7 @@ if (-not (Test-Path -LiteralPath $tree)) {
   New-Item -ItemType Directory $tree | Out-Null
   $tar = Join-Path $R ('t-' + $c8 + '.tar')
   & git -C $Repo archive --format=tar -o $tar $Commit; if ($LASTEXITCODE) { throw 'GIT_ARCHIVE_FAILED' }
-  & "$env:SystemRoot\System32\tar.exe" -xf $tar -C $tree; if ($LASTEXITCODE) { throw 'TAR_FAILED' }
+  & python -I -c "import sys,tarfile; tarfile.open(sys.argv[1]).extractall(sys.argv[2], filter='data')" $tar $tree; if ($LASTEXITCODE) { throw 'TAR_FAILED' }   # not Windows tar.exe: it cannot extract non-ASCII (Chinese) path names
   Remove-Item -LiteralPath $tar
 }
 & python -I (Join-Path $RI 'tools\tree.py') $Repo $Commit $tree; if ($LASTEXITCODE) { throw 'TREE_NOT_THE_COMMIT' }

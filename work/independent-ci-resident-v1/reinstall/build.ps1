@@ -47,7 +47,7 @@ if (-not (Test-Path -LiteralPath $tree)) {
   New-Item -ItemType Directory $tree | Out-Null
   $tar = Join-Path $R ('t-' + $c8 + '.tar')
   & git -C $Repo archive --format=tar -o $tar $Commit; if ($LASTEXITCODE) { throw 'GIT_ARCHIVE_FAILED' }
-  & "$env:SystemRoot\System32\tar.exe" -xf $tar -C $tree; if ($LASTEXITCODE) { throw 'TAR_FAILED' }   # Windows tar: Git's tar cannot take a C:\ path
+  & python -I -c "import sys,tarfile; tarfile.open(sys.argv[1]).extractall(sys.argv[2], filter='data')" $tar $tree; if ($LASTEXITCODE) { throw 'TAR_FAILED' }   # not Windows tar.exe: it cannot extract non-ASCII (Chinese) path names
   Remove-Item -LiteralPath $tar
 }
 # review 1-4: root runs files from this tree; an existing tree-<c8> is reused only when it is exactly the commit (Git blob ids, no extra file)
