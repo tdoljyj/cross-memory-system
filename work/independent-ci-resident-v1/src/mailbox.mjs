@@ -41,6 +41,12 @@ const REASON = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const ARCHIVE_DIR = /^(failed|archive)-[0-9a-z-]{1,120}$/;
 // The retention pass's archive names (retention.mjs#ARCHIVE_NAME).
 const PRUNE_NAME = /^(archive|completed|failed)-[0-9A-Za-z-]{1,90}$/;
+// Request deadlines of the two companion actions that are asked again after a timeout (DESIGN §44, §46). One place for the service
+// (service-ports.mjs, engine-windows.mjs) and the companion's own budget: the deadline must hold every attempt the companion may make.
+// archive-linux: two `start --wait` of 5 min, the archive-status reads (3 x 30 s) and slack. check-refs: a first ls-remote that ended
+// within 3 min, a second of at most 5 min, and slack.
+export const ARCHIVE_LINUX_REQUEST_MS = 14 * 60_000;
+export const CHECK_REFS_REQUEST_MS = 9 * 60_000;
 export const KINDS = Object.freeze(['build-bundle', 'prepare-workspaces', 'relay-stage', 'archive-linux', 'linux-quiescence', 'check-refs', 'archive-usage', 'pr-head', 'memory-ready',
   'archive-prune', 'rebuild-bundle']);
 // rebuild-bundle (Task 4012c1b9, DESIGN §37): the batch's second and last bundle (build-bundle.ps1 -Rebundle), asked only for a

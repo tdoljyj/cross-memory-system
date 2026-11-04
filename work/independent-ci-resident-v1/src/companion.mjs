@@ -290,6 +290,8 @@ export const PR_HEAD_TIMEOUT_MS = 30_000;
 // DESIGN §44 (Tasks 576231fa, 4d3aaa64, 8e1f07d3, the remainder): a wsl.exe call that ran out of time (25-45 s on a loaded host,
 // DESIGN §25) says nothing about the thing it was asked, so a READ-ONLY probe, or an idempotent root-tool action, is asked again
 // a bounded number of times before "no answer" is turned into a failure that HALTs. Never for an action with an effect.
+export const ARCHIVE_STATUS_RESERVE_MS = 100_000; // kept free for the archive-status reads (3 x 30 s) after a second archive start
+export const RETRY_MIN_ROOM_MS = 60_000; // a second attempt that would get less than this is not made
 export const READ_RETRIES = 2; // reads asked again after a read that timed out: three in all
 export const TERMINAL_NOANSWER_CAP_MS = 120_000; // FORMAL_WORKER_TERMINAL_UNCONFIRMED: the longest wait while the unit facts give no answer
 export const WSPREP_QUIET_WAIT_MS = 5 * 60_000; // after a timed-out workspace preparation: the longest wait for the Linux side to go quiet
@@ -400,8 +402,16 @@ export class Companion {
         // earlier verified result and moves nothing, clued-ci-resident-linux#earlier_result): a `start --wait` that only ran out of
         // time is asked once more, which joins a unit still running or replays the finished one. Verified still needs exit 0 and the
         // tool's own receipt.
-        if (timedOutGone(r)) await this.noteRetry('archive-start-wait', 1, 5 * 60_000, r);
-        if (timedOutGone(r)) r = await this.run(this.a.startWait('clued-ci-archive', `${request.batchId}_${request.reason}`), { timeoutMs: 5 * 60_000 });
+        // §46: only while the request's own deadline holds the second start and the status reads (ARCHIVE_LINUX_REQUEST_MS makes room
+        // for both; the clamp is for a request sent with less). The service no longer waits for an answer after the deadline.
+        if (timedOutGone(r)) {
+          const room = Date.parse(request.deadline) - this.clock() - ARCHIVE_STATUS_RESERVE_MS;
+          if (room >= RETRY_MIN_ROOM_MS) {
+            const ms = Math.min(5 * 60_000, room);
+            await this.noteRetry('archive-start-wait', 1, ms, r);
+            r = await this.run(this.a.startWait('clued-ci-archive', `${request.batchId}_${request.reason}`), { timeoutMs: ms });
+          }
+        }
         const s = await this.runRead(this.a.archiveStatus(`${request.batchId}_${request.reason}`), { timeoutMs: 30_000 }, 'archive-status');
         const v = s.code === 0 ? json(s.stdout) : null;
         const verified = r.code === 0 && v?.verified === true && typeof v.directory === 'string';
@@ -413,13 +423,17 @@ export class Companion {
         // §44: the gate is one read-only ls-remote (networkWrite false). Only a definite answer (unchanged, or changed) ends it; a read
         // that got none (git's low-speed limit, a refused proxy, a timeout) is asked once more, when the first did not take long. Two
         // reads without an answer are REMOTE_REFS_UNAVAILABLE as before (the engine then burns the head: REFS_GATE_UNCONFIRMED).
-        let v = null, r = null;
+        let v = null, r = null, room = 5 * 60_000;
         for (let attempt = 1; attempt <= 2; attempt += 1) {
           const began = this.clock();
-          r = await this.run(this.a.checkRefs(request.batchId), { timeoutMs: 5 * 60_000 });
+          r = await this.run(this.a.checkRefs(request.batchId), { timeoutMs: room });
           v = json(r.stdout);
           if ((r.code === 0 && v?.status === 'REMOTE_REFS_UNCHANGED') || v?.status === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE') break;
           if (r.tree === 'unconfirmed' || this.clock() - began > CHECK_REFS_SECOND_TRY_MAX_MS) break;
+          // §46: the second try gets what is left of the request's deadline (CHECK_REFS_REQUEST_MS makes room for a full one), and
+          // none when too little is left.
+          room = Math.min(5 * 60_000, Date.parse(request.deadline) - this.clock() - 10_000);
+          if (room < RETRY_MIN_ROOM_MS) break;
           await this.noteRetry('check-refs', attempt, this.clock() - began, r);
         }
         if (r.code === 0 && v?.status === 'REMOTE_REFS_UNCHANGED') return { ok: true, code: null };

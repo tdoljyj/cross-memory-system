@@ -25,12 +25,15 @@ test('build-bundle: the low-speed window leaves room for the retry inside the co
   const wait = Number(companion.match(/case 'build-bundle':[\s\S]*?timeoutMs: (\d+) \* 60_000/)[1]) * 60;
   assert.equal(low, 300);
   assert.ok(low * 2 <= win, 'a dead first attempt is given up well inside the retry window');
-  // the second attempt starts before `win`, so it has more than wait - win; at 120 KB/s one 64 MB transfer takes ~533 s
-  assert.ok(wait - win >= 2 * 533, 'a retry can still finish one complete slowest-rate transfer with a stall in it');
+  // at 120 KB/s one 64 MB transfer takes ~533 s. A first attempt that stalls at the very end of it is given up `low` seconds
+  // later and must still be inside the window (review of gen7: with 600 it was not, and no retry followed).
+  assert.ok(533 + low <= win, 'a stall at the end of the slowest complete transfer still leaves a retry');
+  // the second attempt starts before `win`, so it has more than wait - win: one complete slowest-rate transfer plus one stall
+  assert.ok(wait - win >= 533 + low, 'a retry can still finish one complete slowest-rate transfer with a stall in it');
 });
 
-test('build-bundle: one retry of the network steps, in a second fresh store, only in the first 10 minutes', () => {
-  assert.ok(text.includes("$NetworkSteps=@('fetch','ls-remote','fetch-reviewed','fetch-test');$RetryWithinSeconds=600;$MaxStoreAttempts=3"));
+test('build-bundle: one retry of the network steps, in a second fresh store, only in the first 15 minutes', () => {
+  assert.ok(text.includes("$NetworkSteps=@('fetch','ls-remote','fetch-reviewed','fetch-test');$RetryWithinSeconds=900;$MaxStoreAttempts=3"));
   assert.ok(text.includes("$FetchDir2=Join-Path $Root 'fetch-2.git'"));
   assert.ok(text.includes('try{return Build-Store $dirs[$n]}'));
   assert.ok(text.includes("$dirs=@($FetchDir,$FetchDir2,$FetchDir3);$networkRetried=$false"));
@@ -49,7 +52,7 @@ test('build-bundle: the main block reads no variable that only Build-Store sets 
 });
 
 // 2026-11-04 (PR #990): a push between the fetch and the ls-remote made the fetched refs differ from ls-remote. Only that
-// one check (right after the full fetch) may start a new attempt, at most two more, in the same first 10 minutes; the other
+// one check (right after the full fetch) may start a new attempt, at most two more, in the same first 15 minutes; the other
 // FETCHED_REFS_DIFFER_FROM_LS_REMOTE checks and every other refusal stay final. Behaviour: test-build-bundle.ps1.
 test('build-bundle: only the first refs-vs-ls-remote check can start a new attempt, at most 3 attempts in all', () => {
   const store = text.slice(text.indexOf('function Build-Store'), text.indexOf('function Retry-Allowed'));

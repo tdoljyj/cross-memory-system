@@ -23,6 +23,7 @@ import { ABORTABLE_IN_FLIGHT, LINUX_MEMORY_NOT_READY } from './classify.mjs';
 import { pinnedNodeProfile, validateNodeProfile } from './node-profile.mjs';
 import { validateRoleProbeFact } from './role-probe.mjs';
 import { RELAY_TIMEOUT_MS } from './companion.mjs';
+import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS } from './mailbox.mjs';
 import { REVOCATION_STAGE, REVOCATION_RUN_MS, REVOCATION_PENDING_STATE, REVOCATION_RUN_ID,
   validateRevocationFacts,validateRevocationQualification } from './revocation-maintenance.mjs';
 import { RUN_MODES, TRAIN_RUN_INPUT_FIELDS, validateTrainRunInput } from './train.mjs';
@@ -453,7 +454,7 @@ export class WindowsEngine {
   }
 
   async archiveLinux(batch, reason) {
-    const answer = await this.companionMailbox.await(await this.companionMailbox.send('archive-linux', { batchId: batch.batchId, reason }, 6 * 60_000), this.sleep);
+    const answer = await this.companionMailbox.await(await this.companionMailbox.send('archive-linux', { batchId: batch.batchId, reason }, ARCHIVE_LINUX_REQUEST_MS), this.sleep);
     return { verified: answer?.ok === true && answer.verified === true, directory: answer?.directory ?? null };
   }
 
@@ -681,7 +682,7 @@ export class WindowsEngine {
     // Lesson b29: no push between the bundle and the first scanner stage. A moved ref is a clean,
     // transient refusal before anything ran (eligible for the automatic attempt 2).
     if (firstLinux) {
-      const refs = await this.companionMailbox.await(await this.companionMailbox.send('check-refs', { batchId: batch.batchId }, 6 * 60_000), this.sleep);
+      const refs = await this.companionMailbox.await(await this.companionMailbox.send('check-refs', { batchId: batch.batchId }, CHECK_REFS_REQUEST_MS), this.sleep);
       if (refs?.ok !== true) {
         // Only an explicit "refs moved" answer is the transient REMOTE_REFS_CHANGED_SINCE_BUNDLE; no answer or
         // anything else is REFS_GATE_UNCONFIRMED, clean but final: never an attempt-2 code (PR-A review MINOR 5).

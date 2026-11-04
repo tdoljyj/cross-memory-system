@@ -42,11 +42,11 @@ Refuse {Reviewed-Commits ($toml+"# clued-reviewed-finding: {`"fingerprint`":`"$(
 # Stalled transfers (lesson #916): every git call carries the low-speed abort, and only an early network failure is retried.
 $i=[Array]::IndexOf($FixedCommon,'http.lowSpeedLimit=1000');Yes ($i -gt 0 -and $FixedCommon[$i-1] -ceq '-c') 'common-low-speed-limit'
 $i=[Array]::IndexOf($FixedCommon,'http.lowSpeedTime=300');Yes ($i -gt 0 -and $FixedCommon[$i-1] -ceq '-c') 'common-low-speed-time'
-Yes ((@($NetworkSteps)-join '|') -ceq 'fetch|ls-remote|fetch-reviewed|fetch-test' -and $RetryWithinSeconds -eq 600 -and $MaxStoreAttempts -eq 3) 'retry-constants'
+Yes ((@($NetworkSteps)-join '|') -ceq 'fetch|ls-remote|fetch-reviewed|fetch-test' -and $RetryWithinSeconds -eq 900 -and $MaxStoreAttempts -eq 3) 'retry-constants'
 function Step([string]$l,[int]$x){return [ordered]@{label=$l;exitCode=$x;stderrChars=1}}
 foreach($l in @('fetch','ls-remote','fetch-reviewed','fetch-test')){Yes (Retry-Allowed 'GIT_STEP_FAILED' (Step $l 128) 61) ('retry-'+$l)}
-Yes (Retry-Allowed 'GIT_STEP_FAILED' (Step 'fetch' 128) 599.9) 'retry-just-in-time'
-Yes (-not (Retry-Allowed 'GIT_STEP_FAILED' (Step 'fetch' 128) 600)) 'no-retry-too-late'
+Yes (Retry-Allowed 'GIT_STEP_FAILED' (Step 'fetch' 128) 899.9) 'retry-just-in-time'
+Yes (-not (Retry-Allowed 'GIT_STEP_FAILED' (Step 'fetch' 128) 900)) 'no-retry-too-late'
 foreach($l in @('init-bare','cat-file','source-gitleaks-toml','reviewed-closure','for-each-ref','test-cat-file','test-parents','for-each-ref-3')){Yes (-not (Retry-Allowed 'GIT_STEP_FAILED' (Step $l 128) 61)) ('no-retry-'+$l)}
 foreach($r in @('REMOTE_MAIN_BASE_CHANGED','FETCHED_REFS_DIFFER_FROM_LS_REMOTE','GIT_START_UNCONFIRMED','FIXED_BUNDLE_BUILD_UNCONFIRMED')){Yes (-not (Retry-Allowed $r (Step 'fetch' 128) 61)) ('no-retry-'+$r)}
 Yes (-not (Retry-Allowed 'GIT_STEP_FAILED' $null 61)) 'no-retry-without-step'
@@ -58,8 +58,8 @@ Yes ((Ref-Diff (Ref-Map "$a`trefs/heads/main`n" "`t" $true) (New-RefMap)).count 
 $many=New-RefMap;foreach($x in 1..12){$many['refs/heads/b'+('{0:d2}' -f $x)]=$a};$d1=Ref-Diff $many (New-RefMap);Yes ($d1.count -eq 12 -and @($d1.refs).Count -eq 8 -and $d1.refs[0] -ceq 'refs/heads/b01') 'ref-diff-capped'
 Yes ((Ref-Diff $m $m).count -eq 0) 'ref-diff-equal'
 Yes (Race-Retry-Allowed 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' $d0 61) 'race-retry'
-Yes (Race-Retry-Allowed 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' $d0 599.9) 'race-retry-just-in-time'
-Yes (-not (Race-Retry-Allowed 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' $d0 600)) 'no-race-retry-too-late'
+Yes (Race-Retry-Allowed 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' $d0 899.9) 'race-retry-just-in-time'
+Yes (-not (Race-Retry-Allowed 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' $d0 900)) 'no-race-retry-too-late'
 Yes (-not (Race-Retry-Allowed 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' $null 61)) 'no-race-retry-unrecorded'
 foreach($r in @('REMOTE_MAIN_BASE_CHANGED','GIT_STEP_FAILED','EXACT_REVIEWED_REF_SET_REQUIRED','HEAD_BASE_SOURCE_COMMIT_MISSING')){Yes (-not (Race-Retry-Allowed $r $d0 61)) ('no-race-retry-'+$r)}
 # a real v2 bundle from a throwaway local repository
@@ -155,7 +155,7 @@ if($git){
   Refused-With {Fetch-Store} 'GIT_STEP_FAILED' 'second-failure-final'
   Yes ($attempts -eq 2 -and (Fetches) -eq 2 -and $stage -ceq 'fetch-all-heads-and-tags' -and $lastGit.label -ceq 'fetch') 'never-a-third-attempt'
   # 5. a stall after the retry window: no second attempt
-  New-Case @{fetch=1} 600
+  New-Case @{fetch=1} 900
   Refused-With {Fetch-Store} 'GIT_STEP_FAILED' 'late-failure-final'
   Yes ($attempts -eq 1 -and $null -eq $firstAttempt -and -not (Test-Path -LiteralPath $FetchDir2)) 'late-failure-not-retried'
   # 6. a refusal of the script's own checks is never retried (here: main is not the descriptor's base)
@@ -192,7 +192,7 @@ if($git){
   Refused-With {Fetch-Store} 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' 'race-three-times-final'
   Yes ($attempts -eq 3 -and (Fetches) -eq 3 -and (@($calls|Where-Object{$_ -ceq 'ls-remote'}).Count) -eq 3 -and $stage -ceq 'fetched-store-readback' -and $refsDiffer.count -eq 1) 'race-never-a-fourth-attempt'
   # after the window: no new attempt
-  New-Case @{} 600;$races=1
+  New-Case @{} 900;$races=1
   Refused-With {Fetch-Store} 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' 'race-late-final'
   Yes ($attempts -eq 1 -and $null -eq $firstAttempt -and -not (Test-Path -LiteralPath $FetchDir2)) 'race-late-not-retried'
   # every other check is unchanged: after the race, the new attempt still refuses a main that is not the base

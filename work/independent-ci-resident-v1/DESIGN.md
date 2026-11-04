@@ -3770,3 +3770,29 @@ wsl.exe 一次调用在负载高时要 25–45 秒（§25、§26）。companion 
 ### 45.5 测试与验证
 
 本节没有改运行代码，所以没有新增测试。第 7 代基线在本工作树上重跑：常驻套件 802 个测试 / 796 pass / 0 fail / 6 skipped；`independent-ci-v1` 套件 517 个测试 / 516 pass / 1 fail，失败的是 `resident-v2-bridge.test.mjs` 的 “issuer: an answer that would be late…”（`BRIDGE_BYTE_BOUND`），**两套同时跑时出现，单独连跑三次均 36/36 通过**，是负载下的时间敏感测试，与本节无关。两套**顺序**重跑的最终数字：常驻套件 802 / 796 pass / 0 fail / 6 skipped；`independent-ci-v1` 套件 517 / 517 pass / 0 fail。
+
+## 46. 第 7 代独立审核的两条建议修（Decision `4f5f35d3`：发现的缺陷全部修掉）
+
+审核对 §44 与 `build-bundle.ps1` 的低速窗口给出 PASS-WITH-FIXES，两条建议都在本节修掉。
+
+### 46.1 重问必须装得进请求自己的期限（`archive-linux`、`check-refs`）
+
+- **缺陷**：§44 让 `archive-linux` 的 `start --wait` 超时后再启动一次，每次 5 分钟；服务侧这个请求的期限只有 6 分钟（`service-ports.mjs` 的 `TIMEOUTS` 与 `engine-windows.mjs#archiveLinux` 各写死一份）。第一次超时已用满 5 分钟，第二次启动和状态读到点时服务早已按“没有答案”走 `FAILURE_ARCHIVE_UNCONFIRMED` HALT，重问没有减少任何一次 HALT，还白占约 11 分钟的 companion 通道。`check-refs` 同形：第一次读至多 3 分钟时才问第二次，第二次至多 5 分钟，合计 8 分钟，请求期限也是 6 分钟。
+- **期限只在一处定**：`mailbox.mjs` 导出 `ARCHIVE_LINUX_REQUEST_MS` = 14 分钟（两次 5 分钟的启动 + 3 次 30 秒的状态读 + 余量）和 `CHECK_REFS_REQUEST_MS` = 9 分钟（至多 3 分钟的第一次 + 5 分钟的第二次 + 余量）。服务端口和引擎都用它们，不再各写一份 6 分钟。这两个动作只出现在收尾与第 2 段前的 refs 门，多等几分钟不碰任何新的写动作。
+- **companion 自己再按请求期限卡一道**（防御：按更短期限发来的请求，包括升级中新旧版本交错时）：`archive-linux` 的第二次启动只在“期限 − 现在 − `ARCHIVE_STATUS_RESERVE_MS`（100 秒，留给状态读）”不少于 `RETRY_MIN_ROOM_MS`（60 秒）时才做，超时取 5 分钟与剩余的较小者；`check-refs` 的第二次读取同理，留 10 秒余量。剩余不够就不做，没做的重问也不写 `retry` 日志。结论不变：没有定论的仍是 `LINUX_ARCHIVE_UNCONFIRMED` / `REMOTE_REFS_UNAVAILABLE`，头仍然烧掉。
+- **未放宽任何检查**：`verified` 仍要退出码 0 加工具自己的回执；第二次启动仍只重放同一实例的既有结果（幂等）。
+
+### 46.2 低速窗口放宽后重试窗口没跟着放宽（`build-bundle.ps1`）
+
+- **缺陷**：`http.lowSpeedTime` 放宽到 300 秒后，`RetryWithinSeconds` 仍是 600。限速下一次完整传输要 213–533 秒，在传输末尾（约 480–533 秒）卡死的第一次尝试要到约 780–833 秒才失败，已过 600 秒窗口，不再重试，直接失败。
+- **改动**：`RetryWithinSeconds` 600 → 900（15 分钟）。最慢速率下末尾卡死也在 533 + 300 = 833 秒内失败，仍在窗口内；第二次尝试至少还有 15 分钟（companion 等 30 分钟），够一次最慢的完整传输加一次卡顿（833 秒）。窗口仍是有界的，不是无限重试；最多一次整库重做的规则（`$MaxStoreAttempts`、`FETCHED_REFS_DIFFER_FROM_LS_REMOTE` 的重试）不变。
+- **测试**：`test-build-bundle.ps1` 的常量、“刚好在窗口内 / 窗口外”的边界改为 900；`resident-v2-build-bundle.test.mjs` 钉住常量，并新增“最慢完整传输 + 低速窗口 ≤ 重试窗口”和“30 分钟 − 重试窗口 ≥ 最慢传输 + 低速窗口”。
+
+### 46.3 测试
+
+- `test/request-deadline.test.mjs`（4 个）：两个期限只在 `mailbox.mjs` 定且服务/引擎使用；真实期限下两次启动都超时仍在期限内回答；6 分钟、9 分钟与刚好够/差 1 毫秒的期限下第二次启动的有无与超时；`check-refs` 的第二次读取的超时与“剩余不够就不读”。
+- 安装：与 §44 一起随第 7 代的修订装；Source 里只有 `build-bundle.ps1` 变了。
+
+### 46.4 一个测试的偶发失败也一并修掉
+
+`issuer-refs-transient.test.mjs` 的 “a slow refs collection” 在负载下偶发失败：测试把 `Date.now` 加偏移 35 秒来模拟慢收集，而测试自己的 `waitFor`（等 Linux 侧文件）也用被偏移的 `Date.now` 当期限，Linux 侧文件晚几毫秒写出时等待立即到期。`waitFor` 改用模块加载时取下的真实时钟。生产代码没有改。

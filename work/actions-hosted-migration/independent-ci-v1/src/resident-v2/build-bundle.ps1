@@ -67,12 +67,13 @@ $Common=@('-c','core.hooksPath=C:/nonexistent-clued-hooks','-c','core.fsmonitor=
   '-c','fetch.writeCommitGraph=false','-c','protocol.allow=never','-c','protocol.https.allow=always','-c','init.templateDir=','-c','advice.defaultBranchName=false',
   '-c','http.lowSpeedLimit=1000','-c','http.lowSpeedTime=300')
 # The steps that talk to GitHub. A full build takes 40-283 s (receipts of 2026-10-23); the companion waits 30 minutes
-# (companion.mjs build-bundle). A retry starts only within the first 10 of them, so the second attempt has at least
-# 20 minutes, twice what the first one can have used. A transfer that stays just above the low-speed limit is still
-# not bounded: nothing here kills git. Under the 2026-11-04 throttle (120-300 KB/s, 64 MB: one transfer is 213-533 s) a dead
-# connection is given up after the 300 s low-speed window, so a first attempt that dies still dies inside the 600 s retry
-# window, and the second one has the other 20+ minutes: one complete transfer at the slowest rate, two at the fastest.
-$NetworkSteps=@('fetch','ls-remote','fetch-reviewed','fetch-test');$RetryWithinSeconds=600;$MaxStoreAttempts=3
+# (companion.mjs build-bundle). A retry starts only within the first 15 of them, so the second attempt has at least
+# 15 minutes. A transfer that stays just above the low-speed limit is still not bounded: nothing here kills git. Under
+# the 2026-11-04 throttle (120-300 KB/s, 64 MB: one transfer is 213-533 s) a dead connection is given up after the
+# 300 s low-speed window. A first attempt that stalls as late as the end of the slowest complete transfer (533 s) therefore
+# fails at about 833 s, still inside the 900 s retry window (it was 600 s, which that stall missed: no retry at all),
+# and the second attempt has the rest of the 30 minutes: one complete transfer at the slowest rate plus one stall.
+$NetworkSteps=@('fetch','ls-remote','fetch-reviewed','fetch-test');$RetryWithinSeconds=900;$MaxStoreAttempts=3
 $Clock=[Diagnostics.Stopwatch]::StartNew()
 # The persistent seed. Under bundles\ so that it inherits bundles\'s ACL (Owner modify, resident read): installing it needs no ACL change.
 $SeedRoot=Join-Path $Resident 'bundles\_seed';$SeedDir=Join-Path $SeedRoot 'seed.git';$SeedNew=Join-Path $SeedRoot 'seed-new.git';$SeedLock=Join-Path $SeedRoot 'seed.lock';$SeedMeta=Join-Path $SeedRoot 'seed-meta.json'

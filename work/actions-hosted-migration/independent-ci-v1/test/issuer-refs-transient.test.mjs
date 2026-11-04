@@ -124,8 +124,11 @@ async function put(root, name, bytes) {
   await fs.writeFile(path.join(root, 'incoming', `${name}.json`), bytes, { flag: 'wx' });
   await fs.writeFile(path.join(root, 'incoming', `${name}.ready.json`), canonical({ bytes: bytes.length, contract: 'clued.independent-ci.complete-public-file/1', sha256: sha(bytes) }), { flag: 'wx' });
 }
+// The test's own wait runs on the real clock: a test that skews Date.now (review M2: +35 s inside the first collection) must not make
+// this wait expire when the Linux side's file is merely a few milliseconds late (the 2026-11-04 flake of "a slow refs collection").
+const REAL_NOW = Date.now.bind(Date);
 async function waitFor(file, ms = 8000) {
-  for (const until = Date.now() + ms; ;) { try { return await fs.readFile(file); } catch (e) { if (e.code !== 'ENOENT' || Date.now() > until) throw e; } await new Promise(r => setTimeout(r, 50)); }
+  for (const until = REAL_NOW() + ms; ;) { try { return await fs.readFile(file); } catch (e) { if (e.code !== 'ENOENT' || REAL_NOW() > until) throw e; } await new Promise(r => setTimeout(r, 50)); }
 }
 const exists = file => fs.lstat(file).then(() => true, () => false);
 
