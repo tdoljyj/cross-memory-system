@@ -62,7 +62,7 @@ test('build-bundle: only the first refs-vs-ls-remote check can start a new attem
   const retry = text.slice(text.indexOf('function Race-Retry-Allowed'), text.indexOf('try{\n $id='));
   assert.ok(retry.includes("$Reason -ceq 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' -and $null -ne $Differ -and $ElapsedSeconds -lt $RetryWithinSeconds"));
   assert.ok(retry.includes('$network=(-not $networkRetried) -and (Retry-Allowed $reason $script:lastGit $elapsed)'));
-  assert.ok(retry.includes('if($n -ge ($MaxStoreAttempts-1) -or -not ($race -or $network)){throw}'));
+  assert.ok(retry.includes('if($n -ge ($MaxStoreAttempts-1) -or -not ($race -or $network -or $seedFell)){throw}'));
   // the checks the retry must not touch
   for (const code of ['REMOTE_MAIN_BASE_CHANGED', 'HEAD_BASE_SOURCE_COMMIT_MISSING', 'REMOTE_REF_TARGET_TYPE_UNSUPPORTED', 'TRUSTED_REVIEW_SOURCE_CHANGED', 'EXACT_REVIEWED_REF_SET_REQUIRED']) {
     assert.ok(store.includes(`throw '${code}'`), code);
@@ -82,4 +82,64 @@ test('build-bundle: S != H is fetched, checked and bundled; the S = H guard is g
   assert.ok(store.includes("throw 'TEST_COMMIT_PARENTS_REQUIRED'"));
   assert.ok(text.includes("'--glob=refs/reviewed/*','--glob=refs/clued-test/*'"));
   for (const field of ['testSha=$Test', 'testRefCount=$header.test.Count', 'testRefListSha256=(Ref-List-Sha $header.test)']) assert.ok(text.includes(field), field);
+});
+
+// The persistent seed (DESIGN 10.1, tier 2). Behaviour: test-build-bundle.ps1 (damaged, hostile and busy seeds, the update, the
+// whole script as a process). This pins what makes it safe on any host: the seed is a cache that can add an attempt and never a
+// refusal, it is only ever read through a local fetch into a new bare repository, and it never reaches the receipt or the bundle.
+test('build-bundle: the seed lives under bundles (bundles ACL, no install change) and its numbers are fixed', () => {
+  assert.ok(text.includes("$SeedRoot=Join-Path $Resident 'bundles\\_seed';$SeedDir=Join-Path $SeedRoot 'seed.git'"));
+  assert.ok(text.includes('$SeedMinFullFetchSeconds=90;$SeedMetaMaxAgeSeconds=86400;$SeedLockStaleSeconds=1800;$SeedMaxPacks=12;$SeedMaxBytes=1073741824'));
+  assert.ok(text.includes("$SeedConfigKeys=@('core.repositoryformatversion','core.filemode','core.bare','core.symlinks','core.ignorecase','core.logallrefupdates')"));
+});
+
+test('build-bundle: a seeded attempt is a fresh bare repository primed by a local fetch, the seed refs are dropped, and every check follows unchanged', () => {
+  const store = text.slice(text.indexOf('function Build-Store'), text.indexOf('function Retry-Allowed'));
+  // fresh store first, then the seed, then GitHub, then the seed's refs are gone, then the (unchanged) ref/ls-remote checks
+  const order = ["init','--bare'", 'Seed-Prime $gd', "Invoke-Git 'fetch'", 'Seed-Drop-Refs $Dir $gd', "Invoke-Git 'ls-remote'", 'Same-Map $local $remote'].map(k => store.indexOf(k));
+  assert.ok(order.every(i => i >= 0) && order.every((v, i) => i === 0 || v > order[i - 1]), String(order));
+  assert.ok(text.includes("'+refs/heads/*:'+$SeedNs+'heads/*'") && text.includes("$SeedNs='refs/clued-seed/'"));
+  // the seed is fetched as a local path with the local protocol allowed for that one call only, never added to $Common
+  const common = text.match(/^\$Common=@\(([\s\S]*?)\)\r?$/m)[1];
+  assert.doesNotMatch(common, /protocol\.file/);
+  assert.ok(text.includes("'-c','protocol.file.allow=always',$Gd,'fetch'"));
+  // no alternates, no clone --local, no hard links, no shared objects: objects only arrive through fetch
+  for (const bad of ['--shared', '--local', '--reference', 'alternates=', 'objects/info/alternates', 'core.sharedRepository']) assert.ok(!text.includes(bad), bad);
+  // the seed is never trusted for its config, location type or contents of hooks
+  for (const k of ['SEED_PATH_NOT_REAL_DIRECTORY', 'SEED_UNEXPECTED_ENTRY', 'SEED_HOOKS_PRESENT', 'SEED_CONFIG_REFUSED', 'SEED_LAYOUT_REFUSED']) assert.ok(text.includes(`'${k}'`), k);
+});
+
+test('build-bundle: a seed can add an attempt but never a refusal: no seeded last attempt, SEED_UNUSABLE is retried unseeded, a GIT_STEP_FAILED retry is unseeded', () => {
+  assert.ok(text.includes('$script:seedAttempt=($script:seedUse -and $n -le ($MaxStoreAttempts-2))'));
+  assert.equal(text.match(/Build-Store \$/g).length, 1);
+  assert.ok(text.includes("if($Reason -ceq 'SEED_UNUSABLE'){"));
+  assert.ok(text.includes("if($Reason -ceq 'GIT_STEP_FAILED'){$script:seedUse=$false;"));
+  // SEED_UNUSABLE is thrown only from the seed's own steps
+  const thrown = [...text.matchAll(/throw 'SEED_UNUSABLE'/g)].length;
+  assert.equal(thrown, 2);
+  // not a network step: a seed step is never retried as one
+  assert.ok(!/NetworkSteps=@\([^)]*seed/.test(text));
+  // the seed update runs after the receipt, is wrapped, and its failure discards the seed instead of failing the bundle
+  const main = text.slice(text.search(/^try\{/m));
+  assert.ok(main.indexOf('$created+=$ReceiptPath') < main.indexOf('Seed-Update $store'));
+  assert.ok(text.includes("}catch{$r.updated=$false;$r.error=Seed-Error-Text $_;Seed-Discard 'SEED_UPDATE_FAILED'}"));
+  assert.ok(main.indexOf('Seed-Begin') < main.indexOf('$store=Fetch-Store'));
+});
+
+test('build-bundle: the receipt and the bundle are unchanged by the seed; the answer carries a seed object and the companion reads nothing new', () => {
+  assert.ok(text.includes('storeAttempts=$attempts;firstAttempt=$firstAttempt'));
+  const receipt = text.slice(text.indexOf('$receipt=[ordered]@{'), text.indexOf('$json=($receipt'));
+  assert.doesNotMatch(receipt, /[Ss]eed/);
+  assert.ok(text.includes("'bundle','create','--quiet','--version=2',$Bundle,'--branches','--tags','--glob=refs/reviewed/*','--glob=refs/clued-test/*'"));
+  assert.ok(text.includes('seed=$seedReport}|ConvertTo-Json -Depth 4 -Compress'));
+  const companion = fs.readFileSync(new URL('../../../independent-ci-resident-v1/src/companion.mjs', import.meta.url), 'utf8');
+  const bundle = companion.slice(companion.indexOf("case 'build-bundle'"), companion.indexOf("case 'rebuild-bundle'"));
+  assert.ok(!bundle.includes('seed'));
+});
+
+test('build-bundle: removals of seed trees never follow a link and clear read-only object files', () => {
+  const rm = text.slice(text.indexOf('function Remove-Tree'), text.indexOf('function Test-RealDir'));
+  assert.ok(rm.includes('ReparsePoint') && rm.includes('SetAttributes'));
+  assert.ok(!/Remove-Item[^\n]*-Recurse/.test(text.slice(text.indexOf('# ---- The persistent seed'), text.indexOf('function Build-Store'))), 'no Remove-Item -Recurse on a seed tree');
+  assert.ok(!text.includes('[IO.Directory]::Delete($SeedDir,$true)'));
 });

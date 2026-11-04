@@ -34,6 +34,16 @@ Train front batch (quota phase 2 step 3c-2, design v0.5 §5.2): the descriptor's
 commit whose parents are exactly [T, H], and the bundle carries that one ref; the receipt counts it (testRefCount 0 when
 S = H). Old test merges can disappear when GitHub recomputes: the fetch then fails like any network step, before the batch.
 
+Persistent seed (DESIGN §10.1, tier 2): behind a slow egress the full fetch of the repository is most of the build, so a verified
+copy of the last build's objects is kept in bundles\_seed\seed.git (same ACL as bundles\: the Owner's session writes, the
+resident and root only read; no new install step). A seeded attempt fetches the seed's refs into a fresh bare repository under
+refs/clued-seed/* (local fetch: every object is hashed again), fetches GitHub into the same repository (git then transfers only
+what the seed lacks), deletes refs/clued-seed/* and then runs every check of an unseeded attempt unchanged: the repository is
+still a new bare one without alternates or shallow, its refs are exactly ls-remote's, and only reachable objects go into the
+bundle. The seed is advisory: any doubt about it (shape, config, local fetch, connectivity) discards it and the next attempt is
+the unseeded one; a seed can add an attempt, never a refusal. It is updated only from a store that passed all checks and
+produced the bundle. The receipt is unchanged; the script's answer carries a `seed` object. Unseeded runs are unchanged.
+
 Second generation (Task 4012c1b9, DESIGN §37): a batch resumed from parking point A after a long hosted wait gets one more
 bundle, right before its workspace, in bundles\<batchId>\gen-2\ with the same checks and a receipt that also names the
 generation and the first bundle. The batch's refs must still be its own: main still the base T and some branch still at
@@ -64,6 +74,14 @@ $Common=@('-c','core.hooksPath=C:/nonexistent-clued-hooks','-c','core.fsmonitor=
 # window, and the second one has the other 20+ minutes: one complete transfer at the slowest rate, two at the fastest.
 $NetworkSteps=@('fetch','ls-remote','fetch-reviewed','fetch-test');$RetryWithinSeconds=600;$MaxStoreAttempts=3
 $Clock=[Diagnostics.Stopwatch]::StartNew()
+# The persistent seed. Under bundles\ so that it inherits bundles\'s ACL (Owner modify, resident read): installing it needs no ACL change.
+$SeedRoot=Join-Path $Resident 'bundles\_seed';$SeedDir=Join-Path $SeedRoot 'seed.git';$SeedNew=Join-Path $SeedRoot 'seed-new.git';$SeedLock=Join-Path $SeedRoot 'seed.lock';$SeedMeta=Join-Path $SeedRoot 'seed-meta.json'
+$SeedNs='refs/clued-seed/';$SeedMetaContract='clued.independent-ci.bundle-seed-meta/1'
+# Used only while the last full (unseeded) fetch took at least this long; after a day it is measured again with one unseeded fetch.
+$SeedMinFullFetchSeconds=90;$SeedMetaMaxAgeSeconds=86400;$SeedLockStaleSeconds=1800;$SeedMaxPacks=12;$SeedMaxBytes=1073741824
+$SeedConfigKeys=@('core.repositoryformatversion','core.filemode','core.bare','core.symlinks','core.ignorecase','core.logallrefupdates')
+$seedUse=$false;$seedAttempt=$false;$seedBusy=$false
+$seedReport=[ordered]@{enabled=$true;used=$false;reason=$null;discarded=$false;primeSeconds=$null;updated=$false;updateSkipped=$null;seedBytes=$null;error=$null}
 $stage='fixed-preflight';$created=@();$writesStarted=$false;$lastGit=$null;$attempts=1;$firstAttempt=$null;$refsDiffer=$null
 function Utc{return [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'",[Globalization.CultureInfo]::InvariantCulture)}
 function Hash-Bytes([byte[]]$Bytes){$a=[Security.Cryptography.SHA256]::Create();try{return ([BitConverter]::ToString($a.ComputeHash($Bytes))).Replace('-','').ToLowerInvariant()}finally{$a.Dispose()}}
@@ -182,6 +200,168 @@ function Current-Receipt{
  if(Test-Path -LiteralPath $Gen2Root){if(-not (Test-Path -LiteralPath $Gen2Receipt -PathType Leaf)){throw 'BUNDLE_GENERATION_INCOMPLETE'};return $Gen2Receipt}
  return $Gen1Receipt
 }
+# ---- The persistent seed. Everything here is best effort: an exception in any of it ends in Seed-Discard, never in a refusal. ----
+# Removes a tree without ever following a link (a junction or symlink is removed itself); git's object files are read-only.
+function Remove-Tree([string]$P){
+ if(([IO.File]::GetAttributes($P) -band [IO.FileAttributes]::ReparsePoint) -ne 0){[IO.Directory]::Delete($P);return}
+ foreach($c in [IO.Directory]::GetFileSystemEntries($P)){
+  $a=[IO.File]::GetAttributes($c);$dir=(($a -band [IO.FileAttributes]::Directory) -ne 0)
+  if(($a -band [IO.FileAttributes]::ReparsePoint) -ne 0){if($dir){[IO.Directory]::Delete($c)}else{[IO.File]::Delete($c)}}
+  elseif($dir){Remove-Tree $c}
+  else{[IO.File]::SetAttributes($c,[IO.FileAttributes]::Normal);[IO.File]::Delete($c)}
+ }
+ [IO.File]::SetAttributes($P,[IO.FileAttributes]::Directory);[IO.Directory]::Delete($P)
+}
+function Test-RealDir([string]$P){if(-not (Test-Path -LiteralPath $P -PathType Container)){return $false};return (((Get-Item -LiteralPath $P -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0)}
+# One writer at a time, never waited for: a lock held by someone else (or younger than half an hour) means "no seed this time".
+function Seed-Lock{
+ try{$f=[IO.File]::Open($SeedLock,'CreateNew','Write','None')}
+ catch [IO.IOException]{
+  $age=((Get-Date).ToUniversalTime()-(Get-Item -LiteralPath $SeedLock -Force).LastWriteTimeUtc).TotalSeconds
+  if($age -lt $SeedLockStaleSeconds){return $false}
+  Remove-Item -LiteralPath $SeedLock -Force;$f=[IO.File]::Open($SeedLock,'CreateNew','Write','None')
+ }
+ try{$b=(New-Object Text.UTF8Encoding($false)).GetBytes((Utc)+' pid='+$PID);$f.Write($b,0,$b.Length)}finally{$f.Dispose()}
+ return $true
+}
+function Seed-Unlock{Remove-Item -LiteralPath $SeedLock -Force -ErrorAction SilentlyContinue}
+# $null when the seed has exactly the shape this script gives it: a real directory tree, no alternates, shallow file, grafts, gitfile
+# redirection, hooks, and a config of the plain bare-repository keys only (a seed's own config is read by git when it serves a fetch).
+function Seed-Shape-Problem{
+ if(-not (Test-RealDir $SeedRoot) -or -not (Test-RealDir $SeedDir)){return 'SEED_PATH_NOT_REAL_DIRECTORY'}
+ foreach($f in @('objects\info\alternates','objects\info\http-alternates','shallow','info\grafts','commondir','gitdir','worktrees','modules')){if(Test-Path -LiteralPath (Join-Path $SeedDir $f)){return 'SEED_UNEXPECTED_ENTRY'}}
+ foreach($d in @('objects','refs')){if(-not (Test-RealDir (Join-Path $SeedDir $d))){return 'SEED_LAYOUT_REFUSED'}}
+ if(-not (Test-Path -LiteralPath (Join-Path $SeedDir 'HEAD') -PathType Leaf)){return 'SEED_LAYOUT_REFUSED'}
+ $h=Join-Path $SeedDir 'hooks';if((Test-Path -LiteralPath $h) -and @(Get-ChildItem -LiteralPath $h -Force -Recurse -File).Count -ne 0){return 'SEED_HOOKS_PRESENT'}
+ $cfg=Join-Path $SeedDir 'config';if(-not (Test-Path -LiteralPath $cfg -PathType Leaf) -or (Get-Item -LiteralPath $cfg -Force).Length -gt 4096){return 'SEED_CONFIG_REFUSED'}
+ $kept=0
+ foreach($line in ((Invoke-Git 'seed-config' @('config','--file',$cfg,'--list')) -split "`n")){
+  $l=$line.TrimEnd("`r");if($l.Length -eq 0){continue}
+  $eq=$l.IndexOf('=');if($eq -lt 1){return 'SEED_CONFIG_REFUSED'}
+  $k=$l.Substring(0,$eq);$v=$l.Substring($eq+1)
+  if($SeedConfigKeys -cnotcontains $k){return 'SEED_CONFIG_REFUSED'}
+  if(($k -ceq 'core.bare' -and $v -cne 'true') -or ($k -ceq 'core.repositoryformatversion' -and $v -cne '0')){return 'SEED_CONFIG_REFUSED'}
+  $kept++
+ }
+ if($kept -lt 1){return 'SEED_CONFIG_REFUSED'}
+ return $null
+}
+function Seed-Discard([string]$Why){
+ $script:seedReport.discarded=$true;$script:seedReport.reason=$Why;$script:seedUse=$false
+ try{
+  if(Test-Path -LiteralPath $SeedDir){
+   if(Test-RealDir $SeedDir){Remove-Tree $SeedDir}
+   elseif(Test-Path -LiteralPath $SeedDir -PathType Container){[IO.Directory]::Delete($SeedDir)}
+   else{[IO.File]::Delete($SeedDir)}
+  }
+ }catch{try{[IO.Directory]::Move($SeedDir,(Join-Path $SeedRoot ('dead-'+[Guid]::NewGuid().ToString('N').Substring(0,8))))}catch{}}
+ Remove-Item -LiteralPath $SeedMeta -Force -ErrorAction SilentlyContinue
+}
+# Advisory facts about the last unseeded fetch; unreadable or odd is "no measurement", never an error.
+function Seed-Meta-Read{
+ try{
+  if(-not (Test-Path -LiteralPath $SeedMeta -PathType Leaf)){return $null}
+  if((Get-Item -LiteralPath $SeedMeta -Force).Length -gt 4096){return $null}
+  $m=[IO.File]::ReadAllText($SeedMeta)|ConvertFrom-Json
+  if($m.contract -cne $SeedMetaContract){return $null}
+  if(($m.lastFullFetchSeconds -isnot [int] -and $m.lastFullFetchSeconds -isnot [long] -and $m.lastFullFetchSeconds -isnot [double]) -or ($m.lastFullFetchAtUnix -isnot [int] -and $m.lastFullFetchAtUnix -isnot [long] -and $m.lastFullFetchAtUnix -isnot [double])){return $null}
+  return $m
+ }catch{return $null}
+}
+function Unix-Now([DateTime]$NowUtc){return [long][Math]::Floor(($NowUtc-(New-Object DateTime 1970,1,1,0,0,0,([DateTimeKind]::Utc))).TotalSeconds)}
+function Seed-Wanted($Meta,[DateTime]$NowUtc){
+ if($null -eq $Meta){return [pscustomobject]@{use=$true;reason='NO_MEASUREMENT'}}
+ if(((Unix-Now $NowUtc)-[long]$Meta.lastFullFetchAtUnix) -gt $SeedMetaMaxAgeSeconds){return [pscustomobject]@{use=$false;reason='REMEASURE_DUE'}}
+ if([double]$Meta.lastFullFetchSeconds -lt $SeedMinFullFetchSeconds){return [pscustomobject]@{use=$false;reason='NETWORK_FAST'}}
+ return [pscustomobject]@{use=$true;reason='NETWORK_SLOW'}
+}
+function Seed-Begin{
+ $r=$script:seedReport
+ try{
+  if(-not (Test-Path -LiteralPath $SeedDir)){$r.reason='NO_SEED';return}
+  $problem=Seed-Shape-Problem
+  if($null -ne $problem){Seed-Discard $problem;return}
+  $w=Seed-Wanted (Seed-Meta-Read) ([DateTime]::UtcNow);$r.reason=$w.reason
+  if($w.use){$script:seedUse=$true}
+ }catch{Seed-Discard 'SEED_CHECK_FAILED'}
+}
+# Inside a seeded attempt, right after init-bare: the seed's refs/heads, tags and reviewed refs under refs/clued-seed/ by a local fetch
+# (every object is hashed again by index-pack; its own connectivity check runs). Any trouble is SEED_UNUSABLE.
+function Seed-Prime([string]$Gd){
+ $script:stage='seed-prime';$sw=[Diagnostics.Stopwatch]::StartNew();$locked=$false
+ try{
+  $locked=Seed-Lock;if(-not $locked){$script:seedBusy=$true;throw 'SEED_BUSY'}
+  $p=Seed-Shape-Problem;if($null -ne $p){throw $p}
+  $null=Invoke-Git 'seed-fetch' ($Common+@('-c','protocol.file.allow=always',$Gd,'fetch','--quiet','--no-tags','--no-write-fetch-head','--no-recurse-submodules',$SeedDir,('+refs/heads/*:'+$SeedNs+'heads/*'),('+refs/tags/*:'+$SeedNs+'tags/*'),('+refs/reviewed/*:'+$SeedNs+'reviewed/*')))
+ }catch{if($script:seedReport.reason -cnotmatch '\ASEED_'){$script:seedReport.reason='SEED_PRIME_FAILED'};throw 'SEED_UNUSABLE'}
+ finally{if($locked){Seed-Unlock}}
+ $script:seedReport.used=$true;$script:seedReport.primeSeconds=[int]$sw.Elapsed.TotalSeconds
+}
+# After the GitHub fetch of a seeded attempt: the seed's refs go (the loose ref files under refs\clued-seed, then a check through git
+# that no such ref is left, packed or not), and what the checks will compare is reachable from heads and tags in full.
+function Seed-Drop-Refs([string]$Dir,[string]$Gd){
+ try{
+  $ns=Join-Path $Dir 'refs\clued-seed';if(Test-Path -LiteralPath $ns){Remove-Tree $ns}
+  if(-not [string]::IsNullOrWhiteSpace((Invoke-Git 'seed-refs-left' ($Common+@($Gd,'for-each-ref','--format=%(refname)',$SeedNs))))){throw 'SEED_REFS_REMAIN'}
+  $null=Invoke-Git 'seed-connectivity' ($Common+@($Gd,'rev-list','--objects','--quiet','--branches','--tags'))
+ }catch{$script:seedReport.reason='SEED_DROP_FAILED';throw 'SEED_UNUSABLE'}
+}
+# Called from Fetch-Store's catch with the failed attempt's reason: true = the seed was the problem and an unseeded attempt may follow.
+function Seed-Failure([string]$Reason){
+ if(-not $script:seedAttempt){return $false}
+ if($Reason -ceq 'SEED_UNUSABLE'){
+  if($script:seedBusy){$script:seedUse=$false;$script:seedReport.reason='SEED_BUSY'}else{Seed-Discard $script:seedReport.reason}
+  return $true
+ }
+ # A git step of a seeded attempt failed: a network retry (when the window allows it) runs without the seed, which stays.
+ if($Reason -ceq 'GIT_STEP_FAILED'){$script:seedUse=$false;$script:seedReport.reason='UNSEEDED_AFTER_GIT_FAILURE'}
+ return $false
+}
+# What failed, for the answer only: a code, or the exception's first 80 characters of plain text, and the last git step.
+function Seed-Error-Text($ErrorRecord){
+ $m=[string]$ErrorRecord.Exception.Message;$m=($m -replace '[^A-Za-z0-9_ .:\-]','');if($m.Length -gt 80){$m=$m.Substring(0,80)}
+ $g=if($null -ne $script:lastGit){$script:lastGit.label+' '+$script:lastGit.exitCode}else{''}
+ return ($m+' | '+$g)
+}
+function Seed-Bytes{
+ $co=Invoke-Git 'seed-count' ($Common+@(('--git-dir='+$SeedDir),'count-objects','-v'));$kib=0;$packs=0
+ foreach($l in ($co -split "`n")){$m=[regex]::Match($l.TrimEnd("`r"),'\A(size|size-pack|packs): (\d+)\z');if($m.Success){if($m.Groups[1].Value -ceq 'packs'){$packs=[int]$m.Groups[2].Value}else{$kib+=[long]$m.Groups[2].Value}}}
+ return [pscustomobject]@{bytes=($kib*1024);packs=$packs}
+}
+# After the bundle and receipt are written: bring the seed to the state of this verified store (heads, tags and reviewed refs, pruned).
+# A missing seed, a seed that fails its shape check or one that outgrew $SeedMaxBytes after a repack is made again from this store.
+function Seed-Update($Store){
+ $r=$script:seedReport;$locked=$false
+ try{
+  [void][IO.Directory]::CreateDirectory($SeedRoot);if(-not (Test-RealDir $SeedRoot)){$r.updateSkipped='SEED_ROOT_NOT_REAL_DIRECTORY';return}
+  $locked=Seed-Lock;if(-not $locked){$r.updateSkipped='SEED_BUSY';return}
+  $prev=Seed-Meta-Read
+  for($pass=1;$pass -le 2;$pass++){
+   $made=$false
+   if(Test-Path -LiteralPath $SeedDir){$p=Seed-Shape-Problem;if($null -ne $p){Seed-Discard $p}}
+   $target=$SeedDir
+   if(-not (Test-Path -LiteralPath $SeedDir)){
+    if(Test-Path -LiteralPath $SeedNew){Remove-Tree $SeedNew}
+    $null=Invoke-Git 'seed-init' @('-c','init.templateDir=','init','--bare','--quiet','--template=',$SeedNew);$target=$SeedNew;$made=$true
+   }
+   $null=Invoke-Git 'seed-update' ($Common+@('-c','protocol.file.allow=always','-c','fetch.unpackLimit=1',('--git-dir='+$target),'fetch','--quiet','--no-tags','--no-write-fetch-head','--prune','--no-recurse-submodules',$Store.dir,'+refs/heads/*:refs/heads/*','+refs/tags/*:refs/tags/*','+refs/reviewed/*:refs/reviewed/*'))
+   if($made){[IO.Directory]::Move($SeedNew,$SeedDir)}
+   $sz=Seed-Bytes
+   if($sz.packs -gt $SeedMaxPacks){$null=Invoke-Git 'seed-repack' ($Common+@(('--git-dir='+$SeedDir),'repack','-a','-d','-q'));$sz=Seed-Bytes}
+   if($sz.bytes -le $SeedMaxBytes){$r.seedBytes=$sz.bytes;break}
+   if($pass -eq 2){throw 'SEED_TOO_LARGE'}
+   Seed-Discard 'SEED_OUTGREW_LIMIT'
+  }
+  $secs=$null;$at=$null
+  if($Store.unseeded){$secs=[int][Math]::Ceiling($Store.fetchSeconds);$at=Unix-Now ([DateTime]::UtcNow)}
+  elseif($null -ne $prev){$secs=$prev.lastFullFetchSeconds;$at=$prev.lastFullFetchAtUnix}
+  $meta=[ordered]@{contract=$SeedMetaContract;updatedAt=(Utc)}
+  if($null -ne $secs){$meta['lastFullFetchSeconds']=$secs;$meta['lastFullFetchAtUnix']=$at}
+  [IO.File]::WriteAllText($SeedMeta,(($meta|ConvertTo-Json -Compress)+"`n"),(New-Object Text.UTF8Encoding($false)))
+  $r.updated=$true
+ }catch{$r.updated=$false;$r.error=Seed-Error-Text $_;Seed-Discard 'SEED_UPDATE_FAILED'}
+ finally{if($locked){Seed-Unlock}}
+}
 # One complete attempt at the fetched store, in a fresh bare repository of its own ($Dir must not exist yet): all heads
 # and tags, ls-remote equality, main == base, then the reviewed commits fetched by SHA, each read back, then (train
 # front batch only) the tested commit S by SHA with its parents [T, H].
@@ -190,9 +370,11 @@ function Build-Store([string]$Dir){
  $null=Invoke-Git 'init-bare' (@('-c','init.templateDir=','init','--bare','--quiet','--template=',$Dir));$script:created+=$Dir
  if(Test-Path -LiteralPath (Join-Path $Dir 'hooks')){if(@(Get-ChildItem -LiteralPath (Join-Path $Dir 'hooks') -Force -Recurse -File).Count -ne 0){throw 'TEMPLATE_HOOKS_REFUSED'}}
  $gd='--git-dir='+$Dir
- $script:stage='fetch-all-heads-and-tags';$fetchStartedAt=Utc
+ if($script:seedAttempt){Seed-Prime $gd}
+ $script:stage='fetch-all-heads-and-tags';$fetchStartedAt=Utc;$fetchWatch=[Diagnostics.Stopwatch]::StartNew()
  $null=Invoke-Git 'fetch' ($Common+@($gd,'fetch','--quiet','--no-tags','--no-write-fetch-head','--no-recurse-submodules',$Url,'+refs/heads/*:refs/heads/*','+refs/tags/*:refs/tags/*'))
  $fetchCompletedAt=Utc
+ if($script:seedAttempt){Seed-Drop-Refs $Dir $gd}
  $script:stage='ls-remote-after-fetch'
  $remote=Ref-Map (Invoke-Git 'ls-remote' ($Common+@($gd,'ls-remote','--branches','--tags',$Url))) "`t" $true
  $lsRemoteCompletedAt=Utc
@@ -238,6 +420,7 @@ function Build-Store([string]$Dir){
  if(-not (Same-Map $final.formal $remote) -or -not (Same-Map $final.reviewed $expectedReviewed)){throw 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE'}
  if(-not (Same-Map $final.test $expectedTest)){throw 'EXACT_TEST_REF_REQUIRED'}
  return [pscustomobject]@{dir=$Dir;gd=$gd;remote=$remote;branchesAtHead=$branchesAtHead;reviewed=$reviewed;expectedReviewed=$expectedReviewed;expectedTest=$expectedTest
+  unseeded=(-not $script:seedAttempt);fetchSeconds=$fetchWatch.Elapsed.TotalSeconds
   fetchStartedAt=$fetchStartedAt;fetchCompletedAt=$fetchCompletedAt;lsRemoteCompletedAt=$lsRemoteCompletedAt;reviewedFetchStartedAt=$reviewedFetchStartedAt;reviewedFetchCompletedAt=$reviewedFetchCompletedAt}
 }
 # Only a network step that git itself failed is retried, and only early enough: never a refusal of this script
@@ -259,12 +442,15 @@ function Fetch-Store{
  $dirs=@($FetchDir,$FetchDir2,$FetchDir3);$networkRetried=$false
  for($n=0;$n -lt $MaxStoreAttempts;$n++){
   $script:attempts=$n+1
+  # A seeded attempt is never the last one: a seed that fails always leaves an unseeded attempt behind it.
+  $script:seedAttempt=($script:seedUse -and $n -le ($MaxStoreAttempts-2))
   try{return Build-Store $dirs[$n]}
   catch{
    $reason=$_.Exception.Message;$elapsed=$Clock.Elapsed.TotalSeconds
    $race=Race-Retry-Allowed $reason $script:refsDiffer $elapsed
    $network=(-not $networkRetried) -and (Retry-Allowed $reason $script:lastGit $elapsed)
-   if($n -ge ($MaxStoreAttempts-1) -or -not ($race -or $network)){throw}
+   $seedFell=Seed-Failure $reason
+   if($n -ge ($MaxStoreAttempts-1) -or -not ($race -or $network -or $seedFell)){throw}
    if($network){$networkRetried=$true}
    if($null -eq $script:firstAttempt){
     $script:firstAttempt=[ordered]@{stage=$script:stage;git=$script:lastGit;failedAfterSeconds=[int]$elapsed}
@@ -299,6 +485,7 @@ try{
  Absent $Root
  $stage='batch-directory';$writesStarted=$true;[void][IO.Directory]::CreateDirectory($Root);$created+=$Root
  $gitVersion=(Invoke-Git 'version' @('--version')).Trim();$gitSha=Hash-File $Git
+ Seed-Begin
  $store=Fetch-Store
  $gd=$store.gd;$remote=$store.remote;$reviewed=$store.reviewed;$reviewedCommits=$reviewed.commits;$expectedReviewed=$store.expectedReviewed;$expectedTest=$store.expectedTest
  # The second generation is still this batch's: some branch is still at the head (main == base is Build-Store's own check).
@@ -330,10 +517,11 @@ try{
  if($Rebundle){$receipt['generation']=2;$receipt['previousBundleSha256']=$previous.bundleSha256;$receipt['previousRefListSha256']=$previous.refListSha256}
  $json=($receipt|ConvertTo-Json -Depth 5 -Compress)
  $rb=(New-Object Text.UTF8Encoding($false)).GetBytes($json+[char]10);$f=[IO.File]::Open($ReceiptPath,'CreateNew','Write','None');try{$f.Write($rb,0,$rb.Length);$f.Flush($true)}finally{$f.Dispose()};$created+=$ReceiptPath
- [ordered]@{status='BUNDLE_WRITTEN';batchId=$BatchId;generation=$(if($Rebundle){2}else{1});bundleSha256=$sha;bundleBytes=$bytes;receiptSha256=(Hash-Bytes $rb);refListSha256=$receipt.refListSha256;lsRemoteCompletedAt=$store.lsRemoteCompletedAt}|ConvertTo-Json -Compress
+ Seed-Update $store
+ [ordered]@{status='BUNDLE_WRITTEN';batchId=$BatchId;generation=$(if($Rebundle){2}else{1});bundleSha256=$sha;bundleBytes=$bytes;receiptSha256=(Hash-Bytes $rb);refListSha256=$receipt.refListSha256;lsRemoteCompletedAt=$store.lsRemoteCompletedAt;seed=$seedReport}|ConvertTo-Json -Depth 4 -Compress
  exit 0
 }catch{
  $code=if($_.Exception.Message -cmatch '\A[A-Z][A-Z0-9_]{1,90}\z'){$_.Exception.Message}else{'FIXED_BUNDLE_BUILD_UNCONFIRMED'}
  [ordered]@{status=$(if($writesStarted){'PARTIAL_STATE_PRESERVED_NO_RETRY'}else{'REFUSED_BEFORE_WRITE'});stage=$stage;reason=$code;git=$lastGit;created=$created
-  storeAttempts=$attempts;firstAttempt=$firstAttempt;credentialsPrinted=$false;existingCheckoutTouched=$false;automaticRetryAllowed=$false}|ConvertTo-Json -Depth 5 -Compress;exit 2
+  storeAttempts=$attempts;firstAttempt=$firstAttempt;seed=$seedReport;credentialsPrinted=$false;existingCheckoutTouched=$false;automaticRetryAllowed=$false}|ConvertTo-Json -Depth 5 -Compress;exit 2
 }

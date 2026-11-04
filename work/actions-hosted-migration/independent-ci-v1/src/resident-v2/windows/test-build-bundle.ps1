@@ -8,11 +8,12 @@ function Refused-With([scriptblock]$f,[string]$code,[string]$what){$got=$null;tr
 $t=$null;$e=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($tool,[ref]$t,[ref]$e);if($e.Count){throw 'BUILD_BUNDLE_PARSE_FAILED'}
 $ReviewedPrefix='refs/reviewed/';$TestPrefix='refs/clued-test/'
 foreach($name in @('Utc','Hash-Bytes','Hash-Text','Absent','Quote-Arg','Invoke-Git','Assert-FormalRefName','New-RefMap','Split-Refs','Ref-Map','Same-Map','Ref-List-Sha','Reviewed-Map','Reviewed-Commits','Bundle-Header',
-  'Ref-Diff','Build-Store','Retry-Allowed','Race-Retry-Allowed','Fetch-Store')){
+  'Ref-Diff','Build-Store','Retry-Allowed','Race-Retry-Allowed','Fetch-Store',
+  'Remove-Tree','Test-RealDir','Seed-Lock','Seed-Unlock','Seed-Shape-Problem','Seed-Discard','Seed-Meta-Read','Unix-Now','Seed-Wanted','Seed-Begin','Seed-Prime','Seed-Drop-Refs','Seed-Failure','Seed-Error-Text','Seed-Bytes','Seed-Update')){
  $f=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -ceq $name});if($f.Count -ne 1){throw ('FUNCTION_MISSING:'+$name)};. ([scriptblock]::Create($f[0].Extent.Text))
 }
 # The fixed values exactly as the script assigns them.
-foreach($name in @('Common','NetworkSteps','RetryWithinSeconds','MaxStoreAttempts')){
+foreach($name in @('Common','NetworkSteps','RetryWithinSeconds','MaxStoreAttempts','SeedNs','SeedMetaContract','SeedMinFullFetchSeconds','SeedConfigKeys','seedUse','seedAttempt','seedBusy','seedReport')){
  $s=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -ceq ('$'+$name)});if($s.Count -ne 1){throw ('ASSIGNMENT_MISSING:'+$name)};. ([scriptblock]::Create($s[0].Extent.Text))
 }
 $FixedCommon=[string[]]$Common
@@ -126,6 +127,7 @@ if($git){
    $script:FetchDir=Join-Path $script:Root 'fetch.git';$script:FetchDir2=Join-Path $script:Root 'fetch-2.git';$script:FetchDir3=Join-Path $script:Root 'fetch-3.git'
    $script:stalls=$Stalls;$script:calls=@();$script:created=@();$script:lastGit=$null;$script:stage='x';$script:attempts=1;$script:firstAttempt=$null
    $script:Head=$c2;$script:Base=$c1;$script:Test=$c2
+   $script:seedUse=$false;$script:seedAttempt=$false;$script:seedBusy=$false;$script:seedReport=[ordered]@{enabled=$true;used=$false;reason=$null;discarded=$false;primeSeconds=$null;updated=$false;updateSkipped=$null;seedBytes=$null;error=$null}
    $script:Clock=if($null -eq $Elapsed){[Diagnostics.Stopwatch]::StartNew()}else{[pscustomobject]@{Elapsed=[TimeSpan]::FromSeconds($Elapsed)}}
   }
   function Fetches{return @($script:calls|Where-Object{$_ -ceq 'fetch'}).Count}
@@ -207,6 +209,138 @@ if($git){
   New-Case @{'fetch-reviewed'=2} $null;$races=1
   Refused-With {Fetch-Store} 'GIT_STEP_FAILED' 'race-then-two-stalls-final'
   Yes ($attempts -eq 3 -and (Fetches) -eq 3 -and $firstAttempt.refsDiffer.count -eq 1 -and $lastGit.label -ceq 'fetch-reviewed') 'race-then-one-network-retry-only'
+
+  # ---- The persistent seed (DESIGN 10.1): placed like production, under bundles\_seed next to the batch directories ----
+  $SeedRoot=Join-Path $tmp 'bundles\_seed';$SeedDir=Join-Path $SeedRoot 'seed.git';$SeedNew=Join-Path $SeedRoot 'seed-new.git';$SeedLock=Join-Path $SeedRoot 'seed.lock';$SeedMeta=Join-Path $SeedRoot 'seed-meta.json'
+  $SeedLockStaleSeconds=1800;$SeedMaxPacks=12;$SeedMaxBytes=1073741824
+  $consts=@{};foreach($name in @('SeedMinFullFetchSeconds','SeedMetaMaxAgeSeconds','SeedLockStaleSeconds','SeedMaxPacks','SeedMaxBytes')){
+   $st=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -ceq ('$'+$name)});if($st.Count -ne 1){throw ('ASSIGNMENT_MISSING:'+$name)};$consts[$name]=$st[0].Right.Extent.Text}
+  $SeedMetaMaxAgeSeconds=86400
+  function Reset-Seed{
+   $script:seedUse=$false;$script:seedAttempt=$false;$script:seedBusy=$false
+   $script:seedReport=[ordered]@{enabled=$true;used=$false;reason=$null;discarded=$false;primeSeconds=$null;updated=$false;updateSkipped=$null;seedBytes=$null;error=$null}
+   if(Test-Path -LiteralPath $SeedRoot){Remove-Tree $SeedRoot}
+  }
+  function Write-Meta([int]$Seconds,[long]$At){[void][IO.Directory]::CreateDirectory($SeedRoot);[IO.File]::WriteAllText($SeedMeta,(([ordered]@{contract=$SeedMetaContract;updatedAt=(Utc);lastFullFetchSeconds=$Seconds;lastFullFetchAtUnix=$At}|ConvertTo-Json -Compress)+"`n"))}
+  function Slow-Meta{Write-Meta 500 (Unix-Now ([DateTime]::UtcNow))}
+  function Store-Refs($s){return (Split-Refs ((& git ('--git-dir='+$s.dir) for-each-ref '--format=%(objectname) %(refname)') -join "`n") ' ' $false $true)}
+  function Git-Ok([string[]]$GitArgs){try{$null=& $realGit 'probe' $GitArgs;return $true}catch{return $false}}
+  $pins=@{};foreach($name in $consts.Keys){$pins[$name]=$consts[$name]}
+  Yes ($pins['SeedMinFullFetchSeconds'] -ceq '90' -and $pins['SeedMetaMaxAgeSeconds'] -ceq '86400' -and $pins['SeedMaxBytes'] -ceq '1073741824' -and $pins['SeedMaxPacks'] -ceq '12') 'seed-constants'
+
+  # S1. gating: only a slow measured fetch turns the seed on; none, an old one or a fast one are decided and said
+  $now=[DateTime]::UtcNow;$u=Unix-Now $now
+  $mk={param($sec,$at)[pscustomobject]@{lastFullFetchSeconds=$sec;lastFullFetchAtUnix=$at}}
+  Yes ((Seed-Wanted $null $now).use -and (Seed-Wanted $null $now).reason -ceq 'NO_MEASUREMENT') 'seed-wanted-no-measurement'
+  Yes ((Seed-Wanted (& $mk 300 $u) $now).use -and (Seed-Wanted (& $mk 90 $u) $now).use) 'seed-wanted-slow'
+  Yes ((-not (Seed-Wanted (& $mk 89 $u) $now).use) -and (Seed-Wanted (& $mk 89 $u) $now).reason -ceq 'NETWORK_FAST') 'seed-not-wanted-fast'
+  Yes ((-not (Seed-Wanted (& $mk 500 ($u-86401)) $now).use) -and (Seed-Wanted (& $mk 500 ($u-86401)) $now).reason -ceq 'REMEASURE_DUE') 'seed-not-wanted-stale'
+  Yes ((Seed-Wanted (& $mk 500 ($u-86399)) $now).use) 'seed-wanted-just-fresh'
+
+  # S2. no seed: nothing changes (unseeded store, no seed call), then the verified store makes the seed and its measurement
+  Reset-Seed;New-Case @{} $null;Seed-Begin
+  Yes ((-not $seedUse) -and $seedReport.reason -ceq 'NO_SEED') 'seed-none-at-begin'
+  $s=Fetch-Store;Yes ($s.unseeded -eq $true -and @($calls|Where-Object{$_ -like 'seed-*'}).Count -eq 0 -and (Same-Map $s.remote $expected)) 'seed-none-unseeded-store'
+  Seed-Update $s
+  Yes ($seedReport.updated -and -not (Test-Path -LiteralPath $SeedNew) -and (Test-Path -LiteralPath $SeedDir) -and $null -eq (Seed-Shape-Problem)) ('seed-created-from-store:'+($seedReport|ConvertTo-Json -Compress))
+  $meta=Seed-Meta-Read;Yes ($null -ne $meta -and $meta.lastFullFetchAtUnix -ge $u -and $meta.lastFullFetchSeconds -lt 90) 'seed-meta-measures-unseeded-fetch'
+  $sr=Split-Refs ((& git --git-dir=$SeedDir for-each-ref '--format=%(objectname) %(refname)') -join "`n") ' ' $false $true
+  Yes ((Same-Map $sr.formal $expected) -and $sr.reviewed.Count -eq 1 -and (-not (Test-Path -LiteralPath (Join-Path $SeedDir 'objects\info\alternates')))) 'seed-holds-heads-tags-reviewed'
+  Yes (Git-Ok @(('--git-dir='+$SeedDir),'fsck','--full','--strict')) 'seed-fsck'
+  # a fast measured network leaves the (maintained) seed unused
+  Seed-Begin;Yes ((-not $seedUse) -and $seedReport.reason -ceq 'NETWORK_FAST') 'seed-fast-network-not-used'
+
+  # S3. a seeded build: the seed's refs are primed, GitHub is fetched, the seed's refs are gone, every check ran as before
+  Slow-Meta;New-Case @{} $null;$seedReport.reason=$null;Seed-Begin
+  Yes ($seedUse -and $seedReport.reason -ceq 'NETWORK_SLOW') 'seed-wanted-after-slow-measurement'
+  $s=Fetch-Store
+  Yes ($s.unseeded -eq $false -and $attempts -eq 1 -and $seedReport.used -and (Fetches) -eq 1 -and (Same-Map $s.remote $expected) -and $s.expectedReviewed.Count -eq 1) 'seeded-store'
+  Yes ((@($calls|Where-Object{$_ -like 'seed-*'})-join '|') -ceq 'seed-config|seed-config|seed-fetch|seed-refs-left|seed-connectivity') ('seeded-calls:'+(@($calls)-join ','))
+  $all=Store-Refs $s;Yes ((Same-Map $all.formal $expected) -and $all.reviewed.Count -eq 1 -and $all.test.Count -eq 0) 'seeded-store-no-seed-refs'
+  Yes (Git-Ok @(('--git-dir='+$s.dir),'fsck','--full','--strict')) 'seeded-store-fsck'
+  foreach($f in @('shallow','info\grafts','objects\info\alternates','objects\info\http-alternates')){Yes (-not (Test-Path -LiteralPath (Join-Path $s.dir $f))) ('seeded-store-no-'+$f)}
+  $fb=Join-Path $Root 'all-refs.bundle';$null=Invoke-Git 'bundle-create' ($Common+@($s.gd,'bundle','create','--quiet','--version=2',$fb,'--branches','--tags','--glob=refs/reviewed/*','--glob=refs/clued-test/*'))
+  $hdr=Bundle-Header $fb;Yes ((Same-Map $hdr.formal $expected) -and (Same-Map $hdr.reviewed $s.expectedReviewed)) 'seeded-bundle'
+  $metaBefore=[IO.File]::ReadAllText($SeedMeta);Seed-Update $s
+  Yes ($seedReport.updated -and ([IO.File]::ReadAllText($SeedMeta) | ConvertFrom-Json).lastFullFetchSeconds -eq 500) 'seeded-update-keeps-the-unseeded-measurement'
+
+  # S4. what a seed must never do. A commit that exists only in the seed, under a branch of its own and a tag, and a hostile config
+  $evil=(& git --git-dir=$SeedDir -c user.name=f -c user.email=f@f commit-tree -m evil ((& git --git-dir=$SeedDir rev-parse ($c2+'^{tree}')).Trim())).Trim()
+  & git --git-dir=$SeedDir update-ref refs/heads/evil $evil;& git --git-dir=$SeedDir update-ref refs/tags/evil-tag $evil;& git --git-dir=$SeedDir update-ref refs/reviewed/evil $evil
+  Slow-Meta;New-Case @{} $null;Seed-Begin;$s=Fetch-Store
+  $all=Store-Refs $s
+  Yes ($s.unseeded -eq $false -and (Same-Map $all.formal $expected) -and $all.reviewed.Count -eq 1 -and -not $all.formal.ContainsKey('refs/heads/evil')) 'seed-refs-never-survive'
+  # the seed's object may sit unreachable in the store, but a ref is only what GitHub says, and the bundle carries reachable objects only
+  $fb=Join-Path $Root 'all-refs.bundle';$null=Invoke-Git 'bundle-create' ($Common+@($s.gd,'bundle','create','--quiet','--version=2',$fb,'--branches','--tags','--glob=refs/reviewed/*','--glob=refs/clued-test/*'))
+  $hdr=Bundle-Header $fb;Yes ((Same-Map $hdr.formal $expected) -and (Same-Map $hdr.reviewed $s.expectedReviewed)) 'seed-evil-bundle-refs'
+  $clone=Join-Path $tmp 'bundle-clone.git';Yes (Git-Ok @('clone','-q','--bare',$fb,$clone)) 'bundle-clones'
+  Yes (-not (Git-Ok @(('--git-dir='+$clone),'cat-file','-e',$evil))) 'seed-evil-object-not-in-bundle'
+  # seed update prunes what the verified store does not have (here: the planted refs)
+  Seed-Update $s;$sr=Split-Refs ((& git --git-dir=$SeedDir for-each-ref '--format=%(objectname) %(refname)') -join "`n") ' ' $false $true
+  Yes ((Same-Map $sr.formal $expected) -and $sr.reviewed.Count -eq 1) 'seed-update-prunes-foreign-refs'
+  # shape: each of these is discarded at the start and the build is the unseeded one
+  $shape={param($mutate,$code,$what)
+   Reset-Seed;New-Case @{} $null;$st=Fetch-Store;Seed-Update $st;Slow-Meta;& $mutate
+   New-Case @{} $null;$script:seedReport.reason=$null;Seed-Begin
+   Yes ((-not $seedUse) -and $seedReport.discarded -and $seedReport.reason -ceq $code -and -not (Test-Path -LiteralPath $SeedDir)) ('seed-shape-'+$what)
+   $st=Fetch-Store;Yes ($st.unseeded -eq $true -and $attempts -eq 1 -and (Same-Map $st.remote $expected)) ('seed-shape-build-unseeded-'+$what)}
+  & $shape {[IO.File]::WriteAllText((Join-Path $SeedDir 'objects\info\alternates'),"C:/elsewhere/objects`n")} 'SEED_UNEXPECTED_ENTRY' 'alternates'
+  & $shape {[IO.File]::WriteAllText((Join-Path $SeedDir 'shallow'),"$c1`n")} 'SEED_UNEXPECTED_ENTRY' 'shallow'
+  & $shape {[void][IO.Directory]::CreateDirectory((Join-Path $SeedDir 'info'));[IO.File]::WriteAllText((Join-Path $SeedDir 'info\grafts'),"$c2 $c0`n")} 'SEED_UNEXPECTED_ENTRY' 'grafts'
+  & $shape {[IO.File]::WriteAllText((Join-Path $SeedDir 'commondir'),"..\..`n")} 'SEED_UNEXPECTED_ENTRY' 'commondir'
+  & $shape {[void][IO.Directory]::CreateDirectory((Join-Path $SeedDir 'hooks'));[IO.File]::WriteAllText((Join-Path $SeedDir 'hooks\pre-upload-pack'),"#!/bin/sh`n")} 'SEED_HOOKS_PRESENT' 'hook'
+  & $shape {& git config --file (Join-Path $SeedDir 'config') core.fsmonitor 'C:/evil.exe'} 'SEED_CONFIG_REFUSED' 'config-fsmonitor'
+  & $shape {& git config --file (Join-Path $SeedDir 'config') uploadpack.packObjectsHook 'C:/evil.exe'} 'SEED_CONFIG_REFUSED' 'config-pack-hook'
+  & $shape {& git config --file (Join-Path $SeedDir 'config') include.path 'C:/evil.cfg'} 'SEED_CONFIG_REFUSED' 'config-include'
+  & $shape {& git config --file (Join-Path $SeedDir 'config') core.bare false} 'SEED_CONFIG_REFUSED' 'config-not-bare'
+  & $shape {Remove-Item -LiteralPath (Join-Path $SeedDir 'HEAD') -Force} 'SEED_LAYOUT_REFUSED' 'no-head'
+  & $shape {$real=Join-Path $tmp 'junction-target';[void][IO.Directory]::CreateDirectory($real);[IO.File]::WriteAllText((Join-Path $real 'keep.txt'),'keep');Remove-Item -LiteralPath (Join-Path $SeedDir 'objects') -Recurse -Force;$null=cmd /c mklink /J ("$SeedDir\objects") $real} 'SEED_LAYOUT_REFUSED' 'objects-is-a-junction'
+  Yes (Test-Path -LiteralPath (Join-Path $tmp 'junction-target\keep.txt')) 'junction-target-untouched'
+
+  # S5. a seed that looks right and is not: its packs are damaged. The local fetch fails before GitHub is asked for anything,
+  #     the seed is discarded, and the next attempt (unseeded) builds the same store: the seed cost an attempt, not the bundle.
+  Reset-Seed;New-Case @{} $null;$st=Fetch-Store;Seed-Update $st;Slow-Meta
+  $pack=@(Get-ChildItem -LiteralPath (Join-Path $SeedDir 'objects\pack') -Filter '*.pack')[0];$bytes=[IO.File]::ReadAllBytes($pack.FullName);for($i=40;$i -lt [Math]::Min(200,$bytes.Length);$i++){$bytes[$i]=$bytes[$i] -bxor 0xff};[IO.File]::SetAttributes($pack.FullName,[IO.FileAttributes]::Normal);[IO.File]::WriteAllBytes($pack.FullName,$bytes)
+  New-Case @{} $null;$seedReport.reason=$null;Seed-Begin;Yes $seedUse 'damaged-seed-passes-shape'
+  $s=Fetch-Store
+  Yes ($s.dir -ceq $FetchDir2 -and $attempts -eq 2 -and $s.unseeded -eq $true -and (Fetches) -eq 1 -and -not (Test-Path -LiteralPath $SeedDir) -and $seedReport.discarded -and (Same-Map $s.remote $expected)) ('damaged-seed-falls-back:'+(@($calls)-join ','))
+  Yes ($firstAttempt.stage -ceq 'seed-prime' -and $s.expectedReviewed.Count -eq 1) 'damaged-seed-first-attempt-recorded'
+  # a seed that cannot even take part (the lock is held by someone else): unseeded attempt, the seed stays
+  Reset-Seed;New-Case @{} $null;$st=Fetch-Store;Seed-Update $st;Slow-Meta;[IO.File]::WriteAllText($SeedLock,'held')
+  New-Case @{} $null;Seed-Begin;$s=Fetch-Store
+  Yes ($attempts -eq 2 -and $s.unseeded -eq $true -and (Test-Path -LiteralPath $SeedDir) -and -not $seedReport.discarded -and $seedReport.reason -ceq 'SEED_BUSY' -and (Same-Map $s.remote $expected)) 'busy-seed-left-alone'
+  Remove-Item -LiteralPath $SeedLock -Force
+  # a lock that is older than half an hour is a crashed run's: taken over
+  [IO.File]::WriteAllText($SeedLock,'old');(Get-Item -LiteralPath $SeedLock).LastWriteTimeUtc=[DateTime]::UtcNow.AddSeconds(-($SeedLockStaleSeconds+60))
+  Yes ((Seed-Lock) -and (Test-Path -LiteralPath $SeedLock)) 'stale-lock-taken-over';Seed-Unlock;Yes (-not (Test-Path -LiteralPath $SeedLock)) 'lock-released'
+  [IO.File]::WriteAllText($SeedLock,'young');Yes (-not (Seed-Lock)) 'young-lock-respected';Remove-Item -LiteralPath $SeedLock -Force
+
+  # S6. the retry rules with a seed. A stalled GitHub fetch of a seeded attempt: the retry is unseeded, the seed stays.
+  Reset-Seed;New-Case @{} $null;$st=Fetch-Store;Seed-Update $st;Slow-Meta
+  New-Case @{fetch=1} $null;Seed-Begin;$s=Fetch-Store
+  Yes ($s.dir -ceq $FetchDir2 -and $attempts -eq 2 -and $s.unseeded -eq $true -and @($calls|Where-Object{$_ -ceq 'seed-fetch'}).Count -eq 1 -and (Test-Path -LiteralPath $SeedDir) -and $firstAttempt.git.label -ceq 'fetch') 'stall-then-unseeded-retry'
+  # refs pushed meanwhile: the retry is seeded again (the seed is not what failed), the third attempt never is
+  New-Case @{} $null;$races=1;$seedReport.reason=$null;Seed-Begin;$s=Fetch-Store
+  Yes ($attempts -eq 2 -and $s.unseeded -eq $false -and @($calls|Where-Object{$_ -ceq 'seed-fetch'}).Count -eq 2 -and (Same-Map $s.remote $expected)) 'race-retry-seeded-again'
+  New-Case @{} $null;$races=2;Seed-Begin;$s=Fetch-Store
+  Yes ($attempts -eq 3 -and $s.unseeded -eq $true -and @($calls|Where-Object{$_ -ceq 'seed-fetch'}).Count -eq 2) 'third-attempt-never-seeded'
+  # a refusal of the script's own checks stays final and is not retried because of the seed
+  New-Case @{} $null;$Base=$c2;Seed-Begin
+  Refused-With {Fetch-Store} 'REMOTE_MAIN_BASE_CHANGED' 'seeded-refusal-final';Yes ($attempts -eq 1 -and (Test-Path -LiteralPath $SeedDir)) 'seeded-refusal-not-retried'
+
+  # S7. the seed update never fails a build: a store that is gone, a seed that outgrows the limit, a repack on demand
+  Reset-Seed;New-Case @{} $null;$st=Fetch-Store;Seed-Update $st;Yes $seedReport.updated 'update-ok'
+  $gone=[pscustomobject]@{dir=(Join-Path $tmp 'no-such-store.git');unseeded=$true;fetchSeconds=1.0}
+  $seedReport.updated=$false;$seedReport.discarded=$false;Seed-Update $gone
+  Yes ((-not $seedReport.updated) -and $seedReport.discarded -and -not (Test-Path -LiteralPath $SeedDir) -and -not (Test-Path -LiteralPath $SeedLock)) 'update-failure-discards-and-unlocks'
+  $SeedMaxBytes=1;Seed-Update $st
+  Yes ((-not $seedReport.updated) -and -not (Test-Path -LiteralPath $SeedDir) -and -not (Test-Path -LiteralPath $SeedNew) -and -not (Test-Path -LiteralPath $SeedLock)) 'oversized-seed-not-kept'
+  $SeedMaxBytes=1073741824;$seedReport.discarded=$false;Seed-Update $st;Yes ($seedReport.updated -and (Test-Path -LiteralPath $SeedDir)) 'seed-made-again'
+  $SeedMaxPacks=0;$calls=@();Seed-Update $st
+  Yes ($seedReport.updated -and @($calls|Where-Object{$_ -ceq 'seed-repack'}).Count -eq 1 -and $null -eq (Seed-Shape-Problem)) 'seed-repacked-when-many-packs'
+  Yes (Git-Ok @(('--git-dir='+$SeedDir),'fsck','--full','--strict')) 'repacked-seed-fsck'
+  $SeedMaxPacks=12
+  Reset-Seed
   # 7. The whole script, main block included, as its own process, on a copy that changes only its fixed places: the
   #    resident directory, the remote (the file:// fixture, allowed for this copy only) and git's path. The answer and
   #    the receipt, then -CheckRefs, then a second run of the same batch (create-only). The script refuses elevation.
@@ -225,6 +359,8 @@ if($git){
    $copy=Join-Path $tmp 'build-bundle-copy.ps1';[IO.File]::WriteAllText($copy,$text)
    $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $batch)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
    Yes ($code -eq 0 -and $v.status -ceq 'BUNDLE_WRITTEN' -and $v.lsRemoteCompletedAt -cmatch '\A\d{4}-\d\d-\d\dT') ('main-block-answer:'+$out)
+   Yes ($v.seed.enabled -eq $true -and $v.seed.used -eq $false -and $v.seed.updated -eq $true -and $v.seed.reason -ceq 'NO_SEED') ('main-block-seed-created:'+$out)
+   Yes ((Test-Path -LiteralPath (Join-Path $res 'bundles\_seed\seed.git\HEAD')) -and (Test-Path -LiteralPath (Join-Path $res 'bundles\_seed\seed-meta.json')) -and -not (Test-Path -LiteralPath (Join-Path $res 'bundles\_seed\seed.lock'))) 'main-block-seed-files'
    $rc=[IO.File]::ReadAllText((Join-Path $res ('bundles\'+$batch+'\all-refs.receipt.json')))|ConvertFrom-Json
    Yes ($rc.status -ceq 'EXACT_ALL_REFS_AND_REVIEWED_BUNDLE_CREATED' -and $rc.storeAttempts -eq 1 -and $null -eq $rc.firstAttempt -and $rc.refListSha256 -ceq (Ref-List-Sha $expected) -and
      $rc.reviewedCommitCount -eq 1 -and $rc.headSha -ceq $c2 -and $rc.mainSha -ceq $c1 -and $rc.bundleSha256 -ceq $v.bundleSha256 -and $rc.lsRemoteCompletedAt -ceq $v.lsRemoteCompletedAt -and
@@ -238,6 +374,7 @@ if($git){
    $gen1=[IO.File]::ReadAllText((Join-Path $res ('bundles\'+$batch+'\all-refs.receipt.json')))|ConvertFrom-Json
    $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $batch -Rebundle)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
    Yes ($code -eq 0 -and $v.status -ceq 'BUNDLE_WRITTEN' -and $v.generation -eq 2) ('rebundle-answer:'+$out)
+   Yes ($v.seed.used -eq $false -and $v.seed.reason -ceq 'NETWORK_FAST') ('rebundle-fast-network-no-seed:'+$out)
    $rc2=[IO.File]::ReadAllText((Join-Path $res ('bundles\'+$batch+'\gen-2\all-refs.receipt.json')))|ConvertFrom-Json
    Yes ($rc2.generation -eq 2 -and $rc2.previousBundleSha256 -ceq $gen1.bundleSha256 -and $rc2.previousRefListSha256 -ceq $gen1.refListSha256 -and $rc2.bundleSha256 -ceq $v.bundleSha256 -and
      $rc2.descriptorSha256 -ceq $gen1.descriptorSha256 -and $rc2.refListSha256 -ceq (Ref-List-Sha $expected) -and (Test-Path -LiteralPath (Join-Path $res ('bundles\'+$batch+'\gen-2\all-refs.bundle')))) 'rebundle-receipt'
@@ -266,6 +403,16 @@ if($git){
    $tm=New-RefMap;$tm[$TestPrefix+$cS]=$cS
    Yes ($rc.testSha -ceq $cS -and $rc.testRefCount -eq 1 -and $rc.testRefListSha256 -ceq (Ref-List-Sha $tm) -and $rc.refListSha256 -ceq (Ref-List-Sha $expected)) 'front-main-block-receipt'
    $fh=Bundle-Header (Join-Path $res ('bundles\'+$fbatch+'\all-refs.bundle'));Yes ((Same-Map $fh.test $tm) -and (Same-Map $fh.formal $expected)) 'front-main-block-bundle'
+   # the same batch shape on a measured-slow network: the seed is used, the receipt keeps its fields and says the same things
+   $sbatch='0123456789abcdef-5eed5eed5eed';$sob=Join-Path $res ('outbox\'+$sbatch);[void][IO.Directory]::CreateDirectory($sob)
+   $sd=[ordered]@{};foreach($k in $fd.Keys){$sd[$k]=$fd[$k]};$sd['batchId']=$sbatch;[IO.File]::WriteAllText((Join-Path $sob 'descriptor.json'),($sd|ConvertTo-Json -Compress))
+   $smeta=Join-Path $res 'bundles\_seed\seed-meta.json';[IO.File]::WriteAllText($smeta,((([ordered]@{contract=$SeedMetaContract;updatedAt=(Utc);lastFullFetchSeconds=500;lastFullFetchAtUnix=(Unix-Now ([DateTime]::UtcNow))})|ConvertTo-Json -Compress)+"`n"))
+   $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $sbatch)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+   Yes ($code -eq 0 -and $v.status -ceq 'BUNDLE_WRITTEN' -and $v.seed.used -eq $true -and $v.seed.reason -ceq 'NETWORK_SLOW' -and $v.seed.updated -eq $true -and $v.seed.discarded -eq $false) ('main-block-seeded:'+$out)
+   $rs=[IO.File]::ReadAllText((Join-Path $res ('bundles\'+$sbatch+'\all-refs.receipt.json')))|ConvertFrom-Json
+   $rf=[IO.File]::ReadAllText((Join-Path $res ('bundles\'+$fbatch+'\all-refs.receipt.json')))|ConvertFrom-Json
+   Yes ($rs.storeAttempts -eq 1 -and $null -eq $rs.firstAttempt -and $rs.refListSha256 -ceq $rf.refListSha256 -and $rs.testRefListSha256 -ceq $rf.testRefListSha256 -and $rs.reviewedRefListSha256 -ceq $rf.reviewedRefListSha256 -and (@($rs.PSObject.Properties.Name)-join '|') -ceq (@($rf.PSObject.Properties.Name)-join '|')) 'main-block-seeded-receipt-same-shape'
+   $sh=Bundle-Header (Join-Path $res ('bundles\'+$sbatch+'\all-refs.bundle'));Yes ((Same-Map $sh.test $tm) -and (Same-Map $sh.formal $expected) -and (Same-Map $sh.reviewed $fh.reviewed)) 'main-block-seeded-bundle'
    # Task 4012c1b9: a push to the head's branch since the first bundle (a new commit on top of the head): the second generation
    # is refused (REMOTE_HEAD_MOVED). A force-push that drops the head fails earlier, at the head's object (a git step).
    $c3=(& $g commit-tree -p $c2 -m c3 ((& $g rev-parse "$c2^{tree}").Trim())).Trim();& $g update-ref refs/heads/feature $c3
