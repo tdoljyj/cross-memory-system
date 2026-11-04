@@ -35,7 +35,7 @@ import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from './full-admissio
 import { claimRolePublication, readRolePublication, rolePublicationKey } from './effect-journal.mjs';
 import { relayExternalId, validateHostedEnvelope } from './hosted-relay-v1/attest.mjs';
 import { ROLE_ALREADY_ON_GITHUB_REASON, publishedNames } from './published-on-github-v2.mjs';
-import { withdrawalTitle, withdrawalNote } from './withdrawal-text.mjs';
+import { withdrawalTitle, withdrawalNote, verificationUnavailable } from './withdrawal-text.mjs';
 
 const HASH = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -48,6 +48,10 @@ const stop = (code, drift = false, extra = {}) => { throw Object.assign(new Erro
 // admissionReason is the port's own code; admissionDiagnostic is its sanitized diagnostic (fixed enums only, no remote text).
 // Both are carried to the withdrawal's journal record, and the diagnostic to the outcome the resident reads.
 const ADMISSION_REASON = /^full_admission_[a-z_]{1,60}$/;
+// Whether a refusal before anything was recorded or written is only a passing fault of the sources (GitHub unreadable after the bounded read
+// retry, Native's claim observation or the admission port unavailable): then the entry says the stage is safe to run again (outcome.safeToRerun;
+// the resident re-invokes this publisher stage with the same signed result, DESIGN 51), never inferred from a code by the resident.
+const passingFault = error => { const r = reason(error); return verificationUnavailable(r) || r === 'native_claim_observation_unavailable' || (r === 'full_admission_not_proven' && verificationUnavailable(error?.admissionReason)); };
 const admissionOf = error => ({ ...(ADMISSION_REASON.test(error?.admissionReason ?? '') ? { admissionReason: error.admissionReason } : {}),
   ...(error?.admissionDiagnostic ? { admissionDiagnostic: error.admissionDiagnostic } : {}) });
 // An uncoded exception is never a transport fact (PR-A review MINOR 5): it is not a transient code.
@@ -118,6 +122,12 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
   async function onGithubOnly(mutex, job, definition) {
     if (await journal.read(rolePublicationKey(mutex))) return false;
     return (await publishedNames(github, job.headSha, [definition.name], definition.appId, frontJobIdsV2(job))).length > 0;
+  }
+  // The two reads the after-write verification depends on, nothing else: the PR and the head's check inventory.
+  async function probeGithub(job) {
+    await github.readPullRequest(job.pr);
+    const list = await github.readChecks(job.headSha);
+    if (list?.complete !== true || !Array.isArray(list.checks)) stop('check_readback_unconfirmed');
   }
   async function discoverKnown(definition, job, externalId) {
     const list = await github.readChecks(job.headSha);
@@ -267,12 +277,16 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
           return { status: 'SETTLED', effectKey: key, checkRunId: previous.details.checkRunId, sideEffects: 0, productionAuthorized: domain === 'production', mode: 'staged' };
         }
         if (await onGithubOnly(mutex, job, definition)) return { status: 'BLOCKED', effectKey: key, reason: ROLE_ALREADY_ON_GITHUB_REASON, sideEffects: 0, productionAuthorized: false };
+        // DESIGN 51 (B): GitHub must answer once more, right before anything is recorded or written. If it cannot (after the bounded
+        // read retry), the publication ends here with nothing in the journal, no K and nothing on GitHub, safe to run again, instead
+        // of writing a check whose verification then cannot be done.
+        await probeGithub(job);
       } catch (error) {
         if (previous?.state === 'settled' && positive(previous.details?.checkRunId)) {
           const known = { id: previous.details.checkRunId, app: { id: definition.appId }, head_sha: job.headSha, name: definition.name, external_id: externalId };
           return revoke({ key, phase: 'settled', known, definition, job, externalId, cause: reason(error), sideEffects: 0, ...admissionOf(error) });
         }
-        return { status: previous ? 'UNCERTAIN' : 'BLOCKED', ...(key ? { effectKey: key } : {}), reason: reason(error), ...(admissionOf(error).admissionDiagnostic ? { admissionDiagnostic: admissionOf(error).admissionDiagnostic } : {}), ...(admissionOf(error).admissionDiagnostic ? { admissionDiagnostic: admissionOf(error).admissionDiagnostic } : {}), sideEffects: 0, productionAuthorized: false };
+        return { status: previous ? 'UNCERTAIN' : 'BLOCKED', ...(key ? { effectKey: key } : {}), reason: reason(error), ...(!previous && passingFault(error) ? { safeToRerun: true } : {}), ...(admissionOf(error).admissionDiagnostic ? { admissionDiagnostic: admissionOf(error).admissionDiagnostic } : {}), ...(admissionOf(error).admissionDiagnostic ? { admissionDiagnostic: admissionOf(error).admissionDiagnostic } : {}), sideEffects: 0, productionAuthorized: false };
       }
       let phase = 'intent', sent = false, known = null, sideEffects = 0;
       try {

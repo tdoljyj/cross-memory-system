@@ -253,6 +253,15 @@ export const SCANNER_ABANDON_ARCHIVE_REASON = 'scanner-abandoned';
 // The stages before which the executor records the head as "may have published" (executed-heads.mjs): every stage that
 // can publish a role or control check.
 export const PUBLICATION_STAGES = Object.freeze([3, 5, 7, 8, RELAY_STAGE]);
+// DESIGN 51: the scanner publisher stages and how long the resident waits before it runs one again after it ended clean without writing
+// anything because GitHub / Native were passingly unavailable (1 run + 3 repeats, at most 7 minutes more, inside the stage's own limit).
+export const PUBLICATION_RETRY_STAGES = Object.freeze([3, 5, 7]);
+export const PUBLICATION_RETRY_MS = Object.freeze([30_000, 90_000, 300_000]);
+// Only the entry's own flag decides (never a code): a clean BLOCKED with zero side effects that published nothing, on a runner that read back
+// as the original and a Windows tree at zero.
+export const publicationRetryable = (number, r) => PUBLICATION_RETRY_STAGES.includes(number) && r?.ok === false && r.proof?.windowsTreeZero === true
+  && r.proof?.serviceOriginalStopped === true && r.outcome?.status === 'BLOCKED' && r.outcome.sideEffects === 0 && r.outcome.mayHavePublished === false
+  && r.outcome.safeToRerun === true;
 // A backfill that keeps failing transiently (not a refused source) HALTs after this long (an antivirus or backup lock
 // of a few minutes only defers it).
 export const BACKFILL_PENDING_MAX_MS = 30 * 60_000;
@@ -2624,9 +2633,23 @@ export class ResidentExecutor {
         if (unrecorded) { unrecorded.relayedRoles = relayed; return unrecorded; }
         this.atStage(number, 'stage');
         const execution = number === ROLE_STAGES[role][0];
-        const { result: r, abort, stopCode, unconfirmed } = await this.runStageWatched(key, batch, number, { betweenRoles: execution && index > 0, firstLinux: execution && index === 0 });
+        let run = await this.runStageWatched(key, batch, number, { betweenRoles: execution && index > 0, firstLinux: execution && index === 0 });
+        let { result: r, abort, stopCode, unconfirmed } = run;
         await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r),
           ...(r.bridge ? { bridge: bridgeFacts(r.bridge) } : {}), ...(r.memoryGate ? { memoryGate: memoryGateFacts(r.memoryGate) } : {}) });
+        // DESIGN 51 (C): a publisher stage (3, 5, 7) that ended before it wrote anything, because a source it reads was passingly unavailable and
+        // its entry says so (outcome.safeToRerun), is run again with the same signed result (still in the spool), after a bounded back-off.
+        // Nothing is parked and nothing re-scanned; the Source starts from a clean journal (nothing was recorded) and re-proves everything.
+        for (let again = 0; again < PUBLICATION_RETRY_MS.length && publicationRetryable(number, r) && !abort && !unconfirmed; again++) {
+          await this.receipt('publication-retry', { key, stage: number, try: again + 1, afterMs: PUBLICATION_RETRY_MS[again], failureCode: validCode(r.code), reason: r.outcome?.reason ?? null });
+          await this.sleep(PUBLICATION_RETRY_MS[again]);
+          if ((aborted = await this.abortIfRequested(key, batch, `before-stage-${number}`))) return aborted;
+          this.atStage(number, 'stage');
+          run = await this.runStageWatched(key, batch, number, { betweenRoles: false, firstLinux: false });
+          ({ result: r, abort, stopCode, unconfirmed } = run);
+          await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r),
+            ...(r.bridge ? { bridge: bridgeFacts(r.bridge) } : {}), retry: again + 1 });
+        }
         if (unconfirmed) return this.unknown(key, 'OWNER_ABORT_UNCONFIRMED', 'owner-abort-unconfirmed', batch, { safePoint: `in-stage-${number}`, stage: number });
         if (abort) return this.concludeAbort(key, batch, { safePoint: `in-stage-${number}`, stage: number, result: r, request: abort, stopCode });
         if (r.ok !== true) return new StepFailure(number, r.code, r.proof, 'stage', relayed, r);

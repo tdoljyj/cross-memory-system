@@ -80,7 +80,7 @@ export function notOnDuty(reason, diagnostic) {
 // A GitHub read that outlived the bounded read retry (read-retry.mjs) before anything was recorded or written (the published-on-github
 // read-back, the first step) is as safe to re-run as the first evaluation's boundary: nothing exists to reconcile (DESIGN 49).
 export const refusalSafeToRerun = ({ step, claimed, reason, diagnostic }) => claimed === null
-  && ((step === 'boundary' && (notOnDuty(reason, diagnostic) || !deterministicPrFault(reason, diagnostic))) || (step === 'published-on-github' && verificationUnavailable(reason)));
+  && ((step === 'boundary' && (notOnDuty(reason, diagnostic) || !deterministicPrFault(reason, diagnostic))) || (['published-on-github', 'probe'].includes(step) && verificationUnavailable(reason)));
 const freeze = v => { if (v && typeof v === 'object') { Object.values(v).forEach(freeze); Object.freeze(v); } return v; };
 const fixedJob = job => { validateJobV2(job); check(job.repo === REPO && job.role === ROLE && job.attempt >= 1 && job.attempt <= MAX_ATTEMPT_V2, 'FIXED_WORK_ADMISSION_JOB_REQUIRED'); return freeze(structuredClone(job)); };
 function identity(c, job, externalId) { return Number.isSafeInteger(c?.id) && c.id > 0 && c.app?.id === APP_ID && c.name === CHECK_NAME && c.head_sha === job.headSha && c.external_id === externalId; }
@@ -197,6 +197,11 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       }
       step = 'boundary';
       const evaluated = await evaluate(job, claimed, facts => { scheduling = facts; });
+      // DESIGN 51 (B): GitHub must answer once more before the batch claim is recorded or anything is written; if it cannot (after the
+      // bounded read retry) the refusal is clean and safe to re-run, with no claim and no journal record.
+      step = 'probe';
+      await github.readPullRequest(job.pr);
+      check((await github.readChecks(job.headSha))?.complete === true, 'COMPLETE_CHECK_INVENTORY_REQUIRED');
       step = 'admitted';
       before = bound(job, evaluated);
       if (!claimed) {

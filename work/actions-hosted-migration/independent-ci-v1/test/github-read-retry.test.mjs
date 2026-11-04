@@ -20,7 +20,8 @@ import { recordBatchClaim, readBatchClaim } from '../src/batch-claim-v2.mjs';
 import { withReadRetry, READ_RETRY_DELAYS_MS, READ_RETRY_BUDGET_MS } from '../src/read-retry.mjs';
 import { withdrawalTitle, verificationUnavailable } from '../src/withdrawal-text.mjs';
 import { controllerPorts } from '../src/resident-v2/entry-runtime.mjs';
-import { outcomeFailureCode } from '../src/resident-v2/stage-fact.mjs';
+import { outcomeFailureCode, outcomeFacts } from '../src/resident-v2/stage-fact.mjs';
+import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
 import { HEAD, BASE, tempDir, fixtureRecord, signResult } from './resident-v2-fixtures.mjs';
 
@@ -139,6 +140,7 @@ test('controllerPorts: every GitHub read of the controller is retried; its write
 const claim = (o = {}) => ({ claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000), ...o });
 const jobsFor = (attempt = 1) => batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt });
 const SLOT_UNTIL = iso(Date.now() + 3600_000);
+const blocked = reason => ({ contract: 'clued.independent-ci.full-admission/2', status: 'BLOCKED', admitted: false, reason });
 function admitted(job, observed, packet, { batchClaim = null, mode = {} } = {}) {
   const facts = { contract: 'clued.independent-ci.full-admission/2', status: 'ADMITTED', admitted: true, completeAdmission: true, evaluator: 'scripts/ci/clued-work-admission.mjs#evaluate',
     domain: 'fixture', repository: REPO, scope: 'project:x', prRef: `${REPO}#${job.pr}`, headSha: job.headSha, baseSha: job.baseSha, jobId: job.id, role: job.role, attempt: job.attempt,
@@ -279,4 +281,82 @@ test('withdrawal text: only a GitHub read that could not be done is "verificatio
   assert.equal(withdrawalTitle('Work admission', 'x'), 'Work admission authorization changed');
   assert.equal(withdrawalTitle('Independent control', 'x'), 'Independent control authorization changed');
   assert.equal(withdrawalTitle('Independent CI', 'x'), 'Independent CI authorization changed');
+});
+
+// ---- DESIGN 51: B (probe before anything is recorded or written) and the entry's own safe-to-rerun flag (C) ----
+test('work admission v2 (B): GitHub unreadable at the probe, before the batch claim is recorded, ends clean and safe to re-run; the next run publishes', async t => {
+  const github = fakeGithub();
+  const { pub, job } = await workAdmission(t, { github, answer: okAnswer });
+  let failing = true; const rp = github.readPullRequest.bind(github);
+  github.readPullRequest = async n => { if (failing) throw Object.assign(new Error('github_http_503'), { code: 'github_http_503' }); return rp(n); };
+  const r = await pub.publish(job);
+  assert.deepEqual([r.status, r.reason, r.sideEffects, r.safeToRerun, github.checks.length], ['BLOCKED', 'github_http_503', 0, true, 0]);
+  // nothing was recorded: no batch claim, no effect-key record, so the very next run is a first admission again
+  failing = false;
+  const again = await pub.publish(job);
+  assert.deepEqual([again.status, again.sideEffects, github.checks.length], ['SETTLED', 1, 1]);
+});
+
+function scannerWorld(t, role, answer) {
+  return (async () => {
+    const { signer, docs } = fixtureRecord();
+    const record = validateRecordV2(docs, { now: Date.now() });
+    const job = jobsFor()[role], c = claim();
+    const refs = Object.fromEntries(['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef'].map(k => [k, record.accepted[k]]));
+    const authority = { fixture: true, async observe(j) { return { ...subjectOfV2(j), ...refs, ciPrincipalBindingId: record.config.ciPrincipalBindingId, sourceAccepted: true, hostQualified: true,
+      publisherQualified: true, ciPrincipalQualified: true, observedAt: iso(Date.now()), claimExpiresAt: c.expiresAt, claim: claimGeneration(c) }; } };
+    const signers = new Map([...record.signers].map(([k, s]) => [k, { ...s, domain: 'fixture' }]));
+    const envelope = signResult(job, signer, { finishedAt: Date.now() - 1000, startedAt: Date.now() - 5000, domain: 'fixture' });
+    const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+    const make = github => createStagedCheckPublisherV2({ nativeAdmission: fakeAdmission(answer ?? ((j, packet, opts) => admitted(j, c, packet, { batchClaim: opts.batchClaim }))), authority, github, journal, signers,
+      configuredChecks: record.config.checks, readChangedPaths: j => github.readChangedPaths(j),
+      protectedDeployment: { enabled: true, domain: 'fixture', repository: REPO, ciPrincipalBindingId: record.config.ciPrincipalBindingId, ...refs }, batchClaim: claimGeneration(c), domain: 'fixture' });
+    return { job, c, envelope, signer, journal, make, publish: github => make(github).publish({ job, envelope }) };
+  })();
+}
+
+test('scanner publisher v2 (B, C): GitHub unreadable at the probe leaves no K, no journal record, no check; safe to run again and the next run publishes', async t => {
+  const w = await scannerWorld(t, 'gitleaks');
+  const github = fakeGithub();
+  // the PR is read twice before the write (the boundary, then the probe): the second read fails
+  const rp = github.readPullRequest.bind(github); let reads = 0, failing = true;
+  github.readPullRequest = async n => { reads++; if (failing && reads >= 2) throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); return rp(n); };
+  const r = await w.publish(github);
+  assert.deepEqual([r.status, r.reason, r.sideEffects, r.safeToRerun, github.checks.length], ['BLOCKED', 'github_http_502', 0, true, 0], JSON.stringify(r));
+  assert.equal(await w.journal.read(r.effectKey), null, 'no effect-key record');
+  assert.equal(outcomeFailureCode({ ...r, mayHavePublished: false }, 3), 'GITHUB_TRANSIENT_UNAVAILABLE');
+  failing = false;
+  const again = await w.publish(github);
+  assert.deepEqual([again.status, again.sideEffects, github.checks.map(x => x.conclusion)], ['SETTLED', 1, ['success']], JSON.stringify(again));
+});
+
+test('scanner publisher v2 (C): the safe-to-rerun flag is the entry own, set only for a passing fault before anything was recorded', async t => {
+  const blockedBy = (reason, diagnostic) => () => ({ ...blocked(reason), ...(diagnostic ? { diagnostic } : {}) });
+  // the admission port was unavailable (any exception inside it): safe; Native's rejection of the head: not
+  let r = await (await scannerWorld(t, 'trivy', blockedBy('full_admission_unavailable'))).publish(fakeGithub());
+  assert.deepEqual([r.status, r.reason, r.sideEffects, r.safeToRerun], ['BLOCKED', 'full_admission_not_proven', 0, true]);
+  r = await (await scannerWorld(t, 'trivy', blockedBy('full_admission_rejected', { reasonCodes: ['claim_not_current'], nativeReasonCodes: [], verdict: 'REJECTED' }))).publish(fakeGithub());
+  assert.deepEqual([r.status, r.reason, r.sideEffects, r.safeToRerun], ['BLOCKED', 'full_admission_not_proven', 0, undefined]);
+  r = await (await scannerWorld(t, 'trivy', blockedBy('full_admission_native_changed'))).publish(fakeGithub());
+  assert.equal(r.safeToRerun, undefined);
+  // GitHub unreadable: safe; a 403 is a refusal: not
+  for (const [code, safe] of [['github_http_500', true], ['github_transport_unconfirmed', true], ['github_http_403', undefined], ['pr_subject_changed', undefined]]) {
+    const github = fakeGithub(); github.failReads(code);
+    r = await (await scannerWorld(t, 'trivy')).publish(github);
+    assert.deepEqual([r.status, r.reason, r.sideEffects, r.safeToRerun], ['BLOCKED', code, 0, safe], code);
+  }
+  // a refused signed result is never safe to run again
+  const w = await scannerWorld(t, 'trivy');
+  const bad = { ...w.envelope, signature: 'x'.repeat(10) };
+  r = await w.make(fakeGithub()).publish({ job: w.job, envelope: bad });
+  assert.deepEqual([r.status, r.sideEffects, r.safeToRerun], ['BLOCKED', 0, undefined]);
+});
+
+test('the flag survives the entry\'s outcome record and the stage fact the resident reads (stage 3)', async t => {
+  const github = fakeGithub(); github.failReads('github_http_502');
+  const r = await (await scannerWorld(t, 'gitleaks')).publish(github);
+  const written = await writeOutcome({ receiptsRoot: await tempDir(t, 'clued-no-role-'), nonce: randomUUID().replace(/-/g, ''), plan: { stage: 3, entryRole: 'check-publisher' }, jobIds: [], result: r });
+  const facts = outcomeFacts(written);
+  assert.deepEqual([facts.safeToRerun, facts.sideEffects, facts.mayHavePublished], [true, 0, false]);
+  assert.equal(outcomeFailureCode(written, 3), 'GITHUB_TRANSIENT_UNAVAILABLE');
 });
