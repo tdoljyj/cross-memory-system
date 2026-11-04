@@ -658,9 +658,9 @@ class RoleProbeSelfTestRegressionTests(unittest.TestCase):
         def result(args, code, findings):
             return subprocess.CompletedProcess(args, code, json.dumps(findings).encode(), b'')
 
-        def finding(path, rule, line=1):
-            return {'File': path, 'RuleID': rule, 'StartLine': line,
-                    'Fingerprint': '0' * 40 + ':' + path + ':' + rule + ':' + str(line)}
+        def finding(path, rule, line=1, commit='0' * 40):
+            return {'File': path, 'RuleID': rule, 'StartLine': line, 'Commit': commit,
+                    'Fingerprint': commit + ':' + path + ':' + rule + ':' + str(line)}
 
         def route(args, **options):
             if args[0] != docker:
@@ -714,6 +714,12 @@ class RoleProbeSelfTestRegressionTests(unittest.TestCase):
                 prefix, shift = [('', 0), ('other-path/', 0), ('', 1)][index - 9]
                 return result(args, 1, [finding(prefix + catalog, 'curl-auth-user', spec['line'] + shift) for spec in specs])
             if index == 12:
+                head = actual_run(['git', 'rev-parse', 'HEAD'], cwd=repo, capture_output=True, check=True).stdout.decode().strip()
+                self.assertEqual(actual_run(['git', 'cat-file', '-p', 'HEAD:' + catalog], cwd=repo, capture_output=True,
+                                            check=True).stdout, reviewed._candidate_policy.load(ROOT)[reviewed._candidate_policy.H2]['catalog'])
+                return result(args, 1, [finding(catalog, 'curl-auth-user', spec['line'], head)
+                                        for spec in reviewed._candidate_policy.SPECS_D94])
+            if index == 13:
                 return result(args, 1, [finding('curl-credential-probe.txt', 'curl-auth-user')])
             self.fail('Unexpected extra detector call')
 
@@ -730,7 +736,7 @@ class RoleProbeSelfTestRegressionTests(unittest.TestCase):
 
     def test_new_commit_other_path_and_added_line_are_all_detected(self):
         report, scans = self.run_self_test()
-        self.assertEqual(len(scans), 13)
+        self.assertEqual(len(scans), 14)
         for key in ['role_probe_new_commit_detection', 'role_probe_different_path_detection',
                     'role_probe_different_line_detection', 'historical_json_new_commit_detection',
                     'historical_json_different_path_detection', 'historical_json_different_line_detection',
@@ -747,7 +753,8 @@ class RoleProbeSelfTestRegressionTests(unittest.TestCase):
         for index, reason in [(9, 'Historical JSON metadata was suppressed at a new commit'),
                               (10, 'Historical JSON metadata was suppressed at another path'),
                               (11, 'Historical JSON metadata was suppressed at another line'),
-                              (12, 'Genuine credential-shaped curl fixture was suppressed')]:
+                              (12, 'Historical d94cd486 JSON metadata was suppressed at a new commit'),
+                              (13, 'Genuine credential-shaped curl fixture was suppressed')]:
             with self.subTest(scan=index), self.assertRaisesRegex(ValueError, reason):
                 self.run_self_test(suppress=index)
 
@@ -820,6 +827,20 @@ class HistoricalD94ExactTwinTests(unittest.TestCase):
                         self.config.replace(row, self.rows()[731], 1)]:
             with self.subTest(), self.assertRaises(ValueError):
                 reviewed.parse_records(changed)
+
+    def test_whole_line_digest_is_enforced_for_every_spec(self):
+        for fingerprint, spec in self.policy.FINDINGS.items():
+            with self.subTest(fingerprint=fingerprint), patch.dict(spec, line_sha256='0' * 64), self.assertRaises(ValueError):
+                self.policy.verify(fingerprint, self.data)
+        self.assertEqual(self.policy.SPECS_D94[0]['line_sha256'], self.policy.SPECS[0]['line_sha256'])
+
+    def test_a_missing_branch_only_commit_names_its_branch(self):
+        records = reviewed.parse_records(self.config)
+        with tempfile.TemporaryDirectory(prefix='clued-empty-store-') as empty:
+            reviewed.run(['git', 'init', '--quiet'], cwd=Path(empty))
+            with self.assertRaisesRegex(ValueError, 'd94cd486 \\(branch claude/gitleaks-midgen-reviewed-hold\\)'):
+                reviewed._ensure_reviewed_commits(Path(empty), records, allow_fetch=False)
+        self.assertEqual(self.policy.BRANCH_ONLY, {self.D94: 'claude/gitleaks-midgen-reviewed-hold'})
 
     def test_changed_catalog_bytes_or_line_are_rejected(self):
         for mutate in [lambda d: d.update(catalog=d['catalog'] + b' '),

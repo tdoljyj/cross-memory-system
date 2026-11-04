@@ -233,7 +233,7 @@ const GIT_ENV = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: p
 const git = (args, input) => { const r = spawnSync(GIT, args, { input, env: GIT_ENV });
   if (r.status !== 0) throw new Error(`git ${args[0]} failed: ${String(r.stderr).slice(0, 300)}`); return r.stdout.toString('utf8').trim(); };
 
-test('gitleaks v4 prepare: only the 729 successor passes; legacy, swapped or tampered bytes are refused before output', { skip: !GIT ? 'no single-link git executable' : !GITLEAKS_SUCCESSOR && 'successor workflow awaits a real freeze commit' }, async t => {
+test('gitleaks v4 prepare: only the active 733 successor passes; legacy, swapped or tampered bytes are refused before output', { skip: !GIT ? 'no single-link git executable' : !GITLEAKS_SUCCESSOR && 'successor workflow awaits a real freeze commit' }, async t => {
   const directory = await fsp.mkdtemp(path.join(os.tmpdir(), 'clued-workflow-pins-'));
   t.after(async () => {
     const open = async p => { const s = await fsp.lstat(p); await fsp.chmod(p, s.isDirectory() ? 0o700 : 0o600);
@@ -245,6 +245,7 @@ test('gitleaks v4 prepare: only the 729 successor passes; legacy, swapped or tam
   const base = git(['--git-dir=' + store, 'commit-tree', tree, '-m', 'synthetic base']);
   const head = git(['--git-dir=' + store, 'commit-tree', tree, '-p', base, '-m', 'synthetic head']);
   const gitSha = sha256(fs.readFileSync(GIT));
+  let lastMessage = '';
   async function attempt(label, workflow, pins) {
     const run = await fsp.mkdtemp(path.join(directory, `${label}-`)), source = path.join(run, 'source');
     // Helper and config are single exact pins: the working tree must equal them.
@@ -262,10 +263,12 @@ test('gitleaks v4 prepare: only the 729 successor passes; legacy, swapped or tam
       await gitleaksV4.prepareRequiredHistory({ job, sourceManifestBytes: bytes, expectedSourceManifestSha256: sha256(bytes), trustedSourceDirectory: source,
         gitDirectory: store, remoteSnapshot: snapshot, outputDirectory: path.join(run, 'history'), gitExecutable: GIT, expectedGitSha256: gitSha });
       return { code: null, outputs: fs.readdirSync(run) };
-    } catch (error) { return { code: error.code, outputs: fs.readdirSync(run) }; }
+    } catch (error) { lastMessage = String(error.message); return { code: error.code, outputs: fs.readdirSync(run) }; }
   }
   const active = successorWorkflowBytes(), main = workflowBytes('main', GITLEAKS), prB = workflowBytes('pr-b', GITLEAKS), tampered = Buffer.concat([active, Buffer.from('# tampered\n')]);
   assert.deepEqual(await attempt('successor', active, [sha256(active)]), { code: 'REVIEWED_COMMIT_NOT_IN_STORE', outputs: ['history', 'source'] });
+  // The stable code is kept; the message names the branch that alone carries a reviewed commit (Decision 98fec682).
+  assert.match(lastMessage, /d94cd486 lives only on branch claude\/gitleaks-midgen-reviewed-hold \(PR #991\) until it is merged: do not delete it/);
   for (const [label, bytes] of [['main', main], ['pr-b', prB]]) {
     assert.deepEqual(await attempt(label, bytes, [sha256(bytes)]), { code: 'TRUSTED_REVIEW_SOURCE_PIN_REQUIRED', outputs: ['source'] }, label);
   }

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { batchJobsV2, subjectOfV2 } from '../src/job-v2.mjs';
-import { REVIEWED_COMMITS, REVIEWED_HISTORY_PROOF, validateSelfTestReport, requiredScannerPlan } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
+import { REVIEWED_COMMITS, REVIEWED_HISTORY_PROOF, matchesReviewedHistoryProof, validateSelfTestReport, requiredScannerPlan } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
 import { REVIEWED_COMMITS as LEGACY_COMMITS } from '../worker/formal-gitleaks-v3/required-history/prepare.mjs';
 import { validateCleanupObservation } from '../worker/formal-fixed-role-policy-v3/policy.mjs';
 import { observationFacts } from '../worker/protected-job-bridge-v4/signed-result.mjs';
@@ -60,12 +60,22 @@ test('Source v4 successor has exactly 733 findings/104 commits; the legacy Sourc
   assert.deepEqual(LEGACY_COMMITS, { findings: 726, commits: 100, sha256: 'fcb2cc04ee35e01fbfc4bfc3dc9b0bb0ba78a6c4083ab5e17433c549450d59bb' });
 });
 
+test('the pinned proof is exactly 175 files at 104 commits and 130 objects (adjacent values are refused)', () => {
+  assert.deepEqual({ ...REVIEWED_HISTORY_PROOF }, { commits: 104, files_at_commits: 175, verified_git_objects: 130,
+    reviewed_commits_sha256: REVIEWED_COMMITS.sha256, reviewed_ignore_sha256: '51d18a93ba783848ab6bd60e496a1ceb9fcb82d901533f0bd8114189a99edd6b' });
+  for (const [key, values] of [['commits', [103, 105]], ['files_at_commits', [174, 176]], ['verified_git_objects', [129, 131]]]) for (const value of values) {
+    assert.equal(matchesReviewedHistoryProof({ ...REVIEWED_HISTORY_PROOF, [key]: value }), false, `${key}=${value}`);
+  }
+  assert.equal(matchesReviewedHistoryProof({ ...REVIEWED_HISTORY_PROOF }), true);
+});
+
 test('the actual self-test must retain every old guard and prove new marker and valid-PEM detection', async () => {
   assert.equal(report().regression.synthetic_test_repository, '/controlled-helper-return/repo');
   assert.doesNotThrow(() => validateSelfTestReport(report()));
   for (const edit of [r => r.exact_historical_fingerprints = 732, r => r.exact_historical_fingerprints = 734,
     r => r.global_fingerprints = 1, r => r.default_rules_unchanged = false, r => r.commits = 103,
-    r => r.files_at_commits = 170, r => r.verified_git_objects = 131, r => r.ignore_sha256 = 'a'.repeat(64), r => r.extra = true,
+    r => r.files_at_commits = 170, r => r.files_at_commits = 174, r => r.files_at_commits = 176,
+    r => r.verified_git_objects = 129, r => r.verified_git_objects = 131, r => r.ignore_sha256 = 'a'.repeat(64), r => r.extra = true,
     r => r.regression.extra = true, r => delete r.regression.synthetic_test_repository,
     r => r.regression.synthetic_test_repository = false, r => r.regression.synthetic_test_repository = 'relative/repo']) {
     const value = report(); edit(value); assert.throws(() => validateSelfTestReport(value), { code: 'UNCHANGED_REVIEW_SELF_TEST_REQUIRED' });

@@ -15,7 +15,11 @@ const ROOT=fileURLToPath(new URL('../../../',import.meta.url));
 const env={...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',GIT_TERMINAL_PROMPT:'0',
   GIT_AUTHOR_NAME:'offline fixture',GIT_AUTHOR_EMAIL:'fixture@example.invalid',GIT_COMMITTER_NAME:'offline fixture',GIT_COMMITTER_EMAIL:'fixture@example.invalid'};
 const git=(dir,args,input)=>{const r=spawnSync('git',['-C',dir,...args],{env,windowsHide:true,input,encoding:'utf8'});assert.equal(r.status,0,String(r.stderr));return r.stdout.trim();};
-const COMMIT=git(ROOT,['rev-parse','HEAD']);
+// A fixed frozen commit, never HEAD: the plan accepts a commit only while its closure equals the digests pinned in
+// hosted-relay-v1/registry.json (the 732 hosted generation). 2640dce9 is the gen8 head that closure was frozen against;
+// HEAD moves with every Source re-pin (DESIGN 52) and would make this module throw CUTOVER_FROZEN_CLOSURE_DRIFT.
+const COMMIT='2640dce952d68337f391a842755ac763c6f2ad4a';
+assert.equal(git(ROOT,['cat-file','-t',COMMIT]),'commit');
 const INPUT={repoDir:ROOT,frozenCommit:COMMIT,ownerUserId:'11111111-1111-4111-8111-111111111111',projectId:'22222222-2222-4222-8222-222222222222',sourceManifestSha256:'e'.repeat(64),
   qualificationHeadSha:'a'.repeat(40),qualificationHoldEvidenceSha256:'b'.repeat(64)};
 const sha=b=>createHash('sha256').update(b).digest('hex');

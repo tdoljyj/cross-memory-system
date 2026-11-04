@@ -14,7 +14,7 @@ import tomllib
 
 # Candidate-only pinned stdlib module; checked bytes are executed from this RAM buffer.
 import types as _candidate_types
-_CANDIDATE_POLICY_SHA = "91b620c4bd87ba43a02dd0e1db489aebe4993583e0008dff90136d9fef66e2ae"
+_CANDIDATE_POLICY_SHA = "ed2a198650173a2d5f469e2094e02ce3c6301421b2186460c212281a0d2a8cd6"
 _candidate_raw = Path(__file__).with_name("reviewed_gitleaks_historical.py").read_bytes()
 if hashlib.sha256(_candidate_raw).hexdigest() != _CANDIDATE_POLICY_SHA:
     raise ValueError("Candidate policy module changed")
@@ -316,18 +316,20 @@ def _ensure_reviewed_commits(repo, records, *, allow_fetch=True):
         )
         if result.returncode:
             missing.append(commit)
+    branch_only = [f"{c[:8]} (branch {_candidate_policy.BRANCH_ONLY[c]})" for c in missing if c in _candidate_policy.BRANCH_ONLY]
+    hint = ("; reachable only from a GitHub branch until it is merged, do not delete it: " + ", ".join(branch_only)) if branch_only else ""
     if missing and not allow_fetch:
-        raise ValueError("Required historical commits unavailable; read-only preparation never fetches")
+        raise ValueError("Required historical commits unavailable; read-only preparation never fetches" + hint)
     if missing:
         result = subprocess.run(
             ["git", "fetch", "--no-tags", "--no-recurse-submodules", "--depth=1", "origin", *missing],
             cwd=repo, capture_output=True, check=False,
         )
         if result.returncode:
-            raise ValueError("Reviewed commit is not available")
+            raise ValueError("Reviewed commit is not available" + hint)
     for commit in commits:
         if run(["git", "cat-file", "-t", commit], cwd=repo).strip() != b"commit":
-            raise ValueError("Reviewed commit is not available")
+            raise ValueError("Reviewed commit is not available" + hint)
     return commits
 
 
@@ -835,6 +837,17 @@ def self_test(config, production_ignore):
     code, historical_line = scan()
     if code != 1 or not all(has_exact(historical_line, _candidate_policy.CATALOG, s["line"]+1) for s in _candidate_policy.SPECS):
         raise ValueError("Historical JSON metadata was suppressed at another line")
+    # The d94cd486 catalog (the reviewed twin) must not be suppressed at a commit of its own either: this commit
+    # has a different hash, so the exact finding of that very commit has to be reported.
+    d94_catalog = run(["git", "cat-file", "blob", f"{_candidate_policy.H2}:{_candidate_policy.CATALOG}"], cwd=config.parent)
+    if hashlib.sha256(d94_catalog).hexdigest() != _candidate_policy.COMMITS[_candidate_policy.H2]["catalog_sha"]:
+        raise ValueError("Exact historical d94cd486 catalog regression bytes changed")
+    target.unlink(); commit(); target.write_bytes(d94_catalog); commit()
+    head = run(["git", "rev-parse", "HEAD"], cwd=test_repo).decode().strip()
+    code, d94_new = scan()
+    if code != 1 or not all(any(f.get("Commit") == head and f["File"] == _candidate_policy.CATALOG and f["RuleID"] == "curl-auth-user"
+                                and f["StartLine"] == s["line"] for f in d94_new) for s in _candidate_policy.SPECS_D94):
+        raise ValueError("Historical d94cd486 JSON metadata was suppressed at a new commit")
     synthetic = " ".join(["curl", "--user", ":".join(["fixture-identity", "fixture-auth-value"]), "https://invalid.example"]) + "\n"
     (test_repo / "curl-credential-probe.txt").write_text(synthetic, encoding="utf-8"); commit()
     code, genuine_shape = scan()

@@ -3942,16 +3942,16 @@ Windows 一侧也在受同一条链路的影响，但不是 WSL 乱跳的原因�
 
 **实现（与 `cc353e29` 两条同一条证明路径，推广到“每个提交一份钉值”）。**
 - `.gitleaks.toml`：`clued-reviewed-count: 733`，末尾追加那一条记录（前 732 条记录字节不变，新增常量 `PRIOR_732_RECORD_LINES_SHA256`；旧的 `ORIGINAL_730_RECORD_LINES_SHA256` 与两条一组的检查保持）。
-- `reviewed_gitleaks_historical.py`：每个已审核提交有自己的钉值表 `COMMITS`（目录、角色规格、单提交补丁的 sha256 和 blob）；`d94cd486` 的规格是 `cc353e29` 的 gitleaks 规格换提交（同一索引、行号、列区间、解码行区间、来源 blob、角色），另外两条规格都新增“整行字节”的 sha256 钉值，证明两个提交的第 3829 行逐字节相同。`verify` 仍然要求：目录/角色规格/补丁的字节与 blob 钉值一致，补丁里该行是新增行，规则命中恰一处且列区间一致，被匹配的是 `docker run` 的数字 uid:gid，来源与角色定义对得上。
-- `reviewed_gitleaks.py`：`EXPECTED_COUNT = 733`；按位置分段检查（前 730 / cc353e29 两条 / d94cd486 一条）；自检的四个历史回归（新提交、另一路径、另一行、真正的 curl 凭据）不变，它们本来就用同样的字节在一个新提交里证明放行不会外溢。
+- `reviewed_gitleaks_historical.py`：每个已审核提交有自己的钉值表 `COMMITS`（目录、角色规格、单提交补丁的 sha256 和 blob）；`d94cd486` 的规格是 `cc353e29` 的 gitleaks 规格换提交（同一索引、行号、列区间、解码行区间、来源 blob、角色），另外两条规格都新增“整行字节（连 LF）”的 sha256 钉值，`verify` 逐条比较它，证明两个提交的第 3829 行逐字节相同（有篡改该钉值被拒的测试）。`verify` 仍然要求：目录/角色规格/补丁的字节与 blob 钉值一致，补丁里该行是新增行，规则命中恰一处且列区间一致，被匹配的是 `docker run` 的数字 uid:gid，来源与角色定义对得上。
+- `reviewed_gitleaks.py`：`EXPECTED_COUNT = 733`；按位置分段检查（前 730 / cc353e29 两条 / d94cd486 一条）；自检的四个历史回归（新提交、另一路径、另一行、真正的 curl 凭据）保留；“新提交”这一项另外显式用 `d94cd486` 自己的目录字节在一个新提交里再跑一遍，并要求报告里有该提交自己的发现（按 Commit 字段，不是只看文件名）。
 - `selftest-shim.mjs`：自检里的 git 垫片只多放行一条精确的 `d94cd486^ d94cd486` 目录补丁命令，其他提交对一律拒绝（新增测试覆盖）。
 - `prepare.mjs`：`SOURCE_PINS`、`REVIEWED_COMMITS`、`REVIEWED_HISTORY_PROOF` 全部由工具从真实 git 对象算出，不是手算（见下表）。
 
 | 钉值 | 第 8 代（732） | 第 9 代（733） |
 |---|---|---|
 | `.gitleaks.toml` sha256 | `f21a46cb2a0c…` | `55d9299006dd…` |
-| `reviewed_gitleaks.py` sha256 | `4441bbee3b02…` | `38264a09306b…` |
-| `reviewed_gitleaks_historical.py` sha256 | `d395d46b18aa…` | `91b620c4bd87…` |
+| `reviewed_gitleaks.py` sha256 | `4441bbee3b02…` | `a604c77c92aa…` |
+| `reviewed_gitleaks_historical.py` sha256 | `d395d46b18aa…` | `ed2a19865017…` |
 | `REVIEWED_COMMITS` findings / commits | 732 / 103 | 733 / 104 |
 | 审核提交集合 sha256 | `576a86a6061e…` | `702a8d6c6cab…` |
 | `files_at_commits` | 174 | 175 |
@@ -3960,8 +3960,9 @@ Windows 一侧也在受同一条链路的影响，但不是 WSL 乱跳的原因�
 
 **验证。** 用 CI 发行版里钉死的镜像 `ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0…bbb7`（`CluedCI-Linux`，`--network none`、只读、`--cap-drop ALL`）和由新 `.gitleaks.toml` 生成的审核 ignore，对真实提交对象各扫一次：`d94cd486` 在 732 的 ignore 下 1 个发现（`curl-auth-user:3829`，即线上失败），在 733 的 ignore 下 0 个；`e14db576`、`59fff541` 在 733 下仍各 1 个发现（被拒）；`cc353e29` 在两份下都是 0 个。助手的物理自检（上面四个历史回归和既有的各项）在同一镜像里全部通过。
 
-**后果与没做的。**
+**后果与没做的（各项都有检查办法）。**
 1. **托管的 `gitleaks.yml` 及其登记没有改。** 它写死的 `.gitleaks.toml`、助手、提交集合、ignore 的摘要仍是 732 那一组（和提交 `8d2f207e` 放行 role-probe 那次一样，先改常驻 Source，托管那一代另行冻结）；要让托管路径也认这一条，需要新的 `gitleaks.yml` 代、新的登记（`clued-gated-proof-*`、`trusted-workflows`、`hosted-relay registry`、`gitleaks-732.yml` 夹具等）和独立审核。常驻 Source 用 `prepare.mjs` 里的钉值，不执行也不读 `gitleaks.yml` 里的这些摘要。
-2. **证明依赖 `d94cd486` 及其父提交 `8ea4da40` 在对象库里。** `verify_history` 读该提交的目录、角色规格和单提交补丁；`build-bundle.ps1` 按已装 Source 的 `.gitleaks.toml` 把每个审核提交按哈希从 origin 取成 `refs/reviewed/<sha>`，常驻准备再把它的整个闭包打包。`d94cd486` 目前只在 PR #991 的分支 `claude/gitleaks-midgen-reviewed-hold` 上；分支被删除或改写后，GitHub 可能不再按哈希提供它，打包或助手就会 fail closed（`cc353e29` 已在 main 里，没有这个依赖）。#991 合入 main 之前不要删分支；或者另行把该提交保留到一个常驻引用上。
+2. **证明依赖 `d94cd486` 及其父提交 `8ea4da40` 在对象库里。** `verify_history` 读该提交的目录、角色规格和单提交补丁；`build-bundle.ps1` 按已装 Source 的 `.gitleaks.toml` 把每个审核提交按哈希从 origin 取成 `refs/reviewed/<sha>`，常驻准备再把它的整个闭包打包。`d94cd486` 目前只在 PR #991 的分支 `claude/gitleaks-midgen-reviewed-hold` 上可达（`cc353e29` 已在 main 里，没有这个依赖）。**检查项：#991 合入（或 `d94cd486` 在 main 上可达）之前不得删除或改写该分支**；否则 GitHub 可能不再按哈希提供它，打包或助手 fail closed。报错里已点出分支：`prepare.mjs` 的 `REVIEWED_COMMIT_NOT_IN_STORE`（稳定错误码不变）的消息、Python 助手 `_ensure_reviewed_commits` 的 ValueError 都会写出 `d94cd486` 和分支名（测试覆盖）；`BRANCH_ONLY`（历史模块）与 `BRANCH_ONLY_REVIEWED`（`prepare.mjs`）是这份清单，分支合入后两处一起删。
 3. **同样内容的其他提交再出现就再需要 Owner 决定。** 例如 #991 分支被改写（rebase）后，新的提交哈希需要新的一条（733 → 734）。
 4. 这一条只对 `curl-auth-user` 在这一行有效；真正的 `curl --user 身份:口令` 仍被检出（自检的 `genuine_curl_credential_detection`）。
+5. **在新的托管代冻结、registry 重新登记之前，不能以本提交（或其后代）为 frozenCommit 构建 cutover 计划。** `hosted-relay-v1/registry.json` 仍钉着 732 代的 `.gitleaks.toml`、`reviewed_gitleaks.py`、`reviewed_gitleaks_historical.py` 摘要（`f21a46cb…`/`4441bbee…`/`d395d46b…`），`scan-start-cutover-plan.mjs` 对 frozenCommit 与 registry 的 sourceCommit 都核对闭包，任何带 733 新字节的提交会抛 `CUTOVER_FROZEN_CLOSURE_DRIFT`。`qualification/scan-start-cutover-plan.test.mjs` 因此固定使用 gen8 头 `2640dce9`，不再用 `HEAD`。扫描许可切换线要先登记 733 的托管代（新 `gitleaks.yml`、新登记、registry 重建），再用新的冻结提交构建 cutover 计划。
