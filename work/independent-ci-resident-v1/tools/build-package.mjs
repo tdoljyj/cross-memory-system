@@ -39,6 +39,7 @@ import { validateStateCompat } from '../src/upgrade-mailbox.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { RESIDENT_INSTALL_ROOT, validateCompanionConfig, validateHintConfig } from '../src/companion.mjs';
 import { validateStatusConfig } from '../src/pr-status.mjs';
+import { validatePanelDispatchConfig } from '../src/panel-dispatch.mjs';
 import { INSTALLED_MANIFEST_CONTRACT } from '../src/service-ports.mjs';
 import { pinnedNodeProfile } from '../src/node-profile.mjs';
 import { nodeIdentityOf, nodeIdentitySha256 } from '../src/node-identity.mjs';
@@ -196,6 +197,7 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
   check(finalCompanion.companion.nodeProfileSha256 === nodeProfileSha256 && canonicalJson(finalCompanion.companion.node) === canonicalJson(node), 'PACKAGE_NODE_PROFILE_CHANGED');
   validateHintConfig(finalCompanion.hints);
   validateStatusConfig(finalCompanion.status);
+  validatePanelDispatchConfig(finalCompanion.panelDispatch);
   await fs.mkdir(path.join(out, 'config'));
   await writeJson(path.join(out, 'config', 'policy.json'), finalPolicy);
   await writeJson(path.join(out, 'config', 'companion.json'), finalCompanion);

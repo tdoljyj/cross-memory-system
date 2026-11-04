@@ -22,6 +22,7 @@ import { readStatus } from './status.mjs';
 import { LocalStore, PrStatusReporter, toastArgv, validateStatusConfig } from './pr-status.mjs';
 import { companionBackstop } from './ruleset-backstop.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
+import { PanelDispatchState, PanelDispatcher, validatePanelDispatchConfig } from './panel-dispatch.mjs';
 import { CompanionHeartbeat, ghHandoverPort, readHeartbeatToken, scQueryArgv, serviceRunningFrom, supabaseHeartbeatTransport } from './companion-heartbeat.mjs';
 
 // The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
@@ -37,6 +38,9 @@ export const UPGRADE_LANE_EVERY_MS = 5_000;
 export const HEARTBEAT_LANE_EVERY_MS = 30_000;
 // The companion's instance lock is refreshed this often (instance-lock.mjs: a holder older than ten minutes is not fresh).
 export const COMPANION_LOCK_TOUCH_MS = 60_000;
+// The compute panel's five-minute trigger (DESIGN §43, panel-dispatch.mjs) looks this often whether it is due; it dispatches at most every
+// five minutes. Its own Runner: a slow GitHub never delays the heartbeat or the mailbox.
+export const PANEL_DISPATCH_LANE_EVERY_MS = 30_000;
 const SC_EXE = 'C:\\Windows\\System32\\sc.exe';
 
 // The node heartbeat, or null when no heartbeat token is installed (then nothing about the companion changes). The server's
@@ -275,6 +279,14 @@ export async function main(args = process.argv.slice(2)) {
     run: (a, o) => heartbeatRunner.run(a, o), store: heartbeatStore });
   // §41.6a: while the heartbeat's answer shows the failover watchdog stale, the PR page status says so too.
   reporter.watchdogStale = () => heartbeat?.watchdogStale === true;
+  // The panel trigger (DESIGN §43, Decision 7eb98011): on unless companion.json says panelDispatch.enabled false; dispatches only while
+  // this node's status says ACTIVE. Its own Runner and its own memory file (two lanes never write one file).
+  const panelRunner = new Runner({ env: { ...process.env }, jobHost });
+  const panelDispatch = validatePanelDispatchConfig(raw.panelDispatch).enabled
+    ? new PanelDispatcher({ nodeName: cfg.node.nodeName, repo: raw.repo, ghExe: raw.ghExe, clock: Date.now, run: (a, o) => panelRunner.run(a, o), readStatus: () => readStatus(values.root),
+      notify: async (key, title, body) => { await panelRunner.run(toastArgv(cfg.powershellExe, title, body), { timeoutMs: 15_000 }); },
+      state: await PanelDispatchState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-panel-dispatch.json')) })
+    : null;
   keepalive(companionArgv(cfg).keepalive());
   let lastPoll = 0, lastReport = 0, lastBackstop = 0;
   // Only now, with a usable job host and every part of the companion set up: a companion whose job host cannot start a
@@ -289,6 +301,7 @@ export async function main(args = process.argv.slice(2)) {
       lane({ runner, work: () => companion.step() }),
       lane({ runner: upgradeRunner, work: () => upgradeLane.step(), everyMs: UPGRADE_LANE_EVERY_MS }),
       ...(heartbeat ? [lane({ runner: heartbeatRunner, work: () => heartbeat.step(), everyMs: HEARTBEAT_LANE_EVERY_MS })] : []),
+      ...(panelDispatch ? [lane({ runner: panelRunner, work: () => panelDispatch.step(), everyMs: PANEL_DISPATCH_LANE_EVERY_MS })] : []),
       lane({ runner: advisory, work: async () => {
         if (Date.now() - lastPoll > POLL_EVERY_MS) {
           lastPoll = Date.now();

@@ -3640,3 +3640,16 @@ node rollout/rollout.mjs next    --plan <rollout.json> --observation <file> [...
 - `rollout/test/precheck.test.mjs`：包里带着本树**真实的**升级代理副本（`upgraderCopy`），所以做决定的就是被测代码：PASS（plan 与 ACCEPT 相同，节点根目录逐字节不变）、读不到的槽、冻结模块改动（列出 `src/store.mjs`）、副本被篡改（import 之前拒绝）、身份、state、接受、同包、Linux 工具变更。
 - `rollout/test/test_upgrade_tools.py`：`upgrade-config.py` 沿用现装包、包不是当前代、包是别的节点；`roles-derived.py` 的结果等于冻结 Linux 工具 stage 时 `derive_role` 的结果（用该工具自己的离线 fixtures），以及工具不同、角色副本过期、manifest 不是包的、新提交缺钉住文件。
 - 不改升级代理、常驻、Linux 工具、重装工具链的任何字节：diff 只在 `rollout/` 和本节。
+
+## 43. 算力面板的 5 分钟触发（Task `b42419de`，Decision `7eb98011`；Note `9477974e`）
+
+完整说明在本分支的设计说明里；这里只记代码的合同。
+
+- **为什么**：GitHub 对本仓库的定时触发大量丢弃，`clued-compute-panel.yml` 的 `*/5` 实际约 6 小时一次。由持有 ci-admission 的节点在 main 上 `workflow_dispatch` 它，cron 留作兜底。
+- **`src/panel-dispatch.mjs`**：companion 的一条独立通道（`companion-main.mjs`，自己的 `Runner`，每 30 秒一看），自己的记忆文件 `companion-panel-dispatch.json`（Owner 档案）。没有新凭据：同一个 Owner 的 `gh` 登录；写只有一条固定 argv `gh api --method POST repos/<repo>/actions/workflows/clued-compute-panel.yml/dispatches -f ref=main`，另有一次读取该 workflow 在 main 上最近 5 次运行（`--include`，用 GitHub 的 `Date` 头算年龄）。
+- **当班**：`status.json` 新鲜（≤ 5 分钟）、`node.name` 是本节点、`node.mode === 'ACTIVE'`、没有 `dual-active` 持有者；否则零调用。HALT、PAUSE 不阻止（面板正要显示它们）。
+- **不重复**：main 上任何事件、年龄不到 4 分钟的运行占住这个时隙（另一节点、cron、上一次）；加上并发组 `cancel-in-progress` 作最后一层。每小时最多 20 次，跨重启有效。
+- **退避与告警**：失败后 1、2、4、8、15 分钟重试；连续 3 次失败、403/404/422（第一次）、当班但 15 分钟没有运行，各弹一次 toast；之后出现新运行弹一次"已恢复"。下一次读取时必须看到上一次触发产生的运行，否则记为 `DISPATCH_NO_RUN`。
+- **开关**：`companion.json` 可选键 `panelDispatch: { enabled }`，缺省开；其余不可配置。`tools/build-package.mjs` 校验。
+- **测试**：`test/panel-dispatch.test.mjs`（17 个，假 GitHub）。
+- **不做**：不改 workflow 文件和 `compute_panel.py`；面板自身的"上次运行过久"告警是后续项。
