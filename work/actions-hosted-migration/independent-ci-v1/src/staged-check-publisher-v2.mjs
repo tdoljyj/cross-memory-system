@@ -286,7 +286,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
           const known = { id: previous.details.checkRunId, app: { id: definition.appId }, head_sha: job.headSha, name: definition.name, external_id: externalId };
           return revoke({ key, phase: 'settled', known, definition, job, externalId, cause: reason(error), sideEffects: 0, ...admissionOf(error) });
         }
-        return { status: previous ? 'UNCERTAIN' : 'BLOCKED', ...(key ? { effectKey: key } : {}), reason: reason(error), ...(!previous && passingFault(error) ? { safeToRerun: true } : {}), ...(admissionOf(error).admissionDiagnostic ? { admissionDiagnostic: admissionOf(error).admissionDiagnostic } : {}), ...(admissionOf(error).admissionDiagnostic ? { admissionDiagnostic: admissionOf(error).admissionDiagnostic } : {}), sideEffects: 0, productionAuthorized: false };
+        return { status: previous ? 'UNCERTAIN' : 'BLOCKED', ...(key ? { effectKey: key } : {}), reason: reason(error), ...(!previous && passingFault(error) ? { safeToRerun: true } : {}), ...(admissionOf(error).admissionDiagnostic ? { admissionDiagnostic: admissionOf(error).admissionDiagnostic } : {}), sideEffects: 0, productionAuthorized: false };
       }
       let phase = 'intent', sent = false, known = null, sideEffects = 0;
       try {
