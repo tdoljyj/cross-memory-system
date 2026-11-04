@@ -86,13 +86,13 @@
     {
       "id": "hook.work-claim-guard",
       "kind": "hook",
-      "version": "1.1.9",
+      "version": "1.1.10",
       "description": "Claude Code work-claim hooks.",
       "root": "scripts/hooks",
       "files": [
         "clued_work_claim_guard.py"
       ],
-      "content_sha256": "a36f0d45716e23a3ec5ac750d71ac2b64fb47b180b0e376fdb5325fea927fe64",
+      "content_sha256": "055d69ec66bf698d676a07cb5ff114d793e1a81081685030fae64b7ff3a1e8ba",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -131,13 +131,13 @@
     {
       "id": "hook.settings",
       "kind": "hook",
-      "version": "1.1.1",
+      "version": "1.1.2",
       "description": "Claude Code hook registration (.claude/settings.json).",
       "root": ".claude",
       "files": [
         "settings.json"
       ],
-      "content_sha256": "0dc40be75363da599b8996202efd58733214546f481580f57e71350a3b10b5fe"
+      "content_sha256": "c0d1e8e8801714524b4359974d64817caade55d6e0eb09e8e35a86ef48aed1e9"
     },
     {
       "id": "script.runner-handover-qualifier",
