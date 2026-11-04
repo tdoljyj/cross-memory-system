@@ -514,11 +514,13 @@ class DuplicateBuildTests(unittest.TestCase):
         report = panel.build(self.client(), NOW, state)
         key = panel.duplicate_event(report["duplicates"]["found"][0])[0]
         self.assertEqual(len(report["duplicates"]["found"]), 1)
-        self.assertIn(key, state["announced"])  # main() announces only the keys not in `announced`
+        self.assertTrue(panel.is_announced(state, key))  # main() announces only the keys not yet announced
+        self.assertEqual(state["announced"], [])  # duplicates keep their own set
+        self.assertEqual([k for k in report["events"] if k.startswith("dup")], [])
         # a duplicate on a new head at the next scan is not yet recorded: it will be announced
         newer = BuildClient([pull(1, "a" * 40), pull(2, "b" * 40)], {"a" * 40: self.dup, "b" * 40: self.dup})
         report = panel.build(newer, NOW + timedelta(hours=1), state)
-        fresh = [k for k in report["events"] if k.startswith("dup:") and k not in state["announced"]]
+        fresh = [k for k in report["events"] if k.startswith("dup:") and not panel.is_announced(state, k)]
         self.assertEqual(len(fresh), 1)
         self.assertIn("b" * 12, fresh[0])
 
@@ -545,6 +547,169 @@ class DuplicateBuildTests(unittest.TestCase):
         self.assertIn("没有发现", unread)  # an empty list of PRs is a scan with nothing to read
         broken = panel.render(panel.build(BuildClient([pull(1, "a" * 40)], {}, fail="check-runs"), NOW, {}), {})
         self.assertIn("尚未采集", broken)
+
+
+class Flaky(BuildClient):
+    """BuildClient whose check-run reads fail: the codes in `errors` once each, in order, or `always` every time
+    (a code of 0 is a network error)."""
+
+    def __init__(self, *args, errors: list[int] | None = None, always: int | None = None, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.errors, self.always, self.check_calls = list(errors or []), always, 0
+
+    def get(self, path: str, params: dict | None = None):
+        if "check-runs" in path:
+            self.check_calls += 1
+            code = self.always if self.always is not None else (self.errors.pop(0) if self.errors else None)
+            if code == 0:
+                raise OSError("connection reset")
+            if code:
+                raise panel.RequestError(f"GET {path} failed ({code})", code)
+        return super().get(path, params)
+
+
+def many_heads(count: int, state: str = "closed", updated_min_ago: float = 180) -> tuple[list[dict], dict[str, list[dict]]]:
+    """`count` PRs, each head with one gitleaks check that really ran twice."""
+    dup = [resident("gitleaks", 50), resident("gitleaks", 40, attempt=2)]
+    shas = [f"{i:04x}" + "a" * 36 for i in range(count)]
+    return [pull(i + 1, sha, state, updated_min_ago=updated_min_ago) for i, sha in enumerate(shas)], {sha: dup for sha in shas}
+
+
+class DuplicateRetryTests(unittest.TestCase):
+    """Review finding (a): a 5xx must not void the whole scan, and a failed scan must not start over every 5 minutes."""
+
+    def setUp(self) -> None:
+        self.sleeps: list[float] = []
+        self.original = panel.SLEEP
+        panel.SLEEP = self.sleeps.append
+        self.dup = [resident("gitleaks", 50), resident("gitleaks", 40, attempt=2)]
+
+    def tearDown(self) -> None:
+        panel.SLEEP = self.original
+
+    def test_a_5xx_or_network_error_is_tried_again_with_a_doubling_pause(self) -> None:
+        client = Flaky([pull(1, "a" * 40)], {"a" * 40: self.dup}, errors=[502, 0])
+        result = panel.scan_duplicates(client, NOW, {})
+        self.assertEqual([item["pr"] for item in result["found"]], [1])
+        self.assertEqual((client.check_calls, self.sleeps), (3, [panel.DUP_BACKOFF, panel.DUP_BACKOFF * 2]))
+
+    def test_other_errors_are_not_retried_and_the_tries_are_bounded(self) -> None:
+        client = Flaky([pull(1, "a" * 40)], {}, always=403)
+        with self.assertRaises(RuntimeError):
+            panel.scan_duplicates(client, NOW, {})
+        self.assertEqual((client.check_calls, self.sleeps), (1, []))
+        client = Flaky([pull(1, "a" * 40)], {}, always=502)
+        with self.assertRaises(RuntimeError):
+            panel.scan_duplicates(client, NOW, {})
+        self.assertEqual((client.check_calls, len(self.sleeps)), (panel.DUP_ATTEMPTS, panel.DUP_ATTEMPTS - 1))
+
+    def test_a_failed_scan_waits_15_minutes_then_reads_again(self) -> None:
+        state: dict = {}
+        report = panel.build(Flaky([pull(1, "a" * 40)], {"a" * 40: self.dup}, always=502), NOW, state)
+        self.assertEqual(state["duplicates_failed_at"], panel.iso(NOW))
+        self.assertTrue(any(e.startswith("duplicate runs:") for e in report["errors"]))
+        soon = Flaky([pull(1, "a" * 40)], {"a" * 40: self.dup})
+        report = panel.build(soon, NOW + timedelta(minutes=5), state)
+        self.assertEqual(soon.check_calls, 0)  # still waiting
+        self.assertTrue(any("不再重试" in e for e in report["errors"]))
+        self.assertNotIn("duplicates", state)
+        later = Flaky([pull(1, "a" * 40)], {"a" * 40: self.dup})
+        report = panel.build(later, NOW + timedelta(minutes=16), state)
+        self.assertEqual(later.check_calls, 1)
+        self.assertNotIn("duplicates_failed_at", state)
+        self.assertEqual(report["duplicates"]["total"], 1)
+        self.assertEqual(report["errors"], [])
+
+    def test_a_scan_that_retried_into_success_leaves_no_failure_mark(self) -> None:
+        state: dict = {}
+        panel.build(Flaky([pull(1, "a" * 40)], {"a" * 40: self.dup}, errors=[502]), NOW, state)
+        self.assertNotIn("duplicates_failed_at", state)
+        self.assertEqual(state["duplicates"]["total"], 1)
+
+
+class DuplicateKeepTests(unittest.TestCase):
+    """Review finding (b): the total and the carry-over must not fall to the number of findings kept in full."""
+
+    def test_the_total_survives_saving_and_settled_heads(self) -> None:
+        pulls, checks = many_heads(36)
+        state: dict = {}
+        report = panel.build(BuildClient(pulls, checks), NOW, state)
+        saved = state["duplicates"]
+        self.assertEqual((saved["total"], len(saved["found"]), len(saved["rest"])), (36, panel.DUP_KEEP, 36 - panel.DUP_KEEP))
+        self.assertNotIn("runs", saved["rest"][0])  # a short record
+        self.assertEqual((report["duplicates"]["total"], len(report["duplicates"]["found"])), (36, panel.DUP_ROWS))
+        # an hour later the closed heads are not read again, and still all 36 are counted
+        again = BuildClient(pulls, checks)
+        report = panel.build(again, NOW + timedelta(hours=1), state)
+        self.assertNotIn("/commits/" + "0000" + "a" * 36 + "/check-runs", again.paths)
+        self.assertEqual(state["duplicates"]["total"], 36)
+        self.assertEqual((len(state["duplicates"]["found"]), len(state["duplicates"]["rest"])), (panel.DUP_KEEP, 36 - panel.DUP_KEEP))
+        self.assertIn("共 36 项，只列最近 10 项", panel.render(report, state))
+        # and a third pass still has them (the short records are carried, not dropped)
+        panel.build(BuildClient(pulls, checks), NOW + timedelta(hours=2), state)
+        self.assertEqual(state["duplicates"]["total"], 36)
+
+    def test_beyond_the_saving_limit_the_dropped_heads_are_read_again_so_the_total_stays_exact(self) -> None:
+        count = panel.DUP_KEEP + panel.DUP_MAX + 10
+        pulls, checks = many_heads(count)
+        state: dict = {}
+        panel.build(BuildClient(pulls, checks), NOW, state)
+        saved = state["duplicates"]
+        self.assertEqual((saved["total"], len(saved["rest"]), len(saved["settled"])), (count, panel.DUP_MAX, count - 10))
+        again = BuildClient(pulls, checks)
+        panel.build(again, NOW + timedelta(hours=1), state)
+        self.assertEqual(state["duplicates"]["total"], count)
+        self.assertEqual(sum(1 for path in again.paths if path.endswith("/check-runs")), 10)  # only the dropped heads
+
+    def test_short_records_age_out_with_the_window(self) -> None:
+        pulls, checks = many_heads(30)
+        state: dict = {}
+        panel.build(BuildClient(pulls, checks), NOW, state)
+        self.assertEqual(state["duplicates"]["total"], 30)
+        panel.build(BuildClient(pulls, checks), NOW + timedelta(days=4), state)
+        self.assertEqual(state["duplicates"]["total"], 0)
+
+
+class DuplicateAnnouncedTests(unittest.TestCase):
+    """Review finding (c): other events must not push announced duplicate keys out of the saved set."""
+
+    def test_other_events_do_not_evict_duplicate_keys(self) -> None:
+        state: dict = {}
+        panel.mark_announced(state, ["dup:aaaa:gitleaks:2"])
+        panel.mark_announced(state, [f"failed:{i}" for i in range(500)])
+        self.assertTrue(panel.is_announced(state, "dup:aaaa:gitleaks:2"))
+        self.assertEqual(len(state["announced"]), 200)
+        self.assertFalse(panel.is_announced(state, "failed:0"))
+        self.assertNotIn("dup:aaaa:gitleaks:2", state["announced"])
+
+    def test_the_duplicate_set_is_bounded_but_never_drops_a_live_finding(self) -> None:
+        pulls, checks = many_heads(3)
+        state: dict = {}
+        panel.build(BuildClient(pulls, checks), NOW, state)
+        live = [panel.duplicate_key(item) for item in state["duplicates"]["found"]]
+        panel.mark_announced(state, [f"dup:old{i}:x:2" for i in range(2 * panel.DUP_ANNOUNCED)])
+        self.assertEqual(len(state["announced_dup"]), panel.DUP_ANNOUNCED)
+        self.assertTrue(all(panel.is_announced(state, key) for key in live))
+        self.assertTrue(panel.is_announced(state, f"dup:old{2 * panel.DUP_ANNOUNCED - 1}:x:2"))  # the newest others stay
+        self.assertFalse(panel.is_announced(state, "dup:old0:x:2"))  # the oldest others go
+
+    def test_a_finding_is_not_announced_again_after_many_other_events(self) -> None:
+        pulls, checks = many_heads(2, state="open", updated_min_ago=10)
+        state: dict = {}
+        panel.build(BuildClient(pulls, checks), NOW, state)  # the first scan records both
+        panel.mark_announced(state, [f"failed:{i}" for i in range(1000)])
+        report = panel.build(BuildClient(pulls, checks), NOW + timedelta(hours=1), state)
+        self.assertEqual([key for key in report["events"] if key.startswith("dup")], [])
+
+    def test_the_issue_body_stays_well_under_the_limit_in_the_worst_case(self) -> None:
+        pulls, checks = many_heads(panel.DUP_KEEP + panel.DUP_MAX + 30)
+        state: dict = {}
+        panel.build(BuildClient(pulls, checks), NOW, state)
+        panel.mark_announced(state, [f"dup:old{i}:x:2" for i in range(2 * panel.DUP_ANNOUNCED)])
+        panel.mark_announced(state, [f"failed:{i}" for i in range(400)])
+        report = panel.build(BuildClient(pulls, checks), NOW + timedelta(hours=1), state)
+        body = panel.render(report, state)
+        self.assertLess(len(body), 50000)  # the limit is 65536 characters
 
 
 FIXTURE = ROOT / "tests" / "fixtures" / "compute-panel-duplicate-runs.json"
@@ -639,8 +804,8 @@ class RecordedDataTests(unittest.TestCase):
         client = RecordedGitHub(now)
         result = panel.scan_duplicates(client, now, {})
         self.assertEqual(result["heads_read"], panel.DUP_PULLS)
-        self.assertEqual((result["total"], len(result["found"])), (33, panel.DUP_KEEP))
-        self.assertEqual(sorted({item["pr"] for item in result["found"]}), [959, 964, 965, 970, 976, 977, 978])
+        self.assertEqual((result["total"], len(result["found"])), (33, 33))  # every finding; pack_duplicates() trims the saved form
+        self.assertEqual(sorted({item["pr"] for item in result["found"]}), [958, 959, 960, 961, 963, 964, 965, 970, 976, 977, 978])
         self.assertEqual(len(client.paths), 1 + 2 * panel.DUP_PULLS)
         # three days later, a scan reads the same PRs and finds the hosted-and-resident pairs have aged out
         later = RecordedGitHub(datetime(2026, 11, 5, 9, 0, tzinfo=timezone.utc))
@@ -672,15 +837,16 @@ class RecordedDataTests(unittest.TestCase):
         self.assertEqual(sum(1 for line in body.splitlines() if line.startswith("| #")), panel.DUP_ROWS)
         self.assertIn("共 33 项，只列最近 10 项", body)
         self.assertLess(len(body), 40000)
-        self.assertEqual(len({key for key in report["events"] if key.startswith("dup:")}), panel.DUP_KEEP)
+        self.assertEqual([key for key in report["events"] if key.startswith("dup")], [])  # the first scan announces nothing
+        self.assertEqual(len(state["announced_dup"]), 33)
         # a later scan that finds a burst announces the first rows and one summary line, and records the rest
         later = {"events_at": panel.iso(now), "duplicates": {"as_of": panel.iso(now - timedelta(hours=2))}}
         report = panel.build(Client(now), now, later)
-        announce = [key for key in report["events"] if key.startswith("dup") and key not in later["announced"]]
+        announce = [key for key in report["events"] if key.startswith("dup") and not panel.is_announced(later, key)]
         self.assertEqual(len(announce), panel.DUP_ROWS + 1)
         self.assertEqual(sum(1 for key in announce if key.startswith("dup-more:")), 1)
-        self.assertIn("另有 10 项", report["events"][[key for key in announce if key.startswith("dup-more:")][0]])
-        self.assertEqual(len(later["announced"]), panel.DUP_KEEP - panel.DUP_ROWS)
+        self.assertIn("另有 23 项", report["events"][[key for key in announce if key.startswith("dup-more:")][0]])
+        self.assertEqual(len(later["announced_dup"]), 33 - panel.DUP_ROWS)
 
 
 if __name__ == "__main__":

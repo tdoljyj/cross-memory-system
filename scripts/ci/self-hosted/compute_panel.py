@@ -21,12 +21,14 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import math
 import os
 import re
 import statistics
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -67,7 +69,13 @@ DUP_PULLS = 30                         # newest-updated PRs read per scan (open 
 DUP_RESCAN = timedelta(hours=24)       # a PR merged this recently is read again: the resident may reschedule it
 DUP_PAGES = 5                          # check-run pages per head (100 each)
 DUP_ROWS = 10                          # rows in the panel table and the machine-readable data
-DUP_KEEP = 20                          # findings kept in the saved state (the issue body is limited to 65536 characters)
+DUP_KEEP = 12                          # findings kept with their details in the saved state (the issue body is limited to 65536 characters)
+DUP_MAX = 80                           # further findings kept as short records, so the total and the carry-over stay right
+DUP_ANNOUNCED = 300                    # announced duplicate keys kept (as short tokens), apart from the 200 other events
+DUP_ATTEMPTS = 3                       # tries per request on a 5xx or a network error
+DUP_BACKOFF = 2.0                      # seconds before the second try, doubled for the third
+DUP_FAILED_WAIT = timedelta(minutes=15)  # after a failed scan, wait this long before reading again
+SLEEP = time.sleep
 DUP_RUNS_SHOWN = 4
 DUP_TITLE = 60
 # check-run conclusions that mean the check's work really ran; cancelled (a superseded copy), skipped,
@@ -135,6 +143,14 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class RequestError(RuntimeError):
+    """An HTTP error reply; `code` is its status."""
+
+    def __init__(self, message: str, code: int) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class GitHub:
     def __init__(self, token: str, repository: str, api_url: str = "https://api.github.com") -> None:
         self.token = token
@@ -171,7 +187,7 @@ class GitHub:
             self._budget(error.headers)
             if error.code in (301, 302, 303, 307, 308):
                 return error.code, None, dict(error.headers)
-            raise RuntimeError(f"{method} {path} failed ({error.code})") from None
+            raise RequestError(f"{method} {path} failed ({error.code})", error.code) from None
 
     def _budget(self, headers: Any) -> None:
         value = headers.get("X-RateLimit-Remaining") if headers else None
@@ -613,25 +629,49 @@ def duplicate_findings(head: str, pull: dict, checks: list[dict], workflows: dic
     return found
 
 
+def duplicate_key(finding: dict) -> str:
+    """A new key whenever the count grows."""
+    return f"dup:{finding['head']}:{finding['check']}:{finding['count']}"
+
+
 def duplicate_event(finding: dict) -> tuple[str, str]:
-    """The event key (a new key whenever the count grows) and its one-line text."""
+    """The event key and its one-line text. A short record (kept for the total only) has no runs to describe."""
     counts: dict[str, int] = {}
-    for run in finding["runs"]:
+    for run in finding.get("runs") or []:
         counts[run["executor"]] = counts.get(run["executor"], 0) + 1
     names = {"resident": "常驻", "hosted": "托管"}
     parts = "、".join(f"{names.get(who, cell(who))} {n} 次" for who, n in counts.items())
     why = "；".join({"after-merge": "合并后又被调度", "cross-executor": "托管与常驻各跑一次",
-                     "same-executor": "同一执行方重复"}[cause] for cause in finding["causes"])
-    text = (f"重复执行：PR #{finding['pr']}（{finding['title']}）提交 {finding['head'][:8]} 的检查 {cell(finding['label'])} "
-            f"真跑了 {finding['count']} 次（{parts}；{why}；{finding['first']} 至 {finding['last']}）")
-    return f"dup:{finding['head']}:{finding['check']}:{finding['count']}", text
+                     "same-executor": "同一执行方重复"}[cause] for cause in finding.get("causes") or [])
+    span = f"{finding['first']} 至 {finding['last']}" if finding.get("first") else f"最近 {finding['last']}"
+    detail = "；".join(part for part in (parts, why, span) if part)
+    text = (f"重复执行：PR #{finding['pr']}（{finding.get('title', '')}）提交 {finding['head'][:8]} 的检查 "
+            f"{cell(finding.get('label') or finding['check'])} 真跑了 {finding['count']} 次（{detail}）")
+    return duplicate_key(finding), text
+
+
+def short_finding(finding: dict) -> dict:
+    """What is kept of a finding beyond the first DUP_KEEP: enough to count it, carry it over and date it."""
+    return {key: finding[key] for key in ("head", "pr", "check", "count", "last") if key in finding}
+
+
+def retrying(call):
+    """Run one request; a 5xx or a network error is tried DUP_ATTEMPTS times with a doubling pause."""
+    for attempt in range(DUP_ATTEMPTS):
+        try:
+            return call()
+        except (RequestError, OSError) as error:
+            transient = isinstance(error, OSError) or error.code >= 500
+            if not transient or attempt == DUP_ATTEMPTS - 1:
+                raise
+            SLEEP(DUP_BACKOFF * 2 ** attempt)
 
 
 def read_check_runs(client: GitHub, sha: str) -> list[dict]:
     """Every check run on a commit, not only the latest per name (filter=all). Needs checks: read."""
     checks: list[dict] = []
     for page in range(1, DUP_PAGES + 1):
-        reply = client.get(f"/commits/{sha}/check-runs", {"filter": "all", "per_page": 100, "page": page}) or {}
+        reply = retrying(lambda: client.get(f"/commits/{sha}/check-runs", {"filter": "all", "per_page": 100, "page": page})) or {}
         rows = reply.get("check_runs") or []
         checks.extend(rows)
         if len(rows) < 100:
@@ -641,20 +681,62 @@ def read_check_runs(client: GitHub, sha: str) -> list[dict]:
 
 def read_workflow_runs(client: GitHub, sha: str) -> dict[int, dict]:
     """run id -> workflow path, event and attempt, to tell same-named jobs of different workflows apart."""
-    reply = client.get("/actions/runs", {"head_sha": sha, "per_page": 100}) or {}
+    reply = retrying(lambda: client.get("/actions/runs", {"head_sha": sha, "per_page": 100})) or {}
     return {run["id"]: {"path": run.get("path"), "name": run.get("name"), "event": run.get("event"),
                         "attempt": run.get("run_attempt")} for run in reply.get("workflow_runs") or []}
+
+
+def dup_token(key: str) -> str:
+    return hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
+
+
+def is_announced(state: dict, key: str) -> bool:
+    if key.startswith("dup"):
+        return dup_token(key) in (state.get("announced_dup") or [])
+    return key in (state.get("announced") or [])
+
+
+def mark_announced(state: dict, keys: list[str]) -> None:
+    """Duplicate keys have their own set of DUP_ANNOUNCED short tokens, so other events cannot push them out;
+    the keys of the findings still in the window are never dropped (that would announce them again)."""
+    plain = [key for key in keys if not key.startswith("dup")]
+    state["announced"] = ((state.get("announced") or []) + plain)[-200:]
+    tokens = list(state.get("announced_dup") or [])
+    tokens += [dup_token(key) for key in keys if key.startswith("dup") and dup_token(key) not in tokens]
+    if len(tokens) > DUP_ANNOUNCED:
+        stored = state.get("duplicates") or {}
+        live = {dup_token(duplicate_key(item)) for item in (stored.get("found") or []) + (stored.get("rest") or [])}
+        room = max(DUP_ANNOUNCED - len(live & set(tokens)), 0)
+        old = [token for token in tokens if token not in live]
+        spare = set(old[max(len(old) - room, 0):] if room else [])
+        tokens = [token for token in tokens if token in live or token in spare]
+    state["announced_dup"] = tokens
+
+
+def pack_duplicates(scan: dict) -> dict:
+    """The saved form of a scan: the first DUP_KEEP findings in full, the next DUP_MAX as short records.
+    `total` is the count of all of them, whatever is kept."""
+    found = scan["found"]
+    packed = {key: value for key, value in scan.items() if key != "found"}
+    packed["found"] = found[:DUP_KEEP]
+    packed["rest"] = [short_finding(item) for item in found[DUP_KEEP:DUP_KEEP + DUP_MAX]]
+    # A head whose findings did not fit is not "settled": the next scan reads it again, so the total stays exact.
+    dropped = {item["head"] for item in found[DUP_KEEP + DUP_MAX:]}
+    packed["settled"] = {head: stamp for head, stamp in (scan.get("settled") or {}).items() if head not in dropped}
+    return packed
 
 
 def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
     """Duplicate runs on the heads of the PRs updated in the last DUP_LOOKBACK.
 
     A closed PR whose last update is unchanged and that was not merged recently is not read again; its
-    earlier findings are kept. Raises RuntimeError when a read fails (the previous result then stays).
+    earlier findings are kept. Raises RuntimeError when a read still fails after its retries (the previous result
+    then stays). Returns every finding; pack_duplicates() decides what is saved.
     """
     floor = now - DUP_LOOKBACK
-    pulls = client.get("/pulls", {"state": "all", "sort": "updated", "direction": "desc", "per_page": DUP_PULLS}) or []
-    old_found = previous.get("found") or []
+    pulls = retrying(lambda: client.get(
+        "/pulls", {"state": "all", "sort": "updated", "direction": "desc", "per_page": DUP_PULLS})) or []
+    old_found = (previous.get("found") or []) + (previous.get("rest") or [])
     settled_before = previous.get("settled") or {}
     settled: dict[str, str] = {}
     found: list[dict] = []
@@ -679,7 +761,7 @@ def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
     found = [item for item in found if (parse_time(item["last"]) or now) >= floor]
     found.sort(key=lambda item: item["last"], reverse=True)
     return {"as_of": iso(now), "window_days": DUP_LOOKBACK.days, "heads_read": heads, "total": len(found),
-            "found": found[:DUP_KEEP], "settled": settled}
+            "found": found, "settled": settled}
 
 
 def alerts_for(pool: dict[str, dict], residents: dict[str, dict]) -> dict[str, str]:
@@ -794,9 +876,9 @@ def render(report: dict, state: dict) -> str:
         for item in duplicates["found"]:
             who = {"resident": "常驻", "hosted": "托管"}
             parts = "、".join(f"{who.get(r['executor'], cell(r['executor']))}{('#' + str(r['attempt'])) if r.get('attempt') else ''}"
-                              for r in item["runs"])
-            lines.append(f"| #{item['pr']} | {item['head'][:8]} | {cell(item['label'])} | {item['count']} | {parts} | "
-                         f"{'；'.join(why[c] for c in item['causes'])} | {item['last']} |")
+                              for r in item.get("runs") or []) or "—"
+            lines.append(f"| #{item['pr']} | {item['head'][:8]} | {cell(item.get('label') or item['check'])} | {item['count']} | {parts} | "
+                         f"{'；'.join(why[c] for c in item.get('causes') or []) or '—'} | {item['last']} |")
         if duplicates.get("total", 0) > len(duplicates["found"]):
             lines.append(f"共 {duplicates['total']} 项，只列最近 {len(duplicates['found'])} 项。")
     if report["alerts"]:
@@ -849,19 +931,33 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
                        "week": summarize_batches(batches, now, 7)}
             state["metrics"] = metrics
     duplicates = state.get("duplicates") or {}
-    if not client.low() and (not duplicates.get("as_of") or now - parse_time(duplicates["as_of"]) >= DUP_EVERY):
+    items = duplicates.get("found") or []  # between scans: the findings saved with their details
+    due = not client.low() and (not duplicates.get("as_of") or now - parse_time(duplicates["as_of"]) >= DUP_EVERY)
+    failed_at = parse_time(state.get("duplicates_failed_at"))
+    if due and failed_at is not None and now - failed_at < DUP_FAILED_WAIT:
+        # A scan that failed (after its retries) is not started again at once: the next 5-minute runs would fail the same way.
+        errors.append(f"duplicate runs: 上次读取失败（{iso(failed_at)}），{int(DUP_FAILED_WAIT.total_seconds() // 60)} 分钟内不再重试")
+    elif due:
         scanned = attempt("duplicate runs", lambda: scan_duplicates(client, now, duplicates), None)
-        if scanned is not None:
-            if not duplicates.get("as_of"):
+        if scanned is None:
+            state["duplicates_failed_at"] = iso(now)
+        else:
+            state.pop("duplicates_failed_at", None)
+            first_scan = not duplicates.get("as_of")
+            items = scanned["found"]
+            state["duplicates"] = duplicates = pack_duplicates(scanned)
+            if first_scan:
                 # The first scan records what is already there and announces none of it.
-                state["announced"] = ((state.get("announced") or []) + [duplicate_event(item)[0] for item in scanned["found"]])[-200:]
-            state["duplicates"] = duplicates = scanned
-    events: dict[str, str] = dict(duplicate_event(item) for item in duplicates.get("found") or [])
-    fresh = [key for key in events if key not in (state.get("announced") or [])]
-    if len(fresh) > DUP_ROWS:
+                mark_announced(state, [duplicate_key(item) for item in items])
+    events: dict[str, str] = {}
+    for item in items:
+        key = duplicate_key(item)
+        if not is_announced(state, key):  # only what is still to be said: already announced ones stay out of the report
+            events[key] = duplicate_event(item)[1]
+    if len(events) > DUP_ROWS:
         # A burst is announced as the first DUP_ROWS items and one line for the rest (the panel lists them all).
-        extra = fresh[DUP_ROWS:]
-        state["announced"] = ((state.get("announced") or []) + extra)[-200:]
+        extra = list(events)[DUP_ROWS:]
+        mark_announced(state, extra)
         for key in extra:
             del events[key]
         events[f"dup-more:{duplicates.get('as_of')}"] = f"重复执行：另有 {len(extra)} 项，见面板“重复执行”表"
@@ -936,10 +1032,9 @@ def main() -> int:
         return 0
     new = {k: v for k, v in report["alerts"].items() if k not in previous}
     resolved = {k: v for k, v in previous.items() if k not in report["alerts"]}
-    # Events are announced once: the keys already announced stay in the state (the newest 200).
-    announced = state.get("announced") or []
-    events = {k: v for k, v in report["events"].items() if k not in announced}
-    state["announced"] = (announced + list(events))[-200:]
+    # Events are announced once: the keys already announced stay in the state (the newest 200; duplicates have their own set).
+    events = {k: v for k, v in report["events"].items() if not is_announced(state, k)}
+    mark_announced(state, list(events))
     if first_events:
         events = {}
     body = render(report, state)
