@@ -8,11 +8,25 @@ import fs from 'node:fs';
 
 const text = fs.readFileSync(new URL('../src/resident-v2/build-bundle.ps1', import.meta.url), 'utf8');
 
-test('build-bundle: every git call aborts a transfer below 1000 bytes/s for 60 s', () => {
+test('build-bundle: every git call aborts a transfer below 1000 bytes/s for 300 s', () => {
   const common = text.match(/^\$Common=@\(([\s\S]*?)\)\r?$/m)?.[1];
   assert.ok(common, 'the $Common assignment');
   assert.match(common, /'-c','http\.lowSpeedLimit=1000'/);
-  assert.match(common, /'-c','http\.lowSpeedTime=60'/);
+  assert.match(common, /'-c','http\.lowSpeedTime=300'/);
+});
+
+// 2026-11-04 (PR #992): behind a ~2.5 Mbit/s egress with stalls, 60 s was too short and the 64 MB fetch was restarted from
+// zero twice. A stall that ends the first attempt must still leave a retry: the low-speed window fits twice into the retry
+// window, and a retry still has at least the companion's wait minus that window (30 min deadline in companion.mjs).
+test('build-bundle: the low-speed window leaves room for the retry inside the companion wait', () => {
+  const low = Number(text.match(/'-c','http\.lowSpeedTime=(\d+)'/)[1]);
+  const win = Number(text.match(/\$RetryWithinSeconds=(\d+)/)[1]);
+  const companion = fs.readFileSync(new URL('../../../independent-ci-resident-v1/src/companion.mjs', import.meta.url), 'utf8');
+  const wait = Number(companion.match(/case 'build-bundle':[\s\S]*?timeoutMs: (\d+) \* 60_000/)[1]) * 60;
+  assert.equal(low, 300);
+  assert.ok(low * 2 <= win, 'a dead first attempt is given up well inside the retry window');
+  // the second attempt starts before `win`, so it has more than wait - win; at 120 KB/s one 64 MB transfer takes ~533 s
+  assert.ok(wait - win >= 2 * 533, 'a retry can still finish one complete slowest-rate transfer with a stall in it');
 });
 
 test('build-bundle: one retry of the network steps, in a second fresh store, only in the first 10 minutes', () => {

@@ -19,7 +19,9 @@ head; the output directory is resident\bundles\<batchId>\ (Owner drop box, read 
 a receipt binds batchId, descriptor digest and Source commit.
 
 Stalled transfers (lesson #916, 2026-10-23: a fetch stalled at 47 MB and held the resident until the companion's
-35-minute deadline): an HTTP transfer slower than 1000 bytes/s for 60 s is aborted, and a failed network step gets one
+35-minute deadline): an HTTP transfer slower than 1000 bytes/s for 300 s is aborted (60 s until 2026-11-04, when the
+resident's egress was throttled to ~2.5 Mbit/s: 120-300 KB/s with stalls, a 64 MB repository took 213-533 s plus stalls, and a stall
+of over 60 s at 58 MB aborted two attempts in a row, PR #992), and a failed network step gets one
 more complete attempt in a second fresh bare repository (Fetch-Store), only while most of the companion's wait is left.
 
 Refs pushed between the fetch and the ls-remote (a push to any branch of the repository in that window made the fetched refs
@@ -53,11 +55,13 @@ $Gen2Name='gen-2';$Gen1Root=$Root;$Gen1Receipt=$ReceiptPath;$Gen2Root=Join-Path 
 $ReviewedPrefix='refs/reviewed/';$TestPrefix='refs/clued-test/'
 $Common=@('-c','core.hooksPath=C:/nonexistent-clued-hooks','-c','core.fsmonitor=false','-c','gc.auto=0','-c','maintenance.auto=false',
   '-c','fetch.writeCommitGraph=false','-c','protocol.allow=never','-c','protocol.https.allow=always','-c','init.templateDir=','-c','advice.defaultBranchName=false',
-  '-c','http.lowSpeedLimit=1000','-c','http.lowSpeedTime=60')
+  '-c','http.lowSpeedLimit=1000','-c','http.lowSpeedTime=300')
 # The steps that talk to GitHub. A full build takes 40-283 s (receipts of 2026-10-23); the companion waits 30 minutes
 # (companion.mjs build-bundle). A retry starts only within the first 10 of them, so the second attempt has at least
 # 20 minutes, twice what the first one can have used. A transfer that stays just above the low-speed limit is still
-# not bounded: nothing here kills git.
+# not bounded: nothing here kills git. Under the 2026-11-04 throttle (120-300 KB/s, 64 MB: one transfer is 213-533 s) a dead
+# connection is given up after the 300 s low-speed window, so a first attempt that dies still dies inside the 600 s retry
+# window, and the second one has the other 20+ minutes: one complete transfer at the slowest rate, two at the fastest.
 $NetworkSteps=@('fetch','ls-remote','fetch-reviewed','fetch-test');$RetryWithinSeconds=600;$MaxStoreAttempts=3
 $Clock=[Diagnostics.Stopwatch]::StartNew()
 $stage='fixed-preflight';$created=@();$writesStarted=$false;$lastGit=$null;$attempts=1;$firstAttempt=$null;$refsDiffer=$null

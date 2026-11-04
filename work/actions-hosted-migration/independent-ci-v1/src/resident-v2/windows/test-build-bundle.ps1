@@ -40,7 +40,7 @@ Refuse {Reviewed-Commits ($toml.Replace('count: 2','count: 3'))} 'reviewed-count
 Refuse {Reviewed-Commits ($toml+"# clued-reviewed-finding: {`"fingerprint`":`"$($b):x:rule:1`",`"kinds`":[`"K`"]}`n")} 'reviewed-duplicate'
 # Stalled transfers (lesson #916): every git call carries the low-speed abort, and only an early network failure is retried.
 $i=[Array]::IndexOf($FixedCommon,'http.lowSpeedLimit=1000');Yes ($i -gt 0 -and $FixedCommon[$i-1] -ceq '-c') 'common-low-speed-limit'
-$i=[Array]::IndexOf($FixedCommon,'http.lowSpeedTime=60');Yes ($i -gt 0 -and $FixedCommon[$i-1] -ceq '-c') 'common-low-speed-time'
+$i=[Array]::IndexOf($FixedCommon,'http.lowSpeedTime=300');Yes ($i -gt 0 -and $FixedCommon[$i-1] -ceq '-c') 'common-low-speed-time'
 Yes ((@($NetworkSteps)-join '|') -ceq 'fetch|ls-remote|fetch-reviewed|fetch-test' -and $RetryWithinSeconds -eq 600 -and $MaxStoreAttempts -eq 3) 'retry-constants'
 function Step([string]$l,[int]$x){return [ordered]@{label=$l;exitCode=$x;stderrChars=1}}
 foreach($l in @('fetch','ls-remote','fetch-reviewed','fetch-test')){Yes (Retry-Allowed 'GIT_STEP_FAILED' (Step $l 128) 61) ('retry-'+$l)}
