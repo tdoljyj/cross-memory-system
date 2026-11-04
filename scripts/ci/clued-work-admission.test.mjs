@@ -58,6 +58,7 @@ import {
   INDEPENDENT_GATE_SOURCE,
   INDEPENDENT_GATE_WAIT_SECONDS,
   INDEPENDENT_GATE_POLL_SECONDS,
+  INDEPENDENT_GATE_WAIT_CEILING_SECONDS,
   independentAdmissionCheck,
   checkNamesPullRequest,
   SAME_EVENT_MS,
@@ -3096,12 +3097,154 @@ test("independent gate: polls about every 30 seconds for at most 10 minutes, the
   assert.equal(result.slept.length, 20);
   assert.equal(result.slept.reduce((sum, ms) => sum + ms, 0), 600000);
   assert.match(result.outcome.reasons[0], /kooyumi-work-admission of App 5368905 for #452 .* has posted no check after 600s/);
-  // A longer configured wait is capped; the default gate keeps its own 180-second limit.
+  // A longer configured wait is capped at the ceiling (see the wait test below).
   result = await independentGate([], { envOverrides: { CLUED_ADMISSION_GATE_WAIT_SECONDS: "3600" } });
-  assert.equal(result.slept.reduce((sum, ms) => sum + ms, 0), 600000);
+  assert.equal(result.slept.reduce((sum, ms) => sum + ms, 0), 780000);
   // independentAdmissionCheck needs checks: read.
   const forbidden = fakeFetch({ [CHECKS]: { status: 403, body: {} } });
   await assert.rejects(() => independentAdmissionCheck(forbidden.fetchImpl, env(), "o/r", HEAD, 452), /needs `checks: read`/);
+});
+
+// --- Repair re-run of the independent gate: a slow independent CI makes attempt 1 end in ADMISSION_PENDING with every
+// heavy job skipped; "Re-run all jobs" is admitted once the admission settled, and only while no heavy job of the head ever ran.
+const HEAVY_JOBS = ["clued-cloud-tests", "ci-suites", "migration-verify"];
+const attemptJob = (id, name, conclusion, overrides = {}) => ({ id, name, head_sha: HEAD, status: "completed", conclusion, ...overrides });
+const pendingNote = { title: "admission-gate", message: "ADMISSION_PENDING: kooyumi-work-admission of App 5368905 for #452 has posted no check after 600s; heavy jobs are skipped." };
+const refusedNote = { title: "admission-gate", message: "RERUN_REFUSED: run attempt 2: the independent CI admission allows one repair re-run; push a new commit; this re-run did not run the heavy jobs." };
+// A previous attempt n: the gate job (id 100n) with its annotations, and the heavy jobs with the given conclusions.
+const earlierAttempt = (n, { heavy = ["skipped", "skipped", "skipped"], notes = [pendingNote], extraJobs = [], gateJobs } = {}) => ({
+  jobs: gateJobs ?? [attemptJob(100 * n, "admission-gate", "success"), ...heavy.map((conclusion, index) => attemptJob(100 * n + 1 + index, HEAVY_JOBS[index] ?? `heavy-${index}`,
+    conclusion === "in_progress" ? null : conclusion, conclusion === "in_progress" ? { status: "in_progress" } : {})), ...extraJobs],
+  notes,
+});
+async function repairGate(earlier, { attempt = earlier.length + 1, checks = [nativeCheck()], selfRun = {}, script = {}, listStatus = {}, envOverrides = {} } = {}) {
+  const extra = [];
+  const base = fakeFetch({ ...SELF_RUN, [THIS_RUN]: { body: { id: 9001, run_attempt: attempt, head_sha: HEAD, created_at: RUN_CREATED, ...selfRun } },
+    [CHECKS]: { body: { check_runs: checks } }, [PULL]: { body: { state: "open", head: { sha: HEAD }, base: { ref: "main" } } }, ...script });
+  // The attempt-jobs and annotation URLs extend the run URL key, so they are served here, not by the first-prefix script.
+  const fetchImpl = async (url, init = {}) => {
+    const text = String(url);
+    const jobs = /\/actions\/runs\/9001\/attempts\/(\d+)\/jobs/.exec(text);
+    const notes = /\/check-runs\/(\d+)\/annotations/.exec(text);
+    if (jobs || notes) {
+      extra.push({ url: text, method: init.method ?? "GET" });
+      const status = (jobs ? listStatus.jobs : listStatus.notes) ?? 200;
+      const found = jobs ? earlier[Number(jobs[1]) - 1] : earlier.find((entry) => entry.jobs.some((job) => String(job.id) === notes[1]));
+      const body = status !== 200 || !found ? {} : jobs ? { total_count: found.jobs.length, jobs: found.jobs } : found.notes;
+      return { ok: status === 200, status, headers: { get: () => null }, json: async () => body, text: async () => JSON.stringify(body) };
+    }
+    return base.fetchImpl(url, init);
+  };
+  const slept = [];
+  const outcome = await gate({ env: env({ CLUED_ADMISSION_GATE_SOURCE: INDEPENDENT_GATE_SOURCE, GITHUB_RUN_ATTEMPT: String(attempt), ...envOverrides }),
+    event: independentEvent(), eventName: "pull_request", fetchImpl, sleep: async (ms) => { slept.push(ms); } });
+  return { outcome, calls: base.calls, extra, slept };
+}
+
+test("independent gate repair re-run: earlier attempts that only ended in ADMISSION_PENDING allow one re-run once the admission settled", async () => {
+  const { outcome, calls, extra, slept } = await repairGate([earlierAttempt(1)]);
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.reasons, slept], [true, "ADMITTED", [], []]);
+  assert.deepEqual(outcome.repair_rerun, { attempt: 2, earlier_attempts: [{ attempt: 1, heavy_jobs: 3 }] });
+  assert.deepEqual(extra.map((call) => call.url.replace("https://api.test/repos/o/r/", "").replace(/\?.*$/, "")),
+    ["actions/runs/9001/attempts/1/jobs", "check-runs/100/annotations"]);
+  assert.ok([...calls, ...extra].every((call) => call.method === "GET" || call.url === EPOCH_URL), "read-only, besides the public epoch observation");
+  // A first re-run that was itself refused (an old gate, or a stale head) ran nothing: the next one is still the repair.
+  const second = await repairGate([earlierAttempt(1), earlierAttempt(2, { notes: [refusedNote] })]);
+  assert.deepEqual([second.outcome.admitted, second.outcome.verdict], [true, "ADMITTED"]);
+  assert.deepEqual(second.outcome.repair_rerun.earlier_attempts.map((entry) => entry.attempt), [1, 2]);
+  // Any number of other jobs are heavy jobs.
+  const many = await repairGate([earlierAttempt(1, { heavy: ["skipped", "skipped", "skipped", "skipped", "skipped"] })]);
+  assert.equal(many.outcome.admitted, true);
+});
+
+test("independent gate repair re-run: an earlier attempt that ran any heavy job refuses, whatever its conclusion", async () => {
+  for (const conclusion of ["success", "failure", "cancelled", "timed_out", "neutral", "in_progress"]) {
+    const { outcome } = await repairGate([earlierAttempt(1, { heavy: ["skipped", conclusion, "skipped"] })]);
+    assert.deepEqual([conclusion, outcome.admitted, outcome.verdict], [conclusion, false, "RERUN_REFUSED"]);
+    assert.match(outcome.reasons[0], /attempt 1 already ran ci-suites: (completed\/\w+|in_progress\/none)/);
+    assert.match(outcome.reasons[0], /push a new commit/);
+  }
+  // All heavy jobs ran in attempt 1 (the ordinary failed-test case): refused, the commit's tests ran once.
+  assert.equal((await repairGate([earlierAttempt(1, { heavy: ["failure", "success", "success"], notes: [] })])).outcome.verdict, "RERUN_REFUSED");
+  // The allowance is one: attempt 2 was the repair and ran, so attempt 3 is refused, even though attempt 1 only timed out.
+  for (const conclusion of ["success", "failure", "cancelled"]) {
+    const { outcome } = await repairGate([earlierAttempt(1), earlierAttempt(2, { heavy: [conclusion, "skipped", "skipped"], notes: [] })]);
+    assert.deepEqual([conclusion, outcome.admitted, outcome.verdict], [conclusion, false, "RERUN_REFUSED"]);
+    assert.match(outcome.reasons[0], /attempt 2 already ran clued-cloud-tests/);
+  }
+  // A later attempt does not hide an earlier one that ran.
+  assert.equal((await repairGate([earlierAttempt(1, { heavy: ["success", "success", "success"] }), earlierAttempt(2), earlierAttempt(3)])).outcome.verdict, "RERUN_REFUSED");
+});
+
+test("independent gate repair re-run: anything the earlier attempts do not prove refuses", async () => {
+  const cases = [
+    ["no annotation (admitted, heavy jobs skipped for another reason)", { earlier: [earlierAttempt(1, { notes: [] })], reason: /did not end in ADMISSION_PENDING/ }],
+    ["a different verdict", { earlier: [earlierAttempt(1, { notes: [{ title: "admission-gate", message: "REJECTED: concluded failure" }] })], reason: /did not end in ADMISSION_PENDING/ }],
+    ["another annotation title", { earlier: [earlierAttempt(1, { notes: [{ title: "other", message: pendingNote.message }] })], reason: /did not end in ADMISSION_PENDING/ }],
+    ["no heavy job listed", { earlier: [earlierAttempt(1, { heavy: [] })], reason: /does not list one admission-gate job and its heavy jobs/ }],
+    ["no gate job listed", { earlier: [earlierAttempt(1, { gateJobs: HEAVY_JOBS.map((name, index) => attemptJob(10 + index, name, "skipped")) })], reason: /does not list one admission-gate job/ }],
+    ["two gate jobs", { earlier: [earlierAttempt(1, { extraJobs: [attemptJob(150, "admission-gate", "success")] })], reason: /does not list one admission-gate job/ }],
+    ["a job of another head", { earlier: [earlierAttempt(1, { extraJobs: [attemptJob(160, "extra", "skipped", { head_sha: BASE })] })], reason: /another head/ }],
+    ["a job list that cannot be read", { earlier: [earlierAttempt(1)], listStatus: { jobs: 403 }, reason: /earlier attempts could not be read \(GitHub API .*attempts\/1\/jobs.* returned 403\)/ }],
+    ["annotations that cannot be read", { earlier: [earlierAttempt(1)], listStatus: { notes: 500 }, reason: /earlier attempts could not be read/ }],
+    ["a run of another head", { earlier: [earlierAttempt(1)], selfRun: { head_sha: BASE }, reason: /is not attempt 2 of a run of/ }],
+    ["a run whose attempt differs", { earlier: [earlierAttempt(1)], selfRun: { run_attempt: 3 }, reason: /is not attempt 2 of a run of/ }],
+  ];
+  for (const [label, { earlier, reason, ...options }] of cases) {
+    const { outcome } = await repairGate(earlier, options);
+    assert.deepEqual([label, outcome.admitted, outcome.verdict], [label, false, "RERUN_REFUSED"]);
+    assert.match(outcome.reasons[0], reason, label);
+  }
+  // Without any readable history (the pre-existing re-run test): refused.
+  const rerun = await independentGate([nativeCheck()], { envOverrides: { GITHUB_RUN_ATTEMPT: "2" },
+    script: { [PULL]: { body: { state: "open", head: { sha: HEAD }, base: { ref: "main" } } } } });
+  assert.deepEqual([rerun.outcome.admitted, rerun.outcome.verdict], [false, "RERUN_REFUSED"]);
+});
+
+test("independent gate repair re-run: an admission that has not settled or does not admit never reads the history and never admits", async () => {
+  // Not settled: keeps waiting the whole limit, then ADMISSION_PENDING (a failed re-run, its heavy jobs stay skipped).
+  for (const checks of [[], [nativeCheck({ status: "in_progress", conclusion: null })]]) {
+    const { outcome, extra, slept } = await repairGate([earlierAttempt(1)], { checks });
+    assert.deepEqual([outcome.admitted, outcome.verdict, extra, slept.reduce((sum, ms) => sum + ms, 0)], [false, "ADMISSION_PENDING", [], 600000]);
+  }
+  // Settled but failed, or not bound to this pull request: REJECTED without history reads.
+  for (const checks of [[nativeCheck({ conclusion: "failure" })], [nativeCheck({ output: { summary: "Independent Native control check for o/r#453" } })]]) {
+    const { outcome, extra } = await repairGate([earlierAttempt(1)], { checks });
+    assert.deepEqual([outcome.admitted, outcome.verdict, extra], [false, "REJECTED", []]);
+  }
+  // The admission settles while the re-run waits: admitted by that re-run.
+  let reads = 0;
+  const late = (call) => {
+    if (!call.url.includes("check_name=kooyumi-work-admission")) return { body: { check_runs: [] } };
+    reads += 1;
+    return { body: { check_runs: reads < 3 ? [] : [nativeCheck()] } };
+  };
+  const waited = await repairGate([earlierAttempt(1)], { script: { [CHECKS]: late } });
+  assert.deepEqual([waited.outcome.admitted, waited.outcome.verdict, waited.slept], [true, "ADMITTED", [30000, 30000]]);
+  // A stale execution epoch and a moved head still refuse the repair.
+  const stale = await repairGate([earlierAttempt(1)], { script: { [VERIFY]: { body: { status: "ok", guard_required: true, epoch_current: false } } } });
+  assert.deepEqual([stale.outcome.admitted, stale.outcome.reasons], [false, ["work_claim_execution_epoch_stale"]]);
+  const moved = await repairGate([earlierAttempt(1)], { script: { [PULL]: { body: { state: "open", head: { sha: BASE }, base: { ref: "main" } } } } });
+  assert.deepEqual([moved.outcome.admitted, moved.outcome.verdict], [false, "RERUN_REFUSED"]);
+  assert.match(moved.outcome.reasons[0], /no longer the head of #452/);
+  assert.deepEqual(moved.extra, []);
+});
+
+test("independent gate: the wait is configurable, lowered freely and raised up to the registered job's ceiling", async () => {
+  assert.equal(INDEPENDENT_GATE_WAIT_CEILING_SECONDS, 780);
+  assert.ok(INDEPENDENT_GATE_WAIT_CEILING_SECONDS + 60 <= 15 * 60, "the polling fits the gate job's 15-minute timeout with room for setup");
+  const waitOf = async (value) => {
+    const { slept, outcome } = await independentGate([], { envOverrides: value === undefined ? {} : { CLUED_ADMISSION_GATE_WAIT_SECONDS: value } });
+    assert.equal(outcome.verdict, "ADMISSION_PENDING");
+    return slept.reduce((sum, ms) => sum + ms, 0) / 1000;
+  };
+  assert.deepEqual([await waitOf(undefined), await waitOf("600"), await waitOf("300"), await waitOf("0")], [600, 600, 300, 0]);
+  assert.deepEqual([await waitOf("700"), await waitOf("780"), await waitOf("3600"), await waitOf("-5"), await waitOf("abc")], [700, 780, 780, 600, 600]);
+  // The default gate keeps its 180-second limit whatever the env says.
+  const { fetchImpl } = fakeFetch(checksReturn([]));
+  const slept = [];
+  await gate({ env: env({ CLUED_ADMISSION_GATE_WAIT_SECONDS: "3600" }), event: event(), eventName: "pull_request", fetchImpl, sleep: async (ms) => { slept.push(ms); } });
+  assert.equal(slept.reduce((sum, ms) => sum + ms, 0), 180000);
 });
 
 test("independent gate: under the Owner's disaster-recovery switch the clued-admission App check of this event still decides", async () => {
