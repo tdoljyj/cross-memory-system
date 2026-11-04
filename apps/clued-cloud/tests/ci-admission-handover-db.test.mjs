@@ -138,32 +138,27 @@ test('ci-admission handover (Z1): one transaction, delayed start, purposes, park
     assert.deepEqual(readers.map((r) => r.sig).sort(), [
       'clued_binding_role_set_v1(jsonb)',
       'clued_binding_roles_list_v1(jsonb)', 'clued_headless_binding_confirmation_issue_v1(jsonb)', 'clued_headless_binding_issue_v1(jsonb)',
-      'clued_headless_binding_list_v1(jsonb)', 'clued_headless_binding_revoke_v1(jsonb)', 'clued_owner_grant_admission_door_v1(text,jsonb)',
+      'clued_headless_binding_list_v1(jsonb)', 'clued_headless_binding_revoke_v1(jsonb)',
       'clued_private.binding_role_admits_v1(clued_agent_bindings,text)', 'clued_private.binding_role_change_check_v1(clued_agent_bindings,text,boolean,jsonb)',
       'clued_private.binding_role_handover_check_v1(clued_agent_bindings,clued_agent_bindings)',
       'clued_private.binding_role_handover_view_v1(clued_agent_bindings,clued_agent_bindings)',
       'clued_private.binding_role_holders_v1(uuid,text,uuid[])', 'clued_private.binding_role_resident_held_v1(uuid,uuid[])',
       'clued_private.headless_binding_view_before_sources_v2(uuid,jsonb)', 'clued_private.owner_grant_resident_upgrade_door_v1(text,jsonb)',
-      'clued_private.work_claim_ci_command_v1(text,jsonb)', 'clued_private.work_claim_execution_current_v1(jsonb)',
-      // 20261029050000 (independent publication) readers, listed after the fact.
-      'clued_private.work_claim_independent_abort_v1(text,jsonb)', 'clued_private.work_claim_independent_begin_v1(text,jsonb)',
-      'clued_private.work_claim_independent_drain_command_v1(text,jsonb)',
-      'clued_private.work_claim_verify_before_execution_v1(text,jsonb)', 'clued_work_verify_v1(text,jsonb)',
-      // 20261023092957 (unified scheduling stage 1) readers; both require effective_at<=clock_timestamp().
-      'clued_private.ci_claim_current_v1(uuid,clued_private.ci_jobs_v1,text,bigint,uuid)',
-      'clued_private.ci_publisher_current_v1(uuid,uuid,uuid,integer,text)',
+      'clued_private.work_claim_verify_before_execution_v1(text,jsonb)',
+      // 20261104090000 (unified scheduling 2A): the command door, the independent publication commands, verify, the
+      // Owner Grant admission door, admission validity and the Stage 1 publisher check no longer read the table
+      // themselves; they ask ci_duty_admits_v1, which requires effective_at<=clock_timestamp() (checked below).
+      'clued_private.ci_duty_admits_v1(uuid,uuid,text,uuid)', 'clued_private.ci_duty_holder_v1(uuid,uuid)',
+      'clued_private.ci_phase_3_to_4_v1(uuid,uuid,integer,jsonb)', 'clued_private.ci_phase_4_to_3_v1(uuid,uuid,integer,boolean)',
       // 20261031090000 (merge train 2b): the one-click handover now calls this core.
       'clued_private.binding_role_handover_core_v1(uuid,uuid,uuid,text,jsonb)',
     ].sort(),'a new reader of binding_roles_v1 must be reviewed for rows that have not started');
     const started = (sig) => readers.find((r) => r.sig === sig).prosrc.split('effective_at<=clock_timestamp()').length - 1;
-    assert.equal(started('clued_owner_grant_admission_door_v1(text,jsonb)'), 1);
-    assert.equal(started('clued_work_verify_v1(text,jsonb)'), 2);
     assert.equal(started('clued_private.owner_grant_resident_upgrade_door_v1(text,jsonb)'), 1);
-    assert.equal(started('clued_private.work_claim_execution_current_v1(jsonb)'), 1);
-    assert.equal(started('clued_private.work_claim_ci_command_v1(text,jsonb)'), 1);
     assert.equal(started('clued_private.binding_role_admits_v1(clued_agent_bindings,text)'), 1);
-    assert.equal(started('clued_private.ci_claim_current_v1(uuid,clued_private.ci_jobs_v1,text,bigint,uuid)'), 1);
-    assert.equal(started('clued_private.ci_publisher_current_v1(uuid,uuid,uuid,integer,text)'), 1);
+    // ci_duty_admits_v1: the started-row test and the not-parking publisher test; ci_duty_holder_v1: the single holder row.
+    assert.equal(started('clued_private.ci_duty_admits_v1(uuid,uuid,text,uuid)'), 2);
+    assert.equal(started('clued_private.ci_duty_holder_v1(uuid,uuid)'), 1);
     assert.match(readers.find((r) => r.sig === 'clued_headless_binding_issue_v1(jsonb)').prosrc,
       /greatest\(e\.effective_at,v_now\),e\.purpose/);
 
