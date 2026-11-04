@@ -54,6 +54,7 @@ import { TRAIN_MODES, TRAIN_MODE_DEFAULT, RULESET_UNREADABLE, STRICT_OFF_WITHOUT
   trainHeadDecision, rulesetFacts, rulesetDecision, testMergeDecision, mergedAsTested } from './train-rules.mjs';
 import { GREEN_LEDGER_UNAVAILABLE } from './green-ledger.mjs';
 import { ROLE_ALREADY_ON_GITHUB, publishedNames } from '../published-on-github-v2.mjs';
+import { withdrawalTitle, withdrawalNote } from '../withdrawal-text.mjs';
 
 export const APP_ID = 5368905, REPO = 'tdoljyj/cross-memory-system';
 export const CONTROL_CHECKS_V2 = Object.freeze({
@@ -249,7 +250,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     } catch { if (phase !== 'sent') return { status: 'UNCERTAIN', reason: 'NEGATIVE_COMPENSATION_JOURNAL_UNCONFIRMED', effectKey: key, sideEffects, productionAuthorized: false }; }
     try {
       assertLive(); sideEffects++;
-      const patched = await github.revokeCheck(known.id, { status: 'completed', conclusion: 'failure', output: { title: 'Independent control authorization changed', summary: `Reconcile Native admission check ${key}; ${cause}. No Native ticket or Receipt is asserted.` } });
+      const patched = await github.revokeCheck(known.id, { status: 'completed', conclusion: 'failure', output: { title: withdrawalTitle('Independent control', cause), summary: `Reconcile Native admission check ${key}; ${cause}.${withdrawalNote(cause)} No Native ticket or Receipt is asserted.` } });
       check(identity(patched, job, externalId) && patched.status === 'completed' && patched.conclusion === 'failure', 'NEGATIVE_COMPENSATION_UNCONFIRMED'); await readback(job, externalId, known.id, 'failure');
       if (logged) await journal.transition(revKey, 'sent', 'settled', { checkRunId: known.id, conclusion: 'failure' });
       const current = await journal.read(key); check(['sent', 'uncertain', 'settled'].includes(current?.state), 'NEGATIVE_COMPENSATION_STATE_UNCONFIRMED');

@@ -35,6 +35,7 @@ import { admittedFactsMatchJobV2 } from './full-admission-v2.mjs';
 import { claimRolePublication, readRolePublication, rolePublicationKey } from './effect-journal.mjs';
 import { relayExternalId, validateHostedEnvelope } from './hosted-relay-v1/attest.mjs';
 import { ROLE_ALREADY_ON_GITHUB_REASON, publishedNames } from './published-on-github-v2.mjs';
+import { withdrawalTitle, withdrawalNote } from './withdrawal-text.mjs';
 
 const HASH = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -217,7 +218,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     try {
       sideEffects++;
       const patched = await github.revokeCheck(known.id, { status: 'completed', conclusion: 'failure',
-        output: { title: 'Independent CI authorization changed', summary: `Staged Native observation; reconcile ${key}` } });
+        output: { title: withdrawalTitle('Independent CI', cause), summary: `Staged Native observation; reconcile ${key}${withdrawalNote(cause)}` } });
       if (!identity(patched, definition, job, externalId) || patched.status !== 'completed' || patched.conclusion !== 'failure') stop('revocation_unconfirmed');
       await readback(known, definition, job, externalId, 'failure');
       if (revocationLogged) await journal.transition(revocationKey, 'sent', 'settled', { checkRunId: known.id, conclusion: 'failure' });

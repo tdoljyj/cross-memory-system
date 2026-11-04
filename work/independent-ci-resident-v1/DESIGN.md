@@ -3873,3 +3873,14 @@ Windows 一侧也在受同一条链路的影响，但不是 WSL 乱跳的原因�
 **没有把撤回改成可重试（BACKOFF）。** 见任务回执：写后漂移时 GitHub 上已有一个 failure 检查（`sideEffects` ≥ 1），不可撤回，K(head, role) 与效果键也禁止重发，必须烧；写前漂移本来就是 `BLOCKED`、`sideEffects` 0、没有任何外部痕迹，而其原因（subject、认领、资格变化）是确定性的，等也不会变好；跨阶段重试需要保存签名结果、新增等待类和 Source/C# 边界改动，不在本次范围。
 
 测试：`test/scan-publish-merge-slot.test.mjs`（加入队列、退出队列、过期、仅 until 变化、不再需要等 7 种槽变化 × 3 个扫描角色都 `SETTLED`；其余每个绑定字段变化仍撤销；第 8 段的槽或队首变化仍撤销）。
+
+## 49. GitHub 暂时错误（5xx、网络）不再烧头：只读请求有界指数退避；写后无法核对时的收尾与措辞（第 8 代；11-04 PR #992 head df85e68d）
+
+**事故。** attempt 2（批次 dcc34762）第 1 段：写入准入检查之后的复核（`boundary` → 读 PR / 变更文件 / 检查清单）里 GitHub 回了一个 502，`github_http_502`。发布者已经把检查写在 head 上，于是按“复核失败”撤销（`REVOKED`，`sideEffects` 2），标题却写成 “Work admission authorization changed”，head 烧掉（`PUBLICATION_REVOKED`，clean-final / burn）。502 说明不了授权有任何变化。根因有两个：`github.mjs` 只重试网络错误，从不重试 HTTP 状态；评估器自己的 GitHub 读取（`githubJson`）完全不重试。
+
+**改动。**
+1. `src/read-retry.mjs#withReadRetry`，由 `controllerPorts` 包在控制器的 fetch 外面（所以发布者的 GitHub 端口和评估器的读取一起受益）：只对 GET，在 500/502/503/504 或网络错误（`TypeError: fetch failed`，cause 为网络码）时重试，延迟 1、2、4、8 秒，同一个包装（即同一段进程）的总等待不超过 20 秒，每次重试前调用 `live()`（段的期限或停止请求会结束等待）；重试用新的 30 秒超时。POST/PATCH 与所有 Native RPC（POST）原样透传，**从不重试**；501、4xx（含 403、429）、重定向、不是网络错误的拒绝都原样返回。用尽后返回最后一次的答复或错误，下游看到的仍是 `github_http_5xx` / `github_transport_unconfirmed`，分类不变。每次重试向观察日志写一条 `github_read_retry`。20 秒是被扫描发布者的 60 秒观察预算（`PUBLICATION_OBSERVE_BUDGET_MS`）约束出来的：重试不能把写前阶段拖过 `guardNewPublication`。
+2. 写前用尽：发布者本来就返回 `BLOCKED`、`sideEffects` 0、没有任何外部痕迹；`outcomeFailureCode` 映射为 `GITHUB_TRANSIENT_UNAVAILABLE`（transient / burn / attempt2，第 0–2 段），**失败表没有改**：把第 1 段的这一行改成 release-if-safe（即不烧 attempt、10/20/40 分钟退避重来）是策略变化，`failure-table.test.mjs` 现在明确钉着相反的结论，留给 Owner 决定。
+3. 写后用尽（检查已在 GitHub 上，`sideEffects` ≥ 1）：仍然撤销（一个无法核对的 success 不能留着；失败检查已在 head 上，head 必须烧），但标题改为 “… check withdrawn: verification unavailable”，摘要写明“GitHub 读不到，未观察到授权变化”；原因码仍是 `github_http_502`。真实的授权漂移仍写 “authorization changed”（`src/withdrawal-text.mjs`，第 1、8 段和扫描发布者三个 v2 发布者共用）。撤销自己的身份读取或 PATCH 也失败时，结果是 `UNCERTAIN`（`NEGATIVE_COMPENSATION_*`，`PUBLICATION_UNCERTAIN`，HALT 等 Owner 对账），不猜、不盲写。
+
+测试：`test/github-read-retry.test.mjs`（13 例）。

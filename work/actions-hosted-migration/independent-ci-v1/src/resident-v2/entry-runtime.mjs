@@ -22,6 +22,7 @@ import { createIndependentPublicationPortsForJobs, independentControllerId } fro
 import { registerIndependentController } from '../../../../../scripts/ci/clued-independent-revoker.mjs';
 import { revocationQualification } from './revocation-run.mjs';
 import { ALL_STAGE_CODES } from './stage-fact.mjs';
+import { withReadRetry } from '../read-retry.mjs';
 import { createIndependentScanStartPort } from '../scan-start-v1/native-port.mjs';
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
@@ -102,8 +103,12 @@ export async function controllerPrincipal(record) {
   return { appKey, nativeToken };
 }
 
-export function controllerPorts({ record, appKey, nativeToken, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now() }) {
-  const fetchImpl = (url, opts = {}) => { live(); return globalThis.fetch(url, { ...opts, signal: signal ? AbortSignal.any([signal, opts.signal ?? AbortSignal.timeout(30000)]) : (opts.signal ?? AbortSignal.timeout(30000)) }); };
+// readRetry: options of read-retry.mjs#withReadRetry (tests inject sleep and a smaller budget). Reads of GitHub (GET) are
+// repeated on a 5xx or a network failure with exponential backoff inside the stage's own live() deadline; writes and the Native
+// RPCs (POST) are never repeated.
+export function controllerPorts({ record, appKey, nativeToken, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now(), baseFetch = globalThis.fetch, readRetry = {} }) {
+  const singleFetch = (url, opts = {}) => { live(); return baseFetch(url, { ...opts, signal: signal ? AbortSignal.any([signal, opts.signal ?? AbortSignal.timeout(30000)]) : (opts.signal ?? AbortSignal.timeout(30000)) }); };
+  const fetchImpl = withReadRetry(singleFetch, { live, onRetry: r => { try { log('github_read_retry', r); } catch { /* best-effort */ } }, ...readRetry });
   const github = createGitHubChecksPort({ repository: record.config.repository, repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId,
     installationId: FIXED_APP.installationId, includeModeRead: true, privateKeyProvider: async () => appKey, fetchImpl });
   const admission = createFullAdmissionPortV2({ protectedConfig: { ...record.config, domain: 'production', workspace: sourceRoot, policyText }, fetchImpl,
