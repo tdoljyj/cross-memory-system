@@ -14,15 +14,18 @@ import tomllib
 
 # Candidate-only pinned stdlib module; checked bytes are executed from this RAM buffer.
 import types as _candidate_types
-_CANDIDATE_POLICY_SHA = "d395d46b18aa0dd642ecd5417d846750647152e1a97a20597b2bd295fd630870"
+_CANDIDATE_POLICY_SHA = "91b620c4bd87ba43a02dd0e1db489aebe4993583e0008dff90136d9fef66e2ae"
 _candidate_raw = Path(__file__).with_name("reviewed_gitleaks_historical.py").read_bytes()
 if hashlib.sha256(_candidate_raw).hexdigest() != _CANDIDATE_POLICY_SHA:
     raise ValueError("Candidate policy module changed")
 _candidate_policy = _candidate_types.ModuleType("historical_policy_candidate")
 exec(compile(_candidate_raw, "reviewed_gitleaks_historical.py", "exec"), _candidate_policy.__dict__)
 HISTORICAL_FINDINGS = _candidate_policy.FINDINGS
+HISTORICAL_CC353_FINDINGS = _candidate_policy.FINDINGS_CC353
+HISTORICAL_D94_FINDINGS = _candidate_policy.FINDINGS_D94
 HISTORICAL_KIND = _candidate_policy.KIND
 ORIGINAL_730_RECORD_LINES_SHA256 = "2440bebed2821ec57c80d07b8e5470e3459ce95189003f6cc520123cde72997e"
+PRIOR_732_RECORD_LINES_SHA256 = "7052a705c174d345eb585e5f67d5f4b4acc9ed6ba9d53318bb42fbf91c59934f"
 
 PREFIX = "# clued-reviewed-finding: "
 COUNT_PREFIX = "# clued-reviewed-count: "
@@ -30,7 +33,7 @@ LEGACY_COUNT = 726
 LEGACY_RECORD_LINES_SHA256 = "5ec9aef1a5af7f356152ba7dfc18e197a968cf3ac70ffd2b2aa7000a4801d35c"
 SCHEDULING_END = 729
 PRIOR_RECORD_LINES_SHA256 = "3117636bb9809e0aa2f953340172e48ba171b010949112dbe79e5879309a45cd"
-EXPECTED_COUNT = 732
+EXPECTED_COUNT = 733
 SCHEDULING_COMMIT = "fd10191533a5f2139b224a90a096880039d62034"
 SCHEDULING_TEST_PATH = "apps/clued-cloud/tests/ci-scheduling-stage1-ui.test.mjs"
 SCHEDULING_README_PATH = "work/ci-scheduling-stage1-20261023/README.md"
@@ -286,10 +289,14 @@ def parse_records(text):
     if {record["fingerprint"] for record in records[SCHEDULING_END:730]} != set(ROLE_PROBE_FINDINGS):
         raise ValueError("Role-probe token exception set changed")
     record_lines = [line for line in text.splitlines() if line.startswith(PREFIX)]
-    if ({record["fingerprint"] for record in records[730:]} != set(HISTORICAL_FINDINGS)
+    if ({record["fingerprint"] for record in records[730:732]} != set(HISTORICAL_CC353_FINDINGS)
             or hashlib.sha256(("\n".join(record_lines[:730])+"\n").encode()).hexdigest()
             != ORIGINAL_730_RECORD_LINES_SHA256):
         raise ValueError("Original730 bytes or exact two appended subjects changed")
+    if ({record["fingerprint"] for record in records[732:]} != set(HISTORICAL_D94_FINDINGS)
+            or hashlib.sha256(("\n".join(record_lines[:732])+"\n").encode()).hexdigest()
+            != PRIOR_732_RECORD_LINES_SHA256):
+        raise ValueError("Prior732 bytes or the one exact appended d94cd486 subject changed")
     legacy_lines = [line for line in text.splitlines() if line.startswith(PREFIX)][:LEGACY_COUNT]
     if hashlib.sha256(("\n".join(legacy_lines) + "\n").encode()).hexdigest() != LEGACY_RECORD_LINES_SHA256:
         raise ValueError("Legacy reviewed finding bytes changed")
@@ -878,7 +885,7 @@ def prepare_candidate(args):
         "config_sha256":hashlib.sha256(Path(args.config).read_bytes()).hexdigest(),
         "all_record_lines_sha256":hashlib.sha256(("\n".join(line for line in Path(args.config).read_text().splitlines()
              if line.startswith(PREFIX))+"\n").encode()).hexdigest(),
-        "old730_preserved":True,"exact_new_subjects":len(HISTORICAL_FINDINGS)}))
+        "old730_preserved":True,"old732_preserved":True,"exact_new_subjects":len(HISTORICAL_FINDINGS)}))
 
 
 def parse_cli(argv=None):

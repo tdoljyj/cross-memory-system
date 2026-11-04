@@ -10,6 +10,7 @@ import { REVIEWED_COMMITS as LEGACY_COMMITS } from '../worker/formal-gitleaks-v3
 import { validateCleanupObservation } from '../worker/formal-fixed-role-policy-v3/policy.mjs';
 import { observationFacts } from '../worker/protected-job-bridge-v4/signed-result.mjs';
 import { takeActualObservation } from '../worker/formal-gitleaks-v4/adapter.mjs';
+import { safeGitArguments } from '../worker/formal-gitleaks-v4/required-history/selftest-shim.mjs';
 
 const iso = ms => new Date(ms).toISOString();
 // Evaluate only the pinned Python helper's real report/return expressions, not
@@ -48,22 +49,22 @@ function execution() {
     sourceManifestSha256: 'c'.repeat(64), createdAt: iso(now - 60000), attempt: 1 }).gitleaks;
   const observation = { contract: 'clued.independent-ci.formal-scanner-observation/2', domain: 'production-observation', fixture: false,
     formalEligible: false, qualificationIssued: false, checksWritten: false, subject: subjectOfV2(job), sourceManifestSha256: job.sourceManifestSha256,
-    profile: 'required-gitleaks-history/1', sourceSha: 'd'.repeat(40), requiredHistoricalExceptions: 732, reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, startedAt: iso(now - 5000),
+    profile: 'required-gitleaks-history/1', sourceSha: 'd'.repeat(40), requiredHistoricalExceptions: 733, reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, startedAt: iso(now - 5000),
     finishedAt: iso(now - 1000), exitCode: 0, conclusion: 'success', logs: { stdout: { sha256: 'e'.repeat(64) }, stderr: { sha256: 'f'.repeat(64) } },
     cleanup: { complete: true, wholeContainerTreeStopped: true, containerRemoved: true, observedAt: iso(now - 500) } };
   return { job, observation, issue: { job, expiresAt: iso(now + 60000) }, now };
 }
 
-test('Source v4 successor has exactly 732 findings/103 commits; the legacy Source remains 726/100', () => {
-  assert.deepEqual(REVIEWED_COMMITS, { findings: 732, commits: 103, sha256: '576a86a6061e6c4331ec952b4bc498570fe614b46131d1387c871c59d2cf80cb' });
+test('Source v4 successor has exactly 733 findings/104 commits; the legacy Source remains 726/100', () => {
+  assert.deepEqual(REVIEWED_COMMITS, { findings: 733, commits: 104, sha256: '702a8d6c6cabd1ba42451397f848aed74eacfbf2e6349bd491378533c6be7d56' });
   assert.deepEqual(LEGACY_COMMITS, { findings: 726, commits: 100, sha256: 'fcb2cc04ee35e01fbfc4bfc3dc9b0bb0ba78a6c4083ab5e17433c549450d59bb' });
 });
 
 test('the actual self-test must retain every old guard and prove new marker and valid-PEM detection', async () => {
   assert.equal(report().regression.synthetic_test_repository, '/controlled-helper-return/repo');
   assert.doesNotThrow(() => validateSelfTestReport(report()));
-  for (const edit of [r => r.exact_historical_fingerprints = 729, r => r.exact_historical_fingerprints = 731,
-    r => r.global_fingerprints = 1, r => r.default_rules_unchanged = false, r => r.commits = 101,
+  for (const edit of [r => r.exact_historical_fingerprints = 732, r => r.exact_historical_fingerprints = 734,
+    r => r.global_fingerprints = 1, r => r.default_rules_unchanged = false, r => r.commits = 103,
     r => r.files_at_commits = 170, r => r.verified_git_objects = 131, r => r.ignore_sha256 = 'a'.repeat(64), r => r.extra = true,
     r => r.regression.extra = true, r => delete r.regression.synthetic_test_repository,
     r => r.regression.synthetic_test_repository = false, r => r.regression.synthetic_test_repository = 'relative/repo']) {
@@ -86,11 +87,11 @@ test('the actual self-test must retain every old guard and prove new marker and 
     { code: 'ACTUAL_TRUSTED_SELF_TEST_OBSERVATION_REQUIRED' });
 });
 
-test('policy and result bridge agree on 732 and reject both legacy/mismatched counts and incomplete cleanup', () => {
+test('policy and result bridge agree on 733 and reject both legacy/mismatched counts and incomplete cleanup', () => {
   const { job, observation, issue, now } = execution();
   assert.equal(validateCleanupObservation(job, observation), observation);
   assert.equal(observationFacts(issue, observation, now).exitCode, 0);
-  for (const count of [726, 729, 730, 731, undefined]) {
+  for (const count of [726, 730, 731, 732, 734, undefined]) {
     const changed = { ...observation, requiredHistoricalExceptions: count };
     assert.throws(() => validateCleanupObservation(job, changed), { code: 'ACTUAL_ROLE_CLEANUP_UNCONFIRMED' });
     assert.throws(() => observationFacts(issue, changed, now), { code: 'ACTUAL_HISTORY_CLEANUP_REQUIRED' });
@@ -109,4 +110,15 @@ test('policy and result bridge agree on 732 and reject both legacy/mismatched co
     assert.throws(() => observationFacts(issue, changed, now), { code: 'ACTUAL_HISTORY_CLEANUP_REQUIRED' });
   }
   assert.throws(() => takeActualObservation(observation, job), { code: 'ACTUAL_PROTECTED_HISTORY_OBSERVATION_REQUIRED' });
+});
+
+test('the self-test git shim admits exactly the cc353e29 and d94cd486 one-commit catalog diffs (Decision 98fec682) and no other revision pair', () => {
+  const diff = (from, to) => ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--diff-algorithm=myers', '--unified=0',
+    from, to, '--', 'scripts/ci/clued-gated-proof-profiles.json'];
+  const c = { templates: '/templates' }, cc353 = 'cc353e29a32b991696df95d5fc3f9b9d107e8d1c', d94 = 'd94cd486e29a7362888fc32cd807ceb38890acb6';
+  for (const commit of [cc353, d94]) assert.deepEqual(safeGitArguments(diff(`${commit}^`, commit), c).slice(-11), diff(`${commit}^`, commit));
+  for (const args of [diff(`${d94}^`, cc353), diff(`${cc353}^`, d94), diff(`${d94}^`, '0'.repeat(40)), diff(`${'0'.repeat(40)}^`, '0'.repeat(40)),
+    [...diff(`${d94}^`, d94), '--stat'], ['diff', `${d94}^`, d94], ['log', d94], ['show', d94], ['fetch', 'origin', d94]]) {
+    assert.throws(() => safeGitArguments(args, c), { code: 'SELF_TEST_GIT_COMMAND_REFUSED' });
+  }
 });

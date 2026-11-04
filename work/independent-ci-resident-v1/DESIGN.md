@@ -3929,3 +3929,39 @@ Windows 一侧也在受同一条链路的影响，但不是 WSL 乱跳的原因�
 - 不变量：K(head, role) 与效果键语义不变（重跑的每一次都是“什么也没写过”的干净开始，Source 按原规则取得 K、写 journal）；同一检查不真跑两次（重跑的是发布段，同一份签名结果，`evidenceSha256` 相同，第 2/4/6 段不再运行，测试钉了 `[1,2,3,3,3,4,...]`）；授权每次从头重新证明（完整的 `before` 边界）。
 - 代价与风险：第 3、5 段的重跑会让 Linux 独占区和 Windows 交换槽多占最多 7 分钟（单批，阶段本来就允许 15 分钟）；这段时间里常驻层不处理别的事件（同步睡眠）。**我无法在这里验证：** Windows 助手/broker 对同一阶段的重复调用（`invokeStage` 的代码路径支持，第 8 段的多次尝试就是这样用的，但没有对真实 broker 做过实测）；这需要在装机的节点上做一次受控演练（人为让 GitHub 读失败一次）再放开。
 - 需要独立审核和 Owner 批准：C 改变了第 3、5、7 段“写前失败即烧头”的策略；B 改了两个发布者的写前顺序。
+
+## 52. gitleaks 审核放行 732 → 733：只放行 d94cd486 的一行（第 9 代；Decision `98fec682`）
+
+**背景。** PR #991（`gitleaks.yml` 中间代 `ba469065` 及其登记）的登记提交 `d94cd486e29a7362888fc32cd807ceb38890acb6`（分支 `claude/gitleaks-midgen-reviewed-hold`）把该代的 `gitleaks.yml` 压成一行 JSON 字符串，写进 `scripts/ci/clued-gated-proof-profiles.json` 的第 3829 行。gitleaks 8.30.1 的 `curl-auth-user` 规则把这一行里前面的 `curl` 和后面 docker 的 `--user=65532:65532` 连成一次命中。这是误报：被匹配的 `65532:65532` 是 `docker run` 的数字 uid:gid，不是凭据。同一行字节在已放行的 `cc353e29` 里就是第 3829 行（整行连 LF 的 sha256 前 16 位 `1d46d7f51f8c0d32`），但放行是按完整指纹（提交:路径:规则:行号）的，`cc353e29` 的两条对 `d94cd486` 不生效，常驻 gitleaks 因此判 failure。
+
+**决定。** Owner Decision `98fec682`（Clued，project `0597aa60-9b98-4da6-a4ab-63d7705b632f`）选方案 1：把放行**精确**扩展到 `d94cd486` 的这一行，钉进第 9 代。只加一条：
+
+`d94cd486e29a7362888fc32cd807ceb38890acb6:scripts/ci/clued-gated-proof-profiles.json:curl-auth-user:3829`，kinds `["EXACT_ESCAPED_JSON_DOCKER_UID_GID"]`（与 `cc353e29` 两条相同）。
+
+**为什么只放这一条。** `d94cd486` 对该文件只加了 gitleaks 一个来源（42 行，没有 trivy），所以只有一处命中；`cc353e29` 的第二条（trivy，5538）在 `d94cd486` 里不存在，不放。不改任何规则，不加全局、路径或正则放行。同一内容出现在别的提交里（例如 `e14db576`、`59fff541`，同一登记内容的其他提交）仍然被拒：放行绑定的是提交哈希，不是内容。
+
+**实现（与 `cc353e29` 两条同一条证明路径，推广到“每个提交一份钉值”）。**
+- `.gitleaks.toml`：`clued-reviewed-count: 733`，末尾追加那一条记录（前 732 条记录字节不变，新增常量 `PRIOR_732_RECORD_LINES_SHA256`；旧的 `ORIGINAL_730_RECORD_LINES_SHA256` 与两条一组的检查保持）。
+- `reviewed_gitleaks_historical.py`：每个已审核提交有自己的钉值表 `COMMITS`（目录、角色规格、单提交补丁的 sha256 和 blob）；`d94cd486` 的规格是 `cc353e29` 的 gitleaks 规格换提交（同一索引、行号、列区间、解码行区间、来源 blob、角色），另外两条规格都新增“整行字节”的 sha256 钉值，证明两个提交的第 3829 行逐字节相同。`verify` 仍然要求：目录/角色规格/补丁的字节与 blob 钉值一致，补丁里该行是新增行，规则命中恰一处且列区间一致，被匹配的是 `docker run` 的数字 uid:gid，来源与角色定义对得上。
+- `reviewed_gitleaks.py`：`EXPECTED_COUNT = 733`；按位置分段检查（前 730 / cc353e29 两条 / d94cd486 一条）；自检的四个历史回归（新提交、另一路径、另一行、真正的 curl 凭据）不变，它们本来就用同样的字节在一个新提交里证明放行不会外溢。
+- `selftest-shim.mjs`：自检里的 git 垫片只多放行一条精确的 `d94cd486^ d94cd486` 目录补丁命令，其他提交对一律拒绝（新增测试覆盖）。
+- `prepare.mjs`：`SOURCE_PINS`、`REVIEWED_COMMITS`、`REVIEWED_HISTORY_PROOF` 全部由工具从真实 git 对象算出，不是手算（见下表）。
+
+| 钉值 | 第 8 代（732） | 第 9 代（733） |
+|---|---|---|
+| `.gitleaks.toml` sha256 | `f21a46cb2a0c…` | `55d9299006dd…` |
+| `reviewed_gitleaks.py` sha256 | `4441bbee3b02…` | `38264a09306b…` |
+| `reviewed_gitleaks_historical.py` sha256 | `d395d46b18aa…` | `91b620c4bd87…` |
+| `REVIEWED_COMMITS` findings / commits | 732 / 103 | 733 / 104 |
+| 审核提交集合 sha256 | `576a86a6061e…` | `702a8d6c6cab…` |
+| `files_at_commits` | 174 | 175 |
+| `verified_git_objects` | 130 | 130（只由验收文件里的对象号决定，不变） |
+| 审核 ignore sha256 | `61b4af25bf5a…` | `51d18a93ba78…` |
+
+**验证。** 用 CI 发行版里钉死的镜像 `ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0…bbb7`（`CluedCI-Linux`，`--network none`、只读、`--cap-drop ALL`）和由新 `.gitleaks.toml` 生成的审核 ignore，对真实提交对象各扫一次：`d94cd486` 在 732 的 ignore 下 1 个发现（`curl-auth-user:3829`，即线上失败），在 733 的 ignore 下 0 个；`e14db576`、`59fff541` 在 733 下仍各 1 个发现（被拒）；`cc353e29` 在两份下都是 0 个。助手的物理自检（上面四个历史回归和既有的各项）在同一镜像里全部通过。
+
+**后果与没做的。**
+1. **托管的 `gitleaks.yml` 及其登记没有改。** 它写死的 `.gitleaks.toml`、助手、提交集合、ignore 的摘要仍是 732 那一组（和提交 `8d2f207e` 放行 role-probe 那次一样，先改常驻 Source，托管那一代另行冻结）；要让托管路径也认这一条，需要新的 `gitleaks.yml` 代、新的登记（`clued-gated-proof-*`、`trusted-workflows`、`hosted-relay registry`、`gitleaks-732.yml` 夹具等）和独立审核。常驻 Source 用 `prepare.mjs` 里的钉值，不执行也不读 `gitleaks.yml` 里的这些摘要。
+2. **证明依赖 `d94cd486` 及其父提交 `8ea4da40` 在对象库里。** `verify_history` 读该提交的目录、角色规格和单提交补丁；`build-bundle.ps1` 按已装 Source 的 `.gitleaks.toml` 把每个审核提交按哈希从 origin 取成 `refs/reviewed/<sha>`，常驻准备再把它的整个闭包打包。`d94cd486` 目前只在 PR #991 的分支 `claude/gitleaks-midgen-reviewed-hold` 上；分支被删除或改写后，GitHub 可能不再按哈希提供它，打包或助手就会 fail closed（`cc353e29` 已在 main 里，没有这个依赖）。#991 合入 main 之前不要删分支；或者另行把该提交保留到一个常驻引用上。
+3. **同样内容的其他提交再出现就再需要 Owner 决定。** 例如 #991 分支被改写（rebase）后，新的提交哈希需要新的一条（733 → 734）。
+4. 这一条只对 `curl-auth-user` 在这一行有效；真正的 `curl --user 身份:口令` 仍被检出（自检的 `genuine_curl_credential_detection`）。

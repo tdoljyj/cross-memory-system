@@ -65,7 +65,7 @@ class ReviewedArtifactDigestTests(unittest.TestCase):
     def test_exact_record_count_and_artifact_reason(self):
         records = reviewed.parse_records(self.config)
         exact = [r for r in records if ':' + reviewed.REVIEW_DOCUMENT_PATH + ':' in r['fingerprint']]
-        self.assertEqual(len(records), 730)
+        self.assertEqual(len(records), 733)
         legacy_digest = hashlib.sha256(json.dumps(records[:484], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         self.assertEqual(legacy_digest, 'b10a7c8542f886ccce1daec04057ad5a5873ef9d75eae1643ccc879289b39172')
         prior_digest = hashlib.sha256(json.dumps(records[:491], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
@@ -151,7 +151,7 @@ class FinalEvidenceArtifactDigestTests(unittest.TestCase):
     def test_changed_registry_count_is_rejected(self):
         row = next(line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)
                    and reviewed.FINAL_EVIDENCE_COMMIT in line)
-        for changed in [self.config.replace('# clued-reviewed-count: 730', '# clued-reviewed-count: 729'),
+        for changed in [self.config.replace('# clued-reviewed-count: 733', '# clued-reviewed-count: 732'),
                         self.config.replace(row + '\n', '', 1), self.config + row + '\n']:
             with self.subTest():
                 with self.assertRaisesRegex(ValueError, 'Reviewed finding count changed'):
@@ -427,7 +427,7 @@ class SchedulingExactFixtureTests(unittest.TestCase):
 
     def test_only_three_exact_additions_preserve_every_legacy_record_byte(self):
         records = reviewed.parse_records(self.config)
-        self.assertEqual(len(records), 730)
+        self.assertEqual(len(records), 733)
         self.assertEqual(self.rows()[:726], self.rows(self.old_config))
         self.assertEqual(hashlib.sha256(('\n'.join(self.rows()[:726]) + '\n').encode()).hexdigest(),
                          reviewed.LEGACY_RECORD_LINES_SHA256)
@@ -460,7 +460,7 @@ class SchedulingExactFixtureTests(unittest.TestCase):
                    self.config.replace(rows[0] + '\n', '', 1),
                    self.config.replace(rows[0], fourth, 1),
                    self.config.replace(rows[0], rows[0].replace(':', ': ', 1), 1),
-                   self.config.replace('# clued-reviewed-count: 730', '# clued-reviewed-count: 731') + fourth + '\n']
+                   self.config.replace('# clued-reviewed-count: 733', '# clued-reviewed-count: 734') + fourth + '\n']
         for changed in changes:
             with self.subTest(), self.assertRaises(ValueError):
                 reviewed.parse_records(changed)
@@ -543,12 +543,12 @@ class RoleProbeExactTokenTests(unittest.TestCase):
 
     def test_only_one_exact_addition_preserves_every_prior_record_byte(self):
         records = reviewed.parse_records(self.config)
-        self.assertEqual(len(records), 730)
+        self.assertEqual(len(records), 733)
         self.assertEqual(self.rows()[:729], self.rows(self.old_config))
         self.assertEqual(hashlib.sha256(('\n'.join(self.rows()[:729]) + '\n').encode()).hexdigest(),
                          reviewed.PRIOR_RECORD_LINES_SHA256)
         self.assertEqual(reviewed.tomllib.loads(self.config), reviewed.tomllib.loads(self.old_config))
-        self.assertEqual([r['fingerprint'] for r in records[729:]], [self.FINGERPRINT])
+        self.assertEqual([r['fingerprint'] for r in records[729:730]], [self.FINGERPRINT])
         self.assertEqual(records[729]['kinds'], ['SYNTHETIC_ROLE_PROBE_TOKEN'])
 
     def test_commit_path_rule_line_and_classification_are_not_transferable(self):
@@ -571,9 +571,9 @@ class RoleProbeExactTokenTests(unittest.TestCase):
     def test_deleted_duplicate_or_extra_record_is_rejected(self):
         row = self.rows()[729]
         second = row.replace(':generic-api-key:73', ':generic-api-key:74')
-        for changed in [self.config.replace(row + '\n', '', 1).replace('count: 730', 'count: 729'),
+        for changed in [self.config.replace(row + '\n', '', 1).replace('count: 733', 'count: 732'),
                         self.config.replace(row, self.rows()[728], 1),
-                        self.config.replace('count: 730', 'count: 731') + second + '\n']:
+                        self.config.replace('count: 733', 'count: 734') + second + '\n']:
             with self.subTest(), self.assertRaises(ValueError):
                 reviewed.parse_records(changed)
 
@@ -708,6 +708,13 @@ class RoleProbeSelfTestRegressionTests(unittest.TestCase):
                 return result(args, 1, [finding(reviewed.ROLE_PROBE_PATH, 'generic-api-key', 74)])
             if index == 8:
                 return result(args, 1, [finding('controlled-valid-private.pem', 'private-key')])
+            catalog = reviewed._candidate_policy.CATALOG
+            specs = reviewed._candidate_policy.SPECS
+            if index in [9, 10, 11]:
+                prefix, shift = [('', 0), ('other-path/', 0), ('', 1)][index - 9]
+                return result(args, 1, [finding(prefix + catalog, 'curl-auth-user', spec['line'] + shift) for spec in specs])
+            if index == 12:
+                return result(args, 1, [finding('curl-credential-probe.txt', 'curl-auth-user')])
             self.fail('Unexpected extra detector call')
 
         with tempfile.TemporaryDirectory(prefix='clued-role-probe-self-test-') as temporary:
@@ -723,9 +730,11 @@ class RoleProbeSelfTestRegressionTests(unittest.TestCase):
 
     def test_new_commit_other_path_and_added_line_are_all_detected(self):
         report, scans = self.run_self_test()
-        self.assertEqual(len(scans), 9)
+        self.assertEqual(len(scans), 13)
         for key in ['role_probe_new_commit_detection', 'role_probe_different_path_detection',
-                    'role_probe_different_line_detection']:
+                    'role_probe_different_line_detection', 'historical_json_new_commit_detection',
+                    'historical_json_different_path_detection', 'historical_json_different_line_detection',
+                    'genuine_curl_credential_detection']:
             self.assertIs(report[key], True, key)
 
     def test_each_suppressed_role_probe_regression_fails_the_self_test(self):
@@ -733,6 +742,93 @@ class RoleProbeSelfTestRegressionTests(unittest.TestCase):
                               (7, 'suppressed at another line')]:
             with self.subTest(scan=index), self.assertRaisesRegex(ValueError, 'Role-probe marker was ' + reason):
                 self.run_self_test(suppress=index)
+
+    def test_each_suppressed_historical_json_regression_fails_the_self_test(self):
+        for index, reason in [(9, 'Historical JSON metadata was suppressed at a new commit'),
+                              (10, 'Historical JSON metadata was suppressed at another path'),
+                              (11, 'Historical JSON metadata was suppressed at another line'),
+                              (12, 'Genuine credential-shaped curl fixture was suppressed')]:
+            with self.subTest(scan=index), self.assertRaisesRegex(ValueError, reason):
+                self.run_self_test(suppress=index)
+
+
+class HistoricalD94ExactTwinTests(unittest.TestCase):
+    """Owner Decision 98fec682: one appended fingerprint, the d94cd486 twin of the cc353e29 gitleaks.yml line."""
+    D94 = 'd94cd486e29a7362888fc32cd807ceb38890acb6'
+    FINGERPRINT = D94 + ':scripts/ci/clued-gated-proof-profiles.json:curl-auth-user:3829'
+    GEN8_COMMIT = '2640dce9'
+
+    @classmethod
+    def setUpClass(cls):
+        cls.config = (ROOT / '.gitleaks.toml').read_text(encoding='utf-8')
+        cls.old_config = reviewed.run(['git', 'cat-file', 'blob', cls.GEN8_COMMIT + ':.gitleaks.toml'], cwd=ROOT).decode()
+        cls.policy = reviewed._candidate_policy
+        cls.data = cls.policy.load(ROOT)
+
+    def rows(self, text=None):
+        return [line for line in (self.config if text is None else text).splitlines() if line.startswith(reviewed.PREFIX)]
+
+    def test_exactly_one_record_is_appended_and_the_732_bytes_are_preserved(self):
+        records = reviewed.parse_records(self.config)
+        self.assertEqual(len(records), 733)
+        self.assertEqual(self.rows()[:732], self.rows(self.old_config))
+        self.assertEqual(len(self.rows(self.old_config)), 732)
+        self.assertEqual(hashlib.sha256(('\n'.join(self.rows()[:732]) + '\n').encode()).hexdigest(),
+                         reviewed.PRIOR_732_RECORD_LINES_SHA256)
+        self.assertEqual([r['fingerprint'] for r in records[732:]], [self.FINGERPRINT])
+        self.assertEqual(records[732]['kinds'], [self.policy.KIND])
+        self.assertEqual(set(self.policy.FINDINGS), set(self.policy.FINDINGS_CC353) | {self.FINGERPRINT})
+        self.assertEqual(reviewed.tomllib.loads(self.config), reviewed.tomllib.loads(self.old_config))
+        self.assertEqual(reviewed.tomllib.loads(self.config), reviewed.BASE_CONFIG)
+
+    def test_the_twin_line_is_byte_identical_and_the_pinned_history_proof_passes(self):
+        for fingerprint in self.policy.FINDINGS:
+            self.assertEqual(self.policy.verify(fingerprint, self.data)['fixed_historical_subject_verified'], True)
+        lines = {commit: self.data[commit]['catalog'].decode().split('\n')[3828] for commit in (self.policy.H, self.D94)}
+        self.assertEqual(lines[self.policy.H], lines[self.D94])
+        self.assertEqual(hashlib.sha256(lines[self.D94].encode() + b'\n').hexdigest()[:16], '1d46d7f51f8c0d32')
+
+    def test_commit_path_rule_line_and_kind_are_not_transferable(self):
+        row = self.rows()[732]
+        value = json.loads(row[len(reviewed.PREFIX):])
+        commit, path, rule, line = value['fingerprint'].split(':')
+        mutations = [dict(value, fingerprint=':'.join(['0' * 40, path, rule, line])),
+                     dict(value, fingerprint=':'.join([commit, 'other/' + path, rule, line])),
+                     dict(value, fingerprint=':'.join([commit, path, rule, '3830'])),
+                     dict(value, fingerprint=':'.join([commit, path, 'generic-api-key', line])),
+                     dict(value, kinds=['SYNTHETIC_TEST_TOKEN']), dict(value, kinds=['ARTIFACT_DIGEST'])]
+        for changed in mutations:
+            replacement = reviewed.PREFIX + json.dumps(changed, separators=(',', ':'))
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                reviewed.parse_records(self.config.replace(row, replacement, 1))
+
+    def test_other_d94cd486_lines_and_other_commits_cannot_borrow_the_kind(self):
+        row = self.rows()[732]
+        for fingerprint in [self.D94 + ':scripts/ci/clued-gated-proof-profiles.json:curl-auth-user:5538',
+                            '8ea4da401cf09bbb4b98244e9a69f57ab2db32e3:scripts/ci/clued-gated-proof-profiles.json:curl-auth-user:3829',
+                            'e14db5764a67a927b27371fa3b568287671de4a3:scripts/ci/clued-gated-proof-profiles.json:curl-auth-user:3829',
+                            '59fff5419bcfe83be00a091e96d49e4186cb4bad:scripts/ci/clued-gated-proof-profiles.json:curl-auth-user:3829']:
+            replacement = reviewed.PREFIX + json.dumps({'fingerprint': fingerprint, 'kinds': [self.policy.KIND]}, separators=(',', ':'))
+            with self.subTest(fingerprint=fingerprint), self.assertRaises(ValueError):
+                reviewed.parse_records(self.config.replace(row, replacement, 1))
+            with self.subTest(extra=fingerprint), self.assertRaises(ValueError):
+                reviewed.parse_records(self.config.replace('count: 733', 'count: 734') + replacement + '\n')
+
+    def test_deleted_or_replaced_records_are_rejected(self):
+        row = self.rows()[732]
+        for changed in [self.config.replace(row + '\n', '', 1).replace('count: 733', 'count: 732'),
+                        self.config.replace(row, self.rows()[731], 1)]:
+            with self.subTest(), self.assertRaises(ValueError):
+                reviewed.parse_records(changed)
+
+    def test_changed_catalog_bytes_or_line_are_rejected(self):
+        for mutate in [lambda d: d.update(catalog=d['catalog'] + b' '),
+                       lambda d: d.update(catalog=d['catalog'].replace(b'--user=65532:65532', b'--user=65533:65533', 1)),
+                       lambda d: d.update(roles=d['roles'] + b' '), lambda d: d.update(patch=d['patch'] + b' ')]:
+            data = copy.deepcopy(self.data)
+            mutate(data[self.D94])
+            with self.subTest(), self.assertRaises(ValueError):
+                self.policy.verify(self.FINGERPRINT, data)
 
 
 if __name__ == '__main__':
