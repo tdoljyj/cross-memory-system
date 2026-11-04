@@ -40,6 +40,7 @@ RELAY_STEP = """      - name: Emit relay identity
           echo "::notice title=clued-hosted-relay-v1::$jwt"
 """
 HOSTED_EXECUTOR_ROUTE = "    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      id-token: write\n    steps:"
+SCAN_START_EXECUTOR_ROUTE = "    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      actions: read\n      checks: read\n      pull-requests: read\n      id-token: write\n    steps:"
 HEX_RELAY_STEP = RELAY_STEP.replace(
     "        run: |\n",
     "        # Hex, not the JWT text: GitHub masks JWT-shaped text in logs and annotations (Task 169fd456).\n        run: |\n",
@@ -250,6 +251,7 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
 
     def test_owner_decision_325717a6_names_exactly_the_hosted_executor_jobs(self):
         self.assertEqual(policy.OWNER_DECISION_HOSTED_SOURCE, "325717a6")
+        self.assertEqual(policy.HOSTED_SCAN_START_SUCCESSOR["frozen_commit"], "956078fcec98844ab9be05e857fe4f53b3372fc4")
         self.assertEqual(policy.owner_decision_findings(policy.OWNER_DECISION_HOSTED_JOBS,
                                                         policy.LEGACY_HOSTED_DEBT), [])
         pairs = {(file, job) for file, entry in policy.OWNER_DECISION_HOSTED_JOBS.items()
@@ -294,7 +296,9 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
                     if (file, job_id) in expected:
                         self.assertTrue(expected[(file, job_id)] <= names, names)
                         fields = policy.job_fields(block)
-                        self.assertEqual(fields["permissions"].split(), ["contents:", "read", "id-token:", "write"])
+                        expected_permissions = ["contents:", "read", "id-token:", "write"] if file != "gitleaks.yml" else [
+                            "contents:", "read", "actions:", "read", "checks:", "read", "pull-requests:", "read", "id-token:", "write"]
+                        self.assertEqual(fields["permissions"].split(), expected_permissions)
                         expected_step = RELAY_STEP if file == "contract-placement.yml" else HEX_RELAY_STEP
                         self.assertTrue(block.endswith(expected_step), file)
                         self.assertEqual(block.count("id-token"), 1)
@@ -383,7 +387,7 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
             (gitleaks.replace("--redact --exit-code 1", "--redact --exit-code 0"), "Owner-decision hosted job changed"),
             (gitleaks.replace("  push:\n", "  schedule:\n    - cron: '0 * * * *'\n  push:\n"), "Owner-decision hosted workflow controls changed"),
             (gitleaks.replace("permissions:\n  contents: read\n", "permissions:\n  contents: write\n", 1), "Owner-decision hosted workflow controls changed"),
-            (gitleaks.replace(HOSTED_EXECUTOR_ROUTE, HOSTED_EXECUTOR_ROUTE.replace("ubuntu-latest", "ubuntu-24.04")), "Owner-decision hosted job changed"),
+            (gitleaks.replace(SCAN_START_EXECUTOR_ROUTE, SCAN_START_EXECUTOR_ROUTE.replace("ubuntu-latest", "ubuntu-24.04")), "Owner-decision hosted job changed"),
             # The relay identity: its permission, audience, condition and position are exact.
             (gitleaks.replace("      id-token: write\n", "      id-token: write\n      checks: write\n", 1), "Owner-decision hosted job changed"),
             (gitleaks.replace("      id-token: write\n", "", 1), "Owner-decision hosted job changed"),
@@ -396,7 +400,7 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
                 self.assertNotEqual(changed, gitleaks)
                 self.assert_rejected(policy.evaluate_workflows({**texts, "gitleaks.yml": changed}), reason)
         # A job moved back to self-hosted or removed must drop its exception.
-        back = gitleaks.replace(HOSTED_EXECUTOR_ROUTE, HOSTED_EXECUTOR_ROUTE.replace(
+        back = gitleaks.replace(SCAN_START_EXECUTOR_ROUTE, SCAN_START_EXECUTOR_ROUTE.replace(
             "ubuntu-latest", "[self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]"))
         self.assertNotEqual(back, gitleaks)
         self.assert_rejected(policy.evaluate_workflows({**texts, "gitleaks.yml": back}),
