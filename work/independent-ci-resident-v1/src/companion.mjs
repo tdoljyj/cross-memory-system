@@ -191,6 +191,21 @@ export function retryLogEntry({ at, op, attempt, ms, runner }) {
       refused: typeof r.refused === 'string' && /^[A-Z][A-Z0-9_]{1,79}$/.test(r.refused) ? r.refused : null } };
 }
 
+// DESIGN 52 (Decision 98fec682): build-bundle.ps1's refusal answer carries one fixed-text `hint` (a reviewed commit that only a
+// branch keeps alive). The companion answers BUNDLE_UNAVAILABLE as before; the hint reaches the operator only through this log
+// entry. Only that one field is taken, length-capped and character-checked, and the reason only when it is a plain code: nothing
+// else of the script's output is ever logged.
+export const BUNDLE_HINT_MAX = 400;
+const BUNDLE_HINT = /^[A-Za-z0-9 ().,:;\/#_-]+$/;
+export function bundleRefusalLogEntry({ at, op, runner }) {
+  if (runner?.code !== 2 || typeof runner.stdout !== 'string' || runner.stdout.length > 65_536) return null;
+  let v = null;
+  try { v = JSON.parse(runner.stdout); } catch { return null; }
+  const hint = v?.hint;
+  if (typeof hint !== 'string' || hint.length === 0 || hint.length > BUNDLE_HINT_MAX || !BUNDLE_HINT.test(hint)) return null;
+  return { at: new Date(at).toISOString(), kind: 'bundle-refusal', op, reason: typeof v.reason === 'string' && /^[A-Z][A-Z0-9_]{1,79}$/.test(v.reason) ? v.reason : null, hint };
+}
+
 // DESIGN §33 (the 2026-10-29 first HALT): the path-valued keys of companion.json and which of them point into the installed CI
 // Source, <root>\source\<ciSourceManifestSha256>\. A path key is a Source script unless it is named here as not one, so a new path
 // key is held to the Source directory by default. A config whose script paths name another (older) Source directory runs
@@ -368,6 +383,10 @@ export class Companion {
     try { await this.log?.(retryLogEntry({ at: this.clock() - ms, op, attempt, ms, runner })); } catch { /* the log never decides */ }
   }
 
+  async noteBundleRefusal(op, runner) {
+    try { const entry = bundleRefusalLogEntry({ at: this.clock(), op, runner }); if (entry) await this.log?.(entry); } catch { /* the log never decides */ }
+  }
+
   async quiescence(batchId) {
     const r = await this.runRead(this.a.linuxTool('quiescence', batchId), { timeoutMs: 30_000 }, 'quiescence');
     const v = r.code === 0 ? json(r.stdout) : null;
@@ -379,6 +398,7 @@ export class Companion {
       case 'build-bundle': {
         const r = await this.run(this.a.bundle(request.batchId), { timeoutMs: 30 * 60_000 });
         const v = r.code === 0 ? json(r.stdout) : null;
+        if (v?.status !== 'BUNDLE_WRITTEN') await this.noteBundleRefusal('build-bundle', r);
         return { ok: v?.status === 'BUNDLE_WRITTEN', code: v?.status === 'BUNDLE_WRITTEN' ? null : 'BUNDLE_UNAVAILABLE' };
       }
       // DESIGN §37: the second generation. Refs no longer the batch's (main moved, or no branch still at the head) is the clean
@@ -387,6 +407,7 @@ export class Companion {
         const r = await this.run(this.a.rebundle(request.batchId), { timeoutMs: 30 * 60_000 });
         const v = r.code === 0 || r.code === 2 ? json(r.stdout) : null;
         if (r.code === 0 && v?.status === 'BUNDLE_WRITTEN' && v.generation === 2) return { ok: true, code: null };
+        await this.noteBundleRefusal('rebuild-bundle', r);
         return { ok: false, code: REBUNDLE_REFS_CHANGED.includes(v?.reason) ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'BUNDLE_UNAVAILABLE' };
       }
       case 'prepare-workspaces': {

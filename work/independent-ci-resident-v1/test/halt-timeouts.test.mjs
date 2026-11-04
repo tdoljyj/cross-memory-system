@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { COMPANION_CONFIG_CONTRACT, CHECK_REFS_SECOND_TRY_MAX_MS, Companion, READ_RETRIES, TERMINAL_NOANSWER_CAP_MS, WSPREP_QUIET_WAIT_MS,
-  retryLogEntry, timedOutGone, validateCompanionConfig } from '../src/companion.mjs';
+  BUNDLE_HINT_MAX, bundleRefusalLogEntry, retryLogEntry, timedOutGone, validateCompanionConfig } from '../src/companion.mjs';
 import { Mailbox } from '../src/mailbox.mjs';
 import { events, haltHint } from '../src/pr-status.mjs';
 import { TEST_NODE, TEST_NODE_SHA, tempRoot } from './helpers.mjs';
@@ -214,4 +214,42 @@ test('the HALT notice names what to read before the Owner re-arms, for timeout-s
   }
   assert.equal(haltHint('SOMETHING_ELSE'), ''); assert.equal(haltHint('constructor'), ''); assert.equal(haltHint(null), '');
   assert.equal(body('PUBLICATION_UNCERTAIN'), '原因：PUBLICATION_UNCERTAIN。需要 Owner 复位（rearm）后才会继续。', 'other codes read as before');
+});
+
+// DESIGN 52 (Decision 98fec682): the hint of build-bundle.ps1's refusal reaches the operator through the companion log, and only that.
+const HINT = 'The reviewed set contains d94cd486 (and its parent 8ea4da40), which is reachable only from branch claude/gitleaks-midgen-reviewed-hold until PR #991 is merged: if that branch was deleted or rewritten, restore it.';
+const refusal = (extra = {}) => ({ code: 2, stdout: JSON.stringify({ status: 'REFUSED_BEFORE_WRITE', stage: 'fetch-reviewed-commits-by-sha', reason: 'GIT_STEP_FAILED', hint: HINT,
+  git: { label: 'fetch-reviewed', exitCode: 128 }, created: ['C:\\secret\\path'], ...extra }), stderr: 'token ghp_x' });
+
+test('a build-bundle refusal with a hint is answered BUNDLE_UNAVAILABLE as before and logs only the reason and the hint', async () => {
+  for (const [kind, op] of [['build-bundle', 'build-bundle'], ['rebuild-bundle', 'rebuild-bundle']]) {
+    const rg = rig({ script: () => refusal() });
+    assert.deepEqual(await rg.c.handle(request(kind)), { ok: false, code: 'BUNDLE_UNAVAILABLE' });
+    assert.equal(rg.logs.length, 1, kind);
+    assert.deepEqual(rg.logs[0], { at: new Date(T0).toISOString(), kind: 'bundle-refusal', op, reason: 'GIT_STEP_FAILED', hint: HINT });
+    assert.equal(JSON.stringify(rg.logs[0]).includes('secret'), false);
+    assert.equal(JSON.stringify(rg.logs[0]).includes('ghp_'), false);
+  }
+});
+
+test('a build-bundle refusal without a hint, or with a too long, empty, non-string or unexpected-character hint, logs nothing', async () => {
+  for (const extra of [{ hint: undefined }, { hint: null }, { hint: '' }, { hint: 'x'.repeat(BUNDLE_HINT_MAX + 1) }, { hint: 5 }, { hint: ['a'] },
+    { hint: 'visit https://example.invalid?a=b' }, { hint: 'line one\nline two' }, { hint: 'C:\\Users\\x' }, { hint: '<script>' }]) {
+    const rg = rig({ script: () => refusal(extra) });
+    assert.deepEqual(await rg.c.handle(request('build-bundle')), { ok: false, code: 'BUNDLE_UNAVAILABLE' });
+    assert.deepEqual(rg.logs, [], JSON.stringify(extra).slice(0, 60));
+  }
+  assert.equal(bundleRefusalLogEntry({ at: T0, op: 'build-bundle', runner: { code: 1, stdout: refusal().stdout } }), null, 'only the script\'s own refusal exit');
+  assert.equal(bundleRefusalLogEntry({ at: T0, op: 'build-bundle', runner: { code: 2, stdout: 'not json' } }), null);
+  assert.equal(bundleRefusalLogEntry({ at: T0, op: 'build-bundle', runner: null }), null);
+  assert.equal(bundleRefusalLogEntry({ at: T0, op: 'build-bundle', runner: { code: 2, stdout: refusal({ reason: 'free text' }).stdout } }).reason, null);
+  const ok = rig({ script: () => ({ code: 0, stdout: JSON.stringify({ status: 'BUNDLE_WRITTEN', generation: 2, hint: HINT }) }) });
+  assert.deepEqual(await ok.c.handle(request('build-bundle')), { ok: true, code: null });
+  assert.deepEqual(ok.logs, []);
+});
+
+test('a failing log never changes the answer of a refused build-bundle', async () => {
+  const state = { now: T0 };
+  const c = new Companion({ cfg, mailbox: null, run: async () => refusal(), fileExists: async () => true, sleep: async () => {}, clock: () => state.now, log: async () => { throw new Error('disk full'); } });
+  assert.deepEqual(await c.handle(request('build-bundle')), { ok: false, code: 'BUNDLE_UNAVAILABLE' });
 });
