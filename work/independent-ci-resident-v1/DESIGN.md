@@ -3717,3 +3717,46 @@ wsl.exe 一次调用在负载高时要 25–45 秒（§25、§26）。companion 
 
 - `test/halt-timeouts.test.mjs`（9 个）：`timedOutGone` 的边界；`quiescence` 重问与“未证明消失的树只问一次”；`archive-linux` 的两次启动上限、退出码非 0 不重问、状态读重问；`check-refs` 的定论、两次上限、长读不再问；`prepare-workspaces` 的静止等待（不重启、受截止约束、退出码 1 不等）；`start --no-block` 超时（有证据继续、无证据照旧、永不重启）；单元读无答案的 120 秒上限与“仍在忙”的 30 秒；日志行的键；HALT 提示。
 - 安装：常驻层 Windows 包的改动（companion 与 PR 页面），随第 7 代一并装；Source v2、Linux 工具、policy 合同不变。
+
+## 45. 三个扫描并行？分析结论：常驻层不能安全做到，最小的可行办法是 Source 级的“多角色扫描段”（Task `c59e697c`，第 8 代，分析稿，未改任何运行代码）
+
+范围：基于第 7 代 `b88ee755`。任务要求在常驻节点内让 gitleaks、trivy、contract-placement 的执行段（第 2、4、6 段）并行，再按现有顺序发布。本节逐项核对共享资源，结论是：**只改常驻层，任何并行都会被下面五处单例挡住；没有任何一处能靠“只把发布串行”绕开**，因为发布段（第 3、5、7 段）本身也要占同一个交换槽。没有写并行的代码：并行逻辑放在常驻层就是死代码，放进 Source 就是一次 Source 变更（新 Source 清单、Owner Decision、UAC、Grant），要先由 Owner 选。
+
+### 45.1 五处单例（读代码得到的事实）
+
+| # | 资源 | 证据 | 为什么挡并行 |
+|---|---|---|---|
+| 1 | Windows 交换槽 | 每一段（含发布段）都是一次经交换代理的整段换手：原 runner 服务被停、换成通用助手，段结束再读回 `serviceOriginalStopped`；`maxConcurrent` 只能是 1，交换代理有全局互斥量，`Runner.run` 在子进程未退出时拒绝新子进程（`RUNNER_BUSY_WITH_UNFINISHED_CHILD`）；发行方（`windows-issuer.mjs`）整个 Linux 扫描期间都占着它回答回调 | 同时只能有一个发行方会话；两个扫描段无法同时换手。**发布段也要换手，所以它既不能与扫描段重叠，也没有“只串行发布”这一档可选** |
+| 2 | Linux 角色锁 | `formal-fixed-role-policy-v3/policy.mjs:28,107-110`：固定路径 `/var/lib/clued-independent-ci/formal-role.lock`，`wx` 新建，第二个 worker 直接失败；`prepare-workspaces.py:43`、归档、安装与重装脚本都把它当唯一一份 | 第二个 worker 起不来 |
+| 3 | Linux 单 unit 守卫 | 每个 unit 的 `ExecStartPre` guard 要求其他 `clued-ci-*@` unit 全部 inactive/failed（`clued-ci-resident-linux:19,138-142`）；`quiescence` 与归档也按“同一时间只有一个”核对 | 第二个 unit 的守卫失败 |
+| 4 | formal-spool | 一个目录对：`incoming/{issue,response-01..32}`、`outgoing/{result,blocked,challenge-01..32,active.lock}`，名字固定，`active.lock` 独占（`mailbox.mjs:51`），归档白名单就是这些名字（`clued-ci-resident-linux:83-84`）。回调序号 1..32 是**每个 issue 自己的**序号，所以序号本身不冲突；冲突的是三个角色共用同名文件 `issue.json` / `result.json` / `active.lock` | 三个角色共用一个目录就互相覆盖或互相拒绝 |
+| 5 | companion 邮箱 lane 一次一个请求 | `companion-main.mjs#lane`：邮箱 lane 有自己唯一的 Runner，`runner.busy` 时不取新请求（咨询类工作在另一条 lane，不能借用）；`relay-stage`（泵）是邮箱 lane 上的一个长请求，泵期间 `memory-ready`、`check-refs`、归档等其他邮箱请求都排在它后面 | 即使 1–4 解决，三个泵也没有并发的载体 |
+
+另外：`ROLE_STAGES`、`POSITIONS`、`PUBLICATION_STAGES`、批次导出的 8 段工作清单、C# 通用助手的阶段表、`source-closure.json` 都按“第 2、4、6 段各一个角色”钉死，改阶段结构 = 改 Source。
+
+### 45.2 其余五项核对
+
+- **WSL 内存（`.wslconfig` memory=28GB）**：不是瓶颈。gitleaks、trivy 容器固定 2 GiB / 2 CPU / 128 pids（`policy.mjs` `FIXED_SCANNER_RESOURCES_REQUIRED`），contract-placement 是 node-entry 容器；三者同时最多约 6 GiB 外加 docker 与页缓存。**真正要防的是 §32 的 hv_sock 环形缓冲块**：它看的是连续空闲块数（64 块阈值），不是总内存；三个泵同时开 wsl.exe，用块的速度约三倍。并行方案的内存闸必须在合并段之前读一次，并按角色数留量（阈值待实测，不能沿用 64）。CPU：每个扫描 2 核，要先量 DESK 的 `nproc` 再定，否则三个 2 核容器互相拖慢，收益缩水。
+- **发布顺序与 ledger/烧头**：今天第 3 段发布之后才跑第 4 段，所以第 4 段失败时 gitleaks 的检查已在 GitHub 上、head 已被 `executed-heads` 记为“可能已发布”（`beforePublication` 在第 3、5、7 段前写，`PUBLICATION_STAGES`）。扫描先全部跑完再发布，则任一扫描失败都发生在第一次发布**之前**：PR 上没有半截检查，head 仍按“失败的 head 永远烧掉”烧（第 1 段后的 `markStarted`），语义不变且更干净。**必须新增的一条规则**：自动 attempt 2 今天只对第 1、2 段的暂时性码开放，是因为那时最多 gitleaks 跑过一半；并行后可能 trivy 已经**跑完并出了合格结果**而 gitleaks 失败，attempt 2 会让 trivy 对同一提交再真跑一次，违反“同一提交的同一检查只真跑一次”。所以：只要有任一角色已收到合格的签名结果，就不进 attempt 2。
+- **断路器**：`POSITIONS` 用“批次结束的位置”区分 Linux/Windows-only 位置（`LINUX_POSITIONS`）。合并后的扫描段只有一个位置；它失败属于 Linux 位置，关闭规则（“走过失败的位置”）照旧，但同一批里多角色同时失败只能计一次，否则一批让熔断数多算。
+- **第 3、5、7 段发布前的 Native 完整准入，以及合并槽/认领的观察时间点**：现有设计里每个发布段自己在开头做一次完整准入，用的是实时读到的认领答复（`one-shot-v2.mjs` `serverAnswerCurrent`），不复用任何旧观察；发行方的 issue 窗口是 `min(段上限, 认领租约, 验收 validUntil, 持有租约)` 且 `issue.expiresAt ≤ claimExpiresAt`（`protocol.mjs:94`），每次回调都在同一认领代下重新准入。所以并行**不会**让发布使用过期观察：每个发布段仍然实时重核。会变的有两点，都要写进设计而不是靠运气：(1) 三个 issue 在同一时刻签发，共享同一个较早的 `claimExpiresAt`，串行时后面的角色拿的是更晚的认领读数；(2) 第一个发布段要等最慢的扫描结束才开始，gitleaks 的结果等待时间变长（缩短的是总时长，不是这一项）。净效果是 PR 从第 1 段到最后一次发布的总跨度缩短，合并槽过期的暴露窗口变小；但这两点必须由测试固定：发布段拿到的结果若超过其 issue 窗口，按现有码干净失败，不放宽任何检查。今天遇到的“合并槽在两次观察之间过期、发布被撤回”发生在第 3 段与第 8 段之间（§41.3 撤绿），与扫描并行无关；并行不改第 8 段，也不改撤绿规则。
+
+### 45.3 最小可行方案（Source 级，供 Owner 选择，未实现）
+
+只有这样才能在 1–5 处都不放宽的前提下并行：**新增一个“多角色扫描段”，一次换手、一个发行方会话、三个 Linux worker 并发；发布段 3、5、7 保持原样、原顺序、原绑定。** 先例：第 9 段（托管转发）已经支持“按行序取非空角色子集”的变长作业清单，可以照它建模。
+
+1. Linux：锁改为每角色一个（`formal-role-<role>.lock`），guard 改为“每个角色至多一个 worker，且 wsprep/archive 与任何 worker 互斥”；spool 改为 `formal-spool/<role>/{incoming,outgoing}`；归档白名单、`quiescence`、`prepare-workspaces.py`、安装/重装/校验脚本同步改（`ROLE_LOCK_PRESENT` 等）。
+2. Windows：`windows-issuer.mjs` 在一个会话里对三个邮箱各自发 issue、轮询回调、收结果；`formal-spool-acl.ps1`、`archive-windows-spool.ps1` 改成三个子目录；C# 通用助手阶段表加新段（`FormalPublicBoundaryV2.cs`，编译后的二进制，哈希写在安装记录里）。
+3. 常驻层：`relay-stage` 泵要能并发三路（companion 主循环改成可并发，或一个泵多路复用三个角色）；执行器 `continueBatch` 里 `ROLE_STAGES` 循环改成“一个扫描段，然后按 3、5、7 顺序发布”；内存闸、`POSITIONS`、`ATTEMPT2` 规则、回执（`stage-terminal` 每角色一条）、状态页、失败表按 §45.2 调整。
+4. 保持不变：失败的 head 永远烧；同一提交同一检查只真跑一次（上面的 attempt 2 新规则）；发布顺序和绑定；生产库只读；不放宽任何安全检查。
+5. 范围：约 15–25 个 Source 文件加一个已编译助手，改动会改变 Source 清单，必须随第 8 代的 Source 变更一起走独立审核、Decision、UAC、Grant。代价不小，不是一次本地提交能完成并让人放心的东西。
+
+### 45.4 能省多少（估算，未实测）
+
+并行只缩短“三个扫描的执行时间之和”到“最长的一个”再加一次换手；换手本身省下两次。设 gitleaks、trivy、placement 的实际执行时间为 g、t、p（分钟），节省 ≈ g + t + p − max(g, t, p) + 约 1–2（少两次换手与中间归档）。**我这里没有读 `C:\ProgramData` 的回执，拿不到真实的 g、t、p**；按设计里的段上限（45/30/10 分钟，是上限不是典型值）无法推算。请取最近几个批次的 `stage-terminal` 回执时间戳算出来；若典型值是 g≈8、t≈8、p≈2，节省约 10–12 分钟（每 PR 30–40 分钟里的约 25–30%）。
+
+**对比：同样大小的、风险更低的省时项**：设计 §10.1 的“持久种子库”（`resident\seed.git`，只在 `build-bundle.ps1`，不改扫描结构）按 §10.1 自己的估算在限速网络下每个批次省 4–9 分钟，且不需要多角色改造；它需要 Owner 就种子目录的 ACL 与保留策略做决定。建议先做它，再决定是否值得做 §45.3。
+
+### 45.5 测试与验证
+
+本节没有改运行代码，所以没有新增测试。第 7 代基线在本工作树上重跑：常驻套件 802 个测试 / 796 pass / 0 fail / 6 skipped；`independent-ci-v1` 套件 517 个测试 / 516 pass / 1 fail，失败的是 `resident-v2-bridge.test.mjs` 的 “issuer: an answer that would be late…”（`BRIDGE_BYTE_BOUND`），**两套同时跑时出现，单独连跑三次均 36/36 通过**，是负载下的时间敏感测试，与本节无关。两套**顺序**重跑的最终数字：常驻套件 802 / 796 pass / 0 fail / 6 skipped；`independent-ci-v1` 套件 517 / 517 pass / 0 fail。
