@@ -73,7 +73,8 @@ test('build-bundle: only the first refs-vs-ls-remote check can start a new attem
   }
   // the receipt keeps storeAttempts and firstAttempt and lists every retried attempt in failedAttempts (readers take the keys they need)
   assert.equal(text.split('storeAttempts=$attempts;firstAttempt=$firstAttempt;failedAttempts=@($failedAttempts)').length - 1, 2, 'the receipt and the refusal answer');
-  assert.ok(text.includes('storeAttempts=$attempts;firstAttempt=$firstAttempt;failedAttempts=@($failedAttempts);credentialsPrinted=$false'));
+  // (the refusal answer also carries the seed report, between failedAttempts and credentialsPrinted: both keys were added by different branches)
+  assert.ok(text.includes('storeAttempts=$attempts;firstAttempt=$firstAttempt;failedAttempts=@($failedAttempts);seed=$seedReport;credentialsPrinted=$false'));
   assert.ok(text.includes("$given=[ordered]@{attempt=($n+1);reason=$reason;stage=$script:stage;git=$script:lastGit;failedAfterSeconds=[int]$elapsed}"));
   assert.ok(text.includes("'fetch-3.git'"));
 });
