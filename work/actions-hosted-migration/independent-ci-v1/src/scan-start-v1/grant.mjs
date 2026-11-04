@@ -41,3 +41,39 @@ export function requireFreshScanStartGrant(job, grant, now = Date.now()) {
   check(w && Number.isSafeInteger(now) && now >= w.start && now < w.end);
   return validateScanStartGrant(grant, { job, executionId: grant.execution_id });
 }
+
+// Whether a resident role must take its one Native scan-start permission
+// before it launches (Task 169fd456). Production has no active scan-start
+// policy yet: Native execution activation and that policy are a separate,
+// gated, irreversible cutover. Until then this Source starts its scanners as
+// Sources before 36b8046a did: no Native call, and the bridge issue id is the
+// execution id (Native would have granted exactly that id). The Source that
+// is installed together with the activation sets this to true; nothing at
+// run time can switch it.
+export const NATIVE_SCAN_START_REQUIRED = false;
+const LOCAL_CONTRACT = 'clued.ci-scan-start-not-required/1';
+const LOCAL_FIELDS = ['contract', 'native', 'execution_id', 'head_sha', 'role'];
+export function localScanStart(job, executionId) {
+  try {
+    check(typeof executionId === 'string' && UUID.test(executionId) && typeof job?.headSha === 'string'
+      && /^[a-f0-9]{40}$/.test(job.headSha) && ['gitleaks', 'trivy', 'contract-placement'].includes(job.role));
+    return Object.freeze({ contract: LOCAL_CONTRACT, native: false, execution_id: executionId, head_sha: job.headSha, role: job.role });
+  } catch { fail(); }
+}
+function validateLocalScanStart(value, job) {
+  try {
+    check(value !== null && typeof value === 'object' && Object.isFrozen(value));
+    const d = Object.getOwnPropertyDescriptors(value);
+    check(Reflect.ownKeys(d).length === LOCAL_FIELDS.length && LOCAL_FIELDS.every(k => d[k] && Object.hasOwn(d[k], 'value') && d[k].enumerable));
+    check(value.contract === LOCAL_CONTRACT && value.native === false && typeof value.execution_id === 'string' && UUID.test(value.execution_id)
+      && value.head_sha === job?.headSha && value.role === job?.role);
+    return value;
+  } catch { fail(); }
+}
+// What an adapter checks before (and again right before) its first scanner:
+// a fresh Native grant when the Source requires one, otherwise only the local
+// start of this exact job. A Native grant is refused in local mode and a local
+// start is refused in Native mode, so the two can never be mixed.
+export function scanStartPermission(job, value, nativeRequired = NATIVE_SCAN_START_REQUIRED, now = Date.now()) {
+  return nativeRequired === true ? requireFreshScanStartGrant(job, value, now) : validateLocalScanStart(value, job);
+}

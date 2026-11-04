@@ -17,7 +17,7 @@ import {openFixedRoleSession,takeActualRoleSession} from '../formal-fixed-role-p
 import {readFixedIssueJob} from './issue-job.mjs';
 import {canonical} from '../../src/proof.mjs';
 import {noteBridgeResponseTimes,noteBridgeRefsTimes} from '../../src/admission-facts-v2.mjs';
-import {validateScanStartGrant,noteScanStartResponseWindow} from '../../src/scan-start-v1/grant.mjs';
+import {validateScanStartGrant,noteScanStartResponseWindow,NATIVE_SCAN_START_REQUIRED,localScanStart} from '../../src/scan-start-v1/grant.mjs';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 const fail=code=>{throw Object.assign(new Error(code),{code});},check=(v,c)=>{if(!v)fail(c);};
@@ -53,7 +53,11 @@ export async function executeProtectedIssuedJob(options={}){
     // Adapters cannot prepare until their first callback gets a fresh actual
     // production response through the accepted Root-protected relay.
     const ports=Object.freeze({admissionPort:subject=>callback('admission',subject),remoteRefsPort:subject=>callback('remote-refs',subject),
-      scanStartPort:async subject=>{const grant=await callback('scan-start',subject);validateScanStartGrant(grant,{job,executionId:issue.issueId});return grant;}});
+      // While the Source does not require Native, no scan-start challenge is ever written: the
+      // issue id is this job's execution id, once (grant.mjs NATIVE_SCAN_START_REQUIRED).
+      scanStartPort:async subject=>{if(!NATIVE_SCAN_START_REQUIRED){check(canonical(subject)===canonical(job),'FORMAL_CALLBACK_SUBJECT_CHANGED');
+        check(!scanStartRequested,'SCAN_START_ONCE_REQUIRED');scanStartRequested=true;return localScanStart(job,issue.issueId);}
+        const grant=await callback('scan-start',subject);validateScanStartGrant(grant,{job,executionId:issue.issueId});return grant;}});
     const session=takeActualRoleSession(await openFixedRoleSession(job));
     const adapter=job.role==='gitleaks'?createFormalGitleaksAdapter(ports):job.role==='trivy'?createFormalTrivyAdapter(ports):createFormalContractPlacementAdapter(ports);executionMayHaveStarted=true;
     const result=await adapter.execute(job,{signal});

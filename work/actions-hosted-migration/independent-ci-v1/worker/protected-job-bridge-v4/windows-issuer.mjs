@@ -24,7 +24,7 @@ import {runEntry,controllerPrincipal,controllerPorts,observationLog} from '../..
 import {createWindowsContext,takeAcceptedBridgeContext,assertWindowsContextLive,closeWindowsContext} from './boundary.mjs';
 import {openAcceptedMailbox,takeActualMailbox} from './mailbox.mjs';
 import {CALLBACK_WINDOW_MS,makeIssue,makeResponse,validateChallenge,validateBlocked,admissionValid,issueGeneration,encode,decode,digest} from './protocol.mjs';
-import {validateScanStartGrant} from '../../src/scan-start-v1/grant.mjs';
+import {validateScanStartGrant,NATIVE_SCAN_START_REQUIRED} from '../../src/scan-start-v1/grant.mjs';
 import {verifySignedBridgeResult} from './signed-result.mjs';
 export const ISSUER_SUCCESS='ISSUED_RESULT_RECEIVED';
 const STALE_ADMISSION='full_admission_observation_expired',UNAVAILABLE_ADMISSION='full_admission_unavailable';
@@ -91,7 +91,7 @@ export const issuerEvaluate=({github,admission,job,batchClaim})=>async()=>{
 
 // The issuer engine. Ports are injected so the offline tests drive the real protocol; production wires
 // them in main(). sideEffects counts "the Linux side may run": 0 until the issue is written.
-export async function runIssuer({context,evaluate,collect,scanStart,box,clock=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),stageDeadline,signal}){
+export async function runIssuer({context,evaluate,collect,scanStart,box,clock=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),stageDeadline,signal,nativeScanStartRequired=NATIVE_SCAN_START_REQUIRED}){
   takeAcceptedBridgeContext(context);const job=context.job;let sideEffects=0,admissionDiagnostic=null;
   // Preserve only the shared sanitizer's refusal facts, plus bounded retry context when an admission round gave up.
   // A late round may end with a bridge reason instead, so this is context, not necessarily the final failure's cause.
@@ -172,6 +172,8 @@ export async function runIssuer({context,evaluate,collect,scanStart,box,clock=Da
       }
       let grant=null;
       if(challenge.action==='scan-start'){
+        // A Source that does not require Native never asks; a challenge anyway is refused, not served.
+        check(nativeScanStartRequired===true,'SCAN_START_NOT_REQUIRED_BY_SOURCE');
         check(!scanStartAttempted&&typeof scanStart==='function','SCAN_START_PORT_OR_ONCE_REQUIRED');
         admissionValid(job,current,clock(),issueGeneration(issue));
         if(clock()>=Date.parse(challenge.deadline))return goLate(challenge);

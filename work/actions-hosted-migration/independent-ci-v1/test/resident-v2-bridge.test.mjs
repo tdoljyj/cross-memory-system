@@ -34,7 +34,7 @@ const sha = b => createHash('sha256').update(b).digest('hex');
 const claim = (o = {}) => ({ claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000), ...o });
 const PACKET = { complete: true, paths: ['a.txt'] };
 // Explicit offline Native boundary; no production caller flag is added.
-const runIssuer = options => runActualIssuer({ scanStart: async ({ job, executionId }) => ({ status: 'committed', contract: 'clued.ci-scan-start-grant/1', launch_allowed: true, execution_id: executionId, receipt_id: randomUUID(), repository_id: 1334673495, head_sha: job.headSha, role: job.role, provider: 'independent-controller', start_requested_at: new Date().toISOString() }), ...options });
+const runIssuer = options => runActualIssuer({ scanStart: async ({ job, executionId }) => ({ status: 'committed', contract: 'clued.ci-scan-start-grant/1', launch_allowed: true, execution_id: executionId, receipt_id: randomUUID(), repository_id: 1334673495, head_sha: job.headSha, role: job.role, provider: 'independent-controller', start_requested_at: new Date().toISOString() }), nativeScanStartRequired: true, ...options });
 const refsSnapshot = (now = Date.now()) => ({ contract: 'clued.independent-ci.remote-heads-tags/1', repository: REPO, complete: true, observedAt: iso(now), refs: [{ name: 'refs/heads/main', objectSha: BASE }] });
 
 function setup({ attempt = 1 } = {}) {

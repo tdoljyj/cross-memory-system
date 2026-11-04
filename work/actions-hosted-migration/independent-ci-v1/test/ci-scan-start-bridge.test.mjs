@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { batchJobsV2 } from '../src/job-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
-import { validateScanStartGrant, requireFreshScanStartGrant } from '../src/scan-start-v1/grant.mjs';
+import { validateScanStartGrant, requireFreshScanStartGrant, NATIVE_SCAN_START_REQUIRED, localScanStart, scanStartPermission } from '../src/scan-start-v1/grant.mjs';
 import { REQUIRED_SOURCE_PATHS, createWindowsContext, validateSourcePins } from '../worker/protected-job-bridge-v4/boundary.mjs';
 import { runIssuer } from '../worker/protected-job-bridge-v4/windows-issuer.mjs';
 import { makeIssue, makeChallenge, makeResponse, validateResponse, encode, decode, RESPONSE_CONTRACT } from '../worker/protected-job-bridge-v4/protocol.mjs';
@@ -67,7 +67,7 @@ test('response successor /3 ordinary rounds cannot carry a grant, scan-start mus
   assert.throws(() => makeResponse(issue, ch, f.facts(), null, { scanStart: { ...g, execution_id: randomUUID() } }));
   assert.equal(JSON.stringify(value).includes('token'), false);
 });
-async function drive({ native, lostResponse = false, firstAction = 'scan-start', mutateFacts = null } = {}) {
+async function drive({ native, lostResponse = false, firstAction = 'scan-start', mutateFacts = null, nativeScanStartRequired = true } = {}) {
   const f = setup(); let issue, callbacks = 0, nativeCalls = 0, now = Date.now(); const responses = [];
   const box = { async lock() {}, async write(name, bytes) {
     if (name === 'issue') issue = decode(bytes);
@@ -77,7 +77,7 @@ async function drive({ native, lostResponse = false, firstAction = 'scan-start',
     if (name === 'challenge-02' && responses.length) return encode(makeChallenge(issue, 'scan-start', 2, { now }));
     return missing();
   } };
-  const result = await runIssuer({ context: f.context, box, clock: () => now, sleep: async ms => { now += ms; }, stageDeadline: now + 600000,
+  const result = await runIssuer({ nativeScanStartRequired, context: f.context, box, clock: () => now, sleep: async ms => { now += ms; }, stageDeadline: now + 600000,
     collect: async () => null, evaluate: async () => { callbacks++; return mutateFacts ? mutateFacts(f, callbacks) : f.facts(now); },
     scanStart: async args => { nativeCalls++; assert.equal(args.executionId, issue.issueId); assert.equal(args.facts.claimId, issue.admission.claimId);
       return native ? native(args, () => { now += 120001; }) : grant(f.job, args.executionId); } });
@@ -109,5 +109,31 @@ test('all production adapters require the separate start port; a caller fixture 
     const f = setup(role), adapter = factory({ admissionPort: async () => f.facts(), remoteRefsPort: async () => null, fixture: true });
     const result = await adapter.execute(f.job, { fixture: true });
     assert.equal(result.status, 'BLOCKED'); assert.match(result.reason, /PORT/); assert.equal(result.observation, undefined);
+  }
+});
+
+// Task 169fd456: until production activates the Native scan-start policy, this
+// Source starts scanners without a Native permission (grant.mjs).
+test('this Source does not require Native: an issuer refuses a scan-start challenge and never calls Native', async () => {
+  assert.equal(NATIVE_SCAN_START_REQUIRED, false);
+  const x = await drive({ nativeScanStartRequired: NATIVE_SCAN_START_REQUIRED });
+  assert.equal(x.nativeCalls, 0); assert.equal(x.responses.length, 0);
+  assert.equal(x.result.status, 'UNCERTAIN'); assert.equal(x.result.reason, 'SCAN_START_NOT_REQUIRED_BY_SOURCE');
+});
+test('local start binds the exact job and issue id; Native and local permissions never substitute for each other', () => {
+  for (const role of ['gitleaks', 'trivy', 'contract-placement']) {
+    const f = setup(role), id = randomUUID(), local = localScanStart(f.job, id);
+    assert.ok(Object.isFrozen(local));
+    assert.deepEqual({ ...local }, { contract: 'clued.ci-scan-start-not-required/1', native: false, execution_id: id, head_sha: f.job.headSha, role });
+    assert.equal(scanStartPermission(f.job, local, false), local);
+    assert.equal(scanStartPermission(f.job, local).execution_id, id, 'the Source default is local');
+    assert.throws(() => scanStartPermission(f.job, local, true), { code: 'SCAN_START_GRANT_REFUSED' }, 'a local start never passes as Native');
+    assert.throws(() => scanStartPermission(f.job, grant(f.job, id), false), { code: 'SCAN_START_GRANT_REFUSED' }, 'a Native grant is not a local start');
+    assert.throws(() => scanStartPermission(f.job, { ...local }, false), { code: 'SCAN_START_GRANT_REFUSED' }, 'only the frozen value made for the job');
+    for (const patch of [{ head_sha: 'f'.repeat(40) }, { role: role === 'trivy' ? 'gitleaks' : 'trivy' }, { native: true }, { execution_id: 'not-a-uuid' }, { extra: 1 }]) {
+      assert.throws(() => scanStartPermission(f.job, Object.freeze({ ...local, ...patch }), false), { code: 'SCAN_START_GRANT_REFUSED' });
+    }
+    assert.throws(() => localScanStart(f.job, 'not-a-uuid'), { code: 'SCAN_START_GRANT_REFUSED' });
+    assert.throws(() => localScanStart({ ...f.job, role: 'other' }, id), { code: 'SCAN_START_GRANT_REFUSED' });
   }
 });
