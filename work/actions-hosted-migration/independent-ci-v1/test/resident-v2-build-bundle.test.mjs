@@ -71,8 +71,10 @@ test('build-bundle: only the first refs-vs-ls-remote check can start a new attem
     assert.ok(store.includes(`throw '${code}'`), code);
     assert.ok(!retry.includes(code), code);
   }
-  // no new contract field: the receipt keeps storeAttempts and firstAttempt
-  assert.ok(text.includes('storeAttempts=$attempts;firstAttempt=$firstAttempt'));
+  // the receipt keeps storeAttempts and firstAttempt and lists every retried attempt in failedAttempts (readers take the keys they need)
+  assert.equal(text.split('storeAttempts=$attempts;firstAttempt=$firstAttempt;failedAttempts=@($failedAttempts)').length - 1, 2, 'the receipt and the refusal answer');
+  assert.ok(text.includes('storeAttempts=$attempts;firstAttempt=$firstAttempt;failedAttempts=@($failedAttempts);credentialsPrinted=$false'));
+  assert.ok(text.includes("$given=[ordered]@{attempt=($n+1);reason=$reason;stage=$script:stage;git=$script:lastGit;failedAfterSeconds=[int]$elapsed}"));
   assert.ok(text.includes("'fetch-3.git'"));
 });
 

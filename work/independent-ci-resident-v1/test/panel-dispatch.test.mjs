@@ -5,8 +5,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { BACKOFF_MS, DISPATCH_EVERY_MS, MAX_PER_HOUR, MIN_GAP_MS, PANEL_REF, PANEL_WORKFLOW, PanelDispatchState, PanelDispatcher, STALL_NOTIFY_MS,
-  dispatchArgv, dutyOf, parseRuns, runsArgv, validatePanelDispatchConfig } from '../src/panel-dispatch.mjs';
+import { BACKOFF_MS, DISPATCH_EVERY_MS, DUTY_LOG_KEPT, MAX_PER_HOUR, MIN_GAP_MS, PANEL_REF, PANEL_REPO, PANEL_WORKFLOW, PanelDispatchState, PanelDispatcher, STAGGER_STEPS, STAGGER_STEP_MS,
+  STALL_NOTIFY_MS, dispatchArgv, dutyOf, parseRuns, runsArgv, staggerMs, validatePanelDispatchConfig } from '../src/panel-dispatch.mjs';
 import { PANEL_DISPATCH_LANE_EVERY_MS } from '../src/companion-main.mjs';
 import { tempRoot } from './helpers.mjs';
 
@@ -19,9 +19,12 @@ const status = (o = {}, at = T0) => ({ writtenAt: at - 10_000, intakePause: null
 function github({ skew = 0, runs = [], failRuns = false, dispatchFails = null, dispatchMakesRun = true } = {}) {
   const g = { now: T0, skew, runs: [...runs], calls: [], failRuns, dispatchFails, dispatchMakesRun, nextId: 1000 };
   const included = (code, body, extra = '') => `HTTP/2.0 ${code} OK\r\ndate: ${new Date(g.now).toUTCString()}\r\ncontent-type: application/json\r\n${extra}\r\n${body}`;
+  g.reads = 0; g.beforeRead = null;
   g.run = async (argv) => {
     g.calls.push(argv);
     if (argv[1] === 'api' && argv.includes('--include') && argv.includes('GET')) {
+      g.reads += 1;
+      if (g.beforeRead) g.beforeRead(g.reads);
       if (g.failRuns) return { code: 1, stdout: '', stderr: 'gh: Bad gateway (HTTP 502)' };
       return { code: 0, stdout: included(200, JSON.stringify({ total_count: g.runs.length, workflow_runs: g.runs.map(r => ({ id: r.id, event: r.event, status: r.status ?? 'completed', created_at: new Date(r.at).toISOString() })) })), stderr: '' };
     }
@@ -44,6 +47,7 @@ async function node(t, g, o = {}) {
   let st = o.status ?? ((now) => status({}, now));
   const d = new PanelDispatcher({ nodeName: o.name ?? 'desk-w-591', repo: REPO, ghExe: GH, clock: () => g.now + (o.skew ?? 0), run: g.run,
     readStatus: async () => (typeof st === 'function' ? st(g.now + (o.skew ?? 0)) : st), notify: async (key, title, body) => { notes.push({ key, title, body }); }, state: await PanelDispatchState.open(file) });
+  d.stagger = o.stagger ?? 0; // the stagger has tests of its own; the others look at the rest without it
   return { d, notes, file, setStatus: s => { st = s; }, g };
 }
 
@@ -59,7 +63,8 @@ test('the argv is fixed: the panel workflow on main, no input, one POST; a bad g
   assert.deepEqual(dispatchArgv(GH, REPO), [GH, 'api', '--method', 'POST', `repos/${REPO}/actions/workflows/clued-compute-panel.yml/dispatches`, '-f', 'ref=main']);
   assert.deepEqual(runsArgv(GH, REPO), [GH, 'api', '--include', '--method', 'GET', `repos/${REPO}/actions/workflows/clued-compute-panel.yml/runs?branch=main&per_page=5`]);
   assert.deepEqual([PANEL_WORKFLOW, PANEL_REF], ['clued-compute-panel.yml', 'main']);
-  for (const [gh, repo] of [['gh', REPO], [GH, 'no-slash'], [GH, 'a/b/../c x'], [GH, '']]) {
+  assert.equal(PANEL_REPO, REPO);
+  for (const [gh, repo] of [['gh', REPO], [GH, 'no-slash'], [GH, 'a/b/../c x'], [GH, ''], [GH, 'tdoljyj/other-repo'], [GH, 'someone-else/cross-memory-system'], [GH, `${REPO}x`], [GH, `${REPO}/`], [GH, REPO.toUpperCase()]]) {
     assert.throws(() => dispatchArgv(gh, repo), /PANEL_DISPATCH_ARGS_INVALID/);
     assert.throws(() => runsArgv(gh, repo), /PANEL_DISPATCH_ARGS_INVALID/);
   }
@@ -284,4 +289,104 @@ test('the pulse: the memory file says when it last looked, whether the node is o
   await n.d.step();
   saved = JSON.parse(await fs.readFile(n.file, 'utf8'));
   assert.deepEqual([saved.tickAt, saved.duty, saved.lastDispatchAt], [g.now, { on: true, reason: null }, g.now]);
+});
+
+test('the repository is pinned: the dispatcher is built for this repository only, whatever the configuration says', async t => {
+  const state = new PanelDispatchState(path.join(await tempRoot(t), 'panel.json'));
+  const build = repo => new PanelDispatcher({ nodeName: 'desk-w-591', repo, ghExe: GH, clock: () => T0, run: async () => ({ code: 0 }), readStatus: async () => null, notify: async () => {}, state });
+  for (const repo of ['tdoljyj/other-repo', 'someone-else/cross-memory-system', 'a/b']) assert.throws(() => build(repo), /PANEL_DISPATCH_ARGS_INVALID/);
+  assert.doesNotThrow(() => build(REPO));
+});
+
+test('the hourly ceiling: reached once, then no read, no GitHub call, and the memory file written no more than once a minute', async t => {
+  const g = github();
+  const file = path.join(await tempRoot(t), 'panel.json');
+  const seed = new PanelDispatchState(file);
+  seed.data.sent = Array.from({ length: MAX_PER_HOUR }, (_, i) => T0 - 50 * MIN + i * MIN);
+  seed.data.lastDispatchAt = T0 - 31 * MIN;
+  await seed.save();
+  const n = await node(t, g, { file });
+  let saves = 0; const save = n.d.state.save.bind(n.d.state); n.d.state.save = async () => { saves += 1; return save(); };
+  const first = await n.d.step();
+  assert.equal(first.skipped, 'HOURLY_CAP');
+  assert.equal(first.untilMs, 10 * MIN);
+  const afterFirst = saves, nextAt = n.d.nextAt;
+  for (let i = 0; i < 18; i += 1) { g.advance(30_000); assert.equal((await n.d.step()).skipped, 'HOURLY_CAP'); } // nine minutes, 18 looks
+  assert.equal(g.calls.length, 0);
+  assert.ok(saves - afterFirst <= 9, `${saves - afterFirst} writes in nine minutes: at most one a minute`);
+  assert.equal(n.d.nextAt, nextAt, 'the clock guard for the next attempt is not what holds the ceiling');
+  g.advance(2 * MIN);
+  assert.equal((await n.d.step()).dispatched, true, 'the ceiling ends when the oldest of the twenty is an hour old');
+});
+
+test('a clock set back: dispatches stamped in its future do not hold the ceiling', async t => {
+  const g = github();
+  const file = path.join(await tempRoot(t), 'panel.json');
+  const seed = new PanelDispatchState(file);
+  seed.data.sent = Array.from({ length: MAX_PER_HOUR }, (_, i) => T0 + 3 * 3_600_000 + i * MIN);
+  await seed.save();
+  const n = await node(t, g, { file });
+  assert.equal((await n.d.step()).dispatched, true);
+});
+
+test('the node-specific wait: the same for a name, 0 to 57 s in 3 s steps, different for the two real nodes', () => {
+  for (const name of ['desk-w-591', 'turing', 'home-win-02', 'a']) {
+    const w = staggerMs(name);
+    assert.equal(w, staggerMs(name));
+    assert.ok(w >= 0 && w < STAGGER_STEPS * STAGGER_STEP_MS && w % STAGGER_STEP_MS === 0, `${name} ${w}`);
+  }
+  assert.notEqual(staggerMs('desk-w-591'), staggerMs('turing'), 'the two nodes of today do not wake up together');
+});
+
+test('taking the duty waits the node\'s own time; so does following a run that was not its own', async t => {
+  const g = github({ runs: [{ id: 1, event: 'schedule', at: T0 - 6 * MIN }] });
+  const a = await node(t, g, { stagger: 12_000 });
+  assert.deepEqual([(await a.d.step()).skipped, a.d.nextAt - g.now], ['NOT_DUE', 12_000]);
+  g.advance(11_000);
+  assert.equal((await a.d.step()).skipped, 'NOT_DUE');
+  g.advance(1_000);
+  assert.equal((await a.d.step()).dispatched, true);
+  // the other node follows A's run: five minutes after it, plus its own wait, never at A's second
+  const b = await node(t, g, { name: 'turing', status: now => status({ node: { name: 'turing', mode: 'ACTIVE' } }, now), stagger: 21_000 });
+  assert.equal((await b.d.step()).skipped, 'NOT_DUE');
+  g.advance(21_000);
+  const rb = await b.d.step();
+  assert.equal(rb.skipped, 'RECENT_RUN');
+  assert.equal(b.d.nextAt - g.now, DISPATCH_EVERY_MS - rb.ageMs + 21_000);
+  // A is due at its run + 5 minutes; B only 21 s later, and then finds A's run
+  g.advance(DISPATCH_EVERY_MS - 21_000);
+  assert.equal((await a.d.step()).dispatched, true);
+  g.advance(21_000);
+  assert.equal((await b.d.step()).skipped, 'RECENT_RUN');
+  assert.equal(g.posts().length, 2, 'one dispatch for each slot');
+});
+
+test('another node\'s dispatch between the first read and the POST holds the slot (the list is read again right before)', async t => {
+  const g = github();
+  const n = await node(t, g);
+  g.beforeRead = count => { if (count === 2) g.runs.unshift({ id: 4242, event: 'workflow_dispatch', at: g.now - 2_000 }); };
+  const r = await n.d.step();
+  assert.deepEqual([r.skipped, r.recheck, r.event], ['RECENT_RUN', true, 'workflow_dispatch']);
+  assert.equal(g.posts().length, 0);
+  assert.equal(g.reads, 2);
+  g.beforeRead = null;
+  g.advance(DISPATCH_EVERY_MS + 5_000);
+  assert.equal((await n.d.step()).dispatched, true);
+  assert.equal(g.reads, 4, 'two reads for each dispatch');
+});
+
+test('the duty log: how the duty changed and why, kept across restarts, the last ten', async t => {
+  const g = github();
+  const ctl = { mode: 'ACTIVE', fresh: true };
+  const n = await node(t, g, { status: now => status({ node: { name: 'desk-w-591', mode: ctl.mode } }, ctl.fresh ? now : now - 10 * MIN) });
+  await n.d.step();
+  ctl.fresh = false; g.advance(MIN); await n.d.step();
+  ctl.fresh = true; ctl.mode = 'STANDBY'; g.advance(MIN); await n.d.step();
+  g.advance(MIN); await n.d.step(); // unchanged: no new entry
+  ctl.mode = 'ACTIVE'; g.advance(MIN); await n.d.step();
+  const saved = JSON.parse(await fs.readFile(n.file, 'utf8'));
+  assert.deepEqual(saved.dutyLog.map(e => [e.on, e.reason]), [[true, null], [false, 'STATUS_STALE'], [false, 'NOT_ACTIVE'], [true, null]]);
+  assert.deepEqual((await PanelDispatchState.open(n.file)).data.dutyLog.map(e => e.reason), [null, 'STATUS_STALE', 'NOT_ACTIVE', null]);
+  for (let i = 0; i < 14; i += 1) { ctl.mode = i % 2 ? 'ACTIVE' : 'STANDBY'; g.advance(MIN); await n.d.step(); }
+  assert.equal(JSON.parse(await fs.readFile(n.file, 'utf8')).dutyLog.length, DUTY_LOG_KEPT);
 });

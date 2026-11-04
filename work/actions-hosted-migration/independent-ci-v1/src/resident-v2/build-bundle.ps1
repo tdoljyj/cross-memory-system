@@ -83,7 +83,7 @@ $SeedMinFullFetchSeconds=90;$SeedMetaMaxAgeSeconds=86400;$SeedLockStaleSeconds=1
 $SeedConfigKeys=@('core.repositoryformatversion','core.filemode','core.bare','core.symlinks','core.ignorecase','core.logallrefupdates')
 $seedUse=$false;$seedAttempt=$false;$seedBusy=$false
 $seedReport=[ordered]@{enabled=$true;used=$false;reason=$null;discarded=$false;primeSeconds=$null;updated=$false;updateSkipped=$null;seedBytes=$null;error=$null}
-$stage='fixed-preflight';$created=@();$writesStarted=$false;$lastGit=$null;$attempts=1;$firstAttempt=$null;$refsDiffer=$null
+$stage='fixed-preflight';$created=@();$writesStarted=$false;$lastGit=$null;$attempts=1;$firstAttempt=$null;$failedAttempts=@();$refsDiffer=$null
 function Utc{return [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'",[Globalization.CultureInfo]::InvariantCulture)}
 function Hash-Bytes([byte[]]$Bytes){$a=[Security.Cryptography.SHA256]::Create();try{return ([BitConverter]::ToString($a.ComputeHash($Bytes))).Replace('-','').ToLowerInvariant()}finally{$a.Dispose()}}
 function Hash-File([string]$Path){$a=[Security.Cryptography.SHA256]::Create();$s=[IO.File]::Open($Path,'Open','Read','Read');try{return ([BitConverter]::ToString($a.ComputeHash($s))).Replace('-','').ToLowerInvariant()}finally{$s.Dispose();$a.Dispose()}}
@@ -438,7 +438,9 @@ function Race-Retry-Allowed([string]$Reason,$Differ,[double]$ElapsedSeconds){
 # The store with at most $MaxStoreAttempts attempts, of which at most one is a retry of a failed network step. Every further
 # attempt runs every step and check again in its own new bare repository; whatever an earlier one left (a partial pack,
 # refs) stays where it is and is never read again. The receipt's storeAttempts counts the attempts, firstAttempt describes
-# the first one that was given up on (its refsDiffer: how many refs and which ones, at most 8, were not equal).
+# the first one that was given up on (its refsDiffer: how many refs and which ones, at most 8, were not equal), and
+# failedAttempts lists every one that was given up on and retried, each with its attempt number, reason, stage, git step and
+# refsDiffer, so the reason of a second failure is not lost (the attempt that ends the run is the answer's own reason).
 function Fetch-Store{
  $dirs=@($FetchDir,$FetchDir2,$FetchDir3);$networkRetried=$false
  for($n=0;$n -lt $MaxStoreAttempts;$n++){
@@ -453,6 +455,9 @@ function Fetch-Store{
    $seedFell=Seed-Failure $reason
    if($n -ge ($MaxStoreAttempts-1) -or -not ($race -or $network -or $seedFell)){throw}
    if($network){$networkRetried=$true}
+   $given=[ordered]@{attempt=($n+1);reason=$reason;stage=$script:stage;git=$script:lastGit;failedAfterSeconds=[int]$elapsed}
+   if($race){$given['refsDiffer']=$script:refsDiffer}
+   $script:failedAttempts=@($script:failedAttempts)+,$given
    if($null -eq $script:firstAttempt){
     $script:firstAttempt=[ordered]@{stage=$script:stage;git=$script:lastGit;failedAfterSeconds=[int]$elapsed}
     if($race){$script:firstAttempt['refsDiffer']=$script:refsDiffer}
@@ -512,7 +517,7 @@ try{
   mainSha=$Base;headSha=$Head;headPresent=$true;basePresent=$true;branchesAtHead=$store.branchesAtHead
   fetchStartedAt=$store.fetchStartedAt;fetchCompletedAt=$store.fetchCompletedAt;lsRemoteCompletedAt=$store.lsRemoteCompletedAt
   reviewedFetchStartedAt=$store.reviewedFetchStartedAt;reviewedFetchCompletedAt=$store.reviewedFetchCompletedAt;bundleCreatedAt=$bundleCreatedAt
-  storeAttempts=$attempts;firstAttempt=$firstAttempt
+  storeAttempts=$attempts;firstAttempt=$firstAttempt;failedAttempts=@($failedAttempts)
   gitExecutableSha256=$gitSha;gitVersion=$gitVersion
   credentialsPrinted=$false;credentialsWrittenByScript=$false;existingCheckoutTouched=$false;wslTouched=$false;automaticRetryAllowed=$false}
  if($Rebundle){$receipt['generation']=2;$receipt['previousBundleSha256']=$previous.bundleSha256;$receipt['previousRefListSha256']=$previous.refListSha256}
@@ -524,5 +529,5 @@ try{
 }catch{
  $code=if($_.Exception.Message -cmatch '\A[A-Z][A-Z0-9_]{1,90}\z'){$_.Exception.Message}else{'FIXED_BUNDLE_BUILD_UNCONFIRMED'}
  [ordered]@{status=$(if($writesStarted){'PARTIAL_STATE_PRESERVED_NO_RETRY'}else{'REFUSED_BEFORE_WRITE'});stage=$stage;reason=$code;git=$lastGit;created=$created
-  storeAttempts=$attempts;firstAttempt=$firstAttempt;seed=$seedReport;credentialsPrinted=$false;existingCheckoutTouched=$false;automaticRetryAllowed=$false}|ConvertTo-Json -Depth 5 -Compress;exit 2
+  storeAttempts=$attempts;firstAttempt=$firstAttempt;failedAttempts=@($failedAttempts);seed=$seedReport;credentialsPrinted=$false;existingCheckoutTouched=$false;automaticRetryAllowed=$false}|ConvertTo-Json -Depth 5 -Compress;exit 2
 }

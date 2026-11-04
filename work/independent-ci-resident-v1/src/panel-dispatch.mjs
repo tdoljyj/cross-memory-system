@@ -12,14 +12,19 @@
 // fresh, and the dual-active hold is not set. Nothing else is shared between nodes: before every dispatch the workflow's own run
 // list on GitHub is read, and a run on main younger than MIN_GAP_MS (any event: a dispatch of another node, a schedule event)
 // counts as this slot's dispatch, so two nodes that are both ACTIVE for a moment do not dispatch twice (a race inside one read
-// interval can, and the workflow's concurrency group then cancels one of the two runs).
+// interval can, and the workflow's concurrency group then cancels one of the two runs). Two things shrink that window further: the
+// list is read once more right before the POST, and every node waits a small node-specific time (staggerMs, from its name) when it
+// takes the duty and when it follows a run it did not make, so two nodes do not wake up on the same run + five minutes.
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { check } from './canonical.mjs';
 import { parseIncluded } from './poller.mjs';
 import { NODE_NAME, HOLDER_DUAL } from './node-duty.mjs';
 
 const MIN = 60_000;
+// The repository the panel workflow lives in. Pinned here, not read from the configuration: the dispatcher only ever starts this workflow of this repository.
+export const PANEL_REPO = 'tdoljyj/cross-memory-system';
 export const PANEL_WORKFLOW = 'clued-compute-panel.yml';
 export const PANEL_REF = 'main';
 // Nominal cadence (the workflow's own cron is */5; Decision 7eb98011).
@@ -39,11 +44,18 @@ export const MAX_PER_HOUR = 20;
 export const VERIFY_SLACK_MS = MIN;
 export const RUNS_TIMEOUT_MS = 20_000;
 export const DISPATCH_TIMEOUT_MS = 30_000;
+// Node-specific wait (0 to 57 s in 3 s steps, from the node's name) so that two nodes that are on duty at once do not dispatch in the same second.
+export const STAGGER_STEP_MS = 3_000;
+export const STAGGER_STEPS = 20;
+export const DUTY_LOG_KEPT = 10;
 export const STATE_CONTRACT = 'clued.independent-ci.panel-dispatch-state/1';
 const STATE_TICK_WRITE_MS = MIN;
 const NOTIFIED_KEPT = 50;
 const RUNS_PER_PAGE = 5;
-const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+// 0 .. 57 s, the same for the same name on every start.
+export function staggerMs(nodeName) {
+  return createHash('sha256').update(String(nodeName), 'utf8').digest()[0] % STAGGER_STEPS * STAGGER_STEP_MS;
+}
 // Failures that retrying does not cure: the notification does not wait for FAILURES_NOTIFY.
 const NEEDS_OWNER = new Set(['DISPATCH_FORBIDDEN', 'DISPATCH_NOT_FOUND', 'DISPATCH_REJECTED']);
 
@@ -56,7 +68,7 @@ export function validatePanelDispatchConfig(c) {
 }
 
 function argvCheck(ghExe, repo) {
-  check(typeof ghExe === 'string' && /^[A-Z]:\\/.test(ghExe) && REPO.test(repo ?? ''), 'PANEL_DISPATCH_ARGS_INVALID');
+  check(typeof ghExe === 'string' && /^[A-Z]:\\/.test(ghExe) && repo === PANEL_REPO, 'PANEL_DISPATCH_ARGS_INVALID');
 }
 // --include: the status line and headers come first; the Date header is GitHub's clock, which ages the runs without trusting this machine's.
 export function runsArgv(ghExe, repo) {
@@ -100,7 +112,7 @@ export function dutyOf(status, nodeName, now) {
   return null;
 }
 
-const emptyState = () => ({ contract: STATE_CONTRACT, lastDispatchAt: null, pendingAt: null, sent: [], notified: {}, tickAt: null, duty: null, lastRunAt: null, failures: 0, lastCode: null });
+const emptyState = () => ({ contract: STATE_CONTRACT, lastDispatchAt: null, pendingAt: null, sent: [], notified: {}, tickAt: null, duty: null, dutyLog: [], lastRunAt: null, failures: 0, lastCode: null });
 const time = v => (Number.isSafeInteger(v) && v > 0 ? v : null);
 
 // The dispatcher's own memory in the Owner's profile (like the heartbeat's): when it last dispatched (a restart must not dispatch at
@@ -113,7 +125,8 @@ export class PanelDispatchState {
       const v = JSON.parse(await fs.readFile(file, 'utf8'));
       if (v?.contract === STATE_CONTRACT) {
         s.data = { ...emptyState(), lastDispatchAt: time(v.lastDispatchAt), pendingAt: time(v.pendingAt), sent: Array.isArray(v.sent) ? v.sent.filter(t => time(t)).slice(-MAX_PER_HOUR) : [],
-          notified: v.notified && typeof v.notified === 'object' && !Array.isArray(v.notified) ? v.notified : {} };
+          notified: v.notified && typeof v.notified === 'object' && !Array.isArray(v.notified) ? v.notified : {},
+          dutyLog: Array.isArray(v.dutyLog) ? v.dutyLog.filter(e => time(e?.at) && typeof e.on === 'boolean').slice(-DUTY_LOG_KEPT) : [] };
       }
     } catch { /* fresh memory */ }
     return s;
@@ -143,7 +156,7 @@ export class PanelDispatcher {
     check(NODE_NAME.test(this.nodeName ?? ''), 'PANEL_DISPATCH_NODE_REQUIRED');
     argvCheck(this.ghExe, this.repo);
     this.failures = 0; this.spellSince = null; this.onDutySince = null; this.stallSpell = null; this.alarmedAt = null;
-    this.lastRunSeenAt = null; this.lastTickWriteAt = 0;
+    this.lastRunSeenAt = null; this.lastTickWriteAt = 0; this.capUntil = 0; this.stagger = staggerMs(this.nodeName);
     this.nextAt = (this.state.data.lastDispatchAt ?? 0) + DISPATCH_EVERY_MS;
   }
 
@@ -186,6 +199,12 @@ export class PanelDispatcher {
     let status = null;
     try { status = await this.readStatus(); } catch { status = null; }
     const off = dutyOf(status, this.nodeName, now);
+    // The pulse says how the duty is now; the log keeps the last few changes (why a five-minute slot was missed).
+    if (d.duty?.on !== (off === null) || d.duty?.reason !== off) {
+      d.dutyLog.push({ at: now, on: off === null, reason: off });
+      d.dutyLog = d.dutyLog.slice(-DUTY_LOG_KEPT);
+      this.lastTickWriteAt = 0;
+    }
     d.duty = { on: off === null, reason: off };
     if (off) {
       // Not the node on duty: a spell of its own is over; the next duty starts fresh (a failed spell is the next node's business).
@@ -193,14 +212,25 @@ export class PanelDispatcher {
       await this.persist(now);
       return { skipped: 'NOT_ON_DUTY', reason: off };
     }
-    this.onDutySince ??= now;
+    if (this.onDutySince === null) {
+      // Taking the duty: this node's own small wait first, so that a node that took over while the other still is ACTIVE does not start in the same second.
+      this.onDutySince = now;
+      this.nextAt = Math.max(this.nextAt, now + this.stagger);
+    }
     // A clock that moved back (a resync) must not park the next attempt far in the future.
     if (this.nextAt - now > BACKOFF_MS[BACKOFF_MS.length - 1]) this.nextAt = now;
     await this.stallCheck(now);
+    if (now < this.capUntil && this.capUntil - now <= 60 * MIN) { await this.persist(now); return { skipped: 'HOURLY_CAP', untilMs: this.capUntil - now }; }
     if (now < this.nextAt) { await this.persist(now); return { skipped: 'NOT_DUE', inMs: this.nextAt - now }; }
 
-    d.sent = d.sent.filter(t => now - t < 60 * MIN);
-    if (d.sent.length >= MAX_PER_HOUR) { this.nextAt = d.sent[0] + 60 * MIN; await this.persist(now, true); return { skipped: 'HOURLY_CAP' }; }
+    // A dispatch time in the future belongs to a clock that has since been set back: it does not count (it would hold the ceiling for as long as the clock was off).
+    d.sent = d.sent.filter(t => t <= now && now - t < 60 * MIN);
+    if (d.sent.length >= MAX_PER_HOUR) {
+      // Its own deadline, apart from nextAt (the clock guard above is for nextAt); not looked at again, nor the state written again, before it.
+      this.capUntil = d.sent[0] + 60 * MIN;
+      await this.persist(now, true);
+      return { skipped: 'HOURLY_CAP', untilMs: this.capUntil - now };
+    }
 
     const r = await this.run(runsArgv(this.ghExe, this.repo), { timeoutMs: RUNS_TIMEOUT_MS });
     const read = r.code === 0 && !r.timedOut && !r.refused ? parseRuns(r.stdout, now) : null;
@@ -222,9 +252,21 @@ export class PanelDispatcher {
     }
     if (newest && age(newest) < MIN_GAP_MS) {
       // That run is this slot's dispatch (ours, another node's, or the cron's): the next slot is five minutes after it.
-      this.nextAt = now + (DISPATCH_EVERY_MS - age(newest));
+      this.nextAt = now + (DISPATCH_EVERY_MS - age(newest)) + this.stagger;
       await this.persist(now, true);
       return { skipped: 'RECENT_RUN', ageMs: age(newest), event: newest.event };
+    }
+
+    // Once more right before the POST: another node's dispatch made since the first read (a read takes up to seconds) holds the slot.
+    const again = await this.run(runsArgv(this.ghExe, this.repo), { timeoutMs: RUNS_TIMEOUT_MS });
+    const second = again.code === 0 && !again.timedOut && !again.refused ? parseRuns(again.stdout, now) : null;
+    if (!second) return this.fail(now, 'RUNS_UNREADABLE');
+    const latest = second.runs[0] ?? null;
+    const latestAge = latest ? Math.max(0, second.serverNow - latest.createdAt) : null;
+    if (latest && latestAge < MIN_GAP_MS) {
+      this.nextAt = now + (DISPATCH_EVERY_MS - latestAge) + this.stagger;
+      await this.persist(now, true);
+      return { skipped: 'RECENT_RUN', ageMs: latestAge, event: latest.event, recheck: true };
     }
 
     const w = await this.run(dispatchArgv(this.ghExe, this.repo), { timeoutMs: DISPATCH_TIMEOUT_MS });

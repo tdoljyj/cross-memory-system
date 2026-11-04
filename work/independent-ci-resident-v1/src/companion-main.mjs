@@ -22,7 +22,7 @@ import { readStatus } from './status.mjs';
 import { LocalStore, PrStatusReporter, toastArgv, validateStatusConfig } from './pr-status.mjs';
 import { companionBackstop } from './ruleset-backstop.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
-import { PanelDispatchState, PanelDispatcher, validatePanelDispatchConfig } from './panel-dispatch.mjs';
+import { PANEL_REPO, PanelDispatchState, PanelDispatcher, validatePanelDispatchConfig } from './panel-dispatch.mjs';
 import { CompanionHeartbeat, ghHandoverPort, readHeartbeatToken, scQueryArgv, serviceRunningFrom, supabaseHeartbeatTransport } from './companion-heartbeat.mjs';
 
 // The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
@@ -282,7 +282,8 @@ export async function main(args = process.argv.slice(2)) {
   // The panel trigger (DESIGN §43, Decision 7eb98011): on unless companion.json says panelDispatch.enabled false; dispatches only while
   // this node's status says ACTIVE. Its own Runner and its own memory file (two lanes never write one file).
   const panelRunner = new Runner({ env: { ...process.env }, jobHost });
-  const panelDispatch = validatePanelDispatchConfig(raw.panelDispatch).enabled
+  // Only for the repository the panel workflow is in (panel-dispatch.mjs#PANEL_REPO); tools/build-package.mjs refuses a configuration that names another one.
+  const panelDispatch = validatePanelDispatchConfig(raw.panelDispatch).enabled && raw.repo === PANEL_REPO
     ? new PanelDispatcher({ nodeName: cfg.node.nodeName, repo: raw.repo, ghExe: raw.ghExe, clock: Date.now, run: (a, o) => panelRunner.run(a, o), readStatus: () => readStatus(values.root),
       notify: async (key, title, body) => { await panelRunner.run(toastArgv(cfg.powershellExe, title, body), { timeoutMs: 15_000 }); },
       state: await PanelDispatchState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-panel-dispatch.json')) })

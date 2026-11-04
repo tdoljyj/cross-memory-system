@@ -125,7 +125,7 @@ if($git){
    $script:races=0;$script:lateRaces=0;$script:refsDiffer=$null;$script:FetchDir3=$null
    $script:Root=Join-Path $tmp ('bundles\'+[Guid]::NewGuid().ToString('N').Substring(0,8));[void][IO.Directory]::CreateDirectory($script:Root)
    $script:FetchDir=Join-Path $script:Root 'fetch.git';$script:FetchDir2=Join-Path $script:Root 'fetch-2.git';$script:FetchDir3=Join-Path $script:Root 'fetch-3.git'
-   $script:stalls=$Stalls;$script:calls=@();$script:created=@();$script:lastGit=$null;$script:stage='x';$script:attempts=1;$script:firstAttempt=$null
+   $script:stalls=$Stalls;$script:calls=@();$script:created=@();$script:lastGit=$null;$script:stage='x';$script:attempts=1;$script:firstAttempt=$null;$script:failedAttempts=@()
    $script:Head=$c2;$script:Base=$c1;$script:Test=$c2
    $script:seedUse=$false;$script:seedAttempt=$false;$script:seedBusy=$false;$script:seedReport=[ordered]@{enabled=$true;used=$false;reason=$null;discarded=$false;primeSeconds=$null;updated=$false;updateSkipped=$null;seedBytes=$null;error=$null}
    $script:Clock=if($null -eq $Elapsed){[Diagnostics.Stopwatch]::StartNew()}else{[pscustomobject]@{Elapsed=[TimeSpan]::FromSeconds($Elapsed)}}
@@ -149,7 +149,7 @@ if($git){
   Yes ($s.dir -ceq $FetchDir2 -and $attempts -eq 2 -and (Fetches) -eq 2 -and $firstAttempt.stage -ceq 'fetch-reviewed-commits-by-sha') 'retry-reviewed-fetch'
   # 3. no stall: one attempt, nothing else created
   New-Case @{} $null;$s=Fetch-Store
-  Yes ($s.dir -ceq $FetchDir -and $attempts -eq 1 -and $null -eq $firstAttempt -and -not (Test-Path -LiteralPath $FetchDir2) -and (Same-Map $s.remote $expected)) 'no-stall-one-attempt'
+  Yes ($s.dir -ceq $FetchDir -and $attempts -eq 1 -and $null -eq $firstAttempt -and @($failedAttempts).Count -eq 0 -and -not (Test-Path -LiteralPath $FetchDir2) -and (Same-Map $s.remote $expected)) 'no-stall-one-attempt'
   # 4. both attempts stall: the second failure is the answer, never a third attempt
   New-Case @{fetch=2} $null
   Refused-With {Fetch-Store} 'GIT_STEP_FAILED' 'second-failure-final'
@@ -206,6 +206,9 @@ if($git){
   # network retries and race retries share the three attempts, with one network retry at most
   New-Case @{fetch=1} $null;$races=1;$s=Fetch-Store
   Yes ($s.dir -ceq $FetchDir3 -and $attempts -eq 3 -and $firstAttempt.git.label -ceq 'fetch' -and -not $firstAttempt.Contains('refsDiffer')) 'stall-then-race-then-success'
+  # every attempt that was retried is listed with its own reason, the second failure's too (observation of the generation 6 review)
+  Yes (@($failedAttempts).Count -eq 2 -and $failedAttempts[0].attempt -eq 1 -and $failedAttempts[0].reason -ceq 'GIT_STEP_FAILED' -and $failedAttempts[0].git.label -ceq 'fetch' -and -not $failedAttempts[0].Contains('refsDiffer') -and
+    $failedAttempts[1].attempt -eq 2 -and $failedAttempts[1].reason -ceq 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' -and $failedAttempts[1].refsDiffer.count -eq 1 -and $failedAttempts[1].stage -ceq 'fetched-store-readback') 'failed-attempts-list-both'
   New-Case @{'fetch-reviewed'=2} $null;$races=1
   Refused-With {Fetch-Store} 'GIT_STEP_FAILED' 'race-then-two-stalls-final'
   Yes ($attempts -eq 3 -and (Fetches) -eq 3 -and $firstAttempt.refsDiffer.count -eq 1 -and $lastGit.label -ceq 'fetch-reviewed') 'race-then-one-network-retry-only'
@@ -362,7 +365,7 @@ if($git){
    Yes ($v.seed.enabled -eq $true -and $v.seed.used -eq $false -and $v.seed.updated -eq $true -and $v.seed.reason -ceq 'NO_SEED') ('main-block-seed-created:'+$out)
    Yes ((Test-Path -LiteralPath (Join-Path $res 'bundles\_seed\seed.git\HEAD')) -and (Test-Path -LiteralPath (Join-Path $res 'bundles\_seed\seed-meta.json')) -and -not (Test-Path -LiteralPath (Join-Path $res 'bundles\_seed\seed.lock'))) 'main-block-seed-files'
    $rc=[IO.File]::ReadAllText((Join-Path $res ('bundles\'+$batch+'\all-refs.receipt.json')))|ConvertFrom-Json
-   Yes ($rc.status -ceq 'EXACT_ALL_REFS_AND_REVIEWED_BUNDLE_CREATED' -and $rc.storeAttempts -eq 1 -and $null -eq $rc.firstAttempt -and $rc.refListSha256 -ceq (Ref-List-Sha $expected) -and
+   Yes ($rc.status -ceq 'EXACT_ALL_REFS_AND_REVIEWED_BUNDLE_CREATED' -and $rc.storeAttempts -eq 1 -and $null -eq $rc.firstAttempt -and @($rc.failedAttempts).Count -eq 0 -and $rc.refListSha256 -ceq (Ref-List-Sha $expected) -and
      $rc.reviewedCommitCount -eq 1 -and $rc.headSha -ceq $c2 -and $rc.mainSha -ceq $c1 -and $rc.bundleSha256 -ceq $v.bundleSha256 -and $rc.lsRemoteCompletedAt -ceq $v.lsRemoteCompletedAt -and
      (@($rc.branchesAtHead)-join '|') -ceq 'refs/heads/feature') 'main-block-receipt'
    Yes ($rc.testSha -ceq $c2 -and $rc.testRefPrefix -ceq $TestPrefix -and $rc.testRefCount -eq 0 -and $rc.testRefListSha256 -ceq (Hash-Text '')) 'main-block-receipt-no-test-ref'
