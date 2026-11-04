@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,10 @@ GUARD = load_guard()
 
 def bash_kind(command: str) -> str | None:
     return GUARD.guarded_kind({"tool_name": "Bash", "tool_input": {"command": command}})
+
+
+def powershell_kind(command: str) -> str | None:
+    return GUARD.guarded_kind({"tool_name": "PowerShell", "tool_input": {"command": command}})
 
 
 def stamp(delta: timedelta) -> str:
@@ -75,6 +80,9 @@ class WorkClaimGuardTest(unittest.TestCase):
 
     def bash(self, command: str, session: str = "s1", env: dict | None = None):
         return self.pre("Bash", {"command": command}, session, env)
+
+    def powershell(self, command: str, session: str = "s1", env: dict | None = None):
+        return self.pre("PowerShell", {"command": command}, session, env)
 
     def post(self, name: str, response, tool_input: dict | None = None):
         return self.run_hook({"hook_event_name": "PostToolUse", "tool_name": name,
@@ -192,6 +200,148 @@ class WorkClaimGuardTest(unittest.TestCase):
                 self.assertEqual(bash_kind(command), expected)
         self.assertEqual(self.bash("echo 'cd x && npm test' | bash", session="piped").returncode, 2)
         self.assertEqual(self.bash("ssh host 'git push'; git push", session="pushed").returncode, 2)
+
+    # Task ee78df7f: the PowerShell tool is checked exactly as Bash is. The command is read as
+    # PowerShell, whose call operator, .exe names, quoting and script blocks differ from a POSIX shell.
+    POWERSHELL_KINDS = (
+        ("git push", "publish"),
+        ("git push -u origin work", "publish"),
+        ("& git push", "publish"),
+        ("& git push origin work", "publish"),
+        ("&git push", "publish"),
+        ("& 'git' push", "publish"),
+        ('& "git" push', "publish"),
+        (r'& "C:\Program Files\Git\cmd\git.exe" push', "publish"),
+        (r"& 'C:\Program Files\Git\cmd\git.exe' -C 'C:\w\x' push origin HEAD", "publish"),
+        ("GIT.EXE push", "publish"),
+        ("git.exe push", "publish"),
+        (r"git -C C:\w\x push", "publish"),
+        (r"cd C:\w\x; git push", "publish"),
+        ("cd C:\\w\\x\r\ngit push", "publish"),
+        ("git status && git push", "publish"),
+        ("git add .; git commit -m 'x'; git push", "publish"),
+        ("if ($?) { git push }", "publish"),
+        ("try { git push } catch { throw }", "publish"),
+        ("foreach ($b in @('a','b')) { git push origin $b }", "publish"),
+        ("git push `\n  origin work", "publish"),
+        ("git push 2>&1 | Out-Host", "publish"),
+        ("$env:X = '1'; git push", "publish"),
+        ('Write-Output "$(git push)"', "publish"),
+        ("gh pr create --fill", "publish"),
+        ("& gh.exe pr create --title 'x' --body 'y'", "publish"),
+        ("gh pr edit 5 --body 'y'", "publish"),
+        ("npm.cmd test", "spend"),
+        ("& npm run build", "spend"),
+        ("& npx.cmd tsc --noEmit", "spend"),
+        ("pytest.exe -q", "spend"),
+        ("cd apps\\clued-cloud; npm ci", "spend"),
+        ("gh workflow run g4.yml", "spend"),
+        ("git status", None),
+        ("git fetch origin main", None),
+        ("Get-ChildItem", None),
+        ("& git status", None),
+        ("Write-Host 'git push later'", None),
+        ('Write-Host "run; git push"', None),
+        ("Write-Output 'npm test'", None),
+        ('Write-Host "quote`"; git push"', None),  # the backtick escapes the quote: one string
+        ('Write-Host "doubled"";git push"', None),
+        ("Write-Host 'it''s; git push'", None),
+        ("echo 'a; git push'", None),
+        ("git commit -m 'x; git push'", None),
+        ('git commit -m "x`; git push"', None),
+        ("Get-ChildItem | Select-String 'git push'", None),
+        ("$x = 'git push'", None),
+        ("git log --oneline # git push", None),
+        ("<# git push #> git status", None),
+        ("Write-Host @'\ngit push\nnpm ci\n'@", None),
+        ("git commit -m @'\nnote: git push\n'@", None),
+        ("'unterminated; git push", "publish"),  # unparsed, so scanned as written, as Bash is
+    )
+
+    def test_powershell_commands_are_guarded_like_bash(self):
+        for command, expected in self.POWERSHELL_KINDS:
+            with self.subTest(command=command):
+                self.assertEqual(powershell_kind(command), expected)
+        # Like the Bash tool, a nested shell's string is not read: ssh h 'git push' and sh -c 'git push' pass.
+        for command in ("pwsh -c \"git push\"", "Invoke-Expression 'git push'", "cmd /c git push"):
+            with self.subTest(command=command):
+                self.assertIsNone(powershell_kind(command))
+
+    def test_powershell_push_without_claim_blocks_once_per_session(self):
+        for n, command in enumerate(("git push -u origin claude/x", "& git push -u origin claude/x",
+                                     r"& 'C:\Program Files\Git\cmd\git.exe' push", "gh pr create --fill")):
+            with self.subTest(command=command):
+                first = self.powershell(command, session=f"ps-{n}")
+                self.assertEqual(first.returncode, 2)
+                self.assertIn("Clued-Work-Claim", first.stderr)
+                self.assertIn("clued_work_claim", first.stderr)
+                self.assertEqual(self.powershell(command, session=f"ps-{n}").returncode, 0)
+        self.assertEqual(self.powershell("npm.cmd run build", session="ps-spend").returncode, 2)
+        self.assertEqual(self.powershell("Write-Host 'git push'", session="ps-data").returncode, 0)
+        # The one report per session and kind is shared with the Bash tool: the guard is one guard.
+        self.assertEqual(self.bash("git push", session="ps-0").returncode, 0)
+
+    def test_powershell_claim_allows_and_env_off_switch_skip(self):
+        self.post("mcp__Clued__clued_work_claim", committed(claim()))
+        for command in ("git push", "& git push", "npm.cmd test"):
+            with self.subTest(command=command):
+                self.assertEqual(self.powershell(command, session=command).returncode, 0)
+
+    def test_settings_run_the_guard_before_the_powershell_tool_too(self):
+        settings = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        groups = [group for group in settings["hooks"]["PreToolUse"]
+                  if any(hook["command"].endswith('clued_work_claim_guard.py"') for hook in group["hooks"])]
+        self.assertEqual(len(groups), 1)
+        matcher = re.compile(groups[0]["matcher"])
+        for tool in sorted(GUARD.SHELL_TOOLS | GUARD.EDIT_TOOLS | {"Agent", "Workflow"}):
+            with self.subTest(tool=tool):
+                self.assertIsNotNone(matcher.fullmatch(tool))
+        self.assertIsNotNone(matcher.fullmatch("mcp__github__push_files"))
+        for tool in ("Read", "Grep", "PowerShellX"):
+            with self.subTest(tool=tool):
+                self.assertIsNone(matcher.fullmatch(tool))
+
+    def test_powershell_text_is_rewritten_for_the_posix_readers(self):
+        for command, expected in (
+                ("git push", "git push"),
+                ("& git push", "& git push"),
+                ("& 'git' push", "& git push"),
+                (r'& "C:\Program Files\Git\cmd\git.exe" push', "& git push"),
+                ("GIT.EXE push", "git push"),
+                (r"git -C C:\w\x push", r"git -C 'C:\w\x' push"),
+                (r"cd $env:TEMP\x; git push", r"cd $env:TEMP\\x; git push"),
+                ("if ($?) { git push }", "if ($?) ; git push ;"),
+                ("Write-Host \"it's\"", "write-host \"it's\""),
+                ("echo 'it''s'", "echo 'it'\\''s'"),
+                ('echo "a`"b""c"', 'echo "a\\"b\\"c"'),
+                ("echo \"a`$b `` `\\\"", 'echo "a\\$b \\` \\\\"'),
+                ("git commit -m @'\na 'b'\n'@", "git commit -m 'a '\\''b'\\'''"),
+                ('echo @"\na "b" $(date)\n"@', 'echo "a \\"b\\" $(date)"'),
+                ("git push `\n origin", "git push   origin"),
+                ("git push # c 'x\ngit status", "git push \ngit status"),
+                ("<# a #>git push", " git push"),
+                ("echo ${env:ProgramFiles(x86)} @{a='b;c'}", "echo ${env:ProgramFiles(x86)} (a='b;c')"),
+                ("echo $(git push)", "echo $(git push)"),
+                ("echo “curly; git push”", 'echo "curly; git push"'),
+                ("echo ‘curly; git push’", "echo 'curly; git push'")):
+            with self.subTest(command=command):
+                self.assertEqual(GUARD.powershell_command(command), expected)
+        # What does not parse is scanned as written, as a Bash line is.
+        for command in ("git push 'oops", 'git push "oops', "git push )", "echo (", "echo ${x", "<# git push",
+                        "echo @'\nbody", "(" * 3000):
+            with self.subTest(command=command[:20]):
+                self.assertEqual(GUARD.powershell_command(command), command)
+
+    def test_powershell_classification_time_is_linear(self):
+        unit = " ; ".join(("git commit -m 'a''b' -m \"c`\"d $(e 'f')\"", "Write-Host @'\nx | y ; z\n'@",
+                           "if ($a) { & 'C:\\Program Files\\Git\\cmd\\git.exe' status } else { gh pr view 1 }",
+                           "foreach ($i in @{a='b'; c=(1,2)}) { Write-Output \"$i\" } # a ' comment"))
+        command = (unit + "\n") * (5000 // (len(unit) + 1))
+        for text in (command, "'" + command, "(" * 5000, "<#" * 2500):
+            with self.subTest(text=text[:12]):
+                started = time.perf_counter()
+                powershell_kind(text)
+                self.assertLess(time.perf_counter() - started, 0.5)
 
     def test_blanking_keeps_quotes_and_length(self):
         command = "grep -E '(npm test|x)' f && git commit -m \"a; $(date) | b\""
@@ -818,6 +968,85 @@ class PublishTrailerTest(unittest.TestCase):
 
     def bash(self, command: str, session: str = "s1", env: dict | None = None):
         return self.pre("Bash", {"command": command}, session, env)
+
+    def powershell(self, command: str, session: str = "s1", env: dict | None = None):
+        return self.pre("PowerShell", {"command": command}, session, env)
+
+    # Task ee78df7f: a PowerShell `git push` is read for the Claim and Scope lines like a Bash one.
+    def test_powershell_push_is_read_for_the_trailers(self):
+        self.commit("Fix the guard")
+        git = r"& 'C:\Program Files\Git\cmd\git.exe'"
+        for n, command in enumerate(("git push -u origin work", "& git push origin work", "git.exe push origin HEAD",
+                                     f"{git} -C '{self.project}' push origin work", f"cd '{self.project}'; git push",
+                                     "git status; git push; Write-Host done")):
+            with self.subTest(command=command):
+                result = self.powershell(command, session=f"ps-missing-{n}")
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("has no `Clued-Work-Claim:` line", result.stderr)
+                self.assertIn(f"\n{CLAIM_LINE}\n{SCOPE_LINE}\n", result.stderr)
+        self.commit(f"Fix the guard\n\n{CLAIM_LINE}\n{SCOPE_LINE}\n")
+        for n, command in enumerate(("git push -u origin work", "& git push origin work", "GIT.EXE push origin HEAD",
+                                     f"{git} -C '{self.project}' push origin work", f"cd '{self.project}'; git push",
+                                     "git push origin work 2>&1 | Out-Host")):
+            with self.subTest(command=command):
+                result = self.powershell(command, session=f"ps-ok-{n}")
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_powershell_commit_in_the_same_command_is_read(self):
+        self.commit("Base commit without trailers")
+        here = f"@'\nFix the guard\n\n{CLAIM_LINE}\n{SCOPE_LINE}\n'@"
+        escaped = f'"Fix the guard`n`n{CLAIM_LINE}`n{SCOPE_LINE}"'
+        for n, message in enumerate((here, escaped)):
+            result = self.powershell(f"git add -A; git commit -q -m {message}; git push -u origin work",
+                                     session=f"ps-good-{n}")
+            self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.powershell(f"git commit -q -m 'Fix' -m '{CLAIM_LINE}'; & git push", session="ps-no-scope")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("The message of the `git commit` before this push", result.stderr)
+        # An editor or a variable leaves the head unknown: nothing is guessed.
+        # An if condition can run a command too, so a push behind one is not read either.
+        for n, command in enumerate(("git commit; git push", "git commit -m $msg; git push",
+                                     "git merge origin/main; git push", "if (git merge origin/main) { git push }")):
+            with self.subTest(command=command):
+                self.assertEqual(self.powershell(command, session=f"ps-unknown-{n}").returncode, 0)
+
+    def test_powershell_pull_request_body_is_read(self):
+        self.commit(f"Fix the guard\n\n{CLAIM_LINE}\n{SCOPE_LINE}")
+        only_claim = f"@'\nSummary\n\n{CLAIM_LINE}\n'@"
+        for n, command in enumerate((f"gh pr create --title x --body {only_claim}",
+                                     f"& gh.exe pr edit 5 --body {only_claim}",
+                                     f"gh pr create --title x `\n  --body {only_claim}")):
+            with self.subTest(command=command):
+                result = self.powershell(command, session=f"ps-body-{n}")
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("The pull request body names claim", result.stderr)
+        (self.project / "body.md").write_text("Summary only\n", encoding="utf-8")
+        for n, command in enumerate(("gh pr create --title x --body-file body.md", "gh pr edit 5 -F body.md",
+                                     "gh pr create -b \"Summary only\"")):
+            with self.subTest(command=command):
+                result = self.powershell(command, session=f"ps-file-{n}")
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("The pull request body has no `Clued-Work-Claim:` line", result.stderr)
+        full = f"@'\nSummary\n\n{CLAIM_LINE}\n{SCOPE_LINE}\n'@"
+        for n, command in enumerate((f"gh pr create --title x --body {full}", "gh pr create --fill --head work",
+                                     "gh pr create --body $body", "gh pr create --body-file -")):
+            with self.subTest(command=command):
+                result = self.powershell(command, session=f"ps-pass-{n}")
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_powershell_data_and_odd_commands_are_not_judged(self):
+        self.commit("No trailers")
+        for n, command in enumerate(("Write-Host 'git push'", 'Write-Host "a`"; git push"', "git commit -m 'git push'",
+                                     "'unterminated", "git push )", "<# git push", "echo @'\nbody",
+                                     "git push origin 'a\x00b'", "cd 'a\x00b'; git push")):
+            with self.subTest(command=command):
+                result = self.powershell(command, session=f"ps-odd-{n}")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+        # Other repositories and the off switch are judged as for Bash.
+        self.assertEqual(self.powershell("git push", env={**self.env, "CLUED_WORK_CLAIM_GUARD": "off"}).returncode, 0)
+        self.assertEqual(self.powershell("gh pr create --base feature/x --body 'Summary only'",
+                                         session="ps-base").returncode, 0)
 
     def test_missing_claim_line_blocks_once_with_the_exact_lines(self):
         self.commit("Fix the guard")

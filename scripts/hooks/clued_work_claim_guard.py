@@ -17,7 +17,8 @@ events, chosen by the payload's hook_event_name:
   and, when Agent messages are enabled, answer them. Fresh own-session claims
   near expiry add an Agent renewal reminder, not an Owner extension request;
   expired leases and actual chain caps remain stops for protected spending.
-* PreToolUse blocks the call once per session and kind when no live claim is
+* PreToolUse (Bash and PowerShell, which powershell_command reads as PowerShell)
+  blocks the call once per session and kind when no live claim is
   recorded and CLUED_WORK_CLAIM is unset. Kinds: publish (git push, gh pr
   create, gh pr edit of the body, the GitHub PR and file-push tools), spend
   (installs, builds, tests, npm run and npx scripts, gh workflow run / gh run
@@ -67,6 +68,7 @@ PUBLISH_TOOLS = {"create_pull_request", "push_files", "create_or_update_file"}
 # Starting CI or dispatching a subtask spends like a build (agent-contract §1.7).
 SPEND_TOOLS = {"actions_run_trigger", "create_session"}
 EDIT_TOOLS = {"Edit", "Write", "NotebookEdit"}
+SHELL_TOOLS = {"Bash", "PowerShell"}
 # Agent messages (agent-contract Appendix A.3): where agent_inbox is folded in, and the
 # tools that read and answer it.
 INBOX_TOOLS = {"clued_session_resume", "clued_work_renew"}
@@ -112,12 +114,16 @@ SPEND_COMMAND = re.compile(
 # a commit message), so a | ; ( or command word inside them is not a command
 # (Task ada1334c). Every other command, shells, ssh, su, eval, docker, xargs and
 # interpreters included, is scanned as written.
-TEXT_COMMANDS = {"grep", "egrep", "fgrep", "rg", "ag", "ack", "awk", "jq", "echo", "printf"}
+TEXT_COMMANDS = {"grep", "egrep", "fgrep", "rg", "ag", "ack", "awk", "jq", "echo", "printf",
+                 # PowerShell: its output cmdlets and Select-String (the PowerShell tool lower-cases the name)
+                 "write-host", "write-output", "write-error", "write-warning", "write-verbose",
+                 "write-information", "write-debug", "select-string", "sls"}
 TEXT_GIT_COMMANDS = {"grep", "log", "show", "commit"}
 COMMAND_PREFIXES = {"sudo", "command", "time"}
 # A text command piped into anything else may be feeding a shell, so it is not blanked.
 TEXT_FILTERS = {"grep", "egrep", "fgrep", "rg", "ag", "ack", "jq", "head", "tail", "wc", "sort", "uniq",
-                "cut", "tr", "cat", "less", "more", "column", "nl", "fold"}
+                "cut", "tr", "cat", "less", "more", "column", "nl", "fold",
+                "select-string", "sls", "out-host", "out-null", "out-string", "measure-object"}
 # Options and programs that make a text command run a command: rg --pre, git grep -O,
 # a pager, awk system() / getline / print | "cmd", and the sed e command or s///e flag.
 RUNS_OPTION = re.compile(r"^(?:--pre|--pager|--open-files-in-pager|-[A-Za-z]*O)")
@@ -327,6 +333,188 @@ def scannable(command: str) -> str:
     return "".join(chars)
 
 
+# PowerShell does not quote or escape like a POSIX shell: inside a string a doubled quote is the
+# escape, the backtick is the escape character, a backslash is an ordinary character, `&` calls a
+# command (it does not background it), `{ }` hold a script block and `@' '@` is a here-string. The
+# readers above parse POSIX words, so powershell_command first rewrites a PowerShell command line
+# into that form (the same words and separators) and the PowerShell tool then goes through the
+# same checks as Bash. A line that does not parse is scanned as written, as a Bash one is.
+POWERSHELL_SINGLE = "'\u2018\u2019\u201a\u201b"  # PowerShell also takes the typographic quotes
+POWERSHELL_DOUBLE = '"\u201c\u201d\u201e'
+POWERSHELL_BREAKS = " \t\r\n;|&(){}<>`$" + POWERSHELL_SINGLE + POWERSHELL_DOUBLE
+POWERSHELL_ESCAPES = {"n": "\n", "t": "\t", "r": "", "0": "", "a": "", "b": "", "f": "", "v": "", "\n": ""}
+HERE_STRING = re.compile(r"@(['\"])[ \t]*\r?\n")
+EXECUTABLE_SUFFIXES = (".exe", ".cmd", ".bat", ".com")
+
+
+def ps_single(text: str, i: int) -> tuple[str, int]:
+    """The '...' string opening at text[i] as a POSIX single-quoted word, and the index past it."""
+    body, j = [], i + 1
+    while j < len(text):
+        if text[j] in POWERSHELL_SINGLE:
+            if text[j + 1:j + 2] and text[j + 1] in POWERSHELL_SINGLE:  # '' is a quote inside the string
+                body.append("'")
+                j += 2
+                continue
+            return "'" + "".join(body).replace("'", "'\\''") + "'", j + 1
+        body.append(text[j])
+        j += 1
+    raise ValueError("unterminated string")
+
+
+def ps_double(text: str, i: int, here: bool = False) -> tuple[str, int]:
+    """The "..." string opening at text[i] as a POSIX double-quoted word, and the index past it.
+
+    here: text is the body of a @" "@ here-string, in which a quote is an ordinary character.
+    """
+    body, j = [], i + 1
+    while j < len(text):
+        char = text[j]
+        if char == "`":
+            following = text[j + 1:j + 2]
+            body.append(POWERSHELL_ESCAPES.get(following, "\\" + following if following in '$"`\\' else following))
+            j += 2
+        elif char in POWERSHELL_DOUBLE:
+            if here or (text[j + 1:j + 2] and text[j + 1] in POWERSHELL_DOUBLE):  # "" is a quote in the string
+                body.append('\\"')
+                j += 1 if here else 2
+            else:
+                return '"' + "".join(body) + '"', j + 1
+        elif char == "$" and text[j + 1:j + 2] == "(":
+            inner, j = ps_scan(text, j + 2, ")")
+            body.append("$(" + inner + ")")
+            j += 1
+        elif char == "$" and text[j + 1:j + 2] == "{":
+            end = text.index("}", j)
+            body.append(text[j:end + 1])
+            j = end + 1
+        elif char == "\\":
+            body.append("\\\\")
+            j += 1
+        else:
+            body.append(char)
+            j += 1
+    if here:
+        return '"' + "".join(body) + '"', j
+    raise ValueError("unterminated string")
+
+
+def ps_scan(text: str, i: int, closer: str) -> tuple[str, int]:
+    """PowerShell source from text[i] up to closer (not consumed) as POSIX shell text, and closer's index."""
+    out, n, dollar = [], len(text), -1
+    while i < n:
+        char = text[i]
+        word_start = (text[i - 1] if i else "\n") in " \t\r\n;|&(){}"
+        if char == closer:
+            return "".join(out), i
+        if char == "\r":
+            i += 1
+        elif text.startswith("<#", i):
+            i = text.index("#>", i + 2) + 2
+            out.append(" ")
+        elif char in " \t\n;|&<>":
+            out.append(char)
+            i += 1
+        elif char == "#" and word_start:
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+        elif char == "@" and word_start and (here := HERE_STRING.match(text, i)):
+            quote = here.group(1)
+            end = text.find("\n" + quote + "@", here.end() - 1)
+            if end < 0:
+                raise ValueError("unterminated here-string")
+            body = text[here.end():end].replace("\r", "")
+            out.append("'" + body.replace("'", "'\\''") + "'" if quote == "'" else ps_double(body, -1, True)[0])
+            i = end + 3
+        elif char == "(" or text[i:i + 2] in ("$(", "@(", "@{"):
+            # ( ), $( ), @( ) and @{ } hold commands or data a POSIX shell reads as one opaque group.
+            opener = text[i:i + 2] if char != "(" else "("
+            inner, i = ps_scan(text, i + len(opener), "}" if opener == "@{" else ")")
+            out.append(("$(" if opener == "$(" else "(") + inner + ")")
+            i += 1
+        elif char == "$" and text[i + 1:i + 2] == "{":
+            end = text.index("}", i)
+            out.append(text[i:end + 1])
+            i = end + 1
+        elif char == "$":
+            out.append("$")
+            i += 1
+            dollar = i
+        elif char in POWERSHELL_SINGLE:
+            word, i = ps_single(text, i)
+            out.append(word)
+        elif char in POWERSHELL_DOUBLE:
+            word, i = ps_double(text, i)
+            out.append(word)
+        elif char == "`":
+            following = text[i + 1:i + 2]
+            if following in ("\r", "\n"):  # a line continuation
+                out.append(" ")
+                i += 3 if text[i + 1:i + 3] == "\r\n" else 2
+            else:
+                out.append("\\" + following if following else "")
+                i += 2
+        elif char == ")":
+            raise ValueError("unbalanced )")
+        elif char in "{}":  # a script block or a brace group: its statements are commands
+            out.append(";")
+            i += 1
+        else:
+            end = i + 1
+            while end < n and text[end] not in POWERSHELL_BREAKS:
+                end += 1
+            run = text[i:end]
+            if "\\" in run:  # a Windows path: one literal word, not an escape
+                run = run.replace("\\", "\\\\") if i == dollar else "'" + run + "'"
+            out.append(run)
+            i = end
+    if closer:
+        raise ValueError("unbalanced " + closer)
+    return "".join(out), i
+
+
+def normalize_commands(text: str) -> str:
+    """text with each command word as the POSIX readers expect it: bare, lower case, no directory or .exe.
+
+    `& 'C:\\Program Files\\Git\\cmd\\git.exe' push` and `GIT.exe push` both become `git push`.
+    """
+    segments = shell_segments(text)
+    if segments is None:
+        return text
+    edits = []
+    for words, _ in segments:
+        if not words:
+            continue
+        start, end, plain, quotes = words[0]
+        raw = text[start:end]
+        if plain:
+            name = raw
+        elif len(quotes) == 1 and quotes[0] == [start, end - 1] and raw[0] in "'\"":
+            name = raw[1:-1]
+            if raw[0] == '"':
+                name = name.replace("\\\\", "\\")
+                if re.search(r"[$\"]", name):
+                    continue
+        else:
+            continue
+        base = name.replace("\\", "/").rsplit("/", 1)[-1].lower()
+        if base.endswith(EXECUTABLE_SUFFIXES):
+            base = base[:-4]
+        if base and base != raw:
+            edits.append((start, end, base))
+    for start, end, base in reversed(edits):
+        text = text[:start] + base + text[end:]
+    return text
+
+
+def powershell_command(command: str) -> str:
+    """A PowerShell command line as POSIX shell text, or the line itself when it does not parse."""
+    try:
+        return normalize_commands(ps_scan(command, 0, "")[0])
+    except (ValueError, IndexError, RecursionError):
+        return command
+
+
 PUBLIC_CONFIG = re.compile(r'return \{ url: "(https://[^"]+)", key: "(sb_publishable_[A-Za-z0-9_-]+)" \};')
 
 RULE = (
@@ -471,9 +659,11 @@ def record_claim(payload: dict) -> None:
 def guarded_kind(payload: dict) -> str | None:
     name = payload.get("tool_name", "")
     tool_input = payload.get("tool_input") or {}
-    if name == "Bash":
-        # Heredoc bodies (commit messages, inline scripts) are data, not commands.
-        command = scannable(lift_heredocs(str(tool_input.get("command", "")))[0])
+    if name in SHELL_TOOLS:
+        raw = str(tool_input.get("command", ""))
+        # Heredoc bodies (commit messages, inline scripts) are data, not commands. PowerShell has none:
+        # its strings and here-strings are read by powershell_command.
+        command = scannable(powershell_command(raw) if name == "PowerShell" else lift_heredocs(raw)[0])
         if PUBLISH_COMMAND.search(command):
             return "publish"
         if SPEND_COMMAND.search(command):
@@ -772,14 +962,16 @@ def pr_body(options: dict[str, str | None], cwd: Path | None, before: str) -> st
         return None
 
 
-def bash_publish_texts(command: str, cwd: Path | None, home_dir: Path | None = None) -> list[tuple[str, str, str]]:
+def bash_publish_texts(command: str, cwd: Path | None, home_dir: Path | None = None,
+                       heredocs: bool = True) -> list[tuple[str, str, str]]:
     """(where, label, text) for each head commit message and pull request body the command publishes.
 
     Only top-level simple commands are read. What cannot be read without running
     the command (an expanded word, an editor, a file it writes first, a push after
-    a step that may move HEAD) is skipped.
+    a step that may move HEAD) is skipped. heredocs=False: a PowerShell command already
+    rewritten by powershell_command, whose `<<` is text.
     """
-    text, bodies = lift_heredocs(command)
+    text, bodies = lift_heredocs(command) if heredocs else (command, [])
     text = join_lines(text)
     segments = shell_segments(text)
     if segments is None:
@@ -850,9 +1042,12 @@ def bash_publish_texts(command: str, cwd: Path | None, home_dir: Path | None = N
 def publish_texts(payload: dict) -> list[tuple[str, str, str]]:
     name = payload.get("tool_name", "")
     tool_input = payload.get("tool_input") or {}
-    if name == "Bash":
+    if name in SHELL_TOOLS:
         cwd = Path(payload.get("cwd") or project_dir(payload))
-        return bash_publish_texts(str(tool_input.get("command", "")), cwd, project_dir(payload))
+        command = str(tool_input.get("command", ""))
+        if name == "PowerShell":
+            return bash_publish_texts(powershell_command(command), cwd, project_dir(payload), heredocs=False)
+        return bash_publish_texts(command, cwd, project_dir(payload))
     field = {"create_pull_request": ("body", "body", "The pull request body"),
              "push_files": ("message", "commit", "The commit message"),
              "create_or_update_file": ("message", "commit", "The commit message")}.get(tool_suffix(name))
