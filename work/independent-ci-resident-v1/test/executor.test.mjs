@@ -75,8 +75,11 @@ test('a merged PR leaves the queue before it is reserved: no bundle, no stage, n
   const f = await executorFixture(t, { companion });
   await f.drop(triggerBytes());
   const r = await f.exec.tick();
-  assert.notEqual(r.state, 'COMPLETED');
+  assert.deepEqual([r.state, r.reason], ['IGNORED', 'PR_CLOSED']);
   assert.deepEqual([f.queue.row(884).state, f.queue.row(884).reason], ['DONE', 'PR_CLOSED']);
+  const receipts = await fs.readdir(path.join(f.root, 'state', 'receipts'));
+  const closed = await Promise.all(receipts.filter(n => n.includes('queue-pr-closed')).map(async n => JSON.parse(await fs.readFile(path.join(f.root, 'state', 'receipts', n), 'utf8')).body));
+  assert.deepEqual(closed.map(b => [b.pr, b.state, b.before]), [[884, 'merged', 'reserve']]);
   assert.deepEqual(stagesRun(f.engine), [], 'stage 1 never ran');
   assert.equal(companion.calls.some(c => c[0] === 'bundle'), false, 'no bundle was built');
   assert.equal((await f.ledger.state(keyFor())).state, 'ABSENT');

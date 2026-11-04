@@ -278,6 +278,28 @@ test('issuer: one admission callback, then the signed result -> ISSUED_RESULT_RE
   await assert.rejects(fs.lstat(path.join(root, 'outgoing', 'response-02.json')), { code: 'ENOENT' });
 });
 
+test('issuer, local scan-start mode: an admission round, then the signed result -> ISSUED_RESULT_RECEIVED without any Native start', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+  const f = issuerFixture(t), root = await spool(t), box = await createFixtureMailbox(root, 'windows');
+  const linux = (async () => {
+    const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
+    await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1)));
+    const response = decode(await waitFor(path.join(root, 'outgoing', 'response-01.json')));
+    assert.equal(response.admission.claimId, f.c.claimId); assert.equal(response.scanStart, null);
+    await put(root, 'result', Buffer.from(canonical(signedWrapper(issue, trivyObservation(f.job), f.signer))));
+  })();
+  let nativeCalls = 0;
+  const r = await runIssuer({ context: f.context, evaluate: f.evaluate, collect: async () => null, box, stageDeadline: Date.now() + 20_000,
+    nativeScanStartRequired: false, scanStart: async () => { nativeCalls++; throw new Error('never called in local mode'); } });
+  await linux;
+  assert.equal(r.status, ISSUER_SUCCESS, JSON.stringify(r)); assert.equal(r.sideEffects, 1); assert.equal(nativeCalls, 0);
+});
+test('issuer: a scan-start mode that is not a boolean is refused before anything is issued', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+  const f = issuerFixture(t), root = await spool(t), box = await createFixtureMailbox(root, 'windows');
+  for (const mode of ['false', 0, null]) await assert.rejects(() => runIssuer({ context: f.context, evaluate: f.evaluate, collect: async () => null, box,
+    stageDeadline: Date.now() + 20_000, nativeScanStartRequired: mode }), /SCAN_START_MODE_INVALID/);
+  await assert.rejects(fs.lstat(path.join(root, 'outgoing', 'issue.json')), { code: 'ENOENT' });
+});
+
 test('issuer: the Linux clean blocked record ends the stage BLOCKED with zero side effects (refs moved since the bundle)', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
   const f = issuerFixture(t), root = await spool(t), box = await createFixtureMailbox(root, 'windows');
   const linux = (async () => { const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json'))); await put(root, 'blocked', encode(makeBlocked(issue, 'REMOTE_REFS_CHANGED_SINCE_BUNDLE'))); })();

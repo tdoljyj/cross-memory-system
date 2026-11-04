@@ -75,5 +75,6 @@ function validateLocalScanStart(value, job) {
 // start of this exact job. A Native grant is refused in local mode and a local
 // start is refused in Native mode, so the two can never be mixed.
 export function scanStartPermission(job, value, nativeRequired = NATIVE_SCAN_START_REQUIRED, now = Date.now()) {
-  return nativeRequired === true ? requireFreshScanStartGrant(job, value, now) : validateLocalScanStart(value, job);
+  if (typeof nativeRequired !== 'boolean') fail();
+  return nativeRequired ? requireFreshScanStartGrant(job, value, now) : validateLocalScanStart(value, job);
 }

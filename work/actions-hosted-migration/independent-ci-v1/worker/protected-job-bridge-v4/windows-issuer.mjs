@@ -93,6 +93,7 @@ export const issuerEvaluate=({github,admission,job,batchClaim})=>async()=>{
 // them in main(). sideEffects counts "the Linux side may run": 0 until the issue is written.
 export async function runIssuer({context,evaluate,collect,scanStart,box,clock=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),stageDeadline,signal,nativeScanStartRequired=NATIVE_SCAN_START_REQUIRED}){
   takeAcceptedBridgeContext(context);const job=context.job;let sideEffects=0,admissionDiagnostic=null;
+  check(typeof nativeScanStartRequired==='boolean','SCAN_START_MODE_INVALID');
   // Preserve only the shared sanitizer's refusal facts, plus bounded retry context when an admission round gave up.
   // A late round may end with a bridge reason instead, so this is context, not necessarily the final failure's cause.
   // The issuer's classification still depends only on status/reason/sideEffects, never this diagnostic.
@@ -195,7 +196,8 @@ export async function runIssuer({context,evaluate,collect,scanStart,box,clock=Da
       let raw=null;try{raw=await box.read('result');}catch(e){if(e.code!=='ENOENT')throw e;}
       if(raw){let wrapper;try{wrapper=JSON.parse(raw.toString('utf8'));}catch{fail('SIGNED_BRIDGE_RESULT_JSON_REQUIRED');}
         check(Buffer.from(canonical(wrapper)).equals(raw),'SIGNED_BRIDGE_RESULT_CANONICAL_REQUIRED');
-        check(scanStartGranted,'SCAN_START_GRANT_NOT_OBSERVED');
+        // Native mode: the result needs the one granted start. Local mode: no start was ever asked for.
+        check(nativeScanStartRequired?scanStartGranted:!scanStartAttempted,'SCAN_START_GRANT_NOT_OBSERVED');
         verifySignedBridgeResult({issue,wrapper,signers:context.signers,now:clock()});await admitted(Date.parse(issue.expiresAt));
         // Retries keep only their waits inside the window; a last evaluation may still end past it.
         check(clock()<Date.parse(issue.expiresAt),'BRIDGE_RESULT_DEADLINE');

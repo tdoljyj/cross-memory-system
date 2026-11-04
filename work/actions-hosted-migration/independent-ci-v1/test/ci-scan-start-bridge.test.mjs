@@ -129,7 +129,9 @@ test('local start binds the exact job and issue id; Native and local permissions
     assert.equal(scanStartPermission(f.job, local).execution_id, id, 'the Source default is local');
     assert.throws(() => scanStartPermission(f.job, local, true), { code: 'SCAN_START_GRANT_REFUSED' }, 'a local start never passes as Native');
     assert.throws(() => scanStartPermission(f.job, grant(f.job, id), false), { code: 'SCAN_START_GRANT_REFUSED' }, 'a Native grant is not a local start');
-    assert.throws(() => scanStartPermission(f.job, { ...local }, false), { code: 'SCAN_START_GRANT_REFUSED' }, 'only the frozen value made for the job');
+    assert.throws(() => scanStartPermission(f.job, { ...local }, false), { code: 'SCAN_START_GRANT_REFUSED' }, 'a plain copy is refused; only frozen values pass');
+    for (const mode of ['false', 0, null, undefined, 'true', 1]) if (mode !== undefined)
+      assert.throws(() => scanStartPermission(f.job, local, mode), { code: 'SCAN_START_GRANT_REFUSED' }, 'the mode is a boolean or nothing');
     for (const patch of [{ head_sha: 'f'.repeat(40) }, { role: role === 'trivy' ? 'gitleaks' : 'trivy' }, { native: true }, { execution_id: 'not-a-uuid' }, { extra: 1 }]) {
       assert.throws(() => scanStartPermission(f.job, Object.freeze({ ...local, ...patch }), false), { code: 'SCAN_START_GRANT_REFUSED' });
     }
