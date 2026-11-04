@@ -93,12 +93,12 @@ export const issuerEvaluate=({github,admission,job,batchClaim})=>async()=>{
 // them in main(). sideEffects counts "the Linux side may run": 0 until the issue is written.
 export async function runIssuer({context,evaluate,collect,scanStart,box,clock=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),stageDeadline,signal,nativeScanStartRequired=NATIVE_SCAN_START_REQUIRED}){
   takeAcceptedBridgeContext(context);const job=context.job;let sideEffects=0,admissionDiagnostic=null;
-  check(typeof nativeScanStartRequired==='boolean','SCAN_START_MODE_INVALID');
   // Preserve only the shared sanitizer's refusal facts, plus bounded retry context when an admission round gave up.
   // A late round may end with a bridge reason instead, so this is context, not necessarily the final failure's cause.
   // The issuer's classification still depends only on status/reason/sideEffects, never this diagnostic.
   const diagnosed=outcome=>admissionDiagnostic?{...outcome,admissionDiagnostic}:outcome;
   try{
+    check(typeof nativeScanStartRequired==='boolean','SCAN_START_MODE_INVALID');
     check(Number.isSafeInteger(stageDeadline)&&stageDeadline>clock(),'FORMAL_ISSUER_WINDOW_UNCONFIRMED');
     await box.lock();
     // One complete admission. A transient refusal (RETRY_WAITS_MS) is evaluated again, in full, after its wait and

@@ -2292,17 +2292,10 @@ export class ResidentExecutor {
       await this.receipt('attempt2-ignored', { key: key2, attempt1: key1, failureCode: 'ATTEMPT2_SOURCE_CHANGED' });
       return { state: 'IGNORED', key: key2, reason: 'ATTEMPT2_SOURCE_CHANGED', next: true };
     }
-    // A merged or closed PR never runs attempt 2 either (rule 41ab823a): one live read, as before a reservation.
-    // No answer is never a fact: attempt 2 then runs as before.
-    const live = await this.livePull(subject.pr);
-    if (live && live.state !== 'open') {
-      await this.ledger.closeAttempt2(key1, { failureCode: 'ATTEMPT2_PR_CLOSED', liveState: live.state });
-      if (this.queue.closePr(subject.pr, this.clock())) await this.receipt('queue-pr-closed', { pr: subject.pr, state: live.state, before: 'attempt2' });
-      await this.receipt('attempt2-ignored', { key: key2, attempt1: key1, failureCode: 'ATTEMPT2_PR_CLOSED' });
-      return { state: 'IGNORED', key: key2, reason: 'ATTEMPT2_PR_CLOSED', next: true };
-    }
+    let live = null;
     if (this.newerCommitQueued(subject)) {
-      if (live && live.headSha !== subject.headSha) {
+      live = await this.livePull(subject.pr);
+      if (live && (live.state !== 'open' || live.headSha !== subject.headSha)) {
         await this.ledger.closeAttempt2(key1, { failureCode: 'ATTEMPT2_SUPERSEDED', liveHeadSha: live.headSha, liveState: live.state });
         await this.receipt('attempt2-ignored', { key: key2, attempt1: key1, failureCode: 'ATTEMPT2_SUPERSEDED' });
         return { state: 'IGNORED', key: key2, reason: 'ATTEMPT2_SUPERSEDED', next: true };
@@ -2324,6 +2317,15 @@ export class ResidentExecutor {
     if (pre.halt) { await this.haltWith(pre.halt, { key: key2 }); return { state: 'HALTED', key: key2, failureCode: pre.halt }; }
     // A deferred attempt 2 never blocks the rows behind it (PR-A review MINOR 9): a global deferral stops them anyway.
     if (pre.defer) { if (pre.notice) this.queue.notice(pre.notice); return { state: 'DEFERRED', key: key2, reason: pre.defer, next: true }; }
+    // A merged or closed PR never runs attempt 2 either (rule 41ab823a): one live read after the precheck, as in
+    // runRow (reusing the read above when there was one). No answer is never a fact: attempt 2 then runs as before.
+    live ??= await this.livePull(subject.pr);
+    if (live && live.state !== 'open') {
+      await this.ledger.closeAttempt2(key1, { failureCode: 'ATTEMPT2_PR_CLOSED', liveState: live.state });
+      if (this.queue.closePr(subject.pr, this.clock())) await this.receipt('queue-pr-closed', { pr: subject.pr, state: live.state, before: 'attempt2' });
+      await this.receipt('attempt2-ignored', { key: key2, attempt1: key1, failureCode: 'ATTEMPT2_PR_CLOSED' });
+      return { state: 'IGNORED', key: key2, reason: 'ATTEMPT2_PR_CLOSED', next: true };
+    }
     // Consumed create-only before the reservation: whatever attempt 2 ends with, it never runs again.
     await this.ledger.consumeAttempt2(key1, { key2 });
     await this.ledger.reserve(key2, subject, { origin: 'attempt2' });

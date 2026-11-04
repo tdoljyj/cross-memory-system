@@ -294,10 +294,12 @@ test('issuer, local scan-start mode: an admission round, then the signed result 
   assert.equal(r.status, ISSUER_SUCCESS, JSON.stringify(r)); assert.equal(r.sideEffects, 1); assert.equal(nativeCalls, 0);
 });
 test('issuer: a scan-start mode that is not a boolean is refused before anything is issued', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
-  const f = issuerFixture(t), root = await spool(t), box = await createFixtureMailbox(root, 'windows');
-  for (const mode of ['false', 0, null]) await assert.rejects(() => runIssuer({ context: f.context, evaluate: f.evaluate, collect: async () => null, box,
-    stageDeadline: Date.now() + 20_000, nativeScanStartRequired: mode }), /SCAN_START_MODE_INVALID/);
-  await assert.rejects(fs.lstat(path.join(root, 'outgoing', 'issue.json')), { code: 'ENOENT' });
+  for (const mode of ['false', 0, null]) {
+    const f = issuerFixture(t), root = await spool(t), box = await createFixtureMailbox(root, 'windows');
+    const r = await runIssuer({ context: f.context, evaluate: f.evaluate, collect: async () => null, box, stageDeadline: Date.now() + 20_000, nativeScanStartRequired: mode });
+    assert.deepEqual([r.status, r.reason, r.sideEffects], ['BLOCKED', 'SCAN_START_MODE_INVALID', 0]);
+    await assert.rejects(fs.lstat(path.join(root, 'outgoing', 'issue.json')), { code: 'ENOENT' }, 'nothing was issued');
+  }
 });
 
 test('issuer: the Linux clean blocked record ends the stage BLOCKED with zero side effects (refs moved since the bundle)', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
