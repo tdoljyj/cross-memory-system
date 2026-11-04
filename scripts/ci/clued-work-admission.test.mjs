@@ -59,6 +59,9 @@ import {
   INDEPENDENT_GATE_WAIT_SECONDS,
   INDEPENDENT_GATE_POLL_SECONDS,
   INDEPENDENT_GATE_WAIT_CEILING_SECONDS,
+  GITHUB_READ_RETRY_ATTEMPTS,
+  GITHUB_READ_RETRY_STATUSES,
+  withGithubReadRetry,
   independentAdmissionCheck,
   checkNamesPullRequest,
   SAME_EVENT_MS,
@@ -3245,6 +3248,132 @@ test("independent gate: the wait is configurable, lowered freely and raised up t
   const slept = [];
   await gate({ env: env({ CLUED_ADMISSION_GATE_WAIT_SECONDS: "3600" }), event: event(), eventName: "pull_request", fetchImpl, sleep: async (ms) => { slept.push(ms); } });
   assert.equal(slept.reduce((sum, ms) => sum + ms, 0), 180000);
+});
+
+// --- Bounded retry of the read-only GitHub API calls, and a gate that stopped on an API outage ran no heavy job.
+const retryReply = (status, body = {}) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => null }, json: async () => body, text: async () => JSON.stringify(body) });
+function scriptedFetch(replies) {
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    calls.push({ url: String(url), method: init.method ?? "GET" });
+    const next = replies[Math.min(calls.length, replies.length) - 1];
+    if (next instanceof Error) throw next;
+    return typeof next === "number" ? retryReply(next) : next;
+  };
+  return { fetchImpl, calls };
+}
+const API = "https://api.test";
+
+test("github read retry: 500/502/503/504 and network errors are retried with 1s, 2s pauses; everything else is final at once", async () => {
+  assert.deepEqual([GITHUB_READ_RETRY_ATTEMPTS, GITHUB_READ_RETRY_STATUSES], [3, [500, 502, 503, 504]]);
+  for (const status of GITHUB_READ_RETRY_STATUSES) {
+    const { fetchImpl, calls } = scriptedFetch([status, status, 200]);
+    const budget = { spentMs: 0 };
+    const slept = [];
+    const response = await withGithubReadRetry(fetchImpl, { GITHUB_API_URL: API }, { sleep: async (ms) => { slept.push(ms); }, budget })(`${API}/repos/o/r/x`);
+    assert.deepEqual([response.status, calls.length, slept, budget.spentMs], [200, 3, [1000, 2000], 3000], String(status));
+  }
+  // The attempts run out: the last answer is handed back for the caller's own error; a network failure becomes a named error.
+  let { fetchImpl, calls } = scriptedFetch([502, 502, 502, 200]);
+  assert.equal((await withGithubReadRetry(fetchImpl, { GITHUB_API_URL: API }, { sleep: async () => {} })(`${API}/repos/o/r/x`)).status, 502);
+  assert.equal(calls.length, 3);
+  ({ fetchImpl, calls } = scriptedFetch([new TypeError("fetch failed"), new TypeError("fetch failed"), new TypeError("fetch failed")]));
+  await assert.rejects(withGithubReadRetry(fetchImpl, { GITHUB_API_URL: API }, { sleep: async () => {} })(`${API}/repos/o/r/x?y=1`),
+    /^Error: GitHub API \/repos\/o\/r\/x\?y=1 could not be reached after 3 attempts \(fetch failed\)$/);
+  assert.equal(calls.length, 3);
+  ({ fetchImpl, calls } = scriptedFetch([new TypeError("fetch failed"), 200]));
+  assert.equal((await withGithubReadRetry(fetchImpl, { GITHUB_API_URL: API }, { sleep: async () => {} })(`${API}/repos/o/r/x`)).status, 200);
+  // 4xx (rate limit, permission, missing), 599 and success are never repeated.
+  for (const status of [200, 304, 400, 401, 403, 404, 422, 429, 501, 599]) {
+    ({ fetchImpl, calls } = scriptedFetch([status, 200]));
+    const slept = [];
+    assert.equal((await withGithubReadRetry(fetchImpl, { GITHUB_API_URL: API }, { sleep: async (ms) => { slept.push(ms); } })(`${API}/repos/o/r/x`)).status, status);
+    assert.deepEqual([calls.length, slept], [1, []], String(status));
+  }
+  // Only a GET to the GitHub API is repeated: writes and other hosts are not.
+  ({ fetchImpl, calls } = scriptedFetch([502, 200]));
+  const wrapped = withGithubReadRetry(fetchImpl, { GITHUB_API_URL: API }, { sleep: async () => {} });
+  assert.equal((await wrapped(`${API}/repos/o/r/x`, { method: "POST" })).status, 502);
+  assert.equal((await wrapped(`${PUBLIC.url}/rest/v1/rpc/clued_work_verify_v1`, { method: "GET" })).status, 200);
+  assert.equal(calls.length, 2);
+  // Wrapping twice does not multiply the attempts; the pause scales with CLUED_GITHUB_RETRY_BASE_MS.
+  ({ fetchImpl, calls } = scriptedFetch([502]));
+  const slept = [];
+  const once = withGithubReadRetry(fetchImpl, { GITHUB_API_URL: API, CLUED_GITHUB_RETRY_BASE_MS: "50" }, { sleep: async (ms) => { slept.push(ms); } });
+  await withGithubReadRetry(once, { GITHUB_API_URL: API, CLUED_GITHUB_RETRY_BASE_MS: "50" }, { sleep: async (ms) => { slept.push(ms); } })(`${API}/repos/o/r/x`);
+  assert.deepEqual([calls.length, slept], [3, [50, 100]]);
+});
+
+test("independent gate: a transient 502 is retried inside the wait budget; an outage that outlasts the retries is an ERROR", async () => {
+  // One 502 on the first poll: retried after 1s, the admission settles, nothing else changes.
+  let failed = false;
+  const flaky = (call) => {
+    if (!call.url.includes("check_name=kooyumi-work-admission")) return { body: { check_runs: [] } };
+    if (!failed) { failed = true; return { status: 502, body: {} }; }
+    return { body: { check_runs: [nativeCheck()] } };
+  };
+  let result = await independentGate(flaky);
+  assert.deepEqual([result.outcome.admitted, result.outcome.verdict, result.slept], [true, "ADMITTED", [1000]]);
+  // The pause counts into the wait: 1s of retry plus the polls still end at exactly 600s.
+  failed = false;
+  const flakyEmpty = (call) => {
+    if (!call.url.includes("check_name=kooyumi-work-admission")) return { body: { check_runs: [] } };
+    if (!failed) { failed = true; return { status: 503, body: {} }; }
+    return { body: { check_runs: [] } };
+  };
+  result = await independentGate(flakyEmpty);
+  assert.deepEqual([result.outcome.verdict, result.slept.reduce((sum, ms) => sum + ms, 0), result.slept[0]], ["ADMISSION_PENDING", 600000, 1000]);
+  // A 4xx is never retried.
+  let reads = 0;
+  await assert.rejects(independentGate((call) => { if (call.url.includes("check_name=kooyumi-work-admission")) reads += 1; return { status: 429, body: {} }; }), /returned 429/);
+  assert.equal(reads, 1);
+  // The outage outlasts the three attempts: the gate throws (main reports ERROR).
+  reads = 0;
+  const outage = (call) => { if (call.url.includes("check_name=kooyumi-work-admission")) reads += 1; return { status: 502, body: {} }; };
+  await assert.rejects(independentGate(outage), /^Error: GitHub API \/repos\/o\/r\/commits\/a{40}\/check-runs\?check_name=kooyumi-work-admission.* returned 502$/);
+  assert.equal(reads, 3);
+});
+
+test("independent gate repair re-run: an attempt that ended in a GitHub API outage ran no heavy job and allows the one repair", async () => {
+  // Run the real main() on attempt 1 with the API down for the whole retry, then feed its own annotation to the repair.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "clued-work-admission-"));
+  const eventPath = path.join(dir, "event.json");
+  fs.writeFileSync(eventPath, JSON.stringify(independentEvent()));
+  const down = (status) => fakeFetch({ ...SELF_RUN, [CHECKS]: { status, body: {} } });
+  const errors = [];
+  const original = console.error;
+  const originalLog = console.log;
+  let code;
+  try {
+    console.error = (text) => { errors.push(String(text)); };
+    console.log = () => {};
+    code = await main(["--mode", "gate"], { ...env({ CLUED_ADMISSION_GATE_SOURCE: INDEPENDENT_GATE_SOURCE, CLUED_GITHUB_RETRY_BASE_MS: "0" }),
+      GITHUB_EVENT_NAME: "pull_request", GITHUB_EVENT_PATH: eventPath, GITHUB_OUTPUT: path.join(dir, "out"), GITHUB_STEP_SUMMARY: path.join(dir, "sum") }, down(502).fetchImpl);
+  } finally { console.error = original; console.log = originalLog; }
+  assert.equal(code, 1);
+  assert.match(fs.readFileSync(path.join(dir, "out"), "utf8"), /^verdict=ERROR$/m);
+  const annotation = /^::error title=([^:]+)::(.*)$/.exec(errors[0]);
+  assert.deepEqual([annotation[1], annotation[2].endsWith("returned 502")], ["kooyumi-work-admission", true]);
+  const outageNote = { title: annotation[1], message: annotation[2] };
+  const repaired = await repairGate([earlierAttempt(1, { notes: [outageNote] })]);
+  assert.deepEqual([repaired.outcome.admitted, repaired.outcome.verdict], [true, "ADMITTED"]);
+  // An outage on the repair attempt itself, or an unreachable API, is the same: the next re-run is still the repair.
+  const unreachable = { title: "kooyumi-work-admission", message: "GitHub API /repos/o/r/pulls/452 could not be reached after 3 attempts (fetch failed)" };
+  const chain = await repairGate([earlierAttempt(1), earlierAttempt(2, { notes: [unreachable] })]);
+  assert.deepEqual([chain.outcome.admitted, chain.outcome.verdict], [true, "ADMITTED"]);
+  // Other errors prove nothing about the heavy jobs: a 4xx, a missing token, an error that is not an API outage, or an outage note
+  // under another title refuses; so does an outage attempt that did run a heavy job.
+  for (const [label, note, heavy] of [
+    ["a 403", { title: "kooyumi-work-admission", message: "GitHub API /repos/o/r/commits/x/check-runs returned 403: the admission-gate job needs `checks: read`" }, undefined],
+    ["a 404", { title: "kooyumi-work-admission", message: "GitHub API /repos/o/r/pulls/452 returned 404" }, undefined],
+    ["a missing token", { title: "kooyumi-work-admission", message: "GITHUB_TOKEN is not set." }, undefined],
+    ["a 5xx text in the middle", { title: "kooyumi-work-admission", message: "see: GitHub API /x returned 502" }, undefined],
+    ["another title", { title: "other", message: annotation[2] }, undefined],
+    ["a heavy job that ran", outageNote, ["skipped", "success", "skipped"]],
+  ]) {
+    const { outcome } = await repairGate([earlierAttempt(1, { notes: [note], ...(heavy ? { heavy } : {}) })]);
+    assert.deepEqual([label, outcome.admitted, outcome.verdict], [label, false, "RERUN_REFUSED"]);
+  }
 });
 
 test("independent gate: under the Owner's disaster-recovery switch the clued-admission App check of this event still decides", async () => {

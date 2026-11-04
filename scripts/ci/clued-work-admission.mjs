@@ -305,6 +305,46 @@ export async function githubPaged(fetchImpl, env, route, key) {
   return items;
 }
 
+// Bounded retry of the read-only GitHub API calls. A GET that answers 500, 502,
+// 503 or 504, or that fails on the network, is tried again after 1s and 2s (three
+// attempts in all; CLUED_GITHUB_RETRY_BASE_MS scales the first pause). Every
+// other status, including each 4xx, is final at once, and nothing but a GET to
+// the GitHub API is ever repeated, so the Clued RPCs and the App's writes are
+// untouched. The pauses are added to `budget.spentMs`, which the gate counts
+// into its wait. When the attempts run out the last response is returned (the
+// caller throws its usual `GitHub API <route> returned 5xx`), or, for a network
+// failure, an error `GitHub API <route> could not be reached`.
+export const GITHUB_READ_RETRY_ATTEMPTS = 3;
+export const GITHUB_READ_RETRY_STATUSES = Object.freeze([500, 502, 503, 504]);
+const RETRY_ORIGINAL = Symbol("githubReadRetryOriginal");
+export function withGithubReadRetry(fetchImpl, env = {}, { sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), budget = null } = {}) {
+  if (typeof fetchImpl !== "function") return fetchImpl;
+  const inner = fetchImpl[RETRY_ORIGINAL] ?? fetchImpl;
+  const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
+  const configured = Number.parseInt(env.CLUED_GITHUB_RETRY_BASE_MS ?? "", 10);
+  const baseMs = Number.isInteger(configured) && configured >= 0 ? Math.min(configured, 10000) : 1000;
+  const wrapped = async (url, init = {}) => {
+    const target = String(url);
+    if ((init.method ?? "GET") !== "GET" || !target.startsWith(`${base}/`)) return inner(url, init);
+    for (let attempt = 1; ; attempt += 1) {
+      let response = null;
+      let failure = null;
+      try { response = await inner(url, init); } catch (error) { failure = error; }
+      const transient = failure !== null || GITHUB_READ_RETRY_STATUSES.includes(response.status);
+      if (!transient) return response;
+      if (attempt >= GITHUB_READ_RETRY_ATTEMPTS) {
+        if (failure === null) return response;
+        throw new Error(`GitHub API ${target.slice(base.length)} could not be reached after ${attempt} attempts (${failure instanceof Error ? failure.message : String(failure)})`);
+      }
+      const pause = baseMs * 2 ** (attempt - 1);
+      if (budget) budget.spentMs += pause;
+      await sleep(pause);
+    }
+  };
+  wrapped[RETRY_ORIGINAL] = inner;
+  return wrapped;
+}
+
 // The files endpoint stops at 3000 entries. Callers compare file_count with
 // the PR's changed_files and fail closed when the list came back short.
 export async function changedPathsOfPullRequest(fetchImpl, env, repository, number) {
@@ -2472,6 +2512,11 @@ export async function independentAdmissionCheck(fetchImpl, env, repository, head
 // from GitHub's record instead of an attempt number. Anything unreadable
 // refuses. The gate job already holds `actions: read` and `checks: read`.
 const INDEPENDENT_NOT_ADMITTED_VERDICT = /^(?:ADMISSION_PENDING|RERUN_REFUSED):/;
+// A gate that stopped on a GitHub API failure that outlived the bounded retry
+// (main() reports it as an ERROR with title kooyumi-work-admission) ran no heavy
+// job either: only a 5xx answer or an unreachable API counts, not a 4xx.
+const INDEPENDENT_TRANSIENT_API_ERROR = /^GitHub API \S+ (?:returned 5[0-9]{2}|could not be reached after [0-9]+ attempts)/;
+const INDEPENDENT_ERROR_ANNOTATION_TITLE = "kooyumi-work-admission";
 export async function independentRepairRerun({ fetchImpl, env, pr, attempt, self }) {
   const repository = env.GITHUB_REPOSITORY;
   const runId = env.GITHUB_RUN_ID;
@@ -2494,8 +2539,10 @@ export async function independentRepairRerun({ fetchImpl, env, pr, attempt, self
         return refuse(`attempt ${earlier} already ran ${ran.map((job) => `${String(job.name).slice(0, 80)}: ${job.status}/${job.conclusion ?? "none"}`).join(", ")}; ` +
           "one commit's required tests run once");
       const notes = await githubPaged(fetchImpl, env, `/repos/${repository}/check-runs/${gates[0].id}/annotations`);
-      if (!notes.some((note) => note && note.title === INDEPENDENT_GATE_JOB_NAME && INDEPENDENT_NOT_ADMITTED_VERDICT.test(String(note.message ?? ""))))
-        return refuse(`the ${INDEPENDENT_GATE_JOB_NAME} job of attempt ${earlier} did not end in ADMISSION_PENDING`);
+      if (!notes.some((note) => note && (
+        (note.title === INDEPENDENT_GATE_JOB_NAME && INDEPENDENT_NOT_ADMITTED_VERDICT.test(String(note.message ?? ""))) ||
+        (note.title === INDEPENDENT_ERROR_ANNOTATION_TITLE && INDEPENDENT_TRANSIENT_API_ERROR.test(String(note.message ?? ""))))))
+        return refuse(`the ${INDEPENDENT_GATE_JOB_NAME} job of attempt ${earlier} did not end in ADMISSION_PENDING or a GitHub API outage`);
       attempts.push({ attempt: earlier, heavy_jobs: heavy.length });
     }
   } catch (error) {
@@ -2779,6 +2826,8 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   }
 
   const outcome = emptyOutcome(eventName);
+  const retryBudget = { spentMs: 0 };
+  fetchImpl = withGithubReadRetry(fetchImpl, env, { sleep, budget: retryBudget });
   if (eventName === "workflow_dispatch") return dispatchGate({ env, event, fetchImpl, now, outcome });
   if (!PR_EVENTS.has(eventName)) {
     outcome.admitted = true;
@@ -2832,8 +2881,10 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
       // On a re-run the admission run may itself be running again under its
       // old id, with its previous attempt's check posted: wait for it to end.
       const settled = found.check && found.check.status === "completed" && (!attempt || !found.run || found.run.status === "completed");
-      if (settled || waited >= limit) break;
-      const delay = Math.min(pollSeconds, limit - waited);
+      // The pauses of retried GitHub reads count into the wait.
+      const used = waited + retryBudget.spentMs / 1000;
+      if (settled || used >= limit) break;
+      const delay = Math.min(pollSeconds, limit - used);
       await sleep(delay * 1000);
       waited += delay;
     }
@@ -3506,6 +3557,7 @@ export function mergeSlotOutputs(outcome) {
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env, fetchImpl = globalThis.fetch, { readPolicyFile = fs.readFileSync } = {}) {
+  fetchImpl = withGithubReadRetry(fetchImpl, env);
   const modeIndex = argv.indexOf("--mode");
   const mode = modeIndex >= 0 ? argv[modeIndex + 1] : "required";
   if (!["required", "gate", "reverify", "dispatch-admit", "app-check", "adopt"].includes(mode)) {
