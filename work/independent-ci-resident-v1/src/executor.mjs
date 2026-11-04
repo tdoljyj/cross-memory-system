@@ -2244,6 +2244,15 @@ export class ResidentExecutor {
       if (this.queue.stopAtCap(c.pr, c.headSha, pre.stop, this.clock())) this.queue.notice({ key: `stopped:${c.pr}:${c.headSha}:${pre.stop}`, kind: 'stopped', pr: c.pr, headSha: c.headSha, code: pre.stop });
       return { state: 'DEFERRED', key, reason: pre.stop, next: true };
     }
+    // A merged or closed PR leaves the queue before it is reserved (one live read), not only after a batch of it failed
+    // (falsified): on 2026-11-03 merged PR 984 stayed first in the queue and breaker trials ran merged heads again
+    // (rule 41ab823a). No answer is never a fact: the row runs as before.
+    const live = await this.livePull(c.pr);
+    if (live && live.state !== 'open') {
+      if (this.queue.closePr(c.pr, this.clock())) await this.receipt('queue-pr-closed', { pr: c.pr, state: live.state, before: 'reserve' });
+      this.reportOutcome(subject, 'IGNORED', { code: 'PR_CLOSED', key });
+      return { state: 'IGNORED', key, reason: 'PR_CLOSED', next: true };
+    }
 
     await this.ledger.reserve(key, subject, { origin: c.origin });
     await this.receipt('batch-reserved', { key, headKey: hk, subject, origin: c.origin });
