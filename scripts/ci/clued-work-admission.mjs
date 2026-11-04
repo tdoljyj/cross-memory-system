@@ -305,6 +305,46 @@ export async function githubPaged(fetchImpl, env, route, key) {
   return items;
 }
 
+// Bounded retry of the read-only GitHub API calls. A GET that answers 500, 502,
+// 503 or 504, or that fails on the network, is tried again after 1s and 2s (three
+// attempts in all; CLUED_GITHUB_RETRY_BASE_MS scales the first pause). Every
+// other status, including each 4xx, is final at once, and nothing but a GET to
+// the GitHub API is ever repeated, so the Clued RPCs and the App's writes are
+// untouched. The pauses are added to `budget.spentMs`, which the gate counts
+// into its wait. When the attempts run out the last response is returned (the
+// caller throws its usual `GitHub API <route> returned 5xx`), or, for a network
+// failure, an error `GitHub API <route> could not be reached`.
+export const GITHUB_READ_RETRY_ATTEMPTS = 3;
+export const GITHUB_READ_RETRY_STATUSES = Object.freeze([500, 502, 503, 504]);
+const RETRY_ORIGINAL = Symbol("githubReadRetryOriginal");
+export function withGithubReadRetry(fetchImpl, env = {}, { sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), budget = null } = {}) {
+  if (typeof fetchImpl !== "function") return fetchImpl;
+  const inner = fetchImpl[RETRY_ORIGINAL] ?? fetchImpl;
+  const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
+  const configured = Number.parseInt(env.CLUED_GITHUB_RETRY_BASE_MS ?? "", 10);
+  const baseMs = Number.isInteger(configured) && configured >= 0 ? Math.min(configured, 10000) : 1000;
+  const wrapped = async (url, init = {}) => {
+    const target = String(url);
+    if ((init.method ?? "GET") !== "GET" || !target.startsWith(`${base}/`)) return inner(url, init);
+    for (let attempt = 1; ; attempt += 1) {
+      let response = null;
+      let failure = null;
+      try { response = await inner(url, init); } catch (error) { failure = error; }
+      const transient = failure !== null || GITHUB_READ_RETRY_STATUSES.includes(response.status);
+      if (!transient) return response;
+      if (attempt >= GITHUB_READ_RETRY_ATTEMPTS) {
+        if (failure === null) return response;
+        throw new Error(`GitHub API ${target.slice(base.length)} could not be reached after ${attempt} attempts (${failure instanceof Error ? failure.message : String(failure)})`);
+      }
+      const pause = baseMs * 2 ** (attempt - 1);
+      if (budget) budget.spentMs += pause;
+      await sleep(pause);
+    }
+  };
+  wrapped[RETRY_ORIGINAL] = inner;
+  return wrapped;
+}
+
 // The files endpoint stops at 3000 entries. Callers compare file_count with
 // the PR's changed_files and fail closed when the list came back short.
 export async function changedPathsOfPullRequest(fetchImpl, env, repository, number) {
@@ -2416,6 +2456,15 @@ export const INDEPENDENT_ADMISSION_APP_ID = 5368905;
 export const INDEPENDENT_ADMISSION_CHECK = "kooyumi-work-admission";
 export const INDEPENDENT_GATE_WAIT_SECONDS = 600;
 export const INDEPENDENT_GATE_POLL_SECONDS = 30;
+// CLUED_ADMISSION_GATE_WAIT_SECONDS may lower the wait or raise it up to this
+// ceiling. The gate job holds one runner while it polls, and the registered
+// job's timeout-minutes (15) must still cover checkout, setup and the wait, so
+// a longer wait is a workflow change (the env value, and the timeout beyond
+// this ceiling) that registers a new gate digest.
+export const INDEPENDENT_GATE_WAIT_CEILING_SECONDS = 780;
+// The one job of the workflow that is the gate; every other job of the run is
+// a heavy job (independentRepairRerun).
+export const INDEPENDENT_GATE_JOB_NAME = "admission-gate";
 // The independent CI's native-work-admission ids: v1 (<job id>:f<fence>:e<epoch>:a<attempt>) and
 // Source v2 (src/job-v2.mjs admissionExternalIdV2: v2:<job id>:a<1|2>:c<claim prefix>:f<fence>:e<epoch>).
 const INDEPENDENT_NATIVE_ADMISSION_ID = /^independent-ci:native-work-admission:(?:[a-f0-9]{64}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9}:a[1-9][0-9]{0,9}|v2:[a-f0-9]{64}:a[12]:c[a-f0-9]{8}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9})$/;
@@ -2440,11 +2489,74 @@ export async function independentAdmissionCheck(fetchImpl, env, repository, head
   return { settled: true, check: newest, bound, admitted: bound && newest.conclusion === "success" };
 }
 
-async function independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, independent, limit }) {
+// Repair re-run. The independent CI is slow (a throttled uplink makes its
+// bundling take minutes, or it is busy with another pull request), so the gate
+// can time out with ADMISSION_PENDING, skip every heavy job, and see the
+// admission settle a moment later. A "Re-run all jobs" of that run is then the
+// only way to run the required tests on this head without a new commit, which
+// would start the slow independent CI from scratch. It is admitted only when
+// the run's earlier attempts, read from the Actions API, prove that no heavy
+// job of this head ever ran (rule 41ab823a: one real run of one check on one
+// commit):
+//   - every earlier attempt lists the gate job once and at least one other job,
+//     all of this head;
+//   - every job except the gate job of every earlier attempt has status
+//     completed and conclusion skipped (success, failure, cancelled, anything
+//     else counts as having run);
+//   - the gate job of every earlier attempt ended with a not-admitted verdict:
+//     its admission-gate annotation starts with ADMISSION_PENDING (the reason
+//     this exists) or RERUN_REFUSED (a refused earlier re-run, which ran
+//     nothing either).
+// Because the attempt this admits runs the heavy jobs, the next re-run finds
+// them in its history and is refused: the allowance is one, and it is derived
+// from GitHub's record instead of an attempt number. Anything unreadable
+// refuses. The gate job already holds `actions: read` and `checks: read`.
+const INDEPENDENT_NOT_ADMITTED_VERDICT = /^(?:ADMISSION_PENDING|RERUN_REFUSED):/;
+// A gate that stopped on a GitHub API failure that outlived the bounded retry
+// (main() reports it as an ERROR with title kooyumi-work-admission) ran no heavy
+// job either: only a 5xx answer or an unreachable API counts, not a 4xx.
+const INDEPENDENT_TRANSIENT_API_ERROR = /^GitHub API \S+ (?:returned 5[0-9]{2}|could not be reached after [0-9]+ attempts)/;
+const INDEPENDENT_ERROR_ANNOTATION_TITLE = "kooyumi-work-admission";
+export async function independentRepairRerun({ fetchImpl, env, pr, attempt, self }) {
+  const repository = env.GITHUB_REPOSITORY;
+  const runId = env.GITHUB_RUN_ID;
+  const refuse = (reason) => ({ allowed: false, reason });
+  if (!self || self.head_sha !== pr.head.sha || Number(self.run_attempt) !== attempt)
+    return refuse(`run ${runId} is not attempt ${attempt} of a run of ${pr.head.sha}`);
+  const attempts = [];
+  try {
+    for (let earlier = 1; earlier < attempt; earlier += 1) {
+      const jobs = await githubPaged(fetchImpl, env, `/repos/${repository}/actions/runs/${runId}/attempts/${earlier}/jobs`, "jobs");
+      const listed = jobs.filter((job) => job && typeof job === "object");
+      const gates = listed.filter((job) => job.name === INDEPENDENT_GATE_JOB_NAME);
+      const heavy = listed.filter((job) => job.name !== INDEPENDENT_GATE_JOB_NAME);
+      if (listed.length !== jobs.length || gates.length !== 1 || heavy.length === 0)
+        return refuse(`attempt ${earlier} does not list one ${INDEPENDENT_GATE_JOB_NAME} job and its heavy jobs`);
+      if (listed.some((job) => job.head_sha !== pr.head.sha))
+        return refuse(`attempt ${earlier} has a job of another head than ${pr.head.sha}`);
+      const ran = heavy.filter((job) => !(job.status === "completed" && job.conclusion === "skipped"));
+      if (ran.length > 0)
+        return refuse(`attempt ${earlier} already ran ${ran.map((job) => `${String(job.name).slice(0, 80)}: ${job.status}/${job.conclusion ?? "none"}`).join(", ")}; ` +
+          "one commit's required tests run once");
+      const notes = await githubPaged(fetchImpl, env, `/repos/${repository}/check-runs/${gates[0].id}/annotations`);
+      if (!notes.some((note) => note && (
+        (note.title === INDEPENDENT_GATE_JOB_NAME && INDEPENDENT_NOT_ADMITTED_VERDICT.test(String(note.message ?? ""))) ||
+        (note.title === INDEPENDENT_ERROR_ANNOTATION_TITLE && INDEPENDENT_TRANSIENT_API_ERROR.test(String(note.message ?? ""))))))
+        return refuse(`the ${INDEPENDENT_GATE_JOB_NAME} job of attempt ${earlier} did not end in ADMISSION_PENDING or a GitHub API outage`);
+      attempts.push({ attempt: earlier, heavy_jobs: heavy.length });
+    }
+  } catch (error) {
+    return refuse(`the earlier attempts could not be read (${error instanceof Error ? error.message : String(error)})`);
+  }
+  return { allowed: true, attempts };
+}
+
+async function independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, independent, limit, self }) {
   const what = `${INDEPENDENT_ADMISSION_CHECK} of App ${INDEPENDENT_ADMISSION_APP_ID} for #${pr.number} on ${pr.head.sha}`;
   outcome.admission_source = INDEPENDENT_GATE_SOURCE;
   outcome.automation_self_hosted = false;
   const check = independent && independent.check;
+  let repair = null;
   if (check) outcome.admission_run = { id: check.id, status: check.status, conclusion: check.conclusion ?? null,
     html_url: check.html_url ?? null, source: what };
   if (!independent || !independent.settled) {
@@ -2459,9 +2571,9 @@ async function independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, in
   } else if (!pr.base || !pr.base.repo || pr.base.ref !== pr.base.repo.default_branch) {
     outcome.verdict = "REJECTED";
     outcome.reasons.push("the independent CI admits only pull requests into the default branch");
-  } else if (attempt) {
+  } else if (attempt && !(repair = await independentRepairRerun({ fetchImpl, env, pr, attempt, self })).allowed) {
     outcome.verdict = "RERUN_REFUSED";
-    outcome.reasons.push(`run attempt ${attempt}: the independent CI admission names no re-run allowance; push a new commit`);
+    outcome.reasons.push(`run attempt ${attempt}: the independent CI admission allows one repair re-run, only when no earlier attempt ran a heavy job (${repair.reason}); push a new commit`);
   } else if (!await executionEpochCurrent(fetchImpl, env, env.GITHUB_WORKSPACE, {
     repository: env.GITHUB_REPOSITORY, head_sha: pr.head.sha, pr_ref: outcome.pr_ref, target_branch: pr.base.ref,
   })) {
@@ -2470,6 +2582,7 @@ async function independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, in
   } else {
     outcome.verdict = "ADMITTED";
     outcome.admitted = true;
+    if (repair) outcome.repair_rerun = { attempt, earlier_attempts: repair.attempts };
   }
   return outcome;
 }
@@ -2713,6 +2826,8 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   }
 
   const outcome = emptyOutcome(eventName);
+  const retryBudget = { spentMs: 0 };
+  fetchImpl = withGithubReadRetry(fetchImpl, env, { sleep, budget: retryBudget });
   if (eventName === "workflow_dispatch") return dispatchGate({ env, event, fetchImpl, now, outcome });
   if (!PR_EVENTS.has(eventName)) {
     outcome.admitted = true;
@@ -2734,8 +2849,11 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   const maxWait = independentSource ? INDEPENDENT_GATE_WAIT_SECONDS : GATE_WAIT_SECONDS;
   const pollSeconds = independentSource ? INDEPENDENT_GATE_POLL_SECONDS : GATE_POLL_SECONDS;
   const waitSeconds = Number.parseInt(env.CLUED_ADMISSION_GATE_WAIT_SECONDS ?? "", 10);
+  // The independent source may be configured above its default, up to the
+  // ceiling its registered job can hold; the default gate only lowers its wait.
+  const ceiling = independentSource ? INDEPENDENT_GATE_WAIT_CEILING_SECONDS : maxWait;
   const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0
-    ? Math.min(waitSeconds, maxWait) : maxWait;
+    ? Math.min(waitSeconds, ceiling) : maxWait;
   try {
     if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
     const attempt = rerunAttempt(env);
@@ -2763,15 +2881,17 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
       // On a re-run the admission run may itself be running again under its
       // old id, with its previous attempt's check posted: wait for it to end.
       const settled = found.check && found.check.status === "completed" && (!attempt || !found.run || found.run.status === "completed");
-      if (settled || waited >= limit) break;
-      const delay = Math.min(pollSeconds, limit - waited);
+      // The pauses of retried GitHub reads count into the wait.
+      const used = waited + retryBudget.spentMs / 1000;
+      if (settled || used >= limit) break;
+      const delay = Math.min(pollSeconds, limit - used);
       await sleep(delay * 1000);
       waited += delay;
     }
     // The independent source decides unless the clued-admission App's
     // event-bound check (disaster recovery only) settled first.
     if (independentSource && (independent?.settled || !(found.check && found.check.status === "completed")))
-      return await independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, independent, limit });
+      return await independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, independent, limit, self });
     // Merge Admission step 2 (review MINOR-3/4): on a re-run, the newest
     // check for this pull request on this head decides, whichever admission
     // run (or re-verification) posted it: every later check is a later
@@ -3437,6 +3557,7 @@ export function mergeSlotOutputs(outcome) {
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env, fetchImpl = globalThis.fetch, { readPolicyFile = fs.readFileSync } = {}) {
+  fetchImpl = withGithubReadRetry(fetchImpl, env);
   const modeIndex = argv.indexOf("--mode");
   const mode = modeIndex >= 0 ? argv[modeIndex + 1] : "required";
   if (!["required", "gate", "reverify", "dispatch-admit", "app-check", "adopt"].includes(mode)) {
