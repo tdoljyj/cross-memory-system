@@ -191,19 +191,17 @@ export function retryLogEntry({ at, op, attempt, ms, runner }) {
       refused: typeof r.refused === 'string' && /^[A-Z][A-Z0-9_]{1,79}$/.test(r.refused) ? r.refused : null } };
 }
 
-// DESIGN 52 (Decision 98fec682): build-bundle.ps1's refusal answer carries one fixed-text `hint` (a reviewed commit that only a
-// branch keeps alive). The companion answers BUNDLE_UNAVAILABLE as before; the hint reaches the operator only through this log
-// entry. Only that one field is taken, length-capped and character-checked, and the reason only when it is a plain code: nothing
-// else of the script's output is ever logged.
-export const BUNDLE_HINT_MAX = 400;
-const BUNDLE_HINT = /^[A-Za-z0-9 ().,:;\/#_-]+$/;
+// DESIGN 52 (Decision 98fec682): build-bundle.ps1's refusal answer may carry one fixed `hint` (a reviewed commit that only a branch keeps
+// alive). The companion answers BUNDLE_UNAVAILABLE as before; the hint reaches the operator only through this log entry, and only when it
+// equals the fixed text below byte for byte (the same literal is in build-bundle.ps1, Branch-Only-Hint; a test pins both). Any other hint,
+// and every other part of the script's output, is dropped. The reason is logged only when it is a plain code.
+export const BUNDLE_BRANCH_ONLY_HINT = 'The reviewed set contains d94cd486 (and its parent 8ea4da40), which is reachable only from branch claude/gitleaks-midgen-reviewed-hold until PR #991 is merged: if that branch was deleted or rewritten, restore it.';
 export function bundleRefusalLogEntry({ at, op, runner }) {
   if (runner?.code !== 2 || typeof runner.stdout !== 'string' || runner.stdout.length > 65_536) return null;
   let v = null;
   try { v = JSON.parse(runner.stdout); } catch { return null; }
-  const hint = v?.hint;
-  if (typeof hint !== 'string' || hint.length === 0 || hint.length > BUNDLE_HINT_MAX || !BUNDLE_HINT.test(hint)) return null;
-  return { at: new Date(at).toISOString(), kind: 'bundle-refusal', op, reason: typeof v.reason === 'string' && /^[A-Z][A-Z0-9_]{1,79}$/.test(v.reason) ? v.reason : null, hint };
+  if (v?.hint !== BUNDLE_BRANCH_ONLY_HINT) return null;
+  return { at: new Date(at).toISOString(), kind: 'bundle-refusal', op, reason: typeof v.reason === 'string' && /^[A-Z][A-Z0-9_]{1,79}$/.test(v.reason) ? v.reason : null, hint: v.hint };
 }
 
 // DESIGN §33 (the 2026-10-29 first HALT): the path-valued keys of companion.json and which of them point into the installed CI

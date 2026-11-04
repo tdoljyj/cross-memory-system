@@ -3,8 +3,9 @@
 // action with an effect: a worker start is never run twice, a workspace preparation never again, and a failed head stays burned.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { COMPANION_CONFIG_CONTRACT, CHECK_REFS_SECOND_TRY_MAX_MS, Companion, READ_RETRIES, TERMINAL_NOANSWER_CAP_MS, WSPREP_QUIET_WAIT_MS,
-  BUNDLE_HINT_MAX, bundleRefusalLogEntry, retryLogEntry, timedOutGone, validateCompanionConfig } from '../src/companion.mjs';
+  BUNDLE_BRANCH_ONLY_HINT, bundleRefusalLogEntry, retryLogEntry, timedOutGone, validateCompanionConfig } from '../src/companion.mjs';
 import { Mailbox } from '../src/mailbox.mjs';
 import { events, haltHint } from '../src/pr-status.mjs';
 import { TEST_NODE, TEST_NODE_SHA, tempRoot } from './helpers.mjs';
@@ -216,12 +217,21 @@ test('the HALT notice names what to read before the Owner re-arms, for timeout-s
   assert.equal(body('PUBLICATION_UNCERTAIN'), '原因：PUBLICATION_UNCERTAIN。需要 Owner 复位（rearm）后才会继续。', 'other codes read as before');
 });
 
-// DESIGN 52 (Decision 98fec682): the hint of build-bundle.ps1's refusal reaches the operator through the companion log, and only that.
-const HINT = 'The reviewed set contains d94cd486 (and its parent 8ea4da40), which is reachable only from branch claude/gitleaks-midgen-reviewed-hold until PR #991 is merged: if that branch was deleted or rewritten, restore it.';
+// DESIGN 52 (Decision 98fec682): the hint of build-bundle.ps1's refusal reaches the operator through the companion log, and only when it is
+// exactly the fixed text; every other hint is dropped.
+const HINT = BUNDLE_BRANCH_ONLY_HINT;
 const refusal = (extra = {}) => ({ code: 2, stdout: JSON.stringify({ status: 'REFUSED_BEFORE_WRITE', stage: 'fetch-reviewed-commits-by-sha', reason: 'GIT_STEP_FAILED', hint: HINT,
   git: { label: 'fetch-reviewed', exitCode: 128 }, created: ['C:\\secret\\path'], ...extra }), stderr: 'token ghp_x' });
 
-test('a build-bundle refusal with a hint is answered BUNDLE_UNAVAILABLE as before and logs only the reason and the hint', async () => {
+test('the fixed hint is the same text in build-bundle.ps1 and in the companion', () => {
+  const ps = fs.readFileSync(new URL('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/build-bundle.ps1', import.meta.url), 'utf8');
+  const m = /\$branchOnly=@\{'d94cd486e29a7362888fc32cd807ceb38890acb6'='([^']+)'\}/.exec(ps);
+  assert.ok(m, 'the script defines the fixed text for d94cd486');
+  assert.equal(m[1], BUNDLE_BRANCH_ONLY_HINT);
+  assert.match(ps, / return \$branchOnly\[\$hit\[0\]\]\n/, 'the script returns the table text unchanged');
+});
+
+test('a build-bundle refusal with the fixed hint is answered BUNDLE_UNAVAILABLE as before and logs only the reason and that hint', async () => {
   for (const [kind, op] of [['build-bundle', 'build-bundle'], ['rebuild-bundle', 'rebuild-bundle']]) {
     const rg = rig({ script: () => refusal() });
     assert.deepEqual(await rg.c.handle(request(kind)), { ok: false, code: 'BUNDLE_UNAVAILABLE' });
@@ -232,9 +242,12 @@ test('a build-bundle refusal with a hint is answered BUNDLE_UNAVAILABLE as befor
   }
 });
 
-test('a build-bundle refusal without a hint, or with a too long, empty, non-string or unexpected-character hint, logs nothing', async () => {
-  for (const extra of [{ hint: undefined }, { hint: null }, { hint: '' }, { hint: 'x'.repeat(BUNDLE_HINT_MAX + 1) }, { hint: 5 }, { hint: ['a'] },
-    { hint: 'visit https://example.invalid?a=b' }, { hint: 'line one\nline two' }, { hint: 'C:\\Users\\x' }, { hint: '<script>' }]) {
+test('any hint that is not exactly the fixed text is dropped, whatever characters it has; a refusal without one logs nothing', async () => {
+  for (const extra of [{ hint: undefined }, { hint: null }, { hint: '' }, { hint: HINT + ' ' }, { hint: ' ' + HINT }, { hint: HINT.toLowerCase() }, { hint: HINT.slice(0, -1) },
+    { hint: HINT + HINT }, { hint: 5 }, { hint: [HINT] }, { hint: { text: HINT } },
+    { hint: 'C:/Users/x/AppData/token' }, { hint: 'https://github.com/org/repo' }, { hint: 'https://example.invalid/a' },
+    { hint: 'ghp_abcdefghijklmnopqrstuvwxyz0123456789ABCD' }, { hint: 'line one\nline two' }, { hint: 'C:\\Users\\x' }, { hint: '<script>' },
+    { hint: 'The reviewed set contains d94cd486 (and its parent 8ea4da40), which is reachable only from branch other-branch until PR #991 is merged' }]) {
     const rg = rig({ script: () => refusal(extra) });
     assert.deepEqual(await rg.c.handle(request('build-bundle')), { ok: false, code: 'BUNDLE_UNAVAILABLE' });
     assert.deepEqual(rg.logs, [], JSON.stringify(extra).slice(0, 60));
