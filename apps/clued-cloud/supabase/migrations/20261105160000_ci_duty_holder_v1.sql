@@ -571,8 +571,15 @@ begin
     raise exception 'CI_PHASE_PREREQUISITES_UNMET:open_green_in_ledger' using errcode='55000'; end if;
   t:=clock_timestamp();
   select * into l from clued_private.ci_train_lease_v1 where user_id=u and project_id=p for update;
-  v_target:=coalesce(l.holder_binding_id,
-    (select n.binding_id from clued_private.ci_nodes_v1 n where n.user_id=u and n.project_id=p and n.node_id=l.last_holder_node_id));
+  -- The lease's last holder, only while its node is still active or draining in
+  -- this project and is that Binding's node: a node the Owner revoked (which is
+  -- how a lease loses its holder to last_holder_node_id) never receives the role.
+  v_target:=case when l.holder_binding_id is not null then
+      (select n.binding_id from clued_private.ci_nodes_v1 n where n.user_id=u and n.project_id=p and n.node_id=l.holder_node_id
+        and n.binding_id=l.holder_binding_id and n.state in ('active','draining'))
+    else
+      (select n.binding_id from clued_private.ci_nodes_v1 n where n.user_id=u and n.project_id=p and n.node_id=l.last_holder_node_id
+        and n.state in ('active','draining')) end;
   r:=clued_private.ci_receipt_v1(u,p,'ci_phase_4_to_3',p::text,jsonb_build_object('former_holder_binding_id',l.holder_binding_id,
     'former_holder_node_id',l.holder_node_id,'last_holder_node_id',l.last_holder_node_id,'generation',l.generation));
   if l.user_id is not null then

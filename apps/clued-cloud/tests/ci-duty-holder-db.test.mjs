@@ -490,6 +490,23 @@ test('unified scheduling 2A: duty holder, equivalence of every routed entry poin
       }
     });
 
+    await t.test('4 to 3 never hands the role to a node the Owner revoked (Native revoke empties the lease into last_holder_node_id)',async()=>{
+      await phase4WithLease(nodeB,B);await clearRoles();
+      const version=Number((await one('select version from clued_private.ci_nodes_v1 where node_id=$1',[nodeB])).version);
+      const issue=await f.native('clued_ci_node_confirmation_issue_v1',{project_id:project,node_id:nodeB,base_version:version,action:'revoke',accepted_ref:'fixture-owner-revoke'});
+      f.committed(await f.native('clued_ci_node_apply_v1',{confirmation_token:issue.confirmation_token,view_digest:issue.view_digest}));
+      const lease=await one('select state,holder_node_id,last_holder_node_id from clued_private.ci_train_lease_v1 where user_id=$1 and project_id=$2',[user,project]);
+      assert.deepEqual([lease.state,lease.holder_node_id,lease.last_holder_node_id],['silence',null,nodeB]);
+      const was=await snapshot();
+      await assert.rejects(()=>retreat(4),/CI_PHASE_ROLLBACK_NO_LEASE_HOLDER/);
+      assert.deepEqual(await snapshot(),was);
+      // a lease still naming the revoked node (no sweep yet) is refused the same way
+      await admin.query("update clued_private.ci_train_lease_v1 set state='active',holder_node_id=$2,holder_binding_id=$3,expires_at=clock_timestamp()+interval '5 minutes' where user_id=$1",[user,nodeB,B]);
+      await assert.rejects(()=>retreat(4),/CI_PHASE_ROLLBACK_NO_LEASE_HOLDER/);
+      await admin.query("update clued_private.ci_train_lease_v1 set state='silence',holder_node_id=null,holder_binding_id=null where user_id=$1",[user]);
+      assert.equal((await q("select 1 from clued_private.binding_roles_v1 where user_id=$1 and binding_id=$2 and role='ci-admission' and revoked_at is null",[user,B])).length,0);
+    });
+
     await t.test('two CI projects (run last: pool policy rows are permanent): at phase <= 3 every rewrite still equals its old text; one project at 4 closes the unresolved account',async()=>{
       await f.modelMode(3);await setLease(null,null,'unheld');
       f.committed(await f.pool(f.project2,23456));
