@@ -39,9 +39,12 @@ export function safeGitArguments(args, c) {
   while (rest[0] === '-c') {
     check(/^(user\.(name|email)|commit\.gpgsign)=/.test(rest[1] ?? ''), 'SELF_TEST_GIT_OPTION_REFUSED'); rest.splice(0, 2);
   }
-  const historicalDiff = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--diff-algorithm=myers', '--unified=0',
-    'cc353e29a32b991696df95d5fc3f9b9d107e8d1c^', 'cc353e29a32b991696df95d5fc3f9b9d107e8d1c', '--', 'scripts/ci/clued-gated-proof-profiles.json'];
-  const exactHistoricalDiff = canonical(args) === canonical(historicalDiff);
+  // The two exact historical one-commit catalog diffs the pinned helper reads: cc353e29 and, by Owner Decision
+  // 98fec682, its registration twin d94cd486. No other revision pair is admitted.
+  const historicalDiff = commit => ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--diff-algorithm=myers', '--unified=0',
+    `${commit}^`, commit, '--', 'scripts/ci/clued-gated-proof-profiles.json'];
+  const exactHistoricalDiff = ['cc353e29a32b991696df95d5fc3f9b9d107e8d1c', 'd94cd486e29a7362888fc32cd807ceb38890acb6']
+    .some(commit => canonical(args) === canonical(historicalDiff(commit)));
   check(exactHistoricalDiff || ['init', 'add', 'commit', 'rev-parse', 'cat-file', 'merge-base', 'commit-tree'].includes(rest[0]), 'SELF_TEST_GIT_COMMAND_REFUSED');
   return ['--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/nonexistent-clued-hooks', '-c', 'protocol.allow=never',
     '-c', `init.templateDir=${c.templates}`, ...args];
