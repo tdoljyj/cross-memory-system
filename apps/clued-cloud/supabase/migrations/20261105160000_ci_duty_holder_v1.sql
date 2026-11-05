@@ -24,7 +24,7 @@
 -- one-transaction moves ci_phase_3_to_4_v1 / ci_phase_4_to_3_v1 exist. Nothing
 -- in the repository or in any Native/Worker wrapper calls the two moves, and
 -- the forward move refuses while ci_phase_external_prerequisites_v1 reports any
--- outstanding item (eight are listed there). No pool policy is above phase 1
+-- outstanding item (nine are listed there). No pool policy is above phase 1
 -- today, and nothing here raises a phase, so applying this migration to
 -- production changes no behaviour.
 --
@@ -34,8 +34,10 @@
 -- never leases kind=maintenance), the dedicated train-maintenance claim (T4),
 -- admission metering de-duplication across publishers, the single sweep
 -- watermark source of DESIGN 5.2, the 2B green mirror, the 4E resident phase
--- routing, the reconciliation days (Q2), G2/G4..G8/G10, the phase 1->2->3
--- moves, and any wrapper or page for the moves.
+-- routing, the route that replaces the hosted admission workflow's run-based
+-- publication (scripts/ci/clued-work-admission.mjs) from phase 4, the
+-- reconciliation days (Q2), G2/G4..G8/G10, the phase 1->2->3 moves, and any
+-- wrapper or page for the moves.
 --
 -- Deviation from DESIGN 5.1 class F, recorded here: the primitive
 -- binding_role_admits_v1(..,'ci-admission') is called by ci_duty_admits_v1 (the
@@ -57,14 +59,16 @@ end $ci_duty_guard_before$;
 -- Phase and project readers. Read only: no lock, no row created (ci_policy_v1
 -- locks and inserts, which a predicate in a hot path must not do).
 
--- policy.phase read the way Stage 1 reads it ((policy->>'phase')::integer).
--- Absent: 1, as every Stage 1 writer sets it. Unreadable: the largest integer,
--- so that the reader takes the phase-4 branch, which admits only a lease holder
--- or an approved publisher node, never the legacy role.
+-- policy.phase of a pool_policy row, parsed as Stage 1 parses it
+-- ((policy->>'phase')::integer). Every Stage 1 writer sets the key; a row
+-- without it, or with a value that does not parse, yields the largest integer,
+-- so that the reader takes the closed phase-4 branch (a lease holder or an
+-- approved publisher node, never the legacy role). An account or project
+-- without any pool_policy row does not come here: it is phase 1.
 create function clued_private.ci_duty_phase_value_v1(policy jsonb) returns integer
 language plpgsql immutable set search_path='' as $$
 begin
-  return coalesce((policy->>'phase')::integer,1);
+  return coalesce((policy->>'phase')::integer,2147483647);
 exception when others then
   return 2147483647;
 end $$;
@@ -99,14 +103,18 @@ language sql stable security definer set search_path='' as $$
   from clued_private.ci_quota_counters_v1 x where x.user_id=u and x.row_kind='pool_policy'
 $$;
 
--- Pool apply (Stage 1 ci_apply_v1) rewrites the whole policy with phase 1. Only
--- the phase moves may change the phase: from phase 2 on, an apply keeps the
--- stored phase, mode and signature gateway flag (used by the rewrite below).
+-- Pool apply (Stage 1 ci_apply_v1) rewrites the whole policy with phase 1 and
+-- mode prepared. Only the phase moves may change the phase: from phase 2 on, an
+-- apply keeps the stored phase, mode, status and signature gateway flag (used by
+-- the rewrite below). A missing mode stays 'prepared' and a missing flag false,
+-- never JSON null: Stage 1 compares policy->>'mode'='prepared' without coalesce.
 create function clued_private.ci_duty_policy_keep_v1(policy jsonb) returns jsonb
 language sql immutable set search_path='' as $$
   select case when clued_private.ci_duty_phase_value_v1(policy)>=2
-    then jsonb_build_object('phase',policy->'phase','mode',policy->'mode',
-      'signature_gateway_active',coalesce(policy->'signature_gateway_active','false'::jsonb))
+    then jsonb_strip_nulls(jsonb_build_object('phase',policy->'phase',
+      'mode',coalesce(nullif(policy->'mode','null'::jsonb),'"prepared"'::jsonb),
+      'status',nullif(policy->'status','null'::jsonb),
+      'signature_gateway_active',coalesce(nullif(policy->'signature_gateway_active','null'::jsonb),'false'::jsonb)))
     else '{}'::jsonb end
 $$;
 
@@ -279,7 +287,9 @@ $r$not clued_private.ci_duty_admits_v1(b.user_id,b.id,'duty_role')$r$);
 -- DESIGN N1, door path: from phase 4 every publication goes through the Stage 1
 -- reservation path. The door's run-based publication_begin does not name its
 -- check, so it is refused as a whole from phase 4 (abort, reconcile and finish
--- of publications already open stay available).
+-- of publications already open stay available). Its caller today is the hosted
+-- admission workflow (scripts/ci/clued-work-admission.mjs); the route that
+-- replaces it is an outstanding item of the forward move.
 select clued_private.ci_duty_patch_v1('clued_private.work_claim_ci_command_v1(text,jsonb)',
 $a$  if op='publication_begin' then
 $a$,
@@ -452,7 +462,7 @@ create function clued_private.ci_phase_external_prerequisites_v1(u uuid,p uuid) 
 language sql stable security definer set search_path='' as $$
   select array['green_mirror_2b','admission_issue_fact_g9','resident_phase_routing_4e','reconciliation_days_q2',
     'maintenance_never_leased_g1','dedicated_maintenance_claim_t4','admission_meter_dedup_phase4',
-    'sweep_watermark_single_source']::text[]
+    'sweep_watermark_single_source','hosted_admission_publication_route']::text[]
 $$;
 
 -- Greens the server knows to be open: any ledger row not finished.
@@ -533,18 +543,23 @@ end $$;
 --     20 minutes) on an active, publisher-approved, qualified node;
 --   holder_is_former_lease_holder: it is not, but it is the lease's last holder
 --     anyway, so there is nobody better to hand to;
---   handed_over: the role goes to the lease's last holder (the holder, or after a
---     node revoke the Binding of last_holder_node_id) by the existing handover
---     core; it starts after five minutes, nobody is on duty meanwhile (fails
---     closed). A parking row of that Binding is revoked first in the same
---     transaction, because the core refuses a target that holds the role.
--- Every other case raises and the whole move rolls back (still phase 4):
--- no single resident holder, no last lease holder to hand to, or a refusal by
--- the handover core (for example a target that is not live).
+--   handed_over: the role goes from the single resident holder to the lease's
+--     last holder (the holder, or after a node revoke the Binding of
+--     last_holder_node_id) by the existing handover core;
+--   granted: there is no resident holder at all (the rows were revoked during
+--     phase 4); the lease's last holder is granted the role directly, under the
+--     same target rules as the handover core (live, context:read, not a heartbeat
+--     connection, holding neither ci-admission nor resident-upgrade).
+--   In both, the role starts after five minutes (binding_role_start_v1), nobody
+--   is on duty meanwhile (fails closed), and a parking row of the target is
+--   revoked first in the same transaction, under its own role receipt.
+-- Every other case raises and the whole move rolls back (still phase 4): two or
+-- more resident holders, no last lease holder to hand to, or a refused target.
 create function clued_private.ci_phase_4_to_3_v1(u uuid,p uuid,p_expected_phase integer,p_green_settled_by_readback boolean default false) returns jsonb
 language plpgsql volatile security definer set search_path='' as $$
 declare q clued_private.ci_quota_counters_v1; l clued_private.ci_train_lease_v1; t timestamptz; r uuid;
   d record; keep boolean:=false; v_handover jsonb; v_holders uuid[]; v_target uuid; v_outcome text;
+  tb public.clued_agent_bindings%rowtype; v_role_receipt uuid; v_start timestamptz;
 begin
   perform clued_private.work_claim_lock(u);
   perform pg_advisory_xact_lock(hashtextextended('clued-binding-role:'||u::text||':ci-admission',0));
@@ -569,7 +584,8 @@ begin
     where user_id=u and project_id=p and row_kind='pool_policy';
   select * into d from clued_private.ci_duty_holder_v1(u,p);
   if d.binding_id is not null and d.node_id is not null then
-    keep:=exists(select 1 from clued_private.ci_node_liveness_v1 x where x.node_id=d.node_id and x.last_heartbeat_at>t-interval '20 minutes')
+    keep:=exists(select 1 from public.clued_agent_bindings x where x.id=d.binding_id and x.user_id=u and clued_private.binding_live_v1(x))
+      and exists(select 1 from clued_private.ci_node_liveness_v1 x where x.node_id=d.node_id and x.last_heartbeat_at>t-interval '20 minutes')
       and exists(select 1 from clued_private.ci_nodes_v1 n where n.node_id=d.node_id and n.state='active' and n.publisher_approved
         and n.qualification_status='verified' and n.qualification_expires_at>t and n.eligible_until>t);
   end if;
@@ -577,17 +593,47 @@ begin
   else
     select array_agg(x.binding_id) into v_holders from clued_private.binding_roles_v1 x
       where x.user_id=u and x.role='ci-admission' and x.revoked_at is null and x.purpose in ('resident-node','unspecified');
-    if v_holders is null or cardinality(v_holders)<>1 then
+    if v_holders is not null and cardinality(v_holders)>1 then
       raise exception 'CI_PHASE_ROLLBACK_NO_SINGLE_HOLDER' using errcode='55000'; end if;
     if v_target is null then
       raise exception 'CI_PHASE_ROLLBACK_NO_LEASE_HOLDER' using errcode='55000'; end if;
-    if v_holders[1]=v_target then v_outcome:='holder_is_former_lease_holder';
+    if v_holders is not null and v_holders[1]=v_target then v_outcome:='holder_is_former_lease_holder';
     else
-      update clued_private.binding_roles_v1 set revoked_at=t,revoked_receipt_id=r
-        where user_id=u and binding_id=v_target and role='ci-admission' and purpose='parking' and revoked_at is null;
-      v_handover:=clued_private.binding_role_handover_core_v1(u,v_holders[1],v_target,null,
-        jsonb_build_object('receipt_kind','CI_ADMISSION_PHASE_ROLLBACK_HANDOVER','principal','ci_phase_4_to_3','phase_receipt_id',r));
-      v_outcome:='handed_over';
+      -- A parking row of the target is revoked under its own role receipt.
+      if exists(select 1 from clued_private.binding_roles_v1 x where x.user_id=u and x.binding_id=v_target
+          and x.role='ci-admission' and x.purpose='parking' and x.revoked_at is null) then
+        insert into public.clued_audit_receipts(user_id,binding_id,context_key,operation,object_type,object_id,version,metadata)
+        values(u,null,'global','binding_role_revoke','binding_role',v_target::text||':ci-admission',1,
+          jsonb_build_object('receipt_kind','CI_ADMISSION_PHASE_ROLLBACK_PARKING_REVOKED','principal','ci_phase_4_to_3',
+            'binding_id',v_target,'role','ci-admission','purpose','parking','phase_receipt_id',r))
+        returning id into v_role_receipt;
+        update clued_private.binding_roles_v1 set revoked_at=t,revoked_receipt_id=v_role_receipt
+          where user_id=u and binding_id=v_target and role='ci-admission' and purpose='parking' and revoked_at is null;
+      end if;
+      if v_holders is not null then
+        v_handover:=clued_private.binding_role_handover_core_v1(u,v_holders[1],v_target,null,
+          jsonb_build_object('receipt_kind','CI_ADMISSION_PHASE_ROLLBACK_HANDOVER','principal','ci_phase_4_to_3','phase_receipt_id',r));
+        v_outcome:='handed_over';
+      else
+        -- No resident holder at all: grant the role to the target, under the
+        -- handover core's target rules and its five-minute start.
+        select * into tb from public.clued_agent_bindings x where x.id=v_target and x.user_id=u for update;
+        if tb.id is null or not clued_private.binding_live_v1(tb) or not ('context:read'=any(tb.scopes))
+            or exists(select 1 from clued_private.ci_node_heartbeat_link_v1 k where k.heartbeat_binding_id=tb.id and k.revoked_at is null)
+            or exists(select 1 from clued_private.binding_roles_v1 x where x.binding_id=tb.id
+              and x.role in ('ci-admission','resident-upgrade') and x.revoked_at is null) then
+          raise exception 'CI_PHASE_ROLLBACK_TARGET_INVALID' using errcode='55000'; end if;
+        v_start:=clued_private.binding_role_start_v1('ci-admission','resident-node',t);
+        insert into public.clued_audit_receipts(user_id,binding_id,context_key,operation,object_type,object_id,version,metadata)
+        values(u,null,'global','binding_role_grant','binding_role',tb.id::text||':ci-admission',1,
+          jsonb_build_object('receipt_kind','CI_ADMISSION_PHASE_ROLLBACK_GRANTED','principal','ci_phase_4_to_3',
+            'role','ci-admission','to_binding_id',tb.id,'purpose','resident-node','effective_at',v_start,'phase_receipt_id',r))
+        returning id into v_role_receipt;
+        insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id,effective_at,purpose)
+        values(u,tb.id,'ci-admission',t,v_role_receipt,v_start,'resident-node');
+        v_handover:=jsonb_build_object('receipt_id',v_role_receipt,'at',t,'effective_at',v_start,'from_binding_id',null,'to_binding_id',tb.id);
+        v_outcome:='granted';
+      end if;
     end if;
   end if;
   return jsonb_build_object('phase',3,'receipt_id',r,'outcome',v_outcome,'role_holder_kept',keep,'handover',v_handover);

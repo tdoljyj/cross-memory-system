@@ -40,6 +40,10 @@ async function anchorPairs(){
     if(!/^(not )?(exists\(|clued_private\.)/.test(before))continue;   // statements, not yes/no expressions
     pairs.push({sig,before:bind(before),after:bind(after)});
   }
+  // merge_slot_admits_v1 was replaced whole (touch, adopt, return, queue join, lease extend call it): old body
+  // against the wrapper, which asks ci_duty_admits_v1 in mode duty_merge_slot.
+  pairs.push({sig:'clued_private.merge_slot_admits_v1(public.clued_agent_bindings)',before:oldMergeSlot,
+    after:'clued_private.merge_slot_admits_v1((select x from public.clued_agent_bindings x where x.id=$2::uuid))'});
   return pairs;
 }
 
@@ -108,12 +112,12 @@ test('unified scheduling 2A: duty holder, equivalence of every routed entry poin
       }
       assert.equal((await one('select clued_private.ci_scan_start_native_source_current_v1() v')).v,true);
       // every expression rewrite of the migration is in the equivalence matrix below
-      assert.equal(pairs.length,18,JSON.stringify(pairs.map(p=>p.sig)));
+      assert.equal(pairs.length,19,JSON.stringify(pairs.map(p=>p.sig)));
     });
 
-    await t.test('phase value is read like Stage 1; absent is 1, unreadable takes the closed phase-4 branch',async()=>{
+    await t.test('phase value is parsed like Stage 1; a missing or unreadable phase takes the closed phase-4 branch',async()=>{
       const v=async policy=>(await one('select clued_private.ci_duty_phase_value_v1($1::jsonb) v',[JSON.stringify(policy)])).v;
-      assert.equal(await v({}),1);assert.equal(await v({phase:3}),3);assert.equal(await v({phase:' 4'}),4);assert.equal(await v({phase:'100'}),100);
+      assert.equal(await v({}),2147483647);assert.equal(await v({phase:3}),3);assert.equal(await v({phase:' 4'}),4);assert.equal(await v({phase:'100'}),100);
       assert.equal(await v({phase:'x'}),2147483647);assert.equal(await v({phase:'3.5'}),2147483647);
     });
 
@@ -279,13 +283,23 @@ test('unified scheduling 2A: duty holder, equivalence of every routed entry poin
       assert.equal((await probe(A)).reason,undefined);assert.equal((await probe(B)).reason,'admission_binding_required');
     });
 
-    await t.test('pool apply keeps phase, mode and gateway flag from phase 2 on (only the moves change the phase)',async()=>{
+    await t.test('pool apply keeps phase, mode, status and gateway flag from phase 2 on; a missing mode stays prepared, never null',async()=>{
+      const policy=async()=>(await one("select policy from clued_private.ci_quota_counters_v1 where user_id=$1 and project_id=$2 and row_kind='pool_policy'",[user,project])).policy;
       await f.modelMode(4);
-      const before=(await one("select policy from clued_private.ci_quota_counters_v1 where user_id=$1 and project_id=$2 and row_kind='pool_policy'",[user,project])).policy;
+      await admin.query("update clued_private.ci_quota_counters_v1 set policy=policy||'{\"signature_gateway_active\":true}'::jsonb where user_id=$1 and project_id=$2 and row_kind='pool_policy'",[user,project]);
+      const before=await policy();
       f.committed(await f.pool());
-      const after=(await one("select policy from clued_private.ci_quota_counters_v1 where user_id=$1 and project_id=$2 and row_kind='pool_policy'",[user,project])).policy;
-      assert.deepEqual([after.phase,after.mode,after.signature_gateway_active],[before.phase,before.mode,false]);
+      let after=await policy();
+      assert.deepEqual([after.phase,after.mode,after.status,after.signature_gateway_active],[before.phase,before.mode,before.status,true]);
       assert.equal((await duty()).length,1,'the lease stays the source of duty');
+      // phase 2 without a mode key: the apply writes mode 'prepared' (Stage 1 compares mode='prepared' without coalesce)
+      await admin.query("update clued_private.ci_quota_counters_v1 set policy=(policy-'mode'-'signature_gateway_active')||'{\"phase\":2}'::jsonb where user_id=$1 and project_id=$2 and row_kind='pool_policy'",[user,project]);
+      f.committed(await f.pool());
+      after=await policy();
+      assert.deepEqual([after.phase,after.mode,after.signature_gateway_active],[2,'prepared',false]);
+      // phase 1 is unchanged Stage 1 behaviour: the apply writes phase 1, mode prepared
+      await f.modelMode(1);f.committed(await f.pool());after=await policy();
+      assert.deepEqual([after.phase,after.mode],[1,'prepared']);
     });
 
     await t.test('mode names are validated',async()=>{
@@ -333,7 +347,7 @@ test('unified scheduling 2A: duty holder, equivalence of every routed entry poin
       const request=await maintenanceRequest();
       await refuse(request,/CI_PHASE_CAS_MISMATCH/,4);
       // as shipped: exactly the eight external items are outstanding
-      await refuse(request,/CI_PHASE_PREREQUISITES_UNMET:green_mirror_2b,admission_issue_fact_g9,resident_phase_routing_4e,reconciliation_days_q2,maintenance_never_leased_g1,dedicated_maintenance_claim_t4,admission_meter_dedup_phase4,sweep_watermark_single_source$/);
+      await refuse(request,/CI_PHASE_PREREQUISITES_UNMET:green_mirror_2b,admission_issue_fact_g9,resident_phase_routing_4e,reconciliation_days_q2,maintenance_never_leased_g1,dedicated_maintenance_claim_t4,admission_meter_dedup_phase4,sweep_watermark_single_source,hosted_admission_publication_route$/);
       await openExternal();   // test-only: declare the external items shipped; the table-backed checks are real
       await clearRoles();await refuse(request,/holder_not_single_started_node/);
       await grant(A);await grant(B);await refuse(request,/holder_not_single_started_node/);
@@ -434,7 +448,23 @@ test('unified scheduling 2A: duty holder, equivalence of every routed entry poin
       // no last lease holder to hand to
       await admin.query("update clued_private.ci_train_lease_v1 set holder_node_id=null,holder_binding_id=null,last_holder_node_id=null where user_id=$1",[user]);
       await refuse(/CI_PHASE_ROLLBACK_NO_LEASE_HOLDER/);
+      // no resident holder at all: the last lease holder is granted the role (five-minute start), its parking row revoked first
+      await admin.query("update clued_private.ci_train_lease_v1 set holder_node_id=$2,holder_binding_id=$3 where user_id=$1",[user,nodeB,B]);
+      await clearRoles();await grant(B,'parking');
+      const was=await snapshot();
+      await admin.query('update public.clued_agent_bindings set revoked_at=clock_timestamp() where id=$1',[B]);
+      await assert.rejects(()=>retreat(4),/CI_PHASE_ROLLBACK_TARGET_INVALID/);assert.deepEqual(await snapshot(),was);
+      await admin.query('update public.clued_agent_bindings set revoked_at=null where id=$1',[B]);
+      const granted=(await retreat(4)).v;
+      assert.deepEqual([granted.outcome,granted.handover.to_binding_id,granted.handover.from_binding_id],['granted',B,null]);
+      const live=(await snapshot()).roles.filter(r=>r.live);
+      assert.deepEqual(live.map(r=>[r.binding_id,r.purpose]),[[B,'resident-node']]);
+      assert.equal((await duty()).length,0,'the grant starts after five minutes');
+      const kinds=(await q(`select r.metadata->>'receipt_kind' k from clued_private.binding_roles_v1 x join public.clued_audit_receipts r on r.id in (x.granted_receipt_id,x.revoked_receipt_id)
+        where x.user_id=$1 and x.binding_id=$2 and x.role='ci-admission' order by 1`,[user,B])).map(r=>r.k);
+      assert.ok(kinds.includes('CI_ADMISSION_PHASE_ROLLBACK_GRANTED')&&kinds.includes('CI_ADMISSION_PHASE_ROLLBACK_PARKING_REVOKED'),JSON.stringify(kinds));
       // the dead holder was the lease holder itself: nobody better, it stays
+      await phase4WithLease(nodeB,B);
       await admin.query("update clued_private.ci_train_lease_v1 set holder_node_id=$2,holder_binding_id=$3 where user_id=$1",[user,nodeA,A]);
       assert.equal((await retreat(4)).v.outcome,'holder_is_former_lease_holder');
     });
