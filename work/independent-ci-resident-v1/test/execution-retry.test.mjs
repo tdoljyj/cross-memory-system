@@ -350,5 +350,7 @@ test('the first local Linux stage (gitleaks and trivy relayed to hosted): its ru
   f.companion.hostedHint = async s => Buffer.from(JSON.stringify(hintFor({ gitleaks: { state: 'SUCCESS' }, trivy: { state: 'SUCCESS' } }, { pr: s.pr, head: s.headSha, at: f.clock() })));
   const r = await f.exec.tick();
   assert.equal(r.state, 'COMPLETED', JSON.stringify(r));
-  assert.deepEqual(engine.opts.filter(o => o[0] === 6).map(o => o[1]), [{ betweenRoles: false, firstLinux: true }, { betweenRoles: false, firstLinux: true, again: 1 }]);
+  const opts6 = engine.opts.filter(o => o[0] === 6).map(o => o[1]);
+  assert.ok(opts6.every(o => typeof o.stillAllowed === 'function'), "the refs gate's waits ask the executor (DESIGN 55)");
+  assert.deepEqual(opts6.map(({ stillAllowed, ...o }) => o), [{ betweenRoles: false, firstLinux: true }, { betweenRoles: false, firstLinux: true, again: 1 }]);
 });

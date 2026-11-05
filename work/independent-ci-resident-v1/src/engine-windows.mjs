@@ -248,6 +248,11 @@ export function windowsArchiveCode(r, v) {
   return 'WINDOWS_ARCHIVE_UNCONFIRMED';
 }
 
+// Generation 11 (DESIGN 55): the waits before the refs gate is asked again after an answer that says only that the line gave none
+// (REMOTE_REFS_NO_ANSWER, companion.mjs). Nothing of the stage has run; an Owner abort ends the wait at once (gateSleep), and after each
+// wait the executor's own check (runStage opts.stillAllowed: no HALT, no drift, the authority still holds) must pass.
+export const REFS_GATE_RETRY_MS = Object.freeze([60_000, 300_000]);
+
 export class WindowsEngine {
   // ports: { run (Runner.run), busy() (Runner.busy), companionMailbox, sleep, clock,
   //          paths: { sourceRoot, workRoot, outboxRoot, nodeExe, powershellExe, scExe },
@@ -688,13 +693,33 @@ export class WindowsEngine {
     // Lesson b29: no push between the bundle and the first scanner stage. A moved ref is a clean,
     // transient refusal before anything ran (eligible for the automatic attempt 2).
     if (firstLinux) {
-      const refs = await this.companionMailbox.await(await this.companionMailbox.send('check-refs', { batchId: batch.batchId }, CHECK_REFS_REQUEST_MS), this.sleep);
+      const askRefs = async () => this.companionMailbox.await(await this.companionMailbox.send('check-refs', { batchId: batch.batchId }, CHECK_REFS_REQUEST_MS), this.sleep);
+      let refs = await askRefs();
+      // What the gate did (DESIGN 55), carried with the stage's result for its receipt: how often it asked, and why it stopped asking
+      // before the line answered (the executor's check: halt, drift, authority), never both a refusal and the line.
+      const gate = { asks: 1, waitRefused: null };
+      const aborted = async () => ({ ok: false, code: 'OWNER_ABORT_REQUESTED', proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() }, refsGate: gate });
+      for (let again = 0; again < REFS_GATE_RETRY_MS.length && refs?.ok !== true && refs?.code === 'REMOTE_REFS_NO_ANSWER'; again++) {
+        if (this.stopRequested(batch, stage.number)) return aborted();
+        await this.gateSleep(REFS_GATE_RETRY_MS[again]);
+        if (this.stopRequested(batch, stage.number)) return aborted();
+        if (typeof opts?.stillAllowed === 'function') {
+          let verdict;
+          try { verdict = await opts.stillAllowed(); } catch { verdict = 'error'; }
+          if (verdict !== true) { gate.waitRefused = typeof verdict === 'string' && /^[a-z-]{1,20}$/.test(verdict) ? verdict : 'refused'; break; }
+        }
+        refs = await askRefs();
+        gate.asks += 1;
+      }
       if (refs?.ok !== true) {
         // Only an explicit "refs moved" answer is the transient REMOTE_REFS_CHANGED_SINCE_BUNDLE; no answer or
         // anything else is REFS_GATE_UNCONFIRMED, clean but final: never an attempt-2 code (PR-A review MINOR 5).
         const code = refs?.code === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'REFS_GATE_UNCONFIRMED';
-        return { ok: false, code, proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() } };
+        // Generation 11 (MINOR-9): the line and nothing else is told to the breaker as a network ending (classify.mjs#networkFailure).
+        return { ok: false, code, proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() }, refsGate: gate,
+          ...(refs?.code === 'REMOTE_REFS_NO_ANSWER' && gate.waitRefused === null ? { refsNoAnswer: true } : {}) };
       }
+      if (gate.asks > 1) return { ...(await this.invoke(batch, again ? { ...stage, again } : stage, row)), refsGate: gate };
     }
     return this.invoke(batch, again ? { ...stage, again } : stage, row);
   }

@@ -24,6 +24,7 @@ import { revocationQualification } from './revocation-run.mjs';
 import { ALL_STAGE_CODES } from './stage-fact.mjs';
 import { withReadRetry } from '../read-retry.mjs';
 import { createIndependentScanStartPort } from '../scan-start-v1/native-port.mjs';
+import { HOLDERS_RPC } from '../independent-control-checks-v2/merge-slot-native.mjs';
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
@@ -104,11 +105,29 @@ export async function controllerPrincipal(record) {
 }
 
 // readRetry: options of read-retry.mjs#withReadRetry (tests inject sleep and a smaller budget). Reads of GitHub (GET) are
-// repeated on a 5xx or a network failure with exponential backoff inside the stage's own live() deadline; writes and the Native
-// RPCs (POST) are never repeated.
+// repeated on a 5xx or a network failure with exponential backoff inside the stage's own live() deadline; writes are never repeated.
+// Generation 11 (resident DESIGN 55): the Native verify RPC is a read only as the server's own ordinary observation (no action, no
+// pr_ref, ci_dispatch absent or false: migration 20261017215600, native.current's claim verification) or with one of
+// NATIVE_READ_ACTIONS (lists); it is then repeated like a GitHub read. The admission evaluator's verify carries pr_ref (it binds the
+// PR and records an execution admission: a write) and every other action (publication begin/finish/abort/reconcile, scan start, the
+// legacy drain) is never repeated. A retried native.current still has to answer within its own 30 s round trip (clock-skew.mjs,
+// measured from the first send): a retry that ends later is refused as before, on the safe side.
+// The merge-slot holders RPC (holders and the role probe) is a read as well.
+export const NATIVE_READ_ACTIONS = Object.freeze(['revocations_list', 'independent_revocation_heads']);
+export function nativeReadPost(supabaseUrl) {
+  const base = `${String(supabaseUrl).replace(/\/+$/, '')}/rest/v1/rpc/`, rpc = `${base}clued_work_verify_v1`, holders = `${base}${HOLDERS_RPC}`;
+  return (url, opts) => {
+    if (url === holders) return true;
+    if (url !== rpc || typeof opts?.body !== 'string') return false;
+    const input = JSON.parse(opts.body)?.p_input;
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+    if (Object.hasOwn(input, 'action')) return NATIVE_READ_ACTIONS.includes(input.action);
+    return !Object.hasOwn(input, 'pr_ref') && (!Object.hasOwn(input, 'ci_dispatch') || input.ci_dispatch === false);
+  };
+}
 export function controllerPorts({ record, appKey, nativeToken, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now(), baseFetch = globalThis.fetch, readRetry = {} }) {
   const singleFetch = (url, opts = {}) => { live(); return baseFetch(url, { ...opts, signal: signal ? AbortSignal.any([signal, opts.signal ?? AbortSignal.timeout(30000)]) : (opts.signal ?? AbortSignal.timeout(30000)) }); };
-  const fetchImpl = withReadRetry(singleFetch, { live, deadlineAt: () => live.deadlineAt ?? null, resetOn: (url, opts) => String(opts?.method ?? 'GET').toUpperCase() !== 'GET' && /\/check-runs(?:[/?]|$)/.test(String(url)), onRetry: r => { try { log('github_read_retry', r); } catch { /* best-effort */ } }, ...readRetry });
+  const fetchImpl = withReadRetry(singleFetch, { live, deadlineAt: () => live.deadlineAt ?? null, resetOn: (url, opts) => String(opts?.method ?? 'GET').toUpperCase() !== 'GET' && /\/check-runs(?:[/?]|$)/.test(String(url)), readPost: nativeReadPost(record.config.supabaseUrl), onRetry: r => { try { log(r.post ? 'native_read_retry' : 'github_read_retry', r); } catch { /* best-effort */ } }, ...readRetry });
   const github = createGitHubChecksPort({ repository: record.config.repository, repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId,
     installationId: FIXED_APP.installationId, includeModeRead: true, privateKeyProvider: async () => appKey, fetchImpl });
   const admission = createFullAdmissionPortV2({ protectedConfig: { ...record.config, domain: 'production', workspace: sourceRoot, policyText }, fetchImpl,

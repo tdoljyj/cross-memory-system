@@ -501,13 +501,19 @@ export class Companion {
       // Source v2 S9 / lesson b29: before the first scanner stage, the refs must still be the bundle's.
       case 'check-refs': {
         // §44: the gate is one read-only ls-remote (networkWrite false). Only a definite answer (unchanged, or changed) ends it; a read
-        // that got none (git's low-speed limit, a refused proxy, a timeout) is asked once more, when the first did not take long. Two
-        // reads without an answer are REMOTE_REFS_UNAVAILABLE as before (the engine then burns the head: REFS_GATE_UNCONFIRMED).
-        let v = null, r = null, room = 5 * 60_000;
+        // that got none (git's low-speed limit, a refused proxy, a timeout) is asked once more, when the first did not take long. Reads
+        // without an answer end as REMOTE_REFS_NO_ANSWER or REMOTE_REFS_UNAVAILABLE (generation 11, below).
+        // Generation 11 (DESIGN 55): REMOTE_REFS_NO_ANSWER only when every read was the line and nothing else: ls-remote failed in git
+        // (GIT_STEP_FAILED, ls-remote-check) or the read ran out of time with no verdict, its tree gone ('zero', never 'unconfirmed'). Any
+        // other refusal of the script (a descriptor, a generation) stays REMOTE_REFS_UNAVAILABLE, which the engine never asks again.
+        let v = null, r = null, room = 5 * 60_000, line = true;
         for (let attempt = 1; attempt <= 2; attempt += 1) {
           const began = this.clock();
           r = await this.run(this.a.checkRefs(request.batchId), { timeoutMs: room });
           v = json(r.stdout);
+          const gitLine = v?.reason === 'GIT_STEP_FAILED' && v?.git?.label === 'ls-remote-check';
+          const silent = !v?.status && !v?.reason && r.timedOut === true && r.tree === 'zero' && !r.refused;
+          if (r.tree === 'unconfirmed' || !(gitLine || silent)) line = false;
           if ((r.code === 0 && v?.status === 'REMOTE_REFS_UNCHANGED') || v?.status === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE') break;
           if (r.tree === 'unconfirmed' || this.clock() - began > CHECK_REFS_SECOND_TRY_MAX_MS) break;
           // §46: the second try gets what is left of the request's deadline (CHECK_REFS_REQUEST_MS makes room for a full one), and
@@ -517,7 +523,8 @@ export class Companion {
           await this.noteRetry('check-refs', attempt, this.clock() - began, r);
         }
         if (r.code === 0 && v?.status === 'REMOTE_REFS_UNCHANGED') return { ok: true, code: null };
-        return { ok: false, code: v?.status === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'REMOTE_REFS_UNAVAILABLE' };
+        if (v?.status === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE') return { ok: false, code: 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' };
+        return { ok: false, code: line ? 'REMOTE_REFS_NO_ANSWER' : 'REMOTE_REFS_UNAVAILABLE' };
       }
       case 'archive-usage': {
         const r = await this.run(this.a.archiveUsage(), { timeoutMs: 2 * 60_000 });

@@ -21,7 +21,8 @@ import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.m
 import { recordBatchClaim, readBatchClaim } from '../src/batch-claim-v2.mjs';
 import { withReadRetry, READ_RETRY_DELAYS_MS, READ_RETRY_BUDGET_MS } from '../src/read-retry.mjs';
 import { withdrawalTitle, verificationUnavailable, admissionVerificationRetryable, ADMISSION_REREAD_REASONS } from '../src/withdrawal-text.mjs';
-import { controllerPorts } from '../src/resident-v2/entry-runtime.mjs';
+import { NATIVE_READ_ACTIONS, controllerPorts, nativeReadPost } from '../src/resident-v2/entry-runtime.mjs';
+import { probeRole } from '../src/resident-v2/role-probe-entry.mjs';
 import { outcomeFailureCode, outcomeFacts, TRANSIENT_CODES } from '../src/resident-v2/stage-fact.mjs';
 import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
@@ -518,4 +519,76 @@ test('the flag survives the entry\'s outcome record and the stage fact the resid
   const facts = outcomeFacts(written);
   assert.deepEqual([facts.safeToRerun, facts.sideEffects, facts.mayHavePublished], [true, 0, false]);
   assert.equal(outcomeFailureCode(written, 3), 'GITHUB_TRANSIENT_UNAVAILABLE');
+});
+
+// ---- Generation 11 (resident DESIGN 55): the Native read RPCs under a network cut ----
+const SUPA = 'https://example.invalid';
+const VERIFY = `${SUPA}/rest/v1/rpc/clued_work_verify_v1`, HOLDERS = `${SUPA}/rest/v1/rpc/clued_work_merge_slot_holders_v1`;
+const rpcBody = input => JSON.stringify({ p_token_hash: 'x', p_input: input });
+
+test('read retry: a POST the caller names a read is repeated like a GET; every other POST passes once; a predicate that throws is no read', async () => {
+  const s = scripted([503, netFault('ECONNRESET'), 200]); const sleeps = [];
+  const f = withReadRetry(s.fn, { sleep: async ms => { sleeps.push(ms); }, readPost: url => url === VERIFY });
+  assert.equal((await f(VERIFY, { method: 'POST', body: '{}' })).status, 200);
+  assert.deepEqual(sleeps, [1000, 2000]);
+  const w = scripted([503]);
+  const g = withReadRetry(w.fn, { sleep: async () => {}, readPost: url => url === VERIFY });
+  assert.equal((await g(`${SUPA}/rest/v1/rpc/other`, { method: 'POST', body: '{}' })).status, 503);
+  assert.equal((await g(VERIFY, { method: 'PATCH', body: '{}' })).status, 503, 'a PATCH is never a read');
+  assert.equal(w.calls.length, 2);
+  const t = scripted([503]);
+  const h = withReadRetry(t.fn, { sleep: async () => {}, readPost: () => { throw new Error('x'); } });
+  assert.equal((await h(VERIFY, { method: 'POST', body: '{}' })).status, 503);
+  assert.equal(t.calls.length, 1);
+  assert.throws(() => withReadRetry(s.fn, { readPost: 'yes' }), /read_retry_configuration_invalid/);
+});
+
+test('controllerPorts: the Native claim verification, the list actions and the holders RPC are repeated reads; publication and scan-start actions never are', async () => {
+  assert.deepEqual([...NATIVE_READ_ACTIONS], ['revocations_list', 'independent_revocation_heads']);
+  const isRead = nativeReadPost(`${SUPA}/`);
+  assert.equal(isRead(VERIFY, { body: rpcBody({ scope: 's', claim_id: 'c', head_sha: 'a', base_sha: 'b', changed_paths: ['x'] }) }), true, 'native.current: an ordinary observation');
+  // the admission evaluator's verify binds the PR and records an execution admission (a write): never a read
+  assert.equal(isRead(VERIFY, { body: rpcBody({ scope: 's', claim_id: 'c', pr_ref: 'o/r#9', head_sha: 'a', target_branch: 'main', admission_mode: 'x' }) }), false, 'pr_ref');
+  assert.equal(isRead(VERIFY, { body: rpcBody({ scope: 's', ci_dispatch: true }) }), false, 'ci_dispatch');
+  assert.equal(isRead(VERIFY, { body: rpcBody({ scope: 's', ci_dispatch: false }) }), true, 'ci_dispatch false');
+  assert.equal(isRead(VERIFY, { body: JSON.stringify({ p_token_hash: 'x', p_input: [] }) }), false, 'not an object: never a read');
+  for (const action of NATIVE_READ_ACTIONS) assert.equal(isRead(VERIFY, { body: rpcBody({ action, scope: 's' }) }), true, action);
+  for (const action of ['publication_begin_independent', 'publication_finish', 'publication_abort_independent', 'publication_reconcile', 'independent_legacy_drain_finish', 'scan_start_independent', 'execution_current', 'other'])
+    assert.equal(isRead(VERIFY, { body: rpcBody({ action, scope: 's' }) }), false, action);
+  assert.equal(isRead(HOLDERS, { body: rpcBody({ scope: 's' }) }), true);
+  assert.equal(isRead(`${SUPA}/rest/v1/rpc/clued_work_verify_v2`, { body: rpcBody({}) }), false);
+  assert.throws(() => isRead(VERIFY, { body: '{' }));
+  // through the controller's fetch: a cut native.current read is asked again; a publication_begin is sent once
+  const record = { config: { repository: REPO, scope: `project:${randomUUID()}`, supabaseUrl: SUPA, publishableKey: 'sb_publishable_test' }, accepted: {}, ciTokenPinSha256: 'a'.repeat(64) };
+  const s = scripted([netFault('ECONNRESET'), 502, 200]); const sleeps = [];
+  const ports = controllerPorts({ record, appKey: null, nativeToken: 'clued_bnd_testtoken', policyText: '{}', sourceRoot: process.cwd(), live() {}, log() {},
+    baseFetch: s.fn, readRetry: { sleep: async ms => { sleeps.push(ms); } } });
+  const logged = [];
+  const named = controllerPorts({ record, appKey: null, nativeToken: 'clued_bnd_testtoken', policyText: '{}', sourceRoot: process.cwd(), live() {}, log: (k) => logged.push(k),
+    baseFetch: scripted([netFault('ECONNRESET'), 200]).fn, readRetry: { sleep: async () => {} } });
+  assert.equal((await named.fetchImpl(VERIFY, { method: 'POST', body: rpcBody({ scope: record.config.scope, claim_id: 'c' }) })).status, 200);
+  assert.deepEqual(logged, ['native_read_retry']);
+  assert.equal((await ports.fetchImpl(VERIFY, { method: 'POST', body: rpcBody({ scope: record.config.scope, claim_id: 'c' }) })).status, 200);
+  assert.deepEqual(sleeps, [1000, 2000]);
+  const w = scripted([502]);
+  const writes = controllerPorts({ record, appKey: null, nativeToken: 'clued_bnd_testtoken', policyText: '{}', sourceRoot: process.cwd(), live() {}, log() {},
+    baseFetch: w.fn, readRetry: { sleep: async () => {} } });
+  assert.equal((await writes.fetchImpl(VERIFY, { method: 'POST', body: rpcBody({ action: 'publication_begin_independent', scope: record.config.scope }) })).status, 502);
+  assert.equal(w.calls.length, 1, 'a Native write is sent once');
+});
+
+test('role probe: the holders read cut by the network is asked again inside the entry deadline', async () => {
+  const record = { config: { repository: REPO, scope: `project:${randomUUID()}`, supabaseUrl: SUPA, publishableKey: 'sb_publishable_test' }, accepted: { node: { controllerSid: 'S-1-5-21-1' } } };
+  const token = 'clued_bnd_testtoken';
+  record.accepted.ciTokenPinSha256 = digest('clued.independent-ci.ci-binding-pin/1\0' + token);
+  // the third read answers definitely (the binding is not authorized): a reply, not a network fault
+  const answered = new Response(JSON.stringify({ code: '42501', message: 'binding_not_authorized' }), { status: 401 });
+  const s = scripted([netFault('ECONNRESET'), 503, answered]); const sleeps = [];
+  const live = () => {};
+  const r = await probeRole({ record, live, tokenReader: async () => token, protect: async () => {}, fetchImpl: s.fn, readRetry: { sleep: async ms => { sleeps.push(ms); } } });
+  assert.equal(s.calls.length, 3);
+  assert.equal(s.calls.every(c => c.url === HOLDERS && c.method === 'POST'), true);
+  assert.deepEqual(sleeps, [1000, 2000]);
+  assert.equal(r.status, 'BLOCKED');
+  assert.equal(r.reason, 'ROLE_PROBE_CONNECTION_UNAUTHORIZED', 'the third read answered');
 });

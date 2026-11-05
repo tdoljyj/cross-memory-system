@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { DB_ATTEMPT_MS, LOCK_POLL_MS, LOCK_WAIT_MS, SCAN_RESERVE_MS, STAGING_NAME, actualCachePort, fixtureCachePort } from '../worker/formal-trivy-v3/cache.mjs';
+import { CHECKS_ATTEMPTS, CHECKS_ATTEMPT_MS, DB_ATTEMPT_MS, LOCK_POLL_MS, LOCK_WAIT_MS, SCAN_RESERVE_MS, STAGING_NAME, actualCachePort, fixtureCachePort } from '../worker/formal-trivy-v3/cache.mjs';
 import { DB_REPOSITORIES } from '../worker/required-trivy-v2/plans.mjs';
 
 const H = s => createHash('sha256').update(s).digest('hex');
@@ -224,4 +224,55 @@ test('losing a reclaim race (the other rename won) is no error: the lock is simp
   t2.reclaimLock = async () => { t2.lockFile = null; throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
   const r2 = await prepareWith(t2, { runContainer: runs([]) });
   assert.deepEqual([r2.status, r2.reason], ['BLOCKED', 'ENOENT']);
+});
+
+// ---- Generation 11 (resident DESIGN 55): the pinned checks bundle download cut by the network ----
+
+test('checks bundle: a download cut by the network (removal confirmed) is tried once more in the stage, then READY', async () => {
+  const s = store({ current: db(HOUR, 6 * HOUR) });
+  s.checksFacts = null; // no valid bundle yet: the checks step runs
+  const runContainer = runs([cut, ok]);
+  const inspect = s.inspect; s.inspect = async kind => (kind === 'checks' ? CHECKS_OK() : inspect(kind));
+  const r = await prepareWith(s, { runContainer });
+  assert.equal(r.status, 'READY', JSON.stringify(r));
+  assert.deepEqual(runContainer.seen, ['checks', 'checks']);
+  assert.deepEqual(s.promoted, ['checks']);
+});
+
+test('checks bundle: two clean failures, or no time for a second attempt, end BLOCKED PINNED_CHECKS_DOWNLOAD_FAILED (lock released); an unconfirmed removal stays UNCERTAIN', async () => {
+  assert.deepEqual([CHECKS_ATTEMPTS, CHECKS_ATTEMPT_MS], [2, 310_000]);
+  let s = store({ current: db(HOUR, 6 * HOUR) }); s.checksFacts = null;
+  let runContainer = runs([cut, fail]);
+  let r = await prepareWith(s, { runContainer });
+  assert.deepEqual([r.status, r.reason, runContainer.seen.length], ['BLOCKED', 'PINNED_CHECKS_DOWNLOAD_FAILED', 2]);
+  assert.deepEqual(s.released, [false]);
+  s = store({ current: db(HOUR, 6 * HOUR) }); s.checksFacts = null;
+  runContainer = runs([cut, ok]);
+  r = await prepareWith(s, { runContainer }, Date.now() + SCAN_RESERVE_MS + CHECKS_ATTEMPT_MS - 60_000);
+  assert.deepEqual([r.status, r.reason, runContainer.seen.length], ['BLOCKED', 'PINNED_CHECKS_DOWNLOAD_FAILED', 1], 'no time for a second attempt');
+  s = store({ current: db(HOUR, 6 * HOUR) }); s.checksFacts = null;
+  runContainer = runs([lost, ok]);
+  r = await prepareWith(s, { runContainer });
+  assert.deepEqual([r.status, r.reason, runContainer.seen.length], ['UNCERTAIN', 'CHECKS_EXECUTION_OR_CLEANUP_UNKNOWN', 1]);
+});
+
+// ---- Generation 11 (resident DESIGN 55): docker images never come over the network while a stage runs ----
+test('docker: every container a stage creates (scanners and the trivy cache container) says --pull=never; images are loaded at install only', async () => {
+  const { createArguments } = await import('../worker/verify-once/verify-worker.mjs');
+  const { cacheCreateArguments } = await import('../worker/formal-trivy-v3/docker.mjs');
+  const { IMAGE } = await import('../worker/required-trivy-v3/plans.mjs');
+  const scanner = createArguments({ limits: { pids: 64, cpus: 1, memoryBytes: 1 << 30 }, imageDigest: 'registry.invalid/x@sha256:' + 'a'.repeat(64) },
+    { nonce: 'n', executionId: 'e' }, { mounts: [['/input', '/input']], cwd: '/scratch', executable: '/bin/x', args: [] }, 'name');
+  assert.ok(scanner.includes('--pull=never') && scanner.includes('--network=none'));
+  const cache = cacheCreateArguments({ image: IMAGE, network: 'host', user: '65532:65532', executable: '/usr/local/bin/trivy', args: ['--version'],
+    mounts: [{ source: '/cache/staging/db-' + 'a'.repeat(64), target: '/cache', readOnly: false }] }, { nonce: 'n', executionId: 'e' }, 'cache');
+  assert.ok(cache.includes('--pull=never'), 'the networked cache container downloads the DB, never its own image');
+  assert.equal(cache.filter(v => v.startsWith('--pull')).length, 1);
+  // the launcher of the Linux worker's own scanner containers (both execution modes)
+  const { dockerCreateArguments } = await import('../worker/linux-launcher.mjs');
+  for (const executionMode of ['scanner', 'node']) {
+    const launched = dockerCreateArguments({ executionMode, pids: 64, cpus: 1, memoryBytes: 1 << 30, entryFile: '/control/entry.mjs', containerNodeExecutable: '/usr/bin/node', image: 'x' },
+      { containerCommand: { executable: '/bin/x', args: [] }, identity: { jobId: 'j' } }, { candidate: '/c', source: '/s', request: '/r' }, 'name');
+    assert.ok(launched.includes('--pull=never') && launched.includes('--network=none'), executionMode);
+  }
 });

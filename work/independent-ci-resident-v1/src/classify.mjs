@@ -286,8 +286,10 @@ export const UNEXECUTED_REASON_RULES = Object.freeze({
 //   - ADMISSION_VERIFICATION_UNAVAILABLE: the Source maps only a passing cause to it (withdrawal-text.mjs#admissionVerificationRetryable).
 export const NETWORK_NATIVE_REASONS = Object.freeze(['native_claim_observation_unavailable', 'full_admission_mode_unknown', 'full_admission_observer_unknown', 'full_admission_observation_expired']);
 export const NETWORK_GITHUB_REASONS = Object.freeze(['github_http_500', 'github_http_502', 'github_http_503', 'github_http_504', 'github_transport_unconfirmed']);
-export function networkFailure({ code, outcome = null, bundleNetwork = false }) {
+export function networkFailure({ code, outcome = null, bundleNetwork = false, refsNoAnswer = false }) {
   switch (code) {
+    // Generation 11 (DESIGN 55): the refs gate got no answer from the line, also after its two waits (engine-windows.mjs#runStage).
+    case 'REFS_GATE_UNCONFIRMED': return refsNoAnswer === true;
     case 'BUNDLE_UNAVAILABLE': return bundleNetwork === true;
     case 'GITHUB_TRANSIENT_UNAVAILABLE': return NETWORK_GITHUB_REASONS.includes(outcome?.reason);
     case 'NATIVE_ADMISSION_UNAVAILABLE': return NETWORK_NATIVE_REASONS.includes(outcome?.reason) || (outcome?.reason === 'full_admission_unavailable' && outcome?.diagnostic?.transport === true);

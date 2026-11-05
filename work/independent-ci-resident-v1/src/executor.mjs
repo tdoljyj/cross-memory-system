@@ -135,7 +135,7 @@ import { PROBE_REQUEST_CONTRACT, RESIDENT_REQUEST_CONTRACTS, REQUEST_MAX_AGE_MS,
 import { RELAY_RECEIPTS } from './receipts.mjs';
 import { CODE, HEX40, HEX64, ResidentError, canonicalJson, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 import { UPGRADE_RESUME_CONTRACT, validateUpgradeResume } from './upgrade-mailbox.mjs';
-import { ARCHIVE_LINUX_REQUEST_MS } from './mailbox.mjs';
+import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS } from './mailbox.mjs';
 import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
@@ -230,6 +230,7 @@ const adopted = a => ({ requestSha256: a.requestSha256, by: a.by, reason: a.reas
 class StepFailure {
   constructor(stageNumber, code, proof, phase, relayedRoles = 0, result = null) {
     Object.assign(this, { stageNumber, code: validCode(code), proof: proof ?? {}, phase, relayedRoles, outcome: result?.outcome ?? null, brokerNoLaunch: result?.brokerNoLaunch === true,
+      refsNoAnswer: result?.refsNoAnswer === true,
       bridge: bridgeFacts(result?.bridge) });
   }
 }
@@ -266,6 +267,13 @@ export const PUBLICATION_RETRY_MS = Object.freeze([30_000, 90_000, 300_000]);
 export const EXECUTION_RETRY_MS = Object.freeze([60_000, 300_000]);
 // What a run again needs before its wait: the bounded quiescence proof and the two archives (each at its own request bound).
 const EXECUTION_RETRY_PREPARE_MS = ABORT_QUIESCENCE_WAIT_MS + 2 * ARCHIVE_LINUX_REQUEST_MS;
+// The refs gate's facts (DESIGN 55) for a stage-terminal receipt: only when it asked more than once or stopped asking; checked shapes only.
+const refsGateFacts = r => {
+  const g = r?.refsGate;
+  if (!g || !Number.isSafeInteger(g.asks) || g.asks < 1 || g.asks > 3) return {};
+  const refused = typeof g.waitRefused === 'string' && /^[a-z-]{1,20}$/.test(g.waitRefused) ? g.waitRefused : null;
+  return g.asks > 1 || refused ? { refsGate: { asks: g.asks, waitRefused: refused } } : {};
+};
 // An archive directory (either host) named for exactly this reason: failed-<batch>-<reason>-<12 hex nonce>, with or without a path.
 const archiveNamedFor = (directory, reason) => typeof directory === 'string'
   && new RegExp(`(?:^|[\\\\/])failed-[0-9a-z]+-${reason}-[0-9a-f]{12}$`).test(directory);
@@ -574,11 +582,22 @@ export class ResidentExecutor {
   // caps: each stage from this one on (cap plus margin), and, before the wait (afterWait false), the wait itself and what precedes it
   // (EXECUTION_RETRY_PREPARE_MS: the quiescence proof and the two archives at their bounds). After the wait only the stages are left.
   // Unknown expiry (null): no bound.
-  executionRetryFitsAuthority(number, again, { afterWait = false } = {}) {
+  executionRetryFitsAuthority(number, again, { afterWait = false, extraMs = 0 } = {}) {
     if (this.policy.validUntil === null) return true;
     const rest = this.policy.stages.filter(s => s.number >= number && s.number !== RELAY_STAGE && s.number !== TRAIN_STAGE)
       .reduce((sum, s) => sum + s.runMilliseconds + this.policy.limits.stageMarginMs, 0);
-    return Date.parse(this.policy.validUntil) >= this.clock() + (afterWait ? 0 : EXECUTION_RETRY_MS[again] + EXECUTION_RETRY_PREPARE_MS) + rest;
+    return Date.parse(this.policy.validUntil) >= this.clock() + (afterWait ? 0 : EXECUTION_RETRY_MS[again] + EXECUTION_RETRY_PREPARE_MS) + extraMs + rest;
+  }
+
+  // After a wait of the refs gate (DESIGN 55): still no HALT, no drift, and the authority still covers this stage and the rest.
+  // true, or why not ('halt', 'drift', 'authority', 'error'); the authority also covers the next refs read (CHECK_REFS_REQUEST_MS).
+  async gateWaitStillAllowed(key, number) {
+    try {
+      if (await this.ledger.halted()) return 'halt';
+      if (await this.driftCode()) return 'drift';
+      if (!this.executionRetryFitsAuthority(number, 0, { afterWait: true, extraMs: CHECK_REFS_REQUEST_MS })) return 'authority';
+      return true;
+    } catch { return 'error'; }
   }
 
   // After the wait, before the run again: still no HALT, no drift, and the authority still covers it.
@@ -2797,10 +2816,12 @@ export class ResidentExecutor {
         if (unrecorded) { unrecorded.relayedRoles = relayed; return unrecorded; }
         this.atStage(number, 'stage');
         const execution = number === ROLE_STAGES[role][0];
-        let run = await this.runStageWatched(key, batch, number, { betweenRoles: execution && index > 0, firstLinux: execution && index === 0 });
+        // stillAllowed: after each wait of the refs gate (DESIGN 55), no HALT, no drift, the authority still covers this stage and the rest.
+        let run = await this.runStageWatched(key, batch, number, { betweenRoles: execution && index > 0, firstLinux: execution && index === 0,
+          ...(execution && index === 0 ? { stillAllowed: () => this.gateWaitStillAllowed(key, number) } : {}) });
         let { result: r, abort, stopCode, unconfirmed } = run;
         await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r),
-          ...(r.bridge ? { bridge: bridgeFacts(r.bridge) } : {}), ...(r.memoryGate ? { memoryGate: memoryGateFacts(r.memoryGate) } : {}) });
+          ...(r.bridge ? { bridge: bridgeFacts(r.bridge) } : {}), ...(r.memoryGate ? { memoryGate: memoryGateFacts(r.memoryGate) } : {}), ...refsGateFacts(r) });
         // DESIGN 51 (C): a publisher stage (3, 5, 7) that ended before it wrote anything, because a source it reads was passingly unavailable and
         // its entry says so (outcome.safeToRerun), is run again with the same signed result (still in the spool), after a bounded back-off.
         // Nothing is parked and nothing re-scanned; the Source starts from a clean journal (nothing was recorded) and re-proves everything.
@@ -2829,10 +2850,11 @@ export class ResidentExecutor {
           this.atStage(number, 'stage');
           // A run again of the batch's first Linux stage passes the refs gate and the version check again (firstLinux); it never
           // archives between roles (the retry-stage archive took the run's records).
-          run = await this.runStageWatched(key, batch, number, { betweenRoles: false, firstLinux: execution && index === 0, again: again + 1 });
+          run = await this.runStageWatched(key, batch, number, { betweenRoles: false, firstLinux: execution && index === 0, again: again + 1,
+            ...(execution && index === 0 ? { stillAllowed: () => this.gateWaitStillAllowed(key, number) } : {}) });
           ({ result: r, abort, stopCode, unconfirmed } = run);
           await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r),
-            ...(r.bridge ? { bridge: bridgeFacts(r.bridge) } : {}), ...(r.memoryGate ? { memoryGate: memoryGateFacts(r.memoryGate) } : {}), executionRetry: again + 1 });
+            ...(r.bridge ? { bridge: bridgeFacts(r.bridge) } : {}), ...(r.memoryGate ? { memoryGate: memoryGateFacts(r.memoryGate) } : {}), ...refsGateFacts(r), executionRetry: again + 1 });
         }
         if (unconfirmed) return this.unknown(key, 'OWNER_ABORT_UNCONFIRMED', 'owner-abort-unconfirmed', batch, { safePoint: `in-stage-${number}`, stage: number });
         if (abort) return this.concludeAbort(key, batch, { safePoint: `in-stage-${number}`, stage: number, result: r, request: abort, stopCode });
@@ -3000,7 +3022,7 @@ export class ResidentExecutor {
       reasonCodes: o?.diagnostic?.reasonCodes ?? null, nativeReasonCodes: o?.diagnostic?.nativeReasonCodes ?? null,
       ciRetryAfter: o?.scheduling?.ciRetryAfter ?? o?.diagnostic?.ciRetryAfter ?? null, safeToRerun: o?.safeToRerun === true, brokerNoLaunch: failure.brokerNoLaunch === true,
       // Generation 10 (DESIGN 53.3): the ending was the line and nothing else (classify.mjs#networkFailure).
-      network: networkFailure({ code: failure.code, outcome: o }) };
+      network: networkFailure({ code: failure.code, outcome: o, refsNoAnswer: failure.refsNoAnswer === true }) };
   }
 
   async fail(key, batch, failure) {

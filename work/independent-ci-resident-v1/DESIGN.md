@@ -4180,3 +4180,73 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 
 - `test/scanner-abandon.test.mjs`、`test/memory-gate.test.mjs`：第 4、6 段在原有结束之前先重跑两次，每次是独立的归档原因。
 - `test/test_linux_tool.py`：`retry-stage-N-K` 保留工作区，移动协议记录、角色锁和 runs；其他原因（含 `retry-stage-4`、`retry-stage-4-3`）不保留。
+
+## 55. 外部依赖的断流容错排查（第 11 代第 2 项；Decision `4f5f35d3`）
+
+逐一排查常驻 CI 及其 Source 在网络中断时的表现。原则是“默认网络会抖动”：瞬时故障在有界时间内等待或重试；一时说不清的情况，既不当成功，也不当成 PR 本身的失败。凡是改动的地方，都配了断流模拟测试。
+
+### 55.1 改动
+
+1. **GitHub 写请求收到 5xx（`github.mjs`）。**
+   - 500/502/503/504 说明不了写入是否生效，网关可能在写入落地之后才报错。现在把它当作“回复被截断”处理：按 external_id 或 check id 读回 GitHub 上的副本。
+   - 读回在端口重试窗口里剩下的每个延迟点各做一次，因为副本可能稍后才出现。找到就采用（要求完全一致：App、名称、head、external_id、结论、title、summary），**永远不重发**。读回失败或一直没有副本，就保留原来的 5xx 码。其他状态码照旧不读回。
+   - 端口里另外两个本身就是读的 POST（安装令牌的签发、GraphQL 的 force-push 读取），遇到 5xx 时会像连接中断一样在窗口内重发。
+2. **Native 读请求（`read-retry.mjs#readPost`、`entry-runtime.mjs#nativeReadPost`、`role-probe-entry.mjs`）。** 下面三类请求按 GET 的方式重试，预算和截止时间与 GitHub 读请求相同；重试记录为 `native_read_retry`。
+   - `clued_work_verify_v1` 的普通观测：没有 action、没有 `pr_ref`、`ci_dispatch` 缺省或为 false。这是服务端自己对观测的定义（迁移 `20261017215600`），也就是 native.current 的认领核验。
+   - 带只读 action 的调用：`revocations_list`、`independent_revocation_heads`。
+   - merge-slot 的 holders RPC，包括 role probe（每次尝试仍是 10 s）。
+
+   **不在此列**的有两类：准入评估器的 verify（带 `pr_ref`，会绑定 PR、写一行执行准入，属于写入）；其他所有 action。
+
+   native.current 的往返时限从第一次发送算起，为 30 s（`clock-skew.mjs`）。重试拖到超过这个时限再拿到的答复，仍按原规则拒绝。这样做偏保守。
+3. **trivy checks bundle（`formal-trivy-v3/cache.mjs`）。** 第一次下载干净地失败（容器已确认删除）后，只要剩余时间还够一次下载加一次扫描，就在同一段内再试一次（`CHECKS_ATTEMPTS = 2`）。两次都失败，仍是 BLOCKED `PINNED_CHECKS_DOWNLOAD_FAILED`，接着由 §54 的段重跑处理。
+4. **refs 闸门（`companion.mjs`、`engine-windows.mjs`、`executor.mjs`）。**
+   - 只有当每次读都只是“线路问题”时，伴随进程才回答 `REMOTE_REFS_NO_ANSWER`。线路问题指：ls-remote 在 git 里失败（`GIT_STEP_FAILED`，`ls-remote-check`），或读超时且没有结论、进程树确认已消失（`zero`）。
+   - 其他情况仍回答 `REMOTE_REFS_UNAVAILABLE`，引擎不会再问：脚本自己的拒绝、进程树未确认消失（`unconfirmed`）、未超时却没有结论。
+   - 对 `REMOTE_REFS_NO_ANSWER`，引擎在 1 分钟后、5 分钟后各再问一次；这期间本段什么都没跑。
+     - 等待可被 Owner 中止立即唤醒，中止后本段以 `OWNER_ABORT_REQUESTED` 结束（与 `invoke()` 相同）。
+     - 每次等待之后，执行器都要再确认：没有 HALT、没有漂移、安装授权仍覆盖下一次读 refs（`CHECK_REFS_REQUEST_MS`）以及本段和之后各段（`gateWaitStillAllowed`）。不满足时说明原因：`halt`、`drift`、`authority`。
+   - 闸门做了什么写进本段的 `stage-terminal` 回执：`refsGate { asks, waitRefused }`，只有问过不止一次或中途停问时才写。
+   - 最终仍没有答复，就结束为 `REFS_GATE_UNCONFIRMED`。这时记录中带 `refsNoAnswer`，熔断器会把它算作网络原因（`classify.mjs#networkFailure`）。如果是执行器的检查叫停的，则不算网络原因。
+5. **runner hook。** 在单独的分支 `claude/runner-hook-admission-retry`（组件 1.0.2），说明见该分支的 README。
+6. **测试的偶发失败。** `formal-trivy-cache-network.test.mjs` 里有两处：
+   - 回执名的正则漏掉了以 e 结尾的随机 id，约 1/16 的概率失败；
+   - NTFS 按句柄改名，两个重叠的改名可能先后都报告成功。现在只在按路径改名的文件系统上测真正的并发，Windows 上只测“后到者落空”。
+
+   `registration-core` 的偶发失败见第 3 项。
+7. **docker 镜像。** 新增断言：所有容器的创建参数都带 `--pull=never`，包括扫描器（`verify-worker.mjs`、`linux-launcher.mjs` 的两种模式）和联网的 trivy 缓存容器。镜像只在安装时加载，运行期间从不从网络拉取。
+
+### 55.2 依赖表
+
+| 依赖 | 改前 | 改后 | 断流模拟测试 |
+|---|---|---|---|
+| GitHub 读 | GET 遇 5xx 或网络错误时有界重试（§49） | 不变 | `github-read-retry.test.mjs`：“read retry: …” 系列 |
+| GitHub 写 | 传输中断时读回，只有连接阶段的失败才补发；收到 5xx 时不读回，于是撤回、烧 head 或 UNCERTAIN | 收到 5xx 也在窗口内多次读回，GitHub 上有副本就采用，永不重发；本身是读的 POST 遇 5xx 会重发 | `github.test.mjs`：“a 502 to the check POST after GitHub stored the run …”、“a 503 … never sent again”、“a 504 to the revocation PATCH …”、“a 504 … only at the second read-back …”、“a 5xx to a POST that is a read …” |
+| Clued/Native 读 | 只有认领观测会重试；current、两个列表 action、holders、role probe 都只读一次 | 都按读请求重试；评估器的 verify 和所有写类 action 不重试 | `github-read-retry.test.mjs`：“controllerPorts: the Native claim verification …”、“role probe: …”、“read retry: a POST the caller names a read …” |
+| Clued/Native 写 | 只发一次 | 不变，见 55.3 | — |
+| git：首次打包 | 网络重试，加种子回退（§53.2） | 不变 | `resident-v2-build-bundle.test.mjs`：“one retry of the network steps …” |
+| git：第二次打包 | 网络失败时结束为 `PARKED_BUNDLE_TOO_OLD`，烧 head | **不变**，见 55.3（脚本不支持重来） | `rebundle.test.mjs`：“any other refusal (or no answer) of the second bundle …” |
+| git：refs 闸门 | 两次读都没有答复就是 `REFS_GATE_UNCONFIRMED`，烧 head | 线路问题在 1 分钟、5 分钟后各再问一次；最终失败算作网络原因 | `dependency-cuts.test.mjs`：“refs gate: …”三条、“companion: REMOTE_REFS_NO_ANSWER only when …” |
+| docker 镜像 | 运行时 `--pull=never` | 不变，新增断言 | `formal-trivy-cache-network.test.mjs`：“docker: every container … --pull=never” |
+| trivy DB | 4 次下载，全部失败则回退到 72 小时内的 DB（§53.11） | 不变 | `formal-trivy-cache-network.test.mjs`：“a DB download cut off by the network …” |
+| trivy checks bundle | 只下载一次 | 段内再试一次，之后接 §54 的段重跑 | 同一文件：“checks bundle: …”两条 |
+| WSL 桥泵 | 中继在预算内重试；重跑时会把旧单元的事实误判为本次已运行 | 以重跑前的基线为准（§54.3） | `relay-retry.test.mjs`；`execution-retry.test.mjs`：“the pump of a run again …” |
+| 第 4、6 段执行 | 环境类失败就烧 head | 批次内重跑（§54） | `execution-retry.test.mjs` |
+| 伴随进程 mailbox 与心跳 | 心跳丢失时停止，随后 HALT | 不变，见 55.3 | `bridge-observer.test.mjs`：“signal D …”；`request-deadline.test.mjs` |
+| runner hook（GitHub 读） | 一次读失败就拒绝作业 | 读请求有界重试，等待按墙钟计 | 分支 `claude/runner-hook-admission-retry`：`clued-runner-job-started.test.mjs` 中的 “transient reads: …”、“clock: …” |
+
+### 55.3 不改的部分及理由（后续任务）
+
+下面标为“后续任务”的三项，由主会话在 Clued 登记为任务，登记后把任务 ID 补进这里。本会话不直接写 Clued。
+
+- **第二次打包（停靠点 A 的重新打包）。**
+  - 原因：`build-bundle.ps1 -Rebundle` 在取数之前就建立 `gen-2\`。断网后脚本回答 `PARTIAL_STATE_PRESERVED_NO_RETRY` 并保留 `gen-2\`；再跑一次会以 `FIXED_TARGET_ALREADY_EXISTS` 拒绝。脚本头部也写明 “never twice”。所以常驻层这边的重试不可能成功，第 11 代没有做（审查时发现后已撤下）。
+  - 要修，只能改 Source：把没有 receipt 的 `gen-2\` 在 create-only 与 reparse 检查之下改名移开（例如 `gen-2-failed-<n>`），让 `Current-Receipt` 忽略它，并补 PowerShell 测试。这属于 Source 改动，需要单独送审，是**后续任务**。
+- **Native 写类 RPC**，逐项说明：
+  - `publication_finish`、`publication_reconcile`、`independent_legacy_drain_finish`：服务端按发布 id 加 check run id 重放并返回原 receipt，回复丢失后再发一次本身是安全的。但发布者在“发出之后”的状态机（回执日志、`discoverKnown`）需要一并设计“再发 finish”这一步，才能不烧 head。
+  - `publication_begin_independent`：回复丢失已有恢复路径（`adoptOpenTicket`）。
+  - `scan_start_independent`：一次性的 burn key，按设计“丢失的回复永远不给第二次启动”；真正缺的是只读的读回。
+  - 以上都要按 §50 的方式设计并经 Owner 批准，列为**后续任务**。
+- **发布者遇到完全一致的副本时撤回**（`discoverKnown`）：55.1 第 1 项的多次读回缩小了这个窗口。如果副本在端口窗口之后才出现，发布者仍会撤回它、烧 head。把“采用完全一致的副本”的逻辑搬到发布者里，属于发布状态机的改动，列为**后续任务**。
+- **伴随进程请求无应答、心跳丢失导致 HALT**：这时状态未知，Linux 上可能还有进程在跑。按设计必须停下，交给 Owner 处理，不能猜。
+- **`ci_nodes_status`**：只读，但它走 Source A 的端口（`clued-merge-train-native.mjs`），不经过本节的 `readPost`。保守起见，本代不动。

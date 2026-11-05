@@ -22,6 +22,10 @@ export const DB_ATTEMPT_MS = 310_000;
 export const SCAN_RESERVE_MS = 420_000;
 export const LOCK_POLL_MS = 15_000;
 export const LOCK_WAIT_MS = 300_000;
+// Generation 11 (resident DESIGN 55): the pinned checks bundle gets a second download attempt in the same stage when the first one
+// failed cleanly (removal confirmed) and there is still time for another attempt and the scan after it.
+export const CHECKS_ATTEMPTS = 2;
+export const CHECKS_ATTEMPT_MS = 310_000;
 export const STAGING_NAME = /^(?:db|checks)-[a-f0-9]{64}$/;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 // The real probes of a stale lock (fixtureCachePort may replace them; actualCachePort never does).
@@ -290,13 +294,18 @@ async function prepare({ storage, docker, dockerRootDirectory, checksPin, deadli
     const existingChecks = await storage.current('checks'); let activeChecks = existingChecks.facts, checksActivation = null;
     try { validateChecksBundle(activeChecks, checksPin); }
     catch {
-      check(Date.now() < deadline && !signal?.aborted, 'CACHE_AUTHORITY_EXPIRED');
-      const stage = await storage.stage('checks'), spec = checksPreparationPlan({ stagingDirectory: stage, emptyDirectory: storage.empty, checksPin });
-      check(!spec.status, 'REAL_CHECKS_PIN_MISSING');
-      const run = await runContainer({ spec, docker, dockerRootDirectory, deadline, signal }); observations.push(run);
-      if (!run.cleanupConfirmed) { retain = run.touched; return { status: retain ? 'UNCERTAIN' : 'BLOCKED',
-        reason: run.touched ? 'CHECKS_EXECUTION_OR_CLEANUP_UNKNOWN' : run.reason, observations, lockReclaimed, fixture, publicationAuthorized: false }; }
-      // Generation 10: removal confirmed: a clean failure (BLOCKED, lock released), whatever made the run unknown.
+      let stage, run;
+      for (let attempt = 1; ; attempt += 1) {
+        check(Date.now() < deadline && !signal?.aborted, 'CACHE_AUTHORITY_EXPIRED');
+        stage = await storage.stage('checks'); const spec = checksPreparationPlan({ stagingDirectory: stage, emptyDirectory: storage.empty, checksPin });
+        check(!spec.status, 'REAL_CHECKS_PIN_MISSING');
+        run = await runContainer({ spec, docker, dockerRootDirectory, deadline, signal }); observations.push(run);
+        if (!run.cleanupConfirmed) { retain = run.touched; return { status: retain ? 'UNCERTAIN' : 'BLOCKED',
+          reason: run.touched ? 'CHECKS_EXECUTION_OR_CLEANUP_UNKNOWN' : run.reason, observations, lockReclaimed, fixture, publicationAuthorized: false }; }
+        // Generation 10: removal confirmed: a clean failure (BLOCKED, lock released), whatever made the run unknown. Generation 11: one
+        // more attempt while another attempt and the scan still fit.
+        if (run.outcome === 'success' || attempt >= CHECKS_ATTEMPTS || deadline - now() < CHECKS_ATTEMPT_MS + SCAN_RESERVE_MS) break;
+      }
       check(run.outcome === 'success', 'PINNED_CHECKS_DOWNLOAD_FAILED');
       const facts = await storage.inspect('checks', stage); validateChecksBundle(facts, checksPin);
       check(Date.now() < deadline && !signal?.aborted, 'CACHE_AUTHORITY_EXPIRED');

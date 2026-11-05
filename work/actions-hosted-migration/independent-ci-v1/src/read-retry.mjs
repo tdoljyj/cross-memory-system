@@ -6,8 +6,9 @@
 // network failure (never an HTTP status), and the evaluator's own GitHub reads (githubJson) not at all.
 //
 // This wraps the controller's fetch. It repeats a request only when ALL of these hold:
-//   - the method is GET (or omitted): a read. Every write (POST/PATCH) and the Native RPCs (POST) pass through untouched,
-//     so no write is ever repeated here and no Native receipt is ever written twice;
+//   - the method is GET (or omitted): a read; or a POST the caller names a read (readPost, generation 11: the Native verify RPC as an
+//     ordinary observation, its list actions and the merge-slot holders RPC). Every other write (POST/PATCH) and every other Native
+//     RPC passes through untouched, so no write is ever repeated here and no Native receipt is ever written twice;
 //   - the answer is a 500, 502, 503 or 504, or the request failed on the network (fetch rejected with a TypeError whose
 //     cause is a network code). A 501, a 4xx (including 403 and 429), a redirect and every other refusal is returned as it
 //     is: those are not passing faults. A rejection that is not a network fault (abort, timeout, a refusal raised by the
@@ -29,13 +30,18 @@ const NETWORK_CODES = Object.freeze(['ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED
 export const networkFault = error => error instanceof TypeError && ['fetch failed', 'terminated'].includes(error.message) && NETWORK_CODES.includes(error.cause?.code);
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-export function withReadRetry(fetchImpl, { delaysMs = READ_RETRY_DELAYS_MS, budgetMs = READ_RETRY_BUDGET_MS, attemptTimeoutMs = 30_000, sleep = wait, live = () => {}, onRetry = () => {}, deadlineAt = () => null, resetOn = () => false, now = () => Date.now() } = {}) {
+// readPost (generation 11, resident DESIGN 55): a POST that is a read by its exact URL and body (the caller decides; the controller
+// names the Native verify RPC without an action or with a listed read-only action), repeated like a GET. Every other POST/PATCH passes
+// through untouched, as before.
+export function withReadRetry(fetchImpl, { delaysMs = READ_RETRY_DELAYS_MS, budgetMs = READ_RETRY_BUDGET_MS, attemptTimeoutMs = 30_000, sleep = wait, live = () => {}, onRetry = () => {}, deadlineAt = () => null, resetOn = () => false, readPost = () => false, now = () => Date.now() } = {}) {
   if (typeof fetchImpl !== 'function' || !Array.isArray(delaysMs) || !delaysMs.every(ms => Number.isSafeInteger(ms) && ms > 0)
-    || !Number.isSafeInteger(budgetMs) || budgetMs < 0 || typeof sleep !== 'function' || typeof live !== 'function' || typeof deadlineAt !== 'function' || typeof resetOn !== 'function' || typeof now !== 'function') throw new Error('read_retry_configuration_invalid');
+    || !Number.isSafeInteger(budgetMs) || budgetMs < 0 || typeof sleep !== 'function' || typeof live !== 'function' || typeof deadlineAt !== 'function' || typeof resetOn !== 'function' || typeof readPost !== 'function' || typeof now !== 'function') throw new Error('read_retry_configuration_invalid');
   let spent = 0;
   return async function retryingFetch(url, opts = {}) {
     const method = String(opts?.method ?? 'GET').toUpperCase();
-    if (method !== 'GET') {
+    let read = method === 'GET';
+    if (method === 'POST') { try { read = readPost(String(url), opts) === true; } catch { read = false; } }
+    if (!read) {
       try { return await fetchImpl(url, opts); } finally { if (resetOn(url, opts)) spent = 0; }
     }
     for (let attempt = 0; ; attempt++) {
@@ -58,7 +64,7 @@ export function withReadRetry(fetchImpl, { delaysMs = READ_RETRY_DELAYS_MS, budg
       live();
       try { await response?.body?.cancel?.(); } catch { /* the failed answer is discarded */ }
       spent += delay;
-      onRetry({ attempt: attempt + 1, delayMs: delay, status: response?.status ?? null, network: failure ? failure.cause?.code ?? 'network' : null });
+      onRetry({ attempt: attempt + 1, delayMs: delay, status: response?.status ?? null, network: failure ? failure.cause?.code ?? 'network' : null, ...(method === 'POST' ? { post: true } : {}) });
       await sleep(delay);
       live();
     }
