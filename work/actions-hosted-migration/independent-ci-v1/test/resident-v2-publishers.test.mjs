@@ -218,10 +218,13 @@ test('one-shot v2: the protected observation must name exactly the batch claim g
   const accepted = Object.fromEntries(['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef'].map(k => [k, randomUUID()]));
   const body = { status: 'ok', verdict: 'ADMITTED', execution_policy: 'staged', current_fence: 3, execution_epoch: 1, paths_outside_write_set: [], verified_at: iso(now - 1000),
     claim: { claim_id: c.claimId, fence: 3, execution_epoch: 1, context_key: 'project:x', status: 'ACTIVE', lease_key_required: false, execution_handover_pending: false, expires_at: c.expiresAt } };
-  const f = protectedFactsFromVerify({ job: jobs.gitleaks, batchClaim: claimGeneration(c), body, status: 200, config, accepted, now });
+  const timing = { sentMono: 0, nowMono: 1000 };
+  const f = protectedFactsFromVerify({ job: jobs.gitleaks, batchClaim: claimGeneration(c), body, status: 200, config, accepted, ...timing });
   assert.deepEqual(f.claim, claimGeneration(c));
-  assert.throws(() => protectedFactsFromVerify({ job: jobs.gitleaks, batchClaim: { ...claimGeneration(c), fence: 4 }, body, status: 200, config, accepted, now }), { code: 'native_claim_observation_refused' });
-  assert.throws(() => protectedFactsFromVerify({ job: jobs.gitleaks, batchClaim: claimGeneration(c), body: { ...body, claim: { ...body.claim, lease_key_required: true } }, status: 200, config, accepted, now }), { code: 'native_claim_observation_refused' });
+  assert.throws(() => protectedFactsFromVerify({ job: jobs.gitleaks, batchClaim: { ...claimGeneration(c), fence: 4 }, body, status: 200, config, accepted, ...timing }), { code: 'native_claim_observation_refused' });
+  assert.throws(() => protectedFactsFromVerify({ job: jobs.gitleaks, batchClaim: claimGeneration(c), body: { ...body, claim: { ...body.claim, lease_key_required: true } }, status: 200, config, accepted, ...timing }), { code: 'native_claim_observation_refused' });
+  assert.throws(() => protectedFactsFromVerify({ job: jobs.gitleaks, batchClaim: claimGeneration(c), body, status: 200, config, accepted }),
+    error => error.code === 'native_claim_observation_refused' && error.checks.includes('round_trip_age'), 'missing monotonic evidence must fail closed');
 });
 
 // Resident quota redesign v0.6 §1 / §9 phase 1: the resident releases a stage-1 failure only on the entry's own

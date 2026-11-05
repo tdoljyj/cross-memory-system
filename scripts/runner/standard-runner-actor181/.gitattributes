@@ -1,0 +1,5 @@
+# This tree contains reviewed raw-byte captures and compiled Native libraries.
+# Preserve their exact bytes through add/archive/checkout; their SHA pins are raw.
+* -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+# Preserve the reviewed relay loader's two-space empty line as captured input.
+host-install/install_relay_entry216.ps1 whitespace=-blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

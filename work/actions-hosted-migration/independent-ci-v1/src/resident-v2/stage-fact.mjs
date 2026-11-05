@@ -9,6 +9,7 @@ import { HEX64, OUTCOME_CONTRACT, RELAY_STAGE_NUMBER, TRAIN_STAGE_NUMBER } from 
 import { validateTrainFacts } from '../independent-control-checks-v2/train-facts.mjs';
 import { roleProbeFact } from './role-probe-run.mjs';
 import { validateRevocationFacts } from './revocation-run.mjs';
+import { validateRelayQualificationRun, validateRelayQualificationObservation } from './relay-qualification-run.mjs';
 import { RELAY_HALT_CODES, relayPlanEnding, validateRelayPlanRows } from '../hosted-relay-v1/relay-plan.mjs';
 import { sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2 } from '../admission-facts-v2.mjs';
 import { HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB, ROLE_ALREADY_ON_GITHUB_REASON } from '../published-on-github-v2.mjs';
@@ -196,7 +197,7 @@ const trainFactsOrNull = f => { try { return validateTrainFacts(f); } catch { re
 // The one stage fact the resident engine parses (engine-windows.mjs#parseStageFact keeps v1 names).
 // trainJobMode (stage 10): the mode of the sealed train-run job (jobs.json, invoke-stage.mjs); the facts' own mode must be it.
 export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha256, broker, receipt, receiptBytes, outcome, outcomeBytes, controllerSid, preflightCode = null, expectedJobIds = null,
-  trainJobMode = null }) {
+  trainJobMode = null, relayQualificationJob = null }) {
   const fact = { contract: STAGE_FACT_CONTRACT, stage, nonce, manifest_sha256: workManifestSha256, state: 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED',
     failure_code: null, scm_start_call_issued: false, original_binary_restored: false, complete_original_readback: false, configuration_conflict_detected: false,
     tree_cleanup_confirmed: false, tree_active_processes: null, root_exit_confirmed: false, native_receipt_sha256: null, outcome: null, relay: null, train: null, broker_no_launch: false };
@@ -242,6 +243,26 @@ export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha
   const trainFacts = plan.stage === TRAIN_STAGE_NUMBER && boundOutcome ? trainFactsOrNull(outcome.train) : null;
   if (plan.stage === TRAIN_STAGE_NUMBER) fact.train = trainFacts;
   if (n.ok) {
+    // Stage 13 is a bounded observation only. Its typed payload must match the
+    // original sealed job, not merely an arbitrary zero-effect result/job name.
+    if (plan.stage === 13) {
+      let observation = null;
+      try {
+        const job = validateRelayQualificationRun(relayQualificationJob);
+        if (boundOutcome && boundOutcome.stage === 13 && boundOutcome.entryRole === 'relay-qualification'
+          && boundOutcome.status === 'RELAY_QUALIFICATION_OBSERVATION' && boundOutcome.reason === null
+          && boundOutcome.sideEffects === 0 && boundOutcome.mayHavePublished === false
+          && Array.isArray(boundOutcome.jobIds) && boundOutcome.jobIds.length === 1 && HEX64.test(boundOutcome.jobIds[0] ?? '')
+          && Array.isArray(expectedJobIds) && expectedJobIds.length === 1 && boundOutcome.jobIds[0] === expectedJobIds[0]
+          && job.id === expectedJobIds[0] && job.runId === plan.batchId
+          && job.sourceManifestSha256 === plan.sourceManifestSha256 && job.nodeProfileSha256 === plan.nodeProfileSha256)
+          observation = validateRelayQualificationObservation(boundOutcome.observation, job);
+      } catch { /* Unknown/invalid observations cannot confer qualification. */ }
+      if (!observation) return done('STAGE_OUTCOME_MISSING');
+      return { ...fact, state: SUCCESS_STATE, observation,
+        observationLocator: { nonce, outcomeSha256: receipt.outcome_sha256,
+          nativeReceiptSha256: fact.native_receipt_sha256, jobId: expectedJobIds[0] } };
+    }
     if (plan.stage === 12) {
       let revocation = null;
       try { revocation = validateRevocationFacts(boundOutcome?.revocation); } catch { /* unconfirmed */ }
@@ -283,6 +304,13 @@ export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha
       return { ...fact, state: 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' };
     }
     if (!boundOutcome || !['SETTLED', 'ISSUED_RESULT_RECEIVED'].includes(boundOutcome.status)) return done('STAGE_OUTCOME_MISSING');
+    if (plan.stage === 1 && boundOutcome.status === 'SETTLED'
+      && Array.isArray(boundOutcome.jobIds) && boundOutcome.jobIds.length === 1
+      && Array.isArray(expectedJobIds) && expectedJobIds.length === 1
+      && HEX64.test(boundOutcome.jobIds[0] ?? '') && boundOutcome.jobIds[0] === expectedJobIds[0]) {
+      fact.stage1Locator = { nonce, outcomeSha256: receipt.outcome_sha256,
+        nativeReceiptSha256: fact.native_receipt_sha256, jobId: boundOutcome.jobIds[0] };
+    }
     return { ...fact, state: 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' };
   }
   if (n.code === 'STAGE_CHILD_TIMEOUT') return done(boundOutcome ? outcomeFailureCode(boundOutcome, plan.stage) : 'STAGE_CHILD_TIMEOUT');

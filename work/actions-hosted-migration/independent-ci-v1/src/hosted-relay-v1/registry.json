@@ -2,7 +2,7 @@
   "annotationTitle": "clued-hosted-relay-v1",
   "audience": "clued-hosted-relay-v1",
   "baseRef": "main",
-  "contract": "clued.independent-ci.hosted-relay-registry/1",
+  "contract": "clued.independent-ci.hosted-relay-registry/2",
   "domain": "production",
   "eventName": "pull_request",
   "expectedSubject": "repo:tdoljyj/cross-memory-system:pull_request",
@@ -21,7 +21,7 @@
   "repositoryId": 1334673495,
   "repositoryOwner": "tdoljyj",
   "repositoryOwnerId": 52366662,
-  "requireCheckRunIdClaim": false,
+  "requireCheckRunIdClaim": true,
   "roles": {
     "gitleaks": {
       "checkName": "gitleaks",
@@ -39,16 +39,16 @@
           "sha256": "a41e32538ac28a3e28fc482f2e4d93d83223c9f0a10b02103cdea52c86c30106"
         },
         {
-          "blob": "a8288f8673630b28f9f69a010ba8614d3f537711",
+          "blob": "bd30bbb8527d86a9e3c2bd2aafe07e0eb1a342fc",
           "mode": "100644",
           "path": ".github/actions/ci-temporary-storage/check-workflows.mjs",
-          "sha256": "a17026cbf180e4c85ce8fa29e5ab9862f8b4e96073088d4bbe4b30d0061e7a9f"
+          "sha256": "832ae3eac5a222e9630ca9ff34bb269398a2e284ca3ed9d6e61e870f192bd8fa"
         },
         {
-          "blob": "87f61a42771580b52f4ad6626e4299cba79f056b",
+          "blob": "01e05e15b80fcf1f0431e71d8aa05d1584aa8d0d",
           "mode": "100644",
           "path": ".github/actions/ci-temporary-storage/coverage.json",
-          "sha256": "76019ae7e6620f596067acc675bdabb492625a0a44b492f5ae68e66fb3f92399"
+          "sha256": "06429c38656fb92f32101681d26d518281424225cf22e086a8dd595ad77bac09"
         },
         {
           "blob": "dd162105b2800d31b9970d25575945a140a69d42",
@@ -63,16 +63,16 @@
           "sha256": "f6288615c4b6fe1e2cb8630405c8c618bd73fbe85d1b5336d331600730d9b1fd"
         },
         {
-          "blob": "e6fafbb0a40ce37795f1e50bbda03cd33fbf40e0",
+          "blob": "6441fc32b084002de697415ea8343af07816c929",
           "mode": "100644",
           "path": ".github/workflows/gitleaks.yml",
-          "sha256": "9d6c23d2ae4769d123f7ddcd3a25810878d36a85efc2403c07ecec5ecd17cdab"
+          "sha256": "116e6b201e30251b0f702ff4416dcfd015d2b311cbd2f000cdcd3e81e6d29966"
         },
         {
-          "blob": "e71138cd63ddb0fd1c28069834c11ddf493d530f",
+          "blob": "771d06e646024aa5384014a3f28bab50ccebaaba",
           "mode": "100644",
           "path": ".gitleaks.toml",
-          "sha256": "8aae8a204add7e201ff141a9035c0400b300b08c691ff483f09d24383b53b5ba"
+          "sha256": "f21a46cb2a0c2a61a63e0ebaf9115759cd244abcd99682c1d83da36d3b78061b"
         },
         {
           "blob": "5717f72c9317a0a2d935fde232bdebe9dd6be3a7",
@@ -177,10 +177,22 @@
           "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
         },
         {
-          "blob": "50bf248631723d1358eeed796e86d0caaa72d2b9",
+          "blob": "07042a02682d818f7e51a8d4e6105d7cc58c4b27",
+          "mode": "100644",
+          "path": "scripts/ci/clued-scan-start.mjs",
+          "sha256": "02eea1acaecc39ec179ac4201246509152dbf7bb7119687fb7cf640fb86146e1"
+        },
+        {
+          "blob": "917e02e6332e773384d4d1079a5fd32094f1f580",
           "mode": "100644",
           "path": "scripts/ci/reviewed_gitleaks.py",
-          "sha256": "9b1755f9001560aab95bb893f8c2cdc36f1826e3f83d2cae3ccf15ff27b4a476"
+          "sha256": "4441bbee3b022be40a0e6533ee6f56241621babc961b0389c25d4484a298d67f"
+        },
+        {
+          "blob": "5b4d32cb4c9fd8228fdae569d1f44c86af6c07b2",
+          "mode": "100644",
+          "path": "scripts/ci/reviewed_gitleaks_historical.py",
+          "sha256": "d395d46b18aa0dd642ecd5417d846750647152e1a97a20597b2bd295fd630870"
         },
         {
           "blob": "19421881d280bc351fc1992b1a6ec1f15a62e8fb",
@@ -193,9 +205,15 @@
           "mode": "100644",
           "path": "scripts/phase2-qualification/windows-isolation/.gitattributes",
           "sha256": "aa20458a6ba4eab07db3d623a255cecfa367d3e82845ec2440a17302b5f9f32a"
+        },
+        {
+          "blob": "c5192dd54a4e3059078f15942bd10b5ab2ad7726",
+          "mode": "100644",
+          "path": "scripts/runner/standard-runner-actor181/.gitattributes",
+          "sha256": "6d7eb667cead2701eeea1bc95b2d1a141754de0d2403340f1d733bdae19354c0"
         }
       ],
-      "closureSha256": "2f547f5bee984708e6198afa32b2fd486e6c1a1ce582b742353ddef4c429d63e",
+      "closureSha256": "a7624ec02b1608564a96811c3dfee264ac26e113e2633e62cf853909b681c0ad",
       "forbiddenChangePrefixes": [
         "scripts/ci/"
       ],
@@ -204,9 +222,9 @@
       "hostedJobTimeoutMinutes": 25,
       "mustNotExist": [],
       "runsOn": "ubuntu-latest",
-      "workflowBlob": "e6fafbb0a40ce37795f1e50bbda03cd33fbf40e0",
+      "workflowBlob": "6441fc32b084002de697415ea8343af07816c929",
       "workflowPath": ".github/workflows/gitleaks.yml",
-      "workflowSha256": "9d6c23d2ae4769d123f7ddcd3a25810878d36a85efc2403c07ecec5ecd17cdab"
+      "workflowSha256": "116e6b201e30251b0f702ff4416dcfd015d2b311cbd2f000cdcd3e81e6d29966"
     },
     "trivy": {
       "checkName": "trivy",
@@ -225,16 +243,16 @@
           "sha256": "a41e32538ac28a3e28fc482f2e4d93d83223c9f0a10b02103cdea52c86c30106"
         },
         {
-          "blob": "a8288f8673630b28f9f69a010ba8614d3f537711",
+          "blob": "bd30bbb8527d86a9e3c2bd2aafe07e0eb1a342fc",
           "mode": "100644",
           "path": ".github/actions/ci-temporary-storage/check-workflows.mjs",
-          "sha256": "a17026cbf180e4c85ce8fa29e5ab9862f8b4e96073088d4bbe4b30d0061e7a9f"
+          "sha256": "832ae3eac5a222e9630ca9ff34bb269398a2e284ca3ed9d6e61e870f192bd8fa"
         },
         {
-          "blob": "87f61a42771580b52f4ad6626e4299cba79f056b",
+          "blob": "01e05e15b80fcf1f0431e71d8aa05d1584aa8d0d",
           "mode": "100644",
           "path": ".github/actions/ci-temporary-storage/coverage.json",
-          "sha256": "76019ae7e6620f596067acc675bdabb492625a0a44b492f5ae68e66fb3f92399"
+          "sha256": "06429c38656fb92f32101681d26d518281424225cf22e086a8dd595ad77bac09"
         },
         {
           "blob": "dd162105b2800d31b9970d25575945a140a69d42",
@@ -249,10 +267,10 @@
           "sha256": "f6288615c4b6fe1e2cb8630405c8c618bd73fbe85d1b5336d331600730d9b1fd"
         },
         {
-          "blob": "50bd4ae3312ea3c5b1896a9ec81922b0b392343b",
+          "blob": "9867c4c847a61aa33761e27b793e0928bc6cbfdc",
           "mode": "100644",
           "path": ".github/workflows/trivy.yml",
-          "sha256": "8ec20479b6a7bbf3cc3c2b085271c9a7ed4dc06a16ea9e39c05900428adfa0d2"
+          "sha256": "ef85f4ad53e75d2105c1892600b83b8b70b198dc1518ff856ba53fb6c4053ccb"
         },
         {
           "blob": "e76304383ad74fe0f79e2d04ad29e8ad1d11f470",
@@ -351,6 +369,12 @@
           "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
         },
         {
+          "blob": "07042a02682d818f7e51a8d4e6105d7cc58c4b27",
+          "mode": "100644",
+          "path": "scripts/ci/clued-scan-start.mjs",
+          "sha256": "02eea1acaecc39ec179ac4201246509152dbf7bb7119687fb7cf640fb86146e1"
+        },
+        {
           "blob": "19421881d280bc351fc1992b1a6ec1f15a62e8fb",
           "mode": "100644",
           "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/.gitattributes",
@@ -361,10 +385,18 @@
           "mode": "100644",
           "path": "scripts/phase2-qualification/windows-isolation/.gitattributes",
           "sha256": "aa20458a6ba4eab07db3d623a255cecfa367d3e82845ec2440a17302b5f9f32a"
+        },
+        {
+          "blob": "c5192dd54a4e3059078f15942bd10b5ab2ad7726",
+          "mode": "100644",
+          "path": "scripts/runner/standard-runner-actor181/.gitattributes",
+          "sha256": "6d7eb667cead2701eeea1bc95b2d1a141754de0d2403340f1d733bdae19354c0"
         }
       ],
-      "closureSha256": "d6a98fb2401f6c2ea97bb777eb56ffe02fc1fe33757d71a59a62bfc75684e7d2",
-      "forbiddenChangePrefixes": [],
+      "closureSha256": "63d43a01772eb47af9eee4737f0d5f77710796b29eb1dc26f379a4d578ea22d0",
+      "forbiddenChangePrefixes": [
+        "scripts/ci/"
+      ],
       "hostedCheckName": "trivy-hosted-executor",
       "hostedJobId": "trivy-trusted-self-hosted",
       "hostedJobTimeoutMinutes": 25,
@@ -375,13 +407,21 @@
         "trivy.yaml"
       ],
       "runsOn": "ubuntu-latest",
-      "workflowBlob": "50bd4ae3312ea3c5b1896a9ec81922b0b392343b",
+      "workflowBlob": "9867c4c847a61aa33761e27b793e0928bc6cbfdc",
       "workflowPath": ".github/workflows/trivy.yml",
-      "workflowSha256": "8ec20479b6a7bbf3cc3c2b085271c9a7ed4dc06a16ea9e39c05900428adfa0d2"
+      "workflowSha256": "ef85f4ad53e75d2105c1892600b83b8b70b198dc1518ff856ba53fb6c4053ccb"
     }
   },
   "runnerEnvironment": "github-hosted",
-  "sourceCommit": "37a98c6afdfdfdc533b7b87b294106cce38332cb",
-  "sourceTree": "93e264667df336bff3d969d7f3dcba46387c356d",
-  "specSha256": "4b360ec93f6a53a5b2024b9e38d5cc70dab555b28147f20b9965dc46dc9b6e70"
+  "scanStart": {
+    "audience": "clued-ci-scan-start-v1",
+    "contract": "clued.ci-scan-start-workflow-gate/1",
+    "endpoint": "https://kooyumi.pixelgrav.com/v1/ci/scan-start",
+    "scriptPath": "scripts/ci/clued-scan-start.mjs",
+    "scriptSha256": "02eea1acaecc39ec179ac4201246509152dbf7bb7119687fb7cf640fb86146e1",
+    "stepName": "Acquire one-time scan permission"
+  },
+  "sourceCommit": "d63e1e1c3064db249c0de3bec8c727cb203ebc87",
+  "sourceTree": "a08389d2bafdba4abafab97e94161a9ec34dbc6f",
+  "specSha256": "f85440433df0f8aceba2f490d9e5c6485bc0bf1ed1fdb85efbc77e42fa4270e6"
 }

@@ -75,10 +75,12 @@
 import { createHash, createSign, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import {isDeepStrictEqual} from "node:util";
 import {CONTROL_WORKFLOW_FILES,registeredControlWorkflowTransition} from './clued-control-workflow-source.mjs';
+import {ACTOR_WORKFLOW,registeredActorTransition as actorSourceTransition} from './clued-standard-runner-actor-source.mjs';
 import {PUBLISHER_FILES,registeredPublisherTransition} from "./clued-production-publisher-source.mjs";
 import {PUBLISHER_PR_QUALIFICATION_FILES,registeredPublisherPrQualificationTransition} from "./clued-publisher-qualification-source.mjs";
-import {compileRegisteredWorkflow,registeredWorkflowSource,rolesForSource,roleDefinitionDigest,workflowBlob} from "./clued-workflow-profile.mjs";
+import {compileRegisteredWorkflow,registeredWorkflowSource,rolesForSource,roleDefinitionDigest,workflowBlob,parseWorkflowProfiles} from "./clued-workflow-profile.mjs";
 import {createNaturalRecorder,observeEvaluation} from "./merge-admission-source-producer.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -454,7 +456,7 @@ export function registeredPlacementSuccessor({file,headText,baseText,profiles,ro
     // parser or importing any candidate code.
     const compiled=compileRegisteredWorkflow(headText,{primary_ids:["contract-placement"],accepted_roles:roles,
       parseYaml:()=>({name:"contract-placement",on:{pull_request:null},jobs:{"admission-gate":{},"contract-placement":role.definition}})});
-    if(JSON.stringify(compiled)!==JSON.stringify(profile) ||
+    if(!isDeepStrictEqual(compiled,profile) ||
       sha256Hex(workflowJobs(headText).find(job=>job.name===GATE_JOB)?.lines.join("\n")??"")!==PLACEMENT_GATE_SHA256)
       return no("placement compiled Source/FrozenGate differs");
     return {passed:true,registeredPlacementTransition:before.profile.gated===false,profile,role};
@@ -467,7 +469,7 @@ function trustedPlacementCatalogues() {
     if(!info.isFile() || info.isSymbolicLink() || info.size>limit)throw Error("trusted placement catalogue unavailable");
     const bytes=fs.readFileSync(location),text=bytes.toString("utf8");
     if(bytes.length>limit || !Buffer.from(text,"utf8").equals(bytes))throw Error("trusted placement catalogue invalid");
-    return JSON.parse(text);
+    return name.endsWith("clued-gated-proof-profiles.json")?parseWorkflowProfiles(bytes):JSON.parse(text);
   };
   try{return {profiles:read("./clued-gated-proof-profiles.json",1048576),
     roleSpecs:read("./clued-gated-proof-role-specs.json",524288)};}
@@ -670,6 +672,45 @@ const BOOTSTRAP_ORDINARY_SOURCES=Object.freeze([
       {
         "job_id": "untrusted-hosted",
         "definition_sha256": "f968f1e82055b40013ef4bb560b0b11bd7af6bc90b0817f821c59db273dc794a"
+      }
+    ]
+  },
+  {
+    "file": ".github/workflows/gitleaks.yml",
+    "predecessor_blob": "e6fafbb0a40ce37795f1e50bbda03cd33fbf40e0",
+    "candidate_blob": "ba4690650935961e7f4aa289a3aa0dc874b8b4fd",
+    "candidate_sha256": "d8daffb6f35d572ada3028f1b372bc9e728edb9d757a6442a702ae423645ff77",
+    "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
+    "roles": [
+      {
+        "job_id": "gitleaks-trusted-self-hosted",
+        "definition_sha256": "2325e6f3f3d459f1204a77a842d4726b13cad06e73c1312478a6b9df013882bd"
+      }
+    ]
+  },
+  {
+    "file": ".github/workflows/trivy.yml",
+    "predecessor_blob": "50bd4ae3312ea3c5b1896a9ec81922b0b392343b",
+    "candidate_blob": "9867c4c847a61aa33761e27b793e0928bc6cbfdc",
+    "candidate_sha256": "ef85f4ad53e75d2105c1892600b83b8b70b198dc1518ff856ba53fb6c4053ccb",
+    "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
+    "roles": [
+      {
+        "job_id": "trivy-trusted-self-hosted",
+        "definition_sha256": "7745a8c7286ffba75761d8ee00fbb099809318a9bdc6bf52760064d040cefa8f"
+      }
+    ]
+  },
+  {
+    "file": ".github/workflows/gitleaks.yml",
+    "predecessor_blob": "ba4690650935961e7f4aa289a3aa0dc874b8b4fd",
+    "candidate_blob": "6441fc32b084002de697415ea8343af07816c929",
+    "candidate_sha256": "116e6b201e30251b0f702ff4416dcfd015d2b311cbd2f000cdcd3e81e6d29966",
+    "gate_sha256": "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9",
+    "roles": [
+      {
+        "job_id": "gitleaks-trusted-self-hosted",
+        "definition_sha256": "9dd1c58aa9a60dce0a079158bd0ce3ac47b93626854c85672e9c217f5a623caf"
       }
     ]
   }
@@ -1288,7 +1329,7 @@ function strategyShrinks(job, old) {
 // Findings for one workflow at the PR head; baseText is its base-branch
 // version, or null when the PR adds it. Existing ungated workflows (the
 // short checks of Owner Decision 75abfe80) stay ungated.
-export function gateFindings(headText, baseText, { registeredPublisherTransition = false, registeredPlacementTransition = false, registeredControlTransition = false, registeredBootstrapOrdinaryTransition = false } = {}) {
+export function gateFindings(headText, baseText, { registeredPublisherTransition = false, registeredPlacementTransition = false, registeredControlTransition = false, registeredBootstrapOrdinaryTransition = false, registeredActorTransition = false } = {}) {
   const form = workflowFormFindings(headText);
   if (form.length) return form;
   // Only the trusted-main exact-pair caller may set this Source classification.
@@ -1297,6 +1338,7 @@ export function gateFindings(headText, baseText, { registeredPublisherTransition
     if(baseText===null||workflowIsGated(baseText)||workflowIsGated(headText))return ['controller_Source_expected_ungated'];
     return [];
   }
+  if(registeredActorTransition===true&&actorSourceTransition(ACTOR_WORKFLOW,headText).passed)return [];
   const jobs = workflowJobs(headText);
   const selfHosted = jobs.some((job) => !jobIsHosted(job));
   const required = baseText === null ? selfHosted : workflowIsGated(baseText) ||
@@ -1389,6 +1431,10 @@ export async function workflowFindings(fetchImpl, env, repository, files, headSh
         !registeredPublisherPrQualificationTransition(trustedPublisherPrQualificationProfiles(),file.filename,head,base,{repository}).passed)) {
       gate.push(`workflow_gate:${file.filename}:publisher_PR_qualification_Source_not_registered`);
     }
+    const actorKnown=file.filename===ACTOR_WORKFLOW||file.previous_filename===ACTOR_WORKFLOW;
+    const actorSource=actorKnown&&file.filename===ACTOR_WORKFLOW&&['added','modified'].includes(file.status)&&
+      (file.status==='added'||basePath===file.filename)?actorSourceTransition(file.filename,head):null;
+    if(actorKnown&&!actorSource?.passed)gate.push(`workflow_gate:${file.filename}:actor_Source_FullRoles_not_registered`);
     const controlKnown=Object.hasOwn(CONTROL_WORKFLOW_FILES,file.filename)||Object.hasOwn(CONTROL_WORKFLOW_FILES,file.previous_filename??'');
     const controlSource=controlKnown?registeredControlWorkflowTransition(trustedControlProfiles(),file.filename,head,base,{repository,change:file}):null;
     if(controlKnown&&!controlSource.passed)gate.push(`workflow_gate:${file.filename}:control_Source_not_registered`);
@@ -1403,7 +1449,7 @@ export async function workflowFindings(fetchImpl, env, repository, files, headSh
     const ordinaryRequired=ordinaryKnown&&(workflowIsGated(head)||base!==null&&workflowIsGated(base));
     const ordinarySource=ordinaryRequired?registeredBootstrapOrdinarySuccessor({file,headText:head,baseText:base,...trustedPlacementCatalogues()}):null;
     if(ordinaryRequired&&!ordinarySource.passed)gate.push(`workflow_gate:${file.filename}:bootstrap_ordinary_Source_not_registered`);
-    for (const finding of gateFindings(head, base, { registeredControlTransition:controlSource?.passed===true, registeredPublisherTransition,
+    for (const finding of gateFindings(head, base, { registeredActorTransition:actorSource?.passed===true, registeredControlTransition:controlSource?.passed===true, registeredPublisherTransition,
       registeredPlacementTransition:placementSource?.registeredPlacementTransition===true,
       registeredBootstrapOrdinaryTransition:ordinarySource?.registeredBootstrapOrdinaryTransition===true })) {
       gate.push(`workflow_gate:${file.filename}:${finding}`);
@@ -2986,9 +3032,29 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
 // environment's branch policy keeps the token from it anyway.
 
 export const DISPATCH_ADMISSION_WORKFLOW = "clued-work-admission-dispatch.yml";
-export const DISPATCH_GATED_WORKFLOWS = ["clued-connection-authorization.yml", "clued-g4-database.yml", "information-flow-e2e.yml", "clued-handover-external-qualification.yml", "clued-handover-disposable-idle.yml"];
+export const DISPATCH_GATED_WORKFLOWS = ["clued-connection-authorization.yml", "clued-g4-database.yml", "information-flow-e2e.yml", "clued-handover-external-qualification.yml", "clued-handover-disposable-idle.yml", "clued-standard-runner-actor-qualification.yml"];
 export const DISPATCH_ADMISSION_TTL_SECONDS = 1800;
 export const ADMITTED_HEAD_TITLE = "clued-admitted-head";
+export const DISPATCH_NATIVE_VERDICT_TITLE = "clued-dispatch-native-verdict-v1";
+// Only the real Native response is projected; a missing field stays null.
+// This carrier records an existing admission, never creates an OS permission.
+export function closeNativeDispatchVerdict(payload,request){
+  const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(v);
+  const positive=v=>Number.isSafeInteger(v)&&v>0;
+  const claim=payload?.claim;
+  const expiry=typeof claim?.expires_at==='string'&&claim.expires_at.length<=64&&Number.isFinite(Date.parse(claim.expires_at))?claim.expires_at:null;
+  const fields={verdict:payload?.verdict==='ADMITTED'?'ADMITTED':null,
+    execution_authorized:typeof payload?.execution_authorized==='boolean'?payload.execution_authorized:null,
+    execution_epoch:positive(payload?.execution_epoch)?payload.execution_epoch:null,
+    execution_policy:['active','staged'].includes(payload?.execution_policy)?payload.execution_policy:null,
+    head_authorization_id:uuid(payload?.head_authorization_id)?payload.head_authorization_id:null,
+    task_id:uuid(claim?.task_id)?claim.task_id:null,fence:positive(claim?.fence)?claim.fence:null,
+    claim_status:['ACTIVE','DRAINING'].includes(claim?.status)?claim.status:null,expires_at:expiry};
+  return {contract:'clued.native-ci-dispatch-verdict/1',subject:{scope:request.scope,claim_id:request.claim_id,
+    repository:request.repository,head_sha:request.head_sha,target_branch:request.target_branch,workflow:request.workflow},
+    native:fields,complete:fields.verdict==='ADMITTED'&&fields.execution_authorized===true&&fields.execution_epoch!==null&&fields.execution_policy!==null&&fields.task_id!==null&&fields.fence!==null&&fields.claim_status!==null&&fields.expires_at!==null};
+}
+
 
 // The head the admission run verified, from its own notice annotation. The
 // run executes default-branch code only, so the annotation is that code's.
@@ -3119,6 +3185,9 @@ async function dispatchAdmitCore({ env, fetchImpl, workspace }) {
   if (verified.kind === "refused") throw new Error(`Clued refused the verification request (${verified.detail}).`);
   outcome.verdict = verified.verdict;
   outcome.reasons.push(...verified.reasons);
+  outcome.dispatch_admission = closeNativeDispatchVerdict(verified.payload,{scope,claim_id:claimId,head_sha:commit.sha,repository:env.GITHUB_REPOSITORY,target_branch:ref,workflow});
+  if(outcome.dispatch_admission.complete) console.log(`::notice title=${DISPATCH_NATIVE_VERDICT_TITLE}::${JSON.stringify(outcome.dispatch_admission)}`);
+
   if (verified.payload.claim && typeof verified.payload.claim === "object") {
     const { claim } = verified.payload;
     outcome.claim = {

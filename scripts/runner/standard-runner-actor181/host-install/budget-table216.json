@@ -1,0 +1,34 @@
+{
+  "schema": "clued.install-budget-table216/1",
+  "scope": "INSTALL only; unchanged QUAL and native binary",
+  "native_binary_sha256": "abfd6fae020b3f0cb31e43cd3802ec98cb089472f70579310dc99ce42e3048cb",
+  "critical_current": {
+    "root_verifier_ms": 15000,
+    "self_receive_ms": 20000,
+    "relay_pending_ms": 19000,
+    "actual_fresh_per_phase": true,
+    "ba_cache_used": false
+  },
+  "readonly_rpc": {
+    "node_next_ms": 90000,
+    "broker_receive_idle_ms": 90000,
+    "self_observer_receive_idle_ms": 90000,
+    "ba_root_reply_ms": 90000,
+    "host_rpc_ms": 90000,
+    "relay_pending_ms": 89000,
+    "native_frame_body_ms": 20000
+  },
+  "readonly_observation": {
+    "scope": "one actual pending BA command only",
+    "reuse_max_age_ms": 15000,
+    "stale_action": "real fresh two-gate read in same readonly command; failure refuses",
+    "destroyed_on_command_completion": true
+  },
+  "overall": {
+    "common_parent_ms": 300000,
+    "install_relay_ms": 300000,
+    "self_wait_ms": 360000,
+    "effective_overall_not_more_than_ms": 300000
+  },
+  "execution_authority": false
+}

@@ -7,12 +7,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {compileRegisteredWorkflow,roleDefinitionDigest,workflowBlob,rolesForSource,futureWorkflowSubject,external2FutureWorkflowCatalogue} from './clued-workflow-profile.mjs';
+import {compileRegisteredWorkflow,roleDefinitionDigest,workflowBlob,rolesForSource,futureWorkflowSubject,external2FutureWorkflowCatalogue,parseWorkflowProfiles} from './clued-workflow-profile.mjs';
 import {reportMergeSlots} from './clued-merge-slot-ci.mjs';
 import {createHash} from 'node:crypto';
 import {workflowJobs} from './clued-work-admission.mjs';
 import {applicableCI} from './clued-gated-proof.mjs';
 import {execFileSync} from 'node:child_process';
+import {loadHistoricalWorkflowProfiles69e} from './fixtures/workflow-profiles-69e30b6/fixture.mjs';
 const repository='o/r',headRepository='fork/r',file='.github/workflows/fixture.yml';
 const sha='a'.repeat(40),head='b'.repeat(40);
 const run={id:7,node_id:'WFR_fixture',run_attempt:2,event:'pull_request',head_sha:head,path:file,
@@ -441,9 +442,11 @@ test('complete catalogue retains counted CI when a PR deletes its gate; non-CI e
 
 function futureExecutionWorld({trustedFuture=true,acceptance='accepted',critical='success',primary='success',
   staleAttempt=false,moveMain=false,truncateHead=false,truncateDefault=false,treeTruncated=false,
-  actualSourceDiffers=false,alreadyInstalled=false,gateHashDiffers=false,defaultBranch='main'}={}) {
-  const w=executionWorld(),saved=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
-  const savedRoles=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)));
+  actualSourceDiffers=false,alreadyInstalled=false,gateHashDiffers=false,defaultBranch='main',sourceRegistries=null}={}) {
+  const w=executionWorld(),saved=sourceRegistries?structuredClone(sourceRegistries.profiles):
+    parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
+  const savedRoles=sourceRegistries?structuredClone(sourceRegistries.roleSpecs):
+    JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)));
   const consumer_id='company-linux-01',futureFile=`.github/workflows/clued-work-handover-qualification-${consumer_id}.yml`;
   const registered=saved.future_workflows?.find(entry=>entry.file===futureFile),profile=structuredClone(
     registered?.source_profile??saved.workflows[futureFile]);
@@ -556,8 +559,9 @@ test('future enrollment never qualifies skipped execution, an old attempt or a c
 });
 
 function sevenConsumerExecutionWorld({moveMain=false,sourceRegistries=null}={}) {
-  const profiles=sourceRegistries?structuredClone(sourceRegistries.profiles):JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
-  const roleSpecs=sourceRegistries?structuredClone(sourceRegistries.roleSpecs):JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)));
+  const historical=sourceRegistries?null:loadHistoricalWorkflowProfiles69e();
+  const profiles=sourceRegistries?structuredClone(sourceRegistries.profiles):parseWorkflowProfiles(historical.profilesRaw);
+  const roleSpecs=sourceRegistries?structuredClone(sourceRegistries.roleSpecs):JSON.parse(historical.rolesRaw);
   // This fixture reconstructs the predecessor seven-only installation.
   // Current default External2 futures do not belong to its old 13+future7 Source.
   delete profiles.external2_future_workflows;delete roleSpecs.external2_future_workflows;
@@ -571,7 +575,7 @@ function sevenConsumerExecutionWorld({moveMain=false,sourceRegistries=null}={}) 
   const promoted=!(profiles.future_workflows?.length);
   if(promoted) {
     // Preserve the same fixture after the separately governed active promotion.
-    const one=futureExecutionWorld().entry;
+    const one=futureExecutionWorld({sourceRegistries:{profiles,roleSpecs}}).entry;
     profiles.future_workflows=[];roleSpecs.future_workflows=[];
     for(const consumer_id of ['company-linux-01','company-linux-02','company-linux-03','company-linux-04',
       'home-linux-01','company-win-01','home-win-01']) {
@@ -692,8 +696,8 @@ test('inactive External2 arrays preserve predecessor-only worlds; malformed or m
 
 
 test('active22 is preserved while the predecessor fixture reconstructs exactly thirteen plus readonly seven',()=>{
-  const profiles=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
-  const roleSpecs=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)));
+  const historical=loadHistoricalWorkflowProfiles69e(),profiles=parseWorkflowProfiles(historical.profilesRaw);
+  const roleSpecs=JSON.parse(historical.rolesRaw);
   const exactFiles=['.github/workflows/clued-handover-external-qualification.yml','.github/workflows/clued-handover-disposable-idle.yml'];
   if(Object.keys(profiles.workflows).length===20){
     assert.deepEqual(profiles.external2_future_workflows.map(entry=>entry.file).sort(),[...exactFiles].sort());
@@ -979,7 +983,8 @@ test('hung GraphQL response body is aborted within the independent shadow budget
   const root=fs.realpathSync(os.tmpdir()),workspace=fs.mkdtempSync(path.join(root,'clued-source-budget-'));
   try {
     fs.mkdirSync(path.join(workspace,'scripts/ci'),{recursive:true});
-    for(const name of ['profiles','role-specs'])fs.writeFileSync(path.join(workspace,`scripts/ci/clued-gated-proof-${name}.json`),'{}');
+    for(const name of ['profiles','role-specs'])fs.writeFileSync(path.join(workspace,`scripts/ci/clued-gated-proof-${name}.json`),
+      snapshotFixtureFiles[`scripts/ci/clued-gated-proof-${name}.json`]);
     const seen=await observeCompletedSource({env:{GITHUB_REPOSITORY:repository},eventName:'workflow_run',
       event:{workflow_run:{id:7}},workspace,workflows:new Map([[file,'c'.repeat(40)]]),budgetMs:5,
       read:async()=>completed,graphRead});
