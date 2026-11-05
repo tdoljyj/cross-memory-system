@@ -511,14 +511,15 @@ test('resident CI assist: merge_queue_join and lease_extend on the CI command do
     q2Claim = await renew('h5', q2Claim, { trigger_refs: ['task:q2'] });
     assert.deepEqual(q2Claim.trigger_refs, ['task:q2']);
 
-    // --- Approval (current behaviour, pending an Owner decision): verify records the execution
-    // admission of a protected-layer head before and without any Owner Grant, and the CI may join. ---
+    // --- Approval: verify records the execution admission of a protected-layer head before and without any
+    // Owner Grant, and the CI may join it: intended, the server trusts the admission check, joining is not
+    // merging, and the required checks still need the Grant (Owner Decision 207c0cd0 v4). ---
     const v = await claim('h5', 'V');
     const vAdmitted = await agent('node', 'clued_work_verify_v1', { scope: 'global', claim_id: v.claim_id, pr_ref: `${REPO}#26`,
       head_sha: HEAD('9'), target_branch: 'main', admission_mode: { state: 'normal', layer: 'protected' } });
     assert.equal(vAdmitted.verdict, 'ADMITTED');
     assert.equal((await admin.query(`select count(*)::int n from clued_private.owner_grants_v1 where user_id=$1`, [userId])).rows[0].n, 0);
-    assert.equal((await join('node', `${REPO}#26`, HEAD('9'))).joined, true, 'no server-side approval condition today');
+    assert.equal((await join('node', `${REPO}#26`, HEAD('9'))).joined, true, 'no server-side Grant condition for a join');
 
     // --- A CI ref that left the claim (the slot returned on close) is not put back by a renewal. ---
     assert.equal((await agent('node', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: pr2 })).returned, true);

@@ -34,6 +34,11 @@
 -- neither join nor extend. Otherwise the answer names why: claim_not_bound
 -- (no claim of the scope is bound to pr_ref), claim_not_live (none of them is
 -- live) or head_not_admitted (a live one, but no such admission).
+-- There is no Owner Grant condition here (Owner Decision 207c0cd0 v4): the
+-- server trusts the admission check. The resident joins only a head that its
+-- stage 8 has evaluated again and that passed the Owner review where one is
+-- required; joining is not merging, and merging still needs the required
+-- checks, which themselves require the Grant where one is needed.
 --
 -- 1. action merge_queue_join, input {action, scope, pr_ref: "owner/repo#N",
 --    head_sha}. The claim joins merge:<owner>/<repo>:main at the back,

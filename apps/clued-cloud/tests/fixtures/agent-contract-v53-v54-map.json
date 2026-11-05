@@ -3,7 +3,7 @@
   "source_version": 53,
   "target_version": 54,
   "source_document_normalized_sha256": "3a1af9005a4714ec32aff26d0af8341199d55fd8397d3cebf3517e5293eb4b24",
-  "target_document_normalized_sha256": "868db43fdffab1b0912fb649d9c8674eabaece2ff259aedd18d939c4f64bf8cc",
+  "target_document_normalized_sha256": "9effa8bb042149b69f50b3bdb940a20878091bdd648521164386f9bd6976a45e",
   "edits": [
     {
       "id": "version",
@@ -13,7 +13,7 @@
     {
       "id": "ci-queue-assist",
       "before": "Changing or adding a merge ref (other than its letter case) joins every queue of the claim again at the back.\n",
-      "after": "Changing or adding a merge ref (other than its letter case) joins every queue of the claim again at the back. Where the resident CI runs, it may also put the claim into the default branch's queue itself (`merge:<owner>/<name>:main`, at the back) once it has admitted the current head of the pull request the claim is bound to, and extend the claim's lease while its CI runs, never past the hard deadline. Neither changes your `fence`, `lease_version`, `progress_ref` or renewal count, so your renewals stay valid. While the merge ref the CI added is on the claim, a renewal whose `trigger_refs` leave it out keeps it and your place; if your list then already holds the 50 refs a claim may hold, the renewal is refused with `work_claim_trigger_refs_invalid`. Once that ref has left the claim (a merge, a close or a CI failure gives the slot back), it is no longer the CI's: a ref you add yourself leaves with a renewal without it, as any of your refs. A renewal never shortens a longer lease the CI gave: it sets the later of the current expiry and 2 hours from now, within the hard deadline. When a CI extension has already brought the lease to the hard deadline, a renewal is still accepted: it records your progress, refs and write set, and the expiry stays at the deadline.\n"
+      "after": "Changing or adding a merge ref (other than its letter case) joins every queue of the claim again at the back. Where the resident CI runs, it may also put the claim into the default branch's queue itself (`merge:<owner>/<name>:main`, at the back) once it has admitted the current head of the pull request the claim is bound to, and extend the claim's lease while its CI runs, never past the hard deadline. The CI joins only a head that the resident's stage 8 has evaluated again and that passed the Owner review where one is required. Joining is not merging: merging still needs the required checks, and those require the Owner Grant where one is needed. Neither changes your `fence`, `lease_version`, `progress_ref` or renewal count, so your renewals stay valid. While the merge ref the CI added is on the claim, a renewal whose `trigger_refs` leave it out keeps it and your place; if your list then already holds the 50 refs a claim may hold, the renewal is refused with `work_claim_trigger_refs_invalid`. Once that ref has left the claim (a merge, a close or a CI failure gives the slot back), it is no longer the CI's: a ref you add yourself leaves with a renewal without it, as any of your refs. A renewal never shortens a longer lease the CI gave: it sets the later of the current expiry and 2 hours from now, within the hard deadline. When a CI extension has already brought the lease to the hard deadline, a renewal is still accepted: it records your progress, refs and write set, and the expiry stays at the deadline.\n"
     },
     {
       "id": "ci-queue-leave",
