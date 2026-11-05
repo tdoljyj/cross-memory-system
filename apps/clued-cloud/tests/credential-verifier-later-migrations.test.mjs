@@ -13,14 +13,20 @@ import { fileVersion, migrationsDirectory } from '../scripts/migration-ledger.mj
 
 const VERIFIER_VERSION = fileVersion('20261008210000_credential_verifier_v1.sql');
 const FIX = '20261106010000_storage_route_destination_verifier_v1.sql';
-const STORED = String.raw`(?:(?:\w+\.)?(?:token_hash|old_token_hash|old_reader_hash|old_writer_hash|authority_token_hash)|\w+\s*->>?\s*'(?:token_hash|reader_hash|writer_hash|renewal_hash)')`;
-const PROOF = String.raw`(?:p_\w+|v_\w+|h|reader_hash|writer_hash|\$\d+)`;
+const STORED = String.raw`(?:\(\s*)?(?:(?:\w+\.)?(?:token_hash|old_token_hash|old_reader_hash|old_writer_hash|authority_token_hash)` +
+  String.raw`|(?:\w+\.)?\w+\s*->>?\s*'(?:token_hash|reader_hash|writer_hash|renewal_hash)')(?:\s*\))?`;
+const PROOF = String.raw`(?:p_\w+|v_\w+|h|reader_hash|writer_hash|\$\d+)(?:::\w+)?`;
 const OPERATOR = String.raw`\s*(?:=|<>|!=|is\s+(?:not\s+)?distinct\s+from)\s*`;
-// Wider than the expression credential-verifier-db.test.mjs uses: either order, = any(...) and in (...), positional
-// and v_ parameters, JSON fields, any case. `set token_hash=...` is an assignment (the trigger converts it).
+// Wider than the expression credential-verifier-db.test.mjs uses: either order, = any(...) (also over array[...]),
+// [not] in (...), casts, positional and v_ parameters, JSON fields with or without an alias or parentheses, any case.
+// Not comparisons: `set token_hash=...` (an assignment, which the trigger converts), a plpgsql assignment
+// `v_hash = token_hash;` at the start of a statement, and a proof-named value that is itself a record field or JSON
+// object (`v_binding.token_hash`, `p_request->>...`). An assignment after the first column of a multi-column SET
+// (`set a=1, token_hash=p_hash`) still matches; list it in KNOWN.
 const RAW_COMPARISON = new RegExp(
-  String.raw`(?<![\w.$])(?<!set )${STORED}(?:${OPERATOR}(?:(?:any|all)\s*\(\s*)?|\s+in\s*\(\s*)${PROOF}(?![\w(])` +
-    String.raw`|(?<![\w.$:])${PROOF}${OPERATOR}${STORED}(?!\w)`,
+  String.raw`(?<![\w.$])(?<!\bset\s+)${STORED}(?:${OPERATOR}(?:(?:any|all)\s*\(\s*(?:array\s*\[\s*)?)?|\s+(?:not\s+)?in\s*\(\s*)` +
+    String.raw`${PROOF}(?![\w(.]|\s*->)` +
+    String.raw`|(?<![\w.$:])(?<!(?:^|;|\bbegin|\bthen|\belse|\bloop)\s*)${PROOF}${OPERATOR}${STORED}(?!\w)`,
   'gi',
 );
 // Each file's raw comparisons, exactly as written, that are not live ones.
@@ -34,11 +40,17 @@ const KNOWN = {
   '20261031090000_merge_train_failover_v1.sql': ['x.token_hash=v_hash', 'x.token_hash=v_hash'],
 };
 
-// Comments and string literals go; a JSON key (->>'reader_hash') stays, and dollar-quoted bodies are read as code.
+// Comments and string literals go; a JSON key (->>'reader_hash') stays. A dollar-quoted body is read as code on its
+// own, so a quote inside it never runs past its closing tag.
 function code(sql) {
   let out = '';
   for (let i = 0; i < sql.length; ) {
-    if (sql.startsWith('--', i)) {
+    const dollar = /^\$\w*\$/.exec(sql.slice(i, i + 64))?.[0];
+    if (dollar && !/[\w$]/.test(sql[i - 1] ?? '')) {
+      const end = sql.indexOf(dollar, i + dollar.length);
+      out += dollar + code(sql.slice(i + dollar.length, end < 0 ? sql.length : end)) + dollar;
+      i = end < 0 ? sql.length : end + dollar.length;
+    } else if (sql.startsWith('--', i)) {
       const end = sql.indexOf('\n', i);
       i = end < 0 ? sql.length : end;
     } else if (sql.startsWith('/*', i)) {
@@ -46,8 +58,9 @@ function code(sql) {
       i = end < 0 ? sql.length : end + 2;
       out += ' ';
     } else if (sql[i] === "'") {
+      const escapes = /(?<![\w$])e$/i.test(out);
       let end = i + 1;
-      while (end < sql.length && !(sql[end] === "'" && sql[end + 1] !== "'")) end += sql[end] === "'" ? 2 : 1;
+      while (end < sql.length && !(sql[end] === "'" && sql[end + 1] !== "'")) end += sql[end] === "'" || (escapes && sql[end] === '\\') ? 2 : 1;
       out += /->>?\s*$/.test(out) ? sql.slice(i, end + 1) : "''";
       i = end + 1;
     } else {
@@ -64,12 +77,18 @@ test('the scanner finds raw comparisons in either order and ignores comments, li
   for (const sql of [
     'select 1 where b.token_hash=p_hash', 'where p_hash = b.token_hash', 'WHERE B.TOKEN_HASH = P_HASH',
     'where token_hash = any($1)', 'where token_hash in (v_hash)', 'where token_hash=$1', 'where token_hash is not distinct from h',
-    "where request->>'reader_hash'=h", "where h = request->>'writer_hash'",
+    "where request->>'reader_hash'=h", "where h = request->>'writer_hash'", "where r.request->>'reader_hash'=h",
+    "where (request->>'reader_hash')=h", 'where token_hash = any(array[p_hash])', 'where p_hash::text = token_hash',
+    'where token_hash not in (p_hash)', "perform $d$don't$d$; select 1 where token_hash=p_hash",
+    String.raw`select E'it\'s' where token_hash=p_hash`, 'where\n  p_hash = token_hash',
   ]) assert.equal(found(sql).length, 1, sql);
   for (const sql of [
     'where b.token_hash=clued_private.credential_verifier_v1(p_hash)', 'update t set token_hash=p_hash',
     '-- where token_hash=p_hash', '/* where token_hash=p_hash */', "select 'where token_hash=p_hash'",
     'v_hash := token_hash', 'where token_hash = any(clued_private.credential_verifier_v1(p_hash))',
+    'update t set\n  token_hash=p_hash', "where p_request->>'reader_hash'=p_request->>'writer_hash'",
+    'where token_hash = v_binding.token_hash', 'begin v_hash = token_hash; end', 'select 1;\n  v_hash = token_hash;',
+    "select 'it''s where token_hash=p_hash'",
   ]) assert.deepEqual(found(sql), [], sql);
 });
 
