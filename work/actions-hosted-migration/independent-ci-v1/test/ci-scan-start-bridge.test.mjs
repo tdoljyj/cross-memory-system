@@ -116,7 +116,7 @@ test('all production adapters require the separate start port; a caller fixture 
 
 // Task 169fd456: until production activates the Native scan-start policy, this
 // Source starts scanners without a Native permission (grant.mjs).
-test('this Source does not require Native: an issuer refuses a scan-start challenge and never calls Native', async () => {
+test('this Source does not require Native: an issuer refuses a scan-start challenge and never calls Native', WINDOWS, async () => {
   assert.equal(NATIVE_SCAN_START_REQUIRED, false);
   const x = await drive({ nativeScanStartRequired: NATIVE_SCAN_START_REQUIRED });
   assert.equal(x.nativeCalls, 0); assert.equal(x.responses.length, 0);

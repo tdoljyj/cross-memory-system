@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
-import {CONTROL_WORKFLOW_FILES,CONTROL_WORKFLOW_SOURCE_PATH,DISPATCHER_CHOICE_SOURCE,RETIRED_CONSUMER_OBSERVER_SOURCE,
+import {CONTROL_WORKFLOW_FILES,CONTROL_WORKFLOW_SOURCE_PATH,DISPATCHER_CHOICE_SOURCE,
   compileControlWorkflowSource,registeredControlWorkflowSource,registeredControlWorkflowTransition} from './clued-control-workflow-source.mjs';
 import {roleDefinitionDigest,workflowBlob} from './clued-workflow-profile.mjs';
 
@@ -75,11 +75,7 @@ test('dispatcher choice kind is scoped to its one file and exact legacy predeces
 });
 
 test('catalogue retains all fourteen old Sources, complete FullRoles and every old dependency verbatim',()=>{
-  const r=load();
-  const retirement=r.workflows[RETIRED_CONSUMER_OBSERVER_SOURCE.file];
-  retirement.sources=retirement.sources.filter(s=>s.source_kind!=='retired_consumer_observer_successor');
-  delete r.roles[RETIRED_CONSUMER_OBSERVER_SOURCE.file][RETIRED_CONSUMER_OBSERVER_SOURCE.workflow_blob];
-  const row=r.workflows[file],added=row.sources.filter(s=>s.source_kind==='dispatcher_choice_successor');
+  const r=load(),row=r.workflows[file],added=row.sources.filter(s=>s.source_kind==='dispatcher_choice_successor');
   assert.equal(added.length,1);assert.equal(row.sources.length,3);assert.equal(Object.keys(CONTROL_WORKFLOW_FILES).length,7);
   row.sources=row.sources.filter(s=>s.source_kind!=='dispatcher_choice_successor');delete r.roles[file][DISPATCHER_CHOICE_SOURCE.workflow_blob];
   assert.equal(Object.values(r.workflows).reduce((n,row)=>n+row.sources.length,0),14);
@@ -109,8 +105,8 @@ test('only modified exact legacy to choice successor is a registered transition'
     assert.equal(registeredControlWorkflowTransition(r,file,a,b,{change}).passed,false);
 });
 
-test('current retirement dependency snapshot binds actual implementation Git bytes without self-referential authority',()=>{
-  const pins=RETIRED_CONSUMER_OBSERVER_SOURCE.implementation_blobs;
+test('new dependency snapshot binds actual implementation Git bytes without self-referential authority',()=>{
+  const pins=DISPATCHER_CHOICE_SOURCE.implementation_blobs;
   assert.equal(Object.keys(pins).length,28);
   for(const name of ['.github/actions/ci-temporary-storage/check-workflows.mjs',
     '.github/actions/ci-temporary-storage/coverage.json','scripts/ci/clued-handover-native-entry.mjs',
@@ -121,58 +117,4 @@ test('current retirement dependency snapshot binds actual implementation Git byt
   assert.equal(pins[CONTROL_WORKFLOW_SOURCE_PATH],undefined);
   assert.equal(pins['scripts/ci/clued-control-workflow-source.mjs'],undefined);
   for(const [name,blob]of Object.entries(pins))assert.equal(workflowBlob(fs.readFileSync(new URL(name,root),'utf8')),blob,name);
-});
-
-
-test('retirement removes only the retired live consumer while preserving the fifteen old Source records',()=>{
-  const r=load(),f=RETIRED_CONSUMER_OBSERVER_SOURCE.file,rows=r.workflows[f].sources;
-  const head=rows.find(s=>s.source_kind==='retired_consumer_observer_successor');
-  const previous=rows.find(s=>s.workflow_blob===RETIRED_CONSUMER_OBSERVER_SOURCE.retired_from_blob);
-  assert.equal(Object.values(r.workflows).reduce((n,x)=>n+x.sources.length,0),16);
-  assert.equal(rows.length,4);assert.equal(head.source_yaml,fs.readFileSync(new URL(f,root),'utf8'));
-  assert.equal(head.operation,'retire_completed_consumer_signal');
-  const before=structuredClone(previous.workflow_definition),after=structuredClone(head.workflow_definition);
-  const retired=RETIRED_CONSUMER_OBSERVER_SOURCE.removed_workflow;
-  assert.equal(before.on.workflow_run.workflows.filter(x=>x===retired).length,1);
-  assert.equal(after.on.workflow_run.workflows.includes(retired),false);
-  before.on.workflow_run.workflows=before.on.workflow_run.workflows.filter(x=>x!==retired);
-  assert.deepEqual(after,before);assert.deepEqual(head.role_digests,previous.role_digests);
-  const current=sourceResult(r,head.source_yaml,f);assert.equal(current.passed,true);
-  for(const key of ['execution_authority','dispatch_authority','production_authority','canonical_authority','runner_hook_exception'])assert.equal(current.authority_boundary[key],false);
-  const removed='.github/workflows/clued-work-handover-qualification-home-linux-01.yml';
-  assert.equal(fs.existsSync(new URL(removed,root)),false);
-  for(const name of ['clued-gated-proof-profiles.json','clued-gated-proof-role-specs.json']){
-    const active=JSON.parse(fs.readFileSync(new URL('scripts/ci/'+name,root)));
-    assert.equal(active.workflows[removed],undefined);
-  }
-  const coverage=JSON.parse(fs.readFileSync(new URL('.github/actions/ci-temporary-storage/coverage.json',root)));
-  assert.equal(coverage.workflows[removed.split('/').at(-1)],undefined);
-});
-
-test('retirement transition requires exact actual-main legacy or completion predecessor, modified path and complete unchanged Role',()=>{
-  const r=load(),f=RETIRED_CONSUMER_OBSERVER_SOURCE.file,rows=r.workflows[f].sources;
-  const head=rows.find(s=>s.source_kind==='retired_consumer_observer_successor');
-  const previous=rows.find(s=>s.workflow_blob===RETIRED_CONSUMER_OBSERVER_SOURCE.retired_from_blob);
-  const changed={filename:f,status:'modified'};
-  const check=(a=head.source_yaml,b=previous.source_yaml,c=changed)=>registeredControlWorkflowTransition(r,f,a,b,{change:c}).passed;
-  assert.equal(check(),true);
-  const legacy=rows.find(s=>s.source_kind==='legacy_predecessor');
-  assert.equal(workflowBlob(legacy.source_yaml),RETIRED_CONSUMER_OBSERVER_SOURCE.legacy_from_blob);
-  assert.equal(RETIRED_CONSUMER_OBSERVER_SOURCE.legacy_from_blob,'662dbc3e846311379efa5f081b3cca518a881f74');
-  assert.equal(check(head.source_yaml,legacy.source_yaml),true);
-  for(const old of rows.filter(s=>s!==previous&&s!==legacy))assert.equal(check(head.source_yaml,old.source_yaml),false);
-  assert.equal(check(head.source_yaml,legacy.source_yaml+'\n'),false);
-  for(const c of [{...changed,status:'added'},{...changed,status:'renamed'},{...changed,previous_filename:'other.yml'},{...changed,filename:'other.yml'}])assert.equal(check(head.source_yaml,previous.source_yaml,c),false);
-  assert.equal(check(head.source_yaml+'\n'),false);
-  const base=rows.find(s=>s.source_kind==='legacy_predecessor');
-  const compileRetired=(text,definition,roles=roleList(definition))=>compileControlWorkflowSource(f,text,{source_kind:'retired_consumer_observer_successor',predecessor:base,parseYaml:()=>definition,accepted_roles:roles});
-  assert.deepEqual(compileRetired(head.source_yaml,head.workflow_definition),head);
-  for(const edit of [v=>v.on.workflow_run.workflows.pop(),v=>v.on.workflow_run.workflows.push('other'),v=>v.on.workflow_run.workflows.reverse(),v=>v.on.workflow_run.workflows.push(RETIRED_CONSUMER_OBSERVER_SOURCE.removed_workflow),v=>v.jobs.report.permissions={contents:'write'},v=>v.jobs.report['runs-on']=['self-hosted'],v=>v.jobs.report.steps[0].run='arbitrary',v=>v.on.workflow_dispatch={unreviewed:true}]){
-    const definition=structuredClone(head.workflow_definition);edit(definition);
-    assert.throws(()=>compileRetired(head.source_yaml,definition));
-  }
-  assert.throws(()=>compileRetired(head.source_yaml,head.workflow_definition,[]));
-  for(const edit of [v=>delete v.roles[f][head.workflow_blob],v=>v.workflows[f].sources.push(head),v=>v.workflows[f].sources.find(x=>x.source_kind==='retired_consumer_observer_successor').implementation_blobs['scripts/ci/clued-work-admission.mjs']='0'.repeat(40)]){
-    const altered=structuredClone(r);edit(altered);assert.equal(sourceResult(altered,head.source_yaml,f).passed,false);
-  }
 });
