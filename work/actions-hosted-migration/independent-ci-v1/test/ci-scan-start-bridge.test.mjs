@@ -32,11 +32,13 @@ function setup(role = 'trivy') {
     sourceManifestSha256: record.config.sourceManifestSha256, createdAt: new Date(Date.now() - 60000).toISOString(), attempt: 1 })[role];
   const c = { claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: new Date(Date.now() + 3600000).toISOString() };
   const facts = (at = Date.now()) => admittedFacts(job, c, { complete: true, paths: ['a.txt'] }, { batchClaim: c, observedAt: at });
-  const context = createWindowsContext({ inputs: { jobs: [job], record }, policyText: '{}', sourceRoot: 'C:\\fixture', live() {} });
+  // The Windows issuer context exists only on win32 (FORMAL_WINDOWS_CONTROLLER_REQUIRED): built only by the tests that drive the issuer.
+  const context = () => createWindowsContext({ inputs: { jobs: [job], record }, policyText: '{}', sourceRoot: 'C:\\fixture', live() {} });
   const issue = () => makeIssue(job, facts(), null, { sourceAcceptanceRef: record.accepted.sourceAcceptanceRef,
     hostQualificationRef: record.accepted.hostQualificationRef, expiresAt: new Date(Date.now() + 600000).toISOString() });
   return { job, facts, context, issue };
 }
+const WINDOWS = { skip: process.platform !== 'win32' && 'Windows issuer context' };
 test('closed grant binds fixed repo/head/role/provider/execution and rejects replay/consumed/extra/accessors', () => {
   const f = setup(), id = randomUUID(), good = grant(f.job, id);
   assert.equal(validateScanStartGrant(good, { job: f.job, executionId: id }).execution_id, id);
@@ -77,22 +79,22 @@ async function drive({ native, lostResponse = false, firstAction = 'scan-start',
     if (name === 'challenge-02' && responses.length) return encode(makeChallenge(issue, 'scan-start', 2, { now }));
     return missing();
   } };
-  const result = await runIssuer({ context: f.context, box, clock: () => now, sleep: async ms => { now += ms; }, stageDeadline: now + 600000,
+  const result = await runIssuer({ context: f.context(), box, clock: () => now, sleep: async ms => { now += ms; }, stageDeadline: now + 600000,
     collect: async () => null, evaluate: async () => { callbacks++; return mutateFacts ? mutateFacts(f, callbacks) : f.facts(now); },
     scanStart: async args => { nativeCalls++; assert.equal(args.executionId, issue.issueId); assert.equal(args.facts.claimId, issue.admission.claimId);
       return native ? native(args, () => { now += 120001; }) : grant(f.job, args.executionId); } });
   return { result, responses, nativeCalls, callbacks, issue };
 }
-test('one fixed issue UUID consumes once; repeated scan-start challenge never reinvokes Native', async () => {
+test('one fixed issue UUID consumes once; repeated scan-start challenge never reinvokes Native', WINDOWS, async () => {
   const x = await drive(); assert.equal(x.nativeCalls, 1); assert.equal(x.responses.length, 1);
   assert.equal(x.responses[0].scanStart.execution_id, x.issue.issueId);
   assert.equal(x.result.status, 'UNCERTAIN'); assert.equal(x.result.reason, 'SCAN_START_PORT_OR_ONCE_REQUIRED');
 });
-test('ordinary admission does not consume; actual scan-start is a separate one-time round', async () => {
+test('ordinary admission does not consume; actual scan-start is a separate one-time round', WINDOWS, async () => {
   const x = await drive({ firstAction: 'admission', lostResponse: true });
   assert.equal(x.nativeCalls, 0); assert.equal(x.responses[0].scanStart, null);
 });
-test('lost Native reply, lost response, denied/replay grant and deadline overrun cannot launch or retry begin', async () => {
+test('lost Native reply, lost response, denied/replay grant and deadline overrun cannot launch or retry begin', WINDOWS, async () => {
   for (const options of [
     { native() { throw { code: 'SECRET_NATIVE_TOKEN' }; } }, { lostResponse: true },
     { native: args => ({ status: 'consumed', launch_allowed: false, execution_id: args.executionId, receipt_id: null, reason: 'scan_start_already_consumed' }) },
@@ -100,7 +102,7 @@ test('lost Native reply, lost response, denied/replay grant and deadline overrun
   ]) { const x = await drive(options); assert.equal(x.nativeCalls, 1); assert.equal(x.result.status, 'UNCERTAIN');
     assert.ok(!JSON.stringify(x.result).includes('SECRET')); if (!options.lostResponse) assert.equal(x.responses.length, 0); }
 });
-test('a changed admission generation refuses before Native begin', async () => {
+test('a changed admission generation refuses before Native begin', WINDOWS, async () => {
   const x = await drive({ mutateFacts: (f, n) => n === 1 ? f.facts() : { ...f.facts(), claimId: randomUUID() } });
   assert.equal(x.nativeCalls, 0); assert.equal(x.responses.length, 0); assert.equal(x.result.status, 'UNCERTAIN');
 });
