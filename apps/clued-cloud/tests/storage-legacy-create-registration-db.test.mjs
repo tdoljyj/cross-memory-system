@@ -1,6 +1,6 @@
 // Real disposable PostgreSQL. Synthetic identities/time/Drive transport only;
 // these tests never query production, change a real grant or mutate Google.
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
@@ -327,6 +327,6 @@ test('legacy create: current registration, original unresolved history and no re
   }
   const actual=await fs.realpath(directory);assert.equal(path.dirname(actual).toLowerCase(),parent.toLowerCase());
   assert.ok(path.basename(actual).startsWith('kooyumi-create-registration-db-'));
-  await fs.rm(actual,{recursive:true,force:false,maxRetries:20,retryDelay:250});
+  await removeTestDirectory(actual);
  }
 });

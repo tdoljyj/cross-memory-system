@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -259,7 +259,7 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
           assert.equal(ownMarker.pid,ownProcess.pid);assert.equal(ownMarker.run_id,runId);assert.equal(ownMarker.database_dir,databaseDir);
           const postmaster=(await fs.readFile(path.join(databaseDir,'postmaster.pid'),'utf8')).split(/\r?\n/)[0];
           assert.equal(Number(postmaster),ownProcess.pid,'The owned datadir must name this exact PostgreSQL child');
-          await Promise.race([stopCluster(server),new Promise((_,reject)=>{stopTimer=setTimeout(()=>reject(new Error('OWN_POSTGRES_STOP_TIMEOUT')),15000);})]);
+          await Promise.race([server.stop(),new Promise((_,reject)=>{stopTimer=setTimeout(()=>reject(new Error('OWN_POSTGRES_STOP_TIMEOUT')),15000);})]);
           cleanup=exited();
         }
       } else cleanup=!startAttempted&&initialiseSettled;

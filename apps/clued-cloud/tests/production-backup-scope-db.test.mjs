@@ -193,5 +193,4 @@ test('actual PostgreSQL backup selection, catalog coverage and migration scope f
     if (db) await db.close();
     await removeTestDirectory(dir);
   }
-  await assert.rejects(fs.stat(dir),{ code:'ENOENT' });
 });

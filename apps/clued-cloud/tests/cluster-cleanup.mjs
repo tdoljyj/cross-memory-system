@@ -8,8 +8,12 @@
 //
 // Cleanup is best effort and never throws: when a directory still cannot be
 // removed it logs one line, deletes whatever can be deleted so no large
-// directory is left behind, and returns false.
+// directory is left behind, and returns false. It never kills a process: the
+// postmaster is stopped by the library, and its exit is confirmed by the exact
+// pid of the child this process started (postmaster.pid is not trusted; on
+// Windows the library's taskkill leaves a stale one behind).
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 export const CLEANUP_DEFAULTS = Object.freeze({
@@ -33,37 +37,40 @@ function options(overrides = {}) {
   return {
     ...CLEANUP_DEFAULTS,
     rm: fs.rm,
-    readFile: fs.readFile,
     readdir: fs.readdir,
+    realpath: fs.realpath,
     sleep: sleepFor,
     alive: processAlive,
-    kill: (pid) => process.kill(pid),
     log: defaultLog,
     ...overrides,
   };
 }
 
-// A cleanup must never be pointed at something that is not a test directory.
-function checkedDirectory(directory) {
+// A cleanup is only ever pointed at something strictly inside the temp directory.
+async function checkedDirectory(directory, o) {
   if (typeof directory !== 'string' || !path.isAbsolute(directory)) return null;
-  const resolved = path.resolve(directory);
-  const { root } = path.parse(resolved);
-  return resolved.slice(root.length).split(path.sep).filter(Boolean).length >= 2 ? resolved : null;
+  const target = path.resolve(directory);
+  const roots = new Set([o.tmpdir ?? os.tmpdir()].map((root) => path.resolve(root)));
+  for (const root of [...roots]) {
+    try { roots.add(path.resolve(await o.realpath(root))); } catch { /* keep the unresolved root */ }
+  }
+  for (const root of roots) {
+    const relative = path.relative(root, target);
+    if (relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)) return target;
+  }
+  return null;
 }
 
-// postmaster.pid is removed by postgres as it shuts down; its first line is the
-// pid. Resolves true once no live postmaster is recorded for the directory.
-export async function waitForClusterExit(directory, overrides = {}) {
+// Resolves true once the process with this pid is gone (or there is no pid).
+export async function waitForPidExit(pid, overrides = {}) {
   const o = options(overrides);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
   const deadline = Date.now() + o.exitTimeoutMs;
-  for (;;) {
-    let pid = null;
-    try { pid = Number.parseInt(String(await o.readFile(path.join(directory, 'postmaster.pid'), 'utf8')).split('\n')[0], 10); }
-    catch { return true; }
-    if (!Number.isSafeInteger(pid) || pid <= 0 || !o.alive(pid)) return true;
+  while (o.alive(pid)) {
     if (Date.now() >= deadline) return false;
     await o.sleep(o.pollMs);
   }
+  return true;
 }
 
 async function removeWhatCan(directory, o) {
@@ -78,13 +85,12 @@ async function removeWhatCan(directory, o) {
   return left;
 }
 
-// Removes a test directory (cluster data, scratch parents, bundles). Waits for
-// a recorded postmaster to exit, retries lock errors, never throws.
+// Removes a test directory (cluster data, scratch parents, bundles) that lies
+// inside the temp directory. Retries lock errors and never throws.
 export async function removeTestDirectory(directory, overrides = {}) {
   const o = options(overrides);
-  const target = checkedDirectory(directory);
-  if (target === null) { o.log(`refusing to remove ${JSON.stringify(directory)}: not an absolute test directory`); return false; }
-  if (!(await waitForClusterExit(target, o))) o.log(`postmaster of ${target} is still running after ${o.exitTimeoutMs} ms; removing anyway`);
+  const target = await checkedDirectory(directory, o);
+  if (target === null) { o.log(`refusing to remove ${JSON.stringify(directory)}: not a directory inside the temp directory`); return false; }
   let last;
   for (let attempt = 1; attempt <= o.attempts; attempt += 1) {
     try {
@@ -107,20 +113,17 @@ export async function stopCluster(server, overrides = {}) {
   if (!server) return;
   const o = options(overrides);
   const directory = overrides.directory ?? server.options?.databaseDir;
-  try { await server.stop(); }
-  catch (error) {
-    // The library's own unretried remove of a non-persistent cluster is the usual cause.
-    if (!['EBUSY', 'EPERM', 'ENOTEMPTY', 'EACCES'].includes(error?.code)) o.log(`stop() failed: ${error?.code ?? error?.message}`);
-  }
-  if (typeof directory !== 'string') return;
-  if (!(await waitForClusterExit(directory, o))) {
-    let pid = null;
-    try { pid = Number.parseInt(String(await o.readFile(path.join(directory, 'postmaster.pid'), 'utf8')).split('\n')[0], 10); } catch { /* gone */ }
-    if (Number.isSafeInteger(pid) && pid > 0) {
-      o.log(`postmaster ${pid} of ${directory} did not exit; killing it`);
-      try { o.kill(pid); } catch { /* already gone */ }
-      await waitForClusterExit(directory, { ...o, exitTimeoutMs: 5000 });
+  const child = server.process;
+  const pid = child?.pid;
+  // stop() waits for an 'exit' event, which an already exited child never emits again.
+  const exited = !child || (child.exitCode !== null && child.exitCode !== undefined) || typeof child.signalCode === 'string';
+  if (!exited) {
+    try { await server.stop(); }
+    catch (error) {
+      // The library's own unretried remove of a non-persistent cluster is the usual cause.
+      if (!['EBUSY', 'EPERM', 'ENOTEMPTY', 'EACCES'].includes(error?.code)) o.log(`stop() failed: ${error?.code ?? error?.message}`);
     }
   }
-  if (server.options?.persistent === false) await removeTestDirectory(directory, o);
+  if (!(await waitForPidExit(pid, o))) o.log(`postmaster ${pid} is still running ${o.exitTimeoutMs} ms after stop()`);
+  if (typeof directory === 'string' && server.options?.persistent === false) await removeTestDirectory(directory, o);
 }
