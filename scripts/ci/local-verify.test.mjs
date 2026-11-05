@@ -534,6 +534,11 @@ test('a command that runs Node tests and runs none is a failure, never a pass', 
   assert.equal(compareCommand(command(0, report(counts(5)), { tests: 5 }), null, { selector: selection }).verdict, 'pass');
   assert.equal(compareCommand(command(0, null, { tests: null }), null, { selector: selection }).verdict, 'pass', 'a command without a test report (lint, build) passes on its exit status');
   assert.equal(compareSuite([command(0), none], null, { selector: selection }).verdict, 'new');
+  // a known-failure command that exits 0 without any report: told apart from a run that did not finish
+  const silentKnown = compareCommand(command(0, report(), { tests: 0, known: 'k' }), null, { selector: selection, known: [] });
+  assert.equal(silentKnown.verdict, 'new');
+  assert.match(silentKnown.detail, /ran no tests/);
+  assert.match(compareCommand(command(1, report(), { tests: 0, known: 'k' }), command(1, report(), { known: 'k' }), { selector: selection, known: [] }).detail ?? '', /^(?!ran no tests)/, 'a crash is not reported as a silent run');
   // as started: exit 0 and no report, whether or not the command has known failures
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-none-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

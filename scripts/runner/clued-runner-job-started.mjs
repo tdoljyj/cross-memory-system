@@ -773,9 +773,7 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch) {
   return enforce ? 1 : 0;
 }
 
-// Real paths on both sides: Node resolves a junction or symlink in import.meta.url but not in argv[1], and a guard that compared them
-// skipped main() behind a link and exited 0 (defect fd06357f). Not import.meta.main: this runs on whatever Node the runner has.
-if (process.argv[1] && (() => { try { return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } })()) {
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const proxyArguments = proxyBootstrapArguments();
     if (proxyArguments) {

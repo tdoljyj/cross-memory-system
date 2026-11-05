@@ -91,25 +91,3 @@ test('a script that uses import.meta.main runs behind a link, one that compares 
   assert.equal(out(path.join(dir, 'real', 'old.mjs')), 'ran');
   assert.equal(out(path.join(dir, 'link', 'old.mjs')), '', 'the comparison is defeated by the link: the script does nothing, silently');
 });
-
-// The two protected scripts run as the admission gate and the runner's pre-job hook; behind a link
-// their old guard skipped main() and the process exited 0, i.e. it admitted (defect fd06357f).
-test('the admission gate and the runner hook run main() behind a link, with the verdict they give at their real path', (t) => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'main-entry-protected-')));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const link = path.join(dir, 'scripts-link');
-  linkTo(path.join(ROOT, 'scripts'), link);
-  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(CLUED_|GITHUB_|NODE_TEST_CONTEXT)/.test(name)));
-  const run = (script, args, extra = {}) => spawnSync(process.execPath, [script, ...args], { encoding: 'utf8', windowsHide: true, env: { ...env, ...extra }, cwd: dir });
-  const cases = [
-    ['ci/clued-work-admission.mjs', ['--mode', 'bogus'], {}, 2, /usage: clued-work-admission\.mjs --mode/],
-    ['runner/clued-runner-job-started.mjs', [], { CLUED_RUNNER_HOOK_ENFORCE: '1' }, 1, /REFUSE/],
-  ];
-  for (const [script, args, extra, status, output] of cases) {
-    for (const [label, file] of [['real path', path.join(ROOT, 'scripts', script)], ['through a link', path.join(link, script)]]) {
-      const result = run(file, args, extra);
-      assert.equal(result.status, status, `${script} ${label}: ${result.stdout}${result.stderr}`);
-      assert.match(`${result.stdout}${result.stderr}`, output, `${script} ${label}`);
-    }
-  }
-});

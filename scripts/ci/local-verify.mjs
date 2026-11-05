@@ -720,10 +720,10 @@ export function compareCommand(head, base, { selector, known = [] }) {
   const passed = (result) => (result.known && result.report
     ? selector.knownFailureVerdict({ status: result.status, report: result.report, known }).ok
     : result.status === 0);
-  if (passed(head)) {
-    // exit 0 and a complete report, but not one test run: a script that did not run the tests
-    return head.tests === 0 ? { verdict: 'new', detail: 'ran no tests (a command that runs no test is not a pass)' } : { verdict: 'pass' };
-  }
+  // exit 0 but not one test run (no report, or one without a test): a script that ended without running them, say so
+  // (defects 2102f7e1, d7e9d4b4) instead of "did not finish" or a pass
+  if (head.tests === 0 && head.status === 0) return { verdict: 'new', detail: 'ran no tests (a command that runs no test is not a pass)' };
+  if (passed(head)) return { verdict: 'pass' };
   const failing = () => {
     const names = head.report ? failEntries(head.report).map(label) : [];
     return names.length ? `: ${names.join('; ')}` : '';

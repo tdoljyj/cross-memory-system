@@ -3,6 +3,7 @@
 // SUITE_COMMANDS['admission-self-tests'] of ci-required-selection.mjs, both jobs of
 // .github/workflows/clued-components.yml and both entries of
 // scripts/ci/clued-gated-proof-role-specs.json. They must list the same files.
+// (Adding scripts/ci/pr-repush-preflight.test.mjs to all of them needs the protected-file re-pin: branch claude/protected-fd06357f.)
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -30,5 +31,4 @@ test('the admission self-test list is the same in the selection, the components 
   assert.equal(roleSpecs.length, 2, 'both entries of the role specs');
   for (const list of [...workflow, ...roleSpecs]) assert.deepEqual(list, selection);
   for (const file of selection) assert.ok(fs.existsSync(path.join(ROOT, file)), `${file} exists`);
-  assert.ok(selection.includes('scripts/ci/pr-repush-preflight.test.mjs'), 'the pre-push preflight is one of them');
 });
