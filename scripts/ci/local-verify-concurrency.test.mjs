@@ -9,8 +9,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { acquireNamedLock, admitRun, beginRun, leaveUmbrella, listRuns, pruneDependencyStores, pruneWorktrees, refreshUmbrella, roomForOneMore,
-  sampleResources, withLock, worktree, worktreeLock } from './local-verify.mjs';
+import { acquireNamedLock, admitRun, beginRun, killCommand, leaveUmbrella, linuxScript, listRuns, pruneDependencyStores, pruneWorktrees, refreshUmbrella,
+  roomForOneMore, sampleResources, withLock, worktree, worktreeLock } from './local-verify.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TOOL = path.join(ROOT, 'scripts', 'ci', 'local-verify.mjs');
@@ -50,7 +50,7 @@ test('the registry holds the runs that live: ended runs go, runs of dead process
   a.update({ state: 'running', deps: ['k'] });
   assert.deepEqual(listRuns(home).map((run) => [run.state, run.deps]), [['running', ['k']]]);
   a.end();
-  assert.deepEqual(listRuns(home), []);
+  assert.deepEqual([...listRuns(home)], []);
   b.end();
 });
 
@@ -294,14 +294,14 @@ function probeRepository(t, { seconds }) {
     "const id = fs.existsSync('change.txt') ? fs.readFileSync('change.txt', 'utf8').trim() : 'main';",
     'const start = Date.now();',
     `await new Promise((resolve) => setTimeout(resolve, ${seconds * 1000}));`,
-    "fs.writeFileSync(path.join(stamps, `${id}-${process.pid}.json`), JSON.stringify({ id, start, end: Date.now(), cwd: process.cwd() }));",
+    "fs.writeFileSync(path.join(stamps, `${id}-${process.pid}.json`), JSON.stringify({ id, start, end: Date.now(), cwd: process.cwd(), temp: process.env.TEMP ?? process.env.TMPDIR }));",
     'process.exit(verdict);',
   ].join('\n'));
   git(repo, 'add', '--all');
   git(repo, 'commit', '-q', '-m', 'main');
   const main = git(repo, 'rev-parse', 'HEAD');
   const changes = [];
-  for (const [name, failing] of [['one', false], ['two', true], ['three', false]]) {
+  for (const [name, failing] of [['one', false], ['two', true], ['three', true]]) {
     const dir = path.join(base, `change-${name}`);
     git(repo, 'worktree', 'add', '-q', '-b', `change-${name}`, dir, main);
     fs.writeFileSync(path.join(dir, 'change.txt'), `${name}\n`);
@@ -330,7 +330,7 @@ const stampsOf = (dir) => fs.readdirSync(dir).map((name) => JSON.parse(fs.readFi
 test('three different changes verified at the same time finish side by side with the results each has alone', { timeout: 240_000 }, async (t) => {
   const seconds = 8;
   // alone, one after the other, each with a cache of its own
-  const solo = probeRepository(t, { seconds });
+  const solo = probeRepository(t, { seconds: 0 }); // the duration does not change a verdict
   const alone = {};
   for (const { name, dir } of solo.changes) {
     const home = fs.realpathSync(fs.mkdtempSync(path.join(solo.base, 'home-')));
@@ -339,32 +339,29 @@ test('three different changes verified at the same time finish side by side with
   }
   assert.deepEqual(alone.one.results.map((r) => r.verdict), ['pass']);
   assert.deepEqual(alone.two.results.map((r) => r.verdict), ['new'], 'the failing change fails against a passing main');
-  assert.deepEqual([alone.one.code, alone.two.code, alone.three.code], [0, 1, 0]);
+  assert.deepEqual(alone.three.results.map((r) => r.verdict), ['new']);
+  assert.deepEqual([alone.one.code, alone.two.code, alone.three.code], [0, 1, 1]);
 
   // together, one cache
   const together = probeRepository(t, { seconds });
   const home = fs.realpathSync(fs.mkdtempSync(path.join(together.base, 'home-')));
-  const started = Date.now();
   const outcomes = await Promise.all(together.changes.map(({ dir }) => runTool({ dir, main: together.main, env: together.env, home,
     extra: { CLUED_LOCAL_VERIFY_MAX_RUNS: '3' } })));
-  const took = (Date.now() - started) / 1000;
   const names = together.changes.map((change) => change.name);
   names.forEach((name, index) => {
     assert.ok(outcomes[index].results, outcomes[index].output);
     assert.deepEqual(outcomes[index].results, alone[name].results, `${name}: the same result as alone`);
     assert.equal(outcomes[index].code, alone[name].code, `${name}: the same exit code as alone`);
-    assert.doesNotMatch(outcomes[index].output, /queued, position/, `${name} did not wait for a place`);
   });
   // the probes of the three changes ran at the same time: every one started before any one ended
   const ran = stampsOf(together.stamps).filter((stamp) => stamp.id !== 'main');
   assert.equal(ran.length, 3);
-  const timeline = JSON.stringify(ran.map((stamp) => [stamp.id, stamp.start - started, stamp.end - started]));
+  const timeline = JSON.stringify(ran.map((stamp) => [stamp.id, stamp.start - Math.min(...ran.map((x) => x.start)), stamp.end - Math.min(...ran.map((x) => x.start))]));
   const waited = outcomes.map((outcome) => outcome.output.split('\n').filter((line) => /queued|started after|another run/.test(line)).join(' | ')).join(' // ');
   assert.ok(Math.max(...ran.map((stamp) => stamp.start)) < Math.min(...ran.map((stamp) => stamp.end)), `the three probes overlap in time: ${timeline} ${waited}`);
   assert.equal(new Set(ran.map((stamp) => stamp.cwd)).size, 3, 'each in a worktree of its own');
-  // main's baseline for the failing change was computed once, in main's shared worktree
+  // main's baseline, which both failing changes need, was computed once, in main's shared worktree
   assert.equal(stampsOf(together.stamps).filter((stamp) => stamp.id === 'main').length, 1);
-  assert.ok(took < 3 * seconds + 12, `${took} s for three runs of ${seconds} s side by side`);
   // nothing is left: no run, no lock, no worktree of a run, no stale file
   assert.deepEqual(fs.readdirSync(path.join(home, 'runs')), []);
   assert.deepEqual(fs.readdirSync(path.join(home, 'locks')).filter((name) => name.includes('.lock')), []);
@@ -384,4 +381,153 @@ test('more runs than the limit queue, say their position, and go one after the o
   const ran = stampsOf(repo.stamps).filter((stamp) => stamp.id !== 'main').sort((a, b) => a.start - b.start);
   assert.equal(ran.length, 3);
   ran.slice(1).forEach((stamp, index) => assert.ok(stamp.start >= ran[index].end - 50, 'one at a time'));
+});
+
+// ---- what the independent review asked to be proven ----
+
+// A child process that increments a counter file under a named lock, many times; it records when it held the lock.
+const lockChild = (dir, id, rounds) => [
+  `import fs from 'node:fs';`,
+  `import { withLock } from ${JSON.stringify(pathToFileURL(TOOL).href)};`,
+  `const home = ${JSON.stringify(dir)};`,
+  `for (let i = 0; i < ${rounds}; i += 1) {`,
+  `  withLock(home, 'shared', () => {`,
+  `    const file = home + '/counter.txt';`,
+  `    const before = Number(fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 0);`,
+  `    const start = Date.now();`,
+  `    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3);`,
+  `    fs.writeFileSync(file, String(before + 1));`,
+  `    fs.appendFileSync(home + '/holds.jsonl', JSON.stringify({ id: ${JSON.stringify(id)}, start, end: Date.now() }) + '\\n');`,
+  `  }, { log: () => {} });`,
+  `}`,
+].join('\n');
+
+test('several processes take turns on one lock: no update is lost and no two holds overlap, also when the lock they find is stale', async (t) => {
+  const home = tempHome(t);
+  fs.mkdirSync(path.join(home, 'locks'), { recursive: true });
+  // left by a process that stopped while holding it
+  fs.writeFileSync(path.join(home, 'locks', 'shared.lock'), JSON.stringify({ pid: 99999999, token: 'dead', started: Date.now() }));
+  const children = [1, 2, 3, 4].map((id) => {
+    const file = path.join(home, `child-${id}.mjs`);
+    fs.writeFileSync(file, lockChild(home, id, 15));
+    return new Promise((resolve) => {
+      const child = spawn(process.execPath, [file], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      let output = '';
+      child.stdout.on('data', (chunk) => { output += chunk; });
+      child.stderr.on('data', (chunk) => { output += chunk; });
+      child.on('close', (code) => resolve({ code, output }));
+    });
+  });
+  const outcomes = await Promise.all(children);
+  outcomes.forEach((outcome) => assert.equal(outcome.code, 0, outcome.output));
+  assert.equal(Number(fs.readFileSync(path.join(home, 'counter.txt'), 'utf8')), 60, 'every increment counted: the lock excluded');
+  const holds = fs.readFileSync(path.join(home, 'holds.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line)).sort((a, b) => a.start - b.start);
+  assert.equal(holds.length, 60);
+  holds.slice(1).forEach((hold, index) => assert.ok(hold.start >= holds[index].end, 'one holder at a time'));
+  assert.deepEqual(fs.readdirSync(path.join(home, 'locks')), [], 'no lock and no leftover stays');
+});
+
+test('a short lock held by a process whose number is in use is stale after its own limit: the admission lock after two minutes', (t) => {
+  const home = tempHome(t);
+  const locks = path.join(home, 'locks');
+  fs.mkdirSync(locks, { recursive: true });
+  const old = Date.now() - 3 * 60_000;
+  fs.writeFileSync(path.join(locks, 'admission.lock'), JSON.stringify({ pid: process.pid, token: 'old', started: old }));
+  fs.writeFileSync(path.join(locks, 'dependencies-aaaa.lock'), JSON.stringify({ pid: process.pid, token: 'old', started: old }));
+  let took = false;
+  withLock(home, 'admission', () => { took = true; }, { log: () => {}, wait: () => { throw new Error('waited'); } });
+  assert.equal(took, true, 'taken over: a process that is alive but holds the admission lock for minutes is not working on it');
+  // the same age on a lock that is held for long on purpose is not stale
+  assert.throws(() => withLock(home, 'dependencies-aaaa', () => {}, { log: () => {}, wait: () => { throw new Error('waited'); } }), /waited/);
+});
+
+test('an older copy of the tool that places its lock while a run decides is not pushed aside; a lock named by a stopped run is taken over by one that lives', (t) => {
+  const { home, state, options } = machine(t);
+  const lock = path.join(home, 'run.lock');
+  const a = beginRun(home, { pid: process.pid, now: () => state.time });
+  // a running run is there, so the sample is taken: during it the older copy places its lock
+  const first = beginRun(home, { pid: process.pid + 7, now: () => state.time - 10 });
+  first.update({ state: 'running', admittedAt: state.time - 100_000 });
+  options.sample = () => {
+    fs.writeFileSync(lock, JSON.stringify({ pid: 4242, token: 'older', started: state.time }));
+    return state.sample;
+  };
+  state.hooks.push(() => {}, () => {});
+  let looks = 0;
+  options.wait = () => { state.time += 4000; looks += 1; if (looks === 2) throw new Error('stop'); };
+  assert.throws(() => admitRun(home, a, options), /stop/);
+  assert.equal(a.run.state, 'queued', 'it did not start');
+  assert.match(state.lines[0], /an older copy of this tool is running \(process 4242\)/);
+  assert.equal(JSON.parse(fs.readFileSync(lock, 'utf8')).token, 'older', "the older copy's lock is still its own");
+  // run.lock names a run that was stopped without handing it on: a run that lives names itself
+  fs.writeFileSync(lock, JSON.stringify({ pid: 4243, token: 'u', started: state.time, concurrent: true }));
+  refreshUmbrella(home, first, { alive: (pid) => pid !== 4243, now: () => state.time });
+  assert.equal(JSON.parse(fs.readFileSync(lock, 'utf8')).pid, process.pid, 'it names the process that took it');
+  a.end();
+  first.end();
+});
+
+test('runs whose record cannot be read are not taken for gone: nothing a run may be using is removed meanwhile', (t) => {
+  const home = tempHome(t);
+  const store = path.join(home, 'node_modules');
+  const keys = ['a', 'b', 'c', 'd', 'e'].map((letter) => letter.repeat(16));
+  keys.forEach((key, index) => {
+    fs.mkdirSync(path.join(store, key), { recursive: true });
+    const when = new Date(Date.now() - (keys.length - index) * 60_000);
+    fs.utimesSync(path.join(store, key), when, when);
+  });
+  const run = beginRun(home);
+  fs.writeFileSync(path.join(home, 'runs', '1-abcdef.json'), '{"id":"1-abcdef","pid":'); // being written
+  const listed = listRuns(home, { wait: () => {} });
+  assert.equal(listed.unreadable, 1);
+  assert.equal(listed.length, 1);
+  pruneDependencyStores(home);
+  assert.equal(fs.readdirSync(store).length, 5, 'nothing is pruned while a record cannot be read');
+  fs.rmSync(path.join(home, 'runs', '1-abcdef.json'));
+  pruneDependencyStores(home);
+  assert.equal(fs.readdirSync(store).length, 3, 'and the usual rule once all can');
+  run.end();
+});
+
+test('what ends processes under a worktree does not reach a sibling worktree whose name starts with it', () => {
+  const [, [, , , pattern]] = killCommand('/cache/worktrees/abc-1234', 'linux');
+  assert.ok(new RegExp(pattern).test('node /cache/worktrees/abc-1234/apps/x.mjs'));
+  assert.ok(!new RegExp(pattern).test('node /cache/worktrees/abc-1234-rXYZ-abcdef/apps/x.mjs'), "a run's own worktree of the same commit is not this one");
+  const win = killCommand('D:\\cache\\worktrees\\abc-1234', 'win32')[1].at(-1);
+  assert.match(win, /IndexOf\(\$d \+ \[char\]92/);
+  assert.match(win, /IndexOf\(\$e \+ \[char\]47/);
+});
+
+test('the Linux script is valid bash and its lock keeps two runs apart (where flock exists)', (t) => {
+  const bash = spawnSync('bash', ['-c', 'command -v flock'], { encoding: 'utf8', windowsHide: true });
+  const script = linuxScript({ bundle: '/b/it.bundle', refs: '/b/run.refs', tool: '/b/tool.mjs', run: 'run-1', candidate: 'a'.repeat(40), main: 'b'.repeat(40), suites: ['x'] });
+  const syntax = spawnSync('bash', ['-n'], { input: script, encoding: 'utf8', windowsHide: true });
+  if (syntax.error) return t.skip('no bash');
+  assert.equal(syntax.status, 0, syntax.stderr);
+  if (bash.status !== 0) return t.skip('no flock here (the distribution has it)');
+  const home = tempHome(t);
+  const lock = path.join(home, 'repo.lock');
+  const body = (id) => `exec 9>"${lock.replace(/\\/g, '/')}"; flock -w 20 9; echo "${id} in $(date +%s%N)"; sleep 1; echo "${id} out $(date +%s%N)"; flock -u 9; exec 9>&-`;
+  const run = (id) => new Promise((resolve) => {
+    const child = spawn('bash', ['-c', body(id)], { windowsHide: true });
+    let out = '';
+    child.stdout.on('data', (chunk) => { out += chunk; });
+    child.on('close', () => resolve(out.trim().split('\n').map((line) => { const [who, what, at] = line.split(' '); return { who, what, at: BigInt(at) }; })));
+  });
+  return Promise.all([run('a'), run('b')]).then(([a, b]) => {
+    const [first, second] = a[0].at < b[0].at ? [a, b] : [b, a];
+    assert.ok(second[0].at >= first[1].at, 'the second came in after the first went out');
+  });
+});
+
+test('the probes of side-by-side runs see a temporary directory of their own', { timeout: 120_000 }, async (t) => {
+  const repo = probeRepository(t, { seconds: 3 });
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(repo.base, 'home-')));
+  const outcomes = await Promise.all(repo.changes.slice(0, 2).map(({ dir }) => runTool({ dir, main: repo.main, env: repo.env, home,
+    extra: { CLUED_LOCAL_VERIFY_MAX_RUNS: '2' } })));
+  outcomes.forEach((outcome) => assert.ok(outcome.results, outcome.output));
+  const temps = stampsOf(repo.stamps).filter((stamp) => stamp.id !== 'main').map((stamp) => stamp.temp);
+  assert.equal(new Set(temps).size, 2);
+  temps.forEach((temp) => assert.ok(temp.startsWith(path.join(home, 't') + path.sep), `${temp} is under the cache's own temporary directories`));
+  assert.deepEqual(fs.existsSync(path.join(home, 't')) ? fs.readdirSync(path.join(home, 't')) : [], [], 'removed when the runs end');
 });

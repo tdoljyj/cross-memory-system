@@ -117,12 +117,16 @@ test("the Linux run takes objects only from this side's bundle (no GitHub login 
   assert.ok(script.includes(`fetch -q --no-tags '/mnt/c/L/it'\\''s.bundle' '+refs/*:refs/local-verify/incoming/run-7/*'`), 'all of the bundle is kept, under refs of this run');
   assert.ok(script.includes(`for-each-ref --format='delete %(refname)' refs/local-verify/incoming/run-7/ | git -C "$repo" update-ref --stdin`),
     'and its refs dropped once the real ones are set');
-  assert.ok(script.includes(`update-ref --stdin < '/mnt/c/L/run.refs'`));
+  assert.ok(script.includes(`done < '/mnt/c/L/run.refs' | git -C "$repo" update-ref --stdin`), 'the refs of this run\'s view are applied through a filter that never moves a ref back');
+  assert.ok(script.includes('merge-base --is-ancestor "$sha" "$cur"'), 'the clone may be ahead of this run\'s view: a ref moves only forward');
+  assert.ok(script.includes('flock -w 900 9') && script.includes('flock -u 9; exec 9>&-'), 'runs take turns while they change the clone, and let go before the tests');
+  assert.ok(script.indexOf('trap ') < script.indexOf('flock -w'), 'the clean-up is set before anything is created');
+  assert.ok(script.includes('refs/local-verify/run-7/ refs/local-verify/incoming/run-7/'), 'and removes the refs of this run only');
   assert.ok(script.includes(`for commit in ${candidate} ${main}; do`));
   assert.ok(script.includes(`cp '/mnt/c/L/tool.mjs' "$tool/local-verify.mjs"`), 'the same tool on both sides, whatever the change holds');
   assert.ok(script.endsWith(`--candidate ${candidate} --base ${main} --no-fetch --fresh-base --suite 'clued-cloud' --suite 'x'\\''y'`));
   const without = linuxScript({ bundle: null, refs: '/r', tool: '/t', run: 'r', candidate, main, suites: [] });
-  assert.ok(!without.includes('bundle') && without.includes("update-ref --stdin < '/r'"), 'refs are set even when no bundle is needed');
+  assert.ok(!without.includes('bundle') && without.includes("done < '/r' | git"), 'refs are set even when no bundle is needed');
   assert.deepEqual(readResults('noise\nLOCAL_VERIFY_RESULT [{"suite":"a"}]\nLOCAL_VERIFY_RESULT [{"suite":"b"}]\r\ntail'), [{ suite: 'b' }]);
   assert.equal(readResults('no result'), null);
 });
@@ -209,7 +213,7 @@ test('the processes a stopped command left are found by their command line: eith
   assert.match(args.at(-1), /OrdinalIgnoreCase.*OrdinalIgnoreCase/);
   assert.match(args.at(-1), /Replace\(\[char\]92, \[char\]47\)/);
   assert.match(args.at(-1), /ProcessId -ne \$PID/, 'never itself');
-  assert.deepEqual(killCommand('/home/dev/wt.1', 'linux'), ['pkill', ['-e', '-f', '--', '/home/dev/wt\\.1'], {}]);
+  assert.deepEqual(killCommand('/home/dev/wt.1', 'linux'), ['pkill', ['-e', '-f', '--', '/home/dev/wt\\.1/'], {}]);
 });
 
 test('snapshot: HEAD with tracked changes and new files that are not ignored, leaving the index and working tree alone', (t) => {
@@ -549,7 +553,9 @@ test('fixed drives are asked of Windows once and read as drive letters', () => {
   const run = (file, args) => { seen.push([file, args.at(-1)]); return { status: 0, stdout: 'C:\r\nd:\r\n\r\n' }; };
   assert.deepEqual(fixedDrives({ run }), ['C:', 'D:']);
   assert.match(seen[0][1], /DriveType=3/, 'fixed drives only (not optical, removable or network ones)');
-  assert.deepEqual(fixedDrives({ run: () => ({ status: 1, stdout: '' }) }), [], 'not listable: none');
+  assert.deepEqual(fixedDrives({ run: () => ({ status: 1, stdout: '' }), exists: (drive) => drive === 'C:\\' || drive === 'E:\\' }), ['C:', 'E:'], 'not listable: the drives that exist, not a switch to the home directory');
+  let tries = 0;
+  assert.deepEqual(fixedDrives({ run: () => { tries += 1; return tries === 1 ? { status: 1, stdout: '' } : { status: 0, stdout: 'D:\r\n' }; } }), ['D:'], 'asked again once');
 });
 
 test('a command that runs Node tests and runs none is a failure, never a pass', (t) => {
