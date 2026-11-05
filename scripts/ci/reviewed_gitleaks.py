@@ -12,13 +12,25 @@ import subprocess
 import tempfile
 import tomllib
 
+# Candidate-only pinned stdlib module; checked bytes are executed from this RAM buffer.
+import types as _candidate_types
+_CANDIDATE_POLICY_SHA = "d395d46b18aa0dd642ecd5417d846750647152e1a97a20597b2bd295fd630870"
+_candidate_raw = Path(__file__).with_name("reviewed_gitleaks_historical.py").read_bytes()
+if hashlib.sha256(_candidate_raw).hexdigest() != _CANDIDATE_POLICY_SHA:
+    raise ValueError("Candidate policy module changed")
+_candidate_policy = _candidate_types.ModuleType("historical_policy_candidate")
+exec(compile(_candidate_raw, "reviewed_gitleaks_historical.py", "exec"), _candidate_policy.__dict__)
+HISTORICAL_FINDINGS = _candidate_policy.FINDINGS
+HISTORICAL_KIND = _candidate_policy.KIND
+ORIGINAL_730_RECORD_LINES_SHA256 = "2440bebed2821ec57c80d07b8e5470e3459ce95189003f6cc520123cde72997e"
+
 PREFIX = "# clued-reviewed-finding: "
 COUNT_PREFIX = "# clued-reviewed-count: "
 LEGACY_COUNT = 726
 LEGACY_RECORD_LINES_SHA256 = "5ec9aef1a5af7f356152ba7dfc18e197a968cf3ac70ffd2b2aa7000a4801d35c"
 SCHEDULING_END = 729
 PRIOR_RECORD_LINES_SHA256 = "3117636bb9809e0aa2f953340172e48ba171b010949112dbe79e5879309a45cd"
-EXPECTED_COUNT = 730
+EXPECTED_COUNT = 732
 SCHEDULING_COMMIT = "fd10191533a5f2139b224a90a096880039d62034"
 SCHEDULING_TEST_PATH = "apps/clued-cloud/tests/ci-scheduling-stage1-ui.test.mjs"
 SCHEDULING_README_PATH = "work/ci-scheduling-stage1-20261023/README.md"
@@ -154,6 +166,7 @@ KINDS = {
 }
 KINDS |= SCHEDULING_KINDS
 KINDS |= ROLE_PROBE_KINDS
+KINDS.add(HISTORICAL_KIND)
 BASE_CONFIG = {
     "title": "Clued Gitleaks configuration",
     "extend": {"useDefault": True},
@@ -197,7 +210,7 @@ def parse_records(text):
                 or not re.fullmatch(r"[1-9][0-9]*", line)):
             raise ValueError("Non-exact finding location")
         fixture = SCHEDULING_FINDINGS.get(record["fingerprint"])
-        if rule not in {"generic-api-key", "sourcegraph-access-token"} and fixture is None:
+        if rule not in {"generic-api-key", "sourcegraph-access-token"} and fixture is None and record["fingerprint"] not in HISTORICAL_FINDINGS:
             raise ValueError("Unreviewed rule")
         if not record["kinds"] or set(record["kinds"]) - KINDS:
             raise ValueError("Unreviewed reason")
@@ -208,6 +221,10 @@ def parse_records(text):
         if (token_fixture is not None and record["kinds"] != [token_fixture["kind"]]
                 or set(record["kinds"]) & ROLE_PROBE_KINDS and token_fixture is None):
             raise ValueError("Role-probe token exception identity changed")
+        historical = HISTORICAL_FINDINGS.get(record["fingerprint"])
+        if ((historical is not None and record["kinds"] != [HISTORICAL_KIND])
+                or (HISTORICAL_KIND in record["kinds"] and historical is None)):
+            raise ValueError("Exact historical escaped-JSON identity changed")
         if rule == "sourcegraph-access-token" and record["kinds"] != ["GIT_OBJECT_METADATA"]:
             raise ValueError("Object rule requires object proof")
         if path == REVIEW_DOCUMENT_PATH and (
@@ -266,8 +283,13 @@ def parse_records(text):
         raise ValueError("Exact path exception set changed")
     if {record["fingerprint"] for record in records[LEGACY_COUNT:SCHEDULING_END]} != set(SCHEDULING_FINDINGS):
         raise ValueError("Scheduling fixture exception set changed")
-    if {record["fingerprint"] for record in records[SCHEDULING_END:]} != set(ROLE_PROBE_FINDINGS):
+    if {record["fingerprint"] for record in records[SCHEDULING_END:730]} != set(ROLE_PROBE_FINDINGS):
         raise ValueError("Role-probe token exception set changed")
+    record_lines = [line for line in text.splitlines() if line.startswith(PREFIX)]
+    if ({record["fingerprint"] for record in records[730:]} != set(HISTORICAL_FINDINGS)
+            or hashlib.sha256(("\n".join(record_lines[:730])+"\n").encode()).hexdigest()
+            != ORIGINAL_730_RECORD_LINES_SHA256):
+        raise ValueError("Original730 bytes or exact two appended subjects changed")
     legacy_lines = [line for line in text.splitlines() if line.startswith(PREFIX)][:LEGACY_COUNT]
     if hashlib.sha256(("\n".join(legacy_lines) + "\n").encode()).hexdigest() != LEGACY_RECORD_LINES_SHA256:
         raise ValueError("Legacy reviewed finding bytes changed")
@@ -277,7 +299,7 @@ def parse_records(text):
     return records
 
 
-def _ensure_reviewed_commits(repo, records):
+def _ensure_reviewed_commits(repo, records, *, allow_fetch=True):
     commits = sorted({record["fingerprint"].split(":", 1)[0] for record in records})
     missing = []
     for commit in commits:
@@ -287,6 +309,8 @@ def _ensure_reviewed_commits(repo, records):
         )
         if result.returncode:
             missing.append(commit)
+    if missing and not allow_fetch:
+        raise ValueError("Required historical commits unavailable; read-only preparation never fetches")
     if missing:
         result = subprocess.run(
             ["git", "fetch", "--no-tags", "--no-recurse-submodules", "--depth=1", "origin", *missing],
@@ -557,9 +581,10 @@ def verify_role_probe_token(repo, fingerprint, text):
         raise ValueError("Role-probe token use changed")
 
 
-def verify_history(repo, records):
-    commits = _ensure_reviewed_commits(repo, records)
+def verify_history(repo, records, *, read_only=False):
+    commits = _ensure_reviewed_commits(repo, records, allow_fetch=not read_only)
     blobs = {}
+    historical_data = _candidate_policy.load(repo)
     for record in records:
         commit, path, rule, line = record["fingerprint"].split(":")
         key = commit + ":" + path
@@ -568,6 +593,8 @@ def verify_history(repo, records):
         text = blobs[key]
         if int(line) > len(text.splitlines()):
             raise ValueError("Reviewed location no longer resolves")
+        if record["fingerprint"] in HISTORICAL_FINDINGS:
+            _candidate_policy.verify(record["fingerprint"], historical_data)
         if record["fingerprint"] in SCHEDULING_FINDINGS:
             verify_scheduling_fixture(repo, record["fingerprint"], text)
         if record["fingerprint"] in ROLE_PROBE_FINDINGS:
@@ -779,6 +806,33 @@ def self_test(config, production_ignore):
     if code != 1 or not any(finding["File"] == "controlled-valid-private.pem"
                             and finding["RuleID"] == "private-key" for finding in valid_private):
         raise ValueError("A valid controlled PKCS8 private fixture was incorrectly suppressed")
+    # The two precise historical dispositions must never mask a new commit,
+    # path, shifted line or genuine credential-shaped curl. Future physical
+    # self-test executes these checks; pure preparation cannot claim them passed.
+    catalog = run(["git", "cat-file", "blob", f"{_candidate_policy.H}:{_candidate_policy.CATALOG}"], cwd=config.parent)
+    if hashlib.sha256(catalog).hexdigest() != _candidate_policy.CATALOG_SHA:
+        raise ValueError("Exact historical catalog regression bytes changed")
+    target = test_repo / _candidate_policy.CATALOG
+    target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(catalog); commit()
+    code, historical_new = scan()
+    def has_exact(finding_list, file, line):
+        return any(f["File"] == file and f["RuleID"] == "curl-auth-user" and f["StartLine"] == line for f in finding_list)
+    if code != 1 or not all(has_exact(historical_new, _candidate_policy.CATALOG, s["line"]) for s in _candidate_policy.SPECS):
+        raise ValueError("Historical JSON metadata was suppressed at a new commit")
+    other = "other-path/" + _candidate_policy.CATALOG
+    other_target = test_repo / other; other_target.parent.mkdir(parents=True, exist_ok=True); other_target.write_bytes(catalog); commit()
+    code, historical_path = scan()
+    if code != 1 or not all(has_exact(historical_path, other, s["line"]) for s in _candidate_policy.SPECS):
+        raise ValueError("Historical JSON metadata was suppressed at another path")
+    target.unlink(); commit(); target.write_bytes(b"\n"+catalog); commit()
+    code, historical_line = scan()
+    if code != 1 or not all(has_exact(historical_line, _candidate_policy.CATALOG, s["line"]+1) for s in _candidate_policy.SPECS):
+        raise ValueError("Historical JSON metadata was suppressed at another line")
+    synthetic = " ".join(["curl", "--user", ":".join(["fixture-identity", "fixture-auth-value"]), "https://invalid.example"]) + "\n"
+    (test_repo / "curl-credential-probe.txt").write_text(synthetic, encoding="utf-8"); commit()
+    code, genuine_shape = scan()
+    if code != 1 or not has_exact(genuine_shape, "curl-credential-probe.txt", 1):
+        raise ValueError("Genuine credential-shaped curl fixture was suppressed")
     return {"baseline_detection": True, "exact_history_only": True,
             "new_commit_detection": True, "different_path_detection": True,
             "scheduling_marker_new_commit_detection": True,
@@ -787,16 +841,69 @@ def self_test(config, production_ignore):
             "role_probe_different_path_detection": True,
             "role_probe_different_line_detection": True,
             "valid_private_key_detection": True,
+            "historical_json_new_commit_detection": True,
+            "historical_json_different_path_detection": True,
+            "historical_json_different_line_detection": True,
+            "genuine_curl_credential_detection": True,
             "synthetic_test_repository": str(test_repo),
             "handover_acceptance_artifact_proof": _self_test_handover_acceptance(root)}
 
 
-def main():
+def prepare_candidate(args):
+    """Preparation only: no runtime ignore, detector, fetch, or Source acceptance."""
+    records = parse_records(Path(args.config).read_text(encoding="utf-8"))
+    actual_history = verify_history(args.repo, records, read_only=True)
+    data = _candidate_policy.load(args.repo)
+    for fingerprint in HISTORICAL_FINDINGS:
+        _candidate_policy.verify(fingerprint, data)
+    commits = sorted({record["fingerprint"].split(":",1)[0] for record in records})
+    subjects = sorted({":".join(record["fingerprint"].split(":")[:2]) for record in records})
+    # Read-only cat-file derives actual availability and types; never fetch missing history.
+    refs = commits + subjects
+    result = subprocess.run(["git", "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+                            cwd=args.repo,input=("\n".join(refs)+"\n").encode(),capture_output=True,check=False)
+    rows = result.stdout.splitlines()
+    if result.returncode or len(rows)!=len(refs):
+        raise ValueError("Read-only history inventory failed")
+    types = [row.rsplit(b" ",1)[-1] for row in rows]
+    content = "".join(record["fingerprint"]+"\n" for record in records).encode()
+    print(json.dumps({"status":"PROPOSED","clear_candidate_not_authorized":True,
+        "runtime_ignore_eligible":False,"ignore_written":False,"scanner_invoked":False,
+        "verified_history":actual_history,
+        "reviewed_commits_sha256":hashlib.sha256(("\n".join(commits)+"\n").encode()).hexdigest(),
+        "metadata_count":len(records),"unique_commits":len(commits),"unique_files_at_commits":len(subjects),
+        "actual_available_commits":sum(kind==b"commit" for kind in types[:len(commits)]),
+        "actual_available_file_blobs":sum(kind==b"blob" for kind in types[len(commits):]),
+        "fingerprints_in_memory_sha256":hashlib.sha256(content).hexdigest(),
+        "config_sha256":hashlib.sha256(Path(args.config).read_bytes()).hexdigest(),
+        "all_record_lines_sha256":hashlib.sha256(("\n".join(line for line in Path(args.config).read_text().splitlines()
+             if line.startswith(PREFIX))+"\n").encode()).hexdigest(),
+        "old730_preserved":True,"exact_new_subjects":len(HISTORICAL_FINDINGS)}))
+
+
+def parse_cli(argv=None):
+    """Parse only. This function performs no proof, file write or scan."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
-    parser.add_argument("--output", required=True)
+    parser.add_argument("--output")
     parser.add_argument("--self-test", action="store_true")
-    args = parser.parse_args()
+    parser.add_argument("--prepare-candidate", action="store_true")
+    parser.add_argument("--repo")
+    args = parser.parse_args(argv)
+    if args.prepare_candidate:
+        if not args.repo or args.output is not None or args.self_test:
+            parser.error("prepare-candidate requires --repo and forbids --output/--self-test")
+    elif args.output is None or args.repo is not None:
+        parser.error("runtime requires --output and forbids --repo")
+    return args
+
+
+def main():
+    args = parse_cli()
+    if args.prepare_candidate:
+        return prepare_candidate(args)
+    # Ordinary accepted-Source CLI restored unchanged; outer Source acceptance,
+    # signature and installation remain prerequisites. Not executed in preparation.
     config = Path(args.config).resolve(strict=True)
     records = parse_records(config.read_text(encoding="utf-8"))
     proof = verify_history(config.parent, records)

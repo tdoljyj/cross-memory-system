@@ -1,6 +1,7 @@
 // Pure, typed execution proof. Callers supply authenticated, budgeted reads
 // and source qualification. No slot/executor imports and no mutation here.
-import {validDocumentationSkippedRoute} from './clued-workflow-profile.mjs';
+import {validDocumentationSkippedRoute,isExactAllRequiredPrimariesProfile,REQUIRED_TESTS_SOURCE} from './clued-workflow-profile.mjs';
+import {inspectRequiredApplicability} from './clued-required-applicability.mjs';
 export const QUALITY = '.github/workflows/clued-cloud-quality-gate.yml';
 export const DOCUMENTATION_STEPS = Object.freeze(['Install from lockfile', 'Run npm run lint',
   'Run npm run ledger:verify', 'Run npm run typecheck', 'Run npm run build', 'Run npm run test:unit']);
@@ -100,7 +101,77 @@ export function applicableCI({workflows,profiles,changedFiles,commits,diffComple
   return targets.size?{passed:true,state:'qualified',workflows:targets}:unknown('no applicable CI target');
 }
 
-export function qualifyPrimary(profile, jobs, file) {
+function qualifyAllRequiredPrimaries(profile,jobs,file,requiredDiffContext) {
+  try {
+    if(!isExactAllRequiredPrimariesProfile(profile,file)||!Array.isArray(jobs)||jobs.length!==4)
+      return unknown(`${file}: exact all-required Source/jobs missing`);
+    const names=['admission-gate',...REQUIRED_TESTS_SOURCE.primary_ids];
+    if(jobs.some(job=>!job||!names.includes(job.name))||
+      names.some(name=>jobs.filter(job=>job.name===name).length!==1))
+      return unknown(`${file}: required primary set missing or duplicate`);
+    const nativeId=value=>typeof value==='number'&&Number.isSafeInteger(value)&&value>0?String(value):
+      typeof value==='string'&&/^[1-9][0-9]{0,19}$/.test(value)?value:null;
+    const gate=jobs.find(job=>job.name==='admission-gate'),run=nativeId(gate.run_id),attempt=gate.run_attempt;
+    if(!run||!Number.isSafeInteger(attempt)||attempt<1||
+      jobs.some(job=>!Number.isSafeInteger(job.id)||job.id<1||nativeId(job.run_id)!==run||job.run_attempt!==attempt)||
+      new Set(jobs.map(job=>job.id)).size!==jobs.length)
+      return unknown(`${file}: required jobs cross native run/attempt identity`);
+    if(gate.status!=='completed'||gate.conclusion!=='success')return unknown(`${file}: gate did not complete successfully`);
+    const ids=[],primaryScopes=[];
+    for(const name of REQUIRED_TESTS_SOURCE.primary_ids) {
+      const job=jobs.find(job=>job.name===name),route=profile.routes.find(route=>route.job_id===name);
+      if(job.status==='completed'&&FAILED.has(job.conclusion))return failed(`${file}: required primary ${name} failed`);
+      if(job.status!=='completed'||job.conclusion!=='success'||!Array.isArray(job.labels)||
+        !job.labels.includes('self-hosted')||!Array.isArray(job.steps)||!route)
+        return unknown(`${file}: required primary ${name} did not fully execute`);
+      if(name==='migration-verify') {
+        const verify=job.steps.filter(step=>step.name==='Verify migrations on the production schema');
+        const unaffected=job.steps.filter(step=>step.name==='Not affected');
+        if(verify.length===1&&verify[0].status==='completed'&&verify[0].conclusion==='skipped'&&
+          unaffected.length===1&&unaffected[0].status==='completed'&&unaffected[0].conclusion==='success') {
+          const expected=requiredDiffContext?.expected;
+          const evidence=inspectRequiredApplicability(requiredDiffContext?.token,expected);
+          const selected=job.steps.filter(step=>step.name==='Select suites'),install=job.steps.filter(step=>step.name==='Install from lockfile');
+          if(!evidence||String(evidence.run_id)!==run||evidence.run_attempt!==attempt||
+            evidence.gate_job_id!==gate.id||evidence.scope!=='migration-verify:not_applicable'||
+            JSON.stringify(evidence.native_job_ids)!==JSON.stringify(jobs.map(j=>j.id).sort((a,b)=>a-b))||
+            selected.length!==1||selected[0].status!=='completed'||selected[0].conclusion!=='success'||
+            install.length!==1||install[0].status!=='completed'||install[0].conclusion!=='skipped')
+            return {...unknown(`${file}: not_applicable_without_independent_diff`),code:'NOT_APPLICABLE_WITHOUT_INDEPENDENT_DIFF'};
+          primaryScopes.push({job_id:name,native_job_id:job.id,scope:'not_applicable',
+            evidence_scope:evidence.scope,evidence});
+          ids.push(job.id);
+          return {passed:true,state:'qualified',scope:'required_workflow_requirements_satisfied',
+            execution_mode:'all_required_primaries',reason:`${file}: required execution and independent applicability observed`,
+            job_ids:ids,primary_scopes:primaryScopes,scopes:[]};
+        }
+        // Full mode never treats the mutually exclusive no-op as migration
+        // execution. It remains Source/FullRole/command-digest bound.
+        if(unaffected.length!==1||unaffected[0].status!=='completed'||unaffected[0].conclusion!=='skipped')
+          return unknown(`${file}: migration no-op cannot substitute for Full execution`);
+      }
+      for(const [stepName,count]of Object.entries(route.required_steps)) {
+        const steps=job.steps.filter(step=>step.name===stepName);
+        if(steps.length!==count||steps.some(step=>step.status!=='completed'))
+          return unknown(`${file}: required primary step identity/count differs`);
+        if(steps.some(step=>FAILED.has(step.conclusion)))return failed(`${file}: required primary execution step failed`);
+        if(steps.some(step=>step.conclusion!=='success'))return unknown(`${file}: required primary execution step did not run`);
+      }
+      ids.push(job.id);
+      primaryScopes.push({job_id:name,native_job_id:job.id,
+        scope:name==='ci-suites'?'declared_selected_command':'actual_full'});
+    }
+    return {passed:true,state:'qualified',scope:'workflow_execution',execution_mode:'all_required_primaries',
+      reason:`${file}: all three required primaries executed`,job_ids:ids,primary_scopes:primaryScopes,scopes:[]};
+  }catch{return unknown('all-required primary proof unavailable');}
+}
+
+export function qualifyPrimary(profile, jobs, file,{requiredDiffContext}={}) {
+  if(profile?.execution_eligible===false)return {...unknown('source_metadata_only_disabled'),
+    code:'SOURCE_METADATA_ONLY_DISABLED',gate_only:false};
+  if(profile&&(Object.hasOwn(profile,'execution_mode')||profile.workflow_blob===REQUIRED_TESTS_SOURCE.workflow_blob||
+    file===REQUIRED_TESTS_SOURCE.file))
+    return qualifyAllRequiredPrimaries(profile,jobs,file,requiredDiffContext);
   if(!profile || !Array.isArray(profile.routes) || !Array.isArray(jobs)) return unknown(`${file}: missing profile/jobs`);
   const gates=jobs.filter(x=>x.name==='admission-gate');
   if(profile.gated && (gates.length!==1 || gates[0].status!=='completed' || gates[0].conclusion!=='success'))
@@ -162,7 +233,8 @@ async function completeList(read, route, key) {
   return null;
 }
 
-export async function qualifiedCI({read,repository,head,prNumber,workflows,profiles,authorizeSource,revalidateSources,qualifyDocumentation,qualifyRunIdentity}) {
+export async function qualifiedCI({read,repository,head,base,prNumber,workflows,profiles,authorizeSource,revalidateSources,
+  qualifyDocumentation,qualifyRunIdentity,qualifyRequiredApplicability}) {
   try {
     if(!/^[a-f0-9]{40}$/.test(head) || !Number.isInteger(prNumber) || prNumber<=0 ||
         !(workflows instanceof Map) || !profiles?.workflows || typeof authorizeSource!=='function' ||
@@ -255,6 +327,13 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
         return unknown(`${file}: job outcome not terminal/valid`);
       let proof;
       proof=qualifyPrimary(profiles.workflows[file],jobs,file);
+      if(proof.code==='NOT_APPLICABLE_WITHOUT_INDEPENDENT_DIFF'&&typeof qualifyRequiredApplicability==='function'&&
+        /^[a-f0-9]{40}$/.test(base??'')&&isExactAllRequiredPrimariesProfile(profiles.workflows[file],file)) {
+        const requestKey=Object.freeze({});
+        const expected={repository,prNumber,head,base,runId:run.id,runAttempt:run.run_attempt,requestKey};
+        const token=await qualifyRequiredApplicability({file,run,jobs,...expected});
+        proof=qualifyPrimary(profiles.workflows[file],jobs,file,{requiredDiffContext:{token,expected}});
+      }
       if(proof.gate_only) return run.run_attempt===1?
         terminal(run,{...proof,rerun:{id:run.id,run_attempt:run.run_attempt,path:file}}):
         unknown(`${file}: gate-only recovery already attempted`);
@@ -264,7 +343,7 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
         proof={...proof,passed:true,state:'qualified'};
       }
       if(!proof.passed) return proof.state==='failed'?terminal(run,proof):proof;
-      scopes.push({file,scope:proof.scope});
+      scopes.push({file,scope:proof.scope,...(proof.primary_scopes?{primary_scopes:proof.primary_scopes}:{})});
       proofs.push({file,id:run.id,run_attempt:run.run_attempt});
     }
     // A queued or started retry, or a newer run, invalidates this observation.
@@ -294,6 +373,7 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
     }
     if(!await sourceStillCurrent())return unknown('source authority changed while qualifying');
     if(!await nativeBarrier())return unknown('native state changed during source recheck');
-    return {passed:true,state:'qualified',reason:`${proofs.length} qualified CI workflows`,scopes,proofs,native_runs:nativeRuns()};
+    return {passed:true,state:'qualified',reason:`${proofs.length} qualified CI workflows`,scopes,proofs,native_runs:nativeRuns(),
+      ...(scopes.some(s=>s.scope==='required_workflow_requirements_satisfied')?{scope:'required_workflow_requirements_satisfied'}:{})};
   } catch {return unknown('CI qualification read failed');}
 }

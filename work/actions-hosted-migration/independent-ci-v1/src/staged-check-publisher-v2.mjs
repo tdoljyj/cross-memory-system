@@ -28,7 +28,7 @@
 // is role_already_published_on_head). A read-back that is not complete refuses (fail closed).
 import { prepareNativePublication, nativePublicationNoPostProof } from '../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { canonical, digest } from './proof.mjs';
-import { freshStamp } from './clock-skew.mjs';
+import { freshStamp, retainedServerAnswerCurrent } from './clock-skew.mjs';
 import { validateJobV2, subjectOfV2, scanEffectKeyV2, scanExternalIdV2, sameClaimGeneration, claimGeneration, makeJobV2, prBaseAcceptedV2, isTrainFrontJobV2, frontJobIdsV2 } from './job-v2.mjs';
 import { verifyResultV2 } from './proof-v2.mjs';
 import { admittedFactsMatchJobV2 } from './full-admission-v2.mjs';
@@ -44,7 +44,8 @@ const ref = value => typeof value === 'string' && value.length > 0 && value.leng
 const stop = (code, drift = false) => { throw Object.assign(new Error(code), { code, drift }); };
 // An uncoded exception is never a transport fact (PR-A review MINOR 5): it is not a transient code.
 const reason = error => /^[a-z][a-z0-9_]{0,80}$/.test(error?.code ?? '') ? error.code : 'publication_operation_unconfirmed';
-const fresh = (observedAt, expiresAt, now) => freshStamp(Date.parse(observedAt), now) && Date.parse(expiresAt) > now;
+const fresh = (facts, now) => retainedServerAnswerCurrent(facts)
+  ?? (freshStamp(Date.parse(facts.observedAt), now) && Date.parse(facts.claimExpiresAt) > now);
 const requiredRefs = ['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef'];
 const SUBJECT_KEYS = ['baseSha', 'claimId', 'epoch', 'fence', 'headSha', 'pr', 'repo', 'sourceManifestSha256'];
 
@@ -121,8 +122,8 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     if (expectedEvidenceSha256 && expectedEvidenceSha256 !== verified.evidenceSha256) stop('evidence_identity_conflict', true);
     const facts = await authority.observe(job, batchClaim);
     if (!plain(facts)) stop('protected_facts_unconfirmed');
-    if (Number.isFinite(Date.parse(facts.claimExpiresAt)) && Date.parse(facts.claimExpiresAt) <= clock()) stop('protected_lease_expired', true);
-    if (!fresh(facts.observedAt, facts.claimExpiresAt, clock())) stop('protected_facts_unconfirmed');
+    if (retainedServerAnswerCurrent(facts) === null && Number.isFinite(Date.parse(facts.claimExpiresAt)) && Date.parse(facts.claimExpiresAt) <= clock()) stop('protected_lease_expired', true);
+    if (!fresh(facts, clock())) stop('protected_facts_unconfirmed');
     if (!Object.entries(subjectOfV2(job)).every(([k, value]) => facts[k] === value)) stop('protected_subject_changed', true);
     if (!sameClaimGeneration(facts.claim, batchClaim)) stop('protected_claim_changed', true);
     if (facts.sourceAccepted !== true || facts.hostQualified !== true || facts.publisherQualified !== true || facts.ciPrincipalQualified !== true)
@@ -151,7 +152,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
       || !Array.isArray(native.workflowGateFindings) || native.workflowGateFindings.length) stop('full_admission_incomplete');
     // Generation, not expires_at: a renewal between the two observations is not a disagreement.
     if (!sameClaimGeneration(facts.claim, native.observedClaim)) stop('lease_observations_disagree', true);
-    if (!fresh(facts.observedAt, facts.claimExpiresAt, clock())) stop('protected_facts_expired_during_admission');
+    if (!fresh(facts, clock())) stop('protected_facts_expired_during_admission');
     if (proof.kind === 'signed') {
       try {
         const stillVerified = verifyResultV2({ job, envelope: proof.envelope, signers, now: clock(), domain });
@@ -256,7 +257,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
           compensation: 'known-check-patch-failure-on-any-unsettled-write' });
         if (intent.existing) return { status: 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
         await journal.transition(key, 'intent', 'authorized', { observationKind: 'staged-native-observation', nativeObservationSha256: before.native.observationSha256 }); phase = 'authorized';
-        if (!fresh(before.native.observedAt, before.native.claimExpiresAt, clock())) stop('lease_expired_before_write', true);
+        if (!fresh(before.native, clock())) stop('lease_expired_before_write', true);
         const payload = { name: definition.name, head_sha: job.headSha, status: 'completed', conclusion: before.verified.payload.conclusion,
           external_id: externalId, output: { title: `${definition.name}: ${before.verified.payload.conclusion}`,
             summary: `Independent CI job ${job.id} (attempt ${job.attempt}); signed execution sha256 ${before.verified.evidenceSha256}; staged Native observation sha256 ${before.native.observationSha256}. ${before.native.publicationRequired ? 'The protected publisher attaches its Native Receipt.' : 'No Native publication ticket or Receipt is asserted.'}` } };
@@ -267,7 +268,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         const after = await boundary(job, { kind: 'signed', envelope }, definition);
         if (after.bindingSha256 !== before.bindingSha256 || after.verified.evidenceSha256 !== before.verified.evidenceSha256) stop('authorization_binding_changed', true);
         await readback(known, definition, job, externalId, before.verified.payload.conclusion);
-        if (!fresh(after.native.observedAt, after.native.claimExpiresAt, clock())) stop('lease_expired_after_write', true);
+        if (!fresh(after.native, clock())) stop('lease_expired_after_write', true);
         await journal.transition(key, 'sent', 'settled', { checkRunId: known.id, externalId, conclusion: before.verified.payload.conclusion,
           observationKind: 'staged-native-observation', nativeObservationBeforeSha256: before.native.observationSha256, nativeObservationAfterSha256: after.native.observationSha256,
           evidenceSha256: before.verified.evidenceSha256 });
@@ -357,7 +358,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
           nativeObservationSha256: before.native.observationSha256, compensation: 'known-check-patch-failure-on-any-unsettled-write' });
         if (intent.existing) return result({ status: 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0 }, mutexKey, true);
         await journal.transition(key, 'intent', 'authorized', { observationKind: 'staged-native-observation', nativeObservationSha256: before.native.observationSha256 }); phase = 'authorized';
-        if (!fresh(before.native.observedAt, before.native.claimExpiresAt, clock())) stop('lease_expired_before_write', true);
+        if (!fresh(before.native, clock())) stop('lease_expired_before_write', true);
         const payload = { name: definition.name, head_sha: job.headSha, status: 'completed', conclusion: 'success',
           external_id: externalId, output: { title: `${definition.name}: success`,
             summary: `Relayed GitHub-hosted run ${envelope.runUrl} (attempt ${envelope.runAttempt}), job ${envelope.jobUrl}; `
@@ -372,7 +373,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         const after = await boundary(job, { kind: 'hosted', envelope, fresh: false }, definition);
         if (after.bindingSha256 !== before.bindingSha256 || after.verified.evidenceSha256 !== before.verified.evidenceSha256) stop('authorization_binding_changed', true);
         await readback(known, definition, job, externalId, 'success');
-        if (!fresh(after.native.observedAt, after.native.claimExpiresAt, clock())) stop('lease_expired_after_write', true);
+        if (!fresh(after.native, clock())) stop('lease_expired_after_write', true);
         await journal.transition(key, 'sent', 'settled', { checkRunId: known.id, externalId, conclusion: 'success', attestationSha256: envelope.attestationSha256,
           observationKind: 'staged-native-observation', nativeObservationBeforeSha256: before.native.observationSha256,
           nativeObservationAfterSha256: after.native.observationSha256 });

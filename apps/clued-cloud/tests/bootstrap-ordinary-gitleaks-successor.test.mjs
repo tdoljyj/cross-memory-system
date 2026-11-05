@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
+import '../../../scripts/ci/clued-scan-start-prereg.test.mjs';
 import {
   registeredBootstrapOrdinarySuccessor,
   sha256Hex,
   workflowFindings,
 } from '../../../scripts/ci/clued-work-admission.mjs';
-import { registeredWorkflowSource, workflowBlob } from '../../../scripts/ci/clued-workflow-profile.mjs';
+import { registeredWorkflowSource, workflowBlob, parseWorkflowProfiles } from '../../../scripts/ci/clued-workflow-profile.mjs';
 
 const FILE = '.github/workflows/gitleaks.yml';
 const LEGACY = '74043d68d20dbee9f9404a66f0a02d3285fea0aa';
@@ -15,11 +16,13 @@ const AFTER = 'd0fe73eeabc9c163d3216e57ca6a7633288262c5';
 // The refrozen hosted gitleaks workflow (730 entries, frozen commit a38e8fef).
 const NEXT = '8d172bdfeda9b554d2c8c0e5868ccae6e1a3096d';
 const HEX = 'e6fafbb0a40ce37795f1e50bbda03cd33fbf40e0';
+const SCAN_START = 'ba4690650935961e7f4aa289a3aa0dc874b8b4fd';
+const HISTORY_732 = '6441fc32b084002de697415ea8343af07816c929';
 const HEAD = 'f88785c9f93bae4ad7e06e4f9be93d9471125a18';
 const BASE = 'f6ae29eda25c5ffa6131662e60251492e0878aa2';
 const ROOT = new URL('../../../', import.meta.url);
 const load = name => JSON.parse(fs.readFileSync(new URL(`scripts/ci/${name}`, ROOT), 'utf8'));
-const profiles = load('clued-gated-proof-profiles.json');
+const profiles = parseWorkflowProfiles(fs.readFileSync(new URL('scripts/ci/clued-gated-proof-profiles.json',ROOT)));
 const roleSpecs = load('clued-gated-proof-role-specs.json');
 const entry = blob => {
   const record = profiles.workflows[FILE];
@@ -32,11 +35,15 @@ const check = (before = BEFORE, after = AFTER, extra = {}) => registeredBootstra
   file: { filename: FILE, status: 'modified' }, baseText: text(before), headText: text(after), profiles, roleSpecs, ...extra,
 });
 
-test('actual gitleaks successor bytes match the registered frozen hex Source', () => {
+test('the integrated gitleaks bytes match the exact preregistered scan-start Source and retain the frozen hex Source', () => {
   const actual = fs.readFileSync(new URL(FILE, ROOT), 'utf8');
-  assert.equal(actual, text(HEX));
-  assert.equal(workflowBlob(actual), HEX);
-  assert.equal(sha256Hex(actual), '9d6c23d2ae4769d123f7ddcd3a25810878d36a85efc2403c07ecec5ecd17cdab');
+  assert.equal(actual, text(HISTORY_732));
+  assert.equal(workflowBlob(actual), HISTORY_732);
+  assert.equal(sha256Hex(actual), '116e6b201e30251b0f702ff4416dcfd015d2b311cbd2f000cdcd3e81e6d29966');
+  assert.equal(workflowBlob(text(SCAN_START)), SCAN_START);
+  assert.equal(sha256Hex(text(SCAN_START)), 'd8daffb6f35d572ada3028f1b372bc9e728edb9d757a6442a702ae423645ff77');
+  assert.equal(workflowBlob(text(HEX)), HEX);
+  assert.equal(sha256Hex(text(HEX)), '9d6c23d2ae4769d123f7ddcd3a25810878d36a85efc2403c07ecec5ecd17cdab');
   assert.equal(workflowBlob(text(NEXT)), NEXT);
   // The 729-entry generation stays registered as its predecessor.
   assert.equal(workflowBlob(text(AFTER)), AFTER);

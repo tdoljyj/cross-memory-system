@@ -1,0 +1,707 @@
+{
+  "schema": "clued.actor-execution-files221/1",
+  "files": [
+    {
+      "file": ".github/workflows/clued-standard-runner-actor-qualification.yml",
+      "bytes": 3527,
+      "sha256": "9414d76960d096e786738c4470bcf32dd3e50ab2999eea59c922473436034b1d"
+    },
+    {
+      "file": "scripts/ci/clued-standard-runner-actor-source.mjs",
+      "bytes": 7888,
+      "sha256": "87b7b9a14833afad3382907085765b3cea8595e4c3e69ab56f10d795c9949d43"
+    },
+    {
+      "file": "scripts/runner/qualify-standard-runner-actor.mjs",
+      "bytes": 16579,
+      "sha256": "c2dd12444ae93439e0009acef45b4e4d436ff71db5c8e21c61ebdb880f6ccb12"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/bridge/ci_origin_read181.cjs",
+      "bytes": 6492,
+      "sha256": "6ba112177cabde424603f5268fabc2923e61c87bb75b7cafa4dccfb7c3d49d34"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/bridge/console_frame181.mjs",
+      "bytes": 757,
+      "sha256": "49aed67063bfd6db704f135ceea6744b5db7045075cda8a73c7506e775e8740f"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/bridge/public_epoch_read181.cjs",
+      "bytes": 3184,
+      "sha256": "522f5b16d77b7228596e2c7ca06eaaac7c7b67e153c29dd0ae6112cbfd9cb9a2"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/bridge/root_mcp_bridge181.js",
+      "bytes": 28942,
+      "sha256": "9f4155821083637ff3364fecb09aa7f63e71b0c8d6244b192b75013109dd7d2f"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/capture/actor.ps1",
+      "bytes": 29883,
+      "sha256": "c82a699dbbf5bfd44939fcdc1c5a211ed66d3571a8baa522fb955ab1d3859616"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/capture/definition.ps1",
+      "bytes": 6546,
+      "sha256": "0f8e12a1da7db668fc64b4ab10dde042f06ec26186a93833a446d284dec890a4"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/capture/identity.dll",
+      "bytes": 15872,
+      "sha256": "31a3f23a0db09cbd44fba46aaacacf72818a8e3759cd50ca716b7b0b57b157c8"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/capture/local_pipe.dll",
+      "bytes": 12800,
+      "sha256": "0fc2bc75b9ff8696e60d8999dc5867ec1dffbacd66479c60f781e0629cef6932"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/capture/observer_core.ps1",
+      "bytes": 4284,
+      "sha256": "017d894f54a7bef4fae447b7e3b04d0c0faa29011efafb5b1e603b185d2ff95c"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/capture/observer_entry.ps1",
+      "bytes": 23435,
+      "sha256": "6d2ae34fc7bc390708120e1b3f653fa49c49ac1ae9f7a61f77ddf08daa27f079"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/capture/observer_os.ps1",
+      "bytes": 45853,
+      "sha256": "c27f400015fcf0628ff42f46d777892437fd688158b1e6b25c616d60e8c9971a"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/capture/registration.ps1",
+      "bytes": 896,
+      "sha256": "642cd65994270271ab12f88c81bfc5653852ae2fd1ad831e827ac016679e4fcb"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/capture/runner_entry.ps1",
+      "bytes": 31773,
+      "sha256": "19eb2653409aa505d894ab26d4a12444eda9260ae48640de951f34af1e0e79dc"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/errors.mjs",
+      "bytes": 2544,
+      "sha256": "9df39d911f7e40a612cd0f9698361b40e410930592d843be3d46ad8427a84fd8"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/actor.ps1",
+      "bytes": 16573,
+      "sha256": "0401d559c495469f213ef4eaf00b8590c9eea91bba0dc3c58e2983b483e9c3e4"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/budget-table216.json",
+      "bytes": 1120,
+      "sha256": "74ce5f31697a0067fc9c01edb0d7e74d4b7c292b5b2490f7f93017057f321ea6"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/build_capture216.mjs",
+      "bytes": 7798,
+      "sha256": "dac98e3550cd59896ab74391f5c9c5226623f4dbef3c22a5419afd827e47f511"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/capture-inputs216.json",
+      "bytes": 4355,
+      "sha256": "e9d100c8b98ddd032faf6aa2784a1ef8f330ea329905456e66c6796ba0041eae"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/capture_pins216.mjs",
+      "bytes": 2171,
+      "sha256": "c5f477472a49e21f78af30bab16d7939f58f67953397197eb39e92fb1eb8922c"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/child_factory.dll",
+      "bytes": 25088,
+      "sha256": "24076ae339aa6b90240da7abb0dee2ea4be224f781aab1a08cf8b19764944bbf"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/code-epochs216.json",
+      "bytes": 677,
+      "sha256": "a002e31c7b07ed08f5100cef0983de92e99380da4dbd8353f89de3b0e4cafcc7"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/console_frame.mjs",
+      "bytes": 757,
+      "sha256": "49aed67063bfd6db704f135ceea6744b5db7045075cda8a73c7506e775e8740f"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/console_transport.mjs",
+      "bytes": 3709,
+      "sha256": "ee5fc554bce81da793d8400db7a36a6392d69f4ed31e5e163a5ddbc257e4a9dd"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/control.dll",
+      "bytes": 15360,
+      "sha256": "5885416d8d76ad33dfd5978d61221402b6f7b035c4f226611d4f1b229c493ad8"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/definition.ps1",
+      "bytes": 6546,
+      "sha256": "0f8e12a1da7db668fc64b4ab10dde042f06ec26186a93833a446d284dec890a4"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/enrollment_adapter.ps1",
+      "bytes": 7943,
+      "sha256": "69cccbbf0899c82ac09f35e163cc782cb2edab385be05e984cf9b14e00956627"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/enrollment_code.py",
+      "bytes": 9991,
+      "sha256": "9395b92c4724e498f02f9a138f76a1cb60cb5b6deba351725a1baee5579f7a79"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/identity.dll",
+      "bytes": 15872,
+      "sha256": "31a3f23a0db09cbd44fba46aaacacf72818a8e3759cd50ca716b7b0b57b157c8"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/imports216.json",
+      "bytes": 2398,
+      "sha256": "e576ab8cb4e87512cdcc47e2a68d7d869b332231d23401addfb718f33bf50109"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/ingress.dll",
+      "bytes": 13824,
+      "sha256": "abfd6fae020b3f0cb31e43cd3802ec98cb089472f70579310dc99ce42e3048cb"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/install_observer216.ps1",
+      "bytes": 6935,
+      "sha256": "e6a4cc9d6c0cf907cf1cd009bb6685b0c1bcf8d067bf28bc069d737328e80f73"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/install_observer_entry216.ps1",
+      "bytes": 4740,
+      "sha256": "dbc5b428b49b85bf4c2e58ea72da63ec7a91d07b319845207f076f2c59efb30e"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/install_relay216.ps1",
+      "bytes": 12551,
+      "sha256": "e7d70a9514a8057bd9541143824e41dd3d55a6235854c082f0a577fd60ea5653"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/install_relay_entry216.ps1",
+      "bytes": 4937,
+      "sha256": "c2036ae654ae2275b88a9bd6fe24caefbf088aeb04a673da97698ebb137a485f"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/namespace.ps1",
+      "bytes": 953,
+      "sha256": "88a8388c9d3f5c0a814549de0cd4cb8ba7820860fab05f674bbc04b0f30dd4b9"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/native-provenance216.json",
+      "bytes": 1015,
+      "sha256": "8f525e5756981cdc9a92b79511f628e2f9bf927ce28aa56df3c8aca145b839f7"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/node_ingress.ps1",
+      "bytes": 4404,
+      "sha256": "4b71c2422904315f861a41a63373b04dc9bfcc848d5b35e22ea655d39fc045c7"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/observer-capture216.json",
+      "bytes": 2893,
+      "sha256": "19a5bf5de21d0a63ac9f64534310aab48c63d0a76bf31409726aca18e19a0ddf"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/observer.ps1",
+      "bytes": 9366,
+      "sha256": "142b564e2fd411e7f68d82b2b6ca4b16ef261c5d795324d296b8b6535a35895e"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/parent_bootstrap.ps1",
+      "bytes": 9145,
+      "sha256": "29503e11d72494bb90865eece3a034541241050daba45dd50942d3a7d223215f"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/qual_helpers.ps1",
+      "bytes": 11967,
+      "sha256": "2eced12090f96460c5699f247d171bd3e16a69e908c9debd6986cd36af3dc509"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/qual_receiver.ps1",
+      "bytes": 18918,
+      "sha256": "4ea513a4a99a5aca4dac62670e37ed4237acbabd776d891be03bb906f5c856a0"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/registration.ps1",
+      "bytes": 896,
+      "sha256": "642cd65994270271ab12f88c81bfc5653852ae2fd1ad831e827ac016679e4fcb"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/root_entry.ps1",
+      "bytes": 12945,
+      "sha256": "0092a0385a6c57aecaf76de3b1553cac5e61b49c12bd87b833eba2391bb8abcf"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/root_install_authority216.js",
+      "bytes": 25634,
+      "sha256": "d9f903576edc9128f966097df93cfaaefb5306ebe1c0c73f571f8f082a0c6b7e"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/selector_native.dll",
+      "bytes": 13312,
+      "sha256": "3eb5a5e9daeba5b9351da5b1922240ef695a694772342625d125a73d2ef40a01"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/self-bootstrap215.json",
+      "bytes": 104,
+      "sha256": "08f7b2694e0fbdd40faaba9303befd739695c6c243f00363b9900c32ee50e033"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/self_helpers.ps1",
+      "bytes": 29883,
+      "sha256": "c82a699dbbf5bfd44939fcdc1c5a211ed66d3571a8baa522fb955ab1d3859616"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/uac_supervisor.ps1",
+      "bytes": 11947,
+      "sha256": "db8ec064e2f049c8fc306333d6cddfd4bbe677222c34d349e2551e7effb68a36"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-install/xml.ps1",
+      "bytes": 10959,
+      "sha256": "aa5dfe432ce9d6c0f6a1b867c1950b5036ec431056dc30560a1d230a74e6efb5"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/authority_server_with_reader181.ps1",
+      "bytes": 16708,
+      "sha256": "a605e93536b31d5018f17e991e38c11f9dccd95f982eb61ade15ae5394f35aa3"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/ba_observer_wrapper181.ps1",
+      "bytes": 15611,
+      "sha256": "eeabca53245fec8cc5b872da58c4ab0c64932cb88da05d2e29c0ac5fc73d15c2"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/build_capture214.mjs",
+      "bytes": 8011,
+      "sha256": "3ee3c9ba45dd3614e5e34519f1649a09c1f0f04a16407126b81dcee67c977c75"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/capture-inputs214.json",
+      "bytes": 6210,
+      "sha256": "ce19a6c3e5bf08c690691cdaa5e8ba3733baa8b450db460fdf1cf35fcc0776d2"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/capture_pins214.mjs",
+      "bytes": 2193,
+      "sha256": "aeaed264569fa43e1bec24927aef27fc60b574358ffb653fc5f8069727b5ea17"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/console_frame181.mjs",
+      "bytes": 757,
+      "sha256": "49aed67063bfd6db704f135ceea6744b5db7045075cda8a73c7506e775e8740f"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/console_transport214.mjs",
+      "bytes": 3709,
+      "sha256": "ee5fc554bce81da793d8400db7a36a6392d69f4ed31e5e163a5ddbc257e4a9dd"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/LocalPipeTransportRuntime181.dll",
+      "bytes": 13312,
+      "sha256": "579063ff78159c37f36cd2af12b4802e6c5da38b7138f24ef7c97d66377b7d8f"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/new_child_read_access181.dll",
+      "bytes": 25088,
+      "sha256": "24076ae339aa6b90240da7abb0dee2ea4be224f781aab1a08cf8b19764944bbf"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/NodeIngressPipe212.dll",
+      "bytes": 13824,
+      "sha256": "abfd6fae020b3f0cb31e43cd3802ec98cb089472f70579310dc99ce42e3048cb"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/observer_entry181.ps1",
+      "bytes": 23435,
+      "sha256": "6d2ae34fc7bc390708120e1b3f653fa49c49ac1ae9f7a61f77ddf08daa27f079"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/OriginalPipeTask214.cs",
+      "bytes": 607,
+      "sha256": "66bab59df8f5db096b7446f8de783661da0c39fb482dc2151534ccc302d1cc4c"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/OriginalPipeTask214.dll",
+      "bytes": 4096,
+      "sha256": "deec8b4985ba67084bb0d11b56b1cfe1059340bf77775d042a86126c9721dab0"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/owned_effects214.ps1",
+      "bytes": 16406,
+      "sha256": "5f14a330ff00e1701db0d0f37507d08370cd9a28f2e40cadba4319011334a81c"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/parent_bootstrap181.ps1",
+      "bytes": 9145,
+      "sha256": "29503e11d72494bb90865eece3a034541241050daba45dd50942d3a7d223215f"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/relay_entry214.ps1",
+      "bytes": 4746,
+      "sha256": "0ed43755374e6f322c6ed7d8c3ddc0202cb9d88ecf6fcac4196369fa53e4e797"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/relay_ingress_mux216.ps1",
+      "bytes": 16133,
+      "sha256": "454c10a1caf4ca133084f7c8a86e742da62437df97f0cce26507f66a62a9b9a2"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/root_node_ingress212.ps1",
+      "bytes": 4404,
+      "sha256": "4b71c2422904315f861a41a63373b04dc9bfcc848d5b35e22ea655d39fc045c7"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/root_owned_supervisor214.js",
+      "bytes": 20868,
+      "sha256": "faff55a65f78b0504dd1db72461025f6b303ae04f9556f40e31adca32335dda6"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/root_uac_control181.dll",
+      "bytes": 15360,
+      "sha256": "5885416d8d76ad33dfd5978d61221402b6f7b035c4f226611d4f1b229c493ad8"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/root_uac_supervisor181.ps1",
+      "bytes": 11947,
+      "sha256": "db8ec064e2f049c8fc306333d6cddfd4bbe677222c34d349e2551e7effb68a36"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/selector_publisher216.ps1",
+      "bytes": 2495,
+      "sha256": "6dfe7e7d05e8a2d9a26bafb0237b14c55535bbc58882b0a4176ea6af2a4c59c2"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/SelectorPublisher216.cs",
+      "bytes": 9001,
+      "sha256": "8f3f07a100c8e19213cef0552ae4667232b9e7f60945459ce745730dc27613c7"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/SelectorPublisher216.dll",
+      "bytes": 13312,
+      "sha256": "3eb5a5e9daeba5b9351da5b1922240ef695a694772342625d125a73d2ef40a01"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/self_registration_actor181.ps1",
+      "bytes": 29883,
+      "sha256": "c82a699dbbf5bfd44939fcdc1c5a211ed66d3571a8baa522fb955ab1d3859616"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/self_registration_observer181.ps1",
+      "bytes": 4284,
+      "sha256": "017d894f54a7bef4fae447b7e3b04d0c0faa29011efafb5b1e603b185d2ff95c"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/self_registration_observer_os181.ps1",
+      "bytes": 45853,
+      "sha256": "c27f400015fcf0628ff42f46d777892437fd688158b1e6b25c616d60e8c9971a"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/supervisor_entry214.ps1",
+      "bytes": 12945,
+      "sha256": "0092a0385a6c57aecaf76de3b1553cac5e61b49c12bd87b833eba2391bb8abcf"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/windows_task_definition181.ps1",
+      "bytes": 6546,
+      "sha256": "0f8e12a1da7db668fc64b4ab10dde042f06ec26186a93833a446d284dec890a4"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/windows_task_registration_account181.ps1",
+      "bytes": 896,
+      "sha256": "642cd65994270271ab12f88c81bfc5653852ae2fd1ad831e827ac016679e4fcb"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/host-qualification/WindowsAccountIdentity181.dll",
+      "bytes": 15872,
+      "sha256": "31a3f23a0db09cbd44fba46aaacacf72818a8e3759cd50ca716b7b0b57b157c8"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/installed-authority.mjs",
+      "bytes": 309,
+      "sha256": "3d98b57e9ea20106d7c4f964c1775a9f251ee2d4dd097e64c77361376a3654ed"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/installed-provider.mjs",
+      "bytes": 1241,
+      "sha256": "4f3f4cc6761587f6bb6571f1d6c8035b9054c80006deaf5fe5b77c3dd0674c6e"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/joint/authority_server_with_reader181.ps1",
+      "bytes": 16708,
+      "sha256": "a605e93536b31d5018f17e991e38c11f9dccd95f982eb61ade15ae5394f35aa3"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/joint/ba_observer_launcher181.mjs",
+      "bytes": 6900,
+      "sha256": "2275ba693f84d6a79783bd29771afedf7996a0c94f4ab11d10a15f09c6dc22c4"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/joint/ba_observer_wrapper181.ps1",
+      "bytes": 15611,
+      "sha256": "eeabca53245fec8cc5b872da58c4ab0c64932cb88da05d2e29c0ac5fc73d15c2"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/joint/captured_pair_launch181.mjs",
+      "bytes": 3211,
+      "sha256": "08ec2e011495b0960fb380fa08ec141199b968c31ec4814249e4aa2240a50a70"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/joint/joint_runtime211.mjs",
+      "bytes": 3045,
+      "sha256": "37248bb933bb38e35c834b8c3f38a1d97b808e66144c9afe5e93de12a431d99e"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/joint/LocalPipeTransportRuntime181.cs",
+      "bytes": 11285,
+      "sha256": "86c9acdae0bc96f411eb0b60fc3e5cc6060fb4ec7fd9161f04b705150041c478"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/joint/LocalPipeTransportRuntime181.dll",
+      "bytes": 13312,
+      "sha256": "579063ff78159c37f36cd2af12b4802e6c5da38b7138f24ef7c97d66377b7d8f"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/joint/provider_client_runtime181.ps1",
+      "bytes": 6107,
+      "sha256": "b71d7eb8159942d94bc6ea14c0a572b3c5cea7636140c373fc3dcdebd07932d1"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/joint/relay_stdio_wrapper181.ps1",
+      "bytes": 4773,
+      "sha256": "09e211957c29aeeedca084185f0c676f6b92157880f7f1e7f3b130e79b8248b8"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/joint/runner_entry_runtime181.ps1",
+      "bytes": 31773,
+      "sha256": "19eb2653409aa505d894ab26d4a12444eda9260ae48640de951f34af1e0e79dc"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/joint/runner_pipe_wrapper_runtime181.ps1",
+      "bytes": 9520,
+      "sha256": "769044544957af1c79d39e6cf30c49b6adc5900ec960e2e1846e27c43a3c9db3"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/joint/runner_spawn_transport211.mjs",
+      "bytes": 7317,
+      "sha256": "05306130b91a56d3958c4ae4d2ffc5380f5278a7b9e8d114bc62fc34734d95e7"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/joint-capture.mjs",
+      "bytes": 2545,
+      "sha256": "e0ba93fc836efb7ef03bb7672fafaf19754ea01b293a7269a12ba40a05c9e40a"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/maintenance-pipeline215.mjs",
+      "bytes": 1633,
+      "sha256": "ec477370b317f3d49b22c8eeed7cfe111875b9e7ff5265c0db1f5a1b4eb12ede"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/node-ingress/node-authority212.mjs",
+      "bytes": 8670,
+      "sha256": "7063e687f4f1a8565ba81f0f1efa4a11a3459b341b7bc8a5c83b067c23f1c2ac"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/node-ingress/node_broker212.ps1",
+      "bytes": 4592,
+      "sha256": "77f46d2d87ccae6e71160e16048b3b32d5357e409b8c8cce1e8f05c4da89d3a1"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/node-ingress/NodeIngressPipe212.cs",
+      "bytes": 11667,
+      "sha256": "4154cc09c96124a8ffd146debd4e1cfe4b64b119309b7c9e09ed508e440415ce"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/node-ingress/NodeIngressPipe212.dll",
+      "bytes": 13824,
+      "sha256": "abfd6fae020b3f0cb31e43cd3802ec98cb089472f70579310dc99ce42e3048cb"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/node-ingress/protocol212.mjs",
+      "bytes": 2414,
+      "sha256": "83799f396e7ab2ae3f33713f148d4124f7536f8a76b9106f56bf8e756ca8149e"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/node-ingress/root_node_authority212.js",
+      "bytes": 10808,
+      "sha256": "b32892565e43c198a404fa31d68e3c5d13952fcdfec7bcabfd1b7b9d4beb0685"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/node-ingress/root_node_ingress212.ps1",
+      "bytes": 4404,
+      "sha256": "4b71c2422904315f861a41a63373b04dc9bfcc848d5b35e22ea655d39fc045c7"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/node-ingress/selector-wait212.mjs",
+      "bytes": 1583,
+      "sha256": "bb9b67aa63a1a4ed6a63c87bf3e13f0c3b337604b9c88768358327d0ba9386e5"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/node-ingress/WindowsAccountIdentity181.dll",
+      "bytes": 15872,
+      "sha256": "31a3f23a0db09cbd44fba46aaacacf72818a8e3759cd50ca716b7b0b57b157c8"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/node-runtime/NodePrimaryObservation211.cs",
+      "bytes": 8907,
+      "sha256": "a4ee0b66382d693ce3fc0bc7cf0e007ed36b9902fda12f2bed6bbdadffe808bc"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/node-runtime/read-node-primary.mjs",
+      "bytes": 3887,
+      "sha256": "fe4bee9ca15ce87d964c88770a3c9ee079f6c3cde555f6d6bbb1faa09807edc6"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/node-runtime/runtime-projection.mjs",
+      "bytes": 1677,
+      "sha256": "f75ef56429dbdbdcccf5b71be27fab4234da4bffbf5b4b210d76cd403ef5602c"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/provider-core.mjs",
+      "bytes": 6458,
+      "sha256": "73369d0ae90078effa64bc6f34b5f2e1e90af8debefac43eef9c674f11ef20c1"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/captured-members215.json",
+      "bytes": 1889,
+      "sha256": "b3d843c1281a5fa2d8590f9efd79b95ef305480ae173026951ad041f08e451f3"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/core.ps1",
+      "bytes": 16573,
+      "sha256": "0401d559c495469f213ef4eaf00b8590c9eea91bba0dc3c58e2983b483e9c3e4"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/definition.ps1",
+      "bytes": 6546,
+      "sha256": "0f8e12a1da7db668fc64b4ab10dde042f06ec26186a93833a446d284dec890a4"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/enrollment_adapter.ps1",
+      "bytes": 7943,
+      "sha256": "69cccbbf0899c82ac09f35e163cc782cb2edab385be05e984cf9b14e00956627"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/enrollment_code.py",
+      "bytes": 9991,
+      "sha256": "9395b92c4724e498f02f9a138f76a1cb60cb5b6deba351725a1baee5579f7a79"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/identity.dll",
+      "bytes": 15872,
+      "sha256": "31a3f23a0db09cbd44fba46aaacacf72818a8e3759cd50ca716b7b0b57b157c8"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/ingress.dll",
+      "bytes": 13824,
+      "sha256": "abfd6fae020b3f0cb31e43cd3802ec98cb089472f70579310dc99ce42e3048cb"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/install_protocol215.mjs",
+      "bytes": 2496,
+      "sha256": "e45cd5d9ecf6f2657417fa8d52377f632b4309f89c1772b923847b91b13ce294"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/install_spawn215.mjs",
+      "bytes": 7441,
+      "sha256": "aa07e354d2fc3e881c9bf50fa8d53bcbd39e110c72e96594236eb9df85471ca0"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/install_wrapper215.ps1",
+      "bytes": 10751,
+      "sha256": "383ab3c34ddc98c43fffa5a3b19269c299033231d0c7ce09b4408e546a33a749"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/namespace.ps1",
+      "bytes": 953,
+      "sha256": "88a8388c9d3f5c0a814549de0cd4cb8ba7820860fab05f674bbc04b0f30dd4b9"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/node_broker212.ps1",
+      "bytes": 4629,
+      "sha256": "cb8e77757c9924abe7b7a82859fa27506937c8db5def05659d9ed58e3eb81485"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/node_capture_pins215.json",
+      "bytes": 1763,
+      "sha256": "8e26a5ed5165ebc594c43b3f403f2ae2ce79dc58f6568f3423afb4a403da1a6c"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/node_install_authority215.mjs",
+      "bytes": 8770,
+      "sha256": "13679cac295573aa2593c870c1c6a417c4a73c31a7bb93ed3206eb4601414c5f"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/protocol212.mjs",
+      "bytes": 2414,
+      "sha256": "83799f396e7ab2ae3f33713f148d4124f7536f8a76b9106f56bf8e756ca8149e"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/registration.ps1",
+      "bytes": 896,
+      "sha256": "642cd65994270271ab12f88c81bfc5653852ae2fd1ad831e827ac016679e4fcb"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/run_install215.mjs",
+      "bytes": 1816,
+      "sha256": "c4ffbc79ea4fc649614ce35a363eb25f6ba6db2dac933a3d571e35c6854c8e6d"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/selector_wait218.mjs",
+      "bytes": 1170,
+      "sha256": "dde1b02c0acf77877b0bf5fac22f266e99942318d383fbc4868eb43265eb2a59"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/self_helpers.ps1",
+      "bytes": 29883,
+      "sha256": "c82a699dbbf5bfd44939fcdc1c5a211ed66d3571a8baa522fb955ab1d3859616"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/self-install/xml_helpers.ps1",
+      "bytes": 10959,
+      "sha256": "aa5dfe432ce9d6c0f6a1b867c1950b5036ec431056dc30560a1d230a74e6efb5"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/server/authority_server181.ps1",
+      "bytes": 15949,
+      "sha256": "15ad0a6e66ed87fa2fa30f398200ba35dd80ae524387ce6407306a84e24f03d1"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/server/closed-spawn-and-authority-abi181.json",
+      "bytes": 8010,
+      "sha256": "f1b7ec9212c1780f0c3d15edf4e4ba08cbfe3546ca9db164fc8e9181ade9a8a6"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/server/provider_client181.ps1",
+      "bytes": 3745,
+      "sha256": "5b53a5861e7708594c5c37343ea001c0d838cfdb8b0a15ff9008e35e2f236f3a"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/server/runner_pipe_wrapper181.ps1",
+      "bytes": 9520,
+      "sha256": "e39091d524ada1f0631c05eb8a91f417d76689196a4953801955c663a67f240f"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/server/runner_spawn_transport181.mjs",
+      "bytes": 7004,
+      "sha256": "ac56d52d00d11e14f80877a68276e9d6ffbcc4e80322e4fe2480e51a04a8ae15"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/source-capture.mjs",
+      "bytes": 1678,
+      "sha256": "c853d78d03618e4566dd08844538bb0b5a331381d2aeec679b04092c37b77b07"
+    },
+    {
+      "file": "scripts/runner/standard-runner-actor181/source-manifest.json",
+      "bytes": 27255,
+      "sha256": "54790a5675d35d5d559f63e64a8c03e093ad460a42862e3bfd0c1e044b391947"
+    }
+  ],
+  "self_and_catalogue_excluded_to_avoid_cycles": true,
+  "execution_authority": false
+}

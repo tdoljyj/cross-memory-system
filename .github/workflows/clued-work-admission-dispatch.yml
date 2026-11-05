@@ -29,6 +29,7 @@ on:
           - information-flow-e2e.yml
           - clued-handover-external-qualification.yml
           - clued-handover-disposable-idle.yml
+          - clued-standard-runner-actor-qualification.yml
       ref:
         description: Branch or tag the heavy workflow will run on
         required: true

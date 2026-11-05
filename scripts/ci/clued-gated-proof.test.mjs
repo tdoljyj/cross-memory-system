@@ -1,14 +1,113 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import {parseWorkflowProfiles,REQUIRED_TESTS_SOURCE} from './clued-workflow-profile.mjs';
 import {qualifyPrimary,qualifiedCI,applicableCI,gateIdentityWitness,checkoutIdentityWitness,QUALITY,DOCUMENTATION_STEPS} from './clued-gated-proof.mjs';
-const profiles=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
+const profiles=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
 const FILE='.github/workflows/clued-components.yml',HEAD='a'.repeat(40);
 const profile=profiles.workflows[FILE],route=profile.routes[0];
 const step=(name,conclusion='success')=>({name,status:'completed',conclusion});
 const primary=(extra={})=>({id:2,name:route.name,status:'completed',conclusion:'success',labels:['self-hosted'],
   steps:Object.entries(route.required_steps).flatMap(([name,count])=>Array.from({length:count},()=>step(name))),...extra});
 const gate={id:1,name:'admission-gate',status:'completed',conclusion:'success',labels:['self-hosted']};
+
+const requiredProfile=profiles.workflows[REQUIRED_TESTS_SOURCE.file];
+function requiredJobs(){
+  return [{...gate,id:101,run_id:777,run_attempt:2},...requiredProfile.routes.map((r,i)=>({
+    id:102+i,run_id:777,run_attempt:2,name:r.name,status:'completed',conclusion:'success',labels:['self-hosted','Linux'],
+    steps:[...Object.entries(r.required_steps).flatMap(([name,count])=>Array.from({length:count},()=>step(name))),
+      ...(r.job_id==='migration-verify'?[step('Not affected','skipped')]:[])],
+  }))];
+}
+const requiredProof=(jobs=requiredJobs(),p=requiredProfile,file=REQUIRED_TESTS_SOURCE.file)=>qualifyPrimary(p,jobs,file);
+
+test('exact compound Source requires all three real primaries and the gate on one native attempt',()=>{
+  const result=requiredProof();assert.equal(result.passed,true);assert.equal(result.scope,'workflow_execution');
+  assert.deepEqual(result.job_ids,[102,103,104]);assert.equal(result.execution_mode,'all_required_primaries');
+  const strings=requiredJobs();for(const j of strings)j.run_id=String(j.run_id);assert.equal(requiredProof(strings).passed,true);
+});
+
+test('no missing duplicate skipped neutral failed or active required primary can be replaced by another success',()=>{
+  for(let i=1;i<=3;i++){
+    const missing=requiredJobs();missing.splice(i,1);assert.equal(requiredProof(missing).passed,false);
+    const duplicate=requiredJobs();duplicate.push({...duplicate[i],id:900+i});assert.equal(requiredProof(duplicate).passed,false);
+    for(const conclusion of ['skipped','neutral','failure','cancelled']){
+      const jobs=requiredJobs();jobs[i].conclusion=conclusion;assert.equal(requiredProof(jobs).passed,false);
+    }
+    const running=requiredJobs();running[i].status='in_progress';assert.equal(requiredProof(running).passed,false);
+  }
+  const helper=requiredJobs();helper.push({id:999,run_id:777,run_attempt:2,name:'helper',status:'completed',conclusion:'success'});
+  assert.equal(requiredProof(helper).passed,false);
+});
+
+test('compound proof rejects native identity mixing, missing identities, duplicate IDs and wrong runner route',()=>{
+  for(let i=0;i<=3;i++)for(const edit of [j=>j.run_id=778,j=>j.run_attempt=3,j=>delete j.run_id,
+    j=>j.id=NaN,(j,jobs,index)=>j.id=jobs[(index+1)%jobs.length].id,j=>j.run_attempt='2']){
+    const jobs=requiredJobs();edit(jobs[i],jobs,i);
+    assert.equal(requiredProof(jobs).passed,false);
+  }
+  for(let i=1;i<=3;i++){
+    const jobs=requiredJobs();jobs[i].labels=['ubuntu-latest'];assert.equal(requiredProof(jobs).passed,false);
+  }
+});
+
+test('compound proof binds every full execution step and never treats not-affected as migration execution',()=>{
+  for(let i=1;i<=3;i++)for(const edit of [j=>j.steps.shift(),j=>j.steps.push({...j.steps[0]}),
+    j=>j.steps[0].conclusion='skipped',j=>j.steps[0].conclusion='neutral',j=>j.steps[0].conclusion='failure',
+    j=>j.steps[0].name='different command step']){
+    const jobs=requiredJobs();edit(jobs[i]);assert.equal(requiredProof(jobs).passed,false);
+  }
+  const unaffected=requiredJobs(),migration=unaffected[3];
+  migration.steps.find(s=>s.name==='Verify migrations on the production schema').conclusion='skipped';
+  migration.steps.find(s=>s.name==='Not affected').conclusion='success';
+  const r=requiredProof(unaffected);assert.equal(r.passed,false);assert.equal(r.state,'unknown');
+  assert.equal(r.code,'NOT_APPLICABLE_WITHOUT_INDEPENDENT_DIFF');assert.equal(r.gate_only,undefined);
+  assert.equal(requiredProof().passed,true,'the full path permits only the pinned auxiliary no-op to be skipped');
+});
+
+test('compound profile mode, exact Source, three role projection and command hashes cannot be forged',()=>{
+  for(const edit of [p=>delete p.execution_mode,p=>p.execution_mode='alternative',p=>p.workflow_blob='a'.repeat(40),
+    p=>p.source_sha256='b'.repeat(64),p=>p.source_yaml+='# changed\n',p=>p.primary_ids.pop(),
+    p=>p.routes[1].job_id='other-role',p=>p.routes[2].command_digests['Not affected'][0]='c'.repeat(64),
+    p=>delete p.routes[0].required_steps['Lint, ledger, typecheck, build and unit tests']]){
+    const p=structuredClone(requiredProfile);edit(p);assert.equal(requiredProof(requiredJobs(),p).passed,false);
+  }
+  assert.equal(requiredProof(requiredJobs(),requiredProfile,'.github/workflows/borrowed.yml').passed,false);
+  const forged=structuredClone(profile);forged.execution_mode='all_required_primaries';
+  assert.equal(qualifyPrimary(forged,[gate,primary()],FILE).passed,false);
+});
+
+test('derived metadata with execution explicitly disabled is never execution or gate recovery',()=>{
+  for(const p of [{...requiredProfile,execution_eligible:false},{...profile,execution_eligible:false}]) {
+    const r=qualifyPrimary(p,requiredJobs(),REQUIRED_TESTS_SOURCE.file);
+    assert.equal(r.passed,false);assert.equal(r.state,'unknown');assert.equal(r.reason,'source_metadata_only_disabled');
+    assert.equal(r.code,'SOURCE_METADATA_ONLY_DISABLED');assert.equal(r.gate_only,false);assert.equal(r.rerun,undefined);
+  }
+  const borrowed={...requiredProfile,execution_eligible:true};
+  assert.equal(requiredProof(requiredJobs(),borrowed).passed,false,'a true flag cannot mint compound Source qualification');
+});
+
+test('the outer CI proof applies all-primary execution and final Source/attempt barriers unchanged',async()=>{
+  const make=(jobs=requiredJobs(),extra={})=>{
+    const run={id:777,path:REQUIRED_TESTS_SOURCE.file,head_sha:HEAD,event:'pull_request',status:'completed',
+      conclusion:'success',run_attempt:2,pull_requests:[{number:5}]};
+    return {repository:'o/r',head:HEAD,prNumber:5,
+      workflows:new Map([[REQUIRED_TESTS_SOURCE.file,REQUIRED_TESTS_SOURCE.workflow_blob]]),
+      profiles:{workflows:{[REQUIRED_TESTS_SOURCE.file]:requiredProfile}},authorizeSource:async()=>true,
+      revalidateSources:async()=>true,
+      read:async url=>url.includes('/actions/runs?')?{total_count:1,workflow_runs:[run]}:
+        url.includes('/attempts/')?{total_count:jobs.length,jobs}:url.endsWith('/777')?run:null,...extra};
+  };
+  assert.equal((await qualifiedCI(make())).passed,true);
+  for(const extra of [{authorizeSource:async()=>false},{revalidateSources:async()=>false}])
+    assert.equal((await qualifiedCI(make(requiredJobs(),extra))).passed,false);
+  const mixed=requiredJobs();mixed[2].run_attempt=1;assert.equal((await qualifiedCI(make(mixed))).passed,false);
+  const notApplicable=requiredJobs();
+  notApplicable[3].steps.find(s=>s.name==='Verify migrations on the production schema').conclusion='skipped';
+  notApplicable[3].steps.find(s=>s.name==='Not affected').conclusion='success';
+  const r=await qualifiedCI(make(notApplicable));assert.equal(r.passed,false);
+  assert.equal(r.code,'NOT_APPLICABLE_WITHOUT_INDEPENDENT_DIFF');assert.equal(r.rerun,undefined);
+});
 test('auxiliary success, primary skipped and missing/duplicate execution steps cannot qualify',()=>{
   for(const jobs of [[gate,{id:4,name:'helper',status:'completed',conclusion:'success'}],
     [gate,primary({conclusion:'skipped'}),{id:4,name:'helper',status:'completed',conclusion:'success'}],
@@ -199,11 +298,14 @@ test('terminal-only detail or final-list read failures remain unknown without re
     }
   }
 });
-test('audited complete documentation diff selects only five unconditional workflows',()=>{
+test('audited documentation diff preserves the original five and includes the new unconditional required-tests Source',()=>{
   const workflows=new Map(Object.entries(profiles.workflows).map(([file,p])=>[file,p.workflow_blob]));
   const w={workflows,profiles,changedFiles:['docs/README.md'],commits:1,diffComplete:true,sourceQualified:true};
-  const result=applicableCI(w);assert.equal(result.passed,true);assert.equal(result.workflows.size,5);
-  assert.equal(applicableCI({...w,changedFiles:[]}).workflows.size,5);
+  const result=applicableCI(w);assert.equal(result.passed,true);
+  const expected=[QUALITY,'.github/workflows/clued-components.yml','.github/workflows/contract-placement.yml',
+    '.github/workflows/gitleaks.yml','.github/workflows/trivy.yml',REQUIRED_TESTS_SOURCE.file].sort();
+  assert.deepEqual([...result.workflows.keys()].sort(),expected);
+  assert.deepEqual([...applicableCI({...w,changedFiles:[]}).workflows.keys()].sort(),expected);
   assert.equal(applicableCI({...w,changedFiles:[],diffComplete:false}).state,'unknown');
   assert.ok(result.workflows.has(QUALITY));assert.equal(result.workflows.has('.github/workflows/clued-g4-database.yml'),false);
   w.changedFiles=['apps/clued-cloud/worker/nested/file.ts'];assert.ok(applicableCI(w).workflows.has('.github/workflows/clued-connection-authorization.yml'));

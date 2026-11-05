@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 
 test('Native617 candidate Source catalogue is complete but never an accepted registration',async()=>{
   const {native617PendingWorkflowCatalogue}=await import('./clued-workflow-profile.mjs');
-  const registry=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
+  const registry=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
   const specs=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)));
   const result=native617PendingWorkflowCatalogue(registry,specs);
   assert.equal(result.structurally_valid,true);assert.equal(result.passed,false);
@@ -19,7 +19,7 @@ test('Native617 candidate Source catalogue is complete but never an accepted reg
 });
 test('pending Native617 data refuses invented receipts, partial roles, route mixing and self registration',async()=>{
   const {native617PendingWorkflowCatalogue}=await import('./clued-workflow-profile.mjs');
-  const read=()=>({registry:JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url))),
+  const read=()=>({registry:parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url))),
     specs:JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)))});
   for(const edit of [
     x=>x.registry.native617_pending_sources.pop(),
@@ -41,8 +41,10 @@ test('pending Native617 data refuses invented receipts, partial roles, route mix
 });
 import test from 'node:test';
 import {compileRegisteredWorkflow,selectRegisteredProfiles,roleDefinitionDigest,workflowBlob,futureWorkflowSubject,
-  futureWorkflowCatalogue,acceptedFutureWorkflowSource} from './clued-workflow-profile.mjs';
+  futureWorkflowCatalogue,acceptedFutureWorkflowSource,parseWorkflowProfiles,REQUIRED_TESTS_SOURCE,
+  isExactAllRequiredPrimariesProfile} from './clued-workflow-profile.mjs';
 import fs from 'node:fs';
+import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
 import {workflowJobs} from './clued-work-admission.mjs';
 const SOURCE='name: fake-fixture\non: fixture\njobs: fixture\n';
@@ -63,6 +65,30 @@ test('unsupported triggers, routes, reuse, matrix and empty execution never regi
     p=>p.jobs.other={...p.jobs.main}]) {
     const parsed=structuredClone(definition);edit(parsed);assert.throws(()=>compile(SOURCE,parsed));
   }
+});
+
+test('only the exact required-tests Source and its three complete independent roles compile compound mode',()=>{
+  const require=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url)),yaml=require('yaml');
+  const raw=fs.readFileSync(new URL('../../'+REQUIRED_TESTS_SOURCE.file,import.meta.url),'utf8'),value=yaml.parse(raw);
+  const primary_ids=[...REQUIRED_TESTS_SOURCE.primary_ids],roles=primary_ids.map(job_id=>({job_id,
+    definition_sha256:roleDefinitionDigest(value.jobs[job_id]),definition:value.jobs[job_id]}));
+  const options={primary_ids,parseYaml:yaml.parse,accepted_roles:roles},compiled=compileRegisteredWorkflow(raw,options);
+  assert.equal(isExactAllRequiredPrimariesProfile(compiled,REQUIRED_TESTS_SOURCE.file),true);
+  assert.equal(compiled.execution_mode,'all_required_primaries');assert.equal(compiled.routes.length,3);
+  assert.equal(compiled.routes.every(route=>route.self_hosted),true);
+  assert.equal(compiled.routes[2].required_steps['Not affected'],undefined);
+  assert.equal(compiled.routes[2].command_digests['Not affected'].length,1,'the auxiliary command is not removed from Source');
+  assert.equal(compiled.routes[2].required_steps['Verify migrations on the production schema'],1);
+  for(const text of [raw+'# different Source\n',raw.replace('node','echo')])assert.throws(()=>compileRegisteredWorkflow(text,options));
+  const reordered={...options,accepted_roles:[...roles].reverse()};
+  assert.deepEqual(compileRegisteredWorkflow(raw,reordered),compiled,'independent role array order is not authority');
+  for(const edit of [o=>o.primary_ids.pop(),o=>o.accepted_roles.pop(),
+    o=>delete o.accepted_roles[0].definition,o=>o.accepted_roles[1].definition_sha256='a'.repeat(64),
+    o=>o.accepted_roles[2].definition.name='changed']){
+    const changed={primary_ids:structuredClone(primary_ids),accepted_roles:structuredClone(roles),parseYaml:yaml.parse};edit(changed);
+    assert.throws(()=>compileRegisteredWorkflow(raw,changed));
+  }
+  assert.equal(compile().execution_mode,undefined,'old alternative compiler behavior is unchanged');
 });
 test('unregistered, altered, revoked, ambiguous or partial candidate sources stay unknown',()=>{
   const p=compile(),file='.github/workflows/fixture.yml';
@@ -86,7 +112,7 @@ test('a future source uses only an independently preregistered default-branch en
 });
 
 function acceptedFutureFixture() {
-  const source=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
+  const source=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
   const roles=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)));
   const consumer_id='company-linux-01',file=`.github/workflows/clued-work-handover-qualification-${consumer_id}.yml`;
   const saved=source.future_workflows?.find(entry=>entry.file===file);
@@ -159,7 +185,7 @@ test('future compiled definitions cannot waive matrix, reusable jobs or route re
   }
 });
 test('candidate future Sources retain exact full-byte profiles and frozen gate hash',()=>{
-  const registry=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
+  const registry=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
   const specs=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)));
   assert.equal(futureWorkflowCatalogue(registry,specs).passed,true);
   for(const entry of registry.future_workflows??[]) {

@@ -16,7 +16,7 @@ import { runWorkerJob } from '../src/worker-v2.mjs';
 import { REQUIRED_SOURCE_PATHS, createWindowsContext } from '../worker/protected-job-bridge-v4/boundary.mjs';
 import { CALLBACK_WINDOW_MS, makeIssue, makeChallenge, makeResponse, makeBlocked, validateChallenge, validateResponse, validateBlocked, encode, decode, digest as bridgeDigest } from '../worker/protected-job-bridge-v4/protocol.mjs';
 import { createFixtureMailbox } from '../worker/protected-job-bridge-v4/mailbox.mjs';
-import { runIssuer, issuerEvaluate, blockedReason, refsFailureReason, ISSUER_SUCCESS } from '../worker/protected-job-bridge-v4/windows-issuer.mjs';
+import { runIssuer as runActualIssuer, issuerEvaluate, blockedReason, refsFailureReason, ISSUER_SUCCESS } from '../worker/protected-job-bridge-v4/windows-issuer.mjs';
 import { resultPayload, observationFacts, verifySignedBridgeResult, RESULT_WRAPPER_CONTRACT_V2 } from '../worker/protected-job-bridge-v4/signed-result.mjs';
 import { callbackValue, cleanBlockedReason, isCleanBlocked } from '../worker/protected-job-bridge-v4/linux-worker.mjs';
 import { cacheRefusal } from '../worker/formal-trivy-v4/adapter.mjs';
@@ -33,6 +33,8 @@ const iso = ms => new Date(ms).toISOString();
 const sha = b => createHash('sha256').update(b).digest('hex');
 const claim = (o = {}) => ({ claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000), ...o });
 const PACKET = { complete: true, paths: ['a.txt'] };
+// Explicit offline Native boundary; no production caller flag is added.
+const runIssuer = options => runActualIssuer({ scanStart: async ({ job, executionId }) => ({ status: 'committed', contract: 'clued.ci-scan-start-grant/1', launch_allowed: true, execution_id: executionId, receipt_id: randomUUID(), repository_id: 1334673495, head_sha: job.headSha, role: job.role, provider: 'independent-controller', start_requested_at: new Date().toISOString() }), ...options });
 const refsSnapshot = (now = Date.now()) => ({ contract: 'clued.independent-ci.remote-heads-tags/1', repository: REPO, complete: true, observedAt: iso(now), refs: [{ name: 'refs/heads/main', objectSha: BASE }] });
 
 function setup({ attempt = 1 } = {}) {
@@ -58,13 +60,13 @@ function signedWrapper(issue, observation, signer) {
   return { contract: RESULT_WRAPPER_CONTRACT_V2, domain: 'production', issueSha256: bridgeDigest(issue), envelope, observation };
 }
 
-test('gitleaks signed result v4 binds the exact 730/102/173/130 proof and rejects legacy or altered proof', () => {
+test('gitleaks signed result v4 binds the exact 732/103/174/130 proof and rejects legacy or altered proof', () => {
   const { jobs, signer, record } = setup(), job = jobs.gitleaks, c = claim(), now = Date.now();
   const issue = makeIssue(job, facts(job, c), refsSnapshot(), { sourceAcceptanceRef: record.accepted.sourceAcceptanceRef,
     hostQualificationRef: record.accepted.hostQualificationRef, expiresAt: iso(now + 600000) });
   const observation = { contract: 'clued.independent-ci.formal-scanner-observation/2', domain: 'production-observation', fixture: false,
     profile: 'required-gitleaks-history/1', subject: Object.fromEntries(['id', 'repo', 'pr', 'headSha', 'baseSha', 'role', 'sourceManifestSha256', 'attempt'].map(k => [k, job[k]])),
-    sourceManifestSha256: job.sourceManifestSha256, sourceSha: 'c'.repeat(40), requiredHistoricalExceptions: 730,
+    sourceManifestSha256: job.sourceManifestSha256, sourceSha: 'c'.repeat(40), requiredHistoricalExceptions: 732,
     reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, startedAt: iso(now - 5000), finishedAt: iso(now - 1000), exitCode: 0, conclusion: 'success',
     logs: { stdout: { sha256: hex(32) }, stderr: { sha256: hex(32) } },
     cleanup: { complete: true, wholeContainerTreeStopped: true, containerRemoved: true, observedAt: iso(now - 500) },
@@ -252,7 +254,7 @@ test('issuer diagnostics: complete rejection before issue retains its sanitized 
 test('issuer diagnostics: complete callback rejection keeps UNCERTAIN and the exact sanitized rejection context', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
   const f = issuerFixture(t); let n = 0, issue; const writes = [];
   const box = { async lock() {}, async write(name, bytes) { writes.push(name); if (name === 'issue') issue = decode(bytes); },
-    async read(name) { if (name === 'challenge-01') return encode(makeChallenge(issue, 'admission', 1));
+    async read(name) { if (name === 'challenge-01') return encode(makeChallenge(issue, 'scan-start', 1));
       throw Object.assign(new Error('not present'), { code: 'ENOENT' }); } };
   const r = await runIssuer({ context: f.context, evaluate: async () => ++n === 1 ? facts(f.job, f.c) : rejectedIssuerFacts(),
     collect: async () => null, box, stageDeadline: Date.now() + 60_000 });
@@ -264,7 +266,7 @@ test('issuer: one admission callback, then the signed result -> ISSUED_RESULT_RE
   const f = issuerFixture(t), root = await spool(t), box = await createFixtureMailbox(root, 'windows');
   const linux = (async () => {
     const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
-    await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1)));
+    await put(root, 'challenge-01', encode(makeChallenge(issue, 'scan-start', 1)));
     const response = decode(await waitFor(path.join(root, 'outgoing', 'response-01.json')));
     assert.equal(response.admission.claimId, f.c.claimId);
     await put(root, 'result', Buffer.from(canonical(signedWrapper(issue, trivyObservation(f.job), f.signer))));
@@ -294,7 +296,7 @@ test('issuer: an answer that would be late writes no response and waits for the 
   const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
   const linux = (async () => {
     const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
-    const challenge = makeChallenge(issue, 'admission', 1, { deadline: new Date(Date.now() + 1500).toISOString() });
+    const challenge = makeChallenge(issue, 'scan-start', 1, { deadline: new Date(Date.now() + 1500).toISOString() });
     await put(root, 'challenge-01', encode(challenge));
     await new Promise(r => setTimeout(r, 3500));
     await put(root, 'blocked', encode(makeBlocked(issue, 'BRIDGE_CALLBACK_DEADLINE')));
@@ -312,7 +314,7 @@ test('issuer: a stale callback admission (slow host, not a refusal) is evaluated
   const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
   const linux = (async () => {
     const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
-    await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1)));
+    await put(root, 'challenge-01', encode(makeChallenge(issue, 'scan-start', 1)));
     await waitFor(path.join(root, 'outgoing', 'response-01.json'));
     await put(root, 'result', Buffer.from(canonical(signedWrapper(issue, trivyObservation(f.job), f.signer))));
   })();
@@ -328,7 +330,7 @@ test('issuer: a callback admission still stale after three evaluations is late, 
   const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
   const linux = (async () => {
     const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
-    await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1)));
+    await put(root, 'challenge-01', encode(makeChallenge(issue, 'scan-start', 1)));
     await new Promise(r => setTimeout(r, 1500));
     await put(root, 'blocked', encode(makeBlocked(issue, 'BRIDGE_CALLBACK_DEADLINE')));
   })();
@@ -358,7 +360,7 @@ test('issuer: an unavailable admission is evaluated again after a short backoff;
   const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
   const linux = (async () => {
     const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
-    await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1)));
+    await put(root, 'challenge-01', encode(makeChallenge(issue, 'scan-start', 1)));
     const response = decode(await waitFor(path.join(root, 'outgoing', 'response-01.json')));
     assert.equal(response.admission.observationSha256, given[2].observationSha256, 'the answer is the evaluation after the retry');
     assert.notEqual(response.admission.observationSha256, given[0].observationSha256);
@@ -377,7 +379,7 @@ test('issuer: a callback admission unavailable until the round deadline answers 
   const linux = (async () => {
     const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
     const deadline = Date.now() + 2950;
-    await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1, { deadline: iso(deadline) })));
+    await put(root, 'challenge-01', encode(makeChallenge(issue, 'scan-start', 1, { deadline: iso(deadline) })));
     await new Promise(r => setTimeout(r, deadline + 300 - Date.now()));
     await put(root, 'blocked', encode(makeBlocked(issue, 'BRIDGE_CALLBACK_DEADLINE')));
   })();
@@ -397,7 +399,7 @@ test('issuer: a callback admission still unavailable after four evaluations (wai
   const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
   const linux = (async () => {
     const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
-    await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1)));
+    await put(root, 'challenge-01', encode(makeChallenge(issue, 'scan-start', 1)));
     await waitUntil(() => n >= 5);
     await put(root, 'blocked', encode(makeBlocked(issue, 'BRIDGE_CALLBACK_DEADLINE')));
   })();
@@ -413,7 +415,7 @@ test('issuer: a refusal is final at once, also right after an unavailable evalua
     const f = issuerFixture(t), waits = [];
     const evaluate = async () => (++n === 1 ? facts(f.job, f.c) : n === 2 ? UNAVAILABLE : refusal);
     const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
-    const linux = (async () => { const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json'))); await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1))); })();
+    const linux = (async () => { const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json'))); await put(root, 'challenge-01', encode(makeChallenge(issue, 'scan-start', 1))); })();
     const r = await runIssuer({ context: f.context, evaluate, collect: async () => null, box, sleep: backoffSleep(waits), stageDeadline: Date.now() + 10_000 });
     await linux;
     assert.deepEqual([r.status, r.reason, r.sideEffects, n, waits, r.admissionDiagnostic], ['UNCERTAIN', refusal.reason ?? 'ACTUAL_NATIVE_ADMISSION_REQUIRED', 1, 3, [1000], undefined]);
@@ -431,7 +433,7 @@ test('issuer: both transient reasons share one evaluation counter; the final adm
     const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
     const linux = (async () => {
       const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
-      await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1)));
+      await put(root, 'challenge-01', encode(makeChallenge(issue, 'scan-start', 1)));
       const answered = await waitFor(path.join(root, 'outgoing', 'response-01.json'), 1500).then(() => true, () => false);
       await put(root, answered ? 'result' : 'blocked', answered ? Buffer.from(canonical(signedWrapper(issue, trivyObservation(f.job), f.signer))) : encode(makeBlocked(issue, 'BRIDGE_CALLBACK_DEADLINE')));
     })();
@@ -513,7 +515,7 @@ test('issuer: a changed-paths read that fails once in a callback round is retrie
   const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
   const linux = (async () => {
     const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
-    await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1)));
+    await put(root, 'challenge-01', encode(makeChallenge(issue, 'scan-start', 1)));
     await waitFor(path.join(root, 'outgoing', 'response-01.json'));
     await put(root, 'result', Buffer.from(canonical(signedWrapper(issue, trivyObservation(f.job), f.signer))));
   })();
@@ -532,7 +534,7 @@ test('issuer: a final admission that ends past the issue window is not a success
   const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
   const linux = (async () => {
     const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
-    await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1)));
+    await put(root, 'challenge-01', encode(makeChallenge(issue, 'scan-start', 1)));
     await waitFor(path.join(root, 'outgoing', 'response-01.json'));
     await put(root, 'result', Buffer.from(canonical(signedWrapper(issue, trivyObservation(f.job), f.signer))));
   })();
@@ -548,7 +550,7 @@ test('issuer: a challenge relayed only after its deadline is late (no admission,
   const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
   const linux = (async () => {
     const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
-    const challenge = makeChallenge(issue, 'admission', 1, { deadline: new Date(Date.now() + 300).toISOString() });
+    const challenge = makeChallenge(issue, 'scan-start', 1, { deadline: new Date(Date.now() + 300).toISOString() });
     await new Promise(r => setTimeout(r, 700));
     await put(root, 'challenge-01', encode(challenge));
     await new Promise(r => setTimeout(r, 700));
@@ -567,7 +569,7 @@ test('issuer: an expired challenge that was never valid (created before the issu
   const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
   const linux = (async () => {
     const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
-    const challenge = makeChallenge(issue, 'admission', 1, { deadline: new Date(Date.now() + 300).toISOString() });
+    const challenge = makeChallenge(issue, 'scan-start', 1, { deadline: new Date(Date.now() + 300).toISOString() });
     await new Promise(r => setTimeout(r, 600));
     await put(root, 'challenge-01', encode({ ...challenge, createdAt: new Date(Date.parse(issue.issuedAt) - 1000).toISOString() }));
   })();
@@ -584,7 +586,7 @@ test('issuer: after a late round the wait for the blocked record is two windows;
   const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
   const linux = (async () => {
     const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
-    await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1, { deadline: new Date(Date.now() + 300).toISOString() })));
+    await put(root, 'challenge-01', encode(makeChallenge(issue, 'scan-start', 1, { deadline: new Date(Date.now() + 300).toISOString() })));
     await new Promise(r => setTimeout(r, 1500));
     skew = 2 * CALLBACK_WINDOW_MS + 5000;
   })();
@@ -618,7 +620,7 @@ test('issuer: a refused first admission issues nothing; a claim that moves after
   const moved = issuerFixture(t);
   const evaluate = async () => (++n === 1 ? facts(moved.job, moved.c) : { status: 'BLOCKED', reason: 'full_admission_claim_changed' });
   const root2 = await spool(t), box2 = await createFixtureMailbox(root2, 'windows');
-  const linux = (async () => { const issue = decode(await waitFor(path.join(root2, 'outgoing', 'issue.json'))); await put(root2, 'challenge-01', encode(makeChallenge(issue, 'admission', 1))); })();
+  const linux = (async () => { const issue = decode(await waitFor(path.join(root2, 'outgoing', 'issue.json'))); await put(root2, 'challenge-01', encode(makeChallenge(issue, 'scan-start', 1))); })();
   const r2 = await runIssuer({ context: moved.context, evaluate, collect: async () => null, box: box2, stageDeadline: Date.now() + 10_000 });
   await linux;
   assert.deepEqual([r2.status, r2.reason, r2.sideEffects, n], ['UNCERTAIN', 'full_admission_claim_changed', 1, 2], 'a refusal other than staleness is never re-evaluated');

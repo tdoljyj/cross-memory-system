@@ -1,55 +1,6 @@
 {
-  "admission-self-tests": [
-    {
-      "file": "scripts/ci/clued-merge-slot-ci.test.mjs",
-      "path": [
-        "the workflow is triggered by every CI workflow's completion, runs default-branch code and is hosted"
-      ],
-      "fingerprint": "54d50457d9dd1f08",
-      "reason": "the workflow_run list in clued-merge-slot-ci.yml (disabled) does not name clued-native617-admission-dispatch.yml, clued-compute-panel.yml and clued-required-tests.yml; add them before it is re-enabled"
-    },
-    {
-      "file": "scripts/ci/clued-work-admission.test.mjs",
-      "path": [
-        "gate guard (A1): the exact PR-B hosted executor Sources are registered successors of main's self-hosted ones"
-      ],
-      "fingerprint": "7610fc986a709f5d",
-      "reason": "workflow inventories and gate guard A1 do not match main (clued-native617-admission-dispatch.yml, the gitleaks.yml pair)"
-    },
-    {
-      "file": "scripts/ci/clued-work-admission.test.mjs",
-      "path": [
-        "owner review: the workflows on main that hold an environment are exactly the release, storage, attestation, admission and handover qualification ones"
-      ],
-      "fingerprint": "0068c69aa2a65a2c",
-      "reason": "workflow inventories and gate guard A1 do not match main (clued-native617-admission-dispatch.yml, the gitleaks.yml pair)"
-    },
-    {
-      "file": "scripts/ci/clued-work-admission.test.mjs",
-      "path": [
-        "workflows: only base-branch jobs in the clued-admission environment get the Clued token"
-      ],
-      "fingerprint": "f34f247d7e5b0b17",
-      "reason": "workflow inventories and gate guard A1 do not match main (clued-native617-admission-dispatch.yml, the gitleaks.yml pair)"
-    }
-  ],
+  "admission-self-tests": [],
   "clued-cloud": [
-    {
-      "file": "apps/clued-cloud/tests/ci-proof-profiles.test.mjs",
-      "path": [
-        "registered definitions match full YAML bytes and complete explicit primary profiles"
-      ],
-      "fingerprint": "8f599f9deaf902a0",
-      "reason": "registered workflow definitions and the request-budget fixture no longer match main"
-    },
-    {
-      "file": "apps/clued-cloud/tests/ci-temporary-storage.test.mjs",
-      "path": [
-        "every repository workflow and job has a valid temporary-data lifecycle"
-      ],
-      "fingerprint": "f42faf753ec75ffd",
-      "reason": "clued-native617-admission-dispatch.yml and the handover qualification workflows lack reviewed temporary-data entries"
-    },
     {
       "file": "apps/clued-cloud/tests/integration-runtime-gate-evidence.test.mjs",
       "path": [

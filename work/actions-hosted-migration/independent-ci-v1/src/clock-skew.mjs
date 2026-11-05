@@ -25,6 +25,29 @@ export function serverAnswerCurrent({ verifiedAt, expiresAt, sentMono, nowMono, 
   if (!Number.isFinite(verified)) failed.push('verified_at_form');
   if (!Number.isFinite(expires)) failed.push('expires_at_form');
   if (!Number.isFinite(age) || age < 0 || age > maxAgeMs) failed.push('round_trip_age');
-  if (!failed.length && !(expires - verified > age + LEASE_MARGIN_MS)) failed.push('lease_remaining');
+  // Lease failure is independent of an overlong round trip. It must not be
+  // hidden by round_trip_age and then mistaken for retryable unavailability.
+  if (Number.isFinite(verified) && Number.isFinite(expires) && Number.isFinite(age) && age >= 0
+    && !(expires - verified > age + LEASE_MARGIN_MS)) failed.push('lease_remaining');
   return failed;
+}
+
+// Installed issuer ports retain their verified answer for this exact facts
+// object, in this process only. Server stamps remain in the facts for audit;
+// consumers use the original monotonic send, never compare server/local time.
+// No JSON field can create, renew or transfer this private association. A clone
+// has none; a changed object fails. Existing serialized/bridge facts keep their
+// separate validation contract and receive no new authority from this map.
+const serverAnswers = new WeakMap();
+export function retainServerAnswerForFacts(facts, { verifiedAt, expiresAt, sentMono }, monotonic) {
+  if (!facts || typeof facts !== 'object' || serverAnswers.has(facts) || typeof monotonic !== 'function'
+    || serverAnswerCurrent({ verifiedAt, expiresAt, sentMono, nowMono: monotonic() }).length) throw new Error('server_answer_binding_refused');
+  serverAnswers.set(facts, { verifiedAt, expiresAt, sentMono, monotonic, fingerprint: JSON.stringify(facts) });
+  return facts;
+}
+export function retainedServerAnswerCurrent(facts) {
+  const held = serverAnswers.get(facts);
+  if (!held) return null;
+  try { return held.fingerprint === JSON.stringify(facts)
+    && serverAnswerCurrent({ ...held, nowMono: held.monotonic() }).length === 0; } catch { return false; }
 }

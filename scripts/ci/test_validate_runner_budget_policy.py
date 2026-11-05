@@ -40,6 +40,7 @@ RELAY_STEP = """      - name: Emit relay identity
           echo "::notice title=clued-hosted-relay-v1::$jwt"
 """
 HOSTED_EXECUTOR_ROUTE = "    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      id-token: write\n    steps:"
+SCAN_START_EXECUTOR_ROUTE = "    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      actions: read\n      checks: read\n      pull-requests: read\n      id-token: write\n    steps:"
 HEX_RELAY_STEP = RELAY_STEP.replace(
     "        run: |\n",
     "        # Hex, not the JWT text: GitHub masks JWT-shaped text in logs and annotations (Task 169fd456).\n        run: |\n",
@@ -250,6 +251,7 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
 
     def test_owner_decision_325717a6_names_exactly_the_hosted_executor_jobs(self):
         self.assertEqual(policy.OWNER_DECISION_HOSTED_SOURCE, "325717a6")
+        self.assertEqual(policy.HOSTED_SCAN_START_SUCCESSOR["frozen_commit"], "956078fcec98844ab9be05e857fe4f53b3372fc4")
         self.assertEqual(policy.owner_decision_findings(policy.OWNER_DECISION_HOSTED_JOBS,
                                                         policy.LEGACY_HOSTED_DEBT), [])
         pairs = {(file, job) for file, entry in policy.OWNER_DECISION_HOSTED_JOBS.items()
@@ -273,6 +275,30 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
             self.assertFalse(routes[pair]["legacy_migration_debt"], pair)
         self.assertEqual(sum(row["owner_decision_hosted"] for row in routes.values()), 6)
 
+    def test_exact_732_and_observer_candidate_successors_keep_original_debt_and_fail_unknown(self):
+        self.assertEqual(sum(len(row["jobs"]) for row in policy.LEGACY_HOSTED_DEBT.values()), 42)
+        self.assertEqual(sum(len(row["jobs"]) for row in policy.OWNER_DECISION_HOSTED_JOBS.values()), 6)
+        self.assertEqual(policy.LEGACY_HOSTED_DEBT["clued-merge-slot-ci.yml"]["control_sha256"],
+                         "500da29fb3c1fbe9df2be795e84f92908249a8ee057bef709e17e5aa7c5e341f")
+        self.assertEqual(policy.OWNER_DECISION_HOSTED_JOBS["gitleaks.yml"]["jobs"]["gitleaks-trusted-self-hosted"],
+                         "b8dac89af1f63b0528c7b2209e071e4f88919f82fb33562591eaf6b50c0186ea")
+        self.assertEqual(set(policy.EXACT_SOURCE_CANDIDATE_SUCCESSORS), {"gitleaks.yml", "clued-merge-slot-ci.yml"})
+        for filename, successor in policy.EXACT_SOURCE_CANDIDATE_SUCCESSORS.items():
+            text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
+            debt = ({filename: policy.LEGACY_HOSTED_DEBT[filename]} if successor["kind"] == "legacy" else {})
+            owner = ({filename: policy.OWNER_DECISION_HOSTED_JOBS[filename]} if successor["kind"] == "owner" else {})
+            self.assert_pass(policy.evaluate_workflows({filename: text}, debt, owner))
+            # Full workflow identity and exact previous-map identity are both
+            # mandatory. A candidate hash is never a generic hosted permit.
+            changed = text.replace("    runs-on: ubuntu", "    timeout-minutes: 360\n    runs-on: ubuntu", 1)
+            self.assertNotEqual(changed, text)
+            self.assertEqual(policy.evaluate_workflows({filename: changed}, debt, owner)["status"], "FAIL")
+            changed = text.replace("jobs:\n", "jobs:\n  extra-paid-job:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo extra\n", 1)
+            self.assertEqual(policy.evaluate_workflows({filename: changed}, debt, owner)["status"], "FAIL")
+            altered_debt, altered_owner = copy.deepcopy(debt), copy.deepcopy(owner)
+            target = altered_debt if debt else altered_owner
+            target[filename]["control_sha256"] = "a" * 64
+            self.assertEqual(policy.evaluate_workflows({filename: text}, altered_debt, altered_owner)["status"], "FAIL")
     def test_hosted_executors_never_carry_a_required_check_name(self):
         # Owner Decision bc6fdad1: a same-name hosted check run counts as the
         # required check even though the ruleset pins App 5368905.
@@ -294,7 +320,9 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
                     if (file, job_id) in expected:
                         self.assertTrue(expected[(file, job_id)] <= names, names)
                         fields = policy.job_fields(block)
-                        self.assertEqual(fields["permissions"].split(), ["contents:", "read", "id-token:", "write"])
+                        expected_permissions = ["contents:", "read", "id-token:", "write"] if file == "contract-placement.yml" else [
+                            "contents:", "read", "actions:", "read", "checks:", "read", "pull-requests:", "read", "id-token:", "write"]
+                        self.assertEqual(fields["permissions"].split(), expected_permissions)
                         expected_step = RELAY_STEP if file == "contract-placement.yml" else HEX_RELAY_STEP
                         self.assertTrue(block.endswith(expected_step), file)
                         self.assertEqual(block.count("id-token"), 1)
@@ -383,7 +411,7 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
             (gitleaks.replace("--redact --exit-code 1", "--redact --exit-code 0"), "Owner-decision hosted job changed"),
             (gitleaks.replace("  push:\n", "  schedule:\n    - cron: '0 * * * *'\n  push:\n"), "Owner-decision hosted workflow controls changed"),
             (gitleaks.replace("permissions:\n  contents: read\n", "permissions:\n  contents: write\n", 1), "Owner-decision hosted workflow controls changed"),
-            (gitleaks.replace(HOSTED_EXECUTOR_ROUTE, HOSTED_EXECUTOR_ROUTE.replace("ubuntu-latest", "ubuntu-24.04")), "Owner-decision hosted job changed"),
+            (gitleaks.replace(SCAN_START_EXECUTOR_ROUTE, SCAN_START_EXECUTOR_ROUTE.replace("ubuntu-latest", "ubuntu-24.04")), "Owner-decision hosted job changed"),
             # The relay identity: its permission, audience, condition and position are exact.
             (gitleaks.replace("      id-token: write\n", "      id-token: write\n      checks: write\n", 1), "Owner-decision hosted job changed"),
             (gitleaks.replace("      id-token: write\n", "", 1), "Owner-decision hosted job changed"),
@@ -396,7 +424,7 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
                 self.assertNotEqual(changed, gitleaks)
                 self.assert_rejected(policy.evaluate_workflows({**texts, "gitleaks.yml": changed}), reason)
         # A job moved back to self-hosted or removed must drop its exception.
-        back = gitleaks.replace(HOSTED_EXECUTOR_ROUTE, HOSTED_EXECUTOR_ROUTE.replace(
+        back = gitleaks.replace(SCAN_START_EXECUTOR_ROUTE, SCAN_START_EXECUTOR_ROUTE.replace(
             "ubuntu-latest", "[self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]"))
         self.assertNotEqual(back, gitleaks)
         self.assert_rejected(policy.evaluate_workflows({**texts, "gitleaks.yml": back}),

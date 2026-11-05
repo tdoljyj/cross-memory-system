@@ -1,0 +1,16 @@
+{
+  "schema": "clued.actor-static-code-pins221/1",
+  "original_maintenance_source_version": "1.0.1",
+  "qualification": {
+    "self": "258f5437df03824066a1cf2bd8ef2f1a4cfb4c4b921d7aba904100e60cc1f1fd",
+    "observer": "17c85ea6052ce15f4d501316247009ff374aebc435841e016fabd609fd7d12e3"
+  },
+  "installation": {
+    "self": "8e26a5ed5165ebc594c43b3f403f2ae2ce79dc58f6568f3423afb4a403da1a6c",
+    "observer": "19a5bf5de21d0a63ac9f64534310aab48c63d0a76bf31409726aca18e19a0ddf"
+  },
+  "node_primary": "a4ee0b66382d693ce3fc0bc7cf0e007ed36b9902fda12f2bed6bbdadffe808bc",
+  "root_bridge": "9f4155821083637ff3364fecb09aa7f63e71b0c8d6244b192b75013109dd7d2f",
+  "source_capture_manifest": "54790a5675d35d5d559f63e64a8c03e093ad460a42862e3bfd0c1e044b391947",
+  "execution_authority": false
+}

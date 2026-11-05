@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { TRAIN_RUN_CONTRACT, TRAIN_RUN_FIELDS, TRAIN_RUN_MODES, TRAIN_RUN_SHADOW_DEFAULTS, makeTrainRun, trainRunJobId, trainRunKey, validateTrainRun } from '../src/resident-v2/train-run.mjs';
-import { ENTRY_V2, FORMAL_STAGES_V2, STAGES_V2, TRAIN_STAGE_NUMBER, TRAIN_STAGE_V2, STATE_V2 } from '../src/resident-v2/layout.mjs';
+import { ENTRY_V2, FORMAL_STAGES_V2, STAGES_V2, TRAIN_STAGE_NUMBER, TRAIN_STAGE_V2, STATE_V2, stageByNumber } from '../src/resident-v2/layout.mjs';
 import { trainRunCases } from './train-run-cases.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
@@ -60,11 +60,26 @@ test('train run: the key comes from a fresh seed, never from content', () => {
   assert.throws(() => trainRunKey({ repo: REPO, seed: 'short' }), e => e.code === 'TRAIN_RUN_KEY_REFUSED');
 });
 
-test('stage 10: a train row outside the batch, with its own entry and state directory', () => {
+test('stage 10: a train row outside the batch, with its own entry and state directory', async () => {
   assert.equal(TRAIN_STAGE_NUMBER, 10);
   assert.deepEqual([TRAIN_STAGE_V2.kind, TRAIN_STAGE_V2.entryRole, TRAIN_STAGE_V2.jobRoles, TRAIN_STAGE_V2.runMilliseconds, TRAIN_STAGE_V2.linuxWorker],
     ['train', 'train-maintenance', ['train-run'], 300_000, false]);
-  assert.equal(STAGES_V2.length, 12, 'stages 1-10, the C2 role probe (11) and independent revocation maintenance (12)');
+  assert.equal(STAGES_V2.length, 13, 'the twelve existing stages plus the dedicated read-only relay observation stage');
+  const priorCaps = [900000,2700000,900000,1800000,900000,600000,900000,2700000,900000,300000,60000,300000];
+  assert.deepEqual(STAGES_V2.slice(0,12).map(s => s.number), Array.from({length:12},(_,i)=>i+1));
+  assert.deepEqual(STAGES_V2.slice(0,12).map(s => s.runMilliseconds), priorCaps, 'stages 1-12 retain their exact caps');
+  assert.deepEqual(STAGES_V2.filter(s => s.linuxWorker).map(s => s.number), [2,4,6]);
+  const observation = stageByNumber(13);
+  assert.deepEqual([observation.kind,observation.entryRole,observation.jobRoles,observation.runMilliseconds,observation.linuxWorker,observation.variableJobRoles],
+    ['relay-qualification','relay-qualification',['relay-qualification-run'],300000,false,false]);
+  assert.equal(ENTRY_V2['relay-qualification'],'work/actions-hosted-migration/independent-ci-v1/src/resident-v2/relay-qualification-entry.mjs');
+  assert.ok(!FORMAL_STAGES_V2.some(s => s.number === 13), 'observation is outside PR batch execution');
+  assert.equal(stageByNumber(14),null, 'there is no generic stage14 extension');
+  const fs = (await import('node:fs')).default;
+  const broker = fs.readFileSync(new URL('../../../independent-ci-resident-v1/windows/SwapBroker.cs',import.meta.url),'utf8');
+  const abortable = /AbortableStages\s*=\s*\{\s*([\d,\s]+)\}/.exec(broker);
+  assert.ok(abortable, 'the fixed broker abort table is present');
+  assert.deepEqual(abortable[1].split(',').map(v=>Number(v.trim())),[2,4,6], 'stage13 never gains scanner abort authority');
   assert.ok(!FORMAL_STAGES_V2.some(s => s.number === 10), 'stage 10 is never one of the batch stages');
   assert.equal(ENTRY_V2['train-maintenance'], 'work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-maintenance.mjs');
   assert.match(STATE_V2.trainShadow, /\\state\\v2\\train-shadow$/);
