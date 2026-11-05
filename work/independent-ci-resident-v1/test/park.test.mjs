@@ -804,3 +804,24 @@ test('4a: the next try finds an unsettled journal entry (RECONCILIATION_REQUIRED
   const c = await g.exec.tick();
   assert.deepEqual([c.state, c.failureCode, c.attempt2], ['FAILED_CLEAN', 'BATCH_CLAIM_CHANGED', undefined]);
 });
+
+// Generation 12, review round 28: the green ledger's not-ready answer of a queue head keeps the queue place (publisher.mjs), so the
+// head is tried again in 60 s and the try is not counted, as in generation 11.
+test('review round 28: GREEN_LEDGER_UNAVAILABLE at the queue head parks for the 60-second head retry, uncounted', async t => {
+  const { PARK_HEAD_RETRY_MS: HEAD_MS } = await import('../src/executor.mjs');
+  const helpers = await import('./helpers.mjs');
+  const answer = { ok: false, code: 'GREEN_LEDGER_UNAVAILABLE', proof: helpers.WINDOWS_CLEAN, brokerNoLaunch: false,
+    outcome: { status: 'BLOCKED', reason: 'GREEN_LEDGER_UNAVAILABLE', sideEffects: 0, mayHavePublished: false, diagnostic: null,
+      scheduling: { ciRetryAfter: null, mergeQueue: { entered: true, state: 'head', position: 1 }, claimExpiresAt: null }, safeToRerun: false } };
+  const engine = helpers.fakeEngine({});
+  const base = engine.runStage;
+  let i = 0;
+  engine.runStage = async (b, s, o) => (s.number === 8 && i++ === 0 ? answer : base(b, s, o));
+  const f = await helpers.executorFixture(t, { engine });
+  await f.drop(helpers.triggerBytes());
+  const r = await f.exec.tick();
+  assert.equal(r.state, 'PARKED');
+  assert.equal(r.until - f.clock(), HEAD_MS);
+  const [entry] = await f.ledger.parkedEntries();
+  assert.equal(ResidentExecutor.lastTry(entry).position, 1);
+});

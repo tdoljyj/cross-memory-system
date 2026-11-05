@@ -28,6 +28,8 @@ import { REVOCATION_STAGE, REVOCATION_RUN_MS, REVOCATION_PENDING_STATE, REVOCATI
   validateRevocationFacts,validateRevocationQualification } from './revocation-maintenance.mjs';
 import { RUN_MODES, TRAIN_RUN_INPUT_FIELDS, validateTrainRunInput } from './train.mjs';
 
+// How long a failed read of the installed Source's watch support waits before it is read again (queueWatchSupported).
+export const QUEUE_WATCH_SUPPORT_RETRY_MS = 5 * 60_000;
 // The installed train mode stages 1 and 8 read (INTERFACES §6: 'off', 'shadow' or 'on'; 'off' for anything else). The one
 // place the resident names it: service-main.mjs gives it to the engine (port trainMode), which passes it to the invoker as
 // --train-mode for those two stages only; the invoker writes it create-only as train-mode.json into the stage directory
@@ -159,7 +161,8 @@ export function parseStageOutcome(o) {
   return {
     status: o.status, reason: o.reason, sideEffects: o.sideEffects, mayHavePublished: o.mayHavePublished,
     diagnostic,
-    scheduling: s ? { ciRetryAfter: isoOrNull(s.ciRetryAfter), mergeQueue: queueEntry(s.mergeQueue) } : null,
+    // claimExpiresAt (generation 12, DESIGN §56.3): the claim's lease end Native reported, for the renewal reminder only.
+    scheduling: s ? { ciRetryAfter: isoOrNull(s.ciRetryAfter), mergeQueue: queueEntry(s.mergeQueue), claimExpiresAt: isoOrNull(s.claimExpiresAt) } : null,
     // the flag holds only on a clean BLOCKED with zero side effects that may not have published
     safeToRerun: o.safeToRerun === true && o.status === 'BLOCKED' && o.sideEffects === 0 && o.mayHavePublished === false,
   };
@@ -412,6 +415,25 @@ export class WindowsEngine {
 
   stopRequested(batch, number) { return this.abortRequested?.batchId === batch.batchId && this.abortRequested.stage === number; }
   async requireV2(name) { const p = this.v2(name); try { await fs.access(p); } catch { fail('SOURCE_V2_REQUIRED'); } return p; }
+  // Generation 12 (DESIGN §56.2): whether the installed Source knows the queue watch (role-probe-run/2, --watch-pr) on its whole path:
+  // the Node job maker and validator (role-probe-run.mjs, which invoke-stage and the entry use) and the session-0 helper's own job check
+  // (windows/FormalPublicBoundaryV2.cs). An older Source refuses the job, which would leave a role probe without a fact (a HALT), so the
+  // executor watches only when both say yes. A definite answer (both read, or a file missing) is kept for the engine's life (the
+  // installed Source does not change under a running service); a read that failed otherwise (a file held by an antivirus or a backup)
+  // is no for now and read again after QUEUE_WATCH_SUPPORT_RETRY_MS (review round 33, MINOR 1).
+  async queueWatchSupported() {
+    if (this.queueWatchKnown !== undefined) return this.queueWatchKnown;
+    const now = typeof this.clock === 'function' ? this.clock() : Date.now();
+    if (Number.isFinite(this.queueWatchReadFailedAt) && now >= this.queueWatchReadFailedAt && now - this.queueWatchReadFailedAt < QUEUE_WATCH_SUPPORT_RETRY_MS) return false;
+    try {
+      const js = await fs.readFile(this.v2('role-probe-run.mjs'), 'utf8'), cs = await fs.readFile(this.v2(path.join('windows', 'FormalPublicBoundaryV2.cs')), 'utf8');
+      this.queueWatchKnown = js.includes("'clued.independent-ci.role-probe-run/2'") && cs.includes('RoleProbeRunV2="clued.independent-ci.role-probe-run/2"');
+    } catch (error) {
+      if (error?.code === 'ENOENT') this.queueWatchKnown = false;
+      else { this.queueWatchReadFailedAt = now; return false; }
+    }
+    return this.queueWatchKnown;
+  }
 
   async scReadback() {
     const qc = parseScQc((await this.run([this.paths.scExe, 'qc', this.node.runnerService], { timeoutMs: 15_000 })).stdout);
@@ -517,14 +539,19 @@ export class WindowsEngine {
 
   // C2 never derives a PR/batch, starts Linux or contacts the companion. The installed invoker creates
   // one stage-11 plan and asks the same serialized broker; independent SCM readback remains mandatory.
-  async runRoleProbe() {
+  // watchPr (generation 12, DESIGN §56.2): the queue watch's PR; the intent is then /2 and the invoker gets --watch-pr.
+  async runRoleProbe({ watchPr = null } = {}) {
     const entry = await this.requireV2('invoke-stage.mjs');
     const runKey = randomBytes(32).toString('hex'), runId = `${runKey.slice(0, 16)}-${randomBytes(6).toString('hex')}`;
-    const manifest = sha256(Buffer.from(canonicalJson({ contract: 'clued.independent-ci.role-probe-intent/1', runKey, runId, nodeProfileSha256: this.nodeProfileSha256 })));
+    const watch = Number.isSafeInteger(watchPr) && watchPr > 0 && watchPr < 10_000_000_000 ? watchPr : null;
+    const manifest = sha256(Buffer.from(canonicalJson(watch === null
+      ? { contract: 'clued.independent-ci.role-probe-intent/1', runKey, runId, nodeProfileSha256: this.nodeProfileSha256 }
+      : { contract: 'clued.independent-ci.role-probe-intent/2', runKey, runId, nodeProfileSha256: this.nodeProfileSha256, watchPr: watch })));
     if (this.busy?.() === true || this.inflight) return { ok: false, code: 'ROLE_PROBE_BUSY', deferred: true, proof: null, roleProbe: null };
     // A live original runner is not ours to stop: do not even request a swap.
     if (!(await this.scReadback())) return { ok: false, code: 'ROLE_PROBE_BUSY', deferred: true, proof: null, roleProbe: null };
-    const r = await this.run([this.paths.nodeExe, entry, '--role-probe', runKey, '--probe-id', runId, '--node-profile-sha256', this.nodeProfileSha256], { timeoutMs: 420_000 });
+    const r = await this.run([this.paths.nodeExe, entry, '--role-probe', runKey, '--probe-id', runId, '--node-profile-sha256', this.nodeProfileSha256,
+      ...(watch === null ? [] : ['--watch-pr', String(watch)])], { timeoutMs: 420_000 });
     if (r.timedOut || r.code === null) return { ok: false, code: 'STAGE_INVOKER_TERMINAL_UNCONFIRMED', proof: { windowsTreeZero: false, serviceOriginalStopped: false }, roleProbe: null };
     const fact = parseStageFact(r.stdout, manifest), stopped = await this.scReadback();
     return { ...fact, proof: { ...fact.proof, serviceOriginalStopped: fact.proof.serviceOriginalStopped && stopped }, runId };

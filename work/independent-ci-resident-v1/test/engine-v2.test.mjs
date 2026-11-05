@@ -225,3 +225,78 @@ test('C2 engine intent manifest is independently computed; full cleanup/outcome 
   };
   const r = await f.engine.runRoleProbe(); assert.equal(r.ok, true); assert.equal(r.roleProbe.result, 'held'); assert.equal(invoked, 1); assert.equal(f.sent.length, 0);
 });
+test('generation 12: the queue watch only with an installed Source that knows role-probe-run/2 (the real file does)', async t => {
+  const f = await engineFixture(t);
+  assert.equal(await f.engine.queueWatchSupported(), false, 'no role-probe-run.mjs in the fixture Source');
+  const copyReal = async (e, names) => {
+    await fs.mkdir(path.dirname(e.v2(path.join('windows', 'x'))), { recursive: true });
+    for (const n of names) await fs.copyFile(new URL(`../../actions-hosted-migration/independent-ci-v1/src/resident-v2/${n}`, import.meta.url), e.v2(n));
+  };
+  const half = await engineFixture(t);
+  await copyReal(half.engine, ['role-probe-run.mjs']);
+  assert.equal(await half.engine.queueWatchSupported(), false, 'the session-0 helper must know /2 too');
+  const g = await engineFixture(t);
+  await copyReal(g.engine, ['role-probe-run.mjs', path.join('windows', 'FormalPublicBoundaryV2.cs')]);
+  assert.equal(await g.engine.queueWatchSupported(), true);
+  const old = await engineFixture(t);
+  await fs.writeFile(old.engine.v2('role-probe-run.mjs'), "export const ROLE_PROBE_RUN_CONTRACT = 'clued.independent-ci.role-probe-run/1';");
+  assert.equal(await old.engine.queueWatchSupported(), false);
+});
+test('generation 12: a queue watch is intent /2 with --watch-pr; a bad PR number watches nothing (/1)', async t => {
+  const f = await engineFixture(t); const seen = [];
+  f.engine.scReadback = async () => true;
+  f.engine.run = async a => {
+    seen.push(a.slice(2));
+    const runKey = a[3], runId = a[5], nodeProfileSha256 = a[7], watchPr = a[8] === '--watch-pr' ? Number(a[9]) : null;
+    const manifest = sha256(Buffer.from(canonicalJson(watchPr === null ? { contract: 'clued.independent-ci.role-probe-intent/1', runKey, runId, nodeProfileSha256 }
+      : { contract: 'clued.independent-ci.role-probe-intent/2', runKey, runId, nodeProfileSha256, watchPr })));
+    const code = watchPr === null ? 'ROLE_PROBE_HELD' : 'ROLE_PROBE_HELD_WATCHED_HEAD';
+    return { code: 0, stdout: JSON.stringify(fact({ stage: 11, manifest_sha256: manifest, roleProbe: { result: 'held', code },
+      outcome: { status: 'BLOCKED', reason: code, sideEffects: 0, mayHavePublished: false } })) };
+  };
+  const w = await f.engine.runRoleProbe({ watchPr: 884 });
+  assert.equal(w.ok, true); assert.equal(w.roleProbe.code, 'ROLE_PROBE_HELD_WATCHED_HEAD');
+  assert.deepEqual(seen[0].slice(6), ['--watch-pr', '884']);
+  for (const bad of [0, -1, 1.5, '884', 10_000_000_000]) {
+    const r = await f.engine.runRoleProbe({ watchPr: bad });
+    assert.equal(r.ok, true); assert.equal(seen.at(-1).length, 6, String(bad));
+  }
+});
+
+// Review round 32, NIT 2: the role-probe intent's manifest is computed on both sides, by the resident (engine-windows.mjs#runRoleProbe:
+// canonical.mjs) and by the Source (invoke-stage.mjs#invokeRoleProbe: proof.mjs#canonical, prepare-record.mjs#hash); a fact is accepted
+// only when they match. Both, byte for byte, for /1 and for /2 with watchPr at its bounds.
+test('review round 32: the resident and the Source hash the role-probe intent /1 and /2 alike', async () => {
+  const { canonical } = await import('../../actions-hosted-migration/independent-ci-v1/src/proof.mjs');
+  const { hash } = await import('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/prepare-record.mjs');
+  const runKey = 'a'.repeat(64), runId = `${'a'.repeat(16)}-${'b'.repeat(12)}`, nodeProfileSha256 = 'c'.repeat(64);
+  const intents = [{ contract: 'clued.independent-ci.role-probe-intent/1', runKey, runId, nodeProfileSha256 },
+    ...[1, 884, 9_999_999_999].map(watchPr => ({ contract: 'clued.independent-ci.role-probe-intent/2', runKey, runId, nodeProfileSha256, watchPr }))];
+  for (const intent of intents) {
+    assert.equal(canonical(intent), canonicalJson(intent), JSON.stringify(intent));
+    assert.equal(hash(canonical(intent)), sha256(Buffer.from(canonicalJson(intent))), JSON.stringify(intent));
+  }
+});
+
+test('review round 33: a failed read of the installed Source (not a missing file) is no for now, and read again after a while', async t => {
+  const { QUEUE_WATCH_SUPPORT_RETRY_MS } = await import('../src/engine-windows.mjs');
+  const g = await engineFixture(t);
+  await fs.mkdir(path.dirname(g.engine.v2(path.join('windows', 'x'))), { recursive: true });
+  for (const n of ['role-probe-run.mjs', path.join('windows', 'FormalPublicBoundaryV2.cs')]) {
+    await fs.copyFile(new URL(`../../actions-hosted-migration/independent-ci-v1/src/resident-v2/${n}`, import.meta.url), g.engine.v2(n));
+  }
+  let now = Date.parse('2026-11-06T08:00:00Z');
+  g.engine.clock = () => now;
+  const real = fs.readFile;
+  let busy = true;
+  fs.readFile = async (...a) => { if (busy) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' }); return real(...a); };
+  t.after(() => { fs.readFile = real; });
+  assert.equal(await g.engine.queueWatchSupported(), false, 'a held file: no for now');
+  busy = false;
+  now += QUEUE_WATCH_SUPPORT_RETRY_MS - 1;
+  assert.equal(await g.engine.queueWatchSupported(), false, 'not read again before the wait');
+  now += 1;
+  assert.equal(await g.engine.queueWatchSupported(), true, 'read again, and kept');
+  busy = true;
+  assert.equal(await g.engine.queueWatchSupported(), true);
+});

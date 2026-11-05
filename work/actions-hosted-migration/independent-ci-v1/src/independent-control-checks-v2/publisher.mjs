@@ -7,8 +7,13 @@
 //     the batch claim is the queue head, the merge slot is held for this base and still valid — only then
 //     does it publish both checks. If the window min(45 min merge slot, claim lease, install validUntil,
 //     stage cap) ends first, it stops cleanly with RESIDENT_QUEUE_HEAD_NOT_REACHED and publishes nothing.
-//     Renewing the claim / merge slot is the claim holder's job (agent contract A.6); this code never
-//     renews anything;
+//     The observations are read-only. Renewing the claim / merge slot (clued_work_renew) stays the claim holder's job
+//     (agent contract A.6). Generation 12 (resident DESIGN 56.4): the only writes besides the pair are two CI-door actions
+//     (claim-assist-native.mjs), each after an observation that passed: joining the claim to the merge queue and extending
+//     its lease; a join is followed by one more observation, which may come after the window, and a ready head then
+//     publishes as usual; a not-ready answer after a ready head (a transient failure before or while publishing) still
+//     carries the lease end Native answered, without the queue place (review round 20, MINOR 2), except GREEN_LEDGER_UNAVAILABLE,
+//     which keeps the whole facts with the place (review round 28);
 //   - journal and observation log in state\v2\effects-control (S13);
 //   - PR-A integration: the durable producer identity sourceBindingSha256 (v1's rule: everything but the
 //     renewable lease and slot timestamps) is journaled, and consume() is the v2 control consumer the merge
@@ -45,6 +50,7 @@
 //     head only, like sourceBinding; neither its `until` nor the claim lease is, so a renewal, keepalive or touch in the
 //     middle of a batch no longer voids it. Freshness still needs the lease unexpired (fresh()).
 import { prepareNativePublication, nativePublicationNoPostProof } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
+import { STAGE8_LEASE_MINUTES, extendLeaseIfShort, leaseAfter } from './claim-assist-native.mjs';
 import { digest } from '../proof.mjs';
 import { freshStamp } from '../clock-skew.mjs';
 import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, CONTROL_ROLES_V2, MAX_ATTEMPT_V2, sameBatchV2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
@@ -140,7 +146,7 @@ function sourceBinding(job, packet, facts, authority) {
 // latestProof, frontBatches, refused) and pullsUpdatedSince(cursorIso) -> {complete, pulls: [{number, updatedAt}]}
 // (github.mjs readPullsUpdatedSince). Any of them missing is "not proven", never a green.
 function engine({ github, journal, admission, assertLive, record, authority, batchClaim, greenLedger = null, trainMode = TRAIN_MODE_DEFAULT, trainModeUnreadable = false,
-  slotNative = null, sweepStore = null, pullsUpdatedSince = null, clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)) }, production) {
+  slotNative = null, sweepStore = null, pullsUpdatedSince = null, clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)), claimAssist = null }, production) {
   const domain = production ? 'production' : 'fixture';
   // The green ledger is required where a green is written (publishPair), not here: the merge-gate consumer only reads (review M1).
   check(TRAIN_MODES.includes(trainMode) && (greenLedger === null || typeof greenLedger?.append === 'function'), 'CONTROL_PUBLISHER_CONFIGURATION_REFUSED');
@@ -349,9 +355,22 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
   // S8: read-only wait for the queue head, then publish the pair in the fixed order. The latest scheduling facts
   // (is the claim in the merge queue at all) travel with a not-ready answer (resident quota redesign v0.6 §9), and
   // the answer names why (phase 2, step 2): main moved (at once: waiting cannot help), not in the queue, not its head.
+  // Generation 12 (resident DESIGN 56.4): with claimAssist (claim-assist-native.mjs), a claim Native observed outside the merge queue is
+  // put in it once per run (the back of the queue; the wait goes on and may reach the head within this run), and a lease shorter than
+  // STAGE8_LEASE_MINUTES is extended once; both only after the checks that end the run at once (main moved), so a batch that cannot
+  // merge never takes a place in the queue. A claim already at the head is not put in the queue again, but its lease is still extended,
+  // once, after the head checks and before the run answers ready. Neither is a publication or a side effect of this stage; a failure is only recorded, and
+  // the lease end this run reports is the one Native answered to the extension.
   async function waitForQueueHead(slotJob, waitUntil) {
-    let scheduling = null, last = null, lastTrain = null;
+    let scheduling = null, last = null, lastTrain = null, joinAsked = false, extendAsked = false, reobserve = false;
     const tell = facts => { scheduling = facts; };
+    // Once per run, also on a try that is ready at once (review round 19, MINOR 2): the lease is extended before the run ends either way.
+    const extendOnce = async () => {
+      if (!claimAssist || extendAsked || !scheduling?.claimExpiresAt) return;
+      extendAsked = true;
+      const x = await extendLeaseIfShort({ claimAssist, job: slotJob, claimExpiresAt: scheduling.claimExpiresAt, minutes: STAGE8_LEASE_MINUTES, now: clock(), record });
+      if (x) scheduling = { ...scheduling, claimExpiresAt: leaseAfter(scheduling.claimExpiresAt, x) };
+    };
     for (let polls = 1; ; polls++) {
       let observed = null, answered = null;
       try { const { packet, facts } = await observe(slotJob, tell); answered = facts; factsValid(slotJob, packet, facts, domain, clock(), batchClaim, { requireQueueHead: false }); observed = facts; last = facts; }
@@ -370,15 +389,35 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         // §41.2: with the train on, only a green the single-green proof covers; not waited out (the next stage 10 decides).
         if (!train.reason && trainOn) {
           const proven = await trainHead(slotJob);
-          if (proven.reason) { record('native_train_not_ready', { jobId: slotJob.id, reason: proven.reason }); return { ready: false, reason: proven.reason, polls, scheduling }; }
+          // A queue head the train or the rules hold is still a claim whose admission passed: its lease is extended once before the run
+          // ends (review round 29, MINOR 1).
+          if (proven.reason) { record('native_train_not_ready', { jobId: slotJob.id, reason: proven.reason }); await extendOnce(); return { ready: false, reason: proven.reason, polls, scheduling }; }
           train.proof = proven.proof;
         }
-        if (!train.reason) return { ready: true, polls, scheduling, train };
+        if (!train.reason) { await extendOnce(); return { ready: true, polls, scheduling, train }; }
         record('native_train_not_ready', { jobId: slotJob.id, reason: train.reason });
-        if (!TRAIN_WAITED.includes(train.reason)) return { ready: false, reason: train.reason, polls, scheduling };
+        if (!TRAIN_WAITED.includes(train.reason)) { await extendOnce(); return { ready: false, reason: train.reason, polls, scheduling }; }
         lastTrain = train.reason;
       }
       if (observed && typeof observed.mergeSlot?.tip === 'string' && observed.mergeSlot.tip !== slotJob.baseSha) return { ready: false, reason: 'RESIDENT_BASE_MOVED', polls, scheduling };
+      if (observed && claimAssist) {
+        await extendOnce();
+        if (!joinAsked && scheduling?.mergeQueue?.entered === false) {
+          joinAsked = true;
+          let j;
+          try { j = await claimAssist.joinQueue({ pr: slotJob.pr, headSha: slotJob.headSha }); } catch { j = { ok: false, code: 'CLAIM_ASSIST_UNREACHABLE' }; }
+          try { record('native_queue_join', { jobId: slotJob.id, ok: j.ok === true, joined: j.joined === true, code: j.code ?? j.reason ?? null }); } catch { /* a log only */ }
+          // A join changes the claim's trigger_refs and so the digest of its execution admission: one more observation (a verify of
+          // this head) right away records the admission again, also when this run's window is over (review round 11, MINOR 1). If
+          // that observation fails (a passing GitHub or Native fault), the next try records it again. The stage's own deadline still
+          // bounds it.
+          reobserve = j.ok === true && j.joined === true;
+          // Until an observation says more, the claim is in the queue at an unknown place: a failed observation after the join never
+          // reports it as not joined (review round 24, NIT 4).
+          if (reobserve) scheduling = { ...scheduling, mergeQueue: { entered: true, state: 'waiting', position: null } };
+        }
+      }
+      if (reobserve) { reobserve = false; continue; }
       if (clock() + QUEUE_POLL_MS > waitUntil) {
         if (lastTrain) return { ready: false, reason: lastTrain, polls, scheduling };
         const notJoined = last !== null && scheduling?.mergeQueue?.entered === false;
@@ -429,27 +468,33 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     const head = await waitForQueueHead(jobs[1], waitUntil);
     record('native_queue_wait', { jobId: jobs[1].id, ready: head.ready, polls: head.polls });
     if (!head.ready) return { status: 'BLOCKED', reason: head.reason, sideEffects: 0, productionAuthorized: false, polls: head.polls, scheduling: head.scheduling };
+    // After a ready head, every answer that is not SETTLED carries the lease end (also the one the extension answered), so the resident
+    // does not keep the end from before the extension; not the queue place: a transient park after it is counted as before (DESIGN §28).
+    // The green ledger's answer below is the exception: not a §28 code, it keeps the whole facts.
+    const lease = head.scheduling ? { scheduling: { ciRetryAfter: null, mergeQueue: null, claimExpiresAt: head.scheduling.claimExpiresAt ?? null } } : {};
     // C4: both halves are read back before either is published (nothing written yet: a refusal is a clean BLOCKED). A half
     // with an unsettled journal entry (a write that may have happened) skips this and keeps its path (reconciliation).
     let unsettled;
     try { unsettled = (await Promise.all(jobs.map(job => journal.read(admissionEffectKeyV2(ACTION, job, batchClaim, definitionFor(job)))))).some(e => e && e.state !== 'settled'); }
-    catch (e) { return { status: 'BLOCKED', reason: safe(e), sideEffects: 0, productionAuthorized: false }; }
+    catch (e) { return { status: 'BLOCKED', reason: safe(e), sideEffects: 0, productionAuthorized: false, ...lease }; }
     if (!unsettled) for (const job of jobs) {
       let on;
-      try { on = await onGithubOnly(job); } catch (e) { return { status: 'BLOCKED', reason: safe(e), sideEffects: 0, productionAuthorized: false }; }
-      if (on) return { status: 'BLOCKED', reason: ROLE_ALREADY_ON_GITHUB, role: job.role, sideEffects: 0, productionAuthorized: false };
+      try { on = await onGithubOnly(job); } catch (e) { return { status: 'BLOCKED', reason: safe(e), sideEffects: 0, productionAuthorized: false, ...lease }; }
+      if (on) return { status: 'BLOCKED', reason: ROLE_ALREADY_ON_GITHUB, role: job.role, sideEffects: 0, productionAuthorized: false, ...lease };
     }
     // Step 3a (§5.4 item 4): the merge-slot green is in the ledger before anything of the pair is written. Production
     // without a ledger (it could not be opened: review M2) writes nothing and parks.
     if (greenLedger || production) {
       const slot = fixedJob(jobs[1]);
       try { check(greenLedger, GREEN_LEDGER_UNAVAILABLE); await ledger('intent', slot, head.train, admissionEffectKeyV2(ACTION, slot, batchClaim, definitionFor(slot)), admissionExternalIdV2(prefixFor(slot), slot, batchClaim), null, null, { required: true }); }
+      // Not a transient park (§28) but a not-ready answer the resident schedules by the queue place: the whole facts, which already carry
+      // the lease end the extension answered (extendOnce ran before ready), so a queue head keeps its 60-second retries (review round 28).
       catch { return { status: 'BLOCKED', reason: GREEN_LEDGER_UNAVAILABLE, sideEffects: 0, productionAuthorized: false, polls: head.polls, scheduling: head.scheduling }; }
     }
     const results = []; let sideEffects = 0;
     for (const job of jobs) {
       const r = await publishOne(job, { train: head.train }); sideEffects += r.sideEffects ?? 0; results.push({ role: job.role, ...r });
-      if (r.status !== 'SETTLED') return { status: r.status === 'BLOCKED' && sideEffects > 0 ? 'UNCERTAIN' : r.status, reason: r.reason ?? 'CONTROL_PAIR_INCOMPLETE', results, sideEffects, productionAuthorized: false };
+      if (r.status !== 'SETTLED') return { status: r.status === 'BLOCKED' && sideEffects > 0 ? 'UNCERTAIN' : r.status, reason: r.reason ?? 'CONTROL_PAIR_INCOMPLETE', results, sideEffects, productionAuthorized: false, ...lease };
     }
     const touched = trainOn && head.train?.proof ? { trainTouch: await touchGreen(jobs[1], head.train.proof) } : {};
     return { status: 'SETTLED', results, sideEffects, productionAuthorized: production, qualificationIssued: false, nativeTicketIssued: false, ...touched };

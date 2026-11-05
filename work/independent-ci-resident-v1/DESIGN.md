@@ -449,7 +449,7 @@ v0.9 起，释放还是烧号由机器可读的失败对照表 `src/failure-tabl
 | S5 | 安装记录不带 claim、PR 或作业；`validUntil` 为空表示直到 Source 变更或卸载；没有 24 小时或 claim 截止上限；Linux qualification v2 的 `expiresAt` 也可以为空（绑定到 Source） | `prepare-record.mjs`、`record.mjs`、`worker/qualification-v2.mjs` |
 | S6 | 作业契约 `job/2`：id = sha256(["clued.independent-ci.job/2", repo, pr, head, base, sourceManifestSha256, role, attempt])，没有 claim；完整准入 `full-admission/2` 从 PR trailer 实时解析 claim；第 1 段以“只能新建”的方式记下批次 claim 代次（claimId、fence、epoch），之后每个阶段、每次 bridge 回调都必须是同一代次（续租只改 `expires_at`，算同一代次）；Linux 角色策略 v3 和 qualification v2 没有 currentClaim | `src/job-v2.mjs`、`full-admission-v2.mjs`、`admission-facts-v2.mjs`、`batch-claim-v2.mjs`、`worker/formal-fixed-role-policy-v3/`、`formal-gitleaks-v4/`、`formal-trivy-v4/`、`formal-contract-placement-v2/`、`worker-v2.mjs` |
 | S7 | bridge v4：协议 `/2`、签名结果 `/2`、新增干净的 `blocked` 记录（Linux 在扫描器碰到 PR 之前干净结束时发出（含 trivy 缓存准备的干净拒绝：缓存容器只挂缓存目录，快照已删；这类干净拒绝是终局，不自动重试），Windows 发行方据此干净结束，不再等到截止）；一轮回调的窗口 120 秒（`protocol.mjs` `CALLBACK_WINDOW_MS`；30 秒在 TURING 上实测不够：PR #889 第 2 阶段一轮 34 秒、约 47 秒，Owner 决定 dd7378d2）；发行方的回复若已过本轮截止就不再回复、等 Linux 的 `blocked` 干净结束，不再 UNCERTAIN；Windows 归档白名单含 `incoming\blocked`；发行方是一个 v2 阶段入口；relay 从已安装的 `resident\source\<sha>` 副本运行；companion 先用一次 root `ls`（约 0.15 秒）看 Linux 哪条记录就绪，再调 relay（每次约 5 秒），先收 challenge、再收 result、再收 blocked；一轮回调失败后把 Linux 的 `blocked` 交给发行方一次 | `worker/protected-job-bridge-v4/*`、`R/src/companion.mjs` |
-| S8 | 控制助手每 30 秒只读核一次合并队列，窗口 = min(合并位 45 分钟, claim, validUntil, 阶段上限减 7 分钟)，满足就发一对检查，否则 `RESIDENT_QUEUE_HEAD_NOT_REACHED`，什么都不发 | `src/independent-control-checks-v2/` |
+| S8 | 控制助手每 30 秒只读核一次合并队列（第 12 代：观察通过后还会经 CI 命令门入队、延长租约，见 §56.4），窗口 = min(合并位 45 分钟, claim, validUntil, 阶段上限减 7 分钟)，满足就发一对检查，否则 `RESIDENT_QUEUE_HEAD_NOT_REACHED`，什么都不发 | `src/independent-control-checks-v2/` |
 | S9 | `prepare-workspaces.py --batch <id>` 读公开描述符 `/2`，按内容重算作业 id，核对已安装 Source 和角色策略 v3；`build-bundle.ps1 -BatchId` 打 bundle，`-CheckRefs` 是第 2 段前的“bundle 之后没有推送”闸门 | `src/resident-v2/prepare-workspaces.py`、`build-bundle.ps1`、`R/src/engine-windows.mjs` |
 | S10 | 一个 Node：worker unit、relay、自检和角色策略都用 `/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node`，策略 v3 要求 `nodeExecutable` 等于它 | `worker/qualification-v2.mjs`、`protected-job-bridge-v4/relay-public.ps1`、`R/linux/systemd/clued-ci-worker@.service` |
 | S11 | 稳定的失败码目录（§6.3），由代理回复、原生回执和入口结局合成 | `src/resident-v2/stage-fact.mjs`、`invoke-stage.mjs`、`stage-inputs.mjs`、`R/src/classify.mjs` |
@@ -886,8 +886,8 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 ### 10.2 第 8 段
 
 - 今天：5 分钟内要写 ready marker，而 marker 只做格式检查，不是授权；真正的核验是控制发布者实时读合并队列（`queue-facts.mjs:2-7`）。
-- Source v2（S8）：删掉 marker；控制助手每 30 秒用 ci-admission Binding 只读核一次：该 claim 是队首、合并位没过期、tip 等于 base。满足就发布一次；到窗口上限仍不满足，就以 `RESIDENT_QUEUE_HEAD_NOT_REACHED` 干净失败。
-- claim 持有者只需按合同 A.6 让就绪的 PR 留在合并队列里，续租由机制自治（resident constraint a8ff16a7）。
+- Source v2（S8）：删掉 marker；控制助手每 30 秒用 ci-admission Binding 只读核一次（第 12 代：观察通过后还会经 CI 命令门入队、延长租约，见 §56.4）：该 claim 是队首、合并位没过期、tip 等于 base。满足就发布一次；到窗口上限仍不满足，就以 `RESIDENT_QUEUE_HEAD_NOT_REACHED` 干净失败。
+- claim 持有者只需按合同 A.6 让就绪的 PR 留在合并队列里，续租由机制自治（resident constraint a8ff16a7）。（第 12 代：CI 准入 Binding 本身不能续租，常驻会提醒持有者续租，并在 Native 支持时经 CI 命令门入队、延长租约，见 §56.1、§56.3、§56.4。）
 
 ---
 
@@ -1267,7 +1267,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 - **PR 页面**（`src/pr-status.mjs`，companion）：
   - 每个打开的 PR 的当前 head 挂一条 commit status，上下文是 `resident-queue (info only)`。只写状态，不发评论，所以不改 PR 的更新时间；
   - 起决定作用的是写之前实时读 main 的规则：名字一旦出现在必需检查里就不写，并通知一次；读不到规则时也不写。本仓库只用规则集保护 main，经典分支保护返回 404（2026-10-22 核实），所以读规则能看到全部必需检查。固定的 ` (info only)` 后缀只是让重名不太可能，矩阵作业也可能起这种名字；
-  - 只有状态或文字变化时才写，每轮最多 20 条；“已提议”这类泛泛的文字不会覆盖已写过的状态；写失败的 head 10 分钟内不再试。
+  - 只有状态或文字变化时才写，每轮最多 20 条；“已提议”这类泛泛的文字不会覆盖已写过的状态；写失败的 head：要写的文字变了下一轮就重写，同样的文字 2 分钟后再写（第 12 代，§56.8；原为 10 分钟）。
 - **Windows 通知**：在 Owner 会话里弹出，每个事件键只弹一次。事件有：
   - HALT；
   - 状态超过 5 分钟没更新；
@@ -1280,7 +1280,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 - **两条线**（`companion-main.mjs#lane`）：companion 自己的动作（邮箱：bundle、工作区、Linux 归档和静止证明、转发泵）和咨询性工作（poller、PR 页面状态、通知）各走一条线，各用自己的 Runner。
   - 一个卡住的 gh 只会占住它自己那条线；服务要的证明（例如 2 分钟期限的 `linux-quiescence`）照常应答，GitHub 再慢也不会让邮箱请求过期，进而导致不该有的 HALT（独立复核 M1）。§24 起，两条线的子进程都由作业宿主在时限处连同它的作业一起结束，卡住的 gh 也只占到时限为止。
   - 咨询性的每次调用最多 15 秒，每轮 PR 页面加通知最多 60 秒，超时后这一轮不再发起新调用。
-  - 调用超时或 Runner 仍忙时，这一轮就此结束；没做成的事不记为已做或失败：没弹出的通知下一轮再弹，没写成的 PR 状态不进 10 分钟的失败名单。
+  - 调用超时或 Runner 仍忙时，这一轮就此结束；没做成的事不记为已做或失败：没弹出的通知下一轮再弹，没写成的 PR 状态不进失败名单（第 12 代起，同样的文字 2 分钟后重写，文字变了下一轮就重写，§56.8）。
   - 通知先于 PR 页面：通知只在本机，不应排在慢的 GitHub 后面。
   - 之前“泵送桥接段时 PR 页面和通知要等泵结束”的限制因此不再存在。
 
@@ -1502,7 +1502,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 
 ### 18.4 Source v2：第 8 段一次只查一下
 
-- `publisher.mjs`：`STAGE8_CHECK_MS = 90_000`。一次运行只看第一次观察加窗口内的几次轮询，不再在段里等最长 45 分钟。没就绪时在写任何日志之前零副作用退出，并说明原因（`STAGE8_NOT_READY_REASONS`）：
+- `publisher.mjs`：`STAGE8_CHECK_MS = 90_000`。一次运行只看第一次观察加窗口内的几次轮询（第 12 代：入队成功后再观察一次，可以越过窗口，见 §56.4），不再在段里等最长 45 分钟。没就绪时在写任何日志之前零副作用退出，并说明原因（`STAGE8_NOT_READY_REASONS`）：
   - `RESIDENT_BASE_MOVED`：观察到的合并位尖端不等于作业的 base，立即退出（等也没用）；
   - `RESIDENT_MERGE_QUEUE_NOT_JOINED`：调度事实说 claim 根本不在合并队列里；
   - `RESIDENT_QUEUE_HEAD_NOT_REACHED`：在队列里还不是队首，或窗口内没得到有效观察（队列位置未知）。
@@ -1544,6 +1544,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
   - 没入队：“已测通：现在加入合并队列，<时间>再查第 8 段”；
   - 已入队：“已测通，在合并队列第 N 位：等成为队首，<时间>再查第 8 段”；
   - 不知道位置：“已测通：等合并队列，<时间>再查第 8 段”（不说已在队列里）；
+  - （第 12 代：被观察的行和租约提醒见 §56.2、§56.3）
   - main 移动后结束：“main 已移动：请合入最新 main 并推新提交”；
   - 停靠名额满时排队的行：“排队第 N 位：停靠的批次已满，等它们结束”（不给按空闲执行器估的开始时间）。名额满不满每个 tick 都写进状态（`queue.parkingFull`），不只在推迟新批次的那个 tick；HALT、暂停或回填中的 tick 不更新它，那时 PR 页面先显示停机、暂停或回填的文字。
 - 停靠中的 PR 有了还没测的新提交时，新提交在状态里显示为跑着的批次后面的提交，不显示“已测通”。
@@ -1991,7 +1992,7 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 
 ### 23.4 接班核对及其边界
 
-每次新的 `held` 角色探测确认本节点 ACTIVE、且没有双活锁时，companion 对本轮看到的打开 PR heads 做接班核对。每轮最多读 10 个；未读完则后续轮继续。单个 head 读取失败后等 5 分钟再试，连续三次失败就跳过这个 head，让核对可以结束；Owner GitHub login 读不到时只等待，不计入这三次。
+每次新的 `held` 角色探测确认本节点 ACTIVE、且没有双活锁时，companion 对本轮看到的打开 PR heads 做接班核对。每轮最多读 10 个；未读完则后续轮继续（第 12 代：核对进行中来了新的探测也不重来；核对在读完时结束，或在角色不再被确认、上锁时丢掉；节点一直 ACTIVE 时新核对最多每 15 分钟开始一次；刚转为 ACTIVE（包括从 UNCERTAIN 回到 ACTIVE）、执行器重新启动（状态里的 pid 变了）或上一次核对被丢掉时立即开始，见 §56.2）。单个 head 读取失败后等 5 分钟再试，连续三次失败就跳过这个 head，让核对可以结束；Owner GitHub login 读不到时只等待，不计入这三次。
 
 发现另一节点的最新当班或双活文字仍在 30 分钟窗口内，就建立本地锁：原来已 ACTIVE 的记 `dual-active`，新接班的记 `takeover-refused`。两者都暂停本节点接新并通知 Owner。核对进行中本身不是执行器的准入闸门，锁在整轮核对结束并确认冲突后建立。
 
@@ -2009,7 +2010,7 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 
 ### 23.6 报告器边界
 
-报告器每轮最多写 20 条页面状态、显示 5 条通知；单个外部调用超时 15 秒，页面写失败后冷却 10 分钟。受 `inBudget()` 保护的通知、逐 head 扫描和页面写入路径会检查本轮已用时间是否小于 60 秒，已启动的调用可以越过这一时点；读取 required contexts 之前没有这项预算检查，需实际读取规则时即使前面的通知已耗尽预算，仍可能发起一次规则 GET。因此 60 秒不是所有调用的统一启动硬上限。它在 companion 独立的 advisory lane 运行；先显示本地通知，再做节点核对与页面写入。超时留下未结束子进程时本轮停止发起后续调用，下一轮等待原 Runner，不把尚未完成的动作记成成功。
+报告器每轮最多写 20 条页面状态、显示 5 条通知；单个外部调用超时 15 秒，页面写失败后冷却 2 分钟，要写的文字变了下一轮就重写（第 12 代，见 §56.8；原为 10 分钟）。受 `inBudget()` 保护的通知、逐 head 扫描和页面写入路径会检查本轮已用时间是否小于 60 秒，已启动的调用可以越过这一时点；读取 required contexts 之前没有这项预算检查，需实际读取规则时即使前面的通知已耗尽预算，仍可能发起一次规则 GET。因此 60 秒不是所有调用的统一启动硬上限。它在 companion 独立的 advisory lane 运行；先显示本地通知，再做节点核对与页面写入。超时留下未结束子进程时本轮停止发起后续调用，下一轮等待原 Runner，不把尚未完成的动作记成成功。
 
 本节记录 C5 已合入代码的行为；主机安装、节点资格和真实移交仍按各自的授权与验证流程办理。
 
@@ -2426,7 +2427,7 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
    - **停在 A、B 的批次不挡探测，当节点不是 `ACTIVE`，或这次探测是 `urgent` 时**（`probeAtParking()`；2026-10-29 复核 M1）。空闲 `ACTIVE` 节点的定期探测保持 C2 的做法：账本里有任何打开的批次就不探。
    - 为什么可以：C2 要求账本里没有打开的条目，是因为探测要经交换代理切换一次 runner 服务，不能和正式的段抢。但 tick 是串行的，探测只在 tick 里运行，不会与本执行器自己的段重叠。停在 A、B 的批次没有进程，没有 broker 请求，Linux 是空的（§18.1）。不在停靠点的打开条目（崩溃现场）在每个 tick 开头已被恢复处理成 HALT，到不了探测这一步。
    - 为什么要这样：重启或复位之后，停靠的批次（最长 `park.maxMs`，24 小时）否则会让节点一直是 `UNCERTAIN`，拿不到任何新触发；§29.9 说的“单节点行为和以前一样”也不成立（第 2 批的重装本身就是一次重启）。
-   - 定期探测仍不在停靠批次旁边运行，因为停靠可以很久，每 30 分钟切换一次 runner 会一直打断它。
+   - 定期探测仍不在停靠批次旁边运行，因为停靠可以很久，每 30 分钟切换一次 runner 会一直打断它。（第 12 代：排队观察例外，见 §56.2。）
 6. **立即探测**：第 1 段以外的批次以下面这些码结束时，标 `urgent`，下一个安静 tick 就探测。
    - NOT_ADMITTED 家族的码（`PR_NOT_OPEN_OR_CHANGED` 在任何段都可能出现）；
    - `PUBLICATION_BLOCKED`；
@@ -2593,7 +2594,7 @@ STANDBY 对符合触发条件的打开 PR 检查三种情况：对方持续写�
 
 ## C2：主备角色的独立只读探测（代码候选，未做 P4 现场验收）
 
-- stage 11 `role-probe` 经过当前 record/2、完整 node-profile、固定 Source、原 SwapBroker 与同一个 generic helper。新增 60 秒子进程上限；原 stages 1–10、各自 deadline、互斥与清理语义不变。只在 ledger 无任何 open batch（包括 hosted wait/parked；C3 起，节点不是 ACTIVE 或探测 urgent 时停靠的批次不算，§29.2 第 5 条）、非 HALT/PAUSE、安装与 Source 未漂移时调用；本地 tick 串行，runner 非 original-stopped 时不提交 broker 请求，原全局互斥仍非等待取得，不抢占其他 controller。
+- stage 11 `role-probe` 经过当前 record/2、完整 node-profile、固定 Source、原 SwapBroker 与同一个 generic helper。新增 60 秒子进程上限；原 stages 1–10、各自 deadline、互斥与清理语义不变。只在 ledger 无任何 open batch（包括 hosted wait/parked；C3 起，节点不是 ACTIVE 或探测 urgent 时停靠的批次不算，§29.2 第 5 条；第 12 代：排队观察例外，见 §56.2）、非 HALT/PAUSE、安装与 Source 未漂移时调用；本地 tick 串行，runner 非 original-stopped 时不提交 broker 请求，原全局互斥仍非等待取得，不抢占其他 controller。
 - 新 `role-probe-run/1` 只含 repository、随机 runId、Source/node-profile pin 与时间，不含 PR/head/claim/attempt。plan/3 的 `batchKey/batchId` 仅复用现有技术相关键；不会 reserve/markStarted/burn/evaluate/写 CI 批次，也不创建 Linux 工作区或调用 companion。stage fact 的 manifest pin 是 resident 与 invoker 独立计算的 `role-probe-intent/1` 原 canonical bytes 的 SHA。
 - controller entry 只打开固定 `ci-admission.token`，验证原 token fingerprint 与完整 profile 的 controller SID；不打开 App key，只调用 `clued_work_merge_slot_holders_v1`，10 秒请求界限、64 KiB 回复界限、拒重定向。`status:ok` 无 reason 为 held，`admission_binding_required` 为 not-held，其他为 uncertain。服务端的 `binding_not_authorized` / `authorization_revoked_or_expired` 不足以区分具体撤销、过期或权限不适用，因此仅输出 `ROLE_PROBE_CONNECTION_UNAUTHORIZED`，不伪造细分原因。
 - **parking holder 是解释 held 的硬前提。** 没有任何有效角色条目时，服务也可向所有 Binding 开放；holders RPC 无法证明已 parking。部署/启用主备前必须另有 Owner 的实际 parking 证据，本代码不能用 empty holders 或 held 代替。C2 不变更节点模式、不授 CI 执行权限；C3 负责启动状态、角色与失败后的模式转换。C2 的明确 mode 输入决定 STANDBY 15 分钟、ACTIVE idle 30 分钟。（C3 之后：节点启动是 UNCERTAIN，用 STANDBY 的 15 分钟间隔，启动、复位和疑似失去角色时立即探测；见 §29。）
@@ -4005,7 +4006,7 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 
 - 执行器新端口 `statusFlush`（`service-main.mjs` 传状态定时器的 `flush`）：批次领取时（`driveReserved` 开头）立即把当前批次、`RUNNING`、队列行 RUNNING 写进 status.json；熔断器的门把 open 改成 half-open（试跑开始）时立即写队列、熔断器视图并 flush。定时器正在写时请求的 flush 不再丢弃：写完后立即再写一次（`startStatusTimer`）。以前 `reportQueue` 在门之前调用，整个批次期间 status.json 都显示 open 和一个已经过去的试跑时间。
 - PR 页（`pr-status.mjs#describe`）：熔断器 open 但试跑时间已到，显示“熔断后的试跑时间已到，即将开始”；half-open 显示“熔断后的试跑阶段，一次只跑一批”（half-open 只说明允许试跑，不声称正在跑；正在跑的那一批对自己的 PR 显示“运行中”）；都不再显示“熔断中”。网络原因的 open 显示“（网络故障）”。status 解析保留 `breaker.cause`（只认 `network`）。
-- companion（`companion-main.mjs`）：距上次发帖超过 5 秒后，最多每 5 秒读一次 status.json；`statusSignature`（当前批次的 PR、head、attempt、段，熔断器状态与试跑时间，暂停接新，HALT，PAUSE；只用 `parseStatus` 真有的字段）一变就立即发 PR 页状态（`reportDue`），否则仍每分钟一次；`reporter.pass` 的限额与“只写变了的内容”不变。
+- companion（`companion-main.mjs`）：距上次发帖超过 5 秒后，最多每 5 秒读一次 status.json；`statusSignature`（第 12 代起还包括排队行，见 §56.8；当前批次的 PR、head、attempt、段，熔断器状态与试跑时间，暂停接新，HALT，PAUSE；只用 `parseStatus` 真有的字段）一变就立即发 PR 页状态（`reportDue`），否则仍每分钟一次；`reporter.pass` 的限额与“只写变了的内容”不变。
 
 ### 53.6 写后读确认失败：有限次退避重读，仍失败则判 transient 并安排第 2 次尝试
 
@@ -4250,3 +4251,308 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 - **发布者遇到完全一致的副本时撤回**（`discoverKnown`）：55.1 第 1 项的多次读回缩小了这个窗口。如果副本在端口窗口之后才出现，发布者仍会撤回它、烧 head。把“采用完全一致的副本”的逻辑搬到发布者里，属于发布状态机的改动，列为**后续任务**（Clued `a7951534-a9e9-4c82-a1a0-b4c1cec48e5f`）。
 - **伴随进程请求无应答、心跳丢失导致 HALT**：这时状态未知，Linux 上可能还有进程在跑。按设计必须停下，交给 Owner 处理，不能猜。
 - **`ci_nodes_status`**：只读，但它走 Source A 的端口（`clued-merge-train-native.mjs`），不经过本节的 `readPost`。保守起见，本代不动。
+
+## 56. 推送后全自动（第 12 代；Task `c9dea57b`；Decision `4f5f35d3`：发现的缺陷全部修掉）
+
+目的：一个 PR 推送之后，少等、少人手。范围有四项：
+
+1. 第 8 段因 `RESIDENT_MERGE_QUEUE_NOT_JOINED` 停靠时，自动入队。
+2. 入队以后第 8 段马上重试。
+3. 认领快过期而批次还在跑时，提醒或自动续租。
+4. 必需测试的准入超时后自动补跑。
+
+第 2 项全部、第 3 项的提醒部分在本分支实现（56.2、56.3）。第 1 项、第 3 项的自动续租、第 4 项均已由 Owner 决定：入队选 A、批准 CI 延长租约（Clued Decision“第 12 代‘推送后全自动’设计决定”），补跑改选 C（Decision `207c0cd0` v2，由伴随进程点）。Native 侧在从 main 切出的分支上实现；常驻侧调用 CI 命令门新 action 的客户端和补跑都在本分支（56.4、56.5）。
+
+### 56.1 查到的事实（决定方案的前提）
+
+- **常驻 CI 拿不到续租所需的东西。**
+  - 常驻 CI 在 Native 的身份是 CI 准入 Binding（`secrets\ci-admission.token`）。它能调用的只有：`clued_work_verify_v1`、`clued_work_merge_slot_touch_v1`、`clued_work_merge_slot_return_v1`、`clued_work_merge_slot_holders_v1`（以及列车的保活、水位）。
+  - 加入合并队列的唯一办法，是持有者用 `clued_work_renew` 把 `merge:<repo>:main` 放进 `trigger_refs`（`apps/clued-cloud/worker/work-claims.ts`）。不是持有者 Binding 的调用方，必须带上认领的 `lease_key`。
+  - `lease_key` 按合同只留在认领方会话里，不能写进文件、提交、记录或日志。续租还要求一个新的 `progress_ref`。
+  - 结论：不改 Native，常驻 CI 既不能入队，也不能续租。
+- **批次中途续租不会作废批次。** 批次认领（`batch-claim-v2.mjs`）只比较 claim id、fence、epoch；续租只改 `expires_at`，算同一代。第 8 段的 binding 也已不含 `until` 和 `claimExpiresAt`（Decision `b30b1b79` 第 3 项，§41.8）。
+  - 所以“批次跑着时请持有者续租”是安全的提醒。
+  - 钩子 `scripts/hooks/clued_work_claim_guard.py` 里“renewing during the batch voids it”的说法已经过时，是文档后续（不属于本分支）。
+- **常驻 App 不能补跑 workflow。** `github.mjs#credential` 要求安装令牌的权限集合恰好是 `checks:write`、`contents:read`、`pull_requests:read`（另有只读的 `actions_variables`、`environments`），没有 `actions:write`。
+- **今天入队后要等多久。**
+  - 停靠后，没入队的批次按 `PARK_RETRY_MS`（10、20、40、80、120 分钟）重试。
+  - 第 10 段（每 `train.maintenanceEveryMs`，即 10 分钟，只在空闲的 tick）读到队首是本批的 PR 时，会提前一次（`hintParkedHead`）。
+  - 所以持有者入队后，通常要等到下一次第 10 段，约 10 分钟。
+
+### 56.2 第 2 项：排队观察（queue watch，已实现）
+
+- **观察谁。** 停靠在 B、最后一次尝试的原因是 `RESIDENT_MERGE_QUEUE_NOT_JOINED` 或 `RESIDENT_QUEUE_HEAD_NOT_REACHED` 的批次（`QUEUE_WATCH_CODES`）。要求同时满足：
+  - 不是 §28 的暂时性停靠；
+  - 不在第 1 位的 60 s 连试之中（第 1 位的尝试在 `PARK_HEAD_STREAK_MS` 的 15 分钟内本来就 60 s 一次；连试结束、重新按退避之后，第 1 位也照样观察）；
+  - 下次尝试不在 30 s 之内；
+  - 没超过 `park.maxMs`；
+  - 当天第 8 段重试额度没用完。
+- **在什么时候观察**（`executor.mjs#queueWatchMaintenance`）：
+  - 只在什么也没跑的 tick 上，且节点为 ACTIVE、没有 PAUSE、所有打开的批次都停在停靠点。
+  - 暂停接新期间（暂停生效，或暂停状态读不出）一律不观察，不论这个 tick 的排队有没有到期的行；列车开、接管扫描还没做完（停靠批次被扣着）时也不观察：观察之后的尝试跟不上。暂停结束后照常观察。
+  - 只在已安装的 Source 整条路径都认得观察时（见下文“Source 与安装”）。
+  - 时钟比上一次角色探测的结束时间或上一次观察结果还早时，不观察，等时钟追上。
+- **节奏。**
+  - 一次观察与上一次角色探测（观察或普通探测）**结束**之间至少隔 `QUEUE_WATCH_MS`（30 s）。所以两次探测不会挤在同一个 tick，慢的探测之后也不会紧接着再观察。别的换跑不在这个间隔里：定时的角色探测按它自己的节奏，可能紧跟在一次观察之后；第 10 段也可能夹在中间或紧挨着。
+  - 每个批次自己的间隔随它在 B 停的时间变长（`QUEUE_WATCH_RAMP_MS`）：前 30 分钟 30 s，到 2 小时为止 2 分钟，之后 5 分钟。
+  - 观察没有确定答复（uncertain，或者 runner 正忙而延期）时，这个批次的下一次观察至少再等 30 s、2 分钟、5 分钟、10 分钟（`QUEUE_WATCH_FAIL_MS`，按连续失败次数）。
+  - 几个批次按各自到期的先后轮流。每天最多 `QUEUE_WATCH_MAX_PER_DAY`（1440）次，只数真正发出的换跑；这个计数只在内存里，重启后清零。
+  - 因为不空闲或安装授权快到期而没能开始的观察，不算数，`QUEUE_WATCH_MS` 内也不再试。
+  - 每次换跑都带着角色探测原有的风险：没有确认事实就 HALT。按上面的节奏，一个批次在 B 停 2 小时，最多约 105 次换跑，之后每小时 12 次。
+  - 观察和普通角色探测一样先写 `role-probe-intent`：换跑中途主机重启、断电或执行器崩溃，下次启动时以 `ROLE_PROBE_INTERRUPTED` 停机（`executor.mjs#roleProbeRecover`），要 Owner 复位。正常停服务（`STOP-REQUESTED`）会等当前 tick 跑完，不会触发。第 11 代 ACTIVE 时停靠批次旁边不跑定时探测，现在批次停在 B 的前 30 分钟每次探测结束 30 s 后又观察，探测时间占比升高，这类停机的机会也随之升高。是否接受这个代价、或改成观察中断不停机，交 Owner 决定；本代不改恢复规则。
+- **探测多回答什么。**
+  - Source v2 的 `role-probe-run/2` 多一个 `watchPr` 字段；意图清单相应变成 `role-probe-intent/2`。
+  - 探测本来就读一次 `clued_work_merge_slot_holders_v1`。在值班的情况下，如果唯一的持槽者绑定的正好是 `<repo>#watchPr`，就回答 `ROLE_PROBE_HELD_WATCHED_HEAD`（`merge-slot-native.mjs#parseRoleProbe`）。
+  - 只多一位信息，而且只关于常驻自己问的 PR：PR 号不发给 Native，持有者名单也不出 entry（C2 的约束不变）。
+  - 不带观察时，作业和意图仍是 /1，逐字节不变。
+- **看到之后做什么**（`watchAnswered`）：
+  - 只有答复从“不是队首”（或还没答过）变成“是队首”时，这个批次的尝试才马上到期，但离上次尝试结束不少于 `PARK_HEAD_RETRY_MS`（60 s）。
+  - holders 一直说“是队首”而第 8 段一直说没准备好（两者读的东西不同，例如队列条目已失效而槽位还在）时，只提前一次，之后照批次自己的退避。所以观察不会让 head 比以前更快烧掉。
+  - 答复先变成“不是队首”、再变回“是队首”时，再提前一次。
+  - 尝试本身照旧计入各项预算。观察本身不向 GitHub 或 Native 写任何东西（只写它自己的角色探测回执），也不算尝试。
+- **其余照角色探测处理。**
+  - 意图和结果回执上分别多 `watchPr`、`watch {pr, head}`。
+  - 有确定答复（held、not-held）时，照常记账并更新节点模式。记账时存成普通的 `ROLE_PROBE_HELD`（`role-probe.mjs#roleBookFact`），所以上一代读回去也认得。
+  - 观察的 uncertain 答复不记进角色账：观察比定时探测频繁得多，一次 90 s 的网络抖动不该让 Owner 收到“连续三次无法确认”；定时探测仍照原样计数。但对熔断器，它和别的探测一样算一次失败（只是打断连续成功的计数，不通知 Owner），网络还在抖时不会凑够提前试跑的条件。
+  - 探测途中时钟往回跳了，就不记账。
+  - 没有确认事实就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`）；忙时只延期。
+  - 不带观察的探测如果说“观察到队首”，不算事实。
+- **断流。** holders 读不到时，探测回答 `ROLE_PROBE_UNCERTAIN`：不提前尝试，不 HALT，按 `QUEUE_WATCH_FAIL_MS` 退避，批次照原来的退避重试。
+- **效果。**
+  - 持有者加入合并队列（队列空时立即成为队首），或前面的认领合入以后，第 8 段在下一次观察（停靠后的前 30 分钟内约 30 s，之后几分钟）加一个 tick 内重试，不用再等 10 分钟以上。
+  - 状态里的 `pending` 行多一个 `watched` 标记。只有被观察的行，PR 页面才写“排到队首后几分钟内查第 8 段（最晚约 HH:MM）”；不观察时（Source 太旧、STANDBY、额度用完）保持第 11 代的文字。
+  - 这个标记只在最近 `QUEUE_WATCH_VIEW_MS`（90 s）内有空闲 tick 确认过时才算数。任何批次工作（新批次、从 A 继续往下跑的批次、第 8 段尝试、第 2 次尝试）每到一段，标记立即作废并重写一次排队行（批次只是停在 A 等托管信号时不算，那时观察照常进行），所以另一个批次在跑、观察根本跑不了的时候，页面回到第 11 代的文字。每个空闲 tick 都先刷新这个标记，再看节奏；在这个 tick 里刷新过、又没有被批次工作作废的标记，一直有效到这个 tick 结束时写的状态，所以观察本身慢、或者同一个 tick 里观察之后又跑了第 10 段，都不会让它在观察照常进行时失效。
+  - 观察每次答 held 都会更新 `node.probe.at`，也就是“确认本节点持有角色”的探测。伴随进程的接班核对（§23.4）不因此每轮重来：核对进行中来了新的探测，照样读下去（角色不再被确认或上锁时才丢掉，丢掉的不算间隔）；节点一直 ACTIVE 时，新的核对最多每 `TAKEOVER_RECHECK_MS`（15 分钟）开始一次（`node-duty.mjs`），所以打开的 PR 多于一轮能读的 10 个时核对也能做完，GitHub 读取量和第 11 代同一量级。
+
+### 56.3 第 3 项的提醒部分：认领租约快到期（已实现）
+
+- **租约从哪来。**
+  - Native 每次准入都会报告认领的 `expires_at`。Source v2 的调度事实多一个 `claimExpiresAt`（`admission-facts-v2.mjs#schedulingFactsV2`、`sanitizeSchedulingV2`）。拒绝诊断的形状不变。
+  - 第 1 段和每次第 8 段尝试的结果都带调度事实。常驻在这两处记下这个批次最新的租约结束时间（`executor.mjs#noteLease`）。
+  - CI 在这两段延长过租约（56.4）时，结果里带的是 Native 对延长的答复中的新结束时间；答复说延长了却没给时间，就不带（宁可不显示，也不显示旧的、会误报的时间）。
+  - 同时写进账本：停靠点 A 的等待记录、停靠点 B 的停靠记录、每次第 8 段尝试的记录（包括 §28 的暂时性停靠）。
+  - 重启后，在停靠批次的任何处理之前，按“最新尝试记录 → 停靠记录 → 等待记录”的顺序恢复。
+  - 第 3、5、7 段的发布者不带调度事实，所以这几段之间的续租要到第 8 段才看得到。
+- **什么算快到期**（`status.mjs#leaseShort`）：
+  - 正在跑的批次：剩余时间少于“平均一批还剩的时间（从开始算 `LEASE_BATCH_ESTIMATE_MS`，22 分钟）+ `LEASE_MARGIN_MS`（30 分钟，留给第 8 段和合入）”；
+  - 停靠在 B 的批次：剩余时间少于 `LEASE_MARGIN_MS`；
+  - 停靠在 A 的批次（等托管信号，整批还在前面）：按刚开始跑的批次算；
+  - 已过期：单独标出。
+  - `expires_at` 是 Native 的时间，余量远大于 §47 的时钟容差。
+  - 这个结束时间是上一次第 1 段或第 8 段尝试时 Native 说的（停在 B 时最多是 2 小时前）。持有者之后自己续了租，常驻看不到。所以提醒的说法不超过这一点：快到期时写“请现在续租（已续租可忽略）”；过了这个时间写“按上次读到的租约，认领已于 HH:MM 到期（已续租可忽略）”，给 Owner 的通知标题是“可能已到期”，不再建议重新认领、推新提交（那会丢掉一个已经过了 1–7 段的批次）。
+- **怎么提醒。**
+  - PR 页面上，运行中或停靠的文字后面加“；认领约 HH:MM 到期，请现在续租（已续租可忽略）”或“；按上次读到的租约，认领已于 HH:MM 到期（已续租可忽略）”。持有者在 PR 的检查里就能看到。
+  - 停靠在 A、又不是状态里“当前批次”的行（A 可以同时停好几个），PR 页面写“运行中：等待托管信号”，同样带提醒。停在 A 的批次不论是不是当前批次，都按刚开始跑的批次算剩余时间；从 A 继续往下跑的批次从继续的那一刻算（状态 `current.leaseFrom`）。PR 页面和 Owner 通知用同一个起点。
+  - 只有正在跑的批次才按“运行中”判断；第 1 段被拒、已经退回排队的批次不算（它的行仍可能在排队，但没有批次在跑）。
+  - 状态板多一条通知 `lease-short`（批次每到一段都重算一次），每个租约结束时间和状态（快到期、已过期）各一个 key，只在状态板上还没有这个 key 时才加。伴随进程按 key 记住已弹过的通知（14 天），所以同一个 key 只给 Owner 弹一次 Windows 通知。
+  - 状态 `current` 和 `pending` 行都多一个 `claimExpiresAt` 字段。
+  - 批次结束（排队行不再是活的）后，记下的租约就丢掉；正在跑的批次即使它那一行已显示更新的提交，租约也保留到批次结束。
+  - 同一个 head 的新一次尝试开始时，先丢掉之前记下的租约（例如上一次第 1 段被拒、批次退回排队时记下的），等这次的第 1 段从 Native 读到新的结束时间；否则可能拿几小时前的旧值误报“已到期”。
+- 只是提醒：执行器的任何决定都不读它；没有事实时什么也不显示，不猜。
+
+### 56.4 第 1 项入队、第 3 项自动续租（Owner 已决定：入队选 A，批准 CI 延长租约；Decision `207c0cd0` v3：走现有的 CI 命令门；v4：入队信任准入检查）
+
+- **Native 侧**在从 main 切出的分支 `claude/native-ci-claim-assist` 上实现（本节对照的合同提交是 `e02ae378`，当时分支已普通合并 main `ea57e45b`；之后主会话又合并了更新的 main 准备推送，合同没有变；`script.independent-native-publication` 升到 1.1.5，agent contract 升到 54）。生产迁移和部署由主会话逐步请 Owner 批准，本会话不碰生产。
+- 不新增 anon 函数（CI 面保持 CI8），而是在现有的 CI 命令门 `clued_work_verify_v1` 上加两个 action，只给 Owner 标记的 CI 准入 Binding（已启动、没撤销、用途为 resident-node 或 unspecified；不是 CI 准入 Binding 的有效令牌得到 `{status:'rejected', error_code:'admission_binding_required'}`，无效令牌得到 42501，只能报心跳的连接得到 `heartbeat_connection_only`）。两者要求的认领都是：在这个 scope 里、`bound_pr` 正是这个 PR、仍然有效（ACTIVE、未过期、没有待交接、没被更新的 fence 取代、不是没被采用的副本），并且这个 head（40 位十六进制，服务端统一转成小写；常驻客户端只发小写）在当前执行纪元里、对这个 PR、目标分支 main 有一条执行准入记录：
+  - `merge_queue_join {action, scope, pr_ref, head_sha}`：把 `merge:<repo>:main` 加进 `trigger_refs`（排到队尾；失效或出队后重新排队，与持有者续租时相同）。不动租约、fence、`lease_version`、`progress_ref`、持有者、续租次数、执行纪元；已在队列里就什么也不写；`trigger_refs` 已满时干净地拒绝（`trigger_refs_full`）。写一条 Receipt `WORK_CLAIM_MERGE_QUEUE_JOINED_BY_CI`。
+  - `lease_extend {action, scope, pr_ref, head_sha, minutes}`：`minutes` 为 1..180，到期时间改为 least（max（原到期，现在 + minutes），认领的硬上限 24 h）。已过期的认领不复活，每个认领 5 分钟内最多真正延长一次。同样不动 `lease_version` 和 fence，所以持有者下一次 `clued_work_renew` 不会因 CAS 被拒。写一条 Receipt `WORK_CLAIM_LEASE_EXTENDED_BY_CI`。
+- **持有者续租的三处改动**（前两处是 Owner 认定的缺陷，一并修了；第三处是审查中发现的）：
+  - 持有者带着自己的 `trigger_refs` 续租时，**CI 加上的** `merge:<repo>:main` 保留，队列位置不变。只有 CI 真正加上的引用才算 CI 的：CI 只是让持有者自己加的引用重新排队时，它仍是持有者的。已经离开认领的合并引用（合入、关闭、CI 失败）不会被加回来，之后持有者自己再加的就是持有者的。所以：CI 加上的引用还在时，持有者要离开队列只能释放认领；持有者自己的引用，续租时不带它就离开。
+    - 续租时如果保留 CI 的引用会让 `trigger_refs` 超过 50 个，续租以 `work_claim_trigger_refs_invalid`（22023）拒绝，什么也不改。
+  - 持有者续租时，新的到期时间取 least（max（现有到期，现在 + 2 h），硬上限），不会把 CI 延长的租约截短。
+  - CI 把租约延到硬上限后，持有者的续租照样接受（记下进度、引用和写集，到期时间保持在上限），不再以 `work_claim_hard_deadline` 拒绝；没有 CI 延长时，到了上限仍照旧拒绝。
+- **入队的另一个效果**：入队改变 `trigger_refs`，和持有者续租一样：受保护的认领之前的执行准入摘要会对不上，直到 head 再验证一次。第 8 段的每次观察都会经准入评估器再 verify 一次（带 `target_branch`），所以入队后的下一次观察就会重新对上。入队成功后，这次尝试马上再观察一次，即使它的 90 s 已经用完（仍受这一段自己的期限约束），把执行准入重新记上；这次观察若碰上一时的 GitHub 或 Native 故障，就等下一次尝试再记。这次观察时如果已经排到队首，就照常发布。这次观察失败时，答复按“已在队列里、位置不明”给出（`RESIDENT_QUEUE_HEAD_NOT_REACHED`），不说没入队。
+- **常驻侧（本分支）**：Source v2 的 `claim-assist-native.mjs`。
+  - 第 8 段（`publisher.mjs#waitForQueueHead`）：Native 说认领不在合并队列里时，每次尝试调用一次入队，然后在同一次尝试 90 s 的轮询里继续等队首；队列空时，这次尝试就能通过。租约剩余少于 `STAGE8_LEASE_MINUTES`（180 分钟，Native 允许的最大值：最长 120 分钟的退避加 30 分钟提醒余量还有富余，所以 CI 能续上时不会在下一次尝试前误提醒）时，每次尝试延长一次。一开始就已在队首、马上可以发布的尝试不再入队，但同样延长一次（在队首和合入链的检查之后、答复“已就绪”之前）。已在队首、但合入规则或合并列车说还没准备好（例如单绿证明没成立）的尝试，在答复“没准备好”之前也延长一次。队首已就绪、之后因暂时性故障（读回检查、发布时 Native 一时读不到等）没发布成的答复，照样带回租约结束时间（包括延长后 Native 答复的新时间），但不带合并队列位置，所以 §28 的暂时性停靠计数不变。绿灯账本写不进（`GREEN_LEDGER_UNAVAILABLE`）不是 §28 的暂时性码，常驻按排位安排下次尝试，所以它带回完整的调度事实（含队首位置和延长后的租约），队首照样 60 s 后重试、不计次。
+  - 两者都放在“main 已移动”（`RESIDENT_BASE_MOVED`）的检查之后：合不进去的批次不去占队列的位置。
+  - **调用方的义务（Decision `207c0cd0` v4）**：服务端入队时不查 Owner Grant，而是信任准入检查。所以常驻只在本次运行里完整准入（包括需要时的 Owner 审查）刚通过之后才调用：第 8 段只在一次观察通过 `factsValid` 之后，第 1 段只在发布成功（SETTLED）之后。入队不等于合并：合并仍要过必需检查，而必需检查本身要求 Grant。测试覆盖了“准入没通过的观察不入队、不延长”。
+  - 第 1 段（`formal-work-admission-check-v2/startup.mjs`）：发布成功（SETTLED）后，租约剩余少于 `STAGE1_LEASE_MINUTES`（90 分钟，一批加第 8 段）时延长一次。
+  - 这两种写都不是发布：不写 GitHub 检查，不写 Native 发布记录，后面的段和合并闸门都不把它当授权。所以它们不计入这一段的 `sideEffects`。要是计入，一次本该干净的第 8 段“没准备好”会变成失败，反而烧 head。
+  - 两种写都是幂等的，由服务端限次。失败只写观察日志，端口从不抛错，写日志失败也不影响结果。失败包括：门还不认识这两个 action（22023 `work_claim_ci_command_invalid`，记作 NOT_DEPLOYED）、拒绝、5xx 或断流（记作 UNREACHABLE，包括读 200 答复正文时断流）、超过 64 KiB 的答复、配置或参数不对。结果与没有它们时完全一样：持有者照常可以自己续租，56.3 的提醒照常显示。
+  - 这两个 POST 不被 entry 的读重试（`read-retry.mjs`）重发：`nativeReadPost` 只把门的两个读 action 当作读。
+  - 入队、延长都不使批次作废：批次认领只比较 claim id、fence、epoch。
+
+### 56.5 第 4 项：准入超时后自动补跑（Owner 选 C：由伴随进程点；Decision `207c0cd0` v2）
+
+- **现状。**
+  - `clued-required-tests.yml` 的 `admission-gate` 最多等 600 s（`INDEPENDENT_GATE_WAIT_SECONDS`），等常驻第 1 段发出 `kooyumi-work-admission`。
+  - 常驻忙时第 1 段来晚了，gate 就以 `ADMISSION_PENDING` 结束，重型 job 跳过，必需检查缺失。
+  - #993 已经允许“Re-run all jobs”在同一 head 上补跑一次（`independentRepairRerun`）。缺的是谁来点：今天要 Owner 手动点。
+- **做法**（`src/admission-rerun.mjs`，伴随进程里自己的 lane、自己的 Runner、自己的记忆文件 `companion-admission-rerun.json`）：
+  - 伴随进程用 Owner 会话里的 gh 登录（它本来就用这个登录写 PR 状态）点一次“Re-run all jobs”：`gh api --method POST repos/<repo>/actions/runs/<id>/rerun`。不新增 workflow，不要新令牌，不给常驻 App 加权限。
+  - 只在本节点 ACTIVE、没有 HALT、状态文件是最近 5 分钟（`STATUS_STALE_MS`）内写的时候（更旧的状态证明不了角色：执行器可能已停、另一节点已接手；面板触发和 PR 状态也这样读），只看本节点跑过或排过的 head（状态里的 current、排队行、最近结果），且这个 head 是轮询器看到的开着的 PR。
+  - 每分钟一步；同一个 head 至多每 2 分钟看一次，从第一次看到起看 12 小时；每步至多看 5 个 head。
+  - 一个 head 只要还是候选，它的记录就一直留着（不论多久），所以 12 小时的窗口不会重新开始，“永久放弃”也不会忘。记录里还记着它最后一次是候选的时间（至多每小时更新一次）。不是候选时，记录只在两种情况下去掉：完整的一步（状态新、本节点 ACTIVE、没有 HALT、轮询器已经看到开着的 PR）里它不在候选之列；或者它最后一次是候选已过 24 小时。伴随进程刚启动（轮询器还没跑过）、节点暂时 STANDBY 或 UNCERTAIN、HALT、状态过旧，都不算完整的一步。所以伴随进程刚启动、节点暂时 STANDBY 或 UNCERTAIN、HALT 时，12 小时的窗口和“永久放弃”的结论都不会被重置。
+- **点之前必须全部满足**（判断从未合入的 76481044 搬来，`decide`）：
+  1. 恰好一个开着的、目标为默认分支、来自本仓库的 PR 的 head 正是它，并且 App 5368905 在这个 head 上最新的 `kooyumi-work-admission` 是 completed/success、绑定这个 PR（第 1 段已发出准入；同 `independentAdmissionCheck`）。
+  2. 这个 head 的 `clued-required-tests` pull_request 运行全部 completed，没有排队或在跑的尝试。
+  3. 这个 head 的任何运行、任何尝试里，除 gate 外没有 job 真跑过（都是 completed/skipped）。
+  4. gate 自己的补跑规则（`repairAllowed`，照搬 #993 的 `independentRepairRerun`）允许下一个尝试：之前每个尝试只跑了 gate，gate 以 `ADMISSION_PENDING`、`RERUN_REFUSED` 或 GitHub 5xx/连不上的 ERROR 结束。手动点过、但什么也没跑的补跑不占这一次。
+  5. 点之前再读一次：PR 仍开着、仍是这个 head，运行仍是 completed、仍是同一个尝试。
+  - 从不点“Re-run failed jobs”或单个 job。新尝试里的 gate 会再判一次，这一侧从来不是放行重型 job 的依据。
+- **最多一次，断流时也不重复。**
+  - 每个 head 一条回执（`clued.independent-ci.admission-rerun/1`：PR、head、run、尝试号、结果、时间）。先把 `intent` 写到盘上，再发请求，发完写结果：`sent`、`unsent`、`refused` 或 `unknown`（见下文“告知”）。
+  - 这个 head 只要有任何回执（包括请求的答复丢了、或在两次写之间崩溃，只剩 `intent`），就再也不点。伴随进程启动后看到只剩 `intent` 的回执，把它改记成 `unknown`，给 Owner 弹一次“结果不确定”。
+  - 第二次写（记下结果）失败时，这一步结束时或之后的某一步再写，直到写进去；在那之前盘上的 `intent` 照样挡住再点。`intent` 本身写不进时不发请求，这一步别的改动（新 head 的窗口起点、最终结论）也留到下一步写。把只剩 `intent` 的回执改记成 `unknown` 时写不进，就保持 `intent`、先不通知，下一步再改。
+  - gh 起不来（`unsent`）、GitHub 拒绝（`refused`）、超时或结果无法确认（`unknown`），都只记下来，不重试，给 Owner 弹一次通知，说明情况和要不要手动补跑。
+  - 回执写不进去就不发请求。记忆文件存在却读不出来、不是 JSON、或形状不完全对，这个 lane 什么也不做（忘掉回执可能导致点两次）；之后每一步重读一次，仍读不出时给 Owner 弹一次通知。回执保留 14 天。
+  - 读 GitHub 失败（断流、非 0 退出、不是 JSON）时什么也不点，2 分钟后重新读。
+  - 回执丢了（例如重装），还有 gate 自己的规则兜底：补跑的那次尝试里重型 job 真跑了，就不会再允许。
+- **告知。**
+  - 点成功后给 Owner 弹一次通知；这个 head 在 PR 页面上的基础文字前面加“已自动补跑一次必需测试；”（`pr-status.mjs#withRerunLine`）。这一句放在值班词（当班、双活停机、已交班、停摆）之后：别的节点只在文字开头读值班词（`node-duty.mjs#parseDutyStatus`），看门狗那一句仍在最后。
+  - 请求的结果分四种记进回执，各给 Owner 一句话：`sent`（已补跑）；`unsent`（gh 没有启动，请求没到 GitHub）；`refused`（GitHub 以 HTTP 4xx 拒绝）；`unknown`（超时、作业宿主无法确认、或没有 HTTP 答复的失败：GitHub 可能已经开始，请到 PR 页面看）。不论哪种都不再自动点。
+- **两处已知约束：以后任何新 workflow 都会碰到**（在未合入的 76481044 里实测发现）：
+  - 已安装在每台 runner 上的 hook `scripts/runner/clued-runner-job-started.mjs` 只放行 main 上的 push、schedule、workflow_run、pull_request_target、workflow_dispatch，不放行 `check_run`。要用 `check_run` 触发，得先做 hook 的后继版本，并在每台 runner 上重装。
+  - 每个新 workflow 都必须登记进 `.github/actions/ci-temporary-storage/coverage.json`。这个文件被 gitleaks/trivy 的 scan-start 策略钉住（`hosted-relay-v1/registry.json` 的冻结闭包，生产 Worker `ci-scan-start-v1.ts` 会核对）。所以加任何一个 workflow，都得重新钉值并部署生产 Worker，否则之后 PR 的 scan start 会被拒（`clued-cloud` 的 `ci-scan-start-worker.test.mjs` 会失败）。
+  - 后者已立为 Clued 任务 `259a20c6-1e77-46fb-8ef1-8d8386d38ffc`（“新 workflow 登记要重钉 scan-start 策略并部署，应改成不需要部署”）。
+
+### 56.6 策略、Source 与安装
+
+- **策略。** 不改（仍是 /9），没有新的策略字段。观察的节奏和上限是代码常量。
+- **Source v2 改动：**
+  - `role-probe-run.mjs`：新增 /2；
+  - `windows/FormalPublicBoundaryV2.cs`：session 0 助手自己的作业检查也认 /2（`RoleProbeRunId` 与 JS 的 id 一致，`watchPr` 为 1..9999999999）；
+  - `invoke-stage.mjs`：`--watch-pr`、意图 /2；
+  - `role-probe-entry.mjs`；
+  - `merge-slot-native.mjs#parseRoleProbe`；
+  - `admission-facts-v2.mjs`：`claimExpiresAt`；
+  - `independent-control-checks-v2/claim-assist-native.mjs`（新）、`independent-control-checks-v2/publisher.mjs`、两个 `startup.mjs`：入队与延长租约（56.4）；
+  - `resident-v2/source-closure.json`：重新生成，多了 `claim-assist-native.mjs`。
+- **常驻改动：**
+  - `executor.mjs`：观察、租约；
+  - `role-probe.mjs`；
+  - `engine-windows.mjs`；
+  - `status.mjs`：`claimExpiresAt`、`lease-short`、`leaseShort`，排队行的 `watched`、`network`、`heldBy`，`queue.hold`，`parseStatus` 读出 `pid`；
+  - `pr-status.mjs`；
+  - `queue.mjs`、`ledger.mjs`：网络退避标记、租约写进等待和停靠记录（56.3、56.8）；
+  - `admission-rerun.mjs`（新）、`companion-main.mjs`：伴随进程的补跑 lane（56.5）；
+  - `node-duty.mjs`：接班核对的间隔（`TAKEOVER_RECHECK_MS`，§23.4、§56.2）。
+- **安装。** 随第 12 代一起，由 Owner Grant 和 UAC 完成，本会话不安装。
+  - 旧的 Source 不认识 `--watch-pr`，会以 `STAGE_PACKAGE_REFUSED` 拒绝；那样角色探测没有事实，会 HALT。
+  - 所以执行器只在已安装的 Source 整条路径都认得 `role-probe-run/2` 时才观察（`engine-windows.mjs#queueWatchSupported`，读一次已安装的 `role-probe-run.mjs` 和 session 0 助手的 `windows/FormalPublicBoundaryV2.cs`，两者都认得才算）。读不到或不认得，就不观察，一切照第 11 代。读到内容或文件不存在时，结论保持到服务进程结束（已安装的 Source 运行中不会变）；其他读错误（文件被杀毒软件或备份占用）只算这一次不观察，`QUEUE_WATCH_SUPPORT_RETRY_MS`（5 分钟）后再读。
+
+### 56.7 测试
+
+- 常驻：
+  - `test/queue-watch.test.mjs`：
+    - 没入队时每 30 s 观察一次；成为队首后马上尝试，远早于 10 分钟；
+    - 排在第 2 位的也观察，第 1 位在 60 s 连试之中不观察；
+    - 断流时回答 uncertain，不提前、不 HALT；
+    - 没有确认事实就 HALT，忙时只延期；
+    - 不带观察的“队首”回答不算事实；
+    - STANDBY、PAUSE、即将到期、超过 `maxMs`、超过日上限时都不观察；
+    - Source 不认得观察时（或读不到）不观察；
+    - holders 与第 8 段说法不一时只提前一次，答复变化后才再提前；
+    - 时钟往回跳不抛错、不观察；慢的探测之后不在同一 tick 再观察；节奏随停靠时间放慢；第 8 段额度用完时不观察；
+    - 记账存 `ROLE_PROBE_HELD`。
+  - `test/lease-reminder.test.mjs`：
+    - `leaseShort` 的边界；
+    - 引擎只保留合法的时间；
+    - PR 页面上运行中、停靠的提醒文字，没有事实时不显示；
+    - Owner 通知只发一次；
+    - 执行器从第 1 段、第 8 段取租约，重启后恢复（暂时性停靠的尝试记录、停靠记录）；
+    - 未被观察的停靠行保持第 11 代文字；
+    - 断流时没有事实、没有通知；
+    - 批次结束后忘掉租约。
+  - `test/engine-v2.test.mjs`：观察时意图 /2、带 `--watch-pr`；PR 号不合法时不观察；只有认得 /2 的已安装 Source 才算支持观察。
+  - `test/admission-rerun.test.mjs`：
+    - 只点一次，回执先于请求落盘，告诉 PR 页面和 Owner，重启后也不再点；
+    - 断流：请求失败、超时、起不来只记 `unsent`、`refused` 或 `unknown`，不重点；读失败时不点，2 分钟后重读再点一次；
+    - 只剩 `intent` 时不点；回执写不进或记忆文件读不出时不点；
+    - 重型 job 跑过、gate 因别的原因拒绝时永久放弃；尝试在跑、准入还没到（或别的 App、没绑定、失败）、没有开着的 PR、fork、别的目标分支时暂不点；
+    - 点之前 PR 或运行变了不点；手动补跑过但什么也没跑时仍可点；有别的 head 的 job 时不点；
+    - 只在 ACTIVE、只看本节点碰过的 head；gh 端口的参数、路由、分页。
+- Source v2：
+  - `test/role-probe-watch.test.mjs`：
+    - /1 不变、/2 的 id 绑定 PR；
+    - 只有恰好一个、绑定这个 PR 的持槽者才算队首；
+    - entry 不把 PR 发给 Native；
+    - 断流时回答 uncertain；
+    - CLI 拒绝不合法的 `--watch-pr`；
+    - Windows 上用 PowerShell 编译 `FormalPublicBoundaryV2.cs`，确认 C# 接受同一个 /2 作业、算出同一个 id，/1 不变。
+  - `windows/PureTestsV2.cs`（`test-pure-v2.ps1`）：/2 的接受与拒绝（PR 号绑进 id、范围、缺字段、/1 不许带 `watchPr`、合同固定）。
+  - `test/claim-assist-native.test.mjs`：发送的是 CI 令牌的哈希、scope、PR、head，不发令牌本身；未部署、拒绝、5xx、断流、坏答复都有名字，不抛错；分钟数越界不发；只有租约不够时才延长。
+  - `test/resident-v2-publishers.test.mjs`：第 8 段不在队列时入队一次、租约短时延长一次，仍是干净的“没准备好”；门还不认识这两个 action 或断流时，结果与没有它们时一样。
+  - 调度事实相关的已有测试按新形状更新。
+- 各轮审查后补的测试（两边都有，文件名写在条目里；没写文件名的在常驻的 `test/` 下）：
+  - 第二轮审查后补的：
+    - 延长后报告的是 Native 答复的新结束时间；
+    - main 已移动时不入队、不延长；写日志抛错不影响结果；
+    - 答复超过 64 KiB、配置或参数不对时不抛错；
+    - 两个 POST 经过 entry 的 fetch 只发一次；
+    - 第 1 段只在 SETTLED 且租约不够时延长；
+    - 第 1 位连试结束后也观察；`watched` 标记过期；没能开始的观察不计数；
+    - 停靠在 A 的行带提醒。
+  - 第三、四轮审查后补的：
+    - 补跑那一句在值班词之后，看门狗那一句在最后（经伴随进程的整次写状态验证）；
+    - 补跑记忆文件形状不对时不点、只告诉一次、能读后继续；请求结果分 unsent、refused、unknown；
+    - 12 小时窗口不因保存、伴随进程重启、STANDBY 或 HALT 而重置；
+    - Native 答复里没有租约结束时间时忘掉旧值，重启后取最新的那条记录；
+    - 观察答“不在值班”时即使没记账也转 STANDBY；被延期的观察不计数；
+    - 签名随 `watched`、`claimExpiresAt`、`network` 变化；客户端拒绝不是 40 位小写十六进制的 head。
+  - 第五、六轮审查后补的：
+    - 每次有答复的观察都告诉熔断器（`queue-watch.test.mjs`）；
+    - 停在 A 的批次在 HALT、PAUSE 时照实说（`lease-reminder.test.mjs`）；
+    - 租约时间可能是旧的：过期提醒不建议推新提交（`lease-reminder.test.mjs`）；
+    - 准入没通过的观察不入队、不延长（`resident-v2-publishers.test.mjs`）。
+  - 第九、十轮审查后补的（`admission-rerun.test.mjs`）：
+    - 一直是候选的 head 过了 24 小时也不重新开窗口；
+    - 伴随进程刚启动（轮询器还没跑）、状态过旧时，记录不丢、结论不忘；
+    - 超过 5 分钟的状态不算 ACTIVE 的证明，什么也不点。
+  - 第十一、十二轮审查后补的：在最后一次轮询时入队成功，也会马上再观察一次；这次观察时已是队首的，照常发布两个检查（`resident-v2-publishers.test.mjs`）。
+  - 第十三至十七轮审查后补的：
+    - 另一个批次开始后，停靠行不再显示为被观察；位次不明的被观察行也用被观察的文字（`queue-watch.test.mjs`、`lease-reminder.test.mjs`）；
+    - 运行中的批次在中途就收到租约提醒（`lease-reminder.test.mjs`）；
+    - 从 A 继续的批次：停靠行不再显示为被观察；它那一行已显示更新提交时仍保留租约（`queue-watch-wait-path.test.mjs`）；
+    - 批次停在 A 的安静 tick 里，停靠行的“被观察”标记不闪（`queue-watch-wait-path.test.mjs`）；
+    - 停在 A 的当前批次按刚开始算；从 A 继续的批次从继续时算，PR 页面和通知一致；第 1 段被拒、退回排队的批次不发“运行中”的提醒；CI 续上租约时下一次尝试前不误提醒（`lease-reminder.test.mjs`）。
+  - 第十八、十九轮审查后补的：
+    - 停在 A 的在跑批次，它那一行已显示更新的提交时，也从现在算，发一次 `CLAIM_LEASE_SHORT`（`lease-reminder.test.mjs`）；
+    - 上一次尝试被拒时记下的旧租约，在同一个 head 的下一次尝试开始时丢掉，不误报“已到期”（`lease-reminder.test.mjs`）；
+    - 一开始就在队首的第 8 段尝试，租约短时同样延长一次，不入队，照常发布（`resident-v2-publishers.test.mjs`）。
+  - 第二十轮审查后补的：
+    - 网络退避到期后被按行延期压住时，PR 页面写延期，不写网络和已过的时间（`pr-status-refresh.test.mjs`）；
+    - 队首已就绪、延长后遇到暂时性故障的答复带回新的租约结束时间、不带队列位置（`resident-v2-publishers.test.mjs`）；常驻按它停靠，不误提醒（`lease-reminder.test.mjs`）；
+    - 暂停接新期间（没有到期行时也一样）和接管扫描扣着停靠批次时不观察，暂停结束后恢复（`queue-watch.test.mjs`）。
+  - 第二十一、二十二轮审查后补的（`pr-status-refresh.test.mjs`）：
+    - 到期的退避或等待不写已过的时间；被按行延期压住时写延期，非自动解除的不写“自动重试”；自己的时间还没到的行被延期时保留原来的文字和时间；
+    - 延期过了期限不再算压住；熔断这类整条队列的闸门优先于按行延期；有别的批次在跑时写“当前批次结束后”；
+    - 签名随 `heldBy` 和停靠位满不满变化。
+  - 第二十三轮审查后补的（`pr-status-refresh.test.mjs`）：当日执行批次或评估额度用完时，到期的退避行和排队行写额度的文字，等待行不受评估额度限制；排队行延期期间写“排队中”，过期后写位次和预计时间；签名随额度满不满变化。
+  - 第二十四轮审查后补的：整条队列的延期（例如两端版本不一致）对到期的退避行和排队行都写延期的文字，签名随它变化；“排队超过 1 小时”的通知写压住这一行的闸门；没有调度读额度时，额度每分钟读一次（`pr-status-refresh.test.mjs`）；入队后的那次观察失败时不报没入队（`resident-v2-publishers.test.mjs`）。
+  - 第二十五轮审查后补的（`pr-status-refresh.test.mjs`）：批次停在 A 时合并列车的闸门仍在状态里、排队行写闸门，调度越过后清掉；时间还没到的退避行被延期时，通知用行自己的原因。
+  - 第二十六轮审查后补的（`pr-status-refresh.test.mjs`）：从 A 继续跑的批次期间和之后不再显示之前调度遇到的整条队列延期；HALT 时“排队超过 1 小时”的通知用行自己的原因。
+  - 第二十七轮审查后补的：慢的观察、观察后同一 tick 又跑第 10 段时，本 tick 的状态仍是被观察（`queue-watch.test.mjs`）；每 30 s 一次角色确认时接班核对仍能做完、新核对有间隔（`node-duty.test.mjs`）；读 200 答复正文时断流记作 UNREACHABLE（`claim-assist-native.test.mjs`）；队首就绪后绿灯账本写不了时带回完整的调度事实（第二十八轮改正，`resident-v2-publishers.test.mjs`）。
+  - 第二十八轮审查后补的：队首的 `GREEN_LEDGER_UNAVAILABLE` 带回完整的调度事实，常驻 60 s 后按队首重试、不计次（`resident-v2-publishers.test.mjs`、`park.test.mjs`）；角色不再被确认而丢掉的接班核对不推迟下一次核对，ACTIVE→STANDBY→ACTIVE 与伴随进程重启后立即核对（`node-duty.test.mjs`）。
+  - 第二十九轮审查后补的：已在队首、规则或列车说没准备好时也延长租约（`resident-v2-publishers.test.mjs`）；ACTIVE→UNCERTAIN→ACTIVE、执行器重启后立即做接班核对，一直 ACTIVE 时仍有间隔（`node-duty.test.mjs`）；补跑结果写不进时之后再写，只剩 `intent` 的回执记成 `unknown` 并通知一次（`admission-rerun.test.mjs`）。
+  - 第三十轮审查后补的（`admission-rerun.test.mjs`）：`intent` 写不进时，这一步的其他改动在下一步写进；改记 `unknown` 写不进时保持 `intent`、不通知，下一步再改并通知一次。
+  - 第三十一轮审查：只改注释和 DESIGN（租约常量的注释；观察中断时 `ROLE_PROBE_INTERRUPTED` 停机的风险写进 §56.2），没有新测试。
+  - 第三十二轮审查后补的：常驻和 Source 两边对角色探测意图 /1、/2（`watchPr` 取边界值）的哈希逐字节一致（`engine-v2.test.mjs`）；§56.6 的改动清单补上 `node-duty.mjs` 和 `status.mjs` 的新字段。
+  - 第三十三轮审查后补的：读已安装 Source 时一时出错，不会让观察在整个进程里关掉，5 分钟后再读（`engine-v2.test.mjs`）。
+
+### 56.8 缺陷 `050560ac`：批次没执行、转入退避后，PR 页面仍停在“运行中”
+
+- **现象。**
+  - PR 998 head `67b0c70a` 在 10:58 领取批次，PR 页面写了“当班：运行中：第 0 段”。
+  - 11:04 打包遇到网络失败（`BUNDLE_UNAVAILABLE`，network），这一行转成 BACKOFF，11:14 重试。
+  - GitHub 上 `resident-queue/desk-w-591` 的状态一直停在“运行中”。
+- **原因。**
+  - 执行器在 tick 结束时清掉了 `current`，排队行也是 BACKOFF，`describe` 本来会写“未准入或未执行……自动重试”。
+  - 但伴随进程那次写 GitHub 很可能也碰上了同一次断网，写失败了。写失败的 head 要等 `POST_RETRY_MS`（10 分钟）才再写。到 11:14 批次又跑起来，要写的又是“运行中：第 0 段”，与上一次写成功的一样，于是什么也不写。
+  - 另外，伴随进程只在 `current`、熔断、暂停、HALT 变化时立即重读状态（`statusSignature`），排队行变了（转入 BACKOFF、STOPPED，重试时间）要等下一次每分钟的轮询。
+- **修法**（`pr-status.mjs`、`queue.mjs`、`status.mjs`）：
+  - `statusSignature` 加上排队行的 PR、head、状态、原因、下次时间，以及 `watched`、`claimExpiresAt`、`network`、`heldBy`，再加上停靠位满不满（`queue.parkingFull`）：批次没执行、转入退避或停住、重新排上、被延期压住、提醒出现，都立刻触发一次写。熔断打开或关上本来就在签名里。
+  - 写失败的 head：要写的文字一变，下一次轮询就再写；同样的文字在 `POST_RETRY_MS` 之后再写，从 10 分钟改为 2 分钟。
+  - 网络原因的退避（`queue.mjs` 的 `levelKind === 'network'`）在状态的 `pending` 行上带 `network` 标记。PR 页面写明原因和下次时间，例如“网络问题，打包失败，约 11:14Z 自动重试，不用推新提交”。原因文字按 `classify.mjs#networkFailure` 的几个代码给出；其他退避仍是原来的文字。
+  - 退避或等待的行被按行的延期压住时（`queue.mjs#defer`：行的状态不变），排队视图仍给出行自己的原因，另用 `heldBy` 字段写延期的代码；延期只在它的期限（`deferUntil`）之内算压住，过了期限这一行又是候选。PR 页面：
+    - 自己的时间还没到（例如新提交触发后提前成了候选，又被延期）：照旧写原来的文字和时间，那个时间的重试照样会跑；
+    - 时间已到、被状态里看得到的整条队列的闸门压住（暂停接新、熔断、停靠位满、当日执行批次额度用完，退避行还有当日评估额度用完，以及调度遇到的整条队列的延期：companion 没就绪、两端版本不一致、托管资格窗口未确认、合并列车的接管扫描或 Source 问题，记在状态的 `queue.hold`（`executor.mjs#SCHEDULE_HOLDS`），从遇到它的那次调度一直保留到某次调度越过它，或有批次开始干活（新批次、从 A 继续的批次、第 8 段的尝试、第二次尝试：这时排队的行等的是它，下一次调度再判断）；只是停在 A 等托管信号时仍保留；额度看状态的 `limits`，由读额度的那次调度写入，没有调度读到时由每个 tick 的报告最多每分钟读一次）：先写那个闸门的文字，和排队的行一样，例如“排队第 1 位：执行器熔断中（网络故障），约 12:04Z 试跑”“排队第 1 位：今日执行批次额度已满，明天继续”；被延期压住、不在可跑的行里时写“排队中：……”，不写“第 ? 位”；
+    - 时间已到、没有看得到的闸门、被按行延期压住：写延期本身，例如“排队中：本 PR 今日批次已满，之后自动重试”；不是到时自己解除的延期（`RELAY_QUALIFICATION_HELD`）不写“自动重试”；
+    - 时间已到、没被压住：前面还有批次时写预计开始的时间（“约 HH:MMZ 自动重试”）；有别的批次在跑时写“当前批次结束后自动重试”；否则写“即将自动重试”。都不写已经过去的时间。
+  - 排队（QUEUED）的行也一样：没有可跑的位次时写“排队中：……”（例如“排队中：冷却中（10 分钟）”）；按行延期过了期限后不再写延期的原因，回到“排队第 N 位，预计 HH:MM 开始”；当日额度用完时写额度的文字，不给预计开始时间。
+  - 签名还随当日两个额度满不满、执行器的整条队列延期变化。
+  - “排队超过 1 小时”的通知仍按（PR、提交、原因）各一次，原因取 PR 页面上压住这一行的东西：到期的行先看整条队列的闸门，再看按行延期，再看行自己的原因；自己的时间还没到的退避或等待行用行自己的原因，和页面一样；HALT 或 PAUSE 时不看整条队列的闸门，只用行自己的延期或原因（页面这时写停机或暂停）。按行延期过期、改由停靠位满之类的闸门压住时，通知写那个闸门（例如“停靠的批次已满”），不写“前面还有批次”。
+- **测试**（`test/pr-status-refresh.test.mjs`）：
+  - 网络退避的文字；非网络退避的文字不变；
+  - 签名随排队行变化，行不变时签名也不变；
+  - 断网时写失败，文字一变马上重写，同样的文字 2 分钟后重写。

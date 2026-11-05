@@ -478,11 +478,22 @@ export class RunQueue {
     // A parked row whose current commit is a newer one (its batch still rests at B) shows that commit as waiting for the
     // batch, never as tested (independent review of step 2, m3).
     const parkedHere = r => r.state === 'PARKED' && r.running?.headSha === r.current.headSha;
+    // A back-off or wait keeps its own reason; a per-row deferral that holds it now (defer: the row keeps its state; until deferUntil)
+    // is named apart (heldBy), so the PR page can tell the two (review round 21, MINOR 1 and NIT 2). A deferral whose time ran out
+    // holds nothing any more (review round 22, MINOR 1): the row is a candidate again.
+    const own = r => r.state === 'BACKOFF' || r.state === 'WAITING';
+    const held = r => own(r) && r.deferred && time(r.deferUntil) && r.deferUntil > now ? r.deferred : null;
+    // A queued row's reason is only ever its deferral (defer); once that ran out it says none, as a row that may run (review round 23,
+    // MINOR 2).
+    const queuedReason = r => (time(r.deferUntil) && r.deferUntil <= now ? null : (r.deferred ?? r.reason ?? null));
     return this.data.rows.filter(r => r.current).map(r => ({
       pr: r.pr, headSha: r.current.headSha, baseSha: r.current.baseSha, state: r.state === 'PARKED' && !parkedHere(r) ? 'RUNNING' : r.state,
-      reason: r.state === 'PARKED' && !parkedHere(r) ? null : (r.deferred ?? r.reason ?? null), since: r.since ?? null,
+      reason: r.state === 'PARKED' && !parkedHere(r) ? null : own(r) ? (r.reason ?? null) : r.state === 'QUEUED' ? queuedReason(r) : (r.deferred ?? r.reason ?? null),
+      heldBy: held(r), since: r.since ?? null,
       nextAt: parkedHere(r) ? (r.parked?.nextAt ?? null) : r.state === 'PARKED' ? null : time(r.nextAt) ? r.nextAt : (r.poke ? r.poke.dueAt : null), level: r.level, origin: r.origin ?? null, stopKind: r.stopKind ?? null,
       queuePosition: parkedHere(r) ? (r.parked?.position ?? null) : null,
+      // Generation 12 (defect 050560ac): a back-off after a network release (the line to GitHub or Native, DESIGN 53.3), for the PR page.
+      network: r.state === 'BACKOFF' && r.levelKind === 'network',
       firstAt: r.current.firstAt ?? null, position: ahead.has(r.pr) ? ahead.get(r.pr) + 1 : null,
       eta: ahead.has(r.pr) ? start + ahead.get(r.pr) * etaBatchMs : null,
     })).sort((a, b) => (a.position ?? 1e9) - (b.position ?? 1e9) || a.pr - b.pr);

@@ -140,8 +140,8 @@ import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
 import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, trainDue, trainRunInput, trainRunMode, trainSummary, trainSweepView } from './train.mjs';
-import { RoleProbe, validateRoleProbeFact } from './role-probe.mjs';
-import { NODE_MODES } from './status.mjs';
+import { ROLE_PROBE_CODES, RoleProbe, roleBookFact, validateRoleProbeFact } from './role-probe.mjs';
+import { NODE_MODES, leaseShort } from './status.mjs';
 import { RelayQualificationHolds, RELAY_QUALIFICATION_HELD, qualificationWindowSnapshot, qualificationWindowMatches } from './relay-qualification-hold.mjs';
 import { RelayQualificationObservations } from './relay-qualification-observations.mjs';
 import { RevocationMaintenanceBook,validateRevocationFacts,validateRevocationQualification,
@@ -193,6 +193,12 @@ const archiveFacts = error => (typeof error?.windowsArchiveCode === 'string' && 
 const TRAIN_RUN_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/;
 // The schedule results that ran nothing, after which stage 10 may run (an intake pause holds it as well).
 const TRAIN_QUIET_STATES = Object.freeze(['IDLE', 'DEFERRED']);
+// How often the tick's report reads the daily budgets when no scheduling pass did (reportLimits).
+export const LIMITS_REFRESH_MS = 60_000;
+// The global deferrals of a scheduling pass (precheck, trainGate) that hold every row: kept on the status (queue.hold) from the pass
+// that met one until a pass that got past it or until batch work starts (atStage: a new batch, one going on from A, a stage-8 try),
+// also while a batch only rests at A (review rounds 25 and 26).
+export const SCHEDULE_HOLDS = Object.freeze(['COMPANION_NOT_READY', VERSION_SKEW, 'RELAY_QUALIFICATION_WINDOW_UNCONFIRMED', ...TRAIN_SCHEDULE_DEFERRALS]);
 const TRAIN_HELD_REASONS = Object.freeze(['INTAKE_PAUSED', 'INTAKE_PAUSE_UNCONFIRMED']);
 // The train on: the newest front-batch receipts read back at a start (per head, whatever their age; review R3 MINOR 11).
 const FRONT_RECOVER_RECEIPTS = 512;
@@ -327,6 +333,17 @@ export const STAGE8_TRANSIENT_RETRY_MS = Object.freeze([60_000, 3 * 60_000, 10 *
 // says main moved or the PR changed) makes a try due at most this often.
 export const PARK_HEAD_RETRY_MS = 60_000;
 export const PARK_NUDGE_MS = 5 * 60_000;
+// Generation 12 (DESIGN §56.2): the queue watch of batches parked at B for the merge queue.
+// QUEUE_WATCH_MS: the least gap between the end of any role probe (a watch or not) and the next watch, so a tick runs at most one
+// swap for the two. Each batch is watched again after QUEUE_WATCH_RAMP_MS[i].every while it has rested at B less than .until
+// (30 s for its first 30 minutes, then 2 minutes up to 2 hours, then 5 minutes), and after a watch that gave no definite answer
+// (uncertain, or deferred while the runner was busy) after at least QUEUE_WATCH_FAIL_MS[failures in a row - 1].
+export const QUEUE_WATCH_MS = 30_000;
+export const QUEUE_WATCH_RAMP_MS = Object.freeze([{ until: 30 * 60_000, every: 30_000 }, { until: 2 * 60 * 60_000, every: 2 * 60_000 }, { until: Infinity, every: 5 * 60_000 }]);
+export const QUEUE_WATCH_FAIL_MS = Object.freeze([30_000, 2 * 60_000, 5 * 60_000, 10 * 60_000]);
+export const QUEUE_WATCH_MAX_PER_DAY = 1440;
+export const QUEUE_WATCH_VIEW_MS = 90_000;
+export const QUEUE_WATCH_CODES = Object.freeze(['RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED']);
 // Tries at the merge queue's first place come a minute apart for at most this long in a row; then the back-off applies
 // again. They never count towards park.stage8MaxTries (independent review of step 2, m5).
 export const PARK_HEAD_STREAK_MS = 15 * 60_000;
@@ -1333,6 +1350,7 @@ export class ResidentExecutor {
   async tick() {
     if (this.tickBusy) return { state: 'DEFERRED', reason: 'EXECUTOR_TICK_BUSY' };
     this.tickBusy = true;
+    this.tickSeq = (this.tickSeq ?? 0) + 1;
     try { const result = await this.tickInner(); await this.reportTick(result); return result; }
     finally { this.tickBusy = false; }
   }
@@ -1353,9 +1371,28 @@ export class ResidentExecutor {
         if (!['WAITING'].includes(result?.state)) s.setCurrent(null);
       });
       if (typeof this.versions === 'function') this.report(s => s.setVersions?.(this.versionState?.view ?? null));
+      await this.refreshLimits();
+      // A watch view renewed by this tick and not ended by batch work in it (atStage) holds to the tick's end, however long the watch
+      // and the stage-10 run after it took (review round 27, MINOR 1): the status written now says watched.
+      if (Number.isFinite(this.queueWatchViewAt) && this.queueWatchViewTick === this.tickSeq && this.clock() >= this.queueWatchViewAt) this.queueWatchViewAt = this.clock();
       this.reportQueue();
       this.reportNode();
     } catch { /* advisory */ }
+  }
+
+  // The daily budgets on the status (the PR page names a used-up one as a gate of the whole queue). Written by every scheduling pass
+  // that reads them, and at most once a minute by the tick's report otherwise (review round 24, NIT 3): budgets free up as the 24-hour
+  // window moves on also while no row reaches that pass (a deferral holds the only one).
+  reportLimits(u, now) {
+    const l = this.policy.limits;
+    this.limitsReportedAt = now;
+    this.report(s => s.update({ limits: { batches24h: u.started, maxBatches: l.maxBatchesPer24h, evaluations24h: u.evaluations, maxEvaluations: l.maxEvaluationsPer24h,
+      waitingRetries24h: u.waitingRetries, maxWaitingRetries: l.waitingRetriesPer24h } }));
+  }
+  async refreshLimits() {
+    const now = this.clock();
+    if (Number.isFinite(this.limitsReportedAt) && now >= this.limitsReportedAt && now - this.limitsReportedAt < LIMITS_REFRESH_MS) return;
+    try { this.reportLimits(await this.ledger.usage(now - DAY, { separateNetwork: this.networkPolicy() !== null }), now); } catch { /* a view: the next tick tries again */ }
   }
 
   // The status board's `train` (status.mjs): the mode and the newest summary as in step 3c-1; the sweep, the revoke-head request,
@@ -1515,6 +1552,7 @@ export class ResidentExecutor {
     if (acted) return acted;
     // Nothing else to do: the tick rests in the hosted wait (the status keeps showing it).
     const r = await this.schedule();
+    this.scheduleHold = r?.state === 'DEFERRED' && SCHEDULE_HOLDS.includes(r.reason) ? r.reason : null;
     // A batch resting at parking point A stays the tick's result (and the status's current batch) while only the intake
     // pause holds the new ones (independent review of C6, minor 3).
     const result = waiting && (r.state === 'IDLE' || [...TRAIN_HELD_REASONS, ...Object.values(NODE_DEFERRALS), ...TRAIN_SCHEDULE_DEFERRALS].includes(r.reason)) ? waiting : r;
@@ -1523,6 +1561,11 @@ export class ResidentExecutor {
     if ((!waiting || this.probeAtParking()) && TRAIN_QUIET_STATES.includes(r.state) && !TRAIN_HELD_REASONS.includes(r.reason)) {
       const probeResult = await this.roleProbeMaintenance();
       if (probeResult) return probeResult;
+    }
+    // Generation 12 (DESIGN §56.2): the queue watch, also only after a schedule that ran nothing.
+    if (TRAIN_QUIET_STATES.includes(r.state) && !TRAIN_HELD_REASONS.includes(r.reason)) {
+      const watched = await this.queueWatchMaintenance();
+      if (watched) return watched;
     }
     if (TRAIN_QUIET_STATES.includes(r.state) && !TRAIN_HELD_REASONS.includes(r.reason)) return (await this.trainMaintenance()) ?? result;
     // The train on: under an intake pause stage 10 runs revoke-only whatever the queue holds (trainMaintenance reads the hold
@@ -1561,7 +1604,13 @@ export class ResidentExecutor {
   // after a restart or a re-arm the batches parked before it would otherwise keep the node UNCERTAIN for park.maxMs.
   probeAtParking() { return this.probing() && (this.nodeMode() !== 'ACTIVE' || this.roleProbe.urgent === true); }
 
-  async roleProbeMaintenance({ upgradePaused = false } = {}) {
+  // watch (generation 12, DESIGN §56.2): { key, pr, lastEnd } of a batch parked at B for the merge queue (lastEnd: when its last
+  // stage-8 try ended). The probe then also asks whether that PR's claim holds the merge slot; it runs on the watch's own cadence
+  // (queueWatchMaintenance), never under a pause, and only while every open batch rests at a parking point. Everything else is the
+  // role probe's: receipts, the node mode on a definite answer, the HALT when no fact is confirmed. An uncertain watch answer is not
+  // counted in the role book's uncertain count (a watch runs far more often than the periodic probe, which keeps its own), but it is a
+  // failed probe for the breaker like any other. A clock that went back since the last observation never reaches the role book.
+  async roleProbeMaintenance({ upgradePaused = false, watch = null } = {}) {
     if (typeof this.engine.runRoleProbe !== 'function' || this.roleProbeRunning) return null;
     // C3 owns the mode and all its transitions (DESIGN §29); status (advisory) is never an input. UNCERTAIN has STANDBY's
     // 15-minute interval, and `urgent` (a start, a re-arm, a failure that may mean the role is gone) is due at once.
@@ -1573,41 +1622,53 @@ export class ResidentExecutor {
     const upgradePause = upgradePaused === true && typeof source?.reason === 'string'
       && /^resident-upgrade [0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12} [1-9][0-9]{0,2}$/.test(source.reason)
       && source.requestSha256 === sha256(Buffer.from(canonicalJson({ contract: PAUSE_CONTRACT, reason: source.reason }) + '\n'));
-    const idle = !(await this.ledger.halted()) && (pause ? upgradePause && open.length === 0
+    const idle = !(await this.ledger.halted()) && (watch ? !pause && open.every(e => Ledger.resumable(e)) : pause ? upgradePause && open.length === 0
       : (this.probeAtParking() ? open.every(e => Ledger.resumable(e)) : open.length === 0));
-    if (!this.roleProbe.due({ now, mode: mode === 'ACTIVE' ? 'ACTIVE' : 'STANDBY', idle })) return null;
+    if (watch ? !idle || (this.roleProbe.last !== null && now < this.roleProbe.last.at) : !this.roleProbe.due({ now, mode: mode === 'ACTIVE' ? 'ACTIVE' : 'STANDBY', idle })) return null;
     if (this.policy.validUntil !== null && Date.parse(this.policy.validUntil) < now + 240_000) return null;
     const drift = await this.driftCode();
-    if (drift) { await this.haltWith(drift, { phase: 'role-probe' }); return { state: 'HALTED', failureCode: drift }; }
+    if (drift) { await this.haltWith(drift, { phase: watch ? 'queue-watch' : 'role-probe' }); return { state: 'HALTED', failureCode: drift }; }
     this.roleProbeRunning = true;
     try {
-      const intent = await this.receipt('role-probe-intent', { mode, urgent: this.roleProbe.urgent === true });
+      const intent = await this.receipt('role-probe-intent', { mode, urgent: this.roleProbe.urgent === true, ...(watch ? { watchPr: watch.pr } : {}) });
       let r;
-      try { r = await this.engine.runRoleProbe(); } catch { r = null; }
+      try { r = await (watch ? this.engine.runRoleProbe({ watchPr: watch.pr }) : this.engine.runRoleProbe()); } catch { r = null; }
       // Only the engine's pre-broker busy guard is a deferral, not a role fact. BROKER_BUSY after a
       // request is not whitelisted here and retains the original unknown/HALT behavior.
       const deferred = r?.deferred === true && r.code === 'ROLE_PROBE_BUSY';
+      // A watch counts towards QUEUE_WATCH_MAX_PER_DAY once the engine got past its busy guard (a swap was asked for).
+      if (watch && !deferred) { const day = dayKey(now); if (this.queueWatchDay?.day !== day) this.queueWatchDay = { day, n: 0 }; this.queueWatchDay.n += 1; }
       let fact = null;
       if (r?.ok === true && r.proof?.windowsTreeZero === true && r.proof?.serviceOriginalStopped === true
         && r.outcome?.status === 'BLOCKED' && r.outcome.sideEffects === 0 && r.outcome.mayHavePublished === false) {
         try { const f = validateRoleProbeFact(r.roleProbe); if (r.outcome.reason === f.code) fact = f; } catch { /* no fact */ }
       }
+      // Only a watch can name its PR as the slot holder; a probe without one that says so is no fact.
+      if (fact?.code === ROLE_PROBE_CODES.watchedHead && !watch) fact = null;
+      const watchedHead = !!watch && fact?.code === ROLE_PROBE_CODES.watchedHead;
       if (!deferred && !fact) await this.haltWith('ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED', { intentSeq: intent.seq, failureCode: r?.code ?? null });
-      if (fact) {
-        const observation = this.roleProbe.observe(fact, this.clock());
+      const observedAt = this.clock();
+      const observe = fact && (!watch || (fact.result !== 'uncertain' && (this.roleProbe.last === null || observedAt >= this.roleProbe.last.at)));
+      if (observe) {
+        const observation = this.roleProbe.observe(roleBookFact(fact), observedAt);
         this.roleProbeNotices.push(...observation.notices);
         this.roleProbeNotices = this.roleProbeNotices.slice(-10);
         this.report(s => s.setRoleProbe?.(this.policy.node.nodeName, observation.probe));
-        // not-held is the safe direction and takes effect first; held only after the result is recorded. uncertain changes nothing.
-        if (fact.result === 'not-held') await this.setNodeMode('STANDBY', 'probe-not-held');
       }
-      await this.receipt('role-probe-result', { intentSeq: intent.seq, deferred, ok: !!fact, fact, state: this.roleProbe.snapshot() });
+      // not-held is the safe direction and takes effect first (also from a watch whose answer the role book could not take, review
+      // round 4 NIT 8); held only after the result is recorded and observed. uncertain changes nothing.
+      if (fact?.result === 'not-held') await this.setNodeMode('STANDBY', 'probe-not-held');
+      await this.receipt('role-probe-result', { intentSeq: intent.seq, deferred, ok: !!fact, fact, state: this.roleProbe.snapshot(),
+        ...(watch ? { watch: { pr: watch.pr, head: watchedHead } } : {}) });
       // Generation 10: only a definite answer (held, not-held) shows that Native could be reached; an uncertain fact is also what a probe
       // whose own reads failed returns (merge-slot-native.mjs), so it counts as a failed probe, like no fact at all.
+      // Every answered probe tells the breaker whether Native was reached, a watch too: an uncertain watch breaks a run of good probes
+      // (review round 5, MINOR 2); it only stays out of the role book's uncertain count (no Owner notice for a short flap).
       if (!deferred) await this.noteBreakerProbe(fact?.result === 'held' || fact?.result === 'not-held', 'role-probe');
-      if (fact?.result === 'held') await this.setNodeMode('ACTIVE', 'probe-held');
+      if (fact?.result === 'held' && observe) await this.setNodeMode('ACTIVE', 'probe-held');
+      if (watch) this.watchAnswered(watch, deferred || !fact || fact.result === 'uncertain' ? 'unknown' : watchedHead ? 'head' : 'not-head');
       return !deferred && !fact ? { state: 'HALTED', failureCode: 'ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED' } : null;
-    } finally { this.roleProbeRunning = false; }
+    } finally { this.roleProbeRunning = false; this.roleProbeEndedAt = this.clock(); }
   }
 
   async revocationMaintenanceRecover() {
@@ -1918,6 +1979,99 @@ export class ResidentExecutor {
 
   // ---- parking (phase 2, step 2; DESIGN §18) ----
 
+  // Generation 12 (DESIGN §56.2): the queue watch. A batch parked at B whose last try found its claim outside the merge queue
+  // (RESIDENT_MERGE_QUEUE_NOT_JOINED) or behind another claim (RESIDENT_QUEUE_HEAD_NOT_REACHED) waits up to two hours for its
+  // next try (PARK_RETRY_MS), although stage 8 can pass as soon as the claim holds the merge slot: the holder joins the queue,
+  // the claim ahead merges. Every QUEUE_WATCH_MS, on a tick that ran nothing and on an ACTIVE node, one role probe watches one
+  // such batch's PR (the batches take turns, each on its own cadence: QUEUE_WATCH_RAMP_MS, QUEUE_WATCH_FAIL_MS); when the slot holder
+  // becomes bound to that PR, the batch's try is due now (watchAnswered). Only the change from not holding the slot to holding it
+  // brings a try forward: a holders answer that keeps saying "head" while stage 8 says not ready (the two read different things)
+  // leaves the batch on its own back-off, so the watch can never burn a head faster than before.
+  // A watch writes nothing to GitHub or Native (only its own role-probe receipts) and is never a try: it counts towards no try budget.
+  // QUEUE_WATCH_MAX_PER_DAY bounds the probes; a batch whose try is due within QUEUE_WATCH_MS anyway, or that is out of tries for the
+  // day, is not watched.
+  // A try at the queue's first place comes PARK_HEAD_RETRY_MS after the last one only during its streak (PARK_HEAD_STREAK_MS); once the
+  // back-off applies again (its next try is further away) that batch is watched like the others. view: the rows the PR page may call
+  // watched (whatever their next try's time).
+  queueWatchCandidates(entries, now, { view = false } = {}) {
+    return entries.filter(e => {
+      if (!Ledger.parkedAt(e)) return false;
+      const last = ResidentExecutor.lastTry(e), pr = e.reserved?.subject?.pr;
+      const streak = last?.position === 1 && !(Date.parse(last.nextAt) - Date.parse(last.at) > PARK_HEAD_RETRY_MS);
+      return last && last.transient !== true && QUEUE_WATCH_CODES.includes(last.code) && !streak && Number.isSafeInteger(pr) && pr > 0
+        && (view || this.parkedDueAt(e) > now + QUEUE_WATCH_MS) && now - Date.parse(e.parked.at) < this.policy.park.maxMs;
+    });
+  }
+
+  // When batch e may be watched again: its own cadence after its last watch (none yet: now).
+  queueWatchDueAt(e) {
+    const book = this.queueWatchBook?.get(e.key);
+    if (!book) return -Infinity;
+    const age = book.at - Date.parse(e.parked.at);
+    const every = QUEUE_WATCH_RAMP_MS.find(r => age < r.until).every;
+    return book.at + Math.max(every, book.failures > 0 ? QUEUE_WATCH_FAIL_MS[Math.min(book.failures, QUEUE_WATCH_FAIL_MS.length) - 1] : 0);
+  }
+
+  async queueWatchMaintenance() {
+    if (typeof this.engine.runRoleProbe !== 'function' || this.roleProbeRunning) return null;
+    const now = this.clock(), day = dayKey(now);
+    const off = () => { this.queueWatchView = new Set(); return null; };
+    if (this.nodeMode() !== 'ACTIVE') return off();
+    // Never under an intake pause (in force, or its state unreadable), whatever the queue holds, like the role probe it is a run of
+    // (DESIGN §56.2; review round 20, NIT 1): before, a pause held it only on a tick whose schedule had a due row. Nor while the train's
+    // take-over sweep holds the parked batches (resumeParked hold): a try could not follow the watch.
+    if (this.intakeTroubleSince != null || this.intakePause?.view(now) || this.trainTakeoverPending()) return off();
+    if (this.queueWatchDay?.day !== day) this.queueWatchDay = { day, n: 0 };
+    if (this.queueWatchDay.n >= QUEUE_WATCH_MAX_PER_DAY) return off();
+    // The status view first, on every quiet tick (review round 3, MINOR 6): a slow probe never lets it lapse while watches go on.
+    let entries;
+    try { entries = await this.ledger.parkedEntries(); } catch { return null; }
+    const candidates = this.queueWatchCandidates(entries, now), shown = this.queueWatchCandidates(entries, now, { view: true });
+    this.queueWatchBook ??= new Map();
+    for (const k of [...this.queueWatchBook.keys()]) if (!entries.some(e => e.key === k && Ledger.parkedAt(e))) this.queueWatchBook.delete(k);
+    if (shown.length === 0) return off();
+    // Only with a Source that knows the watch (engine-windows.mjs#queueWatchSupported); an engine without the check never watches.
+    try { if (typeof this.engine.queueWatchSupported !== 'function' || (await this.engine.queueWatchSupported()) !== true) return off(); } catch { return off(); }
+    // Not while the day's stage-8 tries are used up: a nudge could not start one (resumeParked). The ledger's usage is read at most
+    // every QUEUE_WATCH_MS (it walks the day's entries).
+    if (!(Number.isFinite(this.queueWatchBudgetAt) && now >= this.queueWatchBudgetAt && now - this.queueWatchBudgetAt < QUEUE_WATCH_MS)) {
+      try { this.queueWatchBudgetOk = (await this.ledger.usage(now - DAY)).stage8Retries < this.policy.park.stage8RetriesPer24h; } catch { this.queueWatchBudgetOk = false; }
+      this.queueWatchBudgetAt = now;
+    }
+    if (!this.queueWatchBudgetOk) return off();
+    // The status: these rows are watched (the PR page says the try follows the slot within minutes), as of now (queueWatchViewAt: a view
+    // not renewed by a quiet tick within QUEUE_WATCH_VIEW_MS, as while another batch runs, says nothing).
+    this.queueWatchView = new Set(shown.map(e => `${e.reserved.subject.pr}:${e.reserved.subject.headSha}`));
+    this.queueWatchViewAt = now;
+    this.queueWatchViewTick = this.tickSeq;
+    // A clock that went back since the last probe or observation: no watch until it has caught up (the role book refuses it).
+    if ([this.roleProbeEndedAt, this.roleProbe.last?.at].some(at => Number.isFinite(at) && now < at)) return null;
+    // One swap per QUEUE_WATCH_MS at most, counted from the end of the last role probe (a watch or not).
+    if (Number.isFinite(this.roleProbeEndedAt) && now - this.roleProbeEndedAt < QUEUE_WATCH_MS) return null;
+    // A watch that could not start (not idle, the install authority ending) is not tried again on every quiet tick.
+    if (Number.isFinite(this.queueWatchTriedAt) && now >= this.queueWatchTriedAt && now - this.queueWatchTriedAt < QUEUE_WATCH_MS) return null;
+    const due = candidates.filter(e => this.queueWatchDueAt(e) <= now).sort((a, b) => this.queueWatchDueAt(a) - this.queueWatchDueAt(b) || a.key.localeCompare(b.key));
+    if (due.length === 0) return null;
+    const pick = due[0];
+    this.queueWatchTriedAt = now;
+    return this.roleProbeMaintenance({ watch: { key: pick.key, pr: pick.reserved.subject.pr, lastEnd: Date.parse(ResidentExecutor.lastTry(pick)?.at ?? '') } });
+  }
+
+  // A watch answered for batch watch.key: 'head' (its PR's claim holds the merge slot), 'not-head', or 'unknown' (uncertain,
+  // deferred or no fact). Only a change to 'head' from anything else brings the batch's try forward: due now, never sooner than
+  // PARK_HEAD_RETRY_MS after its last try ended.
+  watchAnswered({ key, lastEnd }, answer) {
+    this.queueWatchBook ??= new Map();
+    const before = this.queueWatchBook.get(key);
+    const now = this.clock();
+    this.queueWatchBook.set(key, { at: now, answer: answer === 'unknown' ? (before?.answer ?? null) : answer,
+      failures: answer === 'unknown' ? (before?.failures ?? 0) + 1 : 0 });
+    if (answer !== 'head' || before?.answer === 'head') return;
+    const due = Math.max(now, Number.isFinite(lastEnd) ? lastEnd + PARK_HEAD_RETRY_MS : now);
+    this.parkNudges ??= new Map();
+    this.parkNudges.set(key, Math.min(this.parkNudges.get(key) ?? due, due));
+  }
+
   // Stage 10 (shadow or on) read the merge queue's head: front = { pr, headSha }. A batch parked at B for exactly that PR and head
   // may be the claim that just became first, so its next stage-8 try is due now instead of after a back-off of up to two hours
   // (Task 867250db). Only a hint: the try itself reads the queue, and counts as any try. Never twice within PARK_HEAD_RETRY_MS of
@@ -1969,6 +2123,14 @@ export class ResidentExecutor {
   // hold: evaluate nothing (the train on's take-over sweep is pending); the status still shows them.
   async resumeParked({ hold = false } = {}) {
     const entries = await this.ledger.parkedEntries();
+    // Generation 12 (DESIGN §56.3): after a restart, a parked batch's lease end comes back from its newest record (the last stage-8
+    // try's, else the parking record at B, else the wait record at A), before anything below may return.
+    // The newest record that has the field decides, also when it says none (null).
+    const newestLease = e => [ResidentExecutor.lastTry(e), e.parked, e.wait].find(x => x && Object.hasOwn(x, 'claimExpiresAt'))?.claimExpiresAt ?? null;
+    for (const e of entries) {
+      const s = e.reserved?.subject, at = Date.parse(newestLease(e) ?? '');
+      if (s && Number.isFinite(at) && !this.claimLeases?.has(`${s.pr}:${s.headSha}`)) { this.claimLeases ??= new Map(); this.claimLeases.set(`${s.pr}:${s.headSha}`, { expiresAt: at }); }
+    }
     // Every batch resting at parking point A, for the status page (Task 4012c1b9, review N4 of step 2): several may wait at
     // once, each shown on its own row as PARKED_A, not only the one in `current`.
     this.parkedA = new Set(entries.filter(x => Ledger.waitingAt(x)).map(x => `${x.reserved?.subject?.pr}:${x.reserved?.subject?.headSha}`));
@@ -2071,6 +2233,7 @@ export class ResidentExecutor {
     const n = await this.ledger.beginTry(key, { batchId: batch.batchId });
     this.atStage(8, 'stage');
     const control = await this.engine.runStage(batch, this.stage(8), { betweenRoles: false, firstLinux: false });
+    this.noteLease(subject, control);
     await this.receipt('stage-terminal', { key, stage: 8, ok: control.ok === true, failureCode: control.ok ? null : validCode(control.code), factsSha256: control.factsSha256 ?? null, outcome: outcomeSummary(control), try: n });
     const relayed = s.plan?.relayed?.length ?? 0;
     if (control.ok === true) {
@@ -2113,7 +2276,8 @@ export class ResidentExecutor {
         await this.ledger.endTry(key, n, { code: control.code, nextAt: new Date(now).toISOString(), position, entered: queueFact?.entered ?? null, ending: 'PARKED_OVER_CAPACITY' });
         return windowsOnly(new StepFailure(8, 'PARKED_OVER_CAPACITY', control.proof, 'stage', relayed));
       }
-      await this.ledger.endTry(key, n, { code: control.code, nextAt: new Date(nextAt).toISOString(), position, entered: queueFact?.entered ?? null });
+      await this.ledger.endTry(key, n, { code: control.code, nextAt: new Date(nextAt).toISOString(), position, entered: queueFact?.entered ?? null,
+        claimExpiresAt: this.leaseOf(subject) });
       await this.receipt('stage8-not-ready', { key, try: n, failureCode: control.code, nextAt: new Date(nextAt).toISOString(), position });
       return { state: 'PARKED', key, reason: control.code, until: nextAt, position, tries: n,
         settle: { kind: 'parked', code: control.code, klass: 'queue', breaker: 'neutral', pos: POSITIONS[8], linux: false, nextAt, position } };
@@ -2128,7 +2292,8 @@ export class ResidentExecutor {
       const assumedPosition = Number.isSafeInteger(position) ? position : Number.isSafeInteger(last?.position) ? last.position
         : Number.isSafeInteger(last?.assumedPosition) ? last.assumedPosition : 1;
       const nextAt = now + STAGE8_TRANSIENT_RETRY_MS[transientParks];
-      await this.ledger.endTry(key, n, { code: control.code, nextAt: new Date(nextAt).toISOString(), position, entered: queueFact?.entered ?? null, transient: true, assumedPosition });
+      await this.ledger.endTry(key, n, { code: control.code, nextAt: new Date(nextAt).toISOString(), position, entered: queueFact?.entered ?? null, transient: true, assumedPosition,
+        claimExpiresAt: this.leaseOf(subject) });
       await this.receipt('stage8-transient-parked', { key, try: n, failureCode: control.code, nextAt: new Date(nextAt).toISOString(), position, assumedPosition, park: transientParks + 1 });
       return { state: 'PARKED', key, reason: control.code, until: nextAt, position: assumedPosition, tries: n,
         settle: { kind: 'parked', code: control.code, klass: 'transient', breaker: 'neutral', pos: POSITIONS[8], linux: false, nextAt, position: assumedPosition } };
@@ -2143,14 +2308,36 @@ export class ResidentExecutor {
   async persistQueue() { try { await this.queue.save(); return true; } catch { return false; } }
 
   // The status board's queue, breaker and notices (a view; nothing the executor decides reads it).
-  reportQueue() {
+  // inFlight: this.current is the batch running now (atStage), so its lease is kept whatever its PR's row shows (this.current outlives
+  // its batch, so only a caller that knows says so).
+  reportQueue({ inFlight = false } = {}) {
     this.report(s => {
       const b = breakerOf(this.queue.breaker);
-      s.update({ queue: { generation: this.queue.generation, live: this.queue.live().length, depth: this.policy.limits.queueDepth, parkingFull: this.parkingFull === true }, breaker: breakerView(b),
-        notices: [...(this.versionState?.notices ?? []), ...this.roleProbeNotices, ...this.queue.notices].slice(0, 50) });
       const parkedA = this.parkedA ?? new Set();
-      s.setPending(this.queue.view(this.clock(), { etaBatchMs: ETA_BATCH_MS })
-        .map(r => r.state === 'RUNNING' && parkedA.has(`${r.pr}:${r.headSha}`) ? { ...r, reason: PARKED_A_REASON } : r));
+      const now = this.clock(), view = this.queue.view(now, { etaBatchMs: ETA_BATCH_MS });
+      // Leases of batches no longer live in the queue (done or stopped) and not in flight are forgotten.
+      // (this.current keeps the last batch after it ended, so only the queue's own rows say what is live.)
+      const live = new Set(view.filter(r => !['DONE', 'STOPPED'].includes(r.state)).map(r => `${r.pr}:${r.headSha}`));
+      if (inFlight && this.current && Number.isSafeInteger(this.current.pr)) live.add(`${this.current.pr}:${this.current.headSha}`);
+      for (const k of [...(this.claimLeases?.keys() ?? [])]) if (!live.has(k)) this.claimLeases.delete(k);
+      const atA = r => r.state === 'RUNNING' && parkedA.has(`${r.pr}:${r.headSha}`);
+      const isCurrent = r => this.current && r.pr === this.current.pr && r.headSha === this.current.headSha;
+      // A batch at parking point A still has its whole run ahead (since: now); one at B needs only stage 8 and the merge.
+      this.leaseNotices([...view.filter(r => r.state === 'PARKED').map(r => ({ pr: r.pr, headSha: r.headSha, running: false })),
+        ...view.filter(r => atA(r)).map(r => ({ pr: r.pr, headSha: r.headSha, running: true, since: now })),
+        // The batch in flight, only from atStage (inFlight): this.current outlives its batch, and a released batch is not running
+        // (review round 17, MINOR 2).
+        ...(inFlight && this.current && live.has(`${this.current.pr}:${this.current.headSha}`) && !view.some(r => isCurrent(r) && (r.state === 'PARKED' || atA(r)))
+          // A batch resting at A ('relay-wait') counts from now, like every batch at A (review round 18, NIT 1).
+          ? [{ pr: this.current.pr, headSha: this.current.headSha, running: true,
+            since: this.current.phase === 'relay-wait' ? now : (Date.parse(this.current.leaseFrom ?? this.current.since ?? '') || null) }] : [])], now);
+      // The notices after leaseNotices, so a new lease-short notice is in this report (review round 2, NIT 12).
+      s.update({ queue: { generation: this.queue.generation, live: this.queue.live().length, depth: this.policy.limits.queueDepth, parkingFull: this.parkingFull === true,
+        hold: this.scheduleHold ?? null }, breaker: breakerView(b),
+        notices: [...(this.versionState?.notices ?? []), ...this.roleProbeNotices, ...this.queue.notices].slice(0, 50) });
+      const watchedNow = Number.isFinite(this.queueWatchViewAt) && now >= this.queueWatchViewAt && now - this.queueWatchViewAt <= QUEUE_WATCH_VIEW_MS;
+      s.setPending(view.map(r => ({ ...(atA(r) ? { ...r, reason: PARKED_A_REASON } : r), claimExpiresAt: this.leaseOf(r),
+        watched: watchedNow && r.state === 'PARKED' && this.queueWatchView?.has(`${r.pr}:${r.headSha}`) === true })));
     });
   }
 
@@ -2313,9 +2500,8 @@ export class ResidentExecutor {
       if (others.length > 0) list = others;
     }
     this.tickUsage = await this.ledger.usage(now - DAY, { separateNetwork: this.networkPolicy() !== null });
-    const u = this.tickUsage, l = this.policy.limits;
-    this.report(s => s.update({ limits: { batches24h: u.started, maxBatches: l.maxBatchesPer24h, evaluations24h: u.evaluations, maxEvaluations: l.maxEvaluationsPer24h,
-      waitingRetries24h: u.waitingRetries, maxWaitingRetries: l.waitingRetriesPer24h } }));
+    const u = this.tickUsage;
+    this.reportLimits(u, now);
     let last = null, evaluationsFull = null;
     for (const item of list.slice(0, ROWS_PER_TICK)) {
       // A full evaluation budget stops only what it bounds: the due waits behind it still run (independent review m1).
@@ -2539,6 +2725,9 @@ export class ResidentExecutor {
   async driveReserved(key, subject, t0, origin = 'queued') {
     let batch = null;
     let outcome;
+    // A new batch learns its lease from its own stage 1 (DESIGN §56.3): an end kept from an earlier attempt of this head (a refused stage 1
+    // that released the batch) may be long stale, and is forgotten before the batch shows as running (review round 19, MINOR 1).
+    this.claimLeases?.delete(`${subject.pr}:${subject.headSha}`);
     this.current = { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, attempt: subject.attempt, since: new Date(this.clock()).toISOString() };
     this.atStage(0, 'derive');
     // Generation 10 (DESIGN 53.5): the claimed batch, its queue row RUNNING and the executor RUNNING are on the board now, not after the
@@ -2642,7 +2831,55 @@ export class ResidentExecutor {
   }
 
   // The status board's batch in flight (this.current is set when a batch is reserved or resumed).
-  atStage(stage, phase) { if (this.current) this.report(s => s.setCurrent({ ...this.current, stage, phase })); }
+  // Generation 12 (review rounds 13-15): the queue's rows are written again at every stage, so the running batch's lease notice is
+  // evaluated after stage 1 recorded its lease (DESIGN §56.3); the batch in flight keeps its lease even when its PR's row shows another
+  // commit (inFlight). Every phase but 'relay-wait' is batch work during which no watch can run (a new batch, one going on from A, a
+  // stage-8 try, an attempt 2): the watch view lapses at once (DESIGN §56.2). 'relay-wait' is a batch still resting at A, evaluated on
+  // quiet ticks where watches go on, so it leaves the view alone; the batch's next phase (rebundle, workspace, a stage) ends it.
+  // A batch that goes on from A leaves the A set at once (review round 17, MINOR 3): its row is RUNNING again, and its lease is judged
+  // from now (leaseFrom), the same on the PR page and in the Owner notice, as a batch with its whole run ahead.
+  atStage(stage, phase) {
+    if (!this.current) return;
+    this.current.phase = phase;
+    if (phase !== 'relay-wait') {
+      this.queueWatchViewAt = null;
+      // Batch work (a new batch, one going on from A, a stage-8 try, attempt 2): the queue rows wait for it now, not for a global
+      // deferral an earlier pass met; the next pass judges that again (review round 26, MINOR 1).
+      this.scheduleHold = null;
+      const key = `${this.current.pr}:${this.current.headSha}`;
+      if (this.parkedA?.has(key)) { this.parkedA.delete(key); this.current.leaseFrom = new Date(this.clock()).toISOString(); }
+    }
+    this.report(s => s.setCurrent({ ...this.current, stage, phase, claimExpiresAt: this.leaseOf(this.current) }));
+    this.reportQueue({ inFlight: true });
+  }
+
+  // ---- the claim's lease (generation 12, DESIGN §56.3) ----
+  // The newest lease end Native reported for a batch's claim (stage 1 and each stage-8 try carry it), by PR and head. A view only:
+  // the status page and the PR page remind the holder to renew; nothing the executor decides reads it.
+  // An outcome whose scheduling facts came from Native (an object) but name no lease end (claimExpiresAt null: Native named none, or
+  // the CI's extension answered none, claim-assist-native.mjs#leaseAfter) forgets the stored end rather than show a stale one; an
+  // outcome without scheduling facts (Native not reached) changes nothing.
+  noteLease(subject, r) {
+    const s = r?.outcome?.scheduling;
+    if (!subject || !Number.isSafeInteger(subject.pr) || !s || typeof s !== 'object') return;
+    const at = Date.parse(s.claimExpiresAt ?? '');
+    this.claimLeases ??= new Map();
+    if (Number.isFinite(at)) this.claimLeases.set(`${subject.pr}:${subject.headSha}`, { expiresAt: at });
+    else this.claimLeases.delete(`${subject.pr}:${subject.headSha}`);
+  }
+  leaseOf(subject) {
+    const l = subject ? this.claimLeases?.get(`${subject.pr}:${subject.headSha}`) : null;
+    return l ? new Date(l.expiresAt).toISOString() : null;
+  }
+  // A lease that ends before the batch can finish is the Owner's to hear about once per lease end (the holder sees the PR page).
+  leaseNotices(rows, now) {
+    for (const r of rows) {
+      const l = this.claimLeases?.get(`${r.pr}:${r.headSha}`);
+      const short = l ? leaseShort({ expiresAt: l.expiresAt, now, running: r.running === true, since: r.since }) : null;
+      const key = short ? `lease-short:${r.pr}:${r.headSha.slice(0, 12)}:${l.expiresAt}:${short}` : null;
+      if (key && !this.queue.notices.some(n => n.key === key)) this.queue.notice({ key, kind: 'lease-short', pr: r.pr, headSha: r.headSha, code: short === 'expired' ? 'CLAIM_LEASE_EXPIRED' : 'CLAIM_LEASE_SHORT', at: now, until: l.expiresAt });
+    }
+  }
 
   stage(number) { return this.policy.stages.find(s => s.number === number); }
 
@@ -2716,6 +2953,7 @@ export class ResidentExecutor {
     this.atStage(1, 'stage');
     const first = await this.engine.runStage(batch, this.stage(1), { betweenRoles: false, firstLinux: false });
     await this.receipt('stage-terminal', { key, stage: 1, ok: first.ok === true, failureCode: first.ok ? null : validCode(first.code), factsSha256: first.factsSha256 ?? null, outcome: outcomeSummary(first) });
+    this.noteLease(subject, first);
     if (first.ok !== true) {
       if (first.code === 'HEAD_PUBLISHED_ON_GITHUB') {
         const unrecorded = await this.recordPublishedOnGithub(key, subject);
@@ -2730,7 +2968,7 @@ export class ResidentExecutor {
     await this.receipt('batch-started', { key });
     // The wait's anchor (t0) and the derived batch, durable before the first wait evaluation: a later tick,
     // or a restarted service, continues from here without deriving or running stage 1 again.
-    await this.ledger.beginWait(key, { t0, batch });
+    await this.ledger.beginWait(key, { t0, batch, claimExpiresAt: this.leaseOf(subject) });
     const outcome = await this.continueBatch(key, subject, batch, t0);
     if (outcome?.state === 'WAITING') await this.receipt('relay-waiting', { key, until: outcome.until, reason: outcome.reason });
     return outcome;
@@ -2867,7 +3105,7 @@ export class ResidentExecutor {
     // point B and stage 8 runs as tries (the first one right away). Stage 8 touches only Windows.
     const closed = await this.engine.closeBatch(batch, { linux: localRoles.length > 0 });
     archiveCheck(closed && closed.verified === true, 'SUCCESS_PATH_ARCHIVE_UNCONFIRMED', closed);
-    await this.ledger.park(key, { batch, closed: closed.archived ?? null, local: localRoles });
+    await this.ledger.park(key, { batch, closed: closed.archived ?? null, local: localRoles, claimExpiresAt: this.leaseOf(subject) });
     await this.receipt('batch-parked', { key, local: localRoles, relayed: plan.relayed.map(r => r.role) });
     // Everything up to stage 7 passed (Linux too when a role ran locally): the breaker learns it now. A view: a failure
     // here never changes the batch, which already rests at B (independent review of step 2, m12).

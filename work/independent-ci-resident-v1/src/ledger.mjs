@@ -231,10 +231,12 @@ export class Ledger {
   }
 
   // The hosted wait record: written once, right after 10-started, before anything else of the batch.
-  async beginWait(key, { t0, batch }) {
+  async beginWait(key, { t0, batch, claimExpiresAt = null }) {
     const s = await this.state(key);
     check(s.state === 'STARTED' && !s.wait && !s.planIntent && !s.abort && Number.isSafeInteger(t0) && t0 > 0 && batch && typeof batch.batchId === 'string', 'RELAY_WAIT_REQUIRES_STARTED_ENTRY', s.state);
-    await writeNew(path.join(this.dir(key), '15-relay-wait.json'), { key, contract: 'clued.independent-ci.resident-relay-wait/1', t0, batch, at: isoNow(this.clock) });
+    // claimExpiresAt (generation 12, DESIGN §56.3): stage 1's lease end, a view only (restored for the renewal reminder after a restart).
+    await writeNew(path.join(this.dir(key), '15-relay-wait.json'), { key, contract: 'clued.independent-ci.resident-relay-wait/1', t0, batch, at: isoNow(this.clock),
+      ...(typeof claimExpiresAt === 'string' ? { claimExpiresAt } : {}) });
   }
 
   // Restrictive parking before Stage 1. No 10-started, head burn or cleanup

@@ -45,8 +45,11 @@ export const reasonCodes = values => [...new Set((Array.isArray(values) ? values
 const ISO_TIME = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)$/;
 export const isoOrNull = value => typeof value === 'string' && value.length <= 40 && ISO_TIME.test(value) && Number.isFinite(Date.parse(value))
   ? new Date(Date.parse(value)).toISOString() : null;
+// Generation 12 (resident DESIGN 56.3): claimExpiresAt, the claim's lease end as Native reported it, so the resident can tell the
+// holder to renew before the lease ends under a running or parked batch. Display only: the admission itself still checks the lease.
 export function schedulingFactsV2(outcome, native, repo) {
-  return { ciRetryAfter: isoOrNull(outcome?.ci_retry_after ?? native?.ci_retry_after ?? null), mergeQueue: mergeQueueEntryV2(native?.claim, { repo }) };
+  return { ciRetryAfter: isoOrNull(outcome?.ci_retry_after ?? native?.ci_retry_after ?? null), mergeQueue: mergeQueueEntryV2(native?.claim, { repo }),
+    claimExpiresAt: isoOrNull(native?.claim?.expires_at ?? null) };
 }
 function mergeQueueFact(value) {
   if (!plain(value) || Object.keys(value).sort().join('|') !== 'entered|position|state' || typeof value.entered !== 'boolean') return null;
@@ -57,7 +60,7 @@ function mergeQueueFact(value) {
 // The one sanitizer of scheduling facts for every consumer (diagnostic, entry outcome, stage fact): fixed shape or null.
 export function sanitizeSchedulingV2(value) {
   if (!plain(value)) return null;
-  return { ciRetryAfter: isoOrNull(value.ciRetryAfter), mergeQueue: mergeQueueFact(value.mergeQueue) };
+  return { ciRetryAfter: isoOrNull(value.ciRetryAfter), mergeQueue: mergeQueueFact(value.mergeQueue), claimExpiresAt: isoOrNull(value.claimExpiresAt) };
 }
 // The one sanitizer of a rejection diagnostic (publisher result, entry outcome, stage fact). null when it is not
 // an object. Verdicts, the owner-review kind and the two code lists are always present; the rest only when valid.
@@ -74,7 +77,10 @@ export function sanitizeAdmissionDiagnosticV2(d) {
     diagnostic.transientAdmission = d.transientAdmission;
     if (Number.isSafeInteger(d.evaluations) && d.evaluations >= 1 && d.evaluations <= 4) diagnostic.evaluations = d.evaluations;
   }
-  if (Object.hasOwn(d, 'ciRetryAfter') || Object.hasOwn(d, 'mergeQueue')) Object.assign(diagnostic, sanitizeSchedulingV2({ ciRetryAfter: d.ciRetryAfter, mergeQueue: d.mergeQueue }));
+  if (Object.hasOwn(d, 'ciRetryAfter') || Object.hasOwn(d, 'mergeQueue')) {
+    const { ciRetryAfter, mergeQueue } = sanitizeSchedulingV2({ ciRetryAfter: d.ciRetryAfter, mergeQueue: d.mergeQueue });
+    Object.assign(diagnostic, { ciRetryAfter, mergeQueue });
+  }
   return diagnostic;
 }
 

@@ -10,7 +10,8 @@
 //     collision unlikely; a matrix job could still be named like that;
 //   - written only when its state or text changes for that head (the last write per head is kept locally), at most
 //     MAX_POSTS_PER_PASS per pass; a generic "proposed" text never replaces anything already written for that head; a
-//     head whose write failed is left alone for POST_RETRY_MS.
+//     head whose write failed is written again at the next pass when the text it should show changed, else after
+//     POST_RETRY_MS (generation 12, defect 050560ac).
 // Every call is short (ADVISORY_TIMEOUT_MS) and a pass stops starting calls after PASS_BUDGET_MS. The companion runs all
 // of this in its advisory lane, with its own Runner (companion-main.mjs), so it never delays the mailbox. A call that
 // timed out leaves its child running and the Runner busy: the pass ends there (stalled), and nothing it could not do is
@@ -29,7 +30,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
-import { STATUS_STALE_MS } from './status.mjs';
+import { STATUS_STALE_MS, leaseShort } from './status.mjs';
 import { withTrainLine } from './train.mjs';
 import { DUTY_REFRESH_MS, NODE_NAME, NodeDuty, REFRESH_MAX_POSTS, TAKEOVER_TIME_TEXT, freshMemory, nodeContext, pruneMemory, standbyContext, validMemory } from './node-duty.mjs';
 
@@ -40,17 +41,36 @@ export const WAIT_NOTIFY_MS = 3_600_000;
 export const REQUIRED_CACHE_MS = 30 * 60_000;
 export const ADVISORY_TIMEOUT_MS = 15_000;
 export const PASS_BUDGET_MS = 60_000;
-export const POST_RETRY_MS = 10 * 60_000;
+// A head whose write failed is tried again after POST_RETRY_MS with the same text, and at the next pass when the text it should
+// show changed (generation 12, defect 050560ac: a write lost to the same network failure that released the batch must not leave
+// "运行中" on the page until the batch runs again).
+export const POST_RETRY_MS = 2 * 60_000;
 // Generation 10 (DESIGN 53.5): the companion reads status.json at most this often (REPORT_MIN_GAP_MS) between its minute passes, and
 // posts at once when what the PR page shows from it changed (statusSignature, over status.mjs#parseStatus's fields): the batch in
-// flight (PR, head, attempt, stage), the breaker's state or trial time, the intake pause, HALT, PAUSE.
+// flight (PR, head, attempt, stage), the breaker's state or trial time, the intake pause, HALT, PAUSE, and (generation 12) the queue
+// rows (PR, head, state, reason, next time, watched, lease end, network, the deferral holding the row), whether the parking places
+// are full, whether a daily budget is used up, and a global deferral of the scheduling pass.
 export const REPORT_MIN_GAP_MS = 5_000;
 export function statusSignature(status) {
   if (!status || typeof status !== 'object') return null;
   const c = status.current;
-  return canonicalJson({ current: c ? { pr: c.pr ?? null, headSha: c.headSha ?? null, attempt: c.attempt ?? null, stage: c.stage ?? null } : null,
+  // Generation 12 (defect 050560ac): the queue rows too (state, reason, next time, hold, ...), so a batch that did not run, a back-off,
+  // a stop or a retry reaches the PR page at once, not at the next minute pass; and the parking places, a gate the page names
+  // (review round 22, NIT 2).
+  const rows = Array.isArray(status.pending) ? status.pending.slice(0, 100).map(r => [r.pr ?? null, r.headSha ?? null, r.state ?? null, r.deferred ?? null, r.nextAt ?? null,
+    r.watched === true, r.claimExpiresAt ?? null, r.network === true, r.heldBy ?? null]) : [];
+  return canonicalJson({ current: c ? { pr: c.pr ?? null, headSha: c.headSha ?? null, attempt: c.attempt ?? null, stage: c.stage ?? null } : null, rows,
     breaker: status.breaker ? { state: status.breaker.state ?? null, nextTrialAt: status.breaker.nextTrialAt ?? null } : null,
-    intakePause: status.intakePause ? canonicalJson(status.intakePause) : null, halt: status.halt?.code ?? null, paused: status.paused === true });
+    intakePause: status.intakePause ? canonicalJson(status.intakePause) : null, halt: status.halt?.code ?? null, paused: status.paused === true,
+    parkingFull: status.queue?.parkingFull === true, quota: [quotaFull(status, 'batches'), quotaFull(status, 'evaluations')], hold: globalDefer(status) });
+}
+// Whether a daily budget of the whole queue is used up (status.limits, written by the scheduling pass that reached the due rows): the
+// executions (every row) or the evaluations (not a wait's retry: it has its own budget). Review round 23, MINOR 1.
+function quotaFull(status, kind) {
+  const l = status?.limits;
+  if (!l) return false;
+  return kind === 'batches' ? Number.isSafeInteger(l.batches24h) && Number.isSafeInteger(l.maxBatches) && l.batches24h >= l.maxBatches
+    : Number.isSafeInteger(l.evaluations24h) && Number.isSafeInteger(l.maxEvaluations) && l.evaluations24h >= l.maxEvaluations;
 }
 // Whether the advisory lane posts now: the minute has passed, or the signature moved (and the last pass is at least REPORT_MIN_GAP_MS old).
 export function reportDue({ now, lastReport, lastSignature, signature, everyMs }) {
@@ -68,6 +88,38 @@ export const STAGE_NAMES = Object.freeze({ 0: '准备', 1: '准入', 2: 'gitleak
 const DEFERRED_TEXT = Object.freeze({ DAILY_BATCH_LIMIT: '今日执行批次额度已满，明天继续', DAILY_EVALUATION_LIMIT: '今日评估额度已满', UNEXECUTED_COOLDOWN: '冷却中（10 分钟）',
   COMPANION_NOT_READY: '等 companion 就绪', PR_DAILY_BATCH_LIMIT: '本 PR 今日批次已满', WAITING_BUDGET_EXHAUSTED: '今日等待重试额度已满，明天继续',
   REEVALUATION_CAP: '本提交今日重新评估次数已满', BREAKER_OPEN: '执行器熔断中', TRAIN_NON_FRONT_RUNS_OFF: '合并列车只跑车头批次，成为车头后再跑' });
+// A per-row hold that is not a limit running out by itself (no "自动重试" promised).
+const HELD_TEXT = Object.freeze({ RELAY_QUALIFICATION_HELD: '本提交被托管资格保护扣住' });
+// The global deferrals of a scheduling pass (executor.mjs#precheck, #trainGate; SCHEDULE_HOLDS) that the status keeps as queue.hold
+// until a pass gets past it: no row runs while one holds (review rounds 24 and 25). The daily budgets come from status.limits (quotaFull).
+const GLOBAL_DEFER_TEXT = Object.freeze({ COMPANION_NOT_READY: '等 companion 就绪', VERSION_SKEW: '两端版本不一致，等升级处理完',
+  RELAY_QUALIFICATION_WINDOW_UNCONFIRMED: '托管资格窗口未确认，稍后重查', TRAIN_TAKEOVER_SWEEP_PENDING: '合并列车接管扫描中',
+  TRAIN_SOURCE_MISMATCH: '合并列车的 Source 不一致，等 Owner 处理', TRAIN_SOURCE_UNREADABLE: '合并列车的 Source 读不出，稍后重查' });
+const globalDefer = status => GLOBAL_DEFER_TEXT[status?.queue?.hold] ? status.queue.hold : null;
+// The gate of the whole queue the status shows, in the order the PR page names them: the intake pause, the breaker, the parking
+// places, the daily budgets (a wait's retry is not bound by the evaluations), a global deferral. null: none.
+const GATE_TEXT = Object.freeze({ INTAKE_PAUSED: '暂停接新中', BREAKER_HALF_OPEN: '熔断后的试跑阶段', BREAKER_OPEN: '执行器熔断中', PARKING_FULL: '停靠的批次已满' });
+function queueGate(status, row) {
+  if (status.intakePause) return 'INTAKE_PAUSED';
+  if (status.breaker?.state === 'half-open') return 'BREAKER_HALF_OPEN';
+  if (status.breaker?.state === 'open') return 'BREAKER_OPEN';
+  if (status.queue?.parkingFull === true) return 'PARKING_FULL';
+  if (quotaFull(status, 'batches')) return 'DAILY_BATCH_LIMIT';
+  if (row?.state !== 'WAITING' && quotaFull(status, 'evaluations')) return 'DAILY_EVALUATION_LIMIT';
+  return globalDefer(status);
+}
+// What holds a row now, as the PR page says it: a queued row, or a back-off or wait whose time came, first by a gate of the whole
+// queue, then by its own deferral in force; a back-off or wait whose time is still ahead by its own reason. The ">1 hour" notice is keyed
+// on it, so a deferral running out under a gate names the gate (review round 24, NIT 2).
+function rowHold(status, row, now) {
+  const own = row.state === 'BACKOFF' || row.state === 'WAITING';
+  // Under HALT or PAUSE the page says that, before any gate; the notice keeps the row's own hold (review round 26, NIT 2).
+  if (status.halt || status.paused) return row.heldBy ?? row.deferred ?? null;
+  // A back-off or wait whose time is still ahead: its own reason, as its page (review round 25, NIT 2).
+  if (own && row.nextAt > now) return row.deferred ?? null;
+  const due = row.state === 'QUEUED' || own;
+  return (due ? queueGate(status, row) : null) ?? row.heldBy ?? row.deferred ?? null;
+}
 // Why a row waits (failure-table class waiting), in the words of the PR page.
 const WAIT_TEXT = Object.freeze({ OWNER_REVIEW_REQUIRED: '等 Owner 批准受保护改动', TASK_CI_HEAD_CAP_REACHED: 'Task 的 24 小时 CI 额度已满',
   WAITING_BUDGET_EXHAUSTED: '今日等待重试额度已满（明天继续）' });
@@ -83,6 +135,9 @@ const STAGE8_RULES_TEXT = Object.freeze({
   MERGE_METHODS_NOT_MERGE_ONLY: () => ({ title: '合并方式不只有 merge，第 8 段停发合并位', body: 'strict 已关时，main 只能允许 merge 方式合入。请在规则集里只留 merge，或把 strict 改回开。' }),
   TRAIN_TEST_MERGE_TREE_DIFFERS: (pr, head) => ({ title: `PR #${pr} 的试合并与测过的树不同`, body: `提交 ${head}：GitHub 对 main 与此提交的试合并不是测过的树，没有发合并位。请推新提交，并检查原因。` }) });
 const LIVE = new Set(['QUEUED', 'PARKED', 'WAITING', 'BACKOFF']);
+// Generation 12 (defect 050560ac): what failed when a network release put the row in back-off (classify.mjs#networkFailure's codes).
+const NETWORK_CAUSE_TEXT = Object.freeze({ BUNDLE_UNAVAILABLE: '打包失败', REFS_GATE_UNCONFIRMED: 'refs 闸门没有答复',
+  NATIVE_ADMISSION_UNAVAILABLE: '准入服务连不上', ADMISSION_VERIFICATION_UNAVAILABLE: '准入核验没有答复', GITHUB_TRANSIENT_UNAVAILABLE: 'GitHub 暂时不可用' });
 const hhmm = ms => new Date(ms).toISOString().slice(11, 16) + 'Z';
 const clip = s => s.length <= DESCRIPTION_MAX ? s : `${s.slice(0, DESCRIPTION_MAX - 1)}…`;
 
@@ -90,6 +145,13 @@ const clip = s => s.length <= DESCRIPTION_MAX ? s : `${s.slice(0, DESCRIPTION_MA
 // (companion-heartbeat.mjs#watchdogStale), every text this node writes for a PR head ends with this, never clipped away. At
 // the end, so the duty words that start a text (node-duty.mjs) stay where the other nodes read them.
 export const WATCHDOG_STALE_TEXT = '自动接班看门狗未运行';
+// Generation 12 (DESIGN §56.5): the companion re-ran this head's required tests once (admission-rerun.mjs). Applied to the base text
+// (describe), before the duty word and the other lines are added: at the start of the base, so a clipped text keeps it; never in front
+// of a duty word (当班, 双活停机, 已交班, 停摆), which another node reads at the start of the text. A weak (generic) text gets none.
+export function withRerunLine(want, rerun) {
+  if (!want || want.weak || rerun !== true) return want;
+  return { ...want, description: clip(`已自动补跑一次必需测试；${want.description}`) };
+}
 export function withWatchdogLine(want, stale, max = DESCRIPTION_MAX) {
   if (!want || stale !== true || want.description.endsWith(WATCHDOG_STALE_TEXT)) return want;
   const tail = `；${WATCHDOG_STALE_TEXT}`, room = max - tail.length;
@@ -106,6 +168,16 @@ export function contextFree(context, required) {
   return !required.some(r => typeof r === 'string' && r.trim().toLowerCase() === c);
 }
 
+// Generation 12 (DESIGN §56.3): the renewal reminder appended to a running or parked batch's text (status.mjs#leaseShort).
+export function leaseText(row, now, { running, since = null }) {
+  const short = leaseShort({ expiresAt: row?.claimExpiresAt ?? null, now, running, since });
+  // The end is what Native said at the last stage 1 or stage-8 try (up to two hours ago at B): a renewal since then is not seen, so
+  // neither text claims more than that (review round 6, MINOR A).
+  if (short === 'expired') return `；按上次读到的租约，认领已于 ${hhmm(row.claimExpiresAt)} 到期（已续租可忽略）`;
+  if (short === 'short') return `；认领约 ${hhmm(row.claimExpiresAt)} 到期，请现在续租（已续租可忽略）`;
+  return '';
+}
+
 // Pure: what the PR page should say for one open PR head, or null (write nothing). weak: a generic text that never
 // replaces what was already written for that head.
 export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
@@ -120,10 +192,22 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
   const mine = x => x && x.pr === pull.pr && x.headSha === pull.headSha;
   if (mine(status.current)) {
     const stage = status.current.stage;
-    return { state: 'pending', description: stage === null ? '运行中：等待托管信号' : `运行中：第 ${stage} 段（${STAGE_NAMES[stage] ?? '?'}）` };
+    const text = stage === null ? '运行中：等待托管信号' : `运行中：第 ${stage} 段（${STAGE_NAMES[stage] ?? '?'}）`;
+    // A batch resting at A (stage null, atStage 'relay-wait') still has its whole run ahead: counted from now, like a row at A that is
+    // not the current one and like the executor's notice (review round 16, MINOR 1); since is its reservation time there. A batch that
+    // went on from A is counted from then (leaseFrom), as the executor's notice does (review round 17, MINOR 3).
+    return { state: 'pending', description: clip(text + leaseText(status.current, now, { running: true, since: stage === null ? now : (status.current.leaseFrom ?? status.current.since) })) };
   }
   // The run queue (phase 2): a row that waits for its turn or its next try says so; nothing runs while HALTed or paused.
   const row = status.pending.find(mine);
+  // Generation 12 (DESIGN §56.3): a batch resting at parking point A that is not the status's current one (several may wait at A):
+  // it waits for the hosted signals, with the renewal reminder (its whole run is still ahead).
+  // Under HALT or PAUSE it says that, like a row of the queue (review round 5, MINOR 1).
+  if (row && row.state === 'RUNNING' && row.deferred === 'PARKED_A') {
+    if (status.halt) return { state: 'error', description: clip(`执行器已停机（${status.halt.code}），等 Owner 复位`) };
+    if (status.paused) return { state: 'pending', description: '执行器已暂停，等 Owner 恢复' };
+    return { state: 'pending', description: clip('运行中：等待托管信号' + leaseText(row, now, { running: true, since: now })) };
+  }
   if (row && LIVE.has(row.state)) {
     if (status.halt) return { state: 'error', description: clip(`执行器已停机（${status.halt.code}），等 Owner 复位`) };
     if (status.paused) return { state: 'pending', description: '执行器已暂停，等 Owner 恢复' };
@@ -132,27 +216,56 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     const at = row.nextAt ? `约 ${hhmm(row.nextAt)} ` : '';
     // Parked before stage 8 (phase 2, step 2): its checks are published; it waits for the merge queue.
     if (row.state === 'PARKED') {
-      if (row.deferred === 'RESIDENT_MERGE_QUEUE_NOT_JOINED') return { state: 'pending', description: clip(`已测通：现在加入合并队列，${at}再查第 8 段`) };
-      if (PARKED_TEXT[row.deferred]) return { state: 'pending', description: clip(`${PARKED_TEXT[row.deferred]}，${at}再查第 8 段`) };
+      const lease = leaseText(row, now, { running: false }), latest = row.nextAt ? `（最晚约 ${hhmm(row.nextAt)}）` : '';
+      // Generation 12 (DESIGN §56.2): a watched row (row.watched) tries stage 8 within minutes once its claim holds the merge slot;
+      // an unwatched one (an older Source, a STANDBY node, the watch or try budget used up) keeps the generation-11 text.
+      if (row.deferred === 'RESIDENT_MERGE_QUEUE_NOT_JOINED') return { state: 'pending', description: clip(row.watched
+        ? `已测通：现在加入合并队列，排到队首后几分钟内查第 8 段${latest}${lease}` : `已测通：现在加入合并队列，${at}再查第 8 段${lease}`) };
+      if (PARKED_TEXT[row.deferred]) return { state: 'pending', description: clip(`${PARKED_TEXT[row.deferred]}，${at}再查第 8 段${lease}`) };
       // Without a place the Source did not learn whether the claim is in the queue (review of step 2, m13).
-      if (!row.queuePosition) return { state: 'pending', description: clip(`已测通：等合并队列，${at}再查第 8 段`) };
-      return { state: 'pending', description: clip(`已测通，在合并队列第 ${row.queuePosition} 位：等成为队首，${at}再查第 8 段`) };
+      if (!row.queuePosition) return { state: 'pending', description: clip(row.watched ? `已测通：等合并队列，排到队首后几分钟内查第 8 段${latest}${lease}`
+        : `已测通：等合并队列，${at}再查第 8 段${lease}`) };
+      return { state: 'pending', description: clip(row.watched ? `已测通，在合并队列第 ${row.queuePosition} 位：排到队首后几分钟内查第 8 段${latest}${lease}`
+        : `已测通，在合并队列第 ${row.queuePosition} 位：等成为队首，${at}再查第 8 段${lease}`) };
     }
-    if (row.state === 'WAITING') return { state: 'pending', description: clip(`${WAIT_TEXT[row.deferred] ?? `等待中（${code}）`}：${at}自动重试，批准或修正后编辑 PR 可提前`) };
-    if (row.state === 'BACKOFF') return { state: 'pending', description: clip(`未准入或未执行（${code}）：${at}自动重试（第 ${row.level} 次），修正后编辑 PR 可提前`) };
-    // The intake pause (primary/standby C6): no new batch starts until it ends (the executor's first gate, before the
-    // parking places and the breaker); no estimate that assumes a free executor.
-    if (status.intakePause) return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：暂停接新中${status.intakePause.until ? `，最晚 ${hhmm(status.intakePause.until)} 恢复` : ''}`) };
     // Generation 10 (DESIGN 53.5): a trial time that has come is no longer "open" on the page (the executor starts the trial at its next
     // pass and the board then says half-open). Half-open only says trials are allowed, one batch at a time: whether one runs now is the
     // batch in flight (status.current, shown above for its own PR), so the text claims nothing more.
     const trialDue = status.breaker?.state === 'open' && Number.isFinite(status.breaker.nextTrialAt) && status.breaker.nextTrialAt <= now;
-    if (status.breaker?.state === 'half-open' || trialDue) return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：熔断后的试跑${trialDue ? '时间已到，即将开始' : '阶段，一次只跑一批'}，试跑通过后恢复`) };
-    if (status.breaker?.state === 'open') return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：执行器熔断中${status.breaker.cause === 'network' ? '（网络故障）' : ''}${status.breaker.nextTrialAt ? `，约 ${hhmm(status.breaker.nextTrialAt)} 试跑` : ''}`) };
+    // A back-off or wait whose time has come (review rounds 21 and 22) shows no passed time: held by a gate of the whole queue the
+    // status shows (intake pause, breaker, parking places) it says that gate first, like a queued row; else held by a per-row deferral in
+    // force (queue.mjs#view heldBy) it says the deferral; else it runs when its turn comes: at its estimated start when batches are
+    // ahead of it, after the batch in flight, or at once. One whose time is still ahead keeps its own text and time, also while a
+    // deferral holds it.
+    // The daily budgets of the whole queue (status.limits, review round 23) and the global deferrals the status shows (review round 24)
+    // are such gates too (queueGate).
+    const gate = queueGate(status, row);
+    if (row.state === 'BACKOFF' || row.state === 'WAITING') {
+      const due = !(row.nextAt > now);
+      if (due && !gate && row.heldBy) {
+        return { state: 'pending', description: clip(DEFERRED_TEXT[row.heldBy] ? `排队中：${DEFERRED_TEXT[row.heldBy]}，之后自动重试` : `排队中：${HELD_TEXT[row.heldBy] ?? `暂缓（${row.heldBy}）`}`) };
+      }
+      if (!(due && gate)) {
+        const when = !due ? at : row.eta > now ? `约 ${hhmm(row.eta)} ` : status.current ? '当前批次结束后' : '即将';
+        if (row.state === 'WAITING') return { state: 'pending', description: clip(`${WAIT_TEXT[row.deferred] ?? `等待中（${code}）`}：${when}自动重试，批准或修正后编辑 PR 可提前`) };
+        // Generation 12 (defect 050560ac): a network back-off names the cause and the next try; it needs nothing from the PR.
+        if (row.network) return { state: 'pending', description: clip(`网络问题，${NETWORK_CAUSE_TEXT[row.deferred] ?? `未执行（${code}）`}，${when}自动重试，不用推新提交`) };
+        return { state: 'pending', description: clip(`未准入或未执行（${code}）：${when}自动重试（第 ${row.level} 次），修正后编辑 PR 可提前`) };
+      }
+    }
+    // A row without a place among those that may run now (a deferral holds it) says no place, not "第 ? 位" (review round 22).
+    const place = row.position ? `排队第 ${row.position} 位` : '排队中';
+    // The intake pause (primary/standby C6): no new batch starts until it ends (the executor's first gate, before the
+    // parking places and the breaker); no estimate that assumes a free executor.
+    if (status.intakePause) return { state: 'pending', description: clip(`${place}：暂停接新中${status.intakePause.until ? `，最晚 ${hhmm(status.intakePause.until)} 恢复` : ''}`) };
+    if (status.breaker?.state === 'half-open' || trialDue) return { state: 'pending', description: clip(`${place}：熔断后的试跑${trialDue ? '时间已到，即将开始' : '阶段，一次只跑一批'}，试跑通过后恢复`) };
+    if (status.breaker?.state === 'open') return { state: 'pending', description: clip(`${place}：执行器熔断中${status.breaker.cause === 'network' ? '（网络故障）' : ''}${status.breaker.nextTrialAt ? `，约 ${hhmm(status.breaker.nextTrialAt)} 试跑` : ''}`) };
     // No new batch while the parking places are full (phase 2, step 2; review m8): no estimate that assumes a free executor.
-    if (status.queue?.parkingFull === true) return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：停靠的批次已满，等它们结束`) };
+    if (status.queue?.parkingFull === true) return { state: 'pending', description: clip(`${place}：停靠的批次已满，等它们结束`) };
+    // A daily budget used up, or a global deferral: no start before it ends (no estimate that assumes it).
+    if (gate && (DEFERRED_TEXT[gate] || GLOBAL_DEFER_TEXT[gate])) return { state: 'pending', description: clip(`${place}：${DEFERRED_TEXT[gate] ?? GLOBAL_DEFER_TEXT[gate]}`) };
     const why = row.deferred ? `：${DEFERRED_TEXT[row.deferred] ?? row.deferred}` : '';
-    return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位${why}${row.eta && !row.deferred ? `，预计 ${hhmm(row.eta)} 开始` : ''}`) };
+    return { state: 'pending', description: clip(`${place}${why}${row.eta && !row.deferred ? `，预计 ${hhmm(row.eta)} 开始` : ''}`) };
   }
   // Generation 10 (DESIGN 53.3): the network cap is an environment stop, lifted by itself when the outside answers again.
   if (row && row.state === 'STOPPED' && row.stopKind === 'release-cap' && row.deferred === 'NETWORK_RELEASE_CAP_REACHED') {
@@ -228,8 +341,11 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
   if (status.halt) out.push({ key: `halt:${status.halt.code}:${status.halt.at ?? ''}`, title: '常驻执行器已停机（HALT）', body: `原因：${status.halt.code}。需要 Owner 复位（rearm）后才会继续。${haltHint(status.halt.code)}` });
   for (const p of status.pending) {
     if (!LIVE.has(p.state ?? 'QUEUED') || !p.since || now - p.since <= WAIT_NOTIFY_MS) continue;
-    const reason = p.deferred ?? p.state ?? 'QUEUED';
-    out.push({ key: `wait:${p.pr}:${p.headSha}:${reason}`, title: `PR #${p.pr} 排队超过 1 小时`, body: `提交 ${p.headSha.slice(0, 8)}：${DEFERRED_TEXT[p.deferred] ?? WAIT_TEXT[p.deferred] ?? (p.deferred ? `等待中（${p.deferred}）` : '前面还有批次')}。` });
+    // What holds the row now, as its PR page says (rowHold: a gate, its deferral, its own reason; review rounds 21 and 24).
+    const d = rowHold(status, p, now);
+    const reason = d ?? p.state ?? 'QUEUED';
+    out.push({ key: `wait:${p.pr}:${p.headSha}:${reason}`, title: `PR #${p.pr} 排队超过 1 小时`,
+      body: `提交 ${p.headSha.slice(0, 8)}：${DEFERRED_TEXT[d] ?? GATE_TEXT[d] ?? GLOBAL_DEFER_TEXT[d] ?? HELD_TEXT[d] ?? WAIT_TEXT[d] ?? (d ? `等待中（${d}）` : '前面还有批次')}。` });
   }
   // The executor's own notices (queue.mjs#notice), each key once.
   for (const n of status.notices ?? []) {
@@ -240,6 +356,12 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
       case 'new-trigger': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 收到新触发`, body: `提交 ${head} 等待中的重试已提前，冷却 10 分钟后重新评估。` }); break;
       case 'stopped': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${n.code ?? '?'}）。请修正后推新提交。` }); break;
       case 'stage8-budget': out.push({ key: `notice:${n.key}`, title: '今日第 8 段重试额度已用完', body: '停靠批次的第 8 段重试今天已用完，明天继续。' }); break;
+      // Generation 12 (DESIGN §56.3): the claim of a running or parked batch is about to end.
+      // The end is the one Native said at the last stage 1 or stage-8 try; a renewal since then is not seen (review round 6, MINOR A).
+      case 'lease-short': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 的认领${n.code === 'CLAIM_LEASE_EXPIRED' ? '可能已到期' : '快到期'}`,
+        body: n.code === 'CLAIM_LEASE_EXPIRED'
+          ? `提交 ${head}：按上次读到的租约，认领${n.until ? `约 ${hhmm(n.until)} ` : ''}已到期。没有续租的话，后面的段会被拒；已续租可忽略。`
+          : `提交 ${head}：认领租约${n.until ? `约 ${hhmm(n.until)} ` : ''}到期，早于本批跑完。请持有者现在用 clued_work_renew 续租（批次中续租不会作废本批；已续租可忽略）。` }); break;
       // Phase 2, step 3a: why stage 8 writes no merge-slot green.
       case 'stage8-rules': out.push({ key: `notice:${n.key}`, ...(STAGE8_RULES_TEXT[n.code] ? STAGE8_RULES_TEXT[n.code](n.pr, head) : { title: '第 8 段不发合并位', body: n.code ?? '?' }) }); break;
       case 'queue-unsaved': out.push({ key: `notice:${n.key}`, title: '常驻执行器写不进排队表', body: `连续多次写不进 state\\queue\\queue.json（${n.code ?? '?'}），新的触发留在收件箱里没有处理。` }); break;
@@ -388,7 +510,7 @@ export class PrStatusReporter {
     this.passStartedAt = now;
     this.stalled = false;
     let posted = 0;
-    for (const [head, at] of this.failed) if (now - at >= POST_RETRY_MS) this.failed.delete(head);
+    for (const [head, f] of this.failed) if (now - f.at >= POST_RETRY_MS) this.failed.delete(head);
     const memoryBefore = canonicalJson(this.store.data.node);
     let toasts = await this.showAll(events({ status, statusError, now, pulls, startedAt: this.startedAt, collision: this.collision }), now, 0);
     // A pass whose duty could not be worked out writes nothing on the PR page (never under a fallback name: review m1).
@@ -403,9 +525,10 @@ export class PrStatusReporter {
       if (Array.isArray(required) && !this.collision && !this.stalled) {
         const described = new Set();
         const write = async (headSha, want, ctx, key) => {
-          if (posted >= MAX_POSTS_PER_PASS || !this.inBudget() || this.failed.has(key)) return false;
+          const text = `${want.state}|${clip(want.description)}`;
+          if (posted >= MAX_POSTS_PER_PASS || !this.inBudget() || this.failed.get(key)?.text === text) return false;
           const ok = await this.post(headSha, want, ctx);
-          if (ok) posted += 1; else if (!this.stalled) this.failed.set(key, now);
+          if (ok) { posted += 1; this.failed.delete(key); } else if (!this.stalled) this.failed.set(key, { at: now, text });
           return ok;
         };
         // What was written per head under this node's context: dutyAt is the last 当班 or 双活停机 (what an 已交班 is owed
@@ -418,7 +541,10 @@ export class PrStatusReporter {
         };
         for (const pull of pulls) {
           if (posted >= MAX_POSTS_PER_PASS || !this.inBudget()) break;
-          const want = withWatchdogLine(this.duty.want(pull, status, now, withTrainLine(describe({ pull, status, now }), status?.train?.last ?? null, pull, now, DESCRIPTION_MAX)),
+          // The re-run line goes into the base text, so the duty word stays at the start (node-duty.mjs#parseDutyStatus reads it there)
+          // and the watchdog tail stays last (review round 3, BLOCKER 1).
+          const base = withRerunLine(describe({ pull, status, now }), this.rerunDone?.(pull.headSha) === true);
+          const want = withWatchdogLine(this.duty.want(pull, status, now, withTrainLine(base, status?.train?.last ?? null, pull, now, DESCRIPTION_MAX)),
             this.watchdogStale?.() === true);
           if (!want) continue;
           described.add(pull.headSha);

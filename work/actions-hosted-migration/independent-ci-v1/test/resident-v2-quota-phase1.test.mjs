@@ -72,8 +72,11 @@ test('merge-queue entry fact: in the queue (head, waiting), not in it (none, lap
   assert.equal(mergeQueueEntryV2(null, job), null);
   assert.deepEqual(mergeQueueEntryV2(q('waiting', -4), job), { entered: true, state: 'waiting', position: null });
   assert.deepEqual(sanitizeSchedulingV2({ ciRetryAfter: '2026-10-22T12:00:00Z', mergeQueue: { entered: true, state: 'waiting', position: 2, extra: 1 } }),
-    { ciRetryAfter: '2026-10-22T12:00:00.000Z', mergeQueue: null });
+    { ciRetryAfter: '2026-10-22T12:00:00.000Z', mergeQueue: null, claimExpiresAt: null });
   assert.equal(sanitizeSchedulingV2('x'), null);
+  // generation 12: the lease end, normalized; anything else is null
+  assert.equal(sanitizeSchedulingV2({ claimExpiresAt: '2026-11-05T10:00:00+08:00' }).claimExpiresAt, '2026-11-05T02:00:00.000Z');
+  for (const bad of ['soon', 42, '2026-11-05', null]) assert.equal(sanitizeSchedulingV2({ claimExpiresAt: bad }).claimExpiresAt, null, String(bad));
 });
 
 test('GitHub 5xx, 429 and transport failures are GITHUB_TRANSIENT_UNAVAILABLE; 403 and other answers are not', () => {
@@ -100,7 +103,8 @@ test('stage fact: the bound outcome carries diagnostic, scheduling and the safe-
   assert.equal(f.safeToRerun, true);
   assert.deepEqual(f.diagnostic.reasonCodes, ['task_ci_head_cap_reached', 'unknown_reason']);
   assert.equal(f.diagnostic.ciRetryAfter, '2026-10-22T12:00:00.000Z');
-  assert.deepEqual(f.scheduling, { ciRetryAfter: '2026-10-22T12:00:00.000Z', mergeQueue: { entered: false, state: null, position: null } });
+  assert.deepEqual(f.scheduling, { ciRetryAfter: '2026-10-22T12:00:00.000Z', mergeQueue: { entered: false, state: null, position: null }, claimExpiresAt: null });
+  assert.equal(outcomeFacts({ ...o, scheduling: { ...o.scheduling, claimExpiresAt: '2026-10-22T13:00:00Z' } }).scheduling.claimExpiresAt, '2026-10-22T13:00:00.000Z');
   // the flag never survives side effects or a status other than BLOCKED
   assert.equal(outcomeFacts({ ...o, sideEffects: 1, mayHavePublished: true }).safeToRerun, false);
   assert.equal(outcomeFacts({ ...o, status: 'UNCERTAIN' }).safeToRerun, false);

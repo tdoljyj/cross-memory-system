@@ -28,7 +28,9 @@ test('the stage fact\'s outcome reaches the executor whole: diagnostic codes, ci
   assert.deepEqual(f.outcome, { status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, mayHavePublished: false, safeToRerun: true,
     diagnostic: { verdict: 'REJECTED', nativeVerdict: 'REJECTED', ownerReviewKind: 'UNKNOWN', reasonCodes: ['task_ci_head_cap_reached'], nativeReasonCodes: ['task_ci_head_cap_reached'], ciRetryAfter: '2026-10-22T12:00:00.000Z',
       mergeQueue: { entered: false, state: null, position: null } },
-    scheduling: { ciRetryAfter: '2026-10-22T12:00:00.000Z', mergeQueue: { entered: true, state: 'waiting', position: 3 } } });
+    scheduling: { ciRetryAfter: '2026-10-22T12:00:00.000Z', mergeQueue: { entered: true, state: 'waiting', position: 3 }, claimExpiresAt: null } });
+  // generation 12 (DESIGN §56.3): the claim's lease end passes when it is a time
+  assert.equal(parseStageOutcome({ ...outcome, scheduling: { ...outcome.scheduling, claimExpiresAt: '2026-10-22T13:00:00.000Z' } }).scheduling.claimExpiresAt, '2026-10-22T13:00:00.000Z');
   // re-validated to fixed shapes: nothing malformed passes, and a flag never survives side effects
   assert.equal(parseStageOutcome({ ...outcome, sideEffects: 1, mayHavePublished: true }).safeToRerun, false);
   assert.equal(parseStageOutcome({ ...outcome, status: 'blocked' }), null);

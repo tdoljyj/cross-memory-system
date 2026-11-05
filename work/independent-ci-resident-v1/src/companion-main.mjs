@@ -23,6 +23,7 @@ import { LocalStore, PrStatusReporter, REPORT_MIN_GAP_MS, reportDue, statusSigna
 import { companionBackstop } from './ruleset-backstop.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
 import { PANEL_REPO, PanelDispatchState, PanelDispatcher, validatePanelDispatchConfig } from './panel-dispatch.mjs';
+import { AdmissionRerunState, AdmissionRerunner, RERUN_LANE_EVERY_MS, ghPort } from './admission-rerun.mjs';
 import { CompanionHeartbeat, ghHandoverPort, readHeartbeatToken, scQueryArgv, serviceRunningFrom, supabaseHeartbeatTransport } from './companion-heartbeat.mjs';
 
 // The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
@@ -288,6 +289,15 @@ export async function main(args = process.argv.slice(2)) {
       notify: async (key, title, body) => { await panelRunner.run(toastArgv(cfg.powershellExe, title, body), { timeoutMs: 15_000 }); },
       state: await PanelDispatchState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-panel-dispatch.json')) })
     : null;
+  // Generation 12 (DESIGN §56.5, Decision 207c0cd0 v2): the one repair re-run of the required tests the admission gate allows, clicked
+  // with the Owner's gh login when the gate timed out before stage 1's admission. Its own Runner and its own memory file.
+  const rerunRunner = new Runner({ env: { ...process.env }, jobHost });
+  const rerunner = new AdmissionRerunner({ gh: ghPort({ ghExe: raw.ghExe, repo: raw.repo, run: (a, o) => rerunRunner.run(a, o) }),
+    state: await AdmissionRerunState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-admission-rerun.json')),
+    clock: Date.now, readStatus: () => readStatus(values.root), pulls: () => (poller.lastPass ? poller.lastPass.pulls : null),
+    notify: async (key, title, body) => { await rerunRunner.run(toastArgv(cfg.powershellExe, title, body), { timeoutMs: 15_000 }); } });
+  // The PR page says when this lane re-ran a head's required tests (pr-status.mjs#PrStatusReporter, rerunDone).
+  reporter.rerunDone = headSha => rerunner.done(headSha);
   keepalive(companionArgv(cfg).keepalive());
   let lastPoll = 0, lastReport = 0, lastBackstop = 0, lastSignature = null, lastStatusRead = 0;
   // Only now, with a usable job host and every part of the companion set up: a companion whose job host cannot start a
@@ -303,6 +313,7 @@ export async function main(args = process.argv.slice(2)) {
       lane({ runner: upgradeRunner, work: () => upgradeLane.step(), everyMs: UPGRADE_LANE_EVERY_MS }),
       ...(heartbeat ? [lane({ runner: heartbeatRunner, work: () => heartbeat.step(), everyMs: HEARTBEAT_LANE_EVERY_MS })] : []),
       ...(panelDispatch ? [lane({ runner: panelRunner, work: () => panelDispatch.step(), everyMs: PANEL_DISPATCH_LANE_EVERY_MS })] : []),
+      lane({ runner: rerunRunner, work: () => rerunner.step(), everyMs: RERUN_LANE_EVERY_MS }),
       lane({ runner: advisory, work: async () => {
         if (Date.now() - lastPoll > POLL_EVERY_MS) {
           lastPoll = Date.now();
