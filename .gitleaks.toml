@@ -14,7 +14,7 @@ regexes = ['''^sb_secret_fixture_rejected$''']
 # GA record IDs, and OAuth user IDs (not bearer tokens).
 # The CI helper validates and materializes these comments outside the repository.
 # This keeps review data inside the existing scanner-configuration boundary.
-# clued-reviewed-count: 732
+# clued-reviewed-count: 733
 # clued-reviewed-finding: {"fingerprint":"023b363fbde0db8e2283746ec850832e48e93508:artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/root6-registration/ReadRootSnapshotAfterNW01.json:generic-api-key:1","kinds":["IDEMPOTENCY_METADATA"]}
 # clued-reviewed-finding: {"fingerprint":"0d283aa0352c0bf4cb315213a3eeaf413a0721b8:scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-final-v14-expired1/ExpiredFinalGAPredispatchRecovery.sql:generic-api-key:2","kinds":["GA_RECORD_ID"]}
 # clued-reviewed-finding: {"fingerprint":"0f1352758e23e33ad8a14bfae9ab5a9211e1c9f9:scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-final/ExpiredFinalGAPredispatchRecovery.sql:generic-api-key:5","kinds":["GA_RECORD_ID"]}
@@ -814,3 +814,7 @@ regexes = ['''^sb_secret_fixture_rejected$''']
 # clued-reviewed-finding: {"fingerprint":"16f981cca5bdcae27e5eb08768013b36deafe44a:work/independent-ci-resident-v1/test/role-probe.test.mjs:generic-api-key:73","kinds":["SYNTHETIC_ROLE_PROBE_TOKEN"]}
 # clued-reviewed-finding: {"fingerprint":"cc353e29a32b991696df95d5fc3f9b9d107e8d1c:scripts/ci/clued-gated-proof-profiles.json:curl-auth-user:3829","kinds":["EXACT_ESCAPED_JSON_DOCKER_UID_GID"]}
 # clued-reviewed-finding: {"fingerprint":"cc353e29a32b991696df95d5fc3f9b9d107e8d1c:scripts/ci/clued-gated-proof-profiles.json:curl-auth-user:5538","kinds":["EXACT_ESCAPED_JSON_DOCKER_UID_GID"]}
+
+# Owner Decision 98fec682: the exact byte-identical twin of the cc353e29 line at the registration commit d94cd486.
+# One fingerprint only; no rule, path, line-range or global suppression.
+# clued-reviewed-finding: {"fingerprint":"d94cd486e29a7362888fc32cd807ceb38890acb6:scripts/ci/clued-gated-proof-profiles.json:curl-auth-user:3829","kinds":["EXACT_ESCAPED_JSON_DOCKER_UID_GID"]}

@@ -60,20 +60,20 @@ function signedWrapper(issue, observation, signer) {
   return { contract: RESULT_WRAPPER_CONTRACT_V2, domain: 'production', issueSha256: bridgeDigest(issue), envelope, observation };
 }
 
-test('gitleaks signed result v4 binds the exact 732/103/174/130 proof and rejects legacy or altered proof', () => {
+test('gitleaks signed result v4 binds the exact 733/104/175/130 proof and rejects legacy or altered proof', () => {
   const { jobs, signer, record } = setup(), job = jobs.gitleaks, c = claim(), now = Date.now();
   const issue = makeIssue(job, facts(job, c), refsSnapshot(), { sourceAcceptanceRef: record.accepted.sourceAcceptanceRef,
     hostQualificationRef: record.accepted.hostQualificationRef, expiresAt: iso(now + 600000) });
   const observation = { contract: 'clued.independent-ci.formal-scanner-observation/2', domain: 'production-observation', fixture: false,
     profile: 'required-gitleaks-history/1', subject: Object.fromEntries(['id', 'repo', 'pr', 'headSha', 'baseSha', 'role', 'sourceManifestSha256', 'attempt'].map(k => [k, job[k]])),
-    sourceManifestSha256: job.sourceManifestSha256, sourceSha: 'c'.repeat(40), requiredHistoricalExceptions: 732,
+    sourceManifestSha256: job.sourceManifestSha256, sourceSha: 'c'.repeat(40), requiredHistoricalExceptions: 733,
     reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, startedAt: iso(now - 5000), finishedAt: iso(now - 1000), exitCode: 0, conclusion: 'success',
     logs: { stdout: { sha256: hex(32) }, stderr: { sha256: hex(32) } },
     cleanup: { complete: true, wholeContainerTreeStopped: true, containerRemoved: true, observedAt: iso(now - 500) },
     formalEligible: false, checksWritten: false, qualificationIssued: false };
   const wrapper = signedWrapper(issue, observation, signer);
   assert.equal(verifySignedBridgeResult({ issue, wrapper, signers: record.signers }).payload.conclusion, 'success');
-  for (const changed of [{ ...observation, requiredHistoricalExceptions: 726 }, { ...observation, requiredHistoricalExceptions: 729 }, { ...observation, reviewedHistoryProof: undefined },
+  for (const changed of [{ ...observation, requiredHistoricalExceptions: 726 }, { ...observation, requiredHistoricalExceptions: 729 }, { ...observation, requiredHistoricalExceptions: 732 }, { ...observation, reviewedHistoryProof: undefined },
     ...Object.keys(REVIEWED_HISTORY_PROOF).map(key => ({ ...observation, reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF, [key]: null } }))]) {
     assert.throws(() => verifySignedBridgeResult({ issue, wrapper: { ...wrapper, observation: changed }, signers: record.signers }),
       { code: 'ACTUAL_HISTORY_CLEANUP_REQUIRED' });
