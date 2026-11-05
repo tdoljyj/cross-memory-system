@@ -305,6 +305,7 @@
           "needs": "admission-gate",
           "permissions": {
             "actions": "read",
+            "checks": "read",
             "contents": "read",
             "issues": "write",
             "pull-requests": "read",
@@ -343,7 +344,7 @@
           ],
           "timeout-minutes": 10
         },
-        "definition_sha256": "04ecb082214ad9fbb93f7c2c4ea33fa2e6fc3ebc602c136b003b1435d897a4dc",
+        "definition_sha256": "f6dab50b88823d3dc0e6a7901024d73956582a7a422525084348f52d258b1150",
         "job_id": "panel"
       }
     ],
@@ -479,14 +480,15 @@
   "workflows": {
     ".github/workflows/clued-compute-panel.yml": {
       "family": "compute_panel",
-      "source_sha256": "59bb085f524890fd936982f7b9503451e6e4ac613aca6f1fdc378371a8e42d31",
+      "source_sha256": "35e0e05e323d608e873b3375f8ca5ac03601a6a767ed831cbba4df5dfa91adf5",
       "source_yaml_lines": [
         "# Compute panel (Task 679a0c2b, Owner Decision 183ee67c): every five minutes",
         "# each general-pool runner answers a route probe (its name, free disk and",
         "# available memory), and one Linux runner rebuilds the panel issue from those",
-        "# probes, the in-progress jobs of every workflow and the resident executors'",
-        "# info-only PR statuses. It uses only this workflow's GITHUB_TOKEN; no secret",
-        "# reaches the pool. See scripts/ci/self-hosted/compute_panel.py and",
+        "# probes, the in-progress jobs of every workflow, the resident executors'",
+        "# info-only PR statuses and, for the duplicate-run alert (Task e435e658), the",
+        "# check runs of recent PR heads (checks: read). It uses only this workflow's",
+        "# GITHUB_TOKEN; no secret reaches the pool. See scripts/ci/self-hosted/compute_panel.py and",
         "# docs/maintenance/compute-panel.md. clued-ci-health and clued-ci-usage-report",
         "# stay on hosted runners: the pool cannot watch its own complete loss.",
         "name: clued-compute-panel",
@@ -725,6 +727,7 @@
         "    timeout-minutes: 10",
         "    permissions:",
         "      actions: read",
+        "      checks: read",
         "      contents: read",
         "      issues: write",
         "      pull-requests: read",
@@ -744,7 +747,7 @@
         "        run: python3 -I scripts/ci/self-hosted/compute_panel.py",
         ""
       ],
-      "workflow_blob": "d668c7c88c6aaf1b9421e66d57eafa1b80ed8f00",
+      "workflow_blob": "7d263683953b140897c30681828924d6a183b26c",
       "workflow_definition": {
         "concurrency": {
           "cancel-in-progress": true,
@@ -806,6 +809,7 @@
             "needs": "admission-gate",
             "permissions": {
               "actions": "read",
+              "checks": "read",
               "contents": "read",
               "issues": "write",
               "pull-requests": "read",
@@ -1074,7 +1078,7 @@
           "contents": "read"
         }
       },
-      "workflow_definition_sha256": "519a9708c1be769d11eede573d7f7fac02bd029a877678ab50783d821962eab6"
+      "workflow_definition_sha256": "e35d99eadf18acc62d66b8bac23507d55acda0214d1b7488e8ef8242caf90fc5"
     },
     ".github/workflows/clued-native617-admission-dispatch.yml": {
       "family": "disabled_native617_dispatch",

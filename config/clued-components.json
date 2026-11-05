@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.2",
+      "version": "1.1.3",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -556,7 +556,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "c0215cd5c5debfa187a43c3edb3c511889a3b908bdf6a9dbed9bd26a0df52a3a"
+      "content_sha256": "6c8a5dd9e3a81296a72414ea5048d3527b991c3f3e1125566f9aa3012945202b"
     },
     {
       "id": "script.resource-maintenance",
@@ -578,7 +578,7 @@
     {
       "id": "script.non-pr-control-source",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Exact non-PR Source metadata classifier; candidate until separately accepted Source placement. No execution authority.",
       "root": "scripts/ci",
       "files": [
@@ -590,7 +590,7 @@
         "file": "clued-non-pr-control-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "853e9b6c30c3155a9d3013dd843fd3cb228e41a6b879c31da5b59a56fdd7a5e9"
+      "content_sha256": "c3fb56890dbb8b446ab1abdb9461db107429b46ca80af97c327f92fbd2f7d57e"
     },
     {
       "id": "script.source-only-workflow",
