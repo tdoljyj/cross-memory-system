@@ -11,7 +11,7 @@ import { JOB_HOST_PROBE, lane, probeJobHost } from '../src/companion-main.mjs';
 import { COMPANION_CONFIG_CONTRACT, Companion, jobTreeOf, validateCompanionConfig } from '../src/companion.mjs';
 import { Mailbox, RESPONSE_CONTRACT } from '../src/mailbox.mjs';
 import { mailboxCompanion } from '../src/service-ports.mjs';
-import { TEST_NODE, TEST_NODE_SHA, executorFixture, fakeCompanion, fakeEngine, tempRoot, triggerBytes } from './helpers.mjs';
+import { TEST_NODE, TEST_NODE_SHA, executorFixture, fakeCompanion, fakeEngine, tempRoot, triggerBytes, waitFor } from './helpers.mjs';
 
 const NONCE = '0123456789abcdef0123456789abcdef';
 const HOST = 'C:\\ProgramData\\CluedIndependentCI\\resident\\bin\\CluedCompanionJobHost.exe';
@@ -285,11 +285,15 @@ test('responses /2: jobTree is null, zero or unconfirmed, nothing else', async t
 
 test('the service port passes the bundle answer\'s job tree on', async t => {
   const root = await tempRoot(t);
-  const box = await Mailbox.open(root, () => Date.parse('2026-10-23T09:00:00Z'));
+  let now = Date.parse('2026-10-23T09:00:00Z');
+  const box = await Mailbox.open(root, () => now);
   const port = mailboxCompanion(box, tick);
   const asked = port.buildBundle({ batchId: BATCH });
-  let req = null;
-  while (!req) { await tick(); req = (await box.pending())[0] ?? null; }
+  // if the request never arrives, the test fails on the wait below; moving the clock past the ask's deadline ends the ask's polling,
+  // so a failing run ends instead of spinning on
+  t.after(() => { now += 24 * 3_600_000; });
+  asked.catch(() => {});
+  const req = await waitFor(async () => (await box.pending())[0], 'the bundle request to reach the mailbox');
   await box.respond(req, { ok: false, code: 'BUNDLE_UNAVAILABLE', jobTree: 'zero' });
   assert.deepEqual(await asked, { ok: false, code: 'BUNDLE_UNAVAILABLE', jobTree: 'zero' });
 });
