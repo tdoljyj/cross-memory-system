@@ -112,6 +112,12 @@ test('the integrated candidate uses exactly the two preregistered workflow bytes
     .map(id => [id, REQUIRED_TESTS_SOURCE.role_sha256[id]]));
   delete profileBefore.workflows[REQUIRED_TESTS_SOURCE.file];
   delete rolesBefore.workflows[REQUIRED_TESTS_SOURCE.file];
+  // #988: the Node 22 install managed-cache Source is registered after this generation; strip it like the other later successors.
+  const NODE22 = '.github/workflows/clued-cloud-node22-install.yml', NODE22_BLOB = '30e783feb7ab54a578b5ed3b692fa664e00207d1';
+  assert.equal(profileBefore.workflows[NODE22].accepted_sources.filter(x => x.workflow_blob === NODE22_BLOB).length, 1);
+  profileBefore.workflows[NODE22].accepted_sources = profileBefore.workflows[NODE22].accepted_sources.filter(x => x.workflow_blob !== NODE22_BLOB);
+  assert.equal(Object.hasOwn(rolesBefore.workflows[NODE22].sources, NODE22_BLOB), true);
+  delete rolesBefore.workflows[NODE22].sources[NODE22_BLOB];
   assert.equal(roleDefinitionDigest(profileBefore), 'fd63c6804f427cbe6c2e8ba4e18f8d53981006bdb2e1113a196ddd73fee7c9a7');
   assert.equal(roleDefinitionDigest(rolesBefore), '4a86b392b2d094fd8f80d8bafc2bf0e4ab32357c4c1f21ac747556836c242352');
   const admission = fs.readFileSync(new URL('./clued-work-admission.mjs', import.meta.url), 'utf8');
