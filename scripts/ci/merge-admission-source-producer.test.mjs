@@ -372,10 +372,16 @@ test('runtime loader validates the current Source registry against actual bytes 
     Object.fromEntries(Object.entries(previous).filter(([key])=>!['admission_source','previous_admission_sources','natural_producers','execution_source','previous_execution_sources'].includes(key))));
   assert.equal(sha256(JSON.stringify({...unchanged,execution_source:sealedLegacy.execution_source,previous_execution_sources:sealedLegacy.previous_execution_sources})),
     'a7011398d87dbfdb907d583765ef9b899fb149eaa47dd8ecad58da8772188fe0');
+  // Intentional loss: previous_admission_sources (4) and previous_execution_sources (4) were already full when
+  // this registry was re-pinned to the current bytes, so the generation registered at 9e9d3fa66 was replaced rather
+  // than retained: admission script b413917364fc and execution_source cdaf73165378/7cddf4abf791. Raising the
+  // capacity or rotating the oldest entry needs its own change; the history stays pinned to the sealed 80bd559f.
   assert.deepEqual(cfg.previous_admission_sources.at(-1),{...cfg.admission_source,
     script_blob:previous.admission_source.script_blob,source_checkout_sha:'80bd559f283b7c009cd37f1fbde700b6d6be41ae',default_branch:'main'});
-  assert.equal(cfg.execution_source.profiles_sha256,sha256(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'))));
-  assert.equal(cfg.execution_source.role_specs_sha256,sha256(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-role-specs.json'))));
+  assert.equal(cfg.execution_source.profiles_sha256,sha256(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'))),
+    'R9 registry is stale: execution_source.profiles_sha256 no longer matches scripts/ci/clued-gated-proof-profiles.json; re-pin it in '+R9_RUNTIME_CONFIG);
+  assert.equal(cfg.execution_source.role_specs_sha256,sha256(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-role-specs.json'))),
+    'R9 registry is stale: execution_source.role_specs_sha256 no longer matches scripts/ci/clued-gated-proof-role-specs.json; re-pin it in '+R9_RUNTIME_CONFIG);
   assert.equal(r.reason_code,'FORWARD_EPOCH_NOT_ESTABLISHED');assert.equal(r.window,null);
   const expected=JSON.parse(r.reviewed_expected_sources_raw);
   assert.equal(expected.schema,'clued.merge-admission-four-source-expectations/2');assert.deepEqual(expected.previous_execution_sources,cfg.previous_execution_sources);
@@ -399,6 +405,7 @@ test('runtime loader validates the current Source registry against actual bytes 
     registeredBlob='b8fee41077d854e906244b9fa2d374f058dbd4a3',
     selected=registeredWorkflowSource(JSON.parse(snapshot.proof_profiles_raw),file,registeredBlob),actualRoles=rolesForSource(JSON.parse(snapshot.role_specs_raw),file,registeredBlob);
   assert.equal(snapshot.workflow_directory.find(row=>row.path===file).sha,actualBlob);
+  assert.equal(registeredWorkflowSource(JSON.parse(snapshot.proof_profiles_raw),file,actualBlob).passed,false,'the pending successor must not be accepted as registered');
   assert.equal(selected.passed,true);assert.equal(selected.profile.workflow_blob,registeredBlob);assert.equal(actualRoles.length,1);assert.equal(actualRoles[0].job_id,'qualify');
   assert.equal(actualRoles[0].definition_sha256,'fab079be15c3b25abe44ff6bcc2af3ff86161db853b0017ae92cb3f5ececb074');
   assert.equal(roleDefinitionDigest(actualRoles[0].definition),actualRoles[0].definition_sha256);assert.equal(actualRoles[0].definition.env.QUALIFICATION_IDLE_RUN_ID,'${{ inputs.idle_run_id }}');
