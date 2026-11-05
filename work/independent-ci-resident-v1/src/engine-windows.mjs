@@ -148,7 +148,9 @@ export function parseStageOutcome(o) {
   if (diagnostic) {
     if (OWNER_REVIEW_KINDS.has(d.ownerReviewKind)) diagnostic.ownerReviewKind = d.ownerReviewKind;
     if (ADMISSION_PHASES.has(d.phase)) diagnostic.phase = d.phase;
-    for (const field of ['workflowGateFindingsPresent', 'modeFresh', 'recorderFresh']) if (typeof d[field] === 'boolean') diagnostic[field] = d[field];
+    // transport (generation 10): Source full-admission-v2.mjs#transportFault, kept so classify.mjs#networkFailure can tell the line from
+    // any other fault of a NATIVE_ADMISSION_UNAVAILABLE.
+    for (const field of ['workflowGateFindingsPresent', 'modeFresh', 'recorderFresh', 'transport']) if (typeof d[field] === 'boolean') diagnostic[field] = d[field];
     if (ISSUER_TRANSIENT_ADMISSIONS.has(d.transientAdmission)) {
       diagnostic.transientAdmission = d.transientAdmission;
       if (Number.isSafeInteger(d.evaluations) && d.evaluations >= 1 && d.evaluations <= 4) diagnostic.evaluations = d.evaluations;

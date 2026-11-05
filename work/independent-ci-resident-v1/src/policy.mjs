@@ -43,12 +43,16 @@
 // touch's hard_cap_minutes), frontBatchBudgetMs (what a front batch needs left on its slot), sweepFreshMs (default 900000: the
 // newest sweep proof stage 8 accepts) and fullSweepMaxMs (a full sweep's longest run); nonFrontRuns may be false. /7 stays
 // accepted exactly as it was ('on' refused, POLICY_TRAIN_ON_NOT_SUPPORTED); its train run carries TRAIN_DEFAULTS.
-// Contract /9 (generation 10, network tolerance, DESIGN 53.4; Task 125a5162 item 4): /8 plus breaker.network = { backoffMs, earlyTrialProbes }:
-//   - backoffMs: the trial delays of a breaker that only network faults opened (breaker.mjs NETWORK_FAULT_CODES); 1-6 non-decreasing
-//     entries of 1 minute to 24 hours, its first no longer than breaker.backoffMs's first (it may only shorten the wait);
-//   - earlyTrialProbes (1-10): that many read-only probes in a row that reached the outside bring such a breaker's trial forward.
-// /7 and /8 stay accepted exactly as they were: without breaker.network the breaker behaves as before (the Owner's release request
-// works under any contract). Changing these numbers is a new policy (new hash, the Owner's UAC), never a per-batch input.
+// Contract /9 (generation 10, network tolerance, DESIGN 53.3, 53.4; Task 125a5162 items 3 and 4): /8 plus
+// breaker.network = { trialDelayMs, earlyTrialProbes, releasesPerHeadPer24h }:
+//   - trialDelayMs: the wait for the trial of a breaker that only network faults opened (classify.mjs#networkFailure), every time (one
+//     outage never stacks it); 1 minute up to breaker.backoffMs's first (it may only shorten the wait);
+//   - earlyTrialProbes (1-10): that many read-only probes in a row that reached the outside make such a breaker's trial due now;
+//   - releasesPerHeadPer24h (1-144): a network release of a head counts towards this cap instead of limits.releasesPerHeadPer24h, and
+//     is tried again every 10 minutes; at the cap the row stops (lifted when the breaker closes, the probes see the outside again or
+//     the Owner releases the breaker).
+// /7 and /8 stay accepted exactly as they were: without breaker.network the breaker and the release cap behave as before (the Owner's
+// release request works under any contract). Changing these numbers is a new policy (new hash, the Owner's UAC), never a per-batch input.
 import { HEX64, REPO, UUID, check, exactKeys } from './canonical.mjs';
 import { RELAY_ROLES } from './hosted-wait.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
@@ -145,12 +149,12 @@ export function validatePolicy(p) {
 }
 
 const delayList = a => Array.isArray(a) && a.length >= 1 && a.length <= 6 && a.every((ms, i) => int(ms, 60_000, 86_400_000) && (i === 0 || a[i - 1] <= ms));
-// breaker.network (contract /9, generation 10): the network breaker's own delays (never a longer first wait than the policy's own) and
-// the read-only probes that bring its trial forward.
+// breaker.network (contract /9, generation 10): the network breaker's trial delay (never longer than the policy's own first wait), the
+// read-only probes that bring its trial forward and the network release cap per head.
 export function validateBreakerNetwork(breaker) {
   const n = breaker.network;
-  exactKeys(n, ['backoffMs', 'earlyTrialProbes'], 'POLICY_BREAKER_NETWORK_KEYS_INVALID');
-  check(delayList(n.backoffMs) && n.backoffMs[0] <= breaker.backoffMs[0] && int(n.earlyTrialProbes, 1, 10), 'POLICY_BREAKER_NETWORK_INVALID');
+  exactKeys(n, ['trialDelayMs', 'earlyTrialProbes', 'releasesPerHeadPer24h'], 'POLICY_BREAKER_NETWORK_KEYS_INVALID');
+  check(int(n.trialDelayMs, 60_000, breaker.backoffMs[0]) && int(n.earlyTrialProbes, 1, 10) && int(n.releasesPerHeadPer24h, 1, 144), 'POLICY_BREAKER_NETWORK_INVALID');
   return n;
 }
 

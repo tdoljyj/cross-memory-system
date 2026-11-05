@@ -368,11 +368,17 @@ if($git){
   Yes ($attempts -eq 2 -and $s.unseeded -eq $true -and -not $seedReport.used -and $seedReport.networkFailureNoted -and $null -ne (Seed-Meta-Failure-At) -and $null -eq (Seed-Meta-Read)) 'no-seed-network-failure-noted'
   Seed-Update $s;$nm=Seed-Meta-Object;Yes ($seedReport.updated -and $nm.lastFullFetchSeconds -ge 0 -and $null -ne $nm.lastNetworkFailureAtUnix) 'first-seed-keeps-note'
   New-Case @{} $null;Seed-Begin;Yes ($seedUse -and $seedReport.reason -ceq 'RECENT_NETWORK_FAILURE') 'first-seed-used-after-network-failure'
-  # N3. both attempts fail on the network: the answer is the second failure (never a third attempt), the retry was seeded, the note is there
+  # N3. the seeded network retry fails on the network too: a seeded attempt is never the last one, so a third, unseeded attempt follows
+  #     (inside the same window) and builds the store; three failures in a row are the answer, never a fourth attempt
   Reset-Seed;New-Case @{} $null;$st=Fetch-Store;Seed-Update $st
-  New-Case @{fetch=2} $null;Seed-Begin
-  Refused-With {Fetch-Store} 'GIT_STEP_FAILED' 'network-twice-final'
-  Yes ($attempts -eq 2 -and (Fetches) -eq 2 -and @($calls|Where-Object{$_ -ceq 'seed-fetch'}).Count -eq 1 -and @($failedAttempts).Count -eq 1 -and $seedReport.networkFailureNoted -and (Test-Path -LiteralPath $SeedDir)) 'network-twice-seeded-retry-noted'
+  New-Case @{fetch=2} $null;Seed-Begin;$s=Fetch-Store
+  Yes ($s.dir -ceq $FetchDir3 -and $attempts -eq 3 -and $s.unseeded -eq $true -and (Fetches) -eq 3 -and @($calls|Where-Object{$_ -ceq 'seed-fetch'}).Count -eq 1 -and @($failedAttempts).Count -eq 2 -and $seedReport.reason -ceq 'UNSEEDED_AFTER_SEEDED_NETWORK_FAILURE' -and $seedReport.networkFailureNoted -and (Test-Path -LiteralPath $SeedDir) -and (Same-Map $s.remote $expected)) ('seeded-retry-fails-then-unseeded:'+(@($calls)-join ','))
+  New-Case @{fetch=3} $null;Seed-Begin
+  Refused-With {Fetch-Store} 'GIT_STEP_FAILED' 'network-three-times-final'
+  Yes ($attempts -eq 3 -and (Fetches) -eq 3 -and @($failedAttempts).Count -eq 2 -and (Test-Path -LiteralPath $SeedDir)) 'never-a-fourth-attempt-after-network'
+  # an unseeded build (no seed) keeps its single network retry: two failures are the answer
+  Reset-Seed;New-Case @{fetch=2} $null;Seed-Begin
+  Refused-With {Fetch-Store} 'GIT_STEP_FAILED' 'unseeded-network-twice-final';Yes ($attempts -eq 2 -and (Fetches) -eq 2) 'unseeded-one-network-retry'
   # N4. the seed of the network retry is damaged: SEED_UNUSABLE, the seed is discarded, an unseeded third attempt builds the store;
   #     the network-failure note outlives the discarded seed
   Reset-Seed;New-Case @{} $null;$st=Fetch-Store;Seed-Update $st
@@ -502,7 +508,7 @@ if($git){
    $down=Join-Path $tmp 'build-bundle-down.ps1';[IO.File]::WriteAllText($down,$text)
    $out=(& powershell -NoProfile -NonInteractive -File $down -BatchId $dbatch)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
    Yes ($code -eq 2 -and $v.status -ceq 'PARTIAL_STATE_PRESERVED_NO_RETRY' -and $v.reason -ceq 'GIT_STEP_FAILED' -and $v.stage -ceq 'fetch-all-heads-and-tags' -and $v.git.label -ceq 'fetch' -and $v.git.exitCode -ne 0) ('network-down-refusal:'+$out)
-   Yes ($v.storeAttempts -eq 2 -and @($v.failedAttempts).Count -eq 1 -and $v.failedAttempts[0].attempt -eq 1 -and $v.failedAttempts[0].reason -ceq 'GIT_STEP_FAILED' -and $v.failedAttempts[0].git.label -ceq 'fetch' -and $v.failedAttempts[0].stage -ceq 'fetch-all-heads-and-tags') ('network-down-attempts:'+$out)
+   Yes ($v.storeAttempts -eq 3 -and @($v.failedAttempts).Count -eq 2 -and $v.failedAttempts[0].attempt -eq 1 -and $v.failedAttempts[0].reason -ceq 'GIT_STEP_FAILED' -and $v.failedAttempts[0].git.label -ceq 'fetch' -and $v.failedAttempts[0].stage -ceq 'fetch-all-heads-and-tags' -and $v.failedAttempts[1].attempt -eq 2 -and $v.failedAttempts[1].git.label -ceq 'fetch') ('network-down-attempts:'+$out)
    Yes ($v.seed.used -eq $true -and $v.seed.networkFailureNoted -eq $true -and $null -eq $v.hint -and $out -cnotmatch '127\.0\.0\.1') ('network-down-seeded-retry-noted-no-url:'+$out)
    $dm=[IO.File]::ReadAllText((Join-Path $res 'bundles\_seed\seed-meta.json'))|ConvertFrom-Json;Yes ($null -ne $dm.lastNetworkFailureAtUnix -and $dm.lastFullFetchSeconds -eq 500) 'network-down-meta'
   }

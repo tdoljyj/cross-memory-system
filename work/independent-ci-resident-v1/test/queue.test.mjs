@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { RunQueue, RELEASE_BACKOFF_MS, WAITING_BACKOFF_MS, COMPACT_AFTER_MS, SUPERSEDED_MAX, validateQueue, ENVIRONMENT_BACKOFF_MS, ENVIRONMENT_CLASSES } from '../src/queue.mjs';
+import { RunQueue, RELEASE_BACKOFF_MS, WAITING_BACKOFF_MS, COMPACT_AFTER_MS, SUPERSEDED_MAX, validateQueue, NETWORK_BACKOFF_MS } from '../src/queue.mjs';
 import { tempRoot } from './helpers.mjs';
 
 const MIN = 60_000;
@@ -155,13 +155,9 @@ test('depth counts live rows only; done and stopped rows leave after 24 hours; t
   q.begin(1, H(1), KEY, 'queued', now());
   q.settle(1, H(1), { kind: 'completed' }, now());
   assert.equal(q.offer(trig(3, 3), now(), small).action, 'new', 'a done row is not live');
-  // generation 10 (DESIGN 53.3): an environment release never stops the row at the cap, whatever releases24h says; it backs off a flat
-  // 10 minutes. A row the cap stopped for an environment fault before generation 10 (a carried queue file) is still lifted when the
-  // breaker closes.
+  // the release cap stopped a row because of an environment fault: lifted when the breaker closes
   q.begin(3, H(3), KEY, 'queued', now());
-  assert.equal(q.settle(3, H(3), { kind: 'released', klass: 'environment', code: 'BROKER_REQUEST_EXPIRED', releases24h: 3, releaseCap: 2 }, now()), null);
-  assert.deepEqual([q.row(3).state, q.row(3).stopKind, (q.row(3).nextAt - now()) / MIN], ['BACKOFF', null, 10]);
-  Object.assign(q.row(3), { state: 'STOPPED', stopKind: 'release-cap', stopClass: 'environment', nextAt: null });
+  q.settle(3, H(3), { kind: 'released', klass: 'environment', code: 'BROKER_REQUEST_EXPIRED', releases24h: 3, releaseCap: 2 }, now());
   assert.equal(q.row(3).stopClass, 'environment');
   assert.deepEqual(q.liftEnvironmentStops(now()), [3]);
   assert.deepEqual([q.row(3).state, q.candidates(now()).some(c => c.pr === 3)], ['BACKOFF', true]);
@@ -219,19 +215,34 @@ test('step 3c-2b: a train front commit carries S and its attempt, goes first, su
   assert.throws(() => validateQueue({ ...again.data, rows: [{ ...again.data.rows.find(r => r.pr === 8), current: { ...again.row(8).current, frontAttempt: 5 } }] }), { code: 'QUEUE_FILE_INVALID' });
 });
 
-test('generation 10 (DESIGN 53.3): an environment or transient release backs off a flat 10 minutes, never stops at the cap; other releases keep their ladder', async t => {
+test('generation 10 (DESIGN 53.3): a network release backs off a flat 10 minutes towards its own cap; other releases keep their ladder and cap', async t => {
   const { q, now, advance } = await fresh(t);
-  assert.deepEqual([ENVIRONMENT_BACKOFF_MS.map(ms => ms / MIN), [...ENVIRONMENT_CLASSES]], [[10], ['environment', 'transient']]);
+  assert.deepEqual(NETWORK_BACKOFF_MS.map(ms => ms / MIN), [10]);
   q.offer(trig(5, 5), now(), OPTS);
-  const settle = (klass, code, n) => { q.begin(5, H(5), KEY, q.candidates(Number.MAX_SAFE_INTEGER).find(c => c.pr === 5).origin, now()); return q.settle(5, H(5), { kind: 'released', klass, code, releases24h: n, releaseCap: 2 }, now()); };
-  for (let n = 1; n <= 12; n += 1) {
-    assert.equal(settle(n % 2 ? 'environment' : 'transient', 'BUNDLE_UNAVAILABLE', n), null, `release ${n}`);
-    assert.deepEqual([q.row(5).state, q.row(5).stopKind, (q.row(5).nextAt - now()) / MIN, q.row(5).levelKind], ['BACKOFF', null, 10, 'environment'], `release ${n}`);
+  const settle = o => { q.begin(5, H(5), KEY, q.candidates(Number.MAX_SAFE_INTEGER).find(c => c.pr === 5).origin, now()); return q.settle(5, H(5), { kind: 'released', releaseCap: 2, ...o }, now()); };
+  for (let n = 1; n < 6; n += 1) {
+    // the head's own releases24h (already at the cap) do not stop a network release; only its own cap does
+    assert.equal(settle({ klass: 'environment', code: 'BUNDLE_UNAVAILABLE', releases24h: 5, network: true, networkReleases24h: n, networkCap: 6 }), null, `release ${n}`);
+    assert.deepEqual([q.row(5).state, q.row(5).stopKind, (q.row(5).nextAt - now()) / MIN, q.row(5).levelKind], ['BACKOFF', null, 10, 'network'], `release ${n}`);
     advance(10 * MIN);
   }
-  // a not-admitted release afterwards starts its own ladder at 10 and is still bound by the cap
-  assert.equal(settle('not-admitted', 'CLAIM_NOT_CURRENT', 1), null);
+  assert.equal(settle({ klass: 'environment', code: 'BUNDLE_UNAVAILABLE', network: true, networkReleases24h: 6, networkCap: 6 }), 'stopped');
+  assert.deepEqual([q.row(5).state, q.row(5).stopKind, q.row(5).stopClass], ['STOPPED', 'release-cap', 'environment'], 'an environment stop: lifted with the others');
+  assert.deepEqual(q.liftEnvironmentStops(now()), [5]);
+  // a release that is not the network (a deterministic bundle refusal) keeps the ladder and the head's cap
+  advance(MIN);
+  assert.equal(settle({ klass: 'environment', code: 'BUNDLE_UNAVAILABLE', releases24h: 1, network: false }), null);
   assert.deepEqual([(q.row(5).nextAt - now()) / MIN, q.row(5).levelKind], [10, 'release']);
   advance(10 * MIN);
-  assert.equal(settle('not-admitted', 'CLAIM_NOT_CURRENT', 2), 'stopped');
+  assert.equal(settle({ klass: 'environment', code: 'BUNDLE_UNAVAILABLE', releases24h: 2, network: false }), 'stopped');
+  // the outside answers again: a network back-off is due now; other back-offs are not touched
+  q.offer(trig(6, 6), now(), OPTS);
+  q.begin(6, H(6), KEY, 'queued', now());
+  q.settle(6, H(6), { kind: 'released', klass: 'environment', code: 'BUNDLE_UNAVAILABLE', network: true, networkReleases24h: 1, networkCap: 6, releaseCap: 2 }, now());
+  q.offer(trig(7, 7), now(), OPTS);
+  q.begin(7, H(7), KEY, 'queued', now());
+  q.settle(7, H(7), { kind: 'released', klass: 'not-admitted', code: 'CLAIM_NOT_CURRENT', releases24h: 1, releaseCap: 2 }, now());
+  assert.deepEqual(q.wakeNetworkRows(now()), [6]);
+  assert.deepEqual([q.row(6).nextAt === now(), q.row(7).nextAt > now()], [true, true]);
+  assert.deepEqual(q.wakeNetworkRows(now()), [], 'nothing twice');
 });

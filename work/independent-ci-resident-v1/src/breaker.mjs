@@ -17,13 +17,14 @@
 //     a release, an ignore) is inconclusive: the breaker stays half-open and the next candidate is the next trial.
 //   - A failure after stage 1 still burns its head, trial or not (v0.6 §9 phase 2 item 7).
 //   - Generation 10 (DESIGN 53.4, Task 125a5162 item 4), only with a policy that names breaker.network (contract /9): a breaker that
-//     every opening failure says was the network (NETWORK_FAULT_CODES: GitHub, Native or the bundle unreachable) has the cause
-//     'network' and the delays breaker.network.backoffMs (first 10 minutes); a trial that fails with a network code again reopens it at
-//     the SAME level (one outage is one cause: its failures never stack the delay), any other failure at the next level as before (and
-//     the cause is no longer network); breaker.network.earlyTrialProbes read-only probes in a row that reached the outside (the role
-//     probe, stage 10's run) after it opened bring its trial forward to now (breakerProbe; a failed probe starts the count again). The
-//     Owner's release (breakerRelease, rearm-resident.ps1 -Request ReleaseBreaker, with a reason, in the receipts) brings the trial of
-//     any open breaker forward to now, whatever the policy. Neither one closes it: the trial still has to get past the failing place.
+//     every opening failure says was the network (ev.network: classify.mjs#networkFailure) has the cause 'network' and waits
+//     breaker.network.trialDelayMs (10 minutes) for its trial; a trial that fails on the network again reopens it at the SAME delay and
+//     level (one outage is one cause: its failures never stack the delay; the network release cap per head bounds what an outage costs),
+//     any other failure at the next level of breaker.backoffMs as before (and the cause is no longer network);
+//     breaker.network.earlyTrialProbes read-only probes in a row that reached the outside (a role probe with a definite answer, a
+//     stage-10 run that read main from GitHub) after it opened make its trial due now (breakerProbe; a failed probe starts the count
+//     again). The Owner's release (breakerRelease, rearm-resident.ps1 -Request ReleaseBreaker, with a reason, in the receipts) makes the
+//     trial of any open breaker due now, whatever the policy. Neither one closes it: the trial still has to get past the failing place.
 import { check } from './canonical.mjs';
 
 export const BREAKER_STATES = Object.freeze(['closed', 'open', 'half-open']);
@@ -33,12 +34,8 @@ export const POSITIONS = Object.freeze({ bundle: 1, 1: 2, 9: 3, workspace: 4, 2:
 // Places that touch Linux (the workspace preparation and the three scanner executions); every other one is Windows-only.
 export const LINUX_POSITIONS = Object.freeze([POSITIONS.workspace, POSITIONS[2], POSITIONS[4], POSITIONS[6]]);
 const FAILURES_KEPT = 16;
-// The endings that mean "the outside could not be reached" (generation 10): the bundle (GitHub), GitHub or Native unreadable at stage 1,
-// and stage 1's own check withdrawn because it could not be verified.
-export const NETWORK_FAULT_CODES = Object.freeze(['BUNDLE_UNAVAILABLE', 'GITHUB_TRANSIENT_UNAVAILABLE', 'NATIVE_ADMISSION_UNAVAILABLE', 'ADMISSION_VERIFICATION_UNAVAILABLE']);
 export const NETWORK_CAUSE = 'network';
 const networkOf = policy => policy?.breaker?.network ?? null;
-const networkCode = code => NETWORK_FAULT_CODES.includes(code);
 
 // stage 0 is the bundle (phase bundle) or the workspace preparation (phase workspace).
 export function positionOf(stage, phase = 'stage') {
@@ -64,18 +61,19 @@ export function breakerGate(b, now) {
 
 // pos / windowsOnly: the furthest place among the failures that opened it (a trial must get past every one of them), and
 // whether all of them were Windows-only (independent review of step 1, m3).
-// cause: NETWORK_CAUSE (generation 10: the network delays of a /9 policy) or null (the policy's own delays, as before).
+// cause: NETWORK_CAUSE (generation 10: the network trial delay of a /9 policy) or null (the policy's own delays, as before).
 const open = (b, policy, now, { pos, windowsOnly, prs, level, cause = null }) => {
-  const delays = cause === NETWORK_CAUSE && networkOf(policy) ? networkOf(policy).backoffMs : policy.breaker.backoffMs;
+  const delays = policy.breaker.backoffMs;
+  const delay = cause === NETWORK_CAUSE && networkOf(policy) ? networkOf(policy).trialDelayMs : delays[Math.min(level, delays.length - 1)];
   const reopening = b.state !== 'closed';
-  Object.assign(b, { state: 'open', openedAt: reopening ? (b.openedAt ?? now) : now, level, nextTrialAt: now + delays[Math.min(level, delays.length - 1)], cause, probeOks: 0,
+  Object.assign(b, { state: 'open', openedAt: reopening ? (b.openedAt ?? now) : now, level, nextTrialAt: now + delay, cause, probeOks: 0,
     failingPos: reopening ? Math.max(b.failingPos ?? pos, pos) : pos,
     failingWindowsOnly: reopening ? (b.failingWindowsOnly === true && windowsOnly === true) : windowsOnly === true,
     exclude: [...new Set([...b.exclude, ...prs])].slice(-FAILURES_KEPT) });
 };
 
 // One batch ending. ev: { pos (where it ended: positionOf, or POSITIONS.END), completed, counts, neutral, windowsOnly, pr,
-// code }. Returns the transition: 'opened', 'reopened', 'closed' or null. A trial that closes the breaker and fails
+// code, network (generation 10: classify.mjs#networkFailure said the ending was the line) }. Returns the transition: 'opened', 'reopened', 'closed' or null. A trial that closes the breaker and fails
 // counted later in the same batch closes it first, then counts that failure (it got past the failing place).
 export function breakerRecord(b, ev, policy, now) {
   check(Number.isSafeInteger(ev?.pos) && ev.pos >= POSITIONS.bundle && ev.pos <= POSITIONS.END, 'BREAKER_EVENT_INVALID');
@@ -88,7 +86,7 @@ export function breakerRecord(b, ev, policy, now) {
       transition = 'closed';
     } else if (ev.counts === true) {
       // Generation 10: the same network outage failing the trial again keeps its level (and its cause); anything else escalates.
-      const same = b.cause === NETWORK_CAUSE && networkCode(ev.code) && networkOf(policy) !== null;
+      const same = b.cause === NETWORK_CAUSE && ev.network === true && networkOf(policy) !== null;
       open(b, policy, now, { pos: ev.pos, windowsOnly: ev.windowsOnly, prs: [ev.pr], level: same ? b.level : b.level + 1, cause: same ? NETWORK_CAUSE : null });
       b.failures = [...b.failures, { at: now, pos: ev.pos, pr: ev.pr, code: ev.code ?? null }].slice(-FAILURES_KEPT);
       return 'reopened';
@@ -99,17 +97,17 @@ export function breakerRecord(b, ev, policy, now) {
   // closed
   if (ev.completed === true || (ev.counts !== true && ev.pos > b.streakPos)) { b.streak = 0; b.streakPos = 0; b.streakPrs = []; b.streakFails = []; }
   if (ev.counts !== true) return transition;
-  b.failures = [...b.failures.filter(f => now - f.at < policy.breaker.windowMs), { at: now, pos: ev.pos, pr: ev.pr, code: ev.code ?? null, windowsOnly: ev.windowsOnly === true }].slice(-FAILURES_KEPT);
+  b.failures = [...b.failures.filter(f => now - f.at < policy.breaker.windowMs), { at: now, pos: ev.pos, pr: ev.pr, code: ev.code ?? null, windowsOnly: ev.windowsOnly === true, network: ev.network === true }].slice(-FAILURES_KEPT);
   b.streak += 1;
   b.streakPos = ev.pos;
   b.streakPrs = [...b.streakPrs, ev.pr].slice(-FAILURES_KEPT);
-  b.streakFails = [...(b.streakFails ?? []), { pos: ev.pos, windowsOnly: ev.windowsOnly === true, code: ev.code ?? null }].slice(-FAILURES_KEPT);
+  b.streakFails = [...(b.streakFails ?? []), { pos: ev.pos, windowsOnly: ev.windowsOnly === true, network: ev.network === true }].slice(-FAILURES_KEPT);
   const inWindow = b.failures.filter(f => now - f.at < policy.breaker.windowMs);
   if (b.streak >= policy.breaker.consecutive || inWindow.length >= policy.breaker.windowCount) {
     const opening = b.streak >= policy.breaker.consecutive ? b.streakFails : inWindow;
     const prs = [...new Set([...b.streakPrs, ...inWindow.map(f => f.pr)])];
     b.exclude = [];
-    const cause = networkOf(policy) !== null && opening.every(f => networkCode(f.code)) ? NETWORK_CAUSE : null;
+    const cause = networkOf(policy) !== null && opening.every(f => f.network === true) ? NETWORK_CAUSE : null;
     open(b, policy, now, { pos: Math.max(...opening.map(f => f.pos)), windowsOnly: opening.every(f => f.windowsOnly === true), prs, level: 0, cause });
     return 'opened';
   }
@@ -118,14 +116,14 @@ export function breakerRecord(b, ev, policy, now) {
 
 // Generation 10: one read-only probe that ran while the breaker is open (ok: it reached the outside and answered). Only an open breaker
 // of cause network under a /9 policy listens. Returns 'early-trial' when this probe completed the run of breaker.network.earlyTrialProbes
-// and the trial was still ahead (it is due now), else null.
+// (the trial is due now: brought forward, or already due and still waiting for a candidate, which the executor then wakes), else null.
 export function breakerProbe(b, ok, policy, now) {
   const n = networkOf(policy);
   if (!n || b.state !== 'open' || b.cause !== NETWORK_CAUSE) return null;
   if (ok !== true) { b.probeOks = 0; return null; }
   b.probeOks = (Number.isSafeInteger(b.probeOks) ? b.probeOks : 0) + 1;
-  if (b.probeOks < n.earlyTrialProbes || !(now < b.nextTrialAt)) return null;
-  b.nextTrialAt = now;
+  if (b.probeOks < n.earlyTrialProbes) return null;
+  if (now < b.nextTrialAt) b.nextTrialAt = now;
   b.probeOks = 0;
   return 'early-trial';
 }

@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { COMPANION_CONFIG_CONTRACT, CHECK_REFS_SECOND_TRY_MAX_MS, Companion, READ_RETRIES, TERMINAL_NOANSWER_CAP_MS, WSPREP_QUIET_WAIT_MS,
-  BUNDLE_BRANCH_ONLY_HINT, bundleRefusalLogEntry, retryLogEntry, timedOutGone, validateCompanionConfig } from '../src/companion.mjs';
+  BUNDLE_BRANCH_ONLY_HINT, BUNDLE_NETWORK_STEPS, BUNDLE_NETWORK_UNAVAILABLE, bundleNetworkRefusal, bundleRefusalLogEntry, retryLogEntry, timedOutGone, validateCompanionConfig } from '../src/companion.mjs';
 import { Mailbox } from '../src/mailbox.mjs';
 import { events, haltHint } from '../src/pr-status.mjs';
 import { TEST_NODE, TEST_NODE_SHA, tempRoot } from './helpers.mjs';
@@ -238,9 +238,11 @@ const entryOf = (op, extra = {}) => ({ at: new Date(T0).toISOString(), kind: 'bu
 const leaks = e => ['secret', 'ghp_', 'C:\\', 'https:', 'token', 'refs/heads', 'unable'].filter(x => JSON.stringify(e).includes(x));
 
 test('a build-bundle refusal with the fixed hint is answered BUNDLE_UNAVAILABLE as before and logs its codes and that hint', async () => {
-  for (const [kind, op] of [['build-bundle', 'build-bundle'], ['rebuild-bundle', 'rebuild-bundle']]) {
+  // (generation 10: the fixture's own reason is a GitHub step that failed in git, so a first bundle answers BUNDLE_NETWORK_UNAVAILABLE;
+  // the second generation keeps BUNDLE_UNAVAILABLE)
+  for (const [kind, op, code] of [['build-bundle', 'build-bundle', 'BUNDLE_NETWORK_UNAVAILABLE'], ['rebuild-bundle', 'rebuild-bundle', 'BUNDLE_UNAVAILABLE']]) {
     const rg = rig({ script: () => refusal() });
-    assert.deepEqual(await rg.c.handle(request(kind)), { ok: false, code: 'BUNDLE_UNAVAILABLE' });
+    assert.deepEqual(await rg.c.handle(request(kind)), { ok: false, code });
     assert.equal(rg.logs.length, 1, kind);
     assert.deepEqual(rg.logs[0], entryOf(op));
     assert.deepEqual(leaks(rg.logs[0]), []);
@@ -257,7 +259,7 @@ test('generation 10: a network refusal logs reason, stage, the git step and ever
       error: 'fatal: unable to access https://github.com/x | fetch 128', networkFailureNoted: true },
     credentialsPrinted: false, existingCheckoutTouched: false, automaticRetryAllowed: false };
   const rg = rig({ script: () => ({ code: 2, stdout: JSON.stringify(down), stderr: 'fatal: unable to access https://github.com/x token ghp_x' }) });
-  assert.deepEqual(await rg.c.handle(request('build-bundle')), { ok: false, code: 'BUNDLE_UNAVAILABLE' });
+  assert.deepEqual(await rg.c.handle(request('build-bundle')), { ok: false, code: 'BUNDLE_NETWORK_UNAVAILABLE' });
   assert.deepEqual(rg.logs, [{ at: new Date(T0).toISOString(), kind: 'bundle-refusal', op: 'build-bundle', runner: { code: 2, timedOut: false, tree: null, refused: null },
     status: 'PARTIAL_STATE_PRESERVED_NO_RETRY', reason: 'GIT_STEP_FAILED', stage: 'fetch-all-heads-and-tags', git: { label: 'fetch', exitCode: 128, stderrChars: 97 }, storeAttempts: 2,
     failedAttempts: [{ attempt: 1, reason: 'GIT_STEP_FAILED', stage: 'fetch-all-heads-and-tags', git: { label: 'fetch', exitCode: 128, stderrChars: 97 }, failedAfterSeconds: 3, refsDiffer: null }],
@@ -281,7 +283,7 @@ test('any hint that is not exactly the fixed text is dropped, whatever character
     { hint: 'ghp_abcdefghijklmnopqrstuvwxyz0123456789ABCD' }, { hint: 'line one\nline two' }, { hint: 'C:\\Users\\x' }, { hint: '<script>' },
     { hint: 'The reviewed set contains d94cd486 (and its parent 8ea4da40), which is reachable only from branch other-branch until PR #991 is merged' }]) {
     const rg = rig({ script: () => refusal(extra) });
-    assert.deepEqual(await rg.c.handle(request('build-bundle')), { ok: false, code: 'BUNDLE_UNAVAILABLE' });
+    assert.deepEqual(await rg.c.handle(request('build-bundle')), { ok: false, code: 'BUNDLE_NETWORK_UNAVAILABLE' });
     assert.deepEqual(rg.logs, [entryOf('build-bundle', { hint: null })], JSON.stringify(extra).slice(0, 60));
     assert.deepEqual(leaks(rg.logs[0]), []);
   }
@@ -310,5 +312,22 @@ test('generation 10: every failedAttempts/seed key the companion logs is one bui
 test('a failing log never changes the answer of a refused build-bundle', async () => {
   const state = { now: T0 };
   const c = new Companion({ cfg, mailbox: null, run: async () => refusal(), fileExists: async () => true, sleep: async () => {}, clock: () => state.now, log: async () => { throw new Error('disk full'); } });
-  assert.deepEqual(await c.handle(request('build-bundle')), { ok: false, code: 'BUNDLE_UNAVAILABLE' });
+  assert.deepEqual(await c.handle(request('build-bundle')), { ok: false, code: 'BUNDLE_NETWORK_UNAVAILABLE' });
+});
+
+test('generation 10: only a GitHub step that failed in git is BUNDLE_NETWORK_UNAVAILABLE; every other refusal or no answer stays BUNDLE_UNAVAILABLE', async () => {
+  const ps = fs.readFileSync(new URL('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/build-bundle.ps1', import.meta.url), 'utf8');
+  const m = /\$NetworkSteps=@\(([^)]*)\)/.exec(ps);
+  assert.deepEqual(m[1].split(',').map(x => x.trim().replace(/^'|'$/g, '')), [...BUNDLE_NETWORK_STEPS], 'the same steps as build-bundle.ps1');
+  for (const label of BUNDLE_NETWORK_STEPS) assert.equal(bundleNetworkRefusal(refusal({ git: { label, exitCode: 128 } })), true, label);
+  for (const r of [refusal({ git: { label: 'cat-file', exitCode: 128 } }), refusal({ git: { label: 'fetch', exitCode: 0 } }), refusal({ reason: 'REMOTE_MAIN_BASE_CHANGED' }),
+    refusal({ reason: 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE' }), refusal({ reason: 'REMOTE_REF_NAME_FAILS_FORMAL_VALIDATION', git: { label: 'fetch', exitCode: 0 } }), refusal({ git: null }),
+    { code: 1, stdout: refusal().stdout }, { code: null, timedOut: true, stdout: '' }, { code: 2, stdout: 'x' }, null])
+    assert.equal(bundleNetworkRefusal(r), false, JSON.stringify(r)?.slice(0, 120));
+  for (const [script, code] of [[() => refusal({ reason: 'HEAD_BASE_SOURCE_COMMIT_MISSING', git: { label: 'cat-file', exitCode: 128 } }), 'BUNDLE_UNAVAILABLE'],
+    [() => ({ code: null, timedOut: true, stdout: '' }), 'BUNDLE_UNAVAILABLE'], [() => refusal({ git: { label: 'ls-remote', exitCode: 128 } }), BUNDLE_NETWORK_UNAVAILABLE]]) {
+    const rg = rig({ script });
+    assert.deepEqual(await rg.c.handle(request('build-bundle')), { ok: false, code });
+    assert.equal(rg.logs.length, 1, 'logged either way');
+  }
 });

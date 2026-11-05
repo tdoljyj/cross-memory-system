@@ -33,12 +33,9 @@
       7200000
     ],
     "network": {
-      "backoffMs": [
-        600000,
-        1800000,
-        3600000
-      ],
-      "earlyTrialProbes": 2
+      "trialDelayMs": 600000,
+      "earlyTrialProbes": 2,
+      "releasesPerHeadPer24h": 36
     }
   },
   "stage8": {

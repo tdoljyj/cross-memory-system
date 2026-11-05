@@ -166,12 +166,18 @@ export class StatusFile {
 
 // The service's timer: rewrites the whole snapshot every intervalMs (writtenAt always moves), never two writes at once,
 // never an exception out of the timer. flush() writes now (start, stop, a state change the caller wants out early).
+// Generation 10 (DESIGN 53.5): a flush asked while a write is under way is not dropped: the running write writes the snapshot once more
+// when it is done (the board may have changed in between), so an early flush never waits for the next 15 seconds.
 export function startStatusTimer({ board, file, intervalMs = STATUS_REFRESH_MS, schedule = globalThis.setInterval, cancel = globalThis.clearInterval }) {
-  let busy = false;
+  let busy = false, again = false;
   const flush = async () => {
-    if (busy) return false;
+    if (busy) { again = true; return false; }
     busy = true;
-    try { await file.write(board.snapshot()); return true; } catch { return false; } finally { busy = false; }
+    try {
+      let ok = true;
+      do { again = false; try { await file.write(board.snapshot()); } catch { ok = false; } } while (again);
+      return ok;
+    } finally { busy = false; }
   };
   const handle = schedule(() => flush(), intervalMs);
   handle?.unref?.();

@@ -192,9 +192,9 @@ export function retryLogEntry({ at, op, attempt, ms, runner }) {
 }
 
 // DESIGN 52 (Decision 98fec682): build-bundle.ps1's refusal answer may carry one fixed `hint` (a reviewed commit that only a branch keeps
-// alive). The companion answers BUNDLE_UNAVAILABLE as before; the hint reaches the operator only through this log entry, and only when it
-// equals the fixed text below byte for byte (the same literal is in build-bundle.ps1, Branch-Only-Hint; a test pins both). Any other hint,
-// and every other part of the script's output, is dropped. The reason is logged only when it is a plain code.
+// alive). The companion answers BUNDLE_UNAVAILABLE as before; the hint reaches the operator only through the log entry below, and only
+// when it equals the fixed text below byte for byte (the same literal is in build-bundle.ps1, Branch-Only-Hint; a test pins both). Any
+// other hint is dropped; of the rest of the answer only the codes and counts that bundleRefusalLogEntry names are kept (generation 10).
 export const BUNDLE_BRANCH_ONLY_HINT = 'The reviewed set contains d94cd486 (and its parent 8ea4da40), which is reachable only from branch claude/gitleaks-midgen-reviewed-hold until PR #991 is merged: if that branch was deleted or rewritten, restore it.';
 // Generation 10 (DESIGN 53.1, Task 125a5162 item 1): EVERY bundle that was not written leaves one entry, so the cause of a
 // BUNDLE_UNAVAILABLE is visible (on 2026-11-05 two refused bundles burned a head and the log said nothing). Only codes and counts are
@@ -210,6 +210,18 @@ const bundleCount = n => (Number.isSafeInteger(n) && n >= 0 && n <= 1_000_000_00
 const bundleExit = n => (Number.isSafeInteger(n) && n >= -2_147_483_648 && n <= 4_294_967_295 ? n : null);
 const bundleGit = g => (plainObject(g) ? { label: bundleSlug(g.label), exitCode: bundleExit(g.exitCode), stderrChars: bundleCount(g.stderrChars) } : null);
 export const BUNDLE_LOG_ATTEMPTS_MAX = 3;
+// Generation 10 (DESIGN 53.3): the GitHub steps of build-bundle.ps1 ($NetworkSteps; a test keeps the two lists equal). A refusal whose
+// own reason is that one of them failed in git (what a network failure looks like there: stderr is never read) is answered with
+// BUNDLE_NETWORK_UNAVAILABLE instead of BUNDLE_UNAVAILABLE, so the executor can tell the line from every other refusal of the script
+// (a ref that fails its checks, main moved, a commit missing, a timeout, the script's own fault), which keep the release cap.
+export const BUNDLE_NETWORK_STEPS = Object.freeze(['fetch', 'ls-remote', 'fetch-reviewed', 'fetch-test']);
+export const BUNDLE_NETWORK_UNAVAILABLE = 'BUNDLE_NETWORK_UNAVAILABLE';
+export function bundleNetworkRefusal(runner) {
+  if (runner?.code !== 2 || typeof runner.stdout !== 'string' || runner.stdout.length > 65_536) return false;
+  let v = null;
+  try { v = JSON.parse(runner.stdout); } catch { return false; }
+  return plainObject(v) && v.reason === 'GIT_STEP_FAILED' && plainObject(v.git) && BUNDLE_NETWORK_STEPS.includes(v.git.label) && Number.isSafeInteger(v.git.exitCode) && v.git.exitCode !== 0;
+}
 export function bundleRefusalLogEntry({ at, op, runner }) {
   const r = plainObject(runner) ? runner : {};
   let v = null;
@@ -221,7 +233,7 @@ export function bundleRefusalLogEntry({ at, op, runner }) {
     : null)) : null;
   const s = plainObject(v?.seed) ? v.seed : null;
   return { at: new Date(at).toISOString(), kind: 'bundle-refusal', op: bundleSlug(op),
-    runner: { code: Number.isSafeInteger(r.code) ? r.code : null, timedOut: r.timedOut === true, tree: ['zero', 'unconfirmed'].includes(r.tree) ? r.tree : null, refused: bundleCode(r.refused) },
+    runner: { code: bundleExit(r.code), timedOut: r.timedOut === true, tree: ['zero', 'unconfirmed'].includes(r.tree) ? r.tree : null, refused: bundleCode(r.refused) },
     status: bundleCode(v?.status), reason: bundleCode(v?.reason), stage: bundleSlug(v?.stage), git: bundleGit(v?.git), storeAttempts: bundleCount(v?.storeAttempts),
     failedAttempts: attempts, seed: s ? { used: s.used === true, reason: bundleCode(s.reason), discarded: s.discarded === true, networkFailureNoted: s.networkFailureNoted === true } : null,
     hint: v?.hint === BUNDLE_BRANCH_ONLY_HINT ? v.hint : null };
@@ -419,8 +431,9 @@ export class Companion {
       case 'build-bundle': {
         const r = await this.run(this.a.bundle(request.batchId), { timeoutMs: 30 * 60_000 });
         const v = r.code === 0 ? json(r.stdout) : null;
-        if (v?.status !== 'BUNDLE_WRITTEN') await this.noteBundleRefusal('build-bundle', r);
-        return { ok: v?.status === 'BUNDLE_WRITTEN', code: v?.status === 'BUNDLE_WRITTEN' ? null : 'BUNDLE_UNAVAILABLE' };
+        if (v?.status === 'BUNDLE_WRITTEN') return { ok: true, code: null };
+        await this.noteBundleRefusal('build-bundle', r);
+        return { ok: false, code: bundleNetworkRefusal(r) ? BUNDLE_NETWORK_UNAVAILABLE : 'BUNDLE_UNAVAILABLE' };
       }
       // DESIGN §37: the second generation. Refs no longer the batch's (main moved, or no branch still at the head) is the clean
       // transient REMOTE_REFS_CHANGED_SINCE_BUNDLE; anything else (including no answer) only says the bundle could not be renewed.

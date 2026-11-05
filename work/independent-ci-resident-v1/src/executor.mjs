@@ -122,7 +122,8 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { Ledger, MAX_TRIES, QUOTA_TIER_EVALUATION, batchKey, headKey } from './ledger.mjs';
 import { ABORTABLE_IN_FLIGHT, BRIDGE_ABANDONED_UNPUBLISHED, NOT_ADMITTED_CODES, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, failureRow,
-  proofComplete, scannerAbandonEligible } from './classify.mjs';
+  networkFailure, proofComplete, scannerAbandonEligible } from './classify.mjs';
+import { BUNDLE_NETWORK_UNAVAILABLE } from './companion.mjs';
 import { parseTrigger } from './trigger.mjs';
 import { POSITIONS, breakerGate, breakerOf, breakerProbe, breakerRecord, breakerRelease, breakerView, positionOf } from './breaker.mjs';
 import { batchBudgetMs } from './policy.mjs';
@@ -132,7 +133,7 @@ import { RELAY_TRAIN_FRONT_LOCAL, relayPlanFromRows, STAGE1_TRANSIENT_RELEASE_CO
 import { RELAY_STAGE, ROLE_STAGES, trainSettings } from './policy.mjs';
 import { PROBE_REQUEST_CONTRACT, RESIDENT_REQUEST_CONTRACTS, REQUEST_MAX_AGE_MS, validateResidentRequest } from './resident-requests.mjs';
 import { RELAY_RECEIPTS } from './receipts.mjs';
-import { CODE, HEX64, ResidentError, canonicalJson, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
+import { CODE, HEX40, HEX64, ResidentError, canonicalJson, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 import { UPGRADE_RESUME_CONTRACT, validateUpgradeResume } from './upgrade-mailbox.mjs';
 import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
@@ -535,7 +536,10 @@ export class ResidentExecutor {
       const now = this.clock(), before = b.nextTrialAt;
       const t = breakerProbe(b, ok, this.policy, now);
       if (t === 'early-trial') {
-        await this.receipt('breaker-early-trial', { probe, level: b.level, cause: b.cause ?? null, previousNextTrialAt: new Date(before).toISOString(), nextTrialAt: new Date(b.nextTrialAt).toISOString() });
+        // The outside answers again: rows a network release or the network cap holds back are due now (else the trial may find no
+        // candidate, and the rows would wait out their own 10 minutes or a stop that only a closing breaker lifts).
+        const { lifted, woke } = this.wakeAfterNetwork(now);
+        await this.receipt('breaker-early-trial', { probe, level: b.level, cause: b.cause ?? null, previousNextTrialAt: new Date(before).toISOString(), nextTrialAt: new Date(b.nextTrialAt).toISOString(), lifted, woke });
       }
       await this.persistQueue();
       this.reportQueue();
@@ -550,13 +554,24 @@ export class ResidentExecutor {
     this.queue.breaker = b;
     const r = breakerRelease(b, this.clock());
     check(r.released === true, r.code ?? 'BREAKER_NOT_OPEN');
+    const { lifted, woke } = this.wakeAfterNetwork(this.clock());
     // Like every breaker change the queue file is a view: the release is in force in memory now; a file that cannot be written now
     // is written by the next batch end (the trial itself), never a reason to refuse what already took effect.
     await this.persistQueue();
     this.reportQueue();
     await this.flushStatus();
     return { by, reason, level: r.level, cause: r.cause, openedAt: Number.isSafeInteger(r.openedAt) ? new Date(r.openedAt).toISOString() : null,
-      previousNextTrialAt: new Date(r.previousNextTrialAt).toISOString(), nextTrialAt: new Date(b.nextTrialAt).toISOString() };
+      previousNextTrialAt: new Date(r.previousNextTrialAt).toISOString(), nextTrialAt: new Date(b.nextTrialAt).toISOString(), lifted, woke };
+  }
+
+  // Generation 10: the policy's breaker.network (contract /9), or null.
+  networkPolicy() { return this.policy.breaker?.network ?? null; }
+
+  // Generation 10 (DESIGN 53.4): environment stops lifted, network back-offs due now (queue.mjs). A view.
+  wakeAfterNetwork(now) {
+    let lifted = [], woke = [];
+    try { lifted = this.queue.liftEnvironmentStops(now); woke = this.queue.wakeNetworkRows(now); } catch { /* a view */ }
+    return { lifted, woke };
   }
 
   // The status board is a view: a failure to update it never changes what the executor does.
@@ -644,7 +659,7 @@ export class ResidentExecutor {
         await this.owner.remember(entry.name, requestSha256);
         continue;
       }
-      let outcome, abortKey = null;
+      let outcome, abortKey = null, releaseFacts = null;
       try {
         const v = parseBoundedJson(entry.bytes, 2048, 'OWNER_REQUEST_REFUSED');
         // Every request carries its own time and nonce, so a retry after a refusal is a new request.
@@ -669,6 +684,8 @@ export class ResidentExecutor {
         } else if (v.contract === BREAKER_RELEASE_CONTRACT) {
           exactKeys(v, ['contract', 'reason', 'by', 'requestedAt', 'nonce'], 'OWNER_REQUEST_REFUSED');
           check(SID.test(v.by) && NONCE.test(v.nonce) && !Number.isNaN(Date.parse(v.requestedAt)) && typeof v.reason === 'string' && v.reason.length > 0 && v.reason.length <= 200, 'OWNER_REQUEST_REFUSED');
+          // A validated request keeps its reason in the receipts also when the service refuses it (BREAKER_NOT_OPEN).
+          releaseFacts = { kind: 'breaker-release', by: v.by, reason: v.reason };
           outcome = { kind: 'breaker-release', ...(await this.releaseBreaker(v)) };
         } else if (v.contract === DRAIN_CONTRACT) {
           exactKeys(v, ['contract', 'reason', 'by', 'requestedAt', 'nonce'], 'OWNER_REQUEST_REFUSED');
@@ -692,7 +709,7 @@ export class ResidentExecutor {
           accepted = s?.abort?.requestSha256 === requestSha256
             && !(s.state === 'TERMINAL' && s.outcome === 'FAILED_CLEAN' && s.terminal?.facts?.failureCode === OWNER_ABORTED);
         } catch { accepted = false; }
-        await this.receipt(accepted ? 'owner-abort-unconfirmed' : 'owner-request-refused', { requestSha256, failureCode: codeOf(error), ...archiveFacts(error) });
+        await this.receipt(accepted ? 'owner-abort-unconfirmed' : 'owner-request-refused', { requestSha256, failureCode: codeOf(error), ...archiveFacts(error), ...(releaseFacts ?? {}) });
       }
       await this.owner.remember(entry.name, requestSha256);
     }
@@ -1489,8 +1506,9 @@ export class ResidentExecutor {
         if (fact.result === 'not-held') await this.setNodeMode('STANDBY', 'probe-not-held');
       }
       await this.receipt('role-probe-result', { intentSeq: intent.seq, deferred, ok: !!fact, fact, state: this.roleProbe.snapshot() });
-      // Generation 10: a probe that got a fact reached the outside (any result: an answer is an answer); one that did not, did not.
-      if (!deferred) await this.noteBreakerProbe(!!fact, 'role-probe');
+      // Generation 10: only a definite answer (held, not-held) shows that Native could be reached; an uncertain fact is also what a probe
+      // whose own reads failed returns (merge-slot-native.mjs), so it counts as a failed probe, like no fact at all.
+      if (!deferred) await this.noteBreakerProbe(fact?.result === 'held' || fact?.result === 'not-held', 'role-probe');
       if (fact?.result === 'held') await this.setNodeMode('ACTIVE', 'probe-held');
       return !deferred && !fact ? { state: 'HALTED', failureCode: 'ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED' } : null;
     } finally { this.roleProbeRunning = false; }
@@ -1748,8 +1766,8 @@ export class ResidentExecutor {
       if (clean && summary.front?.pr) await this.hintParkedHead(summary.front);
     }
     await this.trainDutySave();
-    // Generation 10: stage 10 read the merge queue and main from GitHub when it brought a summary back.
-    if (clean) await this.noteBreakerProbe(summary !== null, 'train-run');
+    // Generation 10: stage 10 reached GitHub only when its summary names main's commit (a run that is not on duty reads nothing).
+    if (clean) await this.noteBreakerProbe(HEX40.test(summary?.mainSha ?? ''), 'train-run');
     return clean ? null : { state: 'HALTED', failureCode: haltCode };
   }
 
@@ -2198,7 +2216,7 @@ export class ResidentExecutor {
       const others = list.filter(x => !gate.exclude.includes(x.pr));
       if (others.length > 0) list = others;
     }
-    this.tickUsage = await this.ledger.usage(now - DAY);
+    this.tickUsage = await this.ledger.usage(now - DAY, { separateNetwork: this.networkPolicy() !== null });
     const u = this.tickUsage, l = this.policy.limits;
     this.report(s => s.update({ limits: { batches24h: u.started, maxBatches: l.maxBatchesPer24h, evaluations24h: u.evaluations, maxEvaluations: l.maxEvaluationsPer24h,
       waitingRetries24h: u.waitingRetries, maxWaitingRetries: l.waitingRetriesPer24h } }));
@@ -2262,6 +2280,9 @@ export class ResidentExecutor {
     // The head's release cap (design v0.5 §4.5: at most releasesPerHeadPer24h releases a day) from the ledger, so a queue
     // that started over never forgets it (independent review m4). A wait, a new trigger and attempt 2 are not bound by it.
     if (['queued', 'backoff-retry', 'restored'].includes(origin) && (usage.releasesByHead.get(subject.headSha) ?? 0) >= l.releasesPerHeadPer24h) return { stop: 'RELEASE_CAP_REACHED' };
+    // Generation 10 (DESIGN 53.3): the network cap of a /9 policy; an environment stop, lifted when the outside answers again.
+    const net = this.networkPolicy();
+    if (net && ['queued', 'backoff-retry', 'restored'].includes(origin) && (usage.networkReleasesByHead?.get(subject.headSha) ?? 0) >= net.releasesPerHeadPer24h) return { stop: 'NETWORK_RELEASE_CAP_REACHED', stopClass: 'environment' };
     const startCode = await this.batchStartChecks(null);
     if (startCode) return { halt: startCode };
     const beat = await this.companion.heartbeat();
@@ -2324,7 +2345,7 @@ export class ResidentExecutor {
     if (pre.halt) { await this.haltWith(pre.halt, { key }); return { state: 'HALTED', key, failureCode: pre.halt }; }
     if (pre.defer) return this.deferral(pre, key, c.pr);
     if (pre.stop) {
-      if (this.queue.stopAtCap(c.pr, c.headSha, pre.stop, this.clock())) this.queue.notice({ key: `stopped:${c.pr}:${c.headSha}:${pre.stop}`, kind: 'stopped', pr: c.pr, headSha: c.headSha, code: pre.stop });
+      if (this.queue.stopAtCap(c.pr, c.headSha, pre.stop, this.clock(), pre.stopClass ?? null)) this.queue.notice({ key: `stopped:${c.pr}:${c.headSha}:${pre.stop}`, kind: 'stopped', pr: c.pr, headSha: c.headSha, code: pre.stop });
       return { state: 'DEFERRED', key, reason: pre.stop, next: true };
     }
     // A merged or closed PR leaves the queue before it is reserved (one live read), not only after a batch of it failed
@@ -2453,7 +2474,7 @@ export class ResidentExecutor {
     // roles were all relayed, a stage-8 try); it never closes a breaker a Linux place opened (design v0.5 §4.6; review m2).
     const windowsOnly = typeof s.windowsOnly === 'boolean' ? s.windowsOnly : ['completed', 'parked'].includes(s.kind) ? s.linux !== true : s.pos < POSITIONS.workspace;
     const t = breakerRecord(b, { pos: s.pos, completed: s.kind === 'completed', counts: s.breaker === 'counts', neutral: s.breaker !== 'counts', windowsOnly,
-      pr: subject.pr, code: s.code ?? null }, this.policy, now);
+      pr: subject.pr, code: s.code ?? null, network: s.network === true }, this.policy, now);
     if (t === 'opened' || t === 'reopened') {
       this.queue.notice({ key: `breaker:${b.openedAt}`, kind: 'breaker-open', pr: null, headSha: null, code: s.code ?? null, until: b.nextTrialAt });
       await this.receipt('breaker-opened', { failureCode: s.code ?? null, failingPos: b.failingPos, level: b.level, nextTrialAt: new Date(b.nextTrialAt).toISOString(), reopened: t === 'reopened' });
@@ -2480,17 +2501,21 @@ export class ResidentExecutor {
       const environment = ['environment', 'transient'].includes(s?.klass);
       const b = breakerOf(this.queue.breaker);
       this.queue.breaker = b;
-      // This release counts towards the head's cap unless it is a wait, a supersession, a node-role release or an environment fault
-      // (generation 10, DESIGN 53.3: whatever the breaker's state; ledger.mjs#usage counts the same way; the tick's usage is from before
-      // this batch).
-      const counted = s?.kind === 'released' && s.klass !== 'waiting' && s.klass !== 'node-role' && s.reason !== 'SUPERSEDED' && !environment;
+      // Generation 10 (DESIGN 53.3): under a policy with breaker.network a release that was the line counts towards the network cap
+      // only (and backs off a flat 10 minutes), never towards the head's release cap.
+      const network = s?.kind === 'released' && s.klass !== 'waiting' && s.network === true && this.networkPolicy() !== null;
+      // This release counts towards the head's cap unless it is a wait, a supersession, a network release (above), or an environment
+      // fault while the breaker is not closed (ledger.mjs#usage counts the same way; the tick's usage is from before this batch).
+      const counted = s?.kind === 'released' && s.klass !== 'waiting' && s.klass !== 'node-role' && s.reason !== 'SUPERSEDED' && !network && !(environment && s.breakerState !== 'closed');
       const releases24h = (this.tickUsage?.releasesByHead.get(subject.headSha) ?? 0) + (counted ? 1 : 0);
+      const networkReleases24h = (this.tickUsage?.networkReleasesByHead?.get(subject.headSha) ?? 0) + (network ? 1 : 0);
       const ciRetryAfter = typeof s?.ciRetryAfter === 'string' && Number.isFinite(Date.parse(s.ciRetryAfter)) ? Date.parse(s.ciRetryAfter) : null;
       const settled = this.queue.settle(subject.pr, subject.headSha, s ? { kind: s.kind, code: s.code ?? null, klass: s.klass ?? null, reason: s.reason ?? null, ciRetryAfter,
-        releases24h, releaseCap: this.policy.limits.releasesPerHeadPer24h } : { kind: 'burned', code: result.failureCode ?? null, klass: 'unknown' }, now);
+        releases24h, releaseCap: this.policy.limits.releasesPerHeadPer24h, network, networkReleases24h, networkCap: this.networkPolicy()?.releasesPerHeadPer24h ?? null }
+        : { kind: 'burned', code: result.failureCode ?? null, klass: 'unknown' }, now);
       if (settled === 'stopped') {
         this.queue.notice({ key: `stopped:${subject.pr}:${subject.headSha}:${s.code}`, kind: 'stopped', pr: subject.pr, headSha: subject.headSha, code: s.code ?? null });
-        await this.receipt('queue-row-stopped', { pr: subject.pr, headSha: subject.headSha, failureCode: s.code ?? null, releases24h });
+        await this.receipt('queue-row-stopped', { pr: subject.pr, headSha: subject.headSha, failureCode: s.code ?? null, releases24h, ...(network ? { networkReleases24h } : {}) });
       }
       // A batch that rested at B told the breaker about stages 1-7 when it parked: its end is a stage-8 ending.
       await this.feedBreaker(subject, s);
@@ -2559,7 +2584,9 @@ export class ResidentExecutor {
     // effect and publishes nothing, so its failure can release the reservation.
     this.atStage(0, 'bundle');
     const bundle = await this.companion.buildBundle(batch);
-    if (!bundle || bundle.ok !== true) return Object.assign(new StepFailure(0, 'BUNDLE_UNAVAILABLE', {}, 'bundle'), { companionJobTree: bundle?.jobTree ?? null });
+    if (!bundle || bundle.ok !== true) return Object.assign(new StepFailure(0, 'BUNDLE_UNAVAILABLE', {}, 'bundle'), { companionJobTree: bundle?.jobTree ?? null,
+      // Generation 10 (DESIGN 53.3): the companion's own word that a GitHub step failed in git (companion.mjs#bundleNetworkRefusal).
+      bundleNetwork: bundle?.code === BUNDLE_NETWORK_UNAVAILABLE });
     const early = await this.abortIfRequested(key, batch, 'before-stage-1');
     if (early) return early;
     // Phase 2: a newer commit of the PR arrived while the bundle was built. Nothing of this batch ran: released, not
@@ -2874,7 +2901,9 @@ export class ResidentExecutor {
     const o = failure.outcome;
     return { class: row?.class ?? null, retry: row?.retry ?? null, breaker: row?.breaker ?? null, reason: o?.reason ?? null,
       reasonCodes: o?.diagnostic?.reasonCodes ?? null, nativeReasonCodes: o?.diagnostic?.nativeReasonCodes ?? null,
-      ciRetryAfter: o?.scheduling?.ciRetryAfter ?? o?.diagnostic?.ciRetryAfter ?? null, safeToRerun: o?.safeToRerun === true, brokerNoLaunch: failure.brokerNoLaunch === true };
+      ciRetryAfter: o?.scheduling?.ciRetryAfter ?? o?.diagnostic?.ciRetryAfter ?? null, safeToRerun: o?.safeToRerun === true, brokerNoLaunch: failure.brokerNoLaunch === true,
+      // Generation 10 (DESIGN 53.3): the ending was the line and nothing else (classify.mjs#networkFailure).
+      network: networkFailure({ code: failure.code, outcome: o }) };
   }
 
   async fail(key, batch, failure) {
@@ -2888,11 +2917,12 @@ export class ResidentExecutor {
         // Nothing of this batch reached Linux yet (DESIGN §24): the close archives Windows only and asks the companion for
         // nothing, so a companion still busy with, or done with, the failed bundle cannot turn this release into a HALT.
         await this.closeOrThrow(batch, { linux: false });
-        await this.ledger.releaseUnexecuted(key, 'BUNDLE_UNAVAILABLE', { failureCode: failure.code, class: 'environment', breaker: 'counts', breakerState });
-        await this.receipt('batch-unexecuted', { key, failureCode: failure.code, companionJobTree: failure.companionJobTree ?? null });
+        const network = networkFailure({ code: failure.code, bundleNetwork: failure.bundleNetwork === true });
+        await this.ledger.releaseUnexecuted(key, 'BUNDLE_UNAVAILABLE', { failureCode: failure.code, class: 'environment', breaker: 'counts', breakerState, network });
+        await this.receipt('batch-unexecuted', { key, failureCode: failure.code, companionJobTree: failure.companionJobTree ?? null, network });
         this.reportOutcome(this.current, 'NOT_EXECUTED', { code: failure.code, key });
         return { state: 'NOT_EXECUTED', key, failureCode: failure.code,
-          settle: { kind: 'released', reason: 'BUNDLE_UNAVAILABLE', code: failure.code, klass: 'environment', breaker: 'counts', breakerState, pos } };
+          settle: { kind: 'released', reason: 'BUNDLE_UNAVAILABLE', code: failure.code, klass: 'environment', breaker: 'counts', breakerState, pos, network } };
       }
       const proof = await this.proofFor(batch, failure.proof);
       // The failure table (classify.mjs#decideFailure): a stage-1 failure is released only on the outcome's own
@@ -2904,7 +2934,7 @@ export class ResidentExecutor {
       // admission_binding_required): STANDBY, whatever else the ending is. A later live refusal may mean the same: probe at once.
       if (row?.class === 'node-role') await this.setNodeMode('STANDBY', 'role-not-held');
       else if (failure.stageNumber !== 1 && ROLE_LOST_SUSPECT_CODES.includes(failure.code)) this.roleProbe.markUrgent();
-      const settle = { code: failure.code, klass: row?.class ?? 'unknown', breaker: row?.breaker ?? 'counts', breakerState, pos, ciRetryAfter: facts.ciRetryAfter, outcomeReason: facts.reason,
+      const settle = { code: failure.code, klass: row?.class ?? 'unknown', breaker: row?.breaker ?? 'counts', breakerState, pos, ciRetryAfter: facts.ciRetryAfter, outcomeReason: facts.reason, network: facts.network,
         ...(typeof failure.windowsOnly === 'boolean' ? { windowsOnly: failure.windowsOnly } : {}) };
       if (!started && release) {
         await this.closeOrThrow(batch);

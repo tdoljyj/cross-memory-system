@@ -24,8 +24,8 @@
 //   - When stage 1 or the bundle proves the current commit is no longer the PR's head, the companion reads the PR once;
 //     the head it sees becomes current again when it is one of the row's superseded commits and not burned (restore).
 //     A live read only ever stops or re-queues; it never admits anything.
-//   - After a release the row goes to the tail with its own back-off: 10 -> 20 -> 40 minutes (§4.5); an environment release every
-//     10 minutes and never counted towards the cap (generation 10, ENVIRONMENT_BACKOFF_MS). A wait backs off
+//   - After a release the row goes to the tail with its own back-off: 10 -> 20 -> 40 minutes (§4.5); a network release under a /9
+//     policy every 10 minutes and towards its own cap (generation 10, NETWORK_BACKOFF_MS). A wait backs off
 //     10 -> 20 -> 40 -> 80 -> 120 minutes, then every 120 (§4.4), or until Native's ci_retry_after. A commit released
 //     policy.limits.releasesPerHeadPer24h times in 24 hours (waits never count) is STOPPED: only a new commit runs the
 //     PR again (§4.5); a new trigger pokes only a row that still waits for its next try.
@@ -54,13 +54,15 @@ export const SEEN_MAX = 32;
 const MIN = 60_000;
 export const WAITING_BACKOFF_MS = Object.freeze([10 * MIN, 20 * MIN, 40 * MIN, 80 * MIN, 120 * MIN]);
 export const RELEASE_BACKOFF_MS = Object.freeze([10 * MIN, 20 * MIN, 40 * MIN]);
-// Generation 10 (DESIGN 53.3, Task 125a5162 item 3): a release of an environment fault (failure-table class environment or transient:
-// the bundle, GitHub or Native unreachable, the broker) says nothing about the PR. It never counts towards the head's release cap, so it
-// never stops the row, and it is tried again every 10 minutes, flat: the breaker (breaker.mjs) is what throttles a lasting fault for
-// every PR together (open after three in a row, a trial per its delay), and a flat 10 minutes is what makes the head run again within
-// 10 minutes of the network coming back (an escalating ladder would leave it waiting up to 40).
-export const ENVIRONMENT_BACKOFF_MS = Object.freeze([10 * MIN]);
-export const ENVIRONMENT_CLASSES = Object.freeze(['environment', 'transient']);
+// Generation 10 (DESIGN 53.3, Task 125a5162 item 3), only under a policy with breaker.network (/9): a release that was the line to GitHub
+// or Native (classify.mjs#networkFailure: the executor passes outcome.network) says nothing about the PR. It counts towards the network
+// cap (breaker.network.releasesPerHeadPer24h, outcome.networkReleases24h / networkCap), never towards the head's release cap, and is
+// tried again every 10 minutes, flat: the breaker throttles a lasting outage for every PR together, and a flat 10 minutes is what makes
+// the head run again within 10 minutes of the network coming back (the 10/20/40 ladder would leave it waiting up to 40). At the network
+// cap the row stops as an environment stop (stopClass environment), lifted with the other environment stops.
+export const NETWORK_BACKOFF_MS = Object.freeze([10 * MIN]);
+// The reason a row stopped at the network cap shows (the status board and the PR page say it runs again by itself).
+export const NETWORK_RELEASE_CAP_REACHED = 'NETWORK_RELEASE_CAP_REACHED';
 export const CI_RETRY_MAX_MS = 24 * 60 * MIN;
 export const COMPACT_AFTER_MS = 24 * 60 * MIN;
 export const NOTICES_MAX = 50;
@@ -333,16 +335,21 @@ export class RunQueue {
       case 'released': {
         r.order = this.seq(); // to the tail
         const waiting = outcome.klass === 'waiting';
-        const environment = ENVIRONMENT_CLASSES.includes(outcome.klass);
-        if (!waiting && !environment && Number.isSafeInteger(outcome.releases24h) && outcome.releases24h >= outcome.releaseCap) {
+        const network = !waiting && outcome.network === true;
+        if (network && Number.isSafeInteger(outcome.networkReleases24h) && outcome.networkReleases24h >= outcome.networkCap) {
+          Object.assign(r, { stopKind: 'release-cap', stopClass: 'environment', nextAt: null });
+          this.setState(r, 'STOPPED', NETWORK_RELEASE_CAP_REACHED, now);
+          return 'stopped';
+        }
+        if (!waiting && !network && Number.isSafeInteger(outcome.releases24h) && outcome.releases24h >= outcome.releaseCap) {
           Object.assign(r, { stopKind: 'release-cap', stopClass: outcome.klass ?? null, nextAt: null });
           this.setState(r, 'STOPPED', outcome.code ?? null, now);
           return 'stopped';
         }
-        const kind = waiting ? 'waiting' : environment ? 'environment' : 'release';
+        const kind = waiting ? 'waiting' : network ? 'network' : 'release';
         const level = r.levelKind === kind ? r.level : 0;
         const retryAfter = waiting && Number.isSafeInteger(outcome.ciRetryAfter) ? Math.min(Math.max(outcome.ciRetryAfter, now + WAITING_BACKOFF_MS[0]), now + CI_RETRY_MAX_MS) : null;
-        r.nextAt = retryAfter ?? now + delayAt(waiting ? WAITING_BACKOFF_MS : environment ? ENVIRONMENT_BACKOFF_MS : RELEASE_BACKOFF_MS, level);
+        r.nextAt = retryAfter ?? now + delayAt(waiting ? WAITING_BACKOFF_MS : network ? NETWORK_BACKOFF_MS : RELEASE_BACKOFF_MS, level);
         Object.assign(r, { level: level + 1, levelKind: kind, stopKind: null, stopClass: null });
         this.setState(r, waiting ? 'WAITING' : 'BACKOFF', outcome.code ?? null, now);
         return null;
@@ -356,10 +363,11 @@ export class RunQueue {
 
   // The precheck found the head at its release cap (from the ledger): the row stops without a batch. true when it stopped
   // now (the executor notifies once).
-  stopAtCap(pr, headSha, code, now) {
+  // stopClass: 'environment' for the network cap (generation 10), so the environment lift applies to it.
+  stopAtCap(pr, headSha, code, now, stopClass = null) {
     const r = this.row(pr);
     if (!r || r.current?.headSha !== headSha || r.running || r.state === 'STOPPED') return false;
-    Object.assign(r, { stopKind: 'release-cap', stopClass: null, nextAt: null, poke: null, deferred: null, deferUntil: null });
+    Object.assign(r, { stopKind: 'release-cap', stopClass, nextAt: null, poke: null, deferred: null, deferUntil: null });
     this.setState(r, 'STOPPED', code, now);
     return true;
   }
@@ -425,6 +433,19 @@ export class RunQueue {
       lifted.push(r.pr);
     }
     return lifted;
+  }
+
+  // Generation 10 (DESIGN 53.4): the outside answers again (probes, the Owner's release): a row that backs off after a network release
+  // is due now instead of at its next 10-minute mark. Returns the PRs it woke.
+  wakeNetworkRows(now) {
+    const woke = [];
+    for (const r of this.data.rows) {
+      if (r.state !== 'BACKOFF' || r.levelKind !== 'network' || !r.current || !(r.nextAt > now)) continue;
+      r.nextAt = now;
+      r.updatedAt = now;
+      woke.push(r.pr);
+    }
+    return woke;
   }
 
   // Rows done or stopped for 24 hours leave the queue; so do notices older than that.

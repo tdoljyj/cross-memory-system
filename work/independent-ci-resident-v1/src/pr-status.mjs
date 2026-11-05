@@ -41,15 +41,16 @@ export const REQUIRED_CACHE_MS = 30 * 60_000;
 export const ADVISORY_TIMEOUT_MS = 15_000;
 export const PASS_BUDGET_MS = 60_000;
 export const POST_RETRY_MS = 10 * 60_000;
-// Generation 10 (DESIGN 53.5): the companion reads status.json at most this often between its minute passes, and posts at once when what
-// the PR page shows from it changed (statusSignature): a claimed batch, its stage, the breaker's state or trial time, HALT, PAUSE.
+// Generation 10 (DESIGN 53.5): the companion reads status.json at most this often (REPORT_MIN_GAP_MS) between its minute passes, and
+// posts at once when what the PR page shows from it changed (statusSignature, over status.mjs#parseStatus's fields): the batch in
+// flight (PR, head, attempt, stage), the breaker's state or trial time, the intake pause, HALT, PAUSE.
 export const REPORT_MIN_GAP_MS = 5_000;
 export function statusSignature(status) {
   if (!status || typeof status !== 'object') return null;
   const c = status.current;
-  return canonicalJson({ current: c ? { key: c.key ?? null, pr: c.pr ?? null, headSha: c.headSha ?? null, stage: c.stage ?? null, phase: c.phase ?? null } : null,
+  return canonicalJson({ current: c ? { pr: c.pr ?? null, headSha: c.headSha ?? null, attempt: c.attempt ?? null, stage: c.stage ?? null } : null,
     breaker: status.breaker ? { state: status.breaker.state ?? null, nextTrialAt: status.breaker.nextTrialAt ?? null } : null,
-    halt: status.halt?.code ?? null, paused: status.paused === true });
+    intakePause: status.intakePause ? canonicalJson(status.intakePause) : null, halt: status.halt?.code ?? null, paused: status.paused === true });
 }
 // Whether the advisory lane posts now: the minute has passed, or the signature moved (and the last pass is at least REPORT_MIN_GAP_MS old).
 export function reportDue({ now, lastReport, lastSignature, signature, everyMs }) {
@@ -143,14 +144,19 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     // parking places and the breaker); no estimate that assumes a free executor.
     if (status.intakePause) return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：暂停接新中${status.intakePause.until ? `，最晚 ${hhmm(status.intakePause.until)} 恢复` : ''}`) };
     // Generation 10 (DESIGN 53.5): a trial time that has come is no longer "open" on the page (the executor starts the trial at its next
-    // pass and the board then says half-open); a half-open breaker says a trial is running or due, never "open".
+    // pass and the board then says half-open). Half-open only says trials are allowed, one batch at a time: whether one runs now is the
+    // batch in flight (status.current, shown above for its own PR), so the text claims nothing more.
     const trialDue = status.breaker?.state === 'open' && Number.isFinite(status.breaker.nextTrialAt) && status.breaker.nextTrialAt <= now;
-    if (status.breaker?.state === 'half-open' || trialDue) return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：熔断后的试跑${trialDue ? '时间已到，即将开始' : '进行中'}，试跑通过后恢复`) };
+    if (status.breaker?.state === 'half-open' || trialDue) return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：熔断后的试跑${trialDue ? '时间已到，即将开始' : '阶段，一次只跑一批'}，试跑通过后恢复`) };
     if (status.breaker?.state === 'open') return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：执行器熔断中${status.breaker.cause === 'network' ? '（网络故障）' : ''}${status.breaker.nextTrialAt ? `，约 ${hhmm(status.breaker.nextTrialAt)} 试跑` : ''}`) };
     // No new batch while the parking places are full (phase 2, step 2; review m8): no estimate that assumes a free executor.
     if (status.queue?.parkingFull === true) return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：停靠的批次已满，等它们结束`) };
     const why = row.deferred ? `：${DEFERRED_TEXT[row.deferred] ?? row.deferred}` : '';
     return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位${why}${row.eta && !row.deferred ? `，预计 ${hhmm(row.eta)} 开始` : ''}`) };
+  }
+  // Generation 10 (DESIGN 53.3): the network cap is an environment stop, lifted by itself when the outside answers again.
+  if (row && row.state === 'STOPPED' && row.stopKind === 'release-cap' && row.deferred === 'NETWORK_RELEASE_CAP_REACHED') {
+    return { state: 'pending', description: '网络故障重试次数已达今日上限：网络恢复后自动重试，不用推新提交' };
   }
   if (row && row.state === 'STOPPED' && row.stopKind === 'release-cap') {
     return { state: 'failure', description: clip(`24 小时内已多次未准入或未执行（${row.deferred ?? '?'}）：请修正后推新提交`) };

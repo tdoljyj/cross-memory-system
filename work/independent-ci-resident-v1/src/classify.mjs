@@ -262,16 +262,35 @@ export function failureRow({ code, stage, phase = 'stage', reason = null, diagno
 //   cap: the budget that bounds its retries now that the run queue retries on its own (queue.mjs). Phase 1's daily cap
 //     per key (unexecutedMaxPer24h) is gone with policy /4: a wait (failure-table class waiting) is bounded by the
 //     waits' own budget (waitingRetriesPer24h a day, every PR together), any other release by the head's release cap
-//     (releasesPerHeadPer24h counted releases in 24 hours, then STOPPED), a supersession by nothing (nothing about the PR was
-//     decided). Generation 10 (DESIGN 53.3): a release of failure-table class environment or transient is never counted towards the
-//     cap, whatever the breaker's state (before: only while the breaker was not closed); the bundle and the broker's no-launch are always
-//     that class, so their cap is null; it is bounded by the flat 10-minute retry and the breaker (queue.mjs#ENVIRONMENT_BACKOFF_MS).
+//     (releasesPerHeadPer24h counted releases in 24 hours, then STOPPED; an environment release while the breaker is
+//     not closed is not counted), a supersession by nothing (nothing about the PR was decided). Generation 10 (DESIGN 53.3), only
+//     under a policy with breaker.network (/9): a release that networkFailure below says was the network counts towards its own cap
+//     instead (breaker.network.releasesPerHeadPer24h, every 10 minutes: queue.mjs#NETWORK_BACKOFF_MS), never towards this one.
 export const UNEXECUTED_REASON_RULES = Object.freeze({
   NOT_ADMITTED: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: 'waitingRetriesPer24h', other: 'releasesPerHeadPer24h' }), evidence: 'stage-1 outcome safeToRerun' }),
-  BUNDLE_UNAVAILABLE: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: null, other: null }), evidence: 'bundle failed before stage 1' }),
-  BROKER_NOT_LAUNCHED: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: null, other: null }), evidence: 'broker refused before any launch, original restored' }),
+  BUNDLE_UNAVAILABLE: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: null, other: 'releasesPerHeadPer24h' }), evidence: 'bundle failed before stage 1' }),
+  BROKER_NOT_LAUNCHED: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: null, other: 'releasesPerHeadPer24h' }), evidence: 'broker refused before any launch, original restored' }),
   SUPERSEDED: Object.freeze({ cooldown: false, cap: Object.freeze({ waiting: null, other: null }), evidence: 'a newer commit of the PR arrived before stage 1' }),
 });
+
+// Generation 10 (DESIGN 53.3, 53.4): whether an ending was the line to GitHub or Native and nothing else, from the most specific fact
+// there is (never from the class alone: BUNDLE_UNAVAILABLE, BROKER_* and NATIVE_ADMISSION_UNAVAILABLE also stand for faults that would
+// repeat). Used for the network release cap and the network cause of the breaker.
+//   - BUNDLE_UNAVAILABLE: the companion said a GitHub step of build-bundle.ps1 failed in git (companion.mjs#bundleNetworkRefusal);
+//   - GITHUB_TRANSIENT_UNAVAILABLE: GitHub answered 500/502/503/504 or did not answer (not 429: a rate limit is no outage);
+//   - NATIVE_ADMISSION_UNAVAILABLE: the explicit Native read exhaustion, or a full_admission_unavailable whose diagnostic says it caught
+//     a transport fault (Source full-admission-v2.mjs#transportFault); a credential refused or an evaluator fault inside it is not;
+//   - ADMISSION_VERIFICATION_UNAVAILABLE: the Source maps only a passing cause to it (withdrawal-text.mjs#admissionVerificationRetryable).
+export const NETWORK_GITHUB_REASONS = Object.freeze(['github_http_500', 'github_http_502', 'github_http_503', 'github_http_504', 'github_transport_unconfirmed']);
+export function networkFailure({ code, outcome = null, bundleNetwork = false }) {
+  switch (code) {
+    case 'BUNDLE_UNAVAILABLE': return bundleNetwork === true;
+    case 'GITHUB_TRANSIENT_UNAVAILABLE': return NETWORK_GITHUB_REASONS.includes(outcome?.reason);
+    case 'NATIVE_ADMISSION_UNAVAILABLE': return outcome?.reason === 'native_claim_observation_unavailable' || (outcome?.reason === 'full_admission_unavailable' && outcome?.diagnostic?.transport === true);
+    case 'ADMISSION_VERIFICATION_UNAVAILABLE': return true;
+    default: return false;
+  }
+}
 
 // The failure decision of the executor (phase 1). release: the unexecuted reason to close the reservation with, or
 // null. A release needs the table's release-if-safe row, an entry that did not reach 10-started, the Windows half of

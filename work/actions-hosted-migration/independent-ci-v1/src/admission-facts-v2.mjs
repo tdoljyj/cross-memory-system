@@ -65,7 +65,9 @@ export function sanitizeAdmissionDiagnosticV2(d) {
   if (!plain(d)) return null;
   const diagnostic = { verdict: verdict(d.verdict), nativeVerdict: verdict(d.nativeVerdict), ownerReviewKind: ownerKind(d.ownerReviewKind) };
   for (const field of ['reasonCodes', 'nativeReasonCodes']) diagnostic[field] = [...new Set((Array.isArray(d[field]) ? d[field].slice(0, 64) : []).map(value => DIAGNOSTIC_SET.has(value) ? value : 'unknown_reason'))].sort();
-  for (const field of ['workflowGateFindingsPresent', 'modeFresh', 'recorderFresh']) if (typeof d[field] === 'boolean') diagnostic[field] = d[field];
+  // transport (generation 10, resident DESIGN 53.6): full_admission_unavailable caught a network failure, a timeout or a GitHub/Native
+  // 500/502/503/504, not any other exception of the evaluation (a refused credential, a 401/403, an evaluator fault).
+  for (const field of ['workflowGateFindingsPresent', 'modeFresh', 'recorderFresh', 'transport']) if (typeof d[field] === 'boolean') diagnostic[field] = d[field];
   if (DIAGNOSTIC_PHASES.includes(d.phase)) diagnostic.phase = d.phase;
   // Issuer retry context is diagnostic only: one round has at most four evaluations.
   if (ISSUER_TRANSIENT_ADMISSIONS.has(d.transientAdmission)) {

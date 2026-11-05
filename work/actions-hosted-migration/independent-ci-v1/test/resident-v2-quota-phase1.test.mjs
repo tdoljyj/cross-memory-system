@@ -159,14 +159,14 @@ test('issuer diagnostics: actual entry JSON survives both Source and resident fi
   const receiptsRoot = await tempDir(t, 'clued-issuer-diagnostic-');
   const raw = { verdict: 'REJECTED', nativeVerdict: 'REJECTED', ownerReviewKind: 'refused', reasonCodes: ['owner_grant_required'],
     nativeReasonCodes: ['path_outside_write_set'], phase: 'changed_paths', transientAdmission: 'full_admission_unavailable', evaluations: 4,
-    workflowGateFindingsPresent: true, modeFresh: false, recorderFresh: true, rawBody: 'sensitive-details-must-not-survive' };
+    workflowGateFindingsPresent: true, modeFresh: false, recorderFresh: true, transport: true, rawBody: 'sensitive-details-must-not-survive' };
   const written = await writeOutcome({ receiptsRoot, nonce: hex(16), plan: { stage: 4, entryRole: 'scanner-issuer' }, jobIds: [],
     result: { status: 'UNCERTAIN', reason: 'full_admission_rejected', sideEffects: 1, admissionDiagnostic: raw, safeToRerun: true } });
   const file = path.join(receiptsRoot, `outcome-${written.nonce}.json`);
   const actual = JSON.parse(await fs.readFile(file, 'utf8'));
   const resident = parseStageOutcome(outcomeFacts(actual));
   for (const key of ['verdict', 'nativeVerdict', 'ownerReviewKind', 'reasonCodes', 'nativeReasonCodes', 'phase', 'transientAdmission', 'evaluations',
-    'workflowGateFindingsPresent', 'modeFresh', 'recorderFresh']) assert.deepEqual(resident.diagnostic[key], raw[key], key);
+    'workflowGateFindingsPresent', 'modeFresh', 'recorderFresh', 'transport']) assert.deepEqual(resident.diagnostic[key], raw[key], key);
   assert.equal(JSON.stringify(actual).includes(raw.rawBody), false);
   assert.deepEqual([resident.status, resident.reason, resident.sideEffects, resident.mayHavePublished, resident.safeToRerun],
     ['UNCERTAIN', 'full_admission_rejected', 1, true, false]);

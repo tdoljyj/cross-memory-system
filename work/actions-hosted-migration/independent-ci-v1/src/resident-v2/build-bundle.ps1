@@ -543,8 +543,12 @@ function Fetch-Store{
    if(Network-Step-Failed $reason $script:lastGit){Seed-Note-Network-Failure}
    $race=Race-Retry-Allowed $reason $script:refsDiffer $elapsed
    $network=(-not $networkRetried) -and (Retry-Allowed $reason $script:lastGit $elapsed)
+   # Generation 10: a SEEDED attempt whose GitHub step failed after the network retry was used up still leaves one unseeded attempt
+   # behind it (inside the same window), so the invariant holds that a seeded attempt is never the last one, whatever failed in it.
+   $seededNetwork=$networkRetried -and $script:seedAttempt -and (Retry-Allowed $reason $script:lastGit $elapsed)
+   if($seededNetwork){$script:seedUse=$false;$script:seedReport.reason='UNSEEDED_AFTER_SEEDED_NETWORK_FAILURE'}
    $seedFell=Seed-Failure $reason
-   if($n -ge ($MaxStoreAttempts-1) -or -not ($race -or $network -or $seedFell)){throw}
+   if($n -ge ($MaxStoreAttempts-1) -or -not ($race -or $network -or $seedFell -or $seededNetwork)){throw}
    if($network){$networkRetried=$true;Seed-After-Network-Failure}
    $given=[ordered]@{attempt=($n+1);reason=$reason;stage=$script:stage;git=$script:lastGit;failedAfterSeconds=[int]$elapsed}
    if($race){$given['refsDiffer']=$script:refsDiffer}

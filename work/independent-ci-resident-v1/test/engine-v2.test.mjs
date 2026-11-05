@@ -57,10 +57,10 @@ const stages = validatePolicy(rawPolicy()).stages;
 test('issuer diagnostics: resident second filter retains only allowed issuer context and never grants a retry', () => {
   const diagnostic = { verdict: 'REJECTED', nativeVerdict: 'ERROR', ownerReviewKind: 'refused', reasonCodes: ['owner_grant_required'],
     nativeReasonCodes: ['path_outside_write_set'], phase: 'changed_paths', transientAdmission: 'full_admission_unavailable', evaluations: 4,
-    workflowGateFindingsPresent: true, modeFresh: false, recorderFresh: true, rawBody: 'sensitive-details-must-not-survive' };
+    workflowGateFindingsPresent: true, modeFresh: false, recorderFresh: true, transport: true, rawBody: 'sensitive-details-must-not-survive' };
   const input = { status: 'UNCERTAIN', reason: 'full_admission_rejected', sideEffects: 1, mayHavePublished: true, safeToRerun: true, diagnostic };
   const r = parseStageOutcome(input);
-  for (const key of ['ownerReviewKind', 'phase', 'transientAdmission', 'evaluations', 'workflowGateFindingsPresent', 'modeFresh', 'recorderFresh'])
+  for (const key of ['ownerReviewKind', 'phase', 'transientAdmission', 'evaluations', 'workflowGateFindingsPresent', 'modeFresh', 'recorderFresh', 'transport'])
     assert.deepEqual(r.diagnostic[key], diagnostic[key], key);
   assert.equal(Object.hasOwn(r.diagnostic, 'rawBody'), false);
   assert.equal(r.safeToRerun, false);
