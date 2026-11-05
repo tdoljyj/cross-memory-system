@@ -56,15 +56,15 @@
     {
       "id": "hook.runner-job-started",
       "kind": "hook",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Immutable runner job-started successor source; the canonical distribution copy requires exact-byte equality before qualification.",
       "root": "scripts/runner",
       "files": [
-        "clued-runner-job-started.work-handover-native-admission-v1.mjs"
+        "clued-runner-job-started.work-handover-native-admission-retry-v1.mjs"
       ],
-      "content_sha256": "47da4af7eb15b56259503d2e872af4080ff3740bce80dab077d869a31d2bb69c",
+      "content_sha256": "b57c98550aff77a7054981a128e10693117d28276d43ba174d87bcf5f1e78b3a",
       "version_marker": {
-        "file": "clued-runner-job-started.work-handover-native-admission-v1.mjs",
+        "file": "clued-runner-job-started.work-handover-native-admission-retry-v1.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
       }
     },
@@ -414,7 +414,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.2",
+      "version": "1.1.4",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate, protected Stage13 observations and durable restrictive holds. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [
@@ -556,7 +556,7 @@
         "file": "scripts/ci/clued-independent-publication-port.mjs",
         "pattern": "export const COMPONENT_VERSION = '{version}';"
       },
-      "content_sha256": "30be010a3b6e8fe3c591bf2578c83ac6d24057d4836a8853cc9d2b5934b31cad"
+      "content_sha256": "edc72d1ebce036a2802de5e2b6bf0980599c6119eb2d546fd02a8b350fb66993"
     },
     {
       "id": "script.resource-maintenance",
@@ -578,7 +578,7 @@
     {
       "id": "script.non-pr-control-source",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Exact non-PR Source metadata classifier; candidate until separately accepted Source placement. No execution authority.",
       "root": "scripts/ci",
       "files": [
@@ -590,7 +590,7 @@
         "file": "clued-non-pr-control-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "cf80d714893cf5e0a27ea125c0359cc6dc307c9538f5a38bace0040ff01fcd5c"
+      "content_sha256": "c3fb56890dbb8b446ab1abdb9461db107429b46ca80af97c327f92fbd2f7d57e"
     },
     {
       "id": "script.source-only-workflow",
