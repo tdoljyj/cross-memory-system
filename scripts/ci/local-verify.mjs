@@ -207,8 +207,8 @@ export function watchdogLevels({ hostname = os.hostname(), env = process.env, re
   if (host?.watchdog_path) {
     try {
       const installed = readText(host.watchdog_path);
-      const suspend = /\$SuspendDisk\s*=\s*(\d+)/i.exec(installed);
-      const resume = /\$ResumeDisk\s*=\s*(\d+)/i.exec(installed);
+      const suspend = /\$SuspendDisk\s*=\s*(\d+(?:\.\d+)?)/i.exec(installed);
+      const resume = /\$ResumeDisk\s*=\s*(\d+(?:\.\d+)?)/i.exec(installed);
       if (suspend && resume) levels = { suspend: Number(suspend[1]), resume: Number(resume[1]) };
     } catch { /* not installed here: the profile's levels */ }
   }

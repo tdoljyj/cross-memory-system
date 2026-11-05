@@ -143,8 +143,8 @@ if ($Plan) {
     [pscustomobject]@{
         SpaceProblem = $problem
         Name = $Name; DataRoot = $DataRoot; InstallDir = $InstallDir; DownloadDir = $DownloadDir
-        InstallDirFreeGB = (Get-FreeGB $InstallDir); RequiredFreeGB = $RequiredFreeGB
-        InstallDirOnSystemDrive = (Test-OnSystemDrive $InstallDir); ExistingBasePath = $existingBase
+        InstallDirFreeGB = if ($InstallDir) { Get-FreeGB $InstallDir } else { $null }; RequiredFreeGB = $RequiredFreeGB
+        InstallDirOnSystemDrive = if ($InstallDir) { Test-OnSystemDrive $InstallDir } else { $null }; ExistingBasePath = $existingBase
     } | ConvertTo-Json -Compress
     return
 }
