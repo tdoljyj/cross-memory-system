@@ -97,18 +97,32 @@ export async function stagingLeftovers(root) {
   }
   return { verifiable: true, names: names.sort() };
 }
-// A lock proven stale: the receipt first (durable, create-only, under reclaimed/), then the leftovers (never following a link), then
-// the lock itself, only while its bytes and inode are still the ones that were judged.
+// A lock proven stale. Order (review of gen10, round 4):
+//   1. the lock is claimed by one atomic rename into reclaimed/claim-<random>: of two preparations judging the same lock only one
+//      rename succeeds; the claimed file must still be the bytes and inode that were judged (else it is put back, refused);
+//   2. the receipt (durable, create-only): stagingToRemove names what is about to be removed;
+//   3. the leftovers (never following a link); 4. a completion record names what was really removed (stagingRemoved).
+// The lock is gone from prepare.lock at step 1, so a failure at 3 leaves no lock behind, only the receipt without its completion.
 export async function reclaimStaleLock({ root, state, leftovers, proof, protect = dir => protectedPath(dir, { directory: true }), clock = Date.now, syncDir = syncDirectory }) {
   const dir = path.join(root, 'reclaimed'); if (await absent(dir)) await fs.mkdir(dir, { mode: 0o700 }); await protect(dir);
-  const at = new Date(clock()).toISOString();
-  const receipt = { contract: 'clued.independent-ci.trivy-cache-lock-reclaimed/1', at, lockSha256: state.sha256, lockPid: state.pid, stagingRemoved: leftovers.names, proof };
-  const file = path.join(dir, 'lock-' + at.replace(/[:.]/g, '-') + '-' + randomBytes(8).toString('hex') + '.json');
+  const at = new Date(clock()).toISOString(), id = at.replace(/[:.]/g, '-') + '-' + randomBytes(8).toString('hex');
+  const claim = path.join(dir, 'claim-' + id);
+  await fs.rename(state.file, claim);
+  const stat = await fs.lstat(claim), bytes = stat.isFile() && !stat.isSymbolicLink() && stat.size <= 4096 ? await fs.readFile(claim, 'utf8') : null;
+  if (bytes === null || digest({ bytes }) !== state.sha256 || stat.ino !== state.ino) {
+    await fs.rename(claim, state.file).catch(() => {});
+    check(false, 'CACHE_LOCK_CHANGED_WHILE_RECLAIMED');
+  }
+  await syncDir(root); await syncDir(dir);
+  const receipt = { contract: 'clued.independent-ci.trivy-cache-lock-reclaimed/1', at, lockSha256: state.sha256, lockPid: state.pid, claim: path.basename(claim),
+    stagingToRemove: leftovers.names, proof };
+  const file = path.join(dir, 'lock-' + id + '.json');
   await durable(file, receipt); await syncDir(dir);
-  for (const name of leftovers.names) { check(STAGING_NAME.test(name), 'CACHE_RECLAIM_NAME_REFUSED'); await removeCacheTree(path.join(root, 'staging', name)); }
-  const again = await readLockState(root); check(again && again.sha256 === state.sha256 && again.ino === state.ino, 'CACHE_LOCK_CHANGED_WHILE_RECLAIMED');
-  await fs.unlink(state.file); await syncDir(root);
-  return { ...receipt, receipt: path.basename(file) };
+  const removed = [];
+  for (const name of leftovers.names) { check(STAGING_NAME.test(name), 'CACHE_RECLAIM_NAME_REFUSED'); await removeCacheTree(path.join(root, 'staging', name)); removed.push(name); }
+  await durable(path.join(dir, 'lock-' + id + '.done.json'), { contract: 'clued.independent-ci.trivy-cache-lock-reclaimed-done/1', receipt: path.basename(file), stagingRemoved: removed, at: new Date(clock()).toISOString() });
+  await syncDir(dir);
+  return { ...receipt, stagingRemoved: removed, receipt: path.basename(file) };
 }
 
 // Reclaim after a confirmed promotion (resident Task 4aedda54, DESIGN §35): every promotion left its staging copy and a new
@@ -215,6 +229,8 @@ async function acquireLock({ storage, docker, deadline, signal, hooks }) {
   for (;;) {
     try { await storage.lock(); return reclaimed; } catch (error) { if (error.code !== 'EEXIST') throw error; }
     const state = await storage.lockState();
+    // Released between the two steps: take it now instead of waiting a poll (review of gen10, round 4).
+    if (state === null) { check(!signal?.aborted && now() < until, 'CACHE_PREPARATION_LOCK_BUSY'); continue; }
     if (state && !reclaimed && state.shape && state.pid !== process.pid && !alive(state.pid) && await containersNone(docker)) {
       const leftovers = await storage.stagingLeftovers();
       if (leftovers.verifiable) {
@@ -297,8 +313,12 @@ function validateChecksBundleShape(pin) {
     && pin.majorVersion === 2 && /^[a-f0-9]{64}$/.test(pin.contentSha256 ?? ''), 'REAL_CHECKS_BUNDLE_PIN_REQUIRED');
 }
 const boundedContext = context => { check(context && Object.keys(context).every(key => ['deadline', 'signal'].includes(key)) && Number.isFinite(context.deadline), 'FIXED_CACHE_CONTEXT_REQUIRED'); return context; };
+// The actual port takes its four inputs once, at construction, into a frozen copy: a later change to the caller's options object (a
+// hook, another storage or docker client) never reaches prepare (review of gen10, round 4). Test hooks are refused outright.
 export function actualCachePort(options) {
-  check(actualStores.has(options.storage) && isActualDockerClient(options.docker) && options.hooks === undefined, 'ACTUAL_PROTECTED_CACHE_TRANSPORT_REQUIRED');
-  return Object.freeze({ fixture: false, prepare: context => prepare({ ...options, ...boundedContext(context), fixture: false }) });
+  check(options?.hooks === undefined, 'ACTUAL_CACHE_HOOKS_REFUSED');
+  check(actualStores.has(options.storage) && isActualDockerClient(options.docker), 'ACTUAL_PROTECTED_CACHE_TRANSPORT_REQUIRED');
+  const fixed = Object.freeze({ storage: options.storage, docker: options.docker, dockerRootDirectory: options.dockerRootDirectory, checksPin: structuredClone(options.checksPin) });
+  return Object.freeze({ fixture: false, prepare: context => prepare({ ...fixed, ...boundedContext(context), fixture: false, hooks: {} }) });
 }
 export function fixtureCachePort(options) { return Object.freeze({ fixture: true, prepare: context => prepare({ ...options, ...boundedContext(context), fixture: true }) }); }

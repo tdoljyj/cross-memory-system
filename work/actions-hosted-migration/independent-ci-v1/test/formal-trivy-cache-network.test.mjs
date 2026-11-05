@@ -129,8 +129,24 @@ test('a lock that is not provably stale is waited for (bounded) and then refused
   assert.deepEqual([s.reclaims.length, polls], [0, 2]);
 });
 
-test('the actual port refuses test hooks', () => {
-  assert.throws(() => actualCachePort({ storage: {}, docker: () => {}, hooks: {} }), { code: 'ACTUAL_PROTECTED_CACHE_TRANSPORT_REQUIRED' });
+test('the actual port refuses test hooks before anything else, and keeps a frozen copy of its inputs', async () => {
+  assert.throws(() => actualCachePort({ storage: {}, docker: () => {}, hooks: {} }), { code: 'ACTUAL_CACHE_HOOKS_REFUSED' });
+  assert.throws(() => actualCachePort({ storage: {}, docker: () => {} }), { code: 'ACTUAL_PROTECTED_CACHE_TRANSPORT_REQUIRED' });
+  const text = await (await import('node:fs/promises')).readFile(new URL('../worker/formal-trivy-v3/cache.mjs', import.meta.url), 'utf8');
+  const port = text.slice(text.indexOf('export function actualCachePort'), text.indexOf('export function fixtureCachePort'));
+  assert.match(port, /const fixed = Object\.freeze\(\{ storage: options\.storage, docker: options\.docker, dockerRootDirectory: options\.dockerRootDirectory, checksPin: structuredClone\(options\.checksPin\) \}\);/);
+  assert.match(port, /prepare\(\{ \.\.\.fixed, \.\.\.boundedContext\(context\), fixture: false, hooks: \{\} \}\)/);
+  assert.doesNotMatch(port, /\.\.\.options/, 'options is never spread again after construction');
+});
+
+test('a lock released between EEXIST and the read is taken at once, without a poll', async () => {
+  const s = store({ lockHeldBy: 4242, current: db(2 * HOUR, 4 * HOUR) });
+  const lock = s.lock;
+  let first = true;
+  s.lock = async () => { if (first) { first = false; s.lockFile = null; throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' }); } return lock(); };
+  const sleeps = [];
+  const r = await prepareWith(s, { sleep: async ms => { sleeps.push(ms); }, runContainer: runs([]) });
+  assert.deepEqual([r.status, sleeps], ['READY', []]);
 });
 
 test('on a real directory: the lock state, the staging leftovers and a reclaim with its durable receipt', async t => {
@@ -154,14 +170,26 @@ test('on a real directory: the lock state, the staging leftovers and a reclaim w
   assert.deepEqual(await stagingLeftovers(root), { verifiable: true, names: [leftover] });
   const r = await reclaimStaleLock({ root, state, leftovers: await stagingLeftovers(root), proof: { pidGone: true, cacheContainers: 0, stagingVerifiable: true }, protect: async () => {}, syncDir: NOSYNC });
   assert.deepEqual([await readLockState(root), await readdir(join(root, 'staging'))], [null, []]);
-  const [file] = await readdir(join(root, 'reclaimed'));
-  const receipt = JSON.parse(await readFile(join(root, 'reclaimed', file), 'utf8'));
-  assert.deepEqual([receipt.contract, receipt.lockPid, receipt.stagingRemoved, r.receipt], ['clued.independent-ci.trivy-cache-lock-reclaimed/1', 236590, [leftover], file]);
+  const files = (await readdir(join(root, 'reclaimed'))).sort();
+  assert.equal(files.length, 3, files.join(','));
+  const receiptName = files.find(f => /^lock-.*[^e]\.json$/.test(f) && !f.endsWith('.done.json'));
+  const receipt = JSON.parse(await readFile(join(root, 'reclaimed', receiptName), 'utf8'));
+  assert.deepEqual([receipt.contract, receipt.lockPid, receipt.stagingToRemove, r.receipt, r.stagingRemoved], ['clued.independent-ci.trivy-cache-lock-reclaimed/1', 236590, [leftover], receiptName, [leftover]]);
+  const done = JSON.parse(await readFile(join(root, 'reclaimed', files.find(f => f.endsWith('.done.json'))), 'utf8'));
+  assert.deepEqual([done.receipt, done.stagingRemoved], [receiptName, [leftover]]);
+  assert.ok(files.some(f => f === receipt.claim), 'the claimed lock is kept beside its receipt');
   // a lock that changed after it was judged is not removed; an odd lock has no pid; an unknown staging entry is not verifiable
   await writeFile(join(root, 'prepare.lock'), JSON.stringify({ pid: 1, nonce: 'a'.repeat(64) }));
   const judged = await readLockState(root);
   await writeFile(join(root, 'prepare.lock'), JSON.stringify({ pid: 2, nonce: 'a'.repeat(64) }));
   await assert.rejects(reclaimStaleLock({ root, state: judged, leftovers: { verifiable: true, names: [] }, proof: {}, protect: async () => {}, syncDir: NOSYNC }), { code: 'CACHE_LOCK_CHANGED_WHILE_RECLAIMED' });
+  assert.equal((await readLockState(root)).pid, 2, 'a lock that changed is put back where it was');
+  // two judges of the same stale lock: only one rename wins, the other finds no lock to claim
+  const stale = await readLockState(root);
+  const a = reclaimStaleLock({ root, state: stale, leftovers: { verifiable: true, names: [] }, proof: {}, protect: async () => {}, syncDir: NOSYNC });
+  const b = reclaimStaleLock({ root, state: stale, leftovers: { verifiable: true, names: [] }, proof: {}, protect: async () => {}, syncDir: NOSYNC });
+  const outcomes = await Promise.allSettled([a, b]);
+  assert.equal(outcomes.filter(o => o.status === 'fulfilled').length, 1, JSON.stringify(outcomes.map(o => o.status)));
   await writeFile(join(root, 'prepare.lock'), '');
   assert.deepEqual([(await readLockState(root)).pid, (await readLockState(root)).shape], [null, false]);
   await writeFile(join(root, 'staging', 'stray.txt'), 'x');
