@@ -10,7 +10,7 @@ import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sourceApp = path.resolve(process.env.CLUED_SYNTHETIC_SOURCE_APP ?? app);
 const { allowRawTestBindings } = await import(pathToFileURL(path.join(sourceApp,'tests/raw-binding-grants-fixture.mjs')));
-const { AUTHORIZATION_SUCCESSOR_MIGRATIONS, snapshotAuthorizationCallerBoundary, assertAuthorizationSuccessorBoundary, findGatewayCloseoutMigration, assertGatewayCloseoutBoundary, snapshotCallerCatalog } = await import(pathToFileURL(path.join(sourceApp,'tests/worker-gateway-caller-fixture.mjs')));
+const { AUTHORIZATION_SUCCESSOR_MIGRATIONS, snapshotAuthorizationCallerBoundary, assertAuthorizationSuccessorBoundary, findGatewayCloseoutMigration, assertGatewayCloseoutBoundary, snapshotCallerCatalog, replayGatewayCloseout } = await import(pathToFileURL(path.join(sourceApp,'tests/worker-gateway-caller-fixture.mjs')));
 
 // Real isolated PostgreSQL and synthetic accounts/IDs only. No production,
 // real Owner approval, DomainAuthority, DataGate, M2 or model qualification.
@@ -108,10 +108,10 @@ for (const scene of ['boundaries','consume-race']) test(`Native Binding successo
     await db.query('update clued_private.owner_requests_v1 set grant_id=null where id=$1',[REQUEST]);
     await db.query('update clued_private.owner_grants_v1 set id=$1 where id=$2',[OLD,oldGrant.grant.grant_id]);
     await db.query('update clued_private.owner_requests_v1 set grant_id=$1 where id=$2',[OLD,REQUEST]);
-    await db.query(await fs.readFile(path.join(sourceApp,'supabase/migrations',closeout),'utf8'));
+    await replayGatewayCloseout(db, await fs.readFile(path.join(sourceApp,'supabase/migrations',closeout),'utf8'));
     await assertGatewayCloseoutBoundary(db);
     const callerCatalog = await snapshotCallerCatalog(db);
-    await db.query(await fs.readFile(path.join(sourceApp,'supabase/migrations',closeout),'utf8'));
+    await replayGatewayCloseout(db, await fs.readFile(path.join(sourceApp,'supabase/migrations',closeout),'utf8'));
     assert.deepEqual(await snapshotCallerCatalog(db),callerCatalog,'G6 replay preserves the actual Native correction writer and caller ACLs');
     await assertGatewayCloseoutBoundary(db);
 
@@ -454,7 +454,7 @@ for (const scene of ['boundaries','consume-race']) test(`Native Binding successo
     // Keep all original Native correction/binding scenes and their sealed G6
     // replay in the historical stage. Only now install the current pair.
     const historicalCatalog = await snapshotCallerCatalog(db);
-    await db.query(await fs.readFile(path.join(sourceApp, 'supabase/migrations', closeout), 'utf8'));
+    await replayGatewayCloseout(db, await fs.readFile(path.join(sourceApp, 'supabase/migrations', closeout), 'utf8'));
     assert.deepEqual(await snapshotCallerCatalog(db), historicalCatalog,
       'sealed closeout remains unchanged after the complete historical scenarios');
     await assertGatewayCloseoutBoundary(db);

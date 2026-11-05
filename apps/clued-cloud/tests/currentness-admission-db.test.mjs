@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { AUTHORIZATION_SUCCESSOR_MIGRATIONS, snapshotAuthorizationCallerBoundary, assertAuthorizationSuccessorBoundary, setWorkerGatewayCaller, workerGatewayRpc, CLOSEOUT_MIGRATION, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+import { AUTHORIZATION_SUCCESSOR_MIGRATIONS, snapshotAuthorizationCallerBoundary, assertAuthorizationSuccessorBoundary, setWorkerGatewayCaller, workerGatewayRpc, CLOSEOUT_MIGRATION, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -539,7 +539,7 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
     // Reapply the actual formal closeout after all fixture scenarios; no skip.
     const closeoutMigration = await findGatewayCloseoutMigration(root);
     const closeoutBefore = await snapshotCallerCatalog(admin);
-    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    await replayGatewayCloseout(admin, await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
     assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
     await assertGatewayCloseoutBoundary(admin);
     // The unchanged closeout above seals all actual historical scenarios.
