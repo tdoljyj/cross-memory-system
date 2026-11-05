@@ -129,12 +129,13 @@ import { POSITIONS, breakerGate, breakerOf, breakerProbe, breakerRecord, breaker
 import { batchBudgetMs } from './policy.mjs';
 import { attempt2Decision, attempt2Subject } from './attempts.mjs';
 import { decide, parseHint, HEAVY_ROLES, RELAY_ROLES } from './hosted-wait.mjs';
-import { RELAY_TRAIN_FRONT_LOCAL, relayPlanFromRows, STAGE1_TRANSIENT_RELEASE_CODES } from './classify.mjs';
+import { EXECUTION_RETRY_STAGES, RELAY_TRAIN_FRONT_LOCAL, executionRetryable, relayPlanFromRows, STAGE1_TRANSIENT_RELEASE_CODES } from './classify.mjs';
 import { RELAY_STAGE, ROLE_STAGES, trainSettings } from './policy.mjs';
 import { PROBE_REQUEST_CONTRACT, RESIDENT_REQUEST_CONTRACTS, REQUEST_MAX_AGE_MS, validateResidentRequest } from './resident-requests.mjs';
 import { RELAY_RECEIPTS } from './receipts.mjs';
 import { CODE, HEX40, HEX64, ResidentError, canonicalJson, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 import { UPGRADE_RESUME_CONTRACT, validateUpgradeResume } from './upgrade-mailbox.mjs';
+import { ARCHIVE_LINUX_REQUEST_MS } from './mailbox.mjs';
 import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
@@ -260,6 +261,14 @@ export const PUBLICATION_STAGES = Object.freeze([3, 5, 7, 8, RELAY_STAGE]);
 // anything because GitHub / Native were passingly unavailable (1 run + 3 repeats, at most 7 minutes more, inside the stage's own limit).
 export const PUBLICATION_RETRY_STAGES = Object.freeze([3, 5, 7]);
 export const PUBLICATION_RETRY_MS = Object.freeze([30_000, 90_000, 300_000]);
+// Generation 11 (DESIGN 54): the waits before an execution stage (4, 6) runs again in the same batch (classify.mjs#executionRetryable);
+// two runs again at most, each its own stage run with its own cap.
+export const EXECUTION_RETRY_MS = Object.freeze([60_000, 300_000]);
+// What a run again needs before its wait: the bounded quiescence proof and the two archives (each at its own request bound).
+const EXECUTION_RETRY_PREPARE_MS = ABORT_QUIESCENCE_WAIT_MS + 2 * ARCHIVE_LINUX_REQUEST_MS;
+// An archive directory (either host) named for exactly this reason: failed-<batch>-<reason>-<12 hex nonce>, with or without a path.
+const archiveNamedFor = (directory, reason) => typeof directory === 'string'
+  && new RegExp(`(?:^|[\\\\/])failed-[0-9a-z]+-${reason}-[0-9a-f]{12}$`).test(directory);
 // Only the entry's own flag decides (never a code): a clean BLOCKED with zero side effects that published nothing, on a runner that read back
 // as the original and a Windows tree at zero.
 export const publicationRetryable = (number, r) => PUBLICATION_RETRY_STAGES.includes(number) && r?.ok === false && r.proof?.windowsTreeZero === true
@@ -522,6 +531,71 @@ export class ResidentExecutor {
   }
 
   receipt(type, body) { return this.receipts.append(type, body); }
+
+  // Generation 11 (DESIGN 54): before an execution stage runs again in the same batch. No HALT and no drift; the installed authority
+  // covers the wait, this stage again and every stage after it; quiescence on both hosts (the abort's bounded proof: the failed run's
+  // worker and containers are gone); then the failed run's records are archived rename-only under retry-stage-N-K (K: this try, so each
+  // run again is its own archive instance, never a replay of the one before) on both hosts (Windows: the bridge protocol records; Linux:
+  // the protocol records, the role slot and the run directories, never the workspaces, which the run again needs), each archive named
+  // for exactly this reason; then one receipt. false: not proven, the batch ends as before, with an execution-retry-refused receipt
+  // naming the step and any archive already made.
+  async prepareExecutionRetry(key, batch, number, r, again, basis) {
+    const reason = `retry-stage-${number}-${again + 1}`;
+    let step = 'halt', windows = null, linux = null;
+    const refused = async () => {
+      try { await this.receipt('execution-retry-refused', { key, stage: number, try: again + 1, basis, step, failureCode: validCode(r.code), windows, linux }); } catch { /* the refusal stands */ }
+      return false;
+    };
+    try {
+      if (await this.ledger.halted()) return refused();
+      step = 'drift';
+      if (await this.driftCode()) return refused();
+      step = 'authority';
+      if (!this.executionRetryFitsAuthority(number, again)) return refused();
+      step = 'quiescence';
+      const proof = await this.abortQuiescence(batch, r.proof ?? {});
+      if (!proofComplete(proof)) return refused();
+      step = 'archive-windows';
+      const w = await this.engine.archiveFailure(batch, reason);
+      if (w?.verified !== true || !archiveNamedFor(w.directory, reason)) return refused();
+      windows = w.directory;
+      step = 'archive-linux';
+      const l = await this.companion.archiveLinux(batch, reason);
+      if (l?.verified !== true || !archiveNamedFor(l.directory, reason)) return refused();
+      linux = l.directory;
+      step = 'receipt';
+      await this.receipt('execution-retry', { key, stage: number, try: again + 1, afterMs: EXECUTION_RETRY_MS[again], basis, failureCode: validCode(r.code),
+        reason: r.outcome?.reason ?? null, archive: reason, windows, linux });
+      return true;
+    } catch { return refused(); }
+  }
+
+  // The installed authority (policy validUntil) must still hold when the run again and every later stage of the batch are done at their
+  // caps: each stage from this one on (cap plus margin), and, before the wait (afterWait false), the wait itself and what precedes it
+  // (EXECUTION_RETRY_PREPARE_MS: the quiescence proof and the two archives at their bounds). After the wait only the stages are left.
+  // Unknown expiry (null): no bound.
+  executionRetryFitsAuthority(number, again, { afterWait = false } = {}) {
+    if (this.policy.validUntil === null) return true;
+    const rest = this.policy.stages.filter(s => s.number >= number && s.number !== RELAY_STAGE && s.number !== TRAIN_STAGE)
+      .reduce((sum, s) => sum + s.runMilliseconds + this.policy.limits.stageMarginMs, 0);
+    return Date.parse(this.policy.validUntil) >= this.clock() + (afterWait ? 0 : EXECUTION_RETRY_MS[again] + EXECUTION_RETRY_PREPARE_MS) + rest;
+  }
+
+  // After the wait, before the run again: still no HALT, no drift, and the authority still covers it.
+  async executionRetryStillAllowed(key, number, again) {
+    let step = 'after-wait-halt';
+    try {
+      if (!(await this.ledger.halted())) {
+        step = 'after-wait-drift';
+        if (!(await this.driftCode())) {
+          step = 'after-wait-authority';
+          if (this.executionRetryFitsAuthority(number, again, { afterWait: true })) return true;
+        }
+      }
+    } catch { /* not proven */ }
+    try { await this.receipt('execution-retry-refused', { key, stage: number, try: again + 1, step }); } catch { /* the refusal stands */ }
+    return false;
+  }
   // Generation 10 (DESIGN 53.5): status.json written now, not at the timer's next beat. A failure changes nothing (the timer still runs).
   async flushStatus() { try { await this.statusFlush?.(); } catch { /* advisory */ } }
 
@@ -2739,6 +2813,26 @@ export class ResidentExecutor {
           ({ result: r, abort, stopCode, unconfirmed } = run);
           await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r),
             ...(r.bridge ? { bridge: bridgeFacts(r.bridge) } : {}), retry: again + 1 });
+        }
+        // Generation 11 (DESIGN 54): an execution stage (4, 6) that ended with an environment fault proven to have published nothing
+        // runs again in this batch, after a two-host quiescence proof and a retry-stage-N archive; its publication stage runs once,
+        // afterwards. Anything not proven ends as before (the failure path below).
+        for (let again = 0; again < EXECUTION_RETRY_MS.length && EXECUTION_RETRY_STAGES.includes(number) && r.ok !== true && !abort && !unconfirmed; again++) {
+          const verdict = executionRetryable({ stage: number, code: validCode(r.code), outcome: r.outcome ?? null, bridge: r.bridge ? bridgeFacts(r.bridge) : null, proof: r.proof });
+          if (!verdict.retry) break;
+          if (!(await this.prepareExecutionRetry(key, batch, number, r, again, verdict.basis))) break;
+          this.atStage(number, 'retry-wait'); // the status page: waiting to run the stage again, not running it
+          await this.sleep(EXECUTION_RETRY_MS[again]);
+          if ((aborted = await this.abortIfRequested(key, batch, `before-stage-${number}`))) return aborted;
+          // A HALT or a drift that came during the wait: no run again (the failure path below ends the batch as before).
+          if (!(await this.executionRetryStillAllowed(key, number, again))) break;
+          this.atStage(number, 'stage');
+          // A run again of the batch's first Linux stage passes the refs gate and the version check again (firstLinux); it never
+          // archives between roles (the retry-stage archive took the run's records).
+          run = await this.runStageWatched(key, batch, number, { betweenRoles: false, firstLinux: execution && index === 0, again: again + 1 });
+          ({ result: r, abort, stopCode, unconfirmed } = run);
+          await this.receipt('stage-terminal', { key, stage: number, ok: r.ok === true, failureCode: r.ok ? null : validCode(r.code), factsSha256: r.factsSha256 ?? null, outcome: outcomeSummary(r),
+            ...(r.bridge ? { bridge: bridgeFacts(r.bridge) } : {}), ...(r.memoryGate ? { memoryGate: memoryGateFacts(r.memoryGate) } : {}), executionRetry: again + 1 });
         }
         if (unconfirmed) return this.unknown(key, 'OWNER_ABORT_UNCONFIRMED', 'owner-abort-unconfirmed', batch, { safePoint: `in-stage-${number}`, stage: number });
         if (abort) return this.concludeAbort(key, batch, { safePoint: `in-stage-${number}`, stage: number, result: r, request: abort, stopCode });

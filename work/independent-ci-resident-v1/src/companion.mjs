@@ -142,6 +142,18 @@ export function parseUnitFacts(r) {
 // active or deactivating; failed (kept until reset); an invocation id with a main-process start time. (The pump also counts a
 // challenge it relayed.)
 export const workerRanEvidence = f => !!f && (WORKER_RUNNING_STATES.has(f.activeState) || f.activeState === 'failed' || (f.invocationId !== '' && f.mainStartMonotonic > 0));
+// DESIGN 54: a run again starts the same instance (clued-ci-worker@<jobId>) a second time, and the run before left its facts (failed,
+// or inactive with its invocation id and start time): they are no evidence for this run. baseline = the facts read before this start;
+// only a change from them counts (a new invocation that started its main process or failed, or a running state). 'unread' (the
+// baseline could not be read): only a running state counts (the pump's records count anyway). null: a first run, as before.
+export function workerRanSince(f, baseline = null) {
+  if (baseline === null) return workerRanEvidence(f);
+  if (!f) return false;
+  if (WORKER_RUNNING_STATES.has(f.activeState)) return true;
+  if (baseline === 'unread') return false;
+  const fresh = f.invocationId !== '' && f.invocationId !== baseline.invocationId;
+  return fresh && (f.mainStartMonotonic > baseline.mainStartMonotonic || f.activeState === 'failed');
+}
 
 // The pre-stage memory gate (DESIGN §32, Task 25851665): the same arithmetic as linux/host-tuning/clued-wsl-memguard. Every
 // Windows->WSL hv_sock channel needs one free block of the ring order: each direction's socket default clamped to 6..64 pages,
@@ -691,6 +703,10 @@ export class Companion {
       check(first === true, 'COMPANION_PUMP_UNCONFIRMED');
       while (!(await ready('issue'))) { check(this.clock() < deadline, 'ACTUAL_ISSUE_NOT_PUBLISHED'); await live(); await this.sleep(100); }
       check(await relay('SendIssue', 0, { deadline }), 'ISSUE_TRANSFER_UNCONFIRMED');
+      // DESIGN 54: before a run again starts the instance a second time, its facts from the run before are the baseline.
+      let baseline = null;
+      if (request.again) baseline = parseUnitFacts(await this.runRead(this.a.unitFacts('clued-ci-worker', request.jobId), { timeoutMs: RELAY_CHECK_TIMEOUT_MS }, 'worker-unit-baseline')) ?? 'unread';
+      const ranSince = f => workerRanSince(f, baseline);
       await live(); // a cancel that came with the issue transfer starts no worker
       const startCalledAt = this.clock(); // no challenge can exist before the worker was asked to start
       let start = await this.run(this.a.startNoBlock('clued-ci-worker', request.jobId), { timeoutMs: 30_000 });
@@ -700,7 +716,7 @@ export class Companion {
       if (start.code !== 0 && timedOutGone(start)) {
         await this.noteRetry('worker-start', 1, 30_000, start);
         const f = parseUnitFacts(await this.runRead(this.a.unitFacts('clued-ci-worker', request.jobId), { timeoutMs: RELAY_CHECK_TIMEOUT_MS }, 'worker-unit-facts'));
-        if (workerRanEvidence(f)) start = { code: 0 };
+        if (ranSince(f)) start = { code: 0 };
       }
       check(start.code === 0, 'LINUX_WORKER_START_UNCONFIRMED');
       let sequence = 1, blockedRefused = false;
@@ -712,7 +728,7 @@ export class Companion {
         if (this.clock() < worker.factsAt) return;
         worker.factsAt = this.clock() + WORKER_FACTS_EVERY_MS;
         const f = parseUnitFacts(await this.run(this.a.unitFacts('clued-ci-worker', request.jobId), { timeoutMs: RELAY_CHECK_TIMEOUT_MS }));
-        if (workerRanEvidence(f) || sequence > 1) worker.ran = true;
+        if (ranSince(f) || sequence > 1) worker.ran = true;
         // Ended: it ran, and its unit is inactive or failed now. The listing the loop takes next is then final: nobody writes
         // Linux outgoing once the worker is gone.
         worker.ended = worker.ran && !!f && ['inactive', 'failed'].includes(f.activeState);

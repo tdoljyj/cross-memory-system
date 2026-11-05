@@ -243,12 +243,13 @@ test('A: a refusal at stage 2 is FAILED_CLEAN, never published, no HALT, and the
   assert.equal((await f.exec.tick()).state, 'COMPLETED');
 });
 
-test('A: at stages 4 and 6 the refusal is FAILED_CLEAN too (no UNCERTAIN, no HALT), but stage 3 published: no attempt 2, a new commit runs', async t => {
+test('A: at stages 4 and 6 the refusal runs again twice in the batch (DESIGN 54), then is FAILED_CLEAN (no UNCERTAIN, no HALT); stage 3 published: no attempt 2', async t => {
   for (const stage of [4, 6]) {
     const f = await executorFixture(t, { engine: fakeEngine({ stages: { [stage]: refused } }) });
     await f.drop(triggerBytes());
     const r = await f.exec.tick();
     assert.deepEqual([r.state, r.failureCode, r.attempt2], ['FAILED_CLEAN', LINUX_MEMORY_NOT_READY, undefined], String(stage));
+    assert.equal(f.engine.calls.filter(c => c[0] === 'stage' && c[1] === stage).length, 3, 'the run and two runs again');
     assert.equal(await f.ledger.halted(), null);
     const s = await f.ledger.state(KEY);
     assert.deepEqual([s.terminal.facts.stage, s.terminal.facts.retry], [stage, 'new-commit']);

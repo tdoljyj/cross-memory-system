@@ -85,11 +85,13 @@ const REQUEST_FIELDS = {
 
 export function validateRequest(v) {
   check(v && KINDS.includes(v.kind), 'MAILBOX_REQUEST_KIND_REFUSED');
-  exactKeys(v, ['contract', 'requestId', 'kind', 'createdAt', 'deadline', ...REQUEST_FIELDS[v.kind]], 'MAILBOX_REQUEST_KEYS_REFUSED');
+  // DESIGN 54: a relay-stage of a run again (stages 4 and 6 only) carries `again` (1 or 2); a first run never carries it.
+  const again = v.kind === 'relay-stage' && Object.hasOwn(v, 'again');
+  exactKeys(v, ['contract', 'requestId', 'kind', 'createdAt', 'deadline', ...REQUEST_FIELDS[v.kind], ...(again ? ['again'] : [])], 'MAILBOX_REQUEST_KEYS_REFUSED');
   check(v.contract === REQUEST_CONTRACT && UUID.test(v.requestId), 'MAILBOX_REQUEST_IDENTITY_REFUSED');
   check(BATCH_ID.test(v.batchId), 'MAILBOX_BATCH_ID_REFUSED');
   check(!Number.isNaN(Date.parse(v.createdAt)) && !Number.isNaN(Date.parse(v.deadline)) && Date.parse(v.deadline) > Date.parse(v.createdAt), 'MAILBOX_REQUEST_TIME_REFUSED');
-  if (v.kind === 'relay-stage') check([2, 4, 6].includes(v.stage) && HEX64.test(v.jobId), 'MAILBOX_RELAY_FIELDS_REFUSED');
+  if (v.kind === 'relay-stage') check([2, 4, 6].includes(v.stage) && HEX64.test(v.jobId) && (!again || ([4, 6].includes(v.stage) && [1, 2].includes(v.again))), 'MAILBOX_RELAY_FIELDS_REFUSED');
   if (v.kind === 'archive-linux') check(REASON.test(v.reason), 'MAILBOX_ARCHIVE_REASON_REFUSED');
   if (v.kind === 'pr-head') check(Number.isSafeInteger(v.pr) && v.pr > 0 && v.pr < 1e9, 'MAILBOX_PR_REFUSED');
   return v;

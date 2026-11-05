@@ -296,6 +296,33 @@ export function networkFailure({ code, outcome = null, bundleNetwork = false }) 
   }
 }
 
+// Generation 11 (DESIGN 54): the execution stages 4 and 6 run again IN THE SAME BATCH after an ending that says nothing about the PR and
+// is proven to have published nothing; stage 3 already published, so an attempt 2 is impossible (DESIGN 53.12), and a new commit is
+// what this replaces. The stage's own publication (5 or 7) has not run: it runs once, after the run that succeeds, on that run's signed
+// result. Two kinds of ending qualify:
+//   - abandoned: the scanner-abandonment proof of DESIGN 27 holds (scannerAbandonEligible: an allow-listed ending, the pump code
+//     provable, STOP_SENT where needed, the Windows half of the proof, a quiet pump), e.g. LINUX_WORKER_ENDED_WITHOUT_RECORD;
+//   - clean: a BLOCKED outcome with zero side effects that may not have published, the Windows half of the proof, and a reason that is
+//     the environment (EXECUTION_RETRY_BLOCKED_REASONS: the Linux side refused its preparation, a callback deadline, the remote refs
+//     or GitHub / Native unreadable; full_admission_unavailable only with its transport flag), or the memory gate's refusal before the
+//     stage was invoked. A refusal about the PR (it changed or closed, refs moved, not admitted) is never retried.
+// The executor adds: no HALT, no drift, a two-host quiescence proof and a verified retry-stage-N archive before each run again.
+export const EXECUTION_RETRY_STAGES = Object.freeze([4, 6]);
+export const EXECUTION_RETRY_BLOCKED_REASONS = Object.freeze(['LINUX_PREPARATION_REFUSED', 'BRIDGE_CALLBACK_DEADLINE', 'REMOTE_REFS_UNAVAILABLE',
+  ...NETWORK_GITHUB_REASONS, ...NETWORK_NATIVE_REASONS]);
+export function executionRetryable({ stage, code, outcome = null, bridge = null, proof = null } = {}) {
+  const no = reason => ({ retry: false, basis: null, reason });
+  if (!EXECUTION_RETRY_STAGES.includes(stage)) return no('EXECUTION_RETRY_STAGE_NOT_LISTED');
+  if (proof?.windowsTreeZero !== true || proof?.serviceOriginalStopped !== true) return no('EXECUTION_RETRY_WINDOWS_PROOF_INCOMPLETE');
+  if (code === LINUX_MEMORY_NOT_READY) return { retry: true, basis: 'memory-gate', reason: null };
+  if (scannerAbandonEligible({ stage, code, bridge, proof }).eligible) return { retry: true, basis: 'abandoned-unpublished', reason: null };
+  const o = outcome;
+  if (o?.status !== 'BLOCKED' || o.sideEffects !== 0 || o.mayHavePublished !== false) return no('EXECUTION_RETRY_NOT_A_CLEAN_REFUSAL');
+  const transport = o.reason === 'full_admission_unavailable' && o.diagnostic?.transport === true;
+  if (!EXECUTION_RETRY_BLOCKED_REASONS.includes(o.reason) && !transport) return no('EXECUTION_RETRY_REASON_NOT_ENVIRONMENT');
+  return { retry: true, basis: 'clean-refusal', reason: null };
+}
+
 // The failure decision of the executor (phase 1). release: the unexecuted reason to close the reservation with, or
 // null. A release needs the table's release-if-safe row, an entry that did not reach 10-started, the Windows half of
 // the cleanup proof, and EITHER the bound stage outcome's own safeToRerun flag (v0.6 §9 phase 1, items 1 and 2; never

@@ -4067,5 +4067,116 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 
 - **原因。** 第 3 段（gitleaks 发布）已经在 head 上发布了角色检查。第 2 次尝试会以新的 job id 从第 1 段重来：第 1 段的 `published-on-github` 读回会看到 gitleaks 角色检查而以 `HEAD_PUBLISHED_ON_GITHUB` 结束；即使绕开它，第 2 段也会对同一提交再真跑一次 gitleaks 并再发布一次，违反“同一提交的同一检查只真跑一次”与 K(head, role) 的语义（§50 的不变量 ①②）。所以 `attempt2Decision` 只允许第 0、1、2 段，`BRIDGE_ABANDONED_UNPUBLISHED` 在第 4、6 段是 `new-commit`。这条不放宽。
 - **本代的做法（快修）。** 从源头消除这两类失败（53.11）：断流的 DB 下载不再变成 `UNCERTAIN`/保留锁，能回退就回退；旧锁可证明失效时自动回收。剩下的第 4、6 段失败（例如锁确实被占用、72 小时内没有可用 DB）仍按原规则结束。
-- **不需要新提交的恢复路径（下一代，未在本代实现）。** 在**同一批次内**原地重跑执行段（第 4 或 6 段），条件与 §51 C 对第 3、5、7 段的原地重跑相同的思路：入口证明本段什么都没发布（桥的“未发布”证明、`BRIDGE_ABANDONED_UNPUBLISHED` 的静止证明）、该角色在 GitHub 上没有检查、Linux 独占区与工作区仍在、一次性的扫描许可未被消耗或可重新取得；重跑前归档本段的协议记录（同角色间归档 `between-roles` 的做法），有界次数与退避，都在段的上限内。这要动执行器的阶段循环、桥与归档协议，属于下一步系统化排查的内容，需要独立审核。
+- **不需要新提交的恢复路径（第 11 代已实现，见 §54；与这里的原设想有出入）。** 在**同一批次内**原地重跑执行段（第 4 或 6 段）。实现的条件以 §54.1、§54.2 为准：§27 的静止与“未发布”证明、或干净的环境拒绝，两台主机静止，按 `retry-stage-N-K` 归档，有界次数与退避，安装授权要够用。原设想里“读 GitHub 确认该角色没有检查”没有实现：第 5、7 段还没有跑，本批次不可能已有该角色的检查；扫描许可也不需要（`NATIVE_SCAN_START_REQUIRED = false`）。独立审核的结论见第 11 代的汇报。
 
+## 54. 第 4、6 段同批次原地重跑（第 11 代；Decision `4f5f35d3`：发现的缺陷全部修掉；承接 §53.12）
+
+第 4 段（trivy）和第 6 段（contract-placement）是执行段：只在 Linux 上真跑扫描器，把签名结果放进 spool，**自己不发布任何检查**；检查由其后的第 5、7 段发布。第 3 段已经发布了 gitleaks，所以这两段失败后不能有第 2 次尝试（§53.12）。
+
+本代的做法：环境类失败、并且能证明什么都没发布时，**在同一批次内**有界重跑该段。不烧 head，也不需要新提交。
+
+**与 §50 不变量 ① 的关系（如实说明）。** ① 原文是“同一提交的同一检查只真跑一次，绝不重跑扫描”，本节重跑的正是扫描。本节保持的是：
+
+- **只发布一次：** 第 5、7 段各只跑一次；
+- **K(head, role)：** 一个角色在一个 head 上只有一个发布者。
+
+重跑扫描的依据，是 §27 那类结构性的“未发布”证明，与 O-2（Owner Decision `eaa7d5e4`：第 2 段的一次自动 attempt 2）属于同一类。O-2 当时明确说第 4、6 段不进 attempt 2；本节没有改 attempt 2，而是在批次内重跑，出发点是第 11 代的任务（主会话下发，Decision `4f5f35d3`）。把“重跑扫描”扩展到第 4、6 段，需要 Owner 在安装第 11 代时确认。
+
+### 54.1 规则（`classify.mjs#executionRetryable`，纯函数）
+
+只适用于第 4、6 段（`EXECUTION_RETRY_STAGES`），并且 Windows 一半的证明（`windowsTreeZero` 且 `serviceOriginalStopped`）必须齐全。满足下列之一才重跑：
+
+- **memory-gate：** 内存闸门在调用之前就拒绝了（`LINUX_MEMORY_NOT_READY`），本段什么都没跑。
+- **abandoned-unpublished：** §27 的扫描放弃证明成立（`scannerAbandonEligible`：结束码在允许表里、泵的码可证明、需要时有 `STOP_SENT`、泵已安静）。例子是 11-05 head `46f6e452` 的 `LINUX_WORKER_ENDED_WITHOUT_RECORD`。
+- **clean-refusal：** 结果为 `BLOCKED`，`sideEffects` 为 0，`mayHavePublished` 为 false，原因在 `EXECUTION_RETRY_BLOCKED_REASONS` 中（`LINUX_PREPARATION_REFUSED`、`BRIDGE_CALLBACK_DEADLINE`、`REMOTE_REFS_UNAVAILABLE`、GitHub/Native 读不到的那组网络原因）。`full_admission_unavailable` 只有带 `transport` 标记时才算。
+  - 这一类不要求 `pumpQuiet`。原因：伴随进程按顺序处理请求，重跑之前的静止证明（`linux-quiescence`）排在旧泵之后才执行，所以能证明旧泵和 worker 都已结束。
+  - **与 Source 注释的分歧（如实说明）：** `LINUX_PREPARATION_REFUSED` 是 Windows issuer 对 Linux 端所有干净拒绝的统称。其中有环境原因（准备锁、DB 或 checks 下载被网络切断），也有确定性的配置拒绝（`DIRTY_SOURCE_NOT_QUALIFIED`、`QUALIFIED_JOB_CONTEXT_MISMATCH`、资格过期）。Source 的注释说干净拒绝“是最终结果，不自动重试”（`windows-issuer.mjs`、`formal-trivy-v4/adapter.mjs`），那是指 Source 自己不重试。常驻层在批次内有界重跑，对确定性的拒绝只是白跑最多两次、约 6 分钟加两次运行，与安全无关；分不清的时候按“可能是环境”处理。如果要让 Linux 端把可重试的原因单独透传出来，需要改 Source 的拒绝格式，另立任务。
+
+关于 PR 本身的拒绝一律不重跑：PR 关闭或变了、refs 移动、未准入、`github_http_403/429` 等。`UNCERTAIN`、有副作用或可能已发布的结束，除了放弃证明能覆盖的情形，也一律不重跑。
+
+### 54.2 执行器（`executor.mjs`，阶段循环）
+
+第 4、6 段失败后，在原有的结束路径之前，最多重跑 2 次（`EXECUTION_RETRY_MS = [60 s, 300 s]`）。每次重跑都是独立的一次段运行，有自己的上限。
+
+**重跑之前（`prepareExecutionRetry`），依次要求：**
+
+1. 没有 HALT，没有漂移（`driftCode`）。
+2. **安装授权覆盖得了**（`executionRetryFitsAuthority`）：`validUntil` 不早于“现在 + 等待 + 静止证明与两边归档的上限（5 分钟 + 2×14 分钟）+ 本段及之后每一段的上限加余量”；等待之后再查一次，那时只算后面各段。批次开始时的 `batchBudgetMs` 没有算重跑，所以这里另算；不够就不重跑。
+3. 两台主机都静止（中止用的有界证明 `abortQuiescence`）。
+4. 两台主机上的 `retry-stage-N-K` 归档都已核实，并且返回的目录名正是这个原因（`archiveNamedFor`）。
+   - K 是第几次重跑，所以**每次重跑都是独立的归档实例**。Linux 工具对已经跑过的实例只回放上次结果、不移动任何东西；如果两次重跑共用一个原因，第二次就会是回放。
+   - Windows 走失败现场范围，只移动桥协议记录。
+   - Linux 走 `stage-retry` 范围：移动协议记录、角色锁和 `runs/*`，保留工作区。
+5. 写一张 `execution-retry` 回执，带上段、第几次、等待、依据、失败码、原因、归档原因和两边的目录。
+
+任何一步不成立，就写 `execution-retry-refused`（带停在哪一步，以及已经做好的归档目录），然后按原路径结束：放弃证明成立时仍是 `FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED` new-commit，静止证明不成立仍是 HALT。
+
+**等待与重跑：**
+
+- 等待期间，状态页的阶段显示为 `retry-wait`。
+- 等待之后先查 Owner 中止，再查一次 HALT、漂移和授权（`executionRetryStillAllowed`）。
+- 然后以 `{ betweenRoles: false, firstLinux: <与首跑相同>, again: K }` 重跑：
+  - 不做 between-roles 归档，这一步已由重跑归档完成；
+  - 如果本段是批次里第一个 Linux 段，refs 闸门和版本检查照样再过一遍。
+- 引擎在每次调用这一段时，都会忘掉上次运行留下的停止请求（`stageStopFor`）。这样本次的停止（Owner 中止或桥停止）会找到并写入**本次**的 swap，不会拿上次的 `STOP_SENT` 当作本次的证据。
+- 重跑的 `stage-terminal` 回执带 `executionRetry`。
+
+**之后：**
+
+- 只有重跑成功，循环才往下走到第 5 或第 7 段。它们照常只跑一次，发布的是这次成功运行的签名结果。Windows 失败现场归档会移走旧的 `incoming/result*`，所以第 5、7 段读到的只可能是本次的结果。
+- 两次重跑都用完，就按原规则结束，此时 head 记为已发布（第 3 段已经发布）。
+
+**局限：** 批次 claim 的租期由持有者续期，之后每一段都会实时核验。重跑把批次拉长后，如果 claim 在中途过期：在段开始前过期，后面的段会干净地拒绝；在 issue 写出之后、扫描中途过期，可能以未确认结束，走放弃证明烧 head，最坏是 HALT。这和以前一个很长的批次碰上 claim 过期的结果相同。常驻层读不到这个租期，所以没有把它算进重跑前的检查。
+
+### 54.3 同一个作业再跑一次：哪些东西会挡住，怎么处理
+
+重跑用的是同一个 `jobId`（批次行是固定的）。逐项核对：
+
+- **Windows 调用器：** 每次调用都用新的随机 nonce 建 stage 目录，broker requestId 和签发方的 issueId 也是新的；`NATIVE_SCAN_START_REQUIRED = false`，没有一次性的 Native 扫描许可。
+- **Linux 角色锁**（`policy.mjs#SERIAL_LOCK`，用 `wx` 创建）：worker 没留记录就结束时会留下这把锁，`stage-retry` 把它移入归档。Linux 侧的桥锁 `outgoing/active.lock` 和旧的 `incoming/issue.json` 也在协议记录里，一并移走。
+- **contract-placement 的运行目录** `runs/placement-<jobId>`：用非递归 `mkdir` 创建，已存在会 EEXIST。由 `stage-retry` 移走 `runs/*`。trivy 的运行目录名是随机的。
+- **工作区：** 容器的 bind 挂载全部只读（通用 runner 用 `readonly`；trivy 的 `docker.mjs` 逐一核对 `RW === !readOnly`），可写的只有 trivy 的 `/cache`。所以失败的那次改不了工作区，重跑直接沿用。trivy 缓存遗留的准备锁由 §53.11 回收。
+- **systemd 单元** `clued-ci-worker@<jobId>`：`Type=oneshot`、`Restart=no`，处于 failed 的单元可以再次 start。
+- **伴随进程的“已运行”证据（本代发现并修掉的缺陷）：**
+  - 问题：上次运行留下的单元事实（failed，或 inactive 加上次的 InvocationID 和启动时间）原来会被 `workerRanEvidence` 当成“这次已运行”。`start --no-block` 之后，systemd 在负载下可能几秒后才真正启动；这期间泵读到旧事实，判为“已运行并已结束”，列表为空时就误报 `LINUX_WORKER_ENDED_WITHOUT_RECORD`。而新 worker 其实正要开始，最终静止证明失败，导致 HALT。
+  - 修法：重跑时 relay-stage 请求带 `again`（只允许第 4、6 段，取值 1 或 2；首跑永远不带，见 `mailbox.mjs#validateRequest`）。泵在启动之前先读一次单元事实作为基线，只认相对基线的变化（`companion.mjs#workerRanSince`）：运行中的状态，或者新的 InvocationID 并且有新的主进程启动时间或已 failed。
+  - 基线读不到时，只认运行中的状态，记录照常算证据。这是失败即关闭：最坏情况是快速结束的 worker 被报成 `LINUX_WORKER_NOT_STARTED`，之后仍要过静止证明。
+  - 首跑不读基线，行为与原来完全一样，也不多一次 wsl.exe 调用。
+- **引擎缓存的停止请求：** 见 54.2，每次调用时清掉。
+
+### 54.4 归档（`linux/bin/clued-ci-resident-linux`）
+
+只有 `retry-stage-4-1`、`retry-stage-4-2`、`retry-stage-6-1`、`retry-stage-6-2` 这四个确切原因保留工作区，范围记为 `stage-retry`，前缀 `failed`。它不算完成范围，所以：
+
+- 半对照样移走并报告；
+- 未知的叶子留在原处（`remainderLeftInPlace`），只报告。
+
+其他原因的行为不变。Windows 的 `archive-windows-spool.ps1` 和离线参照 `archive.mjs` 不用改：这些原因符合通用格式，走失败现场范围，只移动协议记录。
+
+本批次更早角色的 `runs/*`（例如第 2 段 gitleaks 的运行目录）会一起进入这次重跑的归档，不再出现在 success-close 归档里。这只是证据换了位置，没有删除任何东西。
+
+### 54.5 策略与安装
+
+不改签名策略（仍是 /9），也不新增策略字段；重跑次数和等待时间是代码常量。安装与第 10 代相同：Owner 批 Grant、点 UAC，由主会话负责。另外需要 Owner 确认本节开头所说的“第 4、6 段批次内重跑扫描”。
+
+### 54.6 测试
+
+`test/execution-retry.test.mjs`：
+
+- 纯规则。
+- 第 4 段 worker 断了一次之后重跑成功：阶段序列为 `[1,2,3,4,4,5,6,7,8]`，第 5 段只跑一次，两边都归档为 `retry-stage-4-1`，回执齐全。
+- 第 6 段两次干净的环境拒绝：等待 1 分钟和 5 分钟，归档原因依次为 `-1`、`-2`。
+- 重跑用完：按原样结束，head 被烧。
+- 不重跑的情形：关于 PR 的拒绝、第 2 段、静止不成立（HALT）、归档没有核实、归档目录不是本次原因的（模拟回放），这些都会写 refused 回执并列出已做的 Windows 归档。
+- 内存闸门。
+- 重跑之前或等待期间出现 HALT 或漂移。
+- 安装授权不够。
+- 引擎每次调用都忘掉上次的停止。
+- mailbox 对 `again` 的字段规则；引擎把 `again` 传给泵，其他段拒绝 `again`，首个 Linux 段重跑时保留 refs 闸门。
+- `workerRanSince`。
+- 泵的模拟：旧证据会误报结束；新证据会一直跟到记录。另外覆盖真结束、从未启动、基线读不到三种情况。
+
+其他文件：
+
+- `test/scanner-abandon.test.mjs`、`test/memory-gate.test.mjs`：第 4、6 段在原有结束之前先重跑两次，每次是独立的归档原因。
+- `test/test_linux_tool.py`：`retry-stage-N-K` 保留工作区，移动协议记录、角色锁和 runs；其他原因（含 `retry-stage-4`、`retry-stage-4-3`）不保留。

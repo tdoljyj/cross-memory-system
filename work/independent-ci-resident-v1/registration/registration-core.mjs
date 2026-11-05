@@ -123,6 +123,14 @@ export function jwkFromPublicPem(pem) {
   return publicJwk({ kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y });
 }
 export const keyFingerprint = jwk => canonicalDigest(publicJwk(jwk));
+// KEY_UNREGISTRABLE for any valid public key whose coordinates the registration RPC refuses (databaseRefuses has no word boundary;
+// sensitiveText has one, so only some of those keys are also "not a public document"). A value that is not a valid public key is
+// left to the caller's own checks (PUBLIC_KEY_INVALID, FACTS_INVALID), as before.
+const unregistrable = jwk => { let key; try { key = publicJwk(jwk); } catch { return false; } return databaseRefuses(key); };
+function refuseUnregistrableKeys(...jwks) {
+  check(!jwks.some(unregistrable), 'KEY_UNREGISTRABLE',
+    'a public key coordinate contains text the registration RPC refuses; these keys cannot be registered, create new ones in an approved install wave');
+}
 
 const uniqueOf = (value, allowed, min, max) => Array.isArray(value) && value.length >= min && value.length <= max
   && value.every(item => typeof item === 'string' && allowed.includes(item)) && new Set(value).size === value.length;
@@ -142,6 +150,9 @@ export function validProfile(value) {
 
 // page.tsx#registrationDocument, plus the database's "the two keys differ" rule; bindingIds, when given, is the page's binding list.
 export function validateRegistration(value, bindingIds) {
+  // A key coordinate that holds refused text at a word boundary also makes the document "not public" (publicDocument); it is the
+  // same unregistrable key, so its actionable cause is reported first (generation 11: the random-key case got FACTS_INVALID).
+  if (plain(value)) refuseUnregistrableKeys(value.identity_public_jwk, value.encryption_public_jwk);
   check(plain(value) && publicDocument(value), 'REGISTRATION_INVALID', 'not a public document');
   check(Object.keys(value).every(key => REGISTRATION_KEYS.includes(key)), 'REGISTRATION_INVALID', 'unknown field');
   check(typeof value.binding_id === 'string' && UUID.test(value.binding_id), 'REGISTRATION_INVALID', 'binding_id');
@@ -156,8 +167,7 @@ export function validateRegistration(value, bindingIds) {
   const identity = publicJwk(value.identity_public_jwk);
   const encryption = publicJwk(value.encryption_public_jwk);
   check(identity.x !== encryption.x || identity.y !== encryption.y, 'REGISTRATION_INVALID', 'identity and encryption keys are the same key');
-  check(!databaseRefuses(identity) && !databaseRefuses(encryption), 'KEY_UNREGISTRABLE',
-    'a public key coordinate contains text the registration RPC refuses; these keys cannot be registered, create new ones in an approved install wave');
+  refuseUnregistrableKeys(identity, encryption);
   check(!databaseRefuses(value), 'REGISTRATION_INVALID', 'the document contains text the registration RPC refuses');
   check(Buffer.byteLength(JSON.stringify(value), 'utf8') <= MAX_BYTES, 'REGISTRATION_INVALID', 'larger than 64 KiB');
   return value;
@@ -173,6 +183,7 @@ export const FACT_KEYS = Object.freeze(['os', 'os_version', 'hostname', 'memory_
   'windows_sandbox_enabled', 'tpm_present', 'identity_public_jwk', 'encryption_public_jwk', 'identity_key_origin', 'encryption_key_origin']);
 const nullableBoolean = value => value === null || typeof value === 'boolean';
 export function validateFacts(facts) {
+  if (plain(facts)) refuseUnregistrableKeys(facts.identity_public_jwk, facts.encryption_public_jwk);
   check(plain(facts) && publicDocument(facts), 'FACTS_INVALID', 'not a public document');
   const keys = Object.keys(facts).sort();
   check(keys.join(',') === [...FACT_KEYS].sort().join(','), 'FACTS_INVALID', `fields ${keys.join(',')}`);

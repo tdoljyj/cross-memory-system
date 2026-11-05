@@ -664,6 +664,10 @@ export class WindowsEngine {
     const firstLinux = opts ? opts.firstLinux === true : stage.number === 2;
     check(!betweenRoles || [4, 6].includes(stage.number), 'RESIDENT_BETWEEN_ROLES_STAGE_INVALID');
     check(!firstLinux || [2, 4, 6].includes(stage.number), 'RESIDENT_FIRST_LINUX_STAGE_INVALID');
+    // DESIGN 54: a run again of an execution stage in the same batch (1 or 2). It never archives between roles (the retry-stage archive
+    // took the run's records); the batch's first Linux stage keeps its refs gate and version check (firstLinux) on a run again too.
+    const again = opts?.again ?? 0;
+    check(again === 0 || ([4, 6].includes(stage.number) && [1, 2].includes(again) && !betweenRoles), 'RESIDENT_STAGE_AGAIN_INVALID');
     // Before the second and third Linux role, archive the previous role's protocol records on both
     // hosts, exactly as run-batch.ps1:81 does today; otherwise a stale issue.ready would be relayed.
     if (betweenRoles) {
@@ -692,7 +696,7 @@ export class WindowsEngine {
         return { ok: false, code, proof: { windowsTreeZero: true, serviceOriginalStopped: await this.scReadback() } };
       }
     }
-    return this.invoke(batch, stage, row);
+    return this.invoke(batch, again ? { ...stage, again } : stage, row);
   }
 
   // The pre-stage memory gate (DESIGN §32). { checks, order, blocks, low, ready, waitedMs, refused }: ready true (a reading at or
@@ -742,8 +746,11 @@ export class WindowsEngine {
   }
 
   async invokeStage(batch, stage, row, invoke) {
+    // Generation 11 (DESIGN 54, review B2): a stage run again in the same batch is a new swap; the stop remembered for the run before
+    // (stageStop) is not this run's, so it is forgotten here and a stop of this run finds and writes its own.
+    if (this.stageStopFor?.batchId === batch.batchId && this.stageStopFor.stage === stage.number) this.stageStopFor = null;
     const relay = stage.linuxWorker
-      ? this.companionMailbox.send('relay-stage', { batchId: batch.batchId, stage: stage.number, jobId: row.jobId }, stage.runMilliseconds + 120_000)
+      ? this.companionMailbox.send('relay-stage', { batchId: batch.batchId, stage: stage.number, jobId: row.jobId, ...(stage.again ? { again: stage.again } : {}) }, stage.runMilliseconds + 120_000)
       : null;
     this.inflight = relay ? { batchId: batch.batchId, stage: stage.number, request: relay } : null;
     // DESIGN §26: while a scanner-issuer stage runs, its pump and the companion's heartbeat are watched (and the stage is
