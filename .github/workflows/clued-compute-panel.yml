@@ -1,9 +1,10 @@
 # Compute panel (Task 679a0c2b, Owner Decision 183ee67c): every five minutes
 # each general-pool runner answers a route probe (its name, free disk and
 # available memory), and one Linux runner rebuilds the panel issue from those
-# probes, the in-progress jobs of every workflow and the resident executors'
-# info-only PR statuses. It uses only this workflow's GITHUB_TOKEN; no secret
-# reaches the pool. See scripts/ci/self-hosted/compute_panel.py and
+# probes, the in-progress jobs of every workflow, the resident executors'
+# info-only PR statuses and, for the duplicate-run alert (Task e435e658), the
+# check runs of recent PR heads (checks: read). It uses only this workflow's
+# GITHUB_TOKEN; no secret reaches the pool. See scripts/ci/self-hosted/compute_panel.py and
 # docs/maintenance/compute-panel.md. clued-ci-health and clued-ci-usage-report
 # stay on hosted runners: the pool cannot watch its own complete loss.
 name: clued-compute-panel
@@ -238,6 +239,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       actions: read
+      checks: read
       contents: read
       issues: write
       pull-requests: read

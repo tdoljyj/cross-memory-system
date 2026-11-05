@@ -578,7 +578,7 @@
     {
       "id": "script.non-pr-control-source",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Exact non-PR Source metadata classifier; candidate until separately accepted Source placement. No execution authority.",
       "root": "scripts/ci",
       "files": [
@@ -590,7 +590,7 @@
         "file": "clued-non-pr-control-source.mjs",
         "pattern": "export const COMPONENT_VERSION='{version}';"
       },
-      "content_sha256": "2a72aa9b01a93d926767777739c5ad0a6f80951f5f113ade248e10660e98c82f"
+      "content_sha256": "cf80d714893cf5e0a27ea125c0359cc6dc307c9538f5a38bace0040ff01fcd5c"
     },
     {
       "id": "script.source-only-workflow",
