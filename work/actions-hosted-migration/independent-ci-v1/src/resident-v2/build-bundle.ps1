@@ -92,7 +92,8 @@ $stage='fixed-preflight';$created=@();$writesStarted=$false;$lastGit=$null;$atte
 # fetches or reads the reviewed commits failed. It names public facts only (a short commit id and a branch name).
 function Branch-Only-Hint([string]$Stage,[string]$Reason,$Commits){
  # One fixed text per commit: the companion logs a hint only when it equals this text byte for byte (companion.mjs BUNDLE_BRANCH_ONLY_HINT).
- $branchOnly=@{'d94cd486e29a7362888fc32cd807ceb38890acb6'='The reviewed set contains d94cd486 (and its parent 8ea4da40), which is reachable only from branch claude/gitleaks-midgen-reviewed-hold until PR #991 is merged: if that branch was deleted or rewritten, restore it.'}
+ # Empty since PR #991 brought d94cd486 into main (DESIGN 52): no reviewed commit is kept alive by a branch only.
+ $branchOnly=@{}
  if(@('fetch-reviewed-commits-by-sha','reviewed-store-readback') -cnotcontains $Stage){return $null}
  if(@('GIT_STEP_FAILED','REVIEWED_COMMIT_NOT_IN_STORE','EXACT_REVIEWED_REF_SET_REQUIRED') -cnotcontains $Reason){return $null}
  $hit=@(@($Commits)|Where-Object{$branchOnly.ContainsKey($_)})

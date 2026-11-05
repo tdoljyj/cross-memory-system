@@ -205,9 +205,10 @@ export function retryLogEntry({ at, op, attempt, ms, runner }) {
 
 // DESIGN 52 (Decision 98fec682): build-bundle.ps1's refusal answer may carry one fixed `hint` (a reviewed commit that only a branch keeps
 // alive). The companion answers BUNDLE_UNAVAILABLE as before; the hint reaches the operator only through the log entry below, and only
-// when it equals the fixed text below byte for byte (the same literal is in build-bundle.ps1, Branch-Only-Hint; a test pins both). Any
+// when it is one of the fixed texts below byte for byte (the same literals as in build-bundle.ps1, Branch-Only-Hint; a test pins both). Any
 // other hint is dropped; of the rest of the answer only the codes and counts that bundleRefusalLogEntry names are kept (generation 10).
-export const BUNDLE_BRANCH_ONLY_HINT = 'The reviewed set contains d94cd486 (and its parent 8ea4da40), which is reachable only from branch claude/gitleaks-midgen-reviewed-hold until PR #991 is merged: if that branch was deleted or rewritten, restore it.';
+// Empty since PR #991 brought d94cd486 into main (the script's table is empty too): every hint is dropped.
+export const BUNDLE_BRANCH_ONLY_HINTS = Object.freeze([]);
 // Generation 10 (DESIGN 53.1, Task 125a5162 item 1): EVERY bundle that was not written leaves one entry, so the cause of a
 // BUNDLE_UNAVAILABLE is visible (on 2026-11-05 two refused bundles burned a head and the log said nothing). Only codes and counts are
 // kept, each through its own fixed pattern: the script's status, reason and stage, the last git step (its label, exit code and how many
@@ -251,7 +252,7 @@ export function bundleRefusalLogEntry({ at, op, runner }) {
     runner: { code: bundleExit(r.code), timedOut: r.timedOut === true, tree: ['zero', 'unconfirmed'].includes(r.tree) ? r.tree : null, refused: bundleCode(r.refused) },
     status: bundleCode(v?.status), reason: bundleCode(v?.reason), stage: bundleSlug(v?.stage), git: bundleGit(v?.git), storeAttempts: bundleCount(v?.storeAttempts),
     failedAttempts: attempts, seed: s ? { used: s.used === true, reason: bundleCode(s.reason), discarded: s.discarded === true, networkFailureNoted: s.networkFailureNoted === true } : null,
-    hint: v?.hint === BUNDLE_BRANCH_ONLY_HINT ? v.hint : null };
+    hint: typeof v?.hint === 'string' && BUNDLE_BRANCH_ONLY_HINTS.includes(v.hint) ? v.hint : null };
 }
 
 // DESIGN §33 (the 2026-10-29 first HALT): the path-valued keys of companion.json and which of them point into the installed CI

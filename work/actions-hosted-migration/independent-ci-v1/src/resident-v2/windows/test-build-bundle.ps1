@@ -40,11 +40,10 @@ $toml="# clued-reviewed-count: 2`n# clued-reviewed-finding: {`"fingerprint`":`"$
 $r=Reviewed-Commits $toml;Yes ($r.findings -eq 2 -and @($r.commits).Count -eq 2 -and $r.commits[0] -ceq $a -and $r.sha256 -ceq (Hash-Text "$a`n$b`n")) 'reviewed-commits'
 Refuse {Reviewed-Commits ($toml.Replace('count: 2','count: 3'))} 'reviewed-count-mismatch'
 Refuse {Reviewed-Commits ($toml+"# clued-reviewed-finding: {`"fingerprint`":`"$($b):x:rule:1`",`"kinds`":[`"K`"]}`n")} 'reviewed-duplicate'
-# The branch-only hint (Decision 98fec682): only at the reviewed-commit steps, only for the listed reasons, only when the set holds d94cd486.
+# The branch-only hint (Decision 98fec682): its table is empty since PR #991 brought d94cd486 into main, so no step gives one.
 $d94='d94cd486e29a7362888fc32cd807ceb38890acb6'
-$h=Branch-Only-Hint 'fetch-reviewed-commits-by-sha' 'GIT_STEP_FAILED' @($a,$d94,$b)
-Yes ($h -cmatch 'd94cd486' -and $h -cmatch 'claude/gitleaks-midgen-reviewed-hold' -and $h -cmatch 'restore it' -and $h -cnotmatch 'https?:') 'branch-only-hint-names-the-branch'
-Yes ($null -ne (Branch-Only-Hint 'reviewed-store-readback' 'REVIEWED_COMMIT_NOT_IN_STORE' @($d94))) 'branch-only-hint-readback'
+Yes ($null -eq (Branch-Only-Hint 'fetch-reviewed-commits-by-sha' 'GIT_STEP_FAILED' @($a,$d94,$b))) 'no-hint-after-991-fetch'
+Yes ($null -eq (Branch-Only-Hint 'reviewed-store-readback' 'REVIEWED_COMMIT_NOT_IN_STORE' @($d94))) 'no-hint-after-991-readback'
 Yes ($null -eq (Branch-Only-Hint 'fetch-reviewed-commits-by-sha' 'GIT_STEP_FAILED' @($a,$b))) 'no-hint-without-the-commit'
 Yes ($null -eq (Branch-Only-Hint 'fetch-all-heads-and-tags' 'GIT_STEP_FAILED' @($d94))) 'no-hint-at-another-stage'
 Yes ($null -eq (Branch-Only-Hint 'fetch-reviewed-commits-by-sha' 'REMOTE_MAIN_BASE_CHANGED' @($d94))) 'no-hint-for-another-reason'
