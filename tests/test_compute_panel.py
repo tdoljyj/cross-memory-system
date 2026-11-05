@@ -928,6 +928,16 @@ class DuplicateReviewTests(unittest.TestCase):
         self.assertIn("d" * 12, fresh[0])
         self.assertEqual(state["duplicates"]["quiet"], [])
 
+    def test_a_settled_pr_carried_over_keeps_the_scan_valid_when_the_other_head_is_unreadable(self) -> None:
+        closed = pull(1, SHA, "closed", 2 * 24 * 60)
+        state: dict = {}
+        panel.build(BuildClient([closed], {SHA: self.dup}), NOW, state)
+        gone = FailRules([closed, pull(2, "b" * 40)], {SHA: self.dup}, rules=[("b" * 40, [panel.RequestError("x", 422)] * 5)])
+        panel.build(gone, NOW + timedelta(hours=1), state)
+        self.assertNotIn("duplicates_failed_at", state)
+        self.assertEqual((state["duplicates"]["as_of"], state["duplicates"]["skipped"], state["duplicates"]["total"]),
+                         (panel.iso(NOW + timedelta(hours=1)), 1, 1))
+
     def test_check_run_ids_are_unique_so_page_deduplication_never_drops_a_real_run(self) -> None:
         ids = [check("gitleaks", 5)["id"] for _ in range(50)]
         self.assertEqual(len(set(ids)), 50)

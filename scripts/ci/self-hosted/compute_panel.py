@@ -805,7 +805,7 @@ def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
     settled_before = previous.get("settled") or {}
     settled: dict[str, str] = {}
     found: list[dict] = []
-    heads = skipped = 0
+    heads = skipped = carried = 0
     skipped_heads: list[str] = []
     for pull in pulls:
         if (parse_time(pull.get("updated_at")) or now) < floor:
@@ -815,6 +815,7 @@ def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
         key = settle_key(pull, sha)
         if closed and settled_before.get(key) == pull.get("updated_at"):
             settled[key] = pull["updated_at"]
+            carried += 1
             found.extend(item for item in old_found if item["head"] == sha[:12])
             continue
         if client.low():
@@ -833,7 +834,7 @@ def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
         ended = parse_time(pull.get("merged_at")) or parse_time(pull.get("closed_at")) or parse_time(pull.get("updated_at"))
         if closed and ended is not None and now - ended >= DUP_RESCAN:
             settled[key] = str(pull.get("updated_at"))
-    if skipped and not heads:
+    if skipped and not heads and not carried:
         raise RuntimeError(f"所有 {skipped} 个提交都读不到")  # nothing was read: a failed scan, not an empty one
     best: dict[tuple[str, str], dict] = {}
     for item in found:  # a head shared by two PRs, or read twice, is one finding per check: the larger count wins
