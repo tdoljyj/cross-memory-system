@@ -648,30 +648,6 @@
       ],
       "fingerprint": "54164e09f028bb7c",
       "reason": "merge-admission natural-frame fixtures no longer match main (run through tests/production-publisher-source.test.mjs)"
-    },
-    {
-      "file": "scripts/ci/merge-admission-source-producer.test.mjs",
-      "path": [
-        "real loader wire obtains a separately pinned forward epoch through the actual C1 operations under mock HTTP, never a seven-day packet selection"
-      ],
-      "fingerprint": "2074d0a32afb71b9",
-      "reason": "merge-admission source-producer fixtures no longer match main"
-    },
-    {
-      "file": "scripts/ci/merge-admission-source-producer.test.mjs",
-      "path": [
-        "runtime execution history requires a bounded unique list of exact checkout and profile/role hash selectors before clock use"
-      ],
-      "fingerprint": "e05c3b2909fb1eba",
-      "reason": "merge-admission source-producer fixtures no longer match main"
-    },
-    {
-      "file": "scripts/ci/merge-admission-source-producer.test.mjs",
-      "path": [
-        "runtime loader validates the current Source registry against actual bytes and retains the complete old main admission template"
-      ],
-      "fingerprint": "19e65308726d22db",
-      "reason": "merge-admission source-producer fixtures no longer match main"
     }
   ]
 }
