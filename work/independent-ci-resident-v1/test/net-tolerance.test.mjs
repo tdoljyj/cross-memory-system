@@ -12,7 +12,7 @@ import { POLICY_CONTRACT_V8, POLICY_CONTRACT_V9, TRAIN_DEFAULTS, validatePolicy 
 import { BREAKER_RELEASE_CONTRACT } from '../src/executor.mjs';
 import { batchKey, headKey } from '../src/ledger.mjs';
 import { attempt2Decision } from '../src/attempts.mjs';
-import { NETWORK_GITHUB_REASONS, classifyFailure, decideFailure, networkFailure, TRANSIENT_CODES } from '../src/classify.mjs';
+import { NETWORK_GITHUB_REASONS, NETWORK_NATIVE_REASONS, classifyFailure, decideFailure, networkFailure, TRANSIENT_CODES } from '../src/classify.mjs';
 import { BUNDLE_NETWORK_UNAVAILABLE } from '../src/companion.mjs';
 import { describe, reportDue, statusSignature, REPORT_MIN_GAP_MS } from '../src/pr-status.mjs';
 import { StatusBoard, parseStatus, startStatusTimer } from '../src/status.mjs';
@@ -83,7 +83,11 @@ test('networkFailure: only the most specific fact says "the line"; a code alone 
   assert.equal(networkFailure({ code: 'BUNDLE_UNAVAILABLE' }), false, 'a refusal of the script itself (refs, main moved, timeout) is no network fault');
   for (const reason of NETWORK_GITHUB_REASONS) assert.equal(networkFailure({ code: 'GITHUB_TRANSIENT_UNAVAILABLE', outcome: { reason } }), true, reason);
   for (const reason of ['github_http_429', 'github_http_501', null]) assert.equal(networkFailure({ code: 'GITHUB_TRANSIENT_UNAVAILABLE', outcome: { reason } }), false, String(reason));
-  assert.equal(networkFailure({ code: 'NATIVE_ADMISSION_UNAVAILABLE', outcome: { reason: 'native_claim_observation_unavailable' } }), true);
+  for (const reason of NETWORK_NATIVE_REASONS) assert.equal(networkFailure({ code: 'NATIVE_ADMISSION_UNAVAILABLE', outcome: { reason } }), true, reason);
+  assert.deepEqual([...NETWORK_NATIVE_REASONS].slice(1), ['full_admission_mode_unknown', 'full_admission_observer_unknown', 'full_admission_observation_expired'],
+    'the pre-write side of the Source reread reasons (withdrawal-text.mjs ADMISSION_REREAD_REASONS without the after-write one)');
+  for (const reason of ['full_admission_principal_unknown', 'full_admission_rejected', 'full_admission_claim_changed'])
+    assert.equal(networkFailure({ code: 'NATIVE_ADMISSION_UNAVAILABLE', outcome: { reason } }), false, reason);
   assert.equal(networkFailure({ code: 'NATIVE_ADMISSION_UNAVAILABLE', outcome: { reason: 'full_admission_unavailable', diagnostic: { transport: true } } }), true);
   for (const diagnostic of [{ transport: false }, {}, null]) assert.equal(networkFailure({ code: 'NATIVE_ADMISSION_UNAVAILABLE', outcome: { reason: 'full_admission_unavailable', diagnostic } }), false, JSON.stringify(diagnostic));
   assert.equal(networkFailure({ code: 'ADMISSION_VERIFICATION_UNAVAILABLE' }), true);
@@ -508,4 +512,9 @@ test('executor: noteBreakerProbe resets on a failed probe, brings the trial forw
   assert.deepEqual([r.probe, r.lifted, r.woke], ['train-run', [], []]);
   const saved = JSON.parse(await fs.readFile(path.join(f.root, 'state', 'queue', 'queue.json'), 'utf8'));
   assert.equal(saved.breaker.nextTrialAt, f.clock());
+});
+
+test('the pre-write network reasons are exactly the Source reread reasons that can come before a write', async () => {
+  const { ADMISSION_REREAD_REASONS } = await import('../../actions-hosted-migration/independent-ci-v1/src/withdrawal-text.mjs');
+  assert.deepEqual([...NETWORK_NATIVE_REASONS].slice(1), ADMISSION_REREAD_REASONS.filter(r => r.startsWith('full_admission_')));
 });

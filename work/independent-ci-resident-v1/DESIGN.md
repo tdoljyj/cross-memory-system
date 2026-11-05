@@ -1037,7 +1037,7 @@ v0.5 时的记录：
 - **R3 磁盘增长**：只改名、不删除，工作区副本会一直累积。需要 Owner 定保留规则（§15 D5）。
 - **R4 companion 依赖 Owner 登录。** 没有登录时只推迟，不会出错。
 - **R5 常驻 SID 被攻破**：能让代理启动已审的助手跑任意作业输入，助手里的 node 代码照样做实时准入；还能拒绝服务。拿不到 SYSTEM，也不能以 clued-control 身份运行任意代码。交换代理本身是 SYSTEM 级的新攻击面：它的输入只有 5 个字段，助手路径由阶段号推出，按阶段名精确比对白名单，只返回固定错误码。
-- **R6 trivy 缓存的 `prepare.lock`**，在不确定结局下会留下（`cache.mjs:160`），复审时确认 Linux 归档是否要把它纳入。
+- **R6 trivy 缓存的 `prepare.lock`**，在不确定结局下会留下（`cache.mjs:160`），复审时确认 Linux 归档是否要把它纳入。（2026-11-05 已实际发生；第 10 代：可证明失效时自动回收并留回执，见 §53.11。）
 - **R7 ACL 掩码与 SDDL 规范形式**：P2 时确认。
 - **R8 时钟**：bridge 的回调窗口（120 秒）跨 Windows 和 WSL 两个时钟。常驻后 VM 不再冷启动，风险变小，但没有消除。
 - **R9 先进先出按文件名排序**：触发记录的文件名由生产者定，可以抢到队头；后果被评估上限约束。冷却中的 head 不会挡住后面的 PR。
@@ -3988,7 +3988,7 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 
 ### 53.3 网络类失败不烧 head（只在策略 /9 下）
 
-- **什么算网络**（`classify.mjs#networkFailure`，从最具体的事实判断，绝不只看类别）：`BUNDLE_UNAVAILABLE` 且 companion 答的是 `BUNDLE_NETWORK_UNAVAILABLE`；`GITHUB_TRANSIENT_UNAVAILABLE` 且原因是 GitHub 500/502/503/504 或无答复（429 限流不算）；`NATIVE_ADMISSION_UNAVAILABLE` 且原因是显式的 Native 读用尽，或 `full_admission_unavailable` 并且诊断说捕获的是传输故障（`transport: true`，见 53.6）；`ADMISSION_VERIFICATION_UNAVAILABLE`（Source 只把“可通过的原因”映射到它）。`BROKER_*`、其他打包拒绝、凭据或评估器异常都不算。结论写进释放记录和失败事实（`network`），回执 `batch-unexecuted` 也带上。
+- **什么算网络**（`classify.mjs#networkFailure`，从最具体的事实判断，绝不只看类别）：`BUNDLE_UNAVAILABLE` 且 companion 答的是 `BUNDLE_NETWORK_UNAVAILABLE`；`GITHUB_TRANSIENT_UNAVAILABLE` 且原因是 GitHub 500/502/503/504 或无答复（429 限流不算）；`NATIVE_ADMISSION_UNAVAILABLE` 且原因是显式的 Native 读用尽、慢线路上观察不完整或过期（`full_admission_mode_unknown`、`full_admission_observer_unknown`、`full_admission_observation_expired`：与 Source 写后重读的原因同一组，写前写后口径一致，`clock-skew.mjs` 的新鲜度只有 30 秒，慢线路上很容易过期），或 `full_admission_unavailable` 并且诊断说捕获的是传输故障（`transport: true`，见 53.6）；`ADMISSION_VERIFICATION_UNAVAILABLE`（Source 只把“可通过的原因”映射到它）。`BROKER_*`、其他打包拒绝、凭据或评估器异常都不算。结论写进释放记录和失败事实（`network`），回执 `batch-unexecuted` 也带上。
 - **计数**：策略有 `breaker.network`（/9）时，网络释放计入 `ledger.mjs#usage` 的 `networkReleasesByHead`（不论熔断器状态），**不计** `releasesPerHeadPer24h`；上限是 `breaker.network.releasesPerHeadPer24h`（示例 36，即每 10 分钟一次可持续 6 小时；熔断器打开时实际重试更稀），到上限行以“环境停止”（`stopClass: environment`）停下，熔断器关闭、只读探测重新看到外面（53.4）或 Owner 放行时解除（`liftEnvironmentStops`）。网络释放的退避固定 10 分钟（`queue.mjs#NETWORK_BACKOFF_MS`，`levelKind: network`），这样网络恢复后 10 分钟内一定重跑。其余释放（包括非网络的环境类）**完全照旧**：计 release-cap（熔断器非 closed 时的环境类照旧不计）、10/20/40 阶梯、两次即 STOPPED。
 - /7、/8 策略下没有任何变化（`usage` 不分开网络释放，执行器照旧计数）。所以第 10 代的“网络不烧 head”随新策略 /9 一起生效。
 
@@ -4031,7 +4031,8 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
    - 所有策略：网络重试与之后 6 小时的构建用种子（种子仍只是建议性的，核对不变）；带种子的网络重试再失败时多一次不带种子的尝试（最多 3 次）。
    - 所有策略：第 1 段写后核对在可通过的原因下有界重读；仍失败时撤回并转为 transient → 自动第 2 次尝试（原为 clean-final 烧头）。`full_admission_unavailable` 的诊断多一个 `transport` 布尔值。
    - 所有策略：状态立即刷新与 PR 页措辞；撤回措辞多一种 “verification failed”。
-3. 不需要：ACL 变化、新目录、Native 迁移、托管工作流登记、companion 答复合同变化（`seed-meta.json` 在已有的 `bundles\_seed\` 下）。
+   - 所有策略：trivy 缓存（53.11）：断流但容器移除已确认的 DB/checks 下载算干净失败（DB 继续下一次尝试并可回退到 72 小时内的旧 DB），时间不够时跳过下载走回退；旧的 `prepare.lock` 在可证明失效时自动回收（回执写在缓存根的 `reclaimed\` 下），否则有界等待后干净拒绝。
+3. 不需要：ACL 变化、Native 迁移、托管工作流登记、companion 答复合同变化（`seed-meta.json` 在已有的 `bundles\_seed\` 下）。trivy 缓存根下会新建一个 `reclaimed/` 目录（0700，root，与缓存根同属 Linux 侧受保护目录，只在第一次回收时创建）。
 
 ### 53.9 测试
 
@@ -4040,7 +4041,8 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 - `test/net-tolerance.test.mjs`（新，22 例）：策略 /9 的校验与示例；`networkFailure` 的每个分支（含诊断 `transport` 经常驻解析保留）；熔断器的网络延迟、不叠加、混合原因、/7 /8 不变、旧状态、探测（含已到期再到期、只有 Native 答复不提前）、Owner 放行；角色探测经 `roleProbeMaintenance` 真跑（uncertain 清零、held 计数但不单独提前）；探测只解除网络上限的停止、Owner 放行解除全部环境停止；`ADMISSION_VERIFICATION_UNAVAILABLE` 的分类与第 2 次尝试（执行器端到端完成）；**模拟断流 45 分钟**：没有 head 被烧、没有行 STOPPED、不计 release-cap、不花 evaluation，网络恢复后第一个 PR 在 10 分钟内重新跑、三个 PR 都在 12 分钟内跑完；确定性打包拒绝仍两次即停、熔断器不标网络；网络上限停下的行在第 10 段读到 main 后被解除并跑完；/8 策略下行为与第 9 代相同；第 10 段读不到 main、角色探测 uncertain 都不算成功；Owner 放行的回执、拒绝回执里的理由；status flush 与定时器补写、PR 页文字、companion 立即重发与读取节流。
 - Source：`test/github-read-retry.test.mjs`（写后一次 5xx 重读后结算；Native 传输故障一次重读后结算；持续读不到、Native 传输故障、观察过期、mode 读不到的撤回与映射；非传输的 `full_admission_unavailable` 不重读、不转 transient、措辞 “verification failed”；`transportFault` 用评估代码真实抛出的错误形状判定；时间窗、期限与租约丢失的具体结局）、`test/resident-v2-quota-phase1.test.mjs`（`transport` 穿过两侧过滤）、`test/resident-v2-build-bundle.test.mjs`（钉住新的重试规则）。
 - 既有测试按新口径修改：`queue`（网络释放的上限、退避与唤醒）、`core`（usage 分开计数，/8 照旧）、`engine-v2`（诊断白名单含 `transport`）、`failure-table`。
-- 平台：Windows 上全部 node、python、PS 套件；Linux 平台用 `--import` 预加载把 `process.platform` 设成 `linux` 跑全部 node 套件——失败的 15 例与未改动的第 9 代基线（`0521cb9f`）完全相同，都是平台假设（Windows 控制器守卫 `FORMAL_WINDOWS_CONTROLLER_REQUIRED`、NTFS 上的 POSIX 权限位），本代没有新增。
+- Source：`test/formal-trivy-cache-network.test.mjs`（新，10 例，53.11）：断流（移除已确认）的 DB 尝试是干净失败、四次后回退到 72 小时内的旧 DB；超过 72 小时或没有 DB 是干净的 BLOCKED；只有移除未确认才 UNCERTAIN；新鲜的 DB 不下载；时间不够时跳过并回退；旧锁回收（含真实目录上的回执、残留删除、锁在判断后变化则不删、奇怪的锁没有 pid、链接与陌生条目不可验证）；回收条件不满足时有界等待后干净拒绝；真实端口拒绝测试钩子。
+- 平台：Windows 上全部 node、python、PS 套件；Linux 平台用 `--import` 预加载把 `process.platform` 设成 `linux` 跑全部 node 套件。逐个提交比对过（最近一次是本节所在提交的前一个提交 `1c6440aa`，最终提交另在汇报里给出）：失败的 15 例与未改动的第 9 代基线（`0521cb9f`）完全相同，都是平台假设（Windows 控制器守卫 `FORMAL_WINDOWS_CONTROLLER_REQUIRED`、NTFS 上的 POSIX 权限位），本代没有新增；新增的测试在两种平台下都通过。
 
 ### 53.10 没做的与局限
 
@@ -4049,3 +4051,21 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 - 探测提前试跑依赖第 10 段在当班运行（读到 main）或角色探测到期；都不跑时等 10 分钟或 Owner 放行。
 - 整仓 `fetch` / `ls-remote` 以外的取回失败一律当确定性失败（53.1）：如果线路恰好在按 SHA 取回时断开，这一次会计普通 cap（脚本自己仍会在窗口内重试一次）。
 - Linux 预加载无法模拟 POSIX 文件权限与 Windows 平台守卫，真实 Linux 上的那 15 例没有在本机验证（本机的两个 WSL 发行版都属于 CI，不碰）。
+
+### 53.11 trivy 第 4 段：DB 下载被断流打断、旧的准备锁（第 8、9 项；2026-11-05 head `46f6e452`、`429d0e27`）
+
+**事故。** `46f6e452`：第 4 段的 DB 下载容器在约 100–700 KB/s、间歇断开的线路上超时；容器已被移除（清理确认），但 `runCacheContainer` 把超时记为 `unknown`，缓存准备于是判 `UNCERTAIN`（`DB_EXECUTION_OR_CLEANUP_UNKNOWN`）并**保留** `prepare.lock`；随后 `LINUX_WORKER_ENDED_WITHOUT_RECORD` → `BRIDGE_ABANDONED_UNPUBLISHED`，第 3 段已发布，不能有第 2 次尝试，head 烧掉。`429d0e27`：那把保留的锁（风险清单 R6）让之后每一次 trivy 准备都被 `EEXIST` 拒绝，又烧掉一个 head，直到 Owner 手工删锁（`owner-recovery/trivy-prepare-lock-20261105.json`）。
+
+**改动（`worker/formal-trivy-v3/cache.mjs`）。**
+1. **干净失败。** DB 或 checks 容器结局不明（超时、断线、退出读不到），但**移除已确认**时，它只能写过自己新建的 staging 目录（唯一的可写挂载 `/cache`），而 staging 只在成功并核对后才会被提升，所以这是一次干净的失败尝试：DB 继续下一次尝试（4 次：两个仓库各 2 次，规则不变），四次都失败时走已有的“72 小时内旧 DB 回退”（`databaseDecision`）；checks 是干净的 `BLOCKED`（`PINNED_CHECKS_DOWNLOAD_FAILED`），锁释放。只有移除**没有**确认的，才照旧 `UNCERTAIN` 并保留锁。
+2. **时间预留。** 只在作业还剩 `DB_ATTEMPT_MS`（310 秒，一次下载的上限）+ `SCAN_RESERVE_MS`（420 秒，扫描 300 秒加核对与清理）时才开始一次 DB 下载；没时间的尝试记为 `skipped: NO_TIME_LEFT` 的失败，由同一条回退规则决定。以前四次下载可能吃光 25 分钟，扫描没有时间，或以 `CACHE_AUTHORITY_EXPIRED` 结束。
+3. **新鲜的 DB 直接用。** 不变：当前 DB 可用且 `NextUpdate` 未到时不下载（`databaseDecision` 的第一条）。
+4. **旧锁回收。** 拿锁遇到 `EEXIST` 时读旧锁（`readLockState`：不跟随链接；只有 `lock()` 写出的 `{pid, nonce}` 形状才有 pid）。同时满足：锁里的 pid 已不存在（`process.kill(pid, 0)` 得 `ESRCH`；锁由 worker 进程自己写，pid 不存在即该角色的 worker 进程已结束）、没有任何带 `clued.verify.nonce` 标签的容器（`docker container ls --all`）、`staging/` 下每一项都是 `db-`/`checks-` 形状的真实目录（`stagingLeftovers`）——才回收（`reclaimStaleLock`）：先在缓存根的 `reclaimed/` 写一条持久、只创建的回执（`clued.independent-ci.trivy-cache-lock-reclaimed/1`：时间、锁的摘要与 pid、删掉的残留、三条证明），再删残留（不跟随链接），最后在锁的字节与 inode 仍是判断时那一份的前提下删锁，然后正常拿锁继续。任何一条不满足（pid 还在、有容器、残留不可验证、锁形状不对）都不回收：每 15 秒再看一次，最多 5 分钟（且不越过下载与扫描的预留），之后干净地 `BLOCKED`（`CACHE_PREPARATION_LOCK_BUSY`），绝不 `UNCERTAIN`、绝不保留锁。
+5. 测试钩子只经 `fixtureCachePort`；`actualCachePort` 拒绝带钩子的选项。
+
+### 53.12 第 4、6 段失败为什么不能有第 2 次尝试，以及不用新提交的恢复路径（安全说明）
+
+- **原因。** 第 3 段（gitleaks 发布）已经在 head 上发布了角色检查。第 2 次尝试会以新的 job id 从第 1 段重来：第 1 段的 `published-on-github` 读回会看到 gitleaks 角色检查而以 `HEAD_PUBLISHED_ON_GITHUB` 结束；即使绕开它，第 2 段也会对同一提交再真跑一次 gitleaks 并再发布一次，违反“同一提交的同一检查只真跑一次”与 K(head, role) 的语义（§50 的不变量 ①②）。所以 `attempt2Decision` 只允许第 0、1、2 段，`BRIDGE_ABANDONED_UNPUBLISHED` 在第 4、6 段是 `new-commit`。这条不放宽。
+- **本代的做法（快修）。** 从源头消除这两类失败（53.11）：断流的 DB 下载不再变成 `UNCERTAIN`/保留锁，能回退就回退；旧锁可证明失效时自动回收。剩下的第 4、6 段失败（例如锁确实被占用、72 小时内没有可用 DB）仍按原规则结束。
+- **不需要新提交的恢复路径（下一代，未在本代实现）。** 在**同一批次内**原地重跑执行段（第 4 或 6 段），条件与 §51 C 对第 3、5、7 段的原地重跑相同的思路：入口证明本段什么都没发布（桥的“未发布”证明、`BRIDGE_ABANDONED_UNPUBLISHED` 的静止证明）、该角色在 GitHub 上没有检查、Linux 独占区与工作区仍在、一次性的扫描许可未被消耗或可重新取得；重跑前归档本段的协议记录（同角色间归档 `between-roles` 的做法），有界次数与退避，都在段的上限内。这要动执行器的阶段循环、桥与归档协议，属于下一步系统化排查的内容，需要独立审核。
+

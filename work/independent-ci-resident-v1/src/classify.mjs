@@ -278,15 +278,19 @@ export const UNEXECUTED_REASON_RULES = Object.freeze({
 // repeat). Used for the network release cap and the network cause of the breaker.
 //   - BUNDLE_UNAVAILABLE: the companion said a GitHub step of build-bundle.ps1 failed in git (companion.mjs#bundleNetworkRefusal);
 //   - GITHUB_TRANSIENT_UNAVAILABLE: GitHub answered 500/502/503/504 or did not answer (not 429: a rate limit is no outage);
-//   - NATIVE_ADMISSION_UNAVAILABLE: the explicit Native read exhaustion, or a full_admission_unavailable whose diagnostic says it caught
-//     a transport fault (Source full-admission-v2.mjs#transportFault); a credential refused or an evaluator fault inside it is not;
+//   - NATIVE_ADMISSION_UNAVAILABLE: the explicit Native read exhaustion; an observation incomplete or too old on a slow line (the mode
+//     or the observer could not be read in time, the observation expired before it was used: the same reasons the Source reads again
+//     after the write, withdrawal-text.mjs ADMISSION_REREAD_REASONS, so the two sides of the write agree); or a full_admission_unavailable
+//     whose diagnostic says it caught a transport fault (Source full-admission-v2.mjs#transportFault); a credential refused or an
+//     evaluator fault inside it is not;
 //   - ADMISSION_VERIFICATION_UNAVAILABLE: the Source maps only a passing cause to it (withdrawal-text.mjs#admissionVerificationRetryable).
+export const NETWORK_NATIVE_REASONS = Object.freeze(['native_claim_observation_unavailable', 'full_admission_mode_unknown', 'full_admission_observer_unknown', 'full_admission_observation_expired']);
 export const NETWORK_GITHUB_REASONS = Object.freeze(['github_http_500', 'github_http_502', 'github_http_503', 'github_http_504', 'github_transport_unconfirmed']);
 export function networkFailure({ code, outcome = null, bundleNetwork = false }) {
   switch (code) {
     case 'BUNDLE_UNAVAILABLE': return bundleNetwork === true;
     case 'GITHUB_TRANSIENT_UNAVAILABLE': return NETWORK_GITHUB_REASONS.includes(outcome?.reason);
-    case 'NATIVE_ADMISSION_UNAVAILABLE': return outcome?.reason === 'native_claim_observation_unavailable' || (outcome?.reason === 'full_admission_unavailable' && outcome?.diagnostic?.transport === true);
+    case 'NATIVE_ADMISSION_UNAVAILABLE': return NETWORK_NATIVE_REASONS.includes(outcome?.reason) || (outcome?.reason === 'full_admission_unavailable' && outcome?.diagnostic?.transport === true);
     case 'ADMISSION_VERIFICATION_UNAVAILABLE': return true;
     default: return false;
   }
