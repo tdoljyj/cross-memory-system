@@ -4237,16 +4237,16 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 
 ### 55.3 不改的部分及理由（后续任务）
 
-下面标为“后续任务”的三项，由主会话在 Clued 登记为任务，登记后把任务 ID 补进这里。本会话不直接写 Clued。
+下面标为“后续任务”的三项，已由主会话在 Clued 登记（project `0597aa60`），任务 ID 写在各项末尾。
 
 - **第二次打包（停靠点 A 的重新打包）。**
   - 原因：`build-bundle.ps1 -Rebundle` 在取数之前就建立 `gen-2\`。断网后脚本回答 `PARTIAL_STATE_PRESERVED_NO_RETRY` 并保留 `gen-2\`；再跑一次会以 `FIXED_TARGET_ALREADY_EXISTS` 拒绝。脚本头部也写明 “never twice”。所以常驻层这边的重试不可能成功，第 11 代没有做（审查时发现后已撤下）。
-  - 要修，只能改 Source：把没有 receipt 的 `gen-2\` 在 create-only 与 reparse 检查之下改名移开（例如 `gen-2-failed-<n>`），让 `Current-Receipt` 忽略它，并补 PowerShell 测试。这属于 Source 改动，需要单独送审，是**后续任务**。
+  - 要修，只能改 Source：把没有 receipt 的 `gen-2\` 在 create-only 与 reparse 检查之下改名移开（例如 `gen-2-failed-<n>`），让 `Current-Receipt` 忽略它，并补 PowerShell 测试。这属于 Source 改动，需要单独送审，是**后续任务**（Clued `3e2e12d7-f266-46db-9a77-1026b41e7d58`）。
 - **Native 写类 RPC**，逐项说明：
   - `publication_finish`、`publication_reconcile`、`independent_legacy_drain_finish`：服务端按发布 id 加 check run id 重放并返回原 receipt，回复丢失后再发一次本身是安全的。但发布者在“发出之后”的状态机（回执日志、`discoverKnown`）需要一并设计“再发 finish”这一步，才能不烧 head。
   - `publication_begin_independent`：回复丢失已有恢复路径（`adoptOpenTicket`）。
   - `scan_start_independent`：一次性的 burn key，按设计“丢失的回复永远不给第二次启动”；真正缺的是只读的读回。
-  - 以上都要按 §50 的方式设计并经 Owner 批准，列为**后续任务**。
-- **发布者遇到完全一致的副本时撤回**（`discoverKnown`）：55.1 第 1 项的多次读回缩小了这个窗口。如果副本在端口窗口之后才出现，发布者仍会撤回它、烧 head。把“采用完全一致的副本”的逻辑搬到发布者里，属于发布状态机的改动，列为**后续任务**。
+  - 以上都要按 §50 的方式设计并经 Owner 批准，列为**后续任务**（Clued `21fbe23b-7e65-4e07-9a02-36e0c307363c`）。
+- **发布者遇到完全一致的副本时撤回**（`discoverKnown`）：55.1 第 1 项的多次读回缩小了这个窗口。如果副本在端口窗口之后才出现，发布者仍会撤回它、烧 head。把“采用完全一致的副本”的逻辑搬到发布者里，属于发布状态机的改动，列为**后续任务**（Clued `a7951534-a9e9-4c82-a1a0-b4c1cec48e5f`）。
 - **伴随进程请求无应答、心跳丢失导致 HALT**：这时状态未知，Linux 上可能还有进程在跑。按设计必须停下，交给 Owner 处理，不能猜。
 - **`ci_nodes_status`**：只读，但它走 Source A 的端口（`clued-merge-train-native.mjs`），不经过本节的 `readPost`。保守起见，本代不动。
