@@ -198,3 +198,20 @@ test('on a real directory: the lock state, the staging leftovers and a reclaim w
   try { await symlink(join(root, 'reclaimed'), join(root, 'staging', 'db-' + 'c'.repeat(64)), 'junction'); assert.equal((await stagingLeftovers(root)).verifiable, false, 'a link is never verifiable'); }
   catch (error) { if (error.code !== 'EPERM') throw error; }
 });
+
+test('the actual store is frozen before it is branded: its methods cannot be replaced', async () => {
+  const text = await (await import('node:fs/promises')).readFile(new URL('../worker/formal-trivy-v3/cache.mjs', import.meta.url), 'utf8');
+  const factory = text.slice(text.indexOf('export async function createActualStorage'), text.indexOf('// Generation 10: take the lock'));
+  assert.match(factory, /Object\.freeze\(storage\); actualStores\.add\(storage\); return storage;/);
+  assert.equal((factory.match(/actualStores\.add\(/g) ?? []).length, 1, 'branded in exactly one place, after the freeze');
+  // a frozen object of the same shape refuses a replaced method (strict mode: the assignment throws)
+  const frozen = Object.freeze({ reclaimLock() {} });
+  assert.throws(() => { 'use strict'; frozen.reclaimLock = () => {}; }, TypeError);
+});
+
+test('losing a reclaim race (the other rename won) is no error: the lock is simply tried again', async () => {
+  const s = store({ lockHeldBy: 4242, current: db(2 * HOUR, 4 * HOUR), staging: [] });
+  s.reclaimLock = async () => { s.lockFile = null; throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  const r = await prepareWith(s, { runContainer: runs([]) });
+  assert.deepEqual([r.status, r.lockReclaimed], ['READY', null]);
+});

@@ -217,7 +217,9 @@ export async function createActualStorage(root) {
         reclaimed };
     },
   };
-  actualStores.add(storage); return storage;
+  // Frozen before it is branded (review of gen10, round 5): no caller can replace a method of the actual store (its lock handle lives in
+  // the closure, so lock()/unlock() keep working).
+  Object.freeze(storage); actualStores.add(storage); return storage;
 }
 
 // Generation 10: take the lock; a stale one (pid gone, no cache container, staging verifiable) is reclaimed with a receipt, anything
@@ -234,7 +236,9 @@ async function acquireLock({ storage, docker, deadline, signal, hooks }) {
     if (state && !reclaimed && state.shape && state.pid !== process.pid && !alive(state.pid) && await containersNone(docker)) {
       const leftovers = await storage.stagingLeftovers();
       if (leftovers.verifiable) {
-        reclaimed = await storage.reclaimLock({ state, leftovers, proof: { pidGone: true, cacheContainers: 0, stagingVerifiable: true } });
+        // Another preparation claimed it first (its rename won, ours finds no lock): not an error, just try the lock again.
+        try { reclaimed = await storage.reclaimLock({ state, leftovers, proof: { pidGone: true, cacheContainers: 0, stagingVerifiable: true } }); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
         continue;
       }
     }
