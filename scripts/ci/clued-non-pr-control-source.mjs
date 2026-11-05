@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {roleDefinitionDigest,workflowBlob} from './clued-workflow-profile.mjs';
 
-export const COMPONENT_VERSION='1.0.0';
+export const COMPONENT_VERSION='1.0.1';
 export const NON_PR_CONTROL_SOURCE_PATH='scripts/ci/clued-non-pr-control-sources.json';
 export const NON_PR_CONTROL_SOURCE_SCHEMA='clued.non-pr-control-sources/1';
 export const NON_PR_CONTROL_MAX_BYTES=524288;
@@ -13,19 +13,19 @@ const freeze=value=>{if(value&&typeof value==='object'){Object.values(value).for
 export const NON_PR_CONTROL_FILES=freeze({
   ".github/workflows/clued-compute-panel.yml": {
     "family": "compute_panel",
-    "workflow_blob": "e064a36182b8b18da6a8da2f9246b3401ff99b9e",
-    "source_sha256": "87407648f6d212fdf8e1897545e841dabd1a8023e60f4db71df34866c084d3bf",
-    "workflow_definition_sha256": "5e09f26e96c53a8b6343648e9dd8e439ec84f68edef330c33c934833e87ea077",
+    "workflow_blob": "d668c7c88c6aaf1b9421e66d57eafa1b80ed8f00",
+    "source_sha256": "59bb085f524890fd936982f7b9503451e6e4ac613aca6f1fdc378371a8e42d31",
+    "workflow_definition_sha256": "519a9708c1be769d11eede573d7f7fac02bd029a877678ab50783d821962eab6",
     "triggers": [
       "schedule",
       "workflow_dispatch"
     ],
     "roles": {
       "admission-gate": "a38d818cac3e095f0747700e9d206a65a395c3af97728f3230743748b548a1bd",
-      "probe-company-linux-01": "bfe99c0c76e3e3b8d3571200eb58a3e4a74a7d8f423cd3d675e09869685051c1",
-      "probe-company-linux-02": "b3c9ddc2e6d4bff310e11fa53bc52234ec3b349b7b0d4c1762cb97629d40fe3e",
-      "probe-company-linux-03": "4abff93a2856e8b1ef004daa507c34127ec1a0468b1ce80a808ae10e71d337a5",
-      "probe-company-linux-04": "2889c0581442422edd9901e83fee231d819281748add922af1d22d59627331a0",
+      "probe-company-linux-01": "4cb8a59fce36545141fe1555a6e1e2ffdc19980165b643cceb41c80f4e20f288",
+      "probe-company-linux-02": "5a1b2310bea18536ded0d193b75b2107759282f4e4a254dd5a7c7e516e141a17",
+      "probe-company-linux-03": "f70917829cb770a0e3e9c6f54a2b5e78873ddb132379f5fe87106bdd13714dbc",
+      "probe-company-linux-04": "02c1274d680d2611206fd170d903ad8329638fda9dea9754b8e7f162bc9f517c",
       "probe-company-win-01": "4cc4f1e6c8c9a114cd81c11e1591ed3fa3312131d4a602b4bf39439eadbbf187",
       "probe-home-win-01": "4453ef9a9af1b2e3f705af656e5bbd8a84f789c4b571d369c015c175723c696b",
       "panel": "04ecb082214ad9fbb93f7c2c4ea33fa2e6fc3ebc602c136b003b1435d897a4dc"

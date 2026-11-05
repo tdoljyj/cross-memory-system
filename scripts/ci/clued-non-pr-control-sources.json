@@ -85,6 +85,7 @@
             },
             {
               "env": {
+                "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
                 "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-01"
               },
               "name": "Probe the runner",
@@ -94,7 +95,7 @@
           ],
           "timeout-minutes": 5
         },
-        "definition_sha256": "bfe99c0c76e3e3b8d3571200eb58a3e4a74a7d8f423cd3d675e09869685051c1",
+        "definition_sha256": "4cb8a59fce36545141fe1555a6e1e2ffdc19980165b643cceb41c80f4e20f288",
         "job_id": "probe-company-linux-01"
       },
       {
@@ -124,6 +125,7 @@
             },
             {
               "env": {
+                "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
                 "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-02"
               },
               "name": "Probe the runner",
@@ -133,7 +135,7 @@
           ],
           "timeout-minutes": 5
         },
-        "definition_sha256": "b3c9ddc2e6d4bff310e11fa53bc52234ec3b349b7b0d4c1762cb97629d40fe3e",
+        "definition_sha256": "5a1b2310bea18536ded0d193b75b2107759282f4e4a254dd5a7c7e516e141a17",
         "job_id": "probe-company-linux-02"
       },
       {
@@ -163,6 +165,7 @@
             },
             {
               "env": {
+                "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
                 "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-03"
               },
               "name": "Probe the runner",
@@ -172,7 +175,7 @@
           ],
           "timeout-minutes": 5
         },
-        "definition_sha256": "4abff93a2856e8b1ef004daa507c34127ec1a0468b1ce80a808ae10e71d337a5",
+        "definition_sha256": "f70917829cb770a0e3e9c6f54a2b5e78873ddb132379f5fe87106bdd13714dbc",
         "job_id": "probe-company-linux-03"
       },
       {
@@ -202,6 +205,7 @@
             },
             {
               "env": {
+                "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
                 "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-04"
               },
               "name": "Probe the runner",
@@ -211,7 +215,7 @@
           ],
           "timeout-minutes": 5
         },
-        "definition_sha256": "2889c0581442422edd9901e83fee231d819281748add922af1d22d59627331a0",
+        "definition_sha256": "02c1274d680d2611206fd170d903ad8329638fda9dea9754b8e7f162bc9f517c",
         "job_id": "probe-company-linux-04"
       },
       {
@@ -475,7 +479,7 @@
   "workflows": {
     ".github/workflows/clued-compute-panel.yml": {
       "family": "compute_panel",
-      "source_sha256": "87407648f6d212fdf8e1897545e841dabd1a8023e60f4db71df34866c084d3bf",
+      "source_sha256": "59bb085f524890fd936982f7b9503451e6e4ac613aca6f1fdc378371a8e42d31",
       "source_yaml_lines": [
         "# Compute panel (Task 679a0c2b, Owner Decision 183ee67c): every five minutes",
         "# each general-pool runner answers a route probe (its name, free disk and",
@@ -555,6 +559,7 @@
         "      - name: Probe the runner",
         "        shell: bash",
         "        env:",
+        "          CLUED_CACHE_NODE_BINDING: /home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
         "          EXPECTED_RUNNER_NAME: clued-ci-company-linux-01",
         "        run: |",
         "          set -euo pipefail",
@@ -583,6 +588,7 @@
         "      - name: Probe the runner",
         "        shell: bash",
         "        env:",
+        "          CLUED_CACHE_NODE_BINDING: /home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
         "          EXPECTED_RUNNER_NAME: clued-ci-company-linux-02",
         "        run: |",
         "          set -euo pipefail",
@@ -611,6 +617,7 @@
         "      - name: Probe the runner",
         "        shell: bash",
         "        env:",
+        "          CLUED_CACHE_NODE_BINDING: /home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
         "          EXPECTED_RUNNER_NAME: clued-ci-company-linux-03",
         "        run: |",
         "          set -euo pipefail",
@@ -639,6 +646,7 @@
         "      - name: Probe the runner",
         "        shell: bash",
         "        env:",
+        "          CLUED_CACHE_NODE_BINDING: /home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
         "          EXPECTED_RUNNER_NAME: clued-ci-company-linux-04",
         "        run: |",
         "          set -euo pipefail",
@@ -736,7 +744,7 @@
         "        run: python3 -I scripts/ci/self-hosted/compute_panel.py",
         ""
       ],
-      "workflow_blob": "e064a36182b8b18da6a8da2f9246b3401ff99b9e",
+      "workflow_blob": "d668c7c88c6aaf1b9421e66d57eafa1b80ed8f00",
       "workflow_definition": {
         "concurrency": {
           "cancel-in-progress": true,
@@ -862,6 +870,7 @@
               },
               {
                 "env": {
+                  "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
                   "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-01"
                 },
                 "name": "Probe the runner",
@@ -897,6 +906,7 @@
               },
               {
                 "env": {
+                  "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
                   "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-02"
                 },
                 "name": "Probe the runner",
@@ -932,6 +942,7 @@
               },
               {
                 "env": {
+                  "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
                   "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-03"
                 },
                 "name": "Probe the runner",
@@ -967,6 +978,7 @@
               },
               {
                 "env": {
+                  "CLUED_CACHE_NODE_BINDING": "/home/runner/.clued-cache-maintenance/managed-runner-builds/binding.json",
                   "EXPECTED_RUNNER_NAME": "clued-ci-company-linux-04"
                 },
                 "name": "Probe the runner",
@@ -1062,7 +1074,7 @@
           "contents": "read"
         }
       },
-      "workflow_definition_sha256": "5e09f26e96c53a8b6343648e9dd8e439ec84f68edef330c33c934833e87ea077"
+      "workflow_definition_sha256": "519a9708c1be769d11eede573d7f7fac02bd029a877678ab50783d821962eab6"
     },
     ".github/workflows/clued-native617-admission-dispatch.yml": {
       "family": "disabled_native617_dispatch",
