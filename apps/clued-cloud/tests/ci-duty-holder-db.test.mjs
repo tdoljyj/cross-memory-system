@@ -348,8 +348,8 @@ test('unified scheduling 2A: duty holder, equivalence of every routed entry poin
       const refuse=async(request,pattern,phase=3)=>{const was=await snapshot();await assert.rejects(()=>advance(phase,request),pattern);assert.deepEqual(await snapshot(),was);};
       const request=await maintenanceRequest();
       await refuse(request,/CI_PHASE_CAS_MISMATCH/,4);
-      // as shipped: exactly the eight external items are outstanding
-      await refuse(request,/CI_PHASE_PREREQUISITES_UNMET:green_mirror_2b,admission_issue_fact_g9,resident_phase_routing_4e,reconciliation_days_q2,maintenance_never_leased_g1,dedicated_maintenance_claim_t4,admission_meter_dedup_phase4,sweep_watermark_single_source,hosted_admission_publication_route$/);
+      // as shipped: exactly the nine external items are outstanding
+      await refuse(request,/CI_PHASE_PREREQUISITES_UNMET:green_mirror_writers_3d,admission_issue_fact_g9,resident_phase_routing_4e,reconciliation_days_q2,maintenance_never_leased_g1,dedicated_maintenance_claim_t4,admission_meter_dedup_phase4,sweep_watermark_single_source,hosted_admission_publication_route$/);
       await openExternal();   // test-only: declare the external items shipped; the table-backed checks are real
       await clearRoles();await refuse(request,/holder_not_single_started_node/);
       await grant(A);await grant(B);await refuse(request,/holder_not_single_started_node/);

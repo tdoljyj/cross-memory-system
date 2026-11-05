@@ -12,9 +12,11 @@ type Json = Record<string, unknown>;
 type NodeAction = "approve" | "drain" | "retire" | "revoke";
 type Node = { node_id: string; name: string; state: string; version: number; binding_id: string;
   profile_sha256: string; identity_fingerprint: string; encryption_fingerprint: string;
-  qualification_status: string; publisher_approved: boolean; scan_signing_approved: boolean; connection_expires_at: string | null };
+  qualification_status: string; publisher_approved: boolean; scan_signing_approved: boolean; connection_expires_at: string | null;
+  eligible_until?: string | null; hardening_observed?: boolean };
 type Pool = Json & { version: number; mode: "prepared"; status: "UNCONFIGURED" | "CONFIGURED_PREPARED"; limits: Json | null };
-type Listing = { nodes: Node[]; pool: Pool; bindings: { id: string; agent_name: string }[]; observed_at: string };
+type NodeList = { version: number; sha256: string | null };
+type Listing = { nodes: Node[]; pool: Pool; nodeList: NodeList; bindings: { id: string; agent_name: string }[]; observed_at: string };
 type Preview = { kind: "node" | "pool"; token: string; digest: string; expires: string; view: Json;
   nodeId?: string; baseVersion: number; action?: NodeAction };
 type UnknownWrite = { kind: "registration" | "node" | "pool" | "preview"; nodeId?: string; baseVersion?: number; action?: NodeAction };
@@ -154,7 +156,12 @@ function parseListing(value: Json): Listing {
     || !value.bindings.every(binding => object(binding) && UUID.test(str(binding.id)) && typeof binding.agent_name === "string")) {
     throw new RequestFailure("当前状态尚未完整读取，不能修改。", true);
   }
-  return { nodes: nodes as Node[], pool: value.pool as Listing["pool"], bindings: value.bindings as Listing["bindings"], observed_at: str(value.observed_at) };
+  // Absent before the 2B migration: no approved node list yet.
+  const list = value.node_list === undefined ? { version: 0, sha256: null } : value.node_list;
+  if (!object(list) || !integer(list.version) || !(list.sha256 === null || typeof list.sha256 === "string" && SHA.test(list.sha256))
+    || (list.version === 0) !== (list.sha256 === null)) throw new RequestFailure("当前状态尚未完整读取，不能修改。", true);
+  return { nodes: nodes as Node[], pool: value.pool as Listing["pool"], nodeList: { version: list.version, sha256: list.sha256 },
+    bindings: value.bindings as Listing["bindings"], observed_at: str(value.observed_at) };
 }
 
 function parsePreview(value: Json, target: Omit<Preview, "token" | "digest" | "expires" | "view">): Preview {
@@ -342,6 +349,18 @@ export default function CiNodesPage() {
     }), { kind: "pool", baseVersion: listing.pool.version }), { kind: "preview" }, setPreview);
   }
 
+  // Q-B2: the node signature gateway is closed until the Owner opens it for this
+  // project; the same two-step pool confirmation closes it again.
+  async function prepareGateway(open: boolean) {
+    if (!listing) return;
+    if (sensitiveText(acceptedRef)) { setError("接受记录中不能包含密码、令牌或私钥。"); return; }
+    if (open && !acceptedRef.trim()) { setError("打开签名网关前，请填写本次接受记录。"); return; }
+    await mutate(async () => parsePreview(await rpc("clued_ci_pool_confirmation_issue_v1", {
+      project_id: project, base_version: listing.pool.version, signature_gateway_active: open,
+      ...(acceptedRef.trim() ? { accepted_ref: acceptedRef.trim() } : {}),
+    }), { kind: "pool", baseVersion: listing.pool.version }), { kind: "preview" }, setPreview);
+  }
+
   async function confirm() {
     if (!preview || Date.parse(preview.expires) <= Date.now()) { setPreview(null); setError("确认已过期，请重新读取状态并生成预览。"); return; }
     const exact = preview;
@@ -357,7 +376,9 @@ export default function CiNodesPage() {
       }
       return result;
     }, { kind: exact.kind, nodeId: exact.nodeId, baseVersion: exact.baseVersion, action: exact.action }, () => {
-      setListing(null); setNotice(exact.kind === "node" ? "修改已保存。登记批准不代表已取得运行资格，请刷新查看最新记录。" : "准备阶段的额度设置已保存，请刷新查看最新记录。");
+      const gateway = object(exact.view.choices) && typeof exact.view.choices.signature_gateway_active === "boolean";
+      setListing(null); setNotice(exact.kind === "node" ? "修改已保存。登记批准不代表已取得运行资格，请刷新查看最新记录。"
+        : gateway ? "签名网关设置已保存，请刷新查看最新记录。" : "准备阶段的额度设置已保存，请刷新查看最新记录。");
     });
   }
 
@@ -389,7 +410,9 @@ export default function CiNodesPage() {
           <section aria-label="已登记节点"><h2>节点</h2>
             {listing.nodes.length === 0 ? <p>尚未登记节点。</p> : listing.nodes.map(node => <article className="ci-node" key={node.node_id}>
               <h3>{node.name}</h3><p>{STATES[node.state]} · 版本 {node.version}</p>
-              <p>尚未取得运行资格</p>
+              <p>{node.qualification_status === "verified" && node.eligible_until && Date.parse(node.eligible_until) > now
+                ? "运行资格有效至 " + localTime(node.eligible_until) + (node.hardening_observed ? " · 节点自报已加固" : "")
+                : "尚未取得运行资格"}</p>
               <dl><dt>节点编号</dt><dd>{node.node_id}</dd><dt>连接</dt><dd>{listing.bindings.find(item => item.id === node.binding_id)?.agent_name ?? node.binding_id}</dd>
                 <dt>连接到期</dt><dd>{localTime(node.connection_expires_at)}</dd><dt>资料摘要</dt><dd><code>{node.profile_sha256}</code></dd>
                 <dt>身份公钥指纹</dt><dd><code>{node.identity_fingerprint}</code></dd><dt>加密公钥指纹</dt><dd><code>{node.encryption_fingerprint}</code></dd>
@@ -418,12 +441,19 @@ export default function CiNodesPage() {
               <label htmlFor="ci-repository-name">仓库名称（owner/repo）</label><input id="ci-repository-name" value={repositoryName} disabled={blocked} onChange={event => setRepositoryName(event.target.value)} />
             </details><button type="button" disabled={blocked} onClick={() => void preparePool()}>预览额度修改</button>
           </section>
+          <section aria-label="节点签名网关"><h2>节点签名网关</h2>
+            <p>{listing.pool.signature_gateway_active === true ? "已打开：已批准的节点可以提交签名的资格报告和命令。" : "已关闭：节点的签名命令一律被拒绝。"}</p>
+            <p>已批准节点清单 · 版本 {listing.nodeList.version}{listing.nodeList.sha256 ? <> · <code>{listing.nodeList.sha256}</code></> : null}</p>
+            {listing.pool.signature_gateway_active === true
+              ? <button type="button" disabled={blocked} onClick={() => void prepareGateway(false)}>预览关闭网关</button>
+              : <button type="button" disabled={blocked} onClick={() => void prepareGateway(true)}>预览打开网关</button>}
+          </section>
           <label htmlFor="ci-accepted-ref">本次接受记录（如适用）</label><input id="ci-accepted-ref" value={acceptedRef} disabled={blocked}
             onChange={event => setAcceptedRef(event.target.value)} maxLength={512} />
           <p className="context-muted">状态读取于 {localTime(listing.observed_at)}</p>
         </>}
       </>}
-      {preview && <section className="ci-preview" aria-label="确认修改"><h2>确认{preview.kind === "node" ? ACTIONS[preview.action!] : "额度修改"}</h2>
+      {preview && <section className="ci-preview" aria-label="确认修改"><h2>确认{preview.kind === "node" ? ACTIONS[preview.action!] : "项目设置修改"}</h2>
         <p>请核对服务器给出的完整修改内容。仅本次预览有效；登记批准仍不启用运行资格。</p>
         <pre>{JSON.stringify(preview.view, null, 2)}</pre><p>有效期至 {localTime(preview.expires)}</p>
         {Date.parse(preview.expires) <= now && <p role="status">确认已过期，请取消后重新读取状态。</p>}

@@ -24,7 +24,7 @@ const node = (extra = {}) => ({ node_id: NODE, name: '公司测试节点', state
   qualification_status: 'unverified', publisher_approved: false, scan_signing_approved: false,
   connection_expires_at: '2026-10-24T10:00:00Z', ...extra });
 const listed = (nodes = [node()], extra = {}) => ({ status: 'ok', mode: 'prepared', nodes,
-  pool: { version: 0, status: 'UNCONFIGURED', mode: 'prepared', limits: null },
+  pool: { version: 0, status: 'UNCONFIGURED', mode: 'prepared', limits: null }, node_list: { version: 0, sha256: null },
   bindings: [{ id: BINDING, agent_name: 'Codex Desktop' }], observed_at: '2026-10-23T10:00:00Z', ...extra });
 const issued = (extra = {}) => ({ status: 'issued', confirmation_token: 'fixture-token', view_digest: 'd'.repeat(64),
   expires_at: '2026-10-23T10:05:00Z', confirmation_view: { project_id: PROJECT, node_id: NODE,
@@ -215,6 +215,33 @@ test('pool limits need an acceptance reference and a distinct confirmation; no a
   assert.ok(f.text().includes('准备阶段的额度设置已保存'));
   assert.ok(!f.text().includes('上次请求结果未知'));
   assert.equal(f.calls.length, 3);
+});
+
+test('2B: opening the node signature gateway needs an acceptance reference and a two-step pool confirmation; closing does not', async t => {
+  const f = fixture(); t.after(() => f.unmount()); await load(f, listed([node()], { node_list: { version: 3, sha256: 'e'.repeat(64) } }));
+  assert.ok(f.text().includes('已关闭：节点的签名命令一律被拒绝')); assert.ok(f.text().includes('已批准节点清单 · 版本 3'));
+  f.click('预览打开网关'); assert.equal(f.calls.length, 1); assert.ok(f.text().includes('打开签名网关前，请填写本次接受记录'));
+  f.change('ci-accepted-ref', 'decision:e6e4c3e8'); f.click('预览打开网关');
+  const request = f.calls[1]; assert.equal(request.name, 'clued_ci_pool_confirmation_issue_v1');
+  assert.deepEqual(request.args.p_input, { project_id: PROJECT, base_version: 0, signature_gateway_active: true, accepted_ref: 'decision:e6e4c3e8' });
+  request.resolve(issued({ confirmation_view: { project_id: PROJECT, choices: { base_version: 0, signature_gateway_active: true } } })); await f.settle();
+  f.click('确认修改'); assert.equal(f.calls[2].name, 'clued_ci_pool_apply_v1');
+  f.calls[2].resolve({ status: 'committed', project_id: PROJECT,
+    pool: { version: 1, status: 'UNCONFIGURED', mode: 'prepared', limits: null, signature_gateway_active: true } }); await f.settle();
+  assert.ok(f.text().includes('签名网关设置已保存'));
+  const g = fixture(); t.after(() => g.unmount());
+  await load(g, listed([node({ state: 'active', qualification_status: 'verified', eligible_until: '2030-01-01T00:00:00Z', hardening_observed: true })],
+    { pool: { version: 2, status: 'UNCONFIGURED', mode: 'prepared', limits: null, signature_gateway_active: true }, node_list: { version: 3, sha256: 'e'.repeat(64) } }));
+  assert.ok(g.text().includes('已打开')); assert.ok(g.text().includes('节点自报已加固'));
+  g.click('预览关闭网关');
+  assert.deepEqual(g.calls[1].args.p_input, { project_id: PROJECT, base_version: 2, signature_gateway_active: false });
+});
+
+test('2B: a malformed approved node list is not a readable state', async t => {
+  for (const list of [{ version: 1, sha256: null }, { version: 0, sha256: 'e'.repeat(64) }, { version: -1, sha256: null }, 'x']) {
+    const f = fixture(); t.after(() => f.unmount()); await load(f, listed([node()], { node_list: list }));
+    assert.ok(f.text().includes('当前状态尚未完整读取'), JSON.stringify(list));
+  }
 });
 
 test('malformed or unprepared server state cannot enable any mutation', async t => {

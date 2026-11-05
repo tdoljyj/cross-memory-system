@@ -27,7 +27,8 @@ export async function schedulingFixture(){
     const actual=await fs.realpath(directory).catch(e=>{if(e.code==='ENOENT')return null;throw e;});
     if(actual!==null){assert.equal(path.dirname(actual),parent);assert.equal(actual,directory);}
     await server.stop().catch(()=>{}); // persistent:false may itself remove this owned cluster.
-    if(actual!==null)await fs.rm(directory,{recursive:true,force:true});};
+    // Windows may hold the stopped cluster's files for a moment (EBUSY); fs.rm retries those.
+    if(actual!==null)await fs.rm(directory,{recursive:true,force:true,maxRetries:10,retryDelay:200});};
   try{
     await server.initialise();await server.start();const admin=await connect();
     await admin.query(`create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;create role authenticator nologin noinherit;
