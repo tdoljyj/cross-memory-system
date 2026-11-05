@@ -239,4 +239,6 @@ test('every release reason is registered with its cool-down and the budget that 
   }
   assert.deepEqual(UNEXECUTED_REASON_RULES.NOT_ADMITTED.cap, { waiting: 'waitingRetriesPer24h', other: 'releasesPerHeadPer24h' });
   assert.deepEqual(UNEXECUTED_REASON_RULES.SUPERSEDED.cap, { waiting: null, other: null });
+  // generation 10 (DESIGN 53.3): the bundle and the broker's no-launch are environment releases, never counted towards the cap
+  assert.deepEqual([UNEXECUTED_REASON_RULES.BUNDLE_UNAVAILABLE.cap, UNEXECUTED_REASON_RULES.BROKER_NOT_LAUNCHED.cap], [{ waiting: null, other: null }, { waiting: null, other: null }]);
 });

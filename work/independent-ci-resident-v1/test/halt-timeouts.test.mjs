@@ -231,18 +231,50 @@ test('the fixed hint is the same text in build-bundle.ps1 and in the companion',
   assert.match(ps, / return \$branchOnly\[\$hit\[0\]\]\n/, 'the script returns the table text unchanged');
 });
 
-test('a build-bundle refusal with the fixed hint is answered BUNDLE_UNAVAILABLE as before and logs only the reason and that hint', async () => {
+// What a refused build looks like in the companion log (generation 10, DESIGN 53.1): the codes and counts of the refusal, nothing else.
+const entryOf = (op, extra = {}) => ({ at: new Date(T0).toISOString(), kind: 'bundle-refusal', op, runner: { code: 2, timedOut: false, tree: null, refused: null },
+  status: 'REFUSED_BEFORE_WRITE', reason: 'GIT_STEP_FAILED', stage: 'fetch-reviewed-commits-by-sha', git: { label: 'fetch-reviewed', exitCode: 128, stderrChars: null },
+  storeAttempts: null, failedAttempts: null, seed: null, hint: HINT, ...extra });
+const leaks = e => ['secret', 'ghp_', 'C:\\', 'https:', 'token', 'refs/heads', 'unable'].filter(x => JSON.stringify(e).includes(x));
+
+test('a build-bundle refusal with the fixed hint is answered BUNDLE_UNAVAILABLE as before and logs its codes and that hint', async () => {
   for (const [kind, op] of [['build-bundle', 'build-bundle'], ['rebuild-bundle', 'rebuild-bundle']]) {
     const rg = rig({ script: () => refusal() });
     assert.deepEqual(await rg.c.handle(request(kind)), { ok: false, code: 'BUNDLE_UNAVAILABLE' });
     assert.equal(rg.logs.length, 1, kind);
-    assert.deepEqual(rg.logs[0], { at: new Date(T0).toISOString(), kind: 'bundle-refusal', op, reason: 'GIT_STEP_FAILED', hint: HINT });
-    assert.equal(JSON.stringify(rg.logs[0]).includes('secret'), false);
-    assert.equal(JSON.stringify(rg.logs[0]).includes('ghp_'), false);
+    assert.deepEqual(rg.logs[0], entryOf(op));
+    assert.deepEqual(leaks(rg.logs[0]), []);
   }
 });
 
-test('any hint that is not exactly the fixed text is dropped, whatever characters it has; a refusal without one logs nothing', async () => {
+test('generation 10: a network refusal logs reason, stage, the git step and every given-up attempt as codes and counts, never output text', async () => {
+  // The shape of build-bundle.ps1's refusal (test-build-bundle.ps1 network-down-*: GitHub unreachable, the retry seeded).
+  const down = { status: 'PARTIAL_STATE_PRESERVED_NO_RETRY', stage: 'fetch-all-heads-and-tags', reason: 'GIT_STEP_FAILED', hint: null,
+    git: { label: 'fetch', exitCode: 128, stderrChars: 97 }, created: ['C:\\ProgramData\\CluedIndependentCI\\resident\\bundles\\b\\fetch.git'], storeAttempts: 2,
+    firstAttempt: { stage: 'fetch-all-heads-and-tags', git: { label: 'fetch', exitCode: 128, stderrChars: 97 }, failedAfterSeconds: 3 },
+    failedAttempts: [{ attempt: 1, reason: 'GIT_STEP_FAILED', stage: 'fetch-all-heads-and-tags', git: { label: 'fetch', exitCode: 128, stderrChars: 97 }, failedAfterSeconds: 3 }],
+    seed: { enabled: true, used: true, reason: 'SEEDED_AFTER_NETWORK_FAILURE', discarded: false, primeSeconds: 21, updated: false, updateSkipped: null, seedBytes: null,
+      error: 'fatal: unable to access https://github.com/x | fetch 128', networkFailureNoted: true },
+    credentialsPrinted: false, existingCheckoutTouched: false, automaticRetryAllowed: false };
+  const rg = rig({ script: () => ({ code: 2, stdout: JSON.stringify(down), stderr: 'fatal: unable to access https://github.com/x token ghp_x' }) });
+  assert.deepEqual(await rg.c.handle(request('build-bundle')), { ok: false, code: 'BUNDLE_UNAVAILABLE' });
+  assert.deepEqual(rg.logs, [{ at: new Date(T0).toISOString(), kind: 'bundle-refusal', op: 'build-bundle', runner: { code: 2, timedOut: false, tree: null, refused: null },
+    status: 'PARTIAL_STATE_PRESERVED_NO_RETRY', reason: 'GIT_STEP_FAILED', stage: 'fetch-all-heads-and-tags', git: { label: 'fetch', exitCode: 128, stderrChars: 97 }, storeAttempts: 2,
+    failedAttempts: [{ attempt: 1, reason: 'GIT_STEP_FAILED', stage: 'fetch-all-heads-and-tags', git: { label: 'fetch', exitCode: 128, stderrChars: 97 }, failedAfterSeconds: 3, refsDiffer: null }],
+    seed: { used: true, reason: 'SEEDED_AFTER_NETWORK_FAILURE', discarded: false, networkFailureNoted: true }, hint: null }]);
+  assert.deepEqual(leaks(rg.logs[0]), []);
+  // A refs race keeps only its count; at most three attempts; a value off its pattern is null.
+  const odd = bundleRefusalLogEntry({ at: T0, op: 'build-bundle', runner: { code: 2, stdout: JSON.stringify({ ...down, stage: 'Fetch All', reason: 'free text', git: { label: '../x', exitCode: 'x', stderrChars: -1 },
+    storeAttempts: 2.5, failedAttempts: [{ attempt: 1, reason: 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE', stage: 'fetched-store-readback', git: null, failedAfterSeconds: 4, refsDiffer: { count: 2, refs: ['refs/heads/secret-name'] } },
+      'junk', {}, { attempt: 4 }], seed: { used: 'yes', reason: 'not a code' } }) } });
+  assert.deepEqual([odd.stage, odd.reason, odd.git, odd.storeAttempts, odd.failedAttempts.length], [null, null, { label: null, exitCode: null, stderrChars: null }, null, 3]);
+  assert.deepEqual(odd.failedAttempts[0], { attempt: 1, reason: 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE', stage: 'fetched-store-readback', git: null, failedAfterSeconds: 4, refsDiffer: 2 });
+  assert.deepEqual(odd.failedAttempts.slice(1), [null, { attempt: null, reason: null, stage: null, git: null, failedAfterSeconds: null, refsDiffer: null }]);
+  assert.deepEqual(odd.seed, { used: false, reason: null, discarded: false, networkFailureNoted: false });
+  assert.deepEqual(leaks(odd), []);
+});
+
+test('any hint that is not exactly the fixed text is dropped, whatever characters it has; the refusal is still logged with hint null', async () => {
   for (const extra of [{ hint: undefined }, { hint: null }, { hint: '' }, { hint: HINT + ' ' }, { hint: ' ' + HINT }, { hint: HINT.toLowerCase() }, { hint: HINT.slice(0, -1) },
     { hint: HINT + HINT }, { hint: 5 }, { hint: [HINT] }, { hint: { text: HINT } },
     { hint: 'C:/Users/x/AppData/token' }, { hint: 'https://github.com/org/repo' }, { hint: 'https://example.invalid/a' },
@@ -250,15 +282,29 @@ test('any hint that is not exactly the fixed text is dropped, whatever character
     { hint: 'The reviewed set contains d94cd486 (and its parent 8ea4da40), which is reachable only from branch other-branch until PR #991 is merged' }]) {
     const rg = rig({ script: () => refusal(extra) });
     assert.deepEqual(await rg.c.handle(request('build-bundle')), { ok: false, code: 'BUNDLE_UNAVAILABLE' });
-    assert.deepEqual(rg.logs, [], JSON.stringify(extra).slice(0, 60));
+    assert.deepEqual(rg.logs, [entryOf('build-bundle', { hint: null })], JSON.stringify(extra).slice(0, 60));
+    assert.deepEqual(leaks(rg.logs[0]), []);
   }
-  assert.equal(bundleRefusalLogEntry({ at: T0, op: 'build-bundle', runner: { code: 1, stdout: refusal().stdout } }), null, 'only the script\'s own refusal exit');
-  assert.equal(bundleRefusalLogEntry({ at: T0, op: 'build-bundle', runner: { code: 2, stdout: 'not json' } }), null);
-  assert.equal(bundleRefusalLogEntry({ at: T0, op: 'build-bundle', runner: null }), null);
+  // An answer that is no refusal JSON, or no answer at all, is still one entry: the runner's own facts, every script field null.
+  const bare = { status: null, reason: null, stage: null, git: null, storeAttempts: null, failedAttempts: null, seed: null, hint: null };
+  assert.deepEqual(bundleRefusalLogEntry({ at: T0, op: 'build-bundle', runner: { code: 2, stdout: 'not json' } }), { at: new Date(T0).toISOString(), kind: 'bundle-refusal', op: 'build-bundle',
+    runner: { code: 2, timedOut: false, tree: null, refused: null }, ...bare });
+  assert.deepEqual(bundleRefusalLogEntry({ at: T0, op: 'build-bundle', runner: { code: null, timedOut: true, tree: 'unconfirmed', stdout: '' } }).runner, { code: null, timedOut: true, tree: 'unconfirmed', refused: null });
+  assert.deepEqual(bundleRefusalLogEntry({ at: T0, op: 'build-bundle', runner: null }), { at: new Date(T0).toISOString(), kind: 'bundle-refusal', op: 'build-bundle',
+    runner: { code: null, timedOut: false, tree: null, refused: null }, ...bare });
+  assert.equal(bundleRefusalLogEntry({ at: T0, op: 'build-bundle', runner: { code: 2, stdout: 'x'.repeat(65_537) } }).status, null, 'an oversized answer is not parsed');
   assert.equal(bundleRefusalLogEntry({ at: T0, op: 'build-bundle', runner: { code: 2, stdout: refusal({ reason: 'free text' }).stdout } }).reason, null);
   const ok = rig({ script: () => ({ code: 0, stdout: JSON.stringify({ status: 'BUNDLE_WRITTEN', generation: 2, hint: HINT }) }) });
   assert.deepEqual(await ok.c.handle(request('build-bundle')), { ok: true, code: null });
   assert.deepEqual(ok.logs, []);
+});
+
+test('generation 10: every failedAttempts/seed key the companion logs is one build-bundle.ps1 writes', () => {
+  const ps = fs.readFileSync(new URL('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/build-bundle.ps1', import.meta.url), 'utf8');
+  assert.match(ps, /\$given=\[ordered\]@\{attempt=\(\$n\+1\);reason=\$reason;stage=\$script:stage;git=\$script:lastGit;failedAfterSeconds=\[int\]\$elapsed\}/);
+  assert.match(ps, /\$script:lastGit=\[ordered\]@\{label=\$Label;exitCode=\$p\.ExitCode;stderrChars=\$err\.Length\}/);
+  assert.match(ps, /\$seedReport=\[ordered\]@\{enabled=\$true;used=\$false;reason=\$null;discarded=\$false;[^}]*networkFailureNoted=\$false\}/);
+  assert.match(ps, /stage=\$stage;reason=\$code;hint=[^\n]+;git=\$lastGit;created=\$created\n  storeAttempts=\$attempts;firstAttempt=\$firstAttempt;failedAttempts=@\(\$failedAttempts\);seed=\$seedReport;/);
 });
 
 test('a failing log never changes the answer of a refused build-bundle', async () => {

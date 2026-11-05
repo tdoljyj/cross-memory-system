@@ -13,6 +13,7 @@ import { validateRelayQualificationRun, validateRelayQualificationObservation } 
 import { RELAY_HALT_CODES, relayPlanEnding, validateRelayPlanRows } from '../hosted-relay-v1/relay-plan.mjs';
 import { sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2 } from '../admission-facts-v2.mjs';
 import { HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB, ROLE_ALREADY_ON_GITHUB_REASON } from '../published-on-github-v2.mjs';
+import { verificationUnavailable } from '../withdrawal-text.mjs';
 
 export const STAGE_FACT_CONTRACT = 'clued.independent-ci.resident-stage-fact/2';
 export const NATIVE_RECEIPT_CONTRACT_V2 = 'clued.independent-ci.windows-formal-entry-receipt/2';
@@ -28,8 +29,12 @@ export const NOT_ADMITTED_CODES = Object.freeze(['NATIVE_NOT_ADMITTED', 'OWNER_R
 // Clean transient: an outside, passing condition (network, GitHub 5xx, a push between bundle and
 // scan, a precondition not yet met). Eligible for the one automatic attempt 2 when nothing was
 // published (Owner decision 1b5d3687; the resident decides eligibility, see attempts.mjs).
+// ADMISSION_VERIFICATION_UNAVAILABLE (generation 10, resident DESIGN 53.6): stage 1 wrote its own (attempt-scoped) admission check, could
+// not verify it because GitHub or Native could not be read even after the bounded re-reads, and withdrew it as "verification
+// unavailable" (a REVOKED outcome, outcomeFailureCode below). Nothing about the PR was found; attempt 2 re-proves under new job ids.
+export const ADMISSION_VERIFICATION_UNAVAILABLE = 'ADMISSION_VERIFICATION_UNAVAILABLE';
 export const TRANSIENT_CODES = Object.freeze(['NATIVE_ADMISSION_UNAVAILABLE', 'GITHUB_TRANSIENT_UNAVAILABLE', 'BRIDGE_TRANSPORT_TIMEOUT',
-  'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'ARCHIVE_PRECONDITION_NOT_MET']);
+  'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'ARCHIVE_PRECONDITION_NOT_MET', ADMISSION_VERIFICATION_UNAVAILABLE]);
 export const TRAIN_CODES = Object.freeze(['TRAIN_FRONT_JOB_WITHOUT_TRAIN', 'TRAIN_SINGLE_GREEN_NOT_PROVEN', 'TRAIN_TEST_COMMIT_GONE', 'TRAIN_REVOKE_UNCONFIRMED',
   'TRAIN_SWEEP_INCOMPLETE', 'TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_FRONT_BUDGET_SHORT', 'TRAIN_FRONT_ATTEMPTS_USED',
   'RELAY_TRAIN_FRONT_LOCAL',
@@ -117,7 +122,10 @@ export function outcomeFailureCode(outcome, stageNumber) {
   if (!plain(outcome)) return 'STAGE_OUTCOME_MISSING';
   if (outcome.status === 'UNCERTAIN') return stageNumber === RELAY_STAGE_NUMBER && RELAY_HALT_CODES.includes(outcome.reason) ? outcome.reason : 'PUBLICATION_UNCERTAIN';
   if (outcome.status === 'RECONCILIATION_REQUIRED') return 'RECONCILIATION_REQUIRED';
-  if (outcome.status === 'REVOKED') return 'PUBLICATION_REVOKED';
+  // Generation 10: only stage 1's own admission check, only when it was withdrawn because it could not be verified (GitHub or Native
+  // unreadable: the withdrawal-text set), is transient. Every other withdrawal, and every one at any other stage (a role check is on the
+  // head), stays PUBLICATION_REVOKED: clean and final for the head.
+  if (outcome.status === 'REVOKED') return stageNumber === 1 && verificationUnavailable(outcome.reason) ? ADMISSION_VERIFICATION_UNAVAILABLE : 'PUBLICATION_REVOKED';
   if (outcome.status !== 'BLOCKED') return 'PUBLICATION_UNCERTAIN';
   if (outcome.sideEffects !== 0 || outcome.mayHavePublished !== false) return 'PUBLICATION_UNCERTAIN';
   const r = outcome.reason;

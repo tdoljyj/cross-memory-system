@@ -3966,3 +3966,70 @@ Windows 一侧也在受同一条链路的影响，但不是 WSL 乱跳的原因�
 3. **同样内容的其他提交再出现就再需要 Owner 决定。** 例如 #991 分支被改写（rebase）后，新的提交哈希需要新的一条（733 → 734）。
 4. 这一条只对 `curl-auth-user` 在这一行有效；真正的 `curl --user 身份:口令` 仍被检出（自检的 `genuine_curl_credential_detection`）。
 5. **在新的托管代冻结、registry 重新登记之前，不能以本提交（或其后代）为 frozenCommit 构建 cutover 计划。** `hosted-relay-v1/registry.json` 仍钉着 732 代的 `.gitleaks.toml`、`reviewed_gitleaks.py`、`reviewed_gitleaks_historical.py` 摘要（`f21a46cb…`/`4441bbee…`/`d395d46b…`），`scan-start-cutover-plan.mjs` 对 frozenCommit 与 registry 的 sourceCommit 都核对闭包，任何带 733 新字节的提交会抛 `CUTOVER_FROZEN_CLOSURE_DRIFT`。`qualification/scan-start-cutover-plan.test.mjs` 因此固定使用 `2640dce9`（闭包仍等于 registry 钉值的最后一个提交，它的下一个提交开始 733 重新钉值），不再用 `HEAD`。扫描许可切换线要先登记 733 的托管代（新 `gitleaks.yml`、新登记、registry 重建），再用新的冻结提交构建 cutover 计划。
+
+## 53. 网络抖动容错（第 10 代；Task `125a5162`、`5cee3629`；Decision `4f5f35d3`：发现的缺陷全部修掉）
+
+**事故（2026-11-05，PR #989）。** DESK-W-591 到 GitHub 的线路间歇性断开（curl 56 SSL unexpected eof，约 100 KB/s）。head `82239f97`：两次批次都 `BUNDLE_UNAVAILABLE`（每次两个新裸库只收到 2 KB / 18 KB 就断），两次释放用完 release-cap，行被 STOPPED。head `7af40318`：第 1 段写入准入检查后读 GitHub 核对失败（`full_admission_unavailable`），检查被撤回，`PUBLICATION_REVOKED` 判 clean-final，head 烧掉。熔断器把同一次断流计 3 次，02:48:58Z 打开、冷却 30 分钟，期间列车演练和角色探测都能访问 GitHub，仍干等到 03:19；第 2 次尝试 03:19:10Z 已领取、03:20:29Z 已开跑，status.json 和 03:20:10Z 发到 GitHub 的状态仍是“熔断中，约 03:18Z 试跑”。两个 head 都只能靠 Owner 批空提交恢复。日志里看不到打包为什么失败。
+
+### 53.1 打包拒绝的原因可见（`companion.mjs#bundleRefusalLogEntry`）
+
+以前只在拒绝答复里的 `hint` 恰好等于 §52 那条固定文案时才记一条日志，其余全部丢弃。现在**每一次**没有写出 bundle 的 `build-bundle` / `rebuild-bundle` 都写一条 `bundle-refusal`（本机 `companion-log\relay-<日期>.jsonl`），字段固定，只有代码和计数：`status`、`reason`、`stage`、最后一个 git 步骤（`label`、`exitCode`、`stderrChars`：只是 stderr 的字符数，不是内容）、`storeAttempts`、`failedAttempts`（最多 3 个：序号、原因、阶段、git 步骤、秒数；refs 竞态只记个数，不记 ref 名）、`seed`（`used`、`reason`、`discarded`、`networkFailureNoted`）、runner 自己的事实（退出码、是否超时、进程树、拒绝码）。每个值都过自己的模式（大写代码 `^[A-Z][A-Z0-9_]{1,79}$`、小写步骤名 `^[a-z][a-z0-9-]{0,63}$`、非负整数），不符合的记 null；脚本输出里的路径、`created` 目录、`seed.error` 文本、任何自由文本一律不记。没有可解析的答复（超时、崩溃）也记一条，脚本字段全为 null。`hint` 仍只在逐字节等于固定文案时记录。对执行器的答复不变（`BUNDLE_UNAVAILABLE`），日志失败不影响答复。
+
+### 53.2 网络失败后的重试走种子（`build-bundle.ps1`）
+
+- 一次 GitHub 步骤（`fetch`、`ls-remote`、`fetch-reviewed`、`fetch-test`）在 git 里失败（`Network-Step-Failed`），不论这次会不会重试，都把失败时间写进 `seed-meta.json` 的新字段 `lastNetworkFailureAtUnix`（`Seed-Note-Network-Failure`：持种子锁、锁忙就跳过、任何异常都吞掉，原有测量字段原样保留；种子被丢弃时这条记录保留下来，它说的是线路不是种子）。
+- `Seed-Wanted`：6 小时内（`$SeedAfterNetworkFailureSeconds=21600`）有网络失败记录时 `RECENT_NETWORK_FAILURE`，用种子，优先于 `NETWORK_FAST` 和 `REMEASURE_DUE`；时间在将来的记录被忽略（meta 仍然只是建议性的，伪造它只能开关种子）。
+- 同一次构建里的网络重试：开始时通过形状检查的种子（`$seedAvailable`，丢弃或锁忙后为假）即使测量说“网络快”也启用（`SEEDED_AFTER_NETWORK_FAILURE`）；带种子的尝试里 GitHub 步骤失败后，重试**仍带种子**（以前改成不带种子，在同一条坏线路上整仓重拉 64 MB）。
+- 不变：带种子的尝试永远不是最后一次（`$n -le $MaxStoreAttempts-2`）；种子自己出问题是 `SEED_UNUSABLE`，丢弃种子并紧接一次不带种子的尝试，不占网络重试名额；网络重试最多一次、只在 900 秒窗口内；所有核对（ls-remote 相等、main==base、已审提交逐个读回、S 的父提交、bundle 头）一项不少；回执字段不变，答复的 `seed` 对象多一个 `networkFailureNoted`。
+
+### 53.3 环境类失败不烧 head、不计 release-cap
+
+- 失败表 class 为 `environment` 或 `transient` 的释放（打包失败、第 1 段 GitHub/Native 读不到且入口证明什么都没写、broker 未启动）**不再计入** `releasesPerHeadPer24h`，不论熔断器什么状态（`ledger.mjs#usage`、`executor.mjs#afterBatch` 两处同一口径；以前只在熔断器非 closed 时不计，熔断器 closed 时两次网络失败就让行 STOPPED，而 `liftEnvironmentStops` 只在熔断器从开到关时才会解除，熔断器从没打开过就永远解不了）。`UNEXECUTED_REASON_RULES` 里 `BUNDLE_UNAVAILABLE`、`BROKER_NOT_LAUNCHED` 的 cap 改为 null。
+- 这类释放的退避固定 10 分钟（`queue.mjs#ENVIRONMENT_BACKOFF_MS`，`levelKind` 为 `environment`，与其他释放的 10/20/40 阶梯分开）。理由：持续的环境故障由熔断器统一节流（连续 3 次打开，之后只有试跑），行自己的阶梯只会让网络恢复后再多等最多 40 分钟。日预算不变：这类释放本来就不算 evaluation（`UNCOUNTED_RELEASES`）。
+- 第 9 代留下的“因环境故障被 cap 停住”的行（队列文件里带过来的）仍由 `liftEnvironmentStops` 在熔断器关闭时解除。
+
+### 53.4 熔断：网络类冷却 10 分钟、同一根因不叠加、探测提前试跑、Owner 提前放行
+
+数值在已签策略里，所以新增**策略合同 /9**（`policy.mjs`）：/8 全部字段加 `breaker.network = { backoffMs, earlyTrialProbes }`。`backoffMs` 1–6 个不减的值（1 分钟到 24 小时），第一个不得长于 `breaker.backoffMs[0]`（只能缩短）；`earlyTrialProbes` 1–10。示例 `config/policy.v9.example.json` = 已装的 /8 值 + `network: { backoffMs: [600000, 1800000, 3600000], earlyTrialProbes: 2 }`。/7、/8 原样接受、行为不变（没有 `breaker.network` 时没有网络冷却、不叠加规则和探测提前，但 Owner 放行在任何合同下都可用）。
+
+- **网络原因**（`breaker.mjs`）：打开熔断的那组失败全部是 `NETWORK_FAULT_CODES`（`BUNDLE_UNAVAILABLE`、`GITHUB_TRANSIENT_UNAVAILABLE`、`NATIVE_ADMISSION_UNAVAILABLE`、`ADMISSION_VERIFICATION_UNAVAILABLE`）时 `cause = 'network'`，用 `breaker.network.backoffMs`（第一级 10 分钟）。混有任何别的失败就是 null，用原来的 30/60/120。第 9 代带过来的状态（条目没有代码）不会被当成网络原因。
+- **同一根因不叠加**：网络原因的熔断，试跑又以网络代码失败时按**同一级**重开（还是 10 分钟），一次断流不会把冷却叠到 60、120；试跑以别的失败结束则按原规则升一级，原因变为 null，之后照原阶梯。
+- **只读探测提前试跑**：熔断器 open 且原因为网络时，角色探测拿到事实（任何结果，有回答就说明到得了外面）、第 10 段（列车演练）带回摘要（读到了 main 和合并队列）各算一次成功，失败的探测把计数清零；连续 `earlyTrialProbes` 次成功且试跑时间还没到，就把试跑时间提前到现在（回执 `breaker-early-trial`，持久化到队列文件）。half-open、closed 或非网络原因的熔断器不听探测。
+- **Owner 提前放行**：`windows/rearm-resident.ps1 -Request ReleaseBreaker -Reason <文字>`（提权，同 Rearm）在 `owner\` 写 `clued.independent-ci.resident-owner-breaker-release/1`（`by`、`reason`、`requestedAt`、`nonce`；`tools/rearm-tool.mjs request-release-breaker` 写同一形状，`inspect` 输出新增 `breaker`）。服务把 open 的熔断器的试跑时间设为现在，回执 `owner-request`（kind `breaker-release`，含理由、原试跑时间、级别、原因）；**不关闭**熔断器，试跑仍要越过失败的位置。熔断器不是 open 时拒绝（`BREAKER_NOT_OPEN`，回执 `owner-request-refused`），所以迟到或重复的请求什么也不改。
+
+### 53.5 状态显示与实际一致
+
+- 执行器新端口 `statusFlush`（`service-main.mjs` 传状态定时器的 `flush`）：批次领取时（`driveReserved` 开头）立即把当前批次、`RUNNING`、队列行 RUNNING 写进 status.json；熔断器的门把 open 改成 half-open（试跑开始）时立即写队列、熔断器视图并 flush。以前 `reportQueue` 在门之前调用，整个批次期间 status.json 都显示 open 和一个已经过去的试跑时间。
+- PR 页（`pr-status.mjs#describe`）：熔断器 half-open，或 open 但试跑时间已到，显示“熔断后的试跑进行中 / 时间已到，即将开始”，不再显示“熔断中”；网络原因的 open 显示“（网络故障）”。status 解析保留 `breaker.cause`（只认 `network`）。
+- companion（`companion-main.mjs`）：每 5 秒读一次 status.json，`statusSignature`（当前批次及其段、熔断器状态与试跑时间、HALT、PAUSE）一变就立即发 PR 页状态（`reportDue`），否则仍每分钟一次；`reporter.pass` 的限额与“只写变了的内容”不变。
+
+### 53.6 写后读确认失败：有限次退避重读，仍失败则判 transient 并安排第 2 次尝试
+
+- Source（`formal-work-admission-check-v2/publisher.mjs#reverified`）：检查写入后的核对（新的 after 边界：Native + GitHub、绑定与写前比较、读回、新鲜度），失败原因属于“读不到”集合（`withdrawal-text.mjs#verificationUnavailable`：500/502/503/504、无传输、`full_admission_unavailable`，与读重试和撤回措辞同一集合）时，等 10、30、60 秒后**从头**再做一次核对（共 100 秒，远在第 1 段 15 分钟上限内，每次之前和之后都 `assertLive`，段期限或停止请求结束等待；每次写 `native_check_verify_retry` 观察日志）。绑定变化、读回不一致、观察过期等真实拒绝立即终局，和以前一样。已结算批次重跑时的读回（`previous` 路径）同样处理。
+- 重读用完仍读不到：照旧撤回（failure，标题 “verification unavailable”），但 `stage-fact.mjs#outcomeFailureCode` 把**第 1 段**、原因属于该集合的 `REVOKED` 映射为新的 transient 码 `ADMISSION_VERIFICATION_UNAVAILABLE`（Source `TRANSIENT_CODES` 与常驻 `classify.mjs#TRANSIENT_CODES` 同一列表，测试钉住相等）。失败表新行：`transient / burn / attempt2 / counts`。于是 attempt 1 结束为 FAILED_CLEAN，自动安排唯一的第 2 次尝试（10 分钟后，新 job id、新 external_id，`published-on-github` 只拦同一 attempt 的准入检查），不用新提交。其他段的 `REVOKED`（角色检查已在 head 上）和第 1 段的真实授权变化仍是 `PUBLICATION_REVOKED`，clean-final。
+- 第 2 次尝试本身再失败就按原规则烧头（attempt 2 不再有 attempt 3）。
+
+### 53.7 runner hook（Task `5cee3629`）：不属于这一代 Source，在哪里修
+
+- 代码在 `scripts/runner/clued-runner-job-started.work-handover-native-admission-v1.mjs`（组件 `hook.runner-job-started` 1.0.1，`config/clued-components.json` 钉了 `content_sha256`），由每台自托管 runner 的 `ACTIONS_RUNNER_HOOK_JOB_STARTED` 在每个作业前运行。它**不在**常驻 CI Source 的闭包里：`source-closure.json` 只把旧的 `scripts/runner/clued-runner-job-started.mjs` 作为门禁的钉住输入，native-admission 这个 hook 文件不在其中，常驻层和 Source v2 都不加载它。所以第 10 代没有改它。
+- 缺陷所在：`github()` 每个 GitHub 请求只发一次，`fetch failed` 或超时直接抛到 `main()`，被写成 `check failed: …` 并（enforced 时）拒绝作业；对改了工作流的 PR，Native 分支只认 `runnerAttempt === 1`，重跑（attempt 2）被拒，close/reopen 又因准入早于新 run 被判陈旧，所以一次网络抖动就用掉唯一一次运行，只能推新提交。
+- 应该在哪里修：在 `scripts/runner/` 出一个新的 hook 后继版本（例如 `…work-handover-native-admission-v2.mjs`，组件 1.0.2）：对只读 GET 做有界重试（5xx 与网络错误，指数退避，总时长在 `CLUED_RUNNER_HOOK_WAIT_SECONDS` 之内，令牌签发请求单独有界），并同时设计 `5cee3629` 正文里的恢复路径（同一 head 的准入在 reopen 后的首个 run 可用，或常驻层对已完成 head 在 reopen 时补发一次新的准入；都必须保持“一个提交一个检查只真跑一次”）。然后按该组件自己的流程：更新 `config/clued-components.json` 版本与摘要、`qualify-native-admission-candidate.mjs`、独立审核、精确 Source 接受、合入后由 Owner 在每台 runner 上按受保护机器流程安装，并用真实作业启动日志做资格确认。这是一条仓库 PR（主线），与常驻 Source 安装分开。
+
+### 53.8 安装第 10 代时要 Owner 批准的内容
+
+1. **新策略 /9**：已签策略改动的字段只有 `contract`（`…resident-policy/8` → `/9`）和新增的 `breaker.network.backoffMs = [600000, 1800000, 3600000]`、`breaker.network.earlyTrialProbes = 2`；其余数值与已装的 /8 相同（安装时的 `sourceManifestSha256`、`ciSourceManifestSha256`、`residentManifestSha256` 和 `ownerAcceptance.decisionRef` 照每次安装更新）。新策略哈希需要 Owner 的 Decision、Grant 与一次 UAC。
+2. **行为变化**（需要 Owner 决定接受）：环境类释放不再计入 release-cap（`releasesPerHeadPer24h` 的数值不变，计数口径变）；第 1 段“验证不可用的撤回”从 clean-final 改为 transient → 自动第 2 次尝试；网络重试改用种子；新增 Owner 请求 `ReleaseBreaker`。
+3. 不需要：ACL 变化、新目录、Native 迁移、托管工作流登记（`seed-meta.json` 在已有的 `bundles\_seed\` 下）。
+
+### 53.9 测试
+
+- `windows/test-build-bundle.ps1`（PS 5.1，184 → 222 例）：网络失败记录与时间窗、种子在“网络快”时被网络重试启用、带种子的网络重试、两次都失败、重试时种子损坏（第三次不带种子成功、记录留下）、锁被占用、脚本自己的拒绝不记录；整个脚本作为进程对一个关闭的本机端口运行（GitHub 不可达）：拒绝答复里的原因、阶段、git 步骤、两次尝试、`networkFailureNoted`，答复不含 URL。
+- `test/halt-timeouts.test.mjs`：拒绝日志只含代码和计数、各种越界值为 null、不泄露路径/令牌/URL/ref 名、字段名与 `build-bundle.ps1` 一致。
+- `test/net-tolerance.test.mjs`（新，17 例）：策略 /9 的校验与示例；熔断器的网络冷却、不叠加、混合原因、/7 /8 不变、旧状态、探测提前、Owner 放行；`ADMISSION_VERIFICATION_UNAVAILABLE` 的分类与第 2 次尝试（执行器端到端：第 2 次尝试完成）；**模拟断流 45 分钟**：没有 head 被烧、没有行 STOPPED、不计 cap、不花 evaluation，网络恢复后第一个 PR 在 10 分钟内重新跑、三个 PR 都在 12 分钟内跑完（串行）；/8 策略下同样不烧不停；列车演练读到 GitHub 后提前试跑；Owner 放行的回执与拒绝；status flush、PR 页文字、companion 立即重发。
+- 既有测试按新口径修改：`queue`、`core`（usage）、`scheduler`（环境故障不再被 cap 停住）、`failure-table`、Source `github-read-retry`（写后一次 5xx 重读后结算、Native 读不到一次重读后结算、持续读不到的撤回与映射、`assertLive` 结束等待）、`resident-v2-build-bundle`（钉住新的重试规则）。
+
+### 53.10 没做的与局限
+
+- runner hook（53.7）不在本代。
+- 模拟断流是离线测试（假 companion、假引擎、假时钟）；真实 broker、真实 GitHub 断流下的表现要在装机后观察（`bundle-refusal` 日志、`breaker-early-trial` 回执）。
+- 探测提前试跑依赖第 10 段在运行（`train.enabled` 不是 `off`，DESK-W-591 是 shadow）或角色探测到期；都不跑时只能等 10 分钟或 Owner 放行。

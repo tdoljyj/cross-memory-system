@@ -43,14 +43,21 @@
 // touch's hard_cap_minutes), frontBatchBudgetMs (what a front batch needs left on its slot), sweepFreshMs (default 900000: the
 // newest sweep proof stage 8 accepts) and fullSweepMaxMs (a full sweep's longest run); nonFrontRuns may be false. /7 stays
 // accepted exactly as it was ('on' refused, POLICY_TRAIN_ON_NOT_SUPPORTED); its train run carries TRAIN_DEFAULTS.
+// Contract /9 (generation 10, network tolerance, DESIGN 53.4; Task 125a5162 item 4): /8 plus breaker.network = { backoffMs, earlyTrialProbes }:
+//   - backoffMs: the trial delays of a breaker that only network faults opened (breaker.mjs NETWORK_FAULT_CODES); 1-6 non-decreasing
+//     entries of 1 minute to 24 hours, its first no longer than breaker.backoffMs's first (it may only shorten the wait);
+//   - earlyTrialProbes (1-10): that many read-only probes in a row that reached the outside bring such a breaker's trial forward.
+// /7 and /8 stay accepted exactly as they were: without breaker.network the breaker behaves as before (the Owner's release request
+// works under any contract). Changing these numbers is a new policy (new hash, the Owner's UAC), never a per-batch input.
 import { HEX64, REPO, UUID, check, exactKeys } from './canonical.mjs';
 import { RELAY_ROLES } from './hosted-wait.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
 
 export const POLICY_CONTRACT_V7 = 'clued.independent-ci.resident-policy/7';
 export const POLICY_CONTRACT_V8 = 'clued.independent-ci.resident-policy/8';
+export const POLICY_CONTRACT_V9 = 'clued.independent-ci.resident-policy/9';
 export const POLICY_CONTRACT = POLICY_CONTRACT_V7;
-export const POLICY_CONTRACTS = Object.freeze([POLICY_CONTRACT_V7, POLICY_CONTRACT_V8]);
+export const POLICY_CONTRACTS = Object.freeze([POLICY_CONTRACT_V7, POLICY_CONTRACT_V8, POLICY_CONTRACT_V9]);
 export const REMINDER_BYTES_DEFAULT = 50 * 1024 ** 3;
 
 // The fixed eight stages of the six-check batch (stages.json of the installed Source).
@@ -107,16 +114,16 @@ export function validatePolicy(p) {
   check(int(p.limits.inboxMaxFiles, 1, 256), 'POLICY_INBOX_BOUND_INVALID');
   check(int(p.limits.unexecutedCooldownMs, 60_000, 86_400_000), 'POLICY_COOLDOWN_INVALID');
   check(int(p.limits.stageMarginMs, 60_000, 900_000), 'POLICY_MARGIN_INVALID');
-  exactKeys(p.breaker, ['consecutive', 'windowCount', 'windowMs', 'backoffMs'], 'POLICY_BREAKER_KEYS_INVALID');
+  exactKeys(p.breaker, ['consecutive', 'windowCount', 'windowMs', 'backoffMs', ...(p.contract === POLICY_CONTRACT_V9 ? ['network'] : [])], 'POLICY_BREAKER_KEYS_INVALID');
   check(int(p.breaker.consecutive, 1, 10) && int(p.breaker.windowCount, 1, 20) && int(p.breaker.windowMs, 60_000, 86_400_000)
-    && Array.isArray(p.breaker.backoffMs) && p.breaker.backoffMs.length >= 1 && p.breaker.backoffMs.length <= 6
-    && p.breaker.backoffMs.every((ms, i, a) => int(ms, 60_000, 86_400_000) && (i === 0 || a[i - 1] <= ms)), 'POLICY_BREAKER_INVALID');
+    && delayList(p.breaker.backoffMs), 'POLICY_BREAKER_INVALID');
+  if (p.contract === POLICY_CONTRACT_V9) validateBreakerNetwork(p.breaker);
   exactKeys(p.stage8, ['mode'], 'POLICY_STAGE8_KEYS_INVALID');
   check(p.stage8.mode === 'park', 'POLICY_STAGE8_MODE_INVALID');
   exactKeys(p.park, ['maxParked', 'maxParkedOutsideTop2', 'maxMs', 'stage8MaxTries', 'stage8RetriesPer24h'], 'POLICY_PARK_KEYS_INVALID');
   check(int(p.park.maxParked, 1, 8) && int(p.park.maxParkedOutsideTop2, 0, 16) && int(p.park.maxMs, 3_600_000, 86_400_000) && int(p.park.stage8MaxTries, 1, 24)
     && int(p.park.stage8RetriesPer24h, 0, 200), 'POLICY_PARK_INVALID');
-  if (p.contract === POLICY_CONTRACT_V8) validateTrainV8(p.train); else validateTrain(p.train);
+  if (p.contract === POLICY_CONTRACT_V7) validateTrain(p.train); else validateTrainV8(p.train);
   exactKeys(p.companion, ['userSid', 'heartbeatMaxAgeMs'], 'POLICY_COMPANION_KEYS_INVALID');
   check(SID.test(p.companion.userSid) && p.companion.userSid === node.ownerSid, 'POLICY_COMPANION_SID_INVALID');
   check(int(p.companion.heartbeatMaxAgeMs, 5_000, 600_000), 'POLICY_HEARTBEAT_INVALID');
@@ -135,6 +142,16 @@ export function validatePolicy(p) {
   check(int(p.retention.reminderBytes, 1024 ** 3, 1024 ** 4) && int(p.retention.checkEveryMs, 60_000, 86_400_000), 'POLICY_RETENTION_INVALID');
   validateRelay(p.relay);
   return Object.freeze({ ...p, node, stages: FIXED_STAGES.map((s, i) => ({ ...s, runMilliseconds: p.stageRunMilliseconds[i] })) });
+}
+
+const delayList = a => Array.isArray(a) && a.length >= 1 && a.length <= 6 && a.every((ms, i) => int(ms, 60_000, 86_400_000) && (i === 0 || a[i - 1] <= ms));
+// breaker.network (contract /9, generation 10): the network breaker's own delays (never a longer first wait than the policy's own) and
+// the read-only probes that bring its trial forward.
+export function validateBreakerNetwork(breaker) {
+  const n = breaker.network;
+  exactKeys(n, ['backoffMs', 'earlyTrialProbes'], 'POLICY_BREAKER_NETWORK_KEYS_INVALID');
+  check(delayList(n.backoffMs) && n.backoffMs[0] <= breaker.backoffMs[0] && int(n.earlyTrialProbes, 1, 10), 'POLICY_BREAKER_NETWORK_INVALID');
+  return n;
 }
 
 // train (contract /6): stage 10's mode and schedule. 'on' is refused until step 3c-2 brings the code that acts on it.

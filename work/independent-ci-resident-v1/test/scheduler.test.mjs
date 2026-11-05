@@ -57,7 +57,8 @@ test('the budgets come from the ledger: waits have their own, environment releas
   await f.exec.tick();
   await f.exec.tick();
   let u = await f.ledger.usage(0);
-  assert.deepEqual([u.evaluations, u.waitingRetries, u.releasesByHead.get(H(2))], [1, 0, 1], 'the first wait is an evaluation; the broker release is not');
+  // generation 10 (DESIGN 53.3): the broker release (an environment fault) is no evaluation and never counts towards the head's cap
+  assert.deepEqual([u.evaluations, u.waitingRetries, u.releasesByHead.get(H(2))], [1, 0, undefined], 'the first wait is an evaluation; the broker release is not');
   f.advance(10 * MIN);
   assert.equal((await f.exec.tick()).state, 'NOT_ADMITTED', 'the first waiting retry');
   u = await f.ledger.usage(0);
@@ -271,7 +272,7 @@ test('review m4: the release cap holds across a queue that started over; the reb
   assert.ok((await receiptTypes(f)).includes('queue-rebuilt'));
 });
 
-test('the breaker closing lifts rows the release cap stopped because of an environment fault', async t => {
+test('generation 10 (DESIGN 53.3): an environment fault never stops a row at the release cap; it retries every 10 minutes and runs once the fault is gone', async t => {
   const broker = { ok: false, code: 'BROKER_REQUEST_EXPIRED', proof: WINDOWS_CLEAN, outcome: null, brokerNoLaunch: true };
   const burn = { ok: false, code: 'STAGE_PACKAGE_REFUSED', proof: WINDOWS_CLEAN };
   const per = { 1: broker };
@@ -281,19 +282,20 @@ test('the breaker closing lifts rows the release cap stopped because of an envir
   await f.exec.tick();
   f.advance(10 * MIN + 1);
   await f.exec.tick();
-  assert.deepEqual([f.queue.row(1).state, f.queue.row(1).stopClass], ['STOPPED', 'environment']);
-  // the two broker releases plus one more counted failure open the breaker
+  assert.deepEqual([f.queue.row(1).state, f.queue.row(1).stopKind, (f.queue.row(1).nextAt - f.clock()) / MIN], ['BACKOFF', null, 10], 'two releases, the cap is two: still not stopped');
+  assert.equal((await f.ledger.usage(0)).releasesByHead.get(H(1)), undefined);
+  // the two broker releases plus one more counted failure open the breaker (a broker fault is no network fault: the policy's 30 minutes)
   per[2] = burn;
   await f.drop(triggerBytes({ pr: 2, headSha: H(2) }));
   await f.exec.tick();
-  assert.equal(f.queue.breaker.state, 'open');
+  assert.deepEqual([f.queue.breaker.state, f.queue.breaker.cause, (f.queue.breaker.nextTrialAt - f.clock()) / MIN], ['open', null, 30]);
   delete per[1];
   await f.drop(triggerBytes({ pr: 3, headSha: H(3) }));
   f.advance(30 * MIN);
   assert.equal((await f.exec.tick()).state, 'COMPLETED', 'the trial (PR 3) completes');
   assert.equal(f.queue.breaker.state, 'closed');
-  assert.equal(f.queue.row(1).state, 'BACKOFF', 'the environment stop is lifted');
-  assert.equal((await f.exec.tick()).state, 'COMPLETED', 'and PR 1 runs');
+  assert.equal(f.queue.row(1).state, 'BACKOFF');
+  assert.equal((await f.exec.tick()).state, 'COMPLETED', 'and PR 1 runs: the environment fault never cost it its head');
 });
 
 test('the re-evaluation cap per (PR, commit) and the evaluation budget at the executor; a full budget never starves a due wait', async t => {

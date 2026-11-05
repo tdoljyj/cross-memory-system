@@ -17,8 +17,10 @@ export const NOT_ADMITTED_CODES = Object.freeze(['NATIVE_NOT_ADMITTED', 'OWNER_R
 // (attempts.mjs; Owner decision 1b5d3687).
 // NATIVE_ADMISSION_UNAVAILABLE also covers explicit protected-observation exhaustion, but only after the Source
 // proved BLOCKED/zero effects/no possible publication. It does not widen attempts.mjs's stage 0/1/2 boundary.
+// ADMISSION_VERIFICATION_UNAVAILABLE (generation 10, DESIGN 53.6): stage 1 withdrew its own admission check because it could not be
+// verified (GitHub or Native unreadable after the bounded re-reads); attempt 2 re-proves it under new job ids instead of a burned head.
 export const TRANSIENT_CODES = Object.freeze(['NATIVE_ADMISSION_UNAVAILABLE', 'GITHUB_TRANSIENT_UNAVAILABLE', 'BRIDGE_TRANSPORT_TIMEOUT',
-  'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'ARCHIVE_PRECONDITION_NOT_MET']);
+  'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'ARCHIVE_PRECONDITION_NOT_MET', 'ADMISSION_VERIFICATION_UNAVAILABLE']);
 // Why the roles of a train front batch (a subject with testSha) stay local: a relay reason, not a failure (§41.4, §38.8 m1);
 // listed with the codes so every table knows it.
 export const RELAY_TRAIN_FRONT_LOCAL = 'RELAY_TRAIN_FRONT_LOCAL';
@@ -260,12 +262,14 @@ export function failureRow({ code, stage, phase = 'stage', reason = null, diagno
 //   cap: the budget that bounds its retries now that the run queue retries on its own (queue.mjs). Phase 1's daily cap
 //     per key (unexecutedMaxPer24h) is gone with policy /4: a wait (failure-table class waiting) is bounded by the
 //     waits' own budget (waitingRetriesPer24h a day, every PR together), any other release by the head's release cap
-//     (releasesPerHeadPer24h counted releases in 24 hours, then STOPPED; an environment release while the breaker is
-//     not closed is not counted), a supersession by nothing (nothing about the PR was decided).
+//     (releasesPerHeadPer24h counted releases in 24 hours, then STOPPED), a supersession by nothing (nothing about the PR was
+//     decided). Generation 10 (DESIGN 53.3): a release of failure-table class environment or transient is never counted towards the
+//     cap, whatever the breaker's state (before: only while the breaker was not closed); the bundle and the broker's no-launch are always
+//     that class, so their cap is null; it is bounded by the flat 10-minute retry and the breaker (queue.mjs#ENVIRONMENT_BACKOFF_MS).
 export const UNEXECUTED_REASON_RULES = Object.freeze({
   NOT_ADMITTED: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: 'waitingRetriesPer24h', other: 'releasesPerHeadPer24h' }), evidence: 'stage-1 outcome safeToRerun' }),
-  BUNDLE_UNAVAILABLE: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: null, other: 'releasesPerHeadPer24h' }), evidence: 'bundle failed before stage 1' }),
-  BROKER_NOT_LAUNCHED: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: null, other: 'releasesPerHeadPer24h' }), evidence: 'broker refused before any launch, original restored' }),
+  BUNDLE_UNAVAILABLE: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: null, other: null }), evidence: 'bundle failed before stage 1' }),
+  BROKER_NOT_LAUNCHED: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: null, other: null }), evidence: 'broker refused before any launch, original restored' }),
   SUPERSEDED: Object.freeze({ cooldown: false, cap: Object.freeze({ waiting: null, other: null }), evidence: 'a newer commit of the PR arrived before stage 1' }),
 });
 

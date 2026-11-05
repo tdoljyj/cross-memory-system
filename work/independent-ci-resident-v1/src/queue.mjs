@@ -24,7 +24,8 @@
 //   - When stage 1 or the bundle proves the current commit is no longer the PR's head, the companion reads the PR once;
 //     the head it sees becomes current again when it is one of the row's superseded commits and not burned (restore).
 //     A live read only ever stops or re-queues; it never admits anything.
-//   - After a release the row goes to the tail with its own back-off: 10 -> 20 -> 40 minutes (§4.5). A wait backs off
+//   - After a release the row goes to the tail with its own back-off: 10 -> 20 -> 40 minutes (§4.5); an environment release every
+//     10 minutes and never counted towards the cap (generation 10, ENVIRONMENT_BACKOFF_MS). A wait backs off
 //     10 -> 20 -> 40 -> 80 -> 120 minutes, then every 120 (§4.4), or until Native's ci_retry_after. A commit released
 //     policy.limits.releasesPerHeadPer24h times in 24 hours (waits never count) is STOPPED: only a new commit runs the
 //     PR again (§4.5); a new trigger pokes only a row that still waits for its next try.
@@ -53,6 +54,13 @@ export const SEEN_MAX = 32;
 const MIN = 60_000;
 export const WAITING_BACKOFF_MS = Object.freeze([10 * MIN, 20 * MIN, 40 * MIN, 80 * MIN, 120 * MIN]);
 export const RELEASE_BACKOFF_MS = Object.freeze([10 * MIN, 20 * MIN, 40 * MIN]);
+// Generation 10 (DESIGN 53.3, Task 125a5162 item 3): a release of an environment fault (failure-table class environment or transient:
+// the bundle, GitHub or Native unreachable, the broker) says nothing about the PR. It never counts towards the head's release cap, so it
+// never stops the row, and it is tried again every 10 minutes, flat: the breaker (breaker.mjs) is what throttles a lasting fault for
+// every PR together (open after three in a row, a trial per its delay), and a flat 10 minutes is what makes the head run again within
+// 10 minutes of the network coming back (an escalating ladder would leave it waiting up to 40).
+export const ENVIRONMENT_BACKOFF_MS = Object.freeze([10 * MIN]);
+export const ENVIRONMENT_CLASSES = Object.freeze(['environment', 'transient']);
 export const CI_RETRY_MAX_MS = 24 * 60 * MIN;
 export const COMPACT_AFTER_MS = 24 * 60 * MIN;
 export const NOTICES_MAX = 50;
@@ -325,15 +333,16 @@ export class RunQueue {
       case 'released': {
         r.order = this.seq(); // to the tail
         const waiting = outcome.klass === 'waiting';
-        if (!waiting && Number.isSafeInteger(outcome.releases24h) && outcome.releases24h >= outcome.releaseCap) {
+        const environment = ENVIRONMENT_CLASSES.includes(outcome.klass);
+        if (!waiting && !environment && Number.isSafeInteger(outcome.releases24h) && outcome.releases24h >= outcome.releaseCap) {
           Object.assign(r, { stopKind: 'release-cap', stopClass: outcome.klass ?? null, nextAt: null });
           this.setState(r, 'STOPPED', outcome.code ?? null, now);
           return 'stopped';
         }
-        const kind = waiting ? 'waiting' : 'release';
+        const kind = waiting ? 'waiting' : environment ? 'environment' : 'release';
         const level = r.levelKind === kind ? r.level : 0;
         const retryAfter = waiting && Number.isSafeInteger(outcome.ciRetryAfter) ? Math.min(Math.max(outcome.ciRetryAfter, now + WAITING_BACKOFF_MS[0]), now + CI_RETRY_MAX_MS) : null;
-        r.nextAt = retryAfter ?? now + delayAt(waiting ? WAITING_BACKOFF_MS : RELEASE_BACKOFF_MS, level);
+        r.nextAt = retryAfter ?? now + delayAt(waiting ? WAITING_BACKOFF_MS : environment ? ENVIRONMENT_BACKOFF_MS : RELEASE_BACKOFF_MS, level);
         Object.assign(r, { level: level + 1, levelKind: kind, stopKind: null, stopClass: null });
         this.setState(r, waiting ? 'WAITING' : 'BACKOFF', outcome.code ?? null, now);
         return null;

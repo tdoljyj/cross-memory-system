@@ -253,7 +253,8 @@ test('ledger usage (phase 2): every daily budget from the ledger, per origin and
   await ledger.reserve(batchKey(s(1, 1)), s(1, 1));
   await ledger.markStarted(batchKey(s(1, 1)), { batchId: '0123456789abcdef-0123456789ab' });
   // a real refusal (an evaluation), a wait from a waiting retry (its own budget), an environment release while the breaker
-  // was open (neither), a supersession (neither), a new-trigger re-evaluation (an evaluation and one re-evaluation)
+  // was open or closed (neither: generation 10, DESIGN 53.3), a supersession (neither), a new-trigger re-evaluation (an evaluation
+  // and one re-evaluation)
   const release = async (subj, origin, reason, facts) => { const k = batchKey(subj); await ledger.reserve(k, subj, { origin }); await ledger.releaseUnexecuted(k, reason, facts); };
   await release(s(2, 2), 'queued', 'NOT_ADMITTED', { class: 'not-admitted' });
   await release(s(3, 3), 'waiting-retry', 'NOT_ADMITTED', { class: 'waiting' });
@@ -264,7 +265,7 @@ test('ledger usage (phase 2): every daily budget from the ledger, per origin and
   const u = await ledger.usage(0);
   assert.deepEqual([u.started, u.startedByPr.get(1), u.evaluations, u.waitingRetries], [1, 1, 2, 1]);
   assert.deepEqual([u.reevaluations.get(`2:${'2'.repeat(40)}`), u.releasesByHead.get('2'.repeat(40)), u.releasesByHead.get('3'.repeat(40)), u.releasesByHead.get('4'.repeat(40)), u.releasesByHead.get('5'.repeat(40))],
-    [1, 2, undefined, 1, undefined]);
+    [1, 2, undefined, undefined, undefined]);
   await assert.rejects(ledger.reserve(batchKey(s(6, 6)), s(6, 6), { origin: 'made-up' }), { code: 'RESERVATION_ORIGIN_INVALID' });
   now += 86_400_001;
   assert.equal((await ledger.usage(now - 86_400_000)).evaluations, 0, 'a day later nothing counts');

@@ -538,7 +538,9 @@ export class Ledger {
       // A burned entry that never started (a low-risk tier burn among them) is an evaluation whatever its class: it no
       // longer counts as an execution, so it must count somewhere (DESIGN §36).
       if (!started && origin !== 'waiting-retry' && !UNCOUNTED_RELEASES.includes(reason) && (burned || (!environment && !nodeRole))) u.evaluations += 1;
-      if (reason && reason !== 'SUPERSEDED' && facts?.class !== 'waiting' && !nodeRole && !(environment && facts?.breakerState && facts.breakerState !== 'closed') && HEX40.test(s.headSha ?? '')) bump(u.releasesByHead, s.headSha);
+      // Generation 10 (DESIGN 53.3): an environment release never counts towards the head's release cap, whatever the breaker's state
+      // (before: only while the breaker was not closed, so a short network outage with a closed breaker stopped the head for good).
+      if (reason && reason !== 'SUPERSEDED' && facts?.class !== 'waiting' && !nodeRole && !environment && HEX40.test(s.headSha ?? '')) bump(u.releasesByHead, s.headSha);
     };
     const read = async file => (await exists(file)) ? (await readJson(file)).value : null;
     for (const key of await this.keys()) {

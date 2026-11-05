@@ -41,6 +41,21 @@ export const REQUIRED_CACHE_MS = 30 * 60_000;
 export const ADVISORY_TIMEOUT_MS = 15_000;
 export const PASS_BUDGET_MS = 60_000;
 export const POST_RETRY_MS = 10 * 60_000;
+// Generation 10 (DESIGN 53.5): the companion reads status.json at most this often between its minute passes, and posts at once when what
+// the PR page shows from it changed (statusSignature): a claimed batch, its stage, the breaker's state or trial time, HALT, PAUSE.
+export const REPORT_MIN_GAP_MS = 5_000;
+export function statusSignature(status) {
+  if (!status || typeof status !== 'object') return null;
+  const c = status.current;
+  return canonicalJson({ current: c ? { key: c.key ?? null, pr: c.pr ?? null, headSha: c.headSha ?? null, stage: c.stage ?? null, phase: c.phase ?? null } : null,
+    breaker: status.breaker ? { state: status.breaker.state ?? null, nextTrialAt: status.breaker.nextTrialAt ?? null } : null,
+    halt: status.halt?.code ?? null, paused: status.paused === true });
+}
+// Whether the advisory lane posts now: the minute has passed, or the signature moved (and the last pass is at least REPORT_MIN_GAP_MS old).
+export function reportDue({ now, lastReport, lastSignature, signature, everyMs }) {
+  if (now - lastReport > everyMs) return true;
+  return now - lastReport > REPORT_MIN_GAP_MS && signature !== null && signature !== lastSignature;
+}
 // A call that did not run (the Runner is still busy with an earlier child) or did not finish in time.
 export const stalledCall = r => r?.timedOut === true || r?.refused === 'RUNNER_BUSY_WITH_UNFINISHED_CHILD';
 const DESCRIPTION_MAX = 140;
@@ -127,7 +142,11 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     // The intake pause (primary/standby C6): no new batch starts until it ends (the executor's first gate, before the
     // parking places and the breaker); no estimate that assumes a free executor.
     if (status.intakePause) return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：暂停接新中${status.intakePause.until ? `，最晚 ${hhmm(status.intakePause.until)} 恢复` : ''}`) };
-    if (status.breaker?.state === 'open') return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：执行器熔断中${status.breaker.nextTrialAt ? `，约 ${hhmm(status.breaker.nextTrialAt)} 试跑` : ''}`) };
+    // Generation 10 (DESIGN 53.5): a trial time that has come is no longer "open" on the page (the executor starts the trial at its next
+    // pass and the board then says half-open); a half-open breaker says a trial is running or due, never "open".
+    const trialDue = status.breaker?.state === 'open' && Number.isFinite(status.breaker.nextTrialAt) && status.breaker.nextTrialAt <= now;
+    if (status.breaker?.state === 'half-open' || trialDue) return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：熔断后的试跑${trialDue ? '时间已到，即将开始' : '进行中'}，试跑通过后恢复`) };
+    if (status.breaker?.state === 'open') return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：执行器熔断中${status.breaker.cause === 'network' ? '（网络故障）' : ''}${status.breaker.nextTrialAt ? `，约 ${hhmm(status.breaker.nextTrialAt)} 试跑` : ''}`) };
     // No new batch while the parking places are full (phase 2, step 2; review m8): no estimate that assumes a free executor.
     if (status.queue?.parkingFull === true) return { state: 'pending', description: clip(`排队第 ${row.position ?? '?'} 位：停靠的批次已满，等它们结束`) };
     const why = row.deferred ? `：${DEFERRED_TEXT[row.deferred] ?? row.deferred}` : '';

@@ -128,7 +128,7 @@ export const fastSleep = () => new Promise(resolve => setImmediate(resolve));
 // backfillManifest: the install's carried-state manifest (install\backfill-manifest.json); null = none carried (an empty
 // list of sources), false = no manifest at all. status: a status board (status.mjs), or none.
 export async function executorFixture(t, { engine = fakeEngine(), companion, policy = rawPolicy(), integrity, now = Date.parse('2026-10-20T12:00:00Z'), sleep = fastSleep,
-  backfillManifest = null, status = undefined, root: givenRoot = null } = {}) {
+  backfillManifest = null, status = undefined, root: givenRoot = null, statusFlush = undefined } = {}) {
   const root = givenRoot ?? await tempRoot(t);
   let time = now;
   const clock = () => time;
@@ -144,7 +144,7 @@ export async function executorFixture(t, { engine = fakeEngine(), companion, pol
   const comp = companion ?? fakeCompanion({}, clock);
   const queue = await RunQueue.open(path.join(root, 'state', 'queue'), clock);
   const ports = {
-    policy: validatePolicy(policy), ledger, receipts, inbox, requests, owner, engine, companion: comp, clock, sleep, executedHeads, status, queue,
+    policy: validatePolicy(policy), ledger, receipts, inbox, requests, owner, engine, companion: comp, clock, sleep, executedHeads, status, queue, statusFlush,
     sourceIntegrity: async () => integrity ?? { ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT },
   };
   const exec = new ResidentExecutor(ports);

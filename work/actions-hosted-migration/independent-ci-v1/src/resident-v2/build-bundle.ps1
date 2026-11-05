@@ -80,9 +80,12 @@ $SeedRoot=Join-Path $Resident 'bundles\_seed';$SeedDir=Join-Path $SeedRoot 'seed
 $SeedNs='refs/clued-seed/';$SeedMetaContract='clued.independent-ci.bundle-seed-meta/1'
 # Used only while the last full (unseeded) fetch took at least this long; after a day it is measured again with one unseeded fetch.
 $SeedMinFullFetchSeconds=90;$SeedMetaMaxAgeSeconds=86400;$SeedLockStaleSeconds=1800;$SeedMaxPacks=12;$SeedMaxBytes=1073741824
+# Generation 10 (DESIGN 53.2): a GitHub step that failed on the network is noted in seed-meta.json; for this long after it every build
+# uses the seed (whatever the measurement says), and a network retry in the same build uses it too. Advisory like the rest of the meta.
+$SeedAfterNetworkFailureSeconds=21600
 $SeedConfigKeys=@('core.repositoryformatversion','core.filemode','core.bare','core.symlinks','core.ignorecase','core.logallrefupdates')
-$seedUse=$false;$seedAttempt=$false;$seedBusy=$false;$seedLockHeld=$false
-$seedReport=[ordered]@{enabled=$true;used=$false;reason=$null;discarded=$false;primeSeconds=$null;updated=$false;updateSkipped=$null;seedBytes=$null;error=$null}
+$seedUse=$false;$seedAttempt=$false;$seedBusy=$false;$seedLockHeld=$false;$seedAvailable=$false
+$seedReport=[ordered]@{enabled=$true;used=$false;reason=$null;discarded=$false;primeSeconds=$null;updated=$false;updateSkipped=$null;seedBytes=$null;error=$null;networkFailureNoted=$false}
 $stage='fixed-preflight';$created=@();$writesStarted=$false;$lastGit=$null;$attempts=1;$firstAttempt=$null;$failedAttempts=@();$refsDiffer=$null;$reviewedCommits=@()
 # Reviewed commits that GitHub serves only because a branch still carries them (Decision 98fec682). Git stderr is never read,
 # so the hint cannot say which commit is missing: it is given when the reviewed set contains such a commit and the step that
@@ -269,7 +272,7 @@ function Seed-Shape-Problem{
 # Removes the seed. Only with the seed lock: a lock held by someone else (a build that is priming from or updating the seed right now) means
 # the seed is left alone ("discarded" stays false, the answer's error says why); this run does not use it either way.
 function Seed-Discard([string]$Why){
- $script:seedUse=$false;$script:seedReport.reason=$Why
+ $script:seedUse=$false;$script:seedAvailable=$false;$script:seedReport.reason=$Why
  $took=$false
  try{
   if(-not $script:seedLockHeld){
@@ -277,6 +280,8 @@ function Seed-Discard([string]$Why){
    if(-not $took){$script:seedReport.error='SEED_DISCARD_SKIPPED_LOCK_HELD_BY_ANOTHER';return}
   }
   $script:seedReport.discarded=$true
+  # The network-failure note (generation 10) is about the network, not about this seed: it outlives the seed.
+  $failedAt=Seed-Meta-Failure-At
   try{
    if(Test-Path -LiteralPath $SeedDir){
     if(Test-RealDir $SeedDir){Remove-Tree $SeedDir}
@@ -285,21 +290,44 @@ function Seed-Discard([string]$Why){
    }
   }catch{try{[IO.Directory]::Move($SeedDir,(Join-Path $SeedRoot ('dead-'+[Guid]::NewGuid().ToString('N').Substring(0,8))))}catch{}}
   Remove-Item -LiteralPath $SeedMeta -Force -ErrorAction SilentlyContinue
+  if($null -ne $failedAt){try{[IO.File]::WriteAllText($SeedMeta,(([ordered]@{contract=$SeedMetaContract;updatedAt=(Utc);lastNetworkFailureAtUnix=$failedAt}|ConvertTo-Json -Compress)+"`n"),(New-Object Text.UTF8Encoding($false)))}catch{}}
  }finally{if($took){Seed-Unlock}}
 }
 # Advisory facts about the last unseeded fetch; unreadable or odd is "no measurement", never an error.
 function Seed-Meta-Read{
  try{
-  if(-not (Test-Path -LiteralPath $SeedMeta -PathType Leaf)){return $null}
-  if((Get-Item -LiteralPath $SeedMeta -Force).Length -gt 4096){return $null}
-  $m=[IO.File]::ReadAllText($SeedMeta)|ConvertFrom-Json
-  if($m.contract -cne $SeedMetaContract){return $null}
+  $m=Seed-Meta-Object
+  if($null -eq $m){return $null}
   if(($m.lastFullFetchSeconds -isnot [int] -and $m.lastFullFetchSeconds -isnot [long] -and $m.lastFullFetchSeconds -isnot [double]) -or ($m.lastFullFetchAtUnix -isnot [int] -and $m.lastFullFetchAtUnix -isnot [long] -and $m.lastFullFetchAtUnix -isnot [double])){return $null}
   return $m
  }catch{return $null}
 }
+# The meta file as an object when it is small and of this contract, else null (never an error).
+function Seed-Meta-Object{
+ try{
+  if(-not (Test-Path -LiteralPath $SeedMeta -PathType Leaf)){return $null}
+  if((Get-Item -LiteralPath $SeedMeta -Force).Length -gt 4096){return $null}
+  $m=[IO.File]::ReadAllText($SeedMeta)|ConvertFrom-Json
+  if($null -eq $m -or $m.contract -cne $SeedMetaContract){return $null}
+  return $m
+ }catch{return $null}
+}
+# Generation 10: when a GitHub step of a build last failed on the network (unix seconds), or null. Read on its own, so a meta that
+# holds only this (no measurement yet) still says it.
+function Seed-Meta-Failure-At{
+ try{
+  $m=Seed-Meta-Object
+  if($null -eq $m -or $null -eq $m.PSObject.Properties['lastNetworkFailureAtUnix']){return $null}
+  $v=$m.lastNetworkFailureAtUnix
+  if($v -isnot [int] -and $v -isnot [long] -and $v -isnot [double]){return $null}
+  return [long]$v
+ }catch{return $null}
+}
 function Unix-Now([DateTime]$NowUtc){return [long][Math]::Floor(($NowUtc-(New-Object DateTime 1970,1,1,0,0,0,([DateTimeKind]::Utc))).TotalSeconds)}
-function Seed-Wanted($Meta,[DateTime]$NowUtc){
+# $FailureAtUnix (generation 10): a network failure noted in the last $SeedAfterNetworkFailureSeconds turns the seed on whatever the
+# measurement says (a time in the future is ignored: the meta is advisory and a wrong clock must not keep the seed on).
+function Seed-Wanted($Meta,[DateTime]$NowUtc,$FailureAtUnix=$null){
+ if($null -ne $FailureAtUnix){$age=(Unix-Now $NowUtc)-[long]$FailureAtUnix;if($age -ge 0 -and $age -le $SeedAfterNetworkFailureSeconds){return [pscustomobject]@{use=$true;reason='RECENT_NETWORK_FAILURE'}}}
  if($null -eq $Meta){return [pscustomobject]@{use=$true;reason='NO_MEASUREMENT'}}
  if(((Unix-Now $NowUtc)-[long]$Meta.lastFullFetchAtUnix) -gt $SeedMetaMaxAgeSeconds){return [pscustomobject]@{use=$false;reason='REMEASURE_DUE'}}
  if([double]$Meta.lastFullFetchSeconds -lt $SeedMinFullFetchSeconds){return [pscustomobject]@{use=$false;reason='NETWORK_FAST'}}
@@ -311,9 +339,34 @@ function Seed-Begin{
   if(-not (Test-Path -LiteralPath $SeedDir)){$r.reason='NO_SEED';return}
   $problem=Seed-Shape-Problem
   if($null -ne $problem){Seed-Discard $problem;return}
-  $w=Seed-Wanted (Seed-Meta-Read) ([DateTime]::UtcNow);$r.reason=$w.reason
+  # A seed that passed its shape check: a network retry of this build may use it even when the measurement does not (generation 10).
+  $script:seedAvailable=$true
+  $w=Seed-Wanted (Seed-Meta-Read) ([DateTime]::UtcNow) (Seed-Meta-Failure-At);$r.reason=$w.reason
   if($w.use){$script:seedUse=$true}
  }catch{Seed-Discard 'SEED_CHECK_FAILED'}
+}
+# Generation 10 (DESIGN 53.2): a GitHub step failed on the network. Noted in seed-meta.json (the measurement fields are kept as they
+# were), so the next builds use the seed for $SeedAfterNetworkFailureSeconds. Best effort: a busy lock, a meta that cannot be written or
+# a seed root that is not a real directory only leave networkFailureNoted false; nothing here ever fails the build.
+function Seed-Note-Network-Failure{
+ $locked=$false
+ try{
+  [void][IO.Directory]::CreateDirectory($SeedRoot);if(-not (Test-RealDir $SeedRoot)){return}
+  $locked=Seed-Lock;if(-not $locked){return}
+  $prev=Seed-Meta-Read
+  $meta=[ordered]@{contract=$SeedMetaContract;updatedAt=(Utc)}
+  if($null -ne $prev){$meta['lastFullFetchSeconds']=$prev.lastFullFetchSeconds;$meta['lastFullFetchAtUnix']=$prev.lastFullFetchAtUnix}
+  $meta['lastNetworkFailureAtUnix']=Unix-Now ([DateTime]::UtcNow)
+  [IO.File]::WriteAllText($SeedMeta,(($meta|ConvertTo-Json -Compress)+"`n"),(New-Object Text.UTF8Encoding($false)))
+  $script:seedReport.networkFailureNoted=$true
+ }catch{}finally{if($locked){Seed-Unlock}}
+}
+# Generation 10: the network retry of this build uses the seed when one passed its shape check at the start (and was not discarded or
+# found busy since), also when the measurement had left it off. The seed stays advisory: a seed that fails in the retry is SEED_UNUSABLE
+# and an unseeded attempt follows, like any seeded attempt (a seeded attempt is never the last one).
+function Seed-After-Network-Failure{
+ if($script:seedUse -or -not $script:seedAvailable -or $script:seedBusy -or -not (Test-Path -LiteralPath $SeedDir)){return}
+ $script:seedUse=$true;$script:seedReport.reason='SEEDED_AFTER_NETWORK_FAILURE'
 }
 # Inside a seeded attempt, right after init-bare: the seed's refs/heads, tags and reviewed refs under refs/clued-seed/ by a local fetch
 # (every object is hashed again by index-pack; its own connectivity check runs). Any trouble is SEED_UNUSABLE.
@@ -343,8 +396,9 @@ function Seed-Failure([string]$Reason){
   if($script:seedBusy){$script:seedUse=$false;$script:seedReport.reason='SEED_BUSY'}else{Seed-Discard $script:seedReport.reason}
   return $true
  }
- # A git step of a seeded attempt failed: a network retry (when the window allows it) runs without the seed, which stays.
- if($Reason -ceq 'GIT_STEP_FAILED'){$script:seedUse=$false;$script:seedReport.reason='UNSEEDED_AFTER_GIT_FAILURE'}
+ # A git step of a seeded attempt failed. Generation 10 (DESIGN 53.2): a network retry (when the window allows it) uses the seed again:
+ # what failed is GitHub's transfer, not the seed, and the seeded retry asks GitHub for the increment only. (Before generation 10 the
+ # retry ran unseeded and fetched the whole repository again over the same failing line.) Nothing else is retried for it.
  return $false
 }
 # What failed, for the answer only: a code, or the exception's first 80 characters of plain text, and the last git step.
@@ -387,6 +441,8 @@ function Seed-Update($Store){
   elseif($null -ne $prev){$secs=$prev.lastFullFetchSeconds;$at=$prev.lastFullFetchAtUnix}
   $meta=[ordered]@{contract=$SeedMetaContract;updatedAt=(Utc)}
   if($null -ne $secs){$meta['lastFullFetchSeconds']=$secs;$meta['lastFullFetchAtUnix']=$at}
+  # The network-failure note (generation 10) is kept until it ages out: a build that got through once does not mean the line is good.
+  $failedAt=Seed-Meta-Failure-At;if($null -ne $failedAt){$meta['lastNetworkFailureAtUnix']=$failedAt}
   [IO.File]::WriteAllText($SeedMeta,(($meta|ConvertTo-Json -Compress)+"`n"),(New-Object Text.UTF8Encoding($false)))
   $r.updated=$true
  }catch{$r.updated=$false;$r.error=Seed-Error-Text $_;Seed-Discard 'SEED_UPDATE_FAILED'}
@@ -457,7 +513,11 @@ function Build-Store([string]$Dir){
 # (main moved, refs differ, a commit missing from the store), never a git that did not start. Stderr is not read, so
 # a network failure that will repeat (credentials, a reviewed commit gone from GitHub) also costs one more attempt.
 function Retry-Allowed([string]$Reason,$Step,[double]$ElapsedSeconds){
- return ($Reason -ceq 'GIT_STEP_FAILED' -and $null -ne $Step -and $NetworkSteps -ccontains $Step.label -and $Step.exitCode -ne 0 -and $ElapsedSeconds -lt $RetryWithinSeconds)
+ return ((Network-Step-Failed $Reason $Step) -and $ElapsedSeconds -lt $RetryWithinSeconds)
+}
+# A step that talks to GitHub failed in git itself (what a network failure looks like here: stderr is never read).
+function Network-Step-Failed([string]$Reason,$Step){
+ return ($Reason -ceq 'GIT_STEP_FAILED' -and $null -ne $Step -and $NetworkSteps -ccontains $Step.label -and $Step.exitCode -ne 0)
 }
 # The refs moved between the fetch and the ls-remote: only the first FETCHED_REFS_DIFFER_FROM_LS_REMOTE of a store (Build-Store
 # sets $refsDiffer there and nowhere else), and only early enough, like a network step.
@@ -479,11 +539,13 @@ function Fetch-Store{
   try{return Build-Store $dirs[$n]}
   catch{
    $reason=$_.Exception.Message;$elapsed=$Clock.Elapsed.TotalSeconds
+   # Generation 10: every network failure of a GitHub step is noted for the next builds, retried here or not (the last one too).
+   if(Network-Step-Failed $reason $script:lastGit){Seed-Note-Network-Failure}
    $race=Race-Retry-Allowed $reason $script:refsDiffer $elapsed
    $network=(-not $networkRetried) -and (Retry-Allowed $reason $script:lastGit $elapsed)
    $seedFell=Seed-Failure $reason
    if($n -ge ($MaxStoreAttempts-1) -or -not ($race -or $network -or $seedFell)){throw}
-   if($network){$networkRetried=$true}
+   if($network){$networkRetried=$true;Seed-After-Network-Failure}
    $given=[ordered]@{attempt=($n+1);reason=$reason;stage=$script:stage;git=$script:lastGit;failedAfterSeconds=[int]$elapsed}
    if($race){$given['refsDiffer']=$script:refsDiffer}
    $script:failedAttempts=@($script:failedAttempts)+,$given

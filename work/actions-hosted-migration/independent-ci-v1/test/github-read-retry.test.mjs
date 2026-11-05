@@ -14,13 +14,13 @@ import { randomUUID } from 'node:crypto';
 import { digest } from '../src/proof.mjs';
 import { batchJobsV2, claimGeneration, subjectOfV2 } from '../src/job-v2.mjs';
 import { EffectJournal } from '../src/effect-journal.mjs';
-import { createFixtureWorkAdmissionPublisherV2, refusalSafeToRerun } from '../src/formal-work-admission-check-v2/publisher.mjs';
+import { createFixtureWorkAdmissionPublisherV2, refusalSafeToRerun, VERIFY_REREAD_DELAYS_MS } from '../src/formal-work-admission-check-v2/publisher.mjs';
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { recordBatchClaim, readBatchClaim } from '../src/batch-claim-v2.mjs';
 import { withReadRetry, READ_RETRY_DELAYS_MS, READ_RETRY_BUDGET_MS } from '../src/read-retry.mjs';
 import { withdrawalTitle, verificationUnavailable } from '../src/withdrawal-text.mjs';
 import { controllerPorts } from '../src/resident-v2/entry-runtime.mjs';
-import { outcomeFailureCode, outcomeFacts } from '../src/resident-v2/stage-fact.mjs';
+import { outcomeFailureCode, outcomeFacts, TRANSIENT_CODES } from '../src/resident-v2/stage-fact.mjs';
 import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
 import { HEAD, BASE, tempDir, fixtureRecord, signResult } from './resident-v2-fixtures.mjs';
@@ -223,8 +223,11 @@ async function workAdmission(t, { github, answer }) {
   const batchClaims = { read: async j => { try { return await readBatchClaim(dir, j); } catch (e) { if (e.code === 'BATCH_CLAIM_MISSING') return null; throw e; } }, record: (j, cl, at) => recordBatchClaim(dir, j, cl, at) };
   const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
   const admission = fakeAdmission((job, packet, opts, n) => answer(job, c, packet, opts, n));
-  const pub = createFixtureWorkAdmissionPublisherV2({ github, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaims });
-  return { pub, job: jobs['work-admission'], journal, admission };
+  // Generation 10: the bounded re-reads of the verification after the write wait through this stub (no real 100 s here).
+  const sleeps = [], records = [];
+  const pub = createFixtureWorkAdmissionPublisherV2({ github, journal, admission, assertLive() {}, record: (k, v) => { records.push([k, v]); }, authority: {}, batchClaims,
+    sleep: async ms => { sleeps.push(ms); } });
+  return { pub, job: jobs['work-admission'], journal, admission, sleeps, records };
 }
 const okAnswer = (job, c, packet, opts) => admitted(job, c, packet, { batchClaim: opts.batchClaim });
 
@@ -246,25 +249,65 @@ test('work admission v2: a 5xx that outlives the read retry BEFORE any write is 
   assert.equal(refusalSafeToRerun({ step: 'boundary', claimed: { claimId: 'x' }, reason: 'github_http_502', diagnostic: null }), false);
 });
 
-test('work admission v2: a 5xx AFTER the write withdraws the check as "verification unavailable", never as "authorization changed"', async t => {
+test('work admission v2 (gen 10): one 5xx AFTER the write is read again after a back-off and the check settles; nothing is withdrawn', async t => {
   const github = fakeGithub();
-  const { pub, job } = await workAdmission(t, { github, answer: okAnswer });
+  const { pub, job, sleeps, records } = await workAdmission(t, { github, answer: okAnswer });
   github.onCreate(() => github.failReads('github_http_502')); // the first read after the write fails, as in PR #992
-  // the withdrawal's own identity read must work: let reads through once the failing one has been seen
-  let failures = 0; const readChecks = github.readChecks.bind(github), readChangedPaths = github.readChangedPaths.bind(github);
+  let failures = 0; const readChangedPaths = github.readChangedPaths.bind(github);
   github.readChangedPaths = async j => { try { return await readChangedPaths(j); } catch (e) { failures++; github.failReads(null); throw e; } };
-  github.readChecks = async h => readChecks(h);
   const r = await pub.publish(job);
   assert.equal(failures, 1);
-  assert.deepEqual([r.status, r.reason, r.sideEffects], ['REVOKED', 'github_http_502', 2], JSON.stringify(r));
-  assert.equal(github.checks.length, 1);
-  const c = github.checks[0];
-  assert.equal(c.conclusion, 'failure');
-  assert.doesNotMatch(c.output.title, /authorization changed/);
-  assert.match(c.output.title, /withdrawn: verification unavailable/);
-  assert.match(c.output.summary, /github_http_502/);
-  assert.match(c.output.summary, /no change of it was observed/);
-  assert.equal(outcomeFailureCode(r, 1), 'PUBLICATION_REVOKED', 'a failure check stands on the head: the head is burned, as the iron rule says');
+  assert.deepEqual([r.status, r.sideEffects, github.checks.length, github.checks[0].conclusion], ['SETTLED', 1, 1, 'success'], JSON.stringify(r));
+  assert.deepEqual(sleeps, [VERIFY_REREAD_DELAYS_MS[0]]);
+  assert.deepEqual(records.filter(([k]) => k === 'native_check_verify_retry').map(([, v]) => [v.attempt, v.delayMs, v.cause]), [[1, 10_000, 'github_http_502']]);
+});
+
+test('work admission v2 (gen 10): Native unreadable after the write (full_admission_unavailable) once: read again, settled', async t => {
+  const github = fakeGithub();
+  const { pub, job, sleeps } = await workAdmission(t, { github, answer: (j, c, packet, opts, n) => (n === 2 ? blocked('full_admission_unavailable') : admitted(j, c, packet, { batchClaim: opts.batchClaim })) });
+  const r = await pub.publish(job);
+  assert.deepEqual([r.status, github.checks[0].conclusion, sleeps.length], ['SETTLED', 'success', 1], JSON.stringify(r));
+});
+
+test('work admission v2 (gen 10): still unreadable after the bounded re-reads: withdrawn as "verification unavailable"; stage 1 maps it to the transient ADMISSION_VERIFICATION_UNAVAILABLE', async t => {
+  assert.deepEqual([...VERIFY_REREAD_DELAYS_MS], [10_000, 30_000, 60_000]);
+  for (const [label, setup] of [
+    ['github_http_502', g => { g.onCreate(() => { const rp = g.readChangedPaths.bind(g); g.readChangedPaths = async () => { throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); }; void rp; }); return null; }],
+    ['full_admission_unavailable', () => (j, c, packet, opts, n) => (n >= 2 ? blocked('full_admission_unavailable') : admitted(j, c, packet, { batchClaim: opts.batchClaim }))]]) {
+    const github = fakeGithub();
+    const answer = setup(github) ?? okAnswer;
+    const { pub, job, sleeps, admission } = await workAdmission(t, { github, answer });
+    const r = await pub.publish(job);
+    assert.deepEqual([r.status, r.reason, r.sideEffects], ['REVOKED', label, 2], `${label} ${JSON.stringify(r)}`);
+    assert.deepEqual(sleeps, [...VERIFY_REREAD_DELAYS_MS], label);
+    if (label === 'full_admission_unavailable') assert.equal(admission.calls, 1 + 1 + VERIFY_REREAD_DELAYS_MS.length, 'the verification is done again from the start every time');
+    const c = github.checks[0];
+    assert.equal(c.conclusion, 'failure');
+    assert.match(c.output.title, /withdrawn: verification unavailable/);
+    assert.match(c.output.summary, /no change of it was observed/);
+    assert.equal(outcomeFailureCode(r, 1), 'ADMISSION_VERIFICATION_UNAVAILABLE', 'stage 1: transient, the resident schedules attempt 2');
+    for (const stage of [3, 5, 7, 8]) assert.equal(outcomeFailureCode(r, stage), 'PUBLICATION_REVOKED', `stage ${stage}: a role check is on the head`);
+  }
+  // only the "could not read" causes; a real change stays PUBLICATION_REVOKED even at stage 1
+  for (const reason of ['NATIVE_AUTHORIZATION_BINDING_CHANGED', 'NATIVE_CHECK_READBACK_UNCONFIRMED', 'github_http_429', 'github_http_501', 'NATIVE_OBSERVATION_EXPIRED_AFTER_WRITE'])
+    assert.equal(outcomeFailureCode({ status: 'REVOKED', reason, sideEffects: 2 }, 1), 'PUBLICATION_REVOKED', reason);
+  assert.ok(TRANSIENT_CODES.includes('ADMISSION_VERIFICATION_UNAVAILABLE'));
+});
+
+test('work admission v2 (gen 10): the re-read wait ends with the stage (assertLive); the delays are validated', async t => {
+  const github = fakeGithub();
+  const jobs = jobsFor(), c = claim(), dir = await tempDir(t);
+  const batchClaims = { read: async j => { try { return await readBatchClaim(dir, j); } catch (e) { if (e.code === 'BATCH_CLAIM_MISSING') return null; throw e; } }, record: (j, cl, at) => recordBatchClaim(dir, j, cl, at) };
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  let dead = false; const sleeps = [];
+  const admission = fakeAdmission((job, packet, opts, n) => (n >= 2 ? blocked('full_admission_unavailable') : admitted(job, c, packet, { batchClaim: opts.batchClaim })));
+  const pub = createFixtureWorkAdmissionPublisherV2({ github, journal, admission, assertLive() { if (dead) throw Object.assign(new Error('STAGE_DEADLINE'), { code: 'STAGE_DEADLINE' }); }, record() {}, authority: {}, batchClaims,
+    sleep: async ms => { sleeps.push(ms); dead = true; } });
+  const r = await pub.publish(jobs['work-admission']);
+  assert.deepEqual(sleeps, [10_000], 'one wait, then the stage was over');
+  assert.notEqual(r.status, 'SETTLED');
+  for (const bad of [[0], [-1], [1.5], [120_001], [1, 2, 3, 4, 5, 6, 7], 'x'])
+    assert.throws(() => createFixtureWorkAdmissionPublisherV2({ github, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaims, verifyRereadDelaysMs: bad }), { code: 'WORK_ADMISSION_PUBLISHER_CONFIGURATION_REFUSED' });
 });
 
 test('work admission v2: a real authorization change after the write still says "authorization changed"', async t => {

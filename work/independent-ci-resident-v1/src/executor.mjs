@@ -124,7 +124,7 @@ import { Ledger, MAX_TRIES, QUOTA_TIER_EVALUATION, batchKey, headKey } from './l
 import { ABORTABLE_IN_FLIGHT, BRIDGE_ABANDONED_UNPUBLISHED, NOT_ADMITTED_CODES, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, failureRow,
   proofComplete, scannerAbandonEligible } from './classify.mjs';
 import { parseTrigger } from './trigger.mjs';
-import { POSITIONS, breakerGate, breakerOf, breakerRecord, breakerView, positionOf } from './breaker.mjs';
+import { POSITIONS, breakerGate, breakerOf, breakerProbe, breakerRecord, breakerRelease, breakerView, positionOf } from './breaker.mjs';
 import { batchBudgetMs } from './policy.mjs';
 import { attempt2Decision, attempt2Subject } from './attempts.mjs';
 import { decide, parseHint, HEAVY_ROLES, RELAY_ROLES } from './hosted-wait.mjs';
@@ -150,6 +150,8 @@ export const REARM_CONTRACT = 'clued.independent-ci.resident-owner-rearm/1';
 export const DRAIN_CONTRACT = 'clued.independent-ci.resident-owner-drain-parked/1';
 export const RESUME_CONTRACT = 'clued.independent-ci.resident-owner-resume/1';
 export const ABORT_CONTRACT = 'clued.independent-ci.resident-owner-abort/1';
+// Generation 10 (DESIGN 53.4): the Owner's early release of an open breaker (rearm-resident.ps1 -Request ReleaseBreaker -Reason ...).
+export const BREAKER_RELEASE_CONTRACT = 'clued.independent-ci.resident-owner-breaker-release/1';
 // In-place upgrade channel (Task 018da927, DESIGN §34; frozen observation surface A11): the upgrader (CluedCIUpgrader, LocalSystem)
 // lifts the PAUSE it set for an upgrade through the admin-only owner\ directory, by the exact PAUSED.json bytes it saw. Taken from
 // owner\ only (never from the user-writable requests\, where its contract is no pause and is rejected); its receipt is
@@ -350,12 +352,16 @@ export class ResidentExecutor {
   //   intakePause (optional): intake-pause.mjs#IntakePause; opened from the ledger's state directory when not given.
   //   versions (optional): async () -> { view, notices } (status.mjs#readVersionState; DESIGN §34): status /7 `versions`, the
   //     upgrade notices and the version-skew hold. Without it the executor shows no versions and holds nothing for them.
+  //   statusFlush (optional): async () -> writes status.json now (service-main.mjs: the status timer's flush). Generation 10 (DESIGN
+  //     53.5): called when a batch is claimed and when a breaker trial starts, so the board never shows the breaker open after its
+  //     trial began. Without it the status timer writes within its 15 seconds as before.
   constructor(ports) {
     //   queue: queue.mjs#RunQueue (the run queue and the breaker's state; a view the ledger always overrules).
     for (const k of EXECUTOR_PORTS) check(ports[k], 'EXECUTOR_PORT_MISSING', k);
     Object.assign(this, ports);
     this.sleep ??= ms => new Promise(r => setTimeout(r, ms));
     this.status ??= NO_STATUS;
+    this.statusFlush ??= null;
     this.ownerReadFailures = new Map();
     this.intakeRequestFailures = new Map();
     this.deferralReceipts = new Set(); // `${reason}:${day}` of the global deferrals already receipted (deferral())
@@ -515,6 +521,43 @@ export class ResidentExecutor {
   }
 
   receipt(type, body) { return this.receipts.append(type, body); }
+  // Generation 10 (DESIGN 53.5): status.json written now, not at the timer's next beat. A failure changes nothing (the timer still runs).
+  async flushStatus() { try { await this.statusFlush?.(); } catch { /* advisory */ } }
+
+  // Generation 10 (DESIGN 53.4): a read-only probe (the role probe, a stage-10 run) told the breaker whether the outside answered. Only an
+  // open breaker of cause network listens (breaker.mjs#breakerProbe); enough probes in a row bring its trial forward to now. A view: a
+  // failure here changes nothing the probe did.
+  async noteBreakerProbe(ok, probe) {
+    try {
+      const b = breakerOf(this.queue.breaker);
+      this.queue.breaker = b;
+      if (b.state !== 'open') return null;
+      const now = this.clock(), before = b.nextTrialAt;
+      const t = breakerProbe(b, ok, this.policy, now);
+      if (t === 'early-trial') {
+        await this.receipt('breaker-early-trial', { probe, level: b.level, cause: b.cause ?? null, previousNextTrialAt: new Date(before).toISOString(), nextTrialAt: new Date(b.nextTrialAt).toISOString() });
+      }
+      await this.persistQueue();
+      this.reportQueue();
+      return t;
+    } catch { return null; }
+  }
+
+  // Generation 10 (DESIGN 53.4): the Owner's release of an open breaker. Its trial is due now; nothing else changes (the trial must still
+  // get past the failing place to close it). A breaker that is not open is refused (BREAKER_NOT_OPEN), so a stale request does nothing.
+  async releaseBreaker({ reason, by }) {
+    const b = breakerOf(this.queue.breaker);
+    this.queue.breaker = b;
+    const r = breakerRelease(b, this.clock());
+    check(r.released === true, r.code ?? 'BREAKER_NOT_OPEN');
+    // Like every breaker change the queue file is a view: the release is in force in memory now; a file that cannot be written now
+    // is written by the next batch end (the trial itself), never a reason to refuse what already took effect.
+    await this.persistQueue();
+    this.reportQueue();
+    await this.flushStatus();
+    return { by, reason, level: r.level, cause: r.cause, openedAt: Number.isSafeInteger(r.openedAt) ? new Date(r.openedAt).toISOString() : null,
+      previousNextTrialAt: new Date(r.previousNextTrialAt).toISOString(), nextTrialAt: new Date(b.nextTrialAt).toISOString() };
+  }
 
   // The status board is a view: a failure to update it never changes what the executor does.
   report(fn) { try { fn(this.status); } catch { /* advisory */ } }
@@ -623,6 +666,10 @@ export class ResidentExecutor {
         } else if (v.contract === ABORT_CONTRACT) {
           abortKey = validateAbortRequest(v).batchKey;
           outcome = { kind: 'abort', ...(await this.abortAtTickStart(v, requestSha256, entry.name)) };
+        } else if (v.contract === BREAKER_RELEASE_CONTRACT) {
+          exactKeys(v, ['contract', 'reason', 'by', 'requestedAt', 'nonce'], 'OWNER_REQUEST_REFUSED');
+          check(SID.test(v.by) && NONCE.test(v.nonce) && !Number.isNaN(Date.parse(v.requestedAt)) && typeof v.reason === 'string' && v.reason.length > 0 && v.reason.length <= 200, 'OWNER_REQUEST_REFUSED');
+          outcome = { kind: 'breaker-release', ...(await this.releaseBreaker(v)) };
         } else if (v.contract === DRAIN_CONTRACT) {
           exactKeys(v, ['contract', 'reason', 'by', 'requestedAt', 'nonce'], 'OWNER_REQUEST_REFUSED');
           check(SID.test(v.by) && NONCE.test(v.nonce) && !Number.isNaN(Date.parse(v.requestedAt)) && typeof v.reason === 'string' && v.reason.length > 0 && v.reason.length <= 200, 'OWNER_REQUEST_REFUSED');
@@ -1442,6 +1489,8 @@ export class ResidentExecutor {
         if (fact.result === 'not-held') await this.setNodeMode('STANDBY', 'probe-not-held');
       }
       await this.receipt('role-probe-result', { intentSeq: intent.seq, deferred, ok: !!fact, fact, state: this.roleProbe.snapshot() });
+      // Generation 10: a probe that got a fact reached the outside (any result: an answer is an answer); one that did not, did not.
+      if (!deferred) await this.noteBreakerProbe(!!fact, 'role-probe');
       if (fact?.result === 'held') await this.setNodeMode('ACTIVE', 'probe-held');
       return !deferred && !fact ? { state: 'HALTED', failureCode: 'ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED' } : null;
     } finally { this.roleProbeRunning = false; }
@@ -1699,6 +1748,8 @@ export class ResidentExecutor {
       if (clean && summary.front?.pr) await this.hintParkedHead(summary.front);
     }
     await this.trainDutySave();
+    // Generation 10: stage 10 read the merge queue and main from GitHub when it brought a summary back.
+    if (clean) await this.noteBreakerProbe(summary !== null, 'train-run');
     return clean ? null : { state: 'HALTED', failureCode: haltCode };
   }
 
@@ -2123,6 +2174,9 @@ export class ResidentExecutor {
       this.reportQueue();
       return { state: 'DEFERRED', reason: 'BREAKER_OPEN', until: gate.until };
     }
+    // Generation 10 (DESIGN 53.5): the gate moved an open breaker whose trial time came to half-open: the board says so at once (before:
+    // it kept "open, trial at <a time already past>" until the batch ended).
+    if (gate.trial) { await this.persistQueue(); this.reportQueue(); await this.flushStatus(); }
     // One trial at a time: while a batch rests at parking point A, a half-open breaker starts none (review m11).
     if (gate.trial && (await this.parkedCounts(entries.filter(e => Ledger.waitingAt(e)))).inside > 0) {
       await this.persistQueue();
@@ -2370,6 +2424,11 @@ export class ResidentExecutor {
     let outcome;
     this.current = { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, attempt: subject.attempt, since: new Date(this.clock()).toISOString() };
     this.atStage(0, 'derive');
+    // Generation 10 (DESIGN 53.5): the claimed batch, its queue row RUNNING and the executor RUNNING are on the board now, not after the
+    // batch (the companion posts the PR page from it; companion-main.mjs posts again as soon as it sees the change).
+    this.report(s => s.setState('RUNNING', null));
+    this.reportQueue();
+    await this.flushStatus();
     try {
       outcome = await this.drive(key, subject, t0, b => { batch = b; });
       if (outcome instanceof StepFailure) outcome = await this.fail(key, batch, outcome);
@@ -2421,9 +2480,10 @@ export class ResidentExecutor {
       const environment = ['environment', 'transient'].includes(s?.klass);
       const b = breakerOf(this.queue.breaker);
       this.queue.breaker = b;
-      // This release counts towards the head's cap unless it is a wait, a supersession, or an environment fault while
-      // the breaker is not closed (ledger.mjs#usage counts the same way; the tick's usage is from before this batch).
-      const counted = s?.kind === 'released' && s.klass !== 'waiting' && s.klass !== 'node-role' && s.reason !== 'SUPERSEDED' && !(environment && s.breakerState !== 'closed');
+      // This release counts towards the head's cap unless it is a wait, a supersession, a node-role release or an environment fault
+      // (generation 10, DESIGN 53.3: whatever the breaker's state; ledger.mjs#usage counts the same way; the tick's usage is from before
+      // this batch).
+      const counted = s?.kind === 'released' && s.klass !== 'waiting' && s.klass !== 'node-role' && s.reason !== 'SUPERSEDED' && !environment;
       const releases24h = (this.tickUsage?.releasesByHead.get(subject.headSha) ?? 0) + (counted ? 1 : 0);
       const ciRetryAfter = typeof s?.ciRetryAfter === 'string' && Number.isFinite(Date.parse(s.ciRetryAfter)) ? Date.parse(s.ciRetryAfter) : null;
       const settled = this.queue.settle(subject.pr, subject.headSha, s ? { kind: s.kind, code: s.code ?? null, klass: s.klass ?? null, reason: s.reason ?? null, ciRetryAfter,

@@ -115,11 +115,21 @@ test('build-bundle: a seeded attempt is a fresh bare repository primed by a loca
   for (const k of ['SEED_PATH_NOT_REAL_DIRECTORY', 'SEED_UNEXPECTED_ENTRY', 'SEED_HOOKS_PRESENT', 'SEED_CONFIG_REFUSED', 'SEED_LAYOUT_REFUSED']) assert.ok(text.includes(`'${k}'`), k);
 });
 
-test('build-bundle: a seed can add an attempt but never a refusal: no seeded last attempt, SEED_UNUSABLE is retried unseeded, a GIT_STEP_FAILED retry is unseeded', () => {
+test('build-bundle: a seed can add an attempt but never a refusal: no seeded last attempt, SEED_UNUSABLE is retried unseeded, a network retry is seeded (gen 10)', () => {
   assert.ok(text.includes('$script:seedAttempt=($script:seedUse -and $n -le ($MaxStoreAttempts-2))'));
   assert.equal(text.match(/Build-Store \$/g).length, 1);
   assert.ok(text.includes("if($Reason -ceq 'SEED_UNUSABLE'){"));
-  assert.ok(text.includes("if($Reason -ceq 'GIT_STEP_FAILED'){$script:seedUse=$false;"));
+  // Generation 10 (resident DESIGN 53.2): a network failure no longer turns the seed off for the retry; the retry may turn it ON (a seed
+  // that passed its shape check), and every network failure of a GitHub step is noted in the meta for the next builds.
+  assert.ok(!text.includes("if($Reason -ceq 'GIT_STEP_FAILED'){$script:seedUse=$false;"));
+  assert.ok(text.includes("if($network){$networkRetried=$true;Seed-After-Network-Failure}"));
+  assert.ok(text.includes("if(Network-Step-Failed $reason $script:lastGit){Seed-Note-Network-Failure}"));
+  const after = text.slice(text.indexOf('function Seed-After-Network-Failure'), text.indexOf('# Inside a seeded attempt'));
+  assert.ok(after.includes('-not $script:seedAvailable -or $script:seedBusy -or -not (Test-Path -LiteralPath $SeedDir)'), 'only a seed that passed its shape check, not busy, still there');
+  assert.ok(text.includes('$SeedAfterNetworkFailureSeconds=21600'));
+  // the note is advisory and best effort: never a refusal (its own try/catch, the lock not waited for)
+  const note = text.slice(text.indexOf('function Seed-Note-Network-Failure'), text.indexOf('function Seed-After-Network-Failure'));
+  assert.ok(note.includes('}catch{}finally{if($locked){Seed-Unlock}}') && note.includes('$locked=Seed-Lock;if(-not $locked){return}') && !/throw/.test(note));
   // SEED_UNUSABLE is thrown only from the seed's own steps
   const thrown = [...text.matchAll(/throw 'SEED_UNUSABLE'/g)].length;
   assert.equal(thrown, 2);

@@ -19,7 +19,7 @@ import { Poller } from './poller.mjs';
 import { Inbox } from './inbox.mjs';
 import os from 'node:os';
 import { readStatus } from './status.mjs';
-import { LocalStore, PrStatusReporter, toastArgv, validateStatusConfig } from './pr-status.mjs';
+import { LocalStore, PrStatusReporter, REPORT_MIN_GAP_MS, reportDue, statusSignature, toastArgv, validateStatusConfig } from './pr-status.mjs';
 import { companionBackstop } from './ruleset-backstop.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
 import { PANEL_REPO, PanelDispatchState, PanelDispatcher, validatePanelDispatchConfig } from './panel-dispatch.mjs';
@@ -289,7 +289,7 @@ export async function main(args = process.argv.slice(2)) {
       state: await PanelDispatchState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-panel-dispatch.json')) })
     : null;
   keepalive(companionArgv(cfg).keepalive());
-  let lastPoll = 0, lastReport = 0, lastBackstop = 0;
+  let lastPoll = 0, lastReport = 0, lastBackstop = 0, lastSignature = null;
   // Only now, with a usable job host and every part of the companion set up: a companion whose job host cannot start a
   // child, or whose set-up failed, sends no heartbeat, so the service starts no batch (DESIGN §24; design r3 review MINOR 1;
   // r3 implementation review MAJOR 2). The beat stops with the lanes; the entry below exits outright, so no timer keeps a
@@ -316,11 +316,18 @@ export async function main(args = process.argv.slice(2)) {
           lastBackstop = Date.now();
           try { await companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), store }); } catch { /* next time */ }
         }
-        if (Date.now() - lastReport > REPORT_EVERY_MS) {
-          lastReport = Date.now();
+        // Generation 10 (DESIGN 53.5): status.json is read every REPORT_MIN_GAP_MS; the PR page is posted every minute as before, and also
+        // at once when the batch, its stage, the breaker or HALT/PAUSE changed (a claimed batch or a started trial is on the page within
+        // seconds, not after the next minute or the batch's end). reporter.pass still writes only what changed, within its own bounds.
+        if (Date.now() - lastReport > REPORT_MIN_GAP_MS) {
           let status = null, statusError = false;
           try { status = await readStatus(values.root); } catch { statusError = true; }
-          try { await reporter.pass({ pulls: poller.lastPass?.pulls ?? [], status, statusError }); } catch { /* advisory: the next minute tries again */ }
+          const signature = statusSignature(status);
+          if (reportDue({ now: Date.now(), lastReport, lastSignature, signature, everyMs: REPORT_EVERY_MS })) {
+            lastReport = Date.now();
+            lastSignature = signature;
+            try { await reporter.pass({ pulls: poller.lastPass?.pulls ?? [], status, statusError }); } catch { /* advisory: the next minute tries again */ }
+          }
         }
       } }),
     ]);

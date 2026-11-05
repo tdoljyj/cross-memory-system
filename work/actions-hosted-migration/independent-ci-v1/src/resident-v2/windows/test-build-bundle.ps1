@@ -9,11 +9,12 @@ $t=$null;$e=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($tool,
 $ReviewedPrefix='refs/reviewed/';$TestPrefix='refs/clued-test/'
 foreach($name in @('Utc','Hash-Bytes','Hash-Text','Absent','Quote-Arg','Invoke-Git','Assert-FormalRefName','New-RefMap','Split-Refs','Ref-Map','Same-Map','Ref-List-Sha','Reviewed-Map','Reviewed-Commits','Bundle-Header',
   'Ref-Diff','Build-Store','Retry-Allowed','Race-Retry-Allowed','Fetch-Store','Branch-Only-Hint',
-  'Remove-Tree','Test-RealDir','Seed-Lock','Seed-Unlock','Seed-Shape-Problem','Seed-Discard','Seed-Meta-Read','Unix-Now','Seed-Wanted','Seed-Begin','Seed-Prime','Seed-Drop-Refs','Seed-Failure','Seed-Error-Text','Seed-Bytes','Seed-Update')){
+  'Remove-Tree','Test-RealDir','Seed-Lock','Seed-Unlock','Seed-Shape-Problem','Seed-Discard','Seed-Meta-Read','Unix-Now','Seed-Wanted','Seed-Begin','Seed-Prime','Seed-Drop-Refs','Seed-Failure','Seed-Error-Text','Seed-Bytes','Seed-Update',
+  'Seed-Meta-Object','Seed-Meta-Failure-At','Seed-Note-Network-Failure','Seed-After-Network-Failure','Network-Step-Failed')){
  $f=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -ceq $name});if($f.Count -ne 1){throw ('FUNCTION_MISSING:'+$name)};. ([scriptblock]::Create($f[0].Extent.Text))
 }
 # The fixed values exactly as the script assigns them.
-foreach($name in @('Common','NetworkSteps','RetryWithinSeconds','MaxStoreAttempts','SeedNs','SeedMetaContract','SeedMinFullFetchSeconds','SeedConfigKeys','seedUse','seedAttempt','seedBusy','seedLockHeld','seedReport')){
+foreach($name in @('Common','NetworkSteps','RetryWithinSeconds','MaxStoreAttempts','SeedNs','SeedMetaContract','SeedMinFullFetchSeconds','SeedConfigKeys','seedUse','seedAttempt','seedBusy','seedLockHeld','seedAvailable','seedReport','SeedAfterNetworkFailureSeconds')){
  $s=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -ceq ('$'+$name)});if($s.Count -ne 1){throw ('ASSIGNMENT_MISSING:'+$name)};. ([scriptblock]::Create($s[0].Extent.Text))
 }
 $FixedCommon=[string[]]$Common
@@ -136,7 +137,7 @@ if($git){
    $script:FetchDir=Join-Path $script:Root 'fetch.git';$script:FetchDir2=Join-Path $script:Root 'fetch-2.git';$script:FetchDir3=Join-Path $script:Root 'fetch-3.git'
    $script:stalls=$Stalls;$script:calls=@();$script:created=@();$script:lastGit=$null;$script:stage='x';$script:attempts=1;$script:firstAttempt=$null;$script:failedAttempts=@()
    $script:Head=$c2;$script:Base=$c1;$script:Test=$c2
-   $script:seedUse=$false;$script:seedAttempt=$false;$script:seedBusy=$false;$script:seedLockHeld=$false;$script:seedReport=[ordered]@{enabled=$true;used=$false;reason=$null;discarded=$false;primeSeconds=$null;updated=$false;updateSkipped=$null;seedBytes=$null;error=$null}
+   $script:seedUse=$false;$script:seedAttempt=$false;$script:seedBusy=$false;$script:seedLockHeld=$false;$script:seedAvailable=$false;$script:seedReport=[ordered]@{enabled=$true;used=$false;reason=$null;discarded=$false;primeSeconds=$null;updated=$false;updateSkipped=$null;seedBytes=$null;error=$null;networkFailureNoted=$false}
    $script:Clock=if($null -eq $Elapsed){[Diagnostics.Stopwatch]::StartNew()}else{[pscustomobject]@{Elapsed=[TimeSpan]::FromSeconds($Elapsed)}}
   }
   function Fetches{return @($script:calls|Where-Object{$_ -ceq 'fetch'}).Count}
@@ -229,8 +230,8 @@ if($git){
    $st=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -ceq ('$'+$name)});if($st.Count -ne 1){throw ('ASSIGNMENT_MISSING:'+$name)};$consts[$name]=$st[0].Right.Extent.Text}
   $SeedMetaMaxAgeSeconds=86400
   function Reset-Seed{
-   $script:seedUse=$false;$script:seedAttempt=$false;$script:seedBusy=$false;$script:seedLockHeld=$false
-   $script:seedReport=[ordered]@{enabled=$true;used=$false;reason=$null;discarded=$false;primeSeconds=$null;updated=$false;updateSkipped=$null;seedBytes=$null;error=$null}
+   $script:seedUse=$false;$script:seedAttempt=$false;$script:seedBusy=$false;$script:seedLockHeld=$false;$script:seedAvailable=$false
+   $script:seedReport=[ordered]@{enabled=$true;used=$false;reason=$null;discarded=$false;primeSeconds=$null;updated=$false;updateSkipped=$null;seedBytes=$null;error=$null;networkFailureNoted=$false}
    if(Test-Path -LiteralPath $SeedRoot){Remove-Tree $SeedRoot}
   }
   function Write-Meta([int]$Seconds,[long]$At){[void][IO.Directory]::CreateDirectory($SeedRoot);[IO.File]::WriteAllText($SeedMeta,(([ordered]@{contract=$SeedMetaContract;updatedAt=(Utc);lastFullFetchSeconds=$Seconds;lastFullFetchAtUnix=$At}|ConvertTo-Json -Compress)+"`n"))}
@@ -248,6 +249,14 @@ if($git){
   Yes ((-not (Seed-Wanted (& $mk 89 $u) $now).use) -and (Seed-Wanted (& $mk 89 $u) $now).reason -ceq 'NETWORK_FAST') 'seed-not-wanted-fast'
   Yes ((-not (Seed-Wanted (& $mk 500 ($u-86401)) $now).use) -and (Seed-Wanted (& $mk 500 ($u-86401)) $now).reason -ceq 'REMEASURE_DUE') 'seed-not-wanted-stale'
   Yes ((Seed-Wanted (& $mk 500 ($u-86399)) $now).use) 'seed-wanted-just-fresh'
+  # generation 10: a network failure noted in the last 6 hours turns the seed on over a fast or an old measurement; an older or a future one does not
+  Yes ($SeedAfterNetworkFailureSeconds -eq 21600) 'seed-after-network-failure-window'
+  $w=Seed-Wanted (& $mk 30 $u) $now ($u-60);Yes ($w.use -and $w.reason -ceq 'RECENT_NETWORK_FAILURE') 'seed-wanted-after-network-failure-over-fast'
+  $w=Seed-Wanted (& $mk 30 ($u-86401)) $now ($u-21600);Yes ($w.use -and $w.reason -ceq 'RECENT_NETWORK_FAILURE') 'seed-wanted-after-network-failure-over-remeasure'
+  $w=Seed-Wanted $null $now ($u-1);Yes ($w.use -and $w.reason -ceq 'RECENT_NETWORK_FAILURE') 'seed-wanted-after-network-failure-without-measurement'
+  $w=Seed-Wanted (& $mk 30 $u) $now ($u-21601);Yes ((-not $w.use) -and $w.reason -ceq 'NETWORK_FAST') 'seed-network-failure-aged-out'
+  $w=Seed-Wanted (& $mk 30 $u) $now ($u+600);Yes ((-not $w.use) -and $w.reason -ceq 'NETWORK_FAST') 'seed-network-failure-in-the-future-ignored'
+  $w=Seed-Wanted (& $mk 30 $u) $now;Yes ((-not $w.use) -and $w.reason -ceq 'NETWORK_FAST') 'seed-wanted-two-argument-form-unchanged'
 
   # S2. no seed: nothing changes (unseeded store, no seed call), then the verified store makes the seed and its measurement
   Reset-Seed;New-Case @{} $null;Seed-Begin
@@ -338,10 +347,49 @@ if($git){
   Remove-Item -LiteralPath $SeedLock -Force
   Seed-Discard 'SEED_TEST';Yes ($seedReport.discarded -and -not (Test-Path -LiteralPath $SeedDir) -and -not (Test-Path -LiteralPath $SeedLock) -and -not $seedLockHeld) 'discard-takes-and-releases-the-lock'
 
-  # S6. the retry rules with a seed. A stalled GitHub fetch of a seeded attempt: the retry is unseeded, the seed stays.
+  # S6. the retry rules with a seed. Generation 10 (DESIGN 53.2): a stalled GitHub fetch of a seeded attempt is retried WITH the seed
+  # (before: unseeded, the whole repository again over the same failing line); the failure is noted in the meta for the next builds.
   Reset-Seed;New-Case @{} $null;$st=Fetch-Store;Seed-Update $st;Slow-Meta
   New-Case @{fetch=1} $null;Seed-Begin;$s=Fetch-Store
-  Yes ($s.dir -ceq $FetchDir2 -and $attempts -eq 2 -and $s.unseeded -eq $true -and @($calls|Where-Object{$_ -ceq 'seed-fetch'}).Count -eq 1 -and (Test-Path -LiteralPath $SeedDir) -and $firstAttempt.git.label -ceq 'fetch') 'stall-then-unseeded-retry'
+  Yes ($s.dir -ceq $FetchDir2 -and $attempts -eq 2 -and $s.unseeded -eq $false -and @($calls|Where-Object{$_ -ceq 'seed-fetch'}).Count -eq 2 -and (Test-Path -LiteralPath $SeedDir) -and $firstAttempt.git.label -ceq 'fetch' -and (Same-Map $s.remote $expected) -and $s.expectedReviewed.Count -eq 1) ('stall-then-seeded-retry:'+(@($calls)-join ','))
+  $nm=Seed-Meta-Object;Yes ($seedReport.networkFailureNoted -and $null -ne $nm -and [long]$nm.lastNetworkFailureAtUnix -ge (Unix-Now ([DateTime]::UtcNow))-60 -and $nm.lastFullFetchSeconds -eq 500) 'stall-noted-in-meta-measurement-kept'
+  Yes (Git-Ok @(('--git-dir='+$s.dir),'fsck','--full','--strict')) 'seeded-retry-store-fsck'
+  # N1. a fast measured network (seed off) whose fetch fails: the retry turns the seed on; the next build uses it too
+  Reset-Seed;New-Case @{} $null;$st=Fetch-Store;Seed-Update $st
+  New-Case @{fetch=1} $null;Seed-Begin;Yes ((-not $seedUse) -and $seedAvailable -and $seedReport.reason -ceq 'NETWORK_FAST') 'fast-network-seed-available-not-used'
+  $s=Fetch-Store
+  Yes ($attempts -eq 2 -and $s.unseeded -eq $false -and $seedReport.used -and $seedReport.reason -ceq 'SEEDED_AFTER_NETWORK_FAILURE' -and @($calls|Where-Object{$_ -ceq 'seed-fetch'}).Count -eq 1 -and $failedAttempts[0].git.label -ceq 'fetch' -and (Same-Map $s.remote $expected)) ('network-failure-turns-seed-on:'+(@($calls)-join ','))
+  Seed-Update $s;Yes ($seedReport.updated -and $null -ne (Seed-Meta-Failure-At)) 'seed-update-keeps-network-failure-note'
+  New-Case @{} $null;Seed-Begin;Yes ($seedUse -and $seedReport.reason -ceq 'RECENT_NETWORK_FAILURE') 'next-build-seeded-after-network-failure'
+  $s=Fetch-Store;Yes ($attempts -eq 1 -and $s.unseeded -eq $false -and (Same-Map $s.remote $expected)) 'next-build-seeded-store'
+  # N2. no seed at all: the retry is unseeded as before; the failure is still noted (the seed root is made), and the seed the
+  #     successful build makes is used by the next build
+  Reset-Seed;New-Case @{fetch=1} $null;Seed-Begin;$s=Fetch-Store
+  Yes ($attempts -eq 2 -and $s.unseeded -eq $true -and -not $seedReport.used -and $seedReport.networkFailureNoted -and $null -ne (Seed-Meta-Failure-At) -and $null -eq (Seed-Meta-Read)) 'no-seed-network-failure-noted'
+  Seed-Update $s;$nm=Seed-Meta-Object;Yes ($seedReport.updated -and $nm.lastFullFetchSeconds -ge 0 -and $null -ne $nm.lastNetworkFailureAtUnix) 'first-seed-keeps-note'
+  New-Case @{} $null;Seed-Begin;Yes ($seedUse -and $seedReport.reason -ceq 'RECENT_NETWORK_FAILURE') 'first-seed-used-after-network-failure'
+  # N3. both attempts fail on the network: the answer is the second failure (never a third attempt), the retry was seeded, the note is there
+  Reset-Seed;New-Case @{} $null;$st=Fetch-Store;Seed-Update $st
+  New-Case @{fetch=2} $null;Seed-Begin
+  Refused-With {Fetch-Store} 'GIT_STEP_FAILED' 'network-twice-final'
+  Yes ($attempts -eq 2 -and (Fetches) -eq 2 -and @($calls|Where-Object{$_ -ceq 'seed-fetch'}).Count -eq 1 -and @($failedAttempts).Count -eq 1 -and $seedReport.networkFailureNoted -and (Test-Path -LiteralPath $SeedDir)) 'network-twice-seeded-retry-noted'
+  # N4. the seed of the network retry is damaged: SEED_UNUSABLE, the seed is discarded, an unseeded third attempt builds the store;
+  #     the network-failure note outlives the discarded seed
+  Reset-Seed;New-Case @{} $null;$st=Fetch-Store;Seed-Update $st
+  $pack=@(Get-ChildItem -LiteralPath (Join-Path $SeedDir 'objects\pack') -Filter '*.pack')[0];$bytes=[IO.File]::ReadAllBytes($pack.FullName);for($i=40;$i -lt [Math]::Min(200,$bytes.Length);$i++){$bytes[$i]=$bytes[$i] -bxor 0xff};[IO.File]::SetAttributes($pack.FullName,[IO.FileAttributes]::Normal);[IO.File]::WriteAllBytes($pack.FullName,$bytes)
+  New-Case @{fetch=1} $null;Seed-Begin;$s=Fetch-Store
+  Yes ($s.dir -ceq $FetchDir3 -and $attempts -eq 3 -and $s.unseeded -eq $true -and $seedReport.discarded -and -not (Test-Path -LiteralPath $SeedDir) -and (Same-Map $s.remote $expected) -and $failedAttempts[1].stage -ceq 'seed-prime') ('damaged-seed-in-network-retry:'+(@($calls)-join ','))
+  Yes ($null -ne (Seed-Meta-Failure-At) -and $null -eq (Seed-Meta-Read)) 'network-note-outlives-discarded-seed'
+  # N5. the seed lock is held by another build when the failure happens: no note (no error), the retry's seed is busy, the third attempt is unseeded
+  Reset-Seed;New-Case @{} $null;$st=Fetch-Store;Seed-Update $st;[IO.File]::WriteAllText($SeedLock,'held')
+  New-Case @{fetch=1} $null;Seed-Begin;$s=Fetch-Store
+  Yes ($attempts -eq 3 -and $s.unseeded -eq $true -and -not $seedReport.networkFailureNoted -and $seedReport.reason -ceq 'SEED_BUSY' -and (Test-Path -LiteralPath $SeedDir) -and (Same-Map $s.remote $expected)) ('busy-seed-in-network-retry:'+(@($calls)-join ','))
+  Remove-Item -LiteralPath $SeedLock -Force
+  # N6. a failure that is not a network step (the script's own refusal) is never noted
+  Reset-Seed;New-Case @{} $null;$st=Fetch-Store;Seed-Update $st;New-Case @{} $null;$Base=$c2;Seed-Begin
+  Refused-With {Fetch-Store} 'REMOTE_MAIN_BASE_CHANGED' 'refusal-not-noted-final';Yes ((-not $seedReport.networkFailureNoted) -and $null -eq (Seed-Meta-Failure-At)) 'refusal-not-noted'
+  Yes ((Network-Step-Failed 'GIT_STEP_FAILED' (Step 'fetch-reviewed' 128)) -and -not (Network-Step-Failed 'GIT_STEP_FAILED' (Step 'cat-file' 128)) -and -not (Network-Step-Failed 'GIT_STEP_FAILED' (Step 'fetch' 0)) -and -not (Network-Step-Failed 'REMOTE_MAIN_BASE_CHANGED' (Step 'fetch' 128))) 'network-step-failed'
+  Reset-Seed;New-Case @{} $null;$st=Fetch-Store;Seed-Update $st;Slow-Meta
   # refs pushed meanwhile: the retry is seeded again (the seed is not what failed), the third attempt never is
   New-Case @{} $null;$races=1;$seedReport.reason=$null;Seed-Begin;$s=Fetch-Store
   Yes ($attempts -eq 2 -and $s.unseeded -eq $false -and @($calls|Where-Object{$_ -ceq 'seed-fetch'}).Count -eq 2 -and (Same-Map $s.remote $expected)) 'race-retry-seeded-again'
@@ -442,6 +490,21 @@ if($git){
    $out=(& powershell -NoProfile -NonInteractive -File $copy -BatchId $fbatch -Rebundle)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
    Yes ($code -eq 2 -and $v.reason -ceq 'REMOTE_HEAD_MOVED') ('rebundle-head-moved:'+$out)
    & $g update-ref refs/heads/feature $c2
+   # Generation 10 (DESIGN 53.1, 53.2): GitHub unreachable (a closed loopback port, connection refused at once). The refusal the
+   # companion logs carries the codes and counts: reason, stage, the git step, both attempts; the retry used the seed; the meta notes it.
+   $dbatch='0123456789abcdef-dead0000beef';$dob=Join-Path $res ('outbox\'+$dbatch);[void][IO.Directory]::CreateDirectory($dob)
+   $dd=[ordered]@{};foreach($k in $descriptor.Keys){$dd[$k]=$descriptor[$k]};$dd['batchId']=$dbatch;[IO.File]::WriteAllText((Join-Path $dob 'descriptor.json'),($dd|ConvertTo-Json -Compress))
+   $text=[IO.File]::ReadAllText($tool)
+   foreach($pair in @(@("`$Resident='C:\ProgramData\CluedIndependentCI\resident'","`$Resident='$res'"),@("`$Url='https://github.com/tdoljyj/cross-memory-system.git'","`$Url='https://127.0.0.1:1/unreachable.git'"),
+     @("'-c','protocol.https.allow=always'","'-c','protocol.https.allow=always','-c','http.proxy='"),@("`$Git='C:\Program Files\Git\cmd\git.exe'","`$Git='$Git'"))){
+    if(-not $text.Contains($pair[0])){throw ('FIXED_PLACE_MISSING:'+$pair[0])};$text=$text.Replace($pair[0],$pair[1])
+   }
+   $down=Join-Path $tmp 'build-bundle-down.ps1';[IO.File]::WriteAllText($down,$text)
+   $out=(& powershell -NoProfile -NonInteractive -File $down -BatchId $dbatch)-join '';$code=$LASTEXITCODE;$v=$out|ConvertFrom-Json
+   Yes ($code -eq 2 -and $v.status -ceq 'PARTIAL_STATE_PRESERVED_NO_RETRY' -and $v.reason -ceq 'GIT_STEP_FAILED' -and $v.stage -ceq 'fetch-all-heads-and-tags' -and $v.git.label -ceq 'fetch' -and $v.git.exitCode -ne 0) ('network-down-refusal:'+$out)
+   Yes ($v.storeAttempts -eq 2 -and @($v.failedAttempts).Count -eq 1 -and $v.failedAttempts[0].attempt -eq 1 -and $v.failedAttempts[0].reason -ceq 'GIT_STEP_FAILED' -and $v.failedAttempts[0].git.label -ceq 'fetch' -and $v.failedAttempts[0].stage -ceq 'fetch-all-heads-and-tags') ('network-down-attempts:'+$out)
+   Yes ($v.seed.used -eq $true -and $v.seed.networkFailureNoted -eq $true -and $null -eq $v.hint -and $out -cnotmatch '127\.0\.0\.1') ('network-down-seeded-retry-noted-no-url:'+$out)
+   $dm=[IO.File]::ReadAllText((Join-Path $res 'bundles\_seed\seed-meta.json'))|ConvertFrom-Json;Yes ($null -ne $dm.lastNetworkFailureAtUnix -and $dm.lastFullFetchSeconds -eq 500) 'network-down-meta'
   }
  }finally{if($listener){$listener.Stop()};Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue;Remove-Item Env:\GIT_CONFIG_GLOBAL,Env:\GIT_CONFIG_NOSYSTEM -ErrorAction SilentlyContinue}
 }

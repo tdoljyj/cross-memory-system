@@ -216,7 +216,8 @@ export function parseStatus(bytes) {
         at: Date.parse(r.at) || null })) : [],
     limits: v.limits && Number.isSafeInteger(v.limits.batches24h) ? { batches24h: v.limits.batches24h, maxBatches: v.limits.maxBatches, evaluations24h: v.limits.evaluations24h, maxEvaluations: v.limits.maxEvaluations } : null,
     queue: v.queue && /^[0-9a-f]{12}$/.test(v.queue.generation ?? '') ? { generation: v.queue.generation, live: Number.isSafeInteger(v.queue.live) ? v.queue.live : null, parkingFull: v.queue.parkingFull === true } : null,
-    breaker: v.breaker && BREAKER_STATES.includes(v.breaker.state) ? { state: v.breaker.state, nextTrialAt: ms(v.breaker.nextTrialAt), openedAt: ms(v.breaker.openedAt) } : null,
+    breaker: v.breaker && BREAKER_STATES.includes(v.breaker.state) ? { state: v.breaker.state, nextTrialAt: ms(v.breaker.nextTrialAt), openedAt: ms(v.breaker.openedAt),
+      cause: v.breaker.cause === 'network' ? 'network' : null } : null,
     notices: Array.isArray(v.notices) ? v.notices.filter(n => n && NOTICE_KINDS.includes(n.kind) && typeof n.key === 'string' && /^[A-Za-z0-9:_-]{1,160}$/.test(n.key)).slice(0, NOTICES_MAX)
       .map(n => ({ key: n.key, kind: n.kind, pr: Number.isSafeInteger(n.pr) ? n.pr : null, headSha: head(n.headSha) ? n.headSha : null, code: codeOrNull(n.code), at: ms(n.at), until: ms(n.until) })) : [],
     train: trainOf(v.train),

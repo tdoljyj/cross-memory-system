@@ -196,12 +196,35 @@ export function retryLogEntry({ at, op, attempt, ms, runner }) {
 // equals the fixed text below byte for byte (the same literal is in build-bundle.ps1, Branch-Only-Hint; a test pins both). Any other hint,
 // and every other part of the script's output, is dropped. The reason is logged only when it is a plain code.
 export const BUNDLE_BRANCH_ONLY_HINT = 'The reviewed set contains d94cd486 (and its parent 8ea4da40), which is reachable only from branch claude/gitleaks-midgen-reviewed-hold until PR #991 is merged: if that branch was deleted or rewritten, restore it.';
+// Generation 10 (DESIGN 53.1, Task 125a5162 item 1): EVERY bundle that was not written leaves one entry, so the cause of a
+// BUNDLE_UNAVAILABLE is visible (on 2026-11-05 two refused bundles burned a head and the log said nothing). Only codes and counts are
+// kept, each through its own fixed pattern: the script's status, reason and stage, the last git step (its label, exit code and how many
+// characters of stderr it wrote: never the text), the store attempts and every given-up attempt (number, reason, stage, git step,
+// seconds; a refs difference only as its count, never the ref names), the seed's use (used, reason code, discarded, networkFailureNoted)
+// and the runner's own facts (exit code, timed out, tree, refusal code). A value that does not fit its pattern is null; nothing else of
+// the script's output (paths, created directories, any free text) is ever written. The hint stays the one fixed text or null.
+const BUNDLE_CODE = /^[A-Z][A-Z0-9_]{1,79}$/, BUNDLE_SLUG = /^[a-z][a-z0-9-]{0,63}$/;
+const bundleCode = s => (typeof s === 'string' && BUNDLE_CODE.test(s) ? s : null);
+const bundleSlug = s => (typeof s === 'string' && BUNDLE_SLUG.test(s) ? s : null);
+const bundleCount = n => (Number.isSafeInteger(n) && n >= 0 && n <= 1_000_000_000 ? n : null);
+const bundleExit = n => (Number.isSafeInteger(n) && n >= -2_147_483_648 && n <= 4_294_967_295 ? n : null);
+const bundleGit = g => (plainObject(g) ? { label: bundleSlug(g.label), exitCode: bundleExit(g.exitCode), stderrChars: bundleCount(g.stderrChars) } : null);
+export const BUNDLE_LOG_ATTEMPTS_MAX = 3;
 export function bundleRefusalLogEntry({ at, op, runner }) {
-  if (runner?.code !== 2 || typeof runner.stdout !== 'string' || runner.stdout.length > 65_536) return null;
+  const r = plainObject(runner) ? runner : {};
   let v = null;
-  try { v = JSON.parse(runner.stdout); } catch { return null; }
-  if (v?.hint !== BUNDLE_BRANCH_ONLY_HINT) return null;
-  return { at: new Date(at).toISOString(), kind: 'bundle-refusal', op, reason: typeof v.reason === 'string' && /^[A-Z][A-Z0-9_]{1,79}$/.test(v.reason) ? v.reason : null, hint: v.hint };
+  if (typeof r.stdout === 'string' && r.stdout.length <= 65_536) { try { v = JSON.parse(r.stdout); } catch { v = null; } }
+  if (!plainObject(v)) v = null;
+  const attempts = Array.isArray(v?.failedAttempts) ? v.failedAttempts.slice(0, BUNDLE_LOG_ATTEMPTS_MAX).map(a => (plainObject(a)
+    ? { attempt: bundleCount(a.attempt), reason: bundleCode(a.reason), stage: bundleSlug(a.stage), git: bundleGit(a.git), failedAfterSeconds: bundleCount(a.failedAfterSeconds),
+      refsDiffer: plainObject(a.refsDiffer) ? bundleCount(a.refsDiffer.count) : null }
+    : null)) : null;
+  const s = plainObject(v?.seed) ? v.seed : null;
+  return { at: new Date(at).toISOString(), kind: 'bundle-refusal', op: bundleSlug(op),
+    runner: { code: Number.isSafeInteger(r.code) ? r.code : null, timedOut: r.timedOut === true, tree: ['zero', 'unconfirmed'].includes(r.tree) ? r.tree : null, refused: bundleCode(r.refused) },
+    status: bundleCode(v?.status), reason: bundleCode(v?.reason), stage: bundleSlug(v?.stage), git: bundleGit(v?.git), storeAttempts: bundleCount(v?.storeAttempts),
+    failedAttempts: attempts, seed: s ? { used: s.used === true, reason: bundleCode(s.reason), discarded: s.discarded === true, networkFailureNoted: s.networkFailureNoted === true } : null,
+    hint: v?.hint === BUNDLE_BRANCH_ONLY_HINT ? v.hint : null };
 }
 
 // DESIGN §33 (the 2026-10-29 first HALT): the path-valued keys of companion.json and which of them point into the installed CI
