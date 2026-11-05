@@ -87,7 +87,7 @@ test('Task goal/file completion uses exact M1 admission, persisted Storage proof
       'grant usage on schema auth,extensions to anon,authenticated,service_role;',
       'grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;'
     ].join('\n'));
-    for (const name of (await fs.readdir(path.join(root, 'supabase/migrations'))).filter((n) => n.endsWith('.sql')).sort()) {
+    for (const name of (await fs.readdir(path.join(root, 'supabase/migrations'))).filter((n) => n.endsWith('.sql')&&n!=='20261017205505_storage_durable_execution_entry_v1.sql').sort()) {
       try {
         const bytes = await fs.readFile(path.join(root, 'supabase/migrations', name));
         if (name === '20261014132753_task_goal_delivery_v1.sql') {
@@ -722,6 +722,14 @@ test('Task goal/file completion uses exact M1 admission, persisted Storage proof
       const definition = (await admin.query("select pg_get_functiondef('clued_private.record_mutation_core(uuid,uuid,jsonb,text)'::regprocedure) d")).rows[0].d;
       assert.ok(definition.indexOf('task_goal_delivery_admit_v1') > definition.indexOf("if v_record.version<>v_base"));
       await assertGatewayCloseoutBoundary(admin);
+    });
+    await suite.test('historical delivery proof fixtures survive the actual entry upgrade without manufacturing new execution',async()=>{
+      const digest=async()=>(await admin.query('select clued_private.m1_sha256(jsonb_agg(to_jsonb(m) order by id)) digest from clued_private.resource_center_mutations_v1 m')).rows[0].digest;
+      const before=await digest();
+      await admin.query(await fs.readFile(path.join(root,'supabase/migrations/20261017205505_storage_durable_execution_entry_v1.sql'),'utf8'));
+      assert.equal(await digest(),before);await assertGatewayCloseoutBoundary(admin);
+      assert.equal((await admin.query('select count(*)::int n from clued_private.storage_execution_entry_permits_v1')).rows[0].n,0);
+      await assert.rejects(admin.query("select public.clued_resource_center_mutation_journal_v1($1,'{\"action\":\"prepare\"}'::jsonb)",[owner]),/storage_durable_job_required/);
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});

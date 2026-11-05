@@ -79,6 +79,20 @@ function automaticRecovery(raw: Data): Data {
   return { automatic_recovery: raw.automatic_recovery };
 }
 
+function currentDirectoryState(raw: Data): Data {
+  if (Object.hasOwn(raw,"current_path") && (!Object.hasOwn(raw,"current_artifact_state") ||
+      raw.current_artifact_state !== "active" || typeof raw.current_path !== "string" ||
+      raw.current_path.length < 2 || raw.current_path.length > 1000 || raw.current_path.endsWith("/") ||
+      /[\\\p{Cc}]/u.test(raw.current_path) || raw.current_path.split("/").some(part=>part==="."||part==="..")))
+    throw new Error("storage_recovery_response_invalid");
+  if (!Object.hasOwn(raw, "current_artifact_state")) return {};
+  if (raw.status !== "resolved" || raw.resolution !== "automatically_registered_current_state" ||
+      raw.automatic_recovery !== "resolved" || typeof raw.current_artifact_state !== "string" || !["active", "trashed"].includes(raw.current_artifact_state))
+    throw new Error("storage_recovery_response_invalid");
+  return { current_artifact_state: raw.current_artifact_state,
+    ...(Object.hasOwn(raw,"current_path")?{current_path:raw.current_path}:{}) };
+}
+
 export function storageRecoveryResolutionResult(value: unknown, reference: Data): Data {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("storage_recovery_response_invalid");
   const raw = value as Data, uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -93,7 +107,7 @@ export function storageRecoveryResolutionResult(value: unknown, reference: Data)
   return { status: "resolved", resolution: raw.resolution, connection_id: raw.connection_id, job_id: raw.job_id,
     receipt_id: raw.receipt_id, source_receipt_id: raw.source_receipt_id, base_version: raw.base_version,
     ...(raw.observation_id !== undefined ? { observation_id: raw.observation_id } : {}), review_available: false,
-    ...(automatic ? { automatic_recovery: "resolved" } : {}), execution_permitted: false };
+    ...(automatic ? { automatic_recovery: "resolved" } : {}), ...currentDirectoryState(raw), execution_permitted: false };
 }
 
 /** Native recovery may show a quarantined conflict as attention required. The
@@ -101,6 +115,7 @@ export function storageRecoveryResolutionResult(value: unknown, reference: Data)
 export function storageRecoveryOwnerResult(value: unknown, reference: Data): Data {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("storage_recovery_response_invalid");
   const raw = value as Data;
+  currentDirectoryState(raw);
   if (raw.status === "resolved") return storageRecoveryResolutionResult(raw, reference);
   const projected = storageAgentResult(raw.status === "conflict" ? { ...raw, status: "attention_required" } : raw, reference);
   if (projected.job_id !== reference.job_id || projected.connection_id !== reference.connection_id ||
@@ -129,6 +144,7 @@ export function storageRecoveryListResult(value: unknown, connectionId: string):
         !["queued", "prepared", "started", "uncertain", "committed", "cancelled", "denied", "attention_required", "conflict", "resolved"].includes(String(j.status)))
       throw new Error("storage_recovery_response_invalid");
     seen.add(j.job_id);
+    currentDirectoryState(j);
     const context = j.read_connection_id !== undefined ? { read_connection_id: connectionId } : {};
     if (j.status === "resolved") return { ...storageRecoveryResolutionResult(j, { connection_id: j.connection_id, job_id: j.job_id }), ...context };
     const diagnostic = j.diagnostic === null || j.diagnostic === undefined ? undefined : sanitizeRecoveryDiagnostic(j.diagnostic);

@@ -4,7 +4,8 @@ import fs from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { describe } from "node:test";
+import { once } from "node:events";
 import EmbeddedPostgres from "embedded-postgres";
 
 import { createResourceCenterGoogleDriveOnlineToolHost, createResourceCenterGoogleDriveWriterToolHost,
@@ -52,6 +53,42 @@ const ROOT_ID = "drive-root-id";
 const TRACK = ROOT + "/20_P_产品与体验";
 const TRACK_ID = "drive-track-id";
 const tokenHash = crypto.createHash("sha256").update("clued_rcb_test_token").digest("hex");
+const durableEntryMigration = '20261017205505_storage_durable_execution_entry_v1.sql';
+
+// A cancelled database scenario must stop registering real child tests. Bind
+// native context methods to their original receiver and retain every overload.
+function cancellationAwareContext(context) {
+  return new Proxy(context, {
+    get(target, key) {
+      const value = Reflect.get(target, key, target);
+      if (key === "test") return (...args) => {
+        target.signal.throwIfAborted();
+        const last = args.length - 1, callback = args[last];
+        if (typeof callback === "function") args[last] = (child, ...rest) =>
+          callback(cancellationAwareContext(child), ...rest);
+        return Reflect.apply(value, target, args);
+      };
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+async function within(promise, milliseconds, label) {
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(label)), milliseconds);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
+async function removeOwnedScratch(directory, parent, prefix) {
+  const actual = await fs.realpath(directory);
+  assert.equal(actual, directory, "scratch identity must remain unchanged");
+  assert.equal(path.dirname(actual), parent, "scratch must remain under its original temporary parent");
+  assert.ok(path.basename(actual).startsWith(prefix), "scratch must retain its owned random prefix");
+  await fs.rm(actual, { recursive: true, force: false, maxRetries: 5, retryDelay: 100 });
+}
 
 // The imported resource fixtures retain historical upgrade and retired-alias
 // assertions. Close that history with the actual current G6 migration, then
@@ -71,6 +108,13 @@ async function qualifyCurrentCallers(t, admin, server, closeoutSql) {
       await admin.query(await fs.readFile(path.join(process.cwd(), "supabase", "migrations", name), "utf8"));
     }
     await assertAuthorizationSuccessorBoundary(admin, authorizationBefore);
+  });
+  await t.test('the actual durable entry upgrade closes historical writer fixtures and preserves current callers', async () => {
+    const before = await snapshotAuthorizationCallerBoundary(admin);
+    await admin.query(await fs.readFile(path.join(process.cwd(),'supabase','migrations',durableEntryMigration),'utf8'));
+    assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin),before);
+    await assertGatewayCloseoutBoundary(admin);
+    assert.equal((await admin.query("select count(*)::int n from clued_private.storage_execution_entry_permits_v1")).rows[0].n,0);
   });
   const gateway = server.getPgClient(), native = server.getPgClient(), ci = server.getPgClient();
   await gateway.connect(); await native.connect(); await ci.connect();
@@ -161,18 +205,86 @@ const focusedAdopt = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-ado
 const focusedWorkClaim = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-work-claim";
 const focusedConnections = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-connections";
 const focusedAncestors = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-ancestors";
-for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focusedOnboard || focusedDirectoryMove || focusedAdopt || focusedWorkClaim || focusedConnections || focusedAncestors ? ["legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, { timeout: 180000 }, async (t) => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-resource-center-db-"));
+const focused = focusedCloud || focusedAdmin || focusedRead || focusedOnboard || focusedDirectoryMove || focusedAdopt || focusedWorkClaim || focusedConnections || focusedAncestors;
+const bindingSchemas = focused ? ["legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"];
+const scenarios = focused ? ["focused"] : ["registration", "accounts", "administration", "read", "mutations", "uploads", "connections"];
+let previousCleanup = Promise.resolve();
+describe("Canonical Resource Center complete scenario matrix", { concurrency: false }, () => {
+for (const bindingSchema of bindingSchemas) for (const scenario of scenarios) {
+test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema}; ${scenario})`, { timeout: 180000 }, async (context) => {
+  await previousCleanup; // A failed owned cleanup must not start another server.
+  const t = cancellationAwareContext(context);
+  const temporaryParent = await fs.realpath(os.tmpdir());
+  const directory = await fs.mkdtemp(path.join(temporaryParent, "clued-resource-center-db-"));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: "postgres", password: crypto.randomBytes(32).toString("hex"),
-    port: await freePort(), persistent: false, postgresFlags: ["-c", "io_method=sync"],
+    port: await freePort(), persistent: true, postgresFlags: ["-c", "io_method=sync"],
     onLog() {}, onError(message) { process.stderr.write(message + "\n"); },
   });
+  const clients = new Set(), createClient = server.getPgClient.bind(server);
+  let closing = false, closingClients, cleanupPromise, initialisePromise, setupPromise, setupSettled = false;
+  server.getPgClient = (...args) => {
+    t.signal.throwIfAborted();
+    assert.equal(closing, false, "a closing scenario cannot create another database client");
+    const client = createClient(...args);
+    clients.add(client);
+    client.once("end", () => clients.delete(client));
+    return client;
+  };
+  const closeClients = () => closingClients ??= Promise.allSettled(
+    [...clients].map(client => Promise.resolve().then(() => client.end())));
+  const cleanup = () => {
+    if (!cleanupPromise) {
+      closing = true;
+      cleanupPromise = (async () => {
+        // Initialisation may still be unwinding after cancellation. Never
+        // remove a directory that an unconfirmed producer may still use.
+        if (initialisePromise) await within(initialisePromise.catch(() => {}), 5000, "owned database initialisation did not relinquish its scratch");
+        // start() first resolves its local binary/identity, then exposes the
+        // owned producer before its ready promise settles. Wait only for that
+        // handle or a settled setup; never wait for ready before stopping it.
+        for (let wait = 0; setupPromise && !setupSettled && !server.process && wait < 250; wait++)
+          await new Promise(resolve => setTimeout(resolve, 20));
+        assert.ok(!setupPromise || setupSettled || server.process, "owned database startup did not expose a confirmed producer");
+        const ended = closeClients();
+        try { await within(ended, 3000, "owned database clients did not close before server shutdown"); }
+        catch { /* Stopping this exact owned server also releases a pipelined query. */ }
+        const producer = server.process;
+        if (producer) {
+          const exited = producer.exitCode !== null || producer.signalCode !== null;
+          const alreadyClosed = exited && (!producer.stdout || producer.stdout.closed) && (!producer.stderr || producer.stderr.closed);
+          const closed = alreadyClosed ? Promise.resolve() : once(producer, "close");
+          if (!exited) await within(server.stop(), 10000, "owned database server did not stop");
+          producer.stdin?.destroy(); producer.stdout?.destroy(); producer.stderr?.destroy();
+          await within(closed, 3000, "owned database producer close was not confirmed");
+          // The SDK also stops registered instances from its exit hook. Do
+          // not leave an already closed handle for that hook to stop again.
+          assert.ok(server.process === producer || server.process === undefined, "owned database producer identity changed during shutdown");
+          if (server.process === producer) server.process = undefined;
+        }
+        if (setupPromise) await within(setupPromise.catch(() => {}), 5000, "owned database setup did not settle after shutdown");
+        const results = await within(ended, 3000, "owned database clients remained after shutdown");
+        const errors = results.filter(result => result.status === "rejected").map(result => result.reason);
+        await removeOwnedScratch(directory, temporaryParent, "clued-resource-center-db-");
+        if (errors.length) throw new AggregateError(errors, "owned database client cleanup failed");
+      })();
+      previousCleanup = cleanupPromise;
+    }
+    return cleanupPromise;
+  };
+  const abort = () => { closing = true; void cleanup().catch(() => {}); };
+  t.signal.addEventListener("abort", abort, { once: true });
+  t.after(cleanup);
   let admin;
   let anon;
   try {
-    await server.initialise();
-    await server.start();
+    setupPromise = (async () => {
+      initialisePromise = server.initialise();
+      await initialisePromise; t.signal.throwIfAborted();
+      await server.start(); t.signal.throwIfAborted();
+    })();
+    void setupPromise.then(() => { setupSettled = true; }, () => { setupSettled = true; });
+    await setupPromise;
     admin = server.getPgClient();
     await admin.connect();
     await admin.query("create role anon nologin; create role authenticated nologin;" +
@@ -188,7 +300,8 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
     const closeout = await findGatewayCloseoutMigration(process.cwd());
     const closeoutSql = await fs.readFile(path.join(migrationDir, closeout), "utf8");
     let refreshUpgrade;
-    for (const name of (await fs.readdir(migrationDir)).filter((name) => name.endsWith(".sql") && name !== closeout && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name)).sort()) {
+    for (const name of (await fs.readdir(migrationDir)).filter((name) => name.endsWith(".sql") && name !== closeout && name !== durableEntryMigration && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name)).sort()) {
+      t.signal.throwIfAborted();
       try {
         if (name === "20260927145426_resource_center_default_refresh_consent_v1.sql") refreshUpgrade = await seedRefreshUpgrade(admin,server);
         if (name === "20260927232454_resource_center_binding_expiry_compat_v1.sql" && bindingSchema === "production-no-legacy-expiry") {
@@ -239,6 +352,57 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       " values($1,$2,'Owner approval','Temporary test objects only','project',$3,'decision','active',1,'active'," +
       "$4,'{\"rationale\":\"Test registration\"}','{}','{}','user_explicit','Owner confirmed')",
     [DECISION, USER, PROJECT, "project:" + PROJECT]);
+
+    // Each complete scenario keeps the same historical bootstrap and closes
+    // with the real current migrations and caller positives. No assertion or
+    // business fixture is replaced with a synthetic prerequisite.
+    const standalone = {
+      accounts: async () => {
+        await testRenewalDatabase(t, admin, server, USER, DECISION);
+        await testStorageAccount(t, admin, server, USER, DECISION);
+        await testStorageOAuth(t, admin, server, USER, DECISION);
+        await testAccountRefresh(t, admin, server, USER, DECISION);
+        await testDirectoryProbe(t, admin, server, USER, DECISION);
+        await testAccountPolicy(t, admin, server, USER, DECISION);
+      },
+      administration: async () => {
+        await testStorageAdmin(t, admin, server, USER, PROJECT);
+        await testStorageClientCapability(t, admin, server, USER, DECISION);
+        await testStorageSourceReader(t, admin);
+        await testStoragePolicyTransition(t, admin, server, USER, DECISION);
+      },
+      read: async () => {
+        await testAccountCloud(t, admin, server, USER, DECISION,{demandRenewal:true});
+        await testStorageRead(t, admin, server, USER, DECISION,{demandRenewal:true});
+        await testStorageClientRedirectIdentity(t, admin, server, USER, DECISION);
+        await testStorageReadContent(t, admin, server, USER, DECISION);
+        await testStorageModifyLevel(t, admin, server, USER, DECISION);
+      },
+      mutations: async () => {
+        await testStorageModifyExecution(t, admin, server, USER, DECISION);
+        await testStorageReplace(t, admin, server, USER, DECISION);
+        await testStorageDestructive(t, admin, server, USER, DECISION);
+        await testStorageDirectoryMove(t, admin, server, USER, DECISION);
+        await testStorageAdopt(t, admin, server, USER, DECISION);
+        await testStorageWorkClaim(t, admin, server, USER, DECISION);
+        await testStorageNormalUse(t, admin, server, USER, DECISION);
+      },
+      uploads: async () => {
+        await testStorageBinaryUpload(t, admin, server, USER, DECISION);
+        await testStorageBudget(t, admin, server, USER);
+      },
+      connections: async () => {
+        await testStorageOnboard(t, admin, server, USER, DECISION);
+        await testStorageConnections(t, admin, server);
+      },
+    };
+    if (standalone[scenario]) {
+      t.signal.throwIfAborted();
+      await standalone[scenario]();
+      t.signal.throwIfAborted();
+      await qualifyCurrentCallers(t, admin, server, closeoutSql);
+      return;
+    }
 
     // Fast local diagnosis only. CI leaves this unset and runs both complete
     // schema shapes plus every existing Resource Center regression.
@@ -889,8 +1053,9 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       } })).status, "resolved");
     });
     await t.test("temporary Host/Worker/DB chain denies read-only then atomically finalizes qualified create", async (child) => {
-      const tempParent = await fs.mkdtemp(path.join(os.tmpdir(), "clued-rc-acceptance-"));
-      child.after(() => fs.rm(tempParent, { recursive: true, force: true }));
+      const nativeTemporaryParent = await fs.realpath(os.tmpdir());
+      const tempParent = await fs.mkdtemp(path.join(nativeTemporaryParent, "clued-rc-acceptance-"));
+      child.after(() => removeOwnedScratch(tempParent, nativeTemporaryParent, "clued-rc-acceptance-"));
       const nativeRoot = path.join(tempParent, "Clued_资料中心");
       const nativeTrack = path.join(nativeRoot, "20_P_产品与体验");
       const nativeTopic = path.join(nativeTrack, "视觉探索");
@@ -1115,32 +1280,6 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
         await gateway.end();
       }
     });
-    await testRenewalDatabase(t, admin, server, USER, DECISION);
-    await testStorageAccount(t, admin, server, USER, DECISION);
-    await testStorageOAuth(t, admin, server, USER, DECISION);
-    await testAccountRefresh(t, admin, server, USER, DECISION);
-    await testDirectoryProbe(t, admin, server, USER, DECISION);
-    await testAccountPolicy(t, admin, server, USER, DECISION);
-    await testStorageAdmin(t, admin, server, USER, PROJECT);
-    await testStorageClientCapability(t, admin, server, USER, DECISION);
-    await testStorageSourceReader(t, admin);
-    await testStoragePolicyTransition(t, admin, server, USER, DECISION);
-    await testAccountCloud(t, admin, server, USER, DECISION,{demandRenewal:true});
-    await testStorageRead(t, admin, server, USER, DECISION,{demandRenewal:true});
-    await testStorageClientRedirectIdentity(t, admin, server, USER, DECISION);
-    await testStorageReadContent(t, admin, server, USER, DECISION);
-    await testStorageModifyLevel(t, admin, server, USER, DECISION);
-    await testStorageModifyExecution(t, admin, server, USER, DECISION);
-    await testStorageReplace(t, admin, server, USER, DECISION);
-    await testStorageDestructive(t, admin, server, USER, DECISION);
-    await testStorageDirectoryMove(t, admin, server, USER, DECISION);
-    await testStorageAdopt(t, admin, server, USER, DECISION);
-    await testStorageWorkClaim(t, admin, server, USER, DECISION);
-    await testStorageNormalUse(t, admin, server, USER, DECISION);
-    await testStorageBinaryUpload(t, admin, server, USER, DECISION);
-    await testStorageBudget(t, admin, server, USER);
-    await testStorageOnboard(t, admin, server, USER, DECISION);
-    await testStorageConnections(t, admin, server);
     await t.test("a directory with a recorded sharing digest is matched by sharing, not Drive version", async () => {
       const shared = "d".repeat(64), changed = "e".repeat(64);
       const rowVersion = async (id) => Number((await admin.query(
@@ -1227,8 +1366,9 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
     assert.equal((await resolve()).status, "denied");
     await qualifyCurrentCallers(t, admin, server, closeoutSql);
   } finally {
-    if (anon) await anon.end();
-    if (admin) await admin.end();
-    await server.stop();
+    t.signal.removeEventListener("abort", abort);
+    await cleanup();
   }
+});
+}
 });

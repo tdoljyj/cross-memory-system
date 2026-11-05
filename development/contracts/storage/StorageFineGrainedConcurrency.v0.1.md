@@ -584,3 +584,17 @@ Owner 原生恢复接口与后台调度均接入相同的只读缺失探测和�
 
 本节尚为候选：真实 PostgreSQL/Worker 场景须覆盖 existing directory 与真实 legacy NULL create，active/trashed 物理子项不变且无子 Artifact，双观察变化与伪造事实拒绝，原有效 typed proof 优先、Receipt 失败回滚、并发及其他隔离不变。源码/CI、合并、迁移、同批部署、数据库先于页面及独立审核全部通过后才接受。目标自身的 trashed 状态、目录移动和非 job I12 仍未由本节交付。
 
+## 26. 目录自身的当前回收站状态（e91 有限源码候选）
+
+原 typed proof 仍先尝试正常结算。只有原 I9、完整 attempt/Receipt、关闭版本及终止窗口均合格时，当前程序才可独立登记一个 ordinary 目录自身的当前状态。原登记状态由锁定的 Artifact 推导为 `registered_state`；两次实际 GET 的 `trashed` 与 `explicitlyTrashed` 必须都是严格布尔且相等，推导 `current_state` 为 active 或 trashed。父链始终 active；不放宽原 `path_current_v1`，而是对目标身份、原状态、版本与 Decision 单独 CAS。root、track、撤销的目标和 active/trashed 登记后代不纳入本有限出口。
+
+当前目标在回收站时不拥有 active 名称槽；同名的其他 active 对象不被接管、登记或覆盖。该目标不枚举子项，`empty` 必须为 null，不能从无法列举推导空目录。active 目标继续真实列举并保留实际布尔 child-presence 事实。两种状态均保留当前 full scope、完整 owner-private ACL、明确旧摘要匹配、连续父链、30 秒双读和真实 wall-clock 复检；缺失权限证据不由程序填 true。
+
+Google 的 `files.permissions` 仅在请求者可分享时才保证完整。回收站目标的 canShare 不为 true 时，使用真实 GET `files/{id}/permissions` 完整分页（包含 published view），不制造分享能力、不复用不完整字段。列表缺失、重复权限/分页标记、权限不唯一、额外 grantee 或分页未完成均拒绝本次资格并由既有程序退避重读。仅支持当前账号拥有的 My Drive 私有对象；读权限列表不授予分享、删除或恢复权限。依据：[File 元数据](https://developers.google.com/workspace/drive/api/reference/rest/v3/files)、[permissions.list](https://developers.google.com/workspace/drive/api/reference/rest/v3/permissions/list)。
+
+目标状态使用独立 private permit，绑定当前事务、pending 独立 Receipt、原 intent、Owner/profile、目标 ID 与完整 before/after hash，允许的差量仅为 state 和既有元数据资格白名单。父链只用原 metadata permit，原 permit 逐字段禁止状态变化的规则保持。采用既有 `storage-object:` 物理锁域的有界 try-lock，在锁下拒绝跨 Owner/profile 的 live 物理别名、其他在途或 verified 依赖以及其他隔离的 object/slot/subtree/unknown scope；已知无关兄弟目录的隔离保留且不扩大到全根。
+
+新结果携带 `current_artifact_state`。原 mutation 保持 conflict、原 request/snapshot/attempt/Receipt 不动，新资格、全部受写行、版本/ref、Event、独立 Receipt 和本 intent 的隔离出口同事务提交，失败全部回滚。页面必须区分“目录在回收站，原作业已自动处理”与 active 恢复使用。它不执行 delete/untrash、不自动授予 destructive/canUntrash，也不绕过以后真正 restore 的原 P5、空目录和名称冲突准入。
+
+先验收真实 PostgreSQL 的四状态矩阵、拒绝/原子回滚、真实连接锁竞争、别名与登记后代，再测 GET-only Worker、HTTP 与页面。源码/CI、正常合并、迁移与同批发布、生产数据库、页面、独立审核和持久归档通过后才接受；本节不宣告目录移动、非 job I12 或暂停事项完成。
+

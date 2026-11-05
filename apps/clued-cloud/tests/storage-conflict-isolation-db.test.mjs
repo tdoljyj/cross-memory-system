@@ -12,6 +12,7 @@ import {fileURLToPath} from 'node:url';
 import EmbeddedPostgres from 'embedded-postgres';
 import {allowTestIssuerCredentials} from './issuer-credentials-fixture.mjs';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
+import {testStorageDestructive} from './resource-center-storage-destructive-db.fixture.mjs';
 import {setWorkerGatewayCaller,assertGatewayCloseoutBoundary} from './worker-gateway-caller-fixture.mjs';
 import {createResourceCenterCloudExecutor} from '../../../kernel/host/resource-center-cloud-executor.mjs';
 import {createGoogleDriveMetadataApi} from '../../../kernel/host/resource-center-google-drive-metadata.mjs';
@@ -49,7 +50,7 @@ test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts'
     insert into public.test_storage_publication_ledger(version) values(p_version);
    end$$;
    revoke all on function public.test_storage_publication_v1(text,text) from public,anon,authenticated,service_role;`);
-  for(const name of (await fs.readdir(path.join(cloud,'supabase/migrations'))).filter(n=>n.endsWith('.sql')).sort()){
+  for(const name of (await fs.readdir(path.join(cloud,'supabase/migrations'))).filter(n=>n.endsWith('.sql')&&n!=='20261017205505_storage_durable_execution_entry_v1.sql').sort()){
    try{
     const migration=await fs.readFile(path.join(cloud,'supabase/migrations',name),'utf8');
     if(name==='20261016040000_storage_conflict_isolation_v1.sql'){
@@ -949,6 +950,15 @@ test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts'
    await db.query('select clued_private.storage_conflict_assert_v1($1,$2,$3,$4)',[other,distinctProfile,{operation:'create',target_kind:'file',destination_path:'/other-owner-unrelated/new.txt'},{destination_parent_id:'separate-parent-'+id()}]);
    await guard({operation:'create',target_kind:'file',destination_path:root+'/docs/still-unrelated.txt'},{destination_parent_id:parent});
    await assert.rejects(db.query('select clued_private.storage_conflict_assert_v1($1,$2,$3,$4)',[other,distinctProfile,{operation:'replace',target_kind:'file',destination_path:'/other-root/physical-alias.txt'},{destination_file_id:partialFile}]),/storage_object_under_review/,'the known physical file identity remains protected through a root alias');
+  });
+  await t.test('historical isolation fixtures close with the actual entry upgrade and unrelated current cloud use',async()=>{
+   const digest=async()=>(await db.query('select clued_private.m1_sha256(jsonb_agg(to_jsonb(m) order by id)) digest from clued_private.resource_center_mutations_v1 m')).rows[0].digest;
+   const before=await digest();await db.query(await fs.readFile(path.join(cloud,'supabase/migrations/20261017205505_storage_durable_execution_entry_v1.sql'),'utf8'));
+   assert.equal(await digest(),before);
+   await testStorageDestructive(t,db,server,owner,decision,{gateway:true,only_extra:true,extra_cases:async ctx=>{
+    const current=await ctx.setup();await ctx.createFile(current.target,current.client,current.storage,'after-entry-upgrade.txt');
+   }});
+   assert.equal((await db.query('select count(*)::int n from clued_private.storage_execution_entry_permits_v1')).rows[0].n,0);
   });
  }catch(error){console.error(error.message);if(error.cause)console.error(error.cause.message);throw error;
  }finally{

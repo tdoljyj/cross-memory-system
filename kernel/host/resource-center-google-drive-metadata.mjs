@@ -164,6 +164,37 @@ export function createGoogleDriveMetadataApi({
     return result;
   }
 
+  // files.permissions is complete only when canShare is true. A trashed
+  // owner item may not be shareable; read the actual permissions endpoint
+  // instead of inventing that capability or treating an absent ACL as empty.
+  async function listPermissions(id, {signal} = {}) {
+    if (!registrationDetails || typeof id !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(id))
+      throw new TypeError("Registration permission read requires a valid file ID.");
+    const token = await credential(true), permissions = [], seenTokens = new Set(), seenIds = new Set();
+    let pageToken;
+    for (let page = 0; page < 20; page++) {
+      const url = new URL(`${DRIVE_API}/${encodeURIComponent(id)}/permissions`);
+      url.searchParams.set("fields", "nextPageToken,permissions(id,type,role,domain,allowFileDiscovery,expirationTime,deleted,pendingOwner,view)");
+      url.searchParams.set("includePermissionsForView", "published");
+      url.searchParams.set("supportsAllDrives", "true");
+      url.searchParams.set("pageSize", "100");
+      if (pageToken) url.searchParams.set("pageToken", pageToken);
+      const result = await read(url.href, token, signal);
+      if (!Array.isArray(result?.permissions) || result.permissions.length > 100 ||
+          result.nextPageToken !== undefined && (typeof result.nextPageToken !== "string" || !result.nextPageToken || result.nextPageToken.length > 4096))
+        throw new Error("DRIVE_PERMISSIONS_INVALID");
+      for (const permission of result.permissions) {
+        if (!permission || typeof permission !== "object" || Array.isArray(permission) || typeof permission.id !== "string" || seenIds.has(permission.id))
+          throw new Error("DRIVE_PERMISSIONS_INVALID");
+        seenIds.add(permission.id); permissions.push(permission);
+      }
+      if (result.nextPageToken === undefined) return permissions;
+      if (seenTokens.has(result.nextPageToken)) throw new Error("DRIVE_PERMISSIONS_INVALID");
+      seenTokens.add(result.nextPageToken); pageToken = result.nextPageToken;
+    }
+    throw new Error("DRIVE_PAGINATION_LIMIT");
+  }
+
   // Sharing state is read separately so every other metadata object keeps its
   // existing shape; see resource-center-google-drive-sharing.mjs.
   async function getSharing(id, {signal} = {}) {
@@ -383,7 +414,7 @@ export function createGoogleDriveMetadataApi({
     return result.files.length > 0 || (typeof result.nextPageToken === "string" && result.nextPageToken.length > 0);
   }
 
-  return Object.freeze({ getFile, getSharing, getAccess, getVersionedAccess, getOwnership, getAppAuthorization, hasChildren, getRevision, countKeptRevisions, downloadRevision, listChildren: (input, {signal} = {}) => list(input, false, signal),
+  return Object.freeze({ getFile, listPermissions, getSharing, getAccess, getVersionedAccess, getOwnership, getAppAuthorization, hasChildren, getRevision, countKeptRevisions, downloadRevision, listChildren: (input, {signal} = {}) => list(input, false, signal),
     listFolder: (parentId, {signal, app_authorized: appAuthorized = false} = {}) => {
       if (typeof appAuthorized !== "boolean") throw new TypeError("app_authorized must be boolean.");
       return list({ parent_id: parentId }, true, signal, appAuthorized);

@@ -13,6 +13,7 @@ import { scopeProfile } from "./storage-google-scopes";
 import { recoveryDiagnostic, type RecoveryDiagnostic, type RecoveryStage } from "./storage-recovery-diagnostics";
 import { createStorageRecoveryReview } from "./storage-recovery-review";
 import { createStorageCurrentRegistrationRecovery } from "./storage-registration-recovery";
+import { createStorageCurrentLocationRecovery } from "./storage-location-recovery";
 
 type Data = Record<string, unknown>;
 type Reference = { connection_id: string; job_id: string };
@@ -376,6 +377,8 @@ export async function createStorageCloudRecovery(config: {
   };
   const registration = config.current_registration ? await createStorageCurrentRegistrationRecovery({ client_id: config.client_id,
     vault: config.vault, rpc: config.current_registration.rpc, fetch: config.fetch, clock }) : null;
+  const location = config.current_registration ? await createStorageCurrentLocationRecovery({client_id:config.client_id,
+    vault:config.vault,rpc:config.current_registration.rpc,fetch:config.fetch,clock,timeout_ms:Math.min(timeout,30000)}) : null;
   return Object.freeze({ async run(reference: Reference) {
     const result = await runOriginal(reference);
     const d = config.verified?.descriptor;
@@ -391,6 +394,13 @@ export async function createStorageCloudRecovery(config: {
       // Original result/diagnostic stays authoritative after a denied current
       // qualification. This never manufactures success or a provider retry.
       if (error instanceof Error && error.message === EXPIRING) return { ...result, status: "credential_expiring" };
+      if (location && d.mutation.target_kind === "directory" && ["delete","restore"].includes(String(d.mutation.operation)) &&
+          d.attempt.contract === "clued.storage-destructive-attempt/1") {
+        try { return await location.run(reference,String(d.intent_id)); }
+        catch (locationError) {
+          if (locationError instanceof Error && locationError.message === EXPIRING) return {...result,status:"credential_expiring"};
+        }
+      }
       return result;
     }
   }});

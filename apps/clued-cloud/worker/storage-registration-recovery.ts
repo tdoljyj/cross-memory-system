@@ -10,16 +10,19 @@ const object = (value: unknown): value is Data => !!value && typeof value === "o
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const denied = () => new Error("storage_current_registration_unavailable");
 
-function resolution(value: Data, reference: Reference, intentId: string, base?: Data): Data & {status: "resolved"} {
+function resolution(value: Data, reference: Reference, intentId: string, base?: Data, observedState?: string): Data & {status: "resolved"} {
   if (value.status !== "resolved" || value.resolution !== "automatically_registered_current_state" ||
       value.automatic_recovery !== "resolved" || value.execution_permitted !== false ||
       value.connection_id !== reference.connection_id || value.job_id !== reference.job_id || value.intent_id !== intentId ||
       !uuid.test(String(value.receipt_id)) || !uuid.test(String(value.source_receipt_id)) || value.receipt_id === value.source_receipt_id ||
       !Number.isSafeInteger(value.base_version) || Number(value.base_version) < 1 ||
-      base && (value.base_version !== base.base_version || value.source_receipt_id !== base.source_receipt_id)) throw denied();
+      base && (value.base_version !== base.base_version || value.source_receipt_id !== base.source_receipt_id) ||
+      value.current_artifact_state !== undefined && (typeof value.current_artifact_state !== "string" || !["active", "trashed"].includes(value.current_artifact_state)) ||
+      observedState !== undefined && value.current_artifact_state !== observedState) throw denied();
   return { status: "resolved", resolution: "automatically_registered_current_state", automatic_recovery: "resolved",
     ...reference, intent_id: intentId, receipt_id: value.receipt_id, source_receipt_id: value.source_receipt_id,
-    base_version: value.base_version, execution_permitted: false };
+    base_version: value.base_version, ...(value.current_artifact_state !== undefined ? { current_artifact_state: value.current_artifact_state } : {}),
+    execution_permitted: false };
 }
 
 /** A fresh program-owned metadata registration, not the old Agent operation.
@@ -58,7 +61,7 @@ export async function createStorageCurrentRegistrationRecovery(config: {
           typeof actor.provider_subject !== "string" || !/^[A-Za-z0-9_-]{1,255}$/.test(actor.provider_subject) ||
           !object(reader) || reader.contract !== "clued.storage-recovery-reader/1" || !uuid.test(String(reader.connection_id)) ||
           actor.connection_id !== reader.connection_id || actor.credential_version !== d.credential_version || reader.credential_version !== d.credential_version ||
-          !object(plan) || plan.contract !== "clued.storage-registration-plan/1" || !["refresh_directory", "adopt_create"].includes(String(plan.mode)) || plan.intent_id !== intentId ||
+          !object(plan) || plan.contract !== "clued.storage-registration-plan/1" || !["refresh_directory", "refresh_directory_state", "adopt_create"].includes(String(plan.mode)) || plan.intent_id !== intentId ||
           actor.root_folder_id !== plan.root_folder_id || actor.root_parent_id !== plan.root_parent_id || actor.managed_root !== plan.managed_root) throw denied();
       if (plan.mode === "adopt_create" && (!object(plan.target) || !["file", "directory"].includes(String(plan.target.target_kind)) ||
           !actor.actions.includes(plan.target.target_kind === "directory" ? "create_topic" : "create_file"))) throw denied();
@@ -79,7 +82,7 @@ export async function createStorageCurrentRegistrationRecovery(config: {
           controller.signal.throwIfAborted();
           const url = new URL(String(input));
           if (init?.method !== "GET" || init.body != null || url.origin !== "https://www.googleapis.com" || url.username || url.password || url.hash ||
-              !/^\/drive\/v3\/files(?:\/[A-Za-z0-9_-]+)?$/.test(url.pathname) ||
+              !/^\/drive\/v3\/files(?:\/[A-Za-z0-9_-]+(?:\/permissions)?)?$/.test(url.pathname) ||
               [...url.searchParams.keys()].some(key => !["fields", "supportsAllDrives", "includeItemsFromAllDrives", "includePermissionsForView", "q", "pageSize", "pageToken"].includes(key)) ||
               url.searchParams.has("includePermissionsForView") && url.searchParams.get("includePermissionsForView") !== "published") throw denied();
           return bounded(fetcher(input, { ...init, signal: AbortSignal.any([controller.signal, ...(init.signal ? [init.signal] : [])]) }));
@@ -89,7 +92,7 @@ export async function createStorageCurrentRegistrationRecovery(config: {
       const settled = await bounded(config.rpc({ action: "registration_current_commit", ...pinned,
         base_version: d.base_version, source_receipt_id: d.source_receipt_id, registration_authority: actor, registration_plan: plan, ...observations }));
       controller.signal.throwIfAborted();
-      return resolution(settled, pinned, intentId, d);
+      return resolution(settled, pinned, intentId, d, observations.second_observation.target.current_state);
     } finally { clearTimeout(timer); controller.abort(); }
   } });
 }

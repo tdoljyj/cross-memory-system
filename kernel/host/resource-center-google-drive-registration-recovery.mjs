@@ -15,8 +15,9 @@ const safeName = name => typeof name === "string" && name.length >= 1 && name.le
 const exactKeys = (value, required, optional = []) => object(value) && required.every(key => Object.hasOwn(value, key)) &&
   Object.keys(value).every(key => required.includes(key) || optional.includes(key));
 
-function registeredNode(node) {
-  if (!exactKeys(node, ["artifact_id", "artifact_version", "path", "provider_file_id", "parent_id", "access_digest", "sharing_digest"]) ||
+function registeredNode(node, state = false) {
+  if (!exactKeys(node, ["artifact_id", "artifact_version", "path", "provider_file_id", "parent_id", "access_digest", "sharing_digest",
+        ...(state ? ["registered_state"] : [])]) || state && !["active", "trashed"].includes(node.registered_state) ||
       !uuid.test(node.artifact_id) || !Number.isSafeInteger(node.artifact_version) || node.artifact_version < 1 ||
       typeof node.path !== "string" || !validId(node.provider_file_id) || !validId(node.parent_id) ||
       !safeName(nameOf(node.path)) ||
@@ -25,7 +26,7 @@ function registeredNode(node) {
 
 function validatePlan(plan) {
   if (!exactKeys(plan, ["contract", "mode", "managed_root", "root_folder_id", "root_parent_id", "intent_id", "request_sha256", "parents", "target"]) ||
-      plan.contract !== "clued.storage-registration-plan/1" || !["refresh_directory", "adopt_create"].includes(plan.mode) ||
+      plan.contract !== "clued.storage-registration-plan/1" || !["refresh_directory", "refresh_directory_state", "adopt_create"].includes(plan.mode) ||
       typeof plan.managed_root !== "string" || plan.managed_root.length > 2000 || plan.managed_root.includes("\\") ||
       !safeName(nameOf(plan.managed_root)) || !validId(plan.root_folder_id) || !validId(plan.root_parent_id) ||
       !uuid.test(plan.intent_id) || !digest.test(plan.request_sha256) || !Array.isArray(plan.parents) ||
@@ -39,7 +40,7 @@ function validatePlan(plan) {
     ids.add(node.provider_file_id);
   }
   const target = plan.target;
-  if (plan.mode === "refresh_directory") registeredNode(target);
+  if (["refresh_directory", "refresh_directory_state"].includes(plan.mode)) registeredNode(target, plan.mode === "refresh_directory_state");
   else if (!exactKeys(target, ["path", "provider_file_id", "parent_id", "target_kind", "mime_type", "size", "sha256"]) ||
       !["file", "directory"].includes(target.target_kind) ||
       (target.target_kind === "directory" ? target.mime_type !== folder || target.size !== null || target.sha256 !== null :
@@ -56,11 +57,12 @@ function validatePlan(plan) {
 // item, not a guessed ACL or a change to an existing explicit baseline.
 // permission IDs and provider_subject are different contracts: never compare
 // an OAuth subject to a permission ID to manufacture an ownership proof.
-function privateAccess(file) {
-  if (file.ownedByMe !== true || file.capabilities?.canShare !== true || file.driveId != null ||
-      file.shared !== false || !Array.isArray(file.permissions) || file.permissions.length !== 1 ||
+function privateAccess(file, listedPermissions) {
+  const permissions = listedPermissions === undefined ? file.permissions : listedPermissions;
+  if (file.ownedByMe !== true || listedPermissions === undefined && file.capabilities?.canShare !== true || file.driveId != null ||
+      file.shared !== false || !Array.isArray(permissions) || permissions.length !== 1 ||
       !Array.isArray(file.permissionIds) || file.permissionIds.length !== 1) fail("OWNERSHIP_UNPROVEN");
-  const permission = file.permissions[0];
+  const permission = permissions[0];
   if (!exactKeys(permission, ["id", "type", "role"], ["domain", "allowFileDiscovery", "expirationTime", "deleted", "pendingOwner", "view"]) ||
       typeof permission.id !== "string" || !/^[A-Za-z0-9_.:-]{1,200}$/.test(permission.id) ||
       permission.type !== "user" || permission.role !== "owner" || file.permissionIds[0] !== permission.id ||
@@ -68,16 +70,17 @@ function privateAccess(file) {
       (permission.deleted !== undefined && permission.deleted !== false) ||
       (permission.pendingOwner !== undefined && permission.pendingOwner !== false) ||
       (permission.allowFileDiscovery !== undefined && permission.allowFileDiscovery !== false)) fail("OWNERSHIP_UNPROVEN");
-  const access = googleDriveAccessDigest(file), sharing = googleDriveSharingDigest(file);
+  const access = googleDriveAccessDigest({ ...file, permissions }), sharing = googleDriveSharingDigest(file);
   if (!access || !sharing) fail("ACL_INCOMPLETE");
   return { access_digest: access, sharing_digest: sharing,
     owner_permission_id: permission.id, owner_allow_file_discovery: permission.allowFileDiscovery ?? null };
 }
 
-function identity(file, node, directory) {
+function identity(file, node, directory, currentState = false) {
   if (!object(file) || file.id !== node.provider_file_id || file.name !== nameOf(node.path) ||
       !Array.isArray(file.parents) || file.parents.length !== 1 || file.parents[0] !== node.parent_id ||
-      file.trashed !== false || file.explicitlyTrashed !== false || !version.test(file.version) ||
+      (currentState ? typeof file.trashed !== "boolean" || file.explicitlyTrashed !== file.trashed :
+        file.trashed !== false || file.explicitlyTrashed !== false) || !version.test(file.version) ||
       (directory ? file.mimeType !== folder : typeof file.mimeType !== "string" || file.mimeType.startsWith("application/vnd.google-apps.")))
     fail("IDENTITY_CHANGED");
 }
@@ -93,7 +96,7 @@ function baseline(node, acl) {
  * plan and independently rechecks it, authority and CAS at settlement. This
  * observer creates neither a grant nor an old successful mutation. There is
  * no provider effect, Agent fallback, confirmation flag or caller credential.
- * @param {{metadata?: {getFile: Function, listChildren: Function, hasChildren: Function}, clock?: () => number}} [config]
+ * @param {{metadata?: {getFile: Function, listChildren: Function, hasChildren: Function, listPermissions?: Function}, clock?: () => number}} [config]
  */
 export function createGoogleDriveRegistrationRecovery({ metadata, clock = Date.now } = {}) {
   if (!metadata || ["getFile", "listChildren", "hasChildren"].some(key => typeof metadata[key] !== "function") || typeof clock !== "function")
@@ -101,11 +104,16 @@ export function createGoogleDriveRegistrationRecovery({ metadata, clock = Date.n
   return Object.freeze({ async observe(plan, { signal } = {}) {
     validatePlan(plan);
     const pinned = structuredClone(plan);
-    const readNode = async (node, directory) => {
+    const readNode = async (node, directory, currentState = false) => {
       signal?.throwIfAborted();
       const file = await metadata.getFile(node.provider_file_id, { signal });
-      identity(file, node, directory);
-      const acl = privateAccess(file);
+      identity(file, node, directory, currentState);
+      let permissions;
+      if (currentState && file.trashed && file.capabilities?.canShare !== true) {
+        if (file.ownedByMe !== true || file.driveId != null || typeof metadata.listPermissions !== "function") fail("OWNERSHIP_UNPROVEN");
+        permissions = await metadata.listPermissions(node.provider_file_id, { signal });
+      }
+      const acl = privateAccess(file, permissions);
       if (Object.hasOwn(node, "artifact_id")) baseline(node, acl);
       return { file, acl };
     };
@@ -121,17 +129,24 @@ export function createGoogleDriveRegistrationRecovery({ metadata, clock = Date.n
         }
         parents.push({ ...node, ...acl, provider_file_version: file.version });
       }
-      const target = pinned.target, directory = pinned.mode === "refresh_directory" || target.target_kind === "directory";
-      const { file, acl } = await readNode(target, directory);
-      const matches = await metadata.listChildren({ parent_id: target.parent_id, name: nameOf(target.path) }, { signal });
-      if (!Array.isArray(matches) || matches.length !== 1 || matches[0].id !== target.provider_file_id) fail("NAMESPACE_CONFLICT");
+      const target = pinned.target, state = pinned.mode === "refresh_directory_state";
+      const directory = state || pinned.mode === "refresh_directory" || target.target_kind === "directory";
+      const { file, acl } = await readNode(target, directory, state);
+      // An explicitly trashed object owns no active name slot. A new active
+      // same-name object is neither adopted nor overwritten by this repair.
+      if (!file.trashed) {
+        const matches = await metadata.listChildren({ parent_id: target.parent_id, name: nameOf(target.path) }, { signal });
+        if (!Array.isArray(matches) || matches.length !== 1 || matches[0].id !== target.provider_file_id) fail("NAMESPACE_CONFLICT");
+      }
       // Registration does not widen the parent namespace's access.
       if (acl.access_digest !== parents.at(-1).access_digest || acl.sharing_digest !== parents.at(-1).sharing_digest) fail("ACL_CHANGED");
       let empty = null;
       if (directory) {
-        if (file.capabilities?.canListChildren !== true) fail("NAMESPACE_UNPROVEN");
         if (file.size != null || file.sha256Checksum != null || file.headRevisionId != null) fail("IDENTITY_CHANGED");
-        empty = !(await metadata.hasChildren(target.provider_file_id, { signal }));
+        if (!file.trashed) {
+          if (file.capabilities?.canListChildren !== true) fail("NAMESPACE_UNPROVEN");
+          empty = !(await metadata.hasChildren(target.provider_file_id, { signal }));
+        }
         // This is new current metadata for this directory only. Preserve the
         // observed child-presence fact; children are neither adopted nor
         // changed, and the old mutation's typed proof is not being rebuilt.
@@ -144,6 +159,7 @@ export function createGoogleDriveRegistrationRecovery({ metadata, clock = Date.n
       return { contract: "clued.storage-registration-observation/1", mode: pinned.mode, parents,
         target: { ...target, ...acl, provider_file_version: file.version, mime_type: file.mimeType,
           size: directory ? null : file.size, sha256: directory ? null : file.sha256Checksum, empty,
+          ...(state ? { current_state: file.trashed ? "trashed" : "active" } : {}),
           intent_tag: pinned.mode === "adopt_create" ? file.appProperties.clued_intent_id : null,
           request_tag: pinned.mode === "adopt_create" ? file.appProperties.clued_request_sha256 : null } };
     };

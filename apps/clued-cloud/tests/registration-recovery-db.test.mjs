@@ -358,4 +358,25 @@ test("registration recovery: real PostgreSQL boundary, CAS, receipts and unchang
   assert.equal(await compatible({...saved,credential_generation:generation+10000}),false);
   await db.query("begin");try{await db.query("update clued_private.issuer_credentials_v1 set state='retired',retired_at=$3::timestamptz+interval '1 second' where issuer_id=$1 and generation=$2",[saved.issuer_id,saved.credential_generation,saved.recorded_at]);assert.equal(await compatible(saved),true,"legitimately retired history remains readable");}finally{await db.query("rollback");}
  });
-}));
+ await t.test('historical nonjob fault fixtures close with the actual entry upgrade and a genuine current cloud create',async()=>{
+  const before=(await db.query('select clued_private.m1_sha256(jsonb_agg(to_jsonb(m) order by id)) digest from clued_private.resource_center_mutations_v1 m')).rows[0].digest;
+  await f.installDurableEntry();
+  assert.equal((await db.query('select clued_private.m1_sha256(jsonb_agg(to_jsonb(m) order by id)) digest from clued_private.resource_center_mutations_v1 m')).rows[0].digest,before);
+  assert.equal((await db.query('select count(*)::int n from clued_private.storage_execution_entry_permits_v1')).rows[0].n,0);
+  await f.createOriginal();assert.equal((await db.query('select count(*)::int n from clued_private.storage_execution_entry_permits_v1')).rows[0].n,0);
+ });
+ await t.test('the upgraded real Worker still refreshes and replaces one original file through the durable job',async()=>{
+  const target=await f.addFile(),before=await job(target.ref),writes=f.getWrites(),calls=[];
+  const result=await f.executeWorker(target.ref,input=>calls.push(structuredClone(input)));
+  assert.equal(result.status,'committed',JSON.stringify(result));
+  const after=await job(target.ref),registered=await artifact(target.provider),journal=(await db.query(
+   'select * from clued_private.resource_center_mutations_v1 where id=$1',[after.intent_id])).rows[0];
+  assert.deepEqual(after.mutation,before.mutation);assert.deepEqual(after.authority_snapshot_v2,before.authority_snapshot_v2);
+  assert.equal(after.request_digest,before.request_digest);assert.equal(journal.state,'committed');
+  assert.ok(journal.provider_attempt_receipt_id);assert.ok(journal.verified_receipt_id_v2);
+  assert.equal(registered.provider_file_version,'47');assert.equal(f.files.get(target.provider).sha256Checksum,sha('replacement'));
+  assert.equal(f.getWrites()-writes,2,'one revision pin and one multipart replacement, after installing the new gate');
+  assert.equal(calls.filter(input=>input.action==='begin').length,1);assert.equal(calls.filter(input=>input.action==='provider_attempt').length,1);
+  assert.equal((await db.query('select count(*)::int n from clued_private.storage_execution_entry_permits_v1')).rows[0].n,0);
+ });
+},{historicalNonjobFixtures:true}));
