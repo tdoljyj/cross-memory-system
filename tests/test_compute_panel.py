@@ -1100,6 +1100,34 @@ class DuplicateMainTests(unittest.TestCase):
         self.assertEqual(len(state["duplicates"]["found"]), panel.DUP_KEEP)  # the detail is back (the limit is normal again)
         self.assertEqual(store["comments"], [])
 
+    def test_a_summary_only_body_still_comments_keeps_between_scans_and_recovers_on_the_next(self) -> None:
+        from unittest import mock
+        dup = [resident("gitleaks", 50), resident("gitleaks", 40, attempt=2)]
+        pulls, checks = many_heads(40)
+        store: dict = {"comments": []}
+        with mock.patch.object(panel, "DUP_BODY_LIMIT", 1):
+            self.run_main(store, pulls, checks, NOW)  # the first scan: recorded quietly
+            self.assertEqual(store["comments"], [])
+            newer, more = pulls + [pull(99, "f" * 40)], {**checks, "f" * 40: dup}
+            self.run_main(store, newer, more, NOW + timedelta(hours=1))  # a scan with a new duplicate
+            self.assertEqual(len(store["comments"]), 1)
+            self.assertIn("重复执行：PR #99", store["comments"][0])
+            first = panel.read_state(store["issue"]["body"])
+            self.assertTrue(first["duplicates"]["omitted"])
+            self.run_main(store, newer, more, NOW + timedelta(hours=1, minutes=5))  # between scans
+            between = panel.read_state(store["issue"]["body"])
+            self.assertEqual((between["duplicates"]["omitted"], between["duplicates"]["total"], between["duplicates"]["as_of"]),
+                             (True, 41, first["duplicates"]["as_of"]))
+            self.assertIn("明细已省略", store["issue"]["body"])
+            self.assertEqual(len(store["comments"]), 1)
+            self.assertEqual(between["announced_dup"], first["announced_dup"])
+        self.run_main(store, newer, more, NOW + timedelta(hours=2))  # the next scan, limit normal again
+        recovered = panel.read_state(store["issue"]["body"])
+        self.assertNotIn("omitted", recovered["duplicates"])
+        self.assertEqual((recovered["duplicates"]["total"], len(recovered["duplicates"]["found"])), (41, panel.DUP_KEEP))
+        self.assertNotIn("明细已省略", store["issue"]["body"])
+        self.assertEqual(len(store["comments"]), 1)
+
 
 FIXTURE = ROOT / "tests" / "fixtures" / "compute-panel-duplicate-runs.json"
 
