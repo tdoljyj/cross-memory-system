@@ -34,8 +34,14 @@
 // CI's full checkout, the Linux clone has GitHub's branches (as origin/*), its
 // tags and an origin remote: some tests read commits only a branch other than
 // main still holds. On Windows the worktrees see this repository's own refs.
-// One run at a time per cache (a lock, taken after the change is snapshotted,
-// so a queued run verifies what was there when it started). Logs, worktrees,
+// Runs go side by side (defect 791484c2): each is queued after the change is
+// snapshotted (so it verifies what was there when it started), and starts when it
+// is first in line and the machine has room for one more (free memory, idle CPU,
+// free disk, the system drive counted against the CI watchdog's levels; at most
+// CLUED_LOCAL_VERIFY_MAX_RUNS, default 4; the first run always starts); a waiting
+// run prints its position. The shared things have a lock each: the installation
+// of the dependencies of a lockfile, main's results, main's worktree, the repository's
+// worktree list and fetches. A change is verified in a worktree of its own. Logs, worktrees,
 // results of main and the dependency cache (about 10 GB) live under
 // <data drive>:\clued-dev\cache\clued-local-verify on Windows: the first drive
 // after the system drive that exists, or CLUED_DEV_ROOT (the same root
@@ -257,38 +263,51 @@ export function testEnvironment(env, extra = {}, platform = process.platform) {
     ...(platform === 'win32' ? { PYTHONUTF8: '1' } : {}), ...extra };
 }
 
-// One run at a time per cache: worktrees, results of main and the dependency
-// store are shared. The lock appears with its content at once (written aside,
-// then hard-linked into place). A lock whose process is gone, older than any
-// run, or unreadable for longer than a write takes, is taken over: renamed
-// away first (only one waiter can), then checked to be the one seen stale, so
-// two waiters never both hold it. It is removed on exit only while it is
-// still this run's; refresh() renews its age between suites.
-export function acquireLock(home, { pid = process.pid, now = Date.now, wait = sleep, alive = processAlive, log = console.log } = {}) {
-  const file = path.join(home, 'run.lock');
+// A lock is a file that appears with its content at once (written aside, then
+// hard-linked into place). A lock whose process is gone, older than any run, or
+// unreadable for longer than a write takes, is taken over: renamed away first
+// (only one waiter can), then checked to be the one seen stale, so two waiters
+// never both hold it. It is removed on exit only while it is still its holder's;
+// refresh() renews its age. Named locks live in <home>/locks; the shared state
+// (worktrees, dependency stores, results of main) is guarded by one lock per
+// thing, not one for the whole cache (defect 791484c2).
+const heldAtExit = new Set();
+function releaseAtExit(release) {
+  if (heldAtExit.size === 0) process.once('exit', () => { for (const held of [...heldAtExit]) held(); });
+  heldAtExit.add(release);
+  return () => heldAtExit.delete(release);
+}
+
+export function acquireNamedLock(dir, name, { pid = process.pid, now = Date.now, wait = sleep, alive = processAlive, log = console.log,
+  what = dir, pollMs = 5000, nowait = false, extra = {} } = {}) {
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${name}.lock`);
   const token = `${pid}-${now()}-${Math.random().toString(16).slice(2)}`;
-  const read = (name) => {
+  const read = (target) => {
     try {
-      return JSON.parse(fs.readFileSync(name, 'utf8'));
+      return JSON.parse(fs.readFileSync(target, 'utf8'));
     } catch {
       return null;
     }
   };
   const aside = () => {
     const temporary = `${file}.${token}.new`;
-    fs.writeFileSync(temporary, JSON.stringify({ pid, token, started: now() }));
+    fs.writeFileSync(temporary, JSON.stringify({ pid, token, started: now(), ...extra }));
     return temporary;
   };
+  const leftovers = new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.lock\\..+$`);
   let announced = false;
   for (;;) {
     const temporary = aside();
     try {
       fs.linkSync(temporary, file);
       fs.rmSync(temporary, { force: true });
+      let forget = () => {};
       const release = () => {
+        forget();
         if (read(file)?.token === token) fs.rmSync(file, { force: true });
       };
-      // Read, then replace: not one step, but only this run writes its own lock
+      // Read, then replace: not one step, but only the holder writes its own lock
       // while it lives, and a failure only loses one renewal.
       release.refresh = () => {
         if (read(file)?.token !== token) return;
@@ -298,15 +317,16 @@ export function acquireLock(home, { pid = process.pid, now = Date.now, wait = sl
           renameRetrying(renewed, file);
         } catch (error) {
           if (renewed) fs.rmSync(renewed, { force: true });
-          log(`local-verify: could not renew the run lock: ${error.message}`);
+          log(`local-verify: could not renew the lock ${name}: ${error.message}`);
         }
       };
-      process.once('exit', release);
-      // what a run that stopped between writing and placing its lock, or
+      release.token = token;
+      forget = releaseAtExit(release);
+      // what a holder that stopped between writing and placing its lock, or
       // between taking over a stale lock and removing it, left
-      for (const name of fs.readdirSync(home)) {
-        const leftover = path.join(home, name);
-        if (/^run\.lock\..+$/.test(name) && !name.includes(token)) {
+      for (const entry of fs.readdirSync(dir)) {
+        const leftover = path.join(dir, entry);
+        if (leftovers.test(entry) && !entry.includes(token)) {
           try {
             if (now() - fs.statSync(leftover).mtimeMs > UNREADABLE_LOCK_MS) fs.rmSync(leftover, { force: true });
           } catch { /* gone */ }
@@ -329,9 +349,10 @@ export function acquireLock(home, { pid = process.pid, now = Date.now, wait = sl
       }
     }
     if (!stale) {
-      if (!announced) log(`local-verify: another run (process ${held?.pid ?? 'unknown'}) is using ${home}; waiting for it`);
+      if (nowait) return null;
+      if (!announced) log(`local-verify: another run (process ${held?.pid ?? 'unknown'}) is using ${what}; waiting for it`);
       announced = true;
-      wait(5000);
+      wait(pollMs);
       continue;
     }
     const moved = `${file}.${token}`;
@@ -353,6 +374,23 @@ export function acquireLock(home, { pid = process.pid, now = Date.now, wait = sl
   }
 }
 
+// The whole-cache lock of earlier versions of this tool (still taken, as
+// run.lock, by copies that have not been updated: see holdUmbrella).
+export function acquireLock(home, options = {}) {
+  return acquireNamedLock(home, 'run', { what: home, ...options });
+}
+
+const lockDirOf = (home) => path.join(home, 'locks');
+// fn() while holding the named lock of the cache.
+export function withLock(home, name, fn, options = {}) {
+  const release = acquireNamedLock(lockDirOf(home), name, { what: name, ...options });
+  try {
+    return fn(release);
+  } finally {
+    release();
+  }
+}
+
 function processAlive(pid) {
   if (!Number.isInteger(pid)) return false;
   try {
@@ -362,17 +400,263 @@ function processAlive(pid) {
   }
 }
 
+// ---- several runs at once (defect 791484c2) ----
+//
+// Every run registers itself in <home>/runs/<id>.json (queued, then running;
+// removed when it ends; a file whose process is gone is dropped). A run starts
+// when it is first in the queue and the machine has room for one more: free
+// memory, idle CPU and free disk, the system drive counted against the level at
+// which the CI host's watchdog stops the runners. The first run always starts.
+// A run that has to wait says its position.
+export const RUN_NEEDS = { memGb: 6, cores: 4, dataGb: 3, systemGb: 3 }; // one more run: Windows and Linux side, embedded PostgreSQL, builds
+export const HOST_KEEPS = { memGb: 10, cores: 4, dataGb: 10 }; // what the CI runners and the user keep (the watchdog resumes at 10 GB of memory)
+export const MAX_RUNS = 4;
+const RAMP_MS = 120_000; // a run just started has not yet taken what it will take
+const QUEUE_POLL_MS = 1000;
+const QUEUE_GRACE_MS = 3000; // a wait this short is not worth a line
+const QUEUE_REPORT_MS = 60_000;
+const GIB = 1024 ** 3;
+
+const runsDirOf = (home) => path.join(home, 'runs');
+
+// The runs that are alive: files of runs whose process is gone, or that were not
+// renewed for longer than any run lasts, are removed.
+export function listRuns(home, { alive = processAlive, now = Date.now } = {}) {
+  const dir = runsDirOf(home);
+  const runs = [];
+  let names = [];
+  try {
+    names = fs.readdirSync(dir);
+  } catch { /* none yet */ }
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    const file = path.join(dir, name);
+    try {
+      const run = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (!alive(run.pid) || now() - fs.statSync(file).mtimeMs > LOCK_MAX_AGE_MS) fs.rmSync(file, { force: true });
+      else runs.push(run);
+    } catch { /* being replaced, or gone: the next look sees it */ }
+  }
+  return runs;
+}
+
+// This run, in the registry. handle.update({...}) changes its record, touch()
+// shows that it lives, end() removes it (also at exit).
+export function beginRun(home, { pid = process.pid, now = Date.now, label = '' } = {}) {
+  const id = `${pid}-${Math.random().toString(16).slice(2, 8)}`;
+  const run = { id, pid, state: 'queued', queuedAt: now(), label, deps: [], worktrees: [] };
+  fs.mkdirSync(runsDirOf(home), { recursive: true });
+  const file = path.join(runsDirOf(home), `${id}.json`);
+  const write = () => {
+    const temporary = `${file}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(run));
+    renameRetrying(temporary, file);
+  };
+  write();
+  let forget = () => {};
+  const handle = {
+    run,
+    update(patch) {
+      Object.assign(run, patch);
+      write();
+    },
+    touch() {
+      try {
+        fs.utimesSync(file, new Date(), new Date());
+      } catch {
+        write(); // the file was dropped as stale meanwhile
+      }
+    },
+    end() {
+      forget();
+      fs.rmSync(file, { force: true });
+    },
+  };
+  forget = releaseAtExit(handle.end);
+  return handle;
+}
+
+// Idle CPU cores (two looks at the CPU times, a moment apart), free memory and
+// free disk (the cache's drive, and the system drive where the watchdog guards it).
+export function sampleResources(home, { cpus = os.cpus, freemem = os.freemem, free = freeGb, platform = process.platform, env = process.env, wait = sleep } = {}) {
+  const total = (list) => list.reduce((sum, cpu) => sum + Object.values(cpu.times).reduce((a, b) => a + b, 0), 0);
+  const idle = (list) => list.reduce((sum, cpu) => sum + cpu.times.idle, 0);
+  const before = cpus();
+  wait(500);
+  const after = cpus();
+  const span = total(after) - total(before);
+  const idleCores = span > 0 ? (after.length * (idle(after) - idle(before))) / span : after.length;
+  let systemFreeGb = null;
+  if (platform === 'win32') {
+    try {
+      systemFreeGb = free(`${env.SystemDrive || 'C:'}\\`);
+    } catch { /* not askable */ }
+  }
+  let dataFreeGb = null;
+  try {
+    dataFreeGb = free(home);
+  } catch { /* not askable */ }
+  return { freeMemGb: freemem() / GIB, idleCores, dataFreeGb, systemFreeGb };
+}
+
+// Room for one more run, given those running (and how many of them only just
+// started: what they will take is not yet seen in the free numbers).
+export function roomForOneMore({ running, ramping = 0 }, sample, { maxRuns = MAX_RUNS, needs = RUN_NEEDS, keeps = HOST_KEEPS, resume = CI_HOST_RESUME_FREE_GB } = {}) {
+  if (running === 0) return { ok: true, lacks: [] };
+  const lacks = [];
+  if (running >= maxRuns) lacks.push({ kind: 'runs', text: `${running} runs are running, the limit is ${maxRuns}` });
+  const short = (kind, label, free, need, keep, unit = 'GB') => {
+    const ahead = ramping * need; // taken soon by the runs that only just started
+    if (free - ahead - keep < need) {
+      lacks.push({ kind, text: `${label}: ${free.toFixed(1)} ${unit} free${ahead ? `, ${ahead} of it about to be taken by runs just started` : ''}, ${need + keep} ${unit} needed (one more run takes ${need}, ${keep} stay free)` });
+    }
+  };
+  short('memory', 'memory', sample.freeMemGb, needs.memGb, keeps.memGb);
+  short('cpu', 'CPU', sample.idleCores, needs.cores, keeps.cores, 'idle cores');
+  if (sample.dataFreeGb !== null) short('disk', 'disk of the cache', sample.dataFreeGb, needs.dataGb, keeps.dataGb);
+  if (sample.systemFreeGb !== null && resume > 0) {
+    short('system-disk', "the system drive (the CI watchdog resumes the runners at its level)", sample.systemFreeGb, needs.systemGb, resume);
+  }
+  return { ok: lacks.length === 0, lacks };
+}
+
+// How many GB of the system drive the watchdog wants kept free.
+export const resumeLevelGb = (env = process.env) => (env.CLUED_CI_RESUME_FREE_GB === undefined ? CI_HOST_RESUME_FREE_GB : Number(env.CLUED_CI_RESUME_FREE_GB));
+export const maxRunsOf = (env = process.env) => (Number.isInteger(Number(env.CLUED_LOCAL_VERIFY_MAX_RUNS)) && Number(env.CLUED_LOCAL_VERIFY_MAX_RUNS) > 0
+  ? Number(env.CLUED_LOCAL_VERIFY_MAX_RUNS) : MAX_RUNS);
+
+// Earlier versions of this tool take one run.lock for a whole run and wait for
+// each other's. While a run of this version lives, run.lock names one of them as
+// its holder (concurrent: true), so such a copy keeps waiting instead of working
+// on the shared state; this version joins a lock of its own kind and waits for
+// one of an older copy. Called with the admission lock held.
+function umbrellaState(home, { alive, now }) {
+  const file = path.join(home, 'run.lock');
+  let held = null;
+  try {
+    held = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch { /* none, or unreadable */ }
+  if (!held) {
+    let age = null;
+    try {
+      age = now() - fs.statSync(file).mtimeMs;
+    } catch { /* none */ }
+    // unreadable for longer than a write takes: stale, as in acquireNamedLock
+    return age === null || age > UNREADABLE_LOCK_MS ? { file, free: true } : { file, old: { pid: null } };
+  }
+  if (!alive(held.pid) || now() - held.started > LOCK_MAX_AGE_MS) return { file, free: true };
+  return held.concurrent ? { file, joined: held } : { file, old: held };
+}
+function writeUmbrella(file, pid, now) {
+  const temporary = `${file}.${pid}.umbrella`;
+  fs.writeFileSync(temporary, JSON.stringify({ pid, token: `umbrella-${pid}-${now()}`, started: now(), concurrent: true }));
+  return temporary;
+}
+
+// Waits (printing its place in the queue) until this run may start, then marks
+// it running. One short lock serialises the decisions of waiting runs.
+export function admitRun(home, handle, { now = Date.now, wait = sleep, alive = processAlive, log = console.log,
+  limits = {}, env = process.env, sample = env.CLUED_LOCAL_VERIFY_RESOURCES === 'off'
+    ? () => ({ freeMemGb: Infinity, idleCores: Infinity, dataFreeGb: null, systemFreeGb: null }) // only the limit on runs applies (tests)
+    : () => sampleResources(home) } = {}) {
+  let reported = { key: '', at: 0 };
+  for (;;) {
+    let outcome;
+    withLock(home, 'admission', () => {
+      const runs = listRuns(home, { alive, now });
+      const mine = runs.find((run) => run.id === handle.run.id);
+      if (!mine) {
+        handle.update({}); // dropped as stale: put back
+        outcome = { ok: false, retry: true };
+        return;
+      }
+      const queued = runs.filter((run) => run.state === 'queued').sort((a, b) => a.queuedAt - b.queuedAt || (a.id < b.id ? -1 : 1));
+      const position = queued.findIndex((run) => run.id === handle.run.id) + 1;
+      const running = runs.filter((run) => run.state === 'running');
+      const umbrella = umbrellaState(home, { alive, now });
+      let lacks = [];
+      if (position > 1) lacks.push({ kind: 'queue', text: `${position - 1} run${position > 2 ? 's' : ''} queued ahead` });
+      else if (umbrella.old) lacks.push({ kind: 'older', text: `an older copy of this tool is running (process ${umbrella.old.pid ?? 'unknown'})` });
+      else {
+        const ramping = running.filter((run) => now() - run.admittedAt < RAMP_MS).length;
+        const room = roomForOneMore({ running: running.length, ramping }, running.length === 0 ? {} : sample(),
+          { maxRuns: maxRunsOf(env), resume: resumeLevelGb(env), ...limits });
+        lacks = room.lacks;
+      }
+      outcome = { ok: lacks.length === 0, position, running: running.length, lacks };
+      if (outcome.ok) {
+        handle.update({ state: 'running', admittedAt: now() });
+        // run.lock: this run is one of those it names
+        if (umbrella.free) {
+          const temporary = writeUmbrella(umbrella.file, process.pid, now);
+          try {
+            fs.rmSync(umbrella.file, { force: true });
+            fs.linkSync(temporary, umbrella.file);
+          } catch { /* an older copy took it in this instant: it holds the lock, we only share files it would also clean; see the notes */ } finally {
+            fs.rmSync(temporary, { force: true });
+          }
+        }
+      }
+    }, { pollMs: 200, log: () => {}, what: 'the admission lock' });
+    if (outcome.ok) {
+      if (reported.at) log(`local-verify: started after ${Math.round((now() - handle.run.queuedAt) / 1000)} s in the queue`);
+      return;
+    }
+    if (!outcome.retry && now() - handle.run.queuedAt >= QUEUE_GRACE_MS) {
+      const key = `${outcome.position}/${outcome.running}/${outcome.lacks.map((lack) => lack.kind).join(',')}`;
+      if (key !== reported.key || now() - reported.at >= QUEUE_REPORT_MS) {
+        log(`local-verify: queued, position ${outcome.position} (${outcome.running} running): ${outcome.lacks.map((lack) => lack.text).join('; ')}`);
+        reported = { key, at: now() };
+      }
+    }
+    handle.touch();
+    wait(QUEUE_POLL_MS);
+  }
+}
+
+// This run is done: if run.lock names this process, it passes to another run that
+// is running (an older copy must not start while one lives), else it goes.
+export function leaveUmbrella(home, handle, { alive = processAlive, now = Date.now } = {}) {
+  try {
+    withLock(home, 'admission', () => {
+      const file = path.join(home, 'run.lock');
+      let held = null;
+      try {
+        held = JSON.parse(fs.readFileSync(file, 'utf8'));
+      } catch { return; }
+      if (!held?.concurrent || held.pid !== handle.run.pid) return;
+      const successor = listRuns(home, { alive, now }).find((run) => run.state === 'running' && run.id !== handle.run.id);
+      if (!successor) {
+        fs.rmSync(file, { force: true });
+        return;
+      }
+      const temporary = writeUmbrella(file, successor.pid, now);
+      renameRetrying(temporary, file);
+    }, { pollMs: 200, log: () => {}, what: 'the admission lock' });
+  } catch { /* the registry entry still tells the others */ }
+}
+
+// Keeps run.lock young while this run is the process it names.
+export function refreshUmbrella(home, handle, { now = Date.now } = {}) {
+  const file = path.join(home, 'run.lock');
+  try {
+    const held = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (held.concurrent && held.pid === handle.run.pid) renameRetrying(writeUmbrella(file, held.pid, now), file);
+  } catch { /* not ours, or being handed over */ }
+}
+
 // main: --base, else GitHub's main. GitHub's branches and tags are fetched
 // either way (the Linux clone gets them); without a login or network the last
 // fetched copy is used, else origin's main.
-function resolveMain(root, options) {
+// The fetches of one repository take turns (two writing the same refs at once fail on ref locks).
+function resolveMain(root, options, home) {
   if (options.fetch) {
     const env = { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' };
     let fetched = false;
     for (let attempt = 1; attempt <= 3 && !fetched; attempt += 1) {
-      fetched = git(['-c', 'http.lowSpeedLimit=1000', '-c', 'http.lowSpeedTime=60', 'fetch', '--quiet', '--no-tags',
+      fetched = withLock(home, `fetch-${repositoryKey(root)}`, () => git(['-c', 'http.lowSpeedLimit=1000', '-c', 'http.lowSpeedTime=60', 'fetch', '--quiet', '--no-tags',
         '--prune', `https://github.com/${REPOSITORY}.git`, `+refs/heads/*:${GITHUB_BRANCHES}*`, `+refs/tags/*:${GITHUB_TAGS}*`],
-        { cwd: root, env, allowFail: true, timeout: 10 * 60_000 }).status === 0;
+        { cwd: root, env, allowFail: true, timeout: 10 * 60_000 }).status === 0, { what: "GitHub's branches being fetched" });
       if (!fetched && attempt < 3) sleep(5000 * attempt);
     }
     if (!fetched) console.log(`local-verify: could not fetch GitHub's branches (network, or git has no login for https://github.com/${REPOSITORY}); using the last fetched copy`);
@@ -439,14 +723,18 @@ export function changedFiles(root, change, main, limit) {
 async function loadSelector(root, main, home) {
   const dir = path.join(home, 'selectors', main);
   if (!fs.existsSync(path.join(dir, 'complete'))) {
-    fs.rmSync(dir, { recursive: true, force: true });
-    fs.mkdirSync(dir, { recursive: true });
-    for (const file of SELECTOR_FILES) {
-      const result = spawnSync('git', ['show', `${main}:${file}`], { cwd: root, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
-      if (result.status !== 0) throw new Error(`main ${main.slice(0, 12)} has no ${file}`);
-      fs.writeFileSync(path.join(dir, path.basename(file)), result.stdout);
-    }
-    fs.writeFileSync(path.join(dir, 'complete'), '');
+    // written once, by whichever run gets there first; the others find it complete
+    withLock(home, `selector-${main.slice(0, 16)}`, () => {
+      if (fs.existsSync(path.join(dir, 'complete'))) return;
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.mkdirSync(dir, { recursive: true });
+      for (const file of SELECTOR_FILES) {
+        const result = spawnSync('git', ['show', `${main}:${file}`], { cwd: root, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
+        if (result.status !== 0) throw new Error(`main ${main.slice(0, 12)} has no ${file}`);
+        fs.writeFileSync(path.join(dir, path.basename(file)), result.stdout);
+      }
+      fs.writeFileSync(path.join(dir, 'complete'), '');
+    }, { what: `the selection files of main ${main.slice(0, 12)}` });
   }
   const selector = await import(pathToFileURL(path.join(dir, path.basename(SELECTOR))).href);
   return { ...selector, reporterUrl: pathToFileURL(path.join(dir, 'ci-test-failures-reporter.mjs')).href };
@@ -499,13 +787,17 @@ const commonDir = (dir) => {
     return null;
   }
 };
+const repositoryKey = (root) => sha256(commonDir(root) ?? root).slice(0, 8);
 // Named per repository too: the cache is per user, and a worktree of another
-// clone would not see this clone's commits.
-export function worktreePath(root, commit, home) {
-  return path.join(home, 'worktrees', `${commit.slice(0, 16)}-${sha256(commonDir(root) ?? root).slice(0, 8)}`);
+// clone would not see this clone's commits. A worktree with an owner (a run's id)
+// is that run's alone; one without (main's, for the baseline) is shared and
+// used only while holding its lock (worktreeLock).
+export function worktreePath(root, commit, home, owner = null) {
+  return path.join(home, 'worktrees', `${commit.slice(0, 16)}-${repositoryKey(root)}${owner ? `-r${owner}` : ''}`);
 }
-export function worktree(root, commit, home) {
-  const dir = worktreePath(root, commit, home);
+export const worktreeLock = (dir) => `worktree-${path.basename(dir)}`;
+export function worktree(root, commit, home, { owner = null } = {}) {
+  const dir = worktreePath(root, commit, home, owner);
   const own = fs.existsSync(path.join(dir, '.git')) ? commonDir(dir) : null;
   const valid = own !== null && own === commonDir(root);
   if (valid) {
@@ -517,26 +809,47 @@ export function worktree(root, commit, home) {
     } catch { /* none */ }
     fs.rmSync(dir, { recursive: true, force: true });
     fs.mkdirSync(path.dirname(dir), { recursive: true });
-    // --force also takes over this path when git still lists it but it is gone
-    git(['worktree', 'add', '--quiet', '--detach', '--force', dir, commit], { cwd: root });
+    // --force also takes over this path when git still lists it but it is gone;
+    // the repository's worktree list is written by one run at a time
+    withLock(home, `git-${repositoryKey(root)}`, () => git(['worktree', 'add', '--quiet', '--detach', '--force', dir, commit], { cwd: root }),
+      { what: 'the repository (adding a worktree)' });
   }
   cleanWorktree(dir);
   fs.utimesSync(dir, new Date(), new Date());
   return dir;
 }
 
-// Keeps the newest worktrees and the ones in use; only this cache's own.
-function pruneWorktrees(root, home, inUse) {
+// A run's own worktree is removed when the run is done.
+export function dropWorktree(root, dir, home) {
+  try {
+    removeLink(path.join(dir, APP, 'node_modules'));
+  } catch { /* none */ }
+  withLock(home, `git-${repositoryKey(root)}`, () => git(['worktree', 'remove', '--force', dir], { cwd: root, allowFail: true }),
+    { what: 'the repository (removing a worktree)' });
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// The runs' own worktrees whose run is gone, and all but the newest of the shared
+// ones that nobody holds; only this cache's own.
+export function pruneWorktrees(root, home, { alive = processAlive, now = Date.now } = {}) {
   const dir = path.join(home, 'worktrees');
   if (!fs.existsSync(dir)) return;
-  const entries = fs.readdirSync(dir).map((name) => path.join(dir, name))
-    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-  for (const old of entries.slice(KEEP_WORKTREES).filter((entry) => !inUse.includes(entry))) {
+  const live = new Set(listRuns(home, { alive, now }).map((run) => run.id));
+  const entries = fs.readdirSync(dir).map((name) => path.join(dir, name));
+  const owned = (entry) => /-r(\d+-[0-9a-f]{6})$/.exec(entry)?.[1] ?? null;
+  const gone = [
+    ...entries.filter((entry) => owned(entry) && !live.has(owned(entry))),
+    ...entries.filter((entry) => !owned(entry)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs).slice(KEEP_WORKTREES),
+  ];
+  for (const old of gone) {
+    // a shared worktree is only taken from someone who is not using it
+    const release = owned(old) ? () => {} : acquireNamedLock(lockDirOf(home), worktreeLock(old), { nowait: true });
+    if (release === null) continue;
     try {
-      removeLink(path.join(old, APP, 'node_modules'));
-    } catch { /* none */ }
-    git(['worktree', 'remove', '--force', old], { cwd: root, allowFail: true });
-    fs.rmSync(old, { recursive: true, force: true });
+      dropWorktree(root, old, home);
+    } catch { /* in use by something we cannot see: the next run tries again */ } finally {
+      release();
+    }
   }
 }
 
@@ -566,8 +879,12 @@ function npmSync(args, cwd, label, log) {
 
 // The application's node_modules for this lockfile, installed once (npm ci
 // --ignore-scripts, as the workflow does; the embedded PostgreSQL package is
-// rebuilt as migration-verify does) and linked into the worktree.
-function ensureAppDependencies(dir, home, { rebuild, log = console.log }) {
+// rebuilt as migration-verify does) and linked into the worktree. One lock per
+// dependency key: runs that need the same one wait for the first to finish it
+// (the store is then only read), runs that need another install at the same time.
+// A store a live run uses is never removed (the run's record names it, written
+// while the key's lock is still held).
+function ensureAppDependencies(dir, home, { rebuild, log = console.log, run = null }) {
   const app = path.join(dir, APP);
   const read = (file) => (fs.existsSync(path.join(app, file)) ? fs.readFileSync(path.join(app, file)) : null);
   if (!read('package.json') || !read('package-lock.json')) throw new Error(`${APP} has no package.json or package-lock.json`);
@@ -575,39 +892,60 @@ function ensureAppDependencies(dir, home, { rebuild, log = console.log }) {
   const store = path.join(home, 'node_modules');
   const ready = path.join(store, key);
   fs.mkdirSync(store, { recursive: true });
-  for (const name of fs.readdirSync(store)) {
-    // what a run that stopped mid-install or mid-delete left (one run at a time holds the lock)
-    if (/^[0-9a-f]{16}-.{6}$/.test(name) || name.endsWith('.deleting')) fs.rmSync(path.join(store, name), { recursive: true, force: true });
-  }
-  if (!fs.existsSync(path.join(ready, 'complete'))) {
-    const temporary = fs.mkdtempSync(path.join(store, `${key}-`));
-    for (const file of ['package.json', 'package-lock.json', '.npmrc']) {
-      if (fs.existsSync(path.join(app, file))) fs.copyFileSync(path.join(app, file), path.join(temporary, file));
+  withLock(home, `dependencies-${key}`, () => {
+    for (const name of fs.readdirSync(store)) {
+      // what a run that stopped mid-install or mid-delete left of this key (nobody else installs it now)
+      if ((name.startsWith(`${key}-`) && /^[0-9a-f]{16}-.{6}$/.test(name)) || name === `${key}.deleting`) fs.rmSync(path.join(store, name), { recursive: true, force: true });
     }
-    try {
-      npmSync(['ci', '--ignore-scripts', '--cache', path.join(home, 'npm-cache'), '--prefer-offline', '--fetch-retries=5',
-        '--fetch-timeout=60000', '--no-audit', '--no-fund'], temporary, `installing ${APP} dependencies (${key})`, log);
-      fs.writeFileSync(path.join(temporary, 'complete'), '');
-      renameRetrying(temporary, ready);
-    } finally {
-      fs.rmSync(temporary, { recursive: true, force: true });
+    if (!fs.existsSync(path.join(ready, 'complete'))) {
+      const temporary = fs.mkdtempSync(path.join(store, `${key}-`));
+      for (const file of ['package.json', 'package-lock.json', '.npmrc']) {
+        if (fs.existsSync(path.join(app, file))) fs.copyFileSync(path.join(app, file), path.join(temporary, file));
+      }
+      try {
+        npmSync(['ci', '--ignore-scripts', '--cache', path.join(home, 'npm-cache'), '--prefer-offline', '--fetch-retries=5',
+          '--fetch-timeout=60000', '--no-audit', '--no-fund'], temporary, `installing ${APP} dependencies (${key})`, log);
+        fs.writeFileSync(path.join(temporary, 'complete'), '');
+        renameRetrying(temporary, ready);
+      } finally {
+        fs.rmSync(temporary, { recursive: true, force: true });
+      }
     }
-  }
-  const platformPackage = `@embedded-postgres/${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}`;
-  if (rebuild && !fs.existsSync(path.join(ready, 'rebuilt')) && fs.existsSync(path.join(ready, 'node_modules', platformPackage))) {
-    npmSync(['rebuild', platformPackage], ready, `rebuilding ${platformPackage}`, log);
-    fs.writeFileSync(path.join(ready, 'rebuilt'), '');
-  }
-  fs.utimesSync(ready, new Date(), new Date());
-  const stores = fs.readdirSync(store).filter((name) => /^[0-9a-f]{16}$/.test(name)).map((name) => path.join(store, name))
-    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-  for (const old of stores.slice(KEEP_DEPENDENCY_STORES)) {
-    // renamed first, so a half-deleted store never looks complete
-    renameRetrying(old, `${old}.deleting`);
-    fs.rmSync(`${old}.deleting`, { recursive: true, force: true });
-  }
+    const platformPackage = `@embedded-postgres/${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}`;
+    if (rebuild && !fs.existsSync(path.join(ready, 'rebuilt')) && fs.existsSync(path.join(ready, 'node_modules', platformPackage))) {
+      npmSync(['rebuild', platformPackage], ready, `rebuilding ${platformPackage}`, log);
+      fs.writeFileSync(path.join(ready, 'rebuilt'), '');
+    }
+    fs.utimesSync(ready, new Date(), new Date());
+    if (run && !run.run.deps.includes(key)) run.update({ deps: [...run.run.deps, key] });
+  }, { what: `the ${APP} dependencies ${key} being installed`, log });
+  pruneDependencyStores(home, { keep: key });
   linkDependencies(path.join(app, 'node_modules'), path.join(ready, 'node_modules'));
   return key;
+}
+
+// All but the newest stores go, except those a live run uses or holds the lock of.
+export function pruneDependencyStores(home, { keep = null, alive = processAlive, now = Date.now } = {}) {
+  const store = path.join(home, 'node_modules');
+  const names = fs.readdirSync(store);
+  const stores = names.filter((name) => /^[0-9a-f]{16}$/.test(name))
+    .sort((a, b) => fs.statSync(path.join(store, b)).mtimeMs - fs.statSync(path.join(store, a)).mtimeMs);
+  const leftovers = names.filter((name) => /^[0-9a-f]{16}\.deleting$/.test(name)).map((name) => name.slice(0, 16));
+  for (const key of [...stores.slice(KEEP_DEPENDENCY_STORES), ...leftovers]) {
+    if (key === keep) continue;
+    const release = acquireNamedLock(lockDirOf(home), `dependencies-${key}`, { nowait: true });
+    if (release === null) continue; // being installed or just taken by a run
+    try {
+      // looked at with the lock held: a run records its store before it lets go of the lock
+      if (listRuns(home, { alive, now }).some((run) => run.deps?.includes(key))) continue;
+      const old = path.join(store, key);
+      // renamed first, so a half-deleted store never looks complete
+      if (fs.existsSync(old)) renameRetrying(old, `${old}.deleting`);
+      fs.rmSync(`${old}.deleting`, { recursive: true, force: true });
+    } catch { /* in use by something we cannot see: the next run tries again */ } finally {
+      release();
+    }
+  }
 }
 
 // The dependency key of the application at a commit, read without a worktree.
@@ -767,25 +1105,47 @@ export function writeCached(file, value) {
   fs.writeFileSync(temporary, JSON.stringify(value));
   renameRetrying(temporary, file);
 }
-function mainResults(selector, id, { root, main, home, logFile, env, freshBase }) {
+// main's results are computed once per result (a lock named after it: runs that
+// need the same one wait and read it) in main's shared worktree, which one
+// computation uses at a time. Lock order: results, then worktree, then dependencies.
+function mainResults(selector, id, { root, main, home, logFile, env, freshBase, run = null, log = console.log }) {
   const cache = mainResultsFile(home, { main, id, python: pythonVersion(),
     dependencies: NEEDS_APP_DEPENDENCIES.has(id) ? dependencyKeyAt(root, main) : null });
   const cached = freshBase ? null : readCached(cache);
   if (cached) return cached;
-  const dir = worktree(root, main, home);
-  if (NEEDS_APP_DEPENDENCIES.has(id)) ensureAppDependencies(dir, home, { rebuild: id === 'production-schema' });
-  const results = runCommands(selector, id, dir, main, logFile, { env });
-  writeCached(cache, results);
-  return results;
+  return withLock(home, `main-${path.basename(cache, '.json')}`, () => {
+    const meanwhile = freshBase ? null : readCached(cache); // another run computed it while this one waited
+    if (meanwhile) return meanwhile;
+    return withLock(home, worktreeLock(worktreePath(root, main, home)), () => {
+      const dir = worktree(root, main, home);
+      if (NEEDS_APP_DEPENDENCIES.has(id)) ensureAppDependencies(dir, home, { rebuild: id === 'production-schema', run });
+      const results = runCommands(selector, id, dir, main, logFile, { env });
+      writeCached(cache, results);
+      return results;
+    }, { what: `the worktree of main ${main.slice(0, 12)}`, log });
+  }, { what: `main's results for ${id}`, log });
 }
 
 const platformName = () => (process.platform === 'win32' ? 'windows' : 'linux');
 
-function verifyHere({ root, home, selector, main, candidate, suites, logs, freshBase, lock }) {
+// The change is verified in a worktree of its own, removed afterwards: other runs
+// of the same commit, or of main, never share it.
+function verifyHere({ root, home, selector, main, candidate, suites, logs, freshBase, run }) {
   const platform = platformName();
   if (process.version !== `v${CI_NODE}`) console.log(`local-verify: ${platform}: Node ${process.version} here, CI uses v${CI_NODE}`);
-  const dir = worktree(root, candidate, home);
-  pruneWorktrees(root, home, [dir, worktreePath(root, main, home)]);
+  pruneWorktrees(root, home);
+  const dir = worktree(root, candidate, home, { owner: run.run.id });
+  run.update({ worktrees: [...run.run.worktrees, dir] });
+  try {
+    return verifySuites({ root, home, selector, main, dir, suites, logs, freshBase, run, platform });
+  } finally {
+    try {
+      dropWorktree(root, dir, home);
+    } catch { /* the next run's prune takes it */ }
+  }
+}
+
+function verifySuites({ root, home, selector, main, dir, suites, logs, freshBase, run, platform }) {
   const env = testEnvironment(process.env, { CI_BASE_SHA: main });
   const knownLists = selector.readKnownFailures();
   const results = [];
@@ -794,14 +1154,15 @@ function verifyHere({ root, home, selector, main, candidate, suites, logs, fresh
     console.log(`local-verify: ${platform}: ${id} ...`);
     let outcome;
     try {
-      lock?.refresh();
+      run.touch();
+      refreshUmbrella(home, run);
       cleanWorktree(dir);
-      if (NEEDS_APP_DEPENDENCIES.has(id)) ensureAppDependencies(dir, home, { rebuild: id === 'production-schema' });
+      if (NEEDS_APP_DEPENDENCIES.has(id)) ensureAppDependencies(dir, home, { rebuild: id === 'production-schema', run });
       const head = runCommands(selector, id, dir, main, log, { env });
       outcome = compareSuite(head, null, { selector, knownLists });
       if (outcome.verdict !== 'pass') {
         console.log(`local-verify: ${platform}: ${id} failed; running it on main ${main.slice(0, 12)} to compare`);
-        const theirs = mainResults(selector, id, { root, main, home, logFile: path.join(logs, `${platform}-${id}.main.log`), env, freshBase });
+        const theirs = mainResults(selector, id, { root, main, home, logFile: path.join(logs, `${platform}-${id}.main.log`), env, freshBase, run });
         outcome = compareSuite(head, theirs, { selector, knownLists });
       }
     } catch (error) {
@@ -822,25 +1183,29 @@ const quote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
 // tags are then set exactly from `refs` (update-ref --stdin lines, deletions
 // too), whether or not a bundle was needed. It runs the same copy of this file
 // as this side (which needs nothing but Node; the change under test may not
-// have it) against that clone.
+// have it) against that clone. Runs at the same time share the clone: they take
+// turns (flock) while they change its refs, and each uses refs of its own.
 export function linuxScript({ bundle, refs, tool, run, candidate, main, suites, freshBase = false }) {
   return [
     'set -e',
     `repo="$HOME/${LINUX_HOME}/repo"`,
-    'mkdir -p "$repo"; [ -d "$repo/.git" ] || git init -q "$repo"',
+    'mkdir -p "$repo"',
+    `exec 9>"$HOME/${LINUX_HOME}/repo.lock"; flock 9`,
+    '[ -d "$repo/.git" ] || git init -q "$repo"',
     `git -C "$repo" remote get-url origin >/dev/null 2>&1 || git -C "$repo" remote add origin https://github.com/${REPOSITORY}.git`,
     ...(bundle ? [
       `git -C "$repo" bundle verify -q ${quote(bundle)} >/dev/null`,
       // every ref the bundle carries, so all its objects are kept (a fetch keeps
       // only what the refs it takes reach); dropped once the real refs are set
-      `git -C "$repo" fetch -q --no-tags ${quote(bundle)} '+refs/*:${INCOMING}*'`,
+      `git -C "$repo" fetch -q --no-tags ${quote(bundle)} '+refs/*:${INCOMING}${run}/*'`,
     ] : []),
     `git -C "$repo" update-ref --stdin < ${quote(refs)}`,
     `for commit in ${candidate} ${main}; do git -C "$repo" cat-file -e "$commit^{commit}" || { echo "local-verify: $commit is not in the clone" >&2; exit 3; }; done`,
-    `git -C "$repo" update-ref refs/local-verify/candidate ${candidate}`,
-    `git -C "$repo" update-ref refs/local-verify/base ${main}`,
-    `git -C "$repo" for-each-ref --format='delete %(refname)' ${INCOMING} | git -C "$repo" update-ref --stdin`,
-    'tool=$(mktemp -d); trap \'rm -rf "$tool"\' EXIT',
+    `git -C "$repo" update-ref refs/local-verify/${run}/candidate ${candidate}`,
+    `git -C "$repo" update-ref refs/local-verify/${run}/base ${main}`,
+    `git -C "$repo" for-each-ref --format='delete %(refname)' ${INCOMING}${run}/ | git -C "$repo" update-ref --stdin`,
+    'flock -u 9; exec 9>&-',
+    `tool=$(mktemp -d); trap 'rm -rf "$tool"; git -C "$repo" update-ref -d refs/local-verify/${run}/candidate; git -C "$repo" update-ref -d refs/local-verify/${run}/base' EXIT`,
     `cp ${quote(tool)} "$tool/local-verify.mjs"`,
     'cd "$repo"',
     `node "$tool/local-verify.mjs" --candidate ${candidate} --base ${main} --no-fetch${freshBase ? ' --fresh-base' : ''}${suites.map((id) => ` --suite ${quote(id)}`).join('')}`,
@@ -999,7 +1364,19 @@ async function main(argv) {
   if (change?.included.length) {
     console.log(`local-verify: includes ${change.included.length} uncommitted file(s): ${change.included.slice(0, 20).join(', ')}${change.included.length > 20 ? ', ...' : ''}`);
   }
-  const lock = acquireLock(home);
+  // other runs may be working: wait for a place (printing the position), never for
+  // the whole cache
+  const run = beginRun(home, { label: options.candidate ? `linux ${options.candidate.slice(0, 12)}` : '' });
+  try {
+    admitRun(home, run);
+    return await verifyChange({ options, root, home, change, run });
+  } finally {
+    leaveUmbrella(home, run);
+    run.end();
+  }
+}
+
+async function verifyChange({ options, root, home, change, run }) {
   // refs earlier versions of this file left in the user's repository (in the
   // Linux clone, candidate and base are the ones linuxScript just set)
   if (!options.candidate) {
@@ -1007,8 +1384,8 @@ async function main(argv) {
       git(['update-ref', '-d', ref], { cwd: root, allowFail: true });
     }
   }
-  // fetched under the lock: a Linux hand-over reads the same refs
-  const mainCommit = resolveMain(root, options);
+  // a Linux hand-over reads the refs fetched here
+  const mainCommit = resolveMain(root, options, home);
   let candidate;
   let suites = options.suites;
   if (options.candidate) {
@@ -1021,8 +1398,12 @@ async function main(argv) {
   }
   // what earlier versions or stopped runs left behind
   fs.rmSync(path.join(home, 'baselines'), { recursive: true, force: true });
+  // bundles of runs that are gone (another run's are in use)
   if (fs.existsSync(path.join(home, 'bundles'))) {
-    for (const name of fs.readdirSync(path.join(home, 'bundles'))) fs.rmSync(path.join(home, 'bundles', name), { force: true });
+    for (const name of fs.readdirSync(path.join(home, 'bundles'))) {
+      const owner = /^run-(\d+)\./.exec(name)?.[1];
+      if (owner === undefined || !processAlive(Number(owner))) fs.rmSync(path.join(home, 'bundles', name), { force: true });
+    }
   }
   const selector = await loadSelector(root, mainCommit, home);
   if (!suites.length && change) {
@@ -1031,12 +1412,12 @@ async function main(argv) {
     console.log(`local-verify: ${files === null ? 'more files than GitHub lists' : `${files.length} changed file(s)`}; suites: ${suites.join(', ') || 'none'}`);
   }
   for (const id of suites) if (!selector.SUITE_COMMANDS[id]) throw new Error(`unknown suite: ${id}`);
-  const logs = path.join(home, 'logs', `${new Date().toISOString().replace(/[:.]/g, '-')}-${candidate.slice(0, 12)}`);
+  const logs = path.join(home, 'logs', `${new Date().toISOString().replace(/[:.]/g, '-')}-${candidate.slice(0, 12)}-${run.run.id}`);
   fs.mkdirSync(logs, { recursive: true });
   const linux = options.linux && suites.length
     ? startLinux({ root, home, candidate, main: mainCommit, suites, logs, freshBase: options.freshBase })
     : null;
-  const results = options.here ? verifyHere({ root, home, selector, main: mainCommit, candidate, suites, logs, freshBase: options.freshBase, lock }) : [];
+  const results = options.here ? verifyHere({ root, home, selector, main: mainCommit, candidate, suites, logs, freshBase: options.freshBase, run }) : [];
   if (linux) results.push(...await linux);
   console.log('\nlocal-verify summary');
   for (const result of results) {

@@ -114,8 +114,8 @@ test("the Linux run takes objects only from this side's bundle (no GitHub login 
   assert.ok(script.includes('remote add origin https://github.com/tdoljyj/cross-memory-system.git'), 'an origin remote, as in CI');
   assert.ok(!/fetch[^\n]*github\.com/.test(script), 'nothing is fetched from GitHub in the distribution');
   assert.ok(script.includes(`bundle verify -q '/mnt/c/L/it'\\''s.bundle'`));
-  assert.ok(script.includes(`fetch -q --no-tags '/mnt/c/L/it'\\''s.bundle' '+refs/*:refs/local-verify/incoming/*'`), 'all of the bundle is kept');
-  assert.ok(script.includes(`for-each-ref --format='delete %(refname)' refs/local-verify/incoming/ | git -C "$repo" update-ref --stdin`),
+  assert.ok(script.includes(`fetch -q --no-tags '/mnt/c/L/it'\\''s.bundle' '+refs/*:refs/local-verify/incoming/run-7/*'`), 'all of the bundle is kept, under refs of this run');
+  assert.ok(script.includes(`for-each-ref --format='delete %(refname)' refs/local-verify/incoming/run-7/ | git -C "$repo" update-ref --stdin`),
     'and its refs dropped once the real ones are set');
   assert.ok(script.includes(`update-ref --stdin < '/mnt/c/L/run.refs'`));
   assert.ok(script.includes(`for commit in ${candidate} ${main}; do`));
