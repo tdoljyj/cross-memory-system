@@ -219,7 +219,7 @@ test('the HALT notice names what to read before the Owner re-arms, for timeout-s
 
 // DESIGN 52 (Decision 98fec682): the hint of build-bundle.ps1's refusal reaches the operator through the companion log, and only when it is one
 // of the fixed texts (none listed since PR #991 merged); every other hint is dropped.
-// The former fixed text for d94cd486 (DESIGN 52), dropped since PR #991 merged it into main.
+// A prefix of the former fixed text for d94cd486 (DESIGN 52), dropped since PR #991 merged it into main.
 const HINT = 'The reviewed set contains d94cd486 (and its parent 8ea4da40), which is reachable only from branch claude/gitleaks-midgen-reviewed-hold until PR #991 is merged';
 const refusal = (extra = {}) => ({ code: 2, stdout: JSON.stringify({ status: 'REFUSED_BEFORE_WRITE', stage: 'fetch-reviewed-commits-by-sha', reason: 'GIT_STEP_FAILED', hint: HINT,
   git: { label: 'fetch-reviewed', exitCode: 128 }, created: ['C:\\secret\\path'], ...extra }), stderr: 'token ghp_x' });
@@ -228,7 +228,7 @@ test('no reviewed commit is kept alive by a branch only any more: the script tab
   const ps = fs.readFileSync(new URL('../../actions-hosted-migration/independent-ci-v1/src/resident-v2/build-bundle.ps1', import.meta.url), 'utf8');
   assert.match(ps, /\n \$branchOnly=@\{\}\r?\n/, 'the script lists no commit');
   assert.deepEqual(BUNDLE_BRANCH_ONLY_HINTS, []);
-  assert.match(ps, / return \$branchOnly\[\$hit\[0\]\]\r?\n/, 'the script returns the table text unchanged');
+  assert.match(ps, / return \$branchOnly\[\$hit\[0\]\]\r?\n/, 'the lookup still goes through the (empty) table');
 });
 
 // What a refused build looks like in the companion log (generation 10, DESIGN 53.1): the codes and counts of the refusal, nothing else.

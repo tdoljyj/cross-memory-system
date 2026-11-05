@@ -91,7 +91,7 @@ $stage='fixed-preflight';$created=@();$writesStarted=$false;$lastGit=$null;$atte
 # so the hint cannot say which commit is missing: it is given when the reviewed set contains such a commit and the step that
 # fetches or reads the reviewed commits failed. It names public facts only (a short commit id and a branch name).
 function Branch-Only-Hint([string]$Stage,[string]$Reason,$Commits){
- # One fixed text per commit: the companion logs a hint only when it equals this text byte for byte (companion.mjs BUNDLE_BRANCH_ONLY_HINT).
+ # One fixed text per commit: the companion logs a hint only when it is one of these texts byte for byte (companion.mjs BUNDLE_BRANCH_ONLY_HINTS).
  # Empty since PR #991 brought d94cd486 into main (DESIGN 52): no reviewed commit is kept alive by a branch only.
  $branchOnly=@{}
  if(@('fetch-reviewed-commits-by-sha','reviewed-store-readback') -cnotcontains $Stage){return $null}
