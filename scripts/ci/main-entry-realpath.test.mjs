@@ -34,7 +34,9 @@ test('the idiom is recognised', () => {
 test('no script decides by itself that it is the entry point with a comparison a link defeats, except the listed pinned ones', (t) => {
   const files = trackedScripts();
   if (files === null) return t.skip('not a git work tree');
-  const found = files.filter((file) => fs.readFileSync(path.join(ROOT, file), 'utf8').split('\n').some(usesLinkBlindIdiom)).sort();
+  // (this file quotes the idiom in its own fixtures)
+  const self = path.relative(ROOT, fileURLToPath(import.meta.url)).split(path.sep).join('/');
+  const found = files.filter((file) => file !== self && fs.readFileSync(path.join(ROOT, file), 'utf8').split('\n').some(usesLinkBlindIdiom)).sort();
   const listed = new Set(LEGACY);
   assert.deepEqual(found.filter((file) => !listed.has(file)), [],
     'use `if (import.meta.main)` (Node 22.18 and later) so the script also runs behind a link; a new file may not use the comparison');

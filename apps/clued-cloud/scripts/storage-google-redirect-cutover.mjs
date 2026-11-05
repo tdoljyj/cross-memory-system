@@ -1,7 +1,7 @@
 // Offline SQL generation only. No database, provider, or credential access.
 import { readFile, stat } from 'node:fs/promises';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.0.1';
 const CONTRACT = 'kooyumi.storage-google-redirect-cutover/1';
 export const GOOGLE_CLIENT_ID = '980987540427-hu235tq06q94cak7hsm9a6ds88kvpdig.apps.googleusercontent.com';
 export const OLD_CALLBACK = 'https://clued.pixelgrav.com/storage/google/callback';

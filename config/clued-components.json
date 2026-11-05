@@ -330,14 +330,14 @@
     {
       "id": "script.storage-google-redirect-cutover",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Generate bounded, exact-client CAS configuration SQL for the original Google Storage callback cutover; no credential access.",
       "root": "apps/clued-cloud",
       "files": [
         "scripts/storage-google-redirect-cutover.mjs",
         "tests/storage-google-redirect-cutover.test.mjs"
       ],
-      "content_sha256": "84d033529b8fc691d81262df37ec224a7b1c84c3ce284c724bd03aee104e7496",
+      "content_sha256": "b500cf80713853023e81a0d3857ad62f40dc7604e0b443b751ba506c39c06118",
       "version_marker": {
         "file": "scripts/storage-google-redirect-cutover.mjs",
         "pattern": "export const VERSION = '{version}';"
@@ -804,7 +804,7 @@
     {
       "id": "ci.temporary-storage-lifecycle",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Job temporary-storage setup and exact pre-bootstrap lifecycle classification; scan permission writes remain explicit.",
       "root": ".",
       "files": [
@@ -815,7 +815,7 @@
         ".github/actions/ci-temporary-storage/coverage.json",
         "apps/clued-cloud/tests/ci-temporary-storage.test.mjs"
       ],
-      "content_sha256": "08d94d93d61b2531f00702cfd686cdf4d6d27a75caa1d3f0aa756914314b9a48"
+      "content_sha256": "17c3de25171b216f4704f9f67f614ecc54aa672d74a385c7956fd5fbd5f27ea1"
     }
   ]
 }

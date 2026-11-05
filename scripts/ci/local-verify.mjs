@@ -194,7 +194,7 @@ export function systemDriveNotes(home, { env = process.env, platform = process.p
       notes.push(`${drive} has ${gb.toFixed(1)} GB free, below ${resume} GB: the CI host's watchdog stops the self-hosted runners below ${CI_HOST_SUSPEND_FREE_GB} GB and starts them again at ${resume} GB; free space there first`);
     }
   } catch { /* the drive cannot be asked: nothing to say */ }
-  if (path.parse(home).root.toLowerCase() === drive.toLowerCase()) {
+  if (path.win32.parse(home).root.toLowerCase() === drive.toLowerCase()) {
     notes.push(`the cache ${home} is on ${drive} and grows to about 10 GB; set CLUED_DEV_ROOT (or CLUED_LOCAL_VERIFY_HOME) to a directory on another drive`);
   }
   return notes;
