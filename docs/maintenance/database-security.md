@@ -199,6 +199,15 @@ read a row could call as that Binding. The columns now hold a verifier,
   with a raw parameter. `apps/clued-cloud/tests/credential-verifier-db.test.mjs`
   repeats that guard, also checks that no function passes a stored value on as
   a proof, and checks that a second run changes nothing.
+- Functions written by later migrations must compare with
+  `clued_private.credential_verifier_v1(<proof>)` too.
+  `apps/clued-cloud/tests/credential-verifier-later-migrations.test.mjs` scans
+  the source of every later migration for a raw comparison (either order,
+  `= any(...)`, `in (...)`, `$n` and `v_` parameters, JSON fields, any case);
+  each known exception is listed with its exact text and reason.
+  `20261106010000_storage_route_destination_verifier_v1` fixed one such
+  function (`storage_route_destination_v1`, Clued Task e21ff6fd) and repeats
+  this migration's guard against `pg_proc`.
 
 Issuer columns (`authorization_issuers_v12`, `authorization_requests_v12`,
 `storage_*.issuer_hash`) are step 2b; see
