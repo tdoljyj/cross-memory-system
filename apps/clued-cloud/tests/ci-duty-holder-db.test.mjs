@@ -8,6 +8,8 @@ import {schedulingFixture,digest,sha} from './ci-scheduling-stage1-fixture.mjs';
 
 // Unified scheduling 2A: ci_duty_holder_v1 / ci_duty_admits_v1 and the two phase moves,
 // on a real PostgreSQL with the whole migration chain (DESIGN 5.1, PR 969).
+// raw-binding-grants: every Binding inserted here is inserted after schedulingFixture(), which calls
+// allowRawTestBindings; its trigger grants each later insert.
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const MIGRATION='20261105160000_ci_duty_holder_v1.sql';
