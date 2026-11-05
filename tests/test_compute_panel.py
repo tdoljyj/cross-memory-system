@@ -938,6 +938,29 @@ class DuplicateReviewTests(unittest.TestCase):
         self.assertEqual((state["duplicates"]["as_of"], state["duplicates"]["skipped"], state["duplicates"]["total"]),
                          (panel.iso(NOW + timedelta(hours=1)), 1, 1))
 
+    def test_shrinking_keeps_the_split_by_executor_in_the_table(self) -> None:
+        state: dict = {}
+        report = panel.build(BuildClient([pull(1, SHA)], {SHA: self.dup}), NOW, state)
+        self.assertIn("| 常驻#1、常驻#2 |", panel.render(report, state))
+        panel.shrink_duplicates(state, 2, report)
+        report["duplicates"]["found"] = state["duplicates"]["found"]  # what the next run reads back from the saved state
+        body = panel.render(report, state)
+        self.assertIn("| 常驻 2 |", body)
+
+    def test_many_unreadable_heads_are_all_remembered_and_never_announced_late(self) -> None:
+        count = panel.DUP_PULLS
+        shas = [f"{i:04x}" + "a" * 36 for i in range(count)]
+        pulls = [pull(i + 1, sha) for i, sha in enumerate(shas)]
+        checks = {sha: self.dup for sha in shas}
+        gone = [(sha, [panel.RequestError("gone", 404)] * 5) for sha in shas[1:]]
+        state: dict = {"events_at": panel.iso(NOW)}
+        panel.build(FailRules(pulls, checks, rules=gone), NOW, state)
+        self.assertEqual((state["duplicates"]["skipped"], len(state["duplicates"]["quiet"])), (count - 1, count - 1))
+        report = panel.build(BuildClient(pulls, checks), NOW + timedelta(hours=1), state)
+        self.assertEqual([key for key in report["events"] if key.startswith("dup")], [])
+        self.assertEqual(state["duplicates"]["total"], count)
+        self.assertEqual(state["duplicates"]["quiet"], [])
+
     def test_check_run_ids_are_unique_so_page_deduplication_never_drops_a_real_run(self) -> None:
         ids = [check("gitleaks", 5)["id"] for _ in range(50)]
         self.assertEqual(len(set(ids)), 50)
@@ -1045,6 +1068,37 @@ class DuplicateMainTests(unittest.TestCase):
         self.assertGreater(sizes["unguarded"], panel.ISSUE_LIMIT)  # the guard is what keeps the update writable
         self.assertLessEqual(sizes["guarded"], panel.DUP_BODY_LIMIT)
         self.assertEqual(panel.read_state(store["issue"]["body"])["duplicates"]["total"], count)
+
+    def test_the_body_always_ends_up_under_the_limit_down_to_a_summary(self) -> None:
+        from unittest import mock
+        name = "w" * 250
+        dup = [resident(name, 50), resident(name, 40, attempt=2)]
+        count = panel.DUP_KEEP + panel.DUP_MAX + 30
+        shas = [f"{i:04x}" + "a" * 36 for i in range(count)]
+        pulls = [{**pull(i + 1, sha, "closed", 2 * 24 * 60), "title": "T" * 300} for i, sha in enumerate(shas)]
+        checks = {sha: dup for sha in shas}
+        sizes = {}
+        for limit in (10 ** 9, panel.DUP_BODY_LIMIT, 40000, 1):  # unguarded, normal, forcing level 4, forcing level 5
+            store: dict = {"comments": []}
+            with mock.patch.object(panel, "DUP_BODY_LIMIT", limit):
+                self.run_main(store, pulls, checks, NOW)
+                self.run_main(store, pulls, checks, NOW + timedelta(hours=1))
+            sizes[limit] = len(store["issue"]["body"])
+            state = panel.read_state(store["issue"]["body"])
+            self.assertEqual(state["duplicates"]["total"], count)  # the total survives every level
+            if limit == 1:
+                self.assertTrue(state["duplicates"]["omitted"])
+                self.assertIn("明细已省略", store["issue"]["body"])
+                self.assertLessEqual(len(store["issue"]["body"]), panel.ISSUE_LIMIT - 500)
+                self.assertEqual(store["comments"], [])
+        self.assertLessEqual(sizes[40000], 40000)
+        self.assertLess(sizes[1], sizes[40000])
+        # the next run after a summary-only body (the limit is normal again) scans again and restores the detail, announcing nothing twice
+        self.run_main(store, pulls, checks, NOW + timedelta(hours=3))
+        state = panel.read_state(store["issue"]["body"])
+        self.assertEqual((state["duplicates"]["total"], state["duplicates"].get("omitted")), (count, None))
+        self.assertEqual(len(state["duplicates"]["found"]), panel.DUP_KEEP)  # the detail is back (the limit is normal again)
+        self.assertEqual(store["comments"], [])
 
 
 FIXTURE = ROOT / "tests" / "fixtures" / "compute-panel-duplicate-runs.json"

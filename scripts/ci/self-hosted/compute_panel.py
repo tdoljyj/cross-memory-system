@@ -694,8 +694,9 @@ def retrying(call):
         except (RequestError, OSError, http.client.HTTPException, ValueError) as error:
             transient = not isinstance(error, RequestError) or error.code >= 500
             if not transient or attempt == DUP_ATTEMPTS - 1:
-                if isinstance(error, (RuntimeError, OSError)):
-                    raise
+                if isinstance(error, (RequestError, OSError)):
+                    raise  # build()'s attempt() already catches both
+                # a cut-off reply (HTTPException) or an unreadable body (ValueError): make it a RuntimeError for attempt()
                 raise RuntimeError(f"read failed: {type(error).__name__}") from error
             SLEEP(DUP_BACKOFF * 2 ** attempt)
 
@@ -764,10 +765,12 @@ def pack_duplicates(scan: dict) -> dict:
     return packed
 
 
-def shrink_duplicates(state: dict, level: int) -> None:
+def shrink_duplicates(state: dict, level: int, report: dict | None = None) -> None:
     """Make the saved duplicates smaller (the issue body is limited to 65536 characters). Level 1 drops the short
-    records, level 2 the run details, level 3 all but the rows shown. Heads that lost findings are not settled, so
-    the next scan reads them again and the total is exact once more."""
+    records, level 2 the run details (the split by executor stays), level 3 all but the rows shown, level 4 every
+    detail: only the total remains, and the panel says so. Level 5 also leaves the events out of the machine-readable
+    data (they are already in the comment). Heads that lost findings are not settled, so the next scan reads them
+    again and the total is exact once more; the announced keys and the quiet heads are kept, so nothing is said twice."""
     saved = state.get("duplicates") or {}
     if not saved:
         return
@@ -783,6 +786,12 @@ def shrink_duplicates(state: dict, level: int) -> None:
     saved["found"] = keep
     heads = {item["head"] for item in drop}
     saved["settled"] = {key: stamp for key, stamp in (saved.get("settled") or {}).items() if key.split(":")[-1] not in heads}
+    if level >= 4:
+        saved.update(found=[], rest=[], settled={}, omitted=True)
+        if report is not None:
+            report["duplicates"].update(found=[], omitted=True)
+    if level >= 5 and report is not None:
+        report["events"] = {}
 
 
 def settle_key(pull: dict, sha: str) -> str:
@@ -844,7 +853,7 @@ def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
     found = [item for item in best.values() if (parse_time(item["last"]) or now) >= floor]
     found.sort(key=lambda item: item["last"], reverse=True)
     return {"as_of": iso(now), "window_days": DUP_LOOKBACK.days, "heads_read": heads, "skipped": skipped,
-            "skipped_heads": skipped_heads[:50], "total": len(found), "found": found, "settled": settled}
+            "skipped_heads": skipped_heads, "total": len(found), "found": found, "settled": settled}
 
 
 def alerts_for(pool: dict[str, dict], residents: dict[str, dict]) -> dict[str, str]:
@@ -950,6 +959,8 @@ def render(report: dict, state: dict) -> str:
               f"{duplicates.get('as_of') or '尚未采集'}）", ""]
     if not duplicates.get("as_of"):
         lines.append("尚未采集（需要 checks: read；读取失败见页末说明）。")
+    elif duplicates.get("omitted"):
+        lines.append(f"共 {duplicates.get('total', 0)} 项；正文接近 Issue 上限，明细已省略，下一轮扫描恢复。")
     elif not duplicates.get("found"):
         lines.append(f"没有发现：读了 {duplicates.get('heads_read', 0)} 个提交，没有同一检查真跑两次及以上。"
                      "取消、跳过、常驻的准入与第 8 段复查不算真跑。")
@@ -959,7 +970,10 @@ def render(report: dict, state: dict) -> str:
         for item in duplicates["found"]:
             who = {"resident": "常驻", "hosted": "托管"}
             parts = "、".join(f"{who.get(r['executor'], cell(r['executor']))}{('#' + str(r['attempt'])) if r.get('attempt') else ''}"
-                              for r in item.get("runs") or []) or "—"
+                              for r in item.get("runs") or [])
+            if not parts and item.get("mix"):  # the run details were shrunk away; the split stays
+                parts = "、".join(f"{who.get(e, cell(e))} {n}" for e, n in item["mix"].items())
+            parts = parts or "—"
             lines.append(f"| #{item['pr']} | {item['head'][:8]} | {cell(item.get('label') or item['check'])} | {item['count']} | {parts} | "
                          f"{'；'.join(why[c] for c in item.get('causes') or []) or '—'} | {item['last']} |")
         if duplicates.get("total", 0) > len(duplicates["found"]):
@@ -1044,7 +1058,7 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
             # old news, recorded without an announcement.
             was_quiet = set(duplicates.get("quiet") or [])
             unreadable = set(scanned.pop("skipped_heads", []))
-            scanned["quiet"] = sorted(unreadable if first_scan else was_quiet & unreadable)[:50]
+            scanned["quiet"] = sorted(unreadable if first_scan else was_quiet & unreadable)  # at most DUP_PULLS heads are read per scan
             state["duplicates"] = duplicates = pack_duplicates(scanned)
             if first_scan:
                 # The first scan records what is already there and announces none of it.
@@ -1085,7 +1099,7 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
         "residents": residents,
         "others": OTHERS,
         "metrics": metrics,
-        "duplicates": {**{key: duplicates[key] for key in ("as_of", "window_days", "heads_read", "skipped", "total") if key in duplicates},
+        "duplicates": {**{key: duplicates[key] for key in ("as_of", "window_days", "heads_read", "skipped", "total", "omitted") if key in duplicates},
                        "found": (duplicates.get("found") or [])[:DUP_ROWS]},
         "alerts": alerts_for(pool, residents),
         "events": events,
@@ -1140,10 +1154,10 @@ def main() -> int:
     if first_events:
         events = {}
     body = render(report, state)
-    for level in (1, 2, 3):
+    for level in (1, 2, 3, 4, 5):
         if len(body) <= DUP_BODY_LIMIT:
             break
-        shrink_duplicates(state, level)  # the body must stay under the issue limit, or no update could be written
+        shrink_duplicates(state, level, report)  # the body must stay under the issue limit, or no update could be written
         body = render(report, state)
     if len(body) > ISSUE_LIMIT - 500:
         report["errors"].append(f"正文 {len(body)} 字符，接近 Issue 上限 {ISSUE_LIMIT}")
