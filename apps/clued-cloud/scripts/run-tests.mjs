@@ -83,7 +83,7 @@ export async function runNodeTests(args, { cwd = process.cwd(), env = process.en
 // Node resolves links (a junction, a symlink) in the module URL but not in
 // argv[1], so the comparison failed behind a link and the script ended with exit
 // 0 without running a single test (defect 2102f7e1).
-if (import.meta.main) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   try {
     process.exitCode = await runNodeTests(process.argv.slice(2));
   } catch (error) {

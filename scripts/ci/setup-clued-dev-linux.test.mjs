@@ -34,13 +34,13 @@ test('the distribution and the downloads go under the data root, and the system 
   assert.equal(allowed.plan.InstallDir, path.join(dir, 'wsl', 'CluedDev-Linux'));
   assert.equal(allowed.plan.DownloadDir, path.join(dir, 'download'));
   assert.equal(allowed.plan.InstallDirOnSystemDrive, onSystemDrive(dir));
-  const viaVariable = plan([], { CLUED_DEV_ROOT: dir });
+  const viaVariable = plan(['-Name', 'CluedDevTest-NotInstalled'], { CLUED_DEV_ROOT: dir });
   if (onSystemDrive(dir)) {
     assert.notEqual(viaVariable.status, 0, 'the system drive is refused');
     assert.match(`${viaVariable.stdout}${viaVariable.stderr}`, /is on the system drive/);
   } else {
     assert.equal(viaVariable.status, 0, viaVariable.stderr);
-    assert.equal(viaVariable.plan.InstallDir, path.join(dir, 'wsl', 'CluedDev-Linux'), 'CLUED_DEV_ROOT is the data root');
+    assert.equal(viaVariable.plan.InstallDir, path.join(dir, 'wsl', 'CluedDevTest-NotInstalled'), 'CLUED_DEV_ROOT is the data root');
   }
   const own = plan(['-InstallDir', path.join(dir, 'a'), '-DownloadDir', path.join(dir, 'b'), '-AllowSystemDrive']);
   assert.equal(own.status, 0, own.stderr);

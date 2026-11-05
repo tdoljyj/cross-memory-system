@@ -146,7 +146,7 @@ export async function main(args) {
   return buildCutoverSql(input);
 }
 
-if (import.meta.main) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   main(process.argv.slice(2)).then(sql => process.stdout.write(sql)).catch(error => {
     // Never echo untrusted metadata or file contents, including parse errors.
     process.stderr.write(error.message.startsWith('usage:') ? error.message + '\n'

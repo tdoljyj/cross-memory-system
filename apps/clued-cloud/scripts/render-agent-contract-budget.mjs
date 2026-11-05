@@ -94,4 +94,4 @@ console.log(JSON.stringify({ current_parts: responses.length, current_response_b
   synthetic_parts: syntheticResponses.length, synthetic_response_bytes: syntheticResponses.map(renderedBootstrapBytes), version, sha256: identity.sha256 }));
 }
 
-if (import.meta.main) await main();
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) await main();

@@ -92,7 +92,7 @@ export async function startPilotServer(profilePath, expectedSha256) {
   return server;
 }
 
-if (import.meta.main) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   startPilotServer(process.argv[2], process.argv[3]).catch((error) => {
     process.stderr.write(`${error?.code ?? "RESOURCE_CENTER_PILOT_START_FAILED"}\n`);
     process.exitCode = 1;

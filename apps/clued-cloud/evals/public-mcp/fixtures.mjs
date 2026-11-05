@@ -64,6 +64,6 @@ export async function resetAcceptanceFixture(connectionString = process.env.SUPA
   return { owners: 2, bindings: 2, contexts: 2, synthetic_only: true };
 }
 
-if (import.meta.main) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   console.log(JSON.stringify(await resetAcceptanceFixture()));
 }

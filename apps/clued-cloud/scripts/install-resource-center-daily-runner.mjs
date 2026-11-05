@@ -107,7 +107,7 @@ export async function installDailyHost({ destination, consumer_runtime_directory
   await freshFile(path.join(destination, "installation.json"), JSON.stringify(manifest, null, 2) + "\n");
   return manifest;
 }
-if (import.meta.main) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   const request = JSON.parse(await fs.readFile(process.argv[2], "utf8"));
   installDailyHost(request).then(result => process.stdout.write(JSON.stringify(result) + "\n")).catch(() => {
     process.stderr.write("INSTALL_FAILED_CLOSED\n");process.exitCode = 2;

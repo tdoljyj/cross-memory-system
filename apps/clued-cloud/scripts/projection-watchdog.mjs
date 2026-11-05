@@ -230,7 +230,7 @@ export async function runProjectionWatchdog(env = process.env) {
   return { status: 'notified', changes };
 }
 
-if (import.meta.main) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   runProjectionWatchdog().then((result) => {
     process.stdout.write(JSON.stringify({ status: result.status,
       active_incidents: result.incidents?.length ?? result.changes?.active.length ?? 0 }) + '\n');

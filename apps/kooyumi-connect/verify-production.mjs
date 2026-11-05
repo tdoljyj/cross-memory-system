@@ -75,6 +75,6 @@ async function main() {
   await writeFile(evidence, JSON.stringify(result, null, 2) + '\n', { flag: 'wx' });
   process.stdout.write(JSON.stringify(result) + '\n');
 }
-if (import.meta.main) {
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
   main().catch(error => { process.stderr.write(error.message + '\n'); process.exitCode = 1; });
 }
