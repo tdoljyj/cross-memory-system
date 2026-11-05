@@ -20,13 +20,15 @@ const OPERATOR = String.raw`\s*(?:=|<>|!=|is\s+(?:not\s+)?distinct\s+from)\s*`;
 // Wider than the expression credential-verifier-db.test.mjs uses: either order, = any(...) (also over array[...]),
 // [not] in (...), casts, positional and v_ parameters, JSON fields with or without an alias or parentheses, any case.
 // Not comparisons: `set token_hash=...` (an assignment, which the trigger converts), a plpgsql assignment
-// `v_hash = token_hash;` at the start of a statement, and a proof-named value that is itself a record field or JSON
+// `v_hash = token_hash;` (a whole statement; in `case when x then v_hash = token_hash else ...` it is a comparison), and a proof-named value that is itself a record field or JSON
 // object (`v_binding.token_hash`, `p_request->>...`). An assignment after the first column of a multi-column SET
 // (`set a=1, token_hash=p_hash`) still matches; list it in KNOWN.
+const STATEMENT_START = String.raw`(?:^|;|\bbegin|\bthen|\belse|\bloop)\s*`;
 const RAW_COMPARISON = new RegExp(
-  String.raw`(?<![\w.$])(?<!\bset\s+)${STORED}(?:${OPERATOR}(?:(?:any|all)\s*\(\s*(?:array\s*\[\s*)?)?|\s+(?:not\s+)?in\s*\(\s*)` +
+  String.raw`(?<![\w.$])(?<!\bset\s+)${STORED}(?:${OPERATOR}(?:(?:any|all)\s*\(\s*(?:array\s*\[\s*)?)?|\s+(?:not\s+)?in\s*\(\s*(?:select\s+)?)` +
     String.raw`${PROOF}(?![\w(.]|\s*->)` +
-    String.raw`|(?<![\w.$:])(?<!(?:^|;|\bbegin|\bthen|\belse|\bloop)\s*)${PROOF}${OPERATOR}${STORED}(?!\w)`,
+    String.raw`|(?<![\w.$:])(?<!${STATEMENT_START})${PROOF}${OPERATOR}${STORED}(?!\w)` +
+    String.raw`|(?<=${STATEMENT_START})${PROOF}${OPERATOR}${STORED}(?!\w)(?!\s*;)`,
   'gi',
 );
 // Each file's raw comparisons, exactly as written, that are not live ones.
@@ -45,7 +47,7 @@ const KNOWN = {
 function code(sql) {
   let out = '';
   for (let i = 0; i < sql.length; ) {
-    const dollar = /^\$\w*\$/.exec(sql.slice(i, i + 64))?.[0];
+    const dollar = /^\$(?:[A-Za-z_]\w*)?\$/.exec(sql.slice(i, i + 64))?.[0];
     if (dollar && !/[\w$]/.test(sql[i - 1] ?? '')) {
       const end = sql.indexOf(dollar, i + dollar.length);
       out += dollar + code(sql.slice(i + dollar.length, end < 0 ? sql.length : end)) + dollar;
@@ -81,6 +83,7 @@ test('the scanner finds raw comparisons in either order and ignores comments, li
     "where (request->>'reader_hash')=h", 'where token_hash = any(array[p_hash])', 'where p_hash::text = token_hash',
     'where token_hash not in (p_hash)', "perform $d$don't$d$; select 1 where token_hash=p_hash",
     String.raw`select E'it\'s' where token_hash=p_hash`, 'where\n  p_hash = token_hash',
+    'where case when x then v_hash = b.token_hash else false end', 'where token_hash in (select p_hash)',
   ]) assert.equal(found(sql).length, 1, sql);
   for (const sql of [
     'where b.token_hash=clued_private.credential_verifier_v1(p_hash)', 'update t set token_hash=p_hash',

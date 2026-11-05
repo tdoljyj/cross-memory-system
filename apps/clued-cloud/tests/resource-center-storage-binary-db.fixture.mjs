@@ -415,6 +415,8 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
           } finally {
             await timeTravel(`update clued_private.${table} set ${column}=$2 where id=$1`, [id, user]);
           }
+          assert.equal(await placedAs(clientHash, foreign.connection, file(foreignUnplaced), true), `${foreign.root}/${STRAY}/stray.md`,
+            `${table} restored`);
         }
       } finally {
         await admin.query("update clued_private.resource_center_profiles_v1 set cloud_runtime=$2::jsonb where id=$1", [profileOf, JSON.stringify(runtime)]);
